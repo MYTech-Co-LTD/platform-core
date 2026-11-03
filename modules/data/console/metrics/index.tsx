@@ -11,8 +11,10 @@
 // 入参会以 400 `TARGET_NOT_SUPPORTED` 被**显式拒绝**（不静默丢弃）。所以这里也不摆一个
 // 按了会报错的输入框——见 README「L2 的已知边界」。
 import { useEffect, useMemo, useState } from 'react'
-import { Button, Card, Drawer, Input, Modal, Popconfirm, Segmented, Select, Space, Switch, Table, Tag, Timeline, Typography, message } from 'antd'
+import { Button, Card, Drawer, Dropdown, Input, Modal, Popconfirm, Segmented, Select, Space, Switch, Table, Tag, Timeline, Typography, message } from 'antd'
+import type { MenuProps } from 'antd'
 import { apiGet, apiSend, messageOf } from '../lib/api'
+import { useIsMobile } from '../lib/useIsMobile'
 
 interface MetricRow {
   id: string
@@ -89,6 +91,7 @@ const dimsOf = (row: MetricRow | undefined): string[] =>
 export default function MetricsPage() {
   const [rows, setRows] = useState<MetricRow[]>([])
   // 列表工具条（UX 2026-11-03）：指标表列多、行多，搜索与来源筛选是第一需要。
+  const isMobile = useIsMobile()
   const [query, setQuery] = useState('')
   const [sourceFilter, setSourceFilter] = useState<'all' | 'l1' | 'l2'>('all')
   const [draft, setDraft] = useState<Draft | null>(null)
@@ -208,6 +211,60 @@ export default function MetricsPage() {
       || (r.description ?? '').toLowerCase().includes(q)
   })
 
+  // ── 移动布局（<768px）：表格在手机上不可用 ⇒ 卡片列表（信息与桌面列等价 + 「更多」动作菜单）。
+  const emptyText = rows.length === 0
+    ? '还没有指标。平台指标随数据面接入自动出现；本租户可基于平台指标新建派生指标。'
+    : '没有匹配的指标，试试清空搜索或切换筛选'
+
+  const confirmRemove = (r: MetricRow) => {
+    Modal.confirm({
+      title: `删除派生指标 ${r.id}？`, okText: '确认删除', cancelText: '取消',
+      okButtonProps: { danger: true }, onOk: () => remove(r.id),
+    })
+  }
+
+  const mobileMoreItems = (r: MetricRow): NonNullable<MenuProps['items']> => {
+    if (r.source === 'l1') return []
+    const items: NonNullable<MenuProps['items']> = [
+      { key: 'history', label: '变更历史', onClick: () => openHistory(r.id) },
+      { key: 'edit', label: '编辑', onClick: () => openEdit(r) },
+      { key: 'meta', label: '元数据', onClick: () => openMeta(r) },
+      { type: 'divider' },
+      { key: 'remove', label: '删除', danger: true, onClick: () => confirmRemove(r) },
+    ]
+    return items
+  }
+
+  const mobileCards = (
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+      {visibleRows.length === 0 ? (
+        <div style={{ color: '#999', textAlign: 'center', padding: '32px 0', lineHeight: 1.8 }}>{emptyText}</div>
+      ) : visibleRows.map((r) => (
+        <div key={r.id} style={{ background: '#fff', borderRadius: 12, border: '1px solid #f0f0f0', padding: 14 }}>
+          <div style={{ display: 'flex', justifyContent: 'space-between', gap: 8, alignItems: 'flex-start' }}>
+            <div style={{ fontSize: 16, fontWeight: 600, lineHeight: 1.35 }}>{r.title}</div>
+            {r.source === 'l1' ? <Tag color="blue">平台（只读）</Tag> : <Tag color="green">本租户派生</Tag>}
+          </div>
+          <div style={{ fontSize: 12, color: '#888', marginTop: 4, wordBreak: 'break-all' }}>{r.id}</div>
+          <div style={{ fontSize: 12, color: '#666', marginTop: 8, lineHeight: 1.8 }}>
+            所需 scope {r.requiredScope ?? '不限'} · 主体列 {r.subjectColumn}
+            {r.source === 'l2' ? ` · v${r.version}` : ''}
+            {r.source === 'l2' && r.updatedBy ? ` · ${r.updatedBy}` : ''}
+          </div>
+          {r.source === 'l2' ? (
+            <div style={{ display: 'flex', justifyContent: 'flex-end', marginTop: 10 }}>
+              <Dropdown menu={{ items: mobileMoreItems(r) }} trigger={['click']}>
+                <Button size="small" type="text">更多 ▾</Button>
+              </Dropdown>
+            </div>
+          ) : (
+            <div style={{ fontSize: 12, color: '#999', marginTop: 10 }}>平台词表经 API 只读</div>
+          )}
+        </div>
+      ))}
+    </div>
+  )
+
   return (
     <Space direction="vertical" style={{ width: '100%' }} size="middle">
       {ctx}
@@ -217,7 +274,7 @@ export default function MetricsPage() {
           使用统计
         </Button>
         <Typography.Text type="secondary">
-          派生指标只能**裁剪/别名/过滤**平台已声明的指标；口径本体改不了（要改口径请改 dbt 声明）。
+          派生指标只能<strong>裁剪 / 别名 / 过滤</strong>平台已声明的指标；口径本体改不了（要改口径请改 dbt 声明）。
         </Typography.Text>
       </Space>
 
@@ -227,7 +284,7 @@ export default function MetricsPage() {
           value={query}
           onChange={(e) => setQuery(e.target.value)}
           placeholder="搜索指标 id / 标题 / 说明"
-          style={{ width: 300 }}
+          style={{ width: isMobile ? '100%' : 300 }}
         />
         <Segmented
           value={sourceFilter}
@@ -310,6 +367,7 @@ export default function MetricsPage() {
         </Card>
       )}
 
+      {isMobile ? mobileCards : (
       <Table
         rowKey="id"
         dataSource={visibleRows}
@@ -358,6 +416,7 @@ export default function MetricsPage() {
                 </Space>
                 )) },
       ]} />
+      )}
 
       {/* 变更史：#489。倒序（服务端已排好），删除行标红——它是不可逆的那一类。 */}
       <Drawer title={`变更历史：${historyId ?? ''}`} open={historyId !== null}

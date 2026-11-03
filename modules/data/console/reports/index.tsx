@@ -25,8 +25,10 @@
 //     `PUT` 对 platform 行回 409 `USE_PUBLISH_ENDPOINT`）。
 import { useEffect, useRef, useState } from 'react'
 import { useOutletContext, useSearchParams } from 'react-router-dom'
-import { Button, Drawer, Input, Modal, Popconfirm, Segmented, Space, Table, Tag, Tooltip, Tree, Typography, message } from 'antd'
+import { Button, Drawer, Dropdown, Input, Modal, Popconfirm, Segmented, Space, Table, Tag, Tooltip, Tree, Typography, message } from 'antd'
+import type { MenuProps } from 'antd'
 import { ApiError, apiGet, apiSend, messageOf } from '../lib/api'
+import { useIsMobile } from '../lib/useIsMobile'
 import SpecView from './SpecView'
 
 /** Console 壳 Outlet context 的结构子集（壳侧真实形状见 apps/web ConsoleOutletContext；demo 模块先例） */
@@ -92,6 +94,7 @@ export default function ReportsPage() {
   const [rows, setRows] = useState<ReportRow[]>([])
   // 列表工具条（2026-11-03 UX）：租户报表多起来后，靠肉眼扫表找一张是主要摩擦点。
   // 纯前端过滤（服务端清单本来就是一次性全量；分页/服务端搜索是另一个议题）。
+  const isMobile = useIsMobile()
   const [query, setQuery] = useState('')
   const [statusFilter, setStatusFilter] = useState<'all' | 'published' | 'draft' | 'changed'>('all')
   // 请求者自己的部门闭包（`GET /reports/manage` 回带；本人部门 + 全部祖先）。只用来判
@@ -554,6 +557,109 @@ export default function ReportsPage() {
     return true
   })
 
+  // ── 移动布局（<768px）：表格在手机上不可用（横向溢出、操作全在屏外）⇒ 换成卡片列表。
+  //    信息与桌面列等价：标题/状态/页门/部门门/所有者 + 「打开」+「更多」。
+  const emptyText = rows.length === 0
+    ? (canManage ? '还没有报表。可通过 AI 助手（MCP）或 API 创建第一张。' : '暂时没有对你可见的报表')
+    : '没有匹配的报表，试试清空搜索或切换筛选'
+
+  const mobileStatusTags = (r: ReportRow) => (
+    <Space size={4} wrap>
+      {r.renderer === 'platform' && (r.publishedVersion === null
+        ? <Tag>未发布</Tag>
+        : r.hasUnpublishedChanges
+          ? <Tag color="orange">有未发布改动</Tag>
+          : <Tag color="green">{`已发布 v${r.publishedVersion}`}</Tag>)}
+      {r.ownerActive === false && <Tag color="red">所有者已停用</Tag>}
+    </Space>
+  )
+
+  const confirmRecycle = (r: ReportRow) => {
+    Modal.confirm({
+      title: r.renderer === 'platform'
+        ? `回收会删除「${r.title}」、报表本体及其全部历史版本，确定？`
+        : `回收会删除「${r.title}」及其报表本体，确定？`,
+      okText: '确认回收', cancelText: '取消',
+      okButtonProps: { danger: true },
+      onOk: () => recycle(r),
+    })
+  }
+
+  const mobileMoreItems = (r: ReportRow): NonNullable<MenuProps['items']> => {
+    const items: NonNullable<MenuProps['items']> = []
+    if (!r.canEdit) {
+      items.push({ key: 'share', label: '共享', onClick: () => void openShare(r) })
+      return items
+    }
+    items.push({ key: 'share', label: '共享', onClick: () => void openShare(r) })
+    items.push({
+      key: 'dept',
+      label: (r.requiredDepts ?? []).length === 0 ? '配部门门' : '改部门门',
+      onClick: () => void openDeptGate(r),
+    })
+    if (r.renderer === 'metabase') {
+      items.push({ key: 'edit', label: '编辑', onClick: () => void edit(r) })
+      items.push({ key: 'gate', label: '改页门', onClick: () => { setGateEdit(r); setGateDraft(r.requiredScope ?? '') } })
+      if (r.requiredScope !== null) {
+        items.push({
+          key: 'publish', label: '发布',
+          onClick: () => Modal.confirm({
+            title: `发布后所有拿到本模块的人都能看到「${r.title}」，确定？`,
+            okText: '确认发布', cancelText: '取消',
+            onOk: () => publishGate(r),
+          }),
+        })
+      }
+    } else {
+      items.push({ key: 'publish', label: '发布', onClick: () => { setPublishTarget(r); setPublishNote('') } })
+      if (r.publishedVersion !== null) {
+        items.push({
+          key: 'unpublish', label: '下线',
+          onClick: () => Modal.confirm({
+            title: `下线后独立链接立即失效（历史版本保留），确定下线「${r.title}」？`,
+            okText: '确认下线', cancelText: '取消',
+            onOk: () => unpublish(r),
+          }),
+        })
+        items.push({ key: 'link', label: '复制独立链接', onClick: () => void copyLink(r) })
+      }
+      items.push({ key: 'versions', label: '版本历史', onClick: () => void openVersions(r) })
+    }
+    items.push({ type: 'divider' })
+    items.push({ key: 'recycle', label: '回收', danger: true, onClick: () => confirmRecycle(r) })
+    return items
+  }
+
+  const mobileCards = (
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+      {visibleRows.length === 0 ? (
+        <div style={{ color: '#999', textAlign: 'center', padding: '32px 0', lineHeight: 1.8 }}>{emptyText}</div>
+      ) : visibleRows.map((r) => (
+        <div key={r.id} style={{ background: '#fff', borderRadius: 12, border: '1px solid #f0f0f0', padding: 14 }}>
+          <div style={{ display: 'flex', justifyContent: 'space-between', gap: 8, alignItems: 'flex-start' }}>
+            <div style={{ fontSize: 16, fontWeight: 600, lineHeight: 1.35 }}>{r.title}</div>
+            {mobileStatusTags(r)}
+          </div>
+          <div style={{ fontSize: 12, color: '#666', marginTop: 8, lineHeight: 1.8 }}>
+            页门 {r.requiredScope ?? '不限'} · 部门门 {(r.requiredDepts ?? []).length === 0 ? '不限' : `${(r.requiredDepts ?? []).length} 个部门`}
+            <br />
+            所有者 {r.owner ?? '无'}{r.ownerActive === false ? '（已停用）' : ''}
+          </div>
+          <div style={{ display: 'flex', justifyContent: 'flex-end', alignItems: 'center', gap: 8, marginTop: 10 }}>
+            {openBtn(r)}
+            {r.canEdit ? (
+              <Dropdown menu={{ items: mobileMoreItems(r) }} trigger={['click']}>
+                <Button size="small" type="text">更多 ▾</Button>
+              </Dropdown>
+            ) : (
+              <Button size="small" type="text" onClick={() => void openShare(r)}>共享</Button>
+            )}
+          </div>
+        </div>
+      ))}
+    </div>
+  )
+
   return (
     <Space direction="vertical" style={{ width: '100%' }} size="middle">
       {ctx}
@@ -563,7 +669,7 @@ export default function ReportsPage() {
           value={query}
           onChange={(e) => setQuery(e.target.value)}
           placeholder="搜索报表标题或所有者"
-          style={{ width: 280 }}
+          style={{ width: isMobile ? '100%' : 280 }}
         />
         <Segmented
           value={statusFilter}
@@ -576,6 +682,7 @@ export default function ReportsPage() {
           ]}
         />
       </Space>
+      {isMobile ? mobileCards : (
       <Table
         rowKey="id"
         dataSource={visibleRows}
@@ -724,6 +831,7 @@ export default function ReportsPage() {
           ),
         },
       ]} />
+      )}
       <Modal title={`改页门：${gateEdit?.title ?? ''}`}
              open={gateEdit !== null}
              okText="确定" cancelText="取消"

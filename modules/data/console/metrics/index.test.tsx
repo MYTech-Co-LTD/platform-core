@@ -191,6 +191,23 @@ describe('指标管理页', () => {
     expect(screen.queryByText('lemeng:retail:net_sales')).toBeNull()
   })
 
+  it('★ 窄屏（<768px）渲染卡片列表；L2 卡片有「更多」，L1 只有只读说明（#移动端）', async () => {
+    const mq = {
+      matches: true, media: '(max-width: 767px)', onchange: null,
+      addEventListener: vi.fn(), removeEventListener: vi.fn(),
+      addListener: vi.fn(), removeListener: vi.fn(), dispatchEvent: vi.fn(),
+    }
+    vi.stubGlobal('matchMedia', vi.fn(() => mq))
+    try {
+      renderPage()
+      await waitFor(() => expect(screen.getByText('lemeng:retail:net_sales')).toBeInTheDocument())
+      expect(screen.queryByRole('table')).toBeNull()
+      expect(screen.getAllByRole('button', { name: /更\s*多/ })).toHaveLength(1)
+    } finally {
+      vi.unstubAllGlobals()
+    }
+  })
+
   it('★ 空清单（UX）：给「指标从哪来」的说明，而不是裸「暂无数据」', async () => {
     m.mockImplementation(async () => json({ metrics: [] }))
     renderPage()
