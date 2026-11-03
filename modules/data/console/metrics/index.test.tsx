@@ -5,7 +5,7 @@
 // groupBy。这不是「表单恰好没做那几个输入框」，而是 T8 收紧入参之后 UI 侧能表达的全部——
 // 一旦有人给页面加回一个「自定义 SQL」输入框，这条用例会红。
 import '@testing-library/jest-dom/vitest'
-import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
+import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 vi.mock('@platform/sdk/web', () => ({ platformFetch: vi.fn() }))
@@ -169,13 +169,43 @@ describe('指标管理页', () => {
     expect(screen.getByText('平台物化（追溯走 git）')).toBeInTheDocument()      // L1：不显示空白（否则读成「缺数据」）
   })
 
+  it('★ 工具条（UX）：搜索指标、来源筛选、无匹配空态', async () => {
+    renderPage()
+    await waitFor(() => expect(screen.getByText('lemeng:retail:net_sales')).toBeInTheDocument())
+    const search = screen.getByPlaceholderText('搜索指标 id / 标题 / 说明')
+
+    fireEvent.change(search, { target: { value: '熊喵' } })
+    expect(screen.getByText('xiongmao:net_sales')).toBeInTheDocument()
+    expect(screen.queryByText('lemeng:retail:net_sales')).toBeNull()
+
+    fireEvent.change(search, { target: { value: '不存在的指标' } })
+    expect(screen.getByText('没有匹配的指标，试试清空搜索或切换筛选')).toBeInTheDocument()
+
+    fireEvent.change(search, { target: { value: '' } })
+    fireEvent.click(screen.getByText('平台指标'))
+    expect(screen.getByText('lemeng:retail:net_sales')).toBeInTheDocument()
+    expect(screen.queryByText('xiongmao:net_sales')).toBeNull()
+
+    fireEvent.click(screen.getByText('派生指标'))
+    expect(screen.getByText('xiongmao:net_sales')).toBeInTheDocument()
+    expect(screen.queryByText('lemeng:retail:net_sales')).toBeNull()
+  })
+
+  it('★ 空清单（UX）：给「指标从哪来」的说明，而不是裸「暂无数据」', async () => {
+    m.mockImplementation(async () => json({ metrics: [] }))
+    renderPage()
+    expect(await screen.findByText('还没有指标。平台指标随数据面接入自动出现；本租户可基于平台指标新建派生指标。'))
+      .toBeInTheDocument()
+  })
+
   it('★ 变更历史抽屉：点开 → 拉 /metrics/:id/audit → 渲染动作与口径摘要（删除行的摘要来自 before）', async () => {
     renderPage()
     await waitFor(() => expect(screen.getByText('xiongmao:net_sales')).toBeInTheDocument())
     button('变更历史').click()
 
     await waitFor(() => expect(screen.getByText(/变更历史：xiongmao:net_sales/)).toBeInTheDocument())
-    expect(screen.getByText('删除')).toBeInTheDocument()
+    // ⚠️ 行内「删除」按钮与审计标签同文（text 按钮不像描边按钮那样自动插空格）⇒ 抽屉内断言
+    expect(within(screen.getByRole('dialog')).getByText('删除')).toBeInTheDocument()
     expect(screen.getByText(/被删：L2 派生自 lemeng:retail:net_sales（删前）/)).toBeInTheDocument()  // ★ 删除留证
     expect(screen.getByText('新建')).toBeInTheDocument()
     expect(screen.getByText(/LiLei/)).toBeInTheDocument()                    // 记的是**人**
