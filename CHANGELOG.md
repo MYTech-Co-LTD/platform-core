@@ -11,6 +11,10 @@
 
 ## [Unreleased]
 
+## [0.248.11](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.248.10...v0.248.11) - 2026-11-03
+- 【修复】data: 门店指标判空从分块级提到父级，部分块空不再整天拒写湖 (#1314) ([#1315](https://github.com/MYTech-Co-LTD/platform-core/pull/1315), [f4027a7](https://github.com/MYTech-Co-LTD/platform-core/commit/f4027a705e55527baddf7e380ef28813b7342562))
+
+
 ## [0.248.10](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.248.9...v0.248.10) - 2026-11-03
 - 【修复】askdata: 撞墙判据三处失真 + 判据侧水位（#963） ([#1312](https://github.com/MYTech-Co-LTD/platform-core/pull/1312), [909ccb0](https://github.com/MYTech-Co-LTD/platform-core/commit/909ccb072a053a5f7351a11d7ac700518aaf7f92))
 
