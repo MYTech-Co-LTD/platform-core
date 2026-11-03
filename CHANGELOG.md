@@ -11,6 +11,10 @@
 
 ## [Unreleased]
 
+## [0.259.2](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.259.1...v0.259.2) - 2026-11-03
+- 【修复】data: 移动端交互重做——整卡可点 + 底部 ActionSheet + 44px 触控（#1357） ([#1358](https://github.com/MYTech-Co-LTD/platform-core/pull/1358), [b277845](https://github.com/MYTech-Co-LTD/platform-core/commit/b277845d26a31f8f3c931870abd19940cea52a90))
+
+
 ## [0.259.1](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.259.0...v0.259.1) - 2026-11-03
 - 【修复】data: console 报表/指标页在手机上改成卡片列表（#1355） ([#1356](https://github.com/MYTech-Co-LTD/platform-core/pull/1356), [76cbae3](https://github.com/MYTech-Co-LTD/platform-core/commit/76cbae32efc2532893ec9b40ddac5d2364dd8b44))
 
