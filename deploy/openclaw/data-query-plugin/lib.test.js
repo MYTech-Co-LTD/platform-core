@@ -550,3 +550,39 @@ test("toolbox：403 bad_param → 参数文案带 detail（与 /query 同映射�
   assert.equal(r.code, "BAD_PARAM");
   assert.match(r.error, /unknown_dimension:store/);
 });
+
+// ── #964：身份兜底按会话键隔离（跨会话绝不继承）──────────────────────────────────
+test("resolveToolUserId：直给 userid 入表；同会话 ctx 为空 ⇒ 会话内兜底", async () => {
+  const { resolveToolUserId } = await import("./lib.js");
+  const m = new Map();
+  assert.deepEqual(resolveToolUserId({ requesterSenderId: "u-alice", sessionKey: "s1" }, m),
+    { userId: "u-alice", sessionKey: "s1" });
+  assert.deepEqual(resolveToolUserId({ sessionKey: "s1" }, m), { userId: "u-alice", sessionKey: "s1" });
+});
+
+test("★ resolveToolUserId：跨会话 ctx 为空 ⇒ 绝不继承他人 userid（返回空串，走身份错误）", async () => {
+  const { resolveToolUserId } = await import("./lib.js");
+  const m = new Map();
+  resolveToolUserId({ requesterSenderId: "u-alice", sessionKey: "s1" }, m);
+  // 新会话、ctx 为空：旧实现会拿 u-alice 去查（越权）；现在必须为空
+  assert.deepEqual(resolveToolUserId({ sessionKey: "s2" }, m), { userId: "", sessionKey: "s2" });
+  // 无会话键同样不兜底
+  assert.deepEqual(resolveToolUserId({}, m), { userId: "", sessionKey: "" });
+});
+
+test("resolveToolUserId：表容量上限按插入序淘汰最老（防长驻进程无限增长）", async () => {
+  const { resolveToolUserId } = await import("./lib.js");
+  const m = new Map();
+  resolveToolUserId({ requesterSenderId: "u1", sessionKey: "s1" }, m, 2);
+  resolveToolUserId({ requesterSenderId: "u2", sessionKey: "s2" }, m, 2);
+  resolveToolUserId({ requesterSenderId: "u3", sessionKey: "s3" }, m, 2);
+  assert.equal(m.has("s1"), false);
+  assert.equal(m.get("s3"), "u3");
+});
+
+test("resolveToolUserId：同会话直给值与兜底不串（direct 覆盖旧记录）", async () => {
+  const { resolveToolUserId } = await import("./lib.js");
+  const m = new Map();
+  resolveToolUserId({ requesterSenderId: "u-old", sessionKey: "s9" }, m);
+  assert.equal(resolveToolUserId({ requesterSenderId: "u-new", sessionKey: "s9" }, m).userId, "u-new");
+});

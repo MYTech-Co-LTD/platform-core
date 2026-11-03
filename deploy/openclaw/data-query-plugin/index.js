@@ -13,13 +13,16 @@ import {
   toToolResult,
   DEFAULT_API_BASE,
   freshnessStore,
+  resolveToolUserId,
   makeFreshnessSendingHook,
   makeFreshnessInboundHook,
 } from "./lib.js";
 
 const CHANNEL_KEY = process.env.DATA_WECOM_CHANNEL_KEY || "";
-// 同一轮后续工具调用 ctx.requesterSenderId 偶发为空的兜底（对齐生产先例实测行为）。
-let lastUserId = "";
+// 同一会话后续工具调用 ctx.requesterSenderId 偶发为空的兜底（#964：**按会话键隔离**）。
+// 旧实现是模块级全局（跨会话共用）⇒ 新会话 ctx 为空时会用上一会话的 userid 取数 =
+// 拿越权面换少一次报错；现在跨会话绝不继承，无会话记录则如实返回身份错误。
+const lastUserIdBySession = new Map();
 
 const LIST_DEF = {
   name: "list_metrics",
@@ -75,10 +78,7 @@ export default definePluginEntry({
     // onResult：工具回包的旁路观察（捕获新鲜度行）。**绝不许 throw**——它在 execute 主路径上，
     // 抛了会把正常查数搞挂；这里吞异常即可（新鲜度行缺失可接受，查数失败不可接受）。
     const factory = (def, run, onResult) => (ctx) => {
-      const userId = (ctx && ctx.requesterSenderId) || lastUserId;
-      if (userId) lastUserId = userId;
-      // 会话键：钩子按同一把键取捕获（拿不到 ⇒ 全局槽，见 lib.js FRESHNESS_GLOBAL_SLOT）。
-      const sessionKey = (ctx && ctx.sessionKey) || "";
+      const { userId, sessionKey } = resolveToolUserId(ctx, lastUserIdBySession);
       // runId：本轮 turn 的关联键（前向兼容——当前宿主工具 ctx 无 runId，恒空串）。
       const runId = (ctx && ctx.runId) || "";
       return {

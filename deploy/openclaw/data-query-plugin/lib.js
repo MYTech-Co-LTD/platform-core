@@ -310,3 +310,36 @@ export function makeFreshnessInboundHook(store) {
     }
   };
 }
+
+/**
+ * 工具调用身份解析（#964）：`ctx.requesterSenderId` 偶发为空时的兜底，**按会话键隔离**。
+ *
+ * 为什么不能沿用旧实现（模块级全局 lastUserId）：那是**进程内所有会话共用**的——
+ * 任一新会话首个调用的 ctx 为空，就会拿**上一个会话的** userid 去查平台问数 API，
+ * 而权限由平台按人裁决 ⇒ 取到的是**那个人的**数据。跨会话兜底 = 越权面。
+ *
+ * 语义：
+ *   · ctx 带 userid ⇒ 用直给值，并把 (sessionKey → userid) 记进表（同一会话后续可用）；
+ *   · ctx 不带 userid 但同会话有记录 ⇒ 兜底（这就是旧实现想保住的「同一轮偶发为空」自愈）；
+ *   · ctx 不带 userid 且无会话键/无记录 ⇒ **返回空串**（调用链会以「无法识别身份」硬失败，
+ *     如实报错远好于取错人的数据）。
+ * 表容量有上限（防止长驻进程无限增长）；超限按插入序淘汰最老一条。
+ *
+ * @param {{requesterSenderId?: string, sessionKey?: string} | null | undefined} ctx
+ * @param {Map<string, string>} lastBySession 调用方持有的会话→userid 表（就地更新）
+ * @param {number} [cap]
+ * @returns {{ userId: string, sessionKey: string }}
+ */
+export function resolveToolUserId(ctx, lastBySession, cap = 500) {
+  const sessionKey = (ctx && ctx.sessionKey) || "";
+  const direct = (ctx && ctx.requesterSenderId) || "";
+  const userId = direct || (sessionKey ? lastBySession.get(sessionKey) || "" : "");
+  if (direct && sessionKey) {
+    if (!lastBySession.has(sessionKey) && lastBySession.size >= cap) {
+      const oldest = lastBySession.keys().next().value;
+      if (oldest !== undefined) lastBySession.delete(oldest);
+    }
+    lastBySession.set(sessionKey, direct);
+  }
+  return { userId, sessionKey };
+}
