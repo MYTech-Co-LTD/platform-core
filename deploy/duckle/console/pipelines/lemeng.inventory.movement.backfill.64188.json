@@ -257,8 +257,8 @@
           "pageSize": 200,
           "maxPages": 600,
           "rawResponseDestination": "/workspace/.duckle-raw/inv-movement-${datetime}.json",
-          "retryAttempts": 5,
-          "retryBackoffMs": 8000
+          "retryAttempts": 10,
+          "retryBackoffMs": 15000
         },
         "schema": [
           {

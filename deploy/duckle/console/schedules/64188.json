@@ -399,6 +399,27 @@
     "next_run_at": null
   },
   {
+    "id": "panel-lemeng.saler_commission.l0.64188",
+    "pipeline_id": "lemeng.saler_commission.l0.64188",
+    "name": "lemeng.saler_commission.l0.64188",
+    "enabled": true,
+    "kind": {
+      "type": "cron",
+      "expr": "45 3 * * *"
+    },
+    "timezone": "Asia/Shanghai",
+    "misfire": "skip",
+    "catchup": {
+      "maxCatchupRuns": 31,
+      "maxCatchupAgeDays": 45
+    },
+    "last_run_at": null,
+    "last_run_status": null,
+    "last_run_duration_ms": null,
+    "last_run_error": null,
+    "next_run_at": null
+  },
+  {
     "id": "panel-lemeng.inventory.movement.l0.64188",
     "pipeline_id": "lemeng.inventory.movement.l0.64188",
     "name": "lemeng.inventory.movement.l0.64188",

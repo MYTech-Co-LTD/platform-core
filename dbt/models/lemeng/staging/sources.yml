@@ -249,3 +249,12 @@ sources:
           partition_keys: ['system_book', 'bizday']
           partition_key_typing: '由路径字符串重推断；两列在 staging 显式 cast'
           pagination: '引擎原生分页（page 风格，空页停）；maxPages=600 撞上限 exit 1 并自报截断行数'
+
+      - name: saler_commission
+        description: '乐檬**销售员提成汇总**（2026-11-03 契约）：行 = 账套 × bizday × 门店 × 销售员。接口 nhsoft.report.ai.salercommission.find；无 summary_types 参数，粒度固定。'
+        meta:
+          path_convention: 'lemeng/saler_commission/system_book=<账套>/bizday=<日期>/all.parquet'
+          access_path: "read_parquet('s3://{{ var(\"zos_bucket\") }}/{{ var(\"lemeng_saler_commission_prefix\") }}/*/bizday=**/*.parquet') r"
+          partition_keys: ['system_book', 'bizday']
+          partition_key_typing: '由路径字符串重推断；两列在 staging 显式 cast'
+          pagination: '无分页（responsePath=/result/rows）'
