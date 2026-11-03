@@ -11,6 +11,10 @@
 
 ## [Unreleased]
 
+## [0.248.14](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.248.13...v0.248.14) - 2026-11-03
+- 【修复】data: 零售日批重采窗扩到 T-1..T-3 治晚到退货（#814 restatement window） ([#1319](https://github.com/MYTech-Co-LTD/platform-core/pull/1319), [002da5f](https://github.com/MYTech-Co-LTD/platform-core/commit/002da5f751c2e9659b2197327c1a1440cded2b73))
+
+
 ## [0.248.13](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.248.12...v0.248.13) - 2026-11-03
 - 【修复】data: 会员汇总 shape 全列改行内 JSON 取值，源端缺维度得 NULL 而非整天失败 ([#1317](https://github.com/MYTech-Co-LTD/platform-core/pull/1317), [36f748f](https://github.com/MYTech-Co-LTD/platform-core/commit/36f748fa51036273e706c8cb9cc52a5e48fc8e29))
 
