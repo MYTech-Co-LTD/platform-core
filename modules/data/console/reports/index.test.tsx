@@ -232,11 +232,11 @@ describe('报表页签双视图', () => {
       await waitFor(() => expect(screen.getByText('自绘大盘')).toBeInTheDocument())
       // 结构切换：没有表格（桌面那一套横向滚动在手机上不可用）
       expect(screen.queryByRole('table')).toBeNull()
-      // 卡片里「打开」+「更多」都在；「更多」点开是资产动作
-      expect(screen.getAllByRole('button', { name: /更\s*多/ }).length).toBeGreaterThan(0)
-      fireEvent.click(screen.getAllByRole('button', { name: /更\s*多/ })[0]!)
-      expect(await screen.findByText('配部门门')).toBeInTheDocument()
-      expect(screen.getByText('回收')).toBeInTheDocument()
+      // 整卡是按钮（可点开报表）；更多是 44px 的独立触控目标，点开是底部动作面板
+      expect(screen.getAllByRole('button', { name: /^打开 / }).length).toBeGreaterThan(0)
+      fireEvent.click(screen.getAllByRole('button', { name: '更多操作' })[0]!)
+      expect(await screen.findByText('配置部门门')).toBeInTheDocument()
+      expect(screen.getByText('回收报表')).toBeInTheDocument()
     } finally {
       vi.unstubAllGlobals()
     }
