@@ -11,6 +11,10 @@
 
 ## [Unreleased]
 
+## [0.259.0](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.258.0...v0.259.0) - 2026-11-03
+- 【新增】data: 接源 AMAREPORT 销售员提成汇总（salercommission） ([#1348](https://github.com/MYTech-Co-LTD/platform-core/pull/1348), [676b31c](https://github.com/MYTech-Co-LTD/platform-core/commit/676b31c91ce1723f7e67e3feea5b116df5ec9888))
+
+
 ## [0.258.0](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.257.0...v0.258.0) - 2026-11-03
 - 【新增】web: 移动端业务工作台 /m 打磨（#1351） ([#1352](https://github.com/MYTech-Co-LTD/platform-core/pull/1352), [5d8a082](https://github.com/MYTech-Co-LTD/platform-core/commit/5d8a082d5652ea82bacff55be50d81aeee0c2758))
 
