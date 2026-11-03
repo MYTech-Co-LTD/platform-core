@@ -11,6 +11,10 @@
 
 ## [Unreleased]
 
+## [0.260.0](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.259.2...v0.260.0) - 2026-11-03
+- 【新增】web: 移动端控制台壳——底部标签栏 + 一屏布局（#1359） ([#1360](https://github.com/MYTech-Co-LTD/platform-core/pull/1360), [142f97e](https://github.com/MYTech-Co-LTD/platform-core/commit/142f97eab5ab32ca9db26fa499054a6b87255f87))
+
+
 ## [0.259.2](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.259.1...v0.259.2) - 2026-11-03
 - 【修复】data: 移动端交互重做——整卡可点 + 底部 ActionSheet + 44px 触控（#1357） ([#1358](https://github.com/MYTech-Co-LTD/platform-core/pull/1358), [b277845](https://github.com/MYTech-Co-LTD/platform-core/commit/b277845d26a31f8f3c931870abd19940cea52a90))
 
