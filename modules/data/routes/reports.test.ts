@@ -241,7 +241,8 @@ describe('报表面声明（不需要数据库）', () => {
     // 元数据写路径（§10.4.3 P1）：低档申报 + 域层并集写闸（同 draft 口径）
     expect(declared.get('PUT /metrics/:id/meta')).toBe('data:query')
     expect(declared.get('GET /branches')).toBe('data:query')
-    expect(declared.get('POST /reports')).toBe('data:manage')
+    // 创建（#1330）：声明观看面 + handler 真判据（data:create ∪ data:manage）
+    expect(declared.get('POST /reports')).toBe('data:query')
     expect(declared.get('GET /reports')).toBe('data:query')
     expect(declared.get('GET /reports/:id/embed-url')).toBe('data:query')
     // ── 资产级写动作（#1325 用户裁决：**owner 对自己报表有最高权限**）——
@@ -284,13 +285,13 @@ describe('报表面声明（不需要数据库）', () => {
     expect(await list.json()).toEqual({ error: 'FORBIDDEN', need: 'data:manage' })
   })
 
-  it('★ 页门负测：只有 data:query ⇒ 建报表被门卫 403（模块自己不写 requireScope）', async () => {
-    const res = await gatedApp(makeIdentity({ orgId: ORG }), null).request('/reports', {
+  it('★ 创建权（#1330）：只有 data:query ⇒ 403 need data:create（门卫放行后由 handler 判）', async () => {
+    const res = await gatedApp(makeIdentity({ orgId: ORG, scopes: ['data:query'] }), null).request('/reports', {
       method: 'POST', headers: { 'content-type': 'application/json' },
       body: JSON.stringify({ title: '越权报表' }),
     })
     expect(res.status).toBe(403)
-    expect(await res.json()).toEqual({ error: 'FORBIDDEN', need: 'data:manage' })
+    expect(await res.json()).toEqual({ error: 'FORBIDDEN', need: 'data:create' })
   })
 
   it('★ 页门负测：对账是管理面（跨资产）⇒ 无 data:manage 403', async () => {
@@ -819,6 +820,31 @@ describePg('报表路由（需要 DATABASE_URL）', () => {
     // 新 owner 看得到，旧 owner（admin）仍能看到——因为持 data:manage
     expect((await (await viewer().app.request('/reports')).json()).reports.map((r: { id: string }) => r.id))
       .toContain(id)
+  })
+
+  it('★ 创建权（#1330）：data:create 即可建自己的报表（owner=创建者、默认私有）；只有 data:query 不行', async () => {
+    const jsonHdr = { 'content-type': 'application/json' }
+    const body = JSON.stringify({
+      title: '我的私有报表', renderer: 'platform',
+      spec: { panels: [{ chart: 'table', title: '公开', metricId: OPEN_METRIC }] },
+    })
+    const creator = shell(makeIdentity({ orgId: ORG, userId: 'u-creator', scopes: ['data:query', 'data:create'] })).app
+    const res = await creator.request('/reports', { method: 'POST', headers: jsonHdr, body })
+    expect(res.status).toBe(201)
+    const { id } = await res.json() as { id: string }
+
+    // 创建后：owner = 创建者、默认私有（restricted）
+    expect((await pool.query(
+      'select subject_type, subject_id, relation from data.asset_acl where org = $1 and asset_id = $2', [ORG, id],
+    )).rows).toEqual([{ subject_type: 'user', subject_id: 'u-creator', relation: 'owner' }])
+    expect((await pool.query('select visibility from data.reports where org = $1 and id = $2', [ORG, id]))
+      .rows[0].visibility).toBe('restricted')
+
+    // 只有 data:query（无 create/manage）⇒ 403 need data:create
+    const plain = shell(makeIdentity({ orgId: ORG, userId: 'u-nocreate', scopes: ['data:query'] })).app
+    const denied = await plain.request('/reports', { method: 'POST', headers: jsonHdr, body: JSON.stringify({ title: 'x' }) })
+    expect(denied.status).toBe(403)
+    expect(await denied.json()).toEqual({ error: 'FORBIDDEN', need: 'data:create' })
   })
 
   it('★ 观看清单回带 version 与服务端 canEdit（#1327）：owner=true、非 owner=false', async () => {

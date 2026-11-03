@@ -98,8 +98,11 @@ canEditAsset(row, requester, acl):
 - **`canEditAsset` 不看 `viewer`**：被点名可看 ≠ 可改配置。
 - **owner 对自己报表有最高权限**（2026-11-03 用户裁决，issue #1325）：改规格、发布/回收/回滚、
   读草稿与历史版本、改部门门、编辑入口、删除都走 `canEditAsset`（owner ∪ `data:manage`）；
-  这些端点在 manifest 申报 `data:query`（门卫只挡匿名/无关者），创建报表/管理清单/对账仍为
+  这些端点在 manifest 申报 `data:query`（门卫只挡匿名/无关者），管理清单/对账仍为
   `data:manage`（跨资产动作）。转账后的 owner 未必持管理码——这正是本条的动机。
+- **创建权独立成码**（2026-11-03 用户裁决，issue #1330）：`POST /reports` 申报 `data:query`，
+  handler 判 `data:create ∪ data:manage`。普通用户持 `data:create` 即可建**自己的**报表
+  （owner=创建者、默认 `restricted`）；管理员不受新码收紧。创建与「管全租户资产」是两件事。
 - 管理员改他人资产**必须留审计**（who / 哪条 / 改了什么 / `byAdmin`）。
 - owner 判定用 **Casdoor 用户名**（与权限码同源），不引第二套身份。
 

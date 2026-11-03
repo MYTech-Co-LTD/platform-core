@@ -189,6 +189,8 @@ const narrativeErrorStatus = (e: NarrativeContextErr): 400 | 403 | 404 => {
  */
 /** 模块管理码（资产级判定的另一半：owner ∪ 该码）。单一常量，别在多处写字符串。 */
 const MANAGE_SCOPE = 'data:manage'
+/** 建**自己的**报表（#1330）。创建后 owner=创建者、默认私有；管理员（data:manage）同样可建。 */
+const CREATE_SCOPE = 'data:create'
 
 const reportIdOf = (raw: string | undefined): string | null =>
   raw === undefined || raw === '' ? null : raw
@@ -226,6 +228,11 @@ export function registerReports(r: ModuleHono, ctx: RouteCtx): void {
     // 入口先判身份：不给匿名者「本站有没有接报表服务」的探测信号（fail-closed）
     const requester = requesterOf(c)
     if (requester === null) return c.json({ error: 'UNAUTHENTICATED' }, 403)
+    // 创建权（#1330）：`data:create`（建自己的）∪ `data:manage`（管理员照旧，不因新码被收紧）。
+    // manifest 声明的是 data:query（门卫只挡匿名/无关者），真判据在这里——与资产写同一口径。
+    if (!requester.hasScope(CREATE_SCOPE) && !requester.hasScope(MANAGE_SCOPE)) {
+      return c.json({ error: 'FORBIDDEN', need: CREATE_SCOPE }, 403)
+    }
     // body 解析先于 metabaseFromEnv()（platform 分支要读 renderer/spec，且 400「调用方缺陷」
     // 本就该先于 503「配置状态」——先验参再查环境，与 PUT 的「先 parse 再查库」同序）。
     const parsed = ReportBody.safeParse(await c.req.json().catch(() => null))
