@@ -264,7 +264,7 @@
         "label": "s",
         "componentId": "code.sql",
         "properties": {
-          "sql": "SELECT\n  CAST(batch_id AS VARCHAR) AS batch_id,\n  CAST(system_book AS INTEGER) AS system_book,\n  CAST(bizday AS DATE) AS bizday,\n  CAST(branch_num AS INTEGER) AS branch_num,\n  CAST(branch_code AS VARCHAR) AS branch_code,\n  CAST(branch_name AS VARCHAR) AS branch_name,\n  CAST(branch_region_num AS INTEGER) AS branch_region_num,\n  CAST(branch_region_name AS VARCHAR) AS branch_region_name,\n  CAST(metric AS VARCHAR) AS metric,\n  CAST(actual_value AS DECIMAL(20,2)) AS actual_value,\n  CAST(target_value AS DECIMAL(20,2)) AS target_value,\n  CAST(actual_rate AS DECIMAL(20,6)) AS actual_rate,\n  CAST(computed_at AS TIMESTAMPTZ) AS computed_at\nFROM input"
+          "sql": "SELECT\n  CAST(batch_id AS VARCHAR) AS batch_id,\n  CAST(system_book AS INTEGER) AS system_book,\n  CAST(bizday AS DATE) AS bizday,\n  CAST(branch_num AS INTEGER) AS branch_num,\n  CAST(branch_code AS VARCHAR) AS branch_code,\n  CAST(branch_name AS VARCHAR) AS branch_name,\n  CAST(branch_region_num AS INTEGER) AS branch_region_num,\n  CAST(branch_region_name AS VARCHAR) AS branch_region_name,\n  CAST(metric AS VARCHAR) AS metric,\n  CAST(actual_value AS DECIMAL(20,2)) AS actual_value,\n  CAST(target_value AS DECIMAL(20,2)) AS target_value,\n  CAST(actual_rate AS DECIMAL(20,6)) AS actual_rate,\n  CAST(computed_at AS TIMESTAMPTZ) AS computed_at\nFROM input\nWHERE branch_num IS NOT NULL"
         }
       }
     },
@@ -309,6 +309,37 @@
           "mode": "overwrite",
           "compression": "zstd",
           "connectionRef": "zos"
+        }
+      }
+    },
+    {
+      "id": "gall",
+      "type": "transform",
+      "position": {
+        "x": 0,
+        "y": 0
+      },
+      "data": {
+        "label": "gall",
+        "componentId": "code.sql",
+        "properties": {
+          "sql": "-- 父级全空栅（issue #1314）：所有块 chunk_n_matched 之和为 0 才判「整天真无数据」。\nSELECT 1 AS all_empty FROM input HAVING coalesce(sum(CAST(chunk_n_matched AS INTEGER)), 0) = 0"
+        }
+      }
+    },
+    {
+      "id": "dall",
+      "type": "transform",
+      "position": {
+        "x": 0,
+        "y": 0
+      },
+      "data": {
+        "label": "dall",
+        "componentId": "ctl.die",
+        "properties": {
+          "condition": "has-rows",
+          "message": "全部块 0 家门店有数据（bizday=${BIZDAY}）——权限收窄 / 月份锚错 / 网关空集，拒绝写湖"
         }
       }
     }
@@ -488,6 +519,26 @@
       "id": "e-gc-snk",
       "source": "gc",
       "target": "snk",
+      "sourceHandle": "main",
+      "targetHandle": "main",
+      "data": {
+        "connectionType": "main"
+      }
+    },
+    {
+      "id": "e_gall",
+      "source": "dasm",
+      "target": "gall",
+      "sourceHandle": "main",
+      "targetHandle": "main",
+      "data": {
+        "connectionType": "main"
+      }
+    },
+    {
+      "id": "e_dall",
+      "source": "gall",
+      "target": "dall",
       "sourceHandle": "main",
       "targetHandle": "main",
       "data": {
