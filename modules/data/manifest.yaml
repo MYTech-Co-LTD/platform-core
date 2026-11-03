@@ -4,6 +4,10 @@ version: 0.1.0
 platform: '>=0.1'
 permissions:
   - { code: data:query,  name: 数据问数 }
+  # 建**自己的**报表（#1330）：创建后 owner=创建者、默认私有（restricted）。
+  # 与 data:manage 分开是刻意的——「能建自己的资产」≠「能管全租户指标/报表」；
+  # 真正的资产写权限由 canEditAsset（owner ∪ data:manage）在 handler 判。
+  - { code: data:create, name: 创建自己的报表 }
   - { code: data:manage, name: 数据指标管理 }
   # 列级授权（spec 2026-10-17 §4.2）：看得到成本价 / 毛利额一类敏感指标。
   # 由租户管理员发放（`POST /api/platform/admin/permissions/:code/users`，需 tenant:admin）。
@@ -96,14 +100,15 @@ api:
     # token 是平台级身份能力，现由 /api/platform/keys 承载（个人档免 scope + 管理档 tenant:admin）。
     # 删声明必须与本模块的注册集合同提交（装载期双向核对，差一侧即装载失败）。
     # ── 报表（Metabase 报表 facade；#150 T7）──
-    # 页门分档（spec §4「权限双门必须分开表态」）：**创建**/管理清单/对账 = data:manage（跨租户能力，
-    # 必须经平台）；观看面（清单 + 拿嵌入 URL）= data:query。
+    # 页门分档（spec §4「权限双门必须分开表态」）：**创建**声明 data:query（门卫只挡匿名/无关者），
+    # 真判据在 handler：`data:create ∪ data:manage`（普通用户靠 data:create 建自己的；管理员照旧）；
+    # 管理清单/对账 = data:manage（跨资产能力，必须经平台）；观看面（清单 + 拿嵌入 URL）= data:query。
     # ⚠️ **资产级写动作**（改规格/发布/回收/回滚/读草稿与历史/改部门门/删除/编辑入口）= data:query，
     #    真判据在 handler 的 canEditAsset（owner ∪ data:manage）——#1325 用户裁决：
     #    **owner 对自己报表有最高权限**（转账后的 owner 未必持管理码）。
     # **数据门不在这里**：看哪个租户的数据由嵌入时锁定的 tenant 参数控（值 = 调用者 org，
     # 入参不可覆盖）——门卫管不了那一半，别以为声明了 scope 就万事大吉。
-    - { method: POST,   path: /reports,               scope: data:manage }
+    - { method: POST,   path: /reports,               scope: data:query }
     - { method: GET,    path: /reports,               scope: data:query }
     - { method: GET,    path: /reports/:id/embed-url, scope: data:query }
     # 编辑页入口（spec §3⑦）：把身份经 120s 一次性票据渡给专用反代 ⇒ **资产写动作**：
