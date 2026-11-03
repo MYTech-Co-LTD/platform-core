@@ -399,9 +399,13 @@ describePg('报表路由（需要 DATABASE_URL）', () => {
     },
   }
 
-  const shell = (identity: ReturnType<typeof makeIdentity>, sources?: string[]) => ({
+  const shell = (
+    identity: ReturnType<typeof makeIdentity>,
+    sources?: string[],
+    extra?: { userStatus?: (org: string, name: string) => Promise<'active' | 'inactive' | 'unknown'> },
+  ) => ({
     app: buildTestApp(
-      mod, identity, { pool, addresses: fakeAddresses },
+      mod, identity, { pool, addresses: fakeAddresses, ...extra },
       { id: TENANT, casdoor_org: identity.orgId }, sources,
     ),
     identity,
@@ -872,6 +876,40 @@ describePg('报表路由（需要 DATABASE_URL）', () => {
     expect(ownerRow.version).toBe(await versionOf(app, id))
     // 所有者列在观看清单里也要真实（否则 owner-only 用户看到自己的报表是「无所有者」）
     expect(ownerRow.owner).toBe('u-viewer')
+  })
+
+  it('★ 管理清单回 ownerActive（#1333）：停用/查无此人 ⇒ false；在职 ⇒ true；未注入 ⇒ null', async () => {
+    const { app } = manage()
+    const created = await post(app, {
+      title: '活跃态报表', renderer: 'platform',
+      spec: { panels: [{ chart: 'text', content: 'x', span: 24 }] },
+    })
+    const { id } = await created.json() as { id: string }
+    // 模拟「资产所有者已离职」的既有状态（直接改 ACL；转账接口只接受在职账号，这里构造存量）
+    await pool.query(
+      `update data.asset_acl set subject_id = 'u-gone' where org = $1 and asset_id = $2 and relation = 'owner'`,
+      [ORG, id],
+    )
+    const identity = makeIdentity({ orgId: ORG, userId: 'u-admin', scopes: ['data:query', 'data:manage'] })
+    const withStatus = shell(identity, undefined, {
+      userStatus: async (_org, name) => (name === 'u-gone' ? 'inactive' : 'active'),
+    }).app
+    const rowsOf = async (target: Hono) =>
+      (await (await target.request('/reports/manage')).json()).reports as {
+        id: string; owner: string | null; ownerActive: boolean | null
+      }[]
+
+    expect((await rowsOf(withStatus)).find((r) => r.id === id))
+      .toMatchObject({ owner: 'u-gone', ownerActive: false })
+    // 未注入 resolver（旧宿主/单测）⇒ null（未知），不冒充 inactive
+    expect((await rowsOf(manage().app)).find((r) => r.id === id)!.ownerActive).toBeNull()
+
+    // 在职 owner ⇒ true（同一 resolver 的另一半，防「一律 false」）
+    await pool.query(
+      `update data.asset_acl set subject_id = 'u-admin' where org = $1 and asset_id = $2 and relation = 'owner'`,
+      [ORG, id],
+    )
+    expect((await rowsOf(withStatus)).find((r) => r.id === id)!.ownerActive).toBe(true)
   })
 
   it('★ owner 最高权限（#1325）：转账给只有 data:query 的 owner 后，可读草稿/历史、改规格/部门门、发布/回收、删除；非 owner 仍 403', async () => {

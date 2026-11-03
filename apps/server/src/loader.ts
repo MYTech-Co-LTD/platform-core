@@ -467,7 +467,21 @@ export async function loadModules(
   const addresses = deps.channelAddressResolver
     ?? createChannelAddressResolver({ pool: deps.pool, casdoorFor: deps.casdoorFor })
 
-  const baseCtx: ModuleContext = { pool: deps.pool, identityLinks, events, addresses }
+  // 用户活跃态（#1333）：给管理/清理面判「owner 是否还在职」。不暴露 Casdoor 客户端；
+  // 查询失败一律 `unknown`（fail-open 到「不知道」，绝不冒充 inactive —— 误标会误导清理）。
+  const userStatus: ModuleContext['userStatus'] = deps.casdoorFor === undefined
+    ? undefined
+    : async (org, name) => {
+      try {
+        const u = await deps.casdoorFor!(org).getUser(name)
+        if (u === null) return 'inactive'
+        return u.isForbidden ? 'inactive' : 'active'
+      } catch {
+        return 'unknown'
+      }
+    }
+
+  const baseCtx: ModuleContext = { pool: deps.pool, identityLinks, events, addresses, userStatus }
   for (const p of pending) {
     if (typeof p.def.createPorts === 'function') {
       portsByModule.set(p.manifest.id, p.def.createPorts(baseCtx))

@@ -146,6 +146,16 @@ export interface EnqueueEventInput {
 }
 
 /** 宿主递给 createRouter 的运行时上下文：绑定资源在此，模块不自己建连接。 */
+/**
+ * 用户活跃态（#1333 资产所有者清理面）：宿主注入的只读查询，**不暴露 Casdoor 客户端本身**。
+ *
+ * - `active`   = Casdoor 里存在且未停用
+ * - `inactive` = 查无此人（离职/删除）或 `isForbidden=true`（停用）
+ * - `unknown`  = 宿主未注入 / Casdoor 不可达 / 查询失败——**不可当成 inactive**（fail-open 到「不知道」）
+ */
+export type UserStatus = 'active' | 'inactive' | 'unknown'
+export type UserStatusResolver = (org: string, name: string) => Promise<UserStatus>
+
 export interface ModuleContext {
   pool: Pool
   /**
@@ -160,6 +170,8 @@ export interface ModuleContext {
   notify?: NotifyPort
   /** 渠道地址解析（Casdoor 用户 → 通道地址）；仅 notify 模块使用。 */
   addresses?: ChannelAddressResolver
+  /** 用户活跃态查询（Casdoor 状态）；仅管理/清理面使用。未注入 = 无法判定（unknown）。 */
+  userStatus?: UserStatusResolver
 }
 
 /**

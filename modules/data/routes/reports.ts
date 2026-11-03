@@ -459,13 +459,24 @@ export function registerReports(r: ModuleHono, ctx: RouteCtx): void {
     // 所有者（spec 2026-11-01 §4.4）：管理面要能看出「谁负责 / 有没有人负责」。
     // 无 owner 行的 = 历史资产（本设计不猜测所有者，见 §4.3）；清单里显式标注，供交接清理。
     const acls = await loadAssetAcls(ctx.pool, c.get('tenant').casdoor_org, rows.map((r) => r.id))
-    return c.json({
-      myDepts,
-      // `version` 是**登记侧**版本（写保护的读侧）：console 从本清单拿它、写时回带。
-      // 观看面 GET /reports 刻意不带它（那里没有写动作，外泄版本号无消费方）。
-      // 版本徽标（设计 §8.2）：`publishedVersion` = 线上内容版本号（null = 未发布/已下线）；
-      // `hasUnpublishedChanges` = 指针存在且草稿计数器越过了那一版发布时的 draft_version。
-      reports: rows.map((row) => ({
+    // 所有者活跃态（#1333，spec §4.4「管理员可列出无活跃所有者的资产供清理」）：
+    // 逐行查 Casdoor 会 N+1（同一 owner 常有多张报表）⇒ 本请求内按 owner 去重缓存。
+    // 未注入 resolver ⇒ null（未知），**不冒充 inactive**。
+    const ownerStatusCache = new Map<string, boolean | null>()
+    const ownerActiveOf = async (owner: string | null): Promise<boolean | null> => {
+      if (owner === null || ctx.userStatus === undefined) return null
+      const cached = ownerStatusCache.get(owner)
+      if (cached !== undefined) return cached
+      const s = await ctx.userStatus(c.get('tenant').casdoor_org, owner)
+      // 只把确定态折成布尔；`unknown`（Casdoor 不可达/未注入）保持 null。
+      const v = s === 'active' ? true : s === 'inactive' ? false : null
+      ownerStatusCache.set(owner, v)
+      return v
+    }
+    const reports: Array<Record<string, unknown>> = []
+    for (const row of rows) {
+      const owner = (acls.get(row.id) ?? []).find((a) => a.relation === 'owner')?.subjectId ?? null
+      reports.push({
         id: row.id, title: row.title, requiredScope: row.requiredScope,
         requiredDepts: row.requiredDepts,
         renderer: row.renderer, version: row.version,
@@ -473,11 +484,14 @@ export function registerReports(r: ModuleHono, ctx: RouteCtx): void {
         // 服务端算的「能不能改」（#1327）：管理面恒 true，但仍走同一实现，别在前端另判。
         canEdit: canEditAsset(acls.get(row.id) ?? [], requester, MANAGE_SCOPE),
         // 无所有者（历史资产）显式暴露；管理员可「转移」给它一个负责人（spec §4.4）
-        owner: (acls.get(row.id) ?? []).find((a) => a.relation === 'owner')?.subjectId ?? null,
+        owner,
+        // #1333：true=在职 / false=停用或查无此人 / null=未知（未注入或 Casdoor 不可达）
+        ownerActive: await ownerActiveOf(owner),
         hasUnpublishedChanges:
           row.publishedVersionId !== null && row.version > (row.publishedDraftVersion ?? 0),
-      })),
-    })
+      })
+    }
+    return c.json({ myDepts, reports })
   })
 
   const GateBody = z.object({
