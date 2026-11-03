@@ -11,6 +11,10 @@
 
 ## [Unreleased]
 
+## [0.252.0](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.251.0...v0.252.0) - 2026-11-03
+- 【新增】data: 管理面标注「无活跃所有者」的资产（#1333） ([#1334](https://github.com/MYTech-Co-LTD/platform-core/pull/1334), [48aa8df](https://github.com/MYTech-Co-LTD/platform-core/commit/48aa8dfaa3f3e60d3132dcdc6ec56508f7aced78))
+
+
 ## [0.251.0](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.250.0...v0.251.0) - 2026-11-03
 - 【新增】data: 创建报表独立成码 data:create（#1330） ([#1331](https://github.com/MYTech-Co-LTD/platform-core/pull/1331), [c6eddea](https://github.com/MYTech-Co-LTD/platform-core/commit/c6eddea9a223061a1caf4ec6fd23bbdf6660acb0))
 
