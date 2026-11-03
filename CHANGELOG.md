@@ -11,6 +11,10 @@
 
 ## [Unreleased]
 
+## [0.248.15](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.248.14...v0.248.15) - 2026-11-03
+- 【修复】data: 报表内容读取路径补齐资产 ACL（published-spec / narrative） ([#1322](https://github.com/MYTech-Co-LTD/platform-core/pull/1322), [1f2ac01](https://github.com/MYTech-Co-LTD/platform-core/commit/1f2ac0138ea8b645fd1b52cc8e82d11fe3a38a85))
+
+
 ## [0.248.14](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.248.13...v0.248.14) - 2026-11-03
 - 【修复】data: 零售日批重采窗扩到 T-1..T-3 治晚到退货（#814 restatement window） ([#1319](https://github.com/MYTech-Co-LTD/platform-core/pull/1319), [002da5f](https://github.com/MYTech-Co-LTD/platform-core/commit/002da5f751c2e9659b2197327c1a1440cded2b73))
 
