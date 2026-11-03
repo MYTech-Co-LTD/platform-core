@@ -663,7 +663,11 @@ export default function ReportsPage() {
   return (
     <Space direction="vertical" style={{ width: '100%' }} size="middle">
       {ctx}
-      <Space wrap size="small" style={{ width: '100%', justifyContent: 'space-between' }}>
+      <div style={{
+        display: 'flex', gap: 8,
+        flexDirection: isMobile ? 'column' : 'row',
+        justifyContent: 'space-between', alignItems: isMobile ? 'stretch' : 'center',
+      }}>
         <Input
           allowClear
           value={query}
@@ -681,7 +685,7 @@ export default function ReportsPage() {
             { label: '有改动', value: 'changed' },
           ]}
         />
-      </Space>
+      </div>
       {isMobile ? mobileCards : (
       <Table
         rowKey="id"

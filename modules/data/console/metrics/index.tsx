@@ -278,7 +278,11 @@ export default function MetricsPage() {
         </Typography.Text>
       </Space>
 
-      <Space wrap size="small" style={{ width: '100%', justifyContent: 'space-between' }}>
+      <div style={{
+        display: 'flex', gap: 8,
+        flexDirection: isMobile ? 'column' : 'row',
+        justifyContent: 'space-between', alignItems: isMobile ? 'stretch' : 'center',
+      }}>
         <Input
           allowClear
           value={query}
@@ -295,7 +299,7 @@ export default function MetricsPage() {
             { label: '派生指标', value: 'l2' },
           ]}
         />
-      </Space>
+      </div>
 
       {draft !== null && (
         <Card size="small" title={draft.id === '' ? '新建派生指标（L2）' : `编辑 ${draft.id}`}>
