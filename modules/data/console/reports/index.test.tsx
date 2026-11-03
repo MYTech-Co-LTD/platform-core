@@ -220,6 +220,28 @@ describe('报表页签双视图', () => {
     expect(within(rowOf('自绘大盘')).queryByText('已停用')).toBeNull()
   })
 
+  it('★ 窄屏（<768px）渲染卡片列表而不是表格；「更多」里是资产动作（#移动端）', async () => {
+    const mq = {
+      matches: true, media: '(max-width: 767px)', onchange: null,
+      addEventListener: vi.fn(), removeEventListener: vi.fn(),
+      addListener: vi.fn(), removeListener: vi.fn(), dispatchEvent: vi.fn(),
+    }
+    vi.stubGlobal('matchMedia', vi.fn(() => mq))
+    try {
+      renderPage(['data:query', 'data:manage'])
+      await waitFor(() => expect(screen.getByText('自绘大盘')).toBeInTheDocument())
+      // 结构切换：没有表格（桌面那一套横向滚动在手机上不可用）
+      expect(screen.queryByRole('table')).toBeNull()
+      // 卡片里「打开」+「更多」都在；「更多」点开是资产动作
+      expect(screen.getAllByRole('button', { name: /更\s*多/ }).length).toBeGreaterThan(0)
+      fireEvent.click(screen.getAllByRole('button', { name: /更\s*多/ })[0]!)
+      expect(await screen.findByText('配部门门')).toBeInTheDocument()
+      expect(screen.getByText('回收')).toBeInTheDocument()
+    } finally {
+      vi.unstubAllGlobals()
+    }
+  })
+
   it('管理清单里「门是自己没有的 scope」的行：打开被禁用（服务端 embed-url 对它是 403）', async () => {
     // 管理清单按 spec **不裁行**（管理员必须看得见、能改页门）⇒ 「打开」只按 renderer 置灰是不够的：
     // 页门未放行的行（r2 = sales:read，而本 session 只有 data:query/data:manage）点开必然 403。
