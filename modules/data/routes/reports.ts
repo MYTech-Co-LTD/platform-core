@@ -420,6 +420,17 @@ export function registerReports(r: ModuleHono, ctx: RouteCtx): void {
         .map((row) => ({
           id: row.id, title: row.title, requiredScope: row.requiredScope,
           requiredDepts: row.requiredDepts, renderer: row.renderer,
+          // #1327：写保护的读侧值 + 服务端算好的「能不能改」。
+          // `canEdit` 唯一实现仍是 `canEditAsset`（owner ∪ data:manage）——前端只消费结论，
+          // 不复制判据（复制必然漂移，#1179 的教训）。
+          version: row.version,
+          canEdit: canEditAsset(acls.get(row.id) ?? [], requester, MANAGE_SCOPE),
+          // 所有者列（#1327）：owner-only 用户也在看这份清单，缺它会把自己的报表显示成「无所有者」
+          owner: (acls.get(row.id) ?? []).find((a) => a.relation === 'owner')?.subjectId ?? null,
+          // 版本徽标/发布按钮对 owner（可能无 manage 码）同样要有数据来源（#1327）
+          publishedVersion: row.publishedVersion,
+          hasUnpublishedChanges:
+            row.publishedVersionId !== null && row.version > (row.publishedDraftVersion ?? 0),
         })),
     })
   })
@@ -452,6 +463,8 @@ export function registerReports(r: ModuleHono, ctx: RouteCtx): void {
         requiredDepts: row.requiredDepts,
         renderer: row.renderer, version: row.version,
         publishedVersion: row.publishedVersion,
+        // 服务端算的「能不能改」（#1327）：管理面恒 true，但仍走同一实现，别在前端另判。
+        canEdit: canEditAsset(acls.get(row.id) ?? [], requester, MANAGE_SCOPE),
         // 无所有者（历史资产）显式暴露；管理员可「转移」给它一个负责人（spec §4.4）
         owner: (acls.get(row.id) ?? []).find((a) => a.relation === 'owner')?.subjectId ?? null,
         hasUnpublishedChanges:

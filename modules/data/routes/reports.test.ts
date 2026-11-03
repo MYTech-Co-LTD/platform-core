@@ -532,7 +532,7 @@ describePg('报表路由（需要 DATABASE_URL）', () => {
     expect(rows.rowCount).toBe(0)
   })
 
-  it('GET /reports：只回本 org 的登记，投影 id/title/requiredScope/requiredDepts/renderer', async () => {
+  it('GET /reports：只回本 org 的登记，投影 id/title/requiredScope/requiredDepts/renderer + 写面字段（#1327）', async () => {
     const { app } = manage()
     await post(app, { title: '销售日报' })
     await post(app, { title: '仅管理员', requiredScope: 'data:manage' })
@@ -541,7 +541,10 @@ describePg('报表路由（需要 DATABASE_URL）', () => {
     expect(body.reports.map((r: { title: string }) => r.title)).toEqual(['销售日报'])
     // 部门门对外可见（console 要据此显示门徽标），所以投影里带上 `requiredDepts`
     expect(Object.keys(body.reports[0]).sort())
-      .toEqual(['id', 'renderer', 'requiredDepts', 'requiredScope', 'title'])
+      .toEqual([
+        'canEdit', 'hasUnpublishedChanges', 'id', 'owner', 'publishedVersion', 'renderer',
+        'requiredDepts', 'requiredScope', 'title', 'version',
+      ])
 
     const admin = await (await manage().app.request('/reports')).json()
     expect(admin.reports).toHaveLength(2)
@@ -816,6 +819,33 @@ describePg('报表路由（需要 DATABASE_URL）', () => {
     // 新 owner 看得到，旧 owner（admin）仍能看到——因为持 data:manage
     expect((await (await viewer().app.request('/reports')).json()).reports.map((r: { id: string }) => r.id))
       .toContain(id)
+  })
+
+  it('★ 观看清单回带 version 与服务端 canEdit（#1327）：owner=true、非 owner=false', async () => {
+    const { app } = manage()
+    const jsonHdr = { 'content-type': 'application/json' }
+    const panel = { chart: 'table', title: '公开', metricId: OPEN_METRIC }
+    const created = await post(app, { title: 'canEdit 面', renderer: 'platform', spec: { panels: [panel] } })
+    const { id } = await created.json() as { id: string }
+
+    const listOf = async (target: Hono) =>
+      (await (await target.request('/reports')).json()).reports as {
+        id: string; version?: number; canEdit?: boolean; owner?: string | null
+      }[]
+    // 非 owner（只有 data:query）：能看见（tenant 行）但没有写权
+    expect(await listOf(viewer().app)).toContainEqual(expect.objectContaining({ id, canEdit: false }))
+    const nonOwnerRow = (await listOf(viewer().app)).find((r) => r.id === id)!
+    expect(Number.isInteger(nonOwnerRow.version)).toBe(true)
+
+    // 转给 query-only owner ⇒ 同一份清单给出 canEdit=true（前端按钮的唯一依据）
+    expect((await app.request(`/reports/${id}/owner`, {
+      method: 'PUT', headers: jsonHdr, body: JSON.stringify({ owner: 'u-viewer' }),
+    })).status).toBe(200)
+    const ownerRow = (await listOf(viewer().app)).find((r) => r.id === id)!
+    expect(ownerRow.canEdit).toBe(true)
+    expect(ownerRow.version).toBe(await versionOf(app, id))
+    // 所有者列在观看清单里也要真实（否则 owner-only 用户看到自己的报表是「无所有者」）
+    expect(ownerRow.owner).toBe('u-viewer')
   })
 
   it('★ owner 最高权限（#1325）：转账给只有 data:query 的 owner 后，可读草稿/历史、改规格/部门门、发布/回收、删除；非 owner 仍 403', async () => {

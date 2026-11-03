@@ -1,10 +1,11 @@
-// console/reports/index.tsx — 「报表」页签：观看面（清单 + 嵌入预览）+ 管理面（data:manage）。
+// console/reports/index.tsx — 「报表」页签：观看面（清单 + 嵌入预览）+ 资产操作（owner ∪ data:manage）。
 //
 // 四条纪律落在这个文件里：
 //  ① **不发 Metabase 凭据、不自己拼嵌入 URL**：iframe 的 src 只能来自平台的
 //     `GET /reports/:id/embed-url`（服务端签的短期 JWT，locked.tenant = 调用者 org）。
 //     前端拿不到 secret，也就没有「自己换租户」的面。
-//  ② 管理动作（页门/发布/回收）只对 `data:manage` 身份出现（spec §3⑤ 管理面唯一）——
+//  ② 资产动作（编辑/页门/发布/回收）只在服务端 `canEdit` 为真时出现（#1327：owner 未必持
+//     管理码；按钮显示与后端 canEditAsset 同源，前端不复制判据）——
 //     scope 判定读 Console 壳经 Outlet 注入的 session.scopes（demo 模块先例），这只是
 //     **视图选择**；真正的授权由宿主门卫按 manifest 施加，前端不重复判权。
 //     登记/改登记内容（标题、锁参）仍走 API/管线，不在消费层第二次定义口径。
@@ -47,15 +48,20 @@ interface ReportRow {
   renderer: 'metabase' | 'platform'
   // **登记侧**版本（写保护的读侧）：`GET /reports/manage` 每行回带；三个写动作回带它
   // （PUT 走 body `expectedVersion`、DELETE 走查询串 `?expectedVersion=`）。服务端不服 ⇒ 409 STALE_WRITE。
-  // ⚠️ 观看面 `GET /reports` **刻意不带**它（那里没有写动作）——本类型只服务管理面，故必填。
+  // 观看面 `GET /reports` 现在也带它（#1327：query-only owner 要能改自己的报表）。
   // ⚠️ 本仓有**第二份**同名 `ReportRow`（`modules/data/domain/report-store.ts`，Task 1/3 已加 version）：
   //    两处不同文件、编译器不会互相提醒，加字段时都要改（Task 1 已知 minor）。
   version: number
   // ── 版本徽标（月报重做 Task 12；设计 §8.2）─────────────────────────────────────
-  // 只有 `GET /reports/manage` 回带（观看清单刻意不带）；版本通路也只属于 platform 行。
+  // 两份清单都回带（#1327：owner 操作需要）；版本通路只属于 platform 行。
   // `publishedVersion = null` = 未发布/已下线；`hasUnpublishedChanges` = 指针存在且草稿改过。
   publishedVersion: number | null
   hasUnpublishedChanges: boolean
+  /**
+   * 服务端算好的「能不能改」（#1327）：`canEditAsset`（owner ∪ data:manage）的结论。
+   * 前端**不复制判据**，只消费这个布尔——按钮显示与后端授权永远同源。
+   */
+  canEdit: boolean
 }
 
 /** `GET /reports/dept-options` 的一行：活节点平表（前端按 `parentExtId` 组树）。 */
@@ -547,7 +553,7 @@ export default function ReportsPage() {
               {/* 版本徽标（月报重做 Task 12；设计 §8.2）：只有管理清单带 `publishedVersion` /
                   `hasUnpublishedChanges`，且版本通路只属于 platform 行——Metabase 行标题保持原样，
                   不硬造一个「未发布」（它根本没有版本概念）。 */}
-              {canManage && r.renderer === 'platform' && (
+              {r.canEdit && r.renderer === 'platform' && (
                 r.publishedVersion === null
                   ? <Tag>未发布</Tag>
                   : r.hasUnpublishedChanges
@@ -592,12 +598,12 @@ export default function ReportsPage() {
               {/* 「编辑」与「打开」是**两条不同通路**：打开 = 嵌入预览（embed-url，只读令牌）；
                   编辑 = 专用入口反代会话（edit-url，可写）。平台自绘行没有 Metabase dashboard 可编辑，
                   故按 renderer 逐行给按钮（服务端同守卫：409 RENDERER_NOT_EDITABLE）。 */}
-              {canManage && r.renderer === 'metabase' && (
+              {r.canEdit && r.renderer === 'metabase' && (
                 <Button size="small" onClick={() => void edit(r)}>编辑</Button>
               )}
               {/* 部门门：**与渲染器无关**（自绘行也要能配），故放在两支条件之外。
                   与「改页门」的区别：页门按 scope，部门门按组织架构（子树继承）。 */}
-              {canManage && (
+              {r.canEdit && (
                 <Button size="small" onClick={() => void openDeptGate(r)}>
                   {(r.requiredDepts ?? []).length === 0 ? '配部门门' : '改部门门'}
                 </Button>
@@ -606,7 +612,7 @@ export default function ReportsPage() {
                   （owner ∪ data:manage），这里不看 canManage——被共享的 owner 也要能改。 */}
               <Button size="small" onClick={() => void openShare(r)}>共享</Button>
               {/* ── Metabase 行：既有管理动作**一字不动**（改页门/发布=清页门/回收）────────── */}
-              {canManage && r.renderer === 'metabase' && (
+              {r.canEdit && r.renderer === 'metabase' && (
                 <>
                   <Button size="small" onClick={() => { setGateEdit(r); setGateDraft(r.requiredScope ?? '') }}>
                     改页门
@@ -631,7 +637,7 @@ export default function ReportsPage() {
               )}
               {/* ── platform 行：版本通路（设计 §6.4）。**没有「改页门」**——页门由发布时从面板
                      派生并随快照钉死；手改会与线上快照不一致（服务端 PUT 对该类行 409）。────── */}
-              {canManage && r.renderer === 'platform' && (
+              {r.canEdit && r.renderer === 'platform' && (
                 <>
                   <Button size="small" onClick={() => { setPublishTarget(r); setPublishNote('') }}>发布</Button>
                   {r.publishedVersion !== null && (
