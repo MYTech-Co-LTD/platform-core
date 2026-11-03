@@ -31,12 +31,18 @@ const json = (b: unknown, status = 200) =>
 // ── 版本徽标字段（月报重做 Task 12）：只有 `GET /reports/manage` 回带。
 // r3 = 已发布 v2 且草稿改过（橙色「有未发布改动」）；r4 = 从未发布（灰色「未发布」）。
 // Metabase 行（r1/r2）的 publishedVersion 恒 null，但**不渲染**徽标（版本通路只属 platform 行）。
+// `canEdit` = 服务端 `canEditAsset` 的结论（#1327）：按钮显示只认它，不再看 session.scopes。
+// 观看清单里默认 false（普通员工）；owner 场景由 `ownerRows()` 覆盖。
 const ROWS = [
-  { id: 'r1', title: '销售日报', requiredScope: null, renderer: 'metabase', version: 1, publishedVersion: null, hasUnpublishedChanges: false },
-  { id: 'r2', title: '未放行报表', requiredScope: 'sales:read', renderer: 'metabase', version: 2, publishedVersion: null, hasUnpublishedChanges: false },
-  { id: 'r3', title: '自绘大盘', requiredScope: null, renderer: 'platform', version: 3, publishedVersion: 2, hasUnpublishedChanges: true },
-  { id: 'r4', title: '未发布报表', requiredScope: null, renderer: 'platform', version: 5, publishedVersion: null, hasUnpublishedChanges: false },
+  { id: 'r1', title: '销售日报', requiredScope: null, renderer: 'metabase', version: 1, publishedVersion: null, hasUnpublishedChanges: false, canEdit: false },
+  { id: 'r2', title: '未放行报表', requiredScope: 'sales:read', renderer: 'metabase', version: 2, publishedVersion: null, hasUnpublishedChanges: false, canEdit: false },
+  { id: 'r3', title: '自绘大盘', requiredScope: null, renderer: 'platform', version: 3, publishedVersion: 2, hasUnpublishedChanges: true, canEdit: false },
+  { id: 'r4', title: '未发布报表', requiredScope: null, renderer: 'platform', version: 5, publishedVersion: null, hasUnpublishedChanges: false, canEdit: false },
 ]
+/** 管理清单 / owner 场景：服务端对每行都判 canEdit=true。 */
+const editableRows = () => ROWS.map((r) => ({ ...r, canEdit: true }))
+/** 单个/多个指定行的可编辑副本（测试内自定 mock 用）。 */
+const ed = (rows: typeof ROWS) => rows.map((r) => ({ ...r, canEdit: true }))
 
 /** `GET /reports/:id/versions` 夹具：r3 线上 v2，v1 是历史版（可回滚）。 */
 const VERSIONS = [
@@ -91,8 +97,9 @@ beforeEach(() => {
   m.mockImplementation(async (url: string, init?: RequestInit) => {
     calls.push({ url, init })
     // 顺序 matters：/reports/manage 与 /reports/:id/embed-url 都以 /reports 开头，长的先判
-    if (url.endsWith('/reports/manage')) return json({ reports: ROWS })
+    if (url.endsWith('/reports/manage')) return json({ reports: editableRows() })
     if (/\/reports\/[^/]+\/embed-url$/.test(url)) return json({ url: 'https://mb.test/embed/abc' })
+    // 默认（非 owner）：观看清单行 canEdit=false —— 下面的双视图用例据此断言「无资产动作」
     if (url.endsWith('/reports')) return json({ reports: ROWS.filter((r) => r.requiredScope === null) })
     if (init?.method === 'PUT') return json({ ok: true })
     if (init?.method === 'DELETE') return new Response(null, { status: 204 })
@@ -141,6 +148,28 @@ describe('报表页签双视图', () => {
     expect(within(selfDrawnRow).getAllByText('平台自绘').length).toBeGreaterThan(0)
   })
 
+  it('★ query-only owner（服务端 canEdit=true）⇒ 观看清单里也出现发布/版本等资产动作（#1327）', async () => {
+    // 关键：session 里**没有** data:manage——按钮只认服务端的 `canEdit`，不看 scopes。
+    m.mockImplementation(async (url: string, init?: RequestInit) => {
+      calls.push({ url, init })
+      if (url.endsWith('/reports')) return json({ reports: editableRows().filter((r) => r.requiredScope === null) })
+      return json({})
+    })
+    renderPage(['data:query'])
+    await waitFor(() => expect(screen.getByText('自绘大盘')).toBeInTheDocument())
+    // 仍是观看清单（不是 /reports/manage）
+    expect(calls.some((c) => c.url.endsWith('/reports/manage'))).toBe(false)
+    // platform 行：发布 / 版本 / 下线（r3 已发布 v2）都出现
+    expect(rowButton('自绘大盘', '发布')).toBeInTheDocument()
+    expect(rowButton('自绘大盘', '版本')).toBeInTheDocument()
+    expect(rowButton('自绘大盘', '下线')).toBeInTheDocument()
+    // Metabase 行：编辑 / 改页门 / 回收
+    expect(rowButton('销售日报', '编辑')).toBeInTheDocument()
+    expect(rowButton('销售日报', '改页门')).toBeInTheDocument()
+    // 部门门与「共享」一样逐行给
+    expect(rowButton('自绘大盘', '配部门门')).toBeInTheDocument()
+  })
+
   it('管理清单里「门是自己没有的 scope」的行：打开被禁用（服务端 embed-url 对它是 403）', async () => {
     // 管理清单按 spec **不裁行**（管理员必须看得见、能改页门）⇒ 「打开」只按 renderer 置灰是不够的：
     // 页门未放行的行（r2 = sales:read，而本 session 只有 data:query/data:manage）点开必然 403。
@@ -163,7 +192,7 @@ describe('报表页签双视图', () => {
     // （服务端对它 409 RENDERER_NOT_EMBEDDABLE），改渲染 <SpecView/>；metabase 行一字不动。
     m.mockImplementation(async (url: string, init?: RequestInit) => {
       calls.push({ url, init })
-      if (url.endsWith('/reports')) return json({ reports: ROWS.filter((r) => r.requiredScope === null) })
+      if (url.endsWith('/reports')) return json({ reports: editableRows().filter((r) => r.requiredScope === null) })
       if (/\/reports\/[^/]+\/embed-url$/.test(url)) return json({ url: 'https://mb.test/embed/abc' })
       if (/\/reports\/[^/]+\/spec$/.test(url)) {
         return json({ spec: { panels: [{ chart: 'table', title: '净销售额趋势', metricId: 'm1', dims: [], args: {}, span: 12 }] }, version: ROWS[2].version })
@@ -192,7 +221,7 @@ describe('报表页签双视图', () => {
   it('★ 深链 ?open=<id>：列表就绪后自动打开该自绘报表，无需点「打开」(#1047)', async () => {
     m.mockImplementation(async (url: string, init?: RequestInit) => {
       calls.push({ url, init })
-      if (url.endsWith('/reports')) return json({ reports: ROWS.filter((r) => r.requiredScope === null) })
+      if (url.endsWith('/reports')) return json({ reports: editableRows().filter((r) => r.requiredScope === null) })
       if (/\/reports\/[^/]+\/spec$/.test(url)) {
         return json({ spec: { panels: [{ chart: 'table', title: '净销售额趋势', metricId: 'm1', dims: [], args: {}, span: 24 }] }, version: ROWS[2].version })
       }
@@ -209,7 +238,7 @@ describe('报表页签双视图', () => {
   it('★ 深链指向不存在/不可见的 id ⇒ 静默留在列表，不弹不炸 (#1047)', async () => {
     m.mockImplementation(async (url: string, init?: RequestInit) => {
       calls.push({ url, init })
-      if (url.endsWith('/reports')) return json({ reports: ROWS.filter((r) => r.requiredScope === null) })
+      if (url.endsWith('/reports')) return json({ reports: editableRows().filter((r) => r.requiredScope === null) })
       return json({})
     })
     renderPage(['data:query'], '/console/data/reports?open=no-such')
@@ -270,7 +299,7 @@ describe('报表页签双视图', () => {
     // 条目是**防御性**的，不是主路径。
     m.mockImplementation(async (url: string, init?: RequestInit) => {
       calls.push({ url, init })
-      if (url.endsWith('/reports/manage')) return json({ reports: [ROWS[0]] })   // 销售日报（metabase 行）
+      if (url.endsWith('/reports/manage')) return json({ reports: ed([ROWS[0]]) })   // 销售日报（metabase 行）
       if (/\/reports\/[^/]+\/embed-url$/.test(url)) {
         return json({ error: 'RENDERER_NOT_EMBEDDABLE' }, 409)
       }
@@ -285,7 +314,7 @@ describe('报表页签双视图', () => {
   it('编辑：点击后向平台换 handoff URL，并用 iframe 打开（同父域 ⇒ SameSite=Lax 可用）', async () => {
     m.mockImplementation(async (url: string, init?: RequestInit) => {
       calls.push({ url, init })
-      if (url.endsWith('/reports/manage')) return json({ reports: [ROWS[0]] })
+      if (url.endsWith('/reports/manage')) return json({ reports: ed([ROWS[0]]) })
       if (/\/reports\/[^/]+\/edit-url$/.test(url)) return json({ url: 'https://mb.test/handoff?t=T' })
       return json({})
     })
@@ -323,7 +352,7 @@ describe('报表页签双视图', () => {
     let releaseSecond: (() => void) | null = null
     m.mockImplementation(async (url: string, init?: RequestInit) => {
       calls.push({ url, init })
-      if (url.endsWith('/reports/manage')) return json({ reports: [ROWS[0]] })
+      if (url.endsWith('/reports/manage')) return json({ reports: ed([ROWS[0]]) })
       if (/\/reports\/[^/]+\/edit-url$/.test(url)) {
         if (issued === 1) await new Promise<void>((r) => { releaseSecond = () => r() })
         return json({ url: `https://mb.test/handoff?t=T${++issued}` })
@@ -370,7 +399,7 @@ describe('报表页签双视图', () => {
     let issued = 0
     m.mockImplementation(async (url: string, init?: RequestInit) => {
       calls.push({ url, init })
-      if (url.endsWith('/reports/manage')) return json({ reports: [ROWS[0]] })
+      if (url.endsWith('/reports/manage')) return json({ reports: ed([ROWS[0]]) })
       if (/\/reports\/[^/]+\/edit-url$/.test(url)) return json({ url: `https://mb.test/handoff?t=T${++issued}` })
       return json({})
     })
@@ -393,7 +422,7 @@ describe('报表页签双视图', () => {
   it('★ 服务端 503（未配代理 origin）⇒ 出人话文案', async () => {
     m.mockImplementation(async (url: string, init?: RequestInit) => {
       calls.push({ url, init })
-      if (url.endsWith('/reports/manage')) return json({ reports: [ROWS[0]] })
+      if (url.endsWith('/reports/manage')) return json({ reports: ed([ROWS[0]]) })
       if (/\/reports\/[^/]+\/edit-url$/.test(url)) return json({ error: 'EDIT_PROXY_UNCONFIGURED' }, 503)
       return json({})
     })
@@ -413,7 +442,7 @@ describe('报表页签双视图', () => {
     let reloads = 0
     m.mockImplementation(async (url: string, init?: RequestInit) => {
       calls.push({ url, init })
-      if (url.endsWith('/reports/manage')) { reloads += 1; return json({ reports: [ROWS[1]] }) }
+      if (url.endsWith('/reports/manage')) { reloads += 1; return json({ reports: ed([ROWS[1]]) }) }
       if (init?.method === 'PUT') return json({ error: 'STALE_WRITE', currentVersion: 9 }, 409)
       return json({})
     })
@@ -440,7 +469,7 @@ describe('报表页签双视图', () => {
     let reloads = 0
     m.mockImplementation(async (url: string, init?: RequestInit) => {
       calls.push({ url, init })
-      if (url.endsWith('/reports/manage')) { reloads += 1; return json({ reports: [ROWS[0], ROWS[1]] }) }
+      if (url.endsWith('/reports/manage')) { reloads += 1; return json({ reports: ed([ROWS[0], ROWS[1]]) }) }
       if (init?.method === 'DELETE') return json({ error: 'STALE_WRITE', currentVersion: 9 }, 409)
       return json({})
     })
@@ -464,7 +493,7 @@ describe('报表页签双视图', () => {
     let reloads = 0
     m.mockImplementation(async (url: string, init?: RequestInit) => {
       calls.push({ url, init })
-      if (url.endsWith('/reports/manage')) { reloads += 1; return json({ reports: [ROWS[0]] }) }
+      if (url.endsWith('/reports/manage')) { reloads += 1; return json({ reports: ed([ROWS[0]]) }) }
       if (init?.method === 'PUT') return json({ error: 'STALE_WRITE', currentVersion: 9 }, 409)
       return json({})
     })
@@ -497,7 +526,7 @@ describe('报表页签双视图', () => {
       calls.push({ url, init })
       if (url.endsWith('/reports/manage')) {
         // 缺 `version`（其余字段齐备——单看形状是「正常」的，这正是要拦的那类静默）
-        return json({ reports: [{ id: 'r1', title: '销售日报', requiredScope: 'sales:read', renderer: 'metabase' }] })
+        return json({ reports: [{ id: 'r1', title: '销售日报', requiredScope: 'sales:read', renderer: 'metabase', canEdit: true }] })
       }
       return json({})
     })
@@ -516,7 +545,7 @@ describe('报表页签双视图', () => {
 describe('平台自绘行的版本管理', () => {
   const manageRows = (rows = ROWS) => m.mockImplementation(async (url: string, init?: RequestInit) => {
     calls.push({ url, init })
-    if (url.endsWith('/reports/manage')) return json({ reports: rows })
+    if (url.endsWith('/reports/manage')) return json({ reports: rows.map((r) => ({ ...r, canEdit: true })) })
     return json({})
   })
 
@@ -565,7 +594,7 @@ describe('平台自绘行的版本管理', () => {
   it('发布：Modal 填 note ⇒ POST /reports/r3/publish 带行版本', async () => {
     m.mockImplementation(async (url: string, init?: RequestInit) => {
       calls.push({ url, init })
-      if (url.endsWith('/reports/manage')) return json({ reports: ROWS })
+      if (url.endsWith('/reports/manage')) return json({ reports: editableRows() })
       if (url.endsWith('/reports/r3/publish')) return json({ ok: true, publishedVersion: 3 })
       return json({})
     })
@@ -587,7 +616,7 @@ describe('平台自绘行的版本管理', () => {
 
   it('发布幂等：服务端 unchanged ⇒ 文案说「仍是 vN」而不是谎报新版本', async () => {
     m.mockImplementation(async (url: string) => {
-      if (url.endsWith('/reports/manage')) return json({ reports: ROWS })
+      if (url.endsWith('/reports/manage')) return json({ reports: editableRows() })
       if (url.endsWith('/reports/r3/publish')) return json({ ok: true, publishedVersion: 2, unchanged: true })
       return json({})
     })
@@ -601,7 +630,7 @@ describe('平台自绘行的版本管理', () => {
   it('发布 409（版本陈旧）⇒ 人话 + 关 Modal + 刷新列表', async () => {
     let reloads = 0
     m.mockImplementation(async (url: string) => {
-      if (url.endsWith('/reports/manage')) { reloads += 1; return json({ reports: ROWS }) }
+      if (url.endsWith('/reports/manage')) { reloads += 1; return json({ reports: editableRows() }) }
       // 版本端点的失败体是 `{ ok:false, reason }`（不是 `{error}`）——按真机形状桩
       if (url.endsWith('/reports/r3/publish')) return json({ ok: false, reason: 'STALE_WRITE' }, 409)
       return json({})
@@ -624,7 +653,7 @@ describe('平台自绘行的版本管理', () => {
   it('下线：Popconfirm 确认 ⇒ POST /reports/r3/unpublish 带行版本', async () => {
     m.mockImplementation(async (url: string, init?: RequestInit) => {
       calls.push({ url, init })
-      if (url.endsWith('/reports/manage')) return json({ reports: ROWS })
+      if (url.endsWith('/reports/manage')) return json({ reports: editableRows() })
       if (url.endsWith('/reports/r3/unpublish')) return json({ unpublished: true })
       return json({})
     })
@@ -645,7 +674,7 @@ describe('平台自绘行的版本管理', () => {
   it('版本历史抽屉：列出历史、查看钉版本链接、回滚旧版带行版本', async () => {
     m.mockImplementation(async (url: string, init?: RequestInit) => {
       calls.push({ url, init })
-      if (url.endsWith('/reports/manage')) return json({ reports: ROWS })
+      if (url.endsWith('/reports/manage')) return json({ reports: editableRows() })
       if (url.endsWith('/reports/r3/versions')) return json({ versions: VERSIONS })
       if (url.endsWith('/reports/r3/versions/1/rollback')) return json({ ok: true, publishedVersion: 3 })
       return json({})
@@ -728,7 +757,7 @@ describe('部门门配置（组织架构树多选）', () => {
   const mockWith = (rows: unknown[], myDepts: string[]) =>
     m.mockImplementation(async (url: string, init?: RequestInit) => {
       calls.push({ url, init })
-      if (url.endsWith('/reports/manage')) return json({ reports: rows, myDepts })
+      if (url.endsWith('/reports/manage')) return json({ reports: rows.map((r) => ({ ...(r as object), canEdit: true })), myDepts })
       if (url.endsWith('/reports/dept-options')) return json({ depts: DEPT_OPTIONS })
       if (url.endsWith('/reports')) return json({ reports: rows })
       if (init?.method === 'PUT') return json({ ok: true })
