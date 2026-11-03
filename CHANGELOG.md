@@ -11,6 +11,10 @@
 
 ## [Unreleased]
 
+## [0.248.13](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.248.12...v0.248.13) - 2026-11-03
+- 【修复】data: 会员汇总 shape 全列改行内 JSON 取值，源端缺维度得 NULL 而非整天失败 ([#1317](https://github.com/MYTech-Co-LTD/platform-core/pull/1317), [36f748f](https://github.com/MYTech-Co-LTD/platform-core/commit/36f748fa51036273e706c8cb9cc52a5e48fc8e29))
+
+
 ## [0.248.12](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.248.11...v0.248.12) - 2026-11-03
 - 【修复】data: config_drift 漂移行接线告警面——断言⑭ + 对齐表行（#809） ([#1316](https://github.com/MYTech-Co-LTD/platform-core/pull/1316), [1a05138](https://github.com/MYTech-Co-LTD/platform-core/commit/1a051384bd173b2661dc7f67176e8fbdb33d063a))
 
