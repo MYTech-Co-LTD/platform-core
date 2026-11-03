@@ -25,8 +25,7 @@
 //     `PUT` 对 platform 行回 409 `USE_PUBLISH_ENDPOINT`）。
 import { useEffect, useRef, useState } from 'react'
 import { useOutletContext, useSearchParams } from 'react-router-dom'
-import { Button, Drawer, Dropdown, Input, Modal, Popconfirm, Segmented, Space, Table, Tag, Tooltip, Tree, Typography, message } from 'antd'
-import type { MenuProps } from 'antd'
+import { Button, Drawer, Input, Modal, Popconfirm, Segmented, Space, Table, Tag, Tooltip, Tree, Typography, message } from 'antd'
 import { ApiError, apiGet, apiSend, messageOf } from '../lib/api'
 import { useIsMobile } from '../lib/useIsMobile'
 import SpecView from './SpecView'
@@ -95,6 +94,7 @@ export default function ReportsPage() {
   // 列表工具条（2026-11-03 UX）：租户报表多起来后，靠肉眼扫表找一张是主要摩擦点。
   // 纯前端过滤（服务端清单本来就是一次性全量；分页/服务端搜索是另一个议题）。
   const isMobile = useIsMobile()
+  const [sheetFor, setSheetFor] = useState<ReportRow | null>(null)
   const [query, setQuery] = useState('')
   const [statusFilter, setStatusFilter] = useState<'all' | 'published' | 'draft' | 'changed'>('all')
   // 请求者自己的部门闭包（`GET /reports/manage` 回带；本人部门 + 全部祖先）。只用来判
@@ -585,23 +585,26 @@ export default function ReportsPage() {
     })
   }
 
-  const mobileMoreItems = (r: ReportRow): NonNullable<MenuProps['items']> => {
-    const items: NonNullable<MenuProps['items']> = []
-    if (!r.canEdit) {
-      items.push({ key: 'share', label: '共享', onClick: () => void openShare(r) })
-      return items
-    }
-    items.push({ key: 'share', label: '共享', onClick: () => void openShare(r) })
-    items.push({
+  // 底部动作面板（移动端 ActionSheet）——下拉菜单锚在小按钮上不适合触屏。
+  interface SheetAction { key: string; label: string; danger?: boolean; onClick: () => void }
+  const sheetActions = (r: ReportRow): SheetAction[] => {
+    const actions: SheetAction[] = [
+      { key: 'share', label: '共享 / 调整可见范围', onClick: () => void openShare(r) },
+    ]
+    if (!r.canEdit) return actions
+    actions.push({
       key: 'dept',
-      label: (r.requiredDepts ?? []).length === 0 ? '配部门门' : '改部门门',
+      label: (r.requiredDepts ?? []).length === 0 ? '配置部门门' : '修改部门门',
       onClick: () => void openDeptGate(r),
     })
     if (r.renderer === 'metabase') {
-      items.push({ key: 'edit', label: '编辑', onClick: () => void edit(r) })
-      items.push({ key: 'gate', label: '改页门', onClick: () => { setGateEdit(r); setGateDraft(r.requiredScope ?? '') } })
+      actions.push({ key: 'edit', label: '编辑', onClick: () => void edit(r) })
+      actions.push({
+        key: 'gate', label: '修改页门',
+        onClick: () => { setGateEdit(r); setGateDraft(r.requiredScope ?? '') },
+      })
       if (r.requiredScope !== null) {
-        items.push({
+        actions.push({
           key: 'publish', label: '发布',
           onClick: () => Modal.confirm({
             title: `发布后所有拿到本模块的人都能看到「${r.title}」，确定？`,
@@ -611,9 +614,9 @@ export default function ReportsPage() {
         })
       }
     } else {
-      items.push({ key: 'publish', label: '发布', onClick: () => { setPublishTarget(r); setPublishNote('') } })
+      actions.push({ key: 'publish', label: '发布', onClick: () => { setPublishTarget(r); setPublishNote('') } })
       if (r.publishedVersion !== null) {
-        items.push({
+        actions.push({
           key: 'unpublish', label: '下线',
           onClick: () => Modal.confirm({
             title: `下线后独立链接立即失效（历史版本保留），确定下线「${r.title}」？`,
@@ -621,43 +624,118 @@ export default function ReportsPage() {
             onOk: () => unpublish(r),
           }),
         })
-        items.push({ key: 'link', label: '复制独立链接', onClick: () => void copyLink(r) })
+        actions.push({ key: 'link', label: '复制独立链接', onClick: () => void copyLink(r) })
       }
-      items.push({ key: 'versions', label: '版本历史', onClick: () => void openVersions(r) })
+      actions.push({ key: 'versions', label: '版本历史', onClick: () => void openVersions(r) })
     }
-    items.push({ type: 'divider' })
-    items.push({ key: 'recycle', label: '回收', danger: true, onClick: () => confirmRecycle(r) })
-    return items
+    actions.push({ key: 'recycle', label: '回收报表', danger: true, onClick: () => confirmRecycle(r) })
+    return actions
+  }
+
+  /** 整卡可点：能打开就打开；打不开就说明原因（不是放一个灰色小按钮让人猜）。 */
+  const openRow = (r: ReportRow) => {
+    if (!canOpen(r)) {
+      messageApi.warning(
+        r.requiredScope !== null && !session.scopes.includes(r.requiredScope)
+          ? `你的账号没有这张报表的权限（${r.requiredScope}）`
+          : '你的部门不在这张报表的部门门里',
+      )
+      return
+    }
+    if (r.renderer === 'platform') setSelfDrawn({ title: r.title, id: r.id })
+    else void open(r)
   }
 
   const mobileCards = (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
       {visibleRows.length === 0 ? (
         <div style={{ color: '#999', textAlign: 'center', padding: '32px 0', lineHeight: 1.8 }}>{emptyText}</div>
-      ) : visibleRows.map((r) => (
-        <div key={r.id} style={{ background: '#fff', borderRadius: 12, border: '1px solid #f0f0f0', padding: 14 }}>
-          <div style={{ display: 'flex', justifyContent: 'space-between', gap: 8, alignItems: 'flex-start' }}>
-            <div style={{ fontSize: 16, fontWeight: 600, lineHeight: 1.35 }}>{r.title}</div>
-            {mobileStatusTags(r)}
+      ) : visibleRows.map((r) => {
+        const deptN = (r.requiredDepts ?? []).length
+        const gateSummary = [
+          r.requiredScope !== null ? `页门 ${r.requiredScope}` : null,
+          deptN > 0 ? `部门门 ${deptN} 个部门` : null,
+        ].filter(Boolean).join(' · ')
+        return (
+          <div
+            key={r.id}
+            role="button"
+            tabIndex={0}
+            aria-label={`打开 ${r.title}`}
+            onClick={() => openRow(r)}
+            onKeyDown={(e) => {
+              if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); openRow(r) }
+            }}
+            style={{
+              display: 'flex', alignItems: 'center', gap: 6,
+              background: '#fff', borderRadius: 14, border: '1px solid #eee',
+              padding: '14px 10px 14px 16px', cursor: 'pointer',
+              opacity: canOpen(r) ? 1 : 0.55,
+            }}
+          >
+            <div style={{ flex: 1, minWidth: 0 }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 8, minWidth: 0 }}>
+                <span style={{
+                  fontSize: 16, fontWeight: 600, lineHeight: 1.4,
+                  overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
+                }}>{r.title}</span>
+                {mobileStatusTags(r)}
+              </div>
+              <div style={{ fontSize: 12, color: '#999', marginTop: 6, display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+                <span>{r.owner ? `所有者 ${r.owner}${r.ownerActive === false ? '（已停用）' : ''}` : '无所有者'}</span>
+                {gateSummary !== '' ? <span>· {gateSummary}</span> : null}
+              </div>
+            </div>
+            {/* 44px 触控目标；动作在下方面板里，不挤在卡片底部 */}
+            <button
+              type="button"
+              aria-label="更多操作"
+              onClick={(e) => { e.stopPropagation(); setSheetFor(r) }}
+              style={{
+                width: 44, height: 44, flex: '0 0 auto', borderRadius: 22,
+                border: 'none', background: 'transparent', color: '#999',
+                fontSize: 22, lineHeight: '44px', cursor: 'pointer',
+              }}
+            >⋯</button>
+            <span aria-hidden style={{ color: '#ccc', fontSize: 18, marginRight: 4 }}>›</span>
           </div>
-          <div style={{ fontSize: 12, color: '#666', marginTop: 8, lineHeight: 1.8 }}>
-            页门 {r.requiredScope ?? '不限'} · 部门门 {(r.requiredDepts ?? []).length === 0 ? '不限' : `${(r.requiredDepts ?? []).length} 个部门`}
-            <br />
-            所有者 {r.owner ?? '无'}{r.ownerActive === false ? '（已停用）' : ''}
-          </div>
-          <div style={{ display: 'flex', justifyContent: 'flex-end', alignItems: 'center', gap: 8, marginTop: 10 }}>
-            {openBtn(r)}
-            {r.canEdit ? (
-              <Dropdown menu={{ items: mobileMoreItems(r) }} trigger={['click']}>
-                <Button size="small" type="text">更多 ▾</Button>
-              </Dropdown>
-            ) : (
-              <Button size="small" type="text" onClick={() => void openShare(r)}>共享</Button>
-            )}
-          </div>
-        </div>
-      ))}
+        )
+      })}
     </div>
+  )
+
+  const mobileSheet = (
+    <Drawer
+      placement="bottom"
+      open={sheetFor !== null}
+      onClose={() => setSheetFor(null)}
+      closable={false}
+      title={sheetFor?.title}
+      height="auto"
+      styles={{ body: { padding: '4px 0 16px' } }}
+    >
+      {sheetFor !== null && sheetActions(sheetFor).map((a) => (
+        <button
+          key={a.key}
+          type="button"
+          onClick={() => { const fn = a.onClick; setSheetFor(null); fn() }}
+          style={{
+            display: 'block', width: '100%', padding: '15px 24px',
+            border: 'none', background: 'none', textAlign: 'left', cursor: 'pointer',
+            fontSize: 16, color: a.danger === true ? '#ff4d4f' : '#1f1f1f',
+          }}
+        >{a.label}</button>
+      ))}
+      <button
+        type="button"
+        onClick={() => setSheetFor(null)}
+        style={{
+          display: 'block', width: '100%', padding: '15px 24px', marginTop: 8,
+          border: 'none', borderTop: '1px solid #f0f0f0', background: '#fafafa',
+          textAlign: 'center', cursor: 'pointer', fontSize: 16, color: '#666',
+        }}
+      >取消</button>
+    </Drawer>
   )
 
   return (
@@ -836,6 +914,7 @@ export default function ReportsPage() {
         },
       ]} />
       )}
+      {isMobile ? mobileSheet : null}
       <Modal title={`改页门：${gateEdit?.title ?? ''}`}
              open={gateEdit !== null}
              okText="确定" cancelText="取消"

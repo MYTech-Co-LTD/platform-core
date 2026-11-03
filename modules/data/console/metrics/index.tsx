@@ -11,8 +11,7 @@
 // 入参会以 400 `TARGET_NOT_SUPPORTED` 被**显式拒绝**（不静默丢弃）。所以这里也不摆一个
 // 按了会报错的输入框——见 README「L2 的已知边界」。
 import { useEffect, useMemo, useState } from 'react'
-import { Button, Card, Drawer, Dropdown, Input, Modal, Popconfirm, Segmented, Select, Space, Switch, Table, Tag, Timeline, Typography, message } from 'antd'
-import type { MenuProps } from 'antd'
+import { Button, Card, Drawer, Input, Modal, Popconfirm, Segmented, Select, Space, Switch, Table, Tag, Timeline, Typography, message } from 'antd'
 import { apiGet, apiSend, messageOf } from '../lib/api'
 import { useIsMobile } from '../lib/useIsMobile'
 
@@ -92,6 +91,7 @@ export default function MetricsPage() {
   const [rows, setRows] = useState<MetricRow[]>([])
   // 列表工具条（UX 2026-11-03）：指标表列多、行多，搜索与来源筛选是第一需要。
   const isMobile = useIsMobile()
+  const [sheetFor, setSheetFor] = useState<MetricRow | null>(null)
   const [query, setQuery] = useState('')
   const [sourceFilter, setSourceFilter] = useState<'all' | 'l1' | 'l2'>('all')
   const [draft, setDraft] = useState<Draft | null>(null)
@@ -223,46 +223,90 @@ export default function MetricsPage() {
     })
   }
 
-  const mobileMoreItems = (r: MetricRow): NonNullable<MenuProps['items']> => {
-    if (r.source === 'l1') return []
-    const items: NonNullable<MenuProps['items']> = [
-      { key: 'history', label: '变更历史', onClick: () => openHistory(r.id) },
-      { key: 'edit', label: '编辑', onClick: () => openEdit(r) },
-      { key: 'meta', label: '元数据', onClick: () => openMeta(r) },
-      { type: 'divider' },
-      { key: 'remove', label: '删除', danger: true, onClick: () => confirmRemove(r) },
-    ]
-    return items
-  }
+  interface SheetAction { key: string; label: string; danger?: boolean; onClick: () => void }
+  const sheetActions = (r: MetricRow): SheetAction[] => [
+    { key: 'history', label: '变更历史', onClick: () => openHistory(r.id) },
+    { key: 'edit', label: '编辑', onClick: () => openEdit(r) },
+    { key: 'meta', label: '元数据', onClick: () => openMeta(r) },
+    { key: 'remove', label: '删除指标', danger: true, onClick: () => confirmRemove(r) },
+  ]
 
   const mobileCards = (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
       {visibleRows.length === 0 ? (
         <div style={{ color: '#999', textAlign: 'center', padding: '32px 0', lineHeight: 1.8 }}>{emptyText}</div>
       ) : visibleRows.map((r) => (
-        <div key={r.id} style={{ background: '#fff', borderRadius: 12, border: '1px solid #f0f0f0', padding: 14 }}>
-          <div style={{ display: 'flex', justifyContent: 'space-between', gap: 8, alignItems: 'flex-start' }}>
-            <div style={{ fontSize: 16, fontWeight: 600, lineHeight: 1.35 }}>{r.title}</div>
-            {r.source === 'l1' ? <Tag color="blue">平台（只读）</Tag> : <Tag color="green">本租户派生</Tag>}
-          </div>
-          <div style={{ fontSize: 12, color: '#888', marginTop: 4, wordBreak: 'break-all' }}>{r.id}</div>
-          <div style={{ fontSize: 12, color: '#666', marginTop: 8, lineHeight: 1.8 }}>
-            所需 scope {r.requiredScope ?? '不限'} · 主体列 {r.subjectColumn}
-            {r.source === 'l2' ? ` · v${r.version}` : ''}
-            {r.source === 'l2' && r.updatedBy ? ` · ${r.updatedBy}` : ''}
+        <div key={r.id} style={{
+          display: 'flex', alignItems: 'center', gap: 6,
+          background: '#fff', borderRadius: 14, border: '1px solid #eee',
+          padding: '14px 10px 14px 16px',
+        }}>
+          <div style={{ flex: 1, minWidth: 0 }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 8, minWidth: 0 }}>
+              <span style={{
+                fontSize: 16, fontWeight: 600, lineHeight: 1.4,
+                overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
+              }}>{r.title}</span>
+              {r.source === 'l1' ? <Tag color="blue">平台（只读）</Tag> : <Tag color="green">本租户派生</Tag>}
+            </div>
+            <div style={{ fontSize: 12, color: '#999', marginTop: 4, wordBreak: 'break-all' }}>{r.id}</div>
+            <div style={{ fontSize: 12, color: '#999', marginTop: 4 }}>
+              {r.requiredScope ?? '不限'} · 主体列 {r.subjectColumn}
+              {r.source === 'l2' ? ` · v${r.version}` : ''}
+              {r.source === 'l2' && r.updatedBy ? ` · ${r.updatedBy}` : ''}
+            </div>
           </div>
           {r.source === 'l2' ? (
-            <div style={{ display: 'flex', justifyContent: 'flex-end', marginTop: 10 }}>
-              <Dropdown menu={{ items: mobileMoreItems(r) }} trigger={['click']}>
-                <Button size="small" type="text">更多 ▾</Button>
-              </Dropdown>
-            </div>
+            <button
+              type="button"
+              aria-label="更多操作"
+              onClick={() => setSheetFor(r)}
+              style={{
+                width: 44, height: 44, flex: '0 0 auto', borderRadius: 22,
+                border: 'none', background: 'transparent', color: '#999',
+                fontSize: 22, lineHeight: '44px', cursor: 'pointer',
+              }}
+            >⋯</button>
           ) : (
-            <div style={{ fontSize: 12, color: '#999', marginTop: 10 }}>平台词表经 API 只读</div>
+            <span style={{ fontSize: 12, color: '#bbb', width: 44, textAlign: 'center' }}>只读</span>
           )}
         </div>
       ))}
     </div>
+  )
+
+  const mobileSheet = (
+    <Drawer
+      placement="bottom"
+      open={sheetFor !== null}
+      onClose={() => setSheetFor(null)}
+      closable={false}
+      title={sheetFor?.title}
+      height="auto"
+      styles={{ body: { padding: '4px 0 16px' } }}
+    >
+      {sheetFor !== null && sheetActions(sheetFor).map((a) => (
+        <button
+          key={a.key}
+          type="button"
+          onClick={() => { const fn = a.onClick; setSheetFor(null); fn() }}
+          style={{
+            display: 'block', width: '100%', padding: '15px 24px',
+            border: 'none', background: 'none', textAlign: 'left', cursor: 'pointer',
+            fontSize: 16, color: a.danger === true ? '#ff4d4f' : '#1f1f1f',
+          }}
+        >{a.label}</button>
+      ))}
+      <button
+        type="button"
+        onClick={() => setSheetFor(null)}
+        style={{
+          display: 'block', width: '100%', padding: '15px 24px', marginTop: 8,
+          border: 'none', borderTop: '1px solid #f0f0f0', background: '#fafafa',
+          textAlign: 'center', cursor: 'pointer', fontSize: 16, color: '#666',
+        }}
+      >取消</button>
+    </Drawer>
   )
 
   return (
@@ -421,6 +465,7 @@ export default function MetricsPage() {
                 )) },
       ]} />
       )}
+      {isMobile ? mobileSheet : null}
 
       {/* 变更史：#489。倒序（服务端已排好），删除行标红——它是不可逆的那一类。 */}
       <Drawer title={`变更历史：${historyId ?? ''}`} open={historyId !== null}

@@ -202,7 +202,11 @@ describe('指标管理页', () => {
       renderPage()
       await waitFor(() => expect(screen.getByText('lemeng:retail:net_sales')).toBeInTheDocument())
       expect(screen.queryByRole('table')).toBeNull()
-      expect(screen.getAllByRole('button', { name: /更\s*多/ })).toHaveLength(1)
+      // L1 只读卡没有动作按钮；L2 卡有一个 44px 的「更多操作」
+      expect(screen.getAllByRole('button', { name: '更多操作' })).toHaveLength(1)
+      expect(screen.getByText('只读')).toBeInTheDocument()
+      fireEvent.click(screen.getByRole('button', { name: '更多操作' }))
+      expect(await screen.findByText('删除指标')).toBeInTheDocument()
     } finally {
       vi.unstubAllGlobals()
     }
