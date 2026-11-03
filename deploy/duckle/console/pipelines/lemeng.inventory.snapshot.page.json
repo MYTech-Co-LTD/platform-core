@@ -1,0 +1,224 @@
+{
+  "name": "lemeng.inventory.snapshot.page",
+  "id": "lemeng.inventory.snapshot.page",
+  "version": 1,
+  "_note": [
+    "库存快照单页采集子管线（#1318 foreach 按页驱动）：每次迭代取一页（ITER_ITEM_PAGE_NUMBER），",
+    "写 staging chunk；空页写 1 行占位（is_placeholder=1），保证父侧「页到齐」判据成立。"
+  ],
+  "nodes": [
+    {
+      "id": "f",
+      "type": "source",
+      "position": {
+        "x": 0,
+        "y": 0
+      },
+      "data": {
+        "label": "f",
+        "componentId": "src.rest",
+        "properties": {
+          "connectionRef": "lemeng",
+          "url": "https://cloud.nhsoft.cn/agi/api/nhsoft.ama.ai.inventory.snapshot.find",
+          "method": "POST",
+          "headers": {
+            "Content-Type": "application/json"
+          },
+          "body": "{\"bizday\":\"${ITER_ITEM_BIZDAY}\",\"page_number\":${ITER_ITEM_PAGE_NUMBER},\"page_size\":200}",
+          "responsePath": "/result",
+          "paginationType": "none",
+          "rawResponseDestination": "/workspace/.duckle-raw/inv-page-${ITER_ITEM_BATCH_ID}-p${ITER_ITEM_PAGE_NUMBER}.json",
+          "retryAttempts": 3,
+          "retryBackoffMs": 2000
+        },
+        "schema": [
+          {
+            "name": "branch_num",
+            "type": "int64"
+          },
+          {
+            "name": "branch_code",
+            "type": "string"
+          },
+          {
+            "name": "branch_name",
+            "type": "string"
+          },
+          {
+            "name": "storehouse_num",
+            "type": "int64"
+          },
+          {
+            "name": "storehouse_code",
+            "type": "string"
+          },
+          {
+            "name": "storehouse_name",
+            "type": "string"
+          },
+          {
+            "name": "item_num",
+            "type": "int64"
+          },
+          {
+            "name": "item_code",
+            "type": "string"
+          },
+          {
+            "name": "item_barcode",
+            "type": "string"
+          },
+          {
+            "name": "item_name",
+            "type": "string"
+          },
+          {
+            "name": "item_spec",
+            "type": "string"
+          },
+          {
+            "name": "item_unit",
+            "type": "string"
+          },
+          {
+            "name": "inventory_quantity",
+            "type": "decimal"
+          },
+          {
+            "name": "inventory_assist_quantity",
+            "type": "decimal"
+          },
+          {
+            "name": "inventory_use_quantity",
+            "type": "decimal"
+          },
+          {
+            "name": "inventory_money",
+            "type": "decimal"
+          },
+          {
+            "name": "carry_cost_price",
+            "type": "decimal"
+          },
+          {
+            "name": "sale_price",
+            "type": "decimal"
+          },
+          {
+            "name": "difference_quantity",
+            "type": "decimal"
+          },
+          {
+            "name": "difference_money",
+            "type": "decimal"
+          }
+        ]
+      }
+    },
+    {
+      "id": "env",
+      "type": "transform",
+      "position": {
+        "x": 0,
+        "y": 0
+      },
+      "data": {
+        "label": "env",
+        "componentId": "code.sql",
+        "properties": {
+          "sql": "SELECT CAST(code AS INTEGER) AS code, CAST(msg AS VARCHAR) AS msg\n FROM read_json_auto('/workspace/.duckle-raw/inv-page-${ITER_ITEM_BATCH_ID}-p${ITER_ITEM_PAGE_NUMBER}.json')\n WHERE CAST(code AS INTEGER) <> 0"
+        }
+      }
+    },
+    {
+      "id": "denv",
+      "type": "transform",
+      "position": {
+        "x": 0,
+        "y": 0
+      },
+      "data": {
+        "label": "denv",
+        "componentId": "ctl.die",
+        "properties": {
+          "condition": "has-rows",
+          "message": "inventory page ${ITER_ITEM_PAGE_NUMBER} 网关非 0 code（{rows} 条）：bizday=${ITER_ITEM_BIZDAY}。raw 见 /workspace/.duckle-raw/inv-page-${ITER_ITEM_BATCH_ID}-p${ITER_ITEM_PAGE_NUMBER}.json"
+        }
+      }
+    },
+    {
+      "id": "s",
+      "type": "transform",
+      "position": {
+        "x": 0,
+        "y": 0
+      },
+      "data": {
+        "label": "s",
+        "componentId": "code.sql",
+        "properties": {
+          "sql": "SELECT '${ITER_ITEM_BATCH_ID}' AS batch_id,\n       CAST(${ITER_ITEM_SYSTEM_BOOK} AS INTEGER) AS system_book,\n       CAST('${ITER_ITEM_BIZDAY}' AS DATE) AS bizday,\n       CAST(${ITER_ITEM_PAGE_NUMBER} AS INTEGER) AS page_num,\nCAST(branch_num AS INTEGER) AS branch_num,\n       CAST(branch_code AS VARCHAR) AS branch_code,\n       CAST(branch_name AS VARCHAR) AS branch_name,\n       CAST(storehouse_num AS BIGINT) AS storehouse_num,\n       CAST(storehouse_code AS VARCHAR) AS storehouse_code,\n       CAST(storehouse_name AS VARCHAR) AS storehouse_name,\n       CAST(item_num AS BIGINT) AS item_num,\n       CAST(item_code AS VARCHAR) AS item_code,\n       CAST(item_barcode AS VARCHAR) AS item_barcode,\n       CAST(item_name AS VARCHAR) AS item_name,\n       CAST(item_spec AS VARCHAR) AS item_spec,\n       CAST(item_unit AS VARCHAR) AS item_unit,\n       CAST(inventory_quantity AS DECIMAL(14,6)) AS inventory_quantity,\n       CAST(inventory_assist_quantity AS DECIMAL(14,6)) AS inventory_assist_quantity,\n       CAST(inventory_use_quantity AS DECIMAL(14,6)) AS inventory_use_quantity,\n       CAST(inventory_money AS DECIMAL(14,2)) AS inventory_money,\n       CAST(carry_cost_price AS DECIMAL(18,8)) AS carry_cost_price,\n       CAST(sale_price AS DECIMAL(18,8)) AS sale_price,\n       CAST(difference_quantity AS DECIMAL(14,6)) AS difference_quantity,\n       CAST(difference_money AS DECIMAL(14,2)) AS difference_money,\n       CAST(0 AS INTEGER) AS is_placeholder,\n       CAST((SELECT count(*) FROM input) AS INTEGER) AS page_rows,\n       CAST(CURRENT_TIMESTAMP AS TIMESTAMPTZ) AS computed_at\nFROM input\nUNION ALL\n-- 空页占位（issue #1318）：0 行是正常的页尾，但要留痕让父侧数「页到齐」\nSELECT '${ITER_ITEM_BATCH_ID}' AS batch_id,\n       CAST(${ITER_ITEM_SYSTEM_BOOK} AS INTEGER) AS system_book,\n       CAST('${ITER_ITEM_BIZDAY}' AS DATE) AS bizday,\n       CAST(${ITER_ITEM_PAGE_NUMBER} AS INTEGER) AS page_num,\nCAST(NULL AS INTEGER) AS branch_num,\n       CAST(NULL AS VARCHAR) AS branch_code,\n       CAST(NULL AS VARCHAR) AS branch_name,\n       CAST(NULL AS BIGINT) AS storehouse_num,\n       CAST(NULL AS VARCHAR) AS storehouse_code,\n       CAST(NULL AS VARCHAR) AS storehouse_name,\n       CAST(NULL AS BIGINT) AS item_num,\n       CAST(NULL AS VARCHAR) AS item_code,\n       CAST(NULL AS VARCHAR) AS item_barcode,\n       CAST(NULL AS VARCHAR) AS item_name,\n       CAST(NULL AS VARCHAR) AS item_spec,\n       CAST(NULL AS VARCHAR) AS item_unit,\n       CAST(NULL AS DECIMAL(14,6)) AS inventory_quantity,\n       CAST(NULL AS DECIMAL(14,6)) AS inventory_assist_quantity,\n       CAST(NULL AS DECIMAL(14,6)) AS inventory_use_quantity,\n       CAST(NULL AS DECIMAL(14,2)) AS inventory_money,\n       CAST(NULL AS DECIMAL(18,8)) AS carry_cost_price,\n       CAST(NULL AS DECIMAL(18,8)) AS sale_price,\n       CAST(NULL AS DECIMAL(14,6)) AS difference_quantity,\n       CAST(NULL AS DECIMAL(14,2)) AS difference_money,\n       CAST(1 AS INTEGER) AS is_placeholder,\n       CAST(0 AS INTEGER) AS page_rows,\n       CAST(CURRENT_TIMESTAMP AS TIMESTAMPTZ) AS computed_at\nWHERE NOT EXISTS (SELECT 1 FROM input)"
+        }
+      }
+    },
+    {
+      "id": "sink",
+      "type": "sink",
+      "position": {
+        "x": 0,
+        "y": 0
+      },
+      "data": {
+        "label": "sink",
+        "componentId": "snk.parquet",
+        "properties": {
+          "path": "/workspace/.duckle-stage/inventory_page/chunk-${ITER_ITEM_BATCH_ID}-p${ITER_ITEM_PAGE_NUMBER}.parquet",
+          "mode": "overwrite",
+          "compression": "zstd"
+        }
+      }
+    }
+  ],
+  "edges": [
+    {
+      "id": "e1",
+      "source": "f",
+      "target": "env",
+      "sourceHandle": "main",
+      "targetHandle": "main",
+      "data": {
+        "connectionType": "main"
+      }
+    },
+    {
+      "id": "e2",
+      "source": "env",
+      "target": "denv",
+      "sourceHandle": "main",
+      "targetHandle": "main",
+      "data": {
+        "connectionType": "main"
+      }
+    },
+    {
+      "id": "e3",
+      "source": "f",
+      "target": "s",
+      "sourceHandle": "main",
+      "targetHandle": "main",
+      "data": {
+        "connectionType": "main"
+      }
+    },
+    {
+      "id": "e4",
+      "source": "s",
+      "target": "sink",
+      "sourceHandle": "main",
+      "targetHandle": "main",
+      "data": {
+        "connectionType": "main"
+      }
+    }
+  ]
+}

@@ -1,0 +1,587 @@
+{
+  "name": "lemeng.inventory.snapshot.backfill.hp.3120",
+  "id": "lemeng.inventory.snapshot.backfill.hp.3120",
+  "version": 1,
+  "_note": [
+    "库存快照**大容量回填变体**（#1318）：老日期单日 5~6 万行，静态 30 页（6,000 行）必截断。",
+    "",
+    "① drv 生成页号 1..301（数据页 1..300 + 哨兵页 301），ctl.foreach 逐页拉（并发 8），",
+    "   子管线 lemeng.inventory.snapshot.page 每页写一个 staging chunk（空页写占位行）。",
+    "② 三道闸：页到齐（gpage/dpages）→ 哨兵页必须为空（gsent/sentinel）→ 源端零行（die_empty）。",
+    "③ rows 剔除占位行与哨兵页后进 shape，契约闸与写湖与主管线一致。"
+  ],
+  "nodes": [
+    {
+      "id": "w0",
+      "type": "source",
+      "position": {
+        "x": 0,
+        "y": 0
+      },
+      "data": {
+        "label": "w0",
+        "componentId": "src.rest",
+        "schema": [
+          {
+            "name": "x",
+            "type": "string"
+          }
+        ],
+        "properties": {
+          "connectionRef": "lemeng",
+          "url": "https://cloud.nhsoft.cn/agi/mcp",
+          "method": "POST",
+          "headers": {
+            "Content-Type": "application/json",
+            "Accept": "application/json, text/event-stream"
+          },
+          "body": "{\"jsonrpc\": \"2.0\", \"id\": 1, \"method\": \"tools/call\", \"params\": {\"name\": \"whoami\", \"arguments\": {}}}",
+          "paginationType": "none",
+          "responseFormat": "xml",
+          "rawResponseDestination": "/workspace/.duckle-raw/whoami-${datetime}.sse",
+          "retryAttempts": 3,
+          "retryBackoffMs": 2000
+        }
+      }
+    },
+    {
+      "id": "g0",
+      "type": "transform",
+      "position": {
+        "x": 0,
+        "y": 0
+      },
+      "data": {
+        "label": "g0",
+        "componentId": "code.sql",
+        "properties": {
+          "sql": "SELECT unnest(regexp_extract_all(content, '(?m)^data: ([^\\r\\n]*)', 1)) AS line FROM read_text('/workspace/.duckle-raw/whoami-${datetime}.sse')"
+        }
+      }
+    },
+    {
+      "id": "g1",
+      "type": "transform",
+      "position": {
+        "x": 0,
+        "y": 0
+      },
+      "data": {
+        "label": "g1",
+        "componentId": "code.sql",
+        "properties": {
+          "sql": "SELECT json_extract_string(line, '$.result.content[0].text') AS txt FROM input QUALIFY row_number() OVER () = count(*) OVER ()"
+        }
+      }
+    },
+    {
+      "id": "g2",
+      "type": "transform",
+      "position": {
+        "x": 0,
+        "y": 0
+      },
+      "data": {
+        "label": "g2",
+        "componentId": "code.sql",
+        "properties": {
+          "sql": "SELECT json_extract_string(txt, '$.company_id') AS company_id, json_extract_string(txt, '$.branch_nums') AS branch_nums FROM input"
+        }
+      }
+    },
+    {
+      "id": "d0",
+      "type": "transform",
+      "position": {
+        "x": 0,
+        "y": 0
+      },
+      "data": {
+        "label": "d0",
+        "componentId": "ctl.die",
+        "properties": {
+          "condition": "no-rows",
+          "message": "identity: whoami 响应里没有可解析的身份（网关形状变了？）⇒ 身份未证，拒绝采集与写湖"
+        }
+      }
+    },
+    {
+      "id": "g3",
+      "type": "transform",
+      "position": {
+        "x": 0,
+        "y": 0
+      },
+      "data": {
+        "label": "g3",
+        "componentId": "code.sql",
+        "properties": {
+          "sql": "SELECT 'book' AS violation, company_id AS detail FROM input WHERE company_id IS DISTINCT FROM '${ENV:SYSTEM_BOOK}' UNION ALL SELECT 'branch' AS violation, CAST(c.branch_num AS VARCHAR) AS detail FROM (SELECT unnest('${ENV:BRANCH_NUMS}'::BIGINT[]) AS branch_num) c LEFT JOIN (SELECT unnest(CAST(json_extract(branch_nums, '$[*]') AS BIGINT[])) AS branch_num FROM input) w USING (branch_num) WHERE w.branch_num IS NULL"
+        }
+      }
+    },
+    {
+      "id": "d1",
+      "type": "transform",
+      "position": {
+        "x": 0,
+        "y": 0
+      },
+      "data": {
+        "label": "d1",
+        "componentId": "ctl.die",
+        "properties": {
+          "condition": "has-rows",
+          "message": "identity: 凭据账套/门店清单自证未过 ⇒ 拒绝采集与写湖"
+        }
+      }
+    },
+    {
+      "id": "gv",
+      "type": "transform",
+      "position": {
+        "x": 0,
+        "y": 0
+      },
+      "data": {
+        "label": "gv",
+        "componentId": "code.sql",
+        "properties": {
+          "sql": "SELECT 'BRANCH_NUMS' AS violation, '${ENV:BRANCH_NUMS}' AS detail, 'JSON integer array, e.g. [1001,1002]' AS rule WHERE NOT regexp_full_match('${ENV:BRANCH_NUMS}', '\\[[0-9]+([, ]+[0-9]+)*\\]') UNION ALL SELECT 'SYSTEM_BOOK', '${ENV:SYSTEM_BOOK}', 'digits only' WHERE NOT regexp_full_match('${ENV:SYSTEM_BOOK}', '[0-9]{1,32}') UNION ALL SELECT 'BIZDAY', '${BIZDAY}', 'YYYY-MM-DD' WHERE NOT regexp_full_match('${BIZDAY}', '[0-9]{4}-[0-9]{2}-[0-9]{2}') UNION ALL SELECT 'BATCH_ID', 'iv-' || '${ENV:SYSTEM_BOOK}' || '-inventory_snapshot-' || replace(replace('${datetime}','-',''),'_','T') || 'Z' AS v, 'iv-<book>-inventory_snapshot-YYYYMMDDTHHMMSSZ' WHERE NOT regexp_full_match('iv-' || '${ENV:SYSTEM_BOOK}' || '-inventory_snapshot-' || replace(replace('${datetime}','-',''),'_','T') || 'Z', 'iv-[0-9]+-inventory_snapshot-[0-9]{8}T[0-9]{6}Z')"
+        }
+      }
+    },
+    {
+      "id": "dv",
+      "type": "transform",
+      "position": {
+        "x": 0,
+        "y": 0
+      },
+      "data": {
+        "label": "dv",
+        "componentId": "ctl.die",
+        "properties": {
+          "condition": "has-rows",
+          "message": "EXPECTED_VALUE_MISSING_OR_MALFORMED: 期望值缺席或形状非法（{rows} 条违规，明细见上）⇒ 拒绝采集与写湖。处置：检查该管线调度/触发面的 env 注入"
+        }
+      }
+    },
+    {
+      "id": "shape",
+      "type": "transform",
+      "position": {
+        "x": 0,
+        "y": 0
+      },
+      "data": {
+        "label": "shape",
+        "componentId": "code.sql",
+        "properties": {
+          "sql": "SELECT\n  'iv-' || '${ENV:SYSTEM_BOOK}' || '-inventory_snapshot-' || replace(replace('${datetime}','-',''),'_','T') || 'Z' AS batch_id,\n  '${ENV:SYSTEM_BOOK}' AS system_book,\n  CAST('${BIZDAY}' AS DATE) AS bizday,\n  CAST(o.branch_num AS INTEGER) AS branch_num,\n  CAST(o.branch_code AS VARCHAR) AS branch_code,\n  CAST(o.branch_name AS VARCHAR) AS branch_name,\n  CAST(o.storehouse_num AS BIGINT) AS storehouse_num,\n  CAST(o.storehouse_code AS VARCHAR) AS storehouse_code,\n  CAST(o.storehouse_name AS VARCHAR) AS storehouse_name,\n  CAST(o.item_num AS BIGINT) AS item_num,\n  CAST(o.item_code AS VARCHAR) AS item_code,\n  CAST(o.item_barcode AS VARCHAR) AS item_barcode,\n  CAST(o.item_name AS VARCHAR) AS item_name,\n  CAST(o.item_spec AS VARCHAR) AS item_spec,\n  CAST(o.item_unit AS VARCHAR) AS item_unit,\n  CAST(o.inventory_quantity AS DECIMAL(14,6)) AS inventory_quantity,\n  CAST(o.inventory_assist_quantity AS DECIMAL(14,6)) AS inventory_assist_quantity,\n  CAST(o.inventory_use_quantity AS DECIMAL(14,6)) AS inventory_use_quantity,\n  CAST(o.inventory_money AS DECIMAL(14,2)) AS inventory_money,\n  CAST(o.carry_cost_price AS DECIMAL(18,8)) AS carry_cost_price,\n  CAST(o.sale_price AS DECIMAL(18,8)) AS sale_price,\n  CAST(o.difference_quantity AS DECIMAL(14,6)) AS difference_quantity,\n  CAST(o.difference_money AS DECIMAL(14,2)) AS difference_money\nFROM input o"
+        }
+      }
+    },
+    {
+      "id": "gate",
+      "type": "transform",
+      "position": {
+        "x": 0,
+        "y": 0
+      },
+      "data": {
+        "label": "gate",
+        "componentId": "qa.contract",
+        "properties": {
+          "rules": {
+            "batch_id": "not_null",
+            "system_book": "not_null",
+            "bizday": "not_null",
+            "branch_num": "not_null",
+            "storehouse_num": "not_null",
+            "item_num": "not_null"
+          }
+        }
+      }
+    },
+    {
+      "id": "sink",
+      "type": "sink",
+      "position": {
+        "x": 0,
+        "y": 0
+      },
+      "data": {
+        "label": "sink",
+        "componentId": "snk.minio",
+        "properties": {
+          "bucket": "${ENV:ZOS_BUCKET}",
+          "key": "lemeng/inventory_snapshot/system_book=${ENV:SYSTEM_BOOK}/bizday=${BIZDAY}/all.parquet",
+          "region": "${ENV:ZOS_REGION}",
+          "urlStyle": "path",
+          "useSsl": "true",
+          "format": "parquet",
+          "mode": "overwrite",
+          "compression": "zstd",
+          "connectionRef": "zos"
+        }
+      }
+    },
+    {
+      "id": "die_empty",
+      "type": "control",
+      "position": {
+        "x": 0,
+        "y": 300
+      },
+      "data": {
+        "label": "空集 ⇒ 具名状态（回填日源端无结转记录）",
+        "componentId": "ctl.die",
+        "properties": {
+          "condition": "no-rows",
+          "message": "SOURCE_NOT_PUBLISHED: bizday=${BIZDAY} 源端零行——该营业日没有匹配的结转记录。本管线是**回填通道**：必须经 POST /api/run 显式传 params={BIZDAY:\"YYYY-MM-DD\"} 驱动。参数形状正确仍为零 ⇒ 源端这一天确实没结转：登记进正典 §1.7 台账后跳过，别反复重试。"
+        }
+      }
+    },
+    {
+      "id": "sentinel",
+      "type": "control",
+      "position": {
+        "x": 8060,
+        "y": 0
+      },
+      "data": {
+        "label": "容量哨兵",
+        "componentId": "ctl.die",
+        "properties": {
+          "condition": "has-rows",
+          "message": "lemeng inventory_snapshot 容量截断：哨兵页（第 301 页）仍有数据（{rows} 行）⇒ 单日行数击穿 300×200=60000 行上限（#1318）。处置：提高 drv 的页数并同步哨兵页号，重生成后端再跑。"
+        }
+      }
+    },
+    {
+      "id": "drv",
+      "type": "transform",
+      "position": {
+        "x": 0,
+        "y": 0
+      },
+      "data": {
+        "label": "drv",
+        "componentId": "code.sql",
+        "properties": {
+          "pureSql": true,
+          "sql": "CREATE OR REPLACE TABLE \"drv\" AS\nWITH pg AS (\n  SELECT CAST(x AS INTEGER) AS page_no FROM generate_series(1, 301) t(x)\n)\nSELECT CAST('${BIZDAY}' AS DATE) AS bizday,\n       CAST('${ENV:SYSTEM_BOOK}' AS INTEGER) AS system_book,\n       strftime(CURRENT_TIMESTAMP AT TIME ZONE 'UTC', '%Y%m%dT%H%M%SZ') AS batch_id,\n       CAST(page_no AS INTEGER) AS page_number,\n       '301' AS n_pages\nFROM pg ORDER BY page_no"
+        }
+      }
+    },
+    {
+      "id": "fe",
+      "type": "transform",
+      "position": {
+        "x": 0,
+        "y": 0
+      },
+      "data": {
+        "label": "fe",
+        "componentId": "ctl.foreach",
+        "properties": {
+          "pipelineRef": "${workspace}/pipelines/lemeng.inventory.snapshot.page.json",
+          "itemKey": "page_number",
+          "concurrency": 8
+        }
+      }
+    },
+    {
+      "id": "an",
+      "type": "transform",
+      "position": {
+        "x": 0,
+        "y": 0
+      },
+      "data": {
+        "label": "an",
+        "componentId": "ctl.anchor",
+        "properties": {}
+      }
+    },
+    {
+      "id": "asm",
+      "type": "transform",
+      "position": {
+        "x": 0,
+        "y": 0
+      },
+      "data": {
+        "label": "asm",
+        "componentId": "code.sql",
+        "properties": {
+          "sql": "SELECT CAST(cur.batch_id AS VARCHAR) AS batch_id,\n       CAST(cur.system_book AS INTEGER) AS system_book,\n       CAST(cur.bizday AS DATE) AS bizday,\n       CAST(cur.branch_num AS INTEGER) AS branch_num,\n       CAST(cur.branch_code AS VARCHAR) AS branch_code,\n       CAST(cur.branch_name AS VARCHAR) AS branch_name,\n       CAST(cur.storehouse_num AS BIGINT) AS storehouse_num,\n       CAST(cur.storehouse_code AS VARCHAR) AS storehouse_code,\n       CAST(cur.storehouse_name AS VARCHAR) AS storehouse_name,\n       CAST(cur.item_num AS BIGINT) AS item_num,\n       CAST(cur.item_code AS VARCHAR) AS item_code,\n       CAST(cur.item_barcode AS VARCHAR) AS item_barcode,\n       CAST(cur.item_name AS VARCHAR) AS item_name,\n       CAST(cur.item_spec AS VARCHAR) AS item_spec,\n       CAST(cur.item_unit AS VARCHAR) AS item_unit,\n       CAST(cur.inventory_quantity AS DECIMAL(14,6)) AS inventory_quantity,\n       CAST(cur.inventory_assist_quantity AS DECIMAL(14,6)) AS inventory_assist_quantity,\n       CAST(cur.inventory_use_quantity AS DECIMAL(14,6)) AS inventory_use_quantity,\n       CAST(cur.inventory_money AS DECIMAL(14,2)) AS inventory_money,\n       CAST(cur.carry_cost_price AS DECIMAL(18,8)) AS carry_cost_price,\n       CAST(cur.sale_price AS DECIMAL(18,8)) AS sale_price,\n       CAST(cur.difference_quantity AS DECIMAL(14,6)) AS difference_quantity,\n       CAST(cur.difference_money AS DECIMAL(14,2)) AS difference_money,\n       CAST(cur.page_num AS INTEGER) AS page_num,\n       CAST(cur.page_rows AS INTEGER) AS page_rows,\n       CAST(cur.is_placeholder AS INTEGER) AS is_placeholder,\n       CAST(cur.file_page AS INTEGER) AS file_page\nFROM (\n  SELECT *, CAST(regexp_extract(filename, 'chunk-([0-9]{8}T[0-9]{6}Z)-p([0-9]+)\\.parquet$', 2) AS INTEGER) AS file_page,\n            regexp_extract(filename, 'chunk-([0-9]{8}T[0-9]{6}Z)-p([0-9]+)\\.parquet$', 1) AS file_batch\n  FROM read_parquet('/workspace/.duckle-stage/inventory_page/*.parquet', filename = true)\n) cur\nCROSS JOIN (SELECT any_value(batch_id) AS batch_id, max(CAST(n_pages AS INTEGER)) AS n_pages FROM \"drv\") e\nWHERE cur.file_batch = e.batch_id\n"
+        }
+      }
+    },
+    {
+      "id": "gpage",
+      "type": "transform",
+      "position": {
+        "x": 0,
+        "y": 0
+      },
+      "data": {
+        "label": "gpage",
+        "componentId": "code.sql",
+        "properties": {
+          "sql": "SELECT 'pages_missing' AS violation,\n       CAST(count(DISTINCT file_page) AS VARCHAR) AS detail,\n       CAST(any_value((SELECT max(CAST(n_pages AS INTEGER)) FROM \"drv\")) AS VARCHAR) AS expected\nFROM input\nHAVING count(DISTINCT file_page) <> (SELECT max(CAST(n_pages AS INTEGER)) FROM \"drv\")"
+        }
+      }
+    },
+    {
+      "id": "dpages",
+      "type": "transform",
+      "position": {
+        "x": 0,
+        "y": 0
+      },
+      "data": {
+        "label": "dpages",
+        "componentId": "ctl.die",
+        "properties": {
+          "condition": "has-rows",
+          "message": "页未到齐（{rows} 条违规，明细见上）：data pages 1..300 + 哨兵页 301。detail=实到页数 / expected=应有页数"
+        }
+      }
+    },
+    {
+      "id": "rows",
+      "type": "transform",
+      "position": {
+        "x": 0,
+        "y": 0
+      },
+      "data": {
+        "label": "rows",
+        "componentId": "code.sql",
+        "properties": {
+          "sql": "SELECT * FROM input WHERE is_placeholder = 0 AND page_num <> 301"
+        }
+      }
+    },
+    {
+      "id": "gsent",
+      "type": "transform",
+      "position": {
+        "x": 0,
+        "y": 0
+      },
+      "data": {
+        "label": "gsent",
+        "componentId": "code.sql",
+        "properties": {
+          "sql": "SELECT * FROM input WHERE page_num = 301 AND page_rows > 0"
+        }
+      }
+    }
+  ],
+  "edges": [
+    {
+      "id": "e1",
+      "source": "w0",
+      "target": "g0",
+      "sourceHandle": "main",
+      "targetHandle": "main",
+      "data": {
+        "connectionType": "main"
+      }
+    },
+    {
+      "id": "e2",
+      "source": "g0",
+      "target": "g1",
+      "sourceHandle": "main",
+      "targetHandle": "main",
+      "data": {
+        "connectionType": "main"
+      }
+    },
+    {
+      "id": "e3",
+      "source": "g1",
+      "target": "g2",
+      "sourceHandle": "main",
+      "targetHandle": "main",
+      "data": {
+        "connectionType": "main"
+      }
+    },
+    {
+      "id": "e4",
+      "source": "g2",
+      "target": "d0",
+      "sourceHandle": "main",
+      "targetHandle": "main",
+      "data": {
+        "connectionType": "main"
+      }
+    },
+    {
+      "id": "e5",
+      "source": "d0",
+      "target": "g3",
+      "sourceHandle": "main",
+      "targetHandle": "main",
+      "data": {
+        "connectionType": "main"
+      }
+    },
+    {
+      "id": "e6",
+      "source": "g3",
+      "target": "d1",
+      "sourceHandle": "main",
+      "targetHandle": "main",
+      "data": {
+        "connectionType": "main"
+      }
+    },
+    {
+      "id": "e7",
+      "source": "d1",
+      "target": "gv",
+      "sourceHandle": "main",
+      "targetHandle": "main",
+      "data": {
+        "connectionType": "main"
+      }
+    },
+    {
+      "id": "e8",
+      "source": "gv",
+      "target": "dv",
+      "sourceHandle": "main",
+      "targetHandle": "main",
+      "data": {
+        "connectionType": "main"
+      }
+    },
+    {
+      "id": "e9",
+      "source": "dv",
+      "target": "drv",
+      "sourceHandle": "main",
+      "targetHandle": "main",
+      "data": {
+        "connectionType": "main"
+      }
+    },
+    {
+      "id": "e10",
+      "source": "drv",
+      "target": "fe",
+      "sourceHandle": "main",
+      "targetHandle": "main",
+      "data": {
+        "connectionType": "main"
+      }
+    },
+    {
+      "id": "e11",
+      "source": "fe",
+      "target": "an",
+      "sourceHandle": "iterate",
+      "targetHandle": "main",
+      "data": {
+        "connectionType": "iterate"
+      }
+    },
+    {
+      "id": "e12",
+      "source": "asm",
+      "target": "gpage",
+      "sourceHandle": "main",
+      "targetHandle": "main",
+      "data": {
+        "connectionType": "main"
+      }
+    },
+    {
+      "id": "e13",
+      "source": "gpage",
+      "target": "dpages",
+      "sourceHandle": "main",
+      "targetHandle": "main",
+      "data": {
+        "connectionType": "main"
+      }
+    },
+    {
+      "id": "e14",
+      "source": "asm",
+      "target": "rows",
+      "sourceHandle": "main",
+      "targetHandle": "main",
+      "data": {
+        "connectionType": "main"
+      }
+    },
+    {
+      "id": "e15",
+      "source": "rows",
+      "target": "die_empty",
+      "sourceHandle": "main",
+      "targetHandle": "main",
+      "data": {
+        "connectionType": "main"
+      }
+    },
+    {
+      "id": "e17",
+      "source": "rows",
+      "target": "shape",
+      "sourceHandle": "main",
+      "targetHandle": "main",
+      "data": {
+        "connectionType": "main"
+      }
+    },
+    {
+      "id": "e18",
+      "source": "shape",
+      "target": "gate",
+      "sourceHandle": "main",
+      "targetHandle": "main",
+      "data": {
+        "connectionType": "main"
+      }
+    },
+    {
+      "id": "e19",
+      "source": "gate",
+      "target": "sink",
+      "sourceHandle": "main",
+      "targetHandle": "main",
+      "data": {
+        "connectionType": "main"
+      }
+    },
+    {
+      "id": "e20",
+      "source": "asm",
+      "target": "gsent",
+      "sourceHandle": "main",
+      "targetHandle": "main",
+      "data": {
+        "connectionType": "main"
+      }
+    },
+    {
+      "id": "e21",
+      "source": "gsent",
+      "target": "sentinel",
+      "sourceHandle": "main",
+      "targetHandle": "main",
+      "data": {
+        "connectionType": "main"
+      }
+    }
+  ]
+}
