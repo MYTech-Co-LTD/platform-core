@@ -11,9 +11,7 @@ import { ManifestSchema } from './manifest'
  *  ① manifest.yaml 可被 YAML 解析且过 ManifestSchema
  *  ② 模块 id 全局唯一（modules/ 与 scaffolds/customer/ 合并看，B4 命名空间）
  *  ③ frontend.console[].entry / migrations.dir 指向的文件/目录存在（相对 manifest 所在目录）
- *  ④ bindings 键 ∈ {postgres, novu, cube}
  */
-export const BINDING_KEYS = ['postgres', 'novu', 'cube'] as const
 
 export interface CheckResult {
   /** 空数组 = 全部通过（CLI exit 0）；每条已含相对路径与错误描述 */
@@ -126,13 +124,6 @@ export async function runChecks(rootDir: string): Promise<CheckResult> {
       const dir = join(dirname(file), m.migrations.dir)
       if (!(await isDir(dir))) {
         errors.push(`${relPath}: migrations.dir 指向的目录不存在: ${m.migrations.dir}`)
-      }
-    }
-
-    // ④ bindings 键白名单
-    for (const key of Object.keys(m.bindings ?? {})) {
-      if (!(BINDING_KEYS as readonly string[]).includes(key)) {
-        errors.push(`${relPath}: bindings 键 "${key}" 不在白名单 {postgres, novu, cube}`)
       }
     }
   }

@@ -56,12 +56,11 @@ globs 是 `['apps/*', 'packages/*', 'modules/*', 'modules/*/*']`——`modules/<
 | `frontend.admin[]` | 否 | 同上 | 管理组子页；path **必须** `/console/admin/` 开头 | schema + 门禁（entry 文件存在） |
 | `frontend.userApp` | 否 | `{mount,dist}` | 独立前端应用（C 端/移动端）；`dist` 相对模块目录 | schema |
 | `migrations.dir` | 否 | string | 迁移目录，缺省 `migrations`；目录不存在静默跳过 | schema + 门禁（目录存在） |
-| `bindings` | 否 | `Record<string,'required'\|'optional'>` | **预留·无消费者**：仅 `check-manifests` 查键白名单 `{postgres, novu, cube}`，**无任何运行时消费——声明了不会有任何效果** | 门禁（键白名单） |
-| `notifications.dir` | 否 | string | **预留·无消费者**：schema 接受，当前无任何读取方——声明了不会有任何效果 | schema |
-| `config.schema` | 否 | string | **预留·无消费者**：同上 | schema |
+| `notifications.events[]` | 否 | `{key,title,scope,payload,recipients,defaults}[]` | 通知事件声明；**先声明再发**（未声明的事件 `ctx.notify.emit` 不投递） | schema + 事件目录 |
 
-> 上面三个「预留·无消费者」字段是**已知债**（清理与否另议）。如实标注是为了防止接入者
-> 以为声明了就有能力——`docs/module-protocol.md` 开篇记的正是「一个字段死于零文档」的教训。
+> 「预留·无消费者」字段已清理（#126，2026-11-03）：`notifications.dir` / `config.schema` /
+> `bindings` 三个只有声明、没有消费者的字段从 schema 移除——`ManifestSchema` 是 strict，
+> 再写它们会**装载失败**（这正是 fail-fast 口径：无能力就不该有声明面）。
 >
 > ⚠️ 上表「语义要点」列是**要求**，不等于「机器都查了」。照 schema 逐字段读出来的一处差异：
 > `frontend.admin[].scope` 不在本模块 `permissions[].code` 内即**装载失败**（schema 拦），
@@ -407,9 +406,8 @@ const results = await probeAnonymous(mountedApp) // 期望每条都是 401
 
 ## 已知边界
 
-- **manifest 三个字段是预留（无消费者）**：`notifications.dir`、`config.schema`（schema 接受、
-  无人读取）、`bindings`（仅 `check-manifests` 查键白名单，无运行时消费）。声明它们**不会有
-  任何效果**——见 §2 表。清理与否另议。
+- **manifest 预留字段已清理（#126）**：`notifications.dir` / `config.schema` / `bindings`
+  已从 schema 移除；需要 reintroduce 时先有真实消费者与案例（无案例不立标准）。
 - **`frontend.admin` 本期零真实消费者**：协议与联动逻辑已交付（fixture 级验证覆盖），但还没有
   真实模块用它。第一个真实模块接入时要补**浏览器级**验收（沿 2026-09-20 spec 的待销账）。
 - **平铺菜单在模块多了会破**：侧栏模块条目是平铺的（协议不支持嵌套），行业经验约 7±2 项。

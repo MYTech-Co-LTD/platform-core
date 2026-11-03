@@ -99,9 +99,7 @@ export interface ModuleManifest {
      *  前端按 registry∩config∩scope 自判（与 console 三重过滤同构）。 */
     admin?: Array<{ path: string; title: string; icon?: string; scope: string; entry: string }> }
   migrations?: { dir: string }
-  bindings?: Record<string, 'required' | 'optional'>
   notifications?: { events: NotificationEventDecl[] }
-  config?: { schema: string }
 }
 
 // B4：命名空间三同之一——模块 id 即权限命名空间，小写 kebab-case。
@@ -209,9 +207,7 @@ const ManifestObject = z.object({
     })).optional(),
   }).optional(),
   migrations: z.object({ dir: z.string() }).optional(),
-  bindings: z.record(z.string(), z.enum(['required', 'optional'])).optional(),
   notifications: z.object({ events: z.array(EventDeclSchema) }).strict().optional(),
-  config: z.object({ schema: z.string() }).optional(),
 // .strict()（issue #708，fix 分项）：未知键 ⇒ schema 拒 ⇒ 装载失败 / check-manifests 红。
 // 没 strict 时 Zod **静默剥离**未知键——「写了等于没写、且不报错」（曾让 dataDependencies
 // 在落地前被写成静默消失的声明面，见 module-protocol.md 同名节实施状态警告）。fail-fast

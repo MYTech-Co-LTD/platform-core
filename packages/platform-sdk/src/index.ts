@@ -3,7 +3,7 @@ export type { ModuleManifest, ModuleManifestInferred } from './manifest'
 export type {
   NotificationEventDecl, EventFieldDecl, EventRecipientDecl, EventPayloadType,
 } from './manifest'
-export { BINDING_KEYS, runChecks } from './checks'
+export { runChecks } from './checks'
 export type { CheckResult } from './checks'
 export { validatePayload } from './events'
 export { DECLARED_GATE_APPROVED, defineModule, requireScope, declaredScopeGate, LinkError } from './module'

@@ -22,7 +22,6 @@ const validManifest = {
     ],
   },
   migrations: { dir: 'migrations' },
-  bindings: { postgres: 'required', novu: 'optional', cube: 'optional' },
   notifications: {
     events: [{
       key: 'demo.note.created',
@@ -37,7 +36,6 @@ const validManifest = {
       defaults: { recipient: 'author', template: 'demo_note_created', channels: ['inapp_default'] },
     }],
   },
-  config: { schema: 'config.schema.json' },
 }
 
 describe('ManifestSchema', () => {
@@ -64,7 +62,7 @@ describe('ManifestSchema', () => {
     }).success).toBe(true)
   })
 
-  it('合法全量样例 parse 通过（api/frontend.console+userApp/migrations/bindings/notifications/config 全字段）', () => {
+  it('合法全量样例 parse 通过（api/frontend.console+userApp/migrations/notifications 全字段）', () => {
     const r = ManifestSchema.safeParse(validManifest)
     expect(r.success).toBe(true)
     if (!r.success) return
@@ -83,9 +81,7 @@ describe('ManifestSchema', () => {
     })
     expect(r.data.frontend?.console?.[1].icon).toBeUndefined()
     expect(r.data.migrations).toEqual({ dir: 'migrations' })
-    expect(r.data.bindings).toEqual({ postgres: 'required', novu: 'optional', cube: 'optional' })
     expect(r.data.notifications?.events?.[0]?.key).toBe('demo.note.created')
-    expect(r.data.config).toEqual({ schema: 'config.schema.json' })
   })
 
   it('permissions[].platformOnly：可选布尔；非布尔 / 拼错字段名 ⇒ 校验失败', () => {
@@ -121,7 +117,6 @@ describe('ManifestSchema', () => {
     expect(r.data.api).toBeUndefined()
     expect(r.data.frontend).toBeUndefined()
     expect(r.data.migrations).toBeUndefined()
-    expect(r.data.bindings).toBeUndefined()
   })
 
   it('id 不匹配 ^[a-z][a-z0-9-]*$ 报错（如 id: Demo）', () => {
@@ -175,13 +170,6 @@ describe('ManifestSchema', () => {
     expect(r.success).toBe(false)
     if (r.success) return
     expect(r.error.issues.some(i => i.path[0] === 'permissions')).toBe(true)
-  })
-
-  it('bindings 值越界报错（required/optional 之外）', () => {
-    const r = ManifestSchema.safeParse({ ...validManifest, bindings: { postgres: 'always' } })
-    expect(r.success).toBe(false)
-    if (r.success) return
-    expect(r.error.issues.some(i => i.path[0] === 'bindings')).toBe(true)
   })
 
   it('console 条目缺 scope/entry 报错', () => {

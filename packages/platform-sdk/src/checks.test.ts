@@ -5,7 +5,7 @@ import { describe, expect, it } from 'vitest'
 import { runChecks } from './checks'
 
 // Task 8（B4/B5）CLI 层：scripts/check-manifests 的核心逻辑是 runChecks，
-// 这里用临时 fixtures 目录直接测（文件存在性/全局唯一性/bindings 白名单都是仓库级检查，schema 管不到）。
+// 这里用临时 fixtures 目录直接测（文件存在性/全局唯一性都是仓库级检查，schema 管不到）。
 
 // 注意 YAML 里 >= 开头的值必须加引号（> 在值首是块标量指示符）。
 const validYaml = [
@@ -24,8 +24,6 @@ const validYaml = [
   '      entry: console/index.js',
   'migrations:',
   '  dir: migrations',
-  'bindings:',
-  '  postgres: required',
 ].join('\n')
 
 async function withRoot(fn: (root: string) => Promise<void>): Promise<void> {
@@ -132,17 +130,6 @@ describe('runChecks（check-manifests CLI 核心）', () => {
     })
   })
 
-  it('bindings 键越界（非 postgres/novu/cube）→ 错误', async () => {
-    await withRoot(async root => {
-      await write(root, 'modules/demo/manifest.yaml', validYaml + '\n  redis: required')
-      await write(root, 'modules/demo/console/index.js')
-      await write(root, 'modules/demo/migrations/')
-      const { errors } = await runChecks(root)
-      expect(errors).toHaveLength(1)
-      expect(errors[0]).toContain('redis')
-    })
-  })
-
   it('manifest.storage.kind 写错 ⇒ 报错（新字段自动走既有 schema 检查，门禁零改动）', async () => {
     await withRoot(async (root) => {
       await write(root, 'modules/storagemod/manifest.yaml', [
@@ -180,7 +167,7 @@ describe('runChecks（check-manifests CLI 核心）', () => {
   // 模块管理页协议（2026-09-20 spec）：admin entry 存在性与 console entry 同规
   it('frontend.admin[].entry 指向的文件不存在 → 报错指明；存在则零错', async () => {
     await withRoot(async root => {
-      // admin 块必须内插进 frontend（validYaml 末尾是 bindings 块，尾部追加会挂错层级）
+      // admin 块必须内插进 frontend（validYaml 末尾是 migrations 块，尾部追加会挂错层级）
       const withAdmin = validYaml.replace(
         '      entry: console/index.js',
         [
