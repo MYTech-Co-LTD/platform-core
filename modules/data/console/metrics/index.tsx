@@ -11,7 +11,7 @@
 // 入参会以 400 `TARGET_NOT_SUPPORTED` 被**显式拒绝**（不静默丢弃）。所以这里也不摆一个
 // 按了会报错的输入框——见 README「L2 的已知边界」。
 import { useEffect, useMemo, useState } from 'react'
-import { Button, Card, Drawer, Input, Modal, Popconfirm, Select, Space, Switch, Table, Tag, Timeline, Typography, message } from 'antd'
+import { Button, Card, Drawer, Input, Modal, Popconfirm, Segmented, Select, Space, Switch, Table, Tag, Timeline, Typography, message } from 'antd'
 import { apiGet, apiSend, messageOf } from '../lib/api'
 
 interface MetricRow {
@@ -88,6 +88,9 @@ const dimsOf = (row: MetricRow | undefined): string[] =>
 
 export default function MetricsPage() {
   const [rows, setRows] = useState<MetricRow[]>([])
+  // 列表工具条（UX 2026-11-03）：指标表列多、行多，搜索与来源筛选是第一需要。
+  const [query, setQuery] = useState('')
+  const [sourceFilter, setSourceFilter] = useState<'all' | 'l1' | 'l2'>('all')
   const [draft, setDraft] = useState<Draft | null>(null)
   // #489：变更历史抽屉。historyId=null 即关闭（不用额外一个 open 布尔量，避免两处状态打架）
   const [historyId, setHistoryId] = useState<string | null>(null)
@@ -196,10 +199,19 @@ export default function MetricsPage() {
     catch (e) { messageApi.error(messageOf(e)) }
   }
 
+  const q = query.trim().toLowerCase()
+  const visibleRows = rows.filter((r) => {
+    if (sourceFilter !== 'all' && r.source !== sourceFilter) return false
+    if (q === '') return true
+    return r.id.toLowerCase().includes(q)
+      || r.title.toLowerCase().includes(q)
+      || (r.description ?? '').toLowerCase().includes(q)
+  })
+
   return (
     <Space direction="vertical" style={{ width: '100%' }} size="middle">
       {ctx}
-      <Space>
+      <Space wrap>
         <Button type="primary" onClick={openCreate} disabled={l1Rows.length === 0}>新建派生指标</Button>
         <Button onClick={() => { if (usageDays === null) openUsage(30); else openUsage(usageDays) }}>
           使用统计
@@ -207,6 +219,25 @@ export default function MetricsPage() {
         <Typography.Text type="secondary">
           派生指标只能**裁剪/别名/过滤**平台已声明的指标；口径本体改不了（要改口径请改 dbt 声明）。
         </Typography.Text>
+      </Space>
+
+      <Space wrap size="small" style={{ width: '100%', justifyContent: 'space-between' }}>
+        <Input
+          allowClear
+          value={query}
+          onChange={(e) => setQuery(e.target.value)}
+          placeholder="搜索指标 id / 标题 / 说明"
+          style={{ width: 300 }}
+        />
+        <Segmented
+          value={sourceFilter}
+          onChange={(v) => setSourceFilter(v as typeof sourceFilter)}
+          options={[
+            { label: '全部', value: 'all' },
+            { label: '平台指标', value: 'l1' },
+            { label: '派生指标', value: 'l2' },
+          ]}
+        />
       </Space>
 
       {draft !== null && (
@@ -279,40 +310,50 @@ export default function MetricsPage() {
         </Card>
       )}
 
-      <Table rowKey="id" dataSource={rows} pagination={false} columns={[
-        { title: 'id', dataIndex: 'id' },
-        { title: '标题', dataIndex: 'title' },
-        { title: '说明', dataIndex: 'description' },
+      <Table
+        rowKey="id"
+        dataSource={visibleRows}
+        pagination={false}
+        scroll={{ x: 1080 }}
+        locale={{
+          emptyText: rows.length === 0
+            ? '还没有指标。平台指标随数据面接入自动出现；本租户可基于平台指标新建派生指标。'
+            : '没有匹配的指标，试试清空搜索或切换筛选',
+        }}
+        columns={[
+        { title: 'id', dataIndex: 'id', width: 180, ellipsis: { showTitle: true } },
+        { title: '标题', dataIndex: 'title', ellipsis: { showTitle: true } },
+        { title: '说明', dataIndex: 'description', ellipsis: { showTitle: true } },
         // 来源：L1 = 平台词表（只读，改它要改 dbt 声明）；L2 = 本租户派生（可改可删）
-        { title: '来源', dataIndex: 'source', render: (v: string) =>
+        { title: '来源', dataIndex: 'source', width: 110, render: (v: string) =>
             v === 'l1' ? <Tag color="blue">平台（只读）</Tag> : <Tag color="green">本租户派生</Tag> },
-        { title: '所需 scope', dataIndex: 'requiredScope', render: (v: string | null) => v ?? '不限' },
+        { title: '所需 scope', dataIndex: 'requiredScope', width: 100, render: (v: string | null) => v ?? '不限' },
         // 主体列**显示出来**（只读）：它是主体钉死的依据，管理员必须能一眼看出这个指标按哪列隔离。
-        { title: '主体列', dataIndex: 'subjectColumn' },
+        { title: '主体列', dataIndex: 'subjectColumn', width: 80 },
         // #489 两列：谁最后动的、动过几次。L1 行**不显示空白**——空白会被读成「这里缺数据」，
         // 而真相是「平台口径的变更史在 git 里」（见 README 的边界一节）。
-        { title: '最后操作人', dataIndex: 'updatedBy', render: (v: string | null, r: MetricRow) =>
+        { title: '最后操作人', dataIndex: 'updatedBy', ellipsis: { showTitle: true }, render: (v: string | null, r: MetricRow) =>
             r.source === 'l1'
               ? <Typography.Text type="secondary">平台物化（追溯走 git）</Typography.Text>
               : (v ?? '—') },
-        { title: '版本', dataIndex: 'version', render: (v: number, r: MetricRow) =>
+        { title: '版本', dataIndex: 'version', width: 60, render: (v: number, r: MetricRow) =>
             r.source === 'l1' ? <Typography.Text type="secondary">—</Typography.Text> : `v${v}` },
-        { title: '操作', render: (_: unknown, r: MetricRow) => (
+        { title: '操作', width: 260, render: (_: unknown, r: MetricRow) => (
             r.source === 'l1'
               ? <Typography.Text type="secondary">平台词表经 API 只读</Typography.Text>
               : (
                 <Space>
-                  <Button size="small" onClick={() => openHistory(r.id)}>变更历史</Button>
-                  <Button size="small" onClick={() => openEdit(r)}>编辑</Button>
+                  <Button size="small" type="text" onClick={() => openHistory(r.id)}>变更历史</Button>
+                  <Button size="small" type="text" onClick={() => openEdit(r)}>编辑</Button>
                   {/* 元数据编辑只对 L2 开放（L1 平台口径，租户不得注解 ⇒ 后端 404，别放出假按钮） */}
                   {r.source === 'l2' && (
-                    <Button size="small" onClick={() => openMeta(r)}>元数据</Button>
+                    <Button size="small" type="text" onClick={() => openMeta(r)}>元数据</Button>
                   )}
                   {/* okText 显式写中文：Popconfirm 的默认 okText 取**locale**（未配 zh_CN 时是 "OK"），
                       而删除是不可逆动作——确认按钮上的字应当自己掌握，不随宿主是否配了 locale 漂。 */}
                   <Popconfirm title={`删除派生指标 ${r.id}？`} okText="确认删除" cancelText="取消"
                               onConfirm={() => remove(r.id)}>
-                    <Button danger size="small">删除</Button>
+                    <Button type="text" danger size="small">删除</Button>
                   </Popconfirm>
                 </Space>
                 )) },
