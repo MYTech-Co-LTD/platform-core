@@ -120,6 +120,9 @@ canEditAsset(row, requester, acl):
 ### 4.4 所有者生命周期（补业界必备项）
 
 - **转移**：owner 可把自己资产转给他人（写 ACL + 审计）；管理员可代转。
+  **受让人校验**（#1335，与部门门同一 fail-closed 口径）：目标用户必须真实可用——
+  Casdoor `inactive`（查无此人/停用）⇒ 400 `UNKNOWN_OWNER` / `UNKNOWN_USER`（ACL 点名同理）；
+  `unknown`（未注入 resolver / 上游不可达）⇒ 放行（可用性优先，且不冒充停用）。
 - **离职/停用**：owner 不再活跃时资产不自动消失——管理员可接管（已有 `:manage`），
   控制台列出「无活跃所有者的资产」供清理。**不做自动转移**（谁接管是需要人判断的事）。
   实现（#1333）：宿主经 `ctx.userStatus` 注入 Casdoor 用户态只读查询（不暴露客户端），
