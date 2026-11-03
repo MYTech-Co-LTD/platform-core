@@ -1,0 +1,125 @@
+{
+  "$schema": "./_schema.schema.json",
+  "contractVersion": 2,
+  "schemaVersion": 1,
+  "consumerVersion": 1,
+  "domain": "lemeng",
+  "table": "customer_analysis",
+  "owner": "data-platform",
+  "description": "乐檬**时段分析**（nhsoft.report.ai.customeranalysis.find；AMAREPORT，2026-11-03 接源）。【行粒度】一行 = 账套×bizday×门店×时段切片（interval_minutes=60）。【窗口】bizday_start=bizday_end 单日；含首尾 ≤31 天、branch_nums 必填 ≤100 家、【维度】summary_types=[branch,bizday]。【用途】分时段客流/销售，支撑排班与时段经营分析。【首发锚】3120 店 1 / 2026-10-28 / 60 分钟粒度 = 14 个非空时段行。",
+  "layout": {
+    "prefix": "lemeng/customer_analysis",
+    "partitionStyle": "hive",
+    "partitionBy": [
+      "system_book",
+      "bizday"
+    ],
+    "fileName": "all.parquet"
+  },
+  "batch": {
+    "markerColumn": "batch_id",
+    "type": "varchar",
+    "unique": false,
+    "note": "= 父管线每轮批次号（UTC 时间戳串）；同 bizday 分区覆盖写。"
+  },
+  "columns": [
+    {
+      "name": "batch_id",
+      "type": "varchar",
+      "nullable": false,
+      "description": "采集批次（父管线 drv 的 batch_id）",
+      "expr": "CAST(batch_id AS VARCHAR)"
+    },
+    {
+      "name": "system_book",
+      "type": "integer",
+      "nullable": false,
+      "description": "账套；分区键",
+      "expr": "CAST(system_book AS INTEGER)"
+    },
+    {
+      "name": "bizday",
+      "type": "date",
+      "nullable": false,
+      "description": "营业日；分区键",
+      "expr": "CAST(bizday AS DATE)"
+    },
+    {
+      "name": "branch_num",
+      "type": "integer",
+      "nullable": false,
+      "description": "门店编号",
+      "expr": "CAST(branch_num AS INTEGER)"
+    },
+    {
+      "name": "branch_code",
+      "type": "varchar",
+      "nullable": true,
+      "description": "门店编码",
+      "expr": "CAST(branch_code AS VARCHAR)"
+    },
+    {
+      "name": "branch_name",
+      "type": "varchar",
+      "nullable": true,
+      "description": "门店名称",
+      "expr": "CAST(branch_name AS VARCHAR)"
+    },
+    {
+      "name": "time_period",
+      "type": "varchar",
+      "nullable": false,
+      "description": "时段切片（HH:MM-HH:MM，60 分钟粒度）",
+      "expr": "CAST(time_period AS VARCHAR)"
+    },
+    {
+      "name": "customer_nums",
+      "type": "bigint",
+      "nullable": true,
+      "description": "客数",
+      "expr": "CAST(customer_nums AS BIGINT)"
+    },
+    {
+      "name": "customer_vip_nums",
+      "type": "bigint",
+      "nullable": true,
+      "description": "会员客数",
+      "expr": "CAST(customer_vip_nums AS BIGINT)"
+    },
+    {
+      "name": "customer_vip_money",
+      "type": "decimal(14,2)",
+      "nullable": true,
+      "description": "会员消费金额",
+      "expr": "CAST(customer_vip_money AS DECIMAL(14,2))"
+    },
+    {
+      "name": "receive_money",
+      "type": "decimal(14,2)",
+      "nullable": true,
+      "description": "实收金额",
+      "expr": "CAST(receive_money AS DECIMAL(14,2))"
+    },
+    {
+      "name": "item_sale_cost",
+      "type": "decimal(14,2)",
+      "nullable": true,
+      "description": "商品销售成本",
+      "expr": "CAST(item_sale_cost AS DECIMAL(14,2))"
+    },
+    {
+      "name": "item_sale_profit",
+      "type": "decimal(14,2)",
+      "nullable": true,
+      "description": "商品销售毛利",
+      "expr": "CAST(item_sale_profit AS DECIMAL(14,2))"
+    },
+    {
+      "name": "computed_at",
+      "type": "timestamptz",
+      "nullable": false,
+      "description": "计算时间",
+      "expr": "CAST(computed_at AS TIMESTAMPTZ)"
+    }
+  ]
+}
