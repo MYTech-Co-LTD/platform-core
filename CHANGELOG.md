@@ -11,6 +11,10 @@
 
 ## [Unreleased]
 
+## [0.251.0](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.250.0...v0.251.0) - 2026-11-03
+- 【新增】data: 创建报表独立成码 data:create（#1330） ([#1331](https://github.com/MYTech-Co-LTD/platform-core/pull/1331), [c6eddea](https://github.com/MYTech-Co-LTD/platform-core/commit/c6eddea9a223061a1caf4ec6fd23bbdf6660acb0))
+
+
 ## [0.250.0](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.249.0...v0.250.0) - 2026-11-03
 - 【新增】data: console 按服务端 canEdit 显示资产操作（#1327） ([#1328](https://github.com/MYTech-Co-LTD/platform-core/pull/1328), [bcce129](https://github.com/MYTech-Co-LTD/platform-core/commit/bcce129aa0dc27e8cd3d728b5552b0e51ea36a19))
 
