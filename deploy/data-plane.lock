@@ -1,4 +1,4 @@
-sha256-of-rest e0189e011ae92dadc5d0e5f7185d8898322676e20a3f10682101f85f51011f90
+sha256-of-rest 92c43c23e8216a8c7666a5f7533e59e1a4e83a8a9d07c857515f1fd939583506
 08938c10c6b4a688c8afda6cd7d1ad3dbf2c20f83cf8c4e7023055ad34eddc70 contracts/README.md ${REPO}/contracts/README.md 0644
 fcc8189e1012d5fbb8e2505025bed637dd01c7b4465ab86125d3eaa7f330eff3 contracts/common/_schema.schema.json ${REPO}/contracts/common/_schema.schema.json 0644
 1730119518c3371f3c2ff3492f4c15cd731688047c6d40805ec4d2c65892f3ff contracts/common/_template.contract.json ${REPO}/contracts/common/_template.contract.json 0644
@@ -9,6 +9,7 @@ d3f3215ea9cc6a966155be4a80639a71ef6253e07fb432d5c90f9fdface7667d contracts/commo
 341db4e3ba1cc784fd90fc965b0d574ca136b5731defdca0d868a6299d387b6e contracts/common/lemeng.client.json ${REPO}/contracts/common/lemeng.client.json 0644
 1da6ad1d649894665f38e86c5bfd6d300fda25bb845e4d6524fc07b28f28bb6b contracts/common/lemeng.client_expense.json ${REPO}/contracts/common/lemeng.client_expense.json 0644
 92e93f2930f6ea266a9ddadc16e2f8b11b71191d47f2e2704600d2f7f1ffda1f contracts/common/lemeng.customer_analysis.json ${REPO}/contracts/common/lemeng.customer_analysis.json 0644
+33f82af66fbaeb28a2bf4d6e1453a95ba0158b261316f704accfc3e39be7db9e contracts/common/lemeng.inventory_movement.json ${REPO}/contracts/common/lemeng.inventory_movement.json 0644
 46b36cc424475e650606dc68fe4862abbe1199667efbb0becccd95e61712e64b contracts/common/lemeng.inventory_snapshot.json ${REPO}/contracts/common/lemeng.inventory_snapshot.json 0644
 c21d94810de28ee9fbe88aa05f7f2653bcd5acf47d75ba642c7ec995db442e21 contracts/common/lemeng.item.json ${REPO}/contracts/common/lemeng.item.json 0644
 16e3c55fa86fbc6d482fc7911d41186652c06e96e3f69acde90c2ca563d3ca8f contracts/common/lemeng.item_price.json ${REPO}/contracts/common/lemeng.item_price.json 0644
@@ -27,7 +28,7 @@ d4789190d6f6953a2d0f490096c3eb820a3c8266b24437e2aeed4025608c4260 contracts/commo
 81895b6736040f34f479157faaa94b7d8be89b0049dde0c75b14ddb4decb8229 contracts/common/lemeng.wholesale_return.json ${REPO}/contracts/common/lemeng.wholesale_return.json 0644
 a9209aad12e3020eefc11f94f51d935c49d1bff9eabf94fb0262d182a6a37c7a contracts/customers/README.md ${REPO}/contracts/customers/README.md 0644
 62370e40a11cc5d7f9f47791475e882ac9db60d697e2949ad625072c90be0cbf dbt/README.md ${REPO}/dbt/README.md 0644
-21770f088293ae472e3c9300410b896806f223caf04c00fe9f46039edc3b0578 dbt/dbt_project.yml ${REPO}/dbt/dbt_project.yml 0644
+a51e798ae691e316fec6b606d81fbba1ac284688d31fd56dba58d46a594617b3 dbt/dbt_project.yml ${REPO}/dbt/dbt_project.yml 0644
 26d553e851b08aed2e399284165f9b314bf09a3ae13047a03386270a12f4f2b6 dbt/macros/generate_schema_name.sql ${REPO}/dbt/macros/generate_schema_name.sql 0644
 d9a9697ca436b57024e8f2bf998ae08b91e42dd0698616b6198827bda6f49d41 dbt/macros/subject_org.sql ${REPO}/dbt/macros/subject_org.sql 0644
 f0d45cde1b1a35109bf8f9214cfb23f9be642ae0844daa16352a2277dfa82530 dbt/models/README.md ${REPO}/dbt/models/README.md 0644
@@ -61,13 +62,14 @@ a77a7644acb4faa15184c4da25e886a46a0c5b9e206b256769c9a2d17266ee10 dbt/models/leme
 fcccfc109837054d5340cbce863e6d4eb73374f4e355beaabd25e10f466ce54c dbt/models/lemeng/marts/recon_run.sql ${REPO}/dbt/models/lemeng/marts/recon_run.sql 0644
 24476c62781ea9bafc8d72f1fe0cd2cd4c71ff32eec77dd614dc3bde97fa906c dbt/models/lemeng/marts/schema.yml ${REPO}/dbt/models/lemeng/marts/schema.yml 0644
 64cc96ee56de0a0cca44d793318573bb88861eeab9d8c8225c6a670aef6109ad dbt/models/lemeng/staging/schema.yml ${REPO}/dbt/models/lemeng/staging/schema.yml 0644
-274fd1cff52059eeca2121d58c8336cedc279b56211ff4a5a9bd730c9272726c dbt/models/lemeng/staging/sources.yml ${REPO}/dbt/models/lemeng/staging/sources.yml 0644
+48a2d8da9f2f9046153116ef3ac7cadf671419588ea4b6aad9e564c882ecdbba dbt/models/lemeng/staging/sources.yml ${REPO}/dbt/models/lemeng/staging/sources.yml 0644
 8026db5c26b6e82cdfa4459858b8c67af4b1e957602e70ff6092634ac9fbe2dd dbt/models/lemeng/staging/stg_lemeng_branch.sql ${REPO}/dbt/models/lemeng/staging/stg_lemeng_branch.sql 0644
 9f3a05225b47130379f7c5fff3f8165c6cf1d8191afc940444889f8ccf5b6308 dbt/models/lemeng/staging/stg_lemeng_branch_expense.sql ${REPO}/dbt/models/lemeng/staging/stg_lemeng_branch_expense.sql 0644
 f7006d45b65780e28f8057e4df4443c4732cbe49603134286714a7a4aa70880d dbt/models/lemeng/staging/stg_lemeng_branch_indicator.sql ${REPO}/dbt/models/lemeng/staging/stg_lemeng_branch_indicator.sql 0644
 4185bdd5ec044744580562f27c958e89691ed27f6fe3f374b9d8793b57298a6a dbt/models/lemeng/staging/stg_lemeng_client.sql ${REPO}/dbt/models/lemeng/staging/stg_lemeng_client.sql 0644
 fdd42f5eb7ce0a4698834a635d60727cd0e413c851765b08f85bd6fe129bc2b1 dbt/models/lemeng/staging/stg_lemeng_client_expense.sql ${REPO}/dbt/models/lemeng/staging/stg_lemeng_client_expense.sql 0644
 13834d560d1bcd9f76d0dcc7a8ec1c38a596ab4519bac48a19bae9b4fa59e18e dbt/models/lemeng/staging/stg_lemeng_customer_analysis.sql ${REPO}/dbt/models/lemeng/staging/stg_lemeng_customer_analysis.sql 0644
+f5e58e6942853239dc2c200e1d59ea43d008a0776af4e9b5dac165ccf9c57eb7 dbt/models/lemeng/staging/stg_lemeng_inventory_movement.sql ${REPO}/dbt/models/lemeng/staging/stg_lemeng_inventory_movement.sql 0644
 698e9e5c7955ac64b34d6d43c95cab8a5b925d2d148388b445d2a2cfc4793505 dbt/models/lemeng/staging/stg_lemeng_inventory_snapshot.sql ${REPO}/dbt/models/lemeng/staging/stg_lemeng_inventory_snapshot.sql 0644
 4ae58c36566be04fdb5bc672a667a976d03ad23d61ffc1139fe8e8dad17e2c8f dbt/models/lemeng/staging/stg_lemeng_item.sql ${REPO}/dbt/models/lemeng/staging/stg_lemeng_item.sql 0644
 5e94ee813066e3d9206e093422a8685be71bdf298128a07d1552df7c3bb3c426 dbt/models/lemeng/staging/stg_lemeng_item_price.sql ${REPO}/dbt/models/lemeng/staging/stg_lemeng_item_price.sql 0644
@@ -231,6 +233,10 @@ c25ffb9937aad2a46014e7c0e83d5f95f12a0f52044d58becef9a80d353a4308 deploy/duckle/c
 f27414725b75d8f8764645e7366c45ad8da85a836106656f7490c45370b0d968 deploy/duckle/console/pipelines/lemeng.dim.item.l0.json ${REPO}/deploy/duckle/console/pipelines/lemeng.dim.item.l0.json 0644
 4abca111a5193f863f90b374049b8b0a00cc15d83555eeceddf00294652374be deploy/duckle/console/pipelines/lemeng.dim.item_price.l0.3120.json ${REPO}/deploy/duckle/console/pipelines/lemeng.dim.item_price.l0.3120.json 0644
 784fb1ca47180bb11b12069be5e7c7740df1fac394dae035e7aa814665389e02 deploy/duckle/console/pipelines/lemeng.dim.item_price.l0.json ${REPO}/deploy/duckle/console/pipelines/lemeng.dim.item_price.l0.json 0644
+9db812672d8851bc59b001aa2a62b8432c825abebe1dc05b6919fd54886ae678 deploy/duckle/console/pipelines/lemeng.inventory.movement.backfill.3120.json ${REPO}/deploy/duckle/console/pipelines/lemeng.inventory.movement.backfill.3120.json 0644
+d7626fe51ffc612d0cf62c1f072d085b9475dcf57b87373fd15c52adde5c1355 deploy/duckle/console/pipelines/lemeng.inventory.movement.backfill.64188.json ${REPO}/deploy/duckle/console/pipelines/lemeng.inventory.movement.backfill.64188.json 0644
+9a21876a65bd75a1d04e5884e3f242b43f95e75084792635c16387fe49e446ee deploy/duckle/console/pipelines/lemeng.inventory.movement.l0.3120.json ${REPO}/deploy/duckle/console/pipelines/lemeng.inventory.movement.l0.3120.json 0644
+a9ab576fce398d1e8112d273967d20b8d04d3a0df53242fef354675b20fa99c0 deploy/duckle/console/pipelines/lemeng.inventory.movement.l0.64188.json ${REPO}/deploy/duckle/console/pipelines/lemeng.inventory.movement.l0.64188.json 0644
 06efa4174118b0ef1f1b70e029b284610e25f260e2e96dffaec3abcd40079d15 deploy/duckle/console/pipelines/lemeng.inventory.snapshot.backfill.3120.json ${REPO}/deploy/duckle/console/pipelines/lemeng.inventory.snapshot.backfill.3120.json 0644
 d4aa92264f3be5e4fc9a36116c8dcc5a0143aaf2eb70a61e0c518d8e6e27f839 deploy/duckle/console/pipelines/lemeng.inventory.snapshot.backfill.64188.json ${REPO}/deploy/duckle/console/pipelines/lemeng.inventory.snapshot.backfill.64188.json 0644
 3e6ad1e83c950aef0d57b4d53e00309a802ba2ff7ecbad17deab90b79877a404 deploy/duckle/console/pipelines/lemeng.inventory.snapshot.catchup.3120.json ${REPO}/deploy/duckle/console/pipelines/lemeng.inventory.snapshot.catchup.3120.json 0644
@@ -288,8 +294,8 @@ ef41033638ccd8623e03a2013e2159ea7ad3a5e89bc6a71cb0c6f1d2d797477b deploy/duckle/c
 05701cd1977bc2db49891b9807f822fff556c376d9815251b98e8071245b3c9a deploy/duckle/console/pipelines/lemeng.wholesale.out.backfill.3120.json ${REPO}/deploy/duckle/console/pipelines/lemeng.wholesale.out.backfill.3120.json 0644
 c471c6a9f25d02b2419f5f9a05e79eb80fdfdc5d599633d892fcff72b208e959 deploy/duckle/console/pipelines/lemeng.wholesale.out.l0.3120.json ${REPO}/deploy/duckle/console/pipelines/lemeng.wholesale.out.l0.3120.json 0644
 26e5ed924ffa1034d0305d575bdd39f8f0a4b83963c17e8e2406ec94f48f374c deploy/duckle/console/pipelines/lemeng.wholesale.return.l0.3120.json ${REPO}/deploy/duckle/console/pipelines/lemeng.wholesale.return.l0.3120.json 0644
-b4f4f069d7613c2f239edf16c73f17533a8ca4e60fe4cbede533c4b2133cbef0 deploy/duckle/console/schedules/3120.json ${REPO}/deploy/duckle/console/schedules/3120.json 0644
-3c5bf781dd3af618e9001fd11ec33fd764204af9749320f282aa6bd49e9ac96b deploy/duckle/console/schedules/64188.json ${REPO}/deploy/duckle/console/schedules/64188.json 0644
+6b2d024329469d83a4c58b967d3d4159aacdaffa080a6ee4def17f67ca7bdcaa deploy/duckle/console/schedules/3120.json ${REPO}/deploy/duckle/console/schedules/3120.json 0644
+b86d0d2f4e0d6202d5f1e6a41067f6f1564f733aa02533139c69b9f09ffac50a deploy/duckle/console/schedules/64188.json ${REPO}/deploy/duckle/console/schedules/64188.json 0644
 127dde28f2d058ec300de7777f171f1922fa8b787af810f2ce63fbfa7a52d53d deploy/duckle/console/schedules/forms.json ${REPO}/deploy/duckle/console/schedules/forms.json 0644
 43381a794c2909ebe1fc184b9ab55e5b301345aac3dc492e10716de5ec5157db deploy/duckle/entrypoint.sh ${REPO}/deploy/duckle/entrypoint.sh 0644
 1adccd79d9d5a1ddad55401259312c332fc63e210d8865f4d14bc6f0263a8c7c deploy/oo-alert-registry.txt ${REPO}/deploy/oo-alert-registry.txt 0644

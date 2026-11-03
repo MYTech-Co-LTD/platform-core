@@ -504,13 +504,13 @@
     "next_run_at": null
   },
   {
-    "id": "panel-lemeng.saler_commission.l0.3120",
-    "pipeline_id": "lemeng.saler_commission.l0.3120",
-    "name": "lemeng.saler_commission.l0.3120",
+    "id": "panel-lemeng.inventory.movement.l0.3120",
+    "pipeline_id": "lemeng.inventory.movement.l0.3120",
+    "name": "lemeng.inventory.movement.l0.3120",
     "enabled": true,
     "kind": {
       "type": "cron",
-      "expr": "45 3 * * *"
+      "expr": "15 4 * * *"
     },
     "timezone": "Asia/Shanghai",
     "misfire": "skip",

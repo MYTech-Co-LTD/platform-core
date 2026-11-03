@@ -1,0 +1,518 @@
+{
+  "name": "lemeng.inventory.movement.l0.3120",
+  "nodes": [
+    {
+      "id": "w0",
+      "type": "source",
+      "position": {
+        "x": 0,
+        "y": 0
+      },
+      "data": {
+        "label": "w0",
+        "componentId": "src.rest",
+        "schema": [
+          {
+            "name": "x",
+            "type": "string"
+          }
+        ],
+        "properties": {
+          "connectionRef": "lemeng",
+          "url": "https://cloud.nhsoft.cn/agi/mcp",
+          "method": "POST",
+          "headers": {
+            "Content-Type": "application/json",
+            "Accept": "application/json, text/event-stream"
+          },
+          "body": "{\"jsonrpc\": \"2.0\", \"id\": 1, \"method\": \"tools/call\", \"params\": {\"name\": \"whoami\", \"arguments\": {}}}",
+          "paginationType": "none",
+          "responseFormat": "xml",
+          "rawResponseDestination": "/workspace/.duckle-raw/whoami-${datetime}.sse",
+          "retryAttempts": 3,
+          "retryBackoffMs": 2000
+        }
+      }
+    },
+    {
+      "id": "g0",
+      "type": "transform",
+      "position": {
+        "x": 0,
+        "y": 0
+      },
+      "data": {
+        "label": "g0",
+        "componentId": "code.sql",
+        "properties": {
+          "sql": "SELECT unnest(regexp_extract_all(content, '(?m)^data: ([^\\r\\n]*)', 1)) AS line FROM read_text('/workspace/.duckle-raw/whoami-${datetime}.sse')"
+        }
+      }
+    },
+    {
+      "id": "g1",
+      "type": "transform",
+      "position": {
+        "x": 0,
+        "y": 0
+      },
+      "data": {
+        "label": "g1",
+        "componentId": "code.sql",
+        "properties": {
+          "sql": "SELECT json_extract_string(line, '$.result.content[0].text') AS txt FROM input QUALIFY row_number() OVER () = count(*) OVER ()"
+        }
+      }
+    },
+    {
+      "id": "g2",
+      "type": "transform",
+      "position": {
+        "x": 0,
+        "y": 0
+      },
+      "data": {
+        "label": "g2",
+        "componentId": "code.sql",
+        "properties": {
+          "sql": "SELECT json_extract_string(txt, '$.company_id') AS company_id, json_extract_string(txt, '$.branch_nums') AS branch_nums FROM input"
+        }
+      }
+    },
+    {
+      "id": "d0",
+      "type": "transform",
+      "position": {
+        "x": 0,
+        "y": 0
+      },
+      "data": {
+        "label": "d0",
+        "componentId": "ctl.die",
+        "properties": {
+          "condition": "no-rows",
+          "message": "identity: whoami 响应里没有可解析的身份（网关形状变了？）⇒ 身份未证，拒绝采集与写湖"
+        }
+      }
+    },
+    {
+      "id": "g3",
+      "type": "transform",
+      "position": {
+        "x": 0,
+        "y": 0
+      },
+      "data": {
+        "label": "g3",
+        "componentId": "code.sql",
+        "properties": {
+          "sql": "SELECT 'book' AS violation, company_id AS detail FROM input WHERE company_id IS DISTINCT FROM '${ENV:SYSTEM_BOOK}' UNION ALL SELECT 'branch' AS violation, CAST(c.branch_num AS VARCHAR) AS detail FROM (SELECT unnest('${ENV:BRANCH_NUMS}'::BIGINT[]) AS branch_num) c LEFT JOIN (SELECT unnest(CAST(json_extract(branch_nums, '$[*]') AS BIGINT[])) AS branch_num FROM input) w USING (branch_num) WHERE w.branch_num IS NULL"
+        }
+      }
+    },
+    {
+      "id": "d1",
+      "type": "transform",
+      "position": {
+        "x": 0,
+        "y": 0
+      },
+      "data": {
+        "label": "d1",
+        "componentId": "ctl.die",
+        "properties": {
+          "condition": "has-rows",
+          "message": "identity: 凭据账套/门店清单自证未过 ⇒ 拒绝采集与写湖"
+        }
+      }
+    },
+    {
+      "id": "gv",
+      "type": "transform",
+      "position": {
+        "x": 0,
+        "y": 0
+      },
+      "data": {
+        "label": "gv",
+        "componentId": "code.sql",
+        "properties": {
+          "sql": "SELECT 'BRANCH_NUMS' AS violation, '${ENV:BRANCH_NUMS}' AS detail, 'JSON integer array, e.g. [1001,1002]' AS rule WHERE NOT regexp_full_match('${ENV:BRANCH_NUMS}', '\\[[0-9]+([, ]+[0-9]+)*\\]') UNION ALL SELECT 'SYSTEM_BOOK', '${ENV:SYSTEM_BOOK}', 'digits only' WHERE NOT regexp_full_match('${ENV:SYSTEM_BOOK}', '[0-9]{1,32}') UNION ALL SELECT 'BIZDAY', '${BIZDAY}', 'YYYY-MM-DD' WHERE NOT regexp_full_match('${BIZDAY}', '[0-9]{4}-[0-9]{2}-[0-9]{2}') UNION ALL SELECT 'BATCH_ID', 'iv-' || '${ENV:SYSTEM_BOOK}' || '-inventory_snapshot-' || replace(replace('${datetime}','-',''),'_','T') || 'Z' AS v, 'iv-<book>-inventory_snapshot-YYYYMMDDTHHMMSSZ' WHERE NOT regexp_full_match('iv-' || '${ENV:SYSTEM_BOOK}' || '-inventory_snapshot-' || replace(replace('${datetime}','-',''),'_','T') || 'Z', 'iv-[0-9]+-inventory_snapshot-[0-9]{8}T[0-9]{6}Z')"
+        }
+      }
+    },
+    {
+      "id": "dv",
+      "type": "transform",
+      "position": {
+        "x": 0,
+        "y": 0
+      },
+      "data": {
+        "label": "dv",
+        "componentId": "ctl.die",
+        "properties": {
+          "condition": "has-rows",
+          "message": "EXPECTED_VALUE_MISSING_OR_MALFORMED: 期望值缺席或形状非法（{rows} 条违规，明细见上）⇒ 拒绝采集与写湖。处置：检查该管线调度/触发面的 env 注入"
+        }
+      }
+    },
+    {
+      "id": "shape",
+      "type": "transform",
+      "position": {
+        "x": 0,
+        "y": 0
+      },
+      "data": {
+        "label": "shape",
+        "componentId": "code.sql",
+        "properties": {
+          "sql": "SELECT\n  'im-' || '${ENV:SYSTEM_BOOK}' || '-inventory_movement-' || replace(replace('${datetime}','-',''),'_','T') || 'Z' AS batch_id,\n  '${ENV:SYSTEM_BOOK}' AS system_book,\n  CAST('${BIZDAY}' AS DATE) AS bizday,\n  CAST(o.movement_id AS VARCHAR) AS movement_id,\n  CAST(o.branch_num AS INTEGER) AS branch_num,\n  CAST(o.branch_code AS VARCHAR) AS branch_code,\n  CAST(o.branch_name AS VARCHAR) AS branch_name,\n  CAST(o.item_num AS BIGINT) AS item_num,\n  CAST(o.item_code AS VARCHAR) AS item_code,\n  CAST(o.item_barcode AS VARCHAR) AS item_barcode,\n  CAST(o.item_name AS VARCHAR) AS item_name,\n  CAST(o.item_spec AS VARCHAR) AS item_spec,\n  CAST(o.item_unit AS VARCHAR) AS item_unit,\n  CAST(o.movement_type AS VARCHAR) AS movement_type,\n  CAST(o.movement_summary AS VARCHAR) AS movement_summary,\n  CAST(o.movement_date AS DATE) AS movement_date,\n  CAST(o.operate_time AS TIMESTAMP) AS operate_time,\n  CAST(o.operator AS VARCHAR) AS operator,\n  CAST(o.bill_no AS VARCHAR) AS bill_no,\n  CAST(o.lot_number AS VARCHAR) AS lot_number,\n  CAST(o.memo AS VARCHAR) AS memo,\n  CAST(o.quantity AS DECIMAL(18,6)) AS quantity,\n  CAST(o.assist_quantity AS DECIMAL(18,6)) AS assist_quantity,\n  CAST(o.unit_price AS DECIMAL(18,8)) AS unit_price,\n  CAST(o.money AS DECIMAL(18,2)) AS money,\n  CAST(o.inventory_balance AS DECIMAL(18,6)) AS inventory_balance,\n  CAST(o.assist_inventory_balance AS DECIMAL(18,6)) AS assist_inventory_balance,\n  CAST(o.out_storehouse_num AS BIGINT) AS out_storehouse_num,\n  CAST(o.out_storehouse_code AS VARCHAR) AS out_storehouse_code,\n  CAST(o.out_storehouse_name AS VARCHAR) AS out_storehouse_name\n,\n  CAST(CURRENT_TIMESTAMP AS TIMESTAMPTZ) AS computed_at\nFROM input o\n"
+        }
+      }
+    },
+    {
+      "id": "gate",
+      "type": "transform",
+      "position": {
+        "x": 0,
+        "y": 0
+      },
+      "data": {
+        "label": "gate",
+        "componentId": "qa.contract",
+        "properties": {
+          "rules": {
+            "batch_id": "not_null",
+            "system_book": "not_null",
+            "bizday": "not_null",
+            "branch_num": "not_null",
+            "item_num": "not_null",
+            "movement_id": "not_null"
+          }
+        }
+      }
+    },
+    {
+      "id": "sink",
+      "type": "sink",
+      "position": {
+        "x": 0,
+        "y": 0
+      },
+      "data": {
+        "label": "sink",
+        "componentId": "snk.minio",
+        "properties": {
+          "bucket": "${ENV:ZOS_BUCKET}",
+          "key": "lemeng/inventory_movement/system_book=${ENV:SYSTEM_BOOK}/bizday=${date-1d}/all.parquet",
+          "region": "${ENV:ZOS_REGION}",
+          "urlStyle": "path",
+          "useSsl": "true",
+          "format": "parquet",
+          "mode": "overwrite",
+          "compression": "zstd",
+          "connectionRef": "zos"
+        }
+      }
+    },
+    {
+      "id": "die_empty",
+      "type": "control",
+      "position": {
+        "x": 0,
+        "y": 300
+      },
+      "data": {
+        "label": "空集 ⇒ 具名状态（回填日源端无结转记录）",
+        "componentId": "ctl.die",
+        "properties": {
+          "condition": "no-rows",
+          "message": "SOURCE_NOT_PUBLISHED: bizday=${BIZDAY} 源端零行——该营业日没有匹配的结转记录。本管线是**回填通道**：必须经 POST /api/run 显式传 params={BIZDAY:\"YYYY-MM-DD\"} 驱动。参数形状正确仍为零 ⇒ 源端这一天确实没结转：登记进正典 §1.7 台账后跳过，别反复重试。"
+        }
+      }
+    },
+    {
+      "id": "f",
+      "type": "source",
+      "position": {
+        "x": 0,
+        "y": 0
+      },
+      "data": {
+        "label": "f",
+        "componentId": "src.rest",
+        "properties": {
+          "connectionRef": "lemeng",
+          "url": "https://cloud.nhsoft.cn/agi/api/nhsoft.ama.ai.inventory.movement.find",
+          "method": "POST",
+          "headers": {
+            "Content-Type": "application/json"
+          },
+          "body": "{\"date_start\":\"${date-1d}\",\"date_end\":\"${date-1d}\",\"page_number\":1,\"page_size\":200}",
+          "responsePath": "/result",
+          "paginationType": "page",
+          "pageParam": "page_number",
+          "pageSize": 200,
+          "maxPages": 600,
+          "rawResponseDestination": "/workspace/.duckle-raw/inv-movement-${datetime}.json",
+          "retryAttempts": 5,
+          "retryBackoffMs": 8000
+        },
+        "schema": [
+          {
+            "name": "movement_id",
+            "type": "string"
+          },
+          {
+            "name": "branch_num",
+            "type": "int64"
+          },
+          {
+            "name": "branch_code",
+            "type": "string"
+          },
+          {
+            "name": "branch_name",
+            "type": "string"
+          },
+          {
+            "name": "item_num",
+            "type": "int64"
+          },
+          {
+            "name": "item_code",
+            "type": "string"
+          },
+          {
+            "name": "item_barcode",
+            "type": "string"
+          },
+          {
+            "name": "item_name",
+            "type": "string"
+          },
+          {
+            "name": "item_spec",
+            "type": "string"
+          },
+          {
+            "name": "item_unit",
+            "type": "string"
+          },
+          {
+            "name": "movement_type",
+            "type": "string"
+          },
+          {
+            "name": "movement_summary",
+            "type": "string"
+          },
+          {
+            "name": "movement_date",
+            "type": "string"
+          },
+          {
+            "name": "operate_time",
+            "type": "string"
+          },
+          {
+            "name": "operator",
+            "type": "string"
+          },
+          {
+            "name": "bill_no",
+            "type": "string"
+          },
+          {
+            "name": "lot_number",
+            "type": "string"
+          },
+          {
+            "name": "memo",
+            "type": "string"
+          },
+          {
+            "name": "quantity",
+            "type": "decimal"
+          },
+          {
+            "name": "assist_quantity",
+            "type": "decimal"
+          },
+          {
+            "name": "unit_price",
+            "type": "decimal"
+          },
+          {
+            "name": "money",
+            "type": "decimal"
+          },
+          {
+            "name": "inventory_balance",
+            "type": "decimal"
+          },
+          {
+            "name": "assist_inventory_balance",
+            "type": "decimal"
+          },
+          {
+            "name": "out_storehouse_num",
+            "type": "int64"
+          },
+          {
+            "name": "out_storehouse_code",
+            "type": "string"
+          },
+          {
+            "name": "out_storehouse_name",
+            "type": "string"
+          }
+        ]
+      }
+    }
+  ],
+  "edges": [
+    {
+      "id": "e1",
+      "source": "w0",
+      "target": "g0",
+      "sourceHandle": "main",
+      "targetHandle": "main",
+      "data": {
+        "connectionType": "main"
+      }
+    },
+    {
+      "id": "e2",
+      "source": "g0",
+      "target": "g1",
+      "sourceHandle": "main",
+      "targetHandle": "main",
+      "data": {
+        "connectionType": "main"
+      }
+    },
+    {
+      "id": "e3",
+      "source": "g1",
+      "target": "g2",
+      "sourceHandle": "main",
+      "targetHandle": "main",
+      "data": {
+        "connectionType": "main"
+      }
+    },
+    {
+      "id": "e4",
+      "source": "g2",
+      "target": "d0",
+      "sourceHandle": "main",
+      "targetHandle": "main",
+      "data": {
+        "connectionType": "main"
+      }
+    },
+    {
+      "id": "e5",
+      "source": "d0",
+      "target": "g3",
+      "sourceHandle": "main",
+      "targetHandle": "main",
+      "data": {
+        "connectionType": "main"
+      }
+    },
+    {
+      "id": "e6",
+      "source": "g3",
+      "target": "d1",
+      "sourceHandle": "main",
+      "targetHandle": "main",
+      "data": {
+        "connectionType": "main"
+      }
+    },
+    {
+      "id": "e7",
+      "source": "d1",
+      "target": "gv",
+      "sourceHandle": "main",
+      "targetHandle": "main",
+      "data": {
+        "connectionType": "main"
+      }
+    },
+    {
+      "id": "e8",
+      "source": "gv",
+      "target": "dv",
+      "sourceHandle": "main",
+      "targetHandle": "main",
+      "data": {
+        "connectionType": "main"
+      }
+    },
+    {
+      "id": "e9",
+      "source": "dv",
+      "target": "f",
+      "sourceHandle": "main",
+      "targetHandle": "main",
+      "data": {
+        "connectionType": "main"
+      }
+    },
+    {
+      "id": "e10",
+      "source": "f",
+      "target": "die_empty",
+      "sourceHandle": "main",
+      "targetHandle": "main",
+      "data": {
+        "connectionType": "main"
+      }
+    },
+    {
+      "id": "e11",
+      "source": "f",
+      "target": "shape",
+      "sourceHandle": "main",
+      "targetHandle": "main",
+      "data": {
+        "connectionType": "main"
+      }
+    },
+    {
+      "id": "e12",
+      "source": "shape",
+      "target": "gate",
+      "sourceHandle": "main",
+      "targetHandle": "main",
+      "data": {
+        "connectionType": "main"
+      }
+    },
+    {
+      "id": "e13",
+      "source": "gate",
+      "target": "sink",
+      "sourceHandle": "main",
+      "targetHandle": "main",
+      "data": {
+        "connectionType": "main"
+      }
+    }
+  ],
+  "id": "lemeng.inventory.movement.l0.3120",
+  "_note": [
+    "乐檬**库存进出明细**（nhsoft.ama.ai.inventory.movement.find；2026-11-03 接源）——",
+    "写湖 lemeng/inventory_movement/system_book=<book>/bizday=<day>/all.parquet。",
+    "",
+    "①【原生分页】src.rest `paginationType=page`（手册 §D 实测：无 total 也能翻到耗尽，空页停；",
+    "   `maxPages` 撞上限会**报错 exit 1 并自报截断行数**，不是静默截断）⇒ 不再手工铺页节点。",
+    "②【身份自证】whoami → company_id == SYSTEM_BOOK、BRANCH_NUMS ⊆ whoami 门店。",
+    "③【契约】qa.contract 断非空；bizday 取参数日期（源端 movement_date 可能跨零点，以查询窗为准）。"
+  ]
+}

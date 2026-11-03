@@ -1,0 +1,244 @@
+{
+  "$schema": "./_schema.schema.json",
+  "contractVersion": 2,
+  "schemaVersion": 1,
+  "consumerVersion": 1,
+  "domain": "lemeng",
+  "table": "inventory_movement",
+  "owner": "data-platform",
+  "description": "乐檬**库存进出明细**（nhsoft.ama.ai.inventory.movement.find；2026-11-03 接源）。【行粒度】一行 = 账套×bizday×一条进出流水（movement_id）。【窗口】单日窗；含首尾 ≤31 天（10002 报错）。【分页】**原生分页** paginationType=page、page_size=200（服务端上限 300 起静默空集）、maxPages=600（12 万行/日，撞上限**报错**非静默截断）。【用途】收发存流水，替代「每日快照」做库存变动分析。【首发锚】64188 / 2026-10-28 第 1 页 200 行；样本 movement_type=out / movement_summary=前台销售。",
+  "layout": {
+    "prefix": "lemeng/inventory_movement",
+    "partitionStyle": "hive",
+    "partitionBy": [
+      "system_book",
+      "bizday"
+    ],
+    "fileName": "all.parquet"
+  },
+  "batch": {
+    "markerColumn": "batch_id",
+    "type": "varchar",
+    "unique": false,
+    "note": "= 本次采集批次号（UTC 时间戳串）；同 bizday 分区覆盖写。"
+  },
+  "columns": [
+    {
+      "name": "batch_id",
+      "type": "varchar",
+      "nullable": false,
+      "description": "采集批次",
+      "expr": "CAST(batch_id AS VARCHAR)"
+    },
+    {
+      "name": "system_book",
+      "type": "integer",
+      "nullable": false,
+      "description": "账套；分区键",
+      "expr": "CAST(system_book AS INTEGER)"
+    },
+    {
+      "name": "bizday",
+      "type": "date",
+      "nullable": false,
+      "description": "业务日（查询窗日期）；分区键",
+      "expr": "CAST(bizday AS DATE)"
+    },
+    {
+      "name": "movement_id",
+      "type": "varchar",
+      "nullable": false,
+      "description": "进出流水主键",
+      "expr": "CAST(movement_id AS VARCHAR)"
+    },
+    {
+      "name": "branch_num",
+      "type": "integer",
+      "nullable": false,
+      "description": "门店编号",
+      "expr": "CAST(branch_num AS INTEGER)"
+    },
+    {
+      "name": "branch_code",
+      "type": "varchar",
+      "nullable": true,
+      "description": "门店编码",
+      "expr": "CAST(branch_code AS VARCHAR)"
+    },
+    {
+      "name": "branch_name",
+      "type": "varchar",
+      "nullable": true,
+      "description": "门店名称",
+      "expr": "CAST(branch_name AS VARCHAR)"
+    },
+    {
+      "name": "item_num",
+      "type": "bigint",
+      "nullable": false,
+      "description": "商品编号",
+      "expr": "CAST(item_num AS BIGINT)"
+    },
+    {
+      "name": "item_code",
+      "type": "varchar",
+      "nullable": true,
+      "description": "商品编码",
+      "expr": "CAST(item_code AS VARCHAR)"
+    },
+    {
+      "name": "item_barcode",
+      "type": "varchar",
+      "nullable": true,
+      "description": "条码",
+      "expr": "CAST(item_barcode AS VARCHAR)"
+    },
+    {
+      "name": "item_name",
+      "type": "varchar",
+      "nullable": true,
+      "description": "商品名称",
+      "expr": "CAST(item_name AS VARCHAR)"
+    },
+    {
+      "name": "item_spec",
+      "type": "varchar",
+      "nullable": true,
+      "description": "规格",
+      "expr": "CAST(item_spec AS VARCHAR)"
+    },
+    {
+      "name": "item_unit",
+      "type": "varchar",
+      "nullable": true,
+      "description": "单位",
+      "expr": "CAST(item_unit AS VARCHAR)"
+    },
+    {
+      "name": "movement_type",
+      "type": "varchar",
+      "nullable": true,
+      "description": "进出方向（in/out）",
+      "expr": "CAST(movement_type AS VARCHAR)"
+    },
+    {
+      "name": "movement_summary",
+      "type": "varchar",
+      "nullable": true,
+      "description": "进出摘要（如 前台销售）",
+      "expr": "CAST(movement_summary AS VARCHAR)"
+    },
+    {
+      "name": "movement_date",
+      "type": "date",
+      "nullable": true,
+      "description": "源端进出日期",
+      "expr": "CAST(movement_date AS DATE)"
+    },
+    {
+      "name": "operate_time",
+      "type": "timestamp",
+      "nullable": true,
+      "description": "操作时间",
+      "expr": "CAST(operate_time AS TIMESTAMP)"
+    },
+    {
+      "name": "operator",
+      "type": "varchar",
+      "nullable": true,
+      "description": "操作人",
+      "expr": "CAST(operator AS VARCHAR)"
+    },
+    {
+      "name": "bill_no",
+      "type": "varchar",
+      "nullable": true,
+      "description": "来源单据号",
+      "expr": "CAST(bill_no AS VARCHAR)"
+    },
+    {
+      "name": "lot_number",
+      "type": "varchar",
+      "nullable": true,
+      "description": "批号",
+      "expr": "CAST(lot_number AS VARCHAR)"
+    },
+    {
+      "name": "memo",
+      "type": "varchar",
+      "nullable": true,
+      "description": "备注",
+      "expr": "CAST(memo AS VARCHAR)"
+    },
+    {
+      "name": "quantity",
+      "type": "decimal(18,6)",
+      "nullable": true,
+      "description": "数量",
+      "expr": "CAST(quantity AS DECIMAL(18,6))"
+    },
+    {
+      "name": "assist_quantity",
+      "type": "decimal(18,6)",
+      "nullable": true,
+      "description": "辅数量",
+      "expr": "CAST(assist_quantity AS DECIMAL(18,6))"
+    },
+    {
+      "name": "unit_price",
+      "type": "decimal(18,8)",
+      "nullable": true,
+      "description": "单价",
+      "expr": "CAST(unit_price AS DECIMAL(18,8))"
+    },
+    {
+      "name": "money",
+      "type": "decimal(18,2)",
+      "nullable": true,
+      "description": "金额",
+      "expr": "CAST(money AS DECIMAL(18,2))"
+    },
+    {
+      "name": "inventory_balance",
+      "type": "decimal(18,6)",
+      "nullable": true,
+      "description": "结存数量",
+      "expr": "CAST(inventory_balance AS DECIMAL(18,6))"
+    },
+    {
+      "name": "assist_inventory_balance",
+      "type": "decimal(18,6)",
+      "nullable": true,
+      "description": "辅结存数量",
+      "expr": "CAST(assist_inventory_balance AS DECIMAL(18,6))"
+    },
+    {
+      "name": "out_storehouse_num",
+      "type": "bigint",
+      "nullable": true,
+      "description": "出库仓编号",
+      "expr": "CAST(out_storehouse_num AS BIGINT)"
+    },
+    {
+      "name": "out_storehouse_code",
+      "type": "varchar",
+      "nullable": true,
+      "description": "出库仓编码",
+      "expr": "CAST(out_storehouse_code AS VARCHAR)"
+    },
+    {
+      "name": "out_storehouse_name",
+      "type": "varchar",
+      "nullable": true,
+      "description": "出库仓名称",
+      "expr": "CAST(out_storehouse_name AS VARCHAR)"
+    },
+    {
+      "name": "computed_at",
+      "type": "timestamptz",
+      "nullable": false,
+      "description": "计算时间",
+      "expr": "CAST(computed_at AS TIMESTAMPTZ)"
+    }
+  ]
+}

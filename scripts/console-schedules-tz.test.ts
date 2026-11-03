@@ -19,7 +19,7 @@ const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..')
 /** 期望：book →（排班 id → §10.6 转换表逐字的 expr）。行序即文件内条目序。 */
 const EXPECTED: Record<string, Record<string, string>> = {
   '3120': {
-    'panel-lemeng.saler_commission.l0.3120': '45 3 * * *',
+    'panel-lemeng.inventory.movement.l0.3120': '15 4 * * *',
     'panel-lemeng.customer_analysis.l0.3120': '30 3 * * *',
     'panel-lemeng.item_sales.l0.3120': '0 3 * * *',
     'panel-lemeng.item_profit.l0.3120': '0 5 * * *',
@@ -47,7 +47,7 @@ const EXPECTED: Record<string, Record<string, string>> = {
     'panel-lemeng.recon.preagg': '40 0 * * *',
   },
   '64188': {
-    'panel-lemeng.saler_commission.l0.64188': '45 3 * * *',
+    'panel-lemeng.inventory.movement.l0.64188': '15 4 * * *',
     'panel-lemeng.customer_analysis.l0.64188': '30 3 * * *',
     'panel-lemeng.item_sales.l0.64188': '0 3 * * *',
     'panel-lemeng.item_profit.l0.64188': '0 5 * * *',
