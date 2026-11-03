@@ -11,6 +11,10 @@
 
 ## [Unreleased]
 
+## [0.253.0](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.252.1...v0.253.0) - 2026-11-03
+- 【新增】data: 接源 AMAREPORT 商品销售/毛利分析（itemsales / itemprofitanalysis） ([#1338](https://github.com/MYTech-Co-LTD/platform-core/pull/1338), [d1eb8a3](https://github.com/MYTech-Co-LTD/platform-core/commit/d1eb8a3ab8950bdc1f2857882e3005e35b5649a8))
+
+
 ## [0.252.1](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.252.0...v0.252.1) - 2026-11-03
 - 【修复】data: 所有者转移 / ACL 点名校验受让人真实可用（#1335） ([#1336](https://github.com/MYTech-Co-LTD/platform-core/pull/1336), [ddf794e](https://github.com/MYTech-Co-LTD/platform-core/commit/ddf794ea0ced8debf04af7357cb28a87e9145ec4))
 
