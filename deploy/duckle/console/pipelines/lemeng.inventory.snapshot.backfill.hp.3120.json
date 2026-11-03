@@ -288,7 +288,7 @@
         "properties": {
           "pipelineRef": "${workspace}/pipelines/lemeng.inventory.snapshot.page.json",
           "itemKey": "page_number",
-          "concurrency": 8
+          "concurrency": 2
         }
       }
     },
