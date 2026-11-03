@@ -5,7 +5,14 @@
    思考的事实源本来就在本机 sqlite，读它反而更直接，且宿主凭据保持只写（合最小权限）。
 
 只做「判据本身不需要阈值」的三条；需要数值的（超预算/触顶）等真实分布出来再定，不在这里编。
-复用 export-transcript.py 的 normalizer（同一套字段口径，避免两处漂移）。
+复用 export-transcript.py 的 normalizer 与 decode_event（同一套字段口径，避免两处漂移）。
+#963（2026-11-03）：
+  · 水位（ASK_ATTR_WM，按 agent 一份）：只判新事件、成功后前进——旧版每轮重扫末 FETCH 行
+    并重复上报（实测 855 行仅 19 个 distinct，且 rule_ver 2/3 混版）。
+  · same_tool_retry 加守卫：两次同参调用之间若有 is_error 回包 ⇒ 记 retry_after_error（正确
+    的重试行为，不进 stuck；计数照打）。
+  · layer_of 基础设施分支补 503 / CASDOOR_UNAVAILABLE（原先落 unknown）。
+  · 读 event_zstd（与 #969 同源盲区：大事件只存压缩态）。rule_ver 升 4。
 """
 import importlib.util, json, os, sqlite3, sys, time, urllib.error, urllib.request
 
@@ -22,18 +29,23 @@ def load_normalizer():
     return mod.norm_parts
 
 
-def read_rows(db, norm_parts):
+def read_rows(db, norm_parts, decode_event, since=0):
     con = sqlite3.connect("file:%s?mode=ro" % db, uri=True)
-    rows = con.execute(
-        "select session_id, seq, created_at, event_json from transcript_events "
-        "order by seq desc limit ?", (FETCH,)).fetchall()
+    if since > 0:
+        rows = con.execute(
+            "select session_id, seq, created_at, event_json, event_zstd from transcript_events "
+            "where seq > ? order by seq asc limit ?", (since, FETCH)).fetchall()
+    else:
+        rows = con.execute(
+            "select session_id, seq, created_at, event_json, event_zstd from transcript_events "
+            "order by seq desc limit ?", (FETCH,)).fetchall()[::-1]   # 首跑：末 FETCH 行，回升序
     out = []
-    for sid, seq, ts, ej in rows[::-1]:          # 反转回升序
-        if not ej:
-            continue
+    for sid, seq, ts, ej, ez in rows:
         try:
-            ev = json.loads(ej)
+            ev = decode_event(ej, ez)        # #969 同源：event_json 空 ⇒ 解 event_zstd
         except Exception:
+            continue                          # 解不出的单条不影响判据面（采集侧已按 #969 钉水位重试）
+        if ev is None:
             continue
         out.extend(norm_parts(sid, seq, ts, ev.get("message"), ev.get("type"), ev.get("customType")))
     return out
@@ -49,6 +61,7 @@ def detect(rows):
         rs.sort(key=lambda x: (x.get("seq") or 0))
         prev_call = prev_call_seq = None
         prev_res = prev_res_seq = None
+        err_since_call = False               # #963：两次同参调用之间是否出现过 is_error 回包
         for r in rs:
             k = r.get("kind")
             if k == "tool_call":
@@ -58,9 +71,15 @@ def detect(rows):
                           "tool": cur[0], "args": cur[1][:200]}
                     if cur[0] == "tool_call":      # 调度器行：解出内层真工具
                         ev.update(inner_of(cur[1]))
-                    hits.append(("same_tool_retry", "指令面", r, ev))
+                    # ⚠️ 错后原样重试是**正确行为**，不是症状（实测：身份/503 出错后重试即成功）。
+                    # 单列 retry_after_error 供计数观察；不进 stuck 流。
+                    hits.append(("retry_after_error" if err_since_call else "same_tool_retry",
+                                 "指令面", r, ev))
                 prev_call, prev_call_seq = cur, r.get("seq")
+                err_since_call = False          # 窗口重开：只看「上一次调用 → 这一次」之间
             elif k == "tool_result":
+                if r.get("is_error"):
+                    err_since_call = True
                 cur = (r.get("tool_result") or "", bool(r.get("is_error")))
                 # ⚠️ 必须要求 is_error —— 否则「两条相同的**成功**回包」会被误判成同错两次（实测误判）
                 if prev_res is not None and cur[0] and cur[1] and cur == prev_res:
@@ -115,7 +134,8 @@ def layer_of(rule, evidence_text):
         return "指令面/回包面"
     if '"truncated":true' in t.replace(" ", ""):
         return "指令面"
-    if "warehouse_transient" in t or "502" in t:
+    if "warehouse_transient" in t or "502" in t or "503" in t or "CASDOOR_UNAVAILABLE" in t:
+        # #963：503（如 CASDOOR_UNAVAILABLE）同属基础设施瞬时态，原先漏判落 unknown。
         return "数据面（基础设施）"
     return "unknown"
 
@@ -137,13 +157,41 @@ def post(stream, batch):
         sys.exit(1)
 
 
+RULE_VER = 4      # #963：判据语义变更（retry_after_error 单列、503 归基础设施）⇒ 升版，查询按它过滤
+
+
 def main():
     if len(sys.argv) != 2:
         sys.exit("usage: attribute.py <openclaw-agent.sqlite>")
-    rows = read_rows(sys.argv[1], load_normalizer())
-    hits = detect(rows)
+    wm_path = os.environ.get("ASK_ATTR_WM", "/var/lib/askdata/attribute.watermark")
+    since = 0
+    if os.path.exists(wm_path):
+        txt = open(wm_path).read().strip()
+        since = int(txt) if txt else 0
+    norm = load_normalizer()
+    # decode_event 复用导出侧实现（同一份 zstd 口径；缺后端=DecodeError，采集侧已按 #969 钉水位）
+    export_mod = None
+    spec_dir = os.path.dirname(os.path.abspath(__file__))
+    import importlib.util as _ilu
+    spec = _ilu.spec_from_file_location("askdata_export_attr", os.path.join(spec_dir, "export-transcript.py"))
+    export_mod = _ilu.module_from_spec(spec)
+    spec.loader.exec_module(export_mod)
+    rows = read_rows(sys.argv[1], norm, export_mod.decode_event, since)
+    hits_all = detect(rows)
+    # retry_after_error = 正确重试行为：计数可见、**不进 stuck 流**（#963）
+    retries = [h for h in hits_all if h[0] == "retry_after_error"]
+    hits = [h for h in hits_all if h[0] != "retry_after_error"]
+
+    def advance_wm():
+        if rows:
+            seqs = [r.get("seq") or 0 for r in rows]
+            new_wm = max(seqs)
+            os.makedirs(os.path.dirname(wm_path) or ".", exist_ok=True)
+            open(wm_path, "w").write(str(new_wm))
+
     if not hits:
-        print("ATTRIBUTE_OK stuck=0 (rows=%d)" % len(rows))
+        advance_wm()
+        print("ATTRIBUTE_OK stuck=0 rows=%d retry_after_error=%d" % (len(rows), len(retries)))
         return
 
     stuck, attributed, by_rule, by_layer = [], [], {}, {}
@@ -151,7 +199,7 @@ def main():
         evs = json.dumps(ev, ensure_ascii=False)
         layer = layer_of(rule, evs)
         base = {"session_id": r.get("session_id"), "seq": r.get("seq"), "ts": r.get("ts"),
-                "rule_ver": 3, "rule": rule, "evidence": evs}
+                "rule_ver": RULE_VER, "rule": rule, "evidence": evs}
         stuck.append(dict(base, layer_hint=hint))
         attributed.append(dict(base, layer=layer))
         by_rule[rule] = by_rule.get(rule, 0) + 1
@@ -159,13 +207,16 @@ def main():
 
     r1 = post(DST, stuck)
     r2 = post(os.environ.get("ASK_ATTR_STREAM", "askdata_stuck_attr"), attributed)
-    stats = [{"rule": k, "n": v} for k, v in by_rule.items()] + \
-            [{"layer": k, "n": v} for k, v in by_layer.items()] + \
-            [{"metric": "total", "n": len(hits)}, {"metric": "sessions", "n": len(set(
-                h[2].get("session_id") for h in hits))}, {"metric": "rows_scanned", "n": len(rows)}]
+    stats = [{"rule": k, "n": v, "rule_ver": RULE_VER} for k, v in by_rule.items()] + \
+            [{"layer": k, "n": v, "rule_ver": RULE_VER} for k, v in by_layer.items()] + \
+            [{"metric": "total", "n": len(hits), "rule_ver": RULE_VER},
+             {"metric": "sessions", "n": len(set(h[2].get("session_id") for h in hits)), "rule_ver": RULE_VER},
+             {"metric": "rows_scanned", "n": len(rows), "rule_ver": RULE_VER},
+             {"metric": "retry_after_error", "n": len(retries), "rule_ver": RULE_VER}]
     r3 = post(os.environ.get("ASK_STATS_STREAM", "askdata_stats"), stats)
-    print("ATTRIBUTE_OK stuck=%d rows=%d by_rule=%s by_layer=%s"
-          % (len(hits), len(rows), json.dumps(by_rule, ensure_ascii=False),
+    advance_wm()      # 三次 post 全成功后前进（失败在上面已 exit 1，水位不动 ⇒ 下轮重试）
+    print("ATTRIBUTE_OK stuck=%d retry_after_error=%d rows=%d by_rule=%s by_layer=%s"
+          % (len(hits), len(retries), len(rows), json.dumps(by_rule, ensure_ascii=False),
              json.dumps(by_layer, ensure_ascii=False)))
     print("  resp: stuck=%s attr=%s stats=%s" % (r1[:80], r2[:80], r3[:80]))
 
