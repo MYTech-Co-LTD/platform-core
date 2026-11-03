@@ -28,8 +28,8 @@
           "responsePath": "/result",
           "paginationType": "none",
           "rawResponseDestination": "/workspace/.duckle-raw/inv-page-${ITER_ITEM_BATCH_ID}-p${ITER_ITEM_PAGE_NUMBER}.json",
-          "retryAttempts": 3,
-          "retryBackoffMs": 2000
+          "retryAttempts": 5,
+          "retryBackoffMs": 8000
         },
         "schema": [
           {
