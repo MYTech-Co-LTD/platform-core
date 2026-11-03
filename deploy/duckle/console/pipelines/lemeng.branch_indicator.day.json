@@ -205,37 +205,6 @@
       }
     },
     {
-      "id": "gs",
-      "type": "transform",
-      "position": {
-        "x": 0,
-        "y": 0
-      },
-      "data": {
-        "label": "gs",
-        "componentId": "code.sql",
-        "properties": {
-          "sql": "SELECT count(DISTINCT branch_num) AS n_matched\nFROM input\nWHERE matched\nHAVING count(DISTINCT branch_num) = 0"
-        }
-      }
-    },
-    {
-      "id": "ds",
-      "type": "transform",
-      "position": {
-        "x": 0,
-        "y": 0
-      },
-      "data": {
-        "label": "ds",
-        "componentId": "ctl.die",
-        "properties": {
-          "condition": "has-rows",
-          "message": "本块 0 家门店有数据（请求 ${ITER_ITEM_N_BRANCHES} 家，chunk ${ITER_ITEM_CHUNK_NO}/${ITER_ITEM_N_CHUNKS}，bizday=${ITER_ITEM_BIZDAY}）——权限收窄 / 月份锚错 / 网关空集，拒绝写湖"
-        }
-      }
-    },
-    {
       "id": "s",
       "type": "transform",
       "position": {
@@ -246,7 +215,7 @@
         "label": "s",
         "componentId": "code.sql",
         "properties": {
-          "sql": "SELECT '${ITER_ITEM_BATCH_ID}' AS batch_id,\n       CAST(${ITER_ITEM_SYSTEM_BOOK} AS INTEGER) AS system_book,\n       CAST('${ITER_ITEM_BIZDAY}' AS DATE) AS bizday,\n       CAST(branch_num AS INTEGER) AS branch_num,\n       CAST(branch_code AS VARCHAR) AS branch_code,\n       CAST(branch_name AS VARCHAR) AS branch_name,\n       CAST(branch_region_num AS INTEGER) AS branch_region_num,\n       CAST(branch_region_name AS VARCHAR) AS branch_region_name,\n       CAST(metric AS VARCHAR) AS metric,\n       CAST(actual_value AS DECIMAL(20, 2)) AS actual_value,\n       CAST(target_value AS DECIMAL(20, 2)) AS target_value,\n       CAST(actual_rate AS DECIMAL(20, 6)) AS actual_rate,\n       CAST(CURRENT_TIMESTAMP AS TIMESTAMPTZ) AS computed_at,\n       -- 本块「本月有数据」的门店数（常数列）：父侧据此对账「每块行数 == 匹配数」；写湖前由父 s 丢弃\n       CAST((SELECT count(DISTINCT branch_num) FROM input WHERE matched) AS INTEGER) AS chunk_n_matched\nFROM input\nWHERE period_day = CAST('${ITER_ITEM_BIZDAY}' AS DATE)"
+          "sql": "SELECT '${ITER_ITEM_BATCH_ID}' AS batch_id,\n       CAST(${ITER_ITEM_SYSTEM_BOOK} AS INTEGER) AS system_book,\n       CAST('${ITER_ITEM_BIZDAY}' AS DATE) AS bizday,\n       CAST(branch_num AS INTEGER) AS branch_num,\n       CAST(branch_code AS VARCHAR) AS branch_code,\n       CAST(branch_name AS VARCHAR) AS branch_name,\n       CAST(branch_region_num AS INTEGER) AS branch_region_num,\n       CAST(branch_region_name AS VARCHAR) AS branch_region_name,\n       CAST(metric AS VARCHAR) AS metric,\n       CAST(actual_value AS DECIMAL(20, 2)) AS actual_value,\n       CAST(target_value AS DECIMAL(20, 2)) AS target_value,\n       CAST(actual_rate AS DECIMAL(20, 6)) AS actual_rate,\n       CAST(CURRENT_TIMESTAMP AS TIMESTAMPTZ) AS computed_at,\n       -- 本块「本月有数据」的门店数（常数列）：父侧据此对账「每块行数 == 匹配数」；写湖前由父 s 丢弃\n       CAST((SELECT count(DISTINCT branch_num) FROM input WHERE matched) AS INTEGER) AS chunk_n_matched\nFROM input\nWHERE period_day = CAST('${ITER_ITEM_BIZDAY}' AS DATE)\nUNION ALL\n-- 占位行（issue #1314）：本块 0 家门店有数据时写 1 行（branch_num=NULL, chunk_n_matched=0），\n-- 保证 staging 分块文件存在、父侧「分块到齐」判据继续成立；「整天是否真无数据」交由父级栅裁决。\nSELECT '${ITER_ITEM_BATCH_ID}' AS batch_id,\n       CAST(${ITER_ITEM_SYSTEM_BOOK} AS INTEGER) AS system_book,\n       CAST('${ITER_ITEM_BIZDAY}' AS DATE) AS bizday,\n       CAST(NULL AS INTEGER) AS branch_num,\n       CAST(NULL AS VARCHAR) AS branch_code,\n       CAST(NULL AS VARCHAR) AS branch_name,\n       CAST(NULL AS INTEGER) AS branch_region_num,\n       CAST(NULL AS VARCHAR) AS branch_region_name,\n       CAST(NULL AS VARCHAR) AS metric,\n       CAST(NULL AS DECIMAL(20, 2)) AS actual_value,\n       CAST(NULL AS DECIMAL(20, 2)) AS target_value,\n       CAST(NULL AS DECIMAL(20, 6)) AS actual_rate,\n       CAST(CURRENT_TIMESTAMP AS TIMESTAMPTZ) AS computed_at,\n       CAST(0 AS INTEGER) AS chunk_n_matched\nWHERE NOT EXISTS (\n  SELECT 1 FROM input WHERE period_day = CAST('${ITER_ITEM_BIZDAY}' AS DATE)\n)"
         }
       }
     },
@@ -320,26 +289,6 @@
       }
     },
     {
-      "id": "e-n-gs",
-      "source": "n",
-      "target": "gs",
-      "sourceHandle": "main",
-      "targetHandle": "main",
-      "data": {
-        "connectionType": "main"
-      }
-    },
-    {
-      "id": "e-gs-ds",
-      "source": "gs",
-      "target": "ds",
-      "sourceHandle": "main",
-      "targetHandle": "main",
-      "data": {
-        "connectionType": "main"
-      }
-    },
-    {
       "id": "e-n-s",
       "source": "n",
       "target": "s",
@@ -357,16 +306,6 @@
       "targetHandle": "main",
       "data": {
         "connectionType": "main"
-      }
-    },
-    {
-      "id": "e-ds-sink",
-      "source": "ds",
-      "target": "sink",
-      "sourceHandle": null,
-      "targetHandle": null,
-      "data": {
-        "connectionType": "on-subjob-ok"
       }
     },
     {
