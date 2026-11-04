@@ -544,5 +544,26 @@
     "last_run_duration_ms": null,
     "last_run_error": null,
     "next_run_at": null
+  },
+  {
+    "id": "panel-lemeng.metric_profile.3120",
+    "pipeline_id": "lemeng.metric_profile.3120",
+    "name": "lemeng.metric_profile.3120",
+    "enabled": true,
+    "kind": {
+      "type": "cron",
+      "expr": "10 5 * * 0"
+    },
+    "timezone": "Asia/Shanghai",
+    "misfire": "skip",
+    "catchup": {
+      "maxCatchupRuns": 4,
+      "maxCatchupAgeDays": 14
+    },
+    "last_run_at": null,
+    "last_run_status": null,
+    "last_run_duration_ms": null,
+    "last_run_error": null,
+    "next_run_at": null
   }
 ]

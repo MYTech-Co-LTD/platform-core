@@ -1,0 +1,174 @@
+{
+  "name": "lemeng.metric_profile.relation",
+  "id": "lemeng.metric_profile.relation",
+  "version": 1,
+  "_note": [
+    "W2 duckle profiler —— **foreach 子管线**：对**一个关系**取该租户的样本，按列做统计画像，追加写仓 `data.metric_profiles`。",
+    "由父管线 lemeng.metric_profile.3120 的 ctl.foreach 逐关系驱动（ITEM 字段：RELATION / ORG），不单独排班。",
+    "",
+    "①【引擎原生，不自写统计】`qa.profile`（Column Profile，2026-11-04 真机 get_component_schema 核实）输出**逐列一行**：",
+    "   column_name / column_type / min / max / approx_unique / avg / std / q25 / q50 / q75 / count / null_percentage。",
+    "   本管线只把它**改形**成仓表五列（org, relation, column, stats, profiled_at）——不改口径、不重算统计（B11）。",
+    "",
+    "②【跨租户隔离】源 SQL 恒带 `where org = '${ITER_ITEM_ORG}'`，org 由父管线驱动表逐行给出；",
+    "   **绝不跨租户聚合** min/max/基数（跨租户画像会把别的租户的取值域带进本租户的候选生成）。",
+    "",
+    "③【采样口径】`limit 50000`（计划 §Task 4『采样 profile（LIMIT N，不全扫）』）。",
+    "   这是**堆序前 N 行**，不是随机样本：对基数/null 率/类型判断足够，对 min/max 可能偏（短窗口）；",
+    "   候选生成（Task 5）的排他判据只吃 cardinality/null 率/类型，**不要拿本表 min/max 做业务结论**。",
+    "   50000 覆盖全部小表（全量），大表（库存快照 9.2M / 零售数量 7.4M）按 ~0.5% 采样。",
+    "   为什么从 200000 降到 50000（2026-11-04 实测）：200k 采样在**三个重负载并发**时把 pg_duckdb 压到",
+    "   crash-recover（`server closed the connection unexpectedly` + `consistent recovery state`），",
+    "   50k 对「基数/null 率/类型」判据没有损失。",
+    "",
+    "④【连接为什么用 connectionRef 而不是内联 ${ENV:...}（实测缺陷，别再踩）】",
+    "   `ctl.foreach` 加载子管线时**只替换 ${ITER_ITEM_*}，不展开 ${ENV:*}**（2026-11-04 真机实测：同一份连接文件在",
+    "   顶层管线可用、在 foreach 子管线的 src/snk.postgres 里原样透传 `${ENV:PGDUCK_PASSWORD}` ⇒ 认证失败）。",
+    "   ⇒ 本子管线一律走 `connectionRef: pgduck`（workspace 的 `connections/pgduck.json`，由投递步骤按 project env",
+    "   的 `PGDUCK_PASSWORD` 落地，chmod 600；见 deploy/duckle/console/README.md §「W2 profiler」）。MCP 的 create_connection 只收",
+    "   `${ENV:KEY}` 占位符，**用它建的连接在本子管线里必失败**——不要用。",
+    "",
+    "⑤【落表位置（与计划文本的差异，已报备）】`data.metric_profiles` 建在**仓（pg_duckdb / warehouse）**，",
+    "   不是平台库：console 容器与单元 A 的 `postgres` **不在同一 docker 网络**（2026-11-04 实测 172.18.0.5:5432 超时），",
+    "   而 `pg_duckdb` 可达；且仓内 `data` schema 已有同形的 `data.load_log` 先例。平台侧经 DATA_WAREHOUSE_URL 读。",
+    "   建表 DDL 见 `deploy/duckle/console/metric_profiles.ddl.sql`（幂等，2026-11-04 已应用）。",
+    "",
+    "⑥【写模式】`append`：profiled_at 进主键 ⇒ 每轮画像留历史（周更 ≈ 一年 52 份画像），不覆盖。",
+    "   表必须预先存在（snk.postgres 的 append 不建表）——DDL 见 ⑤。"
+  ],
+  "nodes": [
+    {
+      "id": "s",
+      "type": "source",
+      "position": {
+        "x": 0,
+        "y": 0
+      },
+      "data": {
+        "label": "s",
+        "componentId": "src.postgres",
+        "properties": {
+          "connectionRef": "pgduck",
+          "mode": "sql",
+          "sql": "select * from ${ITER_ITEM_RELATION} where org = '${ITER_ITEM_ORG}' limit 50000",
+          "pushdown": true,
+          "readOnly": true,
+          "connectTimeout": 30
+        },
+        "schema": [
+          {
+            "name": "x",
+            "type": "string"
+          }
+        ]
+      }
+    },
+    {
+      "id": "p",
+      "type": "transform",
+      "position": {
+        "x": 0,
+        "y": 0
+      },
+      "data": {
+        "label": "p",
+        "componentId": "qa.profile",
+        "properties": {
+          "columns": []
+        }
+      }
+    },
+    {
+      "id": "d0",
+      "type": "transform",
+      "position": {
+        "x": 0,
+        "y": 0
+      },
+      "data": {
+        "label": "d0",
+        "componentId": "ctl.die",
+        "properties": {
+          "condition": "no-rows",
+          "message": "profile 为空：关系 ${ITER_ITEM_RELATION} 在本租户（${ITER_ITEM_ORG}）取不到任何列统计——表不存在/org 值不对/样本 0 行，拒绝静默无写入"
+        }
+      }
+    },
+    {
+      "id": "c",
+      "type": "transform",
+      "position": {
+        "x": 0,
+        "y": 0
+      },
+      "data": {
+        "label": "c",
+        "componentId": "code.sql",
+        "properties": {
+          "sql": "SELECT\n  '${ITER_ITEM_ORG}' AS org,\n  '${ITER_ITEM_RELATION}' AS relation,\n  CAST(column_name AS VARCHAR) AS \"column\",\n  json_object(\n    'column_type', column_type,\n    'min', \"min\",\n    'max', \"max\",\n    'approx_unique', approx_unique,\n    'avg', avg,\n    'std', std,\n    'q25', q25,\n    'q50', q50,\n    'q75', q75,\n    'count', \"count\",\n    'null_percentage', null_percentage\n  ) AS stats,\n  now() AS profiled_at\nFROM input\nWHERE column_name IS NOT NULL"
+        }
+      }
+    },
+    {
+      "id": "sink",
+      "type": "sink",
+      "position": {
+        "x": 0,
+        "y": 0
+      },
+      "data": {
+        "label": "sink",
+        "componentId": "snk.postgres",
+        "properties": {
+          "connectionRef": "pgduck",
+          "schemaName": "data",
+          "tableName": "metric_profiles",
+          "mode": "append",
+          "connectTimeout": 30
+        }
+      }
+    }
+  ],
+  "edges": [
+    {
+      "id": "e-s-p",
+      "source": "s",
+      "target": "p",
+      "sourceHandle": "main",
+      "targetHandle": "main",
+      "data": {
+        "connectionType": "main"
+      }
+    },
+    {
+      "id": "e-p-d0",
+      "source": "p",
+      "target": "d0",
+      "sourceHandle": "main",
+      "targetHandle": "main",
+      "data": {
+        "connectionType": "main"
+      }
+    },
+    {
+      "id": "e-d0-c",
+      "source": "d0",
+      "target": "c",
+      "sourceHandle": "main",
+      "targetHandle": "main",
+      "data": {
+        "connectionType": "main"
+      }
+    },
+    {
+      "id": "e-c-sink",
+      "source": "c",
+      "target": "sink",
+      "sourceHandle": "main",
+      "targetHandle": "main",
+      "data": {
+        "connectionType": "main"
+      }
+    }
+  ]
+}

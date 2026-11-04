@@ -173,3 +173,47 @@ python3 -c "import json,glob,os;fs=glob.glob('/workspace/runs/receipts/*branch_l
   `env` 是容器创建时注入，改键必须 refresh 重建容器才生效，2026-09-27 实测）。
 - 现算清单为空 ⇒ 判红（foreach 零 item = 静默空转）；漂移行以 `status='config_drift'` 走
   OO webhook 告警面（**不阻断**、不进湖）。64188 的排除清单是 `[]`（行为不变），是否排 99 另议。
+
+## W2 profiler（`lemeng.metric_profile.*`，2026-11-04）
+
+列画像管线：按租户逐关系跑 `qa.profile`（duckle 原生组件），追加写**仓** `data.metric_profiles`。
+供 W2 候选生成（Task 5）读——平台侧经 `DATA_WAREHOUSE_URL`（warehousePool），**不是**平台库。
+设计理由、采样口径与实测坑都写在两个管线文件的 `_note` 里；本节只讲**投递要做什么**。
+
+| 文件 | 落地 | 角色 |
+|---|---|---|
+| `pipelines/lemeng.metric_profile.3120.json` | `/workspace/pipelines/` | 父：静态 21 条 L1 marts 清单 × 本租户 org → `ctl.foreach` |
+| `pipelines/lemeng.metric_profile.relation.json` | 同上 | 子：`src.postgres` → `qa.profile` → 改形 → `snk.postgres`（append） |
+| `schedules/3120.json`（追加条目） | `/workspace/schedules.json` | 周更：`10 5 * * 0` Asia/Shanghai（周日 05:10） |
+| `owners.lemeng.json`（追加条目） | `/workspace/owners.json` | 新鲜度：资产 `/workspace/logs/metric-profile-summary.csv`，`maximumAge: 9d`（父管线收尾汇总；**不锚仓表**——sink 在子管线里、父 run 记录不带 assets，锚表会恒 stale） |
+| `alerts.lemeng.json`（追加规则） | `/workspace/alerts.json` | `lemeng.metric_profile.*` failure + recovery |
+| `metric_profiles.ddl.sql` | **不 seed**（对仓执行一次） | 幂等建表 |
+
+**投递四步（顺序不能换）**：
+
+1. **建表**（对仓 pg_duckdb 执行；openship 服务器级 exec）：
+   `docker exec <pg_duckdb 容器> psql -U platform -d warehouse -v ON_ERROR_STOP=1 -f metric_profiles.ddl.sql`
+2. **建连接 `connections/pgduck.json`**（workspace 卷；**不进仓**）：
+   `{kind:"postgres", host:"pg_duckdb", port:5432, database:"warehouse", username:"platform", password:"<project env PGDUCK_PASSWORD>"}`，
+   `chmod 600`。
+   🔴 **值必须是明文真值，不能用 `${ENV:...}` 占位符，也别用 MCP `create_connection`**：`ctl.foreach`
+   加载子管线时只替换 `${ITER_ITEM_*}`、**不展开 `${ENV:*}`**（2026-11-04 实测，同一份连接在顶层管线
+   可用、在子管线里原样透传 ⇒ 认证失败）。MCP 工具只收占位符 ⇒ 用它建的连接在本管线里必失败。
+   console 容器的 env 里本来就有 `PGDUCK_PASSWORD`（同一信任域），落盘不新增暴露面。
+3. **seed** 上表 5 个文件（整文件覆盖语义，同 §「调度器的实测事实」）+ 重启 console 使 `schedules.json` 生效。
+4. **重建 catalog**（`POST /api/catalog`）——否则运行记录不带 `assets`、`owners` 的新鲜度时钟不起算。
+
+**验收**（真机）：
+```sh
+# 触发一次（同步会等 3 分钟以上，用 async + 轮询）
+curl -s -X POST -H "Authorization: Bearer $DUCKLE_TOKEN" -H 'Content-Type: application/json' \
+  -d '{"file":"pipelines/lemeng.metric_profile.3120.json","params":{}}' http://127.0.0.1:18080/api/run/async
+# 回读（仓）
+docker exec <pg_duckdb 容器> psql -U platform -d warehouse -c \
+  "select org, relation, count(*), max(profiled_at) from data.metric_profiles group by 1,2 order by 2"
+```
+判据：父 run `status: ok`、`fe` rows = 21；表里 21 个 relation 各一份本批次画像（约 494 行）。
+
+⚠️ **采样 50000 不是 200000**：2026-11-04 实测 200k × 21 关系在**三份重负载并发**时把 pg_duckdb
+压到 crash-recover（`server closed the connection unexpectedly` + `consistent recovery state`）。
+50k 对「类型 / 基数 / null 率」判据没有损失；别为了「更准」把 limit 调回去。
