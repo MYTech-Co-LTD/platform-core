@@ -12,12 +12,13 @@ import { deleteMetric, loadPlatformCatalog, selectMetricSnapshot, upsertMetric }
 import { writeMetricAudit } from './metric-audit-store'
 import type { MetricCertification } from './metric-governance'
 import { validatePrivateMeasure } from './private-measure'
-import type { PrivateMeasureDeps } from './private-measure'
+import type { PrivateMeasureDeps, PrivateMeasureValidation } from './private-measure'
 import {
   SemanticCompileError,
   collectRefIds,
   compileColumnAgg,
   compileL2,
+  parseL1Select,
   resolveL1Base,
 } from './semantic-compiler'
 import type { ColumnAggDeclaration, CompiledColumnAgg, CompiledL2, L2Declaration } from './semantic-compiler'
@@ -459,14 +460,17 @@ export async function writePrivateMeasure(
 
   return withTx(deps.pool, async (c): Promise<MetricWriteOutcome> => {
     const cur = await c.query(
-      `select source, basis, archived_at, created_by
+      `select source, basis, archived_at, created_by, certified
          from data.metrics where org = $1 and id = $2`,
       [org, input.id],
     )
     let before: Awaited<ReturnType<typeof selectMetricSnapshot>> = null
+    /** 复活时保留既有可信度（upsertMetric 的冲突分支不碰 certified）；新建恒 draft。 */
+    let certified: MetricCertification = 'draft'
     if ((cur.rowCount ?? 0) > 0) {
       const existing = cur.rows[0] as {
-        source: string; basis: string; archived_at: Date | null; created_by: string | null
+        source: string; basis: string; archived_at: Date | null
+        created_by: string | null; certified: string | null
       }
       // ④ 跨档：显式拒绝（理由见函数头注）
       if (existing.source !== 'l2' || existing.basis !== 'column_agg') {
@@ -483,8 +487,9 @@ export async function writePrivateMeasure(
         return { ok: false, http: 403, error: 'NOT_METRIC_CREATOR' }
       }
       before = await selectMetricSnapshot(c, org, input.id)
+      certified = existing.certified === 'certified' ? 'certified' : 'draft'
       await c.query(
-        `update data.metrics set archived_at = null
+        `update data.metrics set archived_at = null, revived_at = now()
           where org = $1 and id = $2 and source = 'l2' and basis = 'column_agg'`,
         [org, input.id],
       )
@@ -501,7 +506,102 @@ export async function writePrivateMeasure(
       before,
       after: {
         title: row.title, description: row.description, subjectColumn: row.subjectColumn,
-        selectSql: row.selectSql, groupBy: row.groupBy, params: row.params, certified: 'draft',
+        selectSql: row.selectSql, groupBy: row.groupBy, params: row.params, certified,
+      },
+    })
+    return { ok: true }
+  })
+}
+
+/** 私有测度三闸失败 → 判别式结果（write 与 D6 confirm 共用同一份状态码映射）。 */
+function privateMeasureFailure(v: Extract<PrivateMeasureValidation, { ok: false }>): MetricWriteOutcome {
+  return {
+    ok: false,
+    // 环境/可见性问题响亮成 500（监控看得见）；其余是调用方可自助修正的输入问题 ⇒ 400。
+    http: v.code === 'COLUMNS_UNAVAILABLE' ? 500 : 400,
+    error: v.code,
+    ...(v.detail === undefined ? {} : { extra: { detail: v.detail } }),
+  }
+}
+
+/**
+ * 私有测度的 D6 确认路径（评审 Important：修改必须走草稿→确认，不能靠「归档再复活」）。
+ *
+ * 草稿形状（`metric-governance.ts` 的 `ColumnAggDraftSchema`）只含 `{kind,agg,column,dims}`——
+ * **没有 relation**：修改只能在原 mart 内换列/换聚合/换维度，换源要重新走 `POST /metrics/private`。
+ * 故 relation 从**当前生效行**的 select_sql 反解（`parseL1Select`，与运行期同一份形状契约）。
+ *
+ * 流程与树形 D6 同形：三闸重校验（数据面列可能已漂移）→ `compileColumnAgg` 重编译 →
+ * 事务内更新生效列 + 审计（`action='update'`）。`basis` 保持 `column_agg`；`draft_spec` 的
+ * 条件清除由路由在成功后执行（与树形路径共用同一份「并发新稿不被吞」的守卫）。
+ */
+export async function confirmPrivateMeasureDraft(
+  deps: PrivateMeasureWriteDeps, org: string, id: string,
+  draft: Omit<ColumnAggDeclaration, 'relation'>,
+): Promise<MetricWriteOutcome> {
+  const actor = deps.requester
+  const cur = await deps.pool.query(
+    `select created_by, select_sql from data.metrics
+      where org = $1 and id = $2 and source = 'l2' and basis = 'column_agg'`,
+    [org, id],
+  )
+  if ((cur.rowCount ?? 0) === 0) return { ok: false, http: 409, error: 'BASIS_CONFLICT' }
+  const row = cur.rows[0] as { created_by: string | null; select_sql: string }
+  if (row.created_by === null) return { ok: false, http: 403, error: 'METRIC_CREATOR_UNKNOWN' }
+  if (row.created_by !== actor.userId) return { ok: false, http: 403, error: 'NOT_METRIC_CREATOR' }
+
+  let relation: string
+  try {
+    relation = parseL1Select(row.select_sql).relation
+  } catch {
+    // 私有测度行的 select_sql 只由 compileColumnAgg 写入；解析不了 = 平台数据坏了（500）
+    return { ok: false, http: 500, error: 'COLUMN_AGG_BASE_SQL_INVALID' }
+  }
+  const input: ColumnAggDeclaration = {
+    agg: draft.agg,
+    column: draft.column,
+    ...(draft.dims === undefined ? {} : { dims: draft.dims }),
+    relation,
+  }
+
+  const validation = await validatePrivateMeasure(deps, input)
+  if (!validation.ok) return privateMeasureFailure(validation)
+
+  let compiled: CompiledColumnAgg
+  try {
+    compiled = compileColumnAgg(input)
+  } catch (e) {
+    if (e instanceof SemanticCompileError) {
+      return { ok: false, http: 400, error: 'BAD_INPUT', extra: { detail: e.message } }
+    }
+    throw e
+  }
+
+  return withTx(deps.pool, async (c): Promise<MetricWriteOutcome> => {
+    const before = await selectMetricSnapshot(c, org, id)
+    if (before === null) return { ok: false, http: 409, error: 'BASIS_CONFLICT' }
+    const upd = await c.query(
+      `update data.metrics
+          set select_sql = $3, group_by = $4, updated_by = $5,
+              version = version + 1, updated_at = now()
+        where org = $1 and id = $2 and source = 'l2' and basis = 'column_agg'`,
+      [org, id, compiled.selectSql, compiled.groupBy, actor.userId],
+    )
+    // 读与写之间被删/换档 ⇒ 不静默成功
+    if ((upd.rowCount ?? 0) === 0) return { ok: false, http: 409, error: 'BASIS_CONFLICT' }
+    await writeMetricAudit(c, {
+      org,
+      metricId: id,
+      action: 'update',
+      userId: actor.userId,
+      channel: actor.channel,
+      keyId: actor.keyId,
+      before,
+      after: {
+        ...before,
+        selectSql: compiled.selectSql,
+        groupBy: compiled.groupBy,
+        certified: before.certified ?? 'draft',
       },
     })
     return { ok: true }

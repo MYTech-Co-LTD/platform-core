@@ -8,7 +8,9 @@
 //   · 归档是**隐藏不是删除**：`archived_at = now()`，行与审计保留（读面三个词表加载器过滤）；
 //   · 回归重放（`REGRESSION_USER_ID`）是系统自检，不算业务使用（与 metricUsageStats 同一口径）。
 //
-// 租户隔离：所有 SQL 都带 `org = $1`（本模块的机器判据 scripts/check-tenant-isolation.mjs）。
+// 租户隔离：所有 SQL 都带 `org = $1`。注意 `scripts/check-tenant-isolation.mjs` **只对账
+// 「每张表有 not null 的 org 列」这一列存在性**，并不校验查询级隔离——查询级隔离靠评审与
+// 本文件/SQL 的形状保证，别把那道门禁当成运行时判据。
 import type { Pool } from 'pg'
 import { REGRESSION_USER_ID } from './metric-usage'
 
@@ -42,8 +44,9 @@ export async function archiveStalePrivateMeasures(
         and m.source = 'l2'
         and m.basis = 'column_agg'
         and m.archived_at is null
-        -- 年龄闸：刚建出来的行不在「30 天零使用」的定义域里
-        and m.created_at <= now() - make_interval(days => $2::int)
+        -- 年龄闸：刚建出来/刚复活的行不在「30 天零使用」的定义域里。
+        -- 复活锚点（035）优先于首次创建锚点：复活 = 观察窗口重新起算，否则下一次 job 立刻再归档。
+        and coalesce(m.revived_at, m.created_at) <= now() - make_interval(days => $2::int)
         and not exists (select 1 from recent r where r.metric_id = m.id)
       returning m.id`,
     [org, days, REGRESSION_USER_ID],

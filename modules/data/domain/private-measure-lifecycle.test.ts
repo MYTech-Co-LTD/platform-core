@@ -26,18 +26,25 @@ let pool: Pool
  */
 async function seedPrivate(
   id: string,
-  opts: { org?: string; createdDaysAgo?: number; archived?: boolean; basis?: 'column_agg' | 'l1_tree' } = {},
+  opts: {
+    org?: string; createdDaysAgo?: number; archived?: boolean
+    basis?: 'column_agg' | 'l1_tree'; revivedDaysAgo?: number
+  } = {},
 ): Promise<void> {
   const org = opts.org ?? ORG
   await pool.query(
     `insert into data.metrics
        (org, id, title, description, required_scope, subject_column, select_sql, group_by,
         params, source, source_system, updated_by, version, totalable, sla_days, freshness_relations,
-        created_by, certified, basis, archived_at, created_at)
+        created_by, certified, basis, archived_at, created_at, revived_at)
      values ($1, $2, $2, '', null, 'org', 'select sum(amount) as value from fct_x', '',
              '{}'::jsonb, 'l2', null, 'u-creator', 1, false, null, null,
-             'u-creator', 'draft', $3, $4, now() - make_interval(days => $5::int))`,
-    [org, id, opts.basis ?? 'column_agg', opts.archived === true ? new Date() : null, opts.createdDaysAgo ?? 40],
+             'u-creator', 'draft', $3, $4, now() - make_interval(days => $5::int), $6)`,
+    [
+      org, id, opts.basis ?? 'column_agg', opts.archived === true ? new Date() : null,
+      opts.createdDaysAgo ?? 40,
+      opts.revivedDaysAgo === undefined ? null : new Date(Date.now() - opts.revivedDaysAgo * 86_400_000),
+    ],
   )
 }
 
@@ -116,6 +123,14 @@ describePg('私有测度生命周期（需要 DATABASE_URL）', () => {
     const row = (await pool.query(
       `select archived_at from data.metrics where org = $1 and id = 'pm_fresh'`, [ORG])).rows[0]
     expect(row.archived_at).toBeNull()
+  })
+
+  it('★ 复活锚点（035）：刚复活的老行从复活时刻重新起算，不立刻再归档', async () => {
+    await seedPrivate('pm_revived_recently', { createdDaysAgo: 60, revivedDaysAgo: 1 })
+    await seedPrivate('pm_revived_long_ago', { createdDaysAgo: 90, revivedDaysAgo: 40 })
+    // 前者：coalesce(revived_at, created_at) = 1 天前 ⇒ 不在「活满 30 天」的定义域
+    // 后者：复活也已 40 天且零使用 ⇒ 归档
+    expect(await archiveStalePrivateMeasures(pool, ORG)).toEqual(['pm_revived_long_ago'])
   })
 
   it('回归重放（REGRESSION_USER_ID）不算使用 ⇒ 仍归档', async () => {

@@ -324,7 +324,10 @@ describePg('私有测度写入：生效列 + basis + draft + create 审计', () 
   it('★ 归档行可复活：creator（或 data:manage）重建立即回到在用；别人 403 且仍归档', async () => {
     const id = 'ma_pm_revive'
     expect((await writePrivateMeasure(pmDeps(pool), ORG, pmInput({ id }))).ok).toBe(true)
-    await pool.query(`update data.metrics set archived_at = now() where org = $1 and id = $2`, [ORG, id])
+    // 管理员先升了可信度，再被淘汰：复活必须保留 certified（upsert 冲突分支不改它）
+    await pool.query(
+      `update data.metrics set archived_at = now(), certified = 'certified' where org = $1 and id = $2`,
+      [ORG, id])
 
     // 非 creator 且无 data:manage ⇒ 403（fail-closed：归档行不能被人静默复活）
     const denied = await writePrivateMeasure(
@@ -334,19 +337,24 @@ describePg('私有测度写入：生效列 + basis + draft + create 审计', () 
       `select archived_at from data.metrics where org = $1 and id = $2`, [ORG, id])).rows[0]
     expect(stillArchived.archived_at).not.toBeNull()
 
-    // creator 本人 ⇒ 复活（archived_at 清空，内容按新声明重写）
+    // creator 本人 ⇒ 复活（archived_at 清空、revived_at 落锚点，内容按新声明重写）
     const revived = await writePrivateMeasure(
       pmDeps(pool), ORG, pmInput({ id, title: '复活后', column: 'branch', agg: 'count' }))
     expect(revived).toEqual({ ok: true })
     const row = (await pool.query(
-      `select archived_at, title, select_sql from data.metrics where org = $1 and id = $2`, [ORG, id])).rows[0]
+      `select archived_at, revived_at, certified, title, select_sql
+         from data.metrics where org = $1 and id = $2`, [ORG, id])).rows[0]
     expect(row).toMatchObject({
       archived_at: null,
+      certified: 'certified',          // ★ 复活不改既有可信度
       title: '复活后',
       select_sql: 'select count(branch) as value, day from pm_write_mart',
     })
-    // 复活记为一次 create（生命周期事件，不是内容修改）
-    expect((await listMetricAudit(pool, ORG, id)).map((a) => a.action)).toEqual(['create', 'create'])
+    expect(row.revived_at).not.toBeNull()   // ★ 生命周期锚点：下次 job 从复活时刻重新起算
+    // 复活记为一次 create（生命周期事件，不是内容修改）；后态 certified 读实际值
+    const audit = await listMetricAudit(pool, ORG, id)
+    expect(audit.map((a) => a.action)).toEqual(['create', 'create'])
+    expect(audit[0]!.after!.certified).toBe('certified')
   })
 
   it('★ 审计与变更同生共死：审计写失败 ⇒ 私有测度行也必须回滚', async () => {

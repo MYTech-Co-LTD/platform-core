@@ -153,8 +153,81 @@ describePg('私有测度 HTTP 面（需要 DATABASE_URL）', () => {
     expect(await again.json()).toEqual({ error: 'METRIC_EXISTS' })
   })
 
-  it('非法 body ⇒ 400 INVALID_BODY（strict：selectSql 等实现细节不得混进声明）', async () => {
-    for (const bad of [
+  // ── D6：私有测度的修改路径（评审 Important）────────────────────────────────────
+  it('★ D6：column_agg 草稿保存 → 确认 → 生效列变化，basis 保持、draft_spec 清空、审计记 update', async () => {
+    expect((await post(body())).status).toBe(201)
+
+    const save = await app().request('/metrics/pm_route_sales/draft', {
+      method: 'PUT',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({
+        draftSpec: { kind: 'column_agg', agg: 'count', column: 'branch', dims: ['day'] },
+      }),
+    })
+    expect(save.status).toBe(200)
+    expect(await save.json()).toEqual({ ok: true })
+    const draftRes = await app().request('/metrics/pm_route_sales/draft')
+    expect((await draftRes.json()).draftSpec)
+      .toEqual({ kind: 'column_agg', agg: 'count', column: 'branch', dims: ['day'] })
+
+    const confirm = await app().request('/metrics/pm_route_sales/confirm-draft', { method: 'POST' })
+    expect(confirm.status).toBe(200)
+    expect(await confirm.json()).toEqual({ ok: true })
+
+    const row = (await pool.query(
+      `select basis, select_sql, group_by, draft_spec, version
+         from data.metrics where org = $1 and id = 'pm_route_sales'`, [ORG])).rows[0]
+    expect(row).toMatchObject({
+      basis: 'column_agg',
+      select_sql: `select count(branch) as value, day from ${SCHEMA}.fct_sales`,
+      group_by: 'day',
+      draft_spec: null,
+      version: 2,
+    })
+    expect((await pool.query(
+      `select action from data.metric_audit where org = $1 and metric_id = 'pm_route_sales' order by id`,
+      [ORG])).rows.map((r) => r.action)).toEqual(['create', 'update'])
+  })
+
+  it('★ D6：给 column_agg 行存树形草稿 ⇒ 400 DRAFT_BASIS_MISMATCH（不落库）', async () => {
+    expect((await post(body())).status).toBe(201)
+    const save = await app().request('/metrics/pm_route_sales/draft', {
+      method: 'PUT',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ draftSpec: { baseMetric: L1_OK.id, op: { kind: 'refine' } } }),
+    })
+    expect(save.status).toBe(400)
+    expect(await save.json()).toEqual({ error: 'DRAFT_BASIS_MISMATCH' })
+    const row = (await pool.query(
+      `select draft_spec from data.metrics where org = $1 and id = 'pm_route_sales'`, [ORG])).rows[0]
+    expect(row.draft_spec).toBeNull()
+  })
+
+  it('★ D6：确认时三闸不过 ⇒ 不生效、草稿保留（改了再确认）', async () => {
+    expect((await post(body())).status).toBe(201)
+    const badDraft = { kind: 'column_agg', agg: 'sum', column: 'no_such_column', dims: [] }
+    const save = await app().request('/metrics/pm_route_sales/draft', {
+      method: 'PUT',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ draftSpec: badDraft }),
+    })
+    expect(save.status).toBe(200)
+
+    const before = (await pool.query(
+      `select select_sql, version from data.metrics where org = $1 and id = 'pm_route_sales'`, [ORG])).rows[0]
+    const confirm = await app().request('/metrics/pm_route_sales/confirm-draft', { method: 'POST' })
+    expect(confirm.status).toBe(400)
+    expect(await confirm.json()).toMatchObject({ error: 'COLUMN_NOT_FOUND' })
+
+    const after = (await pool.query(
+      `select select_sql, version, draft_spec from data.metrics where org = $1 and id = 'pm_route_sales'`,
+      [ORG])).rows[0]
+    expect(after.select_sql).toBe(before.select_sql)   // 数字没变
+    expect(after.version).toBe(before.version)
+    expect(after.draft_spec).toEqual(badDraft)          // ★ 草稿原地保留
+  })
+
+  it('非法 body ⇒ 400 INVALID_BODY（strict：selectSql 等实现细节不得混进声明）', async () => {    for (const bad of [
       body({ id: '' }),
       body({ title: undefined }),
       body({ agg: 'median' }),

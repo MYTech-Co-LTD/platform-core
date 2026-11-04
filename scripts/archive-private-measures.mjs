@@ -56,15 +56,18 @@ if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) 
   }
   const { Pool } = createRequire(import.meta.url)('pg')
   const pool = new Pool({ connectionString: url })
+  /** @type {number} */
+  let exitCode = 0
   try {
     const archived = await archiveStalePrivateMeasures(pool, args.org, args.days)
     console.log(`archive-private-measures: org=${args.org} days=${args.days} archived=${archived.length}`)
     for (const id of archived) console.log(`  ${id}`)
-    process.exit(0)
   } catch (e) {
     console.error('archive-private-measures 执行失败:', e instanceof Error ? e.message : e)
-    process.exit(2)
+    exitCode = 2
   } finally {
+    // 先 end 再 exit：在 try/finally 里直接 process.exit 会跳过 finally（连接池不关）
     await pool.end()
   }
+  process.exit(exitCode)
 }
