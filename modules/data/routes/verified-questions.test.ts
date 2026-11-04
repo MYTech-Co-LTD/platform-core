@@ -144,15 +144,18 @@ describePg('已验证问答平台 API（需要 DATABASE_URL）', () => {
     const rows = await listVerified(pool, ORG, { metricId: 'lemeng:retail:sales' })
     expect(rows).toHaveLength(1)
     expect(rows[0]).toMatchObject({
-      id, status: 'verified', source: 'human', strength: 'human', verifiedBy: ADMIN,
+      id, status: 'verified', source: 'human', strength: 'human',
+      // 确认：verified_by（谁确认过）与 decided_by（谁做的这次决策）都写
+      verifiedBy: ADMIN, decidedBy: ADMIN,
     })
     expect(rows[0]!.verifiedAt).not.toBeNull()
+    expect(rows[0]!.decidedAt).not.toBeNull()
     // 候选列表里不再有它
     expect(await listVerified(pool, ORG, { status: 'candidate', metricId: 'lemeng:retail:sales' })).toHaveLength(0)
   })
 
   // ── 写面：拒绝 ────────────────────────────────────────────────────────────────
-  it('POST /:id/reject：候选 → rejected；不写确认身份；默认列表不再出现', async () => {
+  it('POST /:id/reject：候选 → rejected；决策人落 decided_by，verified_by 仍为 NULL', async () => {
     const id = await seed({ question: '上个月销售额', metricId: 'lemeng:retail:sales', strength: 'weak' })
 
     const res = await postAction(id, 'reject')
@@ -161,7 +164,12 @@ describePg('已验证问答平台 API（需要 DATABASE_URL）', () => {
 
     const rejected = await listVerified(pool, ORG, { status: 'rejected', metricId: 'lemeng:retail:sales' })
     expect(rejected).toHaveLength(1)
-    expect(rejected[0]).toMatchObject({ id, status: 'rejected', verifiedBy: null })
+    expect(rejected[0]).toMatchObject({
+      id, status: 'rejected',
+      // 从未确认过的行：verified_by 恒 NULL；拒绝人必须落在 decided_by（否则库里没人拒绝的痕迹）
+      verifiedBy: null, decidedBy: ADMIN,
+    })
+    expect(rejected[0]!.decidedAt).not.toBeNull()
     expect(await listVerified(pool, ORG, { metricId: 'lemeng:retail:sales' })).toHaveLength(0)
   })
 
@@ -196,5 +204,18 @@ describePg('已验证问答平台 API（需要 DATABASE_URL）', () => {
     // 无身份写入被拒 ⇒ 行没被改
     const rows = await listVerified(pool, ORG, { status: 'candidate' })
     expect(rows.map((r) => r.id)).toContain(id)
+
+    // userId 为空但 orgId 有值：requesterOf 只拦空 orgId ⇒ 路由必须自己挡成 403，
+    // 不能让它落到域层「必须带操作人」抛错冒成 500（评审 Minor）。
+    const id2 = await seed({
+      question: '空账号写入', metricId: 'lemeng:retail:emptyuser', strength: 'weak',
+    })
+    const noUser = await buildTestApp(
+      mod, makeIdentity({ orgId: ORG, scopes: ['data:manage'], userId: '' }), { pool }, { id: 1, casdoor_org: ORG }, [],
+    ).request(`/metrics/verified/${id2}/reject`, { method: 'POST' })
+    expect(noUser.status).toBe(403)
+    expect(await noUser.json()).toEqual({ error: 'UNAUTHENTICATED' })
+    // 仍未被拒（403 发生在写之前）
+    expect((await listVerified(pool, ORG, { status: 'candidate' })).map((r) => r.id)).toContain(id2)
   })
 })

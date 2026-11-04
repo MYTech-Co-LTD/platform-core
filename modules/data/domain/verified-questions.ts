@@ -68,6 +68,10 @@ export interface VerifiedQuestion {
   /** 人工确认人，或 `auto:strong`；未确认 = null。 */
   verifiedBy: string | null
   verifiedAt: string | null
+  /** 最近一次人工决策（确认**或**拒绝）的操作人；自动信号 = null。
+   *  与 `verifiedBy` 分开是刻意的：拒绝不抹掉「谁确认过」，确认也不抹掉「谁拒绝过」的审计面。 */
+  decidedBy: string | null
+  decidedAt: string | null
   lastCheckedAt: string | null
   lastCheckResult: CheckResult | null
   sessionId: string | null
@@ -103,6 +107,8 @@ function toVerifiedQuestion(row: Row): VerifiedQuestion {
     status: row.status as VerifiedQuestionStatus,
     verifiedBy: row.verified_by === null || row.verified_by === undefined ? null : String(row.verified_by),
     verifiedAt: iso(row.verified_at),
+    decidedBy: row.decided_by === null || row.decided_by === undefined ? null : String(row.decided_by),
+    decidedAt: iso(row.decided_at),
     lastCheckedAt: iso(row.last_checked_at),
     lastCheckResult: (row.last_check_result ?? null) as CheckResult | null,
     sessionId: row.session_id === null || row.session_id === undefined ? null : String(row.session_id),
@@ -226,6 +232,8 @@ export async function listVerified(
  *
  * `verified_by` / `verified_at` 只在置为 `verified` 时写入；置为其他状态时**保留**原来的
  * 确认痕迹（拒绝一行不会抹掉「谁确认过它」——审计要能回答两个问题）。
+ * 「谁拒绝的」由 `decided_by` / `decided_at` 承载（033）：**确认与拒绝都写**这两列，
+ * 故任何一次人工决策都能回答归属，而不必依赖 `verified_by`（它对未确认过的候选行恒 NULL）。
  *
  * 人工状态变更**必须带操作人**（verified 与 rejected 都是）：没有归属的确认/拒绝是坏审计，
  * 宁可在入口抛错。自动信号不经过本函数（它走 `upsertCandidate`）。
@@ -253,6 +261,9 @@ export async function setStatus(
         set status      = $3,
             verified_by = case when $3 = 'verified' then $4 else verified_by end,
             verified_at = case when $3 = 'verified' then now() else verified_at end,
+            -- 决策痕迹：确认与拒绝都写（verified_by 只表示「谁确认过」，拒绝不挤占它）
+            decided_by  = case when $3 in ('verified', 'rejected') then $4 else decided_by end,
+            decided_at  = case when $3 in ('verified', 'rejected') then now() else decided_at end,
             -- 人工确认 = 最强档（human > strong > weak），见文件头与计划「冲突语义」表
             source      = case when $3 = 'verified' then 'human' else source end,
             strength    = case when $3 = 'verified' then 'human' else strength end,

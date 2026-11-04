@@ -35,8 +35,11 @@ async function humanDecision(
   status: 'verified' | 'rejected',
 ) {
   const requester = requesterOf(c)
-  // 人工状态变更要能归属到人（审计）；无身份 ⇒ 拒，与其它写端点同档。
-  if (requester === null) return c.json({ error: 'UNAUTHENTICATED' }, 403)
+  // 人工状态变更要能归属到人（审计）；无身份、或 userId 为空 ⇒ 拒。
+  // `requesterOf` 只拦空 orgId，userId 空串会一路落到域层抛错变 500——入口先挡。
+  if (requester === null || requester.userId.trim() === '') {
+    return c.json({ error: 'UNAUTHENTICATED' }, 403)
+  }
   const id = parseIdParam(c.req.param('id'))
   if (id === null) return c.json({ error: 'NOT_FOUND' }, 404)
   // 域层返回 false = 本 org 下没有这一行（含跨租户 id）⇒ 404，不区分「不存在」与「别人的」。

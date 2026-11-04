@@ -200,6 +200,28 @@ describePg('verified-questions（需要 DATABASE_URL）', () => {
     await expect(setStatus(pool, ORG, row.id, 'rejected', '   ')).rejects.toThrow(/操作人/)
   })
 
+  it('decided_by/decided_at 记录人工决策：拒绝不占用 verified_by；确认时两者都写', async () => {
+    const metricId = 'lemeng:retail:decided'
+    await upsertCandidate(pool, ORG, {
+      question: '决策痕迹问题', metricId,
+      params: {}, slicing: {}, baseline: baselineOf(1),
+      source: 'auto', strength: 'weak',
+    })
+    const candidate = (await listVerified(pool, ORG, { status: 'candidate', metricId }))[0]!
+
+    await setStatus(pool, ORG, candidate.id, 'rejected', 'u-rejecter')
+    const rejected = (await listVerified(pool, ORG, { status: 'rejected', metricId }))[0]!
+    // 从未 confirmed 的行：verified_by 保持 NULL，拒绝人由 decided_by 承载
+    expect(rejected).toMatchObject({ decidedBy: 'u-rejecter', verifiedBy: null })
+    expect(rejected.decidedAt).not.toBeNull()
+
+    await setStatus(pool, ORG, candidate.id, 'verified', 'u-verifier')
+    const verified = (await listVerified(pool, ORG, { metricId }))[0]!
+    expect(verified).toMatchObject({ decidedBy: 'u-verifier', verifiedBy: 'u-verifier' })
+    expect(verified.verifiedAt).not.toBeNull()
+    expect(verified.decidedAt).not.toBeNull()
+  })
+
   it('跨租户不串：别的 org 看不到本租户行，也改不动', async () => {
     await upsertCandidate(pool, OTHER_ORG, {
       question: '上个月净销售额', metricId: 'lemeng:retail:net_sales',
