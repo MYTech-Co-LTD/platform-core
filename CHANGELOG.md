@@ -11,6 +11,10 @@
 
 ## [Unreleased]
 
+## [0.268.1](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.268.0...v0.268.1) - 2026-11-04
+- 【修复】data: OO 摄入改用组织级 _search（真机 stream 级恒 404） ([#1381](https://github.com/MYTech-Co-LTD/platform-core/pull/1381), [d661c24](https://github.com/MYTech-Co-LTD/platform-core/commit/d661c2446be3307316dc00a34313b86e66f7b1a5))
+
+
 ## [0.268.0](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.267.0...v0.268.0) - 2026-11-04
 - 【新增】data: W1 可信度地基——已验证问答 + 回归 job（结构+容差） ([#1379](https://github.com/MYTech-Co-LTD/platform-core/pull/1379), [0a4dfa1](https://github.com/MYTech-Co-LTD/platform-core/commit/0a4dfa1a4fd466b201dbd3017db75f34af20828c))
 
