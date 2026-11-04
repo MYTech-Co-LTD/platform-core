@@ -24,7 +24,7 @@ import { COLUMN_AGG_FUNCS } from '../domain/semantic-compiler'
 import type { ColumnAggFunc } from '../domain/semantic-compiler'
 import { writePrivateMeasure } from '../domain/metric-write'
 import type { PrivateMeasureWriteDeps } from '../domain/metric-write'
-import { getCandidate, setCandidateStatus } from '../domain/metric-candidates'
+import { claimCandidate, getCandidate, setCandidateStatus } from '../domain/metric-candidates'
 import { generateCandidates } from '../domain/candidate-generator'
 import type { CandidateGeneratorDeps } from '../domain/candidate-generator'
 import { listArchivedPrivateMeasures } from '../domain/private-measure-lifecycle'
@@ -102,8 +102,18 @@ export function registerPrivateMeasures(r: ModuleHono, ctx: RouteCtx): void {
     if (requester === null || requester.userId.trim() === '') {
       return c.json({ error: 'UNAUTHENTICATED' }, 403)
     }
-    // 空 body 视为 `{}`（全白名单关系、每关系 20 条）；形状不对才是 400
-    const parsed = GenerateCandidatesBody.safeParse(await c.req.json().catch(() => ({})))
+    // 空 body 视为 `{}`（全白名单关系、每关系 20 条）；**畸形 JSON 必须 400**——它是写动作，
+    // 把解析失败当空 body 跑全量生成会让调用方在「手滑」时意外写一池候选。
+    const text = await c.req.text().catch(() => '')
+    let rawBody: unknown = {}
+    if (text.trim() !== '') {
+      try {
+        rawBody = JSON.parse(text)
+      } catch {
+        return c.json({ error: 'INVALID_BODY' }, 400)
+      }
+    }
+    const parsed = GenerateCandidatesBody.safeParse(rawBody)
     if (!parsed.success) return c.json({ error: 'INVALID_BODY' }, 400)
 
     const deps: CandidateGeneratorDeps = {
@@ -141,6 +151,13 @@ export function registerPrivateMeasures(r: ModuleHono, ctx: RouteCtx): void {
     if (candidate.status !== 'pending') {
       return c.json({ error: 'CANDIDATE_NOT_ADOPTABLE', status: candidate.status }, 409)
     }
+    // ★ CAS 占位（评审 Minor 5）：先原子地把 pending→created，抢不到说明并发请求已采用/已改状态。
+    //   状态是**互斥锁**不是事后标记 ⇒ 同一候选不会被两个请求各建一条私有测度。
+    const claimed = await claimCandidate(ctx.pool, org, candidateId)
+    if (!claimed) {
+      const current = await getCandidate(ctx.pool, org, candidateId)
+      return c.json({ error: 'CANDIDATE_NOT_ADOPTABLE', status: current?.status ?? 'unknown' }, 409)
+    }
 
     const title = parsed.data.title
       ?? `${candidate.relation} ${candidate.expr.agg}(${candidate.expr.column})`
@@ -162,20 +179,16 @@ export function registerPrivateMeasures(r: ModuleHono, ctx: RouteCtx): void {
         column: candidate.expr.column,
         dims: candidate.expr.dims,
         relation: candidate.relation,
-        origin: 'profile',
+        // 血统跟着候选走（评审 Minor 4）：generate 产的是 profile；对话/挖掘来的候选标 demand。
+        origin: candidate.origin,
       },
     )
     if (!outcome.ok) {
+      // 采用失败：把占位**回滚**成 pending（否则候选永久卡在 created，且没有对应测度）。
+      // 回滚本身失败不回滚错误语义：调用方拿到的是真正的失败原因（写测度没成功）。
+      await setCandidateStatus(ctx.pool, org, candidateId, 'pending')
       return c.json({ error: outcome.error, ...(outcome.extra ?? {}) }, outcome.http)
     }
-
-    // 测度已建，候选状态是**第二件事**（不跨池事务；同一平台库也分两步）：
-    // 更新失败不静默成功——否则同一候选会被反复采用（第二次必撞 409 METRIC_EXISTS）。
-    // ⚠️ 已知边界（并发）：状态检查不是互斥锁——两个请求同时 adopt 同一候选会各建一条
-    //    私有测度（id 不同 ⇒ 不会撞 METRIC_EXISTS）。候选 status 是**事后标记**不是锁；
-    //    真要收口需先 CAS 占位（pending→created）再写、失败回滚，那是另一个任务。
-    const updated = await setCandidateStatus(ctx.pool, org, candidateId, 'created')
-    if (!updated) return c.json({ error: 'CANDIDATE_STATUS_UPDATE_FAILED' }, 500)
     return c.json({ ok: true, metricId: parsed.data.id, candidateStatus: 'created' }, 201)
   })
 }

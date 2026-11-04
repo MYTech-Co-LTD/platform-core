@@ -4,8 +4,11 @@
 import { afterAll, beforeAll, describe, expect, it } from 'vitest'
 import { Pool } from 'pg'
 import {
+  claimCandidate,
+  expireCandidates,
   getCandidate,
   listCandidates,
+  reviveExpiredCandidates,
   setCandidateStatus,
   upsertCandidate,
 } from './metric-candidates'
@@ -151,6 +154,52 @@ describePg('metric-candidates（需要 DATABASE_URL）', () => {
     })
     expect(await getCandidate(pool, OTHER_ORG, mine.id)).toBeNull()
     expect(await getCandidate(pool, ORG, 999999999)).toBeNull()
+  })
+
+  it('claimCandidate 是 CAS：pending 抢到即 created；再次抢 / 非 pending / 跨 org 都 false', async () => {
+    const c = await upsertCandidate(pool, ORG, input({ relation: 'fct_claim' }))
+    expect(await claimCandidate(pool, ORG, c.id)).toBe(true)
+    expect((await getCandidate(pool, ORG, c.id))!.status).toBe('created')
+    expect(await claimCandidate(pool, ORG, c.id)).toBe(false)
+
+    const rejected = await upsertCandidate(pool, ORG, input({
+      relation: 'fct_claim_rejected', expr: { agg: 'avg', column: 'x', dims: [] },
+    }))
+    await setCandidateStatus(pool, ORG, rejected.id, 'rejected')
+    expect(await claimCandidate(pool, ORG, rejected.id)).toBe(false)
+
+    const other = await upsertCandidate(pool, ORG, input({
+      relation: 'fct_claim_other', expr: { agg: 'max', column: 'y', dims: [] },
+    }))
+    expect(await claimCandidate(pool, OTHER_ORG, other.id)).toBe(false)
+    expect((await getCandidate(pool, ORG, other.id))!.status).toBe('pending')
+  })
+
+  it('expireCandidates 只退役自动来源的 pending：demand / rejected / 别家 org 不受影响', async () => {
+    const auto = await upsertCandidate(pool, ORG, input({
+      relation: 'fct_expire_auto', expr: { agg: 'sum', column: 'a', dims: [] },
+    }))
+    const demand = await upsertCandidate(pool, ORG, input({
+      relation: 'fct_expire_demand', expr: { agg: 'sum', column: 'b', dims: [] }, origin: 'demand',
+    }))
+    const decided = await upsertCandidate(pool, ORG, input({
+      relation: 'fct_expire_decided', expr: { agg: 'sum', column: 'c', dims: [] },
+    }))
+    await setCandidateStatus(pool, ORG, decided.id, 'rejected')
+
+    expect(await expireCandidates(pool, ORG, [auto.id, demand.id, decided.id])).toBe(1)
+    expect((await getCandidate(pool, ORG, auto.id))!.status).toBe('expired')
+    expect((await getCandidate(pool, ORG, demand.id))!.status).toBe('pending')
+    expect((await getCandidate(pool, ORG, decided.id))!.status).toBe('rejected')
+    // org 进 WHERE：别家 org 调不动本租户的行
+    expect(await expireCandidates(pool, OTHER_ORG, [demand.id])).toBe(0)
+    expect((await getCandidate(pool, ORG, demand.id))!.status).toBe('pending')
+
+    // 复活：只有**自动** expired 行能回到 pending（人工决策 rejected/created 不碰）
+    expect(await reviveExpiredCandidates(pool, ORG, [auto.id])).toBe(1)
+    expect((await getCandidate(pool, ORG, auto.id))!.status).toBe('pending')
+    expect(await reviveExpiredCandidates(pool, ORG, [decided.id, auto.id])).toBe(0)
+    expect((await getCandidate(pool, ORG, decided.id))!.status).toBe('rejected')
   })
 
   it('setCandidateStatus 带 org：本 org 改得到，别家 org / 不存在的 id 都返回 false 且不动目标行', async () => {

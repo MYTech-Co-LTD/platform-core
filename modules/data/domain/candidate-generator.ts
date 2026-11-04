@@ -29,7 +29,7 @@ import { NUMERIC_DATA_TYPES, loadRelationColumns, maskedTargets, whitelistedRela
 import type { RelationColumn } from './private-measure'
 import { dimensionNamesOf, parseL1Select } from './semantic-compiler'
 import type { ColumnAggFunc } from './semantic-compiler'
-import { listCandidates, upsertCandidate } from './metric-candidates'
+import { listCandidates, expireCandidates, reviveExpiredCandidates, upsertCandidate } from './metric-candidates'
 import type { Candidate } from './metric-candidates'
 import { warehouseConfigured, warehousePool } from './warehouse'
 
@@ -64,6 +64,11 @@ export interface CandidateGeneratorDeps {
   loadProfiles?: (pool: Pool, org: string) => Promise<ProfileRow[]>
   /** 实际列加载器；缺省 = `loadRelationColumns(warehouse, relation)`（与三闸同一份）。 */
   loadColumns?: (pool: Pool, relation: string) => Promise<RelationColumn[]>
+  /**
+   * 「两个关系名是否指向**同一物理关系**」；缺省 = `samePhysicalRelation`（`to_regclass` 比 OID）。
+   * 归一画像关系时用：一侧裸名、一侧带 schema 时**不能**只看最后一段（两个 schema 可能同名表）。
+   */
+  sameRelation?: (pool: Pool, a: string, b: string) => Promise<boolean>
 }
 
 export interface GenerateOptions {
@@ -106,9 +111,19 @@ export interface GenerateReport {
   refreshed: number
   /** 被规则筛掉的「列 × 聚合」数。 */
   skipped: number
-  /** 被每关系上限截掉的候选数。 */
+  /** 被每关系上限截掉的候选数（**本次运行**丢掉的；池级结果看 `pendingAfter`）。 */
   capped: number
   maxPerRelation: number
+  /** 本次被退役（置 `expired`）的陈旧自动候选数（池级上限的退役动作）。 */
+  expired: number
+  /** 本次被复活（`expired` → `pending`）的自动候选数（画像重新支持它）。 */
+  revived: number
+  /**
+   * 本次处理的关系在处理完之后，`origin='profile' and status='pending'` 的候选总数
+   * （**池级**口径：恒 ≤ `relations × maxPerRelation`）。`capped` 只反映本次截断，
+   * 后者才能证明「多次生成不会把池撑爆」。
+   */
+  pendingAfter: number
   /** 逐规则计数（恒含全部 key，值为 0 也给出——消费方不必判 key 是否存在）。 */
   skippedBy: Record<GenerateSkipReason, number>
 }
@@ -178,6 +193,24 @@ export async function loadLatestProfiles(pool: Pool, org: string): Promise<Profi
 }
 
 /**
+ * 两个关系名是否指向**同一物理关系**（`to_regclass` 比 OID）。
+ *
+ * 为什么不用字符串比较：裸名按会话 `search_path` 解析，`fct_sales` 与 `staging.fct_sales`
+ * 可能指向同一张表，也可能指向**两张不同的表**（不同 schema 同名）。只比最后一段的归一
+ * 在后者上会静默把画像 A 的列说成表 B 的列 ⇒ adopt 时按 B 的列校验，产出一条语义错误的私有测度。
+ *
+ * 任一侧解析不到（表不存在 / 名字非法）⇒ false（fail-closed：宁可不归一）。
+ */
+export async function samePhysicalRelation(pool: Pool, a: string, b: string): Promise<boolean> {
+  const r = await pool.query(
+    'select to_regclass($1::text)::oid as a, to_regclass($2::text)::oid as b',
+    [a, b],
+  )
+  const row = (r.rows[0] ?? {}) as { a?: unknown; b?: unknown }
+  return row.a != null && row.b != null && String(row.a) === String(row.b)
+}
+
+/**
  * L1 已覆盖的「关系（最后一段）| 聚合 | 列」集合。
  *
  * 解析对象是 L1 的 `select_sql`（运行期同一份形状契约 ⇒ 先过 `parseL1Select` 拿关系）。
@@ -227,15 +260,37 @@ function declaredDimsByRelation(catalog: readonly MetricRow[]): Map<string, stri
 }
 
 /**
- * 画像关系到白名单关系的归一：
- *   ① 逐字命中（L1 声明与画像都带 schema / 都不带）；
- *   ② 否则按最后一段唯一匹配（实测：L1 写裸名 `fct_retail_sale`，profiler 写 `staging.fct_retail_sale`）；
- *   ③ 匹配到 0 条或多条（同名跨 schema，歧义）⇒ null（跳过，不猜）。
+ * 画像关系到白名单关系的归一（**必须证明是同一物理关系**，不能只看名字）：
+ *   ① 逐字命中（L1 声明与画像都带 schema / 都不带）⇒ 直接归一；
+ *   ② 否则在「最后一段同名」的候选里逐个用 `to_regclass` OID 比对（裸名 vs 限定名 / 两份限定名）；
+ *      **恰好一个**物理命中才算归一；
+ *   ③ 0 个（不是同一张表）或多个（同名跨 schema、OID 解析不到）⇒ null（跳过并计入
+ *      `skippedRelations`，不猜）。
+ *
+ * 反例（评审 Important 2）：白名单 `pm_route.fct_sales`、画像 `staging.fct_sales` 是**两张表**，
+ * 只比最后一段会把后者的列当成前者的列 ⇒ adopt 过闸后静默产出语义错误的私有测度。
+ *
+ * 解析器抛错（仓不可达/名字非法）按「不命中」处理：fail-closed，该关系不进候选。
  */
-function canonicalRelation(profileRelation: string, whitelist: ReadonlySet<string>): string | null {
+async function canonicalRelation(
+  profileRelation: string,
+  whitelist: ReadonlySet<string>,
+  sameRelation: (a: string, b: string) => Promise<boolean>,
+): Promise<string | null> {
   if (whitelist.has(profileRelation)) return profileRelation
   const base = lastSegment(profileRelation)
-  const matches = [...whitelist].filter((r) => lastSegment(r) === base)
+  const candidates = [...whitelist].filter((r) => lastSegment(r) === base).sort()
+  if (candidates.length === 0) return null
+  const matches: string[] = []
+  for (const candidate of candidates) {
+    let same = false
+    try {
+      same = await sameRelation(candidate, profileRelation)
+    } catch {
+      same = false
+    }
+    if (same) matches.push(candidate)
+  }
   return matches.length === 1 ? matches[0]! : null
 }
 
@@ -333,6 +388,8 @@ export async function generateCandidates(
     }
     warehouse = warehousePool()
   }
+  // 收窄成 const：下面的闭包（sameRelationOf）要用它，`let` 的收窄不进闭包
+  const warehouseDb: Pool = warehouse
 
   const maxPerRelation = Math.max(1, Math.min(
     HARD_MAX_PER_RELATION,
@@ -356,7 +413,7 @@ export async function generateCandidates(
   // ③ 仓库池：最新画像
   let profiles: ProfileRow[]
   try {
-    profiles = await (deps.loadProfiles ?? loadLatestProfiles)(warehouse, org)
+    profiles = await (deps.loadProfiles ?? loadLatestProfiles)(warehouseDb, org)
   } catch (e) {
     return {
       ok: false, code: 'PROFILE_UNAVAILABLE',
@@ -372,6 +429,13 @@ export async function generateCandidates(
     return { ok: false, code: 'CANDIDATE_STORE_UNAVAILABLE', detail: `读候选池失败：${messageOf(e)}` }
   }
   const existingKeys = new Set(existing.map((c) => candidateKey(c.relation, c.expr)))
+  const existingByKey = new Map(existing.map((c) => [candidateKey(c.relation, c.expr), c]))
+  // 关系归一的物理比对器：缺省走仓库池的 to_regclass（测试注入 fake，见 deps.sameRelation）
+  const sameRelationOf = (a: string, b: string): Promise<boolean> => (
+    deps.sameRelation !== undefined
+      ? deps.sameRelation(warehouseDb, a, b)
+      : samePhysicalRelation(warehouseDb, a, b)
+  )
 
   const skippedBy: Record<GenerateSkipReason, number> = {
     'no-stats': 0,
@@ -406,17 +470,20 @@ export async function generateCandidates(
     skipped: 0,
     capped: 0,
     maxPerRelation,
+    expired: 0,
+    revived: 0,
+    pendingAfter: 0,
     skippedBy,
   }
 
   for (const profileRelation of [...byRelation.keys()].sort()) {
     if (relationFilter !== null && !relationFilter.has(lastSegment(profileRelation))) continue
-    const canonical = canonicalRelation(profileRelation, whitelist)
+    const canonical = await canonicalRelation(profileRelation, whitelist, sameRelationOf)
     if (canonical === null) { report.skippedRelations += 1; continue }
 
     let columns: RelationColumn[]
     try {
-      columns = await (deps.loadColumns ?? loadRelationColumns)(warehouse, profileRelation)
+      columns = await (deps.loadColumns ?? loadRelationColumns)(warehouseDb, profileRelation)
     } catch {
       // 关系名不合法 / 仓不可达：该关系不可判 ⇒ 跳过（不猜列类型）
       report.skippedRelations += 1
@@ -487,6 +554,47 @@ export async function generateCandidates(
     if (drafts.length > maxPerRelation) {
       report.capped += drafts.length - maxPerRelation
       drafts.length = maxPerRelation
+    }
+
+    // ★ 池级上限（评审 Important 1）：纯 upsert 没有删除/失效 ⇒ 旧 pending 永不退场，
+    //   「每关系 ≤20」只在单次调用内成立。这里把**本次没有产出**的自动 pending 候选置
+    //   `expired`（过期语义：最新画像/规则不再支持它），保证处理完的关系里
+    //   `origin='profile' and status='pending'` 恒 ≤ maxPerRelation。
+    //   只动 pending + profile：人工拒绝/采用（rejected/created/promoted）与 demand 来源不碰。
+    const finalKeys = new Set(drafts.map((d) => candidateKey(d.relation, d.expr)))
+    const staleIds = existing
+      .filter((c) => c.relation === canonical && c.status === 'pending' && c.origin === 'profile'
+        && !finalKeys.has(candidateKey(c.relation, c.expr)))
+      .map((c) => c.id)
+    if (staleIds.length > 0) {
+      try {
+        report.expired += await expireCandidates(deps.pool, org, staleIds)
+      } catch (e) {
+        return { ok: false, code: 'CANDIDATE_STORE_UNAVAILABLE', detail: `退役陈旧候选失败：${messageOf(e)}` }
+      }
+    }
+    // 复活：上一轮被自动退役、本轮画像重新支持的候选置回 pending（upsert 不碰状态，必须显式）。
+    const reviveIds = existing
+      .filter((c) => c.relation === canonical && c.status === 'expired' && c.origin === 'profile'
+        && finalKeys.has(candidateKey(c.relation, c.expr)))
+      .map((c) => c.id)
+    if (reviveIds.length > 0) {
+      try {
+        report.revived += await reviveExpiredCandidates(deps.pool, org, reviveIds)
+      } catch (e) {
+        return { ok: false, code: 'CANDIDATE_STORE_UNAVAILABLE', detail: `复活过期候选失败：${messageOf(e)}` }
+      }
+    }
+    for (const key of finalKeys) {
+      const prev = existingByKey.get(key)
+      // 新插入 ⇒ pending 且 origin=profile；既有 profile 行：pending 计入池，expired 本轮会被
+      // 复活（见上）也计入；既有 demand 行 upsert 不翻 origin ⇒ 不占 profile 的每关系预算。
+      if (
+        prev === undefined
+        || (prev.origin === 'profile' && (prev.status === 'pending' || prev.status === 'expired'))
+      ) {
+        report.pendingAfter += 1
+      }
     }
 
     for (const draft of drafts) {

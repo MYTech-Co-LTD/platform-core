@@ -197,6 +197,70 @@ export async function getCandidate(pool: Pool, org: string, id: number): Promise
 }
 
 /**
+ * 批量把**自动来源**的 `expired` 候选重新置回 `pending`（池级上限的复活动作）。
+ *
+ * 为什么需要它：`upsertCandidate` 的冲突分支**不碰状态**（人工决策不得被自动信号复活），
+ * 所以「上一轮被自动退役、这一轮画像又支持它」的候选必须显式复活——否则一次画像抖动
+ * （列暂时消失/被上限挤出）会让候选**永久**退出池（expired 没有人工改回入口）。
+ *
+ * 只认 `origin='profile'`：demand 来源不参与自动池的退役/复活；`rejected` 等人工决策不动
+ * （它们不是 `expired`，不会被本函数选中）。
+ */
+export async function reviveExpiredCandidates(
+  pool: Pool, org: string, ids: readonly number[],
+): Promise<number> {
+  if (ids.length === 0) return 0
+  const r = await pool.query(
+    `update data.metric_candidates
+        set status = 'pending', updated_at = now()
+      where org = $1 and id = any($2::bigint[])
+        and status = 'expired' and origin = 'profile'`,
+    [org, ids],
+  )
+  return r.rowCount ?? 0
+}
+
+/**
+ * 批量把**自动来源**的 pending 候选置 `expired`（池级上限的退役动作，W2 Task 5 评审）。
+ *
+ * 只动 `status='pending' and origin='profile'`：人工决策（rejected/promoted/created）不碰，
+ * demand 来源（对话挖出来的）不碰——它们不占 profiler 的「每关系 ≤20」预算。
+ * 返回实际退役行数（并发下可能小于 ids 长度：行已被别处改状态 ⇒ 本次没动它）。
+ */
+export async function expireCandidates(
+  pool: Pool, org: string, ids: readonly number[],
+): Promise<number> {
+  if (ids.length === 0) return 0
+  const r = await pool.query(
+    `update data.metric_candidates
+        set status = 'expired', updated_at = now()
+      where org = $1 and id = any($2::bigint[])
+        and status = 'pending' and origin = 'profile'`,
+    [org, ids],
+  )
+  return r.rowCount ?? 0
+}
+
+/**
+ * 采用前的**占位**（CAS：pending → created）。返回是否抢到。
+ *
+ * 为什么不是「建完测度再改状态」：那两个动作分属不同语句，两个并发 adopt 会都看到 pending
+ * ⇒ 各建一条私有测度（id 不同，不会撞 METRIC_EXISTS）。CAS 让「同一候选只能被采用一次」
+ * 成为数据库层的事实；采用失败（三闸不过）由调用方把状态**回滚**成 pending（见路由）。
+ *
+ * 只认 pending：created/promoted/rejected/expired 都是决策，抢不到 ⇒ 调用方回 409。
+ */
+export async function claimCandidate(pool: Pool, org: string, id: number): Promise<boolean> {
+  const r = await pool.query(
+    `update data.metric_candidates
+        set status = 'created', updated_at = now()
+      where org = $1 and id = $2 and status = 'pending'`,
+    [org, id],
+  )
+  return (r.rowCount ?? 0) > 0
+}
+
+/**
  * 人工/流程改状态。返回是否命中本租户的行（false = id 不存在或属于别的 org ⇒ 路由层回 404）。
  *
  * ⚠️ `org` 必须进 WHERE（不是先查再改）：跨租户改状态是静默越权，且没有任何日志能看出改错。

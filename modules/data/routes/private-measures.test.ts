@@ -50,6 +50,13 @@ const L1_MISSING = l1Def({
   id: `${L1_PREFIX}missing`,
   selectSql: `select sum(${SCHEMA}.no_such_table.x) as value from ${SCHEMA}.no_such_table`,
 })
+/** `branch` 是被掩码列（adopt 的闸③用例：候选把掩码列当维度必须拒）。 */
+const L1_MASKED = l1Def({
+  id: `${L1_PREFIX}masked`,
+  selectSql: `select sum(${SCHEMA}.fct_sales.amount) as value, day, branch from ${SCHEMA}.fct_sales`,
+  groupBy: 'day, branch',
+  masks: [{ column: `${SCHEMA}.fct_sales.branch`, kind: 'nullify', grantedBy: 'data:precise' }],
+})
 
 function app(org = ORG, scopes: string[] = ['data:query'], userId = 'u-private') {
   // warehouse 用变量携带：绕开 ModuleContext 字面量的多余属性检查（协议上只有 pool；
@@ -131,6 +138,7 @@ describePg('私有测度 HTTP 面（需要 DATABASE_URL）', () => {
       org text not null, day date, amount numeric(12,2), branch text)`)
     await upsertL1Metric(pool, L1_OK)
     await upsertL1Metric(pool, L1_MISSING)
+    await upsertL1Metric(pool, L1_MASKED)
   })
 
   beforeEach(async () => {
@@ -346,6 +354,9 @@ describePg('私有测度 HTTP 面（需要 DATABASE_URL）', () => {
       skipped: 1,        // sum(amount) 已被 L1_OK 覆盖
       capped: 0,
       maxPerRelation: 20,
+      expired: 0,
+      revived: 0,
+      pendingAfter: 3,   // 池级：处理完这 1 个关系后 pending（profile）共 3 条
       skippedBy: {
         'no-stats': 0,
         'no-data': 0,
@@ -404,6 +415,25 @@ describePg('私有测度 HTTP 面（需要 DATABASE_URL）', () => {
     expect(audit.row_after.origin).toBe('demand')
   })
 
+  it('adopt 的血统跟候选走：demand 来源候选采用后审计记 demand（不硬编码 profile）', async () => {
+    const c = await upsertCandidate(pool, ORG, {
+      relation: `${SCHEMA}.fct_sales`,
+      expr: { agg: 'avg', column: 'amount' },
+      origin: 'demand',
+    })
+    const res = await appWithWarehouse(warehouseWithProfiles([]), ['data:manage'], 'u-adopt').request(
+      `/metrics/candidates/${c.id}/adopt`,
+      {
+        method: 'POST', headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ id: 'pm_demand_adopt' }),
+      },
+    )
+    expect(res.status).toBe(201)
+    const audit = (await pool.query(
+      `select row_after from data.metric_audit where org = $1 and metric_id = 'pm_demand_adopt'`, [ORG])).rows[0]
+    expect(audit.row_after.origin).toBe('demand')
+  })
+
   it('★ adopt 不信任候选：关系不在白名单 ⇒ 400 RELATION_NOT_ALLOWED，候选仍 pending', async () => {
     const c = await upsertCandidate(pool, ORG, {
       relation: 'not_a_mart',
@@ -422,6 +452,42 @@ describePg('私有测度 HTTP 面（需要 DATABASE_URL）', () => {
     expect((await listCandidates(pool, ORG))[0]!.status).toBe('pending')
     expect((await pool.query(
       `select 1 from data.metrics where org = $1 and id = 'pm_bad_candidate'`, [ORG])).rowCount).toBe(0)
+  })
+
+  it('★ adopt 三闸重校验：sum(非数值列) ⇒ COLUMN_NOT_NUMERIC；掩码维度 ⇒ DIM_MASKED（失败回滚 pending）', async () => {
+    const appManual = appWithWarehouse(warehouseWithProfiles([]))
+    const adopt = (candidateId: number, metricId: string) => appManual.request(
+      `/metrics/candidates/${candidateId}/adopt`,
+      {
+        method: 'POST', headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ id: metricId }),
+      },
+    )
+
+    // 闸②：sum 要求数值列（branch 是 text）
+    const nonNumeric = await upsertCandidate(pool, ORG, {
+      relation: `${SCHEMA}.fct_sales`,
+      expr: { agg: 'sum', column: 'branch' },
+      origin: 'profile',
+    })
+    const r1 = await adopt(nonNumeric.id, 'pm_non_numeric')
+    expect(r1.status).toBe(400)
+    expect(await r1.json()).toMatchObject({ error: 'COLUMN_NOT_NUMERIC' })
+    expect((await listCandidates(pool, ORG)).find((c) => c.id === nonNumeric.id)!.status).toBe('pending')
+
+    // 闸③：branch 被 L1_MASKED 掩码 ⇒ 不得做维度
+    const maskedDim = await upsertCandidate(pool, ORG, {
+      relation: `${SCHEMA}.fct_sales`,
+      expr: { agg: 'avg', column: 'amount', dims: ['branch'] },
+      origin: 'profile',
+    })
+    const r2 = await adopt(maskedDim.id, 'pm_masked_dim')
+    expect(r2.status).toBe(400)
+    expect(await r2.json()).toMatchObject({ error: 'DIM_MASKED' })
+    expect((await listCandidates(pool, ORG)).find((c) => c.id === maskedDim.id)!.status).toBe('pending')
+    expect((await pool.query(
+      `select 1 from data.metrics where org = $1 and id = any($2)`, [ORG, ['pm_non_numeric', 'pm_masked_dim']],
+    )).rowCount).toBe(0)
   })
 
   it('adopt 的状态机：rejected ⇒ 409 CANDIDATE_NOT_ADOPTABLE；不存在 / 别家 org ⇒ 404', async () => {
@@ -486,6 +552,20 @@ describePg('私有测度 HTTP 面（需要 DATABASE_URL）', () => {
     expect(res.status).toBe(500)
     expect(await res.json()).toMatchObject({ error: 'PROFILE_UNAVAILABLE' })
     expect(await listCandidates(pool, ORG)).toHaveLength(0)
+  })
+
+  it('generate body：畸形 JSON ⇒ 400（写动作不把解析失败当空 body）；空 body ⇒ 200 默认全量', async () => {
+    const appGen = appWithWarehouse(warehouseWithProfiles([]))
+    const bad = await appGen.request('/metrics/candidates/generate', {
+      method: 'POST', headers: { 'content-type': 'application/json' }, body: '{not-json',
+    })
+    expect(bad.status).toBe(400)
+    expect(await bad.json()).toEqual({ error: 'INVALID_BODY' })
+    expect(await listCandidates(pool, ORG)).toHaveLength(0)
+
+    const empty = await appGen.request('/metrics/candidates/generate', { method: 'POST' })
+    expect(empty.status).toBe(200)
+    expect(await empty.json()).toMatchObject({ added: 0, profiles: 0, maxPerRelation: 20 })
   })
 
   it('generate 非法 body ⇒ 400 INVALID_BODY（maxPerRelation 上限 20）', async () => {
