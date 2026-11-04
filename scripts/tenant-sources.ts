@@ -9,12 +9,16 @@
 //     只能自己读。那是**平台侧**动作（平台代码的合法 schema 就是 platform），故落在这里，
 //     由脚本解析后把值注入 `runRegression`。
 //
-// SQL 口径与宿主 `apps/server/src/tenant-source.ts` 一致（`SOURCES_ENABLED_SQL`）：
-// 只认 `enabled = true`，停用行保留在表里但不属于「已接入」。
+// **SQL 不在本文件**：`platform.tenant` / `platform.tenant_source` 的查询唯一事实源是
+// `apps/server/src/tenant-source.ts`（头注写明了理由：各写一份 ⇒ 改列名漏一处 = 运行时
+// 500 / CLI 直接崩）。本文件只编排，复用 `resolveTenantIdByOrg` + `listEnabledSources`。
+import {
+  listEnabledSources,
+  resolveTenantIdByOrg,
+  type SqlExecutor,
+} from '../apps/server/src/tenant-source.ts'
 
-export interface TenantSourceExecutor {
-  query(sql: string, params?: unknown[]): Promise<{ rows: Record<string, unknown>[] }>
-}
+export type { SqlExecutor }
 
 /**
  * `org`（= `platform.tenant.casdoor_org`）→ tenant_id → `enabled = true` 的源集合。
@@ -23,20 +27,12 @@ export interface TenantSourceExecutor {
  * 静默退化成空集只会让 CLI 报出一片与真相无关的红（所有指标都被裁成未声明）。
  */
 export async function loadAdoptedSources(
-  exec: TenantSourceExecutor,
+  exec: SqlExecutor,
   org: string,
 ): Promise<ReadonlySet<string>> {
-  const tenant = await exec.query(
-    'select id from platform.tenant where casdoor_org = $1',
-    [org],
-  )
-  const tenantId = tenant.rows[0]?.id
-  if (tenantId === undefined || tenantId === null) {
+  const tenantId = await resolveTenantIdByOrg(exec, org)
+  if (tenantId === null) {
     throw new Error(`loadAdoptedSources: 未知租户 org='${org}'（platform.tenant.casdoor_org 无此行）`)
   }
-  const sources = await exec.query(
-    'select source from platform.tenant_source where tenant_id = $1 and enabled = true order by source',
-    [tenantId],
-  )
-  return new Set(sources.rows.map((r) => String(r.source)))
+  return new Set(await listEnabledSources(exec, tenantId))
 }

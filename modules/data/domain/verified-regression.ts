@@ -8,6 +8,10 @@
 // 口径边界（B11）：本文件**不新增业务口径**——只重放已声明指标、比结构与数值稳定性。
 // 不做逐字 digest：结果集里的文本/时间值可以合法漂移，基线只钉「口径会不会被改动」。
 //
+// **基线的唯一生产者是 `summarize`**：它给每列**恒写** `numeric`（true/false）。`summarize`
+// 之外写入的基线（Task 1 时代的手工/旧数据）可能没有该标记——`compare` 对此做双向兼容，
+// 规则见 `compare` 内注释（两侧都缺 = 按旧管的数值列比；仅一侧缺 = 只比 null 计数）。
+//
 // 租户隔离：回归集由 `listVerified(pool, org)` 读、`recordCheck(pool, org, …)` 写，全部带 org；
 // 重放的 `runQuery` 也以同一个 org 作用域（词表 = 平台 L1 ∪ 本 org L2）。
 import type { Pool } from 'pg'
@@ -48,9 +52,9 @@ function finiteNumber(v: unknown): number | null {
 /**
  * 一次成功查询 → 基线。
  *
- * 列分类规则：**所有非 null 值都是有限数** ⇒ 数值列（记 sum/min/max）；否则非数值列
- * （三值记 0、`numeric:false`，比较时只比 null 计数）。全 null / 0 行也按非数值列——
- * 没有值就没有依据说它是数，不猜。
+ * 列分类规则：**所有非 null 值都是有限数** ⇒ 数值列（记 sum/min/max、`numeric:true`）；否则
+ * 非数值列（三值记 0、`numeric:false`，比较时只比 null 计数）。全 null / 0 行也按非数值列——
+ * 没有值就没有依据说它是数，不猜。`numeric` **恒在场**（本函数是基线的唯一生产者）。
  */
 export function summarize(ok: QueryOk): Baseline {
   const rowCount = ok.rows.length
@@ -70,9 +74,10 @@ export function summarize(ok: QueryOk): Baseline {
       else nums.push(n)
     }
     // 没有非 null 值 ⇒ 无从判数值性（全 null / 空结果），按非数值列。
+    // `numeric` **恒在场**（基线唯一生产者 = 本函数）：让新旧基线之间的类型翻转可判。
     if (nums.length === 0) numeric = false
     summary[column] = numeric
-      ? { sum: nums.reduce((a, b) => a + b, 0), min: Math.min(...nums), max: Math.max(...nums), nulls }
+      ? { sum: nums.reduce((a, b) => a + b, 0), min: Math.min(...nums), max: Math.max(...nums), nulls, numeric: true }
       : { sum: 0, min: 0, max: 0, nulls, numeric: false }
   })
   return { columns: [...ok.columns], rowCount, summary }
@@ -97,9 +102,6 @@ function withinTolerance(base: number, cur: number, tolerance: number): boolean 
   return Math.abs(cur - base) <= Math.max(Math.abs(base) * tolerance, 1e-9)
 }
 
-/** 数值性判据：只有显式 `numeric: false` 才按非数值列（缺席 = 兼容 Task 1 的旧基线）。 */
-const isNumeric = (entry: ColumnSummary | undefined): boolean => entry?.numeric !== false
-
 /**
  * 比较基线（规则与计划 Task 3 逐条对应，**不许放宽**）：
  *   1. `columns` **集合与顺序**任一不同 ⇒ fail；
@@ -108,9 +110,15 @@ const isNumeric = (entry: ColumnSummary | undefined): boolean => entry?.numeric 
  *   4. 非数值列只比 null 计数；
  *   5. 非 ok 的重放结果不经过本函数——由 `runRegression` 直接判 fail（见下）。
  *
+ * `numeric` 标记的兼容（基线唯一生产者是 `summarize`，它恒写 true/false）：
+ *   · 两侧都在场 ⇒ 严格按标记比（false 只比 nulls；标记翻转 ⇒ fail）；
+ *   · 两侧都缺席 ⇒ 旧基线/手写夹具时代，按**数值列**比（Task 3 brief 的夹具形状）；
+ *   · **仅一侧缺席** ⇒ 类型不可比，只比 null 计数——否则旧基线里的文本列会被当数值列，
+ *     与新版 `numeric:false` 形成「数值性变化」永久红。
+ *
  * 补充的 fail-closed 判定（都不是放宽）：
  *   · 数值列也**同时**比 null 计数（null 数变化是结构信号，规则 3 没禁止多比）；
- *   · summary 缺列 / 数值性翻转 / 非有限数值 / 非法容差 ⇒ fail，不给缺省值兜底。
+ *   · summary 缺列 / 非有限数值 / 非法容差 ⇒ fail，不给缺省值兜底。
  */
 export function compare(baseline: Baseline, current: Baseline, tolerance: number): CompareResult {
   const diffs: string[] = []
@@ -143,14 +151,23 @@ export function compare(baseline: Baseline, current: Baseline, tolerance: number
       diffs.push(`summary: 列 '${column}' ${b === undefined ? '基线' : '当前'}缺摘要`)
       continue
     }
-    if (isNumeric(b) !== isNumeric(c)) {
-      diffs.push(`column '${column}': 数值性变化（基线 ${isNumeric(b) ? '数值' : '非数值'}，当前 ${isNumeric(c) ? '数值' : '非数值'}）`)
-      continue
-    }
     if (b.nulls !== c.nulls) {
       diffs.push(`column '${column}': nulls 基线 ${b.nulls} ≠ 当前 ${c.nulls}`)
     }
-    if (!isNumeric(b)) continue // 规则 4：非数值列到此为止
+
+    const bothMarked = b.numeric !== undefined && c.numeric !== undefined
+    const bothUnmarked = b.numeric === undefined && c.numeric === undefined
+    if (bothMarked) {
+      if (b.numeric !== c.numeric) {
+        diffs.push(`column '${column}': 数值性变化（基线 ${b.numeric === true ? '数值' : '非数值'}，当前 ${c.numeric === true ? '数值' : '非数值'}）`)
+        continue
+      }
+      if (b.numeric === false) continue // 规则 4：非数值列到此为止
+    } else if (!bothUnmarked) {
+      // 仅一侧带标记 ⇒ 新旧基线混跑，类型不可比：只比 null 计数（已比）。
+      continue
+    }
+    // 两侧都无标记（旧基线/手写夹具）或两侧 numeric:true ⇒ 按数值列比三聚合。
 
     for (const field of ['sum', 'min', 'max'] as const) {
       const base = b[field]
@@ -255,7 +272,12 @@ export async function runRegression(
     questions = questions.filter((q) => wanted.has(q.id))
   }
   if (opts.limit !== undefined) {
-    questions = questions.slice(0, Math.max(0, Math.trunc(opts.limit)))
+    // NaN / 小数 / 负数都会让 slice 静默产出空集（CLI 再据此报「回归集为空」——把配置错误
+    // 伪装成业务状态）。入口直接抛错，fail-fast。
+    if (!Number.isInteger(opts.limit) || opts.limit < 0) {
+      throw new Error(`runRegression: 非法 limit=${String(opts.limit)}（必须是非负整数）`)
+    }
+    questions = questions.slice(0, opts.limit)
   }
 
   const queryDeps: QueryDeps = {

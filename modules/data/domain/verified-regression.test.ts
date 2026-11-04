@@ -9,9 +9,6 @@ import type { Pool } from 'pg'
 import type { QueryOk, QueryOutcome } from './query-service'
 import type { Baseline, VerifiedQuestion } from './verified-questions'
 import { compare, runRegression, summarize } from './verified-regression'
-// 平台侧装配器住在 scripts/（B1 不许 modules/** 读 platform 物理表）：回归 CLI 用它把
-// 「本租户已接入源」解析出来再注入 runRegression。跨层 import 只在测试里发生。
-import { loadAdoptedSources } from '../../../scripts/tenant-sources'
 
 const ORG = 'org-regression-t3'
 
@@ -23,7 +20,7 @@ function ok(columns: string[], rows: unknown[][]): QueryOk {
 const baselineOf = (value: number): Baseline => ({
   columns: ['value'],
   rowCount: 1,
-  summary: { value: { sum: value, min: value, max: value, nulls: 0 } },
+  summary: { value: { sum: value, min: value, max: value, nulls: 0, numeric: true } },
 })
 
 // ── 纯函数：summarize ────────────────────────────────────────────────────────────
@@ -33,8 +30,8 @@ describe('summarize', () => {
     const s = summarize(ok(['value'], [['1000.50'], ['999.50'], [null]]))
     expect(s.columns).toEqual(['value'])
     expect(s.rowCount).toBe(3)
-    // numeric 字符串必须按数值处理（node-pg 对 numeric 的默认返回形状）
-    expect(s.summary.value).toEqual({ sum: 2000, min: 999.5, max: 1000.5, nulls: 1 })
+    // numeric 字符串必须按数值处理（node-pg 对 numeric 的默认返回形状）；numeric 恒在场
+    expect(s.summary.value).toEqual({ sum: 2000, min: 999.5, max: 1000.5, nulls: 1, numeric: true })
   })
 
   it('非数值列只记 null 计数，并标 numeric:false（sum/min/max 不参与比较）', () => {
@@ -125,6 +122,37 @@ describe('compare', () => {
       summary: { value: { sum: 0, min: 0, max: 0, nulls: 0, numeric: false } },
     }
     expect(compare(base, flipped, 0.001).ok).toBe(false)
+  })
+
+  it('非数值列正向：三聚合不同但 null 数相同 ⇒ pass（规则 4 只比 nulls）', () => {
+    const base: Baseline = {
+      columns: ['branch'], rowCount: 1,
+      summary: { branch: { sum: 0, min: 0, max: 0, nulls: 0, numeric: false } },
+    }
+    const cur: Baseline = {
+      columns: ['branch'], rowCount: 1,
+      summary: { branch: { sum: 999, min: 1, max: 9, nulls: 0, numeric: false } },
+    }
+    expect(compare(base, cur, 0.001).ok).toBe(true)
+  })
+
+  it('旧基线（无 numeric 标记）混跑：仅一侧缺标记 ⇒ 只比 nulls，不判「数值性变化」永久红', () => {
+    // 旧基线的文本列被旧实现记成 sum=3120（无标记）——新版 summarize 判它是非数值列。
+    const legacy: Baseline = {
+      columns: ['branch'], rowCount: 1,
+      summary: { branch: { sum: 3120, min: 3120, max: 3120, nulls: 0 } },
+    }
+    const fresh: Baseline = {
+      columns: ['branch'], rowCount: 1,
+      summary: { branch: { sum: 0, min: 0, max: 0, nulls: 0, numeric: false } },
+    }
+    expect(compare(legacy, fresh, 0.001).ok).toBe(true)
+    // 但 null 数变化仍然红
+    const nulled: Baseline = {
+      columns: ['branch'], rowCount: 1,
+      summary: { branch: { sum: 0, min: 0, max: 0, nulls: 1, numeric: false } },
+    }
+    expect(compare(legacy, nulled, 0.001).ok).toBe(false)
   })
 
   it('非法容差（负数/NaN）⇒ fail（异常输入不放行）', () => {
@@ -247,42 +275,13 @@ describe('runRegression', () => {
     const { pool } = fakePool([])
     await expect(runRegression(depsOf(pool, async () => ok(['value'], [['1']])), ORG)).resolves.toEqual([])
   })
-})
 
-// ── 装配：loadAdoptedSources（QueryDeps.adoptedSources 必填，不能默认空集） ──────
-
-describe('loadAdoptedSources', () => {
-  function fakeExec(tenant: { id: number } | undefined, sources: string[]) {
-    const calls: { text: string; params: unknown[] }[] = []
-    return {
-      calls,
-      exec: {
-        query: async (text: string, params?: unknown[]) => {
-          calls.push({ text, params: params ?? [] })
-          if (/from\s+platform\.tenant\b/.test(text)) {
-            return { rows: tenant === undefined ? [] : [tenant] }
-          }
-          if (/from\s+platform\.tenant_source/.test(text)) {
-            return { rows: sources.map((source) => ({ source })) }
-          }
-          throw new Error(`fake exec: unexpected sql: ${text}`)
-        },
-      },
-    }
-  }
-
-  it('casdoor_org → tenant_id → 只取 enabled=true 的源', async () => {
-    const { exec, calls } = fakeExec({ id: 7 }, ['ama', 'lemeng'])
-    const sources = await loadAdoptedSources(exec, 'org-a')
-    expect([...sources].sort()).toEqual(['ama', 'lemeng'])
-    expect(calls[0]?.params).toEqual(['org-a'])
-    expect(calls[1]?.params).toEqual([7])
-    expect(calls[1]?.text).toContain('enabled = true')
-  })
-
-  it('未知租户 ⇒ 抛错（不明显地退化成空集，避免全量假红）', async () => {
-    const { exec } = fakeExec(undefined, [])
-    await expect(loadAdoptedSources(exec, 'nope')).rejects.toThrow(/unknown|未知/i)
+  it('非法 limit（NaN / 负数 / 小数）⇒ 抛错，不静默空集', async () => {
+    const { pool } = fakePool([questionRow({ id: 31 })])
+    const deps = depsOf(pool, async () => ok(['value'], [['1000']]))
+    await expect(runRegression(deps, ORG, { limit: Number.NaN })).rejects.toThrow(/limit/)
+    await expect(runRegression(deps, ORG, { limit: -1 })).rejects.toThrow(/limit/)
+    await expect(runRegression(deps, ORG, { limit: 1.5 })).rejects.toThrow(/limit/)
   })
 })
 

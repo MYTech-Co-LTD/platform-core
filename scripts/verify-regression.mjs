@@ -51,12 +51,17 @@ export function parseArgs(argv) {
   const out = { org }
   if (raw.limit !== undefined) {
     const limit = Number(raw.limit)
-    if (!Number.isInteger(limit) || limit < 0) throw new Error(`--limit 必须是非负整数，收到 '${raw.limit}'`)
+    // 空串会被 Number 静默转成 0——那不是用户意图，按缺值处理。
+    if (raw.limit.trim() === '' || !Number.isInteger(limit) || limit < 0) {
+      throw new Error(`--limit 必须是非负整数，收到 '${raw.limit}'`)
+    }
     out.limit = limit
   }
   if (raw.ids !== undefined) {
-    const ids = raw.ids.split(',').map((s) => s.trim()).filter((s) => s !== '').map(Number)
-    if (ids.length === 0 || ids.some((n) => !Number.isInteger(n) || n <= 0)) {
+    const parts = raw.ids.split(',').map((s) => s.trim())
+    // 空段（首/尾逗号、连续逗号）也是打错，不静默丢弃。
+    const ids = parts.map(Number)
+    if (parts.some((p) => p === '') || ids.some((n) => !Number.isInteger(n) || n <= 0)) {
       throw new Error(`--ids 必须是逗号分隔的正整数，收到 '${raw.ids}'`)
     }
     out.ids = ids
@@ -82,6 +87,9 @@ if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) 
 
   const { Pool } = createRequire(import.meta.url)('pg')
   const pool = new Pool({ connectionString: url })
+  // 退出码先落变量、finally 关池后再 exit：`process.exit()` 会立即终止进程，放进 try 里
+  // 会跳过 finally ⇒ 连接池不关（job 里表现为连接泄漏/进程被强杀）。
+  let code = 2
   try {
     // QueryDeps.adoptedSources 必填：不装配就会把本租户所有源都裁掉（全量假红），故先解析。
     const adoptedSources = await loadAdoptedSources(pool, args.org)
@@ -102,13 +110,15 @@ if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) 
 
     if (results.length === 0) {
       console.error('verify-regression: 回归集为空——没有基线就没有可信度，不判绿')
-      process.exit(2)
+      code = 2
+    } else {
+      code = count('pass') === results.length ? 0 : 1
     }
-    process.exit(count('pass') === results.length ? 0 : 1)
   } catch (e) {
     console.error('verify-regression 跑不成:', e instanceof Error ? e.message : e)
-    process.exit(2)
+    code = 2
   } finally {
     await pool.end()
   }
+  process.exit(code)
 }

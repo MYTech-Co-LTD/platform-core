@@ -37,8 +37,9 @@ export interface ColumnSummary {
   /** null/undefined 的格数——非数值列唯一被比较的字段。 */
   nulls: number
   /**
-   * `false` = 该列不是数值列（Task 3 的 `summarize` 对全 null / 混合类型 / 文字列写入）。
-   * **缺席按数值列处理**——兼容 Task 1 时代写入的基线与手写夹具（它们的 summary 只有四键）。
+   * 该列是不是数值列（Task 3 的 `summarize` **恒写**：数值 true / 非数值 false）。
+   * 可选只为兼容 Task 1 时代写入的旧基线（四键形状）；`compare` 的兼容规则：
+   * 两侧都在场按标记比、两侧都缺席按旧管数值列比、仅一侧缺席只比 null 计数。
    */
   numeric?: boolean
 }
