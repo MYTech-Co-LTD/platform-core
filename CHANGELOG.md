@@ -11,6 +11,10 @@
 
 ## [Unreleased]
 
+## [0.268.6](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.268.5...v0.268.6) - 2026-11-04
+- 【修复】askdata: 强信号须通过「像指标问题」过滤（降级 weak） ([#1393](https://github.com/MYTech-Co-LTD/platform-core/pull/1393), [425f125](https://github.com/MYTech-Co-LTD/platform-core/commit/425f12581fb96dfd2a413ebec624013d19fddbee))
+
+
 ## [0.268.5](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.268.4...v0.268.5) - 2026-11-04
 - 【修复】data: 门店费用页节点重试 3×2s → 10×15s（21 页并发触发 PAT 频率闸） ([#1391](https://github.com/MYTech-Co-LTD/platform-core/pull/1391), [348dbd4](https://github.com/MYTech-Co-LTD/platform-core/commit/348dbd492668a2650fd699e2b6a0d79ebf0da7d2))
 
