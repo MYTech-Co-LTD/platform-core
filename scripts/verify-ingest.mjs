@@ -12,13 +12,17 @@
 //   · strong   ⇒ source='auto' / strength='strong'（Task 1 写入即 verified）；
 //   · weak     ⇒ source='auto' / strength='weak'（candidate，等人工确认）。
 //
-// 水位（`ASK_VERIFY_INGEST_WM`，默认 `/var/lib/askdata/verify-ingest.watermark`，按流一份）：
-//   · 值是 OO 命中的 `_timestamp`（微秒整数）。查询用 **严格 `_timestamp > 水位`** 取新记录：
+// 水位（`ASK_VERIFY_INGEST_WM`；默认**按流一份** `/var/lib/askdata/verify-ingest.<stream>.watermark`）：
+//   · 值是 OO 命中的 `_timestamp`（微秒整数）。查询用 **`_timestamp >= 水位`** 取新记录：
 //     OO 的 `_search` 时间窗是微秒 epoch（`start_time`/`end_time`），事件里的 `at`（RFC3339 UTC）
 //     是**事件时间**，不能当摄入游标——迟到入库的事件 `at` 可能更早，用 `at` 会漏。
-//     `_timestamp` 是 OO 的**入库时间**，单调向前；严格 `>` 避免每轮重读上一批边界记录。
+//     `_timestamp` 是 OO 的**入库时间**，单调向前。用 `>=`（不是 `>`）是为了**不丢同一微秒的
+//     记录**（同一批入库的多条可能共享 `_timestamp`；边界组会在下一轮再读一次，靠唯一索引幂等
+//     吸收）。排序加 `seq, sessionId` 次级键，避免同微秒组跨页重排导致漏读。
 //   · **整轮成功后才写水位**（HTTP 失败、DB 写入失败都不前进）；写入为临时文件 + rename。
-//   · `--since <ts>` 显式指定本次读取起点（RFC3339 或 epoch 秒/毫秒/微秒），水位仍只前进不回退。
+//   · `--since <ts>` 显式指定本次读取起点（RFC3339 或 epoch 秒/毫秒/微秒）。**晚于已存水位时
+//     拒绝运行（exit 2）**：那会静默跳过 [水位, since) 区间；确需跳过先移走水位文件。
+//   · 水位仍只前进不回退。
 //
 // 幂等：Task 1 的唯一索引 `(org, metric_id, md5(question), md5(params::text), md5(slicing::text))`
 // 吸收重复投递（OO 重放、水位回退、batched 重评估都靠它）。
@@ -34,8 +38,12 @@
 // 用法：
 //   npx tsx scripts/verify-ingest.mjs [--once] [--dry-run] [--since <RFC3339|epoch>]
 //
+// `--dry-run`：不重放、不落库、不写水位。`DATABASE_URL` **可选**——有则建池并做租户源校验
+// （未知租户计入 skipped），没有则只做事件解析预览（不访问 DB）。
+//
 // 退出码：0 = 整轮跑完（含跳过/重放失败——那些是数据状态，已逐条计数与落库）；
-//         2 = 环境/链路问题（缺 OO_READ_* / DATABASE_URL、参数错、OO HTTP 失败、DB 写入失败）。
+//         2 = 环境/链路问题（缺 OO_READ_* / 非 dry-run 缺 DATABASE_URL、参数错、OO HTTP 失败、
+//             DB 写入失败、`--since` 晚于已存水位）。
 import { createRequire } from 'node:module'
 import { mkdirSync, readFileSync, renameSync, writeFileSync } from 'node:fs'
 import { dirname } from 'node:path'
@@ -46,10 +54,18 @@ import {
   upsertCandidate,
 } from '../modules/data/domain/verified-questions.ts'
 import { regressionRequester, summarize } from '../modules/data/domain/verified-regression.ts'
-import { loadAdoptedSources } from './tenant-sources.ts'
+import { isUnknownTenantError, loadAdoptedSources } from './tenant-sources.ts'
 
 export const STREAM = 'askdata_verified'
-export const DEFAULT_WM_PATH = '/var/lib/askdata/verify-ingest.watermark'
+export const DEFAULT_WM_DIR = '/var/lib/askdata'
+/** 水位**按流一份**：换流（或未来多流）时路径自动分开，不会互踩。
+ * @param {string} [stream]
+ * @returns {string}
+ */
+export function defaultWmPath(stream = STREAM) {
+  return `${DEFAULT_WM_DIR}/verify-ingest.${stream}.watermark`
+}
+export const DEFAULT_WM_PATH = defaultWmPath()
 /** 单页条数（OO `_search` 的 `size`）；翻页靠 `from` 偏移，整轮成功后才落水位。 */
 const PAGE_SIZE = 1000
 /** 翻页安全阀：防止 OO 忽略 `from` 时无限循环（不是业务上限）。 */
@@ -123,6 +139,9 @@ export const EMPTY_BASELINE = { columns: [], rowCount: 0, summary: {} }
  * @property {number} skippedOrg
  * @property {number} skippedBadEvent
  * @property {number} skippedUnknownTenant
+ * @property {number} skippedBadTimestamp
+ * @property {number} defaultedParams
+ * @property {number} defaultedSlicing
  * @property {number} wouldIngest
  */
 
@@ -219,7 +238,7 @@ export function parseArgs(argv) {
  * @returns {Record<string, unknown>}
  */
 export function parseJsonObject(raw, field) {
-  if (raw === undefined || raw === null || raw === '') return {}
+  if (raw === undefined || raw === null || (typeof raw === 'string' && raw.trim() === '')) return {}
   if (typeof raw === 'object' && !Array.isArray(raw)) {
     return /** @type {Record<string, unknown>} */ (raw)
   }
@@ -234,6 +253,17 @@ export function parseJsonObject(raw, field) {
     throw new BadEventError(`${field} 必须是 JSON 对象`)
   }
   return /** @type {Record<string, unknown>} */ (parsed)
+}
+
+/**
+ * params/slicing 是否缺省（undefined/null/空白串）。缺省会按 `{}` 继续，但**必须计数并打日志**：
+ * 静默默认会让「事件契约坏了」看起来像「参数本来就是空」。
+ *
+ * @param {unknown} raw
+ * @returns {boolean}
+ */
+export function isMissingJsonField(raw) {
+  return raw === undefined || raw === null || (typeof raw === 'string' && raw.trim() === '')
 }
 
 /**
@@ -274,8 +304,9 @@ export function parseEvent(hit) {
  * OO `_search` 客户端（`POST {url}/api/{org}/{stream}/_search`，Basic 鉴权）。
  *
  * 请求体按 OpenObserve v1.0.4 形状：`{query: {sql, start_time, end_time, from, size}}`，
- * 时间是**微秒 epoch**（UTC 窗口）。SQL 用严格 `_timestamp > 游标`：游标是上一轮见过的
- * 最大入库时间，严格大于才避免每轮重读上一批的边界记录。
+ * 时间是**微秒 epoch**（UTC 窗口）。SQL 用 **`_timestamp >= 游标`**：同一微秒入库的多条记录
+ * 可能被分页截断，严格 `>` 会漏掉边界组；`>=` 让下一轮重读该组（唯一索引幂等吸收）。
+ * 次级排序 `seq, sessionId` 固定同微秒组内的顺序，避免跨页重排导致漏读。
  *
  * @param {IngestOpts} opts
  * @param {typeof fetch} fetchImpl
@@ -290,10 +321,10 @@ export function searchClient(opts, fetchImpl) {
     if (org === '') throw new Error('verify-ingest: 缺 OO_READ_ORG')
     const stream = opts.stream ?? STREAM
     const header = authHeader(opts.token)
-    const cursorSql = req.cursorUs === null ? '' : ` where _timestamp > ${Math.trunc(req.cursorUs)}`
+    const cursorSql = req.cursorUs === null ? '' : ` where _timestamp >= ${Math.trunc(req.cursorUs)}`
     const body = {
       query: {
-        sql: `select * from "${stream}"${cursorSql} order by _timestamp asc`,
+        sql: `select * from "${stream}"${cursorSql} order by _timestamp asc, seq asc, sessionId asc`,
         start_time: req.cursorUs ?? 0,
         end_time: req.endUs,
         from: req.from,
@@ -367,13 +398,11 @@ export function writeWatermark(path, value) {
   renameSync(tmp, path)
 }
 
-/** @param {Record<string, any>} hit @returns {number} OO 入库时间（微秒） */
-function hitTimestamp(hit) {
+/** @param {Record<string, any>} hit @returns {number|null} OO 入库时间（微秒）；不合法 ⇒ null */
+function timestampOrNull(hit) {
   const raw = hit._timestamp
   const n = typeof raw === 'number' ? raw : Number(raw)
-  if (!Number.isFinite(n) || n < 0) {
-    throw new Error(`verify-ingest: OO 命中缺合法 _timestamp（收到 ${String(raw)}）`)
-  }
+  if (!Number.isFinite(n) || n < 0) return null
   return Math.trunc(n)
 }
 
@@ -386,14 +415,16 @@ function logLine(message) {
  * 核心摄入（可注入全部副作用；单测不连网/不连库）。
  *
  * 顺序：读水位 → 分页拉 `_search` → 逐条处理 → **全部成功后才写水位**。
- * 分页边界用 `_timestamp` 严格游标；`--since` 只影响本轮读取起点，水位仍只前进。
+ * 分页边界用 `_timestamp >=` 游标（同微秒组下一轮重读、唯一索引吸收）；`--since` 只影响
+ * 本轮读取起点，水位仍只前进；`--since` 晚于已存水位直接拒绝（不静默跳过区间）。
  *
  * @param {IngestOpts} opts
  * @param {IngestDeps} [overrides]
  * @returns {Promise<IngestResult>}
  */
 export async function ingest(opts, overrides = {}) {
-  const wmPath = opts.wmPath ?? DEFAULT_WM_PATH
+  const stream = opts.stream ?? STREAM
+  const wmPath = opts.wmPath ?? defaultWmPath(stream)
   /** @type {typeof fetch} */
   const fetchImpl = overrides.fetch ?? globalThis.fetch
   /** @type {() => number} */
@@ -420,6 +451,15 @@ export async function ingest(opts, overrides = {}) {
   const pool = overrides.pool
 
   const storedWm = readWm(wmPath)
+  // `--since` 晚于已存水位 ⇒ 拒绝运行：否则 [storedWm, since) 区间被**静默跳过**（review Important 5）。
+  // 确实要跳区间应先移走水位文件，而不是在参数上悄悄制造一个洞。
+  if (opts.sinceUs !== undefined && opts.sinceUs !== null
+    && storedWm !== null && opts.sinceUs > storedWm) {
+    throw new Error(
+      `verify-ingest: --since ${opts.sinceUs} 晚于已存水位 ${storedWm}，拒绝跳过区间；`
+      + `若确实要跳，先移走水位文件 ${wmPath}`,
+    )
+  }
   // `--since` 显式覆盖本轮读取起点；水位本身只前进（见末尾写水位条件）。
   const cursorUs = opts.sinceUs ?? storedWm
   const endUs = now() * 1000
@@ -444,15 +484,6 @@ export async function ingest(opts, overrides = {}) {
     if (typeof page.total === 'number' && from >= page.total) break
   }
 
-  // 批次最大入库时间 = 候选水位。**只认实际取到的命中**：空轮不前进（避免把 --since
-  // 或一次探测读成「已经处理到那里」）。
-  /** @type {number|null} */
-  let maxCursor = null
-  for (const hit of hits) {
-    const ts = hitTimestamp(hit)
-    if (maxCursor === null || ts > maxCursor) maxCursor = ts
-  }
-
   /** @type {Counters} */
   const counters = {
     fetched: hits.length,
@@ -464,7 +495,30 @@ export async function ingest(opts, overrides = {}) {
     skippedOrg: 0,
     skippedBadEvent: 0,
     skippedUnknownTenant: 0,
+    skippedBadTimestamp: 0,
+    defaultedParams: 0,
+    defaultedSlicing: 0,
     wouldIngest: 0,
+  }
+
+  // 有效命中的入库时间 = 候选水位。缺 `_timestamp` 的毒丸记录**只跳过该条并计数**：
+  // 不能让一条坏记录把整轮抛错、水位永远不动（review Minor 8）。
+  /** @type {{hit: Record<string, any>, ts: number}[]} */
+  const entries = []
+  for (const hit of hits) {
+    const ts = timestampOrNull(hit)
+    if (ts === null) {
+      counters.skippedBadTimestamp += 1
+      log(`verify-ingest: 跳过缺合法 _timestamp 的记录（收到 ${String(hit._timestamp)}）`)
+      continue
+    }
+    entries.push({ hit, ts })
+  }
+  // **只认实际取到的有效命中**：空轮不前进（避免把 --since 或一次探测读成「已经处理到那里」）。
+  /** @type {number|null} */
+  let maxCursor = null
+  for (const { ts } of entries) {
+    if (maxCursor === null || ts > maxCursor) maxCursor = ts
   }
 
   /** @type {Map<string, ReadonlySet<string>>} */
@@ -478,7 +532,7 @@ export async function ingest(opts, overrides = {}) {
     return loaded
   }
 
-  for (const hit of hits) {
+  for (const { hit } of entries) {
     const rawSignal = typeof hit.signal === 'string' ? hit.signal.trim() : ''
     // 负信号：不入集、不重放，只计数（信号本身已是结论；其它字段缺失也不改变这一点）。
     if (rawSignal === 'negative') {
@@ -497,20 +551,35 @@ export async function ingest(opts, overrides = {}) {
       continue
     }
 
-    /** @type {ReadonlySet<string>} */
-    let sources
-    try {
-      sources = await sourcesFor(event.org)
-    } catch (e) {
-      const msg = e instanceof Error ? e.message : String(e)
-      // 「未知租户」= 事件里的 org 不是平台租户（配置/数据不一致）⇒ 跳过该条，别的租户照常。
-      // 其它错误（池断开等）必须炸整轮：静默跳过会让水位越过没处理的数据。
-      if (msg.includes('未知租户')) {
-        counters.skippedUnknownTenant += 1
-        log(`verify-ingest: 跳过未知租户 org='${event.org}'`)
-        continue
+    // params/slicing 缺失按 {} 继续，但**必须计数并在日志里可见**（不静默吞契约缺口）。
+    if (isMissingJsonField(hit.params)) {
+      counters.defaultedParams += 1
+      log(`verify-ingest: params 缺省按 {} 处理 org=${event.org} ${event.metricId}`)
+    }
+    if (isMissingJsonField(hit.slicing)) {
+      counters.defaultedSlicing += 1
+      log(`verify-ingest: slicing 缺省按 {} 处理 org=${event.org} ${event.metricId}`)
+    }
+
+    /** @type {ReadonlySet<string>|null} */
+    let sources = null
+    if (pool !== null) {
+      try {
+        sources = await sourcesFor(event.org)
+      } catch (e) {
+        // 未知租户 = 事件不属于本平台租户（配置/数据不一致）⇒ 跳过该条，别的租户照常。
+        // 其它错误（池断开等）必须炸整轮：静默跳过会让水位越过没处理的数据。
+        // 判类用类型化错误（review Minor 6），**不再匹配文案**。
+        if (isUnknownTenantError(e)) {
+          counters.skippedUnknownTenant += 1
+          log(`verify-ingest: 跳过未知租户 org='${event.org}'`)
+          continue
+        }
+        throw e
       }
-      throw e
+    } else if (opts.dryRun !== true) {
+      // main 已保证非 dry-run 一定有 pool；走到这里说明装配坏了，响亮失败。
+      throw new Error('verify-ingest: 非 dry-run 缺少数据库执行器（内部装配错误）')
     }
 
     if (opts.dryRun === true) {
@@ -518,6 +587,9 @@ export async function ingest(opts, overrides = {}) {
       counters[event.signal] += 1
       log(`verify-ingest[dry-run]: ${event.signal} org=${event.org} ${event.metricId} — ${event.question}`)
       continue
+    }
+    if (sources === null) {
+      throw new Error('verify-ingest: 非 dry-run 未取到 adoptedSources（内部装配错误）')
     }
 
     /** @type {string|null} */
@@ -566,6 +638,8 @@ export async function ingest(opts, overrides = {}) {
     }
 
     // 重放失败：不猜基线（空哨兵）+ 强制 candidate（强信号也不冒充 verified）+ 记 error。
+    // `preserveBaseline`：既有 verified 行的好基线/切面/容差恒保留（空哨兵只用于新行 insert，
+    // review Critical 1 —— 否则 strong 信号会把已验证基线换成空基线）。
     const id = await upsert(pool, event.org, {
       question: event.question,
       metricId: event.metricId,
@@ -576,6 +650,7 @@ export async function ingest(opts, overrides = {}) {
       strength: event.signal,
       sessionId: event.sessionId,
       forceCandidate: true,
+      preserveBaseline: true,
     })
     await record(pool, event.org, id, 'error')
     counters.replayError += 1
@@ -626,18 +701,21 @@ export async function main(argv, env = process.env, overrides = {}) {
   }
 
   const databaseUrl = String(env.DATABASE_URL ?? '').trim()
-  if (args.dryRun !== true && databaseUrl === '') {
-    console.error('verify-ingest: 缺 DATABASE_URL（从 openship 项目 env 取；--dry-run 不需要）')
+  const haveDb = databaseUrl !== ''
+  if (args.dryRun !== true && !haveDb) {
+    console.error('verify-ingest: 缺 DATABASE_URL（从 openship 项目 env 取；--dry-run 可不需要）')
     return 2
   }
 
   let pool = overrides.pool ?? null
-  const ownPool = pool === null && args.dryRun !== true
+  // 只要有 DATABASE_URL 就建池（**含 dry-run**）：dry-run 也做租户源校验；
+  // 没有 DATABASE_URL 的 dry-run 只做事件预览（不访问 DB）。
+  const ownPool = pool === null && haveDb
   if (ownPool) {
     const { Pool } = createRequire(import.meta.url)('pg')
     pool = new Pool({ connectionString: databaseUrl })
   }
-  const wmPath = String(env.ASK_VERIFY_INGEST_WM ?? '').trim() || DEFAULT_WM_PATH
+  const wmPath = String(env.ASK_VERIFY_INGEST_WM ?? '').trim() || defaultWmPath(STREAM)
 
   try {
     const result = await ingest({
@@ -654,7 +732,9 @@ export async function main(argv, env = process.env, overrides = {}) {
       `verify-ingest${result.dryRun ? '[dry-run]' : ''}: fetched=${c.fetched} strong=${c.strong} `
       + `weak=${c.weak} negative=${c.negative} written=${c.written} replay_error=${c.replayError} `
       + `skipped_org=${c.skippedOrg} skipped_bad_event=${c.skippedBadEvent} `
-      + `skipped_unknown_tenant=${c.skippedUnknownTenant}`
+      + `skipped_bad_timestamp=${c.skippedBadTimestamp} `
+      + `skipped_unknown_tenant=${c.skippedUnknownTenant} `
+      + `defaulted_params=${c.defaultedParams} defaulted_slicing=${c.defaultedSlicing}`
       + (result.dryRun ? ` would_ingest=${c.wouldIngest}` : ''),
     )
     const w = result.watermark

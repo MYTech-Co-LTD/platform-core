@@ -262,6 +262,43 @@ describePg('verified-questions（需要 DATABASE_URL）', () => {
     expect(verified).toMatchObject({ status: 'verified', verifiedBy: 'auto:strong' })
   })
 
+  it('preserveBaseline：重放失败不拿空哨兵覆盖已验证基线；tolerance 缺省不被重置', async () => {
+    const metricId = 'lemeng:retail:preserve-baseline'
+    const id = await upsertCandidate(pool, ORG, {
+      question: '保留基线问题', metricId,
+      params: {}, slicing: {}, baseline: baselineOf(100), tolerance: 0.005,
+      source: 'auto', strength: 'strong',
+    })
+    const before = (await listVerified(pool, ORG)).find((r) => r.id === id)!
+
+    // 重放失败：空哨兵 + forceCandidate + preserveBaseline（Task 5 的失败路径）
+    await upsertCandidate(pool, ORG, {
+      question: '保留基线问题', metricId,
+      params: {}, slicing: {}, baseline: { columns: [], rowCount: 0, summary: {} },
+      source: 'auto', strength: 'strong', forceCandidate: true, preserveBaseline: true,
+    })
+    const afterFail = (await listVerified(pool, ORG)).find((r) => r.id === id)!
+    expect(afterFail.baseline).toEqual(before.baseline)
+    expect(afterFail.slicing).toEqual(before.slicing)
+    expect(afterFail.tolerance).toBe(0.005)
+    expect(afterFail).toMatchObject({ status: 'verified', verifiedBy: 'auto:strong' })
+
+    await recordCheck(pool, ORG, id, 'error')
+    expect((await listVerified(pool, ORG)).find((r) => r.id === id)!.lastCheckResult).toBe('error')
+
+    // 之后重放成功：新基线可覆盖，但**没给 tolerance** ⇒ 保留已有容差（Minor 9），
+    // 且内容变化 ⇒ 旧的 error 清空。
+    await upsertCandidate(pool, ORG, {
+      question: '保留基线问题', metricId,
+      params: {}, slicing: {}, baseline: baselineOf(200),
+      source: 'auto', strength: 'strong',
+    })
+    const afterOk = (await listVerified(pool, ORG)).find((r) => r.id === id)!
+    expect(afterOk.baseline.summary.value!.sum).toBe(200)
+    expect(afterOk.tolerance).toBe(0.005)
+    expect(afterOk.lastCheckResult).toBeNull()
+  })
+
   it('recordCheck 落 last_checked_at / last_check_result，且按 org 收窄', async () => {
     const row = (await listVerified(pool, ORG))[0]!
     await recordCheck(pool, ORG, row.id, 'error')

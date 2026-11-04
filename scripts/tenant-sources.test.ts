@@ -3,7 +3,12 @@
 // 不连库：假 exec 应答两条 SQL。SQL 本体已收在 `apps/server/src/tenant-source.ts`（单一事实源），
 // 本测试只钉「编排顺序 / 参数 / 未知租户 fail-fast / enabled 过滤口径」，不复制 SQL 断言全文。
 import { describe, expect, it } from 'vitest'
-import { loadAdoptedSources, type SqlExecutor } from './tenant-sources'
+import {
+  isUnknownTenantError,
+  loadAdoptedSources,
+  UnknownTenantError,
+  type SqlExecutor,
+} from './tenant-sources'
 
 function fakeExec(tenant: { id: number } | undefined, sources: string[]) {
   const calls: { text: string; params: unknown[] }[] = []
@@ -34,10 +39,14 @@ describe('loadAdoptedSources', () => {
     expect(calls[1]?.text).toContain('enabled = true')
   })
 
-  it('未知租户 ⇒ 抛错（不明显地退化成空集，避免全量假红）', async () => {
+  it('未知租户 ⇒ 抛 UnknownTenantError（类型化；文案可变、行为不变）', async () => {
     const { exec, calls } = fakeExec(undefined, [])
-    await expect(loadAdoptedSources(exec, 'nope')).rejects.toThrow(/未知租户/)
+    await expect(loadAdoptedSources(exec, 'nope')).rejects.toBeInstanceOf(UnknownTenantError)
     // 解析不到 tenant 就不该再查 tenant_source
     expect(calls).toHaveLength(1)
+    // 判定函数认类与等价 code（摄入侧靠它区分「跳过该条」与「炸整轮」）
+    expect(isUnknownTenantError(new UnknownTenantError('nope'))).toBe(true)
+    expect(isUnknownTenantError({ code: 'UNKNOWN_TENANT' })).toBe(true)
+    expect(isUnknownTenantError(new Error('db down'))).toBe(false)
   })
 })

@@ -75,6 +75,16 @@ export interface CandidateInput {
    * 只在本参数为 true 时降档；signal 本身仍如实记 `strength='strong'`（审计可辨）。
    */
   forceCandidate?: boolean
+  /**
+   * 重放失败时**保留已有行的基线/切面/容差**（新行仍写传入的空哨兵 + candidate）。
+   *
+   * 为什么必须与 `forceCandidate` 一起用（2026-11-04 评审 Critical 1）：失败路径传入的
+   * `baseline` 是空哨兵；若既有行已 verified 且好基线在手，冲突 CASE 原先会因
+   * `excluded.strength='strong'` 允许覆盖 ⇒ 好基线被空基线打掉。`preserveBaseline=true`
+   * 让冲突时**恒取 `vq.baseline` / `vq.slicing` / `vq.tolerance`**，只由随后的
+   * `recordCheck('error')` 更新检查结果。
+   */
+  preserveBaseline?: boolean
 }
 
 /** 库行（snake_case → camelCase 后的形状）。 */
@@ -149,9 +159,12 @@ function toVerifiedQuestion(row: Row): VerifiedQuestion {
  *   · verified 行的确认身份恒冻结；内容（baseline/slicing/tolerance）只接受 human/strong 覆盖；
  *   · rejected 行不被自动信号复活；
  *   · source/strength 取最强（先弱后强会升级）；内容被覆盖时清空 last_check_result；
- *   · tolerance 缺省时**整列不写**，让表默认（0.001）生效——默认值只有表定义一处事实源。
+ *   · tolerance 缺省时**整列不写**：insert 走表默认（0.001），update 则**保留已有 tolerance**
+ *     （不能让一次没带容差的强信号把人工调过的容差重置成默认值，2026-11-04 评审 Minor 9）。
  *   · `forceCandidate`（摄入侧重放失败）⇒ 即使 auto+strong 也只落 candidate（没有基线不冒充
  *     verified）；signal 仍如实记 strength=strong。
+ *   · `preserveBaseline`（同上失败路径）⇒ 冲突时恒取 `vq.baseline/slicing/tolerance`，
+ *     不拿空哨兵覆盖既有好基线（2026-11-04 评审 Critical 1）。
  *
  * 返回命中行的 `id`：摄入侧需要在重放失败时立刻 `recordCheck(…, 'error')`，而它手里只有
  * 本函数的输入（不是 id）。调用方可以忽略返回值（原先是 void）。
@@ -163,6 +176,34 @@ export async function upsertCandidate(pool: Pool, org: string, input: CandidateI
   const autoStrong = input.forceCandidate !== true && input.source === 'auto' && input.strength === 'strong'
   const status: VerifiedQuestionStatus = autoStrong ? 'verified' : 'candidate'
   const verifiedBy = autoStrong ? 'auto:strong' : null
+  const preserveBaseline = input.preserveBaseline === true
+  const toleranceProvided = input.tolerance !== undefined
+  // 冲突时内容列（baseline/slicing/tolerance）的更新表达式与「内容是否真的变了」的判据
+  // **必须同源**：否则容差缺省时 excluded.tolerance 是表默认，会把「保留 vq.tolerance」
+  // 误判成「内容变了」而清空 last_check_result。
+  const baselineUpdate = preserveBaseline
+    ? 'vq.baseline'
+    : `case
+         when vq.status = 'verified' and excluded.source <> 'human' and excluded.strength <> 'strong'
+           then vq.baseline else excluded.baseline
+       end`
+  const slicingUpdate = preserveBaseline
+    ? 'vq.slicing'
+    : `case
+         when vq.status = 'verified' and excluded.source <> 'human' and excluded.strength <> 'strong'
+           then vq.slicing else excluded.slicing
+       end`
+  const toleranceUpdate = preserveBaseline || !toleranceProvided
+    ? 'vq.tolerance'
+    : `case
+         when vq.status = 'verified' and excluded.source <> 'human' and excluded.strength <> 'strong'
+           then vq.tolerance else excluded.tolerance
+       end`
+  const contentChangedSql = preserveBaseline
+    ? 'false'
+    : `(vq.baseline is distinct from excluded.baseline
+        or vq.slicing is distinct from excluded.slicing
+        or ${toleranceProvided ? 'vq.tolerance is distinct from excluded.tolerance' : 'false'})`
 
   // 列清单动态拼：tolerance 未给 ⇒ 不出现该列（走表默认），不能用 coalesce 把默认值抄第二遍。
   const cols: string[] = []
@@ -211,25 +252,15 @@ export async function upsertCandidate(pool: Pool, org: string, input: CandidateI
        status = case when vq.status in ('verified', 'rejected') then vq.status else excluded.status end,
        verified_by = case when vq.status in ('verified', 'rejected') then vq.verified_by else excluded.verified_by end,
        verified_at = case when vq.status in ('verified', 'rejected') then vq.verified_at else excluded.verified_at end,
-       -- verified 行的参考基线只有 human/strong 能覆盖；弱信号不得悄悄替换
-       baseline = case
-                    when vq.status = 'verified' and excluded.source <> 'human' and excluded.strength <> 'strong'
-                      then vq.baseline else excluded.baseline
-                  end,
-       slicing = case
-                   when vq.status = 'verified' and excluded.source <> 'human' and excluded.strength <> 'strong'
-                     then vq.slicing else excluded.slicing
-                 end,
-       tolerance = case
-                     when vq.status = 'verified' and excluded.source <> 'human' and excluded.strength <> 'strong'
-                       then vq.tolerance else excluded.tolerance
-                   end,
-       -- 基线/切面/容差**真的被覆盖** ⇒ 旧的 pass/fail/error 不再对应当前基线，清空。
-       -- （verified 行被弱信号命中时内容没被覆盖，旧结果仍然对应当前基线，保留。）
+       -- verified 行的参考基线只有 human/strong 能覆盖；弱信号不得悄悄替换。
+       -- preserveBaseline（摄入重放失败）⇒ 恒取已有值，空哨兵只用于新行 insert。
+       baseline = ${baselineUpdate},
+       slicing = ${slicingUpdate},
+       tolerance = ${toleranceUpdate},
+       -- 内容**真的被覆盖** ⇒ 旧的 pass/fail/error 不再对应当前基线，清空。
+       -- （preserveBaseline / 未提供 tolerance 时内容未变，旧结果仍然对应当前基线，保留。）
        last_check_result = case
-                             when (vq.baseline is distinct from excluded.baseline
-                               or vq.slicing is distinct from excluded.slicing
-                               or vq.tolerance is distinct from excluded.tolerance)
+                             when ${contentChangedSql}
                               and (vq.status <> 'verified'
                                 or excluded.source = 'human'
                                 or excluded.strength = 'strong')

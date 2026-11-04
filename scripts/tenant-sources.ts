@@ -21,18 +21,36 @@ import {
 export type { SqlExecutor }
 
 /**
+ * `casdoor_org` 解析不到平台租户。**类型化**是刻意的：摄入侧要靠它区分
+ * 「这条事件不属于本平台」与「数据库/链路坏了」——前者跳过该条，后者必须炸整轮
+ * （静默跳过会让水位越过没处理的数据）。不要再靠错误文案匹配判类。
+ */
+export class UnknownTenantError extends Error {
+  readonly code = 'UNKNOWN_TENANT' as const
+  constructor(org: string) {
+    super(`loadAdoptedSources: 未知租户 org='${org}'（platform.tenant.casdoor_org 无此行）`)
+    this.name = 'UnknownTenantError'
+  }
+}
+
+/** 判定未知租户错误（兼容带 `code='UNKNOWN_TENANT'` 的等价错误对象，文案可变、行为不变）。 */
+export function isUnknownTenantError(e: unknown): e is UnknownTenantError {
+  if (e instanceof UnknownTenantError) return true
+  return typeof e === 'object' && e !== null && 'code' in e
+    && (/** @type {{code?: unknown}} */ (e)).code === 'UNKNOWN_TENANT'
+}
+
+/**
  * `org`（= `platform.tenant.casdoor_org`）→ tenant_id → `enabled = true` 的源集合。
  *
- * 未知租户（`casdoor_org` 无行）⇒ **抛错**：那是配置错误（`--org` 打错），不是「零接入源」。
- * 静默退化成空集只会让 CLI 报出一片与真相无关的红（所有指标都被裁成未声明）。
+ * 未知租户（`casdoor_org` 无行）⇒ **抛 `UnknownTenantError`**：那是配置错误（`--org` 打错），
+ * 不是「零接入源」。静默退化成空集只会让 CLI 报出一片与真相无关的红（所有指标都被裁成未声明）。
  */
 export async function loadAdoptedSources(
   exec: SqlExecutor,
   org: string,
 ): Promise<ReadonlySet<string>> {
   const tenantId = await resolveTenantIdByOrg(exec, org)
-  if (tenantId === null) {
-    throw new Error(`loadAdoptedSources: 未知租户 org='${org}'（platform.tenant.casdoor_org 无此行）`)
-  }
+  if (tenantId === null) throw new UnknownTenantError(org)
   return new Set(await listEnabledSources(exec, tenantId))
 }

@@ -15,6 +15,7 @@ import { describe, expect, it, vi } from 'vitest'
 import {
   authHeader,
   DEFAULT_WM_PATH,
+  defaultWmPath,
   EMPTY_BASELINE,
   ingest,
   main,
@@ -26,6 +27,7 @@ import {
   STREAM,
   writeWatermark,
 } from './verify-ingest.mjs'
+import { UnknownTenantError } from './tenant-sources'
 
 const NOW_MS = Date.UTC(2026, 10, 4, 12, 0, 0)
 const TS1 = 1_793_793_000_000_000
@@ -97,15 +99,33 @@ function collect(hits: Record<string, unknown>[], over: Record<string, unknown> 
     upsert: async (_pool: any, org: string, input: any) => {
       const key = `${org}|${input.metricId}|${input.question}|${JSON.stringify(input.params)}|${JSON.stringify(input.slicing)}`
       upserts.push({ org, input })
-      if (!store.has(key)) {
-        store.set(key, {
+      const existing = store.get(key)
+      if (existing === undefined) {
+        const row = {
+          id: nextId++,
           org,
           ...input,
           // Task 1 的落库映射：自动强信号 → verified；其余 → candidate（重放失败强制 candidate）。
           status: input.forceCandidate === true ? 'candidate' : input.strength === 'strong' ? 'verified' : 'candidate',
-        })
+        }
+        store.set(key, row)
+        return row.id
       }
-      return nextId++
+      // 冲突语义的最小模拟（真语义由 Task 1 的 DB 测试钉住）：
+      // preserveBaseline=true ⇒ 已有基线/切面不被空哨兵覆盖；verified 的 status 冻结。
+      const next = { ...existing }
+      if (input.preserveBaseline !== true) {
+        next.baseline = input.baseline
+        next.slicing = input.slicing
+      }
+      if (input.tolerance !== undefined) next.tolerance = input.tolerance
+      if (existing.status !== 'verified' && existing.status !== 'rejected') {
+        next.status = input.forceCandidate === true ? 'candidate' : input.strength === 'strong' ? 'verified' : 'candidate'
+        next.verified_by = next.status === 'verified' ? 'auto:strong' : null
+      }
+      next.strength = input.strength === 'strong' || existing.strength === 'strong' ? 'strong' : existing.strength
+      store.set(key, next)
+      return existing.id
     },
     recordCheck: async (_pool: any, org: string, id: number, result: string) => {
       records.push({ org, id, result })
@@ -132,10 +152,11 @@ describe('parseEvent（Task 4 事件契约）', () => {
     expect(ev.slicing).toEqual({})
   })
 
-  it('缺省 / 空串的 params / slicing ⇒ {}（不把空串当 JSON 解析）', () => {
+  it('缺省 / 空串 / 空白串的 params / slicing ⇒ {}（不把空串当 JSON 解析）', () => {
     const ev = parseEvent(hit({ params: '', slicing: undefined }))
     expect(ev.params).toEqual({})
     expect(ev.slicing).toEqual({})
+    expect(parseEvent(hit({ params: '   ', slicing: '\n' }))).toMatchObject({ params: {}, slicing: {} })
   })
 
   it('org 为空 ⇒ BadEventError(BAD_ORG)；question/metricId 缺失与非法 JSON ⇒ 抛错（不猜）', () => {
@@ -185,7 +206,7 @@ describe('authHeader', () => {
 // ── OO `_search` HTTP 形态 ─────────────────────────────────────────────────────
 
 describe('searchClient', () => {
-  it('POST /api/<org>/<stream>/_search；Basic 鉴权；微秒时间窗；严格 _timestamp > 水位', async () => {
+  it('POST /api/<org>/<stream>/_search；Basic 鉴权；微秒时间窗；>= 水位 + seq 次级排序', async () => {
     const calls: { url: string; init: any }[] = []
     const fakeFetch = async (url: string, init: any) => {
       calls.push({ url, init })
@@ -208,8 +229,9 @@ describe('searchClient', () => {
       size: 7,
     })
     expect(body.query.sql).toContain(`from "${STREAM}"`)
-    expect(body.query.sql).toContain('where _timestamp > 1793793000000123')
-    expect(body.query.sql).toContain('order by _timestamp asc')
+    // >= 而非 >：同一微秒入库的边界组不能被跳过（review Important 4）
+    expect(body.query.sql).toContain('where _timestamp >= 1793793000000123')
+    expect(body.query.sql).toContain('order by _timestamp asc, seq asc, sessionId asc')
   })
 
   it('首次运行（无水位）不加 where，start_time=0', async () => {
@@ -222,7 +244,7 @@ describe('searchClient', () => {
     await search({ cursorUs: null, endUs: 1, from: 0, size: 10 })
     const body = JSON.parse(calls[0]!.init.body)
     expect(body.query.start_time).toBe(0)
-    expect(body.query.sql).not.toContain('where _timestamp >')
+    expect(body.query.sql).not.toContain('where _timestamp >=')
   })
 
   it('非 2xx ⇒ 抛错（带状态与响应片段），不当空结果', async () => {
@@ -299,13 +321,34 @@ describe('ingest', () => {
 
     expect(r.counters).toMatchObject({ replayError: 1, written: 1, strong: 0 })
     expect(c.upserts[0]!.input).toMatchObject({
-      source: 'auto', strength: 'strong', forceCandidate: true,
+      source: 'auto', strength: 'strong', forceCandidate: true, preserveBaseline: true,
     })
     // 明确哨兵基线（不是用编造的数值冒充基线）
     expect(c.upserts[0]!.input.baseline).toEqual(EMPTY_BASELINE)
     expect(c.records).toEqual([{ org: 'acme', id: 1, result: 'error' }])
     expect([...c.store.values()][0]!.status).toBe('candidate')
     expect(c.wmWrites).toEqual([TS1])
+  })
+
+  it('既有 verified 行 + 重放失败 ⇒ 好基线/status 不变，只记 last_check_result=error', async () => {
+    const c = collect([hit()])
+    await ingest(OPTS, c.deps)
+    const key = [...c.store.keys()][0]!
+    const before = { ...c.store.get(key)! }
+    expect(before.status).toBe('verified')
+    expect(before.baseline).toEqual(BASELINE)
+
+    // 第二轮同一事件重投，重放失败（压缩水位后同微秒边界会被 >= 重读，正是要覆盖的场景）
+    c.deps.replay = async () => ({
+      status: 'denied', metricId: 'lemeng:retail:net_sales', reason: 'metric_not_declared',
+    })
+    await ingest(OPTS, c.deps)
+
+    const after = c.store.get(key)!
+    expect(after.status).toBe('verified')
+    expect(after.baseline).toEqual(before.baseline)
+    expect(c.upserts[c.upserts.length - 1]!.input).toMatchObject({ forceCandidate: true, preserveBaseline: true })
+    expect(c.records).toEqual([{ org: 'acme', id: before.id, result: 'error' }])
   })
 
   it('重放抛异常 ⇒ 同样 candidate + error（异常与「口径红」都可辨、不猜）', async () => {
@@ -315,7 +358,7 @@ describe('ingest', () => {
     const r = await ingest(OPTS, c.deps)
 
     expect(r.counters.replayError).toBe(1)
-    expect(c.upserts[0]!.input.forceCandidate).toBe(true)
+    expect(c.upserts[0]!.input).toMatchObject({ forceCandidate: true, preserveBaseline: true })
     expect(c.records).toEqual([{ org: 'acme', id: 1, result: 'error' }])
   })
 
@@ -330,15 +373,89 @@ describe('ingest', () => {
     expect(c.wmWrites).toEqual([TS2])
   })
 
-  it('未知租户（loadAdoptedSources 抛「未知租户」）⇒ 跳过该事件并计数，不炸整轮', async () => {
-    const c = collect([hit()], {
-      loadSources: async () => { throw new Error("loadAdoptedSources: 未知租户 org='ghost'") },
+  it('未知租户按类型化 code 跳过（文案不参与判定）；普通「未知租户」文案不翻转行为', async () => {
+    // 1) 类型化错误（文案故意不含「未知租户」）⇒ 跳过该条
+    const typed = collect([hit()], {
+      loadSources: async () => { throw new UnknownTenantError('ghost') },
     })
+    const r = await ingest(OPTS, typed.deps)
+    expect(r.counters).toMatchObject({ skippedUnknownTenant: 1, written: 0 })
+    expect(typed.upserts).toHaveLength(0)
+    expect(typed.wmWrites).toEqual([TS1])
+
+    // 2) 等价 code 的普通对象（兼容其它模块抛法）
+    const coded = collect([hit()], {
+      loadSources: async () => {
+        const err: any = new Error('tenant missing')
+        err.code = 'UNKNOWN_TENANT'
+        throw err
+      },
+    })
+    expect((await ingest(OPTS, coded.deps)).counters.skippedUnknownTenant).toBe(1)
+
+    // 3) 只有文案、没有 code ⇒ 不再被当成未知租户（必须炸整轮，不静默越过数据）
+    const textOnly = collect([hit()], {
+      loadSources: async () => { throw new Error('未知租户但无 code') },
+    })
+    await expect(ingest(OPTS, textOnly.deps)).rejects.toThrow(/未知租户但无 code/)
+    expect(textOnly.wmWrites).toEqual([])
+  })
+
+  it('同一 _timestamp 的记录跨轮不丢（>= 水位；边界组重读靠唯一键幂等）', async () => {
+    const a = hit({ _timestamp: TS1, metricId: 'lemeng:a', question: '问题 A', sessionId: 's1', seq: 1 })
+    const b = hit({ _timestamp: TS1, metricId: 'lemeng:b', question: '问题 B', sessionId: 's2', seq: 2 })
+    const batches = [[a], [a, b]]
+    let round = 0
+    const search = async ({ cursorUs }: any) => {
+      expect(cursorUs).toBe(round === 0 ? null : TS1)
+      const hits = batches[round] ?? []
+      round += 1
+      return { hits, total: hits.length }
+    }
+    const c = collect([], { search })
+    await ingest(OPTS, c.deps)
+    await ingest(OPTS, c.deps)
+
+    const ids = c.upserts.map((u) => u.input.metricId)
+    expect(ids).toContain('lemeng:a')
+    expect(ids).toContain('lemeng:b')
+    expect(c.store.size).toBe(2)
+    // 第二轮 max(_timestamp) 与已存水位相同 ⇒ 不再写水位
+    expect(c.wmWrites).toEqual([TS1])
+  })
+
+  it('缺 _timestamp 的毒丸记录只跳过该条（计数），不阻塞整轮/水位', async () => {
+    const poison = hit({ _timestamp: 'bad', metricId: 'lemeng:poison' })
+    const good = hit({ _timestamp: TS2 })
+    const c = collect([poison, good])
     const r = await ingest(OPTS, c.deps)
 
-    expect(r.counters).toMatchObject({ skippedUnknownTenant: 1, written: 0 })
+    expect(r.counters).toMatchObject({ fetched: 2, skippedBadTimestamp: 1, written: 1 })
+    expect(c.upserts.map((u) => u.input.metricId)).toEqual(['lemeng:retail:net_sales'])
+    expect(c.wmWrites).toEqual([TS2])
+
+    // 整批都是毒丸：不抛错、不写水位（下轮会再报，计数可见）
+    const only = collect([hit({ _timestamp: undefined })])
+    const r2 = await ingest(OPTS, only.deps)
+    expect(r2.counters).toMatchObject({ fetched: 1, skippedBadTimestamp: 1, written: 0 })
+    expect(only.wmWrites).toEqual([])
+  })
+
+  it('params/slicing 缺省按 {} 继续，但计数可见（不静默吞契约缺口）', async () => {
+    const c = collect([hit({ params: '', slicing: '   ' })])
+    const r = await ingest(OPTS, c.deps)
+
+    expect(r.counters).toMatchObject({ defaultedParams: 1, defaultedSlicing: 1, written: 1 })
+    expect(c.upserts[0]!.input.params).toEqual({})
+    expect(c.upserts[0]!.input.slicing).toEqual({})
+  })
+
+  it('--since 晚于已存水位 ⇒ 拒绝运行（不静默跳过区间）', async () => {
+    const c = collect([hit()])
+    c.deps.readWm = () => TS1
+    await expect(ingest({ ...OPTS, sinceUs: TS2 }, c.deps)).rejects.toThrow(/--since.*水位/)
     expect(c.upserts).toHaveLength(0)
-    expect(c.wmWrites).toEqual([TS1])
+    expect(c.wmWrites).toEqual([])
   })
 
   it('水位成功后才前进：落库失败 ⇒ 抛错且不写水位；成功 ⇒ 推进到批次最大 _timestamp', async () => {
@@ -395,8 +512,9 @@ describe('ingest', () => {
 // ── 水位文件 ───────────────────────────────────────────────────────────────────
 
 describe('水位文件', () => {
-  it('不存在 ⇒ null；写入（含建目录）后可读回；默认路径在 /var/lib/askdata', () => {
-    expect(DEFAULT_WM_PATH).toBe('/var/lib/askdata/verify-ingest.watermark')
+  it('不存在 ⇒ null；写入（含建目录）后可读回；默认路径按流一份', () => {
+    expect(DEFAULT_WM_PATH).toBe('/var/lib/askdata/verify-ingest.askdata_verified.watermark')
+    expect(defaultWmPath('other_stream')).toBe('/var/lib/askdata/verify-ingest.other_stream.watermark')
     const dir = mkdtempSync(join(tmpdir(), 'verify-ingest-'))
     try {
       const path = join(dir, 'nested', 'wm')
@@ -427,18 +545,48 @@ describe('main', () => {
     }
   })
 
-  it('--dry-run 不要求 DATABASE_URL；有完整依赖时走通并返回 0', async () => {
+  it('--dry-run 不要求 DATABASE_URL（跳过 DB/租户源校验）；有完整依赖时走通并返回 0', async () => {
     const err = vi.spyOn(console, 'error').mockImplementation(() => {})
     const log = vi.spyOn(console, 'log').mockImplementation(() => {})
     try {
       const c = collect([hit()])
+      let loads = 0
       const code = await main(
         ['--dry-run'],
         { OO_READ_URL: 'https://oo.test', OO_READ_ORG: 'oo-org', OO_READ_TOKEN: 't' },
-        c.deps,
+        { ...c.deps, loadSources: async () => { loads += 1; return new Set(['lemeng']) } },
       )
       expect(code).toBe(0)
+      expect(loads).toBe(0) // 无 DB ⇒ 不访问租户源（也不会 null.query）
       expect(c.upserts).toHaveLength(0)
+    } finally {
+      err.mockRestore()
+      log.mockRestore()
+    }
+  })
+
+  it('--dry-run + 有 DATABASE_URL ⇒ 建池并做租户源校验（不再 null.query TypeError）', async () => {
+    const err = vi.spyOn(console, 'error').mockImplementation(() => {})
+    const log = vi.spyOn(console, 'log').mockImplementation(() => {})
+    try {
+      const c = collect([hit()])
+      let loads = 0
+      const code = await main(
+        ['--dry-run'],
+        {
+          OO_READ_URL: 'https://oo.test', OO_READ_ORG: 'oo-org', OO_READ_TOKEN: 't',
+          DATABASE_URL: 'postgres://fake',
+        },
+        {
+          ...c.deps,
+          loadSources: async () => { loads += 1; return new Set(['lemeng']) },
+          pool: { end: async () => {} },
+        },
+      )
+      expect(code).toBe(0)
+      expect(loads).toBe(1)
+      expect(c.upserts).toHaveLength(0)
+      expect(c.wmWrites).toEqual([])
     } finally {
       err.mockRestore()
       log.mockRestore()
