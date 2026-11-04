@@ -292,6 +292,8 @@ it('describe_metric 返回 entity/synonyms', async () => {
 
 ⚠️ 同时改 `deps()` 里那条假 DB 行：把 `entity: m.entity, synonyms: m.synonyms` 加进 `query: async () => ({ rows: catalog.map(...) })` 的映射（否则 `toMetricRow` 读不到，测试会假绿/假红）。`row()` 夹具的默认值也补 `entity: null, synonyms: []`。
 
+⚠️ **同类夹具必须一起补**：`modules/data/domain/toolbox/health.test.ts` 也用 `as MetricRow` 构造行且缺这两字段——Task 2 评审已点名。若 `searchImpl`/`describeMetricImpl` 的代码路径会读到它，运行期 `undefined.some(...)` 会 TypeError；两处夹具都补默认值。
+
 - [ ] **Step 2: 跑测试确认失败**
 
 Run: `npx vitest run modules/data/domain/toolbox/discovery.test.ts -t "同义词"`
@@ -307,6 +309,10 @@ Expected: FAIL
 ```
 
 ⚠️ 不要在这里另行校验形态——形态归门禁（Task 1），sync 只搬值（两处各判会漂）。
+
+⚠️ **同时改 `comparableOf`（`scripts/sync-data-semantics.mjs` 约 L1118 的固定元组）**：把
+`entity` / `synonyms` 纳入比对，否则改了声明后 `--check` **不报漂移**（该元组是「内容比对」的唯一口径）。
+⚠️ 二进制的 jsonb 比对口径：`synonyms` 声明侧是数组、库里读回也是数组，直接 `JSON.stringify` 比对。
 
 - [ ] **Step 4: 改消费面**
 
@@ -346,7 +352,13 @@ git commit -m "feat(data): 词表消费 entity/synonyms（搜索命中 + 详情�
 **Interfaces:**
 - Consumes: Task 1–3 的全部实现。
 
-- [ ] **Step 1: 在真声明里加实体与同义词**
+- [ ] **Step 1: 真声明（**本波不扩**）**
+
+2026-11-04 用户裁决：**不新增业务同义词**，`l1_metrics.yml` 保留 Task 1 的两个示例即可（真实别名等业务方确认后再补，不编）。
+
+**同时（Task 3 评审遗留，必须一并做）**：
+- `modules/data/domain/toolbox/registry.ts` 的 `search_catalog` 描述补「同义词也命中」；`describe_metric` 描述补「返回 entity/synonyms」。工具描述是**模型看到的契约**，不写等于没消费。
+- 订正两处过期注释：`scripts/sync-data-semantics.mjs:1066`「16 元组」→ 当前实际元组数；`scripts/check-data-models.mjs:221-223`「本波不落库」→ 已落库。
 
 顶层加：
 
@@ -370,8 +382,8 @@ entities:
 - [ ] **Step 2: 跑门禁与同步 dry-run**
 
 ```bash
-node scripts/check-data-models.mjs
-node scripts/sync-data-semantics.mjs --check
+npx tsx scripts/check-data-models.mjs
+npx tsx scripts/sync-data-semantics.mjs --check
 ```
 
 Expected: 两条都 exit 0；`--check` 输出差异里只出现本次新增字段。
@@ -390,10 +402,10 @@ Expected: 全绿。
 把 `docs/superpowers/plans/2026-11-04-auto-metric-derivation-roadmap.md` §5 的 W0 行改为：
 
 ```md
-| W0 | 已完成 | 2026-11-04 | 2026-11-04 | PR #<号> · 门禁绿 · `--check` 无意外 diff | — |
+| W0 | 进行中（实现完成，待 PR） | 2026-11-04 | 2026-11-04 | 门禁绿 · `--check` 无意外 diff · 全量测试绿 | — |
 ```
 
-（若只完成了一部分，写「部分完成(见偏离)」并在「偏离与备注」列写明差什么。）
+⚠️ 状态停在「进行中（实现完成，待 PR）」——**合并后由控制器改为「已完成」并填 PR 号**（台账的「已完成」含义是已合入）。
 
 - [ ] **Step 5: 提交**
 
