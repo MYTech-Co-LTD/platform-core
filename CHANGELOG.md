@@ -11,6 +11,10 @@
 
 ## [Unreleased]
 
+## [0.266.1](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.266.0...v0.266.1) - 2026-11-04
+- 【修复】data-mobile: 报表管理与报表中心拆开——管理 tab 只列「我创建的」（#1373） ([#1374](https://github.com/MYTech-Co-LTD/platform-core/pull/1374), [c6540eb](https://github.com/MYTech-Co-LTD/platform-core/commit/c6540eb633a6ff14eee1fd5f2f45568717283765))
+
+
 ## [0.266.0](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.265.0...v0.266.0) - 2026-11-04
 - 【新增】data: 接源库存进出明细（inventory.movement）——原生分页单节点 ([#1354](https://github.com/MYTech-Co-LTD/platform-core/pull/1354), [ecfd0e6](https://github.com/MYTech-Co-LTD/platform-core/commit/ecfd0e6729e80ae9d2f928af644fde06bd2ecf0c))
 
