@@ -340,8 +340,9 @@ export function searchClient(opts, fetchImpl) {
     if (org === '') throw new Error('verify-ingest: 缺 OO_READ_ORG')
     const stream = opts.stream ?? STREAM
     const header = authHeader(opts.token)
-    const lookbackDays = Number.isFinite(opts.lookbackDays) && opts.lookbackDays > 0
-      ? opts.lookbackDays
+    const rawLookback = Number(opts.lookbackDays)
+    const lookbackDays = Number.isFinite(rawLookback) && rawLookback > 0
+      ? rawLookback
       : LOOKBACK_DAYS_DEFAULT
     const cursorSql = req.cursorUs === null ? '' : ` where _timestamp >= ${Math.trunc(req.cursorUs)}`
     const body = {
@@ -488,8 +489,9 @@ export async function ingest(opts, overrides = {}) {
   }
   // `--since` 显式覆盖本轮读取起点；水位本身只前进（见末尾写水位条件）。
   const endUs = now() * 1000
-  const lookbackDays = Number.isFinite(opts.lookbackDays) && opts.lookbackDays > 0
-    ? opts.lookbackDays
+  const rawLookback = Number(opts.lookbackDays)
+  const lookbackDays = Number.isFinite(rawLookback) && rawLookback > 0
+    ? rawLookback
     : LOOKBACK_DAYS_DEFAULT
   // 无水位（首跑）**不能从 0 开始**：OO 判 `invalid time range`。用有界回看窗口。
   const cursorUs = opts.sinceUs ?? storedWm ?? (endUs - lookbackDays * DAY_US)
