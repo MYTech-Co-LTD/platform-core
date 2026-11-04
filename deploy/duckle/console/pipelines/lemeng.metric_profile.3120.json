@@ -33,7 +33,12 @@
     "⑧【收尾汇总 = 新鲜度凭证】`sm` 在 foreach 全部成功（anchor 触发）后写 `/workspace/logs/metric-profile-summary.csv`，",
     "   一行 =（org, relations=21, status=ok, ts）。为什么要它：**sink 在子管线里、父 run 记录不带 assets**",
     "   （实测：`runs/lemeng.metric_profile.3120.json` 的 ok 记录无 assets 字段）⇒ 直接给 `postgres://metric_profiles`",
-    "   配 owners 规则会恒 stale（写时钟永不起算）。故 owners 锚在本 CSV（与零售父管线同一形态）。"
+    "   配 owners 规则会恒 stale（写时钟永不起算）。故 owners 锚在本 CSV（与零售父管线同一形态）。",
+    "",
+    "⑨【`sm` 的两个口径】",
+    "   · `relations` 是**回声计数**（= 驱动表行数），**不是**「21 个关系都成功」的独立证据：成功语义由",
+    "     `ctl.foreach` 的失败传播保证（任一子 run 失败 ⇒ 父 run error，走不到 anchor/sm）。别把它读成逐关系回执。",
+    "   · `ts` 显式 `now() AT TIME ZONE 'UTC'`：容器 TZ 变化不会让汇总行错标时区（本文件 ⑧ 的判据也依赖它）。"
   ],
   "nodes": [
     {
@@ -110,7 +115,7 @@
         "label": "sm",
         "componentId": "code.sql",
         "properties": {
-          "sql": "SELECT org,\n       count(*) AS relations,\n       'ok' AS status,\n       strftime(now(), '%Y-%m-%dT%H:%M:%SZ') AS ts\nFROM input\nGROUP BY org"
+          "sql": "SELECT org,\n       count(*) AS relations,\n       'ok' AS status,\n       -- 显式 UTC：now() 是 TIMESTAMPTZ，strftime 会按**会话 TZ**渲染；容器 TZ 变了就会错标。\n       strftime(now() AT TIME ZONE 'UTC', '%Y-%m-%dT%H:%M:%SZ') AS ts\nFROM input\nGROUP BY org"
         }
       }
     },

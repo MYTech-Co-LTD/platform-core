@@ -110,6 +110,8 @@ D6 原文「L2 变更走草稿→确认→生效（不做即时生效）」的�
 ```
 ① Profiler（**duckle 管线**，不是自写 SQL）
    形态：src.postgres（customSql 按 org 过滤）→ qa.profile → snk.postgres（`data.metric_profiles`）
+   ⚠️ **落点订正（2026-11-04 实测）**：该表在**仓库库（pg_duckdb）**，不是平台库——console 到平台 pg 超时，
+   且 `data.load_log` 同址先例。平台侧（Task 5）经 `DATA_WAREHOUSE_URL` 读，建表走数据面引导步骤而非平台迁移。
    ⚠️ 判停门结论 = **①引擎有**（`qa.profile` / `qa.classify` 均 available，2026-11-04 真机目录实测）；
       自写采样 SQL 属违反 duckle-native-first，不采纳
    输入：L1 已用的 marts（当前 18/25）× 运行时 `information_schema.columns` 取实际列

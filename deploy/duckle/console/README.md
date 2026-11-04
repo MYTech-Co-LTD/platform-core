@@ -147,7 +147,7 @@ python3 -c "import json,glob,os;fs=glob.glob('/workspace/runs/receipts/*branch_l
 
 | 事实 | 证据 |
 |---|---|
-| **cron 按 UTC 解释** | 登记于 `06:54:22Z` → 触发于 `06:55:03Z`；容器 TZ 实测为 **UTC** |
+| **cron 按条目的 `timezone` 解释**（2026-11-04 复核，取代旧结论） | `0 0 * * *` + Asia/Shanghai 的 `lemeng.retail.close.l1` 实测 `startedAt 16:00:35Z`（= 00:00 CST）；`0 14,16,18,20,22 * * *` 的 `lemeng.dim.item.l0` 实测 `12:01Z`（= 20:00 CST）⇒ 条目 `timezone` 生效。⚠️ 旧行「cron 按 UTC 解释」（2026-09-26）是条目**未带 timezone** 时的实测，对现行条目已不成立；W2 profiler 的 `10 5 * * 0` Asia/Shanghai = **周日 05:10 CST / 周六 21:10 UTC** |
 | **会重复触发**（不是只跑一次） | `last_run_at` 从 `06:57:03Z` 走到 `06:58:03Z`；serve 日志两条 `scheduled tick -> ok` |
 | 失败**如实入账** | 失败时 `last_run_status=error` + `last_run_error=<原因>`（不是静默绿） |
 | ⚠️ **`/api/schedules` 的 GET 只回定义、不回运行状态** | 它返回**以 `pipeline_id` 为键的字典**（**不是数组**），每条字段是 `{id, enabled, cron, intervalSeconds, intervalMinutes, planId, timezone, exclude, misfire, catchup}`——**没有任何 `last_run_*`** ⇒ 观测要读 `schedules.json` 或 serve 日志，别信那个 GET。<br>✅ **但它适合自证「定义加载了没」**：GET 到的条目数与 seed 的一致即生效（2026-09-26 实测：零售条目 seed + 重启后即出现在 GET 里，并带上了 console 补的 `misfire`/`catchup`） |
@@ -178,42 +178,66 @@ python3 -c "import json,glob,os;fs=glob.glob('/workspace/runs/receipts/*branch_l
 
 列画像管线：按租户逐关系跑 `qa.profile`（duckle 原生组件），追加写**仓** `data.metric_profiles`。
 供 W2 候选生成（Task 5）读——平台侧经 `DATA_WAREHOUSE_URL`（warehousePool），**不是**平台库。
-设计理由、采样口径与实测坑都写在两个管线文件的 `_note` 里；本节只讲**投递要做什么**。
+设计理由、采样口径与实测坑都写在两个管线文件的 `_note` 里；本节讲**投递要做什么 + 已知边界**。
 
 | 文件 | 落地 | 角色 |
 |---|---|---|
 | `pipelines/lemeng.metric_profile.3120.json` | `/workspace/pipelines/` | 父：静态 21 条 L1 marts 清单 × 本租户 org → `ctl.foreach` |
 | `pipelines/lemeng.metric_profile.relation.json` | 同上 | 子：`src.postgres` → `qa.profile` → 改形 → `snk.postgres`（append） |
-| `schedules/3120.json`（追加条目） | `/workspace/schedules.json` | 周更：`10 5 * * 0` Asia/Shanghai（周日 05:10） |
+| `schedules/3120.json`（追加条目） | `/workspace/schedules.json` | 周更：`10 5 * * 0` Asia/Shanghai（**周日 05:10 CST = 周六 21:10 UTC**） |
 | `owners.lemeng.json`（追加条目） | `/workspace/owners.json` | 新鲜度：资产 `/workspace/logs/metric-profile-summary.csv`，`maximumAge: 9d`（父管线收尾汇总；**不锚仓表**——sink 在子管线里、父 run 记录不带 assets，锚表会恒 stale） |
 | `alerts.lemeng.json`（追加规则） | `/workspace/alerts.json` | `lemeng.metric_profile.*` failure + recovery |
-| `metric_profiles.ddl.sql` | **不 seed**（对仓执行一次） | 幂等建表 |
+| `metric_profiles.ddl.sql` | **不 seed**（对仓执行一次） | 幂等建表（`create … if not exists`） |
+| `ensure-metric-profiles.sh` | **不 seed**（数据面机宿主执行） | 建/验表脚本（见步骤 1；容器发现 + psql + 断言） |
 
-**投递四步（顺序不能换）**：
+**投递五步（顺序不能换）**：
 
-1. **建表**（对仓 pg_duckdb 执行；openship 服务器级 exec）：
-   `docker exec <pg_duckdb 容器> psql -U platform -d warehouse -v ON_ERROR_STOP=1 -f metric_profiles.ddl.sql`
-2. **建连接 `connections/pgduck.json`**（workspace 卷；**不进仓**）：
-   `{kind:"postgres", host:"pg_duckdb", port:5432, database:"warehouse", username:"platform", password:"<project env PGDUCK_PASSWORD>"}`，
-   `chmod 600`。
-   🔴 **值必须是明文真值，不能用 `${ENV:...}` 占位符，也别用 MCP `create_connection`**：`ctl.foreach`
-   加载子管线时只替换 `${ITER_ITEM_*}`、**不展开 `${ENV:*}`**（2026-11-04 实测，同一份连接在顶层管线
-   可用、在子管线里原样透传 ⇒ 认证失败）。MCP 工具只收占位符 ⇒ 用它建的连接在本管线里必失败。
-   console 容器的 env 里本来就有 `PGDUCK_PASSWORD`（同一信任域），落盘不新增暴露面。
-3. **seed** 上表 5 个文件（整文件覆盖语义，同 §「调度器的实测事实」）+ 重启 console 使 `schedules.json` 生效。
+1. **建表（固化为脚本，别靠记得手敲）**——openship 服务器级 exec，在**数据面机宿主**上：
+   ```sh
+   sh <检出根>/deploy/duckle/console/ensure-metric-profiles.sh          # 幂等建表 + 断言表在
+   sh <检出根>/deploy/duckle/console/ensure-metric-profiles.sh --check  # 只验（新机巡检/重建后复核）
+   ```
+   成功字面量 `ENSURE_METRIC_PROFILES_OK:`；失败 `ENSURE_METRIC_PROFILES_FAILED:`（exit 1）。
+2. **建连接 `connections/pgduck.json`**（console 3120 的 **workspace 卷内**；**不进仓**）：
+   `{kind:"postgres", host:"pg_duckdb", port:5432, database:"warehouse", username:"platform", password:"<当前 PGDUCK_PASSWORD>"}`，
+   `chmod 600`。🔴 **值必须是明文真值**：`ctl.foreach` 加载子管线时只替换 `${ITER_ITEM_*}`、
+   **不展开 `${ENV:*}`**（2026-11-04 实测：同一份连接在顶层管线可用、在子管线里原样透传 ⇒ 认证失败）；
+   MCP `create_connection` 只收 `${ENV:KEY}` 占位符 ⇒ 用它建的连接在本管线里必失败。台账见下。
+3. **seed** 步骤 2 的连接 + 上表**前 5 个**文件（两个管线、schedules、owners、alerts；整文件覆盖语义）
+   + 重启 console 使 `schedules.json` 生效。DDL 与脚本**不 seed**（它们在检出里直接跑）。
 4. **重建 catalog**（`POST /api/catalog`）——否则运行记录不带 `assets`、`owners` 的新鲜度时钟不起算。
+5. **首跑验收**：
+   ```sh
+   # 触发一次（约 100s；用 async + 轮询，同步口会挂到跑完）
+   curl -s -X POST -H "Authorization: Bearer $DUCKLE_TOKEN" -H 'Content-Type: application/json' \
+     -d '{"file":"pipelines/lemeng.metric_profile.3120.json","params":{}}' http://127.0.0.1:18080/api/run/async
+   # 回读（仓）
+   docker exec <pg_duckdb 容器> psql -U "$POSTGRES_USER" -d "$POSTGRES_DB" -c \
+     "select org, relation, count(*), max(profiled_at) from data.metric_profiles group by 1,2 order by 2"
+   ```
+   判据：父 run `status: ok`、`fe` rows = 21、收尾 `metric-profile-summary.csv` 一行；
+   表里 21 个 relation 各一份画像 —— **约 263 行 = 21 关系 × 各自列数**（单租户、单批次，不含历史批次；
+   实测 2026-11-04）。表是 append + `profiled_at` 进主键，跑多轮会累积，别拿总行数当判据。
 
-**验收**（真机）：
-```sh
-# 触发一次（同步会等 3 分钟以上，用 async + 轮询）
-curl -s -X POST -H "Authorization: Bearer $DUCKLE_TOKEN" -H 'Content-Type: application/json' \
-  -d '{"file":"pipelines/lemeng.metric_profile.3120.json","params":{}}' http://127.0.0.1:18080/api/run/async
-# 回读（仓）
-docker exec <pg_duckdb 容器> psql -U platform -d warehouse -c \
-  "select org, relation, count(*), max(profiled_at) from data.metric_profiles group by 1,2 order by 2"
-```
-判据：父 run `status: ok`、`fe` rows = 21；表里 21 个 relation 各一份本批次画像（约 494 行）。
+### 🔑 明文连接台账（`connections/pgduck.json`）
 
-⚠️ **采样 50000 不是 200000**：2026-11-04 实测 200k × 21 关系在**三份重负载并发**时把 pg_duckdb
-压到 crash-recover（`server closed the connection unexpectedly` + `consistent recovery state`）。
-50k 对「类型 / 基数 / null 率」判据没有损失；别为了「更准」把 limit 调回去。
+| 项 | 口径（**写「在哪、怎么取」，不写值**） |
+|---|---|
+| 位置 | console 3120 的 workspace 卷内 `connections/pgduck.json`（容器内 `/workspace/connections/`）；**不是**仓内文件，git 里没有它 |
+| 来源 | 口令 = openship project env `PGDUCK_PASSWORD`（console 容器 env 里也有同名键）；其余固定项见步骤 2 |
+| 为什么明文 | 见步骤 2 的实测（子管线不展开 `${ENV:*}`）；容器 env 里本来就有同一口令，落盘不新增信任域 |
+| 重建恢复 | 卷/容器重建后**必须重新落盘**同一文件（固定四项 + project env 当前口令，`chmod 600`）；漏了 = 下一次周更认证失败（alerts 会响） |
+| 轮换 | 两处同步改：openship project env `PGDUCK_PASSWORD`（改后 refresh 重建容器，env 才生效）+ `connections/pgduck.json`。漏一处 = 认证失败 |
+| 备份风险（**已知**） | 该 workspace 卷若进备份/快照，会带走**明文**仓库口令。暂无针对该卷的备份策略；将来做备份时要么排除 `connections/`，要么把库口令纳入轮换清单 |
+
+### 已知边界（登记，不隐藏）
+
+- **org 硬编码**：父管线驱动表写死 `'shanhaiyiguo-org'`（当前仓里 staging 表只有这一个 org）。
+  多租户部署时要改成「租户 × 关系」笛卡尔积（子管线已参数化，只吃 `${ITER_ITEM_ORG}`）。
+- **关系清单静态 21 条**：L1 声明新增/删除指标或换关系时，profiler **不会自动跟**。
+  `scripts/check-profile-relations.mjs` 把父管线驱动表与 `dbt/semantics/l1_metrics.yml` 对照，
+  差集非空打印 `PROFILE_RELATIONS_FAILED:` 并 exit 1。⚠️ **未接 CI**（2026-11-05 评审裁决：
+  先作为人工/脚本闸，等 Task 5 链路稳定后再决定是否进门禁）。
+- **采样 50000 不是 200000**：2026-11-04 实测 200k × 21 关系在**三份重负载并发**时把 pg_duckdb
+  压到 crash-recover（`server closed the connection unexpectedly` + `consistent recovery state`）。
+  50k 对「类型 / 基数 / null 率」判据没有损失；别为了「更准」把 limit 调回去。

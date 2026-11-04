@@ -34,7 +34,15 @@
     "   建表 DDL 见 `deploy/duckle/console/metric_profiles.ddl.sql`（幂等，2026-11-04 已应用）。",
     "",
     "⑥【写模式】`append`：profiled_at 进主键 ⇒ 每轮画像留历史（周更 ≈ 一年 52 份画像），不覆盖。",
-    "   表必须预先存在（snk.postgres 的 append 不建表）——DDL 见 ⑤。"
+    "   表必须预先存在（snk.postgres 的 append 不建表）——DDL 见 ⑤。",
+    "",
+    "",
+    "⑦【空输入闸：不能用 no-rows（实测订正）】`qa.profile` 对**0 行输入仍产出逐列一行**（count=0、其余统计 null），",
+    "   因为 schema 来自源（autodetect 的列元数据）。⇒ `ctl.die(no-rows)` 永远不触发，空 org/空表会写出",
+    "   「全 count=0」的假画像且 run=ok（2026-11-05 真机负向验证实测）。故闸改成查 `count`：",
+    "   `max(cast(\"count\" as bigint)) = 0` ⇒ `ctl.die(has-rows)` 报错。",
+    "   ⚠️ 源节点也**不申报** `schema`（autodetect；手写占位 schema 只会在 schema 推导上多一层假设，",
+    "   与空行闸无关——真正兜住空输入的是上面这条 count 闸）。"
   ],
   "nodes": [
     {
@@ -54,13 +62,7 @@
           "pushdown": true,
           "readOnly": true,
           "connectTimeout": 30
-        },
-        "schema": [
-          {
-            "name": "x",
-            "type": "string"
-          }
-        ]
+        }
       }
     },
     {
@@ -79,6 +81,21 @@
       }
     },
     {
+      "id": "g0",
+      "type": "transform",
+      "position": {
+        "x": 0,
+        "y": 0
+      },
+      "data": {
+        "label": "g0",
+        "componentId": "code.sql",
+        "properties": {
+          "sql": "SELECT 'empty_sample' AS violation,\n       CAST(max(CAST(\"count\" AS BIGINT)) AS VARCHAR) AS detail\nFROM input\nHAVING coalesce(max(CAST(\"count\" AS BIGINT)), 0) = 0"
+        }
+      }
+    },
+    {
       "id": "d0",
       "type": "transform",
       "position": {
@@ -89,8 +106,8 @@
         "label": "d0",
         "componentId": "ctl.die",
         "properties": {
-          "condition": "no-rows",
-          "message": "profile 为空：关系 ${ITER_ITEM_RELATION} 在本租户（${ITER_ITEM_ORG}）取不到任何列统计——表不存在/org 值不对/样本 0 行，拒绝静默无写入"
+          "condition": "has-rows",
+          "message": "样本为空：关系 ${ITER_ITEM_RELATION} 在 ${ITER_ITEM_ORG} 下所有列 count 都是 0（0 行 / org 值不对）。qa.profile 对空输入仍产逐列一行，故用 count 判空；拒绝写假画像"
         }
       }
     },
@@ -141,8 +158,18 @@
       }
     },
     {
-      "id": "e-p-d0",
+      "id": "e-p-g0",
       "source": "p",
+      "target": "g0",
+      "sourceHandle": "main",
+      "targetHandle": "main",
+      "data": {
+        "connectionType": "main"
+      }
+    },
+    {
+      "id": "e-g0-d0",
+      "source": "g0",
       "target": "d0",
       "sourceHandle": "main",
       "targetHandle": "main",
@@ -151,8 +178,8 @@
       }
     },
     {
-      "id": "e-d0-c",
-      "source": "d0",
+      "id": "e-p-c",
+      "source": "p",
       "target": "c",
       "sourceHandle": "main",
       "targetHandle": "main",
@@ -168,6 +195,16 @@
       "targetHandle": "main",
       "data": {
         "connectionType": "main"
+      }
+    },
+    {
+      "id": "e-d0-sink",
+      "source": "d0",
+      "target": "sink",
+      "sourceHandle": null,
+      "targetHandle": null,
+      "data": {
+        "connectionType": "on-subjob-ok"
       }
     }
   ]
