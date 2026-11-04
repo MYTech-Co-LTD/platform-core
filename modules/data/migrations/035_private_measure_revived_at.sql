@@ -1,0 +1,14 @@
+-- 035_private_measure_revived_at.sql — 私有测度复活的生命周期锚点（W2 Task 3 评审 Important/Minor 7）。
+--
+-- 为什么需要它：私有测度归档后可由 creator 经 `POST /metrics/private` 复活（archived_at 清空）。
+-- 若淘汰 job 仍按 `created_at` 算「活满 30 天」，刚复活的行会在下一次 job 立刻再次归档——
+-- 「复活」变成一次最多 1 个调度周期的假动作。
+--
+-- 选择 **新增列** 而不是改 `created_at`：
+--   · `created_at` 的语义是「这一行第一次进来」，rewrite 它会抹掉唯一的首次锚点
+--     （metric-store 对 upsert 的冲突分支明令不碰它；复活也不该例外）；
+--   · `revived_at` 只表达「最近一次复活」，NULL = 从未复活。淘汰的年龄闸取
+--     `coalesce(revived_at, created_at)`——窗口从最近一次复活重新起算。
+--
+-- 幂等：本目录迁移会被每次部署全量重跑 ⇒ `add column if not exists`。
+alter table data.metrics add column if not exists revived_at timestamptz;

@@ -77,6 +77,9 @@ function l1(over: Partial<MetricRow> = {}): MetricRow {
     bizDescription: null,
     unit: null,
     caliberNote: null,
+    // 测度档与归档（W2，034）：L1 行恒树形档 / 恒未归档
+    basis: 'l1_tree',
+    archivedAt: null,
     ...over,
   }
 }
@@ -153,6 +156,22 @@ describe('resolveL1Base：base 必须命中 L1 词表', () => {
   it('base 命中的是**别家的 L2 行** ⇒ 同样抛（L2 不能当 L2 的 base：唯一编译点只认 L1）', () => {
     const l2Row = l1({ id: 'tenant:custom', source: 'l2' })
     expectThrow(() => resolveL1Base([...L1_CATALOG, l2Row], 'tenant:custom'), 'L1_BASE_NOT_FOUND')
+  })
+
+  // W2 私有测度档（basis='column_agg'）：**不可被 L2 ref 引用**（plan 三闸之二）。
+  // source 过滤已挡掉正常形态（私有测度 source='l2'），这里钉的是**显式档断言**——
+  // 防「脏数据 / 未来 source 扩展」让私有测度变成 L2 的基底（口径蔓延：私有测度 → L2 → 更多 L2）。
+  it('base 行的 basis=column_agg（私有测度档）⇒ 显式拒绝 L2_BASE_NOT_L1_TREE', () => {
+    const colAgg = l1({ id: 'tenant:private', basis: 'column_agg' })
+    expectThrow(() => resolveL1Base([...L1_CATALOG, colAgg], 'tenant:private'), 'L2_BASE_NOT_L1_TREE')
+  })
+
+  it('compileL2 走同一道闸：ref 指向 column_agg 行时编译即拒（不是运行期才炸）', () => {
+    const colAgg = l1({ id: 'tenant:private', basis: 'column_agg' })
+    expectThrow(() => compileL2([...L1_CATALOG, colAgg], {
+      baseMetric: 'tenant:private',
+      op: { kind: 'refine' },
+    }), 'L2_BASE_NOT_L1_TREE')
   })
 })
 

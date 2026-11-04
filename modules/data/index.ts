@@ -6,6 +6,7 @@ import type { ModuleHono, ModuleVars, RouteCtx } from './routes/context'
 import { registerMcp } from './routes/mcp'
 import { registerMcpManage } from './routes/mcp-manage'
 import { registerMetrics } from './routes/metrics'
+import { registerPrivateMeasures } from './routes/private-measures'
 import { registerVerifiedQuestions } from './routes/verified-questions'
 import { registerQuery } from './routes/query'
 import { registerQueryDetail } from './routes/query-detail'
@@ -30,6 +31,8 @@ export default defineModule({
     const _ctx: RouteCtx = {
       pool: moduleCtx.pool,
       execute: (moduleCtx as RouteCtx).execute,
+      // W2 私有测度的列白名单：测试注入数据面替身；生产不传 ⇒ 域层走 warehousePool()
+      warehouse: (moduleCtx as RouteCtx).warehouse,
       // 部门选择器的数据源：宿主注入的只读组织架构（B1：模块不自己查 platform schema）
       addresses: moduleCtx.addresses,
       // 通知端口：指标确认生效的变更通知（spec 2026-11-01 §10.4 D6）。旧宿主/单测 = undefined ⇒ 跳过
@@ -42,6 +45,7 @@ export default defineModule({
     // T6，T8 收紧写路径：POST/PUT 只收结构化 L2Declaration（SQL 由 domain/semantic-compiler.ts
     // 这个**唯一编译点**生成）；`source='l1'` 的行经 API 只读。端点集合未变 ⇒ 本清单无新声明。
     registerMetrics(r, _ctx)
+    registerPrivateMeasures(r, _ctx) // W2：私有测度创建 + 归档读面
     registerVerifiedQuestions(r, _ctx) // W1：已验证问答（列/确认/拒绝）
     registerQuery(r, _ctx) // T6
     registerQueryDetail(r, _ctx) // spec 2026-10-21 下钻

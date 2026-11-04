@@ -44,6 +44,10 @@ export type CompileErrorCode =
   | 'MIXED_BASE'
   // expr 档新增：树超深或 ref 出现次数超量
   | 'EXPR_DEPTH_EXCEEDED'
+  // 私有测度档（W2，basis='column_agg'）：列级聚合声明形状不对 / 标识符越界 / 聚合函数越界
+  | 'BAD_COLUMN_AGG'
+  // 私有测度档（W2）：base 行不是树形档（basis≠'l1_tree'）——私有测度不可被 L2 ref 引用
+  | 'L2_BASE_NOT_L1_TREE'
 
 export class SemanticCompileError extends Error {
   readonly code: CompileErrorCode
@@ -95,6 +99,41 @@ export type L2Declaration = L2RefineDeclaration | L2ExprDeclaration
 
 /** 维度名只许是 PG 标识符（白名单外的字符一律进不了 SQL——它们在 L1 的 grain 里也不存在）。 */
 const IDENT_RE = /^[A-Za-z_][A-Za-z0-9_]*$/
+
+/**
+ * PG 保留字/关键字（**能通过 IDENT_RE 的那些**——带空格/符号的关键字本来就过不了标识符闸）。
+ *
+ * 用途：列名/维度名恰好是保留字（实测撞过 `order` / `group` / `column`）时，裸拼进 SQL 会被
+ * 解析成语法关键字（`sum(order)` = 语法错）。编译期用双引号包裹成标识符引用，产物仍过
+ * `parseL1Select`（形状契约不排除引号标识符）。**不**改白名单校验：列名先去校验、后编译。
+ */
+const RESERVED_SQL_WORDS = new Set([
+  'all', 'analyse', 'analyze', 'and', 'any', 'array', 'as', 'asc', 'asymmetric', 'authorization',
+  'binary', 'both', 'case', 'cast', 'check', 'collate', 'column', 'concurrently', 'constraint',
+  'create', 'cross', 'current_catalog', 'current_date', 'current_role', 'current_schema',
+  'current_time', 'current_timestamp', 'current_user', 'default', 'deferrable', 'desc', 'distinct',
+  'do', 'else', 'end', 'except', 'false', 'fetch', 'for', 'foreign', 'freeze', 'from', 'full',
+  'grant', 'group', 'having', 'ilike', 'in', 'initially', 'inner', 'intersect', 'into', 'is',
+  'isnull', 'join', 'lateral', 'leading', 'left', 'like', 'limit', 'localtime', 'natural', 'not',
+  'notnull', 'null', 'offset', 'on', 'only', 'or', 'order', 'outer', 'over', 'overlaps',
+  'partition', 'placing', 'primary', 'references', 'returning', 'right', 'select',
+  'session_user', 'similar', 'some', 'symmetric', 'system_user', 'table', 'then', 'to', 'trailing',
+  'true', 'union', 'unique', 'user', 'using', 'variadic', 'verbose', 'when', 'where', 'window',
+  'with',
+])
+
+/** 标识符 → SQL 片段：保留字加双引号（输入已过 `IDENT_RE`，无需转义内部引号）。 */
+function sqlIdent(name: string): string {
+  return RESERVED_SQL_WORDS.has(name.toLowerCase()) ? `"${name}"` : name
+}
+
+/**
+ * 关系名：裸标识符，或 `schema.table` 两段（与 `L1_SELECT_RE` 的 FROM 面同一形状）。
+ * 私有测度档的 `relation` 是**唯一**由已校验输入直接拼进 SQL 的 FROM 片段 ⇒ 这里必须自己拦，
+ * 不能指望上游（编译点是唯一防线，见文件头「为什么唯一编译点是安全属性」）。
+ * 导出给 `private-measure.ts` 的列清单加载器复用——**同一把尺**，别在别处另写一份。
+ */
+export const RELATION_NAME_RE = /^([A-Za-z_][A-Za-z0-9_]*)(?:\.([A-Za-z_][A-Za-z0-9_]*))?$/
 
 /**
  * 表达式节点（增补 §2.2，**闭集**）。
@@ -263,6 +302,10 @@ function describeMask(m: MaskSpec): string {
  *
  * ★ 只认 `source === 'l1'` 的行：`l1` 这个参数名是「L1 词表」，不是「任意词表」。
  *   若允许拿一条 L2 行当 base，L2 就能在别处 L2 的编译产物上再编译——口径链无上限。
+ * ★ 还要认**测度档**（W2，034）：私有测度档（`basis='column_agg'`）**不可被 L2 ref 引用**。
+ *   source 过滤在正常形态下已挡住它（私有测度 source='l2'），但那是**另一个字段的副作用**；
+ *   档位断言是显式的（脏数据 / 未来 source 扩展都不会让「私有测度 → L2 → 更多 L2」的口径蔓延
+ *   重新出现）。见 plan 2026-11-04-amd-w2-three-tier「三闸」之二。
  */
 export function resolveL1Base(l1Catalog: readonly MetricRow[], baseMetric: string): MetricRow {
   const hit = l1Catalog.find((m) => m.id === baseMetric && m.source === 'l1')
@@ -270,6 +313,15 @@ export function resolveL1Base(l1Catalog: readonly MetricRow[], baseMetric: strin
     throw new SemanticCompileError(
       'L1_BASE_NOT_FOUND',
       `baseMetric \`${baseMetric}\` 不在 L1 词表里：L2 只能 refine 已声明的平台指标（新指标要进 dbt YAML 走 L1）`,
+    )
+  }
+  // ★ 私有测度档不进 L2 的基底面（fail-closed）：口径链是单向的 L1 → L2/私有测度，
+  //   反向（私有测度 → L2）会让未审核的单列聚合变成更多口径的「事实源」。
+  if (hit.basis !== 'l1_tree') {
+    throw new SemanticCompileError(
+      'L2_BASE_NOT_L1_TREE',
+      `baseMetric \`${hit.id}\` 的测度档是 \`${String(hit.basis)}\`：私有测度（column_agg）不可被 L2 ref 引用`,
+      { base: hit.id, basis: hit.basis },
     )
   }
   // ★ L2 不得基于**被掩码的 L1** 构建（spec 2026-10-17 §5.3.1，fail-closed）：
@@ -662,6 +714,113 @@ function compileExpr(l1Catalog: readonly MetricRow[], decl: L2ExprDeclaration): 
     subjectColumn: first.subjectColumn,
     groupBy: visibleDims.join(', '),
   }
+}
+
+// ── 私有测度档（W2，034，`basis='column_agg'`）：列级单聚合 → L1 同形 select_sql ─────────
+//
+// 三档语义（roadmap 2026-11-04 §2）里这是**过渡档**：基于源数据实际列的单列聚合，写入期编译成
+// 与 L1 **逐字同形**的 `select <agg>(<col>) as value[, dims] from <relation>` ⇒ 运行期
+// authorize / 掩码 / 行域 / 审计**零新路径**（它们是按 select_sql 形状工作的）。
+//
+// 为什么也放在本文件（「唯一编译点」）：它同样把**租户输入**变成 SQL 片段。把它另放一个文件
+// 就等于「用户输入 → SQL」有了第二处，审计面重新变成「靠人记得全部位置」。
+//
+// 边界（Global Constraint B11，**别私自放宽**）：只做列级单聚合——无复合表达式、无 join、
+// 无 case、无窗口函数。复合口径走 L2（`compileL2`）；要进平台口径走 L1 的 dbt YAML + PR。
+//
+// ★★ **column_agg 行永不进 L1 目录 / 永不被 L2 ref 引用**（本档的单向门）：
+//    · `resolveL1Base` 只认 `source === 'l1'` **且** `basis === 'l1_tree'`（显式档断言）；
+//    · 白名单反解（`private-measure.ts`）只从 L1 树形行的 select_sql 取关系。
+//    两条合起来保证：私有测度不会成为更多口径的「事实源」（口径蔓延的单向门）。
+/** 允许的聚合函数（闭集）。加成员 = 改这里 + `compileColumnAgg` 的映射 + 测试，走 PR。 */
+export const COLUMN_AGG_FUNCS = ['sum', 'count', 'avg', 'min', 'max', 'count_distinct'] as const
+export type ColumnAggFunc = (typeof COLUMN_AGG_FUNCS)[number]
+
+/** 私有测度声明（`data.metric_candidates.expr` / 写入口的输入形状）。 */
+export interface ColumnAggDeclaration {
+  agg: ColumnAggFunc
+  /** 被聚合列（measure 列）；count/count_distinct 不限类型，其余须数值列（白名单闸在调用方）。 */
+  column: string
+  /** 可选维度（低基数、已声明、非掩码列；闸在调用方）。缺省 / 空数组 = 不分组。 */
+  dims?: readonly string[]
+  /** 源关系（L1 已用 mart，可带 schema）。 */
+  relation: string
+}
+
+/**
+ * 编译产物。`subjectColumn` 固定 `'org'`：私有测度是**租户行**（source='l2'），主体列只能是
+ * 租户隔离键；返回字面量类型让调用方直接落库、不再自己推导（推导两处 = 第二事实源）。
+ */
+export interface CompiledColumnAgg {
+  selectSql: string
+  groupBy: string
+  subjectColumn: 'org'
+}
+
+/** 列名/维度名必须是干净标识符（**输入直接拼进 SQL** ⇒ 编译点是唯一防线，fail-closed）。 */
+function assertColumnAggIdent(value: unknown, what: string): string {
+  if (typeof value !== 'string' || !IDENT_RE.test(value)) {
+    throw new SemanticCompileError(
+      'BAD_COLUMN_AGG',
+      `${what} 不是合法列名（只许 PG 标识符）：${JSON.stringify(value)}`,
+    )
+  }
+  return value
+}
+
+/**
+ * 私有测度声明 → `select <agg>(<column>) as value[, <dims>] from <relation>`。
+ *
+ * ★ 产物**当场过 `parseL1Select`**（同一个解析器 = 形状契约的唯一事实源）：未来谁改了本函数的
+ *   拼法或形状契约，两者漂开的第一个信号就在这里，而不是等到线上 authorize 拼出非法 SQL。
+ * ★ dims 去重保序（重复维度不进 GROUP BY 两次，与 L2 的 `visibleDimsOf` 同一纪律）。
+ * ★ 保留字列名/维度名加双引号（`sum("order")`）：裸拼会被当语法关键字；引号形态仍过
+ *   `parseL1Select`，运行期授权/聚合语义不变。
+ * ★ **运行期掩码的已知边界（本波不实现）**：产物用**裸列名**，而 L1 掩码声明是**限定名**
+ *   （`关系.列`）⇒ 若 measure 列被掩码，运行期 `maskedSelectSql` 逐字匹配命中不了 ⇒ 聚合会
+ *   读到原值。写入期由 `private-measure.ts` 的 `MEASURE_MASKED` / `RELATION_MASKED`
+ *   fail-closed 拒绝。后续方向：编译**限定名 SQL**（`sum(关系.列)`）+ 运行期掩码识别同一
+ *   形状，再放开被掩码列——**本波不做**。
+ * ★ 不做白名单校验（那是 `private-measure.ts` 的职责，需要 DB）；本函数是纯的，可被穷举单测。
+ */
+export function compileColumnAgg(decl: ColumnAggDeclaration): CompiledColumnAgg {
+  if (decl === null || typeof decl !== 'object') {
+    throw new SemanticCompileError('BAD_COLUMN_AGG', '私有测度声明不是对象')
+  }
+  // 判别字段先收形状（调用方可能 `as` 绕过类型）：未知 agg 不猜、不做同义词映射。
+  const raw = decl as { agg?: unknown; column?: unknown; dims?: unknown; relation?: unknown }
+  if (typeof raw.agg !== 'string' || !(COLUMN_AGG_FUNCS as readonly string[]).includes(raw.agg)) {
+    throw new SemanticCompileError(
+      'BAD_COLUMN_AGG',
+      `聚合函数不在闭集（${COLUMN_AGG_FUNCS.join('|')}）内：${JSON.stringify(raw.agg)}`,
+    )
+  }
+  const agg = raw.agg as ColumnAggFunc
+  const column = assertColumnAggIdent(raw.column, 'column')
+  if (typeof raw.relation !== 'string' || !RELATION_NAME_RE.test(raw.relation)) {
+    throw new SemanticCompileError(
+      'BAD_COLUMN_AGG',
+      `relation 不是合法关系名（只许 \`标识符\` 或 \`schema.标识符\`）：${JSON.stringify(raw.relation)}`,
+    )
+  }
+  if (raw.dims !== undefined && !Array.isArray(raw.dims)) {
+    throw new SemanticCompileError('BAD_COLUMN_AGG', `dims 必须是数组：${JSON.stringify(raw.dims)}`)
+  }
+  const dims: string[] = []
+  for (const d of raw.dims ?? []) {
+    const dim = assertColumnAggIdent(d, 'dims 元素')
+    if (!dims.includes(dim)) dims.push(dim)
+  }
+
+  const aggExpr = agg === 'count_distinct'
+    ? `count(distinct ${sqlIdent(column)})`
+    : `${agg}(${sqlIdent(column)})`
+  const dimSelect = dims.length > 0 ? `, ${dims.map(sqlIdent).join(', ')}` : ''
+  // groupBy 必须与 SELECT 里的维度**逐字一致**（运行期 `GROUP BY ${groupBy}`）；保留字同样加引号。
+  const selectSql = `select ${aggExpr} as value${dimSelect} from ${raw.relation}`
+  // 自检：编译产物**必须**能被运行期同一份形状契约解析（零新运行期路径的可机检落点）
+  parseL1Select(selectSql)
+  return { selectSql, groupBy: dims.map(sqlIdent).join(', '), subjectColumn: 'org' }
 }
 
 /**

@@ -3,9 +3,11 @@ import { afterAll, beforeAll, describe, expect, it } from 'vitest'
 import { Pool } from 'pg'
 import { applyMigrations } from '../test-util'
 import { upsertL1Metric } from './metric-store'
-import { deleteMetricDeclaration, writeL2Declaration } from './metric-write'
+import { deleteMetricDeclaration, writeL2Declaration, writePrivateMeasure } from './metric-write'
+import type { PrivateMeasureWriteDeps } from './metric-write'
 import { listMetricAudit } from './metric-audit-store'
 import type { Requester } from './authz'
+import type { RelationColumn } from './private-measure'
 
 const dbUrl = process.env.DATABASE_URL
 const describePg = dbUrl ? describe : describe.skip
@@ -13,14 +15,43 @@ const ORG = 'org-ma-write'
 const L1 = 'ma_l1_base'
 /** 带值级掩码的 L1 基底：L2 不得建立在它之上（spec 2026-10-17 §5.3.1，fail-closed）。 */
 const MASKED_L1 = 'ma_l1_masked_base'
+/** 私有测度白名单探针：L1 已用 mart 是 `pm_write_mart`（真实列由测试缝给）。 */
+const PM_L1 = 'ma_l1_private'
+const PM_RELATION = 'pm_write_mart'
 
 /** 身份夹具：pat 通道、带 key_id（审计的身份三件套都非空，最严的形状）。 */
-const req = (userId = 'ZhangDuo'): Requester => ({
-  userId, orgId: ORG, channel: 'pat', keyId: 3, scopes: ['data:manage'],
-  hasScope: (c) => c === 'data:manage',
+const req = (userId = 'ZhangDuo', scopes: string[] = ['data:manage']): Requester => ({
+  userId, orgId: ORG, channel: 'pat', keyId: 3, scopes,
+  hasScope: (c) => scopes.includes(c),
 })
 const deps = (pool: Pool, userId = 'ZhangDuo') =>
   ({ pool, adoptedSources: new Set<string>(), requester: req(userId) })
+
+/** 私有测度路径的「实际列」（information_schema 的归一形状）。 */
+const PM_COLUMNS: RelationColumn[] = [
+  { name: 'org', dataType: 'text' },
+  { name: 'day', dataType: 'date' },
+  { name: 'amount', dataType: 'numeric' },
+  { name: 'branch', dataType: 'text' },
+]
+
+const pmDeps = (pool: Pool, over: Partial<PrivateMeasureWriteDeps> = {}): PrivateMeasureWriteDeps => ({
+  pool,
+  requester: req(),
+  loadColumns: async () => PM_COLUMNS,
+  ...over,
+})
+
+const pmInput = (over: Record<string, unknown> = {}) => ({
+  id: 'ma_pm_sales',
+  title: '自定义销售额',
+  description: '按日汇总',
+  agg: 'sum' as const,
+  column: 'amount',
+  dims: ['day'],
+  relation: PM_RELATION,
+  ...over,
+})
 
 const decl = {
   baseMetric: L1,
@@ -48,11 +79,18 @@ describePg('写路径的审计（#489）', () => {
       slaDays: 1, freshnessRelations: [],
       masks: [{ column: 'mart_sales_daily.revenue', kind: 'round', step: 1000, grantedBy: 'data:cost' }],
     })
+    // 私有测度的白名单来源：L1 已用 mart = pm_write_mart（真实列由 loadColumns 测试缝给）
+    await upsertL1Metric(pool, {
+      id: PM_L1, title: '私有测度基底', description: '', requiredScope: null, subjectColumn: 'org',
+      selectSql: 'select sum(pm_write_mart.amount) as value, day from pm_write_mart',
+      groupBy: 'day', params: {}, sourceSystem: null,
+      slaDays: 1, freshnessRelations: [], masks: null,
+    })
   })
   afterAll(async () => {
     await pool.query('delete from data.metric_audit where org = $1', [ORG]).catch(() => {})
     await pool.query('delete from data.metrics where org = $1', [ORG]).catch(() => {})
-    await pool.query(`delete from data.metrics where org = 'platform' and id = any($1)`, [[L1, MASKED_L1]]).catch(() => {})
+    await pool.query(`delete from data.metrics where org = 'platform' and id = any($1)`, [[L1, MASKED_L1, PM_L1]]).catch(() => {})
     await pool.end()
   })
 
@@ -161,5 +199,169 @@ describePg('写路径的审计（#489）', () => {
     const d = await deleteMetricDeclaration(deps(pool), ORG, id)
     expect(d).toMatchObject({ ok: false, http: 403, error: 'METRIC_CREATOR_UNKNOWN' })
     await pool.query(`delete from data.metrics where org = $1 and id = $2`, [ORG, id])
+  })
+})
+
+// ── 私有测度写入（W2 Task 3）──────────────────────────────────────────────────────
+// 新建 = 写**生效列**（select_sql/group_by）+ `basis='column_agg'` + `certified='draft'`；
+// **不写 draft_spec**（D6 只管修改）。审计与变更同事务。
+describePg('私有测度写入：生效列 + basis + draft + create 审计', () => {
+  const pool = new Pool({ connectionString: dbUrl })
+  beforeAll(async () => {
+    await applyMigrations(pool)
+    await upsertL1Metric(pool, {
+      id: PM_L1, title: '私有测度基底', description: '', requiredScope: null, subjectColumn: 'org',
+      selectSql: 'select sum(pm_write_mart.amount) as value, day from pm_write_mart',
+      groupBy: 'day', params: {}, sourceSystem: null,
+      slaDays: 1, freshnessRelations: [], masks: null,
+    })
+    // 反向跨档用例需要一条合法 L1 基底来编译树形 L2（本组独立于上一组的 beforeAll/afterAll）
+    await upsertL1Metric(pool, {
+      id: L1, title: '基底', description: '', requiredScope: null, subjectColumn: 'org',
+      selectSql: 'select sum(mart_sales_daily.revenue) as value, bizday from mart_sales_daily',
+      groupBy: 'bizday', params: {}, sourceSystem: null,
+      slaDays: 1, freshnessRelations: [], masks: null,
+    })
+  })
+  afterAll(async () => {
+    await pool.query('delete from data.metric_audit where org = $1', [ORG]).catch(() => {})
+    await pool.query('delete from data.metrics where org = $1', [ORG]).catch(() => {})
+    await pool.query(`delete from data.metrics where org = 'platform' and id = any($1)`, [[PM_L1, L1]]).catch(() => {})
+    expect(pool.ended, '池在本 afterAll 之前已被 end').toBe(false)
+    await pool.end().catch(() => {})
+  })
+
+  it('★ 新建：生效列编译自声明、basis=column_agg、certified=draft、created_by=操作人、draft_spec 为空', async () => {
+    const r = await writePrivateMeasure(pmDeps(pool), ORG, pmInput())
+    expect(r).toEqual({ ok: true })
+
+    const row = (await pool.query(
+      `select source, basis, certified, created_by, subject_column, select_sql, group_by, draft_spec, archived_at
+         from data.metrics where org = $1 and id = 'ma_pm_sales'`, [ORG])).rows[0]
+    expect(row).toMatchObject({
+      source: 'l2',
+      basis: 'column_agg',
+      certified: 'draft',
+      created_by: 'ZhangDuo',
+      subject_column: 'org',
+      select_sql: 'select sum(amount) as value, day from pm_write_mart',
+      group_by: 'day',
+      draft_spec: null,          // ★ D6：新建即时生效，不走草稿
+      archived_at: null,
+    })
+
+    const audit = await listMetricAudit(pool, ORG, 'ma_pm_sales')
+    expect(audit.map((a) => a.action)).toEqual(['create'])
+    expect(audit[0]!.before).toBeNull()
+    expect(audit[0]!.after!.selectSql).toBe('select sum(amount) as value, day from pm_write_mart')
+    expect(audit[0]!.userId).toBe('ZhangDuo')
+  })
+
+  it('三闸失败：不在白名单 ⇒ 400 RELATION_NOT_ALLOWED；实际列查不到 ⇒ 500 COLUMNS_UNAVAILABLE', async () => {
+    const notAllowed = await writePrivateMeasure(
+      pmDeps(pool), ORG, pmInput({ id: 'ma_pm_bad_relation', relation: 'not_a_mart' }))
+    expect(notAllowed).toMatchObject({ ok: false, http: 400, error: 'RELATION_NOT_ALLOWED' })
+
+    const unavailable = await writePrivateMeasure(
+      pmDeps(pool, { loadColumns: async () => [] }), ORG, pmInput({ id: 'ma_pm_no_columns' }))
+    expect(unavailable).toMatchObject({ ok: false, http: 500, error: 'COLUMNS_UNAVAILABLE' })
+
+    // 两道都失败 ⇒ 一行都没落、也没审计（判定链是只读的，失败不留半成品）
+    const rows = await pool.query(
+      `select id from data.metrics where org = $1 and id = any($2)`, [ORG, ['ma_pm_bad_relation', 'ma_pm_no_columns']])
+    expect(rows.rowCount).toBe(0)
+    expect((await listMetricAudit(pool, ORG, 'ma_pm_bad_relation')).length).toBe(0)
+    expect((await listMetricAudit(pool, ORG, 'ma_pm_no_columns')).length).toBe(0)
+  })
+
+  it('★ L2 不得占 L1 的 id（占下会被加载侧丢弃 ⇒ 静默无效）⇒ 409 ID_RESERVED_BY_L1', async () => {
+    const r = await writePrivateMeasure(pmDeps(pool), ORG, pmInput({ id: PM_L1 }))
+    expect(r).toMatchObject({ ok: false, http: 409, error: 'ID_RESERVED_BY_L1' })
+  })
+
+  it('★ 跨档 upsert 显式拒绝：同 id 是树形 L2 ⇒ 409 BASIS_CONFLICT，原行不动', async () => {
+    const id = 'ma_pm_basis_conflict'
+    await pool.query(
+      `insert into data.metrics
+         (org, id, title, description, required_scope, subject_column, select_sql, group_by,
+          params, source, source_system, updated_by, version, totalable, sla_days, freshness_relations,
+          created_by, certified, basis)
+       values ($1, $2, '树形行', '', null, 'org', 'select 1 as value', '', '{}'::jsonb,
+               'l2', null, 'ZhangDuo', 1, false, null, null, 'ZhangDuo', 'draft', 'l1_tree')`,
+      [ORG, id])
+
+    const r = await writePrivateMeasure(pmDeps(pool), ORG, pmInput({ id }))
+    expect(r).toMatchObject({ ok: false, http: 409, error: 'BASIS_CONFLICT' })
+    const row = (await pool.query(
+      `select basis, select_sql from data.metrics where org = $1 and id = $2`, [ORG, id])).rows[0]
+    expect(row).toMatchObject({ basis: 'l1_tree', select_sql: 'select 1 as value' })
+    expect((await listMetricAudit(pool, ORG, id)).length).toBe(0)
+  })
+
+  it('★ 反向跨档：树形 L2 写（D6 确认路径共用）不得落到私有测度行 ⇒ 409 BASIS_CONFLICT，原行不动', async () => {
+    const id = 'ma_pm_reverse_conflict'
+    expect((await writePrivateMeasure(pmDeps(pool), ORG, pmInput({ id }))).ok).toBe(true)
+    const r = await writeL2Declaration(deps(pool), ORG, id, decl)   // creator 本人也拒
+    expect(r).toMatchObject({ ok: false, http: 409, error: 'BASIS_CONFLICT' })
+    const row = (await pool.query(
+      `select basis, select_sql from data.metrics where org = $1 and id = $2`, [ORG, id])).rows[0]
+    expect(row).toMatchObject({
+      basis: 'column_agg',
+      select_sql: 'select sum(amount) as value, day from pm_write_mart',
+    })
+    expect((await listMetricAudit(pool, ORG, id)).map((a) => a.action)).toEqual(['create'])
+  })
+
+  it('★ 同档且在用 ⇒ 409 METRIC_EXISTS（本端点只建不改；修改走 D6）', async () => {
+    expect((await writePrivateMeasure(pmDeps(pool), ORG, pmInput({ id: 'ma_pm_exists' }))).ok).toBe(true)
+    const again = await writePrivateMeasure(pmDeps(pool), ORG, pmInput({ id: 'ma_pm_exists', title: '改个名' }))
+    expect(again).toMatchObject({ ok: false, http: 409, error: 'METRIC_EXISTS' })
+    const row = (await pool.query(
+      `select title, version from data.metrics where org = $1 and id = 'ma_pm_exists'`, [ORG])).rows[0]
+    expect(row).toMatchObject({ title: '自定义销售额', version: 1 })
+  })
+
+  it('★ 归档行可复活：creator（或 data:manage）重建立即回到在用；别人 403 且仍归档', async () => {
+    const id = 'ma_pm_revive'
+    expect((await writePrivateMeasure(pmDeps(pool), ORG, pmInput({ id }))).ok).toBe(true)
+    // 管理员先升了可信度，再被淘汰：复活必须保留 certified（upsert 冲突分支不改它）
+    await pool.query(
+      `update data.metrics set archived_at = now(), certified = 'certified' where org = $1 and id = $2`,
+      [ORG, id])
+
+    // 非 creator 且无 data:manage ⇒ 403（fail-closed：归档行不能被人静默复活）
+    const denied = await writePrivateMeasure(
+      pmDeps(pool, { requester: req('WangDuo', ['data:query']) }), ORG, pmInput({ id }))
+    expect(denied).toMatchObject({ ok: false, http: 403, error: 'NOT_METRIC_CREATOR' })
+    const stillArchived = (await pool.query(
+      `select archived_at from data.metrics where org = $1 and id = $2`, [ORG, id])).rows[0]
+    expect(stillArchived.archived_at).not.toBeNull()
+
+    // creator 本人 ⇒ 复活（archived_at 清空、revived_at 落锚点，内容按新声明重写）
+    const revived = await writePrivateMeasure(
+      pmDeps(pool), ORG, pmInput({ id, title: '复活后', column: 'branch', agg: 'count' }))
+    expect(revived).toEqual({ ok: true })
+    const row = (await pool.query(
+      `select archived_at, revived_at, certified, title, select_sql
+         from data.metrics where org = $1 and id = $2`, [ORG, id])).rows[0]
+    expect(row).toMatchObject({
+      archived_at: null,
+      certified: 'certified',          // ★ 复活不改既有可信度
+      title: '复活后',
+      select_sql: 'select count(branch) as value, day from pm_write_mart',
+    })
+    expect(row.revived_at).not.toBeNull()   // ★ 生命周期锚点：下次 job 从复活时刻重新起算
+    // 复活记为一次 create（生命周期事件，不是内容修改）；后态 certified 读实际值
+    const audit = await listMetricAudit(pool, ORG, id)
+    expect(audit.map((a) => a.action)).toEqual(['create', 'create'])
+    expect(audit[0]!.after!.certified).toBe('certified')
+  })
+
+  it('★ 审计与变更同生共死：审计写失败 ⇒ 私有测度行也必须回滚', async () => {
+    const broken = pmDeps(pool, { requester: req(null as unknown as string) })
+    await expect(writePrivateMeasure(broken, ORG, pmInput({ id: 'ma_pm_tx' }))).rejects.toThrow()
+    const gone = await pool.query(`select 1 from data.metrics where org = $1 and id = 'ma_pm_tx'`, [ORG])
+    expect(gone.rowCount).toBe(0)
+    expect((await listMetricAudit(pool, ORG, 'ma_pm_tx')).length).toBe(0)
   })
 })

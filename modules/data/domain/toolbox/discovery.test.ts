@@ -15,7 +15,10 @@ const row = (over: Partial<MetricRow>): MetricRow => ({
   freshnessRelations: ['stg_lemeng_retail_order_line'], masks: null,
   // W0（031）：MetricRow 上两字段**恒有值**（未声明 = null / []）——夹具必须同形，
   // 否则读侧 `.some(...)` 会撞上 undefined（假红/假绿都不可信）。
-  entity: null, synonyms: [], ...over,
+  entity: null, synonyms: [],
+  // W2（034）：档与归档态恒有值——夹具同形（L1 恒树形 / 恒未归档）
+  basis: 'l1_tree', archivedAt: null,
+  ...over,
 }) as MetricRow
 
 const requester: Requester = { userId: 'u', orgId: 'acme', channel: 'pat', keyId: 1, scopes: ['data:query'], hasScope: (c) => c === 'data:query' }

@@ -43,6 +43,17 @@ describePg('metric-governance（需要 DATABASE_URL）', () => {
     await applyMigrations(pool)
     // 夹具：creator=CREATOR 的一条 L2（upsertMetric 首插写 created_by + certified='draft'）
     await upsertMetric(pool, ORG, def(), CREATOR)
+    // W2：私有测度行（basis 感知的草稿保存/确认的夹具）
+    await pool.query(
+      `insert into data.metrics
+         (org, id, title, description, required_scope, subject_column, select_sql, group_by,
+          params, source, source_system, updated_by, version, totalable, sla_days, freshness_relations,
+          created_by, certified, basis)
+       values ($1, 'gov_pm', '私有测度', '', null, 'org',
+               'select sum(amount) as value, day from gov_mart', 'day', '{}'::jsonb,
+               'l2', null, $2, 1, false, null, null, $2, 'draft', 'column_agg')`,
+      [ORG, CREATOR],
+    )
   })
 
   afterAll(async () => {
@@ -52,16 +63,36 @@ describePg('metric-governance（需要 DATABASE_URL）', () => {
 
   it('saveMetricDraft 往返：存进去的草稿，读出来必须原样（抓参数错位）', async () => {
     const ok = await saveMetricDraft(pool, ORG, 'gov_m1', CREATOR, DRAFT)
-    expect(ok).toBe(true)
+    expect(ok).toEqual({ ok: true })
     const draft = await loadMetricDraft(pool, ORG, 'gov_m1', CREATOR)
     expect(draft).toEqual(DRAFT)
   })
 
-  it('非 creator 存草稿 → false，且已有草稿不被别人覆盖/读出', async () => {
+  it('非 creator 存草稿 → NOT_EDITABLE，且已有草稿不被别人覆盖/读出', async () => {
     expect(await loadMetricDraft(pool, ORG, 'gov_m1', OTHER)).toBeNull()
     const ok = await saveMetricDraft(pool, ORG, 'gov_m1', OTHER, { title: '别人的覆盖' })
-    expect(ok).toBe(false)
+    expect(ok).toEqual({ ok: false, error: 'NOT_EDITABLE' })
     // creator 的草稿原封不动
+    expect(await loadMetricDraft(pool, ORG, 'gov_m1', CREATOR)).toEqual(DRAFT)
+  })
+
+  // ── W2 Task 3 评审 Important：basis 感知的草稿保存 ──────────────────────────────
+  it('★ column_agg 行：只收列级聚合草稿；树形草稿 ⇒ DRAFT_BASIS_MISMATCH（不落库）', async () => {
+    const pmDraft = { kind: 'column_agg', agg: 'count', column: 'branch', dims: ['day'] }
+    expect(await saveMetricDraft(pool, ORG, 'gov_pm', CREATOR, pmDraft)).toEqual({ ok: true })
+    expect(await loadMetricDraft(pool, ORG, 'gov_pm', CREATOR)).toEqual(pmDraft)
+
+    // 树形声明（无 kind:'column_agg'）存到私有测度行 = 死草稿 ⇒ 400
+    const treeDraft = { baseMetric: 'some_l1', op: { kind: 'refine' } }
+    expect(await saveMetricDraft(pool, ORG, 'gov_pm', CREATOR, treeDraft))
+      .toEqual({ ok: false, error: 'DRAFT_BASIS_MISMATCH' })
+    expect(await loadMetricDraft(pool, ORG, 'gov_pm', CREATOR)).toEqual(pmDraft)  // 原稿不动
+  })
+
+  it('★ 树形 L2 行：拒收 column_agg 草稿（DRAFT_BASIS_MISMATCH）', async () => {
+    const pmDraft = { kind: 'column_agg', agg: 'sum', column: 'amount' }
+    expect(await saveMetricDraft(pool, ORG, 'gov_m1', CREATOR, pmDraft))
+      .toEqual({ ok: false, error: 'DRAFT_BASIS_MISMATCH' })
     expect(await loadMetricDraft(pool, ORG, 'gov_m1', CREATOR)).toEqual(DRAFT)
   })
 
@@ -73,11 +104,11 @@ describePg('metric-governance（需要 DATABASE_URL）', () => {
   it('条件清除（确认路径的并发守卫）：内容对得上才清；被并发新稿抢先 ⇒ false 且新稿保留', async () => {
     const v1 = { title: 'v1' }
     const v2 = { title: 'v2' }
-    expect(await saveMetricDraft(pool, ORG, 'gov_m1', CREATOR, v1)).toBe(true)
+    expect(await saveMetricDraft(pool, ORG, 'gov_m1', CREATOR, v1)).toEqual({ ok: true })
     // 内容对得上：清掉，返回 true
     expect(await clearMetricDraft(pool, ORG, 'gov_m1', CREATOR, v1)).toBe(true)
     // 模拟「load 之后另一标签页存了 v2」：拿旧内容 v1 去清 ⇒ false，v2 原地保留
-    expect(await saveMetricDraft(pool, ORG, 'gov_m1', CREATOR, v2)).toBe(true)
+    expect(await saveMetricDraft(pool, ORG, 'gov_m1', CREATOR, v2)).toEqual({ ok: true })
     expect(await clearMetricDraft(pool, ORG, 'gov_m1', CREATOR, v1)).toBe(false)
     expect(await loadMetricDraft(pool, ORG, 'gov_m1', CREATOR)).toEqual(v2)
   })

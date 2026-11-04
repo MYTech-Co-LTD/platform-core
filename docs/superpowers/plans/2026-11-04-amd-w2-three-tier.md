@@ -117,7 +117,7 @@ select sum(<column>) as value[, <dims...>] from <relation>
 ### Task 4: duckle profiler 管线
 
 **Files:**
-- Create: `deploy/duckle/console/pipelines/metric_profile.<账套>.json`（按实际账套）
+- Create: `deploy/duckle/console/pipelines/lemeng.metric_profile.<账套>.json`（域前缀是排班门禁硬要求）
 - Modify: `deploy/duckle/console/schedules/*.json`、`deploy/duckle/console/owners.*.json`（三处登记面）
 - Test: 无单测（管线格式只有真引擎可验）——**验收 = `duckle validate` + 实跑一次 + 回读 profile 表**
 
@@ -129,7 +129,14 @@ src.postgres(customSql: select * from <mart> where org = '${ORG}' limit ...)
 ```
 - **判停门**：先 `list_components`/`get_component_schema` 复核 `qa.profile` 输出行形状；不符则改 `qa.describe` + 自算。
 - 按 org 逐租户：管线参数 `ORG` 由排班/运行注入（每租户一次运行，不跨租户聚合）。
-- 落表 `data.metric_profiles(org, relation, column, stats jsonb, profiled_at)`（迁移并入 034 或 035）。
+- 落表 `data.metric_profiles(org, relation, column, stats jsonb, profiled_at)`，**落在仓库库（pg_duckdb）**，
+  不是平台库（2026-11-04 实测：console 到平台 pg 172.18.0.5:5432 超时；`data.load_log` 同址先例）。
+  ⇒ 建表 DDL 是**数据面引导步骤**（`deploy/duckle/console/metric_profiles.ddl.sql` + 投递清单），不走 `modules/data/migrations/`；
+  Task 5 必须经 `DATA_WAREHOUSE_URL` 读取。
+- 关系清单当前为静态 21 条（L1 已用 marts），**须有漂移检测**：`scripts/check-profile-relations.mjs`
+  对照 `l1_metrics.yml` 的 relation 集，差集即告警（是否接入 CI 待定）。
+- ORG 当前硬编码单租户（调度 params 被静默丢弃，实测）；**多租户前必须解决**，登记为已知边界。
+- 明文 `connections/pgduck.json` 由 `PGDUCK_PASSWORD` 生成，**不进仓**；位置/来源/重建与轮换写进台账。
 
 ---
 

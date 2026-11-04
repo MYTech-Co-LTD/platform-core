@@ -8,11 +8,21 @@
 // （HTTP 面直出状态码；MCP 写面翻成工具级错误 `{status:'refused', error}`）。
 import type { Pool, PoolClient } from 'pg'
 import type { Requester } from './authz'
+import type { CandidateOrigin } from './metric-candidates'
 import { deleteMetric, loadPlatformCatalog, selectMetricSnapshot, upsertMetric } from './metric-store'
 import { writeMetricAudit } from './metric-audit-store'
 import type { MetricCertification } from './metric-governance'
-import { SemanticCompileError, collectRefIds, compileL2, resolveL1Base } from './semantic-compiler'
-import type { CompiledL2, L2Declaration } from './semantic-compiler'
+import { validatePrivateMeasure } from './private-measure'
+import type { PrivateMeasureDeps, PrivateMeasureValidation } from './private-measure'
+import {
+  SemanticCompileError,
+  collectRefIds,
+  compileColumnAgg,
+  compileL2,
+  parseL1Select,
+  resolveL1Base,
+} from './semantic-compiler'
+import type { ColumnAggDeclaration, CompiledColumnAgg, CompiledL2, L2Declaration } from './semantic-compiler'
 
 export interface MetricWriteDeps {
   pool: Pool
@@ -70,8 +80,9 @@ function compileFailure(e: SemanticCompileError): { http: 400 | 500; error: stri
   return { http: 400, error: e.code, ...(e.extra === undefined ? {} : { extra: e.extra }) }
 }
 
-/** 该 id 是否是平台词表（L1）里的行（L1 行对所有租户可见，故「只读」对所有租户成立）。 */
-async function isL1Id(deps: MetricWriteDeps, id: string): Promise<boolean> {
+/** 该 id 是否是平台词表（L1）里的行（L1 行对所有租户可见，故「只读」对所有租户成立）。
+ *  入参只收 pool：本判定与「已接入源」无关，私有测度写路径也要复用（不给它凑假的 adoptedSources）。 */
+async function isL1Id(deps: { pool: Pool }, id: string): Promise<boolean> {
   return (await loadPlatformCatalog(deps.pool)).some((m) => m.id === id)
 }
 
@@ -158,11 +169,19 @@ export async function writeL2Declaration(
     // 不为「建/改」各留一条分支）。同一读也给出审计要的**前态**。
     const before = await selectMetricSnapshot(c, org, id)
     if (before !== null) {
-      // creator 闸（判定说明见上面函数体外的注释块）：update 才判，create 不判。
+      // ★ 跨档闸（W2，Task 1 评审遗留）：树形 L2 写不得落到私有测度行上。
+      //   upsert 的冲突分支**不翻档**（首插定档），放过去会写成「select_sql 是树形、basis 仍是
+      //   column_agg」的自相矛盾行——运行期按树形跑、生命周期按私有测度淘汰，两个事实源。
+      //   私有测度的修改/复活只经 `writePrivateMeasure`（新建即时；修改走 D6 是树形档的规则）。
       const cur = await c.query(
-        `select created_by from data.metrics where org = $1 and id = $2 and source = 'l2'`,
+        `select created_by, basis from data.metrics where org = $1 and id = $2 and source = 'l2'`,
         [org, id],
       )
+      const basis: string | undefined = cur.rows[0]?.basis
+      if (basis === 'column_agg') {
+        return { ok: false, http: 409, error: 'BASIS_CONFLICT', extra: { existing_basis: basis } }
+      }
+      // creator 闸（判定说明见上面函数体外的注释块）：update 才判，create 不判。
       const createdBy: string | null = cur.rows[0]?.created_by ?? null
       if (createdBy === null) return { ok: false, http: 403, error: 'METRIC_CREATOR_UNKNOWN' }
       if (createdBy !== actor.userId) return { ok: false, http: 403, error: 'NOT_METRIC_CREATOR' }
@@ -342,6 +361,262 @@ export async function updateMetricMeta(
       keyId: actor.keyId,
       before: beforeMeta as never,
       after: afterMeta as never,
+    })
+    return { ok: true }
+  })
+}
+
+// ── 私有测度（W2 Task 3，`basis='column_agg'`）────────────────────────────────────
+/**
+ * 私有测度写路径的入参：**行句柄/标题** + 列级聚合声明。
+ *
+ * 与 L2 的 `id + L2DeclarationBody` 同构：声明决定 select_sql（唯一编译点
+ * `compileColumnAgg`），id/title 是行属性。description 可省（'' = 未写）。
+ */
+export interface PrivateMeasureWriteInput extends ColumnAggDeclaration {
+  id: string
+  title: string
+  description?: string
+  /**
+   * 血统（W2 Task 5）：`demand`（缺省）= 对话/人手即时创建；`profile` = 候选池一键采用。
+   *
+   * **只进审计快照，不进指标行**——它是「这条口径怎么来的」，不是口径本身；新增列会让读侧
+   * 多一个与授权无关的字段，而审计已经提供了逐条历史。取值非法 ⇒ BAD_INPUT（不落坏血统）。
+   */
+  origin?: CandidateOrigin
+}
+
+/**
+ * 依赖 = 三闸的 deps（平台库 / 数据面列清单可注入）+ 写路径的操作人。
+ *
+ * 刻意**不**复用 `MetricWriteDeps`：私有测度不过「源接入闸」（spec §4.2 的三闸只到
+ * relation/column/dims；运行期授权仍由 authorize 的 org 主体钉死兜底）。把 `adoptedSources`
+ * 挂进来会让人以为还有第四道闸——而它并没有被消费。
+ */
+export type PrivateMeasureWriteDeps = PrivateMeasureDeps & { requester: Requester }
+
+/**
+ * 私有测度写入（新建即时可用；D6 只管修改）。
+ *
+ * 判定链（全部在域层，HTTP 面只做形状与错误码映射）：
+ *   ① 三闸 `validatePrivateMeasure`（relation 白名单 / 实际列 / dims）——失败按码映射，
+ *      `COLUMNS_UNAVAILABLE` 是**环境**问题 ⇒ 500（别折成「列名写错」的 400）；
+ *   ② 编译 `compileColumnAgg`（纯函数；与 L1 同一份形状契约）；
+ *   ③ 不得占 L1 的 id（占下会被加载侧丢弃 ⇒ 一次「成功的空操作」）；
+ *   ④ 同 id 已存在时**显式**处理，绝不静默 upsert：
+ *      · 跨档（basis 不是 column_agg）⇒ 409 `BASIS_CONFLICT`（upsert 的冲突分支不翻档，
+ *        放过去会写成「SQL 是列聚合、basis 还是树形」的自相矛盾行）；
+ *      · 同档且在用 ⇒ 409 `METRIC_EXISTS`（本端点只建不改；修改走 D6 草稿流）；
+ *      · 同档但已归档 ⇒ 可复活，但要过 creator/manage 闸（归档行不能被别人静默复活）。
+ *
+ * 落库：**写生效列**（select_sql/group_by）+ `basis='column_agg'` + `certified='draft'` +
+ * `created_by`；**不写 draft_spec**（新建即时可用）。审计与变更同事务（`action='create'`，
+ * 复活也记 create——它是一次生命周期事件，不是内容修改）。
+ * 血统（`input.origin`，缺省 demand）写进审计 `after.origin`：`profile` = 候选池采用，
+ * `demand` = 对话即时创建（W2 Task 5；不新增指标列）。
+ */
+export async function writePrivateMeasure(
+  deps: PrivateMeasureWriteDeps, org: string, input: PrivateMeasureWriteInput,
+): Promise<MetricWriteOutcome> {
+  const actor = deps.requester
+
+  // 行句柄/标题的形状闸也放域层（路由的 zod 只挡 HTTP；未来 MCP 工具共用本函数时不该
+  // 因为「没人校验」写出无 id / 无标题的行）。
+  if (
+    typeof input.id !== 'string' || input.id === ''
+    || typeof input.title !== 'string' || input.title.trim() === ''
+    || (input.description !== undefined && typeof input.description !== 'string')
+    || (input.origin !== undefined && input.origin !== 'profile' && input.origin !== 'demand')
+  ) {
+    return { ok: false, http: 400, error: 'BAD_INPUT', extra: { detail: 'id/title 必填且为非空字符串；origin ∈ {profile,demand}' } }
+  }
+  // 血统缺省 = demand（对话/人手即时创建是常规入口；批量采用必须显式标 profile）
+  const origin: CandidateOrigin = input.origin ?? 'demand'
+
+  // ① 三闸（只读校验，失败不留半成品）
+  const validation = await validatePrivateMeasure(deps, input)
+  if (!validation.ok) {
+    return {
+      ok: false,
+      // 环境/可见性问题响亮成 500（监控看得见）；其余是调用方可自助修正的输入问题 ⇒ 400。
+      http: validation.code === 'COLUMNS_UNAVAILABLE' ? 500 : 400,
+      error: validation.code,
+      ...(validation.detail === undefined ? {} : { extra: { detail: validation.detail } }),
+    }
+  }
+
+  // ② 编译（validate 已用同一函数收过形状；这里再调一次是「产物就是落库物」的单点）
+  let compiled: CompiledColumnAgg
+  try {
+    compiled = compileColumnAgg(input)
+  } catch (e) {
+    if (e instanceof SemanticCompileError) {
+      return { ok: false, http: 400, error: 'BAD_INPUT', extra: { detail: e.message } }
+    }
+    throw e
+  }
+
+  // ③ 与 writeL2Declaration 同一条纪律：L2 不能占 L1 的 id
+  if (await isL1Id(deps, input.id)) return { ok: false, http: 409, error: 'ID_RESERVED_BY_L1' }
+
+  const row = {
+    id: input.id,
+    title: input.title,
+    description: input.description ?? '',
+    requiredScope: null,
+    // 编译产物给出 'org'（私有测度是租户行）——不在这里另推导一次
+    subjectColumn: compiled.subjectColumn,
+    selectSql: compiled.selectSql,
+    groupBy: compiled.groupBy,
+    params: {},
+  }
+
+  return withTx(deps.pool, async (c): Promise<MetricWriteOutcome> => {
+    const cur = await c.query(
+      `select source, basis, archived_at, created_by, certified
+         from data.metrics where org = $1 and id = $2`,
+      [org, input.id],
+    )
+    let before: Awaited<ReturnType<typeof selectMetricSnapshot>> = null
+    /** 复活时保留既有可信度（upsertMetric 的冲突分支不碰 certified）；新建恒 draft。 */
+    let certified: MetricCertification = 'draft'
+    if ((cur.rowCount ?? 0) > 0) {
+      const existing = cur.rows[0] as {
+        source: string; basis: string; archived_at: Date | null
+        created_by: string | null; certified: string | null
+      }
+      // ④ 跨档：显式拒绝（理由见函数头注）
+      if (existing.source !== 'l2' || existing.basis !== 'column_agg') {
+        return {
+          ok: false, http: 409, error: 'BASIS_CONFLICT',
+          extra: { existing_basis: existing.basis },
+        }
+      }
+      // ④ 同档在用：只建不改（修改走 D6），不静默覆盖
+      if (existing.archived_at === null) return { ok: false, http: 409, error: 'METRIC_EXISTS' }
+      // ④ 同档已归档：可复活，但只能由 creator ∪ data:manage（与 D6 草稿端点的写闸同源）
+      if (existing.created_by === null) return { ok: false, http: 403, error: 'METRIC_CREATOR_UNKNOWN' }
+      if (existing.created_by !== actor.userId && !actor.hasScope('data:manage')) {
+        return { ok: false, http: 403, error: 'NOT_METRIC_CREATOR' }
+      }
+      before = await selectMetricSnapshot(c, org, input.id)
+      certified = existing.certified === 'certified' ? 'certified' : 'draft'
+      await c.query(
+        `update data.metrics set archived_at = null, revived_at = now()
+          where org = $1 and id = $2 and source = 'l2' and basis = 'column_agg'`,
+        [org, input.id],
+      )
+    }
+
+    await upsertMetric(c, org, row, actor.userId, { basis: 'column_agg' })
+    await writeMetricAudit(c, {
+      org,
+      metricId: input.id,
+      action: 'create',
+      userId: actor.userId,
+      channel: actor.channel,
+      keyId: actor.keyId,
+      before,
+      after: {
+        title: row.title, description: row.description, subjectColumn: row.subjectColumn,
+        selectSql: row.selectSql, groupBy: row.groupBy, params: row.params, certified,
+        origin,
+      },
+    })
+    return { ok: true }
+  })
+}
+
+/** 私有测度三闸失败 → 判别式结果（write 与 D6 confirm 共用同一份状态码映射）。 */
+function privateMeasureFailure(v: Extract<PrivateMeasureValidation, { ok: false }>): MetricWriteOutcome {
+  return {
+    ok: false,
+    // 环境/可见性问题响亮成 500（监控看得见）；其余是调用方可自助修正的输入问题 ⇒ 400。
+    http: v.code === 'COLUMNS_UNAVAILABLE' ? 500 : 400,
+    error: v.code,
+    ...(v.detail === undefined ? {} : { extra: { detail: v.detail } }),
+  }
+}
+
+/**
+ * 私有测度的 D6 确认路径（评审 Important：修改必须走草稿→确认，不能靠「归档再复活」）。
+ *
+ * 草稿形状（`metric-governance.ts` 的 `ColumnAggDraftSchema`）只含 `{kind,agg,column,dims}`——
+ * **没有 relation**：修改只能在原 mart 内换列/换聚合/换维度，换源要重新走 `POST /metrics/private`。
+ * 故 relation 从**当前生效行**的 select_sql 反解（`parseL1Select`，与运行期同一份形状契约）。
+ *
+ * 流程与树形 D6 同形：三闸重校验（数据面列可能已漂移）→ `compileColumnAgg` 重编译 →
+ * 事务内更新生效列 + 审计（`action='update'`）。`basis` 保持 `column_agg`；`draft_spec` 的
+ * 条件清除由路由在成功后执行（与树形路径共用同一份「并发新稿不被吞」的守卫）。
+ */
+export async function confirmPrivateMeasureDraft(
+  deps: PrivateMeasureWriteDeps, org: string, id: string,
+  draft: Omit<ColumnAggDeclaration, 'relation'>,
+): Promise<MetricWriteOutcome> {
+  const actor = deps.requester
+  const cur = await deps.pool.query(
+    `select created_by, select_sql from data.metrics
+      where org = $1 and id = $2 and source = 'l2' and basis = 'column_agg'`,
+    [org, id],
+  )
+  if ((cur.rowCount ?? 0) === 0) return { ok: false, http: 409, error: 'BASIS_CONFLICT' }
+  const row = cur.rows[0] as { created_by: string | null; select_sql: string }
+  if (row.created_by === null) return { ok: false, http: 403, error: 'METRIC_CREATOR_UNKNOWN' }
+  if (row.created_by !== actor.userId) return { ok: false, http: 403, error: 'NOT_METRIC_CREATOR' }
+
+  let relation: string
+  try {
+    relation = parseL1Select(row.select_sql).relation
+  } catch {
+    // 私有测度行的 select_sql 只由 compileColumnAgg 写入；解析不了 = 平台数据坏了（500）
+    return { ok: false, http: 500, error: 'COLUMN_AGG_BASE_SQL_INVALID' }
+  }
+  const input: ColumnAggDeclaration = {
+    agg: draft.agg,
+    column: draft.column,
+    ...(draft.dims === undefined ? {} : { dims: draft.dims }),
+    relation,
+  }
+
+  const validation = await validatePrivateMeasure(deps, input)
+  if (!validation.ok) return privateMeasureFailure(validation)
+
+  let compiled: CompiledColumnAgg
+  try {
+    compiled = compileColumnAgg(input)
+  } catch (e) {
+    if (e instanceof SemanticCompileError) {
+      return { ok: false, http: 400, error: 'BAD_INPUT', extra: { detail: e.message } }
+    }
+    throw e
+  }
+
+  return withTx(deps.pool, async (c): Promise<MetricWriteOutcome> => {
+    const before = await selectMetricSnapshot(c, org, id)
+    if (before === null) return { ok: false, http: 409, error: 'BASIS_CONFLICT' }
+    const upd = await c.query(
+      `update data.metrics
+          set select_sql = $3, group_by = $4, updated_by = $5,
+              version = version + 1, updated_at = now()
+        where org = $1 and id = $2 and source = 'l2' and basis = 'column_agg'`,
+      [org, id, compiled.selectSql, compiled.groupBy, actor.userId],
+    )
+    // 读与写之间被删/换档 ⇒ 不静默成功
+    if ((upd.rowCount ?? 0) === 0) return { ok: false, http: 409, error: 'BASIS_CONFLICT' }
+    await writeMetricAudit(c, {
+      org,
+      metricId: id,
+      action: 'update',
+      userId: actor.userId,
+      channel: actor.channel,
+      keyId: actor.keyId,
+      before,
+      after: {
+        ...before,
+        selectSql: compiled.selectSql,
+        groupBy: compiled.groupBy,
+        certified: before.certified ?? 'draft',
+      },
     })
     return { ok: true }
   })

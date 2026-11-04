@@ -132,6 +132,7 @@ const EXEMPT_GLOBAL = new Map([
   ['lemeng.member.summary.backfill.3120', '回填专用（#1047 会员全店回填 10-01..24；${BIZDAY} 参数化，同族 loss/expense 先例）'],
   ['lemeng.branch_indicator.backfill.3120', '回填专用（#1047 D10 配送金额回填 10-01..19；${BIZDAY} 参数化，同族成员先例）'],
   ['lemeng.branch_indicator.day', '**foreach 子管线**——由 lemeng.branch_indicator.l0.3120 的 ctl.foreach 逐门店块驱动（100 家/块绕端点硬限），不单独排班；排班在父管线'],
+  ['lemeng.metric_profile.relation', '**foreach 子管线**（W2 profiler）——由 lemeng.metric_profile.3120 的 ctl.foreach 逐 mart 驱动，不单独排班；排班在父管线'],
   ['lemeng.inventory.snapshot.backfill.3120', '回填专用（#1079 库存快照 10-18..10-25 补采；${BIZDAY} 参数化，同族 transfer.in 先例）'],
 
   ['lemeng.item_sales.backfill.3120', '回填专用（${BIZDAY} 参数化；同族 loss/expense 先例）'],

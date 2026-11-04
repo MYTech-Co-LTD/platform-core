@@ -1,0 +1,201 @@
+{
+  "name": "lemeng.metric_profile.3120",
+  "id": "lemeng.metric_profile.3120",
+  "version": 1,
+  "_note": [
+    "W2 duckle profiler —— **父管线**：按租户逐关系跑画像，结果由子管线追加写仓 `data.metric_profiles`。",
+    "周更（schedules/3120.json：周日 05:10 Asia/Shanghai，低峰），不是日更：画像只服务候选生成，不需要日级新鲜度。",
+    "",
+    "①【为什么按 org 一跑、而不是按账套一跑】画像的隔离键是 **org（租户）**，不是账套书。",
+    "   3120 与 64188 两个账套同属 `shanhaiyiguo-org`（仓里 staging 表的 org 列实测只有这一个值）；",
+    "   因此本管线在 3120 的 console 里跑一次即覆盖该租户全部 mart，64188 侧**不重复排**（重复只会产生同 org 的重复画像）。",
+    "   命名仍是 `<族>.<账套>` 形态，只为满足 check-console-schedules 的域/账套闸（域必须=lemeng，且后缀=3120）。",
+    "",
+    "②【关系清单 = L1 已用的 marts（2026-11-04 由 data.metrics 的 L1 select_sql 反解，21 条）】",
+    "   清单是**静态**的：管线不改词表，L1 增删关系时这里要跟着改（漂移判据：L1 的 from 关系集 ≠ 本清单）。",
+    "   没走「从 data.metrics 现读」是因为 console 只连仓（pg_duckdb），平台库的 data.metrics 从 console 不可达（见子管线 _note ④）。",
+    "",
+    "③【跨租户】驱动表一行 =（relation, org）；org 现取本租户字面量（同 ① 实测）。",
+    "   换成多租户部署时：驱动表改成租户 × 关系笛卡尔积，子管线无需改（它只吃 ITER_ITEM_ORG）。",
+    "",
+    "④【失败可见】任一关系子管线失败 ⇒ foreach 失败、父 run 非 ok ⇒ 引擎 alerts.json 的 failure 规则发 OO。",
+    "   子管线自己带 no-rows 闸（表在但该 org 0 行也不静默跳过）。",
+    "",
+    "⑤【驱动为什么用 src.postgres(select 1) 而不是 src.inline（实测 2026-11-05）】：src.inline 无法被 catalog 命名（`could not be named` ⇒ `check-duckle-catalog` 门禁红）；纯 SQL 根节点又不能驱动 ctl.foreach（`Catalog Error: Table with name drv does not exist`，2026-11-04 实测）。故用 src.postgres mode=sql `select 1 as seed` + schemaName/tableName 命名提示（catalog 只读节点属性、不连库），再 code.sql `unnest([...])` 展开；两层都保留，别并回根节点。",
+    "   ctl.foreach 读不到它的临时表（`Catalog Error: Table with name drv does not exist`，2026-11-04 CLI 实测）。",
+    "",
+    "⑥【前置：workspace 必须有 `connections/pgduck.json`】子管线走 connectionRef（原因见子管线 _note ④）；",
+    "   该连接由投递步骤按 project env 的 PGDUCK_PASSWORD 落盘（deploy/duckle/console/README.md §「W2 profiler」），不进仓。",
+    "",
+    "⑦【落表位置】`data.metric_profiles` 在**仓（pg_duckdb）**而不是平台库——理由与差异报备见子管线 _note ⑤。",
+    "",
+    "⑧【收尾汇总 = 新鲜度凭证】`sm` 在 foreach 全部成功（anchor 触发）后写 `/workspace/logs/metric-profile-summary.csv`，",
+    "   一行 =（org, relations=21, status=ok, ts）。为什么要它：**sink 在子管线里、父 run 记录不带 assets**",
+    "   （实测：`runs/lemeng.metric_profile.3120.json` 的 ok 记录无 assets 字段）⇒ 直接给 `postgres://metric_profiles`",
+    "   配 owners 规则会恒 stale（写时钟永不起算）。故 owners 锚在本 CSV（与零售父管线同一形态）。",
+    "",
+    "⑨【`sm` 的两个口径】",
+    "   · `relations` 是**回声计数**（= 驱动表行数），**不是**「21 个关系都成功」的独立证据：成功语义由",
+    "     `ctl.foreach` 的失败传播保证（任一子 run 失败 ⇒ 父 run error，走不到 anchor/sm）。别把它读成逐关系回执。",
+    "   · `ts` 显式 `now() AT TIME ZONE 'UTC'`：容器 TZ 变化不会让汇总行错标时区（本文件 ⑧ 的判据也依赖它）。"
+  ],
+  "nodes": [
+    {
+      "id": "seed",
+      "type": "source",
+      "position": {
+        "x": 0,
+        "y": 0
+      },
+      "data": {
+        "label": "seed",
+        "componentId": "src.postgres",
+        "properties": {
+          "mode": "sql",
+          "sql": "select 1 as seed",
+          "connectionRef": "pgduck",
+          "schemaName": "data",
+          "tableName": "load_log"
+        }
+      }
+    },
+    {
+      "id": "drv",
+      "type": "transform",
+      "position": {
+        "x": 0,
+        "y": 0
+      },
+      "data": {
+        "label": "drv",
+        "componentId": "code.sql",
+        "properties": {
+          "sql": "SELECT unnest([\n  'staging.fct_branch_day_activity',\n  'staging.fct_branch_expense',\n  'staging.fct_branch_indicator',\n  'staging.fct_client_contribution',\n  'staging.fct_client_expense',\n  'staging.fct_contribution',\n  'staging.fct_hq_outbound',\n  'staging.fct_inventory_snapshot',\n  'staging.fct_loss_adjustment',\n  'staging.fct_member_summary',\n  'staging.fct_outbound_region',\n  'staging.fct_purchase',\n  'staging.fct_purchase_concentration',\n  'staging.fct_request_fulfillment',\n  'staging.fct_retail_comparable_growth',\n  'staging.fct_retail_quantity',\n  'staging.fct_retail_sale',\n  'staging.fct_transfer_item',\n  'staging.fct_transfer_line_quality',\n  'staging.stg_lemeng_retail_order_line',\n  'staging.stg_lemeng_wholesale_out'\n]) AS relation,\n'shanhaiyiguo-org' AS org\nFROM input"
+        }
+      }
+    },
+    {
+      "id": "fe",
+      "type": "transform",
+      "position": {
+        "x": 0,
+        "y": 0
+      },
+      "data": {
+        "label": "fe",
+        "componentId": "ctl.foreach",
+        "properties": {
+          "pipelineRef": "${workspace}/pipelines/lemeng.metric_profile.relation.json",
+          "itemKey": "relation",
+          "concurrency": 1
+        }
+      }
+    },
+    {
+      "id": "an",
+      "type": "transform",
+      "position": {
+        "x": 0,
+        "y": 0
+      },
+      "data": {
+        "label": "an",
+        "componentId": "ctl.anchor",
+        "properties": {}
+      }
+    },
+    {
+      "id": "sm",
+      "type": "transform",
+      "position": {
+        "x": 0,
+        "y": 0
+      },
+      "data": {
+        "label": "sm",
+        "componentId": "code.sql",
+        "properties": {
+          "sql": "SELECT org,\n       count(*) AS relations,\n       'ok' AS status,\n       -- 显式 UTC：now() 是 TIMESTAMPTZ，strftime 会按**会话 TZ**渲染；容器 TZ 变了就会错标。\n       strftime(now() AT TIME ZONE 'UTC', '%Y-%m-%dT%H:%M:%SZ') AS ts\nFROM input\nGROUP BY org"
+        }
+      }
+    },
+    {
+      "id": "rep",
+      "type": "sink",
+      "position": {
+        "x": 0,
+        "y": 0
+      },
+      "data": {
+        "label": "rep",
+        "componentId": "snk.csv",
+        "properties": {
+          "path": "/workspace/logs/metric-profile-summary.csv",
+          "mode": "overwrite"
+        }
+      }
+    }
+  ],
+  "edges": [
+    {
+      "id": "e-seed-drv",
+      "source": "seed",
+      "target": "drv",
+      "sourceHandle": "main",
+      "targetHandle": "main",
+      "data": {
+        "connectionType": "main"
+      }
+    },
+    {
+      "id": "e-drv-fe",
+      "source": "drv",
+      "target": "fe",
+      "sourceHandle": "main",
+      "targetHandle": "main",
+      "data": {
+        "connectionType": "main"
+      }
+    },
+    {
+      "id": "e-fe-an",
+      "source": "fe",
+      "target": "an",
+      "sourceHandle": "iterate",
+      "targetHandle": "main",
+      "data": {
+        "connectionType": "trigger"
+      }
+    },
+    {
+      "id": "e-drv-sm",
+      "source": "drv",
+      "target": "sm",
+      "sourceHandle": "main",
+      "targetHandle": "main",
+      "data": {
+        "connectionType": "main"
+      }
+    },
+    {
+      "id": "e-an-sm",
+      "source": "an",
+      "target": "sm",
+      "sourceHandle": null,
+      "targetHandle": null,
+      "data": {
+        "connectionType": "on-subjob-ok"
+      }
+    },
+    {
+      "id": "e-sm-rep",
+      "source": "sm",
+      "target": "rep",
+      "sourceHandle": "main",
+      "targetHandle": "main",
+      "data": {
+        "connectionType": "main"
+      }
+    }
+  ]
+}

@@ -19,7 +19,8 @@ import type { Context } from 'hono'
 import { TENANT_SOURCES } from '@platform/sdk'
 import type { ModuleHono, ModuleVars, RouteCtx } from './context'
 import { requesterOf, writeOutcome } from './context'
-import { saveMetricDraft, loadMetricDraft, clearMetricDraft } from '../domain/metric-governance'
+import { saveMetricDraft, loadMetricDraft, clearMetricDraft, metricBasisOf } from '../domain/metric-governance'
+import { ColumnAggDraftSchema, MetricDraftSpecSchema } from '../domain/metric-governance'
 import { certifyMetric, updateMetricMeta } from '../domain/metric-write'
 import { metricUsageStats, retireCandidatesOf } from '../domain/metric-usage'
 import { paramFaceOf, visibleMetrics } from '../domain/authz'
@@ -33,8 +34,8 @@ import type { MetricRow } from '../domain/metric-store'
 import { L2RefineDeclarationSchema, L2ExprDeclarationSchema, L2DeclarationSchema, exceedsNesting } from '../domain/semantic-compiler'
 // 写/删的判定链在域层**只有一份**（HTTP 面与 MCP 写面共用）——本文件只做
 // 「参数形状校验 + 域层结果 → HTTP」，不再内联任何闸门。
-import { deleteMetricDeclaration, writeL2Declaration } from '../domain/metric-write'
-import type { MetricWriteDeps } from '../domain/metric-write'
+import { confirmPrivateMeasureDraft, deleteMetricDeclaration, writeL2Declaration } from '../domain/metric-write'
+import type { MetricWriteDeps, MetricWriteOutcome, PrivateMeasureWriteDeps } from '../domain/metric-write'
 
 /**
  * 写路径的 body = L2 声明的**外层信封**（id 是行的稳定句柄，不属于「声明」本身）。
@@ -133,6 +134,15 @@ const adoptedSourcesOf = (c: Context<ModuleVars>): ReadonlySet<string> =>
  */
 function writeDeps(ctx: RouteCtx, c: Context<ModuleVars>, requester: Requester): MetricWriteDeps {
   return { pool: ctx.pool, adoptedSources: adoptedSourcesOf(c), requester }
+}
+
+/** 私有测度路径的 deps（三闸 + D6 确认共用）：生产 warehouse 缺省，测试可注入。 */
+function privateMeasureDeps(ctx: RouteCtx, requester: Requester): PrivateMeasureWriteDeps {
+  return {
+    pool: ctx.pool,
+    requester,
+    ...(ctx.warehouse === undefined ? {} : { warehouse: ctx.warehouse }),
+  }
 }
 
 // 注：域层判别式结果 → HTTP 的唯一映射点已上收到 `routes/context.ts`（`writeOutcome`）——
@@ -248,10 +258,15 @@ export function registerMetrics(r: ModuleHono, ctx: RouteCtx): void {
     const body = await c.req.json().catch(() => null)
     // 结构预检必须**先于**递归 schema：超深输入会在 zod 里爆栈冒成 500（#593，与 POST /metrics 同款）
     if (exceedsNesting(body)) return c.json({ error: 'INVALID_BODY' }, 400)
-    const parsed = z.object({ draftSpec: L2DeclarationSchema }).safeParse(body)
+    const parsed = z.object({ draftSpec: MetricDraftSpecSchema }).safeParse(body)
     if (!parsed.success) return c.json({ error: 'INVALID_DRAFT' }, 400)
-    const ok = await saveMetricDraft(ctx.pool, orgOf(c), id, requester.userId, parsed.data.draftSpec)
-    return ok ? c.json({ ok: true }) : c.json({ error: 'NOT_EDITABLE' }, 403)
+    // basis 感知（W2）：column_agg 行只收列级聚合草稿；树形行拒收 column_agg 草稿。
+    // 档位不符是 400（请求形状问题，不是权限问题）。
+    const saved = await saveMetricDraft(ctx.pool, orgOf(c), id, requester.userId, parsed.data.draftSpec)
+    if (saved.ok) return c.json({ ok: true })
+    return saved.error === 'DRAFT_BASIS_MISMATCH'
+      ? c.json({ error: 'DRAFT_BASIS_MISMATCH' }, 400)
+      : c.json({ error: 'NOT_EDITABLE' }, 403)
   })
 
   // 草稿读取（预览确认页）
@@ -281,11 +296,22 @@ export function registerMetrics(r: ModuleHono, ctx: RouteCtx): void {
     if (id === null) return c.json({ error: 'NOT_FOUND' }, 404)
     const draft = await loadMetricDraft(ctx.pool, org, id, requester.userId)
     if (draft === null) return c.json({ error: 'NOT_FOUND' }, 404)
-    // 显式重解析（不是断言式转型）：draft_spec 是 jsonb，读回来的形状不因为是「自己存的」就免检
-    // ——027 之前的脏数据/手工改库都要在这里被拦住（400），而不是漏进编译点冒 500。
-    const parsedDecl = L2DeclarationSchema.safeParse(draft)
-    if (!parsedDecl.success) return c.json({ error: 'INVALID_DRAFT' }, 400)
-    const out = await writeL2Declaration(writeDeps(ctx, c, requester), org, id, parsedDecl.data, { keepDraft: true })
+    // basis 分档（W2 Task 3 评审 Important）：私有测度的草稿是列级聚合声明，确认走
+    // `confirmPrivateMeasureDraft`（三闸重校验 + 重编译 + 写生效列 + 审计）；树形路径原样。
+    const basis = await metricBasisOf(ctx.pool, org, id)
+    if (basis === null) return c.json({ error: 'NOT_FOUND' }, 404)
+    let out: MetricWriteOutcome
+    if (basis === 'column_agg') {
+      const parsedDraft = ColumnAggDraftSchema.safeParse(draft)
+      if (!parsedDraft.success) return c.json({ error: 'INVALID_DRAFT' }, 400)
+      out = await confirmPrivateMeasureDraft(privateMeasureDeps(ctx, requester), org, id, parsedDraft.data)
+    } else {
+      // 显式重解析（不是断言式转型）：draft_spec 是 jsonb，读回来的形状不因为是「自己存的」就免检
+      // ——027 之前的脏数据/手工改库都要在这里被拦住（400），而不是漏进编译点冒 500。
+      const parsedDecl = L2DeclarationSchema.safeParse(draft)
+      if (!parsedDecl.success) return c.json({ error: 'INVALID_DRAFT' }, 400)
+      out = await writeL2Declaration(writeDeps(ctx, c, requester), org, id, parsedDecl.data, { keepDraft: true })
+    }
     if (!out.ok) return writeOutcome(c, out, 200)
     const cleared = await clearMetricDraft(ctx.pool, org, id, requester.userId, draft)
     if (!cleared) return c.json({ error: 'DRAFT_CHANGED_RETRY' }, 409)

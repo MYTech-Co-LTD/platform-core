@@ -47,6 +47,11 @@ export interface RouteCtx {
   /** 缺省 = 真仓库（runQuery 惰性连）。测试注入假执行器（T8/T9 的测试也靠它）。 */
   execute?: SqlExecutor
   /**
+   * 数据面连接（W2 私有测度的实际列白名单用）。缺省 = `warehousePool()`（生产是**另一张库**）。
+   * 与 `execute` 同款：只给测试注入，不是模块协议的字段；生产装配下不传。
+   */
+  warehouse?: Pool
+  /**
    * 通知端口（宿主注入；缺省 = 旧宿主/单测，调用点判空跳过——与 aftersales 同款注入面）。
    * 消费方：指标确认生效的变更通知（spec 2026-11-01 §10.4 D6）。
    */

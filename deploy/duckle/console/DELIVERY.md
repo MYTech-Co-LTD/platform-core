@@ -38,6 +38,10 @@
 
 ### 0.2 本批要投的文件（**8 个，别多别少**）
 
+> ⚠️ **这张表是 2026-09-29 的 Wave B/C 批次，不是 console 的当前内容。** 之后每批都在仓里追加了
+> 排班/管线（例如 §0.3 回填变体、§0.4 W2 profiler）。**投递前先按本文件末尾「批次登记」与
+> §0.1 的实测状态核对当前批次**；「8 个」只约束 Wave B/C 这一次，别当成全量清单。
+
 | # | 仓内路径 | 卷内落点 | 角色 |
 |---|---|---|---|
 | 1 | `deploy/duckle/console/schedules/3120.json` | `/workspace/schedules.json`（**改名**） | 调度定义（3 条 L1 + 2 条 L0 启用/就绪；零售三条薄壳全部置停） |
@@ -77,6 +81,79 @@
 - 完整判据、批次表、出事处置见 `docs/superpowers/specs/2026-09-30-backfill-toolchain.md`。
 
 ---
+
+### 0.4 W2 profiler 批次（2026-11-05；单列一批，与 §0.2 不重叠）
+
+**机制正文在 `README.md` §「W2 profiler」**（为什么落仓、连接为什么明文、已知边界），本节只是**执行清单**。
+
+| # | 仓内路径 | 落点 / 动作 | 角色 |
+|---|---|---|---|
+| 1 | `deploy/duckle/console/metric_profiles.ddl.sql` + `ensure-metric-profiles.sh` | **不 seed**；在数据面机宿主跑 `sh <检出根>/deploy/duckle/console/ensure-metric-profiles.sh` | 幂等建表 + 断言（成功 `ENSURE_METRIC_PROFILES_OK:`） |
+| 2 | （不来自仓）`connections/pgduck.json` | 写进 console 3120 的 `/workspace/connections/`，`chmod 600`；口令取 project env `PGDUCK_PASSWORD` | 子管线 `connectionRef` 的目标；**明文**，台账见 README §「🔑 明文连接台账」 |
+| 3 | `deploy/duckle/console/pipelines/lemeng.metric_profile.3120.json` | `/workspace/pipelines/` | 父（21 关系 × org → foreach → 收尾汇总） |
+| 4 | `deploy/duckle/console/pipelines/lemeng.metric_profile.relation.json` | 同上 | foreach 子（`src.postgres` → `qa.profile` → `snk.postgres`） |
+| 5 | `deploy/duckle/console/schedules/3120.json` | `/workspace/schedules.json`（整文件覆盖；**本批新增** `lemeng.metric_profile.3120` 周更条目） | 调度 |
+| 6 | `deploy/duckle/console/owners.lemeng.json` | `/workspace/owners.json`（整文件覆盖；**本批新增** summary CSV 的 9d SLA） | 新鲜度 |
+| 7 | `deploy/duckle/console/alerts.lemeng.json` | `/workspace/alerts.json`（整文件覆盖；**本批新增** `lemeng.metric_profile.*` failure/recovery） | 告警 |
+
+**seed 顺序（不可换）**：
+
+1. `ensure-metric-profiles.sh`（表不在 ⇒ 第一次成功 run 也不可能成功）
+2. `connections/pgduck.json`（子管线认证）
+3. **同步整文件** seed 第 5–7 项 + 第 3–4 项管线（**seed 前先 diff 卷里的现行文件**——`schedules/owners/alerts`
+   是整文件覆盖，卷里可能有别的批次留下的条目，直接覆盖会丢）
+4. 重启 console（`schedules.json` 才重新加载）
+5. `POST /api/catalog` 重建 catalog
+6. 首跑：`POST /api/run/async {"file":"pipelines/lemeng.metric_profile.3120.json"}`；判据见 README §投递五步
+
+> ⚠️ 本批**不动** `schedules/64188.json`：两个账套同属 `shanhaiyiguo-org`，画像按 org 跑一次即可；
+> 64188 侧重复排只会产生同 org 的重复画像。
+
+---
+
+### 0.5 W2 私有测度 30 天归档 job（本批配套，单列）
+
+> 机制正文：`modules/data/domain/private-measure-lifecycle.ts`（判定与 SQL）；`scripts/archive-private-measures.mjs`
+> 只是薄 CLI（参数/连接/输出）。**它不是 console 排班**——`schedules.json` 只管 duckle 管线；归档读的是
+> **平台库** `data.metrics` / `data.query_audit`，所以跑在 **platform-core server 容器**里，与
+> `deploy/notify-jobs.md` 的四个 job 同一范式（openship job + `docker exec`，零常驻）。
+
+| 项 | 值 |
+|---|---|
+| job key | `custom:archive-private-measures`（建 job 时以 openship 返回的 key 为准） |
+| 目标 | `serverId=23a1091e`（mytech-weknora）；容器 `openship-platform-core-server` |
+| cron（UTC） | `17 4 * * *`（每日一次；窗口是 30 天，不需要更密） |
+| 命令 | 见下（**每租户一次**；`--org` 必填，脚本不接受「不传 = 全租户」的静默默认） |
+| 失败通知 | 订阅与 `notify-reconcile` 同一通道（job 静默失败 = 淘汰停摆无人知晓） |
+
+**job 命令模板**（先把 `platform.tenant` 的 org 逐个取出，再对每个 org 调一次）：
+
+```sh
+docker exec openship-platform-core-server sh -lc '
+  set -e
+  ORGS=$(pnpm exec tsx -e "
+    import { Pool } from \"pg\";
+    const pool = new Pool();
+    const { rows } = await pool.query(\"select org from platform.tenant order by org\");
+    console.log(rows.map((r) => r.org).join(\" \"));
+    await pool.end();
+  ")
+  for org in $ORGS; do
+    [ -n "$org" ] || continue
+    pnpm exec tsx scripts/archive-private-measures.mjs --org "$org"
+  done
+'
+```
+
+- **每租户 org 来源**：`platform.tenant`（唯一登记处）。新租户**登记后**才进 job 射程；未登记 = 盲区
+  （与 `notify-preflight` 同一口径）。
+- **判据**：stdout `archive-private-measures: org=<org> days=30 archived=<n>` 且 exit 0；
+  `archived=<n>` 是本次**新归档**数（幂等：已归档的行不会重复计）。
+- ⚠️ **首次建 job 时按真机实测订正命令**：容器里 `tsx -e` 的顶层 `await` / `pg` 解析以实测为准。
+  本节是按 `notify-jobs.md` 范式写的**模板**，不是已验证的 job 定义（无案例不立标准）。
+- 回退（停 job）：openship MCP `delete_jobs_by_key` 删除该 key（或 dashboard 停用）⇒ **只停未来淘汰**。
+  已归档行**不会**自动恢复；需要时由 creator ∪ `data:manage` 走 `POST /metrics/private` 复活
+  （清 `archived_at`，观察窗口从复活时刻重新起算）。
 
 ## 1. 硬步骤与顺序
 
@@ -409,6 +486,18 @@ print(r['status'], r.get('at'), 'assets=', [a['id'] for a in r.get('assets',[])]
 `freshness.json` 里湖对象资产不再 Stale）——通过后才进 Wave D 收口。
 
 ---
+
+## 7. 批次登记（投递前先看这里，别照抄某一张表）
+
+| 批次 | 日期 | 清单在哪 | 状态 |
+|---|---|---|---|
+| Wave B/C（零售 L1 切换） | 2026-09-29 | §0.2（8 个文件） | 已投递 |
+| 回填变体父管线（#387） | 2026-09-30 | §0.3 | 按需（回填时投） |
+| W2 profiler（`lemeng.metric_profile.*`） | 2026-11-05 | §0.4（7 项，含 DDL 脚本与连接文件） | **待合入后投递** |
+
+> **为什么需要这张表**：每一批的「本批文件集」只描述**那一次**要投什么；console 卷是**累积**的。
+> 把某一批的清单当成当前全量（或反过来只投当批却覆盖了跨批文件）都会造成静默漂移——
+> `schedules/owners/alerts` 是**整文件覆盖**语义，seed 前必须 diff 卷里的现行文件。
 
 ## 附：改本目录任一家族文件后的硬前置
 

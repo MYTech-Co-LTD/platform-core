@@ -13,6 +13,7 @@
 import type { Pool, PoolClient } from 'pg'
 import type { Channel } from './authz'
 import type { MetricCertification } from './metric-governance'
+import type { CandidateOrigin } from './metric-candidates'
 
 /** `certify` = 可信度升降（§10.4 D7）；`meta` = 元数据标注（§10.4.3 P1）——两者都不是定义变更，单独成词。 */
 export type MetricAction = 'create' | 'update' | 'delete' | 'certify' | 'meta'
@@ -30,6 +31,14 @@ export interface MetricRowSnapshot {
    * 唯一变化的东西）；其余动作可不带（字段缺席 = 快照先于 027 的历史行）。
    */
   certified?: MetricCertification
+  /**
+   * 私有测度的**来源标记**（W2 Task 5，与 `data.metric_candidates.origin` 同域）：
+   *   `profile` = 候选池一键采用（批量 profiler 产出）；
+   *   `demand`  = 对话中用户明确要，即时创建。
+   * 只出现在 `basis='column_agg'` 行的 create 审计里——它是**血统**，不是口径的一部分
+   * （不进 select_sql / 不参与授权），故放审计快照而不是新增指标列。
+   */
+  origin?: CandidateOrigin
 }
 
 export interface MetricAuditEntry {

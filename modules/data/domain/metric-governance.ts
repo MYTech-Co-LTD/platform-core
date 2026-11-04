@@ -12,23 +12,81 @@
 // 可信度分级（D7）：L1 恒 certified（读侧从 source 推导）；L2 新建默认 draft，
 // 管理员审核后升 certified——先手动标，审核工作流出现真实诉求再自动化。
 import type { Pool } from 'pg'
+import { z } from 'zod'
+import type { MetricBasis } from './metric-store'
+import { COLUMN_AGG_FUNCS, L2DeclarationSchema } from './semantic-compiler'
 
 export type MetricCertification = 'certified' | 'draft'
 
-/** 草稿保存：只写 `draft_spec`，**不触发编译点**（数字不变）。 */
+/**
+ * 私有测度的草稿形状（W2 Task 3 评审 Important）：`{kind:'column_agg', agg, column, dims}`。
+ *
+ * **没有 relation** 是刻意的：修改只能在原 mart 内换列/换聚合/换维度；换源 = 新建一条。
+ * `.strict()` 与 L2 写面同一纪律：混入 `selectSql`/`relation` 等未列键 ⇒ 400，不静默忽略。
+ */
+export const ColumnAggDraftSchema = z.object({
+  kind: z.literal('column_agg'),
+  agg: z.enum(COLUMN_AGG_FUNCS),
+  column: z.string().min(1).max(128),
+  dims: z.array(z.string().min(1).max(128)).max(64).optional(),
+}).strict()
+
+/** 草稿的两种档位：树形 L2 声明（既有）| 私有测度列级聚合（W2）。 */
+export const MetricDraftSpecSchema = z.union([L2DeclarationSchema, ColumnAggDraftSchema])
+
+export type ColumnAggDraft = z.infer<typeof ColumnAggDraftSchema>
+
+/** 存草稿的判别式结果：区分「不可编辑」（403）与「草稿档位与行不符」（400）。 */
+export type SaveDraftResult =
+  | { ok: true }
+  | { ok: false; error: 'NOT_EDITABLE' | 'DRAFT_BASIS_MISMATCH' }
+
+/**
+ * 该行是不是私有测度（草稿形状分档与确认分支都读它）。
+ * 只读 L2；不存在 / L1 ⇒ null（调用方回 404/409，不猜）。
+ */
+export async function metricBasisOf(
+  pool: Pool, org: string, metricId: string,
+): Promise<MetricBasis | null> {
+  const { rows } = await pool.query(
+    `select basis from data.metrics where org = $1 and id = $2 and source = 'l2'`,
+    [org, metricId],
+  )
+  if (rows.length === 0) return null
+  return (rows[0] as { basis?: unknown }).basis === 'column_agg' ? 'column_agg' : 'l1_tree'
+}
+
+/**
+ * 草稿保存：只写 `draft_spec`，**不触发编译点**（数字不变）。
+ *
+ * ★ basis 感知（W2 Task 3 评审 Important）：`column_agg` 行只收列级聚合草稿，树形 L2 行
+ *   拒收 `kind:'column_agg'` 草稿——存进去也确认不了（死草稿），不如在保存时就 400。
+ */
 export async function saveMetricDraft(
   pool: Pool, org: string, metricId: string, creator: string, draftSpec: Record<string, unknown>,
-): Promise<boolean> {
+): Promise<SaveDraftResult> {
   // 只有 creator 且 source=l2 才能存草稿（L1 只读、非 creator 不可编辑）
   // ⚠️ 占位符各用各的：`set` 用 $4（草稿 JSON），`created_by` 用 $3（creator）——
   //    复用同一个编号曾让 creator 串被当草稿写库（往返测试 metric-governance.test.ts 抓的）。
+  const cur = await pool.query(
+    `select basis from data.metrics
+      where org = $1 and id = $2 and source = 'l2' and created_by = $3`,
+    [org, metricId, creator],
+  )
+  if ((cur.rowCount ?? 0) === 0) return { ok: false, error: 'NOT_EDITABLE' }
+  const basis: MetricBasis =
+    (cur.rows[0] as { basis?: unknown }).basis === 'column_agg' ? 'column_agg' : 'l1_tree'
+  const isColumnAggDraft = (draftSpec as { kind?: unknown }).kind === 'column_agg'
+  if ((basis === 'column_agg') !== isColumnAggDraft) return { ok: false, error: 'DRAFT_BASIS_MISMATCH' }
+
+  // `and basis = $5` 是 TOCTOU 守卫：读档位与写草稿之间行被换档 ⇒ 不写（宁可 false，不落错档草稿）
   const r = await pool.query(
     `update data.metrics
         set draft_spec = $4::jsonb
-      where org = $1 and id = $2 and source = 'l2' and created_by = $3`,
-    [org, metricId, creator, JSON.stringify(draftSpec)],
+      where org = $1 and id = $2 and source = 'l2' and created_by = $3 and basis = $5`,
+    [org, metricId, creator, JSON.stringify(draftSpec), basis],
   )
-  return (r.rowCount ?? 0) > 0
+  return (r.rowCount ?? 0) > 0 ? { ok: true } : { ok: false, error: 'NOT_EDITABLE' }
 }
 
 /** 读取草稿（creator 确认前预览用）。 */

@@ -1,0 +1,25 @@
+{
+  "_note": [
+    "W2 双臂对照的注入夹具（B 臂 = A 词表 + 这些私有测度卡）。",
+    "两条都是 fct_retail_sale 的真实列（dbt/models/lemeng/marts/fct_retail_sale.sql），",
+    "且不被 l1_metrics.yml 的单列聚合覆盖，属候选生成器可能产出的形状。",
+    "用法：node scripts/askdata/dual-arm-eval.mjs --trace <jsonl> --inject scripts/askdata/dual-arm-inject.example.json --catalog-yaml dbt/semantics/l1_metrics.yml",
+    "⚠️ 这不是生产候选池导出；真实候选以 data.metric_candidates 为准。"
+  ],
+  "measures": [
+    {
+      "id": "private:retail:return_amount",
+      "label": "零售退货金额",
+      "synonyms": ["退货金额", "零售退货"],
+      "relation": "fct_retail_sale",
+      "expr": {"agg": "sum", "column": "return_amount"}
+    },
+    {
+      "id": "private:retail:avg_order_value",
+      "label": "零售客单价",
+      "synonyms": ["客单价"],
+      "relation": "fct_retail_sale",
+      "expr": {"agg": "avg", "column": "net_amount"}
+    }
+  ]
+}
