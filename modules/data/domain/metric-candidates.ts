@@ -183,6 +183,20 @@ export async function listCandidates(
 }
 
 /**
+ * 按 id 读一条本租户候选（adopt 路径用；id 是 bigserial，跨租户一律读不到 ⇒ null）。
+ *
+ * `org` 必须进 WHERE（理由同 `setCandidateStatus`：先按 id 查再判 org 是静默越权）。
+ */
+export async function getCandidate(pool: Pool, org: string, id: number): Promise<Candidate | null> {
+  const { rows } = await pool.query(
+    `select ${CANDIDATE_COLUMNS} from data.metric_candidates where org = $1 and id = $2`,
+    [org, id],
+  )
+  const row = (rows as Row[])[0]
+  return row === undefined ? null : toCandidate(row)
+}
+
+/**
  * 人工/流程改状态。返回是否命中本租户的行（false = id 不存在或属于别的 org ⇒ 路由层回 404）。
  *
  * ⚠️ `org` 必须进 WHERE（不是先查再改）：跨租户改状态是静默越权，且没有任何日志能看出改错。

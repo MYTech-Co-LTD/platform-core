@@ -224,10 +224,11 @@ describe('报表面声明（不需要数据库）', () => {
     // 选择器数据源，spec 2026-10-30 §3.4；#1173）；+2：资产级共享 `GET/PUT /reports/:id/acl`
     // （spec 2026-11-01 §4，申报 data:query —— owner 未必持管理码，真判据在 handler 的
     // canEditAsset）；+3：已验证问答（W1 可信度地基：列 data:query + 确认/拒绝 data:manage）；
-    // +2：私有测度（W2 三档闭环：POST /metrics/private 申报 data:query + 归档读面 data:manage））：
+    // +2：私有测度（W2 三档闭环：POST /metrics/private 申报 data:query + 归档读面 data:manage）；
+    // +2：候选池（W2 Task 5：generate / adopt 两条管理动作，data:manage））：
     // 穷举口径（同 module.test.ts 的表清单）——别处加端点而漏改这里会红，
     // 逼着声明与测试一起动。
-    expect(declared).toHaveLength(48)
+    expect(declared).toHaveLength(50)
     // 资产级共享：入口按观看面（data:query）申报，授权收紧在 handler 里（owner ∪ data:manage）
     expect(declared.get('GET /reports/:id/acl')).toBe('data:query')
     expect(declared.get('PUT /reports/:id/acl')).toBe('data:query')
@@ -248,6 +249,9 @@ describe('报表面声明（不需要数据库）', () => {
     expect(declared.get('POST /metrics/verified/:id/reject')).toBe('data:manage')
     // 私有测度（W2）：新建与 D6 草稿端点同档（creator = 调用者）；归档读面是管理信息
     expect(declared.get('POST /metrics/private')).toBe('data:query')
+    // 候选池（W2 Task 5）：批量生成/采用是管理动作（无 creator 歧义）
+    expect(declared.get('POST /metrics/candidates/generate')).toBe('data:manage')
+    expect(declared.get('POST /metrics/candidates/:id/adopt')).toBe('data:manage')
     expect(declared.get('GET /metrics/private/archived')).toBe('data:manage')
     expect(declared.get('GET /branches')).toBe('data:query')
     // 创建（#1330）：声明观看面 + handler 真判据（data:create ∪ data:manage）

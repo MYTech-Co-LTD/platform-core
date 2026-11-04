@@ -95,6 +95,13 @@ api:
     # 归档行读面（Task 1 评审遗留：archivedAt 消费面不可达）：管理动作的可见面 ⇒ data:manage。
     # 只读；复活走 POST /metrics/private（creator ∪ data:manage 闸在域层）。
     - { method: GET,    path: /metrics/private/archived,  scope: data:manage }
+    # 候选池（W2 Task 5；spec 2026-11-04 §3 双来源分流）：批量 profile 产出**只进候选池**，
+    # 一键采用才上台——防「26 关系 × 几十列」自动建出数百条垃圾口径。
+    #   · generate：读仓库库最新画像（只读）+ 写平台库候选表（幂等）；无 profile 数据 ⇒ 500（不是 0 条假绿）
+    #   · adopt：候选 → 私有测度。候选里的 expr 是**输入**，三闸 + 编译一处不少（见域层）。
+    # 两条都是管理动作（没有「creator 是谁」的歧义）⇒ data:manage。
+    - { method: POST,   path: /metrics/candidates/generate,       scope: data:manage }
+    - { method: POST,   path: /metrics/candidates/:id/adopt,      scope: data:manage }
     # ── 已验证问答（W1 可信度地基；计划 2026-11-04-amd-w1-verified-questions Task 2）──
     # 三条都是 data:manage：基线由关闭掩码的重放产生，读面会把掩码列的精确聚合值透给
     # 低档用户（终审 Important 4）；人工确认/拒绝本来就是管理动作。

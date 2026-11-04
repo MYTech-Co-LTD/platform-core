@@ -82,8 +82,12 @@ export interface PrivateMeasureDeps {
 /** 私有测度声明（与编译点同一形状；这里只做运行期收严）。 */
 export type PrivateMeasureInput = ColumnAggDeclaration
 
-/** 数值类型白名单（PG `information_schema.columns.data_type` 的字面量）。 */
-const NUMERIC_DATA_TYPES = new Set([
+/**
+ * 数值类型白名单（PG `information_schema.columns.data_type` 的字面量）。
+ * 导出给候选生成（Task 5）复用：两处对「什么算数值列」必须同一份判据，否则候选会生成一批
+ * adopt 时必被闸②拒掉的组合（假候选）。
+ */
+export const NUMERIC_DATA_TYPES = new Set([
   'smallint', 'integer', 'bigint', 'decimal', 'numeric', 'real', 'double precision', 'money',
 ])
 
@@ -132,7 +136,7 @@ export async function loadRelationColumns(pool: Pool, relation: string): Promise
  * （私有测度行不能给自己发白名单）。坏 select_sql 的行**跳过不抛**——它不授予任何东西，
  * 方向是「少授权」= fail-closed；抛会让一行历史脏数据把整个写入面打死。
  */
-function whitelistedRelations(catalog: readonly MetricRow[]): Set<string> {
+export function whitelistedRelations(catalog: readonly MetricRow[]): Set<string> {
   const out = new Set<string>()
   for (const row of catalog) {
     if (row.source !== 'l1' || row.basis !== 'l1_tree') continue
@@ -152,7 +156,7 @@ function whitelistedRelations(catalog: readonly MetricRow[]): Set<string> {
  * 编译产物用裸列名（`sum(cost)`）。保守取最后一段 ⇒ 宁可多拒（fail-closed），
  * 不让一个「维度列被掩码」的私有测度拼出 GROUP BY 与 SELECT 语义错位的 SQL。
  */
-function maskedTargets(catalog: readonly MetricRow[]): Set<string> {
+export function maskedTargets(catalog: readonly MetricRow[]): Set<string> {
   const out = new Set<string>()
   for (const row of catalog) {
     for (const spec of (row.masks ?? []) as MaskSpec[]) {

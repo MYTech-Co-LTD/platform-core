@@ -8,6 +8,7 @@
 // （HTTP 面直出状态码；MCP 写面翻成工具级错误 `{status:'refused', error}`）。
 import type { Pool, PoolClient } from 'pg'
 import type { Requester } from './authz'
+import type { CandidateOrigin } from './metric-candidates'
 import { deleteMetric, loadPlatformCatalog, selectMetricSnapshot, upsertMetric } from './metric-store'
 import { writeMetricAudit } from './metric-audit-store'
 import type { MetricCertification } from './metric-governance'
@@ -376,6 +377,13 @@ export interface PrivateMeasureWriteInput extends ColumnAggDeclaration {
   id: string
   title: string
   description?: string
+  /**
+   * 血统（W2 Task 5）：`demand`（缺省）= 对话/人手即时创建；`profile` = 候选池一键采用。
+   *
+   * **只进审计快照，不进指标行**——它是「这条口径怎么来的」，不是口径本身；新增列会让读侧
+   * 多一个与授权无关的字段，而审计已经提供了逐条历史。取值非法 ⇒ BAD_INPUT（不落坏血统）。
+   */
+  origin?: CandidateOrigin
 }
 
 /**
@@ -404,6 +412,8 @@ export type PrivateMeasureWriteDeps = PrivateMeasureDeps & { requester: Requeste
  * 落库：**写生效列**（select_sql/group_by）+ `basis='column_agg'` + `certified='draft'` +
  * `created_by`；**不写 draft_spec**（新建即时可用）。审计与变更同事务（`action='create'`，
  * 复活也记 create——它是一次生命周期事件，不是内容修改）。
+ * 血统（`input.origin`，缺省 demand）写进审计 `after.origin`：`profile` = 候选池采用，
+ * `demand` = 对话即时创建（W2 Task 5；不新增指标列）。
  */
 export async function writePrivateMeasure(
   deps: PrivateMeasureWriteDeps, org: string, input: PrivateMeasureWriteInput,
@@ -416,9 +426,12 @@ export async function writePrivateMeasure(
     typeof input.id !== 'string' || input.id === ''
     || typeof input.title !== 'string' || input.title.trim() === ''
     || (input.description !== undefined && typeof input.description !== 'string')
+    || (input.origin !== undefined && input.origin !== 'profile' && input.origin !== 'demand')
   ) {
-    return { ok: false, http: 400, error: 'BAD_INPUT', extra: { detail: 'id/title 必填且为非空字符串' } }
+    return { ok: false, http: 400, error: 'BAD_INPUT', extra: { detail: 'id/title 必填且为非空字符串；origin ∈ {profile,demand}' } }
   }
+  // 血统缺省 = demand（对话/人手即时创建是常规入口；批量采用必须显式标 profile）
+  const origin: CandidateOrigin = input.origin ?? 'demand'
 
   // ① 三闸（只读校验，失败不留半成品）
   const validation = await validatePrivateMeasure(deps, input)
@@ -507,6 +520,7 @@ export async function writePrivateMeasure(
       after: {
         title: row.title, description: row.description, subjectColumn: row.subjectColumn,
         selectSql: row.selectSql, groupBy: row.groupBy, params: row.params, certified,
+        origin,
       },
     })
     return { ok: true }

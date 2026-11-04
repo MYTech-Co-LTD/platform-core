@@ -4,6 +4,7 @@
 import { afterAll, beforeAll, describe, expect, it } from 'vitest'
 import { Pool } from 'pg'
 import {
+  getCandidate,
   listCandidates,
   setCandidateStatus,
   upsertCandidate,
@@ -141,6 +142,15 @@ describePg('metric-candidates（需要 DATABASE_URL）', () => {
       .toEqual(['avg'])
     expect((await listCandidates(pool, ORG, { relation: 'fct_list', status: 'pending' })).length).toBe(3)
     expect((await listCandidates(pool, ORG, { relation: 'fct_list', status: 'rejected' })).length).toBe(0)
+  })
+
+  it('getCandidate 带 org：本 org 读得到，别家 org / 不存在的 id 一律 null', async () => {
+    const mine = await upsertCandidate(pool, ORG, input({ relation: 'fct_get' }))
+    expect(await getCandidate(pool, ORG, mine.id)).toMatchObject({
+      id: mine.id, org: ORG, relation: 'fct_get', expr: { agg: 'sum', column: 'net_amount', dims: ['bizday'] },
+    })
+    expect(await getCandidate(pool, OTHER_ORG, mine.id)).toBeNull()
+    expect(await getCandidate(pool, ORG, 999999999)).toBeNull()
   })
 
   it('setCandidateStatus 带 org：本 org 改得到，别家 org / 不存在的 id 都返回 false 且不动目标行', async () => {
