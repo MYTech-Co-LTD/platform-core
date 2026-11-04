@@ -283,7 +283,9 @@ describePg('metric-store（需要 DATABASE_URL）', () => {
         // 元数据（030，§10.4.3）：L2 新建侧不写三列 ⇒ 未标注形态（nullable 直读）
         bizDescription: null, unit: null, caliberNote: null,
         // 实体 / 同义词（W0，031）：L2 行没有声明面 ⇒ 恒 null / []（读侧恒有值，不是可选）
-        entity: null, synonyms: [] })
+        entity: null, synonyms: [],
+        // 测度档与归档（W2，034）：L2 缺省档 = 树（l1_tree），未归档
+        basis: 'l1_tree', archivedAt: null })
   })
 
   it('deleteMetric 返「是否真删了一行」，且只删本租户的', async () => {
@@ -577,5 +579,117 @@ describePg('031 迁移：entity / synonyms（W0 指标实体与同义词）', ()
     const l2 = (await loadMergedCatalog(pool, 'org-w0-test')).find((r) => r.id === 'w0:test:l2')!
     expect(l2.entity).toBeNull()
     expect(l2.synonyms).toEqual([])
+  })
+})
+
+// ── 034 迁移（W2 三档闭环）：basis / archived_at + 查询面默认滤归档。────────────────────
+// 单独一个 describe：本组自带 org 与 L1 前缀，可被 `-t "034"` 单独跑，不依赖上文用例顺序。
+describePg('034 迁移：basis / archived_at（W2 三档闭环）', () => {
+  const pool = new Pool({ connectionString: dbUrl })
+  const W2_ORG = 'org-w2-034'
+  const W2_PREFIX = 'w2:test:'
+
+  afterAll(async () => {
+    // 平台桶跨文件共用：只删本组前缀（理由见文件顶部 L1_ID_PREFIX 的说明）。
+    await pool.query('delete from data.metrics where org = $1 and id like $2', [L1_ORG, `${W2_PREFIX}%`]).catch(() => {})
+    await pool.query('delete from data.metrics where org = $1', [W2_ORG]).catch(() => {})
+    await pool.end().catch(() => {})
+  })
+
+  const l1Def = (id: string) => ({
+    ...def({ id: `${W2_PREFIX}${id}`, title: id }),
+    sourceSystem: 'lemeng', slaDays: 1, freshnessRelations: [] as string[], masks: null,
+  })
+
+  it('★ schema：basis not null default l1_tree + archived_at 可空 + 取值域约束；迁移幂等', async () => {
+    await applyMigrations(pool)
+    await applyMigrations(pool) // 第二遍：必须零效果、不报错（部署脚本每次全量重跑）
+
+    const cols = await pool.query<{ column_name: string; is_nullable: string; column_default: string | null }>(
+      `select column_name, is_nullable, column_default from information_schema.columns
+        where table_schema = 'data' and table_name = 'metrics'
+          and column_name in ('basis', 'archived_at') order by column_name`,
+    )
+    expect(cols.rows).toEqual([
+      { column_name: 'archived_at', is_nullable: 'YES', column_default: null },
+      { column_name: 'basis', is_nullable: 'NO', column_default: "'l1_tree'::text" },
+    ])
+
+    const k = await pool.query<{ def: string }>(
+      `select pg_get_constraintdef(oid) as def from pg_constraint where conname = 'metrics_basis_check'`,
+    )
+    expect(k.rowCount, 'basis 取值域约束没建成（写坏档不会响亮失败）').toBe(1)
+    expect(k.rows[0]!.def).toContain('l1_tree')
+    expect(k.rows[0]!.def).toContain('column_agg')
+  })
+
+  it('★ L1 行恒 basis=l1_tree / archivedAt=null；L2 缺省 l1_tree、显式 column_agg 落库', async () => {
+    await applyMigrations(pool)
+    const id = `${W2_PREFIX}sales`
+    await upsertL1Metric(pool, l1Def('sales') as never)
+
+    const l1 = (await loadPlatformCatalog(pool)).find((m) => m.id === id)!
+    expect({ basis: l1.basis, archivedAt: l1.archivedAt }).toEqual({ basis: 'l1_tree', archivedAt: null })
+
+    await upsertMetric(pool, W2_ORG, def({ id: 'w2_default' }), 'u-w2')
+    expect((await loadOrgCatalog(pool, W2_ORG)).find((m) => m.id === 'w2_default')?.basis)
+      .toBe('l1_tree')
+
+    await upsertMetric(pool, W2_ORG, def({ id: 'w2_private' }), 'u-w2', { basis: 'column_agg' })
+    const priv = (await loadOrgCatalog(pool, W2_ORG)).find((m) => m.id === 'w2_private')!
+    expect({ basis: priv.basis, archivedAt: priv.archivedAt }).toEqual({ basis: 'column_agg', archivedAt: null })
+  })
+
+  it('★ 查询面默认过滤 archived_at：三个加载器都看不到归档行，但行仍在库里（归档不是删除）', async () => {
+    await applyMigrations(pool)
+    const l1Id = `${W2_PREFIX}archived_l1`
+    await upsertL1Metric(pool, l1Def('archived_l1') as never)
+    await upsertMetric(pool, W2_ORG, def({ id: 'w2_archived_l2' }), 'u-w2', { basis: 'column_agg' })
+
+    await pool.query(
+      'update data.metrics set archived_at = now() where id = any($1::text[])',
+      [[l1Id, 'w2_archived_l2']],
+    )
+
+    expect((await loadOrgCatalog(pool, W2_ORG)).map((m) => m.id), 'loadOrgCatalog 漏出归档行').not.toContain('w2_archived_l2')
+    expect((await loadPlatformCatalog(pool)).map((m) => m.id), 'loadPlatformCatalog 漏出归档行').not.toContain(l1Id)
+    const mergedIds = (await loadMergedCatalog(pool, W2_ORG)).map((m) => m.id)
+    expect(mergedIds).not.toContain('w2_archived_l2')
+    expect(mergedIds).not.toContain(l1Id)
+
+    // 行还在（不是 delete）：撤回归档即恢复可见
+    const still = await pool.query('select id from data.metrics where id = any($1::text[])', [[l1Id, 'w2_archived_l2']])
+    expect(still.rowCount).toBe(2)
+    await pool.query('update data.metrics set archived_at = null where org = $1 and id = $2', [W2_ORG, 'w2_archived_l2'])
+    expect((await loadMergedCatalog(pool, W2_ORG)).map((m) => m.id)).toContain('w2_archived_l2')
+  })
+
+  it('★ upsert 不改测度档/归档态：L2 冲突分支不翻档也不复活归档；L1 物化把两列拉回不变式', async () => {
+    await applyMigrations(pool)
+    const l2Id = 'w2_keep_basis'
+    await upsertMetric(pool, W2_ORG, def({ id: l2Id }), 'u-w2', { basis: 'column_agg' })
+    await pool.query('update data.metrics set archived_at = now() where org = $1 and id = $2', [W2_ORG, l2Id])
+
+    // 同 (org, id) 再写一次（缺省档 = l1_tree）：档与归档态都必须保持首次插入的值
+    await upsertMetric(pool, W2_ORG, def({ id: l2Id, title: '改过标题' }), 'u-w2')
+    const row = (await pool.query(
+      'select title, basis, archived_at from data.metrics where org = $1 and id = $2', [W2_ORG, l2Id],
+    )).rows[0]
+    expect(row.title).toBe('改过标题')
+    expect(row.basis, '一次普通 L2 写把私有测度降档成 l1_tree').toBe('column_agg')
+    expect(row.archived_at, '一次普通 L2 写把归档行复活了').not.toBeNull()
+
+    // L1 物化路径：sync 的声明是真值 ⇒ 两列回收成不变式（L1 恒 l1_tree / 恒未归档）
+    const l1Id = `${W2_PREFIX}reassert`
+    await upsertL1Metric(pool, l1Def('reassert') as never)
+    await pool.query(
+      "update data.metrics set basis = 'column_agg', archived_at = now() where org = $1 and id = $2",
+      [L1_ORG, l1Id],
+    )
+    await upsertL1Metric(pool, l1Def('reassert') as never)
+    const l1Row = (await pool.query(
+      'select basis, archived_at from data.metrics where org = $1 and id = $2', [L1_ORG, l1Id],
+    )).rows[0]
+    expect(l1Row).toEqual({ basis: 'l1_tree', archived_at: null })
   })
 })

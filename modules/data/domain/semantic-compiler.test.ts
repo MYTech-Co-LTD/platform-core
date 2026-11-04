@@ -77,6 +77,9 @@ function l1(over: Partial<MetricRow> = {}): MetricRow {
     bizDescription: null,
     unit: null,
     caliberNote: null,
+    // 测度档与归档（W2，034）：L1 行恒树形档 / 恒未归档
+    basis: 'l1_tree',
+    archivedAt: null,
     ...over,
   }
 }

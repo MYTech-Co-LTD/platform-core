@@ -18,6 +18,19 @@ import type { MetricCertification } from './metric-governance'
 export type MetricSource = 'l1' | 'l2'
 
 /**
+ * 测度口径基（034 迁移，W2 三档闭环）——「这行的 select_sql 是哪一档产出的」。
+ *
+ * `l1_tree`   = 树形口径：L1 平台声明、以及由 L1 ref 树编译的 L2（合并/派生/refine）。
+ * `column_agg`= **私有测度**：单列聚合（sum/count/avg/min/max），写入期编译成与 L1 同形的
+ *               `select <agg>(<col>) as value[, dims] from <relation>`。运行期零新路径，
+ *               与树形行一样过 authorize/掩码/行域。不可被 L2 ref 引用（编译器另加断言）。
+ *
+ * 恒有值（列 not null default 'l1_tree'）：L1 行恒 `l1_tree`（sync 物化时写死）；
+ * L2 行由写入口显式给档（缺省 = 树形）。
+ */
+export type MetricBasis = 'l1_tree' | 'column_agg'
+
+/**
  * 库里的 L1 桶 org 值（**不是** env 的 `PLATFORM_ORG`）。
  *
  * L1 行落 `org = 'platform'`（全局约束 5：平台级声明也是合法 org 值，**不豁免** org 列纪律）。
@@ -114,6 +127,20 @@ export interface MetricRow extends MetricDef {
    * 真值只来自 L1 物化路径；L2 行三列恒 NULL ⇒ 恒 undefined（「L2 不支持下钻」由存储形状自然涌现）。
    */
   drill?: DrillBinding
+  /**
+   * 测度口径基（034 迁移，W2 三档闭环）：`l1_tree`（树形，缺省）| `column_agg`（私有测度）。
+   * 恒有值——列缺省/坏值由 `toMetricRow` 归一成 `l1_tree`（读侧不给 undefined 留门）。
+   * L1 行恒 `l1_tree`（sync 物化写死并在冲突分支回收）。
+   */
+  basis: MetricBasis
+  /**
+   * 归档时刻（034 迁移，W2 生命周期）：ISO 字符串；NULL = 在用。
+   *
+   * 归档是**隐藏**不是删除：三个查询面默认滤掉（`archived_at is null`），行与审计保留；
+   * upsert 的冲突分支不碰它（一次普通写不得让归档行静默复活）。
+   * L1 行恒 null（平台口径的生命周期由声明/PR 管，不由租户归档动作管）。
+   */
+  archivedAt: string | null
 }
 
 /**
@@ -207,7 +234,18 @@ function toMetricRow(row: Record<string, unknown>): MetricRow {
     // 下钻绑定（下钻 spec §2.3）：三列归一收口在 drillBindingOf——读侧不信任存储形状，
     // 任一列缺/坏 ⇒ undefined（= 未声明），绝不半绑。
     drill: drillBindingOf(row),
+    // 测度档与归档（W2，034）：档恒有值（坏值/缺列 ⇒ 树形）；归档时刻归一成 ISO 字符串或 null
+    // （坏值宁可当「未归档」也不让整个词表加载因一行脏时间戳抛错——读路径不抛是既有纪律）。
+    basis: row.basis === 'column_agg' ? 'column_agg' : 'l1_tree',
+    archivedAt: archivedAtOf(row.archived_at),
   }
+}
+
+/** 归档时刻归一：Date / 可解析字符串 ⇒ ISO；NULL / 坏值 ⇒ null（= 未归档）。 */
+function archivedAtOf(value: unknown): string | null {
+  if (value === null || value === undefined) return null
+  const d = value instanceof Date ? value : new Date(String(value))
+  return Number.isNaN(d.getTime()) ? null : d.toISOString()
 }
 
 /** 行的下钻三列 → DrillBinding；任一列缺/坏形状 ⇒ undefined（= 未声明）。读侧不信任存储形状。 */
@@ -242,7 +280,7 @@ function drillBindingOf(row: Record<string, unknown>): DrillBinding | undefined 
 
 /** 投影列清单（三处查询共用一处写法——少写/写错一列是「字段静默变 undefined」的经典来源）。 */
 const ROW_COLUMNS =
-  'id, title, description, required_scope, subject_column, select_sql, group_by, params, source, source_system, updated_by, version, totalable, scope_note, sla_days, freshness_relations, mask_spec, drill_expr, drill_dims, drill_detail, certified, created_by, biz_description, unit, caliber_note, entity, synonyms'
+  'id, title, description, required_scope, subject_column, select_sql, group_by, params, source, source_system, updated_by, version, totalable, scope_note, sla_days, freshness_relations, mask_spec, drill_expr, drill_dims, drill_detail, certified, created_by, biz_description, unit, caliber_note, entity, synonyms, basis, archived_at'
 
 /**
  * 本 org 的 L2 行（**不含** L1 平台行）。`order by id`：顺序确定。
@@ -262,7 +300,7 @@ const ROW_COLUMNS =
  */
 export async function loadOrgCatalog(pool: Pool, org: string): Promise<MetricRow[]> {
   const r = await pool.query(
-    `select ${ROW_COLUMNS} from data.metrics where org = $1 order by id`,
+    `select ${ROW_COLUMNS} from data.metrics where org = $1 and archived_at is null order by id`,
     [org],
   )
   return r.rows.map(toMetricRow)
@@ -271,7 +309,7 @@ export async function loadOrgCatalog(pool: Pool, org: string): Promise<MetricRow
 /** L1 平台词表（唯一物化来源是 sync 脚本）。`order by id`：与合并口径一致。 */
 export async function loadPlatformCatalog(pool: Pool): Promise<MetricRow[]> {
   const r = await pool.query(
-    `select ${ROW_COLUMNS} from data.metrics where org = $1 and source = 'l1' order by id`,
+    `select ${ROW_COLUMNS} from data.metrics where org = $1 and source = 'l1' and archived_at is null order by id`,
     [L1_ORG],
   )
   return r.rows.map(toMetricRow)
@@ -296,7 +334,8 @@ export async function loadMergedCatalog(pool: Pool, org: string): Promise<Metric
   const r = await pool.query(
     // L1 桶恒取 platform；L2 只取本 org（**不**跨租户读别人的 L2 行）
     `select ${ROW_COLUMNS} from data.metrics
-      where (org = $1 and source = 'l2') or (org = $2 and source = 'l1')
+      where ((org = $1 and source = 'l2') or (org = $2 and source = 'l1'))
+        and archived_at is null
       order by id, source`,
     [org, L1_ORG],
   )
@@ -347,20 +386,28 @@ export async function loadMergedCatalog(pool: Pool, org: string): Promise<Metric
 // ⚠️ 下钻三列（drill_expr/drill_dims/drill_detail，下钻 spec 2026-10-21 §2.3）同理不写：
 //    L2 没有「compose/dimensions/detail」这个输入 ⇒ 三列恒 NULL——「L2 不支持下钻」（spec §5）
 //    由存储形状自然涌现（读侧 drillBindingOf 恒判 undefined），无需运行期特判。
+// ⚠️ 测度档（basis，034）只由**首次插入**确定，冲突分支不碰：与 source 同一条纪律——
+//    一次普通 L2 写（缺省档 = l1_tree）不得把私有测度行（column_agg）静默降档。
+//    归档态（archived_at）同理不碰：归档是生命周期动作（Task 3 的淘汰 job），
+//    一次内容写不得让它静默复活。
 export async function upsertMetric(
   db: Pool | PoolClient, org: string, def: MetricDef, updatedBy: string,
-  /** 确认生效路径专用：草稿的清除由 confirm 的**内容条件清除**收尾（竞态守卫），这里别抢。 */
-  opts?: { keepDraft?: boolean },
+  /**
+   * `keepDraft`：确认生效路径专用——草稿的清除由 confirm 的**内容条件清除**收尾（竞态守卫），这里别抢。
+   * `basis`：测度档（W2，034）。缺省 `l1_tree`（树形）；私有测度创建时显式传 `column_agg`。
+   */
+  opts?: { keepDraft?: boolean; basis?: MetricBasis },
 ): Promise<void> {
   // see SQL 里的 draft_spec 分支：keepDraft = 确认路径（草稿清不清由调用方的条件清除决定）
   const keepDraft = opts?.keepDraft === true
+  const basis: MetricBasis = opts?.basis === 'column_agg' ? 'column_agg' : 'l1_tree'
   // ★ `updatedBy` 是**必填**（不给默认值）：给了默认值就等于留一条「不写人也能写库」的暗道，
   //   而 #489 的全部意义就是堵它。⚠️ 调用方若直接传 Pool（如夹具），参数照传即可——
   //   生产写路径（domain/metric-write）传的是事务里的 client，审计与变更同生共死。
   await db.query(
     `insert into data.metrics
-       (org, id, title, description, required_scope, subject_column, select_sql, group_by, params, source, source_system, updated_by, version, totalable, sla_days, freshness_relations, created_by, certified)
-     values ($1, $2, $3, $4, $5, $6, $7, $8, $9, 'l2', null, $10, 1, false, null, null, $10, 'draft')
+       (org, id, title, description, required_scope, subject_column, select_sql, group_by, params, source, source_system, updated_by, version, totalable, sla_days, freshness_relations, created_by, certified, basis)
+     values ($1, $2, $3, $4, $5, $6, $7, $8, $9, 'l2', null, $10, 1, false, null, null, $10, 'draft', $11)
      on conflict (org, id) do update set
        title          = excluded.title,
        description    = excluded.description,
@@ -380,7 +427,7 @@ export async function upsertMetric(
        updated_at     = now()`,
     [
       org, def.id, def.title, def.description, def.requiredScope,
-      def.subjectColumn, def.selectSql, def.groupBy, JSON.stringify(def.params), updatedBy,
+      def.subjectColumn, def.selectSql, def.groupBy, JSON.stringify(def.params), updatedBy, basis,
     ],
   )
 }
@@ -428,8 +475,8 @@ function drillDetailJson(drill: DrillBinding): string {
 export async function upsertL1Metric(pool: Pool, def: L1MetricDef): Promise<void> {
   await pool.query(
     `insert into data.metrics
-       (org, id, title, description, required_scope, subject_column, select_sql, group_by, params, source, source_system, totalable, scope_note, sla_days, freshness_relations, mask_spec, drill_expr, drill_dims, drill_detail, unit, entity, synonyms)
-     values ($1, $2, $3, $4, $5, $6, $7, $8, $9, 'l1', $10, $11, $12, $13, $14::jsonb, $15::jsonb, $16, $17::jsonb, $18::jsonb, $19, $20, $21::jsonb)
+       (org, id, title, description, required_scope, subject_column, select_sql, group_by, params, source, source_system, totalable, scope_note, sla_days, freshness_relations, mask_spec, drill_expr, drill_dims, drill_detail, unit, entity, synonyms, basis)
+     values ($1, $2, $3, $4, $5, $6, $7, $8, $9, 'l1', $10, $11, $12, $13, $14::jsonb, $15::jsonb, $16, $17::jsonb, $18::jsonb, $19, $20, $21::jsonb, 'l1_tree')
      on conflict (org, id) do update set
        title          = excluded.title,
        description    = excluded.description,
@@ -454,6 +501,11 @@ export async function upsertL1Metric(pool: Pool, def: L1MetricDef): Promise<void
        --    否则词表按旧声明做同义词/实体匹配（--check 也认它）。
        entity              = excluded.entity,
        synonyms            = excluded.synonyms,
+       -- 测度档与归档（W2，034）：L1 行**恒** l1_tree / 恒未归档（平台口径的生命周期由声明/PR 管）。
+       -- 冲突分支也刷：这两列被人误写（直改库）后，下一次物化必须把它们拉回不变式，
+       -- 否则「L1 行 basis 恒 l1_tree」只是一句注释。
+       basis               = 'l1_tree',
+       archived_at         = null,
        updated_at     = now()`,
     [
       L1_ORG, def.id, def.title, def.description, def.requiredScope,
