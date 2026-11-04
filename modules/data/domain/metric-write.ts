@@ -11,8 +11,16 @@ import type { Requester } from './authz'
 import { deleteMetric, loadPlatformCatalog, selectMetricSnapshot, upsertMetric } from './metric-store'
 import { writeMetricAudit } from './metric-audit-store'
 import type { MetricCertification } from './metric-governance'
-import { SemanticCompileError, collectRefIds, compileL2, resolveL1Base } from './semantic-compiler'
-import type { CompiledL2, L2Declaration } from './semantic-compiler'
+import { validatePrivateMeasure } from './private-measure'
+import type { PrivateMeasureDeps } from './private-measure'
+import {
+  SemanticCompileError,
+  collectRefIds,
+  compileColumnAgg,
+  compileL2,
+  resolveL1Base,
+} from './semantic-compiler'
+import type { ColumnAggDeclaration, CompiledColumnAgg, CompiledL2, L2Declaration } from './semantic-compiler'
 
 export interface MetricWriteDeps {
   pool: Pool
@@ -70,8 +78,9 @@ function compileFailure(e: SemanticCompileError): { http: 400 | 500; error: stri
   return { http: 400, error: e.code, ...(e.extra === undefined ? {} : { extra: e.extra }) }
 }
 
-/** 该 id 是否是平台词表（L1）里的行（L1 行对所有租户可见，故「只读」对所有租户成立）。 */
-async function isL1Id(deps: MetricWriteDeps, id: string): Promise<boolean> {
+/** 该 id 是否是平台词表（L1）里的行（L1 行对所有租户可见，故「只读」对所有租户成立）。
+ *  入参只收 pool：本判定与「已接入源」无关，私有测度写路径也要复用（不给它凑假的 adoptedSources）。 */
+async function isL1Id(deps: { pool: Pool }, id: string): Promise<boolean> {
   return (await loadPlatformCatalog(deps.pool)).some((m) => m.id === id)
 }
 
@@ -158,11 +167,19 @@ export async function writeL2Declaration(
     // 不为「建/改」各留一条分支）。同一读也给出审计要的**前态**。
     const before = await selectMetricSnapshot(c, org, id)
     if (before !== null) {
-      // creator 闸（判定说明见上面函数体外的注释块）：update 才判，create 不判。
+      // ★ 跨档闸（W2，Task 1 评审遗留）：树形 L2 写不得落到私有测度行上。
+      //   upsert 的冲突分支**不翻档**（首插定档），放过去会写成「select_sql 是树形、basis 仍是
+      //   column_agg」的自相矛盾行——运行期按树形跑、生命周期按私有测度淘汰，两个事实源。
+      //   私有测度的修改/复活只经 `writePrivateMeasure`（新建即时；修改走 D6 是树形档的规则）。
       const cur = await c.query(
-        `select created_by from data.metrics where org = $1 and id = $2 and source = 'l2'`,
+        `select created_by, basis from data.metrics where org = $1 and id = $2 and source = 'l2'`,
         [org, id],
       )
+      const basis: string | undefined = cur.rows[0]?.basis
+      if (basis === 'column_agg') {
+        return { ok: false, http: 409, error: 'BASIS_CONFLICT', extra: { existing_basis: basis } }
+      }
+      // creator 闸（判定说明见上面函数体外的注释块）：update 才判，create 不判。
       const createdBy: string | null = cur.rows[0]?.created_by ?? null
       if (createdBy === null) return { ok: false, http: 403, error: 'METRIC_CREATOR_UNKNOWN' }
       if (createdBy !== actor.userId) return { ok: false, http: 403, error: 'NOT_METRIC_CREATOR' }
@@ -342,6 +359,150 @@ export async function updateMetricMeta(
       keyId: actor.keyId,
       before: beforeMeta as never,
       after: afterMeta as never,
+    })
+    return { ok: true }
+  })
+}
+
+// ── 私有测度（W2 Task 3，`basis='column_agg'`）────────────────────────────────────
+/**
+ * 私有测度写路径的入参：**行句柄/标题** + 列级聚合声明。
+ *
+ * 与 L2 的 `id + L2DeclarationBody` 同构：声明决定 select_sql（唯一编译点
+ * `compileColumnAgg`），id/title 是行属性。description 可省（'' = 未写）。
+ */
+export interface PrivateMeasureWriteInput extends ColumnAggDeclaration {
+  id: string
+  title: string
+  description?: string
+}
+
+/**
+ * 依赖 = 三闸的 deps（平台库 / 数据面列清单可注入）+ 写路径的操作人。
+ *
+ * 刻意**不**复用 `MetricWriteDeps`：私有测度不过「源接入闸」（spec §4.2 的三闸只到
+ * relation/column/dims；运行期授权仍由 authorize 的 org 主体钉死兜底）。把 `adoptedSources`
+ * 挂进来会让人以为还有第四道闸——而它并没有被消费。
+ */
+export type PrivateMeasureWriteDeps = PrivateMeasureDeps & { requester: Requester }
+
+/**
+ * 私有测度写入（新建即时可用；D6 只管修改）。
+ *
+ * 判定链（全部在域层，HTTP 面只做形状与错误码映射）：
+ *   ① 三闸 `validatePrivateMeasure`（relation 白名单 / 实际列 / dims）——失败按码映射，
+ *      `COLUMNS_UNAVAILABLE` 是**环境**问题 ⇒ 500（别折成「列名写错」的 400）；
+ *   ② 编译 `compileColumnAgg`（纯函数；与 L1 同一份形状契约）；
+ *   ③ 不得占 L1 的 id（占下会被加载侧丢弃 ⇒ 一次「成功的空操作」）；
+ *   ④ 同 id 已存在时**显式**处理，绝不静默 upsert：
+ *      · 跨档（basis 不是 column_agg）⇒ 409 `BASIS_CONFLICT`（upsert 的冲突分支不翻档，
+ *        放过去会写成「SQL 是列聚合、basis 还是树形」的自相矛盾行）；
+ *      · 同档且在用 ⇒ 409 `METRIC_EXISTS`（本端点只建不改；修改走 D6 草稿流）；
+ *      · 同档但已归档 ⇒ 可复活，但要过 creator/manage 闸（归档行不能被别人静默复活）。
+ *
+ * 落库：**写生效列**（select_sql/group_by）+ `basis='column_agg'` + `certified='draft'` +
+ * `created_by`；**不写 draft_spec**（新建即时可用）。审计与变更同事务（`action='create'`，
+ * 复活也记 create——它是一次生命周期事件，不是内容修改）。
+ */
+export async function writePrivateMeasure(
+  deps: PrivateMeasureWriteDeps, org: string, input: PrivateMeasureWriteInput,
+): Promise<MetricWriteOutcome> {
+  const actor = deps.requester
+
+  // 行句柄/标题的形状闸也放域层（路由的 zod 只挡 HTTP；未来 MCP 工具共用本函数时不该
+  // 因为「没人校验」写出无 id / 无标题的行）。
+  if (
+    typeof input.id !== 'string' || input.id === ''
+    || typeof input.title !== 'string' || input.title.trim() === ''
+    || (input.description !== undefined && typeof input.description !== 'string')
+  ) {
+    return { ok: false, http: 400, error: 'BAD_INPUT', extra: { detail: 'id/title 必填且为非空字符串' } }
+  }
+
+  // ① 三闸（只读校验，失败不留半成品）
+  const validation = await validatePrivateMeasure(deps, input)
+  if (!validation.ok) {
+    return {
+      ok: false,
+      // 环境/可见性问题响亮成 500（监控看得见）；其余是调用方可自助修正的输入问题 ⇒ 400。
+      http: validation.code === 'COLUMNS_UNAVAILABLE' ? 500 : 400,
+      error: validation.code,
+      ...(validation.detail === undefined ? {} : { extra: { detail: validation.detail } }),
+    }
+  }
+
+  // ② 编译（validate 已用同一函数收过形状；这里再调一次是「产物就是落库物」的单点）
+  let compiled: CompiledColumnAgg
+  try {
+    compiled = compileColumnAgg(input)
+  } catch (e) {
+    if (e instanceof SemanticCompileError) {
+      return { ok: false, http: 400, error: 'BAD_INPUT', extra: { detail: e.message } }
+    }
+    throw e
+  }
+
+  // ③ 与 writeL2Declaration 同一条纪律：L2 不能占 L1 的 id
+  if (await isL1Id(deps, input.id)) return { ok: false, http: 409, error: 'ID_RESERVED_BY_L1' }
+
+  const row = {
+    id: input.id,
+    title: input.title,
+    description: input.description ?? '',
+    requiredScope: null,
+    // 编译产物给出 'org'（私有测度是租户行）——不在这里另推导一次
+    subjectColumn: compiled.subjectColumn,
+    selectSql: compiled.selectSql,
+    groupBy: compiled.groupBy,
+    params: {},
+  }
+
+  return withTx(deps.pool, async (c): Promise<MetricWriteOutcome> => {
+    const cur = await c.query(
+      `select source, basis, archived_at, created_by
+         from data.metrics where org = $1 and id = $2`,
+      [org, input.id],
+    )
+    let before: Awaited<ReturnType<typeof selectMetricSnapshot>> = null
+    if ((cur.rowCount ?? 0) > 0) {
+      const existing = cur.rows[0] as {
+        source: string; basis: string; archived_at: Date | null; created_by: string | null
+      }
+      // ④ 跨档：显式拒绝（理由见函数头注）
+      if (existing.source !== 'l2' || existing.basis !== 'column_agg') {
+        return {
+          ok: false, http: 409, error: 'BASIS_CONFLICT',
+          extra: { existing_basis: existing.basis },
+        }
+      }
+      // ④ 同档在用：只建不改（修改走 D6），不静默覆盖
+      if (existing.archived_at === null) return { ok: false, http: 409, error: 'METRIC_EXISTS' }
+      // ④ 同档已归档：可复活，但只能由 creator ∪ data:manage（与 D6 草稿端点的写闸同源）
+      if (existing.created_by === null) return { ok: false, http: 403, error: 'METRIC_CREATOR_UNKNOWN' }
+      if (existing.created_by !== actor.userId && !actor.hasScope('data:manage')) {
+        return { ok: false, http: 403, error: 'NOT_METRIC_CREATOR' }
+      }
+      before = await selectMetricSnapshot(c, org, input.id)
+      await c.query(
+        `update data.metrics set archived_at = null
+          where org = $1 and id = $2 and source = 'l2' and basis = 'column_agg'`,
+        [org, input.id],
+      )
+    }
+
+    await upsertMetric(c, org, row, actor.userId, { basis: 'column_agg' })
+    await writeMetricAudit(c, {
+      org,
+      metricId: input.id,
+      action: 'create',
+      userId: actor.userId,
+      channel: actor.channel,
+      keyId: actor.keyId,
+      before,
+      after: {
+        title: row.title, description: row.description, subjectColumn: row.subjectColumn,
+        selectSql: row.selectSql, groupBy: row.groupBy, params: row.params, certified: 'draft',
+      },
     })
     return { ok: true }
   })
