@@ -46,7 +46,7 @@ describe('移动指标页（spec 2026-11-01 §10.2）', () => {
   })
 
   it('列表渲染：三张卡 + 徽标（平台口径/自建、认证态、新鲜度三态）', async () => {
-    render(<App />)
+    render(<App initialTab="metrics" />)
     await waitFor(() => expect(screen.getByText('净销售额')).toBeTruthy())
     expect(screen.getByText('我的毛利')).toBeTruthy()
     expect(screen.getByText('别人的')).toBeTruthy()
@@ -63,7 +63,7 @@ describe('移动指标页（spec 2026-11-01 §10.2）', () => {
   })
 
   it('★ 移动端搜索（UX）：按名称/说明过滤，计数更新，无匹配有空态', async () => {
-    render(<App />)
+    render(<App initialTab="metrics" />)
     await waitFor(() => expect(screen.getByText('净销售额')).toBeTruthy())
     const input = screen.getByPlaceholderText('搜索名称 / 说明')
 
@@ -84,7 +84,7 @@ describe('移动指标页（spec 2026-11-01 §10.2）', () => {
   })
 
   it('「编辑草稿」只出现在自己的 L2 上（L1 只读、非我创建只读——判定表直译）', async () => {
-    render(<App />)
+    render(<App initialTab="metrics" />)
     await waitFor(() => expect(screen.getByText('我的毛利')).toBeTruthy())
     expect(screen.getAllByText('编辑草稿')).toHaveLength(1)
   })
@@ -99,7 +99,7 @@ describe('移动指标页（spec 2026-11-01 §10.2）', () => {
       { match: (u, m) => u.includes('/api/modules/data/metrics') && m === 'GET',
         respond: () => json(200, LIST) },
     ])
-    render(<App />)
+    render(<App initialTab="metrics" />)
     const edit = await waitFor(() => screen.getByText('编辑草稿'))
     edit.click()
     // 编辑器开着：确认生效（无草稿直接点也行——后端 404 有契约；这里走「先确认」最短链）
@@ -115,14 +115,14 @@ describe('移动指标页（spec 2026-11-01 §10.2）', () => {
       value: { pathname: '/app/data/', search: '', set href(v: string) { hrefs.push(v) } },
     })
     mockFetch([{ match: () => true, respond: () => json(401, { error: 'UNAUTHENTICATED' }) }])
-    render(<App />)
+    render(<App initialTab="metrics" />)
     await waitFor(() => expect(hrefs[0]).toContain('/api/platform/auth/wecom/silent?next='))
     expect(hrefs[0]).toContain(encodeURIComponent('/app/data/'))
   })
 
   it('认证升降（D7）：管理员见「撤回认证/标记认证」按钮；普通人不见（affordance 收在 scopes 上）', async () => {
     // 普通人（scopes 无 data:manage）：无按钮
-    render(<App />)
+    render(<App initialTab="metrics" />)
     await waitFor(() => expect(screen.getByText('我的毛利')).toBeTruthy())
     expect(screen.queryByText('标记认证')).toBeNull()
     expect(screen.queryByText('撤回认证')).toBeNull()
@@ -136,7 +136,7 @@ describe('移动指标页（spec 2026-11-01 §10.2）', () => {
       { match: (u, m) => u.endsWith('/certified') && m === 'PUT',
         respond: () => { puts.push('PUT certified'); return json(200, { ok: true }) } },
     ])
-    render(<App />)
+    render(<App initialTab="metrics" />)
     const btn = await waitFor(() => screen.getAllByText('标记认证'))
     expect(btn.length).toBeGreaterThan(0)          // L1 卡不给按钮（读侧恒 certified）
     fireEvent.click(btn[0]!)
@@ -144,7 +144,7 @@ describe('移动指标页（spec 2026-11-01 §10.2）', () => {
   })
 
   it('元数据展示：带标注的显示业务描述+单位；未标注的诚实显「未标注」（不编默认值）', async () => {
-    render(<App />)
+    render(<App initialTab="metrics" />)
     await waitFor(() => expect(screen.getByText('我的毛利')).toBeTruthy())
     expect(screen.getByText(/业务描述：出库口径毛利 · 单位：元/)).toBeTruthy()
     expect(screen.getAllByText('业务描述：未标注').length).toBeGreaterThan(0)   // 夹具里两条未标注（mine + L1）
@@ -158,7 +158,7 @@ describe('移动指标页（spec 2026-11-01 §10.2）', () => {
       { match: (u, m) => u.includes('/api/modules/data/metrics') && m === 'GET' && !u.includes('/draft'),
         respond: () => json(200, LIST) },
     ])
-    render(<App />)
+    render(<App initialTab="metrics" />)
     fireEvent.click(await waitFor(() => screen.getByText('元数据')))
     fireEvent.change(await waitFor(() => screen.getByPlaceholderText('给看数人读的话')), { target: { value: '毛利率=毛利÷收入' } })
     fireEvent.click(await waitFor(() => screen.getByText('保存元数据')))
@@ -189,7 +189,7 @@ describe('表达式指标编辑器（expr，两操作数算式条）', () => {
       if (url.includes('/api/modules/data/metrics') && (init?.method ?? 'GET') === 'GET' && !url.includes('/draft')) return json(200, LIST)
       throw new Error(`no mock for ${init?.method ?? 'GET'} ${url}`)
     }) as unknown as typeof fetch
-    render(<App />)
+    render(<App initialTab="metrics" />)
     fireEvent.click(await waitFor(() => screen.getByText('编辑草稿')))
     fireEvent.click(await waitFor(() => screen.getByText('表达式')))
     // 右侧默认是数字 1；把左项保持为第一个 L1（净销售额），直接保存草稿
@@ -212,7 +212,7 @@ describe('表达式指标编辑器（expr，两操作数算式条）', () => {
       }
       throw new Error(`no mock for ${init?.method ?? 'GET'} ${url}`)
     }) as unknown as typeof fetch
-    render(<App />)
+    render(<App initialTab="metrics" />)
     fireEvent.click(await waitFor(() => screen.getByText('新建表达式指标')))
     fireEvent.change(await waitFor(() => screen.getByPlaceholderText('指标 id')), { target: { value: 'xiongmao:gross_margin' } })
     // 先验禁用：数字项清空 ⇒ 不就绪，点「创建」不得发请求

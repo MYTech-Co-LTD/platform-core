@@ -10,7 +10,6 @@ import { Suspense, lazy, useEffect, useMemo, useState } from 'react'
 import type { ReactNode } from 'react'
 import { Link, Outlet, useLocation, useNavigate, useOutletContext } from 'react-router-dom'
 import { ProLayout } from '@ant-design/pro-components'
-import type { MenuDataItem } from '@ant-design/pro-components'
 import {
   AppstoreOutlined,
   BarChartOutlined,
@@ -32,7 +31,6 @@ import {
   Button,
   Card,
   ConfigProvider,
-  Drawer,
   Result,
   Spin,
   Typography,
@@ -196,114 +194,45 @@ export default function ConsoleShell() {
 }
 
 /**
- * 移动端壳（<768px）：**没有** PC 的顶栏/侧栏/页签——底部固定标签栏 + 内容一屏。
- * 顶层目的地 = 概览 + 最多 3 个模块 + 我的（主题/手机工作台/退出）。
- * 模块内部的页签由模块自己用**段控**呈现（不是 antd 横向 Menu）。
+ * 移动端打开 console：**不给配置界面**（产品口径 2026-11-04）——
+ * PC 端 = 租户管理员的全部配置 + 特殊业务页；业务操作走手机工作台 `/m`。
+ * 这里只做转场提示；`?desktop=1` 允许强开桌面版（排障/极少数场景）。
  */
-function MobileConsoleShell({
-  session, config, branding, dark, onToggleDark, menuItems, hasAdmin, onLogout, loggingOut,
-}: {
-  session: PlatformSession
-  config: PlatformConfig
+function MobileConfigNotice({ branding, dark, onToggleDark }: {
   branding: Branding
   dark: boolean
   onToggleDark: () => void
-  menuItems: MenuDataItem[]
-  hasAdmin: boolean
-  onLogout: () => void
-  loggingOut: boolean
 }) {
-  const location = useLocation()
-  const navigate = useNavigate()
-  const [sheetOpen, setSheetOpen] = useState(false)
-
-  const tops = menuItems.filter((m) => typeof m.path === 'string' && m.path !== '/console/admin')
-  const tabs = [
-    { path: '/console', name: '概览', icon: <DashboardOutlined /> as ReactNode },
-    ...tops
-      .filter((m) => m.path !== '/console')
-      .slice(0, 3)
-      .map((m) => ({ path: String(m.path), name: String(m.name ?? ''), icon: (m.icon ?? <AppstoreOutlined />) as ReactNode })),
-  ]
-  const isActive = (path: string) => (path === '/console'
-    ? location.pathname === '/console' || location.pathname === '/console/'
-    : location.pathname === path || location.pathname.startsWith(`${path}/`))
-
   return (
     <div style={{
-      minHeight: '100dvh', background: '#f5f5f5',
-      paddingBottom: 'calc(58px + env(safe-area-inset-bottom, 0px))',
+      minHeight: '100dvh', display: 'flex', flexDirection: 'column',
+      alignItems: 'center', justifyContent: 'center', textAlign: 'center',
+      padding: '32px 24px calc(32px + env(safe-area-inset-bottom, 0px))',
+      background: dark ? '#141414' : '#f5f5f5', color: dark ? '#e6e6e6' : '#1f1f1f',
+      boxSizing: 'border-box',
     }}>
-      <div style={{ padding: '10px 12px 0' }}>
-        <Outlet context={{ session, config, branding } satisfies ConsoleOutletContext} />
+      <div style={{ fontSize: 20, fontWeight: 600, marginBottom: 10 }}>配置请在电脑端完成</div>
+      <div style={{ fontSize: 14, lineHeight: 1.8, color: dark ? '#999' : '#888', marginBottom: 28 }}>
+        租户管理员的全部配置在 PC 控制台操作。
+        <br />
+        看报表、看指标等业务操作，请用手机工作台。
       </div>
-
-      <nav style={{
-        position: 'fixed', left: 0, right: 0, bottom: 0, zIndex: 100,
-        display: 'flex', background: '#fff', borderTop: '1px solid #ececec',
-        paddingBottom: 'env(safe-area-inset-bottom, 0px)',
-      }}>
-        {tabs.map((t) => (
-          <button
-            key={t.path}
-            type="button"
-            onClick={() => navigate(t.path)}
-            aria-current={isActive(t.path) ? 'page' : undefined}
-            style={{
-              flex: 1, height: 56, border: 'none', background: 'none', cursor: 'pointer',
-              display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: 2,
-              fontSize: 11, color: isActive(t.path) ? branding.primaryColor : '#8c8c8c',
-            }}
-          >
-            <span aria-hidden style={{ fontSize: 20, lineHeight: 1 }}>{t.icon}</span>
-            <span>{t.name}</span>
-          </button>
-        ))}
-        <button
-          type="button"
-          onClick={() => setSheetOpen(true)}
-          style={{
-            flex: 1, height: 56, border: 'none', background: 'none', cursor: 'pointer',
-            display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: 2,
-            fontSize: 11, color: '#8c8c8c',
-          }}
-        >
-          <span aria-hidden style={{ fontSize: 20, lineHeight: 1 }}><UserOutlined /></span>
-          <span>我的</span>
-        </button>
-      </nav>
-
-      <Drawer
-        placement="bottom"
-        open={sheetOpen}
-        onClose={() => setSheetOpen(false)}
-        closable={false}
-        height="auto"
-        title={session.user.displayName}
-        styles={{ body: { padding: '4px 0 16px' } }}
-      >
-        <button type="button" onClick={() => { setSheetOpen(false); onToggleDark() }}
-                style={{ display: 'block', width: '100%', padding: '15px 24px', border: 'none', background: 'none', textAlign: 'left', fontSize: 16, cursor: 'pointer' }}>
-          {dark ? '切换到浅色模式' : '切换到暗色模式'}
-        </button>
-        {hasAdmin ? (
-          <button type="button" onClick={() => { setSheetOpen(false); navigate('/console/admin/users') }}
-                  style={{ display: 'block', width: '100%', padding: '15px 24px', border: 'none', background: 'none', textAlign: 'left', fontSize: 16, cursor: 'pointer' }}>
-            管理控制台
-          </button>
-        ) : null}
-        <a href="/m" style={{ display: 'block', padding: '15px 24px', color: 'inherit', textDecoration: 'none', fontSize: 16 }}>
-          打开手机工作台
-        </a>
-        <button type="button" onClick={() => { setSheetOpen(false); onLogout() }} disabled={loggingOut}
-                style={{ display: 'block', width: '100%', padding: '15px 24px', border: 'none', background: 'none', textAlign: 'left', fontSize: 16, color: '#ff4d4f', cursor: 'pointer' }}>
-          退出登录
-        </button>
-        <button type="button" onClick={() => setSheetOpen(false)}
-                style={{ display: 'block', width: '100%', padding: '15px 24px', marginTop: 8, border: 'none', borderTop: '1px solid #f0f0f0', background: '#fafafa', textAlign: 'center', fontSize: 16, color: '#666', cursor: 'pointer' }}>
-          取消
-        </button>
-      </Drawer>
+      <a
+        href="/m"
+        style={{
+          display: 'inline-block', padding: '12px 30px', borderRadius: 999,
+          background: branding.primaryColor, color: '#fff', textDecoration: 'none', fontSize: 16,
+        }}
+      >打开手机工作台</a>
+      <button
+        type="button"
+        onClick={onToggleDark}
+        style={{ marginTop: 24, border: 'none', background: 'none', color: dark ? '#999' : '#aaa', fontSize: 13, cursor: 'pointer' }}
+      >{dark ? '切换到浅色模式' : '切换到暗色模式'}</button>
+      <a
+        href={`${window.location.pathname}${window.location.search}${window.location.search.includes('?') ? '&' : '?'}desktop=1`}
+        style={{ marginTop: 8, color: dark ? '#666' : '#bbb', fontSize: 12, textDecoration: 'underline' }}
+      >仍要打开桌面版</a>
     </div>
   )
 }
@@ -323,6 +252,7 @@ function ConsoleLayout({
 }) {
   const location = useLocation()
   const isMobile = useIsMobile()
+  const forceDesktop = new URLSearchParams(location.search).get('desktop') === '1'
   const [loggingOut, setLoggingOut] = useState(false)
 
   // 菜单位置规则（spec §3）在 console-menu.ts：概览 → pinned（case-engine）→ manifest 声明序
@@ -349,20 +279,8 @@ function ConsoleLayout({
     }
   }
 
-  if (isMobile) {
-    return (
-      <MobileConsoleShell
-        session={session}
-        config={config}
-        branding={branding}
-        dark={dark}
-        onToggleDark={onToggleDark}
-        menuItems={menuItems}
-        hasAdmin={menuItems.some((m) => m.path === '/console/admin')}
-        onLogout={() => void onLogout()}
-        loggingOut={loggingOut}
-      />
-    )
+  if (isMobile && !forceDesktop) {
+    return <MobileConfigNotice branding={branding} dark={dark} onToggleDark={onToggleDark} />
   }
 
   return (
