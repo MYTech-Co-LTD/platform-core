@@ -281,7 +281,9 @@ describePg('metric-store（需要 DATABASE_URL）', () => {
         // 治理（spec 2026-11-01 §10.4）：L2 首插写 created_by='fixture' + certified='draft'（读列）
         certified: 'draft', createdBy: 'fixture',
         // 元数据（030，§10.4.3）：L2 新建侧不写三列 ⇒ 未标注形态（nullable 直读）
-        bizDescription: null, unit: null, caliberNote: null })
+        bizDescription: null, unit: null, caliberNote: null,
+        // 实体 / 同义词（W0，031）：L2 行没有声明面 ⇒ 恒 null / []（读侧恒有值，不是可选）
+        entity: null, synonyms: [] })
   })
 
   it('deleteMetric 返「是否真删了一行」，且只删本租户的', async () => {
@@ -528,5 +530,45 @@ describePg('记人 / 版本 / 快照（#489）', () => {
     expect(snap).toMatchObject({ title: 't2', subjectColumn: 'org', groupBy: 'bizday' })
     expect(await selectMetricSnapshot(pool, ORG, 'no_such')).toBeNull()
     expect(await selectMetricSnapshot(pool, 'platform', 'ma_ver')).toBeNull()
+  })
+})
+
+// ── 031 迁移（W0，指标实体与同义词）：L1 声明侧两列的往返。─────────────────────────
+// 单独一个 describe：本组可被 `-t "entity/synonyms"` 单独跑（自己拉迁移，不依赖上文用例顺序）。
+describePg('031 迁移：entity / synonyms（W0 指标实体与同义词）', () => {
+  const pool = new Pool({ connectionString: dbUrl })
+  const W0_ORG = 'org-w0-test'
+  const W0_PREFIX = 'w0:test:'
+
+  afterAll(async () => {
+    // 平台桶是跨文件共用的：只删本组前缀（理由见文件顶部 L1_ID_PREFIX 的说明）。
+    await pool.query('delete from data.metrics where org = $1 and id like $2', [L1_ORG, `${W0_PREFIX}%`]).catch(() => {})
+    await pool.query('delete from data.metrics where org = $1', [W0_ORG]).catch(() => {})
+    await pool.end().catch(() => {})
+  })
+
+  it('L1 行的 entity/synonyms 往返一致；L2 行恒 NULL/空', async () => {
+    await applyMigrations(pool)
+    const def = {
+      id: 'w0:test:sales', title: '销售额', description: 'd', requiredScope: null,
+      subjectColumn: 'org', selectSql: 'select sum(sale_amount) as value from fct_retail_sale',
+      groupBy: 'org', params: {}, totalable: false, scopeNote: '', slaDays: 1,
+      sourceSystem: null, freshnessRelations: [], masks: null,
+      entity: 'branch', synonyms: ['营业额', '销售金额'],
+    }
+    await upsertL1Metric(pool, def as never)
+    const rows = await loadPlatformCatalog(pool)
+    const hit = rows.find((r) => r.id === 'w0:test:sales')!
+    expect(hit.entity).toBe('branch')
+    expect(hit.synonyms).toEqual(['营业额', '销售金额'])
+
+    await upsertMetric(pool, 'org-w0-test', {
+      id: 'w0:test:l2', title: 'L2', description: 'd', requiredScope: null,
+      subjectColumn: 'org', selectSql: 'select 1 as value from t', groupBy: 'org',
+      params: {}, totalable: false,
+    } as never, 'u-w0')
+    const l2 = (await loadMergedCatalog(pool, 'org-w0-test')).find((r) => r.id === 'w0:test:l2')!
+    expect(l2.entity).toBeNull()
+    expect(l2.synonyms).toEqual([])
   })
 })
