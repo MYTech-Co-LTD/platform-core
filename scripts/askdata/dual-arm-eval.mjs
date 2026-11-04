@@ -89,6 +89,7 @@ export const DATA_TOOLS = new Set([
 
 /**
  * @typedef {object} Turn
+ * @property {string} sessionId 会话隔离键（缺 session_id 的旧导出统一落空串）
  * @property {string} question
  * @property {number|null} ts
  * @property {boolean} systemic 系统注入/心跳轮（不是真实用户问题）
@@ -104,6 +105,7 @@ export const DATA_TOOLS = new Set([
  * @property {number} dataTurns
  * @property {number} queryDataTurns
  * @property {{hit: number, total: number, rate: number|null}} firstAnswerHit
+ * @property {{hit: number, total: number, rate: number|null}} zeroExplorationAndHit
  * @property {{mean: number|null, median: number|null, p90: number|null, max: number|null, turnsWithAny: number, distribution: Record<string, number>}} exploration
  * @property {Record<string, number>} hitReasons
  */
@@ -125,6 +127,8 @@ export const DATA_TOOLS = new Set([
  * @property {string} note
  * @property {number} matched
  * @property {number} delta
+ * @property {boolean} meaningless 没有 --contract 时为 true：历史轨迹里不可能出现 W2 私有测度 id，delta 不是有效增量
+ * @property {string|null} meaninglessReason
  * @property {ReachabilityRow[]} rows
  */
 
@@ -158,10 +162,8 @@ export function parseTrace(text) {
       throw new Error(`trace 第 ${i + 1} 行不是合法 JSON`)
     }
   }
-  // 有 seq 就按 seq 排（跨 partition 导出时行序不保证）；没有 seq 保持文件顺序。
-  if (rows.length > 0 && rows.every((r) => typeof r.seq === 'number')) {
-    rows.sort((a, b) => /** @type {number} */ (a.seq) - /** @type {number} */ (b.seq))
-  }
+  // 不在这里全局排序：seq 是全局单调的，但**多会话会交错**（A 会话的 tool_call 夹在 B 会话
+  // 两个 user 事件之间）。切轮必须按 session 分组、组内按 seq 排——见 segmentTurns。
   return rows
 }
 
@@ -176,43 +178,65 @@ function isSystemicQuestion(text) {
 }
 
 /**
- * 轮次切分：一个 user 事件起一轮。
+ * 轮次切分：**按 session 隔离**，每个会话内一个 user 事件起一轮。
+ *
+ * ⚠️ 为什么不能只按全局 seq 切：多会话并发时事件交错（A 的 tool_result 可能排在 B 的 user 之后），
+ * 全局切轮会把 B 的工具调用记到 A 的当前轮，首答即中/探索次数都会被污染。先分会话、组内定序。
  * @param {TraceRow[]} rows
  * @returns {Turn[]}
  */
 export function segmentTurns(rows) {
+  /** @type {Map<string, TraceRow[]>} */
+  const bySession = new Map()
+  for (const r of rows) {
+    const sid = typeof r.session_id === 'string' && r.session_id.length > 0 ? r.session_id : ''
+    let group = bySession.get(sid)
+    if (group === undefined) {
+      group = []
+      bySession.set(sid, group)
+    }
+    group.push(r)
+  }
+
   /** @type {Turn[]} */
   const turns = []
-  /** @type {Turn|null} */
-  let cur = null
-  for (const r of rows) {
-    const kind = r.kind ?? null
-    if (kind === 'user' || (r.role === 'user' && typeof r.text === 'string')) {
-      const question = (r.text ?? '').trim()
-      cur = {
-        question,
-        ts: typeof r.ts === 'number' ? r.ts : null,
-        systemic: isSystemicQuestion(question),
-        calls: [],
-        results: [],
-      }
-      turns.push(cur)
-      continue
+  for (const [sessionId, group] of bySession) {
+    // 组内定序：有 seq 用 seq；没有 seq 就保持该会话在文件里的相对顺序（不跨会话借序）。
+    if (group.length > 1 && group.every((r) => typeof r.seq === 'number')) {
+      group.sort((a, b) => /** @type {number} */ (a.seq) - /** @type {number} */ (b.seq))
     }
-    if (cur === null) continue
-    if (kind === 'tool_call' && typeof r.tool_name === 'string') {
-      cur.calls.push({
-        name: r.tool_name,
-        args: typeof r.tool_args === 'string' ? r.tool_args : null,
-        seq: typeof r.seq === 'number' ? r.seq : null,
-      })
-    } else if (kind === 'tool_result' && typeof r.tool_name === 'string') {
-      cur.results.push({
-        name: r.tool_name,
-        err: r.is_error === true,
-        text: typeof r.tool_result === 'string' ? r.tool_result : '',
-        seq: typeof r.seq === 'number' ? r.seq : null,
-      })
+    /** @type {Turn|null} */
+    let cur = null
+    for (const r of group) {
+      const kind = r.kind ?? null
+      if (kind === 'user' || (r.role === 'user' && typeof r.text === 'string')) {
+        const question = (r.text ?? '').trim()
+        cur = {
+          sessionId,
+          question,
+          ts: typeof r.ts === 'number' ? r.ts : null,
+          systemic: isSystemicQuestion(question),
+          calls: [],
+          results: [],
+        }
+        turns.push(cur)
+        continue
+      }
+      if (cur === null) continue
+      if (kind === 'tool_call' && typeof r.tool_name === 'string') {
+        cur.calls.push({
+          name: r.tool_name,
+          args: typeof r.tool_args === 'string' ? r.tool_args : null,
+          seq: typeof r.seq === 'number' ? r.seq : null,
+        })
+      } else if (kind === 'tool_result' && typeof r.tool_name === 'string') {
+        cur.results.push({
+          name: r.tool_name,
+          err: r.is_error === true,
+          text: typeof r.tool_result === 'string' ? r.tool_result : '',
+          seq: typeof r.seq === 'number' ? r.seq : null,
+        })
+      }
     }
   }
   return turns
@@ -239,19 +263,18 @@ export function metricIdOf(args) {
  * @returns {TurnScore}
  */
 export function scoreTurn(turn) {
-  // 探索动作只数「首次数据面工具之前」的那一段；之后模型已在取数，exec 可能是后处理。
+  // 探索动作的界 = **首次 query_data**（askdata-tuning 的「拿数」点）。list_metrics / query_detail
+  // 只是辅助面：`list_metrics → exec → query_data` 里的 exec 仍要算绕路（评审订正）。
   let explorationActions = 0
   /** @type {string|null} */
   let firstDataTool = null
   for (const c of turn.calls) {
     if (EXPLORE_TOOLS.has(c.name)) {
-      if (firstDataTool === null) explorationActions += 1
+      explorationActions += 1
       continue
     }
-    if (DATA_TOOLS.has(c.name)) {
-      firstDataTool = c.name
-      break
-    }
+    if (firstDataTool === null && DATA_TOOLS.has(c.name)) firstDataTool = c.name
+    if (c.name === 'query_data') break
   }
 
   const qdCalls = turn.calls.filter((c) => c.name === 'query_data')
@@ -331,6 +354,7 @@ export function summarize(scores) {
   const dataTurns = business.filter((s) => s.dataToolUsed)
   const qd = business.filter((s) => s.firstAnswerHit !== null)
   const hits = qd.filter((s) => s.firstAnswerHit === true).length
+  const zeroAndHit = qd.filter((s) => s.explorationActions === 0 && s.firstAnswerHit === true).length
   const ex = business.map((s) => s.explorationActions).sort((a, b) => a - b)
   /** @type {Record<string, number>} */
   const dist = {}
@@ -347,6 +371,12 @@ export function summarize(scores) {
     dataTurns: dataTurns.length,
     queryDataTurns: qd.length,
     firstAnswerHit: { hit: hits, total: qd.length, rate: qd.length > 0 ? hits / qd.length : null },
+    // 三条件（零探索 + 首答即中）的联合率：单看 68.5% 会被误读成「零绕路且一次中」。
+    zeroExplorationAndHit: {
+      hit: zeroAndHit,
+      total: qd.length,
+      rate: qd.length > 0 ? zeroAndHit / qd.length : null,
+    },
     exploration: {
       mean: ex.length > 0 ? sum / ex.length : null,
       median: quantile(ex, 0.5),
@@ -420,6 +450,18 @@ export function normalizeCatalog(raw) {
 }
 
 /**
+ * 从 `dbt/semantics/l1_metrics.yml` 原文抽指标 id（只认 `  - name: '...'`，与 check-profile-relations 同形）。
+ * 这样 catalog-a 不必手工导出成 /tmp JSON —— 仓内文件即事实源。
+ * @param {string} text
+ * @returns {Set<string>}
+ */
+export function catalogFromL1Yaml(text) {
+  const out = new Set()
+  for (const m of text.matchAll(/^ {2}- name: '([^']+)'/gm)) out.add(m[1])
+  return out
+}
+
+/**
  * 问题里按 label/synonyms/column 找最长命中（长度 >= 2，避免单字噪声）。
  * @param {string} question
  * @param {Measure} m
@@ -442,9 +484,14 @@ function measureMatchLength(question, m) {
  * @param {Measure[]} measures
  * @param {Set<string>} catalogA
  * @param {Record<string, string>} contract
+ * @param {boolean=} contractProvided CLI 是否显式给了 `--contract`（缺省按 contract 非空推断）
  * @returns {ReachabilityResult}
  */
-export function reachability(turns, measures, catalogA, contract) {
+export function reachability(turns, measures, catalogA, contract, contractProvided) {
+  // ⚠️ 没有 contract 时不能拿「历史最后一个 query_data 的 metricId」当金标：历史运行时根本
+  // 没有 W2 私有测度，金标恒在 A 词表里 ⇒ delta 恒 0，是个**结构性假零**。该路径显式标 meaningless。
+  const hasContract =
+    contractProvided !== undefined ? contractProvided : Object.keys(contract).length > 0
   /** @type {ReachabilityRow[]} */
   const matched = []
   for (const t of turns) {
@@ -460,6 +507,17 @@ export function reachability(turns, measures, catalogA, contract) {
       }
     }
     if (best === null) continue
+    if (!hasContract) {
+      matched.push({
+        question: t.question,
+        matchedMeasure: best.id,
+        goldMetric: null,
+        aHasGold: false,
+        bHasGold: false,
+        delta: false,
+      })
+      continue
+    }
     const gold = contract[t.question] ?? lastMetricId(t)
     if (gold === null) continue
     const aHasGold = catalogA.has(gold)
@@ -478,6 +536,10 @@ export function reachability(turns, measures, catalogA, contract) {
   return {
     mode: 'reachability',
     observedModelBehaviour: false,
+    meaningless: !hasContract,
+    meaninglessReason: hasContract
+      ? null
+      : '缺少 --contract：历史轨迹里不存在 W2 私有测度 id，按历史 metricId 推金标只会得到结构性 delta=0；部署后需人工提供「问题→金标」契约再测。',
     note:
       '可达性不是模型实测：available ⇒ 有机会首答即中，不等于首答即中。B 臂模型行为需要 W2 部署后用真实会话跑。',
     matched: matched.length,
@@ -520,6 +582,10 @@ export function formatReport(result) {
       (a.firstAnswerHit.rate === null ? ' (n/a)' : ` = ${(a.firstAnswerHit.rate * 100).toFixed(1)}%`),
   )
   lines.push(
+    `  零探索且首答即中: ${a.zeroExplorationAndHit.hit}/${a.zeroExplorationAndHit.total}` +
+      (a.zeroExplorationAndHit.rate === null ? ' (n/a)' : ` = ${(a.zeroExplorationAndHit.rate * 100).toFixed(1)}%`),
+  )
+  lines.push(
     `  探索动作(read|tool_search|tool_describe|exec): mean=${fmt(a.exploration.mean)} ` +
       `median=${fmt(a.exploration.median)} p90=${fmt(a.exploration.p90)} max=${fmt(a.exploration.max)} ` +
       `有绕路的轮次=${a.exploration.turnsWithAny}`,
@@ -533,7 +599,12 @@ export function formatReport(result) {
   } else {
     lines.push(`  模式: ${b.mode}（模型实测=${b.observedModelBehaviour ? '是' : '否'}）`)
     lines.push(`  可匹配轮次: ${b.matched}；A 缺→B 有: ${b.delta}`)
-    if (b.matched === 0) lines.push('  ⇒ 本批真实样本里没有需要私有测度档的问题（B 臂不可测，不编）。')
+    if (b.meaningless) {
+      lines.push('  ⚠️ B 臂无意义（bArmMeaningless=true）：未提供 --contract，历史轨迹里没有私有测度 id ⇒ delta 结构性为 0。')
+      lines.push(`  原因: ${b.meaninglessReason}`)
+    } else if (b.matched === 0) {
+      lines.push('  ⇒ 本批真实样本里 0 条问题文本命中注入测度标签（子串匹配）；B 臂无可测样本，不编。')
+    }
     lines.push(`  口径: ${b.note}`)
   }
   return lines.join('\n')
@@ -570,7 +641,7 @@ export function main(argv) {
     const arg = argv[i]
     if (arg === '--json') {
       json = true
-    } else if (arg === '--trace' || arg === '--inject' || arg === '--catalog' || arg === '--contract' || arg === '--b-mode') {
+    } else if (arg === '--trace' || arg === '--inject' || arg === '--catalog' || arg === '--catalog-yaml' || arg === '--contract' || arg === '--b-mode') {
       const v = argv[i + 1]
       if (typeof v !== 'string' || v.startsWith('--')) {
         console.error(`dual-arm-eval: ${arg} 需要一个参数`)
@@ -587,7 +658,7 @@ export function main(argv) {
       maxExamples = Math.floor(v)
       i += 1
     } else if (arg === '--help' || arg === '-h') {
-      console.log('usage: dual-arm-eval.mjs --trace <jsonl> [--inject <json>] [--catalog <json>] [--contract <json>] [--b-mode reachability|model] [--json] [--max-examples N]')
+      console.log('usage: dual-arm-eval.mjs --trace <jsonl> [--inject <json>] [--catalog <json>|--catalog-yaml dbt/semantics/l1_metrics.yml] [--contract <json>] [--b-mode reachability|model] [--json] [--max-examples N]')
       return 0
     } else {
       console.error(`dual-arm-eval: 未知参数 ${arg}`)
@@ -625,9 +696,9 @@ export function main(argv) {
 
   /** @type {object|null} */
   let b = null
-  if (opts.inject !== undefined || opts.catalog !== undefined) {
-    if (opts.inject === undefined || opts.catalog === undefined) {
-      console.error('dual-arm-eval: B 臂需要 --inject 与 --catalog 同时提供（缺一个就没法判可达性）')
+  if (opts.inject !== undefined || opts.catalog !== undefined || opts['catalog-yaml'] !== undefined) {
+    if (opts.inject === undefined || (opts.catalog === undefined && opts['catalog-yaml'] === undefined)) {
+      console.error('dual-arm-eval: B 臂需要 --inject，且 --catalog 或 --catalog-yaml 二选一（缺就没法判可达性）')
       return 2
     }
     /** @type {Measure[]} */
@@ -638,7 +709,11 @@ export function main(argv) {
     let contract = {}
     try {
       measures = normalizeMeasures(readJson(opts.inject))
-      catalogA = normalizeCatalog(readJson(opts.catalog))
+      if (opts['catalog-yaml'] !== undefined) {
+        catalogA = catalogFromL1Yaml(readFileSync(opts['catalog-yaml'], 'utf8'))
+      } else {
+        catalogA = normalizeCatalog(readJson(/** @type {string} */ (opts.catalog)))
+      }
       if (opts.contract !== undefined) {
         const raw = readJson(opts.contract)
         if (raw !== null && typeof raw === 'object' && !Array.isArray(raw)) {
@@ -649,17 +724,21 @@ export function main(argv) {
       console.error(`dual-arm-eval: 读 B 臂输入失败: ${e instanceof Error ? e.message : String(e)}`)
       return 1
     }
+    if (catalogA.size === 0) {
+      console.error('dual-arm-eval: A 词表为空（--catalog / --catalog-yaml 没解析出指标 id）')
+      return 1
+    }
     if (measures.length === 0) {
       console.error('dual-arm-eval: --inject 里没有合法测度卡（需要 id/label）')
       return 1
     }
-    b = reachability(turns, measures, catalogA, contract)
+    b = reachability(turns, measures, catalogA, contract, opts.contract !== undefined)
   }
 
   const result = {
     trace: opts.trace,
     inject: opts.inject ?? null,
-    catalog: opts.catalog ?? null,
+    catalog: opts.catalog ?? opts['catalog-yaml'] ?? null,
     armA: summarize(scores),
     armB: b,
     examples: scores
