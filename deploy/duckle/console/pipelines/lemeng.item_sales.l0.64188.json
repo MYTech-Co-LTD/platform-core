@@ -3,15 +3,10 @@
   "id": "lemeng.item_sales.l0.64188",
   "version": 1,
   "_note": [
-    "乐檬 AMAREPORT itemsales（商品销售分析）——写湖 lemeng/item_sales/system_book=<book>/bizday=<day>/all.parquet。",
-    "粒度：system_book × bizday × branch_num × item_num（summary_types=[branch,item]）。",
-    "",
-    "①【身份自证（fail-closed）】whoami → company_id == SYSTEM_BOOK、env BRANCH_NUMS ⊆ whoami branch_nums；任一不满足拒采。",
-    "②【分块扇出】AMAREPORT 硬约束：branch_nums 必填、单请求 ≤100 家、日期窗 ≤31 天。",
-    "   ⇒ drv 按 whoami 名单切块（floor(rn/100.0)），ctl.foreach 逐块调子管线 lemeng.item_sales.day。",
-    "③【汇总闸】子管线每块写 .duckle-stage/item_sales/chunk-<batch_id>-<n>.parquet；父侧只认本次 batch_id，",
-    "   断块数/门店数一致 → qa.contract → 才写湖。",
-    "④【回填】同一条管线换时间窗（gen-backfill-variants.mjs 派生 ${BIZDAY} 变体）。"
+    "乐檬 item_sales（nhsoft.report.ai.itemsales.find）日粒度采集——写湖 lemeng/item_sales/system_book=<book>/bizday=<day>/all.parquet。",
+    "① 身份自证（whoami）② 按 100 家切块 ctl.foreach ③ 汇总闸：分块到齐 + 父级全空栅 + 契约闸。",
+    "父级全空栅（#1314）：所有块 chunk_n_matched 之和为 0 才拒写湖；部分块空属正常。",
+    "④ 回填：gen-backfill-variants 派生 ${BIZDAY} 变体。"
   ],
   "nodes": [
     {
@@ -258,7 +253,7 @@
         "label": "s",
         "componentId": "code.sql",
         "properties": {
-          "sql": "SELECT\n  CAST(batch_id AS VARCHAR) AS batch_id,\n  CAST(system_book AS INTEGER) AS system_book,\n  CAST(bizday AS DATE) AS bizday,\n  CAST(branch_num AS INTEGER) AS branch_num,\n  CAST(branch_code AS VARCHAR) AS branch_code,\n  CAST(branch_name AS VARCHAR) AS branch_name,\n  CAST(item_num AS INTEGER) AS item_num,\n  CAST(item_code AS VARCHAR) AS item_code,\n  CAST(item_name AS VARCHAR) AS item_name,\n  CAST(spec AS VARCHAR) AS spec,\n  CAST(unit AS VARCHAR) AS unit,\n  CAST(sale_count AS DECIMAL(20,4)) AS sale_count,\n  CAST(sale_num AS DECIMAL(20,4)) AS sale_num,\n  CAST(total_num AS DECIMAL(20,4)) AS total_num,\n  CAST(sale_money AS DECIMAL(20,2)) AS sale_money,\n  CAST(item_price AS DECIMAL(20,6)) AS item_price,\n  CAST(return_num AS DECIMAL(20,4)) AS return_num,\n  CAST(return_money AS DECIMAL(20,2)) AS return_money,\n  CAST(present_num AS DECIMAL(20,4)) AS present_num,\n  CAST(discount_money AS DECIMAL(20,2)) AS discount_money,\n  CAST(order_detail_share_discount AS DECIMAL(20,2)) AS order_detail_share_discount,\n  CAST(computed_at AS TIMESTAMPTZ) AS computed_at\nFROM input\n"
+          "sql": "SELECT\n  CAST(batch_id AS VARCHAR) AS batch_id,\n  CAST(system_book AS INTEGER) AS system_book,\n  CAST(bizday AS DATE) AS bizday,\n  CAST(branch_num AS INTEGER) AS branch_num,\n  CAST(branch_code AS VARCHAR) AS branch_code,\n  CAST(branch_name AS VARCHAR) AS branch_name,\n  CAST(item_num AS INTEGER) AS item_num,\n  CAST(item_code AS VARCHAR) AS item_code,\n  CAST(item_name AS VARCHAR) AS item_name,\n  CAST(spec AS VARCHAR) AS spec,\n  CAST(unit AS VARCHAR) AS unit,\n  CAST(sale_count AS DECIMAL(20,4)) AS sale_count,\n  CAST(sale_num AS DECIMAL(20,4)) AS sale_num,\n  CAST(total_num AS DECIMAL(20,4)) AS total_num,\n  CAST(sale_money AS DECIMAL(20,2)) AS sale_money,\n  CAST(item_price AS DECIMAL(20,6)) AS item_price,\n  CAST(return_num AS DECIMAL(20,4)) AS return_num,\n  CAST(return_money AS DECIMAL(20,2)) AS return_money,\n  CAST(present_num AS DECIMAL(20,4)) AS present_num,\n  CAST(discount_money AS DECIMAL(20,2)) AS discount_money,\n  CAST(order_detail_share_discount AS DECIMAL(20,2)) AS order_detail_share_discount,\n  CAST(computed_at AS TIMESTAMPTZ) AS computed_at\nFROM input\nWHERE branch_num IS NOT NULL\n"
         }
       }
     },
@@ -305,6 +300,37 @@
           "mode": "overwrite",
           "compression": "zstd",
           "connectionRef": "zos"
+        }
+      }
+    },
+    {
+      "id": "gall",
+      "type": "transform",
+      "position": {
+        "x": 0,
+        "y": 0
+      },
+      "data": {
+        "label": "gall",
+        "componentId": "code.sql",
+        "properties": {
+          "sql": "-- 父级全空栅（issue #1314）：所有块的 chunk_n_matched 之和为 0 才判「整天真无数据」。\n-- 部分块为空是正常现象（新店未开业/老店已关店），占位行的 chunk_n_matched=0 不参与计数。\nSELECT 1 AS all_empty FROM input HAVING coalesce(sum(CAST(chunk_n_matched AS INTEGER)), 0) = 0"
+        }
+      }
+    },
+    {
+      "id": "dall",
+      "type": "transform",
+      "position": {
+        "x": 0,
+        "y": 0
+      },
+      "data": {
+        "label": "dall",
+        "componentId": "ctl.die",
+        "properties": {
+          "condition": "has-rows",
+          "message": "全部块 0 家门店有数据（bizday=${date-1d}，共 {rows} 块）——权限收窄 / 月份锚错 / 网关空集，拒绝写湖"
         }
       }
     }
@@ -484,6 +510,26 @@
       "id": "e-gc-snk",
       "source": "gc",
       "target": "snk",
+      "sourceHandle": "main",
+      "targetHandle": "main",
+      "data": {
+        "connectionType": "main"
+      }
+    },
+    {
+      "id": "e_gall",
+      "source": "dasm",
+      "target": "gall",
+      "sourceHandle": "main",
+      "targetHandle": "main",
+      "data": {
+        "connectionType": "main"
+      }
+    },
+    {
+      "id": "e_dall",
+      "source": "gall",
+      "target": "dall",
       "sourceHandle": "main",
       "targetHandle": "main",
       "data": {
