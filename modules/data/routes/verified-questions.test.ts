@@ -56,7 +56,7 @@ async function seed(over: Partial<CandidateInput> = {}, org = ORG): Promise<numb
 }
 
 const getVerified = (query = '', org = ORG) =>
-  app(org).request(`/metrics/verified${query}`)
+  app(org, ['data:manage']).request(`/metrics/verified${query}`)
 
 const postAction = (id: number | string, action: 'verify' | 'reject', org = ORG, userId = ADMIN) =>
   app(org, ['data:query', 'data:manage'], userId).request(`/metrics/verified/${id}/${action}`, { method: 'POST' })
@@ -124,7 +124,7 @@ describePg('已验证问答平台 API（需要 DATABASE_URL）', () => {
   it('无身份（orgId 空）⇒ 空列表（不是报错，也不是全租户数据）', async () => {
     await seed()
     const anon = await buildTestApp(
-      mod, makeIdentity({ orgId: '', scopes: ['data:query'] }), { pool }, { id: 1, casdoor_org: ORG }, [],
+      mod, makeIdentity({ orgId: '', scopes: ['data:manage'] }), { pool }, { id: 1, casdoor_org: ORG }, [],
     ).request('/metrics/verified')
     expect(anon.status).toBe(200)
     expect(await anon.json()).toEqual({ questions: [] })
@@ -171,6 +171,23 @@ describePg('已验证问答平台 API（需要 DATABASE_URL）', () => {
     })
     expect(rejected[0]!.decidedAt).not.toBeNull()
     expect(await listVerified(pool, ORG, { metricId: 'lemeng:retail:sales' })).toHaveLength(0)
+  })
+
+  // ── 写面：拒绝空哨兵基线 ──────────────────────────────────────────────────────
+  it('POST /:id/verify：空哨兵基线（重放失败的候选）⇒ 409 EMPTY_BASELINE，行保持 candidate', async () => {
+    const id = await seed({
+      question: '重放失败的空基线',
+      metricId: 'lemeng:retail:empty-baseline',
+      strength: 'weak',
+      baseline: { columns: [], rowCount: 0, summary: {} },
+    })
+
+    const res = await postAction(id, 'verify')
+    expect(res.status).toBe(409)
+    expect(await res.json()).toEqual({ error: 'EMPTY_BASELINE' })
+    const rows = await listVerified(pool, ORG, { status: 'candidate', metricId: 'lemeng:retail:empty-baseline' })
+    expect(rows).toHaveLength(1)
+    expect(rows[0]).toMatchObject({ id, status: 'candidate', verifiedBy: null })
   })
 
   // ── 租户隔离 / 形状闸 ─────────────────────────────────────────────────────────

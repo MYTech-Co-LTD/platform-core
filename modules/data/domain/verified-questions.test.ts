@@ -5,6 +5,7 @@
 import { afterAll, beforeAll, describe, expect, it } from 'vitest'
 import { Pool } from 'pg'
 import {
+  EmptyBaselineError,
   listVerified,
   recordCheck,
   setStatus,
@@ -220,6 +221,29 @@ describePg('verified-questions（需要 DATABASE_URL）', () => {
     expect(verified).toMatchObject({ decidedBy: 'u-verifier', verifiedBy: 'u-verifier' })
     expect(verified.verifiedAt).not.toBeNull()
     expect(verified.decidedAt).not.toBeNull()
+  })
+
+  it('setStatus 置 verified 拒绝空哨兵基线（columns 空 / rowCount null），行状态不动', async () => {
+    const metricId = 'lemeng:retail:empty-baseline'
+    // 摄入重放失败的形状：空哨兵 baseline + candidate（Task 5）
+    await upsertCandidate(pool, ORG, {
+      question: '重放失败的问题', metricId,
+      params: {}, slicing: {}, baseline: { columns: [], rowCount: 0, summary: {} },
+      source: 'auto', strength: 'weak',
+    })
+    const row = (await listVerified(pool, ORG, { status: 'candidate', metricId }))[0]!
+    await expect(setStatus(pool, ORG, row.id, 'verified', 'u-admin')).rejects.toThrow(EmptyBaselineError)
+    expect((await listVerified(pool, ORG, { status: 'candidate', metricId }))[0]!.status).toBe('candidate')
+
+    // rowCount 为 null 同样不可确认（不能把「行数未知」当成 0）
+    await upsertCandidate(pool, ORG, {
+      question: '行数未知的问题', metricId: `${metricId}-null`,
+      params: {}, slicing: {},
+      baseline: { columns: ['value'], rowCount: null as unknown as number, summary: {} },
+      source: 'auto', strength: 'weak',
+    })
+    const nullRow = (await listVerified(pool, ORG, { status: 'candidate', metricId: `${metricId}-null` }))[0]!
+    await expect(setStatus(pool, ORG, nullRow.id, 'verified', 'u-admin')).rejects.toThrow(EmptyBaselineError)
   })
 
   it('跨租户不串：别的 org 看不到本租户行，也改不动', async () => {

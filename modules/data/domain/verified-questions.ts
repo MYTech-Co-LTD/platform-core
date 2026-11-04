@@ -104,7 +104,9 @@ export interface VerifiedQuestion {
   verifiedBy: string | null
   verifiedAt: string | null
   /** 最近一次人工决策（确认**或**拒绝）的操作人；自动信号 = null。
-   *  与 `verifiedBy` 分开是刻意的：拒绝不抹掉「谁确认过」，确认也不抹掉「谁拒绝过」的审计面。 */
+   *  与 `verifiedBy` 分开：`verifiedBy` 只记「谁确认过」（拒绝不会清掉它）；本列只保留
+   *  **最近一次**决策——同一行被拒绝后又确认时，之前的拒绝人不再保留（审计要全历史请查
+   *  `query_audit` / 后续决策流水，本表不承担）。 */
   decidedBy: string | null
   decidedAt: string | null
   lastCheckedAt: string | null
@@ -121,6 +123,28 @@ export interface ListVerifiedOptions {
 }
 
 type Row = Record<string, unknown>
+
+/**
+ * 空哨兵基线（摄入重放失败时写入：`columns=[] / summary={}`）没有任何可回归的数值。
+ * 把它置为 `verified` 会产生一条「已验证但永远比不了」的假用例 ⇒ 入口拒绝。
+ * 路由层据此映射 409 `EMPTY_BASELINE`（拒绝是状态冲突，不是请求形状错）。
+ */
+export class EmptyBaselineError extends Error {
+  readonly code = 'EMPTY_BASELINE'
+
+  constructor() {
+    super('setStatus: 空哨兵基线（columns 空 / rowCount 缺失）不能置为 verified')
+    this.name = 'EmptyBaselineError'
+  }
+}
+
+/** 基线是否可用：列集非空且行数已知（`rowCount` 可能是 jsonb null）。 */
+function hasUsableBaseline(raw: unknown): boolean {
+  if (raw === null || typeof raw !== 'object') return false
+  const baseline = raw as Partial<Baseline>
+  return Array.isArray(baseline.columns) && baseline.columns.length > 0
+    && baseline.rowCount !== null && baseline.rowCount !== undefined
+}
 
 function iso(v: unknown): string | null {
   return v === null || v === undefined ? null : new Date(v as string | Date).toISOString()
@@ -309,6 +333,10 @@ export async function listVerified(
  * 置 `verified` 时同时把 `source`/`strength` 升为 `human`——「人工确认」本身就是最强档信号；
  * 不升会留下 `status='verified'` 而 `strength='weak'` 的自相矛盾行（计划 Task 2 定案）。
  *
+ * **空哨兵基线不得置 verified**：重放失败的 candidate 基线与 `columns=[] / summary={}`，
+ * 没有可比较的数值，确认它只会得到一条永远比不了的假回归用例。命中时抛 `EmptyBaselineError`
+ * （路由映射 409），且在 UPDATE 之前判定——行保持原状态。
+ *
  * 返回是否命中本租户的行：`false` = id 不存在或属于别的 org ⇒ 路由层回 404
  * （跨租户不暴露「这个 id 是否存在」，与模块内「非法 id 一律 404」同口径）。
  */
@@ -323,6 +351,15 @@ export async function setStatus(
         ? 'setStatus: 置 verified 必须带确认人（审计要能回答谁确认的）'
         : 'setStatus: 置 rejected 必须带操作人（审计要能回答谁拒绝的）',
     )
+  }
+  if (status === 'verified') {
+    const { rows } = await pool.query(
+      `select baseline from data.verified_questions where org = $1 and id = $2`,
+      [org, id],
+    )
+    const row = (rows as Row[])[0]
+    if (row === undefined) return false
+    if (!hasUsableBaseline(row.baseline)) throw new EmptyBaselineError()
   }
   const { rowCount } = await pool.query(
     `update data.verified_questions

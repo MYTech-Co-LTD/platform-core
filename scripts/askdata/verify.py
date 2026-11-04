@@ -11,10 +11,14 @@
   负信号优先（同一窗口里「对，但是算错了」按负判）；负信号只进统计，平台侧不入回归集。
 
 身份提取：只认真正的查数工具（`QUERY_TOOLS`，名字以仓内实际为准，不猜）：
-  · chat 插件 `deploy/openclaw/data-query-plugin/index.js`：query_data / query_detail；
+  · chat 插件 `deploy/openclaw/data-query-plugin/index.js`：query_data；
   · 直连 MCP 分析师面 `modules/data/domain/toolbox/registry.ts`：query_metric。
   一轮里多次查询 ⇒ 取**最后一次成功**的那次作该轮身份；取不到 metricId 或没有成功回包 ⇒ 跳过并计数。
   legacy 每指标工具（sanitized 名）不进：名字不可逆、参数里也没有 metricId。
+  ⚠️ `query_detail`（下钻）**W1 不计**：摄入侧重放走的是聚合执行器 `runQuery`，而 drill 的
+  `slicing.orderBy` 是字符串、`authz.ts` 按数组遍历 ⇒ 恒 `unknown_order_column:undefined`，
+  每条 drill 事件都会落 candidate/error 且回归覆盖是假的。drill 需要自己的重放执行器，
+  归 W2（届时同时补回本集合与事件契约，不在本波加 `tool` 字段）。
 
 水位（ASK_VERIFY_WM，按 agent 一份，同 #963）：只处理新事件、成功后才前进。
   · 首跑（水位文件不存在）取**库尾部** FETCH 行（同 attribute.py），追当前会话，不被积压占满；
@@ -33,7 +37,8 @@
     同一指标跨天追问若紧邻也会被判负；是否关掉见 NEG_ON_REASK_DIFFERENT_PARAMS。
   · userId：只认事件顶层/消息层/会话层，取不到写空串（不猜，也不进回包内容捞别人的 id）。
   · 水位前只回看 PRECONTEXT_ROWS 条；超长轮可能拿不到用户原文 ⇒ 该轮跳过并计数。
-  · 未配对调用在会话静默后仍无回包 ⇒ 按失败跳过（不无限 hold）。
+  · 未配对调用在会话静默后仍无回包 ⇒ 按失败跳过（不无限 hold）；会话仍活跃但**该轮本身**
+    已超过静默阈值同样落定（否则活跃会话里一条卡死的调用会永久按住水位）。
 """
 import importlib.util
 import json
@@ -61,7 +66,9 @@ NEG_ON_REASK_DIFFERENT_PARAMS = True
 
 # 查数工具（不是发现类工具：list_metrics / describe_metric / sample_dimension_values /
 # get_freshness / preview_query 都不算「回答了一个数」）。
-QUERY_TOOLS = frozenset(("query_data", "query_detail", "query_metric"))
+# query_detail（下钻）**暂不进**：drill 重放需要独立执行器（见文件头「身份提取」），
+# 聚合执行器重放 drill 参数恒错 ⇒ 现在的信号只会污染回归集。W2 接通后加回。
+QUERY_TOOLS = frozenset(("query_data", "query_metric"))
 
 FETCH = int(os.environ.get("ASK_FETCH", "5000"))
 # 水位前的回看行数：只是为了让批首那轮能拿到它的用户问题（不重复产出事件）。
@@ -314,6 +321,19 @@ def _session_idle(rows, now_ms):
     return now_ms - max(stamps) >= IDLE_SETTLE_SECONDS * 1000
 
 
+def _round_stale(rd, now_ms):
+    """**该轮自己**是否已经超过静默阈值（不受会话后续事件影响）。
+
+    会话可能一直有动静（用户换了话题），但一条卡死的未配对调用永远等不到回包 ⇒ 只按
+    会话级 idle 判会让它永久 hold、水位永不前进。轮本身足够旧就按失败落定。
+    缺时间戳 ⇒ 不作「旧」的结论（保持原行为）。
+    """
+    ts = rd.get("ts")
+    if not isinstance(ts, (int, float)):
+        return False
+    return now_ms - ts >= IDLE_SETTLE_SECONDS * 1000
+
+
 def extract_events(rows, org, since=0, now_ms=None, user_ids=None):
     """纯函数：归一化事件列表 → (events, next_watermark, stats)。
 
@@ -365,8 +385,9 @@ def extract_events(rows, org, since=0, now_ms=None, user_ids=None):
             # 窗口边界：末尾那条 tool_call 的回包可能还在下一批。未配对的**新**调用若被当
             # 「失败」跳过、水位又越过它，那一轮就会白跑一次（靠上面的整轮判新兜底，但这里
             # 不前进更省事）。静默后仍未配对 ⇒ 真失败，按下限跳过（不无限 hold）。
+            # 会话仍活跃但该轮本身已老（用户换了话题）⇒ 同样落定，否则一条卡死调用会永久按水位。
             incomplete = [c for c in calls if (c.get("seq") or 0) > since and not c.get("paired")]
-            if incomplete and not idle:
+            if incomplete and not idle and not _round_stale(rd, now_ms):
                 stats["held_incomplete"] += 1
                 hold_at.append(max(since, (rd["user_seq"] or 0) - 1))
                 continue
@@ -439,17 +460,35 @@ def post(base, org, auth, stream, batch):
 
 
 def _read_watermark(path):
+    """读水位；文件不存在 / 空 / 纯空白 ⇒ None（= **没有水位**，首跑口径）。
+
+    空文件曾被读成 0 而 `main` 只按 `os.path.exists` 判首跑 ⇒ 一次中断留下的空文件会让
+    模式从「取库尾部」翻成「从最旧读起」。显式写了 `0` 的文件仍是 0（那是运维的明确选择）。
+    """
     if not os.path.exists(path):
-        return 0
+        return None
     try:
-        return int(open(path).read().strip() or "0")
+        with open(path) as fh:
+            raw = fh.read().strip()
+    except OSError:
+        return None
+    if raw == "":
+        return None
+    try:
+        return int(raw)
     except ValueError:
-        return 0
+        return None
 
 
 def _write_watermark(path, value):
+    """临时文件 + rename 原子替换：进程中断不会留下半截水位文件。"""
     os.makedirs(os.path.dirname(path) or ".", exist_ok=True)
-    open(path, "w").write(str(value))
+    tmp = "%s.tmp-%d" % (path, os.getpid())
+    with open(tmp, "w") as fh:
+        fh.write(str(value))
+        fh.flush()
+        os.fsync(fh.fileno())
+    os.replace(tmp, path)
 
 
 # ── 入口 ────────────────────────────────────────────────────────────────────
@@ -468,11 +507,11 @@ def main(argv=None, env=None):
 
     wm_path = env.get("ASK_VERIFY_WM", "/var/lib/askdata/verify.watermark")
     stream = env.get("ASK_VERIFY_STREAM", "askdata_verified")
-    since = _read_watermark(wm_path)
-    # 首跑（水位文件不存在）：默认取**库尾部**（同 attribute.py），追当前会话。
+    stored = _read_watermark(wm_path)
+    # 首跑（水位文件不存在 / 空）= `stored is None`：默认取**库尾部**（同 attribute.py），追当前会话。
     # ASK_VERIFY_SINCE 可显式指定起点（运维重放/基线用；设 0 = 从头，明确要全量历史）。
     tail = False
-    if not os.path.exists(wm_path):
+    if stored is None:
         override = env.get("ASK_VERIFY_SINCE")
         if override is not None and str(override).strip() != "":
             try:
@@ -480,7 +519,10 @@ def main(argv=None, env=None):
             except ValueError:
                 sys.exit("SYNC_FAIL bad ASK_VERIFY_SINCE")
         else:
+            since = 0
             tail = True
+    else:
+        since = stored
 
     export_mod = load_export_module()
     try:

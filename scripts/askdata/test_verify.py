@@ -193,8 +193,12 @@ class SignalTest(unittest.TestCase):
         self.assertEqual(events[0]["metricId"], "lemeng:retail:net_sales")
         self.assertEqual(events[0]["signal"], "strong")
 
-    def test_query_detail_extracts_slicing(self):
-        """query_detail 的 dimensions/limit 等进 slicing，args 进 params。"""
+    def test_query_detail_not_emitted_in_w1(self):
+        """W1 不把 query_detail 当查数工具：drill 重放要独立执行器（W2 再接通）。
+
+        聚合执行器重放 drill 参数恒错（orderBy 字符串 vs 数组）⇒ 产出的事件只会把回归集
+        每条 drill 都落成 candidate/error。宁可不出，也不出假覆盖。
+        """
         rows = [
             user("s1", 1, "哪几单最大"),
             call("s1", 2, "query_detail",
@@ -204,11 +208,10 @@ class SignalTest(unittest.TestCase):
             result("s1", 3, "query_detail", "c1"),
             user("s1", 4, "谢谢"),
         ]
-        events, _, _ = verify.extract_events(rows, "org1", now_ms=IDLE_LATER)
-        self.assertEqual(json.loads(events[0]["slicing"]),
-                         {"dimensions": ["order_id"], "limit": 10})
-        self.assertEqual(json.loads(events[0]["params"]),
-                         {"bizday": {"from": "2026-05-01", "to": "2026-05-01"}})
+        events, _, stats = verify.extract_events(rows, "org1", now_ms=IDLE_LATER)
+        self.assertEqual(events, [])
+        self.assertEqual(stats["emitted"], 0)
+        self.assertEqual(stats["orphan_queries"], 0)
 
     def test_unsettled_turn_holds_watermark(self):
         """回答后还没等到后续用户消息（未静默）⇒ 本轮不判、水位不前移。"""
@@ -287,6 +290,21 @@ class SignalTest(unittest.TestCase):
         self.assertEqual(stats["held_incomplete"], 0)
         self.assertEqual(wm, 2)
 
+    def test_old_stuck_call_settles_when_session_active(self):
+        """会话仍活跃（有新事件）但卡死调用所在轮已过静默阈值 ⇒ 不再 hold（水位不永久卡住）。"""
+        rows = [
+            user("s1", 1, "5月销售额", ts=BASE_TS),
+            call("s1", 2, "query_data", net_sales(), "c1", ts=BASE_TS + 1000),  # 无 result
+            # 会话后续还有动静（用户换了话题）⇒ 会话本身未静默
+            user("s1", 3, "换个问题", ts=BASE_TS + 3600 * 1000),
+        ]
+        now = BASE_TS + 3600 * 1000 + 60 * 1000   # 距最后事件 1 分钟；距第一轮已 1 小时+
+        events, wm, stats = verify.extract_events(rows, "org1", now_ms=now, since=0)
+        self.assertEqual(events, [])
+        self.assertEqual(stats["held_incomplete"], 0)
+        self.assertEqual(stats["skipped_no_success"], 1)
+        self.assertEqual(wm, 3)                   # 水位越过卡死的轮
+
     def test_unpaired_call_recovered_in_next_batch(self):
         """本轮先按失败前进也无妨：回包到货的下一批按「整轮任一行新」重新评估并产出。"""
         first = [
@@ -351,18 +369,18 @@ class SignalTest(unittest.TestCase):
         self.assertEqual(events[0]["seq"], 2)
 
     def test_reask_with_different_slicing_is_negative(self):
-        """「不同参」包含 slicing：同指标同参数换维度也是重问。"""
+        """「不同参」包含 slicing：同指标同参数换维度也是重问（用 query_data 的维度）。"""
         rows = [
             user("s1", 1, "按订单看销售额"),
-            call("s1", 2, "query_detail",
+            call("s1", 2, "query_data",
                  {"metricId": "lemeng:retail:sales", "args": {"bizday": "2026-05-01"},
                   "dimensions": ["order_id"]}, "c1"),
-            result("s1", 3, "query_detail", "c1"),
+            result("s1", 3, "query_data", "c1"),
             user("s1", 4, "那按门店呢"),
-            call("s1", 5, "query_detail",
+            call("s1", 5, "query_data",
                  {"metricId": "lemeng:retail:sales", "args": {"bizday": "2026-05-01"},
                   "dimensions": ["branch"]}, "c2"),
-            result("s1", 6, "query_detail", "c2"),
+            result("s1", 6, "query_data", "c2"),
         ]
         events, _, _ = verify.extract_events(rows, "org1", now_ms=IDLE_LATER)
         self.assertEqual(events[0]["signal"], "negative")
@@ -421,6 +439,35 @@ class ReadRowsTest(unittest.TestCase):
                                          since=6, fetch=3, pre=2, tail=False)
         self.assertEqual([r["seq"] for r in rows], [5, 6, 7, 8, 9])
         self.assertEqual(base, 6)
+
+
+class WatermarkTest(unittest.TestCase):
+    """水位文件的原子写与「空文件 = 没有水位」语义（不碰真 OO）。"""
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.path = os.path.join(self.tmp.name, "sub", "wm")
+
+    def tearDown(self):
+        self.tmp.cleanup()
+
+    def test_missing_and_empty_are_no_watermark(self):
+        """不存在 / 空 / 纯空白 ⇒ None（首跑口径），不能读成 0 翻转模式。"""
+        self.assertIsNone(verify._read_watermark(self.path))
+        os.makedirs(os.path.dirname(self.path))
+        for body in ("", "   \n\t"):
+            with open(self.path, "w") as fh:
+                fh.write(body)
+            self.assertIsNone(verify._read_watermark(self.path))
+
+    def test_write_is_atomic_and_explicit_zero_survives(self):
+        """写入走临时文件 + rename（不留 tmp）；显式 0 与空文件语义不同。"""
+        verify._write_watermark(self.path, 42)
+        self.assertEqual(verify._read_watermark(self.path), 42)
+        self.assertEqual(sorted(os.listdir(os.path.dirname(self.path))), ["wm"])
+
+        verify._write_watermark(self.path, 0)
+        self.assertEqual(verify._read_watermark(self.path), 0)
 
 
 if __name__ == "__main__":

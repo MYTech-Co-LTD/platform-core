@@ -13,6 +13,8 @@
 //   · weak     ⇒ source='auto' / strength='weak'（candidate，等人工确认）。
 //
 // 水位（`ASK_VERIFY_INGEST_WM`；默认**按流一份** `/var/lib/askdata/verify-ingest.<stream>.watermark`）：
+//   流名由 `ASK_VERIFY_STREAM` 决定（缺省 `askdata_verified`，与 bot 侧 `verify.py` 同名），
+//   同时用于 `_search` 与默认水位文件名——换流时两边必须一起换，否则读到空流却以为「没新事件」。
 //   · 值是 OO 命中的 `_timestamp`（微秒整数）。查询用 **`_timestamp >= 水位`** 取新记录：
 //     OO 的 `_search` 时间窗是微秒 epoch（`start_time`/`end_time`），事件里的 `at`（RFC3339 UTC）
 //     是**事件时间**，不能当摄入游标——迟到入库的事件 `at` 可能更早，用 `at` 会漏。
@@ -721,13 +723,15 @@ export async function main(argv, env = process.env, overrides = {}) {
     const { Pool } = createRequire(import.meta.url)('pg')
     pool = new Pool({ connectionString: databaseUrl })
   }
-  const wmPath = String(env.ASK_VERIFY_INGEST_WM ?? '').trim() || defaultWmPath(STREAM)
+  const stream = String(env.ASK_VERIFY_STREAM ?? '').trim() || STREAM
+  const wmPath = String(env.ASK_VERIFY_INGEST_WM ?? '').trim() || defaultWmPath(stream)
 
   try {
     const result = await ingest({
       url: String(env.OO_READ_URL ?? ''),
       ooOrg: String(env.OO_READ_ORG ?? ''),
       token: String(env.OO_READ_TOKEN ?? ''),
+      stream,
       wmPath,
       dryRun: args.dryRun,
       ...(args.sinceUs !== undefined ? { sinceUs: args.sinceUs } : {}),

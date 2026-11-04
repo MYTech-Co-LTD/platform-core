@@ -614,6 +614,43 @@ describe('main', () => {
     }
   })
 
+  it('ASK_VERIFY_STREAM 同时决定 _search 的流与默认水位文件名（与 bot 侧同名）', async () => {
+    const err = vi.spyOn(console, 'error').mockImplementation(() => {})
+    const log = vi.spyOn(console, 'log').mockImplementation(() => {})
+    try {
+      const urls: string[] = []
+      const wmPaths: string[] = []
+      const c = collect([hit()])
+      c.deps.writeWm = (path: string, value: number) => {
+        wmPaths.push(path)
+        c.wmWrites.push(value)
+      }
+      c.deps.fetch = async (url: string) => {
+        urls.push(String(url))
+        return {
+          ok: true,
+          status: 200,
+          json: async () => ({ hits: [hit()], total: 1 }),
+          text: async () => '',
+        }
+      }
+      const code = await main(
+        [],
+        {
+          OO_READ_URL: 'https://oo.test', OO_READ_ORG: 'oo-org', OO_READ_TOKEN: 't',
+          DATABASE_URL: 'postgres://fake', ASK_VERIFY_STREAM: 'askdata_verified_v2',
+        },
+        { ...c.deps, pool: { end: async () => {} } },
+      )
+      expect(code).toBe(0)
+      expect(urls[0]).toContain('/askdata_verified_v2/_search')
+      expect(wmPaths[0]).toBe('/var/lib/askdata/verify-ingest.askdata_verified_v2.watermark')
+    } finally {
+      err.mockRestore()
+      log.mockRestore()
+    }
+  })
+
   it('注入 pool 时 main 不自己建池（真跑一轮）', async () => {
     const err = vi.spyOn(console, 'error').mockImplementation(() => {})
     const log = vi.spyOn(console, 'log').mockImplementation(() => {})

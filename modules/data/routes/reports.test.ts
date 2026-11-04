@@ -241,8 +241,8 @@ describe('报表面声明（不需要数据库）', () => {
     expect(declared.get('GET /metrics/usage')).toBe('data:manage')
     // 元数据写路径（§10.4.3 P1）：低档申报 + 域层并集写闸（同 draft 口径）
     expect(declared.get('PUT /metrics/:id/meta')).toBe('data:query')
-    // 已验证问答（W1）：列 = 观看面；人工确认/拒绝 = 管理动作
-    expect(declared.get('GET /metrics/verified')).toBe('data:query')
+    // 已验证问答（W1）：三条都 data:manage——基线关闭掩码产生，读面也透精确聚合（终审 Important 4）
+    expect(declared.get('GET /metrics/verified')).toBe('data:manage')
     expect(declared.get('POST /metrics/verified/:id/verify')).toBe('data:manage')
     expect(declared.get('POST /metrics/verified/:id/reject')).toBe('data:manage')
     expect(declared.get('GET /branches')).toBe('data:query')

@@ -1,8 +1,12 @@
 // verified-questions.ts — W1 可信度地基：已验证问答的**平台 HTTP 面**（列出 / 人工确认 / 人工拒绝）。
 //
-//   GET  /metrics/verified              读（manifest: data:query）
+//   GET  /metrics/verified              读（manifest: data:manage）
 //   POST /metrics/verified/:id/verify   写（manifest: data:manage）
 //   POST /metrics/verified/:id/reject   写（manifest: data:manage）
+//
+// GET 为什么也是 data:manage（2026-11-04 终审 Important 4）：基线由 `hasScope:()=>true`
+// 的重放产生（掩码被关掉），一旦某列落下掩码规则，列表里的精确聚合值就可能是低档用户
+// 本来看不到的数字。读面与写面同档，等掩码投影做完再按需下调。
 //
 // 门禁由宿主按 manifest 的 `api.internal` 施加——本文件**不写** requireScope（与 metrics.ts 同纪律）。
 // 隔离键 org 一律取 `c.get('tenant').casdoor_org`（text）；身份归一一律 `requesterOf(c)`。
@@ -15,7 +19,7 @@
 import type { Context } from 'hono'
 import type { ModuleHono, ModuleVars, RouteCtx } from './context'
 import { parseIdParam, requesterOf, writeOutcome } from './context'
-import { listVerified, setStatus } from '../domain/verified-questions'
+import { EmptyBaselineError, listVerified, setStatus } from '../domain/verified-questions'
 import type { ListVerifiedOptions, VerifiedQuestionStatus } from '../domain/verified-questions'
 
 const orgOf = (c: Context<ModuleVars>): string => c.get('tenant').casdoor_org
@@ -43,8 +47,14 @@ async function humanDecision(
   const id = parseIdParam(c.req.param('id'))
   if (id === null) return c.json({ error: 'NOT_FOUND' }, 404)
   // 域层返回 false = 本 org 下没有这一行（含跨租户 id）⇒ 404，不区分「不存在」与「别人的」。
-  const hit = await setStatus(ctx.pool, orgOf(c), id, status, requester.userId)
-  return writeOutcome(c, hit ? { ok: true } : { ok: false, http: 404, error: 'NOT_FOUND' }, 200)
+  // 空哨兵基线置 verified = 状态冲突（没有可回归的数值）⇒ 409；不是 400（请求形状没问题）。
+  try {
+    const hit = await setStatus(ctx.pool, orgOf(c), id, status, requester.userId)
+    return writeOutcome(c, hit ? { ok: true } : { ok: false, http: 404, error: 'NOT_FOUND' }, 200)
+  } catch (e) {
+    if (e instanceof EmptyBaselineError) return c.json({ error: 'EMPTY_BASELINE' }, 409)
+    throw e
+  }
 }
 
 export function registerVerifiedQuestions(r: ModuleHono, ctx: RouteCtx): void {
