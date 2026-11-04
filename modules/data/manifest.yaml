@@ -165,7 +165,7 @@ api:
 notifications:
   events:
     - key: data.metric.definition.changed
-      title: 指标定义变更
+      title: 报表中心定义变更
       description: L2 指标草稿确认生效后，通知本租户的看数人（spec 2026-11-01 §10.4 D6）
       scope: { key: metricId, label: 指标 }
       payload:
@@ -185,13 +185,13 @@ surfaces: [pc, mobile]
 frontend:
   console:
     - { path: /console/data, title: 数据问数, icon: BarChartOutlined, scope: data:query, entry: ./console/index.tsx }
-  # 移动端指标页（spec §5.2 userApp + §10.2）：/m 入口卡片按 scope=data:query 过滤——
+  # 移动端「报表中心」（#1369）：报表 / 指标 / 问数 三 tab；/m 入口卡片按 scope=data:query 过滤——
   # 「谁能看到这个版块」的唯一事实源还是平台 scopes（不造第二套）。dist 由 @data/mobile 构建产
   userApp:
     mount: /app/data
     dist: ./mobile/dist
     scope: data:query
-    title: 指标
+    title: 报表中心
 migrations: { dir: ./migrations }
 # 源投影（计划 5，spec §3⑧）：本模块需要「本租户已接入的源」——宿主按请求把
 # `platform.tenant_source` 里 enabled=true 的集合 set 到 context 的 TENANT_SOURCES 键。

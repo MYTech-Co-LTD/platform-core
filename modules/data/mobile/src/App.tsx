@@ -9,6 +9,7 @@
 import { useCallback, useEffect, useState } from 'react'
 import { Button, Input, Popup, PullToRefresh, Skeleton, TextArea, Tag, Toast } from 'antd-mobile'
 import ReportsView from './ReportsView'
+import AskView from './AskView'
 import { apiGet, apiSend, ApiError } from './api'
 
 interface MetricItem {
@@ -542,18 +543,24 @@ function CreateExprSheet({ open, bases, onClose, onDone }: {
 
 
 /**
- * 移动端数据 app 的入口（2026-11-04 产品口径）：标准 App 结构——
- * 底部两个 tab：报表 / 指标。**不放配置菜单**（配置在 PC 控制台）。
+ * 报表中心（2026-11-04，#1369）：移动数据 App = 三个 tab「报表 / 指标 / 问数」，全接权限——
+ *   · 整个 App 先过 userApp.scope=data:query（没权限的人连卡片都看不到）；
+ *   · 报表 tab：服务端按数据范围（页门/部门门/ACL）过滤；管理动作只对 canEdit（owner ∪
+ *     data:manage）出现——无管理权限的人只看到所有人已发布且有权限看的报表；
+ *   · 指标 tab：L1/L2 他人指标只读；creator ∪ data:manage 才有编辑/元数据入口；
+ *   · 问数 tab：纯使用（同一 data:query 门），无管理动作。
+ * 配置菜单不进移动端（产品口径见 memory surface-split-pc-config-mobile-business）。
  */
-export default function App({ initialTab = 'reports' }: { initialTab?: 'reports' | 'metrics' } = {}) {
-  const [tab, setTab] = useState<'reports' | 'metrics'>(initialTab)
+export default function App({ initialTab = 'reports' }: { initialTab?: 'reports' | 'metrics' | 'ask' } = {}) {
+  const [tab, setTab] = useState<'reports' | 'metrics' | 'ask'>(initialTab)
   const TABS = [
     { key: 'reports' as const, label: '报表', icon: '📊' },
     { key: 'metrics' as const, label: '指标', icon: '📈' },
+    { key: 'ask' as const, label: '问数', icon: '💬' },
   ]
   return (
     <div style={{ minHeight: '100dvh', background: '#f5f5f5', paddingBottom: 'calc(56px + env(safe-area-inset-bottom, 0px))' }}>
-      {tab === 'reports' ? <ReportsView /> : <MetricsView />}
+      {tab === 'reports' ? <ReportsView /> : tab === 'metrics' ? <MetricsView /> : <AskView />}
       <nav style={{
         position: 'fixed', left: 0, right: 0, bottom: 0, zIndex: 100,
         display: 'flex', background: '#fff', borderTop: '1px solid #ececec',
