@@ -1,14 +1,16 @@
-// ReportsView.tsx — 移动端「报表」页（产品口径 2026-11-04：业务操作在移动端，配置在 PC）。
-//
-// 只做观看/进入：
-//   · 平台自绘且**已发布** ⇒ 打开独立链接 `/r/:id`（宿主页，同源整页加载）
-//   · Metabase 行 ⇒ 取 embed-url 后整页打开
-//   · 未发布 ⇒ 预览：打开 `/r/:id?preview=1`（standalone 显式预览模式，走 ACL 保护的
-//     `/spec`——owner/受让人可看自己的草稿；无权者由页面显示错误）。发布动作本身仍在 PC。
-// 不做共享/发布/回收等配置菜单——那些在 PC 控制台。
+// ReportsView.tsx — 报表中心的两张脸（#1369/#1371/#1373）：
+//   · tab="center"  报表中心：所有人创建的**已发布**且有权限看的报表，纯浏览（点卡 = 打开）
+//   · tab="manage"  报表管理：**只列我创建的**（owner = 自己；含未发布草稿），
+//                   点卡 = 管理面板（打开/预览、复制链接、发布/下线）
+// 权限口径：
+//   · 列表由服务端过滤（canViewAsset：页门/部门门/ACL）——前端不复制判断；
+//   · 管理 tab 不能按 canEdit 过滤：对 data:manage 持有者恒真 ⇒ 与中心重复成同一页（#1373）。
+//     管理员管**别人**的报表属配置面，回 PC；移动端只管自己的。
+//   · 发布/下线用行上的 `version`（GET /reports 回带，写保护契约同 console）；
+//     共享/部门门/回收等配置动作不进移动端。
 import { useEffect, useRef, useState } from 'react'
-import { Input, Tag, Toast } from 'antd-mobile'
-import { ApiError, apiGet } from './api'
+import { Dialog, Input, Tag, Toast } from 'antd-mobile'
+import { ApiError, apiGet, apiSend } from './api'
 
 export interface ReportRow {
   id: string
@@ -21,18 +23,30 @@ export interface ReportRow {
   hasUnpublishedChanges?: boolean
   requiredScope?: string | null
   requiredDepts?: string[] | null
+  /** 登记侧版本（写保护读侧）：发布/下线的 expectedVersion 来源 */
+  version?: number
 }
 
-export default function ReportsView({ rows, reload, tab }: {
+interface SheetAction {
+  key: string
+  label: string
+  danger?: boolean
+  onClick: () => void
+}
+
+export default function ReportsView({ rows, reload, tab, self }: {
   rows: ReportRow[]
   reload: () => Promise<void>
-  /** center = 报表中心（纯浏览，只看已发布）；manage = 报表管理（自己的，canEdit） */
   tab: 'center' | 'manage'
+  /** 当前用户 id（= 报表 ACL 的 owner subjectId；管理 tab 按它过滤「我创建的」） */
+  self: string
 }) {
   const [search, setSearch] = useState('')
   const [opening, setOpening] = useState<string | null>(null)
   /** App 内阅读：{ id, title, src } —— 全屏 iframe（复用宿主同一套渲染器，不做第二套） */
   const [viewing, setViewing] = useState<{ id: string; title: string; src: string } | null>(null)
+  /** 管理面板（manage tab 点卡弹出） */
+  const [sheetFor, setSheetFor] = useState<ReportRow | null>(null)
   const pushedRef = useRef(false)
 
   // 安卓返回键/手势：pushState 后返回 = 关闭阅读层（不需要用户找左上角）
@@ -55,14 +69,6 @@ export default function ReportsView({ rows, reload, tab }: {
     else setViewing(null)
   }
 
-  const q = search.trim().toLowerCase()
-  // 报表中心 = 只看已发布（metabase 行恒可看；platform 行要有已发布版本）
-  // 报表管理 = 只看自己的可编辑报表（含未发布草稿——预览走 /r/:id?preview=1）
-  const pool = tab === 'center'
-    ? rows.filter((r) => r.renderer === 'metabase' || (r.publishedVersion !== null && r.publishedVersion !== undefined))
-    : rows.filter((r) => r.canEdit === true)
-  const visible = pool.filter((r) => q === '' || r.title.toLowerCase().includes(q))
-
   const open = async (r: ReportRow): Promise<void> => {
     if (r.renderer === 'platform') {
       // 未发布 ⇒ 预览（#1367：standalone 显式 preview 模式；无权时页面自己报错）
@@ -82,6 +88,80 @@ export default function ReportsView({ rows, reload, tab }: {
     } finally {
       setOpening(null)
     }
+  }
+
+  const q = search.trim().toLowerCase()
+  // 报表中心 = 所有人**已发布**且有权限看的（metabase 行恒可看；platform 行要有已发布版本）
+  // 报表管理 = 只列**我创建/我拥有的**（owner = 自己；含未发布草稿——预览走 /r/:id?preview=1）。
+  //   ⚠️ 不能按 canEdit 过滤：对 data:manage 持有者恒真 ⇒ 与中心重复成同一个页面（#1373）。
+  const pool = tab === 'center'
+    ? rows.filter((r) => r.renderer === 'metabase' || (r.publishedVersion !== null && r.publishedVersion !== undefined))
+    : rows.filter((r) => r.owner !== null && r.owner === self)
+  const visible = pool.filter((r) => q === '' || r.title.toLowerCase().includes(q))
+
+  // ── 管理面板动作（manage tab）：移动端只放**使用级**动作；共享/部门门/回收属配置，在 PC ──
+  const sheetActions = (r: ReportRow): SheetAction[] => {
+    const published = r.renderer === 'metabase'
+      || (r.publishedVersion !== null && r.publishedVersion !== undefined)
+    const actions: SheetAction[] = [
+      { key: 'open', label: published ? '打开报表' : '预览报表', onClick: () => void open(r) },
+    ]
+    if (r.renderer === 'platform' && published) {
+      actions.push({
+        key: 'link',
+        label: '复制独立链接',
+        onClick: () => {
+          const url = `${window.location.origin}/r/${encodeURIComponent(r.id)}`
+          if (navigator.clipboard?.writeText) {
+            void navigator.clipboard.writeText(url).then(() => Toast.show({ content: '独立链接已复制' }))
+          } else {
+            Toast.show({ content: url })
+          }
+        },
+      })
+      actions.push({
+        key: 'unpublish',
+        label: '下线',
+        danger: true,
+        onClick: () => {
+          Dialog.confirm({
+            title: '下线报表',
+            content: '下线后独立链接立即失效（历史版本保留），确定？',
+            confirmText: '确认下线', cancelText: '取消',
+            onConfirm: async () => {
+              try {
+                await apiSend('POST', `/api/modules/data/reports/${encodeURIComponent(r.id)}/unpublish`,
+                  { expectedVersion: r.version })
+                Toast.show({ content: '已下线' })
+                void reload()
+              } catch { Toast.show({ content: '操作失败，请稍后重试' }) }
+            },
+          })
+        },
+      })
+    }
+    if (r.renderer === 'platform' && !published && r.version !== undefined) {
+      actions.push({
+        key: 'publish',
+        label: '发布',
+        onClick: () => {
+          Dialog.confirm({
+            title: '发布报表',
+            content: `发布后所有拿到本模块的人都能看到「${r.title}」，确定？`,
+            confirmText: '确认发布', cancelText: '取消',
+            onConfirm: async () => {
+              try {
+                await apiSend('POST', `/api/modules/data/reports/${encodeURIComponent(r.id)}/publish`,
+                  { expectedVersion: r.version })
+                Toast.show({ content: '已发布' })
+                void reload()
+              } catch { Toast.show({ content: '操作失败，请稍后重试' }) }
+            },
+          })
+        },
+      })
+    }
+    return actions
   }
 
   return (
@@ -119,7 +199,7 @@ export default function ReportsView({ rows, reload, tab }: {
               </>
             ) : (
               <>
-                你还没有可管理的报表
+                你还没有自己创建的报表
                 <br />
                 在 PC 端创建后会出现在这里
               </>
@@ -131,6 +211,33 @@ export default function ReportsView({ rows, reload, tab }: {
           const published = r.renderer === 'metabase'
             ? true
             : r.publishedVersion !== null && r.publishedVersion !== undefined
+          // 交互按语境分开（#1373）：中心点卡 = 打开阅读；管理点卡 = 管理面板
+          if (tab === 'manage') {
+            return (
+              <button
+                key={r.id}
+                type="button"
+                onClick={() => setSheetFor(r)}
+                style={{
+                  display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 10,
+                  width: '100%', textAlign: 'left', cursor: 'pointer',
+                  background: '#fff', borderRadius: 14, border: '1px solid #eee',
+                  padding: '14px 16px',
+                }}
+              >
+                <span style={{ minWidth: 0 }}>
+                  <span style={{ display: 'block', fontSize: 16, fontWeight: 600, lineHeight: 1.4 }}>
+                    {r.title}
+                  </span>
+                  <span style={{ display: 'block', fontSize: 12, color: '#999', marginTop: 6 }}>
+                    {r.renderer === 'metabase' ? 'Metabase 报表'
+                      : published ? (r.hasUnpublishedChanges ? '已发布 · 有未发布改动' : '已发布') : '未发布草稿'}
+                  </span>
+                </span>
+                <span aria-hidden style={{ color: '#999', fontSize: 20, flex: '0 0 auto' }}>⋯</span>
+              </button>
+            )
+          }
           return (
             <button
               key={r.id}
@@ -167,6 +274,44 @@ export default function ReportsView({ rows, reload, tab }: {
           )
         })}
       </div>
+
+      {/* 管理面板（manage tab 点卡弹出） */}
+      {sheetFor !== null && (
+        <div style={{
+          position: 'fixed', inset: 0, zIndex: 210, background: 'rgba(0,0,0,0.45)',
+          display: 'flex', flexDirection: 'column', justifyContent: 'flex-end',
+        }} onClick={() => setSheetFor(null)}>
+          <div
+            style={{ background: '#fff', borderRadius: '14px 14px 0 0', paddingBottom: 'env(safe-area-inset-bottom, 0px)' }}
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div style={{ padding: '14px 16px 8px', fontSize: 15, fontWeight: 600, borderBottom: '1px solid #f0f0f0' }}>
+              {sheetFor.title}
+            </div>
+            {sheetActions(sheetFor).map((a) => (
+              <button
+                key={a.key}
+                type="button"
+                onClick={() => { setSheetFor(null); a.onClick() }}
+                style={{
+                  display: 'block', width: '100%', padding: '15px 24px',
+                  border: 'none', background: 'none', textAlign: 'left', cursor: 'pointer',
+                  fontSize: 16, color: a.danger === true ? '#ff4d4f' : '#1f1f1f',
+                }}
+              >{a.label}</button>
+            ))}
+            <button
+              type="button"
+              onClick={() => setSheetFor(null)}
+              style={{
+                display: 'block', width: '100%', padding: '15px 24px', marginTop: 8,
+                border: 'none', borderTop: '1px solid #f0f0f0', background: '#fafafa',
+                textAlign: 'center', cursor: 'pointer', fontSize: 16, color: '#666',
+              }}
+            >取消</button>
+          </div>
+        </div>
+      )}
 
       {/* App 内阅读层：全屏 + 顶部返回（iframe 载入宿主独立渲染页，口径与 PC 同一套） */}
       {viewing !== null && (

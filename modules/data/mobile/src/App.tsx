@@ -581,9 +581,9 @@ export default function App({ initialTab = 'center' }: { initialTab?: 'center' |
   return (
     <div style={{ minHeight: '100dvh', background: '#f5f5f5', paddingBottom: 'calc(56px + env(safe-area-inset-bottom, 0px))' }}>
       {active === 'center' ? (
-        <ReportsView rows={reportRows} reload={reload} tab="center" />
+        <ReportsView rows={reportRows} reload={reload} tab="center" self={self ?? ''} />
       ) : active === 'reportsManage' ? (
-        <ReportsView rows={reportRows} reload={reload} tab="manage" />
+        <ReportsView rows={reportRows} reload={reload} tab="manage" self={self ?? ''} />
       ) : (
         <MetricsView data={metricsData} reload={reload} />
       )}
