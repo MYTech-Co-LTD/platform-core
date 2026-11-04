@@ -136,7 +136,7 @@ git commit -m "feat(data): verified_questions 存储层（迁移 032）"
 
 **Interfaces:**
 - Consumes: Task 1 的四个函数。
-- Produces: `GET /metrics/verified`（读，`data:query`）、`POST /metrics/verified/:id/verify`、`POST /metrics/verified/:id/reject`（写，`data:manage`）。
+- Produces: `GET /metrics/verified`（**`data:manage`**——基线是未掩码聚合值，不能给 `data:query`）、`POST /metrics/verified/:id/verify`、`POST /metrics/verified/:id/reject`（写，`data:manage`）。
 
 **装配提示（照 `routes/metrics.ts` 既有形态，不要另造）**：
 - `orgOf(c) = c.get('tenant').casdoor_org`；身份用该文件同款 `requesterOf(c)`。
@@ -145,7 +145,7 @@ git commit -m "feat(data): verified_questions 存储层（迁移 032）"
 
 ```yaml
     # ── 已验证问答（W1 可信度地基）──
-    - { method: GET,  path: /metrics/verified,            scope: data:query }
+    - { method: GET,  path: /metrics/verified,            scope: data:manage }
     - { method: POST, path: /metrics/verified/:id/verify, scope: data:manage }
     - { method: POST, path: /metrics/verified/:id/reject, scope: data:manage }
 ```
