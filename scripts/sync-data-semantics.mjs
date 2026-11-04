@@ -1063,7 +1063,7 @@ export function declarationsFromYaml(parsed) {
       ...(typeof m.entity === 'string' ? { entity: m.entity } : {}),
       ...(Array.isArray(m.synonyms) && m.synonyms.length > 0 ? { synonyms: m.synonyms } : {}),
       // `reads` 上载进行对象：默认档要读它（`applyDefaultMaskTier`）。
-      // ⚠️ 它**不在** `comparableOf` 的 16 元组里 ⇒ 加它**不会**让 `--check` 凭空报漂移；
+      // ⚠️ 它**不在** `comparableOf` 的 19 元组里 ⇒ 加它**不会**让 `--check` 凭空报漂移；
       //    但 `reads` 的改动**仍可被 `--check` 检出**——经由它对**合成 masks**（第 13 元）的影响。
       // ⚠️ 也**不会**影响写库：`upsertL1Metric` 的列清单来自 `ROW_COLUMNS` 白名单，多出的键被忽略。
       reads: Array.isArray(m.reads) ? m.reads.map(String) : null,

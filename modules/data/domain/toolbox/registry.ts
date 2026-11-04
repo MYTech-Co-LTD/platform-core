@@ -62,11 +62,11 @@ export const ANALYST_TOOLS: readonly ToolMeta[] = [
   },
   {
     name: 'search_catalog', group: 'discovery', title: '搜索目录',
-    description: '按关键词搜索可见指标（或数据集）。返回 id/标题/档位/归属/一句话说明，≤20 条。',
+    description: '按关键词搜索可见指标（或数据集），同义词也命中。返回 id/标题/档位/归属/一句话说明，≤20 条。',
     inputSchema: {
       type: 'object',
       properties: {
-        q: { type: 'string', description: '关键词（id/标题/说明的子串，大小写不敏感）' },
+        q: { type: 'string', description: '关键词（id/标题/说明/同义词的子串，大小写不敏感）' },
         kind: { type: 'string', enum: ['metric', 'dataset'], description: '缺省 = metric' },
         tier: { type: 'string', enum: ['certified', 'custom'], description: 'certified=平台口径(l1)，custom=本租户口径(l2)' },
       },
@@ -77,7 +77,7 @@ export const ANALYST_TOOLS: readonly ToolMeta[] = [
   },
   {
     name: 'describe_metric', group: 'discovery', title: '指标详情',
-    description: '按 id 取指标详情：口径定义/粒度维度/参数/归属/档位/版本/新鲜度/上游。查数前必调（拿参数键名与维度）。',
+    description: '按 id 取指标详情：口径定义/粒度维度/参数/实体与同义词/归属/档位/版本/新鲜度/上游。查数前必调（拿参数键名与维度）。',
     inputSchema: {
       type: 'object',
       properties: { id: { type: 'string', description: '指标 id（取自 search_catalog 或 list）' } },
