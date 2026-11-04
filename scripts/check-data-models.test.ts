@@ -1734,14 +1734,14 @@ describe('下钻三键 + measures（spec 2026-10-21 §2.3/§2.3.1，#977）', ()
 })
 
 // ════════════════════════════════════════════════════════════════════════════════════════
-// 实体与同义词声明面（自动推导指标 spec 2026-11-04 §3 W0 Task 1）
+// 实体与同义词声明面（自动推导指标 spec 2026-11-04 §5 W0 Task 1）
 //
 // 契约：顶层 `entities: { <snake_case>: { label, synonyms? } }`；指标可选 `entity`（必须指向
-// **同文件**已声明实体）与 `synonyms`（无重复的非空字符串数组）。本波只做声明面 + 静态门禁，
-// 不落库、不改任何口径。基线沿用 `compliant()` 的完整 dbt 目录（否则规则 ⑩ 的空转自检会先红，
-// 分不清红的是新规则还是夹具不完整），只把 L1 声明换成本任务的最小形态。
+// **同文件**已声明实体）与 `synonyms`（无重复的非空字符串数组）。指标级 entity/synonyms 已随
+// 迁移 031 落库（顶层 entities 的 label/synonyms 仍只在声明面）。基线沿用 `compliant()` 的完整
+// dbt 目录（否则规则 ⑩ 的空转自检会先红，分不清红的是新规则还是夹具不完整），只把 L1 声明换成本任务的最小形态。
 // ════════════════════════════════════════════════════════════════════════════════════════
-describe('实体与同义词声明（entities / entity / synonyms，spec 2026-11-04 §3 W0）', () => {
+describe('实体与同义词声明（entities / entity / synonyms，spec 2026-11-04 §5 W0）', () => {
   const ENTITY_L1 = [
     'version: 1',
     'entities:',
@@ -1777,6 +1777,26 @@ describe('实体与同义词声明（entities / entity / synonyms，spec 2026-11
   it('entity 引用未声明实体 ⇒ 红', () => {
     const files = entityCompliant()
     files[METRICS] = files[METRICS]!.replace('entity: branch', 'entity: store')
+    const out = checkDataModels(fixture(files))
+    expect(out.some((e) => e.message.includes('未声明的实体'))).toBe(true)
+  })
+
+  it('entity 声明在别的 yml 文件 ⇒ 红（实体按文件作用域，跨文件不算已声明）', () => {
+    const files = entityCompliant()
+    // 把 entities 块整体挪到另一个 semantics 文件；指标仍在本文件引用 `branch`。
+    // 判据是「**同文件**已声明」：跨文件引用必须红（否则实体归属会随扫描顺序漂）。
+    files[METRICS] = ENTITY_L1.replace(
+      'entities:\n  branch:\n    label: 门店\n    synonyms: [店铺, 分店]\n',
+      '',
+    )
+    files['dbt/semantics/entities.yml'] = [
+      'version: 1',
+      'entities:',
+      '  branch:',
+      '    label: 门店',
+      '    synonyms: [店铺, 分店]',
+      '',
+    ].join('\n')
     const out = checkDataModels(fixture(files))
     expect(out.some((e) => e.message.includes('未声明的实体'))).toBe(true)
   })

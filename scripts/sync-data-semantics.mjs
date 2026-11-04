@@ -141,7 +141,7 @@ const METRIC_NAME_RE = /^[a-z][a-z0-9_]*:[a-z][a-z0-9_]*:[a-z][a-z0-9_]*$/
  * @property {string | null} [unit] 单位（spec 2026-11-01 §10.4.3 P1 的 L1 声明侧；声明 `unit` 的
  *                  物化值；null = 未声明——**接住未声明的行**，赋值留给口径责任人，不代编。
  *                  **可选**与 scopeNote 同形：未声明 = 缺键，canonical 归一后与 null 判等）
- * @property {string | null} [entity] 实体名（自动推导指标 spec 2026-11-04 §3 W0；声明 `entity` 的
+ * @property {string | null} [entity] 实体名（自动推导指标 spec 2026-11-04 §5 W0；声明 `entity` 的
  *                  物化值；null = 未声明。可选理由同 unit——声明侧未写时键缺席）
  * @property {string[]} [synonyms] 同义词（W0；声明 `synonyms` 的物化值；未声明 = 键缺席，
  *                  与库侧归一值 `[]` 判等——见 comparableOf 的归一）
@@ -1056,7 +1056,7 @@ export function declarationsFromYaml(parsed) {
       // 为什么不做强制：单位是口径责任人的**辖区**——sync 脚本代所有指标编一个单位，错一个
       // 就是产品可见的错误数据；正确姿势是通路在位、值由声明作者逐条补。
       unit: unitOf(m.unit, name),
-      // 实体与同义词（自动推导指标 spec 2026-11-04 §3 W0；031）：**只搬值不校验形态**——
+      // 实体与同义词（自动推导指标 spec 2026-11-04 §5 W0；031）：**只搬值不校验形态**——
       // 形态（snake_case、引用顶层 `entities:` 是否声明过、去重）归门禁 Task 1 的规则 ⑤-a2；
       // 两处各判一份必然漂（sync 会被手跑，门禁不是每跑必过，但真事实源在 YAML）。
       // 未声明 = 键缺席（写库侧 `?? null` / `?? []` 收口，与 unit 同形）。
@@ -1104,7 +1104,7 @@ export function unitOf(v, metricName) {
  * （安全面，宁可不生效也不能背着旧声明生效）——必须被 --check 检出。
  * 下钻三键 第六组（下钻 spec 2026-10-21 §2.3）：下钻声明漂了而库内没刷 = 下钻面静默按旧声明跑，
  * 必须被 --check 检出。
- * `entity` / `synonyms` 第七组（W0 spec 2026-11-04 §3）：实体/同义匹配漂了而库内没刷 =
+ * `entity` / `synonyms` 第七组（W0 spec 2026-11-04 §5）：实体/同义匹配漂了而库内没刷 =
  * 问数入口按旧声明命中，必须被 --check 检出。
  */
 /**

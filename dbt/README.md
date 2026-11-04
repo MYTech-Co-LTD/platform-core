@@ -172,11 +172,12 @@ sync 取路径段 `lemeng/<资产>` 推导 `stg_lemeng_<资产>` 关系集物化
 物化进 `data.metrics.unit` 并进 `--check` 比对（声明改/撤而库没刷会被检出）；
 不声明 = 未标注（NULL，**不代编**——赋错单位比空着糟，值由口径责任人逐条补）；
 `%` 等 YAML 保留首字符必须加引号（`unit: '%'`，裸 `%` 是指令符会 parse 失败）。
-`entity`（选填，自动推导指标 spec 2026-11-04 §3 W0）= 指标挂靠的**业务实体**：必须逐字指向
+`entity`（选填，自动推导指标 spec 2026-11-04 §5 W0）= 指标挂靠的**业务实体**：必须逐字指向
 **同文件**顶层 `entities:` 里声明过的名字——形态 `entities: { <snake_case>: { label, synonyms? } }`，
 键闭集 `label` / `synonyms`，`label` 必填；拼错或未声明 ⇒ 静态门禁**响亮失败**（fail-closed）。
 `synonyms`（选填）= 问数入口的**同义说法**（非空字符串数组、无重复项）。
-本波只做声明面与门禁，两者都**不落库**（落库与消费在后续波次）。
+指标级 `entity` / `synonyms`：**已随迁移 031 落库**，由 `search_catalog` / `describe_metric` 消费；
+顶层 `entities` 的 `label` / `synonyms`：W0 仍**只在声明面**（供门禁与后续波次使用，不落库）。
 
 **下钻三键与度量组件（spec 2026-10-21 §2.3/§2.3.1，#977）**：每条指标可另声明 `compose` /
 `dimensions` / `detail` —— **三者同现或同缺**（半套 = 声明了但下钻面起不来，静默）。

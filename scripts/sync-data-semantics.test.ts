@@ -1442,7 +1442,7 @@ describe('unit 声明侧：可选字段 + 可比对面（spec 2026-11-01 §10.4.
   })
 })
 
-// ── entity / synonyms（自动推导指标 spec 2026-11-04 §3 W0）───────────────────────
+// ── entity / synonyms（自动推导指标 spec 2026-11-04 §5 W0）───────────────────────
 // sync 只搬值（形态归门禁 Task 1）；两字段**必须**进 comparableOf，否则声明改了而库没刷
 // `--check` 不报漂移（与 unit/slaDays/masks 同一条纪律）。
 describe('entity / synonyms 物化面（W0，031）', () => {

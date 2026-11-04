@@ -218,14 +218,14 @@ const METRIC_KEYS = new Set([
   // 单位（spec 2026-11-01 §10.4.3 P1，2026-11-02）：展示语义（元/单/行/%/天/家）；
   // 选填——值由口径责任人逐条补，sync 未声明 = 未标注（不代编）。
   'unit',
-  // 实体与同义词（自动推导指标 spec 2026-11-04 §3 W0）：`entity` 指向顶层 `entities:` 里
+  // 实体与同义词（自动推导指标 spec 2026-11-04 §5 W0）：`entity` 指向顶层 `entities:` 里
   // 声明过的实体；`synonyms` 是问数入口的同义说法（选填）。两者已随迁移 031 落库，
   // 由词表搜索/详情消费（W0 Task 2/3）。
   'entity', 'synonyms',
 ])
 
 /**
- * 顶层 `entities:` 的键闭集（自动推导指标 spec 2026-11-04 §3 W0）。
+ * 顶层 `entities:` 的键闭集（自动推导指标 spec 2026-11-04 §5 W0）。
  * 与 `METRIC_KEYS` 同纪律：加字段 = 改这里 + 改 README + 走 PR，防止拼错的键静默不生效。
  */
 const ENTITY_KEYS = new Set(['label', 'synonyms'])
@@ -1199,8 +1199,9 @@ export function checkDataModels(rootDir, opts = {}) {
         }
       }
     }
-    // 顶层 entities:（自动推导指标 spec 2026-11-04 §3 W0）：`{ 实体名: { label, synonyms? } }`。
-    // 本波只做**声明面**校验，不落库；但判据必须是 fail-closed——拼错的键/名会让
+    // 顶层 entities:（自动推导指标 spec 2026-11-04 §5 W0）：`{ 实体名: { label, synonyms? } }`。
+    // 指标级 entity/synonyms 已落库（迁移 031）；顶层 entities 的 label/synonyms 仍只在校验面。
+    // 但判据必须是 fail-closed——拼错的键/名会让
     // `metric.entity` 逐字比对不上，症状是「指标挂在了一个不存在的实体上」且不报错。
     /** @type {Record<string, unknown>} */
     let entities = {}
@@ -1247,7 +1248,7 @@ export function checkDataModels(rootDir, opts = {}) {
       )
     }
 
-    // ⑤-a2 实体与同义词（自动推导指标 spec 2026-11-04 §3 W0）：`entity` 必须指向**同文件**顶层
+    // ⑤-a2 实体与同义词（自动推导指标 spec 2026-11-04 §5 W0）：`entity` 必须指向**同文件**顶层
     // `entities:` 里逐字声明过的名字；`synonyms` 必须是无重复的非空字符串数组。
     // 为什么要门禁：问数入口按同义词召回，重复项会让匹配权重失真；实体名拼错则指标静默不挂任何实体。
     if (metric.fields?.entity !== undefined) {

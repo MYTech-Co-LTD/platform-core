@@ -562,6 +562,13 @@ describePg('031 迁移：entity / synonyms（W0 指标实体与同义词）', ()
     expect(hit.entity).toBe('branch')
     expect(hit.synonyms).toEqual(['营业额', '销售金额'])
 
+    // 冲突分支（sync 的更新路径）：声明改了 ⇒ 重新物化必须把两列一起刷新
+    // （否则 `sync --check` 永远检出漂移，词表按旧同义词命中）。
+    await upsertL1Metric(pool, { ...def, entity: 'store', synonyms: ['销售额'] } as never)
+    const updated = (await loadPlatformCatalog(pool)).find((r) => r.id === 'w0:test:sales')!
+    expect(updated.entity).toBe('store')
+    expect(updated.synonyms).toEqual(['销售额'])
+
     await upsertMetric(pool, 'org-w0-test', {
       id: 'w0:test:l2', title: 'L2', description: 'd', requiredScope: null,
       subjectColumn: 'org', selectSql: 'select 1 as value from t', groupBy: 'org',
