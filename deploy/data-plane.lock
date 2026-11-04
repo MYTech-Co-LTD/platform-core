@@ -1,4 +1,4 @@
-sha256-of-rest c4b88b9d8e66e620d9e0f7f864e5c57f4cef4bc4cae31621b0441b4b21add1f8
+sha256-of-rest 4bdc04272b2e7ee9ec7af8cab6fb6ee10ab766b677587b87f9e6828cc0ba3373
 08938c10c6b4a688c8afda6cd7d1ad3dbf2c20f83cf8c4e7023055ad34eddc70 contracts/README.md ${REPO}/contracts/README.md 0644
 fcc8189e1012d5fbb8e2505025bed637dd01c7b4465ab86125d3eaa7f330eff3 contracts/common/_schema.schema.json ${REPO}/contracts/common/_schema.schema.json 0644
 1730119518c3371f3c2ff3492f4c15cd731688047c6d40805ec4d2c65892f3ff contracts/common/_template.contract.json ${REPO}/contracts/common/_template.contract.json 0644
@@ -201,7 +201,7 @@ f0110d29f00b44d74da6038f1a2badf7e16a6b60a78e11b80c18565714b3ac72 dbt/tests/lemen
 22f34828cddee400045c07572fa47783b0b3d2bb729bd25891849904597f78a5 deploy/data-compose.yml ${REPO}/deploy/data-compose.yml 0644
 a3fc0976e30b18c2e4d4358128e02e02388668007eeff5fa0f4dc6db48be47c0 deploy/dbt/Dockerfile ${REPO}/deploy/dbt/Dockerfile 0644
 8679ed09c1ac5c65194c59fb2044e9edb2b7e5266ce08af4e08bd90bd4c70f6d deploy/duckle/Dockerfile ${REPO}/deploy/duckle/Dockerfile 0644
-848f246bf308ecd9893aca661d4a1443a764714b8901872f8dc4e31c2ab0bcb1 deploy/duckle/console/DELIVERY.md ${REPO}/deploy/duckle/console/DELIVERY.md 0644
+f8871b2abc1d19b3b6af2fea01d61d850a54e9723572b8c716c60dc2431c6a7e deploy/duckle/console/DELIVERY.md ${REPO}/deploy/duckle/console/DELIVERY.md 0644
 6ba008519ae46d4477f1b769c3c94e56b1df48823ae80ffb8eb75edb0591dc35 deploy/duckle/console/README.md ${REPO}/deploy/duckle/console/README.md 0644
 e3446c35618363d0381598e9e1382c3efcee9dad5d9bad29928c34ea96e09183 deploy/duckle/console/alerts.forms.json ${REPO}/deploy/duckle/console/alerts.forms.json 0644
 dfbe3ea5cd0f60ded07c5fc67297525dd4971a7efef6895030d034b085219a47 deploy/duckle/console/alerts.lemeng.json ${REPO}/deploy/duckle/console/alerts.lemeng.json 0644
