@@ -11,6 +11,10 @@
 
 ## [Unreleased]
 
+## [0.268.0](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.267.0...v0.268.0) - 2026-11-04
+- 【新增】data: W1 可信度地基——已验证问答 + 回归 job（结构+容差） ([#1379](https://github.com/MYTech-Co-LTD/platform-core/pull/1379), [0a4dfa1](https://github.com/MYTech-Co-LTD/platform-core/commit/0a4dfa1a4fd466b201dbd3017db75f34af20828c))
+
+
 ## [0.267.0](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.266.1...v0.267.0) - 2026-11-04
 - 【新增】data: W0 指标实体与同义词声明（落库 + 问数消费） ([#1376](https://github.com/MYTech-Co-LTD/platform-core/pull/1376), [d572ea2](https://github.com/MYTech-Co-LTD/platform-core/commit/d572ea29c9557ad592c4680ca1b38a6f3d682240))
 
