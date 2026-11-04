@@ -208,7 +208,7 @@ describe('authHeader', () => {
 // ── OO `_search` HTTP 形态 ─────────────────────────────────────────────────────
 
 describe('searchClient', () => {
-  it('POST /api/<org>/<stream>/_search；Basic 鉴权；微秒时间窗；>= 水位 + seq 次级排序', async () => {
+  it('POST /api/<org>/_search（组织级；流在 SQL 里）；Basic 鉴权；微秒时间窗；>= 水位 + seq 次级排序', async () => {
     const calls: { url: string; init: any }[] = []
     const fakeFetch = async (url: string, init: any) => {
       calls.push({ url, init })
@@ -218,7 +218,7 @@ describe('searchClient', () => {
     await search({ cursorUs: 1_793_793_000_000_123, endUs: 1_793_793_000_456_789, from: 0, size: 7 })
 
     expect(calls).toHaveLength(1)
-    expect(calls[0]!.url).toBe(`https://oo.test/api/oo-org/${STREAM}/_search`)
+    expect(calls[0]!.url).toBe(`https://oo.test/api/oo-org/_search`)
     expect(calls[0]!.init.method).toBe('POST')
     expect(calls[0]!.init.headers.Authorization).toBe('Basic read-token')
     expect(calls[0]!.init.headers['Content-Type']).toBe('application/json')
@@ -643,7 +643,7 @@ describe('main', () => {
         { ...c.deps, pool: { end: async () => {} } },
       )
       expect(code).toBe(0)
-      expect(urls[0]).toContain('/askdata_verified_v2/_search')
+      expect(urls[0]).toBe('https://oo.test/api/oo-org/_search')
       expect(wmPaths[0]).toBe('/var/lib/askdata/verify-ingest.askdata_verified_v2.watermark')
     } finally {
       err.mockRestore()
