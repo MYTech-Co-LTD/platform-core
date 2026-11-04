@@ -337,6 +337,11 @@ export async function findViolations(rootDir) {
       // 是 PG 向所有角色开放的**元数据目录**，不是业务/租户 schema——B1 守的是「业务数据不跨
       // 模块/租户」，目录查询（describe_dataset 列清单等）不属于该面。别把豁免扩到别的形状。
       if (schema === 'information_schema' || schema === 'pg_catalog') continue
+      // PG 的 `excluded` 伪表豁免（2026-11-04，W1 已验证问答实测）：`on conflict do update`
+      // 里的 `is distinct from excluded.baseline` 会被 B1 正则当成交叉 schema 的 `from`。
+      // `excluded` 是 PG 的冲突行别名，**不是 schema**，与上面的目录豁免同性质（伪对象，不是
+      // 跨模块数据）。只豁免这一个名字，别把 `\bfrom\s+\w+\.` 整类放宽。
+      if (schema === 'excluded') continue
       // 已发布维表只读豁免（ADR 2026-10-07 形状②）：模块可以 from/join `data.dim_*`
       // （owner 发布进 data schema 的维表快照，契约与裁剪在发布侧）——但**只读**：
       // update/into 不豁免 ⇒ 发布表只许 owner（data 模块）写。非 dim_ 前缀的 data. 表
