@@ -29,6 +29,19 @@ describe('移动端报表页', () => {
     expect(screen.getByText(/所有者 admin1（已停用）/)).toBeTruthy()
   })
 
+  it('点整卡在 App 内打开（iframe /r/:id）；未发布只提示、不跳转', async () => {
+    render(<ReportsView />)
+    await waitFor(() => expect(screen.getByText('门店销售日报')).toBeTruthy())
+    fireEvent.click(screen.getByText('门店销售日报'))
+    const frame = await screen.findByTitle('门店销售日报')
+    expect(frame.tagName).toBe('IFRAME')
+    expect(frame.getAttribute('src')).toBe('/r/r1')
+
+    // 未发布：Toast 提示、不打开阅读层
+    fireEvent.click(screen.getByText('会员复购分析'))
+    expect(await screen.findByText('未发布：请先在 PC 端发布后再查看')).toBeTruthy()
+  })
+
   it('搜索过滤 + 无匹配空态', async () => {
     render(<ReportsView />)
     await waitFor(() => expect(screen.getByText('门店销售日报')).toBeTruthy())
