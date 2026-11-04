@@ -3,25 +3,9 @@
   "id": "lemeng.customer_analysis.day",
   "version": 1,
   "_note": [
-    "lemeng.branch_indicator 的 L0 子管线（一块 ≤100 店）：只由父管线 lemeng.branch_indicator.l0.<账套> 的 ctl.foreach 调用（itemKey=item_key）。",
-    "",
-    "①【身份】不是独立管线：${ITER_ITEM_*} 由父代入；直接单跑必失败（设计如此）。",
-    "",
-    "②【网关硬约束（2026-10-26 探针实测）】",
-    "   · branch_nums 必填且单请求最多 100 家：缺省 → 0 行；>100 → code 10001「最多支持 100 家门店」。",
-    "   · 名单里夹一个本凭据无权限的店号 → code 10003 → 整块 0 行。",
-    "   · 上面两种在 responsePath=/result/rows 下都只表现为「0 行」（duckle 只说 query returned 0 records）",
-    "     ⇒ 必须靠 rawResponseDestination + env 节点读 code 才看得见真因。",
-    "   · 日粒度 = date_type=month + date=<月内某天> + group_type=day ⇒ 每行 periods[] 带整月逐日。",
-    "③【覆盖语义（2026-10-26 探针实测，勿回退）】网关对「本月无数据」的门店**正当省略**：店 3/4/99 连 sale_money 都返回 0 行，",
-    "   且 total_count == len(rows)；同月店 92 逐日合计 32114.96 分毫不差。⇒ 不能断言「请求的每一家都必须返回」。",
-    "",
-    "④【四闸】① env/denv：网关 code≠0（10001 超 100 家 / 10003 名单含无权限店）；",
-    "   ② gs/ds：本块 0 家匹配（权限收窄 / 月份锚错 / 网关空集）；③ gday/dday：periods[] 缺 bizday 日项（粒度变了）；",
-    "   ④ gtc/dtc：total_count ≠ len(rows)（响应被截断）。缺数据的店显形为 matched=false，不算违规。",
-    "",
-    "⑤【产物】写 /workspace/.duckle-stage/branch_indicator/chunk-<batch>-<n>.parquet（含常数列 chunk_n_matched），",
-    "   由父管线按 batch_id 汇总，并用 chunk_n_matched 对账「每块行数 == 匹配数」后写湖。"
+    "乐檬 customer_analysis（nhsoft.report.ai.customeranalysis.find）——按门店块扇出的子管线（#1314 占位行已内置）。",
+    "本块 0 家门店有数据时写 1 行占位（branch_num=NULL, chunk_n_matched=0），父侧负责整天判空。",
+    "src.rest 必须申报 data.schema：0 行响应时引擎按申报建空表（否则下游绑定失败）。"
   ],
   "nodes": [
     {
@@ -62,36 +46,32 @@
             "type": "string"
           },
           {
-            "name": "branch_region_num",
+            "name": "time_period",
+            "type": "string"
+          },
+          {
+            "name": "customer_nums",
             "type": "int64"
           },
           {
-            "name": "branch_region_name",
-            "type": "string"
+            "name": "customer_vip_nums",
+            "type": "int64"
           },
           {
-            "name": "metric",
-            "type": "string"
+            "name": "customer_vip_money",
+            "type": "decimal"
           },
           {
-            "name": "period",
-            "type": "string"
+            "name": "receive_money",
+            "type": "decimal"
           },
           {
-            "name": "target_value",
-            "type": "float64"
+            "name": "item_sale_cost",
+            "type": "decimal"
           },
           {
-            "name": "actual_value",
-            "type": "float64"
-          },
-          {
-            "name": "actual_rate",
-            "type": "float64"
-          },
-          {
-            "name": "periods",
-            "type": "json"
+            "name": "item_sale_profit",
+            "type": "decimal"
           }
         ]
       }
@@ -184,7 +164,7 @@
         "label": "s",
         "componentId": "code.sql",
         "properties": {
-          "sql": "SELECT '${ITER_ITEM_BATCH_ID}' AS batch_id,\n       CAST(${ITER_ITEM_SYSTEM_BOOK} AS INTEGER) AS system_book,\n       CAST('${ITER_ITEM_BIZDAY}' AS DATE) AS bizday,\n       CAST(branch_num AS INTEGER) AS branch_num,\n       CAST(branch_code AS VARCHAR) AS branch_code,\n       CAST(branch_name AS VARCHAR) AS branch_name,\n       CAST(time_period AS VARCHAR) AS time_period,\n       CAST(customer_nums AS BIGINT) AS customer_nums,\n       CAST(customer_vip_nums AS BIGINT) AS customer_vip_nums,\n       CAST(customer_vip_money AS DECIMAL(14,2)) AS customer_vip_money,\n       CAST(receive_money AS DECIMAL(14,2)) AS receive_money,\n       CAST(item_sale_cost AS DECIMAL(14,2)) AS item_sale_cost,\n       CAST(item_sale_profit AS DECIMAL(14,2)) AS item_sale_profit,\n       CAST(CURRENT_TIMESTAMP AS TIMESTAMPTZ) AS computed_at,\n       CAST((SELECT count(DISTINCT branch_num) FROM input WHERE matched) AS INTEGER) AS chunk_n_matched\nFROM input\nWHERE matched\n"
+          "sql": "SELECT '${ITER_ITEM_BATCH_ID}' AS batch_id,\n       CAST(${ITER_ITEM_SYSTEM_BOOK} AS INTEGER) AS system_book,\n       CAST('${ITER_ITEM_BIZDAY}' AS DATE) AS bizday,\n       CAST(branch_num AS INTEGER) AS branch_num,\n       CAST(branch_code AS VARCHAR) AS branch_code,\n       CAST(branch_name AS VARCHAR) AS branch_name,\n       CAST(time_period AS VARCHAR) AS time_period,\n       CAST(customer_nums AS BIGINT) AS customer_nums,\n       CAST(customer_vip_nums AS BIGINT) AS customer_vip_nums,\n       CAST(customer_vip_money AS DECIMAL(14,2)) AS customer_vip_money,\n       CAST(receive_money AS DECIMAL(14,2)) AS receive_money,\n       CAST(item_sale_cost AS DECIMAL(14,2)) AS item_sale_cost,\n       CAST(item_sale_profit AS DECIMAL(14,2)) AS item_sale_profit,\n       CAST(CURRENT_TIMESTAMP AS TIMESTAMPTZ) AS computed_at,\n       CAST((SELECT count(DISTINCT branch_num) FROM input WHERE matched) AS INTEGER) AS chunk_n_matched\nFROM input\nWHERE matched\nUNION ALL\n-- 占位行（#1314）：本块 0 家门店有数据时写 1 行，保证父侧「分块到齐」判据成立\nSELECT '${ITER_ITEM_BATCH_ID}',CAST(${ITER_ITEM_SYSTEM_BOOK} AS INTEGER),\n       CAST('${ITER_ITEM_BIZDAY}' AS DATE),\n       CAST(NULL AS INTEGER) AS branch_num,\n       CAST(NULL AS VARCHAR) AS branch_code,\n       CAST(NULL AS VARCHAR) AS branch_name,\n       CAST(NULL AS VARCHAR) AS time_period,\n       CAST(NULL AS BIGINT) AS customer_nums,\n       CAST(NULL AS BIGINT) AS customer_vip_nums,\n       CAST(NULL AS DECIMAL(14,2)) AS customer_vip_money,\n       CAST(NULL AS DECIMAL(14,2)) AS receive_money,\n       CAST(NULL AS DECIMAL(14,2)) AS item_sale_cost,\n       CAST(NULL AS DECIMAL(14,2)) AS item_sale_profit,\n       CAST(CURRENT_TIMESTAMP AS TIMESTAMPTZ),\n       CAST(0 AS INTEGER)\nWHERE NOT EXISTS (SELECT 1 FROM input WHERE matched)\n"
         }
       }
     },

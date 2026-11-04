@@ -3,13 +3,10 @@
   "id": "lemeng.customer_analysis.l0.3120",
   "version": 1,
   "_note": [
-    "乐檬 AMAREPORT 时段分析（customeranalysis）——写湖 lemeng/customer_analysis/system_book=<book>/bizday=<day>/all.parquet。",
-    "粒度：system_book × bizday × branch_num × time_period（60 分钟切片）。",
-    "",
-    "①【身份自证】whoami → company_id == SYSTEM_BOOK、BRANCH_NUMS ⊆ whoami 门店。",
-    "②【分块扇出】AMAREPORT 硬约束：branch_nums 必填 ≤100 家、日期窗 ≤31 天 ⇒ drv 切块、ctl.foreach 逐块。",
-    "③【汇总闸】只认本次 batch_id；块数与门店数对账 → qa.contract → 写湖。",
-    "④【回填】gen-backfill-variants 派生 ${BIZDAY} 变体。"
+    "乐檬 customer_analysis（nhsoft.report.ai.customeranalysis.find）日粒度采集——写湖 lemeng/customer_analysis/system_book=<book>/bizday=<day>/all.parquet。",
+    "① 身份自证（whoami）② 按 100 家切块 ctl.foreach ③ 汇总闸：分块到齐 + 父级全空栅 + 契约闸。",
+    "父级全空栅（#1314）：所有块 chunk_n_matched 之和为 0 才拒写湖；部分块空属正常。",
+    "④ 回填：gen-backfill-variants 派生 ${BIZDAY} 变体。"
   ],
   "nodes": [
     {
@@ -256,7 +253,7 @@
         "label": "s",
         "componentId": "code.sql",
         "properties": {
-          "sql": "SELECT\n  CAST(batch_id AS VARCHAR) AS batch_id,\n  CAST(system_book AS INTEGER) AS system_book,\n  CAST(bizday AS DATE) AS bizday,\n  CAST(branch_num AS INTEGER) AS branch_num,\n  CAST(branch_code AS VARCHAR) AS branch_code,\n  CAST(branch_name AS VARCHAR) AS branch_name,\n  CAST(time_period AS VARCHAR) AS time_period,\n  CAST(customer_nums AS BIGINT) AS customer_nums,\n  CAST(customer_vip_nums AS BIGINT) AS customer_vip_nums,\n  CAST(customer_vip_money AS DECIMAL(14,2)) AS customer_vip_money,\n  CAST(receive_money AS DECIMAL(14,2)) AS receive_money,\n  CAST(item_sale_cost AS DECIMAL(14,2)) AS item_sale_cost,\n  CAST(item_sale_profit AS DECIMAL(14,2)) AS item_sale_profit,\n  CAST(computed_at AS TIMESTAMPTZ) AS computed_at\nFROM input\n"
+          "sql": "SELECT\n  CAST(batch_id AS VARCHAR) AS batch_id,\n  CAST(system_book AS INTEGER) AS system_book,\n  CAST(bizday AS DATE) AS bizday,\n  CAST(branch_num AS INTEGER) AS branch_num,\n  CAST(branch_code AS VARCHAR) AS branch_code,\n  CAST(branch_name AS VARCHAR) AS branch_name,\n  CAST(time_period AS VARCHAR) AS time_period,\n  CAST(customer_nums AS BIGINT) AS customer_nums,\n  CAST(customer_vip_nums AS BIGINT) AS customer_vip_nums,\n  CAST(customer_vip_money AS DECIMAL(14,2)) AS customer_vip_money,\n  CAST(receive_money AS DECIMAL(14,2)) AS receive_money,\n  CAST(item_sale_cost AS DECIMAL(14,2)) AS item_sale_cost,\n  CAST(item_sale_profit AS DECIMAL(14,2)) AS item_sale_profit,\n  CAST(computed_at AS TIMESTAMPTZ) AS computed_at\nFROM input\nWHERE branch_num IS NOT NULL\n"
         }
       }
     },
