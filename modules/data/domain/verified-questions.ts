@@ -9,9 +9,17 @@
 //   弱（weak）  → `status='candidate'`，等人工确认
 //   人工（human）→ upsert 只落 `candidate`；确认/拒绝由调用方随后 `setStatus`
 //
-// 唯一索引是 `(org, metric_id, md5(question), md5(params::text))`：同一问题 + 同一参数
-// 重复投递只落一行（幂等，摄入重放/水位回退都靠它）。**冲突时不覆盖已 verified 的行**——
-// 自动化信号不能把人工/先前确认过的基线降级。
+// 唯一索引是 `(org, metric_id, md5(question), md5(params::text), md5(slicing::text))`：
+// 同一问题 + 同一参数 + 同一**切面**重复投递只落一行（幂等，摄入重放/水位回退都靠它）。
+// slicing 必须进键——同题同参不同切面是**不同的结果基线**，合行会把两条回归用例静默并成一条。
+//
+// 冲突语义（2026-11-04 评审后定案，计划 Task 1 的表格是正典）：
+//   · 已 verified 行：status/verified_by/verified_at **恒冻结**（确认身份只由人工 `setStatus` 改写），
+//     baseline/slicing/tolerance 只有 `source='human'` 或 `strength='strong'` 的新信号能覆盖；
+//     覆盖时清空 `last_check_result`（旧结果是对旧基线的，不能当新基线的成绩）。
+//   · 已 rejected 行：自动信号不得复活（status 保持 rejected），只有人工 `setStatus` 能重开。
+//   · source/strength 取「最强」：`human > strong > weak`——先弱后强必须升级，不能出现
+//     status=verified 而 strength=weak 的自相矛盾行。
 import type { Pool } from 'pg'
 
 export type VerifiedQuestionSource = 'human' | 'auto'
@@ -106,13 +114,11 @@ function toVerifiedQuestion(row: Row): VerifiedQuestion {
 /**
  * 写一条候选/已验问答（幂等 upsert）。
  *
- * 冲突语义：
- *   · 已有行 `status='verified'` ⇒ **保留**它的 status / verified_by / verified_at（自动化不降级）；
- *   · 其余状态 ⇒ 采纳本次信号的状态（弱→candidate；强→verified 并记 `auto:strong`）；
- *   · 两种路径都刷新 baseline / tolerance / slicing / session_id / updated_at。
- *
- * ⚠️ 唯一索引不含 slicing（计划原样）：同一 question+params 配不同 slicing 会判为同一行。
- * 这是当前口径的已知边界，改索引前先回计划/issue。
+ * 冲突语义见文件头注释（2026-11-04 评审定案）。要点：
+ *   · verified 行的确认身份恒冻结；内容（baseline/slicing/tolerance）只接受 human/strong 覆盖；
+ *   · rejected 行不被自动信号复活；
+ *   · source/strength 取最强（先弱后强会升级）；内容被覆盖时清空 last_check_result；
+ *   · tolerance 缺省时**整列不写**，让表默认（0.001）生效——默认值只有表定义一处事实源。
  */
 export async function upsertCandidate(pool: Pool, org: string, input: CandidateInput): Promise<void> {
   // 只有**自动强信号**才自带确认身份；人工行恒落 candidate，随后由 setStatus 记下确认人
@@ -120,38 +126,82 @@ export async function upsertCandidate(pool: Pool, org: string, input: CandidateI
   const autoStrong = input.source === 'auto' && input.strength === 'strong'
   const status: VerifiedQuestionStatus = autoStrong ? 'verified' : 'candidate'
   const verifiedBy = autoStrong ? 'auto:strong' : null
+
+  // 列清单动态拼：tolerance 未给 ⇒ 不出现该列（走表默认），不能用 coalesce 把默认值抄第二遍。
+  const cols: string[] = []
+  const exprs: string[] = []
+  const params: unknown[] = []
+  const add = (col: string, val: unknown, cast = ''): void => {
+    params.push(val)
+    cols.push(col)
+    exprs.push(`$${params.length}${cast}`)
+  }
+
+  add('org', org)
+  add('question', input.question)
+  add('metric_id', input.metricId)
+  add('params', JSON.stringify(input.params ?? {}), '::jsonb')
+  add('slicing', JSON.stringify(input.slicing ?? {}), '::jsonb')
+  add('baseline', JSON.stringify(input.baseline), '::jsonb')
+  if (input.tolerance !== undefined) add('tolerance', input.tolerance)
+  add('source', input.source)
+  add('strength', input.strength)
+  add('status', status)
+  const statusParam = params.length
+  add('verified_by', verifiedBy)
+  // verified_at 依赖本次 status 参数，不是独立值。
+  cols.push('verified_at')
+  exprs.push(`case when $${statusParam} = 'verified' then now() else null end`)
+  add('session_id', input.sessionId ?? null)
+
   await pool.query(
     `insert into data.verified_questions as vq
-       (org, question, metric_id, params, slicing, baseline, tolerance,
-        source, strength, status, verified_by, verified_at, session_id)
-     values ($1, $2, $3, $4::jsonb, $5::jsonb, $6::jsonb, coalesce($7::numeric, 0.001),
-             $8, $9, $10, $11,
-             case when $10 = 'verified' then now() else null end,
-             $12)
-     on conflict (org, metric_id, (md5(question)), (md5(params::text)))
+       (${cols.join(', ')})
+     values (${exprs.join(', ')})
+     on conflict (org, metric_id, (md5(question)), (md5(params::text)), (md5(slicing::text)))
      do update set
-       slicing     = excluded.slicing,
-       baseline    = excluded.baseline,
-       tolerance   = excluded.tolerance,
-       session_id  = coalesce(excluded.session_id, vq.session_id),
-       status      = case when vq.status = 'verified' then vq.status else excluded.status end,
-       verified_by = case when vq.status = 'verified' then vq.verified_by else excluded.verified_by end,
-       verified_at = case when vq.status = 'verified' then vq.verified_at else excluded.verified_at end,
-       updated_at  = now()`,
-    [
-      org,
-      input.question,
-      input.metricId,
-      JSON.stringify(input.params ?? {}),
-      JSON.stringify(input.slicing ?? {}),
-      JSON.stringify(input.baseline),
-      input.tolerance ?? null,
-      input.source,
-      input.strength,
-      status,
-      verifiedBy,
-      input.sessionId ?? null,
-    ],
+       -- source/strength 取最强：human > strong > weak（先弱后强必须升级）
+       source = case
+                  when vq.source = 'human' or excluded.source = 'human' then 'human'
+                  else 'auto'
+                end,
+       strength = case
+                    when vq.strength = 'human' or excluded.strength = 'human' then 'human'
+                    when vq.strength = 'strong' or excluded.strength = 'strong' then 'strong'
+                    else 'weak'
+                  end,
+       -- 确认身份恒冻结：verified 行不因自动信号改归属，rejected 行不因自动信号被复活
+       status = case when vq.status in ('verified', 'rejected') then vq.status else excluded.status end,
+       verified_by = case when vq.status in ('verified', 'rejected') then vq.verified_by else excluded.verified_by end,
+       verified_at = case when vq.status in ('verified', 'rejected') then vq.verified_at else excluded.verified_at end,
+       -- verified 行的参考基线只有 human/strong 能覆盖；弱信号不得悄悄替换
+       baseline = case
+                    when vq.status = 'verified' and excluded.source <> 'human' and excluded.strength <> 'strong'
+                      then vq.baseline else excluded.baseline
+                  end,
+       slicing = case
+                   when vq.status = 'verified' and excluded.source <> 'human' and excluded.strength <> 'strong'
+                     then vq.slicing else excluded.slicing
+                 end,
+       tolerance = case
+                     when vq.status = 'verified' and excluded.source <> 'human' and excluded.strength <> 'strong'
+                       then vq.tolerance else excluded.tolerance
+                   end,
+       -- 基线/切面/容差**真的被覆盖** ⇒ 旧的 pass/fail/error 不再对应当前基线，清空。
+       -- （verified 行被弱信号命中时内容没被覆盖，旧结果仍然对应当前基线，保留。）
+       last_check_result = case
+                             when (vq.baseline is distinct from excluded.baseline
+                               or vq.slicing is distinct from excluded.slicing
+                               or vq.tolerance is distinct from excluded.tolerance)
+                              and (vq.status <> 'verified'
+                                or excluded.source = 'human'
+                                or excluded.strength = 'strong')
+                               then null
+                             else vq.last_check_result
+                           end,
+       session_id = coalesce(excluded.session_id, vq.session_id),
+       updated_at = now()`,
+    params,
   )
 }
 
@@ -181,6 +231,10 @@ export async function setStatus(
   pool: Pool, org: string, id: number | string,
   status: VerifiedQuestionStatus, by: string | null = null,
 ): Promise<void> {
+  // 审计必须能回答「谁确认的」：没有确认人的 verified 是坏数据，宁可在入口抛错。
+  if (status === 'verified' && (by === null || by.trim() === '')) {
+    throw new Error('setStatus: 置 verified 必须带确认人（审计要能回答谁确认的）')
+  }
   await pool.query(
     `update data.verified_questions
         set status      = $3,

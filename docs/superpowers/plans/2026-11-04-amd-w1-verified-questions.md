@@ -93,14 +93,25 @@ create table if not exists data.verified_questions (
   check (status in ('candidate','verified','rejected','stale'))
 );
 create unique index if not exists verified_questions_org_metric_q_idx
-  on data.verified_questions (org, metric_id, md5(question), md5(params::text));
+  on data.verified_questions (org, metric_id, md5(question), md5(params::text), md5(slicing::text));
 create index if not exists verified_questions_org_status_idx
   on data.verified_questions (org, status);
 ```
 
 - [ ] **Step 4: 实现域模块**
 
-`verified-questions.ts`：类型 + 四个函数；强信号写入时直接 `status='verified'`、`verified_by='auto:strong'`、`verified_at=now()`；弱信号 `status='candidate'`。
+`verified-questions.ts`：类型 + 四个函数。
+
+**冲突语义（2026-11-04 评审后定案，覆盖 brief 原 SQL）**：
+
+| 场景 | 规则 |
+|---|---|
+| 唯一键 | `(org, metric_id, md5(question), md5(params::text), md5(slicing::text))` —— **slicing 必须进键**：同题同参不同切面 = 不同结果基线，不能合行 |
+| 已 `verified` 行 | `status`/`verified_by`/`verified_at`/`baseline`/`slicing`/`tolerance` **冻结**；只有 `source='human'` 或 `strength='strong'` 的新信号可覆盖，且覆盖时清空 `last_check_result` |
+| 已 `rejected` 行 | **自动信号不得复活**（status 保持 rejected）；只有 `source='human'` 的 `setStatus` 能重开 |
+| `source`/`strength` | 取「最强」：`human > strong > weak`；不得出现 status=verified 而 strength=weak 的行 |
+| `setStatus(...,'verified')` | `by` 为空 ⇒ 抛错（审计必须能回答「谁确认的」） |
+| `tolerance` 默认值 | 只在表定义写一次；insert 不重复写默认 |
 
 - [ ] **Step 5: 跑测试确认通过**
 
