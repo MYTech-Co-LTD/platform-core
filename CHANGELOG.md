@@ -11,6 +11,10 @@
 
 ## [Unreleased]
 
+## [0.264.0](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.263.0...v0.264.0) - 2026-11-04
+- 【新增】data-mobile: 报表中心——三 tab（报表/指标/问数）+ 权限自适应（#1369） ([#1370](https://github.com/MYTech-Co-LTD/platform-core/pull/1370), [e9f64a5](https://github.com/MYTech-Co-LTD/platform-core/commit/e9f64a5a3e036a06155649aebf619c15b01beabf))
+
+
 ## [0.263.0](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.262.1...v0.263.0) - 2026-11-04
 - 【新增】data-mobile: 未发布报表可在移动端预览（#1367） ([#1368](https://github.com/MYTech-Co-LTD/platform-core/pull/1368), [702c85a](https://github.com/MYTech-Co-LTD/platform-core/commit/702c85a1b78656646ccd9f1a318a6133186c2244))
 
