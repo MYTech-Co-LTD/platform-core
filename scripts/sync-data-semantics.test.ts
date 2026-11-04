@@ -1442,6 +1442,52 @@ describe('unit 声明侧：可选字段 + 可比对面（spec 2026-11-01 §10.4.
   })
 })
 
+// ── entity / synonyms（自动推导指标 spec 2026-11-04 §5 W0）───────────────────────
+// sync 只搬值（形态归门禁 Task 1）；两字段**必须**进 comparableOf，否则声明改了而库没刷
+// `--check` 不报漂移（与 unit/slaDays/masks 同一条纪律）。
+describe('entity / synonyms 物化面（W0，031）', () => {
+  const base = { name: 'x:y:z', source: 'lemeng', definition: 'd', expression: 'sum(t.c)',
+    grain: ['g'], owner: 'o', tier: 'certified', freshness_sla_days: 1 }
+
+  it('声明透传：entity 是字符串才带；synonyms 是非空数组才带（未声明 = 键缺席）', () => {
+    const both = declarationsFromYaml(yaml([{ ...base, entity: 'branch', synonyms: ['营业额', '销售金额'] }]))[0] as {
+      entity?: string, synonyms?: string[]
+    }
+    expect(both.entity).toBe('branch')
+    expect(both.synonyms).toEqual(['营业额', '销售金额'])
+    const bare = declarationsFromYaml(yaml([{ ...base }]))[0] as { entity?: string, synonyms?: string[] }
+    expect(bare.entity).toBeUndefined()
+    expect(bare.synonyms).toBeUndefined()
+  })
+
+  it('★ 两字段进 comparableOf：声明变了而库内没跟上 ⇒ 判「更新」（缺这条 --check 假绿）', () => {
+    const row = { id: 'a', title: 'A', description: '', requiredScope: null,
+      subjectColumn: 'org', selectSql: 'select sum(t.c) as value from t', groupBy: 'g', params: {},
+      sourceSystem: 'lemeng', totalable: false, slaDays: 1, freshnessRelations: [] as string[],
+      masks: null, drillExpr: null, drillDims: null, drillDetail: null,
+      entity: 'branch' as string | null, synonyms: ['营业额'] as string[] }
+    // entity 改了 ⇒ 更新
+    expect(diffDeclarations([{ ...row } as never], [{ ...row, entity: 'store' } as never]).updated).toEqual(['a'])
+    // synonyms 改了 ⇒ 更新
+    expect(diffDeclarations([{ ...row } as never], [{ ...row, synonyms: ['销售金额'] } as never]).updated).toEqual(['a'])
+    // 两侧一致 ⇒ 未变
+    expect(diffDeclarations([{ ...row } as never], [{ ...row } as never]).unchanged).toEqual(['a'])
+    // 未声明（声明行上根本没有这两个键——用 undefined 表达同一状态）↔ 库侧归一值
+    // （null / []）⇒ **未变**：否则所有没同义词的指标每次 --check 都报「更新」，
+    // 漂移信号退化成狼来了（#700 同款形态）。
+    expect(diffDeclarations(
+      [{ ...row, entity: undefined, synonyms: undefined } as never],
+      [{ ...row, entity: null, synonyms: [] } as never],
+    ).unchanged).toEqual(['a'])
+  })
+
+  it('仓内真实声明：net_sales 带实体与同义词（W0 Task 4 全量标注前的最小示例）', () => {
+    const byId = new Map(readDeclarations(ROOT).map((r) => [r.id, r]))
+    expect(byId.get('lemeng:retail:net_sales')?.entity).toBe('branch')
+    expect(byId.get('lemeng:retail:net_sales')?.synonyms).toEqual(['净销售金额'])
+  })
+})
+
 // ── 真实声明的单位赋值（2026-11-02，机械可推导子集）───────────────────────────
 // 只钉「已赋值」与「刻意留空」两侧的样本：金额/率/计数/天已赋；数量类因源计量单位未定留空。
 describe('l1_metrics.yml 真实单位赋值（机械可推导子集）', () => {

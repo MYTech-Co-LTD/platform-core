@@ -79,6 +79,18 @@ export interface MetricRow extends MetricDef {
    */
   masks: MaskSpec[] | null
   /**
+   * 实体名（W0，031 迁移）：L1 声明侧物化的「这条指标说的是哪个实体」（如 `branch`）。
+   * 恒有值：未声明 = null（「行里没有这个字段」不是合法态——读侧 Task 3 直接比对）；
+   * L2 行恒 null（租户声明没有实体面）。
+   */
+  entity: string | null
+  /**
+   * 同义词（W0，031 迁移）：L1 声明侧物化的别称数组（如 `['营业额', '销售金额']`）。
+   * 恒数组：未声明 / 坏形状 = []（读侧 Task 3 直接 `.some(...)`，不给 undefined 留门）；
+   * L2 行恒 []（租户声明没有同义词面）。
+   */
+  synonyms: string[]
+  /**
    * 可信度分级（027 迁移，spec 2026-11-01 §10.4 D7）：**读侧推导后的值**——
    * L1 行恒 `'certified'`（平台口径，从 `source='l1'` 推导，不读列：sync 重写整行，列不可信）；
    * L2 行读列（新建走 API 时写 `'draft'`；列 NULL = 027 之前的存量行，按 `'draft'` 报——
@@ -131,6 +143,16 @@ export interface L1MetricDef extends Omit<MetricDef, 'drill'> {
    */
   unit?: string | null
   /**
+   * 实体名（W0，031 迁移，声明 `entities` / 指标 `entity` 的物化值；可选）：未声明 = null。
+   * 与 `unit` 同一条可选理由——合成契约与测试夹具可以不带；写侧 `?? null` 收口。
+   */
+  entity?: string | null
+  /**
+   * 同义词（W0，031 迁移，声明 `synonyms` 的物化值；可选）：未声明 = 空数组。
+   * 写侧 `?? []` 收口——库里 jsonb 恒数组（不留 NULL 给读侧猜）。
+   */
+  synonyms?: string[]
+  /**
    * 明细下钻绑定（下钻 spec 2026-10-21 §2.3，声明 compose/dimensions/detail 的物化值）：
    * **sync 物化路径必传**（声明有 compose/dimensions/detail 就给绑定；未声明 compose = 缺省，
    * 与读侧 `MetricDef.drill?` 的「未声明 = 字段缺席」同一口径）。类型上可选与 `scopeNote`
@@ -169,6 +191,10 @@ function toMetricRow(row: Record<string, unknown>): MetricRow {
     // 掩码声明（spec §5.2）：mask_spec 是 jsonb 数组（pg 已反序列化），只认真数组——
     // 列缺省/坏形状宁可落 null（= 未声明），不让 undefined 冒充真值（同 freshness_relations）。
     masks: Array.isArray(row.mask_spec) ? (row.mask_spec as MaskSpec[]) : null,
+    // 实体与同义词（W0，031）：L1 声明侧物化，读侧**恒有值**——刻意不收窄成可选，
+    // 让「列缺省 / 坏形状」也落在 null / [] 上（Task 3 可直接 .some(...)，不给 undefined 留门）。
+    entity: typeof row.entity === 'string' ? row.entity : null,
+    synonyms: Array.isArray(row.synonyms) ? row.synonyms.map(String) : [],
     // 可信度分级（spec 2026-11-01 §10.4 D7）：推导收口在**这一处**——
     // L1 恒 certified（source 推导，不读列）；L2 读列，NULL（存量）按 draft 报。
     // toolbox 的 tier 投影消费本值，不再各自从 source 推导（第二事实源会打架）。
@@ -216,7 +242,7 @@ function drillBindingOf(row: Record<string, unknown>): DrillBinding | undefined 
 
 /** 投影列清单（三处查询共用一处写法——少写/写错一列是「字段静默变 undefined」的经典来源）。 */
 const ROW_COLUMNS =
-  'id, title, description, required_scope, subject_column, select_sql, group_by, params, source, source_system, updated_by, version, totalable, scope_note, sla_days, freshness_relations, mask_spec, drill_expr, drill_dims, drill_detail, certified, created_by, biz_description, unit, caliber_note'
+  'id, title, description, required_scope, subject_column, select_sql, group_by, params, source, source_system, updated_by, version, totalable, scope_note, sla_days, freshness_relations, mask_spec, drill_expr, drill_dims, drill_detail, certified, created_by, biz_description, unit, caliber_note, entity, synonyms'
 
 /**
  * 本 org 的 L2 行（**不含** L1 平台行）。`order by id`：顺序确定。
@@ -402,8 +428,8 @@ function drillDetailJson(drill: DrillBinding): string {
 export async function upsertL1Metric(pool: Pool, def: L1MetricDef): Promise<void> {
   await pool.query(
     `insert into data.metrics
-       (org, id, title, description, required_scope, subject_column, select_sql, group_by, params, source, source_system, totalable, scope_note, sla_days, freshness_relations, mask_spec, drill_expr, drill_dims, drill_detail, unit)
-     values ($1, $2, $3, $4, $5, $6, $7, $8, $9, 'l1', $10, $11, $12, $13, $14::jsonb, $15::jsonb, $16, $17::jsonb, $18::jsonb, $19)
+       (org, id, title, description, required_scope, subject_column, select_sql, group_by, params, source, source_system, totalable, scope_note, sla_days, freshness_relations, mask_spec, drill_expr, drill_dims, drill_detail, unit, entity, synonyms)
+     values ($1, $2, $3, $4, $5, $6, $7, $8, $9, 'l1', $10, $11, $12, $13, $14::jsonb, $15::jsonb, $16, $17::jsonb, $18::jsonb, $19, $20, $21::jsonb)
      on conflict (org, id) do update set
        title          = excluded.title,
        description    = excluded.description,
@@ -424,6 +450,10 @@ export async function upsertL1Metric(pool: Pool, def: L1MetricDef): Promise<void
        -- 单位（§10.4.3 声明侧，2026-11-02 起）：与 sla_days/masks **同进退**——声明改了
        --    重新物化必须跟上，否则词表 unit 按旧声明显示（--check 也认它）。
        unit                = excluded.unit,
+       -- 实体与同义词（W0，031）：与 unit 同进退——声明改了重新物化必须跟上，
+       --    否则词表按旧声明做同义词/实体匹配（--check 也认它）。
+       entity              = excluded.entity,
+       synonyms            = excluded.synonyms,
        updated_at     = now()`,
     [
       L1_ORG, def.id, def.title, def.description, def.requiredScope,
@@ -437,6 +467,10 @@ export async function upsertL1Metric(pool: Pool, def: L1MetricDef): Promise<void
       def.drill == null ? null : JSON.stringify(def.drill.dims),
       def.drill == null ? null : drillDetailJson(def.drill),
       def.unit ?? null,
+      // 实体 / 同义词（W0，031）：未声明（夹具缺省 undefined）⇒ NULL / '[]'。
+      // synonyms 写 '[]' 而不是 NULL——库里恒数组，读侧归一之外再少一条「NULL 猜空」的分支。
+      def.entity ?? null,
+      JSON.stringify(def.synonyms ?? []),
     ],
   )
 }

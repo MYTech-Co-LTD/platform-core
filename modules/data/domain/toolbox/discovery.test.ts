@@ -12,7 +12,10 @@ const row = (over: Partial<MetricRow>): MetricRow => ({
   selectSql: 'select org, branch_name, bizday, sum(v) as value from fct group by org, branch_name, bizday',
   groupBy: 'org, branch_name, bizday', params: {}, source: 'l1', sourceSystem: 'lemeng',
   updatedBy: null, version: 1, totalable: true, scopeNote: '', slaDays: 2,
-  freshnessRelations: ['stg_lemeng_retail_order_line'], masks: null, ...over,
+  freshnessRelations: ['stg_lemeng_retail_order_line'], masks: null,
+  // W0（031）：MetricRow 上两字段**恒有值**（未声明 = null / []）——夹具必须同形，
+  // 否则读侧 `.some(...)` 会撞上 undefined（假红/假绿都不可信）。
+  entity: null, synonyms: [], ...over,
 }) as MetricRow
 
 const requester: Requester = { userId: 'u', orgId: 'acme', channel: 'pat', keyId: 1, scopes: ['data:query'], hasScope: (c) => c === 'data:query' }
@@ -26,6 +29,7 @@ function deps(catalog: MetricRow[], wh: ToolboxDeps['wh'] = async () => ({ colum
         params: m.params, source: m.source, source_system: m.sourceSystem,
         updated_by: m.updatedBy, version: m.version, totalable: m.totalable, scope_note: m.scopeNote,
         sla_days: m.slaDays, freshness_relations: m.freshnessRelations, mask_spec: m.masks,
+        entity: m.entity, synonyms: m.synonyms,
       })) }),
     } as never,
     org: 'acme', requester, adoptedSources: new Set(['lemeng']), wh,
@@ -49,6 +53,13 @@ describe('searchImpl', () => {
     expect((byQ.payload as { results: { id: string }[] }).results.map((r) => r.id)).toEqual(['acme:custom:1'])
     const byTier = await searchImpl(d, { tier: 'custom' })
     expect((byTier.payload as { results: { id: string }[] }).results.map((r) => r.id)).toEqual(['acme:custom:1'])
+  })
+  it('search_catalog 命中同义词', async () => {
+    // W0（031）：q 的命中面除 id/title/description 外还含声明的同义词——问数入口说
+    // 「营业额」时，指标 `net_sales`（标题「净销」）必须在结果里。
+    const out = await searchImpl(deps([row({ synonyms: ['营业额'] })]), { kind: 'metric', q: '营业额' })
+    const results = (out.payload as { results: { id: string }[] }).results
+    expect(results.map((r) => r.id)).toContain('lemeng:retail:net_sales')
   })
   it('kind=dataset：DENYLIST schema 不出现', async () => {
     const d = deps([], async () => ({ columns: ['table_schema', 'table_name'], rows: [['pg_catalog', 'pg_class'], ['marts', 'fct_retail_sale']] }))
@@ -76,6 +87,15 @@ describe('describeMetricImpl', () => {
     expect((ok.payload as { asOf?: { dataThrough: string } }).asOf?.dataThrough).toBe('2026-10-20')
     const none = await describeMetricImpl(deps([row({})]), { id: 'lemeng:retail:net_sales' })
     expect('asOf' in none.payload).toBe(false)
+  })
+  it('describe_metric 返回 entity/synonyms', async () => {
+    const out = await describeMetricImpl(deps([row({ entity: 'branch', synonyms: ['营业额'] })]), { id: 'lemeng:retail:net_sales' })
+    expect((out.payload as { entity: string }).entity).toBe('branch')
+    expect((out.payload as { synonyms: string[] }).synonyms).toEqual(['营业额'])
+    // 「未声明 = 字段缺席」：没声明实体/同义词 ⇒ payload 里不出现这两个键
+    const bare = await describeMetricImpl(deps([row({})]), { id: 'lemeng:retail:net_sales' })
+    expect('entity' in bare.payload).toBe(false)
+    expect('synonyms' in bare.payload).toBe(false)
   })
 })
 

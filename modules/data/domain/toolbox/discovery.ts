@@ -67,7 +67,10 @@ export const searchImpl: ToolImpl = async (deps, args) => {
     const results = (await visibleRows(deps))
       .filter((m) => wantCertified === null || (m.certified === 'certified') === wantCertified)
       .filter((m) => q === null || m.id.toLowerCase().includes(q)
-        || m.title.toLowerCase().includes(q) || m.description.toLowerCase().includes(q))
+        || m.title.toLowerCase().includes(q) || m.description.toLowerCase().includes(q)
+        // 同义词（W0，031）：问数入口说「营业额」也要命中 net_sales。
+        // MetricRow.synonyms 读侧恒数组（未声明 = []），不给 undefined 留门。
+        || m.synonyms.some((s) => s.toLowerCase().includes(q)))
       .slice(0, SEARCH_LIMIT)
       .map((m) => ({ id: m.id, title: m.title, tier: tierOf(m), owner: ownerOf(m, deps.org), oneLiner: oneLinerOf(m) }))
     return { payload: { results }, isError: false, auditRowCount: null }
@@ -96,6 +99,10 @@ export const describeMetricImpl: ToolImpl = async (deps, args) => {
       grain: m.groupBy.split(',').map((d) => d.trim()).filter((d) => d !== ''),
       params: paramFaceOf(m.params),
       owner: ownerOf(m, deps.org), tier: tierOf(m), version: m.version,
+      // 实体与同义词（W0，031）：**未声明 = 字段缺席**（与 asOf/scopeNote 同一口径）——
+      // 空实体/空数组不是「有值」，把它们抛给消费方等于让它猜。
+      ...(m.entity !== null ? { entity: m.entity } : {}),
+      ...(m.synonyms.length > 0 ? { synonyms: m.synonyms } : {}),
       ...(asOf !== undefined ? { asOf } : {}),
     },
     isError: false, auditMetricId: id, auditRowCount: null,
