@@ -337,8 +337,11 @@ export function searchClient(opts, fetchImpl) {
         size: req.size,
       },
     }
+    // ⚠️ 真机事实（2026-11-04，OO v1.0.4 @ observe.hookflow.cn）：**stream 级 `_search` 恒 404**
+    // （连既有 `askdata_stuck` 也 404），只有**组织级** `/api/{org}/_search` 可用，流由 SQL 指定。
+    // 故这里不带 stream 进路径；`stream` 只出现在 SQL 的 `from "<stream>"` 里。
     const res = await fetchImpl(
-      `${base}/api/${encodeURIComponent(org)}/${encodeURIComponent(stream)}/_search`,
+      `${base}/api/${encodeURIComponent(org)}/_search`,
       {
         method: 'POST',
         headers: { Authorization: header, 'Content-Type': 'application/json' },
