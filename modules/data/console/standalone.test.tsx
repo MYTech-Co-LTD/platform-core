@@ -103,6 +103,36 @@ describe('StandaloneReport（/r/:id 独立页）', () => {
     expect(urls.some((u) => u.includes('/draft'))).toBe(false)
   })
 
+  it('⑤ ?preview=1 走 /spec（ACL 保护），显示「预览草稿」；403 时不回退 published-spec（#1367）', async () => {
+    m.mockImplementation(async (url: string) => {
+      urls.push(url)
+      if (url.includes('/spec')) return json({ spec: { panels: [{ chart: 'text', content: '草稿内容', span: 24 }] }, version: 5 })
+      return json({ error: 'NOT_PUBLISHED' }, 404)
+    })
+
+    renderAt('/r/r1?preview=1')
+
+    expect(await screen.findByText('草稿内容')).toBeInTheDocument()
+    // 只打 /spec：预览是显式参数，仍没有 published-spec 回退路（反过来也不回退）
+    expect(urls).toEqual(['/api/modules/data/reports/r1/spec'])
+    expect(screen.getByText('预览草稿')).toBeInTheDocument()
+  })
+
+  it('⑤b preview=1 且 /spec 403（非受让人）：报错，不回退 published-spec、不回退 /draft（#1367）', async () => {
+    m.mockImplementation(async (url: string) => {
+      urls.push(url)
+      if (url.includes('/spec')) return json({ error: 'FORBIDDEN' }, 403)
+      return json({ title: '线上版', version: 1, spec: { panels: [{ chart: 'text', content: '线上', span: 24 }] } })
+    })
+
+    renderAt('/r/r1?preview=1')
+
+    // 403 经 messageOf 折成中性文案（不回显英文裸码）
+    expect(await screen.findByText('没有权限执行该操作（需要更高授权或页门放行）')).toBeInTheDocument()
+    expect(screen.queryByText('线上')).toBeNull()
+    expect(urls).toEqual(['/api/modules/data/reports/r1/spec'])
+  })
+
   it('④ 响应形状坏（spec.panels 非数组）：fail-closed 报错，不进渲染循环', async () => {
     mockPublished({ title: '月报', version: 1, spec: {} })
 

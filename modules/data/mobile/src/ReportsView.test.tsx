@@ -37,9 +37,10 @@ describe('移动端报表页', () => {
     expect(frame.tagName).toBe('IFRAME')
     expect(frame.getAttribute('src')).toBe('/r/r1')
 
-    // 未发布：Toast 提示、不打开阅读层
+    // 未发布：预览模式（#1367）——阅读层打开 /r/:id?preview=1
     fireEvent.click(screen.getByText('会员复购分析'))
-    expect(await screen.findByText('未发布：请先在 PC 端发布后再查看')).toBeTruthy()
+    const preview = await screen.findByTitle('会员复购分析')
+    expect(preview.getAttribute('src')).toBe('/r/r2?preview=1')
   })
 
   it('搜索过滤 + 无匹配空态', async () => {
