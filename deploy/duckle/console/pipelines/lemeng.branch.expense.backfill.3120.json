@@ -264,8 +264,8 @@
           "body": "{\"date_from\":\"${BIZDAY} 00:00:00\",\"date_to\":\"${BIZDAY} 23:59:59\",\"page_number\":1,\"page_size\":200,\"state_code\":3}",
           "responsePath": "/result",
           "paginationType": "none",
-          "retryAttempts": 3,
-          "retryBackoffMs": 2000
+          "retryAttempts": 10,
+          "retryBackoffMs": 15000
         }
       }
     },
@@ -376,8 +376,8 @@
           "body": "{\"date_from\":\"${BIZDAY} 00:00:00\",\"date_to\":\"${BIZDAY} 23:59:59\",\"page_number\":2,\"page_size\":200,\"state_code\":3}",
           "responsePath": "/result",
           "paginationType": "none",
-          "retryAttempts": 3,
-          "retryBackoffMs": 2000
+          "retryAttempts": 10,
+          "retryBackoffMs": 15000
         }
       }
     },
@@ -488,8 +488,8 @@
           "body": "{\"date_from\":\"${BIZDAY} 00:00:00\",\"date_to\":\"${BIZDAY} 23:59:59\",\"page_number\":3,\"page_size\":200,\"state_code\":3}",
           "responsePath": "/result",
           "paginationType": "none",
-          "retryAttempts": 3,
-          "retryBackoffMs": 2000
+          "retryAttempts": 10,
+          "retryBackoffMs": 15000
         }
       }
     },
@@ -600,8 +600,8 @@
           "body": "{\"date_from\":\"${BIZDAY} 00:00:00\",\"date_to\":\"${BIZDAY} 23:59:59\",\"page_number\":4,\"page_size\":200,\"state_code\":3}",
           "responsePath": "/result",
           "paginationType": "none",
-          "retryAttempts": 3,
-          "retryBackoffMs": 2000
+          "retryAttempts": 10,
+          "retryBackoffMs": 15000
         }
       }
     },
@@ -712,8 +712,8 @@
           "body": "{\"date_from\":\"${BIZDAY} 00:00:00\",\"date_to\":\"${BIZDAY} 23:59:59\",\"page_number\":5,\"page_size\":200,\"state_code\":3}",
           "responsePath": "/result",
           "paginationType": "none",
-          "retryAttempts": 3,
-          "retryBackoffMs": 2000
+          "retryAttempts": 10,
+          "retryBackoffMs": 15000
         }
       }
     },
@@ -824,8 +824,8 @@
           "body": "{\"date_from\":\"${BIZDAY} 00:00:00\",\"date_to\":\"${BIZDAY} 23:59:59\",\"page_number\":6,\"page_size\":200,\"state_code\":3}",
           "responsePath": "/result",
           "paginationType": "none",
-          "retryAttempts": 3,
-          "retryBackoffMs": 2000
+          "retryAttempts": 10,
+          "retryBackoffMs": 15000
         }
       }
     },
@@ -936,8 +936,8 @@
           "body": "{\"date_from\":\"${BIZDAY} 00:00:00\",\"date_to\":\"${BIZDAY} 23:59:59\",\"page_number\":7,\"page_size\":200,\"state_code\":3}",
           "responsePath": "/result",
           "paginationType": "none",
-          "retryAttempts": 3,
-          "retryBackoffMs": 2000
+          "retryAttempts": 10,
+          "retryBackoffMs": 15000
         }
       }
     },
@@ -1048,8 +1048,8 @@
           "body": "{\"date_from\":\"${BIZDAY} 00:00:00\",\"date_to\":\"${BIZDAY} 23:59:59\",\"page_number\":8,\"page_size\":200,\"state_code\":3}",
           "responsePath": "/result",
           "paginationType": "none",
-          "retryAttempts": 3,
-          "retryBackoffMs": 2000
+          "retryAttempts": 10,
+          "retryBackoffMs": 15000
         }
       }
     },
@@ -1160,8 +1160,8 @@
           "body": "{\"date_from\":\"${BIZDAY} 00:00:00\",\"date_to\":\"${BIZDAY} 23:59:59\",\"page_number\":9,\"page_size\":200,\"state_code\":3}",
           "responsePath": "/result",
           "paginationType": "none",
-          "retryAttempts": 3,
-          "retryBackoffMs": 2000
+          "retryAttempts": 10,
+          "retryBackoffMs": 15000
         }
       }
     },
@@ -1272,8 +1272,8 @@
           "body": "{\"date_from\":\"${BIZDAY} 00:00:00\",\"date_to\":\"${BIZDAY} 23:59:59\",\"page_number\":10,\"page_size\":200,\"state_code\":3}",
           "responsePath": "/result",
           "paginationType": "none",
-          "retryAttempts": 3,
-          "retryBackoffMs": 2000
+          "retryAttempts": 10,
+          "retryBackoffMs": 15000
         }
       }
     },
@@ -1384,8 +1384,8 @@
           "body": "{\"date_from\":\"${BIZDAY} 00:00:00\",\"date_to\":\"${BIZDAY} 23:59:59\",\"page_number\":11,\"page_size\":200,\"state_code\":3}",
           "responsePath": "/result",
           "paginationType": "none",
-          "retryAttempts": 3,
-          "retryBackoffMs": 2000
+          "retryAttempts": 10,
+          "retryBackoffMs": 15000
         }
       }
     },
@@ -1496,8 +1496,8 @@
           "body": "{\"date_from\":\"${BIZDAY} 00:00:00\",\"date_to\":\"${BIZDAY} 23:59:59\",\"page_number\":12,\"page_size\":200,\"state_code\":3}",
           "responsePath": "/result",
           "paginationType": "none",
-          "retryAttempts": 3,
-          "retryBackoffMs": 2000
+          "retryAttempts": 10,
+          "retryBackoffMs": 15000
         }
       }
     },
@@ -1608,8 +1608,8 @@
           "body": "{\"date_from\":\"${BIZDAY} 00:00:00\",\"date_to\":\"${BIZDAY} 23:59:59\",\"page_number\":13,\"page_size\":200,\"state_code\":3}",
           "responsePath": "/result",
           "paginationType": "none",
-          "retryAttempts": 3,
-          "retryBackoffMs": 2000
+          "retryAttempts": 10,
+          "retryBackoffMs": 15000
         }
       }
     },
@@ -1720,8 +1720,8 @@
           "body": "{\"date_from\":\"${BIZDAY} 00:00:00\",\"date_to\":\"${BIZDAY} 23:59:59\",\"page_number\":14,\"page_size\":200,\"state_code\":3}",
           "responsePath": "/result",
           "paginationType": "none",
-          "retryAttempts": 3,
-          "retryBackoffMs": 2000
+          "retryAttempts": 10,
+          "retryBackoffMs": 15000
         }
       }
     },
@@ -1832,8 +1832,8 @@
           "body": "{\"date_from\":\"${BIZDAY} 00:00:00\",\"date_to\":\"${BIZDAY} 23:59:59\",\"page_number\":15,\"page_size\":200,\"state_code\":3}",
           "responsePath": "/result",
           "paginationType": "none",
-          "retryAttempts": 3,
-          "retryBackoffMs": 2000
+          "retryAttempts": 10,
+          "retryBackoffMs": 15000
         }
       }
     },
@@ -1944,8 +1944,8 @@
           "body": "{\"date_from\":\"${BIZDAY} 00:00:00\",\"date_to\":\"${BIZDAY} 23:59:59\",\"page_number\":16,\"page_size\":200,\"state_code\":3}",
           "responsePath": "/result",
           "paginationType": "none",
-          "retryAttempts": 3,
-          "retryBackoffMs": 2000
+          "retryAttempts": 10,
+          "retryBackoffMs": 15000
         }
       }
     },
@@ -2056,8 +2056,8 @@
           "body": "{\"date_from\":\"${BIZDAY} 00:00:00\",\"date_to\":\"${BIZDAY} 23:59:59\",\"page_number\":17,\"page_size\":200,\"state_code\":3}",
           "responsePath": "/result",
           "paginationType": "none",
-          "retryAttempts": 3,
-          "retryBackoffMs": 2000
+          "retryAttempts": 10,
+          "retryBackoffMs": 15000
         }
       }
     },
@@ -2168,8 +2168,8 @@
           "body": "{\"date_from\":\"${BIZDAY} 00:00:00\",\"date_to\":\"${BIZDAY} 23:59:59\",\"page_number\":18,\"page_size\":200,\"state_code\":3}",
           "responsePath": "/result",
           "paginationType": "none",
-          "retryAttempts": 3,
-          "retryBackoffMs": 2000
+          "retryAttempts": 10,
+          "retryBackoffMs": 15000
         }
       }
     },
@@ -2280,8 +2280,8 @@
           "body": "{\"date_from\":\"${BIZDAY} 00:00:00\",\"date_to\":\"${BIZDAY} 23:59:59\",\"page_number\":19,\"page_size\":200,\"state_code\":3}",
           "responsePath": "/result",
           "paginationType": "none",
-          "retryAttempts": 3,
-          "retryBackoffMs": 2000
+          "retryAttempts": 10,
+          "retryBackoffMs": 15000
         }
       }
     },
@@ -2392,8 +2392,8 @@
           "body": "{\"date_from\":\"${BIZDAY} 00:00:00\",\"date_to\":\"${BIZDAY} 23:59:59\",\"page_number\":20,\"page_size\":200,\"state_code\":3}",
           "responsePath": "/result",
           "paginationType": "none",
-          "retryAttempts": 3,
-          "retryBackoffMs": 2000
+          "retryAttempts": 10,
+          "retryBackoffMs": 15000
         }
       }
     },
@@ -2578,8 +2578,8 @@
           "body": "{\"date_from\":\"${BIZDAY} 00:00:00\",\"date_to\":\"${BIZDAY} 23:59:59\",\"page_number\":21,\"page_size\":200,\"state_code\":3}",
           "responsePath": "/result",
           "paginationType": "none",
-          "retryAttempts": 3,
-          "retryBackoffMs": 2000
+          "retryAttempts": 10,
+          "retryBackoffMs": 15000
         }
       }
     },
