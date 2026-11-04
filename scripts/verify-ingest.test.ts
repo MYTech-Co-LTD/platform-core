@@ -154,6 +154,12 @@ describe('parseEvent（Task 4 事件契约）', () => {
     expect(ev.slicing).toEqual({})
   })
 
+  it('OO 小写化的键（metricid/sessionid）也能解析（真流真相）', () => {
+    const ev = parseEvent({ ...hit(), metricid: 'lemeng:retail:net_sales', sessionid: 's-lower', metricId: undefined, sessionId: undefined })
+    expect(ev.metricId).toBe('lemeng:retail:net_sales')
+    expect(ev.sessionId).toBe('s-lower')
+  })
+
   it('缺省 / 空串 / 空白串的 params / slicing ⇒ {}（不把空串当 JSON 解析）', () => {
     const ev = parseEvent(hit({ params: '', slicing: undefined }))
     expect(ev.params).toEqual({})
@@ -234,7 +240,7 @@ describe('searchClient', () => {
     // >= 而非 >：同一微秒入库的边界组不能被跳过（review Important 4）
     expect(body.query.sql).toContain('where _timestamp >= 1793793000000123')
     // sessionId 必须加引号：OO 未加引号会小写化 ⇒ 真流 400（review 第 2 轮 Important）
-    expect(body.query.sql).toContain('order by _timestamp asc, seq asc, "sessionId" asc')
+    expect(body.query.sql).toContain('order by _timestamp asc, seq asc, sessionid asc')
   })
 
   it('无游标（首跑）不加 where，start_time = end - 回看窗口（OO 拒绝 0）', async () => {

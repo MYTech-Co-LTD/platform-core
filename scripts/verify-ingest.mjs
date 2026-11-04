@@ -287,11 +287,14 @@ export function parseEvent(hit) {
   if (org === '') throw new BadEventError('缺 org', 'BAD_ORG')
   const question = typeof hit.question === 'string' ? hit.question.trim() : ''
   if (question === '') throw new BadEventError('缺 question')
-  const metricId = typeof hit.metricId === 'string' ? hit.metricId.trim() : ''
+  // ⚠️ OO 会把**所有 JSON 键统一小写**（2026-11-04 真机读回：metricid/sessionid/userid）。
+  // 两种写法都接受：解析以**小写**为准（真流真相），camelCase 兼容测试夹具与旧事件。
+  /** @param {unknown} v */
+  const asText = (v) => (typeof v === 'string' ? v.trim() : '')
+  const metricId = asText(hit.metricid) || asText(hit.metricId)
   if (metricId === '') throw new BadEventError('缺 metricId')
-  const sessionId = typeof hit.sessionId === 'string' && hit.sessionId.trim() !== ''
-    ? hit.sessionId.trim()
-    : null
+  const sessionText = asText(hit.sessionid) || asText(hit.sessionId)
+  const sessionId = sessionText === '' ? null : sessionText
   return {
     signal,
     org,
@@ -317,11 +320,9 @@ const DAY_US = 86400 * 1_000_000
  * 请求体按 OpenObserve v1.0.4 形状：`{query: {sql, start_time, end_time, from, size}}`，
  * 时间是**微秒 epoch**（UTC 窗口）。SQL 用 **`_timestamp >= 游标`**：同一微秒入库的多条记录
  * 可能被分页截断，严格 `>` 会漏掉边界组；`>=` 让下一轮重读该组（唯一索引幂等吸收）。
- * 次级排序 `seq, "sessionId"` 固定同微秒组内的顺序，避免跨页重排导致漏读。
- * **`"sessionId"` 必须加双引号**：OO 对未加引号的标识符按小写解析（实测 `order by fooBar`
- * ⇒ 400 `unknown field 'foobar'`），而 Task 4 写入的键是 camelCase `sessionId`；不加引号会让
- * 真流每次 `_search` 都 400。实测 OO v1.0.4 支持引号且**区分大小写**（`"session_id"` 可用、
- * `"SESSION_ID"` ⇒ 400 `unknown field`）。
+ * 次级排序 `_timestamp, seq, sessionid` 固定同微秒组内的顺序，避免跨页重排导致漏读。
+ * ⚠️ **OO 会把所有 JSON 键统一小写**（2026-11-04 真机读回：`metricid` / `sessionid` / `userid`）。
+ * 因此 SQL 里只能用**小写未引号**的 `sessionid`；写 `"sessionId"` 会 `400 unknown field 'sessionId'`。
  *
  * ⚠️ 端点形状（2026-11-04 以实例 OpenAPI `v1.0.4` 与源码 `v1.1.2` 双双核实）：
  * **不存在** stream 级 `/api/{org}/{stream}/_search`（该版本 404），只有**组织级**
@@ -347,7 +348,7 @@ export function searchClient(opts, fetchImpl) {
     const cursorSql = req.cursorUs === null ? '' : ` where _timestamp >= ${Math.trunc(req.cursorUs)}`
     const body = {
       query: {
-        sql: `select * from "${stream}"${cursorSql} order by _timestamp asc, seq asc, "sessionId" asc`,
+        sql: `select * from "${stream}"${cursorSql} order by _timestamp asc, seq asc, sessionid asc`,
         // OO 拒绝 start_time=0（invalid time range）⇒ 无游标时用有界回看窗口，绝不传 0。
         start_time: req.cursorUs ?? (req.endUs - lookbackDays * DAY_US),
         end_time: req.endUs,
