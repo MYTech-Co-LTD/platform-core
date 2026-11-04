@@ -11,6 +11,10 @@
 
 ## [Unreleased]
 
+## [0.268.5](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.268.4...v0.268.5) - 2026-11-04
+- 【修复】data: 门店费用页节点重试 3×2s → 10×15s（21 页并发触发 PAT 频率闸） ([#1391](https://github.com/MYTech-Co-LTD/platform-core/pull/1391), [348dbd4](https://github.com/MYTech-Co-LTD/platform-core/commit/348dbd492668a2650fd699e2b6a0d79ebf0da7d2))
+
+
 ## [0.268.4](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.268.3...v0.268.4) - 2026-11-04
 - 【修复】data: OO 事件字段名按小写解析（真机统一小写化键） ([#1388](https://github.com/MYTech-Co-LTD/platform-core/pull/1388), [aa6b635](https://github.com/MYTech-Co-LTD/platform-core/commit/aa6b635dde874c2ffbd39abe3ac2f53eee4a8d06))
 
