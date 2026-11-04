@@ -22,9 +22,6 @@ set -- $AGENTS_GLOB
 [ -r /etc/openobserve-ingest.env ] || { echo "SYNC_FAIL missing /etc/openobserve-ingest.env"; exit 1; }
 
 set -a; . /etc/openobserve-ingest.env; set +a
-# 租户隔离键**必填**：缺失就整条 job 响亮失败，绝不用猜的 org 写 OO（fail-closed）。
-# 值由 openship job env 提供（不在 ingest 凭据文件里）。
-[ -n "${ASK_VERIFY_ORG:-}" ] || { echo "SYNC_FAIL missing ASK_VERIFY_ORG"; exit 1; }
 
 for db in $AGENTS_GLOB; do
   [ -r "$db" ] || continue
@@ -34,5 +31,8 @@ for db in $AGENTS_GLOB; do
   # #963：判据侧也按 agent 一份水位（旧版每轮重扫末 5000 行 ⇒ 重复上报 + rule_ver 混版）
   ASK_ATTR_WM="$D/attribute.watermark.$a" python3 "$D/attribute.py" "$db"
   # W1：强/弱/负信号（同样按 agent 一份水位；未尘埃落定的轮会压住水位，下一轮重读）
+  # 租户隔离键**必填**：缺失就响亮失败，绝不用猜的 org 写 OO（fail-closed）。
+  # 校验只挡 verify 这一步（export/attribute 不依赖它）；job 会在此非零退出，不静默跳过信号。
+  [ -n "${ASK_VERIFY_ORG:-}" ] || { echo "SYNC_FAIL missing ASK_VERIFY_ORG"; exit 1; }
   ASK_VERIFY_WM="$D/verify.watermark.$a" python3 "$D/verify.py" "$db"
 done

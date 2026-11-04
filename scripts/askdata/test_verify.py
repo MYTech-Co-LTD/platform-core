@@ -7,7 +7,9 @@ fixture 是构造好的归一化事件列表（形状同 export-transcript.py �
 """
 import json
 import os
+import sqlite3
 import sys
+import tempfile
 import unittest
 
 HERE = os.path.dirname(os.path.abspath(__file__))
@@ -70,8 +72,9 @@ class SignalTest(unittest.TestCase):
         self.assertEqual(ev["org"], "shanhaiyiguo-org")
         self.assertEqual(ev["question"], "5月销售额多少")
         self.assertEqual(ev["metricId"], "lemeng:retail:net_sales")
-        self.assertEqual(ev["params"], net_sales()["args"])
-        self.assertEqual(ev["slicing"], {})
+        # 嵌套对象按 attribute.py 同口径序列化成 JSON 字符串（Task 5 侧解析）
+        self.assertEqual(json.loads(ev["params"]), net_sales()["args"])
+        self.assertEqual(json.loads(ev["slicing"]), {})
         self.assertEqual(ev["sessionId"], "s1")
         self.assertEqual(ev["seq"], 2)
         self.assertIn("userId", ev)
@@ -202,8 +205,9 @@ class SignalTest(unittest.TestCase):
             user("s1", 4, "谢谢"),
         ]
         events, _, _ = verify.extract_events(rows, "org1", now_ms=IDLE_LATER)
-        self.assertEqual(events[0]["slicing"], {"dimensions": ["order_id"], "limit": 10})
-        self.assertEqual(events[0]["params"],
+        self.assertEqual(json.loads(events[0]["slicing"]),
+                         {"dimensions": ["order_id"], "limit": 10})
+        self.assertEqual(json.loads(events[0]["params"]),
                          {"bizday": {"from": "2026-05-01", "to": "2026-05-01"}})
 
     def test_unsettled_turn_holds_watermark(self):
@@ -257,6 +261,166 @@ class SignalTest(unittest.TestCase):
         with self.assertRaises(SystemExit) as cm:
             verify.main(["x.sqlite"], env={"ASK_VERIFY_ORG": "org1"})
         self.assertIn("OO_BASE", str(cm.exception))
+
+    # ── 评审 fix round 1 补齐 ────────────────────────────────────────────────
+    def test_trailing_unpaired_call_holds_watermark(self):
+        """窗口末行是 tool_call（回包还在下一批）⇒ 不判、水位不前移，绝不整轮丢掉。"""
+        rows = [
+            user("s1", 1, "5月销售额"),
+            call("s1", 2, "query_data", net_sales(), "c1"),   # 无 result
+        ]
+        now = BASE_TS + 2 * 1000 + 60 * 1000                 # 未静默
+        events, wm, stats = verify.extract_events(rows, "org1", now_ms=now, since=0)
+        self.assertEqual(events, [])
+        self.assertEqual(stats["held_incomplete"], 1)
+        self.assertEqual(wm, 0)                              # 下一轮重读同一批
+
+    def test_unpaired_call_settles_when_idle(self):
+        """静默后仍无回包 ⇒ 按失败跳过并前进（不无限 hold）。"""
+        rows = [
+            user("s1", 1, "5月销售额"),
+            call("s1", 2, "query_data", net_sales(), "c1"),
+        ]
+        events, wm, stats = verify.extract_events(rows, "org1", now_ms=IDLE_LATER)
+        self.assertEqual(events, [])
+        self.assertEqual(stats["skipped_no_success"], 1)
+        self.assertEqual(stats["held_incomplete"], 0)
+        self.assertEqual(wm, 2)
+
+    def test_unpaired_call_recovered_in_next_batch(self):
+        """本轮先按失败前进也无妨：回包到货的下一批按「整轮任一行新」重新评估并产出。"""
+        first = [
+            user("s1", 1, "5月销售额"),
+            call("s1", 2, "query_data", net_sales(), "c1"),
+        ]
+        events1, wm1, stats1 = verify.extract_events(first, "org1", now_ms=IDLE_LATER)
+        self.assertEqual(events1, [])
+        self.assertEqual(wm1, 2)
+        self.assertEqual(stats1["skipped_no_success"], 1)
+
+        # 下一批：前置上下文的 user/call + 新到的 result（seq 3 > 水位 2）
+        second = first + [result("s1", 3, "query_data", "c1")]
+        events2, wm2, _ = verify.extract_events(second, "org1", now_ms=IDLE_LATER, since=2)
+        self.assertEqual(len(events2), 1)
+        self.assertEqual(events2[0]["seq"], 2)
+        self.assertEqual(events2[0]["signal"], "weak")
+        self.assertEqual(wm2, 3)
+
+    def test_words_outside_window_are_ignored(self):
+        """肯定/否定词都只认回答后 ≤2 个用户回合；窗口外不判 strong/negative。"""
+        base = [
+            user("s1", 1, "5月销售额"),
+            call("s1", 2, "query_data", net_sales(), "c1"),
+            result("s1", 3, "query_data", "c1"),
+            user("s1", 4, "嗯"),
+            user("s1", 5, "好的"),
+        ]
+        for outside, label in (("谢谢", "strong"), ("不对", "negative")):
+            rows = base + [user("s1", 6, outside)]
+            events, _, _ = verify.extract_events(rows, "org1", now_ms=IDLE_LATER)
+            first = [e for e in events if e["seq"] == 2][0]
+            self.assertEqual(first["signal"], "weak", "%s 在窗口外不该判 %s" % (outside, label))
+
+    def test_reask_across_sessions_not_negative(self):
+        """重问判据只在会话内 —— 另一个会话问同指标不算负。"""
+        rows = [
+            user("s1", 1, "5月销售额"),
+            call("s1", 2, "query_data", net_sales(), "c1"),
+            result("s1", 3, "query_data", "c1"),
+            user("s2", 1, "6月销售额"),
+            call("s2", 2, "query_data", net_sales("2026-06-01", "2026-06-30"), "c1"),
+            result("s2", 3, "query_data", "c1"),
+        ]
+        events, _, _ = verify.extract_events(rows, "org1", now_ms=IDLE_LATER)
+        self.assertEqual([e["signal"] for e in events], ["weak", "weak"])
+
+    def test_reask_beyond_window_not_negative(self):
+        """重问判据只看 ≤FOLLOW_USER_TURNS 轮；更远的追问不把前面判负。"""
+        rows = [
+            user("s1", 1, "5月销售额"),
+            call("s1", 2, "query_data", net_sales(), "c1"),
+            result("s1", 3, "query_data", "c1"),
+            user("s1", 4, "嗯"),
+            user("s1", 5, "好的"),
+            user("s1", 6, "还有吗"),
+            call("s1", 7, "query_data", net_sales("2026-06-01", "2026-06-30"), "c2"),
+            result("s1", 8, "query_data", "c2"),
+        ]
+        events, _, _ = verify.extract_events(rows, "org1", now_ms=IDLE_LATER)
+        self.assertEqual([e["signal"] for e in events], ["weak", "weak"])
+        self.assertEqual(events[0]["seq"], 2)
+
+    def test_reask_with_different_slicing_is_negative(self):
+        """「不同参」包含 slicing：同指标同参数换维度也是重问。"""
+        rows = [
+            user("s1", 1, "按订单看销售额"),
+            call("s1", 2, "query_detail",
+                 {"metricId": "lemeng:retail:sales", "args": {"bizday": "2026-05-01"},
+                  "dimensions": ["order_id"]}, "c1"),
+            result("s1", 3, "query_detail", "c1"),
+            user("s1", 4, "那按门店呢"),
+            call("s1", 5, "query_detail",
+                 {"metricId": "lemeng:retail:sales", "args": {"bizday": "2026-05-01"},
+                  "dimensions": ["branch"]}, "c2"),
+            result("s1", 6, "query_detail", "c2"),
+        ]
+        events, _, _ = verify.extract_events(rows, "org1", now_ms=IDLE_LATER)
+        self.assertEqual(events[0]["signal"], "negative")
+
+    def test_find_user_id_does_not_recurse_into_tool_results(self):
+        """身份只认消息层/会话层，绝不进回包内容捞（群成员列表里有别人的 id）。"""
+        self.assertEqual(
+            verify._find_user_id({"type": "message",
+                                  "message": {"role": "user", "senderId": "u1"}}), "u1")
+        self.assertEqual(
+            verify._find_user_id({"type": "session", "session": {"userId": "u2"}}), "u2")
+        self.assertEqual(
+            verify._find_user_id({"type": "message",
+                                  "message": {"role": "toolResult",
+                                              "content": [{"type": "text", "text": "..."}],
+                                              "members": [{"senderId": "someone-else"}]}}), "")
+
+
+def _fake_norm(sid, seq, ts, msg, etype, ctype=None):
+    return [{"session_id": sid, "seq": seq, "ts": ts, "kind": (msg or {}).get("kind")}]
+
+
+def _fake_decode(event_json, event_zstd):
+    return {"message": json.loads(event_json)}
+
+
+class ReadRowsTest(unittest.TestCase):
+    """read_rows 的水位/窗口行为（临时 sqlite，不碰真库）。"""
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.db = os.path.join(self.tmp.name, "t.sqlite")
+        con = sqlite3.connect(self.db)
+        con.execute("create table transcript_events "
+                    "(session_id text, seq integer, created_at integer, "
+                    "event_json text, event_zstd blob)")
+        for seq in range(1, 11):
+            con.execute("insert into transcript_events values (?,?,?,?,NULL)",
+                        ("s1", seq, BASE_TS + seq, json.dumps({"kind": "event"})))
+        con.commit()
+        con.close()
+
+    def tearDown(self):
+        self.tmp.cleanup()
+
+    def test_first_run_reads_tail_not_oldest(self):
+        """首跑取库尾部（最新方向），不是最旧的 5000 条。"""
+        rows, _, base = verify.read_rows(self.db, _fake_norm, _fake_decode,
+                                         since=0, fetch=4, pre=2)
+        self.assertEqual([r["seq"] for r in rows], [5, 6, 7, 8, 9, 10])
+        self.assertEqual(base, 6)                  # 6 及以前只作上下文
+        self.assertEqual([r["seq"] for r in rows if r["seq"] > base], [7, 8, 9, 10])
+
+    def test_forward_read_uses_since_plus_context(self):
+        rows, _, base = verify.read_rows(self.db, _fake_norm, _fake_decode,
+                                         since=6, fetch=3, pre=2, tail=False)
+        self.assertEqual([r["seq"] for r in rows], [5, 6, 7, 8, 9])
+        self.assertEqual(base, 6)
 
 
 if __name__ == "__main__":

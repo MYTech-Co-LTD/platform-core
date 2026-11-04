@@ -17,8 +17,11 @@
   legacy 每指标工具（sanitized 名）不进：名字不可逆、参数里也没有 metricId。
 
 水位（ASK_VERIFY_WM，按 agent 一份，同 #963）：只处理新事件、成功后才前进。
-  ⚠️ 与撞墙判据不同，信号**依赖未来**（用户下一句才说「对/不对」）⇒ 未尘埃落定的轮
-  （后续用户回合不足且会话未静默）**不判、水位不前移**，下一轮重读。重发由平台侧唯一键幂等吸收。
+  · 首跑（水位文件不存在）取**库尾部** FETCH 行（同 attribute.py），追当前会话，不被积压占满；
+    `ASK_VERIFY_SINCE` 可显式指定起点（设 0 = 明确要全量历史）。
+  · 信号依赖**未来**用户消息（用户下一句才说「对/不对」）⇒ 未尘埃落定的轮不判、水位不前移。
+  · 窗口边界的未配对调用（tool_call 有、回包还在下一批）同样不判、水位不前移——否则那一轮永久丢失。
+  重发由平台侧唯一键幂等吸收。
 
 凭据：ASK_VERIFY_ORG **必填**（租户隔离键，缺失 fail-closed）；OO_BASE/OO_ORG/OO_AUTH 沿用宿主
   /etc/openobserve-ingest.env（只写）。
@@ -26,10 +29,11 @@
 已知边界（初始判据必然有，如实带走，等真实会话标定后改）：
   · 词表是**子串**匹配（无分词/无 NLP）：「对不起」「对不对」这类会被误伤。
   · ≤2 个用户回合的窗口会把「下一个问题的谢谢」算到上一轮头上。
-  · 「同题不同参重问」用 **metricId 相同 + params 不同**代理「同一问题」——同一指标跨天追问
-    也会被判负；是否关掉见 NEG_ON_REASK_DIFFERENT_PARAMS。
-  · userId：会话库事件通常不带身份，取不到就写空串（不猜）。
+  · 「同题不同参重问」用 metricId 相同 + (params,slicing) 不同代理「同一问题」，只看窗口内；
+    同一指标跨天追问若紧邻也会被判负；是否关掉见 NEG_ON_REASK_DIFFERENT_PARAMS。
+  · userId：只认事件顶层/消息层/会话层，取不到写空串（不猜，也不进回包内容捞别人的 id）。
   · 水位前只回看 PRECONTEXT_ROWS 条；超长轮可能拿不到用户原文 ⇒ 该轮跳过并计数。
+  · 未配对调用在会话静默后仍无回包 ⇒ 按失败跳过（不无限 hold）。
 """
 import importlib.util
 import json
@@ -78,46 +82,66 @@ def load_export_module():
     return mod
 
 
-def _find_user_id(obj, depth=0):
-    """事件里能找到用户身份就用（不猜键以外的语义）；找不到返回空串。"""
-    if depth > 4:
+def _find_user_id(ev):
+    """只认**事件顶层 / 消息层 / 会话层**的身份键。
+
+    不递归进 message 内容：工具回包里可能有群成员列表等别人的 id（捞到就是错的身份，
+    宁可空串也不猜——空串由平台侧按「未知」处理）。
+    """
+    if not isinstance(ev, dict):
         return ""
-    if isinstance(obj, dict):
+    layers = [ev]
+    for key in ("message", "session"):
+        layer = ev.get(key)
+        if isinstance(layer, dict):
+            layers.append(layer)
+    for layer in layers:
         for k in USER_ID_KEYS:
-            v = obj.get(k)
+            v = layer.get(k)
             if isinstance(v, str) and v.strip():
                 return v.strip()
-        for v in obj.values():
-            got = _find_user_id(v, depth + 1)
-            if got:
-                return got
-    elif isinstance(obj, list):
-        for v in obj[:20]:
-            got = _find_user_id(v, depth + 1)
-            if got:
-                return got
     return ""
 
 
-def read_rows(db, norm_parts, decode_event, since=0, fetch=None, pre=None):
-    """读 seq > since 的新事件 + 少量前置上下文。返回 (归一化行, {session_id: userId})。
+def read_rows(db, norm_parts, decode_event, since=0, fetch=None, pre=None, tail=None):
+    """读新事件 + 少量前置上下文。返回 (归一化行, {session_id: userId}, read_since)。
 
     ⚠️ 解不出来的事件**不许静默跳过**：抛 DecodeError 交给 main 响亮退出、水位不动
     （否则身份/问题会缺一截而无人知道）。常规链路里 export-transcript.py 会先一步停在水位上。
+
+    `tail`（首跑，since==0）= 取**库尾部** FETCH 行（同 attribute.py 首跑口径）：
+    追当前会话，不被数月前的积压占满窗口。`read_since` = 首条新事件前一格，水位前的行
+    只作上下文（取 question/重问判据），不产出事件。
     """
     fetch = FETCH if fetch is None else fetch
     pre = PRECONTEXT_ROWS if pre is None else pre
+    tail = (since == 0) if tail is None else tail
     con = sqlite3.connect("file:%s?mode=ro" % db, uri=True)
     cols = "session_id, seq, created_at, event_json, event_zstd"
-    rows = con.execute(
-        "select %s from transcript_events where seq > ? order by seq asc limit ?" % cols,
-        (since, fetch)).fetchall()
     context = []
-    if since > 0 and rows:
-        # 批首可能落在一轮中间：回看一点，让该轮能找回自己的用户问题（只作上下文，不产出）。
-        context = con.execute(
-            "select %s from transcript_events where seq <= ? order by seq desc limit ?" % cols,
-            (since, pre)).fetchall()[::-1]
+    if tail and since == 0:
+        # 首跑：DESC 取尾部再回升序（与 attribute.py:38-41 同口径）。
+        rows = con.execute(
+            "select %s from transcript_events order by seq desc limit ?" % cols,
+            (fetch,)).fetchall()[::-1]
+        if rows:
+            first_seq = rows[0][1]
+            context = con.execute(
+                "select %s from transcript_events where seq < ? order by seq desc limit ?" % cols,
+                (first_seq, pre)).fetchall()[::-1]
+            read_since = first_seq - 1
+        else:
+            read_since = 0
+    else:
+        rows = con.execute(
+            "select %s from transcript_events where seq > ? order by seq asc limit ?" % cols,
+            (since, fetch)).fetchall()
+        if rows:
+            # 批首可能落在一轮中间：回看一点，让该轮能找回自己的用户问题（只作上下文，不产出）。
+            context = con.execute(
+                "select %s from transcript_events where seq <= ? order by seq desc limit ?" % cols,
+                (since, pre)).fetchall()[::-1]
+        read_since = since
     con.close()
 
     out, user_ids = [], {}
@@ -129,7 +153,7 @@ def read_rows(db, norm_parts, decode_event, since=0, fetch=None, pre=None):
         if uid and sid not in user_ids:
             user_ids[sid] = uid
         out.extend(norm_parts(sid, seq, ts, ev.get("message"), ev.get("type"), ev.get("customType")))
-    return out, user_ids
+    return out, user_ids, read_since
 
 
 # ── 纯函数：回合 / 身份 / 信号 ───────────────────────────────────────────────
@@ -192,13 +216,18 @@ def build_rounds(rows):
 
 
 def _round_calls(round_rows):
-    """回合内的查数调用 + 各自回包。按 tool_call_id 配对；缺 id 时按同名最近一次兜底。"""
+    """回合内的查数调用 + 各自回包。按 tool_call_id 配对；缺 id 时按同名最近一次兜底。
+
+    item 同时保留 `name`（解包后的内层名）与 `outer_name`（轨迹里实际写的工具名）：
+    兜底匹配要比**外层**名（回包记的是外层名，调度器轮里两名字可能不同）。
+    """
     calls, by_id = [], {}
     for r in round_rows:
         kind = r.get("kind")
         if kind == "tool_call":
             name, args = unwrap_tool(r.get("tool_name"), _json_obj(r.get("tool_args")))
-            item = {"row": r, "name": name, "args": args, "results": []}
+            item = {"row": r, "name": name, "outer_name": r.get("tool_name"),
+                    "args": args, "results": []}
             calls.append(item)
             cid = r.get("tool_call_id")
             if cid:
@@ -207,7 +236,7 @@ def _round_calls(round_rows):
             item = by_id.get(r.get("tool_call_id") or "")
             if item is None:
                 for cand in reversed(calls):
-                    if cand["name"] == r.get("tool_name") and not cand["results"]:
+                    if not cand["results"] and r.get("tool_name") in (cand["outer_name"], cand["name"]):
                         item = cand
                         break
             if item is not None:
@@ -219,7 +248,9 @@ def _round_calls(round_rows):
         # 「成功」= 有回包且回包不是 is_error（denied/BAD_PARAM 都不算回答了一个数）。
         ok = bool(c["results"]) and not any(x.get("is_error") for x in c["results"])
         out.append({"name": c["name"], "args": c["args"], "seq": c["row"].get("seq"),
-                    "ts": c["row"].get("ts"), "ok": ok})
+                    "ts": c["row"].get("ts"), "ok": ok,
+                    # 未配对 ≠ 失败：回包可能还在下一批（窗口边界），交 extract_events 决定 hold。
+                    "paired": bool(c["results"])})
     return out
 
 
@@ -246,16 +277,22 @@ def _canon(obj):
     return json.dumps(obj, ensure_ascii=False, sort_keys=True)
 
 
-def _is_reask(metric_id, params, later_round_calls):
-    """会话内同指标、不同参数重问（计划判据）。"""
+def _is_reask(identity, later_round_calls):
+    """会话内**窗口内**同指标、不同参数/切面重问（计划判据）。
+
+    · 只看 ≤ FOLLOW_USER_TURNS 轮：更远的追问是另一件事，不该把前面判负。
+    · 「不同参」同时比 params 与 slicing（query_detail 换维度也是换了问法）。
+    """
     if not NEG_ON_REASK_DIFFERENT_PARAMS:
         return False
-    for calls in later_round_calls:
+    metric_id, params, slicing = identity
+    mine = _canon([params, slicing])
+    for calls in later_round_calls[:FOLLOW_USER_TURNS]:
         for call in calls:
-            ident = metric_identity(call["args"])
-            if ident is None or ident[0] != metric_id:
+            other = metric_identity(call["args"])
+            if other is None or other[0] != metric_id:
                 continue
-            if _canon(ident[1]) != _canon(params):
+            if _canon([other[1], other[2]]) != mine:
                 return True
     return False
 
@@ -293,7 +330,8 @@ def extract_events(rows, org, since=0, now_ms=None, user_ids=None):
     events, hold_at = [], []
     stats = {"turns": 0, "emitted": 0, "strong": 0, "weak": 0, "negative": 0,
              "skipped_no_metric": 0, "skipped_no_success": 0,
-             "skipped_no_question": 0, "held_unsettled": 0, "orphan_queries": 0}
+             "skipped_no_question": 0, "held_unsettled": 0, "held_incomplete": 0,
+             "orphan_queries": 0}
     max_seq = since
 
     for sid, srows in by_session.items():
@@ -317,11 +355,21 @@ def extract_events(rows, org, since=0, now_ms=None, user_ids=None):
             calls = all_calls[i]
             if not calls:
                 continue
-            # 水位之前的一轮只作上下文（重问判据仍可用它的调用）。
-            new_calls = [c for c in calls if (c.get("seq") or 0) > since]
-            if not new_calls:
-                continue
+            # 「本轮是否新」按**整轮任意一行**判（含 user 行与回包行），不只看查数调用：
+            # 窗口末行是 tool_call、回包落在下一批时，下一批里该轮因 result 为「新」而仍会被
+            # 重新评估（call 在前置上下文里照样能配对）——否则这一轮永久丢失。
+            round_seqs = [rd["user_seq"]] + [r.get("seq") or 0 for r in rd["rows"]]
+            if not any((s or 0) > since for s in round_seqs):
+                continue                       # 水位前的旧轮只作上下文（重问判据仍可用）
             stats["turns"] += 1
+            # 窗口边界：末尾那条 tool_call 的回包可能还在下一批。未配对的**新**调用若被当
+            # 「失败」跳过、水位又越过它，那一轮就会白跑一次（靠上面的整轮判新兜底，但这里
+            # 不前进更省事）。静默后仍未配对 ⇒ 真失败，按下限跳过（不无限 hold）。
+            incomplete = [c for c in calls if (c.get("seq") or 0) > since and not c.get("paired")]
+            if incomplete and not idle:
+                stats["held_incomplete"] += 1
+                hold_at.append(max(since, (rd["user_seq"] or 0) - 1))
+                continue
             call, ident = _pick_identity(calls)
             if call is None:
                 stats["skipped_no_" + ("success" if ident == "no_success" else "metric")] += 1
@@ -342,7 +390,7 @@ def extract_events(rows, org, since=0, now_ms=None, user_ids=None):
             neg = any(_has_word(t, NEG_WORDS) for t in follow_texts)
             affirm = any(_has_word(t, AFFIRM_WORDS) for t in follow_texts)
             metric_id, params, slicing = ident
-            if not neg and _is_reask(metric_id, params, all_calls[i + 1:]):
+            if not neg and _is_reask(ident, all_calls[i + 1:]):
                 neg = True                 # 同题不同参重问 = 负信号（计划判据）
             signal = "negative" if neg else ("strong" if affirm else "weak")
             stats[signal] += 1
@@ -351,8 +399,10 @@ def extract_events(rows, org, since=0, now_ms=None, user_ids=None):
                 "org": org,
                 "question": rd["question"],
                 "metricId": metric_id,
-                "params": params,
-                "slicing": slicing,
+                # 嵌套对象按同仓 attribute.py 的口径显式 json.dumps 成字符串（OO _json 批量端点
+                # 对嵌套 payload 的形态未在真流验证过；Task 5 侧按 JSON 字符串解析）。
+                "params": json.dumps(params, ensure_ascii=False),
+                "slicing": json.dumps(slicing, ensure_ascii=False),
                 "signal": signal,
                 "sessionId": sid,
                 "seq": call.get("seq"),
@@ -419,30 +469,44 @@ def main(argv=None, env=None):
     wm_path = env.get("ASK_VERIFY_WM", "/var/lib/askdata/verify.watermark")
     stream = env.get("ASK_VERIFY_STREAM", "askdata_verified")
     since = _read_watermark(wm_path)
+    # 首跑（水位文件不存在）：默认取**库尾部**（同 attribute.py），追当前会话。
+    # ASK_VERIFY_SINCE 可显式指定起点（运维重放/基线用；设 0 = 从头，明确要全量历史）。
+    tail = False
+    if not os.path.exists(wm_path):
+        override = env.get("ASK_VERIFY_SINCE")
+        if override is not None and str(override).strip() != "":
+            try:
+                since = int(str(override).strip())
+            except ValueError:
+                sys.exit("SYNC_FAIL bad ASK_VERIFY_SINCE")
+        else:
+            tail = True
 
     export_mod = load_export_module()
     try:
-        rows, user_ids = read_rows(argv[0], export_mod.norm_parts,
-                                   export_mod.decode_event, since)
+        rows, user_ids, read_since = read_rows(
+            argv[0], export_mod.norm_parts, export_mod.decode_event, since, tail=tail)
     except (export_mod.DecodeError, ValueError) as exc:
         # 水位纪律同 #969：绝不越过读不出来的事件。
         sys.exit("VERIFY_DECODE_FAIL watermark=%d err=%s" % (since, exc))
 
-    events, new_wm, stats = extract_events(rows, org, since=since, user_ids=user_ids)
+    events, new_wm, stats = extract_events(rows, org, since=read_since, user_ids=user_ids)
     by_signal = {k: stats[k] for k in ("strong", "weak", "negative")}
 
     if not events:
         _write_watermark(wm_path, new_wm)
-        print("VERIFY_OK events=0 rows=%d watermark=%d held=%d by_signal=%s"
-              % (len(rows), new_wm, stats["held_unsettled"], json.dumps(by_signal)))
+        print("VERIFY_OK events=0 rows=%d watermark=%d held=%d/%d by_signal=%s"
+              % (len(rows), new_wm, stats["held_unsettled"], stats["held_incomplete"],
+                 json.dumps(by_signal)))
         return
 
     resp = ""
     for i in range(0, len(events), CHUNK):
         resp = post(env["OO_BASE"], env["OO_ORG"], env["OO_AUTH"], stream, events[i:i + CHUNK])
     _write_watermark(wm_path, new_wm)   # 全部 post 成功后才前进（失败上面已 exit 1）
-    print("VERIFY_OK events=%d rows=%d watermark=%d held=%d by_signal=%s skipped=%s resp=%s"
-          % (len(events), len(rows), new_wm, stats["held_unsettled"],
+    print("VERIFY_OK events=%d rows=%d watermark=%d held=%d/%d by_signal=%s skipped=%s resp=%s"
+          % (len(events), len(rows), new_wm,
+             stats["held_unsettled"], stats["held_incomplete"],
              json.dumps(by_signal),
              json.dumps({k: v for k, v in stats.items()
                          if k.startswith("skipped_") or k == "orphan_queries"}),
