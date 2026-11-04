@@ -3,7 +3,8 @@
 // 只做观看/进入：
 //   · 平台自绘且**已发布** ⇒ 打开独立链接 `/r/:id`（宿主页，同源整页加载）
 //   · Metabase 行 ⇒ 取 embed-url 后整页打开
-//   · 未发布 ⇒ 明确提示「请先在 PC 端发布」（发布是配置动作，不在移动端做）
+//   · 未发布 ⇒ 预览：打开 `/r/:id?preview=1`（standalone 显式预览模式，走 ACL 保护的
+//     `/spec`——owner/受让人可看自己的草稿；无权者由页面显示错误）。发布动作本身仍在 PC。
 // 不做共享/发布/回收等配置菜单——那些在 PC 控制台。
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { Input, Skeleton, Tag, Toast } from 'antd-mobile'
@@ -68,11 +69,11 @@ export default function ReportsView() {
 
   const open = async (r: ReportRow): Promise<void> => {
     if (r.renderer === 'platform') {
-      if (r.publishedVersion === null || r.publishedVersion === undefined) {
-        Toast.show({ content: '未发布：请先在 PC 端发布后再查看' })
-        return
-      }
-      openViewer(r.id, r.title, `/r/${encodeURIComponent(r.id)}`)
+      // 未发布 ⇒ 预览（#1367：standalone 显式 preview 模式；无权时页面自己报错）
+      const src = r.publishedVersion === null || r.publishedVersion === undefined
+        ? `/r/${encodeURIComponent(r.id)}?preview=1`
+        : `/r/${encodeURIComponent(r.id)}`
+      openViewer(r.id, r.title, src)
       return
     }
     // Metabase 行：走平台的短期嵌入 URL（前端不碰密钥）
@@ -200,6 +201,9 @@ export default function ReportsView() {
               flex: 1, minWidth: 0, fontSize: 16, fontWeight: 600,
               overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
             }}>{viewing.title}</span>
+            {viewing.src.includes('preview=1') && (
+              <span style={{ fontSize: 12, color: '#fa8c16', border: '1px solid #fa8c16', borderRadius: 4, padding: '0 5px', flex: '0 0 auto' }}>预览</span>
+            )}
           </div>
           <iframe
             key={viewing.id}
