@@ -111,6 +111,7 @@ export const EMPTY_BASELINE = { columns: [], rowCount: 0, summary: {} }
  * @property {string} [stream]
  * @property {boolean} [dryRun]
  * @property {number|null} [sinceUs]
+ * @property {number} [lookbackDays]
  */
 
 /**
@@ -303,7 +304,15 @@ export function parseEvent(hit) {
 }
 
 /**
- * OO `_search` 客户端（`POST {url}/api/{org}/{stream}/_search`，Basic 鉴权）。
+ * 首跑回看窗口（天）。**OO 拒绝 `start_time: 0`**（2026-11-04 真机实测：
+ * `400 [file_list] invalid time range`），所以「无水位」不能译成「从 0 开始」，
+ * 必须给一个**有界**窗口。默认回看 7 天；`ASK_VERIFY_LOOKBACK_DAYS` 可覆盖。
+ */
+const LOOKBACK_DAYS_DEFAULT = 7
+const DAY_US = 86400 * 1_000_000
+
+/**
+ * OO `_search` 客户端（`POST {url}/api/{org}/_search`，Basic 鉴权）。
  *
  * 请求体按 OpenObserve v1.0.4 形状：`{query: {sql, start_time, end_time, from, size}}`，
  * 时间是**微秒 epoch**（UTC 窗口）。SQL 用 **`_timestamp >= 游标`**：同一微秒入库的多条记录
@@ -313,6 +322,10 @@ export function parseEvent(hit) {
  * ⇒ 400 `unknown field 'foobar'`），而 Task 4 写入的键是 camelCase `sessionId`；不加引号会让
  * 真流每次 `_search` 都 400。实测 OO v1.0.4 支持引号且**区分大小写**（`"session_id"` 可用、
  * `"SESSION_ID"` ⇒ 400 `unknown field`）。
+ *
+ * ⚠️ 端点形状（2026-11-04 以实例 OpenAPI `v1.0.4` 与源码 `v1.1.2` 双双核实）：
+ * **不存在** stream 级 `/api/{org}/{stream}/_search`（该版本 404），只有**组织级**
+ * `/api/{org}/_search`，流由 SQL 的 `from "<stream>"` 指定。
  *
  * @param {IngestOpts} opts
  * @param {typeof fetch} fetchImpl
@@ -327,11 +340,16 @@ export function searchClient(opts, fetchImpl) {
     if (org === '') throw new Error('verify-ingest: 缺 OO_READ_ORG')
     const stream = opts.stream ?? STREAM
     const header = authHeader(opts.token)
+    const rawLookback = Number(opts.lookbackDays)
+    const lookbackDays = Number.isFinite(rawLookback) && rawLookback > 0
+      ? rawLookback
+      : LOOKBACK_DAYS_DEFAULT
     const cursorSql = req.cursorUs === null ? '' : ` where _timestamp >= ${Math.trunc(req.cursorUs)}`
     const body = {
       query: {
         sql: `select * from "${stream}"${cursorSql} order by _timestamp asc, seq asc, "sessionId" asc`,
-        start_time: req.cursorUs ?? 0,
+        // OO 拒绝 start_time=0（invalid time range）⇒ 无游标时用有界回看窗口，绝不传 0。
+        start_time: req.cursorUs ?? (req.endUs - lookbackDays * DAY_US),
         end_time: req.endUs,
         from: req.from,
         size: req.size,
@@ -470,8 +488,13 @@ export async function ingest(opts, overrides = {}) {
     )
   }
   // `--since` 显式覆盖本轮读取起点；水位本身只前进（见末尾写水位条件）。
-  const cursorUs = opts.sinceUs ?? storedWm
   const endUs = now() * 1000
+  const rawLookback = Number(opts.lookbackDays)
+  const lookbackDays = Number.isFinite(rawLookback) && rawLookback > 0
+    ? rawLookback
+    : LOOKBACK_DAYS_DEFAULT
+  // 无水位（首跑）**不能从 0 开始**：OO 判 `invalid time range`。用有界回看窗口。
+  const cursorUs = opts.sinceUs ?? storedWm ?? (endUs - lookbackDays * DAY_US)
 
   /** @type {Record<string, any>[]} */
   const hits = []
@@ -738,6 +761,9 @@ export async function main(argv, env = process.env, overrides = {}) {
       wmPath,
       dryRun: args.dryRun,
       ...(args.sinceUs !== undefined ? { sinceUs: args.sinceUs } : {}),
+      ...(env.ASK_VERIFY_LOOKBACK_DAYS !== undefined
+        ? { lookbackDays: Number(env.ASK_VERIFY_LOOKBACK_DAYS) }
+        : {}),
     }, { ...overrides, pool })
 
     const c = result.counters

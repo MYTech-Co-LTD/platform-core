@@ -237,16 +237,17 @@ describe('searchClient', () => {
     expect(body.query.sql).toContain('order by _timestamp asc, seq asc, "sessionId" asc')
   })
 
-  it('首次运行（无水位）不加 where，start_time=0', async () => {
+  it('无游标（首跑）不加 where，start_time = end - 回看窗口（OO 拒绝 0）', async () => {
     const calls: { url: string; init: any }[] = []
     const fakeFetch = async (url: string, init: any) => {
       calls.push({ url, init })
       return { ok: true, status: 200, json: async () => ({ hits: [], total: 0 }), text: async () => '' }
     }
     const search = searchClient(OPTS, fakeFetch as unknown as typeof fetch)
-    await search({ cursorUs: null, endUs: 1, from: 0, size: 10 })
+    const endUs = 1_793_793_600_000_000
+    await search({ cursorUs: null, endUs, from: 0, size: 10 })
     const body = JSON.parse(calls[0]!.init.body)
-    expect(body.query.start_time).toBe(0)
+    expect(body.query.start_time).toBe(endUs - 7 * 86400 * 1_000_000)
     expect(body.query.sql).not.toContain('where _timestamp >=')
   })
 
@@ -410,7 +411,13 @@ describe('ingest', () => {
     const batches = [[a], [a, b]]
     let round = 0
     const search = async ({ cursorUs }: any) => {
-      expect(cursorUs).toBe(round === 0 ? null : TS1)
+      // 首跑不再传 null：OO 拒绝 start_time=0，摄入侧改用有界回看窗口。
+      if (round === 0) {
+        expect(typeof cursorUs).toBe('number')
+        expect(cursorUs).toBeGreaterThan(0)
+      } else {
+        expect(cursorUs).toBe(TS1)
+      }
       const hits = batches[round] ?? []
       round += 1
       return { hits, total: hits.length }
