@@ -66,6 +66,15 @@ export interface CandidateInput {
   source: VerifiedQuestionSource
   strength: VerifiedQuestionStrength
   sessionId?: string | null
+  /**
+   * 摄入侧重放失败时的强制档：即使 `strength='strong'` 也只落 `candidate`。
+   *
+   * 为什么需要这个开关（Task 5 的硬约束）：**没有基线就不能自称已验证**。强信号原本
+   * 「写入即 verified」，但平台侧摄入拿到的事件不带结果，必须重放一次才能生成基线；
+   * 重放失败（denied/error/异常）时基线未知，只能落候选并等下次重放/人工确认。
+   * 只在本参数为 true 时降档；signal 本身仍如实记 `strength='strong'`（审计可辨）。
+   */
+  forceCandidate?: boolean
 }
 
 /** 库行（snake_case → camelCase 后的形状）。 */
@@ -141,11 +150,17 @@ function toVerifiedQuestion(row: Row): VerifiedQuestion {
  *   · rejected 行不被自动信号复活；
  *   · source/strength 取最强（先弱后强会升级）；内容被覆盖时清空 last_check_result；
  *   · tolerance 缺省时**整列不写**，让表默认（0.001）生效——默认值只有表定义一处事实源。
+ *   · `forceCandidate`（摄入侧重放失败）⇒ 即使 auto+strong 也只落 candidate（没有基线不冒充
+ *     verified）；signal 仍如实记 strength=strong。
+ *
+ * 返回命中行的 `id`：摄入侧需要在重放失败时立刻 `recordCheck(…, 'error')`，而它手里只有
+ * 本函数的输入（不是 id）。调用方可以忽略返回值（原先是 void）。
  */
-export async function upsertCandidate(pool: Pool, org: string, input: CandidateInput): Promise<void> {
+export async function upsertCandidate(pool: Pool, org: string, input: CandidateInput): Promise<number> {
   // 只有**自动强信号**才自带确认身份；人工行恒落 candidate，随后由 setStatus 记下确认人
   // （否则 human+strong 会被错标成 `auto:strong`——来源与确认人必须能对上）。
-  const autoStrong = input.source === 'auto' && input.strength === 'strong'
+  // `forceCandidate` = 摄入侧重放失败：信号再强也没有基线，不得自称 verified（Task 5）。
+  const autoStrong = input.forceCandidate !== true && input.source === 'auto' && input.strength === 'strong'
   const status: VerifiedQuestionStatus = autoStrong ? 'verified' : 'candidate'
   const verifiedBy = autoStrong ? 'auto:strong' : null
 
@@ -176,7 +191,7 @@ export async function upsertCandidate(pool: Pool, org: string, input: CandidateI
   exprs.push(`case when $${statusParam} = 'verified' then now() else null end`)
   add('session_id', input.sessionId ?? null)
 
-  await pool.query(
+  const { rows } = await pool.query(
     `insert into data.verified_questions as vq
        (${cols.join(', ')})
      values (${exprs.join(', ')})
@@ -222,9 +237,15 @@ export async function upsertCandidate(pool: Pool, org: string, input: CandidateI
                              else vq.last_check_result
                            end,
        session_id = coalesce(excluded.session_id, vq.session_id),
-       updated_at = now()`,
+       updated_at = now()
+     returning id`,
     params,
   )
+  const row = (rows as Row[])[0]
+  if (row === undefined) {
+    throw new Error('upsertCandidate: insert … returning id 未返回行（无法给调用方一个可 recordCheck 的 id）')
+  }
+  return Number(row.id)
 }
 
 /** 列回归集（默认只列 `verified`；显式给 status 才列候选/拒绝）。 */

@@ -198,8 +198,11 @@ export function compare(baseline: Baseline, current: Baseline, tolerance: number
  * （`listVerified(pool, org)`），词表也按 org 加载（平台 L1 ∪ 本 org L2），所以这里不给
  * 它任何跨租户能力；`hasScope: () => true` 只用于让重放不受「某个租户用户恰好缺某个
  * scope」影响——**回归测的是口径稳定性，不是权限**。不可复用到用户通道。
+ *
+ * 导出给 Task 5 的摄入重放复用：摄入侧生成基线同样是平台侧重放，不能借用租户会话；
+ * 两处必须是同一身份形状（同一重放口径，不另造第二套）。
  */
-function regressionRequester(org: string): Requester {
+export function regressionRequester(org: string): Requester {
   return {
     userId: '(regression)',
     orgId: org,

@@ -238,6 +238,30 @@ describePg('verified-questions（需要 DATABASE_URL）', () => {
     expect((await listVerified(pool, ORG)).some((r) => r.id === orgRow.id && r.status === 'verified')).toBe(true)
   })
 
+  it('forceCandidate：强信号重放失败也只落 candidate，并返回行 id 供 recordCheck', async () => {
+    const metricId = 'lemeng:retail:force-candidate'
+    // 摄入侧重放失败的形状：基线只能是空哨兵（不猜数值），且不得冒充 verified。
+    const id = await upsertCandidate(pool, ORG, {
+      question: '强信号但重放失败', metricId,
+      params: {}, slicing: {}, baseline: { columns: [], rowCount: 0, summary: {} },
+      source: 'auto', strength: 'strong', forceCandidate: true,
+    })
+    expect(Number.isInteger(id)).toBe(true)
+    const candidate = (await listVerified(pool, ORG, { status: 'candidate', metricId }))[0]!
+    expect(candidate.id).toBe(id)
+    expect(candidate).toMatchObject({ status: 'candidate', strength: 'strong', verifiedBy: null })
+
+    // 之后重放成功（不带 forceCandidate）：同一唯一键升级为 verified，返回同一 id。
+    const again = await upsertCandidate(pool, ORG, {
+      question: '强信号但重放失败', metricId,
+      params: {}, slicing: {}, baseline: BASELINE,
+      source: 'auto', strength: 'strong',
+    })
+    expect(again).toBe(id)
+    const verified = (await listVerified(pool, ORG)).find((r) => r.id === id)!
+    expect(verified).toMatchObject({ status: 'verified', verifiedBy: 'auto:strong' })
+  })
+
   it('recordCheck 落 last_checked_at / last_check_result，且按 org 收窄', async () => {
     const row = (await listVerified(pool, ORG))[0]!
     await recordCheck(pool, ORG, row.id, 'error')
