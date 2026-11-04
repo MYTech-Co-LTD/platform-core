@@ -6,11 +6,11 @@
 //   · 未发布 ⇒ 预览：打开 `/r/:id?preview=1`（standalone 显式预览模式，走 ACL 保护的
 //     `/spec`——owner/受让人可看自己的草稿；无权者由页面显示错误）。发布动作本身仍在 PC。
 // 不做共享/发布/回收等配置菜单——那些在 PC 控制台。
-import { useCallback, useEffect, useRef, useState } from 'react'
-import { Input, Skeleton, Tag, Toast } from 'antd-mobile'
+import { useEffect, useRef, useState } from 'react'
+import { Input, Tag, Toast } from 'antd-mobile'
 import { ApiError, apiGet } from './api'
 
-interface ReportRow {
+export interface ReportRow {
   id: string
   title: string
   renderer: 'metabase' | 'platform'
@@ -23,9 +23,12 @@ interface ReportRow {
   requiredDepts?: string[] | null
 }
 
-export default function ReportsView() {
-  const [rows, setRows] = useState<ReportRow[] | null>(null)
-  const [error, setError] = useState<string | null>(null)
+export default function ReportsView({ rows, reload, tab }: {
+  rows: ReportRow[]
+  reload: () => Promise<void>
+  /** center = 报表中心（纯浏览，只看已发布）；manage = 报表管理（自己的，canEdit） */
+  tab: 'center' | 'manage'
+}) {
   const [search, setSearch] = useState('')
   const [opening, setOpening] = useState<string | null>(null)
   /** App 内阅读：{ id, title, src } —— 全屏 iframe（复用宿主同一套渲染器，不做第二套） */
@@ -52,20 +55,13 @@ export default function ReportsView() {
     else setViewing(null)
   }
 
-  const reload = useCallback(async () => {
-    try {
-      const b = await apiGet<{ reports: ReportRow[] }>('/api/modules/data/reports')
-      setRows(b.reports)
-      setError(null)
-    } catch (e) {
-      if (!(e instanceof ApiError && e.status === 401)) setError('加载失败，请稍后重试')
-    }
-  }, [])
-
-  useEffect(() => { void reload() }, [reload])
-
   const q = search.trim().toLowerCase()
-  const visible = (rows ?? []).filter((r) => q === '' || r.title.toLowerCase().includes(q))
+  // 报表中心 = 只看已发布（metabase 行恒可看；platform 行要有已发布版本）
+  // 报表管理 = 只看自己的可编辑报表（含未发布草稿——预览走 /r/:id?preview=1）
+  const pool = tab === 'center'
+    ? rows.filter((r) => r.renderer === 'metabase' || (r.publishedVersion !== null && r.publishedVersion !== undefined))
+    : rows.filter((r) => r.canEdit === true)
+  const visible = pool.filter((r) => q === '' || r.title.toLowerCase().includes(q))
 
   const open = async (r: ReportRow): Promise<void> => {
     if (r.renderer === 'platform') {
@@ -88,21 +84,6 @@ export default function ReportsView() {
     }
   }
 
-  if (error !== null) {
-    return <div style={{ padding: 32, textAlign: 'center', color: '#999' }}>{error}</div>
-  }
-  if (rows === null) {
-    return (
-      <div style={{ padding: 12 }}>
-        <Skeleton.Title animated />
-        <Skeleton.Paragraph lineCount={3} animated />
-        <div style={{ height: 12 }} />
-        <Skeleton.Title animated />
-        <Skeleton.Paragraph lineCount={3} animated />
-      </div>
-    )
-  }
-
   return (
     <div style={{ paddingBottom: 24 }}>
       <div style={{
@@ -110,10 +91,10 @@ export default function ReportsView() {
         padding: '8px 12px 6px', borderBottom: '1px solid #eee',
       }}>
         <h3 style={{ margin: '0 0 2px', fontSize: 18 }}>
-          报表
+          {tab === 'center' ? '报表中心' : '报表管理'}
           {rows.length > 0 ? (
             <span style={{ fontSize: 12, color: '#999', fontWeight: 400, marginLeft: 8 }}>
-              {q === '' ? `共 ${rows.length} 个` : `匹配 ${visible.length} / ${rows.length}`}
+              {q === '' ? `共 ${visible.length} 个` : `匹配 ${visible.length} / ${pool.length}`}
             </span>
           ) : null}
         </h3>
@@ -128,11 +109,21 @@ export default function ReportsView() {
       </div>
 
       <div style={{ padding: '10px 12px 0', display: 'flex', flexDirection: 'column', gap: 10 }}>
-        {rows.length === 0 ? (
+        {pool.length === 0 ? (
           <div style={{ color: '#999', textAlign: 'center', padding: 32, lineHeight: 1.8 }}>
-            暂时没有对你可见的报表
-            <br />
-            需要管理员开通权限后才会出现在这里
+            {tab === 'center' ? (
+              <>
+                暂时没有对你可见的已发布报表
+                <br />
+                有权限的报表发布后会出现在这里
+              </>
+            ) : (
+              <>
+                你还没有可管理的报表
+                <br />
+                在 PC 端创建后会出现在这里
+              </>
+            )}
           </div>
         ) : visible.length === 0 ? (
           <div style={{ color: '#999', textAlign: 'center', padding: 32 }}>没有匹配的报表，试试清空搜索。</div>

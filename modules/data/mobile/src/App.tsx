@@ -9,6 +9,7 @@
 import { useCallback, useEffect, useState } from 'react'
 import { Button, Input, Popup, PullToRefresh, Skeleton, TextArea, Tag, Toast } from 'antd-mobile'
 import ReportsView from './ReportsView'
+import type { ReportRow } from './ReportsView'
 import AskView from './AskView'
 import { apiGet, apiSend, ApiError } from './api'
 
@@ -120,9 +121,8 @@ export function validTerm(t: ExprTerm): boolean {
 
 const OP_LABEL: Record<ExprOp, string> = { add: '+', sub: '−', mul: '×', div: '÷' }
 
-function MetricsView() {
-  const [data, setData] = useState<MetricsResponse | null>(null)
-  const [error, setError] = useState<string | null>(null)
+function MetricsView({ data, reload }: { data: MetricsResponse; reload: () => Promise<void> }) {
+  // 数据由 App 统一拉取（报表中心需要先算「是否有自己的指标/报表」来定 tab 显隐）。
   // 移动端列表搜索（2026-11-03）：指标多起来后，首屏先给搜索而不是让人一直滑
   const [search, setSearch] = useState('')
   /** 编辑中的 L2 id（null = 编辑器关着） */
@@ -132,24 +132,10 @@ function MetricsView() {
   /** 新建表达式指标弹窗（#1298；POST /metrics 需 data:manage，入口按 isAdmin 显隐） */
   const [creatingExpr, setCreatingExpr] = useState(false)
 
-  const reload = useCallback(async () => {
-    try {
-      setData(await apiGet<MetricsResponse>('/api/modules/data/metrics'))
-      setError(null)
-    } catch (e) {
-      // 401 = api.ts 已经在跳静默授权；其余错误才值得显示
-      if (!(e instanceof ApiError && e.status === 401)) {
-        setError('加载失败，请稍后重试')
-      }
-    }
-  }, [])
-
-  useEffect(() => { void reload() }, [reload])
-
-  const self = data?.self?.userId
+  const self = data.self?.userId
   const isMine = (m: MetricItem): boolean => m.source === 'l2' && m.createdBy !== undefined && m.createdBy !== null && m.createdBy === self
   /** 管理员动作门（spec §10.4 D7）：认证升降是 data:manage 的事——L1 恒 certified（读侧推导）不给按钮。 */
-  const isAdmin = (data?.self?.scopes ?? []).includes('data:manage')
+  const isAdmin = (data.self?.scopes ?? []).includes('data:manage')
 
   /** 认证升降（PUT /metrics/:id/certified；reversible 动作，直接点不弹确认）。 */
   const toggleCertified = async (m: MetricItem): Promise<void> => {
@@ -162,20 +148,6 @@ function MetricsView() {
       if (e instanceof ApiError) Toast.show({ content: e.status === 403 ? '没有数据指标管理权限' : `操作失败（${e.status}）` })
       else Toast.show({ content: '网络异常，请重试' })
     }
-  }
-
-  if (error !== null) return <div style={{ padding: 32, textAlign: 'center', color: '#999' }}>{error}</div>
-  if (data === null) {
-    // 移动端用骨架屏而不是居中转圈：同样的等待时间，页面结构先出现，感知更快
-    return (
-      <div style={{ padding: 12 }}>
-        <Skeleton.Title animated />
-        <Skeleton.Paragraph lineCount={3} animated />
-        <div style={{ height: 12 }} />
-        <Skeleton.Title animated />
-        <Skeleton.Paragraph lineCount={3} animated />
-      </div>
-    )
   }
 
   const metrics = data.metrics ?? []
@@ -551,31 +523,85 @@ function CreateExprSheet({ open, bases, onClose, onDone }: {
  *   · 问数 tab：纯使用（同一 data:query 门），无管理动作。
  * 配置菜单不进移动端（产品口径见 memory surface-split-pc-config-mobile-business）。
  */
-export default function App({ initialTab = 'reports' }: { initialTab?: 'reports' | 'metrics' | 'ask' } = {}) {
-  const [tab, setTab] = useState<'reports' | 'metrics' | 'ask'>(initialTab)
-  const TABS = [
-    { key: 'reports' as const, label: '报表', icon: '📊' },
-    { key: 'metrics' as const, label: '指标', icon: '📈' },
-    { key: 'ask' as const, label: '问数', icon: '💬' },
+export default function App({ initialTab = 'center' }: { initialTab?: 'center' | 'reportsManage' | 'metricsManage' } = {}) {
+  // ── 统一取数：tab 显隐需要先知道「有没有自己的报表/指标」──────────────────────
+  const [reportRows, setReportRows] = useState<ReportRow[] | null>(null)
+  const [metricsData, setMetricsData] = useState<MetricsResponse | null>(null)
+  const [error, setError] = useState<string | null>(null)
+
+  const reload = useCallback(async () => {
+    try {
+      const [reports, metrics] = await Promise.all([
+        apiGet<{ reports: ReportRow[] }>('/api/modules/data/reports'),
+        apiGet<MetricsResponse>('/api/modules/data/metrics'),
+      ])
+      setReportRows(reports.reports)
+      setMetricsData(metrics)
+      setError(null)
+    } catch (e) {
+      if (!(e instanceof ApiError && e.status === 401)) setError('加载失败，请稍后重试')
+    }
+  }, [])
+
+  useEffect(() => { void reload() }, [reload])
+
+  const self = metricsData?.self?.userId
+  const isAdmin = (metricsData?.self?.scopes ?? []).includes('data:manage')
+  // ── tab 显隐（#1371）：管理 tab 只对有权者存在，不是置灰───────────────────────
+  // 报表管理 = data:manage ∪ data:create ∪ 拥有可编辑报表（canEdit 由服务端按 owner/ACL 判）
+  // 指标管理 = data:manage ∪ 拥有 L2（createdBy = 自己）
+  const reportManage = isAdmin
+    || (metricsData?.self?.scopes ?? []).includes('data:create')
+    || (reportRows ?? []).some((r) => r.canEdit === true)
+  const metricManage = isAdmin
+    || (metricsData?.metrics ?? []).some((m) => m.source === 'l2' && m.createdBy !== undefined && m.createdBy !== null && m.createdBy === self)
+
+  const [tab, setTab] = useState<'center' | 'reportsManage' | 'metricsManage'>(initialTab)
+  const tabs = [
+    { key: 'center' as const, label: '报表中心', icon: '📊' },
+    ...(reportManage ? [{ key: 'reportsManage' as const, label: '报表管理', icon: '🛠' }] : []),
+    ...(metricManage ? [{ key: 'metricsManage' as const, label: '指标管理', icon: '📈' }] : []),
   ]
+  // 当前 tab 失去权限（数据刷新后）⇒ 回落报表中心
+  const active = tabs.some((t) => t.key === tab) ? tab : 'center'
+
+  if (error !== null) return <div style={{ padding: 32, textAlign: 'center', color: '#999' }}>{error}</div>
+  if (reportRows === null || metricsData === null) {
+    return (
+      <div style={{ padding: 12 }}>
+        <Skeleton.Title animated />
+        <Skeleton.Paragraph lineCount={3} animated />
+        <div style={{ height: 12 }} />
+        <Skeleton.Title animated />
+        <Skeleton.Paragraph lineCount={3} animated />
+      </div>
+    )
+  }
+
   return (
     <div style={{ minHeight: '100dvh', background: '#f5f5f5', paddingBottom: 'calc(56px + env(safe-area-inset-bottom, 0px))' }}>
-      {tab === 'reports' ? <ReportsView /> : tab === 'metrics' ? <MetricsView /> : <AskView />}
+      {active === 'center' ? (
+        <ReportsView rows={reportRows} reload={reload} tab="center" />
+      ) : active === 'reportsManage' ? (
+        <ReportsView rows={reportRows} reload={reload} tab="manage" />
+      ) : (
+        <MetricsView data={metricsData} reload={reload} />
+      )}
       <nav style={{
         position: 'fixed', left: 0, right: 0, bottom: 0, zIndex: 100,
         display: 'flex', background: '#fff', borderTop: '1px solid #ececec',
         paddingBottom: 'env(safe-area-inset-bottom, 0px)',
       }}>
-        {TABS.map((t) => (
+        {tabs.map((t) => (
           <button
             key={t.key}
             type="button"
             onClick={() => setTab(t.key)}
-            aria-current={tab === t.key ? 'page' : undefined}
+            aria-current={active === t.key ? 'page' : undefined}
             style={{
               flex: 1, height: 56, border: 'none', background: 'none', cursor: 'pointer',
               display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: 2,
-              fontSize: 11, color: tab === t.key ? '#1677ff' : '#8c8c8c',
+              fontSize: 11, color: active === t.key ? '#1677ff' : '#8c8c8c',
             }}
           >
             <span aria-hidden style={{ fontSize: 18, lineHeight: 1 }}>{t.icon}</span>
