@@ -11,6 +11,10 @@
 
 ## [Unreleased]
 
+## [0.268.3](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.268.2...v0.268.3) - 2026-11-04
+- 【修复】data: 门店费用容量 900→4,000 条/日（page_size 200 + 数据页 9→20） ([#1386](https://github.com/MYTech-Co-LTD/platform-core/pull/1386), [2bcb9cb](https://github.com/MYTech-Co-LTD/platform-core/commit/2bcb9cb7af4230c8b1f6bdb360ab1fbf4311b905))
+
+
 ## [0.268.2](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.268.1...v0.268.2) - 2026-11-04
 - 【修复】data: verify-ingest 首跑改有界回看窗口（OO 拒绝 start_time=0） ([#1384](https://github.com/MYTech-Co-LTD/platform-core/pull/1384), [1508e91](https://github.com/MYTech-Co-LTD/platform-core/commit/1508e91d89d1893e0da4f3117b7ceb81e6e795ab))
 
