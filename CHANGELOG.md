@@ -11,6 +11,10 @@
 
 ## [Unreleased]
 
+## [0.263.0](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.262.1...v0.263.0) - 2026-11-04
+- 【新增】data-mobile: 未发布报表可在移动端预览（#1367） ([#1368](https://github.com/MYTech-Co-LTD/platform-core/pull/1368), [702c85a](https://github.com/MYTech-Co-LTD/platform-core/commit/702c85a1b78656646ccd9f1a318a6133186c2244))
+
+
 ## [0.262.1](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.262.0...v0.262.1) - 2026-11-04
 - 【修复】data: branch 扇出四源统一装 #1314 占位行 + 父级全空栅（修复空块 Binder Error） ([#1366](https://github.com/MYTech-Co-LTD/platform-core/pull/1366), [0499c04](https://github.com/MYTech-Co-LTD/platform-core/commit/0499c04bb6ba0a9dd6f6b25d1c4f23029cd2db78))
 
