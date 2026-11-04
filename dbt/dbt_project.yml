@@ -130,8 +130,9 @@ vars:
   # 乐檬**时段分析**前缀（AMAREPORT 2026-11-03 接源；行=账套×bizday×门店×时段切片）：
   # 出处：contracts/common/lemeng.customer_analysis.json 的 layout.prefix / partitionBy。
   lemeng_customer_analysis_prefix: 'lemeng/customer_analysis'
-  # 乐檬**销售员提成汇总**前缀（AMAREPORT 2026-11-03 接源；行=账套×bizday×门店×销售员）：
   lemeng_saler_commission_prefix: 'lemeng/saler_commission'
+  # 乐檬**库存进出明细**前缀（2026-11-03 接源；行=一条进出流水）：
+  lemeng_inventory_movement_prefix: 'lemeng/inventory_movement'
   # 乐檬**批发客户档案**前缀（#516 段①；全量快照；不含 bucket / 协议）：
   # s3://<bucket>/lemeng/client/system_book=<账套>/snapshot=<YYYY-MM-DD>/all.parquet
   # 出处：contracts/common/lemeng.client.json 的 `layout.prefix` / `partitionBy`（hive 两级分区）。
