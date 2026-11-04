@@ -196,7 +196,7 @@ it('列集变化 / 行数变化 / 数值超出容差 ⇒ fail；容差内 ⇒ pa
 
 - [ ] **Step 2: 跑红**
 - [ ] **Step 3: 实现纯函数 + `runRegression`**（重放用 `requester = { userId:'(regression)', orgId:org, channel:'pat', keyId:null, scopes:[], hasScope:()=>true }`；这是**平台回归特权**，在注释里写明理由）
-- [ ] **Step 3b: `verified-regression.ts` 同时导出 `loadAdoptedSources(pool, org)`**：按 `platform.tenant.casdoor_org = org` 取 `tenant_id`，再读 `platform.tenant_source where tenant_id=$1 and enabled=true`（`QueryDeps.adoptedSources` 必填，不能默认空集）。`scripts/verify-regression.mjs` 用它装配 `{ pool, adoptedSources }` 后调 `runRegression`；真实仓库执行器走 `QueryDeps.execute` 缺省（惰性真连接），故该脚本必须在**有仓库 env 的运行环境**里跑（平台容器/openship job）。
+- [ ] **Step 3b: `loadAdoptedSources(pool, org)` 落在 `scripts/tenant-sources.ts`（不是域模块）**：B1 架构门禁禁止 `modules/**` 引用 `platform.*`（`lint-architecture.mjs` 扫描 `modules/`），域模块内写 `platform.tenant` 会真红。按 `scripts/provision-tenant.mjs:18` 的先例，**从 `apps/server/src/tenant-source.ts` import** `SOURCES_ENABLED_SQL`/`listEnabledSources`，并复用/导出 `resolveTenantIdByOrg`——**不要复制 SQL**（该文件头注声明它是唯一事实源）。`scripts/verify-regression.mjs` 用它装配 `{ pool, adoptedSources }` 后调 `runRegression`。
 - [ ] **Step 4: 跑绿**
 - [ ] **Step 5: 提交**：`feat(data): 已验问答回归（结构 + 相对容差）`
 
