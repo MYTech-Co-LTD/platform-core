@@ -11,6 +11,10 @@
 
 ## [Unreleased]
 
+## [0.269.0](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.268.6...v0.269.0) - 2026-11-04
+- 【新增】data: W2 三档闭环——私有测度档 + duckle profiler + 候选池 ([#1398](https://github.com/MYTech-Co-LTD/platform-core/pull/1398), [ab5221f](https://github.com/MYTech-Co-LTD/platform-core/commit/ab5221fc842426475e717127f52af52c73bbc8cc))
+
+
 ## [0.268.6](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.268.5...v0.268.6) - 2026-11-04
 - 【修复】askdata: 强信号须通过「像指标问题」过滤（降级 weak） ([#1393](https://github.com/MYTech-Co-LTD/platform-core/pull/1393), [425f125](https://github.com/MYTech-Co-LTD/platform-core/commit/425f12581fb96dfd2a413ebec624013d19fddbee))
 
