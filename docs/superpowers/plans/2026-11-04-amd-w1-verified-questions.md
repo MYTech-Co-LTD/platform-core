@@ -107,9 +107,9 @@ create index if not exists verified_questions_org_status_idx
 | 场景 | 规则 |
 |---|---|
 | 唯一键 | `(org, metric_id, md5(question), md5(params::text), md5(slicing::text))` —— **slicing 必须进键**：同题同参不同切面 = 不同结果基线，不能合行 |
-| 已 `verified` 行 | `status`/`verified_by`/`verified_at`/`baseline`/`slicing`/`tolerance` **冻结**；只有 `source='human'` 或 `strength='strong'` 的新信号可覆盖，且覆盖时清空 `last_check_result` |
+| 已 `verified` 行 | `status`/`verified_by`/`verified_at` **恒冻结**（任何人任何信号都不改——审计不能把人工确认人抹成 `auto:strong`）；`baseline`/`slicing`/`tolerance` 只有 `source='human'` 或 `strength='strong'` 可覆盖，覆盖时清空 `last_check_result` |
 | 已 `rejected` 行 | **自动信号不得复活**（status 保持 rejected）；只有 `source='human'` 的 `setStatus` 能重开 |
-| `source`/`strength` | 取「最强」：`human > strong > weak`；不得出现 status=verified 而 strength=weak 的行 |
+| `source`/`strength` | 取「最强」：`human > strong > weak`；不得出现 status=verified 而 strength=weak 的行。**`setStatus(...,'verified', by)` 必须同时把 `source`/`strength` 升为 `human`**（Task 2 实现确认路径时落地） |
 | `setStatus(...,'verified')` | `by` 为空 ⇒ 抛错（审计必须能回答「谁确认的」） |
 | `tolerance` 默认值 | 只在表定义写一次；insert 不重复写默认 |
 
@@ -137,6 +137,21 @@ git commit -m "feat(data): verified_questions 存储层（迁移 032）"
 **Interfaces:**
 - Consumes: Task 1 的四个函数。
 - Produces: `GET /metrics/verified`（读，`data:query`）、`POST /metrics/verified/:id/verify`、`POST /metrics/verified/:id/reject`（写，`data:manage`）。
+
+**装配提示（照 `routes/metrics.ts` 既有形态，不要另造）**：
+- `orgOf(c) = c.get('tenant').casdoor_org`；身份用该文件同款 `requesterOf(c)`。
+- 写端点返回值走同文件的 `writeOutcome(c, outcome, 200)` 判别式封装（别自己拼状态码）。
+- manifest 声明必须与路由集合**逐条一致**（装载期双向核对，漏声明 = 403）：
+
+```yaml
+    # ── 已验证问答（W1 可信度地基）──
+    - { method: GET,  path: /metrics/verified,            scope: data:query }
+    - { method: POST, path: /metrics/verified/:id/verify, scope: data:manage }
+    - { method: POST, path: /metrics/verified/:id/reject, scope: data:manage }
+```
+
+- **确认路径必须把 `source`/`strength` 升为 `human`**（Task 1 计划定案；否则出现「verified + weak」行）。在 `setStatus` 内实现，不要只在路由里做。
+- `:id` 是 `bigserial` ⇒ 用该文件的 `parseIdParam` 解析（与指标 `text` id 的 `metricIdOf` **不同**，别混）。
 
 - [ ] **Step 1: 写失败测试**（按 `routes/metrics.test.ts` 的既有装配方式）
 - [ ] **Step 2: 跑红**
