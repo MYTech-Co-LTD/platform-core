@@ -64,6 +64,25 @@ IDLE_SETTLE_SECONDS = 1800
 # 同指标不同参数重问是否算负。计划判据；留常量便于标定后关掉。
 NEG_ON_REASK_DIFFERENT_PARAMS = True
 
+# ── 「像一个指标问题」过滤（2026-11-04 真机教训）───────────────────────────────
+# 首跑 7 条 strong 里 6 条是噪声：`/resume`、`<media:document>` + 整份报告粘贴、
+# 「能写入的先做写入」、「在企微智能表格同步」、以及一句**纠错**（"…但是你的是…"）。
+# 强信号再自动 verified 会把回归集污染成回收站。故 strong 还必须通过本过滤，
+# 不通过则**降级为 weak**（仍保留候选，不丢信息）。
+QUESTION_MIN_CHARS = 2
+QUESTION_MAX_CHARS = 200
+QUESTION_EXCLUDE_PREFIX = ("/",)
+QUESTION_EXCLUDE_SUBSTR = ("<media:", "<file", "```")
+# 纠错语：命中即不是「问题」，也不该是 strong（NEG_WORDS 已覆盖大部分）。
+CORRECTION_HINTS = ("你的是", "应该是", "算错了")
+# 问数问题的最小线索集（指标 / 时间 / 追问词）。**初始值，待真实会话标定**。
+QUESTION_HINTS = (
+    "多少", "几", "排名", "同比", "环比", "销售额", "金额", "数量", "客单", "毛利",
+    "库存", "会员", "门店", "指标", "报表", "趋势", "占比", "率", "top", "同期",
+    "昨天", "今天", "本周", "上周", "本月", "上月", "今年", "去年", "季度",
+    "怎么", "为什么", "哪",
+)
+
 # 查数工具（不是发现类工具：list_metrics / describe_metric / sample_dimension_values /
 # get_freshness / preview_query 都不算「回答了一个数」）。
 # query_detail（下钻）**暂不进**：drill 重放需要独立执行器（见文件头「身份提取」），
@@ -280,6 +299,24 @@ def _has_word(text, words):
     return any(w in (text or "") for w in words)
 
 
+def _is_metric_question(text):
+    """强信号的门：这条用户消息是否「像一个指标问题」。
+
+    真机教训（2026-11-04）：`/resume`、附件、整份报告粘贴、操作指令、纠错语都曾被判 strong。
+    规则：长度有界、非命令/附件、非纠错、且命中问数线索或疑问句式。
+    """
+    t = (text or "").strip()
+    if not (QUESTION_MIN_CHARS <= len(t) <= QUESTION_MAX_CHARS):
+        return False
+    if any(t.startswith(p) for p in QUESTION_EXCLUDE_PREFIX):
+        return False
+    if any(s in t for s in QUESTION_EXCLUDE_SUBSTR):
+        return False
+    if _has_word(t, CORRECTION_HINTS):
+        return False
+    return _has_word(t.lower(), QUESTION_HINTS) or t.endswith(("?", "？"))
+
+
 def _canon(obj):
     return json.dumps(obj, ensure_ascii=False, sort_keys=True)
 
@@ -414,6 +451,10 @@ def extract_events(rows, org, since=0, now_ms=None, user_ids=None):
             if not neg and _is_reask(ident, all_calls[i + 1:]):
                 neg = True                 # 同题不同参重问 = 负信号（计划判据）
             signal = "negative" if neg else ("strong" if affirm else "weak")
+            # strong 还必须「像一个指标问题」：否则降级为 weak（候选，不自动 verified）。
+            if signal == "strong" and not _is_metric_question(rd["question"]):
+                signal = "weak"
+                stats["downgraded_non_question"] = stats.get("downgraded_non_question", 0) + 1
             stats[signal] += 1
 
             events.append({
