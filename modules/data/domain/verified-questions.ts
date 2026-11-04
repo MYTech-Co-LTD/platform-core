@@ -226,24 +226,41 @@ export async function listVerified(
  *
  * `verified_by` / `verified_at` 只在置为 `verified` 时写入；置为其他状态时**保留**原来的
  * 确认痕迹（拒绝一行不会抹掉「谁确认过它」——审计要能回答两个问题）。
+ *
+ * 人工状态变更**必须带操作人**（verified 与 rejected 都是）：没有归属的确认/拒绝是坏审计，
+ * 宁可在入口抛错。自动信号不经过本函数（它走 `upsertCandidate`）。
+ *
+ * 置 `verified` 时同时把 `source`/`strength` 升为 `human`——「人工确认」本身就是最强档信号；
+ * 不升会留下 `status='verified'` 而 `strength='weak'` 的自相矛盾行（计划 Task 2 定案）。
+ *
+ * 返回是否命中本租户的行：`false` = id 不存在或属于别的 org ⇒ 路由层回 404
+ * （跨租户不暴露「这个 id 是否存在」，与模块内「非法 id 一律 404」同口径）。
  */
 export async function setStatus(
   pool: Pool, org: string, id: number | string,
   status: VerifiedQuestionStatus, by: string | null = null,
-): Promise<void> {
-  // 审计必须能回答「谁确认的」：没有确认人的 verified 是坏数据，宁可在入口抛错。
-  if (status === 'verified' && (by === null || by.trim() === '')) {
-    throw new Error('setStatus: 置 verified 必须带确认人（审计要能回答谁确认的）')
+): Promise<boolean> {
+  const operator = by?.trim() ?? ''
+  if ((status === 'verified' || status === 'rejected') && operator === '') {
+    throw new Error(
+      status === 'verified'
+        ? 'setStatus: 置 verified 必须带确认人（审计要能回答谁确认的）'
+        : 'setStatus: 置 rejected 必须带操作人（审计要能回答谁拒绝的）',
+    )
   }
-  await pool.query(
+  const { rowCount } = await pool.query(
     `update data.verified_questions
         set status      = $3,
             verified_by = case when $3 = 'verified' then $4 else verified_by end,
             verified_at = case when $3 = 'verified' then now() else verified_at end,
+            -- 人工确认 = 最强档（human > strong > weak），见文件头与计划「冲突语义」表
+            source      = case when $3 = 'verified' then 'human' else source end,
+            strength    = case when $3 = 'verified' then 'human' else strength end,
             updated_at  = now()
       where org = $1 and id = $2`,
-    [org, id, status, by],
+    [org, id, status, operator],
   )
+  return (rowCount ?? 0) > 0
 }
 
 /** 记录一次回归执行结果（pass/fail/error）。status 不变——`stale` 的判定不在本层发明。 */

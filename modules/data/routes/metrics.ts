@@ -18,7 +18,7 @@ import { z } from 'zod'
 import type { Context } from 'hono'
 import { TENANT_SOURCES } from '@platform/sdk'
 import type { ModuleHono, ModuleVars, RouteCtx } from './context'
-import { requesterOf } from './context'
+import { requesterOf, writeOutcome } from './context'
 import { saveMetricDraft, loadMetricDraft, clearMetricDraft } from '../domain/metric-governance'
 import { certifyMetric, updateMetricMeta } from '../domain/metric-write'
 import { metricUsageStats, retireCandidatesOf } from '../domain/metric-usage'
@@ -34,7 +34,7 @@ import { L2RefineDeclarationSchema, L2ExprDeclarationSchema, L2DeclarationSchema
 // 写/删的判定链在域层**只有一份**（HTTP 面与 MCP 写面共用）——本文件只做
 // 「参数形状校验 + 域层结果 → HTTP」，不再内联任何闸门。
 import { deleteMetricDeclaration, writeL2Declaration } from '../domain/metric-write'
-import type { MetricWriteDeps, MetricWriteOutcome } from '../domain/metric-write'
+import type { MetricWriteDeps } from '../domain/metric-write'
 
 /**
  * 写路径的 body = L2 声明的**外层信封**（id 是行的稳定句柄，不属于「声明」本身）。
@@ -135,19 +135,11 @@ function writeDeps(ctx: RouteCtx, c: Context<ModuleVars>, requester: Requester):
   return { pool: ctx.pool, adoptedSources: adoptedSourcesOf(c), requester }
 }
 
-/**
- * 域层判别式结果 → HTTP（**唯一**映射点）。`okStatus` 区分建 201 / 改 200——
- * 那是路由层才知道的事（HTTP 语义不属于判定链）。
- *
- * 判定链本体（禁 target / 撞 L1 保留 id / 基底必须是 L1 / 源接入闸 / 编译 / 落库；
- * 以及「先删自己的 L2 再判 L1」那条顺序）已搬到 `domain/metric-write.ts`——
- * 那里同时服务 MCP 写面，两边必须是**同一份**判定，否则分叉的那条通常是漏判的那条。
- */
-function writeOutcome(c: Context<ModuleVars>, r: MetricWriteOutcome, okStatus: 200 | 201) {
-  return r.ok
-    ? c.json({ ok: true }, okStatus)
-    : c.json({ error: r.error, ...(r.extra ?? {}) }, r.http)
-}
+// 注：域层判别式结果 → HTTP 的唯一映射点已上收到 `routes/context.ts`（`writeOutcome`）——
+// 已验证问答等其它路由也要用同一份「错误码 → HTTP」映射，留在本文件会逼后来者复制。
+// 判定链本体（禁 target / 撞 L1 保留 id / 基底必须是 L1 / 源接入闸 / 编译 / 落库；
+// 以及「先删自己的 L2 再判 L1」那条顺序）已搬到 `domain/metric-write.ts`——
+// 那里同时服务 MCP 写面，两边必须是**同一份**判定，否则分叉的那条通常是漏判的那条。
 
 export function registerMetrics(r: ModuleHono, ctx: RouteCtx): void {
   r.get('/metrics', async (c) => {

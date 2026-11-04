@@ -6,6 +6,7 @@ import type { ModuleHono, ModuleVars, RouteCtx } from './routes/context'
 import { registerMcp } from './routes/mcp'
 import { registerMcpManage } from './routes/mcp-manage'
 import { registerMetrics } from './routes/metrics'
+import { registerVerifiedQuestions } from './routes/verified-questions'
 import { registerQuery } from './routes/query'
 import { registerQueryDetail } from './routes/query-detail'
 import { registerBranches } from './routes/branches'
@@ -41,6 +42,7 @@ export default defineModule({
     // T6，T8 收紧写路径：POST/PUT 只收结构化 L2Declaration（SQL 由 domain/semantic-compiler.ts
     // 这个**唯一编译点**生成）；`source='l1'` 的行经 API 只读。端点集合未变 ⇒ 本清单无新声明。
     registerMetrics(r, _ctx)
+    registerVerifiedQuestions(r, _ctx) // W1：已验证问答（列/确认/拒绝）
     registerQuery(r, _ctx) // T6
     registerQueryDetail(r, _ctx) // spec 2026-10-21 下钻
     registerBranches(r, _ctx) // #1047 报表页筛选器：门店维读面

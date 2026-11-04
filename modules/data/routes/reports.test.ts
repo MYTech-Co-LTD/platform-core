@@ -212,7 +212,7 @@ function gatedApp(identity: ReturnType<typeof makeIdentity>, pool: Pool | null) 
 }
 
 describe('报表面声明（不需要数据库）', () => {
-  it('报表端点都声明了（api.internal 全模块共 43 条），且页门分档：管理动作=data:manage，观看面=data:query', () => {
+  it('报表端点都声明了（api.internal 全模块共 46 条），且页门分档：管理动作=data:manage，观看面=data:query', () => {
     const declared = new Map(
       (mod.manifest.api?.internal ?? []).map((d) => [`${d.method} ${d.path}`, d.scope]),
     )
@@ -223,9 +223,10 @@ describe('报表面声明（不需要数据库）', () => {
     // Task 7）；+2：部门门（`PUT /reports/:id/dept-gate` 改门 + `GET /reports/dept-options`
     // 选择器数据源，spec 2026-10-30 §3.4；#1173）；+2：资产级共享 `GET/PUT /reports/:id/acl`
     // （spec 2026-11-01 §4，申报 data:query —— owner 未必持管理码，真判据在 handler 的
-    // canEditAsset））：穷举口径（同 module.test.ts 的表清单）——别处加端点而漏改这里会红，
+    // canEditAsset）；+3：已验证问答（W1 可信度地基：列 data:query + 确认/拒绝 data:manage））：
+    // 穷举口径（同 module.test.ts 的表清单）——别处加端点而漏改这里会红，
     // 逼着声明与测试一起动。
-    expect(declared).toHaveLength(43)
+    expect(declared).toHaveLength(46)
     // 资产级共享：入口按观看面（data:query）申报，授权收紧在 handler 里（owner ∪ data:manage）
     expect(declared.get('GET /reports/:id/acl')).toBe('data:query')
     expect(declared.get('PUT /reports/:id/acl')).toBe('data:query')
@@ -240,6 +241,10 @@ describe('报表面声明（不需要数据库）', () => {
     expect(declared.get('GET /metrics/usage')).toBe('data:manage')
     // 元数据写路径（§10.4.3 P1）：低档申报 + 域层并集写闸（同 draft 口径）
     expect(declared.get('PUT /metrics/:id/meta')).toBe('data:query')
+    // 已验证问答（W1）：列 = 观看面；人工确认/拒绝 = 管理动作
+    expect(declared.get('GET /metrics/verified')).toBe('data:query')
+    expect(declared.get('POST /metrics/verified/:id/verify')).toBe('data:manage')
+    expect(declared.get('POST /metrics/verified/:id/reject')).toBe('data:manage')
     expect(declared.get('GET /branches')).toBe('data:query')
     // 创建（#1330）：声明观看面 + handler 真判据（data:create ∪ data:manage）
     expect(declared.get('POST /reports')).toBe('data:query')

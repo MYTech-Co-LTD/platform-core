@@ -192,9 +192,12 @@ describePg('verified-questions（需要 DATABASE_URL）', () => {
     expect(rows[0]!.baseline.summary.value!.sum).toBe(11)
   })
 
-  it('setStatus 置 verified 必须带确认人（否则抛错）', async () => {
+  it('setStatus 置 verified / rejected 都必须带操作人（否则抛错）', async () => {
     const row = (await listVerified(pool, ORG))[0]!
     await expect(setStatus(pool, ORG, row.id, 'verified')).rejects.toThrow(/确认人/)
+    // 拒绝也是人工动作：没有操作人的 rejected 行 = 审计缺口（Task 2 补的守卫）
+    await expect(setStatus(pool, ORG, row.id, 'rejected')).rejects.toThrow(/操作人/)
+    await expect(setStatus(pool, ORG, row.id, 'rejected', '   ')).rejects.toThrow(/操作人/)
   })
 
   it('跨租户不串：别的 org 看不到本租户行，也改不动', async () => {
