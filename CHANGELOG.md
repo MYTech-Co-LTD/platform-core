@@ -11,6 +11,10 @@
 
 ## [Unreleased]
 
+## [0.268.4](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.268.3...v0.268.4) - 2026-11-04
+- 【修复】data: OO 事件字段名按小写解析（真机统一小写化键） ([#1388](https://github.com/MYTech-Co-LTD/platform-core/pull/1388), [aa6b635](https://github.com/MYTech-Co-LTD/platform-core/commit/aa6b635dde874c2ffbd39abe3ac2f53eee4a8d06))
+
+
 ## [0.268.3](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.268.2...v0.268.3) - 2026-11-04
 - 【修复】data: 门店费用容量 900→4,000 条/日（page_size 200 + 数据页 9→20） ([#1386](https://github.com/MYTech-Co-LTD/platform-core/pull/1386), [2bcb9cb](https://github.com/MYTech-Co-LTD/platform-core/commit/2bcb9cb7af4230c8b1f6bdb360ab1fbf4311b905))
 
