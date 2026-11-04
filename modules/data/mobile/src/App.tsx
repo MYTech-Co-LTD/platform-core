@@ -8,6 +8,7 @@
 // 「数据至 M月D日」的口径与后端固定行同源（watermark 是日历日，+8 不吃钟点）。
 import { useCallback, useEffect, useState } from 'react'
 import { Button, Input, Popup, PullToRefresh, Skeleton, TextArea, Tag, Toast } from 'antd-mobile'
+import ReportsView from './ReportsView'
 import { apiGet, apiSend, ApiError } from './api'
 
 interface MetricItem {
@@ -118,7 +119,7 @@ export function validTerm(t: ExprTerm): boolean {
 
 const OP_LABEL: Record<ExprOp, string> = { add: '+', sub: '−', mul: '×', div: '÷' }
 
-export default function App() {
+function MetricsView() {
   const [data, setData] = useState<MetricsResponse | null>(null)
   const [error, setError] = useState<string | null>(null)
   // 移动端列表搜索（2026-11-03）：指标多起来后，首屏先给搜索而不是让人一直滑
@@ -185,7 +186,7 @@ export default function App() {
     || (m.bizDescription ?? '').toLowerCase().includes(q))
 
   return (
-    <div style={{ paddingBottom: 32 }}>
+    <div style={{ paddingBottom: 24 }}>
       {/* 顶部固定区（移动端首屏最重要的两件事：我在看什么、怎么找）。滚动时保持可见。 */}
       <div style={{
         position: 'sticky', top: 0, zIndex: 10, background: '#f5f5f5',
@@ -536,5 +537,45 @@ function CreateExprSheet({ open, bases, onClose, onDone }: {
         创建
       </Button>
     </Popup>
+  )
+}
+
+
+/**
+ * 移动端数据 app 的入口（2026-11-04 产品口径）：标准 App 结构——
+ * 底部两个 tab：报表 / 指标。**不放配置菜单**（配置在 PC 控制台）。
+ */
+export default function App({ initialTab = 'reports' }: { initialTab?: 'reports' | 'metrics' } = {}) {
+  const [tab, setTab] = useState<'reports' | 'metrics'>(initialTab)
+  const TABS = [
+    { key: 'reports' as const, label: '报表', icon: '📊' },
+    { key: 'metrics' as const, label: '指标', icon: '📈' },
+  ]
+  return (
+    <div style={{ minHeight: '100dvh', background: '#f5f5f5', paddingBottom: 'calc(56px + env(safe-area-inset-bottom, 0px))' }}>
+      {tab === 'reports' ? <ReportsView /> : <MetricsView />}
+      <nav style={{
+        position: 'fixed', left: 0, right: 0, bottom: 0, zIndex: 100,
+        display: 'flex', background: '#fff', borderTop: '1px solid #ececec',
+        paddingBottom: 'env(safe-area-inset-bottom, 0px)',
+      }}>
+        {TABS.map((t) => (
+          <button
+            key={t.key}
+            type="button"
+            onClick={() => setTab(t.key)}
+            aria-current={tab === t.key ? 'page' : undefined}
+            style={{
+              flex: 1, height: 56, border: 'none', background: 'none', cursor: 'pointer',
+              display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: 2,
+              fontSize: 11, color: tab === t.key ? '#1677ff' : '#8c8c8c',
+            }}
+          >
+            <span aria-hidden style={{ fontSize: 18, lineHeight: 1 }}>{t.icon}</span>
+            <span>{t.label}</span>
+          </button>
+        ))}
+      </nav>
+    </div>
   )
 }

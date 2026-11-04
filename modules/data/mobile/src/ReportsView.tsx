@@ -1,0 +1,157 @@
+// ReportsView.tsx — 移动端「报表」页（产品口径 2026-11-04：业务操作在移动端，配置在 PC）。
+//
+// 只做观看/进入：
+//   · 平台自绘且**已发布** ⇒ 打开独立链接 `/r/:id`（宿主页，同源整页加载）
+//   · Metabase 行 ⇒ 取 embed-url 后整页打开
+//   · 未发布 ⇒ 明确提示「请先在 PC 端发布」（发布是配置动作，不在移动端做）
+// 不做共享/发布/回收等配置菜单——那些在 PC 控制台。
+import { useCallback, useEffect, useState } from 'react'
+import { Input, Skeleton, Tag, Toast } from 'antd-mobile'
+import { ApiError, apiGet } from './api'
+
+interface ReportRow {
+  id: string
+  title: string
+  renderer: 'metabase' | 'platform'
+  canEdit?: boolean
+  owner?: string | null
+  ownerActive?: boolean | null
+  publishedVersion?: number | null
+  hasUnpublishedChanges?: boolean
+  requiredScope?: string | null
+  requiredDepts?: string[] | null
+}
+
+export default function ReportsView() {
+  const [rows, setRows] = useState<ReportRow[] | null>(null)
+  const [error, setError] = useState<string | null>(null)
+  const [search, setSearch] = useState('')
+  const [opening, setOpening] = useState<string | null>(null)
+
+  const reload = useCallback(async () => {
+    try {
+      const b = await apiGet<{ reports: ReportRow[] }>('/api/modules/data/reports')
+      setRows(b.reports)
+      setError(null)
+    } catch (e) {
+      if (!(e instanceof ApiError && e.status === 401)) setError('加载失败，请稍后重试')
+    }
+  }, [])
+
+  useEffect(() => { void reload() }, [reload])
+
+  const q = search.trim().toLowerCase()
+  const visible = (rows ?? []).filter((r) => q === '' || r.title.toLowerCase().includes(q))
+
+  const open = async (r: ReportRow): Promise<void> => {
+    if (r.renderer === 'platform') {
+      if (r.publishedVersion === null || r.publishedVersion === undefined) {
+        Toast.show({ content: '未发布：请先在 PC 端发布后再查看' })
+        return
+      }
+      location.href = `/r/${encodeURIComponent(r.id)}`
+      return
+    }
+    // Metabase 行：走平台的短期嵌入 URL（前端不碰密钥）
+    setOpening(r.id)
+    try {
+      const b = await apiGet<{ url: string }>(`/api/modules/data/reports/${encodeURIComponent(r.id)}/embed-url`)
+      location.href = b.url
+    } catch (e) {
+      Toast.show({ content: e instanceof ApiError && e.status === 403 ? '你没有这张报表的权限' : '打开失败，请稍后重试' })
+    } finally {
+      setOpening(null)
+    }
+  }
+
+  if (error !== null) {
+    return <div style={{ padding: 32, textAlign: 'center', color: '#999' }}>{error}</div>
+  }
+  if (rows === null) {
+    return (
+      <div style={{ padding: 12 }}>
+        <Skeleton.Title animated />
+        <Skeleton.Paragraph lineCount={3} animated />
+        <div style={{ height: 12 }} />
+        <Skeleton.Title animated />
+        <Skeleton.Paragraph lineCount={3} animated />
+      </div>
+    )
+  }
+
+  return (
+    <div style={{ paddingBottom: 24 }}>
+      <div style={{
+        position: 'sticky', top: 0, zIndex: 10, background: '#f5f5f5',
+        padding: '8px 12px 6px', borderBottom: '1px solid #eee',
+      }}>
+        <h3 style={{ margin: '0 0 2px', fontSize: 18 }}>
+          报表
+          {rows.length > 0 ? (
+            <span style={{ fontSize: 12, color: '#999', fontWeight: 400, marginLeft: 8 }}>
+              {q === '' ? `共 ${rows.length} 个` : `匹配 ${visible.length} / ${rows.length}`}
+            </span>
+          ) : null}
+        </h3>
+        {/* 与指标页一致：不用 antd-mobile SearchBar（本仓 React 18 + hoisted 19 下渲染异常） */}
+        <div style={{
+          display: 'flex', alignItems: 'center', gap: 6,
+          background: '#fff', border: '1px solid #e5e5e5', borderRadius: 8, padding: '6px 10px',
+        }}>
+          <span style={{ color: '#bbb', fontSize: 14 }}>⌕</span>
+          <Input placeholder="搜索报表名称" value={search} onChange={setSearch} style={{ '--font-size': '14px' }} />
+        </div>
+      </div>
+
+      <div style={{ padding: '10px 12px 0', display: 'flex', flexDirection: 'column', gap: 10 }}>
+        {rows.length === 0 ? (
+          <div style={{ color: '#999', textAlign: 'center', padding: 32, lineHeight: 1.8 }}>
+            暂时没有对你可见的报表
+            <br />
+            需要管理员开通权限后才会出现在这里
+          </div>
+        ) : visible.length === 0 ? (
+          <div style={{ color: '#999', textAlign: 'center', padding: 32 }}>没有匹配的报表，试试清空搜索。</div>
+        ) : visible.map((r) => {
+          const published = r.renderer === 'metabase'
+            ? true
+            : r.publishedVersion !== null && r.publishedVersion !== undefined
+          return (
+            <button
+              key={r.id}
+              type="button"
+              onClick={() => void open(r)}
+              disabled={opening === r.id}
+              style={{
+                display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 10,
+                width: '100%', textAlign: 'left', cursor: 'pointer',
+                background: '#fff', borderRadius: 14, border: '1px solid #eee',
+                padding: '14px 16px',
+              }}
+            >
+              <span style={{ minWidth: 0 }}>
+                <span style={{ display: 'block', fontSize: 16, fontWeight: 600, lineHeight: 1.4 }}>
+                  {r.title}
+                </span>
+                <span style={{ display: 'block', fontSize: 12, color: '#999', marginTop: 6 }}>
+                  {r.owner ? `所有者 ${r.owner}` : '无所有者'}
+                  {r.ownerActive === false ? '（已停用）' : ''}
+                </span>
+              </span>
+              <span style={{ display: 'flex', alignItems: 'center', gap: 8, flex: '0 0 auto' }}>
+                {r.renderer === 'platform' && (
+                  published
+                    ? <Tag color="success" fill="outline" style={{ '--background-color': '#fff' }}>
+                        {r.hasUnpublishedChanges ? '有更新' : '已发布'}
+                      </Tag>
+                    : <Tag color="default" fill="outline" style={{ '--background-color': '#fff' }}>未发布</Tag>
+                )}
+                <span aria-hidden style={{ color: '#ccc', fontSize: 18 }}>›</span>
+              </span>
+            </button>
+          )
+        })}
+      </div>
+    </div>
+  )
+}
