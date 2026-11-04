@@ -11,6 +11,10 @@
 
 ## [Unreleased]
 
+## [0.262.0](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.261.0...v0.262.0) - 2026-11-04
+- 【新增】data-mobile: 报表在 App 内打开（全屏阅读层 + 返回），不再跳出 App ([#1364](https://github.com/MYTech-Co-LTD/platform-core/pull/1364), [7d23ca6](https://github.com/MYTech-Co-LTD/platform-core/commit/7d23ca6845e913dd4f6b8b8fbafb9f3869929dd5))
+
+
 ## [0.261.0](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.260.0...v0.261.0) - 2026-11-04
 - 【新增】data-mobile: 移动端改业务面（报表进 App），console 手机端转场到手机工作台 ([#1361](https://github.com/MYTech-Co-LTD/platform-core/pull/1361), [bbb9dd4](https://github.com/MYTech-Co-LTD/platform-core/commit/bbb9dd417a49675c283330bdbd6783949f29569e))
 
