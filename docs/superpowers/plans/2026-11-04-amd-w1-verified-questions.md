@@ -166,6 +166,7 @@ it('列集变化 / 行数变化 / 数值超出容差 ⇒ fail；容差内 ⇒ pa
 
 - [ ] **Step 2: 跑红**
 - [ ] **Step 3: 实现纯函数 + `runRegression`**（重放用 `requester = { userId:'(regression)', orgId:org, channel:'pat', keyId:null, scopes:[], hasScope:()=>true }`；这是**平台回归特权**，在注释里写明理由）
+- [ ] **Step 3b: `verified-regression.ts` 同时导出 `loadAdoptedSources(pool, org)`**：按 `platform.tenant.casdoor_org = org` 取 `tenant_id`，再读 `platform.tenant_source where tenant_id=$1 and enabled=true`（`QueryDeps.adoptedSources` 必填，不能默认空集）。`scripts/verify-regression.mjs` 用它装配 `{ pool, adoptedSources }` 后调 `runRegression`；真实仓库执行器走 `QueryDeps.execute` 缺省（惰性真连接），故该脚本必须在**有仓库 env 的运行环境**里跑（平台容器/openship job）。
 - [ ] **Step 4: 跑绿**
 - [ ] **Step 5: 提交**：`feat(data): 已验问答回归（结构 + 相对容差）`
 
@@ -191,8 +192,8 @@ it('列集变化 / 行数变化 / 数值超出容差 ⇒ fail；容差内 ⇒ pa
 - 写出：OO `askdata_verified`（沿用 `OO_BASE/OO_ORG/OO_AUTH`）。
 - 水位：`ASK_VERIFY_WM` 每 agent 一份（同 #963）。
 
-- [ ] **Step 1: 写失败测试**（三条 fixture：强/弱/负）
-- [ ] **Step 2: 跑红**：`python3 -m pytest scripts/askdata/test_verify.py -q`
+- [ ] **Step 1: 写失败测试**（三条 fixture：强/弱/负）——**纯 `unittest`，不引入 pytest**（本机无 pytest，且该目录约定零依赖）
+- [ ] **Step 2: 跑红**：`python3 -m unittest scripts/askdata/test_verify.py -v`
 - [ ] **Step 3: 实现**
 - [ ] **Step 4: 跑绿**
 - [ ] **Step 5: 提交**：`feat(askdata): 已验问答信号识别（强/弱/负）`
@@ -206,8 +207,10 @@ it('列集变化 / 行数变化 / 数值超出容差 ⇒ fail；容差内 ⇒ pa
 - Test: `scripts/verify-ingest.test.ts`（fetch 全注入）
 
 **Interfaces:**
-- Consumes: OO `_search`（`OO_READ_URL` / `OO_READ_ORG` / `OO_READ_TOKEN`）+ Task 1 `upsertCandidate`。
+- Consumes: OO `_search`（`OO_READ_URL` / `OO_READ_ORG` / `OO_READ_TOKEN`）+ Task 1 `upsertCandidate` + Task 3 `summarize`/`runQuery`。
 - Produces: 水位文件 `ASK_VERIFY_INGEST_WM`（按流一份）；幂等 upsert（唯一索引去重）。
+
+**基线从哪来（关键）**：事件只带 `question / metricId / params / slicing`，**不带结果**（轨迹里的工具回包可能被截断/格式化，不可当基线）。摄入方在落库前**重放一次** `runQuery` 并用 `summarize(QueryOk)` 生成 baseline；重放失败则写 `status='candidate'` 且 `last_check_result='error'`，**不猜**。
 
 **部署前置（需用户点名确认新增 secret）**：
 - server 服务行新增 `OO_READ_URL` / `OO_READ_ORG` / `OO_READ_TOKEN`（**只读**）；取值位置：控制面 OO 凭据管理，**不写值**。
