@@ -21,9 +21,8 @@
     "④【失败可见】任一关系子管线失败 ⇒ foreach 失败、父 run 非 ok ⇒ 引擎 alerts.json 的 failure 规则发 OO。",
     "   子管线自己带 no-rows 闸（表在但该 org 0 行也不静默跳过）。",
     "",
-    "⑤【驱动为什么绕一层 src.inline（实测）】驱动表若做成纯 SQL 根节点（code.sql + pureSql:true、无输入），",
+    "⑤【驱动为什么用 src.postgres(select 1) 而不是 src.inline（实测 2026-11-05）】：src.inline 无法被 catalog 命名（`could not be named` ⇒ `check-duckle-catalog` 门禁红）；纯 SQL 根节点又不能驱动 ctl.foreach（`Catalog Error: Table with name drv does not exist`，2026-11-04 实测）。故用 src.postgres mode=sql `select 1 as seed` + schemaName/tableName 命名提示（catalog 只读节点属性、不连库），再 code.sql `unnest([...])` 展开；两层都保留，别并回根节点。",
     "   ctl.foreach 读不到它的临时表（`Catalog Error: Table with name drv does not exist`，2026-11-04 CLI 实测）。",
-    "   ⇒ 用 src.inline 发一行种子、再 code.sql 用 `unnest([...])` 展开成关系行；两层都保留，别并回根节点。",
     "",
     "⑥【前置：workspace 必须有 `connections/pgduck.json`】子管线走 connectionRef（原因见子管线 _note ④）；",
     "   该连接由投递步骤按 project env 的 PGDUCK_PASSWORD 落盘（deploy/duckle/console/README.md §「W2 profiler」），不进仓。",
@@ -50,12 +49,13 @@
       },
       "data": {
         "label": "seed",
-        "componentId": "src.inline",
+        "componentId": "src.postgres",
         "properties": {
-          "columns": {
-            "seed": "1"
-          },
-          "rowCount": 1
+          "mode": "sql",
+          "sql": "select 1 as seed",
+          "connectionRef": "pgduck",
+          "schemaName": "data",
+          "tableName": "load_log"
         }
       }
     },

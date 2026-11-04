@@ -61,7 +61,9 @@
           "sql": "select * from ${ITER_ITEM_RELATION} where org = '${ITER_ITEM_ORG}' limit 50000",
           "pushdown": true,
           "readOnly": true,
-          "connectTimeout": 30
+          "connectTimeout": 30,
+          "schemaName": "staging",
+          "tableName": "${ITER_ITEM_TABLE}"
         }
       }
     },
