@@ -150,6 +150,10 @@ git commit -m "feat(data): verified_questions 存储层（迁移 032）"
     - { method: POST, path: /metrics/verified/:id/reject, scope: data:manage }
 ```
 
+- **确认/拒绝都必须记操作人**：新增迁移 `033_verified_question_decisions.sql` 加
+  `decided_by text` / `decided_at timestamptz`（`add column if not exists`，不改已应用过的 032）；
+  `setStatus` 的 verify 与 reject 两条分支都要写这两列。`verified_by`/`verified_at` 只表示「谁确认过」，
+  不再兼任拒绝记录。
 - **确认路径必须把 `source`/`strength` 升为 `human`**（Task 1 计划定案；否则出现「verified + weak」行）。在 `setStatus` 内实现，不要只在路由里做。
 - `:id` 是 `bigserial` ⇒ 用该文件的 `parseIdParam` 解析（与指标 `text` id 的 `metricIdOf` **不同**，别混）。
 
