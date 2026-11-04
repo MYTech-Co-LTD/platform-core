@@ -18,7 +18,7 @@
 | G2 | 用户问「词表没有但数据支持」的问题，**首答能给出结果**（draft 口径 + 证据），而不是「查不到」 | 真实会话抽样：此类问题首答产出率 | 未开始 |
 | G3 | 任何数字都能回答：**出自哪条口径、哪一档可信度、谁创建/认证、数据截至何时** | 回答徽标覆盖率（抽样 100%） | 部分（新鲜度已有） |
 | G4 | 使用 90 天后词表自增长，但 **certified 口径数量受控**（draft→certified 有审核、30 天淘汰生效），且**首答即中率 / 探索动作次数持续改善** | `metric-usage` 统计 + `askdata-tuning` 的 0–1 动作判据曲线 | 未开始 |
-| G5 | 口径变更**可回归**：已验问答集覆盖核心问题，改口径后回归能准确报红 | 已验问答条数 + 回归命中率 | 未开始 |
+| G5 | 口径变更**可回归**：已验问答集覆盖核心问题，改口径后回归能准确报红 | 已验问答条数 + 回归命中率 | 进行中（W1，限本地夹具） |
 
 **一句话**：不是「指标变多」，而是「每个数字都可信、可追溯、越用越准」。
 
@@ -96,7 +96,7 @@ W1 可信度地基 ──────┘                     （依赖 W1 回归
 | 波次 | 状态 | 开始 | 完成 | PR / 证据 | 偏离与备注 |
 |---|---|---|---|---|---|
 | W0 | 已完成 | 2026-11-04 | 2026-11-04 | PR #1376 · CI 全绿（unit/gates/smoke/web/discipline）· 含 DB 1114 passed | 两处**预存在**红未修：`apps/web` typecheck（React bigint，另案）；`apps/server/loader.test.ts` 并发时序偶发红（隔离复跑绿） |
-| W1 | 进行中（实现完成，待 PR） | 2026-11-04 | 2026-11-04 | 本地 PG 真机回归：`npx tsx scripts/verify-regression.mjs --org w1-acceptance-org --limit 10` 基线 `total=10 pass=10` exit 0；改 `w1:test:by_branch` 口径（`sum(amount)*1.1`）后 `total=10 pass=6 fail=4 error=0` exit 1；还原后 `pass=10` exit 0。`pnpm -r test` exit 0（modules/data 759 passed / 396 skipped 等）；`pnpm run test:guard` 773 passed / 16 skipped；`pnpm run typecheck` 仅 `apps/web` 既有红（见备注⑤） | ① 真机重放用本地 `ma_dev` 兼作 `DATA_WAREHOUSE_URL` + `w1:test:*` 夹具（走真 `runQuery`/CLI，非注入替身），未在生产 marts 重放（部署后动作）；② 10 条已验问答经域函数 `upsertCandidate`+`setStatus` 写入，未走 HTTP（本机无 Casdoor 租户会话；路由另有 7 条 HTTP 测试）；③ OO 真流未验：`_search` 未用新只读凭据实测、`askdata_verified` 引号标识符仅类比验证（Task 5），待部署后 `--dry-run` 再正式跑；④ 部署前置未做（不在本任务）：`verify.py` 交付 `/var/lib/askdata/`、job env `ASK_VERIFY_ORG`、server 新增只读 `OO_READ_URL/ORG/TOKEN`（需用户点名）；⑤ `pnpm typecheck` 整体 exit 2，仅 `apps/web` 预存在红（#1197 console-menu ReactNode vs @types/react@18 bigint），W1 对 apps/web 零改动；⑥ 测试数据（tenant/metrics/vq/schema）已清理，无 L1 行 |
+| W1 | 进行中（实现完成，待 PR） | 2026-11-04 | — | 本地 PG 真机回归：`DATABASE_URL=postgres://localhost/ma_dev DATA_WAREHOUSE_URL=postgres://localhost/ma_dev npx tsx scripts/verify-regression.mjs --org w1-acceptance-org --limit 10` 基线 `total=10 pass=10` exit 0；改 `w1:test:by_branch` 口径（`sum(amount)*1.1`）后 `total=10 pass=6 fail=4 error=0` exit 1；还原后 `pass=10` exit 0。`pnpm -r test` exit 0（modules/data 759 passed / 396 skipped 等；W1 自身 DB 用例在该轮被 skip，带 `DATABASE_URL` 单独复跑 3 个文件 **42 passed**）；`pnpm run test:guard` 773 passed / 16 skipped；`pnpm run typecheck` 仅 `apps/web` 既有红（见备注⑤） | ① 真机重放用本地 `ma_dev` 兼作 `DATA_WAREHOUSE_URL` + `w1:test:*` 夹具（走真 `runQuery`/CLI，非注入替身），未在生产 marts 重放（部署后动作）；② 10 条已验问答经域函数 `upsertCandidate`+`setStatus` 写入，未走 HTTP（本机无 Casdoor 租户会话；路由另有 7 条 HTTP 测试）；③ OO 真流未验：`_search` 未用新只读凭据实测、`askdata_verified` 引号标识符仅类比验证（Task 5），待部署后 `--dry-run` 再正式跑；④ 部署前置未做（不在本任务）：`verify.py` 交付 `/var/lib/askdata/`、job env `ASK_VERIFY_ORG`、server 新增只读 `OO_READ_URL/ORG/TOKEN`（需用户点名）；⑤ `pnpm typecheck` 整体 exit 2，仅 `apps/web` 预存在红（#1197 console-menu ReactNode vs @types/react@18 bigint），W1 对 apps/web 零改动；⑥ 测试数据（tenant/metrics/vq/schema）已清理，无 L1 行 |
 | W2 | 未开始 | — | — | — | — |
 | W3 | 未开始 | — | — | — | — |
 | Phase 2 | 未开始 | — | — | — | — |
