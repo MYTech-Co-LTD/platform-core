@@ -85,6 +85,36 @@ class SignalTest(unittest.TestCase):
         self.assertEqual(stats["strong"], 1)
         self.assertEqual(wm, 6)
 
+    def test_non_question_with_affirm_downgrades_to_weak(self):
+        """肯定词在场、但用户消息不是指标问题（指令/纠错）⇒ 降级 weak，不自动 verified。"""
+        for q in ("/resume", "根据历史记录，能写入的先做写入", "你的是402,866.47，应该是402,735.68"):
+            rows = [
+                user("s1", 1, q),
+                call("s1", 2, "query_data", net_sales(), "c1"),
+                result("s1", 3, "query_data", "c1", '{"status":"ok","total":"100"}'),
+                text("s1", 4, "好"),
+                user("s1", 5, "对了，谢谢"),
+            ]
+            events, _wm, stats = verify.extract_events(rows, "shanhaiyiguo-org", now_ms=IDLE_LATER)
+            self.assertEqual(len(events), 1, q)
+            self.assertEqual(events[0]["signal"], "weak", q)
+            self.assertEqual(stats["strong"], 0, q)
+            self.assertEqual(stats.get("downgraded_non_question"), 1, q)
+
+    def test_attachment_or_overlong_question_downgrades(self):
+        """附件/超长粘贴不是问题 ⇒ weak。"""
+        for q in ('<media:document>\n<file name="x.md">ok</file>', "长" * 201):
+            rows = [
+                user("s1", 1, q),
+                call("s1", 2, "query_data", net_sales(), "c1"),
+                result("s1", 3, "query_data", "c1", '{"status":"ok","total":"100"}'),
+                text("s1", 4, "好的"),
+                user("s1", 5, "对的"),
+            ]
+            events, _wm, _stats = verify.extract_events(rows, "shanhaiyiguo-org", now_ms=IDLE_LATER)
+            self.assertEqual(len(events), 1, q[:20])
+            self.assertEqual(events[0]["signal"], "weak", q[:20])
+
     def test_weak_when_session_ends_without_feedback(self):
         """无肯定/否定且会话结束 ⇒ weak。"""
         rows = [
