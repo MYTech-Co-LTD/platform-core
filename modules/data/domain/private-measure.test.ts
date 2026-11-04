@@ -162,6 +162,15 @@ describe('compileColumnAgg：列级单聚合 → L1 同形 select_sql', () => {
     }
   })
 
+  it('保留字列名/维度名加双引号（裸拼会被当语法关键字），产物仍过 parseL1Select', () => {
+    const out = compileColumnAgg({
+      agg: 'sum', column: 'order', dims: ['group', 'column'], relation: 'fct_retail_sale',
+    })
+    expect(out.selectSql).toBe('select sum("order") as value, "group", "column" from fct_retail_sale')
+    expect(out.groupBy).toBe('"group", "column"')
+    expect(parseL1Select(out.selectSql).relation).toBe('fct_retail_sale')
+  })
+
   it('schema 限定的关系名可编译（单租户/私有化形态）', () => {
     expect(compileColumnAgg({ agg: 'sum', column: 'x', relation: 'dbt.fct_x' }).selectSql)
       .toBe('select sum(x) as value from dbt.fct_x')
@@ -275,12 +284,36 @@ describe('validatePrivateMeasure：白名单 + 实际列 + 维度约束（fail-c
     expect(out).toMatchObject({ ok: false, code: 'DIM_MASKED' })
   })
 
-  it('measure 列被掩码**不**拒（运行期掩码包在聚合内部，语义正确）', async () => {
+  it('★ 闸②：measure 列被掩码 ⇒ MEASURE_MASKED（限定名声明；裸列名聚合运行期命中不了）', async () => {
     const masked = l1({
-      masks: [{ column: 'net_amount', kind: 'round', step: 3, grantedBy: 'data:precise' }],
+      masks: [{ column: 'fct_retail_sale.cost', kind: 'round', step: 3, grantedBy: 'data:precise' }],
     })
-    expect(await validatePrivateMeasure(deps([masked]), input({ column: 'net_amount', dims: [] })))
+    // cost 是数值列（类型闸会过）⇒ 拒的理由只能是掩码，不是 COLUMN_NOT_NUMERIC。
+    const out = await validatePrivateMeasure(deps([masked]), input({ agg: 'sum', column: 'cost', dims: [] }))
+    expect(out).toMatchObject({ ok: false, code: 'MEASURE_MASKED' })
+    expect((out as { detail?: string }).detail).toContain('fct_retail_sale.cost')
+  })
+
+  it('★ 闸②：掩码目标无关系前缀 ⇒ 视为同关系（保守拒）；前缀是别的关系 ⇒ 不拒', async () => {
+    const unqualified = l1({
+      masks: [{ column: 'cost', kind: 'nullify', grantedBy: 'data:precise' }],
+    })
+    expect(await validatePrivateMeasure(deps([unqualified]), input({ agg: 'sum', column: 'cost', dims: [] })))
+      .toMatchObject({ ok: false, code: 'MEASURE_MASKED' })
+
+    const otherRelation = l1({
+      masks: [{ column: 'fct_other.cost', kind: 'nullify', grantedBy: 'data:precise' }],
+    })
+    expect(await validatePrivateMeasure(deps([otherRelation]), input({ agg: 'sum', column: 'cost', dims: [] })))
       .toEqual({ ok: true })
+  })
+
+  it('★ 闸②：该关系上有整值掩码的 L1 ⇒ RELATION_MASKED（整值不进 L2 mask_spec，运行期无法传播）', async () => {
+    const whole = l1({
+      masks: [{ column: null, kind: 'nullify', grantedBy: 'data:precise' }],
+    })
+    const out = await validatePrivateMeasure(deps([whole]), input({ agg: 'sum', column: 'net_amount', dims: [] }))
+    expect(out).toMatchObject({ ok: false, code: 'RELATION_MASKED' })
   })
 
   it('关系在 L1 白名单但库侧看不到任何列 ⇒ COLUMNS_UNAVAILABLE（环境/可见性问题，不是用户列名错）', async () => {

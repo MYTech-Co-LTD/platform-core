@@ -233,6 +233,15 @@ describe('reachability：B 臂可达性（确定性，不模拟模型）', () =>
     expect(String(r.meaninglessReason)).toContain('--contract')
   })
 
+  it('`--contract` 解析后为空（空 {}）⇒ 仍标 meaningless，不复活结构性 delta=0', () => {
+    const r = reachability(turns, measures, normalizeCatalog(['lemeng:retail:net_sales']), {}, true)
+    expect(r.matched).toBe(1)
+    expect(r.delta).toBe(0)
+    expect(r.meaningless).toBe(true)
+    expect(r.rows[0].goldMetric).toBeNull()
+    expect(String(r.meaninglessReason)).toContain('--contract')
+  })
+
   it('有 --contract（人工金标）⇒ A 缺私有测度、B 有 ⇒ delta=1；仍不声称模型实测', () => {
     const r = reachability(turns, measures, normalizeCatalog(['lemeng:retail:net_sales']), contract, true)
     expect(r.matched).toBe(1)

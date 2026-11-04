@@ -161,28 +161,36 @@ export function registerPrivateMeasures(r: ModuleHono, ctx: RouteCtx): void {
 
     const title = parsed.data.title
       ?? `${candidate.relation} ${candidate.expr.agg}(${candidate.expr.column})`
-    const outcome = await writePrivateMeasure(
-      {
-        pool: ctx.pool,
-        requester,
-        ...(ctx.warehouse === undefined ? {} : { warehouse: ctx.warehouse }),
-      },
-      org,
-      {
-        id: parsed.data.id,
-        title: title.slice(0, 200),
-        // description 缺省 = 候选的 rationale（血统落进指标描述：管理面看得出「这条是画像推出来的」）。
-        // 显式传了 description 就用传的（人改过的文案优先）。
-        description: parsed.data.description ?? candidate.rationale,
-        // ★ 候选存的 expr 是**输入不是可信 SQL**：agg/列名/维度全部重走写路径的三闸 + 编译。
-        agg: candidate.expr.agg as ColumnAggFunc,
-        column: candidate.expr.column,
-        dims: candidate.expr.dims,
-        relation: candidate.relation,
-        // 血统跟着候选走（评审 Minor 4）：generate 产的是 profile；对话/挖掘来的候选标 demand。
-        origin: candidate.origin,
-      },
-    )
+    let outcome: Awaited<ReturnType<typeof writePrivateMeasure>>
+    try {
+      outcome = await writePrivateMeasure(
+        {
+          pool: ctx.pool,
+          requester,
+          ...(ctx.warehouse === undefined ? {} : { warehouse: ctx.warehouse }),
+        },
+        org,
+        {
+          id: parsed.data.id,
+          title: title.slice(0, 200),
+          // description 缺省 = 候选的 rationale（血统落进指标描述：管理面看得出「这条是画像推出来的」）。
+          // 显式传了 description 就用传的（人改过的文案优先）。
+          description: parsed.data.description ?? candidate.rationale,
+          // ★ 候选存的 expr 是**输入不是可信 SQL**：agg/列名/维度全部重走写路径的三闸 + 编译。
+          agg: candidate.expr.agg as ColumnAggFunc,
+          column: candidate.expr.column,
+          dims: candidate.expr.dims,
+          relation: candidate.relation,
+          // 血统跟着候选走（评审 Minor 4）：generate 产的是 profile；对话/挖掘来的候选标 demand。
+          origin: candidate.origin,
+        },
+      )
+    } catch (e) {
+      // 写测度**抛错**（如 warehousePool() 未配置）时 CAS 占位不会走下面的 !ok 回滚 ⇒
+      // 候选会永久卡在 created。这里同样回滚成 pending 再上抛原错误（回滚失败不回滚错误语义）。
+      await setCandidateStatus(ctx.pool, org, candidateId, 'pending').catch(() => undefined)
+      throw e
+    }
     if (!outcome.ok) {
       // 采用失败：把占位**回滚**成 pending（否则候选永久卡在 created，且没有对应测度）。
       // 回滚本身失败不回滚错误语义：调用方拿到的是真正的失败原因（写测度没成功）。

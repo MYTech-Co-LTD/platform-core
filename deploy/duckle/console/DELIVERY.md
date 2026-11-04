@@ -109,6 +109,52 @@
 > ⚠️ 本批**不动** `schedules/64188.json`：两个账套同属 `shanhaiyiguo-org`，画像按 org 跑一次即可；
 > 64188 侧重复排只会产生同 org 的重复画像。
 
+---
+
+### 0.5 W2 私有测度 30 天归档 job（本批配套，单列）
+
+> 机制正文：`modules/data/domain/private-measure-lifecycle.ts`（判定与 SQL）；`scripts/archive-private-measures.mjs`
+> 只是薄 CLI（参数/连接/输出）。**它不是 console 排班**——`schedules.json` 只管 duckle 管线；归档读的是
+> **平台库** `data.metrics` / `data.query_audit`，所以跑在 **platform-core server 容器**里，与
+> `deploy/notify-jobs.md` 的四个 job 同一范式（openship job + `docker exec`，零常驻）。
+
+| 项 | 值 |
+|---|---|
+| job key | `custom:archive-private-measures`（建 job 时以 openship 返回的 key 为准） |
+| 目标 | `serverId=23a1091e`（mytech-weknora）；容器 `openship-platform-core-server` |
+| cron（UTC） | `17 4 * * *`（每日一次；窗口是 30 天，不需要更密） |
+| 命令 | 见下（**每租户一次**；`--org` 必填，脚本不接受「不传 = 全租户」的静默默认） |
+| 失败通知 | 订阅与 `notify-reconcile` 同一通道（job 静默失败 = 淘汰停摆无人知晓） |
+
+**job 命令模板**（先把 `platform.tenant` 的 org 逐个取出，再对每个 org 调一次）：
+
+```sh
+docker exec openship-platform-core-server sh -lc '
+  set -e
+  ORGS=$(pnpm exec tsx -e "
+    import { Pool } from \"pg\";
+    const pool = new Pool();
+    const { rows } = await pool.query(\"select org from platform.tenant order by org\");
+    console.log(rows.map((r) => r.org).join(\" \"));
+    await pool.end();
+  ")
+  for org in $ORGS; do
+    [ -n "$org" ] || continue
+    pnpm exec tsx scripts/archive-private-measures.mjs --org "$org"
+  done
+'
+```
+
+- **每租户 org 来源**：`platform.tenant`（唯一登记处）。新租户**登记后**才进 job 射程；未登记 = 盲区
+  （与 `notify-preflight` 同一口径）。
+- **判据**：stdout `archive-private-measures: org=<org> days=30 archived=<n>` 且 exit 0；
+  `archived=<n>` 是本次**新归档**数（幂等：已归档的行不会重复计）。
+- ⚠️ **首次建 job 时按真机实测订正命令**：容器里 `tsx -e` 的顶层 `await` / `pg` 解析以实测为准。
+  本节是按 `notify-jobs.md` 范式写的**模板**，不是已验证的 job 定义（无案例不立标准）。
+- 回退（停 job）：openship MCP `delete_jobs_by_key` 删除该 key（或 dashboard 停用）⇒ **只停未来淘汰**。
+  已归档行**不会**自动恢复；需要时由 creator ∪ `data:manage` 走 `POST /metrics/private` 复活
+  （清 `archived_at`，观察窗口从复活时刻重新起算）。
+
 ## 1. 硬步骤与顺序
 
 > 顺序不可换：**④ 重建 catalog 必须排在 ⑥ 首次 run 之前**——历史运行记录**不追溯**补 `assets`（§3 判据 3）。

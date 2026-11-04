@@ -1,4 +1,4 @@
-// metric-candidates.test.ts — W2 候选池的存储层（032 三档闭环 Task 1，迁移 034 的 data.metric_candidates）。
+// metric-candidates.test.ts — W2 候选池的存储层（034 三档闭环 Task 1，迁移 034 的 data.metric_candidates）。
 //
 // 只钉域层（表形状 / upsert 幂等 / 决策不被自动信号复活 / 租户隔离）；候选生成规则归 Task 5。
 import { afterAll, beforeAll, describe, expect, it } from 'vitest'

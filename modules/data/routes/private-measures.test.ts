@@ -50,12 +50,12 @@ const L1_MISSING = l1Def({
   id: `${L1_PREFIX}missing`,
   selectSql: `select sum(${SCHEMA}.no_such_table.x) as value from ${SCHEMA}.no_such_table`,
 })
-/** `branch` 是被掩码列（adopt 的闸③用例：候选把掩码列当维度必须拒）。 */
+/** `note` 是被掩码列（adopt 的闸③用例：候选把掩码列当维度必须拒；`branch` 保持未掩码，用于类型闸/成功路径）。 */
 const L1_MASKED = l1Def({
   id: `${L1_PREFIX}masked`,
-  selectSql: `select sum(${SCHEMA}.fct_sales.amount) as value, day, branch from ${SCHEMA}.fct_sales`,
-  groupBy: 'day, branch',
-  masks: [{ column: `${SCHEMA}.fct_sales.branch`, kind: 'nullify', grantedBy: 'data:precise' }],
+  selectSql: `select sum(${SCHEMA}.fct_sales.amount) as value, day, branch, note from ${SCHEMA}.fct_sales`,
+  groupBy: 'day, branch, note',
+  masks: [{ column: `${SCHEMA}.fct_sales.note`, kind: 'nullify', grantedBy: 'data:precise' }],
 })
 
 function app(org = ORG, scopes: string[] = ['data:query'], userId = 'u-private') {
@@ -135,7 +135,7 @@ describePg('私有测度 HTTP 面（需要 DATABASE_URL）', () => {
     await pool.query(`drop schema if exists ${SCHEMA} cascade`)
     await pool.query(`create schema ${SCHEMA}`)
     await pool.query(`create table ${SCHEMA}.fct_sales (
-      org text not null, day date, amount numeric(12,2), branch text)`)
+      org text not null, day date, amount numeric(12,2), branch text, note text)`)
     await upsertL1Metric(pool, L1_OK)
     await upsertL1Metric(pool, L1_MISSING)
     await upsertL1Metric(pool, L1_MASKED)
@@ -475,10 +475,10 @@ describePg('私有测度 HTTP 面（需要 DATABASE_URL）', () => {
     expect(await r1.json()).toMatchObject({ error: 'COLUMN_NOT_NUMERIC' })
     expect((await listCandidates(pool, ORG)).find((c) => c.id === nonNumeric.id)!.status).toBe('pending')
 
-    // 闸③：branch 被 L1_MASKED 掩码 ⇒ 不得做维度
+    // 闸③：note 被 L1_MASKED 掩码 ⇒ 不得做维度
     const maskedDim = await upsertCandidate(pool, ORG, {
       relation: `${SCHEMA}.fct_sales`,
-      expr: { agg: 'avg', column: 'amount', dims: ['branch'] },
+      expr: { agg: 'avg', column: 'amount', dims: ['note'] },
       origin: 'profile',
     })
     const r2 = await adopt(maskedDim.id, 'pm_masked_dim')

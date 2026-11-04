@@ -101,6 +101,33 @@ export type L2Declaration = L2RefineDeclaration | L2ExprDeclaration
 const IDENT_RE = /^[A-Za-z_][A-Za-z0-9_]*$/
 
 /**
+ * PG 保留字/关键字（**能通过 IDENT_RE 的那些**——带空格/符号的关键字本来就过不了标识符闸）。
+ *
+ * 用途：列名/维度名恰好是保留字（实测撞过 `order` / `group` / `column`）时，裸拼进 SQL 会被
+ * 解析成语法关键字（`sum(order)` = 语法错）。编译期用双引号包裹成标识符引用，产物仍过
+ * `parseL1Select`（形状契约不排除引号标识符）。**不**改白名单校验：列名先去校验、后编译。
+ */
+const RESERVED_SQL_WORDS = new Set([
+  'all', 'analyse', 'analyze', 'and', 'any', 'array', 'as', 'asc', 'asymmetric', 'authorization',
+  'binary', 'both', 'case', 'cast', 'check', 'collate', 'column', 'concurrently', 'constraint',
+  'create', 'cross', 'current_catalog', 'current_date', 'current_role', 'current_schema',
+  'current_time', 'current_timestamp', 'current_user', 'default', 'deferrable', 'desc', 'distinct',
+  'do', 'else', 'end', 'except', 'false', 'fetch', 'for', 'foreign', 'freeze', 'from', 'full',
+  'grant', 'group', 'having', 'ilike', 'in', 'initially', 'inner', 'intersect', 'into', 'is',
+  'isnull', 'join', 'lateral', 'leading', 'left', 'like', 'limit', 'localtime', 'natural', 'not',
+  'notnull', 'null', 'offset', 'on', 'only', 'or', 'order', 'outer', 'over', 'overlaps',
+  'partition', 'placing', 'primary', 'references', 'returning', 'right', 'select',
+  'session_user', 'similar', 'some', 'symmetric', 'system_user', 'table', 'then', 'to', 'trailing',
+  'true', 'union', 'unique', 'user', 'using', 'variadic', 'verbose', 'when', 'where', 'window',
+  'with',
+])
+
+/** 标识符 → SQL 片段：保留字加双引号（输入已过 `IDENT_RE`，无需转义内部引号）。 */
+function sqlIdent(name: string): string {
+  return RESERVED_SQL_WORDS.has(name.toLowerCase()) ? `"${name}"` : name
+}
+
+/**
  * 关系名：裸标识符，或 `schema.table` 两段（与 `L1_SELECT_RE` 的 FROM 面同一形状）。
  * 私有测度档的 `relation` 是**唯一**由已校验输入直接拼进 SQL 的 FROM 片段 ⇒ 这里必须自己拦，
  * 不能指望上游（编译点是唯一防线，见文件头「为什么唯一编译点是安全属性」）。
@@ -747,6 +774,13 @@ function assertColumnAggIdent(value: unknown, what: string): string {
  * ★ 产物**当场过 `parseL1Select`**（同一个解析器 = 形状契约的唯一事实源）：未来谁改了本函数的
  *   拼法或形状契约，两者漂开的第一个信号就在这里，而不是等到线上 authorize 拼出非法 SQL。
  * ★ dims 去重保序（重复维度不进 GROUP BY 两次，与 L2 的 `visibleDimsOf` 同一纪律）。
+ * ★ 保留字列名/维度名加双引号（`sum("order")`）：裸拼会被当语法关键字；引号形态仍过
+ *   `parseL1Select`，运行期授权/聚合语义不变。
+ * ★ **运行期掩码的已知边界（本波不实现）**：产物用**裸列名**，而 L1 掩码声明是**限定名**
+ *   （`关系.列`）⇒ 若 measure 列被掩码，运行期 `maskedSelectSql` 逐字匹配命中不了 ⇒ 聚合会
+ *   读到原值。写入期由 `private-measure.ts` 的 `MEASURE_MASKED` / `RELATION_MASKED`
+ *   fail-closed 拒绝。后续方向：编译**限定名 SQL**（`sum(关系.列)`）+ 运行期掩码识别同一
+ *   形状，再放开被掩码列——**本波不做**。
  * ★ 不做白名单校验（那是 `private-measure.ts` 的职责，需要 DB）；本函数是纯的，可被穷举单测。
  */
 export function compileColumnAgg(decl: ColumnAggDeclaration): CompiledColumnAgg {
@@ -778,12 +812,15 @@ export function compileColumnAgg(decl: ColumnAggDeclaration): CompiledColumnAgg 
     if (!dims.includes(dim)) dims.push(dim)
   }
 
-  const aggExpr = agg === 'count_distinct' ? `count(distinct ${column})` : `${agg}(${column})`
-  const dimSelect = dims.length > 0 ? `, ${dims.join(', ')}` : ''
+  const aggExpr = agg === 'count_distinct'
+    ? `count(distinct ${sqlIdent(column)})`
+    : `${agg}(${sqlIdent(column)})`
+  const dimSelect = dims.length > 0 ? `, ${dims.map(sqlIdent).join(', ')}` : ''
+  // groupBy 必须与 SELECT 里的维度**逐字一致**（运行期 `GROUP BY ${groupBy}`）；保留字同样加引号。
   const selectSql = `select ${aggExpr} as value${dimSelect} from ${raw.relation}`
   // 自检：编译产物**必须**能被运行期同一份形状契约解析（零新运行期路径的可机检落点）
   parseL1Select(selectSql)
-  return { selectSql, groupBy: dims.join(', '), subjectColumn: 'org' }
+  return { selectSql, groupBy: dims.map(sqlIdent).join(', '), subjectColumn: 'org' }
 }
 
 /**

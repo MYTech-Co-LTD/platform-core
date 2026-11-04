@@ -5,7 +5,8 @@
 // W2 的 Loan B（私有测度档）假设：词表里多一条列级聚合，问数 agent 就少绕路。判据沿用
 // `.claude/skills/askdata-tuning/SKILL.md`：
 //   · 首答即中率 = 第一次 query_data 就成功（无错误回包、无同参重放）的轮次占比；
-//   · 探索动作次数 = 首次数据面工具调用之前出现 read/tool_search/tool_describe/exec 的次数，目标 0–1。
+//   · 探索动作次数 = **首次 query_data** 之前出现 read/tool_search/tool_describe/exec 的次数，目标 0–1
+//     （`list_metrics` / `query_detail` 只是辅助面，不截断计数：`list_metrics → exec → query_data` 里的 exec 仍算绕路）。
 //
 // ## 两个臂怎么来（本脚本只做**可复现**的那部分）
 //
@@ -484,14 +485,16 @@ function measureMatchLength(question, m) {
  * @param {Measure[]} measures
  * @param {Set<string>} catalogA
  * @param {Record<string, string>} contract
- * @param {boolean=} contractProvided CLI 是否显式给了 `--contract`（缺省按 contract 非空推断）
+ * @param {boolean=} contractProvided CLI 是否显式给了 `--contract`（**解析后非空才算**：空 `{}` 也是 meaningless）
  * @returns {ReachabilityResult}
  */
 export function reachability(turns, measures, catalogA, contract, contractProvided) {
   // ⚠️ 没有 contract 时不能拿「历史最后一个 query_data 的 metricId」当金标：历史运行时根本
   // 没有 W2 私有测度，金标恒在 A 词表里 ⇒ delta 恒 0，是个**结构性假零**。该路径显式标 meaningless。
+  // ⚠️ `contractProvided=true` 但解析后为空 `{}`（空文件 / 全是非字符串值）同样是「没提供」：
+  // 只看 flag 会让空文件复活结构性 delta=0，把假零当有效增量。
   const hasContract =
-    contractProvided !== undefined ? contractProvided : Object.keys(contract).length > 0
+    Object.keys(contract).length > 0 && contractProvided !== false
   /** @type {ReachabilityRow[]} */
   const matched = []
   for (const t of turns) {
@@ -539,7 +542,7 @@ export function reachability(turns, measures, catalogA, contract, contractProvid
     meaningless: !hasContract,
     meaninglessReason: hasContract
       ? null
-      : '缺少 --contract：历史轨迹里不存在 W2 私有测度 id，按历史 metricId 推金标只会得到结构性 delta=0；部署后需人工提供「问题→金标」契约再测。',
+      : '缺少 --contract（或解析后为空）：历史轨迹里不存在 W2 私有测度 id，按历史 metricId 推金标只会得到结构性 delta=0；部署后需人工提供「问题→金标」契约再测。',
     note:
       '可达性不是模型实测：available ⇒ 有机会首答即中，不等于首答即中。B 臂模型行为需要 W2 部署后用真实会话跑。',
     matched: matched.length,
@@ -732,7 +735,8 @@ export function main(argv) {
       console.error('dual-arm-eval: --inject 里没有合法测度卡（需要 id/label）')
       return 1
     }
-    b = reachability(turns, measures, catalogA, contract, opts.contract !== undefined)
+    // 解析后非空才算 provided：空 `{}` 必须保持 meaningless（否则结构性 delta=0 会被当真）。
+    b = reachability(turns, measures, catalogA, contract, Object.keys(contract).length > 0)
   }
 
   const result = {

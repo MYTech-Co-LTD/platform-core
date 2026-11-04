@@ -171,9 +171,12 @@ authorize 拼 WHERE org = '<租户org>' │ 掩码列引用定点替换 │ 行�
 
 ### 4.2 三道 fail-closed 闸
 
-1. **白名单**：`relation ∈ L1 声明当前引用的 marts 集合`（2026-11-04 实测 18/25），
+1. **白名单**：`relation ∈ L1 声明当前引用的 marts 集合`（2026-11-04 实测 21 个），
    `column ∈ 该 marts 的**实际列**`（运行时 `information_schema.columns`，**不是**契约列——
-   实测契约列与 mart 列仅 13/25 重合，见 §0.5 A3）；measure 列限数值型，dim 列限低基数。否则拒。
+   实测契约列与 mart 列仅 13/25 重合，见 §0.5 A3）；measure 列限数值型；**measure / dim 列都不得是被掩码列**（fail-closed）。
+   ⚠️ **低基数不是写入闸**（2026-11-05 订正）：写入面没有廉价的基数来源，低基数只是**候选生成规则**
+   （`pickDims` 的 `DIM_MAX_DISTINCT`/`DIM_MAX_RATIO`）；直接调 `POST /metrics/private` 可对高基数列分组——
+   这是已知边界（性能风险，非授权面）。
 2. **不可被引用**：私有测度**不能作为 L2 的 ref 基底**（`resolveL1Base` 只认 L1，需加显式断言），
    防「私有测度 → L2 → 更多 L2」的口径蔓延。
 3. **维度约束**：`dims` 不得含被掩码列（沿用「维度列不能按列掩码」同一判据）。
