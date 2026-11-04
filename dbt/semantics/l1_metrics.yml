@@ -68,6 +68,15 @@
 #    （本仓 scripts/check-data-models.mjs），加上 `dbt/tests/audit_*.sql` 的独立复算（真库上跑）。
 version: 1
 
+# ── 实体（自动推导指标 spec 2026-11-04 §3 W0）：指标挂在哪个业务实体上 ────────────────────────
+# `metrics[].entity` 必须逐字指向这里声明过的名字（静态门禁 fail-closed：拼错/未声明 ⇒ 红）；
+# `synonyms` 是问数入口的同义说法。本波（W0 Task 1）只做**声明面 + 门禁**，不落库；
+# 全量指标的实体标注是 W0 Task 4 的事，这里只放最小示例。
+entities:
+  branch:
+    label: 门店
+    synonyms: [店铺, 分店]
+
 # ── 具名行域（P3.0 Task 3）：行域**声明一次**，聚合面内嵌、下钻面由组件域 LUB 派生 ─────────────
 # 完整谓词 = 沿 extends 链自根向下逐层 `and`（`sale_finished` ⇒
 # `state = 'FINISHED' and order_transaction_type = 'SALE_ORDER'`）。
@@ -219,6 +228,8 @@ measures:
 metrics:
   - name: 'lemeng:retail:sales'
     label: 销售额（不冲退货）
+    entity: branch
+    synonyms: [销售金额, 营业额]
     unit: 元
     definition: >-
       零售销售侧金额（**不冲退货**）= 2026-10-17 之前 `lemeng:retail:net_sales` 的原值。
@@ -242,6 +253,8 @@ metrics:
 
   - name: 'lemeng:retail:net_sales'
     label: 净销售额
+    entity: branch
+    synonyms: [净销售金额]
     unit: 元
     definition: >-
       零售净销售额 = **销售侧 − 退货侧**（2026-10-17 起，issue #813；口径依据 = 客户裁1 的净额

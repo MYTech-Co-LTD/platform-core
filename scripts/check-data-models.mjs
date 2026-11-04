@@ -218,7 +218,18 @@ const METRIC_KEYS = new Set([
   // 单位（spec 2026-11-01 §10.4.3 P1，2026-11-02）：展示语义（元/单/行/%/天/家）；
   // 选填——值由口径责任人逐条补，sync 未声明 = 未标注（不代编）。
   'unit',
+  // 实体与同义词（自动推导指标 spec 2026-11-04 §3 W0）：`entity` 指向顶层 `entities:` 里
+  // 声明过的实体；`synonyms` 是问数入口的同义说法（选填）。两者都只进声明面，本波不落库。
+  'entity', 'synonyms',
 ])
+
+/**
+ * 顶层 `entities:` 的键闭集（自动推导指标 spec 2026-11-04 §3 W0）。
+ * 与 `METRIC_KEYS` 同纪律：加字段 = 改这里 + 改 README + 走 PR，防止拼错的键静默不生效。
+ */
+const ENTITY_KEYS = new Set(['label', 'synonyms'])
+/** 实体名与 `metric.entity` 共用的形态（小写蛇形；跨文件引用靠逐字相等）。 */
+const ENTITY_NAME_RE = /^[a-z][a-z0-9_]*$/
 
 /**
  * 规则 ⑤ 的 ratio 形状核（纯函数，供单测与主扫描共用；spec 2026-10-12 §5.3）。
@@ -1130,7 +1141,7 @@ export function checkDataModels(rootDir, opts = {}) {
     }
     scanContracts(contractsRoot)
   }
-  /** @type {Array<{ name: string, fields: any, file: string, measureKeys: string[], measureMap: Map<string, import('./sync-data-semantics.mjs').Measure>, domains: Record<string, import('./sync-data-semantics.mjs').Domain> }>} */
+  /** @type {Array<{ name: string, fields: any, file: string, measureKeys: string[], measureMap: Map<string, import('./sync-data-semantics.mjs').Measure>, domains: Record<string, import('./sync-data-semantics.mjs').Domain>, entities: Record<string, unknown> }>} */
   const metrics = []
   for (const rel of ymlFiles) {
     let doc
@@ -1187,8 +1198,34 @@ export function checkDataModels(rootDir, opts = {}) {
         }
       }
     }
+    // 顶层 entities:（自动推导指标 spec 2026-11-04 §3 W0）：`{ 实体名: { label, synonyms? } }`。
+    // 本波只做**声明面**校验，不落库；但判据必须是 fail-closed——拼错的键/名会让
+    // `metric.entity` 逐字比对不上，症状是「指标挂在了一个不存在的实体上」且不报错。
+    /** @type {Record<string, unknown>} */
+    let entities = {}
+    if (doc.entities !== undefined && doc.entities !== null) {
+      if (typeof doc.entities !== 'object' || Array.isArray(doc.entities)) {
+        push(rel, 0, '`entities:` 必须是 `{ 实体名: { label, synonyms? } }` 映射，不是数组。')
+      } else {
+        entities = /** @type {Record<string, unknown>} */ (doc.entities)
+        for (const [name, def] of Object.entries(entities)) {
+          if (!ENTITY_NAME_RE.test(name)) push(rel, 0, 'entities 名必须是 snake_case：' + name)
+          if (def === null || typeof def !== 'object' || Array.isArray(def)) {
+            push(rel, 0, `entities.${name} 必须是对象`)
+            continue
+          }
+          const defObj = /** @type {Record<string, unknown>} */ (def)
+          for (const k of Object.keys(defObj)) if (!ENTITY_KEYS.has(k)) push(rel, 0, `entities.${name} 有未知键 \`${k}\``)
+          if (typeof defObj.label !== 'string' || defObj.label === '') push(rel, 0, `entities.${name} 缺 label`)
+          const esyn = defObj.synonyms
+          if (esyn !== undefined && (!Array.isArray(esyn) || esyn.some((s) => typeof s !== 'string' || s === ''))) {
+            push(rel, 0, `entities.${name}.synonyms 必须是非空字符串数组`)
+          }
+        }
+      }
+    }
     if (!Array.isArray(doc.metrics)) continue
-    for (const m of doc.metrics) metrics.push({ name: asText(m?.name), fields: m, file: rel, measureKeys, measureMap, domains })
+    for (const m of doc.metrics) metrics.push({ name: asText(m?.name), fields: m, file: rel, measureKeys, measureMap, domains, entities })
   }
 
   /** @type {Map<string, string[]>} */
@@ -1207,6 +1244,26 @@ export function checkDataModels(rootDir, opts = {}) {
         + '（声明写了但没生效，症状是该指标永远不受限制）。'
         + `允许的键：${[...METRIC_KEYS].join(' / ')}。`,
       )
+    }
+
+    // ⑤-a2 实体与同义词（自动推导指标 spec 2026-11-04 §3 W0）：`entity` 必须指向**同文件**顶层
+    // `entities:` 里逐字声明过的名字；`synonyms` 必须是无重复的非空字符串数组。
+    // 为什么要门禁：问数入口按同义词召回，重复项会让匹配权重失真；实体名拼错则指标静默不挂任何实体。
+    if (metric.fields?.entity !== undefined) {
+      const entity = metric.fields.entity
+      if (typeof entity !== 'string' || !ENTITY_NAME_RE.test(entity)) {
+        push(metric.file, 0, `指标 \`${metric.name}\` 的 entity 必须是 snake_case`)
+      } else if (!Object.hasOwn(metric.entities, entity)) {
+        push(metric.file, 0, `指标 \`${metric.name}\` 引用了未声明的实体 \`${entity}\``)
+      }
+    }
+    if (metric.fields?.synonyms !== undefined) {
+      const syn = metric.fields.synonyms
+      if (!Array.isArray(syn) || syn.some((s) => typeof s !== 'string' || s === '')) {
+        push(metric.file, 0, `指标 \`${metric.name}\` 的 synonyms 必须是非空字符串数组`)
+      } else if (new Set(syn).size !== syn.length) {
+        push(metric.file, 0, `指标 \`${metric.name}\` 的 synonyms 有重复项`)
+      }
     }
 
     // ⑤-x 下钻三键（spec 2026-10-21 §2.3）：同现或同缺——半套声明 = 消费面 NO_DETAIL_BINDING
