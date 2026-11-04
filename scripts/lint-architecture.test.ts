@@ -134,6 +134,23 @@ describe('lint-architecture: B1 跨 schema 引用', () => {
     expect(out(r2)).toContain('platform')
   })
 
+  it('PG 的 excluded 伪表不算跨 schema（on conflict 的 is distinct from excluded.col）', () => {
+    const r = run(
+      'lint-architecture.mjs',
+      fixture({
+        'modules/demo/index.ts':
+          "pool.query('insert into demo.t(v) values ($1) on conflict (id) do update set v = excluded.v where demo.t.v is distinct from excluded.v')\n",
+      }),
+    )
+    expect(r.status).toBe(0)
+    // 别把豁免放大：同一写法里真跨 schema 的 from 仍红
+    const other = fixture({
+      'modules/demo/index.ts':
+        "pool.query('insert into demo.t(v) select v from platform.tenant where demo.t.v is distinct from excluded.v')\n",
+    })
+    expect(run('lint-architecture.mjs', other).status).toBe(1)
+  })
+
   it('模块的 schema 白名单取 manifest.yaml 的 id（三同：id = DB schema）', () => {
     const r = run(
       'lint-architecture.mjs',

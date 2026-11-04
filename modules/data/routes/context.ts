@@ -97,3 +97,22 @@ export function parseIdParam(raw: string | undefined): number | null {
   const n = Number(raw)
   return Number.isSafeInteger(n) && n > 0 ? n : null
 }
+
+/**
+ * 写路径的判别式结果（域层判定 → HTTP 的**唯一**形状）。
+ * 各域（指标 / 已验证问答）共用本形状与 `writeOutcome`——「错误码怎么映射成 HTTP」
+ * 只应有一份实现，路由层不要各自拼状态码。
+ */
+export type RouteWriteOutcome =
+  | { ok: true }
+  | { ok: false; http: 400 | 403 | 404 | 409 | 500; error: string; extra?: Record<string, unknown> }
+
+/**
+ * 域层判别式结果 → HTTP。`okStatus` 区分建 201 / 改 200——那是路由层才知道的事
+ * （HTTP 语义不属于判定链）。
+ */
+export function writeOutcome(c: Context<ModuleVars>, r: RouteWriteOutcome, okStatus: 200 | 201) {
+  return r.ok
+    ? c.json({ ok: true }, okStatus)
+    : c.json({ error: r.error, ...(r.extra ?? {}) }, r.http)
+}

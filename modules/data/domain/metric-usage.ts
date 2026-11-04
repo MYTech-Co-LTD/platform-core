@@ -11,6 +11,15 @@ import type { Pool } from 'pg'
 import { loadMergedCatalog } from './metric-store'
 import type { MetricRow } from './metric-store'
 
+/**
+ * 回归重放用的平台身份（`verified-regression.ts` 的 `regressionRequester`）。
+ *
+ * 回归每次重放都会写 `data.query_audit`——那是**系统自检**，不是业务使用。若计入使用统计，
+ * 回归集里的任何 L2 指标会永远「有活跃」⇒ 永远进不了下线候选。计数与去重用户两处
+ * **共用本常量**，不要各写一份字面量。
+ */
+export const REGRESSION_USER_ID = '(regression)'
+
 /** 单条指标在窗口内的使用聚合。 */
 export interface MetricUsageStat {
   metricId: string
@@ -39,13 +48,13 @@ export async function metricUsageStats(
   // 把 join 拆给 SQL（outer join jsonb）反而把形状归一这件复杂事拖进数据库。
   const { rows } = await pool.query(
     `select metric_id,
-            count(*)::int           as queries,
-            count(distinct user_id)::int as users,
-            max(created_at)          as last_used
+            count(*) filter (where user_id <> $3)::int           as queries,
+            count(distinct user_id) filter (where user_id <> $3)::int as users,
+            max(created_at) filter (where user_id <> $3)         as last_used
        from data.query_audit
       where org = $1 and created_at >= now() - make_interval(days => $2::int)
       group by metric_id`,
-    [org, days],
+    [org, days, REGRESSION_USER_ID],
   )
   const audits = new Map((rows as Record<string, unknown>[]).map((r) => [
     String(r.metric_id),

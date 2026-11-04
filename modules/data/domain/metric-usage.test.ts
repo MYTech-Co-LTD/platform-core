@@ -34,13 +34,16 @@ describePg('metricUsageStats（需要 DATABASE_URL）', () => {
     await upsertMetric(pool, ORG, def({ id: 'usage_hot', title: '热点' }), 'u-creator')
     await upsertMetric(pool, ORG, def({ id: 'usage_cold', title: '冷的' }), 'u-creator')
     await upsertMetric(pool, ORG, def({ id: 'usage_old', title: '早期用过' }), 'u-creator')
-    // 审计夹具：hot 近期被两人多次用；old 只在窗口外用过（30 天前）；cold 零审计 ⇒ 诚实零
+    await upsertMetric(pool, ORG, def({ id: 'usage_regression', title: '只有回归重放' }), 'u-creator')
+    // 审计夹具：hot 近期被两人多次用；old 只在窗口外用过（30 天前）；cold 零审计 ⇒ 诚实零；
+    // regression 只有回归重放（系统自检）⇒ 也不该算使用（review Important 2）。
     await pool.query(
       `insert into data.query_audit (org, user_id, channel, metric_id, verdict, created_at) values
          ($1, 'u-alice', 'session', 'usage_hot', 'ok', now() - interval '1 day'),
          ($1, 'u-alice', 'session', 'usage_hot', 'ok', now() - interval '2 day'),
          ($1, 'u-bob',   'pat',     'usage_hot', 'denied', now() - interval '3 day'),
-         ($1, 'u-alice', 'session', 'usage_old', 'ok', now() - interval '60 day')`,
+         ($1, 'u-alice', 'session', 'usage_old', 'ok', now() - interval '60 day'),
+         ($1, '(regression)', 'pat', 'usage_regression', 'ok', now() - interval '1 day')`,
       [ORG],
     )
   })
@@ -63,6 +66,13 @@ describePg('metricUsageStats（需要 DATABASE_URL）', () => {
     expect(byId.get('usage_old')).toMatchObject({ queries: 0, users: 0, lastUsedAt: null })
   })
 
+  it('回归重放的审计不算使用：只有 (regression) 审计的指标 queries/users/lastUsedAt 恒零', async () => {
+    const stats = await metricUsageStats(pool, ORG, 30)
+    expect(new Map(stats.map((s) => [s.metricId, s])).get('usage_regression')).toMatchObject({
+      queries: 0, users: 0, lastUsedAt: null,
+    })
+  })
+
   it('跨租户不串：别的 org 的审计行不进本租户聚合', async () => {
     await pool.query(
       `insert into data.query_audit (org, user_id, channel, metric_id, verdict, created_at)
@@ -78,6 +88,7 @@ describePg('metricUsageStats（需要 DATABASE_URL）', () => {
     const ids = candidates.map((c) => c.metricId)
     expect(ids).toContain('usage_cold')
     expect(ids).toContain('usage_old')           // 窗口外用过 = 窗口内 0 ⇒ 候选
+    expect(ids).toContain('usage_regression')    // 只有回归重放 ⇒ 不是业务使用，可下线
     expect(ids, '热点用过 ⇒ 不是候选').not.toContain('usage_hot')
     for (const c of candidates) {
       expect(c.source).toBe('l2')

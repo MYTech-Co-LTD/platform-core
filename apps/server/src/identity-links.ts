@@ -9,6 +9,7 @@ import type { Pool, PoolClient } from 'pg'
 import type { CasdoorClient } from '@platform/auth-core'
 import { LinkError } from '@platform/sdk'
 import type { IdentityLinkView, IdentityLinks } from '@platform/sdk'
+import { resolveTenantIdByOrg } from './tenant-source'
 
 // LinkError 的**唯一事实源已上移 SDK**（账户统一 Task 8：模块管理面 handler 要按码映射 HTTP，
 // 错误类型必须两边同见）。此处原样再出口，保持本模块既有导入面不变。
@@ -290,13 +291,11 @@ async function writeAudit(
   action: 'identity.link.confirm' | 'identity.link.rebind' | 'identity.link.revoke' | 'identity.link.dispute',
   detail: Record<string, unknown>,
 ): Promise<void> {
-  const { rows } = await exec.query<{ id: number }>(
-    'select id::int as id from platform.tenant where casdoor_org = $1',
-    [org],
-  )
+  // tenant_id 按 casdoor_org 反查走 tenant-source 的唯一实现（别再内联第三份 SQL）。
+  const tenantId = await resolveTenantIdByOrg(exec, org)
   await exec.query(
     'insert into platform.audit(tenant_id, actor, action, detail) values ($1, $2, $3, $4)',
-    [rows[0]?.id ?? null, actor, action, detail],
+    [tenantId, actor, action, detail],
   )
 }
 

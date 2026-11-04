@@ -87,6 +87,15 @@ api:
     # 是并集，单一 scope 表达不了——取低档进真判据 updateMetricMeta，与草稿端点的取舍同源；
     # 持 data:manage 的 PAT 需同时带 data:query）。L1 在平台桶 ⇒ 租户天然 404（跨租户 fail-closed）
     - { method: PUT,    path: /metrics/:id/meta,          scope: data:query }
+    # ── 已验证问答（W1 可信度地基；计划 2026-11-04-amd-w1-verified-questions Task 2）──
+    # 三条都是 data:manage：基线由关闭掩码的重放产生，读面会把掩码列的精确聚合值透给
+    # 低档用户（终审 Important 4）；人工确认/拒绝本来就是管理动作。
+    # 默认只列 verified；候选/拒绝需显式 ?status=。:id 是 bigserial，跨租户一律 404。
+    # ⚠️ 三条声明必须与 registerVerifiedQuestions 注册的集合逐条一致
+    #    （装载期双向核对：漏声明 ⇒ 请求恒 403；多声明 ⇒ 装载失败）。
+    - { method: GET,    path: /metrics/verified,            scope: data:manage }
+    - { method: POST,   path: /metrics/verified/:id/verify, scope: data:manage }
+    - { method: POST,   path: /metrics/verified/:id/reject, scope: data:manage }
     # ── agent 接入面（**已落地**；#486）──────────────────────────────────────────────
     # 两条通道，对 agent 与人**同形**（都是 HTTP/MCP + 同一个 scope，管理面不自建第二份判定）：
     #   · HTTP：上面那四条 /metrics 写/读端点（PAT 通道即可调）；

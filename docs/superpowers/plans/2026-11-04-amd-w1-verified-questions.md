@@ -93,14 +93,25 @@ create table if not exists data.verified_questions (
   check (status in ('candidate','verified','rejected','stale'))
 );
 create unique index if not exists verified_questions_org_metric_q_idx
-  on data.verified_questions (org, metric_id, md5(question), md5(params::text));
+  on data.verified_questions (org, metric_id, md5(question), md5(params::text), md5(slicing::text));
 create index if not exists verified_questions_org_status_idx
   on data.verified_questions (org, status);
 ```
 
 - [ ] **Step 4: 实现域模块**
 
-`verified-questions.ts`：类型 + 四个函数；强信号写入时直接 `status='verified'`、`verified_by='auto:strong'`、`verified_at=now()`；弱信号 `status='candidate'`。
+`verified-questions.ts`：类型 + 四个函数。
+
+**冲突语义（2026-11-04 评审后定案，覆盖 brief 原 SQL）**：
+
+| 场景 | 规则 |
+|---|---|
+| 唯一键 | `(org, metric_id, md5(question), md5(params::text), md5(slicing::text))` —— **slicing 必须进键**：同题同参不同切面 = 不同结果基线，不能合行 |
+| 已 `verified` 行 | `status`/`verified_by`/`verified_at` **恒冻结**（任何人任何信号都不改——审计不能把人工确认人抹成 `auto:strong`）；`baseline`/`slicing`/`tolerance` 只有 `source='human'` 或 `strength='strong'` 可覆盖，覆盖时清空 `last_check_result` |
+| 已 `rejected` 行 | **自动信号不得复活**（status 保持 rejected）；只有 `source='human'` 的 `setStatus` 能重开 |
+| `source`/`strength` | 取「最强」：`human > strong > weak`；不得出现 status=verified 而 strength=weak 的行。**`setStatus(...,'verified', by)` 必须同时把 `source`/`strength` 升为 `human`**（Task 2 实现确认路径时落地） |
+| `setStatus(...,'verified')` | `by` 为空 ⇒ 抛错（审计必须能回答「谁确认的」） |
+| `tolerance` 默认值 | 只在表定义写一次；insert 不重复写默认 |
 
 - [ ] **Step 5: 跑测试确认通过**
 
@@ -125,7 +136,26 @@ git commit -m "feat(data): verified_questions 存储层（迁移 032）"
 
 **Interfaces:**
 - Consumes: Task 1 的四个函数。
-- Produces: `GET /metrics/verified`（读，`data:query`）、`POST /metrics/verified/:id/verify`、`POST /metrics/verified/:id/reject`（写，`data:manage`）。
+- Produces: `GET /metrics/verified`（**`data:manage`**——基线是未掩码聚合值，不能给 `data:query`）、`POST /metrics/verified/:id/verify`、`POST /metrics/verified/:id/reject`（写，`data:manage`）。
+
+**装配提示（照 `routes/metrics.ts` 既有形态，不要另造）**：
+- `orgOf(c) = c.get('tenant').casdoor_org`；身份用该文件同款 `requesterOf(c)`。
+- 写端点返回值走同文件的 `writeOutcome(c, outcome, 200)` 判别式封装（别自己拼状态码）。
+- manifest 声明必须与路由集合**逐条一致**（装载期双向核对，漏声明 = 403）：
+
+```yaml
+    # ── 已验证问答（W1 可信度地基）──
+    - { method: GET,  path: /metrics/verified,            scope: data:manage }
+    - { method: POST, path: /metrics/verified/:id/verify, scope: data:manage }
+    - { method: POST, path: /metrics/verified/:id/reject, scope: data:manage }
+```
+
+- **确认/拒绝都必须记操作人**：新增迁移 `033_verified_question_decisions.sql` 加
+  `decided_by text` / `decided_at timestamptz`（`add column if not exists`，不改已应用过的 032）；
+  `setStatus` 的 verify 与 reject 两条分支都要写这两列。`verified_by`/`verified_at` 只表示「谁确认过」，
+  不再兼任拒绝记录。
+- **确认路径必须把 `source`/`strength` 升为 `human`**（Task 1 计划定案；否则出现「verified + weak」行）。在 `setStatus` 内实现，不要只在路由里做。
+- `:id` 是 `bigserial` ⇒ 用该文件的 `parseIdParam` 解析（与指标 `text` id 的 `metricIdOf` **不同**，别混）。
 
 - [ ] **Step 1: 写失败测试**（按 `routes/metrics.test.ts` 的既有装配方式）
 - [ ] **Step 2: 跑红**
@@ -166,6 +196,7 @@ it('列集变化 / 行数变化 / 数值超出容差 ⇒ fail；容差内 ⇒ pa
 
 - [ ] **Step 2: 跑红**
 - [ ] **Step 3: 实现纯函数 + `runRegression`**（重放用 `requester = { userId:'(regression)', orgId:org, channel:'pat', keyId:null, scopes:[], hasScope:()=>true }`；这是**平台回归特权**，在注释里写明理由）
+- [ ] **Step 3b: `loadAdoptedSources(pool, org)` 落在 `scripts/tenant-sources.ts`（不是域模块）**：B1 架构门禁禁止 `modules/**` 引用 `platform.*`（`lint-architecture.mjs` 扫描 `modules/`），域模块内写 `platform.tenant` 会真红。按 `scripts/provision-tenant.mjs:18` 的先例，**从 `apps/server/src/tenant-source.ts` import** `SOURCES_ENABLED_SQL`/`listEnabledSources`，并复用/导出 `resolveTenantIdByOrg`——**不要复制 SQL**（该文件头注声明它是唯一事实源）。`scripts/verify-regression.mjs` 用它装配 `{ pool, adoptedSources }` 后调 `runRegression`。
 - [ ] **Step 4: 跑绿**
 - [ ] **Step 5: 提交**：`feat(data): 已验问答回归（结构 + 相对容差）`
 
@@ -191,8 +222,8 @@ it('列集变化 / 行数变化 / 数值超出容差 ⇒ fail；容差内 ⇒ pa
 - 写出：OO `askdata_verified`（沿用 `OO_BASE/OO_ORG/OO_AUTH`）。
 - 水位：`ASK_VERIFY_WM` 每 agent 一份（同 #963）。
 
-- [ ] **Step 1: 写失败测试**（三条 fixture：强/弱/负）
-- [ ] **Step 2: 跑红**：`python3 -m pytest scripts/askdata/test_verify.py -q`
+- [ ] **Step 1: 写失败测试**（三条 fixture：强/弱/负）——**纯 `unittest`，不引入 pytest**（本机无 pytest，且该目录约定零依赖）
+- [ ] **Step 2: 跑红**：`python3 -m unittest scripts/askdata/test_verify.py -v`
 - [ ] **Step 3: 实现**
 - [ ] **Step 4: 跑绿**
 - [ ] **Step 5: 提交**：`feat(askdata): 已验问答信号识别（强/弱/负）`
@@ -206,8 +237,10 @@ it('列集变化 / 行数变化 / 数值超出容差 ⇒ fail；容差内 ⇒ pa
 - Test: `scripts/verify-ingest.test.ts`（fetch 全注入）
 
 **Interfaces:**
-- Consumes: OO `_search`（`OO_READ_URL` / `OO_READ_ORG` / `OO_READ_TOKEN`）+ Task 1 `upsertCandidate`。
+- Consumes: OO `_search`（`OO_READ_URL` / `OO_READ_ORG` / `OO_READ_TOKEN`）+ Task 1 `upsertCandidate` + Task 3 `summarize`/`runQuery`。
 - Produces: 水位文件 `ASK_VERIFY_INGEST_WM`（按流一份）；幂等 upsert（唯一索引去重）。
+
+**基线从哪来（关键）**：事件只带 `question / metricId / params / slicing`，**不带结果**（轨迹里的工具回包可能被截断/格式化，不可当基线）。摄入方在落库前**重放一次** `runQuery` 并用 `summarize(QueryOk)` 生成 baseline；重放失败则写 `status='candidate'` 且 `last_check_result='error'`，**不猜**。
 
 **部署前置（需用户点名确认新增 secret）**：
 - server 服务行新增 `OO_READ_URL` / `OO_READ_ORG` / `OO_READ_TOKEN`（**只读**）；取值位置：控制面 OO 凭据管理，**不写值**。

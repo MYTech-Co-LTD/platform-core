@@ -26,8 +26,23 @@ export const SOURCES_SELECT_SQL =
 export const SOURCES_ENABLED_SQL =
   'select source from platform.tenant_source where tenant_id = $1 and enabled = true order by source'
 
+/**
+ * `casdoor_org` → `tenant_id` 的唯一查询（本表/租户解析同一域，别在别处再写一份）。
+ *
+ * 消费方：`identity-links.ts` 的 audit 反查、回归 CLI 的平台侧装配
+ * （`scripts/tenant-sources.ts`）。查无此行 ⇒ **null**（调用方决定 404 / 留空 / 抛错）。
+ * `id::int` 是既有形状（`platform.tenant.id` 是 serial）；这里保留以便与旧查询逐字一致。
+ */
+export const TENANT_ID_BY_ORG_SQL = 'select id::int as id from platform.tenant where casdoor_org = $1'
+
 /** 能执行查询的最小面（`Pool` 与事务用的 `PoolClient` 都满足）。 */
 export type SqlExecutor = Pick<Pool | PoolClient, 'query'>
+
+/** 见 `TENANT_ID_BY_ORG_SQL`：`org` → tenant_id（无此行 ⇒ null）。 */
+export async function resolveTenantIdByOrg(exec: SqlExecutor, org: string): Promise<number | null> {
+  const { rows } = await exec.query<{ id: number }>(TENANT_ID_BY_ORG_SQL, [org])
+  return rows[0]?.id ?? null
+}
 
 /**
  * 本租户**已接入**（`enabled = true`）的源集合 —— 宿主投影给模块的那个值（计划 5）。
