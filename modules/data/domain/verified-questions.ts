@@ -28,6 +28,21 @@ export type VerifiedQuestionStatus = 'candidate' | 'verified' | 'rejected' | 'st
 /** 回归执行结果（`stale` 的判定归后续任务，本层只如实记录最近一次结果）。 */
 export type CheckResult = 'pass' | 'fail' | 'error'
 
+/** 单列的摘要面（Task 3 的 `summarize` 产出）。 */
+export interface ColumnSummary {
+  /** 数值列的求和/最小/最大。**非数值列恒 0**（三值不参与比较，只有 nulls 有比较意义）。 */
+  sum: number
+  min: number
+  max: number
+  /** null/undefined 的格数——非数值列唯一被比较的字段。 */
+  nulls: number
+  /**
+   * `false` = 该列不是数值列（Task 3 的 `summarize` 对全 null / 混合类型 / 文字列写入）。
+   * **缺席按数值列处理**——兼容 Task 1 时代写入的基线与手写夹具（它们的 summary 只有四键）。
+   */
+  numeric?: boolean
+}
+
 /**
  * 回归基线 = **结构 + 数值摘要**（不是整份结果集）：
  * 结果集可能很大，而口径改动会体现在列集/行数/数值聚合上。比较规则归 Task 3。
@@ -35,7 +50,7 @@ export type CheckResult = 'pass' | 'fail' | 'error'
 export interface Baseline {
   columns: string[]
   rowCount: number
-  summary: Record<string, { sum: number; min: number; max: number; nulls: number }>
+  summary: Record<string, ColumnSummary>
 }
 
 /** 写入候选的载荷（自动信号来自 Task 4/5 的摄入，人工确认走路由）。 */
