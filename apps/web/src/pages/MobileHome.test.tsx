@@ -20,14 +20,14 @@ afterEach(cleanup)
 describe('移动端业务工作台', () => {
   it('按服务端返回渲染应用卡片（不自己判权限）', async () => {
     m.mockResolvedValue(json({ apps: [
-      { moduleId: 'data', mount: '/app/data', title: '指标', icon: null, scope: 'data:query' },
+      { moduleId: 'data', mount: '/app/data', title: '报表中心', icon: null, scope: 'data:query' },
       { moduleId: 'aftersales', mount: '/app/aftersales', title: '售后管理', icon: null, scope: 'aftersales:manage' },
     ] }))
     renderPage()
-    expect(await screen.findByText('指标')).toBeInTheDocument()
+    expect(await screen.findByText('报表中心')).toBeInTheDocument()
     expect(screen.getByText('售后管理')).toBeInTheDocument()
     // 卡片是整页跳转（模块前端是另一套产物）
-    expect(screen.getByText('指标').closest('a')).toHaveAttribute('href', '/app/data')
+    expect(screen.getByText('报表中心').closest('a')).toHaveAttribute('href', '/app/data')
   })
 
   it('空清单：给「需要管理员开通」的下一步，而不是一句「暂无」', async () => {
