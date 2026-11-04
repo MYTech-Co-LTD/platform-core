@@ -306,7 +306,11 @@ export function parseEvent(hit) {
  * 请求体按 OpenObserve v1.0.4 形状：`{query: {sql, start_time, end_time, from, size}}`，
  * 时间是**微秒 epoch**（UTC 窗口）。SQL 用 **`_timestamp >= 游标`**：同一微秒入库的多条记录
  * 可能被分页截断，严格 `>` 会漏掉边界组；`>=` 让下一轮重读该组（唯一索引幂等吸收）。
- * 次级排序 `seq, sessionId` 固定同微秒组内的顺序，避免跨页重排导致漏读。
+ * 次级排序 `seq, "sessionId"` 固定同微秒组内的顺序，避免跨页重排导致漏读。
+ * **`"sessionId"` 必须加双引号**：OO 对未加引号的标识符按小写解析（实测 `order by fooBar`
+ * ⇒ 400 `unknown field 'foobar'`），而 Task 4 写入的键是 camelCase `sessionId`；不加引号会让
+ * 真流每次 `_search` 都 400。实测 OO v1.0.4 支持引号且**区分大小写**（`"session_id"` 可用、
+ * `"SESSION_ID"` ⇒ 400 `unknown field`）。
  *
  * @param {IngestOpts} opts
  * @param {typeof fetch} fetchImpl
@@ -324,7 +328,7 @@ export function searchClient(opts, fetchImpl) {
     const cursorSql = req.cursorUs === null ? '' : ` where _timestamp >= ${Math.trunc(req.cursorUs)}`
     const body = {
       query: {
-        sql: `select * from "${stream}"${cursorSql} order by _timestamp asc, seq asc, sessionId asc`,
+        sql: `select * from "${stream}"${cursorSql} order by _timestamp asc, seq asc, "sessionId" asc`,
         start_time: req.cursorUs ?? 0,
         end_time: req.endUs,
         from: req.from,
@@ -563,7 +567,9 @@ export async function ingest(opts, overrides = {}) {
 
     /** @type {ReadonlySet<string>|null} */
     let sources = null
-    if (pool !== null) {
+    // `!= null` 同时挡 undefined：`overrides.pool` 缺省是 undefined（不是 null），
+    // 用 `!== null` 会把它当成有池 ⇒ `loadSources(undefined)` TypeError（review 第 2 轮 Minor）。
+    if (pool != null) {
       try {
         sources = await sourcesFor(event.org)
       } catch (e) {

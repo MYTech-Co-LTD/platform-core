@@ -84,6 +84,8 @@ function collect(hits: Record<string, unknown>[], over: Record<string, unknown> 
   let wm: number | null = null
   let nextId = 1
   const deps: any = {
+    // 真实装配里非 dry-run 一定有池；替身给个空对象，只有显式 `pool: undefined` 才测「无池」分支。
+    pool: {},
     fetch: async (_url: string, _init: any) => ({
       ok: true,
       status: 200,
@@ -231,7 +233,8 @@ describe('searchClient', () => {
     expect(body.query.sql).toContain(`from "${STREAM}"`)
     // >= 而非 >：同一微秒入库的边界组不能被跳过（review Important 4）
     expect(body.query.sql).toContain('where _timestamp >= 1793793000000123')
-    expect(body.query.sql).toContain('order by _timestamp asc, seq asc, sessionId asc')
+    // sessionId 必须加引号：OO 未加引号会小写化 ⇒ 真流 400（review 第 2 轮 Important）
+    expect(body.query.sql).toContain('order by _timestamp asc, seq asc, "sessionId" asc')
   })
 
   it('首次运行（无水位）不加 where，start_time=0', async () => {
@@ -498,6 +501,24 @@ describe('ingest', () => {
     expect(c.wmWrites).toEqual([])
   })
 
+  it('无池（undefined）：dry-run 不调用 loadSources；非 dry-run 明确报错而非 TypeError', async () => {
+    let loads = 0
+    const dry = collect([hit()], {
+      pool: undefined,
+      loadSources: async () => { loads += 1; return new Set(['lemeng']) },
+    })
+    const r = await ingest({ ...OPTS, dryRun: true }, dry.deps)
+    expect(r.counters.wouldIngest).toBe(1)
+    expect(loads).toBe(0)
+
+    const real = collect([hit()], {
+      pool: undefined,
+      loadSources: async () => { loads += 1; return new Set(['lemeng']) },
+    })
+    await expect(ingest(OPTS, real.deps)).rejects.toThrow(/缺少数据库执行器/)
+    expect(loads).toBe(0)
+  })
+
   it('--dry-run：只统计不重放、不落库、不写水位', async () => {
     const c = collect([hit()])
     const r = await ingest({ ...OPTS, dryRun: true }, c.deps)
@@ -554,7 +575,7 @@ describe('main', () => {
       const code = await main(
         ['--dry-run'],
         { OO_READ_URL: 'https://oo.test', OO_READ_ORG: 'oo-org', OO_READ_TOKEN: 't' },
-        { ...c.deps, loadSources: async () => { loads += 1; return new Set(['lemeng']) } },
+        { ...c.deps, pool: undefined, loadSources: async () => { loads += 1; return new Set(['lemeng']) } },
       )
       expect(code).toBe(0)
       expect(loads).toBe(0) // 无 DB ⇒ 不访问租户源（也不会 null.query）
