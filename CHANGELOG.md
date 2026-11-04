@@ -11,6 +11,10 @@
 
 ## [Unreleased]
 
+## [0.261.0](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.260.0...v0.261.0) - 2026-11-04
+- 【新增】data-mobile: 移动端改业务面（报表进 App），console 手机端转场到手机工作台 ([#1361](https://github.com/MYTech-Co-LTD/platform-core/pull/1361), [bbb9dd4](https://github.com/MYTech-Co-LTD/platform-core/commit/bbb9dd417a49675c283330bdbd6783949f29569e))
+
+
 ## [0.260.0](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.259.2...v0.260.0) - 2026-11-03
 - 【新增】web: 移动端控制台壳——底部标签栏 + 一屏布局（#1359） ([#1360](https://github.com/MYTech-Co-LTD/platform-core/pull/1360), [142f97e](https://github.com/MYTech-Co-LTD/platform-core/commit/142f97eab5ab32ca9db26fa499054a6b87255f87))
 
