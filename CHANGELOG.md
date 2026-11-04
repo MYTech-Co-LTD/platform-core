@@ -11,6 +11,10 @@
 
 ## [Unreleased]
 
+## [0.262.1](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.262.0...v0.262.1) - 2026-11-04
+- 【修复】data: branch 扇出四源统一装 #1314 占位行 + 父级全空栅（修复空块 Binder Error） ([#1366](https://github.com/MYTech-Co-LTD/platform-core/pull/1366), [0499c04](https://github.com/MYTech-Co-LTD/platform-core/commit/0499c04bb6ba0a9dd6f6b25d1c4f23029cd2db78))
+
+
 ## [0.262.0](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.261.0...v0.262.0) - 2026-11-04
 - 【新增】data-mobile: 报表在 App 内打开（全屏阅读层 + 返回），不再跳出 App ([#1364](https://github.com/MYTech-Co-LTD/platform-core/pull/1364), [7d23ca6](https://github.com/MYTech-Co-LTD/platform-core/commit/7d23ca6845e913dd4f6b8b8fbafb9f3869929dd5))
 
