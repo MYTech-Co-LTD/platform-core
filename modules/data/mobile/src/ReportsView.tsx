@@ -5,7 +5,7 @@
 //   · Metabase 行 ⇒ 取 embed-url 后整页打开
 //   · 未发布 ⇒ 明确提示「请先在 PC 端发布」（发布是配置动作，不在移动端做）
 // 不做共享/发布/回收等配置菜单——那些在 PC 控制台。
-import { useCallback, useEffect, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import { Input, Skeleton, Tag, Toast } from 'antd-mobile'
 import { ApiError, apiGet } from './api'
 
@@ -27,6 +27,29 @@ export default function ReportsView() {
   const [error, setError] = useState<string | null>(null)
   const [search, setSearch] = useState('')
   const [opening, setOpening] = useState<string | null>(null)
+  /** App 内阅读：{ id, title, src } —— 全屏 iframe（复用宿主同一套渲染器，不做第二套） */
+  const [viewing, setViewing] = useState<{ id: string; title: string; src: string } | null>(null)
+  const pushedRef = useRef(false)
+
+  // 安卓返回键/手势：pushState 后返回 = 关闭阅读层（不需要用户找左上角）
+  useEffect(() => {
+    const onPop = () => { pushedRef.current = false; setViewing(null) }
+    window.addEventListener('popstate', onPop)
+    return () => window.removeEventListener('popstate', onPop)
+  }, [])
+
+  const openViewer = (id: string, title: string, src: string) => {
+    if (!pushedRef.current) {
+      window.history.pushState({ report: id }, '')
+      pushedRef.current = true
+    }
+    setViewing({ id, title, src })
+  }
+
+  const closeViewer = () => {
+    if (pushedRef.current) window.history.back()
+    else setViewing(null)
+  }
 
   const reload = useCallback(async () => {
     try {
@@ -49,14 +72,14 @@ export default function ReportsView() {
         Toast.show({ content: '未发布：请先在 PC 端发布后再查看' })
         return
       }
-      location.href = `/r/${encodeURIComponent(r.id)}`
+      openViewer(r.id, r.title, `/r/${encodeURIComponent(r.id)}`)
       return
     }
     // Metabase 行：走平台的短期嵌入 URL（前端不碰密钥）
     setOpening(r.id)
     try {
       const b = await apiGet<{ url: string }>(`/api/modules/data/reports/${encodeURIComponent(r.id)}/embed-url`)
-      location.href = b.url
+      openViewer(r.id, r.title, b.url)
     } catch (e) {
       Toast.show({ content: e instanceof ApiError && e.status === 403 ? '你没有这张报表的权限' : '打开失败，请稍后重试' })
     } finally {
@@ -152,6 +175,40 @@ export default function ReportsView() {
           )
         })}
       </div>
+
+      {/* App 内阅读层：全屏 + 顶部返回（iframe 载入宿主独立渲染页，口径与 PC 同一套） */}
+      {viewing !== null && (
+        <div style={{
+          position: 'fixed', inset: 0, zIndex: 200, background: '#fff',
+          display: 'flex', flexDirection: 'column',
+        }}>
+          <div style={{
+            display: 'flex', alignItems: 'center', gap: 4, padding: '2px 8px',
+            borderBottom: '1px solid #ececec', background: '#fff',
+            paddingTop: 'env(safe-area-inset-top, 0px)',
+          }}>
+            <button
+              type="button"
+              aria-label="返回"
+              onClick={closeViewer}
+              style={{
+                width: 44, height: 44, border: 'none', background: 'none',
+                fontSize: 26, lineHeight: '44px', cursor: 'pointer', color: '#1f1f1f',
+              }}
+            >‹</button>
+            <span style={{
+              flex: 1, minWidth: 0, fontSize: 16, fontWeight: 600,
+              overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
+            }}>{viewing.title}</span>
+          </div>
+          <iframe
+            key={viewing.id}
+            title={viewing.title}
+            src={viewing.src}
+            style={{ flex: 1, width: '100%', border: 'none' }}
+          />
+        </div>
+      )}
     </div>
   )
 }
