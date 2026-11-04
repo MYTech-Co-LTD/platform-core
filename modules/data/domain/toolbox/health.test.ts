@@ -10,7 +10,10 @@ const row = (over: Partial<MetricRow>): MetricRow => ({
   id: 'lemeng:retail:net_sales', title: '净销', description: '', requiredScope: null,
   subjectColumn: 'org', selectSql: 'select org from fct', groupBy: 'org, bizday', params: {},
   source: 'l1', sourceSystem: 'lemeng', updatedBy: null, version: 1, totalable: true,
-  scopeNote: '', slaDays: 2, freshnessRelations: ['stg_a'], masks: null, ...over,
+  scopeNote: '', slaDays: 2, freshnessRelations: ['stg_a'], masks: null,
+  // W0（031）：MetricRow 的两字段恒有值（未声明 = null / [])——夹具同形，
+  // 免得将来有工具读到 `.some(...)` 时撞 undefined（Task 2 评审点名）。
+  entity: null, synonyms: [], ...over,
 }) as MetricRow
 
 function deps(over: Partial<ToolboxDeps> & { catalog?: MetricRow[] }): ToolboxDeps {
