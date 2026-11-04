@@ -11,6 +11,10 @@
 
 ## [Unreleased]
 
+## [0.268.2](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.268.1...v0.268.2) - 2026-11-04
+- 【修复】data: verify-ingest 首跑改有界回看窗口（OO 拒绝 start_time=0） ([#1384](https://github.com/MYTech-Co-LTD/platform-core/pull/1384), [1508e91](https://github.com/MYTech-Co-LTD/platform-core/commit/1508e91d89d1893e0da4f3117b7ceb81e6e795ab))
+
+
 ## [0.268.1](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.268.0...v0.268.1) - 2026-11-04
 - 【修复】data: OO 摄入改用组织级 _search（真机 stream 级恒 404） ([#1381](https://github.com/MYTech-Co-LTD/platform-core/pull/1381), [d661c24](https://github.com/MYTech-Co-LTD/platform-core/commit/d661c2446be3307316dc00a34313b86e66f7b1a5))
 
