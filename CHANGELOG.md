@@ -11,6 +11,10 @@
 
 ## [Unreleased]
 
+## [0.272.3](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.272.2...v0.272.3) - 2026-11-05
+- 【修复】data: 需求挖掘改读活的 askdata_trace（askdata_conv 自 10-16 停更）（#1404） ([#1422](https://github.com/MYTech-Co-LTD/platform-core/pull/1422), [4403503](https://github.com/MYTech-Co-LTD/platform-core/commit/4403503aaea5d4adbffdbb6b398b587f81d9dbef))
+
+
 ## [0.272.2](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.272.1...v0.272.2) - 2026-11-05
 - 【修复】askdata: 采集水位改用 (created_at,seq) 复合游标，修复新会话被永久跳过（#1419） ([#1421](https://github.com/MYTech-Co-LTD/platform-core/pull/1421), [65101c4](https://github.com/MYTech-Co-LTD/platform-core/commit/65101c48258a59aeda3031a44fe4eb0099d1c218))
 
