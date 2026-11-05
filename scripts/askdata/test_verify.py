@@ -83,7 +83,7 @@ class SignalTest(unittest.TestCase):
         self.assertEqual(set(ev), {"org", "question", "metricId", "params", "slicing",
                                    "signal", "sessionId", "seq", "userId", "at"})
         self.assertEqual(stats["strong"], 1)
-        self.assertEqual(wm, 6)
+        self.assertEqual(wm, (BASE_TS + 6 * 1000, 6))   # #1419：复合游标 (created_at, seq)
 
     def test_non_question_with_affirm_downgrades_to_weak(self):
         """肯定词在场、但用户消息不是指标问题（指令/纠错）⇒ 降级 weak，不自动 verified。"""
@@ -128,7 +128,7 @@ class SignalTest(unittest.TestCase):
         self.assertEqual(len(events), 1)
         self.assertEqual(events[0]["signal"], "weak")
         self.assertEqual(stats["weak"], 1)
-        self.assertEqual(wm, 4)
+        self.assertEqual(wm, (BASE_TS + 4 * 1000, 4))
 
     def test_negative_word(self):
         """出现否定词 ⇒ negative（负信号优先，不产生 verified/candidate）。"""
@@ -251,10 +251,11 @@ class SignalTest(unittest.TestCase):
             result("s1", 3, "query_data", "c1"),
         ]
         now = BASE_TS + 3 * 1000 + 60 * 1000     # 1 分钟后，远小于静默阈值
-        events, wm, stats = verify.extract_events(rows, "org1", now_ms=now, since=0)
+        events, wm, stats = verify.extract_events(rows, "org1", now_ms=now)
         self.assertEqual(events, [])
         self.assertEqual(stats["held_unsettled"], 1)
-        self.assertEqual(wm, 0)                  # round 从 seq 1 开始 ⇒ 水位停在 0
+        # round 从 seq 1 开始 ⇒ 水位停在该轮起点之前（同 ts 回退一格）
+        self.assertEqual(wm, (BASE_TS + 1000, 0))
 
     def test_context_before_since_is_not_reemitted(self):
         """水位前的旧轮只作上下文（取 question），不重复产出事件。"""
@@ -268,10 +269,11 @@ class SignalTest(unittest.TestCase):
             user("s1", 7, "对"),
             user("s1", 8, "谢谢"),
         ]
-        events, wm, _ = verify.extract_events(rows, "org1", now_ms=IDLE_LATER, since=4)
+        events, wm, _ = verify.extract_events(
+            rows, "org1", now_ms=IDLE_LATER, since=(BASE_TS + 4 * 1000, 4))
         self.assertEqual([e["question"] for e in events], ["新问题"])
         self.assertEqual(events[0]["metricId"], "m:new")
-        self.assertEqual(wm, 8)
+        self.assertEqual(wm, (BASE_TS + 8 * 1000, 8))
 
     def test_user_id_picked_up_when_present(self):
         """事件里带 userId 就带上（生产侧取不到时写空串，不猜）。"""
@@ -303,10 +305,10 @@ class SignalTest(unittest.TestCase):
             call("s1", 2, "query_data", net_sales(), "c1"),   # 无 result
         ]
         now = BASE_TS + 2 * 1000 + 60 * 1000                 # 未静默
-        events, wm, stats = verify.extract_events(rows, "org1", now_ms=now, since=0)
+        events, wm, stats = verify.extract_events(rows, "org1", now_ms=now)
         self.assertEqual(events, [])
         self.assertEqual(stats["held_incomplete"], 1)
-        self.assertEqual(wm, 0)                              # 下一轮重读同一批
+        self.assertEqual(wm, (BASE_TS + 1000, 0))            # 下一轮重读同一批
 
     def test_unpaired_call_settles_when_idle(self):
         """静默后仍无回包 ⇒ 按失败跳过并前进（不无限 hold）。"""
@@ -318,7 +320,7 @@ class SignalTest(unittest.TestCase):
         self.assertEqual(events, [])
         self.assertEqual(stats["skipped_no_success"], 1)
         self.assertEqual(stats["held_incomplete"], 0)
-        self.assertEqual(wm, 2)
+        self.assertEqual(wm, (BASE_TS + 2 * 1000, 2))
 
     def test_old_stuck_call_settles_when_session_active(self):
         """会话仍活跃（有新事件）但卡死调用所在轮已过静默阈值 ⇒ 不再 hold（水位不永久卡住）。"""
@@ -329,11 +331,11 @@ class SignalTest(unittest.TestCase):
             user("s1", 3, "换个问题", ts=BASE_TS + 3600 * 1000),
         ]
         now = BASE_TS + 3600 * 1000 + 60 * 1000   # 距最后事件 1 分钟；距第一轮已 1 小时+
-        events, wm, stats = verify.extract_events(rows, "org1", now_ms=now, since=0)
+        events, wm, stats = verify.extract_events(rows, "org1", now_ms=now)
         self.assertEqual(events, [])
         self.assertEqual(stats["held_incomplete"], 0)
         self.assertEqual(stats["skipped_no_success"], 1)
-        self.assertEqual(wm, 3)                   # 水位越过卡死的轮
+        self.assertEqual(wm, (BASE_TS + 3600 * 1000, 3))   # 水位越过卡死的轮
 
     def test_unpaired_call_recovered_in_next_batch(self):
         """本轮先按失败前进也无妨：回包到货的下一批按「整轮任一行新」重新评估并产出。"""
@@ -343,16 +345,16 @@ class SignalTest(unittest.TestCase):
         ]
         events1, wm1, stats1 = verify.extract_events(first, "org1", now_ms=IDLE_LATER)
         self.assertEqual(events1, [])
-        self.assertEqual(wm1, 2)
+        self.assertEqual(wm1, (BASE_TS + 2 * 1000, 2))
         self.assertEqual(stats1["skipped_no_success"], 1)
 
         # 下一批：前置上下文的 user/call + 新到的 result（seq 3 > 水位 2）
         second = first + [result("s1", 3, "query_data", "c1")]
-        events2, wm2, _ = verify.extract_events(second, "org1", now_ms=IDLE_LATER, since=2)
+        events2, wm2, _ = verify.extract_events(second, "org1", now_ms=IDLE_LATER, since=wm1)
         self.assertEqual(len(events2), 1)
         self.assertEqual(events2[0]["seq"], 2)
         self.assertEqual(events2[0]["signal"], "weak")
-        self.assertEqual(wm2, 3)
+        self.assertEqual(wm2, (BASE_TS + 3 * 1000, 3))
 
     def test_words_outside_window_are_ignored(self):
         """肯定/否定词都只认回答后 ≤2 个用户回合；窗口外不判 strong/negative。"""
@@ -459,16 +461,17 @@ class ReadRowsTest(unittest.TestCase):
     def test_first_run_reads_tail_not_oldest(self):
         """首跑取库尾部（最新方向），不是最旧的 5000 条。"""
         rows, _, base = verify.read_rows(self.db, _fake_norm, _fake_decode,
-                                         since=0, fetch=4, pre=2)
+                                         since=(0, 0), fetch=4, pre=2)
         self.assertEqual([r["seq"] for r in rows], [5, 6, 7, 8, 9, 10])
-        self.assertEqual(base, 6)                  # 6 及以前只作上下文
-        self.assertEqual([r["seq"] for r in rows if r["seq"] > base], [7, 8, 9, 10])
+        self.assertEqual(base, (BASE_TS + 7, 6))    # 6 及以前只作上下文
+        self.assertEqual(
+            [r["seq"] for r in rows if (r["ts"], r["seq"]) > base], [7, 8, 9, 10])
 
     def test_forward_read_uses_since_plus_context(self):
         rows, _, base = verify.read_rows(self.db, _fake_norm, _fake_decode,
-                                         since=6, fetch=3, pre=2, tail=False)
+                                         since=(BASE_TS + 6, 6), fetch=3, pre=2, tail=False)
         self.assertEqual([r["seq"] for r in rows], [5, 6, 7, 8, 9])
-        self.assertEqual(base, 6)
+        self.assertEqual(base, (BASE_TS + 6, 6))
 
 
 class WatermarkTest(unittest.TestCase):
@@ -491,13 +494,13 @@ class WatermarkTest(unittest.TestCase):
             self.assertIsNone(verify._read_watermark(self.path))
 
     def test_write_is_atomic_and_explicit_zero_survives(self):
-        """写入走临时文件 + rename（不留 tmp）；显式 0 与空文件语义不同。"""
-        verify._write_watermark(self.path, 42)
-        self.assertEqual(verify._read_watermark(self.path), 42)
+        """写入走临时文件 + rename（不留 tmp）；显式 (0,0) 与空文件语义不同。"""
+        verify._write_watermark(self.path, (BASE_TS, 42))
+        self.assertEqual(verify._read_watermark(self.path), (BASE_TS, 42))
         self.assertEqual(sorted(os.listdir(os.path.dirname(self.path))), ["wm"])
 
-        verify._write_watermark(self.path, 0)
-        self.assertEqual(verify._read_watermark(self.path), 0)
+        verify._write_watermark(self.path, (0, 0))
+        self.assertEqual(verify._read_watermark(self.path), (0, 0))
 
 
 if __name__ == "__main__":

@@ -21,8 +21,11 @@
   归 W2（届时同时补回本集合与事件契约，不在本波加 `tool` 字段）。
 
 水位（ASK_VERIFY_WM，按 agent 一份，同 #963）：只处理新事件、成功后才前进。
+  · #1419：水位是 (created_at, seq) **复合游标**，不是全局 seq——seq 按 session 从 0 自增，
+    全局 seq 水位一旦越过大会话末尾，之后的新会话会被永久静默跳过。旧整数水位文件就地迁移
+    （取该 seq 事件的 created_at，绝不用当前时间）。
   · 首跑（水位文件不存在）取**库尾部** FETCH 行（同 attribute.py），追当前会话，不被积压占满；
-    `ASK_VERIFY_SINCE` 可显式指定起点（设 0 = 明确要全量历史）。
+    `ASK_VERIFY_SINCE` 可显式指定起点（设 0 = 明确要全量历史；整数按旧口径迁移成游标）。
   · 信号依赖**未来**用户消息（用户下一句才说「对/不对」）⇒ 未尘埃落定的轮不判、水位不前移。
   · 窗口边界的未配对调用（tool_call 有、回包还在下一批）同样不判、水位不前移——否则那一轮永久丢失。
   重发由平台侧唯一键幂等吸收。
@@ -129,44 +132,53 @@ def _find_user_id(ev):
     return ""
 
 
-def read_rows(db, norm_parts, decode_event, since=0, fetch=None, pre=None, tail=None):
+def read_rows(db, norm_parts, decode_event, since=(0, 0), fetch=None, pre=None, tail=None):
     """读新事件 + 少量前置上下文。返回 (归一化行, {session_id: userId}, read_since)。
+
+    `since` 是复合游标 `(created_at, seq)`（#1419：seq 按 session 从 0 起，不能当全局水位）。
 
     ⚠️ 解不出来的事件**不许静默跳过**：抛 DecodeError 交给 main 响亮退出、水位不动
     （否则身份/问题会缺一截而无人知道）。常规链路里 export-transcript.py 会先一步停在水位上。
 
-    `tail`（首跑，since==0）= 取**库尾部** FETCH 行（同 attribute.py 首跑口径）：
-    追当前会话，不被数月前的积压占满窗口。`read_since` = 首条新事件前一格，水位前的行
-    只作上下文（取 question/重问判据），不产出事件。
+    `tail`（首跑，since==(0,0)）= 取**库尾部** FETCH 行（同 attribute.py 首跑口径，按
+    `created_at desc, seq desc` 排序——按全局 seq 取尾会在多会话下取错）：
+    追当前会话，不被数月前的积压占满窗口。`read_since` = 首条新事件前一格
+    （`(首条 ts, 首条 seq - 1)`），水位前的行只作上下文（取 question/重问判据），不产出事件。
     """
     fetch = FETCH if fetch is None else fetch
     pre = PRECONTEXT_ROWS if pre is None else pre
-    tail = (since == 0) if tail is None else tail
+    tail = (since == (0, 0)) if tail is None else tail
     con = sqlite3.connect("file:%s?mode=ro" % db, uri=True)
     cols = "session_id, seq, created_at, event_json, event_zstd"
     context = []
-    if tail and since == 0:
-        # 首跑：DESC 取尾部再回升序（与 attribute.py:38-41 同口径）。
+    if tail and since == (0, 0):
+        # 首跑：DESC 取尾部再回升序（与 attribute.py 同口径）。
         rows = con.execute(
-            "select %s from transcript_events order by seq desc limit ?" % cols,
+            "select %s from transcript_events order by created_at desc, seq desc limit ?" % cols,
             (fetch,)).fetchall()[::-1]
         if rows:
-            first_seq = rows[0][1]
+            first_ts, first_seq = rows[0][2], rows[0][1]
             context = con.execute(
-                "select %s from transcript_events where seq < ? order by seq desc limit ?" % cols,
-                (first_seq, pre)).fetchall()[::-1]
-            read_since = first_seq - 1
+                "select %s from transcript_events "
+                "where (created_at < ?) or (created_at = ? and seq < ?) "
+                "order by created_at desc, seq desc limit ?" % cols,
+                (first_ts, first_ts, first_seq, pre)).fetchall()[::-1]
+            read_since = (first_ts, first_seq - 1)
         else:
-            read_since = 0
+            read_since = (0, 0)
     else:
         rows = con.execute(
-            "select %s from transcript_events where seq > ? order by seq asc limit ?" % cols,
-            (since, fetch)).fetchall()
+            "select %s from transcript_events "
+            "where (created_at > ?) or (created_at = ? and seq > ?) "
+            "order by created_at asc, seq asc limit ?" % cols,
+            (since[0], since[0], since[1], fetch)).fetchall()
         if rows:
             # 批首可能落在一轮中间：回看一点，让该轮能找回自己的用户问题（只作上下文，不产出）。
             context = con.execute(
-                "select %s from transcript_events where seq <= ? order by seq desc limit ?" % cols,
-                (since, pre)).fetchall()[::-1]
+                "select %s from transcript_events "
+                "where (created_at < ?) or (created_at = ? and seq <= ?) "
+                "order by created_at desc, seq desc limit ?" % cols,
+                (since[0], since[0], since[1], pre)).fetchall()[::-1]
         read_since = since
     con.close()
 
@@ -371,10 +383,26 @@ def _round_stale(rd, now_ms):
     return now_ms - ts >= IDLE_SETTLE_SECONDS * 1000
 
 
-def extract_events(rows, org, since=0, now_ms=None, user_ids=None):
+def _after(ts, seq, cursor):
+    """该行是否严格晚于复合游标 `(created_at, seq)`（#1419：跨会话安全的增量判据）。"""
+    if not isinstance(ts, (int, float)) or not isinstance(seq, (int, float)):
+        return False
+    return ts > cursor[0] or (ts == cursor[0] and seq > cursor[1])
+
+
+def _hold_cursor(rd, since):
+    """把水位压到「该轮起点之前」的游标：同一 ts 内回退一格（下一轮重读该轮）。"""
+    ts = rd.get("ts")
+    if not isinstance(ts, (int, float)):
+        return since
+    return max(since, (ts, (rd.get("user_seq") or 0) - 1))
+
+
+def extract_events(rows, org, since=(0, 0), now_ms=None, user_ids=None):
     """纯函数：归一化事件列表 → (events, next_watermark, stats)。
 
-    · 只产出 seq > since 的轮（水位前的行仅作上下文）。
+    `since` / `next_watermark` 都是复合游标 `(created_at, seq)`（#1419）。
+    · 只产出**晚于 since** 的轮（水位前的行仅作上下文）。
     · 未尘埃落定的轮不产出，并把水位压回该轮起点之前（下一轮重读）。
     """
     now_ms = int(time.time() * 1000) if now_ms is None else now_ms
@@ -389,13 +417,13 @@ def extract_events(rows, org, since=0, now_ms=None, user_ids=None):
              "skipped_no_metric": 0, "skipped_no_success": 0,
              "skipped_no_question": 0, "held_unsettled": 0, "held_incomplete": 0,
              "orphan_queries": 0}
-    max_seq = since
+    max_cursor = since
 
     for sid, srows in by_session.items():
         srows.sort(key=lambda x: (x.get("seq") or 0))
         for r in srows:
-            if isinstance(r.get("seq"), (int, float)):
-                max_seq = max(max_seq, int(r["seq"]))
+            if isinstance(r.get("seq"), (int, float)) and isinstance(r.get("ts"), (int, float)):
+                max_cursor = max(max_cursor, (r["ts"], int(r["seq"])))
         rounds, orphan = build_rounds(srows)
         stats["orphan_queries"] += orphan
         idle = _session_idle(srows, now_ms)
@@ -415,18 +443,19 @@ def extract_events(rows, org, since=0, now_ms=None, user_ids=None):
             # 「本轮是否新」按**整轮任意一行**判（含 user 行与回包行），不只看查数调用：
             # 窗口末行是 tool_call、回包落在下一批时，下一批里该轮因 result 为「新」而仍会被
             # 重新评估（call 在前置上下文里照样能配对）——否则这一轮永久丢失。
-            round_seqs = [rd["user_seq"]] + [r.get("seq") or 0 for r in rd["rows"]]
-            if not any((s or 0) > since for s in round_seqs):
+            round_rows = [{"ts": rd.get("ts"), "seq": rd.get("user_seq")}] + rd["rows"]
+            if not any(_after(r.get("ts"), r.get("seq"), since) for r in round_rows):
                 continue                       # 水位前的旧轮只作上下文（重问判据仍可用）
             stats["turns"] += 1
             # 窗口边界：末尾那条 tool_call 的回包可能还在下一批。未配对的**新**调用若被当
             # 「失败」跳过、水位又越过它，那一轮就会白跑一次（靠上面的整轮判新兜底，但这里
             # 不前进更省事）。静默后仍未配对 ⇒ 真失败，按下限跳过（不无限 hold）。
             # 会话仍活跃但该轮本身已老（用户换了话题）⇒ 同样落定，否则一条卡死调用会永久按水位。
-            incomplete = [c for c in calls if (c.get("seq") or 0) > since and not c.get("paired")]
+            incomplete = [c for c in calls
+                          if _after(c.get("ts"), c.get("seq"), since) and not c.get("paired")]
             if incomplete and not idle and not _round_stale(rd, now_ms):
                 stats["held_incomplete"] += 1
-                hold_at.append(max(since, (rd["user_seq"] or 0) - 1))
+                hold_at.append(_hold_cursor(rd, since))
                 continue
             call, ident = _pick_identity(calls)
             if call is None:
@@ -441,7 +470,7 @@ def extract_events(rows, org, since=0, now_ms=None, user_ids=None):
             if settle_needed < FOLLOW_USER_TURNS and not idle:
                 # 用户还没回（或回合不足）且会话未静默 ⇒ 现在判会把 strong/negative 判成 weak。
                 stats["held_unsettled"] += 1
-                hold_at.append(max(since, (rd["user_seq"] or 0) - 1))
+                hold_at.append(_hold_cursor(rd, since))
                 continue
 
             follow_texts = [x["question"] for x in future]
@@ -474,7 +503,7 @@ def extract_events(rows, org, since=0, now_ms=None, user_ids=None):
 
     events.sort(key=lambda e: (e["sessionId"], e["seq"] or 0))
     stats["emitted"] = len(events)
-    new_wm = min([max_seq] + hold_at) if hold_at else max_seq
+    new_wm = min([max_cursor] + hold_at) if hold_at else max_cursor
     return events, new_wm, stats
 
 
@@ -500,36 +529,25 @@ def post(base, org, auth, stream, batch):
         sys.exit(1)
 
 
-def _read_watermark(path):
-    """读水位；文件不存在 / 空 / 纯空白 ⇒ None（= **没有水位**，首跑口径）。
+def _read_watermark(path, db=None):
+    """读水位 → 复合游标 `(created_at, seq)`；不存在 / 空 / 纯空白 ⇒ None（= **没有水位**，首跑口径）。
 
     空文件曾被读成 0 而 `main` 只按 `os.path.exists` 判首跑 ⇒ 一次中断留下的空文件会让
-    模式从「取库尾部」翻成「从最旧读起」。显式写了 `0` 的文件仍是 0（那是运维的明确选择）。
+    模式从「取库尾部」翻成「从最旧读起」。显式写了 `0` 的文件仍是明确选择（迁成 `(0,0)`）。
+
+    格式与旧整数迁移的唯一 owner 是 export-transcript.py（#1419）：旧文件 = 纯整数全局 seq，
+    就地迁成该 seq 事件的 `created_at`。
     """
-    if not os.path.exists(path):
-        return None
-    try:
-        with open(path) as fh:
-            raw = fh.read().strip()
-    except OSError:
-        return None
-    if raw == "":
-        return None
-    try:
-        return int(raw)
-    except ValueError:
-        return None
+    return load_export_module().read_watermark(path, db)
 
 
-def _write_watermark(path, value):
-    """临时文件 + rename 原子替换：进程中断不会留下半截水位文件。"""
-    os.makedirs(os.path.dirname(path) or ".", exist_ok=True)
-    tmp = "%s.tmp-%d" % (path, os.getpid())
-    with open(tmp, "w") as fh:
-        fh.write(str(value))
-        fh.flush()
-        os.fsync(fh.fileno())
-    os.replace(tmp, path)
+def _write_watermark(path, cursor):
+    """原子写 JSON `{"ts":..., "seq":...}`：临时文件 + rename，进程中断不留半截文件。"""
+    return load_export_module().write_watermark(path, cursor)
+
+
+def _fmt_cursor(cursor):
+    return load_export_module().fmt_cursor(cursor)
 
 
 # ── 入口 ────────────────────────────────────────────────────────────────────
@@ -548,38 +566,40 @@ def main(argv=None, env=None):
 
     wm_path = env.get("ASK_VERIFY_WM", "/var/lib/askdata/verify.watermark")
     stream = env.get("ASK_VERIFY_STREAM", "askdata_verified")
-    stored = _read_watermark(wm_path)
+    export_mod = load_export_module()
+    stored = _read_watermark(wm_path, argv[0])   # 旧整数水位就地迁移（#1419）
     # 首跑（水位文件不存在 / 空）= `stored is None`：默认取**库尾部**（同 attribute.py），追当前会话。
-    # ASK_VERIFY_SINCE 可显式指定起点（运维重放/基线用；设 0 = 从头，明确要全量历史）。
+    # ASK_VERIFY_SINCE 可显式指定起点（运维重放/基线用；设 0 = 从头，明确要全量历史；
+    # 非 0 整数按旧口径（全局 seq）迁移成 (created_at, seq) 游标——绝不用当前时间）。
     tail = False
     if stored is None:
         override = env.get("ASK_VERIFY_SINCE")
         if override is not None and str(override).strip() != "":
             try:
-                since = int(str(override).strip())
+                old_seq = int(str(override).strip())
             except ValueError:
                 sys.exit("SYNC_FAIL bad ASK_VERIFY_SINCE")
+            since = export_mod.legacy_seq_to_cursor(argv[0], old_seq)
         else:
-            since = 0
+            since = export_mod.WM_EMPTY
             tail = True
     else:
         since = stored
 
-    export_mod = load_export_module()
     try:
         rows, user_ids, read_since = read_rows(
             argv[0], export_mod.norm_parts, export_mod.decode_event, since, tail=tail)
     except (export_mod.DecodeError, ValueError) as exc:
         # 水位纪律同 #969：绝不越过读不出来的事件。
-        sys.exit("VERIFY_DECODE_FAIL watermark=%d err=%s" % (since, exc))
+        sys.exit("VERIFY_DECODE_FAIL watermark=%s err=%s" % (_fmt_cursor(since), exc))
 
     events, new_wm, stats = extract_events(rows, org, since=read_since, user_ids=user_ids)
     by_signal = {k: stats[k] for k in ("strong", "weak", "negative")}
 
     if not events:
         _write_watermark(wm_path, new_wm)
-        print("VERIFY_OK events=0 rows=%d watermark=%d held=%d/%d by_signal=%s"
-              % (len(rows), new_wm, stats["held_unsettled"], stats["held_incomplete"],
+        print("VERIFY_OK events=0 rows=%d watermark=%s held=%d/%d by_signal=%s"
+              % (len(rows), _fmt_cursor(new_wm), stats["held_unsettled"], stats["held_incomplete"],
                  json.dumps(by_signal)))
         return
 
@@ -587,8 +607,8 @@ def main(argv=None, env=None):
     for i in range(0, len(events), CHUNK):
         resp = post(env["OO_BASE"], env["OO_ORG"], env["OO_AUTH"], stream, events[i:i + CHUNK])
     _write_watermark(wm_path, new_wm)   # 全部 post 成功后才前进（失败上面已 exit 1）
-    print("VERIFY_OK events=%d rows=%d watermark=%d held=%d/%d by_signal=%s skipped=%s resp=%s"
-          % (len(events), len(rows), new_wm,
+    print("VERIFY_OK events=%d rows=%d watermark=%s held=%d/%d by_signal=%s skipped=%s resp=%s"
+          % (len(events), len(rows), _fmt_cursor(new_wm),
              stats["held_unsettled"], stats["held_incomplete"],
              json.dumps(by_signal),
              json.dumps({k: v for k, v in stats.items()

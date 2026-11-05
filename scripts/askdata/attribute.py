@@ -9,6 +9,8 @@
 #963（2026-11-03）：
   · 水位（ASK_ATTR_WM，按 agent 一份）：只判新事件、成功后前进——旧版每轮重扫末 FETCH 行
     并重复上报（实测 855 行仅 19 个 distinct，且 rule_ver 2/3 混版）。
+  · #1419：水位是 (created_at, seq) 复合游标，不是全局 seq（seq 按 session 从 0 起，
+    全局 seq 会永久跳过之后的新会话）；旧整数水位文件就地迁移。
   · same_tool_retry 加守卫：两次同参调用之间若有 is_error 回包 ⇒ 记 retry_after_error（正确
     的重试行为，不进 stuck；计数照打）。
   · layer_of 基础设施分支补 503 / CASDOOR_UNAVAILABLE（原先落 unknown）。
@@ -22,23 +24,28 @@ FETCH = int(os.environ.get("ASK_FETCH", "5000"))
 BASE, ORG, AUTH = os.environ["OO_BASE"], os.environ["OO_ORG"], os.environ["OO_AUTH"]
 
 
-def load_normalizer():
+def load_export():
+    """载入 export-transcript.py（normalizer / decode_event / 水位格式的唯一 owner）。"""
     spec = importlib.util.spec_from_file_location("askdata_export", os.path.join(HERE, "export-transcript.py"))
     mod = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(mod)
-    return mod.norm_parts
+    return mod
 
 
-def read_rows(db, norm_parts, decode_event, since=0):
+def read_rows(db, norm_parts, decode_event, since=(0, 0)):
+    """按复合游标 (created_at, seq) 取新事件（#1419：seq 按 session 从 0 起，不能当全局水位）。"""
     con = sqlite3.connect("file:%s?mode=ro" % db, uri=True)
-    if since > 0:
+    if since > (0, 0):
         rows = con.execute(
             "select session_id, seq, created_at, event_json, event_zstd from transcript_events "
-            "where seq > ? order by seq asc limit ?", (since, FETCH)).fetchall()
+            "where (created_at > ?) or (created_at = ? and seq > ?) "
+            "order by created_at asc, seq asc limit ?",
+            (since[0], since[0], since[1], FETCH)).fetchall()
     else:
         rows = con.execute(
             "select session_id, seq, created_at, event_json, event_zstd from transcript_events "
-            "order by seq desc limit ?", (FETCH,)).fetchall()[::-1]   # 首跑：末 FETCH 行，回升序
+            "order by created_at desc, seq desc limit ?", (FETCH,)).fetchall()[::-1]  # 首跑：末 FETCH 行，回升序
+    con.close()
     out = []
     for sid, seq, ts, ej, ez in rows:
         try:
@@ -164,30 +171,23 @@ def main():
     if len(sys.argv) != 2:
         sys.exit("usage: attribute.py <openclaw-agent.sqlite>")
     wm_path = os.environ.get("ASK_ATTR_WM", "/var/lib/askdata/attribute.watermark")
-    since = 0
-    if os.path.exists(wm_path):
-        txt = open(wm_path).read().strip()
-        since = int(txt) if txt else 0
-    norm = load_normalizer()
-    # decode_event 复用导出侧实现（同一份 zstd 口径；缺后端=DecodeError，采集侧已按 #969 钉水位）
-    export_mod = None
-    spec_dir = os.path.dirname(os.path.abspath(__file__))
-    import importlib.util as _ilu
-    spec = _ilu.spec_from_file_location("askdata_export_attr", os.path.join(spec_dir, "export-transcript.py"))
-    export_mod = _ilu.module_from_spec(spec)
-    spec.loader.exec_module(export_mod)
-    rows = read_rows(sys.argv[1], norm, export_mod.decode_event, since)
+    # decode_event / 水位格式复用导出侧实现（同一份 zstd 口径；缺后端=DecodeError，采集侧已按 #969 钉水位）
+    export_mod = load_export()
+    stored = export_mod.read_watermark(wm_path, sys.argv[1])   # 旧整数水位就地迁移（#1419）
+    since = export_mod.WM_EMPTY if stored is None else stored
+    rows = read_rows(sys.argv[1], export_mod.norm_parts, export_mod.decode_event, since)
     hits_all = detect(rows)
     # retry_after_error = 正确重试行为：计数可见、**不进 stuck 流**（#963）
     retries = [h for h in hits_all if h[0] == "retry_after_error"]
     hits = [h for h in hits_all if h[0] != "retry_after_error"]
 
     def advance_wm():
-        if rows:
-            seqs = [r.get("seq") or 0 for r in rows]
-            new_wm = max(seqs)
-            os.makedirs(os.path.dirname(wm_path) or ".", exist_ok=True)
-            open(wm_path, "w").write(str(new_wm))
+        # 复合游标：取本批**成功解码行**里的最大 (created_at, seq)；解不出的事件不推进水位
+        # （下一轮重读，同 #969 / 采集侧口径）。
+        cursors = [(r.get("ts"), r.get("seq") or 0) for r in rows
+                   if isinstance(r.get("ts"), (int, float))]
+        if cursors:
+            export_mod.write_watermark(wm_path, max(cursors))
 
     if not hits:
         advance_wm()
