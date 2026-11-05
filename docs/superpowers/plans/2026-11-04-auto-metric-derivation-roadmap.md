@@ -57,7 +57,7 @@ W1 可信度地基 ──────┘                     （依赖 W1 回归
 - W0 → `docs/superpowers/plans/2026-11-04-amd-w0-entities.md`（已写）
 - W1 → `docs/superpowers/plans/2026-11-04-amd-w1-verified-questions.md`（已写）
 - W2 → `docs/superpowers/plans/2026-11-04-amd-w2-three-tier.md`（已写）
-- W3 → 待写（依赖 W2 完成）
+- W3 → `docs/superpowers/plans/2026-11-05-amd-w3-l1-proposal.md`（已写）
 - Phase 2 → 单独 spec
 
 **为什么这个顺序**：
