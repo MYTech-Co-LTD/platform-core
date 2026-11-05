@@ -62,8 +62,8 @@
 
 | kind | 判据 | 真实案例（生产） | 诉求 |
 |---|---|---|---|
-| `alias_gap` | `metric_not_declared`，且请求名与词表某指标**末段相同**（`net_sales` ↔ `lemeng:retail:net_sales`） | `net_sales` ×1、`retail:net_sales` ×2 | 补 synonyms |
-| `new_metric` | `metric_not_declared`，且无任何末段匹配 | `lemeng:retail:target`、`lemeng:sales:target`、`lemeng:retail:line_count`、`lemeng:retail:sale_line_count` | 建 L1 |
+| `alias_gap` | `metric_not_declared`，**且请求名不足三段**（`split(':').length < 3`）+ 其**末段**与词表某指标末段相同（`net_sales` ↔ `lemeng:retail:net_sales`） | `net_sales` ×1、`retail:net_sales` ×2 | 补 synonyms |
+| `new_metric` | `metric_not_declared`，其余情形——**含「三段齐全但无精确匹配」**（用户特意指定了域，末段撞名不算别名） | `lemeng:retail:target`、`lemeng:sales:target`、`lemeng:retail:line_count`（末段与 `lemeng:outbound:line_count` 相同，但域不同 ⇒ 真缺）、`lemeng:retail:sale_line_count` | 建 L1 |
 | `drill_gap` | `no_detail_binding`（该指标未声明 `drill` 绑定——**能力边界，不是权限拒绝**） | `lemeng:outbound:net_amount` × `branch_num`（3 次）、`lemeng:branch:transfer_money` × `branch_num`/`system_book` | 声明下钻绑定 |
 | `metric_hunt` | 同一 `session_id` + **同一 `args.bizday` 时间窗**内，`query_data` 出现 **≥2 个不同 `metricId`**（结构判据：≥2 即「没有唯一答案」，不是频次阈值） | conv 实测 `query_data` 行带 `metricId` + `args.bizday{from,to}` | 定口径 / 扩 L2 |
 
