@@ -66,6 +66,24 @@ describe('queryMetricImpl：完整信任信封', () => {
     childrenOf: () => [], testCountOf: () => 0,
   })
 
+  it('#1409：私有测度（L2/column_agg/draft）⇒ caliber=draft，徽标字段随回包', async () => {
+    const draftPool = () => ({
+      query: async (sql: string) => sql.includes('from data.metrics')
+        ? { rows: [{
+            id: 'acme:custom:gm', title: '毛利率', description: '', required_scope: null,
+            subject_column: 'org', select_sql: SELECT_SQL, group_by: 'org, bizday', params: {},
+            source: 'l2', source_system: 'lemeng', updated_by: 'u', version: 1, totalable: false,
+            scope_note: '', sla_days: null, freshness_relations: null, mask_spec: null,
+            certified: 'draft', basis: 'column_agg',
+          }] }
+        : { rows: [{ id: 77, created_at: new Date('2026-10-21T10:00:00Z') }] },
+    }) as never
+    const d = { ...deps(wh), pool: draftPool() }
+    const out = await queryMetricImpl(d, { metricId: 'acme:custom:gm' })
+    const env = out.payload as Record<string, Record<string, unknown>>
+    expect(env.metric).toMatchObject({ caliber: 'draft', basis: 'column_agg', tier: 'custom' })
+  })
+
   it('信封七节（本例 load_log/水位缺席 ⇒ asOf 缺席——可辨不编造）', async () => {
     const d = deps(wh, manifestDep)
     const out = await queryMetricImpl(d, { metricId: 'lemeng:retail:net_sales' })
@@ -73,6 +91,9 @@ describe('queryMetricImpl：完整信任信封', () => {
     const env = out.payload as Record<string, Record<string, unknown>>
     expect(env.status).toBe('ok')
     expect(env.metric).toMatchObject({ id: 'lemeng:retail:net_sales', version: 3, tier: 'certified', owner: 'data-platform', title: '净销' })
+    // #1409：回答面徽标字段（L1 恒 certified / 树形口径）
+    expect(env.metric.caliber).toBe('certified')
+    expect(env.metric.basis).toBe('l1_tree')
     expect(env.metric.definitionHash).toBe('sha256:' + createHash('sha256').update(SELECT_SQL + '{}').digest('hex'))
     expect(env.subject).toMatchObject({ org: 'acme', source: 'lemeng', adoptedSources: ['lemeng'] })
     expect('asOf' in env).toBe(false)

@@ -110,6 +110,11 @@ export const queryMetricImpl: ToolImpl = async (deps, args) => {
         id: metricRow.id, version: metricRow.version,
         definitionHash: `sha256:${sha256(metricRow.selectSql + JSON.stringify(metricRow.params))}`,
         tier: tierOf(metricRow), owner: ownerOf(metricRow, deps.org), title: metricRow.title,
+        // 回答面徽标（#1409 / W2 spec §6「标注」）：caliber 告诉使用者这一档可信度，
+        // basis 区分「平台树」与「私有测度（列级聚合）」——bot 据此在回答首行写「草稿口径」。
+        // 读侧推导口径与 tierOf 同源（L1 恒 certified），不在这里重新按 source 现推。
+        caliber: metricRow.certified === 'certified' ? 'certified' : 'draft',
+        basis: metricRow.basis,
       },
     } : {}),
     subject: { org: ok.subject, source: metricRow?.sourceSystem ?? deps.org, adoptedSources: [...deps.adoptedSources] },
