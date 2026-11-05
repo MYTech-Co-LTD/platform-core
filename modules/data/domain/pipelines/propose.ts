@@ -24,7 +24,18 @@ import type { PipelineDeps, PipelineImpl } from './types'
 import { validateContractDraft, validatePipelineDraft } from './validate'
 import type { Issue } from './validate-types'
 
-export interface ProposedFile { path: string; bytes: number; content: string }
+export interface ProposedFile {
+  path: string
+  bytes: number
+  content: string
+  /**
+   * 本提案所依据的**基线内容摘要**（sha256 hex，可选；#1411）。
+   * 只有「读得到现行文件」的提案面（L1 声明）才给。apply 侧三态用它区分：
+   * 远端 == baseSha256 ⇒ 基线没变、允许更新；其余不同 ⇒ 仍判 conflict（绝不盲写覆盖）。
+   * 缺省 = 该 piece 只允许「新文件」或「与远端完全一致」两种结局（契约/管线提案的现状）。
+   */
+  baseSha256?: string
+}
 
 /** 下游项的**机器可判**档位（消费方常是读 structuredContent 的 agent，不能只靠中文措辞区分）。 */
 export type DownstreamKind =

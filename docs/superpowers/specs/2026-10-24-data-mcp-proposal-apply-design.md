@@ -35,10 +35,18 @@
 基线：repo 由 `DATA_MCP_GITHUB_REPO` 给（默认 `MYTech-Co-LTD/platform-core`），base = 该仓默认分支。
 
 1. `GET /repos/{repo}/git/ref/heads/{default}` ⇒ 基线 head sha。
-2. **冲突预检**（#1003 第 3 条）：逐 piece `GET /repos/{repo}/contents/<path>?ref=<base>`：
+2. **冲突预检**（#1003 第 3 条 + **#1411 第三态**）：逐 piece `GET /repos/{repo}/contents/<path>?ref=<base>`：
    - 404 ⇒ 新文件；
    - 200 且内容与 piece 一致 ⇒ **幂等跳过**（进 `skipped`）；
-   - 200 且不同 ⇒ **拒绝**：`refused / proposal_conflict` + 当前内容 sha256 前 16 位，**不建分支不开 PR、不自动合并**。
+   - 200 且不同，但 piece 自带 `baseSha256`（提案生成时它所依据的基线摘要）且**远端 sha256 == 它** ⇒
+     **允许更新**（PUT 带远端 blob `sha`；GitHub 对并发改动回 409，双保险）；
+   - 200 且其余不同 ⇒ **拒绝**：`refused / proposal_conflict` + 当前内容 sha256 前 16 位，
+     **不建分支不开 PR、不自动合并**。
+
+   **第三态的由来（2026-11-05 真机发现）**：L1 指标声明的 piece 是「全量文件 + 插入/修改 `metrics[]` 条目」，
+   目标文件 `dbt/semantics/l1_metrics.yml` **必然存在且必然不同** ⇒ 两态规则下该提案恒被拒，
+   W3 的「一条私有测度 → draft PR」出口判据结构上不可能满足。第三态保留红线：**基线被别人改过仍拒绝**。
+   只有「读得到现行文件」的提案面（L1 声明）会给 `baseSha256`；契约/管线提案缺省 ⇒ 行为不变。
 3. 建分支：`POST /repos/{repo}/git/refs`（from base head）。建议名 `proposal/<slugOf(title)>`
    已存在 ⇒ 追加 `-<6位随机hex>` 重试（命名碰撞 ≠ 他人改动，不是拒绝路径）。
 4. 逐 piece `PUT /repos/{repo}/contents/<path>`（branch、content base64、现状 sha 或省略=新文件）

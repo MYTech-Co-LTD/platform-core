@@ -11,7 +11,12 @@ const API = 'https://api.github.com'
 const DEFAULT_REPO = 'MYTech-Co-LTD/platform-core'
 const DEFAULT_BASE = 'main'
 
-export interface ProposalPiece { path: string; content: string }
+export interface ProposalPiece {
+  path: string
+  content: string
+  /** 提案所依据的基线摘要（sha256 hex，可选；#1411）。见 ProposalApplyInput 的三态说明。 */
+  baseSha256?: string
+}
 
 export type ProposalApplyOutcome =
   | { kind: 'conflict'; path: string; currentSha256: string }
@@ -100,7 +105,11 @@ export const createProposalApplier = (cfg: ProposalApplyConfig, io: { fetchImpl?
       }
       const baseSha = (ref.body as { object?: { sha?: string } })?.object?.sha ?? ''
 
-      // ② 冲突预检（#1003 第 3 条）：内容不同 ⇒ 拒绝并回当前内容摘要；一致 ⇒ skipped；404 ⇒ 新文件
+      // ② 冲突预检（#1003 第 3 条 + #1411 第三态）：
+      //    · 远端 == piece                ⇒ skipped（幂等）
+      //    · 404                          ⇒ 新文件，直接写
+      //    · piece 自带 baseSha256 且远端 == 它 ⇒ 基线没变，**允许更新**（PUT 带远端 sha，GitHub 对并发改动回 409）
+      //    · 其余不同                     ⇒ conflict（绝不盲写覆盖别人改过的文件）
       const skipped: string[] = []
       const toWrite: { piece: ProposalPiece; remoteSha?: string }[] = []
       for (const p of input.pieces) {
@@ -109,11 +118,17 @@ export const createProposalApplier = (cfg: ProposalApplyConfig, io: { fetchImpl?
         if (res.status === 404) { toWrite.push({ piece: p }); continue }
         if (res.status >= 500) return { kind: 'unknown', detail: `读取 ${p.path} 失败：HTTP ${res.status}` }
         if (res.status !== 200) return { kind: 'github_rejected', detail: `读取 ${p.path} 失败：HTTP ${res.status}` }
-        const body = res.body as { content?: string | null }
+        const body = res.body as { content?: string | null; sha?: string }
         // content 为 null ⇒ 文件超过 1MB，contents API 不内联返回内容；本仓契约/管线条目都是小文件，
         // 正常不会命中。真命中时按空串比对 ⇒ 落 conflict（保守：宁可误报冲突，也不盲写覆盖大文件）。
         const remote = body.content !== undefined && body.content !== null ? Buffer.from(body.content, 'base64').toString('utf8') : ''
         if (remote === p.content) { skipped.push(p.path); continue }
+        // 第三态（#1411）：提案所依据的基线没变 ⇒ 这次差异就是提案自己的改动，可以安全落地。
+        // 远端被改动过（与 baseSha256 不等）⇒ 仍拒绝，红线不变。
+        if (p.baseSha256 !== undefined && sha256hex(remote) === p.baseSha256 && body.sha !== undefined) {
+          toWrite.push({ piece: p, remoteSha: body.sha })
+          continue
+        }
         return { kind: 'conflict', path: p.path, currentSha256: sha256hex(remote).slice(0, 16) }
       }
       if (toWrite.length === 0) return { kind: 'nothing_to_apply', skipped }
