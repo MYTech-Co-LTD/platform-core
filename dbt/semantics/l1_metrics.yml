@@ -226,6 +226,16 @@ measures:
     domain: wholesale_out_audited
 
 metrics:
+  - name: 'lemeng:retail:bizday_count_distinct'
+    label: W3 draft PR 验收
+    definition: >-
+      count(distinct fct_branch_day_activity.bizday)
+    expression: 'count(distinct fct_branch_day_activity.bizday)'
+    grain: [ system_book, branch_num ]
+    owner: w3-acceptance
+    tier: experimental
+    source: lemeng
+    freshness_sla_days: 1
   - name: 'lemeng:retail:sales'
     label: 销售额（不冲退货）
     entity: branch
