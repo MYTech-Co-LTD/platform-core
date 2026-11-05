@@ -7,7 +7,13 @@ import type { CursorSource } from './store'
 export interface MineIo {
   readCursor(org: string, source: CursorSource): Promise<number>
   writeCursor(org: string, source: CursorSource, value: number): Promise<void>
-  readAudit(org: string, sinceId: number): Promise<{ rows: AuditRow[]; maxId: number }>
+  /**
+   * `sinceId` 是**不含**的（SQL 用 `id > sinceId`）。
+   * 返回值只承诺「本批读到的行」——水位由调用方从这些行推导，**不接受**读侧另报 maxId：
+   * 读行带 `limit`、maxId 若取全表 max 就会越过未读行（静默丢行），故接口里没有这个字段。
+   */
+  readAudit(org: string, sinceId: number): Promise<AuditRow[]>
+  /** `sinceUs` 在非 0 时是**不含**的（SQL 用 `_timestamp > sinceUs`），见下方水位推导。 */
   readConv(org: string, sinceUs: number): Promise<ConvRow[]>
   readStuck(org: string, sessionIds: readonly string[]): Promise<Map<string, unknown[]>>
   catalogIds(org: string): Promise<string[]>
@@ -21,7 +27,14 @@ export interface MineSummary {
 
 /**
  * 一轮。顺序：先审计（驱动 skip 计数），再 conv（要会话 → 拉 stuck 证据）。
- * 水位**在对应源全部 upsert 成功后**推进——中途抛错则水位不动，下轮重读（upsert 幂等吸收）。
+ *
+ * 水位语义：**每个源在自己的行全部 upsert 成功后立刻推进**，互不拖累——
+ * OO 连续不可用时，审计侧已落库的计数不会被下轮重读重算。
+ *
+ * 两个源都取「本批实际读到的行」推导水位，且 conv 用**排他游标**（`> cursor`，写 max+1）：
+ * 边界组不再重读，因此不会每轮给同一个 `(session, 窗口)` 重复 +1 occurrences。
+ * 代价是**同微秒（含 +1µs 空隙里）迟到的行会漏**——OO 的 `_timestamp` 是入库时间，
+ * 同一批入库可能共享微秒；这里选择「不重复计数」而不是「绝不漏一行」。
  */
 export async function mineOnce(io: MineIo, org: string, nowUs: number): Promise<MineSummary> {
   const catalog = await io.catalogIds(org)
@@ -32,8 +45,8 @@ export async function mineOnce(io: MineIo, org: string, nowUs: number): Promise<
   }
 
   const audit = await io.readAudit(org, summary.cursorAudit)
-  summary.scanned += audit.rows.length
-  for (const row of audit.rows) {
+  summary.scanned += audit.length
+  for (const row of audit) {
     const draft = classifyAudit(row, catalog)
     if (draft === null) {
       // 只统计「本该是需求、但被探针前缀挡掉」的行；bad_param 等本来就不是需求，不计。
@@ -48,7 +61,11 @@ export async function mineOnce(io: MineIo, org: string, nowUs: number): Promise<
     else if (draft.kind === 'new_metric') summary.newMetric += 1
     else summary.drill += 1
   }
-  summary.cursorAudit = audit.maxId
+  // 水位只由**本批读到的行**推导（不能用全表 max：读行有 limit，会越过未读行）。
+  const auditIds = audit.map((r) => Number(r.id)).filter((n) => Number.isFinite(n))
+  summary.cursorAudit = auditIds.length > 0 ? Math.max(...auditIds) : summary.cursorAudit
+  // 审计侧先落水位：conv 源失败（fail-fast 上抛）不应让已 upsert 的计数在下轮被重读重算。
+  await io.writeCursor(org, 'query_audit', summary.cursorAudit)
 
   const conv = await io.readConv(org, summary.cursorConv)
   const sessionIds = [...new Set(conv.map((r) => r.session_id))]
@@ -57,10 +74,10 @@ export async function mineOnce(io: MineIo, org: string, nowUs: number): Promise<
     await io.upsert(org, draft)
     summary.hunt += 1
   }
+  // 排他游标：读侧用 `_timestamp > cursor`，这里写 max+1 —— 边界组不再重读（见函数头注释）。
   const maxConv = conv.reduce((m, r) => Math.max(m, Number((r as { _timestamp?: number })._timestamp ?? 0)), 0)
-  summary.cursorConv = maxConv > 0 ? maxConv : summary.cursorConv
+  summary.cursorConv = maxConv > 0 ? maxConv + 1 : summary.cursorConv
 
-  await io.writeCursor(org, 'query_audit', summary.cursorAudit)
   await io.writeCursor(org, 'askdata_conv', summary.cursorConv)
   return summary
 }

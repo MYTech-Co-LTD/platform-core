@@ -126,12 +126,12 @@ create table if not exists data.demand_mining_state (
 | 源 | 读法 | 水位 |
 |---|---|---|
 | `data.query_audit` | `where id > last_cursor order by id` | `demand_mining_state.source='query_audit'`，cursor = 最大 id |
-| `askdata_conv` | OO **组织级** `/api/{org}/_search`（流级 `_search` 该版本没有），SQL 指定流名；**JSON 键全小写**（`session_id`/`tool_args`） | `source='askdata_conv'`，cursor = 最大 `_timestamp` |
+| `askdata_conv` | OO **组织级** `/api/{org}/_search`（流级 `_search` 该版本没有），SQL 指定流名；**JSON 键全小写**（`session_id`/`tool_args`） | `source='askdata_conv'`，cursor = 本批最大 `_timestamp` + 1（**排他**：下轮 SQL 用 `> cursor`，边界组不重读） |
 | `askdata_stuck` | 同上读法，按 `(session_id, seq, rule_ver)` 去重**取最新 rule_ver** | 不推进独立水位（按会话窗口查询即可） |
 
-- **去重**：conv 同一 `(session_id, seq)` 有多行（call/result 各写一行）⇒ 先按 `(session_id, seq)` 归并。
+- **不去重 / 不归并**（2026-11-05 Task 2 Critical 订正，**旧文「先按 `(session_id, seq)` 归并」已作废**）：同一 `seq` 下有多条消息 part（thinking/text/tool_call），调用行与结果行分属不同 `seq`；按 `(session_id, seq)` 归并会把调用行整个吃掉（`metric_hunt` 结构性恒 0）。重复行无副作用——分组用的是 `Set<metricId>`，相同 `metricId` 自然只算一次。
 - **幂等**：`insert ... on conflict (org, kind, target) do update set occurrences = demand_signals.occurrences + excluded.occurrences, last_seen = greatest(...)`；`evidence` 滚动保留最近 5 条（新在前）。
-- **summary 行**（机检可 grep）：`demand-mining: scanned=N alias=N new_metric=N drill=N hunt=N skipped_probe=N skipped_reason=N cursor_audit=… cursor_conv=…`
+- **summary 行**（机检可 grep）：`demand-mining: scanned=N alias=N new_metric=N drill=N hunt=N skipped_probe=N cursor_audit=… cursor_conv=…`（**无 `skipped_reason`**：设计早期列过，但实现以 brief 为准——`skipped_probe` 只统计「本该成需求却被探针前缀挡掉」的行，`bad_param` 等本就不是需求、不计数）。
 
 **失败语义（fail-fast，不吞）**：
 
@@ -171,7 +171,7 @@ create table if not exists data.demand_mining_state (
 |---|---|
 | 四类判定正确 | 单测用**生产真实案例**做 fixture：`net_sales`→`alias_gap`、`lemeng:retail:target`→`new_metric`、`outbound:net_amount`+`branch_num`→`drill_gap`、探针前缀被排除 |
 | 幂等 | 同一批数据跑两次 ⇒ `occurrences` 只加一次（水位入 DB 生效）；同 audit id 不重复计 |
-| 去重 | conv 同 `(session_id, seq)` 多行只算一次；stuck 旧 rule_ver 被最新覆盖 |
+| 去重 | conv **不预去重**（同 `seq` 多 part；判定按 `Set<metricId>` 收敛重复，见 §4）；stuck 旧 rule_ver 被最新覆盖 |
 | 工具面 | 写总闸关 ⇒ `dismiss` 回 `denied/mutating_disabled` 且零写入；`list` 不受影响；`check-mcp-toolface` 预算绿 |
 | 真机 | job 跑一次 ⇒ 表有真实行（应有 `alias_gap`/`new_metric`/`drill_gap` 各≥1）⇒ `list_demand_signals` 返回可读清单且 resolved 判定正确 ⇒ 否决一条后再查不再出现 |
 | 不破既有 | W1/W2/W3 的测试全绿；无新 env、无数据面投递 |
