@@ -11,6 +11,10 @@
 
 ## [Unreleased]
 
+## [0.272.2](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.272.1...v0.272.2) - 2026-11-05
+- 【修复】askdata: 采集水位改用 (created_at,seq) 复合游标，修复新会话被永久跳过（#1419） ([#1421](https://github.com/MYTech-Co-LTD/platform-core/pull/1421), [65101c4](https://github.com/MYTech-Co-LTD/platform-core/commit/65101c48258a59aeda3031a44fe4eb0099d1c218))
+
+
 ## [0.272.1](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.272.0...v0.272.1) - 2026-11-05
 - 【修复】askdata: 草稿徽标收紧为首行强制，W2 台账补真机证据（#1409） ([#1418](https://github.com/MYTech-Co-LTD/platform-core/pull/1418), [df39b71](https://github.com/MYTech-Co-LTD/platform-core/commit/df39b71cc8023020a0a7328a73a8547bc59e1b85))
 
