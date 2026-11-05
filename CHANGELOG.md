@@ -11,6 +11,10 @@
 
 ## [Unreleased]
 
+## [0.272.0](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.271.1...v0.272.0) - 2026-11-05
+- 【新增】data: 查询回包带 caliber/basis，bot 回答强制标注草稿口径（#1409） ([#1415](https://github.com/MYTech-Co-LTD/platform-core/pull/1415), [802b7ec](https://github.com/MYTech-Co-LTD/platform-core/commit/802b7ec8f2fc7317997f9afee27f00acb653d9c6))
+
+
 ## [0.271.1](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.271.0...v0.271.1) - 2026-11-05
 - 【修复】data: apply 支持基线未变的文件更新（piece.baseSha256 三态，红线不变）（#1411） ([#1412](https://github.com/MYTech-Co-LTD/platform-core/pull/1412), [fc972a1](https://github.com/MYTech-Co-LTD/platform-core/commit/fc972a12c055e0e6a723520343afa53c85efc137))
 
