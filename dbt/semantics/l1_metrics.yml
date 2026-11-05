@@ -254,7 +254,8 @@ metrics:
   - name: 'lemeng:retail:net_sales'
     label: 净销售额
     entity: branch
-    synonyms: [净销售金额]
+    # 2026-11-05：按需求台账补别名（alias_gap：用户说 `net_sales` / `retail:net_sales`，词表里没有这个说法）。
+    synonyms: [净销售金额, net_sales, retail:net_sales]
     unit: 元
     definition: >-
       零售净销售额 = **销售侧 − 退货侧**（2026-10-17 起，issue #813；口径依据 = 客户裁1 的净额
