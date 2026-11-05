@@ -257,7 +257,7 @@ git commit -m "feat(data): 需求台账表与存储层（Phase 2，#1404）"
 - Consumes: `DemandKind`（Task 1）
 - Produces:
   - `interface AuditRow { id: number | string; metric_id: string; reason: string | null; params: unknown }`
-  - `interface ConvRow { session_id: string; seq: number | string; tool_name: string | null; tool_args: string | null }`
+  - `interface ConvRow { session_id: string; seq: number | string; tool_name: string | null; tool_args: string | null; _timestamp: number }`
   - `interface DemandDraft { kind: DemandKind; target: string; detail: Record<string, unknown>; evidence: unknown[] }`
   - `isProbeTarget(t: string): boolean`
   - `classifyAudit(row: AuditRow, catalogIds: readonly string[]): DemandDraft | null`
@@ -364,7 +364,7 @@ Expected: FAIL（`Cannot find module './classify'`）
 import type { DemandKind } from './store'
 
 export interface AuditRow { id: number | string; metric_id: string; reason: string | null; params: unknown }
-export interface ConvRow { session_id: string; seq: number | string; tool_name: string | null; tool_args: string | null }
+export interface ConvRow { session_id: string; seq: number | string; tool_name: string | null; tool_args: string | null; _timestamp: number }
 export interface DemandDraft {
   kind: DemandKind; target: string
   detail: Record<string, unknown>; evidence: unknown[]
