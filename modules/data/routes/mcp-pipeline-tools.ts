@@ -1,4 +1,5 @@
-// mcp-pipeline-tools.ts —— 管理面 MCP 端点的**管线提案片**（Wave 3 / spec §7 的 8 个工具）。
+// mcp-pipeline-tools.ts —— 管理面 MCP 端点的**管线提案片**（Wave 3 / spec §7 的 8 个
+// + W3 的 propose_metric_declaration，#1401）。
 //
 // 门禁由宿主按 manifest 的 `POST /mcp-manage → data:manage` 施加——**本文件不写 requireScope**
 // （与 mcp-metric-tools.ts 同规：声明即授权）。空身份守卫与读面/口径片同形（M3）。
@@ -21,6 +22,7 @@ import { applyPipelineProposalImpl } from '../domain/pipelines/apply'
 import { proposalApplierFromEnv } from '../domain/pipelines/proposal-apply'
 import type { ProposalApplier } from '../domain/pipelines/proposal-apply'
 import { proposeContractChangeImpl, proposePipelineChangeImpl } from '../domain/pipelines/propose'
+import { proposeMetricDeclarationImpl } from '../domain/pipelines/propose-metric'
 import { runPipelineSandboxImpl } from '../domain/pipelines/sandbox'
 import { sandboxRunnerFromEnv } from '../domain/pipelines/sandbox-runner'
 import type { SandboxRunner } from '../domain/pipelines/sandbox-runner'
@@ -65,6 +67,7 @@ const IMPLS: Record<string, PipelineImpl> = {
   propose_pipeline_change: proposePipelineChangeImpl,
   propose_contract_change: proposeContractChangeImpl,
   apply_pipeline_proposal: applyPipelineProposalImpl,
+  propose_metric_declaration: proposeMetricDeclarationImpl,
 }
 
 // **装载期**一致性（Task 8 M10）：`PIPELINE_TOOLS` 与 `IMPLS` 是两份手写表，漏登记只会在

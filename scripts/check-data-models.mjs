@@ -177,8 +177,10 @@ const R_COLUMN_RE = /r\s*\[\s*['"]/
 const DOUBLE_CAST_RE = /(?:::\s*|\bas\s+)("?)double\1(?![\w])(?!\s+precision)/gi
 /** 规则 ③：`union_by_name` 兜列集漂移 */
 const UNION_BY_NAME_RE = /union_by_name/gi
-/** 规则 ⑥：指标名的命名空间形态 `<源>:<业务域>:<指标>`（三段都小写蛇形） */
-const METRIC_NAME_RE = /^[a-z][a-z0-9_]*:[a-z][a-z0-9_]*:[a-z][a-z0-9_]*$/
+/** 规则 ⑥：指标名的命名空间形态 `<源>:<业务域>:<指标>`（三段都小写蛇形）。
+ *  导出给 W3 的声明提案组装器复用（modules/data/domain/pipelines/propose-metric.ts）——
+ *  命名判据单源在这里，提案侧不再抄一份正则。 */
+export const METRIC_NAME_RE = /^[a-z][a-z0-9_]*:[a-z][a-z0-9_]*:[a-z][a-z0-9_]*$/
 /**
  * 规则 ⑤：语义声明必填字段（owner/tier/grain/definition/source/freshness_sla_days + name/expression；
  * 见计划 Step 4 的字段清单）。

@@ -1,4 +1,5 @@
-// tools.ts —— T1 提案面 8 个工具的**静态元数据**（spec 2026-10-21 §7）。
+// tools.ts —— 提案面的**静态元数据**（Wave 3 spec 2026-10-21 §7 的 8 个 + W3 的
+// propose_metric_declaration，#1401）。
 //
 // ★ 本文件是**纯**的：不得 import pg / Hono / zod / warehouse。CI 门
 //   （scripts/check-mcp-toolface.mjs）与路由片共用本清单——两处各写一份必漂。
@@ -7,7 +8,7 @@
 // 且分析师面的工具预算（≤14，现用 11）与 tools/list ≤10KB 预算**不动**。
 import type { ToolAnnotations } from '../toolbox/registry'
 
-export const PIPELINE_FACE_MAX_TOOLS = 8
+export const PIPELINE_FACE_MAX_TOOLS = 9
 export const MANAGE_SCOPE = 'data:manage'
 
 export interface PipelineToolMeta {
@@ -124,6 +125,31 @@ export const PIPELINE_TOOLS: readonly PipelineToolMeta[] = [
       required: ['proposal'],
     },
     outputSchema: anyObject, requiredScope: MANAGE_SCOPE, mutating: true, annotations: writeable,
+  },
+  {
+    name: 'propose_metric_declaration', group: 'pipeline', title: '提案：L1 指标声明',
+    description: '把一条 L1 指标声明（可从私有测度/候选升级而来）组装成 dbt/semantics/l1_metrics.yml 的**全量文件草案**（新条目按 name 字典序插进 metrics[]，其余内容逐字保留）+ 可选对账 test 草案（auditSql 原文）。只产出、不落盘、不开 PR。同名指标已存在 ⇒ 修改模式（definition 必须变；输入不管的键从原条目带过）。新指标缺 auditSql 不拒——PR 合并前 gate ⑦（audit test）会红，draft PR 带红是预期。',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        name: { type: 'string', description: '指标名：`<源>:<业务域>:<指标>` 三段小写蛇形（如 lemeng:retail:net_sales）' },
+        label: { type: 'string', description: '人读名字' },
+        definition: { type: 'string', description: '口径的逐字定义（单行；折叠排版由工具处理）' },
+        expression: { type: 'string', description: 'sum|avg|min|max|count[ distinct](relation.column)——与 ratio 互斥' },
+        ratio: { type: 'object', properties: { numerator: { type: 'string' }, denominator: { type: 'string' } }, required: ['numerator', 'denominator'], description: '率类声明（分母自动包 nullif）——与 expression 互斥' },
+        grain: { type: 'array', items: { type: 'string' }, description: '可聚合维度清单（非空）' },
+        owner: { type: 'string', description: '口径负责人' },
+        tier: { type: 'string', enum: ['certified', 'experimental'], description: '成熟度标记' },
+        source: { type: 'string', description: '源系统（小写蛇形，如 lemeng；须与登记值逐字一致）' },
+        freshnessSlaDays: { type: 'integer', minimum: 0, description: '新鲜度 SLA 承诺天数（非负整数）' },
+        entity: { type: 'string', description: '选填：顶层 entities: 里已声明的实体名' },
+        synonyms: { type: 'array', items: { type: 'string' }, description: '选填：问数入口的同义说法' },
+        auditSql: { type: 'string', description: '选填：对账 singular test 原文；缺省时 downstream 点名 required，PR 合并前 gate ⑦ 会红' },
+        rationale: { type: 'string', description: '为什么提（入审计与提案摘要）' },
+      },
+      required: ['name', 'label', 'definition', 'grain', 'owner', 'tier', 'source', 'freshnessSlaDays', 'rationale'],
+    },
+    outputSchema: anyObject, requiredScope: MANAGE_SCOPE, mutating: false, annotations: readOnly,
   },
 ]
 

@@ -62,7 +62,7 @@ export const PIPELINES_DIR = 'deploy/duckle/console/pipelines'
 export const CONTRACTS_DIR = 'contracts'
 /** 标题/理由的长度上限：两者都会进审计与回包，不设界就是把入参原样放大。 */
 const MAX_TITLE = 120
-const MAX_RATIONALE = 500
+export const MAX_RATIONALE = 500
 
 /** 标题 → 分支 slug（只建议，不创建）：去空白、小写、非字母数字折 '-'、折叠、截 40。 */
 export function slugOf(title: string): string {
@@ -355,14 +355,16 @@ export function buildContractProposal(
 }
 
 // ── 两个工具实现（路由片把 validation 非空翻译成 refused/invalid_draft）──────────────────
-const NOTE = '草案只在本回包里：本服务不落盘、不开 PR。应用方式由人决定（红线：不直写正式目录）。'
+// NOTE / badParam / textArg / MAX_RATIONALE / refused 同时被 propose-metric.ts（W3 提案链）复用——
+// 回包形状（ok/refused/bad_param）与「零写入」措辞是提案面的消费契约，单源在这里。
+export const NOTE = '草案只在本回包里：本服务不落盘、不开 PR。应用方式由人决定（红线：不直写正式目录）。'
 
-const badParam = (detail: string): { payload: Record<string, unknown>; isError: true; auditRowCount: null } => ({
+export const badParam = (detail: string): { payload: Record<string, unknown>; isError: true; auditRowCount: null } => ({
   payload: { status: 'denied', reason: 'bad_param', detail }, isError: true, auditRowCount: null,
 })
 
 /** 入参字符串：**先 trim**（纯空白与缺失同罪），再按字段上限截断。 */
-const textArg = (v: unknown, max: number): string =>
+export const textArg = (v: unknown, max: number): string =>
   (typeof v === 'string' ? v.trim().slice(0, max) : '')
 
 const okPayload = (p: PipelineProposal): {
@@ -377,7 +379,7 @@ const okPayload = (p: PipelineProposal): {
   isError: false, auditRowCount: null,
 })
 
-const refused = (issues: Issue[]): {
+export const refused = (issues: Issue[]): {
   payload: Record<string, unknown>; isError: true; auditRowCount: null
 } => ({
   payload: { status: 'refused', reason: 'invalid_draft', issues },

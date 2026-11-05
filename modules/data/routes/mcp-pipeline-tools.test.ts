@@ -37,9 +37,9 @@ describe('makePipelineTools.list', () => {
   it('空身份 ⇒ 空工具面', async () => {
     expect(await makePipelineTools(wiring()).list(depsOf({ requester: null }))).toEqual([])
   })
-  it('持身份 ⇒ 8 个工具，且不外泄 requiredScope/mutating 等治理字段', async () => {
+  it('持身份 ⇒ 9 个工具，且不外泄 requiredScope/mutating 等治理字段', async () => {
     const list = await makePipelineTools(wiring()).list(depsOf())
-    expect(list.map((t) => t.name)).toHaveLength(8)
+    expect(list.map((t) => t.name)).toHaveLength(9)
     for (const t of list) {
       expect('requiredScope' in t).toBe(false)
       expect('mutating' in t).toBe(false)
