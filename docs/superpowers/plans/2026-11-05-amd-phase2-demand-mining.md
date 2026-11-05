@@ -371,7 +371,7 @@ export interface DemandDraft {
 }
 
 /** 测试探针前缀（实测 4 条假需求混在生产数据里，2026-11-05）。 */
-const PROBE_PREFIXES = ['verify-', 'mcp-probe-', 'w1:test-', 'test-'] as const
+const PROBE_PREFIXES = ['verify-', 'mcp-probe-', 'w1:test', 'test-'] as const
 
 export const isProbeTarget = (t: string): boolean => {
   const s = t.trim().toLowerCase()

@@ -80,7 +80,7 @@
 
 | 排除 | 判据 | 理由 |
 |---|---|---|
-| 测试探针 | target 命中前缀 `verify-` / `mcp-probe-` / `w1:test-` / `test-` | 实测 4 条假需求混在真数据里 |
+| 测试探针 | target 命中前缀 `verify-` / `mcp-probe-` / `w1:test` / `test-` | 实测 4 条假需求混在真数据里；真实探针 id 为 `w1:test:by_branch`（冒号） |
 | 参数错 | `reason='bad_param'` | 工具面问题（归 #741） |
 | 总闸/基础设施 | `mutating_disabled` / `tool_error` / `warehouse_error` | 不是需求 |
 | unknown 工具 | `unknown_tool` | 工具面问题（归 #741） |

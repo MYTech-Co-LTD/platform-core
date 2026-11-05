@@ -64,12 +64,11 @@ export function huntFromConvs(
   rows: readonly ConvRow[],
   stuckBySession: ReadonlyMap<string, unknown[]>,
 ): DemandDraft[] {
-  const seen = new Set<string>()
   const groups = new Map<string, { session: string; window: string; metrics: Set<string> }>()
   for (const r of rows) {
-    const key = `${r.session_id}#${String(r.seq)}`
-    if (seen.has(key)) continue   // conv 里同一 (session_id, seq) 有 call/result 两行
-    seen.add(key)
+    // 不做 (session_id, seq) 级去重：生产 conv 里同一 seq 有多个 part（thinking/text/tool_call），
+    // 按 seq 去重会把调用行整个吃掉（metric_hunt 结构性恒 0）。重复行无副作用——分组用的是
+    // Set<metricId>，相同 metricId 自然只算一次。
     if (r.tool_name !== 'query_data' || r.tool_args === null) continue
     let parsed: unknown
     try { parsed = JSON.parse(r.tool_args) } catch { continue }

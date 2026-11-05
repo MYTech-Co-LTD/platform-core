@@ -62,9 +62,39 @@ describe('huntFromConvs', () => {
     expect(huntFromConvs([row('s1', 1, 'm:a:b', '2026-10-10', '2026-10-16')], new Map())).toHaveLength(0)
   })
 
-  it('同 (session_id, seq) 重复行只算一次；不同时间窗分开成组', () => {
-    const dup = [row('s1', 1, 'm:a:b', '2026-10-10', '2026-10-16'), row('s1', 1, 'm:a:b', '2026-10-10', '2026-10-16')]
-    expect(huntFromConvs(dup, new Map())).toHaveLength(0)
+  it('同 seq 非调用行（thinking，无 tool_args）在前、query_data 行在后 ⇒ 仍产出', () => {
+    // 生产形状：同一 seq 内 thinking / text / tool_call 多个 part，thinking 的 _timestamp 更早，
+    // 调用所在 seq 的第一个 part 恒为 thinking。按 seq 去重放在解析之前会把调用全部吃掉。
+    const out = huntFromConvs([
+      { session_id: 's1', seq: 1, tool_name: null, tool_args: null },
+      row('s1', 1, 'lemeng:retail:net_sales', '2026-10-10', '2026-10-16'),
+      row('s1', 2, 'lemeng:retail:sale_money', '2026-10-10', '2026-10-16'),
+    ], new Map())
+    expect(out).toHaveLength(1)
+    expect(out[0]).toMatchObject({
+      kind: 'metric_hunt', target: 's1|2026-10-10..2026-10-16',
+      detail: { metricIds: ['lemeng:retail:net_sales', 'lemeng:retail:sale_money'] },
+    })
+  })
+
+  it('同 seq 两条并行调用（不同 metricId）⇒ 两个 metric 都进分组', () => {
+    const out = huntFromConvs([
+      row('s1', 1, 'm:a:b', '2026-10-10', '2026-10-16'),
+      row('s1', 1, 'm:c:d', '2026-10-10', '2026-10-16'),
+    ], new Map())
+    expect(out).toHaveLength(1)
+    expect(out[0]?.detail).toMatchObject({ metricIds: ['m:a:b', 'm:c:d'] })
+  })
+
+  it('同一 (session_id, seq) 重复行不重复计数；不同时间窗分开成组', () => {
+    const dup = [
+      row('s1', 1, 'm:a:b', '2026-10-10', '2026-10-16'),
+      row('s1', 1, 'm:a:b', '2026-10-10', '2026-10-16'),
+      row('s1', 2, 'm:c:d', '2026-10-10', '2026-10-16'),
+    ]
+    const out = huntFromConvs(dup, new Map())
+    expect(out).toHaveLength(1)
+    expect(out[0]?.detail).toMatchObject({ metricIds: ['m:a:b', 'm:c:d'] })
     const two = [
       row('s1', 1, 'm:a:b', '2026-10-10', '2026-10-16'),
       row('s1', 2, 'm:c:d', '2026-10-17', '2026-10-17'),
