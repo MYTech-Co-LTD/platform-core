@@ -11,6 +11,10 @@
 
 ## [Unreleased]
 
+## [0.270.0](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.269.0...v0.270.0) - 2026-11-05
+- 【新增】data: W3 L1 提案自动化——候选升级 → l1_metrics.yml 草案 → draft PR ([#1402](https://github.com/MYTech-Co-LTD/platform-core/pull/1402), [e602700](https://github.com/MYTech-Co-LTD/platform-core/commit/e6027001453c39d9d48081673544bc1a0371095a))
+
+
 ## [0.269.0](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.268.6...v0.269.0) - 2026-11-04
 - 【新增】data: W2 三档闭环——私有测度档 + duckle profiler + 候选池 ([#1398](https://github.com/MYTech-Co-LTD/platform-core/pull/1398), [ab5221f](https://github.com/MYTech-Co-LTD/platform-core/commit/ab5221fc842426475e717127f52af52c73bbc8cc))
 
