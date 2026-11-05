@@ -91,9 +91,14 @@ export interface DemandUpsert {
 const toRow = (r: Record<string, unknown>): DemandRow => ({
   id: Number(r.id), kind: r.kind as DemandKind, target: String(r.target),
   detail: (r.detail ?? {}) as Record<string, unknown>, occurrences: Number(r.occurrences),
-  firstSeen: String(r.first_seen), lastSeen: String(r.last_seen),
+  // timestamptz 由 pg 反序列化成 Date；`String(Date)` 是本地化非 ISO 串（按字母序排序会错乱），
+  // 一律归一成 ISO——与 metric-audit-store / metric-candidates 同款。
+  firstSeen: new Date(r.first_seen as string | Date).toISOString(),
+  lastSeen: new Date(r.last_seen as string | Date).toISOString(),
   evidence: Array.isArray(r.evidence) ? r.evidence : [],
-  dismissedAt: r.dismissed_at === null || r.dismissed_at === undefined ? null : String(r.dismissed_at),
+  dismissedAt: r.dismissed_at === null || r.dismissed_at === undefined
+    ? null
+    : new Date(r.dismissed_at as string | Date).toISOString(),
   dismissedBy: r.dismissed_by === null || r.dismissed_by === undefined ? null : String(r.dismissed_by),
   dismissReason: r.dismiss_reason === null || r.dismiss_reason === undefined ? null : String(r.dismiss_reason),
 })

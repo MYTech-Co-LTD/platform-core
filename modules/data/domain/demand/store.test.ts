@@ -24,6 +24,9 @@ describe.skipIf(dsn === undefined)('demand store（真库）', () => {
     }
     const rows = await listDemands(pool, ORG, { limit: 10 })
     expect(rows).toHaveLength(1)
+    // 时间戳必须是 ISO（`String(Date)` 是本地化串，按字母序排序会错乱）。
+    expect(rows[0]?.firstSeen).toMatch(/^\d{4}-\d{2}-\d{2}T/)
+    expect(rows[0]?.lastSeen).toMatch(/^\d{4}-\d{2}-\d{2}T/)
     expect(rows[0]?.occurrences).toBe(7)
     expect((rows[0]?.evidence as { i: number }[]).map((e) => e.i)).toEqual([7, 6, 5, 4, 3])
   })
@@ -36,6 +39,8 @@ describe.skipIf(dsn === undefined)('demand store（真库）', () => {
     expect((await dismissDemand(pool, ORG, row!.id, 'u2', 'x')).status).toBe('already')
     expect(await listDemands(pool, ORG, { limit: 10 })).toHaveLength(0)
     expect(await listDemands(pool, ORG, { limit: 10, includeDismissed: true })).toHaveLength(1)
+    const [kept] = await listDemands(pool, ORG, { limit: 10, includeDismissed: true })
+    expect(kept?.dismissedAt).toMatch(/^\d{4}-\d{2}-\d{2}T/)
   })
 
   it('水位读写', async () => {
