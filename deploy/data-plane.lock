@@ -1,4 +1,4 @@
-sha256-of-rest b9450152d07a0bd451d9c18d52a6a425d81e401fe65c847a96187c6c6e0fc8ae
+sha256-of-rest 678d24049efc7bce5984d0062d8306ad3e88764595f5924b06094d9eab2ceb54
 08938c10c6b4a688c8afda6cd7d1ad3dbf2c20f83cf8c4e7023055ad34eddc70 contracts/README.md ${REPO}/contracts/README.md 0644
 fcc8189e1012d5fbb8e2505025bed637dd01c7b4465ab86125d3eaa7f330eff3 contracts/common/_schema.schema.json ${REPO}/contracts/common/_schema.schema.json 0644
 1730119518c3371f3c2ff3492f4c15cd731688047c6d40805ec4d2c65892f3ff contracts/common/_template.contract.json ${REPO}/contracts/common/_template.contract.json 0644
@@ -306,10 +306,10 @@ c471c6a9f25d02b2419f5f9a05e79eb80fdfdc5d599633d892fcff72b208e959 deploy/duckle/c
 65e7fcc6049a7aca78660a7019e424fc0aa8c85c54207347b977ba6a94c6020b duckle/README.md ${REPO}/duckle/README.md 0644
 9c48a28d51a5c5d4f2232609c4312ea82fe4040edbd768b5966b49182ad6eef8 duckle/common/README.md ${REPO}/duckle/common/README.md 0644
 691d2f8416d4588f656c174cc00528e4bfa65b85ceb84758900086ca756b2e26 duckle/customers/README.md ${REPO}/duckle/customers/README.md 0644
-fbaa18d26196c8f307ec644a2c6a03c7a5f4985998f81b76c7f4c0447c4726ef scripts/askdata/attribute.py /var/lib/askdata/attribute.py 0644
-c001543e31e85cbebdaa5163085f53b7a5721756380f86602534154f9169c41a scripts/askdata/export-transcript.py /var/lib/askdata/export-transcript.py 0644
+ebbe404fa6ee0ffbce10ecbecfb96623d3a8d40cb8de9a05d705e3fabf019f67 scripts/askdata/attribute.py /var/lib/askdata/attribute.py 0644
+c8a96a26e2187422a98e824ec45235b3cf127cd6e274cb28bf9f174264d608cb scripts/askdata/export-transcript.py /var/lib/askdata/export-transcript.py 0644
 bc9f7793064cfa2976b84cff422844bb43a9204f0e7722c77b719a5135b5194a scripts/askdata/sync-and-run.sh /var/lib/askdata/sync-and-run.sh 0755
-4bd61bc4403d0a7e63e12fa2cb42b2ae18bb6c4419960c6890d1e30cd29cc477 scripts/askdata/verify.py /var/lib/askdata/verify.py 0644
+c01b387e6132c5befb88cf46041dcae3c4ad3dcad77bcdf100967b7166b96517 scripts/askdata/verify.py /var/lib/askdata/verify.py 0644
 a477c6828f557fc13d0860edd1240d0b6446d19380270536881ac676cf046814 scripts/duckle/connection-setup.py /opt/connection-setup.py 0755
 7f2b72fc8e4cbfa4e49bce875d91b254d306a2d9a9e6b0d70f46f26874952482 scripts/lemeng/backfill-daily-partitions.py ${REPO}/scripts/lemeng/backfill-daily-partitions.py 0644
 bbcc8969b337591f9431a1a06f0d603deab72d59364ce21722bb3139e7a31100 scripts/lemeng/backfill-retail-order-line.sh /opt/lemeng-backfill.sh 0755
