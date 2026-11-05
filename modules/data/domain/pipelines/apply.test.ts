@@ -42,6 +42,21 @@ describe('apply_pipeline_proposal', () => {
     expect(verdictOf(out.payload as Record<string, unknown>, out.isError)).toEqual({ verdict: 'ok', reason: 'proposal_apply_unconfigured' })
   })
 
+  it('#1411：piece 的 baseSha256 透传给 applier；非法形状被忽略（不因脏字段放开写权限）', async () => {
+    const seen: { pieces?: { baseSha256?: string }[] }[] = []
+    const applier = {
+      apply: async (input: { pieces?: { baseSha256?: string }[] }) => {
+        seen.push(input)
+        return { kind: 'applied' as const, branch: 'b', prUrl: 'u', prNumber: 1, commitCount: 1, skipped: [] }
+      },
+    }
+    const hex = 'a'.repeat(64)
+    await applyPipelineProposalImpl(depsWith(applier as never), { proposal: { ...proposal, pieces: [{ ...goodPiece, baseSha256: hex }] } })
+    expect(seen[0]?.pieces?.[0]?.baseSha256).toBe(hex)
+    await applyPipelineProposalImpl(depsWith(applier as never), { proposal: { ...proposal, pieces: [{ ...goodPiece, baseSha256: 'not-hex' }] } })
+    expect(seen[1]?.pieces?.[0]?.baseSha256).toBeUndefined()
+  })
+
   it('路径白名单：非允许前缀 / 含 .. / 非 .json / 以 / 开头 ⇒ refused/invalid_draft，applier 零调用', async () => {
     for (const bad of ['.github/workflows/x.yml', 'contracts/../secrets.json', 'contracts/common/x.json ', 'contracts/common/x.txt', '/contracts/x.json']) {
       const { applier, calls } = applierOf({ kind: 'applied', branch: 'b', prUrl: 'u', prNumber: 1, commitCount: 1, skipped: [] })

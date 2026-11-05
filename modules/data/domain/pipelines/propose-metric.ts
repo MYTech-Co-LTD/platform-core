@@ -28,6 +28,7 @@
 //   · B11 relation 白名单：从 currentYaml 的 metrics[] 反解（同 private-measure.ts 的
 //     `whitelistedRelations` 形态——同一 parseL1Select、坏条目跳过不授予）。
 //   · 对账文件名：`metricToAuditFileName`（唯一映射事实源）。
+import { createHash } from 'node:crypto'
 import { readFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { Document, Scalar, isMap, isSeq, parseDocument } from 'yaml'
@@ -585,8 +586,15 @@ export function composeMetricDeclaration(
 
   // ── G. 组回包（零写入：piece 只进回包）──────────────────────────────────────────────────
   const auditDomain = name.split(':')[0] ?? name
+  // `baseSha256` = 本提案所依据的现行文件摘要（#1411）：apply 侧据此区分「没人动过 ⇒ 可安全更新」与
+  // 「基线已变 ⇒ 拒绝」。不带上它，对已存在文件的提案会被一律判 conflict（L1 声明永远应用不了）。
   const pieces: ProposedFile[] = [
-    { path: SEMANTICS_YAML_REL, bytes: Buffer.byteLength(out, 'utf8'), content: out },
+    {
+      path: SEMANTICS_YAML_REL,
+      bytes: Buffer.byteLength(out, 'utf8'),
+      content: out,
+      baseSha256: createHash('sha256').update(currentYaml, 'utf8').digest('hex'),
+    },
   ]
   const downstream: DownstreamItem[] = []
   const validation: Issue[] = []

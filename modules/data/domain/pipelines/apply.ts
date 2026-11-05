@@ -53,7 +53,7 @@ export const applyPipelineProposalImpl: PipelineImpl = async (deps: PipelineDeps
 
   // ① 白名单 + 内容重校验（零网络：YAML 档读现行语义声明是**读仓**，不是网络）
   const issues: Issue[] = []
-  const pieces: { path: string; content: string }[] = []
+  const pieces: { path: string; content: string; baseSha256?: string }[] = []
   // 现行语义声明按需懒读（undefined = 还没读；null = 读了但不可读）。JSON-only 提案不触发读仓。
   let currentYaml: string | null | undefined
   for (let i = 0; i < proposal.pieces.length; i += 1) {
@@ -63,6 +63,13 @@ export const applyPipelineProposalImpl: PipelineImpl = async (deps: PipelineDeps
     const why = pathViolations(path)
     if (why !== null) { issues.push({ path: `proposal.pieces[${i}].path`, message: why }); continue }
     const content = str(p.content)
+    // #1411：提案自带基线摘要时透传给 applier（用于区分「可安全更新」与「基线已变」）。
+    // 形状不合（非 64 位 hex）一律忽略 ⇒ 退回今天的两态行为，不因脏字段放开写权限。
+    const rawBase = str(p.baseSha256)
+    const baseSha256 = /^[0-9a-f]{64}$/i.test(rawBase) ? rawBase.toLowerCase() : undefined
+    const pushPiece = (): void => {
+      pieces.push(baseSha256 === undefined ? { path, content } : { path, content, baseSha256 })
+    }
     // YAML 档（W3）：与容器内现行文件比对——diff 只许落在 metrics[]，变更集逐条过 Task 1 同一套机检
     if (path === SEMANTICS_YAML_REL) {
       if (currentYaml === undefined) currentYaml = readCurrentSemanticsYaml(deps.roots.repoRoot)
@@ -77,14 +84,14 @@ export const applyPipelineProposalImpl: PipelineImpl = async (deps: PipelineDeps
       }
       issues.push(...semanticsYamlPieceIssues(content, currentYaml)
         .map((x) => ({ path: `proposal.pieces[${i}] ${x.path}`, message: x.message })))
-      pieces.push({ path, content })
+      pushPiece()
       continue
     }
     // SQL 档（W3）：对账 singular test 只挡空壳与危险词（复算逻辑人写，gate ⑦ 在合并前拦）
     if (path.startsWith(`${DBT_TESTS_DIR}/`)) {
       issues.push(...sqlPieceIssues(content)
         .map((x) => ({ path: `proposal.pieces[${i}] ${x.path}`, message: x.message })))
-      pieces.push({ path, content })
+      pushPiece()
       continue
     }
     // JSON 两档（契约 / 管线）——校验原样不动
@@ -92,7 +99,7 @@ export const applyPipelineProposalImpl: PipelineImpl = async (deps: PipelineDeps
     try { doc = JSON.parse(content) as unknown } catch { issues.push({ path: `proposal.pieces[${i}].content`, message: '不是合法 JSON' }); continue }
     const found = path.startsWith(`${PIPELINES_DIR}/`) ? validatePipelineDraft(doc) : validateContractDraft(doc)
     issues.push(...found.map((x) => ({ path: `proposal.pieces[${i}] ${x.path}`, message: x.message })))
-    pieces.push({ path, content })
+    pushPiece()
   }
   if (issues.length > 0) {
     return { payload: { status: 'refused', reason: 'invalid_draft', issues }, isError: true, auditRowCount: null }

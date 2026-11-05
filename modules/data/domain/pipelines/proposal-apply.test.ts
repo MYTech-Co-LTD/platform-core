@@ -59,6 +59,45 @@ describe('冲突预检与 nothing_to_apply', () => {
     expect(seen.every((r) => r.method === 'GET')).toBe(true)
   })
 
+  it('远端与 piece 不同、但与 piece.baseSha256 一致 ⇒ 允许更新（PUT 带远端 sha）（#1411）', async () => {
+    const { createHash } = await import('node:crypto')
+    const base = '{"a":1}\n'
+    const next = '{"a":1,"b":2}\n'
+    const { fetchImpl, seen } = fakeGithub([
+      refRoute,
+      { match: /\/contents\//, reply: (rec) => rec.method === 'PUT'
+        ? { status: 200, body: { commit: { sha: 'c1' } } }
+        : { status: 200, body: { content: b64(base), sha: 'remote1' } } },
+      { match: /\/git\/refs$/, reply: () => ({ status: 201, body: { ref: 'refs/heads/proposal/t' } }) },
+      { match: /\/pulls$/, reply: () => ({ status: 201, body: { number: 7, html_url: 'http://x/7' } }) },
+    ])
+    const ap = createProposalApplier({ repo, token: 't' }, { fetchImpl })
+    const out = await ap.apply({
+      title: 't', rationale: 'r', branch: 'proposal/t',
+      pieces: [{ path: piece.path, content: next, baseSha256: createHash('sha256').update(base).digest('hex') }],
+      downstream: [], validation: [],
+    })
+    expect(out).toMatchObject({ kind: 'applied', prNumber: 7 })
+    const put = seen.find((r) => r.method === 'PUT')
+    expect(put?.body).toMatchObject({ sha: 'remote1' })
+  })
+
+  it('给了 baseSha256 但远端已被他人改动 ⇒ 仍 conflict（红线不变）（#1411）', async () => {
+    const { createHash } = await import('node:crypto')
+    const { fetchImpl, seen } = fakeGithub([
+      refRoute,
+      { match: /\/contents\//, reply: () => ({ status: 200, body: { content: b64('{"a":9}\n'), sha: 'remote9' } }) },
+    ])
+    const ap = createProposalApplier({ repo, token: 't' }, { fetchImpl })
+    const out = await ap.apply({
+      title: 't', rationale: 'r', branch: 'proposal/t',
+      pieces: [{ path: piece.path, content: '{"a":1,"b":2}\n', baseSha256: createHash('sha256').update('{"a":1}\n').digest('hex') }],
+      downstream: [], validation: [],
+    })
+    expect(out.kind).toBe('conflict')
+    expect(seen.every((r) => r.method === 'GET')).toBe(true)
+  })
+
   it('全部 piece 内容一致 ⇒ nothing_to_apply（skipped=全部 path），零写调用', async () => {
     const { fetchImpl, seen } = fakeGithub([
       refRoute,
