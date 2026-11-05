@@ -751,10 +751,21 @@ export interface ColumnAggDeclaration {
  * 编译产物。`subjectColumn` 固定 `'org'`：私有测度是**租户行**（source='l2'），主体列只能是
  * 租户隔离键；返回字面量类型让调用方直接落库、不再自己推导（推导两处 = 第二事实源）。
  */
+/**
+ * 私有测度可用的**查询参数**（#1417）：v1 只开 `bizday`（date_range）。
+ *
+ * 为什么只开它：`params` 决定 `authorize` 允许调用方传什么；其它维度先留在 `group_by`
+ * （分组维度 ≠ 过滤参数，且列类型未知——把数值列当 string 过滤会绑定失败）。
+ * 要加别的维度参数，先把列类型查出来再按 `string`/`number` 声明，别在这里猜。
+ */
+export type ColumnAggParams = Record<string, { type: 'date_range'; column: string }>
+
 export interface CompiledColumnAgg {
   selectSql: string
   groupBy: string
   subjectColumn: 'org'
+  /** 可过滤参数（`bizday` 在 dims 里才有）。写路径原样落 `data.metrics.params`。 */
+  params: ColumnAggParams
 }
 
 /** 列名/维度名必须是干净标识符（**输入直接拼进 SQL** ⇒ 编译点是唯一防线，fail-closed）。 */
@@ -820,7 +831,11 @@ export function compileColumnAgg(decl: ColumnAggDeclaration): CompiledColumnAgg 
   const selectSql = `select ${aggExpr} as value${dimSelect} from ${raw.relation}`
   // 自检：编译产物**必须**能被运行期同一份形状契约解析（零新运行期路径的可机检落点）
   parseL1Select(selectSql)
-  return { selectSql, groupBy: dims.map(sqlIdent).join(', '), subjectColumn: 'org' }
+  // #1417：`bizday` 同时是「可分组维度」和「可过滤参数」——用户要「某天的订单数」时，
+  // 没有它就只能拿到全时段累计（生产实测：bot 撞 `unknown_param:bizday`）。
+  const params: ColumnAggParams = {}
+  if (dims.includes('bizday')) params.bizday = { type: 'date_range', column: 'bizday' }
+  return { selectSql, groupBy: dims.map(sqlIdent).join(', '), subjectColumn: 'org', params }
 }
 
 /**

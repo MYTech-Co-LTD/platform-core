@@ -120,6 +120,7 @@ describe('compileColumnAgg：列级单聚合 → L1 同形 select_sql', () => {
         selectSql: 'select sum(net_amount) as value from fct_retail_sale',
         groupBy: '',
         subjectColumn: 'org',
+        params: {},
       })
   })
 
@@ -131,7 +132,18 @@ describe('compileColumnAgg：列级单聚合 → L1 同形 select_sql', () => {
       selectSql: 'select sum(net_amount) as value, system_book, bizday from fct_retail_sale',
       groupBy: 'system_book, bizday',
       subjectColumn: 'org',
+      params: { bizday: { type: 'date_range', column: 'bizday' } },
     })
+  })
+
+  it('#1417：dims 含 bizday ⇒ 产出 date_range 参数（否则私有测度只能全时段累计）', () => {
+    expect(compileColumnAgg({
+      agg: 'sum', column: 'order_count',
+      dims: ['system_book', 'bizday', 'branch_num'], relation: 'fct_branch_day_activity',
+    }).params).toEqual({ bizday: { type: 'date_range', column: 'bizday' } })
+    expect(compileColumnAgg({
+      agg: 'sum', column: 'order_count', dims: ['branch_num'], relation: 'fct_branch_day_activity',
+    }).params).toEqual({})
   })
 
   it('count_distinct 映射为 count(distinct <col>)（不是自己的函数名）', () => {

@@ -468,7 +468,9 @@ export async function writePrivateMeasure(
     subjectColumn: compiled.subjectColumn,
     selectSql: compiled.selectSql,
     groupBy: compiled.groupBy,
-    params: {},
+    // #1417：可过滤参数由编译产物给出（bizday 在 dims 里才有）。写死 {} 会让私有测度
+    // 永远只能全时段累计——生产实测 bot 撞 `unknown_param:bizday`。
+    params: compiled.params,
   }
 
   return withTx(deps.pool, async (c): Promise<MetricWriteOutcome> => {
