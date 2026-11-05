@@ -1484,7 +1484,7 @@ describe('entity / synonyms 物化面（W0，031）', () => {
   it('仓内真实声明：net_sales 带实体与同义词（W0 Task 4 全量标注前的最小示例）', () => {
     const byId = new Map(readDeclarations(ROOT).map((r) => [r.id, r]))
     expect(byId.get('lemeng:retail:net_sales')?.entity).toBe('branch')
-    expect(byId.get('lemeng:retail:net_sales')?.synonyms).toEqual(['净销售金额'])
+    expect(byId.get('lemeng:retail:net_sales')?.synonyms).toEqual(['净销售金额', 'net_sales', 'retail:net_sales'])
   })
 })
 
