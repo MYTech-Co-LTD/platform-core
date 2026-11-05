@@ -6,12 +6,12 @@
 //
 // 四断言（spec §8）：① 分析师面工具数 ≤14；② tools/list 静态序列化 ≤10KB；
 // ③ 工具名 [A-Za-z0-9_.-]；④ mutating 工具必须有注解与 scope。
-// 两面都判（Wave 3 扩面）：分析师面（ANALYST_TOOLS，≤14）+ 提案面（PIPELINE_TOOLS，≤8，
-// 清单见 modules/data/domain/pipelines/tools.ts）。
+// 两面都判（Wave 3 扩面 + Phase 2 需求台账）：分析师面（ANALYST_TOOLS，≤14）+
+// manage 面（MANAGE_TOOLS，≤11 = 提案 9 + 需求台账 2，清单见 modules/data/domain/manage-face.ts）。
 // 事实源 = modules/data/domain/toolbox/registry.ts 的 ANALYST_TOOLS（显式 .ts import；
 // registry 是纯的——这条 import 链不拉 pool/框架，否则门禁会连坐运行时依赖）。
 import { ANALYST_FACE_MAX_LIST_BYTES, ANALYST_FACE_MAX_TOOLS, ANALYST_TOOLS } from '../modules/data/domain/toolbox/registry.ts'
-import { PIPELINE_FACE_MAX_TOOLS, PIPELINE_TOOLS } from '../modules/data/domain/pipelines/tools.ts'
+import { MANAGE_FACE_MAX_TOOLS, MANAGE_TOOLS } from '../modules/data/domain/manage-face.ts'
 import { NOTIFY_MAX_TOOLS, NOTIFY_TOOLS } from '../modules/notify/mcp-tools.ts'
 
 const TOOL_NAME_RE = /^[A-Za-z0-9_.-]+$/
@@ -51,7 +51,7 @@ export function checkToolface(metas, opts = {}) {
 if (process.argv[1]?.endsWith('check-mcp-toolface.mjs')) {
   const violations = [
     ...checkToolface(ANALYST_TOOLS),
-    ...checkToolface(PIPELINE_TOOLS, { maxTools: PIPELINE_FACE_MAX_TOOLS }),
+    ...checkToolface(MANAGE_TOOLS, { maxTools: MANAGE_FACE_MAX_TOOLS }),
     ...checkToolface(NOTIFY_TOOLS, { maxTools: NOTIFY_MAX_TOOLS }),
   ]
   if (violations.length > 0) {

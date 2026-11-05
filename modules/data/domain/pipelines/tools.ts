@@ -6,9 +6,11 @@
 //
 // 落点是 POST /mcp-manage（scope data:manage），不是 /mcp：提案面天然属于管理面，
 // 且分析师面的工具预算（≤14，现用 11）与 tools/list ≤10KB 预算**不动**。
+//
+// ★ 本文件是**提案片**；manage 面总清单与预算见 `../manage-face.ts`
+//   （PIPELINE_TOOLS 是 manage 面的一部分，本文件不再单独持有面预算）。
 import type { ToolAnnotations } from '../toolbox/registry'
 
-export const PIPELINE_FACE_MAX_TOOLS = 9
 export const MANAGE_SCOPE = 'data:manage'
 
 export interface PipelineToolMeta {

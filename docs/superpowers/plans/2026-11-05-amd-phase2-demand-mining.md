@@ -91,9 +91,14 @@ export interface DemandUpsert {
 const toRow = (r: Record<string, unknown>): DemandRow => ({
   id: Number(r.id), kind: r.kind as DemandKind, target: String(r.target),
   detail: (r.detail ?? {}) as Record<string, unknown>, occurrences: Number(r.occurrences),
-  firstSeen: String(r.first_seen), lastSeen: String(r.last_seen),
+  // timestamptz 由 pg 反序列化成 Date；`String(Date)` 是本地化非 ISO 串（按字母序排序会错乱），
+  // 一律归一成 ISO——与 metric-audit-store / metric-candidates 同款。
+  firstSeen: new Date(r.first_seen as string | Date).toISOString(),
+  lastSeen: new Date(r.last_seen as string | Date).toISOString(),
   evidence: Array.isArray(r.evidence) ? r.evidence : [],
-  dismissedAt: r.dismissed_at === null || r.dismissed_at === undefined ? null : String(r.dismissed_at),
+  dismissedAt: r.dismissed_at === null || r.dismissed_at === undefined
+    ? null
+    : new Date(r.dismissed_at as string | Date).toISOString(),
   dismissedBy: r.dismissed_by === null || r.dismissed_by === undefined ? null : String(r.dismissed_by),
   dismissReason: r.dismiss_reason === null || r.dismiss_reason === undefined ? null : String(r.dismiss_reason),
 })
@@ -252,7 +257,7 @@ git commit -m "feat(data): 需求台账表与存储层（Phase 2，#1404）"
 - Consumes: `DemandKind`（Task 1）
 - Produces:
   - `interface AuditRow { id: number | string; metric_id: string; reason: string | null; params: unknown }`
-  - `interface ConvRow { session_id: string; seq: number | string; tool_name: string | null; tool_args: string | null }`
+  - `interface ConvRow { session_id: string; seq: number | string; tool_name: string | null; tool_args: string | null; _timestamp: number }`
   - `interface DemandDraft { kind: DemandKind; target: string; detail: Record<string, unknown>; evidence: unknown[] }`
   - `isProbeTarget(t: string): boolean`
   - `classifyAudit(row: AuditRow, catalogIds: readonly string[]): DemandDraft | null`
@@ -359,14 +364,14 @@ Expected: FAIL（`Cannot find module './classify'`）
 import type { DemandKind } from './store'
 
 export interface AuditRow { id: number | string; metric_id: string; reason: string | null; params: unknown }
-export interface ConvRow { session_id: string; seq: number | string; tool_name: string | null; tool_args: string | null }
+export interface ConvRow { session_id: string; seq: number | string; tool_name: string | null; tool_args: string | null; _timestamp: number }
 export interface DemandDraft {
   kind: DemandKind; target: string
   detail: Record<string, unknown>; evidence: unknown[]
 }
 
 /** 测试探针前缀（实测 4 条假需求混在生产数据里，2026-11-05）。 */
-const PROBE_PREFIXES = ['verify-', 'mcp-probe-', 'w1:test-', 'test-'] as const
+const PROBE_PREFIXES = ['verify-', 'mcp-probe-', 'w1:test', 'test-'] as const
 
 export const isProbeTarget = (t: string): boolean => {
   const s = t.trim().toLowerCase()
@@ -464,6 +469,14 @@ git commit -m "feat(data): 四类需求判定器（零阈值，真实案例 fixt
 
 ### Task 3: 挖掘编排 + CLI 脚本
 
+> ⚠️ **本段代码块为初稿，终审后已按实现修订，以实现为准。** 差异（2026-11-05 终审）：
+> 1. `readAudit` 返回 `AuditRow[]`（**不是** `{ rows, maxId }`）：读行带 `limit`，全表 max 会越过未读行（静默丢行），水位改由本批返回的行推导。
+> 2. `ConvRow` 含**必需**字段 `_timestamp`（水位依赖它），`mine.ts` 不再用类型断言偷读。
+> 3. conv 游标写本批最大 `_timestamp`（**不 +1**）：下轮 SQL 用 `> cursor`，写 max 已足够排他；`+1` 会多排除一档、制造 1 微秒盲区。
+> 4. CLI 用 `createRequire` 取 `pg`（`import pg from 'pg'` 在 pnpm 隔离 node_modules 下解析不到）；`askdata_conv` / `askdata_stuck` 排序键是 `session_id`（`sessionid` 是 `askdata_verified` 的键形，写错 400）。
+> 5. OO 翻页以 `total` 为权威（服务端可能把 `size` 限到 < PAGE_SIZE），`MAX_PAGES` 超限仍抛错；`ooSearch` 内部翻页并支持排他游标。
+> 6. 审计水位在 conv 源读取**之前**落库：conv 失败（fail-fast 上抛）不应让已 upsert 的审计计数下轮重算。
+
 **Files:**
 - Create: `modules/data/domain/demand/mine.ts`
 - Create: `scripts/demand-mining.mjs`
@@ -472,7 +485,7 @@ git commit -m "feat(data): 四类需求判定器（零阈值，真实案例 fixt
 **Interfaces:**
 - Consumes: `classifyAudit` / `huntFromConvs`（Task 2）、`upsertDemand` / `readCursor` / `writeCursor`（Task 1）
 - Produces:
-  - `interface MineIo { readCursor; writeCursor; readAudit(org, sinceId) → { rows, maxId }; readConv(org, sinceUs) → ConvRow[]; readStuck(org, sessionIds) → Map; catalogIds(org) → string[]; upsert(org, draft) → void }`
+  - `interface MineIo { readCursor; writeCursor; readAudit(org, sinceId) → AuditRow[]; readConv(org, sinceUs) → ConvRow[]; readStuck(org, sessionIds) → Map; catalogIds(org) → string[]; upsert(org, draft) → void }`（水位由调用方从**本批行**推导，接口不另报 maxId）
   - `interface MineSummary { scanned: number; alias: number; newMetric: number; drill: number; hunt: number; skippedProbe: number; cursorAudit: number; cursorConv: number }`
   - `mineOnce(io: MineIo, org: string, nowUs: number): Promise<MineSummary>`
 
@@ -489,7 +502,7 @@ const fakeIo = (over: Partial<MineIo> = {}) => {
   const io: MineIo = {
     readCursor: async (_o, s) => cursors.get(s) ?? 0,
     writeCursor: async (_o, s, v) => { cursors.set(s, v) },
-    readAudit: async () => ({ rows: [], maxId: 0 }),
+    readAudit: async () => [],
     readConv: async () => [],
     readStuck: async () => new Map(),
     catalogIds: async () => [],
@@ -502,14 +515,11 @@ const fakeIo = (over: Partial<MineIo> = {}) => {
 describe('mineOnce', () => {
   it('审计行分类后 upsert，并推进两个水位', async () => {
     const { io, upserts, cursors } = fakeIo({
-      readAudit: async () => ({
-        rows: [
-          { id: 10, metric_id: 'net_sales', reason: 'metric_not_declared', params: {} },
-          { id: 11, metric_id: 'm:a:b', reason: 'bad_param', params: {} },
-        ],
-        maxId: 11,
-      }),
-      readConv: async () => [{ session_id: 's1', seq: 1, tool_name: 'query_data', tool_args: '{"metricId":"m:a:b","args":{"bizday":{"from":"2026-10-10","to":"2026-10-16"}}}' }],
+      readAudit: async () => [
+        { id: 10, metric_id: 'net_sales', reason: 'metric_not_declared', params: {} },
+        { id: 11, metric_id: 'm:a:b', reason: 'bad_param', params: {} },
+      ],
+      readConv: async () => [{ session_id: 's1', seq: 1, tool_name: 'query_data', tool_args: '{"metricId":"m:a:b","args":{"bizday":{"from":"2026-10-10","to":"2026-10-16"}}}', _timestamp: 0 }],
       catalogIds: async () => ['lemeng:retail:net_sales'],
     })
     const out = await mineOnce(io, 'org1', 1_800_000_000_000_000)
@@ -524,8 +534,8 @@ describe('mineOnce', () => {
       readAudit: async (_o, since) => {
         calls += 1
         return since === 0
-          ? { rows: [{ id: 5, metric_id: 'm:a:b', reason: 'metric_not_declared', params: {} }], maxId: 5 }
-          : { rows: [], maxId: since }
+          ? [{ id: 5, metric_id: 'm:a:b', reason: 'metric_not_declared', params: {} }]
+          : []
       },
     })
     await mineOnce(io, 'org1', 1_800_000_000_000_000)
@@ -564,7 +574,13 @@ import type { CursorSource } from './store'
 export interface MineIo {
   readCursor(org: string, source: CursorSource): Promise<number>
   writeCursor(org: string, source: CursorSource, value: number): Promise<void>
-  readAudit(org: string, sinceId: number): Promise<{ rows: AuditRow[]; maxId: number }>
+  /**
+   * `sinceId` 是**不含**的（SQL 用 `id > sinceId`）。
+   * 返回值只承诺「本批读到的行」——水位由调用方从这些行推导，**不接受**读侧另报 maxId：
+   * 读行带 `limit`、maxId 若取全表 max 就会越过未读行（静默丢行），故接口里没有这个字段。
+   */
+  readAudit(org: string, sinceId: number): Promise<AuditRow[]>
+  /** `sinceUs` 在非 0 时是**不含**的（SQL 用 `_timestamp > sinceUs`），见下方水位推导。 */
   readConv(org: string, sinceUs: number): Promise<ConvRow[]>
   readStuck(org: string, sessionIds: readonly string[]): Promise<Map<string, unknown[]>>
   catalogIds(org: string): Promise<string[]>
@@ -578,7 +594,15 @@ export interface MineSummary {
 
 /**
  * 一轮。顺序：先审计（驱动 skip 计数），再 conv（要会话 → 拉 stuck 证据）。
- * 水位**在对应源全部 upsert 成功后**推进——中途抛错则水位不动，下轮重读（upsert 幂等吸收）。
+ *
+ * 水位语义：**每个源在自己的行全部 upsert 成功后立刻推进**，互不拖累——
+ * OO 连续不可用时，审计侧已落库的计数不会被下轮重读重算。
+ *
+ * 两个源都取「本批实际读到的行」推导水位，且 conv 用**排他游标**（`> cursor`，游标写本批 max）：
+ * 边界组（`_timestamp == max`）不再重读，因此不会每轮给同一个 `(session, 窗口)` 重复 +1 occurrences。
+ * 代价是**同微秒迟到的行会漏**——OO 的 `_timestamp` 是入库时间，同一批入库可能共享微秒；
+ * 这里选择「不重复计数」而不是「绝不漏一行」。**不要写 `max+1`**：那会额外排除 `max` 与 `max+1`
+ * 两档，凭空制造 1 微秒盲区，却不再带来任何额外收益。
  */
 export async function mineOnce(io: MineIo, org: string, nowUs: number): Promise<MineSummary> {
   const catalog = await io.catalogIds(org)
@@ -589,8 +613,8 @@ export async function mineOnce(io: MineIo, org: string, nowUs: number): Promise<
   }
 
   const audit = await io.readAudit(org, summary.cursorAudit)
-  summary.scanned += audit.rows.length
-  for (const row of audit.rows) {
+  summary.scanned += audit.length
+  for (const row of audit) {
     const draft = classifyAudit(row, catalog)
     if (draft === null) {
       // 只统计「本该是需求、但被探针前缀挡掉」的行；bad_param 等本来就不是需求，不计。
@@ -605,7 +629,11 @@ export async function mineOnce(io: MineIo, org: string, nowUs: number): Promise<
     else if (draft.kind === 'new_metric') summary.newMetric += 1
     else summary.drill += 1
   }
-  summary.cursorAudit = audit.maxId
+  // 水位只由**本批读到的行**推导（不能用全表 max：读行有 limit，会越过未读行）。
+  const auditIds = audit.map((r) => Number(r.id)).filter((n) => Number.isFinite(n))
+  summary.cursorAudit = auditIds.length > 0 ? Math.max(...auditIds) : summary.cursorAudit
+  // 审计侧先落水位：conv 源失败（fail-fast 上抛）不应让已 upsert 的计数在下轮被重读重算。
+  await io.writeCursor(org, 'query_audit', summary.cursorAudit)
 
   const conv = await io.readConv(org, summary.cursorConv)
   const sessionIds = [...new Set(conv.map((r) => r.session_id))]
@@ -614,10 +642,10 @@ export async function mineOnce(io: MineIo, org: string, nowUs: number): Promise<
     await io.upsert(org, draft)
     summary.hunt += 1
   }
-  const maxConv = conv.reduce((m, r) => Math.max(m, Number((r as { _timestamp?: number })._timestamp ?? 0)), 0)
+  // 排他游标：读侧用 `_timestamp > cursor`，这里写本批 max —— 边界组不再重读（见函数头注释）。
+  const maxConv = conv.reduce((m, r) => Math.max(m, r._timestamp), 0)
   summary.cursorConv = maxConv > 0 ? maxConv : summary.cursorConv
 
-  await io.writeCursor(org, 'query_audit', summary.cursorAudit)
   await io.writeCursor(org, 'askdata_conv', summary.cursorConv)
   return summary
 }
@@ -634,15 +662,21 @@ Expected: PASS（4 个）
 
 ```js
 #!/usr/bin/env node
+// @ts-nocheck —— CLI 薄壳：纯核（mineOnce / classify）有同名 .test.ts 兜底；tsc 根工程解析不到
+// pg 类型，不为此给根加依赖（backfill-identity-links.mjs / provision-tenant.mjs 同款头注）。
 // demand-mining.mjs —— Phase 2 每日挖掘（openship job 经 docker exec 在 server 容器内跑）。
 // 复用容器既有 env：DATABASE_URL + OO_READ_URL/OO_READ_ORG/OO_READ_TOKEN（无新凭据）。
-// 退出码：0 = 成功（含 0 条）；1 = 环境/链路失败（缺 env、DB 不可达、OO 失败）——不吞。
-import pg from 'pg'
+// 退出码：0 = 成功（含 0 条）；1 = 环境/链路失败（缺 env、DB 不可达、OO 失败、翻页护栏）——不吞。
+import { createRequire } from 'node:module'
 import { mineOnce } from '../modules/data/domain/demand/mine.ts'
 import { readCursor, upsertDemand, writeCursor } from '../modules/data/domain/demand/store.ts'
 import { loadPlatformCatalog } from '../modules/data/domain/metric-store.ts'
 
 const DAY_US = 86_400_000_000
+/** OO `_search` 单页条数（同 verify-ingest）。 */
+const PAGE_SIZE = 1000
+/** 翻页护栏：超过即**抛错**（拒绝静默截断；也防 OO 忽略 `from` 时无限循环）。 */
+const MAX_PAGES = 100
 
 const need = (k) => {
   const v = String(process.env[k] ?? '').trim()
@@ -655,27 +689,53 @@ const authHeader = (raw) => {
   return /^(Basic|Bearer)\s/i.test(t) ? t : `Basic ${t}`
 }
 
+/**
+ * 组织级 OO `_search`（流级 `_search` 在该版本 404）。返回**全部**命中（内部翻页）。
+ *
+ * - 时间参数是**微秒 epoch**；`start_time` 不能为 0（首轮用 7 天回看窗口兜底）。
+ * - 排序字段按流区分：`askdata_verified` 的键形是 `sessionid`，但 `askdata_conv` /
+ *   `askdata_stuck` 是 `session_id`（生产实测：写 `sessionid` ⇒ 400 unknown field）。
+ * - `exclusive`：游标语义为「不含」（SQL 用 `>`）；首轮（cursor=0）仍用 `>=`。
+ */
 function ooSearch(opts) {
   const base = opts.url.replace(/\/+$/, '')
-  return async (stream, sinceUs, endUs, from, size) => {
-    const body = {
-      query: {
-        sql: `select * from "${stream}" where _timestamp >= ${Math.trunc(sinceUs)} order by _timestamp asc, seq asc, sessionid asc`,
-        start_time: sinceUs > 0 ? sinceUs : endUs - 7 * DAY_US,   // OO 拒绝 start_time=0
-        end_time: endUs, from, size,
-      },
+  return async (stream, sinceUs, endUs, { exclusive = false } = {}) => {
+    const startTime = sinceUs > 0 ? sinceUs : endUs - 7 * DAY_US   // OO 拒绝 start_time=0
+    const cmp = exclusive && sinceUs > 0 ? '>' : '>='
+    const sql = `select * from "${stream}" where _timestamp ${cmp} ${Math.trunc(sinceUs)} `
+      + 'order by _timestamp asc, seq asc, session_id asc'
+    const hits = []
+    let from = 0
+    let pageNo = 0
+    for (;;) {
+      if (pageNo >= MAX_PAGES) {
+        throw new Error(
+          `demand-mining: ${stream} 翻页超过 ${MAX_PAGES} 页（${MAX_PAGES * PAGE_SIZE} 行）仍未读完——拒绝静默截断`,
+        )
+      }
+      const res = await fetch(`${base}/api/${encodeURIComponent(opts.org)}/_search`, {
+        method: 'POST',
+        headers: { Authorization: authHeader(opts.token), 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          query: { sql, start_time: startTime, end_time: endUs, from, size: PAGE_SIZE },
+        }),
+      })
+      if (!res.ok) throw new Error(`demand-mining: OO _search HTTP ${res.status} — ${(await res.text()).slice(0, 300)}`)
+      const data = await res.json()
+      if (data === null || typeof data !== 'object' || !Array.isArray(data.hits)) {
+        throw new Error('demand-mining: OO _search 响应缺 hits 数组（不静默当空结果）')
+      }
+      const batch = data.hits
+      hits.push(...batch)
+      from += batch.length
+      pageNo += 1
+      // `total` 权威，**不能**先看 `batch.length < PAGE_SIZE`：OO 可能把 `size` 限到小于
+      // PAGE_SIZE，那样首页就退出、而 `total` 再大也不翻 ⇒ 静默丢数据。无 `total` 时才退回
+      // 按本页条数判断（拿不到权威计数，至少不无限翻）。
+      const done = typeof data.total === 'number' ? from >= data.total : batch.length < PAGE_SIZE
+      if (done) break
     }
-    const res = await fetch(`${base}/api/${encodeURIComponent(opts.org)}/_search`, {
-      method: 'POST',
-      headers: { Authorization: authHeader(opts.token), 'Content-Type': 'application/json' },
-      body: JSON.stringify(body),
-    })
-    if (!res.ok) throw new Error(`demand-mining: OO _search HTTP ${res.status} — ${(await res.text()).slice(0, 300)}`)
-    const data = await res.json()
-    if (data === null || typeof data !== 'object' || !Array.isArray(data.hits)) {
-      throw new Error('demand-mining: OO _search 响应缺 hits 数组（不静默当空结果）')
-    }
-    return data.hits
+    return hits
   }
 }
 
@@ -683,28 +743,32 @@ async function main() {
   const org = need('PLATFORM_ORG')
   const dsn = need('DATABASE_URL')
   const oo = ooSearch({ url: need('OO_READ_URL'), org: need('OO_READ_ORG'), token: need('OO_READ_TOKEN') })
-  const pool = new pg.Pool({ connectionString: dsn })
+  // 不能用静态 `import pg from 'pg'`：scripts/ 在 pnpm 隔离 node_modules 下解析不到根级 pg
+  // （tsx 的 CJS require 钩子能解析、ESM 静态 import 不能）。与 notify-health.mjs 同款取法。
+  const { Pool } = createRequire(import.meta.url)('pg')
+  const pool = new Pool({ connectionString: dsn })
   try {
     const endUs = Date.now() * 1000
     const summary = await mineOnce({
       readCursor: (o, s) => readCursor(pool, o, s),
       writeCursor: (o, s, v) => writeCursor(pool, o, s, v),
+      // 水位由 `mineOnce` 从**本批返回的行**推导；这里**不**另报 maxId——读行带 limit，
+      // 全表 max 会越过未读行（静默丢行）。
       readAudit: async (o, sinceId) => {
         const { rows } = await pool.query(
           `select id, metric_id, reason, params from data.query_audit
             where org = $1 and id > $2 and reason in ('metric_not_declared','no_detail_binding')
             order by id asc limit 1000`, [o, sinceId],
         )
-        const { rows: maxRows } = await pool.query(
-          'select coalesce(max(id), $2) as max from data.query_audit where org = $1', [o, sinceId],
-        )
-        return { rows, maxId: Number(maxRows[0].max) }
+        return rows
       },
-      readConv: (_o, sinceUs) => oo('askdata_conv', sinceUs, endUs, 0, 5000),
+      readConv: (_o, sinceUs) => oo('askdata_conv', sinceUs, endUs, { exclusive: true }),
       readStuck: async (_o, sessions) => {
         const want = new Set(sessions)
         if (want.size === 0) return new Map()
-        const hits = await oo('askdata_stuck', endUs - 30 * DAY_US, endUs, 0, 5000)
+        // 全窗口翻页（不按 `session_id in (...)` 拼 SQL：会话 id 来自外部数据，不注入）。
+        // 代价是每次扫 30 天；护栏在 ooSearch 里，超限抛错而不是静默截断。
+        const hits = await oo('askdata_stuck', endUs - 30 * DAY_US, endUs)
         const byKey = new Map()   // (session,seq) → 版本号最大的一条
         for (const h of hits) {
           const sid = String(h.session_id ?? '')
@@ -823,13 +887,34 @@ export const DEMAND_TOOLS: readonly DemandToolMeta[] = [
 
 ```ts
 // handlers.ts —— 需求台账工具的 impl。payload 形状与其它 MCP 工具一致（status/reason）。
-import type { McpDeps } from '../../routes/mcp-rpc'
+//
+// ⚠️ 依赖面刻意用**本文件自带的最小窄类型**，不从 `../../routes/mcp-rpc` import `McpDeps`：
+//   domain 层不得反向依赖路由层（路由只是调用方之一）。`McpDeps` 在结构上可赋给本类型。
+import type { Pool } from 'pg'
 import { loadPlatformCatalog } from '../metric-store'
 import type { MetricRow } from '../metric-store'
 import { dismissDemand, listDemands } from './store'
 import type { DemandKind, DemandRow } from './store'
 
+/** 本文件需要的那部分 deps（结构窄类型；`McpDeps` / 测试桩都能直接传）。 */
+export interface DemandToolDeps {
+  pool: Pool
+  org: string
+  requester: { userId: string } | null
+}
+
 const KINDS: readonly DemandKind[] = ['alias_gap', 'new_metric', 'drill_gap', 'metric_hunt']
+
+/**
+ * 取数扫描上限（**安全上限，不是分页**）：`resolved` 是词表快照上的运行期判定，SQL 里没有
+ * 这一列 ⇒ 必须先取一批、判完再按 `limit` 截。若把 `limit` 直接压给 SQL，累积 20+ 条已被
+ * 词表自动消解（但没人 dismiss）的高 occurrence 行会把窗口占满，默认清单看起来是空的，
+ * 真正未消解的新需求排在窗口外且无 offset 可翻。
+ *
+ * 500 行的量级足够覆盖单租户台账的活跃面；**命中上限时回包带 `truncated: true`**，
+ * 不静默——让人知道还有没扫到的（再要就给 kind 过滤，而不是假装扫全了）。
+ */
+export const LIST_SCAN_LIMIT = 500
 
 /**
  * resolved：词表快照上的自动判定（不写回）。`metric_hunt` 永不自动消解——口径是人决。
@@ -856,22 +941,25 @@ export function resolvedOf(row: DemandRow, byId: ReadonlyMap<string, MetricRow>)
 }
 
 export async function callDemandTool(
-  d: McpDeps, name: string, args: Record<string, unknown>,
+  d: DemandToolDeps, name: string, args: Record<string, unknown>,
 ): Promise<Record<string, unknown>> {
   if (name === 'list_demand_signals') {
     const kind = typeof args.kind === 'string' && KINDS.includes(args.kind as DemandKind) ? args.kind as DemandKind : undefined
     if (args.kind !== undefined && kind === undefined) return { status: 'refused', reason: 'bad_kind' }
     const limit = Number.isInteger(args.limit) ? Math.min(50, Math.max(1, Number(args.limit))) : 20
+    // **先取后过滤**：resolved 只存在于词表判定里，SQL 无法先滤；limit 压给 SQL 会被
+    // 已消解的高 occurrence 行占满窗口（见 LIST_SCAN_LIMIT 头注）。
     const rows = await listDemands(d.pool, d.org, {
       ...(kind === undefined ? {} : { kind }),
       includeDismissed: args.includeDismissed === true,
-      limit,
+      limit: LIST_SCAN_LIMIT,
     })
     const catalog = await loadPlatformCatalog(d.pool)
     const byId = new Map(catalog.map((m) => [m.id, m]))
     const items = rows.map((r) => ({ ...r, ...resolvedOf(r, byId) }))
       .filter((r) => args.includeResolved === true || !r.resolved)
-    return { status: 'ok', count: items.length, items }
+      .slice(0, limit)
+    return { status: 'ok', count: items.length, items, truncated: rows.length >= LIST_SCAN_LIMIT }
   }
   if (name === 'dismiss_demand_signal') {
     const id = Number(args.id)

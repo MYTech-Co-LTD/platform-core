@@ -93,12 +93,14 @@ describePg('写面（需要 DATABASE_URL）', () => {
   /** Wave 3 提案面（spec §7）+ W3 L1 声明提案（#1401）：九个，缺一或多一都算漂。 */
   const PIPELINE_TOOL_NAMES = ['apply_pipeline_proposal', 'get_pipeline', 'get_pipeline_run', 'list_pipeline_runs', 'list_pipelines',
     'propose_contract_change', 'propose_metric_declaration', 'propose_pipeline_change', 'run_pipeline_sandbox']
+  /** Phase 2 需求台账（#1404）：两件，缺一或多一都算漂。 */
+  const DEMAND_TOOL_NAMES = ['dismiss_demand_signal', 'list_demand_signals']
 
-  it('tools/list → 口径三 + 报表四（#496）与提案九件（Wave 3 + W3）各自恰好', async () => {
+  it('tools/list → 口径三 + 报表四（#496）+ 提案九件（Wave 3 + W3）+ 需求两件（Phase 2）各自恰好', async () => {
     await seedL1()
     const body = await (await rpc(app(), { jsonrpc: '2.0', id: 1, method: 'tools/list' })).json()
     const tools = (body as { result: { tools: { name: string; description: string }[] } }).result.tools
-    expect(tools.map((t) => t.name).sort()).toEqual([...METRIC_REPORT_TOOL_NAMES, ...PIPELINE_TOOL_NAMES].sort())
+    expect(tools.map((t) => t.name).sort()).toEqual([...METRIC_REPORT_TOOL_NAMES, ...PIPELINE_TOOL_NAMES, ...DEMAND_TOOL_NAMES].sort())
     expect(tools.find((t) => t.name === 'customize_metric')!.description).toContain('不能凭空造新指标')
   })
 
