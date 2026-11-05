@@ -11,6 +11,10 @@
 
 ## [Unreleased]
 
+## [0.271.1](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.271.0...v0.271.1) - 2026-11-05
+- 【修复】data: apply 支持基线未变的文件更新（piece.baseSha256 三态，红线不变）（#1411） ([#1412](https://github.com/MYTech-Co-LTD/platform-core/pull/1412), [fc972a1](https://github.com/MYTech-Co-LTD/platform-core/commit/fc972a12c055e0e6a723520343afa53c85efc137))
+
+
 ## [0.271.0](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.270.0...v0.271.0) - 2026-11-05
 - 【新增】data: Phase 2 需求挖掘——四类机判需求台账 + manage 面两工具（#1404） ([#1407](https://github.com/MYTech-Co-LTD/platform-core/pull/1407), [178c42d](https://github.com/MYTech-Co-LTD/platform-core/commit/178c42d05eb8a2b7d2224bae8b100ec785673641))
 
