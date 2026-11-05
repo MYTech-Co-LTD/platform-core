@@ -23,6 +23,9 @@
   1. **路径白名单**：piece.path 必须以 `contracts/` 或 `deploy/duckle/console/pipelines/` 开头、
      `.json` 结尾、不含 `..`、不以 `/` 开头。理由：PR 会触发分支 CI，放任任意路径等于允许
      MCP 面改 `.github/workflows`（提权通道）。
+     **W3 增补（2026-11-05）**：另收两档——精确单文件 `dbt/semantics/l1_metrics.yml`（YAML，L1 声明
+     提案面）与 `dbt/tests/` 前缀 `.sql` 后缀（audit test piece）；理由与实施见
+     `docs/superpowers/plans/2026-11-05-amd-w3-l1-proposal.md`。
   2. **内容重校验**：按 path 判类型重跑 `validateContractDraft` / `validatePipelineDraft`
      （挡「propose 之后被改过的脏草案」）。
 - 现有两条 `propose_*` 本体不动：仍零写入，结构性红线不破。

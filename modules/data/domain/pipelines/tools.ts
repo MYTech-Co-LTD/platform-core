@@ -118,7 +118,7 @@ export const PIPELINE_TOOLS: readonly PipelineToolMeta[] = [
   },
   {
     name: 'apply_pipeline_proposal', group: 'pipeline', title: '提案应用：落盘并开 draft PR',
-    description: '把 propose_* 的回包原样回传，经 GitHub API 落到提案分支并开 **draft PR**（每文件一个 commit；body 带 downstream 清单与 validation 结论）。三道前置：目标文件与基线不同 ⇒ 拒绝并回当前内容摘要（不自动合并）；piece 路径必须在 contracts/ 或 deploy/duckle/console/pipelines/ 下且为 .json；内容重校验不过 ⇒ 拒绝。本服务未配 DATA_MCP_GITHUB_TOKEN 时回 not_executed（不生效）；写总闸关闭时整个工具不可用。',
+    description: '把 propose_* 的回包原样回传，经 GitHub API 落到提案分支并开 **draft PR**（每文件一个 commit；body 带 downstream 清单与 validation 结论）。三道前置：目标文件与基线不同 ⇒ 拒绝并回当前内容摘要（不自动合并）；piece 路径白名单——contracts/ 或 deploy/duckle/console/pipelines/ 下且为 .json，或精确 dbt/semantics/l1_metrics.yml（YAML），或 dbt/tests/ 下 .sql（audit test）；内容重校验不过 ⇒ 拒绝。本服务未配 DATA_MCP_GITHUB_TOKEN 时回 not_executed（不生效）；写总闸关闭时整个工具不可用。',
     inputSchema: {
       type: 'object',
       properties: { proposal: { type: 'object', description: 'propose_pipeline_change / propose_contract_change 的完整回包（原样回传，不要改写）' } },
