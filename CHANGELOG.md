@@ -11,6 +11,10 @@
 
 ## [Unreleased]
 
+## [0.272.1](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.272.0...v0.272.1) - 2026-11-05
+- 【修复】askdata: 草稿徽标收紧为首行强制，W2 台账补真机证据（#1409） ([#1418](https://github.com/MYTech-Co-LTD/platform-core/pull/1418), [df39b71](https://github.com/MYTech-Co-LTD/platform-core/commit/df39b71cc8023020a0a7328a73a8547bc59e1b85))
+
+
 ## [0.272.0](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.271.1...v0.272.0) - 2026-11-05
 - 【新增】data: 查询回包带 caliber/basis，bot 回答强制标注草稿口径（#1409） ([#1415](https://github.com/MYTech-Co-LTD/platform-core/pull/1415), [802b7ec](https://github.com/MYTech-Co-LTD/platform-core/commit/802b7ec8f2fc7317997f9afee27f00acb653d9c6))
 
