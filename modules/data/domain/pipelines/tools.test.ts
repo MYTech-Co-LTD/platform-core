@@ -5,11 +5,11 @@ import { analystToolNames } from '../toolbox/registry'
 const TOOL_NAME_RE = /^[A-Za-z0-9_.-]+$/
 
 describe('PIPELINE_TOOLS（提案面元数据）', () => {
-  it('恰 8 个工具，名与 spec §7 逐字一致', () => {
+  it('恰 9 个工具，名与 spec §7 + W3（#1401）逐字一致', () => {
     expect(pipelineToolNames()).toEqual([
       'list_pipelines', 'get_pipeline', 'list_pipeline_runs', 'get_pipeline_run',
       'run_pipeline_sandbox', 'propose_pipeline_change', 'propose_contract_change',
-      'apply_pipeline_proposal',
+      'apply_pipeline_proposal', 'propose_metric_declaration',
     ])
     expect(PIPELINE_TOOLS.length).toBe(PIPELINE_FACE_MAX_TOOLS)
   })

@@ -102,6 +102,9 @@ api:
     # 两条都是管理动作（没有「creator 是谁」的歧义）⇒ data:manage。
     - { method: POST,   path: /metrics/candidates/generate,       scope: data:manage }
     - { method: POST,   path: /metrics/candidates/:id/adopt,      scope: data:manage }
+    # W3（#1401）：候选 → L1 声明**草案**。零写盘——piece 只进回包，写动作仍走 MCP 工具面
+    # apply_pipeline_proposal（人复核后开 draft PR）。管理动作（与 adopt 同档）⇒ data:manage。
+    - { method: POST,   path: /metrics/candidates/:id/propose-l1, scope: data:manage }
     # ── 已验证问答（W1 可信度地基；计划 2026-11-04-amd-w1-verified-questions Task 2）──
     # 三条都是 data:manage：基线由关闭掩码的重放产生，读面会把掩码列的精确聚合值透给
     # 低档用户（终审 Important 4）；人工确认/拒绝本来就是管理动作。

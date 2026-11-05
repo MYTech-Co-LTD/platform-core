@@ -40,8 +40,8 @@ const roots = rootsOf({}, root)
 
 describe('rootsOf', () => {
   it('显式基准目录可解析仓内路径；env 可覆盖', () => {
-    expect(rootsOf({}, '/repo')).toEqual({ pipelinesRoot: '/repo/deploy/duckle/console', contractsRoot: '/repo/contracts' })
-    expect(rootsOf({ DATA_PIPELINES_ROOT: '/p', DATA_CONTRACTS_ROOT: '/c' }, '/repo')).toEqual({ pipelinesRoot: '/p', contractsRoot: '/c' })
+    expect(rootsOf({}, '/repo')).toEqual({ pipelinesRoot: '/repo/deploy/duckle/console', contractsRoot: '/repo/contracts', repoRoot: '/repo' })
+    expect(rootsOf({ DATA_PIPELINES_ROOT: '/p', DATA_CONTRACTS_ROOT: '/c' }, '/repo')).toEqual({ pipelinesRoot: '/p', contractsRoot: '/c', repoRoot: '/repo' })
   })
   // 回归（生产事故面）：镜像 CMD 是 `pnpm --filter @platform/server start`，pnpm 把 cwd 设为
   // apps/server ⇒ 旧实现（缺省 = process.cwd()）解析出 apps/server/contracts（不存在），

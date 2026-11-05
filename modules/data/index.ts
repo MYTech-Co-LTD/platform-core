@@ -39,6 +39,8 @@ export default defineModule({
       notify: moduleCtx.notify,
       // 用户活跃态（#1333）：管理面标「无活跃所有者」。旧宿主/单测 = undefined ⇒ ownerActive=null
       userStatus: moduleCtx.userStatus,
+      // W3 候选升级链（#1401）：读现行 l1_metrics.yml 的仓根缝；生产不传 ⇒ 模块位置解析（镜像内 /app）
+      repoRoot: (moduleCtx as RouteCtx).repoRoot,
     }
     // register* 与 manifest.yaml 的 api.internal 必须同一提交对齐（装载期双向核对）
     // 个人 Key 管理已上移宿主（issue #894，正典 §1.5）⇒ 本模块不再有 /keys 路由与声明。
