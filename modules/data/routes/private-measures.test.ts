@@ -11,11 +11,16 @@
 //    路由的 warehouse 测试缝（RouteCtx.warehouse）就是为此存在的。
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest'
 import { Pool } from 'pg'
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
+import { parseDocument } from 'yaml'
 import mod from '../index'
 import { applyMigrations, buildTestApp, makeIdentity } from '../test-util'
 import { L1_ORG, upsertL1Metric } from '../domain/metric-store'
 import type { L1MetricDef } from '../domain/metric-store'
 import { listCandidates, setCandidateStatus, upsertCandidate } from '../domain/metric-candidates'
+import type { CandidateInput } from '../domain/metric-candidates'
 
 const dbUrl = process.env.DATABASE_URL
 const describePg = dbUrl ? describe : describe.skip
@@ -56,6 +61,16 @@ const L1_MASKED = l1Def({
   selectSql: `select sum(${SCHEMA}.fct_sales.amount) as value, day, branch, note from ${SCHEMA}.fct_sales`,
   groupBy: 'day, branch, note',
   masks: [{ column: `${SCHEMA}.fct_sales.note`, kind: 'nullify', grantedBy: 'data:precise' }],
+})
+/**
+ * 候选升级链（W3 Task 3）的白名单基底：**裸关系名**（生产 l1_metrics.yml 的形态——
+ * 组装器的 AGG_SIMPLE_RE 只认 `agg(关系.列)` 单点形态，schema 限定的候选关系升不上去）。
+ * id 取三段命名空间（`<源>:<域>:<指标>`）——name 缺席时的派生建议从它取前两段。
+ */
+const L1_PROMO_BASE = l1Def({
+  id: 'w2route:promo:base_sales',
+  title: '候选升级白名单基底',
+  selectSql: 'select sum(fct_sales.amount) as value, day from fct_sales',
 })
 
 function app(org = ORG, scopes: string[] = ['data:query'], userId = 'u-private') {
@@ -128,6 +143,76 @@ function appWithWarehouse(
   )
 }
 
+// ── W3 Task 3：候选 → L1 声明草案（propose-l1）────────────────────────────────────────────
+/** 组装器的现行文件基底（fixture 仓根里的 l1_metrics.yml）：relation 用裸名 fct_sales。 */
+const PROMO_FIXTURE = `version: 1
+
+metrics:
+  # 既有条目（候选升级链的 B11 基底；插入/替换都不得碰它逐字以外的区域）
+  - name: 'w2route:promo:existing_sales'
+    label: 既有条目
+    definition: >-
+      既有条目 = 测试口径（候选升级链路的 B11 白名单基底）。
+    expression: 'sum(fct_sales.amount)'
+    grain: [day]
+    owner: data-platform
+    tier: experimental
+    source: w2route
+    freshness_sla_days: 1
+`
+
+/** fixture 仓根：临时目录 + `dbt/semantics/l1_metrics.yml`（RouteCtx.repoRoot 缝注入；afterAll 统一删）。 */
+const promoRepoRoots: string[] = []
+function makeRepoRoot(yaml: string = PROMO_FIXTURE): string {
+  const dir = mkdtempSync(join(tmpdir(), 'promo-l1-'))
+  mkdirSync(join(dir, 'dbt/semantics'), { recursive: true })
+  writeFileSync(join(dir, 'dbt/semantics/l1_metrics.yml'), yaml)
+  promoRepoRoots.push(dir)
+  return dir
+}
+
+/** propose-l1 端点的 app（data:manage + repoRoot 缝）。 */
+function proposeApp(repoRoot: string, org = ORG, userId = 'u-promote') {
+  const ctx = { pool, warehouse: pool, repoRoot }
+  return buildTestApp(
+    mod,
+    makeIdentity({ orgId: org, scopes: ['data:manage'], userId }),
+    ctx,
+    { id: 1, casdoor_org: org },
+    [],
+  )
+}
+
+function proposeL1(candidateId: number, body: unknown, repoRoot = makeRepoRoot()) {
+  return proposeApp(repoRoot).request(`/metrics/candidates/${candidateId}/propose-l1`, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify(body),
+  })
+}
+
+/** 候选造厂：默认裸关系 fct_sales + dims [day]（可升级档）；over 覆盖任意入参。 */
+function promoCandidate(over: Partial<CandidateInput> = {}) {
+  return upsertCandidate(pool, ORG, {
+    relation: 'fct_sales',
+    expr: { agg: 'avg', column: 'amount', dims: ['day'] },
+    evidence: {
+      source: 'profile', profileRelation: 'staging.fct_sales', dataType: 'numeric',
+      count: 100, nullPercentage: 0, approxUnique: 90,
+    },
+    rationale: '画像证据充分',
+    confidence: 0.83,
+    origin: 'profile',
+    ...over,
+  })
+}
+
+/** 回包草案 piece 里的新条目（解析回读，不按序列化文本断言）。 */
+function entryOf(pieceContent: string, name: string): Record<string, unknown> {
+  const metrics = (parseDocument(pieceContent).toJS() as { metrics: Array<Record<string, unknown>> }).metrics
+  return metrics.find((m) => m.name === name)!
+}
+
 describePg('私有测度 HTTP 面（需要 DATABASE_URL）', () => {
   beforeAll(async () => {
     pool = new Pool({ connectionString: dbUrl })
@@ -139,6 +224,7 @@ describePg('私有测度 HTTP 面（需要 DATABASE_URL）', () => {
     await upsertL1Metric(pool, L1_OK)
     await upsertL1Metric(pool, L1_MISSING)
     await upsertL1Metric(pool, L1_MASKED)
+    await upsertL1Metric(pool, L1_PROMO_BASE)
   })
 
   beforeEach(async () => {
@@ -149,6 +235,7 @@ describePg('私有测度 HTTP 面（需要 DATABASE_URL）', () => {
 
   afterAll(async () => {
     expect(pool.ended, '池在本 afterAll 之前已被 end').toBe(false)
+    for (const dir of promoRepoRoots) rmSync(dir, { recursive: true, force: true })
     await pool.query('delete from data.metric_audit where org = any($1)', [[ORG, OTHER_ORG]]).catch(() => {})
     await pool.query('delete from data.metrics where org = any($1)', [[ORG, OTHER_ORG]]).catch(() => {})
     await pool.query('delete from data.metric_candidates where org = any($1)', [[ORG, OTHER_ORG]]).catch(() => {})
@@ -576,5 +663,191 @@ describePg('私有测度 HTTP 面（需要 DATABASE_URL）', () => {
       expect(res.status).toBe(400)
       expect(await res.json()).toEqual({ error: 'INVALID_BODY' })
     }
+  })
+
+  // ── 候选 → L1 声明草案（W3 Task 3：propose-l1，零写盘）────────────────────────
+  it('★ propose-l1：候选 → 组装器 → 草案回包（零写盘）+ 成功后状态置 promoted', async () => {
+    const repoRoot = makeRepoRoot()
+    const fixturePath = join(repoRoot, 'dbt/semantics/l1_metrics.yml')
+    const before = readFileSync(fixturePath, 'utf8')
+    const cand = await promoCandidate()
+
+    const res = await proposeL1(cand.id, { name: 'w2route:promo:amount_avg', label: '平均销售额' }, repoRoot)
+    expect(res.status).toBe(200)
+    const body = await res.json()
+    expect(body).toMatchObject({ ok: true, candidateId: cand.id, mode: 'create' })
+
+    // 组装映射逐字段钉死（agg/column→expression、dims→grain、缺省档派生）
+    expect(body.pieces).toHaveLength(1)
+    expect(body.pieces[0].path).toBe('dbt/semantics/l1_metrics.yml')
+    expect(entryOf(body.pieces[0].content, 'w2route:promo:amount_avg')).toMatchObject({
+      label: '平均销售额',
+      definition: 'avg(fct_sales.amount) 按 day 分组',       // definition 缺省 = 算式的逐字陈述
+      expression: 'avg(fct_sales.amount)',
+      grain: ['day'],
+      owner: 'u-promote',                                    // owner 缺省 = 调用者（谁提谁负责）
+      tier: 'experimental',                                  // 机器产的草案 = 试验口径
+      source: 'w2route',                                     // 源 = name 命名空间首段
+      freshness_sla_days: 1,                                 // SLA 缺省 = 同关系既有声明的承诺
+    })
+    // gate ⑦ 不旁路：缺 auditSql ⇒ downstream required + validation 注明（不拒——draft PR 带红是预期）
+    expect(body.downstream).toEqual([{
+      kind: 'required',
+      path: 'dbt/tests/w2route/audit_w2route__promo__amount_avg.sql',
+      why: expect.stringContaining('独立复算'),
+    }])
+    expect(JSON.stringify(body.validation)).toContain('auditSql')
+
+    // rationale 带候选血统 + evidence 摘要与 confidence
+    expect(body.rationale).toContain(`候选 #${cand.id}`)
+    expect(body.rationale).toContain('origin=profile')
+    expect(body.rationale).toContain('confidence=0.83')
+    expect(body.rationale).toContain('dataType=numeric')
+
+    // ★ 零写盘：fixture 原文逐字未动（路由只读；写动作只经 apply_pipeline_proposal 工具面）
+    expect(readFileSync(fixturePath, 'utf8')).toBe(before)
+
+    // 候选状态在**调用成功后**置 promoted（组装失败路径见下面几条：状态不动）
+    expect((await listCandidates(pool, ORG)).find((x) => x.id === cand.id)!.status).toBe('promoted')
+  })
+
+  it('count_distinct 候选 ⇒ count(distinct rel.col)；文件里已有同名条目 ⇒ 修改档（definition 必须变）', async () => {
+    const cand = await promoCandidate({ expr: { agg: 'count_distinct', column: 'branch', dims: ['day'] } })
+    const res = await proposeL1(cand.id, { name: 'w2route:promo:branch_uq', label: '去重门店数' })
+    expect(res.status).toBe(200)
+    expect(entryOf((await res.json()).pieces[0].content, 'w2route:promo:branch_uq'))
+      .toMatchObject({ expression: 'count(distinct fct_sales.branch)', grain: ['day'] })
+
+    // ★ 修改档只能对着「文件里已有同名条目」的基底出（本路由零写盘，上一通提案不落盘 ⇒
+    //   重提同名仍是 create）。基底含同名条目 + definition 显式变 ⇒ 组装器走修改模式。
+    const modifyFixture = `version: 1
+
+metrics:
+  - name: 'w2route:promo:branch_uq'
+    label: 去重门店数
+    definition: >-
+      旧定义（修改档测试基底）。
+    expression: 'count(distinct fct_sales.branch)'
+    grain: [day]
+    owner: data-platform
+    tier: experimental
+    source: w2route
+    freshness_sla_days: 1
+`
+    const again = await proposeL1(cand.id, {
+      name: 'w2route:promo:branch_uq', label: '去重门店数', definition: '改口径后的定义',
+    }, makeRepoRoot(modifyFixture))
+    expect(again.status).toBe(200)
+    expect((await again.json()).mode).toBe('modify')
+    expect((await listCandidates(pool, ORG)).find((x) => x.id === cand.id)!.status).toBe('promoted')
+  })
+
+  it('auditSql 随提案输入携带 ⇒ 成第二个 piece（原文不加工；gate ⑦ 的复算由人写）', async () => {
+    const repoRoot = makeRepoRoot()
+    const cand = await promoCandidate()
+    const sql = 'select day, avg(amount) as value from fct_sales group by 1\n'
+    const res = await proposeL1(cand.id, {
+      name: 'w2route:promo:amount_avg2', label: '平均销售额', auditSql: sql,
+    }, repoRoot)
+    expect(res.status).toBe(200)
+    const body = await res.json()
+    expect(body.pieces).toHaveLength(2)
+    expect(body.pieces[1]).toEqual({
+      path: 'dbt/tests/w2route/audit_w2route__promo__amount_avg2.sql',
+      bytes: Buffer.byteLength(sql), content: sql,
+    })
+    expect(body.downstream).toEqual([])
+  })
+
+  it('★ 候选 relation 不在 L1 已用集合 ⇒ 400 RELATION_NOT_PROMOTABLE，状态不动（B11 路由侧先拒）', async () => {
+    const repoRoot = makeRepoRoot()
+    const cand = await promoCandidate({ relation: 'not_a_mart' })
+    const res = await proposeL1(cand.id, { name: 'w2route:promo:x', label: 'x' }, repoRoot)
+    expect(res.status).toBe(400)
+    expect(await res.json()).toEqual({ error: 'RELATION_NOT_PROMOTABLE', relation: 'not_a_mart' })
+    expect((await listCandidates(pool, ORG))[0]!.status).toBe('pending')
+  })
+
+  it('★ name 缺席 ⇒ 400 NAME_REQUIRED + 服务端派生建议（<源>:<域>:<列>_<聚合>，前两段取同关系既有声明）', async () => {
+    const repoRoot = makeRepoRoot()
+    const cand = await promoCandidate()
+    const res = await proposeL1(cand.id, { label: '平均销售额' }, repoRoot)
+    expect(res.status).toBe(400)
+    expect(await res.json()).toEqual({ error: 'NAME_REQUIRED', suggestedName: 'w2route:promo:amount_avg' })
+    // 标识符是人的决策：建议不给自动采用，候选状态不动
+    expect((await listCandidates(pool, ORG))[0]!.status).toBe('pending')
+  })
+
+  it('组装器不过 ⇒ 400 INVALID_DECLARATION（issues 原样透出）+ 状态不动', async () => {
+    const repoRoot = makeRepoRoot()
+    // dims 空 ⇒ grain 空 ⇒ 组装器机检必拒（L1 声明的 grain 必须非空）
+    const cand = await promoCandidate({ expr: { agg: 'avg', column: 'amount', dims: [] } })
+    const res = await proposeL1(cand.id, { name: 'w2route:promo:no_grain', label: 'x' }, repoRoot)
+    expect(res.status).toBe(400)
+    const body = await res.json()
+    expect(body.error).toBe('INVALID_DECLARATION')
+    expect(body.issues.some((i: { path: string }) => i.path === 'grain')).toBe(true)
+    expect((await listCandidates(pool, ORG))[0]!.status).toBe('pending')
+  })
+
+  it('B11 兜底（组装器那道）：DB 白名单有该关系但现行文件没用过 ⇒ 400 INVALID_DECLARATION', async () => {
+    // 文件基底只用了 fct_other ⇒ 路由侧白名单复核放行（DB 里有 fct_sales），组装器的 B11 拒
+    const repoRoot = makeRepoRoot(PROMO_FIXTURE.replaceAll('fct_sales', 'fct_other'))
+    const cand = await promoCandidate()
+    const res = await proposeL1(cand.id, { name: 'w2route:promo:y', label: 'y' }, repoRoot)
+    expect(res.status).toBe(400)
+    const body = await res.json()
+    expect(body.error).toBe('INVALID_DECLARATION')
+    expect(JSON.stringify(body.issues)).toContain('不在现行 l1_metrics.yml 已用的关系集合里')
+    expect((await listCandidates(pool, ORG))[0]!.status).toBe('pending')
+  })
+
+  it('状态机：rejected/created ⇒ 409 CANDIDATE_NOT_PROMOTABLE；不存在 / 别家 org ⇒ 404', async () => {
+    const repoRoot = makeRepoRoot()
+    const rejected = await promoCandidate()
+    await setCandidateStatus(pool, ORG, rejected.id, 'rejected')
+    const r1 = await proposeL1(rejected.id, { name: 'w2route:promo:a', label: 'x' }, repoRoot)
+    expect(r1.status).toBe(409)
+    expect(await r1.json()).toEqual({ error: 'CANDIDATE_NOT_PROMOTABLE', status: 'rejected' })
+
+    const created = await promoCandidate({ expr: { agg: 'count', column: 'branch', dims: ['day'] } })
+    await setCandidateStatus(pool, ORG, created.id, 'created')
+    const r2 = await proposeL1(created.id, { name: 'w2route:promo:b', label: 'x' }, repoRoot)
+    expect(r2.status).toBe(409)
+    expect(await r2.json()).toEqual({ error: 'CANDIDATE_NOT_PROMOTABLE', status: 'created' })
+
+    const missing = await proposeL1(999999999, { name: 'w2route:promo:c', label: 'x' }, repoRoot)
+    expect(missing.status).toBe(404)
+
+    const foreign = await upsertCandidate(pool, OTHER_ORG, {
+      relation: 'fct_sales', expr: { agg: 'avg', column: 'amount' }, origin: 'profile',
+    })
+    const cross = await proposeL1(foreign.id, { name: 'w2route:promo:d', label: 'x' }, repoRoot)
+    expect(cross.status).toBe(404)
+  })
+
+  it('现行语义声明不可读 ⇒ 500 SEMANTICS_UNREADABLE（未知 ≠ 基线为空，不许静默当空文件）', async () => {
+    const cand = await promoCandidate()
+    const res = await proposeL1(cand.id, { name: 'w2route:promo:z', label: 'z' }, join(tmpdir(), 'promo-l1-not-exist'))
+    expect(res.status).toBe(500)
+    expect(await res.json()).toMatchObject({ error: 'SEMANTICS_UNREADABLE' })
+    expect((await listCandidates(pool, ORG))[0]!.status).toBe('pending')
+  })
+
+  it('非法 body ⇒ 400 INVALID_BODY（strict：label 必填、多余键拒收、name 非字符串拒收）', async () => {
+    const repoRoot = makeRepoRoot()
+    const cand = await promoCandidate()
+    for (const bad of [{ name: 'w2route:promo:a' }, { label: 'x', selectSql: 'select 1 as value' }, { name: 1, label: 'x' }]) {
+      const res = await proposeL1(cand.id, bad, repoRoot)
+      expect(res.status).toBe(400)
+      expect(await res.json()).toEqual({ error: 'INVALID_BODY' })
+    }
+  })
+})
+
+describe('propose-l1 的 manifest 声明（不需要数据库）', () => {
+  it('POST /metrics/candidates/:id/propose-l1 声明为 data:manage（集合一致性由 module.test.ts 兜底）', () => {
+    const entry = mod.manifest.api?.internal?.find((e) => e.path === '/metrics/candidates/:id/propose-l1')
+    expect(entry).toMatchObject({ method: 'POST', scope: 'data:manage' })
   })
 })

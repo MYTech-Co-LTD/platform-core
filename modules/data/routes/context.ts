@@ -70,6 +70,12 @@ export interface RouteCtx {
   addresses?: ChannelAddressResolver
   /** 用户活跃态（#1333）：宿主注入（Casdoor 状态）；未注入 = 未知（管理面 ownerActive=null）。 */
   userStatus?: UserStatusResolver
+  /**
+   * 仓根（W3 候选升级链，#1401）：propose-l1 读现行 `dbt/semantics/l1_metrics.yml` 的解析基准。
+   * 缺省 = 按模块位置解析的仓根（镜像内 /app；dbt/ 整树 COPY 进镜像）。**与 execute/warehouse
+   * 同款：只给测试注入，不是模块协议的字段**——生产装配下不传。
+   */
+  repoRoot?: string
 }
 
 /**
