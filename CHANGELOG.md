@@ -15,6 +15,10 @@
 - 【修复】dbt: 净销售额补别名 net_sales/retail:net_sales（需求台账 alias_gap 首次闭环） ([#1428](https://github.com/MYTech-Co-LTD/platform-core/pull/1428), [56b40c4](https://github.com/MYTech-Co-LTD/platform-core/commit/56b40c4845a08d41cf054f76b20fca0463dacba0))
 
 
+## [0.272.5](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.272.4...v0.272.5) - 2026-11-05
+- 【修复】dbt: 净销售额补别名 net_sales/retail:net_sales（需求台账 alias_gap 首次闭环） ([#1428](https://github.com/MYTech-Co-LTD/platform-core/pull/1428), [56b40c4](https://github.com/MYTech-Co-LTD/platform-core/commit/56b40c4845a08d41cf054f76b20fca0463dacba0))
+
+
 ## [0.272.4](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.272.3...v0.272.4) - 2026-11-05
 - 【修复】data: 私有测度支持 bizday 日期过滤（编译产出 date_range 参数 + 回填迁移）（#1417） ([#1424](https://github.com/MYTech-Co-LTD/platform-core/pull/1424), [67bd5f9](https://github.com/MYTech-Co-LTD/platform-core/commit/67bd5f900c78487277a287e46681fcd8a4d8cf18))
 
