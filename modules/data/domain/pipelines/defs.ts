@@ -39,7 +39,16 @@ export const RUN_ID_RE = /^[A-Za-z0-9][A-Za-z0-9._-]{0,199}$/
  */
 export const REPO_ROOT = join(dirname(fileURLToPath(import.meta.url)), '..', '..', '..', '..')
 
-export interface PipelineRoots { pipelinesRoot: string; contractsRoot: string }
+export interface PipelineRoots {
+  pipelinesRoot: string
+  contractsRoot: string
+  /**
+   * 仓根（dbt/ 语义声明的解析基准——`apply` 重校验以 `<repoRoot>/dbt/semantics/l1_metrics.yml`
+   * 为比对基准，W3）。缺省可省（消费方回落模块位置解析的仓根）；`rootsOf` 恒给出（= baseDir），
+   * 测试注入夹具目录即从这条缝进。
+   */
+  repoRoot?: string
+}
 
 /**
  * env 缝（B9：两键必须在根 .env.example 声明）。
@@ -53,6 +62,7 @@ export function rootsOf(
   return {
     pipelinesRoot: env.DATA_PIPELINES_ROOT?.trim() || join(baseDir, 'deploy/duckle/console'),
     contractsRoot: env.DATA_CONTRACTS_ROOT?.trim() || join(baseDir, 'contracts'),
+    repoRoot: baseDir,
   }
 }
 

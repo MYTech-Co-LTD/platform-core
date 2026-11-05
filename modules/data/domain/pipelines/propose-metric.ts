@@ -47,8 +47,11 @@ import { SemanticCompileError, parseL1Select } from '../semantic-compiler'
 import type { Issue } from './validate-types'
 import type { PipelineDeps, PipelineImpl } from './types'
 
-/** 现行语义声明的仓内相对路径（piece 1 的落点；impl 侧只读它）。 */
+/** 现行语义声明的仓内相对路径（piece 1 的落点；impl 侧只读它；apply 白名单同源）。 */
 export const SEMANTICS_YAML_REL = 'dbt/semantics/l1_metrics.yml'
+
+/** 对账 singular test 的目录前缀（piece 2 的落点；apply 白名单同源，不抄第二份字面量）。 */
+export const DBT_TESTS_DIR = 'dbt/tests'
 
 /** tier 闭集（l1_metrics.yml 头注的字段约定；tier 是标记不是强制，但拼错等于没标）。 */
 const TIERS = ['certified', 'experimental'] as const
@@ -241,21 +244,38 @@ const serializeEntry = (f: EntryFields, carriedPairs: YamlPairLike[]): string =>
   return indentEntry(entryDoc.toString({ lineWidth: 100 }))
 }
 
-// ── 组装器本体 ──────────────────────────────────────────────────────────────────────────────
+// ── 条目机检（compose 与 apply 重校验共用的同一把尺；W3 Task 2 抽出）────────────────────────
+/** 归一化产物：机检 issues + 反解出的 relation + 归一后的字段值（EntryFields / apply 重校验共用）。 */
+export interface MetricDeclarationCheck {
+  issues: Issue[]
+  /** expression/ratio 反解出的 relation（'' = 无有效 relation——该档缺输入或形状非法，已记 issue）。 */
+  relation: string
+  /** 归一后的 ratio（null = 不走 ratio；ratio 在场但反解失败时也为 null 且已记 issue）。 */
+  ratio: { numerator: string; denominator: string } | null
+  /** 归一后的托管字段值（strOf 去空白后；'' = 缺失/非法，已记 issue）。 */
+  fields: {
+    name: string
+    label: string
+    definition: string
+    expression: string          // '' = 不走 expression（用 ratio / 或两者都缺）
+    grain: string[]
+    owner: string
+    tier: string
+    source: string
+    freshnessSlaDays: unknown
+    entity: string              // '' = 未声明（entity 的声明性检查在对现行文件的越界机检里）
+    synonyms: string[] | null   // null = 不落该键
+  }
+}
+
 /**
- * 组装 L1 声明草案（**纯函数**）。`roots` 按 plan 的签名保留形参（候选升级链 Task 3 传真实
- * roots 以对齐其它 propose_*；本函数的全部事实来自注入的 `currentYaml`，不碰 fs）。
- * 拒绝（ok:false）只发生在：输入形状非法 / 现行 YAML 不可解析或无 metrics: 段 / B11 relation
- * 越界 / 同名重提 definition 未变 / entity 未声明。**缺 auditSql 不拒**（draft PR 允许带红，
- * gate ⑦ 在合并前拦）。
+ * 单条目机检（原 compose 的 A 段，逐字抽出）：name/label/definition/expression|ratio/grain/owner/
+ * tier/source/sla/synonyms 的形状判据全部来自本文件顶部引用的既有尺（check-data-models 导出 +
+ * parseL1Select + METRIC_SOURCE_RE）——apply 重校验（semanticsYamlPieceIssues）调它，**不抄第二份**。
+ * **不含** auditSql（compose 专属输入）与对现行文件的越界检查（见 {@link metricContextIssues}——
+ * 那需要现行文件上下文）。
  */
-export function composeMetricDeclaration(
-  roots: PipelineRoots,
-  input: MetricDeclarationInput,
-  currentYaml: string,
-): MetricComposeResult {
-  void roots
-  // ── A. 逐字段机检（草案内路径 = 字段名，同 get_pipeline 的 validation 形态）──────────────
+export function checkMetricDeclaration(input: MetricDeclarationInput): MetricDeclarationCheck {
   const issues: Issue[] = []
   const name = strOf(input.name)
   if (name === '') issues.push({ path: 'name', message: '必填（非空白字符串）' })
@@ -351,6 +371,71 @@ export function composeMetricDeclaration(
   }
   const entity = strOf(input.entity)
 
+  return {
+    issues, relation, ratio,
+    fields: {
+      name, label, definition, expression: hasExpr ? exprRaw : '',
+      grain, owner, tier, source, freshnessSlaDays: input.freshnessSlaDays, entity, synonyms,
+    },
+  }
+}
+
+/** 顶层 entities: 里声明的实体名集合（entity 入参的比对基准）。 */
+const entityNamesOf = (doc: Document): Set<string> => {
+  const entities = asMap(doc.get('entities', true))
+  const out = new Set<string>()
+  if (entities === null) return out
+  for (const pair of entities.items) {
+    const k = keyNameOf(pair)
+    if (k !== '') out.add(k)
+  }
+  return out
+}
+
+/**
+ * 对现行文件的越界机检（B11 relation 白名单 + entity 必须已声明）——compose 与 apply 重校验共用。
+ * `viaExpression` 只决定 issue 的 path 归到 expression 还是 ratio；白名单/实体集由调用方按
+ * 「现行文件」算出（apply 侧同样取**现行**——piece 自带条目不能给自己授权新 relation）。
+ */
+export function metricContextIssues(
+  shape: { relation: string; viaExpression: boolean; entity: string },
+  ctx: { allowedRelations: ReadonlySet<string>; declaredEntities: ReadonlySet<string> },
+): Issue[] {
+  const issues: Issue[] = []
+  if (shape.relation !== '' && !ctx.allowedRelations.has(shape.relation)) {
+    issues.push({
+      path: shape.viaExpression ? 'expression' : 'ratio',
+      message: `relation \`${shape.relation}\` 不在现行 l1_metrics.yml 已用的关系集合里（B11：口径只引用 L1 已用 relation 的列）。现有：${[...ctx.allowedRelations].sort().join(', ') || '（空）'}`,
+    })
+  }
+  if (shape.entity !== '' && !ctx.declaredEntities.has(shape.entity)) {
+    issues.push({ path: 'entity', message: `实体 \`${shape.entity}\` 未在顶层 entities: 声明——本工具的增量限定在 metrics[]（不改 entities:），先在文件里声明实体或去掉 entity 入参` })
+  }
+  return issues
+}
+
+// ── 组装器本体 ──────────────────────────────────────────────────────────────────────────────
+/**
+ * 组装 L1 声明草案（**纯函数**）。`roots` 按 plan 的签名保留形参（候选升级链 Task 3 传真实
+ * roots 以对齐其它 propose_*；本函数的全部事实来自注入的 `currentYaml`，不碰 fs）。
+ * 拒绝（ok:false）只发生在：输入形状非法 / 现行 YAML 不可解析或无 metrics: 段 / B11 relation
+ * 越界 / 同名重提 definition 未变 / entity 未声明。**缺 auditSql 不拒**（draft PR 允许带红，
+ * gate ⑦ 在合并前拦）。
+ */
+export function composeMetricDeclaration(
+  roots: PipelineRoots,
+  input: MetricDeclarationInput,
+  currentYaml: string,
+): MetricComposeResult {
+  void roots
+  // ── A. 逐字段机检 + 归一化（同一把尺已抽出为 checkMetricDeclaration——apply 重校验复用，
+  //      W3 Task 2，此处不再第二遍）────────────────────────────────────────────────────────
+  const shape = checkMetricDeclaration(input)
+  const issues: Issue[] = [...shape.issues]
+  const { name, definition, expression: exprRaw } = shape.fields
+  const ratio = shape.ratio
+  const hasExpr = exprRaw !== ''
+
   let auditSql: string | null = null
   if (input.auditSql !== undefined && input.auditSql !== null) {
     if (typeof input.auditSql === 'string' && input.auditSql.trim() !== '') auditSql = input.auditSql
@@ -399,39 +484,24 @@ export function composeMetricDeclaration(
   if (existing !== null && definition === scalarText(existing.item, 'definition')) {
     issues.push({ path: 'definition', message: '与现行声明逐字相同——同名重提必须改变口径定义（防无意义重提）' })
   }
-  if (relation !== '') {
-    const allowed = l1RelationsOf(seq.items)
-    if (!allowed.has(relation)) {
-      issues.push({
-        path: hasExpr ? 'expression' : 'ratio',
-        message: `relation \`${relation}\` 不在现行 l1_metrics.yml 已用的关系集合里（B11：口径只引用 L1 已用 relation 的列）。现有：${[...allowed].sort().join(', ') || '（空）'}`,
-      })
-    }
-  }
-  if (entity !== '') {
-    const entities = asMap(doc.get('entities', true))
-    const declared = entities !== null && entities.items.some((p) => keyNameOf(p) === entity)
-    if (!declared) {
-      issues.push({ path: 'entity', message: `实体 \`${entity}\` 未在顶层 entities: 声明——本工具的增量限定在 metrics[]（不改 entities:），先在文件里声明实体或去掉 entity 入参` })
-    }
-  }
+  issues.push(...metricContextIssues(
+    { relation: shape.relation, viaExpression: hasExpr, entity: shape.fields.entity },
+    { allowedRelations: l1RelationsOf(seq.items), declaredEntities: entityNamesOf(doc) },
+  ))
   if (issues.length > 0) return { ok: false, issues }
 
   // ── D. 组条目文本（修改模式：输入不管的键从原条目带过）──────────────────────────────────
   const fields: EntryFields = {
-    name, label, definition,
-    expression: hasExpr ? exprRaw : '',
-    ratio,
-    grain, owner, tier, source,
-    freshnessSlaDays: input.freshnessSlaDays as number,
-    entity, synonyms,
+    ...shape.fields,
+    ratio: shape.ratio,
+    freshnessSlaDays: shape.fields.freshnessSlaDays as number,
   }
   const carriedPairs: YamlPairLike[] = []
   if (existing !== null) {
     // entity / synonyms 只在**输入给了**时才算托管键（没给 ⇒ 从原条目带过，防重写丢别名/实体绑定）
     const managed = new Set<string>(MANAGED_KEYS)
-    if (entity === '') managed.delete('entity')
-    if (synonyms === null) managed.delete('synonyms')
+    if (shape.fields.entity === '') managed.delete('entity')
+    if (shape.fields.synonyms === null) managed.delete('synonyms')
     for (const pair of existing.item.items) {
       const k = keyNameOf(pair)
       if (k === '' || managed.has(k)) continue
@@ -526,13 +596,13 @@ export function composeMetricDeclaration(
   if (auditSql === null) {
     validation.push({ path: 'auditSql', message: '未提供——PR 合并前 gate ⑦（audit test）会红，draft PR 带红是预期' })
     downstream.push({
-      path: `dbt/tests/${auditDomain}/${metricToAuditFileName(name)}`,
+      path: `${DBT_TESTS_DIR}/${auditDomain}/${metricToAuditFileName(name)}`,
       kind: 'required',
       why: '对账 singular test（gate ⑦）：每个声明指标必须有一条**独立复算**（layered §7 硬约束 7）；本工具不代写（生成空壳 = 假绿），复算 SQL 请人工编写后随 PR 附上',
     })
   } else {
     pieces.push({
-      path: `dbt/tests/${auditDomain}/${metricToAuditFileName(name)}`,
+      path: `${DBT_TESTS_DIR}/${auditDomain}/${metricToAuditFileName(name)}`,
       bytes: Buffer.byteLength(auditSql, 'utf8'),
       content: auditSql,
     })
@@ -541,11 +611,117 @@ export function composeMetricDeclaration(
   return { ok: true, mode, title, branch: `proposal/${slugOf(title)}`, pieces, downstream, validation }
 }
 
+// ── apply 重校验（W3 Task 2）：YAML piece 的 diff 限定 + 变更集同尺机检 ─────────────────────
+/** 顶层键清单（metrics[] 之外的键逐字比对用）。 */
+const topKeysOf = (doc: Document): string[] => {
+  const m = asMap(doc.contents)
+  return m === null ? [] : m.items.map((p) => keyNameOf(p)).filter((k) => k !== '')
+}
+
+/** metrics[] 的 name 索引（同名/缺名/非映射条目都记 issue——配对比对的底座必须干净）。 */
+const metricsByName = (seq: YamlCollectionLike, into: Issue[]): Map<string, YamlCollectionLike> => {
+  const out = new Map<string, YamlCollectionLike>()
+  for (const item of seq.items) {
+    const map = asMap(item)
+    if (map === null) { into.push({ path: 'metrics', message: 'metrics[] 条目必须是映射（name 键对齐比对的底座）' }); continue }
+    const n = scalarText(map, 'name')
+    if (n === '') { into.push({ path: 'metrics', message: 'metrics[] 条目缺 name（非空字符串）——按 name 配对比对的底座' }); continue }
+    if (out.has(n)) into.push({ path: 'metrics', message: `同名条目 \`${n}\` 重复（同名两处 = 口径分叉，gate ⑥-b 同罪）——先人工归一` })
+    else out.set(n, map)
+  }
+  return out
+}
+
+/** 条目节点 → 组装输入（YAML 键名 → MetricDeclarationInput；形状机检交给同一套尺）。 */
+const inputOfEntry = (map: YamlCollectionLike): MetricDeclarationInput => {
+  // toJSON() 可脱离 Document 独立取 JS 值（toJS() 要 document 参数——实测 TypeError）
+  const e = (map as unknown as { toJSON(): unknown }).toJSON() as Record<string, unknown>
+  return {
+    name: e.name, label: e.label, definition: e.definition,
+    expression: e.expression ?? '', ratio: e.ratio,
+    grain: e.grain ?? [], owner: e.owner, tier: e.tier, source: e.source,
+    freshnessSlaDays: e.freshness_sla_days, entity: e.entity, synonyms: e.synonyms,
+  }
+}
+
+/**
+ * apply 重校验的 YAML 档（纯函数，零网络）。全量文件 piece 与现行文件的 diff 必须**只**落在
+ * metrics[]，变更集（新增 ∪ 修改）逐条过 {@link checkMetricDeclaration} + {@link metricContextIssues}
+ * ——与 propose 完全同一把尺。要点：
+ *   · 未触碰条目**不做**形状检查（现行文件里的复合表达是人工维护的既有事实，不是本通路的产出面；
+ *     一旦触碰（修改）就要过同一套机检 ⇒ 复合表达条目在本通路改不了，走人工编辑）；
+ *   · B11 relation 白名单的基准是**现行文件**的 metrics[]（不是 piece 自带的）——新增条目不能
+ *     通过「自带一条用新 relation 的条目」给自己授权；
+ *   · 现行条目一律不得删除（本通路只收新增/修改；删除声明走人工编辑）。
+ * 任何失配由调用方（apply.ts）落 refused/invalid_draft。
+ */
+export function semanticsYamlPieceIssues(content: string, currentYaml: string): Issue[] {
+  const doc = parseDocument(content)
+  if (doc.errors.length > 0) {
+    return [{ path: 'content', message: `不是合法 YAML：${String(doc.errors[0])}` }]
+  }
+  if (doc.get('version', true) === undefined) {
+    return [{ path: 'version', message: '顶层缺 version——全量文件 piece 必须保持现行文件的顶层结构（version/metrics）' }]
+  }
+  const seq = asSeq(doc.get('metrics', true))
+  if (seq === null) {
+    return [{ path: 'metrics', message: '顶层缺 metrics:（或不是列表）——全量文件 piece 必须含 metrics[]' }]
+  }
+  const cur = parseDocument(currentYaml)
+  const curSeq = asSeq(cur.get('metrics', true))
+  if (cur.errors.length > 0 || curSeq === null) {
+    return [{ path: 'currentYaml', message: `现行 ${SEMANTICS_YAML_REL} 不可解析（或缺 metrics:）——无法比对，拒绝（fail-closed）` }]
+  }
+
+  const issues: Issue[] = []
+
+  // ── ① 顶层键：metrics[] 之外不增不删、值深等（「逐字相等」按解析后的值面比对）─────────────
+  const newKeys = topKeysOf(doc)
+  const curKeys = topKeysOf(cur)
+  const newJs = (doc.toJS() ?? {}) as Record<string, unknown>
+  const curJs = (cur.toJS() ?? {}) as Record<string, unknown>
+  for (const k of newKeys) {
+    if (k !== 'metrics' && !curKeys.includes(k)) issues.push({ path: k, message: '顶层键不在现行文件里——增量限定在 metrics[]（不得新增顶层键）' })
+  }
+  for (const k of curKeys) {
+    if (k !== 'metrics' && !newKeys.includes(k)) issues.push({ path: k, message: '删掉了现行顶层键——增量限定在 metrics[]（其余顶层键逐字保留）' })
+  }
+  for (const k of curKeys) {
+    if (k === 'metrics' || !newKeys.includes(k)) continue
+    if (JSON.stringify(newJs[k]) !== JSON.stringify(curJs[k])) {
+      issues.push({ path: k, message: `非 metrics[] 的顶层键 \`${k}\` 有改动——本通路的增量限定在 metrics[]` })
+    }
+  }
+
+  // ── ② metrics[] 按 name 配对：不删现行条目；变更集 = 新增 ∪ 修改，逐条同尺机检 ─────────────
+  const curByName = metricsByName(curSeq, issues)
+  const newByName = metricsByName(seq, issues)
+  for (const n of curByName.keys()) {
+    if (!newByName.has(n)) issues.push({ path: 'metrics', message: `删掉了现行条目 \`${n}\`——本通路只收新增/修改（删除声明走人工编辑）` })
+  }
+  const textOf = (m: YamlCollectionLike): string => JSON.stringify((m as unknown as { toJSON(): unknown }).toJSON())
+  const allowedRelations = l1RelationsOf(curSeq.items)   // 基准 = 现行文件（不是 piece 自带的）
+  const declaredEntities = entityNamesOf(doc)            // entities: 不许动（①已挡）⇒ 取 piece 侧即可
+  for (const [n, map] of newByName) {
+    const curMap = curByName.get(n)
+    if (curMap !== undefined && textOf(map) === textOf(curMap)) continue   // 未触碰：不做形状检查
+    const shape = checkMetricDeclaration(inputOfEntry(map))
+    issues.push(...[...shape.issues, ...metricContextIssues(
+      { relation: shape.relation, viaExpression: shape.fields.expression !== '', entity: shape.fields.entity },
+      { allowedRelations, declaredEntities },
+    )].map((x) => ({ path: `metrics[${n}] ${x.path}`, message: x.message })))
+  }
+  return issues
+}
+
 // ── impl（路由片注册 propose_metric_declaration）────────────────────────────────────────────
-/** 只读现行语义声明（生产 = 仓根按模块位置解析，镜像内 /app；dbt/ 整树 COPY 进镜像）。 */
-export const readCurrentSemanticsYaml = (): string | null => {
+/**
+ * 只读现行语义声明（生产 = 仓根按模块位置解析，镜像内 /app；dbt/ 整树 COPY 进镜像）。
+ * `baseDir` 是测试注入缝（apply 重校验注入夹具目录；缺省 REPO_ROOT——与 Task 1 行为一致）。
+ */
+export const readCurrentSemanticsYaml = (baseDir: string = REPO_ROOT): string | null => {
   try {
-    return readFileSync(join(REPO_ROOT, SEMANTICS_YAML_REL), 'utf8')
+    return readFileSync(join(baseDir, SEMANTICS_YAML_REL), 'utf8')
   } catch {
     return null
   }
