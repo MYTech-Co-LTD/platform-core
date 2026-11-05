@@ -11,7 +11,8 @@
 | 信号源 | 30 天实际数据 | 可用性判断 |
 |---|---|---|
 | `data.query_audit`（平台侧） | ok 5802；`bad_param` 68（14 指标）、`no_detail_binding` 14（11 指标）、`metric_not_declared` 10（9 指标）、`unknown_tool` 1 | **主信号**：直接给出「用户点了哪个指标/要拆什么」 |
-| `askdata_conv`（OO 全对话） | 566 行 / **9 个会话** | 可挖 `metric_hunt`（口径寻路）；同一 `(session_id, seq)` 有重复行需去重 |
+| `askdata_trace`（OO 全对话，**活流**） | 实测持续写入（`export-transcript.py` 的默认 STREAM） | 可挖 `metric_hunt`（口径寻路） |
+| ~~`askdata_conv`~~（冻结流） | 566 行，**2026-10-16 后无写入** | **不再读取**（2026-11-05 订正：挖掘器默认改读 `askdata_trace`，可用 `ASK_DEMAND_CONV_STREAM` 覆盖） |
 | `askdata_stuck`（OO 撞墙） | 23742 行但只来自约 9 个会话，单会话 11717 行；`rule_ver=4`（#963 修后）仅 61 行/3 会话 | **不可作独立挖掘输入**（旧版重复累积、rule_ver 2/3/4 混版）；只作**证据附注**，按 `(session_id, seq, rule_ver)` 去重取最新 |
 | `data.verified_questions`（W1） | 16 verified / 26 rejected / 3 candidate | 答错=口径问题，不全是需求；本阶段**不接入**（接入留待样本增加后评估） |
 
@@ -25,7 +26,7 @@
 
 | 谁回答 | 问题 | 数据源 |
 |---|---|---|
-| **本设计（Phase 2）** | 「用户**想要什么**而词表没有」 | `query_audit` 拒绝类 + `askdata_conv` 寻路 |
+| **本设计（Phase 2）** | 「用户**想要什么**而词表没有」 | `query_audit` 拒绝类 + `askdata_trace` 寻路 |
 | #741 撞墙回路 | 「bot **为什么**问不出来」（工具面/指令面/回包面） | `askdata_stuck` / `askdata_trace` |
 
 `bad_param`、`tool_error`、`warehouse_error`、`mutating_disabled` **不进需求清单**——它们指向工具面或基础设施，归 #741。
@@ -126,7 +127,7 @@ create table if not exists data.demand_mining_state (
 | 源 | 读法 | 水位 |
 |---|---|---|
 | `data.query_audit` | `where id > last_cursor order by id` | `demand_mining_state.source='query_audit'`，cursor = 最大 id |
-| `askdata_conv` | OO **组织级** `/api/{org}/_search`（流级 `_search` 该版本没有），SQL 指定流名；**JSON 键全小写**（`session_id`/`tool_args`） | `source='askdata_conv'`，cursor = 本批最大 `_timestamp`（**排他**：下轮 SQL 用 `> cursor`，`== max` 的边界组不重读）。**不要写 `max+1`**：那会额外排除 `max` 与 `max+1` 两档、制造 1 微秒盲区，却不比写 `max` 多得任何收益 |
+| `askdata_trace`（原 `askdata_conv` 已冻结） | OO **组织级** `/api/{org}/_search`（流级 `_search` 该版本没有），SQL 指定流名；**JSON 键全小写**（`session_id`/`tool_args`） | `source='askdata_conv'`，cursor = 本批最大 `_timestamp`（**排他**：下轮 SQL 用 `> cursor`，`== max` 的边界组不重读）。**不要写 `max+1`**：那会额外排除 `max` 与 `max+1` 两档、制造 1 微秒盲区，却不比写 `max` 多得任何收益 |
 | `askdata_stuck` | 同上读法，按 `(session_id, seq, rule_ver)` 去重**取最新 rule_ver** | 不推进独立水位（按会话窗口查询即可） |
 
 - **不去重 / 不归并**（2026-11-05 Task 2 Critical 订正，**旧文「先按 `(session_id, seq)` 归并」已作废**）：同一 `seq` 下有多条消息 part（thinking/text/tool_call），调用行与结果行分属不同 `seq`；按 `(session_id, seq)` 归并会把调用行整个吃掉（`metric_hunt` 结构性恒 0）。重复行无副作用——分组用的是 `Set<metricId>`，相同 `metricId` 自然只算一次。

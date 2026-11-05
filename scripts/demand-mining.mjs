@@ -10,6 +10,8 @@ import { readCursor, upsertDemand, writeCursor } from '../modules/data/domain/de
 import { loadPlatformCatalog } from '../modules/data/domain/metric-store.ts'
 
 const DAY_US = 86_400_000_000
+// 对话流：历史 `askdata_conv` 已停更（2026-10-16 起无写入），实际活的是 `askdata_trace`。
+const CONV_STREAM = process.env.ASK_DEMAND_CONV_STREAM ?? 'askdata_trace'
 /** OO `_search` 单页条数（同 verify-ingest）。 */
 const PAGE_SIZE = 1000
 /** 翻页护栏：超过即**抛错**（拒绝静默截断；也防 OO 忽略 `from` 时无限循环）。 */
@@ -30,8 +32,10 @@ const authHeader = (raw) => {
  * 组织级 OO `_search`（流级 `_search` 在该版本 404）。返回**全部**命中（内部翻页）。
  *
  * - 时间参数是**微秒 epoch**；`start_time` 不能为 0（首轮用 7 天回看窗口兜底）。
- * - 排序字段按流区分：`askdata_verified` 的键形是 `sessionid`，但 `askdata_conv` /
+ * - 排序字段按流区分：`askdata_verified` 的键形是 `sessionid`，但 `askdata_trace` /
  *   `askdata_stuck` 是 `session_id`（生产实测：写 `sessionid` ⇒ 400 unknown field）。
+ * - **`askdata_conv` 是冻结流**（2026-10-16 后再无写入，566 行停更）；活的对话流是 `askdata_trace`
+ *   （`export-transcript.py` 的默认 STREAM）。故 conv 侧默认读 trace，可用 `ASK_DEMAND_CONV_STREAM` 覆盖。
  * - `exclusive`：游标语义为「不含」（SQL 用 `>`）；首轮（cursor=0）仍用 `>=`。
  */
 function ooSearch(opts) {
@@ -99,7 +103,7 @@ async function main() {
         )
         return rows
       },
-      readConv: (_o, sinceUs) => oo('askdata_conv', sinceUs, endUs, { exclusive: true }),
+      readConv: (_o, sinceUs) => oo(CONV_STREAM, sinceUs, endUs, { exclusive: true }),
       readStuck: async (_o, sessions) => {
         const want = new Set(sessions)
         if (want.size === 0) return new Map()
