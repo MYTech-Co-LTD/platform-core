@@ -66,8 +66,11 @@ function ooSearch(opts) {
       hits.push(...batch)
       from += batch.length
       pageNo += 1
-      if (batch.length < PAGE_SIZE) break
-      if (typeof data.total === 'number' && from >= data.total) break
+      // `total` 权威，**不能**先看 `batch.length < PAGE_SIZE`：OO 可能把 `size` 限到小于
+      // PAGE_SIZE，那样首页就退出、而 `total` 再大也不翻 ⇒ 静默丢数据。无 `total` 时才退回
+      // 按本页条数判断（拿不到权威计数，至少不无限翻）。
+      const done = typeof data.total === 'number' ? from >= data.total : batch.length < PAGE_SIZE
+      if (done) break
     }
     return hits
   }

@@ -31,10 +31,11 @@ export interface MineSummary {
  * 水位语义：**每个源在自己的行全部 upsert 成功后立刻推进**，互不拖累——
  * OO 连续不可用时，审计侧已落库的计数不会被下轮重读重算。
  *
- * 两个源都取「本批实际读到的行」推导水位，且 conv 用**排他游标**（`> cursor`，写 max+1）：
- * 边界组不再重读，因此不会每轮给同一个 `(session, 窗口)` 重复 +1 occurrences。
- * 代价是**同微秒（含 +1µs 空隙里）迟到的行会漏**——OO 的 `_timestamp` 是入库时间，
- * 同一批入库可能共享微秒；这里选择「不重复计数」而不是「绝不漏一行」。
+ * 两个源都取「本批实际读到的行」推导水位，且 conv 用**排他游标**（`> cursor`，游标写本批 max）：
+ * 边界组（`_timestamp == max`）不再重读，因此不会每轮给同一个 `(session, 窗口)` 重复 +1 occurrences。
+ * 代价是**同微秒迟到的行会漏**——OO 的 `_timestamp` 是入库时间，同一批入库可能共享微秒；
+ * 这里选择「不重复计数」而不是「绝不漏一行」。**不要写 `max+1`**：那会额外排除 `max` 与 `max+1`
+ * 两档，凭空制造 1 微秒盲区，却不再带来任何额外收益。
  */
 export async function mineOnce(io: MineIo, org: string, nowUs: number): Promise<MineSummary> {
   const catalog = await io.catalogIds(org)
@@ -74,9 +75,9 @@ export async function mineOnce(io: MineIo, org: string, nowUs: number): Promise<
     await io.upsert(org, draft)
     summary.hunt += 1
   }
-  // 排他游标：读侧用 `_timestamp > cursor`，这里写 max+1 —— 边界组不再重读（见函数头注释）。
-  const maxConv = conv.reduce((m, r) => Math.max(m, Number((r as { _timestamp?: number })._timestamp ?? 0)), 0)
-  summary.cursorConv = maxConv > 0 ? maxConv + 1 : summary.cursorConv
+  // 排他游标：读侧用 `_timestamp > cursor`，这里写本批 max —— 边界组不再重读（见函数头注释）。
+  const maxConv = conv.reduce((m, r) => Math.max(m, r._timestamp), 0)
+  summary.cursorConv = maxConv > 0 ? maxConv : summary.cursorConv
 
   await io.writeCursor(org, 'askdata_conv', summary.cursorConv)
   return summary

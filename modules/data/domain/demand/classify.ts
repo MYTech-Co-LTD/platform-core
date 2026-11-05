@@ -3,7 +3,16 @@
 import type { DemandKind } from './store'
 
 export interface AuditRow { id: number | string; metric_id: string; reason: string | null; params: unknown }
-export interface ConvRow { session_id: string; seq: number | string; tool_name: string | null; tool_args: string | null }
+/**
+ * OO 会话命中的判定所需字段 + **水位字段**。
+ * `_timestamp` 是必需字段：水位由「本批读到的行的最大 `_timestamp`」推导，读者若不带它，
+ * 水位恒不前进 ⇒ 每轮重读、`occurrences` 无限累加。把它写进契约，让漏实现者在类型检查期暴露。
+ */
+export interface ConvRow {
+  session_id: string; seq: number | string
+  tool_name: string | null; tool_args: string | null
+  _timestamp: number
+}
 export interface DemandDraft {
   kind: DemandKind; target: string
   detail: Record<string, unknown>; evidence: unknown[]

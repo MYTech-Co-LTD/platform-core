@@ -126,7 +126,7 @@ create table if not exists data.demand_mining_state (
 | 源 | 读法 | 水位 |
 |---|---|---|
 | `data.query_audit` | `where id > last_cursor order by id` | `demand_mining_state.source='query_audit'`，cursor = 最大 id |
-| `askdata_conv` | OO **组织级** `/api/{org}/_search`（流级 `_search` 该版本没有），SQL 指定流名；**JSON 键全小写**（`session_id`/`tool_args`） | `source='askdata_conv'`，cursor = 本批最大 `_timestamp` + 1（**排他**：下轮 SQL 用 `> cursor`，边界组不重读） |
+| `askdata_conv` | OO **组织级** `/api/{org}/_search`（流级 `_search` 该版本没有），SQL 指定流名；**JSON 键全小写**（`session_id`/`tool_args`） | `source='askdata_conv'`，cursor = 本批最大 `_timestamp`（**排他**：下轮 SQL 用 `> cursor`，`== max` 的边界组不重读）。**不要写 `max+1`**：那会额外排除 `max` 与 `max+1` 两档、制造 1 微秒盲区，却不比写 `max` 多得任何收益 |
 | `askdata_stuck` | 同上读法，按 `(session_id, seq, rule_ver)` 去重**取最新 rule_ver** | 不推进独立水位（按会话窗口查询即可） |
 
 - **不去重 / 不归并**（2026-11-05 Task 2 Critical 订正，**旧文「先按 `(session_id, seq)` 归并」已作废**）：同一 `seq` 下有多条消息 part（thinking/text/tool_call），调用行与结果行分属不同 `seq`；按 `(session_id, seq)` 归并会把调用行整个吃掉（`metric_hunt` 结构性恒 0）。重复行无副作用——分组用的是 `Set<metricId>`，相同 `metricId` 自然只算一次。

@@ -44,6 +44,7 @@ describe('huntFromConvs', () => {
   const row = (session: string, seq: number, metricId: string, from: string, to: string) => ({
     session_id: session, seq, tool_name: 'query_data',
     tool_args: JSON.stringify({ metricId, args: { bizday: { from, to } } }),
+    _timestamp: 0,
   })
 
   it('同会话同时间窗 ≥2 个 metricId ⇒ metric_hunt', () => {
@@ -66,7 +67,7 @@ describe('huntFromConvs', () => {
     // 生产形状：同一 seq 内 thinking / text / tool_call 多个 part，thinking 的 _timestamp 更早，
     // 调用所在 seq 的第一个 part 恒为 thinking。按 seq 去重放在解析之前会把调用全部吃掉。
     const out = huntFromConvs([
-      { session_id: 's1', seq: 1, tool_name: null, tool_args: null },
+      { session_id: 's1', seq: 1, tool_name: null, tool_args: null, _timestamp: 0 },
       row('s1', 1, 'lemeng:retail:net_sales', '2026-10-10', '2026-10-16'),
       row('s1', 2, 'lemeng:retail:sale_money', '2026-10-10', '2026-10-16'),
     ], new Map())

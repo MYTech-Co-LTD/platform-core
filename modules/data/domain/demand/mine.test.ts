@@ -3,8 +3,8 @@ import { mineOnce } from './mine'
 import type { MineIo } from './mine'
 import type { ConvRow } from './classify'
 
-/** OO 命中带 `_timestamp`（入库微秒），但 `ConvRow` 只声明判定需要的字段——夹具按命中形状造。 */
-const convRow = (over: Partial<ConvRow & { _timestamp: number }> = {}): ConvRow & { _timestamp: number } => ({
+/** OO 命中带 `_timestamp`（入库微秒）；它是 `ConvRow` 的必需字段（水位推导依赖它）。 */
+const convRow = (over: Partial<ConvRow> = {}): ConvRow => ({
   session_id: 's1', seq: 1, tool_name: 'query_data', tool_args: null, _timestamp: 0, ...over,
 })
 
@@ -31,7 +31,7 @@ describe('mineOnce', () => {
         { id: 10, metric_id: 'net_sales', reason: 'metric_not_declared', params: {} },
         { id: 11, metric_id: 'm:a:b', reason: 'bad_param', params: {} },
       ],
-      readConv: async () => [{ session_id: 's1', seq: 1, tool_name: 'query_data', tool_args: '{"metricId":"m:a:b","args":{"bizday":{"from":"2026-10-10","to":"2026-10-16"}}}' }],
+      readConv: async () => [{ session_id: 's1', seq: 1, tool_name: 'query_data', tool_args: '{"metricId":"m:a:b","args":{"bizday":{"from":"2026-10-10","to":"2026-10-16"}}}', _timestamp: 0 }],
       catalogIds: async () => ['lemeng:retail:net_sales'],
     })
     const out = await mineOnce(io, 'org1', 1_800_000_000_000_000)
@@ -77,7 +77,7 @@ describe('mineOnce', () => {
     await expect(mineOnce(io, 'org1', 1_800_000_000_000_000)).rejects.toThrow('OO _search HTTP 503')
   })
 
-  it('conv 水位 = 本批 _timestamp 最大值 + 1（排他游标）', async () => {
+  it('conv 水位 = 本批 _timestamp 最大值（排他游标，不 +1）', async () => {
     const { io, cursors } = fakeIo({
       readConv: async () => [
         convRow({ seq: 1, tool_args: '{"metricId":"m:a:b","args":{"bizday":{"from":"2026-10-10","to":"2026-10-16"}}}', _timestamp: 1000 }),
@@ -85,8 +85,8 @@ describe('mineOnce', () => {
       ],
     })
     const out = await mineOnce(io, 'org1', 1_800_000_000_000_000)
-    expect(out.cursorConv).toBe(2001)
-    expect(cursors.get('askdata_conv')).toBe(2001)
+    expect(out.cursorConv).toBe(2000)
+    expect(cursors.get('askdata_conv')).toBe(2000)
   })
 
   it('同一批 conv 连跑两轮不重复计数（第二轮按排他游标读到空）', async () => {
@@ -106,7 +106,7 @@ describe('mineOnce', () => {
     const second = await mineOnce(io, 'org1', 1_800_000_000_000_000)
     expect(first.hunt).toBe(1)
     expect(second.hunt).toBe(0)
-    expect(seen).toEqual([0, 2001])
+    expect(seen).toEqual([0, 2000])
     expect(upserts).toHaveLength(1)
   })
 
