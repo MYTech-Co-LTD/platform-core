@@ -11,6 +11,10 @@
 
 ## [Unreleased]
 
+## [0.271.0](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.270.0...v0.271.0) - 2026-11-05
+- 【新增】data: Phase 2 需求挖掘——四类机判需求台账 + manage 面两工具（#1404） ([#1407](https://github.com/MYTech-Co-LTD/platform-core/pull/1407), [178c42d](https://github.com/MYTech-Co-LTD/platform-core/commit/178c42d05eb8a2b7d2224bae8b100ec785673641))
+
+
 ## [0.270.0](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.269.0...v0.270.0) - 2026-11-05
 - 【新增】data: W3 L1 提案自动化——候选升级 → l1_metrics.yml 草案 → draft PR ([#1402](https://github.com/MYTech-Co-LTD/platform-core/pull/1402), [e602700](https://github.com/MYTech-Co-LTD/platform-core/commit/e6027001453c39d9d48081673544bc1a0371095a))
 
