@@ -49,3 +49,48 @@ describe('callDemandTool：入参拒答（不触库）', () => {
       .toEqual({ status: 'refused', reason: 'invalid_args' })
   })
 })
+
+describe('callDemandTool：先取后滤（resolved 不占窗口）', () => {
+  const demandRow = (id: number, kind: DemandRow['kind'], target: string, occurrences: number) => ({
+    id, kind, target, detail: {}, occurrences,
+    first_seen: new Date('2026-10-01T00:00:00Z'), last_seen: new Date('2026-10-02T00:00:00Z'), evidence: [],
+    dismissed_at: null, dismissed_by: null, dismiss_reason: null,
+  })
+  /** 假 pool **尊重 SQL 的 limit**（params[3]）——否则测不出「limit 压给 SQL 会先占满窗口」。 */
+  const depsWith = (rows: Record<string, unknown>[], catalog: Record<string, unknown>[] = []): DemandToolDeps => ({
+    pool: {
+      query: async (sql: unknown, params?: unknown[]) => {
+        if (typeof sql === 'string' && /from data\.demand_signals/.test(sql)) {
+          const limit = Number(params?.[3] ?? rows.length)
+          return { rows: rows.slice(0, limit) }
+        }
+        if (typeof sql === 'string' && /from data\.metrics/.test(sql)) return { rows: catalog }
+        return { rows: [] }
+      },
+    } as never,
+    org: 'acme', requester: { userId: 'u' },
+  })
+
+  it('3 条已 resolved + 2 条未 resolved，limit=2 ⇒ 回 2 条未 resolved（旧实现回 0）', async () => {
+    const rows = [
+      demandRow(1, 'alias_gap', '别名一', 99),
+      demandRow(2, 'alias_gap', '别名二', 98),
+      demandRow(3, 'alias_gap', '别名三', 97),
+      demandRow(4, 'new_metric', 'lemeng:retail:target', 2),
+      demandRow(5, 'metric_hunt', 's1|2026-10-10..2026-10-16', 1),
+    ]
+    const catalog = [{ id: 'lemeng:retail:net_sales', synonyms: ['别名一', '别名二', '别名三'] }]
+    const out = await callDemandTool(depsWith(rows, catalog), 'list_demand_signals', { limit: 2 })
+    expect(out.status).toBe('ok')
+    expect(out.count).toBe(2)
+    expect((out.items as { id: number }[]).map((r) => r.id)).toEqual([4, 5])
+    expect(out.truncated).toBe(false)
+  })
+
+  it('扫描命中 500 安全上限 ⇒ truncated:true（不静默）', async () => {
+    const rows = Array.from({ length: 500 }, (_, i) => demandRow(i + 1, 'metric_hunt', `s1|day-${i}`, 1))
+    const out = await callDemandTool(depsWith(rows), 'list_demand_signals', { limit: 20 })
+    expect(out.count).toBe(20)
+    expect(out.truncated).toBe(true)
+  })
+})
