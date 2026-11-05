@@ -6,6 +6,7 @@ import { describe, expect, it } from 'vitest'
 // .mjs 经显式路径 import（scripts 内互相引用的既有手法）；ANALYST_TOOLS 经 .ts 后缀（tsx/vitest 均可解析）
 import { checkToolface } from './check-mcp-toolface.mjs'
 import { ANALYST_TOOLS, ANALYST_FACE_MAX_LIST_BYTES, ANALYST_FACE_MAX_TOOLS } from '../modules/data/domain/toolbox/registry.ts'
+import { MANAGE_FACE_MAX_TOOLS, MANAGE_TOOLS } from '../modules/data/domain/manage-face.ts'
 
 describe('checkToolface：四条判据', () => {
   const meta = (over: Record<string, unknown> = {}) => ({
@@ -33,6 +34,14 @@ describe('checkToolface：四条判据', () => {
     expect(out.filter((s) => s.includes('bad name!'))).toHaveLength(1)
     expect(out.filter((s) => s.includes('a_valid_name') && s.includes('注解'))).toHaveLength(1)
     expect(out.filter((s) => s.includes('a_valid_name') && s.includes('scope'))).toHaveLength(1)
+  })
+})
+
+describe('真仓 manage 面清单本身过门（防清单漂移，不等 CI 才红）', () => {
+  it('11 ≤11；序列化 ≤10KB；名字全合法；mutating 全有注解与 scope', () => {
+    expect(checkToolface(MANAGE_TOOLS, { maxTools: MANAGE_FACE_MAX_TOOLS })).toEqual([])
+    expect(MANAGE_TOOLS.length).toBe(MANAGE_FACE_MAX_TOOLS)
+    expect(JSON.stringify(MANAGE_TOOLS).length).toBeLessThanOrEqual(ANALYST_FACE_MAX_LIST_BYTES)
   })
 })
 

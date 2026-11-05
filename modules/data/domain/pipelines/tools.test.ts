@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { PIPELINE_FACE_MAX_TOOLS, PIPELINE_TOOLS, pipelineToolMeta, pipelineToolNames } from './tools'
+import { PIPELINE_TOOLS, pipelineToolMeta, pipelineToolNames } from './tools'
 import { analystToolNames } from '../toolbox/registry'
 
 const TOOL_NAME_RE = /^[A-Za-z0-9_.-]+$/
@@ -11,7 +11,7 @@ describe('PIPELINE_TOOLS（提案面元数据）', () => {
       'run_pipeline_sandbox', 'propose_pipeline_change', 'propose_contract_change',
       'apply_pipeline_proposal', 'propose_metric_declaration',
     ])
-    expect(PIPELINE_TOOLS.length).toBe(PIPELINE_FACE_MAX_TOOLS)
+    expect(PIPELINE_TOOLS.length).toBe(9)
   })
   it('命名合规、无内部重名、不与分析师面重名', () => {
     const names = pipelineToolNames()

@@ -37,9 +37,10 @@ describe('makePipelineTools.list', () => {
   it('空身份 ⇒ 空工具面', async () => {
     expect(await makePipelineTools(wiring()).list(depsOf({ requester: null }))).toEqual([])
   })
-  it('持身份 ⇒ 9 个工具，且不外泄 requiredScope/mutating 等治理字段', async () => {
+  it('持身份 ⇒ 11 个工具（提案 9 + 需求台账 2），且不外泄 requiredScope/mutating 等治理字段', async () => {
     const list = await makePipelineTools(wiring()).list(depsOf())
-    expect(list.map((t) => t.name)).toHaveLength(9)
+    expect(list.map((t) => t.name)).toHaveLength(11)
+    expect(list.map((t) => t.name)).toEqual(expect.arrayContaining(['list_demand_signals', 'dismiss_demand_signal']))
     for (const t of list) {
       expect('requiredScope' in t).toBe(false)
       expect('mutating' in t).toBe(false)
@@ -76,6 +77,35 @@ describe('makePipelineTools.call', () => {
     const g = makePipelineTools(wiring())
     const out = await g.call(depsOf({ requester: null }), 'list_pipelines', {})
     expect(JSON.parse(out!.text)).toMatchObject({ status: 'denied', reason: 'unauthenticated' })
+  })
+  it('需求台账片：list 正常派发（resolved 过滤在 handlers），dismiss 受写总闸', async () => {
+    const demandRow = {
+      id: 3, kind: 'alias_gap', target: '净销售额', detail: {}, occurrences: 2,
+      first_seen: new Date('2026-10-01T00:00:00Z'), last_seen: new Date('2026-10-02T00:00:00Z'), evidence: [],
+      dismissed_at: null, dismissed_by: null, dismiss_reason: null,
+    }
+    const pool = {
+      query: async (sql: unknown) => {
+        if (typeof sql === 'string' && /from data\.demand_signals/.test(sql)) return { rows: [demandRow] }
+        if (typeof sql === 'string' && /from data\.metrics/.test(sql)) {
+          return { rows: [{ id: 'lemeng:retail:net_sales', synonyms: ['净销售额'] }] }
+        }
+        return { rows: [{ id: 1, created_at: new Date() }] }   // 审计 INSERT
+      },
+    } as never
+    const g = makePipelineTools(wiring({ DATA_MCP_ALLOW_MUTATING: '' }))
+    // 默认滤掉 resolved ⇒ 0 条；显式 includeResolved ⇒ 1 条且带 resolvedBy
+    const hidden = await g.call(depsOf({ pool }), 'list_demand_signals', {})
+    expect(JSON.parse(hidden!.text)).toMatchObject({ status: 'ok', count: 0 })
+    const shown = await g.call(depsOf({ pool }), 'list_demand_signals', { includeResolved: true })
+    expect(JSON.parse(shown!.text)).toMatchObject({
+      status: 'ok', count: 1,
+      items: [{ id: 3, resolved: true, resolvedBy: 'synonym@lemeng:retail:net_sales', firstSeen: '2026-10-01T00:00:00.000Z' }],
+    })
+    // 写总闸关 ⇒ 与提案片同一门控口径
+    const denied = await g.call(depsOf({ pool }), 'dismiss_demand_signal', { id: 3, reason: '不建' })
+    expect(denied!.isError).toBe(true)
+    expect(JSON.parse(denied!.text)).toMatchObject({ status: 'denied', reason: 'mutating_disabled', name: 'dismiss_demand_signal' })
   })
   it('★ 审计写不进去 ⇒ 调用 reject（不被伪装成 tool_exception，也不写假错行）', async () => {
     const g = makePipelineTools(wiring())

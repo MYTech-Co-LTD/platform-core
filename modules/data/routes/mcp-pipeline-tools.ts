@@ -1,5 +1,5 @@
-// mcp-pipeline-tools.ts —— 管理面 MCP 端点的**管线提案片**（Wave 3 / spec §7 的 8 个
-// + W3 的 propose_metric_declaration，#1401）。
+// mcp-pipeline-tools.ts —— 管理面 MCP 端点的**提案片 + 需求台账片**（工具总清单见
+// domain/manage-face.ts：9 提案 + 2 需求 = 11）。
 //
 // 门禁由宿主按 manifest 的 `POST /mcp-manage → data:manage` 施加——**本文件不写 requireScope**
 // （与 mcp-metric-tools.ts 同规：声明即授权）。空身份守卫与读面/口径片同形（M3）。
@@ -8,9 +8,14 @@
 //   ① **写总闸**：mutating 工具在 DATA_MCP_ALLOW_MUTATING !== 'true' 时一律 mutating_disabled；
 //   ② **审计单点**：所有结局（ok/denied/error）都写 data.query_audit（tool = 工具名）；
 //   ③ **不认领返回 null**：mcp-manage.ts 的合成方据此继续问下一片。
+//
+// 分派按元数据的 `group` 走两条路：`demand` → callDemandTool（需求台账，无提案语义）；
+// 其余 → IMPLS（管线提案片）。两份清单都在装载期断言「有实现」。
 import { writeAudit } from '../domain/audit-store'
 import { mutatingAllowed } from '../domain/toolbox/registry'
-import { PIPELINE_TOOLS, pipelineToolMeta } from '../domain/pipelines/tools'
+import { MANAGE_TOOLS, manageToolMeta } from '../domain/manage-face'
+import type { ManageToolMeta } from '../domain/manage-face'
+import { callDemandTool } from '../domain/demand/handlers'
 import { rootsOf } from '../domain/pipelines/defs'
 import type { PipelineRoots } from '../domain/pipelines/defs'
 import { getPipelineImpl, listPipelinesImpl } from '../domain/pipelines/read'
@@ -70,17 +75,20 @@ const IMPLS: Record<string, PipelineImpl> = {
   propose_metric_declaration: proposeMetricDeclarationImpl,
 }
 
-// **装载期**一致性（Task 8 M10）：`PIPELINE_TOOLS` 与 `IMPLS` 是两份手写表，漏登记只会在
-// **被调用时**才暴露成 impl_missing —— 一个已经对客户端宣称存在的工具，调用却报错。
+// **装载期**一致性（Task 8 M10 + Phase 2 Task 4）：`MANAGE_TOOLS` 与实现表是两份手写表，
+// 漏登记只会在**被调用时**才暴露成 impl_missing —— 一个已经对客户端宣称存在的工具，调用却报错。
 // 这里在模块装载时就判死：新增工具必须两处同改（任何 import 本模块的测试即成为回归网）。
 // 用 throw 而不是降级成 warning：两张表同出一个 PR，不一致就是坏构建；早失败好过每次调用失败。
-for (const t of PIPELINE_TOOLS) {
-  if (typeof IMPLS[t.name] !== 'function') {
-    throw new Error(`pipeline tools: 「${t.name}」在 PIPELINE_TOOLS 里但没有实现（IMPLS 漏登记）`)
+for (const t of MANAGE_TOOLS) {
+  const hasImpl = t.group === 'demand'
+    ? t.name === 'list_demand_signals' || t.name === 'dismiss_demand_signal'
+    : typeof IMPLS[t.name] === 'function'
+  if (!hasImpl) {
+    throw new Error(`manage tools: 「${t.name}」没有实现（IMPLS / callDemandTool 漏登记）`)
   }
 }
 
-const entryOf = (t: (typeof PIPELINE_TOOLS)[number]): Record<string, unknown> => ({
+const entryOf = (t: ManageToolMeta): Record<string, unknown> => ({
   name: t.name, title: t.title, description: t.description,
   inputSchema: t.inputSchema, outputSchema: t.outputSchema, annotations: t.annotations,
 })
@@ -147,11 +155,11 @@ export function makePipelineTools(wiring: PipelineWiring = defaultPipelineWiring
   return {
     async list(d: McpDeps) {
       if (d.requester === null) return []
-      return PIPELINE_TOOLS.map(entryOf)
+      return MANAGE_TOOLS.map(entryOf)
     },
 
     async call(d: McpDeps, name: string, args: Record<string, unknown>): Promise<McpToolResult | null> {
-      const meta = pipelineToolMeta(name)
+      const meta = manageToolMeta(name)
       if (meta === undefined) return null
       if (d.requester === null) {
         return reply(d, name, args, { status: 'denied', reason: 'unauthenticated' }, true, null)
@@ -159,21 +167,33 @@ export function makePipelineTools(wiring: PipelineWiring = defaultPipelineWiring
       if (meta.mutating && !mutatingAllowed(wiring.env)) {
         return reply(d, name, args, { status: 'denied', reason: 'mutating_disabled', name }, true, null)
       }
-      // 「清单里有、分派表漏登记」⇒ 精确错误，而不是 TypeError 文本（工具清单与 IMPLS 是两份表）。
-      const impl = IMPLS[name]
-      if (impl === undefined) {
-        return reply(d, name, args, { status: 'error', reason: 'impl_missing', name }, true, null)
-      }
       // 只包 impl：审计（reply）必须在 try **之外**——否则审计连接抖动会被 catch 成
       // 「impl 异常」，再写一条 error/tool_exception 的假错行，把一次成功的调用记成失败。
-      let out: Awaited<ReturnType<PipelineImpl>>
+      let payload: Record<string, unknown>
+      let isError: boolean
+      let auditRowCount: number | null
       try {
-        out = await impl(depsOf(d), args)
+        if (meta.group === 'demand') {
+          payload = await callDemandTool(d, name, args)
+          // 与管线片同规：status 非 ok 都是工具级错误（refused=拒答、not_found=客体不存在）。
+          isError = payload.status !== 'ok'
+          auditRowCount = payload.status === 'ok' && Array.isArray(payload.items) ? payload.items.length : null
+        } else {
+          // 「清单里有、分派表漏登记」⇒ 精确错误，而不是 TypeError 文本（工具清单与 IMPLS 是两份表）。
+          const impl = IMPLS[name]
+          if (impl === undefined) {
+            return reply(d, name, args, { status: 'error', reason: 'impl_missing', name }, true, null)
+          }
+          const out: Awaited<ReturnType<PipelineImpl>> = await impl(depsOf(d), args)
+          payload = out.payload
+          isError = out.isError
+          auditRowCount = out.auditRowCount ?? null
+        }
       } catch (err) {
         const detail = err instanceof Error ? err.message : String(err)
         return reply(d, name, args, { status: 'error', reason: 'tool_exception', detail }, true, null)
       }
-      return reply(d, name, args, out.payload, out.isError, out.auditRowCount ?? null)
+      return reply(d, name, args, payload, isError, auditRowCount)
     },
   }
 }
