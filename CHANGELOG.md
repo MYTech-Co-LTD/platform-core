@@ -11,6 +11,10 @@
 
 ## [Unreleased]
 
+## [0.276.0](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.275.0...v0.276.0) - 2026-11-06
+- 【新增】data: 夜间回填窗口（CST 00:05-09:00）+ 驱动收窗/让路/跳过已有 ([#1457](https://github.com/MYTech-Co-LTD/platform-core/pull/1457), [e4f4a37](https://github.com/MYTech-Co-LTD/platform-core/commit/e4f4a3756c313fa698d30bf1c30f86c1c6e162f0))
+
+
 ## [0.275.0](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.274.0...v0.275.0) - 2026-11-06
 - 【新增】data: 接源 64188 调拨（transfer.in/out）+ 登记三条探针结论 ([#1454](https://github.com/MYTech-Co-LTD/platform-core/pull/1454), [d777263](https://github.com/MYTech-Co-LTD/platform-core/commit/d777263d127debc8382042badf8c1da4d2e1e3d6))
 
