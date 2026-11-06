@@ -249,7 +249,7 @@
         "label": "窗口表（1 行：昨日整天；hour 恒 \"-\" 以复用下游 hour 键控机制）",
         "componentId": "code.sql",
         "properties": {
-          "sql": "SELECT\n  t.run_token AS run_token,\n  strftime((now() AT TIME ZONE 'Asia/Shanghai') - d.days_back, '%Y-%m-%d') AS bizday,\n  '-' AS hour,\n  '00:00:00' AS hour_from,\n  '23:59:59' AS hour_to,\n  '${ENV:SYSTEM_BOOK}' AS system_book,\n  (SELECT branch_nums FROM input) AS branch_nums,\n  'retail-' || '${ENV:SYSTEM_BOOK}' || '-' || replace(replace('${datetime}','-',''),'_','T') || 'Z-day' AS batch_id\nFROM (SELECT replace(replace('${datetime}','-',''),'_','T') AS run_token) t,\n  (SELECT unnest([1, 2, 3]) AS days_back) d"
+          "sql": "SELECT\n  t.run_token AS run_token,\n  strftime((now() AT TIME ZONE 'Asia/Shanghai') - (d.days_back * INTERVAL 1 DAY), '%Y-%m-%d') AS bizday,\n  '-' AS hour,\n  '00:00:00' AS hour_from,\n  '23:59:59' AS hour_to,\n  '${ENV:SYSTEM_BOOK}' AS system_book,\n  (SELECT branch_nums FROM input) AS branch_nums,\n  'retail-' || '${ENV:SYSTEM_BOOK}' || '-' || replace(replace('${datetime}','-',''),'_','T') || 'Z-day' AS batch_id\nFROM (SELECT replace(replace('${datetime}','-',''),'_','T') AS run_token) t,\n  (SELECT unnest([1, 2, 3]) AS days_back) d"
         }
       }
     },
