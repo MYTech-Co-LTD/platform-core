@@ -43,11 +43,11 @@ interface HealthInput {
 ```
 - `HealthSummary`：`metricTotal` / `entityBound` / `entityBoundPct` / `auditCovered` / `auditCoveredPct` / `zeroUse` / `openDemands` / `incidents`。
 
-- [ ] **Step 1: 写失败测试**（3 个用例：全齐、缺 audit 测试、零使用边界）
-- [ ] **Step 2: 跑测试确认失败**
-- [ ] **Step 3: 实现 `healthOf`**（纯函数；对账测试匹配用 `metricToAuditFileName`）
-- [ ] **Step 4: 测试通过 + `tsc --noEmit`**
-- [ ] **Step 5: 提交**
+- [x] **Step 1: 写失败测试**（3 个用例：全齐、缺 audit 测试、零使用边界）
+- [x] **Step 2: 跑测试确认失败**
+- [x] **Step 3: 实现 `healthOf`**（纯函数；对账测试匹配用 `metricToAuditFileName`）
+- [x] **Step 4: 测试通过 + `tsc --noEmit`**
+- [x] **Step 5: 提交**
 
 ---
 
@@ -64,7 +64,7 @@ interface HealthInput {
 - **回溯**：指标详情里一条「口径 → 实体 → 关系 → 上游模型 → 契约」的**可点击链**，每跳高亮。
 - 图谱：桌面用**简单 SVG**（非力导向）：实体—指标二部图，节点数 ≤ 80 时渲染；超过则只给列表（防卡）。
 
-- [ ] **Step 1-6**：测试先行（转义 / 视图模型 / hash 路由存在）→ 实现 → 仓库真实数据生成一次 → 人工看一遍 → 提交
+- [x] **Step 1-6**：测试先行（转义 / 视图模型 / hash 路由存在）→ 实现 → 仓库真实数据生成一次 → 人工看一遍 → 提交
 
 ---
 
@@ -101,11 +101,11 @@ interface HealthInput {
 - 五个视图均可进入、可返回；深链刷新后仍落在同一详情；
 - **从报表进入**：报表 →「口径与来源」→ 指标详情 → 返回 **回到原报表**（不是回体系地图首页）。
 
-- [ ] **Step 1: CSS 断点与移动 DOM 骨架**（先写，断言测试）
-- [ ] **Step 2: 底部标签 + 吸顶搜索 + 卡片列表**
-- [ ] **Step 3: 步骤条回溯 + 全屏详情 + 深链**
-- [ ] **Step 4: 体积/无横向滚动断言（jsdom 可断言 class 与结构；真机走查另记）**
-- [ ] **Step 5: 提交**
+- [x] **Step 1: CSS 断点与移动 DOM 骨架**（先写，断言测试）
+- [x] **Step 2: 底部标签 + 吸顶搜索 + 卡片列表**
+- [x] **Step 3: 步骤条回溯 + 全屏详情 + 深链**
+- [x] **Step 4: 体积/无横向滚动断言（jsdom 可断言 class 与结构；真机走查另记）**
+- [x] **Step 5: 提交**
 
 ---
 
@@ -117,11 +117,11 @@ interface HealthInput {
 - Modify: `modules/data/index.ts`（挂载）
 - Test: `routes/system-map.test.ts`
 
-- [ ] **Step 1: 路由装配**（读声明 → 查运行库 → `modelOf` → `render`；10 分钟内存缓存；`Content-Type: text/html; charset=utf-8`）
-- [ ] **Step 2: 权限**（未登录 403；`data:query` 持有者 200）；manifest 双向核对通过
-- [ ] **Step 2b: 入口接线**（移动壳 `ReportsView` 加「口径与来源」链接与页头次级入口；PC console 菜单加入口）——壳侧只放**链接**，不复制渲染逻辑
-- [ ] **Step 3: 测试**：未登录 / 正常渲染含标题 / XSS 转义 / 缓存命中（二次调用不重复查库）
-- [ ] **Step 4: 提交**
+- [x] **Step 1: 路由装配**（读声明 → 查运行库 → `modelOf` → `render`；10 分钟内存缓存；`Content-Type: text/html; charset=utf-8`）
+- [x] **Step 2: 权限**（未登录 403；`data:query` 持有者 200）；manifest 双向核对通过
+- [x] **Step 2b: 入口接线**（移动壳 `ReportsView` 加「口径与来源」链接与页头次级入口；PC console 菜单加入口）——壳侧只放**链接**，不复制渲染逻辑
+- [x] **Step 3: 测试**：未登录 / 正常渲染含标题 / XSS 转义 / 缓存命中（二次调用不重复查库）
+- [x] **Step 4: 提交**
 
 ---
 
@@ -135,10 +135,10 @@ interface HealthInput {
 - **孤儿表** = `dbt/models/**/marts/*.sql` 里无 owner 的表；owner 来源优先级：契约 `owner` → 声明文件 → 人工登记 `dbt/semantics/table-owners.yml`。
 - **候选质量**：`metric_candidates` 里「单列聚合但列名疑似非度量」（`*_num`/`*_id`/`*_flag`/`*_status` 等）占比；只展示数与样例，**不删除**。
 
-- [ ] **Step 1: 两块统计（纯函数 + 测试）**
-- [ ] **Step 2: 页面展示**
-- [ ] **Step 3: 能确定的表补 owner；不能确定的列「待定」**
-- [ ] **Step 4: 提交**
+- [x] **Step 1: 两块统计（纯函数 + 测试）**
+- [x] **Step 2: 页面展示**
+- [x] **Step 3: 能确定的表补 owner；不能确定的列「待定」**
+- [x] **Step 4: 提交**
 
 ---
 
