@@ -27,7 +27,7 @@ const EXPECTED: Record<string, Record<string, string>> = {
     'panel-lemeng.customer_analysis.l0.3120': '30 3 * * *',
     'panel-lemeng.item_sales.l0.3120': '0 3 * * *',
     'panel-lemeng.item_profit.l0.3120': '0 5 * * *',
-    'panel-lemeng.retail.tick.l1': '*/5 8-23 * * *',
+    'panel-lemeng.retail.tick.l1': '*/10 9-23 * * *',
     'panel-lemeng.dim.item.l0': '0 14,16,18,20,22 * * *',
     'panel-lemeng.retail.close.l1': '0 0 * * *',
     'panel-lemeng.dim.branch.l0': '0 14,16,18,20,22 * * *',
@@ -69,7 +69,7 @@ const EXPECTED: Record<string, Record<string, string>> = {
     'panel-lemeng.dim.item.l0': '0 14,16,18,20,22 * * *',
     'panel-lemeng.dim.item_price.l0': '15 14,16,18,20,22 * * *',
     'panel-lemeng.retail.windows.l1': '30 10,18 * * *',
-    'panel-lemeng.retail.tick.l1': '*/5 8-23 * * *',
+    'panel-lemeng.retail.tick.l1': '*/10 9-23 * * *',
     'panel-lemeng.retail.close.l1': '0 0 * * *',
     'panel-lemeng.recon.preagg': '30 0 * * *',
     // 2026-10-27（#1088）64188 补采：要货/采购/报损/库存(主+兜底)/门店费用/客户费用/门店指标/会员汇总。
