@@ -43,6 +43,17 @@ export async function runWarehouseSql(
   return { columns, rows }
 }
 
+/** 参数化版本（W6 `explore_query`）：值一律走 `$n`，绝不字符串拼接。
+ *  归一形状与 `runWarehouseSql` 一致，消费方不必区分两条通道。 */
+export async function runWarehouseSqlParams(
+  pool: Pool, sql: string, params: readonly unknown[] = [],
+): Promise<{ columns: string[]; rows: unknown[][] }> {
+  const r = await pool.query(sql, params as unknown[])
+  const columns = r.fields.map((f) => f.name)
+  const rows = r.rows.map((row) => columns.map((c) => (row as Record<string, unknown>)[c]))
+  return { columns, rows }
+}
+
 // ── 分析师只读池（spec 2026-10-21 §8：分析师面 warehouse 连接强制只读）─────────────────
 // 与写池同一份 DATA_WAREHOUSE_URL、同一个部署——差别只在**会话**：每条新连接先
 // `set default_transaction_read_only = on`。写池不动（dbt 物化继续走 warehousePool()），

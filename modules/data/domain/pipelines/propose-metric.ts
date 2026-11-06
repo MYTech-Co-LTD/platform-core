@@ -46,7 +46,7 @@ import { METRIC_SOURCE_RE } from '@platform/sdk'
 import { METRIC_NAME_RE, RESERVED_METRIC_ID_PREFIXES, freshnessSlaError, metricToAuditFileName, ratioShapeError } from '../../../../scripts/check-data-models.mjs'
 import { SemanticCompileError, parseL1Select } from '../semantic-compiler'
 import type { Issue } from './validate-types'
-import type { PipelineDeps, PipelineImpl } from './types'
+import type { PipelineImpl } from './types'
 
 /** 现行语义声明的仓内相对路径（piece 1 的落点；impl 侧只读它；apply 白名单同源）。 */
 export const SEMANTICS_YAML_REL = 'dbt/semantics/l1_metrics.yml'

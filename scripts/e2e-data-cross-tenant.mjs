@@ -671,6 +671,8 @@ export function analystToolNamesForProbe() {
   return [
     'data_agent_guide', 'data_harness_catalog', 'search_catalog', 'describe_metric',
     'describe_dataset', 'sample_dimension_values', 'preview_query', 'query_metric',
+    // W6：分析面 2 个（受约束探索 + 配方）——顺序与 registry 逐字一致
+    'explore_query', 'explore_recipe',
     'get_freshness', 'get_quality', 'get_lineage',
   ]
 }

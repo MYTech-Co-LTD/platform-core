@@ -136,13 +136,12 @@ export const createProposalApplier = (cfg: ProposalApplyConfig, io: { fetchImpl?
       // ③ 建分支：建议名已存在（422）⇒ 换 -<6hex> 后缀重试（命名碰撞 ≠ 他人改动，不是拒绝路径）
       const randomToken = (): string => randomBytes(3).toString('hex')
       let branch = input.branch
-      let branchSha = ''
       for (let attempt = 0; ; attempt += 1) {
         const created = await api(`/repos/${cfg.repo}/git/refs`, {
           method: 'POST',
           body: JSON.stringify({ ref: `refs/heads/${branch}`, sha: baseSha }),
         })
-        if (created.status >= 200 && created.status < 300) { branchSha = String((created.body as { object?: { sha?: string } })?.object?.sha ?? ''); break }
+        if (created.status >= 200 && created.status < 300) { break }
         if (created.status === 422 && attempt < 2) { branch = `${input.branch}-${randomToken()}`; continue }
         return created.status >= 500
           ? { kind: 'unknown', detail: `建分支失败：HTTP ${created.status}` }

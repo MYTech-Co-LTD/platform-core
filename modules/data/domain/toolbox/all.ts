@@ -7,7 +7,9 @@ import { guideImpl, harnessCatalogImpl } from './guide'
 import { searchImpl, describeMetricImpl, describeDatasetImpl, sampleDimensionValuesImpl } from './discovery'
 import { defaultDbtManifest, freshnessImpl, qualityImpl, lineageImpl } from './health'
 import { previewImpl, queryMetricImpl } from './query'
-import { analystPool, runWarehouseSql } from '../warehouse'
+import { exploreQueryImpl } from './explore'
+import { exploreRecipeImpl } from './recipes'
+import { analystPool, runWarehouseSql, runWarehouseSqlParams } from '../warehouse'
 import type { SqlExecutor } from '../query-service'
 import type { Requester } from '../authz'
 
@@ -22,6 +24,8 @@ registerImpl('get_quality', qualityImpl)
 registerImpl('get_lineage', lineageImpl)
 registerImpl('preview_query', previewImpl)
 registerImpl('query_metric', queryMetricImpl)
+registerImpl('explore_query', exploreQueryImpl)
+registerImpl('explore_recipe', exploreRecipeImpl)
 
 // ── ToolboxDeps 唯一装配点（Wave 2 决策 D-M1）────────────────────────────────────────────
 export interface ToolboxBase {
@@ -51,6 +55,9 @@ export function buildToolboxDeps(base: ToolboxBase, wiring: ToolboxWiring = {}):
     requester: base.requester,
     adoptedSources: base.adoptedSources,
     wh,
+    // explore_query 要参数化（值走 $n）：只读池 + params。仓库未配置时惰性抛错，
+    // 由 impl 转成 `warehouse_unconfigured`（不让启动期因缺 env 挂掉）。
+    exploreExec: (sql, params) => runWarehouseSqlParams(analystPool(), sql, params),
     dbtManifest: defaultDbtManifest(),
     allowMutating: mutatingAllowed(wiring.env ?? process.env),
   }

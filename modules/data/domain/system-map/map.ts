@@ -27,6 +27,7 @@ import type { Pool } from 'pg'
 // （与 domain/system-map/health.ts、domain/pipelines/propose-metric.ts 同一处理）。
 import { metricToAuditFileName } from '../../../../scripts/check-data-models.mjs'
 import { healthOf } from './health'
+import { valueMetricsOf, type ValueMetrics } from '../analysis/value-metrics'
 import type { HealthSummary } from './health'
 import { REPO_ROOT, loadContracts, rootsOf } from '../pipelines/defs'
 import type { ContractRef } from '../pipelines/defs'
@@ -146,6 +147,10 @@ export interface SystemMapInput {
   tableOwnersYaml?: string | null
   /** Task 5：待处置候选（`data.metric_candidates` 的 pending 行）；缺省 = 未接入。 */
   candidateRows?: Array<{ relation?: string; agg?: string; column?: string }>
+  /** W6：已验问答裁决计数（`data.verified_questions`）；null = 未接入。 */
+  verifiedCounts?: { total: number; decided: number } | null
+  /** W6：可辩护答案耗时样本（毫秒）；null/undefined = 未接入（今天没有会话关联，恒为 null）。 */
+  answerDurationsMs?: readonly number[] | null
   /** 取数期降级说明（DB 查询失败等）；由 loadSystemMapFacts 收集，合并进页面 warnings。 */
   loadWarnings?: string[]
   generatedAt?: string
@@ -249,6 +254,8 @@ export interface SystemMapModel {
   tables: SystemMapTable[]
   orphanTables: SystemMapTable[]
   candidateQuality: SystemMapCandidateQuality
+  /** W6 三个价值指标（缺数即 null/未接入）。 */
+  valueMetrics: ValueMetrics
   reports: Array<SystemMapReportFact & { latestVersion: number | null; latestVersionTitle: string | null }>
   demands: SystemMapDemandFact[]
   dimensions: SystemMapDimension[]
@@ -656,7 +663,6 @@ export function buildSystemMapModel(input: SystemMapInput): SystemMapModel {
     }
   })
 
-  const total = metrics.length
   const l1Metrics = metrics.filter((m) => m.source === 'l1').length
   const privateMetrics = metrics.filter((m) => m.basis === 'column_agg').length
   const l2Metrics = metrics.filter((m) => m.source === 'l2' && m.basis !== 'column_agg').length
@@ -761,6 +767,14 @@ export function buildSystemMapModel(input: SystemMapInput): SystemMapModel {
   const orphanTables = tables.filter((t) => t.owner === null)
   const candidateQuality = candidateQualityOf(input.candidateRows ?? [])
 
+  // W6 Task 5：三个价值指标（口径在 analysis/value-metrics.ts，唯一实现）。
+  const valueMetrics = valueMetricsOf({
+    answerDurationsMs: input.answerDurationsMs ?? null,
+    decided: input.verifiedCounts?.decided ?? 0,
+    verifiedTotal: input.verifiedCounts?.total ?? 0,
+    incidents: input.incidentsTracked === false ? null : (input.incidents ?? 0),
+  })
+
   return {
     generatedAt: input.generatedAt ?? new Date().toISOString(),
     health,
@@ -771,6 +785,7 @@ export function buildSystemMapModel(input: SystemMapInput): SystemMapModel {
     tables,
     orphanTables,
     candidateQuality,
+    valueMetrics,
     reports,
     demands,
     dimensions,
@@ -834,6 +849,13 @@ export async function loadSystemMapFacts(deps: SystemMapLoadDeps): Promise<Syste
     [deps.org],
   ).catch(() => null)
 
+  // W6：已验问答裁决计数（接受率的分母/分子）；表缺席 ⇒ null（未接入）。
+  const verifiedRes = await deps.pool.query(
+    `select count(*)::int as total, count(decided_by)::int as decided
+       from data.verified_questions where org = $1`,
+    [deps.org],
+  ).catch(() => null)
+
   const [metricRows, reportRows, usageRes, versionRes, demandRows, incidentsRes] = await Promise.all([
     loadMergedCatalog(deps.pool, deps.org)
       .catch(() => { warn('指标词表（data.metrics）'); return [] as MetricRow[] }),
@@ -890,6 +912,9 @@ export async function loadSystemMapFacts(deps: SystemMapLoadDeps): Promise<Syste
     dimensionsYaml,
     invariantsYaml,
     tableOwnersYaml,
+    verifiedCounts: verifiedRes === null
+      ? null
+      : { total: Number(verifiedRes.rows[0]?.total ?? 0), decided: Number(verifiedRes.rows[0]?.decided ?? 0) },
     candidateRows: candidatesRes === null
       ? []
       : (candidatesRes.rows as Array<{ relation?: string; agg?: string; column?: string }>),
@@ -1159,6 +1184,29 @@ const CLIENT_JS = `
       });
     }
     add(candBox, 'p', 'muted', '这里只统计、不处置：拒绝/升格候选仍由人决定（POST /private-measures/candidates/<id>/status）。');
+  }
+
+  // ── 总览：三个价值指标（W6 Task 5；缺数显示「未接入」，不画 0）───────────────
+  var vmBox = document.getElementById('value-metrics');
+  if (vmBox) {
+    clear(vmBox);
+    var vm = data.valueMetrics || {};
+    add(vmBox, 'h3', null, '分析面价值指标');
+    var vmNote = add(vmBox, 'p', 'muted', '口径：可辩护答案时长（会话首问→首次带证据包查询成功的中位耗时）/ 接受率（已裁决已验问答占比）/ 口径事故数（近 90 天）。');
+    var vmCards = add(vmBox, 'div', 'cards');
+    function vmCard(value, label, sub) {
+      var card = h('div', 'card');
+      add(card, 'div', 'card-value', value);
+      add(card, 'div', 'card-label', label);
+      add(card, 'div', 'card-sub', sub);
+      vmCards.appendChild(card);
+    }
+    if (vm.answerTimeState === 'ok') vmCard(vm.defensibleAnswerSeconds + ' 秒', '可辩护答案时长（中位）', vm.answerTimeSamples + ' 个会话样本');
+    else if (vm.answerTimeState === 'insufficient') vmCard('样本不足', '可辩护答案时长', vm.answerTimeSamples + ' / 20 个样本');
+    else vmCard('未接入', '可辩护答案时长', '缺会话关联（query_audit 无 session_id），接上后启用');
+    vmCard(vm.acceptancePct === null ? '未接入' : vm.acceptancePct + '%', '接受率', (vm.decided || 0) + ' / ' + (vm.verifiedTotal || 0) + ' 条已验问答已裁决');
+    vmCard(vm.incidents === null ? '未接入' : vm.incidents, '口径事故数（近 90 天）', 'data.metric_audit');
+    void vmNote;
   }
 
   // ── 总览：实体—指标 SVG 二部图（桌面；≤80 节点；手机 CSS 隐藏）──────────────
@@ -1725,6 +1773,7 @@ ${STYLE}
         <div id="tables" class="panel"></div>
         <div id="candidates" class="panel"></div>
       </div>
+      <div id="value-metrics" class="panel"></div>
       <div id="graph" class="graph-panel panel"></div>
       <div id="matrix"></div>
       <div id="orphans"></div>
