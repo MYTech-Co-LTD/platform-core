@@ -77,7 +77,7 @@ Phase 2 ──▶ W4 语义完备 ──▶ W5 治理可回溯 ──▶ W6 AI �
 - Phase 2 → 单独 spec
 - W4 → `docs/superpowers/plans/2026-11-06-amd-w4-semantics.md`（待写）
 - W5 → `docs/superpowers/plans/2026-11-06-amd-w5-governance.md`（已写，PR #1452）
-- W6 → `docs/superpowers/plans/2026-11-06-amd-w6-analysis.md`（待写）
+- W6 → `docs/superpowers/plans/2026-11-06-amd-w6-analysis.md`（已写，issue #1470）
 
 **为什么这个顺序**：
 - W0/W1 **互不依赖** ⇒ 可同波并行派发（波内不碰同一文件：W0 只动 `dbt/semantics/` + 门禁；W1 只动 `modules/data/` 新表与新域）。
