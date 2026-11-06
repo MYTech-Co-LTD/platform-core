@@ -154,6 +154,8 @@ const EXEMPT_GLOBAL = new Map([
   ['lemeng.inventory.movement.backfill.64188', '回填专用（${BIZDAY}；原生分页）'],  //    scripts/lemeng/gen-backfill-variants.mjs 从同账套 l0 机械派生，只在回填期手动驱动。
   ['lemeng.request.order.backfill.3120', '回填专用（#1160 全量历史回填；${BIZDAY} 参数化）'],
   ['lemeng.transfer.out.backfill.3120', '回填专用（#1160 全量历史回填；${BIZDAY} 参数化）'],
+  ['lemeng.transfer.in.backfill.64188', '回填专用（64188 调拨从未接源，2026-11-06 补 730 天；${BIZDAY} 参数化）'],
+  ['lemeng.transfer.out.backfill.64188', '回填专用（同上，#1449 后续）'],
   ['lemeng.purchase.analysis.backfill.3120', '回填专用（#1160 全量历史回填；${BIZDAY} 参数化）'],
   ['lemeng.client.expense.backfill.3120', '回填专用（#1160 全量历史回填；${BIZDAY} 参数化）'],
   ['lemeng.branch.expense.backfill.64188', '回填专用（#1160 64188 侧全量历史回填；${BIZDAY} 参数化）'],
