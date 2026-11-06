@@ -11,6 +11,10 @@
 
 ## [Unreleased]
 
+## [0.274.0](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.273.1...v0.274.0) - 2026-11-06
+- 【新增】data: W4 语义完备——实体权威源 + 维度层级 + 业务不变量 + 接新源前置闸 ([#1448](https://github.com/MYTech-Co-LTD/platform-core/pull/1448), [2d1ea87](https://github.com/MYTech-Co-LTD/platform-core/commit/2d1ea879c18b38fa01820bec9171a3a079c54716))
+
+
 ## [0.273.1](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.273.0...v0.273.1) - 2026-11-06
 - 【修复】data: 库存流水分段 l0 的 shape 改回内联形态（自造列不能 cast 输入） ([#1441](https://github.com/MYTech-Co-LTD/platform-core/pull/1441), [34b5155](https://github.com/MYTech-Co-LTD/platform-core/commit/34b515575038f8b23daf97a4f48eef7427486607))
 
