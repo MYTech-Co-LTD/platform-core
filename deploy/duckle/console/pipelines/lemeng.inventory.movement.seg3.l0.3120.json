@@ -5669,6 +5669,21 @@
         "componentId": "ctl.merge",
         "properties": {}
       }
+    },
+    {
+      "id": "enrich",
+      "type": "transform",
+      "position": {
+        "x": 0,
+        "y": 0
+      },
+      "data": {
+        "label": "enrich",
+        "componentId": "code.sql",
+        "properties": {
+          "sql": "SELECT\n  'im-' || '${ENV:SYSTEM_BOOK}' || '-inventory_movement-' || replace(replace('${datetime}','-',''),'_','T') || 'Z' AS batch_id,\n  '${ENV:SYSTEM_BOOK}' AS system_book,\n  CAST('${date-1d}' AS DATE) AS bizday,\n  o.*,\n  CAST(CURRENT_TIMESTAMP AS TIMESTAMPTZ) AS computed_at\nFROM input o"
+        }
+      }
     }
   ],
   "edges": [
@@ -5773,8 +5788,18 @@
       }
     },
     {
-      "id": "e-merge-shape",
+      "id": "e-merge-enrich",
       "source": "merge",
+      "target": "enrich",
+      "sourceHandle": "main",
+      "targetHandle": "main",
+      "data": {
+        "connectionType": "main"
+      }
+    },
+    {
+      "id": "e-enrich-shape",
+      "source": "enrich",
       "target": "shape",
       "sourceHandle": "main",
       "targetHandle": "main",
