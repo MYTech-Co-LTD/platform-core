@@ -62,28 +62,40 @@
             "type": "string"
           },
           {
-            "name": "metric",
+            "name": "branch_type",
             "type": "string"
           },
           {
-            "name": "period",
+            "name": "coupon_type_name",
             "type": "string"
           },
           {
-            "name": "target_value",
+            "name": "coupon_amount",
             "type": "float64"
           },
           {
-            "name": "actual_value",
+            "name": "coupon_detail_sale_money",
             "type": "float64"
           },
           {
-            "name": "actual_rate",
+            "name": "coupon_discount_money",
             "type": "float64"
           },
           {
-            "name": "periods",
-            "type": "json"
+            "name": "coupon_value",
+            "type": "float64"
+          },
+          {
+            "name": "exchange_card_sale_money",
+            "type": "float64"
+          },
+          {
+            "name": "exchange_card_total_money",
+            "type": "float64"
+          },
+          {
+            "name": "exchange_card_verification_count",
+            "type": "int64"
           }
         ]
       }
