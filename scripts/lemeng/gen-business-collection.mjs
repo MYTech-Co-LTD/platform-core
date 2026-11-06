@@ -23,7 +23,7 @@ const TPL_PARENT = 'lemeng.branch_indicator.l0.3120.json'
 const BOOKS = ['3120', '64188']
 
 /** @typedef {[string, string]} Col  列（名字, SQL 类型） */
-/** @typedef {{ slug: string, name: string, ability: string, body: (d: string) => string, extraRules: Record<string, string>, cols: Col[] }} Report */
+/** @typedef {{ slug: string, name: string, ability: string, body: (d: string) => string, extraRules: Record<string, string>, cols: Col[], sparse?: boolean }} Report */
 
 /** DEC = 金额列（DECIMAL(20,2)）；RATE = 占比列；INT/TXT/JSON */
 const DEC = 'DECIMAL(20, 2)'
@@ -81,6 +81,7 @@ const REPORTS = [
     slug: 'business_collection_coupon',
     name: '营业收款报表-卡券汇总',
     ability: 'nhsoft.report.ai.businesscollection.coupon.find',
+    sparse: true,
     body: (d) => `{"date_start":"${d}","date_end":"${d}","summary_types":["branch","coupon_type"],"branch_nums":\${ITER_ITEM_BRANCH_NUMS_JSON},"date_type":"bizday"}`,
     extraRules: { coupon_type_name: 'not_null' },
     cols: [
@@ -264,6 +265,13 @@ function buildParent(r, book) {
   setProps(doc, 'snk', { key: `lemeng/${r.slug}/system_book=\${ENV:SYSTEM_BOOK}/bizday=\${date-1d}/all.parquet` })
   setProps(doc, 'dasm', { message: `汇总为空：本期 batch 的 staging 分块没产出（foreach 全失败 / 目录被清）⇒ 拒绝写湖（${r.slug}）` })
   setProps(doc, 'dall', { message: `全部块 0 家门店有数据（bizday=\${date-1d}，共 {rows} 块）——权限收窄 / 网关空集，拒绝写湖（${r.slug}）` })
+  if (r.sparse) {
+    // 稀疏报表（卡券汇总）**去掉**「全空即拒写」这道闸：实测 3120 2026-11-05 整天无券核销，
+    // 每块 0 家门店 ⇒ dall 触发 ⇒ run 天天红。对稀疏件「0 行」是**合法业务状态**，
+    // 不是权限收窄或网关空集 —— 这道闸是从 branch_indicator（密集件）抄来的，对本族不成立。
+    doc.nodes = doc.nodes.filter((/** @type {any} */ n) => !['gall', 'dall'].includes(n.id))
+    doc.edges = doc.edges.filter((/** @type {any} */ e) => !['gall', 'dall'].includes(e.source) && !['gall', 'dall'].includes(e.target))
+  }
   return doc
 }
 

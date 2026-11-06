@@ -310,37 +310,6 @@
           "connectionRef": "zos"
         }
       }
-    },
-    {
-      "id": "gall",
-      "type": "transform",
-      "position": {
-        "x": 0,
-        "y": 0
-      },
-      "data": {
-        "label": "gall",
-        "componentId": "code.sql",
-        "properties": {
-          "sql": "-- 父级全空栅（issue #1314）：所有块的 chunk_n_matched 之和为 0 才判「整天真无数据」。\n-- 部分块为空是正常现象（新店未开业/老店已关店），占位行的 chunk_n_matched=0 不参与计数。\nSELECT 1 AS all_empty FROM input HAVING coalesce(sum(CAST(chunk_n_matched AS INTEGER)), 0) = 0"
-        }
-      }
-    },
-    {
-      "id": "dall",
-      "type": "transform",
-      "position": {
-        "x": 0,
-        "y": 0
-      },
-      "data": {
-        "label": "dall",
-        "componentId": "ctl.die",
-        "properties": {
-          "condition": "has-rows",
-          "message": "全部块 0 家门店有数据（bizday=${BIZDAY}，共 {rows} 块）——权限收窄 / 网关空集，拒绝写湖（business_collection_coupon）"
-        }
-      }
     }
   ],
   "edges": [
@@ -518,26 +487,6 @@
       "id": "e-gc-snk",
       "source": "gc",
       "target": "snk",
-      "sourceHandle": "main",
-      "targetHandle": "main",
-      "data": {
-        "connectionType": "main"
-      }
-    },
-    {
-      "id": "e_gall",
-      "source": "dasm",
-      "target": "gall",
-      "sourceHandle": "main",
-      "targetHandle": "main",
-      "data": {
-        "connectionType": "main"
-      }
-    },
-    {
-      "id": "e_dall",
-      "source": "gall",
-      "target": "dall",
       "sourceHandle": "main",
       "targetHandle": "main",
       "data": {
