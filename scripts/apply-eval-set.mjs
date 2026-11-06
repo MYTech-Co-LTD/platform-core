@@ -47,6 +47,16 @@ function shift(date, days) {
   return new Date(Date.UTC(y, m - 1, d) + days * 86_400_000).toISOString().slice(0, 10)
 }
 
+/**
+ * 区间是否**已封板**（右端 < 今天）。评估集的基线必须落在封闭期上：
+ * 2026-11-06 真机实测——「近 7 天」含当天，30 分钟里行数从 633 涨到 868，基线必然分叉。
+ * @param {{from:string,to:string}|null} range @param {string} today
+ */
+export function isClosedRange(range, today) {
+  if (range === null) return true
+  return range.to < today
+}
+
 /** window → bizday 区间；`default` 不带日期参数（用指标自己的缺省参数面）。 */
 /** @param {string} window @param {string} asOf @returns {{from:string,to:string}|null} */
 export function windowArgs(window, asOf) {
@@ -89,6 +99,10 @@ try {
       continue
     }
     const range = windowArgs(item.window, beijingYesterday())
+    if (!isClosedRange(range, beijingYesterday())) {
+      report.push({ id: item.id, metricId: item.metricId, question: item.question, ok: false, reason: 'open_period_not_stable' })
+      continue
+    }
     const queryArgs = range === null ? {} : { bizday: range }
     // params 是 jsonb 反序列化后的**对象**（键 = 参数名），不是数组
     const paramsFace = metric.params !== null && typeof metric.params === 'object' ? metric.params : {}
