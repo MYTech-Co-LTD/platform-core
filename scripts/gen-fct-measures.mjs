@@ -239,10 +239,11 @@ export function renderFctMeasures(measures, spec, domains = {}) {
     }
     const where = resolveDomain(m.domain, domains)
     // 增量基面下推（#1524）：把 lookback 过滤放进 base CTE，让 read_parquet 先按 bizday 裁剪。
-    // 只放最终 SELECT 会「先扫全史再过滤」——tick 档实测 5+ 分钟；下推后应 <2 分钟。
-    // 仅对声明了 incrementalLookback 的模型生效（其余模型 `is_incremental()` 恒假，加了也只是噪音）。
+    // ⚠️ 必须用 `incremental_cutoff()` 渲染成**编译期日期字面量**：写 `(select max(bizday) ... from this)`
+    // 是关联子查询，DuckDB 计划期拿不到常量 ⇒ 不裁剪（实测 5+ 分钟）。仅对声明 incrementalLookback
+    // 的模型生效（其余模型 `is_incremental()` 恒假，加了只是噪音）。
     const incFilter = spec.incrementalLookback
-      ? `\n    {% if is_incremental() %}\n    and ${spec.incrementalKey ?? 'bizday'} >= (select coalesce(max(${spec.incrementalKey ?? 'bizday'}), date '1900-01-01') - interval '${spec.incrementalLookback} days' from {{ this }})\n    {% endif %}`
+      ? `\n    {% if is_incremental() %}\n    and ${spec.incrementalKey ?? 'bizday'} >= {{ incremental_cutoff(${spec.incrementalLookback}) }}\n    {% endif %}`
       : ''
     const priorWhere = emittedBases.get(base)
     if (priorWhere === undefined) {
