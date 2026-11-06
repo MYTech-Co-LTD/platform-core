@@ -400,6 +400,41 @@ describe('composeMetricDeclaration：修改模式（同名已存在）', () => {
     expect(seqText(node as never, 'synonyms')).toEqual(['销售金额', '营业额', 'net_sales'])
   })
 
+  it('#1434：只改 synonyms ⇒ 键级编辑（携带键与注释逐字保留，不走整条重写）', () => {
+    const yaml = [
+      'version: 1',
+      'metrics:',
+      "  - name: 'lemeng:retail:net_sales'",
+      '    label: 净销售额',
+      '    # 这条注释必须留着（整条重写会丢）',
+      "    definition: >-",
+      '      原定义一句话。',
+      "    expression: 'sum(fct_retail_sale.net_amount)'",
+      '    grain: [system_book, bizday]',
+      '    owner: data-platform',
+      '    tier: experimental',
+      '    source: lemeng',
+      '    freshness_sla_days: 1',
+      '    detail:',
+      '      relation: vw_lemeng_retail_order_line',
+      '',
+    ].join('\n')
+    const r = compose({
+      name: 'lemeng:retail:net_sales', label: '净销售额', definition: '原定义一句话。',
+      expression: 'sum(fct_retail_sale.net_amount)', grain: ['system_book', 'bizday'],
+      owner: 'data-platform', tier: 'experimental', source: 'lemeng', freshnessSlaDays: 1,
+      synonyms: ['净销售金额', 'net_sales'], rationale: '补别名',
+    }, yaml)
+    expect(r.ok).toBe(true)
+    if (!r.ok) return
+    const out = r.pieces[0].content
+    expect(out).toContain('# 这条注释必须留着（整条重写会丢）')
+    expect(out).toContain('    detail:\n      relation: vw_lemeng_retail_order_line')
+    expect(out).toContain("synonyms: [ '净销售金额', 'net_sales' ]")
+    expect(out).toContain('    expression: \'sum(fct_retail_sale.net_amount)\'')
+    expect(parseDocument(out).errors).toHaveLength(0)
+  })
+
   it('#1427：definition 与 synonyms 都没变 ⇒ 仍拒（防无意义重提）', () => {
     const same = scalarText(metricsItems(FIXTURE)[0], 'definition')
     const r = compose(modifyInput({ definition: same, synonyms: ['销售金额', '营业额'] }))

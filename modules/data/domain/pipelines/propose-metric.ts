@@ -504,6 +504,77 @@ export function composeMetricDeclaration(
   ))
   if (issues.length > 0) return { ok: false, issues }
 
+  // ── D0. 只改 synonyms ⇒ **键级编辑**（#1434）：除该键的值外，条目原文逐字不动。
+  // 为什么单独走这条路：整条重写会把携带键（`sources`/`compose`/`dimensions`/`detail` 等
+  // 嵌套结构）重新序列化再统一缩进，实测在 `net_sales` 这类条目上产出非法 YAML。
+  // 键级编辑只替换一个 value 区间，天然保留缩进、注释与未触碰的键。
+  if (existing !== null && definition === scalarText(existing.item, 'definition')
+    && shape.fields.synonyms !== null) {
+    const entryText = currentYaml.slice(existing.dashStart, existing.end)
+    const indentMatch = /^( *)/.exec(entryText.split('\n')[0] ?? '')
+    const indent = indentMatch === null ? '    ' : `${indentMatch[1]}  ` // 键所在缩进 = 条目缩进 + 2
+    const seqText = ((): string => {
+      const d = new Document()
+      const seq = d.createNode(shape.fields.synonyms as string[]) as unknown as { flow?: boolean; items?: unknown[] }
+      seq.flow = true
+      for (const it of seq.items ?? []) (it as { type?: unknown }).type = Scalar.QUOTE_SINGLE
+      d.contents = seq as never
+      return d.toString({ lineWidth: 0 }).trim()
+    })()
+    let edited: string | null = null
+    for (const pair of existing.item.items) {
+      if (keyNameOf(pair) !== 'synonyms') continue
+      const kRange = (pair.key as unknown as { range?: [number, number, number] }).range
+      const vRange = (pair.value as unknown as { range?: [number, number, number] }).range
+      if (kRange === null || kRange === undefined || vRange === null || vRange === undefined) break
+      const from = kRange[0] - existing.dashStart
+      // 用 range[1]（值内容末尾）而不是 range[2]——后者会把行尾换行/注释一并吞掉，
+      // 拼出 `synonyms: [...]    definition:` 这种非法结构（#1434 实测）。
+      const to = vRange[1] - existing.dashStart
+      edited = `${entryText.slice(0, from)}synonyms: ${seqText}${entryText.slice(to)}`
+      break
+    }
+    if (edited === null) {
+      // 条目原来没有 synonyms：插在 label 之后（没有 label 就插在 name 之后）。
+      const lines = entryText.split('\n')
+      const at = lines.findIndex((l) => /^ {4}label:/.test(l) || (/^ *- name:/.test(l)))
+      if (at < 0) return { ok: false, issues: [{ path: 'synonyms', message: '条目里找不到可插入的位置（label/name 行）——请人工编辑' }] }
+      lines.splice(at + 1, 0, `${indent}synonyms: ${seqText}`)
+      edited = lines.join('\n')
+    }
+    const out = `${currentYaml.slice(0, existing.dashStart)}${edited}${currentYaml.slice(existing.end)}`
+    // 自检：改完必须仍可解析（坏基线早失败，别把炸弹带到 apply）
+    const check = parseDocument(out)
+    if (check.errors.length > 0) {
+      return { ok: false, issues: [{ path: 'currentYaml', message: `键级编辑后解析失败（组装器缺陷，拒绝产出）：${String(check.errors[0])}` }] }
+    }
+    const auditSqlD = input.auditSql !== undefined && typeof input.auditSql === 'string' && input.auditSql.trim() !== ''
+      ? input.auditSql.trim() : null
+    const adjDomain = name.split(':')[0] ?? name
+    const qPieces: ProposedFile[] = [{
+      path: SEMANTICS_YAML_REL,
+      bytes: Buffer.byteLength(out, 'utf8'),
+      content: out,
+      baseSha256: createHash('sha256').update(currentYaml, 'utf8').digest('hex'),
+    }]
+    const qDown: DownstreamItem[] = []
+    const qVal: Issue[] = [{
+      path: 'name',
+      message: '同名指标已存在：本提案是**修改**该条目——本次只改 `synonyms`（键级编辑，其余原文逐字不动；行内注释保留）',
+    }]
+    if (auditSqlD === null) {
+      qVal.push({ path: 'auditSql', message: '未提供——PR 合并前 gate ⑦（audit test）会红，draft PR 带红是预期' })
+      qDown.push({
+        path: `${DBT_TESTS_DIR}/${adjDomain}/${metricToAuditFileName(name)}`,
+        kind: 'required',
+        why: '对账 singular test（gate ⑦）：每个声明指标必须有一条**独立复算**（layered §7 硬约束 7）；本工具不代写（生成空壳 = 假绿），复算 SQL 请人工编写后随 PR 附上',
+      })
+    } else {
+      qPieces.push({ path: `${DBT_TESTS_DIR}/${adjDomain}/${metricToAuditFileName(name)}`, bytes: Buffer.byteLength(auditSqlD, 'utf8'), content: auditSqlD })
+    }
+    return { ok: true, mode: 'modify', title: `L1 指标声明提案：${name}`, branch: `proposal/${slugOf(`L1 指标声明提案：${name}`)}`, pieces: qPieces, downstream: qDown, validation: qVal }
+  }
+
   // ── D. 组条目文本（修改模式：输入不管的键从原条目带过）──────────────────────────────────
   const fields: EntryFields = {
     ...shape.fields,
