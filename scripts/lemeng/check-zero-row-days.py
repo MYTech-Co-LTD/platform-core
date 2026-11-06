@@ -149,8 +149,9 @@ def main() -> int:
 
     # 截止日取「昨天」（今天的分区可能还没发布，不参与判定）
     end = date.today() - timedelta(days=1)
-    recent = [(end - timedelta(days=i)).isoformat() for i in range(a.days - 1, -1, -1)]
-    base = [(end - timedelta(days=i)).isoformat() for i in range(a.days, a.days + a.baseline)]
+    span = max(a.days, 7)   # 稀疏数据集用 7 天窗口
+    recent = [(end - timedelta(days=i)).isoformat() for i in range(span - 1, -1, -1)]
+    base = [(end - timedelta(days=i)).isoformat() for i in range(span, span + a.baseline)]
 
     bad = 0
     checked = 0
@@ -168,6 +169,11 @@ def main() -> int:
             base_days = [d for d in b if b[d] > 0]
             if len(base_days) < max(1, len(base) // 2):
                 continue  # 本来就没数据（如业务无退货），不报
+            # 稀疏数据集（客户费用/报损这类事件驱动的）基线覆盖率天然低，
+            # 连续 3 天 0 行可能只是「真没单」⇒ 阈值提到 7 天；密集数据集维持 3 天。
+            need = a.days if len(base_days) >= (len(base) * 9 // 10) else max(7, a.days)
+            if len(recent) < need:
+                continue
             zeros = [d for d in recent if r.get(d, -1) == 0]
             missing = [d for d in recent if r.get(d, -1) < 0]
             # 断供判据：窗口内**有分区的天全都 0 行**，且这些天 + 缺分区的天覆盖整个窗口。
