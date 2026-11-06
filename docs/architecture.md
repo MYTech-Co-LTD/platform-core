@@ -215,6 +215,11 @@ token 只决定「这个账号能调哪些面」，不改变分层。
        全史扫描持平（~29s）且视图更新鲜（含当日 tick）。物化表此前是「倒贴磁盘换负优化」：
        lemeng-dbt-materialize 每 2 小时全量重建 13GB staging（单轮 ~40 分钟 + 换表双份盘峰），
        翻视图后该轮只剩 marts 重建。明细视图纪律：必带 bizday 分区过滤；聚合走 marts。 -->
+  <!-- 2026-11-06 物化策略（#1520，用户拍板）：marts 从「全量 table 重建」改「lookback + delete+insert 增量」。
+       设计 = specs/2026-11-04-incremental-marts-design.md；10 分钟档只含 fct_retail_sale（销售明细口径）。
+       触发器：全量重建 + 回填叠加打穿内存（OOM/segfault），且单轮 45–120 分钟 ⇒「10 分钟一物化」不可能。
+       staging 仍是 view（2026-11-02 订正不变）；本次只动物化策略、不碰任何口径（B11）。
+       首个落地：fct_retail_sale，unique_key=(system_book,bizday,branch_num)，lookback 7 天。 -->
   **L1 语义声明的事实源**（`dbt/semantics/l1_metrics.yml` + `dbt/models/<域>/marts/schema.yml`）；
   **对账/断言 tests**（`audit_*` 独立复算 + `assert_*` 结构断言）；**血缘与文档**（`dbt docs generate`）。
 - **输入**：湖里的 parquet（staging 读源）；语义声明是**仓内 YAML**。

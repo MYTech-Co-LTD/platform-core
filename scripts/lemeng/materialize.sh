@@ -193,7 +193,12 @@ export LEMENG_ZOS_BUCKET="$ZB" LEMENG_ZOS_REGION="$ZR" LEMENG_ZOS_ENDPOINT="$ZE"
 export LEMENG_SUBJECT_ORG="$SO"
 export DATA_PLANE_DOMAINS="$DOMAINS"
 
-echo "materialize start repo=${R} network=${NETWORK} image=${IMAGE} domains=${DOMAINS} mode=full_build（本面域内全量，无按需名单，#679）"
+# 物化档位（#1520）：full = 现有逐域全量；tick = 只跑销售明细增量（每 10 分钟档）。
+# tick 是**一个具名模型**（不是手抄名单）：默认 fct_retail_sale，口径变更由模型自身表达。
+SCOPE=${MATERIALIZE_SCOPE:-full}
+TICK_SELECT=${MATERIALIZE_TICK_SELECT:-fct_retail_sale}
+TICK_DOMAIN=${MATERIALIZE_TICK_DOMAIN:-lemeng}
+echo "materialize start repo=${R} network=${NETWORK} image=${IMAGE} domains=${DOMAINS} scope=${SCOPE} mode=full_build（本面域内全量，无按需名单，#679）"
 # dbt 输出 tee 进临时日志：job 的实时流保持不变，同时留一份可解析的汇总行（Done. PASS=n … ERROR=m）。
 # 退出码用 rc 文件带出（POSIX sh 无 pipefail/PIPESTATUS；管道末位是 tee，不能直接判 dbt）。
 _WORK=$(mktemp -d "${TMPDIR:-/tmp}/materialize.XXXXXX")
@@ -207,6 +212,33 @@ MAT_TABLES_ALL=$(docker exec -e PGPASSWORD="$PW" "$PG_CT" psql -U "$UN" -d "$DB"
   | tr -d '\r' | sed '/^[[:space:]]*$/d' | tr '\n' ' ' || true)
 if [ -z "$MAT_TABLES_ALL" ]; then
   echo "materialize warn: 水位表清单为空（staging 无含 bizday 列的表，或点名查询失败）——各域都不写逐表水位，data_as_of 将停留旧值" >&2
+fi
+
+# ── tick 档（#1520）：只跑销售明细增量，供 openship job 每 10 分钟调用 ─────────────────
+# 为什么单独一档：10 分钟一次全量重建物理上不可能（单轮 45–120 分钟）；增量后单表只重算
+# 最近 7 天。选择器是**一个具名模型**（fct_retail_sale），不是按域全量；上游 staging 已是 view
+# （2026-11-02 #1275），无需重建。水位照写 `data.load_log`（relation=fct_retail_sale），
+# 新鲜度面与全量档同源。
+if [ "$SCOPE" = tick ]; then
+  echo "── tick: ${TICK_SELECT}（domain=${TICK_DOMAIN}）──"
+  _log="$_WORK/dbt.tick.log"
+  _rc="$_WORK/dbt.tick.rc"
+  ( if DATA_PLANE_DOMAINS="$TICK_DOMAIN" docker run --rm --network "$NETWORK" -v "$R/dbt:/usr/app" \
+      $(mat_env_args) "$IMAGE" $(mat_dbt_args) --select "$TICK_SELECT" 2>&1; then
+    echo 0 >"$_rc"
+  else
+    echo $? >"$_rc"
+  fi ) | tee "$_log"
+  if [ "$(cat "$_rc")" != 0 ]; then
+    echo "MATERIALIZE_FAILED:dbt_build（tick ${TICK_SELECT}）；retry 由 openship job 配置承担" >&2
+    exit 1
+  fi
+  mat_write_load_log \
+    "$(sed -n 's/.*PASS=\([0-9]*\).*/\1/p' "$_log" | tail -n 1)" \
+    "$(sed -n 's/.*ERROR=\([0-9]*\).*/\1/p' "$_log" | tail -n 1)" \
+    "$TICK_SELECT"
+  echo "MATERIALIZE_OK scope=tick"
+  exit 0
 fi
 
 # ── 逐域 build + 逐域落账（拆爆炸半径，2026-10-17）────────────────────────────────

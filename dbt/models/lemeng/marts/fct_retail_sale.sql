@@ -2,7 +2,12 @@
 -- ⚠️ 注释必须留在 Jinja config 块外：块内是 Jinja 表达式、不认 SQL 注释行（真 dbt 1.9.1
 --   parse 实测报 expected token，2026-09-23 T6 收尾订正）。
 {{
-    config(materialized='table')
+    config(
+        materialized='incremental',
+        unique_key=['system_book', 'bizday', 'branch_num'],
+        incremental_strategy='delete+insert',
+        on_schema_change='sync_all_columns'
+    )
 }}
 
 -- fct_retail_sale.sql — 零售销售事实（口径模型；layered ④：join / 粒度 / **口径在这里定义一次**）。
@@ -147,3 +152,12 @@ left join order_count_cte
     on  gen_agg.system_book = order_count_cte.system_book
     and gen_agg.bizday      = order_count_cte.bizday
     and gen_agg.branch_num  = order_count_cte.branch_num
+{% if is_incremental() %}
+-- 增量窗口（#1520）：只重算最近 7 天；首次 / --full-refresh 时 is_incremental() 为假，走全量。
+-- 为什么用 lookback 而不是「> max(bizday)」：历史回填 / 源端晚到 / 同日重写都要被覆盖，
+-- 详见 docs/superpowers/specs/2026-11-04-incremental-marts-design.md §2.3。
+where gen_agg.bizday >= (
+    select coalesce(max(bizday), date '1900-01-01') - interval '7 days'
+    from {{ this }}
+)
+{% endif %}

@@ -1,4 +1,4 @@
-sha256-of-rest f7bf49c84d924107e74f40900d90cce4069cdc8c438c0d867ad9a83c87b2ca5b
+sha256-of-rest f0803956735e0d49926303edd310cf53dc7da3a638a808f68a28678a593644ab
 08938c10c6b4a688c8afda6cd7d1ad3dbf2c20f83cf8c4e7023055ad34eddc70 contracts/README.md ${REPO}/contracts/README.md 0644
 fcc8189e1012d5fbb8e2505025bed637dd01c7b4465ab86125d3eaa7f330eff3 contracts/common/_schema.schema.json ${REPO}/contracts/common/_schema.schema.json 0644
 1730119518c3371f3c2ff3492f4c15cd731688047c6d40805ec4d2c65892f3ff contracts/common/_template.contract.json ${REPO}/contracts/common/_template.contract.json 0644
@@ -56,7 +56,7 @@ ca91f07f48dc8d26a7dcd84959f0aa6a20ff7dc21ede5b29a012242bf68edcac dbt/models/leme
 62c07279fd092e81de58ab3caa7e7b885d8d9dcf0aaa882c5791d36326fa2972 dbt/models/lemeng/marts/fct_request_fulfillment.sql ${REPO}/dbt/models/lemeng/marts/fct_request_fulfillment.sql 0644
 e3ab46e7866d7359e706e8c303e2c6445eeb7cd1dc5ddc5e3af118bd7f6be6ba dbt/models/lemeng/marts/fct_retail_comparable_growth.sql ${REPO}/dbt/models/lemeng/marts/fct_retail_comparable_growth.sql 0644
 2da05dfa1a3922cf73c8c53ec80b4af0fde36625590d9556915d04a47aa11f84 dbt/models/lemeng/marts/fct_retail_quantity.sql ${REPO}/dbt/models/lemeng/marts/fct_retail_quantity.sql 0644
-018931193c38c039c32610e21390d2d4c0dfe5cb1886d0532f1b896ab8acc451 dbt/models/lemeng/marts/fct_retail_sale.sql ${REPO}/dbt/models/lemeng/marts/fct_retail_sale.sql 0644
+4aa81ad09cfdd672496a9f3a957fcb3c2d31c8fb1616b7d6b8c9d070bd9caab9 dbt/models/lemeng/marts/fct_retail_sale.sql ${REPO}/dbt/models/lemeng/marts/fct_retail_sale.sql 0644
 70a7f1cd649d4176a9866c67ecdf05361b2a957cc9e324d937e43f2310e22067 dbt/models/lemeng/marts/fct_transfer_item.sql ${REPO}/dbt/models/lemeng/marts/fct_transfer_item.sql 0644
 9013270fb8daaa8ccdf615c830567a57819813c9cc39871ce862ae809ec73891 dbt/models/lemeng/marts/fct_transfer_line_quality.sql ${REPO}/dbt/models/lemeng/marts/fct_transfer_line_quality.sql 0644
 9c416edf30af0dbbdde213bf38b322d18c2a09132c269eef786c44b7ee6e99be dbt/models/lemeng/marts/fct_transfer_zero_cost_item.sql ${REPO}/dbt/models/lemeng/marts/fct_transfer_zero_cost_item.sql 0644
@@ -341,8 +341,8 @@ c2b42692eea7c95e0b4957659c4c8fa1b0ca5fc51a5776a0ce48613e3bcb8b1a deploy/duckle/c
 05701cd1977bc2db49891b9807f822fff556c376d9815251b98e8071245b3c9a deploy/duckle/console/pipelines/lemeng.wholesale.out.backfill.3120.json ${REPO}/deploy/duckle/console/pipelines/lemeng.wholesale.out.backfill.3120.json 0644
 c471c6a9f25d02b2419f5f9a05e79eb80fdfdc5d599633d892fcff72b208e959 deploy/duckle/console/pipelines/lemeng.wholesale.out.l0.3120.json ${REPO}/deploy/duckle/console/pipelines/lemeng.wholesale.out.l0.3120.json 0644
 26e5ed924ffa1034d0305d575bdd39f8f0a4b83963c17e8e2406ec94f48f374c deploy/duckle/console/pipelines/lemeng.wholesale.return.l0.3120.json ${REPO}/deploy/duckle/console/pipelines/lemeng.wholesale.return.l0.3120.json 0644
-95b3497f894d5d82cf38e0c9e23cd529248d0042ed8b0ab88ea002b62e9829c4 deploy/duckle/console/schedules/3120.json ${REPO}/deploy/duckle/console/schedules/3120.json 0644
-283567e8d51ff62dbce9f445268b048ca5c2642441671910822c43c9cc041459 deploy/duckle/console/schedules/64188.json ${REPO}/deploy/duckle/console/schedules/64188.json 0644
+72cf3d52daa038ce178c2afc12b76454c47efbe333afdb3660996fdbd14d623a deploy/duckle/console/schedules/3120.json ${REPO}/deploy/duckle/console/schedules/3120.json 0644
+f06e7c39289fb18168ff2da64eddd83e9036cc4127f70a3d0f70664613e73e4d deploy/duckle/console/schedules/64188.json ${REPO}/deploy/duckle/console/schedules/64188.json 0644
 127dde28f2d058ec300de7777f171f1922fa8b787af810f2ce63fbfa7a52d53d deploy/duckle/console/schedules/forms.json ${REPO}/deploy/duckle/console/schedules/forms.json 0644
 43381a794c2909ebe1fc184b9ab55e5b301345aac3dc492e10716de5ec5157db deploy/duckle/entrypoint.sh ${REPO}/deploy/duckle/entrypoint.sh 0644
 1adccd79d9d5a1ddad55401259312c332fc63e210d8865f4d14bc6f0263a8c7c deploy/oo-alert-registry.txt ${REPO}/deploy/oo-alert-registry.txt 0644
@@ -360,7 +360,7 @@ bbcc8969b337591f9431a1a06f0d603deab72d59364ce21722bb3139e7a31100 scripts/lemeng/
 7f52cab56a1501c425f5537641fe53a345ebe4bdd9d458da8e58949f9b8c50c6 scripts/lemeng/check-zero-row-days.py /opt/lemeng-check-zero-row-days.py 0755
 01030dcce0bee5c3c50ed54c0be7b9fa302da3de50be65cf137e03881fd453dc scripts/lemeng/delete-supplanted-hour-partitions.py ${REPO}/scripts/lemeng/delete-supplanted-hour-partitions.py 0644
 f030ebf00606c0e64157c69bd60aaa74ee932f647165d3f8ec8f419982e63344 scripts/lemeng/diagnose.sh /opt/lemeng-diagnose.sh 0755
-2cb0ba5430ec83b6b812178d7aa9df1c62d379f7a263bdc09ed09d4b2465c32a scripts/lemeng/materialize.sh /opt/lemeng-materialize.sh 0755
+cab103d54e9e13c788297ff45d422fab25b3e215ed1e6c5ad904ae9ff27c76c0 scripts/lemeng/materialize.sh /opt/lemeng-materialize.sh 0755
 c004dfd93237edaaad1e727794a467393f73947a583360e3f112ffa1455724d4 scripts/lemeng/nightly-backfill.sh /opt/lemeng-nightly-backfill.sh 0755
 98074d99903bd7092dc8e8179ebec4a968e123e72884502a2a2664e08607eeb9 scripts/lemeng/oo-config-audit.sh /opt/lemeng-oo-config-audit.sh 0755
 6f7c9215e44e145c08b53a1b48d078a6cd73aee92af64d3b903a09c5deb94447 scripts/lemeng/oo-notify-bridge.sh /opt/lemeng-oo-notify-bridge.sh 0755
