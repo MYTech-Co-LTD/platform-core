@@ -11,6 +11,10 @@
 
 ## [Unreleased]
 
+## [0.277.1](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.277.0...v0.277.1) - 2026-11-06
+- 【修复】data: 调拨响应字段改名——in_order_fid/out_order_fid（补契约 + 80 个页节点 schema） ([#1461](https://github.com/MYTech-Co-LTD/platform-core/pull/1461), [44c254e](https://github.com/MYTech-Co-LTD/platform-core/commit/44c254e20bc6ee8c49a30fe4e679f26d52f9f458))
+
+
 ## [0.277.0](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.276.1...v0.277.0) - 2026-11-06
 - 【新增】data: W5 治理可回溯——体系地图（健康五数/回溯链/移动端/孤儿表与候选质量） ([#1460](https://github.com/MYTech-Co-LTD/platform-core/pull/1460), [654480d](https://github.com/MYTech-Co-LTD/platform-core/commit/654480d63a7f090c73a52cd3408169d9a6af5ad8))
 
