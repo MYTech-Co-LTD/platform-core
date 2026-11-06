@@ -7,7 +7,8 @@
 
 **Goal:** 把「这套体系到底靠不靠得住」变成四个可查的数 + 一张业务人员能自己走通的地图；桌面与手机都能用。
 
-**Architecture:** 一个受权限保护的**体系地图页面**（服务端渲染单文件 HTML，`data:query`），同一份数据源同时喂「健康面板」与「指标/实体/数据源/需求」四视图；桌面侧边栏 + 图谱，手机底部标签 + 步骤条。事实源 = 仓内声明（`l1_metrics.yml` / `dimensions.yml` / `invariants.yml` / `contracts/` / `dbt/models`）+ 运行库（`data.metrics` / `reports` / `query_audit` / `demand_signals` / `metric_audit`）。
+**Architecture:** 一个受权限保护的**体系地图页面**（服务端渲染单文件 HTML，`data:query`），同一份数据源同时喂「健康面板」与「指标/实体/数据源/需求」四视图；桌面侧边栏 + 图谱，手机底部标签 + 步骤条。
+**入口定位（定案 A，2026-11-06 用户确认）**：页面是**独立的追溯页**，不是移动壳的第 5 个 tab——业务用户从「报表 → 指标 → 口径与来源」**深链进入**，浏览器返回即回报表；移动壳的 tab 结构（报表/问数）不动。事实源 = 仓内声明（`l1_metrics.yml` / `dimensions.yml` / `invariants.yml` / `contracts/` / `dbt/models`）+ 运行库（`data.metrics` / `reports` / `query_audit` / `demand_signals` / `metric_audit`）。
 
 **Tech Stack:** Hono 路由 + 纯函数渲染器；原生 CSS/JS（零 CDN、零新依赖）；`antd-mobile` **不引入**（页面是独立 HTML，不塞进 React 壳）。
 
@@ -81,6 +82,12 @@ interface HealthInput {
 | `768–1023px` 平板 | 顶部横向标签 + 主区；图保留但缩到 60% 宽 |
 | `<768px` 手机 | **底部固定标签栏**（总览/指标/实体/需求）+ 卡片列表 + 全屏详情页；**不渲染 SVG 图** |
 
+**入口与深链（定案 A）：**
+1. **报表中心 → 指标**：报表详情里每个指标卡片加「口径与来源」链接 → `#/metrics/<指标id>`（同一页面的指标详情）；
+2. **报表中心页头**：次级入口「体系地图」（不占底部 tab）→ `#/overview`；
+3. **PC console**：数据模块菜单加「体系地图」；
+4. **深链约定**：`#/overview` · `#/metrics` · `#/metrics/<id>` · `#/entities` · `#/sources` · `#/demands`；刷新/分享后落在同一视图；从外部进入详情时显示「← 返回」回来源（`document.referrer` 同源则 history.back，否则回 `#/metrics`）。
+
 **手机端四条硬设计：**
 1. **底部标签栏**（`position: sticky; bottom: 0` + `env(safe-area-inset-bottom)`），4 个入口，图标+中文短标；
 2. **搜索置顶吸顶**，全宽输入框，输入即过滤（前端过滤，无需请求）；
@@ -91,7 +98,8 @@ interface HealthInput {
 - 375×667 无横向滚动（`document.scrollingElement.scrollWidth <= innerWidth`）；
 - 所有可点元素 ≥44×44；
 - 首屏 HTML（含内联数据）≤400KB，模拟 3G 首屏 <2s；
-- 五个视图均可进入、可返回；深链刷新后仍落在同一详情。
+- 五个视图均可进入、可返回；深链刷新后仍落在同一详情；
+- **从报表进入**：报表 →「口径与来源」→ 指标详情 → 返回 **回到原报表**（不是回体系地图首页）。
 
 - [ ] **Step 1: CSS 断点与移动 DOM 骨架**（先写，断言测试）
 - [ ] **Step 2: 底部标签 + 吸顶搜索 + 卡片列表**
@@ -111,6 +119,7 @@ interface HealthInput {
 
 - [ ] **Step 1: 路由装配**（读声明 → 查运行库 → `modelOf` → `render`；10 分钟内存缓存；`Content-Type: text/html; charset=utf-8`）
 - [ ] **Step 2: 权限**（未登录 403；`data:query` 持有者 200）；manifest 双向核对通过
+- [ ] **Step 2b: 入口接线**（移动壳 `ReportsView` 加「口径与来源」链接与页头次级入口；PC console 菜单加入口）——壳侧只放**链接**，不复制渲染逻辑
 - [ ] **Step 3: 测试**：未登录 / 正常渲染含标题 / XSS 转义 / 缓存命中（二次调用不重复查库）
 - [ ] **Step 4: 提交**
 
