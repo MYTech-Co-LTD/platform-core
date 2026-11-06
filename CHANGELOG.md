@@ -11,6 +11,10 @@
 
 ## [Unreleased]
 
+## [0.277.0](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.276.1...v0.277.0) - 2026-11-06
+- 【新增】data: W5 治理可回溯——体系地图（健康五数/回溯链/移动端/孤儿表与候选质量） ([#1460](https://github.com/MYTech-Co-LTD/platform-core/pull/1460), [654480d](https://github.com/MYTech-Co-LTD/platform-core/commit/654480d63a7f090c73a52cd3408169d9a6af5ad8))
+
+
 ## [0.276.1](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.276.0...v0.276.1) - 2026-11-06
 - 【修复】data: 调拨接口改版——body 由 start_date/end_date 改为 date_start/date_end + date_type ([#1459](https://github.com/MYTech-Co-LTD/platform-core/pull/1459), [328d36f](https://github.com/MYTech-Co-LTD/platform-core/commit/328d36f69c41e4f629bbe7f5c93e18a35d7962dc))
 
