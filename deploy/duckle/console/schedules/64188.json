@@ -502,5 +502,47 @@
     "last_run_duration_ms": null,
     "last_run_error": null,
     "next_run_at": null
+  },
+  {
+    "id": "panel-lemeng.transfer.in.l0.64188",
+    "pipeline_id": "lemeng.transfer.in.l0.64188",
+    "name": "lemeng.transfer.in.l0.64188",
+    "enabled": true,
+    "kind": {
+      "type": "cron",
+      "expr": "25 14,16,18,20,22 * * *"
+    },
+    "timezone": "Asia/Shanghai",
+    "misfire": "all",
+    "catchup": {
+      "maxCatchupRuns": 31,
+      "maxCatchupAgeDays": 45
+    },
+    "last_run_at": null,
+    "last_run_status": null,
+    "last_run_duration_ms": null,
+    "last_run_error": null,
+    "next_run_at": null
+  },
+  {
+    "id": "panel-lemeng.transfer.out.l0.64188",
+    "pipeline_id": "lemeng.transfer.out.l0.64188",
+    "name": "lemeng.transfer.out.l0.64188",
+    "enabled": true,
+    "kind": {
+      "type": "cron",
+      "expr": "35 14,16,18,20,22 * * *"
+    },
+    "timezone": "Asia/Shanghai",
+    "misfire": "all",
+    "catchup": {
+      "maxCatchupRuns": 31,
+      "maxCatchupAgeDays": 45
+    },
+    "last_run_at": null,
+    "last_run_status": null,
+    "last_run_duration_ms": null,
+    "last_run_error": null,
+    "next_run_at": null
   }
 ]

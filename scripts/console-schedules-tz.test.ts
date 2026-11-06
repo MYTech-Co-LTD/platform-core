@@ -1,6 +1,6 @@
 // console-schedules-tz.test.ts — 业务排班时区统一门禁（spec 2026-10-15 §10.6，2026-10-16 用户拍板）。
 //
-// 钉什么：deploy/duckle/console/schedules/ 下三本种子（3120×30 + 64188×24 + forms×1，共 55 条）必须
+// 钉什么：deploy/duckle/console/schedules/ 下三本种子（3120×30 + 64188×26 + forms×1，共 57 条）必须
 //   ① 全部显式 `timezone: 'Asia/Shanghai'`（含原先缺省无字段的 9 条）；
 //   ② `kind.expr` 与 §10.6 转换表**逐字**一致（旧 UTC expr +8h）。
 //   ⚠️ **2026-10-20 订正（#931）**：非销售采集统一到 **14–24 点每 2 小时**（`M 14,16,18,20,22 * * *`），
@@ -79,6 +79,8 @@ const EXPECTED: Record<string, Record<string, string>> = {
     'panel-lemeng.purchase.analysis.l0.64188': '40 14,16,18,20,22 * * *',
     'panel-lemeng.client.expense.l0.64188': '15 14,16,18,20,22 * * *',
     'panel-lemeng.member.summary.l0.64188': '55 14,16,18,20,22 * * *',
+    'panel-lemeng.transfer.in.l0.64188': '25 14,16,18,20,22 * * *',
+    'panel-lemeng.transfer.out.l0.64188': '35 14,16,18,20,22 * * *',
   },
   // forms（#729 M1.4，**非乐檬域**，有自己的 console）：新增即按 CST 写，无 UTC→CST 转换行。
   // 日批 00:20 CST（刚过零点采集，业务日的提交 T+1 可见；水位=id 键集游标 ⇒ 错峰不影响完整性）。
@@ -113,6 +115,6 @@ describe('console 排班时区统一（spec §10.6）：49 条全显式 Asia/Sha
 
   it('合计恰 55 条（3120×30 + 64188×24 + forms×1）——条数漂移必须显式改 spec §10.6 与本测试', () => {
     const total = Object.values(EXPECTED).reduce((n, m) => n + Object.keys(m).length, 0)
-    expect(total).toBe(55)
+    expect(total).toBe(57)
   })
 })
