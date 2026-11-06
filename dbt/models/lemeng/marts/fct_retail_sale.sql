@@ -84,6 +84,9 @@ with
 base_sale as (
     select * from {{ ref('stg_lemeng_retail_order_line') }}
     where state = 'FINISHED' and order_transaction_type = 'SALE_ORDER'
+    {% if is_incremental() %}
+    and bizday >= (select coalesce(max(bizday), date '1900-01-01') - interval '7 days' from {{ this }})
+    {% endif %}
 ),
 sale_amount__gen as (
     select system_book, bizday, branch_num, order_no, (case when sum(case when state = 'FINISHED' and order_transaction_type = 'SALE_ORDER' then 1 else 0 end) = 0 then 0 else (sum(case when state = 'FINISHED' and order_transaction_type = 'SALE_ORDER' and
@@ -96,6 +99,9 @@ end) as measure_value from base_sale group by system_book, bizday, branch_num, o
 base_return as (
     select * from {{ ref('stg_lemeng_retail_order_line') }}
     where state = 'FINISHED' and order_transaction_type like '%RETURN%'
+    {% if is_incremental() %}
+    and bizday >= (select coalesce(max(bizday), date '1900-01-01') - interval '7 days' from {{ this }})
+    {% endif %}
 ),
 return_amount__gen as (
     select system_book, bizday, branch_num, order_no, order_detail_num, (sum(case when order_transaction_type like '%RETURN%' and state = 'FINISHED' and

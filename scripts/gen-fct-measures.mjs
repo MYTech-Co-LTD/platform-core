@@ -68,6 +68,8 @@ export const REGEN_COMMAND = 'pnpm exec tsx scripts/gen-fct-measures.mjs'
  * @property {string[]} fctGrain 该 fct 的粒度键（与模型头注声明的 grain 同源）
  * @property {string[]} columns 物化的组件键（顺序即生成顺序）
  * @property {Record<string, string>} baseAliases 组件键 → 基面 CTE 名
+ * @property {number} [incrementalLookback] 增量基面下推天数（仅 incremental 模型；#1524）
+ * @property {string} [incrementalKey] 增量过滤键（默认 bizday）
  */
 
 /**
@@ -96,6 +98,9 @@ export const MODELS = [
       'sale_amount@order': 'base_sale',
       'return_amount@line': 'base_return',
     },
+    // 该模型是 incremental（#1520）：基面 CTE 下推 7 天 lookback，让 read_parquet 走 bizday
+    // 分区裁剪。只放最终 SELECT 会先扫全史再过滤（tick 实测 5+ 分钟，#1524）。
+    incrementalLookback: 7,
   },
   // P3.3 Task 2（#1031）：门店费用构件——两列都是 flat（单层直聚，无中间粒度键 ⇒ grainKeys 空）。
   {
@@ -233,10 +238,16 @@ export function renderFctMeasures(measures, spec, domains = {}) {
       throw new Error(`组件 ${key} 的 domain \`${m.domain}\` 未在 \`domains:\` 里声明`)
     }
     const where = resolveDomain(m.domain, domains)
+    // 增量基面下推（#1524）：把 lookback 过滤放进 base CTE，让 read_parquet 先按 bizday 裁剪。
+    // 只放最终 SELECT 会「先扫全史再过滤」——tick 档实测 5+ 分钟；下推后应 <2 分钟。
+    // 仅对声明了 incrementalLookback 的模型生效（其余模型 `is_incremental()` 恒假，加了也只是噪音）。
+    const incFilter = spec.incrementalLookback
+      ? `\n    {% if is_incremental() %}\n    and ${spec.incrementalKey ?? 'bizday'} >= (select coalesce(max(${spec.incrementalKey ?? 'bizday'}), date '1900-01-01') - interval '${spec.incrementalLookback} days' from {{ this }})\n    {% endif %}`
+      : ''
     const priorWhere = emittedBases.get(base)
     if (priorWhere === undefined) {
       emittedBases.set(base, where)
-      ctes.push(`${base} as (\n    select * from ${spec.stagingRef}\n    where ${where}\n)`)
+      ctes.push(`${base} as (\n    select * from ${spec.stagingRef}\n    where ${where}${incFilter}\n)`)
     } else if (priorWhere !== where) {
       throw new Error(`组件 ${key} 复用基面 CTE \`${base}\`，但行域谓词与先到者不同（\`${where}\` ≠ \`${priorWhere}\`）`
         + ' —— 同一 CTE 只有一份 where，后到者会静默沿用先到者的行域；给它们各自的基面别名（baseAliases）')
