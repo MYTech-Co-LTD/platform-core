@@ -48,14 +48,14 @@ const REPORTS = [
       ['all_order_post_fee', DEC], ['order_total_discount_money', DEC],
       ['un_paid_money', DEC], ['make_up_money', DEC],
       ['cash_system_money', DEC], ['cash_difference_money', DEC], ['shift_table_actual_cash_money', DEC],
-      ['card_deposit_money', DEC], ['card_deposit_total_money', DEC],
+      ['card_deposit_money', 'JSONL'], ['card_deposit_total_money', DEC],
       ['card_consume_self_money', DEC], ['card_consume_present_money', DEC],
-      ['prepaid_card_money', DEC], ['prepaid_card_total_money', DEC],
-      ['pick_up_card_money', DEC], ['pick_up_card_total_money', DEC],
+      ['prepaid_card_money', 'JSONL'], ['prepaid_card_total_money', DEC],
+      ['pick_up_card_money', 'JSONL'], ['pick_up_card_total_money', DEC],
       ['coupon_amount', DEC], ['coupon_detail_sale_money', DEC], ['order_coupon_total_money', DEC],
-      ['other_inout_money', DEC], ['other_inout_total_money', DEC],
+      ['other_inout_money', 'JSONL'], ['other_inout_total_money', DEC],
       ['online_payment_receipt_money', DEC], ['online_coupon_amount', DEC],
-      ['all_payment_type_moneys', 'JSON'],
+      ['all_payment_type_moneys', 'JSONL'],
     ],
   },
   {
@@ -96,11 +96,14 @@ const REPORTS = [
 ]
 
 /** @param {string} expr @param {string} type @returns {string} */
-/** 列类型速记 → DuckDB SQL 类型。⚠️ 占位行 `CAST(NULL AS …)` 必须用**这里**，不能用速记本身
+/** 列类型速记 → DuckDB SQL 类型。JSONL = 源端返回的是「对象数组」（如按支付方式拆分的金额明细），
+ *  统一按 JSON 串落湖（2026-11-06 真机实测：.find 的 card_deposit_money / prepaid_card_money /
+ *  pick_up_card_money / other_inout_money / all_payment_type_moneys 都是 list，强转 DECIMAL 会炸
+ *  `Unimplemented type for cast (STRUCT(...)[] -> DECIMAL(20,2))`）。⚠️ 占位行 `CAST(NULL AS …)` 必须用**这里**，不能用速记本身
  *  （2026-11-06 真机教训：`validate` 对 `CAST(NULL AS TXT)` 放行，run 时 DuckDB 报
  *  `Catalog Error: Type with name TXT does not exist` ⇒ 整个 foreach 子管线炸在 s 节点）。 */
 const sqlType = (/** @type {string} */ t) =>
-  t === 'INT' ? 'INTEGER' : t === 'TXT' || t === 'JSON' ? 'VARCHAR' : t
+  t === 'INT' ? 'INTEGER' : t === 'TXT' || t === 'JSON' || t === 'JSONL' ? 'VARCHAR' : t
 
 /** @param {string} expr @param {string} type @returns {string} */
 const cast = (expr, type) => `CAST(${expr} AS ${sqlType(type)})`
@@ -156,14 +159,16 @@ function buildSub(r) {
   })
 
   // n：请求门店清单左连接源端行
-  const perCols = r.cols.filter(([c]) => c !== 'branch_num').map(([c, t]) => `         ${cast('r.' + c, t)} AS ${c}`).join(',\n')
+  // ⚠️ 直接 join `input`，**不再套派生表**：2026-11-06 真机实测，套派生表时 coupon 子管线在绑定阶段报
+  //    `Binder Error: Referenced table "r" not found! Candidate tables: "req"`（同一形状 receive 却能过）。
+  //    扁平成 `LEFT JOIN input ON ...` 后不再有别名作用域可丢。
   setProps(doc, 'n', {
     sql:
       `SELECT CAST(req.branch_num AS INTEGER) AS branch_num,\n` +
-      r.cols.filter(([c]) => c !== 'branch_num').map(([c]) => `       per.${c} AS ${c}`).join(',\n') + ',\n' +
-      `       per.branch_num IS NOT NULL AS matched\n` +
+      r.cols.filter(([c]) => c !== 'branch_num').map(([c, t]) => `       ${cast('input.' + c, t)} AS ${c}`).join(',\n') + ',\n' +
+      `       input.branch_num IS NOT NULL AS matched\n` +
       `FROM (SELECT CAST(j.value AS BIGINT) AS branch_num FROM json_each('\${ITER_ITEM_BRANCH_NUMS_JSON}') j) req\n` +
-      `LEFT JOIN (\n  SELECT CAST(r.branch_num AS BIGINT) AS branch_num,\n${perCols}\n  FROM input r\n) per ON per.branch_num = req.branch_num`,
+      `LEFT JOIN input ON CAST(input.branch_num AS BIGINT) = req.branch_num`,
   })
 
   // 子管线不再需要「月份锚里的日项」那道闸（本接口一请求即一天）
