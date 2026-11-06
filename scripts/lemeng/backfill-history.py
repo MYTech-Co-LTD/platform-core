@@ -160,13 +160,32 @@ def cst_hour() -> int:
     return int((datetime.now(timezone.utc) + timedelta(hours=8)).strftime("%H"))
 
 
+def _cst_minutes() -> int:
+    now = datetime.now(timezone.utc) + timedelta(hours=8)
+    return now.hour * 60 + now.minute
+
+
 def in_yield_span(spec: str) -> bool:
-    """spec 形如 `3-6`（CST 03:00–05:59 让路）。空串 / 非法 ⇒ 不让路。"""
+    """spec 形如 `3-6`（整点）或 `3-5.5` / `03:00-05:30`（精确到分钟）。空串 ⇒ 不让路。"""
+    if not spec:
+        return False
     try:
-        a, b = (int(x) for x in spec.split("-", 1))
+        a_raw, b_raw = (x.strip() for x in spec.split("-", 1))
+    except ValueError:
+        return False
+
+    def to_min(x: str) -> int:
+        if ":" in x:
+            h, m = x.split(":", 1)
+            return int(h) * 60 + int(m)
+        return int(float(x) * 60)
+
+    try:
+        a, b = to_min(a_raw), to_min(b_raw)
     except Exception:  # noqa: BLE001
         return False
-    return a <= cst_hour() < b
+    cur = _cst_minutes()
+    return a <= cur < b
 
 
 def main() -> int:
@@ -181,6 +200,8 @@ def main() -> int:
         return 2
     apply_ = "--apply" in sys.argv
     skip_existing = "--skip-existing" in sys.argv
+    continue_on_fail = "--continue-on-fail" in sys.argv
+    fail_log = arg("--fail-log", "")   # 失败清单落盘（JSONL），供次日补
     until_cst = arg("--until-cst", "")          # 例 9 → CST 09 点后不再起新的一天
     yield_cst = arg("--yield-cst", "")          # 例 3-6 → CST 03..05 点让路（日常采集优先）
 
@@ -241,7 +262,14 @@ def main() -> int:
             if st != "ok":
                 print(f"BF_DAY_FAILED day={day} book={b} reason=run:{st} secs={secs:.0f}")
                 failed += 1
-                break  # 准确性优先：一天失败就停，不带病往前
+                if fail_log:
+                    with open(fail_log, "a") as fh:
+                        fh.write(json.dumps({"dataset": ds, "book": b, "day": day,
+                                             "status": st, "secs": round(secs, 1)},
+                                            ensure_ascii=False) + "\n")
+                if continue_on_fail:
+                    continue          # 夜间长队列：跳过错日，失败清单留档待补
+                break  # 默认仍「准确性优先」：一天失败就停，不带病往前
             if rows <= 0 and not allow_empty:
                 print(f"BF_DAY_EMPTY day={day} book={b} rows={rows} secs={secs:.0f}"
                       "（源侧可能真零单：核过后用 --allow-empty 重跑该段）")

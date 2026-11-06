@@ -5,7 +5,8 @@
 # 白天做会跟物化/日常采集抢资源。把它们挤到夜里，且**与物化天然不重叠**：
 #   · 物化 job `lemeng-dbt-materialize` cron `27 3,7,9,11,13,15 * * *` UTC
 #     = **CST 11:27 / 15:27 / 17:27 / 19:27 / 21:27 / 23:27** —— 全在窗口之外
-#   · 日常采集里只有 03:00–05:00 CST 那批落在窗口内 ⇒ 本脚本用 `--yield-cst 3-6` 让路
+#   · 日常采集里只有 03:00–05:00 CST 那批落在窗口内 ⇒ 本脚本用 `--yield-cst 03:00-05:30` 让路
+#   · 长队列用 `--continue-on-fail`：错日不中断整段，失败清单落 fail-<CST日>.jsonl 待次日补
 #
 # 队列文件（`#` 注释；每行四个字段）：
 #     <dataset> <book> <from YYYY-MM-DD> <to YYYY-MM-DD>      # to 为排他上界
@@ -22,7 +23,7 @@ QUEUE=${QUEUE:-/opt/lemeng-backfill-queue.txt}
 REPO=${REPO:-/opt/platform-core-data/platform-core}
 LEDGER_DIR=${LEDGER_DIR:-/tmp/lemeng-nightly}
 UNTIL_CST=${UNTIL_CST:-9}
-YIELD_CST=${YIELD_CST:-3-6}
+YIELD_CST=${YIELD_CST:-03:00-05:30}   # 日常采集 03:00~05:00 那批 + 半小时余量
 
 mkdir -p "$LEDGER_DIR"
 DAY=$(TZ=Asia/Shanghai date +%Y-%m-%d)
@@ -48,7 +49,9 @@ while read -r ds book from to _; do
   log "RUN ds=$ds book=$book from=$from to=$to"
   if python3 "$REPO/scripts/lemeng/backfill-history.py" \
        --dataset "$ds" --books "$book" --from "$from" --to "$to" \
-       --apply --skip-existing --until-cst "$UNTIL_CST" --yield-cst "$YIELD_CST" \
+       --apply --skip-existing --continue-on-fail \
+       --fail-log "$LEDGER_DIR/fail-$DAY.jsonl" \
+       --until-cst "$UNTIL_CST" --yield-cst "$YIELD_CST" \
        >>"$LEDGER" 2>&1; then
     ok=$((ok+1)); log "OK ds=$ds book=$book"
   else
