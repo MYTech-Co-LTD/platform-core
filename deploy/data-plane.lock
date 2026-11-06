@@ -1,4 +1,4 @@
-sha256-of-rest f3f90108873249beae8cbe3b1de35ec76775e59bfc35f24dfbbcf590afca6476
+sha256-of-rest ac062af459a32987aae12dbced4dd4283ff428f7baa8ae64bdedf80472215430
 08938c10c6b4a688c8afda6cd7d1ad3dbf2c20f83cf8c4e7023055ad34eddc70 contracts/README.md ${REPO}/contracts/README.md 0644
 fcc8189e1012d5fbb8e2505025bed637dd01c7b4465ab86125d3eaa7f330eff3 contracts/common/_schema.schema.json ${REPO}/contracts/common/_schema.schema.json 0644
 1730119518c3371f3c2ff3492f4c15cd731688047c6d40805ec4d2c65892f3ff contracts/common/_template.contract.json ${REPO}/contracts/common/_template.contract.json 0644
@@ -99,6 +99,7 @@ de9ccb666c60518df42e72c49887727c2879e75dcb0b1a08b6d988153e60136d dbt/seeds/x01_c
 741415c81148254c2479a4b0bf41d7ad2970aab7b711fae8ce7e8de314f49c5e dbt/semantics/dimensions.yml ${REPO}/dbt/semantics/dimensions.yml 0644
 5a3a50536b2039cc7d08ce202fa668d7bed6e32f71c40a921caa9706ded35a16 dbt/semantics/invariants.yml ${REPO}/dbt/semantics/invariants.yml 0644
 b7149c932b3f142c591c6c61b15fdd1995725ea1c3898c410e2efaaab910e737 dbt/semantics/l1_metrics.yml ${REPO}/dbt/semantics/l1_metrics.yml 0644
+387016ea359909a9fc2e2f10b0ba2ab3e5c6777c439ca1b779b86cb0e383059d dbt/semantics/table-owners.yml ${REPO}/dbt/semantics/table-owners.yml 0644
 0e5597bb1d43db3237445787e71944f86669d8542b3e473af30f0fe1b0f1b5ea dbt/tests/lemeng/assert_dim_client_region_unique.sql ${REPO}/dbt/tests/lemeng/assert_dim_client_region_unique.sql 0644
 ee84b62a4ca175750ad7e76228446956cb9ec1c8f556ce39b056cfbbd8d2b444 dbt/tests/lemeng/assert_dim_lemeng_branch_key_unique.sql ${REPO}/dbt/tests/lemeng/assert_dim_lemeng_branch_key_unique.sql 0644
 1d4877283ebb59ae5c60e1f2fa7d8a440107bfc70bc1e7bc266f2d9e8167a76c dbt/tests/lemeng/assert_dim_region_key_unique.sql ${REPO}/dbt/tests/lemeng/assert_dim_region_key_unique.sql 0644

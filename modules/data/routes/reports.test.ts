@@ -226,10 +226,11 @@ describe('报表面声明（不需要数据库）', () => {
     // canEditAsset）；+3：已验证问答（W1 可信度地基：列 data:query + 确认/拒绝 data:manage）；
     // +2：私有测度（W2 三档闭环：POST /metrics/private 申报 data:query + 归档读面 data:manage）；
     // +2：候选池（W2 Task 5：generate / adopt 两条管理动作，data:manage）；
-    // +1：候选升级 propose-l1（W3 #1401：候选 → L1 声明草案，零写盘，data:manage））：
+    // +1：候选升级 propose-l1（W3 #1401：候选 → L1 声明草案，零写盘，data:manage））；
+    // +1：体系地图 GET /system-map（W5 Task 4 #1455：只读单文件 HTML，data:query））：
     // 穷举口径（同 module.test.ts 的表清单）——别处加端点而漏改这里会红，
     // 逼着声明与测试一起动。
-    expect(declared).toHaveLength(51)
+    expect(declared).toHaveLength(52)
     // 资产级共享：入口按观看面（data:query）申报，授权收紧在 handler 里（owner ∪ data:manage）
     expect(declared.get('GET /reports/:id/acl')).toBe('data:query')
     expect(declared.get('PUT /reports/:id/acl')).toBe('data:query')
@@ -563,7 +564,7 @@ describePg('报表路由（需要 DATABASE_URL）', () => {
     // 部门门对外可见（console 要据此显示门徽标），所以投影里带上 `requiredDepts`
     expect(Object.keys(body.reports[0]).sort())
       .toEqual([
-        'canEdit', 'hasUnpublishedChanges', 'id', 'owner', 'publishedVersion', 'renderer',
+        'canEdit', 'hasUnpublishedChanges', 'id', 'metricIds', 'owner', 'publishedVersion', 'renderer',
         'requiredDepts', 'requiredScope', 'title', 'version',
       ])
 

@@ -7,7 +7,7 @@ import ReportsView, { type ReportRow } from './ReportsView'
 afterEach(cleanup)
 
 const ROWS: ReportRow[] = [
-  { id: 'r1', title: '门店销售日报', renderer: 'platform', publishedVersion: 3, hasUnpublishedChanges: false, owner: 'admin1', canEdit: true, version: 5 },
+  { id: 'r1', title: '门店销售日报', renderer: 'platform', publishedVersion: 3, hasUnpublishedChanges: false, owner: 'admin1', canEdit: true, version: 5, metricIds: ['lemeng:retail:net_sales'] },
   // 自己的未发布草稿：中心不显示；管理 tab 显示并可预览
   { id: 'r2', title: '会员复购分析', renderer: 'platform', publishedVersion: null, hasUnpublishedChanges: false, owner: 'admin1', canEdit: true, version: 2 },
   // 别人的已发布：中心显示；管理 tab 不显示（管别人的属配置面，在 PC）
@@ -61,6 +61,26 @@ describe('报表中心 / 报表管理（#1373 拆分）', () => {
     fireEvent.click(await screen.findByText('预览报表'))
     const frame = await screen.findByTitle('会员复购分析')
     expect(frame.getAttribute('src')).toBe('/r/r2?preview=1')
+  })
+
+  it('W5 定案 A：报表卡「口径与来源」深链 + 页头「体系地图」次级入口；无指标 id 不渲染链接', async () => {
+    renderView('center')
+    await waitFor(() => expect(screen.getByText('门店销售日报')).toBeTruthy())
+
+    // 页头次级入口（不占底部 tab）
+    const mapEntry = screen.getByText('体系地图')
+    expect(mapEntry.getAttribute('href')).toBe('/api/modules/data/system-map#/overview')
+
+    // 有 metricIds 的报表卡 → 指标详情深链（冒号编码，页面侧解码）
+    const links = screen.getAllByText('口径与来源')
+    expect(links).toHaveLength(1)
+    expect(links[0]!.getAttribute('href'))
+      .toBe('/api/modules/data/system-map#/metrics/lemeng%3Aretail%3Anet_sales')
+    // 同 tab 打开（不 target=_blank）：返回时 history.back() 才回得到原报表
+    expect(links[0]!.getAttribute('target')).toBeNull()
+
+    // 没有 metricIds 的报表（r3/r4）不加链接
+    expect(screen.queryByText(/口径与来源 · /)).toBeNull()
   })
 
   it('搜索过滤 + 无匹配空态', async () => {

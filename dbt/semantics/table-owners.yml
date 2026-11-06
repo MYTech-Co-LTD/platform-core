@@ -1,0 +1,39 @@
+# table-owners.yml —— marts 表的归属登记（W5 Task 5「孤儿表归零」的事实源）
+#
+# 判据（页面 `体系地图 → 总览 → 孤儿表` 与 `scripts/check-data-plane-lock.mjs` 之外的软面）：
+#   孤儿表 = `dbt/models/**/marts/*.sql` 里在 owners 中查不到的模型。
+#   孤儿**不阻断部署**（它是治理信号，不是构建门禁）；但页面会逐个点名，要求有人认领。
+#
+# 为什么登记在仓里而不是从契约推断：契约描述的是**源表**（`contracts/common/*.json` 的 table
+# 例如 `transfer_out`），marts 是 dbt 产物（`fct_hq_outbound`），两者表名不成对应关系；
+# 用模糊匹配猜 owner 会把「猜的」当成「登记的」，比孤儿更危险。
+#
+# 分期：当前全部 marts 由本仓 dbt 项目维护方 `data-platform` 负责（单一数据域 lemeng）。
+#   接入第二个业务域时，**按域拆 owner**（如 `xxx-platform`），新模型必须先在这里登记，
+#   否则页面把它显示为孤儿——这是「新表不静默进入体系」的闸。
+owners:
+  dim_lemeng_branch: data-platform
+  dim_lemeng_client: data-platform
+  fct_branch_day_activity: data-platform
+  fct_branch_expense: data-platform
+  fct_branch_indicator: data-platform
+  fct_client_contribution: data-platform
+  fct_client_expense: data-platform
+  fct_contribution: data-platform
+  fct_hq_outbound: data-platform
+  fct_inventory_snapshot: data-platform
+  fct_loss_adjustment: data-platform
+  fct_member_summary: data-platform
+  fct_outbound_region: data-platform
+  fct_purchase: data-platform
+  fct_purchase_concentration: data-platform
+  fct_request_fulfillment: data-platform
+  fct_retail_comparable_growth: data-platform
+  fct_retail_quantity: data-platform
+  fct_retail_sale: data-platform
+  fct_transfer_item: data-platform
+  fct_transfer_line_quality: data-platform
+  fct_transfer_zero_cost_item: data-platform
+  recon_break: data-platform
+  recon_fact: data-platform
+  recon_run: data-platform

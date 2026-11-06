@@ -24,6 +24,23 @@ type TabKey = (typeof TABS)[number]['key']
 const TAB_KEYS: readonly string[] = TABS.map((t) => t.key)
 const DEFAULT_TAB: TabKey = 'query'
 
+/**
+ * PC 菜单项：三个页签 + 一个**外链**（W5 Task 4 定案 A）。
+ * 体系地图是独立追溯页（服务端渲染单文件 HTML，hash 路由），不是本 console 的路由页签——
+ * 写成页签会让 `navigate(basePath/key)` 指到一个不存在的 console 路由（白屏）。
+ */
+const MENU_ITEMS = [
+  ...TABS.map((t) => ({ key: t.key, label: t.label })),
+  {
+    key: 'system-map',
+    label: (
+      <a href="/api/modules/data/system-map#/overview" target="_blank" rel="noopener">
+        体系地图
+      </a>
+    ),
+  },
+]
+
 /** 末段是不是页签段（决定当前 URL 是「页签」还是「裸条目路径」） */
 function isTabSegment(seg: string): seg is TabKey {
   return TAB_KEYS.includes(seg)
@@ -61,8 +78,8 @@ export default function DataConsolePage() {
         />
       ) : (
         <Menu mode="horizontal" selectedKeys={[active]}
-              items={TABS.map((t) => ({ key: t.key, label: t.label }))}
-              onClick={({ key }) => navigate(`${basePath}/${key}`)}
+              items={MENU_ITEMS}
+              onClick={({ key }) => { if (isTabSegment(key)) navigate(`${basePath}/${key}`) }}
               style={{ marginBottom: 16 }} />
       )}
       <Active />
