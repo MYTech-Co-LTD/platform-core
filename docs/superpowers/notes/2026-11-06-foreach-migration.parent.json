@@ -1,0 +1,227 @@
+{
+  "name": "lemeng.retail_order_line.foreach.v2",
+  "_note": [
+    "retail_order_line **v2 扇出形态（draft，未进调度、未替换 day 形）**。",
+    "code.sql 生成 1..96 页码 → ctl.foreach（concurrency=2）逐页跑 lemeng.retail_order_line.page.v2 →",
+    "每页直接落 chunk=<page>.parquet → 父管线汇总页收据做零行/缺页/容量判据。",
+    "与 day 形的差别：106 节点 → 8 节点；单页失败不拖整批（已成功页的 chunk 保留）；",
+    "判据从「第 96 页必须为空」升级为「页数到齐 + 总单数区间 + 第 96 页为空」。",
+    "⚠️ 0.7.4 的 ctl.foreach inline 实测：① concurrency 生效（但网关并发闸 ≤3，c=4 即 429 PAT并发请求超限）；",
+    "② continueOnFailure **被忽略**——单页失败即中止整批（失败页之后的页不跑）；",
+    "③ retryAttempts/retryBackoffMs 是 **stage 级整体重跑**（不是逐项），重试耗尽后本环境实测卡死（>3min 无结束）。",
+    "逐页重试由子管线 src.rest 的 retryAttempts=3 承担；要逐项失败隔离需引擎支持（本版不满足）。"
+  ],
+  "nodes": [
+    {
+      "id": "pl",
+      "type": "transform",
+      "position": {
+        "x": 0,
+        "y": 0
+      },
+      "data": {
+        "label": "页码清单 1..96",
+        "componentId": "code.sql",
+        "properties": {
+          "sql": "-- 页码清单：1..96（沿用 day 形的容量上限；第 96 页必须为空 = 未截断）\nSELECT\n  CAST(t.p AS INTEGER) AS page_no,\n  CAST(t.p AS INTEGER) AS chunk_no,\n  CAST('${ENV:SYSTEM_BOOK}' AS INTEGER) AS system_book,\n  CAST('${BIZDAY}' AS DATE) AS bizday,\n  '${ENV:BRANCH_NUMS}' AS branch_nums,\n  '${ENV:ZOS_BUCKET}' AS bucket,\n  '${ENV:ZOS_REGION}' AS region,\n  '${V2_SINK_ROOT}' AS sink_root,\n  replace(replace(replace('${datetime}','-',''),'_',''),':','') AS run_token,\n  'retail-v2-' || '${ENV:SYSTEM_BOOK}' || '-' || CAST('${BIZDAY}' AS VARCHAR) || '-' ||\n    replace(replace(replace('${datetime}','-',''),'_',''),':','') AS batch_id,\n  CAST(96 AS INTEGER) AS expected_pages,\n  CAST(1 AS BIGINT) AS ref_min_orders,\n  CAST(19200 AS BIGINT) AS ref_max_orders,\n  'p' || lpad(CAST(t.p AS VARCHAR), 3, '0') AS item_key\nFROM range(1, 97) t(p)"
+        }
+      }
+    },
+    {
+      "id": "fe",
+      "type": "control",
+      "position": {
+        "x": 0,
+        "y": 0
+      },
+      "data": {
+        "label": "逐页 foreach（c=2）",
+        "componentId": "ctl.foreach",
+        "properties": {
+          "pipelineRef": "/workspace/pipelines/lemeng.retail_order_line.page.v2.json",
+          "itemKey": "item_key",
+          "concurrency": 2,
+          "retryAttempts": 4,
+          "retryBackoffMs": 60000,
+          "continueOnFailure": true
+        }
+      }
+    },
+    {
+      "id": "an",
+      "type": "control",
+      "position": {
+        "x": 0,
+        "y": 0
+      },
+      "data": {
+        "label": "等全部页结束",
+        "componentId": "ctl.anchor",
+        "properties": {}
+      }
+    },
+    {
+      "id": "agg",
+      "type": "transform",
+      "position": {
+        "x": 0,
+        "y": 0
+      },
+      "data": {
+        "label": "汇总页收据",
+        "componentId": "code.sql",
+        "properties": {
+          "sql": "SELECT p.expected_pages,\n       p.ref_min_orders,\n       p.ref_max_orders,\n       CAST(count(r.page_no) AS INTEGER) AS pages_reported,\n       CAST(coalesce(sum(CASE WHEN r.status = 'ok' THEN 1 ELSE 0 END), 0) AS INTEGER) AS pages_ok,\n       CAST(coalesce(sum(CASE WHEN r.status <> 'ok' THEN 1 ELSE 0 END), 0) AS INTEGER) AS pages_failed,\n       CAST(coalesce(sum(r.orders), 0) AS BIGINT) AS total_orders,\n       CAST(coalesce(sum(r.detail_rows), 0) AS BIGINT) AS total_detail_rows,\n       CAST(coalesce(max(CASE WHEN r.page_no = p.expected_pages THEN r.orders END), 0) AS BIGINT) AS last_page_orders\nFROM (SELECT any_value(expected_pages) AS expected_pages,\n             any_value(ref_min_orders) AS ref_min_orders,\n             any_value(ref_max_orders) AS ref_max_orders FROM input) p\nLEFT JOIN (SELECT * FROM read_csv('/workspace/logs/retail-v2-foreach/' ||\n    replace(replace(replace('${datetime}','-',''),'_',''),':','') || '-p*.csv',\n    header = true, union_by_name = true)) r ON true\nGROUP BY p.expected_pages, p.ref_min_orders, p.ref_max_orders"
+        }
+      }
+    },
+    {
+      "id": "viol",
+      "type": "transform",
+      "position": {
+        "x": 0,
+        "y": 0
+      },
+      "data": {
+        "label": "零行 / 缺页 / 容量 判据",
+        "componentId": "code.sql",
+        "properties": {
+          "sql": "SELECT 'pages_missing' AS violation,\n       CAST(pages_reported AS VARCHAR) AS detail,\n       CAST(expected_pages AS VARCHAR) AS expected\nFROM input WHERE pages_reported <> expected_pages\nUNION ALL\nSELECT 'pages_failed', CAST(pages_failed AS VARCHAR), '0'\nFROM input WHERE pages_failed > 0\nUNION ALL\nSELECT 'batch_empty', CAST(total_orders AS VARCHAR), '> 0'\nFROM input WHERE total_orders = 0\nUNION ALL\nSELECT 'capacity_truncated', CAST(last_page_orders AS VARCHAR), '0'\nFROM input WHERE last_page_orders > 0\nUNION ALL\nSELECT 'orders_out_of_range', CAST(total_orders AS VARCHAR),\n       CAST(ref_min_orders AS VARCHAR) || '..' || CAST(ref_max_orders AS VARCHAR)\nFROM input WHERE total_orders < ref_min_orders OR total_orders > ref_max_orders"
+        }
+      }
+    },
+    {
+      "id": "rep",
+      "type": "transform",
+      "position": {
+        "x": 0,
+        "y": 0
+      },
+      "data": {
+        "label": "本批汇总行",
+        "componentId": "code.sql",
+        "properties": {
+          "sql": "SELECT strftime(now(), '%Y-%m-%dT%H:%M:%SZ') AS ts,\n       '${ENV:SYSTEM_BOOK}' AS system_book,\n       CAST('${BIZDAY}' AS VARCHAR) AS bizday,\n       '${V2_SINK_ROOT}' AS sink_root,\n       *\nFROM input"
+        }
+      }
+    },
+    {
+      "id": "repsink",
+      "type": "sink",
+      "position": {
+        "x": 0,
+        "y": 0
+      },
+      "data": {
+        "label": "汇总 CSV",
+        "componentId": "snk.csv",
+        "properties": {
+          "path": "/workspace/logs/retail-v2-foreach-summary-${ENV:SYSTEM_BOOK}-${BIZDAY}.csv",
+          "mode": "overwrite"
+        }
+      }
+    },
+    {
+      "id": "die",
+      "type": "control",
+      "position": {
+        "x": 0,
+        "y": 0
+      },
+      "data": {
+        "label": "判红（明细见上）",
+        "componentId": "ctl.die",
+        "properties": {
+          "condition": "has-rows",
+          "message": "retail_order_line v2 判据未过（{rows} 条违规，明细见 rep CSV / 节点输出）：pages_missing=缺页（detail=实到 / expected=应到）；pages_failed=有页失败；batch_empty=整批 0 单；capacity_truncated=第 96 页仍有单（容量截断）；orders_out_of_range=总单数越界。已落盘的 chunk 保留，补跑只补缺页。"
+        }
+      }
+    }
+  ],
+  "edges": [
+    {
+      "id": "e1",
+      "source": "pl",
+      "target": "fe",
+      "sourceHandle": "main",
+      "targetHandle": "main",
+      "data": {
+        "connectionType": "main"
+      }
+    },
+    {
+      "id": "t2",
+      "source": "fe",
+      "target": "an",
+      "data": {
+        "connectionType": "on-subjob-ok"
+      }
+    },
+    {
+      "id": "e3",
+      "source": "pl",
+      "target": "agg",
+      "sourceHandle": "main",
+      "targetHandle": "main",
+      "data": {
+        "connectionType": "main"
+      }
+    },
+    {
+      "id": "t4",
+      "source": "an",
+      "target": "agg",
+      "data": {
+        "connectionType": "on-subjob-ok"
+      }
+    },
+    {
+      "id": "e5",
+      "source": "agg",
+      "target": "viol",
+      "sourceHandle": "main",
+      "targetHandle": "main",
+      "data": {
+        "connectionType": "main"
+      }
+    },
+    {
+      "id": "e6",
+      "source": "viol",
+      "target": "rep",
+      "sourceHandle": "main",
+      "targetHandle": "main",
+      "data": {
+        "connectionType": "main"
+      }
+    },
+    {
+      "id": "e7",
+      "source": "rep",
+      "target": "repsink",
+      "sourceHandle": "main",
+      "targetHandle": "main",
+      "data": {
+        "connectionType": "main"
+      }
+    },
+    {
+      "id": "e_die",
+      "source": "viol",
+      "target": "die",
+      "sourceHandle": "main",
+      "targetHandle": "main",
+      "data": {
+        "connectionType": "main"
+      }
+    },
+    {
+      "id": "t_die",
+      "source": "repsink",
+      "target": "die",
+      "data": {
+        "connectionType": "on-subjob-ok"
+      }
+    }
+  ]
+}
