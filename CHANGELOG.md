@@ -11,6 +11,10 @@
 
 ## [Unreleased]
 
+## [0.273.1](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.273.0...v0.273.1) - 2026-11-06
+- 【修复】data: 库存流水分段 l0 的 shape 改回内联形态（自造列不能 cast 输入） ([#1441](https://github.com/MYTech-Co-LTD/platform-core/pull/1441), [34b5155](https://github.com/MYTech-Co-LTD/platform-core/commit/34b515575038f8b23daf97a4f48eef7427486607))
+
+
 ## [0.273.0](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.272.7...v0.273.0) - 2026-11-06
 - 【新增】data: 库存流水日常采集拆成 4 条按页段的 l0（静态并发替代原生分页） ([#1437](https://github.com/MYTech-Co-LTD/platform-core/pull/1437), [09a2b44](https://github.com/MYTech-Co-LTD/platform-core/commit/09a2b4444600025c58a5a1398d02729742c64480))
 
