@@ -198,6 +198,9 @@ export DATA_PLANE_DOMAINS="$DOMAINS"
 SCOPE=${MATERIALIZE_SCOPE:-full}
 TICK_SELECT=${MATERIALIZE_TICK_SELECT:-fct_retail_sale}
 TICK_DOMAIN=${MATERIALIZE_TICK_DOMAIN:-lemeng}
+# 全量档必须**排除** tick 拥有的模型：tick 每 10 分钟 delete+insert 同一张表，
+# 与全量档的 7 天 delete+insert 并发写同一张表会冲突（#1520）。
+FULL_EXCLUDE=${MATERIALIZE_FULL_EXCLUDE:-fct_retail_sale}
 echo "materialize start repo=${R} network=${NETWORK} image=${IMAGE} domains=${DOMAINS} scope=${SCOPE} mode=full_build（本面域内全量，无按需名单，#679）"
 # dbt 输出 tee 进临时日志：job 的实时流保持不变，同时留一份可解析的汇总行（Done. PASS=n … ERROR=m）。
 # 退出码用 rc 文件带出（POSIX sh 无 pipefail/PIPESTATUS；管道末位是 tee，不能直接判 dbt）。
@@ -260,8 +263,10 @@ for _d in $(printf '%s' "$DOMAINS" | tr ',' ' '); do
   _log="$_WORK/dbt.${_d}.log"
   _rc="$_WORK/dbt.${_d}.rc"
   # 逐命令 env 赋值 ⇒ docker CLI 只看到这一个域，`-e DATA_PLANE_DOMAINS` 透传的就是它。
+  # `--exclude`：全量档不写 tick 拥有的模型（见 FULL_EXCLUDE 注释）。
+  if [ -n "$FULL_EXCLUDE" ]; then _EXC="--exclude ${FULL_EXCLUDE}"; else _EXC=''; fi
   ( if DATA_PLANE_DOMAINS="$_d" docker run --rm --network "$NETWORK" -v "$R/dbt:/usr/app" \
-      $(mat_env_args) "$IMAGE" $(mat_dbt_args) --select "$(mat_dbt_select "$_d")" 2>&1; then
+      $(mat_env_args) "$IMAGE" $(mat_dbt_args) --select "$(mat_dbt_select "$_d")" ${_EXC} 2>&1; then
     echo 0 >"$_rc"
   else
     echo $? >"$_rc"
@@ -276,6 +281,8 @@ for _d in $(printf '%s' "$DOMAINS" | tr ',' ' '); do
   # ⇒ 新增模型自动纳入，不存在「名单没跟」的静默面（#679 的病）。
   _tables=''
   for _m in $(mat_domain_staging_models "$R" "$_d"); do
+    # 全量档排除了 tick 拥有的模型 ⇒ 不能给它写水位（否则 data_as_of 假前进）。
+    [ -n "$FULL_EXCLUDE" ] && [ "$_m" = "$FULL_EXCLUDE" ] && continue
     case " ${MAT_TABLES_ALL} " in *" ${_m} "*) _tables="${_tables} ${_m}";; esac
   done
   if [ -z "$_tables" ]; then

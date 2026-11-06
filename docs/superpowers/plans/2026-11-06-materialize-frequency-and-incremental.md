@@ -27,7 +27,9 @@
 3. `materialize.sh` 加 `MATERIALIZE_SCOPE=tick`：只跑 `dbt build --select fct_retail_sale`，落 `fct_retail_sale` 水位。
 4. 采集排班：`retail.tick.l1` → `*/10 9-23`（两账套）。
 5. 新增 openship job `lemeng-dbt-tick`：每 10 分钟（CST 9–23）跑 tick 构建，排在采集后 2 分钟。
-6. 首次 `--full-refresh --select fct_retail_sale`：见 §4 时点。
+6. 全量档 `--exclude fct_retail_sale`：tick 拥有该模型，两档并发写同一张表会冲突；全量档也不再给
+   它写 `data.load_log` 水位（否则 `data_as_of` 假前进）。tick 档自己写。
+7. 首次 `--full-refresh --select fct_retail_sale`：见 §4 时点。
 
 ### W2（W1 稳定后）：其余日粒度 fct 改增量
 - 按 spec §3/§10：P2 的 13 张日粒度 fct；全量 build 目标 <5 分钟。
