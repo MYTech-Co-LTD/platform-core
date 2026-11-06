@@ -368,6 +368,8 @@ export async function runQuery(
     userId: requester?.userId ?? '(anonymous)',
     channel: requester?.channel ?? 'session',
     keyId: requester?.keyId ?? null,
+    // 会话键只来自身份解析（企微通道的 x-session-id）；没有就落 NULL，绝不按时间猜。
+    sessionId: requester?.sessionId ?? null,
     metricId,
     params: args,
     rowCount,

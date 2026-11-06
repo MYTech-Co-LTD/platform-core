@@ -1009,7 +1009,10 @@ describe('runQuery 分析师面接线', () => {
     }
     const auditCall = inserts.find((c) => c.sql.includes('insert into data.query_audit'))
     expect(auditCall?.sql).toContain(', tool')
-    expect(auditCall?.values?.at(-1)).toBe('query_metric')
+    expect(auditCall?.sql).toContain('session_id')
+    // 会话键列在最后（$13）；非企微通道没有会话 ⇒ null，绝不按时间猜
+    expect(auditCall?.values?.at(-1)).toBeNull()
+    expect(auditCall?.values?.at(-2)).toBe('query_metric')
   })
 
   it('slicing 透传 authorize（切片 SQL 生效）', async () => {

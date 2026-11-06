@@ -157,6 +157,8 @@ export interface Requester {
   channel: Channel
   /** 仅 pat 通道 */
   keyId: number | null
+  /** 会话键（企微通道由 `x-session-id` 带入）；无会话概念的通道不设。 */
+  sessionId?: string
   scopes: string[]
   hasScope: (code: string) => boolean
 }

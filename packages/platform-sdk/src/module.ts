@@ -20,6 +20,11 @@ export interface Identity {
    */
   accountName?: string
   /**
+   * 会话键（W6「可辩护答案时长」用）：企微通道由 `x-session-id` 头带入（openclaw 的 sessionKey）。
+   * 没有会话概念的通道不设 ⇒ 审计落 NULL，绝不按时间/用户猜。
+   */
+  sessionId?: string
+  /**
    * 绑定集合（账户统一设计 §4.3）：该账户全部 active 绑定的 external_id（openid/企微号）。
    * 模块据此做「我的工单」等多绑收窄（`submitter_openid ∈ 集合`）；随 scopes 刷新机制同步刷新。
    * 中间态/内部会话不设（undefined）。顺序不作承诺——消费方按集合语义用，不按下标。

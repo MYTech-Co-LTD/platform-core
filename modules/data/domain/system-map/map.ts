@@ -849,6 +849,18 @@ export async function loadSystemMapFacts(deps: SystemMapLoadDeps): Promise<Syste
     [deps.org],
   ).catch(() => null)
 
+  // W6：可辩护答案时长——按会话算「首条审计 → 首条成功审计」的毫秒差（近 30 天）。
+  // 没有 session_id 的行不参与（企微外的通道没有会话概念，不按时间猜）。
+  const answerTimeRes = await deps.pool.query(
+    `select session_id,
+            (extract(epoch from (min(created_at) filter (where verdict = 'ok') - min(created_at))) * 1000)::float8 as ms
+       from data.query_audit
+      where org = $1 and session_id is not null and created_at >= now() - interval '30 days'
+      group by session_id
+     having min(created_at) filter (where verdict = 'ok') is not null`,
+    [deps.org],
+  ).catch(() => null)
+
   // W6：已验问答裁决计数（接受率的分母/分子）；表缺席 ⇒ null（未接入）。
   const verifiedRes = await deps.pool.query(
     `select count(*)::int as total, count(decided_by)::int as decided
@@ -912,6 +924,9 @@ export async function loadSystemMapFacts(deps: SystemMapLoadDeps): Promise<Syste
     dimensionsYaml,
     invariantsYaml,
     tableOwnersYaml,
+    answerDurationsMs: answerTimeRes === null
+      ? null
+      : (answerTimeRes.rows as Array<{ ms: number }>).map((r) => Number(r.ms)).filter((n) => Number.isFinite(n) && n >= 0),
     verifiedCounts: verifiedRes === null
       ? null
       : { total: Number(verifiedRes.rows[0]?.total ?? 0), decided: Number(verifiedRes.rows[0]?.decided ?? 0) },
