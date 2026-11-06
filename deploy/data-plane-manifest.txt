@@ -32,6 +32,7 @@ scripts/lemeng/wire-warehouse.sh         /opt/lemeng-wire-warehouse.sh          
 scripts/lemeng/readback-helper.sh        ${REPO}/lemeng-readback.sh                0755
 scripts/lemeng/diagnose.sh               /opt/lemeng-diagnose.sh                   0755
 scripts/lemeng/backfill-retail-order-line.sh  /opt/lemeng-backfill.sh              0755
+scripts/lemeng/nightly-backfill.sh           /opt/lemeng-nightly-backfill.sh       0755
 scripts/lemeng/recon-day-heal.sh          /opt/lemeng-recon-day-heal.sh             0755
 scripts/lemeng/seal-lake.sh              /opt/lemeng-seal.sh                     0755
 scripts/lemeng/recon-preagg.sh           /opt/lemeng-recon-preagg.sh            0755
@@ -39,6 +40,7 @@ scripts/lemeng/recon-restate.sh          /opt/lemeng-recon-restate.sh           
 scripts/lemeng/seed-console.sh            /opt/lemeng-seed-console.sh             0755
 scripts/lemeng/delete-supplanted-hour-partitions.py  ${REPO}/scripts/lemeng/delete-supplanted-hour-partitions.py  0644
 scripts/lemeng/backfill-daily-partitions.py          ${REPO}/scripts/lemeng/backfill-daily-partitions.py          0644
+scripts/lemeng/backfill-history.py                   ${REPO}/scripts/lemeng/backfill-history.py                   0644
 scripts/askdata/export-transcript.py      /var/lib/askdata/export-transcript.py     0644
 scripts/askdata/attribute.py              /var/lib/askdata/attribute.py             0644
 scripts/askdata/verify.py                 /var/lib/askdata/verify.py                0644
