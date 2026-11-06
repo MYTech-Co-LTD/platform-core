@@ -112,6 +112,11 @@ jobs:
       #    而 B9 不扫 dbt/）；`contracts/` 与 `duckle/` 的**列集**由下面那条 check-data-contract 管
       #    （2026-10-05 起，issue #430；正典 docs/architecture.md §5.2）。
       - run: pnpm exec tsx scripts/check-data-models.mjs
+      # W4 语义完备门禁（#1447）：实体必填四字段 + 指标 entity 引用闭合 + 维度层级可校验列。
+      # 纯静态（只读 dbt/semantics 与 contracts/），不连库。
+      - run: pnpm exec tsx scripts/check-semantics.mjs
+      # 不变量生成的 dbt test 必须与声明同步（改了 invariants.yml 忘了重生成 ⇒ 红）。
+      - run: pnpm exec tsx scripts/gen-invariant-tests.mjs --check
       # 数据契约注册门禁（正典 docs/architecture.md §5.2 ① / 不变量 B10；案例 = order_total_money
       # 补采 #430/#432）。判据三条：① 契约必须有 `schemaVersion`；② 凡**文本里写着该契约
       # `layout.prefix`** 的管线都算它的生产者（机械推导、不靠手登记），每个生产者文件里必须

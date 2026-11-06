@@ -82,6 +82,7 @@ entities:
     identity_keys: [branch_num]
     merge_rule: prefer_source
     owner: data-platform
+    source_systems: [lemeng]
   item:
     label: 商品
     synonyms: [单品, 货品, 商品编码]
@@ -89,6 +90,7 @@ entities:
     identity_keys: [item_num]
     merge_rule: prefer_source
     owner: data-platform
+    source_systems: [lemeng]
   client:
     label: 客户
     synonyms: [往来单位, 客户编号, 客户ID]
@@ -96,6 +98,7 @@ entities:
     identity_keys: [client_fid]
     merge_rule: prefer_source
     owner: data-platform
+    source_systems: [lemeng]
   supplier:
     label: 供应商
     synonyms: [供货商, 供应商编号]
@@ -103,6 +106,7 @@ entities:
     identity_keys: [supplier_num]
     merge_rule: prefer_source
     owner: data-platform
+    source_systems: [lemeng]
   order:
     label: 零售订单
     synonyms: [订单, 小票, 零售单]
@@ -110,6 +114,7 @@ entities:
     identity_keys: [order_no]
     merge_rule: prefer_source
     owner: data-platform
+    source_systems: [lemeng]
   wholesale_order:
     label: 批发订单
     synonyms: [批发单, 批发出库单]
@@ -117,6 +122,7 @@ entities:
     identity_keys: [order_no]
     merge_rule: prefer_source
     owner: data-platform
+    source_systems: [lemeng]
   transfer:
     label: 调拨单
     synonyms: [调出单, 调入单, 调拨]
@@ -124,6 +130,7 @@ entities:
     identity_keys: [order_no]
     merge_rule: prefer_source
     owner: data-platform
+    source_systems: [lemeng]
   storehouse:
     label: 仓库
     synonyms: [库房, 仓位]
@@ -131,6 +138,7 @@ entities:
     identity_keys: [storehouse_num]
     merge_rule: prefer_source
     owner: data-platform
+    source_systems: [lemeng]
   saler:
     label: 营业员
     synonyms: [导购, 店员, 销售员]
@@ -138,6 +146,7 @@ entities:
     identity_keys: [saler]
     merge_rule: prefer_source
     owner: data-platform
+    source_systems: [lemeng]
   expense_bill:
     label: 费用单
     synonyms: [费用, 单据]
@@ -145,6 +154,7 @@ entities:
     identity_keys: [bill_no]
     merge_rule: prefer_source
     owner: data-platform
+    source_systems: [lemeng]
   outbound_order:
     label: 出库单
     synonyms: [总部出库单, 发货单]
@@ -152,6 +162,7 @@ entities:
     identity_keys: [order_no]
     merge_rule: prefer_source
     owner: data-platform
+    source_systems: [lemeng]
   loss_bill:
     label: 报损单
     synonyms: [损失单, 报损]
@@ -159,6 +170,7 @@ entities:
     identity_keys: [order_no]
     merge_rule: prefer_source
     owner: data-platform
+    source_systems: [lemeng]
   request_order:
     label: 要货单
     synonyms: [要货申请, 门店要货]
@@ -166,6 +178,7 @@ entities:
     identity_keys: [order_no]
     merge_rule: prefer_source
     owner: data-platform
+    source_systems: [lemeng]
 
 # ── 具名行域（P3.0 Task 3）：行域**声明一次**，聚合面内嵌、下钻面由组件域 LUB 派生 ─────────────
 # 完整谓词 = 沿 extends 链自根向下逐层 `and`（`sale_finished` ⇒

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { dimensionIssues, entityIssues, invariantIssues, metricEntities } from './check-semantics.mjs'
+import { dimensionIssues, entityIssues, invariantIssues, metricEntities, newSourceIssues } from './check-semantics.mjs'
 
 const branch = {
   label: '门店', synonyms: ['店铺'],
@@ -111,5 +111,23 @@ describe('invariantIssues（W4 Task 4）', () => {
   it('缺 owner / name 重复 ⇒ issue', () => {
     expect(invariantIssues(doc([inv({ owner: '' })])).join('\n')).toContain('owner')
     expect(invariantIssues(doc([inv(), inv()])).join('\n')).toContain('重复')
+  })
+})
+
+describe('newSourceIssues（W4 Task 5）', () => {
+  /** @param {Record<string, unknown>} entities */
+  const doc = (entities) => ({ version: 1, entities })
+  it('新源已挂在对象上 ⇒ 无 issue', () => {
+    expect(newSourceIssues(doc({ branch: { system_of_record: 'wms', source_systems: ['wms'] } }), 'wms')).toEqual([])
+  })
+  it('新源未挂任何对象 ⇒ issue（孤儿数据）', () => {
+    expect(newSourceIssues(doc({ branch: { system_of_record: 'lemeng', source_systems: ['lemeng'] } }), 'wms').join('\n')).toContain('没有挂到任何业务对象')
+  })
+  it('新源是补充源（非权威） ⇒ 提醒但对齐规则', () => {
+    const out = newSourceIssues(doc({ branch: { system_of_record: 'lemeng', source_systems: ['lemeng', 'wms'], merge_rule: 'prefer_source' } }), 'wms')
+    expect(out.join('\n')).toContain('补充源')
+  })
+  it('对象缺 system_of_record ⇒ issue', () => {
+    expect(newSourceIssues(doc({ x: { source_systems: ['wms'] } }), 'wms').join('\n')).toContain('system_of_record')
   })
 })

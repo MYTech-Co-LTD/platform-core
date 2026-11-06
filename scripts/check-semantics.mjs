@@ -178,7 +178,16 @@ function loadContractColumns(rootDir) {
 
 /** CLI 入口。 @returns {void} */
 function main() {
-  const rootDir = process.argv[2] ?? fileURLToPath(new URL('..', import.meta.url))
+  // 位置参数 = 去掉 `--flag` 与 `--new-source <值>` 后剩下的第一个（默认仓根）
+  const argv = process.argv.slice(2)
+  const positional = []
+  for (let i = 0; i < argv.length; i += 1) {
+    const a = argv[i]
+    if (a === '--new-source') { i += 1; continue }
+    if (a.startsWith('--')) continue
+    positional.push(a)
+  }
+  const rootDir = positional[0] ?? fileURLToPath(new URL('..', import.meta.url))
   const sem = join(rootDir, 'dbt', 'semantics')
   const metricsText = read(join(sem, 'l1_metrics.yml'))
   const metricsDoc = parseOrNull(metricsText)
@@ -187,6 +196,8 @@ function main() {
     process.exit(1)
   }
   const violations = entityIssues(metricsDoc)
+  const newSource = newSourceArg()
+  if (newSource !== null) violations.push(...newSourceIssues(metricsDoc, newSource))
   const dims = parseOrNull(read(join(sem, 'dimensions.yml')))
   const inv = parseOrNull(read(join(sem, 'invariants.yml')))
   // 维度校验基准：contracts/ 里每张表的列集合（表名 → 列）
@@ -204,6 +215,38 @@ function main() {
   /** @param {any} d @param {string} key @returns {number} */
   const n = (d, key) => (Array.isArray(d?.[key]) ? d[key].length : 0)
   console.log(`${SCRIPT_NAME}: OK（entities ${nEnt} / dimensions ${n(dims, 'dimensions')} / invariants ${n(inv, 'invariants')}）`)
+}
+
+/**
+ * 接新源前置闸：新源必须已挂在至少一个业务对象上（`source_systems` 含它）。
+ * @param {any} metricsDoc l1_metrics.yml 解析结果
+ * @param {string} system 新源系统名（如 wms）
+ * @returns {string[]}
+ */
+export function newSourceIssues(metricsDoc, system) {
+  const sys = String(system ?? '').trim()
+  if (sys === '') return ['[new-source] 缺 --new-source <系统名>']
+  const entities = metricsDoc?.entities ?? {}
+  const hits = Object.entries(entities).filter(([, d]) => Array.isArray(/** @type {any} */ (d)?.source_systems) && /** @type {any} */ (d).source_systems.includes(sys))
+  if (hits.length === 0) return [`[new-source] 新源 \`${sys}\` 没有挂到任何业务对象——先在 entities 的 source_systems 里登记它供给哪些对象（否则接进来就是孤儿数据）`]
+  const out = []
+  for (const [name, d] of hits) {
+    const sor = typeof /** @type {any} */ (d)?.system_of_record === 'string' ? /** @type {any} */ (d).system_of_record : ''
+    if (sor === '') out.push(`[new-source] 对象 ${name} 没有 system_of_record——多源下无法裁决`)
+    else if (sor !== sys) {
+      // 非权威源：合法（补充源），但必须在任务报告里写清合并规则
+      out.push(`[new-source] 提醒：${name} 的权威源是 \`${sor}\`，\`${sys}\` 是补充源——接入报告需写明按 ${sor} 对齐、冲突按 merge_rule 处理`)
+    }
+  }
+  return out
+}
+
+/** 供 CLI 识别 `--new-source <sys>`。 @returns {string | null} */
+function newSourceArg() {
+  const i = process.argv.indexOf('--new-source')
+  if (i < 0) return null
+  const v = process.argv[i + 1]
+  return typeof v === 'string' && !v.startsWith('--') ? v : ''
 }
 
 if (process.argv[1] !== undefined && import.meta.url === pathToFileURL(process.argv[1]).href) main()
