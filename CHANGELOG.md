@@ -11,6 +11,11 @@
 
 ## [Unreleased]
 
+## [0.272.6](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.272.5...v0.272.6) - 2026-11-06
+- 【修复】data: movement.l0 去掉调度不传的 BIZDAY 闸 + retail.windows 时间戳减整数（附回填经验沉淀） ([#1432](https://github.com/MYTech-Co-LTD/platform-core/pull/1432), [c7a5492](https://github.com/MYTech-Co-LTD/platform-core/commit/c7a54921f4a6682ffeda69d79a73a645bf153771))
+- 【修复】data: 修改模式改为「definition 或 synonyms 至少一个变」——支持 alias_gap 提案（#1427） ([#1433](https://github.com/MYTech-Co-LTD/platform-core/pull/1433), [abb46ec](https://github.com/MYTech-Co-LTD/platform-core/commit/abb46ec2dafe78f7707bfa490705daa4dceb3b76))
+
+
 ## [0.272.5](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.272.4...v0.272.5) - 2026-11-05
 - 【修复】dbt: 净销售额补别名 net_sales/retail:net_sales（需求台账 alias_gap 首次闭环） ([#1428](https://github.com/MYTech-Co-LTD/platform-core/pull/1428), [56b40c4](https://github.com/MYTech-Co-LTD/platform-core/commit/56b40c4845a08d41cf054f76b20fca0463dacba0))
 
