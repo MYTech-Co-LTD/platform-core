@@ -91,6 +91,20 @@
 #    反向测试：`WIRE_RECON_SELFTEST=1 sh $0 --check` ⇒ 三条各注入一行假判红 ⇒ 桥送到企微。
 #      **这是本组断言的验收判据**（「人为制造一次真红」，同 ⑩ / #898 的口径）。
 
+# ── ⑮ pg_duckdb backend 崩溃（2026-11-06 新增；#1517，配套 #1515 事故）───────────────
+#    为什么需要：pg_duckdb 1.1.1 的 postgres scan 有线程安全 race（上游 duckdb/pg_duckdb#1084），
+#    物化期间 backend 会 SIGSEGV → postmaster recovery。**容器不会重启**（RestartCount=0），
+#    所以 openship 的 crash_loop / 服务不健康都看不见；恢复窗口只有几秒，*/5 的 ③ 真查询
+#    也大概率错过。2026-11-04~06 崩了 5 次，**没有任何预警**（#1515）。
+#    判据本体只能读容器日志（postmaster 会把 `terminated by signal 11` / recovery 写进日志）——
+#    这是**进程级故障**，不归语义对账，故走 advisory：判红行进 `data_plane_probes`，
+#    桥通道②送企微；**不新建 OO 规则、不让探活 job 变红**（红线③）。
+#    窗口默认 15m（探活周期 */5 的 3 倍，防边界漏采）；同一次崩溃会在窗口内重复吐 ERR
+#    （最多 3 轮，每轮 1 条）——桥按行转发，这是**有意的重复提醒**，不是风暴；崩溃移出窗口即停。
+#    反向测试：`WIRE_PGCRASH_SELFTEST=1 sh $0 --check` ⇒ 该断言吐 ERR 行 ⇒ 桥送到企微。
+#      **这是本断言的验收判据**（同 ⑩⑪⑫⑬⑭）。
+#    真实检测验证：`WIRE_PGCRASH_WINDOW=24h sh $0 --check` 应命中当天的 signal 11（历史日志）。
+
 set -eu
 
 PLATFORM_NET=${WIRE_PLATFORM_NET:-openship-platform-core-shanhai}
@@ -110,6 +124,9 @@ REGION_SELFTEST=${WIRE_REGION_SELFTEST:-}
 RECON_SELFTEST=${WIRE_RECON_SELFTEST:-}
 # 反向测试钩子（#809）：跳过真实查询、直接注入一行假 config_drift 判红——验「判红行 → data_plane_probes → 桥 → 企微」。
 DRIFT_SELFTEST=${WIRE_DRIFT_SELFTEST:-}
+# ⑮ 崩溃日志窗口与反向测试钩子（#1517）：窗口默认 15m（*/5 的 3 倍）；SELFTEST 直接吐 ERR。
+PGCRASH_WINDOW=${WIRE_PGCRASH_WINDOW:-15m}
+PGCRASH_SELFTEST=${WIRE_PGCRASH_SELFTEST:-}
 
 die() { echo "WIRE_FAILED: $*" >&2; exit 1; }
 
@@ -407,15 +424,39 @@ print('OK 近 2h 无漂移行')
 PYEOF
 }
 
+# ⑮ pg_duckdb backend 崩溃（#1517；见头注 ⑮）：读容器日志找 postmaster 的崩溃/恢复原句。
+#    为什么不用 `docker inspect .RestartCount`：backend 崩溃不重启容器（RestartCount=0），
+#    只有 postmaster recovery；为什么不用 ③ 真查询：恢复窗口只有几秒，*/5 会错过。
+#    `--since` 用 docker 的时长语法；grep 命中的是 postmaster 原句，不是业务日志里的“recovery”字样。
+assert_pg_crash_free() {
+  printf '⑮ pg_duckdb 崩溃（近 %s 日志）—— ' "$PGCRASH_WINDOW"
+  if [ -n "$PGCRASH_SELFTEST" ]; then
+    echo 'ERR 自测注入：模拟 backend signal 11（WIRE_PGCRASH_SELFTEST）'
+    return 1
+  fi
+  _logs=$(docker logs --since "$PGCRASH_WINDOW" "$PG_CONTAINER" 2>&1) || {
+    echo "ERR 读不到 ${PG_CONTAINER} 的日志（容器不在或 docker 不可用）"
+    return 1
+  }
+  _hits=$(printf '%s\n' "$_logs" \
+    | grep -E 'was terminated by signal (11|6)|terminating any other active server processes|database system is in recovery mode|all server processes terminated; reinitializing|double free or corruption' \
+    | tail -3)
+  if [ -n "$_hits" ]; then
+    echo "ERR 近 ${PGCRASH_WINDOW} 有崩溃：$(printf '%s' "$_hits" | tr '\n' ' ' | cut -c1-160)"
+    return 1
+  fi
+  echo "OK 近 ${PGCRASH_WINDOW} 无 signal 11 / recovery"
+}
+
 # advisory 断言集（判红**不进 rc**、只吐判红行）：语义判据**不走 openship 通知**（红线③），
 # 通知由桥承担（`oo-notify-bridge.sh` 通道② 读 `verdict <> 'OK'` → 企微）。加新条目**先想清它归谁**。
-ADVISORY_CHECKS=" region_registered recon_ledger_cover recon_not_evaluated recon_source_cover config_drift "
+ADVISORY_CHECKS=" region_registered recon_ledger_cover recon_not_evaluated recon_source_cover config_drift pg_crash_free "
 
 do_check() {
   # #538 Phase 1：逐断言产出判红行（probe 观测面）——执行与观测同行，判定逻辑不变。
   rc=0
   _vf=$(mktemp ${TMPDIR:-/tmp}/ww-verdicts.XXXXXX)
-  for _step in dns tcp query fresh marts_fresh metrics dims item_price settlement_face region_registered recon_ledger_cover recon_not_evaluated recon_source_cover config_drift; do
+  for _step in dns tcp query fresh marts_fresh metrics dims item_price settlement_face region_registered recon_ledger_cover recon_not_evaluated recon_source_cover config_drift pg_crash_free; do
     _mode=hard
     case "$ADVISORY_CHECKS" in *" ${_step} "*) _mode=advisory ;; esac
     if _out=$(eval "assert_${_step}" 2>&1); then

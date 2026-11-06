@@ -889,6 +889,12 @@ capabilities / policy 门禁 / run 回执」一句打包，**实测与其中两�
   （`/etc/openobserve-search.env`；ingest 凭据 search 401）。⚠️ 实测漂移**已在发生**（2026-11-03
   3120×3 / 64188×3）——接线后首轮即真红，处置=核对新增门店是否该进底账（不是误报）。
   ⚠️ 立项时按「枚举接口实测有门店无行」外推的「覆盖可能不全 ⇒ 首次跑就红」**已被真机证伪**——别照抄那条外推。
+  ✅ **⑮ pg_duckdb backend 崩溃接线（2026-11-06，Phase 1 续刀；#1517，配套 #1515 事故）**：
+  物化期 backend `signal 11` → postmaster recovery，**容器不重启**（`RestartCount=0`）⇒ openship 的
+  crash_loop / 服务不健康都看不见；恢复窗口只有几秒 ⇒ ③ 真查询大概率错过。2026-11-04~06 崩 5 次
+  **零预警**。接线走断言 **⑮**（读 pg_duckdb 容器近 15m 日志找 `terminated by signal 11` /
+  `recovery mode` / `terminating any other active server processes` ⇒ ERR 进 `data_plane_probes`
+  ⇒ 桥送企微；**不新建 OO 规则**，同 ⑩⑪⑫⑬⑭ 范式）。反向测试 `WIRE_PGCRASH_SELFTEST=1`。
   **反向测试见 #898**（`WIRE_REGION_SELFTEST` 造一次真红 ⇒ 企微收到）。
   **openship 通知不拆**双通道并行 1-2 周；**R12 存量 L2 判据**：「契约有 `sensitivity !== 'none'` 列 **且** `data.metrics` 存在 `source='l2'` 行」⇒ 逐行吐进 `data_plane_probes`。**契约侧闸已就位**（②b，`2026-10-18`）；**判据本体（运行期那条）待本 Phase 的流就位后接线**。 | **进行中**（第一刀 ✅ #898 战区未登记；✅ #905 口径对账台账 ⑪⑫⑬；其余仍挂着） |
 | 2 | 通知切换（数据面告警归 OO，openship 收敛 job 崩溃级）；**拆桥**（OO 升级修好投递腿后，桥接退役）；看门狗升级（search 凭据 → 证据年龄检查）；悬空 duckle→openship webhook 处置；本表翻绿 + 基建速查订正 | **未开工** |
