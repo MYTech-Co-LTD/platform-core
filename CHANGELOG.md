@@ -11,6 +11,10 @@
 
 ## [Unreleased]
 
+## [0.278.0](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.277.1...v0.278.0) - 2026-11-06
+- 【新增】data: 日更件「静默 0 行」巡检 + 正典案例 43 ([#1465](https://github.com/MYTech-Co-LTD/platform-core/pull/1465), [2892fa5](https://github.com/MYTech-Co-LTD/platform-core/commit/2892fa503c26c70963794e66c5dd8a679a2ff305))
+
+
 ## [0.277.1](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.277.0...v0.277.1) - 2026-11-06
 - 【修复】data: 调拨响应字段改名——in_order_fid/out_order_fid（补契约 + 80 个页节点 schema） ([#1461](https://github.com/MYTech-Co-LTD/platform-core/pull/1461), [44c254e](https://github.com/MYTech-Co-LTD/platform-core/commit/44c254e20bc6ee8c49a30fe4e679f26d52f9f458))
 
