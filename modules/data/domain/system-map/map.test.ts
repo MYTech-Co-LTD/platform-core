@@ -635,3 +635,17 @@ describe('Task 5：孤儿表与候选池质量（只报告，不处置）', () =
     expect(html).toContain('"candidateQuality"')
   })
 })
+
+describe('W6：分析面价值指标（总览第三块）', () => {
+  it('缺数显示「未接入」，不画 0；已裁决比例进页面数据', () => {
+    const input = baseInput(METRICS)
+    input.verifiedCounts = { total: 16, decided: 4 }
+    const model = buildSystemMapModel(input)
+    expect(model.valueMetrics.acceptancePct).toBe(25)
+    expect(model.valueMetrics.answerTimeState).toBe('not_connected')
+    const html = renderSystemMapHtml(model)
+    expect(html).toContain('分析面价值指标')
+    expect(html).toContain('未接入')
+    expect(html).toContain('"valueMetrics"')
+  })
+})

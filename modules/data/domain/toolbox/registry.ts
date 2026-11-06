@@ -148,28 +148,6 @@ export const ANALYST_TOOLS: readonly ToolMeta[] = [
     requiredScope: QUERY_SCOPE, mutating: false, annotations: readOnly,
   },
   {
-    name: 'get_freshness', group: 'health', title: '新鲜度',
-    description: '数据截止日/物化时刻/滞后秒。scope=指标 id 时回该指标链路水位与状态；缺省回全局水位。判据与发布面对齐表同源。',
-    inputSchema: {
-      type: 'object',
-      properties: { scope: { type: 'string', description: '指标 id（缺省 = 全局）' } },
-      required: [],
-    },
-    outputSchema: { type: 'object' },
-    requiredScope: READ_SCOPE, mutating: false, annotations: readOnly,
-  },
-  {
-    name: 'get_quality', group: 'health', title: '质量结论',
-    description: 'dbt tests/对账的最近结论。无结论源时**显式返回 unknown**——未知 ≠ 通过。',
-    inputSchema: {
-      type: 'object',
-      properties: { model: { type: 'string', description: 'dbt 模型名（缺省 = 全部已声明）' } },
-      required: [],
-    },
-    outputSchema: { type: 'object' },
-    requiredScope: READ_SCOPE, mutating: false, annotations: readOnly,
-  },
-  {
     name: 'explore_query', group: 'query', title: '受约束探索查询',
     description:
       '对 marts 做结构化聚合（**不收 SQL 文本**）：relation + measures + dimensions + filters + limit。'
@@ -240,6 +218,28 @@ export const ANALYST_TOOLS: readonly ToolMeta[] = [
     },
     outputSchema: { type: 'object' },
     requiredScope: QUERY_SCOPE, mutating: false, annotations: readOnly,
+  },
+  {
+    name: 'get_freshness', group: 'health', title: '新鲜度',
+    description: '数据截止日/物化时刻/滞后秒。scope=指标 id 时回该指标链路水位与状态；缺省回全局水位。判据与发布面对齐表同源。',
+    inputSchema: {
+      type: 'object',
+      properties: { scope: { type: 'string', description: '指标 id（缺省 = 全局）' } },
+      required: [],
+    },
+    outputSchema: { type: 'object' },
+    requiredScope: READ_SCOPE, mutating: false, annotations: readOnly,
+  },
+  {
+    name: 'get_quality', group: 'health', title: '质量结论',
+    description: 'dbt tests/对账的最近结论。无结论源时**显式返回 unknown**——未知 ≠ 通过。',
+    inputSchema: {
+      type: 'object',
+      properties: { model: { type: 'string', description: 'dbt 模型名（缺省 = 全部已声明）' } },
+      required: [],
+    },
+    outputSchema: { type: 'object' },
+    requiredScope: READ_SCOPE, mutating: false, annotations: readOnly,
   },
   {
     name: 'get_lineage', group: 'health', title: '血缘',
