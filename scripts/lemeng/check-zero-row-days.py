@@ -73,14 +73,26 @@ def pg_env() -> dict:
     return env
 
 
-def psql(sql: str, env: dict) -> str:
+def psql(sql: str, env: dict) -> tuple[str, str]:
+    """返回 (stdout, 错误摘要)；错误摘要非空 ⇒ 调用方必须 fail-loud。
+
+    ⚠️ 2026-11-06 初版教训：查询写错（`select duckdb.query(...)` 必须放进 FROM）时
+    psql 只往 stderr 报 ERROR，而初版只取 stdout ⇒ 每个数据集都「基线无数据」被 continue 跳过
+    ⇒ **巡检在真断供上打了 ZERO_ROW_OK**。巡检自己假绿，比没有巡检更危险。
+    """
     p = subprocess.run(
         ["docker", "exec", "-i", "-e", "PGPASSWORD=" + env.get("PGDUCK_PASSWORD", ""),
-         PG_CT, "psql", "-U", env.get("PGDUCK_USER", "postgres"),
-         "-d", env.get("PGDUCK_DB", "postgres"), "-tA", "-f", "-"],
+         PG_CT, "psql", "-U", env.get("PGDUCK_USER", "platform"),
+         "-d", env.get("PGDUCK_DB", "warehouse"), "-tA", "-f", "-"],
         input=sql, capture_output=True, text=True, check=False,
     )
-    return p.stdout
+    blob = (p.stderr or "") + (p.stdout or "")
+    err = ""
+    for line in blob.splitlines():
+        if "ERROR" in line or "FATAL" in line:
+            err = line.strip()[:300]
+            break
+    return p.stdout, err
 
 
 def day_rows(prefix: str, book: str, days: list[str], env: dict) -> dict[str, int]:
@@ -89,11 +101,13 @@ def day_rows(prefix: str, book: str, days: list[str], env: dict) -> dict[str, in
         f"'s3://{BUCKET}/{prefix}/system_book={book}/bizday={d}/*.parquet'" for d in days
     )
     sql = (
-        "select duckdb.query($$ select regexp_extract(file_name,'bizday=([0-9-]+)',1) d,"
+        "select * from duckdb.query($$ select regexp_extract(file_name,'bizday=([0-9-]+)',1) d,"
         " coalesce(sum(num_rows),0) n from parquet_file_metadata([%s])"
         " group by 1 order by 1 $$);\n" % globs
     )
-    out = psql(sql, env)
+    out, err = psql(sql, env)
+    if err:
+        raise RuntimeError(err)
     got: dict[str, int] = {}
     for line in out.splitlines():
         parts = line.strip().split("|")
@@ -124,8 +138,13 @@ def main() -> int:
     checked = 0
     for name, prefix in DATASETS.items():
         for book in books:
-            r = day_rows(prefix, book, recent, env)
-            b = day_rows(prefix, book, base, env)
+            try:
+                r = day_rows(prefix, book, recent, env)
+                b = day_rows(prefix, book, base, env)
+            except RuntimeError as e:  # 查询失败必须响亮，不许当作「没数据」
+                print("ZERO_ROW_DEP_FAILED dataset=%s book=%s reason=%s" % (name, book, e),
+                      file=sys.stderr)
+                return 2
             checked += 1
             # 基线判据：有过数据（至少一半的日子 > 0 行）
             base_days = [d for d in b if b[d] > 0]
