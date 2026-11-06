@@ -90,7 +90,7 @@
     "enabled": true,
     "kind": {
       "type": "cron",
-      "expr": "*/5 8-23 * * *"
+      "expr": "*/10 9-23 * * *"
     },
     "timezone": "Asia/Shanghai",
     "misfire": "skip",
