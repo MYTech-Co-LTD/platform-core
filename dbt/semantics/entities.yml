@@ -1,0 +1,90 @@
+# entities.yml —— 业务对象与**权威源**声明（W4，路线图 G6 / #1444）
+#
+# 为什么需要它：接第二个源系统时，同一个业务对象会在多个系统里各叫各的（门店/店铺/店号）。
+# 这张表回答三个问题：这个对象叫什么、**哪个系统说了算**、跨源靠什么键对齐。
+#
+# 纪律：
+#   · 一个对象只能有一个 `system_of_record`（权威源）；
+#   · `identity_keys` 必须是真实存在的列（本文件只声明，不校验列——列校验在 check-semantics 的维度校验里）；
+#   · 只声明**有真实数据可依据**的对象；没有主键的对象（如会员汇总缺会员号）宁可不声明，别编。
+version: 1
+entities:
+  - name: branch
+    label: 门店
+    aliases: [店铺, 门店编号, 店号]
+    system_of_record: lemeng
+    identity_keys: [branch_num]
+    merge_rule: prefer_source
+    owner: data-platform
+
+  - name: item
+    label: 商品
+    aliases: [单品, 货品, 商品编码]
+    system_of_record: lemeng
+    identity_keys: [item_num]
+    merge_rule: prefer_source
+    owner: data-platform
+
+  - name: client
+    label: 客户
+    aliases: [往来单位, 客户编号, 客户ID]
+    system_of_record: lemeng
+    identity_keys: [client_fid]
+    merge_rule: prefer_source
+    owner: data-platform
+
+  - name: supplier
+    label: 供应商
+    aliases: [供货商, 供应商编号]
+    system_of_record: lemeng
+    identity_keys: [supplier_num]
+    merge_rule: prefer_source
+    owner: data-platform
+
+  - name: order
+    label: 零售订单
+    aliases: [订单, 小票, 零售单]
+    system_of_record: lemeng
+    identity_keys: [order_no]
+    merge_rule: prefer_source
+    owner: data-platform
+
+  - name: wholesale_order
+    label: 批发订单
+    aliases: [批发单, 批发出库单]
+    system_of_record: lemeng
+    identity_keys: [order_no]
+    merge_rule: prefer_source
+    owner: data-platform
+
+  - name: transfer
+    label: 调拨单
+    aliases: [调出单, 调入单, 调拨]
+    system_of_record: lemeng
+    identity_keys: [order_no]
+    merge_rule: prefer_source
+    owner: data-platform
+
+  - name: storehouse
+    label: 仓库
+    aliases: [库房, 仓位]
+    system_of_record: lemeng
+    identity_keys: [storehouse_num]
+    merge_rule: prefer_source
+    owner: data-platform
+
+  - name: saler
+    label: 营业员
+    aliases: [导购, 店员, 销售员]
+    system_of_record: lemeng
+    identity_keys: [saler]
+    merge_rule: prefer_source
+    owner: data-platform
+
+  - name: expense_bill
+    label: 费用单
+    aliases: [费用, 单据]
+    system_of_record: lemeng
+    identity_keys: [bill_no]
+    merge_rule: prefer_source
+    owner: data-platform
