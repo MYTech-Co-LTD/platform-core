@@ -11,6 +11,10 @@
 
 ## [Unreleased]
 
+## [0.276.1](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.276.0...v0.276.1) - 2026-11-06
+- 【修复】data: 调拨接口改版——body 由 start_date/end_date 改为 date_start/date_end + date_type ([#1459](https://github.com/MYTech-Co-LTD/platform-core/pull/1459), [328d36f](https://github.com/MYTech-Co-LTD/platform-core/commit/328d36f69c41e4f629bbe7f5c93e18a35d7962dc))
+
+
 ## [0.276.0](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.275.0...v0.276.0) - 2026-11-06
 - 【新增】data: 夜间回填窗口（CST 00:05-09:00）+ 驱动收窗/让路/跳过已有 ([#1457](https://github.com/MYTech-Co-LTD/platform-core/pull/1457), [e4f4a37](https://github.com/MYTech-Co-LTD/platform-core/commit/e4f4a3756c313fa698d30bf1c30f86c1c6e162f0))
 
