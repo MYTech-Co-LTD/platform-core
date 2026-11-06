@@ -85,7 +85,7 @@ base_sale as (
     select * from {{ ref('stg_lemeng_retail_order_line') }}
     where state = 'FINISHED' and order_transaction_type = 'SALE_ORDER'
     {% if is_incremental() %}
-    and bizday >= (select coalesce(max(bizday), date '1900-01-01') - interval '7 days' from {{ this }})
+    and bizday >= {{ incremental_cutoff(7) }}
     {% endif %}
 ),
 sale_amount__gen as (
@@ -100,7 +100,7 @@ base_return as (
     select * from {{ ref('stg_lemeng_retail_order_line') }}
     where state = 'FINISHED' and order_transaction_type like '%RETURN%'
     {% if is_incremental() %}
-    and bizday >= (select coalesce(max(bizday), date '1900-01-01') - interval '7 days' from {{ this }})
+    and bizday >= {{ incremental_cutoff(7) }}
     {% endif %}
 ),
 return_amount__gen as (

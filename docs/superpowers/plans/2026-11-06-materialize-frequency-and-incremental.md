@@ -33,6 +33,8 @@
 8. **基面下推（#1524）**：`gen-fct-measures.mjs` 对 `incrementalLookback` 模型在 `base_sale` /
    `base_return` CTE 内加 7 天 lookback —— 只放最终 SELECT 会「先扫全史再过滤」，首轮 tick 实测
    5+ 分钟；下推后 read_parquet 走 bizday 分区裁剪，目标 <2 分钟。
+   ⚠️ 下界必须用 `incremental_cutoff()` 渲染成**编译期日期字面量**（`select max(bizday)` 子查询
+   计划期不是常量，DuckDB 仍不裁剪——2026-11-06 实测第二轮仍 5+ 分钟）。
 
 ### W2（W1 稳定后）：其余日粒度 fct 改增量
 - 按 spec §3/§10：P2 的 13 张日粒度 fct；全量 build 目标 <5 分钟。
