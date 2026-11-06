@@ -219,6 +219,29 @@ export const ANALYST_TOOLS: readonly ToolMeta[] = [
     requiredScope: QUERY_SCOPE, mutating: false, annotations: readOnly,
   },
   {
+    name: 'explore_recipe', group: 'query', title: '分析配方',
+    description:
+      '三个写死口径的分析配方：variance（两期方差分解）/ top_contributors（Top-N 贡献）/ baseline（基线异常，'
+      + '中位数+MAD，|score|≥3.5）。只支持单列聚合指标（复合口径请用 explore_query）。结果带证据包（SQL/口径/数据截至）。',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        recipe: { type: 'string', enum: ['variance', 'top_contributors', 'baseline'] },
+        metricId: { type: 'string' },
+        dimension: { type: 'string', description: '分组维度（列名）' },
+        periodA: { type: 'object', description: 'variance 本期 {from,to}' },
+        periodB: { type: 'object', description: 'variance 基期 {from,to}' },
+        period: { type: 'object', description: 'top_contributors 窗口 {from,to}' },
+        asOf: { type: 'string', description: 'baseline 观测日 YYYY-MM-DD' },
+        topN: { type: 'integer', minimum: 1, maximum: 50, description: '缺省 10' },
+        baselineWindowDays: { type: 'integer', minimum: 7, maximum: 180, description: '缺省 28' },
+      },
+      required: ['recipe', 'metricId', 'dimension'],
+    },
+    outputSchema: { type: 'object' },
+    requiredScope: QUERY_SCOPE, mutating: false, annotations: readOnly,
+  },
+  {
     name: 'get_lineage', group: 'health', title: '血缘',
     description: '有界上下游（depth≤3）。血缘源不可用时显式 unknown。',
     inputSchema: {

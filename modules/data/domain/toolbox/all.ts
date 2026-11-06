@@ -8,6 +8,7 @@ import { searchImpl, describeMetricImpl, describeDatasetImpl, sampleDimensionVal
 import { defaultDbtManifest, freshnessImpl, qualityImpl, lineageImpl } from './health'
 import { previewImpl, queryMetricImpl } from './query'
 import { exploreQueryImpl } from './explore'
+import { exploreRecipeImpl } from './recipes'
 import { analystPool, runWarehouseSql, runWarehouseSqlParams } from '../warehouse'
 import type { SqlExecutor } from '../query-service'
 import type { Requester } from '../authz'
@@ -24,6 +25,7 @@ registerImpl('get_lineage', lineageImpl)
 registerImpl('preview_query', previewImpl)
 registerImpl('query_metric', queryMetricImpl)
 registerImpl('explore_query', exploreQueryImpl)
+registerImpl('explore_recipe', exploreRecipeImpl)
 
 // ── ToolboxDeps 唯一装配点（Wave 2 决策 D-M1）────────────────────────────────────────────
 export interface ToolboxBase {
