@@ -73,9 +73,99 @@ version: 1
 # `synonyms` 是问数入口的同义说法。声明已随迁移 031 落库，并由词表搜索/详情消费（W0 Task 1–3）；
 # 业务真实别名待业务方确认后再补（不编），这里只放最小示例。
 entities:
+  # W4（#1447）：顶层 entities 是**唯一事实源**——对象的 label/synonyms 供问数理解，
+  # system_of_record/identity_keys/merge_rule/owner 供**多源接入裁决**（接第二个系统前必须填齐）。
   branch:
     label: 门店
     synonyms: [店铺, 分店]
+    system_of_record: lemeng
+    identity_keys: [branch_num]
+    merge_rule: prefer_source
+    owner: data-platform
+  item:
+    label: 商品
+    synonyms: [单品, 货品, 商品编码]
+    system_of_record: lemeng
+    identity_keys: [item_num]
+    merge_rule: prefer_source
+    owner: data-platform
+  client:
+    label: 客户
+    synonyms: [往来单位, 客户编号, 客户ID]
+    system_of_record: lemeng
+    identity_keys: [client_fid]
+    merge_rule: prefer_source
+    owner: data-platform
+  supplier:
+    label: 供应商
+    synonyms: [供货商, 供应商编号]
+    system_of_record: lemeng
+    identity_keys: [supplier_num]
+    merge_rule: prefer_source
+    owner: data-platform
+  order:
+    label: 零售订单
+    synonyms: [订单, 小票, 零售单]
+    system_of_record: lemeng
+    identity_keys: [order_no]
+    merge_rule: prefer_source
+    owner: data-platform
+  wholesale_order:
+    label: 批发订单
+    synonyms: [批发单, 批发出库单]
+    system_of_record: lemeng
+    identity_keys: [order_no]
+    merge_rule: prefer_source
+    owner: data-platform
+  transfer:
+    label: 调拨单
+    synonyms: [调出单, 调入单, 调拨]
+    system_of_record: lemeng
+    identity_keys: [order_no]
+    merge_rule: prefer_source
+    owner: data-platform
+  storehouse:
+    label: 仓库
+    synonyms: [库房, 仓位]
+    system_of_record: lemeng
+    identity_keys: [storehouse_num]
+    merge_rule: prefer_source
+    owner: data-platform
+  saler:
+    label: 营业员
+    synonyms: [导购, 店员, 销售员]
+    system_of_record: lemeng
+    identity_keys: [saler]
+    merge_rule: prefer_source
+    owner: data-platform
+  expense_bill:
+    label: 费用单
+    synonyms: [费用, 单据]
+    system_of_record: lemeng
+    identity_keys: [bill_no]
+    merge_rule: prefer_source
+    owner: data-platform
+  outbound_order:
+    label: 出库单
+    synonyms: [总部出库单, 发货单]
+    system_of_record: lemeng
+    identity_keys: [order_no]
+    merge_rule: prefer_source
+    owner: data-platform
+  loss_bill:
+    label: 报损单
+    synonyms: [损失单, 报损]
+    system_of_record: lemeng
+    identity_keys: [order_no]
+    merge_rule: prefer_source
+    owner: data-platform
+  request_order:
+    label: 要货单
+    synonyms: [要货申请, 门店要货]
+    system_of_record: lemeng
+    identity_keys: [order_no]
+    merge_rule: prefer_source
+    owner: data-platform
 
 # ── 具名行域（P3.0 Task 3）：行域**声明一次**，聚合面内嵌、下钻面由组件域 LUB 派生 ─────────────
 # 完整谓词 = 沿 extends 链自根向下逐层 `and`（`sale_finished` ⇒
@@ -301,6 +391,7 @@ metrics:
     #   唯一事实源）。在这里再写一遍文件名 = 两处事实源，映射一改这两行就悄悄过期。
 
   - name: 'lemeng:retail:order_count'
+    entity: branch
     label: 订单数
     unit: 单
     definition: >-
@@ -322,6 +413,7 @@ metrics:
       - 's3://<bucket>/lemeng/retail_order_line/system_book=<账套>/bizday=<日期>/hour=<时>/all.parquet'
 
   - name: 'lemeng:retail:net_quantity'
+    entity: branch
     label: 零售净销量
     definition: >-
       净销量 = 销售数量 − 退货数量（客户项 03-07「库存覆盖天数」的**分母**）。可加（按门店日求和）。
@@ -347,6 +439,7 @@ metrics:
       - 's3://<bucket>/lemeng/retail_order_line/system_book=<账套>/bizday=<日期>/hour=<时>/all.parquet'
 
   - name: 'lemeng:retail:consecutive_no_sales_days'
+    entity: branch
     label: 连续无业绩天数
     unit: 天
     definition: >-
@@ -377,6 +470,7 @@ metrics:
       - 's3://<bucket>/lemeng/retail_order_line/system_book=<账套>/bizday=<日期>/hour=<时>/all.parquet'
 
   - name: 'lemeng:retail:comparable_growth_rate'
+    entity: branch
     label: 可比门店销售增长率
     unit: '%'
     definition: >-
@@ -420,6 +514,7 @@ metrics:
   #   当前档案」约束（客户文档 D12 边界）。
 
   - name: 'lemeng:outbound:net_amount'
+    entity: outbound_order
     label: 总仓出库净额
     unit: 元
     definition: >-
@@ -441,6 +536,7 @@ metrics:
       - 's3://<bucket>/lemeng/wholesale_return/system_book=<账套>/bizday=<日期>/all.parquet'
 
   - name: 'lemeng:outbound:gross_profit'
+    entity: outbound_order
     label: 总仓出库毛利
     unit: 元
     definition: >-
@@ -461,6 +557,7 @@ metrics:
       - 's3://<bucket>/lemeng/wholesale_return/system_book=<账套>/bizday=<日期>/all.parquet'
 
   - name: 'lemeng:outbound:gross_margin_rate'
+    entity: outbound_order
     label: 总仓出库毛利率
     unit: '%'
     definition: >-
@@ -481,6 +578,7 @@ metrics:
       - 's3://<bucket>/lemeng/wholesale_return/system_book=<账套>/bizday=<日期>/all.parquet'
 
   - name: 'lemeng:outbound:order_count'
+    entity: outbound_order
     label: 出库单数
     unit: 单
     definition: >-
@@ -499,6 +597,7 @@ metrics:
       - 's3://<bucket>/lemeng/wholesale_out/system_book=<账套>/bizday=<日期>/all.parquet'
 
   - name: 'lemeng:outbound:line_count'
+    entity: outbound_order
     label: 出库明细行数
     unit: 行
     definition: >-
@@ -516,6 +615,7 @@ metrics:
       - 's3://<bucket>/lemeng/wholesale_out/system_book=<账套>/bizday=<日期>/all.parquet'
 
   - name: 'lemeng:outbound:region_net'
+    entity: outbound_order
     label: 战区出库净额
     unit: 元
     definition: >-
@@ -542,6 +642,7 @@ metrics:
       - 's3://<bucket>/lemeng/wholesale_return/system_book=<账套>/bizday=<日期>/all.parquet'
 
   - name: 'lemeng:transfer:batch_fill_rate'
+    entity: transfer
     label: 配送批号填写率
     unit: '%'
     definition: >-
@@ -562,6 +663,7 @@ metrics:
       - 's3://<bucket>/lemeng/transfer_out/system_book=<账套>/bizday=<日期>/all.parquet'
 
   - name: 'lemeng:transfer:zero_cost_exposure_amount'
+    entity: transfer
     label: 配送零成本出库暴露金额
     unit: 元
     definition: >-
@@ -587,6 +689,7 @@ metrics:
       - 's3://<bucket>/lemeng/transfer_out/system_book=<账套>/bizday=<日期>/all.parquet'
 
   - name: 'lemeng:transfer:cost_coverage_pct'
+    entity: transfer
     label: 配送出库成本覆盖率
     unit: '%'
     definition: >-
@@ -613,6 +716,7 @@ metrics:
       - 's3://<bucket>/lemeng/transfer_out/system_book=<账套>/bizday=<日期>/all.parquet'
 
   - name: 'lemeng:transfer:negative_order_count'
+    entity: transfer
     label: 配送负金额单数
     unit: 单
     definition: >-
@@ -630,6 +734,7 @@ metrics:
       - 's3://<bucket>/lemeng/transfer_out/system_book=<账套>/bizday=<日期>/all.parquet'
 
   - name: 'lemeng:transfer:item_gross_margin_rate'
+    entity: transfer
     label: 商品出库毛利率
     unit: '%'
     definition: >-
@@ -656,6 +761,7 @@ metrics:
   # 费用率类为跨模型比率 → L2（消费面）。
 
   - name: 'lemeng:expense:branch_payable'
+    entity: branch
     label: 门店应付费用
     unit: 元
     definition: >-
@@ -671,6 +777,7 @@ metrics:
       - 's3://<bucket>/lemeng/branch_expense/system_book=<账套>/bizday=<日期>/all.parquet'
 
   - name: 'lemeng:expense:branch_receivable'
+    entity: branch
     label: 门店应收费用
     unit: 元
     definition: >-
@@ -686,6 +793,7 @@ metrics:
       - 's3://<bucket>/lemeng/branch_expense/system_book=<账套>/bizday=<日期>/all.parquet'
 
   - name: 'lemeng:expense:branch_net'
+    entity: branch
     label: 门店净费用
     unit: 元
     definition: >-
@@ -702,6 +810,7 @@ metrics:
       - 's3://<bucket>/lemeng/branch_expense/system_book=<账套>/bizday=<日期>/all.parquet'
 
   - name: 'lemeng:expense:client_payable'
+    entity: client
     label: 客户应付费用
     unit: 元
     definition: >-
@@ -718,6 +827,7 @@ metrics:
       - 's3://<bucket>/lemeng/client_expense/system_book=<账套>/bizday=<日期>/all.parquet'
 
   - name: 'lemeng:expense:client_receivable'
+    entity: client
     label: 客户应收费用
     unit: 元
     definition: >-
@@ -735,6 +845,7 @@ metrics:
   # （client_net 描述文曾滞留「符号语义待裁9 → experimental」，与 tier: certified 矛盾
   #   —— 2026-10-24 终审 F-4 订正。）
   - name: 'lemeng:expense:client_net'
+    entity: client
     label: 客户净费用
     unit: 元
     definition: >-
@@ -755,6 +866,7 @@ metrics:
   # coverage_days 需销售分母（D07 上卷）→ W4 另声明。
 
   - name: 'lemeng:inventory:quantity'
+    entity: storehouse
     label: 库存数量
     definition: >-
       库存快照数量合计（基本单位）。T-1 日结（每天凌晨生成前一日快照，不可回溯——
@@ -775,6 +887,7 @@ metrics:
       - 's3://<bucket>/lemeng/inventory_snapshot/system_book=<账套>/bizday=<日期>/all.parquet'
 
   - name: 'lemeng:inventory:money'
+    entity: storehouse
     label: 库存金额
     unit: 元
     definition: >-
@@ -797,6 +910,7 @@ metrics:
   #  ③ 不同 summary 维度查询结果不可重复相加（客户文档边界）。
 
   - name: 'lemeng:purchase:amount'
+    entity: supplier
     label: 采购金额
     unit: 元
     definition: >-
@@ -812,6 +926,7 @@ metrics:
       - 's3://<bucket>/lemeng/item_purchase/system_book=<账套>/bizday=<日期>/all.parquet'
 
   - name: 'lemeng:purchase:present_amount'
+    entity: supplier
     label: 采购赠品金额
     unit: 元
     definition: >-
@@ -826,6 +941,7 @@ metrics:
       - 's3://<bucket>/lemeng/item_purchase/system_book=<账套>/bizday=<日期>/all.parquet'
 
   - name: 'lemeng:purchase:return_amount'
+    entity: supplier
     label: 采购退货金额
     unit: 元
     definition: >-
@@ -841,6 +957,7 @@ metrics:
       - 's3://<bucket>/lemeng/item_purchase/system_book=<账套>/bizday=<日期>/all.parquet'
 
   - name: 'lemeng:purchase:net_amount'
+    entity: supplier
     label: 净采购额
     unit: 元
     definition: >-
@@ -856,6 +973,7 @@ metrics:
       - 's3://<bucket>/lemeng/item_purchase/system_book=<账套>/bizday=<日期>/all.parquet'
 
   - name: 'lemeng:purchase:supplier_count'
+    entity: supplier
     label: 采购供应商数
     unit: 家
     definition: >-
@@ -871,6 +989,7 @@ metrics:
       - 's3://<bucket>/lemeng/item_purchase/system_book=<账套>/bizday=<日期>/all.parquet'
 
   - name: 'lemeng:purchase:item_count'
+    entity: supplier
     label: 采购商品数
     definition: >-
       该窗口内有采购收货的商品**去重数**。⚠️ 非可加：同 supplier_count。
@@ -887,6 +1006,7 @@ metrics:
   # 两项都是「判据过、源已齐、当时被推给消费面」的悬空指标。均落 fct_purchase 现成列，无新构件。
 
   - name: 'lemeng:purchase:return_rate'
+    entity: supplier
     label: 采购退货率
     unit: '%'
     definition: >-
@@ -910,6 +1030,7 @@ metrics:
       - 's3://<bucket>/lemeng/item_purchase/system_book=<账套>/bizday=<日期>/all.parquet'
 
   - name: 'lemeng:purchase:zero_amount_rows'
+    entity: supplier
     label: 零金额采购行数
     unit: 行
     definition: >-
@@ -931,6 +1052,7 @@ metrics:
   # 写不出声明。构件头注记了全部边界（门店费用只挂 transfer 域、批发战区的幻影回落等）。
 
   - name: 'lemeng:contribution:net_amount'
+    entity: branch
     label: 费用后贡献额（总仓级）
     unit: 元
     definition: >-
@@ -957,6 +1079,7 @@ metrics:
       - 's3://<bucket>/lemeng/branch_expense/system_book=<账套>/bizday=<日期>/all.parquet'
 
   - name: 'lemeng:contribution:margin_rate'
+    entity: branch
     label: 费用后贡献率（总仓级）
     unit: '%'
     definition: >-
@@ -979,6 +1102,7 @@ metrics:
       - 's3://<bucket>/lemeng/branch_expense/system_book=<账套>/bizday=<日期>/all.parquet'
 
   - name: 'lemeng:contribution:region_net'
+    entity: branch
     label: 费用后贡献额（战区级）
     unit: 元
     definition: >-
@@ -1005,6 +1129,7 @@ metrics:
       - 's3://<bucket>/lemeng/branch_expense/system_book=<账套>/bizday=<日期>/all.parquet'
 
   - name: 'lemeng:contribution:region_l1_net'
+    entity: branch
     label: 费用后贡献额（一级战区）
     unit: 元
     definition: >-
@@ -1032,6 +1157,7 @@ metrics:
   # 方向语义客户未回签）。
 
   - name: 'lemeng:client_contribution:net_amount'
+    entity: client
     label: 客户费用后贡献额
     unit: 元
     definition: >-
@@ -1055,6 +1181,7 @@ metrics:
       - 's3://<bucket>/lemeng/client_expense/system_book=<账套>/bizday=<日期>/all.parquet'
 
   - name: 'lemeng:client_contribution:margin_rate'
+    entity: client
     label: 客户费用后贡献率
     unit: '%'
     definition: >-
@@ -1076,6 +1203,7 @@ metrics:
       - 's3://<bucket>/lemeng/client_expense/system_book=<账套>/bizday=<日期>/all.parquet'
 
   - name: 'lemeng:expense:loss_rate'
+    entity: branch
     label: 门店补损率
     unit: '%'
     definition: >-
@@ -1099,6 +1227,7 @@ metrics:
       - 's3://<bucket>/lemeng/branch_expense/system_book=<账套>/bizday=<日期>/all.parquet'
 
   - name: 'lemeng:expense:subsidy_rate'
+    entity: branch
     label: 门店补贴率
     unit: '%'
     definition: >-
@@ -1125,6 +1254,7 @@ metrics:
   # 落点 = fct_purchase_concentration（**月度**预聚合构件——CR5 含排序取前 5，是子查询语义）。
 
   - name: 'lemeng:purchase:cr5'
+    entity: supplier
     label: 供应商集中度 CR5
     unit: '%'
     definition: >-
@@ -1161,6 +1291,7 @@ metrics:
   # （跨日履约不计=下界 / 主动配送计入=上界）。边界全文见构件头注。
 
   - name: 'lemeng:request:quantity'
+    entity: request_order
     label: 要货数量
     definition: >-
       有效要货数量合计（基本单位；「有效要货行」= 要货数量 > 0）。粒度 = 账套 × 制单日 ×
@@ -1176,6 +1307,7 @@ metrics:
       - 's3://<bucket>/lemeng/transfer_in/system_book=<账套>/bizday=<日期>/all.parquet'
 
   - name: 'lemeng:request:day_fulfillment_rate'
+    entity: request_order
     label: 截止日满足率
     unit: '%'
     definition: >-
@@ -1219,6 +1351,7 @@ metrics:
   #    结论：给本列打列级掩码前**必须先裁决**「掩码生效 ⇒ 整列缺席（推荐）vs 列在场全 NULL」，
   #    缺口归 #995（下钻条件列 × 列级掩码的语义缺口）；别指望它自己报错。
   - name: 'lemeng:retail:order_line'
+    entity: order
     label: 零售订单明细行
     unit: 行
     definition: >-
@@ -1256,6 +1389,7 @@ metrics:
         - { col: order_detail_std_price, grantedBy: data:cost }
 
   - name: 'lemeng:wholesale:order_line'
+    entity: wholesale_order
     label: 批发明细行
     unit: 行
     definition: >-
@@ -1290,6 +1424,7 @@ metrics:
         - { col: price, grantedBy: data:cost }
 
   - name: 'lemeng:loss:branch_amount'
+    entity: loss_bill
     label: 门店报损金额
     unit: 元
     definition: >-
@@ -1306,6 +1441,7 @@ metrics:
     - 's3://<bucket>/lemeng/loss_adjustment/system_book=<账套>/bizday=<日期>/all.parquet'
 
   - name: 'lemeng:member:branch_vip_money'
+    entity: branch
     label: 门店会员销售
     unit: 元
     definition: >-
@@ -1322,6 +1458,7 @@ metrics:
     sources:
     - 's3://<bucket>/lemeng/member_summary/system_book=<账套>/bizday=<日期>/all.parquet'
   - name: 'lemeng:member:branch_vip_nums'
+    entity: branch
     label: 门店会员客单
     unit: 元
     definition: >-
@@ -1340,6 +1477,7 @@ metrics:
   # 构件落点 fct_branch_indicator（宽表：staging 的 metric 行转列）。新增 D10 指标 = mart 加一列
   # + 本节加一条声明；采集形态/网关省略语义见契约 contracts/common/lemeng.branch_indicator.json。
   - name: 'lemeng:branch:transfer_money'
+    entity: branch
     label: 门店配送金额
     unit: 元
     definition: >-

@@ -230,7 +230,7 @@ const METRIC_KEYS = new Set([
  * 顶层 `entities:` 的键闭集（自动推导指标 spec 2026-11-04 §5 W0）。
  * 与 `METRIC_KEYS` 同纪律：加字段 = 改这里 + 改 README + 走 PR，防止拼错的键静默不生效。
  */
-const ENTITY_KEYS = new Set(['label', 'synonyms'])
+const ENTITY_KEYS = new Set(['label', 'synonyms', 'system_of_record', 'identity_keys', 'merge_rule', 'owner'])
 /** 实体名与 `metric.entity` 共用的形态（小写蛇形；跨文件引用靠逐字相等）。 */
 const ENTITY_NAME_RE = /^[a-z][a-z0-9_]*$/
 
