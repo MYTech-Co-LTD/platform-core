@@ -1466,25 +1466,32 @@ const STYLE = `
   @media (max-width: 767px) {
     header.top { padding: 14px 14px 10px; }
     header.top h1 { font-size: 19px; }
+    /* 375px：副标题不折两行、不在时间中间断行——缩字号 + 隐藏时间戳，保留「生成时间」 */
+    header.top .sub { font-size: 12px; }
+    header.top .sub .ts { display: none; }
     .layout { display: block; padding: 10px 12px 0; }
     body { padding-bottom: calc(64px + env(safe-area-inset-bottom, 0px)); }
     nav.tabs { display: none; }
     nav.mobile-tabbar {
       position: fixed; left: 0; right: 0; bottom: 0; z-index: 100;
-      display: flex; background: #fff; border-top: 1px solid #ececec;
-      padding-bottom: env(safe-area-inset-bottom, 0px);
+      display: flex; width: 100%; box-sizing: border-box; background: #fff;
+      border-top: 1px solid #ececec;
+      /* padding:0（横向无内边距）+ 仅底部安全区——4 项才能严格均分，375px 不裁第 4 项 */
+      padding: 0; padding-bottom: env(safe-area-inset-bottom, 0px);
     }
     nav.mobile-tabbar a {
-      flex: 1; min-height: 56px; display: flex; flex-direction: column;
+      flex: 1 1 0; min-width: 0; min-height: 56px; display: flex; flex-direction: column;
       align-items: center; justify-content: center; gap: 2px;
       font-size: 11px; color: #8c8c8c; text-decoration: none;
+      white-space: nowrap;
     }
     nav.mobile-tabbar a.active { color: var(--accent); font-weight: 600; }
     nav.mobile-tabbar .tab-icon { font-size: 18px; line-height: 1; }
     .desktop-only { display: none !important; }
     .mobile-only { display: grid; }
     .two-col { grid-template-columns: 1fr; }
-    .cards { grid-template-columns: 1fr 1fr; gap: 8px; }
+    /* 375px：健康卡单列（两列会把「近 30 天零使用指标」等标签挤成省略号） */
+    .cards { grid-template-columns: 1fr; gap: 8px; }
     .card { padding: 10px; }
     .card-value { font-size: 21px; }
     .metric-list, .metric-cards { grid-template-columns: 1fr; }
@@ -1524,7 +1531,7 @@ ${STYLE}
 <body>
 <header class="top">
   <h1>数据体系地图</h1>
-  <p class="sub">从指标回溯到实体、源表与口径 · 生成时间 <span id="generated-at">${generated}</span></p>
+  <p class="sub">从指标回溯到实体、源表与口径 · 生成时间 <span class="ts" id="generated-at">${generated}</span></p>
 </header>
 <div class="layout">
   <nav class="tabs" aria-label="体系地图视图">

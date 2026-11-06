@@ -382,6 +382,22 @@ describe('渲染：移动端结构（CSS 断点 + 底部标签栏 + 44px + 无�
     expect(html).toMatch(/body\.detail-open #metric-detail \{[^}]*position: fixed; inset: 0;/)
   })
 
+  it('375px：底部 4 项严格均分（flex:1 1 0 / min-width:0 / nowrap），nav 无横向 padding', () => {
+    const mobile = html.slice(html.indexOf('@media (max-width: 767px)'))
+    expect(mobile).toMatch(/nav\.mobile-tabbar \{[^}]*width: 100%; box-sizing: border-box;/)
+    expect(mobile).toMatch(/nav\.mobile-tabbar \{[^}]*padding: 0; padding-bottom: env\(safe-area-inset-bottom/)
+    expect(mobile).toMatch(/nav\.mobile-tabbar a \{[^}]*flex: 1 1 0; min-width: 0;/)
+    expect(mobile).toMatch(/nav\.mobile-tabbar a \{[^}]*white-space: nowrap;/)
+  })
+
+  it('375px：健康卡单列 + 副标题不折行（缩字号、隐藏时间戳）', () => {
+    const mobile = html.slice(html.indexOf('@media (max-width: 767px)'))
+    expect(mobile).toContain('.cards { grid-template-columns: 1fr; gap: 8px; }')
+    expect(mobile).toContain('header.top .sub { font-size: 12px; }')
+    expect(mobile).toContain('header.top .sub .ts { display: none; }')
+    expect(html).toContain('<span class="ts" id="generated-at">')
+  })
+
   it('点击目标 ≥44px 用 CSS 类；无横向滚动断 min-width 而非只 overflow-x', () => {
     expect(html).toContain('.tap { min-height: 44px; min-width: 44px; }')
     expect(html).toContain('nav.mobile-tabbar a {')
@@ -440,6 +456,8 @@ describe('客户端路由与视图（深链 / 刷新 / 返回 / 搜索）', () =
     expect(text).toContain('未消解需求')
     expect(text).toContain('口径事故数')
     expect(text).toContain('25%')
+    // 375px 底部标签栏：4 项（总览/指标/实体/需求）
+    expect(document.querySelectorAll('nav.mobile-tabbar a').length).toBe(4)
   })
 
   it('W4 声明在总览渲染成清单与计数（维度级数 / 不变量 status+severity）', () => {
