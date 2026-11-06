@@ -1,0 +1,273 @@
+{
+  "name": "lemeng.business_collection_receive.day",
+  "id": "lemeng.business_collection_receive.day",
+  "version": 1,
+  "_note": [
+    "lemeng.business_collection_receive.day —— 营业收款报表-门店收款构成 的单块子管线（由父管线 ctl.foreach 驱动，不单独调度）。",
+    "",
+    "生成器：scripts/lemeng/gen-business-collection.mjs（勿手改；改列集改生成器再重跑）。",
+    "骨架克隆自 lemeng.branch_indicator.day.json，身份门与分块在父管线。",
+    "",
+    "① 请求：POST nhsoft.report.ai.businesscollection.receive.find，一天一窗（BIZDAY=BIZDAY），branch_nums 由父管线按 100 家切好传入。",
+    "② 网关闸（denv）：code != 0 即拒写；10001=单请求超 100 家，10003=名单含本凭据无权限的店号。",
+    "③ 截断闸（gtc/dtc）：result.total_count 必须等于 result.rows 长度——接口不分页，不等即被截断。",
+    "④ 逐门店左连接（n）：以请求里的门店清单为左表，源端没返回的门店 matched=false ⇒",
+    "   整天全空由父级 gall/dall 裁决，单块空只写 1 行占位（branch_num=NULL）保证分块到齐判据成立。",
+    "⑤ staging：/workspace/.duckle-stage/business_collection_receive/chunk-<batch>-<chunk>.parquet。"
+  ],
+  "nodes": [
+    {
+      "id": "f",
+      "type": "source",
+      "position": {
+        "x": 0,
+        "y": 0
+      },
+      "data": {
+        "label": "f",
+        "componentId": "src.rest",
+        "properties": {
+          "connectionRef": "lemeng",
+          "url": "https://cloud.nhsoft.cn/agi/api/nhsoft.report.ai.businesscollection.receive.find",
+          "method": "POST",
+          "headers": {
+            "Content-Type": "application/json"
+          },
+          "body": "{\"date_start\":\"${ITER_ITEM_BIZDAY}\",\"date_end\":\"${ITER_ITEM_BIZDAY}\",\"summary_types\":[\"branch\",\"payment_type\"],\"branch_nums\":${ITER_ITEM_BRANCH_NUMS_JSON},\"order_types\":[\"已结账单\",\"卡存款\",\"其他收支\",\"会员换卡\",\"会员续卡\",\"付费会员\",\"次卡\"],\"date_type\":\"bizday\"}",
+          "paginationType": "none",
+          "responsePath": "/result/rows",
+          "rawResponseDestination": "/workspace/.duckle-raw/business_collection_receive-${ITER_ITEM_BATCH_ID}-c${ITER_ITEM_CHUNK_NO}.json",
+          "retryAttempts": 3,
+          "retryBackoffMs": 2000
+        },
+        "schema": [
+          {
+            "name": "branch_num",
+            "type": "int64"
+          },
+          {
+            "name": "branch_code",
+            "type": "string"
+          },
+          {
+            "name": "branch_name",
+            "type": "string"
+          },
+          {
+            "name": "branch_region_num",
+            "type": "int64"
+          },
+          {
+            "name": "branch_region_name",
+            "type": "string"
+          },
+          {
+            "name": "metric",
+            "type": "string"
+          },
+          {
+            "name": "period",
+            "type": "string"
+          },
+          {
+            "name": "target_value",
+            "type": "float64"
+          },
+          {
+            "name": "actual_value",
+            "type": "float64"
+          },
+          {
+            "name": "actual_rate",
+            "type": "float64"
+          },
+          {
+            "name": "periods",
+            "type": "json"
+          }
+        ]
+      }
+    },
+    {
+      "id": "env",
+      "type": "transform",
+      "position": {
+        "x": 0,
+        "y": 0
+      },
+      "data": {
+        "label": "env",
+        "componentId": "code.sql",
+        "properties": {
+          "sql": "SELECT CAST(code AS INTEGER) AS code, CAST(msg AS VARCHAR) AS msg\nFROM read_json_auto('/workspace/.duckle-raw/business_collection_receive-${ITER_ITEM_BATCH_ID}-c${ITER_ITEM_CHUNK_NO}.json')\nWHERE CAST(code AS INTEGER) <> 0"
+        }
+      }
+    },
+    {
+      "id": "denv",
+      "type": "transform",
+      "position": {
+        "x": 0,
+        "y": 0
+      },
+      "data": {
+        "label": "denv",
+        "componentId": "ctl.die",
+        "properties": {
+          "condition": "has-rows",
+          "message": "business_collection_receive 网关非 0 code（{rows} 条）：chunk ${ITER_ITEM_CHUNK_NO}/${ITER_ITEM_N_CHUNKS} bizday=${ITER_ITEM_BIZDAY}；10001=单请求超 100 家，10003=名单里有本凭据无权限的店号。raw 见 /workspace/.duckle-raw/business_collection_receive-${ITER_ITEM_BATCH_ID}-c${ITER_ITEM_CHUNK_NO}.json"
+        }
+      }
+    },
+    {
+      "id": "gtc",
+      "type": "transform",
+      "position": {
+        "x": 0,
+        "y": 0
+      },
+      "data": {
+        "label": "gtc",
+        "componentId": "code.sql",
+        "properties": {
+          "sql": "SELECT * FROM (\n  SELECT CAST(json_extract_string(CAST(content AS JSON), '$.result.total_count') AS BIGINT) AS total_count,\n         CAST(json_array_length(json_extract(CAST(content AS JSON), '$.result.rows')) AS BIGINT) AS n_rows\n  FROM read_text('/workspace/.duckle-raw/business_collection_receive-${ITER_ITEM_BATCH_ID}-c${ITER_ITEM_CHUNK_NO}.json')\n) t\nWHERE t.total_count IS DISTINCT FROM t.n_rows"
+        }
+      }
+    },
+    {
+      "id": "dtc",
+      "type": "transform",
+      "position": {
+        "x": 0,
+        "y": 0
+      },
+      "data": {
+        "label": "dtc",
+        "componentId": "ctl.die",
+        "properties": {
+          "condition": "has-rows",
+          "message": "网关自相矛盾：total_count 与返回行数不等（{rows} 条）——响应被截断，拒绝写湖。raw 见 /workspace/.duckle-raw/business_collection_receive-${ITER_ITEM_BATCH_ID}-c${ITER_ITEM_CHUNK_NO}.json"
+        }
+      }
+    },
+    {
+      "id": "n",
+      "type": "transform",
+      "position": {
+        "x": 0,
+        "y": 0
+      },
+      "data": {
+        "label": "n",
+        "componentId": "code.sql",
+        "properties": {
+          "sql": "SELECT CAST(req.branch_num AS INTEGER) AS branch_num,\n       per.branch_code AS branch_code,\n       per.branch_name AS branch_name,\n       per.payment_type AS payment_type,\n       per.receive_money AS receive_money,\n       per.receive_money_rate AS receive_money_rate,\n       per.order_count AS order_count,\n       per.order_count_rate AS order_count_rate,\n       per.pos_order_receive_money AS pos_order_receive_money,\n       per.pos_order_count AS pos_order_count,\n       per.card_deposit_receive_money AS card_deposit_receive_money,\n       per.card_deposit_order_count AS card_deposit_order_count,\n       per.card_relate_receive_money AS card_relate_receive_money,\n       per.card_relate_order_count AS card_relate_order_count,\n       per.card_replace_receive_money AS card_replace_receive_money,\n       per.card_replace_order_count AS card_replace_order_count,\n       per.exchange_card_receive_money AS exchange_card_receive_money,\n       per.exchange_card_order_count AS exchange_card_order_count,\n       per.other_receive_money AS other_receive_money,\n       per.other_order_count AS other_order_count,\n       per.purchase_records_receive_money AS purchase_records_receive_money,\n       per.purchase_records_order_count AS purchase_records_order_count,\n       per.branch_num IS NOT NULL AS matched\nFROM (SELECT CAST(j.value AS BIGINT) AS branch_num FROM json_each('${ITER_ITEM_BRANCH_NUMS_JSON}') j) req\nLEFT JOIN (\n  SELECT CAST(r.branch_num AS BIGINT) AS branch_num,\n         CAST(r.branch_code AS VARCHAR) AS branch_code,\n         CAST(r.branch_name AS VARCHAR) AS branch_name,\n         CAST(r.payment_type AS VARCHAR) AS payment_type,\n         CAST(r.receive_money AS DECIMAL(20, 2)) AS receive_money,\n         CAST(r.receive_money_rate AS DECIMAL(20, 6)) AS receive_money_rate,\n         CAST(r.order_count AS INTEGER) AS order_count,\n         CAST(r.order_count_rate AS DECIMAL(20, 6)) AS order_count_rate,\n         CAST(r.pos_order_receive_money AS DECIMAL(20, 2)) AS pos_order_receive_money,\n         CAST(r.pos_order_count AS INTEGER) AS pos_order_count,\n         CAST(r.card_deposit_receive_money AS DECIMAL(20, 2)) AS card_deposit_receive_money,\n         CAST(r.card_deposit_order_count AS INTEGER) AS card_deposit_order_count,\n         CAST(r.card_relate_receive_money AS DECIMAL(20, 2)) AS card_relate_receive_money,\n         CAST(r.card_relate_order_count AS INTEGER) AS card_relate_order_count,\n         CAST(r.card_replace_receive_money AS DECIMAL(20, 2)) AS card_replace_receive_money,\n         CAST(r.card_replace_order_count AS INTEGER) AS card_replace_order_count,\n         CAST(r.exchange_card_receive_money AS DECIMAL(20, 2)) AS exchange_card_receive_money,\n         CAST(r.exchange_card_order_count AS INTEGER) AS exchange_card_order_count,\n         CAST(r.other_receive_money AS DECIMAL(20, 2)) AS other_receive_money,\n         CAST(r.other_order_count AS INTEGER) AS other_order_count,\n         CAST(r.purchase_records_receive_money AS DECIMAL(20, 2)) AS purchase_records_receive_money,\n         CAST(r.purchase_records_order_count AS INTEGER) AS purchase_records_order_count\n  FROM input r\n) per ON per.branch_num = req.branch_num"
+        }
+      }
+    },
+    {
+      "id": "s",
+      "type": "transform",
+      "position": {
+        "x": 0,
+        "y": 0
+      },
+      "data": {
+        "label": "s",
+        "componentId": "code.sql",
+        "properties": {
+          "sql": "SELECT '${ITER_ITEM_BATCH_ID}' AS batch_id,\n       CAST(${ITER_ITEM_SYSTEM_BOOK} AS INTEGER) AS system_book,\n       CAST('${ITER_ITEM_BIZDAY}' AS DATE) AS bizday,\n       CAST(branch_num AS INTEGER) AS branch_num,\n       CAST(branch_code AS VARCHAR) AS branch_code,\n       CAST(branch_name AS VARCHAR) AS branch_name,\n       CAST(payment_type AS VARCHAR) AS payment_type,\n       CAST(receive_money AS DECIMAL(20, 2)) AS receive_money,\n       CAST(receive_money_rate AS DECIMAL(20, 6)) AS receive_money_rate,\n       CAST(order_count AS INTEGER) AS order_count,\n       CAST(order_count_rate AS DECIMAL(20, 6)) AS order_count_rate,\n       CAST(pos_order_receive_money AS DECIMAL(20, 2)) AS pos_order_receive_money,\n       CAST(pos_order_count AS INTEGER) AS pos_order_count,\n       CAST(card_deposit_receive_money AS DECIMAL(20, 2)) AS card_deposit_receive_money,\n       CAST(card_deposit_order_count AS INTEGER) AS card_deposit_order_count,\n       CAST(card_relate_receive_money AS DECIMAL(20, 2)) AS card_relate_receive_money,\n       CAST(card_relate_order_count AS INTEGER) AS card_relate_order_count,\n       CAST(card_replace_receive_money AS DECIMAL(20, 2)) AS card_replace_receive_money,\n       CAST(card_replace_order_count AS INTEGER) AS card_replace_order_count,\n       CAST(exchange_card_receive_money AS DECIMAL(20, 2)) AS exchange_card_receive_money,\n       CAST(exchange_card_order_count AS INTEGER) AS exchange_card_order_count,\n       CAST(other_receive_money AS DECIMAL(20, 2)) AS other_receive_money,\n       CAST(other_order_count AS INTEGER) AS other_order_count,\n       CAST(purchase_records_receive_money AS DECIMAL(20, 2)) AS purchase_records_receive_money,\n       CAST(purchase_records_order_count AS INTEGER) AS purchase_records_order_count,\n       CAST(CURRENT_TIMESTAMP AS TIMESTAMPTZ) AS computed_at,\n       CAST((SELECT count(DISTINCT branch_num) FROM input WHERE matched) AS INTEGER) AS chunk_n_matched\nFROM input\nWHERE matched\nUNION ALL\nSELECT '${ITER_ITEM_BATCH_ID}', CAST(${ITER_ITEM_SYSTEM_BOOK} AS INTEGER), CAST('${ITER_ITEM_BIZDAY}' AS DATE),\n       CAST(NULL AS INTEGER),\n       CAST(NULL AS TXT),\n       CAST(NULL AS TXT),\n       CAST(NULL AS TXT),\n       CAST(NULL AS DECIMAL(20, 2)),\n       CAST(NULL AS DECIMAL(20, 6)),\n       CAST(NULL AS INT),\n       CAST(NULL AS DECIMAL(20, 6)),\n       CAST(NULL AS DECIMAL(20, 2)),\n       CAST(NULL AS INT),\n       CAST(NULL AS DECIMAL(20, 2)),\n       CAST(NULL AS INT),\n       CAST(NULL AS DECIMAL(20, 2)),\n       CAST(NULL AS INT),\n       CAST(NULL AS DECIMAL(20, 2)),\n       CAST(NULL AS INT),\n       CAST(NULL AS DECIMAL(20, 2)),\n       CAST(NULL AS INT),\n       CAST(NULL AS DECIMAL(20, 2)),\n       CAST(NULL AS INT),\n       CAST(NULL AS DECIMAL(20, 2)),\n       CAST(NULL AS INT),\n       CAST(CURRENT_TIMESTAMP AS TIMESTAMPTZ), CAST(0 AS INTEGER)\nWHERE NOT EXISTS (SELECT 1 FROM input WHERE matched)"
+        }
+      }
+    },
+    {
+      "id": "sink",
+      "type": "sink",
+      "position": {
+        "x": 0,
+        "y": 0
+      },
+      "data": {
+        "label": "sink",
+        "componentId": "snk.parquet",
+        "properties": {
+          "path": "/workspace/.duckle-stage/business_collection_receive/chunk-${ITER_ITEM_BATCH_ID}-${ITER_ITEM_CHUNK_NO}.parquet",
+          "mode": "overwrite",
+          "compression": "zstd"
+        }
+      }
+    }
+  ],
+  "edges": [
+    {
+      "id": "e-f-env",
+      "source": "f",
+      "target": "env",
+      "sourceHandle": "main",
+      "targetHandle": "main",
+      "data": {
+        "connectionType": "main"
+      }
+    },
+    {
+      "id": "e-env-denv",
+      "source": "env",
+      "target": "denv",
+      "sourceHandle": "main",
+      "targetHandle": "main",
+      "data": {
+        "connectionType": "main"
+      }
+    },
+    {
+      "id": "e-f-n",
+      "source": "f",
+      "target": "n",
+      "sourceHandle": "main",
+      "targetHandle": "main",
+      "data": {
+        "connectionType": "main"
+      }
+    },
+    {
+      "id": "e-n-s",
+      "source": "n",
+      "target": "s",
+      "sourceHandle": "main",
+      "targetHandle": "main",
+      "data": {
+        "connectionType": "main"
+      }
+    },
+    {
+      "id": "e-s-sink",
+      "source": "s",
+      "target": "sink",
+      "sourceHandle": "main",
+      "targetHandle": "main",
+      "data": {
+        "connectionType": "main"
+      }
+    },
+    {
+      "id": "e-f-gtc",
+      "source": "f",
+      "target": "gtc",
+      "sourceHandle": "main",
+      "targetHandle": "main",
+      "data": {
+        "connectionType": "main"
+      }
+    },
+    {
+      "id": "e-gtc-dtc",
+      "source": "gtc",
+      "target": "dtc",
+      "sourceHandle": "main",
+      "targetHandle": "main",
+      "data": {
+        "connectionType": "main"
+      }
+    }
+  ]
+}

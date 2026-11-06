@@ -1,0 +1,153 @@
+{
+  "$schema": "./_schema.schema.json",
+  "contractVersion": 2,
+  "schemaVersion": 1,
+  "consumerVersion": 1,
+  "domain": "lemeng",
+  "table": "business_collection_coupon",
+  "owner": "data-platform",
+  "description": "乐檬营业收款报表-卡券汇总日粒度（nhsoft.report.ai.businesscollection.coupon.find；AMAREPORT，2026-11-06 接源）。【行粒度】一行 = 账套 × bizday × 门店 × 券类型。【窗口】单日窗（date_start=date_end=BIZDAY），含首尾最多 31 天（10002）；`branch_nums` 必填且**单请求 ≤100 家**（10001，3120 有 270 家 ⇒ 父管线按 100 切块 ctl.foreach）；越权店号 10003。【省略语义】当日无数据的门店不出现在 rows 里（total_count == len(rows) 合法）⇒ 缺行 = 无数据，不是零值。【不分页】接口一次返回全部。业务极稀疏（实测 3120 十月全店仅 2 行）⇒ 缺行 = 当日无券核销，不是断供。",
+  "layout": {
+    "prefix": "lemeng/business_collection_coupon",
+    "partitionStyle": "hive",
+    "partitionBy": [
+      "system_book",
+      "bizday"
+    ],
+    "fileName": "all.parquet"
+  },
+  "batch": {
+    "markerColumn": "batch_id",
+    "type": "varchar",
+    "unique": false,
+    "note": "= 父管线 lemeng.business_collection_coupon.l0.<book> 每轮的批次号（UTC 时间戳串）。同一 bizday 分区每轮覆盖写；回填变体 lemeng.business_collection_coupon.backfill.<book> 由 params.BIZDAY 驱动、复用同一 layout。"
+  },
+  "columns": [
+    {
+      "name": "batch_id",
+      "type": "varchar",
+      "nullable": false,
+      "description": "采集批次（父管线 drv 的 batch_id，UTC 时间戳串）",
+      "expr": "CAST(batch_id AS VARCHAR)"
+    },
+    {
+      "name": "system_book",
+      "type": "integer",
+      "nullable": false,
+      "description": "账套（3120 熊喵 / 64188 品品甜）；分区键",
+      "expr": "CAST(system_book AS INTEGER)"
+    },
+    {
+      "name": "bizday",
+      "type": "date",
+      "nullable": false,
+      "description": "营业日（查询窗单日）；分区键",
+      "expr": "CAST(bizday AS DATE)"
+    },
+    {
+      "name": "branch_num",
+      "type": "integer",
+      "nullable": false,
+      "description": "门店编号",
+      "expr": "CAST(branch_num AS INTEGER)"
+    },
+    {
+      "name": "branch_code",
+      "type": "varchar",
+      "nullable": true,
+      "description": "门店编码",
+      "expr": "CAST(branch_code AS VARCHAR)"
+    },
+    {
+      "name": "branch_name",
+      "type": "varchar",
+      "nullable": true,
+      "description": "门店名称",
+      "expr": "CAST(branch_name AS VARCHAR)"
+    },
+    {
+      "name": "branch_region_num",
+      "type": "integer",
+      "nullable": true,
+      "description": "门店区域编号",
+      "expr": "CAST(branch_region_num AS INTEGER)"
+    },
+    {
+      "name": "branch_region_name",
+      "type": "varchar",
+      "nullable": true,
+      "description": "门店区域名称",
+      "expr": "CAST(branch_region_name AS VARCHAR)"
+    },
+    {
+      "name": "branch_type",
+      "type": "varchar",
+      "nullable": true,
+      "description": "门店类型（加盟/直营）",
+      "expr": "CAST(branch_type AS VARCHAR)"
+    },
+    {
+      "name": "coupon_type_name",
+      "type": "varchar",
+      "nullable": true,
+      "description": "券类型名称",
+      "expr": "CAST(coupon_type_name AS VARCHAR)"
+    },
+    {
+      "name": "coupon_amount",
+      "type": "decimal(20,2)",
+      "nullable": true,
+      "description": "券面额合计（元）",
+      "expr": "CAST(coupon_amount AS DECIMAL(20, 2))"
+    },
+    {
+      "name": "coupon_detail_sale_money",
+      "type": "decimal(20,2)",
+      "nullable": true,
+      "description": "券明细销售额（元）",
+      "expr": "CAST(coupon_detail_sale_money AS DECIMAL(20, 2))"
+    },
+    {
+      "name": "coupon_discount_money",
+      "type": "decimal(20,2)",
+      "nullable": true,
+      "description": "券优惠金额（元）",
+      "expr": "CAST(coupon_discount_money AS DECIMAL(20, 2))"
+    },
+    {
+      "name": "coupon_value",
+      "type": "decimal(20,2)",
+      "nullable": true,
+      "description": "券核销值（源文档未明确定义，按源端原值落湖）（元）",
+      "expr": "CAST(coupon_value AS DECIMAL(20, 2))"
+    },
+    {
+      "name": "exchange_card_sale_money",
+      "type": "decimal(20,2)",
+      "nullable": true,
+      "description": "兑换卡销售额（元）",
+      "expr": "CAST(exchange_card_sale_money AS DECIMAL(20, 2))"
+    },
+    {
+      "name": "exchange_card_total_money",
+      "type": "decimal(20,2)",
+      "nullable": true,
+      "description": "兑换卡总额（元）",
+      "expr": "CAST(exchange_card_total_money AS DECIMAL(20, 2))"
+    },
+    {
+      "name": "exchange_card_verification_count",
+      "type": "integer",
+      "nullable": true,
+      "description": "兑换卡核销笔数",
+      "expr": "CAST(exchange_card_verification_count AS INTEGER)"
+    },
+    {
+      "name": "computed_at",
+      "type": "timestamp_tz",
+      "nullable": false,
+      "description": "采集写入时刻",
+      "expr": "CAST(computed_at AS TIMESTAMPTZ)"
+    }
+  ]
+}

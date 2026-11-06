@@ -189,6 +189,69 @@
     "next_run_at": null
   },
   {
+    "id": "panel-lemeng.business_collection.l0.64188",
+    "pipeline_id": "lemeng.business_collection.l0.64188",
+    "name": "lemeng.business_collection.l0.64188",
+    "enabled": true,
+    "kind": {
+      "type": "cron",
+      "expr": "50 14,16,18,20,22 * * *"
+    },
+    "timezone": "Asia/Shanghai",
+    "misfire": "skip",
+    "catchup": {
+      "maxCatchupRuns": 31,
+      "maxCatchupAgeDays": 45
+    },
+    "last_run_at": null,
+    "last_run_status": null,
+    "last_run_duration_ms": null,
+    "last_run_error": null,
+    "next_run_at": null
+  },
+  {
+    "id": "panel-lemeng.business_collection_receive.l0.64188",
+    "pipeline_id": "lemeng.business_collection_receive.l0.64188",
+    "name": "lemeng.business_collection_receive.l0.64188",
+    "enabled": true,
+    "kind": {
+      "type": "cron",
+      "expr": "50 14,16,18,20,22 * * *"
+    },
+    "timezone": "Asia/Shanghai",
+    "misfire": "skip",
+    "catchup": {
+      "maxCatchupRuns": 31,
+      "maxCatchupAgeDays": 45
+    },
+    "last_run_at": null,
+    "last_run_status": null,
+    "last_run_duration_ms": null,
+    "last_run_error": null,
+    "next_run_at": null
+  },
+  {
+    "id": "panel-lemeng.business_collection_coupon.l0.64188",
+    "pipeline_id": "lemeng.business_collection_coupon.l0.64188",
+    "name": "lemeng.business_collection_coupon.l0.64188",
+    "enabled": true,
+    "kind": {
+      "type": "cron",
+      "expr": "50 14,16,18,20,22 * * *"
+    },
+    "timezone": "Asia/Shanghai",
+    "misfire": "skip",
+    "catchup": {
+      "maxCatchupRuns": 31,
+      "maxCatchupAgeDays": 45
+    },
+    "last_run_at": null,
+    "last_run_status": null,
+    "last_run_duration_ms": null,
+    "last_run_error": null,
+    "next_run_at": null
+  },
+  {
     "id": "panel-lemeng.loss.adjustment.l0.64188",
     "pipeline_id": "lemeng.loss.adjustment.l0.64188",
     "name": "lemeng.loss.adjustment.l0.64188",

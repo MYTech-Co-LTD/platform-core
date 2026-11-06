@@ -131,6 +131,14 @@ vars:
   # 出处：contracts/common/lemeng.customer_analysis.json 的 layout.prefix / partitionBy。
   lemeng_customer_analysis_prefix: 'lemeng/customer_analysis'
   lemeng_saler_commission_prefix: 'lemeng/saler_commission'
+  # 乐檬**营业收款三件套**前缀（AMAREPORT 2026-11-06 接源；行粒度见各契约 description）：
+  # s3://<bucket>/lemeng/business_collection{,_receive,_coupon}/system_book=<账套>/bizday=<日期>/all.parquet
+  # 出处：contracts/common/lemeng.business_collection*.json 的 layout.prefix / partitionBy。
+  # 消费者 = stg_lemeng_business_collection{,_receive,_coupon}（各唯一）；两本账套。
+  # ⚠️ 接口 branch_nums 单请求 ≤100 家 ⇒ 父管线按 whoami 门店清单切块 foreach，落湖仍是单分区。
+  lemeng_business_collection_prefix: 'lemeng/business_collection'
+  lemeng_business_collection_receive_prefix: 'lemeng/business_collection_receive'
+  lemeng_business_collection_coupon_prefix: 'lemeng/business_collection_coupon'
   # 乐檬**库存进出明细**前缀（2026-11-03 接源；行=一条进出流水）：
   lemeng_inventory_movement_prefix: 'lemeng/inventory_movement'
   # 乐檬**批发客户档案**前缀（#516 段①；全量快照；不含 bucket / 协议）：
