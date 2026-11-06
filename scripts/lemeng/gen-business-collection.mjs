@@ -96,12 +96,14 @@ const REPORTS = [
 ]
 
 /** @param {string} expr @param {string} type @returns {string} */
-const cast = (expr, type) => {
-  if (type === 'INT') return `CAST(${expr} AS INTEGER)`
-  if (type === 'TXT') return `CAST(${expr} AS VARCHAR)`
-  if (type === 'JSON') return `CAST(${expr} AS VARCHAR)`
-  return `CAST(${expr} AS ${type})`
-}
+/** 列类型速记 → DuckDB SQL 类型。⚠️ 占位行 `CAST(NULL AS …)` 必须用**这里**，不能用速记本身
+ *  （2026-11-06 真机教训：`validate` 对 `CAST(NULL AS TXT)` 放行，run 时 DuckDB 报
+ *  `Catalog Error: Type with name TXT does not exist` ⇒ 整个 foreach 子管线炸在 s 节点）。 */
+const sqlType = (/** @type {string} */ t) =>
+  t === 'INT' ? 'INTEGER' : t === 'TXT' || t === 'JSON' ? 'VARCHAR' : t
+
+/** @param {string} expr @param {string} type @returns {string} */
+const cast = (expr, type) => `CAST(${expr} AS ${sqlType(type)})`
 
 /** @param {string} f @returns {any} */
 const readJson = (f) => JSON.parse(readFileSync(join(DIR, f), 'utf8'))
@@ -181,7 +183,7 @@ function buildSub(r) {
       `FROM input\nWHERE matched\nUNION ALL\n` +
       `SELECT '\${ITER_ITEM_BATCH_ID}', CAST(\${ITER_ITEM_SYSTEM_BOOK} AS INTEGER), CAST('\${ITER_ITEM_BIZDAY}' AS DATE),\n` +
       `       CAST(NULL AS INTEGER),\n` +
-      r.cols.filter(([c]) => c !== 'branch_num').map(([, t]) => `       CAST(NULL AS ${t})`).join(',\n') + ',\n' +
+      r.cols.filter(([c]) => c !== 'branch_num').map(([, t]) => `       CAST(NULL AS ${sqlType(t)})`).join(',\n') + ',\n' +
       `       CAST(CURRENT_TIMESTAMP AS TIMESTAMPTZ), CAST(0 AS INTEGER)\n` +
       `WHERE NOT EXISTS (SELECT 1 FROM input WHERE matched)`,
   })
