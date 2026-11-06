@@ -20,6 +20,10 @@
 | G4 | 使用 90 天后词表自增长，但 **certified 口径数量受控**（draft→certified 有审核、30 天淘汰生效），且**首答即中率 / 探索动作次数持续改善** | `metric-usage` 统计 + `askdata-tuning` 的 0–1 动作判据曲线 | **机制已建**（usage 统计 + `archived_at` 淘汰 + 归档 job + 候选池 276 pending）；90 天曲线**未开始**（需真实使用时间） |
 | G5 | 口径变更**可回归**：已验问答集覆盖核心问题，改口径后回归能准确报红 | 已验问答条数 + 回归命中率 | **已完成（W1）**：生产 16 条已验，回归 job 每日 04:10，16/16 pass |
 
+| G6 | **语义完备**：每个 certified 指标都有实体归属，维度可从明细上卷到层级 | 实体绑定率 / 层级可上卷率 | **未开始**（48/50 无 `entity:`；4 组层级未进语义层）→ **W4** |
+| G7 | **可回溯、不黑盒**：任一指标 5 分钟内能走到「口径原文 → 源表 → 上游模型」；体系健康四数可季度复评 | 回溯路径可用性 / 对账覆盖率 / 孤儿数 / 零使用指标 | **未开始** → **W5** |
+| G8 | **可分析**：从「是多少」到「为什么 / 正常吗」，且结论可复算 | 锚点对账通过率 / 同一问题两次结论一致率 / 可辩护答案时长 | **未开始** → **W6** |
+
 **一句话**：不是「指标变多」，而是「每个数字都可信、可追溯、越用越准」。
 
 ## §2 能力地图（现状 → 目标）
@@ -35,6 +39,12 @@
 | 源数据画像 | ✅ duckle `qa.profile` 管线 + 周更排班（W2） | 保持 | — | — |
 | 验证/回归 | ✅ `verified_questions` + 回归 job（16/16）；双臂已跑：A 臂 31/48=64.6%、B 臂 reachability matched=1 | 双臂模型实测 | **B 臂模型首答率待样本量累积** | 等数据 |
 | L1 提案 | ✅ 已覆盖语义声明（W3）+ draft PR 端到端已验（#1413）；**「只改 synonyms」走键级编辑**（#1435，携带键/注释逐字保留） | 保持 | — | — |
+| 实体与权威源 | ⚠️ 50 条 L1 仅 **2 条**有 `entity:`；无权威源矩阵 | 多源接入时实体可对齐、冲突可裁决 | `entities.yml` + 门禁 | W4 |
+| 一致性维度与层级 | ❌ 语义层 **0 组**层级（`city/province/district/item_brand` 出现 0 次） | 4 组层级 + 跨源一致性维度 | `dimensions.yml` | W4 |
+| 业务不变量 | ❌ **0 条**可执行业务规则 | 10 条（先数据验证再落测试） | `invariants.yml` + dbt tests | W4 |
+| 可信度可观测 | ⚠️ 无面板（答不出「几条有对账、几条零使用」） | 四数 + 口径事故数，季度可复评 | 面板/页面 | W5 |
+| 体系可回溯 | ❌ 无 | 业务可读 HTML 体系地图（仓内+运行库为事实源） | `system-map` 页面 | W5 |
+| 自由探索分析 | ❌ 仅声明式 `query_detail` | 明细自由探索 + 分析配方 + 证据包 | `explore_query` + 配方 | W6 |
 | 需求挖掘 | ✅ 人审需求台账 + 每日 job + 两工具（Phase 2）；对话侧读 **`askdata_trace`**（#1423）；实测 17 行/21 occ + `metric_hunt` 4 条；**首条 `alias_gap` 已自动消解**（补 synonyms → `resolved`，21→19） | 保持 | `new_metric`/`drill_gap` 仍需人工判断（口径/绑定要人写） | — |
 
 ## §3 波次、依赖与出口判据
@@ -43,6 +53,9 @@
 W0 实体与注释声明 ──┐
                     ├──▶ W2 三档闭环 ──▶ W3 L1 提案自动化 ──▶ Phase 2 需求挖掘
 W1 可信度地基 ──────┘                     （依赖 W1 回归 + W2 升级信号）
+
+Phase 2 ──▶ W4 语义完备 ──▶ W5 治理可回溯 ──▶ W6 AI 分析层
+            （接第二个源系统前必须完成）      （W4 过半即可并行）      （依赖 W4 + W5）
 ```
 
 | 波次 | 范围 | 入口条件 | **出口判据（全部满足才算完成）** |
@@ -52,6 +65,9 @@ W1 可信度地基 ──────┘                     （依赖 W1 回归
 | **W2** 三档闭环 | 私有测度档（编译/白名单/生命周期）+ duckle profiler + 候选表 + 路由 + MCP 工具 | W0 完成（label/同义词用于候选生成） | ① §6 验收（**「draft 徽标」已真机验证 #1415；「Loan B」= 可达性已证 matched=1、模型首答率待样本**，见 §5 偏离）；② 真机走通「问→自动建→他人可用」（30 天淘汰为机制+单测，**未走完真机周期**）；③ 台账已更新 |
 | **W3** L1 提案自动化 | 扩展 `apply_pipeline_proposal` 到语义声明 + dbt model | W2 完成（有升级信号） | ① 一条私有测度 → **draft PR 真开成功**（#1413）；② CI 全绿；③ 台账已更新 |
 | **Phase 2** 需求挖掘 | 从 `query_audit` 拒绝类 + `askdata_trace` 挖「想要但词表没有」→ **人审需求台账**（`askdata_stuck` 仅作证据附注） | W1 有真实数据；W2 候选池在跑 | ① 四类判定有真实案例 fixture + 单测；② 真机 job 产出真实行且重跑幂等；③ 台账工具可读/可否决；④ §5 台账已更新 |
+| **W4** 语义完备 | `entities.yml`（对象/别名/**权威源**/对齐键/冲突规则）· 48 条 entity 绑定 · `dimensions.yml`（4 组层级 + 跨源一致性维度）· `invariants.yml`（10 条，**先数据验证再落测试**）· 接新源前置闸 | 无（**必须在接第二个源系统之前完成**） | ① certified 指标实体绑定 **100%**；② 4 组层级可从明细上卷；③ 每条不变量有 owner/执行位置/最近结果且验证通过（≥99% 期间成立）；④ 三表门禁上线（新源接入必填） |
+| **W5** 治理可回溯 | 可信度面板（对账覆盖率/实体绑定率/零使用指标/未消解需求/口径事故数）· 体系地图页面（仓内+运行库为事实源）· 孤儿归零 · 候选池质量闸 | W4 过半（实体/层级就位） | ① 四数可查且季度可复评；② 任一指标 5 分钟内回溯到口径原文/源表/上游模型；③ 孤儿指标与孤儿表 = 0；④ 候选采用率可观测 |
+| **W6** AI 分析层 | `explore_query`（只读 marts/掩码/限额/审计）· 三配方（方差分解/Top-N 贡献/基线异常）· 证据包契约（锚点+SQL+数据截至+对账）· 评估集 16→50+ | W4 完成 + W5 面板可用 | ① 锚点对账 **100%**（容差 0.1%）；② 同一问题两次结论方向一致；③ 评估集 ≥50 且回归全绿；④ 三个价值指标可观测（可辩护答案时长/接受率/口径事故数） |
 
 **波次计划文件索引**（写计划前先回读本文件）：
 - W0 → `docs/superpowers/plans/2026-11-04-amd-w0-entities.md`（已写）
@@ -59,6 +75,9 @@ W1 可信度地基 ──────┘                     （依赖 W1 回归
 - W2 → `docs/superpowers/plans/2026-11-04-amd-w2-three-tier.md`（已写）
 - W3 → `docs/superpowers/plans/2026-11-05-amd-w3-l1-proposal.md`（已写）
 - Phase 2 → 单独 spec
+- W4 → `docs/superpowers/plans/2026-11-06-amd-w4-semantics.md`（待写）
+- W5 → `docs/superpowers/plans/2026-11-06-amd-w5-governance.md`（待写）
+- W6 → `docs/superpowers/plans/2026-11-06-amd-w6-analysis.md`（待写）
 
 **为什么这个顺序**：
 - W0/W1 **互不依赖** ⇒ 可同波并行派发（波内不碰同一文件：W0 只动 `dbt/semantics/` + 门禁；W1 只动 `modules/data/` 新表与新域）。
@@ -91,6 +110,18 @@ W1 可信度地基 ──────┘                     （依赖 W1 回归
 - **做**：从轨迹挖「想要但词表没有」→ 候选。
 - **不做**：未定，单独 spec。
 
+### W4 语义完备
+- **做**：`entities.yml`（对象/别名/权威源/对齐键/冲突规则）+ 48 条 entity 绑定 + `dimensions.yml`（4 组层级 + 跨源一致性维度）+ `invariants.yml`（10 条，先数据验证再落测试）+ 接新源前置闸（三表 + 门禁）。
+- **不做**：完整六视野本体；不做知识图谱/推理；不做 Data Vault。
+
+### W5 治理可回溯
+- **做**：可信度面板（对账覆盖率/实体绑定率/零使用指标/未消解需求/口径事故数）+ 体系地图页面（仓内声明 + 运行库为事实源，单文件 HTML，`data:query` 保护）+ 孤儿归零 + 候选池质量闸。
+- **不做**：自建 BI；手绘/手工维护的图（必须可重新生成）；改造 console 为图编辑器。
+
+### W6 AI 分析层
+- **做**：`explore_query`（只读 marts、org 注入、掩码强制、行数/超时限额、全量审计）+ 三配方（方差分解 / Top-N 贡献 / 基线异常）+ 证据包契约（锚点 + SQL + 数据截至 + 对账）+ 评估集 16→50+。
+- **不做**：让 agent 自由写任意 SQL 打 raw 表；无锚点的"自由发挥"；把分析结论自动写回指标。
+
 ## §5 进度台账（**每波完成必须更新**）
 
 | 波次 | 状态 | 开始 | 完成 | PR / 证据 | 偏离与备注 |
@@ -100,6 +131,9 @@ W1 可信度地基 ──────┘                     （依赖 W1 回归
 | W2 | 部分完成(见偏离) | 2026-11-04 | 2026-11-05 | PR #1398 · CI 全绿 · 部署山海 v184（ab5221fc）· 迁移 034/035 已验 · profiler seed 完成（首跑 ok 83.9s / 21 关系 / 本批 263 行）· 真机验收通过（候选→adopt→查询 401 行）· 归档 job `custom:efjBgqRgYyKPT6dU` 每日 03:30 · 双臂 A 臂 **31/48 = 64.6%**（2026-11-05 容器内实测：76 轮 / 业务 75 / 数据面 54；零探索且首答即中 30/48 = 62.5%；探索动作 mean=0.467、median=0、p90=1.6、有绕路 9 轮）· B 臂 reachability **matched=1 / A缺→B有=1**（真实新会话「门店订单数是多少」被私有测度点亮；模型首答率需更大样本） | ① profiler 落仓库库（pg_duckdb），平台经 DATA_WAREHOUSE_URL 读；② ORG 硬编码单租户；③ 静态 21 关系清单（有 check-profile-relations.mjs）；④ 明文 connections/pgduck.json（台账见 README §🔑）；⑤ 掩码旁路已修（MEASURE_MASKED/RELATION_MASKED fail-closed）；⑥ 低基数是候选规则非写入闸（spec 已订正）；⑦ **双臂已跑（2026-11-05）**：A 臂数字见证据列；B 臂跑 `reachability`（脚本默认模式）——把本轮真实新会话（`036c084d…`，124 事件）并入轨迹 + 契约「门店订单数是多少」→ `lemeng:branch:order_count` 后 **matched=1、A缺→B有=1**。**口径**：reachability 是上界不是模型首答率，且只有 1 个样本 ⇒ 「Loan B 有效」只算**初证**。⑧ **发现 W1 采集水位缺陷（issue #1419，本波不做）**：`export-transcript.py` 用全局 `seq` 做水位，而 `seq` **按 session 从 0 起** ⇒ 新会话被永久静默跳过（实测 13:36 的会话没进 OO，job 长期 `rows=0`）；B 臂那条新会话是**绕过水位、直接从 sqlite 导出**的。⑩ **私有测度可过滤（#1417，2026-11-05 真机）**：`compileColumnAgg` 现在按 `dims` 产出 `params`——`bizday` ⇒ `date_range`（其它维度不开，列类型未知不猜）；迁移 037 回填存量 `column_agg` 行；真机 `{bizday:{from:'2026-11-04',to:'2026-11-04'}}` ⇒ `ok / 402 行 / 9,495 单`（此前恒 `unknown_param:bizday`、只能给全时段累计）。⑨ **回答面 draft 徽标已真机验证（2026-11-05 21:36 CST）**：新建 draft 私有测度 `lemeng:branch:order_count`（候选 #12 采用，`basis=column_agg`），域级实查回包 `caliber=draft`/`basis=column_agg`/`tier=custom`；企微问 bot，openclaw 日志（13:36:37 UTC）显示回答含「草稿口径」标注 ⇒ 机制端到端成立；**偏差**：bot 把徽标写在正文首段而非「首行单独一行」，已收紧 SKILL 措辞（本 PR）待下次部署生效；**真机还暴露一个缺口**（独立 issue #1417）：私有测度只有 `group_by`、`params` 恒空 ⇒ 不能按 `bizday` 过滤，只能全时段累计 |
 | W3 | 已完成 | 2026-11-05 | 2026-11-05 | PR #1402（squash `e6027001`，CI 全绿）· issue #1401 · commits `95a2015c`（组装器 `propose_metric_declaration`，零写入，工具面 8→9）/ `66c6b7f8`（apply 白名单扩 `dbt/semantics/l1_metrics.yml` 精确单文件 + `dbt/tests/**.sql`，YAML/SQL piece 重校验）/ `6152cd77`（`POST /metrics/candidates/:id/propose-l1`，零写盘）· **验证证据**（2026-11-05 本地实测）：`pnpm -r test` exit 0（modules/data 827 passed/476 skipped、apps/server 125 passed/248 skipped，其余 workspace 全绿）；带 `DATABASE_URL=postgres://localhost/ma_dev` 补跑 modules/data = **79 文件 / 1304 用例全绿** exit 0；`pnpm run test:guard` exit 0（**791 passed** / 16 skipped）；`pnpm run typecheck` exit 2 = **仅 `apps/web` 既有红**（console-menu ReactNode vs @types/react@18 bigint，W0 台账同款另案），被首败中断的 `modules/data`/`modules/notify` 单工程补跑 + `pnpm run typecheck:scripts` 全净；`check-mcp-toolface` / `check-data-models`（声明指标 50）/ `check-data-plane-lock` 三门禁 OK；**真机草案演练**（真实仓 dbt 树副本，非仓内文件）：`composeMetricDeclaration` create+modify 两档 piece 覆盖副本后跑 `checkDataModels` 纯核 = **零违规**，同名同义重提如实拒，仓内零写入（git status clean）· **部署+真机验收**（2026-11-05 山海 v185 `e6027001`）：容器产物四查 OK（`propose-metric.ts` 在场 / tools 8→9 / apply 头注两档白名单 / manifest 107 行声明 propose-l1）；生产候选 #2（origin=profile，`fct_branch_day_activity`，count_distinct(bizday) × [system_book,branch_num]）**domain 级全链**（容器内复刻路由组装映射，零写盘）：无 auditSql ⇒ 单 YAML piece + gate ⑦ downstream `required` + validation 注记；带 auditSql ⇒ YAML + `dbt/tests/lemeng/audit_lemeng__retail__bizday_count_distinct.sql` 双 piece（`:`→`__` 映射正确）；新条目字典序落位（`lemeng:retail:bizday_count_distinct` 排 `sales` 前）、现行 58960B → piece 59293B（只多该条）；apply 侧重校验 `semanticsYamlPieceIssues` 对**真实现行文件** = 零 issues |① **dbt 新 model 不在 v1**：升级对象是已有 marts 列聚合，不需要新 model；新 model 需求出现再议（计划 Self-Review 已登记）；② **audit test 不自动生成**（gate ⑦ 不旁路）：提案输入带 `auditSql` 才成 piece，缺席 ⇒ downstream `required` + validation 注记——draft PR 合并前红是**特性**（复算测试人写才是对账真身）；③ **dim-less 候选不可升级**：grain 非空是 L1 声明硬约定，路由不代选维度（400 回 issues 指导）；④ 评审缓办 Minor（Task1 插入位「字典序」vs 域内聚待业务裁决、回读校验未覆盖全部键、`REL_REF_RE` 与 `ratioShapeError` 两份正则无同形锁；Task2 未触碰区按解析值面比对（注释/格式改动不检出）、同 path 重复 piece 后写者胜；Task3 `defaultSla` 取同关系首条非 min/max、修改档测试依赖 fixture 形状）——**部署已执行**（2026-11-05 山海 v185 `e6027001`，既有自动链路：无新迁移 / 无新 env / 无数据面投递；compose 探活告警为已知假阳性形态，容器 4/4 running）；L1 词表物化走既有日 job `custom:tuQ06mlxBe_2TlTo`（04:33 UTC，#300 边界：物化的是镜像快照，自动部署升级实例后新声明才进词表；要立即生效可手动触发该 job）；⑤ **apply 的 GitHub 半程已于 2026-11-05 真机打通**：用户点名配了 `DATA_MCP_GITHUB_TOKEN`（细粒度 PAT，仅 `MYTech-Co-LTD/platform-core` 一仓、Contents + Pull requests 读写、2027-02-03 到期，存 openship 项目 env isSecret）。打通后发现 applier 只支持「新文件 / 内容一致」，对已存在文件的修改恒判 `proposal_conflict` ⇒ L1 声明**结构上永远应用不了**；已开 issue #1411 并修（piece 增 `baseSha256` 三态：基线未变则允许更新并带远端 sha，基线被改仍拒绝），PR #1412 合并部署。**真机验收**：`origin=profile` 候选 → compose（`PIECE_BASE a86860eb…`）→ apply ⇒ `ok`，**draft PR #1413 真开成功**（2 commit：`dbt/semantics/l1_metrics.yml` + `dbt/tests/lemeng/audit_lemeng__retail__bizday_count_distinct.sql`），核对 `isDraft=true`、文件清单正确后关闭 PR 并删分支（验收产物不入库）；⑥ **HTTP 端点未走真会话**（本机无 Casdoor 租户真人会话，与 W1/W2 同法：路由 403/404/409 分支由 HTTP 测试覆盖，真机走 domain 级全链）|
 | Phase 2 | 已完成 | 2026-11-05 | 2026-11-05 | PR #1407（squash `178c42d0`，CI 全绿）· 部署山海 **v186** · 每日 job `custom:4eM6UfhB2ANodSJ_`（UTC 21:10 = CST 05:10，失败告警接既有通知通道）· issue #1404 · spec #1405 · 计划 #1406 · commits `0f6cb7ae`（迁移 036 + 台账存储层：`data.demand_signals` / `data.demand_mining_state`）/ `847b09cf`（四类纯判定器）/ `de298549`（挖掘编排 + CLI）/ `3021138f`（manage 面两工具，预算 9→11）/ 4 个 fix commit（审阅整改）· **验证证据**：`domain/demand` + manage 两路由测试 **70 passed**（含真库 4 例）；`pnpm run typecheck:scripts` 与模块 `tsc --noEmit` 均净；`check-mcp-toolface: OK`（MANAGE_TOOLS 11，序列化 6841B） | ① 四类判定全部机判零阈值（`alias_gap` 不足三段才按末段匹配 / `new_metric` / `drill_gap` / `metric_hunt` ≥2 结构判据），每条有生产真实案例 fixture；② **测试探针必须排除**（实测 4 条假需求混在真数据里：`verify-` / `mcp-probe-` / `w1:test` / `test-`）；③ **水位入 DB 且排他**（`query_audit` 按本批 max 推、对话流写 max 不写 max+1——+1 有 1µs 盲区）；④ OO 分页 `total` 权威、`MAX_PAGES` 超限抛错；⑤ 对话流列名是 `session_id`（真机实测 `sessionid` 会 400）；⑥ 已知边界（见 spec §8）：conv 只覆盖 openclaw 会话、探针前缀是白名单、resolved 基于 L1 词表快照（L2 裸名会误判 `new_metric`）、`metric_hunt` 只在单批内分组（跨轮会话不命中）、`detail` 顶层 jsonb 合并不累积数组；⑦ 缓办 follow-up 见 SDD 台账（含 upsert 与写水位非原子、stuck 30 天全窗口 >100k 行会硬失败）——**建 job 前必须真机确认 OO_READ_* 在容器 env 且分页 >1000 行可用** —— **已确认并真机验收（2026-11-05 山海 v186）**：容器内 `OO_READ_URL/ORG/TOKEN` + `PLATFORM_ORG` 齐备、迁移 036 两表建成、代码与脚本在 `/app`；首跑 summary `scanned=24 alias=3 new_metric=4 drill=14 hunt=0 skipped_probe=3 cursor_audit=5624`，表内 17 行 / 21 occurrences（别名缺口 `retail:net_sales`×2 + `net_sales`×1、真缺 `retail:target`/`sales:target`/`line_count`/`sale_line_count`、下钻缺口 11 项含 `outbound:net_amount`×3）；**再跑一次 `scanned=0`、occurrences 不变（水位幂等成立）**；工具面域级真机：`list_demand_signals` 按 occurrences 降序 + `truncated=false`、`dismiss` → `already_dismissed` 回原信息、默认列表隐藏已否决（16 vs includeDismissed 17）、非法 kind → `refused/bad_kind`（验收用的那条已恢复未否决）；job 手动 run `success` exit 0。⑧ ~~`hunt=0` 是预期~~ **订正（2026-11-05 当晚查明）**：`hunt=0` 当时被误判为「没有样本」，实际是**两个真缺口叠在一起**——① W1 导出水位用全局 `seq`（新会话 seq 从 0 起 ⇒ 永久跳过，issue #1419）；② 挖掘器读的 `askdata_conv` 自 10-16 起就冻结了（issue #1423）。两者修完后 `hunt` 由 0 → **4**（见 §5「修复批次」行）。教训：**「没有数据」与「数据没进来」必须先区分开**；⑪ **`alias_gap` 已可全自动（2026-11-06）**：#1427→#1433（修改模式认 synonyms）+ #1434→#1435（键级编辑，携带键/注释逐字保留）⇒ 真机 `net_sales`（最复杂条目）只改 synonyms **`ok=true`**；配 #1412 的 apply 三态，可完成「台账需求 → 提案 → draft PR」全自动（仍需人 review 合并）。⑩ **首条真实需求闭环（2026-11-05/06）**：`alias_gap` 两条（`net_sales` ×1、`retail:net_sales` ×2）→ 给 `lemeng:retail:net_sales` 补 synonyms（PR #1428）→ 词表物化（job `custom:tuQ06mlxBe_2TlTo` 手动跑，**更新 1**）→ 台账 `resolvedOf` 自动判定 **两条均 resolved=true（`synonym@lemeng:retail:net_sales`）**，默认清单 **21→19**。这是「需求挖掘 → 人工处置 → 台账自动消解」的第一次完整闭环。**已知限制**：`propose_metric_declaration` 修改模式要求 definition 必变 ⇒ 「只加同义词」走不了提案链（issue #1427），本次走人工 PR。⑨ **CI 自动部署只到 mytech 实例**（`proj_v0QZ68VYDc0pkFxL` / mytech.hookflow.cn），山海实例按既有口径手动部署（本次 v186）|
+| **W4** 语义完备 | 未开始 | — | — | — | 入口前置：**接第二个源系统之前必须完成**（否则多系统实体各叫各的 = 乱麻） |
+| **W5** 治理可回溯 | 未开始 | — | — | — | 与 W4 后半可并行；体系地图的分支 `feat/system-map`（issue #1443）已存在但**未 review 未合并**，按本波规格复用 |
+| **W6** AI 分析层 | 未开始 | — | — | — | 依赖 W4 完成 + W5 面板；评估集扩容是硬门槛 |
 | **修复批次**（跨波） | 已完成 | 2026-11-05 | 2026-11-05 | #1411 → PR #1412（applier 三态：基线未变才允许更新；真机 draft PR #1413）· #1419 → PR #1421（导出/归因/验证三脚本水位改 `(created_at, seq)` 复合游标；投递 `SYNC_OK 327/327`；job 补采 **23 条**、`weak=1` 入集）· #1423 → PR #1422（挖掘器对话流 `askdata_conv`→`askdata_trace`；`hunt` **0→4**）· #1417 → PR #1424 + 迁移 037（私有测度按 `dims` 产出 `params`，`bizday`⇒`date_range`；真机 **402 行 / 9,495 单**）· #1427 → PR #1433（修改模式改为「definition 或 synonyms 至少一个变」）· #1434 → PR #1435（只改 synonyms 走**键级编辑**：携带键/注释逐字保留；真机 `net_sales` ⇒ `ok=true`，注释与 `detail` 均在） | ① **流程自报**：PR #1422 在 discipline/gates 双红时被合入（body 缺 `Closes #N`；free 私仓无服务端保护，`gh pr merge` 不拦红），已补 issue #1423 登记，并把「命令成功 ≠ 绿灯」写入记忆；② 三个缺陷都是**静默**型（水位跳过新会话 / 流冻结 / 参数空），靠「回路三查」（§6-8）才暴露；③ 待办：B 臂模型实测（等样本）、`#1417` 其它维度的过滤参数（需先查列类型）|
 
 **状态取值**：`未开始` / `进行中` / `已完成` / `部分完成(见偏离)` / `已取消(见变更记录)`。
@@ -133,6 +167,7 @@ W1 可信度地基 ──────┘                     （依赖 W1 回归
 | 2026-11-05 | W3 状态由「部分完成」回到「已完成」 | 出口判据①已真机满足：配 PAT（用户点名）+ 修 #1411（applier 三态）+ 真开出 draft PR #1413 |
 | 2026-11-05 | Phase 2 对话流由 `askdata_conv` 改为 `askdata_trace`（事实订正，不动布局） | 实测 `askdata_conv` 自 10-16 起无写入（566 行冻结），活流是 `askdata_trace`；不改则 `metric_hunt` 永远无样本（issue #1423） |
 | 2026-11-05 | §5 台账新增**「修复批次」行类别**（跨波缺陷的集中登记） | 本轮 4 个缺陷横跨 W1/W2/Phase 2（#1411/#1419/#1423/#1417），塞进各自波次行会淹没主证据；单列一行便于「这版块最近修了什么」一眼看到 |
+| 2026-11-06 | **新增 W4/W5/W6 三波**（语义完备 / 治理可回溯 / AI 分析层）与终态 **G6–G8** | 用户即将接入第二个源系统：多源下「同名不同源、跨系统事件链、口径打架」必须事先定义，否则形成乱麻。W4 是接入前置闸；W5 治「黑盒/不可回溯」（用户明确诉求）；W6 把治理成果转成分析能力。三波均按「证据优先」排序：语义（已证缺口 48/50）→ 治理（已证缺口：无面板）→ 分析（依赖前两者）。完整六视野本体**不在**本规划内，放量条件见 §7 同条：≥3 源互联 / 跨域分析 / 审计要求 |
 | 2026-11-06 | §2/§6 增「`alias_gap` 全自动」现状与「放宽规则前先用最复杂真实样本回归」 | #1427 放宽后只在 `net_sales` 上暴露 `#1434`；干净 fixture 没有此形态，教训要写成动作 |
 | 2026-11-05 | §6 增「回路三查」与「出口判据须有真机证据」两条动作 | 本轮三次「看起来在工作、实际空转」（水位/冻结流/参数都静默），只有按这三查才暴露 |
 | 2026-11-05 | W2 的「draft 徽标」判据：机制落地（#1415），截图待补 | `query_metric` 回包新增 `metric.caliber`/`basis`，bot SKILL 规定 draft ⇒ 回答首行「⚠️ 草稿口径」。判据原文要求「真机截图验」，生产当前无 live draft 测度 ⇒ 截图需先建一条再问 bot，故 W2 仍为部分完成 |
