@@ -95,29 +95,43 @@ def psql(sql: str, env: dict) -> tuple[str, str]:
     return p.stdout, err
 
 
+def month_globs(prefix: str, book: str, days: list[str]) -> dict[str, list[str]]:
+    """把窗口按「年-月」分组，返回 month → 该月 glob 列表（每月一条）。
+
+    为什么要按月而不是按天拼 glob（2026-11-06 第三次踩坑）：
+    `parquet_file_metadata([<多天 glob>])` 里**只要有一天没分区**，整条查询直接
+    `IO Error: No files found` ⇒ 全窗口被判「无数据」⇒ 断供日被吞掉 ⇒ **假绿**。
+    按月 glob（`bizday=2026-11-*`）只在该月整体没有文件时才报错，粒度可控。
+    """
+    by_month: dict[str, list[str]] = {}
+    for d in days:
+        by_month.setdefault(d[:7], []).append(d)
+    return {
+        m: ["s3://%s/%s/system_book=%s/bizday=%s-*/*.parquet" % (BUCKET, prefix, book, m)]
+        for m in by_month
+    }
+
+
 def day_rows(prefix: str, book: str, days: list[str], env: dict) -> dict[str, int]:
-    """一天一行：该账套该数据集在这几天各自的行数（缺失记 -1）。"""
-    globs = ",".join(
-        f"'s3://{BUCKET}/{prefix}/system_book={book}/bizday={d}/*.parquet'" for d in days
-    )
-    sql = (
-        "select * from duckdb.query($$ select regexp_extract(file_name,'bizday=([0-9-]+)',1) d,"
-        " coalesce(sum(num_rows),0) n from parquet_file_metadata([%s])"
-        " group by 1 order by 1 $$);\n" % globs
-    )
-    out, err = psql(sql, env)
-    if err:
-        # 「该窗口内一个文件都没有」= 合法缺分区（发布滞后 / 当天还没采），按空集处理；
-        # 其余错误（连接、权限、SQL 写错）才是依赖故障，必须响亮。
-        if "No files found" in err:
-            return {d: -1 for d in days}
-        raise RuntimeError(err)
+    """一天一行：该账套该数据集在这几天各自的行数（分区不存在记 -1）。"""
     got: dict[str, int] = {}
-    for line in out.splitlines():
-        parts = line.strip().split("|")
-        if len(parts) == 2 and parts[0][:2] == "20" and parts[1].lstrip("-").isdigit():
-            got[parts[0]] = int(parts[1])
-    return {d: got.get(d, -1) for d in days}
+    want = set(days)
+    for month, globs in month_globs(prefix, book, days).items():
+        sql = (
+            "select * from duckdb.query($$ select regexp_extract(file_name,'bizday=([0-9-]+)',1) d,"
+            " coalesce(sum(num_rows),0) n from parquet_file_metadata([%s])"
+            " group by 1 order by 1 $$);\n" % ",".join("'%s'" % g for g in globs)
+        )
+        out, err = psql(sql, env)
+        if err:
+            if "No files found" in err:
+                continue  # 整月无分区：该月全记 -1
+            raise RuntimeError(err)
+        for line in out.splitlines():
+            parts = line.strip().split("|")
+            if len(parts) == 2 and parts[0][:2] == "20" and parts[1].lstrip("-").isdigit():
+                got[parts[0]] = int(parts[1])
+    return {d: got.get(d, -1) if d in want else -1 for d in days}
 
 
 def main() -> int:
