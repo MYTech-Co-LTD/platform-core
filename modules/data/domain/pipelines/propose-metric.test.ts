@@ -390,6 +390,23 @@ describe('composeMetricDeclaration：修改模式（同名已存在）', () => {
     if (!r.ok) expect(r.issues.some((i) => i.path === 'definition' && i.message.includes('相同'))).toBe(true)
   })
 
+  it('#1427：definition 不变、只改 synonyms ⇒ 通过（alias_gap 的需求形态）', () => {
+    const same = scalarText(metricsItems(FIXTURE)[0], 'definition')
+    const r = compose(modifyInput({ definition: same, synonyms: ['销售金额', '营业额', 'net_sales'] }))
+    expect(r.ok).toBe(true)
+    if (!r.ok) return
+    expect(r.mode).toBe('modify')
+    const node = metricsItems(r.pieces[0].content).find((m) => scalarText(m, 'name') === 'lemeng:retail:sales')
+    expect(seqText(node as never, 'synonyms')).toEqual(['销售金额', '营业额', 'net_sales'])
+  })
+
+  it('#1427：definition 与 synonyms 都没变 ⇒ 仍拒（防无意义重提）', () => {
+    const same = scalarText(metricsItems(FIXTURE)[0], 'definition')
+    const r = compose(modifyInput({ definition: same, synonyms: ['销售金额', '营业额'] }))
+    expect(r.ok).toBe(false)
+    if (!r.ok) expect(r.issues.some((i) => i.path === 'definition' && i.message.includes('相同'))).toBe(true)
+  })
+
   it('修改模式带 advisory：条目按输入整体重写、行内注释不保留', () => {
     const r = compose(modifyInput({ definition: '口径第二版。' }))
     expect(r.ok).toBe(true)

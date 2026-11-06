@@ -482,8 +482,21 @@ export function composeMetricDeclaration(
   }
   const existing = sameName.length === 1 ? sameName[0] : null
   const mode = existing === null ? 'create' : 'modify'
-  if (existing !== null && definition === scalarText(existing.item, 'definition')) {
-    issues.push({ path: 'definition', message: '与现行声明逐字相同——同名重提必须改变口径定义（防无意义重提）' })
+  // 修改模式的「无意义重提」闸（#1427）：**definition 或 synonyms 至少一个变了**即算有效改动。
+  // 原先只认 definition——导致 Phase 2 最常见的 `alias_gap`（补同义词、不动口径）走不了提案链。
+  if (existing !== null) {
+    const cur = (existing.item as unknown as { toJSON(): unknown }).toJSON() as Record<string, unknown>
+    const curSynonyms = Array.isArray(cur.synonyms) ? cur.synonyms.map(String) : []
+    const inSynonyms = shape.fields.synonyms
+    // synonyms 未给（null）= 该键从原条目带过 ⇒ 不参与「是否有改动」的判断。
+    const synonymsSame = inSynonyms === null
+      || (inSynonyms.length === curSynonyms.length && inSynonyms.every((x, i) => x === curSynonyms[i]))
+    if (definition === scalarText(existing.item, 'definition') && synonymsSame) {
+      issues.push({
+        path: 'definition',
+        message: '与现行声明完全相同——同名重提必须至少改变定义（definition）或同义词（synonyms）（防无意义重提）',
+      })
+    }
   }
   issues.push(...metricContextIssues(
     { relation: shape.relation, viaExpression: hasExpr, entity: shape.fields.entity },
