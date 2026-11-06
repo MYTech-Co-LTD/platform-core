@@ -11,6 +11,10 @@
 
 ## [Unreleased]
 
+## [0.275.0](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.274.0...v0.275.0) - 2026-11-06
+- 【新增】data: 接源 64188 调拨（transfer.in/out）+ 登记三条探针结论 ([#1454](https://github.com/MYTech-Co-LTD/platform-core/pull/1454), [d777263](https://github.com/MYTech-Co-LTD/platform-core/commit/d777263d127debc8382042badf8c1da4d2e1e3d6))
+
+
 ## [0.274.0](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.273.1...v0.274.0) - 2026-11-06
 - 【新增】data: W4 语义完备——实体权威源 + 维度层级 + 业务不变量 + 接新源前置闸 ([#1448](https://github.com/MYTech-Co-LTD/platform-core/pull/1448), [2d1ea87](https://github.com/MYTech-Co-LTD/platform-core/commit/2d1ea879c18b38fa01820bec9171a3a079c54716))
 
