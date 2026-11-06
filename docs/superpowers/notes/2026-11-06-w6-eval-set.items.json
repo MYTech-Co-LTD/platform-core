@@ -1,245 +1,363 @@
 {
-  "note": "W6 评估集提议条目（A 类=已验条目的同指标不同时间窗；B 类=需求台账真实 drill_gap）。window: yesterday|last7|mtd|default；confirmed=true 的 24 条由用户 2026-11-06 裁决写入，9 条零基线暂缓",
+  "note": "W6 评估集 v2：全部改为已封板的 2026-10 整月（滚动窗口 30 分钟自红，见 #1497）。A1–A26 = 已确认；C* = 候选池，dry-run 后挑 7 条凑 50。",
+  "window": {
+    "from": "2026-10-01",
+    "to": "2026-10-31"
+  },
   "items": [
     {
       "id": "A1",
       "metricId": "lemeng:outbound:net_amount",
-      "question": "近 7 天净销售额",
-      "window": "last7",
+      "question": "10 月净销售额",
+      "window": "fixed",
+      "from": "2026-10-01",
+      "to": "2026-10-31",
       "confirmed": true
     },
     {
       "id": "A2",
       "metricId": "lemeng:outbound:net_amount",
-      "question": "本月截至昨天的净销售额",
-      "window": "mtd",
+      "question": "10 月整月净销售额",
+      "window": "fixed",
+      "from": "2026-10-01",
+      "to": "2026-10-31",
       "confirmed": true
     },
     {
       "id": "A3",
       "metricId": "lemeng:retail:net_sales",
-      "question": "本月截至昨天的净销售额",
-      "window": "mtd",
+      "question": "10 月零售净销售额",
+      "window": "fixed",
+      "from": "2026-10-01",
+      "to": "2026-10-31",
       "confirmed": true
     },
     {
       "id": "A4",
       "metricId": "lemeng:retail:net_sales",
-      "question": "昨天净销售额",
-      "window": "yesterday",
+      "question": "10 月的净销售额是多少",
+      "window": "fixed",
+      "from": "2026-10-01",
+      "to": "2026-10-31",
       "confirmed": true
     },
     {
       "id": "A5",
       "metricId": "lemeng:purchase:return_amount",
-      "question": "昨天的采购退货率",
-      "window": "yesterday",
-      "confirmed": false,
-      "excludedReason": "基线为 0（数据可能未到当天）；容差判定会极严，待换窗口或补数据后再入"
+      "question": "10 月采购退货率",
+      "window": "fixed",
+      "from": "2026-10-01",
+      "to": "2026-10-31",
+      "confirmed": true
     },
     {
       "id": "A6",
       "metricId": "lemeng:purchase:return_amount",
-      "question": "本月截至昨天的采购退货率",
-      "window": "mtd",
+      "question": "10 月采购退货金额",
+      "window": "fixed",
+      "from": "2026-10-01",
+      "to": "2026-10-31",
       "confirmed": true
     },
     {
       "id": "A7",
       "metricId": "lemeng:contribution:net_amount",
-      "question": "昨天的费用后贡献率",
-      "window": "yesterday",
-      "confirmed": false,
-      "excludedReason": "基线为 0（数据可能未到当天）；容差判定会极严，待换窗口或补数据后再入"
+      "question": "10 月费用后贡献率",
+      "window": "fixed",
+      "from": "2026-10-01",
+      "to": "2026-10-31",
+      "confirmed": true
     },
     {
       "id": "A8",
       "metricId": "lemeng:contribution:net_amount",
-      "question": "本月截至昨天的费用后贡献率",
-      "window": "mtd",
+      "question": "10 月的费用后贡献额",
+      "window": "fixed",
+      "from": "2026-10-01",
+      "to": "2026-10-31",
       "confirmed": true
     },
     {
       "id": "A9",
       "metricId": "lemeng:expense:loss_rate",
-      "question": "昨天的补损率",
-      "window": "yesterday",
-      "confirmed": false,
-      "excludedReason": "基线为 0（数据可能未到当天）；容差判定会极严，待换窗口或补数据后再入"
+      "question": "10 月补损率",
+      "window": "fixed",
+      "from": "2026-10-01",
+      "to": "2026-10-31",
+      "confirmed": true
     },
     {
       "id": "A10",
       "metricId": "lemeng:expense:loss_rate",
-      "question": "本月截至昨天的补损率",
-      "window": "mtd",
+      "question": "10 月各门店补损率",
+      "window": "fixed",
+      "from": "2026-10-01",
+      "to": "2026-10-31",
       "confirmed": true
     },
     {
       "id": "A11",
       "metricId": "lemeng:expense:subsidy_rate",
-      "question": "近 7 天抖音直播补贴占出库额",
-      "window": "last7",
+      "question": "10 月抖音直播补贴占出库额",
+      "window": "fixed",
+      "from": "2026-10-01",
+      "to": "2026-10-31",
       "confirmed": true
     },
     {
       "id": "A12",
       "metricId": "lemeng:expense:subsidy_rate",
-      "question": "本月截至昨天的抖音直播补贴占出库额",
-      "window": "mtd",
-      "confirmed": false,
-      "excludedReason": "基线为 0（数据可能未到当天）；容差判定会极严，待换窗口或补数据后再入"
+      "question": "10 月补贴占比",
+      "window": "fixed",
+      "from": "2026-10-01",
+      "to": "2026-10-31",
+      "confirmed": true
     },
     {
       "id": "A13",
       "metricId": "lemeng:purchase:cr5",
-      "question": "昨天供应商集中度 CR5",
-      "window": "yesterday",
-      "confirmed": false,
-      "excludedReason": "基线为 0（数据可能未到当天）；容差判定会极严，待换窗口或补数据后再入"
+      "question": "10 月供应商集中度 CR5",
+      "window": "fixed",
+      "from": "2026-10-01",
+      "to": "2026-10-31",
+      "confirmed": true
     },
     {
       "id": "A14",
       "metricId": "lemeng:purchase:cr5",
-      "question": "近 7 天供应商集中度 CR5",
-      "window": "last7",
+      "question": "10 月供应商集中度",
+      "window": "fixed",
+      "from": "2026-10-01",
+      "to": "2026-10-31",
       "confirmed": true
     },
     {
       "id": "A15",
       "metricId": "lemeng:outbound:gross_profit",
-      "question": "近 7 天出库金额、出库毛利与毛利率",
-      "window": "last7",
+      "question": "10 月出库金额与出库毛利、毛利率",
+      "window": "fixed",
+      "from": "2026-10-01",
+      "to": "2026-10-31",
       "confirmed": true
     },
     {
       "id": "A16",
       "metricId": "lemeng:outbound:gross_profit",
-      "question": "本月截至昨天的出库金额、出库毛利与毛利率",
-      "window": "mtd",
+      "question": "10 月出库毛利情况",
+      "window": "fixed",
+      "from": "2026-10-01",
+      "to": "2026-10-31",
       "confirmed": true
     },
     {
       "id": "A17",
       "metricId": "lemeng:contribution:region_net",
-      "question": "东部战区近 7 天净额前五门店",
-      "window": "last7",
+      "question": "10 月东部战区净额前五门店",
+      "window": "fixed",
+      "from": "2026-10-01",
+      "to": "2026-10-31",
       "confirmed": true
     },
     {
       "id": "A18",
       "metricId": "lemeng:contribution:region_net",
-      "question": "东部战区本月净额前五门店",
-      "window": "mtd",
+      "question": "10 月战区净额排名",
+      "window": "fixed",
+      "from": "2026-10-01",
+      "to": "2026-10-31",
       "confirmed": true
     },
     {
       "id": "A19",
       "metricId": "lemeng:outbound:line_count",
-      "question": "昨天出库行数与合计金额",
-      "window": "yesterday",
-      "confirmed": false,
-      "excludedReason": "基线为 0（数据可能未到当天）；容差判定会极严，待换窗口或补数据后再入"
+      "question": "10 月出库行数与合计金额",
+      "window": "fixed",
+      "from": "2026-10-01",
+      "to": "2026-10-31",
+      "confirmed": true
     },
     {
       "id": "A20",
       "metricId": "lemeng:outbound:line_count",
-      "question": "近 7 天出库行数与合计金额",
-      "window": "last7",
+      "question": "10 月出库明细行数",
+      "window": "fixed",
+      "from": "2026-10-01",
+      "to": "2026-10-31",
       "confirmed": true
     },
     {
       "id": "A21",
       "metricId": "lemeng:contribution:region_l1_net",
-      "question": "战区级昨天销售/出库/毛利",
-      "window": "yesterday",
-      "confirmed": false,
-      "excludedReason": "基线为 0（数据可能未到当天）；容差判定会极严，待换窗口或补数据后再入"
+      "question": "10 月战区级销售/出库/毛利",
+      "window": "fixed",
+      "from": "2026-10-01",
+      "to": "2026-10-31",
+      "confirmed": true
     },
     {
       "id": "A22",
       "metricId": "lemeng:contribution:region_l1_net",
-      "question": "战区级近 7 天销售/出库/毛利",
-      "window": "last7",
+      "question": "10 月各战区经营数据",
+      "window": "fixed",
+      "from": "2026-10-01",
+      "to": "2026-10-31",
       "confirmed": true
     },
     {
       "id": "A23",
       "metricId": "lemeng:expense:branch_receivable",
-      "question": "昨天应付按战区统计",
-      "window": "yesterday",
-      "confirmed": false,
-      "excludedReason": "基线为 0（数据可能未到当天）；容差判定会极严，待换窗口或补数据后再入"
+      "question": "10 月应付按战区统计",
+      "window": "fixed",
+      "from": "2026-10-01",
+      "to": "2026-10-31",
+      "confirmed": true
     },
     {
       "id": "A24",
       "metricId": "lemeng:expense:branch_receivable",
-      "question": "本月截至昨天应付按战区统计",
-      "window": "mtd",
+      "question": "10 月各战区应付",
+      "window": "fixed",
+      "from": "2026-10-01",
+      "to": "2026-10-31",
       "confirmed": true
     },
     {
       "id": "A25",
       "metricId": "lemeng:branch:transfer_money",
-      "question": "昨天出库经营总表",
-      "window": "yesterday",
-      "confirmed": false,
-      "excludedReason": "基线为 0（数据可能未到当天）；容差判定会极严，待换窗口或补数据后再入"
+      "question": "10 月出库经营总表",
+      "window": "fixed",
+      "from": "2026-10-01",
+      "to": "2026-10-31",
+      "confirmed": true
     },
     {
       "id": "A26",
       "metricId": "lemeng:branch:transfer_money",
-      "question": "近 7 天出库经营总表",
-      "window": "last7",
+      "question": "10 月出库金额",
+      "window": "fixed",
+      "from": "2026-10-01",
+      "to": "2026-10-31",
       "confirmed": true
     },
     {
-      "id": "B1",
-      "metricId": "lemeng:client_contribution:net_amount",
-      "question": "按客户拆分的净贡献额",
-      "window": "default",
-      "confirmed": true
+      "id": "C1",
+      "metricId": "lemeng:retail:sale_money",
+      "question": "10 月零售销售金额",
+      "window": "fixed",
+      "from": "2026-10-01",
+      "to": "2026-10-31",
+      "confirmed": false,
+      "candidate": true
     },
     {
-      "id": "B2",
-      "metricId": "lemeng:client_contribution:margin_rate",
-      "question": "按客户拆分的毛利率",
-      "window": "default",
-      "confirmed": true
+      "id": "C2",
+      "metricId": "lemeng:retail:return_money",
+      "question": "10 月零售退货金额",
+      "window": "fixed",
+      "from": "2026-10-01",
+      "to": "2026-10-31",
+      "confirmed": false,
+      "candidate": true
     },
     {
-      "id": "B3",
-      "metricId": "lemeng:expense:branch_net",
-      "question": "按门店拆分的费用净额",
-      "window": "default",
-      "confirmed": true
+      "id": "C3",
+      "metricId": "lemeng:member:branch_vip_money",
+      "question": "10 月会员储值金额",
+      "window": "fixed",
+      "from": "2026-10-01",
+      "to": "2026-10-31",
+      "confirmed": false,
+      "candidate": true
     },
     {
-      "id": "B4",
+      "id": "C4",
+      "metricId": "lemeng:inventory:quantity",
+      "question": "10 月库存数量",
+      "window": "fixed",
+      "from": "2026-10-01",
+      "to": "2026-10-31",
+      "confirmed": false,
+      "candidate": true
+    },
+    {
+      "id": "C5",
+      "metricId": "lemeng:branch:order_count",
+      "question": "10 月门店订单数",
+      "window": "fixed",
+      "from": "2026-10-01",
+      "to": "2026-10-31",
+      "confirmed": false,
+      "candidate": true
+    },
+    {
+      "id": "C6",
+      "metricId": "lemeng:outbound:gross_profit",
+      "question": "10 月出库毛利率",
+      "window": "fixed",
+      "from": "2026-10-01",
+      "to": "2026-10-31",
+      "confirmed": false,
+      "candidate": true
+    },
+    {
+      "id": "C7",
       "metricId": "lemeng:expense:branch_payable",
-      "question": "按门店拆分的应付",
-      "window": "default",
-      "confirmed": true
+      "question": "10 月应付合计",
+      "window": "fixed",
+      "from": "2026-10-01",
+      "to": "2026-10-31",
+      "confirmed": false,
+      "candidate": true
     },
     {
-      "id": "B5",
+      "id": "C8",
+      "metricId": "lemeng:expense:branch_net",
+      "question": "10 月费用净额",
+      "window": "fixed",
+      "from": "2026-10-01",
+      "to": "2026-10-31",
+      "confirmed": false,
+      "candidate": true
+    },
+    {
+      "id": "C9",
       "metricId": "lemeng:expense:client_net",
-      "question": "按客户拆分的费用净额",
-      "window": "default",
-      "confirmed": true
+      "question": "10 月客户费用净额",
+      "window": "fixed",
+      "from": "2026-10-01",
+      "to": "2026-10-31",
+      "confirmed": false,
+      "candidate": true
     },
     {
-      "id": "B6",
+      "id": "C10",
       "metricId": "lemeng:purchase:amount",
-      "question": "按供应商拆分的采购金额",
-      "window": "default",
-      "confirmed": true
+      "question": "10 月采购金额",
+      "window": "fixed",
+      "from": "2026-10-01",
+      "to": "2026-10-31",
+      "confirmed": false,
+      "candidate": true
     },
     {
-      "id": "B7",
+      "id": "C11",
+      "metricId": "lemeng:client_contribution:net_amount",
+      "question": "10 月客户净贡献额",
+      "window": "fixed",
+      "from": "2026-10-01",
+      "to": "2026-10-31",
+      "confirmed": false,
+      "candidate": true
+    },
+    {
+      "id": "C12",
       "metricId": "lemeng:transfer:item_gross_margin_rate",
-      "question": "按商品拆分的调拨毛利率",
-      "window": "default",
-      "confirmed": true
+      "question": "10 月调拨毛利率",
+      "window": "fixed",
+      "from": "2026-10-01",
+      "to": "2026-10-31",
+      "confirmed": false,
+      "candidate": true
     }
   ]
 }

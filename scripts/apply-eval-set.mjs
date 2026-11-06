@@ -57,9 +57,17 @@ export function isClosedRange(range, today) {
   return range.to < today
 }
 
-/** window → bizday 区间；`default` 不带日期参数（用指标自己的缺省参数面）。 */
-/** @param {string} window @param {string} asOf @returns {{from:string,to:string}|null} */
-export function windowArgs(window, asOf) {
+/**
+ * window → bizday 区间；`default` 不带日期参数（用指标自己的缺省参数面）。
+ * `fixed` 用条目自带的 `from`/`to`（评估集只收**已封板**的固定历史区间）。
+ */
+/** @param {string} window @param {string} asOf @param {{from?:string,to?:string}} [item] @returns {{from:string,to:string}|null} */
+export function windowArgs(window, asOf, item) {
+  if (window === 'fixed') {
+    const from = typeof item?.from === 'string' ? item.from : ''
+    const to = typeof item?.to === 'string' ? item.to : ''
+    return from !== '' && to !== '' ? { from, to } : null
+  }
   if (window === 'yesterday') return { from: asOf, to: asOf }
   if (window === 'last7') return { from: shift(asOf, -6), to: asOf }
   if (window === 'mtd') return { from: `${asOf.slice(0, 7)}-01`, to: asOf }
@@ -77,7 +85,7 @@ if (!dsn) {
   process.exit(2)
 }
 const doc = JSON.parse(readFileSync(args.items, 'utf8'))
-/** @type {Array<{id:string,metricId:string,question:string,window:string,confirmed?:boolean}>} */
+/** @type {Array<{id:string,metricId:string,question:string,window:string,confirmed?:boolean,from?:string,to?:string}>} */
 const all = Array.isArray(doc.items) ? doc.items : []
 const confirmed = all.filter((i) => i.confirmed === true)
 const skippedUnconfirmed = all.length - confirmed.length
@@ -98,7 +106,7 @@ try {
       report.push({ id: item.id, metricId: item.metricId, question: item.question, ok: false, reason: 'metric_not_found' })
       continue
     }
-    const range = windowArgs(item.window, beijingYesterday())
+    const range = windowArgs(item.window, beijingYesterday(), item)
     if (!isClosedRange(range, beijingYesterday())) {
       report.push({ id: item.id, metricId: item.metricId, question: item.question, ok: false, reason: 'open_period_not_stable' })
       continue
