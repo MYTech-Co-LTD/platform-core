@@ -21,7 +21,15 @@ services:
     # 新增：duckdb.memory_limit 默认 4096MB/连接，而本服务 mem_limit 默认 2g（2048MB）
     #   ⇒ DuckDB 以为自己有 4GB，重查询会被 cgroup OOM kill（无错误、容器重启）。
     #   收到 1536MB 留出 PG 自身与连接开销的余量。
-    command: ["postgres", "-c", "shared_preload_libraries=pg_duckdb", "-c", "duckdb.memory_limit=1536MB"]
+    # 🔴 2026-11-06（issue #1515）：`duckdb.threads=1` 是**崩溃止血**，不是性能调优。
+    #   pg_duckdb 1.1.1 的 postgres scan 有线程安全 race（上游 duckdb/pg_duckdb#1084，open）：
+    #   DuckDB worker 线程读 `CurrentMemoryContext` 时未持 GlobalProcessLock ⇒ 新建的 scan
+    #   memory context 可能挂到短命父上下文、随父释放 ⇒ 下一次 MemoryContextReset 操作已释放
+    #   内存 ⇒ backend SIGSEGV、postmaster recovery、整轮物化报废。
+    #   触发条件 = **并发会话 + 多表扫描**（物化模型 CREATE TABLE AS 读多张 staging 表正是）。
+    #   2026-11-04~06 生产崩 5 次；隔离容器同镜像复现：默认 threads=-1（4 线程）4×10 轮必崩，
+    #   threads=1 跑 40 轮 0 崩。**上游修复前不要撤这一项**（代价：DuckDB 并行度降到 1）。
+    command: ["postgres", "-c", "shared_preload_libraries=pg_duckdb", "-c", "duckdb.memory_limit=1536MB", "-c", "duckdb.threads=1"]
     volumes:
       # ⚠️ 挂**父目录**，不是 `<父>/data`：PG18 起官方把 PGDATA 挪进版本子目录——目标机实测
       #    `PGDATA=/var/lib/postgresql/18/docker`，且 `/var/lib/postgresql/` 下只有 `18/`、**没有 `data/`**。
