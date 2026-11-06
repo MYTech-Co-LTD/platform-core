@@ -1,4 +1,4 @@
-sha256-of-rest 800c673cf0662596f708373b260e57ce7e0827c6040d7e9f17d8a691f2bc9fac
+sha256-of-rest f7bf49c84d924107e74f40900d90cce4069cdc8c438c0d867ad9a83c87b2ca5b
 08938c10c6b4a688c8afda6cd7d1ad3dbf2c20f83cf8c4e7023055ad34eddc70 contracts/README.md ${REPO}/contracts/README.md 0644
 fcc8189e1012d5fbb8e2505025bed637dd01c7b4465ab86125d3eaa7f330eff3 contracts/common/_schema.schema.json ${REPO}/contracts/common/_schema.schema.json 0644
 1730119518c3371f3c2ff3492f4c15cd731688047c6d40805ec4d2c65892f3ff contracts/common/_template.contract.json ${REPO}/contracts/common/_template.contract.json 0644
@@ -371,4 +371,4 @@ a3fedb93e109d82caee9783102a0081a30af4aa5b2f28147758790b3286a76aa scripts/lemeng/
 2a02cf6af79397b29a455f4a363d00be9453b6967df675fc8ecaaf9c9309f7ab scripts/lemeng/recon-restate.sh /opt/lemeng-recon-restate.sh 0755
 185b13c328e83a04651799684a38be905e9cc217d78ed9079fdf3aa2918299e3 scripts/lemeng/seal-lake.sh /opt/lemeng-seal.sh 0755
 e030b1ea2ce35efc8fcf60322938e0b8a8af1258ec08a7434fa255e49d7cd21e scripts/lemeng/seed-console.sh /opt/lemeng-seed-console.sh 0755
-cfb8cf55dc45e1ca913ad17714a0207d0af23d8e6ea4e914c3f7b04e00e412ca scripts/lemeng/wire-warehouse.sh /opt/lemeng-wire-warehouse.sh 0755
+3abb383e2360b17e8e3a502ce166a94c37ad24307e728545a4c06e8d55d35ac8 scripts/lemeng/wire-warehouse.sh /opt/lemeng-wire-warehouse.sh 0755
