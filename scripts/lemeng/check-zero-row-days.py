@@ -107,6 +107,10 @@ def day_rows(prefix: str, book: str, days: list[str], env: dict) -> dict[str, in
     )
     out, err = psql(sql, env)
     if err:
+        # 「该窗口内一个文件都没有」= 合法缺分区（发布滞后 / 当天还没采），按空集处理；
+        # 其余错误（连接、权限、SQL 写错）才是依赖故障，必须响亮。
+        if "No files found" in err:
+            return {d: -1 for d in days}
         raise RuntimeError(err)
     got: dict[str, int] = {}
     for line in out.splitlines():
@@ -152,18 +156,16 @@ def main() -> int:
                 continue  # 本来就没数据（如业务无退货），不报
             zeros = [d for d in recent if r.get(d, -1) == 0]
             missing = [d for d in recent if r.get(d, -1) < 0]
-            if len(zeros) == len(recent):
+            # 断供判据：窗口内**有分区的天全都 0 行**，且这些天 + 缺分区的天覆盖整个窗口。
+            # 只缺分区（一个分区都没有）= 发布滞后 / 还没采，**不报**（避免每天误报 T-1）。
+            if zeros and (len(zeros) + len(missing)) == len(recent):
                 bad += 1
                 print(
-                    "ZERO_ROW_STREAK dataset=%s book=%s days=%s baseline_days_with_data=%d/%d"
+                    "ZERO_ROW_STREAK dataset=%s book=%s zero_days=%s missing_days=%s"
+                    " baseline_days_with_data=%d/%d"
                     " hint=查该管线 run 记录：请求字段被拒(10001) 或 响应字段改名(契约拒写)"
-                    % (name, book, ",".join(recent), len(base_days), len(base))
-                )
-            elif missing:
-                bad += 1
-                print(
-                    "ZERO_ROW_MISSING dataset=%s book=%s days=%s"
-                    % (name, book, ",".join(missing))
+                    % (name, book, ",".join(zeros), ",".join(missing) or "-",
+                       len(base_days), len(base))
                 )
 
     if bad == 0:
