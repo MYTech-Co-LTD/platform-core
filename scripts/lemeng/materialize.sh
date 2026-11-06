@@ -198,6 +198,9 @@ export DATA_PLANE_DOMAINS="$DOMAINS"
 SCOPE=${MATERIALIZE_SCOPE:-full}
 TICK_SELECT=${MATERIALIZE_TICK_SELECT:-fct_retail_sale}
 TICK_DOMAIN=${MATERIALIZE_TICK_DOMAIN:-lemeng}
+# tick 只跑模型 + 它自带的 schema tests；`tests/lemeng/` 下的 singular 重活（audit_*/assert_*）
+# 留给全量档（它按 path:tests/lemeng 选）。否则每 10 分钟跑一遍全史对账（实测单条 >90s）。
+TICK_EXCLUDE=${MATERIALIZE_TICK_EXCLUDE:-path:tests/lemeng}
 # 全量档必须**排除** tick 拥有的模型：tick 每 10 分钟 delete+insert 同一张表，
 # 与全量档的 7 天 delete+insert 并发写同一张表会冲突（#1520）。
 FULL_EXCLUDE=${MATERIALIZE_FULL_EXCLUDE:-fct_retail_sale}
@@ -227,7 +230,7 @@ if [ "$SCOPE" = tick ]; then
   _log="$_WORK/dbt.tick.log"
   _rc="$_WORK/dbt.tick.rc"
   ( if DATA_PLANE_DOMAINS="$TICK_DOMAIN" docker run --rm --network "$NETWORK" -v "$R/dbt:/usr/app" \
-      $(mat_env_args) "$IMAGE" $(mat_dbt_args) --select "$TICK_SELECT" 2>&1; then
+      $(mat_env_args) "$IMAGE" $(mat_dbt_args) --select "$TICK_SELECT" --exclude "$TICK_EXCLUDE" 2>&1; then
     echo 0 >"$_rc"
   else
     echo $? >"$_rc"
