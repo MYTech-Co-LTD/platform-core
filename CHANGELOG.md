@@ -11,6 +11,10 @@
 
 ## [Unreleased]
 
+## [0.273.0](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.272.7...v0.273.0) - 2026-11-06
+- 【新增】data: 库存流水日常采集拆成 4 条按页段的 l0（静态并发替代原生分页） ([#1437](https://github.com/MYTech-Co-LTD/platform-core/pull/1437), [09a2b44](https://github.com/MYTech-Co-LTD/platform-core/commit/09a2b4444600025c58a5a1398d02729742c64480))
+
+
 ## [0.272.7](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.272.6...v0.272.7) - 2026-11-06
 - 【修复】data: 只改 synonyms 走键级编辑——携带键与注释逐字保留（#1434） ([#1435](https://github.com/MYTech-Co-LTD/platform-core/pull/1435), [fedf0ec](https://github.com/MYTech-Co-LTD/platform-core/commit/fedf0ec726cdda55c2b70f3be4ce9001d9a2b623))
 
