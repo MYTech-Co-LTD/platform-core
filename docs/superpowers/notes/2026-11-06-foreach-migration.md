@@ -193,8 +193,9 @@ round 3: 2× code=0 / 2× HTTP 429 {"code":429,"message":"PAT并发请求超限"
 ## 5. 复现
 
 - v2 文件：`docs/superpowers/notes/2026-11-06-foreach-migration.parent.json` / `.child.json`
-  （复制到 console 的 `/workspace/pipelines/` 后 `duckle validate` 通过；本次实跑版本 sha256：
-  parent `0bfe5164…`、child `07549dd2…`（`_note` 在实跑后订正，逻辑未变））。
+  （复制到 console 的 `/workspace/pipelines/` 后 `duckle validate` 通过。本次实跑部署版本 sha256：
+  parent `8354191f…`、child `07549dd2…`；仓内定稿（`_note` 订正后）parent `bdac716a…`、child `07549dd2…`
+  —— 两者仅 `_note` 文案不同，逻辑一致）。
 - 触发：`POST /api/run/async {"file":"pipelines/<parent>.json","params":{"BIZDAY":"2026-10-20","V2_SINK_ROOT":"_V2_FULL"}}`
 - 回读：pg_duckdb `read_parquet('s3://<bucket>/lemeng/retail_order_line/_V2_FULL/system_book=<B>/bizday=2026-10-20/*.parquet')`
 - 本次所有测试前缀：`_V2_LAB` / `_V2_LAB_NR` / `_V2_FULL` / `_V2_C3` / `_V2_BASELINE`（均未写生产 `_DAY_DATA`）。
