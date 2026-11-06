@@ -68,6 +68,8 @@ export const REGEN_COMMAND = 'pnpm exec tsx scripts/gen-fct-measures.mjs'
  * @property {string[]} fctGrain 该 fct 的粒度键（与模型头注声明的 grain 同源）
  * @property {string[]} columns 物化的组件键（顺序即生成顺序）
  * @property {Record<string, string>} baseAliases 组件键 → 基面 CTE 名
+ * @property {number} [incrementalLookback] 增量基面下推天数（仅 incremental 模型；#1524）
+ * @property {string} [incrementalKey] 增量过滤键（默认 bizday）
  */
 
 /**
