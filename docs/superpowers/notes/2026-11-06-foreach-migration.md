@@ -14,7 +14,7 @@
 | **节点数 ≤10** | ✅ 父 **8** / 子 **7** | 父：`pl / fe / an / agg / viol / rep / repsink / die` |
 | **行数 / 单数完全一致** | ✅ **同日新旧逐行一致**（0 差异）；⚠️ 与封板快照差 **1 单**，取证为源端迟到单 | §3.2 |
 | **耗时 ≤ 现有形态** | ❌ **103s vs 60.7s**（c=2）；c=3 反而 **118s** | §3.3 |
-| **429 能降级而非整批归零** | ⚠️ **部分满足**：失败页之前的 chunk 保留（不再整天归零）；但 `ctl.foreach` **首个失败即中止整批**，失败页之后的页不跑；`retryAttempts>1` 时整批重跑且**实测卡死** | §3.4 |
+| **429 能降级而非整批归零** | ⚠️ **部分满足**：失败页之前的 chunk 保留（不再整天归零）；`continueOnFailure` 让**下游守卫照跑并点名缺页**，但失败页之后的页**当轮不跑**（不是逐项继续）；`retryAttempts>1` 整批重跑且本环境实测卡死 | §3.4 |
 
 **裁决建议：本版 v2 不替换 `lemeng.retail_order_line.day`。** 等价性证明变换逻辑正确；
 阻塞项是引擎侧的两条行为（无逐项失败隔离、foreach 子管线逐个起管线开销大）——
@@ -130,7 +130,7 @@ v2_only | 312026826293002003 | 1 | 2026-10-21 21:49:51
 **注入法（真网关确定性错误）**：页码清单里把某一页的 `page_number` 设为 **0**（`chunk_no` 仍是真实页号）：
 网关稳定返回 `HTTP 500 {"code":50000,"msg":"Page index must not be less than zero"}`。
 
-实验 A（3 项：page 1 / page 0 / page 96，**无** foreach 重试）：
+实验 A（3 项：page 1 / page 0 / page 96，**无** `continueOnFailure`、无重试）：
 
 ```
 fe: status=error, duration_ms=6441
@@ -138,18 +138,31 @@ fe: status=error, duration_ms=6441
 ```
 
 - ✅ page 1 的 `chunk=1.parquet` 与收据**已落盘**（不再整天归零）。
-- ❌ page 96 **根本没跑**（foreach 在首个失败项即中止，`continueOnFailure` 未生效）。
-- ❌ 下游 `agg / viol / die` **不执行**（stage 失败即终止管线），零行守卫拿不到机会。
+- ❌ page 96 **没跑**（首个失败项即中止剩余项）。
+- ❌ 下游 `agg / viol / die` **不执行**（硬失败终止管线），零行守卫拿不到机会。
 
-实验 B（同 3 项，**带** `retryAttempts=4, retryBackoffMs=60000, continueOnFailure=true`）：
+实验 B（同 3 项，`continueOnFailure=true`、**无**重试、c=1）——**这条最容易被误读**：
+
+```
+fe: status=error（软失败）
+agg rows=1 → viol rows=1（pages_missing）→ repsink rows=1 → die: error（1 条违规）
+run: error, duration_ms=9176
+```
+
+- ✅ **下游守卫照跑**：`agg / viol / rep / die` 全部执行，`die` 明确报 **pages_missing**（实到 1 / 应到 3）。
+- ✅ page 1 的 chunk 保留。
+- ❌ **page 96 仍未跑**（子管线日志按本 run id 计数 = **0**）——`continueOnFailure` 只让 **foreach 这个 stage 软失败**，
+  不让 foreach **继续处理剩余 item**。已有条目「其余 5 窗照常采集」的实测多半是「失败窗排在最后」，
+  本次把失败放在**中间**才照出这一层。
+
+实验 C（同 3 项，`continueOnFailure=true` + `retryAttempts=4, retryBackoffMs=60000`）：
 
 - 实测为 **stage 级整体重跑**：page 1 与 page 0 各被重跑 **3 次**（`run_started` ×3），page 96 仍未跑。
-- 第 3 次失败后（16:12:10）**stage 卡死 >3 分钟无结束**，console 队列被堵，只能重启容器清场。
-- ⇒ 这三个旧属性在 **0.7.4 inline 模式**里：`continueOnFailure` **被忽略**；`retryAttempts` 作用于**整个 foreach**，
-  失败会放大请求量（96 页 × 重试次数），且重试耗尽后的收尾在本环境**不可靠**。
+- 第 3 次失败后（16:12:10）**stage 卡死 >3 分钟无结束**（本环境一次观察），console 队列被堵，只能重启容器清场。
 
-> 这一条直接推翻任务前提「429 出现时能降级而非整批归零（只丢该 chunk）」：
-> 当前引擎只能做到「**失败页之前的 chunk 保留**」，做不到「其余页照常落盘」。
+> **结论（订正）**：`continueOnFailure` **不是**「逐项失败继续」，而是「**foreach 软失败、下游继续**」。
+> 因此「只丢该 chunk、其余照常落盘」在 0.7.4 **不成立**——失败项之后的页当轮不跑；
+> 但降级形态比旧形态好：**失败页之前的 chunk 保留 + 尾部守卫点名缺页 + 补跑只补缺页**。
 > 要真正逐页隔离，需要引擎提供逐项失败继续（或 `dispatch: queue` + worker 的可用形态，本次未验证）。
 
 ### 3.5 零行 / 缺页 / 容量守卫（逻辑本身通过）

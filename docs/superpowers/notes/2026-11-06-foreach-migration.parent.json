@@ -7,7 +7,7 @@
     "与 day 形的差别：106 节点 → 8 节点；单页失败**不回滚**已落盘的 chunk（但整批仍会中止，见下）；",
     "判据从「第 96 页必须为空」升级为「页数到齐 + 总单数区间 + 第 96 页为空」。",
     "⚠️ 0.7.4 的 ctl.foreach inline 实测：① concurrency 生效（但网关并发闸 ≤3，c=4 即 429 PAT并发请求超限）；",
-    "② continueOnFailure **被忽略**——单页失败即中止整批（失败页之后的页不跑）；",
+    "② continueOnFailure 只让 foreach 软失败（下游守卫照跑），**不**继续剩余 item——失败页之后的页当轮不跑；",
     "③ retryAttempts/retryBackoffMs 是 **stage 级整体重跑**（不是逐项），重试耗尽后本环境实测卡死（>3min 无结束）。",
     "逐页重试由子管线 src.rest 的 retryAttempts=3 承担；要逐项失败隔离需引擎支持（本版不满足）。"
   ],
