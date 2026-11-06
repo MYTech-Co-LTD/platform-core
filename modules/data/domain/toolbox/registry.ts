@@ -334,6 +334,7 @@ export async function callTool(deps: ToolboxDeps, name: string, args: Record<str
       userId: deps.requester?.userId ?? '(anonymous)',
       channel: deps.requester?.channel ?? 'session',
       keyId: deps.requester?.keyId ?? null,
+      sessionId: deps.requester?.sessionId ?? null,
       metricId: base.auditMetricId ?? '',
       params: args, rowCount: base.auditRowCount ?? null,
       verdict, reason: reason === '' ? null : reason,

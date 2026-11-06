@@ -72,6 +72,7 @@ export function wecomChannelIdentityMiddleware(deps: WecomChannelAuthDeps): Midd
       userId: userid,                 // 企微 userid 即 Casdoor name（本仓既有语义）
       orgId: tenant.casdoor_org,
       displayName: userid,
+      ...(c.req.header('x-session-id') ? { sessionId: c.req.header('x-session-id')!.slice(0, 200) } : {}),
       scopes,
       hasScope: (code: string) => scopes.includes(code),
     }

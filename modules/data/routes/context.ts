@@ -97,6 +97,7 @@ export function requesterOf(c: Context<ModuleVars>): Requester | null {
     orgId: identity.orgId,
     channel: c.get(REQUESTER_CHANNEL) ?? 'session',
     keyId: c.get(REQUESTER_KEY_ID) ?? null,
+    ...(identity.sessionId !== undefined ? { sessionId: identity.sessionId } : {}),
     scopes: identity.scopes,
     hasScope: (code: string) => identity.hasScope(code),
   }

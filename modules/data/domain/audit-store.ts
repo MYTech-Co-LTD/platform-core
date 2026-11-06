@@ -28,6 +28,8 @@ export interface AuditEntry {
   /** 隔离键 `org`（text）= 审计里的主体值，**一列两义**（见 T1 的 001_init.sql 注记）。
    *  早期版本的独立 `orgId` 字段已并入本字段——别再加回来。 */
   org: string; userId: string; channel: Channel
+  /** 会话键（企微通道的 `x-session-id`）；缺省 null = 该通道没有会话概念，不伪造。 */
+  sessionId?: string | null
   keyId: number | null; metricId: string; params: Record<string, unknown>
   rowCount: number | null; verdict: 'ok' | 'denied' | 'error'; reason: string | null
   /** 本次查询**实际生效**的值级掩码（spec §4.4 / §4.4.1 三态，T7 #823）：见 `MaskingAudit`。
@@ -58,8 +60,8 @@ export interface AuditEntry {
 export async function writeAudit(pool: Pool, entry: AuditEntry): Promise<{ id: number; createdAt: Date }> {
   const r = await pool.query(
     `insert into data.query_audit
-       (org, user_id, channel, key_id, metric_id, params, row_count, verdict, reason, masking, drill, tool)
-     values ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11::jsonb, $12)
+       (org, user_id, channel, key_id, metric_id, params, row_count, verdict, reason, masking, drill, tool, session_id)
+     values ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11::jsonb, $12, $13)
      returning id, created_at`,
     [
       entry.org, entry.userId, entry.channel, entry.keyId, entry.metricId,
@@ -69,6 +71,7 @@ export async function writeAudit(pool: Pool, entry: AuditEntry): Promise<{ id: n
       entry.masking === null ? null : JSON.stringify(entry.masking),
       entry.drill === undefined || entry.drill === null ? null : JSON.stringify(entry.drill),
       entry.tool ?? null,
+      entry.sessionId ?? null,
     ],
   )
   // 信封的 audit 节要用（spec 2026-10-21 §4：回包可独立核对审计行）；既有调用方不消费返回值。

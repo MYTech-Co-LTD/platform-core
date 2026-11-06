@@ -637,6 +637,14 @@ describe('Task 5：孤儿表与候选池质量（只报告，不处置）', () =
 })
 
 describe('W6：分析面价值指标（总览第三块）', () => {
+  it('给了会话耗时样本 ⇒ 中位秒数上卡片（≥20 样本）', () => {
+    const input = baseInput(METRICS)
+    input.answerDurationsMs = Array.from({ length: 20 }, (_, i) => (i + 1) * 1000)
+    const model = buildSystemMapModel(input)
+    expect(model.valueMetrics.answerTimeState).toBe('ok')
+    expect(model.valueMetrics.defensibleAnswerSeconds).toBe(10.5)
+  })
+
   it('缺数显示「未接入」，不画 0；已裁决比例进页面数据', () => {
     const input = baseInput(METRICS)
     input.verifiedCounts = { total: 16, decided: 4 }

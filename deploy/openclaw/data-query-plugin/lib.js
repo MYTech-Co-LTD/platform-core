@@ -50,7 +50,7 @@ export function toToolResult(payload) {
 // 平台调用 + 错误映射。返回值是**业务载荷**（纯对象）；交给模型前必须经 toToolResult 包裹。
 // fetchImpl 参数注入便于单测；生产用全局 fetch。
 export async function callPlatform(opts) {
-  const { fetchImpl = fetch, apiBase = DEFAULT_API_BASE, channelKey, userId, path, method = "GET", body } = opts;
+  const { fetchImpl = fetch, apiBase = DEFAULT_API_BASE, channelKey, userId, sessionId, path, method = "GET", body } = opts;
   if (!channelKey) {
     return { error: "渠道凭证未配置（openclaw 容器缺 DATA_WECOM_CHANNEL_KEY env），请联系管理员。" };
   }
@@ -65,6 +65,8 @@ export async function callPlatform(opts) {
         "Content-Type": "application/json",
         "x-channel-key": channelKey,
         "x-wecom-userid": userId,
+        // 会话键：平台据此算「可辩护答案时长」（首问 → 首个成功查询）。没有就不带。
+        ...(sessionId ? { "x-session-id": String(sessionId) } : {}),
       },
       body: body === undefined ? undefined : JSON.stringify(body),
     });

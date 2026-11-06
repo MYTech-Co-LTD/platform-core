@@ -85,7 +85,7 @@ export default definePluginEntry({
         ...def,
         // 必须返回 OpenClaw 工具结果契约形状（含 content[]）——见 lib.js toToolResult。
         execute: async (_toolCallId, params) => {
-          const result = await run(normalizeParams(params), userId);
+          const result = await run(normalizeParams(params), userId, sessionKey);
           if (onResult) {
             try {
               onResult(result, sessionKey, runId);
@@ -98,19 +98,20 @@ export default definePluginEntry({
       };
     };
     api.registerTool(
-      factory(LIST_DEF, (_params, userId) =>
-        callPlatform({ apiBase, channelKey: CHANNEL_KEY, userId, path: "/metrics" }),
+      factory(LIST_DEF, (_params, userId, sessionKey) =>
+        callPlatform({ apiBase, channelKey: CHANNEL_KEY, userId, sessionId: sessionKey, path: "/metrics" }),
       ),
       { name: LIST_DEF.name },
     );
     api.registerTool(
       factory(
         QUERY_DEF,
-        (params, userId) =>
+        (params, userId, sessionKey) =>
           callPlatform({
             apiBase,
             channelKey: CHANNEL_KEY,
             userId,
+            sessionId: sessionKey,
             path: "/query",
             method: "POST",
             body: { metricId: params.metricId, args: params.args ?? {} },
@@ -136,11 +137,12 @@ export default definePluginEntry({
     api.registerTool(
       factory(
         DETAIL_DEF,
-        (params, userId) =>
+        (params, userId, sessionKey) =>
           callPlatform({
             apiBase,
             channelKey: CHANNEL_KEY,
             userId,
+            sessionId: sessionKey,
             path: "/query/detail",
             method: "POST",
             body: {
@@ -202,7 +204,7 @@ export default definePluginEntry({
       },
     };
     api.registerTool(
-      factory(DESCRIBE_DEF, (params, userId) =>
+      factory(DESCRIBE_DEF, (params, userId, sessionKey) =>
         callPlatform({
           apiBase, channelKey: CHANNEL_KEY, userId,
           path: "/toolbox", method: "POST",
@@ -212,7 +214,7 @@ export default definePluginEntry({
       { name: DESCRIBE_DEF.name },
     );
     api.registerTool(
-      factory(SAMPLE_DEF, (params, userId) =>
+      factory(SAMPLE_DEF, (params, userId, sessionKey) =>
         callPlatform({
           apiBase, channelKey: CHANNEL_KEY, userId,
           path: "/toolbox", method: "POST",
@@ -232,7 +234,7 @@ export default definePluginEntry({
     api.registerTool(
       factory(
         FRESHNESS_DEF,
-        (params, userId) =>
+        (params, userId, sessionKey) =>
           callPlatform({
             apiBase, channelKey: CHANNEL_KEY, userId,
             path: "/toolbox", method: "POST",
