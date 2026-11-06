@@ -151,10 +151,10 @@
     },
     {
       "name": "card_deposit_money",
-      "type": "decimal(20,2)",
+      "type": "varchar",
       "nullable": true,
-      "description": "储值卡充值金额（元）",
-      "expr": "CAST(card_deposit_money AS DECIMAL(20, 2))"
+      "description": "储值卡充值金额（**源端返回对象数组**，按支付方式拆分；以 JSON 串落湖）",
+      "expr": "CAST(card_deposit_money AS VARCHAR)"
     },
     {
       "name": "card_deposit_total_money",
@@ -179,10 +179,10 @@
     },
     {
       "name": "prepaid_card_money",
-      "type": "decimal(20,2)",
+      "type": "varchar",
       "nullable": true,
-      "description": "付费会员卡购买金额（元）",
-      "expr": "CAST(prepaid_card_money AS DECIMAL(20, 2))"
+      "description": "付费会员卡购买金额（**源端返回对象数组**，按支付方式拆分；以 JSON 串落湖）",
+      "expr": "CAST(prepaid_card_money AS VARCHAR)"
     },
     {
       "name": "prepaid_card_total_money",
@@ -193,10 +193,10 @@
     },
     {
       "name": "pick_up_card_money",
-      "type": "decimal(20,2)",
+      "type": "varchar",
       "nullable": true,
-      "description": "提货卡金额（元）",
-      "expr": "CAST(pick_up_card_money AS DECIMAL(20, 2))"
+      "description": "提货卡金额（**源端返回对象数组**，按支付方式拆分；以 JSON 串落湖）",
+      "expr": "CAST(pick_up_card_money AS VARCHAR)"
     },
     {
       "name": "pick_up_card_total_money",
@@ -228,10 +228,10 @@
     },
     {
       "name": "other_inout_money",
-      "type": "decimal(20,2)",
+      "type": "varchar",
       "nullable": true,
-      "description": "其他收支金额（元）",
-      "expr": "CAST(other_inout_money AS DECIMAL(20, 2))"
+      "description": "其他收支金额（**源端返回对象数组**，按支付方式拆分；以 JSON 串落湖）",
+      "expr": "CAST(other_inout_money AS VARCHAR)"
     },
     {
       "name": "other_inout_total_money",
