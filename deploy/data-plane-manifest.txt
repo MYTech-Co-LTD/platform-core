@@ -41,6 +41,7 @@ scripts/lemeng/seed-console.sh            /opt/lemeng-seed-console.sh           
 scripts/lemeng/delete-supplanted-hour-partitions.py  ${REPO}/scripts/lemeng/delete-supplanted-hour-partitions.py  0644
 scripts/lemeng/backfill-daily-partitions.py          ${REPO}/scripts/lemeng/backfill-daily-partitions.py          0644
 scripts/lemeng/backfill-history.py                   ${REPO}/scripts/lemeng/backfill-history.py                   0644
+scripts/lemeng/check-zero-row-days.py                /opt/lemeng-check-zero-row-days.py                           0755
 scripts/askdata/export-transcript.py      /var/lib/askdata/export-transcript.py     0644
 scripts/askdata/attribute.py              /var/lib/askdata/attribute.py             0644
 scripts/askdata/verify.py                 /var/lib/askdata/verify.py                0644
