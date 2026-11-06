@@ -57,8 +57,8 @@ DATASETS: dict[str, tuple[str, str]] = {
     "loss_adjustment": ("lemeng.loss.adjustment.backfill.{book}", "lemeng/loss_adjustment"),
     "request_order": ("lemeng.request.order.backfill.{book}", "lemeng/request_order"),
     "item_purchase": ("lemeng.purchase.analysis.backfill.{book}", "lemeng/item_purchase"),
-    "transfer_in": ("lemeng.transfer.in.backfill.3120", "lemeng/transfer_in"),
-    "transfer_out": ("lemeng.transfer.out.backfill.3120", "lemeng/transfer_out"),
+    "transfer_in": ("lemeng.transfer.in.backfill.{book}", "lemeng/transfer_in"),
+    "transfer_out": ("lemeng.transfer.out.backfill.{book}", "lemeng/transfer_out"),
     "wholesale_out": ("lemeng.wholesale.out.backfill.3120", "lemeng/wholesale_out"),
     "client_expense": ("lemeng.client.expense.backfill.{book}", "lemeng/client_expense"),
     "member_summary": ("lemeng.member.summary.backfill.{book}", "lemeng/member_summary"),
@@ -156,6 +156,19 @@ def lake_rows(book: str, prefix: str, bizday: str) -> int:
     return -1
 
 
+def cst_hour() -> int:
+    return int((datetime.now(timezone.utc) + timedelta(hours=8)).strftime("%H"))
+
+
+def in_yield_span(spec: str) -> bool:
+    """spec 形如 `3-6`（CST 03:00–05:59 让路）。空串 / 非法 ⇒ 不让路。"""
+    try:
+        a, b = (int(x) for x in spec.split("-", 1))
+    except Exception:  # noqa: BLE001
+        return False
+    return a <= cst_hour() < b
+
+
 def main() -> int:
     ds = arg("--dataset")
     if ds not in DATASETS:
@@ -167,6 +180,10 @@ def main() -> int:
         print("ARGS_FAILED: 需要 --from / --to（YYYY-MM-DD，to 为排他上界）", file=sys.stderr)
         return 2
     apply_ = "--apply" in sys.argv
+    skip_existing = "--skip-existing" in sys.argv
+    until_cst = arg("--until-cst", "")          # 例 9 → CST 09 点后不再起新的一天
+    yield_cst = arg("--yield-cst", "")          # 例 3-6 → CST 03..05 点让路（日常采集优先）
+
     allow_empty = "--allow-empty" in sys.argv
     direction = arg("--direction", "desc")
     max_days = int(arg("--max-days", "0") or 0)
@@ -198,6 +215,15 @@ def main() -> int:
             day = d.isoformat()
             if not apply_:
                 print(f"BF_PLAN day={day} book={b} pipeline={pipeline}")
+                continue
+            # 夜间窗口：到点不再起新的一天；让路时段睡过去（日常采集/物化优先）
+            if until_cst and cst_hour() >= int(until_cst):
+                print(f"BF_WINDOW_CLOSED cst={cst_hour()} 余下 {days.index(d)} 天留待下一夜")
+                break
+            while in_yield_span(yield_cst):
+                time.sleep(60)
+            if skip_existing and lake_rows(b, prefix, day) > 0:
+                print(f"BF_SKIP_EXISTING day={day} book={b}")
                 continue
             since = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%S")
             try:

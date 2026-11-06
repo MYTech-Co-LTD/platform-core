@@ -1,4 +1,4 @@
-sha256-of-rest 3b791af9e032326f2ab8f1a6a95c86f2ebcb633f6d5964d3332d95d2ccb848ac
+sha256-of-rest 3f428ba4171b6c2e5b3f859200d4b6b30f2e20cad51afebc01b3f6b4c5e22a7f
 08938c10c6b4a688c8afda6cd7d1ad3dbf2c20f83cf8c4e7023055ad34eddc70 contracts/README.md ${REPO}/contracts/README.md 0644
 fcc8189e1012d5fbb8e2505025bed637dd01c7b4465ab86125d3eaa7f330eff3 contracts/common/_schema.schema.json ${REPO}/contracts/common/_schema.schema.json 0644
 1730119518c3371f3c2ff3492f4c15cd731688047c6d40805ec4d2c65892f3ff contracts/common/_template.contract.json ${REPO}/contracts/common/_template.contract.json 0644
@@ -309,18 +309,14 @@ e9569de840d5bbe377ea7e0074161ea625166b30dda33bea239204a87065651c deploy/duckle/c
 e5504d8765e7ecc2388dced534438bd7b14b76065e24b8b1e76a9e8730dfa792 deploy/duckle/console/pipelines/lemeng.saler_commission.l0.3120.json ${REPO}/deploy/duckle/console/pipelines/lemeng.saler_commission.l0.3120.json 0644
 3a2f175b3bf73181470ed61bb2899db871bebdd941ee3f0e07326f939162988a deploy/duckle/console/pipelines/lemeng.saler_commission.l0.64188.json ${REPO}/deploy/duckle/console/pipelines/lemeng.saler_commission.l0.64188.json 0644
 b22ce1375c839e9816c5c64c00d4fe25ba024d05a9fbfeb2f98ffb7d1bab27ec deploy/duckle/console/pipelines/lemeng.transfer.in.backfill.3120.json ${REPO}/deploy/duckle/console/pipelines/lemeng.transfer.in.backfill.3120.json 0644
-9423e26158f0f32d19578733f3888588172239b315a7f2d03ec0786ddc69fcb3 deploy/duckle/console/pipelines/lemeng.transfer.in.backfill.64188.json ${REPO}/deploy/duckle/console/pipelines/lemeng.transfer.in.backfill.64188.json 0644
 f400d8f14b19012bd82a61f249818465bdd070d9ef46b7d709d3afd1adfa6eaf deploy/duckle/console/pipelines/lemeng.transfer.in.l0.3120.json ${REPO}/deploy/duckle/console/pipelines/lemeng.transfer.in.l0.3120.json 0644
-d5e494373bab543a5c5f358d92a3f9b0f1caca606f2af519fac1e2c438c97331 deploy/duckle/console/pipelines/lemeng.transfer.in.l0.64188.json ${REPO}/deploy/duckle/console/pipelines/lemeng.transfer.in.l0.64188.json 0644
 3dc5330c9f609a79ebf561b479ed6020eb9665a3692b1bab3b9542ba04babc5e deploy/duckle/console/pipelines/lemeng.transfer.out.backfill.3120.json ${REPO}/deploy/duckle/console/pipelines/lemeng.transfer.out.backfill.3120.json 0644
-cedb904bfc1503753026ecc97d5ab1e6e9b6b1d1aad6d995d67facad9eb61ffe deploy/duckle/console/pipelines/lemeng.transfer.out.backfill.64188.json ${REPO}/deploy/duckle/console/pipelines/lemeng.transfer.out.backfill.64188.json 0644
 ef41033638ccd8623e03a2013e2159ea7ad3a5e89bc6a71cb0c6f1d2d797477b deploy/duckle/console/pipelines/lemeng.transfer.out.l0.3120.json ${REPO}/deploy/duckle/console/pipelines/lemeng.transfer.out.l0.3120.json 0644
-a041092ce4abd493f4c805556986f039264d37257b55a08d32f50a3147496384 deploy/duckle/console/pipelines/lemeng.transfer.out.l0.64188.json ${REPO}/deploy/duckle/console/pipelines/lemeng.transfer.out.l0.64188.json 0644
 05701cd1977bc2db49891b9807f822fff556c376d9815251b98e8071245b3c9a deploy/duckle/console/pipelines/lemeng.wholesale.out.backfill.3120.json ${REPO}/deploy/duckle/console/pipelines/lemeng.wholesale.out.backfill.3120.json 0644
 c471c6a9f25d02b2419f5f9a05e79eb80fdfdc5d599633d892fcff72b208e959 deploy/duckle/console/pipelines/lemeng.wholesale.out.l0.3120.json ${REPO}/deploy/duckle/console/pipelines/lemeng.wholesale.out.l0.3120.json 0644
 26e5ed924ffa1034d0305d575bdd39f8f0a4b83963c17e8e2406ec94f48f374c deploy/duckle/console/pipelines/lemeng.wholesale.return.l0.3120.json ${REPO}/deploy/duckle/console/pipelines/lemeng.wholesale.return.l0.3120.json 0644
 7687e35b91a64d6805267fb4bc5a85efcda0abedbd9243b7cc03c58eb903dcc0 deploy/duckle/console/schedules/3120.json ${REPO}/deploy/duckle/console/schedules/3120.json 0644
-361fe32201e2fcfb17bd909b71c5f1cb9dca0fe0c9fd477bddd30cc96f3c2852 deploy/duckle/console/schedules/64188.json ${REPO}/deploy/duckle/console/schedules/64188.json 0644
+cd8d6b5c6f0ec18eafc14de53948f61da3c1b85d3d5fb45d938bf5112c79c860 deploy/duckle/console/schedules/64188.json ${REPO}/deploy/duckle/console/schedules/64188.json 0644
 127dde28f2d058ec300de7777f171f1922fa8b787af810f2ce63fbfa7a52d53d deploy/duckle/console/schedules/forms.json ${REPO}/deploy/duckle/console/schedules/forms.json 0644
 43381a794c2909ebe1fc184b9ab55e5b301345aac3dc492e10716de5ec5157db deploy/duckle/entrypoint.sh ${REPO}/deploy/duckle/entrypoint.sh 0644
 1adccd79d9d5a1ddad55401259312c332fc63e210d8865f4d14bc6f0263a8c7c deploy/oo-alert-registry.txt ${REPO}/deploy/oo-alert-registry.txt 0644
@@ -333,10 +329,12 @@ bc9f7793064cfa2976b84cff422844bb43a9204f0e7722c77b719a5135b5194a scripts/askdata
 c01b387e6132c5befb88cf46041dcae3c4ad3dcad77bcdf100967b7166b96517 scripts/askdata/verify.py /var/lib/askdata/verify.py 0644
 a477c6828f557fc13d0860edd1240d0b6446d19380270536881ac676cf046814 scripts/duckle/connection-setup.py /opt/connection-setup.py 0755
 7f2b72fc8e4cbfa4e49bce875d91b254d306a2d9a9e6b0d70f46f26874952482 scripts/lemeng/backfill-daily-partitions.py ${REPO}/scripts/lemeng/backfill-daily-partitions.py 0644
+8ece81788ef6b16900c3012bf6d57fe8c8af5075efaa36503399465448f820ad scripts/lemeng/backfill-history.py ${REPO}/scripts/lemeng/backfill-history.py 0644
 bbcc8969b337591f9431a1a06f0d603deab72d59364ce21722bb3139e7a31100 scripts/lemeng/backfill-retail-order-line.sh /opt/lemeng-backfill.sh 0755
 01030dcce0bee5c3c50ed54c0be7b9fa302da3de50be65cf137e03881fd453dc scripts/lemeng/delete-supplanted-hour-partitions.py ${REPO}/scripts/lemeng/delete-supplanted-hour-partitions.py 0644
 f030ebf00606c0e64157c69bd60aaa74ee932f647165d3f8ec8f419982e63344 scripts/lemeng/diagnose.sh /opt/lemeng-diagnose.sh 0755
 2cb0ba5430ec83b6b812178d7aa9df1c62d379f7a263bdc09ed09d4b2465c32a scripts/lemeng/materialize.sh /opt/lemeng-materialize.sh 0755
+4abf232dba121a7cb1f73bb738cefacc69e65e12808d33a2182439b9aac54cc6 scripts/lemeng/nightly-backfill.sh /opt/lemeng-nightly-backfill.sh 0755
 98074d99903bd7092dc8e8179ebec4a968e123e72884502a2a2664e08607eeb9 scripts/lemeng/oo-config-audit.sh /opt/lemeng-oo-config-audit.sh 0755
 6f7c9215e44e145c08b53a1b48d078a6cd73aee92af64d3b903a09c5deb94447 scripts/lemeng/oo-notify-bridge.sh /opt/lemeng-oo-notify-bridge.sh 0755
 bc36151a11daaf0d74da820e02ecda1c5a147f246e8b02b735420e02e2ddeed7 scripts/lemeng/oo-watchdog.sh /opt/lemeng-oo-watchdog.sh 0755
