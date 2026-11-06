@@ -74,16 +74,21 @@ export function martsWhitelist(repoRoot?: string): Set<string> {
  * `RELATION_NOT_ALLOWED` 处理。掩码集合来自本租户词表（L1 声明 + L2 行）。
  */
 export async function loadExploreContext(deps: {
+  /** 平台库（词表/掩码）。⚠️ 列清单**不在这里**——列在仓库库。 */
   pool: Pool
+  /** 仓库只读执行器（`information_schema` 必须问仓库，问平台库会恒空 ⇒ 全部表「不可见」）。 */
+  exec: ExploreExecutor
   org: string
   repoRoot?: string
+  /** 词表装载缝（测试注入；缺省 = `loadMergedCatalog(pool, org)`）。 */
+  loadCatalog?: () => Promise<readonly import('../metric-store').MetricRow[]>
 }): Promise<ExploreContext> {
   const allowedRelations = martsWhitelist(deps.repoRoot)
-  const catalog = await loadMergedCatalog(deps.pool, deps.org)
+  const catalog = deps.loadCatalog !== undefined ? await deps.loadCatalog() : await loadMergedCatalog(deps.pool, deps.org)
   const maskedColumns = maskedTargets(catalog)
   const maskedRelations = wholeValueMaskedRelations(catalog)
 
-  const colsResult = await deps.pool.query(
+  const colsResult = await deps.exec(
     `select table_name, column_name, data_type
        from information_schema.columns
       where table_schema = $1 and table_name = any($2::text[])
@@ -91,10 +96,14 @@ export async function loadExploreContext(deps: {
     ['staging', [...allowedRelations]],
   )
   const columns = new Map<string, Array<{ name: string; dataType: string }>>()
-  for (const row of colsResult.rows as Array<{ table_name: string; column_name: string; data_type: string }>) {
-    const list = columns.get(row.table_name) ?? []
-    list.push({ name: row.column_name, dataType: row.data_type })
-    columns.set(row.table_name, list)
+  for (const row of colsResult.rows) {
+    const name = String(row[0] ?? '')
+    const column = String(row[1] ?? '')
+    const dataType = String(row[2] ?? '')
+    if (name === '' || column === '') continue
+    const list = columns.get(name) ?? []
+    list.push({ name: column, dataType })
+    columns.set(name, list)
   }
   return { allowedRelations, columns, maskedColumns, maskedRelations }
 }
@@ -138,7 +147,7 @@ export async function executeExplore(deps: ExploreDeps, spec: ExploreSpec | unkn
   try {
     context = deps.loadContext !== undefined
       ? await deps.loadContext()
-      : await loadExploreContext({ pool: deps.pool, org: deps.org, repoRoot: deps.repoRoot })
+      : await loadExploreContext({ pool: deps.pool, exec: deps.exec, org: deps.org, repoRoot: deps.repoRoot })
   } catch (e) {
     return { ok: false, code: 'NO_CONTEXT', detail: (e as Error).message, auditId: await auditEntry('error', 'NO_CONTEXT', null) }
   }

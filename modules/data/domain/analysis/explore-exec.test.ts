@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import type { Pool } from 'pg'
-import { executeExplore, martsWhitelist } from './explore-exec'
+import { fileURLToPath } from 'node:url'
+import { executeExplore, loadExploreContext, martsWhitelist } from './explore-exec'
 import type { ExploreContext } from './explore'
 
 const context = (over: Partial<ExploreContext> = {}): ExploreContext => ({
@@ -116,5 +117,35 @@ describe('martsWhitelist', () => {
     const set = martsWhitelist()
     expect(set.has('fct_retail_sale')).toBe(true)
     expect([...set].some((n) => n.startsWith('stg_') || n.startsWith('staging'))).toBe(false)
+  })
+})
+
+describe('loadExploreContext（列清单必须问仓库库，不是平台库）', () => {
+  it('information_schema 走注入的仓库执行器；列按表归组', async () => {
+    const seen: string[] = []
+    const ctx = await loadExploreContext({
+      // 平台库只服务词表；一旦被查询就炸 —— 钉住「列不来自平台库」
+      pool: { query: async () => { throw new Error('platform pool must not be queried for columns') } } as unknown as import('pg').Pool,
+      exec: async (sql: string) => {
+        seen.push(sql)
+        return {
+          columns: ['table_name', 'column_name', 'data_type'],
+          rows: [
+            ['fct_retail_sale', 'org', 'text'],
+            ['fct_retail_sale', 'net_amount', 'numeric'],
+          ],
+        }
+      },
+      org: 'acme',
+      // 仓根（本文件在 modules/data/domain/analysis/，往上四层）
+      repoRoot: fileURLToPath(new URL('../../../..', import.meta.url)),
+      loadCatalog: async () => [],
+    })
+    expect(seen[0]).toContain('information_schema.columns')
+    expect(ctx.columns.get('fct_retail_sale')).toEqual([
+      { name: 'org', dataType: 'text' },
+      { name: 'net_amount', dataType: 'numeric' },
+    ])
+    expect(ctx.allowedRelations.has('fct_retail_sale')).toBe(true)
   })
 })
