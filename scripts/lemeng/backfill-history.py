@@ -63,6 +63,11 @@ DATASETS: dict[str, tuple[str, str]] = {
     "client_expense": ("lemeng.client.expense.backfill.{book}", "lemeng/client_expense"),
     "member_summary": ("lemeng.member.summary.backfill.{book}", "lemeng/member_summary"),
     "branch_indicator": ("lemeng.branch_indicator.backfill.{book}", "lemeng/branch_indicator"),
+    "item_sales": ("lemeng.item_sales.backfill.{book}", "lemeng/item_sales"),
+    "item_profit": ("lemeng.item_profit.backfill.{book}", "lemeng/item_profit"),
+    "saler_commission": ("lemeng.saler_commission.backfill.{book}", "lemeng/saler_commission"),
+    "customer_analysis": ("lemeng.customer_analysis.backfill.{book}", "lemeng/customer_analysis"),
+    "inventory_movement": ("lemeng.inventory.movement.backfill.{book}", "lemeng/inventory_movement"),
 }
 
 
@@ -100,6 +105,27 @@ def api(book: str, method: str, path: str, body: dict | None = None) -> dict:
     with urllib.request.urlopen(req, timeout=180) as r:
         raw = r.read()
     return json.loads(raw) if raw else {}
+
+
+def assert_pipeline(book: str, pipeline: str) -> None:
+    """提交前断言该管线真的在**这个账套的** console 里。
+
+    为什么要这一步（2026-11-06 实证）：补采脚本若跑在 A 账套容器里却调 B 账套的管线，
+    卷里根本没有那个文件（seed 期望集 = 共享族 + 本账套，不灌他账套），
+    duckle 只回一句 `pipeline not found` / rc=2，很容易被当成「跑过了」放过去。
+    这里提前拦，并把「跨账套必须换容器」写进错误文案。
+    """
+    try:
+        pipes = api(book, "GET", "/api/pipelines").get("pipelines", [])
+    except Exception as e:  # noqa: BLE001
+        raise SystemExit(f"PREFLIGHT_FAILED: 读不到 console-{book} 的 /api/pipelines（{e}）")
+    ids = {p.get("id") or p.get("name") or p.get("pipelineId") for p in pipes}
+    if pipeline not in ids:
+        raise SystemExit(
+            f"PREFLIGHT_FAILED: console-{book} 里没有管线 {pipeline}。\n"
+            f"  已装载 {len(ids)} 条；若是他账套的管线，**必须进该账套自己的容器执行**\n"
+            f"  （seed 期望集 = 共享族 + 本账套后缀族，他账套文件不在本工作区）"
+        )
 
 
 def wait_run(book: str, pipeline: str, since_iso: str) -> tuple[str, float]:
@@ -193,6 +219,8 @@ def main() -> int:
     ok = empty = failed = 0
     for b in books:
         pipeline = tpl.format(book=b)
+        if apply_:
+            assert_pipeline(b, pipeline)   # fail-fast：跨账套跑错容器在这里就停
         ledger = open(f"{LEDGER_DIR}/{ds}-{b}.jsonl", "a")
         for d in days:
             day = d.isoformat()
