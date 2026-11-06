@@ -29,8 +29,8 @@ describe('sanitizeToolName / 命名', () => {
 })
 
 describe('ANALYST_TOOLS 静态清单自身的约束（工具面预算的实体面）', () => {
-  it('11 个固定工具、名字全合法、mutating 全 false（Wave 1 纯只读）', () => {
-    expect(ANALYST_TOOLS.length).toBe(11)
+  it('12 个固定工具（W6 加 explore_query）、名字全合法、mutating 全 false（纯只读）', () => {
+    expect(ANALYST_TOOLS.length).toBe(12)
     for (const t of ANALYST_TOOLS) {
       expect(t.name).toMatch(TOOL_NAME_RE)
       expect(t.mutating).toBe(false)

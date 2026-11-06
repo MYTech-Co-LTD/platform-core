@@ -170,6 +170,55 @@ export const ANALYST_TOOLS: readonly ToolMeta[] = [
     requiredScope: READ_SCOPE, mutating: false, annotations: readOnly,
   },
   {
+    name: 'explore_query', group: 'query', title: '受约束探索查询',
+    description:
+      '对 marts 做结构化聚合（**不收 SQL 文本**）：relation + measures + dimensions + filters + limit。'
+      + 'org 由平台钉死；列必须真实存在；被掩码的列/整表拒用；行上限 1000。用于「为什么/构成/对比」类分析；'
+      + '要拿已认证口径的数字仍用 query_metric。',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        relation: { type: 'string', description: 'marts 模型名（如 fct_retail_sale）' },
+        measures: {
+          type: 'array',
+          description: '聚合列（1–10 项）',
+          items: {
+            type: 'object',
+            properties: {
+              agg: { type: 'string', enum: ['sum', 'avg', 'min', 'max', 'count', 'count_distinct'] },
+              column: { type: 'string' },
+              as: { type: 'string', description: '别名（缺省 <agg>_<column>）' },
+            },
+            required: ['agg', 'column'],
+          },
+        },
+        dimensions: { type: 'array', items: { type: 'string' }, description: '分组维度（≤4）' },
+        filters: {
+          type: 'array',
+          description: '过滤（≤10 项）；op ∈ eq/neq/in/gte/lte/between',
+          items: {
+            type: 'object',
+            properties: {
+              column: { type: 'string' },
+              op: { type: 'string', enum: ['eq', 'neq', 'in', 'gte', 'lte', 'between'] },
+              value: {},
+            },
+            required: ['column', 'op', 'value'],
+          },
+        },
+        orderBy: {
+          type: 'object',
+          properties: { key: { type: 'string' }, desc: { type: 'boolean' } },
+          required: ['key'],
+        },
+        limit: { type: 'integer', minimum: 1, maximum: 1000, description: '缺省 200' },
+      },
+      required: ['relation', 'measures'],
+    },
+    outputSchema: { type: 'object' },
+    requiredScope: QUERY_SCOPE, mutating: false, annotations: readOnly,
+  },
+  {
     name: 'get_lineage', group: 'health', title: '血缘',
     description: '有界上下游（depth≤3）。血缘源不可用时显式 unknown。',
     inputSchema: {
@@ -236,6 +285,8 @@ export interface ToolboxDeps {
   adoptedSources: ReadonlySet<string>
   /** 仓库执行器（分析师面 = 只读池；测试注入假执行器）。 */
   wh: SqlExecutor
+  /** 参数化只读执行器（`explore_query` 专用；值走 $n，不拼 SQL 文本）。缺省 = 未配置仓库。 */
+  exploreExec?: (sql: string, params: readonly unknown[]) => Promise<{ columns: string[]; rows: unknown[][] }>
   /** 写开关（缺省 false=关）。 */
   allowMutating?: boolean
   /** 血缘/质量 seam（缺省 = health.ts 的 defaultDbtManifest 读 env 路径；测试注入）。 */

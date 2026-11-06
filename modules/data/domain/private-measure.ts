@@ -193,6 +193,26 @@ export function maskedTargets(catalog: readonly MetricRow[]): Set<string> {
 }
 
 /**
+ * 有**整值掩码**声明（`mask_spec` 里 `column === null`）的 L1 关系集合。
+ *
+ * 消费方：W6 的 `explore_query`——整值掩码关系上的自由聚合会看到原值（与私有测度同一个
+ * 道理：整值掩码只从本行取），所以整表拒。判定口径与 `relationHasWholeValueMask` 同一份。
+ */
+export function wholeValueMaskedRelations(catalog: readonly MetricRow[]): Set<string> {
+  const out = new Set<string>()
+  for (const row of catalog) {
+    if (row.source !== 'l1' || row.basis !== 'l1_tree') continue
+    if (!((row.masks ?? []) as MaskSpec[]).some((spec) => spec.column === null)) continue
+    try {
+      out.add(parseL1Select(row.selectSql).relation)
+    } catch {
+      // 坏行不授予任何东西（方向：少读）
+    }
+  }
+  return out
+}
+
+/**
  * measure 列是否命中值级掩码（`MEASURE_MASKED` 的判据）。
  *
  * 匹配规则（fail-closed）：
