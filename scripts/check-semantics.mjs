@@ -63,6 +63,36 @@ export function entityIssues(doc) {
 
 /** 读 l1_metrics.yml 的 name → entity（缺失 = ''）；供覆盖率报告复用。 */
 /**
+ * 不变量声明校验（W4 Task 4）：形状 + status 闭集 + check_sql 形态。
+ * @param {unknown} doc invariants.yml 解析结果
+ * @returns {string[]}
+ */
+export function invariantIssues(doc) {
+  const out = []
+  const root = /** @type {any} */ (doc)
+  const list = Array.isArray(root?.invariants) ? root.invariants : null
+  if (list === null) return ['[invariants] 缺 invariants: 数组']
+  const seen = new Set()
+  for (const [i, v] of list.entries()) {
+    const at = `invariants[${i}]`
+    if (v === null || typeof v !== 'object') { out.push(`${at} 必须是对象`); continue }
+    const name = typeof v.name === 'string' ? v.name.trim() : ''
+    if (name === '') out.push(`${at} 缺 name`)
+    else if (seen.has(name)) out.push(`${at} name 重复：${name}`)
+    else seen.add(name)
+    if (typeof v.relation !== 'string' || v.relation.trim() === '') out.push(`${at} 缺 relation`)
+    if (!['error', 'warn'].includes(String(v.severity))) out.push(`${at} severity 只允许 error | warn`)
+    if (!['candidate', 'verified', 'observing'].includes(String(v.status))) out.push(`${at} status 只允许 candidate | verified | observing`)
+    if (typeof v.owner !== 'string' || v.owner.trim() === '') out.push(`${at} 缺 owner`)
+    const sql = typeof v.check_sql === 'string' ? v.check_sql.trim() : ''
+    if (!/^select\s+count\(\*\)\s+from\s+[A-Za-z_][\w.]*\s+where\s+/i.test(sql)) {
+      out.push(`${at} check_sql 必须是「select count(*) from <rel> where …」（生成器依赖该形态）`)
+    }
+  }
+  return out
+}
+
+/**
  * 维度层级校验（W4 Task 3）。
  * @param {unknown} doc dimensions.yml 解析结果
  * @param {Map<string, Set<string>>} contractColumns 表名 → 列集合（来自 contracts/）
@@ -162,6 +192,7 @@ function main() {
   // 维度校验基准：contracts/ 里每张表的列集合（表名 → 列）
   const contractColumns = loadContractColumns(rootDir)
   if (dims !== null) violations.push(...dimensionIssues(dims, contractColumns))
+  if (inv !== null) violations.push(...invariantIssues(inv))
   for (const [name, text] of [['dimensions.yml', read(join(sem, 'dimensions.yml'))], ['invariants.yml', read(join(sem, 'invariants.yml'))]]) {
     if (text !== '' && parseOrNull(text) === null) violations.push(`${name} 不是可解析的 YAML`)
   }

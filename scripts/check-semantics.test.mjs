@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { dimensionIssues, entityIssues, metricEntities } from './check-semantics.mjs'
+import { dimensionIssues, entityIssues, invariantIssues, metricEntities } from './check-semantics.mjs'
 
 const branch = {
   label: '门店', synonyms: ['店铺'],
@@ -88,5 +88,28 @@ describe('dimensionIssues（W4 Task 3）', () => {
   it('level 重复 / 少于两级 ⇒ issue', () => {
     expect(dimensionIssues(doc([dim({ hierarchy: [{ level: 'p', column: 'province' }, { level: 'p', column: 'branch_num' }] })]), cols).join('\n')).toContain('重复')
     expect(dimensionIssues(doc([dim({ hierarchy: [{ level: 'only', column: 'branch_num' }] })]), cols).join('\n')).toContain('两级')
+  })
+})
+
+describe('invariantIssues（W4 Task 4）', () => {
+  const inv = (over = {}) => ({
+    name: 'net_eq', relation: 'fct_x', severity: 'error', owner: 'data-platform', status: 'candidate',
+    check_sql: 'select count(*) from fct_x where abs(a - b) > 0.01', ...over,
+  })
+  const doc = /** @param {any[]} invariants */ (invariants) => ({ version: 1, invariants })
+
+  it('干净声明 ⇒ 无 issue', () => {
+    expect(invariantIssues(doc([inv()]))).toEqual([])
+  })
+  it('status / severity 闭集外 ⇒ issue', () => {
+    expect(invariantIssues(doc([inv({ status: 'done' })])).join('\n')).toContain('status')
+    expect(invariantIssues(doc([inv({ severity: 'info' })])).join('\n')).toContain('severity')
+  })
+  it('check_sql 形态不对 ⇒ issue（生成器依赖它）', () => {
+    expect(invariantIssues(doc([inv({ check_sql: 'select 1' })])).join('\n')).toContain('check_sql')
+  })
+  it('缺 owner / name 重复 ⇒ issue', () => {
+    expect(invariantIssues(doc([inv({ owner: '' })])).join('\n')).toContain('owner')
+    expect(invariantIssues(doc([inv(), inv()])).join('\n')).toContain('重复')
   })
 })

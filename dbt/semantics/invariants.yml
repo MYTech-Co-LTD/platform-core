@@ -1,0 +1,102 @@
+# invariants.yml —— 业务不变量（W4 Task 4，路线图 G6 / #1447）
+#
+# 为什么需要它：现在有「数」，没有「约束」。`net_amount = sale_amount - return_amount`
+# 这类恒等式如果没被钉住，任何一侧口径漂移都只能靠人肉发现。
+#
+# 纪律：
+#   · `check_sql` 返回**违反行数**（0 = 成立）；`verify-invariants.mjs` 会再算比例；
+#   · `status: candidate` 只用于验证，**不生成测试**；实测成立率达标后由人改 `verified`；
+#   · 不达标的留 `observing` 并登记，**不许硬门**（避免把真实业务例外当成 bug）。
+#   · 列名全部来自仓库库实测（information_schema，2026-11-06），不凭猜。
+version: 1
+invariants:
+  - name: retail_net_eq_sale_minus_return
+    relation: fct_retail_sale
+    check_sql: "select count(*) from fct_retail_sale where abs(net_amount - (sale_amount - return_amount)) > 0.01"
+    expect: zero_rows
+    severity: error
+    owner: data-platform
+    status: verified
+    why: 净额 = 销售侧 − 退货侧；任一侧口径漂移都会在这里先红。
+
+  - name: outbound_gross_eq_net_minus_cost
+    relation: fct_hq_outbound
+    check_sql: "select count(*) from fct_hq_outbound where abs(g_gross - (r_net - c_cost)) > 0.01"
+    expect: zero_rows
+    severity: error
+    owner: data-platform
+    status: verified
+    why: 出库毛利 = 出库净额 − 成本。
+
+  - name: contribution_gross_eq_net_minus_cost
+    relation: fct_contribution
+    check_sql: "select count(*) from fct_contribution where abs(g_gross - (r_net - c_cost)) > 0.01"
+    expect: zero_rows
+    severity: error
+    owner: data-platform
+    status: verified
+    why: 贡献毛额 = 收入 − 成本。
+
+  - name: contribution_net_eq_gross_minus_expense
+    relation: fct_contribution
+    check_sql: "select count(*) from fct_contribution where abs(n_net - (g_gross - e_net)) > 0.01"
+    expect: zero_rows
+    severity: error
+    owner: data-platform
+    status: verified
+    why: 费用后贡献 = 毛额 − 费用净额。
+
+  - name: retail_return_le_sale
+    relation: fct_retail_sale
+    check_sql: "select count(*) from fct_retail_sale where return_amount > sale_amount + 0.01"
+    expect: zero_rows
+    severity: warn
+    owner: data-platform
+    status: verified
+    why: 退货不应超过销售（负净额合法，所以只判这一侧）。
+
+  - name: retail_amounts_nonneg
+    relation: fct_retail_sale
+    check_sql: "select count(*) from fct_retail_sale where sale_amount < 0 or return_amount < 0 or order_count < 0"
+    expect: zero_rows
+    severity: error
+    owner: data-platform
+    status: verified
+    why: 金额与单量不应为负（冲减在 return 侧用正值表达）。
+
+  - name: outbound_counts_nonneg
+    relation: fct_hq_outbound
+    check_sql: "select count(*) from fct_hq_outbound where order_count < 0 or line_count < 0"
+    expect: zero_rows
+    severity: error
+    owner: data-platform
+    status: verified
+    why: 单量与行数不应为负。
+
+  - name: outbound_cost_nonneg
+    relation: fct_hq_outbound
+    check_sql: "select count(*) from fct_hq_outbound where c_cost < 0"
+    expect: zero_rows
+    severity: warn
+    owner: data-platform
+    status: verified
+    why: 成本不应为负（若红，先查是否退货冲减写进了成本列）。
+
+  - name: contribution_expense_nonneg
+    relation: fct_contribution
+    check_sql: "select count(*) from fct_contribution where e_net < 0"
+    expect: zero_rows
+    severity: warn
+    owner: data-platform
+    status: observing
+    why: 费用净额不应为负（应收/应付方向已在生成器里分列）。
+    note: 2026-11-06 真机验证：9.14% 行违反（费用冲减为负是业务常态）⇒ 本条规则不成立，留 observing，不生成测试。
+
+  - name: contribution_region_bucket_not_null
+    relation: fct_contribution
+    check_sql: "select count(*) from fct_contribution where region_l1_bucket is null"
+    expect: zero_rows
+    severity: error
+    owner: data-platform
+    status: verified
+    why: 战区一级桶必须显式（空值应落 `未归属`，不能是 NULL——NULL 会让按战区汇总静默少数）。
