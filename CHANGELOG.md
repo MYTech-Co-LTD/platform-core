@@ -11,6 +11,10 @@
 
 ## [Unreleased]
 
+## [0.272.7](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.272.6...v0.272.7) - 2026-11-06
+- 【修复】data: 只改 synonyms 走键级编辑——携带键与注释逐字保留（#1434） ([#1435](https://github.com/MYTech-Co-LTD/platform-core/pull/1435), [fedf0ec](https://github.com/MYTech-Co-LTD/platform-core/commit/fedf0ec726cdda55c2b70f3be4ce9001d9a2b623))
+
+
 ## [0.272.6](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.272.5...v0.272.6) - 2026-11-06
 - 【修复】data: movement.l0 去掉调度不传的 BIZDAY 闸 + retail.windows 时间戳减整数（附回填经验沉淀） ([#1432](https://github.com/MYTech-Co-LTD/platform-core/pull/1432), [c7a5492](https://github.com/MYTech-Co-LTD/platform-core/commit/c7a54921f4a6682ffeda69d79a73a645bf153771))
 - 【修复】data: 修改模式改为「definition 或 synonyms 至少一个变」——支持 alias_gap 提案（#1427） ([#1433](https://github.com/MYTech-Co-LTD/platform-core/pull/1433), [abb46ec](https://github.com/MYTech-Co-LTD/platform-core/commit/abb46ec2dafe78f7707bfa490705daa4dceb3b76))
