@@ -108,6 +108,17 @@ const sqlType = (/** @type {string} */ t) =>
 /** @param {string} expr @param {string} type @returns {string} */
 const cast = (expr, type) => `CAST(${expr} AS ${sqlType(type)})`
 
+/** 列类型速记 → src.rest `schema` 的声明类型（duckle 类型名）。
+ *  ⚠️ 为什么必须声明：源端某天 0 行时，引擎把上游建成一个**没有列的空 VALUES**，
+ *  下游任何 `input.<col>` 都绑不上（2026-11-06 真机：coupon 在无券核销的日子报
+ *  `Binder Error: Values list "input" does not have a column named "branch_type"`）。
+ *  声明 schema 后空响应仍有列类型，闸与占位逻辑才成立。 */
+const duckleType = (/** @type {string} */ t) =>
+  t === 'INT' ? 'int64'
+    : t === 'TXT' ? 'string'
+      : t === 'JSON' || t === 'JSONL' ? 'json'
+        : 'float64'
+
 /** @param {string} f @returns {any} */
 const readJson = (f) => JSON.parse(readFileSync(join(DIR, f), 'utf8'))
 /** @param {any} o @returns {any} */
@@ -140,6 +151,7 @@ function buildSub(r) {
     `   整天全空由父级 gall/dall 裁决，单块空只写 1 行占位（branch_num=NULL）保证分块到齐判据成立。`,
     `⑤ staging：/workspace/.duckle-stage/${r.slug}/chunk-<batch>-<chunk>.parquet。`,
   ]
+  nodeOf(doc, 'f').data.schema = r.cols.map(([c, t]) => ({ name: c, type: duckleType(t) }))
   setProps(doc, 'f', {
     url: `https://cloud.nhsoft.cn/agi/api/${r.ability}`,
     body: r.body('${ITER_ITEM_BIZDAY}'),

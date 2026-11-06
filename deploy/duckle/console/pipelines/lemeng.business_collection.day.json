@@ -62,27 +62,107 @@
             "type": "string"
           },
           {
-            "name": "metric",
+            "name": "branch_type",
             "type": "string"
           },
           {
-            "name": "period",
-            "type": "string"
-          },
-          {
-            "name": "target_value",
+            "name": "payment_receipt_money",
             "type": "float64"
           },
           {
-            "name": "actual_value",
+            "name": "payment_receipt_total_money",
             "type": "float64"
           },
           {
-            "name": "actual_rate",
+            "name": "all_order_post_fee",
             "type": "float64"
           },
           {
-            "name": "periods",
+            "name": "order_total_discount_money",
+            "type": "float64"
+          },
+          {
+            "name": "un_paid_money",
+            "type": "float64"
+          },
+          {
+            "name": "make_up_money",
+            "type": "float64"
+          },
+          {
+            "name": "cash_system_money",
+            "type": "float64"
+          },
+          {
+            "name": "cash_difference_money",
+            "type": "float64"
+          },
+          {
+            "name": "shift_table_actual_cash_money",
+            "type": "float64"
+          },
+          {
+            "name": "card_deposit_money",
+            "type": "json"
+          },
+          {
+            "name": "card_deposit_total_money",
+            "type": "float64"
+          },
+          {
+            "name": "card_consume_self_money",
+            "type": "float64"
+          },
+          {
+            "name": "card_consume_present_money",
+            "type": "float64"
+          },
+          {
+            "name": "prepaid_card_money",
+            "type": "json"
+          },
+          {
+            "name": "prepaid_card_total_money",
+            "type": "float64"
+          },
+          {
+            "name": "pick_up_card_money",
+            "type": "json"
+          },
+          {
+            "name": "pick_up_card_total_money",
+            "type": "float64"
+          },
+          {
+            "name": "coupon_amount",
+            "type": "float64"
+          },
+          {
+            "name": "coupon_detail_sale_money",
+            "type": "float64"
+          },
+          {
+            "name": "order_coupon_total_money",
+            "type": "float64"
+          },
+          {
+            "name": "other_inout_money",
+            "type": "json"
+          },
+          {
+            "name": "other_inout_total_money",
+            "type": "float64"
+          },
+          {
+            "name": "online_payment_receipt_money",
+            "type": "float64"
+          },
+          {
+            "name": "online_coupon_amount",
+            "type": "float64"
+          },
+          {
+            "name": "all_payment_type_moneys",
             "type": "json"
           }
         ]

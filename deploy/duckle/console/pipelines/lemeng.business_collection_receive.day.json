@@ -54,36 +54,80 @@
             "type": "string"
           },
           {
-            "name": "branch_region_num",
+            "name": "payment_type",
+            "type": "string"
+          },
+          {
+            "name": "receive_money",
+            "type": "float64"
+          },
+          {
+            "name": "receive_money_rate",
+            "type": "float64"
+          },
+          {
+            "name": "order_count",
             "type": "int64"
           },
           {
-            "name": "branch_region_name",
-            "type": "string"
-          },
-          {
-            "name": "metric",
-            "type": "string"
-          },
-          {
-            "name": "period",
-            "type": "string"
-          },
-          {
-            "name": "target_value",
+            "name": "order_count_rate",
             "type": "float64"
           },
           {
-            "name": "actual_value",
+            "name": "pos_order_receive_money",
             "type": "float64"
           },
           {
-            "name": "actual_rate",
+            "name": "pos_order_count",
+            "type": "int64"
+          },
+          {
+            "name": "card_deposit_receive_money",
             "type": "float64"
           },
           {
-            "name": "periods",
-            "type": "json"
+            "name": "card_deposit_order_count",
+            "type": "int64"
+          },
+          {
+            "name": "card_relate_receive_money",
+            "type": "float64"
+          },
+          {
+            "name": "card_relate_order_count",
+            "type": "int64"
+          },
+          {
+            "name": "card_replace_receive_money",
+            "type": "float64"
+          },
+          {
+            "name": "card_replace_order_count",
+            "type": "int64"
+          },
+          {
+            "name": "exchange_card_receive_money",
+            "type": "float64"
+          },
+          {
+            "name": "exchange_card_order_count",
+            "type": "int64"
+          },
+          {
+            "name": "other_receive_money",
+            "type": "float64"
+          },
+          {
+            "name": "other_order_count",
+            "type": "int64"
+          },
+          {
+            "name": "purchase_records_receive_money",
+            "type": "float64"
+          },
+          {
+            "name": "purchase_records_order_count",
+            "type": "int64"
           }
         ]
       }
