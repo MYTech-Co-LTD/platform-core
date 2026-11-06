@@ -1,0 +1,272 @@
+{
+  "$schema": "./_schema.schema.json",
+  "contractVersion": 2,
+  "schemaVersion": 1,
+  "consumerVersion": 1,
+  "domain": "lemeng",
+  "table": "business_collection",
+  "owner": "data-platform",
+  "description": "乐檬营业收款报表-门店汇总日粒度（nhsoft.report.ai.businesscollection.find；AMAREPORT，2026-11-06 接源）。【行粒度】一行 = 账套 × bizday × 门店。【窗口】单日窗（date_start=date_end=BIZDAY），含首尾最多 31 天（10002）；`branch_nums` 必填且**单请求 ≤100 家**（10001，3120 有 270 家 ⇒ 父管线按 100 切块 ctl.foreach）；越权店号 10003。【省略语义】当日无数据的门店不出现在 rows 里（total_count == len(rows) 合法）⇒ 缺行 = 无数据，不是零值。【不分页】接口一次返回全部。",
+  "layout": {
+    "prefix": "lemeng/business_collection",
+    "partitionStyle": "hive",
+    "partitionBy": [
+      "system_book",
+      "bizday"
+    ],
+    "fileName": "all.parquet"
+  },
+  "batch": {
+    "markerColumn": "batch_id",
+    "type": "varchar",
+    "unique": false,
+    "note": "= 父管线 lemeng.business_collection.l0.<book> 每轮的批次号（UTC 时间戳串）。同一 bizday 分区每轮覆盖写；回填变体 lemeng.business_collection.backfill.<book> 由 params.BIZDAY 驱动、复用同一 layout。"
+  },
+  "columns": [
+    {
+      "name": "batch_id",
+      "type": "varchar",
+      "nullable": false,
+      "description": "采集批次（父管线 drv 的 batch_id，UTC 时间戳串）",
+      "expr": "CAST(batch_id AS VARCHAR)"
+    },
+    {
+      "name": "system_book",
+      "type": "integer",
+      "nullable": false,
+      "description": "账套（3120 熊喵 / 64188 品品甜）；分区键",
+      "expr": "CAST(system_book AS INTEGER)"
+    },
+    {
+      "name": "bizday",
+      "type": "date",
+      "nullable": false,
+      "description": "营业日（查询窗单日）；分区键",
+      "expr": "CAST(bizday AS DATE)"
+    },
+    {
+      "name": "branch_num",
+      "type": "integer",
+      "nullable": false,
+      "description": "门店编号",
+      "expr": "CAST(branch_num AS INTEGER)"
+    },
+    {
+      "name": "branch_code",
+      "type": "varchar",
+      "nullable": true,
+      "description": "门店编码",
+      "expr": "CAST(branch_code AS VARCHAR)"
+    },
+    {
+      "name": "branch_name",
+      "type": "varchar",
+      "nullable": true,
+      "description": "门店名称",
+      "expr": "CAST(branch_name AS VARCHAR)"
+    },
+    {
+      "name": "branch_region_num",
+      "type": "integer",
+      "nullable": true,
+      "description": "门店区域编号",
+      "expr": "CAST(branch_region_num AS INTEGER)"
+    },
+    {
+      "name": "branch_region_name",
+      "type": "varchar",
+      "nullable": true,
+      "description": "门店区域名称",
+      "expr": "CAST(branch_region_name AS VARCHAR)"
+    },
+    {
+      "name": "branch_type",
+      "type": "varchar",
+      "nullable": true,
+      "description": "门店类型（加盟/直营）",
+      "expr": "CAST(branch_type AS VARCHAR)"
+    },
+    {
+      "name": "payment_receipt_money",
+      "type": "decimal(20,2)",
+      "nullable": true,
+      "description": "实收金额（元）",
+      "expr": "CAST(payment_receipt_money AS DECIMAL(20, 2))"
+    },
+    {
+      "name": "payment_receipt_total_money",
+      "type": "decimal(20,2)",
+      "nullable": true,
+      "description": "应收金额（含优惠前）（元）",
+      "expr": "CAST(payment_receipt_total_money AS DECIMAL(20, 2))"
+    },
+    {
+      "name": "all_order_post_fee",
+      "type": "decimal(20,2)",
+      "nullable": true,
+      "description": "全部订单附加费（元）",
+      "expr": "CAST(all_order_post_fee AS DECIMAL(20, 2))"
+    },
+    {
+      "name": "order_total_discount_money",
+      "type": "decimal(20,2)",
+      "nullable": true,
+      "description": "订单总优惠（元）",
+      "expr": "CAST(order_total_discount_money AS DECIMAL(20, 2))"
+    },
+    {
+      "name": "un_paid_money",
+      "type": "decimal(20,2)",
+      "nullable": true,
+      "description": "未收金额（元）",
+      "expr": "CAST(un_paid_money AS DECIMAL(20, 2))"
+    },
+    {
+      "name": "make_up_money",
+      "type": "decimal(20,2)",
+      "nullable": true,
+      "description": "补录金额（选 shift/terminal/cashier 维时不返回）（元）",
+      "expr": "CAST(make_up_money AS DECIMAL(20, 2))"
+    },
+    {
+      "name": "cash_system_money",
+      "type": "decimal(20,2)",
+      "nullable": true,
+      "description": "系统现金（仅 date_type=bizday 返回）（元）",
+      "expr": "CAST(cash_system_money AS DECIMAL(20, 2))"
+    },
+    {
+      "name": "cash_difference_money",
+      "type": "decimal(20,2)",
+      "nullable": true,
+      "description": "现金长短款（仅 date_type=bizday 返回）（元）",
+      "expr": "CAST(cash_difference_money AS DECIMAL(20, 2))"
+    },
+    {
+      "name": "shift_table_actual_cash_money",
+      "type": "decimal(20,2)",
+      "nullable": true,
+      "description": "班次表实盘现金（仅 date_type=bizday 返回）（元）",
+      "expr": "CAST(shift_table_actual_cash_money AS DECIMAL(20, 2))"
+    },
+    {
+      "name": "card_deposit_money",
+      "type": "decimal(20,2)",
+      "nullable": true,
+      "description": "储值卡充值金额（元）",
+      "expr": "CAST(card_deposit_money AS DECIMAL(20, 2))"
+    },
+    {
+      "name": "card_deposit_total_money",
+      "type": "decimal(20,2)",
+      "nullable": true,
+      "description": "储值卡充值总额（含赠送）（元）",
+      "expr": "CAST(card_deposit_total_money AS DECIMAL(20, 2))"
+    },
+    {
+      "name": "card_consume_self_money",
+      "type": "decimal(20,2)",
+      "nullable": true,
+      "description": "储值卡消费本金（元）",
+      "expr": "CAST(card_consume_self_money AS DECIMAL(20, 2))"
+    },
+    {
+      "name": "card_consume_present_money",
+      "type": "decimal(20,2)",
+      "nullable": true,
+      "description": "储值卡消费赠送（元）",
+      "expr": "CAST(card_consume_present_money AS DECIMAL(20, 2))"
+    },
+    {
+      "name": "prepaid_card_money",
+      "type": "decimal(20,2)",
+      "nullable": true,
+      "description": "付费会员卡购买金额（元）",
+      "expr": "CAST(prepaid_card_money AS DECIMAL(20, 2))"
+    },
+    {
+      "name": "prepaid_card_total_money",
+      "type": "decimal(20,2)",
+      "nullable": true,
+      "description": "付费会员卡购买总额（元）",
+      "expr": "CAST(prepaid_card_total_money AS DECIMAL(20, 2))"
+    },
+    {
+      "name": "pick_up_card_money",
+      "type": "decimal(20,2)",
+      "nullable": true,
+      "description": "提货卡金额（元）",
+      "expr": "CAST(pick_up_card_money AS DECIMAL(20, 2))"
+    },
+    {
+      "name": "pick_up_card_total_money",
+      "type": "decimal(20,2)",
+      "nullable": true,
+      "description": "提货卡总额（元）",
+      "expr": "CAST(pick_up_card_total_money AS DECIMAL(20, 2))"
+    },
+    {
+      "name": "coupon_amount",
+      "type": "decimal(20,2)",
+      "nullable": true,
+      "description": "券面额合计（元）",
+      "expr": "CAST(coupon_amount AS DECIMAL(20, 2))"
+    },
+    {
+      "name": "coupon_detail_sale_money",
+      "type": "decimal(20,2)",
+      "nullable": true,
+      "description": "券明细销售额（元）",
+      "expr": "CAST(coupon_detail_sale_money AS DECIMAL(20, 2))"
+    },
+    {
+      "name": "order_coupon_total_money",
+      "type": "decimal(20,2)",
+      "nullable": true,
+      "description": "订单券总额（元）",
+      "expr": "CAST(order_coupon_total_money AS DECIMAL(20, 2))"
+    },
+    {
+      "name": "other_inout_money",
+      "type": "decimal(20,2)",
+      "nullable": true,
+      "description": "其他收支金额（元）",
+      "expr": "CAST(other_inout_money AS DECIMAL(20, 2))"
+    },
+    {
+      "name": "other_inout_total_money",
+      "type": "decimal(20,2)",
+      "nullable": true,
+      "description": "其他收支总额（元）",
+      "expr": "CAST(other_inout_total_money AS DECIMAL(20, 2))"
+    },
+    {
+      "name": "online_payment_receipt_money",
+      "type": "decimal(20,2)",
+      "nullable": true,
+      "description": "线上实收金额（元）",
+      "expr": "CAST(online_payment_receipt_money AS DECIMAL(20, 2))"
+    },
+    {
+      "name": "online_coupon_amount",
+      "type": "decimal(20,2)",
+      "nullable": true,
+      "description": "线上券面额（元）",
+      "expr": "CAST(online_coupon_amount AS DECIMAL(20, 2))"
+    },
+    {
+      "name": "all_payment_type_moneys",
+      "type": "varchar",
+      "nullable": true,
+      "description": "各收款方式金额（JSON 串；键 = 支付方式，值 = 金额）",
+      "expr": "CAST(all_payment_type_moneys AS VARCHAR)"
+    },
+    {
+      "name": "computed_at",
+      "type": "timestamp_tz",
+      "nullable": false,
+      "description": "采集写入时刻",
+      "expr": "CAST(computed_at AS TIMESTAMPTZ)"
+    }
+  ]
+}

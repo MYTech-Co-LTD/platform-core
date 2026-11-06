@@ -1,6 +1,6 @@
 // console-schedules-tz.test.ts — 业务排班时区统一门禁（spec 2026-10-15 §10.6，2026-10-16 用户拍板）。
 //
-// 钉什么：deploy/duckle/console/schedules/ 下三本种子（3120×30 + 64188×26 + forms×1，共 57 条）必须
+// 钉什么：deploy/duckle/console/schedules/ 下三本种子（3120×33 + 64188×29 + forms×1，共 63 条）必须
 //   ① 全部显式 `timezone: 'Asia/Shanghai'`（含原先缺省无字段的 9 条）；
 //   ② `kind.expr` 与 §10.6 转换表**逐字**一致（旧 UTC expr +8h）。
 //   ⚠️ **2026-10-20 订正（#931）**：非销售采集统一到 **14–24 点每 2 小时**（`M 14,16,18,20,22 * * *`），
@@ -33,6 +33,10 @@ const EXPECTED: Record<string, Record<string, string>> = {
     'panel-lemeng.dim.branch.l0': '0 14,16,18,20,22 * * *',
     'panel-lemeng.branch.expense.l0.3120': '5 14,16,18,20,22 * * *',
     'panel-lemeng.branch_indicator.l0.3120': '10 14,16,18,20,22 * * *',
+    // 2026-11-06 营业收款三件套（门店汇总 / 门店收款构成 / 卡券汇总）
+    'panel-lemeng.business_collection.l0.3120': '50 14,16,18,20,22 * * *',
+    'panel-lemeng.business_collection_receive.l0.3120': '50 14,16,18,20,22 * * *',
+    'panel-lemeng.business_collection_coupon.l0.3120': '50 14,16,18,20,22 * * *',
     'panel-lemeng.loss.adjustment.l0.3120': '5 14,16,18,20,22 * * *',
     'panel-lemeng.dim.item_price.l0.3120': '15 14,16,18,20,22 * * *',
     'panel-lemeng.client.expense.l0.3120': '15 14,16,18,20,22 * * *',
@@ -72,6 +76,10 @@ const EXPECTED: Record<string, Record<string, string>> = {
     // 批发与配送**明确不采**（用户 2026-10-27 裁决），故无 transfer.* / wholesale.* 条目。
     'panel-lemeng.branch.expense.l0.64188': '5 14,16,18,20,22 * * *',
     'panel-lemeng.branch_indicator.l0.64188': '10 14,16,18,20,22 * * *',
+    // 2026-11-06 营业收款三件套（与 3120 同批）
+    'panel-lemeng.business_collection.l0.64188': '50 14,16,18,20,22 * * *',
+    'panel-lemeng.business_collection_receive.l0.64188': '50 14,16,18,20,22 * * *',
+    'panel-lemeng.business_collection_coupon.l0.64188': '50 14,16,18,20,22 * * *',
     'panel-lemeng.loss.adjustment.l0.64188': '5 14,16,18,20,22 * * *',
     'panel-lemeng.request.order.l0.64188': '20 14,16,18,20,22 * * *',
     'panel-lemeng.inventory.snapshot.l0.64188': '35 14,16,18,20,22 * * *',
@@ -115,6 +123,6 @@ describe('console 排班时区统一（spec §10.6）：49 条全显式 Asia/Sha
 
   it('合计恰 55 条（3120×30 + 64188×24 + forms×1）——条数漂移必须显式改 spec §10.6 与本测试', () => {
     const total = Object.values(EXPECTED).reduce((n, m) => n + Object.keys(m).length, 0)
-    expect(total).toBe(57)
+    expect(total).toBe(63)
   })
 })

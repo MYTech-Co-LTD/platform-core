@@ -214,6 +214,33 @@ sources:
           partition_key_typing: '由路径字符串重推断；两列在 staging 显式 cast（system_book::varchar / bizday::date）'
           pagination: '无分页（responsePath=/result/rows）；`branch_nums` 单次 ≤100 家（超出 code=10001）⇒ 父管线 whoami 取全店、按 100 切块经 ctl.foreach 派子管线，子管线只写 .duckle-stage，父管线 asm 合并后写湖（2026-10-26 起每轮 date-1d）'
 
+      - name: business_collection
+        description: '乐檬**营业收款报表-门店汇总**（2026-11-06 契约）：行 = 账套 × bizday × 门店（summary_types=[branch]）。接口 nhsoft.report.ai.businesscollection.find；窗口单日、含首尾 ≤31 天（10002）、branch_nums 必传 ≤100 家（10001）⇒ 父管线 whoami 切块 ctl.foreach。⚠️ 当日无数据的门店不出现在 rows ⇒ 缺行 = 无数据，不是零值。`*_money` 里现金三列（cash_system_money / cash_difference_money / shift_table_actual_cash_money）**仅 date_type=bizday 返回**，本管线固定 bizday。all_payment_type_moneys 为 JSON 串（键=支付方式）。'
+        meta:
+          path_convention: 'lemeng/business_collection/system_book=<账套>/bizday=<日期>/all.parquet'
+          access_path: "read_parquet('s3://{{ var(\"zos_bucket\") }}/{{ var(\"lemeng_business_collection_prefix\") }}/*/bizday=**/*.parquet') r"
+          partition_keys: ['system_book', 'bizday']
+          partition_key_typing: '由路径字符串重推断；两列在 staging 显式 cast'
+          pagination: '无分页（responsePath=/result/rows）；响应 {result:{total_count,rows[]}}，管线断言 len(rows)==total_count'
+
+      - name: business_collection_receive
+        description: '乐檬**营业收款报表-门店收款构成**（2026-11-06 契约）：行 = 账套 × bizday × 门店 × 支付方式（summary_types=[branch,payment_type]）。接口 nhsoft.report.ai.businesscollection.receive.find；必填 order_types（已结账单/卡存款/其他收支/会员换卡/会员续卡/付费会员/次卡 全取）。接口**始终按 payment_type 分组**返回，即使未显式选该维 ⇒ 该列恒非空。'
+        meta:
+          path_convention: 'lemeng/business_collection_receive/system_book=<账套>/bizday=<日期>/all.parquet'
+          access_path: "read_parquet('s3://{{ var(\"zos_bucket\") }}/{{ var(\"lemeng_business_collection_receive_prefix\") }}/*/bizday=**/*.parquet') r"
+          partition_keys: ['system_book', 'bizday']
+          partition_key_typing: '由路径字符串重推断；两列在 staging 显式 cast'
+          pagination: '无分页（responsePath=/result/rows）；响应 {result:{total_count,rows[]}}，管线断言 len(rows)==total_count'
+
+      - name: business_collection_coupon
+        description: '乐檬**营业收款报表-卡券汇总**（2026-11-06 契约）：行 = 账套 × bizday × 门店 × 券类型（summary_types=[branch,coupon_type]）。接口 nhsoft.report.ai.businesscollection.coupon.find；date_type=bizday 时窗口 ≤31 天（receipt_date 仅 3 天，本管线固定 bizday）。⚠️ 业务极稀疏（实测 3120 十月全店仅 2 行）⇒ 缺行 = 当日无券核销，不是断供。'
+        meta:
+          path_convention: 'lemeng/business_collection_coupon/system_book=<账套>/bizday=<日期>/all.parquet'
+          access_path: "read_parquet('s3://{{ var(\"zos_bucket\") }}/{{ var(\"lemeng_business_collection_coupon_prefix\") }}/*/bizday=**/*.parquet') r"
+          partition_keys: ['system_book', 'bizday']
+          partition_key_typing: '由路径字符串重推断；两列在 staging 显式 cast'
+          pagination: '无分页（responsePath=/result/rows）；响应 {result:{total_count,rows[]}}，管线断言 len(rows)==total_count'
+
       - name: item_sales
         description: '乐檬**商品销售分析**（2026-11-02 契约）：行 = 账套 × bizday × 门店 × 商品（summary_types=[branch,item]）。接口 nhsoft.report.ai.itemsales.find；窗口 ≤31 天硬限（10002）、branch_nums 必传 ≤100 家（10001）、越权店号 10003 ⇒ 父管线 whoami 取全店、按 100 切块 ctl.foreach 扇出。⚠️ 当日无销售的门店/商品不出现在 rows（total_count==len(rows) 合法）⇒ 缺行 = 无数据，不是零值。与 item_profit 同粒度不同表（商品集合不保证一致），join 在消费面做。'
         meta:

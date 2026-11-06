@@ -49,8 +49,20 @@ const TARGETS = [
   { base: 'lemeng.item_profit', book: '64188', window: '${date-1d}' },
   { base: 'lemeng.customer_analysis', book: '3120', window: '${date-1d}' },
   { base: 'lemeng.customer_analysis', book: '64188', window: '${date-1d}' },
-  { base: 'lemeng.inventory.movement', book: '3120', window: '${date-1d}' },
-  { base: 'lemeng.inventory.movement', book: '64188', window: '${date-1d}' },
+  // ⚠️ 2026-11-06 订正：`lemeng.inventory.movement.l0.{book}` 已在 #1437 拆成 seg1..seg4 并按页段
+  //    静态并发（原文件删除）⇒ 这两条 TARGETS 指向的主管线**已不存在**，生成器读到就 process.exit(2)，
+  //    把排在后面的所有条目一起挡掉（实测：本次新增的 business_collection 族一条都没生成）。
+  //    现有 `lemeng.inventory.movement.backfill.{book}` 是**自包含**形态（自己的 src.rest + sink，
+  //    不经 foreach），不再由主管线派生 ⇒ 从 TARGETS 移除，改由仓内文件直接维护。
+  //    ⚠️ 本脚本的 `--check` **不在 CI 里**（package.json / workflows 均未引用）⇒ 断链一直没被发现；
+  //    要让它有牙，得先把 `--check` 接进 CI。
+  // ── 营业收款三件套（2026-11-06 接源；单日窗，${{BIZDAY}} 由 backfill-history.py 经 params 传入）──
+  { base: 'lemeng.business_collection', book: '3120', window: '${date-1d}' },
+  { base: 'lemeng.business_collection', book: '64188', window: '${date-1d}' },
+  { base: 'lemeng.business_collection_receive', book: '3120', window: '${date-1d}' },
+  { base: 'lemeng.business_collection_receive', book: '64188', window: '${date-1d}' },
+  { base: 'lemeng.business_collection_coupon', book: '3120', window: '${date-1d}' },
+  { base: 'lemeng.business_collection_coupon', book: '64188', window: '${date-1d}' },
 ]
 
 const BACKFILL = '${BIZDAY}'

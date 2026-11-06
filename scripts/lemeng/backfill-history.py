@@ -63,6 +63,11 @@ DATASETS: dict[str, tuple[str, str]] = {
     "client_expense": ("lemeng.client.expense.backfill.{book}", "lemeng/client_expense"),
     "member_summary": ("lemeng.member.summary.backfill.{book}", "lemeng/member_summary"),
     "branch_indicator": ("lemeng.branch_indicator.backfill.{book}", "lemeng/branch_indicator"),
+    # 营业收款三件套（2026-11-06 接源）：单日窗，父管线按 whoami 门店清单切块 foreach；
+    # 接口硬限：branch_nums ≤100 家/请求、日期跨度 ≤31 天 ⇒ 逐日驱动天然合规。
+    "business_collection": ("lemeng.business_collection.backfill.{book}", "lemeng/business_collection"),
+    "business_collection_receive": ("lemeng.business_collection_receive.backfill.{book}", "lemeng/business_collection_receive"),
+    "business_collection_coupon": ("lemeng.business_collection_coupon.backfill.{book}", "lemeng/business_collection_coupon"),
 }
 
 
