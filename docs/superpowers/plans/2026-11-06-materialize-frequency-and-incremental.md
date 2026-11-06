@@ -30,6 +30,9 @@
 6. 全量档 `--exclude fct_retail_sale`：tick 拥有该模型，两档并发写同一张表会冲突；全量档也不再给
    它写 `data.load_log` 水位（否则 `data_as_of` 假前进）。tick 档自己写。
 7. 首次 `--full-refresh --select fct_retail_sale`：见 §4 时点。
+8. **基面下推（#1524）**：`gen-fct-measures.mjs` 对 `incrementalLookback` 模型在 `base_sale` /
+   `base_return` CTE 内加 7 天 lookback —— 只放最终 SELECT 会「先扫全史再过滤」，首轮 tick 实测
+   5+ 分钟；下推后 read_parquet 走 bizday 分区裁剪，目标 <2 分钟。
 
 ### W2（W1 稳定后）：其余日粒度 fct 改增量
 - 按 spec §3/§10：P2 的 13 张日粒度 fct；全量 build 目标 <5 分钟。
