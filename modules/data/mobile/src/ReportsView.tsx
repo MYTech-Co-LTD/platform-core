@@ -25,6 +25,45 @@ export interface ReportRow {
   requiredDepts?: string[] | null
   /** 登记侧版本（写保护读侧）：发布/下线的 expectedVersion 来源 */
   version?: number
+  /**
+   * 报表规格里声明过的指标 id（W5 Task 4，服务端从 spec.panels 投影）。
+   * 空/缺省 ⇒ 不渲染「口径与来源」链接（不猜一个 metric）。
+   */
+  metricIds?: string[]
+}
+
+/**
+ * 体系地图深链（定案 A）：独立追溯页，移动壳只放**链接**，不复制渲染逻辑。
+ * 页面自身按 hash 路由（#/metrics/<id> / #/overview），服务端只认 `/api/modules/data/system-map`。
+ */
+export function systemMapHref(fragment: string): string {
+  const path = fragment.startsWith('#/') ? fragment : `#/${fragment.replace(/^#?\/?/, '')}`
+  return `/api/modules/data/system-map${path}`
+}
+
+/** 报表卡上的「口径与来源」链接组（无指标 id ⇒ 不渲染）。 */
+function SourceLinks({ metricIds }: { metricIds?: string[] }) {
+  const ids = [...new Set(metricIds ?? [])]
+  if (ids.length === 0) return null
+  const shown = ids.slice(0, 3)
+  const linkStyle = {
+    display: 'inline-flex', alignItems: 'center', minHeight: 44,
+    fontSize: 13, color: '#1677ff', textDecoration: 'none',
+  }
+  return (
+    <div style={{ borderTop: '1px solid #f5f5f5', marginTop: 10, paddingTop: 4, display: 'flex', flexWrap: 'wrap', gap: 14 }}>
+      {shown.map((id) => (
+        <a key={id} href={systemMapHref(`#/metrics/${encodeURIComponent(id)}`)} style={linkStyle}>
+          口径与来源{shown.length > 1 ? ` · ${id}` : ''}
+        </a>
+      ))}
+      {ids.length > shown.length ? (
+        <a href={systemMapHref('#/metrics')} style={linkStyle}>
+          全部 {ids.length} 个指标
+        </a>
+      ) : null}
+    </div>
+  )
 }
 
 interface SheetAction {
@@ -170,14 +209,25 @@ export default function ReportsView({ rows, reload, tab, self }: {
         position: 'sticky', top: 0, zIndex: 10, background: '#f5f5f5',
         padding: '8px 12px 6px', borderBottom: '1px solid #eee',
       }}>
-        <h3 style={{ margin: '0 0 2px', fontSize: 18 }}>
-          {tab === 'center' ? '报表中心' : '报表管理'}
-          {rows.length > 0 ? (
-            <span style={{ fontSize: 12, color: '#999', fontWeight: 400, marginLeft: 8 }}>
-              {q === '' ? `共 ${visible.length} 个` : `匹配 ${visible.length} / ${pool.length}`}
-            </span>
-          ) : null}
-        </h3>
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 8 }}>
+          <h3 style={{ margin: '0 0 2px', fontSize: 18 }}>
+            {tab === 'center' ? '报表中心' : '报表管理'}
+            {rows.length > 0 ? (
+              <span style={{ fontSize: 12, color: '#999', fontWeight: 400, marginLeft: 8 }}>
+                {q === '' ? `共 ${visible.length} 个` : `匹配 ${visible.length} / ${pool.length}`}
+              </span>
+            ) : null}
+          </h3>
+          {/* 次级入口（定案 A）：体系地图是独立追溯页，不占底部 tab */}
+          {/* 同 tab 打开：从报表进详情后「← 返回」走 history.back() 回到本报表（Task 3 验收） */}
+          <a href={systemMapHref('#/overview')}
+             style={{
+               display: 'inline-flex', alignItems: 'center', minHeight: 44, padding: '0 4px',
+               fontSize: 13, color: '#1677ff', textDecoration: 'none', flex: '0 0 auto',
+             }}>
+            体系地图
+          </a>
+        </div>
         {/* 与指标页一致：不用 antd-mobile SearchBar（本仓 React 18 + hoisted 19 下渲染异常） */}
         <div style={{
           display: 'flex', alignItems: 'center', gap: 6,
@@ -214,15 +264,41 @@ export default function ReportsView({ rows, reload, tab, self }: {
           // 交互按语境分开（#1373）：中心点卡 = 打开阅读；管理点卡 = 管理面板
           if (tab === 'manage') {
             return (
+              <div key={r.id} style={{ background: '#fff', borderRadius: 14, border: '1px solid #eee', overflow: 'hidden' }}>
+                <button
+                  type="button"
+                  onClick={() => setSheetFor(r)}
+                  style={{
+                    display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 10,
+                    width: '100%', textAlign: 'left', cursor: 'pointer',
+                    background: 'none', border: 'none', padding: '14px 16px',
+                  }}
+                >
+                  <span style={{ minWidth: 0 }}>
+                    <span style={{ display: 'block', fontSize: 16, fontWeight: 600, lineHeight: 1.4 }}>
+                      {r.title}
+                    </span>
+                    <span style={{ display: 'block', fontSize: 12, color: '#999', marginTop: 6 }}>
+                      {r.renderer === 'metabase' ? 'Metabase 报表'
+                        : published ? (r.hasUnpublishedChanges ? '已发布 · 有未发布改动' : '已发布') : '未发布草稿'}
+                    </span>
+                  </span>
+                  <span aria-hidden style={{ color: '#999', fontSize: 20, flex: '0 0 auto' }}>⋯</span>
+                </button>
+                <div style={{ padding: '0 16px' }}><SourceLinks metricIds={r.metricIds} /></div>
+              </div>
+            )
+          }
+          return (
+            <div key={r.id} style={{ background: '#fff', borderRadius: 14, border: '1px solid #eee', overflow: 'hidden' }}>
               <button
-                key={r.id}
                 type="button"
-                onClick={() => setSheetFor(r)}
+                onClick={() => void open(r)}
+                disabled={opening === r.id}
                 style={{
                   display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 10,
                   width: '100%', textAlign: 'left', cursor: 'pointer',
-                  background: '#fff', borderRadius: 14, border: '1px solid #eee',
-                  padding: '14px 16px',
+                  background: 'none', border: 'none', padding: '14px 16px',
                 }}
               >
                 <span style={{ minWidth: 0 }}>
@@ -230,47 +306,23 @@ export default function ReportsView({ rows, reload, tab, self }: {
                     {r.title}
                   </span>
                   <span style={{ display: 'block', fontSize: 12, color: '#999', marginTop: 6 }}>
-                    {r.renderer === 'metabase' ? 'Metabase 报表'
-                      : published ? (r.hasUnpublishedChanges ? '已发布 · 有未发布改动' : '已发布') : '未发布草稿'}
+                    {r.owner ? `所有者 ${r.owner}` : '无所有者'}
+                    {r.ownerActive === false ? '（已停用）' : ''}
                   </span>
                 </span>
-                <span aria-hidden style={{ color: '#999', fontSize: 20, flex: '0 0 auto' }}>⋯</span>
+                <span style={{ display: 'flex', alignItems: 'center', gap: 8, flex: '0 0 auto' }}>
+                  {r.renderer === 'platform' && (
+                    published
+                      ? <Tag color="success" fill="outline" style={{ '--background-color': '#fff' }}>
+                          {r.hasUnpublishedChanges ? '有更新' : '已发布'}
+                        </Tag>
+                      : <Tag color="default" fill="outline" style={{ '--background-color': '#fff' }}>未发布</Tag>
+                  )}
+                  <span aria-hidden style={{ color: '#ccc', fontSize: 18 }}>›</span>
+                </span>
               </button>
-            )
-          }
-          return (
-            <button
-              key={r.id}
-              type="button"
-              onClick={() => void open(r)}
-              disabled={opening === r.id}
-              style={{
-                display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 10,
-                width: '100%', textAlign: 'left', cursor: 'pointer',
-                background: '#fff', borderRadius: 14, border: '1px solid #eee',
-                padding: '14px 16px',
-              }}
-            >
-              <span style={{ minWidth: 0 }}>
-                <span style={{ display: 'block', fontSize: 16, fontWeight: 600, lineHeight: 1.4 }}>
-                  {r.title}
-                </span>
-                <span style={{ display: 'block', fontSize: 12, color: '#999', marginTop: 6 }}>
-                  {r.owner ? `所有者 ${r.owner}` : '无所有者'}
-                  {r.ownerActive === false ? '（已停用）' : ''}
-                </span>
-              </span>
-              <span style={{ display: 'flex', alignItems: 'center', gap: 8, flex: '0 0 auto' }}>
-                {r.renderer === 'platform' && (
-                  published
-                    ? <Tag color="success" fill="outline" style={{ '--background-color': '#fff' }}>
-                        {r.hasUnpublishedChanges ? '有更新' : '已发布'}
-                      </Tag>
-                    : <Tag color="default" fill="outline" style={{ '--background-color': '#fff' }}>未发布</Tag>
-                )}
-                <span aria-hidden style={{ color: '#ccc', fontSize: 18 }}>›</span>
-              </span>
-            </button>
+              <div style={{ padding: '0 16px' }}><SourceLinks metricIds={r.metricIds} /></div>
+            </div>
           )
         })}
       </div>

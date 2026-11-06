@@ -420,6 +420,21 @@ export function registerReports(r: ModuleHono, ctx: RouteCtx): void {
     }
   })
 
+  /**
+   * 报表规格里出现的指标 id（去重、保序）。`text` / `ai_text` 面板没有 metricId。
+   * 只回**实际声明过的** id——移动壳的「口径与来源」深链靠它，前端不猜。
+   */
+  const metricIdsOfSpec = (spec: ReportSpec | null): string[] => {
+    if (spec === null) return []
+    const ids: string[] = []
+    for (const panel of spec.panels) {
+      if ('metricId' in panel && typeof panel.metricId === 'string' && !ids.includes(panel.metricId)) {
+        ids.push(panel.metricId)
+      }
+    }
+    return ids
+  }
+
   r.get('/reports', async (c) => {
     const requester = requesterOf(c)
     // M3 守卫拒掉的请求者：对其「看不见」（约束 3）——空清单，不是报错（口径同 GET /metrics）
@@ -444,6 +459,9 @@ export function registerReports(r: ModuleHono, ctx: RouteCtx): void {
           // `canEdit` 唯一实现仍是 `canEditAsset`（owner ∪ data:manage）——前端只消费结论，
           // 不复制判据（复制必然漂移，#1179 的教训）。
           version: row.version,
+          // W5 Task 4 定案 A：移动壳「口径与来源」深链的唯一来源（规格里的指标 id）。
+          // 没有指标 id（metabase 行 / 纯文本报表）⇒ 空数组，前端据此不渲染链接。
+          metricIds: metricIdsOfSpec(row.spec),
           canEdit: canEditAsset(acls.get(row.id) ?? [], requester, MANAGE_SCOPE),
           // 所有者列（#1327）：owner-only 用户也在看这份清单，缺它会把自己的报表显示成「无所有者」
           owner: (acls.get(row.id) ?? []).find((a) => a.relation === 'owner')?.subjectId ?? null,

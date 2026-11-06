@@ -83,4 +83,11 @@ describe('数据模块 console 入口（三页签）', () => {
     await waitFor(() => expect(screen.getAllByText('报表标题').length).toBeGreaterThan(0))
     await waitFor(() => expect(urls.some((u) => u.includes('/reports'))).toBe(true))
   })
+
+  it('W5 定案 A：菜单含「体系地图」外链（独立追溯页，不是 console 路由页签）', () => {
+    renderAt('/console/data/query')
+    const link = screen.getByText('体系地图').closest('a')
+    expect(link?.getAttribute('href')).toBe('/api/modules/data/system-map#/overview')
+    expect(link?.getAttribute('target')).toBe('_blank')
+  })
 })
