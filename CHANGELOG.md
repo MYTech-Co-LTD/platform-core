@@ -11,6 +11,10 @@
 
 ## [Unreleased]
 
+## [0.278.1](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.278.0...v0.278.1) - 2026-11-06
+- 【修复】data: 零行巡检去掉假绿——duckdb.query 放进 FROM + 查询失败 fail-loud ([#1467](https://github.com/MYTech-Co-LTD/platform-core/pull/1467), [8bf5f66](https://github.com/MYTech-Co-LTD/platform-core/commit/8bf5f66127068a65fc4c2b875e72bdefa7a20c1b))
+
+
 ## [0.278.0](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.277.1...v0.278.0) - 2026-11-06
 - 【新增】data: 日更件「静默 0 行」巡检 + 正典案例 43 ([#1465](https://github.com/MYTech-Co-LTD/platform-core/pull/1465), [2892fa5](https://github.com/MYTech-Co-LTD/platform-core/commit/2892fa503c26c70963794e66c5dd8a679a2ff305))
 
