@@ -1,0 +1,41 @@
+# dimensions.yml —— 维度层级与跨源一致性维度（W4 Task 3，路线图 G6 / #1447）
+#
+# 为什么需要它：语义层现在只有平铺列（`branch_num`/`region_id`/`item_category_name`），
+# 「华东比华南差在哪」「品类怎么构成」这类问题只能靠人手工拼；层级声明一次，下钻/上卷才有依据。
+#
+# 纪律：
+#   · `relation` 必须是**有契约的表**（本文件只收 contracts/ 里能校验列的表）；
+#   · `hierarchy` 自顶向下，最后一级必须是 `key`；
+#   · 同一 `(relation, key)` 只允许出现一次（防两个维度抢同一个键）。
+#
+# ⚠️ 已知缺口（不编）：战区层级 `region_l1 → region_name → branch_num` 的列在
+# `dim_lemeng_branch` 里，但它是 dbt 派生维、**没有契约** ⇒ 本版不声明，等 `dim_lemeng_branch`
+# 的契约落地后再补（登记在 §5 台账 W4 行）。
+version: 1
+dimensions:
+  - name: branch_geo
+    label: 门店（行政区划）
+    relation: branch
+    key: branch_num
+    hierarchy:
+      - { level: province, column: province }
+      - { level: city, column: city }
+      - { level: district, column: district }
+      - { level: branch, column: branch_num }
+
+  - name: item
+    label: 商品（部门 → 品类 → 单品）
+    relation: item
+    key: item_num
+    hierarchy:
+      - { level: department, column: item_department_name }
+      - { level: category, column: item_category_name }
+      - { level: item, column: item_num }
+
+  - name: client
+    label: 客户（类型 → 客户）
+    relation: client
+    key: client_fid
+    hierarchy:
+      - { level: client_type, column: client_type }
+      - { level: client, column: client_fid }

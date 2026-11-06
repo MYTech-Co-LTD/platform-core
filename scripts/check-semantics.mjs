@@ -11,7 +11,7 @@
 //
 // 用法：`pnpm exec tsx scripts/check-semantics.mjs [rootDir]`
 // 契约：干净 → exit 0 + `check-semantics: OK（entities N / dimensions M / invariants K）`
-import { readFileSync, existsSync } from 'node:fs'
+import { readFileSync, existsSync, readdirSync } from 'node:fs'
 import { join } from 'node:path'
 import { fileURLToPath, pathToFileURL } from 'node:url'
 import { parse } from 'yaml'
@@ -62,6 +62,49 @@ export function entityIssues(doc) {
 }
 
 /** 读 l1_metrics.yml 的 name → entity（缺失 = ''）；供覆盖率报告复用。 */
+/**
+ * 维度层级校验（W4 Task 3）。
+ * @param {unknown} doc dimensions.yml 解析结果
+ * @param {Map<string, Set<string>>} contractColumns 表名 → 列集合（来自 contracts/）
+ * @returns {string[]}
+ */
+export function dimensionIssues(doc, contractColumns) {
+  const out = []
+  const root = /** @type {any} */ (doc)
+  const list = Array.isArray(root?.dimensions) ? root.dimensions : null
+  if (list === null) return ['[dimensions] 缺 dimensions: 数组']
+  const seenKeys = new Set()
+  for (const [i, d] of list.entries()) {
+    const at = `dimensions[${i}]`
+    if (d === null || typeof d !== 'object') { out.push(`${at} 必须是对象`); continue }
+    const name = typeof d.name === 'string' ? d.name.trim() : ''
+    if (name === '') out.push(`${at} 缺 name`)
+    const relation = typeof d.relation === 'string' ? d.relation.trim() : ''
+    const key = typeof d.key === 'string' ? d.key.trim() : ''
+    if (relation === '' || key === '') { out.push(`${at} 缺 relation/key`); continue }
+    const cols = contractColumns.get(relation)
+    if (cols === undefined) { out.push(`${at} relation \`${relation}\` 没有契约——无法校验列（未知 ≠ 没有）`); continue }
+    const keyed = `${relation}.${key}`
+    if (seenKeys.has(keyed)) out.push(`${at} (${keyed}) 被多个维度声明（同一个键只能有一个维度）`)
+    seenKeys.add(keyed)
+    if (!cols.has(key)) out.push(`${at} key \`${key}\` 不在 ${relation} 的契约列里`)
+    const hier = Array.isArray(d.hierarchy) ? d.hierarchy : null
+    if (hier === null || hier.length < 2) { out.push(`${at} hierarchy 至少两级`); continue }
+    const levels = new Set()
+    for (const [j, h] of hier.entries()) {
+      const level = typeof h?.level === 'string' ? h.level.trim() : ''
+      const column = typeof h?.column === 'string' ? h.column.trim() : ''
+      if (level === '' || column === '') { out.push(`${at}.hierarchy[${j}] 缺 level/column`); continue }
+      if (levels.has(level)) out.push(`${at}.hierarchy[${j}] level 重复：${level}`)
+      levels.add(level)
+      if (!cols.has(column)) out.push(`${at}.hierarchy[${j}] 列 \`${column}\` 不在 ${relation} 的契约里`)
+    }
+    const last = hier[hier.length - 1]
+    if (typeof last?.column === 'string' && last.column !== key) out.push(`${at} 层级末级必须是 key（\`${key}\`），收到 \`${last.column}\``)
+  }
+  return out
+}
+
 /** @param {any} metricsDoc @returns {Map<string,string>} */
 export function metricEntities(metricsDoc) {
   const map = new Map()
@@ -78,6 +121,31 @@ const read = (p) => (existsSync(p) ? readFileSync(p, 'utf8') : '')
 /** @param {string} text @returns {any} */
 const parseOrNull = (text) => { try { return text === '' ? null : parse(text) } catch { return null } }
 
+/**
+ * 扫 contracts 目录下所有 json，建「表名 → 列集合」。只读列名，不关心 expr。
+ * @param {string} rootDir
+ * @returns {Map<string, Set<string>>}
+ */
+function loadContractColumns(rootDir) {
+  const out = new Map()
+  const base = join(rootDir, 'contracts')
+  if (!existsSync(base)) return out
+  /** @param {string} dir */
+  const walk = (dir) => {
+    for (const ent of readdirSync(dir, { withFileTypes: true })) {
+      const p = join(dir, ent.name)
+      if (ent.isDirectory()) { walk(p); continue }
+      if (!ent.name.endsWith('.json')) continue
+      const doc = parseOrNull(readFileSync(p, 'utf8')) ?? {}
+      const table = typeof doc.table === 'string' ? doc.table : ''
+      if (table === '' || !Array.isArray(doc.columns)) continue
+      out.set(table, new Set(doc.columns.map((/** @type {any} */ c) => c?.name).filter((/** @type {unknown} */ n) => typeof n === 'string')))
+    }
+  }
+  walk(base)
+  return out
+}
+
 /** CLI 入口。 @returns {void} */
 function main() {
   const rootDir = process.argv[2] ?? fileURLToPath(new URL('..', import.meta.url))
@@ -91,6 +159,9 @@ function main() {
   const violations = entityIssues(metricsDoc)
   const dims = parseOrNull(read(join(sem, 'dimensions.yml')))
   const inv = parseOrNull(read(join(sem, 'invariants.yml')))
+  // 维度校验基准：contracts/ 里每张表的列集合（表名 → 列）
+  const contractColumns = loadContractColumns(rootDir)
+  if (dims !== null) violations.push(...dimensionIssues(dims, contractColumns))
   for (const [name, text] of [['dimensions.yml', read(join(sem, 'dimensions.yml'))], ['invariants.yml', read(join(sem, 'invariants.yml'))]]) {
     if (text !== '' && parseOrNull(text) === null) violations.push(`${name} 不是可解析的 YAML`)
   }

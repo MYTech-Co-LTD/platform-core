@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { entityIssues, metricEntities } from './check-semantics.mjs'
+import { dimensionIssues, entityIssues, metricEntities } from './check-semantics.mjs'
 
 const branch = {
   label: '门店', synonyms: ['店铺'],
@@ -52,5 +52,41 @@ describe('metricEntities', () => {
     const map = metricEntities({ metrics: [{ name: 'a:b:c', entity: 'branch' }, { name: 'a:b:d' }] })
     expect(map.get('a:b:c')).toBe('branch')
     expect(map.get('a:b:d')).toBe('')
+  })
+})
+
+describe('dimensionIssues（W4 Task 3）', () => {
+  const cols = new Map([
+    ['branch', new Set(['branch_num', 'province', 'city'])],
+    ['item', new Set(['item_num', 'item_category_name'])],
+  ])
+  /** @param {Record<string, unknown>} [over] */
+  const dim = (over = {}) => ({
+    name: 'branch_geo', relation: 'branch', key: 'branch_num',
+    hierarchy: [{ level: 'province', column: 'province' }, { level: 'branch', column: 'branch_num' }], ...over,
+  })
+  /** @param {any[]} dimensions */
+  const doc = (dimensions) => ({ version: 1, dimensions })
+
+  it('干净声明 ⇒ 无 issue', () => {
+    expect(dimensionIssues(doc([dim()]), cols)).toEqual([])
+  })
+  it('relation 无契约 ⇒ issue（未知 ≠ 没有）', () => {
+    expect(dimensionIssues(doc([dim({ relation: 'ghost' })]), cols).join('\n')).toContain('契约')
+  })
+  it('层级引用了契约里没有的列 ⇒ issue', () => {
+    const out = dimensionIssues(doc([dim({ hierarchy: [{ level: 'x', column: 'nope' }, { level: 'branch', column: 'branch_num' }] })]), cols)
+    expect(out.join('\n')).toContain('nope')
+  })
+  it('层级末级不是 key ⇒ issue', () => {
+    const out = dimensionIssues(doc([dim({ hierarchy: [{ level: 'branch', column: 'branch_num' }, { level: 'province', column: 'province' }] })]), cols)
+    expect(out.join('\n')).toContain('末级')
+  })
+  it('同一 (relation,key) 声明两次 ⇒ issue', () => {
+    expect(dimensionIssues(doc([dim(), dim({ name: 'b2' })]), cols).join('\n')).toContain('多个维度')
+  })
+  it('level 重复 / 少于两级 ⇒ issue', () => {
+    expect(dimensionIssues(doc([dim({ hierarchy: [{ level: 'p', column: 'province' }, { level: 'p', column: 'branch_num' }] })]), cols).join('\n')).toContain('重复')
+    expect(dimensionIssues(doc([dim({ hierarchy: [{ level: 'only', column: 'branch_num' }] })]), cols).join('\n')).toContain('两级')
   })
 })
