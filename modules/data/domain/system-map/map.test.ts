@@ -8,11 +8,14 @@ import { beforeEach, describe, expect, it } from 'vitest'
 import type { ContractRef } from '../pipelines/defs'
 import {
   buildSystemMapModel,
+  candidateQualityOf,
   escapeJsonForScript,
+  martsTablesOf,
   parseDimensionsYaml,
   parseInvariantsYaml,
   parseSelectSql,
   parseSystemMapSemantics,
+  parseTableOwnersYaml,
   renderSystemMapHtml,
 } from './map'
 import type {
@@ -345,6 +348,18 @@ describe('渲染：中文标题 / XSS / 零外链 / 体积', () => {
     expect(html).toContain('\\u003c/script\\u003e\\u003cscript\\u003ealert')
   })
 
+  it('口径正文走 richText：**加粗**/`代码` 转成元素，且不引入 innerHTML', () => {
+    const html = htmlOf()
+    // 渲染器存在，且详情页用的是它（不是纯文本 add）
+    expect(html).toContain('function richText(')
+    expect(html).toContain("richText(detail, 'div', 'definition'")
+    // 样式给 strong/code 兜底（否则粗体与代码块在正文里看不出来）
+    expect(html).toContain('.definition strong')
+    expect(html).toContain('.definition code')
+    // 全文任何地方都不允许 innerHTML（XSS 面不变）
+    expect(html).not.toContain('innerHTML')
+  })
+
   it('escapeJsonForScript 同时处理 & < > 与 U+2028/U+2029', () => {
     const out = escapeJsonForScript({ text: '&<>' + '\u2028' + '\u2029' })
     expect(out).toContain('\\u0026')
@@ -569,5 +584,54 @@ describe('解析器', () => {
   it('parseSystemMapSemantics 对坏 YAML 不抛（空结构）', () => {
     expect(parseSystemMapSemantics('metrics: [oops').metrics.size).toBe(0)
     expect(parseSystemMapSemantics(null).entities.size).toBe(0)
+  })
+})
+
+describe('Task 5：孤儿表与候选池质量（只报告，不处置）', () => {
+  it('parseTableOwnersYaml 读 owners 映射；坏 YAML / 空串返回空表', () => {
+    const owners = parseTableOwnersYaml('owners:\n  fct_a: data-platform\n  fct_b: x\n')
+    expect(owners.get('fct_a')).toBe('data-platform')
+    expect(parseTableOwnersYaml('owners: [oops').size).toBe(0)
+    expect(parseTableOwnersYaml(null).size).toBe(0)
+  })
+
+  it('martsTablesOf：只有 /marts/ 路径进统计域，未登记即 owner=null', () => {
+    const tables = martsTablesOf([
+      { name: 'fct_a', path: 'dbt/models/lemeng/marts/fct_a.sql' },
+      { name: 'stg_a', path: 'dbt/models/lemeng/staging/stg_a.sql' },
+      { name: 'fct_b', path: 'dbt/models/lemeng/marts/fct_b.sql' },
+    ], new Map([['fct_a', 'data-platform']]))
+    expect(tables.map((t) => [t.name, t.owner])).toEqual([
+      ['fct_a', 'data-platform'],
+      ['fct_b', null],
+    ])
+  })
+
+  it('candidateQualityOf：标识/开关类列计入噪声，样例最多 8 条', () => {
+    const rows = [
+      { relation: 'item', agg: 'sum', column: 'sale_money' },
+      { relation: 'item', agg: 'sum', column: 'item_num' },
+      { relation: 'item', agg: 'avg', column: 'is_flag' },
+      { relation: 'item', agg: 'count', column: 'store_id' },
+      ...Array.from({ length: 10 }, (_, i) => ({ relation: 'r', agg: 'sum', column: `c_${i}_status` })),
+    ]
+    const out = candidateQualityOf(rows)
+    expect(out.total).toBe(14)
+    expect(out.junk).toBe(13)
+    expect(out.junkPct).toBe(92.9)
+    expect(out.samples.length).toBe(8)
+    expect(out.samples[0].column).toBe('item_num')
+  })
+
+  it('空候选集 ⇒ 0 / 0 / 0（不出现 NaN）', () => {
+    expect(candidateQualityOf([])).toEqual({ total: 0, junk: 0, junkPct: 0, samples: [] })
+  })
+
+  it('总览页有「孤儿表」「候选池质量」两块面板与数据字段', () => {
+    const html = renderSystemMapHtml(buildSystemMapModel(baseInput(METRICS)))
+    expect(html).toContain('孤儿表')
+    expect(html).toContain('候选池质量')
+    expect(html).toContain('"orphanTables"')
+    expect(html).toContain('"candidateQuality"')
   })
 })

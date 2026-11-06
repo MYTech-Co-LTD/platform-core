@@ -142,6 +142,10 @@ export interface SystemMapInput {
   dimensions?: SystemMapDimension[]
   invariantsYaml?: string | null
   invariants?: SystemMapInvariant[]
+  /** Task 5：marts 表归属登记（`dbt/semantics/table-owners.yml`）。 */
+  tableOwnersYaml?: string | null
+  /** Task 5：待处置候选（`data.metric_candidates` 的 pending 行）；缺省 = 未接入。 */
+  candidateRows?: Array<{ relation?: string; agg?: string; column?: string }>
   /** 取数期降级说明（DB 查询失败等）；由 loadSystemMapFacts 收集，合并进页面 warnings。 */
   loadWarnings?: string[]
   generatedAt?: string
@@ -219,6 +223,21 @@ export interface SystemMapOrphan {
   reasons: string[]
 }
 
+/** Task 5：一张 marts 表的归属（owner 为 null = 孤儿表，要人认领）。 */
+export interface SystemMapTable {
+  name: string
+  path: string | null
+  owner: string | null
+}
+
+/** Task 5：候选池质量（只报告，不处置）。 */
+export interface SystemMapCandidateQuality {
+  total: number
+  junk: number
+  junkPct: number
+  samples: Array<{ relation: string; agg: string; column: string }>
+}
+
 export interface SystemMapModel {
   generatedAt: string
   health: SystemMapHealth
@@ -226,6 +245,10 @@ export interface SystemMapModel {
   entities: SystemMapEntityGroup[]
   sources: SystemMapSource[]
   orphans: SystemMapOrphan[]
+  /** marts 表全量（含 owner），`orphanTables` 是其中 owner 为空的子集。 */
+  tables: SystemMapTable[]
+  orphanTables: SystemMapTable[]
+  candidateQuality: SystemMapCandidateQuality
   reports: Array<SystemMapReportFact & { latestVersion: number | null; latestVersionTitle: string | null }>
   demands: SystemMapDemandFact[]
   dimensions: SystemMapDimension[]
@@ -351,6 +374,67 @@ export function parseInvariantsYaml(raw: string | null | undefined): SystemMapIn
   }
   return out
 }
+
+/**
+ * 解析 marts 表归属登记（`dbt/semantics/table-owners.yml`）。
+ * 形状：`owners: { <表名或模型名>: <负责人> }`。读不到/坏 YAML ⇒ 空表（调用方给 warning）。
+ */
+export function parseTableOwnersYaml(raw: string | null | undefined): Map<string, string> {
+  const out = new Map<string, string>()
+  if (typeof raw !== 'string' || raw.trim() === '') return out
+  let doc: unknown
+  try {
+    doc = parseYaml(raw)
+  } catch {
+    return out
+  }
+  for (const [name, value] of Object.entries(asRecord(asRecord(doc).owners))) {
+    const owner = asText(value).trim()
+    if (name.trim() !== '' && owner !== '') out.set(name.trim(), owner)
+  }
+  return out
+}
+
+/** marts 层模型（`dbt/models/**\/marts/*.sql`）——孤儿表统计的取值域。 */
+export function martsTablesOf(
+  models: readonly SystemMapDbtModel[],
+  owners: ReadonlyMap<string, string>,
+): SystemMapTable[] {
+  return models
+    .filter((m) => (m.path ?? '').includes('/marts/'))
+    .map((m) => ({
+      name: m.name,
+      path: m.path ?? null,
+      owner: owners.get(m.name) ?? owners.get(m.path ?? '') ?? null,
+    }))
+    .sort((a, b) => a.name.localeCompare(b.name))
+}
+
+/**
+ * 候选质量：单列聚合候选里「列名就不像度量」的占比（`*_id` / `*_num` / `*_flag` / `*_status`…
+ * 聚合它们通常没业务意义，是 profiler 的噪声）。**只统计，不删除**（删除是人的决定）。
+ */
+export function candidateQualityOf(
+  rows: readonly { relation?: string; agg?: string; column?: string }[],
+): SystemMapCandidateQuality {
+  const list = Array.isArray(rows) ? rows : []
+  const junkRows = list.filter((r) => NON_MEASURE_COLUMN.test(String(r.column ?? '')))
+  const samples = junkRows.slice(0, 8).map((r) => ({
+    relation: String(r.relation ?? ''),
+    agg: String(r.agg ?? ''),
+    column: String(r.column ?? ''),
+  }))
+  const total = list.length
+  return {
+    total,
+    junk: junkRows.length,
+    junkPct: total === 0 ? 0 : Math.round((junkRows.length / total) * 1000) / 10,
+    samples,
+  }
+}
+
+/** 非度量列名（不是数值口径维度而是标识/开关）：命中即算噪声候选。 */
+const NON_MEASURE_COLUMN = /(?:^|_)(id|num|no|code|flag|status|type|level|seq|sort|order|version|name)$/i
 
 function walkFiles(start: string, predicate: (name: string) => boolean): string[] {
   const out: string[] = []
@@ -668,6 +752,15 @@ export function buildSystemMapModel(input: SystemMapInput): SystemMapModel {
     warnings.push('业务不变量声明（dbt/semantics/invariants.yml）不可读——总览的不变量清单为空')
   }
 
+  // Task 5：孤儿表（marts 无 owner）+ 候选池质量（只报告，不删除）。
+  const tableOwners = parseTableOwnersYaml(input.tableOwnersYaml ?? null)
+  if ((input.tableOwnersYaml ?? '') === '') {
+    warnings.push('表归属登记（dbt/semantics/table-owners.yml）不可读——marts 表会全部显示为待认领')
+  }
+  const tables = martsTablesOf(input.models, tableOwners)
+  const orphanTables = tables.filter((t) => t.owner === null)
+  const candidateQuality = candidateQualityOf(input.candidateRows ?? [])
+
   return {
     generatedAt: input.generatedAt ?? new Date().toISOString(),
     health,
@@ -675,6 +768,9 @@ export function buildSystemMapModel(input: SystemMapInput): SystemMapModel {
     entities,
     sources,
     orphans,
+    tables,
+    orphanTables,
+    candidateQuality,
     reports,
     demands,
     dimensions,
@@ -719,6 +815,7 @@ export async function loadSystemMapFacts(deps: SystemMapLoadDeps): Promise<Syste
   const semantics = parseSystemMapSemantics(semanticsYaml)
   const dimensionsYaml = readRepoText('dbt/semantics/dimensions.yml', baseDir)
   const invariantsYaml = readRepoText('dbt/semantics/invariants.yml', baseDir)
+  const tableOwnersYaml = readRepoText('dbt/semantics/table-owners.yml', baseDir)
   const contracts = loadContracts(rootsOf(deps.env ?? process.env, deps.repoRoot)).contracts
   const models = loadDbtModels(baseDir)
   const auditFiles = loadAuditFiles(baseDir)
@@ -726,6 +823,16 @@ export async function loadSystemMapFacts(deps: SystemMapLoadDeps): Promise<Syste
   // 读面降级一律进 warnings（页面照出，坏块显式可见）——不静默把失败读成「没有数据」。
   const loadWarnings: string[] = []
   const warn = (label: string): void => { loadWarnings.push(`${label} 读取失败——该块按空处理`) }
+
+  // 候选池：只看待处置（pending）的，最多 500 条（这是「质量抽样」，不是全量导出）。
+  const candidatesRes = await deps.pool.query(
+    `select relation, expr->>'agg' as agg, expr->>'column' as column
+       from data.metric_candidates
+      where org = $1 and status = 'pending'
+      order by id desc
+      limit 500`,
+    [deps.org],
+  ).catch(() => null)
 
   const [metricRows, reportRows, usageRes, versionRes, demandRows, incidentsRes] = await Promise.all([
     loadMergedCatalog(deps.pool, deps.org)
@@ -772,6 +879,8 @@ export async function loadSystemMapFacts(deps: SystemMapLoadDeps): Promise<Syste
     latestVersion.set(String(row.report_id), { version: Number(row.version), title: String(row.title) })
   }
 
+  if (candidatesRes === null) warn('候选池（data.metric_candidates）')
+
   const incidentsTracked = incidentsRes !== null
   const incidents = incidentsTracked ? Number(incidentsRes.rows[0]?.n ?? 0) : 0
 
@@ -780,6 +889,10 @@ export async function loadSystemMapFacts(deps: SystemMapLoadDeps): Promise<Syste
     semantics,
     dimensionsYaml,
     invariantsYaml,
+    tableOwnersYaml,
+    candidateRows: candidatesRes === null
+      ? []
+      : (candidatesRes.rows as Array<{ relation?: string; agg?: string; column?: string }>),
     metrics: metricRows.map(metricRowToFact),
     contracts,
     models,
@@ -865,6 +978,23 @@ const CLIENT_JS = `
     add(row, 'div', 'field-label', label);
     add(row, 'div', 'field-value', typeof value === 'string' ? value : String(value));
     return row;
+  }
+  // 口径正文里带轻量 Markdown（双星号加粗、反引号代码，来自 YAML 声明原文）。
+  // 只把这两类标记换成 strong/code 元素，其余仍然逐段走 textContent——不拼 HTML，XSS 面不变。
+  function richText(parent, tag, cls, text) {
+    var host = add(parent, tag, cls);
+    var src = String(text === undefined || text === null ? '' : text);
+    var re = /\\*\\*([^*]+)\\*\\*|\\x60([^\\x60]+)\\x60/g;
+    var last = 0, m;
+    while ((m = re.exec(src)) !== null) {
+      if (m.index > last) add(host, 'span', null, src.slice(last, m.index));
+      var node = document.createElement(m[1] ? 'strong' : 'code');
+      node.textContent = m[1] || m[2];
+      host.appendChild(node);
+      last = re.lastIndex;
+    }
+    if (last < src.length) add(host, 'span', null, src.slice(last));
+    return host;
   }
   function linkButton(parent, text, onClick) {
     var b = add(parent, 'button', 'link-button tap', text);
@@ -990,6 +1120,45 @@ const CLIENT_JS = `
       add(li, 'span', 'muted', ' · 关系 ' + (x.relation || '—') + (x.owner ? ' · owner ' + x.owner : ''));
       if (x.why) add(li, 'div', 'decl-detail', x.why);
     });
+  }
+
+  // ── 总览：孤儿表（marts 无 owner）——「新表不许静默进入体系」的可见面 ─────────
+  var tableBox = document.getElementById('tables');
+  clear(tableBox);
+  var tables = data.tables || [];
+  var orphanTables = data.orphanTables || [];
+  add(tableBox, 'h3', null, '孤儿表（待认领 ' + orphanTables.length + ' / ' + tables.length + ' 张 marts 表）');
+  if (!tables.length) {
+    add(tableBox, 'p', 'empty', '未读到 dbt marts 模型（dbt/models/**/marts）。');
+  } else if (!orphanTables.length) {
+    add(tableBox, 'p', 'muted', '全部已登记归属（事实源 dbt/semantics/table-owners.yml）。');
+  } else {
+    add(tableBox, 'p', 'muted', '登记表 dbt/semantics/table-owners.yml；未登记的模型会一直出现在这里。');
+    var tList = add(tableBox, 'ul', 'plain-list');
+    orphanTables.forEach(function (t) {
+      var li = add(tList, 'li', 'decl-item');
+      add(li, 'strong', null, t.name);
+      add(li, 'span', 'muted', ' · 待认领' + (t.path ? ' · ' + t.path : ''));
+    });
+  }
+
+  // ── 总览：候选池质量（只报告，不删除——删除是人的决定）───────────────────────
+  var candBox = document.getElementById('candidates');
+  clear(candBox);
+  var cq = data.candidateQuality || { total: 0, junk: 0, junkPct: 0, samples: [] };
+  add(candBox, 'h3', null, '候选池质量（待处置 ' + cq.total + ' 条）');
+  if (!cq.total) {
+    add(candBox, 'p', 'muted', '没有待处置候选（data.metric_candidates.status = pending）。');
+  } else {
+    add(candBox, 'p', 'muted',
+      '其中 ' + cq.junk + ' 条落在标识/开关类列（' + cq.junkPct + '%）——聚合 *_id / *_flag / *_status 通常没有业务含义，属 profiler 噪声。');
+    if ((cq.samples || []).length) {
+      var sList = add(candBox, 'ul', 'plain-list');
+      cq.samples.forEach(function (s) {
+        add(sList, 'li', 'decl-item', s.relation + ' · ' + s.agg + '(' + s.column + ')');
+      });
+    }
+    add(candBox, 'p', 'muted', '这里只统计、不处置：拒绝/升格候选仍由人决定（POST /private-measures/candidates/<id>/status）。');
   }
 
   // ── 总览：实体—指标 SVG 二部图（桌面；≤80 节点；手机 CSS 隐藏）──────────────
@@ -1183,7 +1352,7 @@ const CLIENT_JS = `
     tags.appendChild(badge(m.basis === 'column_agg' ? '私有测度' : (m.source === 'l1' ? 'L1 平台声明' : 'L2 自建'), 'info'));
     tags.appendChild(badge(m.certified === 'certified' ? '已认证' : '草稿', m.certified === 'certified' ? 'ok' : 'warn'));
 
-    add(detail, 'div', 'definition', m.definition || '（未声明口径原文）');
+    richText(detail, 'div', 'definition', m.definition || '（未声明口径原文）');
     var grid = add(detail, 'div', 'fields');
     field(grid, '业务名称', m.label);
     field(grid, '同义词', (m.synonyms || []).join('、'));
@@ -1434,6 +1603,8 @@ const STYLE = `
   .detail-head { background: var(--panel); border: 1px solid var(--line); border-radius: 10px 10px 0 0; padding: 14px; min-width: 0; }
   .detail-head h3 { margin: 0; }
   .definition { background: #fbfbfc; border: 1px solid var(--line); border-top: 0; padding: 12px 14px; white-space: pre-wrap; word-break: break-word; }
+  .definition strong { color: var(--fg); font-weight: 650; }
+  .definition code { background: #eef0f3; border-radius: 4px; padding: 0 4px; font-size: 12px; }
   .fields { display: grid; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); gap: 0; border: 1px solid var(--line); border-top: 0; background: var(--panel); }
   .field { padding: 8px 12px; border-bottom: 1px solid var(--line); min-width: 0; }
   .field-label { font-size: 12px; color: var(--muted); }
@@ -1549,6 +1720,10 @@ ${STYLE}
       <div class="two-col">
         <div id="dimensions" class="panel"></div>
         <div id="invariants" class="panel"></div>
+      </div>
+      <div class="two-col">
+        <div id="tables" class="panel"></div>
+        <div id="candidates" class="panel"></div>
       </div>
       <div id="graph" class="graph-panel panel"></div>
       <div id="matrix"></div>
