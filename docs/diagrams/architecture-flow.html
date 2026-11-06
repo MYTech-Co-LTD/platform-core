@@ -1,0 +1,340 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>数据平台运行机制 · 三条链路</title>
+<style>
+  :root{
+    --bg:#f7f8fa; --panel:#fff; --line:#e5e7eb; --fg:#111827; --muted:#6b7280;
+    --accent:#2563eb; --accent-soft:#eff6ff;
+    --ok:#059669; --ok-soft:#ecfdf5; --warn:#b45309; --warn-soft:#fffbeb;
+    --flow:#94a3b8;
+  }
+  *{box-sizing:border-box}
+  html,body{margin:0;height:100%}
+  body{
+    background:var(--bg); color:var(--fg);
+    font:15px/1.6 -apple-system,BlinkMacSystemFont,"PingFang SC","Hiragino Sans GB","Microsoft YaHei",sans-serif;
+  }
+  header{padding:18px 22px 10px;border-bottom:1px solid var(--line);background:var(--panel)}
+  header h1{margin:0;font-size:20px;letter-spacing:.2px}
+  header p{margin:6px 0 0;color:var(--muted);font-size:13px}
+  .tabs{display:flex;gap:8px;margin-top:14px;flex-wrap:wrap}
+  .tab{
+    border:1px solid var(--line);background:#fff;border-radius:999px;padding:7px 14px;
+    font-size:13px;cursor:pointer;min-height:38px
+  }
+  .tab[aria-selected="true"]{background:var(--accent);border-color:var(--accent);color:#fff}
+  main{display:grid;grid-template-columns:minmax(0,1fr) 360px;gap:0;height:calc(100% - 132px)}
+  #canvas{overflow:auto;padding:22px}
+  #detail{
+    border-left:1px solid var(--line);background:var(--panel);padding:20px;overflow:auto
+  }
+  .scene-title{font-size:13px;color:var(--muted);margin:0 0 14px}
+  .row{display:flex;gap:12px;flex-wrap:wrap;align-items:stretch;margin-bottom:0}
+  .node{
+    flex:1 1 180px;min-width:150px;background:#fff;border:1px solid var(--line);border-radius:12px;
+    padding:12px 14px;cursor:pointer;transition:.15s;position:relative
+  }
+  .node:hover{border-color:var(--accent);box-shadow:0 2px 10px rgba(37,99,235,.12);transform:translateY(-1px)}
+  .node:focus-visible{outline:3px solid var(--accent-soft);outline-offset:2px}
+  .node[aria-current="true"]{border-color:var(--accent);background:var(--accent-soft)}
+  .node .kicker{font-size:11px;color:var(--muted);letter-spacing:.06em;text-transform:uppercase}
+  .node strong{display:block;font-size:15px;margin:2px 0 4px}
+  .node span{font-size:12px;color:var(--muted);display:block}
+  .node.ok{border-left:3px solid var(--ok)}
+  .node.warn{border-left:3px solid var(--warn)}
+  .arrow{display:flex;justify-content:center;align-items:center;height:34px;color:var(--flow);font-size:18px}
+  .arrow small{font-size:12px;color:var(--muted);margin-left:8px}
+  .band{display:flex;align-items:center;gap:8px;margin:18px 0 8px;color:var(--muted);font-size:12px}
+  .band::after{content:"";flex:1;height:1px;background:var(--line)}
+  #detail h2{font-size:17px;margin:0 0 4px}
+  #detail .sub{color:var(--muted);font-size:13px;margin:0 0 14px}
+  #detail dl{margin:0}
+  #detail dt{font-size:12px;color:var(--muted);margin-top:14px}
+  #detail dd{margin:4px 0 0;font-size:14px}
+  #detail code{background:#f3f4f6;border-radius:4px;padding:1px 5px;font-size:12px;word-break:break-all}
+  .hint{color:var(--muted);font-size:13px}
+  .pill{display:inline-block;border-radius:999px;padding:1px 9px;font-size:11px;background:#f3f4f6;color:#374151;margin-right:6px}
+  .pill.ok{background:var(--ok-soft);color:var(--ok)}
+  .pill.warn{background:var(--warn-soft);color:var(--warn)}
+  @media (max-width:900px){
+    main{grid-template-columns:1fr;height:auto}
+    #detail{border-left:0;border-top:1px solid var(--line);max-height:none}
+    header{padding:14px 16px 8px}
+    #canvas{padding:16px}
+    .node{flex:1 1 100%;padding:10px 12px}
+    .node strong{font-size:14px}
+    .node span{font-size:12px}
+    #detail{scroll-margin-top:8px}
+  }
+</style>
+</head>
+<body>
+<header>
+  <h1>数据平台 · 运行机制</h1>
+  <p>三条链路看懂这套系统：<strong>一次提问怎么变成数字</strong> · <strong>数据怎么进来</strong> · <strong>体系怎么越用越准</strong>。点任意方块看细节。</p>
+  <div class="tabs" role="tablist" id="tabs"></div>
+</header>
+
+<main>
+  <section id="canvas" aria-live="polite"></section>
+  <aside id="detail">
+    <h2>先点一个方块</h2>
+    <p class="sub">左边是流程，右边是这格的「是什么 / 输入输出 / 代码在哪 / 坏了会怎样」。</p>
+    <p class="hint">提示：三条链路是同一套数据的不同视角——问数链路消费词表，数据链路生产词表与湖，治理回路修正词表。</p>
+  </aside>
+</main>
+
+<script>
+// 每条链路 = 若干「行」，行内并列节点，行间向下流动。
+const SCENES = {
+  ask: {
+    title: '① 问数链路：一句话 → 一个可解释的数字',
+    note: '从企微里问一句「10 月净销售额是多少」，到 bot 回一个带口径、带数据截止日、可审计的数字。',
+    rows: [
+      { nodes: [
+        { id:'user', kicker:'人', title:'企微用户', desc:'在企微里 @bot 提问', detail:{
+          what:'业务用户在企微群里向 bot 提一个问题（自然语言）。',
+          io:'输入：一句话；输出：一条企微消息。',
+          code:'无（外部入口）',
+          fail:'bot 不在群 / 未授权账号 → 直接不响应或提示未关联。' } },
+        { id:'bot', kicker:'入口', title:'openclaw bot', desc:'理解问题、决定调哪个工具', detail:{
+          what:'常驻 agent（openclaw），按 SKILL 与工具清单决定：先查词表、再取数，还是直接答。',
+          io:'输入：用户消息；输出：工具调用（list_metrics / query_data / …）。',
+          code:'deploy/openclaw/data-query-plugin/（6 个工具 + SKILL）',
+          fail:'模型绕路、反复试参数 → 表现为回答慢、答错时间窗（这是 askdata-tuning 要压的指标）。' } },
+        { id:'plugin', kicker:'通道', title:'问数插件', desc:'带身份与服务凭证调平台 API', detail:{
+          what:'把工具调用翻译成平台 HTTP 请求，并带上企微 userid 与渠道凭证；同时带会话键（算出「可辩护答案时长」）。',
+          io:'输入：工具名+参数；输出：POST /api/modules/data/query 等。',
+          code:'deploy/openclaw/data-query-plugin/lib.js（x-channel-key / x-wecom-userid / x-session-id）',
+          fail:'凭证缺失或过期 → 401 CHANNEL_KEY_INVALID；身份缺失 → 明确拒绝而不是猜人。' } },
+      ]},
+      { nodes: [
+        { id:'auth', kicker:'门卫', title:'身份与授权', desc:'org 钉死、scope 校验、部门门', detail:{
+          what:'把「谁在问」变成不可伪造的主体：Casdoor 账号 → 租户 org → 权限码；部门门按组织架构再收一层。',
+          io:'输入：企微 userid + 渠道凭证；输出：Requester{org, scopes, dept}。',
+          code:'apps/server/src/wecom-channel-auth.ts · modules/data/domain/authz.ts · dept-gate.ts',
+          fail:'未关联账号 → 401 并给扫码指引；越权指标 → 403 denied（审计照样写一行）。' } },
+        { id:'catalog', kicker:'词表', title:'指标词表', desc:'L1 声明 / L2 自建 / 私有测度', detail:{
+          what:'所有能查的数字都来自这里：L1（平台声明，certified）、L2（租户自建，draft）、私有测度（单列聚合，draft）。',
+          io:'输入：指标 id；输出：口径原文、SQL 模板、粒度、参数、掩码声明。',
+          code:'dbt/semantics/l1_metrics.yml · data.metrics（PG）· metric-store.ts',
+          fail:'词表里没有 → 拒绝并给出「新建候选」的路径，而不是编一个数。' } },
+        { id:'compile', kicker:'编译', title:'编译 SQL', desc:'主体钉死 + 切片 + 掩码 + 限额', detail:{
+          what:'把指标模板编译成可执行 SQL：恒定拼 WHERE org=…（客户端无法指定），切片维度必须在粒度内，掩码列按声明处理，行数上限 1000。',
+          io:'输入：指标+参数+切片；输出：参数化 SQL + 审计元数据。',
+          code:'modules/data/domain/query-service.ts · semantic-compiler.ts · private-measure.ts',
+          fail:'维度越界 → 拒绝；命中掩码 → 掩码值或拒用（fail-closed）。' } },
+      ]},
+      { nodes: [
+        { id:'wh', kicker:'数据', title:'仓库（marts）', desc:'物化层：staging.fct_* / dim_*', detail:{
+          what:'口径模型的物化结果（pg_duckdb + 湖上 parquet）。分析师面走只读连接（会话级 read-only + 30s 超时）。',
+          io:'输入：编译好的 SQL；输出：行集 + 列名。',
+          code:'warehouse.ts（warehousePool / analystPool）· dbt/models/**/marts',
+          fail:'仓库不可达 → 明确 error（不返回空集冒充 0 行）。' } },
+        { id:'envelope', kicker:'信任', title:'信任信封', desc:'口径档位 / 版本 / 数据截至 / 审计 id', detail:{
+          what:'回答不只是一个数：带 caliber（certified/draft）、basis、版本、创建者、数据截止日（来自 load_log 水位）、本次审计 id。',
+          io:'输入：行集 + 指标元数据 + 水位；输出：结构化信封。',
+          code:'modules/data/domain/toolbox/envelope.ts · query-service.ts（freshnessFaceFor）',
+          fail:'水位查不到 → 标「未知」，不冒充最新。' } },
+        { id:'answer', kicker:'输出', title:'回答 + 徽标', desc:'数字 + 草稿/已认证 + 数据截至', detail:{
+          what:'bot 把信封翻译成人话，必须带三件东西：口径档位徽标、数据截止日、必要时「这是草稿口径」。',
+          io:'输入：信封；输出：企微消息。',
+          code:'deploy/openclaw/data-query-plugin/skills/data-query/SKILL.md',
+          fail:'缺徽标 = 回答不合格（这是 G3 判据：任何数字都能回答来源）。' } },
+      ]},
+    ],
+  },
+  data: {
+    title: '② 数据链路：源系统 → 湖 → 数仓 → 词表',
+    note: '数字从哪里来：采集管线怎么把源系统的数据搬进湖，dbt 怎么把它变成可信的宽表。',
+    rows: [
+      { nodes: [
+        { id:'src', kicker:'源', title:'业务系统', desc:'乐檬（零售/采购/出库…）', detail:{
+          what:'甲方业务系统的 API（乐檬 AGI 网关，多账套 3120 / 64188）。',
+          io:'输入：接口请求；输出：分页 JSON。',
+          code:'deploy/duckle/console/pipelines/*.json（源侧声明）',
+          fail:'网关 429 / 超时 → 管线重试并按日补采，不静默丢。' } },
+        { id:'pipe', kicker:'采集', title:'duckle 采集管线', desc:'分页拉取 → l0 原样落湖', detail:{
+          what:'每条数据集一条管线：分页、按日期切批、失败重试、水位推进；只做搬运，不改口径。',
+          io:'输入：源 API；输出：湖上 parquet（l0）+ load_log 水位。',
+          code:'deploy/duckle/console/pipelines/ · duckle console 3120/64188',
+          fail:'页大小超限会静默返回空集——这是踩过的坑（分页四条工程事实）。' } },
+      ]},
+      { nodes: [
+        { id:'lake', kicker:'存储', title:'对象存储 / 湖', desc:'parquet + 分区', detail:{
+          what:'源数据原样落 S3 兼容对象存储（OOS），按源/日期分区；不覆盖、可重放。',
+          io:'输入：采集批次；输出：parquet 文件。',
+          code:'bucket 配置在部署 env（不写明文）',
+          fail:'上传失败 → 该批不推进水位，下次重跑（幂等）。' } },
+        { id:'dbt', kicker:'建模', title:'dbt 物化', desc:'staging → marts（口径只在这里定义）', detail:{
+          what:'把 l0 规范成 staging，再按业务口径建 fct_*/dim_*。口径**只在 dbt 定义一次**，采集/对账/问数都是消费者。',
+          io:'输入：湖上 parquet；输出：staging schema 的关系（fct_retail_sale 等）。',
+          code:'dbt/models/**/marts · dbt/semantics/*.yml',
+          fail:'物化失败 → 该表保持上一版；对账/回归会报红，不会静默用旧数。' } },
+        { id:'contract', kicker:'契约', title:'契约与不变量', desc:'列清单 / 类型 / 业务不变式', detail:{
+          what:'源表有契约（列清单与类型），业务有不变式（净额=销售-退货、毛利=净额-成本…），CI 与回归都靠它们判红。',
+          io:'输入：声明文件；输出：门禁结果。',
+          code:'contracts/*.json · dbt/semantics/invariants.yml · scripts/check-semantics.mjs',
+          fail:'契约缺列/类型不符 → CI 红，不合入。' } },
+      ]},
+      { nodes: [
+        { id:'fresh', kicker:'观感', title:'新鲜度 / 质量', desc:'load_log 水位 → 数据截至日', detail:{
+          what:'每次物化写 load_log；问数与体系地图据此回答「数据截至哪天」，并按 SLA 判 fresh/late/alert。',
+          io:'输入：load_log；输出：水位与状态。',
+          code:'query-service.ts（freshnessFaceFor）· 体系地图总览',
+          fail:'没有水位 → 显示「未知」，不显示「最新」。' } },
+        { id:'map', kicker:'可见', title:'体系地图', desc:'健康五数 / 回溯链 / 孤儿表', detail:{
+          what:'一张给业务看的页面：任一指标能走到「口径原文 → 实体 → 源关系 → 上游模型 → 契约」；还有健康五数与孤儿表。',
+          io:'输入：仓内声明 + 运行库；输出：单文件 HTML。',
+          code:'modules/data/domain/system-map/ · GET /api/modules/data/system-map',
+          fail:'某一块读不到 → 该块显示「未接入」并写明原因，页面照出。' } },
+      ]},
+    ],
+  },
+  loop: {
+    title: '③ 治理回路：不改代码，体系也会变准',
+    note: '用了半年之后，词表凭什么越用越准：从真实提问里找缺口，人裁决，提案走 draft PR，回归兜底。',
+    rows: [
+      { nodes: [
+        { id:'audit', kicker:'痕迹', title:'query_audit', desc:'每次查询一行（含会话/工具/结果）', detail:{
+          what:'所有查询（成功/拒绝/出错）都落一行：谁、什么通道、查了哪条指标、多少行、结论、工具名、会话键。',
+          io:'输入：每次查询；输出：审计表。',
+          code:'modules/data/domain/audit-store.ts · 迁移 039（session_id）',
+          fail:'审计写失败不会反噬查询，但会丢溯源——运维要盯。' } },
+        { id:'trace', kicker:'痕迹', title:'对话轨迹', desc:'askdata_trace（OO 流）', detail:{
+          what:'bot 的每轮对话与工具调用被导出到 OpenObserve，按会话可回放——用来找「反复撞墙」的地方。',
+          io:'输入：openclaw 会话库；输出：OO 流。',
+          code:'scripts/askdata/export-transcript.py（复合水位 created_at+seq）',
+          fail:'流冻结/水位错 → 挖掘读到空，曾导致「以为没需求」（#1423/#1419）。' } },
+      ]},
+      { nodes: [
+        { id:'mine', kicker:'发现', title:'需求挖掘', desc:'alias_gap / new_metric / drill_gap / metric_hunt', detail:{
+          what:'每天扫审计与轨迹，产出四类可判定缺口：同义词缺失、词表缺指标、下钻缺口、同会话反复查多个指标。',
+          io:'输入：审计 + 轨迹；输出：data.demand_signals。',
+          code:'modules/data/domain/demand/ · job custom:4eM6UfhB2ANodSJ_',
+          fail:'判据是机判的；探针/测试数据要先排除，否则会混进假需求。' } },
+        { id:'profiler', kicker:'发现', title:'列画像候选', desc:'profiler → 候选池', detail:{
+          what:'对新关系做逐列画像，产出「值得变成指标」的候选（单列聚合），等人采用。',
+          io:'输入：marts 关系；输出：data.metric_candidates。',
+          code:'duckle qa.profile（引擎原生）· 管线 custom:efjBgqRgYyKPT6dU',
+          fail:'会产出标识列噪声（实测 23.2%），只报告不自动删。' } },
+      ]},
+      { nodes: [
+        { id:'human', kicker:'人', title:'人工裁决', desc:'采用 / 拒绝 / 补同义词', detail:{
+          what:'人决定哪些候选变成指标、哪些需求是真的；这一层不允许 agent 代签。',
+          io:'输入：候选与需求台账；输出：裁决结果（decided_by/decided_at）。',
+          code:'console 数据模块 · /demands · /private-measures',
+          fail:'没人裁决 → 候选堆积，但不会被悄悄发布。' } },
+        { id:'proposal', kicker:'落地', title:'提案 → draft PR', desc:'W3：自动生成 L1 声明草案', detail:{
+          what:'把裁决结果组装成对 l1_metrics.yml 的精确修改（含基线 sha 三态校验），开 draft PR 给人 review。',
+          io:'输入：候选 + 裁决；输出：draft PR。',
+          code:'modules/data/domain/pipelines/propose-metric.ts · proposal-apply.ts',
+          fail:'基线被改 → 拒绝并说明；合入永远走 PR，不直写。' } },
+        { id:'regress', kicker:'兜底', title:'回归与基线', desc:'50 条已验问答 + 基线刷新', detail:{
+          what:'每条已验问答带基线；改口径后回归报红。基线过期（数据回填）用带操作人的刷新动作处理，只收已封板区间。',
+          io:'输入：verified_questions；输出：pass/fail + 审计。',
+          code:'scripts/verify-regression.mjs · refresh-baseline.mjs · 每日 job',
+          fail:'滚动窗口当基线会 30 分钟自红——已加闸 `open_period_not_stable`。' } },
+      ]},
+      { nodes: [
+        { id:'explore', kicker:'分析', title:'explore_query / 配方', desc:'W6：受约束的只读分析', detail:{
+          what:'「为什么 / 正常吗」用受约束的结构化查询（不是自由 SQL）：表白名单、org 注入、掩码、限额、全量审计；三配方写死算法。',
+          io:'输入：结构化 spec；输出：结果 + 证据包（SQL/口径/数据截至）。',
+          code:'modules/data/domain/analysis/ · 工具 explore_query / explore_recipe',
+          fail:'超出白名单或列名注入 → 拒绝并审计。' } },
+      ]},
+    ],
+  },
+};
+
+const tabsEl = document.getElementById('tabs');
+const canvas = document.getElementById('canvas');
+const detail = document.getElementById('detail');
+let active = 'ask';
+let activeNode = null;
+
+function renderTabs(){
+  tabsEl.innerHTML = '';
+  Object.entries(SCENES).forEach(([key, scene], i) => {
+    const b = document.createElement('button');
+    b.className = 'tab';
+    b.type = 'button';
+    b.setAttribute('role', 'tab');
+    b.setAttribute('aria-selected', String(key === active));
+    b.textContent = (i === 0 ? '问数链路' : i === 1 ? '数据链路' : '治理回路');
+    b.addEventListener('click', () => { active = key; renderTabs(); renderScene(); });
+    tabsEl.appendChild(b);
+  });
+}
+
+function nodeEl(node){
+  const el = document.createElement('button');
+  el.type = 'button';
+  el.className = 'node';
+  el.setAttribute('aria-current', String(activeNode === node.id));
+  el.innerHTML = `<div class="kicker"></div><strong></strong><span></span>`;
+  el.querySelector('.kicker').textContent = node.kicker;
+  el.querySelector('strong').textContent = node.title;
+  el.querySelector('span').textContent = node.desc;
+  el.addEventListener('click', () => {
+    activeNode = node.id; renderScene(); renderDetail(node);
+    // 手机：详情在流程下方，点完自动带过去，省一次猜测
+    if (window.matchMedia('(max-width:900px)').matches) {
+      detail.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    }
+  });
+  return el;
+}
+
+function renderScene(){
+  const scene = SCENES[active];
+  canvas.innerHTML = '';
+  const head = document.createElement('p');
+  head.className = 'scene-title';
+  head.textContent = scene.title + '　·　' + scene.note;
+  canvas.appendChild(head);
+
+  scene.rows.forEach((row, idx) => {
+    const band = document.createElement('div');
+    band.className = 'band';
+    band.textContent = idx === 0 ? '起点' : '';
+    if (idx === 0) canvas.appendChild(band);
+
+    const r = document.createElement('div');
+    r.className = 'row';
+    row.nodes.forEach((n) => r.appendChild(nodeEl(n)));
+    canvas.appendChild(r);
+
+    if (idx < scene.rows.length - 1) {
+      const a = document.createElement('div');
+      a.className = 'arrow';
+      a.innerHTML = '↓';
+      canvas.appendChild(a);
+    }
+  });
+}
+
+function renderDetail(node){
+  detail.innerHTML = '';
+  const h = document.createElement('h2'); h.textContent = node.title; detail.appendChild(h);
+  const s = document.createElement('p'); s.className = 'sub'; s.textContent = node.desc; detail.appendChild(s);
+  const dl = document.createElement('dl');
+  const rows = [['是什么', node.detail.what], ['输入 / 输出', node.detail.io], ['代码 / 入口', node.detail.code], ['坏了会怎样', node.detail.fail]];
+  rows.forEach(([k, v]) => {
+    const dt = document.createElement('dt'); dt.textContent = k; dl.appendChild(dt);
+    const dd = document.createElement('dd');
+    if (k === '代码 / 入口') { const c = document.createElement('code'); c.textContent = v; dd.appendChild(c); }
+    else dd.textContent = v;
+    dl.appendChild(dd);
+  });
+  detail.appendChild(dl);
+}
+
+renderTabs();
+renderScene();
+</script>
+</body>
+</html>
