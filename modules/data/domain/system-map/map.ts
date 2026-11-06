@@ -663,7 +663,6 @@ export function buildSystemMapModel(input: SystemMapInput): SystemMapModel {
     }
   })
 
-  const total = metrics.length
   const l1Metrics = metrics.filter((m) => m.source === 'l1').length
   const privateMetrics = metrics.filter((m) => m.basis === 'column_agg').length
   const l2Metrics = metrics.filter((m) => m.source === 'l2' && m.basis !== 'column_agg').length
