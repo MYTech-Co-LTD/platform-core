@@ -1,0 +1,6594 @@
+{
+  "name": "lemeng.inventory.movement.seg4.l0.64188",
+  "nodes": [
+    {
+      "id": "w0",
+      "type": "source",
+      "position": {
+        "x": 0,
+        "y": 0
+      },
+      "data": {
+        "label": "w0",
+        "componentId": "src.rest",
+        "schema": [
+          {
+            "name": "x",
+            "type": "string"
+          }
+        ],
+        "properties": {
+          "connectionRef": "lemeng",
+          "url": "https://cloud.nhsoft.cn/agi/mcp",
+          "method": "POST",
+          "headers": {
+            "Content-Type": "application/json",
+            "Accept": "application/json, text/event-stream"
+          },
+          "body": "{\"jsonrpc\": \"2.0\", \"id\": 1, \"method\": \"tools/call\", \"params\": {\"name\": \"whoami\", \"arguments\": {}}}",
+          "paginationType": "none",
+          "responseFormat": "xml",
+          "rawResponseDestination": "/workspace/.duckle-raw/whoami-${datetime}.sse",
+          "retryAttempts": 3,
+          "retryBackoffMs": 2000
+        }
+      }
+    },
+    {
+      "id": "g0",
+      "type": "transform",
+      "position": {
+        "x": 0,
+        "y": 0
+      },
+      "data": {
+        "label": "g0",
+        "componentId": "code.sql",
+        "properties": {
+          "sql": "SELECT unnest(regexp_extract_all(content, '(?m)^data: ([^\\r\\n]*)', 1)) AS line FROM read_text('/workspace/.duckle-raw/whoami-${datetime}.sse')"
+        }
+      }
+    },
+    {
+      "id": "g1",
+      "type": "transform",
+      "position": {
+        "x": 0,
+        "y": 0
+      },
+      "data": {
+        "label": "g1",
+        "componentId": "code.sql",
+        "properties": {
+          "sql": "SELECT json_extract_string(line, '$.result.content[0].text') AS txt FROM input QUALIFY row_number() OVER () = count(*) OVER ()"
+        }
+      }
+    },
+    {
+      "id": "g2",
+      "type": "transform",
+      "position": {
+        "x": 0,
+        "y": 0
+      },
+      "data": {
+        "label": "g2",
+        "componentId": "code.sql",
+        "properties": {
+          "sql": "SELECT json_extract_string(txt, '$.company_id') AS company_id, json_extract_string(txt, '$.branch_nums') AS branch_nums FROM input"
+        }
+      }
+    },
+    {
+      "id": "d0",
+      "type": "transform",
+      "position": {
+        "x": 0,
+        "y": 0
+      },
+      "data": {
+        "label": "d0",
+        "componentId": "ctl.die",
+        "properties": {
+          "condition": "no-rows",
+          "message": "identity: whoami 响应里没有可解析的身份（网关形状变了？）⇒ 身份未证，拒绝采集与写湖"
+        }
+      }
+    },
+    {
+      "id": "g3",
+      "type": "transform",
+      "position": {
+        "x": 0,
+        "y": 0
+      },
+      "data": {
+        "label": "g3",
+        "componentId": "code.sql",
+        "properties": {
+          "sql": "SELECT 'book' AS violation, company_id AS detail FROM input WHERE company_id IS DISTINCT FROM '${ENV:SYSTEM_BOOK}' UNION ALL SELECT 'branch' AS violation, CAST(c.branch_num AS VARCHAR) AS detail FROM (SELECT unnest('${ENV:BRANCH_NUMS}'::BIGINT[]) AS branch_num) c LEFT JOIN (SELECT unnest(CAST(json_extract(branch_nums, '$[*]') AS BIGINT[])) AS branch_num FROM input) w USING (branch_num) WHERE w.branch_num IS NULL"
+        }
+      }
+    },
+    {
+      "id": "d1",
+      "type": "transform",
+      "position": {
+        "x": 0,
+        "y": 0
+      },
+      "data": {
+        "label": "d1",
+        "componentId": "ctl.die",
+        "properties": {
+          "condition": "has-rows",
+          "message": "identity: 凭据账套/门店清单自证未过 ⇒ 拒绝采集与写湖"
+        }
+      }
+    },
+    {
+      "id": "gv",
+      "type": "transform",
+      "position": {
+        "x": 0,
+        "y": 0
+      },
+      "data": {
+        "label": "gv",
+        "componentId": "code.sql",
+        "properties": {
+          "sql": "SELECT 'BRANCH_NUMS' AS violation, '${ENV:BRANCH_NUMS}' AS detail, 'JSON integer array, e.g. [1001,1002]' AS rule WHERE NOT regexp_full_match('${ENV:BRANCH_NUMS}', '\\[[0-9]+([, ]+[0-9]+)*\\]') UNION ALL SELECT 'SYSTEM_BOOK', '${ENV:SYSTEM_BOOK}', 'digits only' WHERE NOT regexp_full_match('${ENV:SYSTEM_BOOK}', '[0-9]{1,32}') UNION ALL SELECT 'BATCH_ID', 'iv-' || '${ENV:SYSTEM_BOOK}' || '-inventory_snapshot-' || replace(replace('${datetime}','-',''),'_','T') || 'Z' AS v, 'iv-<book>-inventory_snapshot-YYYYMMDDTHHMMSSZ' WHERE NOT regexp_full_match('iv-' || '${ENV:SYSTEM_BOOK}' || '-inventory_snapshot-' || replace(replace('${datetime}','-',''),'_','T') || 'Z', 'iv-[0-9]+-inventory_snapshot-[0-9]{8}T[0-9]{6}Z')"
+        }
+      }
+    },
+    {
+      "id": "dv",
+      "type": "transform",
+      "position": {
+        "x": 0,
+        "y": 0
+      },
+      "data": {
+        "label": "dv",
+        "componentId": "ctl.die",
+        "properties": {
+          "condition": "has-rows",
+          "message": "EXPECTED_VALUE_MISSING_OR_MALFORMED: 期望值缺席或形状非法（{rows} 条违规，明细见上）⇒ 拒绝采集与写湖。处置：检查该管线调度/触发面的 env 注入"
+        }
+      }
+    },
+    {
+      "id": "shape",
+      "type": "transform",
+      "position": {
+        "x": 0,
+        "y": 0
+      },
+      "data": {
+        "label": "shape",
+        "componentId": "code.sql",
+        "properties": {
+          "sql": "SELECT\n  'im-' || '${ENV:SYSTEM_BOOK}' || '-inventory_movement-' || replace(replace('${datetime}','-',''),'_','T') || 'Z' AS batch_id,\n  '${ENV:SYSTEM_BOOK}' AS system_book,\n  CAST('${date-1d}' AS DATE) AS bizday,\n  CAST(o.movement_id AS VARCHAR) AS movement_id,\n  CAST(o.branch_num AS INTEGER) AS branch_num,\n  CAST(o.branch_code AS VARCHAR) AS branch_code,\n  CAST(o.branch_name AS VARCHAR) AS branch_name,\n  CAST(o.item_num AS BIGINT) AS item_num,\n  CAST(o.item_code AS VARCHAR) AS item_code,\n  CAST(o.item_barcode AS VARCHAR) AS item_barcode,\n  CAST(o.item_name AS VARCHAR) AS item_name,\n  CAST(o.item_spec AS VARCHAR) AS item_spec,\n  CAST(o.item_unit AS VARCHAR) AS item_unit,\n  CAST(o.movement_type AS VARCHAR) AS movement_type,\n  CAST(o.movement_summary AS VARCHAR) AS movement_summary,\n  CAST(o.movement_date AS DATE) AS movement_date,\n  CAST(o.operate_time AS TIMESTAMP) AS operate_time,\n  CAST(o.operator AS VARCHAR) AS operator,\n  CAST(o.bill_no AS VARCHAR) AS bill_no,\n  CAST(o.lot_number AS VARCHAR) AS lot_number,\n  CAST(o.memo AS VARCHAR) AS memo,\n  CAST(o.quantity AS DECIMAL(18,6)) AS quantity,\n  CAST(o.assist_quantity AS DECIMAL(18,6)) AS assist_quantity,\n  CAST(o.unit_price AS DECIMAL(18,8)) AS unit_price,\n  CAST(o.money AS DECIMAL(18,2)) AS money,\n  CAST(o.inventory_balance AS DECIMAL(18,6)) AS inventory_balance,\n  CAST(o.assist_inventory_balance AS DECIMAL(18,6)) AS assist_inventory_balance,\n  CAST(o.out_storehouse_num AS BIGINT) AS out_storehouse_num,\n  CAST(o.out_storehouse_code AS VARCHAR) AS out_storehouse_code,\n  CAST(o.out_storehouse_name AS VARCHAR) AS out_storehouse_name\n,\n  CAST(CURRENT_TIMESTAMP AS TIMESTAMPTZ) AS computed_at\nFROM input o\n"
+        }
+      }
+    },
+    {
+      "id": "gate",
+      "type": "transform",
+      "position": {
+        "x": 0,
+        "y": 0
+      },
+      "data": {
+        "label": "gate",
+        "componentId": "qa.contract",
+        "properties": {
+          "rules": {
+            "batch_id": "not_null",
+            "system_book": "not_null",
+            "bizday": "not_null",
+            "branch_num": "not_null",
+            "item_num": "not_null",
+            "movement_id": "not_null"
+          }
+        }
+      }
+    },
+    {
+      "id": "sink",
+      "type": "sink",
+      "position": {
+        "x": 0,
+        "y": 0
+      },
+      "data": {
+        "label": "sink",
+        "componentId": "snk.minio",
+        "properties": {
+          "bucket": "${ENV:ZOS_BUCKET}",
+          "key": "lemeng/inventory_movement/system_book=${ENV:SYSTEM_BOOK}/bizday=${date-1d}/chunk=seg4.parquet",
+          "region": "${ENV:ZOS_REGION}",
+          "urlStyle": "path",
+          "useSsl": "true",
+          "format": "parquet",
+          "mode": "overwrite",
+          "compression": "zstd",
+          "connectionRef": "zos"
+        }
+      }
+    },
+    {
+      "id": "p121",
+      "type": "source",
+      "position": {
+        "x": 0,
+        "y": 0
+      },
+      "data": {
+        "label": "p121",
+        "componentId": "src.rest",
+        "properties": {
+          "connectionRef": "lemeng",
+          "url": "https://cloud.nhsoft.cn/agi/api/nhsoft.ama.ai.inventory.movement.find",
+          "method": "POST",
+          "headers": {
+            "Content-Type": "application/json"
+          },
+          "body": "{\"date_start\":\"${date-1d}\",\"date_end\":\"${date-1d}\",\"page_number\":121,\"page_size\":200}",
+          "responsePath": "/result",
+          "paginationType": "none",
+          "pageSize": 200,
+          "retryAttempts": 10,
+          "retryBackoffMs": 15000
+        },
+        "schema": [
+          {
+            "name": "movement_id",
+            "type": "string"
+          },
+          {
+            "name": "branch_num",
+            "type": "int64"
+          },
+          {
+            "name": "branch_code",
+            "type": "string"
+          },
+          {
+            "name": "branch_name",
+            "type": "string"
+          },
+          {
+            "name": "item_num",
+            "type": "int64"
+          },
+          {
+            "name": "item_code",
+            "type": "string"
+          },
+          {
+            "name": "item_barcode",
+            "type": "string"
+          },
+          {
+            "name": "item_name",
+            "type": "string"
+          },
+          {
+            "name": "item_spec",
+            "type": "string"
+          },
+          {
+            "name": "item_unit",
+            "type": "string"
+          },
+          {
+            "name": "movement_type",
+            "type": "string"
+          },
+          {
+            "name": "movement_summary",
+            "type": "string"
+          },
+          {
+            "name": "movement_date",
+            "type": "string"
+          },
+          {
+            "name": "operate_time",
+            "type": "string"
+          },
+          {
+            "name": "operator",
+            "type": "string"
+          },
+          {
+            "name": "bill_no",
+            "type": "string"
+          },
+          {
+            "name": "lot_number",
+            "type": "string"
+          },
+          {
+            "name": "memo",
+            "type": "string"
+          },
+          {
+            "name": "quantity",
+            "type": "decimal"
+          },
+          {
+            "name": "assist_quantity",
+            "type": "decimal"
+          },
+          {
+            "name": "unit_price",
+            "type": "decimal"
+          },
+          {
+            "name": "money",
+            "type": "decimal"
+          },
+          {
+            "name": "inventory_balance",
+            "type": "decimal"
+          },
+          {
+            "name": "assist_inventory_balance",
+            "type": "decimal"
+          },
+          {
+            "name": "out_storehouse_num",
+            "type": "int64"
+          },
+          {
+            "name": "out_storehouse_code",
+            "type": "string"
+          },
+          {
+            "name": "out_storehouse_name",
+            "type": "string"
+          }
+        ]
+      }
+    },
+    {
+      "id": "p122",
+      "type": "source",
+      "position": {
+        "x": 0,
+        "y": 0
+      },
+      "data": {
+        "label": "p122",
+        "componentId": "src.rest",
+        "properties": {
+          "connectionRef": "lemeng",
+          "url": "https://cloud.nhsoft.cn/agi/api/nhsoft.ama.ai.inventory.movement.find",
+          "method": "POST",
+          "headers": {
+            "Content-Type": "application/json"
+          },
+          "body": "{\"date_start\":\"${date-1d}\",\"date_end\":\"${date-1d}\",\"page_number\":122,\"page_size\":200}",
+          "responsePath": "/result",
+          "paginationType": "none",
+          "pageSize": 200,
+          "retryAttempts": 10,
+          "retryBackoffMs": 15000
+        },
+        "schema": [
+          {
+            "name": "movement_id",
+            "type": "string"
+          },
+          {
+            "name": "branch_num",
+            "type": "int64"
+          },
+          {
+            "name": "branch_code",
+            "type": "string"
+          },
+          {
+            "name": "branch_name",
+            "type": "string"
+          },
+          {
+            "name": "item_num",
+            "type": "int64"
+          },
+          {
+            "name": "item_code",
+            "type": "string"
+          },
+          {
+            "name": "item_barcode",
+            "type": "string"
+          },
+          {
+            "name": "item_name",
+            "type": "string"
+          },
+          {
+            "name": "item_spec",
+            "type": "string"
+          },
+          {
+            "name": "item_unit",
+            "type": "string"
+          },
+          {
+            "name": "movement_type",
+            "type": "string"
+          },
+          {
+            "name": "movement_summary",
+            "type": "string"
+          },
+          {
+            "name": "movement_date",
+            "type": "string"
+          },
+          {
+            "name": "operate_time",
+            "type": "string"
+          },
+          {
+            "name": "operator",
+            "type": "string"
+          },
+          {
+            "name": "bill_no",
+            "type": "string"
+          },
+          {
+            "name": "lot_number",
+            "type": "string"
+          },
+          {
+            "name": "memo",
+            "type": "string"
+          },
+          {
+            "name": "quantity",
+            "type": "decimal"
+          },
+          {
+            "name": "assist_quantity",
+            "type": "decimal"
+          },
+          {
+            "name": "unit_price",
+            "type": "decimal"
+          },
+          {
+            "name": "money",
+            "type": "decimal"
+          },
+          {
+            "name": "inventory_balance",
+            "type": "decimal"
+          },
+          {
+            "name": "assist_inventory_balance",
+            "type": "decimal"
+          },
+          {
+            "name": "out_storehouse_num",
+            "type": "int64"
+          },
+          {
+            "name": "out_storehouse_code",
+            "type": "string"
+          },
+          {
+            "name": "out_storehouse_name",
+            "type": "string"
+          }
+        ]
+      }
+    },
+    {
+      "id": "p123",
+      "type": "source",
+      "position": {
+        "x": 0,
+        "y": 0
+      },
+      "data": {
+        "label": "p123",
+        "componentId": "src.rest",
+        "properties": {
+          "connectionRef": "lemeng",
+          "url": "https://cloud.nhsoft.cn/agi/api/nhsoft.ama.ai.inventory.movement.find",
+          "method": "POST",
+          "headers": {
+            "Content-Type": "application/json"
+          },
+          "body": "{\"date_start\":\"${date-1d}\",\"date_end\":\"${date-1d}\",\"page_number\":123,\"page_size\":200}",
+          "responsePath": "/result",
+          "paginationType": "none",
+          "pageSize": 200,
+          "retryAttempts": 10,
+          "retryBackoffMs": 15000
+        },
+        "schema": [
+          {
+            "name": "movement_id",
+            "type": "string"
+          },
+          {
+            "name": "branch_num",
+            "type": "int64"
+          },
+          {
+            "name": "branch_code",
+            "type": "string"
+          },
+          {
+            "name": "branch_name",
+            "type": "string"
+          },
+          {
+            "name": "item_num",
+            "type": "int64"
+          },
+          {
+            "name": "item_code",
+            "type": "string"
+          },
+          {
+            "name": "item_barcode",
+            "type": "string"
+          },
+          {
+            "name": "item_name",
+            "type": "string"
+          },
+          {
+            "name": "item_spec",
+            "type": "string"
+          },
+          {
+            "name": "item_unit",
+            "type": "string"
+          },
+          {
+            "name": "movement_type",
+            "type": "string"
+          },
+          {
+            "name": "movement_summary",
+            "type": "string"
+          },
+          {
+            "name": "movement_date",
+            "type": "string"
+          },
+          {
+            "name": "operate_time",
+            "type": "string"
+          },
+          {
+            "name": "operator",
+            "type": "string"
+          },
+          {
+            "name": "bill_no",
+            "type": "string"
+          },
+          {
+            "name": "lot_number",
+            "type": "string"
+          },
+          {
+            "name": "memo",
+            "type": "string"
+          },
+          {
+            "name": "quantity",
+            "type": "decimal"
+          },
+          {
+            "name": "assist_quantity",
+            "type": "decimal"
+          },
+          {
+            "name": "unit_price",
+            "type": "decimal"
+          },
+          {
+            "name": "money",
+            "type": "decimal"
+          },
+          {
+            "name": "inventory_balance",
+            "type": "decimal"
+          },
+          {
+            "name": "assist_inventory_balance",
+            "type": "decimal"
+          },
+          {
+            "name": "out_storehouse_num",
+            "type": "int64"
+          },
+          {
+            "name": "out_storehouse_code",
+            "type": "string"
+          },
+          {
+            "name": "out_storehouse_name",
+            "type": "string"
+          }
+        ]
+      }
+    },
+    {
+      "id": "p124",
+      "type": "source",
+      "position": {
+        "x": 0,
+        "y": 0
+      },
+      "data": {
+        "label": "p124",
+        "componentId": "src.rest",
+        "properties": {
+          "connectionRef": "lemeng",
+          "url": "https://cloud.nhsoft.cn/agi/api/nhsoft.ama.ai.inventory.movement.find",
+          "method": "POST",
+          "headers": {
+            "Content-Type": "application/json"
+          },
+          "body": "{\"date_start\":\"${date-1d}\",\"date_end\":\"${date-1d}\",\"page_number\":124,\"page_size\":200}",
+          "responsePath": "/result",
+          "paginationType": "none",
+          "pageSize": 200,
+          "retryAttempts": 10,
+          "retryBackoffMs": 15000
+        },
+        "schema": [
+          {
+            "name": "movement_id",
+            "type": "string"
+          },
+          {
+            "name": "branch_num",
+            "type": "int64"
+          },
+          {
+            "name": "branch_code",
+            "type": "string"
+          },
+          {
+            "name": "branch_name",
+            "type": "string"
+          },
+          {
+            "name": "item_num",
+            "type": "int64"
+          },
+          {
+            "name": "item_code",
+            "type": "string"
+          },
+          {
+            "name": "item_barcode",
+            "type": "string"
+          },
+          {
+            "name": "item_name",
+            "type": "string"
+          },
+          {
+            "name": "item_spec",
+            "type": "string"
+          },
+          {
+            "name": "item_unit",
+            "type": "string"
+          },
+          {
+            "name": "movement_type",
+            "type": "string"
+          },
+          {
+            "name": "movement_summary",
+            "type": "string"
+          },
+          {
+            "name": "movement_date",
+            "type": "string"
+          },
+          {
+            "name": "operate_time",
+            "type": "string"
+          },
+          {
+            "name": "operator",
+            "type": "string"
+          },
+          {
+            "name": "bill_no",
+            "type": "string"
+          },
+          {
+            "name": "lot_number",
+            "type": "string"
+          },
+          {
+            "name": "memo",
+            "type": "string"
+          },
+          {
+            "name": "quantity",
+            "type": "decimal"
+          },
+          {
+            "name": "assist_quantity",
+            "type": "decimal"
+          },
+          {
+            "name": "unit_price",
+            "type": "decimal"
+          },
+          {
+            "name": "money",
+            "type": "decimal"
+          },
+          {
+            "name": "inventory_balance",
+            "type": "decimal"
+          },
+          {
+            "name": "assist_inventory_balance",
+            "type": "decimal"
+          },
+          {
+            "name": "out_storehouse_num",
+            "type": "int64"
+          },
+          {
+            "name": "out_storehouse_code",
+            "type": "string"
+          },
+          {
+            "name": "out_storehouse_name",
+            "type": "string"
+          }
+        ]
+      }
+    },
+    {
+      "id": "p125",
+      "type": "source",
+      "position": {
+        "x": 0,
+        "y": 0
+      },
+      "data": {
+        "label": "p125",
+        "componentId": "src.rest",
+        "properties": {
+          "connectionRef": "lemeng",
+          "url": "https://cloud.nhsoft.cn/agi/api/nhsoft.ama.ai.inventory.movement.find",
+          "method": "POST",
+          "headers": {
+            "Content-Type": "application/json"
+          },
+          "body": "{\"date_start\":\"${date-1d}\",\"date_end\":\"${date-1d}\",\"page_number\":125,\"page_size\":200}",
+          "responsePath": "/result",
+          "paginationType": "none",
+          "pageSize": 200,
+          "retryAttempts": 10,
+          "retryBackoffMs": 15000
+        },
+        "schema": [
+          {
+            "name": "movement_id",
+            "type": "string"
+          },
+          {
+            "name": "branch_num",
+            "type": "int64"
+          },
+          {
+            "name": "branch_code",
+            "type": "string"
+          },
+          {
+            "name": "branch_name",
+            "type": "string"
+          },
+          {
+            "name": "item_num",
+            "type": "int64"
+          },
+          {
+            "name": "item_code",
+            "type": "string"
+          },
+          {
+            "name": "item_barcode",
+            "type": "string"
+          },
+          {
+            "name": "item_name",
+            "type": "string"
+          },
+          {
+            "name": "item_spec",
+            "type": "string"
+          },
+          {
+            "name": "item_unit",
+            "type": "string"
+          },
+          {
+            "name": "movement_type",
+            "type": "string"
+          },
+          {
+            "name": "movement_summary",
+            "type": "string"
+          },
+          {
+            "name": "movement_date",
+            "type": "string"
+          },
+          {
+            "name": "operate_time",
+            "type": "string"
+          },
+          {
+            "name": "operator",
+            "type": "string"
+          },
+          {
+            "name": "bill_no",
+            "type": "string"
+          },
+          {
+            "name": "lot_number",
+            "type": "string"
+          },
+          {
+            "name": "memo",
+            "type": "string"
+          },
+          {
+            "name": "quantity",
+            "type": "decimal"
+          },
+          {
+            "name": "assist_quantity",
+            "type": "decimal"
+          },
+          {
+            "name": "unit_price",
+            "type": "decimal"
+          },
+          {
+            "name": "money",
+            "type": "decimal"
+          },
+          {
+            "name": "inventory_balance",
+            "type": "decimal"
+          },
+          {
+            "name": "assist_inventory_balance",
+            "type": "decimal"
+          },
+          {
+            "name": "out_storehouse_num",
+            "type": "int64"
+          },
+          {
+            "name": "out_storehouse_code",
+            "type": "string"
+          },
+          {
+            "name": "out_storehouse_name",
+            "type": "string"
+          }
+        ]
+      }
+    },
+    {
+      "id": "p126",
+      "type": "source",
+      "position": {
+        "x": 0,
+        "y": 0
+      },
+      "data": {
+        "label": "p126",
+        "componentId": "src.rest",
+        "properties": {
+          "connectionRef": "lemeng",
+          "url": "https://cloud.nhsoft.cn/agi/api/nhsoft.ama.ai.inventory.movement.find",
+          "method": "POST",
+          "headers": {
+            "Content-Type": "application/json"
+          },
+          "body": "{\"date_start\":\"${date-1d}\",\"date_end\":\"${date-1d}\",\"page_number\":126,\"page_size\":200}",
+          "responsePath": "/result",
+          "paginationType": "none",
+          "pageSize": 200,
+          "retryAttempts": 10,
+          "retryBackoffMs": 15000
+        },
+        "schema": [
+          {
+            "name": "movement_id",
+            "type": "string"
+          },
+          {
+            "name": "branch_num",
+            "type": "int64"
+          },
+          {
+            "name": "branch_code",
+            "type": "string"
+          },
+          {
+            "name": "branch_name",
+            "type": "string"
+          },
+          {
+            "name": "item_num",
+            "type": "int64"
+          },
+          {
+            "name": "item_code",
+            "type": "string"
+          },
+          {
+            "name": "item_barcode",
+            "type": "string"
+          },
+          {
+            "name": "item_name",
+            "type": "string"
+          },
+          {
+            "name": "item_spec",
+            "type": "string"
+          },
+          {
+            "name": "item_unit",
+            "type": "string"
+          },
+          {
+            "name": "movement_type",
+            "type": "string"
+          },
+          {
+            "name": "movement_summary",
+            "type": "string"
+          },
+          {
+            "name": "movement_date",
+            "type": "string"
+          },
+          {
+            "name": "operate_time",
+            "type": "string"
+          },
+          {
+            "name": "operator",
+            "type": "string"
+          },
+          {
+            "name": "bill_no",
+            "type": "string"
+          },
+          {
+            "name": "lot_number",
+            "type": "string"
+          },
+          {
+            "name": "memo",
+            "type": "string"
+          },
+          {
+            "name": "quantity",
+            "type": "decimal"
+          },
+          {
+            "name": "assist_quantity",
+            "type": "decimal"
+          },
+          {
+            "name": "unit_price",
+            "type": "decimal"
+          },
+          {
+            "name": "money",
+            "type": "decimal"
+          },
+          {
+            "name": "inventory_balance",
+            "type": "decimal"
+          },
+          {
+            "name": "assist_inventory_balance",
+            "type": "decimal"
+          },
+          {
+            "name": "out_storehouse_num",
+            "type": "int64"
+          },
+          {
+            "name": "out_storehouse_code",
+            "type": "string"
+          },
+          {
+            "name": "out_storehouse_name",
+            "type": "string"
+          }
+        ]
+      }
+    },
+    {
+      "id": "p127",
+      "type": "source",
+      "position": {
+        "x": 0,
+        "y": 0
+      },
+      "data": {
+        "label": "p127",
+        "componentId": "src.rest",
+        "properties": {
+          "connectionRef": "lemeng",
+          "url": "https://cloud.nhsoft.cn/agi/api/nhsoft.ama.ai.inventory.movement.find",
+          "method": "POST",
+          "headers": {
+            "Content-Type": "application/json"
+          },
+          "body": "{\"date_start\":\"${date-1d}\",\"date_end\":\"${date-1d}\",\"page_number\":127,\"page_size\":200}",
+          "responsePath": "/result",
+          "paginationType": "none",
+          "pageSize": 200,
+          "retryAttempts": 10,
+          "retryBackoffMs": 15000
+        },
+        "schema": [
+          {
+            "name": "movement_id",
+            "type": "string"
+          },
+          {
+            "name": "branch_num",
+            "type": "int64"
+          },
+          {
+            "name": "branch_code",
+            "type": "string"
+          },
+          {
+            "name": "branch_name",
+            "type": "string"
+          },
+          {
+            "name": "item_num",
+            "type": "int64"
+          },
+          {
+            "name": "item_code",
+            "type": "string"
+          },
+          {
+            "name": "item_barcode",
+            "type": "string"
+          },
+          {
+            "name": "item_name",
+            "type": "string"
+          },
+          {
+            "name": "item_spec",
+            "type": "string"
+          },
+          {
+            "name": "item_unit",
+            "type": "string"
+          },
+          {
+            "name": "movement_type",
+            "type": "string"
+          },
+          {
+            "name": "movement_summary",
+            "type": "string"
+          },
+          {
+            "name": "movement_date",
+            "type": "string"
+          },
+          {
+            "name": "operate_time",
+            "type": "string"
+          },
+          {
+            "name": "operator",
+            "type": "string"
+          },
+          {
+            "name": "bill_no",
+            "type": "string"
+          },
+          {
+            "name": "lot_number",
+            "type": "string"
+          },
+          {
+            "name": "memo",
+            "type": "string"
+          },
+          {
+            "name": "quantity",
+            "type": "decimal"
+          },
+          {
+            "name": "assist_quantity",
+            "type": "decimal"
+          },
+          {
+            "name": "unit_price",
+            "type": "decimal"
+          },
+          {
+            "name": "money",
+            "type": "decimal"
+          },
+          {
+            "name": "inventory_balance",
+            "type": "decimal"
+          },
+          {
+            "name": "assist_inventory_balance",
+            "type": "decimal"
+          },
+          {
+            "name": "out_storehouse_num",
+            "type": "int64"
+          },
+          {
+            "name": "out_storehouse_code",
+            "type": "string"
+          },
+          {
+            "name": "out_storehouse_name",
+            "type": "string"
+          }
+        ]
+      }
+    },
+    {
+      "id": "p128",
+      "type": "source",
+      "position": {
+        "x": 0,
+        "y": 0
+      },
+      "data": {
+        "label": "p128",
+        "componentId": "src.rest",
+        "properties": {
+          "connectionRef": "lemeng",
+          "url": "https://cloud.nhsoft.cn/agi/api/nhsoft.ama.ai.inventory.movement.find",
+          "method": "POST",
+          "headers": {
+            "Content-Type": "application/json"
+          },
+          "body": "{\"date_start\":\"${date-1d}\",\"date_end\":\"${date-1d}\",\"page_number\":128,\"page_size\":200}",
+          "responsePath": "/result",
+          "paginationType": "none",
+          "pageSize": 200,
+          "retryAttempts": 10,
+          "retryBackoffMs": 15000
+        },
+        "schema": [
+          {
+            "name": "movement_id",
+            "type": "string"
+          },
+          {
+            "name": "branch_num",
+            "type": "int64"
+          },
+          {
+            "name": "branch_code",
+            "type": "string"
+          },
+          {
+            "name": "branch_name",
+            "type": "string"
+          },
+          {
+            "name": "item_num",
+            "type": "int64"
+          },
+          {
+            "name": "item_code",
+            "type": "string"
+          },
+          {
+            "name": "item_barcode",
+            "type": "string"
+          },
+          {
+            "name": "item_name",
+            "type": "string"
+          },
+          {
+            "name": "item_spec",
+            "type": "string"
+          },
+          {
+            "name": "item_unit",
+            "type": "string"
+          },
+          {
+            "name": "movement_type",
+            "type": "string"
+          },
+          {
+            "name": "movement_summary",
+            "type": "string"
+          },
+          {
+            "name": "movement_date",
+            "type": "string"
+          },
+          {
+            "name": "operate_time",
+            "type": "string"
+          },
+          {
+            "name": "operator",
+            "type": "string"
+          },
+          {
+            "name": "bill_no",
+            "type": "string"
+          },
+          {
+            "name": "lot_number",
+            "type": "string"
+          },
+          {
+            "name": "memo",
+            "type": "string"
+          },
+          {
+            "name": "quantity",
+            "type": "decimal"
+          },
+          {
+            "name": "assist_quantity",
+            "type": "decimal"
+          },
+          {
+            "name": "unit_price",
+            "type": "decimal"
+          },
+          {
+            "name": "money",
+            "type": "decimal"
+          },
+          {
+            "name": "inventory_balance",
+            "type": "decimal"
+          },
+          {
+            "name": "assist_inventory_balance",
+            "type": "decimal"
+          },
+          {
+            "name": "out_storehouse_num",
+            "type": "int64"
+          },
+          {
+            "name": "out_storehouse_code",
+            "type": "string"
+          },
+          {
+            "name": "out_storehouse_name",
+            "type": "string"
+          }
+        ]
+      }
+    },
+    {
+      "id": "p129",
+      "type": "source",
+      "position": {
+        "x": 0,
+        "y": 0
+      },
+      "data": {
+        "label": "p129",
+        "componentId": "src.rest",
+        "properties": {
+          "connectionRef": "lemeng",
+          "url": "https://cloud.nhsoft.cn/agi/api/nhsoft.ama.ai.inventory.movement.find",
+          "method": "POST",
+          "headers": {
+            "Content-Type": "application/json"
+          },
+          "body": "{\"date_start\":\"${date-1d}\",\"date_end\":\"${date-1d}\",\"page_number\":129,\"page_size\":200}",
+          "responsePath": "/result",
+          "paginationType": "none",
+          "pageSize": 200,
+          "retryAttempts": 10,
+          "retryBackoffMs": 15000
+        },
+        "schema": [
+          {
+            "name": "movement_id",
+            "type": "string"
+          },
+          {
+            "name": "branch_num",
+            "type": "int64"
+          },
+          {
+            "name": "branch_code",
+            "type": "string"
+          },
+          {
+            "name": "branch_name",
+            "type": "string"
+          },
+          {
+            "name": "item_num",
+            "type": "int64"
+          },
+          {
+            "name": "item_code",
+            "type": "string"
+          },
+          {
+            "name": "item_barcode",
+            "type": "string"
+          },
+          {
+            "name": "item_name",
+            "type": "string"
+          },
+          {
+            "name": "item_spec",
+            "type": "string"
+          },
+          {
+            "name": "item_unit",
+            "type": "string"
+          },
+          {
+            "name": "movement_type",
+            "type": "string"
+          },
+          {
+            "name": "movement_summary",
+            "type": "string"
+          },
+          {
+            "name": "movement_date",
+            "type": "string"
+          },
+          {
+            "name": "operate_time",
+            "type": "string"
+          },
+          {
+            "name": "operator",
+            "type": "string"
+          },
+          {
+            "name": "bill_no",
+            "type": "string"
+          },
+          {
+            "name": "lot_number",
+            "type": "string"
+          },
+          {
+            "name": "memo",
+            "type": "string"
+          },
+          {
+            "name": "quantity",
+            "type": "decimal"
+          },
+          {
+            "name": "assist_quantity",
+            "type": "decimal"
+          },
+          {
+            "name": "unit_price",
+            "type": "decimal"
+          },
+          {
+            "name": "money",
+            "type": "decimal"
+          },
+          {
+            "name": "inventory_balance",
+            "type": "decimal"
+          },
+          {
+            "name": "assist_inventory_balance",
+            "type": "decimal"
+          },
+          {
+            "name": "out_storehouse_num",
+            "type": "int64"
+          },
+          {
+            "name": "out_storehouse_code",
+            "type": "string"
+          },
+          {
+            "name": "out_storehouse_name",
+            "type": "string"
+          }
+        ]
+      }
+    },
+    {
+      "id": "p130",
+      "type": "source",
+      "position": {
+        "x": 0,
+        "y": 0
+      },
+      "data": {
+        "label": "p130",
+        "componentId": "src.rest",
+        "properties": {
+          "connectionRef": "lemeng",
+          "url": "https://cloud.nhsoft.cn/agi/api/nhsoft.ama.ai.inventory.movement.find",
+          "method": "POST",
+          "headers": {
+            "Content-Type": "application/json"
+          },
+          "body": "{\"date_start\":\"${date-1d}\",\"date_end\":\"${date-1d}\",\"page_number\":130,\"page_size\":200}",
+          "responsePath": "/result",
+          "paginationType": "none",
+          "pageSize": 200,
+          "retryAttempts": 10,
+          "retryBackoffMs": 15000
+        },
+        "schema": [
+          {
+            "name": "movement_id",
+            "type": "string"
+          },
+          {
+            "name": "branch_num",
+            "type": "int64"
+          },
+          {
+            "name": "branch_code",
+            "type": "string"
+          },
+          {
+            "name": "branch_name",
+            "type": "string"
+          },
+          {
+            "name": "item_num",
+            "type": "int64"
+          },
+          {
+            "name": "item_code",
+            "type": "string"
+          },
+          {
+            "name": "item_barcode",
+            "type": "string"
+          },
+          {
+            "name": "item_name",
+            "type": "string"
+          },
+          {
+            "name": "item_spec",
+            "type": "string"
+          },
+          {
+            "name": "item_unit",
+            "type": "string"
+          },
+          {
+            "name": "movement_type",
+            "type": "string"
+          },
+          {
+            "name": "movement_summary",
+            "type": "string"
+          },
+          {
+            "name": "movement_date",
+            "type": "string"
+          },
+          {
+            "name": "operate_time",
+            "type": "string"
+          },
+          {
+            "name": "operator",
+            "type": "string"
+          },
+          {
+            "name": "bill_no",
+            "type": "string"
+          },
+          {
+            "name": "lot_number",
+            "type": "string"
+          },
+          {
+            "name": "memo",
+            "type": "string"
+          },
+          {
+            "name": "quantity",
+            "type": "decimal"
+          },
+          {
+            "name": "assist_quantity",
+            "type": "decimal"
+          },
+          {
+            "name": "unit_price",
+            "type": "decimal"
+          },
+          {
+            "name": "money",
+            "type": "decimal"
+          },
+          {
+            "name": "inventory_balance",
+            "type": "decimal"
+          },
+          {
+            "name": "assist_inventory_balance",
+            "type": "decimal"
+          },
+          {
+            "name": "out_storehouse_num",
+            "type": "int64"
+          },
+          {
+            "name": "out_storehouse_code",
+            "type": "string"
+          },
+          {
+            "name": "out_storehouse_name",
+            "type": "string"
+          }
+        ]
+      }
+    },
+    {
+      "id": "p131",
+      "type": "source",
+      "position": {
+        "x": 0,
+        "y": 0
+      },
+      "data": {
+        "label": "p131",
+        "componentId": "src.rest",
+        "properties": {
+          "connectionRef": "lemeng",
+          "url": "https://cloud.nhsoft.cn/agi/api/nhsoft.ama.ai.inventory.movement.find",
+          "method": "POST",
+          "headers": {
+            "Content-Type": "application/json"
+          },
+          "body": "{\"date_start\":\"${date-1d}\",\"date_end\":\"${date-1d}\",\"page_number\":131,\"page_size\":200}",
+          "responsePath": "/result",
+          "paginationType": "none",
+          "pageSize": 200,
+          "retryAttempts": 10,
+          "retryBackoffMs": 15000
+        },
+        "schema": [
+          {
+            "name": "movement_id",
+            "type": "string"
+          },
+          {
+            "name": "branch_num",
+            "type": "int64"
+          },
+          {
+            "name": "branch_code",
+            "type": "string"
+          },
+          {
+            "name": "branch_name",
+            "type": "string"
+          },
+          {
+            "name": "item_num",
+            "type": "int64"
+          },
+          {
+            "name": "item_code",
+            "type": "string"
+          },
+          {
+            "name": "item_barcode",
+            "type": "string"
+          },
+          {
+            "name": "item_name",
+            "type": "string"
+          },
+          {
+            "name": "item_spec",
+            "type": "string"
+          },
+          {
+            "name": "item_unit",
+            "type": "string"
+          },
+          {
+            "name": "movement_type",
+            "type": "string"
+          },
+          {
+            "name": "movement_summary",
+            "type": "string"
+          },
+          {
+            "name": "movement_date",
+            "type": "string"
+          },
+          {
+            "name": "operate_time",
+            "type": "string"
+          },
+          {
+            "name": "operator",
+            "type": "string"
+          },
+          {
+            "name": "bill_no",
+            "type": "string"
+          },
+          {
+            "name": "lot_number",
+            "type": "string"
+          },
+          {
+            "name": "memo",
+            "type": "string"
+          },
+          {
+            "name": "quantity",
+            "type": "decimal"
+          },
+          {
+            "name": "assist_quantity",
+            "type": "decimal"
+          },
+          {
+            "name": "unit_price",
+            "type": "decimal"
+          },
+          {
+            "name": "money",
+            "type": "decimal"
+          },
+          {
+            "name": "inventory_balance",
+            "type": "decimal"
+          },
+          {
+            "name": "assist_inventory_balance",
+            "type": "decimal"
+          },
+          {
+            "name": "out_storehouse_num",
+            "type": "int64"
+          },
+          {
+            "name": "out_storehouse_code",
+            "type": "string"
+          },
+          {
+            "name": "out_storehouse_name",
+            "type": "string"
+          }
+        ]
+      }
+    },
+    {
+      "id": "p132",
+      "type": "source",
+      "position": {
+        "x": 0,
+        "y": 0
+      },
+      "data": {
+        "label": "p132",
+        "componentId": "src.rest",
+        "properties": {
+          "connectionRef": "lemeng",
+          "url": "https://cloud.nhsoft.cn/agi/api/nhsoft.ama.ai.inventory.movement.find",
+          "method": "POST",
+          "headers": {
+            "Content-Type": "application/json"
+          },
+          "body": "{\"date_start\":\"${date-1d}\",\"date_end\":\"${date-1d}\",\"page_number\":132,\"page_size\":200}",
+          "responsePath": "/result",
+          "paginationType": "none",
+          "pageSize": 200,
+          "retryAttempts": 10,
+          "retryBackoffMs": 15000
+        },
+        "schema": [
+          {
+            "name": "movement_id",
+            "type": "string"
+          },
+          {
+            "name": "branch_num",
+            "type": "int64"
+          },
+          {
+            "name": "branch_code",
+            "type": "string"
+          },
+          {
+            "name": "branch_name",
+            "type": "string"
+          },
+          {
+            "name": "item_num",
+            "type": "int64"
+          },
+          {
+            "name": "item_code",
+            "type": "string"
+          },
+          {
+            "name": "item_barcode",
+            "type": "string"
+          },
+          {
+            "name": "item_name",
+            "type": "string"
+          },
+          {
+            "name": "item_spec",
+            "type": "string"
+          },
+          {
+            "name": "item_unit",
+            "type": "string"
+          },
+          {
+            "name": "movement_type",
+            "type": "string"
+          },
+          {
+            "name": "movement_summary",
+            "type": "string"
+          },
+          {
+            "name": "movement_date",
+            "type": "string"
+          },
+          {
+            "name": "operate_time",
+            "type": "string"
+          },
+          {
+            "name": "operator",
+            "type": "string"
+          },
+          {
+            "name": "bill_no",
+            "type": "string"
+          },
+          {
+            "name": "lot_number",
+            "type": "string"
+          },
+          {
+            "name": "memo",
+            "type": "string"
+          },
+          {
+            "name": "quantity",
+            "type": "decimal"
+          },
+          {
+            "name": "assist_quantity",
+            "type": "decimal"
+          },
+          {
+            "name": "unit_price",
+            "type": "decimal"
+          },
+          {
+            "name": "money",
+            "type": "decimal"
+          },
+          {
+            "name": "inventory_balance",
+            "type": "decimal"
+          },
+          {
+            "name": "assist_inventory_balance",
+            "type": "decimal"
+          },
+          {
+            "name": "out_storehouse_num",
+            "type": "int64"
+          },
+          {
+            "name": "out_storehouse_code",
+            "type": "string"
+          },
+          {
+            "name": "out_storehouse_name",
+            "type": "string"
+          }
+        ]
+      }
+    },
+    {
+      "id": "p133",
+      "type": "source",
+      "position": {
+        "x": 0,
+        "y": 0
+      },
+      "data": {
+        "label": "p133",
+        "componentId": "src.rest",
+        "properties": {
+          "connectionRef": "lemeng",
+          "url": "https://cloud.nhsoft.cn/agi/api/nhsoft.ama.ai.inventory.movement.find",
+          "method": "POST",
+          "headers": {
+            "Content-Type": "application/json"
+          },
+          "body": "{\"date_start\":\"${date-1d}\",\"date_end\":\"${date-1d}\",\"page_number\":133,\"page_size\":200}",
+          "responsePath": "/result",
+          "paginationType": "none",
+          "pageSize": 200,
+          "retryAttempts": 10,
+          "retryBackoffMs": 15000
+        },
+        "schema": [
+          {
+            "name": "movement_id",
+            "type": "string"
+          },
+          {
+            "name": "branch_num",
+            "type": "int64"
+          },
+          {
+            "name": "branch_code",
+            "type": "string"
+          },
+          {
+            "name": "branch_name",
+            "type": "string"
+          },
+          {
+            "name": "item_num",
+            "type": "int64"
+          },
+          {
+            "name": "item_code",
+            "type": "string"
+          },
+          {
+            "name": "item_barcode",
+            "type": "string"
+          },
+          {
+            "name": "item_name",
+            "type": "string"
+          },
+          {
+            "name": "item_spec",
+            "type": "string"
+          },
+          {
+            "name": "item_unit",
+            "type": "string"
+          },
+          {
+            "name": "movement_type",
+            "type": "string"
+          },
+          {
+            "name": "movement_summary",
+            "type": "string"
+          },
+          {
+            "name": "movement_date",
+            "type": "string"
+          },
+          {
+            "name": "operate_time",
+            "type": "string"
+          },
+          {
+            "name": "operator",
+            "type": "string"
+          },
+          {
+            "name": "bill_no",
+            "type": "string"
+          },
+          {
+            "name": "lot_number",
+            "type": "string"
+          },
+          {
+            "name": "memo",
+            "type": "string"
+          },
+          {
+            "name": "quantity",
+            "type": "decimal"
+          },
+          {
+            "name": "assist_quantity",
+            "type": "decimal"
+          },
+          {
+            "name": "unit_price",
+            "type": "decimal"
+          },
+          {
+            "name": "money",
+            "type": "decimal"
+          },
+          {
+            "name": "inventory_balance",
+            "type": "decimal"
+          },
+          {
+            "name": "assist_inventory_balance",
+            "type": "decimal"
+          },
+          {
+            "name": "out_storehouse_num",
+            "type": "int64"
+          },
+          {
+            "name": "out_storehouse_code",
+            "type": "string"
+          },
+          {
+            "name": "out_storehouse_name",
+            "type": "string"
+          }
+        ]
+      }
+    },
+    {
+      "id": "p134",
+      "type": "source",
+      "position": {
+        "x": 0,
+        "y": 0
+      },
+      "data": {
+        "label": "p134",
+        "componentId": "src.rest",
+        "properties": {
+          "connectionRef": "lemeng",
+          "url": "https://cloud.nhsoft.cn/agi/api/nhsoft.ama.ai.inventory.movement.find",
+          "method": "POST",
+          "headers": {
+            "Content-Type": "application/json"
+          },
+          "body": "{\"date_start\":\"${date-1d}\",\"date_end\":\"${date-1d}\",\"page_number\":134,\"page_size\":200}",
+          "responsePath": "/result",
+          "paginationType": "none",
+          "pageSize": 200,
+          "retryAttempts": 10,
+          "retryBackoffMs": 15000
+        },
+        "schema": [
+          {
+            "name": "movement_id",
+            "type": "string"
+          },
+          {
+            "name": "branch_num",
+            "type": "int64"
+          },
+          {
+            "name": "branch_code",
+            "type": "string"
+          },
+          {
+            "name": "branch_name",
+            "type": "string"
+          },
+          {
+            "name": "item_num",
+            "type": "int64"
+          },
+          {
+            "name": "item_code",
+            "type": "string"
+          },
+          {
+            "name": "item_barcode",
+            "type": "string"
+          },
+          {
+            "name": "item_name",
+            "type": "string"
+          },
+          {
+            "name": "item_spec",
+            "type": "string"
+          },
+          {
+            "name": "item_unit",
+            "type": "string"
+          },
+          {
+            "name": "movement_type",
+            "type": "string"
+          },
+          {
+            "name": "movement_summary",
+            "type": "string"
+          },
+          {
+            "name": "movement_date",
+            "type": "string"
+          },
+          {
+            "name": "operate_time",
+            "type": "string"
+          },
+          {
+            "name": "operator",
+            "type": "string"
+          },
+          {
+            "name": "bill_no",
+            "type": "string"
+          },
+          {
+            "name": "lot_number",
+            "type": "string"
+          },
+          {
+            "name": "memo",
+            "type": "string"
+          },
+          {
+            "name": "quantity",
+            "type": "decimal"
+          },
+          {
+            "name": "assist_quantity",
+            "type": "decimal"
+          },
+          {
+            "name": "unit_price",
+            "type": "decimal"
+          },
+          {
+            "name": "money",
+            "type": "decimal"
+          },
+          {
+            "name": "inventory_balance",
+            "type": "decimal"
+          },
+          {
+            "name": "assist_inventory_balance",
+            "type": "decimal"
+          },
+          {
+            "name": "out_storehouse_num",
+            "type": "int64"
+          },
+          {
+            "name": "out_storehouse_code",
+            "type": "string"
+          },
+          {
+            "name": "out_storehouse_name",
+            "type": "string"
+          }
+        ]
+      }
+    },
+    {
+      "id": "p135",
+      "type": "source",
+      "position": {
+        "x": 0,
+        "y": 0
+      },
+      "data": {
+        "label": "p135",
+        "componentId": "src.rest",
+        "properties": {
+          "connectionRef": "lemeng",
+          "url": "https://cloud.nhsoft.cn/agi/api/nhsoft.ama.ai.inventory.movement.find",
+          "method": "POST",
+          "headers": {
+            "Content-Type": "application/json"
+          },
+          "body": "{\"date_start\":\"${date-1d}\",\"date_end\":\"${date-1d}\",\"page_number\":135,\"page_size\":200}",
+          "responsePath": "/result",
+          "paginationType": "none",
+          "pageSize": 200,
+          "retryAttempts": 10,
+          "retryBackoffMs": 15000
+        },
+        "schema": [
+          {
+            "name": "movement_id",
+            "type": "string"
+          },
+          {
+            "name": "branch_num",
+            "type": "int64"
+          },
+          {
+            "name": "branch_code",
+            "type": "string"
+          },
+          {
+            "name": "branch_name",
+            "type": "string"
+          },
+          {
+            "name": "item_num",
+            "type": "int64"
+          },
+          {
+            "name": "item_code",
+            "type": "string"
+          },
+          {
+            "name": "item_barcode",
+            "type": "string"
+          },
+          {
+            "name": "item_name",
+            "type": "string"
+          },
+          {
+            "name": "item_spec",
+            "type": "string"
+          },
+          {
+            "name": "item_unit",
+            "type": "string"
+          },
+          {
+            "name": "movement_type",
+            "type": "string"
+          },
+          {
+            "name": "movement_summary",
+            "type": "string"
+          },
+          {
+            "name": "movement_date",
+            "type": "string"
+          },
+          {
+            "name": "operate_time",
+            "type": "string"
+          },
+          {
+            "name": "operator",
+            "type": "string"
+          },
+          {
+            "name": "bill_no",
+            "type": "string"
+          },
+          {
+            "name": "lot_number",
+            "type": "string"
+          },
+          {
+            "name": "memo",
+            "type": "string"
+          },
+          {
+            "name": "quantity",
+            "type": "decimal"
+          },
+          {
+            "name": "assist_quantity",
+            "type": "decimal"
+          },
+          {
+            "name": "unit_price",
+            "type": "decimal"
+          },
+          {
+            "name": "money",
+            "type": "decimal"
+          },
+          {
+            "name": "inventory_balance",
+            "type": "decimal"
+          },
+          {
+            "name": "assist_inventory_balance",
+            "type": "decimal"
+          },
+          {
+            "name": "out_storehouse_num",
+            "type": "int64"
+          },
+          {
+            "name": "out_storehouse_code",
+            "type": "string"
+          },
+          {
+            "name": "out_storehouse_name",
+            "type": "string"
+          }
+        ]
+      }
+    },
+    {
+      "id": "p136",
+      "type": "source",
+      "position": {
+        "x": 0,
+        "y": 0
+      },
+      "data": {
+        "label": "p136",
+        "componentId": "src.rest",
+        "properties": {
+          "connectionRef": "lemeng",
+          "url": "https://cloud.nhsoft.cn/agi/api/nhsoft.ama.ai.inventory.movement.find",
+          "method": "POST",
+          "headers": {
+            "Content-Type": "application/json"
+          },
+          "body": "{\"date_start\":\"${date-1d}\",\"date_end\":\"${date-1d}\",\"page_number\":136,\"page_size\":200}",
+          "responsePath": "/result",
+          "paginationType": "none",
+          "pageSize": 200,
+          "retryAttempts": 10,
+          "retryBackoffMs": 15000
+        },
+        "schema": [
+          {
+            "name": "movement_id",
+            "type": "string"
+          },
+          {
+            "name": "branch_num",
+            "type": "int64"
+          },
+          {
+            "name": "branch_code",
+            "type": "string"
+          },
+          {
+            "name": "branch_name",
+            "type": "string"
+          },
+          {
+            "name": "item_num",
+            "type": "int64"
+          },
+          {
+            "name": "item_code",
+            "type": "string"
+          },
+          {
+            "name": "item_barcode",
+            "type": "string"
+          },
+          {
+            "name": "item_name",
+            "type": "string"
+          },
+          {
+            "name": "item_spec",
+            "type": "string"
+          },
+          {
+            "name": "item_unit",
+            "type": "string"
+          },
+          {
+            "name": "movement_type",
+            "type": "string"
+          },
+          {
+            "name": "movement_summary",
+            "type": "string"
+          },
+          {
+            "name": "movement_date",
+            "type": "string"
+          },
+          {
+            "name": "operate_time",
+            "type": "string"
+          },
+          {
+            "name": "operator",
+            "type": "string"
+          },
+          {
+            "name": "bill_no",
+            "type": "string"
+          },
+          {
+            "name": "lot_number",
+            "type": "string"
+          },
+          {
+            "name": "memo",
+            "type": "string"
+          },
+          {
+            "name": "quantity",
+            "type": "decimal"
+          },
+          {
+            "name": "assist_quantity",
+            "type": "decimal"
+          },
+          {
+            "name": "unit_price",
+            "type": "decimal"
+          },
+          {
+            "name": "money",
+            "type": "decimal"
+          },
+          {
+            "name": "inventory_balance",
+            "type": "decimal"
+          },
+          {
+            "name": "assist_inventory_balance",
+            "type": "decimal"
+          },
+          {
+            "name": "out_storehouse_num",
+            "type": "int64"
+          },
+          {
+            "name": "out_storehouse_code",
+            "type": "string"
+          },
+          {
+            "name": "out_storehouse_name",
+            "type": "string"
+          }
+        ]
+      }
+    },
+    {
+      "id": "p137",
+      "type": "source",
+      "position": {
+        "x": 0,
+        "y": 0
+      },
+      "data": {
+        "label": "p137",
+        "componentId": "src.rest",
+        "properties": {
+          "connectionRef": "lemeng",
+          "url": "https://cloud.nhsoft.cn/agi/api/nhsoft.ama.ai.inventory.movement.find",
+          "method": "POST",
+          "headers": {
+            "Content-Type": "application/json"
+          },
+          "body": "{\"date_start\":\"${date-1d}\",\"date_end\":\"${date-1d}\",\"page_number\":137,\"page_size\":200}",
+          "responsePath": "/result",
+          "paginationType": "none",
+          "pageSize": 200,
+          "retryAttempts": 10,
+          "retryBackoffMs": 15000
+        },
+        "schema": [
+          {
+            "name": "movement_id",
+            "type": "string"
+          },
+          {
+            "name": "branch_num",
+            "type": "int64"
+          },
+          {
+            "name": "branch_code",
+            "type": "string"
+          },
+          {
+            "name": "branch_name",
+            "type": "string"
+          },
+          {
+            "name": "item_num",
+            "type": "int64"
+          },
+          {
+            "name": "item_code",
+            "type": "string"
+          },
+          {
+            "name": "item_barcode",
+            "type": "string"
+          },
+          {
+            "name": "item_name",
+            "type": "string"
+          },
+          {
+            "name": "item_spec",
+            "type": "string"
+          },
+          {
+            "name": "item_unit",
+            "type": "string"
+          },
+          {
+            "name": "movement_type",
+            "type": "string"
+          },
+          {
+            "name": "movement_summary",
+            "type": "string"
+          },
+          {
+            "name": "movement_date",
+            "type": "string"
+          },
+          {
+            "name": "operate_time",
+            "type": "string"
+          },
+          {
+            "name": "operator",
+            "type": "string"
+          },
+          {
+            "name": "bill_no",
+            "type": "string"
+          },
+          {
+            "name": "lot_number",
+            "type": "string"
+          },
+          {
+            "name": "memo",
+            "type": "string"
+          },
+          {
+            "name": "quantity",
+            "type": "decimal"
+          },
+          {
+            "name": "assist_quantity",
+            "type": "decimal"
+          },
+          {
+            "name": "unit_price",
+            "type": "decimal"
+          },
+          {
+            "name": "money",
+            "type": "decimal"
+          },
+          {
+            "name": "inventory_balance",
+            "type": "decimal"
+          },
+          {
+            "name": "assist_inventory_balance",
+            "type": "decimal"
+          },
+          {
+            "name": "out_storehouse_num",
+            "type": "int64"
+          },
+          {
+            "name": "out_storehouse_code",
+            "type": "string"
+          },
+          {
+            "name": "out_storehouse_name",
+            "type": "string"
+          }
+        ]
+      }
+    },
+    {
+      "id": "p138",
+      "type": "source",
+      "position": {
+        "x": 0,
+        "y": 0
+      },
+      "data": {
+        "label": "p138",
+        "componentId": "src.rest",
+        "properties": {
+          "connectionRef": "lemeng",
+          "url": "https://cloud.nhsoft.cn/agi/api/nhsoft.ama.ai.inventory.movement.find",
+          "method": "POST",
+          "headers": {
+            "Content-Type": "application/json"
+          },
+          "body": "{\"date_start\":\"${date-1d}\",\"date_end\":\"${date-1d}\",\"page_number\":138,\"page_size\":200}",
+          "responsePath": "/result",
+          "paginationType": "none",
+          "pageSize": 200,
+          "retryAttempts": 10,
+          "retryBackoffMs": 15000
+        },
+        "schema": [
+          {
+            "name": "movement_id",
+            "type": "string"
+          },
+          {
+            "name": "branch_num",
+            "type": "int64"
+          },
+          {
+            "name": "branch_code",
+            "type": "string"
+          },
+          {
+            "name": "branch_name",
+            "type": "string"
+          },
+          {
+            "name": "item_num",
+            "type": "int64"
+          },
+          {
+            "name": "item_code",
+            "type": "string"
+          },
+          {
+            "name": "item_barcode",
+            "type": "string"
+          },
+          {
+            "name": "item_name",
+            "type": "string"
+          },
+          {
+            "name": "item_spec",
+            "type": "string"
+          },
+          {
+            "name": "item_unit",
+            "type": "string"
+          },
+          {
+            "name": "movement_type",
+            "type": "string"
+          },
+          {
+            "name": "movement_summary",
+            "type": "string"
+          },
+          {
+            "name": "movement_date",
+            "type": "string"
+          },
+          {
+            "name": "operate_time",
+            "type": "string"
+          },
+          {
+            "name": "operator",
+            "type": "string"
+          },
+          {
+            "name": "bill_no",
+            "type": "string"
+          },
+          {
+            "name": "lot_number",
+            "type": "string"
+          },
+          {
+            "name": "memo",
+            "type": "string"
+          },
+          {
+            "name": "quantity",
+            "type": "decimal"
+          },
+          {
+            "name": "assist_quantity",
+            "type": "decimal"
+          },
+          {
+            "name": "unit_price",
+            "type": "decimal"
+          },
+          {
+            "name": "money",
+            "type": "decimal"
+          },
+          {
+            "name": "inventory_balance",
+            "type": "decimal"
+          },
+          {
+            "name": "assist_inventory_balance",
+            "type": "decimal"
+          },
+          {
+            "name": "out_storehouse_num",
+            "type": "int64"
+          },
+          {
+            "name": "out_storehouse_code",
+            "type": "string"
+          },
+          {
+            "name": "out_storehouse_name",
+            "type": "string"
+          }
+        ]
+      }
+    },
+    {
+      "id": "p139",
+      "type": "source",
+      "position": {
+        "x": 0,
+        "y": 0
+      },
+      "data": {
+        "label": "p139",
+        "componentId": "src.rest",
+        "properties": {
+          "connectionRef": "lemeng",
+          "url": "https://cloud.nhsoft.cn/agi/api/nhsoft.ama.ai.inventory.movement.find",
+          "method": "POST",
+          "headers": {
+            "Content-Type": "application/json"
+          },
+          "body": "{\"date_start\":\"${date-1d}\",\"date_end\":\"${date-1d}\",\"page_number\":139,\"page_size\":200}",
+          "responsePath": "/result",
+          "paginationType": "none",
+          "pageSize": 200,
+          "retryAttempts": 10,
+          "retryBackoffMs": 15000
+        },
+        "schema": [
+          {
+            "name": "movement_id",
+            "type": "string"
+          },
+          {
+            "name": "branch_num",
+            "type": "int64"
+          },
+          {
+            "name": "branch_code",
+            "type": "string"
+          },
+          {
+            "name": "branch_name",
+            "type": "string"
+          },
+          {
+            "name": "item_num",
+            "type": "int64"
+          },
+          {
+            "name": "item_code",
+            "type": "string"
+          },
+          {
+            "name": "item_barcode",
+            "type": "string"
+          },
+          {
+            "name": "item_name",
+            "type": "string"
+          },
+          {
+            "name": "item_spec",
+            "type": "string"
+          },
+          {
+            "name": "item_unit",
+            "type": "string"
+          },
+          {
+            "name": "movement_type",
+            "type": "string"
+          },
+          {
+            "name": "movement_summary",
+            "type": "string"
+          },
+          {
+            "name": "movement_date",
+            "type": "string"
+          },
+          {
+            "name": "operate_time",
+            "type": "string"
+          },
+          {
+            "name": "operator",
+            "type": "string"
+          },
+          {
+            "name": "bill_no",
+            "type": "string"
+          },
+          {
+            "name": "lot_number",
+            "type": "string"
+          },
+          {
+            "name": "memo",
+            "type": "string"
+          },
+          {
+            "name": "quantity",
+            "type": "decimal"
+          },
+          {
+            "name": "assist_quantity",
+            "type": "decimal"
+          },
+          {
+            "name": "unit_price",
+            "type": "decimal"
+          },
+          {
+            "name": "money",
+            "type": "decimal"
+          },
+          {
+            "name": "inventory_balance",
+            "type": "decimal"
+          },
+          {
+            "name": "assist_inventory_balance",
+            "type": "decimal"
+          },
+          {
+            "name": "out_storehouse_num",
+            "type": "int64"
+          },
+          {
+            "name": "out_storehouse_code",
+            "type": "string"
+          },
+          {
+            "name": "out_storehouse_name",
+            "type": "string"
+          }
+        ]
+      }
+    },
+    {
+      "id": "p140",
+      "type": "source",
+      "position": {
+        "x": 0,
+        "y": 0
+      },
+      "data": {
+        "label": "p140",
+        "componentId": "src.rest",
+        "properties": {
+          "connectionRef": "lemeng",
+          "url": "https://cloud.nhsoft.cn/agi/api/nhsoft.ama.ai.inventory.movement.find",
+          "method": "POST",
+          "headers": {
+            "Content-Type": "application/json"
+          },
+          "body": "{\"date_start\":\"${date-1d}\",\"date_end\":\"${date-1d}\",\"page_number\":140,\"page_size\":200}",
+          "responsePath": "/result",
+          "paginationType": "none",
+          "pageSize": 200,
+          "retryAttempts": 10,
+          "retryBackoffMs": 15000
+        },
+        "schema": [
+          {
+            "name": "movement_id",
+            "type": "string"
+          },
+          {
+            "name": "branch_num",
+            "type": "int64"
+          },
+          {
+            "name": "branch_code",
+            "type": "string"
+          },
+          {
+            "name": "branch_name",
+            "type": "string"
+          },
+          {
+            "name": "item_num",
+            "type": "int64"
+          },
+          {
+            "name": "item_code",
+            "type": "string"
+          },
+          {
+            "name": "item_barcode",
+            "type": "string"
+          },
+          {
+            "name": "item_name",
+            "type": "string"
+          },
+          {
+            "name": "item_spec",
+            "type": "string"
+          },
+          {
+            "name": "item_unit",
+            "type": "string"
+          },
+          {
+            "name": "movement_type",
+            "type": "string"
+          },
+          {
+            "name": "movement_summary",
+            "type": "string"
+          },
+          {
+            "name": "movement_date",
+            "type": "string"
+          },
+          {
+            "name": "operate_time",
+            "type": "string"
+          },
+          {
+            "name": "operator",
+            "type": "string"
+          },
+          {
+            "name": "bill_no",
+            "type": "string"
+          },
+          {
+            "name": "lot_number",
+            "type": "string"
+          },
+          {
+            "name": "memo",
+            "type": "string"
+          },
+          {
+            "name": "quantity",
+            "type": "decimal"
+          },
+          {
+            "name": "assist_quantity",
+            "type": "decimal"
+          },
+          {
+            "name": "unit_price",
+            "type": "decimal"
+          },
+          {
+            "name": "money",
+            "type": "decimal"
+          },
+          {
+            "name": "inventory_balance",
+            "type": "decimal"
+          },
+          {
+            "name": "assist_inventory_balance",
+            "type": "decimal"
+          },
+          {
+            "name": "out_storehouse_num",
+            "type": "int64"
+          },
+          {
+            "name": "out_storehouse_code",
+            "type": "string"
+          },
+          {
+            "name": "out_storehouse_name",
+            "type": "string"
+          }
+        ]
+      }
+    },
+    {
+      "id": "p141",
+      "type": "source",
+      "position": {
+        "x": 0,
+        "y": 0
+      },
+      "data": {
+        "label": "p141",
+        "componentId": "src.rest",
+        "properties": {
+          "connectionRef": "lemeng",
+          "url": "https://cloud.nhsoft.cn/agi/api/nhsoft.ama.ai.inventory.movement.find",
+          "method": "POST",
+          "headers": {
+            "Content-Type": "application/json"
+          },
+          "body": "{\"date_start\":\"${date-1d}\",\"date_end\":\"${date-1d}\",\"page_number\":141,\"page_size\":200}",
+          "responsePath": "/result",
+          "paginationType": "none",
+          "pageSize": 200,
+          "retryAttempts": 10,
+          "retryBackoffMs": 15000
+        },
+        "schema": [
+          {
+            "name": "movement_id",
+            "type": "string"
+          },
+          {
+            "name": "branch_num",
+            "type": "int64"
+          },
+          {
+            "name": "branch_code",
+            "type": "string"
+          },
+          {
+            "name": "branch_name",
+            "type": "string"
+          },
+          {
+            "name": "item_num",
+            "type": "int64"
+          },
+          {
+            "name": "item_code",
+            "type": "string"
+          },
+          {
+            "name": "item_barcode",
+            "type": "string"
+          },
+          {
+            "name": "item_name",
+            "type": "string"
+          },
+          {
+            "name": "item_spec",
+            "type": "string"
+          },
+          {
+            "name": "item_unit",
+            "type": "string"
+          },
+          {
+            "name": "movement_type",
+            "type": "string"
+          },
+          {
+            "name": "movement_summary",
+            "type": "string"
+          },
+          {
+            "name": "movement_date",
+            "type": "string"
+          },
+          {
+            "name": "operate_time",
+            "type": "string"
+          },
+          {
+            "name": "operator",
+            "type": "string"
+          },
+          {
+            "name": "bill_no",
+            "type": "string"
+          },
+          {
+            "name": "lot_number",
+            "type": "string"
+          },
+          {
+            "name": "memo",
+            "type": "string"
+          },
+          {
+            "name": "quantity",
+            "type": "decimal"
+          },
+          {
+            "name": "assist_quantity",
+            "type": "decimal"
+          },
+          {
+            "name": "unit_price",
+            "type": "decimal"
+          },
+          {
+            "name": "money",
+            "type": "decimal"
+          },
+          {
+            "name": "inventory_balance",
+            "type": "decimal"
+          },
+          {
+            "name": "assist_inventory_balance",
+            "type": "decimal"
+          },
+          {
+            "name": "out_storehouse_num",
+            "type": "int64"
+          },
+          {
+            "name": "out_storehouse_code",
+            "type": "string"
+          },
+          {
+            "name": "out_storehouse_name",
+            "type": "string"
+          }
+        ]
+      }
+    },
+    {
+      "id": "p142",
+      "type": "source",
+      "position": {
+        "x": 0,
+        "y": 0
+      },
+      "data": {
+        "label": "p142",
+        "componentId": "src.rest",
+        "properties": {
+          "connectionRef": "lemeng",
+          "url": "https://cloud.nhsoft.cn/agi/api/nhsoft.ama.ai.inventory.movement.find",
+          "method": "POST",
+          "headers": {
+            "Content-Type": "application/json"
+          },
+          "body": "{\"date_start\":\"${date-1d}\",\"date_end\":\"${date-1d}\",\"page_number\":142,\"page_size\":200}",
+          "responsePath": "/result",
+          "paginationType": "none",
+          "pageSize": 200,
+          "retryAttempts": 10,
+          "retryBackoffMs": 15000
+        },
+        "schema": [
+          {
+            "name": "movement_id",
+            "type": "string"
+          },
+          {
+            "name": "branch_num",
+            "type": "int64"
+          },
+          {
+            "name": "branch_code",
+            "type": "string"
+          },
+          {
+            "name": "branch_name",
+            "type": "string"
+          },
+          {
+            "name": "item_num",
+            "type": "int64"
+          },
+          {
+            "name": "item_code",
+            "type": "string"
+          },
+          {
+            "name": "item_barcode",
+            "type": "string"
+          },
+          {
+            "name": "item_name",
+            "type": "string"
+          },
+          {
+            "name": "item_spec",
+            "type": "string"
+          },
+          {
+            "name": "item_unit",
+            "type": "string"
+          },
+          {
+            "name": "movement_type",
+            "type": "string"
+          },
+          {
+            "name": "movement_summary",
+            "type": "string"
+          },
+          {
+            "name": "movement_date",
+            "type": "string"
+          },
+          {
+            "name": "operate_time",
+            "type": "string"
+          },
+          {
+            "name": "operator",
+            "type": "string"
+          },
+          {
+            "name": "bill_no",
+            "type": "string"
+          },
+          {
+            "name": "lot_number",
+            "type": "string"
+          },
+          {
+            "name": "memo",
+            "type": "string"
+          },
+          {
+            "name": "quantity",
+            "type": "decimal"
+          },
+          {
+            "name": "assist_quantity",
+            "type": "decimal"
+          },
+          {
+            "name": "unit_price",
+            "type": "decimal"
+          },
+          {
+            "name": "money",
+            "type": "decimal"
+          },
+          {
+            "name": "inventory_balance",
+            "type": "decimal"
+          },
+          {
+            "name": "assist_inventory_balance",
+            "type": "decimal"
+          },
+          {
+            "name": "out_storehouse_num",
+            "type": "int64"
+          },
+          {
+            "name": "out_storehouse_code",
+            "type": "string"
+          },
+          {
+            "name": "out_storehouse_name",
+            "type": "string"
+          }
+        ]
+      }
+    },
+    {
+      "id": "p143",
+      "type": "source",
+      "position": {
+        "x": 0,
+        "y": 0
+      },
+      "data": {
+        "label": "p143",
+        "componentId": "src.rest",
+        "properties": {
+          "connectionRef": "lemeng",
+          "url": "https://cloud.nhsoft.cn/agi/api/nhsoft.ama.ai.inventory.movement.find",
+          "method": "POST",
+          "headers": {
+            "Content-Type": "application/json"
+          },
+          "body": "{\"date_start\":\"${date-1d}\",\"date_end\":\"${date-1d}\",\"page_number\":143,\"page_size\":200}",
+          "responsePath": "/result",
+          "paginationType": "none",
+          "pageSize": 200,
+          "retryAttempts": 10,
+          "retryBackoffMs": 15000
+        },
+        "schema": [
+          {
+            "name": "movement_id",
+            "type": "string"
+          },
+          {
+            "name": "branch_num",
+            "type": "int64"
+          },
+          {
+            "name": "branch_code",
+            "type": "string"
+          },
+          {
+            "name": "branch_name",
+            "type": "string"
+          },
+          {
+            "name": "item_num",
+            "type": "int64"
+          },
+          {
+            "name": "item_code",
+            "type": "string"
+          },
+          {
+            "name": "item_barcode",
+            "type": "string"
+          },
+          {
+            "name": "item_name",
+            "type": "string"
+          },
+          {
+            "name": "item_spec",
+            "type": "string"
+          },
+          {
+            "name": "item_unit",
+            "type": "string"
+          },
+          {
+            "name": "movement_type",
+            "type": "string"
+          },
+          {
+            "name": "movement_summary",
+            "type": "string"
+          },
+          {
+            "name": "movement_date",
+            "type": "string"
+          },
+          {
+            "name": "operate_time",
+            "type": "string"
+          },
+          {
+            "name": "operator",
+            "type": "string"
+          },
+          {
+            "name": "bill_no",
+            "type": "string"
+          },
+          {
+            "name": "lot_number",
+            "type": "string"
+          },
+          {
+            "name": "memo",
+            "type": "string"
+          },
+          {
+            "name": "quantity",
+            "type": "decimal"
+          },
+          {
+            "name": "assist_quantity",
+            "type": "decimal"
+          },
+          {
+            "name": "unit_price",
+            "type": "decimal"
+          },
+          {
+            "name": "money",
+            "type": "decimal"
+          },
+          {
+            "name": "inventory_balance",
+            "type": "decimal"
+          },
+          {
+            "name": "assist_inventory_balance",
+            "type": "decimal"
+          },
+          {
+            "name": "out_storehouse_num",
+            "type": "int64"
+          },
+          {
+            "name": "out_storehouse_code",
+            "type": "string"
+          },
+          {
+            "name": "out_storehouse_name",
+            "type": "string"
+          }
+        ]
+      }
+    },
+    {
+      "id": "p144",
+      "type": "source",
+      "position": {
+        "x": 0,
+        "y": 0
+      },
+      "data": {
+        "label": "p144",
+        "componentId": "src.rest",
+        "properties": {
+          "connectionRef": "lemeng",
+          "url": "https://cloud.nhsoft.cn/agi/api/nhsoft.ama.ai.inventory.movement.find",
+          "method": "POST",
+          "headers": {
+            "Content-Type": "application/json"
+          },
+          "body": "{\"date_start\":\"${date-1d}\",\"date_end\":\"${date-1d}\",\"page_number\":144,\"page_size\":200}",
+          "responsePath": "/result",
+          "paginationType": "none",
+          "pageSize": 200,
+          "retryAttempts": 10,
+          "retryBackoffMs": 15000
+        },
+        "schema": [
+          {
+            "name": "movement_id",
+            "type": "string"
+          },
+          {
+            "name": "branch_num",
+            "type": "int64"
+          },
+          {
+            "name": "branch_code",
+            "type": "string"
+          },
+          {
+            "name": "branch_name",
+            "type": "string"
+          },
+          {
+            "name": "item_num",
+            "type": "int64"
+          },
+          {
+            "name": "item_code",
+            "type": "string"
+          },
+          {
+            "name": "item_barcode",
+            "type": "string"
+          },
+          {
+            "name": "item_name",
+            "type": "string"
+          },
+          {
+            "name": "item_spec",
+            "type": "string"
+          },
+          {
+            "name": "item_unit",
+            "type": "string"
+          },
+          {
+            "name": "movement_type",
+            "type": "string"
+          },
+          {
+            "name": "movement_summary",
+            "type": "string"
+          },
+          {
+            "name": "movement_date",
+            "type": "string"
+          },
+          {
+            "name": "operate_time",
+            "type": "string"
+          },
+          {
+            "name": "operator",
+            "type": "string"
+          },
+          {
+            "name": "bill_no",
+            "type": "string"
+          },
+          {
+            "name": "lot_number",
+            "type": "string"
+          },
+          {
+            "name": "memo",
+            "type": "string"
+          },
+          {
+            "name": "quantity",
+            "type": "decimal"
+          },
+          {
+            "name": "assist_quantity",
+            "type": "decimal"
+          },
+          {
+            "name": "unit_price",
+            "type": "decimal"
+          },
+          {
+            "name": "money",
+            "type": "decimal"
+          },
+          {
+            "name": "inventory_balance",
+            "type": "decimal"
+          },
+          {
+            "name": "assist_inventory_balance",
+            "type": "decimal"
+          },
+          {
+            "name": "out_storehouse_num",
+            "type": "int64"
+          },
+          {
+            "name": "out_storehouse_code",
+            "type": "string"
+          },
+          {
+            "name": "out_storehouse_name",
+            "type": "string"
+          }
+        ]
+      }
+    },
+    {
+      "id": "p145",
+      "type": "source",
+      "position": {
+        "x": 0,
+        "y": 0
+      },
+      "data": {
+        "label": "p145",
+        "componentId": "src.rest",
+        "properties": {
+          "connectionRef": "lemeng",
+          "url": "https://cloud.nhsoft.cn/agi/api/nhsoft.ama.ai.inventory.movement.find",
+          "method": "POST",
+          "headers": {
+            "Content-Type": "application/json"
+          },
+          "body": "{\"date_start\":\"${date-1d}\",\"date_end\":\"${date-1d}\",\"page_number\":145,\"page_size\":200}",
+          "responsePath": "/result",
+          "paginationType": "none",
+          "pageSize": 200,
+          "retryAttempts": 10,
+          "retryBackoffMs": 15000
+        },
+        "schema": [
+          {
+            "name": "movement_id",
+            "type": "string"
+          },
+          {
+            "name": "branch_num",
+            "type": "int64"
+          },
+          {
+            "name": "branch_code",
+            "type": "string"
+          },
+          {
+            "name": "branch_name",
+            "type": "string"
+          },
+          {
+            "name": "item_num",
+            "type": "int64"
+          },
+          {
+            "name": "item_code",
+            "type": "string"
+          },
+          {
+            "name": "item_barcode",
+            "type": "string"
+          },
+          {
+            "name": "item_name",
+            "type": "string"
+          },
+          {
+            "name": "item_spec",
+            "type": "string"
+          },
+          {
+            "name": "item_unit",
+            "type": "string"
+          },
+          {
+            "name": "movement_type",
+            "type": "string"
+          },
+          {
+            "name": "movement_summary",
+            "type": "string"
+          },
+          {
+            "name": "movement_date",
+            "type": "string"
+          },
+          {
+            "name": "operate_time",
+            "type": "string"
+          },
+          {
+            "name": "operator",
+            "type": "string"
+          },
+          {
+            "name": "bill_no",
+            "type": "string"
+          },
+          {
+            "name": "lot_number",
+            "type": "string"
+          },
+          {
+            "name": "memo",
+            "type": "string"
+          },
+          {
+            "name": "quantity",
+            "type": "decimal"
+          },
+          {
+            "name": "assist_quantity",
+            "type": "decimal"
+          },
+          {
+            "name": "unit_price",
+            "type": "decimal"
+          },
+          {
+            "name": "money",
+            "type": "decimal"
+          },
+          {
+            "name": "inventory_balance",
+            "type": "decimal"
+          },
+          {
+            "name": "assist_inventory_balance",
+            "type": "decimal"
+          },
+          {
+            "name": "out_storehouse_num",
+            "type": "int64"
+          },
+          {
+            "name": "out_storehouse_code",
+            "type": "string"
+          },
+          {
+            "name": "out_storehouse_name",
+            "type": "string"
+          }
+        ]
+      }
+    },
+    {
+      "id": "p146",
+      "type": "source",
+      "position": {
+        "x": 0,
+        "y": 0
+      },
+      "data": {
+        "label": "p146",
+        "componentId": "src.rest",
+        "properties": {
+          "connectionRef": "lemeng",
+          "url": "https://cloud.nhsoft.cn/agi/api/nhsoft.ama.ai.inventory.movement.find",
+          "method": "POST",
+          "headers": {
+            "Content-Type": "application/json"
+          },
+          "body": "{\"date_start\":\"${date-1d}\",\"date_end\":\"${date-1d}\",\"page_number\":146,\"page_size\":200}",
+          "responsePath": "/result",
+          "paginationType": "none",
+          "pageSize": 200,
+          "retryAttempts": 10,
+          "retryBackoffMs": 15000
+        },
+        "schema": [
+          {
+            "name": "movement_id",
+            "type": "string"
+          },
+          {
+            "name": "branch_num",
+            "type": "int64"
+          },
+          {
+            "name": "branch_code",
+            "type": "string"
+          },
+          {
+            "name": "branch_name",
+            "type": "string"
+          },
+          {
+            "name": "item_num",
+            "type": "int64"
+          },
+          {
+            "name": "item_code",
+            "type": "string"
+          },
+          {
+            "name": "item_barcode",
+            "type": "string"
+          },
+          {
+            "name": "item_name",
+            "type": "string"
+          },
+          {
+            "name": "item_spec",
+            "type": "string"
+          },
+          {
+            "name": "item_unit",
+            "type": "string"
+          },
+          {
+            "name": "movement_type",
+            "type": "string"
+          },
+          {
+            "name": "movement_summary",
+            "type": "string"
+          },
+          {
+            "name": "movement_date",
+            "type": "string"
+          },
+          {
+            "name": "operate_time",
+            "type": "string"
+          },
+          {
+            "name": "operator",
+            "type": "string"
+          },
+          {
+            "name": "bill_no",
+            "type": "string"
+          },
+          {
+            "name": "lot_number",
+            "type": "string"
+          },
+          {
+            "name": "memo",
+            "type": "string"
+          },
+          {
+            "name": "quantity",
+            "type": "decimal"
+          },
+          {
+            "name": "assist_quantity",
+            "type": "decimal"
+          },
+          {
+            "name": "unit_price",
+            "type": "decimal"
+          },
+          {
+            "name": "money",
+            "type": "decimal"
+          },
+          {
+            "name": "inventory_balance",
+            "type": "decimal"
+          },
+          {
+            "name": "assist_inventory_balance",
+            "type": "decimal"
+          },
+          {
+            "name": "out_storehouse_num",
+            "type": "int64"
+          },
+          {
+            "name": "out_storehouse_code",
+            "type": "string"
+          },
+          {
+            "name": "out_storehouse_name",
+            "type": "string"
+          }
+        ]
+      }
+    },
+    {
+      "id": "p147",
+      "type": "source",
+      "position": {
+        "x": 0,
+        "y": 0
+      },
+      "data": {
+        "label": "p147",
+        "componentId": "src.rest",
+        "properties": {
+          "connectionRef": "lemeng",
+          "url": "https://cloud.nhsoft.cn/agi/api/nhsoft.ama.ai.inventory.movement.find",
+          "method": "POST",
+          "headers": {
+            "Content-Type": "application/json"
+          },
+          "body": "{\"date_start\":\"${date-1d}\",\"date_end\":\"${date-1d}\",\"page_number\":147,\"page_size\":200}",
+          "responsePath": "/result",
+          "paginationType": "none",
+          "pageSize": 200,
+          "retryAttempts": 10,
+          "retryBackoffMs": 15000
+        },
+        "schema": [
+          {
+            "name": "movement_id",
+            "type": "string"
+          },
+          {
+            "name": "branch_num",
+            "type": "int64"
+          },
+          {
+            "name": "branch_code",
+            "type": "string"
+          },
+          {
+            "name": "branch_name",
+            "type": "string"
+          },
+          {
+            "name": "item_num",
+            "type": "int64"
+          },
+          {
+            "name": "item_code",
+            "type": "string"
+          },
+          {
+            "name": "item_barcode",
+            "type": "string"
+          },
+          {
+            "name": "item_name",
+            "type": "string"
+          },
+          {
+            "name": "item_spec",
+            "type": "string"
+          },
+          {
+            "name": "item_unit",
+            "type": "string"
+          },
+          {
+            "name": "movement_type",
+            "type": "string"
+          },
+          {
+            "name": "movement_summary",
+            "type": "string"
+          },
+          {
+            "name": "movement_date",
+            "type": "string"
+          },
+          {
+            "name": "operate_time",
+            "type": "string"
+          },
+          {
+            "name": "operator",
+            "type": "string"
+          },
+          {
+            "name": "bill_no",
+            "type": "string"
+          },
+          {
+            "name": "lot_number",
+            "type": "string"
+          },
+          {
+            "name": "memo",
+            "type": "string"
+          },
+          {
+            "name": "quantity",
+            "type": "decimal"
+          },
+          {
+            "name": "assist_quantity",
+            "type": "decimal"
+          },
+          {
+            "name": "unit_price",
+            "type": "decimal"
+          },
+          {
+            "name": "money",
+            "type": "decimal"
+          },
+          {
+            "name": "inventory_balance",
+            "type": "decimal"
+          },
+          {
+            "name": "assist_inventory_balance",
+            "type": "decimal"
+          },
+          {
+            "name": "out_storehouse_num",
+            "type": "int64"
+          },
+          {
+            "name": "out_storehouse_code",
+            "type": "string"
+          },
+          {
+            "name": "out_storehouse_name",
+            "type": "string"
+          }
+        ]
+      }
+    },
+    {
+      "id": "p148",
+      "type": "source",
+      "position": {
+        "x": 0,
+        "y": 0
+      },
+      "data": {
+        "label": "p148",
+        "componentId": "src.rest",
+        "properties": {
+          "connectionRef": "lemeng",
+          "url": "https://cloud.nhsoft.cn/agi/api/nhsoft.ama.ai.inventory.movement.find",
+          "method": "POST",
+          "headers": {
+            "Content-Type": "application/json"
+          },
+          "body": "{\"date_start\":\"${date-1d}\",\"date_end\":\"${date-1d}\",\"page_number\":148,\"page_size\":200}",
+          "responsePath": "/result",
+          "paginationType": "none",
+          "pageSize": 200,
+          "retryAttempts": 10,
+          "retryBackoffMs": 15000
+        },
+        "schema": [
+          {
+            "name": "movement_id",
+            "type": "string"
+          },
+          {
+            "name": "branch_num",
+            "type": "int64"
+          },
+          {
+            "name": "branch_code",
+            "type": "string"
+          },
+          {
+            "name": "branch_name",
+            "type": "string"
+          },
+          {
+            "name": "item_num",
+            "type": "int64"
+          },
+          {
+            "name": "item_code",
+            "type": "string"
+          },
+          {
+            "name": "item_barcode",
+            "type": "string"
+          },
+          {
+            "name": "item_name",
+            "type": "string"
+          },
+          {
+            "name": "item_spec",
+            "type": "string"
+          },
+          {
+            "name": "item_unit",
+            "type": "string"
+          },
+          {
+            "name": "movement_type",
+            "type": "string"
+          },
+          {
+            "name": "movement_summary",
+            "type": "string"
+          },
+          {
+            "name": "movement_date",
+            "type": "string"
+          },
+          {
+            "name": "operate_time",
+            "type": "string"
+          },
+          {
+            "name": "operator",
+            "type": "string"
+          },
+          {
+            "name": "bill_no",
+            "type": "string"
+          },
+          {
+            "name": "lot_number",
+            "type": "string"
+          },
+          {
+            "name": "memo",
+            "type": "string"
+          },
+          {
+            "name": "quantity",
+            "type": "decimal"
+          },
+          {
+            "name": "assist_quantity",
+            "type": "decimal"
+          },
+          {
+            "name": "unit_price",
+            "type": "decimal"
+          },
+          {
+            "name": "money",
+            "type": "decimal"
+          },
+          {
+            "name": "inventory_balance",
+            "type": "decimal"
+          },
+          {
+            "name": "assist_inventory_balance",
+            "type": "decimal"
+          },
+          {
+            "name": "out_storehouse_num",
+            "type": "int64"
+          },
+          {
+            "name": "out_storehouse_code",
+            "type": "string"
+          },
+          {
+            "name": "out_storehouse_name",
+            "type": "string"
+          }
+        ]
+      }
+    },
+    {
+      "id": "p149",
+      "type": "source",
+      "position": {
+        "x": 0,
+        "y": 0
+      },
+      "data": {
+        "label": "p149",
+        "componentId": "src.rest",
+        "properties": {
+          "connectionRef": "lemeng",
+          "url": "https://cloud.nhsoft.cn/agi/api/nhsoft.ama.ai.inventory.movement.find",
+          "method": "POST",
+          "headers": {
+            "Content-Type": "application/json"
+          },
+          "body": "{\"date_start\":\"${date-1d}\",\"date_end\":\"${date-1d}\",\"page_number\":149,\"page_size\":200}",
+          "responsePath": "/result",
+          "paginationType": "none",
+          "pageSize": 200,
+          "retryAttempts": 10,
+          "retryBackoffMs": 15000
+        },
+        "schema": [
+          {
+            "name": "movement_id",
+            "type": "string"
+          },
+          {
+            "name": "branch_num",
+            "type": "int64"
+          },
+          {
+            "name": "branch_code",
+            "type": "string"
+          },
+          {
+            "name": "branch_name",
+            "type": "string"
+          },
+          {
+            "name": "item_num",
+            "type": "int64"
+          },
+          {
+            "name": "item_code",
+            "type": "string"
+          },
+          {
+            "name": "item_barcode",
+            "type": "string"
+          },
+          {
+            "name": "item_name",
+            "type": "string"
+          },
+          {
+            "name": "item_spec",
+            "type": "string"
+          },
+          {
+            "name": "item_unit",
+            "type": "string"
+          },
+          {
+            "name": "movement_type",
+            "type": "string"
+          },
+          {
+            "name": "movement_summary",
+            "type": "string"
+          },
+          {
+            "name": "movement_date",
+            "type": "string"
+          },
+          {
+            "name": "operate_time",
+            "type": "string"
+          },
+          {
+            "name": "operator",
+            "type": "string"
+          },
+          {
+            "name": "bill_no",
+            "type": "string"
+          },
+          {
+            "name": "lot_number",
+            "type": "string"
+          },
+          {
+            "name": "memo",
+            "type": "string"
+          },
+          {
+            "name": "quantity",
+            "type": "decimal"
+          },
+          {
+            "name": "assist_quantity",
+            "type": "decimal"
+          },
+          {
+            "name": "unit_price",
+            "type": "decimal"
+          },
+          {
+            "name": "money",
+            "type": "decimal"
+          },
+          {
+            "name": "inventory_balance",
+            "type": "decimal"
+          },
+          {
+            "name": "assist_inventory_balance",
+            "type": "decimal"
+          },
+          {
+            "name": "out_storehouse_num",
+            "type": "int64"
+          },
+          {
+            "name": "out_storehouse_code",
+            "type": "string"
+          },
+          {
+            "name": "out_storehouse_name",
+            "type": "string"
+          }
+        ]
+      }
+    },
+    {
+      "id": "p150",
+      "type": "source",
+      "position": {
+        "x": 0,
+        "y": 0
+      },
+      "data": {
+        "label": "p150",
+        "componentId": "src.rest",
+        "properties": {
+          "connectionRef": "lemeng",
+          "url": "https://cloud.nhsoft.cn/agi/api/nhsoft.ama.ai.inventory.movement.find",
+          "method": "POST",
+          "headers": {
+            "Content-Type": "application/json"
+          },
+          "body": "{\"date_start\":\"${date-1d}\",\"date_end\":\"${date-1d}\",\"page_number\":150,\"page_size\":200}",
+          "responsePath": "/result",
+          "paginationType": "none",
+          "pageSize": 200,
+          "retryAttempts": 10,
+          "retryBackoffMs": 15000
+        },
+        "schema": [
+          {
+            "name": "movement_id",
+            "type": "string"
+          },
+          {
+            "name": "branch_num",
+            "type": "int64"
+          },
+          {
+            "name": "branch_code",
+            "type": "string"
+          },
+          {
+            "name": "branch_name",
+            "type": "string"
+          },
+          {
+            "name": "item_num",
+            "type": "int64"
+          },
+          {
+            "name": "item_code",
+            "type": "string"
+          },
+          {
+            "name": "item_barcode",
+            "type": "string"
+          },
+          {
+            "name": "item_name",
+            "type": "string"
+          },
+          {
+            "name": "item_spec",
+            "type": "string"
+          },
+          {
+            "name": "item_unit",
+            "type": "string"
+          },
+          {
+            "name": "movement_type",
+            "type": "string"
+          },
+          {
+            "name": "movement_summary",
+            "type": "string"
+          },
+          {
+            "name": "movement_date",
+            "type": "string"
+          },
+          {
+            "name": "operate_time",
+            "type": "string"
+          },
+          {
+            "name": "operator",
+            "type": "string"
+          },
+          {
+            "name": "bill_no",
+            "type": "string"
+          },
+          {
+            "name": "lot_number",
+            "type": "string"
+          },
+          {
+            "name": "memo",
+            "type": "string"
+          },
+          {
+            "name": "quantity",
+            "type": "decimal"
+          },
+          {
+            "name": "assist_quantity",
+            "type": "decimal"
+          },
+          {
+            "name": "unit_price",
+            "type": "decimal"
+          },
+          {
+            "name": "money",
+            "type": "decimal"
+          },
+          {
+            "name": "inventory_balance",
+            "type": "decimal"
+          },
+          {
+            "name": "assist_inventory_balance",
+            "type": "decimal"
+          },
+          {
+            "name": "out_storehouse_num",
+            "type": "int64"
+          },
+          {
+            "name": "out_storehouse_code",
+            "type": "string"
+          },
+          {
+            "name": "out_storehouse_name",
+            "type": "string"
+          }
+        ]
+      }
+    },
+    {
+      "id": "p151",
+      "type": "source",
+      "position": {
+        "x": 0,
+        "y": 0
+      },
+      "data": {
+        "label": "p151",
+        "componentId": "src.rest",
+        "properties": {
+          "connectionRef": "lemeng",
+          "url": "https://cloud.nhsoft.cn/agi/api/nhsoft.ama.ai.inventory.movement.find",
+          "method": "POST",
+          "headers": {
+            "Content-Type": "application/json"
+          },
+          "body": "{\"date_start\":\"${date-1d}\",\"date_end\":\"${date-1d}\",\"page_number\":151,\"page_size\":200}",
+          "responsePath": "/result",
+          "paginationType": "none",
+          "pageSize": 200,
+          "retryAttempts": 10,
+          "retryBackoffMs": 15000
+        },
+        "schema": [
+          {
+            "name": "movement_id",
+            "type": "string"
+          },
+          {
+            "name": "branch_num",
+            "type": "int64"
+          },
+          {
+            "name": "branch_code",
+            "type": "string"
+          },
+          {
+            "name": "branch_name",
+            "type": "string"
+          },
+          {
+            "name": "item_num",
+            "type": "int64"
+          },
+          {
+            "name": "item_code",
+            "type": "string"
+          },
+          {
+            "name": "item_barcode",
+            "type": "string"
+          },
+          {
+            "name": "item_name",
+            "type": "string"
+          },
+          {
+            "name": "item_spec",
+            "type": "string"
+          },
+          {
+            "name": "item_unit",
+            "type": "string"
+          },
+          {
+            "name": "movement_type",
+            "type": "string"
+          },
+          {
+            "name": "movement_summary",
+            "type": "string"
+          },
+          {
+            "name": "movement_date",
+            "type": "string"
+          },
+          {
+            "name": "operate_time",
+            "type": "string"
+          },
+          {
+            "name": "operator",
+            "type": "string"
+          },
+          {
+            "name": "bill_no",
+            "type": "string"
+          },
+          {
+            "name": "lot_number",
+            "type": "string"
+          },
+          {
+            "name": "memo",
+            "type": "string"
+          },
+          {
+            "name": "quantity",
+            "type": "decimal"
+          },
+          {
+            "name": "assist_quantity",
+            "type": "decimal"
+          },
+          {
+            "name": "unit_price",
+            "type": "decimal"
+          },
+          {
+            "name": "money",
+            "type": "decimal"
+          },
+          {
+            "name": "inventory_balance",
+            "type": "decimal"
+          },
+          {
+            "name": "assist_inventory_balance",
+            "type": "decimal"
+          },
+          {
+            "name": "out_storehouse_num",
+            "type": "int64"
+          },
+          {
+            "name": "out_storehouse_code",
+            "type": "string"
+          },
+          {
+            "name": "out_storehouse_name",
+            "type": "string"
+          }
+        ]
+      }
+    },
+    {
+      "id": "p152",
+      "type": "source",
+      "position": {
+        "x": 0,
+        "y": 0
+      },
+      "data": {
+        "label": "p152",
+        "componentId": "src.rest",
+        "properties": {
+          "connectionRef": "lemeng",
+          "url": "https://cloud.nhsoft.cn/agi/api/nhsoft.ama.ai.inventory.movement.find",
+          "method": "POST",
+          "headers": {
+            "Content-Type": "application/json"
+          },
+          "body": "{\"date_start\":\"${date-1d}\",\"date_end\":\"${date-1d}\",\"page_number\":152,\"page_size\":200}",
+          "responsePath": "/result",
+          "paginationType": "none",
+          "pageSize": 200,
+          "retryAttempts": 10,
+          "retryBackoffMs": 15000
+        },
+        "schema": [
+          {
+            "name": "movement_id",
+            "type": "string"
+          },
+          {
+            "name": "branch_num",
+            "type": "int64"
+          },
+          {
+            "name": "branch_code",
+            "type": "string"
+          },
+          {
+            "name": "branch_name",
+            "type": "string"
+          },
+          {
+            "name": "item_num",
+            "type": "int64"
+          },
+          {
+            "name": "item_code",
+            "type": "string"
+          },
+          {
+            "name": "item_barcode",
+            "type": "string"
+          },
+          {
+            "name": "item_name",
+            "type": "string"
+          },
+          {
+            "name": "item_spec",
+            "type": "string"
+          },
+          {
+            "name": "item_unit",
+            "type": "string"
+          },
+          {
+            "name": "movement_type",
+            "type": "string"
+          },
+          {
+            "name": "movement_summary",
+            "type": "string"
+          },
+          {
+            "name": "movement_date",
+            "type": "string"
+          },
+          {
+            "name": "operate_time",
+            "type": "string"
+          },
+          {
+            "name": "operator",
+            "type": "string"
+          },
+          {
+            "name": "bill_no",
+            "type": "string"
+          },
+          {
+            "name": "lot_number",
+            "type": "string"
+          },
+          {
+            "name": "memo",
+            "type": "string"
+          },
+          {
+            "name": "quantity",
+            "type": "decimal"
+          },
+          {
+            "name": "assist_quantity",
+            "type": "decimal"
+          },
+          {
+            "name": "unit_price",
+            "type": "decimal"
+          },
+          {
+            "name": "money",
+            "type": "decimal"
+          },
+          {
+            "name": "inventory_balance",
+            "type": "decimal"
+          },
+          {
+            "name": "assist_inventory_balance",
+            "type": "decimal"
+          },
+          {
+            "name": "out_storehouse_num",
+            "type": "int64"
+          },
+          {
+            "name": "out_storehouse_code",
+            "type": "string"
+          },
+          {
+            "name": "out_storehouse_name",
+            "type": "string"
+          }
+        ]
+      }
+    },
+    {
+      "id": "p153",
+      "type": "source",
+      "position": {
+        "x": 0,
+        "y": 0
+      },
+      "data": {
+        "label": "p153",
+        "componentId": "src.rest",
+        "properties": {
+          "connectionRef": "lemeng",
+          "url": "https://cloud.nhsoft.cn/agi/api/nhsoft.ama.ai.inventory.movement.find",
+          "method": "POST",
+          "headers": {
+            "Content-Type": "application/json"
+          },
+          "body": "{\"date_start\":\"${date-1d}\",\"date_end\":\"${date-1d}\",\"page_number\":153,\"page_size\":200}",
+          "responsePath": "/result",
+          "paginationType": "none",
+          "pageSize": 200,
+          "retryAttempts": 10,
+          "retryBackoffMs": 15000
+        },
+        "schema": [
+          {
+            "name": "movement_id",
+            "type": "string"
+          },
+          {
+            "name": "branch_num",
+            "type": "int64"
+          },
+          {
+            "name": "branch_code",
+            "type": "string"
+          },
+          {
+            "name": "branch_name",
+            "type": "string"
+          },
+          {
+            "name": "item_num",
+            "type": "int64"
+          },
+          {
+            "name": "item_code",
+            "type": "string"
+          },
+          {
+            "name": "item_barcode",
+            "type": "string"
+          },
+          {
+            "name": "item_name",
+            "type": "string"
+          },
+          {
+            "name": "item_spec",
+            "type": "string"
+          },
+          {
+            "name": "item_unit",
+            "type": "string"
+          },
+          {
+            "name": "movement_type",
+            "type": "string"
+          },
+          {
+            "name": "movement_summary",
+            "type": "string"
+          },
+          {
+            "name": "movement_date",
+            "type": "string"
+          },
+          {
+            "name": "operate_time",
+            "type": "string"
+          },
+          {
+            "name": "operator",
+            "type": "string"
+          },
+          {
+            "name": "bill_no",
+            "type": "string"
+          },
+          {
+            "name": "lot_number",
+            "type": "string"
+          },
+          {
+            "name": "memo",
+            "type": "string"
+          },
+          {
+            "name": "quantity",
+            "type": "decimal"
+          },
+          {
+            "name": "assist_quantity",
+            "type": "decimal"
+          },
+          {
+            "name": "unit_price",
+            "type": "decimal"
+          },
+          {
+            "name": "money",
+            "type": "decimal"
+          },
+          {
+            "name": "inventory_balance",
+            "type": "decimal"
+          },
+          {
+            "name": "assist_inventory_balance",
+            "type": "decimal"
+          },
+          {
+            "name": "out_storehouse_num",
+            "type": "int64"
+          },
+          {
+            "name": "out_storehouse_code",
+            "type": "string"
+          },
+          {
+            "name": "out_storehouse_name",
+            "type": "string"
+          }
+        ]
+      }
+    },
+    {
+      "id": "p154",
+      "type": "source",
+      "position": {
+        "x": 0,
+        "y": 0
+      },
+      "data": {
+        "label": "p154",
+        "componentId": "src.rest",
+        "properties": {
+          "connectionRef": "lemeng",
+          "url": "https://cloud.nhsoft.cn/agi/api/nhsoft.ama.ai.inventory.movement.find",
+          "method": "POST",
+          "headers": {
+            "Content-Type": "application/json"
+          },
+          "body": "{\"date_start\":\"${date-1d}\",\"date_end\":\"${date-1d}\",\"page_number\":154,\"page_size\":200}",
+          "responsePath": "/result",
+          "paginationType": "none",
+          "pageSize": 200,
+          "retryAttempts": 10,
+          "retryBackoffMs": 15000
+        },
+        "schema": [
+          {
+            "name": "movement_id",
+            "type": "string"
+          },
+          {
+            "name": "branch_num",
+            "type": "int64"
+          },
+          {
+            "name": "branch_code",
+            "type": "string"
+          },
+          {
+            "name": "branch_name",
+            "type": "string"
+          },
+          {
+            "name": "item_num",
+            "type": "int64"
+          },
+          {
+            "name": "item_code",
+            "type": "string"
+          },
+          {
+            "name": "item_barcode",
+            "type": "string"
+          },
+          {
+            "name": "item_name",
+            "type": "string"
+          },
+          {
+            "name": "item_spec",
+            "type": "string"
+          },
+          {
+            "name": "item_unit",
+            "type": "string"
+          },
+          {
+            "name": "movement_type",
+            "type": "string"
+          },
+          {
+            "name": "movement_summary",
+            "type": "string"
+          },
+          {
+            "name": "movement_date",
+            "type": "string"
+          },
+          {
+            "name": "operate_time",
+            "type": "string"
+          },
+          {
+            "name": "operator",
+            "type": "string"
+          },
+          {
+            "name": "bill_no",
+            "type": "string"
+          },
+          {
+            "name": "lot_number",
+            "type": "string"
+          },
+          {
+            "name": "memo",
+            "type": "string"
+          },
+          {
+            "name": "quantity",
+            "type": "decimal"
+          },
+          {
+            "name": "assist_quantity",
+            "type": "decimal"
+          },
+          {
+            "name": "unit_price",
+            "type": "decimal"
+          },
+          {
+            "name": "money",
+            "type": "decimal"
+          },
+          {
+            "name": "inventory_balance",
+            "type": "decimal"
+          },
+          {
+            "name": "assist_inventory_balance",
+            "type": "decimal"
+          },
+          {
+            "name": "out_storehouse_num",
+            "type": "int64"
+          },
+          {
+            "name": "out_storehouse_code",
+            "type": "string"
+          },
+          {
+            "name": "out_storehouse_name",
+            "type": "string"
+          }
+        ]
+      }
+    },
+    {
+      "id": "p155",
+      "type": "source",
+      "position": {
+        "x": 0,
+        "y": 0
+      },
+      "data": {
+        "label": "p155",
+        "componentId": "src.rest",
+        "properties": {
+          "connectionRef": "lemeng",
+          "url": "https://cloud.nhsoft.cn/agi/api/nhsoft.ama.ai.inventory.movement.find",
+          "method": "POST",
+          "headers": {
+            "Content-Type": "application/json"
+          },
+          "body": "{\"date_start\":\"${date-1d}\",\"date_end\":\"${date-1d}\",\"page_number\":155,\"page_size\":200}",
+          "responsePath": "/result",
+          "paginationType": "none",
+          "pageSize": 200,
+          "retryAttempts": 10,
+          "retryBackoffMs": 15000
+        },
+        "schema": [
+          {
+            "name": "movement_id",
+            "type": "string"
+          },
+          {
+            "name": "branch_num",
+            "type": "int64"
+          },
+          {
+            "name": "branch_code",
+            "type": "string"
+          },
+          {
+            "name": "branch_name",
+            "type": "string"
+          },
+          {
+            "name": "item_num",
+            "type": "int64"
+          },
+          {
+            "name": "item_code",
+            "type": "string"
+          },
+          {
+            "name": "item_barcode",
+            "type": "string"
+          },
+          {
+            "name": "item_name",
+            "type": "string"
+          },
+          {
+            "name": "item_spec",
+            "type": "string"
+          },
+          {
+            "name": "item_unit",
+            "type": "string"
+          },
+          {
+            "name": "movement_type",
+            "type": "string"
+          },
+          {
+            "name": "movement_summary",
+            "type": "string"
+          },
+          {
+            "name": "movement_date",
+            "type": "string"
+          },
+          {
+            "name": "operate_time",
+            "type": "string"
+          },
+          {
+            "name": "operator",
+            "type": "string"
+          },
+          {
+            "name": "bill_no",
+            "type": "string"
+          },
+          {
+            "name": "lot_number",
+            "type": "string"
+          },
+          {
+            "name": "memo",
+            "type": "string"
+          },
+          {
+            "name": "quantity",
+            "type": "decimal"
+          },
+          {
+            "name": "assist_quantity",
+            "type": "decimal"
+          },
+          {
+            "name": "unit_price",
+            "type": "decimal"
+          },
+          {
+            "name": "money",
+            "type": "decimal"
+          },
+          {
+            "name": "inventory_balance",
+            "type": "decimal"
+          },
+          {
+            "name": "assist_inventory_balance",
+            "type": "decimal"
+          },
+          {
+            "name": "out_storehouse_num",
+            "type": "int64"
+          },
+          {
+            "name": "out_storehouse_code",
+            "type": "string"
+          },
+          {
+            "name": "out_storehouse_name",
+            "type": "string"
+          }
+        ]
+      }
+    },
+    {
+      "id": "p156",
+      "type": "source",
+      "position": {
+        "x": 0,
+        "y": 0
+      },
+      "data": {
+        "label": "p156",
+        "componentId": "src.rest",
+        "properties": {
+          "connectionRef": "lemeng",
+          "url": "https://cloud.nhsoft.cn/agi/api/nhsoft.ama.ai.inventory.movement.find",
+          "method": "POST",
+          "headers": {
+            "Content-Type": "application/json"
+          },
+          "body": "{\"date_start\":\"${date-1d}\",\"date_end\":\"${date-1d}\",\"page_number\":156,\"page_size\":200}",
+          "responsePath": "/result",
+          "paginationType": "none",
+          "pageSize": 200,
+          "retryAttempts": 10,
+          "retryBackoffMs": 15000
+        },
+        "schema": [
+          {
+            "name": "movement_id",
+            "type": "string"
+          },
+          {
+            "name": "branch_num",
+            "type": "int64"
+          },
+          {
+            "name": "branch_code",
+            "type": "string"
+          },
+          {
+            "name": "branch_name",
+            "type": "string"
+          },
+          {
+            "name": "item_num",
+            "type": "int64"
+          },
+          {
+            "name": "item_code",
+            "type": "string"
+          },
+          {
+            "name": "item_barcode",
+            "type": "string"
+          },
+          {
+            "name": "item_name",
+            "type": "string"
+          },
+          {
+            "name": "item_spec",
+            "type": "string"
+          },
+          {
+            "name": "item_unit",
+            "type": "string"
+          },
+          {
+            "name": "movement_type",
+            "type": "string"
+          },
+          {
+            "name": "movement_summary",
+            "type": "string"
+          },
+          {
+            "name": "movement_date",
+            "type": "string"
+          },
+          {
+            "name": "operate_time",
+            "type": "string"
+          },
+          {
+            "name": "operator",
+            "type": "string"
+          },
+          {
+            "name": "bill_no",
+            "type": "string"
+          },
+          {
+            "name": "lot_number",
+            "type": "string"
+          },
+          {
+            "name": "memo",
+            "type": "string"
+          },
+          {
+            "name": "quantity",
+            "type": "decimal"
+          },
+          {
+            "name": "assist_quantity",
+            "type": "decimal"
+          },
+          {
+            "name": "unit_price",
+            "type": "decimal"
+          },
+          {
+            "name": "money",
+            "type": "decimal"
+          },
+          {
+            "name": "inventory_balance",
+            "type": "decimal"
+          },
+          {
+            "name": "assist_inventory_balance",
+            "type": "decimal"
+          },
+          {
+            "name": "out_storehouse_num",
+            "type": "int64"
+          },
+          {
+            "name": "out_storehouse_code",
+            "type": "string"
+          },
+          {
+            "name": "out_storehouse_name",
+            "type": "string"
+          }
+        ]
+      }
+    },
+    {
+      "id": "p157",
+      "type": "source",
+      "position": {
+        "x": 0,
+        "y": 0
+      },
+      "data": {
+        "label": "p157",
+        "componentId": "src.rest",
+        "properties": {
+          "connectionRef": "lemeng",
+          "url": "https://cloud.nhsoft.cn/agi/api/nhsoft.ama.ai.inventory.movement.find",
+          "method": "POST",
+          "headers": {
+            "Content-Type": "application/json"
+          },
+          "body": "{\"date_start\":\"${date-1d}\",\"date_end\":\"${date-1d}\",\"page_number\":157,\"page_size\":200}",
+          "responsePath": "/result",
+          "paginationType": "none",
+          "pageSize": 200,
+          "retryAttempts": 10,
+          "retryBackoffMs": 15000
+        },
+        "schema": [
+          {
+            "name": "movement_id",
+            "type": "string"
+          },
+          {
+            "name": "branch_num",
+            "type": "int64"
+          },
+          {
+            "name": "branch_code",
+            "type": "string"
+          },
+          {
+            "name": "branch_name",
+            "type": "string"
+          },
+          {
+            "name": "item_num",
+            "type": "int64"
+          },
+          {
+            "name": "item_code",
+            "type": "string"
+          },
+          {
+            "name": "item_barcode",
+            "type": "string"
+          },
+          {
+            "name": "item_name",
+            "type": "string"
+          },
+          {
+            "name": "item_spec",
+            "type": "string"
+          },
+          {
+            "name": "item_unit",
+            "type": "string"
+          },
+          {
+            "name": "movement_type",
+            "type": "string"
+          },
+          {
+            "name": "movement_summary",
+            "type": "string"
+          },
+          {
+            "name": "movement_date",
+            "type": "string"
+          },
+          {
+            "name": "operate_time",
+            "type": "string"
+          },
+          {
+            "name": "operator",
+            "type": "string"
+          },
+          {
+            "name": "bill_no",
+            "type": "string"
+          },
+          {
+            "name": "lot_number",
+            "type": "string"
+          },
+          {
+            "name": "memo",
+            "type": "string"
+          },
+          {
+            "name": "quantity",
+            "type": "decimal"
+          },
+          {
+            "name": "assist_quantity",
+            "type": "decimal"
+          },
+          {
+            "name": "unit_price",
+            "type": "decimal"
+          },
+          {
+            "name": "money",
+            "type": "decimal"
+          },
+          {
+            "name": "inventory_balance",
+            "type": "decimal"
+          },
+          {
+            "name": "assist_inventory_balance",
+            "type": "decimal"
+          },
+          {
+            "name": "out_storehouse_num",
+            "type": "int64"
+          },
+          {
+            "name": "out_storehouse_code",
+            "type": "string"
+          },
+          {
+            "name": "out_storehouse_name",
+            "type": "string"
+          }
+        ]
+      }
+    },
+    {
+      "id": "p158",
+      "type": "source",
+      "position": {
+        "x": 0,
+        "y": 0
+      },
+      "data": {
+        "label": "p158",
+        "componentId": "src.rest",
+        "properties": {
+          "connectionRef": "lemeng",
+          "url": "https://cloud.nhsoft.cn/agi/api/nhsoft.ama.ai.inventory.movement.find",
+          "method": "POST",
+          "headers": {
+            "Content-Type": "application/json"
+          },
+          "body": "{\"date_start\":\"${date-1d}\",\"date_end\":\"${date-1d}\",\"page_number\":158,\"page_size\":200}",
+          "responsePath": "/result",
+          "paginationType": "none",
+          "pageSize": 200,
+          "retryAttempts": 10,
+          "retryBackoffMs": 15000
+        },
+        "schema": [
+          {
+            "name": "movement_id",
+            "type": "string"
+          },
+          {
+            "name": "branch_num",
+            "type": "int64"
+          },
+          {
+            "name": "branch_code",
+            "type": "string"
+          },
+          {
+            "name": "branch_name",
+            "type": "string"
+          },
+          {
+            "name": "item_num",
+            "type": "int64"
+          },
+          {
+            "name": "item_code",
+            "type": "string"
+          },
+          {
+            "name": "item_barcode",
+            "type": "string"
+          },
+          {
+            "name": "item_name",
+            "type": "string"
+          },
+          {
+            "name": "item_spec",
+            "type": "string"
+          },
+          {
+            "name": "item_unit",
+            "type": "string"
+          },
+          {
+            "name": "movement_type",
+            "type": "string"
+          },
+          {
+            "name": "movement_summary",
+            "type": "string"
+          },
+          {
+            "name": "movement_date",
+            "type": "string"
+          },
+          {
+            "name": "operate_time",
+            "type": "string"
+          },
+          {
+            "name": "operator",
+            "type": "string"
+          },
+          {
+            "name": "bill_no",
+            "type": "string"
+          },
+          {
+            "name": "lot_number",
+            "type": "string"
+          },
+          {
+            "name": "memo",
+            "type": "string"
+          },
+          {
+            "name": "quantity",
+            "type": "decimal"
+          },
+          {
+            "name": "assist_quantity",
+            "type": "decimal"
+          },
+          {
+            "name": "unit_price",
+            "type": "decimal"
+          },
+          {
+            "name": "money",
+            "type": "decimal"
+          },
+          {
+            "name": "inventory_balance",
+            "type": "decimal"
+          },
+          {
+            "name": "assist_inventory_balance",
+            "type": "decimal"
+          },
+          {
+            "name": "out_storehouse_num",
+            "type": "int64"
+          },
+          {
+            "name": "out_storehouse_code",
+            "type": "string"
+          },
+          {
+            "name": "out_storehouse_name",
+            "type": "string"
+          }
+        ]
+      }
+    },
+    {
+      "id": "p159",
+      "type": "source",
+      "position": {
+        "x": 0,
+        "y": 0
+      },
+      "data": {
+        "label": "p159",
+        "componentId": "src.rest",
+        "properties": {
+          "connectionRef": "lemeng",
+          "url": "https://cloud.nhsoft.cn/agi/api/nhsoft.ama.ai.inventory.movement.find",
+          "method": "POST",
+          "headers": {
+            "Content-Type": "application/json"
+          },
+          "body": "{\"date_start\":\"${date-1d}\",\"date_end\":\"${date-1d}\",\"page_number\":159,\"page_size\":200}",
+          "responsePath": "/result",
+          "paginationType": "none",
+          "pageSize": 200,
+          "retryAttempts": 10,
+          "retryBackoffMs": 15000
+        },
+        "schema": [
+          {
+            "name": "movement_id",
+            "type": "string"
+          },
+          {
+            "name": "branch_num",
+            "type": "int64"
+          },
+          {
+            "name": "branch_code",
+            "type": "string"
+          },
+          {
+            "name": "branch_name",
+            "type": "string"
+          },
+          {
+            "name": "item_num",
+            "type": "int64"
+          },
+          {
+            "name": "item_code",
+            "type": "string"
+          },
+          {
+            "name": "item_barcode",
+            "type": "string"
+          },
+          {
+            "name": "item_name",
+            "type": "string"
+          },
+          {
+            "name": "item_spec",
+            "type": "string"
+          },
+          {
+            "name": "item_unit",
+            "type": "string"
+          },
+          {
+            "name": "movement_type",
+            "type": "string"
+          },
+          {
+            "name": "movement_summary",
+            "type": "string"
+          },
+          {
+            "name": "movement_date",
+            "type": "string"
+          },
+          {
+            "name": "operate_time",
+            "type": "string"
+          },
+          {
+            "name": "operator",
+            "type": "string"
+          },
+          {
+            "name": "bill_no",
+            "type": "string"
+          },
+          {
+            "name": "lot_number",
+            "type": "string"
+          },
+          {
+            "name": "memo",
+            "type": "string"
+          },
+          {
+            "name": "quantity",
+            "type": "decimal"
+          },
+          {
+            "name": "assist_quantity",
+            "type": "decimal"
+          },
+          {
+            "name": "unit_price",
+            "type": "decimal"
+          },
+          {
+            "name": "money",
+            "type": "decimal"
+          },
+          {
+            "name": "inventory_balance",
+            "type": "decimal"
+          },
+          {
+            "name": "assist_inventory_balance",
+            "type": "decimal"
+          },
+          {
+            "name": "out_storehouse_num",
+            "type": "int64"
+          },
+          {
+            "name": "out_storehouse_code",
+            "type": "string"
+          },
+          {
+            "name": "out_storehouse_name",
+            "type": "string"
+          }
+        ]
+      }
+    },
+    {
+      "id": "p160",
+      "type": "source",
+      "position": {
+        "x": 0,
+        "y": 0
+      },
+      "data": {
+        "label": "p160",
+        "componentId": "src.rest",
+        "properties": {
+          "connectionRef": "lemeng",
+          "url": "https://cloud.nhsoft.cn/agi/api/nhsoft.ama.ai.inventory.movement.find",
+          "method": "POST",
+          "headers": {
+            "Content-Type": "application/json"
+          },
+          "body": "{\"date_start\":\"${date-1d}\",\"date_end\":\"${date-1d}\",\"page_number\":160,\"page_size\":200}",
+          "responsePath": "/result",
+          "paginationType": "none",
+          "pageSize": 200,
+          "retryAttempts": 10,
+          "retryBackoffMs": 15000
+        },
+        "schema": [
+          {
+            "name": "movement_id",
+            "type": "string"
+          },
+          {
+            "name": "branch_num",
+            "type": "int64"
+          },
+          {
+            "name": "branch_code",
+            "type": "string"
+          },
+          {
+            "name": "branch_name",
+            "type": "string"
+          },
+          {
+            "name": "item_num",
+            "type": "int64"
+          },
+          {
+            "name": "item_code",
+            "type": "string"
+          },
+          {
+            "name": "item_barcode",
+            "type": "string"
+          },
+          {
+            "name": "item_name",
+            "type": "string"
+          },
+          {
+            "name": "item_spec",
+            "type": "string"
+          },
+          {
+            "name": "item_unit",
+            "type": "string"
+          },
+          {
+            "name": "movement_type",
+            "type": "string"
+          },
+          {
+            "name": "movement_summary",
+            "type": "string"
+          },
+          {
+            "name": "movement_date",
+            "type": "string"
+          },
+          {
+            "name": "operate_time",
+            "type": "string"
+          },
+          {
+            "name": "operator",
+            "type": "string"
+          },
+          {
+            "name": "bill_no",
+            "type": "string"
+          },
+          {
+            "name": "lot_number",
+            "type": "string"
+          },
+          {
+            "name": "memo",
+            "type": "string"
+          },
+          {
+            "name": "quantity",
+            "type": "decimal"
+          },
+          {
+            "name": "assist_quantity",
+            "type": "decimal"
+          },
+          {
+            "name": "unit_price",
+            "type": "decimal"
+          },
+          {
+            "name": "money",
+            "type": "decimal"
+          },
+          {
+            "name": "inventory_balance",
+            "type": "decimal"
+          },
+          {
+            "name": "assist_inventory_balance",
+            "type": "decimal"
+          },
+          {
+            "name": "out_storehouse_num",
+            "type": "int64"
+          },
+          {
+            "name": "out_storehouse_code",
+            "type": "string"
+          },
+          {
+            "name": "out_storehouse_name",
+            "type": "string"
+          }
+        ]
+      }
+    },
+    {
+      "id": "merge",
+      "type": "transform",
+      "position": {
+        "x": 0,
+        "y": 0
+      },
+      "data": {
+        "label": "merge",
+        "componentId": "ctl.merge",
+        "properties": {}
+      }
+    }
+  ],
+  "edges": [
+    {
+      "id": "e1",
+      "source": "w0",
+      "target": "g0",
+      "sourceHandle": "main",
+      "targetHandle": "main",
+      "data": {
+        "connectionType": "main"
+      }
+    },
+    {
+      "id": "e2",
+      "source": "g0",
+      "target": "g1",
+      "sourceHandle": "main",
+      "targetHandle": "main",
+      "data": {
+        "connectionType": "main"
+      }
+    },
+    {
+      "id": "e3",
+      "source": "g1",
+      "target": "g2",
+      "sourceHandle": "main",
+      "targetHandle": "main",
+      "data": {
+        "connectionType": "main"
+      }
+    },
+    {
+      "id": "e4",
+      "source": "g2",
+      "target": "d0",
+      "sourceHandle": "main",
+      "targetHandle": "main",
+      "data": {
+        "connectionType": "main"
+      }
+    },
+    {
+      "id": "e5",
+      "source": "d0",
+      "target": "g3",
+      "sourceHandle": "main",
+      "targetHandle": "main",
+      "data": {
+        "connectionType": "main"
+      }
+    },
+    {
+      "id": "e6",
+      "source": "g3",
+      "target": "d1",
+      "sourceHandle": "main",
+      "targetHandle": "main",
+      "data": {
+        "connectionType": "main"
+      }
+    },
+    {
+      "id": "e7",
+      "source": "d1",
+      "target": "gv",
+      "sourceHandle": "main",
+      "targetHandle": "main",
+      "data": {
+        "connectionType": "main"
+      }
+    },
+    {
+      "id": "e8",
+      "source": "gv",
+      "target": "dv",
+      "sourceHandle": "main",
+      "targetHandle": "main",
+      "data": {
+        "connectionType": "main"
+      }
+    },
+    {
+      "id": "e12",
+      "source": "shape",
+      "target": "gate",
+      "sourceHandle": "main",
+      "targetHandle": "main",
+      "data": {
+        "connectionType": "main"
+      }
+    },
+    {
+      "id": "e13",
+      "source": "gate",
+      "target": "sink",
+      "sourceHandle": "main",
+      "targetHandle": "main",
+      "data": {
+        "connectionType": "main"
+      }
+    },
+    {
+      "id": "e-merge-shape",
+      "source": "merge",
+      "target": "shape",
+      "sourceHandle": "main",
+      "targetHandle": "main",
+      "data": {
+        "connectionType": "main"
+      }
+    },
+    {
+      "id": "e-dv-p121",
+      "source": "dv",
+      "target": "p121",
+      "sourceHandle": null,
+      "targetHandle": null,
+      "data": {
+        "connectionType": "on-subjob-ok"
+      }
+    },
+    {
+      "id": "e-p121-m",
+      "source": "p121",
+      "target": "merge",
+      "sourceHandle": "main",
+      "targetHandle": "main_1",
+      "data": {
+        "connectionType": "main"
+      }
+    },
+    {
+      "id": "e-dv-p122",
+      "source": "dv",
+      "target": "p122",
+      "sourceHandle": null,
+      "targetHandle": null,
+      "data": {
+        "connectionType": "on-subjob-ok"
+      }
+    },
+    {
+      "id": "e-p122-m",
+      "source": "p122",
+      "target": "merge",
+      "sourceHandle": "main",
+      "targetHandle": "main_2",
+      "data": {
+        "connectionType": "main"
+      }
+    },
+    {
+      "id": "e-dv-p123",
+      "source": "dv",
+      "target": "p123",
+      "sourceHandle": null,
+      "targetHandle": null,
+      "data": {
+        "connectionType": "on-subjob-ok"
+      }
+    },
+    {
+      "id": "e-p123-m",
+      "source": "p123",
+      "target": "merge",
+      "sourceHandle": "main",
+      "targetHandle": "main_3",
+      "data": {
+        "connectionType": "main"
+      }
+    },
+    {
+      "id": "e-dv-p124",
+      "source": "dv",
+      "target": "p124",
+      "sourceHandle": null,
+      "targetHandle": null,
+      "data": {
+        "connectionType": "on-subjob-ok"
+      }
+    },
+    {
+      "id": "e-p124-m",
+      "source": "p124",
+      "target": "merge",
+      "sourceHandle": "main",
+      "targetHandle": "main_4",
+      "data": {
+        "connectionType": "main"
+      }
+    },
+    {
+      "id": "e-dv-p125",
+      "source": "dv",
+      "target": "p125",
+      "sourceHandle": null,
+      "targetHandle": null,
+      "data": {
+        "connectionType": "on-subjob-ok"
+      }
+    },
+    {
+      "id": "e-p125-m",
+      "source": "p125",
+      "target": "merge",
+      "sourceHandle": "main",
+      "targetHandle": "main_5",
+      "data": {
+        "connectionType": "main"
+      }
+    },
+    {
+      "id": "e-dv-p126",
+      "source": "dv",
+      "target": "p126",
+      "sourceHandle": null,
+      "targetHandle": null,
+      "data": {
+        "connectionType": "on-subjob-ok"
+      }
+    },
+    {
+      "id": "e-p126-m",
+      "source": "p126",
+      "target": "merge",
+      "sourceHandle": "main",
+      "targetHandle": "main_6",
+      "data": {
+        "connectionType": "main"
+      }
+    },
+    {
+      "id": "e-dv-p127",
+      "source": "dv",
+      "target": "p127",
+      "sourceHandle": null,
+      "targetHandle": null,
+      "data": {
+        "connectionType": "on-subjob-ok"
+      }
+    },
+    {
+      "id": "e-p127-m",
+      "source": "p127",
+      "target": "merge",
+      "sourceHandle": "main",
+      "targetHandle": "main_7",
+      "data": {
+        "connectionType": "main"
+      }
+    },
+    {
+      "id": "e-dv-p128",
+      "source": "dv",
+      "target": "p128",
+      "sourceHandle": null,
+      "targetHandle": null,
+      "data": {
+        "connectionType": "on-subjob-ok"
+      }
+    },
+    {
+      "id": "e-p128-m",
+      "source": "p128",
+      "target": "merge",
+      "sourceHandle": "main",
+      "targetHandle": "main_8",
+      "data": {
+        "connectionType": "main"
+      }
+    },
+    {
+      "id": "e-dv-p129",
+      "source": "dv",
+      "target": "p129",
+      "sourceHandle": null,
+      "targetHandle": null,
+      "data": {
+        "connectionType": "on-subjob-ok"
+      }
+    },
+    {
+      "id": "e-p129-m",
+      "source": "p129",
+      "target": "merge",
+      "sourceHandle": "main",
+      "targetHandle": "main_9",
+      "data": {
+        "connectionType": "main"
+      }
+    },
+    {
+      "id": "e-dv-p130",
+      "source": "dv",
+      "target": "p130",
+      "sourceHandle": null,
+      "targetHandle": null,
+      "data": {
+        "connectionType": "on-subjob-ok"
+      }
+    },
+    {
+      "id": "e-p130-m",
+      "source": "p130",
+      "target": "merge",
+      "sourceHandle": "main",
+      "targetHandle": "main_10",
+      "data": {
+        "connectionType": "main"
+      }
+    },
+    {
+      "id": "e-dv-p131",
+      "source": "dv",
+      "target": "p131",
+      "sourceHandle": null,
+      "targetHandle": null,
+      "data": {
+        "connectionType": "on-subjob-ok"
+      }
+    },
+    {
+      "id": "e-p131-m",
+      "source": "p131",
+      "target": "merge",
+      "sourceHandle": "main",
+      "targetHandle": "main_11",
+      "data": {
+        "connectionType": "main"
+      }
+    },
+    {
+      "id": "e-dv-p132",
+      "source": "dv",
+      "target": "p132",
+      "sourceHandle": null,
+      "targetHandle": null,
+      "data": {
+        "connectionType": "on-subjob-ok"
+      }
+    },
+    {
+      "id": "e-p132-m",
+      "source": "p132",
+      "target": "merge",
+      "sourceHandle": "main",
+      "targetHandle": "main_12",
+      "data": {
+        "connectionType": "main"
+      }
+    },
+    {
+      "id": "e-dv-p133",
+      "source": "dv",
+      "target": "p133",
+      "sourceHandle": null,
+      "targetHandle": null,
+      "data": {
+        "connectionType": "on-subjob-ok"
+      }
+    },
+    {
+      "id": "e-p133-m",
+      "source": "p133",
+      "target": "merge",
+      "sourceHandle": "main",
+      "targetHandle": "main_13",
+      "data": {
+        "connectionType": "main"
+      }
+    },
+    {
+      "id": "e-dv-p134",
+      "source": "dv",
+      "target": "p134",
+      "sourceHandle": null,
+      "targetHandle": null,
+      "data": {
+        "connectionType": "on-subjob-ok"
+      }
+    },
+    {
+      "id": "e-p134-m",
+      "source": "p134",
+      "target": "merge",
+      "sourceHandle": "main",
+      "targetHandle": "main_14",
+      "data": {
+        "connectionType": "main"
+      }
+    },
+    {
+      "id": "e-dv-p135",
+      "source": "dv",
+      "target": "p135",
+      "sourceHandle": null,
+      "targetHandle": null,
+      "data": {
+        "connectionType": "on-subjob-ok"
+      }
+    },
+    {
+      "id": "e-p135-m",
+      "source": "p135",
+      "target": "merge",
+      "sourceHandle": "main",
+      "targetHandle": "main_15",
+      "data": {
+        "connectionType": "main"
+      }
+    },
+    {
+      "id": "e-dv-p136",
+      "source": "dv",
+      "target": "p136",
+      "sourceHandle": null,
+      "targetHandle": null,
+      "data": {
+        "connectionType": "on-subjob-ok"
+      }
+    },
+    {
+      "id": "e-p136-m",
+      "source": "p136",
+      "target": "merge",
+      "sourceHandle": "main",
+      "targetHandle": "main_16",
+      "data": {
+        "connectionType": "main"
+      }
+    },
+    {
+      "id": "e-dv-p137",
+      "source": "dv",
+      "target": "p137",
+      "sourceHandle": null,
+      "targetHandle": null,
+      "data": {
+        "connectionType": "on-subjob-ok"
+      }
+    },
+    {
+      "id": "e-p137-m",
+      "source": "p137",
+      "target": "merge",
+      "sourceHandle": "main",
+      "targetHandle": "main_17",
+      "data": {
+        "connectionType": "main"
+      }
+    },
+    {
+      "id": "e-dv-p138",
+      "source": "dv",
+      "target": "p138",
+      "sourceHandle": null,
+      "targetHandle": null,
+      "data": {
+        "connectionType": "on-subjob-ok"
+      }
+    },
+    {
+      "id": "e-p138-m",
+      "source": "p138",
+      "target": "merge",
+      "sourceHandle": "main",
+      "targetHandle": "main_18",
+      "data": {
+        "connectionType": "main"
+      }
+    },
+    {
+      "id": "e-dv-p139",
+      "source": "dv",
+      "target": "p139",
+      "sourceHandle": null,
+      "targetHandle": null,
+      "data": {
+        "connectionType": "on-subjob-ok"
+      }
+    },
+    {
+      "id": "e-p139-m",
+      "source": "p139",
+      "target": "merge",
+      "sourceHandle": "main",
+      "targetHandle": "main_19",
+      "data": {
+        "connectionType": "main"
+      }
+    },
+    {
+      "id": "e-dv-p140",
+      "source": "dv",
+      "target": "p140",
+      "sourceHandle": null,
+      "targetHandle": null,
+      "data": {
+        "connectionType": "on-subjob-ok"
+      }
+    },
+    {
+      "id": "e-p140-m",
+      "source": "p140",
+      "target": "merge",
+      "sourceHandle": "main",
+      "targetHandle": "main_20",
+      "data": {
+        "connectionType": "main"
+      }
+    },
+    {
+      "id": "e-dv-p141",
+      "source": "dv",
+      "target": "p141",
+      "sourceHandle": null,
+      "targetHandle": null,
+      "data": {
+        "connectionType": "on-subjob-ok"
+      }
+    },
+    {
+      "id": "e-p141-m",
+      "source": "p141",
+      "target": "merge",
+      "sourceHandle": "main",
+      "targetHandle": "main_21",
+      "data": {
+        "connectionType": "main"
+      }
+    },
+    {
+      "id": "e-dv-p142",
+      "source": "dv",
+      "target": "p142",
+      "sourceHandle": null,
+      "targetHandle": null,
+      "data": {
+        "connectionType": "on-subjob-ok"
+      }
+    },
+    {
+      "id": "e-p142-m",
+      "source": "p142",
+      "target": "merge",
+      "sourceHandle": "main",
+      "targetHandle": "main_22",
+      "data": {
+        "connectionType": "main"
+      }
+    },
+    {
+      "id": "e-dv-p143",
+      "source": "dv",
+      "target": "p143",
+      "sourceHandle": null,
+      "targetHandle": null,
+      "data": {
+        "connectionType": "on-subjob-ok"
+      }
+    },
+    {
+      "id": "e-p143-m",
+      "source": "p143",
+      "target": "merge",
+      "sourceHandle": "main",
+      "targetHandle": "main_23",
+      "data": {
+        "connectionType": "main"
+      }
+    },
+    {
+      "id": "e-dv-p144",
+      "source": "dv",
+      "target": "p144",
+      "sourceHandle": null,
+      "targetHandle": null,
+      "data": {
+        "connectionType": "on-subjob-ok"
+      }
+    },
+    {
+      "id": "e-p144-m",
+      "source": "p144",
+      "target": "merge",
+      "sourceHandle": "main",
+      "targetHandle": "main_24",
+      "data": {
+        "connectionType": "main"
+      }
+    },
+    {
+      "id": "e-dv-p145",
+      "source": "dv",
+      "target": "p145",
+      "sourceHandle": null,
+      "targetHandle": null,
+      "data": {
+        "connectionType": "on-subjob-ok"
+      }
+    },
+    {
+      "id": "e-p145-m",
+      "source": "p145",
+      "target": "merge",
+      "sourceHandle": "main",
+      "targetHandle": "main_25",
+      "data": {
+        "connectionType": "main"
+      }
+    },
+    {
+      "id": "e-dv-p146",
+      "source": "dv",
+      "target": "p146",
+      "sourceHandle": null,
+      "targetHandle": null,
+      "data": {
+        "connectionType": "on-subjob-ok"
+      }
+    },
+    {
+      "id": "e-p146-m",
+      "source": "p146",
+      "target": "merge",
+      "sourceHandle": "main",
+      "targetHandle": "main_26",
+      "data": {
+        "connectionType": "main"
+      }
+    },
+    {
+      "id": "e-dv-p147",
+      "source": "dv",
+      "target": "p147",
+      "sourceHandle": null,
+      "targetHandle": null,
+      "data": {
+        "connectionType": "on-subjob-ok"
+      }
+    },
+    {
+      "id": "e-p147-m",
+      "source": "p147",
+      "target": "merge",
+      "sourceHandle": "main",
+      "targetHandle": "main_27",
+      "data": {
+        "connectionType": "main"
+      }
+    },
+    {
+      "id": "e-dv-p148",
+      "source": "dv",
+      "target": "p148",
+      "sourceHandle": null,
+      "targetHandle": null,
+      "data": {
+        "connectionType": "on-subjob-ok"
+      }
+    },
+    {
+      "id": "e-p148-m",
+      "source": "p148",
+      "target": "merge",
+      "sourceHandle": "main",
+      "targetHandle": "main_28",
+      "data": {
+        "connectionType": "main"
+      }
+    },
+    {
+      "id": "e-dv-p149",
+      "source": "dv",
+      "target": "p149",
+      "sourceHandle": null,
+      "targetHandle": null,
+      "data": {
+        "connectionType": "on-subjob-ok"
+      }
+    },
+    {
+      "id": "e-p149-m",
+      "source": "p149",
+      "target": "merge",
+      "sourceHandle": "main",
+      "targetHandle": "main_29",
+      "data": {
+        "connectionType": "main"
+      }
+    },
+    {
+      "id": "e-dv-p150",
+      "source": "dv",
+      "target": "p150",
+      "sourceHandle": null,
+      "targetHandle": null,
+      "data": {
+        "connectionType": "on-subjob-ok"
+      }
+    },
+    {
+      "id": "e-p150-m",
+      "source": "p150",
+      "target": "merge",
+      "sourceHandle": "main",
+      "targetHandle": "main_30",
+      "data": {
+        "connectionType": "main"
+      }
+    },
+    {
+      "id": "e-dv-p151",
+      "source": "dv",
+      "target": "p151",
+      "sourceHandle": null,
+      "targetHandle": null,
+      "data": {
+        "connectionType": "on-subjob-ok"
+      }
+    },
+    {
+      "id": "e-p151-m",
+      "source": "p151",
+      "target": "merge",
+      "sourceHandle": "main",
+      "targetHandle": "main_31",
+      "data": {
+        "connectionType": "main"
+      }
+    },
+    {
+      "id": "e-dv-p152",
+      "source": "dv",
+      "target": "p152",
+      "sourceHandle": null,
+      "targetHandle": null,
+      "data": {
+        "connectionType": "on-subjob-ok"
+      }
+    },
+    {
+      "id": "e-p152-m",
+      "source": "p152",
+      "target": "merge",
+      "sourceHandle": "main",
+      "targetHandle": "main_32",
+      "data": {
+        "connectionType": "main"
+      }
+    },
+    {
+      "id": "e-dv-p153",
+      "source": "dv",
+      "target": "p153",
+      "sourceHandle": null,
+      "targetHandle": null,
+      "data": {
+        "connectionType": "on-subjob-ok"
+      }
+    },
+    {
+      "id": "e-p153-m",
+      "source": "p153",
+      "target": "merge",
+      "sourceHandle": "main",
+      "targetHandle": "main_33",
+      "data": {
+        "connectionType": "main"
+      }
+    },
+    {
+      "id": "e-dv-p154",
+      "source": "dv",
+      "target": "p154",
+      "sourceHandle": null,
+      "targetHandle": null,
+      "data": {
+        "connectionType": "on-subjob-ok"
+      }
+    },
+    {
+      "id": "e-p154-m",
+      "source": "p154",
+      "target": "merge",
+      "sourceHandle": "main",
+      "targetHandle": "main_34",
+      "data": {
+        "connectionType": "main"
+      }
+    },
+    {
+      "id": "e-dv-p155",
+      "source": "dv",
+      "target": "p155",
+      "sourceHandle": null,
+      "targetHandle": null,
+      "data": {
+        "connectionType": "on-subjob-ok"
+      }
+    },
+    {
+      "id": "e-p155-m",
+      "source": "p155",
+      "target": "merge",
+      "sourceHandle": "main",
+      "targetHandle": "main_35",
+      "data": {
+        "connectionType": "main"
+      }
+    },
+    {
+      "id": "e-dv-p156",
+      "source": "dv",
+      "target": "p156",
+      "sourceHandle": null,
+      "targetHandle": null,
+      "data": {
+        "connectionType": "on-subjob-ok"
+      }
+    },
+    {
+      "id": "e-p156-m",
+      "source": "p156",
+      "target": "merge",
+      "sourceHandle": "main",
+      "targetHandle": "main_36",
+      "data": {
+        "connectionType": "main"
+      }
+    },
+    {
+      "id": "e-dv-p157",
+      "source": "dv",
+      "target": "p157",
+      "sourceHandle": null,
+      "targetHandle": null,
+      "data": {
+        "connectionType": "on-subjob-ok"
+      }
+    },
+    {
+      "id": "e-p157-m",
+      "source": "p157",
+      "target": "merge",
+      "sourceHandle": "main",
+      "targetHandle": "main_37",
+      "data": {
+        "connectionType": "main"
+      }
+    },
+    {
+      "id": "e-dv-p158",
+      "source": "dv",
+      "target": "p158",
+      "sourceHandle": null,
+      "targetHandle": null,
+      "data": {
+        "connectionType": "on-subjob-ok"
+      }
+    },
+    {
+      "id": "e-p158-m",
+      "source": "p158",
+      "target": "merge",
+      "sourceHandle": "main",
+      "targetHandle": "main_38",
+      "data": {
+        "connectionType": "main"
+      }
+    },
+    {
+      "id": "e-dv-p159",
+      "source": "dv",
+      "target": "p159",
+      "sourceHandle": null,
+      "targetHandle": null,
+      "data": {
+        "connectionType": "on-subjob-ok"
+      }
+    },
+    {
+      "id": "e-p159-m",
+      "source": "p159",
+      "target": "merge",
+      "sourceHandle": "main",
+      "targetHandle": "main_39",
+      "data": {
+        "connectionType": "main"
+      }
+    },
+    {
+      "id": "e-dv-p160",
+      "source": "dv",
+      "target": "p160",
+      "sourceHandle": null,
+      "targetHandle": null,
+      "data": {
+        "connectionType": "on-subjob-ok"
+      }
+    },
+    {
+      "id": "e-p160-m",
+      "source": "p160",
+      "target": "merge",
+      "sourceHandle": "main",
+      "targetHandle": "main_40",
+      "data": {
+        "connectionType": "main"
+      }
+    }
+  ],
+  "id": "lemeng.inventory.movement.seg4.l0.64188",
+  "_note": [
+    "乐檬**库存进出明细**日常采集（第 4 段：页 121..160）——按页段拆分的静态并发形态。",
+    "为什么不用原生分页：`src.rest` 的 page 模式是**顺序翻页 + 空页不停**，一天 110~160 页必然在尾部撞",
+    "PAT 频率闸，而 sink 是整天覆盖写 ⇒ 整日数据全丢（正典 §1.6 案例 41）。静态页节点由引擎并发发起，",
+    "40 页约 33 秒，且失败只影响本段（重跑本段即可，不影响其它段）。",
+    "落湖：bizday=${date-1d}/chunk=seg4.parquet —— 与其它段同分区多文件，读侧 bizday=**/*.parquet 一致。"
+  ]
+}

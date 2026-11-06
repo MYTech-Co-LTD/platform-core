@@ -525,13 +525,76 @@
     "next_run_at": null
   },
   {
-    "id": "panel-lemeng.inventory.movement.l0.3120",
-    "pipeline_id": "lemeng.inventory.movement.l0.3120",
-    "name": "lemeng.inventory.movement.l0.3120",
+    "id": "panel-lemeng.inventory.movement.seg1.l0.3120",
+    "pipeline_id": "lemeng.inventory.movement.seg1.l0.3120",
+    "name": "lemeng.inventory.movement.seg1.l0.3120",
     "enabled": true,
     "kind": {
       "type": "cron",
       "expr": "15 4 * * *"
+    },
+    "timezone": "Asia/Shanghai",
+    "misfire": "skip",
+    "catchup": {
+      "maxCatchupRuns": 31,
+      "maxCatchupAgeDays": 45
+    },
+    "last_run_at": null,
+    "last_run_status": null,
+    "last_run_duration_ms": null,
+    "last_run_error": null,
+    "next_run_at": null
+  },
+  {
+    "id": "panel-lemeng.inventory.movement.seg2.l0.3120",
+    "pipeline_id": "lemeng.inventory.movement.seg2.l0.3120",
+    "name": "lemeng.inventory.movement.seg2.l0.3120",
+    "enabled": true,
+    "kind": {
+      "type": "cron",
+      "expr": "20 4 * * *"
+    },
+    "timezone": "Asia/Shanghai",
+    "misfire": "skip",
+    "catchup": {
+      "maxCatchupRuns": 31,
+      "maxCatchupAgeDays": 45
+    },
+    "last_run_at": null,
+    "last_run_status": null,
+    "last_run_duration_ms": null,
+    "last_run_error": null,
+    "next_run_at": null
+  },
+  {
+    "id": "panel-lemeng.inventory.movement.seg3.l0.3120",
+    "pipeline_id": "lemeng.inventory.movement.seg3.l0.3120",
+    "name": "lemeng.inventory.movement.seg3.l0.3120",
+    "enabled": true,
+    "kind": {
+      "type": "cron",
+      "expr": "25 4 * * *"
+    },
+    "timezone": "Asia/Shanghai",
+    "misfire": "skip",
+    "catchup": {
+      "maxCatchupRuns": 31,
+      "maxCatchupAgeDays": 45
+    },
+    "last_run_at": null,
+    "last_run_status": null,
+    "last_run_duration_ms": null,
+    "last_run_error": null,
+    "next_run_at": null
+  },
+  {
+    "id": "panel-lemeng.inventory.movement.seg4.l0.3120",
+    "pipeline_id": "lemeng.inventory.movement.seg4.l0.3120",
+    "name": "lemeng.inventory.movement.seg4.l0.3120",
+    "enabled": true,
+    "kind": {
+      "type": "cron",
+      "expr": "30 4 * * *"
     },
     "timezone": "Asia/Shanghai",
     "misfire": "skip",
