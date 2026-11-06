@@ -4,7 +4,7 @@
     "retail_order_line **v2 扇出形态（draft，未进调度、未替换 day 形）**。",
     "code.sql 生成 1..96 页码 → ctl.foreach（concurrency=2）逐页跑 lemeng.retail_order_line.page.v2 →",
     "每页直接落 chunk=<page>.parquet → 父管线汇总页收据做零行/缺页/容量判据。",
-    "与 day 形的差别：106 节点 → 8 节点；单页失败不拖整批（已成功页的 chunk 保留）；",
+    "与 day 形的差别：106 节点 → 8 节点；单页失败**不回滚**已落盘的 chunk（但整批仍会中止，见下）；",
     "判据从「第 96 页必须为空」升级为「页数到齐 + 总单数区间 + 第 96 页为空」。",
     "⚠️ 0.7.4 的 ctl.foreach inline 实测：① concurrency 生效（但网关并发闸 ≤3，c=4 即 429 PAT并发请求超限）；",
     "② continueOnFailure **被忽略**——单页失败即中止整批（失败页之后的页不跑）；",
