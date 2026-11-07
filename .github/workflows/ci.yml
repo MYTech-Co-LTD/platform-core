@@ -243,6 +243,11 @@ jobs:
       # ③ 缺值 fail-fast 守卫被拆 ⇒ 跑到 dbt 连库才炸，晚失败难定位。
       # 纯 sh（从脚本里抽真函数测，不复制实现）：不连库、不取网络、不起容器，秒级。
       - run: sh scripts/lemeng/materialize.test.sh
+      # 回归 verdict 的**可见性投递**（`emit-probe.py`，#1583）。判据三态：dry-run 只出 JSON、
+      # env 缺键 ⇒ 2、投递失败 ⇒ 1。放行错了的后果是「红了但没人知道」——2026-11-07 实测
+      # openship job 通知不进站内 deliveries，数据面只能靠 OO `data_plane_probes` → 企微。
+      # 纯 Python（不连真 OO、不发网络；投递失败用本机拒绝端口模拟），秒级。
+      - run: sh scripts/lemeng/emit-probe.test.sh
       # 检出清点/清理（`sync-data-plane.sh`，issue #683）的「**该不该删**」判别面测试。四条都在防静默错：
       # ① 清点基准 = lock 落地路径列（不是「磁盘上有即有罪」）+ **作用域只到 manifest 目录型条目的
       #    子树**（用例 R/S）⇒ 退化成全树判死会把整检出连 384 个引导残留一起错杀；

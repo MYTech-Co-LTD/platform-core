@@ -89,6 +89,14 @@ export interface CompareResult {
   ok: boolean
   /** 人/日志可读的差异行；`ok` 时恒为空数组。 */
   diffs: string[]
+  /**
+   * 非致命漂移（2026-11-07，spec `2026-11-07-tenant-selfdriving-design.md` §3.3）：
+   * **`value` 列**是答案，其余数值列（`branch_num` / `system_book` 等标识列）的 sum/min/max
+   * 只是「行集指纹」——行集变了不等于答案变，判红会让回归天天假红。这些进 `warns`，不进 `diffs`。
+   *
+   * fail-closed：基线**没有 `value` 列**时，所有数值列仍按 fail（不猜哪列是答案）。
+   */
+  warns: string[]
 }
 
 /** 列名列表的形状化输出（diff 文案用；空数组也显式可见）。 */
@@ -122,6 +130,9 @@ function withinTolerance(base: number, cur: number, tolerance: number): boolean 
  */
 export function compare(baseline: Baseline, current: Baseline, tolerance: number): CompareResult {
   const diffs: string[] = []
+  const warns: string[] = []
+  // 只有两侧都声明了 `value` 才敢把非 value 列当「行集指纹」降级；否则全部按 fail（见接口注释）。
+  const valueColumnPresent = baseline.columns.includes('value') && current.columns.includes('value')
 
   if (!Number.isFinite(tolerance) || tolerance < 0) {
     diffs.push(`tolerance: 非法容差 ${numOf(tolerance)}（必须是非负有限数）`)
@@ -178,15 +189,15 @@ export function compare(baseline: Baseline, current: Baseline, tolerance: number
         continue
       }
       if (!withinTolerance(base, cur, tolerance)) {
-        diffs.push(
-          `column '${column}': ${field} 基线 ${numOf(base)} → 当前 ${numOf(cur)}`
-          + ` 超出容差 ${numOf(tolerance)}（允许 ±${numOf(Math.max(Math.abs(base) * tolerance, 1e-9))}）`,
-        )
+        const line = `column '${column}': ${field} 基线 ${numOf(base)} → 当前 ${numOf(cur)}`
+          + ` 超出容差 ${numOf(tolerance)}（允许 ±${numOf(Math.max(Math.abs(base) * tolerance, 1e-9))}）`
+        if (column === 'value' || !valueColumnPresent) diffs.push(line)
+        else warns.push(line)
       }
     }
   }
 
-  return { ok: diffs.length === 0, diffs }
+  return { ok: diffs.length === 0, diffs, warns }
 }
 
 // ── 3. 回归集重放 ──────────────────────────────────────────────────────────────
@@ -253,6 +264,8 @@ export interface RegressionResult {
   result: CheckResult
   /** 判红/出错的原因；pass 恒为空数组。 */
   diffs: string[]
+  /** 非致命漂移（维度/标识列的行集指纹）；**pass 行也可能非空**（见 `CompareResult.warns`）。 */
+  warns: string[]
 }
 
 /**
@@ -295,6 +308,7 @@ export async function runRegression(
   for (const q of questions) {
     let result: CheckResult
     let diffs: string[]
+    let warns: string[] = []
     try {
       const outcome = await replay(
         queryDeps, org, regressionRequester(org), q.metricId, q.params, q.slicing as SlicingSpec,
@@ -306,6 +320,7 @@ export async function runRegression(
         const cmp = compare(q.baseline, summarize(outcome), q.tolerance)
         result = cmp.ok ? 'pass' : 'fail'
         diffs = cmp.diffs
+        warns = cmp.warns
       }
     } catch (err) {
       result = 'error'
@@ -313,7 +328,7 @@ export async function runRegression(
     }
     // 结果如实落库（Task 1 的 recordCheck 是本层唯一写入口；stale 判定不在这里发明）。
     await recordCheck(deps.pool, org, q.id, result)
-    results.push({ id: q.id, metricId: q.metricId, question: q.question, result, diffs })
+    results.push({ id: q.id, metricId: q.metricId, question: q.question, result, diffs, warns })
   }
   return results
 }

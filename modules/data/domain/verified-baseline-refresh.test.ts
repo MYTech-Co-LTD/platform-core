@@ -36,6 +36,18 @@ describe('refreshBaseline（W6 Task 4：有主体的基线刷新）', () => {
     expect(updates[0][5]).toBe('数据回填后基线过期')
   })
 
+  it('write:false（dry-run）⇒ 只计算不写库，仍返回 before/after/drift', async () => {
+    const { pool, updates } = fakePool({ id: 3, metric_id: 'm:a:b', params: {}, slicing: {}, baseline: baseline(100), status: 'verified' })
+    const out = await refreshBaseline(pool, 'acme', 3, { by: 'duo', reason: '先看漂移' }, {
+      compute: async () => baseline(75),
+      write: false,
+    })
+    expect(out).toMatchObject({ ok: true, id: 3, driftPct: 0.25 })
+    expect(out.before).toEqual(baseline(100))
+    expect(out.after).toEqual(baseline(75))
+    expect(updates).toHaveLength(0)
+  })
+
   it('操作人或原因缺失 ⇒ bad_input，一次写都不发', async () => {
     const { pool, updates } = fakePool({ id: 3, metric_id: 'm:a:b', params: {}, slicing: {}, baseline: baseline(1), status: 'verified' })
     const out = await refreshBaseline(pool, 'acme', 3, { by: ' ', reason: 'x' }, { compute: async () => baseline(2) })

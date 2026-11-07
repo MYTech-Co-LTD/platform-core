@@ -41,6 +41,14 @@ export function driftPctOf(before: Baseline | null, after: Baseline | null): num
 export interface RefreshDeps {
   /** 重放该行并产出新基线；抛错 = 本次刷新失败（不写库）。 */
   compute: (row: { id: number; metricId: string; params: unknown; slicing: unknown }) => Promise<Baseline>
+  /**
+   * `false` = 只计算不落库（CLI 的 dry-run）。缺省 `true`。
+   *
+   * 为什么放在 domain 而不是只在 CLI 里绕过：守卫（not_found / not_verified /
+   * compute_failed）与漂移计算必须**两种模式同源**——CLI 自己再实现一遍就会漂。
+   * 2026-11-07 实测：CLI 号称 dry-run，但 `refreshBaseline` 恒写库 ⇒ dry-run 也改了生产基线。
+   */
+  write?: boolean
   now?: () => Date
 }
 
@@ -84,18 +92,20 @@ export async function refreshBaseline(
   }
 
   const at = (deps.now ?? (() => new Date()))().toISOString()
-  await pool.query(
-    `update data.verified_questions
-        set baseline = $3::jsonb,
-            baseline_refreshed_by = $4,
-            baseline_refreshed_at = $5,
-            baseline_refresh_reason = $6,
-            last_check_result = null,
-            last_checked_at = null,
-            updated_at = now()
-      where org = $1 and id = $2`,
-    [org, id, JSON.stringify(after), by, at, reason],
-  )
+  if (deps.write !== false) {
+    await pool.query(
+      `update data.verified_questions
+          set baseline = $3::jsonb,
+              baseline_refreshed_by = $4,
+              baseline_refreshed_at = $5,
+              baseline_refresh_reason = $6,
+              last_check_result = null,
+              last_checked_at = null,
+              updated_at = now()
+        where org = $1 and id = $2`,
+      [org, id, JSON.stringify(after), by, at, reason],
+    )
+  }
   return {
     ok: true,
     id,
