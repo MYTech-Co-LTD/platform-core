@@ -242,6 +242,15 @@ export function buildPipeline(m, name = m.id) {
     const windowToken = pg.windowToken ?? ''
     const withPage = pageBody(s.body, pageParam, pg.pageSizeParam, pg.pageSize, '${ITER_ITEM_PAGE}')
     const childBody = windowToken ? withPage.split(windowToken).join('${ITER_ITEM_BIZDAY}') : withPage
+    // 子管线同样不展开 ${ENV:*} / ${datetime} ⇒ 投影里的这些 token 一律换成 ITER 列
+    const childSql = m.transform.sql
+      .split('${ENV:SYSTEM_BOOK}')
+      .join('${ITER_ITEM_SYSTEM_BOOK}')
+      .split('${datetime}')
+      .join('${ITER_ITEM_RUN}')
+      .split(windowToken || '\u0000')
+      .join('${ITER_ITEM_BIZDAY}')
+    m = { ...m, transform: { sql: childSql } }
     nodes.push({
       id: 'p',
       type: 'source',
@@ -303,7 +312,7 @@ export function buildPipeline(m, name = m.id) {
         properties: {
           sql:
             `SELECT CAST(t.page AS INTEGER) AS page, '${pg.windowToken ?? ''}' AS bizday, ` +
-            `'${'${ENV:SYSTEM_BOOK}'}' AS book, '${'${datetime}'}' AS run ` +
+            `'${'${ENV:SYSTEM_BOOK}'}' AS system_book, '${'${datetime}'}' AS run ` +
             `FROM (VALUES ${values}) t(page) CROSS JOIN (SELECT has_new FROM input) h WHERE h.has_new`,
         },
       },

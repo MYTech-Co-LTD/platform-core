@@ -90,7 +90,7 @@
         "label": "page list",
         "componentId": "code.sql",
         "properties": {
-          "sql": "SELECT CAST(t.page AS INTEGER) AS page, '${date-1d}' AS bizday, '${ENV:SYSTEM_BOOK}' AS book, '${datetime}' AS run FROM (VALUES (1),(2),(3)) t(page) CROSS JOIN (SELECT has_new FROM input) h WHERE h.has_new"
+          "sql": "SELECT CAST(t.page AS INTEGER) AS page, '${date-1d}' AS bizday, '${ENV:SYSTEM_BOOK}' AS system_book, '${datetime}' AS run FROM (VALUES (1),(2),(3)) t(page) CROSS JOIN (SELECT has_new FROM input) h WHERE h.has_new"
         }
       }
     },

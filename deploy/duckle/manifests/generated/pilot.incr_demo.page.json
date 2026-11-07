@@ -79,7 +79,7 @@
         "properties": {
           "connectionRef": "zos",
           "bucket": "shanhai-data",
-          "key": "pilot/incr_demo/system_book=${ITER_ITEM_BOOK}/bizday=${ITER_ITEM_BIZDAY}/run=${ITER_ITEM_RUN}/page=${ITER_ITEM_PAGE}.parquet",
+          "key": "pilot/incr_demo/system_book=${ITER_ITEM_SYSTEM_BOOK}/bizday=${ITER_ITEM_BIZDAY}/run=${ITER_ITEM_RUN}/page=${ITER_ITEM_PAGE}.parquet",
           "format": "parquet",
           "mode": "overwrite",
           "compression": "zstd"

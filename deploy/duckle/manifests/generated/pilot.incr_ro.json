@@ -1,0 +1,252 @@
+{
+  "name": "pilot.incr_ro",
+  "nodes": [
+    {
+      "id": "probe",
+      "type": "source",
+      "position": {
+        "x": 0,
+        "y": 0
+      },
+      "data": {
+        "label": "probe page 1",
+        "componentId": "src.rest",
+        "schema": [
+          {
+            "name": "request_order_fid",
+            "type": "string"
+          },
+          {
+            "name": "order_type",
+            "type": "string"
+          },
+          {
+            "name": "transfer_state",
+            "type": "string"
+          },
+          {
+            "name": "purchase_date",
+            "type": "string"
+          },
+          {
+            "name": "branch_num",
+            "type": "int64"
+          },
+          {
+            "name": "branch_code",
+            "type": "string"
+          },
+          {
+            "name": "branch_name",
+            "type": "string"
+          },
+          {
+            "name": "out_branch_num",
+            "type": "int64"
+          },
+          {
+            "name": "out_branch_name",
+            "type": "string"
+          },
+          {
+            "name": "items",
+            "type": "json"
+          }
+        ],
+        "properties": {
+          "connectionRef": "lemeng",
+          "url": "https://cloud.nhsoft.cn/agi/api/nhsoft.ama.ai.request.order.find",
+          "method": "POST",
+          "body": "{\"date_start\":\"${date-1d}\",\"date_end\":\"${date-1d}\",\"date_type\":\"制单时间\",\"page_number\":1,\"page_size\":100}",
+          "responsePath": "/result",
+          "paginationType": "none",
+          "headers": {
+            "Content-Type": "application/json"
+          }
+        }
+      }
+    },
+    {
+      "id": "fp",
+      "type": "transform",
+      "position": {
+        "x": 300,
+        "y": 0
+      },
+      "data": {
+        "label": "fingerprint",
+        "componentId": "code.sql",
+        "properties": {
+          "sql": "SELECT max(CAST(request_order_fid AS VARCHAR)) AS fp FROM input"
+        }
+      }
+    },
+    {
+      "id": "prev",
+      "type": "source",
+      "position": {
+        "x": 0,
+        "y": 200
+      },
+      "data": {
+        "label": "prev watermark",
+        "componentId": "src.parquet",
+        "properties": {
+          "path": "/workspace/tmp/pilot-incr-ro.watermark.parquet"
+        }
+      }
+    },
+    {
+      "id": "cmp",
+      "type": "transform",
+      "position": {
+        "x": 600,
+        "y": 0
+      },
+      "data": {
+        "label": "compare",
+        "componentId": "code.sql",
+        "properties": {
+          "sql": "SELECT f.fp, (SELECT max(fp) FROM prev) AS prev_fp, (f.fp IS NOT NULL AND f.fp IS DISTINCT FROM (SELECT max(fp) FROM prev)) AS has_new FROM fp f"
+        }
+      }
+    },
+    {
+      "id": "pages",
+      "type": "transform",
+      "position": {
+        "x": 900,
+        "y": 0
+      },
+      "data": {
+        "label": "page list",
+        "componentId": "code.sql",
+        "properties": {
+          "sql": "SELECT CAST(t.page AS INTEGER) AS page, '${date-1d}' AS bizday, '${ENV:SYSTEM_BOOK}' AS system_book, '${datetime}' AS run FROM (VALUES (1),(2),(3)) t(page) CROSS JOIN (SELECT has_new FROM input) h WHERE h.has_new"
+        }
+      }
+    },
+    {
+      "id": "fe",
+      "type": "transform",
+      "position": {
+        "x": 1200,
+        "y": 0
+      },
+      "data": {
+        "label": "foreach page",
+        "componentId": "ctl.foreach",
+        "properties": {
+          "pipelineRef": "${workspace}/pipelines/pilot.incr_ro.page.json",
+          "concurrency": 1
+        }
+      }
+    },
+    {
+      "id": "wmk",
+      "type": "transform",
+      "position": {
+        "x": 900,
+        "y": 200
+      },
+      "data": {
+        "label": "watermark",
+        "componentId": "code.sql",
+        "properties": {
+          "sql": "SELECT fp FROM input"
+        }
+      }
+    },
+    {
+      "id": "ks",
+      "type": "sink",
+      "position": {
+        "x": 1200,
+        "y": 200
+      },
+      "data": {
+        "label": "write watermark",
+        "componentId": "snk.parquet",
+        "properties": {
+          "path": "/workspace/tmp/pilot-incr-ro.watermark.parquet",
+          "mode": "overwrite"
+        }
+      }
+    }
+  ],
+  "edges": [
+    {
+      "id": "e-probe-fp",
+      "source": "probe",
+      "target": "fp",
+      "sourceHandle": "main",
+      "targetHandle": "main",
+      "data": {
+        "connectionType": "main"
+      }
+    },
+    {
+      "id": "e-fp-cmp",
+      "source": "fp",
+      "target": "cmp",
+      "sourceHandle": "main",
+      "targetHandle": "main",
+      "data": {
+        "connectionType": "main"
+      }
+    },
+    {
+      "id": "e-prev-cmp",
+      "source": "prev",
+      "target": "cmp",
+      "sourceHandle": "main",
+      "targetHandle": "prev",
+      "data": {
+        "connectionType": "main"
+      }
+    },
+    {
+      "id": "e-cmp-pages",
+      "source": "cmp",
+      "target": "pages",
+      "sourceHandle": "main",
+      "targetHandle": "main",
+      "data": {
+        "connectionType": "main"
+      }
+    },
+    {
+      "id": "e-pages-fe",
+      "source": "pages",
+      "target": "fe",
+      "sourceHandle": "main",
+      "targetHandle": "main",
+      "data": {
+        "connectionType": "main"
+      }
+    },
+    {
+      "id": "e-cmp-wmk",
+      "source": "cmp",
+      "target": "wmk",
+      "sourceHandle": "main",
+      "targetHandle": "main",
+      "data": {
+        "connectionType": "main"
+      }
+    },
+    {
+      "id": "e-wmk-ks",
+      "source": "wmk",
+      "target": "ks",
+      "sourceHandle": "main",
+      "targetHandle": "main",
+      "data": {
+        "connectionType": "main"
+      }
+    }
+  ],
+  "_note": [
+    "由 scripts/gen-pipeline.mjs 从 manifest 生成；手改请改 manifest 后重生成（--check 会拦）。"
+  ]
+}
