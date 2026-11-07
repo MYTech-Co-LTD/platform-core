@@ -1,0 +1,249 @@
+{
+  "name": "lemeng.retail_order_line.page.v2",
+  "_note": [
+    "retail_order_line 的 **v2 单页子管线**（draft，由 lemeng.retail_order_line.foreach.v2 的 ctl.foreach 驱动）。",
+    "子管线内**零 ${ENV:...}**：branch_nums / system_book / bizday / bucket / region / sink_root / run_token",
+    "全部由父管线以 ITER_ITEM_* 列显式传入（ctl.foreach 不展开 ENV，2026-09-28 实测）。",
+    "每页落 chunk=<page>.parquet（同一 bizday 分区多文件），失败只影响该页；页收据写 /workspace/logs/retail-v2-foreach/。"
+  ],
+  "nodes": [
+    {
+      "id": "src",
+      "type": "source",
+      "position": {
+        "x": 0,
+        "y": 0
+      },
+      "data": {
+        "label": "page ${ITER_ITEM_PAGE_NO}",
+        "componentId": "src.rest",
+        "schema": [
+          {
+            "name": "order_no",
+            "type": "string"
+          },
+          {
+            "name": "state",
+            "type": "string"
+          },
+          {
+            "name": "order_time",
+            "type": "timestamp"
+          },
+          {
+            "name": "order_operate_time",
+            "type": "timestamp"
+          },
+          {
+            "name": "order_source",
+            "type": "string"
+          },
+          {
+            "name": "order_transaction_type",
+            "type": "string"
+          },
+          {
+            "name": "order_ref_billno",
+            "type": "string"
+          },
+          {
+            "name": "order_total_money",
+            "type": "float64"
+          },
+          {
+            "name": "branch",
+            "type": "json"
+          },
+          {
+            "name": "pos_order_details",
+            "type": "json"
+          }
+        ],
+        "properties": {
+          "connectionRef": "lemeng",
+          "url": "https://cloud.nhsoft.cn/agi/api/nhsoft.retail.ai.pos.posorder.find",
+          "method": "POST",
+          "body": "{\"branch_nums\": ${ITER_ITEM_BRANCH_NUMS}, \"date_from\": \"${ITER_ITEM_BIZDAY}\", \"date_to\": \"${ITER_ITEM_BIZDAY}\", \"time_from\": \"00:00:00\", \"time_to\": \"23:59:59\", \"page_number\": ${ITER_ITEM_PAGE_NO}, \"page_size\": 200}",
+          "responsePath": "/result",
+          "paginationType": "none",
+          "checkpoint": false,
+          "retryAttempts": 3,
+          "retryBackoffMs": 2000
+        }
+      }
+    },
+    {
+      "id": "flatten",
+      "type": "transform",
+      "position": {
+        "x": 560,
+        "y": 0
+      },
+      "data": {
+        "label": "UNNEST pos_order_details + 定型到契约列",
+        "componentId": "code.sql",
+        "properties": {
+          "sql": "SELECT\n  '${ITER_ITEM_BATCH_ID}' AS batch_id,\n  '${ITER_ITEM_SYSTEM_BOOK}' AS system_book,\n  CAST(strptime(json_extract_string(u.d, '$.order_detail_bizday'), '%Y%m%d') AS DATE) AS bizday,\n  CAST(date_part('hour', CAST(o.order_time AS TIMESTAMP)) AS INTEGER) AS hour,\n  CAST(o.order_no AS VARCHAR) AS order_no,\n  CAST(json_extract_string(u.d, '$.order_detail_num') AS VARCHAR) AS order_detail_num,\n  CAST(json_extract_string(u.d, '$.branch_num') AS INTEGER) AS branch_num,\n  json_extract_string(CAST(o.branch AS JSON), '$.branch_name') AS branch_name,\n  CAST(o.order_time AS TIMESTAMP) AS order_time,\n  CAST(o.order_operate_time AS TIMESTAMP) AS order_operate_time,\n  CAST(o.state AS VARCHAR) AS state,\n  CAST(o.order_source AS VARCHAR) AS order_source,\n  CAST(json_extract_string(u.d, '$.item_num') AS VARCHAR) AS item_num,\n  json_extract_string(u.d, '$.item_code') AS item_code,\n  CAST(json_extract_string(u.d, '$.order_detail_money') AS DECIMAL(14,2)) AS sale_money,\n  CAST(json_extract_string(u.d, '$.order_detail_discount') AS DECIMAL(14,2)) AS discount_money,\n  CAST(json_extract_string(u.d, '$.order_detail_payment_money') AS DECIMAL(14,2)) AS payment_money,\n  CAST(json_extract_string(u.d, '$.order_detail_amount') AS DECIMAL(14,3)) AS quantity,\n  CAST(o.order_transaction_type AS VARCHAR) AS order_transaction_type,\n  CAST(o.order_ref_billno AS VARCHAR) AS order_ref_billno,\n  CAST(json_extract_string(u.d, '$.order_detail_share_discount') AS DECIMAL(14,2)) AS order_detail_share_discount,\n  CAST(json_extract_string(u.d, '$.order_detail_std_price') AS DECIMAL(14,2)) AS order_detail_std_price,\n  CAST(json_extract_string(u.d, '$.order_detail_price') AS DECIMAL(14,2)) AS order_detail_price,\n  CAST(json_extract_string(u.d, '$.order_detail_online_qty') AS DECIMAL(14,3)) AS order_detail_online_qty,\n  CAST(o.order_total_money AS DECIMAL(14,2)) AS order_total_money\nFROM input o\nCROSS JOIN UNNEST(from_json(CAST(o.pos_order_details AS JSON), '[\"JSON\"]')) AS u(d)"
+        }
+      }
+    },
+    {
+      "id": "gate",
+      "type": "transform",
+      "position": {
+        "x": 800,
+        "y": 0
+      },
+      "data": {
+        "label": "contract gate",
+        "componentId": "qa.contract",
+        "properties": {
+          "rules": {
+            "order_no": "not_null",
+            "order_detail_num": "not_null",
+            "system_book": "not_null",
+            "bizday": "not_null",
+            "hour": "not_null",
+            "batch_id": "not_null",
+            "sale_money": "in_range:-10000000,10000000"
+          }
+        }
+      }
+    },
+    {
+      "id": "sink",
+      "type": "sink",
+      "position": {
+        "x": 0,
+        "y": 0
+      },
+      "data": {
+        "label": "chunk ${ITER_ITEM_CHUNK_NO}.parquet",
+        "componentId": "snk.minio",
+        "properties": {
+          "connectionRef": "zos",
+          "bucket": "${ITER_ITEM_BUCKET}",
+          "region": "${ITER_ITEM_REGION}",
+          "key": "lemeng/retail_order_line/${ITER_ITEM_SINK_ROOT}/system_book=${ITER_ITEM_SYSTEM_BOOK}/bizday=${ITER_ITEM_BIZDAY}/chunk=${ITER_ITEM_CHUNK_NO}.parquet",
+          "format": "parquet",
+          "mode": "overwrite",
+          "compression": "zstd"
+        }
+      }
+    },
+    {
+      "id": "an",
+      "type": "control",
+      "position": {
+        "x": 0,
+        "y": 0
+      },
+      "data": {
+        "label": "chunk 落盘后再写收据",
+        "componentId": "ctl.anchor",
+        "properties": {}
+      }
+    },
+    {
+      "id": "rec",
+      "type": "transform",
+      "position": {
+        "x": 0,
+        "y": 0
+      },
+      "data": {
+        "label": "本页收据（父管线汇总输入）",
+        "componentId": "code.sql",
+        "properties": {
+          "sql": "SELECT CAST('${ITER_ITEM_RUN_TOKEN}' AS VARCHAR) AS run_token,\n  CAST(${ITER_ITEM_PAGE_NO} AS INTEGER) AS page_no,\n  CAST(${ITER_ITEM_CHUNK_NO} AS INTEGER) AS chunk_no,\n  CAST(${ITER_ITEM_EXPECTED_PAGES} AS INTEGER) AS expected_pages,\n  CAST(count(*) AS BIGINT) AS detail_rows,\n  CAST(count(DISTINCT order_no) AS BIGINT) AS orders,\n  'ok' AS status\nFROM input"
+        }
+      }
+    },
+    {
+      "id": "recsink",
+      "type": "sink",
+      "position": {
+        "x": 0,
+        "y": 0
+      },
+      "data": {
+        "label": "页收据 CSV",
+        "componentId": "snk.csv",
+        "properties": {
+          "path": "/workspace/logs/retail-v2-foreach/${ITER_ITEM_RUN_TOKEN}-p${ITER_ITEM_CHUNK_NO}.csv",
+          "mode": "overwrite"
+        }
+      }
+    }
+  ],
+  "edges": [
+    {
+      "id": "e1",
+      "source": "src",
+      "target": "flatten",
+      "sourceHandle": "main",
+      "targetHandle": "main",
+      "data": {
+        "connectionType": "main"
+      }
+    },
+    {
+      "id": "e2",
+      "source": "flatten",
+      "target": "gate",
+      "sourceHandle": "main",
+      "targetHandle": "main",
+      "data": {
+        "connectionType": "main"
+      }
+    },
+    {
+      "id": "e3",
+      "source": "gate",
+      "target": "sink",
+      "sourceHandle": "main",
+      "targetHandle": "main",
+      "data": {
+        "connectionType": "main"
+      }
+    },
+    {
+      "id": "e4",
+      "source": "sink",
+      "target": "an",
+      "sourceHandle": "main",
+      "targetHandle": "main",
+      "data": {
+        "connectionType": "main"
+      }
+    },
+    {
+      "id": "e5",
+      "source": "gate",
+      "target": "rec",
+      "sourceHandle": "main",
+      "targetHandle": "main",
+      "data": {
+        "connectionType": "main"
+      }
+    },
+    {
+      "id": "t6",
+      "source": "an",
+      "target": "rec",
+      "data": {
+        "connectionType": "on-subjob-ok"
+      }
+    },
+    {
+      "id": "e7",
+      "source": "rec",
+      "target": "recsink",
+      "sourceHandle": "main",
+      "targetHandle": "main",
+      "data": {
+        "connectionType": "main"
+      }
+    }
+  ]
+}
