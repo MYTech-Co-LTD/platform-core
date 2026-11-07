@@ -13,7 +13,7 @@
 |---|---|---|
 | **节点数 ≤10** | ✅ 父 **8** / 子 **7** | 父：`pl / fe / an / agg / viol / rep / repsink / die` |
 | **行数 / 单数完全一致** | ✅ **同日新旧逐行一致**（0 差异）；⚠️ 与封板快照差 **1 单**，取证为源端迟到单 | §3.2 |
-| **耗时 ≤ 现有形态** | ❌ **103s vs 60.7s**（c=2）；c=3 反而 **118s** | §3.3 |
+| **耗时 ≤ 现有形态** | ❌ **93.6~103.4s vs 60.7s**（c=2 两次测量）；c=3 反而 **118s** | §3.3 |
 | **429 能降级而非整批归零** | ⚠️ **部分满足**：失败页之前的 chunk 保留（不再整天归零）；`continueOnFailure` 让**下游守卫照跑并点名缺页**，但失败页之后的页**当轮不跑**（不是逐项继续）；`retryAttempts>1` 整批重跑且本环境实测卡死 | §3.4 |
 
 **裁决建议：本版 v2 不替换 `lemeng.retail_order_line.day`。** 等价性证明变换逻辑正确；
@@ -43,7 +43,7 @@ fe  ctl.foreach(concurrency=2, ...)               rec      本页收据（rows /
 an  ctl.anchor                                    recsink  /workspace/logs/retail-v2-foreach/<run>-p<page>.csv
 agg code.sql：读收据 glob，汇总页数/总单数/总明细/第 96 页单数
 viol code.sql：pages_missing / pages_failed / batch_empty / capacity_truncated / orders_out_of_range
-rep / repsink：本批汇总 CSV
+rep / repsink：**违规明细** CSV（成功时只有表头；批总量见 `agg` 节点）
 die ctl.die(has-rows)：任一违规 → 判红
 ```
 
@@ -118,11 +118,12 @@ v2_only | 312026826293002003 | 1 | 2026-10-21 21:49:51
 | 形态 | 3120 单日 `fe` | 备注 |
 |---|---|---|
 | 旧形态（96 静态节点，一个管线） | **60.7s** | 96 请求共用一个 HTTP 客户端/连接池 |
-| v2 foreach **c=2** | **103.4s** | 96 个子管线，每个 7 stage |
+| v2 foreach **c=2**（首次） | **103.4s** | 96 个子管线，每个 7 stage |
+| v2 foreach **c=2**（最终版复跑 01:37 UTC） | **93.6s** | 96 页、96 收据、`viol`=0；同日同形态两次测量 93.6~103.4s |
 | v2 foreach **c=3**（上限） | **118.1s** | 未更快；本次未命中 429，差异属编排/连接开销 |
 
 **原因（实测推断）**：每个 foreach item 都起一条完整子管线（7 个 stage + 独立的 DuckDB 视图/HTTP 客户端），
-单页成本 ~2.15s；旧形态的 96 个 `src.rest` 在同一管线里共享连接，单页有效成本 ~0.63s。
+单页成本 ~1.95~2.15s；旧形态的 96 个 `src.rest` 在同一管线里共享连接，单页有效成本 ~0.63s。
 **并发受网关上限（≤3）约束，补不回这部分开销。**
 
 ### 3.4 失败注入（判据未过）
@@ -154,6 +155,8 @@ run: error, duration_ms=9176
 - ❌ **page 96 仍未跑**（子管线日志按本 run id 计数 = **0**）——`continueOnFailure` 只让 **foreach 这个 stage 软失败**，
   不让 foreach **继续处理剩余 item**。已有条目「其余 5 窗照常采集」的实测多半是「失败窗排在最后」，
   本次把失败放在**中间**才照出这一层。
+- **c=2 复测同形**（2026-11-07 01:37 UTC，3 项 1/0/96、无重试）：`fe` 6,351ms 软失败，p96 仍 **0** 次，
+  下游 `agg/viol/rep/die` 照跑，`die` 报 `pages_missing`。⇒ 该语义与并发数无关。
 
 实验 C（同 3 项，`continueOnFailure=true` + `retryAttempts=4, retryBackoffMs=60000`）：
 
@@ -174,6 +177,19 @@ agg   rows=1
 viol  rows=0
 die   status=ok, rows=0
 ```
+
+**最终版全量端到端（2026-11-07 01:37 UTC，`_V2_FINAL`）**：
+
+```
+pl    rows=96
+fe    rows=96, duration_ms=93,648
+agg   rows=1
+viol  rows=0
+rep   rows=0（无违规，CSV 只有表头）
+die   status=ok, rows=0
+```
+
+回读 `_V2_FINAL`：**10,016 行 / 6,334 单**，与同日旧形态 `_V2_BASELINE` 一致（十列逐行 0 差异）。
 
 ⇒ 判据 SQL 与 `ctl.die` 接线正确。注意 `die` 的 **main 边必须接 `viol`**（transform），
 `repsink` 只能作 **trigger** 边——接成 main 会报 `Table with name repsink does not exist`（本次踩过）。
