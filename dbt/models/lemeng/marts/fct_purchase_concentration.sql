@@ -1,5 +1,10 @@
 {{
-    config(materialized='table')
+    config(
+        materialized='incremental',
+        unique_key=['system_book', 'bizday', 'item_department'],
+        incremental_strategy='delete+insert',
+        on_schema_change='sync_all_columns'
+    )
 }}
 -- fct_purchase_concentration.sql — **供应商集中度**预聚合构件（#744 W3，2026-10-17）。
 --
@@ -62,6 +67,11 @@ supplier_period as (
           -- `operator does not exist: text = bigint`（2026-10-17 真机首跑就撞上）。
           -- 真机实测 40,371 个商品号全部可无损转 bigint，故往 bigint 靠。
           and i.item_num::bigint = p.item_num
+    {% if is_incremental() %}
+    -- 月度粒度：60 天 lookback 覆盖当月 + 上月（spec §3 的 fct_purchase_concentration 行）。
+    -- 目标表 bizday 是月首，max(bizday)-60d 落到上上月边界附近；多算一月比漏月安全。
+    where p.bizday >= {{ incremental_cutoff(60) }}
+    {% endif %}
     group by 1, 2, 3, 4
 ),
 totals as (

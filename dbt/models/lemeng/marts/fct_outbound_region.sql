@@ -21,13 +21,21 @@
 -- 【join 语义】全部 `left join`：宁可落 `未归属` 也不丢行——丢行 = 静默少数，守恒测试会红但
 --   根因难查；`未归属` 是**可见**的缺口。
 {{
-    config(materialized='table')
+    config(
+        materialized='incremental',
+        unique_key=['system_book', 'bizday', 'channel_type', 'region_l1_bucket'],
+        incremental_strategy='delete+insert',
+        on_schema_change='sync_all_columns'
+    )
 }}
 with
 o as (
     select system_book, bizday, domain, branch_num, client_fid, region_id,
            r_net, order_count, line_count
     from {{ ref('fct_hq_outbound') }}
+    {% if is_incremental() %}
+    where bizday >= {{ incremental_cutoff(7) }}
+    {% endif %}
 ),
 dc as (
     select system_book, client_fid, client_kind, home_system_book,
