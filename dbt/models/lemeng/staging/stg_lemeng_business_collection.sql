@@ -41,7 +41,7 @@ select
   r['online_payment_receipt_money']::decimal(20,2) as online_payment_receipt_money,
   r['online_coupon_amount']::decimal(20,2) as online_coupon_amount,
   r['all_payment_type_moneys']::varchar as all_payment_type_moneys,
-  r['computed_at']::timestamp_tz as computed_at
+  r['computed_at']::timestamptz as computed_at
 from read_parquet(
   's3://{{ var("zos_bucket") }}/{{ var("lemeng_business_collection_prefix") }}/*/bizday=**/*.parquet'
 ) r

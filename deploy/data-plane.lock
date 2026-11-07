@@ -1,4 +1,4 @@
-sha256-of-rest 5bdf1ba68380d9f958039b4a9bbe5c58ae33510919d3795ad402fd3774f9e8d3
+sha256-of-rest 014c23bba7a6e703cecfbca3a65b709681cbabbffc0a08f1a223646d9f4afd4c
 08938c10c6b4a688c8afda6cd7d1ad3dbf2c20f83cf8c4e7023055ad34eddc70 contracts/README.md ${REPO}/contracts/README.md 0644
 fcc8189e1012d5fbb8e2505025bed637dd01c7b4465ab86125d3eaa7f330eff3 contracts/common/_schema.schema.json ${REPO}/contracts/common/_schema.schema.json 0644
 1730119518c3371f3c2ff3492f4c15cd731688047c6d40805ec4d2c65892f3ff contracts/common/_template.contract.json ${REPO}/contracts/common/_template.contract.json 0644
@@ -72,9 +72,9 @@ fcccfc109837054d5340cbce863e6d4eb73374f4e355beaabd25e10f466ce54c dbt/models/leme
 8026db5c26b6e82cdfa4459858b8c67af4b1e957602e70ff6092634ac9fbe2dd dbt/models/lemeng/staging/stg_lemeng_branch.sql ${REPO}/dbt/models/lemeng/staging/stg_lemeng_branch.sql 0644
 9f3a05225b47130379f7c5fff3f8165c6cf1d8191afc940444889f8ccf5b6308 dbt/models/lemeng/staging/stg_lemeng_branch_expense.sql ${REPO}/dbt/models/lemeng/staging/stg_lemeng_branch_expense.sql 0644
 f7006d45b65780e28f8057e4df4443c4732cbe49603134286714a7a4aa70880d dbt/models/lemeng/staging/stg_lemeng_branch_indicator.sql ${REPO}/dbt/models/lemeng/staging/stg_lemeng_branch_indicator.sql 0644
-66e244b72e452a3cb35c8daa7c41df76c68cb214088aafa8bdb960fdb644fdd1 dbt/models/lemeng/staging/stg_lemeng_business_collection.sql ${REPO}/dbt/models/lemeng/staging/stg_lemeng_business_collection.sql 0644
-7aa6313693d9d60ad627d91a8ec8e707ed726eb6d6b2e154a83ef56f96a10578 dbt/models/lemeng/staging/stg_lemeng_business_collection_coupon.sql ${REPO}/dbt/models/lemeng/staging/stg_lemeng_business_collection_coupon.sql 0644
-9d8515b7106ccba09dc20e5254dd0a25aab1f3fdc76cf81a62743ffbe5dfc986 dbt/models/lemeng/staging/stg_lemeng_business_collection_receive.sql ${REPO}/dbt/models/lemeng/staging/stg_lemeng_business_collection_receive.sql 0644
+807847770e4ef3b3d481252c0d8f6d8c07d73dfb209446e2254536e572d29e6b dbt/models/lemeng/staging/stg_lemeng_business_collection.sql ${REPO}/dbt/models/lemeng/staging/stg_lemeng_business_collection.sql 0644
+a2b96934fe1c1fac13b44dd17bb32857f125b450fa16d7f2d7bd7fa7310affa7 dbt/models/lemeng/staging/stg_lemeng_business_collection_coupon.sql ${REPO}/dbt/models/lemeng/staging/stg_lemeng_business_collection_coupon.sql 0644
+c413bbe117d4815baef7f547caf73dc7d63ee79a7f1a18c2ac3186c5ab450f1d dbt/models/lemeng/staging/stg_lemeng_business_collection_receive.sql ${REPO}/dbt/models/lemeng/staging/stg_lemeng_business_collection_receive.sql 0644
 4185bdd5ec044744580562f27c958e89691ed27f6fe3f374b9d8793b57298a6a dbt/models/lemeng/staging/stg_lemeng_client.sql ${REPO}/dbt/models/lemeng/staging/stg_lemeng_client.sql 0644
 fdd42f5eb7ce0a4698834a635d60727cd0e413c851765b08f85bd6fe129bc2b1 dbt/models/lemeng/staging/stg_lemeng_client_expense.sql ${REPO}/dbt/models/lemeng/staging/stg_lemeng_client_expense.sql 0644
 13834d560d1bcd9f76d0dcc7a8ec1c38a596ab4519bac48a19bae9b4fa59e18e dbt/models/lemeng/staging/stg_lemeng_customer_analysis.sql ${REPO}/dbt/models/lemeng/staging/stg_lemeng_customer_analysis.sql 0644
