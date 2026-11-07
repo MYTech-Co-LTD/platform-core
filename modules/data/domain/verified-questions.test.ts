@@ -109,6 +109,42 @@ describePg('verified-questions（需要 DATABASE_URL）', () => {
     expect(after).toMatchObject({ status: 'verified', strength: 'strong', verifiedBy: 'auto:strong' })
   })
 
+  // 2026-11-07 (#1594)：auto-strong 覆盖已验基线时**必须留审计三列**——verify-ingest 每小时会走这条路，
+  // 旧实现只改 baseline 不写 refreshed_by/at/reason ⇒ 基线可绕过 refreshBaseline 的「谁/为什么」。
+  it('强信号覆盖已验基线 ⇒ 同语句写 baseline_refreshed_by/at/reason（auto:strong）', async () => {
+    const row = (await listVerified(pool, ORG)).find((r) => r.metricId === 'lemeng:retail:net_sales')!
+    await upsertCandidate(pool, ORG, {
+      question: '上个月净销售额', metricId: 'lemeng:retail:net_sales',
+      params: {}, slicing: {}, baseline: baselineOf(160),
+      source: 'auto', strength: 'strong', sessionId: 's5',
+    })
+    const { rows } = await pool.query(
+      `select baseline_refreshed_by, baseline_refreshed_at, baseline_refresh_reason
+         from data.verified_questions where org = $1 and id = $2`,
+      [ORG, row.id],
+    )
+    expect(rows[0]?.baseline_refreshed_by).toBe('auto:strong')
+    expect(rows[0]?.baseline_refreshed_at).not.toBeNull()
+    expect(rows[0]?.baseline_refresh_reason).toBe('auto:verify-ingest')
+  })
+
+  it('人工来源覆盖已验基线 ⇒ 审计 by=human / reason=human:upsert', async () => {
+    const row = (await listVerified(pool, ORG)).find((r) => r.metricId === 'lemeng:retail:net_sales')!
+    await upsertCandidate(pool, ORG, {
+      question: '上个月净销售额', metricId: 'lemeng:retail:net_sales',
+      params: {}, slicing: {}, baseline: baselineOf(170),
+      source: 'human', strength: 'weak', sessionId: 's6',
+    })
+    const { rows } = await pool.query(
+      `select baseline_refreshed_by, baseline_refreshed_at, baseline_refresh_reason
+         from data.verified_questions where org = $1 and id = $2`,
+      [ORG, row.id],
+    )
+    expect(rows[0]?.baseline_refreshed_by).toBe('human')
+    expect(rows[0]?.baseline_refreshed_at).not.toBeNull()
+    expect(rows[0]?.baseline_refresh_reason).toBe('human:upsert')
+  })
+
   it('先弱后强：同一行升级为 verified / strength=strong，基线更新', async () => {
     const metricId = 'lemeng:retail:net_sales_q'
     await upsertCandidate(pool, ORG, {
