@@ -128,6 +128,10 @@ select status, count(*), max(updated_at) from data.metric_candidates
   `transfer_out batch 20261106T234522Z + mart 重建后基线过期；口径未变`）+ `#1723`（行集变化）。
 - **回归终态**：`total=49 pass=49 fail=0 warn=0`，rc=0；job `jrun_7OiISVYyAA2kuoTD` 成功并投递
   `OK`（OO `data_plane_probes` 三态齐全：shadow OK → RED → OK）。
-- **★ 途中发现（issue #1594）**：`#1` 的基线在 05:40 被 **`verify-ingest-shanhai`（每小时 :40）**
-  重放后 `upsertCandidate` **静默覆盖**（auto-strong 分支），`baseline_refreshed_*` 仍为空——
-  基线可绕过 `refreshBaseline` 的 by/reason 审计。已单开 issue，建议同语句补审计三列（或禁止 auto 覆盖）。
+- **★ 途中发现（issue #1594，已修）**：`#1` 的基线在 05:40 被 **`verify-ingest-shanhai`（每小时 :40）**
+  重放后 `upsertCandidate` **静默覆盖**（auto-strong 分支），`baseline_refreshed_*` 仍为空。
+  **修复（PR #1596，v204）**：覆盖已验基线的同一条 UPDATE 写
+  `by = human|auto:strong`、`reason = human:upsert|auto:verify-ingest`、`at = now()`。
+  真机探针（容器内临时 org，自清理）复验：
+  `{"baseline_refreshed_by":"auto:strong","baseline_refresh_reason":"auto:verify-ingest"}`；
+  修复后回归仍 `49/49 pass`。
