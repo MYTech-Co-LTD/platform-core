@@ -1,5 +1,10 @@
 {{
-    config(materialized='table')
+    config(
+        materialized='incremental',
+        unique_key=['system_book', 'bizday', 'branch_num', 'item_num'],
+        incremental_strategy='delete+insert',
+        on_schema_change='sync_all_columns'
+    )
 }}
 -- fct_retail_quantity.sql — **零售净销量**构件（#769，2026-10-17）。
 --
@@ -60,6 +65,11 @@ with base as (
         case when order_transaction_type like '%RETURN%' and state in ('FINISHED', 'REPAID')
              then quantity else 0 end as return_quantity
     from {{ ref('stg_lemeng_retail_order_line') }}
+    {% if is_incremental() %}
+    -- 增量窗口（#1520 W2-P1）：主路径（手写 base）与影子路径（生成区 base_rq_*）都下推 7 天，
+    -- 且用编译期字面量才能触发 read_parquet 的 bizday 分区裁剪（#1524）。
+    where bizday >= {{ incremental_cutoff(7) }}
+    {% endif %}
 )
 -- ⚠️ 逗号只能落在标记区**外**（区内逐字节受 `--check` 管），故单独起一行。
 ,
@@ -70,6 +80,9 @@ with base as (
 base_rq_sale as (
     select * from {{ ref('stg_lemeng_retail_order_line') }}
     where order_transaction_type = 'SALE_ORDER' and state = 'FINISHED'
+    {% if is_incremental() %}
+    and bizday >= {{ incremental_cutoff(7) }}
+    {% endif %}
 ),
 sale_quantity__gen as (
     select system_book, bizday, branch_num, item_num, sum(quantity)::numeric(20,3) as sale_quantity__gen from base_rq_sale group by 1, 2, 3, 4
@@ -77,6 +90,9 @@ sale_quantity__gen as (
 base_rq_return as (
     select * from {{ ref('stg_lemeng_retail_order_line') }}
     where order_transaction_type like '%RETURN%' and state in ('FINISHED', 'REPAID')
+    {% if is_incremental() %}
+    and bizday >= {{ incremental_cutoff(7) }}
+    {% endif %}
 ),
 return_quantity__gen as (
     select system_book, bizday, branch_num, item_num, sum(quantity)::numeric(20,3) as return_quantity__gen from base_rq_return group by 1, 2, 3, 4

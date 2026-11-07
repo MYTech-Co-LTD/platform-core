@@ -160,6 +160,8 @@ export const MODELS = [
       'sale_quantity@flat': 'base_rq_sale',
       'return_quantity@flat': 'base_rq_return',
     },
+    // #1520 W2-P1：与主路径（手写 base CTE）同窗口；生成区基面也下推 7 天。
+    incrementalLookback: 7,
   },
 ]
 
