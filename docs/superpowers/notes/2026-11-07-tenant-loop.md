@@ -89,6 +89,18 @@ select status, count(*), max(updated_at) from data.metric_candidates
  where org = $1 group by status;
 ```
 
+### 3.1 观察起点快照（2026-11-07T07:26:40Z）
+
+| 指标 | 值 |
+|---|---|
+| `data.demand_signals` | **45** 条（已否决 0） |
+| `data.metric_candidates` | pending **276** / created **2** |
+| `data.verified_questions` | **49 verified** / 24 stale / 5 candidate / 26 rejected |
+| 回归（job `jrun_7OiISVYyAA2kuoTD`） | **49/49 pass、0 warn** |
+
+**7 天对照基线**：下次按 §3 取数，比较 `demand_signals` 总量/否决数、候选 pending 吞吐、`verified` 数量与回归 pass 率。
+观察起点 = 2026-11-07；30 天判据到期 ≈ **2026-12-07**。
+
 ## 4. 当前状态与已知边界
 
 - **30 天判据**：观察中（本文件首日基线 2026-11-07；到期后按 §3 取数）。
