@@ -119,6 +119,9 @@ probe(src.rest, page_size=1)        # 1 次请求，拿「最新一条」做指�
 | 4 | 定保留策略（压实时点、保留轮数） | 对象数稳定、读侧不变慢 |
 | 5 | 选 1 个源改 L1 形态（探针 + 空页列表 + foreach） | 无新数据时子管线 0 次、run 成功；有新数据时页数与改前一致 |
 
+> **逐条上生产的执行单**：`docs/superpowers/notes/2026-11-08-incremental-production-runbook.md`
+> （含上生产前的阻断项：身份闸/截断哨兵未由生成器携带、契约 `layout.fileName` 与 page 文件不一致）。
+
 ---
 
 ## 4. 需要拍板的三件事
@@ -140,6 +143,10 @@ probe(src.rest, page_size=1)        # 1 次请求，拿「最新一条」做指�
 - **实现细节（踩到的坑）**：`ctl.checkpoint` 会在比较之前把水位文件覆盖成当前值 ⇒ 下一节点读到的
   「上一轮水位」已经是本轮 ⇒ 判定恒为「无新数据」。**正确做法**：水位用**旁路 sink** 写
   （`cmp → wmk(code.sql: SELECT fp) → snk.parquet`），依赖关系保证它在比较之后执行。
+- **契约投影试点（2026-11-08，`pilot/` 前缀）**：用现役 `shape` 节点的契约投影做子管线 transform，
+  跑 3 页 ⇒ run `ok`、湖里回读 **273 行 / 67 单号**、**24 列与契约同序**。
+  父页列表已额外产出 `system_book` / `run`，子管线投影把 `${ENV:SYSTEM_BOOK}` / `${datetime}` /
+  窗口 token 改写成 `ITER_ITEM_*`（否则 `batch_id` 拼不出来——2026-11-07 首次上生产即因此回滚）。
 
 **未验**：
 - `ctl.checkpoint` + `src.parquet` 作为**采集水位**的完整回路（缺文件、并发写、损坏时的行为）；
