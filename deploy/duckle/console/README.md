@@ -2,6 +2,9 @@
 
 > 上位决策：`openship-platform` 仓 **ADR-0014**（业务调度改用 duckle 自带调度器）。
 > 实施步骤与全部实测证据：`docs/superpowers/plans/2026-09-26-lemeng-scheduling-via-duckle.md`。
+>
+> **Agent 自主加管线（不重启 / 不重新部署）SOP**：唯一事实源在 team-harness
+> `docs/standards/agent-add-pipeline-without-restart.md`（2026-11-07 真机验收；本仓只放指针，不复制正文）。
 
 > 🔴 **本文件往下到「告警 alerts.json」一节为止的「薄管线 / wrapper」内容是历史形态，已于
 > 2026-09-29 退役**：薄管线 `.run.json` 删于 #364（切 L0/L1），wrapper `/opt/lemeng-run.sh`
