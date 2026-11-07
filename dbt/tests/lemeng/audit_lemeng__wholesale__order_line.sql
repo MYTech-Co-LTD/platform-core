@@ -1,3 +1,4 @@
+{{ config(tags=['audit']) }}
 -- audit_lemeng__wholesale__order_line — 批发明细指标的**独立复算**（#1182；layered §7 硬约束 7）。
 --
 -- 两侧：

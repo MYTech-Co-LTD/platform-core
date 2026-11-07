@@ -1,3 +1,4 @@
+{{ config(tags=['audit']) }}
 -- audit_lemeng__retail__consecutive_no_sales_days.sql — 骨架与 streak 的**不变量断言**
 -- （刻意**不**复刻物化实现：复刻只能抓 cast/join，抓不到口径错——`zero_cost` 两边同错恒绿是已证教训。
 --   这里断言的是**律**，任何实现只要违反就红。）

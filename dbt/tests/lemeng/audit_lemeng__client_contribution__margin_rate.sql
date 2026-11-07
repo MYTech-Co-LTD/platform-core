@@ -1,3 +1,4 @@
+{{ config(tags=['audit']) }}
 -- audit_lemeng__client_contribution__margin_rate.sql — 客户级费用后贡献率的**独立复算**（对账）。
 -- 与 audit_lemeng__client_contribution__net_amount 同一复算基面（直接打 parquet、不 ref 上游关系）；
 -- 本条额外比较「分子 / 分母 / 商」三样，不只是商——两侧同为 0 时商相等但**没有区分度**

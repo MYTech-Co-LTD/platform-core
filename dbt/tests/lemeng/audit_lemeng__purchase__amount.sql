@@ -1,3 +1,4 @@
+{{ config(tags=['audit']) }}
 -- audit_lemeng__purchase__amount.sql — 采购金额 的独立复算（#640）。
 -- 契约：dbt singular test 返回任何行即失败；空转自检防假绿（对账落在空集上「通过」不是对上了）。
 -- 复算直读 parquet（不复用 staging/fct），粒度 = (system_book, bizday, supplier_num, item_num)。

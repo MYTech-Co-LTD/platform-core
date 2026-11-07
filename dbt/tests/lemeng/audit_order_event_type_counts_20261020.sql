@@ -1,3 +1,4 @@
+{{ config(tags=['audit']) }}
 -- audit_order_event_type_counts_20261020.sql — 类型分布**回归锁**（2026-10-20 实测值）。
 --
 -- 期望：SALE 15,157 / FULL_RETURN 69 / PARTIAL_RETURN 9 / REPAID_RETURN 32（行级，见模型头注）。

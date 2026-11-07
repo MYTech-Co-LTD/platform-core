@@ -1,3 +1,4 @@
+{{ config(tags=['audit']) }}
 -- audit_order_event_ref_coverage_20261020.sql — 退货关联覆盖率**如实证报数**（2026-10-20）。
 --
 -- 实测：总行 15,267；有 `ref_order_no` 的行 **201**（201/15,267 ≈ 1.3%）。

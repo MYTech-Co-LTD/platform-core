@@ -1,3 +1,4 @@
+{{ config(tags=['audit']) }}
 -- audit_lemeng__request__quantity.sql — 要货数量指标的独立复算（#677）。
 -- 契约：dbt singular test 返回任何行即失败；空转自检防假绿。
 -- 复算直接打 parquet、不 ref staging（骨架同族；口径与边界见 fct_request_fulfillment.sql 头注）。

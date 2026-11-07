@@ -1,3 +1,4 @@
+{{ config(tags=['audit']) }}
 -- audit_lemeng__retail__hour_row_count.sql — 「量级」判据（§1.4.1 的分工：**量级落管线外**）。
 --
 -- 契约：dbt singular test，**返回任何行即失败**。

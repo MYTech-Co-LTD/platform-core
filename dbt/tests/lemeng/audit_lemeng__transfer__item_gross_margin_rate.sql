@@ -1,3 +1,4 @@
+{{ config(tags=['audit']) }}
 -- audit_lemeng__transfer__item_gross_margin_rate.sql — 指标的**独立复算**（对账；聚合面与
 -- fct_transfer_item 逐字同构，但直接打 parquet、不 ref staging）。ratio 比较：两侧各自算 g/r
 --（分母 0/null 行两侧同为 null，is distinct from 不误报）。口径见 fct_transfer_item.sql 头注。

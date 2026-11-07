@@ -1,3 +1,4 @@
+{{ config(tags=['audit']) }}
 -- audit_lemeng__retail__recon_gift_hit.sql — 赠品判别式命中集的**独立复算**（对账判别式族）。
 --
 -- ★ 承 #444（pick 自 #398 已关 PR 的同名文件，commit 4feaa28）：判别式**逐字未改**；

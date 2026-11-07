@@ -1,3 +1,4 @@
+{{ config(tags=['audit']) }}
 -- audit_lemeng__member__branch_vip_money.sql — 指标的**独立复算**（直打 parquet 对 fct_member_summary）。
 with recheck as (
 select

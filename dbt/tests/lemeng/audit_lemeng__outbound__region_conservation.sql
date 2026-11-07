@@ -1,3 +1,4 @@
+{{ config(tags=['audit']) }}
 -- audit_lemeng__outbound__region_conservation — 战区出库面**不得增删金额**（#1181）。
 --
 -- 本模型只做归因（换战区、分通道），不重算：`Σ(fct_outbound_region.r_net)` 按

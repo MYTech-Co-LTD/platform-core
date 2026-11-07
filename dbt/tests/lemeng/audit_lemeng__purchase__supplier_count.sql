@@ -1,3 +1,4 @@
+{{ config(tags=['audit']) }}
 -- audit_lemeng__purchase__supplier_count.sql — 采购供应商数 的独立复算（#640）。
 -- 契约：dbt singular test 返回任何行即失败；空转自检防假绿。
 -- 复算直读 parquet（不复用 staging/fct），粒度 = (system_book, bizday)，distinct 供应商。

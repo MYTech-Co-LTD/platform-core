@@ -1,3 +1,4 @@
+{{ config(tags=['audit']) }}
 -- audit_lemeng__contribution__net_amount.sql — 指标的**独立复算**（对账）。
 -- 骨架与 fct_contribution 同构，但**直接打 parquet、不 ref 任何 mart/staging**——复算若走上游关系，
 -- cast 错会同时污染两边 ⇒ 对账恒绿。契约：dbt singular test 返回任何行即失败。
