@@ -77,7 +77,7 @@
         "label": "fingerprint",
         "componentId": "code.sql",
         "properties": {
-          "sql": "SELECT max(CAST(request_order_fid AS VARCHAR)) AS fp FROM input"
+          "sql": "SELECT max(CAST(request_order_fid AS VARCHAR)) AS fp, count(*) AS n FROM input"
         }
       }
     },
@@ -107,7 +107,7 @@
         "label": "compare",
         "componentId": "code.sql",
         "properties": {
-          "sql": "SELECT f.fp, (SELECT max(fp) FROM prev) AS prev_fp, (f.fp IS NOT NULL AND f.fp IS DISTINCT FROM (SELECT max(fp) FROM prev)) AS has_new FROM fp f"
+          "sql": "SELECT f.fp, (SELECT max(fp) FROM prev) AS prev_fp, (f.n > 0 AND (f.n >= 100 OR f.fp IS DISTINCT FROM (SELECT max(fp) FROM prev))) AS has_new FROM fp f"
         }
       }
     },

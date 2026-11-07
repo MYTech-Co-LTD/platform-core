@@ -23,6 +23,7 @@ import { pathToFileURL } from 'node:url'
  *   domain: string,
  *   account?: string,
  *   accounts?: string[],
+ *   identityGate?: boolean,
  *   source: {
  *     connectionRef: string,
  *     url: string,
@@ -131,8 +132,8 @@ export function validateManifest(m) {
       if (pg.truncationGuard && typeof pg.pageSize !== 'number') {
         errs.push('truncationGuard 需要 pageSize（阈值 = pages × pageSize）')
       }
-    } else if (pg.truncationGuard) {
-      errs.push('truncationGuard 只能与 static_pages 一起用')
+    } else if (pg.truncationGuard && pg.type !== 'incremental') {
+      errs.push('truncationGuard 只能与 static_pages / incremental 一起用')
     }
     if (pg.type === 'incremental') {
       if (!Number.isInteger(pg.pages) || pg.pages < 1 || pg.pages > MAX_STATIC_PAGES) {
@@ -152,6 +153,9 @@ export function validateManifest(m) {
         errs.push('incremental 的 sink.key 必须带 `${ITER_ITEM_PAGE}`（子管线按页落盘）')
       }
     }
+  }
+  if (d.identityGate !== undefined && typeof d.identityGate !== 'boolean') {
+    errs.push('identityGate 必须是布尔值')
   }
   const t = d.transform
   if (typeof t !== 'object' || t === null || typeof t.sql !== 'string' || t.sql.trim().length === 0) {
@@ -203,6 +207,159 @@ function pageBody(body, pageParam, pageSizeParam, pageSize, page) {
   return out
 }
 
+/**
+ * 标准 L0 身份闸（与现役 L0 管线同形，2026-11-07 真机）：
+ * whoami → 账套/门店自证 → env 形状闸。由 `dv` 用 `on-subjob-ok` 控制边挂到首个数据节点。
+ * @param {string} connectionRef
+ * @param {string} windowToken
+ * @returns {{ nodes: any[], edges: any[], last: string }}
+ */
+function identityGate(connectionRef, windowToken) {
+  const whoamiFile = '/workspace/.duckle-raw/whoami-${datetime}.sse'
+  /** @type {any[]} */
+  const nodes = [
+    {
+      id: 'w0',
+      type: 'source',
+      position: { x: 0, y: -400 },
+      data: {
+        label: 'w0',
+        componentId: 'src.rest',
+        // 身份探针必须申报 schema：空响应时引擎按它构造关系（正典 §1.3.2 四条护栏之一）。
+        schema: [{ name: 'x', type: 'string' }],
+        properties: {
+          connectionRef,
+          url: 'https://cloud.nhsoft.cn/agi/mcp',
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', Accept: 'application/json, text/event-stream' },
+          body: '{"jsonrpc": "2.0", "id": 1, "method": "tools/call", "params": {"name": "whoami", "arguments": {}}}',
+          paginationType: 'none',
+          responseFormat: 'xml',
+          rawResponseDestination: whoamiFile,
+          retryAttempts: 3,
+          retryBackoffMs: 2000,
+        },
+      },
+    },
+    {
+      id: 'g0',
+      type: 'transform',
+      position: { x: 300, y: -400 },
+      data: {
+        label: 'g0',
+        componentId: 'code.sql',
+        properties: {
+          sql: `SELECT unnest(regexp_extract_all(content, '(?m)^data: ([^\\r\\n]*)', 1)) AS line FROM read_text('${whoamiFile}')`,
+        },
+      },
+    },
+    {
+      id: 'g1',
+      type: 'transform',
+      position: { x: 600, y: -400 },
+      data: {
+        label: 'g1',
+        componentId: 'code.sql',
+        properties: {
+          sql: "SELECT json_extract_string(line, '$.result.content[0].text') AS txt FROM input QUALIFY row_number() OVER () = count(*) OVER ()",
+        },
+      },
+    },
+    {
+      id: 'g2',
+      type: 'transform',
+      position: { x: 900, y: -400 },
+      data: {
+        label: 'g2',
+        componentId: 'code.sql',
+        properties: {
+          sql: "SELECT json_extract_string(txt, '$.company_id') AS company_id, json_extract_string(txt, '$.branch_nums') AS branch_nums FROM input",
+        },
+      },
+    },
+    {
+      id: 'd0',
+      type: 'transform',
+      position: { x: 1200, y: -400 },
+      data: {
+        label: 'd0',
+        componentId: 'ctl.die',
+        properties: {
+          condition: 'no-rows',
+          message: 'identity: whoami 响应里没有可解析的身份（网关形状变了？）⇒ 身份未证，拒绝采集与写湖',
+        },
+      },
+    },
+    {
+      id: 'g3',
+      type: 'transform',
+      position: { x: 1500, y: -400 },
+      data: {
+        label: 'g3',
+        componentId: 'code.sql',
+        properties: {
+          sql:
+            "SELECT 'book' AS violation, company_id AS detail FROM input WHERE company_id IS DISTINCT FROM '${ENV:SYSTEM_BOOK}' " +
+            "UNION ALL SELECT 'branch' AS violation, CAST(c.branch_num AS VARCHAR) AS detail " +
+            "FROM (SELECT unnest('${ENV:BRANCH_NUMS}'::BIGINT[]) AS branch_num) c " +
+            "LEFT JOIN (SELECT unnest(CAST(json_extract(branch_nums, '$[*]') AS BIGINT[])) AS branch_num FROM input) w USING (branch_num) " +
+            'WHERE w.branch_num IS NULL',
+        },
+      },
+    },
+    {
+      id: 'd1',
+      type: 'transform',
+      position: { x: 1800, y: -400 },
+      data: {
+        label: 'd1',
+        componentId: 'ctl.die',
+        properties: { condition: 'has-rows', message: 'identity: 凭据账套/门店清单自证未过 ⇒ 拒绝采集与写湖' },
+      },
+    },
+    {
+      id: 'gv',
+      type: 'transform',
+      position: { x: 2100, y: -400 },
+      data: {
+        label: 'gv',
+        componentId: 'code.sql',
+        properties: {
+          sql:
+            "SELECT 'BRANCH_NUMS' AS violation, '${ENV:BRANCH_NUMS}' AS detail, 'JSON integer array, e.g. [1001,1002]' AS rule " +
+            "WHERE NOT regexp_full_match('${ENV:BRANCH_NUMS}', '\\[[0-9]+([, ]+[0-9]+)*\\]') " +
+            "UNION ALL SELECT 'SYSTEM_BOOK', '${ENV:SYSTEM_BOOK}', 'digits only' WHERE NOT regexp_full_match('${ENV:SYSTEM_BOOK}', '[0-9]{1,32}') " +
+            `UNION ALL SELECT 'BIZDAY', '${windowToken}', 'YYYY-MM-DD' WHERE NOT regexp_full_match('${windowToken}', '[0-9]{4}-[0-9]{2}-[0-9]{2}')`,
+        },
+      },
+    },
+    {
+      id: 'dv',
+      type: 'transform',
+      position: { x: 2400, y: -400 },
+      data: {
+        label: 'dv',
+        componentId: 'ctl.die',
+        properties: {
+          condition: 'has-rows',
+          message:
+            'EXPECTED_VALUE_MISSING_OR_MALFORMED: 期望值缺席或形状非法（{rows} 条违规，明细见上）⇒ 拒绝采集与写湖。处置：检查该管线调度/触发面的 env 注入',
+        },
+      },
+    },
+  ]
+  const order = ['w0', 'g0', 'g1', 'g2', 'd0', 'g3', 'd1', 'gv', 'dv']
+  const edges = order.slice(0, -1).map((id, i) => ({
+    id: `e-${id}-${order[i + 1]}`,
+    source: id,
+    target: order[i + 1],
+    sourceHandle: 'main',
+    targetHandle: 'main',
+    data: { connectionType: 'main' },
+  }))
+  return { nodes, edges, last: 'dv' }
+}
+
 /** @param {Manifest} m @param {string} [name] @returns {Record<string, unknown>} */
 export function buildPipeline(m, name = m.id) {
   const s = m.source
@@ -235,6 +392,25 @@ export function buildPipeline(m, name = m.id) {
   const edges = []
   let prev
   let x = 300
+  let firstDataNode = ''
+  // 身份闸只加在父管线上；子管线由父管线调用前已自证，不重复。
+  const gate = m.identityGate && !name.endsWith('.page') ? identityGate(s.connectionRef, pg.windowToken ?? '') : null
+  if (gate) {
+    nodes.push(...gate.nodes)
+    edges.push(...gate.edges)
+  }
+  /** 把身份闸的出口用 `on-subjob-ok` 控制边挂到首个数据节点（与现役 L0 同形）。 */
+  const attachGate = (target) => {
+    if (!gate) return
+    edges.push({
+      id: 'e-dv-first',
+      source: gate.last,
+      target,
+      sourceHandle: null,
+      targetHandle: null,
+      data: { connectionType: 'on-subjob-ok' },
+    })
+  }
   if (pg.type === 'incremental' && name.endsWith('.page')) {
     // ── 子管线：一页 ────────────────────────────────────────────────────────
     // 子管线不展开 ${ENV:...} / 日期变量（正典 §1.7 #44）⇒ 页码与窗口一律走 ITER 列。
@@ -279,7 +455,12 @@ export function buildPipeline(m, name = m.id) {
       id: 'fp',
       type: 'transform',
       position: { x: 300, y: 0 },
-      data: { label: 'fingerprint', componentId: 'code.sql', properties: { sql: `SELECT ${pg.fingerprintSql} AS fp FROM input` } },
+      data: {
+        label: 'fingerprint',
+        componentId: 'code.sql',
+        // n = 探针页实际行数：页满（n >= pageSize）⇒ 可能还有后续页，强制全量采（见 cmp）
+        properties: { sql: `SELECT ${pg.fingerprintSql} AS fp, count(*) AS n FROM input` },
+      },
     })
     nodes.push({
       id: 'prev',
@@ -297,7 +478,8 @@ export function buildPipeline(m, name = m.id) {
         properties: {
           sql:
             'SELECT f.fp, (SELECT max(fp) FROM prev) AS prev_fp, ' +
-            '(f.fp IS NOT NULL AND f.fp IS DISTINCT FROM (SELECT max(fp) FROM prev)) AS has_new FROM fp f',
+            `(f.n > 0 AND (f.n >= ${/** @type {number} */ (pg.pageSize)} OR f.fp IS DISTINCT FROM (SELECT max(fp) FROM prev))) AS has_new ` +
+            'FROM fp f',
         },
       },
     })
@@ -351,10 +533,50 @@ export function buildPipeline(m, name = m.id) {
     edges.push({ id: 'e-pages-fe', source: 'pages', target: 'fe', sourceHandle: 'main', targetHandle: 'main', data: { connectionType: 'main' } })
     edges.push({ id: 'e-cmp-wmk', source: 'cmp', target: 'wmk', sourceHandle: 'main', targetHandle: 'main', data: { connectionType: 'main' } })
     edges.push({ id: 'e-wmk-ks', source: 'wmk', target: 'ks', sourceHandle: 'main', targetHandle: 'main', data: { connectionType: 'main' } })
+    if (pg.truncationGuard) {
+      // foreach 形态没有 merge 可数 ⇒ 用「第 pages+1 页」尾页探针（与静态页哨兵同义：
+      // 尾页非空 = 已击穿 pages × pageSize）。代价是每轮多 1 次请求；无新数据时也跑。
+      const tailPage = /** @type {number} */ (pg.pages) + 1
+      const tailBody = pageBody(s.body, pageParam, pg.pageSizeParam, 1, tailPage)
+      nodes.push({
+        id: 'tail',
+        type: 'source',
+        position: { x: 0, y: 400 },
+        data: { label: 'tail probe', componentId: 'src.rest', schema: s.schema, properties: sourceProps(tailBody, 'none') },
+      })
+      nodes.push({
+        id: 'dgt',
+        type: 'transform',
+        position: { x: 300, y: 400 },
+        data: {
+          label: 'die on truncation',
+          componentId: 'ctl.die',
+          properties: {
+            condition: 'has-rows',
+            message:
+              `INCREMENTAL_TRUNCATED: 第 ${tailPage} 页仍有行（pages=${pg.pages} × pageSize=${pg.pageSize}）` +
+              ' ⇒ 可能截断；请加页后重生成',
+          },
+        },
+      })
+      edges.push({ id: 'e-tail-dgt', source: 'tail', target: 'dgt', sourceHandle: 'main', targetHandle: 'main', data: { connectionType: 'main' } })
+      if (gate) {
+        edges.push({
+          id: 'e-dv-tail',
+          source: gate.last,
+          target: 'tail',
+          sourceHandle: null,
+          targetHandle: null,
+          data: { connectionType: 'on-subjob-ok' },
+        })
+      }
+    }
+    attachGate('probe')
     return { name, nodes, edges, _note: [`由 scripts/gen-pipeline.mjs 从 manifest 生成；手改请改 manifest 后重生成（--check 会拦）。`] }
   } else if (pg.type === 'static_pages') {
-    const pageParam = pg.pageParam ?? 'page_number' 
+    const pageParam = pg.pageParam ?? 'page_number'
     const pages = pg.pages ?? 1
+    firstDataNode = 'p1'
     for (let i = 1; i <= pages; i += 1) {
       const id = `p${i}`
       nodes.push({
@@ -423,7 +645,9 @@ export function buildPipeline(m, name = m.id) {
       data: { label: 'source', componentId: 'src.rest', schema: s.schema, properties: sourceProps(s.body, pg.type) },
     })
     prev = 's'
+    firstDataNode = 's'
   }
+  attachGate(firstDataNode)
   nodes.push({
     id: 't',
     type: 'transform',

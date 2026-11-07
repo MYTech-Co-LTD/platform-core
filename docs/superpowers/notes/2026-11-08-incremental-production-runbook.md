@@ -25,19 +25,17 @@
 
 ## 1. 上生产前必须解决（不过不切）
 
-### B1 · 生成器增量形态**没有**身份闸 / 形状闸 / 截断哨兵（阻断项）
+### B1 · 身份闸 / 截断哨兵（**已由生成器解决**，2026-11-08）
 
-现役 L0 的 `w0..dv` 是「凭据账套 / 门店清单自证」——**错 token 会静默采错租户**。
-生成器的 `incremental` 父管线在 `pages → fe` 就返回，**不带这些节点**；也没有「第 N 页仍有行」的
-截断哨兵（foreach 形态没有 `merge` 可数，`pages` 上限写死 N 时第 N+1 页会被**静默丢掉**）。
+生成器新增两个 manifest 开关，增量父管线自动带：
 
-⇒ 二选一，先定，再执行 §3：
+- `identityGate: true` ⇒ 标准 `w0..dv`（whoami → 账套/门店自证 → env 形状闸），用 `on-subjob-ok`
+  控制边挂到首个数据节点（`probe`）；**`w0` 必须申报 `schema`**（空响应时引擎按它构造关系，
+  否则 `query returned 0 records and no schema is declared` —— 真机踩过）。
+- `truncationGuard: true`（增量形态）⇒ 父管线加「第 `pages+1` 页」尾页探针 `tail` + `ctl.die`：
+  尾页非空 = 已击穿 `pages × pageSize`。代价是每轮多 1 次请求（无新数据时也跑）。
 
-- **(a) 扩展生成器**：manifest 能声明身份闸（whoami 比对）与页数上限哨兵。9 条都要上，推荐；
-- **(b) 首条手写**：生成物 + 从现役管线原样搬 `w0..dv` 与哨兵；按 `collect-source` D 段在正典
-  `docs/data-platform-handbook.md` §1.7 登记「manifest 表达不了」。
-
-**没做这一步就切 = 丢掉租户身份自证，属回退项目硬约束，不做。**
+切前仍要验：生成物里 `w0..dv` 在位、`dv` 有 `on-subjob-ok` 边到 `probe`、`tail/dgt` 在位。
 
 ### B2 · 契约 `layout.fileName` 与 page 文件不一致
 
@@ -46,11 +44,20 @@
 但声明不再为真。首条按「已知偏差」记账（不改契约）；批量前再决定是否改契约 + 校验器
 （架构级改动，需 spec 与人同意）。
 
-### B3 · 逐源验证指纹单调性
+### B3 · 指纹必须能看见「新增」与「修改」
 
-`fingerprintSql` 现在用 `max(CAST(... AS VARCHAR))`。**字符串 max ≠ 数值 max**：若单据号长度不固定，
-新单可能比水位小 ⇒ 之后**永久漏采**（`has_new` 恒 false）。切前用当日数据验：字符串序与业务序一致；
-不一致就换 `max(CAST(... AS BIGINT))` 或时间字段。此判据逐源做，不靠同族推断。
+`request.order` 的实测：page 1 按 `request_order_fid` **升序**（低单号在前），且单据号长度不固定
+（`YH3120` + 变长门店码 + 日期 + 序号）⇒ **`max(order_no)` 的字符串序不等于业务序，且看不见后页新增**。
+改用源端真实存在的 `last_edit_time`（API 文档确认字段，实测有值）做指纹：
+
+```sql
+coalesce(max(CAST(last_edit_time AS VARCHAR)), '') || '|' ||
+coalesce(max(CAST(request_order_fid AS VARCHAR)), '')
+```
+
+生成器同时把 `count(*) AS n` 带进指纹节点；`cmp` 里 `n >= pageSize` 时**强制全量采**
+（`probe_full`）——探针页满意味着可能还有后页，不能靠 page 1 的指纹判断「没新数据」。
+⇒ 当日单据 ≤ 100 条时能省请求；> 100 条时退化为全量采（正确但不省）。此判据逐源做。
 
 ### B4 · 子管线不展开 `${ENV:*}`
 
@@ -67,7 +74,7 @@
 | 1 | `deploy/duckle/manifests/lemeng.request.order.l0.<acct>.json` | **新增**（`transform.sql` = 现役 `shape` 节点的契约投影原样；`gate.rules` 同现役） |
 | 2 | `deploy/duckle/console/pipelines/lemeng.request.order.l0.<acct>.json` | 由生成器**替换**（父） |
 | 3 | `deploy/duckle/console/pipelines/lemeng.request.order.l0.<acct>.page.json` | 由生成器**新增**（子） |
-| 4 | `deploy/duckle/console/owners.lemeng.json` | `match` 改为 `.../bizday=*/page=*.parquet` |
+| 4 | `deploy/duckle/console/owners.lemeng.json` | `match` 改为 `.../bizday=*/*.parquet`（过渡期同时匹配旧 `all.parquet` 与新 `page=*.parquet`；两账套都切完再收窄） |
 | 5 | `deploy/data-plane.lock` | 重生成（`pnpm exec tsx scripts/lemeng/data-plane-lock.mjs`） |
 | — | `schedules/<acct>.json` | **不改**（`pipeline_id` 不变） |
 | — | `dbt/.../stg_lemeng_request_order.sql` | **不改**（glob 已覆盖） |
@@ -120,6 +127,8 @@ pnpm exec tsx scripts/check-data-plane-lock.mjs
 - 与旧输出**同日**对比 `count(*)` / `count(distinct order_no)`；差异必须能归因（源端迟到/补录），
   **不许有列缺失**。
 - ⚠️ 对比在**对象层**做：新旧共存时 staging 会把两套都算进去。
+- 若本轮 `pages` 是 1..N 且探针页满（`n >= pageSize`）⇒ 属 `probe_full` 强制全量采，**预期行为**，
+  不是指纹失效。
 
 ### S5 · 删旧对象（新输出验过才做）
 
@@ -129,7 +138,9 @@ pnpm exec tsx scripts/check-data-plane-lock.mjs
 ### S6 · 第二跑（无新数据路径）
 
 - 同一天再跑一次；判据：`pages=0`、**0 个子管线**、run `ok`、湖对象数不变、水位文件 mtime 更新。
-- 这是线上每小时的真实路径：**只有 1 次探针请求**。
+- 这是线上每小时的真实路径：**只有 1 次探针请求**（+1 次尾页哨兵）。
+- ⚠️ 若当日单据 > `pageSize`（100），探针页满 ⇒ `probe_full` 强制全量采，`pages` 恒为 1..N；
+  此时**没有请求节省**，但不会漏数。看 `cmp` 的 `n` 判断是哪条路径。
 
 ### S7 · 观测面
 
@@ -168,6 +179,13 @@ B 类 10 条（全量快照/报表类）**不做增量**，走降频方案——
 - **`continueOnFailure` 不继续剩余页**：单页失败会中断后续页，当天分区可能是「部分新 + 部分旧」；
   run 红后必须整轮重跑，不能当部分成功。
 - **水位文件在 console 卷内**：换卷/重建卷 ⇒ 水位空 ⇒ 下一轮全量重采（安全，多花请求）。
-- **跨天/迟到单**：水位是全局单值，不按 bizday 分桶；窗口是 `date-1d`。若迟到单的单据号小于当日最大值，
-  指纹不变 ⇒ 该迟到单不会被发现。B3 的单调性验证覆盖不了这一种，属**已知口径边界**，推广前记入正典。
+- **探针只看第 1 页**：`request.order` 按单号升序，第 1 页是低单号。当日单据 ≤ `pageSize`（100）时
+  第 1 页包含全部单据，指纹有效；> 100 时 `probe_full` 强制全量采（正确、但不省）。**不要**把
+  「无新数据 3.6s」当成 >100 条/日场景的常态。
+- **跨天/迟到单**：水位是全局单值，不按 bizday 分桶；窗口是 `date-1d`。若迟到单的
+  `last_edit_time` 小于当日最大值，指纹不变 ⇒ 该迟到单不会被发现。属**已知口径边界**，推广前记入正典。
+- **`last_edit_time` 是源端字段**（API 文档确认；实测有值），不是本地时间；不要拿 `create_time`
+  代替——审核/改单不会更新 `create_time`。
+- **身份探针 `w0` 必须带 `schema`**（生成器已带 `[{name:'x',type:'string'}]`）：空响应时引擎按它
+  构造关系；缺了会在 `w0` 直接 `query returned 0 records and no schema is declared`（2026-11-08 真机）。
 - **父 run 与子 run 的状态对应**：按 F 段四层验收逐层看，不能只看父 `ok`。
