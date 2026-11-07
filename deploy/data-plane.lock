@@ -1,4 +1,4 @@
-sha256-of-rest c4dc056a4fa5b475a46b6112ed82c9b5d8f3c79ee6cf3eb1a21870a0a5f493a6
+sha256-of-rest 65d9f5c24c858f811cc433be0d30af9d2b76fa8e983ff45f3bae1007dbefb24b
 08938c10c6b4a688c8afda6cd7d1ad3dbf2c20f83cf8c4e7023055ad34eddc70 contracts/README.md ${REPO}/contracts/README.md 0644
 fcc8189e1012d5fbb8e2505025bed637dd01c7b4465ab86125d3eaa7f330eff3 contracts/common/_schema.schema.json ${REPO}/contracts/common/_schema.schema.json 0644
 1730119518c3371f3c2ff3492f4c15cd731688047c6d40805ec4d2c65892f3ff contracts/common/_template.contract.json ${REPO}/contracts/common/_template.contract.json 0644
@@ -232,8 +232,8 @@ dfbe3ea5cd0f60ded07c5fc67297525dd4971a7efef6895030d034b085219a47 deploy/duckle/c
 4fdb1c0ce1e71b4c4870b8ed770ace23118913404d698a282ceff87708283b74 deploy/duckle/console/ensure-metric-profiles.sh ${REPO}/deploy/duckle/console/ensure-metric-profiles.sh 0644
 233b858c41856ea09aa5ec04dacad95b60cf08997e7ff8af98d5878ea3fc991d deploy/duckle/console/metric_profiles.ddl.sql ${REPO}/deploy/duckle/console/metric_profiles.ddl.sql 0644
 c3a97defaf11dd1e7c3d613ca3dbb9e868a7ab19ab2adfb93743209f15da9992 deploy/duckle/console/owners.forms.json ${REPO}/deploy/duckle/console/owners.forms.json 0644
-d244c7f5494fabb0ab8409624a008e67f934716fe94baf6e161cbce5d16b331f deploy/duckle/console/owners.lemeng.json ${REPO}/deploy/duckle/console/owners.lemeng.json 0644
-71405a2761084cdc3be29002a6a03d97f70872e625b7bde1e0f7d168b899de13 deploy/duckle/console/pipeline-scorecard.py ${REPO}/deploy/duckle/console/pipeline-scorecard.py 0644
+c6060a807b80e9ac0ad20e30ecf18f72227e4e9a2c742cbe7bb58dc131cf495d deploy/duckle/console/owners.lemeng.json ${REPO}/deploy/duckle/console/owners.lemeng.json 0644
+afb70ffd271931db717bc209980325fc9edcb44581f3d0214b310ad4cb2d9238 deploy/duckle/console/pipeline-scorecard.py ${REPO}/deploy/duckle/console/pipeline-scorecard.py 0644
 c95928e223e4dc6eb6776d619ee14361a679d5b248b190caa71dc5044a517d27 deploy/duckle/console/pipelines/FLOW.lemeng.md ${REPO}/deploy/duckle/console/pipelines/FLOW.lemeng.md 0644
 7039c29c4d8c215c780e4ec987789c184844d375d4ce84968f837d0f0bfa7ccd deploy/duckle/console/pipelines/README.md ${REPO}/deploy/duckle/console/pipelines/README.md 0644
 0162356abf63b1ad543e3e1637945dc3be484646ca32e5b1ea507df03747d397 deploy/duckle/console/pipelines/forms.submission.l0.json ${REPO}/deploy/duckle/console/pipelines/forms.submission.l0.json 0644

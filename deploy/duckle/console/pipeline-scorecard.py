@@ -77,6 +77,14 @@ def owner_rule(owners, pid):
     """
     import re
 
+    # ① 显式绑定优先：规则里写 `pipelines: ["<pid>", ...]`（支持 * 通配）。
+    #    用于「管线 id 与资产表名对不上」的情况（如 `lemeng.purchase.analysis` 写的是 `item_purchase`）。
+    for rule in owners:
+        for pat in rule.get("pipelines") or []:
+            if _glob(pat, pid):
+                return rule
+
+    # ② 退回到按名字推断：id 的段 → 资产路径里的表名段（最长前缀 + 段边界）。
     parts = pid.split(".")
     rest = parts[1:] if len(parts) > 1 else parts
     for n in range(len(rest), 0, -1):
