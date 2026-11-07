@@ -145,3 +145,30 @@ probe(src.rest, page_size=1)        # 1 次请求，拿「最新一条」做指�
 - `ctl.checkpoint` + `src.parquet` 作为**采集水位**的完整回路（缺文件、并发写、损坏时的行为）；
 - 读侧 `run=*` union 去重后的**性能**（对象数 ×15 后物化耗时）；
 - 保留策略的压实脚本（未写）。
+
+---
+
+## 6. 逐源探针结果（2026-11-08，3120 的 19 条小时档）
+
+**判据**：① 有没有日期窗口；② page 1（page_size=1）能不能拿到稳定的单据号做指纹。
+
+### A 类：可做增量（有窗口 + 有单据号）
+
+| 管线 | 窗口参数 | 指纹候选 | 实测 |
+|---|---|---|---|
+| `request.order` | `date_start/date_end` + `date_type` | `request_order_fid` | ✅ 端到端跑通（10 页 → 空页 0 子管线） |
+| `branch.expense` | `date_from/date_to`（datetime） | `bill_no` | ✅ page1 返回 `OP3120992611060001`（689ms） |
+| `client.expense` | `date_start/date_end` + `date_type` | `other_inout_bill_no` | 同族，待逐条验 |
+| `transfer.in/out`、`wholesale.out/return`、`loss.adjustment` | `date_start/date_end` + `date_type` | 各自单据号 | 同族，待逐条验 |
+| `purchase.analysis` | `audit_date_start/end` | 单据号 | 待验 |
+
+### B 类：没有「增量」概念（全量快照 / 报表 / 无窗口）
+
+`dim.item`、`dim.branch`、`inventory.snapshot`（`bizday` T-2）、`member.summary`、
+`business_collection`(+`_coupon`/`_receive`)、`customer_analysis`、`metric_profile`、`saler_commission`
+
+**这类不该硬做增量**——每轮本来就是「全量重取」。正确处置是**按源端发布节奏降频**（例如每天 1–2 次），
+而不是每小时跑一遍。`dim.item_price` 有 `last_edit_time`，可能属 A 类（按编辑时间增量），待验。
+
+> 结论：**19 条里约 9 条能做真增量，约 10 条应降频。** 这个分类要先跟业务确认（降频会不会影响看数）。
+
