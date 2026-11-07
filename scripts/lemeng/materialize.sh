@@ -38,7 +38,10 @@
 #    AK/SK **不注入**：模型不建 S3 secret，pg_duckdb 的持久 secret 直读湖——
 #    多注入反而可能覆盖持久 secret（别「修」这个）。
 #
-# ④ 退出码契约：0 ⇒ 末行 `MATERIALIZE_OK`；1 ⇒ `MATERIALIZE_FAILED:<missing_env|dbt_build>`。
+# ④ 退出码契约：0 ⇒ 末行 `MATERIALIZE_OK`；1 ⇒ `MATERIALIZE_FAILED:<missing_env|dbt_build|noop>`。
+#    `noop`（2026-11-07，#1537）：dbt 退出 0 **不等于**建了东西——选择器空匹配时 dbt 只打印
+#    `Nothing to do.` 就退出 0。判据落 `mat_log_has_build`：日志须含 `PASS=<n>` 汇总行且不含
+#    `Nothing to do`；否则本档/本域不落账并判失败（宁可红，也不报一个没物的 MATERIALIZE_OK）。
 #    retry 由 openship job 配置承担（现状 retry 2×/300s）。
 #    ⚠️ 2026-10-17 起 `dbt_build` 是**逐域**判的：域是**串行跑、跑完一个域就落一次账**，
 #    红的域不落账、其余域照常落账，最后统一 exit 1（见 ⑤）。⇒ 一次红不再冻结**全部**新鲜度。
@@ -83,6 +86,14 @@ mat_dbt_args() {
 #    这种命令替换里会被词分割切成三段，dbt 只会收到 `--select path:models/<域>` 一小截。
 mat_dbt_select() { # $1=域 → 打印给 --select 的**单个**值（调用方自己加引号）
   printf '%s' "path:models/$1 config.materialized:seed path:tests/$1"
+}
+# 判「dbt 真的建了东西」（#1537）：日志必须既有 `PASS=<n>` 汇总行、又不含 `Nothing to do`。
+# 只有退出码不够——选择器匹配不到任何节点时 dbt 打印 `Nothing to do.` 并退出 0，照着打
+# MATERIALIZE_OK 就是假绿（模型根本没建，水位还会假前进）。$1=日志文件；0=真跑过。
+mat_log_has_build() {
+  [ -f "$1" ] || return 1
+  if grep -q 'Nothing to do' "$1"; then return 1; fi
+  grep -Eq 'PASS=[0-9]+' "$1"
 }
 # 守卫：关键值缺失即响亮失败（fail-fast）。$1=名字（报错定位用） $2=值
 mat_require() {
@@ -239,6 +250,10 @@ if [ "$SCOPE" = tick ]; then
     echo "MATERIALIZE_FAILED:dbt_build（tick ${TICK_SELECT}）；retry 由 openship job 配置承担" >&2
     exit 1
   fi
+  if ! mat_log_has_build "$_log"; then
+    echo "MATERIALIZE_FAILED:noop（tick ${TICK_SELECT} 的 dbt 空跑：选择器没有匹配到可建节点，或输出缺 PASS= 汇总行）" >&2
+    exit 1
+  fi
   mat_write_load_log \
     "$(sed -n 's/.*PASS=\([0-9]*\).*/\1/p' "$_log" | tail -n 1)" \
     "$(sed -n 's/.*ERROR=\([0-9]*\).*/\1/p' "$_log" | tail -n 1)" \
@@ -259,6 +274,7 @@ fi
 # PASS/ERROR 取该域日志的汇总行（sed 贪婪匹配取该行最后一个 PASS=/ERROR=，行级结果
 # `[PASS in 0.1s]` 无等号不会误中）；解析不到 ⇒ 水位行带 NULL，照常落账。
 _FAILED_DOMAINS=''
+_NOOP_DOMAINS=''
 _OK_DOMAINS=''
 for _d in $(printf '%s' "$DOMAINS" | tr ',' ' '); do
   [ -n "$_d" ] || continue
@@ -277,6 +293,12 @@ for _d in $(printf '%s' "$DOMAINS" | tr ',' ' '); do
   if [ "$(cat "$_rc")" != 0 ]; then
     _FAILED_DOMAINS="${_FAILED_DOMAINS} ${_d}"
     echo "materialize warn: 域 ${_d} 的 dbt 非零退出 ⇒ **本域不落账**（其余域继续，不被拖停）" >&2
+    continue
+  fi
+  # #1537：退出 0 也可能是空跑（`Nothing to do.` / 无 PASS 汇总）⇒ 不落账、判 noop。
+  if ! mat_log_has_build "$_log"; then
+    _NOOP_DOMAINS="${_NOOP_DOMAINS} ${_d}"
+    echo "materialize warn: 域 ${_d} 的 dbt 空跑（无 PASS= 汇总行或 Nothing to do）⇒ **本域不落账**，判 MATERIALIZE_FAILED:noop" >&2
     continue
   fi
   # 本域要落账的表 = 「全 bizday 表」∩「本域的 staging 模型名」。
@@ -300,6 +322,11 @@ done
 
 if [ -n "$_FAILED_DOMAINS" ]; then
   echo "MATERIALIZE_FAILED:dbt_build（域${_FAILED_DOMAINS} 的 dbt 非零退出；已成功域${_OK_DOMAINS:-（无）} 照常落账；retry 由 openship job 配置承担）" >&2
+  exit 1
+fi
+# 只有 noop 时给专属码；同时有 dbt_build 时上面已以更严重的码退出（noop 域已在逐域告警点名）。
+if [ -n "$_NOOP_DOMAINS" ]; then
+  echo "MATERIALIZE_FAILED:noop（域${_NOOP_DOMAINS} 的 dbt 空跑：选择器没有匹配到可建节点，或输出缺 PASS= 汇总行；不落账）" >&2
   exit 1
 fi
 echo "MATERIALIZE_OK"

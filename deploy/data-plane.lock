@@ -1,4 +1,4 @@
-sha256-of-rest ca8a084aac5929d15d2b79d8ea47a91d53e0872f41bbf61317fd425f3098a7e2
+sha256-of-rest 973a03ca174afe2924c7ecf146025db482247aa0f5f3723c7a93e28d3a58bacf
 08938c10c6b4a688c8afda6cd7d1ad3dbf2c20f83cf8c4e7023055ad34eddc70 contracts/README.md ${REPO}/contracts/README.md 0644
 fcc8189e1012d5fbb8e2505025bed637dd01c7b4465ab86125d3eaa7f330eff3 contracts/common/_schema.schema.json ${REPO}/contracts/common/_schema.schema.json 0644
 1730119518c3371f3c2ff3492f4c15cd731688047c6d40805ec4d2c65892f3ff contracts/common/_template.contract.json ${REPO}/contracts/common/_template.contract.json 0644
@@ -370,7 +370,7 @@ bbcc8969b337591f9431a1a06f0d603deab72d59364ce21722bb3139e7a31100 scripts/lemeng/
 7f52cab56a1501c425f5537641fe53a345ebe4bdd9d458da8e58949f9b8c50c6 scripts/lemeng/check-zero-row-days.py /opt/lemeng-check-zero-row-days.py 0755
 01030dcce0bee5c3c50ed54c0be7b9fa302da3de50be65cf137e03881fd453dc scripts/lemeng/delete-supplanted-hour-partitions.py ${REPO}/scripts/lemeng/delete-supplanted-hour-partitions.py 0644
 f030ebf00606c0e64157c69bd60aaa74ee932f647165d3f8ec8f419982e63344 scripts/lemeng/diagnose.sh /opt/lemeng-diagnose.sh 0755
-aa904f02f0a5a6c8b2a98639683291da1997b2cf5adc3a57e0c3437bb268ee7e scripts/lemeng/materialize.sh /opt/lemeng-materialize.sh 0755
+206723c404a34a135532a274b302d62b1b71a5295c8883f8b2ef6b7995a2367c scripts/lemeng/materialize.sh /opt/lemeng-materialize.sh 0755
 c004dfd93237edaaad1e727794a467393f73947a583360e3f112ffa1455724d4 scripts/lemeng/nightly-backfill.sh /opt/lemeng-nightly-backfill.sh 0755
 98074d99903bd7092dc8e8179ebec4a968e123e72884502a2a2664e08607eeb9 scripts/lemeng/oo-config-audit.sh /opt/lemeng-oo-config-audit.sh 0755
 6f7c9215e44e145c08b53a1b48d078a6cd73aee92af64d3b903a09c5deb94447 scripts/lemeng/oo-notify-bridge.sh /opt/lemeng-oo-notify-bridge.sh 0755
