@@ -1,5 +1,10 @@
 {{
-    config(materialized='table')
+    config(
+        materialized='incremental',
+        unique_key=['system_book', 'bizday', 'branch_num'],
+        incremental_strategy='delete+insert',
+        on_schema_change='sync_all_columns'
+    )
 }}
 -- fct_branch_indicator.sql — 门店经营指标日粒度构件（D10 2026-10-26；#1047 P3）。
 -- 【粒度】(system_book, bizday, branch_num)——可上卷到店 / 日 / 账套。
@@ -25,6 +30,9 @@ with agg as (
         branch_num,
         sum(case when metric = 'transfer_money' then coalesce(actual_value, 0) else 0 end)::numeric(20,2) as transfer_money
     from {{ ref('stg_lemeng_branch_indicator') }}
+    {% if is_incremental() %}
+    where bizday >= {{ incremental_cutoff(7) }}
+    {% endif %}
     group by 1, 2, 3
 )
 select

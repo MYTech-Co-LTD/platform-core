@@ -1,5 +1,10 @@
 {{
-config(materialized='table')
+config(
+    materialized='incremental',
+    unique_key=['system_book', 'bizday', 'branch_num', 'order_sale_type_name'],
+    incremental_strategy='delete+insert',
+    on_schema_change='sync_all_columns'
+)
 }}
 -- fct_member_summary.sql — 会员汇总构件（#1047 P5；口径在此定义一次）。
 -- 【粒度】(system_book, bizday, branch_num, order_sale_type_name)——可上卷到店日。
@@ -17,6 +22,9 @@ sum(coalesce(customer_nums, 0))::bigint as customer_nums,
 sum(coalesce(customer_vip_money, 0))::numeric(20,2) as vip_money,
 sum(coalesce(customer_vip_nums, 0))::bigint as vip_nums
 from {{ ref('stg_lemeng_member_summary') }}
+{% if is_incremental() %}
+where bizday >= {{ incremental_cutoff(7) }}
+{% endif %}
 group by 1, 2, 3, 4
 )
 select

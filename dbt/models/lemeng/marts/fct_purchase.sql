@@ -1,5 +1,10 @@
 {{
-    config(materialized='table')
+    config(
+        materialized='incremental',
+        unique_key=['system_book', 'bizday', 'supplier_num', 'item_num'],
+        incremental_strategy='delete+insert',
+        on_schema_change='sync_all_columns'
+    )
 }}
 -- fct_purchase.sql — 采购分析构件（W3 余项 2026-10-13，#640）。
 -- 【粒度】(system_book, bizday, supplier_num, item_num) —— summary_types=[supplier,item] 的聚合粒度。
@@ -29,3 +34,6 @@ select
     amount_total::numeric(20,6) as amount_total,
     money_total::numeric(20,2) as money_total
 from {{ ref('stg_lemeng_item_purchase') }}
+{% if is_incremental() %}
+where bizday >= {{ incremental_cutoff(7) }}
+{% endif %}
