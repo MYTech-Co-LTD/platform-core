@@ -109,11 +109,11 @@ interface RelationDecl {
 
 **判据：** 单租户连续 30 天：需求出现→处置→回归覆盖，平台零介入（本轮做到「环路可信可见 + 首日基线」，30 天标观察中）。
 
-- [ ] **Step 1（多 org）**：`--org` / `--all-tenants` 互斥；空租户 exit 1；单 org 失败隔离；conv/stuck 仅单租户部署时挖，多租户 `conv=skipped(multi-tenant)`；单测 + 真机 `--all-tenants` 一轮
-- [ ] **Step 2（评估集卫生）**：`apply-eval-set` 拒 `default`；#3 置 `stale`；修 `refresh-baseline.mjs` 的 dry-run（现仍写库）并刷新 #1723（先 dry-run 看漂移）
-- [ ] **Step 3（判定分级）**：`compare` 的 `warns`；value/结构=fail、维度列=warn、无 value 列 fail-closed；单测 + 真机回归从「每日红」变为「pass + warn」
-- [ ] **Step 4（可见性）**：`emit-probe.sh` 投 `data_plane_probes`；job 命令改为「跑回归→按退出码发 OK/RED→保留退出码」；真机验 OK 行落库、RED 行可被桥转发
-- [ ] **Step 5（观察）**：`notes/2026-11-07-tenant-loop.md` 记首日基线 + 7/30 天观察 SQL（`demand_signals`/`verified`/回归 pass 率）
+- [x] **Step 1（多 org）**：`--org` / `--all-tenants` 互斥；空租户 exit 1；单 org 失败隔离；conv/stuck 仅单租户部署时挖。**真机**：`--all-tenants` → `org=shanhaiyiguo-org … conv=ok`，rc=0
+- [x] **Step 2（评估集卫生）**：`apply-eval-set` 拒 `default`；#3 置 `stale`（回归集 50→49）；`refresh-baseline` dry-run 修好（domain `write?: boolean`）。**#1723 未刷新**——它已降为 warn；且上线后出现 10 条源数据修订导致的 value 漂移，刷新待数据 owner 裁决
+- [x] **Step 3（判定分级）**：`compare` 的 `warns`；value/结构=fail、维度列=warn、无 value 列 fail-closed。**真机**：`#1723` fail→pass+warn；value 漂移仍 fail（10 条，源数据修订）
+- [x] **Step 4（可见性）**：`emit-probe.py` → `/opt`；job 命令已改「跑回归→按退出码发 OK/RED→保留退出码」。**真机**：手动 run `jrun_pWUwtgh_y8cKU51T` 末行投递成功，OO `data_plane_probes` 有 `verdict=RED` 行
+- [ ] **Step 5（观察）**：`notes/2026-11-07-tenant-loop.md` 已记首日基线与上线实测 + 7/30 天 SQL；**30 天曲线观察中**（到期按 §3 取数）
 
 ---
 

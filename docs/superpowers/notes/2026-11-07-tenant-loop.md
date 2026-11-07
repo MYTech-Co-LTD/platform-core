@@ -14,6 +14,7 @@
 | `data.metric_candidates` | 278 行 |
 | `data.verified_questions` | 104 行（回归 `total=50` 为本轮实际重放集；其余是 candidate/弱信号） |
 | 回归（修复前） | `total=50 pass=48 fail=2`：`#3` 滚动窗口基线、`#1723` 标识列 sum 漂移 |
+| 回归（上线后，见 §5） | `total=49 pass=39 fail=10 warn=38`：`#3` 已 `stale`；`#1723` 由 fail 降为 warn；10 条是**源数据修订**导致的 `value` 漂移（待数据 owner 裁决） |
 
 ## 2. 环路四步（每步都可单独重跑）
 
@@ -94,3 +95,29 @@ select status, count(*), max(updated_at) from data.metric_candidates
 - conv 侧多租户不可归因（无租户字段）；要支持需给 openclaw 导出器加 org（历史不可回填）。
 - job failed 通知**不进站内 deliveries feed**（平台缺陷，另开 issue）；数据面可见性以 OO 为单出口。
 - 候选生成仍由租户在 console 触发，未定时化。
+
+## 5. 上线实测（2026-11-07，shanhai v203 / `30c71d7c`）
+
+| 项 | 结果 |
+|---|---|
+| 部署 | `dep_SlvLoUCdPBzCDFow` · v203 · `30c71d7c` · 4/4 服务成功 |
+| 数据面投递 | `SYNC_OK 384/384` · revision `30c71d7c` · `/opt/lemeng-emit-probe.py` 在场 |
+| 多 org 挖掘 | `demand-mining --all-tenants` → `org=shanhaiyiguo-org … conv=ok`，rc=0（单租户，对话侧可挖） |
+| 评估集卫生 | `#3`（近 7 天，`params={}`）置 `stale`（`decided_by=claude`）；回归集 50 → **49** |
+| 判定分级 | `#1723` 由 **fail → pass + warn**（仅 `branch_num` 标识列 sum 漂移）；value 漂移仍 fail |
+| 可见性 | 手动触发回归 job（`jrun_pWUwtgh_y8cKU51T`）：末行 `emit-probe: 已投递 … RED`；OO `data_plane_probes` 可查 `verdict=RED, detail=verify-regression: total=49 pass=39 fail=10 error=0 warn=38` |
+
+### ★ 实测发现的数据修订（**未刷新基线，待裁决**）
+
+上线后首次重放出现 **10 条 `value` 漂移**（10 月出库类）：
+
+- `fct_hq_outbound` 相关：`gross_profit` 156,965.72 → 145,481.79；`line_count` 7,348 → 7,080；
+  `net_amount` 1,955,298.38 → 1,924,578.99；`region_l1` nulls 252 → 249、`client_fid` nulls 748 → 751；
+  `system_book` sum 5,623,788 → 13,196,220（**行集构成大幅变化**）。
+- `#1`「昨天的净销售额」203,765.28 → 247,333.54。
+- 原因：staging 已翻**直读湖视图**（`lemeng-staging-views-flip`）⇒ 湖侧 10 月数据修订会**立即**反映到
+  mart 查询；本次时间窗与 03:54–05:21 的一次全量物化尝试重合，但该 job 最终以 git 超时失败、
+  未写水位（`data.load_log` 里 `fct_hq_outbound` 停在 10-17）。
+- **处置**：这是「基线过期」而非「口径回归」的候选，但**未经数据 owner 确认前不刷新**
+  （刷新会把真实的源侧异常一起抹平）。确认修订符合预期后，用 §2.4 的 `refresh-baseline`
+  按 id 逐个刷新（先 dry-run 看 `driftPct`）。
