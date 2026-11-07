@@ -24,7 +24,7 @@ select
   r['exchange_card_sale_money']::decimal(20,2) as exchange_card_sale_money,
   r['exchange_card_total_money']::decimal(20,2) as exchange_card_total_money,
   r['exchange_card_verification_count']::int as exchange_card_verification_count,
-  r['computed_at']::timestamp_tz as computed_at
+  r['computed_at']::timestamptz as computed_at
 from read_parquet(
   's3://{{ var("zos_bucket") }}/{{ var("lemeng_business_collection_coupon_prefix") }}/*/bizday=**/*.parquet'
 ) r

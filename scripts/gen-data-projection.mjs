@@ -210,6 +210,13 @@ export function sqlType(col) {
       : 'numeric'
   }
   if (col.type === 'integer') return 'int'
+  // DuckDB 的时间类型名**不是** PG 类型名：staging 投影是 PG 视图 DDL，
+  // 直接 `::timestamp_tz` 会被 PG 解析器拒绝（`type "timestamp_tz" does not exist`，
+  // 2026-11-07 实测三张 business_collection view 每轮构建红，#1546）。
+  // 只映射 DuckDB 专有的时间类型；其余（bigint/varchar/date/timestamp/boolean…）逐字照抄。
+  if (col.type === 'timestamp_tz') return 'timestamptz'
+  if (col.type === 'time_tz') return 'timetz'
+  if (col.type === 'timestamp_s' || col.type === 'timestamp_ms' || col.type === 'timestamp_ns') return 'timestamp'
   // bigint / smallint / varchar / date / timestamp / boolean / … 逐字照抄契约类型
   return col.type
 }

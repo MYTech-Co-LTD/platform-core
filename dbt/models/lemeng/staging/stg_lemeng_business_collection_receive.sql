@@ -32,7 +32,7 @@ select
   r['other_order_count']::int as other_order_count,
   r['purchase_records_receive_money']::decimal(20,2) as purchase_records_receive_money,
   r['purchase_records_order_count']::int as purchase_records_order_count,
-  r['computed_at']::timestamp_tz as computed_at
+  r['computed_at']::timestamptz as computed_at
 from read_parquet(
   's3://{{ var("zos_bucket") }}/{{ var("lemeng_business_collection_receive_prefix") }}/*/bizday=**/*.parquet'
 ) r
