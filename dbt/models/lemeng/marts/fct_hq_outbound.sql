@@ -1,10 +1,5 @@
 {{
-    config(
-        materialized='incremental',
-        unique_key=['system_book', 'bizday', 'domain', 'branch_num', 'region_id', 'client_fid'],
-        incremental_strategy='delete+insert',
-        on_schema_change='sync_all_columns'
-    )
+    config(materialized='table')
 }}
 -- fct_hq_outbound.sql — 总仓出库构件长表（W1 2026-10-12；口径模型，layered ④：**口径在这里定义一次**）。
 --
@@ -59,9 +54,6 @@ with transfer_lines as (
     where state_code = 3
       and out_branch_num = 99
       and branch_num <> out_branch_num
-    {% if is_incremental() %}
-      and bizday >= {{ incremental_cutoff(7) }}
-    {% endif %}
     group by 1, 2, 3, 4
 ),
 transfer_dom as (
@@ -80,9 +72,6 @@ wholesale_lines as (
     -- 明细行数按客户分组：行级行数在 (账套,日,门店,客户) 上才是可加的（见头注「client_fid」）。
     select system_book, bizday, branch_num, client_fid, count(*) as line_count
     from {{ ref('stg_lemeng_wholesale_out') }}
-    {% if is_incremental() %}
-    where bizday >= {{ incremental_cutoff(7) }}
-    {% endif %}
     group by 1, 2, 3, 4
 ),
 wholesale_dom as (
@@ -102,9 +91,6 @@ wholesale_dom as (
                max(total_money) as total_money,
                max(cost_money)  as cost_money
         from {{ ref('stg_lemeng_wholesale_out') }}
-        {% if is_incremental() %}
-        where bizday >= {{ incremental_cutoff(7) }}
-        {% endif %}
         group by 1, 2, 3, 4, 5
     ) o
     join wholesale_lines l
@@ -127,9 +113,6 @@ return_dom as (
                max(total_money) as total_money,
                max(cost_money)  as cost_money
         from {{ ref('stg_lemeng_wholesale_return') }}
-        {% if is_incremental() %}
-        where bizday >= {{ incremental_cutoff(7) }}
-        {% endif %}
         group by 1, 2, 3, 4, 5
     )
     group by 1, 2, 3, 4
