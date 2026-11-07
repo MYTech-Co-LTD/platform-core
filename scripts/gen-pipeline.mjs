@@ -36,7 +36,8 @@ import { pathToFileURL } from 'node:url'
  *       pages?: number,
  *       pageParam?: string,
  *       pageSizeParam?: string,
- *       pageSize?: number
+ *       pageSize?: number,
+ *       truncationGuard?: boolean
  *     },
  *     retryAttempts?: number,
  *     retryBackoffMs?: number
@@ -124,6 +125,11 @@ export function validateManifest(m) {
       if (typeof d.sink?.key === 'string' && !d.sink.key.includes('chunk=')) {
         errs.push('static_pages 的 sink.key 必须带 `chunk=`（按段落文件，正典 §1.7 #41）')
       }
+      if (pg.truncationGuard && typeof pg.pageSize !== 'number') {
+        errs.push('truncationGuard 需要 pageSize（阈值 = pages × pageSize）')
+      }
+    } else if (pg.truncationGuard) {
+      errs.push('truncationGuard 只能与 static_pages 一起用')
     }
   }
   const t = d.transform
@@ -241,6 +247,36 @@ export function buildPipeline(m, name = m.id) {
     })
     prev = 'merge'
     x += 300
+    if (pg.truncationGuard) {
+      // 截断哨兵（真机实测 2026-11-07）：叶子 ctl.die 会被执行；命中时 run 标红。
+      // ⚠️ 它是**告警不是闸**——sink 与哨兵并行，湖里已经写了。
+      const threshold = pages * /** @type {number} */ (pg.pageSize)
+      nodes.push({
+        id: 'q',
+        type: 'transform',
+        position: { x: 0, y: -200 },
+        data: {
+          label: 'truncation guard',
+          componentId: 'code.sql',
+          properties: { sql: `SELECT count(*) AS n FROM input HAVING count(*) = ${threshold}` },
+        },
+      })
+      nodes.push({
+        id: 'dg',
+        type: 'transform',
+        position: { x: 300, y: -200 },
+        data: {
+          label: 'die on truncation',
+          componentId: 'ctl.die',
+          properties: {
+            condition: 'has-rows',
+            message: `STATIC_PAGES_TRUNCATED: 总行数 == pages×pageSize（${pages}×${pg.pageSize}=${threshold}）⇒ 可能截断；sink 已写，需人工确认并补页/加页`,
+          },
+        },
+      })
+      edges.push({ id: 'e-merge-q', source: 'merge', target: 'q', sourceHandle: 'main', targetHandle: 'main', data: { connectionType: 'main' } })
+      edges.push({ id: 'e-q-dg', source: 'q', target: 'dg', sourceHandle: 'main', targetHandle: 'main', data: { connectionType: 'main' } })
+    }
   } else {
     nodes.push({
       id: 's',
