@@ -110,20 +110,31 @@ check "load_log SQL 幂等补水位列 max_bizday（spec §10.7.2）" \
 WM_FN=$(extract mat_watermark_sql)
 [ -n "$WM_FN" ] || bad "mat_watermark_sql 抽取失败（函数不存在或格式变了）"
 eval "$WM_FN"
-WM_SQL=$(mat_watermark_sql 26 0 stg_lemeng_a stg_lemeng_b)
+WM_SQL=$(mat_watermark_sql 26 0 'stg_lemeng_a=2026-11-06' 'stg_lemeng_b=2026-11-07')
 check "水位 SQL 事务包裹（BEGIN..COMMIT ⇒ now() 是事务起点，同次物化各行同一 materialized_at）" \
   sh -c 'echo "$1" | head -n 1 | grep -qx "BEGIN;" && echo "$1" | tail -n 1 | grep -qx "COMMIT;"' _ "$WM_SQL"
-INS_SHAPE="INSERT INTO data.load_log (relation, max_bizday, materialized_at, tests_pass, tests_error, status) SELECT 'stg_lemeng_a', max(bizday), now(), 26, 0, 'ok' FROM staging.stg_lemeng_a;"
-check "逐表 INSERT 形状逐字（relation 非空点名到表、max(bizday)、PASS/ERROR 落位）" \
+# ⚠️ 形状是 `VALUES (字面量)` 而**不是** `SELECT max(bizday) FROM staging.x`（issue #1624）：
+# staging 是湖视图，pg_duckdb 的 `INSERT … SELECT … FROM 湖视图` 会报
+# `DuckDB does not support modififying Postgres tables`（2026-11-07 真机三分对照）。
+INS_SHAPE="INSERT INTO data.load_log (relation, max_bizday, materialized_at, tests_pass, tests_error, status) VALUES ('stg_lemeng_a', date '2026-11-06', now(), 26, 0, 'ok');"
+check "逐表 INSERT 形状逐字（relation 非空点名到表、**字面量**日期、PASS/ERROR 落位）" \
   sh -c 'echo "$1" | grep -Fq "$2"' _ "$WM_SQL" "$INS_SHAPE"
-check "多表逐表一行（第二张表也在场）" \
-  sh -c 'echo "$1" | grep -Fq "SELECT '"'"'stg_lemeng_b'"'"', max(bizday), now(), 26, 0, '"'"'ok'"'"' FROM staging.stg_lemeng_b;"' _ "$WM_SQL"
-WM_NULL=$(mat_watermark_sql '' '' stg_lemeng_a)
+check "多表逐表一行（第二张表也在场，各自带自己的日期）" \
+  sh -c 'echo "$1" | grep -Fq "VALUES ('"'"'stg_lemeng_b'"'"', date '"'"'2026-11-07'"'"', now(), 26, 0, '"'"'ok'"'"');"' _ "$WM_SQL"
+check "不得再出现 INSERT…SELECT…FROM staging（湖视图作 INSERT 源会报 DuckDB 写 PG 表）" \
+  sh -c '! echo "$1" | grep -Fq "FROM staging."' _ "$WM_SQL"
+WM_NULL=$(mat_watermark_sql '' '' 'stg_lemeng_a=2026-11-06')
 check "解析不到 PASS/ERROR ⇒ 插 NULL（落账不因解析失败缺账/失败）" \
-  sh -c 'echo "$1" | grep -Fq "max(bizday), now(), NULL, NULL, '"'"'ok'"'"'"' _ "$WM_NULL"
-WM_JUNK=$(mat_watermark_sql '2x' '-1' stg_lemeng_a)
+  sh -c 'echo "$1" | grep -Fq ", now(), NULL, NULL, '"'"'ok'"'"');"' _ "$WM_NULL"
+WM_JUNK=$(mat_watermark_sql '2x' '-1' 'stg_lemeng_a=2026-11-06')
 check "非数字 PASS/ERROR ⇒ 同样 NULL（fail-soft，不把垃圾拼进 SQL）" \
-  sh -c 'echo "$1" | grep -Fq "max(bizday), now(), NULL, NULL, '"'"'ok'"'"'"' _ "$WM_JUNK"
+  sh -c 'echo "$1" | grep -Fq ", now(), NULL, NULL, '"'"'ok'"'"');"' _ "$WM_JUNK"
+WM_NODATE=$(mat_watermark_sql 26 0 'stg_lemeng_a=')
+check "取不到 max_bizday ⇒ 该行 max_bizday 落 NULL（水位未知 ≠ 捏造）" \
+  sh -c 'echo "$1" | grep -Fq "VALUES ('"'"'stg_lemeng_a'"'"', NULL, now(), 26, 0, '"'"'ok'"'"');"' _ "$WM_NODATE"
+WM_BADDATE=$(mat_watermark_sql 26 0 "stg_lemeng_a=2026-11-06'); drop table x; --")
+check "日期形状异常（注入）⇒ 落 NULL，不拼进 SQL" \
+  sh -c '! echo "$1" | grep -Fq "drop table"' _ "$WM_BADDATE"
 
 # ── ⑤-c 表名形状判定跨 locale 确定（CI fix round 1）──────────────────────────────
 # 现象：`case "$_wt" in *[!a-z0-9_]*)` 的括号区间按**运行时 collation** 解释——glibc 的
@@ -136,10 +147,10 @@ WM_LOC_OK='stg_ok1'                    # 安全形状（全小写）⇒ 必须�
 WM_LOC_BAD1='stg_OK1'                  # 含大写 ⇒ 异常（折叠后指不到表）
 WM_LOC_BAD2='stg_x; drop table y'      # 注入形状 ⇒ 异常
 wm_check_at() { # wm_check_at <locale 标签>：当前 locale 环境下调**真函数**断言三态
-  _wm_sql=$(mat_watermark_sql 26 0 "$WM_LOC_OK" "$WM_LOC_BAD1" "$WM_LOC_BAD2" 2>/dev/null)
-  _wm_err=$( (mat_watermark_sql 26 0 "$WM_LOC_OK" "$WM_LOC_BAD1" "$WM_LOC_BAD2") 2>&1 >/dev/null)
+  _wm_sql=$(mat_watermark_sql 26 0 "$WM_LOC_OK=2026-11-07" "$WM_LOC_BAD1=2026-11-07" "$WM_LOC_BAD2=2026-11-07" 2>/dev/null)
+  _wm_err=$( (mat_watermark_sql 26 0 "$WM_LOC_OK=2026-11-07" "$WM_LOC_BAD1=2026-11-07" "$WM_LOC_BAD2=2026-11-07") 2>&1 >/dev/null)
   check "表名形状判定@$1：安全名 stg_ok1 拼 INSERT" \
-    sh -c 'echo "$1" | grep -Fq "FROM staging.stg_ok1;"' _ "$_wm_sql"
+    sh -c 'echo "$1" | grep -Fq "VALUES ('"'"'stg_ok1'"'"', date '"'"'2026-11-07'"'"'"' _ "$_wm_sql"
   check "表名形状判定@$1：大写名 stg_OK1 判异常跳过（不拼进 SQL）" \
     sh -c '! echo "$1" | grep -Fq "stg_OK1"' _ "$_wm_sql"
   check "表名形状判定@$1：注入形状不拼进 SQL" \
@@ -179,9 +190,17 @@ elif [ "$1" = exec ]; then
   if [ "$4" = plat ]; then
     echo stub-org
   elif [ "$4" = pg ]; then
-    # 全 staging 内含 bizday 的表（含**别的域**的：域裁剪由脚本按本域模型名取子集，
-    # 不是靠这条 SQL 过滤 —— 断言「别的域的表没被落账」才有意义）
-    printf 'stg_lemeng_a\nstg_lemeng_b\nstg_forms_submission\n'
+    # 同一个 pg 容器上有**两种**查询，必须分开回答（2026-11-07 #1624 起）：
+    #   ① 水位表清单（information_schema 点名）→ 回全 staging 清单（含别的域，域裁剪由脚本做）
+    #   ② 取各关系 max(bizday)（纯 SELECT，`coalesce(max(bizday)::text`）→ 回「名=日期」
+    case "$*" in
+      *"coalesce(max(bizday)::text"*)
+        for _t in stg_lemeng_a stg_lemeng_b fct_retail_sale; do
+          case "$*" in *"from staging.${_t}"*) printf '%s=2026-11-06\n' "$_t" ;; esac
+        done ;;
+      *)
+        printf 'stg_lemeng_a\nstg_lemeng_b\nstg_forms_submission\n' ;;
+    esac
   fi
   [ "${STUB_EXEC_FAIL:-0}" = 1 ] && exit 1
 elif [ "$1" = run ]; then
@@ -255,9 +274,13 @@ check "落账：向仓 exec psql 写 load_log（幂等建表在场）" LOG_GREP 
 check "水位：先向仓查水位表清单（information_schema 点名 staging 内含 bizday 列的表，spec §10.7.2）" \
   LOG_GREP ok "SELECT table_name FROM information_schema.columns WHERE table_schema='staging' AND column_name='bizday'"
 check "水位：清单里的每张表各一行（relation 非空点名到表，PASS/ERROR=26/0 来自 dbt 汇总行）" \
-  LOG_GREP ok "SELECT 'stg_lemeng_a', max(bizday), now(), 26, 0, 'ok' FROM staging.stg_lemeng_a;"
+  LOG_GREP ok "VALUES ('stg_lemeng_a', "
 check "水位：第二张表同样落位（逐表，不是一行汇总）" \
-  LOG_GREP ok "SELECT 'stg_lemeng_b', max(bizday), now(), 26, 0, 'ok' FROM staging.stg_lemeng_b;"
+  LOG_GREP ok "VALUES ('stg_lemeng_b', "
+check "水位：取最大值走**纯 SELECT**（湖视图不能作 INSERT…SELECT 的源，#1624）" \
+  LOG_GREP ok "as relation, coalesce(max(bizday)::text,'') as mb from staging.stg_lemeng_a"
+check "水位：INSERT 用字面量 VALUES 形态（拼进 SQL 的句子不得再含 FROM staging.）" \
+  sh -c '! grep -Fq "INSERT INTO data.load_log (relation, max_bizday, materialized_at, tests_pass, tests_error, status) SELECT" "$1"' _ "$STUB_E2E/ok/state/calls.log"
 check "水位：旧「仓级」行（relation NULL）不再新写（VALUES 形态的仓级 INSERT 不在场）" \
   sh -c '! grep -Fq "$2" "$1"' _ "$STUB_E2E/ok/state/calls.log" "INSERT INTO data.load_log (status, tests_pass, tests_error) VALUES"
 check "水位：**别的域**的表不落账（域裁剪生效——本面只有 lemeng，forms 的表不在水位行里）" \
@@ -269,7 +292,7 @@ st=$(run_mat tick_ok)
 check "tick：正常 ⇒ 退出码 0" sh -c '[ "$1" = 0 ]' _ "$st"
 check "tick：末行 MATERIALIZE_OK scope=tick" sh -c 'tail -n 1 "$1" | grep -qx "MATERIALIZE_OK scope=tick"' _ "$STUB_E2E/tick_ok/out"
 check "tick：选择器作为单个实参传下去（--select fct_retail_sale）" LOG_GREP tick_ok "--select fct_retail_sale"
-check "tick：水位只写 tick 模型一行" LOG_GREP tick_ok "SELECT 'fct_retail_sale', max(bizday), now(), 26, 0, 'ok' FROM staging.fct_retail_sale;"
+check "tick：水位只写 tick 模型一行" LOG_GREP tick_ok "VALUES ('fct_retail_sale', "
 unset SCOPE_FIXTURE
 
 # ★ #1537：tick 选择器空匹配 ⇒ dbt 退出 0 但 `Nothing to do.` ⇒ 必须判 noop，不许假绿
@@ -350,7 +373,7 @@ check "拆半径：一个域红 ⇒ 整体仍退出 1（响亮，不被静默吞
 check "拆半径：失败字面量仍是 MATERIALIZE_FAILED:dbt_build 且点名红域" \
   sh -c 'grep -q "MATERIALIZE_FAILED:dbt_build" "$1" && grep -q "forms" "$1"' _ "$STUB_E2E/partial/err"
 check "拆半径：**绿域照常落账**（lemeng 的表有水位行 —— 改动前这里会是零行）" \
-  LOG_GREP partial "SELECT 'stg_lemeng_a', max(bizday), now(), 26, 0, 'ok' FROM staging.stg_lemeng_a;"
+  LOG_GREP partial "VALUES ('stg_lemeng_a', "
 check "拆半径：**红域不落账**（forms 的表没有水位行）" \
   sh -c '! grep -Fq "$2" "$1"' _ "$STUB_E2E/partial/state/calls.log" "stg_forms_submission"
 check "拆半径：末行不是 MATERIALIZE_OK（失败不被末行掩盖）" \
