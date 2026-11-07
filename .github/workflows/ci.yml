@@ -158,6 +158,10 @@ jobs:
       # （拼写错/漏生成）② enabled 引用**他账套**后缀管线 = SOP §F.1 的危害形态（一账套一 console
       # 的本体是凭据/env 隔离，错账套排班会**静默采错数据**）。纯静态：只读仓内 JSON，秒级。
       - run: pnpm exec tsx scripts/check-console-schedules.mjs
+      # 源清单（manifest）↔ 生成物一致性（P1，2026-11-07）：deploy/duckle/manifests/*.json
+      # 必须合法，且与 pipelines/<id>.json（已晋级）或 manifests/generated/<id>.json（试点）逐字一致；
+      # 改 manifest 不重生成 / 手改生成物 ⇒ 这里红。纯静态：只读仓内 JSON。
+      - run: pnpm exec tsx scripts/check-source-manifests.mjs
       # 库存快照变体生成物 == committed（#1079）。catchup / backfill 两个变体由主管线
       # `lemeng.inventory.snapshot.l0.3120` 机械派生（只差窗口 token / 管线名 / 空集文案）——
       # 改了主管线（加页、改契约、改窗口）却没重跑生成器 ⇒ 这里红。纯静态：只读仓内 JSON。

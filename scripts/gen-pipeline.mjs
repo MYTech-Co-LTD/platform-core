@@ -15,6 +15,7 @@
 // team-harness `docs/standards/agent-add-pipeline-without-restart.md` 的闸。
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
 import { dirname, join, resolve } from 'node:path'
+import { pathToFileURL } from 'node:url'
 
 /** @typedef {{ name: string, type: string }} SchemaCol */
 /** @typedef {{
@@ -60,7 +61,7 @@ function readJson(p) {
 }
 
 /** @param {unknown} m @returns {string[]} */
-function validateManifest(m) {
+export function validateManifest(m) {
   /** @type {string[]} */
   const errs = []
   if (typeof m !== 'object' || m === null) return ['manifest 必须是 JSON 对象']
@@ -115,7 +116,7 @@ function validateManifest(m) {
 }
 
 /** @param {Manifest} m @returns {Record<string, unknown>} */
-function buildPipeline(m) {
+export function buildPipeline(m) {
   const s = m.source
   /** @type {Record<string, unknown>} */
   const sourceProps = {
@@ -278,4 +279,4 @@ function main() {
   console.log('next: duckle validate / canary run / catalog / 排班与 owners/alerts 按 SOP 原子合并')
 }
 
-main()
+if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) main()
