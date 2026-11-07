@@ -92,6 +92,35 @@ describe('gen-pipeline：static_pages', () => {
     m.source.pagination.pages = 0
     expect(validateManifest(m).join()).toContain('pages')
   })
+
+  it('truncationGuard：加 count→ctl.die 叶子哨兵（阈值 pages×pageSize）', () => {
+    const m = mutate((x) => {
+      x.source.pagination = { type: 'static_pages', pages: 3, pageSize: 2, truncationGuard: true }
+    })
+    expect(validateManifest(m)).toEqual([])
+    const p: any = buildPipeline(m as any)
+    expect(p.nodes.map((n: any) => n.id)).toEqual(['p1', 'p2', 'p3', 'merge', 'q', 'dg', 't', 'k'])
+    expect(p.nodes.find((n: any) => n.id === 'q').data.properties.sql).toContain('= 6')
+    const die = p.nodes.find((n: any) => n.id === 'dg')
+    expect(die.data.componentId).toBe('ctl.die')
+    expect(die.data.properties.condition).toBe('has-rows')
+    // 哨兵是叶子：没有出边（真机实测叶子 die 会被执行）
+    expect(p.edges.some((e: any) => e.source === 'dg')).toBe(false)
+  })
+
+  it('truncationGuard 缺 pageSize 被拦', () => {
+    const m = mutate((x) => {
+      x.source.pagination = { type: 'static_pages', pages: 3, truncationGuard: true }
+    })
+    expect(validateManifest(m).join()).toContain('pageSize')
+  })
+
+  it('truncationGuard 不能配 none', () => {
+    const m = mutate((x) => {
+      x.source.pagination = { type: 'none', truncationGuard: true }
+    })
+    expect(validateManifest(m).join()).toContain('static_pages')
+  })
 })
 
 describe('gen-pipeline：多账套', () => {
