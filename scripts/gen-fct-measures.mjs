@@ -113,6 +113,7 @@ export const MODELS = [
       'ep_payable@flat': 'base_payable',
       'er_receivable@flat': 'base_receivable',
     },
+    incrementalLookback: 7,
   },
   // P3.3 Task 3（#1031）：客户费用构件——与门店族同构的 flat 双列。组件键带 client_ 族前缀：
   // measures 是扁平命名空间，门店族已占 `ep_payable@flat` / `er_receivable@flat`，同名键会静默
@@ -128,6 +129,7 @@ export const MODELS = [
       'client_ep_payable@flat': 'base_payable',
       'client_er_receivable@flat': 'base_receivable',
     },
+    incrementalLookback: 7,
   },
   // P3.3 Task 4（#1031）：配送行质量构件——影子波**唯一的两阶段族**：zero_cost_amount 是 order
   // 粒度 measure（先逐单求 measure_value、再上卷店日），与手写 per_order 链的分组键同源。
