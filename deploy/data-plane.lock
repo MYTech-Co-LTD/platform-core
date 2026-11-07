@@ -1,4 +1,4 @@
-sha256-of-rest ca8a084aac5929d15d2b79d8ea47a91d53e0872f41bbf61317fd425f3098a7e2
+sha256-of-rest 085d13001bc7a372fb294ca65439cc14e5f8488f880f1a0ed157902109da3097
 08938c10c6b4a688c8afda6cd7d1ad3dbf2c20f83cf8c4e7023055ad34eddc70 contracts/README.md ${REPO}/contracts/README.md 0644
 fcc8189e1012d5fbb8e2505025bed637dd01c7b4465ab86125d3eaa7f330eff3 contracts/common/_schema.schema.json ${REPO}/contracts/common/_schema.schema.json 0644
 1730119518c3371f3c2ff3492f4c15cd731688047c6d40805ec4d2c65892f3ff contracts/common/_template.contract.json ${REPO}/contracts/common/_template.contract.json 0644
@@ -351,7 +351,7 @@ c471c6a9f25d02b2419f5f9a05e79eb80fdfdc5d599633d892fcff72b208e959 deploy/duckle/c
 72cf3d52daa038ce178c2afc12b76454c47efbe333afdb3660996fdbd14d623a deploy/duckle/console/schedules/3120.json ${REPO}/deploy/duckle/console/schedules/3120.json 0644
 f06e7c39289fb18168ff2da64eddd83e9036cc4127f70a3d0f70664613e73e4d deploy/duckle/console/schedules/64188.json ${REPO}/deploy/duckle/console/schedules/64188.json 0644
 127dde28f2d058ec300de7777f171f1922fa8b787af810f2ce63fbfa7a52d53d deploy/duckle/console/schedules/forms.json ${REPO}/deploy/duckle/console/schedules/forms.json 0644
-142794f9a66e9a27a9894f0316a2368bd27554306e047cdd145e292b99f9dce1 deploy/duckle/console/scorecard-alert.py ${REPO}/deploy/duckle/console/scorecard-alert.py 0644
+c1e4977c83bbadb61efcc3a90d745754c9f15de73aedc1f6ae74d5c02d0375d8 deploy/duckle/console/scorecard-alert.py ${REPO}/deploy/duckle/console/scorecard-alert.py 0644
 2e88d604de7ff821db77af4938bdcf43d99f3fee8cb91fbf0c4526961aa20c6f deploy/duckle/console/scorecard-baseline.py ${REPO}/deploy/duckle/console/scorecard-baseline.py 0644
 8210ad871e28c59e626cb3fdf2abf552ad1b3e2fe82dc4a2bb0fdcf84beda5f2 deploy/duckle/console/scorecard-heal.py ${REPO}/deploy/duckle/console/scorecard-heal.py 0644
 43381a794c2909ebe1fc184b9ab55e5b301345aac3dc492e10716de5ec5157db deploy/duckle/entrypoint.sh ${REPO}/deploy/duckle/entrypoint.sh 0644
