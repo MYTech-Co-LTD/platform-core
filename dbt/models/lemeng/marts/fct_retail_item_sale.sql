@@ -55,6 +55,14 @@ with src as (
         count(distinct order_no)                              as order_count
     from {{ ref('stg_lemeng_retail_order_line') }}
     where item_num is not null
+    -- ⚠️ **增量过滤必须下推进 src**（2026-11-07 真机实证，issue #1620）：只在最外层过滤
+    --   ⇒ 先聚合**全史**（730 天、全部小时分区）再扔掉，单轮实测 **285s**；而下推成
+    --   **编译期日期字面量**后 read_parquet 能按 bizday 分区裁剪（同 #1524 的教训）。
+    --   慢的直接后果不只是耗时：285s 的长扫描与 10 分钟一班的采集**必然重叠**，
+    --   读到正在被重写的当日小时文件 ⇒ ETag 变化 ⇒ 整轮 ERROR（5 次里 4 次）。
+    {% if is_incremental() %}
+    and bizday >= {{ incremental_cutoff(7) }}
+    {% endif %}
     group by 1, 2, 3, 4
 )
 
@@ -70,10 +78,3 @@ select
     coalesce(sale_quantity, 0)::numeric(20,3) as sale_quantity,
     coalesce(order_count, 0)::bigint          as order_count
 from src
-{% if is_incremental() %}
--- 增量窗口（与 fct_retail_sale 同款 lookback；历史回填/晚到/同日重写都要被覆盖）
-where bizday >= (
-    select coalesce(max(bizday), date '1900-01-01') - interval '7 days'
-    from {{ this }}
-)
-{% endif %}

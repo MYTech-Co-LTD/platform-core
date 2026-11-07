@@ -1,8 +1,10 @@
-{{ config(tags=['audit']) }}
+{{ config(tags=['audit_window']) }}
 -- audit_audit_lemeng__expense__branch_net.sql.sql — 指标的**独立复算**（对账；聚合面与 fct_branch_expense 逐字同构，但直接打 parquet、
 -- 不 ref staging——复算走 staging 会让 cast 错同时污染两边 ⇒ 对账恒绿）。
 -- 契约：dbt singular test 返回任何行即失败；空转自检防「空集上的假绿」。
 -- 口径见 fct_branch_expense.sql 头注（本文件比较：门店净费用 E=应付−应收）。
+-- 【窗口化 #1614】tags 加 audit_window：每小时档经 window_read_parquet 路径级裁剪湖读取，
+--   mart 侧同窗（window_start_date）；env 未设（每日全史档）时宏原样全史 glob。
 with recheck as (
     select
         r['system_book']::varchar as system_book,
@@ -10,18 +12,20 @@ with recheck as (
         r['branch_num']::int     as branch_num,
         r['expense_type']::varchar       as expense_type,
         (sum(case when r['direction']::varchar = '应付' then coalesce(r['amount']::numeric, 0) else 0 end) - sum(case when r['direction']::varchar = '应收' then coalesce(r['amount']::numeric, 0) else 0 end))::numeric(20,2) as v
-    from read_parquet(
-        's3://{{ var("zos_bucket") }}/{{ var("lemeng_branch_expense_prefix") }}/*/bizday=**/*.parquet'
-    ) r
+    from {{ window_read_parquet(
+        's3://' ~ var('zos_bucket') ~ '/' ~ var('lemeng_branch_expense_prefix') ~ '/*/bizday=**/*.parquet'
+    ) }} r
       -- 湖上只存在审核单（管线请求侧已筛审核态、契约不落状态列）——
       -- 此处无需重复筛 state；bizday 闭窗过滤照旧。
       where r['bizday']::date < CAST(now() AT TIME ZONE 'Asia/Shanghai' AS DATE)
+      and r['bizday']::date >= date '{{ window_start_date() }}'
     group by 1, 2, 3, 4
 ),
 materialized as (
     select system_book, bizday, branch_num, expense_type, e_net
     from {{ ref('fct_branch_expense') }}
     where bizday < CAST(now() AT TIME ZONE 'Asia/Shanghai' AS DATE)
+      and bizday >= date '{{ window_start_date() }}'
 )
 select
     coalesce(a.system_book, b.system_book) as system_book,

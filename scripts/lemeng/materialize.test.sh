@@ -37,11 +37,11 @@ check "不含任何 stg_/fct_ 模型名（按需名单的另一种长法）" sh 
 ENV_ARGS=$(extract mat_env_args)
 [ -n "$ENV_ARGS" ] || bad "mat_env_args 抽取失败（函数不存在或格式变了）"
 E_TOKENS=$(echo "$ENV_ARGS" | tr -s ' ' '\n' | sed '/^$/d' | grep -c '^-e$')
-check "-e token 恰 9 个（键集由本函数唯一定义）" sh -c '[ "$1" = 9 ]' _ "$E_TOKENS"
+check "-e token 恰 11 个（键集由本函数唯一定义：9 基础 + 2 窗口键 #1614）" sh -c '[ "$1" = 11 ]' _ "$E_TOKENS"
 E_EQ=$(echo "$ENV_ARGS" | tr -s ' ' '\n' | sed '/^$/d' | grep -c '=' || true)
 check "带 = 的 token 恰 1 个（仅 DBT_HOST=pg_duckdb；值进 argv 就进 ps）" sh -c '[ "$1" = 1 ]' _ "$E_EQ"
 check "带 = 的那个正是 DBT_HOST=pg_duckdb" sh -c 'echo "$1" | grep -qx "DBT_HOST=pg_duckdb"' _ "$(echo "$ENV_ARGS" | tr -s ' ' '\n' | grep '=')"
-for k in DBT_USER DBT_PASSWORD DBT_DBNAME LEMENG_ZOS_BUCKET LEMENG_ZOS_REGION LEMENG_ZOS_ENDPOINT LEMENG_SUBJECT_ORG DATA_PLANE_DOMAINS; do
+for k in DBT_USER DBT_PASSWORD DBT_DBNAME LEMENG_ZOS_BUCKET LEMENG_ZOS_REGION LEMENG_ZOS_ENDPOINT LEMENG_SUBJECT_ORG DATA_PLANE_DOMAINS AUDIT_WINDOW_START AUDIT_WINDOW_PATTERNS; do
   check "透传键在场：-e ${k}" sh -c 'echo "$1" | grep -F -- "-e $2" >/dev/null' _ "$ENV_ARGS" "$k"
 done
 

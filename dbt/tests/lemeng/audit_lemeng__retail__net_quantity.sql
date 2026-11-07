@@ -1,10 +1,13 @@
-{{ config(tags=['audit']) }}
+{{ config(tags=['audit_window']) }}
 -- audit_lemeng__retail__net_quantity.sql — 指标的**独立复算**（对账）。
 -- 直接打 parquet、不 ref 任何 mart/staging（走上游会让 cast 错同时污染两边 ⇒ 对账恒绿）。
 --
 -- ⚠️ 比较的是「销售数量 / 退货数量 / 净销量」三列，不只是净销量——W1 的教训：两侧同值 0 时
 -- 比较 0 vs 0 等于没验。本指标真机上销售≈71 万、退货≈9.8 千，都有区分度。
 -- ⚠️ 两侧**都**滤掉今天：今天的文件正被 5 分钟一班的 tick 重写（ETag 竞态，2026-10-06 实测）。
+-- 【窗口化 #1614】tags 加 audit_window：每小时档经 window_read_parquet 把冷热两腿都收进
+--   月段字符类窗口（`_DAILY` 封版清单 glob 无 bizday 段，宏替换 no-op、保持全量——它本来就是小文件），
+--   mart 侧同窗（window_start_date）；env 未设（每日全史档）时宏原样全史 glob。
 with base_cold as (
     -- ══ 冷热两腿合流（#984）：原 day+window 双 glob 一把读**没有封版排除**，封窗日
     -- 「天文件 + 小时文件」两份并存 ⇒ 双计；拆两腿后热腿排除已封版日（同 stg 冷热合流）。
@@ -18,12 +21,14 @@ with base_cold as (
         case when r['order_transaction_type']::varchar like '%RETURN%'
                   and r['state']::varchar in ('FINISHED', 'REPAID')
              then r['quantity']::numeric else 0 end as return_quantity
-    from read_parquet(
-        -- 冷腿：已封版日的**天文件**；⚠️ 与 staging **同路径**（通配两账套，含封版排除语义）——
-        -- 对账必须与受测面同口径，否则只对账了 3120（issue #250）。
-        's3://{{ var("zos_bucket") }}/{{ var("lemeng_retail_order_line_prefix") }}/_DAY_DATA/system_book=*/bizday=*/all.parquet'
-    ) r
+    -- 冷腿：已封版日的**天文件**；⚠️ 与 staging **同路径**（通配两账套，含封版排除语义）——
+    -- 对账必须与受测面同口径，否则只对账了 3120（issue #250）。
+    -- （⚠️ 注释必须在宏调用括号外：括号内是 Jinja 表达式，SQL `--` 注释在那儿是语法错。）
+    from {{ window_read_parquet(
+        's3://' ~ var('zos_bucket') ~ '/' ~ var('lemeng_retail_order_line_prefix') ~ '/_DAY_DATA/system_book=*/bizday=*/all.parquet'
+    ) }} r
     where r['bizday']::date < CAST(now() AT TIME ZONE 'Asia/Shanghai' AS DATE)
+    and r['bizday']::date >= date '{{ window_start_date() }}'
 ),
 base_hot as (
     -- 热腿：未封版日的小时文件——排除已封版日（同 stg 冷热合流，#984）
@@ -37,10 +42,11 @@ base_hot as (
         case when r['order_transaction_type']::varchar like '%RETURN%'
                   and r['state']::varchar in ('FINISHED', 'REPAID')
              then r['quantity']::numeric else 0 end as return_quantity
-    from read_parquet(
-        's3://{{ var("zos_bucket") }}/{{ var("lemeng_retail_order_line_prefix") }}/system_book=*/bizday=*/hour=*/all.parquet'
-    ) r
+    from {{ window_read_parquet(
+        's3://' ~ var('zos_bucket') ~ '/' ~ var('lemeng_retail_order_line_prefix') ~ '/system_book=*/bizday=*/hour=*/all.parquet'
+    ) }} r
     where r['bizday']::date < CAST(now() AT TIME ZONE 'Asia/Shanghai' AS DATE)
+    and r['bizday']::date >= date '{{ window_start_date() }}'
       and not exists (select 1 from read_parquet('s3://{{ var("zos_bucket") }}/{{ var("lemeng_retail_order_line_prefix") }}/_DAILY/*.parquet') m where cast(m['system_book'] as varchar) = cast(r['system_book'] as varchar) and cast(m['bizday'] as date) = cast(r['bizday'] as date))
 ),
 base as (
@@ -64,6 +70,7 @@ materialized as (
            sum(net_quantity)::numeric(20, 3)   as net_quantity
     from {{ ref('fct_retail_quantity') }}
     where bizday < CAST(now() AT TIME ZONE 'Asia/Shanghai' AS DATE)
+      and bizday >= date '{{ window_start_date() }}'
     group by 1, 2, 3, 4
 )
 select
