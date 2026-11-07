@@ -9,6 +9,27 @@
 
 ---
 
+## 执行记录（2026-11-08，`3120` 已切；`64188` 未切）
+
+| 步骤 | 结果 |
+|---|---|
+| S3 首跑 | `ok`，9 页 / 16.7s；`probe` 67 行、`tail` 0 行、`dgt` 0 行 |
+| S4 湖回读（对象层） | **273 行 / 67 单号**，与旧 `all.parquet` 一致；**24 列**与契约同序；关键列 0 NULL |
+| S5 删旧对象 | `all.parquet` 已删；staging `system_book=3120` → **273 / 67**（无重复） |
+| S6 第二跑 | `pages=0`、`fe` 0、`ok`，5.2s（1 次探针 + 1 次尾页哨兵） |
+| S7 观测面 | owners match 已改 `bizday=*/*.parquet`；catalog 已重建；scorecard **GREEN** |
+| console | 已服务级重启（排班定义热加载）；排班条目不变 |
+
+**踩到并已修的三条**（生成器里已固化，见 §1 B1/B3）：
+① 身份探针 `w0` 缺 `schema` ⇒ 空响应时 `w0` 直接报错；
+② 尾页探针误用 `page_size=1` ⇒ page 10 变成有效页、哨兵假红；
+③ 契约生成器会把 `.page` 子管线的 ITER 投影打回父 token ⇒ 已跳过 `.page`（列集仍由 `check-data-contract` 守）。
+
+**下一步**：观察 3120 至少一天（次日 09:21 CST 起的小时档）；无异常后把 `64188` 加入 manifest
+`accounts`、生成并重复 S1–S7；两账套都切完再把 owners match 收窄到 `page=*.parquet`。
+
+---
+
 ## 0. 对象与基线
 
 | 项 | 值 |
