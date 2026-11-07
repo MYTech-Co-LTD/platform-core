@@ -1,10 +1,11 @@
 #!/usr/bin/env python3
 """scorecard-alert.py — 把 scorecard 的 RED/UNKNOWN 行投进 OO `data_plane_probes`（桥→企微）。
 
-为什么要它：**openship job 的 notifyConfig / `job.run.failed` 订阅在本环境不投递**
-（2026-11-07 真机实测：手工触发与定时触发各一次 failed，deliveries 里零条）。数据面告警的
-单出口是 OO：`data_plane_probes` 里 `verdict <> 'OK'` 的行由 `oo-notify-bridge.sh` 通道②
-转发企微（≤2 分钟，per-check 冷却）。本脚本只投递事实，不改判定、不掩盖失败。
+为什么要它：openship 的 job 通知**只到 job 粒度**（「某个 job 红了」），说不出「哪条管线、
+缺哪一天」；数据面告警的单出口是 OO——`data_plane_probes` 里 `verdict <> 'OK'` 的行由
+`oo-notify-bridge.sh` 通道②转发企微（≤2 分钟，per-check 冷却），一行一条管线。
+（job 通知本身是好的：2026-11-07 实测它直发企微 webhook，只是**不进站内 deliveries feed**。）
+本脚本只投递事实，不改判定、不掩盖失败。
 
 用法（宿主机）：
     python3 scorecard-alert.py /opt/pipeline-scorecard/3120-2026-11-07.csv
