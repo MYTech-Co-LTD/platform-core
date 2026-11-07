@@ -13,10 +13,10 @@
     /workspace/owners.json             owner 规则（asset match → owner）
 
 判据（红/黄/绿）：
-    RED    最近 run status != ok
-    AMBER  任一 owner 资产 state == stale（停更，但没有失败 run）
+    RED    最近 run status != ok **且** 最近一次成功已超 owner SLA（真缺）
+    AMBER  最近 run 中断/失败但 last_ok 仍在 SLA 内（多轮同窗口，数据在）；或 owner 资产 stale
     GREEN  最近 run ok 且无 stale 资产
-    UNKNOWN 没有 run 记录（新管线 / 从未跑）
+    UNKNOWN 排班 enabled 但没有 run 记录（新管线 / 从未跑）
 """
 import glob
 import json
