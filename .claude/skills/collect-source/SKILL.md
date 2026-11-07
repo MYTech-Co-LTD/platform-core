@@ -60,10 +60,19 @@ description: 接新采集源 / 改采集链路 / 改调度 / 源退役的作业�
 
 ### D 管线 → §1.3 对应小节 + §1.6 案例库
 
+- [ ] **默认走 manifest 快车道（2026-11-07 起）**：新源先填 `deploy/duckle/manifests/<id>.json` →
+      `pnpm exec tsx scripts/gen-pipeline.mjs <manifest>` → `scripts/check-source-manifests.mjs`（CI 门禁）。
+      **不手写管线 JSON**；manifest 表达不了的形态才手写，且必须在正典 §1.7 登记「为什么 manifest 不行」。
 - [ ] 管线 JSON 由真引擎产出并**提交进仓**（口径：仓内文件 = 引擎所写的，不手编）
 - [ ] 分页配置**成对检查**：页参数与翻页机制同在——缺一边 = 静默只取首页，
       validate 与 run 都报 ok（案例库有实测记录）
 - [ ] schema 申报与投影列集一致；空响应按申报构造，缺申报 = 空页运行时才炸
+- [ ] **多页源（`static_pages`）三条硬约束**（2026-11-07 真机，正典 §1.7 #41/#46）：
+      - `data.schema` **必须覆盖响应里会参与合并的全部列**，嵌套结构申报 `json`——
+        只申报「最后要用的几列」会让 `ctl.merge` 炸（`number with leading zero is not allowed`）；
+      - `sink.key` 必须带 `chunk=`（按段落文件）；
+      - **默认开 `truncationGuard`**（行数 == pages×pageSize ⇒ run 标红）。⚠️ 它是**告警不是闸**：
+        哨兵与 sink 并行，命中时湖里**已经写了**——处置文案必须写「需人工确认补页」，不能写「拒绝写湖」。
 - [ ] ⚠️ 未验：`xf.tumble`（翻窗聚合）与管线内 `qa.*` 节点组合尚无生产案例——
       首用时当场跑最小验证并回填。
 
@@ -84,10 +93,16 @@ description: 接新采集源 / 改采集链路 / 改调度 / 源退役的作业�
 - [ ] **新鲜度锚成对配**：湖侧（`owners.lemeng.json` 的 minio 锚，抓「没写」）+ 下游侧
       （`wire-warehouse.sh` 判据，抓「写了但物化断链」）。⚠️ 容差**按窗口语义分档**——
       T-2 快照类（如库存快照）比日更件宽一天，否则天然误报。
+- [ ] **owner 规则必须配，且能被 scorecard 命中**（2026-11-07：14 条排班管线因匹配不上而「停更不可见」）：
+      加完跑 `python3 /workspace/pipeline-scorecard.py --explain`，本管线**不能**显示「无规则→缺省」。
+      管线 id 与资产表名对不上时（如 `purchase.analysis` 写的是 `item_purchase`），在该 owner 规则上加
+      `"pipelines": ["<pid 通配>"]` 显式绑定——显式绑定优先于按名字推断。
 
 ### F 验收 → §1.4 / §1.4.1
 
 - [ ] 四层验收（正典 §1.4）逐层过，**缺一层不算过**；判据落位按 §1.4.1
+- [ ] **canary 之后必须独立回读湖**：`count(*)` + 去重键（如单号）在对象存储里直查，
+      **不只看 run 状态 ok**（run 绿 + 湖空 = 正典 §1.7 #43 那类静默断供）
 - [ ] 管线内的闸只判「不可能错」的断言（不可能 = 断言错了管线就该拒写湖）
 - [ ] 自证类检查没过 → 拒写湖是**正确行为**，别绕闸；闸静默放行才是事故
 - [ ] ⚠️ 跨系统验收层（下游 BI/报表）目前全部「待回填」，按正典标注的口径处理。
@@ -96,6 +111,10 @@ description: 接新采集源 / 改采集链路 / 改调度 / 源退役的作业�
 
 - [ ] 告警可达、能响应、能恢复：探活盯防覆盖本源的调度与新鲜度锚
 - [ ] 新鲜度锚验过「匹配到」（catalog 命名得到），不是只配了没生效
+- [ ] **新管线必须进每日 scorecard 且首日 GREEN**（2026-11-07 起）：次日看 `pipeline-scorecard` 输出，
+      本管线在列、级别 GREEN；RED/UNKNOWN 会经 `scorecard-alert.py` → OO `data_plane_probes` → 桥 → 企微（分钟级）。
+      ⚠️ 别指望 openship job 的 `notifyConfig` 说清细节——它只到 job 粒度，且**不进站内 deliveries feed**
+      （判它是否在位只能开环到群，正典 §1.7 #45）。
 - [ ] ⚠️ 未验：告警的**群侧投递与冷却重报**行为——首次真实触发时当场目视并回填。
 
 ### H 回填 → §1.3 对应小节
