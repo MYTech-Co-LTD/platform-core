@@ -88,20 +88,32 @@ interface RelationDecl {
 
 ---
 
-### Task 3: 租户级自进化
+### Task 3: 租户级自进化（**2026-11-07 验证后重写**）
+
+**设计**：`docs/superpowers/specs/2026-11-07-tenant-selfdriving-design.md`（验证证据 V1–V8 与四件范围）。
+
+**为什么重写**：开工前真机验证发现——多 org 只是小改动，真正堵住 30 天判据的是
+① 回归腿连续 3 天红且原因不是口径变化（#3 滚动窗口基线；#1723 标识列 sum 漂移）；
+② `value` 缺失/标识列求和让判据不可执行；③ job failed 通知不进站内 feed。故本 Task 拆成四件。
 
 **Files:**
-- Modify: `scripts/demand-mining.mjs`（`PLATFORM_ORG` → 按租户遍历，或按传入 org）
-- Modify: `modules/data/domain/demand/*`（候选/需求按 org）
-- Modify: `scripts/verify-regression.mjs`（支持 `--org` 多租户；已有）
+- Modify: `scripts/demand-mining.mjs`（`--org` / `--all-tenants`；逐 org 失败隔离）
+- Modify: `modules/data/domain/demand/mine.ts`（`skipConv` + `convSkipped`；单测）
+- Modify: `modules/data/domain/verified-regression.ts`（`compare` 增 `warns`；`runRegression` 透传）
+- Modify: `scripts/verify-regression.mjs`（打印 warn / 汇总 warn=N；退出码只看 fail）
+- Modify: `scripts/apply-eval-set.mjs`（拒 `window: 'default'`）
+- Create: `scripts/refresh-baseline.mjs`（复用 `refreshBaseline`；dry-run 缺省）
+- Create: `scripts/lemeng/emit-probe.sh`（→ `/opt/lemeng-emit-probe.sh`，进 data-plane 清单）
 - Create: `docs/superpowers/notes/2026-11-07-tenant-loop.md`
+- 数据处置：#3 → `stale`；#1723 → 用 refresh CLI 刷新一次
 
-**判据：** 单租户连续 30 天：需求出现→处置→回归覆盖，平台零介入。
+**判据：** 单租户连续 30 天：需求出现→处置→回归覆盖，平台零介入（本轮做到「环路可信可见 + 首日基线」，30 天标观察中）。
 
-- [ ] **Step 1**: 需求挖掘按 org 跑（job 参数化），单测覆盖
-- [ ] **Step 2**: 候选池处置面按 org 隔离（复用现有 scope）
-- [ ] **Step 3**: 租户评估集创建/入库/回归三件套
-- [ ] **Step 4**: 真机：给一个租户跑 7 天，记录 `demand_signals`/`verified` 增长曲线
+- [ ] **Step 1（多 org）**：`--org` / `--all-tenants` 互斥；空租户 exit 1；单 org 失败隔离；conv/stuck 仅单租户部署时挖，多租户 `conv=skipped(multi-tenant)`；单测 + 真机 `--all-tenants` 一轮
+- [ ] **Step 2（评估集卫生）**：`apply-eval-set` 拒 `default`；#3 置 `stale`；新增 `refresh-baseline.mjs` 并刷新 #1723（dry-run 先看漂移）
+- [ ] **Step 3（判定分级）**：`compare` 的 `warns`；value/结构=fail、维度列=warn、无 value 列 fail-closed；单测 + 真机回归从「每日红」变为「pass + warn」
+- [ ] **Step 4（可见性）**：`emit-probe.sh` 投 `data_plane_probes`；job 命令改为「跑回归→按退出码发 OK/RED→保留退出码」；真机验 OK 行落库、RED 行可被桥转发
+- [ ] **Step 5（观察）**：`notes/2026-11-07-tenant-loop.md` 记首日基线 + 7/30 天观察 SQL（`demand_signals`/`verified`/回归 pass 率）
 
 ---
 
