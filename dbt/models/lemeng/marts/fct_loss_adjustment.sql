@@ -1,5 +1,10 @@
 {{
-config(materialized='table')
+config(
+    materialized='incremental',
+    unique_key=['system_book', 'bizday', 'branch_num', 'cause', 'direction'],
+    incremental_strategy='delete+insert',
+    on_schema_change='sync_all_columns'
+)
 }}
 -- fct_loss_adjustment.sql — 报损/调整构件（#1047 P1；口径在此定义一次）。
 -- 【粒度】(system_book, bizday, branch_num, cause, direction)——可上卷到店日/店日因。
@@ -15,6 +20,9 @@ cause,
 direction,
 sum(coalesce(total_money, 0))::numeric(20,2) as loss_money
 from {{ ref('stg_lemeng_loss_adjustment') }}
+{% if is_incremental() %}
+where bizday >= {{ incremental_cutoff(7) }}
+{% endif %}
 group by 1, 2, 3, 4, 5
 ),
 counts as (
@@ -26,6 +34,9 @@ cause,
 direction,
 count(distinct order_no)::bigint as order_count
 from {{ ref('stg_lemeng_loss_adjustment') }}
+{% if is_incremental() %}
+where bizday >= {{ incremental_cutoff(7) }}
+{% endif %}
 group by 1, 2, 3, 4, 5
 )
 select

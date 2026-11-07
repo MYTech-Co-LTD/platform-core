@@ -1,5 +1,10 @@
 {{
-    config(materialized='table')
+    config(
+        materialized='incremental',
+        unique_key=['system_book', 'bizday', 'item_num'],
+        incremental_strategy='delete+insert',
+        on_schema_change='sync_all_columns'
+    )
 }}
 -- fct_transfer_item.sql — 总仓配送出库**商品粒度**构件（W1 2026-10-12；服务 06-03 商品出库毛利率）。
 --
@@ -22,6 +27,9 @@ with item_lines as (
     where state_code = 3
       and out_branch_num = 99
       and branch_num <> out_branch_num
+    {% if is_incremental() %}
+      and bizday >= {{ incremental_cutoff(7) }}
+    {% endif %}
     group by 1, 2, 3
 )
 select
