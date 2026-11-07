@@ -267,6 +267,29 @@ if [ "$SCOPE" = tick ]; then
   exit 0
 fi
 
+# ── audit 档（#1614）：全史对账单独每日跑，不再拖慢每轮 build ─────────────────────────
+# 为什么分档：`audit_*` 每条都**独立全史复算**（read_parquet 扫 730 天），30 条串行
+# 占 60+ 分钟；全量档已 `--exclude 'audit_*'`，把全史对账降为每日一次（本档），
+# 每轮 build 只留 schema tests + 便宜的 assert_*（粒度/键唯一）。
+# 口径不变：audit 的 SQL 一个字没改，只是换了执行频次。
+if [ "$SCOPE" = audit ]; then
+  echo "── audit: audit_*（全史对账；每日独立 job）──"
+  _log="$_WORK/dbt.audit.log"
+  _rc="$_WORK/dbt.audit.rc"
+  ( if DATA_PLANE_DOMAINS="$TICK_DOMAIN" docker run --rm --network "$NETWORK" -v "$R/dbt:/usr/app" \
+      $(mat_env_args) "$IMAGE" test --profiles-dir /usr/app --threads 1 --select 'audit_*' 2>&1; then
+    echo 0 >"$_rc"
+  else
+    echo $? >"$_rc"
+  fi ) | tee "$_log"
+  if [ "$(cat "$_rc")" != 0 ]; then
+    echo "MATERIALIZE_FAILED:dbt_build（audit 全史对账）；retry 由 openship job 配置承担" >&2
+    exit 1
+  fi
+  echo "MATERIALIZE_OK scope=audit"
+  exit 0
+fi
+
 # ── 逐域 build + 逐域落账（拆爆炸半径，2026-10-17）────────────────────────────────
 # 为什么逐域：`data.load_log` 是**全部** relation 新鲜度的单一水位来源，而 dbt 一旦红就整体
 # exit 1 ⇒ **一个模型红会让所有 relation 的 data_as_of 一起停**（2026-10-17 一天内实测两次：
@@ -290,7 +313,7 @@ for _d in $(printf '%s' "$DOMAINS" | tr ',' ' '); do
   # `--exclude`：全量档不写 tick 拥有的模型（见 FULL_EXCLUDE 注释）。
   if [ -n "$FULL_EXCLUDE" ]; then _EXC="--exclude ${FULL_EXCLUDE}"; else _EXC=''; fi
   ( if DATA_PLANE_DOMAINS="$_d" docker run --rm --network "$NETWORK" -v "$R/dbt:/usr/app" \
-      $(mat_env_args) "$IMAGE" $(mat_dbt_args) --select "$(mat_dbt_select "$_d")" ${_EXC} 2>&1; then
+      $(mat_env_args) "$IMAGE" $(mat_dbt_args) --select "$(mat_dbt_select "$_d")" ${_EXC} --exclude 'audit_*' 2>&1; then
     echo 0 >"$_rc"
   else
     echo $? >"$_rc"
