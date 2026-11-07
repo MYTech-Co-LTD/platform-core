@@ -1,0 +1,240 @@
+{
+  "name": "pilot.static_pages_probe",
+  "nodes": [
+    {
+      "id": "p1",
+      "type": "source",
+      "position": {
+        "x": 0,
+        "y": 0
+      },
+      "data": {
+        "label": "page 1",
+        "componentId": "src.rest",
+        "schema": [
+          {
+            "name": "order_no",
+            "type": "string"
+          },
+          {
+            "name": "order_time",
+            "type": "timestamp"
+          }
+        ],
+        "properties": {
+          "connectionRef": "lemeng",
+          "url": "https://cloud.nhsoft.cn/agi/api/nhsoft.retail.ai.pos.posorder.find",
+          "method": "POST",
+          "body": "{\"branch_nums\": ${ENV:BRANCH_NUMS}, \"date_from\": \"${date+8h}\", \"date_to\": \"${date+8h}\", \"time_from\": \"00:00:00\", \"time_to\": \"23:59:59\", \"page_number\": 1, \"page_size\": 2}",
+          "responsePath": "/result",
+          "paginationType": "none",
+          "headers": {
+            "Content-Type": "application/json"
+          },
+          "retryAttempts": 2,
+          "retryBackoffMs": 2000
+        }
+      }
+    },
+    {
+      "id": "p2",
+      "type": "source",
+      "position": {
+        "x": 0,
+        "y": 120
+      },
+      "data": {
+        "label": "page 2",
+        "componentId": "src.rest",
+        "schema": [
+          {
+            "name": "order_no",
+            "type": "string"
+          },
+          {
+            "name": "order_time",
+            "type": "timestamp"
+          }
+        ],
+        "properties": {
+          "connectionRef": "lemeng",
+          "url": "https://cloud.nhsoft.cn/agi/api/nhsoft.retail.ai.pos.posorder.find",
+          "method": "POST",
+          "body": "{\"branch_nums\": ${ENV:BRANCH_NUMS}, \"date_from\": \"${date+8h}\", \"date_to\": \"${date+8h}\", \"time_from\": \"00:00:00\", \"time_to\": \"23:59:59\", \"page_number\": 2, \"page_size\": 2}",
+          "responsePath": "/result",
+          "paginationType": "none",
+          "headers": {
+            "Content-Type": "application/json"
+          },
+          "retryAttempts": 2,
+          "retryBackoffMs": 2000
+        }
+      }
+    },
+    {
+      "id": "p3",
+      "type": "source",
+      "position": {
+        "x": 0,
+        "y": 240
+      },
+      "data": {
+        "label": "page 3",
+        "componentId": "src.rest",
+        "schema": [
+          {
+            "name": "order_no",
+            "type": "string"
+          },
+          {
+            "name": "order_time",
+            "type": "timestamp"
+          }
+        ],
+        "properties": {
+          "connectionRef": "lemeng",
+          "url": "https://cloud.nhsoft.cn/agi/api/nhsoft.retail.ai.pos.posorder.find",
+          "method": "POST",
+          "body": "{\"branch_nums\": ${ENV:BRANCH_NUMS}, \"date_from\": \"${date+8h}\", \"date_to\": \"${date+8h}\", \"time_from\": \"00:00:00\", \"time_to\": \"23:59:59\", \"page_number\": 3, \"page_size\": 2}",
+          "responsePath": "/result",
+          "paginationType": "none",
+          "headers": {
+            "Content-Type": "application/json"
+          },
+          "retryAttempts": 2,
+          "retryBackoffMs": 2000
+        }
+      }
+    },
+    {
+      "id": "merge",
+      "type": "transform",
+      "position": {
+        "x": 300,
+        "y": 0
+      },
+      "data": {
+        "label": "merge",
+        "componentId": "ctl.merge",
+        "properties": {}
+      }
+    },
+    {
+      "id": "t",
+      "type": "transform",
+      "position": {
+        "x": 600,
+        "y": 0
+      },
+      "data": {
+        "label": "transform",
+        "componentId": "code.sql",
+        "properties": {
+          "sql": "SELECT CAST(order_no AS VARCHAR) AS order_no, CAST(order_time AS TIMESTAMP) AS order_time FROM input"
+        }
+      }
+    },
+    {
+      "id": "g",
+      "type": "transform",
+      "position": {
+        "x": 900,
+        "y": 0
+      },
+      "data": {
+        "label": "contract gate",
+        "componentId": "qa.contract",
+        "properties": {
+          "rules": {
+            "order_no": "not_null"
+          }
+        }
+      }
+    },
+    {
+      "id": "k",
+      "type": "sink",
+      "position": {
+        "x": 1200,
+        "y": 0
+      },
+      "data": {
+        "label": "sink",
+        "componentId": "snk.minio",
+        "properties": {
+          "connectionRef": "zos",
+          "bucket": "${ENV:ZOS_BUCKET}",
+          "key": "pilot/static_pages_probe/system_book=${ENV:SYSTEM_BOOK}/snapshot=${date+8h}/chunk=seg1.parquet",
+          "format": "parquet",
+          "mode": "overwrite",
+          "compression": "zstd"
+        }
+      }
+    }
+  ],
+  "edges": [
+    {
+      "id": "e-p1-m",
+      "source": "p1",
+      "target": "merge",
+      "sourceHandle": "main",
+      "targetHandle": "main_1",
+      "data": {
+        "connectionType": "main"
+      }
+    },
+    {
+      "id": "e-p2-m",
+      "source": "p2",
+      "target": "merge",
+      "sourceHandle": "main",
+      "targetHandle": "main_2",
+      "data": {
+        "connectionType": "main"
+      }
+    },
+    {
+      "id": "e-p3-m",
+      "source": "p3",
+      "target": "merge",
+      "sourceHandle": "main",
+      "targetHandle": "main_3",
+      "data": {
+        "connectionType": "main"
+      }
+    },
+    {
+      "id": "e1",
+      "source": "merge",
+      "target": "t",
+      "sourceHandle": "main",
+      "targetHandle": "main",
+      "data": {
+        "connectionType": "main"
+      }
+    },
+    {
+      "id": "e2",
+      "source": "t",
+      "target": "g",
+      "sourceHandle": "main",
+      "targetHandle": "main",
+      "data": {
+        "connectionType": "main"
+      }
+    },
+    {
+      "id": "e3",
+      "source": "g",
+      "target": "k",
+      "sourceHandle": "main",
+      "targetHandle": "main",
+      "data": {
+        "connectionType": "main"
+      }
+    }
+  ],
+  "_note": [
+    "由 scripts/gen-pipeline.mjs 从 manifest 生成；手改请改 manifest 后重生成（--check 会拦）。"
+  ]
+}

@@ -1,0 +1,6 @@
+{
+  "match": "minio://*/pilot/static_pages_probe/system_book=*/snapshot=*/chunk=*.parquet",
+  "owner": "data-eng",
+  "description": "P1 试点：manifest 生成的 static_pages 管线（测试前缀，不排班）",
+  "maximumAge": "36h"
+}
