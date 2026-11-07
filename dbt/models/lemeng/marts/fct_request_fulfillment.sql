@@ -1,5 +1,10 @@
 {{
-    config(materialized='table')
+    config(
+        materialized='incremental',
+        unique_key=['system_book', 'bizday', 'branch_num', 'item_num'],
+        incremental_strategy='delete+insert',
+        on_schema_change='sync_all_columns'
+    )
 }}
 -- fct_request_fulfillment.sql — 要货满足率构件（W3 余项 2026-10-15，#677）。
 -- 【粒度】(system_book, bizday, branch_num, item_num)。
@@ -30,6 +35,9 @@ with requested as (
         count(*)                     as requested_line_count
     from {{ ref('stg_lemeng_request_order') }}
     where quantity > 0
+    {% if is_incremental() %}
+      and bizday >= {{ incremental_cutoff(7) }}
+    {% endif %}
     group by 1, 2, 3, 4
 ),
 shipped as (
@@ -40,6 +48,9 @@ shipped as (
         item_num,
         sum(quantity)::numeric(20,6) as shipped_quantity
     from {{ ref('stg_lemeng_transfer_in') }}
+    {% if is_incremental() %}
+    where bizday >= {{ incremental_cutoff(7) }}
+    {% endif %}
     group by 1, 2, 3, 4
 )
 select
