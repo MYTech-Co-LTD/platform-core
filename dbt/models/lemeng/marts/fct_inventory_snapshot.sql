@@ -1,5 +1,10 @@
 {{
-    config(materialized='table')
+    config(
+        materialized='incremental',
+        unique_key=['system_book', 'bizday', 'branch_num', 'storehouse_num', 'item_num'],
+        incremental_strategy='delete+insert',
+        on_schema_change='sync_all_columns'
+    )
 }}
 -- fct_inventory_snapshot.sql — 库存快照构件（W3 2026-10-13）。
 -- 【粒度】(system_book, bizday, branch_num, storehouse_num, item_num)。
@@ -17,3 +22,8 @@ select
     difference_quantity::numeric(20,6) as difference_quantity,
     difference_money::numeric(20,2) as difference_money
 from {{ ref('stg_lemeng_inventory_snapshot') }}
+{% if is_incremental() %}
+-- 增量窗口（#1520 W2-P1）：库存快照源端 T-2 发布，7 天 lookback 足够覆盖晚到；
+-- 用编译期字面量（incremental_cutoff）才能让 read_parquet 按 bizday 裁剪（#1524 教训）。
+where bizday >= {{ incremental_cutoff(7) }}
+{% endif %}
