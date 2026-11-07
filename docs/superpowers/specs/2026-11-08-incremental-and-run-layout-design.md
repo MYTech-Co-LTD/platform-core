@@ -132,8 +132,14 @@ probe(src.rest, page_size=1)        # 1 次请求，拿「最新一条」做指�
 
 ## 5. 本次已验 / 未验
 
-**已验**（本环境）：`${datetime}` run 目录可写；同管线并发被拒；`ctl.switch` 不能跳过 sink；
-`snk.minio` 只有 overwrite；`ctl.checkpoint` / `src.changed` 的字段形态。
+**已验**（本环境）：
+- `${datetime}` run 目录可写；同管线并发被拒；`ctl.switch` 不能跳过 sink；`snk.minio` 只有 overwrite；
+- **增量链路端到端跑通（2026-11-08，`request.order` 试点，测试前缀）**：
+  - 水位为空 → `pages=10` → `foreach` 跑 10 个子管线（11.1s，10 个分页请求）；
+  - 水位已是最新 → `pages=0` → **`foreach` 跑 0 个子管线**（3.6s，只有 1 次探针请求），run `ok` 不假红。
+- **实现细节（踩到的坑）**：`ctl.checkpoint` 会在比较之前把水位文件覆盖成当前值 ⇒ 下一节点读到的
+  「上一轮水位」已经是本轮 ⇒ 判定恒为「无新数据」。**正确做法**：水位用**旁路 sink** 写
+  （`cmp → wmk(code.sql: SELECT fp) → snk.parquet`），依赖关系保证它在比较之后执行。
 
 **未验**：
 - `ctl.checkpoint` + `src.parquet` 作为**采集水位**的完整回路（缺文件、并发写、损坏时的行为）；
