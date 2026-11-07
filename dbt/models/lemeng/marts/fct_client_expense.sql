@@ -1,5 +1,10 @@
 {{
-    config(materialized='table')
+    config(
+        materialized='incremental',
+        unique_key=['system_book', 'bizday', 'client_fid', 'other_inout_kind'],
+        incremental_strategy='delete+insert',
+        on_schema_change='sync_all_columns'
+    )
 }}
 -- fct_client_expense.sql — 客户费用构件（W2 2026-10-13）。粒度 (system_book, bizday, client_fid, other_inout_kind)。
 -- 【构件列（E 的客户面）】ep = Σ amount where flag=false（应付）；er = Σ where flag=true（应收）；
@@ -25,6 +30,9 @@ with agg as (
         sum(case when other_inout_flag = false then coalesce(other_inout_money, 0) else 0 end)::numeric(20,2) as ep_payable,
         sum(case when other_inout_flag = true then coalesce(other_inout_money, 0) else 0 end)::numeric(20,2) as er_receivable
     from {{ ref('stg_lemeng_client_expense') }}
+    {% if is_incremental() %}
+    where bizday >= {{ incremental_cutoff(7) }}
+    {% endif %}
     group by 1, 2, 3, 4
 ),
 -- BEGIN GENERATED MEASURES
@@ -34,6 +42,9 @@ with agg as (
 base_payable as (
     select * from {{ ref('stg_lemeng_client_expense') }}
     where other_inout_flag = false
+    {% if is_incremental() %}
+    and bizday >= {{ incremental_cutoff(7) }}
+    {% endif %}
 ),
 client_ep_payable__gen as (
     select system_book, bizday, client_fid, other_inout_kind, sum(coalesce(other_inout_money, 0))::numeric(20,2) as client_ep_payable__gen from base_payable group by 1, 2, 3, 4
@@ -41,6 +52,9 @@ client_ep_payable__gen as (
 base_receivable as (
     select * from {{ ref('stg_lemeng_client_expense') }}
     where other_inout_flag = true
+    {% if is_incremental() %}
+    and bizday >= {{ incremental_cutoff(7) }}
+    {% endif %}
 ),
 client_er_receivable__gen as (
     select system_book, bizday, client_fid, other_inout_kind, sum(coalesce(other_inout_money, 0))::numeric(20,2) as client_er_receivable__gen from base_receivable group by 1, 2, 3, 4
@@ -73,6 +87,9 @@ bill_count_cte as (
         other_inout_kind,
         count(distinct other_inout_bill_no) as bill_count
     from {{ ref('stg_lemeng_client_expense') }}
+    {% if is_incremental() %}
+    where bizday >= {{ incremental_cutoff(7) }}
+    {% endif %}
     group by 1, 2, 3, 4
 )
 select
