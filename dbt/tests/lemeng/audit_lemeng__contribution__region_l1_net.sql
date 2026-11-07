@@ -1,3 +1,4 @@
+{{ config(tags=['audit']) }}
 -- audit_lemeng__contribution__region_l1_net.sql — 「一级战区费用后贡献」的**独立复算** + **恒等断言**。
 --
 -- 直接打 parquet、**不 ref 任何 mart/staging**（理由同 `audit_lemeng__contribution__region_net.sql`：

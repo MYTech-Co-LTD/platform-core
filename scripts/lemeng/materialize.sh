@@ -277,7 +277,7 @@ if [ "$SCOPE" = audit ]; then
   _log="$_WORK/dbt.audit.log"
   _rc="$_WORK/dbt.audit.rc"
   ( if DATA_PLANE_DOMAINS="$TICK_DOMAIN" docker run --rm --network "$NETWORK" -v "$R/dbt:/usr/app" \
-      $(mat_env_args) "$IMAGE" test --profiles-dir /usr/app --threads 1 --select 'audit_*' 2>&1; then
+      $(mat_env_args) "$IMAGE" test --profiles-dir /usr/app --threads 1 --select 'tag:audit' 2>&1; then
     echo 0 >"$_rc"
   else
     echo $? >"$_rc"
@@ -313,7 +313,7 @@ for _d in $(printf '%s' "$DOMAINS" | tr ',' ' '); do
   # `--exclude`：全量档不写 tick 拥有的模型（见 FULL_EXCLUDE 注释）。
   if [ -n "$FULL_EXCLUDE" ]; then _EXC="--exclude ${FULL_EXCLUDE}"; else _EXC=''; fi
   ( if DATA_PLANE_DOMAINS="$_d" docker run --rm --network "$NETWORK" -v "$R/dbt:/usr/app" \
-      $(mat_env_args) "$IMAGE" $(mat_dbt_args) --select "$(mat_dbt_select "$_d")" ${_EXC} --exclude 'audit_*' 2>&1; then
+      $(mat_env_args) "$IMAGE" $(mat_dbt_args) --select "$(mat_dbt_select "$_d")" ${_EXC} --exclude 'tag:audit' 2>&1; then
     echo 0 >"$_rc"
   else
     echo $? >"$_rc"

@@ -1,3 +1,4 @@
+{{ config(tags=['audit']) }}
 -- audit_lemeng__inventory__quantity.sql — 库存数量指标的独立复算。
 -- 契约：dbt singular test 返回任何行即失败；空转自检防假绿。
 -- 口径见 fct_inventory_snapshot.sql 头注。

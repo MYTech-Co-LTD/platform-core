@@ -1,3 +1,4 @@
+{{ config(tags=['audit']) }}
 -- audit_lemeng__retail__recon_exchange_shape.sql — 换货「送出半边」公式的**输入形状守卫**（对账判别式族）。
 --
 -- ★ 承 #444：#398 那条「退货归属完备性」的基准已随 2026-10-05 口径订正**撤下**——

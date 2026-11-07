@@ -1,3 +1,4 @@
+{{ config(tags=['audit']) }}
 -- audit_audit_lemeng__expense__client_net.sql.sql — 指标的**独立复算**（对账；聚合面与 fct_client_expense 逐字同构，但直接打 parquet、
 -- 不 ref staging——复算走 staging 会让 cast 错同时污染两边 ⇒ 对账恒绿）。
 -- 契约：dbt singular test 返回任何行即失败；空转自检防「空集上的假绿」。

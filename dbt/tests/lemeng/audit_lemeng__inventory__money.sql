@@ -1,3 +1,4 @@
+{{ config(tags=['audit']) }}
 -- audit_lemeng__inventory__money.sql — 库存金额指标的独立复算。
 -- 契约与形态同 audit_lemeng__inventory__quantity.sql（那边写透了，不复制正文）。
 with recheck as (

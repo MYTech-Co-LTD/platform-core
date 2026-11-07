@@ -1,3 +1,4 @@
+{{ config(tags=['audit']) }}
 -- audit_lemeng__outbound__line_count.sql — 指标的**独立复算**（对账；骨架与聚合面同 fct_hq_outbound 逐字同构，
 -- 但直接打 parquet、不 ref staging——复算若走 staging，cast 错会同时污染两边 ⇒ 对账恒绿）。
 -- 契约：dbt singular test 返回任何行即失败。空转自检防「空集上的假绿」。

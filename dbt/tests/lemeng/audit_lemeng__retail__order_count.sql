@@ -1,3 +1,4 @@
+{{ config(tags=['audit']) }}
 -- audit_lemeng__retail__order_count.sql — 指标 `lemeng:retail:order_count` 的**独立复算**（对账）。
 --
 -- 契约与理由同 audit_lemeng__retail__net_sales.sql（dbt singular test：**返回任何行即失败**；

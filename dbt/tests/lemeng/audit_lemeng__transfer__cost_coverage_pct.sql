@@ -1,3 +1,4 @@
+{{ config(tags=['audit']) }}
 -- audit_lemeng__transfer__cost_coverage_pct.sql — 指标的**独立复算**（对账；聚合面与
 -- fct_transfer_line_quality 逐字同构，但直接打 parquet、不 ref staging——复算走 staging 会让
 -- cast 错同时污染两边 ⇒ 对账恒绿）。

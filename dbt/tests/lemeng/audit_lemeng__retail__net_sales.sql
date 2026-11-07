@@ -1,4 +1,4 @@
-{{ config(store_failures=true) }}
+{{ config(store_failures=true, tags=['audit']) }}
 -- audit_lemeng__retail__net_sales.sql — 指标 `lemeng:retail:net_sales` 的**独立复算**（对账）。
 --
 -- ★ `store_failures=true`（2026-10-17 加，issue #761）：本对账出现过**间歇 FAIL 1、重试自愈**，

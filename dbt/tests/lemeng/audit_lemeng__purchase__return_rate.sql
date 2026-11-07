@@ -1,3 +1,4 @@
+{{ config(tags=['audit']) }}
 -- audit_lemeng__purchase__return_rate.sql — 指标的**独立复算**（对账；聚合面与 fct_purchase 同构，
 -- 但**直接打 parquet、不 ref staging**——复算若走 staging，cast 错会同时污染两边 ⇒ 对账恒绿）。
 -- 契约：dbt singular test 返回任何行即失败。空转自检防「空集上的假绿」。

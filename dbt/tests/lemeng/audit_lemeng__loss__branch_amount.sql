@@ -1,3 +1,4 @@
+{{ config(tags=['audit']) }}
 -- audit_lemeng__loss__branch_amount.sql — 指标的**独立复算**（对账；与 fct_loss_adjustment 逐字同构，但直接打 parquet、
 -- 不 ref staging——复算走 staging 会让 cast 错同时污染两边 ⇒ 对账恒绿）。
 -- 契约：dbt singular test 返回任何行即失败；空转自检防「空集上的假绿」。

@@ -1,3 +1,4 @@
+{{ config(tags=['audit']) }}
 -- audit_lemeng__retail__comparable_growth_rate.sql — 可比门店增长率的**不变量断言**
 -- （刻意**不**复刻实现：同构复算只能抓 cast/join、抓不到口径错——`zero_cost` 两边同错恒绿是已证教训。
 --   这里断言的是**律**，任何实现只要违反就红。）
