@@ -51,6 +51,8 @@ export interface ExploreContext {
   maskedColumns: ReadonlySet<string>
   /** 有整值掩码的关系（整表拒）。 */
   maskedRelations: ReadonlySet<string>
+  /** 已声明的语义关系（W7 Task 2）：只有 verified 且命中率达标的关系可用于 join。 */
+  relations?: ReadonlyArray<import('./relations').RelationDecl>
 }
 
 export interface ExploreCompiledOk {

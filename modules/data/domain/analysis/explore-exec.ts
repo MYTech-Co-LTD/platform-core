@@ -12,6 +12,9 @@ import { writeAudit } from '../audit-store'
 import type { Channel } from '../authz'
 import { loadDbtModels } from '../system-map/map'
 import { compileExplore } from './explore'
+import { readFileSync, existsSync } from 'node:fs'
+import { join } from 'node:path'
+import { parseRelationsYaml } from './relations'
 import type { ExploreContext, ExploreErrorCode, ExploreSpec } from './explore'
 
 export interface ExploreExecutor {
@@ -105,7 +108,13 @@ export async function loadExploreContext(deps: {
     list.push({ name: column, dataType })
     columns.set(name, list)
   }
-  return { allowedRelations, columns, maskedColumns, maskedRelations }
+  // W7 Task 2：关系声明（仓内事实源）。读不到 ⇒ 空集（join 全部不可用，不会静默放宽）。
+  const relPath = join(deps.repoRoot ?? '/app', 'dbt', 'semantics', 'relations.yml')
+  let relations: ReturnType<typeof parseRelationsYaml>['relations'] = []
+  try {
+    if (existsSync(relPath)) relations = parseRelationsYaml(readFileSync(relPath, 'utf8')).relations
+  } catch { relations = [] }
+  return { allowedRelations, columns, maskedColumns, maskedRelations, relations }
 }
 
 /** 审计用的 spec 形状（**值不落库**）。 */
