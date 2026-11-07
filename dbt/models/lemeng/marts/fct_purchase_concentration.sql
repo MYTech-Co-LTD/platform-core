@@ -68,9 +68,10 @@ supplier_period as (
           -- 真机实测 40,371 个商品号全部可无损转 bigint，故往 bigint 靠。
           and i.item_num::bigint = p.item_num
     {% if is_incremental() %}
-    -- 月度粒度：60 天 lookback 覆盖当月 + 上月（spec §3 的 fct_purchase_concentration 行）。
-    -- 目标表 bizday 是月首，max(bizday)-60d 落到上上月边界附近；多算一月比漏月安全。
-    where p.bizday >= {{ incremental_cutoff(60) }}
+    -- 月度粒度：目标 bizday 是月首，max(bizday)-60d 会落在**月中**（如 11-01-60d=09-02），
+    -- 直接过滤会把 9 月截掉 9-01 一天 ⇒ 9 月总额少算（2026-11-07 定向验证实测 -1,151,819.30）。
+    -- 必须先把下界对齐到月首：date_trunc('month', cutoff)。
+    where p.bizday >= date_trunc('month', {{ incremental_cutoff(60) }})::date
     {% endif %}
     group by 1, 2, 3, 4
 ),
