@@ -225,7 +225,7 @@ describe('gen-pipeline：incremental（真增量）', () => {
     const tail = p.nodes.find((n: any) => n.id === 'tail')
     expect(tail.data.componentId).toBe('src.rest')
     expect(tail.data.properties.body).toContain('"page_number":4')
-    expect(tail.data.properties.body).toContain('"page_size":1')
+    expect(tail.data.properties.body).toContain('"page_size":100')
     const die = p.nodes.find((n: any) => n.id === 'dgt')
     expect(die.data.componentId).toBe('ctl.die')
     expect(die.data.properties.condition).toBe('has-rows')

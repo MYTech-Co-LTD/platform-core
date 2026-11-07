@@ -393,7 +393,7 @@
           "connectionRef": "lemeng",
           "url": "https://cloud.nhsoft.cn/agi/api/nhsoft.ama.ai.request.order.find",
           "method": "POST",
-          "body": "{\"date_start\":\"${date-1d}\",\"date_end\":\"${date-1d}\",\"date_type\":\"制单时间\",\"page_number\":10,\"page_size\":1}",
+          "body": "{\"date_start\":\"${date-1d}\",\"date_end\":\"${date-1d}\",\"date_type\":\"制单时间\",\"page_number\":10,\"page_size\":100}",
           "responsePath": "/result",
           "paginationType": "none",
           "headers": {

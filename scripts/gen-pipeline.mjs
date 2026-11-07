@@ -537,7 +537,9 @@ export function buildPipeline(m, name = m.id) {
       // foreach 形态没有 merge 可数 ⇒ 用「第 pages+1 页」尾页探针（与静态页哨兵同义：
       // 尾页非空 = 已击穿 pages × pageSize）。代价是每轮多 1 次请求；无新数据时也跑。
       const tailPage = /** @type {number} */ (pg.pages) + 1
-      const tailBody = pageBody(s.body, pageParam, pg.pageSizeParam, 1, tailPage)
+      // 尾页必须用**同一 pageSize**：page 10 只有在 pageSize=100 时才从第 901 行开始；
+      // 改成 1 会让 page 10 变成有效页（真机 2026-11-08 踩过）。
+      const tailBody = pageBody(s.body, pageParam, pg.pageSizeParam, pg.pageSize, tailPage)
       nodes.push({
         id: 'tail',
         type: 'source',
