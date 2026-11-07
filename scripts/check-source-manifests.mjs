@@ -10,7 +10,7 @@
 // （或手改生成物）会让仓里两套事实悄悄漂移——生成器 --check 只查单个，本脚本查全量。
 import { existsSync, readdirSync, readFileSync } from 'node:fs'
 import { join } from 'node:path'
-import { buildPipeline, validateManifest } from './gen-pipeline.mjs'
+import { buildPipeline, pipelineNames, validateManifest } from './gen-pipeline.mjs'
 
 const MANIFEST_DIR = 'deploy/duckle/manifests'
 const PIPELINE_DIR = 'deploy/duckle/console/pipelines'
@@ -33,17 +33,18 @@ for (const f of files) {
     violations.push(`${f}: ${errs.join('；')}`)
     continue
   }
-  const m = /** @type {{ id: string }} */ (raw)
-  const rendered = `${JSON.stringify(buildPipeline(/** @type {any} */ (raw)), null, 2)}\n`
-  const promoted = join(PIPELINE_DIR, `${m.id}.json`)
-  const generated = join(GENERATED_DIR, `${m.id}.json`)
-  const target = existsSync(promoted) ? promoted : existsSync(generated) ? generated : null
-  if (target === null) {
-    violations.push(`${f}: 缺生成物（${promoted} / ${generated} 都不存在）`)
-    continue
-  }
-  if (readFileSync(target, 'utf8') !== rendered) {
-    violations.push(`${f}: ${target} 与 manifest 不一致（改 manifest 后重生成）`)
+  for (const name of pipelineNames(/** @type {any} */ (raw))) {
+    const rendered = `${JSON.stringify(buildPipeline(/** @type {any} */ (raw), name), null, 2)}\n`
+    const promoted = join(PIPELINE_DIR, `${name}.json`)
+    const generated = join(GENERATED_DIR, `${name}.json`)
+    const target = existsSync(promoted) ? promoted : existsSync(generated) ? generated : null
+    if (target === null) {
+      violations.push(`${f}: 缺生成物（${promoted} / ${generated} 都不存在）`)
+      continue
+    }
+    if (readFileSync(target, 'utf8') !== rendered) {
+      violations.push(`${f}: ${target} 与 manifest 不一致（改 manifest 后重生成）`)
+    }
   }
 }
 
