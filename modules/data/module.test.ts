@@ -71,7 +71,7 @@ describePg('迁移（需要 DATABASE_URL）', () => {
     expect(t.rows.map((r) => r.table_name)).toEqual([
       'asset_acl', 'asset_audit',
       'client_store_override', 'demand_mining_state', 'demand_signals',
-      'dim_branch', 'dim_item', 'dim_item_price', 'dim_settlement_order_line', 'dim_transfer_out', 'dim_wholesale_out', 'metric_audit', 'metric_candidates', 'metrics', 'query_audit', 'query_keys', 'report_narratives', 'report_versions', 'reports', 'verified_questions',
+      'dim_branch', 'dim_item', 'dim_item_price', 'dim_settlement_order_line', 'dim_transfer_out', 'dim_wholesale_out', 'metric_audit', 'metric_candidates', 'metrics', 'query_audit', 'query_keys', 'report_narratives', 'report_versions', 'reports', 'semantic_relation', 'verified_questions',
     ])
 
     // 口径两条（都是开工实测订正，别按口味改回去）：
