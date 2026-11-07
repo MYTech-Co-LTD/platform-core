@@ -2,26 +2,50 @@
 #
 # 纪律：**每条都必须带 evidence**（命中率 + 抽样日）。命中率 <0.95 不许 verified。
 # 维表非唯一时必须写 dedupRule（2026-11-07 实测 stg_lemeng_item ≈42 行/商品，不去重放大 ~41 倍）。
+# `latest_snapshot` 的语义是「取全表最新快照 = 当前值」，**不是**按 bizday 的历史 as-of；
+# 需要「那天属哪个战区」的消费方另行建模，别把它当 as-of join 用。
+#
+# ★ 附加键 `keys` 不是可选项（2026-11-07 真机实测）：事实表与维表都含两个账套（3120/64188），
+#   `branch_num` / `item_num` 跨账套重号 ⇒ 单键 join 会跨账套重复匹配：
+#   · 门店：fct_retail_sale 单日 202 行 → 单键 join 14,292 行（70×）；去重+system_book 后 202 行；
+#   · 商品：fct_retail_item_sale 单日 7,867 行 → 单键 join 8,785 行（+11.7%）；去重+system_book 后 7,867 行。
 version: 1
 relations:
   - name: retail_sale_branch
     from: { relation: fct_retail_sale, column: branch_num }
     to:   { relation: dim_lemeng_branch, column: branch_num }
+    keys: [{ from: system_book, to: system_book }]
     cardinality: N:1
+    dedupRule: latest_snapshot
     status: verified
-    evidence: { matchRate: 1.0, sampledDay: '2026-10-01..2026-11-06', rowsProbed: 571626 }
+    evidence:
+      matchRate: 1.0
+      sampledDay: '2026-10-01..2026-11-06'
+      rowsProbed: 571626
+      note: '单键 join 单日 202→14,292 行（70×）；distinct on (system_book,branch_num) + 双键后 202 行'
 
   - name: retail_item_sale_item
     from: { relation: fct_retail_item_sale, column: item_num }
     to:   { relation: dim_item_latest, column: item_num }
+    keys: [{ from: system_book, to: system_book }]
     cardinality: N:1
     dedupRule: latest_snapshot
     status: verified
-    evidence: { matchRate: 1.0, sampledDay: '2026-10-20', rowsProbed: 7221, matchedDistinct: 1858 }
+    evidence:
+      matchRate: 1.0
+      sampledDay: '2026-11-06'
+      rowsProbed: 7867
+      matchedDistinct: 1858
+      note: '单键 join 7,867→8,785 行（+11.7%，跨账套同号）；双键后 7,867 行'
 
   - name: outbound_client
     from: { relation: fct_hq_outbound, column: client_fid }
     to:   { relation: dim_lemeng_client, column: client_fid }
+    keys: [{ from: system_book, to: system_book }]
     cardinality: N:1
-    status: candidate
-    evidence: { matchRate: null, sampledDay: null, note: '待真机测命中率后升 verified' }
+    status: verified
+    evidence:
+      matchRate: 1.0
+      sampledDay: '2024-11-01..2026-11-05'
+      rowsProbed: 44793
+      note: '全表 131,151 行中 44,793 行有 client_fid（transfer 行恒 NULL，建模如此）；有键行 44,793/44,793 命中'

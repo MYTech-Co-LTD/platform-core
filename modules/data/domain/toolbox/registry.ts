@@ -150,13 +150,20 @@ export const ANALYST_TOOLS: readonly ToolMeta[] = [
   {
     name: 'explore_query', group: 'query', title: '受约束探索查询',
     description:
-      '对 marts 做结构化聚合（**不收 SQL 文本**）：relation + measures + dimensions + filters + limit。'
-      + 'org 由平台钉死；列必须真实存在；被掩码的列/整表拒用；行上限 1000。用于「为什么/构成/对比」类分析；'
+      '对 marts 做结构化聚合（**不收 SQL 文本**）：relation + joins + measures + dimensions + filters + limit。'
+      + 'org 由平台钉死；列必须真实存在；被掩码的列/整表拒用；行上限 1000。'
+      + '跨对象问题先 joins 声明语义关系（见 relations.yml），再用 `<关系名>.<列>` 引用被 join 表的列；'
+      + 'join 是内连接（空键/未匹配行不计）。用于「为什么/构成/对比」类分析；'
       + '要拿已认证口径的数字仍用 query_metric。',
     inputSchema: {
       type: 'object',
       properties: {
         relation: { type: 'string', description: 'marts 模型名（如 fct_retail_sale）' },
+        joins: {
+          type: 'array',
+          items: { type: 'string' },
+          description: '语义关系名（relations.yml，≤5）；只有 verified 且命中率 ≥0.95 的关系可用',
+        },
         measures: {
           type: 'array',
           description: '聚合列（1–10 项）',
