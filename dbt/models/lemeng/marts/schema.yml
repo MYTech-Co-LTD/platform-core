@@ -853,3 +853,54 @@ models:
       - name: item_days_zero_cost
         description: 该商品在本域全期零成本的天数（跨多日持续 ⇒ 更像主数据缺口；**不是结论**）。
         tests: [{not_null: {}}]
+
+  - name: fct_order_event
+    description: >-
+      **订单事件（降级版：类型 + 时间 + 关联单号，不做状态迁移）**（W7 Task 4）。行级事件，
+      粒度 `(system_book, bizday, order_no, order_detail_num)`（唯一性由
+      `assert_fct_order_event_grain_unique` 钉住）。`event_type` 来自 `order_transaction_type`
+      （SALE 含 CANCELED，取消态留在 `state`）；`event_time = order_time`。
+      真机 2026-10-20：15,267 行（SALE 15,157 / FULL_RETURN 69 / PARTIAL_RETURN 9 / REPAID_RETURN 32），
+      `ref_order_no` 覆盖率 **201/15,267 ≈ 1.3%**（如实证报数）。
+      **为什么不做状态机**：单日 9,361 单中 **0 单**有多状态 ⇒ 状态迁移不可重建。
+      **范围**：incremental；首建只回填最近 **30 天**，之后每次只重算最近 7 天（全历史 CTAS 会打崩仓库内存）。
+    columns:
+      - name: system_book
+        description: 账套。粒度键。
+        tests: [{not_null: {}}]
+      - name: org
+        description: 主体列（宏注入）。
+        tests: [{not_null: {}}]
+      - name: bizday
+        description: 业务日。粒度键。
+        tests: [{not_null: {}}]
+      - name: order_no
+        description: 订单号。粒度键。
+        tests: [{not_null: {}}]
+      - name: order_detail_num
+        description: 明细行号。粒度键。
+        tests: [{not_null: {}}]
+      - name: event_type
+        description: 事件类型（SALE / FULL_RETURN / PARTIAL_RETURN / REPAID_RETURN / OTHER）。
+        tests: [{not_null: {}}]
+      - name: order_transaction_type
+        description: 源侧交易类型（映射前原值；OTHER 的排查入口）。
+      - name: state
+        description: 源侧单据状态（FINISHED / CANCELED / REPAID / …）；SALE 含 CANCELED。
+      - name: event_time
+        description: 成交时间（order_time）。
+        tests: [{not_null: {}}]
+      - name: operate_time
+        description: 操作时间（order_operate_time）。
+      - name: ref_order_no
+        description: 退货关联原单号（order_ref_billno）。**可空**；对账自 2026-10-05 起不依赖它。
+      - name: branch_num
+        description: 门店号。
+      - name: branch_name
+        description: 门店名。
+      - name: item_num
+        description: 商品号。
+      - name: sale_money
+        description: 行成交金额（元）。
+      - name: quantity
+        description: 行数量。
