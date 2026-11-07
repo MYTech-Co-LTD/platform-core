@@ -57,14 +57,16 @@ IMAGE=${MATERIALIZE_DBT_IMAGE:-platform-core-dbt:local}
 
 # ── 判别面（materialize.test.sh 从这里抽函数测；这些函数不许碰 docker）──────────
 # 透传键清单：只透传**键名**（`-e VAR` 形态）——值写进 argv 就进 ps。
-# 键集 9 个：DBT_HOST 是字面量（服务名，非敏感），其余 8 个由下方 export 供值。
+# 键集 11 个：DBT_HOST 是字面量（服务名，非敏感）；AUDIT_WINDOW_START/PATTERNS 由
+# hourly 档在主流程里 export（#1614 窗口对账）；其余 8 个由下方 export 供值。
 mat_env_args() {
   printf '%s ' \
     -e DBT_HOST=pg_duckdb \
     -e DBT_USER -e DBT_PASSWORD -e DBT_DBNAME \
     -e LEMENG_ZOS_BUCKET -e LEMENG_ZOS_REGION -e LEMENG_ZOS_ENDPOINT \
     -e LEMENG_SUBJECT_ORG \
-    -e DATA_PLANE_DOMAINS
+    -e DATA_PLANE_DOMAINS \
+    -e AUDIT_WINDOW_START -e AUDIT_WINDOW_PATTERNS
 }
 # dbt 命令：`build`（seed+model+test 一把跑，按 DAG 依赖序）。**选择器由调用方按域追加**
 # （`--select "$(mat_dbt_select <域>)"`），所以本函数只给固定前缀。
@@ -267,17 +269,21 @@ if [ "$SCOPE" = tick ]; then
   exit 0
 fi
 
-# ── audit 档（#1614）：全史对账单独每日跑，不再拖慢每轮 build ─────────────────────────
+# ── audit 档（#1614/#1619）：全史对账单独每日跑，不再拖慢每轮 build ─────────────────────
 # 为什么分档：`audit_*` 每条都**独立全史复算**（read_parquet 扫 730 天），30 条串行
-# 占 60+ 分钟；全量档已 `--exclude 'audit_*'`，把全史对账降为每日一次（本档），
+# 占 60+ 分钟；全量档已排除 audit 两档 tag，把全史对账降为每日一次（本档），
 # 每轮 build 只留 schema tests + 便宜的 assert_*（粒度/键唯一）。
 # 口径不变：audit 的 SQL 一个字没改，只是换了执行频次。
+# tag 语义（#1619）：`tag:audit` = 只属每日全史档的对账；`tag:audit_window` = 每小时档
+# 的十条核心对账（**不带** tag:audit，否则 hourly 档没法用 `--exclude tag:audit` 把它们
+# 和被 eager 间选拖进来的 46 条全史对账一起减掉——真机实测 133 节点里混进了全史档）。
+# 本档用并集把两档**都**全史跑一遍（窗口对账的 env 未设 = 全史，覆盖不变）。
 if [ "$SCOPE" = audit ]; then
-  echo "── audit: audit_*（全史对账；每日独立 job）──"
+  echo "── audit: audit_* 两档并集（全史对账；每日独立 job）──"
   _log="$_WORK/dbt.audit.log"
   _rc="$_WORK/dbt.audit.rc"
   ( if DATA_PLANE_DOMAINS="$TICK_DOMAIN" docker run --rm --network "$NETWORK" -v "$R/dbt:/usr/app" \
-      $(mat_env_args) "$IMAGE" test --profiles-dir /usr/app --threads 1 --select 'tag:audit' 2>&1; then
+      $(mat_env_args) "$IMAGE" test --profiles-dir /usr/app --threads 1 --select 'tag:audit tag:audit_window' 2>&1; then
     echo 0 >"$_rc"
   else
     echo $? >"$_rc"
@@ -287,6 +293,68 @@ if [ "$SCOPE" = audit ]; then
     exit 1
   fi
   echo "MATERIALIZE_OK scope=audit"
+  exit 0
+fi
+
+# ── hourly 档（#1614/#1619）：增量模型 + 核心窗口 audit（每小时）──────────────────────
+# 只跑 `config.materialized:incremental`（不碰全量 table / staging 视图测试 / 全史 audit），
+# 并给**核心 audit**（tag:audit_window）传「月段字符类」窗口：`2026-10-3[0-1],2026-11-0[1-6]`。
+# 实测（2026-11-07）：单串字符类 day 1.07s / hour 5.66s；按天 union 32 次读 = 219s+（比全史还慢）。
+# ⇒ 窗口必须体现在**路径**上，且每个月段只发一次 read_parquet。
+# ⚠️ 选择器语义（2026-11-07 真机 dbt ls 实证，dbt 1.9.1）：
+#   · 逗号**不是**并集——`tag:audit,tag:audit_window` 是一个字面 criterion，匹配不到
+#     任何节点（select 侧直接报「selection criterion does not match any nodes」）；
+#     并集 = **空格**（同 mat_dbt_select 三段式先例）或重复 flag。
+#   · `--exclude fct_retail_sale` 会**级联**删掉依赖它的 test——net_sales 对账
+#     （ref fct_retail_sale）在本档被一并排除 ⇒ hourly 实际跑 **9 条**窗口对账；
+#     retail 域的小时级新鲜度由 net_quantity（读同一份湖）覆盖，net_sales 走每日全史档。
+#   · 不加 `--exclude tag:audit` 也不行：dbt build 的 **eager 间选**会把 ref() 了被选
+#     模型的 singular test 全部拖进来（实测 133/147 节点混进 46 条全史对账）。
+#   · 十条窗口对账因此**不带** tag:audit（带了两挡的排除法就不成立），每日档用并集收它们。
+if [ "$SCOPE" = hourly ]; then
+  # 窗口 = **增量 lookback 窗口**（today−7 .. 昨天），不是月初（2026-11-07 真机实证）：
+  #   增量 mart 只重建 `max(bizday)−7` 之后的分区，更老的列是**建表当时的快照**——源头若
+  #   事后重述/重采，mart 不会跟着变。audit 窗口若比这更宽，那些老分区必然「湖新 mart 旧」
+  #   假红（实测 transfer 2260 条差异 **全部** 落在 10-01..10-27，无一在 7 天内）。
+  #   小时对账的语义就是「验本轮刚重建的那部分」，全史由每日 09:00 的全史 audit job 负责。
+  #   9 张被审 mart 的 lookback 实测都是 7（见各模型 incremental_cutoff(7)）。
+  # 路径 glob 仍用「上月+本月」融合字符类（粗过滤，够覆盖 7 天窗口的两个月边界）。
+  _win=$(python3 - <<'PY'
+from datetime import datetime, timedelta
+from zoneinfo import ZoneInfo
+today = datetime.now(ZoneInfo('Asia/Shanghai')).date()
+first_this = today.replace(day=1)
+first_prev = (first_this - timedelta(days=1)).replace(day=1)
+def fuse(a, b):
+    out = ''
+    for ca, cb in zip(a, b):
+        out += ca if ca == cb else f'[{ca}{cb}]'
+    return out
+ym1, ym2 = first_prev.strftime('%Y-%m'), first_this.strftime('%Y-%m')
+print((today - timedelta(days=7)).isoformat(), fuse(ym1, ym2) + '-*')
+PY
+)
+  AUDIT_WINDOW_START=${_win%% *}
+  AUDIT_WINDOW_PATTERNS=${_win#* }
+  export AUDIT_WINDOW_START AUDIT_WINDOW_PATTERNS
+  echo "── hourly: incremental + window audits（start=${AUDIT_WINDOW_START} lookback-glob=${AUDIT_WINDOW_PATTERNS}）──"
+  _log="$_WORK/dbt.hourly.log"
+  _rc="$_WORK/dbt.hourly.rc"
+  ( if DATA_PLANE_DOMAINS="$TICK_DOMAIN" docker run --rm --network "$NETWORK" -v "$R/dbt:/usr/app" \
+      $(mat_env_args) "$IMAGE" $(mat_dbt_args) --select config.materialized:incremental tag:audit_window --exclude 'tag:audit' --exclude fct_retail_sale 2>&1; then
+    echo 0 >"$_rc"
+  else
+    echo $? >"$_rc"
+  fi ) | tee "$_log"
+  if [ "$(cat "$_rc")" != 0 ]; then
+    echo "MATERIALIZE_FAILED:dbt_build（hourly）；retry 由 openship job 配置承担" >&2
+    exit 1
+  fi
+  if ! mat_log_has_build "$_log"; then
+    echo "MATERIALIZE_OK scope=hourly noop（选择器没有匹配到任何节点）"
+    exit 0
+  fi
+  echo "MATERIALIZE_OK scope=hourly"
   exit 0
 fi
 
@@ -313,7 +381,7 @@ for _d in $(printf '%s' "$DOMAINS" | tr ',' ' '); do
   # `--exclude`：全量档不写 tick 拥有的模型（见 FULL_EXCLUDE 注释）。
   if [ -n "$FULL_EXCLUDE" ]; then _EXC="--exclude ${FULL_EXCLUDE}"; else _EXC=''; fi
   ( if DATA_PLANE_DOMAINS="$_d" docker run --rm --network "$NETWORK" -v "$R/dbt:/usr/app" \
-      $(mat_env_args) "$IMAGE" $(mat_dbt_args) --select "$(mat_dbt_select "$_d")" ${_EXC} --exclude 'tag:audit' 2>&1; then
+      $(mat_env_args) "$IMAGE" $(mat_dbt_args) --select "$(mat_dbt_select "$_d")" ${_EXC} --exclude 'tag:audit tag:audit_window' 2>&1; then
     echo 0 >"$_rc"
   else
     echo $? >"$_rc"

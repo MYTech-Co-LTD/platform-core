@@ -64,3 +64,31 @@
 - **C**：full-refresh 放到回填结束后的 09:00 之后。
 
 > 选定后把本条改为“已执行 <时间> / 结果”，并记录前后对账数字。
+
+## 5. 小时窗口对账档（#1619，2026-11-07 落地）
+
+**做了什么**：`dbt/macros/window_read_parquet.sql`（湖读取窗口/全史双模）+ 9 条核心
+audit 打 `tag:audit_window` + `materialize.sh` 新增 `hourly` 档。
+
+**关键约束（全部真机实证，改动前必看）**：
+
+| 约束 | 为什么 | 违反的后果 |
+|---|---|---|
+| 宏只能输出**裸 `read_parquet(...)` 函数调用** | 本栈取列必须 `from read_parquet('…') r` + `r['列']`，别名挂函数上 | 包一层子查询 ⇒ `cannot subscript type record`，9 条全灭 |
+| 宏体内**不能有 `if/endif` 控制流块** | dbt 1.9 解析器报「block definition inside control flow」 | 整棵树编译失败（开跑即挂） |
+| 路径窗口用**单个**融合月段字符类 glob | 多 pattern union 与上一条冲突；按天 union 219s+ 比全史还慢 | 无可行解 |
+| **窗口起点 = today−7**（增量 lookback），不是月初 | 增量 mart 只重建最近 7 天，更老分区是建表快照 | 源头重述后老分区必然假红（实测 transfer 2260 条全落在 10-01..10-27） |
+| mart 侧也必须同窗（`window_start_date()`） | 否则 full join 出 13 万条「recheck NULL vs 物化有值」 | 假红 |
+| dbt 选择器并集用**空格**，不是逗号 | dbt 1.9.1 把逗号当**一个字面 criterion** | select 报错 / exclude 静默 no-op |
+| hourly 必须 `--exclude tag:audit` | eager 间选把 ref() 被选模型的 singular test 全拖进来 | 46 条全史对账混进小时档（实测 133 节点） |
+
+**实测数字（2026-11-07）**：
+- 单串字符类：day 腿 1.07s / hour 腿 5.66s（全史 206s）
+- 9 条窗口 audit 耗时：branch_net 2.87s、loss 3.15s、purchase 3.43s、request 3.74s、
+  member 4.28s、outbound 9.39s、inventory 9.98s、**retail net_quantity 62.40s**、
+  transfer item_gross_margin_rate 1.21s（窗口收窄后）
+- 整轮 hourly：15 个增量模型 + 93 个 data test，约 14 分钟（模型 ~9 分钟，重头是
+  `fct_order_event` 170s / `fct_retail_item_sale` 285s / `fct_retail_quantity` ~100s）
+
+**已知遗留**：`fct_retail_item_sale` 读零售热小时与 10 分钟采集构成 ETag 竞态
+（今日三轮里两轮 285s ERROR、一轮通过）⇒ issue #1620（热腿只读已封版小时）。

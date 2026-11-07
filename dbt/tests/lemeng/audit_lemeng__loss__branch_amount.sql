@@ -1,8 +1,10 @@
-{{ config(tags=['audit']) }}
+{{ config(tags=['audit_window']) }}
 -- audit_lemeng__loss__branch_amount.sql — 指标的**独立复算**（对账；与 fct_loss_adjustment 逐字同构，但直接打 parquet、
 -- 不 ref staging——复算走 staging 会让 cast 错同时污染两边 ⇒ 对账恒绿）。
 -- 契约：dbt singular test 返回任何行即失败；空转自检防「空集上的假绿」。
 -- 口径见 fct_loss_adjustment.sql 头注（本文件比较：报损/调整金额 Σ total_money，粒度 book×bizday×店×原因×方向）。
+-- 【窗口化 #1614】tags 加 audit_window：每小时档经 window_read_parquet 路径级裁剪湖读取，
+--   mart 侧同窗（window_start_date）；env 未设（每日全史档）时宏原样全史 glob。
 with recheck as (
 select
 r['system_book']::varchar as system_book,
@@ -11,16 +13,18 @@ r['branch_num']::int      as branch_num,
 r['cause']::varchar       as cause,
 r['direction']::varchar   as direction,
 sum(coalesce(r['total_money']::numeric, 0))::numeric(20,2) as v
-from read_parquet(
-'s3://{{ var("zos_bucket") }}/{{ var("lemeng_loss_adjustment_prefix") }}/system_book=*/bizday=*/all.parquet'
-) r
+from {{ window_read_parquet(
+'s3://' ~ var('zos_bucket') ~ '/' ~ var('lemeng_loss_adjustment_prefix') ~ '/system_book=*/bizday=*/all.parquet'
+) }} r
 where r['bizday']::date < CAST(now() AT TIME ZONE 'Asia/Shanghai' AS DATE)
+and r['bizday']::date >= date '{{ window_start_date() }}'
 group by 1, 2, 3, 4, 5
 ),
 materialized as (
 select system_book, bizday, branch_num, cause, direction, loss_money
 from {{ ref('fct_loss_adjustment') }}
 where bizday < CAST(now() AT TIME ZONE 'Asia/Shanghai' AS DATE)
+  and bizday >= date '{{ window_start_date() }}'
 )
 select
 coalesce(a.system_book, b.system_book) as system_book,

@@ -1,7 +1,11 @@
-{{ config(tags=['audit']) }}
+{{ config(tags=['audit_window']) }}
 -- audit_lemeng__transfer__item_gross_margin_rate.sql — 指标的**独立复算**（对账；聚合面与
 -- fct_transfer_item 逐字同构，但直接打 parquet、不 ref staging）。ratio 比较：两侧各自算 g/r
 --（分母 0/null 行两侧同为 null，is distinct from 不误报）。口径见 fct_transfer_item.sql 头注。
+-- 【窗口化 #1614】tags 加 audit_window（transfer 域核心：fct_transfer_item 是增量 mart）；
+--   每小时档经 window_read_parquet 路径级裁剪湖读取，mart 侧同窗（window_start_date）；
+--   env 未设（每日全史档）时宏原样全史 glob。同域 batch_fill_rate 系 refs 全量表
+--   fct_transfer_line_quality（未增量），不进每小时档。
 with item_lines as (
     select
         r['system_book']::varchar as system_book,
@@ -9,13 +13,14 @@ with item_lines as (
         r['item_num']::bigint     as item_num,
         sum(r['out_money']::numeric)::numeric(20,2) as r_net,
         sum(r['subtotal']::numeric)::numeric(20,2)  as c_cost
-    from read_parquet(
-        's3://{{ var("zos_bucket") }}/{{ var("lemeng_transfer_out_prefix") }}/*/bizday=**/*.parquet'
-    ) r
+    from {{ window_read_parquet(
+        's3://' ~ var('zos_bucket') ~ '/' ~ var('lemeng_transfer_out_prefix') ~ '/*/bizday=**/*.parquet'
+    ) }} r
     where r['state_code']::int = 3
       and r['out_branch_num']::int = 99
       and r['branch_num']::int <> r['out_branch_num']::int
       and r['bizday']::date < CAST(now() AT TIME ZONE 'Asia/Shanghai' AS DATE)
+      and r['bizday']::date >= date '{{ window_start_date() }}'
     group by 1, 2, 3
 ),
 recheck as (
@@ -28,6 +33,7 @@ materialized as (
     select system_book, bizday, item_num, g_gross, r_net, c_cost
     from {{ ref('fct_transfer_item') }}
     where bizday < CAST(now() AT TIME ZONE 'Asia/Shanghai' AS DATE)
+      and bizday >= date '{{ window_start_date() }}'
 )
 select
     coalesce(a.system_book, b.system_book) as system_book,

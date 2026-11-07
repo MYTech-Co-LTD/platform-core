@@ -1,4 +1,4 @@
-{{ config(store_failures=true, tags=['audit']) }}
+{{ config(store_failures=true, tags=['audit_window']) }}
 -- audit_lemeng__retail__net_sales.sql — 指标 `lemeng:retail:net_sales` 的**独立复算**（对账）。
 --
 -- ★ `store_failures=true`（2026-10-17 加，issue #761）：本对账出现过**间歇 FAIL 1、重试自愈**，
@@ -76,10 +76,7 @@ with base_cold as (
          and r['quantity']::decimal(38,10) > 0
          and abs(r['discount_money']::decimal(38,10) - r['order_detail_std_price']::decimal(38,10) * r['quantity']::decimal(38,10)) <= 0.02
         ) as is_gift
-    from read_parquet(
-        -- ⚠️ 与 staging **同路径**（通配两账套，含封版排除语义）——对账必须与受测面同口径，否则只对账了 3120（issue #250）。
-        's3://{{ var("zos_bucket") }}/{{ var("lemeng_retail_order_line_prefix") }}/_DAY_DATA/system_book=*/bizday=*/all.parquet'
-    ) r
+    from {{ window_read_parquet('s3://' ~ var('zos_bucket') ~ '/' ~ var('lemeng_retail_order_line_prefix') ~ '/_DAY_DATA/system_book=*/bizday=*/all.parquet') }} r
     where r['state'] = 'FINISHED'
       and r['order_transaction_type'] = 'SALE_ORDER'
       -- ⚠️ 只比**已闭窗营业日**（bizday < 上海今天）：今天的文件正被 5 分钟一班的 tick 重写，
@@ -87,6 +84,7 @@ with base_cold as (
       --    （实测 2026-10-06 run `jrun_dtyVWZnnFaQ_pCCN` attempt 1 就红在这，报 ETag 变化）。
       --    今天未定稿、按定稿线本就不判；两侧**都**滤掉今天，才是同量对比。
       and r['bizday']::date < CAST(now() AT TIME ZONE 'Asia/Shanghai' AS DATE)
+      and r['bizday']::date >= date '{{ window_start_date() }}'
 ),
 base_hot as (
     -- 热腿：未封版日的小时文件——排除已封版日（同 stg 冷热合流，#984）
@@ -104,9 +102,7 @@ base_hot as (
          and r['quantity']::decimal(38,10) > 0
          and abs(r['discount_money']::decimal(38,10) - r['order_detail_std_price']::decimal(38,10) * r['quantity']::decimal(38,10)) <= 0.02
         ) as is_gift
-    from read_parquet(
-        's3://{{ var("zos_bucket") }}/{{ var("lemeng_retail_order_line_prefix") }}/system_book=*/bizday=*/hour=*/all.parquet'
-    ) r
+    from {{ window_read_parquet('s3://' ~ var('zos_bucket') ~ '/' ~ var('lemeng_retail_order_line_prefix') ~ '/system_book=*/bizday=*/hour=*/all.parquet') }} r
     where r['state'] = 'FINISHED'
       and r['order_transaction_type'] = 'SALE_ORDER'
       -- ⚠️ 只比**已闭窗营业日**（bizday < 上海今天）：今天的文件正被 5 分钟一班的 tick 重写，
@@ -114,6 +110,7 @@ base_hot as (
       --    （实测 2026-10-06 run `jrun_dtyVWZnnFaQ_pCCN` attempt 1 就红在这，报 ETag 变化）。
       --    今天未定稿、按定稿线本就不判；两侧**都**滤掉今天，才是同量对比。
       and r['bizday']::date < CAST(now() AT TIME ZONE 'Asia/Shanghai' AS DATE)
+      and r['bizday']::date >= date '{{ window_start_date() }}'
       and not exists (select 1 from read_parquet('s3://{{ var("zos_bucket") }}/{{ var("lemeng_retail_order_line_prefix") }}/_DAILY/*.parquet') m where cast(m['system_book'] as varchar) = cast(r['system_book'] as varchar) and cast(m['bizday'] as date) = cast(r['bizday'] as date))
 ),
 base as (
@@ -137,12 +134,11 @@ ret_base_cold as (
              then 0
              else (r['sale_money']::decimal(38,10) + r['order_detail_share_discount']::decimal(38,10))
         end as return_amount
-    from read_parquet(
-        's3://{{ var("zos_bucket") }}/{{ var("lemeng_retail_order_line_prefix") }}/_DAY_DATA/system_book=*/bizday=*/all.parquet'
-    ) r
+    from {{ window_read_parquet('s3://' ~ var('zos_bucket') ~ '/' ~ var('lemeng_retail_order_line_prefix') ~ '/_DAY_DATA/system_book=*/bizday=*/all.parquet') }} r
     where r['order_transaction_type'] like '%RETURN%'
       and r['state'] = 'FINISHED'
       and r['bizday']::date < CAST(now() AT TIME ZONE 'Asia/Shanghai' AS DATE)
+      and r['bizday']::date >= date '{{ window_start_date() }}'
 ),
 ret_base_hot as (
     -- 热腿：未封版日的小时文件——排除已封版日（同 stg 冷热合流，#984）
@@ -160,12 +156,11 @@ ret_base_hot as (
              then 0
              else (r['sale_money']::decimal(38,10) + r['order_detail_share_discount']::decimal(38,10))
         end as return_amount
-    from read_parquet(
-        's3://{{ var("zos_bucket") }}/{{ var("lemeng_retail_order_line_prefix") }}/system_book=*/bizday=*/hour=*/all.parquet'
-    ) r
+    from {{ window_read_parquet('s3://' ~ var('zos_bucket') ~ '/' ~ var('lemeng_retail_order_line_prefix') ~ '/system_book=*/bizday=*/hour=*/all.parquet') }} r
     where r['order_transaction_type'] like '%RETURN%'
       and r['state'] = 'FINISHED'
       and r['bizday']::date < CAST(now() AT TIME ZONE 'Asia/Shanghai' AS DATE)
+      and r['bizday']::date >= date '{{ window_start_date() }}'
       and not exists (select 1 from read_parquet('s3://{{ var("zos_bucket") }}/{{ var("lemeng_retail_order_line_prefix") }}/_DAILY/*.parquet') m where cast(m['system_book'] as varchar) = cast(r['system_book'] as varchar) and cast(m['bizday'] as date) = cast(r['bizday'] as date))
 ),
 ret_base as (
@@ -218,6 +213,7 @@ materialized as (
         net_amount as net_sales
     from {{ ref('fct_retail_sale') }}
     where bizday < CAST(now() AT TIME ZONE 'Asia/Shanghai' AS DATE)
+      and bizday >= date '{{ window_start_date() }}'
 )
 select
     coalesce(a.system_book, b.system_book) as system_book,
