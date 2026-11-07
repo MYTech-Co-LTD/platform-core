@@ -161,17 +161,31 @@ mat_watermark_sql() {
   done
   printf 'COMMIT;\n'
 }
-# 批量取各关系当前 max(bizday)——**纯 SELECT**（DuckDB 能执行湖视图扫描），一条 SQL 取回全部，
-# 输出 `表名=YYYY-MM-DD`（无值则 `表名=`）。$1..=关系名（已由调用方做过形状过滤）。
+# 取各关系当前 max(bizday)——**纯 SELECT**（DuckDB 能执行湖视图扫描），输出 `表名=YYYY-MM-DD`
+# （无值则 `表名=`）。$1..=关系名（已由调用方做过形状过滤）。
+#
+# ⚠️ 三条都是真机实证出来的（2026-11-07，issue #1622）：
+#   ① **必须带下界字面量**：裸 `max(bizday)` 会 LIST 全部分区（730 天），单表 **>2 分钟不返回**；
+#      加 `where bizday >= date '<字面量>'` 后按分区裁剪，30 天窗口实测 **2.4s**（90 天 4.5s）。
+#   ② **逐表 fail-soft，不拼一条大 UNION ALL**：只要有一张表报错（如 `stg_lemeng_branch`
+#      没有 bizday 列、或某视图暂时读不到），整条 UNION 全灭、23 张表全部落 NULL ——
+#      实测就是这样丢了整批水位。逐表跑 ⇒ 坏的那张只丢它自己。
+#   ③ 下界取 today−30 天：覆盖所有按日更新的源；更老的源落 NULL = 水位未知（诚实结果，
+#      不是错误）。要更宽就改这一个数，代价是线性变慢。
 mat_max_bizdays() {
   [ $# -gt 0 ] || return 0
-  _q=''
+  _lb=$(date -u -d '30 days ago' +%F 2>/dev/null || date -u -v-30d +%F 2>/dev/null || echo '1970-01-01')
   for _t in "$@"; do
-    _sel="select '${_t}' as relation, coalesce(max(bizday)::text,'') as mb from staging.${_t}"
-    if [ -z "$_q" ]; then _q="$_sel"; else _q="${_q} union all ${_sel}"; fi
+    _v=$(docker exec -e PGPASSWORD="$PW" "$PG_CT" \
+      psql -U "$UN" -d "$DB" -tA -c \
+      "select coalesce(max(bizday)::text,'') from staging.${_t} where bizday >= date '${_lb}'" 2>/dev/null \
+      | tr -d ' \r\n')
+    case "$_v" in
+      [0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]) ;;
+      *) _v='' ;;
+    esac
+    printf '%s=%s\n' "$_t" "$_v"
   done
-  docker exec -e PGPASSWORD="$PW" "$PG_CT" \
-    psql -U "$UN" -d "$DB" -tA -F= -c "$_q" 2>/dev/null
 }
 # 落账执行（复用先例的 docker exec psql 通路；凭据取 pg_duckdb 容器自注入的 env）。
 # 问数执行池就是仓 ⇒ data_as_of 与数据查询同池单跳（spec §10.1 为什么写在仓内）。
@@ -379,16 +393,41 @@ PY
   echo "── hourly: incremental + window audits（start=${AUDIT_WINDOW_START} lookback-glob=${AUDIT_WINDOW_PATTERNS}）──"
   _log="$_WORK/dbt.hourly.log"
   _rc="$_WORK/dbt.hourly.rc"
-  ( if DATA_PLANE_DOMAINS="$TICK_DOMAIN" docker run --rm --network "$NETWORK" -v "$R/dbt:/usr/app" \
-      $(mat_env_args) "$IMAGE" $(mat_dbt_args) --select config.materialized:incremental tag:audit_window --exclude 'tag:audit' --exclude fct_retail_sale 2>&1; then
-    echo 0 >"$_rc"
-  else
-    echo $? >"$_rc"
-  fi ) | tee "$_log"
-  if [ "$(cat "$_rc")" != 0 ]; then
-    echo "MATERIALIZE_FAILED:dbt_build（hourly）；retry 由 openship job 配置承担" >&2
-    exit 1
-  fi
+  # ── 节点级重试（2026-11-07，issue #1621）─────────────────────────────────────────
+  # 物化读**活湖**：零售采集每 10 分钟重写「当前小时 + 上一小时」，DuckDB 的 ETag 校验在读取
+  # 途中发现文件换版 ⇒ **整个节点** Database Error。实测单轮 107/108 通过、失败随手落在不同节点
+  # （item_sale / retail_quantity / inventory audit 都中过枪）。
+  # job 级重跑要重跑整轮 8 分钟；这里只从 `run_results.json` 取**失败节点**重跑，几秒收敛。
+  # ⚠️ 收敛判据是「没有失败节点」而不是「退出 0」：dbt 的 warn（test 软失败）不该触发重跑。
+  _attempt=1
+  _select="config.materialized:incremental tag:audit_window"
+  while :; do
+    if [ "$_attempt" = 1 ]; then
+      _excl="--exclude tag:audit --exclude fct_retail_sale"
+    else
+      _excl=''
+    fi
+    ( if DATA_PLANE_DOMAINS="$TICK_DOMAIN" docker run --rm --network "$NETWORK" -v "$R/dbt:/usr/app" \
+        $(mat_env_args) "$IMAGE" $(mat_dbt_args) --select "$_select" $_excl 2>&1; then
+      echo 0 >"$_rc"
+    else
+      echo $? >"$_rc"
+    fi ) | tee -a "$_log"
+    _failed="$(python3 "$R/scripts/lemeng/dbt-failed-nodes.py" "$R/dbt/target/run_results.json" 2>/dev/null || true)"
+    if [ -z "$_failed" ]; then
+      [ "$(cat "$_rc")" = 0 ] && break
+      # 退出码非 0 但解析不出失败节点（run_results 缺失/形状变了）⇒ 不猜，直接判失败
+      echo "MATERIALIZE_FAILED:dbt_build（hourly：退出码非 0 且解析不出失败节点）" >&2
+      exit 1
+    fi
+    if [ "$_attempt" -ge 3 ]; then
+      echo "MATERIALIZE_FAILED:dbt_build（hourly：失败节点重试 ${_attempt} 轮仍有：${_failed}）" >&2
+      exit 1
+    fi
+    _attempt=$((_attempt + 1))
+    echo "── hourly 重试第 ${_attempt} 轮（仅失败节点）：${_failed} ──"
+    _select="$_failed"
+  done
   if ! mat_log_has_build "$_log"; then
     echo "MATERIALIZE_OK scope=hourly noop（选择器没有匹配到任何节点）"
     exit 0

@@ -195,9 +195,7 @@ elif [ "$1" = exec ]; then
     #   ② 取各关系 max(bizday)（纯 SELECT，`coalesce(max(bizday)::text`）→ 回「名=日期」
     case "$*" in
       *"coalesce(max(bizday)::text"*)
-        for _t in stg_lemeng_a stg_lemeng_b fct_retail_sale; do
-          case "$*" in *"from staging.${_t}"*) printf '%s=2026-11-06\n' "$_t" ;; esac
-        done ;;
+        printf '2026-11-06\n' ;;
       *)
         printf 'stg_lemeng_a\nstg_lemeng_b\nstg_forms_submission\n' ;;
     esac
@@ -278,7 +276,9 @@ check "水位：清单里的每张表各一行（relation 非空点名到表，P
 check "水位：第二张表同样落位（逐表，不是一行汇总）" \
   LOG_GREP ok "VALUES ('stg_lemeng_b', "
 check "水位：取最大值走**纯 SELECT**（湖视图不能作 INSERT…SELECT 的源，#1624）" \
-  LOG_GREP ok "as relation, coalesce(max(bizday)::text,'') as mb from staging.stg_lemeng_a"
+  LOG_GREP ok "select coalesce(max(bizday)::text,'') from staging.stg_lemeng_a"
+check "水位：取最大值带下界字面量（裸 max 会 LIST 全部分区，实测 >2 分钟不返回）" \
+  LOG_GREP ok "where bizday >= date '"
 check "水位：INSERT 用字面量 VALUES 形态（拼进 SQL 的句子不得再含 FROM staging.）" \
   sh -c '! grep -Fq "INSERT INTO data.load_log (relation, max_bizday, materialized_at, tests_pass, tests_error, status) SELECT" "$1"' _ "$STUB_E2E/ok/state/calls.log"
 check "水位：旧「仓级」行（relation NULL）不再新写（VALUES 形态的仓级 INSERT 不在场）" \
