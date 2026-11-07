@@ -113,17 +113,31 @@ mat_load_log_sql() {
     'ALTER TABLE data.load_log ADD COLUMN IF NOT EXISTS relation text;' \
     'ALTER TABLE data.load_log ADD COLUMN IF NOT EXISTS max_bizday date;'
 }
-# 逐表水位 INSERT（spec §10.7.2）：$1=tests_pass $2=tests_error，$3..=staging schema 内含 bizday
-# 列的表名（清单由主流程经 information_schema 动态点名，无 bizday 的维度表自然不在列）。
+# 逐表水位 INSERT（spec §10.7.2）：$1=tests_pass $2=tests_error，$3..=`表名=max_bizday` 成对。
 # 全部语句包在一个 BEGIN..COMMIT 里：now() 取**事务起点** ⇒ 同一次物化的全部行共享同一
 # materialized_at（data_as_of = max(materialized_at) 与逐行语义都靠这个一致）。
 # 旧「仓级」行（relation NULL）自本版起不再新写——历史行保留，水位查询只认 relation 非空。
+#
+# ⚠️ **为什么水位值由调用方算好、以字面量塞进来**（2026-11-07 真机实证，issue #1624）：
+#   原形态是 `INSERT … SELECT max(bizday) … FROM staging.<视图>`，现真机报
+#   **`ERROR: DuckDB does not support modififying Postgres tables`** ——
+#   staging 模型自 2026-11-02（#1275 明细 staging 翻直读湖视图）起是**湖视图**，
+#   pg_duckdb 把 `read_parquet` 扫描交给 DuckDB 引擎执行，而 DuckDB 引擎写不了 PG 堆表。
+#   实测三分对照（2026-11-07）：
+#     · `select max(bizday) from staging.stg_lemeng_branch_expense` ⇒ 2026-11-06 ✅
+#     · `insert … select max(bizday) … from 同一视图` ⇒ 上述 ERROR ❌
+#     · `insert … values ('x', date '2026-11-07', …)` ⇒ INSERT 0 1 ✅
+#   ⇒ 取最大值用**纯 SELECT**（DuckDB 执行没问题），再以**字面量** INSERT（纯 PG 路径）。
+#   历史 `stg_lemeng_*` 水位停在 2026-10-29 —— 正好是这次失败的起点，别再以为它一直在写。
 mat_watermark_sql() {
   _wp=$1; _we=$2; shift 2
   case "$_wp" in ''|*[!0-9]*) _wp=NULL ;; esac
   case "$_we" in ''|*[!0-9]*) _we=NULL ;; esac
   printf 'BEGIN;\n'
-  for _wt in "$@"; do
+  for _pair in "$@"; do
+    _wt=${_pair%%=*}
+    _mb=${_pair#*=}
+    [ "$_pair" = "$_wt" ] && _mb=''
     # 表名拼进 SQL 前按标识符安全形状收口：异常名 fail-soft 跳过 + 告警点名（缺一张表的水位
     # 可由下次物化补上，不该让一个异常名炸掉整批，更不能把垃圾拼进 SQL）。
     # ⚠️ 形状判定**必须钉死 locale**（CI fix round 1）：`case "$_wt" in *[!a-z0-9_]*)` 的
@@ -137,10 +151,41 @@ mat_watermark_sql() {
       echo "materialize warn: 水位跳过异常表名 ${_wt}" >&2
       continue
     fi
-    printf "INSERT INTO data.load_log (relation, max_bizday, materialized_at, tests_pass, tests_error, status) SELECT '%s', max(bizday), now(), %s, %s, 'ok' FROM staging.%s;\n" \
-      "$_wt" "$_wp" "$_we" "$_wt"
+    # max_bizday 只接受 `YYYY-MM-DD` 字面量形状；其余（空/异常）落 NULL，绝不拼进 SQL。
+    case "$_mb" in
+      [0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]) _mbsql="date '${_mb}'" ;;
+      *) _mbsql='NULL' ;;
+    esac
+    printf "INSERT INTO data.load_log (relation, max_bizday, materialized_at, tests_pass, tests_error, status) VALUES ('%s', %s, now(), %s, %s, 'ok');\n" \
+      "$_wt" "$_mbsql" "$_wp" "$_we"
   done
   printf 'COMMIT;\n'
+}
+# 取各关系当前 max(bizday)——**纯 SELECT**（DuckDB 能执行湖视图扫描），输出 `表名=YYYY-MM-DD`
+# （无值则 `表名=`）。$1..=关系名（已由调用方做过形状过滤）。
+#
+# ⚠️ 三条都是真机实证出来的（2026-11-07，issue #1622）：
+#   ① **必须带下界字面量**：裸 `max(bizday)` 会 LIST 全部分区（730 天），单表 **>2 分钟不返回**；
+#      加 `where bizday >= date '<字面量>'` 后按分区裁剪，30 天窗口实测 **2.4s**（90 天 4.5s）。
+#   ② **逐表 fail-soft，不拼一条大 UNION ALL**：只要有一张表报错（如 `stg_lemeng_branch`
+#      没有 bizday 列、或某视图暂时读不到），整条 UNION 全灭、23 张表全部落 NULL ——
+#      实测就是这样丢了整批水位。逐表跑 ⇒ 坏的那张只丢它自己。
+#   ③ 下界取 today−30 天：覆盖所有按日更新的源；更老的源落 NULL = 水位未知（诚实结果，
+#      不是错误）。要更宽就改这一个数，代价是线性变慢。
+mat_max_bizdays() {
+  [ $# -gt 0 ] || return 0
+  _lb=$(date -u -d '30 days ago' +%F 2>/dev/null || date -u -v-30d +%F 2>/dev/null || echo '1970-01-01')
+  for _t in "$@"; do
+    _v=$(docker exec -e PGPASSWORD="$PW" "$PG_CT" \
+      psql -U "$UN" -d "$DB" -tA -c \
+      "select coalesce(max(bizday)::text,'') from staging.${_t} where bizday >= date '${_lb}'" 2>/dev/null \
+      | tr -d ' \r\n')
+    case "$_v" in
+      [0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]) ;;
+      *) _v='' ;;
+    esac
+    printf '%s=%s\n' "$_t" "$_v"
+  done
 }
 # 落账执行（复用先例的 docker exec psql 通路；凭据取 pg_duckdb 容器自注入的 env）。
 # 问数执行池就是仓 ⇒ data_as_of 与数据查询同池单跳（spec §10.1 为什么写在仓内）。
@@ -148,8 +193,16 @@ mat_watermark_sql() {
 # 不因记账失败 retry 整个 build；缺账由 data_as_of 停留旧值暴露（新鲜度未知 ≠ 捏造）。
 mat_write_load_log() { # $1=tests_pass $2=tests_error $3..=水位表名
   _wp=$1; _we=$2; shift 2
+  # 先纯 SELECT 取回各关系 max(bizday)（湖视图只能读、不能作为 INSERT…SELECT 的源，
+  # 见 mat_watermark_sql 头注），再以字面量 INSERT。
+  _pairs=$(mat_max_bizdays "$@" | sed '/^$/d')
+  if [ -z "$_pairs" ]; then
+    # 取不到 ⇒ 退回「表名=空」形态：仍写行（relation 在场、max_bizday NULL = 水位未知），
+    # 与「解析不到 PASS/ERROR ⇒ NULL」同一 fail-soft 口径（缺账不如留一条未知）。
+    _pairs=$(for _t in "$@"; do printf '%s=\n' "$_t"; done)
+  fi
   _wsql="$(mat_load_log_sql)
-$(mat_watermark_sql "$_wp" "$_we" "$@")"
+$(mat_watermark_sql "$_wp" "$_we" $_pairs)"
   docker exec -e PGPASSWORD="$PW" "$PG_CT" \
     psql -U "$UN" -d "$DB" -v ON_ERROR_STOP=1 -q -c "$_wsql" \
     || echo "materialize warn: load_log 落账失败（物化本身已成功；data_as_of 将停留旧值，新鲜度面降级）" >&2
@@ -340,19 +393,61 @@ PY
   echo "── hourly: incremental + window audits（start=${AUDIT_WINDOW_START} lookback-glob=${AUDIT_WINDOW_PATTERNS}）──"
   _log="$_WORK/dbt.hourly.log"
   _rc="$_WORK/dbt.hourly.rc"
-  ( if DATA_PLANE_DOMAINS="$TICK_DOMAIN" docker run --rm --network "$NETWORK" -v "$R/dbt:/usr/app" \
-      $(mat_env_args) "$IMAGE" $(mat_dbt_args) --select config.materialized:incremental tag:audit_window --exclude 'tag:audit' --exclude fct_retail_sale 2>&1; then
-    echo 0 >"$_rc"
-  else
-    echo $? >"$_rc"
-  fi ) | tee "$_log"
-  if [ "$(cat "$_rc")" != 0 ]; then
-    echo "MATERIALIZE_FAILED:dbt_build（hourly）；retry 由 openship job 配置承担" >&2
-    exit 1
-  fi
+  # ── 节点级重试（2026-11-07，issue #1621）─────────────────────────────────────────
+  # 物化读**活湖**：零售采集每 10 分钟重写「当前小时 + 上一小时」，DuckDB 的 ETag 校验在读取
+  # 途中发现文件换版 ⇒ **整个节点** Database Error。实测单轮 107/108 通过、失败随手落在不同节点
+  # （item_sale / retail_quantity / inventory audit 都中过枪）。
+  # job 级重跑要重跑整轮 8 分钟；这里只从 `run_results.json` 取**失败节点**重跑，几秒收敛。
+  # ⚠️ 收敛判据是「没有失败节点」而不是「退出 0」：dbt 的 warn（test 软失败）不该触发重跑。
+  _attempt=1
+  _select="config.materialized:incremental tag:audit_window"
+  while :; do
+    if [ "$_attempt" = 1 ]; then
+      _excl="--exclude tag:audit --exclude fct_retail_sale"
+    else
+      _excl=''
+    fi
+    ( if DATA_PLANE_DOMAINS="$TICK_DOMAIN" docker run --rm --network "$NETWORK" -v "$R/dbt:/usr/app" \
+        $(mat_env_args) "$IMAGE" $(mat_dbt_args) --select "$_select" $_excl 2>&1; then
+      echo 0 >"$_rc"
+    else
+      echo $? >"$_rc"
+    fi ) | tee -a "$_log"
+    _failed="$(python3 "$R/scripts/lemeng/dbt-failed-nodes.py" "$R/dbt/target/run_results.json" 2>/dev/null || true)"
+    if [ -z "$_failed" ]; then
+      [ "$(cat "$_rc")" = 0 ] && break
+      # 退出码非 0 但解析不出失败节点（run_results 缺失/形状变了）⇒ 不猜，直接判失败
+      echo "MATERIALIZE_FAILED:dbt_build（hourly：退出码非 0 且解析不出失败节点）" >&2
+      exit 1
+    fi
+    if [ "$_attempt" -ge 3 ]; then
+      echo "MATERIALIZE_FAILED:dbt_build（hourly：失败节点重试 ${_attempt} 轮仍有：${_failed}）" >&2
+      exit 1
+    fi
+    _attempt=$((_attempt + 1))
+    echo "── hourly 重试第 ${_attempt} 轮（仅失败节点）：${_failed} ──"
+    _select="$_failed"
+  done
   if ! mat_log_has_build "$_log"; then
     echo "MATERIALIZE_OK scope=hourly noop（选择器没有匹配到任何节点）"
     exit 0
+  fi
+  # ── 水位落账（2026-11-07 补漏，真机实证）─────────────────────────────────────────
+  # 不落账的后果：`freshness_relations` 读的是 `stg_lemeng_*` 的 max_bizday，
+  # 而 full 档停用后**只有 tick 档写过 `fct_retail_sale`** ⇒ 其余 relation 的 data_as_of
+  # 停在 full 档停用那天（实测 load_log 里 12 行全是 fct_retail_sale）⇒ 新鲜度面全面失真。
+  # 只在本轮**构建成功**后落账（失败不写 = 不假报新鲜）；表集与全量档同源派生。
+  _tables=''
+  for _m in $(mat_domain_staging_models "$R" "$TICK_DOMAIN"); do
+    case " ${MAT_TABLES_ALL} " in *" ${_m} "*) _tables="${_tables} ${_m}";; esac
+  done
+  if [ -z "$_tables" ]; then
+    echo "materialize warn: hourly 档没有可落账的表（本域 staging 无含 bizday 列的表？）" >&2
+  else
+    mat_write_load_log \
+      "$(sed -n 's/.*PASS=\([0-9]*\).*/\1/p' "$_log" | tail -n 1)" \
+      "$(sed -n 's/.*ERROR=\([0-9]*\).*/\1/p' "$_log" | tail -n 1)" \
+      $_tables
   fi
   echo "MATERIALIZE_OK scope=hourly"
   exit 0
