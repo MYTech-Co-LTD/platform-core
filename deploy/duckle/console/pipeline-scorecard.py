@@ -64,25 +64,53 @@ def age_hours(iso):
         return 1e9
 
 
-def sla_hours(owners, pid):
-    """从 owner 规则里找本管线的 maximumAge（粗匹配：match 含 table 段）；缺省 36h。"""
+def owner_rule(owners, pid):
+    """把管线 id 映射到 owner 规则：**最长前缀**匹配资产表名（点↔下划线/连字符两种写法）。
+
+    为什么不是「取 id 最后一段」：`lemeng.request.order.l0.3120` 的最后一段是账套号 `3120`，
+    `lemeng.dim.item.l0` 的最后一段是 `l0`——拿它去子串匹配 owner.match 等于随机命中
+    （2026-11-07 实测：33 条管线里绝大多数落到缺省 36h，恰好和常见值相同，所以一直没被发现；
+    真有非 36h 的规则时就会**漏红**）。
+
+    id 的段与资产路径的对应：`lemeng.branch.expense.l0.3120` → `branch_expense`
+    （`retail.tick` → 规则里写的是 `retail-tick`，所以连字符也要试）。
+    """
     import re
 
-    table = pid.split(".")[-1]
-    for rule in owners:
-        if table in rule.get("match", ""):
-            m = re.fullmatch(r"\s*(\d+)\s*([mhd])\s*", str(rule.get("maximumAge", "")), re.I)
-            if m:
-                n = int(m.group(1))
-                unit = m.group(2).lower()
-                return n / 60.0 if unit == "m" else float(n) if unit == "h" else n * 24.0
-    return 36.0
+    parts = pid.split(".")
+    rest = parts[1:] if len(parts) > 1 else parts
+    for n in range(len(rest), 0, -1):
+        for sep in ("_", "-"):
+            cand = sep.join(rest[:n])
+            # 必须是**路径段边界**：`/client` 不能命中 `/client_expense/`
+            # （否则 `lemeng.client` 会借到 `client_expense` 的 SLA）。
+            pat = re.compile(rf"/{re.escape(cand)}(?=[/.\-])")
+            for rule in owners:
+                if pat.search(rule.get("match") or ""):
+                    return rule
+    return None
+
+
+def sla_hours(owners, pid):
+    """本管线的 owner SLA（小时）；规则没写/写坏时缺省 36h。"""
+    import re
+
+    rule = owner_rule(owners, pid)
+    if not rule:
+        return 36.0
+    m = re.fullmatch(r"\s*(\d+)\s*([mhd])\s*", str(rule.get("maximumAge", "")), re.I)
+    if not m:
+        return 36.0
+    n = int(m.group(1))
+    unit = m.group(2).lower()
+    return n / 60.0 if unit == "m" else float(n) if unit == "h" else n * 24.0
 
 
 def main():
     as_json = "--json" in sys.argv
     strict = "--strict" in sys.argv
     all_runs = "--all" in sys.argv
+    explain = "--explain" in sys.argv
 
     runs = {}
     for path in sorted(glob.glob(os.path.join(WS, "runs", "*.json"))):
@@ -103,7 +131,14 @@ def main():
     for pid, (rec, ok) in sorted(runs.items()):
         if not all_runs and pid not in scheduled_ids:
             continue
-        stale = [a for a, v in freshness.items() if v.get("state") == "stale" and _glob_any(owners, a)]
+        # 排除「未展开的模板路径」：真实对象不可能带 `${...}`。引擎的新鲜度表里混进了这类条目
+        # （2026-11-07 实测 7 条，形如 `.../bizday=${BIZDAY}/all.parquet`），它们永远解析不到、
+        # 永远 stale——不排掉会把 7 条管线误判成 AMBER。
+        stale = [
+            a
+            for a, v in freshness.items()
+            if v.get("state") == "stale" and "${" not in a and _glob_any(owners, a)
+        ]
         # 只统计「本管线 owner 规则覆盖到的」stale 资产；owner 匹配不到的 stale 资产单独列
         my_stale = [a for a in stale if _asset_belongs(owners, a, pid)]
         status = rec.get("status", "?")
@@ -145,6 +180,14 @@ def main():
             }
         )
 
+    if explain:
+        # 运维用：这条管线凭什么算 36h/12h？命中了哪条 owner 规则？
+        print("pipeline,sla_hours,owner_match")
+        for pid in sorted({r["pipeline"] for r in rows}):
+            rule = owner_rule(owners, pid)
+            print(f"{pid},{sla_hours(owners, pid):g},{(rule or {}).get('match') or '<无规则→缺省 36h>'}")
+        return 0
+
     if as_json:
         print(json.dumps(rows, ensure_ascii=False, indent=2))
     else:
@@ -179,11 +222,25 @@ def _glob_any(owners, asset):
 
 
 def _asset_belongs(owners, asset, pid):
-    # owner 规则没有 pipeline 列；用 asset 路径里是否含 pid 的 domain/table 段做粗归属
+    """这条资产是不是这条管线的。
+
+    先看它是否命中**本管线自己的 owner 规则**（最准）；命中不到再退回「资产路径含本管线的表名段」。
+    旧实现用 `pid.split('.')[-1]`（账套号 `3120` / `l0`）去比对，几乎恒假 ⇒ stale 资产归属不到任何
+    管线 ⇒ 「停更但 run 绿」这一类**永远不会变 AMBER**（2026-11-07 与 SLA 匹配同一处修复）。
+    """
+    rule = owner_rule(owners, pid)
+    if rule and _glob(rule.get("match") or "", asset):
+        return True
     if pid in asset:
         return True
     parts = pid.split(".")
-    return len(parts) >= 2 and f"/{parts[-1]}/" in asset and parts[0] in asset
+    rest = parts[1:] if len(parts) > 1 else parts
+    for n in range(len(rest), 0, -1):
+        for sep in ("_", "-"):
+            cand = sep.join(rest[:n])
+            if f"/{cand}/" in asset:
+                return True
+    return False
 
 
 if __name__ == "__main__":
