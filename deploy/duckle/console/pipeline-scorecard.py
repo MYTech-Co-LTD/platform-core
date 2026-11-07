@@ -42,6 +42,43 @@ def last_run(records):
     return None
 
 
+def last_ok(records):
+    """最近一次成功 run（多轮同窗口时，用它判「数据是否还在 SLA 内」）。"""
+    if isinstance(records, dict):
+        return records if records.get("status") == "ok" else None
+    if isinstance(records, list):
+        oks = [r for r in records if r.get("status") == "ok"]
+        return max(oks, key=lambda r: str(r.get("at", ""))) if oks else None
+    return None
+
+
+def age_hours(iso):
+    if not iso:
+        return 1e9
+    try:
+        from datetime import datetime, timezone
+
+        t = datetime.fromisoformat(str(iso).replace("Z", "+00:00"))
+        return (datetime.now(timezone.utc) - t).total_seconds() / 3600.0
+    except ValueError:
+        return 1e9
+
+
+def sla_hours(owners, pid):
+    """从 owner 规则里找本管线的 maximumAge（粗匹配：match 含 table 段）；缺省 36h。"""
+    import re
+
+    table = pid.split(".")[-1]
+    for rule in owners:
+        if table in rule.get("match", ""):
+            m = re.fullmatch(r"\s*(\d+)\s*([mhd])\s*", str(rule.get("maximumAge", "")), re.I)
+            if m:
+                n = int(m.group(1))
+                unit = m.group(2).lower()
+                return n / 60.0 if unit == "m" else float(n) if unit == "h" else n * 24.0
+    return 36.0
+
+
 def main():
     as_json = "--json" in sys.argv
     strict = "--strict" in sys.argv
@@ -52,9 +89,10 @@ def main():
         pid = os.path.basename(path)[:-5]
         if pid.startswith("run-") or pid == "_probe":
             continue
-        rec = last_run(load(path, None))
+        records = load(path, None)
+        rec = last_run(records)
         if rec:
-            runs[pid] = rec
+            runs[pid] = (rec, last_ok(records))
 
     freshness = (load(os.path.join(WS, ".duckle", "freshness.json"), {}) or {}).get("assets", {})
     schedules = load(os.path.join(WS, "schedules.json"), []) or []
@@ -62,15 +100,18 @@ def main():
 
     scheduled_ids = {s.get("pipeline_id") for s in schedules}
     rows = []
-    for pid, rec in sorted(runs.items()):
+    for pid, (rec, ok) in sorted(runs.items()):
         if not all_runs and pid not in scheduled_ids:
             continue
         stale = [a for a, v in freshness.items() if v.get("state") == "stale" and _glob_any(owners, a)]
         # 只统计「本管线 owner 规则覆盖到的」stale 资产；owner 匹配不到的 stale 资产单独列
         my_stale = [a for a in stale if _asset_belongs(owners, a, pid)]
         status = rec.get("status", "?")
+        ok_at = ok.get("at") if ok else None
+        sla = sla_hours(owners, pid)
         if status != "ok":
-            level = "RED"
+            # 多轮同窗口：最后一轮中断/失败，但最近一次成功仍在 SLA 内 ⇒ 数据在，只算 AMBER
+            level = "AMBER" if ok is not None and age_hours(ok_at) <= sla else "RED"
         elif my_stale:
             level = "AMBER"
         else:
@@ -81,6 +122,7 @@ def main():
                 "level": level,
                 "last_run_at": rec.get("at"),
                 "status": status,
+                "last_ok_at": ok_at,
                 "duration_ms": rec.get("duration_ms"),
                 "error": (rec.get("error") or "")[:120],
                 "stale_assets": len(my_stale),
@@ -96,6 +138,7 @@ def main():
                 "level": "UNKNOWN",
                 "last_run_at": None,
                 "status": None,
+                "last_ok_at": None,
                 "duration_ms": None,
                 "error": "scheduled but never ran",
                 "stale_assets": 0,
@@ -105,10 +148,10 @@ def main():
     if as_json:
         print(json.dumps(rows, ensure_ascii=False, indent=2))
     else:
-        print("pipeline,level,last_run_at,status,duration_ms,stale_assets,error")
+        print("pipeline,level,last_run_at,status,last_ok_at,duration_ms,stale_assets,error")
         for r in rows:
             print(
-                f"{r['pipeline']},{r['level']},{r['last_run_at']},{r['status']},"
+                f"{r['pipeline']},{r['level']},{r['last_run_at']},{r['status']},{r['last_ok_at']},"
                 f"{r['duration_ms']},{r['stale_assets']},\"{r['error']}\""
             )
 

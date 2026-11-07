@@ -1,4 +1,4 @@
-sha256-of-rest 088f4d755787eb7da791717d0f8f8b63eba80e0b21b6ed4f0eaa414249f5ec89
+sha256-of-rest beacdcf74d6810cff9ab63241a4abb61433478007176ce182d400713dc1149b4
 08938c10c6b4a688c8afda6cd7d1ad3dbf2c20f83cf8c4e7023055ad34eddc70 contracts/README.md ${REPO}/contracts/README.md 0644
 fcc8189e1012d5fbb8e2505025bed637dd01c7b4465ab86125d3eaa7f330eff3 contracts/common/_schema.schema.json ${REPO}/contracts/common/_schema.schema.json 0644
 1730119518c3371f3c2ff3492f4c15cd731688047c6d40805ec4d2c65892f3ff contracts/common/_template.contract.json ${REPO}/contracts/common/_template.contract.json 0644
@@ -233,7 +233,7 @@ dfbe3ea5cd0f60ded07c5fc67297525dd4971a7efef6895030d034b085219a47 deploy/duckle/c
 233b858c41856ea09aa5ec04dacad95b60cf08997e7ff8af98d5878ea3fc991d deploy/duckle/console/metric_profiles.ddl.sql ${REPO}/deploy/duckle/console/metric_profiles.ddl.sql 0644
 c3a97defaf11dd1e7c3d613ca3dbb9e868a7ab19ab2adfb93743209f15da9992 deploy/duckle/console/owners.forms.json ${REPO}/deploy/duckle/console/owners.forms.json 0644
 d244c7f5494fabb0ab8409624a008e67f934716fe94baf6e161cbce5d16b331f deploy/duckle/console/owners.lemeng.json ${REPO}/deploy/duckle/console/owners.lemeng.json 0644
-19f7905330ca503dba0b26391baf9907dafd1201c838d2c5e11d0c3f58777c18 deploy/duckle/console/pipeline-scorecard.py ${REPO}/deploy/duckle/console/pipeline-scorecard.py 0644
+fdd8afcf459457001e6856f8cdab48e387c8dea4bfd27975bc49d435c400b448 deploy/duckle/console/pipeline-scorecard.py ${REPO}/deploy/duckle/console/pipeline-scorecard.py 0644
 c95928e223e4dc6eb6776d619ee14361a679d5b248b190caa71dc5044a517d27 deploy/duckle/console/pipelines/FLOW.lemeng.md ${REPO}/deploy/duckle/console/pipelines/FLOW.lemeng.md 0644
 7039c29c4d8c215c780e4ec987789c184844d375d4ce84968f837d0f0bfa7ccd deploy/duckle/console/pipelines/README.md ${REPO}/deploy/duckle/console/pipelines/README.md 0644
 0162356abf63b1ad543e3e1637945dc3be484646ca32e5b1ea507df03747d397 deploy/duckle/console/pipelines/forms.submission.l0.json ${REPO}/deploy/duckle/console/pipelines/forms.submission.l0.json 0644
