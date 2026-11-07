@@ -1,0 +1,125 @@
+{
+  "name": "pilot.incr_demo.page",
+  "nodes": [
+    {
+      "id": "p",
+      "type": "source",
+      "position": {
+        "x": 0,
+        "y": 0
+      },
+      "data": {
+        "label": "page",
+        "componentId": "src.rest",
+        "schema": [
+          {
+            "name": "request_order_fid",
+            "type": "string"
+          },
+          {
+            "name": "purchase_date",
+            "type": "string"
+          }
+        ],
+        "properties": {
+          "connectionRef": "lemeng",
+          "url": "https://cloud.nhsoft.cn/agi/api/nhsoft.ama.ai.request.order.find",
+          "method": "POST",
+          "body": "{\"date_start\":\"${ITER_ITEM_BIZDAY}\",\"date_end\":\"${ITER_ITEM_BIZDAY}\",\"date_type\":\"制单时间\",\"page_number\":${ITER_ITEM_PAGE},\"page_size\":100}",
+          "responsePath": "/result",
+          "paginationType": "none",
+          "headers": {
+            "Content-Type": "application/json"
+          }
+        }
+      }
+    },
+    {
+      "id": "t",
+      "type": "transform",
+      "position": {
+        "x": 300,
+        "y": 0
+      },
+      "data": {
+        "label": "transform",
+        "componentId": "code.sql",
+        "properties": {
+          "sql": "SELECT CAST(request_order_fid AS VARCHAR) AS request_order_fid, CAST(purchase_date AS VARCHAR) AS purchase_date FROM input"
+        }
+      }
+    },
+    {
+      "id": "g",
+      "type": "transform",
+      "position": {
+        "x": 600,
+        "y": 0
+      },
+      "data": {
+        "label": "contract gate",
+        "componentId": "qa.contract",
+        "properties": {
+          "rules": {
+            "request_order_fid": "not_null"
+          }
+        }
+      }
+    },
+    {
+      "id": "k",
+      "type": "sink",
+      "position": {
+        "x": 900,
+        "y": 0
+      },
+      "data": {
+        "label": "sink",
+        "componentId": "snk.minio",
+        "properties": {
+          "connectionRef": "zos",
+          "bucket": "shanhai-data",
+          "key": "pilot/incr_demo/system_book=${ITER_ITEM_BOOK}/bizday=${ITER_ITEM_BIZDAY}/run=${ITER_ITEM_RUN}/page=${ITER_ITEM_PAGE}.parquet",
+          "format": "parquet",
+          "mode": "overwrite",
+          "compression": "zstd"
+        }
+      }
+    }
+  ],
+  "edges": [
+    {
+      "id": "e1",
+      "source": "p",
+      "target": "t",
+      "sourceHandle": "main",
+      "targetHandle": "main",
+      "data": {
+        "connectionType": "main"
+      }
+    },
+    {
+      "id": "e2",
+      "source": "t",
+      "target": "g",
+      "sourceHandle": "main",
+      "targetHandle": "main",
+      "data": {
+        "connectionType": "main"
+      }
+    },
+    {
+      "id": "e3",
+      "source": "g",
+      "target": "k",
+      "sourceHandle": "main",
+      "targetHandle": "main",
+      "data": {
+        "connectionType": "main"
+      }
+    }
+  ],
+  "_note": [
+    "由 scripts/gen-pipeline.mjs 从 manifest 生成；手改请改 manifest 后重生成（--check 会拦）。"
+  ]
+}
