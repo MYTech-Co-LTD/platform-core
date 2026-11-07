@@ -8,6 +8,7 @@
 // 失败码是机检面（调用方按 code 映射文案，不解析 detail）。所有拒绝都是 fail-closed：
 // 不确定就拒，不猜。
 import { MAX_QUERY_ROWS } from '../authz'
+import { joinsForRelation, joinClauseOf } from './relations'
 
 /** 只允许打 marts（dbt 物化落点 schema，实测 59 张表都在这里）。 */
 export const EXPLORE_SCHEMA = 'staging'
@@ -28,12 +29,19 @@ export type ExploreErrorCode =
   | 'COLUMN_NOT_NUMERIC'
   | 'COLUMN_MASKED'
   | 'RELATION_MASKED'
+  | 'JOIN_NOT_ALLOWED'
   | 'AGG_NOT_ALLOWED'
   | 'BAD_FILTER'
 
 export interface ExploreSpec {
   relation: string
+  /**
+   * 要 join 的语义关系名（`dbt/semantics/relations.yml` 里的 name，≤5 个）。
+   * 只有 `verified` + 命中率 ≥0.95、且 from 侧就是 `relation` 的关系可用；内连接。
+   */
+  joins?: string[]
   measures: Array<{ agg: ExploreAgg; column: string; as?: string }>
+  /** 列可写成 `<join 关系名>.<列>`；不带前缀 = 基表列。 */
   dimensions?: string[]
   filters?: Array<{ column: string; op: ExploreFilterOp; value: unknown }>
   orderBy?: { key: string; desc?: boolean }
@@ -120,11 +128,54 @@ export function compileExplore(spec: unknown, ctx: ExploreContext): ExploreCompi
   if (!cols.some((c) => c.name === 'org')) return fail('NO_ORG_COLUMN', `${relation} 没有 org 列，拒绝跨租户读`)
   if (ctx.maskedRelations.has(relation)) return fail('RELATION_MASKED', relation)
 
+  // ── join（W7 Task 2：显式 opt-in；只收声明文件里、from 侧匹配且过闸门的关系）──────────
+  const joinsRaw = s.joins === undefined || s.joins === null ? [] : s.joins
+  if (!Array.isArray(joinsRaw)) return fail('BAD_SPEC', 'joins 必须是关系名数组')
+  if (joinsRaw.length > 5) return fail('BAD_SPEC', 'joins 最多 5 项')
+  const eligible = new Map(joinsForRelation(ctx.relations ?? [], relation).map((e) => [e.declaration.name, e]))
+  const joinAliases = new Map<string, readonly RelationColumn[]>()
+  const joinClauses: string[] = []
+  for (const raw of joinsRaw) {
+    if (typeof raw !== 'string' || raw === '') return fail('BAD_SPEC', 'joins 必须是关系名数组')
+    if (joinAliases.has(raw)) return fail('BAD_SPEC', `重复的 join：${raw}`)
+    const entry = eligible.get(raw)
+    if (entry === undefined) return fail('JOIN_NOT_ALLOWED', raw)
+    const target = entry.declaration.to.relation
+    if (ctx.maskedRelations.has(target)) return fail('RELATION_MASKED', target)
+    const targetCols = ctx.columns.get(target)
+    if (targetCols === undefined || targetCols.length === 0) {
+      return fail('JOIN_NOT_ALLOWED', `${raw}: 目标表 ${target} 不可见`)
+    }
+    if (entry.declaration.dedupRule === 'latest_snapshot' && !targetCols.some((c) => c.name === 'snapshot')) {
+      return fail('JOIN_NOT_ALLOWED', `${raw}: ${target} 缺 snapshot 列，无法取最新快照`)
+    }
+    joinAliases.set(raw, targetCols)
+    joinClauses.push(joinClauseOf(entry.declaration, entry.alias, {
+      targetHasOrg: targetCols.some((c) => c.name === 'org'),
+    }))
+  }
+
   const colOf = new Map(cols.map((c) => [c.name, c]))
-  const checkColumn = (name: string): ExploreCompiled | null => {
-    if (!IDENT_RE.test(name) || !colOf.has(name)) return fail('COLUMN_NOT_FOUND', name)
+
+  /**
+   * 列引用：`列` = 基表；`<join 关系名>.<列>` = 被 join 的表。
+   * 只有本次显式 join 的关系名可作前缀（写别的表名不等于 join 了它）。
+   */
+  const resolveColumn = (raw: string): { sqlRef: string; dataType: string } | ExploreCompiled => {
+    const parts = raw.split('.')
+    if (parts.length === 1) {
+      if (!IDENT_RE.test(raw) || !colOf.has(raw)) return fail('COLUMN_NOT_FOUND', raw)
+      if (ctx.maskedColumns.has(raw)) return fail('COLUMN_MASKED', raw)
+      return { sqlRef: `${relation}.${raw}`, dataType: colOf.get(raw)!.dataType }
+    }
+    if (parts.length !== 2) return fail('COLUMN_NOT_FOUND', raw)
+    const [alias, name] = parts
+    const targetCols = joinAliases.get(alias)
+    if (targetCols === undefined || !IDENT_RE.test(name)) return fail('COLUMN_NOT_FOUND', raw)
+    const col = targetCols.find((c) => c.name === name)
+    if (col === undefined) return fail('COLUMN_NOT_FOUND', raw)
     if (ctx.maskedColumns.has(name)) return fail('COLUMN_MASKED', name)
-    return null
+    return { sqlRef: `${alias}.${name}`, dataType: col.dataType }
   }
 
   // ── 度量 ────────────────────────────────────────────────────────────────
@@ -138,58 +189,59 @@ export function compileExplore(spec: unknown, ctx: ExploreContext): ExploreCompi
     const agg = typeof m.agg === 'string' ? m.agg : ''
     if (!(EXPLORE_AGGS as readonly string[]).includes(agg)) return fail('AGG_NOT_ALLOWED', agg)
     const column = typeof m.column === 'string' ? m.column : ''
-    const bad = checkColumn(column)
-    if (bad !== null) return bad
-    const dataType = colOf.get(column)!.dataType
-    if (['sum', 'avg', 'min', 'max'].includes(agg) && !NUMERIC_TYPES.has(dataType)) {
-      return fail('COLUMN_NOT_NUMERIC', `${column}(${dataType})`)
+    const resolved = resolveColumn(column)
+    if ('ok' in resolved) return resolved
+    if (['sum', 'avg', 'min', 'max'].includes(agg) && !NUMERIC_TYPES.has(resolved.dataType)) {
+      return fail('COLUMN_NOT_NUMERIC', `${column}(${resolved.dataType})`)
     }
-    const alias = typeof m.as === 'string' && m.as !== '' ? m.as : `${agg}_${column}`
+    // 默认别名取列名末段：`branch.region_name` ⇒ `sum_region_name`（别名必须是 IDENT）。
+    const alias = typeof m.as === 'string' && m.as !== '' ? m.as : `${agg}_${column.split('.').pop()}`
     if (!IDENT_RE.test(alias) || aliases.has(alias)) return fail('BAD_SPEC', `别名非法或重复：${alias}`)
     aliases.add(alias)
-    selects.push(`${agg === 'count_distinct' ? 'count(distinct' : agg}(${column})${agg === 'count_distinct' ? ')' : ''} as ${alias}`)
+    selects.push(`${agg === 'count_distinct' ? 'count(distinct' : agg}(${resolved.sqlRef})${agg === 'count_distinct' ? ')' : ''} as ${alias}`)
   }
 
   // ── 维度 ────────────────────────────────────────────────────────────────
   const dimsRaw = Array.isArray(s.dimensions) ? s.dimensions : []
   if (dimsRaw.length > 4) return fail('BAD_SPEC', 'dimensions 最多 4 个')
-  const dims: string[] = []
+  const dims: Array<{ name: string; sqlRef: string }> = []
   for (const d of dimsRaw) {
     if (typeof d !== 'string') return fail('BAD_SPEC', 'dimensions 必须是字符串数组')
-    const bad = checkColumn(d)
-    if (bad !== null) return bad
-    if (aliases.has(d)) return fail('BAD_SPEC', `维度与度量别名重名：${d}`)
-    if (!dims.includes(d)) dims.push(d)
+    const resolved = resolveColumn(d)
+    if ('ok' in resolved) return resolved
+    const last = d.split('.').pop()!
+    if (aliases.has(d) || aliases.has(last)) return fail('BAD_SPEC', `维度与度量别名重名：${d}`)
+    if (!dims.some((x) => x.name === d)) dims.push({ name: d, sqlRef: resolved.sqlRef })
   }
 
   // ── 过滤 ────────────────────────────────────────────────────────────────
   const rawFilters = Array.isArray(s.filters) ? s.filters : []
   if (rawFilters.length > 10) return fail('BAD_FILTER', 'filters 最多 10 项')
-  const where: string[] = ['org = $1']
+  const where: string[] = [`${relation}.org = $1`]
   const params: unknown[] = []
   const push = (v: unknown): string => { params.push(v); return `$${params.length + 1}` }
   for (const raw of rawFilters) {
     const f = asRecord(raw)
     const column = typeof f.column === 'string' ? f.column : ''
     const op = typeof f.op === 'string' ? f.op : ''
-    const bad = checkColumn(column)
-    if (bad !== null) return bad
+    const resolved = resolveColumn(column)
+    if ('ok' in resolved) return resolved
     const value = f.value
     if (!(EXPLORE_FILTER_OPS as readonly string[]).includes(op)) return fail('BAD_FILTER', `未知 op：${op}`)
     if (op === 'in') {
       if (!Array.isArray(value) || value.length === 0 || value.length > 200 || !value.every(isPrimitive)) {
         return fail('BAD_FILTER', 'in 需要非空基本类型数组（≤200）')
       }
-      where.push(`${column} = any(${push(value)})`)
+      where.push(`${resolved.sqlRef} = any(${push(value)})`)
     } else if (op === 'between') {
       if (!Array.isArray(value) || value.length !== 2 || !value.every(isPrimitive)) {
         return fail('BAD_FILTER', 'between 需要 [起, 止]')
       }
-      where.push(`${column} between ${push(value[0])} and ${push(value[1])}`)
+      where.push(`${resolved.sqlRef} between ${push(value[0])} and ${push(value[1])}`)
     } else {
       if (!isPrimitive(value)) return fail('BAD_FILTER', `${op} 需要基本类型值`)
       const sqlOp = { eq: '=', neq: '<>', gte: '>=', lte: '<=' }[op]
-      where.push(`${column} ${sqlOp} ${push(value)}`)
+      where.push(`${resolved.sqlRef} ${sqlOp} ${push(value)}`)
     }
   }
 
@@ -209,13 +261,15 @@ export function compileExplore(spec: unknown, ctx: ExploreContext): ExploreCompi
   let orderSql = ''
   if (s.orderBy !== undefined && s.orderBy !== null) {
     const key = typeof orderRaw.key === 'string' ? orderRaw.key : ''
-    const orderable = aliases.has(key) || dims.includes(key)
+    const orderable = aliases.has(key) || dims.some((d) => d.name === key)
     if (!orderable) return fail('BAD_SPEC', `orderBy.key 必须是维度或度量别名：${key}`)
     orderSql = ` order by ${key}${orderRaw.desc === false ? ' asc' : ' desc'}`
   }
 
-  const groupSql = dims.length > 0 ? ` group by ${dims.join(', ')}` : ''
-  const selectSql = [...dims, ...selects].join(', ')
-  const sql = `select ${selectSql} from ${EXPLORE_SCHEMA}.${relation} where ${where.join(' and ')}${groupSql}${orderSql} limit ${limit}`
+  const dimsSql = dims.map((d) => d.sqlRef)
+  const groupSql = dimsSql.length > 0 ? ` group by ${dimsSql.join(', ')}` : ''
+  const joinSql = joinClauses.length > 0 ? ` ${joinClauses.join(' ')}` : ''
+  const selectSql = [...dimsSql, ...selects].join(', ')
+  const sql = `select ${selectSql} from ${EXPLORE_SCHEMA}.${relation}${joinSql} where ${where.join(' and ')}${groupSql}${orderSql} limit ${limit}`
   return { ok: true, sql, params, preview: previewOf(sql, params) }
 }

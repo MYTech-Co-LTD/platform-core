@@ -45,27 +45,46 @@
 **Files:**
 - Create: `modules/data/migrations/040_semantic_relation.sql`
 - Create: `dbt/semantics/relations.yml`（声明面；与 l1_metrics.yml 同风格）
-- Create: `modules/data/domain/semantics/relation.ts` + 测试（校验：字段存在、命中率、证据必填）
-- Modify: `modules/data/domain/analysis/explore.ts`（支持 `joins: [{relation, on:[...]}]`，走同一白名单与掩码）
+- 实际落点：`modules/data/domain/analysis/relations.ts`（解析/闸门/join 编译）+ `explore.ts`（`joins: 关系名[]`、列可写 `<关系名>.<列>`）
+- Modify: `modules/data/domain/toolbox/registry.ts`（工具 schema 暴露 `joins`）
 
-**Interfaces:**
+**Interfaces（实际实现，比初稿多 `keys`）:**
 ```ts
-interface SemanticRelation {
+interface RelationDecl {
   name: string
   from: { relation: string; column: string }
   to: { relation: string; column: string }
-  cardinality: '1:1' | '1:N' | 'N:1'
-  evidence: { matchRate: number; sampledDay: string; rowsProbed: number }
+  keys: Array<{ from: string; to: string }>   // 附加等值键（system_book）—— 见下方实测
+  cardinality: '1:1' | '1:N' | 'N:1' | 'N:M'
+  dedupRule?: 'latest_snapshot'
+  evidence: { matchRate: number | null; sampledDay?: string | null }
   status: 'verified' | 'candidate'
 }
 ```
-- 编译期：`joins` 只能引用 `status='verified'` 且 `matchRate ≥ 0.95` 的关系；
+- 编译期：`joins` 只能引用 `status='verified'` 且 `matchRate ≥ 0.95`、from 侧就是基表的关系；
+  未通过 ⇒ `JOIN_NOT_ALLOWED`，未声明的别名引用 ⇒ `COLUMN_NOT_FOUND`；
 - 执行期：仍走 `explore-exec` 的只读池、org 注入、1000 行上限、审计。
 
-- [ ] **Step 1**: 迁移 + 声明文件（首批只收：门店 100% 已证；客户只收出库/贡献/费用侧）
-- [ ] **Step 2**: 校验器 + 单测（缺证据 / 低命中率 / 未知列 全部拒）
-- [ ] **Step 3**: `explore_query` 支持 joins + 3 个跨对象用例（客户×出库、门店×销售、客户×费用）
-- [ ] **Step 4**: 真机跑通并记录 SQL 与证据
+**★ 实测订正（2026-11-07，join 接线时发现）**：单列键会跨账套串表——事实表与维表都含
+3120/64188 两账套，`branch_num` / `item_num` 跨账套重号。
+- 门店：`fct_retail_sale` 单日 202 行 → 单键 join **14,292 行（70×）**；去重 + `system_book` 后 202 行；
+- 商品：`fct_retail_item_sale` 单日 7,867 行 → 单键 join **8,785 行（+11.7%）**；去重 + `system_book` 后 7,867 行。
+⇒ 声明必须有 `keys: [{from: system_book, to: system_book}]`，维表非唯一必须 `dedupRule: latest_snapshot`。
+
+- [x] **Step 1**: 迁移 + 声明文件（三条关系全部带 `evidence`；门店/商品补 `keys` + 去重）
+- [x] **Step 2**: 校验器 + 单测（缺证据 / 低命中率 / 未知列 / 未知 dedupRule 全部拒）
+- [x] **Step 3**: `explore_query` 支持 joins + 3 个跨对象用例（客户×出库、门店×销售、**商品×销售**）
+      ※ 第三条由「客户×费用」改为商品×销售：商品关系已有真机证据，客户费用侧关系尚未测命中率
+- [x] **Step 4**: 真机跑通并记录 SQL 与证据（见下）
+
+**Step 4 真机证据（在 `shanhai` 数据面 pg_duckdb 上跑编译后同形 SQL）**
+
+| 用例 | 结果 | 行数/金额守恒 |
+|---|---|---|
+| 门店 × 销售（最新日） | 13 个战区，西部二区 21,820.90 居首 | base 89,559.50 = joined 89,559.50 |
+| 商品 × 销售（最新日） | 江苏大闸蟹2.0母蟹 46,320.63 居首 | base 551,477.12 = joined 551,477.12 |
+| 客户 × 出库（全量） | 体系内门店/外部客户各占前二（809.5 万 / 790.5 万） | base 146,681,225.46 = joined 146,681,225.46 |
+| 客户关系命中率 | 有键行 44,793/44,793 = **100%** | 44,793/131,151 行有 `client_fid`（transfer 行恒 NULL） |
 
 ---
 
