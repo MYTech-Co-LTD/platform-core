@@ -55,6 +55,29 @@ REQ_OK_OUT=$(mat_require 'POSTGRES_PASSWORD(pg_duckdb)' 'some-value' 2>&1); REQ_
 check "非空值 ⇒ 退出码 0" sh -c '[ "$1" = 0 ]' _ "$REQ_OK_RC"
 check "非空值 ⇒ 无输出" sh -c '[ -z "$1" ]' _ "$REQ_OK_OUT"
 
+# ── ③-b mat_log_has_build：#1537 的判据（dbt 退出 0 ≠ 建了东西）─────────────────
+# 选择器空匹配时 dbt 打印 `Nothing to do.` 并退出 0；旧脚本照打 MATERIALIZE_OK。
+# 新判据：必须有 `PASS=<n>` 汇总行，且不含 `Nothing to do`。
+LHB_FN=$(extract mat_log_has_build)
+[ -n "$LHB_FN" ] || bad "mat_log_has_build 抽取失败（函数不存在或格式变了）"
+eval "$LHB_FN"
+_lhb=$(mktemp -d)
+printf 'Done. PASS=26 WARN=0 ERROR=0 SKIP=0 TOTAL=26\n' > "$_lhb/ok"
+printf 'Nothing to do. Try checking your model configs and model specification args\n' > "$_lhb/noop"
+printf 'Completed successfully\n' > "$_lhb/nosum"
+printf 'Nothing to do.\nDone. PASS=1 WARN=0 ERROR=0 SKIP=0 TOTAL=1\n' > "$_lhb/both"
+mat_log_has_build "$_lhb/ok";      _rc_ok=$?
+mat_log_has_build "$_lhb/noop";    _rc_noop=$?
+mat_log_has_build "$_lhb/nosum";   _rc_nosum=$?
+mat_log_has_build "$_lhb/both";    _rc_both=$?
+mat_log_has_build "$_lhb/missing"; _rc_missing=$?
+check "有 PASS= 汇总行 ⇒ 判为真跑过（rc 0）" sh -c '[ "$1" = 0 ]' _ "$_rc_ok"
+check "Nothing to do ⇒ 判空跑（rc 1）" sh -c '[ "$1" = 1 ]' _ "$_rc_noop"
+check "无 PASS= 汇总行 ⇒ 判空跑（rc 1，不再默认成功）" sh -c '[ "$1" = 1 ]' _ "$_rc_nosum"
+check "Nothing to do 优先于偶然的 PASS= 行（rc 1）" sh -c '[ "$1" = 1 ]' _ "$_rc_both"
+check "日志文件不存在 ⇒ rc 1（fail-closed）" sh -c '[ "$1" = 1 ]' _ "$_rc_missing"
+rm -rf "$_lhb"
+
 # ── ④ 静态接线：主流程真的用这两个函数（防「函数测绿但 docker run 没走它」）────
 SRC_CONTENT=$(cat "$SRC")
 if printf '%s\n' "$SRC_CONTENT" | grep -Fq -- '$(mat_env_args)'; then ok "docker run 行引用 \$(mat_env_args)（字面量在场）"; else bad "docker run 行引用 \$(mat_env_args)（字面量在场）"; fi
@@ -176,6 +199,11 @@ elif [ "$1" = run ]; then
     printf 'Completed with errors\nDone. PASS=20 WARN=0 ERROR=6 SKIP=0 TOTAL=26\n'
     exit 1
   fi
+  if [ "${STUB_DBT_NOOP:-0}" = 1 ]; then
+    # 选择器空匹配的真机形态（2026-11-07 实测）：只有这一行、退出 0。
+    printf 'Nothing to do. Try checking your model configs and model specification args\n'
+    exit 0
+  fi
   if [ "${STUB_DBT_NO_SUMMARY:-0}" = 1 ]; then
     printf 'Completed successfully\n'
     exit 0
@@ -202,9 +230,12 @@ run_mat() { # $1=用例名 → 假 docker 跑 materialize.sh，stdout/stderr 落
   MATERIALIZE_REPO_DIR="$STUB_E2E/repo" \
   MATERIALIZE_PG_CT=pg MATERIALIZE_CONSOLE_CT=console MATERIALIZE_PLAT_CT=plat \
   MATERIALIZE_NETWORK=stub-net MATERIALIZE_DBT_IMAGE=stub-dbt:stub \
+  MATERIALIZE_SCOPE="${SCOPE_FIXTURE:-full}" \
+  MATERIALIZE_TICK_SELECT="${TICK_SELECT_FIXTURE:-fct_retail_sale}" \
   DATA_PLANE_DOMAINS="${DOMAINS_FIXTURE-lemeng}" \
   STUB_STATE="$_w/state" STUB_ENV_DIR="$STUB_E2E/envdir" \
   STUB_DBT_FAIL="${STUB_DBT_FAIL:-0}" STUB_DBT_NO_SUMMARY="${STUB_DBT_NO_SUMMARY:-0}" \
+  STUB_DBT_NOOP="${STUB_DBT_NOOP:-0}" \
   STUB_DBT_FAIL_DOMAINS="${STUB_DBT_FAIL_DOMAINS:-}" \
   STUB_EXEC_FAIL="${STUB_EXEC_FAIL:-0}" \
   PATH="$STUB_E2E/bin:$PATH" \
@@ -212,7 +243,8 @@ run_mat() { # $1=用例名 → 假 docker 跑 materialize.sh，stdout/stderr 落
   printf '%s' "$?"
 }
 LOG_GREP() { # LOG_GREP <用例名> <字面量>：该跑的 calls.log 里找得到该字面量吗（check 直接调本函数）
-  grep -Fq "$2" "$STUB_E2E/$1/state/calls.log" 2>/dev/null
+  # `--` 必须有：模式以 `-` 开头（如 `--select`）时 grep 会把它当选项。
+  grep -Fq -- "$2" "$STUB_E2E/$1/state/calls.log" 2>/dev/null
 }
 
 # 成功路径：dbt 绿 ⇒ 退出 0、末行 MATERIALIZE_OK、向仓写逐表水位行（PASS/ERROR 从 dbt 输出解析）
@@ -231,6 +263,28 @@ check "水位：旧「仓级」行（relation NULL）不再新写（VALUES 形�
 check "水位：**别的域**的表不落账（域裁剪生效——本面只有 lemeng，forms 的表不在水位行里）" \
   sh -c '! grep -Fq "$2" "$1"' _ "$STUB_E2E/ok/state/calls.log" "stg_forms_submission"
 
+# tick 档正常：只跑具名模型，末行 MATERIALIZE_OK scope=tick，水位写该模型一行
+SCOPE_FIXTURE=tick
+st=$(run_mat tick_ok)
+check "tick：正常 ⇒ 退出码 0" sh -c '[ "$1" = 0 ]' _ "$st"
+check "tick：末行 MATERIALIZE_OK scope=tick" sh -c 'tail -n 1 "$1" | grep -qx "MATERIALIZE_OK scope=tick"' _ "$STUB_E2E/tick_ok/out"
+check "tick：选择器作为单个实参传下去（--select fct_retail_sale）" LOG_GREP tick_ok "--select fct_retail_sale"
+check "tick：水位只写 tick 模型一行" LOG_GREP tick_ok "SELECT 'fct_retail_sale', max(bizday), now(), 26, 0, 'ok' FROM staging.fct_retail_sale;"
+unset SCOPE_FIXTURE
+
+# ★ #1537：tick 选择器空匹配 ⇒ dbt 退出 0 但 `Nothing to do.` ⇒ 必须判 noop，不许假绿
+SCOPE_FIXTURE=tick
+STUB_DBT_NOOP=1
+st=$(run_mat tick_noop)
+STUB_DBT_NOOP=0
+unset SCOPE_FIXTURE
+check "tick 空跑 ⇒ 退出码 1（dbt 退出 0 不再等于成功）" sh -c '[ "$1" = 1 ]' _ "$st"
+check "tick 空跑 ⇒ MATERIALIZE_FAILED:noop 契约字面量" sh -c 'grep -q "MATERIALIZE_FAILED:noop" "$1"' _ "$STUB_E2E/tick_noop/err"
+check "tick 空跑 ⇒ 不写任何水位（空跑不许让 data_as_of 假前进）" \
+  sh -c '! grep -Fq "$2" "$1"' _ "$STUB_E2E/tick_noop/state/calls.log" "INSERT INTO data.load_log"
+check "tick 空跑 ⇒ 末行不是 MATERIALIZE_OK" \
+  sh -c '! tail -n 1 "$1" | grep -qx "MATERIALIZE_OK scope=tick"' _ "$STUB_E2E/tick_noop/out"
+
 # 失败路径：dbt 非零 ⇒ 仍 MATERIALIZE_FAILED:dbt_build，且**零落账**（status 只有 'ok'，失败不写行）
 STUB_DBT_FAIL=1
 st=$(run_mat fail)
@@ -240,12 +294,29 @@ check "落账：dbt 非零 ⇒ MATERIALIZE_FAILED:dbt_build 契约字面量不�
 check "落账：dbt 非零 ⇒ 不向仓写任何 load_log（INSERT 不在场）" sh -c '! grep -Fq "$2" "$1"' _ "$STUB_E2E/fail/state/calls.log" "INSERT INTO data.load_log"
 check "落账：dbt 非零 ⇒ 连建表也不做（一行都不写）" sh -c '! grep -Fq "$2" "$1"' _ "$STUB_E2E/fail/state/calls.log" "CREATE TABLE IF NOT EXISTS data.load_log"
 
-# 解析不到汇总行：物化照常成功，水位行插 NULL（新鲜度缺数 ≠ 整个 job 翻车）
+# ★ 改判（2026-11-07，#1537）：无汇总行从「照常成功」改为「noop 失败」。
+# 旧判据的理由是「新鲜度缺数 ≠ 整个 job 翻车」，但它把**无法证明真的建了东西**当成了成功：
+# dbt 空跑恰恰就是「退出 0 + 无汇总行」这一形状，于是假绿与解析失败不可区分。现在两者都判红，
+# 由 `mat_log_has_build` 统一收口（宁可红，也不报一个没物的 MATERIALIZE_OK）。
 STUB_DBT_NO_SUMMARY=1
 st=$(run_mat nosum)
 STUB_DBT_NO_SUMMARY=0
-check "落账：dbt 无汇总行 ⇒ 仍退出 0" sh -c '[ "$1" = 0 ]' _ "$st"
-check "落账：dbt 无汇总行 ⇒ 水位行插 NULL 不失败" LOG_GREP nosum "max(bizday), now(), NULL, NULL, 'ok' FROM staging.stg_lemeng_a;"
+check "落账：dbt 无汇总行 ⇒ 退出码 1（不能证明真的建了东西）" sh -c '[ "$1" = 1 ]' _ "$st"
+check "落账：dbt 无汇总行 ⇒ MATERIALIZE_FAILED:noop" sh -c 'grep -q "MATERIALIZE_FAILED:noop" "$1"' _ "$STUB_E2E/nosum/err"
+check "落账：dbt 无汇总行 ⇒ 零落账（不再插 NULL 水位）" \
+  sh -c '! grep -Fq "$2" "$1"' _ "$STUB_E2E/nosum/state/calls.log" "INSERT INTO data.load_log"
+
+# ★ #1537 全量档：域选择器空匹配（`Nothing to do.`）⇒ 该域不落账，整体判 noop
+STUB_DBT_NOOP=1
+st=$(run_mat noop)
+STUB_DBT_NOOP=0
+check "全量空跑 ⇒ 退出码 1" sh -c '[ "$1" = 1 ]' _ "$st"
+check "全量空跑 ⇒ MATERIALIZE_FAILED:noop 且点名域" \
+  sh -c 'grep -q "MATERIALIZE_FAILED:noop" "$1" && grep -q "lemeng" "$1"' _ "$STUB_E2E/noop/err"
+check "全量空跑 ⇒ 零落账（不写 load_log）" \
+  sh -c '! grep -Fq "$2" "$1"' _ "$STUB_E2E/noop/state/calls.log" "INSERT INTO data.load_log"
+check "全量空跑 ⇒ 末行不是 MATERIALIZE_OK" \
+  sh -c '! tail -n 1 "$1" | grep -qx "MATERIALIZE_OK"' _ "$STUB_E2E/noop/out"
 
 # 落账本身失败（psql 非零）：告警不翻车——退出码契约维持三态（0/missing_env/dbt_build）
 STUB_EXEC_FAIL=1
