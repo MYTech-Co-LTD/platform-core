@@ -250,6 +250,10 @@ function producerProjections(rootDir, c) {
   /** @type {{ abs: string, doc: any, id: string, sql: string }[]} */
   const out = []
   for (const p of findProducerPipelines(rootDir, c.prefix)) {
+    // 增量子管线（`.page.`）的投影是 manifest 投影的 ITER 派生（`${ENV:SYSTEM_BOOK}` →
+    // `${ITER_ITEM_SYSTEM_BOOK}` 等）。契约生成器按 `expr` 归一会把它打回父 token，
+    // 而子管线**不展开** ENV/日期 ⇒ 运行期才炸。列集仍由 `check-data-contract` 守。
+    if (p.includes('.page.')) continue
     const abs = join(rootDir, p)
     /** @type {any} */
     let doc

@@ -158,3 +158,134 @@ describe('gen-pipeline：分页类型', () => {
     expect(validateManifest(m).join()).toContain('static_pages')
   })
 })
+
+describe('gen-pipeline：incremental（真增量）', () => {
+  const incr = () =>
+    mutate((m) => {
+      m.source.body = '{"date_start":"${date-1d}","page_number":1,"page_size":100}'
+      m.source.pagination = {
+        type: 'incremental',
+        pages: 3,
+        pageParam: 'page_number',
+        pageSize: 100,
+        fingerprintSql: 'max(CAST(order_no AS VARCHAR))',
+        watermarkPath: '/workspace/tmp/x.watermark.parquet',
+        windowToken: '${date-1d}',
+        pageSizeParam: 'page_size',
+      }
+      m.sink.key = 'pilot/demo/run=${ITER_ITEM_RUN}/page=${ITER_ITEM_PAGE}.parquet'
+    })
+
+  it('产出「父 + 子」两条管线', () => {
+    expect(validateManifest(incr())).toEqual([])
+    expect(pipelineNames(incr() as any)).toEqual(['pilot.demo', 'pilot.demo.page'])
+  })
+
+  it('父管线：探针 → 指纹 → 比水位 → 页列表 → foreach（+ 旁路写水位）', () => {
+    const p: any = buildPipeline(incr() as any)
+    expect(p.nodes.map((n: any) => n.id)).toEqual(['probe', 'fp', 'prev', 'cmp', 'pages', 'fe', 'wmk', 'ks'])
+    // 水位必须用旁路 sink 写（ctl.checkpoint 会提前覆盖，实测踩过）
+    const ks = p.nodes.find((n: any) => n.id === 'ks')
+    expect(ks.data.componentId).toBe('snk.parquet')
+    expect(ks.data.properties.path).toBe('/workspace/tmp/x.watermark.parquet')
+    expect(p.nodes.some((n: any) => n.data.componentId === 'ctl.checkpoint')).toBe(false)
+  })
+
+  it('子管线：页码与窗口走 ITER 列（子管线不展开 ENV/日期）', () => {
+    const c: any = buildPipeline(incr() as any, 'pilot.demo.page')
+    const body = c.nodes[0].data.properties.body
+    expect(body).toContain('"page_number":${ITER_ITEM_PAGE}')
+    expect(body).toContain('${ITER_ITEM_BIZDAY}')
+    expect(body).not.toContain('${date-1d}')
+  })
+
+  it('缺 fingerprintSql / watermarkPath / windowToken 被拦', () => {
+    const m = incr()
+    delete (m.source.pagination as any).fingerprintSql
+    expect(validateManifest(m).join()).toContain('fingerprintSql')
+    const m2 = incr()
+    ;(m2.source.pagination as any).watermarkPath = 'relative.parquet'
+    expect(validateManifest(m2).join()).toContain('watermarkPath')
+    const m3 = incr()
+    ;(m3.source.pagination as any).windowToken = '${date-9d}'
+    expect(validateManifest(m3).join()).toContain('windowToken')
+  })
+
+  it('sink.key 缺 ${ITER_ITEM_PAGE} 被拦', () => {
+    const m = incr()
+    m.sink.key = 'pilot/demo/all.parquet'
+    expect(validateManifest(m).join()).toContain('ITER_ITEM_PAGE')
+  })
+
+  it('truncationGuard：尾页探针（pages+1）→ ctl.die，不靠 merge 计数', () => {
+    const m = incr()
+    ;(m.source.pagination as any).truncationGuard = true
+    expect(validateManifest(m)).toEqual([])
+    const p: any = buildPipeline(m as any)
+    const tail = p.nodes.find((n: any) => n.id === 'tail')
+    expect(tail.data.componentId).toBe('src.rest')
+    expect(tail.data.properties.body).toContain('"page_number":4')
+    expect(tail.data.properties.body).toContain('"page_size":100')
+    const die = p.nodes.find((n: any) => n.id === 'dgt')
+    expect(die.data.componentId).toBe('ctl.die')
+    expect(die.data.properties.condition).toBe('has-rows')
+    expect(p.edges.some((e: any) => e.source === 'tail' && e.target === 'dgt')).toBe(true)
+  })
+
+  it('truncationGuard 仍不能配 none', () => {
+    const m = mutate((x) => {
+      x.source.pagination = { type: 'none', truncationGuard: true }
+    })
+    expect(validateManifest(m).join()).toContain('static_pages')
+  })
+})
+
+describe('gen-pipeline：identityGate（L0 身份闸）', () => {
+  it('生成标准 9 节点，并用 on-subjob-ok 挂到首个数据节点', () => {
+    const m = mutate((x) => {
+      x.identityGate = true
+    })
+    expect(validateManifest(m)).toEqual([])
+    const p: any = buildPipeline(m as any)
+    expect(p.nodes.map((n: any) => n.id)).toEqual([
+      'w0', 'g0', 'g1', 'g2', 'd0', 'g3', 'd1', 'gv', 'dv', 's', 't', 'k',
+    ])
+    const control = p.edges.find((e: any) => e.source === 'dv')
+    expect(control.target).toBe('s')
+    expect(control.data.connectionType).toBe('on-subjob-ok')
+    expect(p.nodes.find((n: any) => n.id === 'w0').data.properties.rawResponseDestination).toContain('whoami-')
+    // 空响应时引擎按申报 schema 构造关系；缺了会在 w0 直接报错（真机 2026-11-08）
+    expect(p.nodes.find((n: any) => n.id === 'w0').data.schema).toEqual([{ name: 'x', type: 'string' }])
+    expect(p.nodes.find((n: any) => n.id === 'g3').data.properties.sql).toContain('${ENV:SYSTEM_BOOK}')
+  })
+
+  it('增量父管线：身份闸挂在 probe 上；子管线不重复身份闸', () => {
+    const m = mutate((x) => {
+      x.identityGate = true
+      x.source.body = '{"date_start":"${date-1d}","page_number":1,"page_size":100}'
+      x.source.pagination = {
+        type: 'incremental',
+        pages: 3,
+        pageParam: 'page_number',
+        pageSize: 100,
+        fingerprintSql: 'max(CAST(order_no AS VARCHAR))',
+        watermarkPath: '/workspace/tmp/x.watermark.parquet',
+        windowToken: '${date-1d}',
+      }
+      x.sink.key = 'pilot/demo/run=${ITER_ITEM_RUN}/page=${ITER_ITEM_PAGE}.parquet'
+    })
+    expect(validateManifest(m)).toEqual([])
+    const p: any = buildPipeline(m as any)
+    expect(p.nodes[0].id).toBe('w0')
+    expect(p.edges.find((e: any) => e.source === 'dv' && e.target === 'probe').data.connectionType).toBe('on-subjob-ok')
+    const c: any = buildPipeline(m as any, 'pilot.demo.page')
+    expect(c.nodes.some((n: any) => n.id === 'w0')).toBe(false)
+  })
+
+  it('identityGate 非布尔被拦', () => {
+    const m = mutate((x) => {
+      x.identityGate = 'yes'
+    })
+    expect(validateManifest(m).join()).toContain('identityGate')
+  })
+})

@@ -1,0 +1,78 @@
+{
+  "id": "pilot.incr_ro",
+  "domain": "pilot",
+  "account": "3120",
+  "source": {
+    "connectionRef": "lemeng",
+    "url": "https://cloud.nhsoft.cn/agi/api/nhsoft.ama.ai.request.order.find",
+    "method": "POST",
+    "headers": {
+      "Content-Type": "application/json"
+    },
+    "body": "{\"date_start\":\"${date-1d}\",\"date_end\":\"${date-1d}\",\"date_type\":\"制单时间\",\"page_number\":1,\"page_size\":100}",
+    "responsePath": "/result",
+    "schema": [
+      {
+        "name": "request_order_fid",
+        "type": "string"
+      },
+      {
+        "name": "order_type",
+        "type": "string"
+      },
+      {
+        "name": "transfer_state",
+        "type": "string"
+      },
+      {
+        "name": "purchase_date",
+        "type": "string"
+      },
+      {
+        "name": "branch_num",
+        "type": "int64"
+      },
+      {
+        "name": "branch_code",
+        "type": "string"
+      },
+      {
+        "name": "branch_name",
+        "type": "string"
+      },
+      {
+        "name": "out_branch_num",
+        "type": "int64"
+      },
+      {
+        "name": "out_branch_name",
+        "type": "string"
+      },
+      {
+        "name": "items",
+        "type": "json"
+      }
+    ],
+    "pagination": {
+      "type": "incremental",
+      "pages": 3,
+      "pageParam": "page_number",
+      "pageSize": 100,
+      "fingerprintSql": "max(CAST(request_order_fid AS VARCHAR))",
+      "watermarkPath": "/workspace/tmp/pilot-incr-ro.watermark.parquet",
+      "windowToken": "${date-1d}"
+    }
+  },
+  "transform": {
+    "sql": "SELECT\n  'rq-' || '${ENV:SYSTEM_BOOK}' || '-request_order-' || replace(replace('${datetime}','-',''),'_','T') || 'Z' AS batch_id,\n  '${ENV:SYSTEM_BOOK}' AS system_book,\n  CAST('${date-1d}' AS DATE) AS bizday,\n  CAST(o.request_order_fid AS VARCHAR) AS order_no,\n  CAST(o.order_type AS VARCHAR) AS order_type,\n  CAST(o.transfer_state AS VARCHAR) AS transfer_state,\n  CAST(o.purchase_date AS VARCHAR) AS purchase_date,\n  CAST(o.branch_num AS INTEGER) AS branch_num,\n  CAST(o.branch_code AS VARCHAR) AS branch_code,\n  CAST(o.branch_name AS VARCHAR) AS branch_name,\n  CAST(o.out_branch_num AS INTEGER) AS out_branch_num,\n  CAST(o.out_branch_name AS VARCHAR) AS out_branch_name,\n  CAST(json_extract_string(u.d, '$.item_num') AS BIGINT) AS item_num,\n  json_extract_string(u.d, '$.item_code') AS item_code,\n  json_extract_string(u.d, '$.item_name') AS item_name,\n  json_extract_string(u.d, '$.item_spec') AS item_spec,\n  json_extract_string(u.d, '$.item_unit') AS item_unit,\n  CAST(json_extract_string(u.d, '$.quantity') AS DECIMAL(14,6)) AS quantity,\n  CAST(json_extract_string(u.d, '$.use_quantity') AS DECIMAL(14,6)) AS use_quantity,\n  json_extract_string(u.d, '$.use_unit') AS use_unit,\n  CAST(json_extract_string(u.d, '$.subtotal') AS DECIMAL(14,2)) AS subtotal,\n  CAST(json_extract_string(u.d, '$.use_rate') AS DECIMAL(18,8)) AS use_rate,\n  CAST(json_extract_string(u.d, '$.present_quantity') AS DECIMAL(14,6)) AS present_quantity,\n  CAST(json_extract_string(u.d, '$.present_use_quantity') AS DECIMAL(14,6)) AS present_use_quantity\nFROM input o\nCROSS JOIN UNNEST(from_json(CAST(o.items AS JSON), '[\"JSON\"]')) AS u(d)"
+  },
+  "sink": {
+    "type": "minio",
+    "connectionRef": "zos",
+    "bucket": "shanhai-data",
+    "key": "pilot/incr_ro/system_book=${ITER_ITEM_SYSTEM_BOOK}/bizday=${ITER_ITEM_BIZDAY}/page=${ITER_ITEM_PAGE}.parquet",
+    "format": "parquet",
+    "mode": "overwrite",
+    "compression": "zstd"
+  }
+}

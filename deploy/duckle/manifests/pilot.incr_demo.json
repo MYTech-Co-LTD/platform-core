@@ -1,0 +1,57 @@
+{
+  "id": "pilot.incr_demo",
+  "domain": "pilot",
+  "account": "3120",
+  "source": {
+    "connectionRef": "lemeng",
+    "url": "https://cloud.nhsoft.cn/agi/api/nhsoft.ama.ai.request.order.find",
+    "method": "POST",
+    "headers": {
+      "Content-Type": "application/json"
+    },
+    "body": "{\"date_start\":\"${date-1d}\",\"date_end\":\"${date-1d}\",\"date_type\":\"制单时间\",\"page_number\":1,\"page_size\":100}",
+    "responsePath": "/result",
+    "schema": [
+      {
+        "name": "request_order_fid",
+        "type": "string"
+      },
+      {
+        "name": "purchase_date",
+        "type": "string"
+      }
+    ],
+    "pagination": {
+      "type": "incremental",
+      "pages": 3,
+      "pageParam": "page_number",
+      "pageSize": 100,
+      "fingerprintSql": "max(CAST(request_order_fid AS VARCHAR))",
+      "watermarkPath": "/workspace/tmp/pilot-incr-demo.watermark.parquet",
+      "windowToken": "${date-1d}"
+    }
+  },
+  "transform": {
+    "sql": "SELECT CAST(request_order_fid AS VARCHAR) AS request_order_fid, CAST(purchase_date AS VARCHAR) AS purchase_date FROM input"
+  },
+  "gate": {
+    "rules": {
+      "request_order_fid": "not_null"
+    }
+  },
+  "sink": {
+    "type": "minio",
+    "connectionRef": "zos",
+    "bucket": "shanhai-data",
+    "key": "pilot/incr_demo/system_book=${ITER_ITEM_SYSTEM_BOOK}/bizday=${ITER_ITEM_BIZDAY}/run=${ITER_ITEM_RUN}/page=${ITER_ITEM_PAGE}.parquet",
+    "format": "parquet",
+    "mode": "overwrite",
+    "compression": "zstd"
+  },
+  "owner": {
+    "owner": "data-eng",
+    "match": "minio://*/pilot/incr_demo/system_book=*/bizday=*/run=*/page=*.parquet",
+    "maximumAge": "36h",
+    "description": "P1 试点：manifest 生成的 incremental 管线（测试前缀，不排班）"
+  }
+}

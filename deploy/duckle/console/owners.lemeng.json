@@ -214,9 +214,9 @@
       "maximumAge": "36h"
     },
     {
-      "match": "minio://*/lemeng/request_order/system_book=*/bizday=*/all.parquet",
+      "match": "minio://*/lemeng/request_order/system_book=*/bizday=*/*.parquet",
       "owner": "data-eng",
-      "description": "要货单每日采集的成功凭证（L0 lemeng.request.order.l0.3120）",
+      "description": "要货单每日采集的成功凭证（L0 lemeng.request.order.l0.3120；过渡期同时匹配旧 all.parquet 与新 page=*.parquet）",
       "tags": [
         "lemeng"
       ],
