@@ -228,6 +228,14 @@ export async function upsertCandidate(pool: Pool, org: string, input: CandidateI
     : `(vq.baseline is distinct from excluded.baseline
         or vq.slicing is distinct from excluded.slicing
         or ${toleranceProvided ? 'vq.tolerance is distinct from excluded.tolerance' : 'false'})`
+  // 2026-11-07 (#1594)：覆盖**已 verified 行**的基线时必须留审计（谁/何时/为什么）。
+  // 触发条件与 baselineUpdate 取 excluded 的分支同源：human 或 auto-strong 才覆盖；
+  // preserveBaseline / 弱信号不覆盖 ⇒ 不改审计列。
+  const provenanceCond = preserveBaseline
+    ? 'false'
+    : `(vq.status = 'verified'
+        and vq.baseline is distinct from excluded.baseline
+        and (excluded.source = 'human' or excluded.strength = 'strong'))`
 
   // 列清单动态拼：tolerance 未给 ⇒ 不出现该列（走表默认），不能用 coalesce 把默认值抄第二遍。
   const cols: string[] = []
@@ -281,6 +289,18 @@ export async function upsertCandidate(pool: Pool, org: string, input: CandidateI
        baseline = ${baselineUpdate},
        slicing = ${slicingUpdate},
        tolerance = ${toleranceUpdate},
+       -- 覆盖已验基线 ⇒ 同语句写审计（谁/何时/为什么）；不覆盖则保留原审计。
+       baseline_refreshed_by = case
+                                 when ${provenanceCond}
+                                   then case when excluded.source = 'human' then 'human' else 'auto:strong' end
+                                 else vq.baseline_refreshed_by
+                               end,
+       baseline_refreshed_at = case when ${provenanceCond} then now() else vq.baseline_refreshed_at end,
+       baseline_refresh_reason = case
+                                   when ${provenanceCond}
+                                     then case when excluded.source = 'human' then 'human:upsert' else 'auto:verify-ingest' end
+                                   else vq.baseline_refresh_reason
+                                 end,
        -- 内容**真的被覆盖** ⇒ 旧的 pass/fail/error 不再对应当前基线，清空。
        -- （preserveBaseline / 未提供 tolerance 时内容未变，旧结果仍然对应当前基线，保留。）
        last_check_result = case
