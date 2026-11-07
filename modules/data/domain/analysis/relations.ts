@@ -76,3 +76,21 @@ export function joinClauseOf(decl: RelationDecl, alias: string): string {
   }
   throw new Error(`未支持的 dedupRule: ${decl.dedupRule}`)
 }
+
+/**
+ * 为一次探索挑选可用的 join 子句：只取**本表作为 from 侧**、且 `joinableOf` 通过的关系。
+ * 未通过的关系**不进 SQL**（宁可不 join，也不生成一个会放大行数的连接）。
+ */
+export function joinsForRelation(
+  declarations: readonly RelationDecl[],
+  relation: string,
+): Array<{ declaration: RelationDecl; clause: string; alias: string }> {
+  const out: Array<{ declaration: RelationDecl; clause: string; alias: string }> = []
+  for (const d of declarations) {
+    if (d.from.relation !== relation) continue
+    if (joinableOf(d) !== null) continue
+    const alias = `r_${d.name}`
+    out.push({ declaration: d, alias, clause: joinClauseOf(d, alias) })
+  }
+  return out
+}

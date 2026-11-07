@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { joinClauseOf, joinableOf, parseRelationsYaml } from './relations'
+import { joinClauseOf, joinableOf, joinsForRelation, parseRelationsYaml } from './relations'
 
 const yaml = `
 version: 1
@@ -65,5 +65,15 @@ describe('joinClauseOf（dedup 生成去重子查询）', () => {
   it('未知 dedupRule 显式报错（不猜）', () => {
     const { relations } = parseRelationsYaml(yaml)
     expect(() => joinClauseOf({ ...relations[1], dedupRule: 'magic' }, 'x')).toThrow(/dedupRule/)
+  })
+})
+
+describe('joinsForRelation（只挑本表 from 侧且通过闸门的关系）', () => {
+  it('只返回 verified + 命中率达标、且 from 侧匹配的关系', () => {
+    const { relations } = parseRelationsYaml(yaml)
+    const forSale = joinsForRelation(relations, 'fct_retail_sale')
+    expect(forSale).toHaveLength(1)
+    expect(forSale[0].clause).toContain('join dim_lemeng_branch')
+    expect(joinsForRelation(relations, 'fct_hq_outbound')).toHaveLength(0)   // candidate 被拒
   })
 })
