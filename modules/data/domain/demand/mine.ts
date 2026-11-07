@@ -23,6 +23,18 @@ export interface MineIo {
 export interface MineSummary {
   scanned: number; alias: number; newMetric: number; drill: number; hunt: number
   skippedProbe: number; cursorAudit: number; cursorConv: number
+  /** true = 本轮**没有**挖对话侧（多租户部署无归因字段）；不是「挖了 0 条」。 */
+  convSkipped?: boolean
+}
+
+export interface MineOptions {
+  /**
+   * 跳过对话侧（`askdata_trace` / `askdata_stuck`）。
+   *
+   * 为什么需要：这两个 OO 流**没有租户字段**（2026-11-07 实测 schema）。多租户部署里
+   * 同一部署的对话流无法归因到某个 org ⇒ 只能跳过并显式标记，不能把别家的会话算到本 org。
+   */
+  skipConv?: boolean
 }
 
 /**
@@ -37,7 +49,9 @@ export interface MineSummary {
  * 这里选择「不重复计数」而不是「绝不漏一行」。**不要写 `max+1`**：那会额外排除 `max` 与 `max+1`
  * 两档，凭空制造 1 微秒盲区，却不再带来任何额外收益。
  */
-export async function mineOnce(io: MineIo, org: string, nowUs: number): Promise<MineSummary> {
+export async function mineOnce(
+  io: MineIo, org: string, nowUs: number, opts: MineOptions = {},
+): Promise<MineSummary> {
   const catalog = await io.catalogIds(org)
   const summary: MineSummary = {
     scanned: 0, alias: 0, newMetric: 0, drill: 0, hunt: 0, skippedProbe: 0,
@@ -67,6 +81,12 @@ export async function mineOnce(io: MineIo, org: string, nowUs: number): Promise<
   summary.cursorAudit = auditIds.length > 0 ? Math.max(...auditIds) : summary.cursorAudit
   // 审计侧先落水位：conv 源失败（fail-fast 上抛）不应让已 upsert 的计数在下轮被重读重算。
   await io.writeCursor(org, 'query_audit', summary.cursorAudit)
+
+  if (opts.skipConv === true) {
+    // 对话侧无归因字段 ⇒ 不读、不推 conv 水位，并显式标记（见 MineOptions.skipConv）。
+    summary.convSkipped = true
+    return summary
+  }
 
   const conv = await io.readConv(org, summary.cursorConv)
   const sessionIds = [...new Set(conv.map((r) => r.session_id))]

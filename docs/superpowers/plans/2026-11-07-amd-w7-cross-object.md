@@ -102,7 +102,7 @@ interface RelationDecl {
 - Modify: `modules/data/domain/verified-regression.ts`（`compare` 增 `warns`；`runRegression` 透传）
 - Modify: `scripts/verify-regression.mjs`（打印 warn / 汇总 warn=N；退出码只看 fail）
 - Modify: `scripts/apply-eval-set.mjs`（拒 `window: 'default'`）
-- Create: `scripts/refresh-baseline.mjs`（复用 `refreshBaseline`；dry-run 缺省）
+- Modify: `scripts/refresh-baseline.mjs`（已存在 #1494；修 dry-run 仍写库 → `write:false` 只计算）
 - Create: `scripts/lemeng/emit-probe.sh`（→ `/opt/lemeng-emit-probe.sh`，进 data-plane 清单）
 - Create: `docs/superpowers/notes/2026-11-07-tenant-loop.md`
 - 数据处置：#3 → `stale`；#1723 → 用 refresh CLI 刷新一次
@@ -110,7 +110,7 @@ interface RelationDecl {
 **判据：** 单租户连续 30 天：需求出现→处置→回归覆盖，平台零介入（本轮做到「环路可信可见 + 首日基线」，30 天标观察中）。
 
 - [ ] **Step 1（多 org）**：`--org` / `--all-tenants` 互斥；空租户 exit 1；单 org 失败隔离；conv/stuck 仅单租户部署时挖，多租户 `conv=skipped(multi-tenant)`；单测 + 真机 `--all-tenants` 一轮
-- [ ] **Step 2（评估集卫生）**：`apply-eval-set` 拒 `default`；#3 置 `stale`；新增 `refresh-baseline.mjs` 并刷新 #1723（dry-run 先看漂移）
+- [ ] **Step 2（评估集卫生）**：`apply-eval-set` 拒 `default`；#3 置 `stale`；修 `refresh-baseline.mjs` 的 dry-run（现仍写库）并刷新 #1723（先 dry-run 看漂移）
 - [ ] **Step 3（判定分级）**：`compare` 的 `warns`；value/结构=fail、维度列=warn、无 value 列 fail-closed；单测 + 真机回归从「每日红」变为「pass + warn」
 - [ ] **Step 4（可见性）**：`emit-probe.sh` 投 `data_plane_probes`；job 命令改为「跑回归→按退出码发 OK/RED→保留退出码」；真机验 OK 行落库、RED 行可被桥转发
 - [ ] **Step 5（观察）**：`notes/2026-11-07-tenant-loop.md` 记首日基线 + 7/30 天观察 SQL（`demand_signals`/`verified`/回归 pass 率）

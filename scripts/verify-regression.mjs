@@ -101,12 +101,15 @@ if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) 
     for (const r of results) {
       const tail = r.diffs.length === 0 ? '' : `  — ${r.diffs.join('; ')}`
       console.log(`${r.result.padEnd(5)} #${r.id} ${r.metricId}  ${r.question}${tail}`)
+      // 非致命漂移（维度/标识列的行集指纹）：逐行明示，但不改变 pass/fail 判定。
+      for (const w of r.warns) console.log(`warn   #${r.id} ${r.metricId}  ${w}`)
     }
     const count = (/** @type {'pass'|'fail'|'error'} */ result) =>
       results.filter((r) => r.result === result).length
+    const warnCount = results.reduce((n, r) => n + r.warns.length, 0)
     console.log(
       `verify-regression: total=${results.length} pass=${count('pass')} `
-      + `fail=${count('fail')} error=${count('error')}`)
+      + `fail=${count('fail')} error=${count('error')} warn=${warnCount}`)
 
     if (results.length === 0) {
       console.error('verify-regression: 回归集为空——没有基线就没有可信度，不判绿')

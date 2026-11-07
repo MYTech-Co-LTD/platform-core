@@ -144,4 +144,28 @@ describe('mineOnce', () => {
     await expect(mineOnce(io, 'org1', 1_800_000_000_000_000)).rejects.toThrow('OO down')
     expect(cursors.get('query_audit')).toBe(9)
   })
+
+  it('skipConv：不读 conv/stuck、不推 conv 水位，且摘要显式标记（多租户无归因）', async () => {
+    let convRead = 0
+    let stuckRead = 0
+    const { io, cursors } = fakeIo({
+      readAudit: async () => [{ id: 7, metric_id: 'm:a:b', reason: 'metric_not_declared', params: {} }],
+      readConv: async () => { convRead += 1; return [convRow()] },
+      readStuck: async () => { stuckRead += 1; return new Map() },
+    })
+    const out = await mineOnce(io, 'org1', 1_800_000_000_000_000, { skipConv: true })
+    expect(out.convSkipped).toBe(true)
+    expect(out.hunt).toBe(0)
+    expect(convRead).toBe(0)
+    expect(stuckRead).toBe(0)
+    // 审计侧照常推进；conv 游标不动。
+    expect(cursors.get('query_audit')).toBe(7)
+    expect(cursors.has('askdata_conv')).toBe(false)
+  })
+
+  it('不传 skipConv：照旧挖 conv 且不标记', async () => {
+    const { io } = fakeIo({ readConv: async () => [] })
+    const out = await mineOnce(io, 'org1', 1_800_000_000_000_000)
+    expect(out.convSkipped).toBeUndefined()
+  })
 })

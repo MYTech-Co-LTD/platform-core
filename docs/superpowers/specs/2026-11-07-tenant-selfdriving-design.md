@@ -17,7 +17,7 @@
 | V5 | 红的两类原因：① `#3`「近 7 天」`params={}` —— 摄入时未钉窗口，基线是滚动快照；② `#1723` 业务 `value` 未变，仅 `branch_num`（**标识列**）sum 118197→118356 漂移 | `data.verified_questions` 原行 + job 输出 |
 | V6 | `rowCount` 恒被截到 1000 ⇒ **不能**用它替代行集组成信号 | 基线原文 `rowCount: 1000` |
 | V7 | job failed 通知**不进站内 deliveries feed**；数据面的既定单出口是 OO `data_plane_probes` → `oo-notify-bridge.sh` → 企微 | `deploy/duckle/console/scorecard-alert.py` 头注；100 条 deliveries 中 `job.* = 0` |
-| V8 | 基线刷新能力已实现（`refreshBaseline`，带 by/reason）但**没有任何调用方** | `modules/data/domain/verified-baseline-refresh.ts`；无 route/CLI |
+| V8 | 基线刷新**已有 CLI**（`scripts/refresh-baseline.mjs`，#1494），但它的 dry-run **仍然写库**（CLI 只改了报告里的 `wrote`，`refreshBaseline` 恒执行 UPDATE） | 通读 CLI + domain：`refreshBaseline` 无 `write` 开关 |
 
 **结论**：多 org 迭代本身是小改动；真正让 W7 出口判据「单租户 30 天自转、平台零介入」不成立的是**判据不可执行 + 红不可见**。因此 Task 3 必须先把环路做成「可信、可执行、可见」，再谈多租户。
 
@@ -26,7 +26,7 @@
 ### 2.1 纳入（四件）
 
 1. **多 org 挖掘**：`demand-mining` 支持 `--org` / `--all-tenants`；conv/stuck 侧加单租户归因护栏。
-2. **评估集卫生 + 刷新接线**：禁止无窗口的 `default` 条目；新增 `refresh-baseline` CLI。
+2. **评估集卫生 + 刷新修缺**：禁止无窗口的 `default` 条目；修 `refresh-baseline` 的 dry-run（现为「号称 dry-run 仍写库」）。
 3. **判定分级**：`value`/结构漂移判红；维度（标识）列漂移降为 `warn`。
 4. **verdict 可见性**：回归结果投 OO `data_plane_probes`，复用既有企微桥。
 
@@ -56,11 +56,11 @@ node scripts/demand-mining.mjs [--org <casdoor_org> | --all-tenants]
 - `apply-eval-set`：条目的 `window` 必须是 `fixed`（带已封板 `from`/`to`）或 `yesterday` / `last7` / `mtd`（摄入时解析成**绝对区间**）。**`default`（无参、用指标自身缺省参数面）一律拒收**，原因码 `window_required`。
   - 理由：`yesterday/last7/mtd` 在摄入时已钉成绝对日期；只有 `default` 会把「指标自己的相对缺省」固化进基线。
 - 存量 `#3`：置 `status='stale'`（移出 `listVerified` 默认集），并在 `decided_by` / 备注里写明「滚动窗口，不可作基线」。规则成文：**评估集只收已封板的绝对窗口**。
-- 新增 `scripts/refresh-baseline.mjs`：
+- 修 `scripts/refresh-baseline.mjs`（已存在，#1494）：`refreshBaseline` 增 `write?: boolean`（缺省 true），CLI dry-run 透传 `write:false`。用法：
   ```
   node scripts/refresh-baseline.mjs --org <org> --id <N> --by <人> --reason <文本> [--write]
   ```
-  缺省 dry-run（只重放并打印 before/after/drift，不写）；`--write` 才落库。复用 `refreshBaseline`，重放身份与 `apply-eval-set` / 回归同一条（`regressionRequester` + `runQuery`）。
+  缺省 dry-run（只重放并打印 before/after/drift，**不写库**）；`--write` 才落库。守卫与漂移计算两种模式同源（都在 `refreshBaseline`）。
 - 存量 `#1723`：用该 CLI 刷新一次（reason 记「10 月门店行集变化，业务 value 未变」）。
 
 ### 3.3 判定分级（`compare`）

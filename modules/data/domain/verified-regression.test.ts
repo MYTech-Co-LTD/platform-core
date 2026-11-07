@@ -159,6 +159,91 @@ describe('compare', () => {
     expect(compare(baselineOf(1), baselineOf(1), -0.001).ok).toBe(false)
     expect(compare(baselineOf(1), baselineOf(1), Number.NaN).ok).toBe(false)
   })
+
+  // ── 2026-11-07（#1583）：value = 答案，其余数值列 = 行集指纹 ─────────────────────
+  it('value 漂移 ⇒ fail；维度/标识列漂移 ⇒ warn（ok=true，但逐行明示）', () => {
+    const base: Baseline = {
+      columns: ['value', 'branch_num'], rowCount: 1000,
+      summary: {
+        value: { sum: 1000, min: 1, max: 100, nulls: 0, numeric: true },
+        branch_num: { sum: 100, min: 1, max: 20, nulls: 0, numeric: true },
+      },
+    }
+    const cur: Baseline = {
+      columns: ['value', 'branch_num'], rowCount: 1000,
+      summary: {
+        value: { sum: 1000, min: 1, max: 100, nulls: 0, numeric: true },
+        branch_num: { sum: 120, min: 1, max: 20, nulls: 0, numeric: true },
+      },
+    }
+    const r = compare(base, cur, 0.001)
+    expect(r.ok).toBe(true)
+    expect(r.diffs).toEqual([])
+    expect(r.warns).toHaveLength(1)
+    expect(r.warns[0]).toContain("column 'branch_num'")
+  })
+
+  it('value 与维度同时漂移 ⇒ 只有 value 进 diffs，维度进 warns', () => {
+    const base: Baseline = {
+      columns: ['value', 'branch_num'], rowCount: 1,
+      summary: {
+        value: { sum: 1000, min: 1, max: 100, nulls: 0, numeric: true },
+        branch_num: { sum: 100, min: 1, max: 20, nulls: 0, numeric: true },
+      },
+    }
+    const cur: Baseline = {
+      columns: ['value', 'branch_num'], rowCount: 1,
+      summary: {
+        value: { sum: 2000, min: 2, max: 200, nulls: 0, numeric: true },
+        branch_num: { sum: 120, min: 1, max: 20, nulls: 0, numeric: true },
+      },
+    }
+    const r = compare(base, cur, 0.001)
+    expect(r.ok).toBe(false)
+    expect(r.diffs.every((d) => d.includes("column 'value'"))).toBe(true)
+    expect(r.warns.every((w) => w.includes("column 'branch_num'"))).toBe(true)
+  })
+
+  it('fail-closed：基线没有 value 列 ⇒ 所有数值漂移都按 fail（不放宽）', () => {
+    const base: Baseline = {
+      columns: ['v', 'branch_num'], rowCount: 1,
+      summary: {
+        v: { sum: 1000, min: 1, max: 100, nulls: 0, numeric: true },
+        branch_num: { sum: 100, min: 1, max: 20, nulls: 0, numeric: true },
+      },
+    }
+    const cur: Baseline = {
+      columns: ['v', 'branch_num'], rowCount: 1,
+      summary: {
+        v: { sum: 1000, min: 1, max: 100, nulls: 0, numeric: true },
+        branch_num: { sum: 120, min: 1, max: 20, nulls: 0, numeric: true },
+      },
+    }
+    const r = compare(base, cur, 0.001)
+    expect(r.ok).toBe(false)
+    expect(r.diffs.join('\n')).toContain("column 'branch_num'")
+    expect(r.warns).toEqual([])
+  })
+
+  it('维度列的 null 计数变化仍是 fail（结构信号不降级）', () => {
+    const base: Baseline = {
+      columns: ['value', 'branch_num'], rowCount: 1,
+      summary: {
+        value: { sum: 1, min: 1, max: 1, nulls: 0, numeric: true },
+        branch_num: { sum: 100, min: 1, max: 20, nulls: 0, numeric: true },
+      },
+    }
+    const cur: Baseline = {
+      columns: ['value', 'branch_num'], rowCount: 1,
+      summary: {
+        value: { sum: 1, min: 1, max: 1, nulls: 0, numeric: true },
+        branch_num: { sum: 100, min: 1, max: 20, nulls: 1, numeric: true },
+      },
+    }
+    const r = compare(base, cur, 0.001)
+    expect(r.ok).toBe(false)
+    expect(r.diffs.join('\n')).toContain('nulls')
+  })
 })
 
 // ── 重放编排：runRegression（假池 + 假重放，不连库） ─────────────────────────────
@@ -219,7 +304,7 @@ describe('runRegression', () => {
     }, ORG)
 
     expect(results).toEqual([
-      { id: 11, metricId: 'lemeng:retail:net_sales', question: '上个月净销售额', result: 'pass', diffs: [] },
+      { id: 11, metricId: 'lemeng:retail:net_sales', question: '上个月净销售额', result: 'pass', diffs: [], warns: [] },
     ])
     // 租户隔离：读与写都带同一个 org
     expect(selects[0]?.params[0]).toBe(ORG)
@@ -227,6 +312,25 @@ describe('runRegression', () => {
     // 平台回归特权：不走租户会话（requester 身份固定，scopes 空但 hasScope 恒 true）
     expect(seen[0]?.requesterUserId).toBe('(regression)')
     expect(seen[0]?.org).toBe(ORG)
+  })
+
+  it('只有维度/标识列漂移 ⇒ pass + warns（答案没变，行集变了）', async () => {
+    const dimBaseline: Baseline = {
+      columns: ['value', 'branch_num'], rowCount: 1,
+      summary: {
+        value: { sum: 1000, min: 1000, max: 1000, nulls: 0, numeric: true },
+        branch_num: { sum: 100, min: 100, max: 100, nulls: 0, numeric: true },
+      },
+    }
+    const { pool, updates } = fakePool([questionRow({ id: 15, baseline: dimBaseline })])
+    const results = await runRegression(
+      depsOf(pool, async () => ok(['value', 'branch_num'], [['1000', '120']])), ORG,
+    )
+    expect(results[0]?.result).toBe('pass')
+    expect(results[0]?.diffs).toEqual([])
+    expect(results[0]?.warns.join('\n')).toContain('branch_num')
+    // warn 不是 fail：落库仍是 pass
+    expect(updates[0]?.params).toEqual([ORG, 15, 'pass'])
   })
 
   it('数值超容差 ⇒ fail，diff 带列名与两侧值', async () => {
