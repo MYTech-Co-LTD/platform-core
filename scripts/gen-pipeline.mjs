@@ -399,7 +399,10 @@ export function buildPipeline(m, name = m.id) {
     nodes.push(...gate.nodes)
     edges.push(...gate.edges)
   }
-  /** 把身份闸的出口用 `on-subjob-ok` 控制边挂到首个数据节点（与现役 L0 同形）。 */
+  /**
+   * 把身份闸的出口用 `on-subjob-ok` 控制边挂到首个数据节点（与现役 L0 同形）。
+   * @param {string} target
+   */
   const attachGate = (target) => {
     if (!gate) return
     edges.push({
