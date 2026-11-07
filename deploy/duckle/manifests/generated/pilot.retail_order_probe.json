@@ -1,0 +1,127 @@
+{
+  "name": "pilot.retail_order_probe",
+  "nodes": [
+    {
+      "id": "s",
+      "type": "source",
+      "position": {
+        "x": 0,
+        "y": 0
+      },
+      "data": {
+        "label": "source",
+        "componentId": "src.rest",
+        "schema": [
+          {
+            "name": "order_no",
+            "type": "string"
+          },
+          {
+            "name": "order_time",
+            "type": "timestamp"
+          }
+        ],
+        "properties": {
+          "connectionRef": "lemeng",
+          "url": "https://cloud.nhsoft.cn/agi/api/nhsoft.retail.ai.pos.posorder.find",
+          "method": "POST",
+          "body": "{\"branch_nums\": ${ENV:BRANCH_NUMS}, \"date_from\": \"${date+8h}\", \"date_to\": \"${date+8h}\", \"time_from\": \"00:00:00\", \"time_to\": \"23:59:59\", \"page_number\": 1, \"page_size\": 1}",
+          "responsePath": "/result",
+          "paginationType": "none",
+          "headers": {
+            "Content-Type": "application/json"
+          },
+          "retryAttempts": 3,
+          "retryBackoffMs": 2000
+        }
+      }
+    },
+    {
+      "id": "t",
+      "type": "transform",
+      "position": {
+        "x": 300,
+        "y": 0
+      },
+      "data": {
+        "label": "transform",
+        "componentId": "code.sql",
+        "properties": {
+          "sql": "SELECT CAST(order_no AS VARCHAR) AS order_no, CAST(order_time AS TIMESTAMP) AS order_time FROM input"
+        }
+      }
+    },
+    {
+      "id": "g",
+      "type": "transform",
+      "position": {
+        "x": 600,
+        "y": 0
+      },
+      "data": {
+        "label": "contract gate",
+        "componentId": "qa.contract",
+        "properties": {
+          "rules": {
+            "order_no": "not_null"
+          }
+        }
+      }
+    },
+    {
+      "id": "k",
+      "type": "sink",
+      "position": {
+        "x": 900,
+        "y": 0
+      },
+      "data": {
+        "label": "sink",
+        "componentId": "snk.minio",
+        "properties": {
+          "connectionRef": "zos",
+          "bucket": "${ENV:ZOS_BUCKET}",
+          "key": "pilot/retail_order_probe/system_book=${ENV:SYSTEM_BOOK}/snapshot=${date+8h}/all.parquet",
+          "format": "parquet",
+          "mode": "overwrite",
+          "compression": "zstd"
+        }
+      }
+    }
+  ],
+  "edges": [
+    {
+      "id": "e1",
+      "source": "s",
+      "target": "t",
+      "sourceHandle": "main",
+      "targetHandle": "main",
+      "data": {
+        "connectionType": "main"
+      }
+    },
+    {
+      "id": "e2",
+      "source": "t",
+      "target": "g",
+      "sourceHandle": "main",
+      "targetHandle": "main",
+      "data": {
+        "connectionType": "main"
+      }
+    },
+    {
+      "id": "e3",
+      "source": "g",
+      "target": "k",
+      "sourceHandle": "main",
+      "targetHandle": "main",
+      "data": {
+        "connectionType": "main"
+      }
+    }
+  ],
+  "_note": [
+    "由 scripts/gen-pipeline.mjs 从 manifest 生成；手改请改 manifest 后重生成（--check 会拦）。"
+  ]
+}

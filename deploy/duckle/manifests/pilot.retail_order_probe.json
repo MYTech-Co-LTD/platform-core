@@ -1,0 +1,43 @@
+{
+  "id": "pilot.retail_order_probe",
+  "domain": "pilot",
+  "account": "3120",
+  "source": {
+    "connectionRef": "lemeng",
+    "url": "https://cloud.nhsoft.cn/agi/api/nhsoft.retail.ai.pos.posorder.find",
+    "method": "POST",
+    "headers": { "Content-Type": "application/json" },
+    "body": "{\"branch_nums\": ${ENV:BRANCH_NUMS}, \"date_from\": \"${date+8h}\", \"date_to\": \"${date+8h}\", \"time_from\": \"00:00:00\", \"time_to\": \"23:59:59\", \"page_number\": 1, \"page_size\": 1}",
+    "responsePath": "/result",
+    "schema": [
+      { "name": "order_no", "type": "string" },
+      { "name": "order_time", "type": "timestamp" }
+    ],
+    "pagination": { "type": "none" },
+    "retryAttempts": 3,
+    "retryBackoffMs": 2000
+  },
+  "transform": {
+    "sql": "SELECT CAST(order_no AS VARCHAR) AS order_no, CAST(order_time AS TIMESTAMP) AS order_time FROM input"
+  },
+  "gate": {
+    "rules": { "order_no": "not_null" }
+  },
+  "sink": {
+    "type": "minio",
+    "connectionRef": "zos",
+    "bucket": "${ENV:ZOS_BUCKET}",
+    "key": "pilot/retail_order_probe/system_book=${ENV:SYSTEM_BOOK}/snapshot=${date+8h}/all.parquet",
+    "format": "parquet",
+    "mode": "overwrite",
+    "compression": "zstd"
+  },
+  "schedule": { "cron": "0 3 * * *", "timezone": "Asia/Shanghai", "enabled": false },
+  "owner": {
+    "owner": "data-eng",
+    "match": "minio://*/pilot/retail_order_probe/system_book=*/snapshot=*/all.parquet",
+    "maximumAge": "36h",
+    "description": "P0 试点：manifest 生成的探针管线（测试前缀，不排班）"
+  },
+  "alerts": { "on": ["failure", "recovery"] }
+}

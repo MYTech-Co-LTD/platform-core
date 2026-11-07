@@ -1,0 +1,6 @@
+{
+  "match": "minio://*/pilot/retail_order_probe/system_book=*/snapshot=*/all.parquet",
+  "owner": "data-eng",
+  "description": "P0 试点：manifest 生成的探针管线（测试前缀，不排班）",
+  "maximumAge": "36h"
+}
