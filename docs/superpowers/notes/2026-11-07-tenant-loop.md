@@ -14,7 +14,7 @@
 | `data.metric_candidates` | 278 行 |
 | `data.verified_questions` | 104 行（回归 `total=50` 为本轮实际重放集；其余是 candidate/弱信号） |
 | 回归（修复前） | `total=50 pass=48 fail=2`：`#3` 滚动窗口基线、`#1723` 标识列 sum 漂移 |
-| 回归（上线后，见 §5） | `total=49 pass=39 fail=10 warn=38`：`#3` 已 `stale`；`#1723` 由 fail 降为 warn；10 条是**源数据修订**导致的 `value` 漂移（待数据 owner 裁决） |
+| 回归（上线后，见 §5） | 最终 `total=49 pass=49 fail=0 warn=0`；处置过程见 §5（源数据修订 → 受控刷新；另发现 ingest 静默覆盖基线，issue #1594） |
 
 ## 2. 环路四步（每步都可单独重跑）
 
@@ -118,6 +118,16 @@ select status, count(*), max(updated_at) from data.metric_candidates
 - 原因：staging 已翻**直读湖视图**（`lemeng-staging-views-flip`）⇒ 湖侧 10 月数据修订会**立即**反映到
   mart 查询；本次时间窗与 03:54–05:21 的一次全量物化尝试重合，但该 job 最终以 git 超时失败、
   未写水位（`data.load_log` 里 `fct_hq_outbound` 停在 10-17）。
-- **处置**：这是「基线过期」而非「口径回归」的候选，但**未经数据 owner 确认前不刷新**
-  （刷新会把真实的源侧异常一起抹平）。确认修订符合预期后，用 §2.4 的 `refresh-baseline`
-  按 id 逐个刷新（先 dry-run 看 `driftPct`）。
+- **定性证据**：湖侧 10 月 `stg_lemeng_transfer_out` 行数 32,304，`max(batch_id)=to-64188-transfer_out-20261106T234522Z`
+  ⇒ 源侧在 11-06 23:45Z 重采过；而 `fct_hq_outbound` 的 load_log 停在 10-17 ⇒ 早上的物化重建才把
+  这次修订带进 mart。故定为**基线过期**（口径未变），不是口径回归。
+
+### 处置结果（2026-11-07 收尾）
+
+- **受控刷新**：`refresh-baseline --write` 刷新 9 条 value 基线（by=claude，reason 记
+  `transfer_out batch 20261106T234522Z + mart 重建后基线过期；口径未变`）+ `#1723`（行集变化）。
+- **回归终态**：`total=49 pass=49 fail=0 warn=0`，rc=0；job `jrun_7OiISVYyAA2kuoTD` 成功并投递
+  `OK`（OO `data_plane_probes` 三态齐全：shadow OK → RED → OK）。
+- **★ 途中发现（issue #1594）**：`#1` 的基线在 05:40 被 **`verify-ingest-shanhai`（每小时 :40）**
+  重放后 `upsertCandidate` **静默覆盖**（auto-strong 分支），`baseline_refreshed_*` 仍为空——
+  基线可绕过 `refreshBaseline` 的 by/reason 审计。已单开 issue，建议同语句补审计三列（或禁止 auto 覆盖）。
