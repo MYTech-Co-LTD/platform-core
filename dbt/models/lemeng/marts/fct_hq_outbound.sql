@@ -1,5 +1,10 @@
 {{
-    config(materialized='table')
+    config(
+        materialized='incremental',
+        unique_key=['outbound_key'],
+        incremental_strategy='delete+insert',
+        on_schema_change='sync_all_columns'
+    )
 }}
 -- fct_hq_outbound.sql — 总仓出库构件长表（W1 2026-10-12；口径模型，layered ④：**口径在这里定义一次**）。
 --
@@ -54,6 +59,9 @@ with transfer_lines as (
     where state_code = 3
       and out_branch_num = 99
       and branch_num <> out_branch_num
+    {% if is_incremental() %}
+      and bizday >= {{ incremental_cutoff(7) }}
+    {% endif %}
     group by 1, 2, 3, 4
 ),
 transfer_dom as (
@@ -72,6 +80,9 @@ wholesale_lines as (
     -- 明细行数按客户分组：行级行数在 (账套,日,门店,客户) 上才是可加的（见头注「client_fid」）。
     select system_book, bizday, branch_num, client_fid, count(*) as line_count
     from {{ ref('stg_lemeng_wholesale_out') }}
+    {% if is_incremental() %}
+    where bizday >= {{ incremental_cutoff(7) }}
+    {% endif %}
     group by 1, 2, 3, 4
 ),
 wholesale_dom as (
@@ -91,6 +102,9 @@ wholesale_dom as (
                max(total_money) as total_money,
                max(cost_money)  as cost_money
         from {{ ref('stg_lemeng_wholesale_out') }}
+        {% if is_incremental() %}
+        where bizday >= {{ incremental_cutoff(7) }}
+        {% endif %}
         group by 1, 2, 3, 4, 5
     ) o
     join wholesale_lines l
@@ -113,6 +127,9 @@ return_dom as (
                max(total_money) as total_money,
                max(cost_money)  as cost_money
         from {{ ref('stg_lemeng_wholesale_return') }}
+        {% if is_incremental() %}
+        where bizday >= {{ incremental_cutoff(7) }}
+        {% endif %}
         group by 1, 2, 3, 4, 5
     )
     group by 1, 2, 3, 4
@@ -139,7 +156,18 @@ select
     (u.c_cost - coalesce(d.c_return, 0))::numeric(20,2) as c_cost,
     (u.r_net - coalesce(d.r_return, 0) - u.c_cost + coalesce(d.c_return, 0))::numeric(20,2) as g_gross,
     u.order_count,
-    u.line_count::bigint as line_count
+    u.line_count::bigint as line_count,
+    -- 非空代理键（#1610）：client_fid 在 transfer 域恒 NULL，而 delete+insert 的 `=` 不匹配 NULL。
+    -- 把所有键 coalesce 成一个 md5，unique_key 只指它 ⇒ 增量删除对 transfer/wholesale 都成立。
+    -- ⚠️ 首次切增量必须 --full-refresh（给存量行补这一列），之后才是增量。
+    md5(concat_ws('|',
+        u.system_book,
+        u.bizday::text,
+        u.domain,
+        u.branch_num::text,
+        coalesce(b.region_id, 0)::text,
+        coalesce(u.client_fid, '~NULL~')
+    )) as outbound_key
 from (
     -- transfer 域没有客户对象（它的对象是门店）⇒ client_fid 恒 NULL。
     select system_book, bizday, branch_num, cast(null as varchar) as client_fid,
