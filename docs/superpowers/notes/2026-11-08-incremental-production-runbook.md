@@ -67,7 +67,7 @@ coalesce(max(CAST(request_order_fid AS VARCHAR)), '')
 
 ---
 
-## 2. 变更清单（每账套一份）
+## 2. 变更清单（本批只上 `3120`；`64188` 观察一天后再加入 manifest `accounts`）
 
 | # | 文件 | 动作 |
 |---|---|---|
