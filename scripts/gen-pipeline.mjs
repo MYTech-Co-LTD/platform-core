@@ -37,7 +37,10 @@ import { pathToFileURL } from 'node:url'
  *       pageParam?: string,
  *       pageSizeParam?: string,
  *       pageSize?: number,
- *       truncationGuard?: boolean
+ *       truncationGuard?: boolean,
+ *       fingerprintSql?: string,
+ *       watermarkPath?: string,
+ *       windowToken?: string
  *     },
  *     retryAttempts?: number,
  *     retryBackoffMs?: number
@@ -61,7 +64,7 @@ import { pathToFileURL } from 'node:url'
 const EVENTS = ['failure', 'recovery', 'success', 'stale', 'refreshed']
 // 分页形态：`none` = 单次请求；`static_pages` = 每页一个静态 src.rest 节点 + ctl.merge
 // （正典 §1.7 #41：大结果集源的默认形态；原生分页/foreach 都不适合大源，#44）。
-const PAGINATION_TYPES = ['none', 'static_pages']
+const PAGINATION_TYPES = ['none', 'static_pages', 'incremental']
 const MAX_STATIC_PAGES = 500
 const DEFAULT_OUT = 'deploy/duckle/console/pipelines'
 const OO_ALERT_URL = '${ENV:OO_BASE}/api/${ENV:OO_ORG}/data_alerts/_json'
@@ -131,6 +134,24 @@ export function validateManifest(m) {
     } else if (pg.truncationGuard) {
       errs.push('truncationGuard 只能与 static_pages 一起用')
     }
+    if (pg.type === 'incremental') {
+      if (!Number.isInteger(pg.pages) || pg.pages < 1 || pg.pages > MAX_STATIC_PAGES) {
+        errs.push(`incremental 需要 pages（整数 1..${MAX_STATIC_PAGES}）`)
+      }
+      if (typeof pg.pageSize !== 'number') errs.push('incremental 需要 pageSize')
+      if (typeof pg.fingerprintSql !== 'string' || pg.fingerprintSql.trim().length === 0) {
+        errs.push('incremental 需要 fingerprintSql（对 input 的聚合，如 `max(CAST(order_no AS VARCHAR))`）')
+      }
+      if (typeof pg.watermarkPath !== 'string' || !pg.watermarkPath.startsWith('/')) {
+        errs.push('incremental 需要 watermarkPath（绝对路径，父管线写、下一轮读）')
+      }
+      if (typeof pg.windowToken !== 'string' || !s.body.includes(pg.windowToken)) {
+        errs.push('incremental 需要 windowToken，且 source.body 里要出现它（父展开、子走 ITER_ITEM_BIZDAY）')
+      }
+      if (typeof d.sink?.key === 'string' && !d.sink.key.includes('${ITER_ITEM_PAGE}')) {
+        errs.push('incremental 的 sink.key 必须带 `${ITER_ITEM_PAGE}`（子管线按页落盘）')
+      }
+    }
   }
   const t = d.transform
   if (typeof t !== 'object' || t === null || typeof t.sql !== 'string' || t.sql.trim().length === 0) {
@@ -169,7 +190,7 @@ export function validateManifest(m) {
  * @param {string} pageParam
  * @param {string | undefined} pageSizeParam
  * @param {number | undefined} pageSize
- * @param {number} page
+ * @param {number | string} page
  * @returns {string}
  */
 function pageBody(body, pageParam, pageSizeParam, pageSize, page) {
@@ -214,8 +235,116 @@ export function buildPipeline(m, name = m.id) {
   const edges = []
   let prev
   let x = 300
-  if (pg.type === 'static_pages') {
+  if (pg.type === 'incremental' && name.endsWith('.page')) {
+    // ── 子管线：一页 ────────────────────────────────────────────────────────
+    // 子管线不展开 ${ENV:...} / 日期变量（正典 §1.7 #44）⇒ 页码与窗口一律走 ITER 列。
     const pageParam = pg.pageParam ?? 'page_number'
+    const windowToken = pg.windowToken ?? ''
+    const withPage = pageBody(s.body, pageParam, pg.pageSizeParam, pg.pageSize, '${ITER_ITEM_PAGE}')
+    const childBody = windowToken ? withPage.split(windowToken).join('${ITER_ITEM_BIZDAY}') : withPage
+    nodes.push({
+      id: 'p',
+      type: 'source',
+      position: { x: 0, y: 0 },
+      data: { label: 'page', componentId: 'src.rest', schema: s.schema, properties: sourceProps(childBody, 'none') },
+    })
+    prev = 'p'
+  } else if (pg.type === 'incremental') {
+    // ── 父管线：探针 → 指纹 → 比水位 → 页列表 → foreach ────────────────────
+    const pageParam = pg.pageParam ?? 'page_number'
+    nodes.push({
+      id: 'probe',
+      type: 'source',
+      position: { x: 0, y: 0 },
+      data: {
+        label: 'probe page 1',
+        componentId: 'src.rest',
+        schema: s.schema,
+        properties: sourceProps(
+          pageBody(s.body, pageParam, pg.pageSizeParam, /** @type {number} */ (pg.pageSize), 1),
+          'none'
+        ),
+      },
+    })
+    nodes.push({
+      id: 'fp',
+      type: 'transform',
+      position: { x: 300, y: 0 },
+      data: { label: 'fingerprint', componentId: 'code.sql', properties: { sql: `SELECT ${pg.fingerprintSql} AS fp FROM input` } },
+    })
+    nodes.push({
+      id: 'prev',
+      type: 'source',
+      position: { x: 0, y: 200 },
+      data: { label: 'prev watermark', componentId: 'src.parquet', properties: { path: pg.watermarkPath } },
+    })
+    nodes.push({
+      id: 'cmp',
+      type: 'transform',
+      position: { x: 600, y: 0 },
+      data: {
+        label: 'compare',
+        componentId: 'code.sql',
+        properties: {
+          sql:
+            'SELECT f.fp, (SELECT max(fp) FROM prev) AS prev_fp, ' +
+            '(f.fp IS NOT NULL AND f.fp IS DISTINCT FROM (SELECT max(fp) FROM prev)) AS has_new FROM fp f',
+        },
+      },
+    })
+    const values = Array.from({ length: /** @type {number} */ (pg.pages) }, (_, i) => `(${i + 1})`).join(',')
+    nodes.push({
+      id: 'pages',
+      type: 'transform',
+      position: { x: 900, y: 0 },
+      data: {
+        label: 'page list',
+        componentId: 'code.sql',
+        properties: {
+          sql:
+            `SELECT CAST(t.page AS INTEGER) AS page, '${pg.windowToken ?? ''}' AS bizday, ` +
+            `'${'${ENV:SYSTEM_BOOK}'}' AS book, '${'${datetime}'}' AS run ` +
+            `FROM (VALUES ${values}) t(page) CROSS JOIN (SELECT has_new FROM input) h WHERE h.has_new`,
+        },
+      },
+    })
+    nodes.push({
+      id: 'fe',
+      type: 'transform',
+      position: { x: 1200, y: 0 },
+      data: {
+        label: 'foreach page',
+        componentId: 'ctl.foreach',
+        properties: { pipelineRef: `\${workspace}/pipelines/${name}.page.json`, concurrency: 1 },
+      },
+    })
+    // 水位：必须用**旁路 sink** 在比较之后写（ctl.checkpoint 会提前覆盖，实测踩过）
+    nodes.push({
+      id: 'wmk',
+      type: 'transform',
+      position: { x: 900, y: 200 },
+      data: { label: 'watermark', componentId: 'code.sql', properties: { sql: 'SELECT fp FROM input' } },
+    })
+    nodes.push({
+      id: 'ks',
+      type: 'sink',
+      position: { x: 1200, y: 200 },
+      data: {
+        label: 'write watermark',
+        componentId: 'snk.parquet',
+        properties: { path: pg.watermarkPath, mode: 'overwrite' },
+      },
+    })
+    edges.push({ id: 'e-probe-fp', source: 'probe', target: 'fp', sourceHandle: 'main', targetHandle: 'main', data: { connectionType: 'main' } })
+    edges.push({ id: 'e-fp-cmp', source: 'fp', target: 'cmp', sourceHandle: 'main', targetHandle: 'main', data: { connectionType: 'main' } })
+    edges.push({ id: 'e-prev-cmp', source: 'prev', target: 'cmp', sourceHandle: 'main', targetHandle: 'prev', data: { connectionType: 'main' } })
+    edges.push({ id: 'e-cmp-pages', source: 'cmp', target: 'pages', sourceHandle: 'main', targetHandle: 'main', data: { connectionType: 'main' } })
+    edges.push({ id: 'e-pages-fe', source: 'pages', target: 'fe', sourceHandle: 'main', targetHandle: 'main', data: { connectionType: 'main' } })
+    edges.push({ id: 'e-cmp-wmk', source: 'cmp', target: 'wmk', sourceHandle: 'main', targetHandle: 'main', data: { connectionType: 'main' } })
+    edges.push({ id: 'e-wmk-ks', source: 'wmk', target: 'ks', sourceHandle: 'main', targetHandle: 'main', data: { connectionType: 'main' } })
+    return { name, nodes, edges, _note: [`由 scripts/gen-pipeline.mjs 从 manifest 生成；手改请改 manifest 后重生成（--check 会拦）。`] }
+  } else if (pg.type === 'static_pages') {
+    const pageParam = pg.pageParam ?? 'page_number' 
     const pages = pg.pages ?? 1
     for (let i = 1; i <= pages; i += 1) {
       const id = `p${i}`
@@ -335,8 +464,10 @@ export function buildPipeline(m, name = m.id) {
  * @returns {string[]}
  */
 export function pipelineNames(m) {
-  if (m.accounts && m.accounts.length > 0) return m.accounts.map((a) => `${m.id}.${a}`)
-  return [m.id]
+  const base = m.accounts && m.accounts.length > 0 ? m.accounts.map((a) => `${m.id}.${a}`) : [m.id]
+  // incremental 产出「父 + 子」两条：子管线名 = <父>.page
+  if (m.source?.pagination?.type === 'incremental') return base.flatMap((n) => [n, `${n}.page`])
+  return base
 }
 
 /** @param {Manifest} m @param {string} [name] @returns {{ schedule?: any, owner?: any, alert?: any }} */

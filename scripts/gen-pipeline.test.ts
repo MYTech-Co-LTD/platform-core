@@ -158,3 +158,61 @@ describe('gen-pipeline：分页类型', () => {
     expect(validateManifest(m).join()).toContain('static_pages')
   })
 })
+
+describe('gen-pipeline：incremental（真增量）', () => {
+  const incr = () =>
+    mutate((m) => {
+      m.source.body = '{"date_start":"${date-1d}","page_number":1,"page_size":100}'
+      m.source.pagination = {
+        type: 'incremental',
+        pages: 3,
+        pageParam: 'page_number',
+        pageSize: 100,
+        fingerprintSql: 'max(CAST(order_no AS VARCHAR))',
+        watermarkPath: '/workspace/tmp/x.watermark.parquet',
+        windowToken: '${date-1d}',
+      }
+      m.sink.key = 'pilot/demo/run=${ITER_ITEM_RUN}/page=${ITER_ITEM_PAGE}.parquet'
+    })
+
+  it('产出「父 + 子」两条管线', () => {
+    expect(validateManifest(incr())).toEqual([])
+    expect(pipelineNames(incr() as any)).toEqual(['pilot.demo', 'pilot.demo.page'])
+  })
+
+  it('父管线：探针 → 指纹 → 比水位 → 页列表 → foreach（+ 旁路写水位）', () => {
+    const p: any = buildPipeline(incr() as any)
+    expect(p.nodes.map((n: any) => n.id)).toEqual(['probe', 'fp', 'prev', 'cmp', 'pages', 'fe', 'wmk', 'ks'])
+    // 水位必须用旁路 sink 写（ctl.checkpoint 会提前覆盖，实测踩过）
+    const ks = p.nodes.find((n: any) => n.id === 'ks')
+    expect(ks.data.componentId).toBe('snk.parquet')
+    expect(ks.data.properties.path).toBe('/workspace/tmp/x.watermark.parquet')
+    expect(p.nodes.some((n: any) => n.data.componentId === 'ctl.checkpoint')).toBe(false)
+  })
+
+  it('子管线：页码与窗口走 ITER 列（子管线不展开 ENV/日期）', () => {
+    const c: any = buildPipeline(incr() as any, 'pilot.demo.page')
+    const body = c.nodes[0].data.properties.body
+    expect(body).toContain('"page_number":${ITER_ITEM_PAGE}')
+    expect(body).toContain('${ITER_ITEM_BIZDAY}')
+    expect(body).not.toContain('${date-1d}')
+  })
+
+  it('缺 fingerprintSql / watermarkPath / windowToken 被拦', () => {
+    const m = incr()
+    delete (m.source.pagination as any).fingerprintSql
+    expect(validateManifest(m).join()).toContain('fingerprintSql')
+    const m2 = incr()
+    ;(m2.source.pagination as any).watermarkPath = 'relative.parquet'
+    expect(validateManifest(m2).join()).toContain('watermarkPath')
+    const m3 = incr()
+    ;(m3.source.pagination as any).windowToken = '${date-9d}'
+    expect(validateManifest(m3).join()).toContain('windowToken')
+  })
+
+  it('sink.key 缺 ${ITER_ITEM_PAGE} 被拦', () => {
+    const m = incr()
+    m.sink.key = 'pilot/demo/all.parquet'
+    expect(validateManifest(m).join()).toContain('ITER_ITEM_PAGE')
+  })
+})
