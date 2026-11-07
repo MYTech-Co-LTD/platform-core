@@ -212,6 +212,8 @@ TICK_DOMAIN=${MATERIALIZE_TICK_DOMAIN:-lemeng}
 # tick 只跑模型 + 它自带的 schema tests；`tests/lemeng/` 下的 singular 重活（audit_*/assert_*）
 # 留给全量档（它按 path:tests/lemeng 选）。否则每 10 分钟跑一遍全史对账（实测单条 >90s）。
 TICK_EXCLUDE=${MATERIALIZE_TICK_EXCLUDE:-path:tests/lemeng}
+# 首次切增量（新增非空代理键等）用：显式 MATERIALIZE_TICK_FULL_REFRESH=1 才 --full-refresh。
+TICK_FULL_REFRESH=${MATERIALIZE_TICK_FULL_REFRESH:-}
 # 全量档必须**排除** tick 拥有的模型：tick 每 10 分钟 delete+insert 同一张表，
 # 与全量档的 7 天 delete+insert 并发写同一张表会冲突（#1520）。
 FULL_EXCLUDE=${MATERIALIZE_FULL_EXCLUDE:-fct_retail_sale}
@@ -237,11 +239,14 @@ fi
 # （2026-11-02 #1275），无需重建。水位照写 `data.load_log`（relation=fct_retail_sale），
 # 新鲜度面与全量档同源。
 if [ "$SCOPE" = tick ]; then
-  echo "── tick: ${TICK_SELECT}（domain=${TICK_DOMAIN}）──"
+  echo "── tick: ${TICK_SELECT}（domain=${TICK_DOMAIN}${TICK_FULL_REFRESH:+ full-refresh}）──"
   _log="$_WORK/dbt.tick.log"
   _rc="$_WORK/dbt.tick.rc"
+  # 首次切增量（模型新增非空代理键等）需要一次 --full-refresh；由 env 显式开启，
+  # **不设默认**——默认开会让每次 tick 都全量重建（慢且吃内存）。
+  if [ -n "$TICK_FULL_REFRESH" ]; then _TFR=--full-refresh; else _TFR=''; fi
   ( if DATA_PLANE_DOMAINS="$TICK_DOMAIN" docker run --rm --network "$NETWORK" -v "$R/dbt:/usr/app" \
-      $(mat_env_args) "$IMAGE" $(mat_dbt_args) --select "$TICK_SELECT" --exclude "$TICK_EXCLUDE" 2>&1; then
+      $(mat_env_args) "$IMAGE" $(mat_dbt_args) $_TFR --select "$TICK_SELECT" --exclude "$TICK_EXCLUDE" 2>&1; then
     echo 0 >"$_rc"
   else
     echo $? >"$_rc"
