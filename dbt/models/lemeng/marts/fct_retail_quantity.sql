@@ -65,10 +65,15 @@ with base as (
         case when order_transaction_type like '%RETURN%' and state in ('FINISHED', 'REPAID')
              then quantity else 0 end as return_quantity
     from {{ ref('stg_lemeng_retail_order_line') }}
+    where 1 = 1
     {% if is_incremental() %}
     -- 增量窗口（#1520 W2-P1）：主路径（手写 base）与影子路径（生成区 base_rq_*）都下推 7 天，
     -- 且用编译期字面量才能触发 read_parquet 的 bizday 分区裁剪（#1524）。
-    where bizday >= {{ incremental_cutoff(7) }}
+    and bizday >= {{ incremental_cutoff(7) }}
+    {% endif %}
+    {% if env_var('MAT_CLOSED_BEFORE', 'false') == 'true' %}
+    -- 物化闭窗读（2026-11-08 P0）：tick 采集每 10 分钟重写当前小时，物化读同一分区会撞 ETag。
+    and not (bizday = current_date and hour >= extract(hour from current_timestamp))
     {% endif %}
 )
 -- ⚠️ 逗号只能落在标记区**外**（区内逐字节受 `--check` 管），故单独起一行。
@@ -83,6 +88,9 @@ base_rq_sale as (
     {% if is_incremental() %}
     and bizday >= {{ incremental_cutoff(7) }}
     {% endif %}
+    {% if env_var('MAT_CLOSED_BEFORE', 'false') == 'true' %}
+    and not (bizday = current_date and hour >= extract(hour from current_timestamp))
+    {% endif %}
 ),
 sale_quantity__gen as (
     select system_book, bizday, branch_num, item_num, sum(quantity)::numeric(20,3) as sale_quantity__gen from base_rq_sale group by 1, 2, 3, 4
@@ -92,6 +100,9 @@ base_rq_return as (
     where order_transaction_type like '%RETURN%' and state in ('FINISHED', 'REPAID')
     {% if is_incremental() %}
     and bizday >= {{ incremental_cutoff(7) }}
+    {% endif %}
+    {% if env_var('MAT_CLOSED_BEFORE', 'false') == 'true' %}
+    and not (bizday = current_date and hour >= extract(hour from current_timestamp))
     {% endif %}
 ),
 return_quantity__gen as (
