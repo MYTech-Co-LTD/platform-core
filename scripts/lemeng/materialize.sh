@@ -91,6 +91,26 @@ mat_dbt_args() {
 mat_dbt_select() { # $1=域 → 打印给 --select 的**单个**值（调用方自己加引号）
   printf '%s' "path:models/$1 config.materialized:seed path:tests/$1"
 }
+# 窗口对账的窗口参数（today−7 .. 昨天）：打印 `"<start> <月段字符类>"`，供 hourly 档与
+# 每日窗口对账（MATERIALIZE_AUDIT_WINDOW=1）共用。为什么是 7 天而不是更宽：增量 mart 只
+# 重建 `max(bizday)−7` 之后的分区，更老的是建表时快照 ⇒ 窗口放宽必假红（2026-11-07 实测
+# transfer 2260 条差异全落在 10-01..10-27，无一在 7 天内）。推导细节见 hourly 档注释。
+audit_window_pair() {
+  python3 - <<'PY'
+from datetime import datetime, timedelta
+from zoneinfo import ZoneInfo
+today = datetime.now(ZoneInfo('Asia/Shanghai')).date()
+first_this = today.replace(day=1)
+first_prev = (first_this - timedelta(days=1)).replace(day=1)
+def fuse(a, b):
+    out = ''
+    for ca, cb in zip(a, b):
+        out += ca if ca == cb else f'[{ca}{cb}]'
+    return out
+ym1, ym2 = first_prev.strftime('%Y-%m'), first_this.strftime('%Y-%m')
+print((today - timedelta(days=7)).isoformat(), fuse(ym1, ym2) + '-*')
+PY
+}
 # 判「dbt 真的建了东西」（#1537）：日志必须既有 `PASS=<n>` 汇总行、又不含 `Nothing to do`。
 # 只有退出码不够——选择器匹配不到任何节点时 dbt 打印 `Nothing to do.` 并退出 0，照着打
 # MATERIALIZE_OK 就是假绿（模型根本没建，水位还会假前进）。$1=日志文件；0=真跑过。
@@ -388,6 +408,18 @@ if [ "$SCOPE" = audit ]; then
   # 为什么不用 `--threads >1` 提速：每连接一个 DuckDB 实例（各 1536MB），2 线程实测 postmaster
   # 反复 `terminating any other active server processes`（issue #1157，PASS=12 ERROR=41）。
   _sel=${MATERIALIZE_AUDIT_SELECT:-'tag:audit tag:audit_window'}
+  # 窗口对账档（MATERIALIZE_AUDIT_WINDOW=1）：给「增量 mart 支撑的对账」传 today−7 窗口。
+  # 为什么必须分档：全史比对增量 mart 会在**更老的分区**上假红——mart 只重建 max(bizday)−7
+  # 之后的分区，更老的是建表时快照，湖被重述后不跟。2026-11-09 实测（56 条全史跑完，
+  # 114 分钟）：45 PASS / 11 FAIL，**11 条 FAIL 全部是增量 mart 支撑的**（net_sales 216、
+  # sales 216、order_count 216、inventory 21.5 万……），table 模型支撑的 14 条全绿。
+  if [ "${MATERIALIZE_AUDIT_WINDOW:-}" = 1 ]; then
+    _win=$(audit_window_pair)
+    AUDIT_WINDOW_START=${_win%% *}
+    AUDIT_WINDOW_PATTERNS=${_win#* }
+    export AUDIT_WINDOW_START AUDIT_WINDOW_PATTERNS
+    echo "── audit(window): start=${AUDIT_WINDOW_START} glob=${AUDIT_WINDOW_PATTERNS} ──"
+  fi
   echo "── audit: select=${_sel}（全史对账；分段 job）──"
   _log="$_WORK/dbt.audit.log"
   _rc="$_WORK/dbt.audit.rc"
@@ -428,21 +460,7 @@ if [ "$SCOPE" = hourly ]; then
   #   小时对账的语义就是「验本轮刚重建的那部分」，全史由每日 09:00 的全史 audit job 负责。
   #   9 张被审 mart 的 lookback 实测都是 7（见各模型 incremental_cutoff(7)）。
   # 路径 glob 仍用「上月+本月」融合字符类（粗过滤，够覆盖 7 天窗口的两个月边界）。
-  _win=$(python3 - <<'PY'
-from datetime import datetime, timedelta
-from zoneinfo import ZoneInfo
-today = datetime.now(ZoneInfo('Asia/Shanghai')).date()
-first_this = today.replace(day=1)
-first_prev = (first_this - timedelta(days=1)).replace(day=1)
-def fuse(a, b):
-    out = ''
-    for ca, cb in zip(a, b):
-        out += ca if ca == cb else f'[{ca}{cb}]'
-    return out
-ym1, ym2 = first_prev.strftime('%Y-%m'), first_this.strftime('%Y-%m')
-print((today - timedelta(days=7)).isoformat(), fuse(ym1, ym2) + '-*')
-PY
-)
+  _win=$(audit_window_pair)
   AUDIT_WINDOW_START=${_win%% *}
   AUDIT_WINDOW_PATTERNS=${_win#* }
   export AUDIT_WINDOW_START AUDIT_WINDOW_PATTERNS
