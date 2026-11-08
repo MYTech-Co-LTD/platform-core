@@ -1086,3 +1086,10 @@ gzip -9 -c scripts/lemeng/oo-notify-bridge.sh | base64 | tr -d '\n'
 **版本升级仍要两步**：改仓内脚本的 `BRIDGE_VERSION` **且**改 job env `BRIDGE_EXPECTED_VERSION`
 （投递器只搬文件、不改 env）。
 
+> ⚠️ **机器上的改动必须先回仓，否则下一次投递会把它抹掉**（2026-11-08 实测，#1694）：
+> `oo-notify-bridge.sh` 的 **per-check 12h 冷却**（`/var/lib/oo-notify-bridge/cool_<check>`）只存在于
+> OO 机的 v1.3 副本（2026-10-24 手工投递），**仓内从来没有**（`git log -S'cool_'` 零命中）。
+> 当晚按本 SOP 投递仓内 v3 时把这段逻辑覆盖掉 ⇒ 探活每 5 分钟推一条群，用户报「一直在报」。
+> 现在这段逻辑已收回仓内（#1695，v4），并与机器上既有的 `cool_*` 状态文件同路径同格式兼容。
+> **判据**：任何在 OO 机上 `vi`/`cp` 过的改动，先在仓里找到对应行；仓里没有 ⇒ 先补 PR 再投递。
+
