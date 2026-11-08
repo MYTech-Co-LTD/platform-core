@@ -12,6 +12,8 @@
     },
     "body": "{\"date_start\":\"${date-1d}\",\"date_end\":\"${date-1d}\",\"date_type\":\"制单时间\",\"page_number\":1,\"page_size\":100}",
     "responsePath": "/result",
+    "retryAttempts": 3,
+    "retryBackoffMs": 2000,
     "schema": [
       { "name": "request_order_fid", "type": "string" },
       { "name": "order_type", "type": "string" },
