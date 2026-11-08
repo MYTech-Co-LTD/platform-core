@@ -1,0 +1,32 @@
+{
+  "_note": "小时档管线的实测最大耗时（ms），供 gen-schedules.mjs 分槽、check-schedule-conflicts.mjs 判冲突。来源：2026-11-08 两账套 run 记录，取两账套最大值并向上取整到秒；未列出的用 defaultMaxDurationMs。改了耗时（或新增管线）→ 更新本表后重跑 gen-schedules.mjs。",
+  "defaultMaxDurationMs": 60000,
+  "pipelines": {
+    "lemeng.dim.item.l0": 525000,
+    "lemeng.inventory.snapshot.l0": 62000,
+    "lemeng.item_profit.l0": 42000,
+    "lemeng.branch_indicator.l0": 42000,
+    "lemeng.item_sales.l0": 33000,
+    "lemeng.inventory.movement.seg1.l0": 31000,
+    "lemeng.inventory.movement.seg2.l0": 28000,
+    "lemeng.customer_analysis.l0": 24000,
+    "lemeng.inventory.movement.seg3.l0": 22000,
+    "lemeng.inventory.movement.seg4.l0": 22000,
+    "lemeng.saler_commission.l0": 19000,
+    "lemeng.wholesale.out.l0": 18000,
+    "lemeng.client.expense.l0": 15000,
+    "lemeng.business_collection.l0": 15000,
+    "lemeng.wholesale.return.l0": 14000,
+    "lemeng.business_collection_receive.l0": 12000,
+    "lemeng.branch.expense.l0": 12000,
+    "lemeng.transfer.out.l0": 12000,
+    "lemeng.business_collection_coupon.l0": 10000,
+    "lemeng.transfer.in.l0": 10000,
+    "lemeng.dim.item_price.l0": 9000,
+    "lemeng.loss.adjustment.l0": 9000,
+    "lemeng.request.order.l0": 6000,
+    "lemeng.member.summary.l0": 6000,
+    "lemeng.client.l0": 5000,
+    "lemeng.purchase.analysis.l0": 4000
+  }
+}
