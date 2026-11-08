@@ -1,0 +1,119 @@
+{
+  "id": "lemeng.client.expense.l0",
+  "domain": "lemeng",
+  "accounts": [
+    "3120",
+    "64188"
+  ],
+  "identityGate": true,
+  "source": {
+    "connectionRef": "lemeng",
+    "url": "https://cloud.nhsoft.cn/agi/api/nhsoft.whs.ai.otherinout.find",
+    "method": "POST",
+    "body": "{\"date_start\":\"${date-1d} 00:00:00\",\"date_end\":\"${date-1d} 23:59:59\",\"date_type\":\"审核时间\",\"limit\":100,\"offset\":0}",
+    "responsePath": "/result/content",
+    "retryAttempts": 3,
+    "retryBackoffMs": 2000,
+    "schema": [
+      {
+        "name": "other_inout_bill_no",
+        "type": "string"
+      },
+      {
+        "name": "branch_num",
+        "type": "int64"
+      },
+      {
+        "name": "branch_name",
+        "type": "string"
+      },
+      {
+        "name": "client_fid",
+        "type": "string"
+      },
+      {
+        "name": "client_code",
+        "type": "string"
+      },
+      {
+        "name": "client_name",
+        "type": "string"
+      },
+      {
+        "name": "other_inout_flag",
+        "type": "bool"
+      },
+      {
+        "name": "other_inout_flag_name",
+        "type": "string"
+      },
+      {
+        "name": "other_inout_kind",
+        "type": "string"
+      },
+      {
+        "name": "other_inout_kind_code",
+        "type": "string"
+      },
+      {
+        "name": "other_inout_date",
+        "type": "string"
+      },
+      {
+        "name": "other_inout_money",
+        "type": "decimal"
+      },
+      {
+        "name": "other_inout_due_money",
+        "type": "decimal"
+      },
+      {
+        "name": "other_inout_ref_bill",
+        "type": "string"
+      },
+      {
+        "name": "other_inout_audit_time",
+        "type": "string"
+      },
+      {
+        "name": "state",
+        "type": "json"
+      },
+      {
+        "name": "other_inout_memo",
+        "type": "string"
+      }
+    ],
+    "pagination": {
+      "type": "static_pages",
+      "pages": 19,
+      "pageSize": 100,
+      "pageSizeParam": "limit",
+      "offsetParam": "offset",
+      "truncationGuard": true
+    }
+  },
+  "transform": {
+    "sql": "SELECT\n  'ce-' || '${ENV:SYSTEM_BOOK}' || '-client_expense-' || replace(replace('${datetime}','-',''),'_','T') || 'Z' AS batch_id,\n  '${ENV:SYSTEM_BOOK}' AS system_book,\n  CAST('${date-1d}' AS DATE) AS bizday,\n  CAST(o.other_inout_bill_no AS VARCHAR) AS other_inout_bill_no,\n  CAST(o.branch_num AS INTEGER) AS branch_num,\n  CAST(o.branch_name AS VARCHAR) AS branch_name,\n  CAST(o.client_fid AS VARCHAR) AS client_fid,\n  CAST(o.client_code AS VARCHAR) AS client_code,\n  CAST(o.client_name AS VARCHAR) AS client_name,\n  CAST(o.other_inout_flag AS BOOLEAN) AS other_inout_flag,\n  CAST(o.other_inout_flag_name AS VARCHAR) AS other_inout_flag_name,\n  CAST(o.other_inout_kind AS VARCHAR) AS other_inout_kind,\n  CAST(o.other_inout_kind_code AS VARCHAR) AS other_inout_kind_code,\n  CAST(o.other_inout_date AS VARCHAR) AS other_inout_date,\n  CAST(o.other_inout_money AS DECIMAL(14,2)) AS other_inout_money,\n  CAST(o.other_inout_due_money AS DECIMAL(14,2)) AS other_inout_due_money,\n  CAST(o.other_inout_ref_bill AS VARCHAR) AS other_inout_ref_bill,\n  CAST(o.other_inout_audit_time AS VARCHAR) AS other_inout_audit_time,\n  CAST(json_extract_string(CAST(o.state AS JSON), '$.state_code') AS INTEGER) AS state_code,\n  CAST(o.other_inout_memo AS VARCHAR) AS other_inout_memo\nFROM input o"
+  },
+  "gate": {
+    "rules": {
+      "batch_id": "not_null",
+      "system_book": "not_null",
+      "bizday": "not_null",
+      "other_inout_bill_no": "not_null",
+      "client_fid": "not_null",
+      "other_inout_flag": "not_null",
+      "other_inout_kind": "not_null"
+    }
+  },
+  "sink": {
+    "type": "minio",
+    "connectionRef": "zos",
+    "bucket": "shanhai-data",
+    "key": "lemeng/client_expense/system_book=${ENV:SYSTEM_BOOK}/bizday=${date-1d}/chunk=all.parquet",
+    "format": "parquet",
+    "mode": "overwrite",
+    "compression": "zstd"
+  }
+}

@@ -121,6 +121,40 @@ describe('gen-pipeline：static_pages', () => {
     })
     expect(validateManifest(m).join()).toContain('static_pages')
   })
+
+  it('offset 分页：offset = (page-1)×pageSize，limit 固定', () => {
+    const m = mutate((x) => {
+      x.source.body = '{"date_start":"${date-1d}","limit":100,"offset":0}'
+      x.source.pagination = {
+        type: 'static_pages',
+        pages: 3,
+        pageSize: 100,
+        pageSizeParam: 'limit',
+        offsetParam: 'offset',
+      }
+    })
+    expect(validateManifest(m)).toEqual([])
+    const p: any = buildPipeline(m as any)
+    const bodies = p.nodes.filter((n: any) => n.id.startsWith('p')).map((n: any) => n.data.properties.body)
+    expect(bodies[0]).toContain('"offset":0')
+    expect(bodies[1]).toContain('"offset":100')
+    expect(bodies[2]).toContain('"offset":200')
+    expect(bodies[0]).toContain('"limit":100')
+  })
+
+  it('offset 分页缺 offset 占位被拦', () => {
+    const m = mutate((x) => {
+      x.source.body = '{"date_start":"${date-1d}","limit":100}'
+      x.source.pagination = {
+        type: 'static_pages',
+        pages: 3,
+        pageSize: 100,
+        pageSizeParam: 'limit',
+        offsetParam: 'offset',
+      }
+    })
+    expect(validateManifest(m).join()).toContain('offset')
+  })
 })
 
 describe('gen-pipeline：多账套', () => {

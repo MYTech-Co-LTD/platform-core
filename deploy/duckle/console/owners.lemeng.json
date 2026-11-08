@@ -169,7 +169,7 @@
       "maximumAge": "36h"
     },
     {
-      "match": "minio://*/lemeng/wholesale_out/system_book=*/bizday=*/all.parquet",
+      "match": "minio://*/lemeng/wholesale_out/system_book=*/bizday=*/*.parquet",
       "owner": "data-eng",
       "description": "批发销售单每日采集的成功凭证（L0 lemeng.wholesale.out.l0.3120）",
       "tags": [
@@ -178,7 +178,7 @@
       "maximumAge": "36h"
     },
     {
-      "match": "minio://*/lemeng/wholesale_return/system_book=*/bizday=*/all.parquet",
+      "match": "minio://*/lemeng/wholesale_return/system_book=*/bizday=*/*.parquet",
       "owner": "data-eng",
       "description": "批发退货单每日采集的成功凭证（L0 lemeng.wholesale.return.l0.3120；⚠️ A 阶段恒空集——写 0 行文件仍算成功凭证）",
       "tags": [
@@ -205,7 +205,7 @@
       "maximumAge": "36h"
     },
     {
-      "match": "minio://*/lemeng/client_expense/system_book=*/bizday=*/all.parquet",
+      "match": "minio://*/lemeng/client_expense/system_book=*/bizday=*/*.parquet",
       "owner": "data-eng",
       "description": "客户费用单每日采集的成功凭证（L0 lemeng.client.expense.l0.3120）",
       "tags": [

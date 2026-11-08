@@ -36,6 +36,7 @@ import { pathToFileURL } from 'node:url'
  *       type: string,
  *       pages?: number,
  *       pageParam?: string,
+ *       offsetParam?: string,
  *       pageSizeParam?: string,
  *       pageSize?: number,
  *       truncationGuard?: boolean,
@@ -122,9 +123,28 @@ export function validateManifest(m) {
       if (!Number.isInteger(pg.pages) || pg.pages < 1 || pg.pages > MAX_STATIC_PAGES) {
         errs.push(`static_pages 需要 pages（整数 1..${MAX_STATIC_PAGES}）`)
       }
-      const pageParam = pg.pageParam ?? 'page_number'
-      if (typeof s.body !== 'string' || !new RegExp(`"${pageParam}"\\s*:\\s*\\d+`).test(s.body)) {
-        errs.push(`static_pages 的 source.body 必须含 \`"${pageParam}": <数字>\` 占位（生成器按页改写）`)
+      if (typeof pg.offsetParam === 'string') {
+        // offset/limit 分页：页码不在 body 里，按 `offset = (page-1) × pageSize` 生成。
+        if (typeof pg.pageSizeParam !== 'string') {
+          errs.push('offset 分页需要 pageSizeParam（limit 参数名）')
+        }
+        if (typeof pg.pageSize !== 'number') {
+          errs.push('offset 分页需要 pageSize（offset = (page-1) × pageSize）')
+        }
+        if (typeof s.body !== 'string' || !new RegExp(`"${pg.offsetParam}"\\s*:\\s*\\d+`).test(s.body)) {
+          errs.push(`offset 分页的 source.body 必须含 \`"${pg.offsetParam}": <数字>\` 占位（生成器按页改写）`)
+        }
+        if (
+          typeof pg.pageSizeParam === 'string' &&
+          (typeof s.body !== 'string' || !new RegExp(`"${pg.pageSizeParam}"\\s*:\\s*\\d+`).test(s.body))
+        ) {
+          errs.push(`offset 分页的 source.body 必须含 \`"${pg.pageSizeParam}": <数字>\` 占位`)
+        }
+      } else {
+        const pageParam = pg.pageParam ?? 'page_number'
+        if (typeof s.body !== 'string' || !new RegExp(`"${pageParam}"\\s*:\\s*\\d+`).test(s.body)) {
+          errs.push(`static_pages 的 source.body 必须含 \`"${pageParam}": <数字>\` 占位（生成器按页改写）`)
+        }
       }
       if (typeof d.sink?.key === 'string' && !d.sink.key.includes('chunk=')) {
         errs.push('static_pages 的 sink.key 必须带 `chunk=`（按段落文件，正典 §1.7 #41）')
@@ -201,6 +221,26 @@ function pageBody(body, pageParam, pageSizeParam, pageSize, page) {
   const re = new RegExp(`("${pageParam}"\\s*:\\s*)(\\d+)`)
   let out = body.replace(re, (_m, head) => `${head}${page}`)
   if (pageSizeParam && typeof pageSize === 'number') {
+    const reSize = new RegExp(`("${pageSizeParam}"\\s*:\\s*)(\\d+)`)
+    out = out.replace(reSize, (_m, head) => `${head}${pageSize}`)
+  }
+  return out
+}
+
+/**
+ * offset/limit 分页的请求体改写：`offset = (page-1) × pageSize`，limit 固定 pageSize。
+ * @param {string} body
+ * @param {string} offsetParam
+ * @param {string | undefined} pageSizeParam
+ * @param {number} pageSize
+ * @param {number} page
+ * @returns {string}
+ */
+function offsetBody(body, offsetParam, pageSizeParam, pageSize, page) {
+  const offset = (page - 1) * pageSize
+  const re = new RegExp(`("${offsetParam}"\\s*:\\s*)(\\d+)`)
+  let out = body.replace(re, (_m, head) => `${head}${offset}`)
+  if (pageSizeParam) {
     const reSize = new RegExp(`("${pageSizeParam}"\\s*:\\s*)(\\d+)`)
     out = out.replace(reSize, (_m, head) => `${head}${pageSize}`)
   }
@@ -587,6 +627,9 @@ export function buildPipeline(m, name = m.id) {
     firstDataNode = 'p1'
     for (let i = 1; i <= pages; i += 1) {
       const id = `p${i}`
+      const body = pg.offsetParam
+        ? offsetBody(s.body, pg.offsetParam, pg.pageSizeParam, /** @type {number} */ (pg.pageSize), i)
+        : pageBody(s.body, pageParam, pg.pageSizeParam, pg.pageSize, i)
       nodes.push({
         id,
         type: 'source',
@@ -595,7 +638,7 @@ export function buildPipeline(m, name = m.id) {
           label: `page ${i}`,
           componentId: 'src.rest',
           schema: s.schema,
-          properties: sourceProps(pageBody(s.body, pageParam, pg.pageSizeParam, pg.pageSize, i), 'none'),
+          properties: sourceProps(body, 'none'),
         },
       })
       edges.push({
