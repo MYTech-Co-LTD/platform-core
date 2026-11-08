@@ -1,0 +1,112 @@
+{
+  "id": "lemeng.purchase.analysis.l0",
+  "domain": "lemeng",
+  "accounts": [
+    "3120",
+    "64188"
+  ],
+  "identityGate": true,
+  "source": {
+    "connectionRef": "lemeng",
+    "url": "https://cloud.nhsoft.cn/agi/api/nhsoft.report.ai.itempurchase.find",
+    "method": "POST",
+    "body": "{\"audit_date_start\":\"${date-1d}\",\"audit_date_end\":\"${date-1d}\",\"branch_nums\":[99],\"summary_types\":[\"supplier\",\"item\"]}",
+    "responsePath": "/result",
+    "retryAttempts": 3,
+    "retryBackoffMs": 2000,
+    "schema": [
+      {
+        "name": "supplier_num",
+        "type": "int64"
+      },
+      {
+        "name": "supplier_code",
+        "type": "string"
+      },
+      {
+        "name": "supplier_name",
+        "type": "string"
+      },
+      {
+        "name": "item_num",
+        "type": "int64"
+      },
+      {
+        "name": "item_code",
+        "type": "string"
+      },
+      {
+        "name": "item_barcode",
+        "type": "string"
+      },
+      {
+        "name": "item_name",
+        "type": "string"
+      },
+      {
+        "name": "item_spec",
+        "type": "string"
+      },
+      {
+        "name": "base_unit",
+        "type": "string"
+      },
+      {
+        "name": "purchase_item_amount",
+        "type": "decimal"
+      },
+      {
+        "name": "purchase_item_money",
+        "type": "decimal"
+      },
+      {
+        "name": "purchase_present_amount",
+        "type": "decimal"
+      },
+      {
+        "name": "purchase_present_money",
+        "type": "decimal"
+      },
+      {
+        "name": "purchase_item_return_amount",
+        "type": "decimal"
+      },
+      {
+        "name": "purchase_item_return_money",
+        "type": "decimal"
+      },
+      {
+        "name": "amount_total",
+        "type": "decimal"
+      },
+      {
+        "name": "money_total",
+        "type": "decimal"
+      }
+    ],
+    "pagination": {
+      "type": "none"
+    }
+  },
+  "transform": {
+    "sql": "SELECT\n  'pu-' || '${ENV:SYSTEM_BOOK}' || '-item_purchase-' || replace(replace('${datetime}','-',''),'_','T') || 'Z' AS batch_id,\n  '${ENV:SYSTEM_BOOK}' AS system_book,\n  CAST('${date-1d}' AS DATE) AS bizday,\n  CAST(o.supplier_num AS BIGINT) AS supplier_num,\n  CAST(o.supplier_code AS VARCHAR) AS supplier_code,\n  CAST(o.supplier_name AS VARCHAR) AS supplier_name,\n  CAST(o.item_num AS BIGINT) AS item_num,\n  CAST(o.item_code AS VARCHAR) AS item_code,\n  CAST(o.item_barcode AS VARCHAR) AS item_barcode,\n  CAST(o.item_name AS VARCHAR) AS item_name,\n  CAST(o.item_spec AS VARCHAR) AS item_spec,\n  CAST(o.base_unit AS VARCHAR) AS base_unit,\n  CAST(o.purchase_item_amount AS DECIMAL(14,6)) AS purchase_item_amount,\n  CAST(o.purchase_item_money AS DECIMAL(14,2)) AS purchase_item_money,\n  CAST(o.purchase_present_amount AS DECIMAL(14,6)) AS purchase_present_amount,\n  CAST(o.purchase_present_money AS DECIMAL(14,2)) AS purchase_present_money,\n  CAST(o.purchase_item_return_amount AS DECIMAL(14,6)) AS purchase_item_return_amount,\n  CAST(o.purchase_item_return_money AS DECIMAL(14,2)) AS purchase_item_return_money,\n  CAST(o.amount_total AS DECIMAL(14,6)) AS amount_total,\n  CAST(o.money_total AS DECIMAL(14,2)) AS money_total\nFROM input, UNNEST(input.\"rows\") AS t(o)\nWHERE (SELECT CASE WHEN (SELECT count(*) FROM (SELECT UNNEST(input.\"rows\") FROM input))\n                          <> (SELECT any_value(total_count) FROM input)\n                    THEN error('ITEM_PURCHASE_ROWS_MISMATCH: len(rows) <> total_count（截断守卫，#640）')\n                    ELSE 0 END) IS NOT NULL"
+  },
+  "gate": {
+    "rules": {
+      "batch_id": "not_null",
+      "system_book": "not_null",
+      "bizday": "not_null",
+      "supplier_num": "not_null",
+      "item_num": "not_null"
+    }
+  },
+  "sink": {
+    "type": "minio",
+    "connectionRef": "zos",
+    "bucket": "shanhai-data",
+    "key": "lemeng/item_purchase/system_book=${ENV:SYSTEM_BOOK}/bizday=${date-1d}/all.parquet",
+    "format": "parquet",
+    "mode": "overwrite",
+    "compression": "zstd"
+  }
+}
