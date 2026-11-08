@@ -57,8 +57,9 @@ IMAGE=${MATERIALIZE_DBT_IMAGE:-platform-core-dbt:local}
 
 # ── 判别面（materialize.test.sh 从这里抽函数测；这些函数不许碰 docker）──────────
 # 透传键清单：只透传**键名**（`-e VAR` 形态）——值写进 argv 就进 ps。
-# 键集 11 个：DBT_HOST 是字面量（服务名，非敏感）；AUDIT_WINDOW_START/PATTERNS 由
-# hourly 档在主流程里 export（#1614 窗口对账）；其余 8 个由下方 export 供值。
+# 键集 12 个：DBT_HOST 是字面量（服务名，非敏感）；AUDIT_WINDOW_START/PATTERNS 由
+# hourly 档在主流程里 export（#1614 窗口对账）；MAT_CLOSED_BEFORE 由主流程 export（闭窗读，
+# 2026-11-08 P0）；其余 8 个由下方 export 供值。
 mat_env_args() {
   printf '%s ' \
     -e DBT_HOST=pg_duckdb \
@@ -66,7 +67,8 @@ mat_env_args() {
     -e LEMENG_ZOS_BUCKET -e LEMENG_ZOS_REGION -e LEMENG_ZOS_ENDPOINT \
     -e LEMENG_SUBJECT_ORG \
     -e DATA_PLANE_DOMAINS \
-    -e AUDIT_WINDOW_START -e AUDIT_WINDOW_PATTERNS
+    -e AUDIT_WINDOW_START -e AUDIT_WINDOW_PATTERNS \
+    -e MAT_CLOSED_BEFORE
 }
 # dbt 命令：`build`（seed+model+test 一把跑，按 DAG 依赖序）。**选择器由调用方按域追加**
 # （`--select "$(mat_dbt_select <域>)"`），所以本函数只给固定前缀。
@@ -258,6 +260,9 @@ export DBT_HOST=pg_duckdb DBT_USER="$UN" DBT_PASSWORD="$PW" DBT_DBNAME="$DB"
 export LEMENG_ZOS_BUCKET="$ZB" LEMENG_ZOS_REGION="$ZR" LEMENG_ZOS_ENDPOINT="$ZE"
 export LEMENG_SUBJECT_ORG="$SO"
 export DATA_PLANE_DOMAINS="$DOMAINS"
+# 闭窗读（2026-11-08 P0）：tick/hourly 物化排除「今天且 hour >= 当前小时」的分区，
+# 避免与 10 分钟 tick 采集抢同一个正在重写的分区（DuckDB ETag）。
+export MAT_CLOSED_BEFORE=true
 
 # 物化档位（#1520）：full = 现有逐域全量；tick = 只跑销售明细增量（每 10 分钟档）。
 # tick 是**一个具名模型**（不是手抄名单）：默认 fct_retail_sale，口径变更由模型自身表达。

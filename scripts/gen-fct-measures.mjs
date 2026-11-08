@@ -70,6 +70,7 @@ export const REGEN_COMMAND = 'pnpm exec tsx scripts/gen-fct-measures.mjs'
  * @property {Record<string, string>} baseAliases 组件键 → 基面 CTE 名
  * @property {number} [incrementalLookback] 增量基面下推天数（仅 incremental 模型；#1524）
  * @property {string} [incrementalKey] 增量过滤键（默认 bizday）
+ * @property {boolean} [closedWindow] 基面是否排除「今天当前小时」（物化闭窗读，2026-11-08 P0）
  */
 
 /**
@@ -101,6 +102,9 @@ export const MODELS = [
     // 该模型是 incremental（#1520）：基面 CTE 下推 7 天 lookback，让 read_parquet 走 bizday
     // 分区裁剪。只放最终 SELECT 会先扫全史再过滤（tick 实测 5+ 分钟，#1524）。
     incrementalLookback: 7,
+    // 物化只读已闭窗（2026-11-08 P0）：tick 采集每 10 分钟重写当前小时，物化读同一分区会撞
+    // DuckDB ETag。`MAT_CLOSED_BEFORE=true` 时排除「今天且 hour >= 当前小时」的分区。
+    closedWindow: true,
   },
   // P3.3 Task 2（#1031）：门店费用构件——两列都是 flat（单层直聚，无中间粒度键 ⇒ grainKeys 空）。
   {
@@ -164,6 +168,8 @@ export const MODELS = [
     },
     // #1520 W2-P1：与主路径（手写 base CTE）同窗口；生成区基面也下推 7 天。
     incrementalLookback: 7,
+    // 同 fct_retail_sale：物化只读已闭窗（2026-11-08 P0）。
+    closedWindow: true,
   },
 ]
 
@@ -249,10 +255,15 @@ export function renderFctMeasures(measures, spec, domains = {}) {
     const incFilter = spec.incrementalLookback
       ? `\n    {% if is_incremental() %}\n    and ${spec.incrementalKey ?? 'bizday'} >= {{ incremental_cutoff(${spec.incrementalLookback}) }}\n    {% endif %}`
       : ''
+    // 物化闭窗读（2026-11-08 P0）：`MAT_CLOSED_BEFORE=true`（materialize.sh 注入）时排除
+    // 「今天且 hour >= 当前小时」——tick 采集每 10 分钟重写当前小时，物化读同一分区会撞 ETag。
+    const closedFilter = spec.closedWindow
+      ? `\n    {% if env_var('MAT_CLOSED_BEFORE', 'false') == 'true' %}\n    and not (bizday = current_date and hour >= extract(hour from current_timestamp))\n    {% endif %}`
+      : ''
     const priorWhere = emittedBases.get(base)
     if (priorWhere === undefined) {
       emittedBases.set(base, where)
-      ctes.push(`${base} as (\n    select * from ${spec.stagingRef}\n    where ${where}${incFilter}\n)`)
+      ctes.push(`${base} as (\n    select * from ${spec.stagingRef}\n    where ${where}${incFilter}${closedFilter}\n)`)
     } else if (priorWhere !== where) {
       throw new Error(`组件 ${key} 复用基面 CTE \`${base}\`，但行域谓词与先到者不同（\`${where}\` ≠ \`${priorWhere}\`）`
         + ' —— 同一 CTE 只有一份 where，后到者会静默沿用先到者的行域；给它们各自的基面别名（baseAliases）')

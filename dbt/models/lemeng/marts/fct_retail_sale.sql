@@ -87,6 +87,9 @@ base_sale as (
     {% if is_incremental() %}
     and bizday >= {{ incremental_cutoff(7) }}
     {% endif %}
+    {% if env_var('MAT_CLOSED_BEFORE', 'false') == 'true' %}
+    and not (bizday = current_date and hour >= extract(hour from current_timestamp))
+    {% endif %}
 ),
 sale_amount__gen as (
     select system_book, bizday, branch_num, order_no, (case when sum(case when state = 'FINISHED' and order_transaction_type = 'SALE_ORDER' then 1 else 0 end) = 0 then 0 else (sum(case when state = 'FINISHED' and order_transaction_type = 'SALE_ORDER' and
@@ -101,6 +104,9 @@ base_return as (
     where state = 'FINISHED' and order_transaction_type like '%RETURN%'
     {% if is_incremental() %}
     and bizday >= {{ incremental_cutoff(7) }}
+    {% endif %}
+    {% if env_var('MAT_CLOSED_BEFORE', 'false') == 'true' %}
+    and not (bizday = current_date and hour >= extract(hour from current_timestamp))
     {% endif %}
 ),
 return_amount__gen as (
