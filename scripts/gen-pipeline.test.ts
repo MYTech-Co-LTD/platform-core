@@ -155,6 +155,28 @@ describe('gen-pipeline：static_pages', () => {
     })
     expect(validateManifest(m).join()).toContain('offset')
   })
+
+  it('emptyGuard：merge 后挂 ctl.die(no-rows) 叶子', () => {
+    const m = mutate((x) => {
+      x.source.pagination = { type: 'static_pages', pages: 2, pageSize: 100, pageSizeParam: 'page_size' }
+      x.emptyGuard = { message: 'SOURCE_NOT_PUBLISHED: bizday=${date-1d} 源端零行' }
+    })
+    expect(validateManifest(m)).toEqual([])
+    const p: any = buildPipeline(m as any)
+    const de = p.nodes.find((n: any) => n.id === 'die_empty')
+    expect(de.data.componentId).toBe('ctl.die')
+    expect(de.data.properties.condition).toBe('no-rows')
+    expect(p.edges.some((e: any) => e.source === 'merge' && e.target === 'die_empty')).toBe(true)
+    // 叶子：没有出边（真机实测叶子 ctl.die 会被执行）
+    expect(p.edges.some((e: any) => e.source === 'die_empty')).toBe(false)
+  })
+
+  it('emptyGuard 只配 static_pages', () => {
+    const m = mutate((x) => {
+      x.emptyGuard = { message: 'x' }
+    })
+    expect(validateManifest(m).join()).toContain('emptyGuard')
+  })
 })
 
 describe('gen-pipeline：多账套', () => {
