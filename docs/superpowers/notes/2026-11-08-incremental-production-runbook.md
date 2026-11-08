@@ -1,6 +1,7 @@
 # 增量管线上生产 runbook — `request.order`（第一条）
 
-> **状态：待执行**（2026-11-08 写；本文只写操作步骤与判据，**未动生产**）。
+> **状态：已执行**（2026-11-08）：`request.order` **3120 + 64188 已切**；Wave 1 高频源**不切**
+> （日单量 ≥ page_size ⇒ `probe_full` 每轮全量采，见 §1 B5）。
 > 机制与真机证据：`docs/superpowers/specs/2026-11-08-incremental-and-run-layout-design.md`；
 > 生成器与试点：`scripts/gen-pipeline.mjs` + `deploy/duckle/manifests/pilot.incr_*.json`（PR #1632）。
 > 上一次切换（2026-11-07）因**子管线列集不对**（缺 `batch_id/system_book/bizday`）已完整回滚；
@@ -9,24 +10,26 @@
 
 ---
 
-## 执行记录（2026-11-08，`3120` 已切；`64188` 未切）
+## 执行记录（2026-11-08，`3120` + `64188` 已切）
 
 | 步骤 | 结果 |
 |---|---|
-| S3 首跑 | `ok`，9 页 / 16.7s；`probe` 67 行、`tail` 0 行、`dgt` 0 行 |
-| S4 湖回读（对象层） | **273 行 / 67 单号**，与旧 `all.parquet` 一致；**24 列**与契约同序；关键列 0 NULL |
-| S5 删旧对象 | `all.parquet` 已删；staging `system_book=3120` → **273 / 67**（无重复） |
-| S6 第二跑 | `pages=0`、`fe` 0、`ok`，5.2s（1 次探针 + 1 次尾页哨兵） |
-| S7 观测面 | owners match 已改 `bizday=*/*.parquet`；catalog 已重建；scorecard **GREEN** |
-| console | 已服务级重启（排班定义热加载）；排班条目不变 |
+| S3 首跑（3120） | `ok`，9 页 / 16.7s；`probe` 67 行、`tail` 0 行、`dgt` 0 行 |
+| S4 湖回读（3120） | **273 行 / 67 单号**，与旧 `all.parquet` 一致；**24 列**与契约同序；关键列 0 NULL |
+| S5 删旧对象（3120） | `all.parquet` 已删；staging `system_book=3120` → **273 / 67**（无重复） |
+| S6 第二跑（3120） | `pages=0`、`fe` 0、`ok`，5.2s（1 次探针 + 1 次尾页哨兵） |
+| S7 观测面（3120） | owners match 已改 `bizday=*/*.parquet`；catalog 已重建；scorecard **GREEN** |
+| 64188 首跑/二跑 | 首跑 **115 行 / 34 单**（与旧 `all.parquet` 一致）；删旧对象后 staging 115/34；二跑 `pages=0`、5.7s；GREEN |
+| 排班首跑（10:21 CST） | 3120 **5.7s**、64188 **4.8s**，均 `ok`（无新数据 `pages=0`） |
+| console | 两个账套均已服务级重启；排班条目不变 |
 
 **踩到并已修的三条**（生成器里已固化，见 §1 B1/B3）：
 ① 身份探针 `w0` 缺 `schema` ⇒ 空响应时 `w0` 直接报错；
 ② 尾页探针误用 `page_size=1` ⇒ page 10 变成有效页、哨兵假红；
 ③ 契约生成器会把 `.page` 子管线的 ITER 投影打回父 token ⇒ 已跳过 `.page`（列集仍由 `check-data-contract` 守）。
 
-**下一步**：观察 3120 至少一天（次日 09:21 CST 起的小时档）；无异常后把 `64188` 加入 manifest
-`accounts`、生成并重复 S1–S7；两账套都切完再把 owners match 收窄到 `page=*.parquet`。
+**下一步**：观察两账套（09:21 起的小时档；无新数据应 `pages=0`、有新单/改单应全量采）；
+Wave 1 四条高频源保持旧静态页管线（见 §1 B5），不降频、接受全量重采。
 
 ---
 
@@ -86,9 +89,28 @@ coalesce(max(CAST(request_order_fid AS VARCHAR)), '')
 - `watermarkPath` 每管线唯一：`/workspace/tmp/lemeng.request.order.l0.<acct>.watermark.parquet`；
 - 子管线里 `grep -c 'ENV:'` 必须为 **0**（凭据走 `connectionRef`，其余走 `ITER_ITEM_*`）。
 
+### B5 · 日单量 ≥ `pageSize` 的源**不要切增量**（2026-11-08 实测，Wave 1 决策）
+
+`probe` 只取第 1 页；当日单量 ≥ `pageSize` 时 `n >= pageSize` ⇒ `probe_full` **每轮强制全量采**，
+增量形态不省请求，反而多 1 次探针 + 1 次尾页哨兵，且 `ctl.foreach` 串行（concurrency=1）更慢。
+
+Wave 1 实测（2026-11-07）：
+
+| 源 | pageSize | 当日单量 | 第二跑 | 结论 |
+|---|---|---|---|---|
+| branch.expense | 200 | 266 | `fe=20`、27.1s（旧静态页 11.4s） | 不切 |
+| transfer.in | 100 | 127 | 探针页满 | 不切 |
+| transfer.out | 100 | 138 | 探针页满 | 不切 |
+| loss.adjustment | 100 | 187 | 探针页满 | 不切 |
+
+**决策**：这四条保持旧静态页管线；**不降频**，接受当天的全量重采。branch.expense 3120 切流后已回滚；
+Wave 1 PR #1643 关闭，manifest 留作记录。**只有日单量 < `pageSize`，或 API 有服务端
+`last_edit_time`/`since` 过滤的源，才适合增量形态。**（已查：branch.expense / transfer.in 的请求 DTO
+都只有日期窗、门店、状态、单号、分页参数，**没有** `last_edit_time`/`since`。）
+
 ---
 
-## 2. 变更清单（本批只上 `3120`；`64188` 观察一天后再加入 manifest `accounts`）
+## 2. 变更清单（`3120` + `64188` 均已上；manifest `accounts` 含两账套）
 
 | # | 文件 | 动作 |
 |---|---|---|
@@ -183,20 +205,25 @@ pnpm exec tsx scripts/check-data-plane-lock.mjs
 
 ---
 
-## 5. 推广顺序
+## 5. 推广顺序（2026-11-08 定案）
 
-`request.order 3120`（观察 1 天）→ `64188`（观察 1 天）→ A 类其余逐条重复 S1–S7：
-`branch.expense` / `client.expense` / `transfer.in` / `transfer.out` / `wholesale.out` /
-`wholesale.return` / `loss.adjustment` / `purchase.analysis`。
+`request.order` **3120 + 64188 已切**（低量日 < `pageSize` 时省请求；高量日退化为全量采，正确）。
 
-B 类 10 条（全量快照/报表类）**不做增量**，走降频方案——需业务确认降频不影响看数。
+其余 A 类源**先判「日单量 < `pageSize`」或「API 有服务端 `last_edit_time`/`since`」**，两条都不满足
+就**不切**（见 §1 B5）。当前实测：`branch.expense` / `transfer.in` / `transfer.out` / `loss.adjustment`
+四条日单量都 ≥ `pageSize`，且请求 DTO 没有 since 过滤 ⇒ **保持旧静态页管线，不降频、接受全量重采**；
+`client.expense` / `wholesale.out` / `wholesale.return`（offset 分页）与 `purchase.analysis`（单次请求）
+先按同一判据探，再决定是否值得做 offset 扩展。
+
+B 类 10 条（全量快照/报表类）**不做增量**；降频方案需业务确认（本轮高频源已明确不降频）。
 
 ---
 
 ## 6. 已知未验 / 边界
 
-- **foreach 有新数据时更慢**：零售实测 60.7s（静态页）→ 103.4s（foreach c=2）；request.order 10 页需实测，
-  别把「无新数据 3.6s」当成常态。
+- **foreach 有新数据时更慢**：零售实测 60.7s（静态页）→ 103.4s（foreach c=2）；branch.expense
+  20 页 **27.1s**（foreach c=1）vs 旧静态页 **11.4s**；request.order 10 页需实测，
+  别把「无新数据 5s」当成常态。
 - **`continueOnFailure` 不继续剩余页**：单页失败会中断后续页，当天分区可能是「部分新 + 部分旧」；
   run 红后必须整轮重跑，不能当部分成功。
 - **水位文件在 console 卷内**：换卷/重建卷 ⇒ 水位空 ⇒ 下一轮全量重采（安全，多花请求）。
