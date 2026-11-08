@@ -526,15 +526,15 @@
           },
           {
             "name": "item_department",
-            "type": "json"
+            "type": "string"
           },
           {
             "name": "item_category",
-            "type": "json"
+            "type": "string"
           },
           {
             "name": "item_brand",
-            "type": "json"
+            "type": "string"
           }
         ],
         "properties": {
@@ -918,15 +918,15 @@
           },
           {
             "name": "item_department",
-            "type": "json"
+            "type": "string"
           },
           {
             "name": "item_category",
-            "type": "json"
+            "type": "string"
           },
           {
             "name": "item_brand",
-            "type": "json"
+            "type": "string"
           }
         ],
         "properties": {
@@ -1310,15 +1310,15 @@
           },
           {
             "name": "item_department",
-            "type": "json"
+            "type": "string"
           },
           {
             "name": "item_category",
-            "type": "json"
+            "type": "string"
           },
           {
             "name": "item_brand",
-            "type": "json"
+            "type": "string"
           }
         ],
         "properties": {
@@ -1702,15 +1702,15 @@
           },
           {
             "name": "item_department",
-            "type": "json"
+            "type": "string"
           },
           {
             "name": "item_category",
-            "type": "json"
+            "type": "string"
           },
           {
             "name": "item_brand",
-            "type": "json"
+            "type": "string"
           }
         ],
         "properties": {
@@ -2094,15 +2094,15 @@
           },
           {
             "name": "item_department",
-            "type": "json"
+            "type": "string"
           },
           {
             "name": "item_category",
-            "type": "json"
+            "type": "string"
           },
           {
             "name": "item_brand",
-            "type": "json"
+            "type": "string"
           }
         ],
         "properties": {
@@ -2486,15 +2486,15 @@
           },
           {
             "name": "item_department",
-            "type": "json"
+            "type": "string"
           },
           {
             "name": "item_category",
-            "type": "json"
+            "type": "string"
           },
           {
             "name": "item_brand",
-            "type": "json"
+            "type": "string"
           }
         ],
         "properties": {
@@ -2878,15 +2878,15 @@
           },
           {
             "name": "item_department",
-            "type": "json"
+            "type": "string"
           },
           {
             "name": "item_category",
-            "type": "json"
+            "type": "string"
           },
           {
             "name": "item_brand",
-            "type": "json"
+            "type": "string"
           }
         ],
         "properties": {
@@ -3270,15 +3270,15 @@
           },
           {
             "name": "item_department",
-            "type": "json"
+            "type": "string"
           },
           {
             "name": "item_category",
-            "type": "json"
+            "type": "string"
           },
           {
             "name": "item_brand",
-            "type": "json"
+            "type": "string"
           }
         ],
         "properties": {
@@ -3662,15 +3662,15 @@
           },
           {
             "name": "item_department",
-            "type": "json"
+            "type": "string"
           },
           {
             "name": "item_category",
-            "type": "json"
+            "type": "string"
           },
           {
             "name": "item_brand",
-            "type": "json"
+            "type": "string"
           }
         ],
         "properties": {
@@ -4054,15 +4054,15 @@
           },
           {
             "name": "item_department",
-            "type": "json"
+            "type": "string"
           },
           {
             "name": "item_category",
-            "type": "json"
+            "type": "string"
           },
           {
             "name": "item_brand",
-            "type": "json"
+            "type": "string"
           }
         ],
         "properties": {
@@ -4446,15 +4446,15 @@
           },
           {
             "name": "item_department",
-            "type": "json"
+            "type": "string"
           },
           {
             "name": "item_category",
-            "type": "json"
+            "type": "string"
           },
           {
             "name": "item_brand",
-            "type": "json"
+            "type": "string"
           }
         ],
         "properties": {
@@ -4838,15 +4838,15 @@
           },
           {
             "name": "item_department",
-            "type": "json"
+            "type": "string"
           },
           {
             "name": "item_category",
-            "type": "json"
+            "type": "string"
           },
           {
             "name": "item_brand",
-            "type": "json"
+            "type": "string"
           }
         ],
         "properties": {
@@ -5230,15 +5230,15 @@
           },
           {
             "name": "item_department",
-            "type": "json"
+            "type": "string"
           },
           {
             "name": "item_category",
-            "type": "json"
+            "type": "string"
           },
           {
             "name": "item_brand",
-            "type": "json"
+            "type": "string"
           }
         ],
         "properties": {
@@ -5622,15 +5622,15 @@
           },
           {
             "name": "item_department",
-            "type": "json"
+            "type": "string"
           },
           {
             "name": "item_category",
-            "type": "json"
+            "type": "string"
           },
           {
             "name": "item_brand",
-            "type": "json"
+            "type": "string"
           }
         ],
         "properties": {
@@ -6014,15 +6014,15 @@
           },
           {
             "name": "item_department",
-            "type": "json"
+            "type": "string"
           },
           {
             "name": "item_category",
-            "type": "json"
+            "type": "string"
           },
           {
             "name": "item_brand",
-            "type": "json"
+            "type": "string"
           }
         ],
         "properties": {
@@ -6406,15 +6406,15 @@
           },
           {
             "name": "item_department",
-            "type": "json"
+            "type": "string"
           },
           {
             "name": "item_category",
-            "type": "json"
+            "type": "string"
           },
           {
             "name": "item_brand",
-            "type": "json"
+            "type": "string"
           }
         ],
         "properties": {
@@ -6798,15 +6798,15 @@
           },
           {
             "name": "item_department",
-            "type": "json"
+            "type": "string"
           },
           {
             "name": "item_category",
-            "type": "json"
+            "type": "string"
           },
           {
             "name": "item_brand",
-            "type": "json"
+            "type": "string"
           }
         ],
         "properties": {
@@ -7190,15 +7190,15 @@
           },
           {
             "name": "item_department",
-            "type": "json"
+            "type": "string"
           },
           {
             "name": "item_category",
-            "type": "json"
+            "type": "string"
           },
           {
             "name": "item_brand",
-            "type": "json"
+            "type": "string"
           }
         ],
         "properties": {
@@ -7582,15 +7582,15 @@
           },
           {
             "name": "item_department",
-            "type": "json"
+            "type": "string"
           },
           {
             "name": "item_category",
-            "type": "json"
+            "type": "string"
           },
           {
             "name": "item_brand",
-            "type": "json"
+            "type": "string"
           }
         ],
         "properties": {
@@ -7974,15 +7974,15 @@
           },
           {
             "name": "item_department",
-            "type": "json"
+            "type": "string"
           },
           {
             "name": "item_category",
-            "type": "json"
+            "type": "string"
           },
           {
             "name": "item_brand",
-            "type": "json"
+            "type": "string"
           }
         ],
         "properties": {
@@ -8366,15 +8366,15 @@
           },
           {
             "name": "item_department",
-            "type": "json"
+            "type": "string"
           },
           {
             "name": "item_category",
-            "type": "json"
+            "type": "string"
           },
           {
             "name": "item_brand",
-            "type": "json"
+            "type": "string"
           }
         ],
         "properties": {
@@ -8758,15 +8758,15 @@
           },
           {
             "name": "item_department",
-            "type": "json"
+            "type": "string"
           },
           {
             "name": "item_category",
-            "type": "json"
+            "type": "string"
           },
           {
             "name": "item_brand",
-            "type": "json"
+            "type": "string"
           }
         ],
         "properties": {
@@ -9150,15 +9150,15 @@
           },
           {
             "name": "item_department",
-            "type": "json"
+            "type": "string"
           },
           {
             "name": "item_category",
-            "type": "json"
+            "type": "string"
           },
           {
             "name": "item_brand",
-            "type": "json"
+            "type": "string"
           }
         ],
         "properties": {
@@ -9542,15 +9542,15 @@
           },
           {
             "name": "item_department",
-            "type": "json"
+            "type": "string"
           },
           {
             "name": "item_category",
-            "type": "json"
+            "type": "string"
           },
           {
             "name": "item_brand",
-            "type": "json"
+            "type": "string"
           }
         ],
         "properties": {
@@ -9934,15 +9934,15 @@
           },
           {
             "name": "item_department",
-            "type": "json"
+            "type": "string"
           },
           {
             "name": "item_category",
-            "type": "json"
+            "type": "string"
           },
           {
             "name": "item_brand",
-            "type": "json"
+            "type": "string"
           }
         ],
         "properties": {
@@ -10326,15 +10326,15 @@
           },
           {
             "name": "item_department",
-            "type": "json"
+            "type": "string"
           },
           {
             "name": "item_category",
-            "type": "json"
+            "type": "string"
           },
           {
             "name": "item_brand",
-            "type": "json"
+            "type": "string"
           }
         ],
         "properties": {
@@ -10718,15 +10718,15 @@
           },
           {
             "name": "item_department",
-            "type": "json"
+            "type": "string"
           },
           {
             "name": "item_category",
-            "type": "json"
+            "type": "string"
           },
           {
             "name": "item_brand",
-            "type": "json"
+            "type": "string"
           }
         ],
         "properties": {
@@ -11110,15 +11110,15 @@
           },
           {
             "name": "item_department",
-            "type": "json"
+            "type": "string"
           },
           {
             "name": "item_category",
-            "type": "json"
+            "type": "string"
           },
           {
             "name": "item_brand",
-            "type": "json"
+            "type": "string"
           }
         ],
         "properties": {
@@ -11502,15 +11502,15 @@
           },
           {
             "name": "item_department",
-            "type": "json"
+            "type": "string"
           },
           {
             "name": "item_category",
-            "type": "json"
+            "type": "string"
           },
           {
             "name": "item_brand",
-            "type": "json"
+            "type": "string"
           }
         ],
         "properties": {
@@ -11894,15 +11894,15 @@
           },
           {
             "name": "item_department",
-            "type": "json"
+            "type": "string"
           },
           {
             "name": "item_category",
-            "type": "json"
+            "type": "string"
           },
           {
             "name": "item_brand",
-            "type": "json"
+            "type": "string"
           }
         ],
         "properties": {
@@ -12286,15 +12286,15 @@
           },
           {
             "name": "item_department",
-            "type": "json"
+            "type": "string"
           },
           {
             "name": "item_category",
-            "type": "json"
+            "type": "string"
           },
           {
             "name": "item_brand",
-            "type": "json"
+            "type": "string"
           }
         ],
         "properties": {
@@ -12678,15 +12678,15 @@
           },
           {
             "name": "item_department",
-            "type": "json"
+            "type": "string"
           },
           {
             "name": "item_category",
-            "type": "json"
+            "type": "string"
           },
           {
             "name": "item_brand",
-            "type": "json"
+            "type": "string"
           }
         ],
         "properties": {
@@ -13070,15 +13070,15 @@
           },
           {
             "name": "item_department",
-            "type": "json"
+            "type": "string"
           },
           {
             "name": "item_category",
-            "type": "json"
+            "type": "string"
           },
           {
             "name": "item_brand",
-            "type": "json"
+            "type": "string"
           }
         ],
         "properties": {
@@ -13462,15 +13462,15 @@
           },
           {
             "name": "item_department",
-            "type": "json"
+            "type": "string"
           },
           {
             "name": "item_category",
-            "type": "json"
+            "type": "string"
           },
           {
             "name": "item_brand",
-            "type": "json"
+            "type": "string"
           }
         ],
         "properties": {
@@ -13854,15 +13854,15 @@
           },
           {
             "name": "item_department",
-            "type": "json"
+            "type": "string"
           },
           {
             "name": "item_category",
-            "type": "json"
+            "type": "string"
           },
           {
             "name": "item_brand",
-            "type": "json"
+            "type": "string"
           }
         ],
         "properties": {
@@ -14246,15 +14246,15 @@
           },
           {
             "name": "item_department",
-            "type": "json"
+            "type": "string"
           },
           {
             "name": "item_category",
-            "type": "json"
+            "type": "string"
           },
           {
             "name": "item_brand",
-            "type": "json"
+            "type": "string"
           }
         ],
         "properties": {
@@ -14638,15 +14638,15 @@
           },
           {
             "name": "item_department",
-            "type": "json"
+            "type": "string"
           },
           {
             "name": "item_category",
-            "type": "json"
+            "type": "string"
           },
           {
             "name": "item_brand",
-            "type": "json"
+            "type": "string"
           }
         ],
         "properties": {
@@ -15030,15 +15030,15 @@
           },
           {
             "name": "item_department",
-            "type": "json"
+            "type": "string"
           },
           {
             "name": "item_category",
-            "type": "json"
+            "type": "string"
           },
           {
             "name": "item_brand",
-            "type": "json"
+            "type": "string"
           }
         ],
         "properties": {
@@ -15422,15 +15422,15 @@
           },
           {
             "name": "item_department",
-            "type": "json"
+            "type": "string"
           },
           {
             "name": "item_category",
-            "type": "json"
+            "type": "string"
           },
           {
             "name": "item_brand",
-            "type": "json"
+            "type": "string"
           }
         ],
         "properties": {
@@ -15814,15 +15814,15 @@
           },
           {
             "name": "item_department",
-            "type": "json"
+            "type": "string"
           },
           {
             "name": "item_category",
-            "type": "json"
+            "type": "string"
           },
           {
             "name": "item_brand",
-            "type": "json"
+            "type": "string"
           }
         ],
         "properties": {
@@ -16206,15 +16206,15 @@
           },
           {
             "name": "item_department",
-            "type": "json"
+            "type": "string"
           },
           {
             "name": "item_category",
-            "type": "json"
+            "type": "string"
           },
           {
             "name": "item_brand",
-            "type": "json"
+            "type": "string"
           }
         ],
         "properties": {
@@ -16598,15 +16598,15 @@
           },
           {
             "name": "item_department",
-            "type": "json"
+            "type": "string"
           },
           {
             "name": "item_category",
-            "type": "json"
+            "type": "string"
           },
           {
             "name": "item_brand",
-            "type": "json"
+            "type": "string"
           }
         ],
         "properties": {
@@ -16990,15 +16990,15 @@
           },
           {
             "name": "item_department",
-            "type": "json"
+            "type": "string"
           },
           {
             "name": "item_category",
-            "type": "json"
+            "type": "string"
           },
           {
             "name": "item_brand",
-            "type": "json"
+            "type": "string"
           }
         ],
         "properties": {
@@ -17382,15 +17382,15 @@
           },
           {
             "name": "item_department",
-            "type": "json"
+            "type": "string"
           },
           {
             "name": "item_category",
-            "type": "json"
+            "type": "string"
           },
           {
             "name": "item_brand",
-            "type": "json"
+            "type": "string"
           }
         ],
         "properties": {
@@ -17774,15 +17774,15 @@
           },
           {
             "name": "item_department",
-            "type": "json"
+            "type": "string"
           },
           {
             "name": "item_category",
-            "type": "json"
+            "type": "string"
           },
           {
             "name": "item_brand",
-            "type": "json"
+            "type": "string"
           }
         ],
         "properties": {
@@ -18166,15 +18166,15 @@
           },
           {
             "name": "item_department",
-            "type": "json"
+            "type": "string"
           },
           {
             "name": "item_category",
-            "type": "json"
+            "type": "string"
           },
           {
             "name": "item_brand",
-            "type": "json"
+            "type": "string"
           }
         ],
         "properties": {
@@ -18558,15 +18558,15 @@
           },
           {
             "name": "item_department",
-            "type": "json"
+            "type": "string"
           },
           {
             "name": "item_category",
-            "type": "json"
+            "type": "string"
           },
           {
             "name": "item_brand",
-            "type": "json"
+            "type": "string"
           }
         ],
         "properties": {
@@ -18950,15 +18950,15 @@
           },
           {
             "name": "item_department",
-            "type": "json"
+            "type": "string"
           },
           {
             "name": "item_category",
-            "type": "json"
+            "type": "string"
           },
           {
             "name": "item_brand",
-            "type": "json"
+            "type": "string"
           }
         ],
         "properties": {
@@ -19342,15 +19342,15 @@
           },
           {
             "name": "item_department",
-            "type": "json"
+            "type": "string"
           },
           {
             "name": "item_category",
-            "type": "json"
+            "type": "string"
           },
           {
             "name": "item_brand",
-            "type": "json"
+            "type": "string"
           }
         ],
         "properties": {
@@ -19734,15 +19734,15 @@
           },
           {
             "name": "item_department",
-            "type": "json"
+            "type": "string"
           },
           {
             "name": "item_category",
-            "type": "json"
+            "type": "string"
           },
           {
             "name": "item_brand",
-            "type": "json"
+            "type": "string"
           }
         ],
         "properties": {
@@ -20126,15 +20126,15 @@
           },
           {
             "name": "item_department",
-            "type": "json"
+            "type": "string"
           },
           {
             "name": "item_category",
-            "type": "json"
+            "type": "string"
           },
           {
             "name": "item_brand",
-            "type": "json"
+            "type": "string"
           }
         ],
         "properties": {
@@ -20518,15 +20518,15 @@
           },
           {
             "name": "item_department",
-            "type": "json"
+            "type": "string"
           },
           {
             "name": "item_category",
-            "type": "json"
+            "type": "string"
           },
           {
             "name": "item_brand",
-            "type": "json"
+            "type": "string"
           }
         ],
         "properties": {
@@ -20910,15 +20910,15 @@
           },
           {
             "name": "item_department",
-            "type": "json"
+            "type": "string"
           },
           {
             "name": "item_category",
-            "type": "json"
+            "type": "string"
           },
           {
             "name": "item_brand",
-            "type": "json"
+            "type": "string"
           }
         ],
         "properties": {
@@ -21302,15 +21302,15 @@
           },
           {
             "name": "item_department",
-            "type": "json"
+            "type": "string"
           },
           {
             "name": "item_category",
-            "type": "json"
+            "type": "string"
           },
           {
             "name": "item_brand",
-            "type": "json"
+            "type": "string"
           }
         ],
         "properties": {
@@ -21694,15 +21694,15 @@
           },
           {
             "name": "item_department",
-            "type": "json"
+            "type": "string"
           },
           {
             "name": "item_category",
-            "type": "json"
+            "type": "string"
           },
           {
             "name": "item_brand",
-            "type": "json"
+            "type": "string"
           }
         ],
         "properties": {
@@ -22086,15 +22086,15 @@
           },
           {
             "name": "item_department",
-            "type": "json"
+            "type": "string"
           },
           {
             "name": "item_category",
-            "type": "json"
+            "type": "string"
           },
           {
             "name": "item_brand",
-            "type": "json"
+            "type": "string"
           }
         ],
         "properties": {
@@ -22478,15 +22478,15 @@
           },
           {
             "name": "item_department",
-            "type": "json"
+            "type": "string"
           },
           {
             "name": "item_category",
-            "type": "json"
+            "type": "string"
           },
           {
             "name": "item_brand",
-            "type": "json"
+            "type": "string"
           }
         ],
         "properties": {
@@ -22870,15 +22870,15 @@
           },
           {
             "name": "item_department",
-            "type": "json"
+            "type": "string"
           },
           {
             "name": "item_category",
-            "type": "json"
+            "type": "string"
           },
           {
             "name": "item_brand",
-            "type": "json"
+            "type": "string"
           }
         ],
         "properties": {
@@ -23262,15 +23262,15 @@
           },
           {
             "name": "item_department",
-            "type": "json"
+            "type": "string"
           },
           {
             "name": "item_category",
-            "type": "json"
+            "type": "string"
           },
           {
             "name": "item_brand",
-            "type": "json"
+            "type": "string"
           }
         ],
         "properties": {
@@ -23654,15 +23654,15 @@
           },
           {
             "name": "item_department",
-            "type": "json"
+            "type": "string"
           },
           {
             "name": "item_category",
-            "type": "json"
+            "type": "string"
           },
           {
             "name": "item_brand",
-            "type": "json"
+            "type": "string"
           }
         ],
         "properties": {
@@ -24046,15 +24046,15 @@
           },
           {
             "name": "item_department",
-            "type": "json"
+            "type": "string"
           },
           {
             "name": "item_category",
-            "type": "json"
+            "type": "string"
           },
           {
             "name": "item_brand",
-            "type": "json"
+            "type": "string"
           }
         ],
         "properties": {
@@ -24438,15 +24438,15 @@
           },
           {
             "name": "item_department",
-            "type": "json"
+            "type": "string"
           },
           {
             "name": "item_category",
-            "type": "json"
+            "type": "string"
           },
           {
             "name": "item_brand",
-            "type": "json"
+            "type": "string"
           }
         ],
         "properties": {
@@ -24830,15 +24830,15 @@
           },
           {
             "name": "item_department",
-            "type": "json"
+            "type": "string"
           },
           {
             "name": "item_category",
-            "type": "json"
+            "type": "string"
           },
           {
             "name": "item_brand",
-            "type": "json"
+            "type": "string"
           }
         ],
         "properties": {
@@ -25222,15 +25222,15 @@
           },
           {
             "name": "item_department",
-            "type": "json"
+            "type": "string"
           },
           {
             "name": "item_category",
-            "type": "json"
+            "type": "string"
           },
           {
             "name": "item_brand",
-            "type": "json"
+            "type": "string"
           }
         ],
         "properties": {
@@ -25614,15 +25614,15 @@
           },
           {
             "name": "item_department",
-            "type": "json"
+            "type": "string"
           },
           {
             "name": "item_category",
-            "type": "json"
+            "type": "string"
           },
           {
             "name": "item_brand",
-            "type": "json"
+            "type": "string"
           }
         ],
         "properties": {
@@ -26006,15 +26006,15 @@
           },
           {
             "name": "item_department",
-            "type": "json"
+            "type": "string"
           },
           {
             "name": "item_category",
-            "type": "json"
+            "type": "string"
           },
           {
             "name": "item_brand",
-            "type": "json"
+            "type": "string"
           }
         ],
         "properties": {
@@ -26398,15 +26398,15 @@
           },
           {
             "name": "item_department",
-            "type": "json"
+            "type": "string"
           },
           {
             "name": "item_category",
-            "type": "json"
+            "type": "string"
           },
           {
             "name": "item_brand",
-            "type": "json"
+            "type": "string"
           }
         ],
         "properties": {
@@ -26790,15 +26790,15 @@
           },
           {
             "name": "item_department",
-            "type": "json"
+            "type": "string"
           },
           {
             "name": "item_category",
-            "type": "json"
+            "type": "string"
           },
           {
             "name": "item_brand",
-            "type": "json"
+            "type": "string"
           }
         ],
         "properties": {
@@ -27182,15 +27182,15 @@
           },
           {
             "name": "item_department",
-            "type": "json"
+            "type": "string"
           },
           {
             "name": "item_category",
-            "type": "json"
+            "type": "string"
           },
           {
             "name": "item_brand",
-            "type": "json"
+            "type": "string"
           }
         ],
         "properties": {
@@ -27574,15 +27574,15 @@
           },
           {
             "name": "item_department",
-            "type": "json"
+            "type": "string"
           },
           {
             "name": "item_category",
-            "type": "json"
+            "type": "string"
           },
           {
             "name": "item_brand",
-            "type": "json"
+            "type": "string"
           }
         ],
         "properties": {
@@ -27966,15 +27966,15 @@
           },
           {
             "name": "item_department",
-            "type": "json"
+            "type": "string"
           },
           {
             "name": "item_category",
-            "type": "json"
+            "type": "string"
           },
           {
             "name": "item_brand",
-            "type": "json"
+            "type": "string"
           }
         ],
         "properties": {
@@ -28358,15 +28358,15 @@
           },
           {
             "name": "item_department",
-            "type": "json"
+            "type": "string"
           },
           {
             "name": "item_category",
-            "type": "json"
+            "type": "string"
           },
           {
             "name": "item_brand",
-            "type": "json"
+            "type": "string"
           }
         ],
         "properties": {
@@ -28750,15 +28750,15 @@
           },
           {
             "name": "item_department",
-            "type": "json"
+            "type": "string"
           },
           {
             "name": "item_category",
-            "type": "json"
+            "type": "string"
           },
           {
             "name": "item_brand",
-            "type": "json"
+            "type": "string"
           }
         ],
         "properties": {
@@ -29142,15 +29142,15 @@
           },
           {
             "name": "item_department",
-            "type": "json"
+            "type": "string"
           },
           {
             "name": "item_category",
-            "type": "json"
+            "type": "string"
           },
           {
             "name": "item_brand",
-            "type": "json"
+            "type": "string"
           }
         ],
         "properties": {
@@ -29534,15 +29534,15 @@
           },
           {
             "name": "item_department",
-            "type": "json"
+            "type": "string"
           },
           {
             "name": "item_category",
-            "type": "json"
+            "type": "string"
           },
           {
             "name": "item_brand",
-            "type": "json"
+            "type": "string"
           }
         ],
         "properties": {
@@ -29926,15 +29926,15 @@
           },
           {
             "name": "item_department",
-            "type": "json"
+            "type": "string"
           },
           {
             "name": "item_category",
-            "type": "json"
+            "type": "string"
           },
           {
             "name": "item_brand",
-            "type": "json"
+            "type": "string"
           }
         ],
         "properties": {
@@ -30318,15 +30318,15 @@
           },
           {
             "name": "item_department",
-            "type": "json"
+            "type": "string"
           },
           {
             "name": "item_category",
-            "type": "json"
+            "type": "string"
           },
           {
             "name": "item_brand",
-            "type": "json"
+            "type": "string"
           }
         ],
         "properties": {
@@ -30710,15 +30710,15 @@
           },
           {
             "name": "item_department",
-            "type": "json"
+            "type": "string"
           },
           {
             "name": "item_category",
-            "type": "json"
+            "type": "string"
           },
           {
             "name": "item_brand",
-            "type": "json"
+            "type": "string"
           }
         ],
         "properties": {
@@ -31102,15 +31102,15 @@
           },
           {
             "name": "item_department",
-            "type": "json"
+            "type": "string"
           },
           {
             "name": "item_category",
-            "type": "json"
+            "type": "string"
           },
           {
             "name": "item_brand",
-            "type": "json"
+            "type": "string"
           }
         ],
         "properties": {
@@ -31494,15 +31494,15 @@
           },
           {
             "name": "item_department",
-            "type": "json"
+            "type": "string"
           },
           {
             "name": "item_category",
-            "type": "json"
+            "type": "string"
           },
           {
             "name": "item_brand",
-            "type": "json"
+            "type": "string"
           }
         ],
         "properties": {
@@ -31886,15 +31886,15 @@
           },
           {
             "name": "item_department",
-            "type": "json"
+            "type": "string"
           },
           {
             "name": "item_category",
-            "type": "json"
+            "type": "string"
           },
           {
             "name": "item_brand",
-            "type": "json"
+            "type": "string"
           }
         ],
         "properties": {
@@ -32278,15 +32278,15 @@
           },
           {
             "name": "item_department",
-            "type": "json"
+            "type": "string"
           },
           {
             "name": "item_category",
-            "type": "json"
+            "type": "string"
           },
           {
             "name": "item_brand",
-            "type": "json"
+            "type": "string"
           }
         ],
         "properties": {
@@ -32670,15 +32670,15 @@
           },
           {
             "name": "item_department",
-            "type": "json"
+            "type": "string"
           },
           {
             "name": "item_category",
-            "type": "json"
+            "type": "string"
           },
           {
             "name": "item_brand",
-            "type": "json"
+            "type": "string"
           }
         ],
         "properties": {
@@ -33062,15 +33062,15 @@
           },
           {
             "name": "item_department",
-            "type": "json"
+            "type": "string"
           },
           {
             "name": "item_category",
-            "type": "json"
+            "type": "string"
           },
           {
             "name": "item_brand",
-            "type": "json"
+            "type": "string"
           }
         ],
         "properties": {
@@ -33454,15 +33454,15 @@
           },
           {
             "name": "item_department",
-            "type": "json"
+            "type": "string"
           },
           {
             "name": "item_category",
-            "type": "json"
+            "type": "string"
           },
           {
             "name": "item_brand",
-            "type": "json"
+            "type": "string"
           }
         ],
         "properties": {
@@ -33846,15 +33846,15 @@
           },
           {
             "name": "item_department",
-            "type": "json"
+            "type": "string"
           },
           {
             "name": "item_category",
-            "type": "json"
+            "type": "string"
           },
           {
             "name": "item_brand",
-            "type": "json"
+            "type": "string"
           }
         ],
         "properties": {
@@ -34238,15 +34238,15 @@
           },
           {
             "name": "item_department",
-            "type": "json"
+            "type": "string"
           },
           {
             "name": "item_category",
-            "type": "json"
+            "type": "string"
           },
           {
             "name": "item_brand",
-            "type": "json"
+            "type": "string"
           }
         ],
         "properties": {
@@ -34630,15 +34630,15 @@
           },
           {
             "name": "item_department",
-            "type": "json"
+            "type": "string"
           },
           {
             "name": "item_category",
-            "type": "json"
+            "type": "string"
           },
           {
             "name": "item_brand",
-            "type": "json"
+            "type": "string"
           }
         ],
         "properties": {
@@ -35022,15 +35022,15 @@
           },
           {
             "name": "item_department",
-            "type": "json"
+            "type": "string"
           },
           {
             "name": "item_category",
-            "type": "json"
+            "type": "string"
           },
           {
             "name": "item_brand",
-            "type": "json"
+            "type": "string"
           }
         ],
         "properties": {
@@ -35414,15 +35414,15 @@
           },
           {
             "name": "item_department",
-            "type": "json"
+            "type": "string"
           },
           {
             "name": "item_category",
-            "type": "json"
+            "type": "string"
           },
           {
             "name": "item_brand",
-            "type": "json"
+            "type": "string"
           }
         ],
         "properties": {
@@ -35806,15 +35806,15 @@
           },
           {
             "name": "item_department",
-            "type": "json"
+            "type": "string"
           },
           {
             "name": "item_category",
-            "type": "json"
+            "type": "string"
           },
           {
             "name": "item_brand",
-            "type": "json"
+            "type": "string"
           }
         ],
         "properties": {
@@ -36198,15 +36198,15 @@
           },
           {
             "name": "item_department",
-            "type": "json"
+            "type": "string"
           },
           {
             "name": "item_category",
-            "type": "json"
+            "type": "string"
           },
           {
             "name": "item_brand",
-            "type": "json"
+            "type": "string"
           }
         ],
         "properties": {
@@ -36590,15 +36590,15 @@
           },
           {
             "name": "item_department",
-            "type": "json"
+            "type": "string"
           },
           {
             "name": "item_category",
-            "type": "json"
+            "type": "string"
           },
           {
             "name": "item_brand",
-            "type": "json"
+            "type": "string"
           }
         ],
         "properties": {
@@ -36982,15 +36982,15 @@
           },
           {
             "name": "item_department",
-            "type": "json"
+            "type": "string"
           },
           {
             "name": "item_category",
-            "type": "json"
+            "type": "string"
           },
           {
             "name": "item_brand",
-            "type": "json"
+            "type": "string"
           }
         ],
         "properties": {
@@ -37374,15 +37374,15 @@
           },
           {
             "name": "item_department",
-            "type": "json"
+            "type": "string"
           },
           {
             "name": "item_category",
-            "type": "json"
+            "type": "string"
           },
           {
             "name": "item_brand",
-            "type": "json"
+            "type": "string"
           }
         ],
         "properties": {
@@ -37766,15 +37766,15 @@
           },
           {
             "name": "item_department",
-            "type": "json"
+            "type": "string"
           },
           {
             "name": "item_category",
-            "type": "json"
+            "type": "string"
           },
           {
             "name": "item_brand",
-            "type": "json"
+            "type": "string"
           }
         ],
         "properties": {
@@ -38158,15 +38158,15 @@
           },
           {
             "name": "item_department",
-            "type": "json"
+            "type": "string"
           },
           {
             "name": "item_category",
-            "type": "json"
+            "type": "string"
           },
           {
             "name": "item_brand",
-            "type": "json"
+            "type": "string"
           }
         ],
         "properties": {
@@ -38550,15 +38550,15 @@
           },
           {
             "name": "item_department",
-            "type": "json"
+            "type": "string"
           },
           {
             "name": "item_category",
-            "type": "json"
+            "type": "string"
           },
           {
             "name": "item_brand",
-            "type": "json"
+            "type": "string"
           }
         ],
         "properties": {
@@ -38942,15 +38942,15 @@
           },
           {
             "name": "item_department",
-            "type": "json"
+            "type": "string"
           },
           {
             "name": "item_category",
-            "type": "json"
+            "type": "string"
           },
           {
             "name": "item_brand",
-            "type": "json"
+            "type": "string"
           }
         ],
         "properties": {
@@ -39334,15 +39334,15 @@
           },
           {
             "name": "item_department",
-            "type": "json"
+            "type": "string"
           },
           {
             "name": "item_category",
-            "type": "json"
+            "type": "string"
           },
           {
             "name": "item_brand",
-            "type": "json"
+            "type": "string"
           }
         ],
         "properties": {
@@ -39726,15 +39726,15 @@
           },
           {
             "name": "item_department",
-            "type": "json"
+            "type": "string"
           },
           {
             "name": "item_category",
-            "type": "json"
+            "type": "string"
           },
           {
             "name": "item_brand",
-            "type": "json"
+            "type": "string"
           }
         ],
         "properties": {
@@ -40118,15 +40118,15 @@
           },
           {
             "name": "item_department",
-            "type": "json"
+            "type": "string"
           },
           {
             "name": "item_category",
-            "type": "json"
+            "type": "string"
           },
           {
             "name": "item_brand",
-            "type": "json"
+            "type": "string"
           }
         ],
         "properties": {
@@ -40510,15 +40510,15 @@
           },
           {
             "name": "item_department",
-            "type": "json"
+            "type": "string"
           },
           {
             "name": "item_category",
-            "type": "json"
+            "type": "string"
           },
           {
             "name": "item_brand",
-            "type": "json"
+            "type": "string"
           }
         ],
         "properties": {
@@ -40902,15 +40902,15 @@
           },
           {
             "name": "item_department",
-            "type": "json"
+            "type": "string"
           },
           {
             "name": "item_category",
-            "type": "json"
+            "type": "string"
           },
           {
             "name": "item_brand",
-            "type": "json"
+            "type": "string"
           }
         ],
         "properties": {
@@ -41294,15 +41294,15 @@
           },
           {
             "name": "item_department",
-            "type": "json"
+            "type": "string"
           },
           {
             "name": "item_category",
-            "type": "json"
+            "type": "string"
           },
           {
             "name": "item_brand",
-            "type": "json"
+            "type": "string"
           }
         ],
         "properties": {
@@ -41686,15 +41686,15 @@
           },
           {
             "name": "item_department",
-            "type": "json"
+            "type": "string"
           },
           {
             "name": "item_category",
-            "type": "json"
+            "type": "string"
           },
           {
             "name": "item_brand",
-            "type": "json"
+            "type": "string"
           }
         ],
         "properties": {
@@ -42078,15 +42078,15 @@
           },
           {
             "name": "item_department",
-            "type": "json"
+            "type": "string"
           },
           {
             "name": "item_category",
-            "type": "json"
+            "type": "string"
           },
           {
             "name": "item_brand",
-            "type": "json"
+            "type": "string"
           }
         ],
         "properties": {
@@ -42470,15 +42470,15 @@
           },
           {
             "name": "item_department",
-            "type": "json"
+            "type": "string"
           },
           {
             "name": "item_category",
-            "type": "json"
+            "type": "string"
           },
           {
             "name": "item_brand",
-            "type": "json"
+            "type": "string"
           }
         ],
         "properties": {
@@ -42862,15 +42862,15 @@
           },
           {
             "name": "item_department",
-            "type": "json"
+            "type": "string"
           },
           {
             "name": "item_category",
-            "type": "json"
+            "type": "string"
           },
           {
             "name": "item_brand",
-            "type": "json"
+            "type": "string"
           }
         ],
         "properties": {
@@ -43254,15 +43254,15 @@
           },
           {
             "name": "item_department",
-            "type": "json"
+            "type": "string"
           },
           {
             "name": "item_category",
-            "type": "json"
+            "type": "string"
           },
           {
             "name": "item_brand",
-            "type": "json"
+            "type": "string"
           }
         ],
         "properties": {
@@ -43646,15 +43646,15 @@
           },
           {
             "name": "item_department",
-            "type": "json"
+            "type": "string"
           },
           {
             "name": "item_category",
-            "type": "json"
+            "type": "string"
           },
           {
             "name": "item_brand",
-            "type": "json"
+            "type": "string"
           }
         ],
         "properties": {
@@ -44038,15 +44038,15 @@
           },
           {
             "name": "item_department",
-            "type": "json"
+            "type": "string"
           },
           {
             "name": "item_category",
-            "type": "json"
+            "type": "string"
           },
           {
             "name": "item_brand",
-            "type": "json"
+            "type": "string"
           }
         ],
         "properties": {
@@ -44430,15 +44430,15 @@
           },
           {
             "name": "item_department",
-            "type": "json"
+            "type": "string"
           },
           {
             "name": "item_category",
-            "type": "json"
+            "type": "string"
           },
           {
             "name": "item_brand",
-            "type": "json"
+            "type": "string"
           }
         ],
         "properties": {
@@ -44822,15 +44822,15 @@
           },
           {
             "name": "item_department",
-            "type": "json"
+            "type": "string"
           },
           {
             "name": "item_category",
-            "type": "json"
+            "type": "string"
           },
           {
             "name": "item_brand",
-            "type": "json"
+            "type": "string"
           }
         ],
         "properties": {
@@ -45214,15 +45214,15 @@
           },
           {
             "name": "item_department",
-            "type": "json"
+            "type": "string"
           },
           {
             "name": "item_category",
-            "type": "json"
+            "type": "string"
           },
           {
             "name": "item_brand",
-            "type": "json"
+            "type": "string"
           }
         ],
         "properties": {
@@ -45606,15 +45606,15 @@
           },
           {
             "name": "item_department",
-            "type": "json"
+            "type": "string"
           },
           {
             "name": "item_category",
-            "type": "json"
+            "type": "string"
           },
           {
             "name": "item_brand",
-            "type": "json"
+            "type": "string"
           }
         ],
         "properties": {
@@ -45998,15 +45998,15 @@
           },
           {
             "name": "item_department",
-            "type": "json"
+            "type": "string"
           },
           {
             "name": "item_category",
-            "type": "json"
+            "type": "string"
           },
           {
             "name": "item_brand",
-            "type": "json"
+            "type": "string"
           }
         ],
         "properties": {
@@ -46390,15 +46390,15 @@
           },
           {
             "name": "item_department",
-            "type": "json"
+            "type": "string"
           },
           {
             "name": "item_category",
-            "type": "json"
+            "type": "string"
           },
           {
             "name": "item_brand",
-            "type": "json"
+            "type": "string"
           }
         ],
         "properties": {
@@ -46782,15 +46782,15 @@
           },
           {
             "name": "item_department",
-            "type": "json"
+            "type": "string"
           },
           {
             "name": "item_category",
-            "type": "json"
+            "type": "string"
           },
           {
             "name": "item_brand",
-            "type": "json"
+            "type": "string"
           }
         ],
         "properties": {
@@ -47174,15 +47174,15 @@
           },
           {
             "name": "item_department",
-            "type": "json"
+            "type": "string"
           },
           {
             "name": "item_category",
-            "type": "json"
+            "type": "string"
           },
           {
             "name": "item_brand",
-            "type": "json"
+            "type": "string"
           }
         ],
         "properties": {
@@ -47566,15 +47566,15 @@
           },
           {
             "name": "item_department",
-            "type": "json"
+            "type": "string"
           },
           {
             "name": "item_category",
-            "type": "json"
+            "type": "string"
           },
           {
             "name": "item_brand",
-            "type": "json"
+            "type": "string"
           }
         ],
         "properties": {
@@ -47958,15 +47958,15 @@
           },
           {
             "name": "item_department",
-            "type": "json"
+            "type": "string"
           },
           {
             "name": "item_category",
-            "type": "json"
+            "type": "string"
           },
           {
             "name": "item_brand",
-            "type": "json"
+            "type": "string"
           }
         ],
         "properties": {
@@ -48350,15 +48350,15 @@
           },
           {
             "name": "item_department",
-            "type": "json"
+            "type": "string"
           },
           {
             "name": "item_category",
-            "type": "json"
+            "type": "string"
           },
           {
             "name": "item_brand",
-            "type": "json"
+            "type": "string"
           }
         ],
         "properties": {
@@ -48742,15 +48742,15 @@
           },
           {
             "name": "item_department",
-            "type": "json"
+            "type": "string"
           },
           {
             "name": "item_category",
-            "type": "json"
+            "type": "string"
           },
           {
             "name": "item_brand",
-            "type": "json"
+            "type": "string"
           }
         ],
         "properties": {
@@ -49134,15 +49134,15 @@
           },
           {
             "name": "item_department",
-            "type": "json"
+            "type": "string"
           },
           {
             "name": "item_category",
-            "type": "json"
+            "type": "string"
           },
           {
             "name": "item_brand",
-            "type": "json"
+            "type": "string"
           }
         ],
         "properties": {
@@ -49526,15 +49526,15 @@
           },
           {
             "name": "item_department",
-            "type": "json"
+            "type": "string"
           },
           {
             "name": "item_category",
-            "type": "json"
+            "type": "string"
           },
           {
             "name": "item_brand",
-            "type": "json"
+            "type": "string"
           }
         ],
         "properties": {
@@ -49918,15 +49918,15 @@
           },
           {
             "name": "item_department",
-            "type": "json"
+            "type": "string"
           },
           {
             "name": "item_category",
-            "type": "json"
+            "type": "string"
           },
           {
             "name": "item_brand",
-            "type": "json"
+            "type": "string"
           }
         ],
         "properties": {
@@ -50310,15 +50310,15 @@
           },
           {
             "name": "item_department",
-            "type": "json"
+            "type": "string"
           },
           {
             "name": "item_category",
-            "type": "json"
+            "type": "string"
           },
           {
             "name": "item_brand",
-            "type": "json"
+            "type": "string"
           }
         ],
         "properties": {
@@ -50702,15 +50702,15 @@
           },
           {
             "name": "item_department",
-            "type": "json"
+            "type": "string"
           },
           {
             "name": "item_category",
-            "type": "json"
+            "type": "string"
           },
           {
             "name": "item_brand",
-            "type": "json"
+            "type": "string"
           }
         ],
         "properties": {
@@ -51094,15 +51094,15 @@
           },
           {
             "name": "item_department",
-            "type": "json"
+            "type": "string"
           },
           {
             "name": "item_category",
-            "type": "json"
+            "type": "string"
           },
           {
             "name": "item_brand",
-            "type": "json"
+            "type": "string"
           }
         ],
         "properties": {
@@ -51486,15 +51486,15 @@
           },
           {
             "name": "item_department",
-            "type": "json"
+            "type": "string"
           },
           {
             "name": "item_category",
-            "type": "json"
+            "type": "string"
           },
           {
             "name": "item_brand",
-            "type": "json"
+            "type": "string"
           }
         ],
         "properties": {
@@ -51878,15 +51878,15 @@
           },
           {
             "name": "item_department",
-            "type": "json"
+            "type": "string"
           },
           {
             "name": "item_category",
-            "type": "json"
+            "type": "string"
           },
           {
             "name": "item_brand",
-            "type": "json"
+            "type": "string"
           }
         ],
         "properties": {
@@ -52270,15 +52270,15 @@
           },
           {
             "name": "item_department",
-            "type": "json"
+            "type": "string"
           },
           {
             "name": "item_category",
-            "type": "json"
+            "type": "string"
           },
           {
             "name": "item_brand",
-            "type": "json"
+            "type": "string"
           }
         ],
         "properties": {
@@ -52662,15 +52662,15 @@
           },
           {
             "name": "item_department",
-            "type": "json"
+            "type": "string"
           },
           {
             "name": "item_category",
-            "type": "json"
+            "type": "string"
           },
           {
             "name": "item_brand",
-            "type": "json"
+            "type": "string"
           }
         ],
         "properties": {
@@ -53054,15 +53054,15 @@
           },
           {
             "name": "item_department",
-            "type": "json"
+            "type": "string"
           },
           {
             "name": "item_category",
-            "type": "json"
+            "type": "string"
           },
           {
             "name": "item_brand",
-            "type": "json"
+            "type": "string"
           }
         ],
         "properties": {
@@ -53446,15 +53446,15 @@
           },
           {
             "name": "item_department",
-            "type": "json"
+            "type": "string"
           },
           {
             "name": "item_category",
-            "type": "json"
+            "type": "string"
           },
           {
             "name": "item_brand",
-            "type": "json"
+            "type": "string"
           }
         ],
         "properties": {
@@ -53838,15 +53838,15 @@
           },
           {
             "name": "item_department",
-            "type": "json"
+            "type": "string"
           },
           {
             "name": "item_category",
-            "type": "json"
+            "type": "string"
           },
           {
             "name": "item_brand",
-            "type": "json"
+            "type": "string"
           }
         ],
         "properties": {
@@ -54230,15 +54230,15 @@
           },
           {
             "name": "item_department",
-            "type": "json"
+            "type": "string"
           },
           {
             "name": "item_category",
-            "type": "json"
+            "type": "string"
           },
           {
             "name": "item_brand",
-            "type": "json"
+            "type": "string"
           }
         ],
         "properties": {
@@ -54622,15 +54622,15 @@
           },
           {
             "name": "item_department",
-            "type": "json"
+            "type": "string"
           },
           {
             "name": "item_category",
-            "type": "json"
+            "type": "string"
           },
           {
             "name": "item_brand",
-            "type": "json"
+            "type": "string"
           }
         ],
         "properties": {
@@ -55014,15 +55014,15 @@
           },
           {
             "name": "item_department",
-            "type": "json"
+            "type": "string"
           },
           {
             "name": "item_category",
-            "type": "json"
+            "type": "string"
           },
           {
             "name": "item_brand",
-            "type": "json"
+            "type": "string"
           }
         ],
         "properties": {
@@ -55406,15 +55406,15 @@
           },
           {
             "name": "item_department",
-            "type": "json"
+            "type": "string"
           },
           {
             "name": "item_category",
-            "type": "json"
+            "type": "string"
           },
           {
             "name": "item_brand",
-            "type": "json"
+            "type": "string"
           }
         ],
         "properties": {
@@ -55798,15 +55798,15 @@
           },
           {
             "name": "item_department",
-            "type": "json"
+            "type": "string"
           },
           {
             "name": "item_category",
-            "type": "json"
+            "type": "string"
           },
           {
             "name": "item_brand",
-            "type": "json"
+            "type": "string"
           }
         ],
         "properties": {
@@ -56190,15 +56190,15 @@
           },
           {
             "name": "item_department",
-            "type": "json"
+            "type": "string"
           },
           {
             "name": "item_category",
-            "type": "json"
+            "type": "string"
           },
           {
             "name": "item_brand",
-            "type": "json"
+            "type": "string"
           }
         ],
         "properties": {
@@ -56582,15 +56582,15 @@
           },
           {
             "name": "item_department",
-            "type": "json"
+            "type": "string"
           },
           {
             "name": "item_category",
-            "type": "json"
+            "type": "string"
           },
           {
             "name": "item_brand",
-            "type": "json"
+            "type": "string"
           }
         ],
         "properties": {
@@ -56974,15 +56974,15 @@
           },
           {
             "name": "item_department",
-            "type": "json"
+            "type": "string"
           },
           {
             "name": "item_category",
-            "type": "json"
+            "type": "string"
           },
           {
             "name": "item_brand",
-            "type": "json"
+            "type": "string"
           }
         ],
         "properties": {
@@ -57366,15 +57366,15 @@
           },
           {
             "name": "item_department",
-            "type": "json"
+            "type": "string"
           },
           {
             "name": "item_category",
-            "type": "json"
+            "type": "string"
           },
           {
             "name": "item_brand",
-            "type": "json"
+            "type": "string"
           }
         ],
         "properties": {
@@ -57758,15 +57758,15 @@
           },
           {
             "name": "item_department",
-            "type": "json"
+            "type": "string"
           },
           {
             "name": "item_category",
-            "type": "json"
+            "type": "string"
           },
           {
             "name": "item_brand",
-            "type": "json"
+            "type": "string"
           }
         ],
         "properties": {
@@ -58150,15 +58150,15 @@
           },
           {
             "name": "item_department",
-            "type": "json"
+            "type": "string"
           },
           {
             "name": "item_category",
-            "type": "json"
+            "type": "string"
           },
           {
             "name": "item_brand",
-            "type": "json"
+            "type": "string"
           }
         ],
         "properties": {
@@ -58542,15 +58542,15 @@
           },
           {
             "name": "item_department",
-            "type": "json"
+            "type": "string"
           },
           {
             "name": "item_category",
-            "type": "json"
+            "type": "string"
           },
           {
             "name": "item_brand",
-            "type": "json"
+            "type": "string"
           }
         ],
         "properties": {
