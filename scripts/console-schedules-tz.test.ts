@@ -6,6 +6,10 @@
 //   ⚠️ **2026-11-07 订正（#1624）**：非销售采集由「每 2 小时 5 轮」改为**每小时 15 轮**，
 //     按原依赖顺序重排到 3 分钟一槽（0,3,…,54）——同一账套内分钟槽唯一，避免同一 PAT 并发 >3
 //     触发并发闸（正典案例 42）。
+//   ⚠️ **2026-11-08 订正（P0 排班分配器，#1648）**：小时档的**分钟**改由
+//     `scripts/gen-schedules.mjs` 按 `schedule-durations.json` 的实测耗时分配（tick 后的窗口、
+//     长管线 dim.item 跨一个 tick）。本测试仍钉「时区 + 条目集 + 非小时档 expr」；小时档只钉
+//     小时范围，分钟一致性由 CI 的 `gen-schedules --check` 守。
 //   ⚠️ **2026-10-20 订正（#931）**：非销售采集统一到 **14–24 点每 2 小时**（`M 14,16,18,20,22 * * *`），
 //     触发瞬间**有意改变**——原因是 `${date-1d}` 按 UTC 解析、00:0x CST 时 UTC 仍在前一天 ⇒ 实际采成 T-2。
 //     14:00 CST = 06:00 UTC，UTC 与 CST 同日 ⇒ 日期基准回到北京。销售族（tick/windows/close）与对账不在本次范围。
@@ -105,9 +109,9 @@ function readBook(book: string): Array<{ id?: unknown; kind?: { type?: unknown; 
   return JSON.parse(readFileSync(path.join(ROOT, 'deploy', 'duckle', 'console', 'schedules', `${book}.json`), 'utf8'))
 }
 
-describe('console 排班时区统一（spec §10.6）：49 条全显式 Asia/Shanghai + expr 逐字合表', () => {
+describe('console 排班时区统一（spec §10.6）：全显式 Asia/Shanghai + 非小时档 expr 逐字', () => {
   for (const [book, expected] of Object.entries(EXPECTED)) {
-    it(`book=${book}：条目集与期望表恰同集，timezone 全显式 Asia/Shanghai，expr 逐字一致`, () => {
+    it(`book=${book}：条目集与期望表恰同集，timezone 全显式 Asia/Shanghai，非小时档 expr 逐字`, () => {
       const entries = readBook(book)
       expect(entries.length, `book=${book} 条目数`).toBe(Object.keys(expected).length)
 
@@ -118,7 +122,18 @@ describe('console 排班时区统一（spec §10.6）：49 条全显式 Asia/Sha
         expect(expected[id], `book=${book} 出现期望表外的排班 ${id}（改排班先改 §10.6 表与本测试）`).toBeDefined()
         expect(e.kind?.type, `${id} kind.type`).toBe('cron')
         expect(e.timezone, `${id} timezone 缺失/非显式（§10.6：一律显式 Asia/Shanghai）`).toBe('Asia/Shanghai')
-        expect(e.kind?.expr, `${id} expr 与 §10.6 转换表不符`).toBe(expected[id])
+        // 小时档（`M H-H * * *`）的**分钟**由 `scripts/gen-schedules.mjs` 按实测耗时分配
+        // （2026-11-08 P0）；这里只钉小时范围，分钟一致性由 CI 的 `gen-schedules --check` 守。
+        // 非小时档（tick / 日档 / 2 小时档 / 周更）仍逐字合表。
+        const expectedExpr = String(expected[id])
+        if (/^\d+\s+\d+-\d+\s+\*\s+\*\s+\*$/.test(expectedExpr)) {
+          const got = /^(\d+)\s+(\d+-\d+)\s+\*\s+\*\s+\*$/.exec(String(e.kind?.expr))
+          const want = /^(\d+)\s+(\d+-\d+)\s+\*\s+\*\s+\*$/.exec(expectedExpr)
+          expect(got, `${id} 小时档 expr 形状`).not.toBeNull()
+          expect(got?.[2], `${id} 小时范围`).toBe(want?.[2])
+        } else {
+          expect(e.kind?.expr, `${id} expr 与 §10.6 转换表不符`).toBe(expectedExpr)
+        }
       }
       expect([...seen].sort(), `book=${book} 期望表里的排班在文件里缺席`).toEqual(Object.keys(expected).sort())
     })
