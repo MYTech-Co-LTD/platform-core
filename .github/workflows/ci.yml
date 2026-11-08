@@ -158,6 +158,11 @@ jobs:
       # （拼写错/漏生成）② enabled 引用**他账套**后缀管线 = SOP §F.1 的危害形态（一账套一 console
       # 的本体是凭据/env 隔离，错账套排班会**静默采错数据**）。纯静态：只读仓内 JSON，秒级。
       - run: pnpm exec tsx scripts/check-console-schedules.mjs
+      # 排班分配（2026-11-08，P0）：小时档按实测耗时排 1 分钟槽，同账套不重叠；
+      # 长管线（dim.item 525s）放 :02，允许跨一个 tick（最多 1 采集 + 1 tick）。
+      # 改耗时表/新增管线后重跑 `pnpm exec tsx scripts/gen-schedules.mjs`。
+      - run: pnpm exec tsx scripts/gen-schedules.mjs --check
+      - run: pnpm exec tsx scripts/check-schedule-conflicts.mjs
       # 源清单（manifest）↔ 生成物一致性（P1，2026-11-07）：deploy/duckle/manifests/*.json
       # 必须合法，且与 pipelines/<id>.json（已晋级）或 manifests/generated/<id>.json（试点）逐字一致；
       # 改 manifest 不重生成 / 手改生成物 ⇒ 这里红。纯静态：只读仓内 JSON。
