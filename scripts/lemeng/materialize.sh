@@ -381,11 +381,18 @@ fi
 # 和被 eager 间选拖进来的 46 条全史对账一起减掉——真机实测 133 节点里混进了全史档）。
 # 本档用并集把两档**都**全史跑一遍（窗口对账的 env 未设 = 全史，覆盖不变）。
 if [ "$SCOPE" = audit ]; then
-  echo "── audit: audit_* 两档并集（全史对账；每日独立 job）──"
+  # 分段（2026-11-09，issue #1697）：56 条全史对账 > openship 单命令 **90 分钟硬上限**（实测
+  # `Command timed out after 5400000ms`；job 自身 timeout 设 4h 也压不过这个上限）⇒ 必须拆成
+  # 多个 job 各跑一段。段选择器由 job env 给（`MATERIALIZE_AUDIT_SELECT`，dbt 选择语法），
+  # 缺省仍是两档并集 —— 与旧行为逐字等价，不改变任何单条口径。
+  # 为什么不用 `--threads >1` 提速：每连接一个 DuckDB 实例（各 1536MB），2 线程实测 postmaster
+  # 反复 `terminating any other active server processes`（issue #1157，PASS=12 ERROR=41）。
+  _sel=${MATERIALIZE_AUDIT_SELECT:-'tag:audit tag:audit_window'}
+  echo "── audit: select=${_sel}（全史对账；分段 job）──"
   _log="$_WORK/dbt.audit.log"
   _rc="$_WORK/dbt.audit.rc"
   ( if DATA_PLANE_DOMAINS="$TICK_DOMAIN" docker run --rm --network "$NETWORK" -v "$R/dbt:/usr/app" \
-      $(mat_env_args) "$IMAGE" test --profiles-dir /usr/app --threads 1 --select 'tag:audit tag:audit_window' 2>&1; then
+      $(mat_env_args) "$IMAGE" test --profiles-dir /usr/app --threads 1 --select "$_sel" 2>&1; then
     echo 0 >"$_rc"
   else
     echo $? >"$_rc"
