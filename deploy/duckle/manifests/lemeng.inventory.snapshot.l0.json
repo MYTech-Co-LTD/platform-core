@@ -1,0 +1,132 @@
+{
+  "id": "lemeng.inventory.snapshot.l0",
+  "domain": "lemeng",
+  "accounts": [
+    "3120"
+  ],
+  "identityGate": true,
+  "emptyGuard": {
+    "message": "SOURCE_NOT_PUBLISHED: bizday=${date-2d} 源端零行——快照尚未发布或窗口语义异常。**不是写湖失败、也不是数据错**：源端实测在营业日 D+1 22:35 ~ D+2 00:11 CST 之间发布（距日结 46.6~48.2h，2026-10-26 探针实测），而本管线窗口是 T-2、在 14:35~22:35 CST 取数，**早期轮次早于发布是正常的**：本日后续轮次会自动重试，任一发布即落湖；若当天全部轮次都空，次日 00:35 CST 的兜底管线 lemeng.inventory.snapshot.catchup.3120 会以 T-3 窗口补采。处置：无需人工，看下一轮；兜底也空才查源侧。"
+  },
+  "source": {
+    "connectionRef": "lemeng",
+    "url": "https://cloud.nhsoft.cn/agi/api/nhsoft.ama.ai.inventory.snapshot.find",
+    "method": "POST",
+    "body": "{\"bizday\":\"${date-2d}\",\"page_number\":1,\"page_size\":200}",
+    "responsePath": "/result",
+    "retryAttempts": 3,
+    "retryBackoffMs": 2000,
+    "schema": [
+      {
+        "name": "branch_num",
+        "type": "int64"
+      },
+      {
+        "name": "branch_code",
+        "type": "string"
+      },
+      {
+        "name": "branch_name",
+        "type": "string"
+      },
+      {
+        "name": "storehouse_num",
+        "type": "int64"
+      },
+      {
+        "name": "storehouse_code",
+        "type": "string"
+      },
+      {
+        "name": "storehouse_name",
+        "type": "string"
+      },
+      {
+        "name": "item_num",
+        "type": "int64"
+      },
+      {
+        "name": "item_code",
+        "type": "string"
+      },
+      {
+        "name": "item_barcode",
+        "type": "string"
+      },
+      {
+        "name": "item_name",
+        "type": "string"
+      },
+      {
+        "name": "item_spec",
+        "type": "string"
+      },
+      {
+        "name": "item_unit",
+        "type": "string"
+      },
+      {
+        "name": "inventory_quantity",
+        "type": "decimal"
+      },
+      {
+        "name": "inventory_assist_quantity",
+        "type": "decimal"
+      },
+      {
+        "name": "inventory_use_quantity",
+        "type": "decimal"
+      },
+      {
+        "name": "inventory_money",
+        "type": "decimal"
+      },
+      {
+        "name": "carry_cost_price",
+        "type": "decimal"
+      },
+      {
+        "name": "sale_price",
+        "type": "decimal"
+      },
+      {
+        "name": "difference_quantity",
+        "type": "decimal"
+      },
+      {
+        "name": "difference_money",
+        "type": "decimal"
+      }
+    ],
+    "pagination": {
+      "type": "static_pages",
+      "pages": 30,
+      "pageSize": 200,
+      "pageSizeParam": "page_size",
+      "truncationGuard": true,
+      "windowToken": "${date-2d}"
+    }
+  },
+  "transform": {
+    "sql": "SELECT\n  'iv-' || '${ENV:SYSTEM_BOOK}' || '-inventory_snapshot-' || replace(replace('${datetime}','-',''),'_','T') || 'Z' AS batch_id,\n  '${ENV:SYSTEM_BOOK}' AS system_book,\n  CAST('${date-2d}' AS DATE) AS bizday,\n  CAST(o.branch_num AS INTEGER) AS branch_num,\n  CAST(o.branch_code AS VARCHAR) AS branch_code,\n  CAST(o.branch_name AS VARCHAR) AS branch_name,\n  CAST(o.storehouse_num AS BIGINT) AS storehouse_num,\n  CAST(o.storehouse_code AS VARCHAR) AS storehouse_code,\n  CAST(o.storehouse_name AS VARCHAR) AS storehouse_name,\n  CAST(o.item_num AS BIGINT) AS item_num,\n  CAST(o.item_code AS VARCHAR) AS item_code,\n  CAST(o.item_barcode AS VARCHAR) AS item_barcode,\n  CAST(o.item_name AS VARCHAR) AS item_name,\n  CAST(o.item_spec AS VARCHAR) AS item_spec,\n  CAST(o.item_unit AS VARCHAR) AS item_unit,\n  CAST(o.inventory_quantity AS DECIMAL(14,6)) AS inventory_quantity,\n  CAST(o.inventory_assist_quantity AS DECIMAL(14,6)) AS inventory_assist_quantity,\n  CAST(o.inventory_use_quantity AS DECIMAL(14,6)) AS inventory_use_quantity,\n  CAST(o.inventory_money AS DECIMAL(14,2)) AS inventory_money,\n  CAST(o.carry_cost_price AS DECIMAL(18,8)) AS carry_cost_price,\n  CAST(o.sale_price AS DECIMAL(18,8)) AS sale_price,\n  CAST(o.difference_quantity AS DECIMAL(14,6)) AS difference_quantity,\n  CAST(o.difference_money AS DECIMAL(14,2)) AS difference_money\nFROM input o"
+  },
+  "gate": {
+    "rules": {
+      "batch_id": "not_null",
+      "system_book": "not_null",
+      "bizday": "not_null",
+      "branch_num": "not_null",
+      "storehouse_num": "not_null",
+      "item_num": "not_null"
+    }
+  },
+  "sink": {
+    "type": "minio",
+    "connectionRef": "zos",
+    "bucket": "shanhai-data",
+    "key": "lemeng/inventory_snapshot/system_book=${ENV:SYSTEM_BOOK}/bizday=${date-2d}/chunk=all.parquet",
+    "format": "parquet",
+    "mode": "overwrite",
+    "compression": "zstd"
+  }
+}

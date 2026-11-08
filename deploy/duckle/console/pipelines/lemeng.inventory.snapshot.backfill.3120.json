@@ -6,7 +6,7 @@
       "type": "source",
       "position": {
         "x": 0,
-        "y": 0
+        "y": -400
       },
       "data": {
         "label": "w0",
@@ -38,8 +38,8 @@
       "id": "g0",
       "type": "transform",
       "position": {
-        "x": 0,
-        "y": 0
+        "x": 300,
+        "y": -400
       },
       "data": {
         "label": "g0",
@@ -53,8 +53,8 @@
       "id": "g1",
       "type": "transform",
       "position": {
-        "x": 0,
-        "y": 0
+        "x": 600,
+        "y": -400
       },
       "data": {
         "label": "g1",
@@ -68,8 +68,8 @@
       "id": "g2",
       "type": "transform",
       "position": {
-        "x": 0,
-        "y": 0
+        "x": 900,
+        "y": -400
       },
       "data": {
         "label": "g2",
@@ -83,8 +83,8 @@
       "id": "d0",
       "type": "transform",
       "position": {
-        "x": 0,
-        "y": 0
+        "x": 1200,
+        "y": -400
       },
       "data": {
         "label": "d0",
@@ -99,8 +99,8 @@
       "id": "g3",
       "type": "transform",
       "position": {
-        "x": 0,
-        "y": 0
+        "x": 1500,
+        "y": -400
       },
       "data": {
         "label": "g3",
@@ -114,8 +114,8 @@
       "id": "d1",
       "type": "transform",
       "position": {
-        "x": 0,
-        "y": 0
+        "x": 1800,
+        "y": -400
       },
       "data": {
         "label": "d1",
@@ -130,14 +130,14 @@
       "id": "gv",
       "type": "transform",
       "position": {
-        "x": 0,
-        "y": 0
+        "x": 2100,
+        "y": -400
       },
       "data": {
         "label": "gv",
         "componentId": "code.sql",
         "properties": {
-          "sql": "SELECT 'BRANCH_NUMS' AS violation, '${ENV:BRANCH_NUMS}' AS detail, 'JSON integer array, e.g. [1001,1002]' AS rule WHERE NOT regexp_full_match('${ENV:BRANCH_NUMS}', '\\[[0-9]+([, ]+[0-9]+)*\\]') UNION ALL SELECT 'SYSTEM_BOOK', '${ENV:SYSTEM_BOOK}', 'digits only' WHERE NOT regexp_full_match('${ENV:SYSTEM_BOOK}', '[0-9]{1,32}') UNION ALL SELECT 'BIZDAY', '${BIZDAY}', 'YYYY-MM-DD' WHERE NOT regexp_full_match('${BIZDAY}', '[0-9]{4}-[0-9]{2}-[0-9]{2}') UNION ALL SELECT 'BATCH_ID', 'iv-' || '${ENV:SYSTEM_BOOK}' || '-inventory_snapshot-' || replace(replace('${datetime}','-',''),'_','T') || 'Z' AS v, 'iv-<book>-inventory_snapshot-YYYYMMDDTHHMMSSZ' WHERE NOT regexp_full_match('iv-' || '${ENV:SYSTEM_BOOK}' || '-inventory_snapshot-' || replace(replace('${datetime}','-',''),'_','T') || 'Z', 'iv-[0-9]+-inventory_snapshot-[0-9]{8}T[0-9]{6}Z')"
+          "sql": "SELECT 'BRANCH_NUMS' AS violation, '${ENV:BRANCH_NUMS}' AS detail, 'JSON integer array, e.g. [1001,1002]' AS rule WHERE NOT regexp_full_match('${ENV:BRANCH_NUMS}', '\\[[0-9]+([, ]+[0-9]+)*\\]') UNION ALL SELECT 'SYSTEM_BOOK', '${ENV:SYSTEM_BOOK}', 'digits only' WHERE NOT regexp_full_match('${ENV:SYSTEM_BOOK}', '[0-9]{1,32}') UNION ALL SELECT 'BIZDAY', '${BIZDAY}', 'YYYY-MM-DD' WHERE NOT regexp_full_match('${BIZDAY}', '[0-9]{4}-[0-9]{2}-[0-9]{2}')"
         }
       }
     },
@@ -145,8 +145,8 @@
       "id": "dv",
       "type": "transform",
       "position": {
-        "x": 0,
-        "y": 0
+        "x": 2400,
+        "y": -400
       },
       "data": {
         "label": "dv",
@@ -165,7 +165,7 @@
         "y": 0
       },
       "data": {
-        "label": "p1",
+        "label": "page 1",
         "componentId": "src.rest",
         "schema": [
           {
@@ -266,10 +266,10 @@
       "type": "source",
       "position": {
         "x": 0,
-        "y": 0
+        "y": 120
       },
       "data": {
-        "label": "p2",
+        "label": "page 2",
         "componentId": "src.rest",
         "schema": [
           {
@@ -370,10 +370,10 @@
       "type": "source",
       "position": {
         "x": 0,
-        "y": 0
+        "y": 240
       },
       "data": {
-        "label": "p3",
+        "label": "page 3",
         "componentId": "src.rest",
         "schema": [
           {
@@ -474,10 +474,10 @@
       "type": "source",
       "position": {
         "x": 0,
-        "y": 0
+        "y": 360
       },
       "data": {
-        "label": "p4",
+        "label": "page 4",
         "componentId": "src.rest",
         "schema": [
           {
@@ -578,10 +578,10 @@
       "type": "source",
       "position": {
         "x": 0,
-        "y": 0
+        "y": 480
       },
       "data": {
-        "label": "p5",
+        "label": "page 5",
         "componentId": "src.rest",
         "schema": [
           {
@@ -682,10 +682,10 @@
       "type": "source",
       "position": {
         "x": 0,
-        "y": 0
+        "y": 600
       },
       "data": {
-        "label": "p6",
+        "label": "page 6",
         "componentId": "src.rest",
         "schema": [
           {
@@ -786,10 +786,10 @@
       "type": "source",
       "position": {
         "x": 0,
-        "y": 0
+        "y": 720
       },
       "data": {
-        "label": "p7",
+        "label": "page 7",
         "componentId": "src.rest",
         "schema": [
           {
@@ -890,10 +890,10 @@
       "type": "source",
       "position": {
         "x": 0,
-        "y": 0
+        "y": 840
       },
       "data": {
-        "label": "p8",
+        "label": "page 8",
         "componentId": "src.rest",
         "schema": [
           {
@@ -994,10 +994,10 @@
       "type": "source",
       "position": {
         "x": 0,
-        "y": 0
+        "y": 960
       },
       "data": {
-        "label": "p9",
+        "label": "page 9",
         "componentId": "src.rest",
         "schema": [
           {
@@ -1094,87 +1094,14 @@
       }
     },
     {
-      "id": "merge",
-      "type": "transform",
-      "position": {
-        "x": 0,
-        "y": 0
-      },
-      "data": {
-        "label": "merge",
-        "componentId": "ctl.merge",
-        "properties": {}
-      }
-    },
-    {
-      "id": "shape",
-      "type": "transform",
-      "position": {
-        "x": 0,
-        "y": 0
-      },
-      "data": {
-        "label": "shape",
-        "componentId": "code.sql",
-        "properties": {
-          "sql": "SELECT\n  'iv-' || '${ENV:SYSTEM_BOOK}' || '-inventory_snapshot-' || replace(replace('${datetime}','-',''),'_','T') || 'Z' AS batch_id,\n  '${ENV:SYSTEM_BOOK}' AS system_book,\n  CAST('${BIZDAY}' AS DATE) AS bizday,\n  CAST(o.branch_num AS INTEGER) AS branch_num,\n  CAST(o.branch_code AS VARCHAR) AS branch_code,\n  CAST(o.branch_name AS VARCHAR) AS branch_name,\n  CAST(o.storehouse_num AS BIGINT) AS storehouse_num,\n  CAST(o.storehouse_code AS VARCHAR) AS storehouse_code,\n  CAST(o.storehouse_name AS VARCHAR) AS storehouse_name,\n  CAST(o.item_num AS BIGINT) AS item_num,\n  CAST(o.item_code AS VARCHAR) AS item_code,\n  CAST(o.item_barcode AS VARCHAR) AS item_barcode,\n  CAST(o.item_name AS VARCHAR) AS item_name,\n  CAST(o.item_spec AS VARCHAR) AS item_spec,\n  CAST(o.item_unit AS VARCHAR) AS item_unit,\n  CAST(o.inventory_quantity AS DECIMAL(14,6)) AS inventory_quantity,\n  CAST(o.inventory_assist_quantity AS DECIMAL(14,6)) AS inventory_assist_quantity,\n  CAST(o.inventory_use_quantity AS DECIMAL(14,6)) AS inventory_use_quantity,\n  CAST(o.inventory_money AS DECIMAL(14,2)) AS inventory_money,\n  CAST(o.carry_cost_price AS DECIMAL(18,8)) AS carry_cost_price,\n  CAST(o.sale_price AS DECIMAL(18,8)) AS sale_price,\n  CAST(o.difference_quantity AS DECIMAL(14,6)) AS difference_quantity,\n  CAST(o.difference_money AS DECIMAL(14,2)) AS difference_money\nFROM input o"
-        }
-      }
-    },
-    {
-      "id": "gate",
-      "type": "transform",
-      "position": {
-        "x": 0,
-        "y": 0
-      },
-      "data": {
-        "label": "gate",
-        "componentId": "qa.contract",
-        "properties": {
-          "rules": {
-            "batch_id": "not_null",
-            "system_book": "not_null",
-            "bizday": "not_null",
-            "branch_num": "not_null",
-            "storehouse_num": "not_null",
-            "item_num": "not_null"
-          }
-        }
-      }
-    },
-    {
-      "id": "sink",
-      "type": "sink",
-      "position": {
-        "x": 0,
-        "y": 0
-      },
-      "data": {
-        "label": "sink",
-        "componentId": "snk.minio",
-        "properties": {
-          "bucket": "${ENV:ZOS_BUCKET}",
-          "key": "lemeng/inventory_snapshot/system_book=${ENV:SYSTEM_BOOK}/bizday=${BIZDAY}/all.parquet",
-          "region": "${ENV:ZOS_REGION}",
-          "urlStyle": "path",
-          "useSsl": "true",
-          "format": "parquet",
-          "mode": "overwrite",
-          "compression": "zstd",
-          "connectionRef": "zos"
-        }
-      }
-    },
-    {
       "id": "p10",
       "type": "source",
       "position": {
-        "x": 2340,
-        "y": 0
+        "x": 0,
+        "y": 1080
       },
       "data": {
-        "label": "p1",
+        "label": "page 10",
         "componentId": "src.rest",
         "schema": [
           {
@@ -1274,11 +1201,11 @@
       "id": "p11",
       "type": "source",
       "position": {
-        "x": 2600,
-        "y": 0
+        "x": 0,
+        "y": 1200
       },
       "data": {
-        "label": "p1",
+        "label": "page 11",
         "componentId": "src.rest",
         "schema": [
           {
@@ -1378,11 +1305,11 @@
       "id": "p12",
       "type": "source",
       "position": {
-        "x": 2860,
-        "y": 0
+        "x": 0,
+        "y": 1320
       },
       "data": {
-        "label": "p1",
+        "label": "page 12",
         "componentId": "src.rest",
         "schema": [
           {
@@ -1482,11 +1409,11 @@
       "id": "p13",
       "type": "source",
       "position": {
-        "x": 3120,
-        "y": 0
+        "x": 0,
+        "y": 1440
       },
       "data": {
-        "label": "p1",
+        "label": "page 13",
         "componentId": "src.rest",
         "schema": [
           {
@@ -1586,11 +1513,11 @@
       "id": "p14",
       "type": "source",
       "position": {
-        "x": 3380,
-        "y": 0
+        "x": 0,
+        "y": 1560
       },
       "data": {
-        "label": "p1",
+        "label": "page 14",
         "componentId": "src.rest",
         "schema": [
           {
@@ -1690,11 +1617,11 @@
       "id": "p15",
       "type": "source",
       "position": {
-        "x": 3640,
-        "y": 0
+        "x": 0,
+        "y": 1680
       },
       "data": {
-        "label": "p1",
+        "label": "page 15",
         "componentId": "src.rest",
         "schema": [
           {
@@ -1794,11 +1721,11 @@
       "id": "p16",
       "type": "source",
       "position": {
-        "x": 3900,
-        "y": 0
+        "x": 0,
+        "y": 1800
       },
       "data": {
-        "label": "p1",
+        "label": "page 16",
         "componentId": "src.rest",
         "schema": [
           {
@@ -1898,11 +1825,11 @@
       "id": "p17",
       "type": "source",
       "position": {
-        "x": 4160,
-        "y": 0
+        "x": 0,
+        "y": 1920
       },
       "data": {
-        "label": "p1",
+        "label": "page 17",
         "componentId": "src.rest",
         "schema": [
           {
@@ -2002,11 +1929,11 @@
       "id": "p18",
       "type": "source",
       "position": {
-        "x": 4420,
-        "y": 0
+        "x": 0,
+        "y": 2040
       },
       "data": {
-        "label": "p1",
+        "label": "page 18",
         "componentId": "src.rest",
         "schema": [
           {
@@ -2106,11 +2033,11 @@
       "id": "p19",
       "type": "source",
       "position": {
-        "x": 4680,
-        "y": 0
+        "x": 0,
+        "y": 2160
       },
       "data": {
-        "label": "p1",
+        "label": "page 19",
         "componentId": "src.rest",
         "schema": [
           {
@@ -2210,11 +2137,11 @@
       "id": "p20",
       "type": "source",
       "position": {
-        "x": 4940,
-        "y": 0
+        "x": 0,
+        "y": 2280
       },
       "data": {
-        "label": "p1",
+        "label": "page 20",
         "componentId": "src.rest",
         "schema": [
           {
@@ -2314,11 +2241,11 @@
       "id": "p21",
       "type": "source",
       "position": {
-        "x": 5200,
-        "y": 0
+        "x": 0,
+        "y": 2400
       },
       "data": {
-        "label": "p1",
+        "label": "page 21",
         "componentId": "src.rest",
         "schema": [
           {
@@ -2418,11 +2345,11 @@
       "id": "p22",
       "type": "source",
       "position": {
-        "x": 5460,
-        "y": 0
+        "x": 0,
+        "y": 2520
       },
       "data": {
-        "label": "p1",
+        "label": "page 22",
         "componentId": "src.rest",
         "schema": [
           {
@@ -2522,11 +2449,11 @@
       "id": "p23",
       "type": "source",
       "position": {
-        "x": 5720,
-        "y": 0
+        "x": 0,
+        "y": 2640
       },
       "data": {
-        "label": "p1",
+        "label": "page 23",
         "componentId": "src.rest",
         "schema": [
           {
@@ -2626,11 +2553,11 @@
       "id": "p24",
       "type": "source",
       "position": {
-        "x": 5980,
-        "y": 0
+        "x": 0,
+        "y": 2760
       },
       "data": {
-        "label": "p1",
+        "label": "page 24",
         "componentId": "src.rest",
         "schema": [
           {
@@ -2730,11 +2657,11 @@
       "id": "p25",
       "type": "source",
       "position": {
-        "x": 6240,
-        "y": 0
+        "x": 0,
+        "y": 2880
       },
       "data": {
-        "label": "p1",
+        "label": "page 25",
         "componentId": "src.rest",
         "schema": [
           {
@@ -2834,11 +2761,11 @@
       "id": "p26",
       "type": "source",
       "position": {
-        "x": 6500,
-        "y": 0
+        "x": 0,
+        "y": 3000
       },
       "data": {
-        "label": "p1",
+        "label": "page 26",
         "componentId": "src.rest",
         "schema": [
           {
@@ -2938,11 +2865,11 @@
       "id": "p27",
       "type": "source",
       "position": {
-        "x": 6760,
-        "y": 0
+        "x": 0,
+        "y": 3120
       },
       "data": {
-        "label": "p1",
+        "label": "page 27",
         "componentId": "src.rest",
         "schema": [
           {
@@ -3042,11 +2969,11 @@
       "id": "p28",
       "type": "source",
       "position": {
-        "x": 7020,
-        "y": 0
+        "x": 0,
+        "y": 3240
       },
       "data": {
-        "label": "p1",
+        "label": "page 28",
         "componentId": "src.rest",
         "schema": [
           {
@@ -3146,11 +3073,11 @@
       "id": "p29",
       "type": "source",
       "position": {
-        "x": 7280,
-        "y": 0
+        "x": 0,
+        "y": 3360
       },
       "data": {
-        "label": "p1",
+        "label": "page 29",
         "componentId": "src.rest",
         "schema": [
           {
@@ -3250,11 +3177,11 @@
       "id": "p30",
       "type": "source",
       "position": {
-        "x": 7540,
-        "y": 0
+        "x": 0,
+        "y": 3480
       },
       "data": {
-        "label": "p1",
+        "label": "page 30",
         "componentId": "src.rest",
         "schema": [
           {
@@ -3351,106 +3278,46 @@
       }
     },
     {
-      "id": "p31",
-      "type": "source",
+      "id": "merge",
+      "type": "transform",
       "position": {
-        "x": 7800,
+        "x": 300,
         "y": 0
       },
       "data": {
-        "label": "p1",
-        "componentId": "src.rest",
-        "schema": [
-          {
-            "name": "branch_num",
-            "type": "int64"
-          },
-          {
-            "name": "branch_code",
-            "type": "string"
-          },
-          {
-            "name": "branch_name",
-            "type": "string"
-          },
-          {
-            "name": "storehouse_num",
-            "type": "int64"
-          },
-          {
-            "name": "storehouse_code",
-            "type": "string"
-          },
-          {
-            "name": "storehouse_name",
-            "type": "string"
-          },
-          {
-            "name": "item_num",
-            "type": "int64"
-          },
-          {
-            "name": "item_code",
-            "type": "string"
-          },
-          {
-            "name": "item_barcode",
-            "type": "string"
-          },
-          {
-            "name": "item_name",
-            "type": "string"
-          },
-          {
-            "name": "item_spec",
-            "type": "string"
-          },
-          {
-            "name": "item_unit",
-            "type": "string"
-          },
-          {
-            "name": "inventory_quantity",
-            "type": "decimal"
-          },
-          {
-            "name": "inventory_assist_quantity",
-            "type": "decimal"
-          },
-          {
-            "name": "inventory_use_quantity",
-            "type": "decimal"
-          },
-          {
-            "name": "inventory_money",
-            "type": "decimal"
-          },
-          {
-            "name": "carry_cost_price",
-            "type": "decimal"
-          },
-          {
-            "name": "sale_price",
-            "type": "decimal"
-          },
-          {
-            "name": "difference_quantity",
-            "type": "decimal"
-          },
-          {
-            "name": "difference_money",
-            "type": "decimal"
-          }
-        ],
+        "label": "merge",
+        "componentId": "ctl.merge",
+        "properties": {}
+      }
+    },
+    {
+      "id": "q",
+      "type": "transform",
+      "position": {
+        "x": 0,
+        "y": -200
+      },
+      "data": {
+        "label": "truncation guard",
+        "componentId": "code.sql",
         "properties": {
-          "connectionRef": "lemeng",
-          "url": "https://cloud.nhsoft.cn/agi/api/nhsoft.ama.ai.inventory.snapshot.find",
-          "method": "POST",
-          "body": "{\"bizday\":\"${BIZDAY}\",\"page_number\":31,\"page_size\":200}",
-          "responsePath": "/result",
-          "paginationType": "none",
-          "retryAttempts": 3,
-          "retryBackoffMs": 2000
+          "sql": "SELECT count(*) AS n FROM input HAVING count(*) = 6000"
+        }
+      }
+    },
+    {
+      "id": "dg",
+      "type": "transform",
+      "position": {
+        "x": 300,
+        "y": -200
+      },
+      "data": {
+        "label": "die on truncation",
+        "componentId": "ctl.die",
+        "properties": {
+          "condition": "has-rows",
+          "message": "STATIC_PAGES_TRUNCATED: 总行数 == pages×pageSize（30×200=6000）⇒ 可能截断；sink 已写，需人工确认并补页/加页"
         }
       }
     },
@@ -3471,18 +3338,59 @@
       }
     },
     {
-      "id": "sentinel",
-      "type": "control",
+      "id": "t",
+      "type": "transform",
       "position": {
-        "x": 8060,
+        "x": 600,
         "y": 0
       },
       "data": {
-        "label": "容量哨兵",
-        "componentId": "ctl.die",
+        "label": "transform",
+        "componentId": "code.sql",
         "properties": {
-          "condition": "has-rows",
-          "message": "lemeng inventory_snapshot 容量截断：第 31 页（哨兵页）仍有 {rows} 行（system_book=${ENV:SYSTEM_BOOK}）⇒ 单量已击穿真阈值 6,000 条/日（算式：数据页 30 × page_size 200；2026-10-13 实测 10-11 单日 4,192 行）。处置：加数据页节点 → 同步改本算式与哨兵页页号 → 重生成 → 走 PR"
+          "sql": "SELECT\n  'iv-' || '${ENV:SYSTEM_BOOK}' || '-inventory_snapshot-' || replace(replace('${datetime}','-',''),'_','T') || 'Z' AS batch_id,\n  '${ENV:SYSTEM_BOOK}' AS system_book,\n  CAST('${BIZDAY}' AS DATE) AS bizday,\n  CAST(o.branch_num AS INTEGER) AS branch_num,\n  CAST(o.branch_code AS VARCHAR) AS branch_code,\n  CAST(o.branch_name AS VARCHAR) AS branch_name,\n  CAST(o.storehouse_num AS BIGINT) AS storehouse_num,\n  CAST(o.storehouse_code AS VARCHAR) AS storehouse_code,\n  CAST(o.storehouse_name AS VARCHAR) AS storehouse_name,\n  CAST(o.item_num AS BIGINT) AS item_num,\n  CAST(o.item_code AS VARCHAR) AS item_code,\n  CAST(o.item_barcode AS VARCHAR) AS item_barcode,\n  CAST(o.item_name AS VARCHAR) AS item_name,\n  CAST(o.item_spec AS VARCHAR) AS item_spec,\n  CAST(o.item_unit AS VARCHAR) AS item_unit,\n  CAST(o.inventory_quantity AS DECIMAL(14,6)) AS inventory_quantity,\n  CAST(o.inventory_assist_quantity AS DECIMAL(14,6)) AS inventory_assist_quantity,\n  CAST(o.inventory_use_quantity AS DECIMAL(14,6)) AS inventory_use_quantity,\n  CAST(o.inventory_money AS DECIMAL(14,2)) AS inventory_money,\n  CAST(o.carry_cost_price AS DECIMAL(18,8)) AS carry_cost_price,\n  CAST(o.sale_price AS DECIMAL(18,8)) AS sale_price,\n  CAST(o.difference_quantity AS DECIMAL(14,6)) AS difference_quantity,\n  CAST(o.difference_money AS DECIMAL(14,2)) AS difference_money\nFROM input o"
+        }
+      }
+    },
+    {
+      "id": "g",
+      "type": "transform",
+      "position": {
+        "x": 900,
+        "y": 0
+      },
+      "data": {
+        "label": "contract gate",
+        "componentId": "qa.contract",
+        "properties": {
+          "rules": {
+            "batch_id": "not_null",
+            "system_book": "not_null",
+            "bizday": "not_null",
+            "branch_num": "not_null",
+            "storehouse_num": "not_null",
+            "item_num": "not_null"
+          }
+        }
+      }
+    },
+    {
+      "id": "k",
+      "type": "sink",
+      "position": {
+        "x": 1200,
+        "y": 0
+      },
+      "data": {
+        "label": "sink",
+        "componentId": "snk.minio",
+        "properties": {
+          "connectionRef": "zos",
+          "bucket": "shanhai-data",
+          "key": "lemeng/inventory_snapshot/system_book=${ENV:SYSTEM_BOOK}/bizday=${BIZDAY}/chunk=all.parquet",
+          "format": "parquet",
+          "mode": "overwrite",
+          "compression": "zstd"
         }
       }
     }
@@ -3569,97 +3477,7 @@
       }
     },
     {
-      "id": "e-dv-p1",
-      "source": "dv",
-      "target": "p1",
-      "sourceHandle": null,
-      "targetHandle": null,
-      "data": {
-        "connectionType": "on-subjob-ok"
-      }
-    },
-    {
-      "id": "e-dv-p2",
-      "source": "dv",
-      "target": "p2",
-      "sourceHandle": null,
-      "targetHandle": null,
-      "data": {
-        "connectionType": "on-subjob-ok"
-      }
-    },
-    {
-      "id": "e-dv-p3",
-      "source": "dv",
-      "target": "p3",
-      "sourceHandle": null,
-      "targetHandle": null,
-      "data": {
-        "connectionType": "on-subjob-ok"
-      }
-    },
-    {
-      "id": "e-dv-p4",
-      "source": "dv",
-      "target": "p4",
-      "sourceHandle": null,
-      "targetHandle": null,
-      "data": {
-        "connectionType": "on-subjob-ok"
-      }
-    },
-    {
-      "id": "e-dv-p5",
-      "source": "dv",
-      "target": "p5",
-      "sourceHandle": null,
-      "targetHandle": null,
-      "data": {
-        "connectionType": "on-subjob-ok"
-      }
-    },
-    {
-      "id": "e-dv-p6",
-      "source": "dv",
-      "target": "p6",
-      "sourceHandle": null,
-      "targetHandle": null,
-      "data": {
-        "connectionType": "on-subjob-ok"
-      }
-    },
-    {
-      "id": "e-dv-p7",
-      "source": "dv",
-      "target": "p7",
-      "sourceHandle": null,
-      "targetHandle": null,
-      "data": {
-        "connectionType": "on-subjob-ok"
-      }
-    },
-    {
-      "id": "e-dv-p8",
-      "source": "dv",
-      "target": "p8",
-      "sourceHandle": null,
-      "targetHandle": null,
-      "data": {
-        "connectionType": "on-subjob-ok"
-      }
-    },
-    {
-      "id": "e-dv-p9",
-      "source": "dv",
-      "target": "p9",
-      "sourceHandle": null,
-      "targetHandle": null,
-      "data": {
-        "connectionType": "on-subjob-ok"
-      }
-    },
-    {
-      "id": "e-p1-merge",
+      "id": "e-p1-m",
       "source": "p1",
       "target": "merge",
       "sourceHandle": "main",
@@ -3669,7 +3487,7 @@
       }
     },
     {
-      "id": "e-p2-merge",
+      "id": "e-p2-m",
       "source": "p2",
       "target": "merge",
       "sourceHandle": "main",
@@ -3679,7 +3497,7 @@
       }
     },
     {
-      "id": "e-p3-merge",
+      "id": "e-p3-m",
       "source": "p3",
       "target": "merge",
       "sourceHandle": "main",
@@ -3689,7 +3507,7 @@
       }
     },
     {
-      "id": "e-p4-merge",
+      "id": "e-p4-m",
       "source": "p4",
       "target": "merge",
       "sourceHandle": "main",
@@ -3699,7 +3517,7 @@
       }
     },
     {
-      "id": "e-p5-merge",
+      "id": "e-p5-m",
       "source": "p5",
       "target": "merge",
       "sourceHandle": "main",
@@ -3709,7 +3527,7 @@
       }
     },
     {
-      "id": "e-p6-merge",
+      "id": "e-p6-m",
       "source": "p6",
       "target": "merge",
       "sourceHandle": "main",
@@ -3719,7 +3537,7 @@
       }
     },
     {
-      "id": "e-p7-merge",
+      "id": "e-p7-m",
       "source": "p7",
       "target": "merge",
       "sourceHandle": "main",
@@ -3729,7 +3547,7 @@
       }
     },
     {
-      "id": "e-p8-merge",
+      "id": "e-p8-m",
       "source": "p8",
       "target": "merge",
       "sourceHandle": "main",
@@ -3739,7 +3557,7 @@
       }
     },
     {
-      "id": "e-p9-merge",
+      "id": "e-p9-m",
       "source": "p9",
       "target": "merge",
       "sourceHandle": "main",
@@ -3749,37 +3567,7 @@
       }
     },
     {
-      "id": "e-merge-shape",
-      "source": "merge",
-      "target": "shape",
-      "sourceHandle": "main",
-      "targetHandle": "main",
-      "data": {
-        "connectionType": "main"
-      }
-    },
-    {
-      "id": "e-shape-gate",
-      "source": "shape",
-      "target": "gate",
-      "sourceHandle": "main",
-      "targetHandle": "main",
-      "data": {
-        "connectionType": "main"
-      }
-    },
-    {
-      "id": "e-gate-sink",
-      "source": "gate",
-      "target": "sink",
-      "sourceHandle": "main",
-      "targetHandle": "main",
-      "data": {
-        "connectionType": "main"
-      }
-    },
-    {
-      "id": "e-p10-merge",
+      "id": "e-p10-m",
       "source": "p10",
       "target": "merge",
       "sourceHandle": "main",
@@ -3789,7 +3577,7 @@
       }
     },
     {
-      "id": "e-p11-merge",
+      "id": "e-p11-m",
       "source": "p11",
       "target": "merge",
       "sourceHandle": "main",
@@ -3799,7 +3587,7 @@
       }
     },
     {
-      "id": "e-p12-merge",
+      "id": "e-p12-m",
       "source": "p12",
       "target": "merge",
       "sourceHandle": "main",
@@ -3809,7 +3597,7 @@
       }
     },
     {
-      "id": "e-p13-merge",
+      "id": "e-p13-m",
       "source": "p13",
       "target": "merge",
       "sourceHandle": "main",
@@ -3819,7 +3607,7 @@
       }
     },
     {
-      "id": "e-p14-merge",
+      "id": "e-p14-m",
       "source": "p14",
       "target": "merge",
       "sourceHandle": "main",
@@ -3829,7 +3617,7 @@
       }
     },
     {
-      "id": "e-p15-merge",
+      "id": "e-p15-m",
       "source": "p15",
       "target": "merge",
       "sourceHandle": "main",
@@ -3839,7 +3627,7 @@
       }
     },
     {
-      "id": "e-p16-merge",
+      "id": "e-p16-m",
       "source": "p16",
       "target": "merge",
       "sourceHandle": "main",
@@ -3849,7 +3637,7 @@
       }
     },
     {
-      "id": "e-p17-merge",
+      "id": "e-p17-m",
       "source": "p17",
       "target": "merge",
       "sourceHandle": "main",
@@ -3859,7 +3647,7 @@
       }
     },
     {
-      "id": "e-p18-merge",
+      "id": "e-p18-m",
       "source": "p18",
       "target": "merge",
       "sourceHandle": "main",
@@ -3869,7 +3657,7 @@
       }
     },
     {
-      "id": "e-p19-merge",
+      "id": "e-p19-m",
       "source": "p19",
       "target": "merge",
       "sourceHandle": "main",
@@ -3879,7 +3667,7 @@
       }
     },
     {
-      "id": "e-p20-merge",
+      "id": "e-p20-m",
       "source": "p20",
       "target": "merge",
       "sourceHandle": "main",
@@ -3889,7 +3677,7 @@
       }
     },
     {
-      "id": "e-p21-merge",
+      "id": "e-p21-m",
       "source": "p21",
       "target": "merge",
       "sourceHandle": "main",
@@ -3899,7 +3687,7 @@
       }
     },
     {
-      "id": "e-p22-merge",
+      "id": "e-p22-m",
       "source": "p22",
       "target": "merge",
       "sourceHandle": "main",
@@ -3909,7 +3697,7 @@
       }
     },
     {
-      "id": "e-p23-merge",
+      "id": "e-p23-m",
       "source": "p23",
       "target": "merge",
       "sourceHandle": "main",
@@ -3919,7 +3707,7 @@
       }
     },
     {
-      "id": "e-p24-merge",
+      "id": "e-p24-m",
       "source": "p24",
       "target": "merge",
       "sourceHandle": "main",
@@ -3929,7 +3717,7 @@
       }
     },
     {
-      "id": "e-p25-merge",
+      "id": "e-p25-m",
       "source": "p25",
       "target": "merge",
       "sourceHandle": "main",
@@ -3939,7 +3727,7 @@
       }
     },
     {
-      "id": "e-p26-merge",
+      "id": "e-p26-m",
       "source": "p26",
       "target": "merge",
       "sourceHandle": "main",
@@ -3949,7 +3737,7 @@
       }
     },
     {
-      "id": "e-p27-merge",
+      "id": "e-p27-m",
       "source": "p27",
       "target": "merge",
       "sourceHandle": "main",
@@ -3959,7 +3747,7 @@
       }
     },
     {
-      "id": "e-p28-merge",
+      "id": "e-p28-m",
       "source": "p28",
       "target": "merge",
       "sourceHandle": "main",
@@ -3969,7 +3757,7 @@
       }
     },
     {
-      "id": "e-p29-merge",
+      "id": "e-p29-m",
       "source": "p29",
       "target": "merge",
       "sourceHandle": "main",
@@ -3979,11 +3767,31 @@
       }
     },
     {
-      "id": "e-p30-merge",
+      "id": "e-p30-m",
       "source": "p30",
       "target": "merge",
       "sourceHandle": "main",
       "targetHandle": "main_30",
+      "data": {
+        "connectionType": "main"
+      }
+    },
+    {
+      "id": "e-merge-q",
+      "source": "merge",
+      "target": "q",
+      "sourceHandle": "main",
+      "targetHandle": "main",
+      "data": {
+        "connectionType": "main"
+      }
+    },
+    {
+      "id": "e-q-dg",
+      "source": "q",
+      "target": "dg",
+      "sourceHandle": "main",
+      "targetHandle": "main",
       "data": {
         "connectionType": "main"
       }
@@ -3999,9 +3807,19 @@
       }
     },
     {
-      "id": "e-p31-sentinel",
-      "source": "p31",
-      "target": "sentinel",
+      "id": "e-dv-first",
+      "source": "dv",
+      "target": "p1",
+      "sourceHandle": null,
+      "targetHandle": null,
+      "data": {
+        "connectionType": "on-subjob-ok"
+      }
+    },
+    {
+      "id": "e1",
+      "source": "merge",
+      "target": "t",
       "sourceHandle": "main",
       "targetHandle": "main",
       "data": {
@@ -4009,14 +3827,27 @@
       }
     },
     {
-      "id": "e-sentinel-merge",
-      "source": "sentinel",
-      "target": "merge",
+      "id": "e2",
+      "source": "t",
+      "target": "g",
       "sourceHandle": "main",
-      "targetHandle": "main_32",
+      "targetHandle": "main",
+      "data": {
+        "connectionType": "main"
+      }
+    },
+    {
+      "id": "e3",
+      "source": "g",
+      "target": "k",
+      "sourceHandle": "main",
+      "targetHandle": "main",
       "data": {
         "connectionType": "main"
       }
     }
+  ],
+  "_note": [
+    "由 scripts/gen-pipeline.mjs 从 manifest 生成；手改请改 manifest 后重生成（--check 会拦）。"
   ]
 }

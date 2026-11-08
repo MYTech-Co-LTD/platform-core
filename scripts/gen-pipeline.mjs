@@ -24,6 +24,7 @@ import { pathToFileURL } from 'node:url'
  *   account?: string,
  *   accounts?: string[],
  *   identityGate?: boolean,
+ *   emptyGuard?: { message: string },
  *   source: {
  *     connectionRef: string,
  *     url: string,
@@ -176,6 +177,19 @@ export function validateManifest(m) {
   }
   if (d.identityGate !== undefined && typeof d.identityGate !== 'boolean') {
     errs.push('identityGate 必须是布尔值')
+  }
+  if (d.emptyGuard !== undefined) {
+    if (
+      typeof d.emptyGuard !== 'object' ||
+      d.emptyGuard === null ||
+      typeof d.emptyGuard.message !== 'string' ||
+      d.emptyGuard.message.trim() === ''
+    ) {
+      errs.push('emptyGuard 需要非空 message')
+    }
+    if (d.source?.pagination?.type !== 'static_pages') {
+      errs.push('emptyGuard 只与 static_pages 一起用')
+    }
   }
   const t = d.transform
   if (typeof t !== 'object' || t === null || typeof t.sql !== 'string' || t.sql.trim().length === 0) {
@@ -687,6 +701,27 @@ export function buildPipeline(m, name = m.id) {
       })
       edges.push({ id: 'e-merge-q', source: 'merge', target: 'q', sourceHandle: 'main', targetHandle: 'main', data: { connectionType: 'main' } })
       edges.push({ id: 'e-q-dg', source: 'q', target: 'dg', sourceHandle: 'main', targetHandle: 'main', data: { connectionType: 'main' } })
+    }
+    if (m.emptyGuard) {
+      // 空集具名状态（源未发布）：叶子 ctl.die(no-rows)，与 merge 并行；不阻断 transform/gate/sink。
+      nodes.push({
+        id: 'die_empty',
+        type: 'control',
+        position: { x: 0, y: 300 },
+        data: {
+          label: 'empty guard',
+          componentId: 'ctl.die',
+          properties: { condition: 'no-rows', message: m.emptyGuard.message },
+        },
+      })
+      edges.push({
+        id: 'e-merge-die_empty',
+        source: 'merge',
+        target: 'die_empty',
+        sourceHandle: 'main',
+        targetHandle: 'main',
+        data: { connectionType: 'main' },
+      })
     }
   } else {
     nodes.push({
