@@ -147,6 +147,7 @@ const EXEMPT_GLOBAL = new Map([
   ['lemeng.request.order.l0.3120.page', '**foreach 子管线**——由 lemeng.request.order.l0.3120 的 ctl.foreach 逐页驱动，不单独排班；排班在父管线'],
   ['lemeng.request.order.l0.64188.page', '**foreach 子管线**——由 lemeng.request.order.l0.64188 的 ctl.foreach 逐页驱动，不单独排班；排班在父管线'],
   ['lemeng.inventory.snapshot.backfill.3120', '回填专用（#1079 库存快照 10-18..10-25 补采；${BIZDAY} 参数化，同族 transfer.in 先例）'],
+  ['lemeng.inventory.snapshot.backfill.wide.3120', '回填专用·宽页变体（#1671：2025 段单日 6-8 万行，360 页；${BIZDAY} 参数化，同族 hp 变体先例）'],
 
   ['lemeng.item_sales.backfill.3120', '回填专用（${BIZDAY} 参数化；同族 loss/expense 先例）'],
   ['lemeng.item_sales.backfill.64188', '回填专用（${BIZDAY} 参数化；同族 loss/expense 先例）'],
