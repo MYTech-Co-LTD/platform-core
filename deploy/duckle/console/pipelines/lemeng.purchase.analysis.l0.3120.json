@@ -6,11 +6,17 @@
       "type": "source",
       "position": {
         "x": 0,
-        "y": 0
+        "y": -400
       },
       "data": {
         "label": "w0",
         "componentId": "src.rest",
+        "schema": [
+          {
+            "name": "x",
+            "type": "string"
+          }
+        ],
         "properties": {
           "connectionRef": "lemeng",
           "url": "https://cloud.nhsoft.cn/agi/mcp",
@@ -25,21 +31,15 @@
           "rawResponseDestination": "/workspace/.duckle-raw/whoami-${datetime}.sse",
           "retryAttempts": 3,
           "retryBackoffMs": 2000
-        },
-        "schema": [
-          {
-            "name": "x",
-            "type": "string"
-          }
-        ]
+        }
       }
     },
     {
       "id": "g0",
       "type": "transform",
       "position": {
-        "x": 0,
-        "y": 0
+        "x": 300,
+        "y": -400
       },
       "data": {
         "label": "g0",
@@ -53,8 +53,8 @@
       "id": "g1",
       "type": "transform",
       "position": {
-        "x": 0,
-        "y": 0
+        "x": 600,
+        "y": -400
       },
       "data": {
         "label": "g1",
@@ -68,8 +68,8 @@
       "id": "g2",
       "type": "transform",
       "position": {
-        "x": 0,
-        "y": 0
+        "x": 900,
+        "y": -400
       },
       "data": {
         "label": "g2",
@@ -81,10 +81,10 @@
     },
     {
       "id": "d0",
-      "type": "control",
+      "type": "transform",
       "position": {
-        "x": 0,
-        "y": 0
+        "x": 1200,
+        "y": -400
       },
       "data": {
         "label": "d0",
@@ -99,8 +99,8 @@
       "id": "g3",
       "type": "transform",
       "position": {
-        "x": 0,
-        "y": 0
+        "x": 1500,
+        "y": -400
       },
       "data": {
         "label": "g3",
@@ -112,10 +112,10 @@
     },
     {
       "id": "d1",
-      "type": "control",
+      "type": "transform",
       "position": {
-        "x": 0,
-        "y": 0
+        "x": 1800,
+        "y": -400
       },
       "data": {
         "label": "d1",
@@ -130,53 +130,43 @@
       "id": "gv",
       "type": "transform",
       "position": {
-        "x": 0,
-        "y": 0
+        "x": 2100,
+        "y": -400
       },
       "data": {
         "label": "gv",
         "componentId": "code.sql",
         "properties": {
-          "sql": "SELECT 'BRANCH_NUMS' AS violation, '${ENV:BRANCH_NUMS}' AS detail, 'JSON integer array, e.g. [1001,1002]' AS rule WHERE NOT regexp_full_match('${ENV:BRANCH_NUMS}', '\\[[0-9]+([, ]+[0-9]+)*\\]') UNION ALL SELECT 'SYSTEM_BOOK', '${ENV:SYSTEM_BOOK}', 'digits only' WHERE NOT regexp_full_match('${ENV:SYSTEM_BOOK}', '[0-9]{1,32}') UNION ALL SELECT 'BIZDAY', '${date-1d}', 'YYYY-MM-DD' WHERE NOT regexp_full_match('${date-1d}', '[0-9]{4}-[0-9]{2}-[0-9]{2}') UNION ALL SELECT 'BATCH_ID', 'pu-' || '${ENV:SYSTEM_BOOK}' || '-item_purchase-' || replace(replace('${datetime}','-',''),'_','T') || 'Z' AS v, 'pu-<book>-item_purchase-YYYYMMDDTHHMMSSZ' WHERE NOT regexp_full_match('pu-' || '${ENV:SYSTEM_BOOK}' || '-item_purchase-' || replace(replace('${datetime}','-',''),'_','T') || 'Z', 'pu-[0-9]+-item_purchase-[0-9]{8}T[0-9]{6}Z')"
+          "sql": "SELECT 'BRANCH_NUMS' AS violation, '${ENV:BRANCH_NUMS}' AS detail, 'JSON integer array, e.g. [1001,1002]' AS rule WHERE NOT regexp_full_match('${ENV:BRANCH_NUMS}', '\\[[0-9]+([, ]+[0-9]+)*\\]') UNION ALL SELECT 'SYSTEM_BOOK', '${ENV:SYSTEM_BOOK}', 'digits only' WHERE NOT regexp_full_match('${ENV:SYSTEM_BOOK}', '[0-9]{1,32}') UNION ALL SELECT 'BIZDAY', '${date-1d}', 'YYYY-MM-DD' WHERE NOT regexp_full_match('${date-1d}', '[0-9]{4}-[0-9]{2}-[0-9]{2}')"
         }
       }
     },
     {
       "id": "dv",
-      "type": "control",
+      "type": "transform",
       "position": {
-        "x": 0,
-        "y": 0
+        "x": 2400,
+        "y": -400
       },
       "data": {
         "label": "dv",
         "componentId": "ctl.die",
         "properties": {
           "condition": "has-rows",
-          "message": "EXPECTED_VALUE_MISSING_OR_MALFORMED: 期望值缺席或形状非法（{rows} 条违规，明细见上）⇒ 拒绝采集与写湖"
+          "message": "EXPECTED_VALUE_MISSING_OR_MALFORMED: 期望值缺席或形状非法（{rows} 条违规，明细见上）⇒ 拒绝采集与写湖。处置：检查该管线调度/触发面的 env 注入"
         }
       }
     },
     {
-      "id": "p1",
+      "id": "s",
       "type": "source",
       "position": {
         "x": 0,
         "y": 0
       },
       "data": {
-        "label": "p1",
+        "label": "source",
         "componentId": "src.rest",
-        "properties": {
-          "connectionRef": "lemeng",
-          "url": "https://cloud.nhsoft.cn/agi/api/nhsoft.report.ai.itempurchase.find",
-          "method": "POST",
-          "body": "{\"audit_date_start\":\"${date-1d}\",\"audit_date_end\":\"${date-1d}\",\"branch_nums\":[99],\"summary_types\":[\"supplier\",\"item\"]}",
-          "responsePath": "/result",
-          "paginationType": "none",
-          "retryAttempts": 3,
-          "retryBackoffMs": 2000
-        },
         "schema": [
           {
             "name": "supplier_num",
@@ -246,31 +236,28 @@
             "name": "money_total",
             "type": "decimal"
           }
-        ]
+        ],
+        "properties": {
+          "connectionRef": "lemeng",
+          "url": "https://cloud.nhsoft.cn/agi/api/nhsoft.report.ai.itempurchase.find",
+          "method": "POST",
+          "body": "{\"audit_date_start\":\"${date-1d}\",\"audit_date_end\":\"${date-1d}\",\"branch_nums\":[99],\"summary_types\":[\"supplier\",\"item\"]}",
+          "responsePath": "/result",
+          "paginationType": "none",
+          "retryAttempts": 3,
+          "retryBackoffMs": 2000
+        }
       }
     },
     {
-      "id": "merge",
+      "id": "t",
       "type": "transform",
       "position": {
-        "x": 0,
+        "x": 300,
         "y": 0
       },
       "data": {
-        "label": "merge",
-        "componentId": "ctl.merge",
-        "properties": {}
-      }
-    },
-    {
-      "id": "shape",
-      "type": "transform",
-      "position": {
-        "x": 0,
-        "y": 0
-      },
-      "data": {
-        "label": "shape",
+        "label": "transform",
         "componentId": "code.sql",
         "properties": {
           "sql": "SELECT\n  'pu-' || '${ENV:SYSTEM_BOOK}' || '-item_purchase-' || replace(replace('${datetime}','-',''),'_','T') || 'Z' AS batch_id,\n  '${ENV:SYSTEM_BOOK}' AS system_book,\n  CAST('${date-1d}' AS DATE) AS bizday,\n  CAST(o.supplier_num AS BIGINT) AS supplier_num,\n  CAST(o.supplier_code AS VARCHAR) AS supplier_code,\n  CAST(o.supplier_name AS VARCHAR) AS supplier_name,\n  CAST(o.item_num AS BIGINT) AS item_num,\n  CAST(o.item_code AS VARCHAR) AS item_code,\n  CAST(o.item_barcode AS VARCHAR) AS item_barcode,\n  CAST(o.item_name AS VARCHAR) AS item_name,\n  CAST(o.item_spec AS VARCHAR) AS item_spec,\n  CAST(o.base_unit AS VARCHAR) AS base_unit,\n  CAST(o.purchase_item_amount AS DECIMAL(14,6)) AS purchase_item_amount,\n  CAST(o.purchase_item_money AS DECIMAL(14,2)) AS purchase_item_money,\n  CAST(o.purchase_present_amount AS DECIMAL(14,6)) AS purchase_present_amount,\n  CAST(o.purchase_present_money AS DECIMAL(14,2)) AS purchase_present_money,\n  CAST(o.purchase_item_return_amount AS DECIMAL(14,6)) AS purchase_item_return_amount,\n  CAST(o.purchase_item_return_money AS DECIMAL(14,2)) AS purchase_item_return_money,\n  CAST(o.amount_total AS DECIMAL(14,6)) AS amount_total,\n  CAST(o.money_total AS DECIMAL(14,2)) AS money_total\nFROM input, UNNEST(input.\"rows\") AS t(o)\nWHERE (SELECT CASE WHEN (SELECT count(*) FROM (SELECT UNNEST(input.\"rows\") FROM input))\n                          <> (SELECT any_value(total_count) FROM input)\n                    THEN error('ITEM_PURCHASE_ROWS_MISMATCH: len(rows) <> total_count（截断守卫，#640）')\n                    ELSE 0 END) IS NOT NULL"
@@ -278,14 +265,14 @@
       }
     },
     {
-      "id": "gate",
-      "type": "quality",
+      "id": "g",
+      "type": "transform",
       "position": {
-        "x": 0,
+        "x": 600,
         "y": 0
       },
       "data": {
-        "label": "gate",
+        "label": "contract gate",
         "componentId": "qa.contract",
         "properties": {
           "rules": {
@@ -299,25 +286,22 @@
       }
     },
     {
-      "id": "sink",
+      "id": "k",
       "type": "sink",
       "position": {
-        "x": 0,
+        "x": 900,
         "y": 0
       },
       "data": {
         "label": "sink",
         "componentId": "snk.minio",
         "properties": {
-          "bucket": "${ENV:ZOS_BUCKET}",
+          "connectionRef": "zos",
+          "bucket": "shanhai-data",
           "key": "lemeng/item_purchase/system_book=${ENV:SYSTEM_BOOK}/bizday=${date-1d}/all.parquet",
-          "region": "${ENV:ZOS_REGION}",
-          "urlStyle": "path",
-          "useSsl": "true",
           "format": "parquet",
           "mode": "overwrite",
-          "compression": "zstd",
-          "connectionRef": "zos"
+          "compression": "zstd"
         }
       }
     }
@@ -404,9 +388,19 @@
       }
     },
     {
-      "id": "e-dv-p1",
+      "id": "e-dv-first",
       "source": "dv",
-      "target": "p1",
+      "target": "s",
+      "sourceHandle": null,
+      "targetHandle": null,
+      "data": {
+        "connectionType": "on-subjob-ok"
+      }
+    },
+    {
+      "id": "e1",
+      "source": "s",
+      "target": "t",
       "sourceHandle": "main",
       "targetHandle": "main",
       "data": {
@@ -414,19 +408,9 @@
       }
     },
     {
-      "id": "e-p1-merge",
-      "source": "p1",
-      "target": "merge",
-      "sourceHandle": "main",
-      "targetHandle": "main_1",
-      "data": {
-        "connectionType": "main"
-      }
-    },
-    {
-      "id": "e-merge-shape",
-      "source": "merge",
-      "target": "shape",
+      "id": "e2",
+      "source": "t",
+      "target": "g",
       "sourceHandle": "main",
       "targetHandle": "main",
       "data": {
@@ -434,24 +418,17 @@
       }
     },
     {
-      "id": "e-shape-gate",
-      "source": "shape",
-      "target": "gate",
-      "sourceHandle": "main",
-      "targetHandle": "main",
-      "data": {
-        "connectionType": "main"
-      }
-    },
-    {
-      "id": "e-gate-sink",
-      "source": "gate",
-      "target": "sink",
+      "id": "e3",
+      "source": "g",
+      "target": "k",
       "sourceHandle": "main",
       "targetHandle": "main",
       "data": {
         "connectionType": "main"
       }
     }
+  ],
+  "_note": [
+    "由 scripts/gen-pipeline.mjs 从 manifest 生成；手改请改 manifest 后重生成（--check 会拦）。"
   ]
 }
