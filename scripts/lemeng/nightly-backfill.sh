@@ -25,6 +25,10 @@
 # 每条任务的执行体是 scripts/lemeng/backfill-history.py（它自带 preflight / 逐日回读 / 台账）。
 #
 # 台账：/tmp/lemeng-nightly/<CST 日期>.log
+#
+# 单实例：`flock` 锁 `/tmp/lemeng-nightly.lock`。已在跑 ⇒ 打印 `NIGHTLY_SKIP reason=already-running`
+# 并退出 0（并发是**可拒绝的正常状态**，不报红）。为什么要锁：2026-11-08 实测
+# 定时 job 与另一趟外部启动并发约 6 小时，重复烧配额、台账交错（#1633）。
 set -u
 
 QUEUE=${QUEUE:-/opt/lemeng-backfill-queue.txt}
@@ -41,6 +45,19 @@ DAY=$(TZ=Asia/Shanghai date +%Y-%m-%d)
 LEDGER="$LEDGER_DIR/$DAY.log"
 : >> "$LEDGER"
 log() { printf '%s %s\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$*" >> "$LEDGER"; }
+
+# ── 单实例互斥（2026-11-08 #1633，真机事故）──────────────────────────────────────
+# 昨夜定时 job（00:05）与另一趟外部启动（01:36）**并发了约 6 小时**：两趟跑同一条队列，
+# 重复消耗乐檬 API 配额，且都往同一个 `$LEDGER` 追加 ⇒ 日志交错到无法按实例切分。
+# 这里用 flock 兜住：拿不到锁就**立即退出 0**（并发是预期可拒绝的状态，不该报红）。
+# ⚠️ 锁文件路径要**与台账同域**（/tmp），别放 /var/lock（容器化后权限不稳）。
+LOCK=${LOCK:-/tmp/lemeng-nightly.lock}
+exec 9>"$LOCK" || { echo "NIGHTLY_FAILED reason=cannot-open-lock $LOCK"; exit 1; }
+if ! flock -n 9; then
+  log "ALREADY_RUNNING another instance holds $LOCK —— 本次跳过"
+  echo "NIGHTLY_SKIP reason=already-running"
+  exit 0
+fi
 
 if [ ! -f "$QUEUE" ]; then
   log "NO_QUEUE $QUEUE 不存在 —— 无事可做"
