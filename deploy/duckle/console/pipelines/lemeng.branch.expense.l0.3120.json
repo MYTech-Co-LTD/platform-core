@@ -6,7 +6,7 @@
       "type": "source",
       "position": {
         "x": 0,
-        "y": 0
+        "y": -400
       },
       "data": {
         "label": "w0",
@@ -38,8 +38,8 @@
       "id": "g0",
       "type": "transform",
       "position": {
-        "x": 0,
-        "y": 0
+        "x": 300,
+        "y": -400
       },
       "data": {
         "label": "g0",
@@ -53,8 +53,8 @@
       "id": "g1",
       "type": "transform",
       "position": {
-        "x": 0,
-        "y": 0
+        "x": 600,
+        "y": -400
       },
       "data": {
         "label": "g1",
@@ -68,8 +68,8 @@
       "id": "g2",
       "type": "transform",
       "position": {
-        "x": 0,
-        "y": 0
+        "x": 900,
+        "y": -400
       },
       "data": {
         "label": "g2",
@@ -83,8 +83,8 @@
       "id": "d0",
       "type": "transform",
       "position": {
-        "x": 0,
-        "y": 0
+        "x": 1200,
+        "y": -400
       },
       "data": {
         "label": "d0",
@@ -99,8 +99,8 @@
       "id": "g3",
       "type": "transform",
       "position": {
-        "x": 0,
-        "y": 0
+        "x": 1500,
+        "y": -400
       },
       "data": {
         "label": "g3",
@@ -114,8 +114,8 @@
       "id": "d1",
       "type": "transform",
       "position": {
-        "x": 0,
-        "y": 0
+        "x": 1800,
+        "y": -400
       },
       "data": {
         "label": "d1",
@@ -130,14 +130,14 @@
       "id": "gv",
       "type": "transform",
       "position": {
-        "x": 0,
-        "y": 0
+        "x": 2100,
+        "y": -400
       },
       "data": {
         "label": "gv",
         "componentId": "code.sql",
         "properties": {
-          "sql": "SELECT 'BRANCH_NUMS' AS violation, '${ENV:BRANCH_NUMS}' AS detail, 'JSON integer array, e.g. [1001,1002]' AS rule WHERE NOT regexp_full_match('${ENV:BRANCH_NUMS}', '\\[[0-9]+([, ]+[0-9]+)*\\]') UNION ALL SELECT 'SYSTEM_BOOK', '${ENV:SYSTEM_BOOK}', 'digits only' WHERE NOT regexp_full_match('${ENV:SYSTEM_BOOK}', '[0-9]{1,32}') UNION ALL SELECT 'BIZDAY', '${date-1d}', 'YYYY-MM-DD' WHERE NOT regexp_full_match('${date-1d}', '[0-9]{4}-[0-9]{2}-[0-9]{2}') UNION ALL SELECT 'BATCH_ID', 'to-' || '${ENV:SYSTEM_BOOK}' || '-transfer_out-' || replace(replace('${datetime}','-',''),'_','T') || 'Z' AS v, 'to-<book>-transfer_out-YYYYMMDDTHHMMSSZ' WHERE NOT regexp_full_match('to-' || '${ENV:SYSTEM_BOOK}' || '-transfer_out-' || replace(replace('${datetime}','-',''),'_','T') || 'Z', 'to-[0-9]+-transfer_out-[0-9]{8}T[0-9]{6}Z')"
+          "sql": "SELECT 'BRANCH_NUMS' AS violation, '${ENV:BRANCH_NUMS}' AS detail, 'JSON integer array, e.g. [1001,1002]' AS rule WHERE NOT regexp_full_match('${ENV:BRANCH_NUMS}', '\\[[0-9]+([, ]+[0-9]+)*\\]') UNION ALL SELECT 'SYSTEM_BOOK', '${ENV:SYSTEM_BOOK}', 'digits only' WHERE NOT regexp_full_match('${ENV:SYSTEM_BOOK}', '[0-9]{1,32}') UNION ALL SELECT 'BIZDAY', '${date-1d}', 'YYYY-MM-DD' WHERE NOT regexp_full_match('${date-1d}', '[0-9]{4}-[0-9]{2}-[0-9]{2}')"
         }
       }
     },
@@ -145,8 +145,8 @@
       "id": "dv",
       "type": "transform",
       "position": {
-        "x": 0,
-        "y": 0
+        "x": 2400,
+        "y": -400
       },
       "data": {
         "label": "dv",
@@ -158,14 +158,14 @@
       }
     },
     {
-      "id": "p1",
+      "id": "probe",
       "type": "source",
       "position": {
         "x": 0,
         "y": 0
       },
       "data": {
-        "label": "p1",
+        "label": "probe page 1",
         "componentId": "src.rest",
         "schema": [
           {
@@ -264,2222 +264,127 @@
           "body": "{\"date_from\":\"${date-1d} 00:00:00\",\"date_to\":\"${date-1d} 23:59:59\",\"page_number\":1,\"page_size\":200,\"state_code\":3}",
           "responsePath": "/result",
           "paginationType": "none",
-          "retryAttempts": 10,
-          "retryBackoffMs": 15000
+          "retryAttempts": 3,
+          "retryBackoffMs": 2000
         }
       }
     },
     {
-      "id": "p2",
-      "type": "source",
-      "position": {
-        "x": 0,
-        "y": 0
-      },
-      "data": {
-        "label": "p2",
-        "componentId": "src.rest",
-        "schema": [
-          {
-            "name": "bill_no",
-            "type": "string"
-          },
-          {
-            "name": "branch_num",
-            "type": "int64"
-          },
-          {
-            "name": "branch_name",
-            "type": "string"
-          },
-          {
-            "name": "branch_code",
-            "type": "string"
-          },
-          {
-            "name": "store_name",
-            "type": "string"
-          },
-          {
-            "name": "operate_branch_num",
-            "type": "int64"
-          },
-          {
-            "name": "operate_branch_name",
-            "type": "string"
-          },
-          {
-            "name": "expense_type",
-            "type": "string"
-          },
-          {
-            "name": "direction",
-            "type": "string"
-          },
-          {
-            "name": "amount",
-            "type": "decimal"
-          },
-          {
-            "name": "due_amount",
-            "type": "decimal"
-          },
-          {
-            "name": "paid_amount",
-            "type": "decimal"
-          },
-          {
-            "name": "payment_date",
-            "type": "string"
-          },
-          {
-            "name": "tax_rate",
-            "type": "decimal"
-          },
-          {
-            "name": "tax_amount",
-            "type": "decimal"
-          },
-          {
-            "name": "audit_time",
-            "type": "string"
-          },
-          {
-            "name": "create_time",
-            "type": "string"
-          },
-          {
-            "name": "reference_bill",
-            "type": "string"
-          },
-          {
-            "name": "memo",
-            "type": "string"
-          },
-          {
-            "name": "settlement_state",
-            "type": "int64"
-          },
-          {
-            "name": "settlement_state_name",
-            "type": "string"
-          },
-          {
-            "name": "last_edit_time",
-            "type": "string"
-          }
-        ],
-        "properties": {
-          "connectionRef": "lemeng",
-          "url": "https://cloud.nhsoft.cn/agi/api/nhsoft.ama.ai.branch.expense.find",
-          "method": "POST",
-          "body": "{\"date_from\":\"${date-1d} 00:00:00\",\"date_to\":\"${date-1d} 23:59:59\",\"page_number\":2,\"page_size\":200,\"state_code\":3}",
-          "responsePath": "/result",
-          "paginationType": "none",
-          "retryAttempts": 10,
-          "retryBackoffMs": 15000
-        }
-      }
-    },
-    {
-      "id": "p3",
-      "type": "source",
-      "position": {
-        "x": 0,
-        "y": 0
-      },
-      "data": {
-        "label": "p3",
-        "componentId": "src.rest",
-        "schema": [
-          {
-            "name": "bill_no",
-            "type": "string"
-          },
-          {
-            "name": "branch_num",
-            "type": "int64"
-          },
-          {
-            "name": "branch_name",
-            "type": "string"
-          },
-          {
-            "name": "branch_code",
-            "type": "string"
-          },
-          {
-            "name": "store_name",
-            "type": "string"
-          },
-          {
-            "name": "operate_branch_num",
-            "type": "int64"
-          },
-          {
-            "name": "operate_branch_name",
-            "type": "string"
-          },
-          {
-            "name": "expense_type",
-            "type": "string"
-          },
-          {
-            "name": "direction",
-            "type": "string"
-          },
-          {
-            "name": "amount",
-            "type": "decimal"
-          },
-          {
-            "name": "due_amount",
-            "type": "decimal"
-          },
-          {
-            "name": "paid_amount",
-            "type": "decimal"
-          },
-          {
-            "name": "payment_date",
-            "type": "string"
-          },
-          {
-            "name": "tax_rate",
-            "type": "decimal"
-          },
-          {
-            "name": "tax_amount",
-            "type": "decimal"
-          },
-          {
-            "name": "audit_time",
-            "type": "string"
-          },
-          {
-            "name": "create_time",
-            "type": "string"
-          },
-          {
-            "name": "reference_bill",
-            "type": "string"
-          },
-          {
-            "name": "memo",
-            "type": "string"
-          },
-          {
-            "name": "settlement_state",
-            "type": "int64"
-          },
-          {
-            "name": "settlement_state_name",
-            "type": "string"
-          },
-          {
-            "name": "last_edit_time",
-            "type": "string"
-          }
-        ],
-        "properties": {
-          "connectionRef": "lemeng",
-          "url": "https://cloud.nhsoft.cn/agi/api/nhsoft.ama.ai.branch.expense.find",
-          "method": "POST",
-          "body": "{\"date_from\":\"${date-1d} 00:00:00\",\"date_to\":\"${date-1d} 23:59:59\",\"page_number\":3,\"page_size\":200,\"state_code\":3}",
-          "responsePath": "/result",
-          "paginationType": "none",
-          "retryAttempts": 10,
-          "retryBackoffMs": 15000
-        }
-      }
-    },
-    {
-      "id": "p4",
-      "type": "source",
-      "position": {
-        "x": 0,
-        "y": 0
-      },
-      "data": {
-        "label": "p4",
-        "componentId": "src.rest",
-        "schema": [
-          {
-            "name": "bill_no",
-            "type": "string"
-          },
-          {
-            "name": "branch_num",
-            "type": "int64"
-          },
-          {
-            "name": "branch_name",
-            "type": "string"
-          },
-          {
-            "name": "branch_code",
-            "type": "string"
-          },
-          {
-            "name": "store_name",
-            "type": "string"
-          },
-          {
-            "name": "operate_branch_num",
-            "type": "int64"
-          },
-          {
-            "name": "operate_branch_name",
-            "type": "string"
-          },
-          {
-            "name": "expense_type",
-            "type": "string"
-          },
-          {
-            "name": "direction",
-            "type": "string"
-          },
-          {
-            "name": "amount",
-            "type": "decimal"
-          },
-          {
-            "name": "due_amount",
-            "type": "decimal"
-          },
-          {
-            "name": "paid_amount",
-            "type": "decimal"
-          },
-          {
-            "name": "payment_date",
-            "type": "string"
-          },
-          {
-            "name": "tax_rate",
-            "type": "decimal"
-          },
-          {
-            "name": "tax_amount",
-            "type": "decimal"
-          },
-          {
-            "name": "audit_time",
-            "type": "string"
-          },
-          {
-            "name": "create_time",
-            "type": "string"
-          },
-          {
-            "name": "reference_bill",
-            "type": "string"
-          },
-          {
-            "name": "memo",
-            "type": "string"
-          },
-          {
-            "name": "settlement_state",
-            "type": "int64"
-          },
-          {
-            "name": "settlement_state_name",
-            "type": "string"
-          },
-          {
-            "name": "last_edit_time",
-            "type": "string"
-          }
-        ],
-        "properties": {
-          "connectionRef": "lemeng",
-          "url": "https://cloud.nhsoft.cn/agi/api/nhsoft.ama.ai.branch.expense.find",
-          "method": "POST",
-          "body": "{\"date_from\":\"${date-1d} 00:00:00\",\"date_to\":\"${date-1d} 23:59:59\",\"page_number\":4,\"page_size\":200,\"state_code\":3}",
-          "responsePath": "/result",
-          "paginationType": "none",
-          "retryAttempts": 10,
-          "retryBackoffMs": 15000
-        }
-      }
-    },
-    {
-      "id": "p5",
-      "type": "source",
-      "position": {
-        "x": 0,
-        "y": 0
-      },
-      "data": {
-        "label": "p5",
-        "componentId": "src.rest",
-        "schema": [
-          {
-            "name": "bill_no",
-            "type": "string"
-          },
-          {
-            "name": "branch_num",
-            "type": "int64"
-          },
-          {
-            "name": "branch_name",
-            "type": "string"
-          },
-          {
-            "name": "branch_code",
-            "type": "string"
-          },
-          {
-            "name": "store_name",
-            "type": "string"
-          },
-          {
-            "name": "operate_branch_num",
-            "type": "int64"
-          },
-          {
-            "name": "operate_branch_name",
-            "type": "string"
-          },
-          {
-            "name": "expense_type",
-            "type": "string"
-          },
-          {
-            "name": "direction",
-            "type": "string"
-          },
-          {
-            "name": "amount",
-            "type": "decimal"
-          },
-          {
-            "name": "due_amount",
-            "type": "decimal"
-          },
-          {
-            "name": "paid_amount",
-            "type": "decimal"
-          },
-          {
-            "name": "payment_date",
-            "type": "string"
-          },
-          {
-            "name": "tax_rate",
-            "type": "decimal"
-          },
-          {
-            "name": "tax_amount",
-            "type": "decimal"
-          },
-          {
-            "name": "audit_time",
-            "type": "string"
-          },
-          {
-            "name": "create_time",
-            "type": "string"
-          },
-          {
-            "name": "reference_bill",
-            "type": "string"
-          },
-          {
-            "name": "memo",
-            "type": "string"
-          },
-          {
-            "name": "settlement_state",
-            "type": "int64"
-          },
-          {
-            "name": "settlement_state_name",
-            "type": "string"
-          },
-          {
-            "name": "last_edit_time",
-            "type": "string"
-          }
-        ],
-        "properties": {
-          "connectionRef": "lemeng",
-          "url": "https://cloud.nhsoft.cn/agi/api/nhsoft.ama.ai.branch.expense.find",
-          "method": "POST",
-          "body": "{\"date_from\":\"${date-1d} 00:00:00\",\"date_to\":\"${date-1d} 23:59:59\",\"page_number\":5,\"page_size\":200,\"state_code\":3}",
-          "responsePath": "/result",
-          "paginationType": "none",
-          "retryAttempts": 10,
-          "retryBackoffMs": 15000
-        }
-      }
-    },
-    {
-      "id": "p6",
-      "type": "source",
-      "position": {
-        "x": 0,
-        "y": 0
-      },
-      "data": {
-        "label": "p6",
-        "componentId": "src.rest",
-        "schema": [
-          {
-            "name": "bill_no",
-            "type": "string"
-          },
-          {
-            "name": "branch_num",
-            "type": "int64"
-          },
-          {
-            "name": "branch_name",
-            "type": "string"
-          },
-          {
-            "name": "branch_code",
-            "type": "string"
-          },
-          {
-            "name": "store_name",
-            "type": "string"
-          },
-          {
-            "name": "operate_branch_num",
-            "type": "int64"
-          },
-          {
-            "name": "operate_branch_name",
-            "type": "string"
-          },
-          {
-            "name": "expense_type",
-            "type": "string"
-          },
-          {
-            "name": "direction",
-            "type": "string"
-          },
-          {
-            "name": "amount",
-            "type": "decimal"
-          },
-          {
-            "name": "due_amount",
-            "type": "decimal"
-          },
-          {
-            "name": "paid_amount",
-            "type": "decimal"
-          },
-          {
-            "name": "payment_date",
-            "type": "string"
-          },
-          {
-            "name": "tax_rate",
-            "type": "decimal"
-          },
-          {
-            "name": "tax_amount",
-            "type": "decimal"
-          },
-          {
-            "name": "audit_time",
-            "type": "string"
-          },
-          {
-            "name": "create_time",
-            "type": "string"
-          },
-          {
-            "name": "reference_bill",
-            "type": "string"
-          },
-          {
-            "name": "memo",
-            "type": "string"
-          },
-          {
-            "name": "settlement_state",
-            "type": "int64"
-          },
-          {
-            "name": "settlement_state_name",
-            "type": "string"
-          },
-          {
-            "name": "last_edit_time",
-            "type": "string"
-          }
-        ],
-        "properties": {
-          "connectionRef": "lemeng",
-          "url": "https://cloud.nhsoft.cn/agi/api/nhsoft.ama.ai.branch.expense.find",
-          "method": "POST",
-          "body": "{\"date_from\":\"${date-1d} 00:00:00\",\"date_to\":\"${date-1d} 23:59:59\",\"page_number\":6,\"page_size\":200,\"state_code\":3}",
-          "responsePath": "/result",
-          "paginationType": "none",
-          "retryAttempts": 10,
-          "retryBackoffMs": 15000
-        }
-      }
-    },
-    {
-      "id": "p7",
-      "type": "source",
-      "position": {
-        "x": 0,
-        "y": 0
-      },
-      "data": {
-        "label": "p7",
-        "componentId": "src.rest",
-        "schema": [
-          {
-            "name": "bill_no",
-            "type": "string"
-          },
-          {
-            "name": "branch_num",
-            "type": "int64"
-          },
-          {
-            "name": "branch_name",
-            "type": "string"
-          },
-          {
-            "name": "branch_code",
-            "type": "string"
-          },
-          {
-            "name": "store_name",
-            "type": "string"
-          },
-          {
-            "name": "operate_branch_num",
-            "type": "int64"
-          },
-          {
-            "name": "operate_branch_name",
-            "type": "string"
-          },
-          {
-            "name": "expense_type",
-            "type": "string"
-          },
-          {
-            "name": "direction",
-            "type": "string"
-          },
-          {
-            "name": "amount",
-            "type": "decimal"
-          },
-          {
-            "name": "due_amount",
-            "type": "decimal"
-          },
-          {
-            "name": "paid_amount",
-            "type": "decimal"
-          },
-          {
-            "name": "payment_date",
-            "type": "string"
-          },
-          {
-            "name": "tax_rate",
-            "type": "decimal"
-          },
-          {
-            "name": "tax_amount",
-            "type": "decimal"
-          },
-          {
-            "name": "audit_time",
-            "type": "string"
-          },
-          {
-            "name": "create_time",
-            "type": "string"
-          },
-          {
-            "name": "reference_bill",
-            "type": "string"
-          },
-          {
-            "name": "memo",
-            "type": "string"
-          },
-          {
-            "name": "settlement_state",
-            "type": "int64"
-          },
-          {
-            "name": "settlement_state_name",
-            "type": "string"
-          },
-          {
-            "name": "last_edit_time",
-            "type": "string"
-          }
-        ],
-        "properties": {
-          "connectionRef": "lemeng",
-          "url": "https://cloud.nhsoft.cn/agi/api/nhsoft.ama.ai.branch.expense.find",
-          "method": "POST",
-          "body": "{\"date_from\":\"${date-1d} 00:00:00\",\"date_to\":\"${date-1d} 23:59:59\",\"page_number\":7,\"page_size\":200,\"state_code\":3}",
-          "responsePath": "/result",
-          "paginationType": "none",
-          "retryAttempts": 10,
-          "retryBackoffMs": 15000
-        }
-      }
-    },
-    {
-      "id": "p8",
-      "type": "source",
-      "position": {
-        "x": 0,
-        "y": 0
-      },
-      "data": {
-        "label": "p8",
-        "componentId": "src.rest",
-        "schema": [
-          {
-            "name": "bill_no",
-            "type": "string"
-          },
-          {
-            "name": "branch_num",
-            "type": "int64"
-          },
-          {
-            "name": "branch_name",
-            "type": "string"
-          },
-          {
-            "name": "branch_code",
-            "type": "string"
-          },
-          {
-            "name": "store_name",
-            "type": "string"
-          },
-          {
-            "name": "operate_branch_num",
-            "type": "int64"
-          },
-          {
-            "name": "operate_branch_name",
-            "type": "string"
-          },
-          {
-            "name": "expense_type",
-            "type": "string"
-          },
-          {
-            "name": "direction",
-            "type": "string"
-          },
-          {
-            "name": "amount",
-            "type": "decimal"
-          },
-          {
-            "name": "due_amount",
-            "type": "decimal"
-          },
-          {
-            "name": "paid_amount",
-            "type": "decimal"
-          },
-          {
-            "name": "payment_date",
-            "type": "string"
-          },
-          {
-            "name": "tax_rate",
-            "type": "decimal"
-          },
-          {
-            "name": "tax_amount",
-            "type": "decimal"
-          },
-          {
-            "name": "audit_time",
-            "type": "string"
-          },
-          {
-            "name": "create_time",
-            "type": "string"
-          },
-          {
-            "name": "reference_bill",
-            "type": "string"
-          },
-          {
-            "name": "memo",
-            "type": "string"
-          },
-          {
-            "name": "settlement_state",
-            "type": "int64"
-          },
-          {
-            "name": "settlement_state_name",
-            "type": "string"
-          },
-          {
-            "name": "last_edit_time",
-            "type": "string"
-          }
-        ],
-        "properties": {
-          "connectionRef": "lemeng",
-          "url": "https://cloud.nhsoft.cn/agi/api/nhsoft.ama.ai.branch.expense.find",
-          "method": "POST",
-          "body": "{\"date_from\":\"${date-1d} 00:00:00\",\"date_to\":\"${date-1d} 23:59:59\",\"page_number\":8,\"page_size\":200,\"state_code\":3}",
-          "responsePath": "/result",
-          "paginationType": "none",
-          "retryAttempts": 10,
-          "retryBackoffMs": 15000
-        }
-      }
-    },
-    {
-      "id": "p9",
-      "type": "source",
-      "position": {
-        "x": 0,
-        "y": 0
-      },
-      "data": {
-        "label": "p9",
-        "componentId": "src.rest",
-        "schema": [
-          {
-            "name": "bill_no",
-            "type": "string"
-          },
-          {
-            "name": "branch_num",
-            "type": "int64"
-          },
-          {
-            "name": "branch_name",
-            "type": "string"
-          },
-          {
-            "name": "branch_code",
-            "type": "string"
-          },
-          {
-            "name": "store_name",
-            "type": "string"
-          },
-          {
-            "name": "operate_branch_num",
-            "type": "int64"
-          },
-          {
-            "name": "operate_branch_name",
-            "type": "string"
-          },
-          {
-            "name": "expense_type",
-            "type": "string"
-          },
-          {
-            "name": "direction",
-            "type": "string"
-          },
-          {
-            "name": "amount",
-            "type": "decimal"
-          },
-          {
-            "name": "due_amount",
-            "type": "decimal"
-          },
-          {
-            "name": "paid_amount",
-            "type": "decimal"
-          },
-          {
-            "name": "payment_date",
-            "type": "string"
-          },
-          {
-            "name": "tax_rate",
-            "type": "decimal"
-          },
-          {
-            "name": "tax_amount",
-            "type": "decimal"
-          },
-          {
-            "name": "audit_time",
-            "type": "string"
-          },
-          {
-            "name": "create_time",
-            "type": "string"
-          },
-          {
-            "name": "reference_bill",
-            "type": "string"
-          },
-          {
-            "name": "memo",
-            "type": "string"
-          },
-          {
-            "name": "settlement_state",
-            "type": "int64"
-          },
-          {
-            "name": "settlement_state_name",
-            "type": "string"
-          },
-          {
-            "name": "last_edit_time",
-            "type": "string"
-          }
-        ],
-        "properties": {
-          "connectionRef": "lemeng",
-          "url": "https://cloud.nhsoft.cn/agi/api/nhsoft.ama.ai.branch.expense.find",
-          "method": "POST",
-          "body": "{\"date_from\":\"${date-1d} 00:00:00\",\"date_to\":\"${date-1d} 23:59:59\",\"page_number\":9,\"page_size\":200,\"state_code\":3}",
-          "responsePath": "/result",
-          "paginationType": "none",
-          "retryAttempts": 10,
-          "retryBackoffMs": 15000
-        }
-      }
-    },
-    {
-      "id": "p10",
-      "type": "source",
-      "position": {
-        "x": 0,
-        "y": 0
-      },
-      "data": {
-        "label": "p10",
-        "componentId": "src.rest",
-        "schema": [
-          {
-            "name": "bill_no",
-            "type": "string"
-          },
-          {
-            "name": "branch_num",
-            "type": "int64"
-          },
-          {
-            "name": "branch_name",
-            "type": "string"
-          },
-          {
-            "name": "branch_code",
-            "type": "string"
-          },
-          {
-            "name": "store_name",
-            "type": "string"
-          },
-          {
-            "name": "operate_branch_num",
-            "type": "int64"
-          },
-          {
-            "name": "operate_branch_name",
-            "type": "string"
-          },
-          {
-            "name": "expense_type",
-            "type": "string"
-          },
-          {
-            "name": "direction",
-            "type": "string"
-          },
-          {
-            "name": "amount",
-            "type": "decimal"
-          },
-          {
-            "name": "due_amount",
-            "type": "decimal"
-          },
-          {
-            "name": "paid_amount",
-            "type": "decimal"
-          },
-          {
-            "name": "payment_date",
-            "type": "string"
-          },
-          {
-            "name": "tax_rate",
-            "type": "decimal"
-          },
-          {
-            "name": "tax_amount",
-            "type": "decimal"
-          },
-          {
-            "name": "audit_time",
-            "type": "string"
-          },
-          {
-            "name": "create_time",
-            "type": "string"
-          },
-          {
-            "name": "reference_bill",
-            "type": "string"
-          },
-          {
-            "name": "memo",
-            "type": "string"
-          },
-          {
-            "name": "settlement_state",
-            "type": "int64"
-          },
-          {
-            "name": "settlement_state_name",
-            "type": "string"
-          },
-          {
-            "name": "last_edit_time",
-            "type": "string"
-          }
-        ],
-        "properties": {
-          "connectionRef": "lemeng",
-          "url": "https://cloud.nhsoft.cn/agi/api/nhsoft.ama.ai.branch.expense.find",
-          "method": "POST",
-          "body": "{\"date_from\":\"${date-1d} 00:00:00\",\"date_to\":\"${date-1d} 23:59:59\",\"page_number\":10,\"page_size\":200,\"state_code\":3}",
-          "responsePath": "/result",
-          "paginationType": "none",
-          "retryAttempts": 10,
-          "retryBackoffMs": 15000
-        }
-      }
-    },
-    {
-      "id": "p11",
-      "type": "source",
-      "position": {
-        "x": 0,
-        "y": 0
-      },
-      "data": {
-        "label": "p11",
-        "componentId": "src.rest",
-        "schema": [
-          {
-            "name": "bill_no",
-            "type": "string"
-          },
-          {
-            "name": "branch_num",
-            "type": "int64"
-          },
-          {
-            "name": "branch_name",
-            "type": "string"
-          },
-          {
-            "name": "branch_code",
-            "type": "string"
-          },
-          {
-            "name": "store_name",
-            "type": "string"
-          },
-          {
-            "name": "operate_branch_num",
-            "type": "int64"
-          },
-          {
-            "name": "operate_branch_name",
-            "type": "string"
-          },
-          {
-            "name": "expense_type",
-            "type": "string"
-          },
-          {
-            "name": "direction",
-            "type": "string"
-          },
-          {
-            "name": "amount",
-            "type": "decimal"
-          },
-          {
-            "name": "due_amount",
-            "type": "decimal"
-          },
-          {
-            "name": "paid_amount",
-            "type": "decimal"
-          },
-          {
-            "name": "payment_date",
-            "type": "string"
-          },
-          {
-            "name": "tax_rate",
-            "type": "decimal"
-          },
-          {
-            "name": "tax_amount",
-            "type": "decimal"
-          },
-          {
-            "name": "audit_time",
-            "type": "string"
-          },
-          {
-            "name": "create_time",
-            "type": "string"
-          },
-          {
-            "name": "reference_bill",
-            "type": "string"
-          },
-          {
-            "name": "memo",
-            "type": "string"
-          },
-          {
-            "name": "settlement_state",
-            "type": "int64"
-          },
-          {
-            "name": "settlement_state_name",
-            "type": "string"
-          },
-          {
-            "name": "last_edit_time",
-            "type": "string"
-          }
-        ],
-        "properties": {
-          "connectionRef": "lemeng",
-          "url": "https://cloud.nhsoft.cn/agi/api/nhsoft.ama.ai.branch.expense.find",
-          "method": "POST",
-          "body": "{\"date_from\":\"${date-1d} 00:00:00\",\"date_to\":\"${date-1d} 23:59:59\",\"page_number\":11,\"page_size\":200,\"state_code\":3}",
-          "responsePath": "/result",
-          "paginationType": "none",
-          "retryAttempts": 10,
-          "retryBackoffMs": 15000
-        }
-      }
-    },
-    {
-      "id": "p12",
-      "type": "source",
-      "position": {
-        "x": 0,
-        "y": 0
-      },
-      "data": {
-        "label": "p12",
-        "componentId": "src.rest",
-        "schema": [
-          {
-            "name": "bill_no",
-            "type": "string"
-          },
-          {
-            "name": "branch_num",
-            "type": "int64"
-          },
-          {
-            "name": "branch_name",
-            "type": "string"
-          },
-          {
-            "name": "branch_code",
-            "type": "string"
-          },
-          {
-            "name": "store_name",
-            "type": "string"
-          },
-          {
-            "name": "operate_branch_num",
-            "type": "int64"
-          },
-          {
-            "name": "operate_branch_name",
-            "type": "string"
-          },
-          {
-            "name": "expense_type",
-            "type": "string"
-          },
-          {
-            "name": "direction",
-            "type": "string"
-          },
-          {
-            "name": "amount",
-            "type": "decimal"
-          },
-          {
-            "name": "due_amount",
-            "type": "decimal"
-          },
-          {
-            "name": "paid_amount",
-            "type": "decimal"
-          },
-          {
-            "name": "payment_date",
-            "type": "string"
-          },
-          {
-            "name": "tax_rate",
-            "type": "decimal"
-          },
-          {
-            "name": "tax_amount",
-            "type": "decimal"
-          },
-          {
-            "name": "audit_time",
-            "type": "string"
-          },
-          {
-            "name": "create_time",
-            "type": "string"
-          },
-          {
-            "name": "reference_bill",
-            "type": "string"
-          },
-          {
-            "name": "memo",
-            "type": "string"
-          },
-          {
-            "name": "settlement_state",
-            "type": "int64"
-          },
-          {
-            "name": "settlement_state_name",
-            "type": "string"
-          },
-          {
-            "name": "last_edit_time",
-            "type": "string"
-          }
-        ],
-        "properties": {
-          "connectionRef": "lemeng",
-          "url": "https://cloud.nhsoft.cn/agi/api/nhsoft.ama.ai.branch.expense.find",
-          "method": "POST",
-          "body": "{\"date_from\":\"${date-1d} 00:00:00\",\"date_to\":\"${date-1d} 23:59:59\",\"page_number\":12,\"page_size\":200,\"state_code\":3}",
-          "responsePath": "/result",
-          "paginationType": "none",
-          "retryAttempts": 10,
-          "retryBackoffMs": 15000
-        }
-      }
-    },
-    {
-      "id": "p13",
-      "type": "source",
-      "position": {
-        "x": 0,
-        "y": 0
-      },
-      "data": {
-        "label": "p13",
-        "componentId": "src.rest",
-        "schema": [
-          {
-            "name": "bill_no",
-            "type": "string"
-          },
-          {
-            "name": "branch_num",
-            "type": "int64"
-          },
-          {
-            "name": "branch_name",
-            "type": "string"
-          },
-          {
-            "name": "branch_code",
-            "type": "string"
-          },
-          {
-            "name": "store_name",
-            "type": "string"
-          },
-          {
-            "name": "operate_branch_num",
-            "type": "int64"
-          },
-          {
-            "name": "operate_branch_name",
-            "type": "string"
-          },
-          {
-            "name": "expense_type",
-            "type": "string"
-          },
-          {
-            "name": "direction",
-            "type": "string"
-          },
-          {
-            "name": "amount",
-            "type": "decimal"
-          },
-          {
-            "name": "due_amount",
-            "type": "decimal"
-          },
-          {
-            "name": "paid_amount",
-            "type": "decimal"
-          },
-          {
-            "name": "payment_date",
-            "type": "string"
-          },
-          {
-            "name": "tax_rate",
-            "type": "decimal"
-          },
-          {
-            "name": "tax_amount",
-            "type": "decimal"
-          },
-          {
-            "name": "audit_time",
-            "type": "string"
-          },
-          {
-            "name": "create_time",
-            "type": "string"
-          },
-          {
-            "name": "reference_bill",
-            "type": "string"
-          },
-          {
-            "name": "memo",
-            "type": "string"
-          },
-          {
-            "name": "settlement_state",
-            "type": "int64"
-          },
-          {
-            "name": "settlement_state_name",
-            "type": "string"
-          },
-          {
-            "name": "last_edit_time",
-            "type": "string"
-          }
-        ],
-        "properties": {
-          "connectionRef": "lemeng",
-          "url": "https://cloud.nhsoft.cn/agi/api/nhsoft.ama.ai.branch.expense.find",
-          "method": "POST",
-          "body": "{\"date_from\":\"${date-1d} 00:00:00\",\"date_to\":\"${date-1d} 23:59:59\",\"page_number\":13,\"page_size\":200,\"state_code\":3}",
-          "responsePath": "/result",
-          "paginationType": "none",
-          "retryAttempts": 10,
-          "retryBackoffMs": 15000
-        }
-      }
-    },
-    {
-      "id": "p14",
-      "type": "source",
-      "position": {
-        "x": 0,
-        "y": 0
-      },
-      "data": {
-        "label": "p14",
-        "componentId": "src.rest",
-        "schema": [
-          {
-            "name": "bill_no",
-            "type": "string"
-          },
-          {
-            "name": "branch_num",
-            "type": "int64"
-          },
-          {
-            "name": "branch_name",
-            "type": "string"
-          },
-          {
-            "name": "branch_code",
-            "type": "string"
-          },
-          {
-            "name": "store_name",
-            "type": "string"
-          },
-          {
-            "name": "operate_branch_num",
-            "type": "int64"
-          },
-          {
-            "name": "operate_branch_name",
-            "type": "string"
-          },
-          {
-            "name": "expense_type",
-            "type": "string"
-          },
-          {
-            "name": "direction",
-            "type": "string"
-          },
-          {
-            "name": "amount",
-            "type": "decimal"
-          },
-          {
-            "name": "due_amount",
-            "type": "decimal"
-          },
-          {
-            "name": "paid_amount",
-            "type": "decimal"
-          },
-          {
-            "name": "payment_date",
-            "type": "string"
-          },
-          {
-            "name": "tax_rate",
-            "type": "decimal"
-          },
-          {
-            "name": "tax_amount",
-            "type": "decimal"
-          },
-          {
-            "name": "audit_time",
-            "type": "string"
-          },
-          {
-            "name": "create_time",
-            "type": "string"
-          },
-          {
-            "name": "reference_bill",
-            "type": "string"
-          },
-          {
-            "name": "memo",
-            "type": "string"
-          },
-          {
-            "name": "settlement_state",
-            "type": "int64"
-          },
-          {
-            "name": "settlement_state_name",
-            "type": "string"
-          },
-          {
-            "name": "last_edit_time",
-            "type": "string"
-          }
-        ],
-        "properties": {
-          "connectionRef": "lemeng",
-          "url": "https://cloud.nhsoft.cn/agi/api/nhsoft.ama.ai.branch.expense.find",
-          "method": "POST",
-          "body": "{\"date_from\":\"${date-1d} 00:00:00\",\"date_to\":\"${date-1d} 23:59:59\",\"page_number\":14,\"page_size\":200,\"state_code\":3}",
-          "responsePath": "/result",
-          "paginationType": "none",
-          "retryAttempts": 10,
-          "retryBackoffMs": 15000
-        }
-      }
-    },
-    {
-      "id": "p15",
-      "type": "source",
-      "position": {
-        "x": 0,
-        "y": 0
-      },
-      "data": {
-        "label": "p15",
-        "componentId": "src.rest",
-        "schema": [
-          {
-            "name": "bill_no",
-            "type": "string"
-          },
-          {
-            "name": "branch_num",
-            "type": "int64"
-          },
-          {
-            "name": "branch_name",
-            "type": "string"
-          },
-          {
-            "name": "branch_code",
-            "type": "string"
-          },
-          {
-            "name": "store_name",
-            "type": "string"
-          },
-          {
-            "name": "operate_branch_num",
-            "type": "int64"
-          },
-          {
-            "name": "operate_branch_name",
-            "type": "string"
-          },
-          {
-            "name": "expense_type",
-            "type": "string"
-          },
-          {
-            "name": "direction",
-            "type": "string"
-          },
-          {
-            "name": "amount",
-            "type": "decimal"
-          },
-          {
-            "name": "due_amount",
-            "type": "decimal"
-          },
-          {
-            "name": "paid_amount",
-            "type": "decimal"
-          },
-          {
-            "name": "payment_date",
-            "type": "string"
-          },
-          {
-            "name": "tax_rate",
-            "type": "decimal"
-          },
-          {
-            "name": "tax_amount",
-            "type": "decimal"
-          },
-          {
-            "name": "audit_time",
-            "type": "string"
-          },
-          {
-            "name": "create_time",
-            "type": "string"
-          },
-          {
-            "name": "reference_bill",
-            "type": "string"
-          },
-          {
-            "name": "memo",
-            "type": "string"
-          },
-          {
-            "name": "settlement_state",
-            "type": "int64"
-          },
-          {
-            "name": "settlement_state_name",
-            "type": "string"
-          },
-          {
-            "name": "last_edit_time",
-            "type": "string"
-          }
-        ],
-        "properties": {
-          "connectionRef": "lemeng",
-          "url": "https://cloud.nhsoft.cn/agi/api/nhsoft.ama.ai.branch.expense.find",
-          "method": "POST",
-          "body": "{\"date_from\":\"${date-1d} 00:00:00\",\"date_to\":\"${date-1d} 23:59:59\",\"page_number\":15,\"page_size\":200,\"state_code\":3}",
-          "responsePath": "/result",
-          "paginationType": "none",
-          "retryAttempts": 10,
-          "retryBackoffMs": 15000
-        }
-      }
-    },
-    {
-      "id": "p16",
-      "type": "source",
-      "position": {
-        "x": 0,
-        "y": 0
-      },
-      "data": {
-        "label": "p16",
-        "componentId": "src.rest",
-        "schema": [
-          {
-            "name": "bill_no",
-            "type": "string"
-          },
-          {
-            "name": "branch_num",
-            "type": "int64"
-          },
-          {
-            "name": "branch_name",
-            "type": "string"
-          },
-          {
-            "name": "branch_code",
-            "type": "string"
-          },
-          {
-            "name": "store_name",
-            "type": "string"
-          },
-          {
-            "name": "operate_branch_num",
-            "type": "int64"
-          },
-          {
-            "name": "operate_branch_name",
-            "type": "string"
-          },
-          {
-            "name": "expense_type",
-            "type": "string"
-          },
-          {
-            "name": "direction",
-            "type": "string"
-          },
-          {
-            "name": "amount",
-            "type": "decimal"
-          },
-          {
-            "name": "due_amount",
-            "type": "decimal"
-          },
-          {
-            "name": "paid_amount",
-            "type": "decimal"
-          },
-          {
-            "name": "payment_date",
-            "type": "string"
-          },
-          {
-            "name": "tax_rate",
-            "type": "decimal"
-          },
-          {
-            "name": "tax_amount",
-            "type": "decimal"
-          },
-          {
-            "name": "audit_time",
-            "type": "string"
-          },
-          {
-            "name": "create_time",
-            "type": "string"
-          },
-          {
-            "name": "reference_bill",
-            "type": "string"
-          },
-          {
-            "name": "memo",
-            "type": "string"
-          },
-          {
-            "name": "settlement_state",
-            "type": "int64"
-          },
-          {
-            "name": "settlement_state_name",
-            "type": "string"
-          },
-          {
-            "name": "last_edit_time",
-            "type": "string"
-          }
-        ],
-        "properties": {
-          "connectionRef": "lemeng",
-          "url": "https://cloud.nhsoft.cn/agi/api/nhsoft.ama.ai.branch.expense.find",
-          "method": "POST",
-          "body": "{\"date_from\":\"${date-1d} 00:00:00\",\"date_to\":\"${date-1d} 23:59:59\",\"page_number\":16,\"page_size\":200,\"state_code\":3}",
-          "responsePath": "/result",
-          "paginationType": "none",
-          "retryAttempts": 10,
-          "retryBackoffMs": 15000
-        }
-      }
-    },
-    {
-      "id": "p17",
-      "type": "source",
-      "position": {
-        "x": 0,
-        "y": 0
-      },
-      "data": {
-        "label": "p17",
-        "componentId": "src.rest",
-        "schema": [
-          {
-            "name": "bill_no",
-            "type": "string"
-          },
-          {
-            "name": "branch_num",
-            "type": "int64"
-          },
-          {
-            "name": "branch_name",
-            "type": "string"
-          },
-          {
-            "name": "branch_code",
-            "type": "string"
-          },
-          {
-            "name": "store_name",
-            "type": "string"
-          },
-          {
-            "name": "operate_branch_num",
-            "type": "int64"
-          },
-          {
-            "name": "operate_branch_name",
-            "type": "string"
-          },
-          {
-            "name": "expense_type",
-            "type": "string"
-          },
-          {
-            "name": "direction",
-            "type": "string"
-          },
-          {
-            "name": "amount",
-            "type": "decimal"
-          },
-          {
-            "name": "due_amount",
-            "type": "decimal"
-          },
-          {
-            "name": "paid_amount",
-            "type": "decimal"
-          },
-          {
-            "name": "payment_date",
-            "type": "string"
-          },
-          {
-            "name": "tax_rate",
-            "type": "decimal"
-          },
-          {
-            "name": "tax_amount",
-            "type": "decimal"
-          },
-          {
-            "name": "audit_time",
-            "type": "string"
-          },
-          {
-            "name": "create_time",
-            "type": "string"
-          },
-          {
-            "name": "reference_bill",
-            "type": "string"
-          },
-          {
-            "name": "memo",
-            "type": "string"
-          },
-          {
-            "name": "settlement_state",
-            "type": "int64"
-          },
-          {
-            "name": "settlement_state_name",
-            "type": "string"
-          },
-          {
-            "name": "last_edit_time",
-            "type": "string"
-          }
-        ],
-        "properties": {
-          "connectionRef": "lemeng",
-          "url": "https://cloud.nhsoft.cn/agi/api/nhsoft.ama.ai.branch.expense.find",
-          "method": "POST",
-          "body": "{\"date_from\":\"${date-1d} 00:00:00\",\"date_to\":\"${date-1d} 23:59:59\",\"page_number\":17,\"page_size\":200,\"state_code\":3}",
-          "responsePath": "/result",
-          "paginationType": "none",
-          "retryAttempts": 10,
-          "retryBackoffMs": 15000
-        }
-      }
-    },
-    {
-      "id": "p18",
-      "type": "source",
-      "position": {
-        "x": 0,
-        "y": 0
-      },
-      "data": {
-        "label": "p18",
-        "componentId": "src.rest",
-        "schema": [
-          {
-            "name": "bill_no",
-            "type": "string"
-          },
-          {
-            "name": "branch_num",
-            "type": "int64"
-          },
-          {
-            "name": "branch_name",
-            "type": "string"
-          },
-          {
-            "name": "branch_code",
-            "type": "string"
-          },
-          {
-            "name": "store_name",
-            "type": "string"
-          },
-          {
-            "name": "operate_branch_num",
-            "type": "int64"
-          },
-          {
-            "name": "operate_branch_name",
-            "type": "string"
-          },
-          {
-            "name": "expense_type",
-            "type": "string"
-          },
-          {
-            "name": "direction",
-            "type": "string"
-          },
-          {
-            "name": "amount",
-            "type": "decimal"
-          },
-          {
-            "name": "due_amount",
-            "type": "decimal"
-          },
-          {
-            "name": "paid_amount",
-            "type": "decimal"
-          },
-          {
-            "name": "payment_date",
-            "type": "string"
-          },
-          {
-            "name": "tax_rate",
-            "type": "decimal"
-          },
-          {
-            "name": "tax_amount",
-            "type": "decimal"
-          },
-          {
-            "name": "audit_time",
-            "type": "string"
-          },
-          {
-            "name": "create_time",
-            "type": "string"
-          },
-          {
-            "name": "reference_bill",
-            "type": "string"
-          },
-          {
-            "name": "memo",
-            "type": "string"
-          },
-          {
-            "name": "settlement_state",
-            "type": "int64"
-          },
-          {
-            "name": "settlement_state_name",
-            "type": "string"
-          },
-          {
-            "name": "last_edit_time",
-            "type": "string"
-          }
-        ],
-        "properties": {
-          "connectionRef": "lemeng",
-          "url": "https://cloud.nhsoft.cn/agi/api/nhsoft.ama.ai.branch.expense.find",
-          "method": "POST",
-          "body": "{\"date_from\":\"${date-1d} 00:00:00\",\"date_to\":\"${date-1d} 23:59:59\",\"page_number\":18,\"page_size\":200,\"state_code\":3}",
-          "responsePath": "/result",
-          "paginationType": "none",
-          "retryAttempts": 10,
-          "retryBackoffMs": 15000
-        }
-      }
-    },
-    {
-      "id": "p19",
-      "type": "source",
-      "position": {
-        "x": 0,
-        "y": 0
-      },
-      "data": {
-        "label": "p19",
-        "componentId": "src.rest",
-        "schema": [
-          {
-            "name": "bill_no",
-            "type": "string"
-          },
-          {
-            "name": "branch_num",
-            "type": "int64"
-          },
-          {
-            "name": "branch_name",
-            "type": "string"
-          },
-          {
-            "name": "branch_code",
-            "type": "string"
-          },
-          {
-            "name": "store_name",
-            "type": "string"
-          },
-          {
-            "name": "operate_branch_num",
-            "type": "int64"
-          },
-          {
-            "name": "operate_branch_name",
-            "type": "string"
-          },
-          {
-            "name": "expense_type",
-            "type": "string"
-          },
-          {
-            "name": "direction",
-            "type": "string"
-          },
-          {
-            "name": "amount",
-            "type": "decimal"
-          },
-          {
-            "name": "due_amount",
-            "type": "decimal"
-          },
-          {
-            "name": "paid_amount",
-            "type": "decimal"
-          },
-          {
-            "name": "payment_date",
-            "type": "string"
-          },
-          {
-            "name": "tax_rate",
-            "type": "decimal"
-          },
-          {
-            "name": "tax_amount",
-            "type": "decimal"
-          },
-          {
-            "name": "audit_time",
-            "type": "string"
-          },
-          {
-            "name": "create_time",
-            "type": "string"
-          },
-          {
-            "name": "reference_bill",
-            "type": "string"
-          },
-          {
-            "name": "memo",
-            "type": "string"
-          },
-          {
-            "name": "settlement_state",
-            "type": "int64"
-          },
-          {
-            "name": "settlement_state_name",
-            "type": "string"
-          },
-          {
-            "name": "last_edit_time",
-            "type": "string"
-          }
-        ],
-        "properties": {
-          "connectionRef": "lemeng",
-          "url": "https://cloud.nhsoft.cn/agi/api/nhsoft.ama.ai.branch.expense.find",
-          "method": "POST",
-          "body": "{\"date_from\":\"${date-1d} 00:00:00\",\"date_to\":\"${date-1d} 23:59:59\",\"page_number\":19,\"page_size\":200,\"state_code\":3}",
-          "responsePath": "/result",
-          "paginationType": "none",
-          "retryAttempts": 10,
-          "retryBackoffMs": 15000
-        }
-      }
-    },
-    {
-      "id": "p20",
-      "type": "source",
-      "position": {
-        "x": 0,
-        "y": 0
-      },
-      "data": {
-        "label": "p20",
-        "componentId": "src.rest",
-        "schema": [
-          {
-            "name": "bill_no",
-            "type": "string"
-          },
-          {
-            "name": "branch_num",
-            "type": "int64"
-          },
-          {
-            "name": "branch_name",
-            "type": "string"
-          },
-          {
-            "name": "branch_code",
-            "type": "string"
-          },
-          {
-            "name": "store_name",
-            "type": "string"
-          },
-          {
-            "name": "operate_branch_num",
-            "type": "int64"
-          },
-          {
-            "name": "operate_branch_name",
-            "type": "string"
-          },
-          {
-            "name": "expense_type",
-            "type": "string"
-          },
-          {
-            "name": "direction",
-            "type": "string"
-          },
-          {
-            "name": "amount",
-            "type": "decimal"
-          },
-          {
-            "name": "due_amount",
-            "type": "decimal"
-          },
-          {
-            "name": "paid_amount",
-            "type": "decimal"
-          },
-          {
-            "name": "payment_date",
-            "type": "string"
-          },
-          {
-            "name": "tax_rate",
-            "type": "decimal"
-          },
-          {
-            "name": "tax_amount",
-            "type": "decimal"
-          },
-          {
-            "name": "audit_time",
-            "type": "string"
-          },
-          {
-            "name": "create_time",
-            "type": "string"
-          },
-          {
-            "name": "reference_bill",
-            "type": "string"
-          },
-          {
-            "name": "memo",
-            "type": "string"
-          },
-          {
-            "name": "settlement_state",
-            "type": "int64"
-          },
-          {
-            "name": "settlement_state_name",
-            "type": "string"
-          },
-          {
-            "name": "last_edit_time",
-            "type": "string"
-          }
-        ],
-        "properties": {
-          "connectionRef": "lemeng",
-          "url": "https://cloud.nhsoft.cn/agi/api/nhsoft.ama.ai.branch.expense.find",
-          "method": "POST",
-          "body": "{\"date_from\":\"${date-1d} 00:00:00\",\"date_to\":\"${date-1d} 23:59:59\",\"page_number\":20,\"page_size\":200,\"state_code\":3}",
-          "responsePath": "/result",
-          "paginationType": "none",
-          "retryAttempts": 10,
-          "retryBackoffMs": 15000
-        }
-      }
-    },
-    {
-      "id": "merge",
+      "id": "fp",
       "type": "transform",
       "position": {
-        "x": 0,
+        "x": 300,
         "y": 0
       },
       "data": {
-        "label": "merge",
-        "componentId": "ctl.merge",
-        "properties": {}
-      }
-    },
-    {
-      "id": "shape",
-      "type": "transform",
-      "position": {
-        "x": 0,
-        "y": 0
-      },
-      "data": {
-        "label": "shape",
+        "label": "fingerprint",
         "componentId": "code.sql",
         "properties": {
-          "sql": "SELECT\n  'be-' || '${ENV:SYSTEM_BOOK}' || '-branch_expense-' || replace(replace('${datetime}','-',''),'_','T') || 'Z' AS batch_id,\n  '${ENV:SYSTEM_BOOK}' AS system_book,\n  CAST('${date-1d}' AS DATE) AS bizday,\n  CAST(o.bill_no AS VARCHAR) AS bill_no,\n  CAST(o.branch_num AS INTEGER) AS branch_num,\n  CAST(o.branch_name AS VARCHAR) AS branch_name,\n  CAST(o.branch_code AS VARCHAR) AS branch_code,\n  CAST(o.store_name AS VARCHAR) AS store_name,\n  CAST(o.operate_branch_num AS INTEGER) AS operate_branch_num,\n  CAST(o.operate_branch_name AS VARCHAR) AS operate_branch_name,\n  CAST(o.expense_type AS VARCHAR) AS expense_type,\n  CAST(o.direction AS VARCHAR) AS direction,\n  CAST(o.amount AS DECIMAL(14,2)) AS amount,\n  CAST(o.due_amount AS DECIMAL(14,2)) AS due_amount,\n  CAST(o.paid_amount AS DECIMAL(14,2)) AS paid_amount,\n  CAST(o.payment_date AS VARCHAR) AS payment_date,\n  CAST(o.tax_rate AS DECIMAL(18,8)) AS tax_rate,\n  CAST(o.tax_amount AS DECIMAL(14,2)) AS tax_amount,\n  CAST(o.audit_time AS VARCHAR) AS audit_time,\n  CAST(o.create_time AS VARCHAR) AS create_time,\n  CAST(o.reference_bill AS VARCHAR) AS reference_bill,\n  CAST(o.memo AS VARCHAR) AS memo,\n  CAST(o.settlement_state AS INTEGER) AS settlement_state,\n  CAST(o.settlement_state_name AS VARCHAR) AS settlement_state_name,\n  CAST(o.last_edit_time AS VARCHAR) AS last_edit_time\nFROM input o"
+          "sql": "SELECT coalesce(max(CAST(last_edit_time AS VARCHAR)), '') || '|' || coalesce(max(CAST(bill_no AS VARCHAR)), '') AS fp, count(*) AS n FROM input"
         }
       }
     },
     {
-      "id": "gate",
-      "type": "transform",
-      "position": {
-        "x": 0,
-        "y": 0
-      },
-      "data": {
-        "label": "gate",
-        "componentId": "qa.contract",
-        "properties": {
-          "rules": {
-            "batch_id": "not_null",
-            "system_book": "not_null",
-            "bizday": "not_null",
-            "bill_no": "not_null",
-            "branch_num": "not_null",
-            "expense_type": "not_null",
-            "direction": "not_null"
-          }
-        }
-      }
-    },
-    {
-      "id": "sink",
-      "type": "sink",
-      "position": {
-        "x": 0,
-        "y": 0
-      },
-      "data": {
-        "label": "sink",
-        "componentId": "snk.minio",
-        "properties": {
-          "bucket": "${ENV:ZOS_BUCKET}",
-          "key": "lemeng/branch_expense/system_book=${ENV:SYSTEM_BOOK}/bizday=${date-1d}/all.parquet",
-          "region": "${ENV:ZOS_REGION}",
-          "urlStyle": "path",
-          "useSsl": "true",
-          "format": "parquet",
-          "mode": "overwrite",
-          "compression": "zstd",
-          "connectionRef": "zos"
-        }
-      }
-    },
-    {
-      "id": "p21",
+      "id": "prev",
       "type": "source",
       "position": {
         "x": 0,
+        "y": 200
+      },
+      "data": {
+        "label": "prev watermark",
+        "componentId": "src.parquet",
+        "properties": {
+          "path": "/workspace/tmp/lemeng.branch.expense.l0.watermark.parquet"
+        }
+      }
+    },
+    {
+      "id": "cmp",
+      "type": "transform",
+      "position": {
+        "x": 600,
         "y": 0
       },
       "data": {
-        "label": "p21",
+        "label": "compare",
+        "componentId": "code.sql",
+        "properties": {
+          "sql": "SELECT f.fp, (SELECT max(fp) FROM prev) AS prev_fp, (f.n > 0 AND (f.n >= 200 OR f.fp IS DISTINCT FROM (SELECT max(fp) FROM prev))) AS has_new FROM fp f"
+        }
+      }
+    },
+    {
+      "id": "pages",
+      "type": "transform",
+      "position": {
+        "x": 900,
+        "y": 0
+      },
+      "data": {
+        "label": "page list",
+        "componentId": "code.sql",
+        "properties": {
+          "sql": "SELECT CAST(t.page AS INTEGER) AS page, '${date-1d}' AS bizday, '${ENV:SYSTEM_BOOK}' AS system_book, '${datetime}' AS run FROM (VALUES (1),(2),(3),(4),(5),(6),(7),(8),(9),(10),(11),(12),(13),(14),(15),(16),(17),(18),(19),(20)) t(page) CROSS JOIN (SELECT has_new FROM input) h WHERE h.has_new"
+        }
+      }
+    },
+    {
+      "id": "fe",
+      "type": "transform",
+      "position": {
+        "x": 1200,
+        "y": 0
+      },
+      "data": {
+        "label": "foreach page",
+        "componentId": "ctl.foreach",
+        "properties": {
+          "pipelineRef": "${workspace}/pipelines/lemeng.branch.expense.l0.3120.page.json",
+          "concurrency": 1
+        }
+      }
+    },
+    {
+      "id": "wmk",
+      "type": "transform",
+      "position": {
+        "x": 900,
+        "y": 200
+      },
+      "data": {
+        "label": "watermark",
+        "componentId": "code.sql",
+        "properties": {
+          "sql": "SELECT fp FROM input"
+        }
+      }
+    },
+    {
+      "id": "ks",
+      "type": "sink",
+      "position": {
+        "x": 1200,
+        "y": 200
+      },
+      "data": {
+        "label": "write watermark",
+        "componentId": "snk.parquet",
+        "properties": {
+          "path": "/workspace/tmp/lemeng.branch.expense.l0.watermark.parquet",
+          "mode": "overwrite"
+        }
+      }
+    },
+    {
+      "id": "tail",
+      "type": "source",
+      "position": {
+        "x": 0,
+        "y": 400
+      },
+      "data": {
+        "label": "tail probe",
         "componentId": "src.rest",
         "schema": [
           {
@@ -2578,24 +483,24 @@
           "body": "{\"date_from\":\"${date-1d} 00:00:00\",\"date_to\":\"${date-1d} 23:59:59\",\"page_number\":21,\"page_size\":200,\"state_code\":3}",
           "responsePath": "/result",
           "paginationType": "none",
-          "retryAttempts": 10,
-          "retryBackoffMs": 15000
+          "retryAttempts": 3,
+          "retryBackoffMs": 2000
         }
       }
     },
     {
-      "id": "sentinel",
+      "id": "dgt",
       "type": "transform",
       "position": {
-        "x": 0,
-        "y": 0
+        "x": 300,
+        "y": 400
       },
       "data": {
-        "label": "sentinel",
+        "label": "die on truncation",
         "componentId": "ctl.die",
         "properties": {
           "condition": "has-rows",
-          "message": "lemeng branch_expense 容量截断：第 21 页（哨兵页）仍有 {rows} 行（system_book=${ENV:SYSTEM_BOOK}）⇒ 单日费用单已击穿真阈值 4,000 条（算式：数据页 20 × page_size 200，哨兵页不计容量）。处置：加数据页节点 → 同步改本算式与哨兵页的页号 → 重生成 → 走 PR"
+          "message": "INCREMENTAL_TRUNCATED: 第 21 页仍有行（pages=20 × pageSize=200） ⇒ 可能截断；请加页后重生成"
         }
       }
     }
@@ -2682,419 +587,9 @@
       }
     },
     {
-      "id": "e-dv-p1",
-      "source": "dv",
-      "target": "p1",
-      "sourceHandle": null,
-      "targetHandle": null,
-      "data": {
-        "connectionType": "on-subjob-ok"
-      }
-    },
-    {
-      "id": "e-dv-p2",
-      "source": "dv",
-      "target": "p2",
-      "sourceHandle": null,
-      "targetHandle": null,
-      "data": {
-        "connectionType": "on-subjob-ok"
-      }
-    },
-    {
-      "id": "e-dv-p3",
-      "source": "dv",
-      "target": "p3",
-      "sourceHandle": null,
-      "targetHandle": null,
-      "data": {
-        "connectionType": "on-subjob-ok"
-      }
-    },
-    {
-      "id": "e-dv-p4",
-      "source": "dv",
-      "target": "p4",
-      "sourceHandle": null,
-      "targetHandle": null,
-      "data": {
-        "connectionType": "on-subjob-ok"
-      }
-    },
-    {
-      "id": "e-dv-p5",
-      "source": "dv",
-      "target": "p5",
-      "sourceHandle": null,
-      "targetHandle": null,
-      "data": {
-        "connectionType": "on-subjob-ok"
-      }
-    },
-    {
-      "id": "e-dv-p6",
-      "source": "dv",
-      "target": "p6",
-      "sourceHandle": null,
-      "targetHandle": null,
-      "data": {
-        "connectionType": "on-subjob-ok"
-      }
-    },
-    {
-      "id": "e-dv-p7",
-      "source": "dv",
-      "target": "p7",
-      "sourceHandle": null,
-      "targetHandle": null,
-      "data": {
-        "connectionType": "on-subjob-ok"
-      }
-    },
-    {
-      "id": "e-dv-p8",
-      "source": "dv",
-      "target": "p8",
-      "sourceHandle": null,
-      "targetHandle": null,
-      "data": {
-        "connectionType": "on-subjob-ok"
-      }
-    },
-    {
-      "id": "e-dv-p9",
-      "source": "dv",
-      "target": "p9",
-      "sourceHandle": null,
-      "targetHandle": null,
-      "data": {
-        "connectionType": "on-subjob-ok"
-      }
-    },
-    {
-      "id": "e-dv-p10",
-      "source": "dv",
-      "target": "p10",
-      "sourceHandle": null,
-      "targetHandle": null,
-      "data": {
-        "connectionType": "on-subjob-ok"
-      }
-    },
-    {
-      "id": "e-dv-p11",
-      "source": "dv",
-      "target": "p11",
-      "sourceHandle": null,
-      "targetHandle": null,
-      "data": {
-        "connectionType": "on-subjob-ok"
-      }
-    },
-    {
-      "id": "e-dv-p12",
-      "source": "dv",
-      "target": "p12",
-      "sourceHandle": null,
-      "targetHandle": null,
-      "data": {
-        "connectionType": "on-subjob-ok"
-      }
-    },
-    {
-      "id": "e-dv-p13",
-      "source": "dv",
-      "target": "p13",
-      "sourceHandle": null,
-      "targetHandle": null,
-      "data": {
-        "connectionType": "on-subjob-ok"
-      }
-    },
-    {
-      "id": "e-dv-p14",
-      "source": "dv",
-      "target": "p14",
-      "sourceHandle": null,
-      "targetHandle": null,
-      "data": {
-        "connectionType": "on-subjob-ok"
-      }
-    },
-    {
-      "id": "e-dv-p15",
-      "source": "dv",
-      "target": "p15",
-      "sourceHandle": null,
-      "targetHandle": null,
-      "data": {
-        "connectionType": "on-subjob-ok"
-      }
-    },
-    {
-      "id": "e-dv-p16",
-      "source": "dv",
-      "target": "p16",
-      "sourceHandle": null,
-      "targetHandle": null,
-      "data": {
-        "connectionType": "on-subjob-ok"
-      }
-    },
-    {
-      "id": "e-dv-p17",
-      "source": "dv",
-      "target": "p17",
-      "sourceHandle": null,
-      "targetHandle": null,
-      "data": {
-        "connectionType": "on-subjob-ok"
-      }
-    },
-    {
-      "id": "e-dv-p18",
-      "source": "dv",
-      "target": "p18",
-      "sourceHandle": null,
-      "targetHandle": null,
-      "data": {
-        "connectionType": "on-subjob-ok"
-      }
-    },
-    {
-      "id": "e-dv-p19",
-      "source": "dv",
-      "target": "p19",
-      "sourceHandle": null,
-      "targetHandle": null,
-      "data": {
-        "connectionType": "on-subjob-ok"
-      }
-    },
-    {
-      "id": "e-dv-p20",
-      "source": "dv",
-      "target": "p20",
-      "sourceHandle": null,
-      "targetHandle": null,
-      "data": {
-        "connectionType": "on-subjob-ok"
-      }
-    },
-    {
-      "id": "e-dv-p21",
-      "source": "dv",
-      "target": "p21",
-      "sourceHandle": null,
-      "targetHandle": null,
-      "data": {
-        "connectionType": "on-subjob-ok"
-      }
-    },
-    {
-      "id": "e-p1-merge",
-      "source": "p1",
-      "target": "merge",
-      "sourceHandle": "main",
-      "targetHandle": "main_1",
-      "data": {
-        "connectionType": "main"
-      }
-    },
-    {
-      "id": "e-p2-merge",
-      "source": "p2",
-      "target": "merge",
-      "sourceHandle": "main",
-      "targetHandle": "main_2",
-      "data": {
-        "connectionType": "main"
-      }
-    },
-    {
-      "id": "e-p3-merge",
-      "source": "p3",
-      "target": "merge",
-      "sourceHandle": "main",
-      "targetHandle": "main_3",
-      "data": {
-        "connectionType": "main"
-      }
-    },
-    {
-      "id": "e-p4-merge",
-      "source": "p4",
-      "target": "merge",
-      "sourceHandle": "main",
-      "targetHandle": "main_4",
-      "data": {
-        "connectionType": "main"
-      }
-    },
-    {
-      "id": "e-p5-merge",
-      "source": "p5",
-      "target": "merge",
-      "sourceHandle": "main",
-      "targetHandle": "main_5",
-      "data": {
-        "connectionType": "main"
-      }
-    },
-    {
-      "id": "e-p6-merge",
-      "source": "p6",
-      "target": "merge",
-      "sourceHandle": "main",
-      "targetHandle": "main_6",
-      "data": {
-        "connectionType": "main"
-      }
-    },
-    {
-      "id": "e-p7-merge",
-      "source": "p7",
-      "target": "merge",
-      "sourceHandle": "main",
-      "targetHandle": "main_7",
-      "data": {
-        "connectionType": "main"
-      }
-    },
-    {
-      "id": "e-p8-merge",
-      "source": "p8",
-      "target": "merge",
-      "sourceHandle": "main",
-      "targetHandle": "main_8",
-      "data": {
-        "connectionType": "main"
-      }
-    },
-    {
-      "id": "e-p9-merge",
-      "source": "p9",
-      "target": "merge",
-      "sourceHandle": "main",
-      "targetHandle": "main_9",
-      "data": {
-        "connectionType": "main"
-      }
-    },
-    {
-      "id": "e-p10-merge",
-      "source": "p10",
-      "target": "merge",
-      "sourceHandle": "main",
-      "targetHandle": "main_10",
-      "data": {
-        "connectionType": "main"
-      }
-    },
-    {
-      "id": "e-p11-merge",
-      "source": "p11",
-      "target": "merge",
-      "sourceHandle": "main",
-      "targetHandle": "main_11",
-      "data": {
-        "connectionType": "main"
-      }
-    },
-    {
-      "id": "e-p12-merge",
-      "source": "p12",
-      "target": "merge",
-      "sourceHandle": "main",
-      "targetHandle": "main_12",
-      "data": {
-        "connectionType": "main"
-      }
-    },
-    {
-      "id": "e-p13-merge",
-      "source": "p13",
-      "target": "merge",
-      "sourceHandle": "main",
-      "targetHandle": "main_13",
-      "data": {
-        "connectionType": "main"
-      }
-    },
-    {
-      "id": "e-p14-merge",
-      "source": "p14",
-      "target": "merge",
-      "sourceHandle": "main",
-      "targetHandle": "main_14",
-      "data": {
-        "connectionType": "main"
-      }
-    },
-    {
-      "id": "e-p15-merge",
-      "source": "p15",
-      "target": "merge",
-      "sourceHandle": "main",
-      "targetHandle": "main_15",
-      "data": {
-        "connectionType": "main"
-      }
-    },
-    {
-      "id": "e-p16-merge",
-      "source": "p16",
-      "target": "merge",
-      "sourceHandle": "main",
-      "targetHandle": "main_16",
-      "data": {
-        "connectionType": "main"
-      }
-    },
-    {
-      "id": "e-p17-merge",
-      "source": "p17",
-      "target": "merge",
-      "sourceHandle": "main",
-      "targetHandle": "main_17",
-      "data": {
-        "connectionType": "main"
-      }
-    },
-    {
-      "id": "e-p18-merge",
-      "source": "p18",
-      "target": "merge",
-      "sourceHandle": "main",
-      "targetHandle": "main_18",
-      "data": {
-        "connectionType": "main"
-      }
-    },
-    {
-      "id": "e-p19-merge",
-      "source": "p19",
-      "target": "merge",
-      "sourceHandle": "main",
-      "targetHandle": "main_19",
-      "data": {
-        "connectionType": "main"
-      }
-    },
-    {
-      "id": "e-p20-merge",
-      "source": "p20",
-      "target": "merge",
-      "sourceHandle": "main",
-      "targetHandle": "main_20",
-      "data": {
-        "connectionType": "main"
-      }
-    },
-    {
-      "id": "e-merge-shape",
-      "source": "merge",
-      "target": "shape",
+      "id": "e-probe-fp",
+      "source": "probe",
+      "target": "fp",
       "sourceHandle": "main",
       "targetHandle": "main",
       "data": {
@@ -3102,9 +597,9 @@
       }
     },
     {
-      "id": "e-shape-gate",
-      "source": "shape",
-      "target": "gate",
+      "id": "e-fp-cmp",
+      "source": "fp",
+      "target": "cmp",
       "sourceHandle": "main",
       "targetHandle": "main",
       "data": {
@@ -3112,9 +607,19 @@
       }
     },
     {
-      "id": "e-gate-sink",
-      "source": "gate",
-      "target": "sink",
+      "id": "e-prev-cmp",
+      "source": "prev",
+      "target": "cmp",
+      "sourceHandle": "main",
+      "targetHandle": "prev",
+      "data": {
+        "connectionType": "main"
+      }
+    },
+    {
+      "id": "e-cmp-pages",
+      "source": "cmp",
+      "target": "pages",
       "sourceHandle": "main",
       "targetHandle": "main",
       "data": {
@@ -3122,9 +627,9 @@
       }
     },
     {
-      "id": "e-p21-sentinel",
-      "source": "p21",
-      "target": "sentinel",
+      "id": "e-pages-fe",
+      "source": "pages",
+      "target": "fe",
       "sourceHandle": "main",
       "targetHandle": "main",
       "data": {
@@ -3132,14 +637,57 @@
       }
     },
     {
-      "id": "e-sentinel-merge",
-      "source": "sentinel",
-      "target": "merge",
+      "id": "e-cmp-wmk",
+      "source": "cmp",
+      "target": "wmk",
       "sourceHandle": "main",
-      "targetHandle": "main_21",
+      "targetHandle": "main",
       "data": {
         "connectionType": "main"
+      }
+    },
+    {
+      "id": "e-wmk-ks",
+      "source": "wmk",
+      "target": "ks",
+      "sourceHandle": "main",
+      "targetHandle": "main",
+      "data": {
+        "connectionType": "main"
+      }
+    },
+    {
+      "id": "e-tail-dgt",
+      "source": "tail",
+      "target": "dgt",
+      "sourceHandle": "main",
+      "targetHandle": "main",
+      "data": {
+        "connectionType": "main"
+      }
+    },
+    {
+      "id": "e-dv-tail",
+      "source": "dv",
+      "target": "tail",
+      "sourceHandle": null,
+      "targetHandle": null,
+      "data": {
+        "connectionType": "on-subjob-ok"
+      }
+    },
+    {
+      "id": "e-dv-first",
+      "source": "dv",
+      "target": "probe",
+      "sourceHandle": null,
+      "targetHandle": null,
+      "data": {
+        "connectionType": "on-subjob-ok"
       }
     }
+  ],
+  "_note": [
+    "由 scripts/gen-pipeline.mjs 从 manifest 生成；手改请改 manifest 后重生成（--check 会拦）。"
   ]
 }

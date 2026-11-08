@@ -1,0 +1,142 @@
+{
+  "id": "lemeng.branch.expense.l0",
+  "domain": "lemeng",
+  "accounts": [
+    "3120",
+    "64188"
+  ],
+  "identityGate": true,
+  "source": {
+    "connectionRef": "lemeng",
+    "url": "https://cloud.nhsoft.cn/agi/api/nhsoft.ama.ai.branch.expense.find",
+    "method": "POST",
+    "body": "{\"date_from\":\"${date-1d} 00:00:00\",\"date_to\":\"${date-1d} 23:59:59\",\"page_number\":1,\"page_size\":200,\"state_code\":3}",
+    "responsePath": "/result",
+    "retryAttempts": 3,
+    "retryBackoffMs": 2000,
+    "schema": [
+      {
+        "name": "bill_no",
+        "type": "string"
+      },
+      {
+        "name": "branch_num",
+        "type": "int64"
+      },
+      {
+        "name": "branch_name",
+        "type": "string"
+      },
+      {
+        "name": "branch_code",
+        "type": "string"
+      },
+      {
+        "name": "store_name",
+        "type": "string"
+      },
+      {
+        "name": "operate_branch_num",
+        "type": "int64"
+      },
+      {
+        "name": "operate_branch_name",
+        "type": "string"
+      },
+      {
+        "name": "expense_type",
+        "type": "string"
+      },
+      {
+        "name": "direction",
+        "type": "string"
+      },
+      {
+        "name": "amount",
+        "type": "decimal"
+      },
+      {
+        "name": "due_amount",
+        "type": "decimal"
+      },
+      {
+        "name": "paid_amount",
+        "type": "decimal"
+      },
+      {
+        "name": "payment_date",
+        "type": "string"
+      },
+      {
+        "name": "tax_rate",
+        "type": "decimal"
+      },
+      {
+        "name": "tax_amount",
+        "type": "decimal"
+      },
+      {
+        "name": "audit_time",
+        "type": "string"
+      },
+      {
+        "name": "create_time",
+        "type": "string"
+      },
+      {
+        "name": "reference_bill",
+        "type": "string"
+      },
+      {
+        "name": "memo",
+        "type": "string"
+      },
+      {
+        "name": "settlement_state",
+        "type": "int64"
+      },
+      {
+        "name": "settlement_state_name",
+        "type": "string"
+      },
+      {
+        "name": "last_edit_time",
+        "type": "string"
+      }
+    ],
+    "pagination": {
+      "type": "incremental",
+      "pages": 20,
+      "pageParam": "page_number",
+      "pageSizeParam": "page_size",
+      "pageSize": 200,
+      "truncationGuard": true,
+      "fingerprintSql": "coalesce(max(CAST(last_edit_time AS VARCHAR)), '') || '|' || coalesce(max(CAST(bill_no AS VARCHAR)), '')",
+      "watermarkPath": "/workspace/tmp/lemeng.branch.expense.l0.watermark.parquet",
+      "windowToken": "${date-1d}"
+    }
+  },
+  "transform": {
+    "sql": "SELECT\n  'be-' || '${ENV:SYSTEM_BOOK}' || '-branch_expense-' || replace(replace('${datetime}','-',''),'_','T') || 'Z' AS batch_id,\n  '${ENV:SYSTEM_BOOK}' AS system_book,\n  CAST('${date-1d}' AS DATE) AS bizday,\n  CAST(o.bill_no AS VARCHAR) AS bill_no,\n  CAST(o.branch_num AS INTEGER) AS branch_num,\n  CAST(o.branch_name AS VARCHAR) AS branch_name,\n  CAST(o.branch_code AS VARCHAR) AS branch_code,\n  CAST(o.store_name AS VARCHAR) AS store_name,\n  CAST(o.operate_branch_num AS INTEGER) AS operate_branch_num,\n  CAST(o.operate_branch_name AS VARCHAR) AS operate_branch_name,\n  CAST(o.expense_type AS VARCHAR) AS expense_type,\n  CAST(o.direction AS VARCHAR) AS direction,\n  CAST(o.amount AS DECIMAL(14,2)) AS amount,\n  CAST(o.due_amount AS DECIMAL(14,2)) AS due_amount,\n  CAST(o.paid_amount AS DECIMAL(14,2)) AS paid_amount,\n  CAST(o.payment_date AS VARCHAR) AS payment_date,\n  CAST(o.tax_rate AS DECIMAL(18,8)) AS tax_rate,\n  CAST(o.tax_amount AS DECIMAL(14,2)) AS tax_amount,\n  CAST(o.audit_time AS VARCHAR) AS audit_time,\n  CAST(o.create_time AS VARCHAR) AS create_time,\n  CAST(o.reference_bill AS VARCHAR) AS reference_bill,\n  CAST(o.memo AS VARCHAR) AS memo,\n  CAST(o.settlement_state AS INTEGER) AS settlement_state,\n  CAST(o.settlement_state_name AS VARCHAR) AS settlement_state_name,\n  CAST(o.last_edit_time AS VARCHAR) AS last_edit_time\nFROM input o"
+  },
+  "gate": {
+    "rules": {
+      "batch_id": "not_null",
+      "system_book": "not_null",
+      "bizday": "not_null",
+      "bill_no": "not_null",
+      "branch_num": "not_null",
+      "expense_type": "not_null",
+      "direction": "not_null"
+    }
+  },
+  "sink": {
+    "type": "minio",
+    "connectionRef": "zos",
+    "bucket": "shanhai-data",
+    "key": "lemeng/branch_expense/system_book=${ITER_ITEM_SYSTEM_BOOK}/bizday=${ITER_ITEM_BIZDAY}/page=${ITER_ITEM_PAGE}.parquet",
+    "format": "parquet",
+    "mode": "overwrite",
+    "compression": "zstd"
+  }
+}

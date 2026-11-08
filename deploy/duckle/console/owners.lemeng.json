@@ -160,7 +160,7 @@
       "description": "close 层「昨晚的闭窗尾款收了吗」的凭证（L1 父管线 lemeng.retail.close.l1 每轮写）。2026-09-29 首点成功（两账套 16:00 UTC 各一次）后随下一批补——按 _note ⑪ 定的口径：**日更型用 maximumAge**（不用 expectedAfterSchedule），阈值 36h 与本文件既有三条同口径（日更 24h + 12h 余量）。"
     },
     {
-      "match": "minio://*/lemeng/transfer_out/system_book=*/bizday=*/all.parquet",
+      "match": "minio://*/lemeng/transfer_out/system_book=*/bizday=*/*.parquet",
       "owner": "data-eng",
       "description": "调出单每日采集的成功凭证（L0 lemeng.transfer.out.l0.3120 的 snk.minio 目标；写入=当天采集成功）",
       "tags": [
@@ -187,7 +187,7 @@
       "maximumAge": "36h"
     },
     {
-      "match": "minio://*/lemeng/branch_expense/system_book=*/bizday=*/all.parquet",
+      "match": "minio://*/lemeng/branch_expense/system_book=*/bizday=*/*.parquet",
       "owner": "data-eng",
       "description": "门店费用单每日采集的成功凭证（L0 lemeng.branch.expense.l0.3120）",
       "tags": [
@@ -223,7 +223,7 @@
       "maximumAge": "36h"
     },
     {
-      "match": "minio://*/lemeng/transfer_in/system_book=*/bizday=*/all.parquet",
+      "match": "minio://*/lemeng/transfer_in/system_book=*/bizday=*/*.parquet",
       "owner": "data-eng",
       "description": "调入单每日采集的成功凭证（L0 lemeng.transfer.in.l0.3120）",
       "tags": [
@@ -284,7 +284,7 @@
       ]
     },
     {
-      "match": "minio://*/lemeng/loss_adjustment/system_book=*/bizday=*/all.parquet",
+      "match": "minio://*/lemeng/loss_adjustment/system_book=*/bizday=*/*.parquet",
       "owner": "data-eng",
       "description": "报损报溢每日采集的成功凭证（L0 lemeng.loss.adjustment.l0.3120，两个占位符变体 BIZDAY / date-1d 由同一条 glob 一并覆盖）。2026-10-27 #1086 补：此前恒 unknown，停更无告警。",
       "tags": [

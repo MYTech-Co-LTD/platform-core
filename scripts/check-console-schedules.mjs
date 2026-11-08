@@ -144,8 +144,7 @@ const EXEMPT_GLOBAL = new Map([
   ['lemeng.business_collection_coupon.backfill.3120', '回填专用（${BIZDAY} 参数化）'],
   ['lemeng.business_collection_coupon.backfill.64188', '回填专用（${BIZDAY} 参数化）'],
   ['lemeng.metric_profile.relation', '**foreach 子管线**（W2 profiler）——由 lemeng.metric_profile.3120 的 ctl.foreach 逐 mart 驱动，不单独排班；排班在父管线'],
-  ['lemeng.request.order.l0.3120.page', '**foreach 子管线**——由 lemeng.request.order.l0.3120 的 ctl.foreach 逐页驱动，不单独排班；排班在父管线'],
-  ['lemeng.request.order.l0.64188.page', '**foreach 子管线**——由 lemeng.request.order.l0.64188 的 ctl.foreach 逐页驱动，不单独排班；排班在父管线'],
+  // 增量/foreach 子管线（`.page`）统一由父管线 ctl.foreach 驱动，不单独排班（见下方通用跳过）。
   ['lemeng.inventory.snapshot.backfill.3120', '回填专用（#1079 库存快照 10-18..10-25 补采；${BIZDAY} 参数化，同族 transfer.in 先例）'],
 
   ['lemeng.item_sales.backfill.3120', '回填专用（${BIZDAY} 参数化；同族 loss/expense 先例）'],
@@ -199,6 +198,8 @@ for (const f of scheduleFiles) {
   for (const [name, suffix] of capability) {
     if (domainOf(name) !== bookDomain(book)) continue // 非本域，本 book 不期望（#729）
     if (suffix !== '' && suffix !== book) continue // 非本账套族，本 book 不期望
+    // 增量/foreach 子管线（`.page`）由父管线 ctl.foreach 驱动，不单独排班。
+    if (name.endsWith('.page')) continue
     if (EXEMPT_GLOBAL.has(name) || exemptBook.has(name)) continue
     if (!covered.has(name)) {
       violations.push(`book=${book} 管线 ${name} 无排班条目（期望采集集缺员，#630 完整性方向；豁免须登记进 EXEMPT_*）`)
