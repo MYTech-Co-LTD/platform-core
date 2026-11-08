@@ -1,4 +1,4 @@
-sha256-of-rest 3813598311474e6ec1a99680792abfd9adf9ee18a873da82e703e3a5db6ba723
+sha256-of-rest 97c7aaa18cb6ac3b1f4187a0a04b19b6455f7292c1f6d6018da90db4111efb47
 08938c10c6b4a688c8afda6cd7d1ad3dbf2c20f83cf8c4e7023055ad34eddc70 contracts/README.md ${REPO}/contracts/README.md 0644
 fcc8189e1012d5fbb8e2505025bed637dd01c7b4465ab86125d3eaa7f330eff3 contracts/common/_schema.schema.json ${REPO}/contracts/common/_schema.schema.json 0644
 1730119518c3371f3c2ff3492f4c15cd731688047c6d40805ec4d2c65892f3ff contracts/common/_template.contract.json ${REPO}/contracts/common/_template.contract.json 0644
@@ -292,6 +292,7 @@ fa8c22569a5ed9533ecd985351373529d348e796c5822c1b2262163168a191c5 deploy/duckle/c
 6e6f1849236ed89848a93888bdf3bf7d88e2d5dc888c7ea975c56e74dd04c530 deploy/duckle/console/pipelines/lemeng.inventory.movement.seg4.l0.64188.json ${REPO}/deploy/duckle/console/pipelines/lemeng.inventory.movement.seg4.l0.64188.json 0644
 51eddac4b2dd0e918e8efeba1326ee3f0710ee5c7610a70cf5d83e509db799f1 deploy/duckle/console/pipelines/lemeng.inventory.snapshot.backfill.3120.json ${REPO}/deploy/duckle/console/pipelines/lemeng.inventory.snapshot.backfill.3120.json 0644
 c7de428d92c1008b9167310d29aaedc71c8c2719e22b5614c56079309cf1ba16 deploy/duckle/console/pipelines/lemeng.inventory.snapshot.backfill.64188.json ${REPO}/deploy/duckle/console/pipelines/lemeng.inventory.snapshot.backfill.64188.json 0644
+960321b07a5655e8a650f5949498f846a707551926fc62912e599c4477401138 deploy/duckle/console/pipelines/lemeng.inventory.snapshot.backfill.wide.3120.json ${REPO}/deploy/duckle/console/pipelines/lemeng.inventory.snapshot.backfill.wide.3120.json 0644
 c40c4c4b2ee96d2c5b72a1532e7c4691bfa2f487ee18ee076b819c1c2bfb94fb deploy/duckle/console/pipelines/lemeng.inventory.snapshot.catchup.3120.json ${REPO}/deploy/duckle/console/pipelines/lemeng.inventory.snapshot.catchup.3120.json 0644
 03352650bcd67f1ff927caa4a8bcd36a4f3b62c82e105557ac86eb6067948d85 deploy/duckle/console/pipelines/lemeng.inventory.snapshot.catchup.64188.json ${REPO}/deploy/duckle/console/pipelines/lemeng.inventory.snapshot.catchup.64188.json 0644
 7890d60598420dfbb9bc1b239eebbeffec0d8ce80ffbd70f8a5183740a137da0 deploy/duckle/console/pipelines/lemeng.inventory.snapshot.l0.3120.json ${REPO}/deploy/duckle/console/pipelines/lemeng.inventory.snapshot.l0.3120.json 0644
