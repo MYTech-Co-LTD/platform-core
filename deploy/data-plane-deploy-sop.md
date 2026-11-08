@@ -1072,7 +1072,17 @@ gzip -9 -c scripts/lemeng/oo-notify-bridge.sh | base64 | tr -d '\n'
 #    期望末尾 `BR_OK:... v=<BRIDGE_VERSION>`；把 job env BRIDGE_EXPECTED_VERSION 同步改成同值
 ```
 
-**待议（需要人拍板）**：要彻底自动化，需要给数据面机一把能 ssh 到 OO 机的密钥（跨机推送），
-或在 OO 机侧加一条能取仓内文件的通道（该机**直连 raw.githubusercontent 不通**，实测 000）。
-在此之前，靠「版本握手 + 本节的投递步骤」兜底。
+**已自动化（2026-11-08）**：数据面机装了一把到 OO 机的 root 密钥
+（路径 `/etc/openship/ssh-keys/oo-host.pem`，600；取值=运维保管的 OPS.pem，**不在仓内/文档里写值**），
+由脚本 `/opt/lemeng-oo-scripts-deliver.sh` + openship job
+`custom:o6TSbkpuJ2N2UgG-`（每 15 分钟，幂等）负责投递：
+
+- 逐文件 sha256 比对 → 只推差异件 → 远端 `sh -n` 通过才 `mv` 覆盖（原子，不中断运行中的 job）→ 留 `.bak-<ts>`
+- 失败即 job 红 + 企微告警
+- **源是数据面机的 `/opt/lemeng-*.sh`**（sync 按 manifest 直接写这里）；**检出里那份是旧的，别当源**
+
+上面「手工投递步骤」保留作应急（投递 job 挂了、或密钥不可用时）。
+
+**版本升级仍要两步**：改仓内脚本的 `BRIDGE_VERSION` **且**改 job env `BRIDGE_EXPECTED_VERSION`
+（投递器只搬文件、不改 env）。
 
