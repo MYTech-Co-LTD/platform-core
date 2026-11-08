@@ -35,5 +35,5 @@ select
   r['phone']::varchar as phone,
   r['address']::varchar as address
 from read_parquet(
-  's3://{{ var("zos_bucket") }}/{{ var("lemeng_branch_prefix") }}/*/snapshot=**/all.parquet'
+  's3://{{ var("zos_bucket") }}/{{ var("lemeng_branch_prefix") }}/*/snapshot=**/*.parquet'
 ) r
