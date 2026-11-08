@@ -6,7 +6,7 @@
       "type": "source",
       "position": {
         "x": 0,
-        "y": 0
+        "y": -400
       },
       "data": {
         "label": "w0",
@@ -38,8 +38,8 @@
       "id": "g0",
       "type": "transform",
       "position": {
-        "x": 0,
-        "y": 0
+        "x": 300,
+        "y": -400
       },
       "data": {
         "label": "g0",
@@ -53,8 +53,8 @@
       "id": "g1",
       "type": "transform",
       "position": {
-        "x": 0,
-        "y": 0
+        "x": 600,
+        "y": -400
       },
       "data": {
         "label": "g1",
@@ -68,8 +68,8 @@
       "id": "g2",
       "type": "transform",
       "position": {
-        "x": 0,
-        "y": 0
+        "x": 900,
+        "y": -400
       },
       "data": {
         "label": "g2",
@@ -83,8 +83,8 @@
       "id": "d0",
       "type": "transform",
       "position": {
-        "x": 0,
-        "y": 0
+        "x": 1200,
+        "y": -400
       },
       "data": {
         "label": "d0",
@@ -99,8 +99,8 @@
       "id": "g3",
       "type": "transform",
       "position": {
-        "x": 0,
-        "y": 0
+        "x": 1500,
+        "y": -400
       },
       "data": {
         "label": "g3",
@@ -114,8 +114,8 @@
       "id": "d1",
       "type": "transform",
       "position": {
-        "x": 0,
-        "y": 0
+        "x": 1800,
+        "y": -400
       },
       "data": {
         "label": "d1",
@@ -130,14 +130,14 @@
       "id": "gv",
       "type": "transform",
       "position": {
-        "x": 0,
-        "y": 0
+        "x": 2100,
+        "y": -400
       },
       "data": {
         "label": "gv",
         "componentId": "code.sql",
         "properties": {
-          "sql": "SELECT 'BRANCH_NUMS' AS violation, '${ENV:BRANCH_NUMS}' AS detail, 'JSON integer array, e.g. [1001,1002]' AS rule WHERE NOT regexp_full_match('${ENV:BRANCH_NUMS}', '\\[[0-9]+([, ]+[0-9]+)*\\]') UNION ALL SELECT 'SYSTEM_BOOK', '${ENV:SYSTEM_BOOK}', 'digits only' WHERE NOT regexp_full_match('${ENV:SYSTEM_BOOK}', '[0-9]{1,32}') UNION ALL SELECT 'BIZDAY', '${date-1d}', 'YYYY-MM-DD' WHERE NOT regexp_full_match('${date-1d}', '[0-9]{4}-[0-9]{2}-[0-9]{2}') UNION ALL SELECT 'BATCH_ID', 'to-' || '${ENV:SYSTEM_BOOK}' || '-transfer_out-' || replace(replace('${datetime}','-',''),'_','T') || 'Z' AS v, 'to-<book>-transfer_out-YYYYMMDDTHHMMSSZ' WHERE NOT regexp_full_match('to-' || '${ENV:SYSTEM_BOOK}' || '-transfer_out-' || replace(replace('${datetime}','-',''),'_','T') || 'Z', 'to-[0-9]+-transfer_out-[0-9]{8}T[0-9]{6}Z')"
+          "sql": "SELECT 'BRANCH_NUMS' AS violation, '${ENV:BRANCH_NUMS}' AS detail, 'JSON integer array, e.g. [1001,1002]' AS rule WHERE NOT regexp_full_match('${ENV:BRANCH_NUMS}', '\\[[0-9]+([, ]+[0-9]+)*\\]') UNION ALL SELECT 'SYSTEM_BOOK', '${ENV:SYSTEM_BOOK}', 'digits only' WHERE NOT regexp_full_match('${ENV:SYSTEM_BOOK}', '[0-9]{1,32}') UNION ALL SELECT 'BIZDAY', '', 'YYYY-MM-DD' WHERE NOT regexp_full_match('', '[0-9]{4}-[0-9]{2}-[0-9]{2}')"
         }
       }
     },
@@ -145,8 +145,8 @@
       "id": "dv",
       "type": "transform",
       "position": {
-        "x": 0,
-        "y": 0
+        "x": 2400,
+        "y": -400
       },
       "data": {
         "label": "dv",
@@ -165,7 +165,7 @@
         "y": 0
       },
       "data": {
-        "label": "p1",
+        "label": "page 1",
         "componentId": "src.rest",
         "schema": [
           {
@@ -238,10 +238,10 @@
       "type": "source",
       "position": {
         "x": 0,
-        "y": 0
+        "y": 120
       },
       "data": {
-        "label": "p2",
+        "label": "page 2",
         "componentId": "src.rest",
         "schema": [
           {
@@ -314,10 +314,10 @@
       "type": "source",
       "position": {
         "x": 0,
-        "y": 0
+        "y": 240
       },
       "data": {
-        "label": "p3",
+        "label": "page 3",
         "componentId": "src.rest",
         "schema": [
           {
@@ -390,10 +390,10 @@
       "type": "source",
       "position": {
         "x": 0,
-        "y": 0
+        "y": 360
       },
       "data": {
-        "label": "p4",
+        "label": "page 4",
         "componentId": "src.rest",
         "schema": [
           {
@@ -466,10 +466,10 @@
       "type": "source",
       "position": {
         "x": 0,
-        "y": 0
+        "y": 480
       },
       "data": {
-        "label": "p5",
+        "label": "page 5",
         "componentId": "src.rest",
         "schema": [
           {
@@ -542,10 +542,10 @@
       "type": "source",
       "position": {
         "x": 0,
-        "y": 0
+        "y": 600
       },
       "data": {
-        "label": "p6",
+        "label": "page 6",
         "componentId": "src.rest",
         "schema": [
           {
@@ -618,10 +618,10 @@
       "type": "source",
       "position": {
         "x": 0,
-        "y": 0
+        "y": 720
       },
       "data": {
-        "label": "p7",
+        "label": "page 7",
         "componentId": "src.rest",
         "schema": [
           {
@@ -694,10 +694,10 @@
       "type": "source",
       "position": {
         "x": 0,
-        "y": 0
+        "y": 840
       },
       "data": {
-        "label": "p8",
+        "label": "page 8",
         "componentId": "src.rest",
         "schema": [
           {
@@ -770,10 +770,10 @@
       "type": "source",
       "position": {
         "x": 0,
-        "y": 0
+        "y": 960
       },
       "data": {
-        "label": "p9",
+        "label": "page 9",
         "componentId": "src.rest",
         "schema": [
           {
@@ -845,7 +845,7 @@
       "id": "merge",
       "type": "transform",
       "position": {
-        "x": 0,
+        "x": 300,
         "y": 0
       },
       "data": {
@@ -855,14 +855,45 @@
       }
     },
     {
-      "id": "shape",
+      "id": "q",
       "type": "transform",
       "position": {
         "x": 0,
+        "y": -200
+      },
+      "data": {
+        "label": "truncation guard",
+        "componentId": "code.sql",
+        "properties": {
+          "sql": "SELECT count(*) AS n FROM input HAVING count(*) = 900"
+        }
+      }
+    },
+    {
+      "id": "dg",
+      "type": "transform",
+      "position": {
+        "x": 300,
+        "y": -200
+      },
+      "data": {
+        "label": "die on truncation",
+        "componentId": "ctl.die",
+        "properties": {
+          "condition": "has-rows",
+          "message": "STATIC_PAGES_TRUNCATED: 总行数 == pages×pageSize（9×100=900）⇒ 可能截断；sink 已写，需人工确认并补页/加页"
+        }
+      }
+    },
+    {
+      "id": "t",
+      "type": "transform",
+      "position": {
+        "x": 600,
         "y": 0
       },
       "data": {
-        "label": "shape",
+        "label": "transform",
         "componentId": "code.sql",
         "properties": {
           "sql": "SELECT\n  'to-' || '${ENV:SYSTEM_BOOK}' || '-transfer_out-' || replace(replace('${datetime}','-',''),'_','T') || 'Z' AS batch_id,\n  '${ENV:SYSTEM_BOOK}' AS system_book,\n  CAST('${date-1d}' AS DATE) AS bizday,\n  CAST(o.out_order_fid AS VARCHAR) AS order_no,\n  CAST(o.order_type AS VARCHAR) AS order_type,\n  CAST(o.state_code AS INTEGER) AS state_code,\n  CAST(o.business_date AS VARCHAR) AS business_date,\n  CAST(o.create_time AS VARCHAR) AS create_time,\n  CAST(o.audit_time AS VARCHAR) AS audit_time,\n  CAST(o.branch_num AS INTEGER) AS branch_num,\n  CAST(o.branch_code AS VARCHAR) AS branch_code,\n  CAST(o.branch_name AS VARCHAR) AS branch_name,\n  CAST(o.out_branch_num AS INTEGER) AS out_branch_num,\n  CAST(o.out_branch_name AS VARCHAR) AS out_branch_name,\n  CAST(o.total_money AS DECIMAL(14,2)) AS total_money,\n  CAST(json_extract_string(u.d, '$.item_num') AS BIGINT) AS item_num,\n  CAST(json_extract_string(u.d, '$.item_grade_num') AS BIGINT) AS item_grade_num,\n  json_extract_string(u.d, '$.item_code') AS item_code,\n  json_extract_string(u.d, '$.item_barcode') AS bar_code,\n  json_extract_string(u.d, '$.item_name') AS item_name,\n  json_extract_string(u.d, '$.item_spec') AS item_spec,\n  json_extract_string(u.d, '$.item_unit') AS item_unit,\n  json_extract_string(u.d, '$.lot_number') AS lot_number,\n  CAST(json_extract_string(u.d, '$.quantity') AS DECIMAL(14,6)) AS quantity,\n  CAST(json_extract_string(u.d, '$.use_quantity') AS DECIMAL(14,6)) AS use_quantity,\n  json_extract_string(u.d, '$.use_unit') AS use_unit,\n  CAST(json_extract_string(u.d, '$.use_rate') AS DECIMAL(18,8)) AS use_rate,\n  CAST(json_extract_string(u.d, '$.present_quantity') AS DECIMAL(14,6)) AS present_quantity,\n  json_extract_string(u.d, '$.production_date') AS production_date,\n  CAST(json_extract_string(u.d, '$.unit_price') AS DECIMAL(18,8)) AS unit_price,\n  CAST(json_extract_string(u.d, '$.subtotal') AS DECIMAL(14,2)) AS subtotal,\n  CAST(json_extract_string(u.d, '$.out_money') AS DECIMAL(14,2)) AS out_money,\n  CAST(json_extract_string(u.d, '$.in_money') AS DECIMAL(14,2)) AS in_money,\n  CAST(json_extract_string(u.d, '$.cost') AS DECIMAL(18,8)) AS cost\nFROM input o\nCROSS JOIN UNNEST(from_json(CAST(o.items AS JSON), '[\"JSON\"]')) AS u(d)"
@@ -870,14 +901,14 @@
       }
     },
     {
-      "id": "gate",
+      "id": "g",
       "type": "transform",
       "position": {
-        "x": 0,
+        "x": 900,
         "y": 0
       },
       "data": {
-        "label": "gate",
+        "label": "contract gate",
         "componentId": "qa.contract",
         "properties": {
           "rules": {
@@ -893,117 +924,22 @@
       }
     },
     {
-      "id": "sink",
+      "id": "k",
       "type": "sink",
       "position": {
-        "x": 0,
+        "x": 1200,
         "y": 0
       },
       "data": {
         "label": "sink",
         "componentId": "snk.minio",
         "properties": {
-          "bucket": "${ENV:ZOS_BUCKET}",
-          "key": "lemeng/transfer_out/system_book=${ENV:SYSTEM_BOOK}/bizday=${date-1d}/all.parquet",
-          "region": "${ENV:ZOS_REGION}",
-          "urlStyle": "path",
-          "useSsl": "true",
+          "connectionRef": "zos",
+          "bucket": "shanhai-data",
+          "key": "lemeng/transfer_out/system_book=${ENV:SYSTEM_BOOK}/bizday=${date-1d}/chunk=all.parquet",
           "format": "parquet",
           "mode": "overwrite",
-          "compression": "zstd",
-          "connectionRef": "zos"
-        }
-      }
-    },
-    {
-      "id": "p10",
-      "type": "source",
-      "position": {
-        "x": 0,
-        "y": 0
-      },
-      "data": {
-        "label": "p10",
-        "componentId": "src.rest",
-        "schema": [
-          {
-            "name": "out_order_fid",
-            "type": "string"
-          },
-          {
-            "name": "order_type",
-            "type": "string"
-          },
-          {
-            "name": "state_code",
-            "type": "int64"
-          },
-          {
-            "name": "business_date",
-            "type": "string"
-          },
-          {
-            "name": "create_time",
-            "type": "string"
-          },
-          {
-            "name": "audit_time",
-            "type": "string"
-          },
-          {
-            "name": "branch_num",
-            "type": "int64"
-          },
-          {
-            "name": "branch_code",
-            "type": "string"
-          },
-          {
-            "name": "branch_name",
-            "type": "string"
-          },
-          {
-            "name": "out_branch_num",
-            "type": "int64"
-          },
-          {
-            "name": "out_branch_name",
-            "type": "string"
-          },
-          {
-            "name": "total_money",
-            "type": "float64"
-          },
-          {
-            "name": "items",
-            "type": "json"
-          }
-        ],
-        "properties": {
-          "connectionRef": "lemeng",
-          "url": "https://cloud.nhsoft.cn/agi/api/nhsoft.ama.ai.transfer.out.order.find",
-          "method": "POST",
-          "body": "{\"date_start\":\"${date-1d}\",\"date_end\":\"${date-1d}\",\"date_type\":\"制单时间\",\"page_number\":10,\"page_size\":100}",
-          "responsePath": "/result",
-          "paginationType": "none",
-          "retryAttempts": 3,
-          "retryBackoffMs": 2000
-        }
-      }
-    },
-    {
-      "id": "sentinel",
-      "type": "transform",
-      "position": {
-        "x": 0,
-        "y": 0
-      },
-      "data": {
-        "label": "sentinel",
-        "componentId": "ctl.die",
-        "properties": {
-          "condition": "has-rows",
-          "message": "lemeng transfer_out 容量截断：第 10 页（哨兵页）仍有 {rows} 行（system_book=${ENV:SYSTEM_BOOK}）⇒ 单量已击穿真阈值 900 条/日（算式：数据页 9 × page_size 100，哨兵页不计容量）。处置：加数据页节点 → 同步改本算式与哨兵页的页号 → 重生成 → 走 PR"
+          "compression": "zstd"
         }
       }
     }
@@ -1090,97 +1026,7 @@
       }
     },
     {
-      "id": "e-dv-p1",
-      "source": "dv",
-      "target": "p1",
-      "sourceHandle": null,
-      "targetHandle": null,
-      "data": {
-        "connectionType": "on-subjob-ok"
-      }
-    },
-    {
-      "id": "e-dv-p2",
-      "source": "dv",
-      "target": "p2",
-      "sourceHandle": null,
-      "targetHandle": null,
-      "data": {
-        "connectionType": "on-subjob-ok"
-      }
-    },
-    {
-      "id": "e-dv-p3",
-      "source": "dv",
-      "target": "p3",
-      "sourceHandle": null,
-      "targetHandle": null,
-      "data": {
-        "connectionType": "on-subjob-ok"
-      }
-    },
-    {
-      "id": "e-dv-p4",
-      "source": "dv",
-      "target": "p4",
-      "sourceHandle": null,
-      "targetHandle": null,
-      "data": {
-        "connectionType": "on-subjob-ok"
-      }
-    },
-    {
-      "id": "e-dv-p5",
-      "source": "dv",
-      "target": "p5",
-      "sourceHandle": null,
-      "targetHandle": null,
-      "data": {
-        "connectionType": "on-subjob-ok"
-      }
-    },
-    {
-      "id": "e-dv-p6",
-      "source": "dv",
-      "target": "p6",
-      "sourceHandle": null,
-      "targetHandle": null,
-      "data": {
-        "connectionType": "on-subjob-ok"
-      }
-    },
-    {
-      "id": "e-dv-p7",
-      "source": "dv",
-      "target": "p7",
-      "sourceHandle": null,
-      "targetHandle": null,
-      "data": {
-        "connectionType": "on-subjob-ok"
-      }
-    },
-    {
-      "id": "e-dv-p8",
-      "source": "dv",
-      "target": "p8",
-      "sourceHandle": null,
-      "targetHandle": null,
-      "data": {
-        "connectionType": "on-subjob-ok"
-      }
-    },
-    {
-      "id": "e-dv-p9",
-      "source": "dv",
-      "target": "p9",
-      "sourceHandle": null,
-      "targetHandle": null,
-      "data": {
-        "connectionType": "on-subjob-ok"
-      }
-    },
-    {
-      "id": "e-p1-merge",
+      "id": "e-p1-m",
       "source": "p1",
       "target": "merge",
       "sourceHandle": "main",
@@ -1190,7 +1036,7 @@
       }
     },
     {
-      "id": "e-p2-merge",
+      "id": "e-p2-m",
       "source": "p2",
       "target": "merge",
       "sourceHandle": "main",
@@ -1200,7 +1046,7 @@
       }
     },
     {
-      "id": "e-p3-merge",
+      "id": "e-p3-m",
       "source": "p3",
       "target": "merge",
       "sourceHandle": "main",
@@ -1210,7 +1056,7 @@
       }
     },
     {
-      "id": "e-p4-merge",
+      "id": "e-p4-m",
       "source": "p4",
       "target": "merge",
       "sourceHandle": "main",
@@ -1220,7 +1066,7 @@
       }
     },
     {
-      "id": "e-p5-merge",
+      "id": "e-p5-m",
       "source": "p5",
       "target": "merge",
       "sourceHandle": "main",
@@ -1230,7 +1076,7 @@
       }
     },
     {
-      "id": "e-p6-merge",
+      "id": "e-p6-m",
       "source": "p6",
       "target": "merge",
       "sourceHandle": "main",
@@ -1240,7 +1086,7 @@
       }
     },
     {
-      "id": "e-p7-merge",
+      "id": "e-p7-m",
       "source": "p7",
       "target": "merge",
       "sourceHandle": "main",
@@ -1250,7 +1096,7 @@
       }
     },
     {
-      "id": "e-p8-merge",
+      "id": "e-p8-m",
       "source": "p8",
       "target": "merge",
       "sourceHandle": "main",
@@ -1260,7 +1106,7 @@
       }
     },
     {
-      "id": "e-p9-merge",
+      "id": "e-p9-m",
       "source": "p9",
       "target": "merge",
       "sourceHandle": "main",
@@ -1270,9 +1116,9 @@
       }
     },
     {
-      "id": "e-merge-shape",
+      "id": "e-merge-q",
       "source": "merge",
-      "target": "shape",
+      "target": "q",
       "sourceHandle": "main",
       "targetHandle": "main",
       "data": {
@@ -1280,9 +1126,9 @@
       }
     },
     {
-      "id": "e-shape-gate",
-      "source": "shape",
-      "target": "gate",
+      "id": "e-q-dg",
+      "source": "q",
+      "target": "dg",
       "sourceHandle": "main",
       "targetHandle": "main",
       "data": {
@@ -1290,19 +1136,9 @@
       }
     },
     {
-      "id": "e-gate-sink",
-      "source": "gate",
-      "target": "sink",
-      "sourceHandle": "main",
-      "targetHandle": "main",
-      "data": {
-        "connectionType": "main"
-      }
-    },
-    {
-      "id": "e-dv-p10",
+      "id": "e-dv-first",
       "source": "dv",
-      "target": "p10",
+      "target": "p1",
       "sourceHandle": null,
       "targetHandle": null,
       "data": {
@@ -1310,9 +1146,9 @@
       }
     },
     {
-      "id": "e-p10-sentinel",
-      "source": "p10",
-      "target": "sentinel",
+      "id": "e1",
+      "source": "merge",
+      "target": "t",
       "sourceHandle": "main",
       "targetHandle": "main",
       "data": {
@@ -1320,14 +1156,27 @@
       }
     },
     {
-      "id": "e-sentinel-merge",
-      "source": "sentinel",
-      "target": "merge",
+      "id": "e2",
+      "source": "t",
+      "target": "g",
       "sourceHandle": "main",
-      "targetHandle": "main_10",
+      "targetHandle": "main",
+      "data": {
+        "connectionType": "main"
+      }
+    },
+    {
+      "id": "e3",
+      "source": "g",
+      "target": "k",
+      "sourceHandle": "main",
+      "targetHandle": "main",
       "data": {
         "connectionType": "main"
       }
     }
+  ],
+  "_note": [
+    "由 scripts/gen-pipeline.mjs 从 manifest 生成；手改请改 manifest 后重生成（--check 会拦）。"
   ]
 }
