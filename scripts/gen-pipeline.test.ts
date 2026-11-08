@@ -171,6 +171,39 @@ describe('gen-pipeline：static_pages', () => {
     expect(p.edges.some((e: any) => e.source === 'die_empty')).toBe(false)
   })
 
+  it('perPageTransform：合并前逐页投影，合并后不再跑 transform（正典 §1.6 案例 36）', () => {
+    const m = mutate((x) => {
+      x.source.pagination = { type: 'static_pages', pages: 3, pageSize: 100, pageSizeParam: 'page_size', perPageTransform: true }
+      x.gate = { rules: { order_no: 'not_null' } }
+    })
+    expect(validateManifest(m)).toEqual([])
+    const p: any = buildPipeline(m as any)
+    // 每页后接一个 code.sql 投影节点；合并吃的是投影节点，不是页节点
+    expect(p.nodes.map((n: any) => n.id)).toEqual(['p1', 'n1', 'p2', 'n2', 'p3', 'n3', 'merge', 'g', 'k'])
+    const proj = p.nodes.find((n: any) => n.id === 'n2')
+    expect(proj.data.componentId).toBe('code.sql')
+    expect(proj.data.properties.sql).toBe(m.transform.sql)
+    // 合并后**没有** t：列已按契约摊平，再跑一遍会 binder error
+    expect(p.nodes.some((n: any) => n.id === 't')).toBe(false)
+    expect(p.edges.filter((e: any) => e.target === 'merge').map((e: any) => e.targetHandle)).toEqual([
+      'main_1',
+      'main_2',
+      'main_3',
+    ])
+    expect(p.edges.find((e: any) => e.target === 'g').source).toBe('merge')
+  })
+
+  it('perPageTransform 只配 static_pages / 必须布尔', () => {
+    const m = mutate((x) => {
+      x.source.pagination = { type: 'none', perPageTransform: true }
+    })
+    expect(validateManifest(m).join()).toContain('perPageTransform')
+    const m2 = mutate((x) => {
+      x.source.pagination = { type: 'static_pages', pages: 2, pageSize: 10, perPageTransform: 'yes' }
+    })
+    expect(validateManifest(m2).join()).toContain('perPageTransform')
+  })
+
   it('emptyGuard 只配 static_pages', () => {
     const m = mutate((x) => {
       x.emptyGuard = { message: 'x' }
