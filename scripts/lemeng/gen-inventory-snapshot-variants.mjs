@@ -32,6 +32,15 @@ const MAIN_WINDOW = '${date-2d}'
 const CHECK = process.argv.includes('--check')
 
 /**
+ * 宽页回填变体（只给 3120）：2025 年那段的库存快照**单日 6–8 万行**（2026-11-08 直探源 API 实测：
+ * 2025-08-14 第 350 页仍有 157 行 ⇒ 69,957 行/天），主管线的 30 页 × 200 装不下——装到 6,000 就
+ * 触发截断哨兵。宽变体把页数扩到 360（容量 72,000），只用于历史补采。
+ * 64188 不需要：它的历史完整（2024-11-01 起 736 天，逐日行数与源端对得上）。
+ * @type {{ book: string, pages: number, pageSize: number } | null}
+ */
+const WIDE = { book: '3120', pages: 360, pageSize: 200 }
+
+/**
  * 变体定义：suffix 决定文件名与管线名；window 是替换后的窗口 token。
  * message 是函数——空集文案里要带**本账套**的兜底/回填管线名，写死 3120 会误导 64188 的值班人。
  * @type {{ suffix: string, window: string, label: string, message: (book: string) => string }[]}
@@ -72,6 +81,84 @@ function replaceToken(v, from, to) {
 }
 
 let drift = false
+
+/**
+ * 落盘/比对一份生成物（CHECK 只比不写）。
+ * @param {string} out @param {any} pipeline @param {string} tag
+ */
+function emit(out, pipeline, tag) {
+  const body = JSON.stringify(pipeline, null, 2) + '\n'
+  if (CHECK) {
+    /** @type {string | null} */
+    let onDisk = null
+    try {
+      onDisk = readFileSync(out, 'utf8')
+    } catch {
+      console.error(`GEN_DRIFT: ${out} 不存在（跑了生成器没提交？）`)
+      drift = true
+      return
+    }
+    if (onDisk !== body) {
+      console.error(`GEN_DRIFT: ${out} 与主管线派生结果不一致（改了主管线没重跑生成器？）`)
+      drift = true
+    } else {
+      console.log(`ok: ${out}`)
+    }
+  } else {
+    writeFileSync(out, body)
+    console.log(`written: ${out} (name=${pipeline.name} ${tag})`)
+  }
+}
+
+/**
+ * 把静态页节点从 N 页扩到 `pages` 页：克隆末页模板，逐页改写 `page_number`，接到 merge 的 main_i；
+ * 同时把截断哨兵的阈值与文案改成新容量（否则 360 页的管线还按 30 页判截断）。
+ * @param {any} pipeline @param {number} pages @param {number} pageSize
+ */
+function expandPages(pipeline, pages, pageSize) {
+  const pageIds = pipeline.nodes
+    .map((/** @type {any} */ n) => /^p(\d+)$/.exec(String(n.id)))
+    .filter((/** @type {RegExpExecArray | null} */ m) => m !== null)
+    .map((/** @type {RegExpExecArray} */ m) => Number(m[1]))
+  const have = Math.max(...pageIds)
+  if (have >= pages) return
+  /** @type {any} */
+  const template = pipeline.nodes.find((/** @type {any} */ n) => n.id === `p${have}`)
+  for (let i = have + 1; i <= pages; i += 1) {
+    /** @type {any} */
+    const node = structuredClone(template)
+    node.id = `p${i}`
+    node.data.label = `page ${i}`
+    node.data.properties.body = String(node.data.properties.body).replace(
+      /"page_number"\s*:\s*\d+/,
+      `"page_number":${i}`,
+    )
+    pipeline.nodes.push(node)
+    pipeline.edges.push({
+      id: `e-p${i}-m`,
+      source: `p${i}`,
+      target: 'merge',
+      sourceHandle: 'main',
+      targetHandle: `main_${i}`,
+      data: { connectionType: 'main' },
+    })
+  }
+  const threshold = pages * pageSize
+  /** @type {any} */
+  const guard = pipeline.nodes.find((/** @type {any} */ n) => n.id === 'q')
+  if (guard !== undefined) {
+    guard.data.properties.sql = String(guard.data.properties.sql).replace(/=\s*\d+/, `= ${threshold}`)
+  }
+  /** @type {any} */
+  const die = pipeline.nodes.find((/** @type {any} */ n) => n.id === 'dg')
+  if (die !== undefined) {
+    die.data.properties.message = String(die.data.properties.message).replace(
+      /（\d+×\d+=\d+）/,
+      `（${pages}×${pageSize}=${threshold}）`,
+    )
+  }
+}
+
 for (const book of BOOKS) {
   const MAIN_NAME = `lemeng.inventory.snapshot.l0.${book}`
   const mainPath = join(DIR, `${MAIN_NAME}.json`)
@@ -106,26 +193,16 @@ for (const book of BOOKS) {
     dieEmpty.data.properties.message = v.message(book)
 
     const out = join(dirname(mainPath), `lemeng.inventory.snapshot.${v.suffix}.${book}.json`)
-    const body = JSON.stringify(pipeline, null, 2) + '\n'
-    if (CHECK) {
-      /** @type {string | null} */
-      let onDisk = null
-      try {
-        onDisk = readFileSync(out, 'utf8')
-      } catch {
-        console.error(`GEN_DRIFT: ${out} 不存在（跑了生成器没提交？）`)
-        drift = true
-        continue
-      }
-      if (onDisk !== body) {
-        console.error(`GEN_DRIFT: ${out} 与主管线派生结果不一致（改了主管线没重跑生成器？）`)
-        drift = true
-      } else {
-        console.log(`ok: ${out}`)
-      }
-    } else {
-      writeFileSync(out, body)
-      console.log(`written: ${out} (name=${pipeline.name} window=${v.window})`)
+    emit(out, pipeline, `${v.suffix}.${book}`)
+
+    // 宽页回填变体：只给 WIDE.book，且从**回填变体**再扩页（窗口/空集文案都一样，只多页）。
+    if (v.suffix === 'backfill' && WIDE !== null && book === WIDE.book) {
+      /** @type {any} */
+      const wide = structuredClone(pipeline)
+      expandPages(wide, WIDE.pages, WIDE.pageSize)
+      wide.name = `lemeng.inventory.snapshot.backfill.wide.${book}`
+      const wideOut = join(dirname(mainPath), `lemeng.inventory.snapshot.backfill.wide.${book}.json`)
+      emit(wideOut, wide, `backfill.wide.${book}（${WIDE.pages} 页）`)
     }
   }
 }
