@@ -1,0 +1,97 @@
+{
+  "id": "lemeng.dim.branch.l0",
+  "domain": "lemeng",
+  "account": "3120",
+  "identityGate": true,
+  "source": {
+    "connectionRef": "lemeng",
+    "url": "https://cloud.nhsoft.cn/agi/api/nhsoft.user.ai.branch.find",
+    "method": "POST",
+    "body": "{\"page_number\": 1, \"page_size\": 200}",
+    "responsePath": "/result/content",
+    "retryAttempts": 3,
+    "retryBackoffMs": 2000,
+    "schema": [
+      {
+        "name": "branch_num",
+        "type": "int64"
+      },
+      {
+        "name": "code",
+        "type": "string"
+      },
+      {
+        "name": "name",
+        "type": "string"
+      },
+      {
+        "name": "pinyin",
+        "type": "string"
+      },
+      {
+        "name": "type",
+        "type": "string"
+      },
+      {
+        "name": "enable",
+        "type": "bool"
+      },
+      {
+        "name": "region_id",
+        "type": "int64"
+      },
+      {
+        "name": "province",
+        "type": "string"
+      },
+      {
+        "name": "city",
+        "type": "string"
+      },
+      {
+        "name": "district",
+        "type": "string"
+      },
+      {
+        "name": "contact",
+        "type": "string"
+      },
+      {
+        "name": "phone",
+        "type": "string"
+      },
+      {
+        "name": "address",
+        "type": "string"
+      }
+    ],
+    "pagination": {
+      "type": "static_pages",
+      "pages": 4,
+      "pageSize": 200,
+      "pageSizeParam": "page_size",
+      "truncationGuard": true,
+      "windowToken": "${date+8h}"
+    }
+  },
+  "transform": {
+    "sql": "SELECT\n  'dim-' || '${ENV:SYSTEM_BOOK}' || '-branch-' || replace(replace('${datetime}','-',''),'_','T') || 'Z' AS batch_id,\n  '${ENV:SYSTEM_BOOK}' AS system_book,\n  CAST('${date+8h}' AS DATE) AS snapshot,\n  CAST(o.branch_num AS INTEGER) AS branch_num,\n  CAST(o.code AS VARCHAR) AS code,\n  CAST(o.name AS VARCHAR) AS name,\n  CAST(o.pinyin AS VARCHAR) AS pinyin,\n  CAST(o.type AS VARCHAR) AS type,\n  CAST(o.enable AS BOOLEAN) AS enable,\n  CAST(o.region_id AS INTEGER) AS region_id,\n  CAST(o.province AS VARCHAR) AS province,\n  CAST(o.city AS VARCHAR) AS city,\n  CAST(o.district AS VARCHAR) AS district,\n  CAST(o.contact AS VARCHAR) AS contact,\n  CAST(o.phone AS VARCHAR) AS phone,\n  CAST(o.address AS VARCHAR) AS address\nFROM input o"
+  },
+  "gate": {
+    "rules": {
+      "batch_id": "not_null",
+      "system_book": "not_null",
+      "snapshot": "not_null",
+      "branch_num": "not_null"
+    }
+  },
+  "sink": {
+    "type": "minio",
+    "connectionRef": "zos",
+    "bucket": "shanhai-data",
+    "key": "lemeng/dim_branch/system_book=${ENV:SYSTEM_BOOK}/snapshot=${date+8h}/chunk=all.parquet",
+    "format": "parquet",
+    "mode": "overwrite",
+    "compression": "zstd"
+  }
+}

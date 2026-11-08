@@ -78,7 +78,7 @@
     "     kind=**object**，id = `minio://${ENV:ZOS_BUCKET}/lemeng/dim_branch/system_book=${ENV:SYSTEM_BOOK}/snapshot=${date+8h}/all.parquet`。",
     "     ⚠️ **占位符不展开**（duckle 0.7.4 本机实测：`catalog build` 原样保留 `${ENV:…}` / `${date+8h}`）。",
     "     这对 SLA **无害**：该 id 是**常量**，正合 maximumAge「最近一次成功写距今多久」的语义",
-    "     （它本来就不带日期维度）。匹配用 glob `minio://*/lemeng/dim_branch/system_book=*/snapshot=*/all.parquet`",
+    "     （它本来就不带日期维度）。匹配用 glob `minio://*/lemeng/dim_branch/system_book=*/snapshot=*/*.parquet`",
     "     ——**同样是本机实测匹配通过**的写法（`duckle catalog owners` 复核），不靠猜。",
     "   · ⚠️ **硬前置：catalog 必须先重建**（本次第一步实测发现）。catalog.json 是**静态扫描 pipelines/",
     "     的产物**、不是每次 run 现推（②）⇒ 管线文件进卷后不重建 catalog，该管线的 run record",
@@ -120,7 +120,7 @@
       "maximumAge": "36h"
     },
     {
-      "match": "minio://*/lemeng/dim_branch/system_book=*/snapshot=*/all.parquet",
+      "match": "minio://*/lemeng/dim_branch/system_book=*/snapshot=*/*.parquet",
       "owner": "data-eng",
       "description": "门店维每日采集的成功凭证（L0 管线 lemeng.dim.branch.l0 的 snk.minio 目标；写入=当天采集成功）。⚠️ 占位符不展开是**正常**的（见 ⑧）；该资产时钟只在**重建 catalog 之后**的成功 run 上起算",
       "tags": [
