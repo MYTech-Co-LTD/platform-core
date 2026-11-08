@@ -21,7 +21,7 @@ set -u
 #    /opt 那份**不会被自动更新**（实测踩过：仓库改了过滤逻辑，OO 机仍是 10-24 的老版本，
 #    群里照旧刷屏 40 分钟没人发现）。所以让漂移**响亮**：job env 给 BRIDGE_EXPECTED_VERSION，
 #    与脚本内 BRIDGE_VERSION 不一致就 exit 3（job 失败 → 企微告警 → 值班人按 SOP 手工投递）。
-BRIDGE_VERSION=3
+BRIDGE_VERSION=4
 EXPECTED=${BRIDGE_EXPECTED_VERSION:-}
 if [ -n "$EXPECTED" ] && [ "$EXPECTED" != "$BRIDGE_VERSION" ]; then
   echo "BR_FAIL:version_drift 本机脚本 v${BRIDGE_VERSION} ≠ 期望 v${EXPECTED}（OO 机不随 sync 更新，需手工投递，见 data-plane-deploy-sop.md）"
@@ -132,17 +132,38 @@ PN=$(printf '%s' "$R" | jq '.hits | length')
 case "$PN" in ''|*[!0-9]*) echo "BR_FAIL:search 响应异常(pb)：$(printf '%s' "$R" | head -c 160)"; exit 1 ;; esac
 PNEW=$PLAST
 PSENT=0
+# ── per-check 冷却（2026-11-09，v4）：探活每 5 分钟落一行判红 ⇒ 旧行为**每行都推群**，
+#    一个持续红项就是 12 条/小时（实测 config_drift 3 小时 33 条，用户原话「一直在报」）。
+#    wire-warehouse.sh 的注释早就写明「桥的 per-check 12h 冷却（cool_<check>，43200s）」，
+#    但**代码里从没实现**（`cool_` 全仓只有那行注释）——本版补上，口径照该注释：
+#      · 首次见到该 check 判红       → 立刻推（发现速度不变）
+#      · 距该 check 上次推送 ≥ 43200s → 推（仍在红的定期提醒）
+#      · 否则静默（只推进水位，不推群）
+#    ⚠️ 代价照注释接受：12h 内同一 check 的后续判红不再重复提醒（首报已足以启动处置）。
+#    不用 detail 做「变了就推」的判据——判红 detail 里带计数（如 `64188(12)`），每轮都变，
+#    拿它比会**恒推**，等于没冷却。
+COOLDOWN=${PROBE_COOLDOWN_SECONDS:-43200}
 i=0
 while [ "$i" -lt "$PN" ]; do
   CK=$(printf '%s' "$R" | jq -r ".hits[$i].check")
   DT=$(printf '%s' "$R" | jq -r ".hits[$i].detail // \"\"" | head -c 160)
   TS=$(printf '%s' "$R" | jq -r ".hits[$i]._timestamp" | cut -d. -f1)
+  SF=$STATE_DIR/cool_$CK
+  NOW=$(date +%s)
+  PREV=$(cat "$SF" 2>/dev/null || true)
+  case "$PREV" in ''|*[!0-9]*) PREV=0 ;; esac
+  if [ "$PREV" -gt 0 ] && [ $((NOW - PREV)) -lt "$COOLDOWN" ]; then
+    echo "BR_SKIP:probe_cooldown ${CK}（12h 内已推送，上次 $(( (NOW - PREV) / 60 )) 分钟前）"
+    PNEW=$TS; echo "$PNEW" > "$PB_FILE"
+    i=$((i + 1)); continue
+  fi
   # shellcheck disable=SC2016
   BODY=$(printf '{"msgtype":"markdown","markdown":{"content":"🔴 **[OO 探活] 断言 %s 判红**\\n> %s\\n> 明细: observe.hookflow.cn → Logs → data_plane_probes"}}' "$CK" "$DT")
   RESP=$(curl -sS -m 15 "$WECOM_WEBHOOK_URL" -H 'Content-Type: application/json' -d "$BODY") || {
     echo "BR_FAIL:send unreachable（probe ${CK}）"; exit 1
   }
   echo "$RESP" | grep -q '"errcode":0' || { echo "BR_FAIL:send rejected（probe ${CK}）：$RESP"; exit 1; }
+  echo "$NOW" > "$SF"
   PNEW=$TS
   echo "$PNEW" > "$PB_FILE"
   PSENT=$((PSENT + 1))
