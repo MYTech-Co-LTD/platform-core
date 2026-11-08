@@ -24,6 +24,7 @@ owners:
   fct_inventory_snapshot: data-platform
   fct_loss_adjustment: data-platform
   fct_member_summary: data-platform
+  fct_order_event: data-platform
   fct_outbound_region: data-platform
   fct_purchase: data-platform
   fct_purchase_concentration: data-platform
