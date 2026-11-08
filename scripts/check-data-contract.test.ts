@@ -41,6 +41,7 @@ function fixture(over: {
   schemaVersion?: number | null
   consumerVersion?: number | null
   pipelineText?: string
+  extraProjection?: 'same' | 'different'
   sinkKey?: string
   srcSchema?: Array<{ name: string, type: string }>
   sensitivity?: Record<string, string>
@@ -65,6 +66,12 @@ function fixture(over: {
   const cv = over.consumerVersion === undefined ? sv : over.consumerVersion
   if (cv !== null) contract.consumerVersion = cv
 
+  /** 契约投影 SQL（逐页投影形态下 N 个节点共用同一条）。 */
+  const flatSql =
+    over.pipelineText ??
+    `SELECT ${pc.map((c) => `CAST(b.${c} AS VARCHAR) AS ${c}`).join(', ')}\n` +
+      `FROM input b CROSS JOIN UNNEST(from_json(CAST(b.d AS JSON), '["JSON"]')) AS u(d)`
+
   const pipeline = {
     nodes: [
       // 数据链：src.rest → ctl.merge → flat（新判据 ④ 只看 `ctl.merge` 的直接 src.rest 父）
@@ -77,13 +84,23 @@ function fixture(over: {
           properties: {
             // 故意混入两种**不是投影列**的形态：`CAST(x AS JSON)`（大写类型名）与
             // `AS u(d)`（表别名带括号）——取列器必须都不认。
-            sql:
-              over.pipelineText ??
-              `SELECT ${pc.map((c) => `CAST(b.${c} AS VARCHAR) AS ${c}`).join(', ')}\n` +
-                `FROM input b CROSS JOIN UNNEST(from_json(CAST(b.d AS JSON), '["JSON"]')) AS u(d)`,
+            sql: flatSql,
           },
         },
       },
+      // 逐页投影形态：第二个也命中契约的 code.sql（`same` = 同一条 SQL ⇒ 合法；
+      // `different` = 另一条也命中的 SQL ⇒ 两套投影各说各话，必须红）
+      ...(over.extraProjection
+        ? [
+            {
+              id: 'flat2',
+              data: {
+                componentId: 'code.sql',
+                properties: { sql: over.extraProjection === 'same' ? flatSql : `${flatSql}\n-- variant` },
+              },
+            },
+          ]
+        : []),
       // 另一个 code.sql 节点（守卫/回执），列集与契约不同 —— 必须**不被**当成投影
       { id: 'summ', data: { componentId: 'code.sql', properties: { sql: "SELECT 'r' AS run_token, 'ok' AS status" } }, },
       // 生产者是靠**文本里出现 prefix** 机械推导的；真实管线由 sink 的 key 承载它
@@ -168,6 +185,16 @@ describe('check-data-contract', () => {
     const v = checkDataContract(fixture({ pipelineCols: COLS.slice(0, -1) }))
     expect(v).toHaveLength(1)
     expect(v[0]!.message).toContain('恰好一个')
+  })
+
+  it('逐页投影：N 个命中但**同一条 SQL** ⇒ 不红（perPageTransform 形态）', () => {
+    expect(checkDataContract(fixture({ extraProjection: 'same' }))).toEqual([])
+  })
+
+  it('逐页投影：两条**不同的** SQL 都命中 ⇒ 红（两套投影各说各话）', () => {
+    const v = checkDataContract(fixture({ extraProjection: 'different' }))
+    expect(v).toHaveLength(1)
+    expect(v[0]!.message).toContain('去重 SQL 2 条')
   })
 
   it('列序不同也算红（同序是有意义的判据）', () => {
