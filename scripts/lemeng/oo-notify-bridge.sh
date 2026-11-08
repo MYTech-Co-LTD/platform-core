@@ -17,6 +17,16 @@
 # 退出码：0=无事/全部送达；1=发送失败（下一轮重试）；3=配置/环境坏（openship job notify@failed 兜底）。
 
 set -u
+# ── 版本握手（2026-11-08）：本脚本跑在 **OpenObserve 机**，而 data-plane sync 只在数据面机跑 ⇒
+#    /opt 那份**不会被自动更新**（实测踩过：仓库改了过滤逻辑，OO 机仍是 10-24 的老版本，
+#    群里照旧刷屏 40 分钟没人发现）。所以让漂移**响亮**：job env 给 BRIDGE_EXPECTED_VERSION，
+#    与脚本内 BRIDGE_VERSION 不一致就 exit 3（job 失败 → 企微告警 → 值班人按 SOP 手工投递）。
+BRIDGE_VERSION=3
+EXPECTED=${BRIDGE_EXPECTED_VERSION:-}
+if [ -n "$EXPECTED" ] && [ "$EXPECTED" != "$BRIDGE_VERSION" ]; then
+  echo "BR_FAIL:version_drift 本机脚本 v${BRIDGE_VERSION} ≠ 期望 v${EXPECTED}（OO 机不随 sync 更新，需手工投递，见 data-plane-deploy-sop.md）"
+  exit 3
+fi
 [ -n "${WECOM_WEBHOOK_URL:-}" ] || { echo 'BR_FAIL:bad_args 缺 WECOM_WEBHOOK_URL'; exit 3; }
 
 STATE_DIR=${STATE_DIR:-/var/lib/oo-notify-bridge}
@@ -171,4 +181,4 @@ if [ -n "$TROWS" ]; then
   rm -f "$TTF"
 fi
 
-echo "BR_OK:sent=$SENT probes=$PSENT infra=$TSENT wm=$NEWLAST/$PNEW/$TNEW"
+echo "BR_OK:sent=$SENT probes=$PSENT infra=$TSENT wm=$NEWLAST/$PNEW/$TNEW v=$BRIDGE_VERSION"
