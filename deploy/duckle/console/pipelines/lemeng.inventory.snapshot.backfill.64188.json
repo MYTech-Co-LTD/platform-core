@@ -6,7 +6,7 @@
       "type": "source",
       "position": {
         "x": 0,
-        "y": 0
+        "y": -400
       },
       "data": {
         "label": "w0",
@@ -38,8 +38,8 @@
       "id": "g0",
       "type": "transform",
       "position": {
-        "x": 0,
-        "y": 0
+        "x": 300,
+        "y": -400
       },
       "data": {
         "label": "g0",
@@ -53,8 +53,8 @@
       "id": "g1",
       "type": "transform",
       "position": {
-        "x": 0,
-        "y": 0
+        "x": 600,
+        "y": -400
       },
       "data": {
         "label": "g1",
@@ -68,8 +68,8 @@
       "id": "g2",
       "type": "transform",
       "position": {
-        "x": 0,
-        "y": 0
+        "x": 900,
+        "y": -400
       },
       "data": {
         "label": "g2",
@@ -83,8 +83,8 @@
       "id": "d0",
       "type": "transform",
       "position": {
-        "x": 0,
-        "y": 0
+        "x": 1200,
+        "y": -400
       },
       "data": {
         "label": "d0",
@@ -99,8 +99,8 @@
       "id": "g3",
       "type": "transform",
       "position": {
-        "x": 0,
-        "y": 0
+        "x": 1500,
+        "y": -400
       },
       "data": {
         "label": "g3",
@@ -114,8 +114,8 @@
       "id": "d1",
       "type": "transform",
       "position": {
-        "x": 0,
-        "y": 0
+        "x": 1800,
+        "y": -400
       },
       "data": {
         "label": "d1",
@@ -130,14 +130,14 @@
       "id": "gv",
       "type": "transform",
       "position": {
-        "x": 0,
-        "y": 0
+        "x": 2100,
+        "y": -400
       },
       "data": {
         "label": "gv",
         "componentId": "code.sql",
         "properties": {
-          "sql": "SELECT 'BRANCH_NUMS' AS violation, '${ENV:BRANCH_NUMS}' AS detail, 'JSON integer array, e.g. [1001,1002]' AS rule WHERE NOT regexp_full_match('${ENV:BRANCH_NUMS}', '\\[[0-9]+([, ]+[0-9]+)*\\]') UNION ALL SELECT 'SYSTEM_BOOK', '${ENV:SYSTEM_BOOK}', 'digits only' WHERE NOT regexp_full_match('${ENV:SYSTEM_BOOK}', '[0-9]{1,32}') UNION ALL SELECT 'BIZDAY', '${BIZDAY}', 'YYYY-MM-DD' WHERE NOT regexp_full_match('${BIZDAY}', '[0-9]{4}-[0-9]{2}-[0-9]{2}') UNION ALL SELECT 'BATCH_ID', 'iv-' || '${ENV:SYSTEM_BOOK}' || '-inventory_snapshot-' || replace(replace('${datetime}','-',''),'_','T') || 'Z' AS v, 'iv-<book>-inventory_snapshot-YYYYMMDDTHHMMSSZ' WHERE NOT regexp_full_match('iv-' || '${ENV:SYSTEM_BOOK}' || '-inventory_snapshot-' || replace(replace('${datetime}','-',''),'_','T') || 'Z', 'iv-[0-9]+-inventory_snapshot-[0-9]{8}T[0-9]{6}Z')"
+          "sql": "SELECT 'BRANCH_NUMS' AS violation, '${ENV:BRANCH_NUMS}' AS detail, 'JSON integer array, e.g. [1001,1002]' AS rule WHERE NOT regexp_full_match('${ENV:BRANCH_NUMS}', '\\[[0-9]+([, ]+[0-9]+)*\\]') UNION ALL SELECT 'SYSTEM_BOOK', '${ENV:SYSTEM_BOOK}', 'digits only' WHERE NOT regexp_full_match('${ENV:SYSTEM_BOOK}', '[0-9]{1,32}') UNION ALL SELECT 'BIZDAY', '${BIZDAY}', 'YYYY-MM-DD' WHERE NOT regexp_full_match('${BIZDAY}', '[0-9]{4}-[0-9]{2}-[0-9]{2}')"
         }
       }
     },
@@ -145,8 +145,8 @@
       "id": "dv",
       "type": "transform",
       "position": {
-        "x": 0,
-        "y": 0
+        "x": 2400,
+        "y": -400
       },
       "data": {
         "label": "dv",
@@ -165,7 +165,7 @@
         "y": 0
       },
       "data": {
-        "label": "p1",
+        "label": "page 1",
         "componentId": "src.rest",
         "schema": [
           {
@@ -266,10 +266,10 @@
       "type": "source",
       "position": {
         "x": 0,
-        "y": 0
+        "y": 120
       },
       "data": {
-        "label": "p2",
+        "label": "page 2",
         "componentId": "src.rest",
         "schema": [
           {
@@ -370,10 +370,10 @@
       "type": "source",
       "position": {
         "x": 0,
-        "y": 0
+        "y": 240
       },
       "data": {
-        "label": "p3",
+        "label": "page 3",
         "componentId": "src.rest",
         "schema": [
           {
@@ -474,10 +474,10 @@
       "type": "source",
       "position": {
         "x": 0,
-        "y": 0
+        "y": 360
       },
       "data": {
-        "label": "p4",
+        "label": "page 4",
         "componentId": "src.rest",
         "schema": [
           {
@@ -578,10 +578,10 @@
       "type": "source",
       "position": {
         "x": 0,
-        "y": 0
+        "y": 480
       },
       "data": {
-        "label": "p5",
+        "label": "page 5",
         "componentId": "src.rest",
         "schema": [
           {
@@ -682,10 +682,10 @@
       "type": "source",
       "position": {
         "x": 0,
-        "y": 0
+        "y": 600
       },
       "data": {
-        "label": "p6",
+        "label": "page 6",
         "componentId": "src.rest",
         "schema": [
           {
@@ -786,10 +786,10 @@
       "type": "source",
       "position": {
         "x": 0,
-        "y": 0
+        "y": 720
       },
       "data": {
-        "label": "p7",
+        "label": "page 7",
         "componentId": "src.rest",
         "schema": [
           {
@@ -890,10 +890,10 @@
       "type": "source",
       "position": {
         "x": 0,
-        "y": 0
+        "y": 840
       },
       "data": {
-        "label": "p8",
+        "label": "page 8",
         "componentId": "src.rest",
         "schema": [
           {
@@ -994,10 +994,10 @@
       "type": "source",
       "position": {
         "x": 0,
-        "y": 0
+        "y": 960
       },
       "data": {
-        "label": "p9",
+        "label": "page 9",
         "componentId": "src.rest",
         "schema": [
           {
@@ -1094,87 +1094,14 @@
       }
     },
     {
-      "id": "merge",
-      "type": "transform",
-      "position": {
-        "x": 0,
-        "y": 0
-      },
-      "data": {
-        "label": "merge",
-        "componentId": "ctl.merge",
-        "properties": {}
-      }
-    },
-    {
-      "id": "shape",
-      "type": "transform",
-      "position": {
-        "x": 0,
-        "y": 0
-      },
-      "data": {
-        "label": "shape",
-        "componentId": "code.sql",
-        "properties": {
-          "sql": "SELECT\n  'iv-' || '${ENV:SYSTEM_BOOK}' || '-inventory_snapshot-' || replace(replace('${datetime}','-',''),'_','T') || 'Z' AS batch_id,\n  '${ENV:SYSTEM_BOOK}' AS system_book,\n  CAST('${BIZDAY}' AS DATE) AS bizday,\n  CAST(o.branch_num AS INTEGER) AS branch_num,\n  CAST(o.branch_code AS VARCHAR) AS branch_code,\n  CAST(o.branch_name AS VARCHAR) AS branch_name,\n  CAST(o.storehouse_num AS BIGINT) AS storehouse_num,\n  CAST(o.storehouse_code AS VARCHAR) AS storehouse_code,\n  CAST(o.storehouse_name AS VARCHAR) AS storehouse_name,\n  CAST(o.item_num AS BIGINT) AS item_num,\n  CAST(o.item_code AS VARCHAR) AS item_code,\n  CAST(o.item_barcode AS VARCHAR) AS item_barcode,\n  CAST(o.item_name AS VARCHAR) AS item_name,\n  CAST(o.item_spec AS VARCHAR) AS item_spec,\n  CAST(o.item_unit AS VARCHAR) AS item_unit,\n  CAST(o.inventory_quantity AS DECIMAL(14,6)) AS inventory_quantity,\n  CAST(o.inventory_assist_quantity AS DECIMAL(14,6)) AS inventory_assist_quantity,\n  CAST(o.inventory_use_quantity AS DECIMAL(14,6)) AS inventory_use_quantity,\n  CAST(o.inventory_money AS DECIMAL(14,2)) AS inventory_money,\n  CAST(o.carry_cost_price AS DECIMAL(18,8)) AS carry_cost_price,\n  CAST(o.sale_price AS DECIMAL(18,8)) AS sale_price,\n  CAST(o.difference_quantity AS DECIMAL(14,6)) AS difference_quantity,\n  CAST(o.difference_money AS DECIMAL(14,2)) AS difference_money\nFROM input o"
-        }
-      }
-    },
-    {
-      "id": "gate",
-      "type": "transform",
-      "position": {
-        "x": 0,
-        "y": 0
-      },
-      "data": {
-        "label": "gate",
-        "componentId": "qa.contract",
-        "properties": {
-          "rules": {
-            "batch_id": "not_null",
-            "system_book": "not_null",
-            "bizday": "not_null",
-            "branch_num": "not_null",
-            "storehouse_num": "not_null",
-            "item_num": "not_null"
-          }
-        }
-      }
-    },
-    {
-      "id": "sink",
-      "type": "sink",
-      "position": {
-        "x": 0,
-        "y": 0
-      },
-      "data": {
-        "label": "sink",
-        "componentId": "snk.minio",
-        "properties": {
-          "bucket": "${ENV:ZOS_BUCKET}",
-          "key": "lemeng/inventory_snapshot/system_book=${ENV:SYSTEM_BOOK}/bizday=${BIZDAY}/all.parquet",
-          "region": "${ENV:ZOS_REGION}",
-          "urlStyle": "path",
-          "useSsl": "true",
-          "format": "parquet",
-          "mode": "overwrite",
-          "compression": "zstd",
-          "connectionRef": "zos"
-        }
-      }
-    },
-    {
       "id": "p10",
       "type": "source",
       "position": {
-        "x": 2340,
-        "y": 0
+        "x": 0,
+        "y": 1080
       },
       "data": {
-        "label": "p1",
+        "label": "page 10",
         "componentId": "src.rest",
         "schema": [
           {
@@ -1274,11 +1201,11 @@
       "id": "p11",
       "type": "source",
       "position": {
-        "x": 2600,
-        "y": 0
+        "x": 0,
+        "y": 1200
       },
       "data": {
-        "label": "p1",
+        "label": "page 11",
         "componentId": "src.rest",
         "schema": [
           {
@@ -1378,11 +1305,11 @@
       "id": "p12",
       "type": "source",
       "position": {
-        "x": 2860,
-        "y": 0
+        "x": 0,
+        "y": 1320
       },
       "data": {
-        "label": "p1",
+        "label": "page 12",
         "componentId": "src.rest",
         "schema": [
           {
@@ -1482,11 +1409,11 @@
       "id": "p13",
       "type": "source",
       "position": {
-        "x": 3120,
-        "y": 0
+        "x": 0,
+        "y": 1440
       },
       "data": {
-        "label": "p1",
+        "label": "page 13",
         "componentId": "src.rest",
         "schema": [
           {
@@ -1586,11 +1513,11 @@
       "id": "p14",
       "type": "source",
       "position": {
-        "x": 3380,
-        "y": 0
+        "x": 0,
+        "y": 1560
       },
       "data": {
-        "label": "p1",
+        "label": "page 14",
         "componentId": "src.rest",
         "schema": [
           {
@@ -1690,11 +1617,11 @@
       "id": "p15",
       "type": "source",
       "position": {
-        "x": 3640,
-        "y": 0
+        "x": 0,
+        "y": 1680
       },
       "data": {
-        "label": "p1",
+        "label": "page 15",
         "componentId": "src.rest",
         "schema": [
           {
@@ -1794,11 +1721,11 @@
       "id": "p16",
       "type": "source",
       "position": {
-        "x": 3900,
-        "y": 0
+        "x": 0,
+        "y": 1800
       },
       "data": {
-        "label": "p1",
+        "label": "page 16",
         "componentId": "src.rest",
         "schema": [
           {
@@ -1898,11 +1825,11 @@
       "id": "p17",
       "type": "source",
       "position": {
-        "x": 4160,
-        "y": 0
+        "x": 0,
+        "y": 1920
       },
       "data": {
-        "label": "p1",
+        "label": "page 17",
         "componentId": "src.rest",
         "schema": [
           {
@@ -2002,11 +1929,11 @@
       "id": "p18",
       "type": "source",
       "position": {
-        "x": 4420,
-        "y": 0
+        "x": 0,
+        "y": 2040
       },
       "data": {
-        "label": "p1",
+        "label": "page 18",
         "componentId": "src.rest",
         "schema": [
           {
@@ -2106,11 +2033,11 @@
       "id": "p19",
       "type": "source",
       "position": {
-        "x": 4680,
-        "y": 0
+        "x": 0,
+        "y": 2160
       },
       "data": {
-        "label": "p1",
+        "label": "page 19",
         "componentId": "src.rest",
         "schema": [
           {
@@ -2210,11 +2137,11 @@
       "id": "p20",
       "type": "source",
       "position": {
-        "x": 4940,
-        "y": 0
+        "x": 0,
+        "y": 2280
       },
       "data": {
-        "label": "p1",
+        "label": "page 20",
         "componentId": "src.rest",
         "schema": [
           {
@@ -2314,11 +2241,11 @@
       "id": "p21",
       "type": "source",
       "position": {
-        "x": 5200,
-        "y": 0
+        "x": 0,
+        "y": 2400
       },
       "data": {
-        "label": "p1",
+        "label": "page 21",
         "componentId": "src.rest",
         "schema": [
           {
@@ -2418,11 +2345,11 @@
       "id": "p22",
       "type": "source",
       "position": {
-        "x": 5460,
-        "y": 0
+        "x": 0,
+        "y": 2520
       },
       "data": {
-        "label": "p1",
+        "label": "page 22",
         "componentId": "src.rest",
         "schema": [
           {
@@ -2522,11 +2449,11 @@
       "id": "p23",
       "type": "source",
       "position": {
-        "x": 5720,
-        "y": 0
+        "x": 0,
+        "y": 2640
       },
       "data": {
-        "label": "p1",
+        "label": "page 23",
         "componentId": "src.rest",
         "schema": [
           {
@@ -2626,11 +2553,11 @@
       "id": "p24",
       "type": "source",
       "position": {
-        "x": 5980,
-        "y": 0
+        "x": 0,
+        "y": 2760
       },
       "data": {
-        "label": "p1",
+        "label": "page 24",
         "componentId": "src.rest",
         "schema": [
           {
@@ -2730,11 +2657,11 @@
       "id": "p25",
       "type": "source",
       "position": {
-        "x": 6240,
-        "y": 0
+        "x": 0,
+        "y": 2880
       },
       "data": {
-        "label": "p1",
+        "label": "page 25",
         "componentId": "src.rest",
         "schema": [
           {
@@ -2834,11 +2761,11 @@
       "id": "p26",
       "type": "source",
       "position": {
-        "x": 6500,
-        "y": 0
+        "x": 0,
+        "y": 3000
       },
       "data": {
-        "label": "p1",
+        "label": "page 26",
         "componentId": "src.rest",
         "schema": [
           {
@@ -2938,11 +2865,11 @@
       "id": "p27",
       "type": "source",
       "position": {
-        "x": 6760,
-        "y": 0
+        "x": 0,
+        "y": 3120
       },
       "data": {
-        "label": "p1",
+        "label": "page 27",
         "componentId": "src.rest",
         "schema": [
           {
@@ -3042,11 +2969,11 @@
       "id": "p28",
       "type": "source",
       "position": {
-        "x": 7020,
-        "y": 0
+        "x": 0,
+        "y": 3240
       },
       "data": {
-        "label": "p1",
+        "label": "page 28",
         "componentId": "src.rest",
         "schema": [
           {
@@ -3146,11 +3073,11 @@
       "id": "p29",
       "type": "source",
       "position": {
-        "x": 7280,
-        "y": 0
+        "x": 0,
+        "y": 3360
       },
       "data": {
-        "label": "p1",
+        "label": "page 29",
         "componentId": "src.rest",
         "schema": [
           {
@@ -3250,11 +3177,11 @@
       "id": "p30",
       "type": "source",
       "position": {
-        "x": 7540,
-        "y": 0
+        "x": 0,
+        "y": 3480
       },
       "data": {
-        "label": "p1",
+        "label": "page 30",
         "componentId": "src.rest",
         "schema": [
           {
@@ -3354,11 +3281,11 @@
       "id": "p31",
       "type": "source",
       "position": {
-        "x": 7800,
-        "y": 0
+        "x": 0,
+        "y": 3600
       },
       "data": {
-        "label": "p1",
+        "label": "page 31",
         "componentId": "src.rest",
         "schema": [
           {
@@ -3455,46 +3382,14 @@
       }
     },
     {
-      "id": "die_empty",
-      "type": "control",
-      "position": {
-        "x": 0,
-        "y": 300
-      },
-      "data": {
-        "label": "空集 ⇒ 具名状态（源未发布；日内 5 轮重试 + 次日 00:35 兜底，不写湖）",
-        "componentId": "ctl.die",
-        "properties": {
-          "condition": "no-rows",
-          "message": "SOURCE_NOT_PUBLISHED: bizday=${BIZDAY} 源端零行——快照尚未发布或窗口语义异常。**不是写湖失败、也不是数据错**：源端实测在营业日 D+1 22:35 ~ D+2 00:11 CST 之间发布（距日结 46.6~48.2h，2026-10-26 探针实测），而本管线窗口是 T-2、在 14:35~22:35 CST 取数，**早期轮次早于发布是正常的**：本日后续轮次会自动重试，任一发布即落湖；若当天全部轮次都空，次日 00:35 CST 的兜底管线 lemeng.inventory.snapshot.catchup.3120 会以 T-3 窗口补采。处置：无需人工，看下一轮；兜底也空才查源侧。"
-        }
-      }
-    },
-    {
-      "id": "sentinel",
-      "type": "control",
-      "position": {
-        "x": 8060,
-        "y": 0
-      },
-      "data": {
-        "label": "容量哨兵",
-        "componentId": "ctl.die",
-        "properties": {
-          "condition": "has-rows",
-          "message": "lemeng inventory_snapshot 容量截断：第 91 页（哨兵页）仍有 {rows} 行（system_book=${ENV:SYSTEM_BOOK}）⇒ 单量已击穿真阈值 18,000 条/日（算式：数据页 90 × page_size 200；2026-10-13 实测 10-11 单日 4,192 行）。处置：加数据页节点 → 同步改本算式与哨兵页页号 → 重生成 → 走 PR"
-        }
-      }
-    },
-    {
       "id": "p32",
       "type": "source",
       "position": {
-        "x": 8060,
-        "y": 0
+        "x": 0,
+        "y": 3720
       },
       "data": {
-        "label": "p1",
+        "label": "page 32",
         "componentId": "src.rest",
         "schema": [
           {
@@ -3582,7 +3477,7 @@
           "connectionRef": "lemeng",
           "url": "https://cloud.nhsoft.cn/agi/api/nhsoft.ama.ai.inventory.snapshot.find",
           "method": "POST",
-          "body": "{\"bizday\": \"${BIZDAY}\",\"page_number\": 32,\"page_size\": 200}",
+          "body": "{\"bizday\":\"${BIZDAY}\",\"page_number\":32,\"page_size\":200}",
           "responsePath": "/result",
           "paginationType": "none",
           "retryAttempts": 3,
@@ -3594,11 +3489,11 @@
       "id": "p33",
       "type": "source",
       "position": {
-        "x": 8320,
-        "y": 0
+        "x": 0,
+        "y": 3840
       },
       "data": {
-        "label": "p1",
+        "label": "page 33",
         "componentId": "src.rest",
         "schema": [
           {
@@ -3686,7 +3581,7 @@
           "connectionRef": "lemeng",
           "url": "https://cloud.nhsoft.cn/agi/api/nhsoft.ama.ai.inventory.snapshot.find",
           "method": "POST",
-          "body": "{\"bizday\": \"${BIZDAY}\",\"page_number\": 33,\"page_size\": 200}",
+          "body": "{\"bizday\":\"${BIZDAY}\",\"page_number\":33,\"page_size\":200}",
           "responsePath": "/result",
           "paginationType": "none",
           "retryAttempts": 3,
@@ -3698,11 +3593,11 @@
       "id": "p34",
       "type": "source",
       "position": {
-        "x": 8580,
-        "y": 0
+        "x": 0,
+        "y": 3960
       },
       "data": {
-        "label": "p1",
+        "label": "page 34",
         "componentId": "src.rest",
         "schema": [
           {
@@ -3790,7 +3685,7 @@
           "connectionRef": "lemeng",
           "url": "https://cloud.nhsoft.cn/agi/api/nhsoft.ama.ai.inventory.snapshot.find",
           "method": "POST",
-          "body": "{\"bizday\": \"${BIZDAY}\",\"page_number\": 34,\"page_size\": 200}",
+          "body": "{\"bizday\":\"${BIZDAY}\",\"page_number\":34,\"page_size\":200}",
           "responsePath": "/result",
           "paginationType": "none",
           "retryAttempts": 3,
@@ -3802,11 +3697,11 @@
       "id": "p35",
       "type": "source",
       "position": {
-        "x": 8840,
-        "y": 0
+        "x": 0,
+        "y": 4080
       },
       "data": {
-        "label": "p1",
+        "label": "page 35",
         "componentId": "src.rest",
         "schema": [
           {
@@ -3894,7 +3789,7 @@
           "connectionRef": "lemeng",
           "url": "https://cloud.nhsoft.cn/agi/api/nhsoft.ama.ai.inventory.snapshot.find",
           "method": "POST",
-          "body": "{\"bizday\": \"${BIZDAY}\",\"page_number\": 35,\"page_size\": 200}",
+          "body": "{\"bizday\":\"${BIZDAY}\",\"page_number\":35,\"page_size\":200}",
           "responsePath": "/result",
           "paginationType": "none",
           "retryAttempts": 3,
@@ -3906,11 +3801,11 @@
       "id": "p36",
       "type": "source",
       "position": {
-        "x": 9100,
-        "y": 0
+        "x": 0,
+        "y": 4200
       },
       "data": {
-        "label": "p1",
+        "label": "page 36",
         "componentId": "src.rest",
         "schema": [
           {
@@ -3998,7 +3893,7 @@
           "connectionRef": "lemeng",
           "url": "https://cloud.nhsoft.cn/agi/api/nhsoft.ama.ai.inventory.snapshot.find",
           "method": "POST",
-          "body": "{\"bizday\": \"${BIZDAY}\",\"page_number\": 36,\"page_size\": 200}",
+          "body": "{\"bizday\":\"${BIZDAY}\",\"page_number\":36,\"page_size\":200}",
           "responsePath": "/result",
           "paginationType": "none",
           "retryAttempts": 3,
@@ -4010,11 +3905,11 @@
       "id": "p37",
       "type": "source",
       "position": {
-        "x": 9360,
-        "y": 0
+        "x": 0,
+        "y": 4320
       },
       "data": {
-        "label": "p1",
+        "label": "page 37",
         "componentId": "src.rest",
         "schema": [
           {
@@ -4102,7 +3997,7 @@
           "connectionRef": "lemeng",
           "url": "https://cloud.nhsoft.cn/agi/api/nhsoft.ama.ai.inventory.snapshot.find",
           "method": "POST",
-          "body": "{\"bizday\": \"${BIZDAY}\",\"page_number\": 37,\"page_size\": 200}",
+          "body": "{\"bizday\":\"${BIZDAY}\",\"page_number\":37,\"page_size\":200}",
           "responsePath": "/result",
           "paginationType": "none",
           "retryAttempts": 3,
@@ -4114,11 +4009,11 @@
       "id": "p38",
       "type": "source",
       "position": {
-        "x": 9620,
-        "y": 0
+        "x": 0,
+        "y": 4440
       },
       "data": {
-        "label": "p1",
+        "label": "page 38",
         "componentId": "src.rest",
         "schema": [
           {
@@ -4206,7 +4101,7 @@
           "connectionRef": "lemeng",
           "url": "https://cloud.nhsoft.cn/agi/api/nhsoft.ama.ai.inventory.snapshot.find",
           "method": "POST",
-          "body": "{\"bizday\": \"${BIZDAY}\",\"page_number\": 38,\"page_size\": 200}",
+          "body": "{\"bizday\":\"${BIZDAY}\",\"page_number\":38,\"page_size\":200}",
           "responsePath": "/result",
           "paginationType": "none",
           "retryAttempts": 3,
@@ -4218,11 +4113,11 @@
       "id": "p39",
       "type": "source",
       "position": {
-        "x": 9880,
-        "y": 0
+        "x": 0,
+        "y": 4560
       },
       "data": {
-        "label": "p1",
+        "label": "page 39",
         "componentId": "src.rest",
         "schema": [
           {
@@ -4310,7 +4205,7 @@
           "connectionRef": "lemeng",
           "url": "https://cloud.nhsoft.cn/agi/api/nhsoft.ama.ai.inventory.snapshot.find",
           "method": "POST",
-          "body": "{\"bizday\": \"${BIZDAY}\",\"page_number\": 39,\"page_size\": 200}",
+          "body": "{\"bizday\":\"${BIZDAY}\",\"page_number\":39,\"page_size\":200}",
           "responsePath": "/result",
           "paginationType": "none",
           "retryAttempts": 3,
@@ -4322,11 +4217,11 @@
       "id": "p40",
       "type": "source",
       "position": {
-        "x": 10140,
-        "y": 0
+        "x": 0,
+        "y": 4680
       },
       "data": {
-        "label": "p1",
+        "label": "page 40",
         "componentId": "src.rest",
         "schema": [
           {
@@ -4414,7 +4309,7 @@
           "connectionRef": "lemeng",
           "url": "https://cloud.nhsoft.cn/agi/api/nhsoft.ama.ai.inventory.snapshot.find",
           "method": "POST",
-          "body": "{\"bizday\": \"${BIZDAY}\",\"page_number\": 40,\"page_size\": 200}",
+          "body": "{\"bizday\":\"${BIZDAY}\",\"page_number\":40,\"page_size\":200}",
           "responsePath": "/result",
           "paginationType": "none",
           "retryAttempts": 3,
@@ -4426,11 +4321,11 @@
       "id": "p41",
       "type": "source",
       "position": {
-        "x": 10400,
-        "y": 0
+        "x": 0,
+        "y": 4800
       },
       "data": {
-        "label": "p1",
+        "label": "page 41",
         "componentId": "src.rest",
         "schema": [
           {
@@ -4518,7 +4413,7 @@
           "connectionRef": "lemeng",
           "url": "https://cloud.nhsoft.cn/agi/api/nhsoft.ama.ai.inventory.snapshot.find",
           "method": "POST",
-          "body": "{\"bizday\": \"${BIZDAY}\",\"page_number\": 41,\"page_size\": 200}",
+          "body": "{\"bizday\":\"${BIZDAY}\",\"page_number\":41,\"page_size\":200}",
           "responsePath": "/result",
           "paginationType": "none",
           "retryAttempts": 3,
@@ -4530,11 +4425,11 @@
       "id": "p42",
       "type": "source",
       "position": {
-        "x": 10660,
-        "y": 0
+        "x": 0,
+        "y": 4920
       },
       "data": {
-        "label": "p1",
+        "label": "page 42",
         "componentId": "src.rest",
         "schema": [
           {
@@ -4622,7 +4517,7 @@
           "connectionRef": "lemeng",
           "url": "https://cloud.nhsoft.cn/agi/api/nhsoft.ama.ai.inventory.snapshot.find",
           "method": "POST",
-          "body": "{\"bizday\": \"${BIZDAY}\",\"page_number\": 42,\"page_size\": 200}",
+          "body": "{\"bizday\":\"${BIZDAY}\",\"page_number\":42,\"page_size\":200}",
           "responsePath": "/result",
           "paginationType": "none",
           "retryAttempts": 3,
@@ -4634,11 +4529,11 @@
       "id": "p43",
       "type": "source",
       "position": {
-        "x": 10920,
-        "y": 0
+        "x": 0,
+        "y": 5040
       },
       "data": {
-        "label": "p1",
+        "label": "page 43",
         "componentId": "src.rest",
         "schema": [
           {
@@ -4726,7 +4621,7 @@
           "connectionRef": "lemeng",
           "url": "https://cloud.nhsoft.cn/agi/api/nhsoft.ama.ai.inventory.snapshot.find",
           "method": "POST",
-          "body": "{\"bizday\": \"${BIZDAY}\",\"page_number\": 43,\"page_size\": 200}",
+          "body": "{\"bizday\":\"${BIZDAY}\",\"page_number\":43,\"page_size\":200}",
           "responsePath": "/result",
           "paginationType": "none",
           "retryAttempts": 3,
@@ -4738,11 +4633,11 @@
       "id": "p44",
       "type": "source",
       "position": {
-        "x": 11180,
-        "y": 0
+        "x": 0,
+        "y": 5160
       },
       "data": {
-        "label": "p1",
+        "label": "page 44",
         "componentId": "src.rest",
         "schema": [
           {
@@ -4830,7 +4725,7 @@
           "connectionRef": "lemeng",
           "url": "https://cloud.nhsoft.cn/agi/api/nhsoft.ama.ai.inventory.snapshot.find",
           "method": "POST",
-          "body": "{\"bizday\": \"${BIZDAY}\",\"page_number\": 44,\"page_size\": 200}",
+          "body": "{\"bizday\":\"${BIZDAY}\",\"page_number\":44,\"page_size\":200}",
           "responsePath": "/result",
           "paginationType": "none",
           "retryAttempts": 3,
@@ -4842,11 +4737,11 @@
       "id": "p45",
       "type": "source",
       "position": {
-        "x": 11440,
-        "y": 0
+        "x": 0,
+        "y": 5280
       },
       "data": {
-        "label": "p1",
+        "label": "page 45",
         "componentId": "src.rest",
         "schema": [
           {
@@ -4934,7 +4829,7 @@
           "connectionRef": "lemeng",
           "url": "https://cloud.nhsoft.cn/agi/api/nhsoft.ama.ai.inventory.snapshot.find",
           "method": "POST",
-          "body": "{\"bizday\": \"${BIZDAY}\",\"page_number\": 45,\"page_size\": 200}",
+          "body": "{\"bizday\":\"${BIZDAY}\",\"page_number\":45,\"page_size\":200}",
           "responsePath": "/result",
           "paginationType": "none",
           "retryAttempts": 3,
@@ -4946,11 +4841,11 @@
       "id": "p46",
       "type": "source",
       "position": {
-        "x": 11700,
-        "y": 0
+        "x": 0,
+        "y": 5400
       },
       "data": {
-        "label": "p1",
+        "label": "page 46",
         "componentId": "src.rest",
         "schema": [
           {
@@ -5038,7 +4933,7 @@
           "connectionRef": "lemeng",
           "url": "https://cloud.nhsoft.cn/agi/api/nhsoft.ama.ai.inventory.snapshot.find",
           "method": "POST",
-          "body": "{\"bizday\": \"${BIZDAY}\",\"page_number\": 46,\"page_size\": 200}",
+          "body": "{\"bizday\":\"${BIZDAY}\",\"page_number\":46,\"page_size\":200}",
           "responsePath": "/result",
           "paginationType": "none",
           "retryAttempts": 3,
@@ -5050,11 +4945,11 @@
       "id": "p47",
       "type": "source",
       "position": {
-        "x": 11960,
-        "y": 0
+        "x": 0,
+        "y": 5520
       },
       "data": {
-        "label": "p1",
+        "label": "page 47",
         "componentId": "src.rest",
         "schema": [
           {
@@ -5142,7 +5037,7 @@
           "connectionRef": "lemeng",
           "url": "https://cloud.nhsoft.cn/agi/api/nhsoft.ama.ai.inventory.snapshot.find",
           "method": "POST",
-          "body": "{\"bizday\": \"${BIZDAY}\",\"page_number\": 47,\"page_size\": 200}",
+          "body": "{\"bizday\":\"${BIZDAY}\",\"page_number\":47,\"page_size\":200}",
           "responsePath": "/result",
           "paginationType": "none",
           "retryAttempts": 3,
@@ -5154,11 +5049,11 @@
       "id": "p48",
       "type": "source",
       "position": {
-        "x": 12220,
-        "y": 0
+        "x": 0,
+        "y": 5640
       },
       "data": {
-        "label": "p1",
+        "label": "page 48",
         "componentId": "src.rest",
         "schema": [
           {
@@ -5246,7 +5141,7 @@
           "connectionRef": "lemeng",
           "url": "https://cloud.nhsoft.cn/agi/api/nhsoft.ama.ai.inventory.snapshot.find",
           "method": "POST",
-          "body": "{\"bizday\": \"${BIZDAY}\",\"page_number\": 48,\"page_size\": 200}",
+          "body": "{\"bizday\":\"${BIZDAY}\",\"page_number\":48,\"page_size\":200}",
           "responsePath": "/result",
           "paginationType": "none",
           "retryAttempts": 3,
@@ -5258,11 +5153,11 @@
       "id": "p49",
       "type": "source",
       "position": {
-        "x": 12480,
-        "y": 0
+        "x": 0,
+        "y": 5760
       },
       "data": {
-        "label": "p1",
+        "label": "page 49",
         "componentId": "src.rest",
         "schema": [
           {
@@ -5350,7 +5245,7 @@
           "connectionRef": "lemeng",
           "url": "https://cloud.nhsoft.cn/agi/api/nhsoft.ama.ai.inventory.snapshot.find",
           "method": "POST",
-          "body": "{\"bizday\": \"${BIZDAY}\",\"page_number\": 49,\"page_size\": 200}",
+          "body": "{\"bizday\":\"${BIZDAY}\",\"page_number\":49,\"page_size\":200}",
           "responsePath": "/result",
           "paginationType": "none",
           "retryAttempts": 3,
@@ -5362,11 +5257,11 @@
       "id": "p50",
       "type": "source",
       "position": {
-        "x": 12740,
-        "y": 0
+        "x": 0,
+        "y": 5880
       },
       "data": {
-        "label": "p1",
+        "label": "page 50",
         "componentId": "src.rest",
         "schema": [
           {
@@ -5454,7 +5349,7 @@
           "connectionRef": "lemeng",
           "url": "https://cloud.nhsoft.cn/agi/api/nhsoft.ama.ai.inventory.snapshot.find",
           "method": "POST",
-          "body": "{\"bizday\": \"${BIZDAY}\",\"page_number\": 50,\"page_size\": 200}",
+          "body": "{\"bizday\":\"${BIZDAY}\",\"page_number\":50,\"page_size\":200}",
           "responsePath": "/result",
           "paginationType": "none",
           "retryAttempts": 3,
@@ -5466,11 +5361,11 @@
       "id": "p51",
       "type": "source",
       "position": {
-        "x": 13000,
-        "y": 0
+        "x": 0,
+        "y": 6000
       },
       "data": {
-        "label": "p1",
+        "label": "page 51",
         "componentId": "src.rest",
         "schema": [
           {
@@ -5558,7 +5453,7 @@
           "connectionRef": "lemeng",
           "url": "https://cloud.nhsoft.cn/agi/api/nhsoft.ama.ai.inventory.snapshot.find",
           "method": "POST",
-          "body": "{\"bizday\": \"${BIZDAY}\",\"page_number\": 51,\"page_size\": 200}",
+          "body": "{\"bizday\":\"${BIZDAY}\",\"page_number\":51,\"page_size\":200}",
           "responsePath": "/result",
           "paginationType": "none",
           "retryAttempts": 3,
@@ -5570,11 +5465,11 @@
       "id": "p52",
       "type": "source",
       "position": {
-        "x": 13260,
-        "y": 0
+        "x": 0,
+        "y": 6120
       },
       "data": {
-        "label": "p1",
+        "label": "page 52",
         "componentId": "src.rest",
         "schema": [
           {
@@ -5662,7 +5557,7 @@
           "connectionRef": "lemeng",
           "url": "https://cloud.nhsoft.cn/agi/api/nhsoft.ama.ai.inventory.snapshot.find",
           "method": "POST",
-          "body": "{\"bizday\": \"${BIZDAY}\",\"page_number\": 52,\"page_size\": 200}",
+          "body": "{\"bizday\":\"${BIZDAY}\",\"page_number\":52,\"page_size\":200}",
           "responsePath": "/result",
           "paginationType": "none",
           "retryAttempts": 3,
@@ -5674,11 +5569,11 @@
       "id": "p53",
       "type": "source",
       "position": {
-        "x": 13520,
-        "y": 0
+        "x": 0,
+        "y": 6240
       },
       "data": {
-        "label": "p1",
+        "label": "page 53",
         "componentId": "src.rest",
         "schema": [
           {
@@ -5766,7 +5661,7 @@
           "connectionRef": "lemeng",
           "url": "https://cloud.nhsoft.cn/agi/api/nhsoft.ama.ai.inventory.snapshot.find",
           "method": "POST",
-          "body": "{\"bizday\": \"${BIZDAY}\",\"page_number\": 53,\"page_size\": 200}",
+          "body": "{\"bizday\":\"${BIZDAY}\",\"page_number\":53,\"page_size\":200}",
           "responsePath": "/result",
           "paginationType": "none",
           "retryAttempts": 3,
@@ -5778,11 +5673,11 @@
       "id": "p54",
       "type": "source",
       "position": {
-        "x": 13780,
-        "y": 0
+        "x": 0,
+        "y": 6360
       },
       "data": {
-        "label": "p1",
+        "label": "page 54",
         "componentId": "src.rest",
         "schema": [
           {
@@ -5870,7 +5765,7 @@
           "connectionRef": "lemeng",
           "url": "https://cloud.nhsoft.cn/agi/api/nhsoft.ama.ai.inventory.snapshot.find",
           "method": "POST",
-          "body": "{\"bizday\": \"${BIZDAY}\",\"page_number\": 54,\"page_size\": 200}",
+          "body": "{\"bizday\":\"${BIZDAY}\",\"page_number\":54,\"page_size\":200}",
           "responsePath": "/result",
           "paginationType": "none",
           "retryAttempts": 3,
@@ -5882,11 +5777,11 @@
       "id": "p55",
       "type": "source",
       "position": {
-        "x": 14040,
-        "y": 0
+        "x": 0,
+        "y": 6480
       },
       "data": {
-        "label": "p1",
+        "label": "page 55",
         "componentId": "src.rest",
         "schema": [
           {
@@ -5974,7 +5869,7 @@
           "connectionRef": "lemeng",
           "url": "https://cloud.nhsoft.cn/agi/api/nhsoft.ama.ai.inventory.snapshot.find",
           "method": "POST",
-          "body": "{\"bizday\": \"${BIZDAY}\",\"page_number\": 55,\"page_size\": 200}",
+          "body": "{\"bizday\":\"${BIZDAY}\",\"page_number\":55,\"page_size\":200}",
           "responsePath": "/result",
           "paginationType": "none",
           "retryAttempts": 3,
@@ -5986,11 +5881,11 @@
       "id": "p56",
       "type": "source",
       "position": {
-        "x": 14300,
-        "y": 0
+        "x": 0,
+        "y": 6600
       },
       "data": {
-        "label": "p1",
+        "label": "page 56",
         "componentId": "src.rest",
         "schema": [
           {
@@ -6078,7 +5973,7 @@
           "connectionRef": "lemeng",
           "url": "https://cloud.nhsoft.cn/agi/api/nhsoft.ama.ai.inventory.snapshot.find",
           "method": "POST",
-          "body": "{\"bizday\": \"${BIZDAY}\",\"page_number\": 56,\"page_size\": 200}",
+          "body": "{\"bizday\":\"${BIZDAY}\",\"page_number\":56,\"page_size\":200}",
           "responsePath": "/result",
           "paginationType": "none",
           "retryAttempts": 3,
@@ -6090,11 +5985,11 @@
       "id": "p57",
       "type": "source",
       "position": {
-        "x": 14560,
-        "y": 0
+        "x": 0,
+        "y": 6720
       },
       "data": {
-        "label": "p1",
+        "label": "page 57",
         "componentId": "src.rest",
         "schema": [
           {
@@ -6182,7 +6077,7 @@
           "connectionRef": "lemeng",
           "url": "https://cloud.nhsoft.cn/agi/api/nhsoft.ama.ai.inventory.snapshot.find",
           "method": "POST",
-          "body": "{\"bizday\": \"${BIZDAY}\",\"page_number\": 57,\"page_size\": 200}",
+          "body": "{\"bizday\":\"${BIZDAY}\",\"page_number\":57,\"page_size\":200}",
           "responsePath": "/result",
           "paginationType": "none",
           "retryAttempts": 3,
@@ -6194,11 +6089,11 @@
       "id": "p58",
       "type": "source",
       "position": {
-        "x": 14820,
-        "y": 0
+        "x": 0,
+        "y": 6840
       },
       "data": {
-        "label": "p1",
+        "label": "page 58",
         "componentId": "src.rest",
         "schema": [
           {
@@ -6286,7 +6181,7 @@
           "connectionRef": "lemeng",
           "url": "https://cloud.nhsoft.cn/agi/api/nhsoft.ama.ai.inventory.snapshot.find",
           "method": "POST",
-          "body": "{\"bizday\": \"${BIZDAY}\",\"page_number\": 58,\"page_size\": 200}",
+          "body": "{\"bizday\":\"${BIZDAY}\",\"page_number\":58,\"page_size\":200}",
           "responsePath": "/result",
           "paginationType": "none",
           "retryAttempts": 3,
@@ -6298,11 +6193,11 @@
       "id": "p59",
       "type": "source",
       "position": {
-        "x": 15080,
-        "y": 0
+        "x": 0,
+        "y": 6960
       },
       "data": {
-        "label": "p1",
+        "label": "page 59",
         "componentId": "src.rest",
         "schema": [
           {
@@ -6390,7 +6285,7 @@
           "connectionRef": "lemeng",
           "url": "https://cloud.nhsoft.cn/agi/api/nhsoft.ama.ai.inventory.snapshot.find",
           "method": "POST",
-          "body": "{\"bizday\": \"${BIZDAY}\",\"page_number\": 59,\"page_size\": 200}",
+          "body": "{\"bizday\":\"${BIZDAY}\",\"page_number\":59,\"page_size\":200}",
           "responsePath": "/result",
           "paginationType": "none",
           "retryAttempts": 3,
@@ -6402,11 +6297,11 @@
       "id": "p60",
       "type": "source",
       "position": {
-        "x": 15340,
-        "y": 0
+        "x": 0,
+        "y": 7080
       },
       "data": {
-        "label": "p1",
+        "label": "page 60",
         "componentId": "src.rest",
         "schema": [
           {
@@ -6494,7 +6389,7 @@
           "connectionRef": "lemeng",
           "url": "https://cloud.nhsoft.cn/agi/api/nhsoft.ama.ai.inventory.snapshot.find",
           "method": "POST",
-          "body": "{\"bizday\": \"${BIZDAY}\",\"page_number\": 60,\"page_size\": 200}",
+          "body": "{\"bizday\":\"${BIZDAY}\",\"page_number\":60,\"page_size\":200}",
           "responsePath": "/result",
           "paginationType": "none",
           "retryAttempts": 3,
@@ -6506,11 +6401,11 @@
       "id": "p61",
       "type": "source",
       "position": {
-        "x": 15600,
-        "y": 0
+        "x": 0,
+        "y": 7200
       },
       "data": {
-        "label": "p1",
+        "label": "page 61",
         "componentId": "src.rest",
         "schema": [
           {
@@ -6598,7 +6493,7 @@
           "connectionRef": "lemeng",
           "url": "https://cloud.nhsoft.cn/agi/api/nhsoft.ama.ai.inventory.snapshot.find",
           "method": "POST",
-          "body": "{\"bizday\": \"${BIZDAY}\",\"page_number\": 61,\"page_size\": 200}",
+          "body": "{\"bizday\":\"${BIZDAY}\",\"page_number\":61,\"page_size\":200}",
           "responsePath": "/result",
           "paginationType": "none",
           "retryAttempts": 3,
@@ -6610,11 +6505,11 @@
       "id": "p62",
       "type": "source",
       "position": {
-        "x": 15860,
-        "y": 0
+        "x": 0,
+        "y": 7320
       },
       "data": {
-        "label": "p1",
+        "label": "page 62",
         "componentId": "src.rest",
         "schema": [
           {
@@ -6702,7 +6597,7 @@
           "connectionRef": "lemeng",
           "url": "https://cloud.nhsoft.cn/agi/api/nhsoft.ama.ai.inventory.snapshot.find",
           "method": "POST",
-          "body": "{\"bizday\": \"${BIZDAY}\",\"page_number\": 62,\"page_size\": 200}",
+          "body": "{\"bizday\":\"${BIZDAY}\",\"page_number\":62,\"page_size\":200}",
           "responsePath": "/result",
           "paginationType": "none",
           "retryAttempts": 3,
@@ -6714,11 +6609,11 @@
       "id": "p63",
       "type": "source",
       "position": {
-        "x": 16120,
-        "y": 0
+        "x": 0,
+        "y": 7440
       },
       "data": {
-        "label": "p1",
+        "label": "page 63",
         "componentId": "src.rest",
         "schema": [
           {
@@ -6806,7 +6701,7 @@
           "connectionRef": "lemeng",
           "url": "https://cloud.nhsoft.cn/agi/api/nhsoft.ama.ai.inventory.snapshot.find",
           "method": "POST",
-          "body": "{\"bizday\": \"${BIZDAY}\",\"page_number\": 63,\"page_size\": 200}",
+          "body": "{\"bizday\":\"${BIZDAY}\",\"page_number\":63,\"page_size\":200}",
           "responsePath": "/result",
           "paginationType": "none",
           "retryAttempts": 3,
@@ -6818,11 +6713,11 @@
       "id": "p64",
       "type": "source",
       "position": {
-        "x": 16380,
-        "y": 0
+        "x": 0,
+        "y": 7560
       },
       "data": {
-        "label": "p1",
+        "label": "page 64",
         "componentId": "src.rest",
         "schema": [
           {
@@ -6910,7 +6805,7 @@
           "connectionRef": "lemeng",
           "url": "https://cloud.nhsoft.cn/agi/api/nhsoft.ama.ai.inventory.snapshot.find",
           "method": "POST",
-          "body": "{\"bizday\": \"${BIZDAY}\",\"page_number\": 64,\"page_size\": 200}",
+          "body": "{\"bizday\":\"${BIZDAY}\",\"page_number\":64,\"page_size\":200}",
           "responsePath": "/result",
           "paginationType": "none",
           "retryAttempts": 3,
@@ -6922,11 +6817,11 @@
       "id": "p65",
       "type": "source",
       "position": {
-        "x": 16640,
-        "y": 0
+        "x": 0,
+        "y": 7680
       },
       "data": {
-        "label": "p1",
+        "label": "page 65",
         "componentId": "src.rest",
         "schema": [
           {
@@ -7014,7 +6909,7 @@
           "connectionRef": "lemeng",
           "url": "https://cloud.nhsoft.cn/agi/api/nhsoft.ama.ai.inventory.snapshot.find",
           "method": "POST",
-          "body": "{\"bizday\": \"${BIZDAY}\",\"page_number\": 65,\"page_size\": 200}",
+          "body": "{\"bizday\":\"${BIZDAY}\",\"page_number\":65,\"page_size\":200}",
           "responsePath": "/result",
           "paginationType": "none",
           "retryAttempts": 3,
@@ -7026,11 +6921,11 @@
       "id": "p66",
       "type": "source",
       "position": {
-        "x": 16900,
-        "y": 0
+        "x": 0,
+        "y": 7800
       },
       "data": {
-        "label": "p1",
+        "label": "page 66",
         "componentId": "src.rest",
         "schema": [
           {
@@ -7118,7 +7013,7 @@
           "connectionRef": "lemeng",
           "url": "https://cloud.nhsoft.cn/agi/api/nhsoft.ama.ai.inventory.snapshot.find",
           "method": "POST",
-          "body": "{\"bizday\": \"${BIZDAY}\",\"page_number\": 66,\"page_size\": 200}",
+          "body": "{\"bizday\":\"${BIZDAY}\",\"page_number\":66,\"page_size\":200}",
           "responsePath": "/result",
           "paginationType": "none",
           "retryAttempts": 3,
@@ -7130,11 +7025,11 @@
       "id": "p67",
       "type": "source",
       "position": {
-        "x": 17160,
-        "y": 0
+        "x": 0,
+        "y": 7920
       },
       "data": {
-        "label": "p1",
+        "label": "page 67",
         "componentId": "src.rest",
         "schema": [
           {
@@ -7222,7 +7117,7 @@
           "connectionRef": "lemeng",
           "url": "https://cloud.nhsoft.cn/agi/api/nhsoft.ama.ai.inventory.snapshot.find",
           "method": "POST",
-          "body": "{\"bizday\": \"${BIZDAY}\",\"page_number\": 67,\"page_size\": 200}",
+          "body": "{\"bizday\":\"${BIZDAY}\",\"page_number\":67,\"page_size\":200}",
           "responsePath": "/result",
           "paginationType": "none",
           "retryAttempts": 3,
@@ -7234,11 +7129,11 @@
       "id": "p68",
       "type": "source",
       "position": {
-        "x": 17420,
-        "y": 0
+        "x": 0,
+        "y": 8040
       },
       "data": {
-        "label": "p1",
+        "label": "page 68",
         "componentId": "src.rest",
         "schema": [
           {
@@ -7326,7 +7221,7 @@
           "connectionRef": "lemeng",
           "url": "https://cloud.nhsoft.cn/agi/api/nhsoft.ama.ai.inventory.snapshot.find",
           "method": "POST",
-          "body": "{\"bizday\": \"${BIZDAY}\",\"page_number\": 68,\"page_size\": 200}",
+          "body": "{\"bizday\":\"${BIZDAY}\",\"page_number\":68,\"page_size\":200}",
           "responsePath": "/result",
           "paginationType": "none",
           "retryAttempts": 3,
@@ -7338,11 +7233,11 @@
       "id": "p69",
       "type": "source",
       "position": {
-        "x": 17680,
-        "y": 0
+        "x": 0,
+        "y": 8160
       },
       "data": {
-        "label": "p1",
+        "label": "page 69",
         "componentId": "src.rest",
         "schema": [
           {
@@ -7430,7 +7325,7 @@
           "connectionRef": "lemeng",
           "url": "https://cloud.nhsoft.cn/agi/api/nhsoft.ama.ai.inventory.snapshot.find",
           "method": "POST",
-          "body": "{\"bizday\": \"${BIZDAY}\",\"page_number\": 69,\"page_size\": 200}",
+          "body": "{\"bizday\":\"${BIZDAY}\",\"page_number\":69,\"page_size\":200}",
           "responsePath": "/result",
           "paginationType": "none",
           "retryAttempts": 3,
@@ -7442,11 +7337,11 @@
       "id": "p70",
       "type": "source",
       "position": {
-        "x": 17940,
-        "y": 0
+        "x": 0,
+        "y": 8280
       },
       "data": {
-        "label": "p1",
+        "label": "page 70",
         "componentId": "src.rest",
         "schema": [
           {
@@ -7534,7 +7429,7 @@
           "connectionRef": "lemeng",
           "url": "https://cloud.nhsoft.cn/agi/api/nhsoft.ama.ai.inventory.snapshot.find",
           "method": "POST",
-          "body": "{\"bizday\": \"${BIZDAY}\",\"page_number\": 70,\"page_size\": 200}",
+          "body": "{\"bizday\":\"${BIZDAY}\",\"page_number\":70,\"page_size\":200}",
           "responsePath": "/result",
           "paginationType": "none",
           "retryAttempts": 3,
@@ -7546,11 +7441,11 @@
       "id": "p71",
       "type": "source",
       "position": {
-        "x": 18200,
-        "y": 0
+        "x": 0,
+        "y": 8400
       },
       "data": {
-        "label": "p1",
+        "label": "page 71",
         "componentId": "src.rest",
         "schema": [
           {
@@ -7638,7 +7533,7 @@
           "connectionRef": "lemeng",
           "url": "https://cloud.nhsoft.cn/agi/api/nhsoft.ama.ai.inventory.snapshot.find",
           "method": "POST",
-          "body": "{\"bizday\": \"${BIZDAY}\",\"page_number\": 71,\"page_size\": 200}",
+          "body": "{\"bizday\":\"${BIZDAY}\",\"page_number\":71,\"page_size\":200}",
           "responsePath": "/result",
           "paginationType": "none",
           "retryAttempts": 3,
@@ -7650,11 +7545,11 @@
       "id": "p72",
       "type": "source",
       "position": {
-        "x": 18460,
-        "y": 0
+        "x": 0,
+        "y": 8520
       },
       "data": {
-        "label": "p1",
+        "label": "page 72",
         "componentId": "src.rest",
         "schema": [
           {
@@ -7742,7 +7637,7 @@
           "connectionRef": "lemeng",
           "url": "https://cloud.nhsoft.cn/agi/api/nhsoft.ama.ai.inventory.snapshot.find",
           "method": "POST",
-          "body": "{\"bizday\": \"${BIZDAY}\",\"page_number\": 72,\"page_size\": 200}",
+          "body": "{\"bizday\":\"${BIZDAY}\",\"page_number\":72,\"page_size\":200}",
           "responsePath": "/result",
           "paginationType": "none",
           "retryAttempts": 3,
@@ -7754,11 +7649,11 @@
       "id": "p73",
       "type": "source",
       "position": {
-        "x": 18720,
-        "y": 0
+        "x": 0,
+        "y": 8640
       },
       "data": {
-        "label": "p1",
+        "label": "page 73",
         "componentId": "src.rest",
         "schema": [
           {
@@ -7846,7 +7741,7 @@
           "connectionRef": "lemeng",
           "url": "https://cloud.nhsoft.cn/agi/api/nhsoft.ama.ai.inventory.snapshot.find",
           "method": "POST",
-          "body": "{\"bizday\": \"${BIZDAY}\",\"page_number\": 73,\"page_size\": 200}",
+          "body": "{\"bizday\":\"${BIZDAY}\",\"page_number\":73,\"page_size\":200}",
           "responsePath": "/result",
           "paginationType": "none",
           "retryAttempts": 3,
@@ -7858,11 +7753,11 @@
       "id": "p74",
       "type": "source",
       "position": {
-        "x": 18980,
-        "y": 0
+        "x": 0,
+        "y": 8760
       },
       "data": {
-        "label": "p1",
+        "label": "page 74",
         "componentId": "src.rest",
         "schema": [
           {
@@ -7950,7 +7845,7 @@
           "connectionRef": "lemeng",
           "url": "https://cloud.nhsoft.cn/agi/api/nhsoft.ama.ai.inventory.snapshot.find",
           "method": "POST",
-          "body": "{\"bizday\": \"${BIZDAY}\",\"page_number\": 74,\"page_size\": 200}",
+          "body": "{\"bizday\":\"${BIZDAY}\",\"page_number\":74,\"page_size\":200}",
           "responsePath": "/result",
           "paginationType": "none",
           "retryAttempts": 3,
@@ -7962,11 +7857,11 @@
       "id": "p75",
       "type": "source",
       "position": {
-        "x": 19240,
-        "y": 0
+        "x": 0,
+        "y": 8880
       },
       "data": {
-        "label": "p1",
+        "label": "page 75",
         "componentId": "src.rest",
         "schema": [
           {
@@ -8054,7 +7949,7 @@
           "connectionRef": "lemeng",
           "url": "https://cloud.nhsoft.cn/agi/api/nhsoft.ama.ai.inventory.snapshot.find",
           "method": "POST",
-          "body": "{\"bizday\": \"${BIZDAY}\",\"page_number\": 75,\"page_size\": 200}",
+          "body": "{\"bizday\":\"${BIZDAY}\",\"page_number\":75,\"page_size\":200}",
           "responsePath": "/result",
           "paginationType": "none",
           "retryAttempts": 3,
@@ -8066,11 +7961,11 @@
       "id": "p76",
       "type": "source",
       "position": {
-        "x": 19500,
-        "y": 0
+        "x": 0,
+        "y": 9000
       },
       "data": {
-        "label": "p1",
+        "label": "page 76",
         "componentId": "src.rest",
         "schema": [
           {
@@ -8158,7 +8053,7 @@
           "connectionRef": "lemeng",
           "url": "https://cloud.nhsoft.cn/agi/api/nhsoft.ama.ai.inventory.snapshot.find",
           "method": "POST",
-          "body": "{\"bizday\": \"${BIZDAY}\",\"page_number\": 76,\"page_size\": 200}",
+          "body": "{\"bizday\":\"${BIZDAY}\",\"page_number\":76,\"page_size\":200}",
           "responsePath": "/result",
           "paginationType": "none",
           "retryAttempts": 3,
@@ -8170,11 +8065,11 @@
       "id": "p77",
       "type": "source",
       "position": {
-        "x": 19760,
-        "y": 0
+        "x": 0,
+        "y": 9120
       },
       "data": {
-        "label": "p1",
+        "label": "page 77",
         "componentId": "src.rest",
         "schema": [
           {
@@ -8262,7 +8157,7 @@
           "connectionRef": "lemeng",
           "url": "https://cloud.nhsoft.cn/agi/api/nhsoft.ama.ai.inventory.snapshot.find",
           "method": "POST",
-          "body": "{\"bizday\": \"${BIZDAY}\",\"page_number\": 77,\"page_size\": 200}",
+          "body": "{\"bizday\":\"${BIZDAY}\",\"page_number\":77,\"page_size\":200}",
           "responsePath": "/result",
           "paginationType": "none",
           "retryAttempts": 3,
@@ -8274,11 +8169,11 @@
       "id": "p78",
       "type": "source",
       "position": {
-        "x": 20020,
-        "y": 0
+        "x": 0,
+        "y": 9240
       },
       "data": {
-        "label": "p1",
+        "label": "page 78",
         "componentId": "src.rest",
         "schema": [
           {
@@ -8366,7 +8261,7 @@
           "connectionRef": "lemeng",
           "url": "https://cloud.nhsoft.cn/agi/api/nhsoft.ama.ai.inventory.snapshot.find",
           "method": "POST",
-          "body": "{\"bizday\": \"${BIZDAY}\",\"page_number\": 78,\"page_size\": 200}",
+          "body": "{\"bizday\":\"${BIZDAY}\",\"page_number\":78,\"page_size\":200}",
           "responsePath": "/result",
           "paginationType": "none",
           "retryAttempts": 3,
@@ -8378,11 +8273,11 @@
       "id": "p79",
       "type": "source",
       "position": {
-        "x": 20280,
-        "y": 0
+        "x": 0,
+        "y": 9360
       },
       "data": {
-        "label": "p1",
+        "label": "page 79",
         "componentId": "src.rest",
         "schema": [
           {
@@ -8470,7 +8365,7 @@
           "connectionRef": "lemeng",
           "url": "https://cloud.nhsoft.cn/agi/api/nhsoft.ama.ai.inventory.snapshot.find",
           "method": "POST",
-          "body": "{\"bizday\": \"${BIZDAY}\",\"page_number\": 79,\"page_size\": 200}",
+          "body": "{\"bizday\":\"${BIZDAY}\",\"page_number\":79,\"page_size\":200}",
           "responsePath": "/result",
           "paginationType": "none",
           "retryAttempts": 3,
@@ -8482,11 +8377,11 @@
       "id": "p80",
       "type": "source",
       "position": {
-        "x": 20540,
-        "y": 0
+        "x": 0,
+        "y": 9480
       },
       "data": {
-        "label": "p1",
+        "label": "page 80",
         "componentId": "src.rest",
         "schema": [
           {
@@ -8574,7 +8469,7 @@
           "connectionRef": "lemeng",
           "url": "https://cloud.nhsoft.cn/agi/api/nhsoft.ama.ai.inventory.snapshot.find",
           "method": "POST",
-          "body": "{\"bizday\": \"${BIZDAY}\",\"page_number\": 80,\"page_size\": 200}",
+          "body": "{\"bizday\":\"${BIZDAY}\",\"page_number\":80,\"page_size\":200}",
           "responsePath": "/result",
           "paginationType": "none",
           "retryAttempts": 3,
@@ -8586,11 +8481,11 @@
       "id": "p81",
       "type": "source",
       "position": {
-        "x": 20800,
-        "y": 0
+        "x": 0,
+        "y": 9600
       },
       "data": {
-        "label": "p1",
+        "label": "page 81",
         "componentId": "src.rest",
         "schema": [
           {
@@ -8678,7 +8573,7 @@
           "connectionRef": "lemeng",
           "url": "https://cloud.nhsoft.cn/agi/api/nhsoft.ama.ai.inventory.snapshot.find",
           "method": "POST",
-          "body": "{\"bizday\": \"${BIZDAY}\",\"page_number\": 81,\"page_size\": 200}",
+          "body": "{\"bizday\":\"${BIZDAY}\",\"page_number\":81,\"page_size\":200}",
           "responsePath": "/result",
           "paginationType": "none",
           "retryAttempts": 3,
@@ -8690,11 +8585,11 @@
       "id": "p82",
       "type": "source",
       "position": {
-        "x": 21060,
-        "y": 0
+        "x": 0,
+        "y": 9720
       },
       "data": {
-        "label": "p1",
+        "label": "page 82",
         "componentId": "src.rest",
         "schema": [
           {
@@ -8782,7 +8677,7 @@
           "connectionRef": "lemeng",
           "url": "https://cloud.nhsoft.cn/agi/api/nhsoft.ama.ai.inventory.snapshot.find",
           "method": "POST",
-          "body": "{\"bizday\": \"${BIZDAY}\",\"page_number\": 82,\"page_size\": 200}",
+          "body": "{\"bizday\":\"${BIZDAY}\",\"page_number\":82,\"page_size\":200}",
           "responsePath": "/result",
           "paginationType": "none",
           "retryAttempts": 3,
@@ -8794,11 +8689,11 @@
       "id": "p83",
       "type": "source",
       "position": {
-        "x": 21320,
-        "y": 0
+        "x": 0,
+        "y": 9840
       },
       "data": {
-        "label": "p1",
+        "label": "page 83",
         "componentId": "src.rest",
         "schema": [
           {
@@ -8886,7 +8781,7 @@
           "connectionRef": "lemeng",
           "url": "https://cloud.nhsoft.cn/agi/api/nhsoft.ama.ai.inventory.snapshot.find",
           "method": "POST",
-          "body": "{\"bizday\": \"${BIZDAY}\",\"page_number\": 83,\"page_size\": 200}",
+          "body": "{\"bizday\":\"${BIZDAY}\",\"page_number\":83,\"page_size\":200}",
           "responsePath": "/result",
           "paginationType": "none",
           "retryAttempts": 3,
@@ -8898,11 +8793,11 @@
       "id": "p84",
       "type": "source",
       "position": {
-        "x": 21580,
-        "y": 0
+        "x": 0,
+        "y": 9960
       },
       "data": {
-        "label": "p1",
+        "label": "page 84",
         "componentId": "src.rest",
         "schema": [
           {
@@ -8990,7 +8885,7 @@
           "connectionRef": "lemeng",
           "url": "https://cloud.nhsoft.cn/agi/api/nhsoft.ama.ai.inventory.snapshot.find",
           "method": "POST",
-          "body": "{\"bizday\": \"${BIZDAY}\",\"page_number\": 84,\"page_size\": 200}",
+          "body": "{\"bizday\":\"${BIZDAY}\",\"page_number\":84,\"page_size\":200}",
           "responsePath": "/result",
           "paginationType": "none",
           "retryAttempts": 3,
@@ -9002,11 +8897,11 @@
       "id": "p85",
       "type": "source",
       "position": {
-        "x": 21840,
-        "y": 0
+        "x": 0,
+        "y": 10080
       },
       "data": {
-        "label": "p1",
+        "label": "page 85",
         "componentId": "src.rest",
         "schema": [
           {
@@ -9094,7 +8989,7 @@
           "connectionRef": "lemeng",
           "url": "https://cloud.nhsoft.cn/agi/api/nhsoft.ama.ai.inventory.snapshot.find",
           "method": "POST",
-          "body": "{\"bizday\": \"${BIZDAY}\",\"page_number\": 85,\"page_size\": 200}",
+          "body": "{\"bizday\":\"${BIZDAY}\",\"page_number\":85,\"page_size\":200}",
           "responsePath": "/result",
           "paginationType": "none",
           "retryAttempts": 3,
@@ -9106,11 +9001,11 @@
       "id": "p86",
       "type": "source",
       "position": {
-        "x": 22100,
-        "y": 0
+        "x": 0,
+        "y": 10200
       },
       "data": {
-        "label": "p1",
+        "label": "page 86",
         "componentId": "src.rest",
         "schema": [
           {
@@ -9198,7 +9093,7 @@
           "connectionRef": "lemeng",
           "url": "https://cloud.nhsoft.cn/agi/api/nhsoft.ama.ai.inventory.snapshot.find",
           "method": "POST",
-          "body": "{\"bizday\": \"${BIZDAY}\",\"page_number\": 86,\"page_size\": 200}",
+          "body": "{\"bizday\":\"${BIZDAY}\",\"page_number\":86,\"page_size\":200}",
           "responsePath": "/result",
           "paginationType": "none",
           "retryAttempts": 3,
@@ -9210,11 +9105,11 @@
       "id": "p87",
       "type": "source",
       "position": {
-        "x": 22360,
-        "y": 0
+        "x": 0,
+        "y": 10320
       },
       "data": {
-        "label": "p1",
+        "label": "page 87",
         "componentId": "src.rest",
         "schema": [
           {
@@ -9302,7 +9197,7 @@
           "connectionRef": "lemeng",
           "url": "https://cloud.nhsoft.cn/agi/api/nhsoft.ama.ai.inventory.snapshot.find",
           "method": "POST",
-          "body": "{\"bizday\": \"${BIZDAY}\",\"page_number\": 87,\"page_size\": 200}",
+          "body": "{\"bizday\":\"${BIZDAY}\",\"page_number\":87,\"page_size\":200}",
           "responsePath": "/result",
           "paginationType": "none",
           "retryAttempts": 3,
@@ -9314,11 +9209,11 @@
       "id": "p88",
       "type": "source",
       "position": {
-        "x": 22620,
-        "y": 0
+        "x": 0,
+        "y": 10440
       },
       "data": {
-        "label": "p1",
+        "label": "page 88",
         "componentId": "src.rest",
         "schema": [
           {
@@ -9406,7 +9301,7 @@
           "connectionRef": "lemeng",
           "url": "https://cloud.nhsoft.cn/agi/api/nhsoft.ama.ai.inventory.snapshot.find",
           "method": "POST",
-          "body": "{\"bizday\": \"${BIZDAY}\",\"page_number\": 88,\"page_size\": 200}",
+          "body": "{\"bizday\":\"${BIZDAY}\",\"page_number\":88,\"page_size\":200}",
           "responsePath": "/result",
           "paginationType": "none",
           "retryAttempts": 3,
@@ -9418,11 +9313,11 @@
       "id": "p89",
       "type": "source",
       "position": {
-        "x": 22880,
-        "y": 0
+        "x": 0,
+        "y": 10560
       },
       "data": {
-        "label": "p1",
+        "label": "page 89",
         "componentId": "src.rest",
         "schema": [
           {
@@ -9510,7 +9405,7 @@
           "connectionRef": "lemeng",
           "url": "https://cloud.nhsoft.cn/agi/api/nhsoft.ama.ai.inventory.snapshot.find",
           "method": "POST",
-          "body": "{\"bizday\": \"${BIZDAY}\",\"page_number\": 89,\"page_size\": 200}",
+          "body": "{\"bizday\":\"${BIZDAY}\",\"page_number\":89,\"page_size\":200}",
           "responsePath": "/result",
           "paginationType": "none",
           "retryAttempts": 3,
@@ -9522,11 +9417,11 @@
       "id": "p90",
       "type": "source",
       "position": {
-        "x": 23140,
-        "y": 0
+        "x": 0,
+        "y": 10680
       },
       "data": {
-        "label": "p1",
+        "label": "page 90",
         "componentId": "src.rest",
         "schema": [
           {
@@ -9614,7 +9509,7 @@
           "connectionRef": "lemeng",
           "url": "https://cloud.nhsoft.cn/agi/api/nhsoft.ama.ai.inventory.snapshot.find",
           "method": "POST",
-          "body": "{\"bizday\": \"${BIZDAY}\",\"page_number\": 90,\"page_size\": 200}",
+          "body": "{\"bizday\":\"${BIZDAY}\",\"page_number\":90,\"page_size\":200}",
           "responsePath": "/result",
           "paginationType": "none",
           "retryAttempts": 3,
@@ -9626,11 +9521,11 @@
       "id": "p91",
       "type": "source",
       "position": {
-        "x": 23400,
-        "y": 0
+        "x": 0,
+        "y": 10800
       },
       "data": {
-        "label": "p1",
+        "label": "page 91",
         "componentId": "src.rest",
         "schema": [
           {
@@ -9718,11 +9613,232 @@
           "connectionRef": "lemeng",
           "url": "https://cloud.nhsoft.cn/agi/api/nhsoft.ama.ai.inventory.snapshot.find",
           "method": "POST",
-          "body": "{\"bizday\": \"${BIZDAY}\",\"page_number\": 91,\"page_size\": 200}",
+          "body": "{\"bizday\":\"${BIZDAY}\",\"page_number\":91,\"page_size\":200}",
           "responsePath": "/result",
           "paginationType": "none",
           "retryAttempts": 3,
           "retryBackoffMs": 2000
+        }
+      }
+    },
+    {
+      "id": "p92",
+      "type": "source",
+      "position": {
+        "x": 0,
+        "y": 10920
+      },
+      "data": {
+        "label": "page 92",
+        "componentId": "src.rest",
+        "schema": [
+          {
+            "name": "branch_num",
+            "type": "int64"
+          },
+          {
+            "name": "branch_code",
+            "type": "string"
+          },
+          {
+            "name": "branch_name",
+            "type": "string"
+          },
+          {
+            "name": "storehouse_num",
+            "type": "int64"
+          },
+          {
+            "name": "storehouse_code",
+            "type": "string"
+          },
+          {
+            "name": "storehouse_name",
+            "type": "string"
+          },
+          {
+            "name": "item_num",
+            "type": "int64"
+          },
+          {
+            "name": "item_code",
+            "type": "string"
+          },
+          {
+            "name": "item_barcode",
+            "type": "string"
+          },
+          {
+            "name": "item_name",
+            "type": "string"
+          },
+          {
+            "name": "item_spec",
+            "type": "string"
+          },
+          {
+            "name": "item_unit",
+            "type": "string"
+          },
+          {
+            "name": "inventory_quantity",
+            "type": "decimal"
+          },
+          {
+            "name": "inventory_assist_quantity",
+            "type": "decimal"
+          },
+          {
+            "name": "inventory_use_quantity",
+            "type": "decimal"
+          },
+          {
+            "name": "inventory_money",
+            "type": "decimal"
+          },
+          {
+            "name": "carry_cost_price",
+            "type": "decimal"
+          },
+          {
+            "name": "sale_price",
+            "type": "decimal"
+          },
+          {
+            "name": "difference_quantity",
+            "type": "decimal"
+          },
+          {
+            "name": "difference_money",
+            "type": "decimal"
+          }
+        ],
+        "properties": {
+          "connectionRef": "lemeng",
+          "url": "https://cloud.nhsoft.cn/agi/api/nhsoft.ama.ai.inventory.snapshot.find",
+          "method": "POST",
+          "body": "{\"bizday\":\"${BIZDAY}\",\"page_number\":92,\"page_size\":200}",
+          "responsePath": "/result",
+          "paginationType": "none",
+          "retryAttempts": 3,
+          "retryBackoffMs": 2000
+        }
+      }
+    },
+    {
+      "id": "merge",
+      "type": "transform",
+      "position": {
+        "x": 300,
+        "y": 0
+      },
+      "data": {
+        "label": "merge",
+        "componentId": "ctl.merge",
+        "properties": {}
+      }
+    },
+    {
+      "id": "q",
+      "type": "transform",
+      "position": {
+        "x": 0,
+        "y": -200
+      },
+      "data": {
+        "label": "truncation guard",
+        "componentId": "code.sql",
+        "properties": {
+          "sql": "SELECT count(*) AS n FROM input HAVING count(*) = 18400"
+        }
+      }
+    },
+    {
+      "id": "dg",
+      "type": "transform",
+      "position": {
+        "x": 300,
+        "y": -200
+      },
+      "data": {
+        "label": "die on truncation",
+        "componentId": "ctl.die",
+        "properties": {
+          "condition": "has-rows",
+          "message": "STATIC_PAGES_TRUNCATED: 总行数 == pages×pageSize（92×200=18400）⇒ 可能截断；sink 已写，需人工确认并补页/加页"
+        }
+      }
+    },
+    {
+      "id": "die_empty",
+      "type": "control",
+      "position": {
+        "x": 0,
+        "y": 300
+      },
+      "data": {
+        "label": "空集 ⇒ 具名状态（回填日源端无结转记录）",
+        "componentId": "ctl.die",
+        "properties": {
+          "condition": "no-rows",
+          "message": "SOURCE_NOT_PUBLISHED: bizday=${BIZDAY} 源端零行——该营业日没有匹配的结转记录。本管线是**回填通道**：必须经 POST /api/run 显式传 params={BIZDAY:\"YYYY-MM-DD\"} 驱动。参数形状正确仍为零 ⇒ 源端这一天确实没结转：登记进正典 §1.7 台账后跳过，别反复重试。"
+        }
+      }
+    },
+    {
+      "id": "t",
+      "type": "transform",
+      "position": {
+        "x": 600,
+        "y": 0
+      },
+      "data": {
+        "label": "transform",
+        "componentId": "code.sql",
+        "properties": {
+          "sql": "SELECT\n  'iv-' || '${ENV:SYSTEM_BOOK}' || '-inventory_snapshot-' || replace(replace('${datetime}','-',''),'_','T') || 'Z' AS batch_id,\n  '${ENV:SYSTEM_BOOK}' AS system_book,\n  CAST('${BIZDAY}' AS DATE) AS bizday,\n  CAST(o.branch_num AS INTEGER) AS branch_num,\n  CAST(o.branch_code AS VARCHAR) AS branch_code,\n  CAST(o.branch_name AS VARCHAR) AS branch_name,\n  CAST(o.storehouse_num AS BIGINT) AS storehouse_num,\n  CAST(o.storehouse_code AS VARCHAR) AS storehouse_code,\n  CAST(o.storehouse_name AS VARCHAR) AS storehouse_name,\n  CAST(o.item_num AS BIGINT) AS item_num,\n  CAST(o.item_code AS VARCHAR) AS item_code,\n  CAST(o.item_barcode AS VARCHAR) AS item_barcode,\n  CAST(o.item_name AS VARCHAR) AS item_name,\n  CAST(o.item_spec AS VARCHAR) AS item_spec,\n  CAST(o.item_unit AS VARCHAR) AS item_unit,\n  CAST(o.inventory_quantity AS DECIMAL(14,6)) AS inventory_quantity,\n  CAST(o.inventory_assist_quantity AS DECIMAL(14,6)) AS inventory_assist_quantity,\n  CAST(o.inventory_use_quantity AS DECIMAL(14,6)) AS inventory_use_quantity,\n  CAST(o.inventory_money AS DECIMAL(14,2)) AS inventory_money,\n  CAST(o.carry_cost_price AS DECIMAL(18,8)) AS carry_cost_price,\n  CAST(o.sale_price AS DECIMAL(18,8)) AS sale_price,\n  CAST(o.difference_quantity AS DECIMAL(14,6)) AS difference_quantity,\n  CAST(o.difference_money AS DECIMAL(14,2)) AS difference_money\nFROM input o"
+        }
+      }
+    },
+    {
+      "id": "g",
+      "type": "transform",
+      "position": {
+        "x": 900,
+        "y": 0
+      },
+      "data": {
+        "label": "contract gate",
+        "componentId": "qa.contract",
+        "properties": {
+          "rules": {
+            "batch_id": "not_null",
+            "system_book": "not_null",
+            "bizday": "not_null",
+            "branch_num": "not_null",
+            "storehouse_num": "not_null",
+            "item_num": "not_null"
+          }
+        }
+      }
+    },
+    {
+      "id": "k",
+      "type": "sink",
+      "position": {
+        "x": 1200,
+        "y": 0
+      },
+      "data": {
+        "label": "sink",
+        "componentId": "snk.minio",
+        "properties": {
+          "connectionRef": "zos",
+          "bucket": "shanhai-data",
+          "key": "lemeng/inventory_snapshot/system_book=${ENV:SYSTEM_BOOK}/bizday=${BIZDAY}/chunk=all.parquet",
+          "format": "parquet",
+          "mode": "overwrite",
+          "compression": "zstd"
         }
       }
     }
@@ -9809,99 +9925,929 @@
       }
     },
     {
-      "id": "e-dv-p1",
-      "source": "dv",
-      "target": "p1",
-      "sourceHandle": null,
-      "targetHandle": null,
+      "id": "e-p1-m",
+      "source": "p1",
+      "target": "merge",
+      "sourceHandle": "main",
+      "targetHandle": "main_1",
       "data": {
-        "connectionType": "on-subjob-ok"
+        "connectionType": "main"
       }
     },
     {
-      "id": "e-dv-p2",
-      "source": "dv",
-      "target": "p2",
-      "sourceHandle": null,
-      "targetHandle": null,
+      "id": "e-p2-m",
+      "source": "p2",
+      "target": "merge",
+      "sourceHandle": "main",
+      "targetHandle": "main_2",
       "data": {
-        "connectionType": "on-subjob-ok"
+        "connectionType": "main"
       }
     },
     {
-      "id": "e-dv-p3",
-      "source": "dv",
-      "target": "p3",
-      "sourceHandle": null,
-      "targetHandle": null,
+      "id": "e-p3-m",
+      "source": "p3",
+      "target": "merge",
+      "sourceHandle": "main",
+      "targetHandle": "main_3",
       "data": {
-        "connectionType": "on-subjob-ok"
+        "connectionType": "main"
       }
     },
     {
-      "id": "e-dv-p4",
-      "source": "dv",
-      "target": "p4",
-      "sourceHandle": null,
-      "targetHandle": null,
+      "id": "e-p4-m",
+      "source": "p4",
+      "target": "merge",
+      "sourceHandle": "main",
+      "targetHandle": "main_4",
       "data": {
-        "connectionType": "on-subjob-ok"
+        "connectionType": "main"
       }
     },
     {
-      "id": "e-dv-p5",
-      "source": "dv",
-      "target": "p5",
-      "sourceHandle": null,
-      "targetHandle": null,
+      "id": "e-p5-m",
+      "source": "p5",
+      "target": "merge",
+      "sourceHandle": "main",
+      "targetHandle": "main_5",
       "data": {
-        "connectionType": "on-subjob-ok"
+        "connectionType": "main"
       }
     },
     {
-      "id": "e-dv-p6",
-      "source": "dv",
-      "target": "p6",
-      "sourceHandle": null,
-      "targetHandle": null,
+      "id": "e-p6-m",
+      "source": "p6",
+      "target": "merge",
+      "sourceHandle": "main",
+      "targetHandle": "main_6",
       "data": {
-        "connectionType": "on-subjob-ok"
+        "connectionType": "main"
       }
     },
     {
-      "id": "e-dv-p7",
-      "source": "dv",
-      "target": "p7",
-      "sourceHandle": null,
-      "targetHandle": null,
+      "id": "e-p7-m",
+      "source": "p7",
+      "target": "merge",
+      "sourceHandle": "main",
+      "targetHandle": "main_7",
       "data": {
-        "connectionType": "on-subjob-ok"
+        "connectionType": "main"
       }
     },
     {
-      "id": "e-dv-p8",
-      "source": "dv",
-      "target": "p8",
-      "sourceHandle": null,
-      "targetHandle": null,
+      "id": "e-p8-m",
+      "source": "p8",
+      "target": "merge",
+      "sourceHandle": "main",
+      "targetHandle": "main_8",
       "data": {
-        "connectionType": "on-subjob-ok"
+        "connectionType": "main"
       }
     },
     {
-      "id": "e-dv-p9",
-      "source": "dv",
-      "target": "p9",
-      "sourceHandle": null,
-      "targetHandle": null,
+      "id": "e-p9-m",
+      "source": "p9",
+      "target": "merge",
+      "sourceHandle": "main",
+      "targetHandle": "main_9",
       "data": {
-        "connectionType": "on-subjob-ok"
+        "connectionType": "main"
       }
     },
     {
-      "id": "e-merge-shape",
+      "id": "e-p10-m",
+      "source": "p10",
+      "target": "merge",
+      "sourceHandle": "main",
+      "targetHandle": "main_10",
+      "data": {
+        "connectionType": "main"
+      }
+    },
+    {
+      "id": "e-p11-m",
+      "source": "p11",
+      "target": "merge",
+      "sourceHandle": "main",
+      "targetHandle": "main_11",
+      "data": {
+        "connectionType": "main"
+      }
+    },
+    {
+      "id": "e-p12-m",
+      "source": "p12",
+      "target": "merge",
+      "sourceHandle": "main",
+      "targetHandle": "main_12",
+      "data": {
+        "connectionType": "main"
+      }
+    },
+    {
+      "id": "e-p13-m",
+      "source": "p13",
+      "target": "merge",
+      "sourceHandle": "main",
+      "targetHandle": "main_13",
+      "data": {
+        "connectionType": "main"
+      }
+    },
+    {
+      "id": "e-p14-m",
+      "source": "p14",
+      "target": "merge",
+      "sourceHandle": "main",
+      "targetHandle": "main_14",
+      "data": {
+        "connectionType": "main"
+      }
+    },
+    {
+      "id": "e-p15-m",
+      "source": "p15",
+      "target": "merge",
+      "sourceHandle": "main",
+      "targetHandle": "main_15",
+      "data": {
+        "connectionType": "main"
+      }
+    },
+    {
+      "id": "e-p16-m",
+      "source": "p16",
+      "target": "merge",
+      "sourceHandle": "main",
+      "targetHandle": "main_16",
+      "data": {
+        "connectionType": "main"
+      }
+    },
+    {
+      "id": "e-p17-m",
+      "source": "p17",
+      "target": "merge",
+      "sourceHandle": "main",
+      "targetHandle": "main_17",
+      "data": {
+        "connectionType": "main"
+      }
+    },
+    {
+      "id": "e-p18-m",
+      "source": "p18",
+      "target": "merge",
+      "sourceHandle": "main",
+      "targetHandle": "main_18",
+      "data": {
+        "connectionType": "main"
+      }
+    },
+    {
+      "id": "e-p19-m",
+      "source": "p19",
+      "target": "merge",
+      "sourceHandle": "main",
+      "targetHandle": "main_19",
+      "data": {
+        "connectionType": "main"
+      }
+    },
+    {
+      "id": "e-p20-m",
+      "source": "p20",
+      "target": "merge",
+      "sourceHandle": "main",
+      "targetHandle": "main_20",
+      "data": {
+        "connectionType": "main"
+      }
+    },
+    {
+      "id": "e-p21-m",
+      "source": "p21",
+      "target": "merge",
+      "sourceHandle": "main",
+      "targetHandle": "main_21",
+      "data": {
+        "connectionType": "main"
+      }
+    },
+    {
+      "id": "e-p22-m",
+      "source": "p22",
+      "target": "merge",
+      "sourceHandle": "main",
+      "targetHandle": "main_22",
+      "data": {
+        "connectionType": "main"
+      }
+    },
+    {
+      "id": "e-p23-m",
+      "source": "p23",
+      "target": "merge",
+      "sourceHandle": "main",
+      "targetHandle": "main_23",
+      "data": {
+        "connectionType": "main"
+      }
+    },
+    {
+      "id": "e-p24-m",
+      "source": "p24",
+      "target": "merge",
+      "sourceHandle": "main",
+      "targetHandle": "main_24",
+      "data": {
+        "connectionType": "main"
+      }
+    },
+    {
+      "id": "e-p25-m",
+      "source": "p25",
+      "target": "merge",
+      "sourceHandle": "main",
+      "targetHandle": "main_25",
+      "data": {
+        "connectionType": "main"
+      }
+    },
+    {
+      "id": "e-p26-m",
+      "source": "p26",
+      "target": "merge",
+      "sourceHandle": "main",
+      "targetHandle": "main_26",
+      "data": {
+        "connectionType": "main"
+      }
+    },
+    {
+      "id": "e-p27-m",
+      "source": "p27",
+      "target": "merge",
+      "sourceHandle": "main",
+      "targetHandle": "main_27",
+      "data": {
+        "connectionType": "main"
+      }
+    },
+    {
+      "id": "e-p28-m",
+      "source": "p28",
+      "target": "merge",
+      "sourceHandle": "main",
+      "targetHandle": "main_28",
+      "data": {
+        "connectionType": "main"
+      }
+    },
+    {
+      "id": "e-p29-m",
+      "source": "p29",
+      "target": "merge",
+      "sourceHandle": "main",
+      "targetHandle": "main_29",
+      "data": {
+        "connectionType": "main"
+      }
+    },
+    {
+      "id": "e-p30-m",
+      "source": "p30",
+      "target": "merge",
+      "sourceHandle": "main",
+      "targetHandle": "main_30",
+      "data": {
+        "connectionType": "main"
+      }
+    },
+    {
+      "id": "e-p31-m",
+      "source": "p31",
+      "target": "merge",
+      "sourceHandle": "main",
+      "targetHandle": "main_31",
+      "data": {
+        "connectionType": "main"
+      }
+    },
+    {
+      "id": "e-p32-m",
+      "source": "p32",
+      "target": "merge",
+      "sourceHandle": "main",
+      "targetHandle": "main_32",
+      "data": {
+        "connectionType": "main"
+      }
+    },
+    {
+      "id": "e-p33-m",
+      "source": "p33",
+      "target": "merge",
+      "sourceHandle": "main",
+      "targetHandle": "main_33",
+      "data": {
+        "connectionType": "main"
+      }
+    },
+    {
+      "id": "e-p34-m",
+      "source": "p34",
+      "target": "merge",
+      "sourceHandle": "main",
+      "targetHandle": "main_34",
+      "data": {
+        "connectionType": "main"
+      }
+    },
+    {
+      "id": "e-p35-m",
+      "source": "p35",
+      "target": "merge",
+      "sourceHandle": "main",
+      "targetHandle": "main_35",
+      "data": {
+        "connectionType": "main"
+      }
+    },
+    {
+      "id": "e-p36-m",
+      "source": "p36",
+      "target": "merge",
+      "sourceHandle": "main",
+      "targetHandle": "main_36",
+      "data": {
+        "connectionType": "main"
+      }
+    },
+    {
+      "id": "e-p37-m",
+      "source": "p37",
+      "target": "merge",
+      "sourceHandle": "main",
+      "targetHandle": "main_37",
+      "data": {
+        "connectionType": "main"
+      }
+    },
+    {
+      "id": "e-p38-m",
+      "source": "p38",
+      "target": "merge",
+      "sourceHandle": "main",
+      "targetHandle": "main_38",
+      "data": {
+        "connectionType": "main"
+      }
+    },
+    {
+      "id": "e-p39-m",
+      "source": "p39",
+      "target": "merge",
+      "sourceHandle": "main",
+      "targetHandle": "main_39",
+      "data": {
+        "connectionType": "main"
+      }
+    },
+    {
+      "id": "e-p40-m",
+      "source": "p40",
+      "target": "merge",
+      "sourceHandle": "main",
+      "targetHandle": "main_40",
+      "data": {
+        "connectionType": "main"
+      }
+    },
+    {
+      "id": "e-p41-m",
+      "source": "p41",
+      "target": "merge",
+      "sourceHandle": "main",
+      "targetHandle": "main_41",
+      "data": {
+        "connectionType": "main"
+      }
+    },
+    {
+      "id": "e-p42-m",
+      "source": "p42",
+      "target": "merge",
+      "sourceHandle": "main",
+      "targetHandle": "main_42",
+      "data": {
+        "connectionType": "main"
+      }
+    },
+    {
+      "id": "e-p43-m",
+      "source": "p43",
+      "target": "merge",
+      "sourceHandle": "main",
+      "targetHandle": "main_43",
+      "data": {
+        "connectionType": "main"
+      }
+    },
+    {
+      "id": "e-p44-m",
+      "source": "p44",
+      "target": "merge",
+      "sourceHandle": "main",
+      "targetHandle": "main_44",
+      "data": {
+        "connectionType": "main"
+      }
+    },
+    {
+      "id": "e-p45-m",
+      "source": "p45",
+      "target": "merge",
+      "sourceHandle": "main",
+      "targetHandle": "main_45",
+      "data": {
+        "connectionType": "main"
+      }
+    },
+    {
+      "id": "e-p46-m",
+      "source": "p46",
+      "target": "merge",
+      "sourceHandle": "main",
+      "targetHandle": "main_46",
+      "data": {
+        "connectionType": "main"
+      }
+    },
+    {
+      "id": "e-p47-m",
+      "source": "p47",
+      "target": "merge",
+      "sourceHandle": "main",
+      "targetHandle": "main_47",
+      "data": {
+        "connectionType": "main"
+      }
+    },
+    {
+      "id": "e-p48-m",
+      "source": "p48",
+      "target": "merge",
+      "sourceHandle": "main",
+      "targetHandle": "main_48",
+      "data": {
+        "connectionType": "main"
+      }
+    },
+    {
+      "id": "e-p49-m",
+      "source": "p49",
+      "target": "merge",
+      "sourceHandle": "main",
+      "targetHandle": "main_49",
+      "data": {
+        "connectionType": "main"
+      }
+    },
+    {
+      "id": "e-p50-m",
+      "source": "p50",
+      "target": "merge",
+      "sourceHandle": "main",
+      "targetHandle": "main_50",
+      "data": {
+        "connectionType": "main"
+      }
+    },
+    {
+      "id": "e-p51-m",
+      "source": "p51",
+      "target": "merge",
+      "sourceHandle": "main",
+      "targetHandle": "main_51",
+      "data": {
+        "connectionType": "main"
+      }
+    },
+    {
+      "id": "e-p52-m",
+      "source": "p52",
+      "target": "merge",
+      "sourceHandle": "main",
+      "targetHandle": "main_52",
+      "data": {
+        "connectionType": "main"
+      }
+    },
+    {
+      "id": "e-p53-m",
+      "source": "p53",
+      "target": "merge",
+      "sourceHandle": "main",
+      "targetHandle": "main_53",
+      "data": {
+        "connectionType": "main"
+      }
+    },
+    {
+      "id": "e-p54-m",
+      "source": "p54",
+      "target": "merge",
+      "sourceHandle": "main",
+      "targetHandle": "main_54",
+      "data": {
+        "connectionType": "main"
+      }
+    },
+    {
+      "id": "e-p55-m",
+      "source": "p55",
+      "target": "merge",
+      "sourceHandle": "main",
+      "targetHandle": "main_55",
+      "data": {
+        "connectionType": "main"
+      }
+    },
+    {
+      "id": "e-p56-m",
+      "source": "p56",
+      "target": "merge",
+      "sourceHandle": "main",
+      "targetHandle": "main_56",
+      "data": {
+        "connectionType": "main"
+      }
+    },
+    {
+      "id": "e-p57-m",
+      "source": "p57",
+      "target": "merge",
+      "sourceHandle": "main",
+      "targetHandle": "main_57",
+      "data": {
+        "connectionType": "main"
+      }
+    },
+    {
+      "id": "e-p58-m",
+      "source": "p58",
+      "target": "merge",
+      "sourceHandle": "main",
+      "targetHandle": "main_58",
+      "data": {
+        "connectionType": "main"
+      }
+    },
+    {
+      "id": "e-p59-m",
+      "source": "p59",
+      "target": "merge",
+      "sourceHandle": "main",
+      "targetHandle": "main_59",
+      "data": {
+        "connectionType": "main"
+      }
+    },
+    {
+      "id": "e-p60-m",
+      "source": "p60",
+      "target": "merge",
+      "sourceHandle": "main",
+      "targetHandle": "main_60",
+      "data": {
+        "connectionType": "main"
+      }
+    },
+    {
+      "id": "e-p61-m",
+      "source": "p61",
+      "target": "merge",
+      "sourceHandle": "main",
+      "targetHandle": "main_61",
+      "data": {
+        "connectionType": "main"
+      }
+    },
+    {
+      "id": "e-p62-m",
+      "source": "p62",
+      "target": "merge",
+      "sourceHandle": "main",
+      "targetHandle": "main_62",
+      "data": {
+        "connectionType": "main"
+      }
+    },
+    {
+      "id": "e-p63-m",
+      "source": "p63",
+      "target": "merge",
+      "sourceHandle": "main",
+      "targetHandle": "main_63",
+      "data": {
+        "connectionType": "main"
+      }
+    },
+    {
+      "id": "e-p64-m",
+      "source": "p64",
+      "target": "merge",
+      "sourceHandle": "main",
+      "targetHandle": "main_64",
+      "data": {
+        "connectionType": "main"
+      }
+    },
+    {
+      "id": "e-p65-m",
+      "source": "p65",
+      "target": "merge",
+      "sourceHandle": "main",
+      "targetHandle": "main_65",
+      "data": {
+        "connectionType": "main"
+      }
+    },
+    {
+      "id": "e-p66-m",
+      "source": "p66",
+      "target": "merge",
+      "sourceHandle": "main",
+      "targetHandle": "main_66",
+      "data": {
+        "connectionType": "main"
+      }
+    },
+    {
+      "id": "e-p67-m",
+      "source": "p67",
+      "target": "merge",
+      "sourceHandle": "main",
+      "targetHandle": "main_67",
+      "data": {
+        "connectionType": "main"
+      }
+    },
+    {
+      "id": "e-p68-m",
+      "source": "p68",
+      "target": "merge",
+      "sourceHandle": "main",
+      "targetHandle": "main_68",
+      "data": {
+        "connectionType": "main"
+      }
+    },
+    {
+      "id": "e-p69-m",
+      "source": "p69",
+      "target": "merge",
+      "sourceHandle": "main",
+      "targetHandle": "main_69",
+      "data": {
+        "connectionType": "main"
+      }
+    },
+    {
+      "id": "e-p70-m",
+      "source": "p70",
+      "target": "merge",
+      "sourceHandle": "main",
+      "targetHandle": "main_70",
+      "data": {
+        "connectionType": "main"
+      }
+    },
+    {
+      "id": "e-p71-m",
+      "source": "p71",
+      "target": "merge",
+      "sourceHandle": "main",
+      "targetHandle": "main_71",
+      "data": {
+        "connectionType": "main"
+      }
+    },
+    {
+      "id": "e-p72-m",
+      "source": "p72",
+      "target": "merge",
+      "sourceHandle": "main",
+      "targetHandle": "main_72",
+      "data": {
+        "connectionType": "main"
+      }
+    },
+    {
+      "id": "e-p73-m",
+      "source": "p73",
+      "target": "merge",
+      "sourceHandle": "main",
+      "targetHandle": "main_73",
+      "data": {
+        "connectionType": "main"
+      }
+    },
+    {
+      "id": "e-p74-m",
+      "source": "p74",
+      "target": "merge",
+      "sourceHandle": "main",
+      "targetHandle": "main_74",
+      "data": {
+        "connectionType": "main"
+      }
+    },
+    {
+      "id": "e-p75-m",
+      "source": "p75",
+      "target": "merge",
+      "sourceHandle": "main",
+      "targetHandle": "main_75",
+      "data": {
+        "connectionType": "main"
+      }
+    },
+    {
+      "id": "e-p76-m",
+      "source": "p76",
+      "target": "merge",
+      "sourceHandle": "main",
+      "targetHandle": "main_76",
+      "data": {
+        "connectionType": "main"
+      }
+    },
+    {
+      "id": "e-p77-m",
+      "source": "p77",
+      "target": "merge",
+      "sourceHandle": "main",
+      "targetHandle": "main_77",
+      "data": {
+        "connectionType": "main"
+      }
+    },
+    {
+      "id": "e-p78-m",
+      "source": "p78",
+      "target": "merge",
+      "sourceHandle": "main",
+      "targetHandle": "main_78",
+      "data": {
+        "connectionType": "main"
+      }
+    },
+    {
+      "id": "e-p79-m",
+      "source": "p79",
+      "target": "merge",
+      "sourceHandle": "main",
+      "targetHandle": "main_79",
+      "data": {
+        "connectionType": "main"
+      }
+    },
+    {
+      "id": "e-p80-m",
+      "source": "p80",
+      "target": "merge",
+      "sourceHandle": "main",
+      "targetHandle": "main_80",
+      "data": {
+        "connectionType": "main"
+      }
+    },
+    {
+      "id": "e-p81-m",
+      "source": "p81",
+      "target": "merge",
+      "sourceHandle": "main",
+      "targetHandle": "main_81",
+      "data": {
+        "connectionType": "main"
+      }
+    },
+    {
+      "id": "e-p82-m",
+      "source": "p82",
+      "target": "merge",
+      "sourceHandle": "main",
+      "targetHandle": "main_82",
+      "data": {
+        "connectionType": "main"
+      }
+    },
+    {
+      "id": "e-p83-m",
+      "source": "p83",
+      "target": "merge",
+      "sourceHandle": "main",
+      "targetHandle": "main_83",
+      "data": {
+        "connectionType": "main"
+      }
+    },
+    {
+      "id": "e-p84-m",
+      "source": "p84",
+      "target": "merge",
+      "sourceHandle": "main",
+      "targetHandle": "main_84",
+      "data": {
+        "connectionType": "main"
+      }
+    },
+    {
+      "id": "e-p85-m",
+      "source": "p85",
+      "target": "merge",
+      "sourceHandle": "main",
+      "targetHandle": "main_85",
+      "data": {
+        "connectionType": "main"
+      }
+    },
+    {
+      "id": "e-p86-m",
+      "source": "p86",
+      "target": "merge",
+      "sourceHandle": "main",
+      "targetHandle": "main_86",
+      "data": {
+        "connectionType": "main"
+      }
+    },
+    {
+      "id": "e-p87-m",
+      "source": "p87",
+      "target": "merge",
+      "sourceHandle": "main",
+      "targetHandle": "main_87",
+      "data": {
+        "connectionType": "main"
+      }
+    },
+    {
+      "id": "e-p88-m",
+      "source": "p88",
+      "target": "merge",
+      "sourceHandle": "main",
+      "targetHandle": "main_88",
+      "data": {
+        "connectionType": "main"
+      }
+    },
+    {
+      "id": "e-p89-m",
+      "source": "p89",
+      "target": "merge",
+      "sourceHandle": "main",
+      "targetHandle": "main_89",
+      "data": {
+        "connectionType": "main"
+      }
+    },
+    {
+      "id": "e-p90-m",
+      "source": "p90",
+      "target": "merge",
+      "sourceHandle": "main",
+      "targetHandle": "main_90",
+      "data": {
+        "connectionType": "main"
+      }
+    },
+    {
+      "id": "e-p91-m",
+      "source": "p91",
+      "target": "merge",
+      "sourceHandle": "main",
+      "targetHandle": "main_91",
+      "data": {
+        "connectionType": "main"
+      }
+    },
+    {
+      "id": "e-p92-m",
+      "source": "p92",
+      "target": "merge",
+      "sourceHandle": "main",
+      "targetHandle": "main_92",
+      "data": {
+        "connectionType": "main"
+      }
+    },
+    {
+      "id": "e-merge-q",
       "source": "merge",
-      "target": "shape",
+      "target": "q",
       "sourceHandle": "main",
       "targetHandle": "main",
       "data": {
@@ -9909,19 +10855,9 @@
       }
     },
     {
-      "id": "e-shape-gate",
-      "source": "shape",
-      "target": "gate",
-      "sourceHandle": "main",
-      "targetHandle": "main",
-      "data": {
-        "connectionType": "main"
-      }
-    },
-    {
-      "id": "e-gate-sink",
-      "source": "gate",
-      "target": "sink",
+      "id": "e-q-dg",
+      "source": "q",
+      "target": "dg",
       "sourceHandle": "main",
       "targetHandle": "main",
       "data": {
@@ -9939,909 +10875,19 @@
       }
     },
     {
-      "id": "e-p1-merge",
-      "source": "p1",
-      "target": "merge",
-      "sourceHandle": "main",
-      "targetHandle": "main_1",
+      "id": "e-dv-first",
+      "source": "dv",
+      "target": "p1",
+      "sourceHandle": null,
+      "targetHandle": null,
       "data": {
-        "connectionType": "main"
+        "connectionType": "on-subjob-ok"
       }
     },
     {
-      "id": "e-p2-merge",
-      "source": "p2",
-      "target": "merge",
-      "sourceHandle": "main",
-      "targetHandle": "main_2",
-      "data": {
-        "connectionType": "main"
-      }
-    },
-    {
-      "id": "e-p3-merge",
-      "source": "p3",
-      "target": "merge",
-      "sourceHandle": "main",
-      "targetHandle": "main_3",
-      "data": {
-        "connectionType": "main"
-      }
-    },
-    {
-      "id": "e-p4-merge",
-      "source": "p4",
-      "target": "merge",
-      "sourceHandle": "main",
-      "targetHandle": "main_4",
-      "data": {
-        "connectionType": "main"
-      }
-    },
-    {
-      "id": "e-p5-merge",
-      "source": "p5",
-      "target": "merge",
-      "sourceHandle": "main",
-      "targetHandle": "main_5",
-      "data": {
-        "connectionType": "main"
-      }
-    },
-    {
-      "id": "e-p6-merge",
-      "source": "p6",
-      "target": "merge",
-      "sourceHandle": "main",
-      "targetHandle": "main_6",
-      "data": {
-        "connectionType": "main"
-      }
-    },
-    {
-      "id": "e-p7-merge",
-      "source": "p7",
-      "target": "merge",
-      "sourceHandle": "main",
-      "targetHandle": "main_7",
-      "data": {
-        "connectionType": "main"
-      }
-    },
-    {
-      "id": "e-p8-merge",
-      "source": "p8",
-      "target": "merge",
-      "sourceHandle": "main",
-      "targetHandle": "main_8",
-      "data": {
-        "connectionType": "main"
-      }
-    },
-    {
-      "id": "e-p9-merge",
-      "source": "p9",
-      "target": "merge",
-      "sourceHandle": "main",
-      "targetHandle": "main_9",
-      "data": {
-        "connectionType": "main"
-      }
-    },
-    {
-      "id": "e-p10-merge",
-      "source": "p10",
-      "target": "merge",
-      "sourceHandle": "main",
-      "targetHandle": "main_10",
-      "data": {
-        "connectionType": "main"
-      }
-    },
-    {
-      "id": "e-p11-merge",
-      "source": "p11",
-      "target": "merge",
-      "sourceHandle": "main",
-      "targetHandle": "main_11",
-      "data": {
-        "connectionType": "main"
-      }
-    },
-    {
-      "id": "e-p12-merge",
-      "source": "p12",
-      "target": "merge",
-      "sourceHandle": "main",
-      "targetHandle": "main_12",
-      "data": {
-        "connectionType": "main"
-      }
-    },
-    {
-      "id": "e-p13-merge",
-      "source": "p13",
-      "target": "merge",
-      "sourceHandle": "main",
-      "targetHandle": "main_13",
-      "data": {
-        "connectionType": "main"
-      }
-    },
-    {
-      "id": "e-p14-merge",
-      "source": "p14",
-      "target": "merge",
-      "sourceHandle": "main",
-      "targetHandle": "main_14",
-      "data": {
-        "connectionType": "main"
-      }
-    },
-    {
-      "id": "e-p15-merge",
-      "source": "p15",
-      "target": "merge",
-      "sourceHandle": "main",
-      "targetHandle": "main_15",
-      "data": {
-        "connectionType": "main"
-      }
-    },
-    {
-      "id": "e-p16-merge",
-      "source": "p16",
-      "target": "merge",
-      "sourceHandle": "main",
-      "targetHandle": "main_16",
-      "data": {
-        "connectionType": "main"
-      }
-    },
-    {
-      "id": "e-p17-merge",
-      "source": "p17",
-      "target": "merge",
-      "sourceHandle": "main",
-      "targetHandle": "main_17",
-      "data": {
-        "connectionType": "main"
-      }
-    },
-    {
-      "id": "e-p18-merge",
-      "source": "p18",
-      "target": "merge",
-      "sourceHandle": "main",
-      "targetHandle": "main_18",
-      "data": {
-        "connectionType": "main"
-      }
-    },
-    {
-      "id": "e-p19-merge",
-      "source": "p19",
-      "target": "merge",
-      "sourceHandle": "main",
-      "targetHandle": "main_19",
-      "data": {
-        "connectionType": "main"
-      }
-    },
-    {
-      "id": "e-p20-merge",
-      "source": "p20",
-      "target": "merge",
-      "sourceHandle": "main",
-      "targetHandle": "main_20",
-      "data": {
-        "connectionType": "main"
-      }
-    },
-    {
-      "id": "e-p21-merge",
-      "source": "p21",
-      "target": "merge",
-      "sourceHandle": "main",
-      "targetHandle": "main_21",
-      "data": {
-        "connectionType": "main"
-      }
-    },
-    {
-      "id": "e-p22-merge",
-      "source": "p22",
-      "target": "merge",
-      "sourceHandle": "main",
-      "targetHandle": "main_22",
-      "data": {
-        "connectionType": "main"
-      }
-    },
-    {
-      "id": "e-p23-merge",
-      "source": "p23",
-      "target": "merge",
-      "sourceHandle": "main",
-      "targetHandle": "main_23",
-      "data": {
-        "connectionType": "main"
-      }
-    },
-    {
-      "id": "e-p24-merge",
-      "source": "p24",
-      "target": "merge",
-      "sourceHandle": "main",
-      "targetHandle": "main_24",
-      "data": {
-        "connectionType": "main"
-      }
-    },
-    {
-      "id": "e-p25-merge",
-      "source": "p25",
-      "target": "merge",
-      "sourceHandle": "main",
-      "targetHandle": "main_25",
-      "data": {
-        "connectionType": "main"
-      }
-    },
-    {
-      "id": "e-p26-merge",
-      "source": "p26",
-      "target": "merge",
-      "sourceHandle": "main",
-      "targetHandle": "main_26",
-      "data": {
-        "connectionType": "main"
-      }
-    },
-    {
-      "id": "e-p27-merge",
-      "source": "p27",
-      "target": "merge",
-      "sourceHandle": "main",
-      "targetHandle": "main_27",
-      "data": {
-        "connectionType": "main"
-      }
-    },
-    {
-      "id": "e-p28-merge",
-      "source": "p28",
-      "target": "merge",
-      "sourceHandle": "main",
-      "targetHandle": "main_28",
-      "data": {
-        "connectionType": "main"
-      }
-    },
-    {
-      "id": "e-p29-merge",
-      "source": "p29",
-      "target": "merge",
-      "sourceHandle": "main",
-      "targetHandle": "main_29",
-      "data": {
-        "connectionType": "main"
-      }
-    },
-    {
-      "id": "e-p30-merge",
-      "source": "p30",
-      "target": "merge",
-      "sourceHandle": "main",
-      "targetHandle": "main_30",
-      "data": {
-        "connectionType": "main"
-      }
-    },
-    {
-      "id": "e-p31-merge",
-      "source": "p31",
-      "target": "merge",
-      "sourceHandle": "main",
-      "targetHandle": "main_31",
-      "data": {
-        "connectionType": "main"
-      }
-    },
-    {
-      "id": "e-p32-merge",
-      "source": "p32",
-      "target": "merge",
-      "sourceHandle": "main",
-      "targetHandle": "main_32",
-      "data": {
-        "connectionType": "main"
-      }
-    },
-    {
-      "id": "e-p33-merge",
-      "source": "p33",
-      "target": "merge",
-      "sourceHandle": "main",
-      "targetHandle": "main_33",
-      "data": {
-        "connectionType": "main"
-      }
-    },
-    {
-      "id": "e-p34-merge",
-      "source": "p34",
-      "target": "merge",
-      "sourceHandle": "main",
-      "targetHandle": "main_34",
-      "data": {
-        "connectionType": "main"
-      }
-    },
-    {
-      "id": "e-p35-merge",
-      "source": "p35",
-      "target": "merge",
-      "sourceHandle": "main",
-      "targetHandle": "main_35",
-      "data": {
-        "connectionType": "main"
-      }
-    },
-    {
-      "id": "e-p36-merge",
-      "source": "p36",
-      "target": "merge",
-      "sourceHandle": "main",
-      "targetHandle": "main_36",
-      "data": {
-        "connectionType": "main"
-      }
-    },
-    {
-      "id": "e-p37-merge",
-      "source": "p37",
-      "target": "merge",
-      "sourceHandle": "main",
-      "targetHandle": "main_37",
-      "data": {
-        "connectionType": "main"
-      }
-    },
-    {
-      "id": "e-p38-merge",
-      "source": "p38",
-      "target": "merge",
-      "sourceHandle": "main",
-      "targetHandle": "main_38",
-      "data": {
-        "connectionType": "main"
-      }
-    },
-    {
-      "id": "e-p39-merge",
-      "source": "p39",
-      "target": "merge",
-      "sourceHandle": "main",
-      "targetHandle": "main_39",
-      "data": {
-        "connectionType": "main"
-      }
-    },
-    {
-      "id": "e-p40-merge",
-      "source": "p40",
-      "target": "merge",
-      "sourceHandle": "main",
-      "targetHandle": "main_40",
-      "data": {
-        "connectionType": "main"
-      }
-    },
-    {
-      "id": "e-p41-merge",
-      "source": "p41",
-      "target": "merge",
-      "sourceHandle": "main",
-      "targetHandle": "main_41",
-      "data": {
-        "connectionType": "main"
-      }
-    },
-    {
-      "id": "e-p42-merge",
-      "source": "p42",
-      "target": "merge",
-      "sourceHandle": "main",
-      "targetHandle": "main_42",
-      "data": {
-        "connectionType": "main"
-      }
-    },
-    {
-      "id": "e-p43-merge",
-      "source": "p43",
-      "target": "merge",
-      "sourceHandle": "main",
-      "targetHandle": "main_43",
-      "data": {
-        "connectionType": "main"
-      }
-    },
-    {
-      "id": "e-p44-merge",
-      "source": "p44",
-      "target": "merge",
-      "sourceHandle": "main",
-      "targetHandle": "main_44",
-      "data": {
-        "connectionType": "main"
-      }
-    },
-    {
-      "id": "e-p45-merge",
-      "source": "p45",
-      "target": "merge",
-      "sourceHandle": "main",
-      "targetHandle": "main_45",
-      "data": {
-        "connectionType": "main"
-      }
-    },
-    {
-      "id": "e-p46-merge",
-      "source": "p46",
-      "target": "merge",
-      "sourceHandle": "main",
-      "targetHandle": "main_46",
-      "data": {
-        "connectionType": "main"
-      }
-    },
-    {
-      "id": "e-p47-merge",
-      "source": "p47",
-      "target": "merge",
-      "sourceHandle": "main",
-      "targetHandle": "main_47",
-      "data": {
-        "connectionType": "main"
-      }
-    },
-    {
-      "id": "e-p48-merge",
-      "source": "p48",
-      "target": "merge",
-      "sourceHandle": "main",
-      "targetHandle": "main_48",
-      "data": {
-        "connectionType": "main"
-      }
-    },
-    {
-      "id": "e-p49-merge",
-      "source": "p49",
-      "target": "merge",
-      "sourceHandle": "main",
-      "targetHandle": "main_49",
-      "data": {
-        "connectionType": "main"
-      }
-    },
-    {
-      "id": "e-p50-merge",
-      "source": "p50",
-      "target": "merge",
-      "sourceHandle": "main",
-      "targetHandle": "main_50",
-      "data": {
-        "connectionType": "main"
-      }
-    },
-    {
-      "id": "e-p51-merge",
-      "source": "p51",
-      "target": "merge",
-      "sourceHandle": "main",
-      "targetHandle": "main_51",
-      "data": {
-        "connectionType": "main"
-      }
-    },
-    {
-      "id": "e-p52-merge",
-      "source": "p52",
-      "target": "merge",
-      "sourceHandle": "main",
-      "targetHandle": "main_52",
-      "data": {
-        "connectionType": "main"
-      }
-    },
-    {
-      "id": "e-p53-merge",
-      "source": "p53",
-      "target": "merge",
-      "sourceHandle": "main",
-      "targetHandle": "main_53",
-      "data": {
-        "connectionType": "main"
-      }
-    },
-    {
-      "id": "e-p54-merge",
-      "source": "p54",
-      "target": "merge",
-      "sourceHandle": "main",
-      "targetHandle": "main_54",
-      "data": {
-        "connectionType": "main"
-      }
-    },
-    {
-      "id": "e-p55-merge",
-      "source": "p55",
-      "target": "merge",
-      "sourceHandle": "main",
-      "targetHandle": "main_55",
-      "data": {
-        "connectionType": "main"
-      }
-    },
-    {
-      "id": "e-p56-merge",
-      "source": "p56",
-      "target": "merge",
-      "sourceHandle": "main",
-      "targetHandle": "main_56",
-      "data": {
-        "connectionType": "main"
-      }
-    },
-    {
-      "id": "e-p57-merge",
-      "source": "p57",
-      "target": "merge",
-      "sourceHandle": "main",
-      "targetHandle": "main_57",
-      "data": {
-        "connectionType": "main"
-      }
-    },
-    {
-      "id": "e-p58-merge",
-      "source": "p58",
-      "target": "merge",
-      "sourceHandle": "main",
-      "targetHandle": "main_58",
-      "data": {
-        "connectionType": "main"
-      }
-    },
-    {
-      "id": "e-p59-merge",
-      "source": "p59",
-      "target": "merge",
-      "sourceHandle": "main",
-      "targetHandle": "main_59",
-      "data": {
-        "connectionType": "main"
-      }
-    },
-    {
-      "id": "e-p60-merge",
-      "source": "p60",
-      "target": "merge",
-      "sourceHandle": "main",
-      "targetHandle": "main_60",
-      "data": {
-        "connectionType": "main"
-      }
-    },
-    {
-      "id": "e-p61-merge",
-      "source": "p61",
-      "target": "merge",
-      "sourceHandle": "main",
-      "targetHandle": "main_61",
-      "data": {
-        "connectionType": "main"
-      }
-    },
-    {
-      "id": "e-p62-merge",
-      "source": "p62",
-      "target": "merge",
-      "sourceHandle": "main",
-      "targetHandle": "main_62",
-      "data": {
-        "connectionType": "main"
-      }
-    },
-    {
-      "id": "e-p63-merge",
-      "source": "p63",
-      "target": "merge",
-      "sourceHandle": "main",
-      "targetHandle": "main_63",
-      "data": {
-        "connectionType": "main"
-      }
-    },
-    {
-      "id": "e-p64-merge",
-      "source": "p64",
-      "target": "merge",
-      "sourceHandle": "main",
-      "targetHandle": "main_64",
-      "data": {
-        "connectionType": "main"
-      }
-    },
-    {
-      "id": "e-p65-merge",
-      "source": "p65",
-      "target": "merge",
-      "sourceHandle": "main",
-      "targetHandle": "main_65",
-      "data": {
-        "connectionType": "main"
-      }
-    },
-    {
-      "id": "e-p66-merge",
-      "source": "p66",
-      "target": "merge",
-      "sourceHandle": "main",
-      "targetHandle": "main_66",
-      "data": {
-        "connectionType": "main"
-      }
-    },
-    {
-      "id": "e-p67-merge",
-      "source": "p67",
-      "target": "merge",
-      "sourceHandle": "main",
-      "targetHandle": "main_67",
-      "data": {
-        "connectionType": "main"
-      }
-    },
-    {
-      "id": "e-p68-merge",
-      "source": "p68",
-      "target": "merge",
-      "sourceHandle": "main",
-      "targetHandle": "main_68",
-      "data": {
-        "connectionType": "main"
-      }
-    },
-    {
-      "id": "e-p69-merge",
-      "source": "p69",
-      "target": "merge",
-      "sourceHandle": "main",
-      "targetHandle": "main_69",
-      "data": {
-        "connectionType": "main"
-      }
-    },
-    {
-      "id": "e-p70-merge",
-      "source": "p70",
-      "target": "merge",
-      "sourceHandle": "main",
-      "targetHandle": "main_70",
-      "data": {
-        "connectionType": "main"
-      }
-    },
-    {
-      "id": "e-p71-merge",
-      "source": "p71",
-      "target": "merge",
-      "sourceHandle": "main",
-      "targetHandle": "main_71",
-      "data": {
-        "connectionType": "main"
-      }
-    },
-    {
-      "id": "e-p72-merge",
-      "source": "p72",
-      "target": "merge",
-      "sourceHandle": "main",
-      "targetHandle": "main_72",
-      "data": {
-        "connectionType": "main"
-      }
-    },
-    {
-      "id": "e-p73-merge",
-      "source": "p73",
-      "target": "merge",
-      "sourceHandle": "main",
-      "targetHandle": "main_73",
-      "data": {
-        "connectionType": "main"
-      }
-    },
-    {
-      "id": "e-p74-merge",
-      "source": "p74",
-      "target": "merge",
-      "sourceHandle": "main",
-      "targetHandle": "main_74",
-      "data": {
-        "connectionType": "main"
-      }
-    },
-    {
-      "id": "e-p75-merge",
-      "source": "p75",
-      "target": "merge",
-      "sourceHandle": "main",
-      "targetHandle": "main_75",
-      "data": {
-        "connectionType": "main"
-      }
-    },
-    {
-      "id": "e-p76-merge",
-      "source": "p76",
-      "target": "merge",
-      "sourceHandle": "main",
-      "targetHandle": "main_76",
-      "data": {
-        "connectionType": "main"
-      }
-    },
-    {
-      "id": "e-p77-merge",
-      "source": "p77",
-      "target": "merge",
-      "sourceHandle": "main",
-      "targetHandle": "main_77",
-      "data": {
-        "connectionType": "main"
-      }
-    },
-    {
-      "id": "e-p78-merge",
-      "source": "p78",
-      "target": "merge",
-      "sourceHandle": "main",
-      "targetHandle": "main_78",
-      "data": {
-        "connectionType": "main"
-      }
-    },
-    {
-      "id": "e-p79-merge",
-      "source": "p79",
-      "target": "merge",
-      "sourceHandle": "main",
-      "targetHandle": "main_79",
-      "data": {
-        "connectionType": "main"
-      }
-    },
-    {
-      "id": "e-p80-merge",
-      "source": "p80",
-      "target": "merge",
-      "sourceHandle": "main",
-      "targetHandle": "main_80",
-      "data": {
-        "connectionType": "main"
-      }
-    },
-    {
-      "id": "e-p81-merge",
-      "source": "p81",
-      "target": "merge",
-      "sourceHandle": "main",
-      "targetHandle": "main_81",
-      "data": {
-        "connectionType": "main"
-      }
-    },
-    {
-      "id": "e-p82-merge",
-      "source": "p82",
-      "target": "merge",
-      "sourceHandle": "main",
-      "targetHandle": "main_82",
-      "data": {
-        "connectionType": "main"
-      }
-    },
-    {
-      "id": "e-p83-merge",
-      "source": "p83",
-      "target": "merge",
-      "sourceHandle": "main",
-      "targetHandle": "main_83",
-      "data": {
-        "connectionType": "main"
-      }
-    },
-    {
-      "id": "e-p84-merge",
-      "source": "p84",
-      "target": "merge",
-      "sourceHandle": "main",
-      "targetHandle": "main_84",
-      "data": {
-        "connectionType": "main"
-      }
-    },
-    {
-      "id": "e-p85-merge",
-      "source": "p85",
-      "target": "merge",
-      "sourceHandle": "main",
-      "targetHandle": "main_85",
-      "data": {
-        "connectionType": "main"
-      }
-    },
-    {
-      "id": "e-p86-merge",
-      "source": "p86",
-      "target": "merge",
-      "sourceHandle": "main",
-      "targetHandle": "main_86",
-      "data": {
-        "connectionType": "main"
-      }
-    },
-    {
-      "id": "e-p87-merge",
-      "source": "p87",
-      "target": "merge",
-      "sourceHandle": "main",
-      "targetHandle": "main_87",
-      "data": {
-        "connectionType": "main"
-      }
-    },
-    {
-      "id": "e-p88-merge",
-      "source": "p88",
-      "target": "merge",
-      "sourceHandle": "main",
-      "targetHandle": "main_88",
-      "data": {
-        "connectionType": "main"
-      }
-    },
-    {
-      "id": "e-p89-merge",
-      "source": "p89",
-      "target": "merge",
-      "sourceHandle": "main",
-      "targetHandle": "main_89",
-      "data": {
-        "connectionType": "main"
-      }
-    },
-    {
-      "id": "e-p90-merge",
-      "source": "p90",
-      "target": "merge",
-      "sourceHandle": "main",
-      "targetHandle": "main_90",
-      "data": {
-        "connectionType": "main"
-      }
-    },
-    {
-      "id": "e-p91-sentinel",
-      "source": "p91",
-      "target": "sentinel",
+      "id": "e1",
+      "source": "merge",
+      "target": "t",
       "sourceHandle": "main",
       "targetHandle": "main",
       "data": {
@@ -10849,14 +10895,27 @@
       }
     },
     {
-      "id": "e-sentinel-merge",
-      "source": "sentinel",
-      "target": "merge",
+      "id": "e2",
+      "source": "t",
+      "target": "g",
       "sourceHandle": "main",
-      "targetHandle": "main_91",
+      "targetHandle": "main",
+      "data": {
+        "connectionType": "main"
+      }
+    },
+    {
+      "id": "e3",
+      "source": "g",
+      "target": "k",
+      "sourceHandle": "main",
+      "targetHandle": "main",
       "data": {
         "connectionType": "main"
       }
     }
+  ],
+  "_note": [
+    "由 scripts/gen-pipeline.mjs 从 manifest 生成；手改请改 manifest 后重生成（--check 会拦）。"
   ]
 }
