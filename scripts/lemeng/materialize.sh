@@ -293,6 +293,49 @@ if [ -z "$MAT_TABLES_ALL" ]; then
   echo "materialize warn: 水位表清单为空（staging 无含 bizday 列的表，或点名查询失败）——各域都不写逐表水位，data_as_of 将停留旧值" >&2
 fi
 
+# ── tables 档（2026-11-08，#1679 连带）：table 物化模型每日重建 ──────────────────────────
+# 为什么单列一档：小时档只跑 `config.materialized:incremental`，**table 模型不重建**；全量档
+# 又因 14:24 OOM 停用 ⇒ `recon_run`/`recon_break`（口径对账台账）与一批 dim/fct table 自
+# 2026-11-04 起停更（数据面探活 `recon_ledger_cover` 长期 ERR，就是这条欠账）。
+# table 模型总量可控（最重 stg_lemeng_item 1.8M 行、fct_contribution 111k），夜间窗口单跑一轮
+# 即可，**不必**把停用的全量档拉起来（那档还会连带跑全史 audit，正是当初 OOM 的来源）。
+# 选择器是**交集**（逗号）：`config.materialized:table,path:models/<域>` —— 只本域的 table 模型。
+TABLES_DOMAIN=${MATERIALIZE_TABLES_DOMAIN:-lemeng}
+if [ "$SCOPE" = tables ]; then
+  echo "── tables: config.materialized:table（domain=${TABLES_DOMAIN}；夜间窗口）──"
+  _log="$_WORK/dbt.tables.log"
+  _rc="$_WORK/dbt.tables.rc"
+  ( if DATA_PLANE_DOMAINS="$TABLES_DOMAIN" docker run --rm --network "$NETWORK" -v "$R/dbt:/usr/app" \
+      $(mat_env_args) "$IMAGE" $(mat_dbt_args) \
+      --select "config.materialized:table,path:models/$TABLES_DOMAIN" 2>&1; then
+    echo 0 >"$_rc"
+  else
+    echo $? >"$_rc"
+  fi ) | tee "$_log"
+  if [ "$(cat "$_rc")" != 0 ]; then
+    echo "MATERIALIZE_FAILED:dbt_build（tables ${TABLES_DOMAIN}）；retry 由 openship job 配置承担" >&2
+    exit 1
+  fi
+  if ! mat_log_has_build "$_log"; then
+    echo "MATERIALIZE_FAILED:noop（tables 选择器没有匹配到可建节点，或输出缺 PASS= 汇总行）" >&2
+    exit 1
+  fi
+  _tables=''
+  for _m in $(mat_domain_staging_models "$R" "$TABLES_DOMAIN"); do
+    case " ${MAT_TABLES_ALL} " in *" ${_m} "*) _tables="${_tables} ${_m}";; esac
+  done
+  if [ -z "$_tables" ]; then
+    echo "materialize warn: tables 档没有可落账的表（本域 staging 无含 bizday 列的表？）" >&2
+  else
+    mat_write_load_log \
+      "$(sed -n 's/.*PASS=\([0-9]*\).*/\1/p' "$_log" | tail -n 1)" \
+      "$(sed -n 's/.*ERROR=\([0-9]*\).*/\1/p' "$_log" | tail -n 1)" \
+      $_tables
+  fi
+  echo "MATERIALIZE_OK scope=tables"
+  exit 0
+fi
+
 # ── tick 档（#1520）：只跑销售明细增量，供 openship job 每 10 分钟调用 ─────────────────
 # 为什么单独一档：10 分钟一次全量重建物理上不可能（单轮 45–120 分钟）；增量后单表只重算
 # 最近 7 天。选择器是**一个具名模型**（fct_retail_sale），不是按域全量；上游 staging 已是 view
