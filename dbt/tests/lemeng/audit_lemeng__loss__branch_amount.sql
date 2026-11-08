@@ -14,7 +14,7 @@ r['cause']::varchar       as cause,
 r['direction']::varchar   as direction,
 sum(coalesce(r['total_money']::numeric, 0))::numeric(20,2) as v
 from {{ window_read_parquet(
-'s3://' ~ var('zos_bucket') ~ '/' ~ var('lemeng_loss_adjustment_prefix') ~ '/system_book=*/bizday=*/all.parquet'
+'s3://' ~ var('zos_bucket') ~ '/' ~ var('lemeng_loss_adjustment_prefix') ~ '/system_book=*/bizday=**/*.parquet'
 ) }} r
 where r['bizday']::date < CAST(now() AT TIME ZONE 'Asia/Shanghai' AS DATE)
 and r['bizday']::date >= date '{{ window_start_date() }}'

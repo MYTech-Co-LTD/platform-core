@@ -190,8 +190,8 @@ sources:
       - name: loss_adjustment
         description: '乐檬**库存调整单**（#1047 P1 2026-10-25 契约）：行 = 调整单；查询窗=制单日期族（纯 yyyy-MM-dd）；接口 nhsoft.ama.ai.adjustment.order.find。报损三类 cause（来货损/自然损/试吃）direction=出库；result 数组无 count ⇒ 哨兵页翻页。'
         meta:
-          path_convention: 'lemeng/loss_adjustment/system_book=<账套>/bizday=<日期>/all.parquet'
-          access_path: "read_parquet('s3://{{ var(\"zos_bucket\") }}/{{ var(\"lemeng_loss_adjustment_prefix\") }}/system_book=*/bizday=*/all.parquet') r"
+          path_convention: 'lemeng/loss_adjustment/system_book=<账套>/bizday=<日期>/chunk=all.parquet（2026-11-08 起 manifest static_pages 写 chunk= 分段；旧分区是 bizday=<日>/all.parquet，读侧 glob 两者都吃）'
+          access_path: "read_parquet('s3://{{ var(\"zos_bucket\") }}/{{ var(\"lemeng_loss_adjustment_prefix\") }}/system_book=*/bizday=**/*.parquet') r"
           partition_keys: ['system_book', 'bizday']
           partition_key_typing: '由路径字符串重推断；两列在 staging 显式 cast'
           pagination: '静态页扇出（page_number/page_size=100，哨兵同构）+ ctl.merge；result 数组无 count'
