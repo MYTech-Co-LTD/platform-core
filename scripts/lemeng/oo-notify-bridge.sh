@@ -85,6 +85,17 @@ while [ "$i" -lt "$N" ]; do
         i=$((i + 1)); continue
       fi ;;
   esac
+  # ── 未展开占位符的资产：**不是真资产，别推群**（2026-11-08 实测刷屏）──────────────
+  # 回填变体运行时，引擎把 sink key 的**模板**登记成新鲜度资产，形如
+  #   minio://${ENV:ZOS_BUCKET}/lemeng/<源>/system_book=${ENV:SYSTEM_BOOK}/bizday=${BIZDAY}/all.parquet
+  # 这些路径永远不存在 ⇒ 每轮新鲜度检查都判 stale ⇒ 本桥每轮推群（实测 19 条资产、3,357 条/周）。
+  # 真资产的落地路径**不可能含 `${`**（run 时全部展开）⇒ 按此过滤是安全的。
+  case "$PL" in
+    *'${'*)
+      echo "BR_SKIP:placeholder_asset ${PL}（未展开模板，非真实资产）"
+      NEWLAST=$TS; echo "$NEWLAST" > "$DA_FILE"
+      i=$((i + 1)); continue ;;
+  esac
   # shellcheck disable=SC2016
   BODY=$(printf '{"msgtype":"markdown","markdown":{"content":"%s **[OO 数据面] %s：%s**\\n> %s\\n> 明细: observe.hookflow.cn → Logs → data_alerts"}}' "$E" "$L" "$PL" "$TX")
   RESP=$(curl -sS -m 15 "$WECOM_WEBHOOK_URL" -H 'Content-Type: application/json' -d "$BODY") || {
