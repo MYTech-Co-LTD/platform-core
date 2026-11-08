@@ -61,11 +61,11 @@ fi
 
 if [ ! -f "$QUEUE" ]; then
   log "NO_QUEUE $QUEUE 不存在 —— 无事可做"
-  echo "NIGHTLY_DONE ok=0 fail=0 reason=no-queue"
+  echo "NIGHTLY_DONE ok=0 fail=0 skipped=0 reason=no-queue"
   exit 0
 fi
 
-ok=0; fail=0
+ok=0; fail=0; skipped=0
 # 队列逐条执行；每条是「一个数据集 × 一个账套 × 一段日期」，
 # backfill-history 自己会按 --until-cst 收窗、按 --skip-existing 跳过已有日。
 while read -r ds book from to flags _; do
@@ -87,17 +87,34 @@ while read -r ds book from to flags _; do
     esac
   fi
   log "RUN ds=$ds book=$book from=$from to=$to${_extra:+ flags=$flags}"
+  # ⚠️ 执行体输出先落临时文件再转台账：**要能区分「真跑了」和「窗口已关空转」**。
+  # 2026-11-08 实测：窗口外每个任务都秒退（`BF_WINDOW_CLOSED` + `BF_DONE ok=0 empty=0 failed=0`），
+  # 而旧版只看退出码 ⇒ 15 条任务 3 秒"全 OK"、`NIGHTLY_DONE ok=15 fail=0` 是**假绿**，
+  # 把「营业收款三件套永远轮不到」这个饥饿问题盖了整整一夜。
+  _task_out="$LEDGER_DIR/.task.$$.out"
   if python3 "$REPO/scripts/lemeng/backfill-history.py" \
        --dataset "$ds" --books "$book" --from "$from" --to "$to" \
        --apply --skip-existing --continue-on-fail $_extra \
        --fail-log "$LEDGER_DIR/fail-$DAY.jsonl" \
        --until-cst "$UNTIL_CST" --yield-cst "$YIELD_CST" \
-       >>"$LEDGER" 2>&1; then
+       >"$_task_out" 2>&1; then
+    _rc=0
+  else
+    _rc=$?
+  fi
+  cat "$_task_out" >>"$LEDGER"
+  # 判「空转」：窗口已关 **且** 这一天没产出任何结果（ok/empty/failed 全 0）。
+  # 只认两者同时成立——「全部已存在」(skip-existing) 也会得到 ok=0，那种是**真完成**，不能算跳过。
+  if [ "$_rc" = 0 ] && grep -q 'BF_WINDOW_CLOSED' "$_task_out" \
+     && grep -q 'BF_DONE ok=0 empty=0 failed=0' "$_task_out"; then
+    skipped=$((skipped+1)); log "SKIP ds=$ds book=$book reason=window-closed"
+  elif [ "$_rc" = 0 ]; then
     ok=$((ok+1)); log "OK ds=$ds book=$book"
   else
     fail=$((fail+1)); log "FAIL ds=${ds} book=${book}（详见台账上下文）"
   fi
+  rm -f "$_task_out"
 done < "$QUEUE"
 
-log "NIGHTLY_DONE ok=$ok fail=$fail"
-echo "NIGHTLY_DONE ok=$ok fail=$fail"
+log "NIGHTLY_DONE ok=$ok fail=$fail skipped=$skipped"
+echo "NIGHTLY_DONE ok=$ok fail=$fail skipped=$skipped"
