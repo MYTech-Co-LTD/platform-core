@@ -124,6 +124,13 @@ function expandPages(pipeline, pages, pageSize) {
   if (have >= pages) return
   /** @type {any} */
   const template = pipeline.nodes.find((/** @type {any} */ n) => n.id === `p${have}`)
+  // 宽页变体一次并发 300+ 请求，源网关会随机抖（2026-11-08 实测：同一页重试 3×2s 仍失败，
+  // 事后直探该页 200）⇒ 退避放宽到 5s，给源端恢复时间。
+  for (const n of pipeline.nodes) {
+    if (/^p\d+$/.test(String(n.id)) && n.data?.properties?.retryBackoffMs !== undefined) {
+      n.data.properties.retryBackoffMs = 5000
+    }
+  }
   for (let i = have + 1; i <= pages; i += 1) {
     /** @type {any} */
     const node = structuredClone(template)
@@ -133,6 +140,7 @@ function expandPages(pipeline, pages, pageSize) {
       /"page_number"\s*:\s*\d+/,
       `"page_number":${i}`,
     )
+    if (node.data.properties.retryBackoffMs !== undefined) node.data.properties.retryBackoffMs = 5000
     pipeline.nodes.push(node)
     pipeline.edges.push({
       id: `e-p${i}-m`,
