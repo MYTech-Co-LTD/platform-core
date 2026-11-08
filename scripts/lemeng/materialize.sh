@@ -307,7 +307,8 @@ if [ "$SCOPE" = tables ]; then
   _rc="$_WORK/dbt.tables.rc"
   ( if DATA_PLANE_DOMAINS="$TABLES_DOMAIN" docker run --rm --network "$NETWORK" -v "$R/dbt:/usr/app" \
       $(mat_env_args) "$IMAGE" $(mat_dbt_args) \
-      --select "config.materialized:table,path:models/$TABLES_DOMAIN" 2>&1; then
+      --select "config.materialized:table,path:models/$TABLES_DOMAIN" \
+      --exclude "path:tests/$TABLES_DOMAIN" --exclude tag:audit 2>&1; then
     echo 0 >"$_rc"
   else
     echo $? >"$_rc"
