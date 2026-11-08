@@ -1,0 +1,413 @@
+{
+  "id": "lemeng.dim.item.l0",
+  "domain": "lemeng",
+  "account": "3120",
+  "identityGate": true,
+  "source": {
+    "connectionRef": "lemeng",
+    "url": "https://cloud.nhsoft.cn/agi/api/nhsoft.base.ai.item.find",
+    "method": "POST",
+    "body": "{\"page_number\": 1, \"page_size\": 200}",
+    "responsePath": "/result/content",
+    "retryAttempts": 3,
+    "retryBackoffMs": 2000,
+    "schema": [
+      {
+        "name": "item_num",
+        "type": "string"
+      },
+      {
+        "name": "item_code",
+        "type": "string"
+      },
+      {
+        "name": "bar_code",
+        "type": "string"
+      },
+      {
+        "name": "pinyin",
+        "type": "string"
+      },
+      {
+        "name": "item_name",
+        "type": "string"
+      },
+      {
+        "name": "spec",
+        "type": "string"
+      },
+      {
+        "name": "item_type",
+        "type": "string"
+      },
+      {
+        "name": "item_flag_names",
+        "type": "string"
+      },
+      {
+        "name": "unit_name",
+        "type": "string"
+      },
+      {
+        "name": "unit_group_name",
+        "type": "string"
+      },
+      {
+        "name": "tax_code",
+        "type": "string"
+      },
+      {
+        "name": "valid_period",
+        "type": "int64"
+      },
+      {
+        "name": "made_in",
+        "type": "string"
+      },
+      {
+        "name": "eliminate_flag",
+        "type": "bool"
+      },
+      {
+        "name": "eliminate_at",
+        "type": "string"
+      },
+      {
+        "name": "eliminate_operator",
+        "type": "string"
+      },
+      {
+        "name": "item_sale_cease_flag",
+        "type": "bool"
+      },
+      {
+        "name": "description",
+        "type": "string"
+      },
+      {
+        "name": "item_point_value",
+        "type": "float64"
+      },
+      {
+        "name": "item_sale_no_store",
+        "type": "bool"
+      },
+      {
+        "name": "item_weight_flag",
+        "type": "bool"
+      },
+      {
+        "name": "item_in_tax",
+        "type": "float64"
+      },
+      {
+        "name": "item_out_tax",
+        "type": "float64"
+      },
+      {
+        "name": "free_tax_flag",
+        "type": "bool"
+      },
+      {
+        "name": "created_at",
+        "type": "string"
+      },
+      {
+        "name": "updated_at",
+        "type": "string"
+      },
+      {
+        "name": "created_by",
+        "type": "int64"
+      },
+      {
+        "name": "creator",
+        "type": "string"
+      },
+      {
+        "name": "updated_by",
+        "type": "int64"
+      },
+      {
+        "name": "item_sequence",
+        "type": "int64"
+      },
+      {
+        "name": "deleted_flag",
+        "type": "bool"
+      },
+      {
+        "name": "item_cost_mode",
+        "type": "string"
+      },
+      {
+        "name": "item_method",
+        "type": "string"
+      },
+      {
+        "name": "item_gross_rate",
+        "type": "string"
+      },
+      {
+        "name": "item_direct_rate",
+        "type": "string"
+      },
+      {
+        "name": "item_en_name",
+        "type": "string"
+      },
+      {
+        "name": "item_note_info",
+        "type": "string"
+      },
+      {
+        "name": "item_stock_cease_flag",
+        "type": "bool"
+      },
+      {
+        "name": "item_status",
+        "type": "int64"
+      },
+      {
+        "name": "item_remind_period",
+        "type": "int64"
+      },
+      {
+        "name": "item_transfer_day",
+        "type": "int64"
+      },
+      {
+        "name": "item_purchase_scope",
+        "type": "string"
+      },
+      {
+        "name": "item_store_place",
+        "type": "string"
+      },
+      {
+        "name": "item_assist_unit",
+        "type": "string"
+      },
+      {
+        "name": "item_assist_rate",
+        "type": "float64"
+      },
+      {
+        "name": "item_purchase_unit",
+        "type": "string"
+      },
+      {
+        "name": "item_purchase_rate",
+        "type": "float64"
+      },
+      {
+        "name": "item_inventory_unit",
+        "type": "string"
+      },
+      {
+        "name": "item_inventory_rate",
+        "type": "float64"
+      },
+      {
+        "name": "item_transfer_unit",
+        "type": "string"
+      },
+      {
+        "name": "item_transfer_rate",
+        "type": "float64"
+      },
+      {
+        "name": "item_wholesale_unit",
+        "type": "string"
+      },
+      {
+        "name": "item_wholesale_rate",
+        "type": "float64"
+      },
+      {
+        "name": "item_price_tag_flag",
+        "type": "bool"
+      },
+      {
+        "name": "item_print_label_flag",
+        "type": "bool"
+      },
+      {
+        "name": "item_cost_price",
+        "type": "float64"
+      },
+      {
+        "name": "item_transfer_price",
+        "type": "float64"
+      },
+      {
+        "name": "item_transfer_fix_type",
+        "type": "int64"
+      },
+      {
+        "name": "item_wholesale_fix_type",
+        "type": "int64"
+      },
+      {
+        "name": "item_fix_assist_transfer_price",
+        "type": "bool"
+      },
+      {
+        "name": "item_fix_assist_wholesale_price",
+        "type": "bool"
+      },
+      {
+        "name": "item_wholesale_price",
+        "type": "float64"
+      },
+      {
+        "name": "item_level2_wholesale",
+        "type": "float64"
+      },
+      {
+        "name": "item_level3_wholesale",
+        "type": "float64"
+      },
+      {
+        "name": "item_level4_wholesale",
+        "type": "float64"
+      },
+      {
+        "name": "item_transfer_gross",
+        "type": "float64"
+      },
+      {
+        "name": "item_transfer_fixed_gross",
+        "type": "bool"
+      },
+      {
+        "name": "item_wholesale_gross",
+        "type": "float64"
+      },
+      {
+        "name": "item_wholesale_fixed_gross",
+        "type": "bool"
+      },
+      {
+        "name": "item_wholesale_gross2",
+        "type": "float64"
+      },
+      {
+        "name": "item_wholesale_gross3",
+        "type": "float64"
+      },
+      {
+        "name": "item_wholesale_gross4",
+        "type": "float64"
+      },
+      {
+        "name": "item_wholesale_fixed_gross2",
+        "type": "bool"
+      },
+      {
+        "name": "item_wholesale_fixed_gross3",
+        "type": "bool"
+      },
+      {
+        "name": "item_wholesale_fixed_gross4",
+        "type": "bool"
+      },
+      {
+        "name": "item_wholesale_fix_type2",
+        "type": "int64"
+      },
+      {
+        "name": "item_wholesale_fix_type3",
+        "type": "int64"
+      },
+      {
+        "name": "item_wholesale_fix_type4",
+        "type": "int64"
+      },
+      {
+        "name": "item_manufacture_flag",
+        "type": "bool"
+      },
+      {
+        "name": "item_need_product_date",
+        "type": "bool"
+      },
+      {
+        "name": "item_price_adj",
+        "type": "int64"
+      },
+      {
+        "name": "item_transfer_return_flag",
+        "type": "bool"
+      },
+      {
+        "name": "no_stock_no_request",
+        "type": "bool"
+      },
+      {
+        "name": "item_fix_assist_cost_price",
+        "type": "bool"
+      },
+      {
+        "name": "test_market_end_date",
+        "type": "string"
+      },
+      {
+        "name": "new_crease",
+        "type": "string"
+      },
+      {
+        "name": "request_not_over_center_stock",
+        "type": "bool"
+      },
+      {
+        "name": "material_url",
+        "type": "string"
+      },
+      {
+        "name": "wholesale_book_allow_over_center_stock",
+        "type": "bool"
+      },
+      {
+        "name": "item_department",
+        "type": "json"
+      },
+      {
+        "name": "item_category",
+        "type": "json"
+      },
+      {
+        "name": "item_brand",
+        "type": "json"
+      }
+    ],
+    "pagination": {
+      "type": "static_pages",
+      "pages": 149,
+      "pageSize": 200,
+      "pageSizeParam": "page_size",
+      "truncationGuard": true,
+      "windowToken": "${date+8h}"
+    }
+  },
+  "transform": {
+    "sql": "SELECT\n  'dim-' || '${ENV:SYSTEM_BOOK}' || '-item-' || replace(replace('${datetime}','-',''),'_','T') || 'Z' AS batch_id,\n  '${ENV:SYSTEM_BOOK}' AS system_book,\n  CAST('${date+8h}' AS DATE) AS snapshot,\n  CAST(o.item_num AS VARCHAR) AS item_num,\n  CAST(o.item_code AS VARCHAR) AS item_code,\n  CAST(o.bar_code AS VARCHAR) AS bar_code,\n  CAST(o.pinyin AS VARCHAR) AS pinyin,\n  CAST(o.item_name AS VARCHAR) AS item_name,\n  CAST(o.spec AS VARCHAR) AS spec,\n  CAST(o.item_type AS VARCHAR) AS item_type,\n  CAST(o.item_flag_names AS VARCHAR) AS item_flag_names,\n  CAST(o.unit_name AS VARCHAR) AS unit_name,\n  CAST(o.unit_group_name AS VARCHAR) AS unit_group_name,\n  CAST(o.tax_code AS VARCHAR) AS tax_code,\n  CAST(o.valid_period AS INTEGER) AS valid_period,\n  CAST(o.made_in AS VARCHAR) AS made_in,\n  CAST(o.eliminate_flag AS BOOLEAN) AS eliminate_flag,\n  CAST(o.eliminate_at AS VARCHAR) AS eliminate_at,\n  CAST(o.eliminate_operator AS VARCHAR) AS eliminate_operator,\n  CAST(o.item_sale_cease_flag AS BOOLEAN) AS item_sale_cease_flag,\n  CAST(o.description AS VARCHAR) AS description,\n  CAST(o.item_point_value AS DECIMAL(18,8)) AS item_point_value,\n  CAST(o.item_sale_no_store AS BOOLEAN) AS item_sale_no_store,\n  CAST(o.item_weight_flag AS BOOLEAN) AS item_weight_flag,\n  CAST(o.item_in_tax AS DECIMAL(18,8)) AS item_in_tax,\n  CAST(o.item_out_tax AS DECIMAL(18,8)) AS item_out_tax,\n  CAST(o.free_tax_flag AS BOOLEAN) AS free_tax_flag,\n  CAST(o.created_at AS VARCHAR) AS created_at,\n  CAST(o.updated_at AS VARCHAR) AS updated_at,\n  CAST(o.created_by AS BIGINT) AS created_by,\n  CAST(o.creator AS VARCHAR) AS creator,\n  CAST(o.updated_by AS BIGINT) AS updated_by,\n  CAST(o.item_sequence AS INTEGER) AS item_sequence,\n  CAST(o.deleted_flag AS BOOLEAN) AS deleted_flag,\n  CAST(o.item_cost_mode AS VARCHAR) AS item_cost_mode,\n  CAST(o.item_method AS VARCHAR) AS item_method,\n  CAST(o.item_gross_rate AS VARCHAR) AS item_gross_rate,\n  CAST(o.item_direct_rate AS VARCHAR) AS item_direct_rate,\n  CAST(o.item_en_name AS VARCHAR) AS item_en_name,\n  CAST(o.item_note_info AS VARCHAR) AS item_note_info,\n  CAST(o.item_stock_cease_flag AS BOOLEAN) AS item_stock_cease_flag,\n  CAST(o.item_status AS INTEGER) AS item_status,\n  CAST(o.item_remind_period AS INTEGER) AS item_remind_period,\n  CAST(o.item_transfer_day AS INTEGER) AS item_transfer_day,\n  CAST(o.item_purchase_scope AS VARCHAR) AS item_purchase_scope,\n  CAST(o.item_store_place AS VARCHAR) AS item_store_place,\n  CAST(o.item_assist_unit AS VARCHAR) AS item_assist_unit,\n  CAST(o.item_assist_rate AS DECIMAL(18,8)) AS item_assist_rate,\n  CAST(o.item_purchase_unit AS VARCHAR) AS item_purchase_unit,\n  CAST(o.item_purchase_rate AS DECIMAL(18,8)) AS item_purchase_rate,\n  CAST(o.item_inventory_unit AS VARCHAR) AS item_inventory_unit,\n  CAST(o.item_inventory_rate AS DECIMAL(18,8)) AS item_inventory_rate,\n  CAST(o.item_transfer_unit AS VARCHAR) AS item_transfer_unit,\n  CAST(o.item_transfer_rate AS DECIMAL(18,8)) AS item_transfer_rate,\n  CAST(o.item_wholesale_unit AS VARCHAR) AS item_wholesale_unit,\n  CAST(o.item_wholesale_rate AS DECIMAL(18,8)) AS item_wholesale_rate,\n  CAST(o.item_price_tag_flag AS BOOLEAN) AS item_price_tag_flag,\n  CAST(o.item_print_label_flag AS BOOLEAN) AS item_print_label_flag,\n  CAST(o.item_cost_price AS DECIMAL(18,8)) AS item_cost_price,\n  CAST(o.item_transfer_price AS DECIMAL(18,8)) AS item_transfer_price,\n  CAST(o.item_transfer_fix_type AS INTEGER) AS item_transfer_fix_type,\n  CAST(o.item_wholesale_fix_type AS INTEGER) AS item_wholesale_fix_type,\n  CAST(o.item_fix_assist_transfer_price AS BOOLEAN) AS item_fix_assist_transfer_price,\n  CAST(o.item_fix_assist_wholesale_price AS BOOLEAN) AS item_fix_assist_wholesale_price,\n  CAST(o.item_wholesale_price AS DECIMAL(18,8)) AS item_wholesale_price,\n  CAST(o.item_level2_wholesale AS DECIMAL(18,8)) AS item_level2_wholesale,\n  CAST(o.item_level3_wholesale AS DECIMAL(18,8)) AS item_level3_wholesale,\n  CAST(o.item_level4_wholesale AS DECIMAL(18,8)) AS item_level4_wholesale,\n  CAST(o.item_transfer_gross AS DECIMAL(18,8)) AS item_transfer_gross,\n  CAST(o.item_transfer_fixed_gross AS BOOLEAN) AS item_transfer_fixed_gross,\n  CAST(o.item_wholesale_gross AS DECIMAL(18,8)) AS item_wholesale_gross,\n  CAST(o.item_wholesale_fixed_gross AS BOOLEAN) AS item_wholesale_fixed_gross,\n  CAST(o.item_wholesale_gross2 AS DECIMAL(18,8)) AS item_wholesale_gross2,\n  CAST(o.item_wholesale_gross3 AS DECIMAL(18,8)) AS item_wholesale_gross3,\n  CAST(o.item_wholesale_gross4 AS DECIMAL(18,8)) AS item_wholesale_gross4,\n  CAST(o.item_wholesale_fixed_gross2 AS BOOLEAN) AS item_wholesale_fixed_gross2,\n  CAST(o.item_wholesale_fixed_gross3 AS BOOLEAN) AS item_wholesale_fixed_gross3,\n  CAST(o.item_wholesale_fixed_gross4 AS BOOLEAN) AS item_wholesale_fixed_gross4,\n  CAST(o.item_wholesale_fix_type2 AS INTEGER) AS item_wholesale_fix_type2,\n  CAST(o.item_wholesale_fix_type3 AS INTEGER) AS item_wholesale_fix_type3,\n  CAST(o.item_wholesale_fix_type4 AS INTEGER) AS item_wholesale_fix_type4,\n  CAST(o.item_manufacture_flag AS BOOLEAN) AS item_manufacture_flag,\n  CAST(o.item_need_product_date AS BOOLEAN) AS item_need_product_date,\n  CAST(o.item_price_adj AS INTEGER) AS item_price_adj,\n  CAST(o.item_transfer_return_flag AS BOOLEAN) AS item_transfer_return_flag,\n  CAST(o.no_stock_no_request AS BOOLEAN) AS no_stock_no_request,\n  CAST(o.item_fix_assist_cost_price AS BOOLEAN) AS item_fix_assist_cost_price,\n  CAST(o.test_market_end_date AS VARCHAR) AS test_market_end_date,\n  CAST(o.new_crease AS VARCHAR) AS new_crease,\n  CAST(o.request_not_over_center_stock AS BOOLEAN) AS request_not_over_center_stock,\n  CAST(o.material_url AS VARCHAR) AS material_url,\n  CAST(o.wholesale_book_allow_over_center_stock AS BOOLEAN) AS wholesale_book_allow_over_center_stock,\n  CAST(json_extract_string(CAST(o.item_department AS JSON), '$.id') AS BIGINT) AS item_department_id,\n  CAST(json_extract_string(CAST(o.item_department AS JSON), '$.item_department_name') AS VARCHAR) AS item_department_name,\n  CAST(json_extract_string(CAST(o.item_department AS JSON), '$.item_department_code') AS VARCHAR) AS item_department_code,\n  CAST(json_extract_string(CAST(o.item_category AS JSON), '$.category_code') AS VARCHAR) AS item_category_code,\n  CAST(json_extract_string(CAST(o.item_category AS JSON), '$.category_en_name') AS VARCHAR) AS item_category_en_name,\n  CAST(json_extract_string(CAST(o.item_category AS JSON), '$.category_name') AS VARCHAR) AS item_category_name,\n  CAST(json_extract_string(CAST(o.item_category AS JSON), '$.id') AS BIGINT) AS item_category_id,\n  CAST(json_extract_string(CAST(o.item_category AS JSON), '$.level') AS INTEGER) AS item_category_level,\n  CAST(json_extract_string(CAST(o.item_category AS JSON), '$.parent_id') AS BIGINT) AS item_category_parent_id,\n  CAST(json_extract_string(CAST(o.item_category AS JSON), '$.pinyin') AS VARCHAR) AS item_category_pinyin,\n  CAST(json_extract_string(CAST(o.item_category AS JSON), '$.sort') AS INTEGER) AS item_category_sort,\n  CAST(json_extract_string(CAST(o.item_category AS JSON), '$.tax_code') AS VARCHAR) AS item_category_tax_code,\n  CAST(json_extract_string(CAST(o.item_brand AS JSON), '$.brand_code') AS VARCHAR) AS item_brand_code,\n  CAST(json_extract_string(CAST(o.item_brand AS JSON), '$.brand_name') AS VARCHAR) AS item_brand_name,\n  CAST(json_extract_string(CAST(o.item_brand AS JSON), '$.brand_pinyin') AS VARCHAR) AS item_brand_pinyin,\n  CAST(json_extract_string(CAST(o.item_brand AS JSON), '$.id') AS BIGINT) AS item_brand_id\nFROM input o"
+  },
+  "gate": {
+    "rules": {
+      "batch_id": "not_null",
+      "system_book": "not_null",
+      "snapshot": "not_null",
+      "item_num": "not_null"
+    }
+  },
+  "sink": {
+    "type": "minio",
+    "connectionRef": "zos",
+    "bucket": "shanhai-data",
+    "key": "lemeng/dim_item/system_book=${ENV:SYSTEM_BOOK}/snapshot=${date+8h}/chunk=all.parquet",
+    "format": "parquet",
+    "mode": "overwrite",
+    "compression": "zstd"
+  }
+}

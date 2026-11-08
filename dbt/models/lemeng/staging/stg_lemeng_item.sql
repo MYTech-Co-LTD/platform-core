@@ -127,5 +127,5 @@ select
   r['item_brand_pinyin']::varchar as item_brand_pinyin,
   r['item_brand_id']::bigint as item_brand_id
 from read_parquet(
-  's3://{{ var("zos_bucket") }}/{{ var("lemeng_item_prefix") }}/*/snapshot=**/all.parquet'
+  's3://{{ var("zos_bucket") }}/{{ var("lemeng_item_prefix") }}/*/snapshot=**/*.parquet'
 ) r
