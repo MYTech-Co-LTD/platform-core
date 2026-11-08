@@ -1,7 +1,7 @@
 {
   "id": "lemeng.request.order.l0",
   "domain": "lemeng",
-  "accounts": ["3120"],
+  "accounts": ["3120", "64188"],
   "identityGate": true,
   "source": {
     "connectionRef": "lemeng",
