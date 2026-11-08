@@ -7,9 +7,9 @@
 // 手编必然漂移——窗口 token 同时出现在 p1..pN 的 body、shape 的 bizday 列、sink 的 key 与 gv 的
 // 格式校验里，漏一处就是「回填跑到今天」或「写错分区」。
 //
-// 归属边界：`lemeng.inventory.snapshot.{catchup,backfill}.3120` 归
-// `gen-inventory-snapshot-variants.mjs`（它还要改空集文案）；本脚本只管下面列出的变体，
-// 其中 `inventory.snapshot.backfill.64188` 没有 catchup 兄弟，故由本脚本派生。
+// 归属边界：`lemeng.inventory.snapshot.{catchup,backfill}.{3120,64188}` **全部**归
+// `gen-inventory-snapshot-variants.mjs`（它还要改空集文案）。2026-11-08 起 64188 也有 catchup
+// 兄弟，故两个账套的四份变体统一由那个脚本派生，本脚本不再管 inventory.snapshot。
 //
 // 用法（仓根跑）：
 //   node scripts/lemeng/gen-backfill-variants.mjs           # 生成/覆盖全部变体
@@ -40,7 +40,6 @@ const TARGETS = [
   { base: 'lemeng.member.summary', book: '64188', window: '${date-1d}' },
   { base: 'lemeng.purchase.analysis', book: '64188', window: '${date-1d}' },
   { base: 'lemeng.request.order', book: '64188', window: '${date-1d}' },
-  { base: 'lemeng.inventory.snapshot', book: '64188', window: '${date-2d}' },
   { base: 'lemeng.branch_indicator', book: '64188', window: '${date-1d}' },
   // ── 商品销售/毛利（#1313 后续：AMAREPORT 两表，两本账套都采）──
   { base: 'lemeng.item_sales', book: '3120', window: '${date-1d}' },
