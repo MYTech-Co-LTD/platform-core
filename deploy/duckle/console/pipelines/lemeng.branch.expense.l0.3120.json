@@ -6,7 +6,7 @@
       "type": "source",
       "position": {
         "x": 0,
-        "y": 0
+        "y": -400
       },
       "data": {
         "label": "w0",
@@ -38,8 +38,8 @@
       "id": "g0",
       "type": "transform",
       "position": {
-        "x": 0,
-        "y": 0
+        "x": 300,
+        "y": -400
       },
       "data": {
         "label": "g0",
@@ -53,8 +53,8 @@
       "id": "g1",
       "type": "transform",
       "position": {
-        "x": 0,
-        "y": 0
+        "x": 600,
+        "y": -400
       },
       "data": {
         "label": "g1",
@@ -68,8 +68,8 @@
       "id": "g2",
       "type": "transform",
       "position": {
-        "x": 0,
-        "y": 0
+        "x": 900,
+        "y": -400
       },
       "data": {
         "label": "g2",
@@ -83,8 +83,8 @@
       "id": "d0",
       "type": "transform",
       "position": {
-        "x": 0,
-        "y": 0
+        "x": 1200,
+        "y": -400
       },
       "data": {
         "label": "d0",
@@ -99,8 +99,8 @@
       "id": "g3",
       "type": "transform",
       "position": {
-        "x": 0,
-        "y": 0
+        "x": 1500,
+        "y": -400
       },
       "data": {
         "label": "g3",
@@ -114,8 +114,8 @@
       "id": "d1",
       "type": "transform",
       "position": {
-        "x": 0,
-        "y": 0
+        "x": 1800,
+        "y": -400
       },
       "data": {
         "label": "d1",
@@ -130,14 +130,14 @@
       "id": "gv",
       "type": "transform",
       "position": {
-        "x": 0,
-        "y": 0
+        "x": 2100,
+        "y": -400
       },
       "data": {
         "label": "gv",
         "componentId": "code.sql",
         "properties": {
-          "sql": "SELECT 'BRANCH_NUMS' AS violation, '${ENV:BRANCH_NUMS}' AS detail, 'JSON integer array, e.g. [1001,1002]' AS rule WHERE NOT regexp_full_match('${ENV:BRANCH_NUMS}', '\\[[0-9]+([, ]+[0-9]+)*\\]') UNION ALL SELECT 'SYSTEM_BOOK', '${ENV:SYSTEM_BOOK}', 'digits only' WHERE NOT regexp_full_match('${ENV:SYSTEM_BOOK}', '[0-9]{1,32}') UNION ALL SELECT 'BIZDAY', '${date-1d}', 'YYYY-MM-DD' WHERE NOT regexp_full_match('${date-1d}', '[0-9]{4}-[0-9]{2}-[0-9]{2}') UNION ALL SELECT 'BATCH_ID', 'to-' || '${ENV:SYSTEM_BOOK}' || '-transfer_out-' || replace(replace('${datetime}','-',''),'_','T') || 'Z' AS v, 'to-<book>-transfer_out-YYYYMMDDTHHMMSSZ' WHERE NOT regexp_full_match('to-' || '${ENV:SYSTEM_BOOK}' || '-transfer_out-' || replace(replace('${datetime}','-',''),'_','T') || 'Z', 'to-[0-9]+-transfer_out-[0-9]{8}T[0-9]{6}Z')"
+          "sql": "SELECT 'BRANCH_NUMS' AS violation, '${ENV:BRANCH_NUMS}' AS detail, 'JSON integer array, e.g. [1001,1002]' AS rule WHERE NOT regexp_full_match('${ENV:BRANCH_NUMS}', '\\[[0-9]+([, ]+[0-9]+)*\\]') UNION ALL SELECT 'SYSTEM_BOOK', '${ENV:SYSTEM_BOOK}', 'digits only' WHERE NOT regexp_full_match('${ENV:SYSTEM_BOOK}', '[0-9]{1,32}') UNION ALL SELECT 'BIZDAY', '${date-1d}', 'YYYY-MM-DD' WHERE NOT regexp_full_match('${date-1d}', '[0-9]{4}-[0-9]{2}-[0-9]{2}')"
         }
       }
     },
@@ -145,8 +145,8 @@
       "id": "dv",
       "type": "transform",
       "position": {
-        "x": 0,
-        "y": 0
+        "x": 2400,
+        "y": -400
       },
       "data": {
         "label": "dv",
@@ -165,7 +165,7 @@
         "y": 0
       },
       "data": {
-        "label": "p1",
+        "label": "page 1",
         "componentId": "src.rest",
         "schema": [
           {
@@ -264,8 +264,8 @@
           "body": "{\"date_from\":\"${date-1d} 00:00:00\",\"date_to\":\"${date-1d} 23:59:59\",\"page_number\":1,\"page_size\":200,\"state_code\":3}",
           "responsePath": "/result",
           "paginationType": "none",
-          "retryAttempts": 10,
-          "retryBackoffMs": 15000
+          "retryAttempts": 3,
+          "retryBackoffMs": 2000
         }
       }
     },
@@ -274,10 +274,10 @@
       "type": "source",
       "position": {
         "x": 0,
-        "y": 0
+        "y": 120
       },
       "data": {
-        "label": "p2",
+        "label": "page 2",
         "componentId": "src.rest",
         "schema": [
           {
@@ -376,8 +376,8 @@
           "body": "{\"date_from\":\"${date-1d} 00:00:00\",\"date_to\":\"${date-1d} 23:59:59\",\"page_number\":2,\"page_size\":200,\"state_code\":3}",
           "responsePath": "/result",
           "paginationType": "none",
-          "retryAttempts": 10,
-          "retryBackoffMs": 15000
+          "retryAttempts": 3,
+          "retryBackoffMs": 2000
         }
       }
     },
@@ -386,10 +386,10 @@
       "type": "source",
       "position": {
         "x": 0,
-        "y": 0
+        "y": 240
       },
       "data": {
-        "label": "p3",
+        "label": "page 3",
         "componentId": "src.rest",
         "schema": [
           {
@@ -488,8 +488,8 @@
           "body": "{\"date_from\":\"${date-1d} 00:00:00\",\"date_to\":\"${date-1d} 23:59:59\",\"page_number\":3,\"page_size\":200,\"state_code\":3}",
           "responsePath": "/result",
           "paginationType": "none",
-          "retryAttempts": 10,
-          "retryBackoffMs": 15000
+          "retryAttempts": 3,
+          "retryBackoffMs": 2000
         }
       }
     },
@@ -498,10 +498,10 @@
       "type": "source",
       "position": {
         "x": 0,
-        "y": 0
+        "y": 360
       },
       "data": {
-        "label": "p4",
+        "label": "page 4",
         "componentId": "src.rest",
         "schema": [
           {
@@ -600,8 +600,8 @@
           "body": "{\"date_from\":\"${date-1d} 00:00:00\",\"date_to\":\"${date-1d} 23:59:59\",\"page_number\":4,\"page_size\":200,\"state_code\":3}",
           "responsePath": "/result",
           "paginationType": "none",
-          "retryAttempts": 10,
-          "retryBackoffMs": 15000
+          "retryAttempts": 3,
+          "retryBackoffMs": 2000
         }
       }
     },
@@ -610,10 +610,10 @@
       "type": "source",
       "position": {
         "x": 0,
-        "y": 0
+        "y": 480
       },
       "data": {
-        "label": "p5",
+        "label": "page 5",
         "componentId": "src.rest",
         "schema": [
           {
@@ -712,8 +712,8 @@
           "body": "{\"date_from\":\"${date-1d} 00:00:00\",\"date_to\":\"${date-1d} 23:59:59\",\"page_number\":5,\"page_size\":200,\"state_code\":3}",
           "responsePath": "/result",
           "paginationType": "none",
-          "retryAttempts": 10,
-          "retryBackoffMs": 15000
+          "retryAttempts": 3,
+          "retryBackoffMs": 2000
         }
       }
     },
@@ -722,10 +722,10 @@
       "type": "source",
       "position": {
         "x": 0,
-        "y": 0
+        "y": 600
       },
       "data": {
-        "label": "p6",
+        "label": "page 6",
         "componentId": "src.rest",
         "schema": [
           {
@@ -824,8 +824,8 @@
           "body": "{\"date_from\":\"${date-1d} 00:00:00\",\"date_to\":\"${date-1d} 23:59:59\",\"page_number\":6,\"page_size\":200,\"state_code\":3}",
           "responsePath": "/result",
           "paginationType": "none",
-          "retryAttempts": 10,
-          "retryBackoffMs": 15000
+          "retryAttempts": 3,
+          "retryBackoffMs": 2000
         }
       }
     },
@@ -834,10 +834,10 @@
       "type": "source",
       "position": {
         "x": 0,
-        "y": 0
+        "y": 720
       },
       "data": {
-        "label": "p7",
+        "label": "page 7",
         "componentId": "src.rest",
         "schema": [
           {
@@ -936,8 +936,8 @@
           "body": "{\"date_from\":\"${date-1d} 00:00:00\",\"date_to\":\"${date-1d} 23:59:59\",\"page_number\":7,\"page_size\":200,\"state_code\":3}",
           "responsePath": "/result",
           "paginationType": "none",
-          "retryAttempts": 10,
-          "retryBackoffMs": 15000
+          "retryAttempts": 3,
+          "retryBackoffMs": 2000
         }
       }
     },
@@ -946,10 +946,10 @@
       "type": "source",
       "position": {
         "x": 0,
-        "y": 0
+        "y": 840
       },
       "data": {
-        "label": "p8",
+        "label": "page 8",
         "componentId": "src.rest",
         "schema": [
           {
@@ -1048,8 +1048,8 @@
           "body": "{\"date_from\":\"${date-1d} 00:00:00\",\"date_to\":\"${date-1d} 23:59:59\",\"page_number\":8,\"page_size\":200,\"state_code\":3}",
           "responsePath": "/result",
           "paginationType": "none",
-          "retryAttempts": 10,
-          "retryBackoffMs": 15000
+          "retryAttempts": 3,
+          "retryBackoffMs": 2000
         }
       }
     },
@@ -1058,10 +1058,10 @@
       "type": "source",
       "position": {
         "x": 0,
-        "y": 0
+        "y": 960
       },
       "data": {
-        "label": "p9",
+        "label": "page 9",
         "componentId": "src.rest",
         "schema": [
           {
@@ -1160,8 +1160,8 @@
           "body": "{\"date_from\":\"${date-1d} 00:00:00\",\"date_to\":\"${date-1d} 23:59:59\",\"page_number\":9,\"page_size\":200,\"state_code\":3}",
           "responsePath": "/result",
           "paginationType": "none",
-          "retryAttempts": 10,
-          "retryBackoffMs": 15000
+          "retryAttempts": 3,
+          "retryBackoffMs": 2000
         }
       }
     },
@@ -1170,10 +1170,10 @@
       "type": "source",
       "position": {
         "x": 0,
-        "y": 0
+        "y": 1080
       },
       "data": {
-        "label": "p10",
+        "label": "page 10",
         "componentId": "src.rest",
         "schema": [
           {
@@ -1272,8 +1272,8 @@
           "body": "{\"date_from\":\"${date-1d} 00:00:00\",\"date_to\":\"${date-1d} 23:59:59\",\"page_number\":10,\"page_size\":200,\"state_code\":3}",
           "responsePath": "/result",
           "paginationType": "none",
-          "retryAttempts": 10,
-          "retryBackoffMs": 15000
+          "retryAttempts": 3,
+          "retryBackoffMs": 2000
         }
       }
     },
@@ -1282,10 +1282,10 @@
       "type": "source",
       "position": {
         "x": 0,
-        "y": 0
+        "y": 1200
       },
       "data": {
-        "label": "p11",
+        "label": "page 11",
         "componentId": "src.rest",
         "schema": [
           {
@@ -1384,8 +1384,8 @@
           "body": "{\"date_from\":\"${date-1d} 00:00:00\",\"date_to\":\"${date-1d} 23:59:59\",\"page_number\":11,\"page_size\":200,\"state_code\":3}",
           "responsePath": "/result",
           "paginationType": "none",
-          "retryAttempts": 10,
-          "retryBackoffMs": 15000
+          "retryAttempts": 3,
+          "retryBackoffMs": 2000
         }
       }
     },
@@ -1394,10 +1394,10 @@
       "type": "source",
       "position": {
         "x": 0,
-        "y": 0
+        "y": 1320
       },
       "data": {
-        "label": "p12",
+        "label": "page 12",
         "componentId": "src.rest",
         "schema": [
           {
@@ -1496,8 +1496,8 @@
           "body": "{\"date_from\":\"${date-1d} 00:00:00\",\"date_to\":\"${date-1d} 23:59:59\",\"page_number\":12,\"page_size\":200,\"state_code\":3}",
           "responsePath": "/result",
           "paginationType": "none",
-          "retryAttempts": 10,
-          "retryBackoffMs": 15000
+          "retryAttempts": 3,
+          "retryBackoffMs": 2000
         }
       }
     },
@@ -1506,10 +1506,10 @@
       "type": "source",
       "position": {
         "x": 0,
-        "y": 0
+        "y": 1440
       },
       "data": {
-        "label": "p13",
+        "label": "page 13",
         "componentId": "src.rest",
         "schema": [
           {
@@ -1608,8 +1608,8 @@
           "body": "{\"date_from\":\"${date-1d} 00:00:00\",\"date_to\":\"${date-1d} 23:59:59\",\"page_number\":13,\"page_size\":200,\"state_code\":3}",
           "responsePath": "/result",
           "paginationType": "none",
-          "retryAttempts": 10,
-          "retryBackoffMs": 15000
+          "retryAttempts": 3,
+          "retryBackoffMs": 2000
         }
       }
     },
@@ -1618,10 +1618,10 @@
       "type": "source",
       "position": {
         "x": 0,
-        "y": 0
+        "y": 1560
       },
       "data": {
-        "label": "p14",
+        "label": "page 14",
         "componentId": "src.rest",
         "schema": [
           {
@@ -1720,8 +1720,8 @@
           "body": "{\"date_from\":\"${date-1d} 00:00:00\",\"date_to\":\"${date-1d} 23:59:59\",\"page_number\":14,\"page_size\":200,\"state_code\":3}",
           "responsePath": "/result",
           "paginationType": "none",
-          "retryAttempts": 10,
-          "retryBackoffMs": 15000
+          "retryAttempts": 3,
+          "retryBackoffMs": 2000
         }
       }
     },
@@ -1730,10 +1730,10 @@
       "type": "source",
       "position": {
         "x": 0,
-        "y": 0
+        "y": 1680
       },
       "data": {
-        "label": "p15",
+        "label": "page 15",
         "componentId": "src.rest",
         "schema": [
           {
@@ -1832,8 +1832,8 @@
           "body": "{\"date_from\":\"${date-1d} 00:00:00\",\"date_to\":\"${date-1d} 23:59:59\",\"page_number\":15,\"page_size\":200,\"state_code\":3}",
           "responsePath": "/result",
           "paginationType": "none",
-          "retryAttempts": 10,
-          "retryBackoffMs": 15000
+          "retryAttempts": 3,
+          "retryBackoffMs": 2000
         }
       }
     },
@@ -1842,10 +1842,10 @@
       "type": "source",
       "position": {
         "x": 0,
-        "y": 0
+        "y": 1800
       },
       "data": {
-        "label": "p16",
+        "label": "page 16",
         "componentId": "src.rest",
         "schema": [
           {
@@ -1944,8 +1944,8 @@
           "body": "{\"date_from\":\"${date-1d} 00:00:00\",\"date_to\":\"${date-1d} 23:59:59\",\"page_number\":16,\"page_size\":200,\"state_code\":3}",
           "responsePath": "/result",
           "paginationType": "none",
-          "retryAttempts": 10,
-          "retryBackoffMs": 15000
+          "retryAttempts": 3,
+          "retryBackoffMs": 2000
         }
       }
     },
@@ -1954,10 +1954,10 @@
       "type": "source",
       "position": {
         "x": 0,
-        "y": 0
+        "y": 1920
       },
       "data": {
-        "label": "p17",
+        "label": "page 17",
         "componentId": "src.rest",
         "schema": [
           {
@@ -2056,8 +2056,8 @@
           "body": "{\"date_from\":\"${date-1d} 00:00:00\",\"date_to\":\"${date-1d} 23:59:59\",\"page_number\":17,\"page_size\":200,\"state_code\":3}",
           "responsePath": "/result",
           "paginationType": "none",
-          "retryAttempts": 10,
-          "retryBackoffMs": 15000
+          "retryAttempts": 3,
+          "retryBackoffMs": 2000
         }
       }
     },
@@ -2066,10 +2066,10 @@
       "type": "source",
       "position": {
         "x": 0,
-        "y": 0
+        "y": 2040
       },
       "data": {
-        "label": "p18",
+        "label": "page 18",
         "componentId": "src.rest",
         "schema": [
           {
@@ -2168,8 +2168,8 @@
           "body": "{\"date_from\":\"${date-1d} 00:00:00\",\"date_to\":\"${date-1d} 23:59:59\",\"page_number\":18,\"page_size\":200,\"state_code\":3}",
           "responsePath": "/result",
           "paginationType": "none",
-          "retryAttempts": 10,
-          "retryBackoffMs": 15000
+          "retryAttempts": 3,
+          "retryBackoffMs": 2000
         }
       }
     },
@@ -2178,10 +2178,10 @@
       "type": "source",
       "position": {
         "x": 0,
-        "y": 0
+        "y": 2160
       },
       "data": {
-        "label": "p19",
+        "label": "page 19",
         "componentId": "src.rest",
         "schema": [
           {
@@ -2280,8 +2280,8 @@
           "body": "{\"date_from\":\"${date-1d} 00:00:00\",\"date_to\":\"${date-1d} 23:59:59\",\"page_number\":19,\"page_size\":200,\"state_code\":3}",
           "responsePath": "/result",
           "paginationType": "none",
-          "retryAttempts": 10,
-          "retryBackoffMs": 15000
+          "retryAttempts": 3,
+          "retryBackoffMs": 2000
         }
       }
     },
@@ -2290,10 +2290,10 @@
       "type": "source",
       "position": {
         "x": 0,
-        "y": 0
+        "y": 2280
       },
       "data": {
-        "label": "p20",
+        "label": "page 20",
         "componentId": "src.rest",
         "schema": [
           {
@@ -2392,8 +2392,8 @@
           "body": "{\"date_from\":\"${date-1d} 00:00:00\",\"date_to\":\"${date-1d} 23:59:59\",\"page_number\":20,\"page_size\":200,\"state_code\":3}",
           "responsePath": "/result",
           "paginationType": "none",
-          "retryAttempts": 10,
-          "retryBackoffMs": 15000
+          "retryAttempts": 3,
+          "retryBackoffMs": 2000
         }
       }
     },
@@ -2401,7 +2401,7 @@
       "id": "merge",
       "type": "transform",
       "position": {
-        "x": 0,
+        "x": 300,
         "y": 0
       },
       "data": {
@@ -2411,14 +2411,45 @@
       }
     },
     {
-      "id": "shape",
+      "id": "q",
       "type": "transform",
       "position": {
         "x": 0,
+        "y": -200
+      },
+      "data": {
+        "label": "truncation guard",
+        "componentId": "code.sql",
+        "properties": {
+          "sql": "SELECT count(*) AS n FROM input HAVING count(*) = 4000"
+        }
+      }
+    },
+    {
+      "id": "dg",
+      "type": "transform",
+      "position": {
+        "x": 300,
+        "y": -200
+      },
+      "data": {
+        "label": "die on truncation",
+        "componentId": "ctl.die",
+        "properties": {
+          "condition": "has-rows",
+          "message": "STATIC_PAGES_TRUNCATED: 总行数 == pages×pageSize（20×200=4000）⇒ 可能截断；sink 已写，需人工确认并补页/加页"
+        }
+      }
+    },
+    {
+      "id": "t",
+      "type": "transform",
+      "position": {
+        "x": 600,
         "y": 0
       },
       "data": {
-        "label": "shape",
+        "label": "transform",
         "componentId": "code.sql",
         "properties": {
           "sql": "SELECT\n  'be-' || '${ENV:SYSTEM_BOOK}' || '-branch_expense-' || replace(replace('${datetime}','-',''),'_','T') || 'Z' AS batch_id,\n  '${ENV:SYSTEM_BOOK}' AS system_book,\n  CAST('${date-1d}' AS DATE) AS bizday,\n  CAST(o.bill_no AS VARCHAR) AS bill_no,\n  CAST(o.branch_num AS INTEGER) AS branch_num,\n  CAST(o.branch_name AS VARCHAR) AS branch_name,\n  CAST(o.branch_code AS VARCHAR) AS branch_code,\n  CAST(o.store_name AS VARCHAR) AS store_name,\n  CAST(o.operate_branch_num AS INTEGER) AS operate_branch_num,\n  CAST(o.operate_branch_name AS VARCHAR) AS operate_branch_name,\n  CAST(o.expense_type AS VARCHAR) AS expense_type,\n  CAST(o.direction AS VARCHAR) AS direction,\n  CAST(o.amount AS DECIMAL(14,2)) AS amount,\n  CAST(o.due_amount AS DECIMAL(14,2)) AS due_amount,\n  CAST(o.paid_amount AS DECIMAL(14,2)) AS paid_amount,\n  CAST(o.payment_date AS VARCHAR) AS payment_date,\n  CAST(o.tax_rate AS DECIMAL(18,8)) AS tax_rate,\n  CAST(o.tax_amount AS DECIMAL(14,2)) AS tax_amount,\n  CAST(o.audit_time AS VARCHAR) AS audit_time,\n  CAST(o.create_time AS VARCHAR) AS create_time,\n  CAST(o.reference_bill AS VARCHAR) AS reference_bill,\n  CAST(o.memo AS VARCHAR) AS memo,\n  CAST(o.settlement_state AS INTEGER) AS settlement_state,\n  CAST(o.settlement_state_name AS VARCHAR) AS settlement_state_name,\n  CAST(o.last_edit_time AS VARCHAR) AS last_edit_time\nFROM input o"
@@ -2426,14 +2457,14 @@
       }
     },
     {
-      "id": "gate",
+      "id": "g",
       "type": "transform",
       "position": {
-        "x": 0,
+        "x": 900,
         "y": 0
       },
       "data": {
-        "label": "gate",
+        "label": "contract gate",
         "componentId": "qa.contract",
         "properties": {
           "rules": {
@@ -2449,153 +2480,22 @@
       }
     },
     {
-      "id": "sink",
+      "id": "k",
       "type": "sink",
       "position": {
-        "x": 0,
+        "x": 1200,
         "y": 0
       },
       "data": {
         "label": "sink",
         "componentId": "snk.minio",
         "properties": {
-          "bucket": "${ENV:ZOS_BUCKET}",
-          "key": "lemeng/branch_expense/system_book=${ENV:SYSTEM_BOOK}/bizday=${date-1d}/all.parquet",
-          "region": "${ENV:ZOS_REGION}",
-          "urlStyle": "path",
-          "useSsl": "true",
+          "connectionRef": "zos",
+          "bucket": "shanhai-data",
+          "key": "lemeng/branch_expense/system_book=${ENV:SYSTEM_BOOK}/bizday=${date-1d}/chunk=all.parquet",
           "format": "parquet",
           "mode": "overwrite",
-          "compression": "zstd",
-          "connectionRef": "zos"
-        }
-      }
-    },
-    {
-      "id": "p21",
-      "type": "source",
-      "position": {
-        "x": 0,
-        "y": 0
-      },
-      "data": {
-        "label": "p21",
-        "componentId": "src.rest",
-        "schema": [
-          {
-            "name": "bill_no",
-            "type": "string"
-          },
-          {
-            "name": "branch_num",
-            "type": "int64"
-          },
-          {
-            "name": "branch_name",
-            "type": "string"
-          },
-          {
-            "name": "branch_code",
-            "type": "string"
-          },
-          {
-            "name": "store_name",
-            "type": "string"
-          },
-          {
-            "name": "operate_branch_num",
-            "type": "int64"
-          },
-          {
-            "name": "operate_branch_name",
-            "type": "string"
-          },
-          {
-            "name": "expense_type",
-            "type": "string"
-          },
-          {
-            "name": "direction",
-            "type": "string"
-          },
-          {
-            "name": "amount",
-            "type": "decimal"
-          },
-          {
-            "name": "due_amount",
-            "type": "decimal"
-          },
-          {
-            "name": "paid_amount",
-            "type": "decimal"
-          },
-          {
-            "name": "payment_date",
-            "type": "string"
-          },
-          {
-            "name": "tax_rate",
-            "type": "decimal"
-          },
-          {
-            "name": "tax_amount",
-            "type": "decimal"
-          },
-          {
-            "name": "audit_time",
-            "type": "string"
-          },
-          {
-            "name": "create_time",
-            "type": "string"
-          },
-          {
-            "name": "reference_bill",
-            "type": "string"
-          },
-          {
-            "name": "memo",
-            "type": "string"
-          },
-          {
-            "name": "settlement_state",
-            "type": "int64"
-          },
-          {
-            "name": "settlement_state_name",
-            "type": "string"
-          },
-          {
-            "name": "last_edit_time",
-            "type": "string"
-          }
-        ],
-        "properties": {
-          "connectionRef": "lemeng",
-          "url": "https://cloud.nhsoft.cn/agi/api/nhsoft.ama.ai.branch.expense.find",
-          "method": "POST",
-          "body": "{\"date_from\":\"${date-1d} 00:00:00\",\"date_to\":\"${date-1d} 23:59:59\",\"page_number\":21,\"page_size\":200,\"state_code\":3}",
-          "responsePath": "/result",
-          "paginationType": "none",
-          "retryAttempts": 10,
-          "retryBackoffMs": 15000
-        }
-      }
-    },
-    {
-      "id": "sentinel",
-      "type": "transform",
-      "position": {
-        "x": 0,
-        "y": 0
-      },
-      "data": {
-        "label": "sentinel",
-        "componentId": "ctl.die",
-        "properties": {
-          "condition": "has-rows",
-          "message": "lemeng branch_expense 容量截断：第 21 页（哨兵页）仍有 {rows} 行（system_book=${ENV:SYSTEM_BOOK}）⇒ 单日费用单已击穿真阈值 4,000 条（算式：数据页 20 × page_size 200，哨兵页不计容量）。处置：加数据页节点 → 同步改本算式与哨兵页的页号 → 重生成 → 走 PR"
+          "compression": "zstd"
         }
       }
     }
@@ -2682,217 +2582,7 @@
       }
     },
     {
-      "id": "e-dv-p1",
-      "source": "dv",
-      "target": "p1",
-      "sourceHandle": null,
-      "targetHandle": null,
-      "data": {
-        "connectionType": "on-subjob-ok"
-      }
-    },
-    {
-      "id": "e-dv-p2",
-      "source": "dv",
-      "target": "p2",
-      "sourceHandle": null,
-      "targetHandle": null,
-      "data": {
-        "connectionType": "on-subjob-ok"
-      }
-    },
-    {
-      "id": "e-dv-p3",
-      "source": "dv",
-      "target": "p3",
-      "sourceHandle": null,
-      "targetHandle": null,
-      "data": {
-        "connectionType": "on-subjob-ok"
-      }
-    },
-    {
-      "id": "e-dv-p4",
-      "source": "dv",
-      "target": "p4",
-      "sourceHandle": null,
-      "targetHandle": null,
-      "data": {
-        "connectionType": "on-subjob-ok"
-      }
-    },
-    {
-      "id": "e-dv-p5",
-      "source": "dv",
-      "target": "p5",
-      "sourceHandle": null,
-      "targetHandle": null,
-      "data": {
-        "connectionType": "on-subjob-ok"
-      }
-    },
-    {
-      "id": "e-dv-p6",
-      "source": "dv",
-      "target": "p6",
-      "sourceHandle": null,
-      "targetHandle": null,
-      "data": {
-        "connectionType": "on-subjob-ok"
-      }
-    },
-    {
-      "id": "e-dv-p7",
-      "source": "dv",
-      "target": "p7",
-      "sourceHandle": null,
-      "targetHandle": null,
-      "data": {
-        "connectionType": "on-subjob-ok"
-      }
-    },
-    {
-      "id": "e-dv-p8",
-      "source": "dv",
-      "target": "p8",
-      "sourceHandle": null,
-      "targetHandle": null,
-      "data": {
-        "connectionType": "on-subjob-ok"
-      }
-    },
-    {
-      "id": "e-dv-p9",
-      "source": "dv",
-      "target": "p9",
-      "sourceHandle": null,
-      "targetHandle": null,
-      "data": {
-        "connectionType": "on-subjob-ok"
-      }
-    },
-    {
-      "id": "e-dv-p10",
-      "source": "dv",
-      "target": "p10",
-      "sourceHandle": null,
-      "targetHandle": null,
-      "data": {
-        "connectionType": "on-subjob-ok"
-      }
-    },
-    {
-      "id": "e-dv-p11",
-      "source": "dv",
-      "target": "p11",
-      "sourceHandle": null,
-      "targetHandle": null,
-      "data": {
-        "connectionType": "on-subjob-ok"
-      }
-    },
-    {
-      "id": "e-dv-p12",
-      "source": "dv",
-      "target": "p12",
-      "sourceHandle": null,
-      "targetHandle": null,
-      "data": {
-        "connectionType": "on-subjob-ok"
-      }
-    },
-    {
-      "id": "e-dv-p13",
-      "source": "dv",
-      "target": "p13",
-      "sourceHandle": null,
-      "targetHandle": null,
-      "data": {
-        "connectionType": "on-subjob-ok"
-      }
-    },
-    {
-      "id": "e-dv-p14",
-      "source": "dv",
-      "target": "p14",
-      "sourceHandle": null,
-      "targetHandle": null,
-      "data": {
-        "connectionType": "on-subjob-ok"
-      }
-    },
-    {
-      "id": "e-dv-p15",
-      "source": "dv",
-      "target": "p15",
-      "sourceHandle": null,
-      "targetHandle": null,
-      "data": {
-        "connectionType": "on-subjob-ok"
-      }
-    },
-    {
-      "id": "e-dv-p16",
-      "source": "dv",
-      "target": "p16",
-      "sourceHandle": null,
-      "targetHandle": null,
-      "data": {
-        "connectionType": "on-subjob-ok"
-      }
-    },
-    {
-      "id": "e-dv-p17",
-      "source": "dv",
-      "target": "p17",
-      "sourceHandle": null,
-      "targetHandle": null,
-      "data": {
-        "connectionType": "on-subjob-ok"
-      }
-    },
-    {
-      "id": "e-dv-p18",
-      "source": "dv",
-      "target": "p18",
-      "sourceHandle": null,
-      "targetHandle": null,
-      "data": {
-        "connectionType": "on-subjob-ok"
-      }
-    },
-    {
-      "id": "e-dv-p19",
-      "source": "dv",
-      "target": "p19",
-      "sourceHandle": null,
-      "targetHandle": null,
-      "data": {
-        "connectionType": "on-subjob-ok"
-      }
-    },
-    {
-      "id": "e-dv-p20",
-      "source": "dv",
-      "target": "p20",
-      "sourceHandle": null,
-      "targetHandle": null,
-      "data": {
-        "connectionType": "on-subjob-ok"
-      }
-    },
-    {
-      "id": "e-dv-p21",
-      "source": "dv",
-      "target": "p21",
-      "sourceHandle": null,
-      "targetHandle": null,
-      "data": {
-        "connectionType": "on-subjob-ok"
-      }
-    },
-    {
-      "id": "e-p1-merge",
+      "id": "e-p1-m",
       "source": "p1",
       "target": "merge",
       "sourceHandle": "main",
@@ -2902,7 +2592,7 @@
       }
     },
     {
-      "id": "e-p2-merge",
+      "id": "e-p2-m",
       "source": "p2",
       "target": "merge",
       "sourceHandle": "main",
@@ -2912,7 +2602,7 @@
       }
     },
     {
-      "id": "e-p3-merge",
+      "id": "e-p3-m",
       "source": "p3",
       "target": "merge",
       "sourceHandle": "main",
@@ -2922,7 +2612,7 @@
       }
     },
     {
-      "id": "e-p4-merge",
+      "id": "e-p4-m",
       "source": "p4",
       "target": "merge",
       "sourceHandle": "main",
@@ -2932,7 +2622,7 @@
       }
     },
     {
-      "id": "e-p5-merge",
+      "id": "e-p5-m",
       "source": "p5",
       "target": "merge",
       "sourceHandle": "main",
@@ -2942,7 +2632,7 @@
       }
     },
     {
-      "id": "e-p6-merge",
+      "id": "e-p6-m",
       "source": "p6",
       "target": "merge",
       "sourceHandle": "main",
@@ -2952,7 +2642,7 @@
       }
     },
     {
-      "id": "e-p7-merge",
+      "id": "e-p7-m",
       "source": "p7",
       "target": "merge",
       "sourceHandle": "main",
@@ -2962,7 +2652,7 @@
       }
     },
     {
-      "id": "e-p8-merge",
+      "id": "e-p8-m",
       "source": "p8",
       "target": "merge",
       "sourceHandle": "main",
@@ -2972,7 +2662,7 @@
       }
     },
     {
-      "id": "e-p9-merge",
+      "id": "e-p9-m",
       "source": "p9",
       "target": "merge",
       "sourceHandle": "main",
@@ -2982,7 +2672,7 @@
       }
     },
     {
-      "id": "e-p10-merge",
+      "id": "e-p10-m",
       "source": "p10",
       "target": "merge",
       "sourceHandle": "main",
@@ -2992,7 +2682,7 @@
       }
     },
     {
-      "id": "e-p11-merge",
+      "id": "e-p11-m",
       "source": "p11",
       "target": "merge",
       "sourceHandle": "main",
@@ -3002,7 +2692,7 @@
       }
     },
     {
-      "id": "e-p12-merge",
+      "id": "e-p12-m",
       "source": "p12",
       "target": "merge",
       "sourceHandle": "main",
@@ -3012,7 +2702,7 @@
       }
     },
     {
-      "id": "e-p13-merge",
+      "id": "e-p13-m",
       "source": "p13",
       "target": "merge",
       "sourceHandle": "main",
@@ -3022,7 +2712,7 @@
       }
     },
     {
-      "id": "e-p14-merge",
+      "id": "e-p14-m",
       "source": "p14",
       "target": "merge",
       "sourceHandle": "main",
@@ -3032,7 +2722,7 @@
       }
     },
     {
-      "id": "e-p15-merge",
+      "id": "e-p15-m",
       "source": "p15",
       "target": "merge",
       "sourceHandle": "main",
@@ -3042,7 +2732,7 @@
       }
     },
     {
-      "id": "e-p16-merge",
+      "id": "e-p16-m",
       "source": "p16",
       "target": "merge",
       "sourceHandle": "main",
@@ -3052,7 +2742,7 @@
       }
     },
     {
-      "id": "e-p17-merge",
+      "id": "e-p17-m",
       "source": "p17",
       "target": "merge",
       "sourceHandle": "main",
@@ -3062,7 +2752,7 @@
       }
     },
     {
-      "id": "e-p18-merge",
+      "id": "e-p18-m",
       "source": "p18",
       "target": "merge",
       "sourceHandle": "main",
@@ -3072,7 +2762,7 @@
       }
     },
     {
-      "id": "e-p19-merge",
+      "id": "e-p19-m",
       "source": "p19",
       "target": "merge",
       "sourceHandle": "main",
@@ -3082,7 +2772,7 @@
       }
     },
     {
-      "id": "e-p20-merge",
+      "id": "e-p20-m",
       "source": "p20",
       "target": "merge",
       "sourceHandle": "main",
@@ -3092,9 +2782,9 @@
       }
     },
     {
-      "id": "e-merge-shape",
+      "id": "e-merge-q",
       "source": "merge",
-      "target": "shape",
+      "target": "q",
       "sourceHandle": "main",
       "targetHandle": "main",
       "data": {
@@ -3102,9 +2792,9 @@
       }
     },
     {
-      "id": "e-shape-gate",
-      "source": "shape",
-      "target": "gate",
+      "id": "e-q-dg",
+      "source": "q",
+      "target": "dg",
       "sourceHandle": "main",
       "targetHandle": "main",
       "data": {
@@ -3112,9 +2802,19 @@
       }
     },
     {
-      "id": "e-gate-sink",
-      "source": "gate",
-      "target": "sink",
+      "id": "e-dv-first",
+      "source": "dv",
+      "target": "p1",
+      "sourceHandle": null,
+      "targetHandle": null,
+      "data": {
+        "connectionType": "on-subjob-ok"
+      }
+    },
+    {
+      "id": "e1",
+      "source": "merge",
+      "target": "t",
       "sourceHandle": "main",
       "targetHandle": "main",
       "data": {
@@ -3122,9 +2822,9 @@
       }
     },
     {
-      "id": "e-p21-sentinel",
-      "source": "p21",
-      "target": "sentinel",
+      "id": "e2",
+      "source": "t",
+      "target": "g",
       "sourceHandle": "main",
       "targetHandle": "main",
       "data": {
@@ -3132,14 +2832,17 @@
       }
     },
     {
-      "id": "e-sentinel-merge",
-      "source": "sentinel",
-      "target": "merge",
+      "id": "e3",
+      "source": "g",
+      "target": "k",
       "sourceHandle": "main",
-      "targetHandle": "main_21",
+      "targetHandle": "main",
       "data": {
         "connectionType": "main"
       }
     }
+  ],
+  "_note": [
+    "由 scripts/gen-pipeline.mjs 从 manifest 生成；手改请改 manifest 后重生成（--check 会拦）。"
   ]
 }
