@@ -160,12 +160,16 @@ select
     -- 非空代理键（#1610）：client_fid 在 transfer 域恒 NULL，而 delete+insert 的 `=` 不匹配 NULL。
     -- 把所有键 coalesce 成一个 md5，unique_key 只指它 ⇒ 增量删除对 transfer/wholesale 都成立。
     -- ⚠️ 首次切增量必须 --full-refresh（给存量行补这一列），之后才是增量。
+    -- 🔴 2026-11-08（战区变更事故）：**region_id 不进代理键**。它是 dim_branch 的**派生属性**
+    --   （跟着维表变），一旦进键，战区一改就生成新 key、delete+insert 删不掉旧行 ⇒ mart 里
+    --   新旧战区各存一份（实测：64188 七家店 2026-11-08 由 25411 → 25476，mart 出现重复）。
+    --   业务键 = (system_book, bizday, domain, branch_num, client_fid)，region 由这行**当前**
+    --   维表推出，改了就原地更新（delete+insert 命中同一 key）。
     md5(concat_ws('|',
         u.system_book,
         u.bizday::text,
         u.domain,
         u.branch_num::text,
-        coalesce(b.region_id, 0)::text,
         coalesce(u.client_fid, '~NULL~')
     )) as outbound_key
 from (

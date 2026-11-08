@@ -405,7 +405,11 @@ PY
   # job 级重跑要重跑整轮 8 分钟；这里只从 `run_results.json` 取**失败节点**重跑，几秒收敛。
   # ⚠️ 收敛判据是「没有失败节点」而不是「退出 0」：dbt 的 warn（test 软失败）不该触发重跑。
   _attempt=1
-  _select="config.materialized:incremental tag:audit_window"
+  # `stg_lemeng_branch` 进小时档（2026-11-08 战区变更事故）：它是 **table 模型**，原先只有全量档
+  # 才重建 ⇒ 源端改了门店战区后，stg 一直是旧值，而审计**直读湖**（最新 snapshot）⇒ 每轮 20 行
+  # 假红，且 mart 侧继续按旧战区落行。门店维只有几百行，小时重建成本可忽略；dbt 按 DAG 先建 stg
+  # 再建增量 mart，所以同一轮里 mart 就能吃到新维表。
+  _select="config.materialized:incremental tag:audit_window stg_lemeng_branch"
   while :; do
     if [ "$_attempt" = 1 ]; then
       _excl="--exclude tag:audit --exclude fct_retail_sale"
