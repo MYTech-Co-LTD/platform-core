@@ -16,6 +16,9 @@
 --   2026-10-20 实测 15,267 行 = SALE 15,157 + FULL_RETURN 69 + PARTIAL_RETURN 9 + REPAID_RETURN 32）。
 --   唯一性由 `assert_fct_order_event_grain_unique` 钉住。
 --
+-- 【调度】hourly 档按 `config.materialized:incremental` 自动纳入（每小时重算最近 7 天）；
+--   三条表级审计属**全史档**（`tag:audit`，含固定日 2026-10-20 的锁），随 full 档跑。
+--
 -- 【范围（降级边界）】**首建只回填最近 30 天**（`current_date` 按 Asia/Shanghai 业务日）；
 --   之后每次增量只重算最近 7 天（`delete+insert`，同 fct_retail_sale 的 #1520 形态）。
 --   **更早历史不在本表**——2026-11-07 真机实测：全历史 CTAS 会与同机全量物化抢内存把仓库打
