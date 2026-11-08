@@ -1047,3 +1047,32 @@ docker exec <server 容器> node -e "fetch('http://sandbox-console:18090/healthz
 - `deploy/openship-adopt.md`（平台面 adopt runbook）
 - `deploy/mb-edit-proxy-runbook.md`（**报表编辑页反代的每客户接线 SOP**——专用 host / 平台↔Metabase 网络接线（P7 同款）/ env 顺序与验收判据；跨单元，独立成文）
 - issue #150（数据栈 P0–P3）、#187（T6 真机三坑）、#190 / #192（A 层根治笔）、#199（§E 投递机制）
+
+## E.5 OO 机侧脚本（不随 sync）——手工投递 + 版本握手
+
+`scripts/lemeng/oo-{notify-bridge,watchdog,config-audit}.sh` 的**运行机是 OpenObserve 机**（`113.249.108.153`），
+不是数据面机；而 `sync-data-plane.sh` 只在数据面机跑 ⇒ **OO 机的 `/opt` 副本不会被自动更新**。
+
+**2026-11-08 实测事故**：仓库里给 `oo-notify-bridge.sh` 加了「占位符资产不推群」过滤并合了 PR + sync，
+但 OO 机上仍是 10-24 的老版本 ⇒ 群里照旧每 10 分钟刷屏，40 分钟没人发现（job 输出只有计数、看不出跑了哪版）。
+
+**现在的护栏（版本握手）**：脚本内 `BRIDGE_VERSION`，job env `BRIDGE_EXPECTED_VERSION`；
+不一致 ⇒ `BR_FAIL:version_drift` + exit 3 ⇒ job 红 + 企微告警。**改脚本必须同时改 job env**，否则立刻红。
+
+**手工投递步骤**（改完仓内脚本后）：
+
+```sh
+# 1) 本机：把脚本 gzip+base64（9–11KB 源文件约 6KB，分两段经 openship exec 投递，单条命令上限 10KB）
+gzip -9 -c scripts/lemeng/oo-notify-bridge.sh | base64 | tr -d '\n'
+# 2) OO 机：printf '<分段1>' > /tmp/x.b64; printf '<分段2>' >> /tmp/x.b64
+#            base64 -d /tmp/x.b64 | gunzip > /tmp/x.sh && sh -n /tmp/x.sh
+#            cp /opt/lemeng-oo-notify-bridge.sh /opt/lemeng-oo-notify-bridge.sh.bak-$(date +%Y%m%d)
+#            cp /tmp/x.sh /opt/lemeng-oo-notify-bridge.sh && chmod 755 /opt/lemeng-oo-notify-bridge.sh
+# 3) 验证：. /etc/lemeng-alert-wecom.env && export WECOM_WEBHOOK_URL && sh /opt/lemeng-oo-notify-bridge.sh
+#    期望末尾 `BR_OK:... v=<BRIDGE_VERSION>`；把 job env BRIDGE_EXPECTED_VERSION 同步改成同值
+```
+
+**待议（需要人拍板）**：要彻底自动化，需要给数据面机一把能 ssh 到 OO 机的密钥（跨机推送），
+或在 OO 机侧加一条能取仓内文件的通道（该机**直连 raw.githubusercontent 不通**，实测 000）。
+在此之前，靠「版本握手 + 本节的投递步骤」兜底。
+
