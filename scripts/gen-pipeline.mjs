@@ -394,7 +394,10 @@ export function buildPipeline(m, name = m.id) {
   let x = 300
   let firstDataNode = ''
   // 身份闸只加在父管线上；子管线由父管线调用前已自证，不重复。
-  const gate = m.identityGate && !name.endsWith('.page') ? identityGate(s.connectionRef, pg.windowToken ?? '') : null
+  // 形状闸的 BIZDAY 检查用窗口 token：增量走 `pg.windowToken`；static_pages 默认 `${date-1d}`
+  // （4 条高频源都是日窗；其它窗口的 static_pages 在 manifest 里显式给 `windowToken`）。
+  const gateToken = pg.windowToken ?? '${date-1d}'
+  const gate = m.identityGate && !name.endsWith('.page') ? identityGate(s.connectionRef, gateToken) : null
   if (gate) {
     nodes.push(...gate.nodes)
     edges.push(...gate.edges)
