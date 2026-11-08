@@ -387,7 +387,8 @@
       "pageSize": 200,
       "pageSizeParam": "page_size",
       "truncationGuard": true,
-      "windowToken": "${date+8h}"
+      "windowToken": "${date+8h}",
+      "perPageTransform": true
     }
   },
   "transform": {

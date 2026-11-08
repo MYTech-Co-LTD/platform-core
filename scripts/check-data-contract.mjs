@@ -13,7 +13,11 @@
 //      封版标记（`_SCHEMA/v<N>.parquet`）与读侧断言都引用它。没有它 = 没登记。
 //   ② **生产面**：凡**文本里出现该契约 `layout.prefix`** 的管线文件，都算这张表的**生产者**
 //      （机械推导、不靠手登记 ⇒ 不会有"新管线忘了登记"这种漂移）。
-//      每个生产者文件里必须**恰好一个** `code.sql` 节点的输出别名序列 == 契约列序列（同序）。
+//      每个生产者文件里必须有 `code.sql` 节点的输出别名序列 == 契约列序列（同序）：
+//        · 常规形态 = **恰好一个**；
+//        · 逐页投影形态（`perPageTransform`，正典 §1.6 案例 36 的修法）= **N 个且逐字同一条 SQL**
+//          （每页各跑一遍契约投影再 merge）。重复本身不放宽判据——**SQL 必须完全一致**，
+//          出现第二条不同的「也命中」才红（那才是两套投影各说各话）。
 //      其余 `code.sql` 节点（`qa.contract` 前的守卫、回执等）不参与比对。
 //   ③ **消费面**：`dbt/models/<域>/staging/stg_<domain>_<table>.sql` 的投影别名序列（域目录按域找，见 findStagingModelRel）
 //      （去掉 dbt 注入的 `org`）必须是契约列序列的**同序前缀**；再按 `consumerVersion` 定档：
@@ -171,13 +175,16 @@ export function checkDataContract(rootDir) {
       }
       // 命中数由**调用方**复算（`findProjectionNode` 只回单个/ null，而报错文案要点名 0/≥2 命中）。
       const hits = projections.filter((x) => x.aliases.join('\u0000') === colNames.join('\u0000'))
+      // 逐页投影形态会有 N 个命中——允许重复，但必须**逐字同一条 SQL**（否则是两套投影各说各话）。
+      const distinctHitSql = new Set(hits.map((x) => x.sql))
       const proj = findProjectionNode(doc, colNames)
-      if (hits.length !== 1) {
+      if (hits.length < 1 || distinctHitSql.size !== 1) {
         violations.push({
           file: p,
           message:
-            `作为 \`${where}\` 的生产者，必须**恰好一个** \`code.sql\` 节点的输出列与契约逐列同序；` +
-            `实测命中 ${hits.length} 个（候选列数：${projections.map((x) => x.aliases.length).join('/') || '无'}，契约 ${colNames.length} 列）`,
+            `作为 \`${where}\` 的生产者，必须有 \`code.sql\` 节点的输出列与契约逐列同序（常规 = 恰好一个；` +
+            `逐页投影 = N 个但同一条 SQL）；实测命中 ${hits.length} 个 / 去重 SQL ${distinctHitSql.size} 条` +
+            `（候选列数：${projections.map((x) => x.aliases.length).join('/') || '无'}，契约 ${colNames.length} 列）`,
         })
       } else {
         // ④ **申报面**：投影里引用的 `<输入别名>.<字段>` 必须都在 `src.rest` 节点的 `data.schema` 里。

@@ -41,6 +41,7 @@ import { pathToFileURL } from 'node:url'
  *       pageSizeParam?: string,
  *       pageSize?: number,
  *       truncationGuard?: boolean,
+ *       perPageTransform?: boolean,
  *       fingerprintSql?: string,
  *       watermarkPath?: string,
  *       windowToken?: string
@@ -153,8 +154,14 @@ export function validateManifest(m) {
       if (pg.truncationGuard && typeof pg.pageSize !== 'number') {
         errs.push('truncationGuard 需要 pageSize（阈值 = pages × pageSize）')
       }
+      if (pg.perPageTransform !== undefined && typeof pg.perPageTransform !== 'boolean') {
+        errs.push('perPageTransform 必须是布尔')
+      }
     } else if (pg.truncationGuard && pg.type !== 'incremental') {
       errs.push('truncationGuard 只能与 static_pages / incremental 一起用')
+    }
+    if (pg.perPageTransform !== undefined && pg.type !== 'static_pages') {
+      errs.push('perPageTransform 只与 static_pages 一起用（合并前逐页投影）')
     }
     if (pg.type === 'incremental') {
       if (!Number.isInteger(pg.pages) || pg.pages < 1 || pg.pages > MAX_STATIC_PAGES) {
@@ -418,6 +425,8 @@ function identityGate(connectionRef, windowToken) {
 export function buildPipeline(m, name = m.id) {
   const s = m.source
   const pg = s.pagination ?? { type: 'none' }
+  /** 逐页投影：合并前每页先跑 transform.sql（类型/列名按契约归一），合并后不再跑 transform。 */
+  const perPageProjected = pg.type === 'static_pages' && pg.perPageTransform === true
   /** 源节点属性：**顺序照旧**（connectionRef,url,method,body,responsePath,paginationType,headers,retry）
    *  —— 生成物要跟仓里已有文件逐字一致，`--check` 才不会误报漂移。
    *  @param {string} body
@@ -638,6 +647,12 @@ export function buildPipeline(m, name = m.id) {
   } else if (pg.type === 'static_pages') {
     const pageParam = pg.pageParam ?? 'page_number'
     const pages = pg.pages ?? 1
+    // perPageTransform：合并前逐页投影（正典 §1.6 案例 36 的修法）——`src.rest` 页节点按
+    // **响应实值**推断类型（申报的 data.schema 只在空响应时用），同一列在页间可能是
+    // STRUCT/JSON/VARCHAR 混着；`ctl.merge` = UNION ALL BY NAME 会把 VARCHAR∪JSON 提升成
+    // JSON 并逐值校验 ⇒ 合法业务值（如「注意」）不是合法 JSON，整条 merge 炸。
+    // 每页先跑一遍 transform.sql（把列按契约定型/摊平），合并两侧类型就同构了。
+    const perPage = pg.perPageTransform === true
     firstDataNode = 'p1'
     for (let i = 1; i <= pages; i += 1) {
       const id = `p${i}`
@@ -655,9 +670,28 @@ export function buildPipeline(m, name = m.id) {
           properties: sourceProps(body, 'none'),
         },
       })
+      /** 送进 merge 的那个节点：逐页投影开启时是投影节点，否则是页节点本身。 */
+      let tail = id
+      if (perPage) {
+        tail = `n${i}`
+        nodes.push({
+          id: tail,
+          type: 'transform',
+          position: { x: 300, y: (i - 1) * 120 },
+          data: { label: `page ${i} projection`, componentId: 'code.sql', properties: { sql: m.transform.sql } },
+        })
+        edges.push({
+          id: `e-${id}-${tail}`,
+          source: id,
+          target: tail,
+          sourceHandle: 'main',
+          targetHandle: 'main',
+          data: { connectionType: 'main' },
+        })
+      }
       edges.push({
-        id: `e-${id}-m`,
-        source: id,
+        id: `e-${tail}-m`,
+        source: tail,
         target: 'merge',
         sourceHandle: 'main',
         targetHandle: `main_${i}`,
@@ -734,15 +768,21 @@ export function buildPipeline(m, name = m.id) {
     firstDataNode = 's'
   }
   attachGate(firstDataNode)
-  nodes.push({
-    id: 't',
-    type: 'transform',
-    position: { x, y: 0 },
-    data: { label: 'transform', componentId: 'code.sql', properties: { sql: m.transform.sql } },
-  })
-  edges.push({ id: 'e1', source: prev, target: 't', sourceHandle: 'main', targetHandle: 'main', data: { connectionType: 'main' } })
-  prev = 't'
-  x += 300
+  // 逐页投影已把 transform.sql 跑在每页上（合并前），合并后的列就是契约列 ⇒ 不再重复跑一遍
+  // （再跑一次还会因为 item_department 已被摊平成 *_id 而 binder error）。
+  if (perPageProjected) {
+    // 合并结果直接进 contract gate
+  } else {
+    nodes.push({
+      id: 't',
+      type: 'transform',
+      position: { x, y: 0 },
+      data: { label: 'transform', componentId: 'code.sql', properties: { sql: m.transform.sql } },
+    })
+    edges.push({ id: 'e1', source: prev, target: 't', sourceHandle: 'main', targetHandle: 'main', data: { connectionType: 'main' } })
+    prev = 't'
+    x += 300
+  }
   if (m.gate?.rules && Object.keys(m.gate.rules).length > 0) {
     nodes.push({
       id: 'g',
@@ -750,7 +790,7 @@ export function buildPipeline(m, name = m.id) {
       position: { x, y: 0 },
       data: { label: 'contract gate', componentId: 'qa.contract', properties: { rules: m.gate.rules } },
     })
-    edges.push({ id: 'e2', source: 't', target: 'g', sourceHandle: 'main', targetHandle: 'main', data: { connectionType: 'main' } })
+    edges.push({ id: 'e2', source: prev, target: 'g', sourceHandle: 'main', targetHandle: 'main', data: { connectionType: 'main' } })
     prev = 'g'
     x += 300
   }
