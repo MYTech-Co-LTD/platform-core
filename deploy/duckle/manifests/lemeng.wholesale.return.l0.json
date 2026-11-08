@@ -1,0 +1,81 @@
+{
+  "id": "lemeng.wholesale.return.l0",
+  "domain": "lemeng",
+  "accounts": [
+    "3120"
+  ],
+  "identityGate": true,
+  "source": {
+    "connectionRef": "lemeng",
+    "url": "https://cloud.nhsoft.cn/agi/api/nhsoft.whs.ai.wholesalereturn.find",
+    "method": "POST",
+    "body": "{\"date_start\":\"${date-1d} 00:00:00\",\"date_end\":\"${date-1d} 23:59:59\",\"date_type\":\"制单时间\",\"limit\":100,\"offset\":0}",
+    "responsePath": "/result",
+    "retryAttempts": 3,
+    "retryBackoffMs": 2000,
+    "schema": [
+      {
+        "name": "wholesale_return_fid",
+        "type": "string"
+      },
+      {
+        "name": "wholesale_order_fid",
+        "type": "string"
+      },
+      {
+        "name": "branch_num",
+        "type": "int64"
+      },
+      {
+        "name": "client_fid",
+        "type": "string"
+      },
+      {
+        "name": "wholesale_return_audit_time",
+        "type": "string"
+      },
+      {
+        "name": "wholesale_return_total_money",
+        "type": "decimal"
+      },
+      {
+        "name": "wholesale_return_cost_money",
+        "type": "decimal"
+      },
+      {
+        "name": "wholesale_return_details",
+        "type": "json"
+      }
+    ],
+    "pagination": {
+      "type": "static_pages",
+      "pages": 19,
+      "pageSize": 100,
+      "pageSizeParam": "limit",
+      "offsetParam": "offset",
+      "truncationGuard": true
+    }
+  },
+  "transform": {
+    "sql": "SELECT\n  'wr-' || '${ENV:SYSTEM_BOOK}' || '-wholesale_return-' || replace(replace('${datetime}','-',''),'_','T') || 'Z' AS batch_id,\n  '${ENV:SYSTEM_BOOK}' AS system_book,\n  CAST('${date-1d}' AS DATE) AS bizday,\n  CAST(o.wholesale_return_fid AS VARCHAR) AS wholesale_return_fid,\n  CAST(o.wholesale_order_fid AS VARCHAR) AS order_no,\n  CAST(o.branch_num AS INTEGER) AS branch_num,\n  CAST(o.client_fid AS VARCHAR) AS client_fid,\n  CAST(o.wholesale_return_audit_time AS VARCHAR) AS audit_time,\n  CAST(o.wholesale_return_total_money AS DECIMAL(14,2)) AS total_money,\n  CAST(o.wholesale_return_cost_money AS DECIMAL(14,2)) AS cost_money,\n  CAST(json_extract_string(u.d, '$.order_detail_num') AS VARCHAR) AS order_detail_num,\n  CAST(json_extract_string(u.d, '$.item_num') AS BIGINT) AS item_num,\n  CAST(json_extract_string(u.d, '$.return_detail_money') AS DECIMAL(14,2)) AS return_detail_money,\n  CAST(json_extract_string(u.d, '$.return_detail_cost_money') AS DECIMAL(14,2)) AS return_detail_cost_money\nFROM input o\nCROSS JOIN UNNEST(from_json(CAST(o.wholesale_return_details AS JSON), '[\"JSON\"]')) AS u(d)"
+  },
+  "gate": {
+    "rules": {
+      "batch_id": "not_null",
+      "system_book": "not_null",
+      "bizday": "not_null",
+      "wholesale_return_fid": "not_null",
+      "branch_num": "not_null",
+      "item_num": "not_null"
+    }
+  },
+  "sink": {
+    "type": "minio",
+    "connectionRef": "zos",
+    "bucket": "shanhai-data",
+    "key": "lemeng/wholesale_return/system_book=${ENV:SYSTEM_BOOK}/bizday=${date-1d}/chunk=all.parquet",
+    "format": "parquet",
+    "mode": "overwrite",
+    "compression": "zstd"
+  }
+}

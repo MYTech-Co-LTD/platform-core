@@ -1,0 +1,98 @@
+{
+  "id": "lemeng.wholesale.out.l0",
+  "domain": "lemeng",
+  "accounts": [
+    "3120"
+  ],
+  "identityGate": true,
+  "source": {
+    "connectionRef": "lemeng",
+    "url": "https://cloud.nhsoft.cn/agi/api/nhsoft.whs.ai.wholesaleorder.find",
+    "method": "POST",
+    "body": "{\"date_start\":\"${date-1d} 00:00:00\",\"date_end\":\"${date-1d} 23:59:59\",\"date_type\":\"制单时间\",\"limit\":100,\"offset\":0}",
+    "responsePath": "/result",
+    "retryAttempts": 3,
+    "retryBackoffMs": 2000,
+    "schema": [
+      {
+        "name": "wholesale_order_fid",
+        "type": "string"
+      },
+      {
+        "name": "client_fid",
+        "type": "string"
+      },
+      {
+        "name": "state",
+        "type": "json"
+      },
+      {
+        "name": "wholesale_order_date",
+        "type": "string"
+      },
+      {
+        "name": "wholesale_order_create_time",
+        "type": "string"
+      },
+      {
+        "name": "wholesale_order_audit_time",
+        "type": "string"
+      },
+      {
+        "name": "wholesale_order_last_edit_time",
+        "type": "string"
+      },
+      {
+        "name": "branch_num",
+        "type": "int64"
+      },
+      {
+        "name": "storehouse_num",
+        "type": "int64"
+      },
+      {
+        "name": "wholesale_order_details",
+        "type": "json"
+      },
+      {
+        "name": "wholesale_order_total_money",
+        "type": "decimal"
+      },
+      {
+        "name": "wholesale_order_cost_money",
+        "type": "decimal"
+      }
+    ],
+    "pagination": {
+      "type": "static_pages",
+      "pages": 19,
+      "pageSize": 100,
+      "pageSizeParam": "limit",
+      "offsetParam": "offset",
+      "truncationGuard": true
+    }
+  },
+  "transform": {
+    "sql": "SELECT\n  'wo-' || '${ENV:SYSTEM_BOOK}' || '-wholesale_out-' || replace(replace('${datetime}','-',''),'_','T') || 'Z' AS batch_id,\n  '${ENV:SYSTEM_BOOK}' AS system_book,\n  CAST('${date-1d}' AS DATE) AS bizday,\n  CAST(o.wholesale_order_fid AS VARCHAR) AS order_no,\n  CAST(o.client_fid AS VARCHAR) AS client_fid,\n  CAST(json_extract_string(CAST(o.state AS JSON), '$.state_code') AS INTEGER) AS state_code,\n  json_extract_string(CAST(o.state AS JSON), '$.state_name') AS state_name,\n  CAST(o.wholesale_order_date AS VARCHAR) AS wholesale_order_date,\n  CAST(o.wholesale_order_create_time AS VARCHAR) AS create_time,\n  CAST(o.wholesale_order_audit_time AS VARCHAR) AS audit_time,\n  CAST(o.wholesale_order_last_edit_time AS VARCHAR) AS last_edit_time,\n  CAST(o.branch_num AS INTEGER) AS branch_num,\n  CAST(o.storehouse_num AS BIGINT) AS storehouse_num,\n  CAST(json_extract_string(u.d, '$.order_detail_num') AS INTEGER) AS order_detail_num,\n  CAST(json_extract_string(u.d, '$.item_num') AS BIGINT) AS item_num,\n  json_extract_string(u.d, '$.order_detail_item_code') AS item_code,\n  json_extract_string(u.d, '$.order_detail_item_name') AS item_name,\n  json_extract_string(u.d, '$.order_detail_item_spec') AS item_spec,\n  json_extract_string(u.d, '$.order_detail_item_unit') AS item_unit,\n  CAST(json_extract_string(u.d, '$.order_detail_qty') AS DECIMAL(14,6)) AS quantity,\n  CAST(json_extract_string(u.d, '$.order_detail_price') AS DECIMAL(18,8)) AS price,\n  CAST(json_extract_string(u.d, '$.order_detail_money') AS DECIMAL(14,2)) AS money,\n  CAST(json_extract_string(u.d, '$.order_detail_cost') AS DECIMAL(18,8)) AS cost,\n  json_extract_string(u.d, '$.order_detail_lot_number') AS lot_number,\n  CAST(json_extract_string(u.d, '$.order_detail_present_qty') AS DECIMAL(14,6)) AS present_qty,\n  json_extract_string(u.d, '$.order_detail_use_unit') AS use_unit,\n  CAST(json_extract_string(u.d, '$.order_detail_use_qty') AS DECIMAL(14,6)) AS use_qty,\n  CAST(json_extract_string(u.d, '$.order_detail_use_price') AS DECIMAL(18,8)) AS use_price,\n  CAST(json_extract_string(u.d, '$.order_detail_use_rate') AS DECIMAL(18,8)) AS use_rate,\n  CAST(o.wholesale_order_total_money AS DECIMAL(14,2)) AS total_money,\n  CAST(o.wholesale_order_cost_money AS DECIMAL(14,2)) AS cost_money\nFROM input o\nCROSS JOIN UNNEST(from_json(CAST(o.wholesale_order_details AS JSON), '[\"JSON\"]')) AS u(d)"
+  },
+  "gate": {
+    "rules": {
+      "batch_id": "not_null",
+      "system_book": "not_null",
+      "bizday": "not_null",
+      "order_no": "not_null",
+      "item_num": "not_null",
+      "item_code": "not_null",
+      "order_detail_num": "not_null"
+    }
+  },
+  "sink": {
+    "type": "minio",
+    "connectionRef": "zos",
+    "bucket": "shanhai-data",
+    "key": "lemeng/wholesale_out/system_book=${ENV:SYSTEM_BOOK}/bizday=${date-1d}/chunk=all.parquet",
+    "format": "parquet",
+    "mode": "overwrite",
+    "compression": "zstd"
+  }
+}
