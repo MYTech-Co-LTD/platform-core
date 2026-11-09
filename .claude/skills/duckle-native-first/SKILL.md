@@ -52,12 +52,34 @@ description: 做/改**任何数据面工件**时必用——新建或修改采�
 - [ ] ②/③ 的结论写进正典 §1.7（逐源决策登记）或 `duckle/README.md` §7.4（未验清单）。
 - [ ] **判停**：没登记 = 下一个人会把它当 ① 用。
 
+### ⑤ 落盘类改动：先问「谁回收」
+
+> 2026-11-09 事故（#1706）：workspace 堆到 1.5G / 数万文件，console 的
+> `/api/pipelines`、`/api/runs` 递归扫 workspace ⇒ 单请求 >12s 不返回 ⇒ 调度器把整点
+> occurrence 判 `overdue` + `misfire:skip` ⇒ **采集被整轮跳过**。
+
+- [ ] 任何**新增/修改**管线引入的落盘路径，先查引擎给的开关语义（`component_capabilities`
+      / `get_component_schema`），再回答三个问题：
+      ① 这个产物**是必需的吗**（`src.rest.rawResponseDestination` 是**可选**的——不写它，
+      响应直接按 `responsePath` 解析成行）；② 命名是**每次一份**还是**内容寻址**
+      （路径里放 `{sha256}` ⇒ 未变体重写同一文件，文件数按**不同内容**而不是按 run 数增长）；
+      ③ **谁回收它**（duckle 对 `.duckle-stage` 有官方 `duckle cache clear`，帮助原文
+      「Clearing is safe at any time: everything here can be recomputed」；对 `.duckle-raw`
+      没有 GC）。
+- [ ] **判停**：三条答不全（尤其第 ③ 条没有回收方案）= 不开工。回收方案要么进
+      `scripts/lemeng/console-gc.sh` 这类每日 job，要么用内容寻址 + `s3://` 落点。
+- [ ] **别往 workspace 里堆任何东西**（归档、备份、调试残留都不行）：console 的列表端点
+      **递归**扫整个 workspace，子目录照样算。归档要落到 workspace **之外**。
+- [ ] **清理时保留至少一个运行周期**（本仓用 `-mtime +1`）：删到正在跑的那一轮的文件 =
+      它读不到自己刚写的 raw ⇒ 身份/信封断言 fail-closed ⇒ 拒采（2026-11-09 实测）。
+
 ## 红线（违反任何一条 = 不许合并）
 
 1. **禁止把 ② 写成 ①**——没在本环境跑过就说「首选」。
 2. **禁止把 ③ 写成 ②**——挂个 gate 拖着 = 永远不做。
 3. **「试了一个不行」不构成能力缺口证据**——横向同类要试完，且必须真问过引擎目录。
 4. **碰业务口径时，任何在 dbt 之外实现公式的提案直接驳回**（architecture §4.1 B11）。
+5. **引入落盘路径却没写回收方案 = 不许合并**（见 ⑤；2026-11-09 采集被跳过就是这条的代价）。
 
 ## 边界
 
