@@ -1,4 +1,4 @@
-{{ config(tags=['audit']) }}
+{{ config(tags=['audit','audit_window']) }}
 -- audit_lemeng__purchase__cr5.sql — 指标的**独立复算**（对账）。
 -- 直接打 parquet、不 ref 任何 mart/staging（走上游会让 cast 错同时污染两边 ⇒ 对账恒绿）。
 --
@@ -15,9 +15,8 @@ with purchase as (
         r['item_num']::bigint     as item_num,
         (coalesce(r['purchase_item_money']::numeric, 0)
        - coalesce(r['purchase_item_return_money']::numeric, 0)) as net_p
-    from read_parquet(
-        's3://{{ var("zos_bucket") }}/{{ var("lemeng_item_purchase_prefix") }}/*/bizday=**/*.parquet'
-    ) r
+    from {{ window_read_parquet('s3://' ~ var("zos_bucket") ~ '/' ~ var("lemeng_item_purchase_prefix") ~ '/*/bizday=**/*.parquet') }} r
+    where r['bizday']::date >= date '{{ window_start_date() }}'
 ),
 item_latest as (
     -- dim_item 是快照表：取最新一份，否则按 snapshot 放大（与构件同范式）。
@@ -31,9 +30,7 @@ item_latest as (
                 partition by r['system_book']::varchar, r['item_num']::bigint
                 order by r['snapshot'] desc
             ) as rn
-        from read_parquet(
-            's3://{{ var("zos_bucket") }}/{{ var("lemeng_item_prefix") }}/system_book=*/snapshot=**/*.parquet'
-        ) r
+        from {{ window_read_parquet('s3://' ~ var("zos_bucket") ~ '/' ~ var("lemeng_item_prefix") ~ '/system_book=*/snapshot=**/*.parquet') }} r
     ) t
     where rn = 1
 ),
@@ -81,6 +78,7 @@ materialized as (
            sum(top5_p)::numeric(20, 2)  as top5_p,
            sum(total_p)::numeric(20, 2) as total_p
     from {{ ref('fct_purchase_concentration') }}
+    where bizday >= date '{{ window_start_date() }}'
     group by 1, 2, 3
 )
 select

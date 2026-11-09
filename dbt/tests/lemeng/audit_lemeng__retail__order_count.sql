@@ -1,4 +1,4 @@
-{{ config(tags=['audit']) }}
+{{ config(tags=['audit','audit_window']) }}
 -- audit_lemeng__retail__order_count.sql — 指标 `lemeng:retail:order_count` 的**独立复算**（对账）。
 --
 -- 契约与理由同 audit_lemeng__retail__net_sales.sql（dbt singular test：**返回任何行即失败**；
@@ -21,7 +21,7 @@
 --    （与净销售额同基面，换货单算一单）。粒度 = 账套 × 业务日 × 门店。
 --
 -- ── 形态：与 staging / 另一条 audit **同一套实测形态**（2026-09-24 数据面真机）────────────
--- 取列用 `from read_parquet('…') r` + `r['列名']`（别名挂函数调用上，不是 CTE：CTE 形态取列报
+-- 取列用 `from {{ window_read_parquet('…') }} r` + `r['列名']`（别名挂函数调用上，不是 CTE：CTE 形态取列报
 -- `cannot subscript type record`）；`hive_partitioning=1` / `hive_types` 不能作 read_parquet 形参
 -- （pg_duckdb 的 read_parquet 是 PG 函数、只认位置参数），分区推断默认生效。详见 staging 头注。
 -- `bizday` 是**湖里的真列**（管线已定型为 date）⇒ 不再有 `try_strptime(order_detail_bizday)`。
@@ -34,10 +34,7 @@ with recheck_raw as (
         r['bizday']::date         as bizday,
         r['branch_num']::int      as branch_num,
         r['order_no']::varchar    as order_no
-    from read_parquet(
-        -- ⚠️ 与 staging **同路径**（通配两账套，含封版排除语义）——对账必须与受测面同口径，否则只对账了 3120（issue #250）。
-        's3://{{ var("zos_bucket") }}/{{ var("lemeng_retail_order_line_prefix") }}/_DAY_DATA/system_book=*/bizday=*/all.parquet'
-    ) r
+    from {{ window_read_parquet('s3://' ~ var("zos_bucket") ~ '/' ~ var("lemeng_retail_order_line_prefix") ~ '/_DAY_DATA/system_book=*/bizday=*/all.parquet') }} r
     -- 基面与净销售额同口径（FINISHED+SALE_ORDER，2026-10-12 W0）
     where r['state'] = 'FINISHED'
       and r['order_transaction_type'] = 'SALE_ORDER'
@@ -45,6 +42,7 @@ with recheck_raw as (
       --    ETag 竞态、报 ERROR（实测 2026-10-06 run `jrun_dtyVWZnnFaQ_pCCN` attempt 1）。
       --    今天未定稿不判；两侧都滤，才是同量对比。
       and r['bizday']::date < CAST(now() AT TIME ZONE 'Asia/Shanghai' AS DATE)
+ and r['bizday']::date >= date '{{ window_start_date() }}'
 
     union all
 
@@ -54,13 +52,12 @@ with recheck_raw as (
         r['bizday']::date         as bizday,
         r['branch_num']::int      as branch_num,
         r['order_no']::varchar    as order_no
-    from read_parquet(
-        's3://{{ var("zos_bucket") }}/{{ var("lemeng_retail_order_line_prefix") }}/system_book=*/bizday=*/hour=*/all.parquet'
-    ) r
+    from {{ window_read_parquet('s3://' ~ var("zos_bucket") ~ '/' ~ var("lemeng_retail_order_line_prefix") ~ '/system_book=*/bizday=*/hour=*/all.parquet') }} r
     where r['state'] = 'FINISHED'
       and r['order_transaction_type'] = 'SALE_ORDER'
       and r['bizday']::date < CAST(now() AT TIME ZONE 'Asia/Shanghai' AS DATE)
-      and not exists (select 1 from read_parquet('s3://{{ var("zos_bucket") }}/{{ var("lemeng_retail_order_line_prefix") }}/_DAILY/*.parquet') m where cast(m['system_book'] as varchar) = cast(r['system_book'] as varchar) and cast(m['bizday'] as date) = cast(r['bizday'] as date))
+ and r['bizday']::date >= date '{{ window_start_date() }}'
+      and not exists (select 1 from {{ window_read_parquet('s3://' ~ var("zos_bucket") ~ '/' ~ var("lemeng_retail_order_line_prefix") ~ '/_DAILY/*.parquet') }} m where cast(m['system_book'] as varchar) = cast(r['system_book'] as varchar) and cast(m['bizday'] as date) = cast(r['bizday'] as date))
 ),
 recheck as (
     select
@@ -79,6 +76,7 @@ materialized as (
         order_count
     from {{ ref('fct_retail_sale') }}
     where bizday < CAST(now() AT TIME ZONE 'Asia/Shanghai' AS DATE)
+ and bizday >= date '{{ window_start_date() }}'
 )
 select
     coalesce(a.system_book, b.system_book) as system_book,
