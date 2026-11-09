@@ -26,6 +26,10 @@ export function periodRangeOf(period: PeriodSpec, now: Date): DateRange {
     }
     return { from: period.from, to: period.to }
   }
+  if (period.mode === 'day') {
+    if (period.day === undefined) throw new Error('INVALID_PERIOD')
+    return { from: period.day, to: period.day }
+  }
   if (period.mode === 'last_7_days') {
     const to = todayShanghai(now)
     return { from: dayjs(to).subtract(6, 'day').format(FMT), to }

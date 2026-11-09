@@ -351,6 +351,9 @@ function switchPeriodMode(mode: PeriodSpec['mode'], current: PeriodSpec, range: 
     return { mode: 'month', month }
   }
   if (mode === 'last_7_days') return { mode: 'last_7_days' }
+  if (mode === 'day') {
+    return { mode: 'day', day: current.day ?? range?.to ?? shanghaiToday() }
+  }
   // 自定义：把「当前生效的窗口」预填成可编辑值（不凭空造日期）
   return { mode: 'custom', from: range?.from ?? shanghaiToday(), to: range?.to ?? shanghaiToday() }
 }
@@ -369,6 +372,7 @@ function PeriodBar({ period, range, onChange }: { period: PeriodSpec; range: Dat
         options={[
           { label: '本月', value: 'month' },
           { label: '近 7 天', value: 'last_7_days' },
+          { label: '单日', value: 'day' },
           { label: '自定义', value: 'custom' },
         ]}
       />
@@ -379,6 +383,14 @@ function PeriodBar({ period, range, onChange }: { period: PeriodSpec; range: Dat
           allowClear={false}
           value={dayjs(`${period.month ?? shanghaiToday().slice(0, 7)}-01`)}
           onChange={(d) => { if (d !== null) onChange({ mode: 'month', month: d.format('YYYY-MM') }) }}
+        />
+      )}
+      {period.mode === 'day' && (
+        <DatePicker
+          size="small"
+          allowClear={false}
+          value={dayjs(period.day ?? shanghaiToday())}
+          onChange={(d) => { if (d !== null) onChange({ mode: 'day', day: d.format('YYYY-MM-DD') }) }}
         />
       )}
       {period.mode === 'custom' && period.from !== undefined && period.to !== undefined && (
