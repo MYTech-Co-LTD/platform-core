@@ -24,13 +24,17 @@ const DateStr = z.string().regex(/^\d{4}-\d{2}-\d{2}$/)
 const MonthStr = z.string().regex(/^\d{4}-(0[1-9]|1[0-2])$/)
 
 export const PeriodSchema = z.object({
-  mode: z.enum(['month', 'last_7_days', 'custom']),
+  mode: z.enum(['month', 'last_7_days', 'custom', 'day']),
   month: MonthStr.optional(),
+  day: DateStr.optional(),
   from: DateStr.optional(),
   to: DateStr.optional(),
 }).strict().superRefine((p, ctx) => {
   if (p.mode === 'month' && p.month === undefined) {
     ctx.addIssue({ code: z.ZodIssueCode.custom, path: ['month'], message: 'mode=month 需要 month' })
+  }
+  if (p.mode === 'day' && p.day === undefined) {
+    ctx.addIssue({ code: z.ZodIssueCode.custom, path: ['day'], message: 'mode=day 需要 day' })
   }
   if (p.mode === 'custom') {
     if (p.from === undefined || p.to === undefined) {

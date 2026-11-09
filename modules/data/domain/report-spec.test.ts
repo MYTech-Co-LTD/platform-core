@@ -57,10 +57,12 @@ describe('报表规格（严格白名单）', () => {
 const base = { system_book: '3120', branch_num: '92', bizday: { from: '2026-10-01', to: '2026-10-19' } }
 
 describe('B+C schema', () => {
-  it('period 三种模式通过；month/custom 缺参拒', () => {
+  it('period 四种模式通过；month/day/custom 缺参拒', () => {
     const ok = { period: { mode: 'month', month: '2026-10' }, panels: [{ chart: 'line', title: 't', metricId: 'm', dims: ['bizday'], args: base, span: 24 }] }
     expect(parseReportSpec(ok).ok).toBe(true)
     expect(parseReportSpec({ ...ok, period: { mode: 'month' } }).ok).toBe(false)
+    expect(parseReportSpec({ ...ok, period: { mode: 'day', day: '2026-10-13' } }).ok).toBe(true)
+    expect(parseReportSpec({ ...ok, period: { mode: 'day' } }).ok).toBe(false)
     expect(parseReportSpec({ ...ok, period: { mode: 'custom', from: '2026-10-19', to: '2026-10-01' } }).ok).toBe(false)
   })
 

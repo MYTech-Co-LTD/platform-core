@@ -74,7 +74,7 @@ interface Panel {
   content?: string
 }
 interface SpecFixture {
-  period?: { mode: 'month' | 'last_7_days' | 'custom'; month?: string; from?: string; to?: string }
+  period?: { mode: 'month' | 'last_7_days' | 'day' | 'custom'; month?: string; day?: string; from?: string; to?: string }
   panels: Panel[]
 }
 type QueryBody = { metricId: string; args: Record<string, unknown> } & Record<string, unknown>

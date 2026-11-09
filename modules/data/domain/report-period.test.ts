@@ -15,8 +15,9 @@ describe('periodRangeOf', () => {
     expect(periodRangeOf({ mode: 'month', month: '2026-09' }, now)).toEqual({ from: '2026-09-01', to: '2026-09-30' })
     expect(periodRangeOf({ mode: 'month', month: '2026-10' }, now)).toEqual({ from: '2026-10-01', to: '2026-10-26' })
   })
-  it('last_7_days 与 custom', () => {
+  it('last_7_days / day 与 custom', () => {
     expect(periodRangeOf({ mode: 'last_7_days' }, now)).toEqual({ from: '2026-10-20', to: '2026-10-26' })
+    expect(periodRangeOf({ mode: 'day', day: '2026-10-13' }, now)).toEqual({ from: '2026-10-13', to: '2026-10-13' })
     expect(periodRangeOf({ mode: 'custom', from: '2026-10-01', to: '2026-10-19' }, now)).toEqual({ from: '2026-10-01', to: '2026-10-19' })
   })
 })
