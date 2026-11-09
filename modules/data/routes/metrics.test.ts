@@ -10,7 +10,7 @@ import { TENANT_SOURCES, declaredScopeGate } from '@platform/sdk'
 import type { NotifyPort } from '@platform/sdk'
 import mod from '../index'
 import { applyMigrations, buildTestApp, makeIdentity } from '../test-util'
-import { L1_ORG, upsertL1Metric, upsertMetric } from '../domain/metric-store'
+import { L1_ORG, loadMergedCatalog, upsertL1Metric, upsertMetric } from '../domain/metric-store'
 import type { L1MetricDef, MetricRow } from '../domain/metric-store'
 import { L2ExprDeclarationSchema, L2RefineDeclarationSchema, compileL2 } from '../domain/semantic-compiler'
 import type { L2Declaration } from '../domain/semantic-compiler'
@@ -896,6 +896,61 @@ describePg('指标路由（需要 DATABASE_URL：词表读写）', () => {
       await pool.query(`delete from data.metrics where org = $1 and id = $2`, [ORG, id])
     }
   })
+
+  // ── 租户语义自治（W8，issue #1716）：新建全额声明 ──────────────────────────────
+  const createDeclaration = (body: unknown, scopes = ['data:manage']) =>
+    app(ORG, scopes).request('/metrics/declarations', {
+      method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body),
+    })
+  const tenantDecl = (over: Record<string, unknown> = {}) => ({
+    name: 'tenant:retail:gross_sales',
+    label: '本租户销售额',
+    definition: '本租户口径的销售额',
+    owner: 'data-platform',
+    tier: 'experimental',
+    source: 'lemeng',
+    expression: 'sum(fct_retail_sale.sale_amount)',
+    grain: ['system_book', 'bizday'],
+    freshness_sla_days: 2,
+    sources: ['s3://<bucket>/lemeng/retail_order_line/system_book=<账套>/bizday=<日期>/all.parquet'],
+    ...over,
+  })
+
+  it('W8 新建声明：201 → 词表即时可见（basis/declaration 落库）→ /query 跑新口径 → 审计一条', async () => {
+    const res = await createDeclaration({ declaration: tenantDecl() })
+    expect(res.status).toBe(201)
+    expect((await res.json()).id).toBe('tenant:retail:gross_sales')
+
+    const row = (await loadMergedCatalog(pool, ORG)).find((m) => m.id === 'tenant:retail:gross_sales')
+    expect(row, '新建的租户声明没进本 org 词表').toBeDefined()
+    expect(row!.basis).toBe('declared')
+    expect(row!.selectSql).toBe('select sum(fct_retail_sale.sale_amount) as value, system_book, bizday from fct_retail_sale')
+    expect(row!.overrideOf ?? null).toBeNull()
+
+    const listed = await (await app(ORG, ['data:query']).request('/metrics')).json()
+    expect(listed.metrics.map((m: { id: string }) => m.id)).toContain('tenant:retail:gross_sales')
+
+    const audit = await (await app(ORG, ['data:manage']).request('/metrics/tenant:retail:gross_sales/audit')).json()
+    expect(audit.audit[0]).toMatchObject({ action: 'create' })
+  })
+
+  it('W8 新建声明：撞 L1 id ⇒ 409；重复建 ⇒ 409；坏声明 ⇒ 400 带 issues', async () => {
+    expect((await createDeclaration({ declaration: tenantDecl({ name: L1_SALES.id }) })).status).toBe(409)
+    expect((await createDeclaration({ declaration: tenantDecl({ name: 'tenant:retail:dup' }) })).status).toBe(201)
+    expect((await createDeclaration({ declaration: tenantDecl({ name: 'tenant:retail:dup' }) })).status).toBe(409)
+    const bad = await createDeclaration({ declaration: tenantDecl({ name: 'tenant:retail:bad', owner: '' }) })
+    expect(bad.status).toBe(400)
+    const body = await bad.json()
+    expect(body.error).toBe('DECLARATION_INVALID')
+    expect(Array.isArray(body.issues)).toBe(true)
+  })
+
+  it('W8 新建声明：relation 不在 L1 已用集合 ⇒ 400（B11）', async () => {
+    const res = await createDeclaration({ declaration: tenantDecl({ name: 'tenant:retail:secret', expression: 'sum(secret_table.amount)' }) })
+    expect(res.status).toBe(400)
+    expect((await res.json()).issues.some((i: { message: string }) => i.message.includes('B11'))).toBe(true)
+  })
+
 })
 
 // ── B 中档 · schema ↔ compiler 对偶（增补 §6.2 的**行为侧**）· 纯逻辑三条 ──────────

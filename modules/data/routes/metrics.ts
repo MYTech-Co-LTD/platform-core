@@ -22,6 +22,7 @@ import { requesterOf, writeOutcome } from './context'
 import { saveMetricDraft, loadMetricDraft, clearMetricDraft, metricBasisOf } from '../domain/metric-governance'
 import { ColumnAggDraftSchema, MetricDraftSpecSchema } from '../domain/metric-governance'
 import { certifyMetric, updateMetricMeta } from '../domain/metric-write'
+import { createTenantDeclaration } from '../domain/tenant-declaration-write'
 import { metricUsageStats, retireCandidatesOf } from '../domain/metric-usage'
 import { paramFaceOf, visibleMetrics } from '../domain/authz'
 import type { MetricParamDef, Requester } from '../domain/authz'
@@ -219,6 +220,23 @@ export function registerMetrics(r: ModuleHono, ctx: RouteCtx): void {
     if (!parsed.success) return c.json({ error: 'INVALID_BODY' }, 400)
     const { id, ...decl } = parsed.data
     return writeOutcome(c, await writeL2Declaration(writeDeps(ctx, c, requester), orgOf(c), id, decl), 201)
+  })
+
+  // 租户语义自治（W8，issue #1716）：新建全额声明。只收声明（YAML 条目等价物），不收 SQL；
+  // 校验与 L1/apply 同一把尺，写库后即时生效（无需部署）。覆盖平台口径是 P2 的独立入口。
+  r.post('/metrics/declarations', async (c) => {
+    const requester = requesterOf(c)
+    if (requester === null) return c.json({ error: 'UNAUTHENTICATED' }, 403)
+    const body = await c.req.json().catch(() => null)
+    if (body === null || typeof body !== 'object' || !('declaration' in body)) {
+      return c.json({ error: 'INVALID_BODY' }, 400)
+    }
+    const out = await createTenantDeclaration(
+      { pool: ctx.pool, ...(ctx.warehouse === undefined ? {} : { warehouse: ctx.warehouse }) },
+      orgOf(c), requester, (body as { declaration: unknown }).declaration,
+    )
+    if (out.ok) return c.json({ ok: true, id: out.id }, 201)
+    return writeOutcome(c, out, 201)
   })
 
   r.put('/metrics/:id', async (c) => {
