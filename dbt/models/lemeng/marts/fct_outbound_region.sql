@@ -21,7 +21,8 @@
 --   但共享同一套一级名（东部/南部/西部/中部战区）⇒ **只有 region_l1 能跨账套合并**（同
 --   `lemeng:contribution:region_l1_net` 的 `region_l1_bucket` 口径，空值显式落 `未归属`）。
 --   ⚠️ `client_fid` 是 2026-11-09 加的第 5 键（#1766「外部批发要能按客户下钻」）：wholesale 行
---   按客户拆开，transfer 行客户恒 NULL（NULL 在 GROUP BY 里归一组，配送侧不受影响）。
+--   按客户拆开，transfer 行**落空串哨兵**（无客户；不能是 NULL——唯一键里的 NULL 会让增量
+--   delete+insert 失配并重复插入，#1770 真机实测）。
 --   **扩键改历史行的落法 ⇒ 必须一次 `--full-refresh`**（增量 7 天窗滚不到旧分区）。
 --
 -- 【join 语义】全部 `left join`：宁可落 `未归属` 也不丢行——丢行 = 静默少数，守恒测试会红但
@@ -66,9 +67,12 @@ select
     end::varchar as channel_type,
     -- 一级战区桶：transfer 用门店战区；wholesale 用客户本体门店战区；都没有 ⇒ 未归属
     coalesce(r.region_l1, '未归属')::varchar as region_l1_bucket,
-    -- 客户键（#1766）：wholesale 行是批发客户；transfer 行恒 NULL（门店配送无客户）。
-    -- 客户名不在本表物化——展示层按 `client_fid` 贴 `client_name`（#857/#1760）。
-    o.client_fid::varchar as client_fid,
+    -- 客户键（#1766）：wholesale 行是批发客户；transfer 行无客户 ⇒ **落空串哨兵而不是 NULL**。
+    -- ⚠️ 为什么不能留 NULL（#1770 真机实测）：它是 `unique_key` 的一部分，dbt 的 delete+insert
+    -- 用 `t.key = tmp.key` 匹配，**NULL 永不相等** ⇒ 每次增量都会把窗口内的 transfer 行再插一遍
+    -- （实测「自有门店配送」合计比源多 2,077,832.39 / 12 个日桶；wholesale 侧因 client 非空不受影响）。
+    -- 客户名不在本表物化——展示层按 `client_fid` 贴 `client_name`（#857/#1760），空串查不到 ⇒ null。
+    coalesce(o.client_fid, '')::varchar as client_fid,
     sum(o.r_net)::numeric(20,2)      as r_net,
     sum(o.order_count)::bigint       as order_count,
     sum(o.line_count)::bigint        as line_count
