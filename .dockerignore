@@ -20,6 +20,11 @@
 **/coverage
 **/*.tsbuildinfo
 
+# 构建期生成物（不进仓，也不该从宿主上下文进来）：镜像里由 skillgen stage
+# COPY --from 覆盖提供，挡掉本地残留可让构建上下文确定、避免旧产物混入层缓存。
+deploy/openclaw/data-query-plugin/generated
+deploy/openclaw/data-query-plugin/skills/data-query/SKILL.md
+
 # 本地密钥与临时物
 .env
 *.local

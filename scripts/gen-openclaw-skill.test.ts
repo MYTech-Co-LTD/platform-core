@@ -158,7 +158,15 @@ describe('输入缺失/损坏的报错带绝对路径', () => {
 
 it('Dockerfile.openclaw 仍接线构建期渲染（防删 build stage 后静默退回旧文件）', () => {
   const dockerfile = readFileSync(join(ROOT, 'deploy/Dockerfile.openclaw'), 'utf8')
-  expect(dockerfile).toContain('AS skillgen')
-  expect(dockerfile).toContain('gen-openclaw-skill.mjs')
-  expect(dockerfile).toContain('COPY --from=skillgen')
+  expect(dockerfile).toMatch(/^FROM\s+\S+\s+AS\s+skillgen\s*$/m)
+  expect(dockerfile).toMatch(/^RUN\s+node\s+scripts\/gen-openclaw-skill\.mjs\s+--out\s+\/out\s*$/m)
+  expect(dockerfile).toMatch(/^COPY\s+--from=skillgen\s+\/out\/\s+\/opt\/plugins\/data-query-plugin\/\s*$/m)
+  // 最后一条 FROM 必须仍是钉死 digest 的官方镜像（别让 skillgen 变成运行镜像）。
+  const froms = [...dockerfile.matchAll(/^FROM\s+(\S+)/gm)].map((m) => m[1])
+  expect(froms.at(-1)).toMatch(/^ghcr\.io\/openclaw\/openclaw@sha256:[0-9a-f]{64}$/)
+  // overlay 必须排在插件源码 COPY 之后，否则会被旧文件覆盖回去。
+  const pluginCopy = dockerfile.indexOf('COPY deploy/openclaw/data-query-plugin /opt/plugins/data-query-plugin')
+  const overlayCopy = dockerfile.indexOf('COPY --from=skillgen /out/ /opt/plugins/data-query-plugin/')
+  expect(pluginCopy).toBeGreaterThanOrEqual(0)
+  expect(overlayCopy).toBeGreaterThan(pluginCopy)
 })
