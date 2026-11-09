@@ -1,4 +1,4 @@
-{{ config(tags=['audit']) }}
+{{ config(tags=['audit','audit_window']) }}
 -- audit_lemeng__outbound__region_net — 战区出库净额的**独立复算**（#1181，layered §7 硬约束 7）。
 --
 -- 为什么不能只靠 mart 自己：`fct_outbound_region` 是「归因层」，它错了（join 方向反、通道判别式写错、
@@ -10,6 +10,7 @@
 with base as (
     select f.system_book, f.bizday, f.domain, f.client_fid, f.region_id, f.r_net
     from {{ ref('fct_hq_outbound') }} f
+    where f.bizday >= date '{{ window_start_date() }}'
 ),
 raw as (
     select
@@ -53,6 +54,7 @@ indep as (
 mart as (
     select system_book, bizday, channel_type, region_l1_bucket, r_net
     from {{ ref('fct_outbound_region') }}
+    where bizday >= date '{{ window_start_date() }}'
 )
 select coalesce(m.system_book, i.system_book) as system_book,
        coalesce(m.bizday, i.bizday)           as bizday,
