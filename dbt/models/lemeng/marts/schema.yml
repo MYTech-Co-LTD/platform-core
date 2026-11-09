@@ -103,8 +103,10 @@ models:
         tests: [{not_null: {}}]
       - name: client_fid
         description: >-
-          客户键（粒度键，2026-11-09 加）：wholesale 行 = 批发客户；transfer 行恒 NULL（门店配送无客户）。
+          客户键（粒度键，2026-11-09 加）：wholesale 行 = 批发客户；transfer 行 = 空串哨兵（门店配送无客户；
+          不能是 NULL——唯一键里的 NULL 会让增量 delete+insert 失配并重复插入，#1770）。
           客户名**不物化**——展示层按 `client_fid` 贴 `client_name`（#857 / #1760）。
+        tests: [{not_null: {}}]
       - name: r_net
         description: 出库净额（原样求和，不重算）。
       - name: order_count
