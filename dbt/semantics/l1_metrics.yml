@@ -663,9 +663,14 @@ metrics:
     unit: 元
     definition: >-
       **出库金额**的第一条腿（2026-11-09 用户裁决）：`fct_outbound_region` 里
-      `channel_type='自有门店配送'` 的 `r_net`（= transfer 域；与 `lemeng:branch:transfer_money` 逐日等值）。
-      ⚠️ `体系内批发`（3120 批发给 64188 门店）是 64188 侧调入 transfer 的**镜像**，已含在 transfer 内，
+      `channel_type='自有门店配送'` 的 `r_net`（= transfer 域：审核、总仓发货、排除店间直调）。
+      ⚠️ 与 D10 的 `lemeng:branch:transfer_money` **同业务概念但不同源**，**不保证逐日等值**
+      （实测差异来自 64188 `transfer_out` 分区缺失与跨日归属），出库金额一律以本指标为准，
+      不得把两者相加（issue #1711）。
+      `体系内批发`（3120 批发给 64188 门店）是 64188 侧调入 transfer 的**镜像**，已含在 transfer 内，
       **不计入本指标、也不得与它相加**。
+      ⚠️ 历史完整性：64188 的 `transfer_out` 只采到 2026-02-22 起、且 2026-11-01..04 缺分区
+      （回填进行中，issue #1713）——缺分区的日期本指标会少计，不要当完整值。
       粒度 = 账套 × 业务日。
     expression: 'sum(case when fct_outbound_region.channel_type = ''自有门店配送'' then fct_outbound_region.r_net else 0 end)'
     grain: [system_book, bizday]
@@ -703,6 +708,8 @@ metrics:
       出库金额 = **门店配送金额 + 外部批发金额**（2026-11-09 用户裁决）。实现 = `fct_outbound_region`
       里 `channel_type in ('自有门店配送','外部批发')` 的 `r_net` 之和；**排除 `体系内批发`**
       （3120→64188 门店批发是 64188 侧调入 transfer 的镜像，含它会重复计数）。
+      ⚠️ 历史完整性：64188 的 `transfer_out` 目前只采到 2026-02-22 起、且 2026-11-01..04 缺分区
+      （两年回填进行中，issue #1713）——缺分区的日期会少计门店配送腿，该区间的值不是完整口径。
       ⚠️ 与 certified 的 `lemeng:outbound:net_amount` 不同：后者是**账套视角**的 transfer+wholesale 全量
       （含镜像），集团去重口径 = `net_amount − 体系内批发镜像`。2026-11-07 实测：
       门店配送 177,875.53 + 外部批发 78,711.49 = **256,587.02**；net_amount 288,724.62 − 镜像 32,137.60 = 256,587.02。
@@ -1566,10 +1573,14 @@ metrics:
       锚：3120/店92/2026-10-01..19 合计 **32,114.96**（与乐檬源界面逐分对上；湖侧两面独立复算恒等）。
       ⚠️ tier=experimental：仅 3120 单账套 × 单指标 × 19 天验证，多指标/跨账套未复核前不升。
       粒度 = 账套 × 业务日 × 门店。
-      **出库口径（2026-11-09 用户裁决）**：本指标即「**门店配送金额**」，是出库金额的两条腿之一
-      （另一条 = `lemeng:outbound:external_wholesale`）。它与 `fct_outbound_region.channel_type='自有门店配送'`
-      逐日等值；`体系内批发`（3120 批给 64188 门店）是 64188 侧调入 transfer 的**镜像**，
-      **已在 D10 内，不得再与门店配送相加**。出库金额 = 本指标 + 外部批发金额。
+      **出库口径（2026-11-09 用户裁决）**：本指标是「**门店配送金额**」的业务概念，与出库金额的另一条腿
+      `lemeng:outbound:external_wholesale` 并列。⚠️ 出库金额**不读本指标**：统一读
+      `fct_outbound_region.channel_type='自有门店配送'`（transfer 域）。两者同业务概念但**不同源**
+      （D10 门店指标 API vs transfer_out 出库单），**不保证逐日等值**——2026-11-09 实测：
+      64188 的 `transfer_out` 在 11-01..04 缺分区（D10 有数），08-26/27 存在整日归属差异
+      （∓79,742.13）。⇒ 不要把两者相加，也不要断言相等（issue #1711）。
+      `体系内批发`（3120 批给 64188 门店）是 64188 侧调入 transfer 的**镜像**，已含在门店配送腿内，
+      **不得再与门店配送相加**。出库金额 = 门店配送（transfer 域）+ 外部批发金额。
     expression: 'sum(fct_branch_indicator.transfer_money)'
     grain: [system_book, bizday, branch_num]
     owner: data-platform
