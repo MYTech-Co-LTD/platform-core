@@ -84,7 +84,7 @@ export const reportTools: McpToolGroup = {
           '提议一张新的平台自绘报表。**只是提议**：建出来的一定是未发布状态（页门挂在管理档），',
           '要发布得由人在控制台改页门。**不能凭空发明指标**——metricId 必须是 list_metrics 里出现的 id；',
           '图型支持 line / bar / table / kpi / text / ai_text。ai_text = 观看时按当前期间服务端生成的',
-          '分析文本：focus=overview（结论/异常/行动）或 focus=root_cause（在事实包之外跑确定性',
+          '分析文本：focus=overview（结论/异常/行动）、focus=root_cause（在事实包之外跑确定性',
           '下钻/配方探针，输出「根因」段）；不写 content；必须与至少一个数据面板同报，且报表要带',
           'period。**标题不能与已有报表重名**（重名会被拒，不会覆盖）。',
         ].join(''),
@@ -99,7 +99,7 @@ export const reportTools: McpToolGroup = {
       { name: 'revise_report_spec',
         description: [
           '修改**尚未发布**的报表的规格（已发布的会被拒——那要人在控制台改）。带 expectedVersion（取自 list_reports）。',
-          '可用图型与 propose_report 相同（含 ai_text：focus=overview/root_cause，需与数据面板同报且报表带 period）。',
+          '可用图型与 propose_report 相同（含 ai_text：focus=overview/root_cause/daily_review，需与数据面板同报且报表带 period）。',
         ].join(''),
         inputSchema: {
           type: 'object',

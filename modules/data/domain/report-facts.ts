@@ -23,6 +23,7 @@ import type { Pool } from 'pg'
 import type { Requester, SlicingSpec, SliceOrderBy } from './authz'
 import { runQuery, type QueryDeps, type SqlExecutor } from './query-service'
 import { buildRootCause, type RootCauseBundle } from './report-root-cause'
+import { buildDailyReview, type DailyReviewBundle } from './report-daily-review'
 import type { ToolboxDeps } from './toolbox/registry'
 import {
   compareRangeOf, comparisonCovered, coverageArgsOf, coverageOfQueryResult, coverageSlicing,
@@ -96,10 +97,15 @@ export interface FactBundle {
   /** 期间日期（`from` / `to`），既进白名单也单独给提示词用。 */
   dates: string[]
   /**
-   * 根因探针结果（仅 `focus='root_cause'`；`overview` 恒 null）。
+   * 根因探针结果（仅 `focus='root_cause'`；其余 focus 恒 null）。
    * 数字已并入 `numbers`；narrative 只把它当事实，不重新查数。
    */
   analysis: RootCauseBundle | null
+  /**
+   * 日报经营体检（仅 `focus='daily_review'`；其余 focus 恒 null）。
+   * 数字已并入 `numbers`；三基线/净毛利/MTD 都在这里预计算好。
+   */
+  dailyReview: DailyReviewBundle | null
   /** 规范化 JSON 的 sha256 —— 缓存键的一部分：同一事实必须得到同一串。 */
   factsHash: string
 }
@@ -468,6 +474,28 @@ export async function buildFacts(
   if (analysis !== null) {
     for (const n of analysis.numbers) if (n !== '' && n !== '-') numbers.add(n)
   }
+  // 日报目标日/三基线/净毛利/MTD：只在 daily_review 时跑；走同一 runQuery 通道。
+  const dailyReview = ai.focus === 'daily_review'
+    ? await buildDailyReview({
+        spec, period, range,
+        ...(branchNum === undefined ? {} : { branchNum }),
+        readSeries: async (metricId, args) => {
+          const out = await runQuery(
+            queryDepsOf(deps), deps.org, deps.requester, metricId, args,
+            { dimensions: ['bizday'], orderBy: [{ column: 'bizday', dir: 'asc' }], limit: 1000 },
+          )
+          if (out.status !== 'ok') return null
+          return {
+            columns: out.columns,
+            rows: out.rows,
+            dataAsOf: typeof out.data_as_of === 'string' ? out.data_as_of : null,
+          }
+        },
+      })
+    : null
+  if (dailyReview !== null) {
+    for (const n of dailyReview.numbers) if (n !== '' && n !== '-') numbers.add(n)
+  }
 
   // 「有没有数据」是事实，不是推断。注意**全 0 的合成序列不算数据**：无业绩门店的
   // 「连续无业绩天数」仍会返回逐日 0 行（实测店 91 有 31 行 0）；只看「有行」会把空店
@@ -480,7 +508,8 @@ export async function buildFacts(
     kpis.some((k) => k.current !== '-') ||
     breakdowns.some((b) => b.rows.some((r) => nonZero(r.value))) ||
     daily.min !== null || daily.max !== null ||
-    (analysis?.findings.some((f) => f.rows.length > 0) ?? false)
+    (analysis?.findings.some((f) => f.rows.length > 0) ?? false) ||
+    (dailyReview !== null && dailyReview.today.revenue !== '-')
 
   const facts: Omit<FactBundle, 'factsHash'> = {
     reportTitle: deps.reportTitle,
@@ -498,6 +527,7 @@ export async function buildFacts(
     numbers: [...numbers],
     dates,
     analysis,
+    dailyReview,
   }
   const factsHash = createHash('sha256').update(canonicalJson(facts)).digest('hex')
   return { ...facts, factsHash }

@@ -112,12 +112,13 @@ const TextPanel = z.object({
  *    写侧也不接受任何自由文本键：`.strict()` 下多一个 `content` 即 INVALID_SPEC。
  * ⚠️ `focus` 是**代码常量白名单**：加口径 = 改这里 + 事实包 + 提示词，走 PR。
  *   · `overview`：结论/异常/行动（既有行为）；
- *   · `root_cause`：在事实包之外跑确定性的下钻/配方探针，输出「根因」段（不做对话）。
+ *   · `root_cause`：在事实包之外跑确定性的下钻/配方探针，输出「根因」段（不做对话）；
+ *   · `daily_review`：目标日 + 昨天/MTD 日均/去年同月日均 + 毛利/净毛利/MTD 驱动与建议。
  */
 const AiTextPanel = z.object({
   chart: z.literal('ai_text'),
   title: z.string().trim().min(1).max(120).default('AI 分析'),
-  focus: z.enum(['overview', 'root_cause']),
+  focus: z.enum(['overview', 'root_cause', 'daily_review']),
   span: z.number().int().min(1).max(24).default(24),
 }).strict()
 
