@@ -24,6 +24,7 @@ import {
   type NarrativeEvent,
 } from './narrative'
 import type { FactBundle } from './report-facts'
+import type { DailyReviewBundle, DailySnapshot } from './report-daily-review'
 
 const ORG = 'org-narrative'
 
@@ -51,6 +52,7 @@ const facts: FactBundle = {
   ],
   daily: { min: { day: '2026-10-13', value: '1,024.50' }, max: { day: '2026-10-05', value: '4,800.00' } },
   analysis: null,
+  dailyReview: null,
   missing: [],
   numbers: ['51,273.89', '48,000.00', '6.82%', '1,234', '1,200', '2.83%', '41.55', '40.00', '3.88%',
     '23.45%', '320.00', '5,000.00', '210.00', '110.00', '3,000.00', '2,000.00', '1,024.50', '4,800.00',
@@ -497,5 +499,48 @@ describe('同事实单飞', () => {
     expect(ev2.at(-1)).toMatchObject({ type: 'done', fallback: false, cached: true })
     const text2 = ev2.flatMap((e) => (e.type === 'delta' ? [e.text] : [])).join('')
     expect(text2).toContain('51,273.89')
+  })
+})
+
+describe('daily_review 模板', () => {
+  const snap = (label: string, day: string): DailySnapshot => ({
+    label, day,
+    revenue: '507,322.21', orders: '1,000', aov: '507.32',
+    gross: '172,983.20', grossMargin: '34.10%',
+    loss: '1,000.00', expense: '5,000.00',
+    netGross: '166,983.20', netMargin: '32.91%',
+  })
+  const delta = { revenue: '+1.5%', orders: '+5.3%', aov: '-3.6%', gross: '+1.8%', netMargin: '+0.2pp' }
+  const dr: DailyReviewBundle = {
+    targetDay: '2026-11-08', yesterday: '2026-11-07',
+    monthStart: '2026-11-01', lastYearFrom: '2025-11-01', lastYearTo: '2025-11-08',
+    today: snap('目标日', '2026-11-08'),
+    comparisons: {
+      yesterday: { baseline: snap('昨天', '2026-11-07'), delta },
+      mtdAvg: { baseline: snap('本月至今日均', '2026-11-01 ~ 2026-11-08'), delta },
+      lastYearAvg: null,
+    },
+    mtd: { ...snap('本月累计', '2026-11-01 ~ 2026-11-08'), revenue: '4,007,322.21', netGross: '1,331,183.20' },
+    drivers: [{ side: 'sales', label: '订单数', value: '1,000', delta: '+50 单' }],
+    suggestions: ['净毛利率 32.91%，高于 20% 目标。'],
+    notes: ['净毛利 = 毛利 − 报损 − 费用；当前未含房租、水电等固定成本。'],
+    numbers: ['507,322.21', '32.91%'],
+    dataAsOf: '2026-11-09 06:00:00 +08:00',
+    hash: 'hash',
+  }
+
+  it('包含三基线、净毛利、MTD 与建议，并标注未含房租', () => {
+    const text = templateOf({ ...facts, focus: 'daily_review', dailyReview: dr })
+    expect(text).toContain('vs 昨天')
+    expect(text).toContain('vs 本月至今日均')
+    expect(text).toContain('净毛利 166,983.20')
+    expect(text).toContain('32.91%')
+    expect(text).toContain('未含房租')
+    expect(text).toContain('建议：')
+  })
+
+  it('dailyReview=null ⇒ 明确写不足以生成日报', () => {
+    const text = templateOf({ ...facts, focus: 'daily_review', dailyReview: null })
+    expect(text).toContain('不足以生成日报')
   })
 })

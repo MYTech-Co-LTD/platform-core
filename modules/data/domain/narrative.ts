@@ -24,7 +24,7 @@ import {
 } from './report-narrative-store'
 
 /** 参与缓存键；**改提示词 = 升版本号**（旧缓存自然不再命中）。 */
-export const NARRATIVE_PROMPT_VERSION = 'narrative-v5'
+export const NARRATIVE_PROMPT_VERSION = 'narrative-v6'
 
 /** 与 spec §4.1 同形的 SSE 事件。`replace` 表示「已流出的内容作废」，客户端必须整段替换。 */
 export type NarrativeEvent =
@@ -91,8 +91,23 @@ const ROOT_CAUSE_SYSTEM = [
   '全文不超过 500 个汉字；末尾单独一行写：数据截至 <dataAsOf>（缺失写「新鲜度未知」）。',
 ].join('\n')
 
+const DAILY_REVIEW_SYSTEM = [
+  '如果 facts.dailyReview 非空，按以下五段输出，纯文本，不要 Markdown 表格/HTML：',
+  '结论：今天（targetDay）的营业额、订单数、客单价、毛利/毛利率，一句话判断比昨天好还是差。',
+  '对比：分别写 vs 昨天、vs 本月至今日均、vs 去年同月同日日均；每项带营业额/订单/客单价的变化。',
+  '成本：毛利、报损、费用、净毛利/净毛利率；必须写「未含房租/水电等固定成本」。',
+  'MTD：本月累计营业额/毛利/净毛利/净毛利率，以及与 20% 目标的关系。',
+  '驱动：只引用 facts.dailyReview.drivers 的 label/value/delta，点明是销售侧还是成本侧。',
+  '建议：2–3 条，每条绑定一个金额或项目，写可执行动作，不要空话。',
+  '只引用 facts.dailyReview 里的数字；不得做 facts 之外的算术；缺失写 "-"。',
+  '不要推测天气/竞品/促销等外部原因。',
+  '全文不超过 700 个汉字；末尾单独一行写：数据截至 <dataAsOf>（缺失写「新鲜度未知」）。',
+].join('\n')
+
 function systemOf(focus: AiTextPanel['focus']): string {
-  return focus === 'root_cause' ? `${SYSTEM}\n${ROOT_CAUSE_SYSTEM}` : SYSTEM
+  if (focus === 'root_cause') return `${SYSTEM}\n${ROOT_CAUSE_SYSTEM}`
+  if (focus === 'daily_review') return `${SYSTEM}\n${DAILY_REVIEW_SYSTEM}`
+  return SYSTEM
 }
 
 /**
@@ -159,10 +174,12 @@ export function badNumbers(text: string, allowed: Set<string>): string[] {
 
 function userPrompt(facts: FactBundle, strictNote = ''): string {
   return [
-    `focus=${facts.focus}。请严格按 system 约束写${facts.focus === 'root_cause' ? '四' : '三'}段。`,
+    `focus=${facts.focus}。请严格按 system 约束写${facts.focus === 'root_cause' ? '四' : facts.focus === 'daily_review' ? '五' : '三'}段。`,
     facts.focus === 'root_cause'
       ? '重点：先写结论（当前门店/期间的关键值与对比），再写异常，再用 analysis.findings 写「根因」（点名维度值/明细行/变化量），最后写行动。根因只认 findings 里的数，不另做算术。'
-      : '重点：结论首句写当前门店（branchName，缺省 branchNum），再写销售额/订单/客单价与对比；异常写最低销售日、报损最大原因、费用最大正向项与主要冲减项（有负数才写）；行动 2-3 条，带金额/项目名。',
+      : facts.focus === 'daily_review'
+        ? '重点：按「结论/对比/成本/MTD/驱动/建议」写日报；三基线只引用 dailyReview.comparisons 的 delta；净毛利必须说明未含房租/水电；建议只引用 dailyReview.suggestions 的方向并绑定其中的金额/项目。'
+        : '重点：结论首句写当前门店（branchName，缺省 branchNum），再写销售额/订单/客单价与对比；异常写最低销售日、报损最大原因、费用最大正向项与主要冲减项（有负数才写）；行动 2-3 条，带金额/项目名。',
     ...(facts.hasData ? [] : ['facts.hasData=false：只写一句「该期间门店无有效数据（未接入或未物化）」，不要写异常/行动。']),
     ...(strictNote === '' ? [] : [strictNote]),
     `facts=${JSON.stringify(facts)}`,
@@ -189,6 +206,34 @@ export function templateOf(f: FactBundle): string {
   const asOfLine = `数据截至 ${f.dataAsOf ?? '新鲜度未知'}。`
   if (!f.hasData) {
     return [`结论：${branchLabel}该期间无有效数据（未接入或未物化）。`, asOfLine].join('\n')
+  }
+  if (f.focus === 'daily_review') {
+    const dr = f.dailyReview
+    if (dr === null) {
+      return [`结论：${branchLabel}当前报表数据不足以生成日报。`, asOfLine].join('\n')
+    }
+    const c = dr.comparisons
+    const yd = c.yesterday
+    const yText = yd === null
+      ? '昨天数据不完整'
+      : `vs 昨天 营业额 ${yd.delta.revenue}、订单 ${yd.delta.orders}、客单价 ${yd.delta.aov}`
+    const mText = `vs 本月至今日均 营业额 ${c.mtdAvg.delta.revenue}、订单 ${c.mtdAvg.delta.orders}、客单价 ${c.mtdAvg.delta.aov}`
+    const lyText = c.lastYearAvg === null
+      ? '去年同月无数据'
+      : `vs 去年同月同日日均 营业额 ${c.lastYearAvg.delta.revenue}、订单 ${c.lastYearAvg.delta.orders}、客单价 ${c.lastYearAvg.delta.aov}`
+    const driverText = dr.drivers.slice(0, 3)
+      .map((d) => `${d.side === 'sales' ? '销售侧' : '成本侧'} ${d.label} ${d.value}（${d.delta}）`)
+      .join('；')
+    const suggestionText = dr.suggestions.map((x, i) => `${i + 1}. ${x}`).join(' ')
+    return [
+      `结论：${branchLabel}${dr.targetDay} 营业额 ${dr.today.revenue}，订单 ${dr.today.orders}，客单价 ${dr.today.aov}；毛利 ${dr.today.gross}（毛利率 ${dr.today.grossMargin}）。`,
+      `对比：${yText}；${mText}；${lyText}。`,
+      `成本：报损 ${dr.today.loss}，费用 ${dr.today.expense}，净毛利 ${dr.today.netGross}（净毛利率 ${dr.today.netMargin}）；未含房租/水电等固定成本。`,
+      `MTD：${dr.mtd.day} 累计营业额 ${dr.mtd.revenue}，毛利 ${dr.mtd.gross}，净毛利 ${dr.mtd.netGross}，净毛利率 ${dr.mtd.netMargin}。`,
+      `驱动：${driverText === '' ? '-' : driverText}。`,
+      `建议：${suggestionText}`,
+      asOfLine,
+    ].join('\n')
   }
   // 缺数据时不输出空括号：`-（）` / `-（- -）` 只会让回退文本更像故障（#1083）。
   const withDetail = (base: string, detail: string): string =>
