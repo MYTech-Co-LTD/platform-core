@@ -382,7 +382,11 @@ async function probeDimension(
 }
 
 function addLabelNumbers(numbers: Set<string>, label: string): void {
-  for (const m of label.match(/\d+/g) ?? []) numbers.add(m)
+  for (const m of label.match(/\d+/g) ?? []) {
+    numbers.add(m)
+    const n = Number(m)
+    if (Number.isFinite(n) && m.length > 3) numbers.add(n.toLocaleString('en-US'))
+  }
 }
 
 function addFindingNumbers(numbers: Set<string>, f: RootCauseFinding): void {
