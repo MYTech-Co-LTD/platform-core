@@ -465,6 +465,26 @@ metrics:
     sources:
       - 's3://<bucket>/lemeng/item_profit/system_book=<账套>/bizday=<日期>/all.parquet'
 
+  - name: 'lemeng:retail:item_profit'
+    entity: item
+    label: 零售商品毛利（不含券）
+    unit: 元
+    definition: >-
+      零售商品毛利（不含券）= 商品销售收入（不含券）− 商品销售成本；来源 AMAREPORT 商品毛利分析
+      item_profit，口径模型 fct_retail_item_profit（门店×日×商品粒度）。
+      用途：日报/有界根因的**商品级**读面——fct_retail_profit 只能回答「哪家店哪天」，
+      本指标回答「哪几个商品」造成了当日营业额/毛利下降。
+      主口径 profit_money_no_coupon；成本缺失时消费面必须带覆盖率/`unreliable` 标记。
+      粒度 = 账套 × 业务日 × 门店 × 商品（item_num）。
+    expression: 'sum(fct_retail_item_profit.profit_money_no_coupon)'
+    grain: [system_book, bizday, branch_num, item_num]
+    owner: data-platform
+    tier: experimental
+    source: lemeng
+    freshness_sla_days: 2
+    sources:
+      - 's3://<bucket>/lemeng/item_profit/system_book=<账套>/bizday=<日期>/all.parquet'
+
   - name: 'lemeng:retail:net_quantity'
     entity: branch
     label: 零售净销量

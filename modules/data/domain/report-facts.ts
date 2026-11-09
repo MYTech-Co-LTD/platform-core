@@ -534,7 +534,7 @@ export async function buildFacts(
           adoptedSources: deps.adoptedSources, execute: deps.execute,
           branchNum: branchNum ?? null,
           skipDegenerate: true,
-          extraMetrics: [{ metricId: 'lemeng:retail:order_line', metricTitle: '零售订单明细行', format: 'number' }],
+          extraMetrics: [{ metricId: 'lemeng:retail:item_profit', metricTitle: '零售商品毛利', format: 'currency' }],
           ...(deps.exploreExec === undefined ? {} : { exploreExec: deps.exploreExec }),
         },
         spec,
