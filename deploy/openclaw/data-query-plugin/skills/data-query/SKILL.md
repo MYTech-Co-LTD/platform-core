@@ -1,6 +1,6 @@
 ---
 name: data-query
-description: 平台问数。用户问业务数据（销售额/订单/商品/门店/趋势等）时激活：先 list_metrics 看可见词表，describe_metric 看口径，query_data 查数，用表格/要点汇报。
+description: 平台问数。用户问业务数据（销售额/订单/商品/门店/趋势等）时激活：先 search_catalog 按用户原词检索词表，describe_metric 看口径与覆盖区间，query_data 查数，用表格/要点汇报。
 metadata:
   openclaw:
     emoji: "📊"
@@ -22,6 +22,50 @@ metadata:
 
 **行数预算**（超预算 = 生成极慢、用户观感卡死）：net_sales ≈147 行/天（3120）/ ≈74 行/天（64188）；
 区间×双账套 ≈ 天数×220——**区间超过 4 天必用 `args.total=true`**，不要裸拉明细。
+
+## 先检索，不要猜 id（2026-11-09 真实会话教训）
+
+**第 0 步永远是 `search_catalog({ q: 用户原词 })`**，不是 `list_metrics()`，更不是猜 id：
+
+- `search_catalog` 会命中 **id / 标题 / 说明 / 同义词**；0 命中时换 1~2 个同义词再搜，仍无才用
+  `list_metrics()` 在返回里按关键词找。
+- **禁止凭记忆拼 id**。实测代价：问「配销差额」时模型连猜
+  `branch:sale_money` / `retail:sale_money` / `branch:sale_amount` / `sale:branch_amount`
+  → 4 次 DENIED，最终误答「销售金额没有」；而 `lemeng:retail:sales` 就在词表里。
+- **营业额的默认口径 = 销售金额**（`lemeng:retail:sales` 不冲退货 / `lemeng:retail:net_sales` 冲退货，
+  两条都挂「营业额」同义词）。**配送金额 `lemeng:branch:transfer_money` 不是营业额**——它只是出库的
+  门店配送腿；把配送金额当营业额是**错答**，不是口径差异。
+- 回答必须带上**指标 id + 口径**（如「`lemeng:retail:sales`（不冲退货）」）；用户问营业额时，
+  默认报「不冲退货」，并注明另有「冲退货」口径。
+
+| 用户说法 | 首选指标 |
+|---|---|
+| 营业额 / 销售流水 | `lemeng:retail:sales`（不冲退货）；要冲退货用 `lemeng:retail:net_sales` |
+| 销售金额 | 同上 |
+| 配送金额 / 门店配送 | `lemeng:branch:transfer_money`（= `outbound:store_delivery`） |
+| 出库金额（集团去重） | `lemeng:outbound:amount` = 门店配送 + 外部批发 |
+| 外部批发金额 | `lemeng:outbound:external_wholesale` |
+| 体系内批发 | `lemeng:outbound:region_net` 的 `体系内批发` 通道（3120 批发镜像） |
+| 采购金额 / 采购 Top5 | `lemeng:purchase:amount`（按 `supplier_num` 分组 + Top-N） |
+| 门店数 / 门店销售 | `lemeng:branch:transfer_money`（门店配送）/ `retail:*` 系列 |
+
+## 数据覆盖区间（「最早的数据 / 到几号」）
+
+- 问「最早什么时候有数据 / 数据到几号」时：先 `describe_metric({ id })`，回包有
+  `coverage: { minBizday, maxBizday }` —— **直接引用**。
+- **禁止按月/按季度循环 `query_data` 回查边界**。实测：这个问题让模型查了约 30 次才定位
+  2024-11-01；`coverage` 是一次问答。
+- `get_freshness` 回 `status:"unknown"`（如 `no_load_log`）只是「水位链路未知」，**不等于没有数据**；
+  边界仍以 `describe_metric.coverage` 为准。
+
+## Top-N / 分组（「按供应商前 5」）
+
+- 用 **`query_data` 的切片参数**，一次拿结果，不要拉全量行自己排序：
+  `query_data({ metricId, args:{bizday:{from,to}}, dimensions:["supplier_num"], orderBy:[{column:"value",dir:"desc"}], limit:5 })`
+- `dimensions` 必须是该指标 `grain` 的子集（先 `describe_metric` 看 grain）；`orderBy` 列名用
+  `value`（聚合值）；`limit` 只取前 N。
+- `query_detail` 回 `no_detail_binding` 时**不要重试**；分组/排行改用上面的 `dimensions+orderBy+limit`
+  （聚合面支持，不需要明细下钻）。
 
 ## 查询约定
 
@@ -53,7 +97,7 @@ metadata:
 · 合计以回包的 total 字段为准：字段在场就直接引用，不要自己把行加总；切片/截断产生的部分合计不是全局合计；
 · 数据截止与新鲜度必须如实呈现：回包没有相应字段或正典行 = 新鲜度未知，如实说明，不要编；
 
-1. **先 `list_metrics()`**：看当前用户可见的指标（id/名称/参数说明）。词表按人裁剪且随权限实时变——**以返回为准，勿凭记忆**。
+1. **先 `search_catalog({ q: 用户原词 })`**；0 命中再试同义词，仍无才 `list_metrics()`。词表按人裁剪且随权限实时变——**以返回为准，勿凭记忆、勿猜 id**。
 2. **再 `query_data({ metricId, args })`**：args 按该指标的参数说明给，日期一律 `YYYY-MM-DD`。
 3. **`total` 字段 = 合计值**：可加指标的回包自动带 `total`（该过滤范围的合计），**直接引用，不要自己把明细行加总**；没有 `total` 字段（比率/去重计数类）就不要跨行求和；「只要总数」传 `args.total=true` 拿恒单行回包（`truncated` 恒 false）。
 

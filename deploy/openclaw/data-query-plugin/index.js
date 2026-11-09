@@ -34,7 +34,7 @@ const LIST_DEF = {
 const QUERY_DEF = {
   name: "query_data",
   description:
-    "按指标查数：metricId 来自 list_metrics；args 的**键**只能取该指标 params[].name（乐檬指标就是 `bizday`），**形状**由该 params 的 type 决定：type=date_range ⇒ 值传对象 {\"from\":\"YYYY-MM-DD\",\"to\":\"YYYY-MM-DD\"}（闭区间，查单日则 from=to）；type=string/number/date ⇒ 值传单值（日期单值一律 YYYY-MM-DD）。⚠️ **`date_range` 是类型名、不是键名**——传 {\"date_range\":{…}} 会被服务端 400 `unknown_param:date_range`；正确写法是 {\"bizday\":{\"from\":…,\"to\":…}}。求和类（可加）指标的回包自带 total 字段=该过滤范围的合计——直接引用该值，不要自己把明细行加总；没有 total 字段（比率/去重计数类指标）就不要跨行求和（跨行求和是错数）。「只要总数」可传 args.total=true（必须布尔）——服务端求和恒返回单行合计；区间超过 4 天优先拆单日或用 total，不要裸拉明细。参数键与形状以 list_metrics 返回的 params 为准，不要臆造。回包带 subject（本次钉死的数据主体）与 columns/rows；truncated=true 表示截断——只能答「数据不全」，收窄范围或改传 args.total=true 重查，不要把截断结果当全量。新鲜度与口径射程由系统自动附加：消息末尾会固定附上服务端算好的 📅 新鲜度行与 📐 口径行（该指标声明了射程时才有）——不要自己写任何 📅 / 📐 行，也不要复述或拼接 freshness_line / scope_line（自己写了也会被系统剥掉再统一附加）。**当答案涉及门店/对象个数时，口径行里的排除项是结论的一部分**：不要只报「5 家」，要让读者看得到分母与排除了什么。data_as_of（数据截止，已是北京时间 UTC+8，直接引用不要自行换算）可注明「数据截至 X」；没有该字段=新鲜度未知，如实说明，不要编；明细 rows 按 bizday 降序，首行即最新分区；当日数据是部分天，须标注。",
+    "按指标查数：metricId 来自 list_metrics；args 的**键**只能取该指标 params[].name（乐檬指标就是 `bizday`），**形状**由该 params 的 type 决定：type=date_range ⇒ 值传对象 {\"from\":\"YYYY-MM-DD\",\"to\":\"YYYY-MM-DD\"}（闭区间，查单日则 from=to）；type=string/number/date ⇒ 值传单值（日期单值一律 YYYY-MM-DD）。⚠️ **`date_range` 是类型名、不是键名**——传 {\"date_range\":{…}} 会被服务端 400 `unknown_param:date_range`；正确写法是 {\"bizday\":{\"from\":…,\"to\":…}}。求和类（可加）指标的回包自带 total 字段=该过滤范围的合计——直接引用该值，不要自己把明细行加总；没有 total 字段（比率/去重计数类指标）就不要跨行求和（跨行求和是错数）。「只要总数」可传 args.total=true（必须布尔）——服务端求和恒返回单行合计；区间超过 4 天优先拆单日或用 total，不要裸拉明细。参数键与形状以 list_metrics 返回的 params 为准，不要臆造。回包带 subject（本次钉死的数据主体）与 columns/rows；truncated=true 表示截断——只能答「数据不全」，收窄范围或改传 args.total=true 重查，不要把截断结果当全量。新鲜度与口径射程由系统自动附加：消息末尾会固定附上服务端算好的 📅 新鲜度行与 📐 口径行（该指标声明了射程时才有）——不要自己写任何 📅 / 📐 行，也不要复述或拼接 freshness_line / scope_line（自己写了也会被系统剥掉再统一附加）。**当答案涉及门店/对象个数时，口径行里的排除项是结论的一部分**：不要只报「5 家」，要让读者看得到分母与排除了什么。data_as_of（数据截止，已是北京时间 UTC+8，直接引用不要自行换算）可注明「数据截至 X」；没有该字段=新鲜度未知，如实说明，不要编；明细 rows 按 bizday 降序，首行即最新分区；当日数据是部分天，须标注。**Top-N / 分组**（如「按供应商前 5」）：传 dimensions:[维度名]（必须是该指标 grain 的子集）+ orderBy:[{column:\"value\",dir:\"desc\"}] + limit:5，一次拿到结果，不要拉全量行自己排序。",
   parameters: {
     type: "object",
     properties: {
@@ -45,6 +45,22 @@ const QUERY_DEF = {
           "指标参数键值对；**键** = list_metrics 返回的 params[].name（乐檬指标是 `bizday`），**值形状**由 type 定（type=date_range 传 {from,to} 对象，其余传单值）。⚠️ `date_range` 是类型名不是键名，写成键会 400 unknown_param:date_range；「只要总数」加 total:true（布尔，非真值一律被拒）",
         additionalProperties: true,
       },
+      dimensions: {
+        type: "array",
+        items: { type: "string" },
+        description: "按这些维度聚合（必须是该指标 grain 的子集，如 ["supplier_num"]）。Top-N / 分组看数用它",
+      },
+      orderBy: {
+        type: "array",
+        items: {
+          type: "object",
+          properties: { column: { type: "string" }, dir: { type: "string", enum: ["asc", "desc"] } },
+          required: ["column"],
+          additionalProperties: false,
+        },
+        description: "排序；Top-N 用 [{column:"value",dir:"desc"}]（配合 limit）",
+      },
+      limit: { type: "number", description: "返回行数上限（Top-N 用，如 5）" },
     },
     required: ["metricId"],
     additionalProperties: false,
@@ -114,7 +130,13 @@ export default definePluginEntry({
             sessionId: sessionKey,
             path: "/query",
             method: "POST",
-            body: { metricId: params.metricId, args: params.args ?? {} },
+            body: {
+              metricId: params.metricId,
+              args: params.args ?? {},
+              ...(Array.isArray(params.dimensions) ? { dimensions: params.dimensions } : {}),
+              ...(Array.isArray(params.orderBy) ? { orderBy: params.orderBy } : {}),
+              ...(typeof params.limit === "number" ? { limit: params.limit } : {}),
+            },
           }),
         // 捕获服务端正典固定行（📅 新鲜度 + 📐 口径射程）。两个字段都可能缺席：
         // 没有 freshness_line = 未接新鲜度链路；没有 scope_line = 该指标未声明射程。
@@ -165,6 +187,38 @@ export default definePluginEntry({
     );
     // ── Wave 2（ref #985）：registry 子集三工具，经 POST /toolbox（registry 的 HTTP 薄封装）调用。
     // 与既有工具同一 callPlatform/同一错误文案映射/同一捕获机制——插件仍零权限逻辑。
+    const SEARCH_DEF = {
+      name: "search_catalog",
+      description:
+        "按关键词搜索当前用户可见的指标（**同义词也命中**）。问数第一步用它：用户说「营业额/销售金额/外部批发」这类业务词，先搜索拿到候选 id，再 describe_metric 看口径——**不要凭记忆猜指标 id**。0 命中时换 1~2 个同义词再搜。返回 id/标题/档位/归属/一句话说明（≤20 条）。",
+      parameters: {
+        type: "object",
+        properties: {
+          q: { type: "string", description: "关键词（id/标题/说明/同义词的子串，大小写不敏感）" },
+          kind: { type: "string", enum: ["metric", "dataset"], description: "缺省 = metric" },
+          tier: { type: "string", enum: ["certified", "custom"], description: "可选：按可信度过滤" },
+        },
+        required: ["q"],
+        additionalProperties: false,
+      },
+    };
+    api.registerTool(
+      factory(SEARCH_DEF, (params, userId, sessionKey) =>
+        callPlatform({
+          apiBase, channelKey: CHANNEL_KEY, userId,
+          path: "/toolbox", method: "POST",
+          body: {
+            tool: "search_catalog",
+            args: {
+              q: params.q,
+              ...(typeof params.kind === "string" ? { kind: params.kind } : {}),
+              ...(typeof params.tier === "string" ? { tier: params.tier } : {}),
+            },
+          },
+        }),
+      ),
+      { name: SEARCH_DEF.name },
+    );
     const DESCRIBE_DEF = {
       name: "describe_metric",
       description:

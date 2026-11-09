@@ -7,6 +7,7 @@
   "activation": { "onStartup": true },
   "contracts": {
     "tools": [
+      "search_catalog",
       "list_metrics",
       "query_data",
       "query_detail",
