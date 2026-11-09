@@ -95,7 +95,9 @@ skill 变更的行为回归：按 `scripts/askdata/dual-arm-eval.test.ts` 的既
 
 ## 部署
 
-插件源码随仓分发：compose 把本目录只读挂载到容器 `/opt/plugins/data-query-plugin`，
-容器内 `openclaw plugins install -l /opt/plugins/data-query-plugin` 一次性注册（写进 state 卷的
+插件源码随仓分发：`deploy/Dockerfile.openclaw` 在构建期把本目录 COPY 到容器
+`/opt/plugins/data-query-plugin`，并由 `skillgen` stage 补齐 `generated/` 与
+`skills/data-query/SKILL.md`（仓库不提交这两项）。容器内
+`openclaw plugins install -l /opt/plugins/data-query-plugin` 一次性注册（写进 state 卷的
 openclaw.json，跨部署持久）；部署更新代码后重启容器即生效。
-初始化步骤见计划 Task 4（openship exec 操作）。
+初始化步骤见 `deploy/data-plane-deploy-sop.md` / openship exec 操作。
