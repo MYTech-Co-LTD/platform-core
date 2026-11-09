@@ -6,7 +6,7 @@
 //   1. 从报表自身的 KPI / 日趋势挑异常候选；
 //   2. 按「业务维度优先级」逐维尝试：门店 → 商品 → 客户 → 日；
 //   3. 每个维度算「主因解释度」= |top delta| / Σ|delta|；达到阈值即收口，
-//      低于阈值就换下一维（这就是「有界」：最多 3 维 / 6 次探针）；
+//      低于阈值就换下一维（这就是「有界」：最多 2 维 / 4 次探针）；
 //   4. 对胜出的维度再取一层明细行（订单级），形成「维度 → 明细」链；
 //   5. 输出 findings + 证据数字；narrative.ts 的 LLM 只负责一次成文。
 //
@@ -79,9 +79,9 @@ export interface RootCauseDeps {
 /** `buildRootCause` 只依赖事实包里的这几段（避免与 report-facts 形成运行时环）。 */
 export type RootCauseFacts = Pick<FactBundle, 'kpis' | 'breakdowns' | 'daily' | 'dataAsOf'>
 
-/** 硬上限：2 个异常候选 × 最多 3 维 = 6 次探针（有界分析的核心预算）。 */
-export const MAX_PROBES = 6
-export const MAX_DIMENSIONS = 3
+/** 硬上限：异常候选最多 2 个 × 最多 2 维 = 4 次探针；生产上按天数切窗后通常 1–2 次就收口。 */
+export const MAX_PROBES = 4
+export const MAX_DIMENSIONS = 2
 /** 主因解释度阈值：top |delta| / Σ|delta| ≥ 该值即收口；否则换下一维。 */
 export const CONCENTRATION_THRESHOLD = 0.5
 const TOP_N = 5
@@ -161,6 +161,8 @@ export function pickCandidates(
     out.push({
       metricId: p.metricId, metricTitle: p.title, kind: 'kpi_delta', format: p.format,
       compare,
+      // 明细探针按**最低日单日**切窗：19 天整段直读湖会把一次探针拖到分钟级。
+      ...(facts.daily.min === null ? {} : { day: facts.daily.min.day }),
     })
   }
   // 日趋势：最低日；line 本身没有 compare，复用同指标 KPI 的对比段。
@@ -228,19 +230,6 @@ function concentrationOf(rows: RootCauseRow[], key: 'delta' | 'value' | 'share')
   return sum === 0 ? 0 : Math.max(...vals) / sum
 }
 
-function varianceRows(
-  cur: Map<string, number>, prev: Map<string, number>, format: KpiPanel['format'],
-): { rows: RootCauseRow[]; concentration: number } {
-  const labels = new Set([...cur.keys(), ...prev.keys()])
-  const rows = [...labels].map((label) => {
-    const c = cur.get(label) ?? 0
-    const p = prev.get(label) ?? 0
-    return { label, value: fmt(c, format), delta: fmt(c - p, format) }
-  }).sort((a, b) => Math.abs(numOf(b.delta) ?? 0) - Math.abs(numOf(a.delta) ?? 0))
-    .slice(0, TOP_N)
-  return { rows, concentration: concentrationOf(rows, 'delta') }
-}
-
 function topRows(
   cur: Map<string, number>, format: KpiPanel['format'],
 ): { rows: RootCauseRow[]; concentration: number } {
@@ -255,8 +244,10 @@ async function detailProbe(
   deps: RootCauseDeps, metric: MetricRow, dimension: string,
   candidate: Candidate, range: { from: string; to: string },
 ): Promise<ProbeResult | null> {
+  // 只跑**单日**（最低日；没有就取期间末日）：整段直读湖会把一次探针拖到分钟级。
+  // 基期对比由 KPI 事实负责；这里的职责是「哪个维度/哪几行造成异常」。
   const window = candidate.day === undefined
-    ? { from: range.from, to: range.to }
+    ? { from: range.to, to: range.to }
     : { from: candidate.day, to: candidate.day }
   const drillDims = metric.drill?.dims ?? []
   const orderDim = dimension !== 'order_no' && drillDims.includes('order_no') ? 'order_no' : null
@@ -265,27 +256,22 @@ async function detailProbe(
     pool: deps.pool, execute: deps.execute, adoptedSources: deps.adoptedSources,
     raceRetryDelayMs: deps.raceRetryDelayMs, dimensionLookup: deps.dimensionLookup,
   }
-  const run = (w: { from: string; to: string }) => runDetailQuery(
-    qd, deps.org, deps.requester, metric.id, { bizday: w },
+  const cur = await runDetailQuery(
+    qd, deps.org, deps.requester, metric.id, { bizday: window },
     { dimensions: requested, orderBy: 'value', desc: true, limit: 100 },
   )
-  const cur = await run(window)
   if (cur.status !== 'ok') return null
-  const prev = candidate.compare === null ? null : await run(candidate.compare)
   const curMap = aggregateDetail(cur, dimension)
   if (curMap.size === 0) return null
-  const prevMap = prev !== null && prev.status === 'ok' ? aggregateDetail(prev, dimension) : null
-  const { rows, concentration } = prevMap === null
-    ? topRows(curMap, candidate.format)
-    : varianceRows(curMap, prevMap, candidate.format)
+  const { rows, concentration } = topRows(curMap, candidate.format)
   if (rows.length === 0) return null
 
-  const note = prev !== null && prev.status !== 'ok'
-    ? '对比期明细不可用，仅按本期 Top 贡献列出'
-    : undefined
+  const note = candidate.compare === null
+    ? undefined
+    : '单日主因（基期对比见 KPI 事实；逐单对比基期需另查）'
   const primary: RootCauseFinding = {
     metricId: metric.id, metricTitle: metric.title,
-    kind: prevMap === null ? 'top' : 'variance', dimension, rows,
+    kind: 'top', dimension, rows,
     detailRowCount: cur.rowCountTotal,
     ...(cur.clock_note !== undefined ? { clockNote: cur.clock_note } : {}),
     ...(note === undefined ? {} : { note }),
@@ -395,7 +381,8 @@ function findingKey(f: RootCauseFinding): string {
 /**
  * 有界根因分析。返回 null 时 narrative 走「无法分解」文案（不编）。
  *
- * 预算：2 个异常候选 × 最多 3 维 = 6 次探针；每维 Top 5；胜出维度再取一层明细行。
+ * 预算：2 个异常候选 × 最多 2 维 = 4 次探针；每维 Top 5；胜出维度再取一层明细行。
+ * 明细探针只读**单日**（最低日），避免整段直读湖把首屏拖到分钟级。
  * 缓存键（factsHash）包含本包，同一事实不重复跑探针。
  */
 export async function buildRootCause(

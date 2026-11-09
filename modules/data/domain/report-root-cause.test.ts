@@ -89,7 +89,7 @@ describePg('buildRootCause（需要 DATABASE_URL）', () => {
     await pool.end().catch(() => {})
   })
 
-  it('KPI 有对比 + 声明了下钻 ⇒ 按 branch_num 做「本期 - 基期」分解', async () => {
+  it('KPI 有对比 + 声明了下钻 ⇒ 按最低日单日取 branch_num Top 主因', async () => {
     await applyMigrations(pool)
     await upsertL1Metric(pool, metric)
     const analysis = await buildRootCause(
@@ -100,11 +100,10 @@ describePg('buildRootCause（需要 DATABASE_URL）', () => {
       specOf(), { from: '2026-10-01', to: '2026-10-19' }, 'custom', facts,
     )
     expect(analysis).not.toBeNull()
-    const variance = analysis!.findings.find((f) => f.kind === 'variance' && f.dimension === 'branch_num')
-    expect(variance).toBeDefined()
-    expect(variance!.rows[0]).toMatchObject({ label: '92', value: '500', delta: '-1,200' })
-    // 白名单：变化量与值都进 numbers，narrative 的数字校验才放行
-    expect(analysis!.numbers).toContain('-1,200')
+    const top = analysis!.findings.find((f) => f.kind === 'top' && f.dimension === 'branch_num')
+    expect(top).toBeDefined()
+    expect(top!.rows.find((r) => r.label === '92')).toMatchObject({ value: '500' })
+    // 白名单：值进 numbers，narrative 的数字校验才放行
     expect(analysis!.numbers).toContain('500')
     expect(analysis!.hash).toMatch(/^[0-9a-f]{64}$/)
   })
@@ -156,7 +155,7 @@ describePg('buildRootCause（需要 DATABASE_URL）', () => {
     )
     expect(analysis).not.toBeNull()
     // 门店维解释度 10/27 ≈ 0.37 < 0.5 ⇒ 换商品维；商品维 100/120 ≈ 0.83 ⇒ 收口
-    expect(analysis!.findings.some((f) => f.dimension === 'item_num' && f.kind === 'variance')).toBe(true)
+    expect(analysis!.findings.some((f) => f.dimension === 'item_num' && f.kind === 'top')).toBe(true)
     // 胜出维度再下一层：订单行
     expect(analysis!.findings.some((f) => f.dimension === 'order_no' && f.rows.some((r) => r.label === 'O1'))).toBe(true)
     expect(analysis!.tried).toContain(`${METRIC_ITEM}:branch_num`)
