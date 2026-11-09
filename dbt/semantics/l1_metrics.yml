@@ -425,6 +425,46 @@ metrics:
     sources:
       - 's3://<bucket>/lemeng/retail_order_line/system_book=<账套>/bizday=<日期>/hour=<时>/all.parquet'
 
+  - name: 'lemeng:retail:gross_profit'
+    entity: branch
+    label: 零售毛利（不含券）
+    unit: 元
+    definition: >-
+      零售毛利 = 销售收入（不含券）− 销售成本；来源 AMAREPORT 商品毛利分析 item_profit，
+      口径模型 fct_retail_profit（store×day 汇总）。粒度 = 账套 × 业务日 × 门店。
+      **主口径不含券**（`profit_money_no_coupon`）；含券列 `profit_money` 保留作辅助，不在此指标内混用。
+      ⚠️ 成本列需源侧成本查询权限；缺失时 profit 不可信，消费面必须带覆盖率/`unreliable` 标记，
+      不拿成本列当分母。⚠️ 本指标**不是**净销售额的派生：item_profit 的 sale_money 当前与
+      fct_retail_sale.net_amount 同值（2026-10-13 店 92 逐分对平：4,463.29 / cost 2,596.94 /
+      profit 1,866.35），若源侧改为「原额」口径必须回来改 definition 并重跑对账。
+    expression: 'sum(fct_retail_profit.profit_money_no_coupon)'
+    grain: [system_book, bizday, branch_num]
+    owner: data-platform
+    tier: experimental
+    source: lemeng
+    freshness_sla_days: 2
+    sources:
+      - 's3://<bucket>/lemeng/item_profit/system_book=<账套>/bizday=<日期>/all.parquet'
+
+  - name: 'lemeng:retail:gross_margin'
+    entity: branch
+    label: 零售毛利率（不含券）
+    unit: '%'
+    definition: >-
+      零售毛利率 = 毛利（不含券）÷ 销售收入（不含券）；不可加，上滚/跨店必须重算，不能对率求和。
+      分子分母同店日同源（fct_retail_profit），零分母 → 不适用（sync 自动包 nullif）。
+      成本缺失时分子不可信：消费面必须同时看覆盖率/`unreliable` 标记；本指标不单独承担「成本是否完整」的判断。
+    ratio:
+      numerator: 'sum(fct_retail_profit.profit_money_no_coupon)'
+      denominator: 'sum(fct_retail_profit.sale_money_no_coupon)'
+    grain: [system_book, bizday, branch_num]
+    owner: data-platform
+    tier: experimental
+    source: lemeng
+    freshness_sla_days: 2
+    sources:
+      - 's3://<bucket>/lemeng/item_profit/system_book=<账套>/bizday=<日期>/all.parquet'
+
   - name: 'lemeng:retail:net_quantity'
     entity: branch
     label: 零售净销量
