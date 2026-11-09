@@ -106,7 +106,7 @@ export default function DeclarationModal({ open, mode, seed, onCancel, onSubmit 
         <Input addonBefore="指标 id" value={f.name} disabled={locked} maxLength={64}
                placeholder="如 lemeng:retail:gross_sales"
                onChange={(e) => set('name', e.target.value)} />
-        <Input addonBefore="标题" value={f.label} maxLength={128} onChange={(e) => set('label', e.target.value)} />
+        <Input addonBefore="标题" value={f.label} maxLength={128} placeholder="必填：看数人看到的名字" onChange={(e) => set('label', e.target.value)} />
         <Input.TextArea rows={2} placeholder="口径定义（必填）" value={f.definition}
                         onChange={(e) => set('definition', e.target.value)} />
         <Space wrap>
