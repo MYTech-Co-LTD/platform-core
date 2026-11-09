@@ -62,7 +62,7 @@ type L2BodyType = z.infer<typeof L2Body>
  * （授权核心不认来源）⇒ 写死 MetricRow 会让「裁剪后的词表」传不进来。
  */
 const publicView = (
-  m: { id: string; title: string; description: string; params?: Record<string, MetricParamDef>; certified?: 'certified' | 'draft'; source?: 'l1' | 'l2'; createdBy?: string | null; bizDescription?: string | null; unit?: string | null; caliberNote?: string | null },
+  m: { id: string; title: string; description: string; params?: Record<string, MetricParamDef>; certified?: 'certified' | 'draft'; source?: 'l1' | 'l2'; createdBy?: string | null; bizDescription?: string | null; unit?: string | null; caliberNote?: string | null; overrideOf?: string | null },
   freshness?: MetricFreshnessFace,
 ) => {
   const out: Record<string, unknown> = {
@@ -77,6 +77,9 @@ const publicView = (
     // 元数据三件套（030，spec §10.4.3）：#1284 时「观看面暂不带」的边界随移动卡消费面
     // （#1292）如实更新——看数人要靠业务描述/单位读懂口径；未标注 = null（不编默认值）。
     bizDescription: m.bizDescription ?? null, unit: m.unit ?? null, caliberNote: m.caliberNote ?? null,
+    // 租户口径覆盖（W8，041）：true = 本数字用的是本租户覆盖的平台口径，不是平台默认值。
+    // 观看面必须带——「这个数和别家不一样」是说清口径的前提，不是管理员才需要的信息。
+    override: m.overrideOf != null,
   }
   // 新鲜度徽标（spec §10.4.2）：unknown = 没有可判的 sla/水位 ⇒ **字段缺席**（不捏造，
   // 与 runQuery 的 data_as_of 同一口径）；移动端卡片据此渲染 绿/黄/红/灰。
@@ -101,6 +104,7 @@ const adminView = (m: MetricRow) => ({
   certified: m.certified, createdBy: m.createdBy,
   // 元数据（030，§10.4.3）：治理标注三件套（管理面可编辑/可见）。
   bizDescription: m.bizDescription, unit: m.unit, caliberNote: m.caliberNote,
+  overrideOf: m.overrideOf,
 })
 
 /**

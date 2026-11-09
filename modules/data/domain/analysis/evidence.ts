@@ -30,7 +30,7 @@ export interface EvidencePack {
   freshness: { status: FreshnessStatus; slaDays: number | null }
   caliber: {
     tier: 'certified' | 'draft'
-    basis: 'l1_tree' | 'column_agg'
+    basis: 'l1_tree' | 'column_agg' | 'declared'
     certifiedBy: string | null
     version: number | null
   }

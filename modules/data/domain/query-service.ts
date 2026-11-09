@@ -552,6 +552,8 @@ export async function runQuery(
     // 口径射程（spec §12.6）：声明了才带。插件据此把该行钉在答案末尾（与 freshness_line 同一套
     // 传输层确定性机制——剥模型自写、再附正典行）。
     ...(scopeLine !== undefined ? { scope_line: scopeLine } : {}),
+    // 租户口径覆盖（W8，041）：true ⇒ 本次用的是本租户覆盖的平台口径（HTTP 面须能标注）。
+    ...(metricRow?.overrideOf != null ? { override: true } : {}),
     // 值级脱敏面（spec §5.3）：授权层展开记录非空才回包——空对象不出现该键（缺席 = 原值）。
     // total（显式/自动合计）读的是同一个被掩的内层 select，天然与明细行同一套掩码值。
     // ★ 与上面审计同源（T7，#823）：**判据一份（`hasMasking`）、形状两份、输入同源**。

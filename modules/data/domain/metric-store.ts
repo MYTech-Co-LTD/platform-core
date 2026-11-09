@@ -28,7 +28,7 @@ export type MetricSource = 'l1' | 'l2'
  * 恒有值（列 not null default 'l1_tree'）：L1 行恒 `l1_tree`（sync 物化时写死）；
  * L2 行由写入口显式给档（缺省 = 树形）。
  */
-export type MetricBasis = 'l1_tree' | 'column_agg'
+export type MetricBasis = 'l1_tree' | 'column_agg' | 'declared'
 
 /**
  * 库里的 L1 桶 org 值（**不是** env 的 `PLATFORM_ORG`）。
@@ -112,6 +112,13 @@ export interface MetricRow extends MetricDef {
   certified: MetricCertification
   /** L2 创建者（027 迁移）；L1 行恒 null（平台口径无「创建者」概念），存量 L2 行可能 null（诚实状态）。 */
   createdBy: string | null
+  /**
+   * 租户口径覆盖（041 迁移，W8 2026-11-09）：非空 = 本行是该 org 对 `<id>` 的**平台口径覆盖**。
+   * 只可能出现在 `source='l2'` 的租户行（值 = 被覆盖的平台 L1 id，与 `id` 相同）；
+   * L1 行恒 null。读侧优先级见 `loadMergedCatalog`（覆盖行对本 org 胜出）。
+   * 类型可选：历史夹具不必补字段；读侧一律用 `!= null` 判（undefined 与 null 同义 = 非覆盖）。
+   */
+  overrideOf?: string | null
   /**
    * 元数据（030 迁移，spec §10.4.3 P1）：业务描述 / 单位 / 口径说明——**治理标注**，不经编译点。
    * NULL = 未标注（迁移头注：空着比编一个错的好）。L1 行恒 null——租户不得注解平台口径
@@ -227,6 +234,8 @@ function toMetricRow(row: Record<string, unknown>): MetricRow {
     // toolbox 的 tier 投影消费本值，不再各自从 source 推导（第二事实源会打架）。
     certified: row.source === 'l1' ? 'certified' : row.certified === 'certified' ? 'certified' : 'draft',
     createdBy: (row.created_by ?? null) as string | null,
+    // 租户口径覆盖（041，W8）：空串/缺列都归 null（= 非覆盖），不让坏形状冒充覆盖标记。
+    overrideOf: typeof row.override_of === 'string' && row.override_of !== '' ? row.override_of : null,
     // 元数据（030）：nullable 直读——NULL = 未标注（不编默认值）；坏形状列死了直读也一样安全（text）
     bizDescription: (row.biz_description ?? null) as string | null,
     unit: (row.unit ?? null) as string | null,
@@ -280,7 +289,7 @@ function drillBindingOf(row: Record<string, unknown>): DrillBinding | undefined 
 
 /** 投影列清单（三处查询共用一处写法——少写/写错一列是「字段静默变 undefined」的经典来源）。 */
 const ROW_COLUMNS =
-  'id, title, description, required_scope, subject_column, select_sql, group_by, params, source, source_system, updated_by, version, totalable, scope_note, sla_days, freshness_relations, mask_spec, drill_expr, drill_dims, drill_detail, certified, created_by, biz_description, unit, caliber_note, entity, synonyms, basis, archived_at'
+  'id, title, description, required_scope, subject_column, select_sql, group_by, params, source, source_system, updated_by, version, totalable, scope_note, sla_days, freshness_relations, mask_spec, drill_expr, drill_dims, drill_detail, certified, created_by, biz_description, unit, caliber_note, entity, synonyms, basis, archived_at, override_of'
 
 /**
  * 本 org 的 L2 行（**不含** L1 平台行）。`order by id`：顺序确定。
@@ -339,13 +348,29 @@ export async function loadMergedCatalog(pool: Pool, org: string): Promise<Metric
       order by id, source`,
     [org, L1_ORG],
   )
-  const merged: MetricRow[] = []
+  const rows = r.rows.map(toMetricRow)
   const l1Ids = new Set<string>()
-  for (const row of r.rows.map(toMetricRow)) if (row.source === 'l1') l1Ids.add(row.id)
-  for (const row of r.rows.map(toMetricRow)) {
-    // L2 撞 L1 的 id ⇒ 丢弃 L2 行（L1 赢）。丢弃而不是报错：加载是读路径，
-    // 读路径抛错会让整条问数链因为一行脏数据不可用——而写侧闸门保证这行不该存在。
-    if (row.source === 'l2' && l1Ids.has(row.id)) continue
+  for (const row of rows) if (row.source === 'l1') l1Ids.add(row.id)
+  // 租户口径覆盖（041，W8 2026-11-09）：只有「本 org 的 L2 行 + override_of 指向一个真实存在的
+  // L1 id + override_of === id」才构成覆盖。悬空/错形状的 override_of 不构成覆盖（按普通 L2 走，
+  // 撞名仍丢——fail-closed，不让坏标记顶掉平台口径）。
+  const overrideIds = new Set<string>()
+  for (const row of rows) {
+    if (row.source === 'l2' && row.overrideOf !== null && row.overrideOf === row.id && l1Ids.has(row.id)) {
+      overrideIds.add(row.id)
+    }
+  }
+  const merged: MetricRow[] = []
+  for (const row of rows) {
+    if (row.source === 'l1') {
+      // 覆盖行存在 ⇒ 本 org 用覆盖行，L1 行不对本 org 输出（其他 org 仍看到 L1）。
+      if (!overrideIds.has(row.id)) merged.push(row)
+      continue
+    }
+    // 覆盖行胜出（本 org 用租户口径）；普通 L2 撞 L1 的 id 仍丢弃（L2 只能 refine、不能顶掉 L1）。
+    // 丢弃而不是报错：加载是读路径，抛错会让整条问数链因为一行脏数据不可用。
+    if (overrideIds.has(row.id)) { merged.push(row); continue }
+    if (l1Ids.has(row.id)) continue
     merged.push(row)
   }
   return merged
