@@ -684,3 +684,26 @@ export async function deleteOverrideDeclaration(
   )
   return (r.rowCount ?? 0) > 0
 }
+
+
+/** 本 org 的全部口径覆盖（含草稿；管理面用——草稿不在合并词表里，必须单独可见）。 */
+export async function listOverrideDeclarations(
+  pool: Pool, org: string,
+): Promise<Array<{ id: string; title: string; certified: 'certified' | 'draft'; selectSql: string; updatedBy: string | null; version: number; updatedAt: string | null }>> {
+  const r = await pool.query(
+    `select id, title, certified, select_sql, updated_by, version, updated_at
+       from data.metrics
+      where org = $1 and source = 'l2' and override_of is not null
+      order by id`,
+    [org],
+  )
+  return r.rows.map((row) => ({
+    id: row.id as string,
+    title: row.title as string,
+    certified: row.certified === 'certified' ? 'certified' as const : 'draft' as const,
+    selectSql: row.select_sql as string,
+    updatedBy: (row.updated_by ?? null) as string | null,
+    version: Number(row.version ?? 1),
+    updatedAt: row.updated_at === null || row.updated_at === undefined ? null : String(row.updated_at),
+  }))
+}

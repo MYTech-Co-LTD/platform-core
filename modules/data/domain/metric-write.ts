@@ -98,6 +98,15 @@ export async function writeL2Declaration(
   // ★ L2 不能占 L1 的 id：占下之后**加载侧会丢 L2 行**（L1 赢）⇒ 这次写会**静默无效**
   //   （返回 200 而线上口径没变）。故在这里响亮拒绝，而不是让它变成一次「成功的空操作」。
   if (await isL1Id(deps, id)) return { ok: false, http: 409, error: 'ID_RESERVED_BY_L1' }
+  // 租户全额声明（W8，basis='declared'）不走 L2 结构化编辑：PUT 会把它改成树形口径，
+  // 而投影列（sla/masks/declaration）仍按声明行留着 ⇒ 行形状自相矛盾。编辑 = 删除后重建。
+  {
+    const cur = await deps.pool.query(
+      "select basis from data.metrics where org = $1 and id = $2 and source = 'l2'",
+      [org, id],
+    )
+    if (cur.rows[0]?.basis === 'declared') return { ok: false, http: 409, error: 'DECLARED_NOT_EDITABLE' }
+  }
 
   // 词表只取一次（expr 有 N 个 ref，别在循环里反复 load）
   const catalog = await loadPlatformCatalog(deps.pool)

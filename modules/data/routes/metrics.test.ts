@@ -1007,6 +1007,27 @@ describePg('指标路由（需要 DATABASE_URL：词表读写）', () => {
     expect((await mergedRow()).overrideOf ?? null).toBeNull()
   })
 
+  it('W8 管理面：覆盖清单能看到草稿/生效；声明的行不接受 L2 结构化编辑', async () => {
+    const list = async () => (await (await app(ORG, ['data:manage']).request('/metrics/overrides')).json()).overrides as Array<{ id: string; certified: string }>
+    expect(await list()).toHaveLength(0)
+    await overrideReq('POST', `/metrics/${L1_OVERRIDE.id}/override`, { declaration: overrideDecl() })
+    expect((await list()).find((o) => o.id === L1_OVERRIDE.id)?.certified).toBe('draft')
+    await overrideReq('POST', `/metrics/${L1_OVERRIDE.id}/override/confirm`)
+    expect((await list()).find((o) => o.id === L1_OVERRIDE.id)?.certified).toBe('certified')
+    await overrideReq('DELETE', `/metrics/${L1_OVERRIDE.id}/override`)
+    expect(await list()).toHaveLength(0)
+
+    // 已存在的 declared 行：PUT /metrics/:id（L2 结构化编辑）⇒ 409
+    const declId = 'tenant:retail:edit_guard'
+    expect((await createDeclaration({ declaration: tenantDecl({ name: declId }) })).status).toBe(201)
+    const put = await app(ORG, ['data:manage']).request(`/metrics/${declId}`, {
+      method: 'PUT', headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ ...l2Body(), id: declId }),
+    })
+    expect(put.status).toBe(409)
+    expect((await put.json()).error).toBe('DECLARED_NOT_EDITABLE')
+  })
+
   it('W8 覆盖：重复建/ grain 不同形 被拒；对不存在的 L1 id 覆盖 ⇒ 404', async () => {
     expect((await overrideReq('POST', `/metrics/${L1_OVERRIDE.id}/override`, { declaration: overrideDecl() })).status).toBe(201)
     expect((await overrideReq('POST', `/metrics/${L1_OVERRIDE.id}/override`, { declaration: overrideDecl() })).status).toBe(409)

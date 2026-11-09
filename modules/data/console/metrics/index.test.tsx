@@ -15,6 +15,8 @@ import MetricsPage from './index'
 const m = vi.mocked(platformFetch)
 /** 记下每次请求（含 body），用来断言「提交了什么」。 */
 const calls: Array<{ url: string; method: string; body: unknown }> = []
+/** W8：覆盖清单夹具（每个用例可改写；默认空）。 */
+let OVERRIDES: Array<Record<string, unknown>> = []
 
 const json = (b: unknown) =>
   new Response(JSON.stringify(b), { status: 200, headers: { 'content-type': 'application/json' } })
@@ -51,6 +53,7 @@ const AUDIT = {
 
 beforeEach(() => {
   calls.length = 0
+  OVERRIDES = []
   m.mockReset()
   m.mockImplementation(async (url: string, init?: RequestInit) => {
     calls.push({
@@ -58,6 +61,7 @@ beforeEach(() => {
       method: init?.method ?? 'GET',
       body: typeof init?.body === 'string' ? JSON.parse(init.body) : undefined,
     })
+    if (url.includes('/metrics/overrides')) return json({ overrides: OVERRIDES })
     if (url.includes('/metrics/all')) return json(CATALOG)
     if (url.includes('/audit')) return json(AUDIT)
     return json({ ok: true })
@@ -222,7 +226,8 @@ describe('指标管理页', () => {
   it('★ 变更历史抽屉：点开 → 拉 /metrics/:id/audit → 渲染动作与口径摘要（删除行的摘要来自 before）', async () => {
     renderPage()
     await waitFor(() => expect(screen.getByText('xiongmao:net_sales')).toBeInTheDocument())
-    button('变更历史').click()
+    const l2row = screen.getByText('xiongmao:net_sales').closest('tr')!
+    within(l2row).getByRole('button', { name: /^变\s*更\s*历\s*史$/ }).click()
 
     await waitFor(() => expect(screen.getByText(/变更历史：xiongmao:net_sales/)).toBeInTheDocument())
     // ⚠️ 行内「删除」按钮与审计标签同文（text 按钮不像描边按钮那样自动插空格）⇒ 抽屉内断言
@@ -233,4 +238,78 @@ describe('指标管理页', () => {
     // 拉的是本条的审计（不是 /metrics/all）
     expect(calls.some((c) => c.url.includes('/metrics/xiongmao:net_sales/audit'))).toBe(true)
   })
+  // ── W8：全额声明 / 覆盖平台口径 ────────────────────────────────────────────────
+  it('W8：平台行可「覆盖口径」，保存草稿点 → POST override（name/grain 预填自 L1）', async () => {
+    renderPage()
+    await screen.findByText('lemeng:retail:net_sales')
+    fireEvent.click(button('覆盖口径'))
+    const dialog = await screen.findByRole('dialog')
+    expect(within(dialog).getByText(/覆盖平台口径：lemeng:retail:net_sales/)).toBeInTheDocument()
+    // name 锁死
+    expect(within(dialog).getByDisplayValue('lemeng:retail:net_sales')).toBeDisabled()
+    fireEvent.click(within(dialog).getByRole('button', { name: /保\s*存\s*草\s*稿/ }))
+    await waitFor(() => {
+      const c = calls.find((x) => x.url.includes('/metrics/lemeng:retail:net_sales/override'))
+      expect(c?.method).toBe('POST')
+      expect((c?.body as { declaration: { name: string; grain: string[] } }).declaration.name)
+        .toBe('lemeng:retail:net_sales')
+      expect((c?.body as { declaration: { grain: string[] } }).declaration.grain)
+        .toEqual(['system_book', 'bizday'])
+    })
+  })
+
+  it('W8：新建全额声明表单 → POST /metrics/declarations，body 只有声明（不含 SQL 字段）', async () => {
+    renderPage()
+    await screen.findByText('lemeng:retail:net_sales')
+    fireEvent.click(button('新建声明（全额口径）'))
+    const dialog = await screen.findByRole('dialog')
+    fireEvent.change(within(dialog).getByPlaceholderText('如 lemeng:retail:gross_sales'), {
+      target: { value: 'tenant:retail:gross' },
+    })
+    fireEvent.change(within(dialog).getByPlaceholderText('口径定义（必填）'), {
+      target: { value: '本租户口径' },
+    })
+    fireEvent.change(within(dialog).getByPlaceholderText('sum(fct_retail_sale.sale_amount)'), {
+      target: { value: 'sum(fct_retail_sale.sale_amount)' },
+    })
+    fireEvent.change(within(dialog).getByPlaceholderText(/system_book, bizday/), {
+      target: { value: 'system_book, bizday' },
+    })
+    fireEvent.change(within(dialog).getByPlaceholderText('lemeng.retail_order_line.sale_amount'), {
+      target: { value: 'lemeng.retail_order_line.sale_amount' },
+    })
+    fireEvent.click(within(dialog).getByRole('button', { name: /^创\s*建$/ }))
+    await waitFor(() => {
+      const c = calls.find((x) => x.url.includes('/metrics/declarations'))
+      expect(c?.method).toBe('POST')
+      const d = (c?.body as { declaration: Record<string, unknown> }).declaration
+      expect(d.name).toBe('tenant:retail:gross')
+      expect(d.expression).toBe('sum(fct_retail_sale.sale_amount)')
+      expect(d.grain).toEqual(['system_book', 'bizday'])
+      expect(d.reads).toEqual(['lemeng.retail_order_line.sale_amount'])
+      // 结构上写不出 SQL：body 里没有 selectSql/subjectColumn/groupBy
+      expect(d.selectSql).toBeUndefined()
+      expect(d.groupBy).toBeUndefined()
+    })
+  })
+
+  it('W8：覆盖清单显示草稿，确认启用 → POST confirm；删除 → DELETE override', async () => {
+    OVERRIDES = [{ id: 'lemeng:retail:net_sales', title: '本租户口径', certified: 'draft',
+      selectSql: 'select sum(x) as value from t', updatedBy: 'u', version: 1, updatedAt: null }]
+    renderPage()
+    expect(await screen.findByText('草稿（未生效）')).toBeInTheDocument()
+    fireEvent.click(button('确认启用'))
+    fireEvent.click(screen.getAllByRole('button', { name: /^确\s*认\s*启\s*用$/ }).at(-1)!)
+    await waitFor(() => {
+      expect(calls.some((c) => c.url.includes('/metrics/lemeng:retail:net_sales/override/confirm')
+        && c.method === 'POST')).toBe(true)
+    })
+    fireEvent.click(button('删除覆盖'))
+    fireEvent.click(screen.getAllByRole('button', { name: /^删\s*除\s*覆\s*盖$/ }).at(-1)!)
+    await waitFor(() => {
+      expect(calls.some((c) => c.url.includes('/metrics/lemeng:retail:net_sales/override')
+        && c.method === 'DELETE')).toBe(true)
+    })
+  })
+
 })
