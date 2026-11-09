@@ -589,6 +589,17 @@ describe('authorize slicing：切片计划（授权核心唯一扩展点）', ()
       .toMatchObject({ ok: false, detail: 'unknown_order_column:bizday' })
   })
 
+  it('orderBy value（Top-N）在子集聚合下放行且进外层 SQL', () => {
+    const r = authorize([totalable()], req(), 'm', {}, [totalable()], {
+      dimensions: ['org'], orderBy: [{ column: 'value', dir: 'desc' }], limit: 5,
+    })
+    expect(r.ok).toBe(true)
+    if (r.ok) {
+      expect(r.plan.sql).toContain('ORDER BY value desc')
+      expect(r.plan.sql).toContain('LIMIT 5')
+    }
+  })
+
   it('filters 走声明参数与维度两条路；保留键在 filters 里也拒', () => {
     const r = authorize([totalable()], req(), 'm', { day_from: '2026-10-01' }, [totalable()],
       { dimensions: ['org'], filters: { branch_name: ['A店', "B'店"], org: 'someone-else' } })
