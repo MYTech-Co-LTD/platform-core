@@ -114,11 +114,13 @@ export function registerMcpEndpoint(
     }
 
     if (msg.method === 'initialize') {
+      // 只读一次 getter（实现可能是惰性计算/渲染），避免同一请求调用两次。
+      const instructions = toolset.instructions
       return reply({
         protocolVersion: PROTOCOL_VERSION,
         capabilities: { tools: {} },
         serverInfo: { name: toolset.serverName, version: '0.1.0' },
-        ...(toolset.instructions !== undefined ? { instructions: toolset.instructions } : {}),
+        ...(instructions !== undefined ? { instructions } : {}),
       })
     }
     if (msg.method === 'ping') return reply({})

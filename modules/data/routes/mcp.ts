@@ -17,6 +17,7 @@ import { callTool, legacyMetricTools, listAnalystTools } from '../domain/toolbox
 import { buildToolboxDeps } from '../domain/toolbox/all'
 import '../domain/toolbox/all'
 import { contractView, renderInstructions } from '../skill/render'
+import { GUIDE_INVARIANTS } from '../domain/toolbox/guide'
 import { faceOf, type ContractTool } from '../skill/contract'
 import type { ModuleHono, RouteCtx } from './context'
 import { registerMcpEndpoint } from './mcp-rpc'
@@ -73,13 +74,15 @@ for (const t of STATIC_MCP_TOOLS) {
 const readToolset: McpToolSet = {
   serverName: 'platform-data-mcp',
 
-  // 惰性 + fail-soft：读正典失败时 initialize 不能 500（initialize 失败会让客户端直接连不上）。
+  // 惰性 + fail-soft：读契约/渲染失败时 initialize 不能 500（initialize 失败会让客户端直接连不上）；
+  // shared.md 缺失会在模块加载期 fail-fast（GUIDE_INVARIANTS 已 eager 加载）。
   // 只放指针 + 四条硬约束，完整工作流走 data_agent_guide（按需拉取）。
   get instructions(): string {
     try {
       return renderInstructions()
-    } catch {
-      return '平台数据 MCP：开始数据任务前先调用 data_agent_guide。'
+    } catch (e) {
+      console.warn('[data] mcp initialize.instructions 渲染失败（回退到内置硬约束）:', e instanceof Error ? e.message : e)
+      return ['平台数据 MCP：开始数据任务前先调用 data_agent_guide。', ...GUIDE_INVARIANTS].join('\n')
     }
   },
 
