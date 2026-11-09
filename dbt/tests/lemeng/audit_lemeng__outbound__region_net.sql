@@ -1,4 +1,4 @@
-{{ config(tags=['audit_window']) }}
+{{ config(tags=['audit']) }}
 -- audit_lemeng__outbound__region_net — 战区出库净额的**独立复算**（#1181，layered §7 硬约束 7）。
 --
 -- 为什么不能只靠 mart 自己：`fct_outbound_region` 是「归因层」，它错了（join 方向反、通道判别式写错、

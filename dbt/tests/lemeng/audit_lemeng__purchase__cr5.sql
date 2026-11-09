@@ -1,4 +1,4 @@
-{{ config(tags=['audit_window']) }}
+{{ config(tags=['audit']) }}
 -- audit_lemeng__purchase__cr5.sql — 指标的**独立复算**（对账）。
 -- 直接打 parquet、不 ref 任何 mart/staging（走上游会让 cast 错同时污染两边 ⇒ 对账恒绿）。
 --
