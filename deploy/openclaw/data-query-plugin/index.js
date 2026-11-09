@@ -48,7 +48,7 @@ const QUERY_DEF = {
       dimensions: {
         type: "array",
         items: { type: "string" },
-        description: "按这些维度聚合（必须是该指标 grain 的子集，如 ["supplier_num"]）。Top-N / 分组看数用它",
+        description: '按这些维度聚合（必须是该指标 grain 的子集，如 ["supplier_num"]）。Top-N / 分组看数用它',
       },
       orderBy: {
         type: "array",
@@ -58,7 +58,7 @@ const QUERY_DEF = {
           required: ["column"],
           additionalProperties: false,
         },
-        description: "排序；Top-N 用 [{column:"value",dir:"desc"}]（配合 limit）",
+        description: '排序；Top-N 用 [{column:"value",dir:"desc"}]（配合 limit）',
       },
       limit: { type: "number", description: "返回行数上限（Top-N 用，如 5）" },
     },

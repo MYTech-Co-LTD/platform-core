@@ -10,6 +10,8 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
+import { execFileSync } from "node:child_process";
+import { fileURLToPath } from "node:url";
 
 const indexSrc = readFileSync(new URL("./index.js", import.meta.url), "utf8");
 const manifest = JSON.parse(readFileSync(new URL("./openclaw.plugin.json", import.meta.url), "utf8"));
@@ -40,4 +42,10 @@ test("contracts.tools 与 DEF 名集合一致（无陈旧残留；改名/下线�
   const declared = manifest.contracts?.tools ?? [];
   const extra = declared.filter((n) => !defNames.includes(n));
   assert.deepEqual(extra, [], `contracts.tools 里登记了 index.js 未注册的工具：${extra.join(", ")}`);
+});
+
+test("index.js 语法可解析（node --check）——未转义引号会把插件打成 crash loop", () => {
+  // 2026-11-09 真机：description 里的 ["supplier_num"] 未转义 ⇒ 插件加载 SyntaxError ⇒ 容器
+  // 重启循环；契约测试只读文本、不解析语法，漏掉了。这里补一道真解析。
+  execFileSync(process.execPath, ["--check", fileURLToPath(new URL("./index.js", import.meta.url))], { stdio: "pipe" });
 });
