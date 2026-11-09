@@ -6,6 +6,7 @@
 import type { Pool, PoolClient } from 'pg'
 import type { DrillBinding, DrillColumn, MaskSpec, MetricDef, MetricParamDef } from './authz'
 import type { MetricRowSnapshot } from './metric-audit-store'
+import type { CompiledTenantDeclaration } from './declaration-compiler'
 import type { MetricCertification } from './metric-governance'
 
 /**
@@ -245,7 +246,7 @@ function toMetricRow(row: Record<string, unknown>): MetricRow {
     drill: drillBindingOf(row),
     // 测度档与归档（W2，034）：档恒有值（坏值/缺列 ⇒ 树形）；归档时刻归一成 ISO 字符串或 null
     // （坏值宁可当「未归档」也不让整个词表加载因一行脏时间戳抛错——读路径不抛是既有纪律）。
-    basis: row.basis === 'column_agg' ? 'column_agg' : 'l1_tree',
+    basis: row.basis === 'column_agg' ? 'column_agg' : row.basis === 'declared' ? 'declared' : 'l1_tree',
     archivedAt: archivedAtOf(row.archived_at),
   }
 }
@@ -613,4 +614,42 @@ export async function deleteStaleL1Metrics(pool: Pool, keepIds: readonly string[
     [L1_ORG, keepIds],
   )
   return r.rows.map((row) => row.id as string)
+}
+
+/**
+ * 租户声明写入（W8，041；`basis='declared'`、`source='l2'`、`certified='draft'`）。
+ *
+ * 只做**新建**（`on conflict do nothing`）：已存在（含 L1 id、含既有 L2 行）⇒ 返回 false，
+ * 调用方回 409。更新/覆盖走 `override_metric_caliber`（P2）——两条路径的语义不同，
+ * 不合成一个「upsert 万能函数」（同本文件上方「两个写入函数不是一个」的理由）。
+ *
+ * `declaration` 存**声明原文**：投影列是有损的（没有 owner/tier/sources/additivity），
+ * 编辑回显/审计/重建都靠这一列，不从投影反推。
+ */
+export async function insertTenantDeclaration(
+  db: Pool | PoolClient,
+  org: string,
+  d: CompiledTenantDeclaration,
+  declaration: unknown,
+  updatedBy: string,
+): Promise<boolean> {
+  const r = await db.query(
+    `insert into data.metrics
+       (org, id, title, description, required_scope, subject_column, select_sql, group_by, params,
+        source, source_system, updated_by, version, totalable, scope_note, sla_days,
+        freshness_relations, mask_spec, unit, entity, synonyms, basis, certified, created_by, declaration)
+     values ($1, $2, $3, $4, $5, $6, $7, $8, $9::jsonb,
+             'l2', $10, $11, 1, $12, $13, $14,
+             $15::jsonb, $16::jsonb, $17, $18, $19::jsonb, 'declared', 'draft', $11, $20::jsonb)
+     on conflict (org, id) do nothing
+     returning id`,
+    [
+      org, d.id, d.title, d.description, d.requiredScope, d.subjectColumn, d.selectSql,
+      d.groupBy, JSON.stringify(d.params), d.sourceSystem, updatedBy, d.totalable, d.scopeNote,
+      d.slaDays, JSON.stringify(d.freshnessRelations),
+      d.masks === null ? null : JSON.stringify(d.masks), d.unit, d.entity,
+      JSON.stringify(d.synonyms), JSON.stringify(declaration),
+    ],
+  )
+  return (r.rowCount ?? 0) > 0
 }

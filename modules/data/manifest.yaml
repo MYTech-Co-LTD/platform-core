@@ -74,6 +74,8 @@ api:
     # 口径变更史（#489）：谁、何时、从什么到什么。门与 /metrics/all 同档（能看到「谁改的」＝管理信息）
     - { method: GET,    path: /metrics/:id/audit, scope: data:manage }
     - { method: POST,   path: /metrics,     scope: data:manage }
+    # 租户语义自治（W8，issue #1716）：新建全额声明（basis='declared'，只收声明不收 SQL）
+    - { method: POST,   path: /metrics/declarations, scope: data:manage }
     - { method: PUT,    path: /metrics/:id, scope: data:manage }
     - { method: DELETE, path: /metrics/:id, scope: data:manage }
     # 指标治理（spec 2026-11-01 §10.4）：L2 草稿→确认→生效。申报 data:query——
