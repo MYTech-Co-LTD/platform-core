@@ -280,6 +280,23 @@ export function templateOf(f: FactBundle): string {
   ].join('\n')
 }
 
+/**
+ * LLM 截断/漏段兜底：daily_review 必须至少有「驱动/根因/建议」。
+ * 缺哪段就从确定性模板补哪段（数字同样来自 facts.numbers，不引入新数）。
+ */
+function ensureDailySections(text: string, facts: FactBundle): string {
+  if (facts.focus !== 'daily_review') return text
+  const lines = templateOf(facts).split('\n')
+  const missing: string[] = []
+  for (const prefix of ['驱动：', '根因：', '建议：']) {
+    if (!text.includes(prefix)) {
+      const line = lines.find((l) => l.startsWith(prefix))
+      if (line !== undefined) missing.push(line)
+    }
+  }
+  return missing.length === 0 ? text : `${text.trim()}\n${missing.join('\n')}`
+}
+
 /** 缓存键：内容寻址。`branchNum=null` ⇒ `*`；未配模型 ⇒ `none`（模板结果也缓存）。 */
 export function narrativeKeyOf(deps: NarrativeDeps): NarrativeKey {
   return {
@@ -423,7 +440,7 @@ export async function generateNarrative(deps: NarrativeDeps): Promise<NarrativeR
             },
           ],
           [],
-          { temperature: 0, maxTokens: 1500, signal: AbortSignal.timeout(30000) },
+          { temperature: 0, maxTokens: 4000, signal: AbortSignal.timeout(45000) },
         )) {
           // reason 只用于进度感，不进正文（不读即不泄）
           if (d.content !== undefined) text += d.content
@@ -436,10 +453,11 @@ export async function generateNarrative(deps: NarrativeDeps): Promise<NarrativeR
       // 空输出与越界同罪：空白文本不能当成功缓存（spec §6「永远不空白」）
       const bad = text.trim() === '' ? [] : badNumbers(text, allowed)
       if (text.trim() !== '' && bad.length === 0) {
-        await putNarrative(deps.pool, key, text, false, deps.userId)
-        settleOnce({ text, fallback: false })
+        const finalText = ensureDailySections(text, deps.facts)
+        await putNarrative(deps.pool, key, finalText, false, deps.userId)
+        settleOnce({ text: finalText, fallback: false })
         return {
-          text,
+          text: finalText,
           fallback: false,
           dataAsOf: deps.facts.dataAsOf,
           generatedAt: new Date().toISOString(),
@@ -549,7 +567,7 @@ export async function* streamNarrative(
           },
         ],
         [],
-        { temperature: 0, maxTokens: 1500, signal: controller.signal },
+        { temperature: 0, maxTokens: 4000, signal: controller.signal },
       )) {
         if (d.content === undefined) continue // reasoning 不展示、也不拼进正文
         if (!sawContent) {
@@ -584,9 +602,13 @@ export async function* streamNarrative(
       clearTimeout(timer)
     }
     if (failed === null) {
-      await putNarrative(deps.pool, key, full, false, deps.userId)
-      settleOnce({ text: full, fallback: false })
-      yield doneEvent(full, false, deps.facts)
+      const finalFull = ensureDailySections(full, deps.facts)
+      if (finalFull.length > full.length) {
+        yield { type: 'delta', text: finalFull.slice(full.length) }
+      }
+      await putNarrative(deps.pool, key, finalFull, false, deps.userId)
+      settleOnce({ text: finalFull, fallback: false })
+      yield doneEvent(finalFull, false, deps.facts)
       return
     }
     lastReason = failed
