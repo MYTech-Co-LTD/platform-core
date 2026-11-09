@@ -139,7 +139,14 @@ describe('runDetailQuery（假执行器 + 假词表池，不需要湖）', () =>
     const { pool, audits } = fakePool([NO_DRILL_ROW])
     const sqls: string[] = []
     const out = await runDetailQuery(depsOf(pool, sqls), ORG, req(), 'drill:plain', ARGS, {})
-    expect(out).toEqual({ status: 'denied', metricId: 'drill:plain', reason: 'no_detail_binding', detail: NO_BINDING_DETAIL })
+    expect(out).toEqual({
+      status: 'denied', metricId: 'drill:plain', reason: 'no_detail_binding', detail: NO_BINDING_DETAIL,
+      // 2026-11-09：明细不可用时给聚合面 Top-N 替代路径（维度取 grain 去掉 bizday）
+      alternative: {
+        tool: 'query_data',
+        args: { ...ARGS, dimensions: ['system_book'], orderBy: [{ column: 'value', dir: 'desc' }], limit: 5 },
+      },
+    })
     expect(sqls).toEqual([])
     expect(audits[0].params[AUDIT_REASON]).toBe('no_detail_binding')
   })
@@ -319,7 +326,13 @@ describe('runDetailQuery（假执行器 + 假词表池，不需要湖）', () =>
     }])
     const sqls: string[] = []
     const out = await runDetailQuery(depsOf(pool, sqls), ORG, req(), 'drill:badcols', ARGS, {})
-    expect(out).toEqual({ status: 'denied', metricId: 'drill:badcols', reason: 'no_detail_binding', detail: NO_BINDING_DETAIL })
+    expect(out).toEqual({
+      status: 'denied', metricId: 'drill:badcols', reason: 'no_detail_binding', detail: NO_BINDING_DETAIL,
+      alternative: {
+        tool: 'query_data',
+        args: { ...ARGS, dimensions: ['system_book'], orderBy: [{ column: 'value', dir: 'desc' }], limit: 5 },
+      },
+    })
     expect(sqls).toEqual([])
     expect(audits[0].params[AUDIT_REASON]).toBe('no_detail_binding')
   })

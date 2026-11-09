@@ -358,6 +358,42 @@
       "to": "2026-10-31",
       "confirmed": false,
       "candidate": true
+    },
+    {
+      "id": "C13",
+      "metricId": "lemeng:retail:sales",
+      "question": "10 月营业额（不冲退货）",
+      "window": "fixed",
+      "from": "2026-10-01",
+      "to": "2026-10-31",
+      "confirmed": false
+    },
+    {
+      "id": "C14",
+      "metricId": "lemeng:outbound:external_wholesale",
+      "question": "10 月外部批发金额",
+      "window": "fixed",
+      "from": "2026-10-01",
+      "to": "2026-10-31",
+      "confirmed": false
+    },
+    {
+      "id": "C15",
+      "metricId": "lemeng:branch:transfer_money",
+      "question": "10 月门店配送金额",
+      "window": "fixed",
+      "from": "2026-10-01",
+      "to": "2026-10-31",
+      "confirmed": false
+    },
+    {
+      "id": "C16",
+      "metricId": "lemeng:outbound:amount",
+      "question": "10 月出库金额（集团去重）",
+      "window": "fixed",
+      "from": "2026-10-01",
+      "to": "2026-10-31",
+      "confirmed": false
     }
   ]
 }

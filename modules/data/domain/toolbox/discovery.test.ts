@@ -33,6 +33,10 @@ function deps(catalog: MetricRow[], wh: ToolboxDeps['wh'] = async () => ({ colum
         updated_by: m.updatedBy, version: m.version, totalable: m.totalable, scope_note: m.scopeNote,
         sla_days: m.slaDays, freshness_relations: m.freshnessRelations, mask_spec: m.masks,
         entity: m.entity, synonyms: m.synonyms,
+        // 下钻三列（capabilities.detail 的判据）：夹具带 drill 时同形映射，缺省 NULL
+        drill_expr: m.drill?.expr ?? null, drill_dims: m.drill?.dims ?? null,
+        drill_detail: m.drill === undefined ? null
+          : { relation: m.drill.relation, filter: m.drill.filter, ...(m.drill.columns === undefined ? {} : { columns: m.drill.columns }) },
       })) }),
     } as never,
     org: 'acme', requester, adoptedSources: new Set(['lemeng']), wh,
@@ -109,6 +113,18 @@ describe('describeMetricImpl', () => {
       .toEqual({ minBizday: '2024-11-01', maxBizday: '2026-11-08' })
     const noDay = await describeMetricImpl(deps([row({ groupBy: 'org, branch_name', selectSql: 'select sum(v) as value, org, branch_name from fct' })], wh), { id: 'lemeng:retail:net_sales', coverage: true })
     expect('coverage' in noDay.payload).toBe(false)
+  })
+
+  it('capabilities：detail 看 drill 绑定，topN 看可加且有非日期维度', async () => {
+    const withDrill = row({
+      totalable: true,
+      drill: { expr: 'sum(v)', dims: ['branch_num'], relation: 'vw_t', filter: 'true' } as never,
+    })
+    const a = await describeMetricImpl(deps([withDrill]), { id: 'lemeng:retail:net_sales' })
+    expect((a.payload as { capabilities: unknown }).capabilities).toEqual({ detail: true, topN: true })
+    const plain = row({ totalable: true, groupBy: 'bizday', selectSql: 'select sum(v) as value, bizday from fct' })
+    const b = await describeMetricImpl(deps([plain]), { id: 'lemeng:retail:net_sales' })
+    expect((b.payload as { capabilities: unknown }).capabilities).toEqual({ detail: false, topN: false })
   })
 
   it('describe_metric 返回 entity/synonyms', async () => {

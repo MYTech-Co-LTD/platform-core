@@ -43,7 +43,7 @@ export interface DetailOk {
   masking?: Record<string, string>
 }
 export type DetailOutcome = DetailOk
-  | { status: 'denied'; metricId: string; reason: string; detail?: string }
+  | { status: 'denied'; metricId: string; reason: string; detail?: string; alternative?: { tool: string; args: Record<string, unknown> } }
   | { status: 'error'; metricId: string; reason: 'warehouse_unconfigured' | 'warehouse_transient' | 'warehouse_error'; detail: string }
 
 export interface DrillPlan { sql: string; rowCountSql: string; dimensions: string[] }
@@ -115,8 +115,20 @@ export async function runDetailQuery(
   // L2 下钻」由存储形状涌现，无需特判。
   if (metricRow === undefined || drill === undefined) {
     await audit('denied', 'no_detail_binding', null, null, null)
-    return { status: 'denied', metricId, reason: 'no_detail_binding',
-      detail: '该指标未声明明细下钻（能力边界，非权限问题）——聚合口径可用 query_metric 查询' }
+    // 替代路径（2026-11-09）：明细不可用不等于 Top-N 不可用——把聚合面的切片写法直接给模型，
+    // 免得它拉全量行自己排序（yangwei 采购 Top5 的真实轨迹）。
+    const sliceDims = (metricRow?.groupBy ?? '').split(',').map((d) => d.trim())
+      .filter((d) => d !== '' && d !== 'bizday')
+    return {
+      status: 'denied', metricId, reason: 'no_detail_binding',
+      detail: '该指标未声明明细下钻（能力边界，非权限问题）——聚合口径可用 query_metric 查询',
+      ...(sliceDims.length > 0 ? {
+        alternative: {
+          tool: 'query_data',
+          args: { ...args, dimensions: sliceDims, orderBy: [{ column: 'value', dir: 'desc' }], limit: 5 },
+        },
+      } : {}),
+    }
   }
 
   // bizday 必传（spec §2.4：直读湖全史 11.14s，随天数线性涨）——参数校验过了 authorize，
