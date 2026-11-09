@@ -24,6 +24,12 @@ export interface DimensionLookup {
   branchNameByKey: Map<string, string>
   /** `` `${账套}|${战区号}` `` → 战区名称 + 一级战区（`dim_region` seed）。 */
   regionByKey: Map<string, { name: string; l1: string | null }>
+  /**
+   * `client_fid` → 客户名（`dim_lemeng_client` 最新快照，#1760）。
+   * **只收跨账套唯一的编号**：同号出现在两个账套（且名字不同）⇒ 不入表，展示成 `null`（不猜）。
+   * 键不带账套，是因为按客户切片时 `system_book` 未必在结果列里（`dimensions:["client_fid"]`）。
+   */
+  clientNameByFid: Map<string, string>
 }
 
 /** 键列 → 紧跟其后插入的标签列。顺序即插入顺序。 */
@@ -31,6 +37,7 @@ const LABELS_OF_KEY: Readonly<Record<string, readonly string[]>> = {
   system_book: ['brand_name'],
   branch_num: ['branch_name'],
   region_id: ['region_name', 'region_l1'],
+  client_fid: ['client_name'],
 }
 
 /** 维度侧用于查门店名的 SQL：**按门店取最新快照**（今天改名/新开店都跟着走），只取需要的三列。 */
@@ -53,6 +60,19 @@ const BRAND_NAME_SQL = 'select system_book::varchar as b, brand_name from dim_br
  */
 const REGION_NAME_SQL =
   'select system_book::varchar as b, region_id::int as r, region_name, region_l1 from dim_region'
+
+/**
+ * 客户名（`dim_lemeng_client`，批发行 `client_fid` 的展示名，#1760）。
+ *
+ * - 维表本身已是**最新快照**（`snapshot desc` 取 1），这里不再去重；
+ * - **跨账套唯一才收**：`group by client_fid` 后 `count(*) = 1`。两个账套同号但不同主体时
+ *   名字给 `null` —— 猜一个等于把 A 客户的单记到 B 客户名下；
+ * - `client_fid` 是文本（`003120990000212`），**不要转 int**（前导零会丢，且可能超 int4）。
+ */
+const CLIENT_NAME_SQL = `
+  select client_fid::varchar as c, min(client_name) as name, count(*) as n
+  from dim_lemeng_client
+  group by 1`
 
 /** 执行器形状（与 `runWarehouseSql` 一致；测试可注入）。 */
 type Exec = (sql: string) => Promise<{ columns: string[]; rows: unknown[][] }>
@@ -98,7 +118,23 @@ export async function loadDimensionLookup(exec: Exec): Promise<DimensionLookup |
         })
       }
     }
-    return { brandByBook, branchNameByKey, regionByKey }
+    // 客户名是**后加的第四个源**：#1760 之前部署的仓库可能还没有 `dim_lemeng_client`，
+    // 拿不到就只少这一列，**不能**因为它把品牌/门店/战区的名称一起弄丢（既有语义不变）。
+    const clientNameByFid = new Map<string, string>()
+    try {
+      const client = await exec(CLIENT_NAME_SQL)
+      for (const row of client.rows) {
+        const fid = row[0]
+        const name = row[1]
+        const n = Number(row[2])
+        if (typeof fid === 'string' && typeof name === 'string' && n === 1) {
+          clientNameByFid.set(fid, name)
+        }
+      }
+    } catch {
+      // 维表缺席 / 查询失败 ⇒ 客户名缺席（其余标签照常）
+    }
+    return { brandByBook, branchNameByKey, regionByKey, clientNameByFid }
   } catch {
     return null
   }
@@ -134,6 +170,7 @@ export function decorateWithLabels(
   const bookIdx = result.columns.indexOf('system_book')
   const branchIdx = result.columns.indexOf('branch_num')
   const regionIdx = result.columns.indexOf('region_id')
+  const clientIdx = result.columns.indexOf('client_fid')
 
   const rows = result.rows.map((row) => {
     const book = bookIdx >= 0 && row[bookIdx] != null ? String(row[bookIdx]) : ''
@@ -141,10 +178,14 @@ export function decorateWithLabels(
     const region = regionIdx >= 0 && row[regionIdx] != null
       ? lookup.regionByKey.get(`${book}|${String(row[regionIdx])}`)
       : undefined
-    /** 标签列 → 该行该格的值。键列只有三类，按 (键列, 标签列) 取值即可。 */
+    const clientName = clientIdx >= 0 && row[clientIdx] != null
+      ? (lookup.clientNameByFid.get(String(row[clientIdx])) ?? null)
+      : null
+    /** 标签列 → 该行该格的值。键列只有四类，按 (键列, 标签列) 取值即可。 */
     const valueOf = (col: string, label: string): unknown => {
       if (col === 'system_book') return lookup.brandByBook.get(book) ?? null
       if (col === 'branch_num') return branchKey === null ? null : (lookup.branchNameByKey.get(branchKey) ?? null)
+      if (col === 'client_fid') return clientName
       return label === 'region_name' ? (region?.name ?? null) : (region?.l1 ?? null)
     }
     const out: unknown[] = []
