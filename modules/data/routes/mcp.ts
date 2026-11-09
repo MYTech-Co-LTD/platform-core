@@ -16,7 +16,7 @@ import { analystPool, runWarehouseSql } from '../domain/warehouse'
 import { callTool, legacyMetricTools, listAnalystTools } from '../domain/toolbox/registry'
 import { buildToolboxDeps } from '../domain/toolbox/all'
 import '../domain/toolbox/all'
-import { contractView } from '../skill/render'
+import { contractView, renderInstructions } from '../skill/render'
 import { faceOf, type ContractTool } from '../skill/contract'
 import type { ModuleHono, RouteCtx } from './context'
 import { registerMcpEndpoint } from './mcp-rpc'
@@ -72,6 +72,16 @@ for (const t of STATIC_MCP_TOOLS) {
 
 const readToolset: McpToolSet = {
   serverName: 'platform-data-mcp',
+
+  // 惰性 + fail-soft：读正典失败时 initialize 不能 500（initialize 失败会让客户端直接连不上）。
+  // 只放指针 + 四条硬约束，完整工作流走 data_agent_guide（按需拉取）。
+  get instructions(): string {
+    try {
+      return renderInstructions()
+    } catch {
+      return '平台数据 MCP：开始数据任务前先调用 data_agent_guide。'
+    }
+  },
 
   async list(deps) {
     // M3 守卫拒掉的请求者：词表对其「看不见」——空 tools（两类工具都空），不是报错。
