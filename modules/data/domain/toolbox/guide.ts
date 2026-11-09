@@ -7,9 +7,9 @@ import { guideInvariants, renderSkill } from '../../skill/render'
 /**
  * 通道中性硬约束（Wave 2 决策 D-G1）：三通道同源内容的事实源。
  * B = content/mcp.md 渲染（GUIDE_TEXT_BUILDER）；A = agent-loop SYSTEM_PROMPT 编译期 import；
- * C = SKILL.md 逐字入文 + scripts/check-guide-sync.mjs 机检（C 消费静态 md，无法 import TS
- * ⇒ 机检钉同源）。措辞必须通道中性：不出现任何通道专属工具名；通道特有机制（A 的
- * freshness_line 附行、C 的 📅 传输层自动附加）留各通道本地文案，不进这里。
+ * C 由构建期渲染器从同一正典生成（Task 4），契约测试钉住。措辞必须通道中性：不出现任何通道
+ * 专属工具名；通道特有机制（A 的 freshness_line 附行、C 的 📅 传输层自动附加）留各通道本地
+ * 文案，不进这里。
  *
  * ⚠️ 加载期只对 content/shared.md 做 eager fail-fast：这四行是安全关键约束，构建产物缺
  * shared.md 时必须起不来，而不是静默退化成三行/零行。content/mcp.md 是调用期读取

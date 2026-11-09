@@ -209,15 +209,4 @@ describe('openclaw 渲染', () => {
       expect(openclaw).toContain(`{{include:local/${file}}}`)
     }
   })
-
-  // 迁移证明：Task 3 期间 renderSkill('openclaw') 必须与旧插件 SKILL.md 正文逐字一致。
-  // Task 5 删除旧 SKILL.md（deploy/openclaw/data-query-plugin/skills/data-query/SKILL.md）时，
-  // 同步删除本用例。
-  it('与旧插件 SKILL.md 正文逐字一致（迁移证明）', () => {
-    const repoRoot = join(HERE, '..', '..', '..')
-    const oldPath = join(repoRoot, 'deploy/openclaw/data-query-plugin/skills/data-query/SKILL.md')
-    const old = readFileSync(oldPath, 'utf8')
-    const body = old.replace(/^---\n[\s\S]*?\n---\n\n?/, '').replace(/\n+$/, '')
-    expect(renderSkill('openclaw')).toBe(body)
-  })
 })

@@ -49,3 +49,7 @@ duckle/**/secrets.enc
 #    一条模式覆盖两者及将来同前缀的变体（`*` 不跨 `/` ⇒ 只影响 apps/server/ 下这一族）。
 apps/server/.tmp-loader-fixtures*/
 .superpowers/
+
+# openclaw skill 构建期生成物（来源 modules/data/skill/，不提交）
+deploy/openclaw/data-query-plugin/generated/
+deploy/openclaw/data-query-plugin/skills/data-query/SKILL.md

@@ -6,7 +6,11 @@
 // 另注册 message_sending 钩子（api.on）：query_data 成功回包的新鲜度行按会话捕获，外发消息
 // 末尾由系统确定性附加（strip-then-append）——模型自附不稳（flash 合同弱），传输层兜底。
 // ⚠️ execute 签名 (toolCallId, params, signal, onUpdate)：第一参是 toolCallId 不是模型参数。
+//
+// 工具定义（name/description/parameters）不再手写：构建期由 modules/data/skill/contract.json
+// 渲染到 ./generated/tools.js（scripts/gen-openclaw-skill.mjs）。本文件只留传输层映射。
 import { definePluginEntry } from "openclaw/plugin-sdk/plugin-entry";
+import { TOOL_DEFS } from "./generated/tools.js";
 import {
   callPlatform,
   normalizeParams,
@@ -23,67 +27,6 @@ const CHANNEL_KEY = process.env.DATA_WECOM_CHANNEL_KEY || "";
 // 旧实现是模块级全局（跨会话共用）⇒ 新会话 ctx 为空时会用上一会话的 userid 取数 =
 // 拿越权面换少一次报错；现在跨会话绝不继承，无会话记录则如实返回身份错误。
 const lastUserIdBySession = new Map();
-
-const LIST_DEF = {
-  name: "list_metrics",
-  description:
-    "列出当前用户可见的全部指标（词表按人裁剪，可能很长）。**不要用本工具做检索**：找指标一律先用 search_catalog 按用户原词检索；只有 search 连续 0 命中、或用户明确要看全部指标时才用本工具。先 list 再挑 = 违反流程。以返回为准，不要凭记忆猜指标 id。",
-  parameters: { type: "object", properties: {}, additionalProperties: false },
-};
-
-const QUERY_DEF = {
-  name: "query_data",
-  description:
-    "按指标查数：metricId 来自 list_metrics；args 的**键**只能取该指标 params[].name（乐檬指标就是 `bizday`），**形状**由该 params 的 type 决定：type=date_range ⇒ 值传对象 {\"from\":\"YYYY-MM-DD\",\"to\":\"YYYY-MM-DD\"}（闭区间，查单日则 from=to）；type=string/number/date ⇒ 值传单值（日期单值一律 YYYY-MM-DD）。⚠️ **`date_range` 是类型名、不是键名**——传 {\"date_range\":{…}} 会被服务端 400 `unknown_param:date_range`；正确写法是 {\"bizday\":{\"from\":…,\"to\":…}}。求和类（可加）指标的回包自带 total 字段=该过滤范围的合计——直接引用该值，不要自己把明细行加总；没有 total 字段（比率/去重计数类指标）就不要跨行求和（跨行求和是错数）。「只要总数」可传 args.total=true（必须布尔）——服务端求和恒返回单行合计；区间超过 4 天优先拆单日或用 total，不要裸拉明细。参数键与形状以 list_metrics 返回的 params 为准，不要臆造。回包带 subject（本次钉死的数据主体）与 columns/rows；truncated=true 表示截断——只能答「数据不全」，收窄范围或改传 args.total=true 重查，不要把截断结果当全量。新鲜度与口径射程由系统自动附加：消息末尾会固定附上服务端算好的 📅 新鲜度行与 📐 口径行（该指标声明了射程时才有）——不要自己写任何 📅 / 📐 行，也不要复述或拼接 freshness_line / scope_line（自己写了也会被系统剥掉再统一附加）。**当答案涉及门店/对象个数时，口径行里的排除项是结论的一部分**：不要只报「5 家」，要让读者看得到分母与排除了什么。data_as_of（数据截止，已是北京时间 UTC+8，直接引用不要自行换算）可注明「数据截至 X」；没有该字段=新鲜度未知，如实说明，不要编；明细 rows 按 bizday 降序，首行即最新分区；当日数据是部分天，须标注。**Top-N / 分组**（如「按供应商前 5」）：传 dimensions:[维度名]（必须是该指标 grain 的子集）+ orderBy:[{column:\"value\",dir:\"desc\"}] + limit:5，一次拿到结果，不要拉全量行自己排序。",
-  parameters: {
-    type: "object",
-    properties: {
-      metricId: { type: "string", description: "指标 id（来自 list_metrics）" },
-      args: {
-        type: "object",
-        description:
-          "指标参数键值对；**键** = list_metrics 返回的 params[].name（乐檬指标是 `bizday`），**值形状**由 type 定（type=date_range 传 {from,to} 对象，其余传单值）。⚠️ `date_range` 是类型名不是键名，写成键会 400 unknown_param:date_range；「只要总数」加 total:true（布尔，非真值一律被拒）",
-        additionalProperties: true,
-      },
-      dimensions: {
-        type: "array",
-        items: { type: "string" },
-        description: '按这些维度聚合（必须是该指标 grain 的子集，如 ["supplier_num"]）。Top-N / 分组看数用它',
-      },
-      orderBy: {
-        type: "array",
-        items: {
-          type: "object",
-          properties: { column: { type: "string" }, dir: { type: "string", enum: ["asc", "desc"] } },
-          required: ["column"],
-          additionalProperties: false,
-        },
-        description: '排序；Top-N 用 [{column:"value",dir:"desc"}]（配合 limit）',
-      },
-      limit: { type: "number", description: "返回行数上限（Top-N 用，如 5）" },
-    },
-    required: ["metricId"],
-    additionalProperties: false,
-  },
-};
-
-const DETAIL_DEF = {
-  name: "query_detail",
-  description:
-    "按指标下钻到明细构成（订单级）。args.bizday 必传（{\"from\":\"YYYY-MM-DD\",\"to\":\"YYYY-MM-DD\"}，查单日 from=to）。回包 rowCountTotal = 该范围**全量原始行数**——回答「多少行」用它，不要拿返回行数当全量。dimensions 缺省=最细（订单级）；orderBy 缺省按 value 降序（「哪几单贡献最大」直接问）。仅对声明了下钻的指标可用；回 no_detail_binding 时如实告知该指标不支持下钻、可改用 query_data，不要重试。回包带 drill_as_of/data_as_of/clock_note（两个时钟）与 scope_line——clock_note 与 scope_line 原样转述/钉在答案末尾。回包可能**少一列**（如 order_detail_std_price）：那是条件列未授权（无 data:cost），**不是没有数据**——如实答「该列需授权」，不要当成 NULL、0 或未采集。",
-  parameters: {
-    type: "object",
-    properties: {
-      metricId: { type: "string", description: "指标 id（来自 list_metrics）" },
-      args: { type: "object", description: "参数；bizday 必传", additionalProperties: true },
-      dimensions: { type: "array", items: { type: "string" } },
-      orderBy: { type: "string" }, desc: { type: "boolean" },
-      limit: { type: "number" }, offset: { type: "number" },
-    },
-    required: ["metricId"],
-    additionalProperties: false,
-  },
-};
 
 export default definePluginEntry({
   id: "data-query",
@@ -113,200 +56,80 @@ export default definePluginEntry({
         },
       };
     };
-    api.registerTool(
-      factory(LIST_DEF, (_params, userId, sessionKey) =>
-        callPlatform({ apiBase, channelKey: CHANNEL_KEY, userId, sessionId: sessionKey, path: "/metrics" }),
-      ),
-      { name: LIST_DEF.name },
-    );
-    api.registerTool(
-      factory(
-        QUERY_DEF,
-        (params, userId, sessionKey) =>
-          callPlatform({
-            apiBase,
-            channelKey: CHANNEL_KEY,
-            userId,
-            sessionId: sessionKey,
-            path: "/query",
-            method: "POST",
-            body: {
-              metricId: params.metricId,
-              args: params.args ?? {},
-              ...(Array.isArray(params.dimensions) ? { dimensions: params.dimensions } : {}),
-              ...(Array.isArray(params.orderBy) ? { orderBy: params.orderBy } : {}),
-              ...(typeof params.limit === "number" ? { limit: params.limit } : {}),
-            },
-          }),
-        // 捕获服务端正典固定行（📅 新鲜度 + 📐 口径射程）。两个字段都可能缺席：
-        // 没有 freshness_line = 未接新鲜度链路；没有 scope_line = 该指标未声明射程。
-        // 整条替换（不是字段合并）⇒ 上一次查询的 📐 行不会漏到这一次。
-        (result, sessionKey, runId) => {
-          if (!result) return;
-          const freshness =
-            typeof result.freshness_line === "string" && result.freshness_line ? result.freshness_line : undefined;
-          const scope =
-            typeof result.scope_line === "string" && result.scope_line ? result.scope_line : undefined;
-          if (freshness || scope) freshnessStore.capture(sessionKey, { freshness, scope }, runId);
-        },
-      ),
-      { name: QUERY_DEF.name },
-    );
-    // query_detail（明细下钻，2026-10-21 spec §2.6）：POST /query/detail。回包没有 freshness_line
-    // （明细面只有 data_as_of/clock_note 两个时钟），只有 scope_line 可能需要捕获——
-    // freshnessStore.capture 的对象形态按字段解构，缺 freshness 合法（entry.line=undefined，
-    // 钩子侧按非串过滤，scope 单独在场即只附 📐；scope.test.js「单独在场」已锁该形状）。
-    api.registerTool(
-      factory(
-        DETAIL_DEF,
-        (params, userId, sessionKey) =>
-          callPlatform({
-            apiBase,
-            channelKey: CHANNEL_KEY,
-            userId,
-            sessionId: sessionKey,
-            path: "/query/detail",
-            method: "POST",
-            body: {
-              metricId: params.metricId,
-              args: params.args ?? {},
-              ...(Array.isArray(params.dimensions) ? { dimensions: params.dimensions } : {}),
-              ...(typeof params.orderBy === "string" ? { orderBy: params.orderBy } : {}),
-              ...(typeof params.desc === "boolean" ? { desc: params.desc } : {}),
-              ...(typeof params.limit === "number" ? { limit: params.limit } : {}),
-              ...(typeof params.offset === "number" ? { offset: params.offset } : {}),
-            },
-          }),
-        (result, sessionKey, runId) => {
-          if (!result) return;
-          const scope = typeof result.scope_line === "string" && result.scope_line ? result.scope_line : undefined;
-          if (scope) freshnessStore.capture(sessionKey, { scope }, runId);
-        },
-      ),
-      { name: DETAIL_DEF.name },
-    );
-    // ── Wave 2（ref #985）：registry 子集三工具，经 POST /toolbox（registry 的 HTTP 薄封装）调用。
-    // 与既有工具同一 callPlatform/同一错误文案映射/同一捕获机制——插件仍零权限逻辑。
-    const SEARCH_DEF = {
-      name: "search_catalog",
-      description:
-        "按关键词搜索当前用户可见的指标（**同义词也命中**）。问数第一步用它：用户说「营业额/销售金额/外部批发」这类业务词，先搜索拿到候选 id，再 describe_metric 看口径——**不要凭记忆猜指标 id**。0 命中时换 1~2 个同义词再搜。返回 id/标题/档位/归属/一句话说明（≤20 条）。",
-      parameters: {
-        type: "object",
-        properties: {
-          q: { type: "string", description: "关键词（id/标题/说明/同义词的子串，大小写不敏感）" },
-          kind: { type: "string", enum: ["metric", "dataset"], description: "缺省 = metric" },
-          tier: { type: "string", enum: ["certified", "custom"], description: "可选：按可信度过滤" },
-        },
-        required: ["q"],
-        additionalProperties: false,
-      },
-    };
-    api.registerTool(
-      factory(SEARCH_DEF, (params, userId, sessionKey) =>
-        callPlatform({
-          apiBase, channelKey: CHANNEL_KEY, userId,
-          path: "/toolbox", method: "POST",
-          body: {
-            tool: "search_catalog",
-            args: {
-              q: params.q,
-              ...(typeof params.kind === "string" ? { kind: params.kind } : {}),
-              ...(typeof params.tier === "string" ? { tier: params.tier } : {}),
-            },
+
+    // 传输层映射：契约只描述「是什么」，HTTP 路径/回包观察是通道 C 的本地实现。
+    // 签名与 factory 的 run 一致：(params, userId, sessionKey)；apiBase/CHANNEL_KEY 闭包捕获。
+    const ENDPOINTS = new Map([
+      ["list_metrics", (_p, userId, sessionKey) =>
+        callPlatform({ apiBase, channelKey: CHANNEL_KEY, userId, sessionId: sessionKey, path: "/metrics" })],
+      ["query", (p, userId, sessionKey) =>
+        callPlatform({ apiBase, channelKey: CHANNEL_KEY, userId, sessionId: sessionKey, path: "/query", method: "POST", body: {
+          metricId: p.metricId, args: p.args ?? {},
+          ...(Array.isArray(p.dimensions) ? { dimensions: p.dimensions } : {}),
+          ...(Array.isArray(p.orderBy) ? { orderBy: p.orderBy } : {}),
+          ...(typeof p.limit === "number" ? { limit: p.limit } : {}),
+        } })],
+      ["query_detail", (p, userId, sessionKey) =>
+        callPlatform({ apiBase, channelKey: CHANNEL_KEY, userId, sessionId: sessionKey, path: "/query/detail", method: "POST", body: {
+          metricId: p.metricId, args: p.args ?? {},
+          ...(Array.isArray(p.dimensions) ? { dimensions: p.dimensions } : {}),
+          ...(typeof p.orderBy === "string" ? { orderBy: p.orderBy } : {}),
+          ...(typeof p.desc === "boolean" ? { desc: p.desc } : {}),
+          ...(typeof p.limit === "number" ? { limit: p.limit } : {}),
+          ...(typeof p.offset === "number" ? { offset: p.offset } : {}),
+        } })],
+      ["search", (p, userId) =>
+        callPlatform({ apiBase, channelKey: CHANNEL_KEY, userId, path: "/toolbox", method: "POST", body: {
+          tool: "search_catalog", args: {
+            q: p.q,
+            ...(typeof p.kind === "string" ? { kind: p.kind } : {}),
+            ...(typeof p.tier === "string" ? { tier: p.tier } : {}),
           },
-        }),
-      ),
-      { name: SEARCH_DEF.name },
-    );
-    const DESCRIBE_DEF = {
-      name: "describe_metric",
-      description:
-        "按 id 取指标详情：口径定义/粒度维度/参数/归属/档位/版本/新鲜度。args 键或维度名拿不准时先调它（id 取自 list_metrics）；sample_dimension_values 的 dimension 必须是这里 grain 里的一员。",
-      parameters: {
-        type: "object",
-        properties: {
-          id: { type: "string", description: "指标 id（来自 search_catalog / list_metrics）" },
-          coverage: { type: "boolean", description: "包含数据覆盖区间 {minBizday,maxBizday}；问「最早的数据/到几号」时传 true" },
-        },
-        required: ["id"],
-        additionalProperties: false,
-      },
-    };
-    const SAMPLE_DEF = {
-      name: "sample_dimension_values",
-      description:
-        "取某指标某维度的取值与频次（≤50 行），用于确认过滤值/分组维度的确切写法（如门店名）。dimension 必须是该指标粒度维度之一（describe_metric 返回的 grain）；回包 truncated=true 时只说明「值太多被截断」，不是数据错误。",
-      parameters: {
-        type: "object",
-        properties: {
-          metricId: { type: "string", description: "指标 id" },
-          dimension: { type: "string", description: "维度名（grain 之一）" },
-          q: { type: "string", description: "子串过滤（可选）" },
-          limit: { type: "number", description: "1–50，缺省 50" },
-        },
-        required: ["metricId", "dimension"],
-        additionalProperties: false,
-      },
-    };
-    const FRESHNESS_DEF = {
-      name: "get_freshness",
-      description:
-        "数据截止日/物化时刻/滞后秒。scope=指标 id 查该指标链路水位；缺省查全局水位。用户问「数据到几号/新不新」用它，不要靠猜。回 status=unknown 如实说「新鲜度未知」，不要编。",
-      parameters: {
-        type: "object",
-        properties: { scope: { type: "string", description: "指标 id（缺省 = 全局）" } },
-        required: [],
-        additionalProperties: false,
-      },
-    };
-    api.registerTool(
-      factory(DESCRIBE_DEF, (params, userId, sessionKey) =>
-        callPlatform({
-          apiBase, channelKey: CHANNEL_KEY, userId,
-          path: "/toolbox", method: "POST",
-          body: { tool: "describe_metric", args: { id: params.id, ...(params.coverage === true ? { coverage: true } : {}) } },
-        }),
-      ),
-      { name: DESCRIBE_DEF.name },
-    );
-    api.registerTool(
-      factory(SAMPLE_DEF, (params, userId, sessionKey) =>
-        callPlatform({
-          apiBase, channelKey: CHANNEL_KEY, userId,
-          path: "/toolbox", method: "POST",
-          body: {
-            tool: "sample_dimension_values",
-            args: {
-              metricId: params.metricId,
-              dimension: params.dimension,
-              ...(typeof params.q === "string" && params.q ? { q: params.q } : {}),
-              ...(typeof params.limit === "number" ? { limit: params.limit } : {}),
-            },
+        } })],
+      ["describe_metric", (p, userId) =>
+        callPlatform({ apiBase, channelKey: CHANNEL_KEY, userId, path: "/toolbox", method: "POST", body: {
+          tool: "describe_metric", args: { id: p.id, ...(p.coverage === true ? { coverage: true } : {}) },
+        } })],
+      ["sample_dimension_values", (p, userId) =>
+        callPlatform({ apiBase, channelKey: CHANNEL_KEY, userId, path: "/toolbox", method: "POST", body: {
+          tool: "sample_dimension_values", args: {
+            metricId: p.metricId, dimension: p.dimension,
+            ...(typeof p.q === "string" && p.q ? { q: p.q } : {}),
+            ...(typeof p.limit === "number" ? { limit: p.limit } : {}),
           },
-        }),
-      ),
-      { name: SAMPLE_DEF.name },
-    );
-    api.registerTool(
-      factory(
-        FRESHNESS_DEF,
-        (params, userId, sessionKey) =>
-          callPlatform({
-            apiBase, channelKey: CHANNEL_KEY, userId,
-            path: "/toolbox", method: "POST",
-            body: { tool: "get_freshness", args: { ...(typeof params.scope === "string" && params.scope ? { scope: params.scope } : {}) } },
-          }),
-        // 捕获 get_freshness 回包的正典 📅 行（metric 支才有 line 字段）。不捕获的话：模型转述
-        // 该行会被 message_sending 钩子剥掉、又没有捕获可重附 ⇒ 新鲜度行静默丢失（决策 D-F1）。
-        (result, sessionKey, runId) => {
-          if (!result) return;
-          const line = typeof result.line === "string" && result.line ? result.line : undefined;
-          if (line) freshnessStore.capture(sessionKey, { freshness: line }, runId);
-        },
-      ),
-      { name: FRESHNESS_DEF.name },
-    );
+        } })],
+      ["freshness", (p, userId) =>
+        callPlatform({ apiBase, channelKey: CHANNEL_KEY, userId, path: "/toolbox", method: "POST", body: {
+          tool: "get_freshness", args: { ...(typeof p.scope === "string" && p.scope ? { scope: p.scope } : {}) },
+        } })],
+    ]);
+
+    const OBSERVERS = new Map([
+      ["query", (result, sessionKey, runId) => {
+        if (!result) return;
+        const freshness = typeof result.freshness_line === "string" && result.freshness_line ? result.freshness_line : undefined;
+        const scope = typeof result.scope_line === "string" && result.scope_line ? result.scope_line : undefined;
+        if (freshness || scope) freshnessStore.capture(sessionKey, { freshness, scope }, runId);
+      }],
+      ["query_detail", (result, sessionKey, runId) => {
+        if (!result) return;
+        const scope = typeof result.scope_line === "string" && result.scope_line ? result.scope_line : undefined;
+        if (scope) freshnessStore.capture(sessionKey, { scope }, runId);
+      }],
+      ["freshness", (result, sessionKey, runId) => {
+        if (!result) return;
+        const line = typeof result.line === "string" && result.line ? result.line : undefined;
+        if (line) freshnessStore.capture(sessionKey, { freshness: line }, runId);
+      }],
+    ]);
+
+    for (const raw of TOOL_DEFS) {
+      const { id, ...def } = raw; // id 只用于查传输/观察器，不交给 openclaw（防网关拒绝未知字段）
+      const run = ENDPOINTS.get(id);
+      if (run === undefined) throw new Error(`data-query: 工具 ${id} 没有传输实现`);
+      api.registerTool(factory(def, run, OBSERVERS.get(id)), { name: def.name });
+    }
+
     // 新鲜度行确定性附加（strip-then-append，天然去重）。钩子注册方法按 zh-thinking 插件
     // 同款口径用 api.on（2026.9.9 实测公开方法）；拿不到就跳过并留诊断日志——工具仍可用，
     // 只退回「模型自附」的旧行为，绝不让插件装载失败。
