@@ -1,9 +1,58 @@
 // render.test.ts — 正文渲染的纯判据。
 import { describe, expect, it } from 'vitest'
 import { CONTRACT } from './contract'
-import { contractView, guideInvariants, renderInstructions, renderSkill } from './render'
+import {
+  contractView, guideInvariants, renderInstructions, renderSkill, renderText,
+  type ContentReader,
+} from './render'
 
-describe('renderSkill', () => {
+/** 注入式 content 读取器：测试可给任意桩文本，不碰真实文件。 */
+const readerOf = (files: Record<string, string>): ContentReader => (rel) => {
+  const text = files[rel]
+  if (text === undefined) throw new Error(`test reader: 缺文件 ${rel}`)
+  return text
+}
+const emptyReader = readerOf({})
+
+describe('renderText（纯函数，注入 reader）', () => {
+  it('{{today}} 允许出现并被替换', () => {
+    expect(renderText('今天是 {{today}}', 'mcp', { today: '2026-01-02' }, emptyReader))
+      .toBe('今天是 2026-01-02')
+  })
+
+  it('正文含 {{today}} 但缺 today → 抛错（不静默渲染成空日期）', () => {
+    expect(() => renderText('今天是 {{today}}', 'mcp', {}, emptyReader))
+      .toThrow(/未注入 opts\.today/)
+  })
+
+  it('未知工具占位符 → 抛错', () => {
+    expect(() => renderText('{{tool:nope}}', 'mcp', {}, emptyReader))
+      .toThrow(/没有工具 nope/)
+  })
+
+  it('非法 include → 抛错（不读文件）', () => {
+    expect(() => renderText('{{include:../secret.md}}', 'mcp', {}, emptyReader))
+      .toThrow(/非法 include \.\.\/secret\.md/)
+  })
+
+  it('include 深度超限 → 抛错', () => {
+    const self: ContentReader = () => '{{include:a.md}}'
+    expect(() => renderText('{{include:a.md}}', 'mcp', {}, self))
+      .toThrow(/include 深度超限/)
+  })
+
+  it('未闭合占位符 {{tool:query → 抛错', () => {
+    expect(() => renderText('{{tool:query', 'mcp', {}, emptyReader))
+      .toThrow(/未解析占位符/)
+  })
+
+  it('空占位符 {{}} → 抛错', () => {
+    expect(() => renderText('{{}}', 'mcp', {}, emptyReader))
+      .toThrow(/未解析占位符/)
+  })
+})
+
+describe('renderSkill（真实 content/*.md）', () => {
   it('mcp 正文包含七步工作流、四行硬约束、注入日期', () => {
     const text = renderSkill('mcp', { today: '2026-01-02' })
     expect(text).toContain('今天是 2026-01-02')
@@ -19,6 +68,20 @@ describe('renderSkill', () => {
   it('渲染结果不含未解析占位符', () => {
     expect(renderSkill('mcp', { today: '2026-01-02' })).not.toContain('{{')
     expect(renderInstructions()).not.toContain('{{')
+  })
+})
+
+describe('guideInvariants', () => {
+  it('恰 4 行', () => {
+    expect(guideInvariants()).toHaveLength(4)
+  })
+})
+
+describe('renderInstructions', () => {
+  it('含契约里的 guide 工具名（不硬编码）', () => {
+    const guideName = CONTRACT.tools.find((t) => t.id === 'guide')?.channels.mcp?.name
+    expect(guideName).toBeDefined()
+    expect(renderInstructions()).toContain(guideName!)
   })
 })
 

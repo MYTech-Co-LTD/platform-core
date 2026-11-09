@@ -17,7 +17,7 @@ import { callTool, legacyMetricTools, listAnalystTools } from '../domain/toolbox
 import { buildToolboxDeps } from '../domain/toolbox/all'
 import '../domain/toolbox/all'
 import { contractView } from '../skill/render'
-import { faceOf } from '../skill/contract'
+import { faceOf, type ContractTool } from '../skill/contract'
 import type { ModuleHono, RouteCtx } from './context'
 import { registerMcpEndpoint } from './mcp-rpc'
 import type { McpDeps, McpToolResult, McpToolSet } from './mcp-rpc'
@@ -25,31 +25,50 @@ import type { McpDeps, McpToolResult, McpToolSet } from './mcp-rpc'
 /** 分析师面的仓库执行器：只读池（default_transaction_read_only=on）。测试经 McpDeps.wh 注入替身。 */
 const readonlyWh = () => (sql: string) => runWarehouseSql(analystPool(), sql)
 
+/** MCP tools/list 条目（协议字段）。outputSchema 缺省即省略（契约没声明就不合成）。 */
+interface ListEntry {
+  name: string
+  title: string
+  description: string
+  inputSchema: Record<string, unknown>
+  outputSchema?: Record<string, unknown>
+  annotations: { readOnlyHint: boolean }
+}
+
 /**
- * 分析师面工具 → tools/list 条目。**非 MCP 规范字段不外泄**（requiredScope/mutating/group 只经
- * `data_harness_catalog` 的声明面输出）——工具面与声明面分开，前者按协议、后者按治理。
+ * 契约工具 → tools/list 条目（分析师面与静态工具共用一份 shape）。
+ * **非 MCP 规范字段不外泄**（requiredScope/mutating/group 只经 `data_harness_catalog` 的
+ * 声明面输出）——工具面与声明面分开，前者按协议、后者按治理。
  */
-function analystListEntries(): Record<string, unknown>[] {
-  return listAnalystTools().map((t) => ({
-    name: t.name, title: t.title, description: t.description,
-    inputSchema: t.inputSchema, outputSchema: t.outputSchema, annotations: t.annotations,
-  }))
+function toListEntry(t: ContractTool): ListEntry {
+  const face = faceOf(t, 'mcp')
+  return {
+    name: face.name, title: t.title, description: face.description,
+    inputSchema: face.inputSchema, outputSchema: face.outputSchema, annotations: t.annotations,
+  }
+}
+
+/** 分析师面工具 → tools/list 条目。 */
+function analystListEntries(): ListEntry[] {
+  return contractView('mcp').filter((t) => t.analyst).map(toListEntry)
 }
 
 // 下钻工具（spec 2026-10-21 §2.4）：与 /query/detail 同一 runDetailQuery——授权核心同链。
 // **静态**（不随指标物化）：tools/list 恒在——工具的存在不是存在性探针，该指标支不支持
 // 下钻是**能力陈述**，只出现在调用回包里（denied/no_detail_binding，isError=true）。
 /** 静态附加工具（analyst=false 且声明了 mcp 通道）——query_detail 在这里。 */
-const STATIC_MCP_TOOLS = contractView('mcp')
-  .filter((t) => !t.analyst)
-  .map((t) => {
-    const face = faceOf(t, 'mcp')
-    return {
-      name: face.name, title: t.title, description: face.description,
-      inputSchema: face.inputSchema, outputSchema: face.outputSchema ?? { type: 'object' },
-      annotations: t.annotations,
-    }
-  })
+const STATIC_MCP_TOOLS = contractView('mcp').filter((t) => !t.analyst).map(toListEntry)
+
+/**
+ * 装载期守卫：每个静态工具都必须有 call 分支。否则 tools/list 里看得见、call 却会落到
+ * legacy / 裸 id 回退——静默错分，比少一个工具更难发现。
+ */
+const STATIC_TOOL_HANDLERS = new Set(['query_detail'])
+for (const t of STATIC_MCP_TOOLS) {
+  if (!STATIC_TOOL_HANDLERS.has(t.name)) {
+    throw new Error(`/mcp: 静态工具 ${t.name} 没有 call 分支（tools/list 有、call 会落到 legacy）`)
+  }
+}
 
 const readToolset: McpToolSet = {
   serverName: 'platform-data-mcp',

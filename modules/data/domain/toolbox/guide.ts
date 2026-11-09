@@ -11,9 +11,9 @@ import { guideInvariants, renderSkill } from '../../skill/render'
  * ⇒ 机检钉同源）。措辞必须通道中性：不出现任何通道专属工具名；通道特有机制（A 的
  * freshness_line 附行、C 的 📅 传输层自动附加）留各通道本地文案，不进这里。
  *
- * ⚠️ 刻意在模块加载期 eager 读取 content/shared.md：这四行是安全关键约束，构建产物缺
- * shared.md 时必须 fail-fast（起不来），而不是静默退化成三行/零行。guideImpl 的 try/catch
- * 只兜渲染期错误（坏占位符/非法 include），不掩盖缺失的构建资产。
+ * ⚠️ 加载期只对 content/shared.md 做 eager fail-fast：这四行是安全关键约束，构建产物缺
+ * shared.md 时必须起不来，而不是静默退化成三行/零行。content/mcp.md 是调用期读取
+ * （renderSkill），缺失时由 guideImpl 的 try/catch 转成工具级 guide_unavailable。
  */
 export const GUIDE_INVARIANTS: readonly string[] = guideInvariants()
 
