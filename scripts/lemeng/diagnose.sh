@@ -209,7 +209,7 @@ lake_read_sql() { # $1=bizday $2=hour $3=system_book → 精读**该小时**的 
   if [ "${LAKE_LAYOUT:-hour}" = "day" ]; then
     # 天文件：同样是**单文件精读**；hour 是载荷列（契约列，整数），按它过滤出这一小时。
     # ⚠️ 两侧都 CAST：$2 可能是零填充的 '03'，直接比较在 DuckDB 里会被当字符串/八进制。
-    printf "SELECT count(*) AS n_rows, count(DISTINCT batch_id) AS n_batches FROM read_parquet('s3://%s/lemeng/retail_order_line/system_book=%s/bizday=%s/all.parquet') WHERE CAST(hour AS INTEGER) = CAST('%s' AS INTEGER);" \
+    printf "SELECT count(*) AS n_rows, count(DISTINCT batch_id) AS n_batches FROM read_parquet('s3://%s/lemeng/retail_order_line/_DAY_DATA/system_book=%s/bizday=%s/all.parquet') WHERE CAST(hour AS INTEGER) = CAST('%s' AS INTEGER);" \
       "$ZOS_BUCKET" "$3" "$1" "$2"
   else
     printf "SELECT count(*) AS n_rows, count(DISTINCT batch_id) AS n_batches FROM read_parquet('s3://%s/lemeng/retail_order_line/system_book=%s/bizday=%s/hour=%s/all.parquet');" \
