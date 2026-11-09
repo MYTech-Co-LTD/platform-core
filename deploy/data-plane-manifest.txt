@@ -59,3 +59,4 @@ deploy/oo-alert-registry.txt ${REPO}/deploy/oo-alert-registry.txt 0644
 scripts/lemeng/materialize.sh /opt/lemeng-materialize.sh 0755
 scripts/lemeng/dbt-failed-nodes.py ${REPO}/scripts/lemeng/dbt-failed-nodes.py 0755
 scripts/lemeng/emit-probe.py /opt/lemeng-emit-probe.py 0755
+scripts/lemeng/console-gc.sh /opt/lemeng-console-gc.sh 0755
