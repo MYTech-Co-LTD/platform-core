@@ -986,6 +986,28 @@ agent 把 propose 回包**原样回传**，服务端无状态。WYSIWYG：PR 内
 PAT 最小权限（单仓 contents:write + pull_requests:write），只在 server 行 env。
 审计：`params: args` 整包入库，与 `propose_*` 现状同口径。
 
+### 2.9.1 租户语义自治（2026-11-09 拍板）
+
+**决定**：租户可以写**自己 org 的声明**（新建 + 覆盖平台口径），**即时生效、不走 PR、不部署**；
+平台 L1（`org='platform'`）仍是共享底座，本轮不改 L1 同步 job，也不做平台 L1 的运行时直写。
+设计与验收：`docs/superpowers/specs/2026-11-09-tenant-semantic-autonomy-design.md`。
+
+**两条写入面**（均在 `/mcp-manage` / `data:manage` + 写总闸之后）：
+- `upsert_metric_declaration`：新建租户声明（新 id，`basis='declared'`，与 L1 同一编译器/校验链），
+  新建即时可用（`certified='draft'`，不动任何现有数字）；
+- `override_metric_caliber`：对已存在的 L1 id 建本 org 覆盖行（`override_of = id`），
+  **草稿 → 管理员确认 → 生效**（D6：修改已生效口径不得静默生效）。
+
+**读侧优先级（本次唯一改动的核心不变式）**：`loadMergedCatalog` 现行「L2 撞 L1 的 id ⇒ 丢弃 L2」
+改为「本 org 存在 `override_of` 命中该 id 的行 ⇒ 覆盖行胜出、L1 行不对本 org 输出」；
+**普通** L2 撞名仍丢弃（保留「L2 只能 refine、不能顶掉 L1」的安全面）。四条消费通道仍全部经
+`loadMergedCatalog`，不新增第二份合并逻辑。
+
+**安全不变式**：租户声明只收**声明**、不收自由 SQL（唯一编译点不变）；relation 必须 ∈ L1 已用
+relation 集合；敏感列必须带 `mask`、`required_scope` 缺失即拒写；写前 `EXPLAIN` 校验；
+`org` 由会话强制注入（租户不能写别家、也不能写 `org='platform'`）；每次写入与 `metric_audit` 同事务，
+`version` 单调 + 乐观冲突；回答面必须标注「本租户口径」。
+
 ## 3. 宿主装配链与 I-1 顺序契约
 
 `apps/server/src/app.ts` 里带标号的 **11 段（①–⑪）**，外加一个未编号的 **④.5 请求体上限**
