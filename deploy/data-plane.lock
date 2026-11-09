@@ -1,4 +1,4 @@
-sha256-of-rest c9b9fff5a7f1ca1e90b06ee963fb3b8a80dcb8128352fbb052562a91698af7f3
+sha256-of-rest f29b957ad4b07d87a33809c4f53041a4b669d6473f2283ee8f8d7cc3544ad277
 08938c10c6b4a688c8afda6cd7d1ad3dbf2c20f83cf8c4e7023055ad34eddc70 contracts/README.md ${REPO}/contracts/README.md 0644
 fcc8189e1012d5fbb8e2505025bed637dd01c7b4465ab86125d3eaa7f330eff3 contracts/common/_schema.schema.json ${REPO}/contracts/common/_schema.schema.json 0644
 1730119518c3371f3c2ff3492f4c15cd731688047c6d40805ec4d2c65892f3ff contracts/common/_template.contract.json ${REPO}/contracts/common/_template.contract.json 0644
@@ -53,7 +53,7 @@ da5abc3cc66004913d12fede2055d4b4cfa537bebba36178c5363a73c381c74c dbt/models/leme
 94151eb99f981a6ddf84b18a690c892c0bc03fa49db17f706e3fb7f8841de7d8 dbt/models/lemeng/marts/fct_inventory_snapshot.sql ${REPO}/dbt/models/lemeng/marts/fct_inventory_snapshot.sql 0644
 b1fcb4cf7628741f218885a39c9872963779d699c3856df8a01f6654380af69e dbt/models/lemeng/marts/fct_loss_adjustment.sql ${REPO}/dbt/models/lemeng/marts/fct_loss_adjustment.sql 0644
 9d07d0d42bea149606cfa7ccf5256e26eaff1cbeb57fecf6bf2b13244ca19459 dbt/models/lemeng/marts/fct_member_summary.sql ${REPO}/dbt/models/lemeng/marts/fct_member_summary.sql 0644
-26f7ea6819c413d944b7b481199bf34df3db846202eef17eae05d20ede74183c dbt/models/lemeng/marts/fct_order_event.sql ${REPO}/dbt/models/lemeng/marts/fct_order_event.sql 0644
+96dc74fe1f1ae81472c337ee2726c3db1c555ea62def8b38b65014e267e9e2c0 dbt/models/lemeng/marts/fct_order_event.sql ${REPO}/dbt/models/lemeng/marts/fct_order_event.sql 0644
 6912d7e6b16af1178cacf88940fcd902a4066c43a3f1caeb63314292f529a2c5 dbt/models/lemeng/marts/fct_outbound_region.sql ${REPO}/dbt/models/lemeng/marts/fct_outbound_region.sql 0644
 b7f3fe4caa36deff37a7b6d3e46d40c20ef0fd473ff4a1481a34827fb7856059 dbt/models/lemeng/marts/fct_purchase.sql ${REPO}/dbt/models/lemeng/marts/fct_purchase.sql 0644
 b8ed8d27a21fa6162347a3ca3b4e522c253f7f8415cc7f5f87efac74ca0018f1 dbt/models/lemeng/marts/fct_purchase_concentration.sql ${REPO}/dbt/models/lemeng/marts/fct_purchase_concentration.sql 0644
