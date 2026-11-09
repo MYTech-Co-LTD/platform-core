@@ -426,7 +426,7 @@
     "enabled": true,
     "kind": {
       "type": "cron",
-      "expr": "0 5 * * *"
+      "expr": "5 5,9 * * *"
     },
     "timezone": "Asia/Shanghai",
     "misfire": "skip",
