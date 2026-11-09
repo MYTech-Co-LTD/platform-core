@@ -198,6 +198,12 @@ rb_emit() { # stdin → stdout（至多 RB_MAX_ROWS 行）；超限 ⇒ 打 RB_T
 rb_run() { # $1=SQL [$2=duckdb 旗标（如 -csv）] → duckdb 原始输出到 stdout；引擎非零退出原样透传
   # rb 通路的**单一调用形状**（别再抄第五份）：在 duckle 容器内跑 readback-helper.sh（RB_HELPER 挂成
   # /rb.sh）——凭据由容器 env 展开，值不进命令行、不进日志（helper 的存在理由，见其头注）。
+  # helper 必须是**普通文件**：2026-11-09 实测，落点被一个空目录占位时，docker 照挂、`sh /rb.sh`
+  # 无输出且 exit 0 ⇒ 上层只看到「回读输出无数据行」，把「落盘坏了」误报成「湖的形状变了」。
+  if [ ! -f "$RB_HELPER" ]; then
+    echo "RB_FAILED: 回读 helper 不是普通文件（${RB_HELPER}）——落盘坏了（bind-mount 误建目录？），先 sync 修" >&2
+    return 1
+  fi
   $COMPOSE run --rm -e ZOS_BUCKET -e ZOS_ENDPOINT -e ZOS_REGION -e ZOS_ACCESS_KEY -e ZOS_SECRET_KEY \
     -e RB_FLAGS="${2:-}" -e RB_QUERY="$1" -v "$RB_HELPER":/rb.sh:ro --entrypoint sh duckle -c 'sh /rb.sh'
 }
