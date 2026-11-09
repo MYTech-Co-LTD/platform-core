@@ -1,4 +1,4 @@
-{{ config(tags=['audit']) }}
+{{ config(tags=['audit','audit_window']) }}
 -- audit_lemeng__outbound__region_conservation — 战区出库面**不得增删金额**（#1181）。
 --
 -- 本模型只做归因（换战区、分通道），不重算：`Σ(fct_outbound_region.r_net)` 按
@@ -12,6 +12,7 @@ with a as (
            sum(order_count)::bigint  as order_count,
            sum(line_count)::bigint   as line_count
     from {{ ref('fct_outbound_region') }}
+    where bizday >= date '{{ window_start_date() }}'
     group by 1, 2
 ),
 b as (
@@ -20,6 +21,7 @@ b as (
            sum(order_count)::bigint  as order_count,
            sum(line_count)::bigint   as line_count
     from {{ ref('fct_hq_outbound') }}
+    where bizday >= date '{{ window_start_date() }}'
     group by 1, 2
 )
 select coalesce(a.system_book, b.system_book) as system_book,
