@@ -51,7 +51,7 @@ hasnt "$(lake_read_sql 2026-09-27 17 3120)" "hive_partitioning"
 # 为什么必须有这条：按天 heal 之后小时文件会被天文件取代；diagnose 若仍点名单 hour 文件，
 # 复核读到的是**过时的旧小时文件** ⇒ 误判「缺口还在」（heal 永远修不完）。
 ok "$(LAKE_LAYOUT=day lake_read_sql 2026-09-27 17 3120)" \
-   "SELECT count(*) AS n_rows, count(DISTINCT batch_id) AS n_batches FROM read_parquet('s3://recon-test-bucket/lemeng/retail_order_line/system_book=3120/bizday=2026-09-27/all.parquet') WHERE CAST(hour AS INTEGER) = CAST('17' AS INTEGER);"
+   "SELECT count(*) AS n_rows, count(DISTINCT batch_id) AS n_batches FROM read_parquet('s3://recon-test-bucket/lemeng/retail_order_line/_DAY_DATA/system_book=3120/bizday=2026-09-27/all.parquet') WHERE CAST(hour AS INTEGER) = CAST('17' AS INTEGER);"
 hasnt "$(LAKE_LAYOUT=day lake_read_sql 2026-09-27 17 3120)" "hive_partitioning"
 # 默认（未声明）必须仍是 hour 形态——未迁移的面不受影响
 ok "$(LAKE_LAYOUT=hour lake_read_sql 2026-09-27 17 3120)" \
