@@ -90,11 +90,14 @@ function sensitivityMap(): Map<string, string> {
 
 /** 写前可执行性：warehouse 可用时跑 `EXPLAIN`（只出计划，不扫数据；pg_duckdb 实测支持）。 */
 async function explainOrReject(
-  deps: TenantDeclarationDeps, selectSql: string,
+  deps: TenantDeclarationDeps, selectSql: string, groupBy: string,
 ): Promise<TenantDeclarationOutcome | null> {
   if (deps.warehouse === undefined) return null
+  // ⚠️ 必须补上 `GROUP BY`：L1/租户声明的 select_sql 形状**不含** GROUP BY（授权层在查询期拼），
+  // 直接 EXPLAIN 裸 select_sql 会因「非聚合列不在 GROUP BY」假失败（2026-11-09 真机烟测暴露）。
+  const sql = groupBy === '' ? selectSql : `${selectSql} group by ${groupBy}`
   try {
-    await deps.warehouse.query(`explain ${selectSql}`)
+    await deps.warehouse.query(`explain ${sql}`)
     return null
   } catch (e) {
     return { ok: false, http: 400, error: 'SQL_NOT_EXECUTABLE', extra: { detail: (e as Error).message.slice(0, 300) } }
@@ -199,7 +202,7 @@ export async function createTenantDeclaration(
   const d = compiled.compiled
   const maskIssue = applyTenantDefaultMask(e, d)
   if (maskIssue !== null) return maskIssue
-  const sqlIssue = await explainOrReject(deps, d.selectSql)
+  const sqlIssue = await explainOrReject(deps, d.selectSql, d.groupBy)
   if (sqlIssue !== null) return sqlIssue
 
   // ⑤ 同 org 同 id 已存在 ⇒ 409（不静默改既有口径；修改是另一条语义）
@@ -302,7 +305,7 @@ export async function createOverrideDeclaration(
   const d = compiled.compiled
   const maskIssue = applyTenantDefaultMask(e, d)
   if (maskIssue !== null) return maskIssue
-  const sqlIssue = await explainOrReject(deps, d.selectSql)
+  const sqlIssue = await explainOrReject(deps, d.selectSql, d.groupBy)
   if (sqlIssue !== null) return sqlIssue
   // 覆盖不得**降低**平台口径的门：L1 有 required_scope ⇒ 覆盖必须同码（否则等于给没有该码的人开门）。
   if (l1.requiredScope !== null && d.requiredScope !== l1.requiredScope) {
