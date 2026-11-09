@@ -1,4 +1,4 @@
-sha256-of-rest 7f08daed6484b3f5ead42665a56806c7e82a01b56ac11e0f43eb05fbbc013f84
+sha256-of-rest 573477ea806c9f56d58e2ef8b049b50c5260449031b9185be45065f6c6b90244
 08938c10c6b4a688c8afda6cd7d1ad3dbf2c20f83cf8c4e7023055ad34eddc70 contracts/README.md ${REPO}/contracts/README.md 0644
 fcc8189e1012d5fbb8e2505025bed637dd01c7b4465ab86125d3eaa7f330eff3 contracts/common/_schema.schema.json ${REPO}/contracts/common/_schema.schema.json 0644
 1730119518c3371f3c2ff3492f4c15cd731688047c6d40805ec4d2c65892f3ff contracts/common/_template.contract.json ${REPO}/contracts/common/_template.contract.json 0644
@@ -109,7 +109,7 @@ de9ccb666c60518df42e72c49887727c2879e75dcb0b1a08b6d988153e60136d dbt/seeds/x01_c
 8d039ed687c993221698878e646b6425b064157761da717e7bc84d2c39c463a3 dbt/seeds/x08_thresholds.csv ${REPO}/dbt/seeds/x08_thresholds.csv 0644
 741415c81148254c2479a4b0bf41d7ad2970aab7b711fae8ce7e8de314f49c5e dbt/semantics/dimensions.yml ${REPO}/dbt/semantics/dimensions.yml 0644
 5a3a50536b2039cc7d08ce202fa668d7bed6e32f71c40a921caa9706ded35a16 dbt/semantics/invariants.yml ${REPO}/dbt/semantics/invariants.yml 0644
-d005ad740d1ee2cd55c2f1c4f720da3cac49fccce87700b8aa00ef677afec786 dbt/semantics/l1_metrics.yml ${REPO}/dbt/semantics/l1_metrics.yml 0644
+ac04a389d5c03f84417f9dceab7e481718cddd76b685f58cf0ad22dea957c962 dbt/semantics/l1_metrics.yml ${REPO}/dbt/semantics/l1_metrics.yml 0644
 682241e190dec4a95a4bc1705c0701a09443c410b7924c4b225ed18e36e2f632 dbt/semantics/relations.yml ${REPO}/dbt/semantics/relations.yml 0644
 cf080810e5530a9cb61a03bf4315d26ec4b447e800458e63c858daa7c05484c9 dbt/semantics/table-owners.yml ${REPO}/dbt/semantics/table-owners.yml 0644
 0e5597bb1d43db3237445787e71944f86669d8542b3e473af30f0fe1b0f1b5ea dbt/tests/lemeng/assert_dim_client_region_unique.sql ${REPO}/dbt/tests/lemeng/assert_dim_client_region_unique.sql 0644
