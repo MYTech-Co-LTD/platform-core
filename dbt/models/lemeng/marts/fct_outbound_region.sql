@@ -16,17 +16,20 @@
 --   为「多一个战区口径」去改它 = 动认证面。本模型只读它、**不重算任何金额**（`r_net/order_count/
 --   line_count` 原样求和），守恒由 `audit_lemeng__outbound__region_conservation` 钉住。
 --
--- 【粒度】`(system_book, bizday, channel_type, region_l1_bucket)`。
+-- 【粒度】`(system_book, bizday, channel_type, region_l1_bucket, client_fid)`。
 --   一级战区桶而不是 region_id：两账套的 region_id 空间不相交（3120 的 25383 ≠ 64188 的 25426），
 --   但共享同一套一级名（东部/南部/西部/中部战区）⇒ **只有 region_l1 能跨账套合并**（同
 --   `lemeng:contribution:region_l1_net` 的 `region_l1_bucket` 口径，空值显式落 `未归属`）。
+--   ⚠️ `client_fid` 是 2026-11-09 加的第 5 键（#1766「外部批发要能按客户下钻」）：wholesale 行
+--   按客户拆开，transfer 行客户恒 NULL（NULL 在 GROUP BY 里归一组，配送侧不受影响）。
+--   **扩键改历史行的落法 ⇒ 必须一次 `--full-refresh`**（增量 7 天窗滚不到旧分区）。
 --
 -- 【join 语义】全部 `left join`：宁可落 `未归属` 也不丢行——丢行 = 静默少数，守恒测试会红但
 --   根因难查；`未归属` 是**可见**的缺口。
 {{
     config(
         materialized='incremental',
-        unique_key=['system_book', 'bizday', 'channel_type', 'region_l1_bucket'],
+        unique_key=['system_book', 'bizday', 'channel_type', 'region_l1_bucket', 'client_fid'],
         incremental_strategy='delete+insert',
         on_schema_change='sync_all_columns'
     )
@@ -63,6 +66,9 @@ select
     end::varchar as channel_type,
     -- 一级战区桶：transfer 用门店战区；wholesale 用客户本体门店战区；都没有 ⇒ 未归属
     coalesce(r.region_l1, '未归属')::varchar as region_l1_bucket,
+    -- 客户键（#1766）：wholesale 行是批发客户；transfer 行恒 NULL（门店配送无客户）。
+    -- 客户名不在本表物化——展示层按 `client_fid` 贴 `client_name`（#857/#1760）。
+    o.client_fid::varchar as client_fid,
     sum(o.r_net)::numeric(20,2)      as r_net,
     sum(o.order_count)::bigint       as order_count,
     sum(o.line_count)::bigint        as line_count
@@ -73,4 +79,4 @@ left join dc
 left join dr r
        on r.system_book = case when o.domain = 'transfer' then o.system_book else dc.home_system_book end
       and r.region_id  = case when o.domain = 'transfer' then o.region_id  else dc.client_region_id end
-group by 1, 2, 3, 4, 5
+group by 1, 2, 3, 4, 5, 6

@@ -689,9 +689,10 @@ metrics:
       **出库金额**的第二条腿（2026-11-09 用户裁决）：`fct_outbound_region` 里
       `channel_type='外部批发'` 的 `r_net`（外部客户 + **体系内但不在四大战区**的门店，后者按用户裁决归外部）。
       不含内部批发（体系内四战区）——它与 transfer 镜像，不进本指标。
-      粒度 = 账套 × 业务日。
+      粒度 = 账套 × 业务日 × 客户（`client_fid`，2026-11-09 加：#1766「外部批发按客户下钻」；
+      回包按客户分组时展示层自动贴 `client_name`，#1760）。
     expression: 'sum(case when fct_outbound_region.channel_type = ''外部批发'' then fct_outbound_region.r_net else 0 end)'
-    grain: [system_book, bizday]
+    grain: [system_book, bizday, client_fid]
     owner: data-platform
     tier: experimental
     source: lemeng
