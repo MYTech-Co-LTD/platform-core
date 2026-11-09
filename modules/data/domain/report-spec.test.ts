@@ -104,7 +104,7 @@ describe('B+C schema', () => {
   })
 })
 
-describe('ai_text（AI 生成文本组件，v1 只有 focus=overview）', () => {
+describe('ai_text（AI 生成文本组件，focus=overview/root_cause）', () => {
   const period = { mode: 'custom' as const, from: '2026-10-01', to: '2026-10-19' }
   const ai = { chart: 'ai_text' as const, title: '本月结论', focus: 'overview' as const, span: 24 }
   const line = {
@@ -114,6 +114,7 @@ describe('ai_text（AI 生成文本组件，v1 只有 focus=overview）', () => 
 
   it('ai_text 通过；focus 越界给 UNKNOWN_AI_FOCUS（与未知图型区分开）', () => {
     expect(parseReportSpec({ period, panels: [ai, line] }).ok).toBe(true)
+    expect(parseReportSpec({ period, panels: [{ ...ai, focus: 'root_cause' }, line] }).ok).toBe(true)
     expect(parseReportSpec({ period, panels: [{ ...ai, focus: 'cost' }, line] }))
       .toEqual({ ok: false, code: 'UNKNOWN_AI_FOCUS' })
   })

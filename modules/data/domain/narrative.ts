@@ -82,6 +82,19 @@ const SYSTEM = [
   '不要推测外部原因（天气/竞品/促销），只写数据内可见的构成与需要核对的事项。',
 ].join('\n')
 
+/** `root_cause` 追加段：只在 focus=root_cause 时拼进 system，不改 overview 的既有提示词。 */
+const ROOT_CAUSE_SYSTEM = [
+  '如果 facts.analysis 非空，必须写一段「根因：…」：只引用 analysis.findings 的维度、标签、值和变化量；',
+  '优先用 kind=variance/detail 的 finding，点名「哪个门店/商品/订单/维度值造成了变化」；',
+  'findings 为空、全部是 unavailable、或 analysis 为 null 时，写「根因：当前报表数据不足以分解根因。」，不要猜。',
+  '根因必须落在数据内的维度值/明细行上；不要推测天气/竞品/促销等外部原因。',
+  '全文不超过 500 个汉字；末尾单独一行写：数据截至 <dataAsOf>（缺失写「新鲜度未知」）。',
+].join('\n')
+
+function systemOf(focus: AiTextPanel['focus']): string {
+  return focus === 'root_cause' ? `${SYSTEM}\n${ROOT_CAUSE_SYSTEM}` : SYSTEM
+}
+
 /**
  * 允许数字集合。**只收事实包里出现过的格式化值**（`facts.numbers` 已含期间日期），
  * 再按模型常见的书写变体归一化：
@@ -146,8 +159,10 @@ export function badNumbers(text: string, allowed: Set<string>): string[] {
 
 function userPrompt(facts: FactBundle, strictNote = ''): string {
   return [
-    `focus=${facts.focus}。请严格按 system 约束写三段。`,
-    '重点：结论首句写当前门店（branchName，缺省 branchNum），再写销售额/订单/客单价与对比；异常写最低销售日、报损最大原因、费用最大正向项与主要冲减项（有负数才写）；行动 2-3 条，带金额/项目名。',
+    `focus=${facts.focus}。请严格按 system 约束写${facts.focus === 'root_cause' ? '四' : '三'}段。`,
+    facts.focus === 'root_cause'
+      ? '重点：先写结论（当前门店/期间的关键值与对比），再写异常，再用 analysis.findings 写「根因」（点名维度值/明细行/变化量），最后写行动。根因只认 findings 里的数，不另做算术。'
+      : '重点：结论首句写当前门店（branchName，缺省 branchNum），再写销售额/订单/客单价与对比；异常写最低销售日、报损最大原因、费用最大正向项与主要冲减项（有负数才写）；行动 2-3 条，带金额/项目名。',
     ...(facts.hasData ? [] : ['facts.hasData=false：只写一句「该期间门店无有效数据（未接入或未物化）」，不要写异常/行动。']),
     ...(strictNote === '' ? [] : [strictNote]),
     `facts=${JSON.stringify(facts)}`,
@@ -184,9 +199,23 @@ export function templateOf(f: FactBundle): string {
     expTop,
     negTop === undefined ? '' : `冲减 ${negTop.label} ${negTop.value}`,
   ].filter((s) => s !== '').join('；')
+  const rootCauseLine = ((): string => {
+    if (f.focus !== 'root_cause') return ''
+    const rc = f.analysis?.findings.find((x) => x.kind !== 'unavailable' && x.rows.length > 0)
+    if (rc === undefined) return '根因：当前报表数据不足以分解根因。'
+    const top = rc.rows[0]!
+    const delta = top.delta === undefined ? '' : `，变化 ${top.delta}`
+    // 有界分析的下一层（胜出维度 → 订单/明细行）：模板也把它带出来，回退时同样能看到根因行。
+    const detail = f.analysis?.findings.find((x) => x.kind === 'detail' && x.rows.length > 0)
+    const detailText = detail === undefined
+      ? ''
+      : `；明细 ${detail.dimension} ${detail.rows[0]!.label}（${detail.rows[0]!.value}）`
+    return `根因：${rc.metricTitle} 主要受 ${rc.dimension} ${top.label} 影响（${top.value}${delta}${detailText}）。`
+  })()
   return [
     `结论：${branchLabel}本期销售额 ${k('销售额')?.current ?? '-'}，订单 ${k('订单数')?.current ?? '-'}，客单价 ${k('客单价')?.current ?? '-'}；会员销售占比 ${k('会员销售占比')?.current ?? '-'}。`,
     `异常：最低销售日 ${minText}；${withDetail(`报损 ${k('报损金额')?.current ?? '-'}`, lossDetail)}；${withDetail(`费用 ${k('费用合计（净费用）')?.current ?? k('费用合计')?.current ?? '-'}`, expDetail)}。`,
+    ...(rootCauseLine === '' ? [] : [rootCauseLine]),
     '行动：① 核对最低销售日是否采集缺口/闭店；② 复盘报损最大原因明细；③ 复盘费用最大两项的投放产出。',
     asOfLine,
   ].join('\n')
@@ -325,7 +354,7 @@ export async function generateNarrative(deps: NarrativeDeps): Promise<NarrativeR
       try {
         for await (const d of model.completeStream(
           [
-            { role: 'system', content: SYSTEM },
+            { role: 'system', content: systemOf(deps.focus) },
             {
               role: 'user',
               content: userPrompt(
@@ -451,7 +480,7 @@ export async function* streamNarrative(
     try {
       for await (const d of model.completeStream(
         [
-          { role: 'system', content: SYSTEM },
+          { role: 'system', content: systemOf(deps.focus) },
           {
             role: 'user',
             content: userPrompt(

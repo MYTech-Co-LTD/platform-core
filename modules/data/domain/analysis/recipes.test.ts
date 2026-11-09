@@ -115,6 +115,13 @@ describe('recipeTargetOf（指标 select_sql → 单列聚合目标）', () => {
     expect(recipeTargetOf(sel('count(distinct branch_num)'))).toMatchObject({ ok: true, measure: { agg: 'count_distinct', column: 'branch_num' } })
   })
 
+  it('关系限定列（L1 声明的真实形态）也可反解：只取最后一段列名', () => {
+    expect(recipeTargetOf(sel('sum(fct_retail_sale.sale_amount)')))
+      .toMatchObject({ ok: true, relation: 'fct_retail_sale', measure: { agg: 'sum', column: 'sale_amount' } })
+    expect(recipeTargetOf(sel('count(distinct fct_retail_sale.branch_num)')))
+      .toMatchObject({ ok: true, measure: { agg: 'count_distinct', column: 'branch_num' } })
+  })
+
   it('复合口径（差/比率/case）明确拒，并指向 explore_query', () => {
     const out = recipeTargetOf(sel('sum(a) - sum(b)'))
     expect(out).toMatchObject({ ok: false, code: 'COMPOSITE_EXPRESSION' })

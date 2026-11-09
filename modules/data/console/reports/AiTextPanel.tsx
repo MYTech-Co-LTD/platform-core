@@ -37,7 +37,7 @@ type Props = {
   reportId: string
   /** 面板在 spec 里的下标（服务端按它定位 `ai_text` 面板与事实包主体）。 */
   panelIndex: number
-  focus: 'overview'
+  focus: 'overview' | 'root_cause'
   /** 当前生效期间；`null` = 规格未声明期间（写侧 `AI_TEXT_REQUIRES_PERIOD` 已拦，这里只是兜底）。 */
   period: PeriodSpec | null
   /** 当前门店（筛选栏覆盖优先，其次规格默认）；缺席 = 不按门店切片。 */

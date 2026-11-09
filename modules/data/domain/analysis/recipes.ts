@@ -57,9 +57,11 @@ export type RecipeTarget =
   | { ok: true; relation: string; measure: { agg: ExploreAgg; column: string } }
   | { ok: false; code: 'COMPOSITE_EXPRESSION'; detail: string }
 
-const SINGLE_AGG_RE = /^(sum|avg|min|max)\s*\(\s*([a-z_][a-z0-9_]*)\s*\)$/i
-const COUNT_DISTINCT_RE = /^count\s*\(\s*distinct\s+([a-z_][a-z0-9_]*)\s*\)$/i
-const COUNT_RE = /^count\s*\(\s*([a-z_][a-z0-9_]*)\s*\)$/i
+// 列名可带**关系限定符**（`sum(fct_retail_sale.net_amount)`）：L1 声明的 expression 逐字
+// 就是这种形态。`explore_query` 的基表列要求裸列名 ⇒ 只取最后一段。
+const SINGLE_AGG_RE = /^(sum|avg|min|max)\s*\(\s*(?:[a-z_][a-z0-9_]*\.)?([a-z_][a-z0-9_]*)\s*\)$/i
+const COUNT_DISTINCT_RE = /^count\s*\(\s*distinct\s+(?:[a-z_][a-z0-9_]*\.)?([a-z_][a-z0-9_]*)\s*\)$/i
+const COUNT_RE = /^count\s*\(\s*(?:[a-z_][a-z0-9_]*\.)?([a-z_][a-z0-9_]*)\s*\)$/i
 
 /**
  * 从指标的 `select_sql` 反解「单列聚合」目标。

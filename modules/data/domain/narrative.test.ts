@@ -50,6 +50,7 @@ const facts: FactBundle = {
     { panel: '费用构成', dimension: 'item', rows: [{ label: '平台补贴', value: '3,000.00' }, { label: '配送费', value: '2,000.00' }] },
   ],
   daily: { min: { day: '2026-10-13', value: '1,024.50' }, max: { day: '2026-10-05', value: '4,800.00' } },
+  analysis: null,
   missing: [],
   numbers: ['51,273.89', '48,000.00', '6.82%', '1,234', '1,200', '2.83%', '41.55', '40.00', '3.88%',
     '23.45%', '320.00', '5,000.00', '210.00', '110.00', '3,000.00', '2,000.00', '1,024.50', '4,800.00',
@@ -381,6 +382,33 @@ describe('templateOf', () => {
     expect(text).toContain('销售额 -')
     expect(text).toContain('门店 92（熊喵曲靖沾益2店）')
     expect(text).toContain('数据截至 新鲜度未知。')
+  })
+
+  it('root_cause：模板带「根因」段，且分析数字进白名单（模型可引用）', async () => {
+    const rootFacts: FactBundle = {
+      ...facts,
+      focus: 'root_cause',
+      analysis: {
+        findings: [{
+          metricId: 'n:sales', metricTitle: '销售额', kind: 'variance', dimension: 'branch_num',
+          rows: [{ label: '92', value: '1,024.50', delta: '-800.00' }],
+        }],
+        numbers: ['1,024.50', '-800.00', '92'],
+        dataAsOf: facts.dataAsOf,
+        hash: 'analysis-hash',
+        tried: [],
+      },
+      numbers: [...facts.numbers, '-800.00', '92'],
+    }
+    const text = templateOf(rootFacts)
+    expect(text).toContain('根因：销售额 主要受 branch_num 92 影响（1,024.50，变化 -800.00）')
+    // 模型输出引用分析数字 ⇒ 数字校验通过（不是越界）
+    const { model, calls } = fakeModel([{ content: '根因：门店 92 的销售额为 1,024.50，变化 -800.00。' }])
+    const { pool } = fakePool()
+    const res = await generateNarrative(depsOf(pool, { model, facts: rootFacts, focus: 'root_cause' }))
+    expect(res.fallback).toBe(false)
+    expect(calls).toHaveLength(1)
+    expect(calls[0]!.messages[0]!.content).toContain('根因')
   })
 
   it('缺日极值/拆解时不留空括号（-（） / -（- -））', () => {

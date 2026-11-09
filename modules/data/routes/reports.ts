@@ -1184,6 +1184,7 @@ export function registerReports(r: ModuleHono, ctx: RouteCtx): void {
         // 的源裁剪输入必须显式给（见 `FactsDeps.adoptedSources`）。
         adoptedSources: new Set(c.get(TENANT_SOURCES) ?? []),
         execute: ctx.execute,
+        ...(ctx.exploreExec === undefined ? {} : { exploreExec: ctx.exploreExec }),
         reportTitle: title,
         specKey,
       },

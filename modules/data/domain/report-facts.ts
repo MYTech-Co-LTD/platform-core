@@ -22,6 +22,8 @@ import { createHash } from 'node:crypto'
 import type { Pool } from 'pg'
 import type { Requester, SlicingSpec, SliceOrderBy } from './authz'
 import { runQuery, type QueryDeps, type SqlExecutor } from './query-service'
+import { buildRootCause, type RootCauseBundle } from './report-root-cause'
+import type { ToolboxDeps } from './toolbox/registry'
 import {
   compareRangeOf, comparisonCovered, coverageArgsOf, coverageOfQueryResult, coverageSlicing,
   panelArgsOf, panelQueryBodyOf, type CoverageInfo, type DataPanel,
@@ -40,6 +42,8 @@ export interface FactsDeps {
   adoptedSources: ReadonlySet<string>
   /** 假仓库执行器（测试缝）；缺省 = 真仓库池。 */
   execute?: SqlExecutor
+  /** 参数化只读执行器（根因探针的 explore_recipe 用；测试缝）；缺省 = analystPool。 */
+  exploreExec?: ToolboxDeps['exploreExec']
   /** 报表标题（进 facts、进提示词）。 */
   reportTitle: string
   /** 规格键（`published:3` / `draft:5`），缓存与审计的溯源维度。 */
@@ -91,6 +95,11 @@ export interface FactBundle {
   numbers: string[]
   /** 期间日期（`from` / `to`），既进白名单也单独给提示词用。 */
   dates: string[]
+  /**
+   * 根因探针结果（仅 `focus='root_cause'`；`overview` 恒 null）。
+   * 数字已并入 `numbers`；narrative 只把它当事实，不重新查数。
+   */
+  analysis: RootCauseBundle | null
   /** 规范化 JSON 的 sha256 —— 缓存键的一部分：同一事实必须得到同一串。 */
   factsHash: string
 }
@@ -441,9 +450,27 @@ export async function buildFacts(
   for (const b of breakdowns) for (const r of b.rows) if (r.value !== '-') addNumber(r.value)
   for (const d of [daily.min, daily.max]) if (d !== null) addNumber(d.value)
 
+  const dataAsOf = earliestDataAsOf(asOfList)
+  // 根因探针只在 `focus='root_cause'` 时跑：overview 的既有行为/缓存键一字不动。
+  // 探针只走 `runDetailQuery` / `executeExplore`（与 /query、下钻、分析师面同一授权链）。
+  const analysis = ai.focus === 'root_cause'
+    ? await buildRootCause(
+        {
+          pool: deps.pool, org: deps.org, requester: deps.requester,
+          adoptedSources: deps.adoptedSources, execute: deps.execute,
+          ...(deps.exploreExec === undefined ? {} : { exploreExec: deps.exploreExec }),
+        },
+        spec, range, period.mode,
+        { kpis, breakdowns, daily, dataAsOf },
+      )
+    : null
+  if (analysis !== null) {
+    for (const n of analysis.numbers) if (n !== '' && n !== '-') numbers.add(n)
+  }
+
   // 「有没有数据」是事实，不是推断。注意**全 0 的合成序列不算数据**：无业绩门店的
   // 「连续无业绩天数」仍会返回逐日 0 行（实测店 91 有 31 行 0）；只看「有行」会把空店
-  // 判成有数据。判据：KPI 本期值 / 日极值 / 非零拆解行，任一存在即有数据。
+  // 判成有数据。判据：KPI 本期值 / 日极值 / 非零拆解行 / 根因探针行，任一存在即有数据。
   const nonZero = (s: string): boolean => {
     const n = Number(s.replaceAll(',', ''))
     return Number.isFinite(n) && n !== 0
@@ -451,7 +478,8 @@ export async function buildFacts(
   const hasData =
     kpis.some((k) => k.current !== '-') ||
     breakdowns.some((b) => b.rows.some((r) => nonZero(r.value))) ||
-    daily.min !== null || daily.max !== null
+    daily.min !== null || daily.max !== null ||
+    (analysis?.findings.some((f) => f.rows.length > 0) ?? false)
 
   const facts: Omit<FactBundle, 'factsHash'> = {
     reportTitle: deps.reportTitle,
@@ -461,13 +489,14 @@ export async function buildFacts(
     branchNum: branchNum ?? null,
     branchName: branchInfo.name,
     hasData,
-    dataAsOf: earliestDataAsOf(asOfList),
+    dataAsOf,
     kpis,
     breakdowns,
     daily,
     missing,
     numbers: [...numbers],
     dates,
+    analysis,
   }
   const factsHash = createHash('sha256').update(canonicalJson(facts)).digest('hex')
   return { ...facts, factsHash }
