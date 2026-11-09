@@ -57,6 +57,10 @@ export default definePluginEntry({
       };
     };
 
+    // /toolbox 是 registry 的 HTTP 薄封装：四个工具共用同一请求形状。
+    const toolbox = (tool, args, userId) =>
+      callPlatform({ apiBase, channelKey: CHANNEL_KEY, userId, path: "/toolbox", method: "POST", body: { tool, args } });
+
     // 传输层映射：契约只描述「是什么」，HTTP 路径/回包观察是通道 C 的本地实现。
     // 签名与 factory 的 run 一致：(params, userId, sessionKey)；apiBase/CHANNEL_KEY 闭包捕获。
     const ENDPOINTS = new Map([
@@ -79,29 +83,23 @@ export default definePluginEntry({
           ...(typeof p.offset === "number" ? { offset: p.offset } : {}),
         } })],
       ["search", (p, userId) =>
-        callPlatform({ apiBase, channelKey: CHANNEL_KEY, userId, path: "/toolbox", method: "POST", body: {
-          tool: "search_catalog", args: {
-            q: p.q,
-            ...(typeof p.kind === "string" ? { kind: p.kind } : {}),
-            ...(typeof p.tier === "string" ? { tier: p.tier } : {}),
-          },
-        } })],
+        toolbox("search_catalog", {
+          q: p.q,
+          ...(typeof p.kind === "string" ? { kind: p.kind } : {}),
+          ...(typeof p.tier === "string" ? { tier: p.tier } : {}),
+        }, userId)],
       ["describe_metric", (p, userId) =>
-        callPlatform({ apiBase, channelKey: CHANNEL_KEY, userId, path: "/toolbox", method: "POST", body: {
-          tool: "describe_metric", args: { id: p.id, ...(p.coverage === true ? { coverage: true } : {}) },
-        } })],
+        toolbox("describe_metric", { id: p.id, ...(p.coverage === true ? { coverage: true } : {}) }, userId)],
       ["sample_dimension_values", (p, userId) =>
-        callPlatform({ apiBase, channelKey: CHANNEL_KEY, userId, path: "/toolbox", method: "POST", body: {
-          tool: "sample_dimension_values", args: {
-            metricId: p.metricId, dimension: p.dimension,
-            ...(typeof p.q === "string" && p.q ? { q: p.q } : {}),
-            ...(typeof p.limit === "number" ? { limit: p.limit } : {}),
-          },
-        } })],
+        toolbox("sample_dimension_values", {
+          metricId: p.metricId, dimension: p.dimension,
+          ...(typeof p.q === "string" && p.q ? { q: p.q } : {}),
+          ...(typeof p.limit === "number" ? { limit: p.limit } : {}),
+        }, userId)],
       ["freshness", (p, userId) =>
-        callPlatform({ apiBase, channelKey: CHANNEL_KEY, userId, path: "/toolbox", method: "POST", body: {
-          tool: "get_freshness", args: { ...(typeof p.scope === "string" && p.scope ? { scope: p.scope } : {}) },
-        } })],
+        toolbox("get_freshness", {
+          ...(typeof p.scope === "string" && p.scope ? { scope: p.scope } : {}),
+        }, userId)],
     ]);
 
     const OBSERVERS = new Map([
@@ -123,8 +121,19 @@ export default definePluginEntry({
       }],
     ]);
 
-    for (const raw of TOOL_DEFS) {
-      const { id, ...def } = raw; // id 只用于查传输/观察器，不交给 openclaw（防网关拒绝未知字段）
+    // openclaw 按注册顺序把工具放进模型上下文；保持迁移前顺序（list, query, query_detail, search, describe, sample, freshness）。
+    const REGISTER_ORDER = ["list_metrics", "query", "query_detail", "search", "describe_metric", "sample_dimension_values", "freshness"];
+    // 契约 id 集合必须与注册顺序完全一致：缺任一 id（漏注册）或有多余 id（新增工具未接线）都装载失败。
+    const unregistered = new Set(TOOL_DEFS.map((d) => d.id));
+    for (const id of REGISTER_ORDER) {
+      if (!unregistered.delete(id)) throw new Error(`data-query: 注册顺序里的工具 ${id} 在契约中不存在或重复`);
+    }
+    if (unregistered.size > 0) {
+      throw new Error(`data-query: 契约工具 ${[...unregistered].join(", ")} 未列入 REGISTER_ORDER`);
+    }
+    for (const id of REGISTER_ORDER) {
+      const raw = TOOL_DEFS.find((d) => d.id === id);
+      const { id: _id, ...def } = raw; // id 只用于查传输/观察器，不交给 openclaw（防网关拒绝未知字段）
       const run = ENDPOINTS.get(id);
       if (run === undefined) throw new Error(`data-query: 工具 ${id} 没有传输实现`);
       api.registerTool(factory(def, run, OBSERVERS.get(id)), { name: def.name });

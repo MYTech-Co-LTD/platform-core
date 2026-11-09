@@ -37,6 +37,18 @@ test("contracts.tools 与生成物集合一致（无陈旧残留）", () => {
   assert.deepEqual(extra, [], `contracts.tools 里登记了生成物没有的工具：${extra.join(", ")}`);
 });
 
+test("生成物恰 7 个工具（不多不少）", () => {
+  assert.equal(TOOL_DEFS.length, 7);
+});
+
+test("index.js 的 REGISTER_ORDER 集合 = 生成物 id 集合（防新增工具漏注册）", () => {
+  const src = readFileSync(new URL("./index.js", import.meta.url), "utf8");
+  const m = src.match(/const REGISTER_ORDER\s*=\s*(\[[^\]]*\])/);
+  assert.ok(m, "index.js 里找不到 REGISTER_ORDER 字面量");
+  const order = JSON.parse(m[1]);
+  assert.deepEqual([...order].sort(), TOOL_DEFS.map((d) => d.id).sort());
+});
+
 test("index.js 不再手写工具 description（防回退到两套事实源）", () => {
   const src = readFileSync(new URL("./index.js", import.meta.url), "utf8");
   assert.ok(!/name:\s*"[a-z_]+",\s*\n\s*description:/.test(src), "index.js 仍有手写 DEF；工具定义应来自 generated/tools.js");
