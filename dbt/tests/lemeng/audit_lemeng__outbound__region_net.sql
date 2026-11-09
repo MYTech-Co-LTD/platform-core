@@ -51,10 +51,16 @@ indep as (
         r_net
     from agg
 ),
+-- 本对账的粒度是**通道 × 一级战区桶**（客户键不进比较，复算侧也在 `agg` 里汇总掉了）。
+-- ⚠️ 2026-11-09（#1768）：`fct_outbound_region` 加了 `client_fid` 粒度（#1766）⇒ mart 侧同一
+-- (账套,日,通道,桶) 现在有多行。**必须先 sum 回本对账粒度再 join**，否则多对多放大成假红
+-- （真机实测 44,778 行差异，全部是放大出来的重复，不是口径差）。
 mart as (
-    select system_book, bizday, channel_type, region_l1_bucket, r_net
+    select system_book, bizday, channel_type, region_l1_bucket,
+           sum(r_net)::numeric(20,2) as r_net
     from {{ ref('fct_outbound_region') }}
     where bizday >= date '{{ window_start_date() }}'
+    group by 1, 2, 3, 4
 )
 select coalesce(m.system_book, i.system_book) as system_book,
        coalesce(m.bizday, i.bizday)           as bizday,
