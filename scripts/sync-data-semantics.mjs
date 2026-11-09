@@ -48,6 +48,22 @@ import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { parse as parseYaml } from 'yaml'
 import {
+  buildSelectSql as _buildSelectSql,
+  deriveFreshnessRelations as _deriveFreshnessRelations,
+  deriveParams as _deriveParams,
+  deriveRelation as _deriveRelation,
+  deriveTotalable as _deriveTotalable,
+} from '../modules/data/domain/declaration-compiler.ts'
+
+// W8（2026-11-09）：五个纯推导函数已抽到 modules/data/domain/declaration-compiler.ts，
+// 与「租户运行时声明写入」共用同一把尺。这里保留同名导出，脚本原有 import 方（测试/门禁）不变。
+const buildSelectSql = _buildSelectSql
+const deriveFreshnessRelations = _deriveFreshnessRelations
+const deriveParams = _deriveParams
+const deriveRelation = _deriveRelation
+const deriveTotalable = _deriveTotalable
+export { buildSelectSql, deriveFreshnessRelations, deriveParams, deriveRelation, deriveTotalable }
+import {
   L1_ORG,
   deleteStaleL1Metrics,
   loadPlatformCatalog,
@@ -90,8 +106,6 @@ export const L1_SUBJECT_COLUMN = 'org'
  * 表达式里的**限定列引用**（`关系.列`，关系本身可再带 schema）。
  * 本脚本要用它反推 FROM 的关系名——见 `deriveRelation` 的「为什么必须限定」。
  */
-const QUALIFIED_REF_RE = /([A-Za-z_][A-Za-z0-9_]*(?:\.[A-Za-z_][A-Za-z0-9_]*)*)\.([A-Za-z_][A-Za-z0-9_]*)/g
-
 /** 指标名形态 `<源>:<业务域>:<指标>`（与 scripts/check-data-models.mjs 规则 ⑥ 同一句；门禁是权威，这里只兜底）。 */
 const METRIC_NAME_RE = /^[a-z][a-z0-9_]*:[a-z][a-z0-9_]*:[a-z][a-z0-9_]*$/
 
@@ -151,50 +165,6 @@ const METRIC_NAME_RE = /^[a-z][a-z0-9_]*:[a-z][a-z0-9_]*:[a-z][a-z0-9_]*$/
  * 对象存储路径里认得的**资产段**形态（要拼进 `stg_lemeng_<资产>` 这个 SQL 标识符，
  * 必须是安全形状：小写字母/数字/下划线、非空）。
  */
-const FRESHNESS_ASSET_RE = /^[a-z0-9_]+$/
-
-/**
- * 新鲜度关系集推导（spec §10.7.3）：声明 `sources` 的存储路径段 `lemeng/<资产>` ⇒ 关系名
- * `stg_lemeng_<资产>`。
- *
- * ── 为什么是「命名约定即事实」而不是再要一个显式声明字段 ─────────────────────────────
- * staging 模型名在仓内是 `stg_<源>_<资产>`（`dbt/models/<域>/staging/stg_lemeng_*.sql`，
- * 14 个全部同构，check-data-models 规则 ④ 的双向配对盯着的正是这个形状）；水位要查的表就是
- * 这些 staging 模型落的表。让声明再写一遍关系名 = 两处事实源（sources 已写了路径段）。
- * 故这里**机械推导**：推导不出来（路径里没有 `lemeng/` 段、资产段形状不安全）就**响亮失败**
- * ——瞎猜一个关系名，水位查询会静默查空（freshness 永远「未知」），坏在数据里不报错。
- *
- * @param {readonly string[] | undefined} sources 声明的对象存储路径（选填；undefined/空 = 无链路）
- * @returns {string[]} 关系名数组（保序去重；无 sources = 空数组 = 无自动水位）
- */
-export function deriveFreshnessRelations(sources) {
-  if (!Array.isArray(sources) || sources.length === 0) return []
-  /** @type {string[]} */
-  const relations = []
-  for (const raw of sources) {
-    const p = String(raw)
-    const idx = p.indexOf('lemeng/')
-    if (idx === -1) {
-      throw new Error(
-        `指标声明 sources 路径 \`${p}\` 里没有 \`lemeng/<资产>\` 段，推不出新鲜度关系名 `
-        + '（spec §10.7.3 的推导依赖路径段与 staging 模型名 `stg_lemeng_<资产>` 同构）。'
-        + '请把 sources 写成实际读的湖路径（如 `s3://<bucket>/lemeng/<资产>/…`），'
-        + '或显式不写 sources（= 该指标无自动水位，响应不带 freshness 字段）。',
-      )
-    }
-    const rest = p.slice(idx + 'lemeng/'.length)
-    const asset = rest.split('/')[0] ?? ''
-    if (!FRESHNESS_ASSET_RE.test(asset)) {
-      throw new Error(
-        `指标声明 sources 路径 \`${p}\` 的资产段 \`${asset}\` 形态不合规 —— 它要拼成 SQL 标识符 `
-        + `\`stg_lemeng_${asset}\`，只允许小写字母/数字/下划线（staging 模型名同构）。`,
-      )
-    }
-    const relation = `stg_lemeng_${asset}`
-    if (!relations.includes(relation)) relations.push(relation)
-  }
-  return relations
-}
 
 /**
  * 声明的 `freshness_sla_days` → 数值。**缺声明/坏形状一律响亮失败**（spec §10.7.1）。
@@ -405,56 +375,7 @@ function masksOf(v, metricName, selectSql, grain) {
   return out
 }
 
-/**
- * 从 L1 声明的 `expression` 反推 FROM 的关系名。
- *
- * ── 为什么要求表达式**带关系限定**（`fct_x.col`），而不是自己去猜表名 ──────────────────
- * `data.metrics.select_sql` 必须长成 `select <表达式> as value[, <维度>] from <关系>` 这一形状
- * （`domain/semantic-compiler.ts` 的 L1_SELECT_RE 是它的机器判据——L2 编译点要靠它把 base 拆开）。
- * 关系名是**形状的一部分**，而 dbt YAML 里没有任何字段写着它 ⇒ 只能从表达式取。
- * 取不到就**响亮失败**：猜一个关系名（例如拿 grain 里的列名当表名）会物化出一条语法错的
- * select_sql，而它要到「某个租户查这个指标」时才以 SQL 报错的面目暴露——那时已经离因很远。
- * ⚠️ 这是本脚本加给**将来 L1 声明**的一条硬约束：`expression` 必须引用至少一个
- * `关系.列`。当前两条声明（`sum(fct_retail_sale.net_amount)` / `sum(fct_retail_sale.order_count)`）
- * 都满足；将来若有人写 `count(*)`，这里会红——那时该做的是把关系显式写进声明，
- * 而不是放宽这条判定（放宽 = 允许物化出不知道自己读哪张表的词表）。
- *
- * @param {string} expression L1 声明的 expression 原文
- * @param {string} metricName 指标名（只用于错误信息）
- * @returns {string} 关系名（可带 schema，如 `dbt.fct_x`）
- */
-export function deriveRelation(expression, metricName) {
-  /** @type {Set<string>} */
-  const relations = new Set()
-  for (const m of expression.matchAll(QUALIFIED_REF_RE)) relations.add(m[1])
-  if (relations.size === 0) {
-    throw new Error(
-      `指标 \`${metricName}\` 的 expression \`${expression}\` 里没有「关系.列」形态的引用，`
-      + '取不到 FROM 的关系名 —— L1 的 select_sql 只能是 `select <表达式> as value[, <维度>] from <关系>` '
-      + '这一形状，请把表达式的列写成 `<关系>.<列>`。',
-    )
-  }
-  if (relations.size > 1) {
-    throw new Error(
-      `指标 \`${metricName}\` 的 expression 引用了多个关系（${[...relations].join(', ')}）：`
-      + '单条 L1 声明的 select_sql 只有一个 FROM（跨模型聚合属于 marts 层的活，不是词表层能拼的）。',
-    )
-  }
-  return [...relations][0]
-}
 
-/**
- * 组装 L1 的 `select_sql`（**形状契约**：与 semantic-compiler.ts 的 L1_SELECT_RE 同一条）。
- *
- * @param {string} expression 口径表达式（逐字保留——L2 靠「表达式原样在产物里」来保证不改口径）
- * @param {readonly string[]} grain 可聚合维度
- * @param {string} relation FROM 的关系名
- * @returns {string}
- */
-export function buildSelectSql(expression, grain, relation) {
-  const dims = grain.length > 0 ? `, ${grain.join(', ')}` : ''
-  return `select ${expression} as value${dims} from ${relation}`
-}
 
 /**
  * 问数参数白名单（spec 2026-10-15 §2.2）：grain ∩ 白名单 = 该指标的问数参数面。
@@ -469,27 +390,6 @@ export function buildSelectSql(expression, grain, relation) {
  *
  * @type {Record<string, MetricParamDef>}
  */
-const ASK_PARAM_WHITELIST = {
-  bizday: { column: 'bizday', type: 'date_range' },
-  system_book: { column: 'system_book', type: 'string' },
-  domain: { column: 'domain', type: 'string' },
-  branch_num: { column: 'branch_num', type: 'string' },
-}
-
-/**
- * grain ∩ 白名单 → 该指标的问数参数（参数名 = 列名；required 恒缺省）。
- *
- * @param {readonly string[]} grain 可聚合维度
- * @returns {Record<string, MetricParamDef>}
- */
-export function deriveParams(/** @type {readonly string[]} */ grain) {
-  return Object.fromEntries(
-    // Object.hasOwn 而不是 `in`：`in` 会把原型链上的键也算命中（如 `toString`），
-    // grain 若将来混入这类名字会物化出白名单外的参数——白名单就该只认自有键。
-    grain.filter((/** @type {string} */ c) => Object.hasOwn(ASK_PARAM_WHITELIST, c))
-      .map((/** @type {string} */ c) => /** @type {[string, MetricParamDef]} */ ([c, ASK_PARAM_WHITELIST[c]])),
-  )
-}
 
 /**
  * measure 的对象形态（P3.0 聚合面组件化）：`{ expr, domain?, grain?, additivity, unit?, precision? }`。
@@ -833,27 +733,6 @@ export function composeOf(raw, metricName, measures) {
   })
 }
 
-/**
- * 可加判定（spec §8.4：total 自动伴随的物化依据）——**表达式形状的保守机械规则**。
- *
- * 两条判定，都取**保守**方向（漏给一个自动合计是小事；给比率编一个合计是错数）：
- *   ① `expression` 以 `sum(` 开头 ⇒ 可加 ⇒ true。可加指标的两种实文形态都覆盖：
- *      单聚合（`sum(fct_retail_sale.net_amount)`）与聚合之差（`sum(a) - sum(b)`，
- *      purchase:net_amount）。
- *   ② **含除法形状 ⇒ false**。sync 的 ratio 声明物化成 `sum(…) / nullif(sum(…), 0)`——
- *      ⚠️ 它**也以 `sum(` 开头**，只认前缀会把毛利率/填写率/满足率全判成可加（自动合计
- *      直接给出错数）。比率不可加（上滚 = 重算），一律不给自动合计。
- *      认「空格夹除号」而不是裸 `/`：`sum(a/b)`（行内比值再求和）是可加的，不该被误杀。
- *   ③ 去重计数（`count(distinct …)`）不以 `sum(` 开头，天然落 false——跨行求和
- *      = 供应商·天数，错（spec §8.4 明文）。
- *
- * @param {string} expression 物化后的口径表达式（ratio 声明已在此前包好 nullif）
- * @returns {boolean}
- */
-export function deriveTotalable(expression, additivity = 'flow') {
-  if (additivity !== 'flow') return false
-  return /^\s*sum\s*\(/i.test(expression) && !/\s\/\s/.test(expression)
-}
 
 /**
  * 口径射程与排除项（消费面 spec 2026-10-17 §12.6）：缺省空串 = 未声明（响应不带该行）。
