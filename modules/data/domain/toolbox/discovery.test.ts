@@ -96,10 +96,10 @@ describe('describeMetricImpl', () => {
       ? { columns: ['min', 'max'], rows: [['2024-11-01', '2026-11-08']] }
       : { columns: [], rows: [] }
     const shaped = row({ selectSql: 'select sum(v) as value, org, branch_name, bizday from fct' })
-    const out = await describeMetricImpl(deps([shaped], wh), { id: 'lemeng:retail:net_sales' })
+    const out = await describeMetricImpl(deps([shaped], wh), { id: 'lemeng:retail:net_sales', coverage: true })
     expect((out.payload as { coverage?: { minBizday: string; maxBizday: string } }).coverage)
       .toEqual({ minBizday: '2024-11-01', maxBizday: '2026-11-08' })
-    const noDay = await describeMetricImpl(deps([row({ groupBy: 'org, branch_name', selectSql: 'select sum(v) as value, org, branch_name from fct' })], wh), { id: 'lemeng:retail:net_sales' })
+    const noDay = await describeMetricImpl(deps([row({ groupBy: 'org, branch_name', selectSql: 'select sum(v) as value, org, branch_name from fct' })], wh), { id: 'lemeng:retail:net_sales', coverage: true })
     expect('coverage' in noDay.payload).toBe(false)
   })
 

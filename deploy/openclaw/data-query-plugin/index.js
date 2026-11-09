@@ -225,7 +225,10 @@ export default definePluginEntry({
         "按 id 取指标详情：口径定义/粒度维度/参数/归属/档位/版本/新鲜度。args 键或维度名拿不准时先调它（id 取自 list_metrics）；sample_dimension_values 的 dimension 必须是这里 grain 里的一员。",
       parameters: {
         type: "object",
-        properties: { id: { type: "string", description: "指标 id（来自 list_metrics）" } },
+        properties: {
+          id: { type: "string", description: "指标 id（来自 search_catalog / list_metrics）" },
+          coverage: { type: "boolean", description: "包含数据覆盖区间 {minBizday,maxBizday}；问「最早的数据/到几号」时传 true" },
+        },
         required: ["id"],
         additionalProperties: false,
       },
@@ -262,7 +265,7 @@ export default definePluginEntry({
         callPlatform({
           apiBase, channelKey: CHANNEL_KEY, userId,
           path: "/toolbox", method: "POST",
-          body: { tool: "describe_metric", args: { id: params.id } },
+          body: { tool: "describe_metric", args: { id: params.id, ...(params.coverage === true ? { coverage: true } : {}) } },
         }),
       ),
       { name: DESCRIBE_DEF.name },

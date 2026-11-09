@@ -51,7 +51,7 @@ metadata:
 
 ## 数据覆盖区间（「最早的数据 / 到几号」）
 
-- 问「最早什么时候有数据 / 数据到几号」时：先 `describe_metric({ id })`，回包有
+- 问「最早什么时候有数据 / 数据到几号」时：先 `describe_metric({ id, coverage: true })`，回包有
   `coverage: { minBizday, maxBizday }` —— **直接引用**。
 - **禁止按月/按季度循环 `query_data` 回查边界**。实测：这个问题让模型查了约 30 次才定位
   2024-11-01；`coverage` 是一次问答。

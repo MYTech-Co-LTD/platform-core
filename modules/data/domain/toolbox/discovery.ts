@@ -120,7 +120,9 @@ export const describeMetricImpl: ToolImpl = async (deps, args) => {
     return { payload: { status: 'not_found', metricId: id }, isError: true, auditMetricId: id, auditRowCount: null }
   }
   const asOf = await watermarkOf(deps, m)
-  const coverage = await coverageOf(deps, m)
+  // 覆盖区间是**按需**的：它要对指标关系跑一次 min/max（大表不是免费），
+  // 普通 describe 不付这个成本；问「最早/到几号」时显式 coverage:true。
+  const coverage = args.coverage === true ? await coverageOf(deps, m) : undefined
   return {
     payload: {
       status: 'ok', id, title: m.title, definition: m.description,
