@@ -536,6 +536,7 @@ describe('daily_review 模板', () => {
     expect(text).toContain('净毛利 166,983.20')
     expect(text).toContain('32.91%')
     expect(text).toContain('未含房租')
+    expect(text).toContain('根因：当前数据不足以分解到具体商品/客户')
     expect(text).toContain('建议：')
   })
 

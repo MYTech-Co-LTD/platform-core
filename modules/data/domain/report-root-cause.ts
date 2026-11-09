@@ -428,7 +428,13 @@ export async function buildRootCause(
   for (const c of candidates) {
     const metric = catalog.find((m) => m.id === c.metricId)
     if (metric === undefined) continue
-    const dims = rankDimensions(metric)
+    // 单店视图/单日窗口下，branch_num / bizday 是退化维（只有一个值）——
+    // 拿它当「主因」会把探针浪费在恒 100% 的维度上，永远到不了商品/客户。
+    const dims = rankDimensions(metric).filter((d) => {
+      if (deps.branchNum !== null && deps.branchNum !== undefined && d === 'branch_num') return false
+      if (range.from === range.to && d === 'bizday') return false
+      return true
+    })
     let best: ProbeResult | null = null
     for (const dim of dims) {
       if (probes >= MAX_PROBES) break

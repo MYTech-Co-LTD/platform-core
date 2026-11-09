@@ -71,6 +71,10 @@ describe('buildDailyReview', () => {
     expect(dr.notes.join(' ')).toContain('未含房租')
     expect(dr.numbers).toContain('507,322.21')
     expect(dr.numbers).toContain('32.91%')
+    // LLM 会引用 MTD 累计与驾驶员差值；这些也必须进白名单，否则整段被回退。
+    expect(dr.numbers).toContain('4,007,322.21')
+    expect(dr.numbers).toContain('1,331,183.20')
+    expect(dr.numbers).toContain('+50')
     expect(dr.hash).toMatch(/^[0-9a-f]{64}$/)
   })
 

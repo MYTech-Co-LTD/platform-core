@@ -23,7 +23,7 @@ import type { Pool } from 'pg'
 import type { Requester, SlicingSpec, SliceOrderBy } from './authz'
 import { runQuery, type QueryDeps, type SqlExecutor } from './query-service'
 import { buildRootCause, type RootCauseBundle } from './report-root-cause'
-import { buildDailyReview, type DailyReviewBundle } from './report-daily-review'
+import { buildDailyReview, DAILY_REVIEW_METRICS, type DailyReviewBundle } from './report-daily-review'
 import type { ToolboxDeps } from './toolbox/registry'
 import {
   compareRangeOf, comparisonCovered, coverageArgsOf, coverageOfQueryResult, coverageSlicing,
@@ -97,7 +97,7 @@ export interface FactBundle {
   /** 期间日期（`from` / `to`），既进白名单也单独给提示词用。 */
   dates: string[]
   /**
-   * 根因探针结果（仅 `focus='root_cause'`；其余 focus 恒 null）。
+   * 根因探针结果（`root_cause`，或 `daily_review` 营业额环比为负时；其余情况 null）。
    * 数字已并入 `numbers`；narrative 只把它当事实，不重新查数。
    */
   analysis: RootCauseBundle | null
@@ -459,7 +459,7 @@ export async function buildFacts(
   const dataAsOf = earliestDataAsOf(asOfList)
   // 根因探针只在 `focus='root_cause'` 时跑：overview 的既有行为/缓存键一字不动。
   // 探针只走 `runDetailQuery` / `executeExplore`（与 /query、下钻、分析师面同一授权链）。
-  const analysis = ai.focus === 'root_cause'
+  let analysis = ai.focus === 'root_cause'
     ? await buildRootCause(
         {
           pool: deps.pool, org: deps.org, requester: deps.requester,
@@ -495,6 +495,63 @@ export async function buildFacts(
     : null
   if (dailyReview !== null) {
     for (const n of dailyReview.numbers) if (n !== '' && n !== '-') numbers.add(n)
+    // 日报也带根因：营业额环比为负时复用有界探针（单日、同店），输出维度/明细证据。
+    const revDelta = dailyReview.comparisons.yesterday?.delta.revenue
+      ?? dailyReview.comparisons.mtdAvg.delta.revenue
+    if (revDelta.startsWith('-')) {
+      const prev = dailyReview.comparisons.yesterday?.baseline
+        ?? dailyReview.comparisons.mtdAvg.baseline
+      const syntheticKpis: FactKpi[] = []
+      for (const p of spec.panels) {
+        if (p.chart !== 'kpi') continue
+        const isAov = p.metricId === DAILY_REVIEW_METRICS.revenue
+          && p.denominatorMetricId === DAILY_REVIEW_METRICS.orders
+        if (p.metricId === DAILY_REVIEW_METRICS.revenue || isAov) {
+          syntheticKpis.push({
+            panel: p.title, metricId: p.metricId, format: p.format,
+            current: isAov ? dailyReview.today.aov : dailyReview.today.revenue,
+            previous: isAov ? prev.aov : prev.revenue,
+            delta: isAov ? dailyReview.comparisons.yesterday?.delta.aov ?? '-'
+              : dailyReview.comparisons.yesterday?.delta.revenue ?? '-',
+          })
+        } else if (p.metricId === DAILY_REVIEW_METRICS.orders) {
+          syntheticKpis.push({
+            panel: p.title, metricId: p.metricId, format: p.format,
+            current: dailyReview.today.orders, previous: prev.orders,
+            delta: dailyReview.comparisons.yesterday?.delta.orders ?? '-',
+          })
+        } else if (p.metricId === DAILY_REVIEW_METRICS.gross) {
+          syntheticKpis.push({
+            panel: p.title, metricId: p.metricId, format: p.format,
+            current: dailyReview.today.gross, previous: prev.gross,
+            delta: dailyReview.comparisons.yesterday?.delta.gross ?? '-',
+          })
+        }
+      }
+      analysis = await buildRootCause(
+        {
+          pool: deps.pool, org: deps.org, requester: deps.requester,
+          adoptedSources: deps.adoptedSources, execute: deps.execute,
+          branchNum: branchNum ?? null,
+          ...(deps.exploreExec === undefined ? {} : { exploreExec: deps.exploreExec }),
+        },
+        spec,
+        { from: dailyReview.targetDay, to: dailyReview.targetDay },
+        'day',
+        {
+          kpis: syntheticKpis,
+          breakdowns: [],
+          daily: {
+            min: { day: dailyReview.targetDay, value: dailyReview.today.revenue },
+            max: { day: dailyReview.targetDay, value: dailyReview.today.revenue },
+          },
+          dataAsOf: earliestDataAsOf(asOfList),
+        },
+      )
+      if (analysis !== null) {
+        for (const n of analysis.numbers) if (n !== '' && n !== '-') numbers.add(n)
+      }
+    }
   }
 
   // 「有没有数据」是事实，不是推断。注意**全 0 的合成序列不算数据**：无业绩门店的
