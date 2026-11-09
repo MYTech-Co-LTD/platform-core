@@ -4,7 +4,7 @@
 -- 独立打 parquet；容差 0.0001（万分之一）。
 with recheck as (
     select
-        r['system_book']::varchar as system_book,
+        r['system_book']::int     as system_book,
         r['bizday']::date         as bizday,
         r['branch_num']::int      as branch_num,
         sum(r['profit_money_no_coupon']::decimal(38,10))::numeric(20,2) as profit,
