@@ -35,7 +35,7 @@ export default defineConfig({
           //      · project 级写 `testTimeout` ⇒ 才真的生效
           testTimeout: 15_000,
           hookTimeout: 15_000,
-          include: ['domain/**/*.test.ts', 'routes/**/*.test.ts', '*.test.ts'],
+          include: ['domain/**/*.test.ts', 'routes/**/*.test.ts', 'skill/**/*.test.ts', '*.test.ts'],
         },
       },
       {
