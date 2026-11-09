@@ -79,6 +79,20 @@ OpenClaw native tool-plugin：把可信企微 userid（`toolContext.requesterSen
 node --test lib.test.js
 ```
 
+## skill 正典与生成
+
+`SKILL.md` 与工具描述不手写：正典在 `modules/data/skill/`（`contract.json` + `content/*.md`）。
+本地改完正典后跑：
+
+```bash
+pnpm gen:skill
+```
+
+生成物 `generated/` 与 `skills/data-query/SKILL.md` 已在 `.gitignore`；镜像构建期会自动生成。
+**不要直接改生成物**，改正典。
+
+skill 变更的行为回归：按 `scripts/askdata/dual-arm-eval.test.ts` 的既有流程跑一次双臂评估。
+
 ## 部署
 
 插件源码随仓分发：compose 把本目录只读挂载到容器 `/opt/plugins/data-query-plugin`，
