@@ -1,4 +1,4 @@
-{{ config(store_failures=true, tags=['audit']) }}
+{{ config(store_failures=true, tags=['audit','audit_window']) }}
 -- ★ **2026-10-28（issue #761）**：裸 `::numeric` 在 pg_duckdb 里参与除法会被推成 DOUBLE
 --   （实测 542.2949999999998 vs 精确 542.295）⇒ 最终 2 位小数会差 1 分、间歇假红。
 --   本文件所有裸 `::numeric` 已改 `::decimal(38,10)`；`::numeric(20,2)` 最终 cast 保留。
@@ -31,7 +31,7 @@
 --    sum 的参数表达式里逐单除——除法的舍入位置是口径的一部分，别改成先和后除。
 --
 -- ── 形态：与 staging **同一套实测形态**（2026-09-24 数据面真机）──────────────────────────
--- ① 取列：`from read_parquet('…') r` + `r['列名']` —— 别名必须挂在**函数调用**上；
+-- ① 取列：`from {{ window_read_parquet('…') }} r` + `r['列名']` —— 别名必须挂在**函数调用**上；
 --    CTE 形态在本栈上取列即报 `cannot subscript type record`。
 -- ② `hive_partitioning=1` **不能写成 read_parquet 的形参**（pg_duckdb 的 read_parquet 是 PG
 --    函数、只认位置参数）；分区推断默认生效，推断类型不合约 ⇒ 本文件显式 cast。
@@ -55,10 +55,8 @@ with base_cold as (
          and r['quantity']::decimal(38,10) > 0
          and abs(r['discount_money']::decimal(38,10) - r['order_detail_std_price']::decimal(38,10) * r['quantity']::decimal(38,10)) <= 0.02
         ) as is_gift
-    from read_parquet(
-        -- ⚠️ 与 staging **同路径**（通配两账套，含封版排除语义）——对账必须与受测面同口径，否则只对账了 3120（issue #250）。
-        's3://{{ var("zos_bucket") }}/{{ var("lemeng_retail_order_line_prefix") }}/_DAY_DATA/system_book=*/bizday=*/all.parquet'
-    ) r
+    -- ⚠️ 与 staging **同路径**（通配两账套，含封版排除语义）——对账必须与受测面同口径，否则只对账了 3120（issue #250）。
+    from {{ window_read_parquet('s3://' ~ var("zos_bucket") ~ '/' ~ var("lemeng_retail_order_line_prefix") ~ '/_DAY_DATA/system_book=*/bizday=*/all.parquet') }} r
     where r['state'] = 'FINISHED'
       and r['order_transaction_type'] = 'SALE_ORDER'
       -- ⚠️ 只比**已闭窗营业日**（bizday < 上海今天）：今天的文件正被 5 分钟一班的 tick 重写，
@@ -66,6 +64,7 @@ with base_cold as (
       --    （实测 2026-10-06 run `jrun_dtyVWZnnFaQ_pCCN` attempt 1 就红在这，报 ETag 变化）。
       --    今天未定稿、按定稿线本就不判；两侧**都**滤掉今天，才是同量对比。
       and r['bizday']::date < CAST(now() AT TIME ZONE 'Asia/Shanghai' AS DATE)
+ and r['bizday']::date >= date '{{ window_start_date() }}'
 ),
 base_hot as (
     -- 热腿：未封版日的小时文件——排除已封版日（同 stg 冷热合流，#984）
@@ -83,9 +82,7 @@ base_hot as (
          and r['quantity']::decimal(38,10) > 0
          and abs(r['discount_money']::decimal(38,10) - r['order_detail_std_price']::decimal(38,10) * r['quantity']::decimal(38,10)) <= 0.02
         ) as is_gift
-    from read_parquet(
-        's3://{{ var("zos_bucket") }}/{{ var("lemeng_retail_order_line_prefix") }}/system_book=*/bizday=*/hour=*/all.parquet'
-    ) r
+    from {{ window_read_parquet('s3://' ~ var("zos_bucket") ~ '/' ~ var("lemeng_retail_order_line_prefix") ~ '/system_book=*/bizday=*/hour=*/all.parquet') }} r
     where r['state'] = 'FINISHED'
       and r['order_transaction_type'] = 'SALE_ORDER'
       -- ⚠️ 只比**已闭窗营业日**（bizday < 上海今天）：今天的文件正被 5 分钟一班的 tick 重写，
@@ -93,7 +90,8 @@ base_hot as (
       --    （实测 2026-10-06 run `jrun_dtyVWZnnFaQ_pCCN` attempt 1 就红在这，报 ETag 变化）。
       --    今天未定稿、按定稿线本就不判；两侧**都**滤掉今天，才是同量对比。
       and r['bizday']::date < CAST(now() AT TIME ZONE 'Asia/Shanghai' AS DATE)
-      and not exists (select 1 from read_parquet('s3://{{ var("zos_bucket") }}/{{ var("lemeng_retail_order_line_prefix") }}/_DAILY/*.parquet') m where cast(m['system_book'] as varchar) = cast(r['system_book'] as varchar) and cast(m['bizday'] as date) = cast(r['bizday'] as date))
+ and r['bizday']::date >= date '{{ window_start_date() }}'
+      and not exists (select 1 from {{ window_read_parquet('s3://' ~ var("zos_bucket") ~ '/' ~ var("lemeng_retail_order_line_prefix") ~ '/_DAILY/*.parquet') }} m where cast(m['system_book'] as varchar) = cast(r['system_book'] as varchar) and cast(m['bizday'] as date) = cast(r['bizday'] as date))
 ),
 base as (
     select * from base_cold
@@ -130,6 +128,7 @@ materialized as (
         sale_amount
     from {{ ref('fct_retail_sale') }}
     where bizday < CAST(now() AT TIME ZONE 'Asia/Shanghai' AS DATE)
+ and bizday >= date '{{ window_start_date() }}'
 )
 select
     coalesce(a.system_book, b.system_book) as system_book,

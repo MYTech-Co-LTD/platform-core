@@ -1,4 +1,4 @@
-{{ config(tags=['audit']) }}
+{{ config(tags=['audit','audit_window']) }}
 -- audit_lemeng__request__day_fulfillment_rate.sql — 截止日满足率的独立复算（#677）。
 -- 契约：dbt singular test 返回任何行即失败；空转自检防假绿。
 -- 复算直接打 parquet（D15+D16 双源）、不 ref staging（骨架同族；口径与两向偏差边界
@@ -13,11 +13,10 @@ with request_lines as (
         r['item_num']::bigint     as item_num,
         sum(r['quantity']::numeric(20,6)) as requested_quantity,
         count(*)                  as requested_line_count
-    from read_parquet(
-        's3://{{ var("zos_bucket") }}/{{ var("lemeng_request_order_prefix") }}/*/bizday=**/*.parquet'
-    ) r
+    from {{ window_read_parquet('s3://' ~ var("zos_bucket") ~ '/' ~ var("lemeng_request_order_prefix") ~ '/*/bizday=**/*.parquet') }} r
     where r['quantity']::numeric(20,6) > 0
       and r['bizday']::date < CAST(now() AT TIME ZONE 'Asia/Shanghai' AS DATE)
+ and r['bizday']::date >= date '{{ window_start_date() }}'
     group by 1, 2, 3, 4
 ),
 shipped as (
@@ -27,10 +26,9 @@ shipped as (
         r['branch_num']::int      as branch_num,
         r['item_num']::bigint     as item_num,
         sum(r['quantity']::numeric(20,6)) as shipped_quantity
-    from read_parquet(
-        's3://{{ var("zos_bucket") }}/{{ var("lemeng_transfer_in_prefix") }}/*/bizday=**/*.parquet'
-    ) r
+    from {{ window_read_parquet('s3://' ~ var("zos_bucket") ~ '/' ~ var("lemeng_transfer_in_prefix") ~ '/*/bizday=**/*.parquet') }} r
     where r['bizday']::date < CAST(now() AT TIME ZONE 'Asia/Shanghai' AS DATE)
+ and r['bizday']::date >= date '{{ window_start_date() }}'
     group by 1, 2, 3, 4
 ),
 recheck as (
@@ -56,6 +54,7 @@ materialized as (
         fulfilled_line_count::numeric(20,6) / nullif(requested_line_count, 0) as line_rate
     from {{ ref('fct_request_fulfillment') }}
     where bizday < CAST(now() AT TIME ZONE 'Asia/Shanghai' AS DATE)
+ and bizday >= date '{{ window_start_date() }}'
 )
 select
     coalesce(a.system_book, b.system_book) as system_book,
