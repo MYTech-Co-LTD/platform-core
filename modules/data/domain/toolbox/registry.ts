@@ -80,7 +80,10 @@ export const ANALYST_TOOLS: readonly ToolMeta[] = [
     description: '按 id 取指标详情：口径定义/粒度维度/参数/实体与同义词/归属/档位/版本/新鲜度。查数前必调（拿参数键名与维度）。',
     inputSchema: {
       type: 'object',
-      properties: { id: { type: 'string', description: '指标 id（取自 search_catalog 或 list）' } },
+      properties: {
+        id: { type: 'string', description: '指标 id（取自 search_catalog 或 list）' },
+        coverage: { type: 'boolean', description: '包含数据覆盖区间 {minBizday,maxBizday}（按需；问「最早/到几号」时传 true）' },
+      },
       required: ['id'],
     },
     outputSchema: { type: 'object' },

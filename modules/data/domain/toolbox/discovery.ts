@@ -5,6 +5,7 @@ import { authorizeCore, paramFaceOf, sqlQuote, visibleMetrics } from '../authz'
 import type { MetricRow } from '../metric-store'
 import { loadMergedCatalog } from '../metric-store'
 import { watermarkSqlFor } from '../query-service'
+import { parseL1Select } from '../semantic-compiler'
 import { SAMPLE_MAX_ROWS, type ToolImpl, type ToolImplResult, type ToolboxDeps } from './registry'
 
 const SEARCH_LIMIT = 20
@@ -85,6 +86,32 @@ export const searchImpl: ToolImpl = async (deps, args) => {
   return { payload: { results }, isError: false, auditRowCount: null }
 }
 
+/**
+ * 指标的数据覆盖区间（W8 P0 2026-11-09）：`{minBizday,maxBizday}`。
+ *
+ * 为什么加：真实会话里「最早的数据是什么时候」让模型按月回查了 **~30 次** query_data——
+ * 因为 `get_freshness` 回 `no_load_log`（部分关系不在 load_log），没有单次可得的边界。
+ * 覆盖区间直接对指标的关系跑一次 `min/max(bizday)`：一次问答，且不依赖 load_log。
+ * 只在 grain 含 bizday 时尝试；查询失败 = 字段缺席（不编、不阻断 describe）。
+ */
+async function coverageOf(
+  deps: ToolboxDeps, m: MetricRow,
+): Promise<{ minBizday: string; maxBizday: string } | undefined> {
+  const dims = m.groupBy.split(',').map((d) => d.trim())
+  if (!dims.includes('bizday')) return undefined
+  try {
+    const { relation } = parseL1Select(m.selectSql)
+    if (!/^[A-Za-z_][A-Za-z0-9_]*(\.[A-Za-z_][A-Za-z0-9_]*)?$/.test(relation)) return undefined
+    const r = await deps.wh(`select min(bizday)::text, max(bizday)::text from ${relation}`)
+    const min = r.rows[0]?.[0]
+    const max = r.rows[0]?.[1]
+    if (typeof min === 'string' && WATERMARK_RE.test(min) && typeof max === 'string' && WATERMARK_RE.test(max)) {
+      return { minBizday: min, maxBizday: max }
+    }
+  } catch { /* 关系不可达 / 无 bizday 列 ⇒ 覆盖区间缺席 */ }
+  return undefined
+}
+
 export const describeMetricImpl: ToolImpl = async (deps, args) => {
   const id = typeof args.id === 'string' ? args.id : ''
   const m = id === '' ? undefined : (await visibleRows(deps)).find((x) => x.id === id)
@@ -93,6 +120,9 @@ export const describeMetricImpl: ToolImpl = async (deps, args) => {
     return { payload: { status: 'not_found', metricId: id }, isError: true, auditMetricId: id, auditRowCount: null }
   }
   const asOf = await watermarkOf(deps, m)
+  // 覆盖区间是**按需**的：它要对指标关系跑一次 min/max（大表不是免费），
+  // 普通 describe 不付这个成本；问「最早/到几号」时显式 coverage:true。
+  const coverage = args.coverage === true ? await coverageOf(deps, m) : undefined
   return {
     payload: {
       status: 'ok', id, title: m.title, definition: m.description,
@@ -106,6 +136,8 @@ export const describeMetricImpl: ToolImpl = async (deps, args) => {
       // 租户口径覆盖（W8，041）：true ⇒ 该 id 在本租户被覆盖（回答须标注「本租户口径」）。
       ...(m.overrideOf != null ? { override: true } : {}),
       ...(asOf !== undefined ? { asOf } : {}),
+      // 数据覆盖区间（W8 P0）：「最早/最晚哪天有数据」一次答完，禁止按月回查。
+      ...(coverage !== undefined ? { coverage } : {}),
     },
     isError: false, auditMetricId: id, auditRowCount: null,
   }
