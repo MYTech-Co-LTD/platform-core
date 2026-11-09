@@ -12,8 +12,7 @@
 | 区间合计（近N天 / 本月共多少） | 可加指标的回包**自带 `total` 合计值，直接引用**；「只要总数」可传 `args.total=true`（恒单行）；需要分布再按天拆单日查 |
 | 区间分布（按天 / 按店走势） | 说清分组；**先窄后宽**（先单账套、先 2~3 天探行量） |
 
-**行数预算**（超预算 = 生成极慢、用户观感卡死）：net_sales ≈147 行/天（3120）/ ≈74 行/天（64188）；
-区间×双账套 ≈ 天数×220——**区间超过 4 天必用 `args.total=true`**，不要裸拉明细。
+{{include:local/tenant-shanhai-budget.md}}
 
 ## 先检索，不要猜 id（2026-11-09 真实会话教训）
 
@@ -24,13 +23,9 @@
 
 - `{{tool:search}}` 会命中 **id / 标题 / 说明 / 同义词**；0 命中时换 1~2 个同义词再搜，仍无才用
   `{{tool:list_metrics}}()` 在返回里按关键词找。
-- **禁止凭记忆拼 id**。实测代价：问「配销差额」时模型连猜
-  `branch:sale_money` / `retail:sale_money` / `branch:sale_amount` / `sale:branch_amount`
-  → 4 次 DENIED，最终误答「销售金额没有」；而 `lemeng:retail:sales` 就在词表里。
+- **禁止凭记忆拼 id**。{{include:local/tenant-shanhai-idlessons.md}}
 {{include:local/tenant-shanhai-caliber.md}}
-- 回答必须带上**指标 id + 口径**（如「`lemeng:retail:sales`（不冲退货）」）；用户问营业额时，
-  默认报「不冲退货」`retail:sales`，并注明另有「冲退货」`retail:net_sales`。
-  ⚠️ 搜索结果的排序可能是 `net_sales` 在前（id 字典序）——**不要按搜索结果第一条选**，按本规则默认不冲退货。
+- 回答必须带上**指标 id + 口径**{{include:local/tenant-shanhai-answer-caliber.md}}
 
 {{include:local/tenant-shanhai-metrics.md}}
 
@@ -45,7 +40,7 @@
 ## Top-N / 分组（「按供应商前 5」）
 
 - 用 **`{{tool:query}}` 的切片参数**，一次拿结果，不要拉全量行自己排序：
-  `{{tool:query}}({ metricId, args:{bizday:{from,to}}, dimensions:["supplier_num"], orderBy:[{column:"value",dir:"desc"}], limit:5 })`
+{{include:local/tenant-shanhai-topn.md}}
 - `dimensions` 必须是该指标 `grain` 的子集（先 `{{tool:describe_metric}}` 看 grain）；`orderBy` 列名用
   `value`（聚合值）；`limit` 只取前 N。
 - `{{tool:query_detail}}` 回 `no_detail_binding` 时**不要重试**；分组/排行改用上面的 `dimensions+orderBy+limit`
@@ -96,20 +91,19 @@
 
 ## 参数形状（最容易错的一处）
 
-- `args` 的**键**只能取 `{{tool:list_metrics}}` 返回的 `params[].name`（乐檬指标是 **`bizday`**），**值的形状**由该 `param.type` 决定。
-- **`date_range` 是类型名，不是键名。** 传 `{"date_range": {"from":…,"to":…}}` 会被服务端 400 `unknown_param:date_range`；
-  正确写法是 `{"bizday": {"from":"YYYY-MM-DD","to":"YYYY-MM-DD"}}`（闭区间，单日则 from=to）。
+- `args` 的**键**只能取 `{{tool:list_metrics}}` 返回的 `params[].name`（{{include:local/tenant-shanhai-param-name.md}}），**值的形状**由该 `param.type` 决定。
+{{include:local/tenant-shanhai-params.md}}
 - 键名拿不准就先 `{{tool:list_metrics}}` 看 `params`，**不要臆造键**；被 400 时**不要原样重试**，按 `detail` 自纠一次。
 
 ## 明细下钻（{{tool:query_detail}}，spec §2.6）
 
 - **什么时候用**：用户要「多少行 / 明细构成 / 哪几单贡献最大」这类**行级**答案时，用 `{{tool:query_detail}}({ metricId, args })` 下钻到订单级；聚合口径的合计与分布仍走 `{{tool:query}}`。
-- **问「多少行 / 哪几行 / 按商品看明细」**：`metricId=lemeng:retail:order_line`（如「10-20 有多少行」⇒ `{{tool:query_detail}}({metricId:"lemeng:retail:order_line", args:{bizday:{from:"2026-10-20",to:"2026-10-20"}}})`；单日即 from=to，**别写成裸日期串**——bizday 是 `date_range`，形状不对回 `bad_param`/`invalid_value:bizday`。行数看 `rowCountTotal`，别用聚合面的 1000 行截断）。
+- **问「多少行 / 哪几行 / 按商品看明细」**：{{include:local/tenant-shanhai-drill.md}}
 - **`args.bizday` 必传**：`{"from":"YYYY-MM-DD","to":"YYYY-MM-DD"}`（单日则 from=to）——明细直读数据湖，不带 bizday 会被拒。
 - **`rowCountTotal` 是行数的唯一权威**：它 = 该范围全量原始行数，返回 rows 只是截取。回答「多少行」用 rowCountTotal，**不要拿返回行数当全量**。
 - **回 `no_detail_binding` = 能力边界，不是权限问题**：如实告知「该指标暂不支持明细下钻，聚合口径可用 {{tool:query}} 查询」，**不要重试、不要换参数试探**；回包带的 `alternative` 就是可直接改用的 `{{tool:query}}` 调用（含 `dimensions/orderBy/limit`），照它走聚合面 Top-N；默认给一个业务维度，按问题可再删/换。
 - **双时钟声明原样转述**：`clock_note`（⏱ 开头，明细直读查询时刻 vs 聚合口径截至日）原样转述、钉在答案末尾；`drill_as_of` / `data_as_of` 照抄不要自行换算。`scope_line`（📐）由系统在消息末尾自动附加（同 📅 机制）——不要自己写 📐 行。
-- **回包可能少一列**：`lemeng:retail:order_line` 的 `order_detail_std_price` 等条件列**需授权**才出现（无 `data:cost` ⇒ 该列不在 `columns`/`rows` 里）。这是**未授权**，不是「没有数据」、不是 NULL、不是 0——如实答「该列需授权」。
+- **回包可能少一列**：{{include:local/tenant-shanhai-drill-columns.md}}
 
 ## 口径确认与新鲜度（Wave 2 三新工具）
 

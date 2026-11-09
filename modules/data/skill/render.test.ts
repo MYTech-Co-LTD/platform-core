@@ -1,10 +1,16 @@
 // render.test.ts — 正文渲染的纯判据。
+import { readFileSync, readdirSync } from 'node:fs'
+import { dirname, join } from 'node:path'
+import { fileURLToPath } from 'node:url'
 import { describe, expect, it } from 'vitest'
 import { CONTRACT } from './contract'
 import {
   contractView, guideInvariants, renderInstructions, renderSkill, renderText,
   type ContentReader,
 } from './render'
+
+const HERE = dirname(fileURLToPath(import.meta.url))
+const CONTENT_DIR = join(HERE, 'content')
 
 /** 注入式 content 读取器：测试可给任意桩文本，不碰真实文件。 */
 const readerOf = (files: Record<string, string>): ContentReader => (rel) => {
@@ -192,5 +198,26 @@ describe('openclaw 渲染', () => {
 
   it('openclaw 渲染逐字快照（迁移基线）', () => {
     expect(renderSkill('openclaw')).toMatchSnapshot()
+  })
+
+  it('local/ 下没有孤儿 partial（每个文件都被 openclaw.md include）', () => {
+    const localDir = join(CONTENT_DIR, 'local')
+    const files = readdirSync(localDir).filter((f) => f.endsWith('.md'))
+    expect(files.length).toBeGreaterThan(0)
+    const openclaw = readFileSync(join(CONTENT_DIR, 'openclaw.md'), 'utf8')
+    for (const file of files) {
+      expect(openclaw).toContain(`{{include:local/${file}}}`)
+    }
+  })
+
+  // 迁移证明：Task 3 期间 renderSkill('openclaw') 必须与旧插件 SKILL.md 正文逐字一致。
+  // Task 5 删除旧 SKILL.md（deploy/openclaw/data-query-plugin/skills/data-query/SKILL.md）时，
+  // 同步删除本用例。
+  it('与旧插件 SKILL.md 正文逐字一致（迁移证明）', () => {
+    const repoRoot = join(HERE, '..', '..', '..')
+    const oldPath = join(repoRoot, 'deploy/openclaw/data-query-plugin/skills/data-query/SKILL.md')
+    const old = readFileSync(oldPath, 'utf8')
+    const body = old.replace(/^---\n[\s\S]*?\n---\n\n?/, '').replace(/\n+$/, '')
+    expect(renderSkill('openclaw')).toBe(body)
   })
 })

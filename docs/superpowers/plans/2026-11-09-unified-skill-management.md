@@ -635,7 +635,8 @@ git commit -m "refactor(data): guide 与 MCP 静态工具改为契约渲染 (#$I
 
 **Files:**
 - Create: `modules/data/skill/content/openclaw.md`
-- Create: `modules/data/skill/content/local/tenant-shanhai.md`
+- Create: `modules/data/skill/content/local/tenant-shanhai-*.md`（按 `openclaw.md` 插入点拆多个 partial）
+- Create: `modules/data/skill/content/README.md`（源文件角色说明，不参与渲染）
 - Test: `modules/data/skill/render.test.ts`（追加用例）
 
 - [ ] **Step 1: 创建 `content/openclaw.md`**
@@ -654,32 +655,26 @@ git commit -m "refactor(data): guide 与 MCP 静态工具改为契约渲染 (#$I
 | `sample_dimension_values` | `{{tool:sample_dimension_values}}` |
 | `get_freshness` | `{{tool:freshness}}` |
 
-2. **把租户业务知识抽到 `content/local/tenant-shanhai.md`**，在 `openclaw.md` 原位置放 `{{include:local/tenant-shanhai.md}}`。抽取范围（按现有 SKILL.md 的标题）：
-   - 「## 先检索，不要猜 id」里的 `lemeng:*` 指标 id 表、营业额默认口径、配销差额规则；
+2. **把租户业务知识抽到 `content/local/tenant-shanhai-*.md`**，在 `openclaw.md` 原位置放 `{{include:local/<name>.md}}`。租户内容在原正文中**不连续**，按插入点拆多个 partial（指标表、行数预算、默认口径、覆盖区间、列名、参数形状、明细下钻、部署文案各一个），不要合成单文件。抽取范围（按现有 SKILL.md 的标题）：
+   - 「## 先检索，不要猜 id」里的 `lemeng:*` 指标 id 表、营业额默认口径、配销差额规则、实测代价；
+   - 「## 方法论」里的行数预算（`3120` / `64188` /「区间超过 4 天必用」）；
    - 「## 数据覆盖区间」里的乐檬示例；
    - 「## Top-N / 分组」里的 `supplier_num`、`client_name` 等乐檬列名示例；
    - 「## 参数形状」里的乐檬 `bizday` 示例；
+   - 「## 明细下钻」里的 `lemeng:retail:order_line`、`order_detail_std_price`、`data:cost` 示例；
    - 「## 汇报与行为」里的「扫码登录」等部署相关文案。
-   **通用方法论、纪律、回包信号处理留在 `openclaw.md`**。
+   **通用方法论、纪律、回包信号处理留在 `openclaw.md`**。混合 bullet 用「保留通用句 + 把示例部分 include」的方式（允许行内 include），保证渲染逐字等价；做不到就整条保留并记录原因。
 3. **frontmatter 不要放进 `openclaw.md`**——openclaw 侧 frontmatter 由构建期渲染器从 `content/openclaw.frontmatter.md` 读取（Task 4 创建）。
 
-`content/openclaw.md` 的开头写一行注释（Markdown 注释，不进模型可见正文）：
+**不要在 `openclaw.md` 或 `local/*.md` 里写注释**：全文都会渲染进 agent 可见正文，注释同样可见并会破坏与旧 SKILL.md 的逐字 parity。源文件角色说明写 `content/README.md`（不参与渲染）。
 
-```markdown
-<!-- 通道 C 正文：共享硬约束在 shared.md；租户知识在 local/tenant-shanhai.md。 -->
-```
+- [ ] **Step 2: 创建 `content/local/tenant-shanhai-*.md`**
 
-- [ ] **Step 2: 创建 `content/local/tenant-shanhai.md`**
-
-把 Step 1 抽出的租户内容按原顺序放进来。文件头写：
-
-```markdown
-<!-- 部署/租户专属：仅 openclaw 渲染时拼接，不进入平台 MCP 指令面。 -->
-```
+按 Step 1 的插入点逐个建文件，每个文件只放该位置的原文（不要加注释、不要调整顺序/空白）。文件角色、拆分原因与「为什么不能写注释」写 `content/README.md`。
 
 - [ ] **Step 3: 追加 render 测试：openclaw 正文包含共享硬约束与租户 id，且不含 mcp 专属工具名**
 
-在 `render.test.ts` 追加：
+在 `render.test.ts` 追加（文件头需补 `node:fs` / `node:path` / `node:url` 导入，以及 `HERE = dirname(fileURLToPath(import.meta.url))`、`CONTENT_DIR = join(HERE, 'content')`）：
 
 ```ts
 describe('openclaw 渲染', () => {
@@ -764,6 +759,27 @@ describe('openclaw 渲染', () => {
     expect(desc).toContain('少一列')
     expect(desc).toContain('该列需授权')
   })
+
+  it('openclaw 渲染逐字快照（迁移基线）', () => {
+    expect(renderSkill('openclaw')).toMatchSnapshot()
+  })
+
+  it('local/ 下没有孤儿 partial（每个文件都被 openclaw.md include）', () => {
+    const files = readdirSync(join(CONTENT_DIR, 'local')).filter((f) => f.endsWith('.md'))
+    expect(files.length).toBeGreaterThan(0)
+    const openclaw = readFileSync(join(CONTENT_DIR, 'openclaw.md'), 'utf8')
+    for (const file of files) expect(openclaw).toContain(`{{include:local/${file}}}`)
+  })
+
+  // 迁移证明：Task 5 删除旧 SKILL.md 时同步删除本用例。
+  it('与旧插件 SKILL.md 正文逐字一致（迁移证明）', () => {
+    const repoRoot = join(HERE, '..', '..', '..')
+    const old = readFileSync(
+      join(repoRoot, 'deploy/openclaw/data-query-plugin/skills/data-query/SKILL.md'), 'utf8',
+    )
+    const body = old.replace(/^---\n[\s\S]*?\n---\n\n?/, '').replace(/\n+$/, '')
+    expect(renderSkill('openclaw')).toBe(body)
+  })
 })
 ```
 
@@ -778,7 +794,7 @@ Expected: PASS。若 `openclaw.md` 里还有未替换的占位符或硬编码工
 - [ ] **Step 5: 提交**
 
 ```bash
-git add modules/data/skill/content/openclaw.md modules/data/skill/content/local/tenant-shanhai.md modules/data/skill/render.test.ts
+git add modules/data/skill/content/openclaw.md modules/data/skill/content/local modules/data/skill/content/README.md modules/data/skill/render.test.ts modules/data/skill/__snapshots__
 git commit -m "feat(data): openclaw skill 正文迁入 skill 正典 (#$ISSUE)"
 ```
 
@@ -1146,6 +1162,12 @@ test("query_detail 注册形状：path/method 正确（描述断言已迁到 ski
 # openclaw skill 构建期生成物（来源 modules/data/skill/，不提交）
 deploy/openclaw/data-query-plugin/generated/
 deploy/openclaw/data-query-plugin/skills/data-query/SKILL.md
+```
+
+仅加 `.gitignore` 不够——旧 `SKILL.md` 仍被 git 跟踪，必须同一提交里解除跟踪：
+
+```bash
+git rm --cached deploy/openclaw/data-query-plugin/skills/data-query/SKILL.md
 ```
 
 - [ ] **Step 6: 本地生成并跑插件测试**

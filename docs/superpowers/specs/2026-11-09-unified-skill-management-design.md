@@ -63,11 +63,13 @@
 modules/data/skill/
   contract.json              # 唯一工具契约（所有静态工具）
   content/
+    README.md                # 源文件角色说明（不参与渲染）
     shared.md                # 通道中性：工作流、硬约束、回答纪律
     mcp.md                   # B 专属：PAT 身份、信封字段、审计口径
     openclaw.md              # C 专属：企微 userid、📅/📐 传输层附加、参数形状
     local/
-      tenant-shanhai.md      # 部署/租户知识（乐檬指标 id、行数预算、默认口径）
+      tenant-shanhai-*.md    # 部署/租户知识，按 openclaw.md 插入点拆多个 partial
+                             # （指标 id、行数预算、默认口径、覆盖区间、列名、参数形状、明细下钻、部署文案）
   render.ts                  # 纯函数渲染器（平台侧 + 测试共用）
 scripts/
   gen-openclaw-skill.mjs     # 无依赖 Node 脚本：读 contract.json + content/*.md，渲染 openclaw 产物
@@ -78,6 +80,12 @@ deploy/openclaw/data-query-plugin/
   skills/data-query/
     SKILL.md                 # 构建期生成，gitignore
 ```
+
+`local/` 的租户内容在原 SKILL.md 中**非连续**（指标表、行数预算、覆盖区间、列名、参数形状、
+明细下钻、部署文案分散在各节），因此不合成单个 `tenant-shanhai.md`，而是**按插入点拆成多个
+`tenant-shanhai-*.md`**：每个 partial 只含该插入点的原文，`openclaw.md` 在原位置放
+`{{include:local/<name>.md}}`。这样迁移前后渲染结果逐字等价（字节级 parity 由测试钉住），
+也不把「通用规则 + 租户示例」混在同一条 bullet 里强行拆句。
 
 ### 4.2 数据流
 
@@ -152,7 +160,9 @@ COPY --from=skillgen /out/ /opt/plugins/data-query-plugin/
 - 正文用 `{{tool:<id>}}` 引用逻辑工具，渲染器按通道替换为真实名字。
 - **正文禁止硬编码通道工具名**；出现即视为违规（渲染器与测试都拦）。
 - 共享节用 `GUIDE_INVARIANTS` 的四行硬约束原文；通道专属内容分别放 `mcp.md` / `openclaw.md`。
-- `local/` 只在 openclaw 渲染时拼接，位置由 `openclaw.md` 的 `{{include:local/tenant-shanhai.md}}` 指定。
+- `local/` 只在 openclaw 渲染时拼接，位置由 `openclaw.md` 的 `{{include:local/tenant-shanhai-*.md}}` 指定。
+  租户内容非连续，按插入点拆多个 partial；每个 partial 是原位置原文，混合通用规则与租户示例的
+  bullet 保留通用句、只把示例部分 include（允许行内 include），以保证迁移前后渲染逐字等价。
 
 ### 5.3 渲染器
 
