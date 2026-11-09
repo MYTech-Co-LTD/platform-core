@@ -340,6 +340,21 @@ while IFS= read -r line || [ -n "$line" ]; do
   # `${REPO}` 内路径 ⇒ 两者天然不相交。
   printf '%s\n' "${real_land#"$REPO"/}" >> "$_tmpdir/expected"
 
+  # 落地路径是**目录** = 它被别的东西占过位（2026-11-09 实测：`docker compose run -v <路径>:/rb.sh`
+  # 在源路径不存在时会**自动建一个空目录**；此后本脚本的 `mv -f tmp dest` 不报错，而是把文件搬
+  # **进**那个目录并保留临时名 ⇒ 每次 sync 都打 `OK`，目标却永远是空目录）。
+  # 这种假绿静默存活了 2 天（lemeng-readback.sh 失效 ⇒ 对账的 rb 通道恒空 ⇒ 报「回读无数据行」，
+  # 根因被掩盖成「形状变了」）。所以这里必须 fail loud，不许继续 mv。
+  if [ -d "$real_land" ]; then
+    if [ "$CHECK_MODE" = '1' ]; then
+      echo "DRIFT $real_land $f_sha (目录不是文件)"
+      _drift=$((_drift + 1))
+      continue
+    fi
+    echo "LAND_IS_DIR: ${real_land}（${f_repo}）——落地路径是目录不是文件（多半是 bind-mount 误建）。先人工移除该目录再 sync" >&2
+    exit 1
+  fi
+
   if [ "$CHECK_MODE" = '1' ]; then
     if [ -f "$real_land" ]; then
       actual=$(sha256_of "$real_land")

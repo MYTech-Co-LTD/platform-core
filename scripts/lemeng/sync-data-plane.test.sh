@@ -476,6 +476,18 @@ assert_file "$ROOT/s/checkout/modules/x/y.js" 'S: 作用域外件存活'
 assert_contains "$(out_of s)" '# extra 0' 'S: 清理后作用域内残余 0'
 assert_contains "$(out_of s)" '# outside-scope 1' 'S: 作用域外计数 1（不因 prune 而变）'
 
+# T 落地路径被目录占位（真机形态：docker `-v <路径>:/x` 在源不存在时自动建空目录）：
+# 必须 fail loud，绝不 `mv` 进去——那种假绿会让 `OK` 行照打而目标永远是空目录。
+setup t
+mkdir -p "$ROOT/t/checkout/duckle/a.json"
+st=$(run_sync t)
+assert_eq '1' "$st" 'T: 目录占位时退出码 1'
+assert_contains "$(err_of t)" 'LAND_IS_DIR: ' 'T: 打 LAND_IS_DIR 指名'
+if [ -d "$ROOT/t/checkout/duckle/a.json" ]; then ok 'T: 目录原样不动'; else bad 'T: 目录被动了'; fi
+st=$(run_sync t --check)
+assert_eq '1' "$st" 'T: --check 下同样判红'
+assert_contains "$(out_of t)" 'DRIFT ' 'T: --check 打 DRIFT 行'
+
 # ---- 汇总 ----
 
 printf '\n%d 通过, %d 失败\n' "$PASSED" "$FAILED"
