@@ -23,7 +23,7 @@ import type { Pool } from 'pg'
 import type { Requester, SlicingSpec, SliceOrderBy } from './authz'
 import { runQuery, type QueryDeps, type SqlExecutor } from './query-service'
 import { buildRootCause, type RootCauseBundle } from './report-root-cause'
-import { buildDailyReview, type DailyReviewBundle } from './report-daily-review'
+import { buildDailyReview, FIXED_COST_FORM_ID, type DailyReviewBundle } from './report-daily-review'
 import type { ToolboxDeps } from './toolbox/registry'
 import {
   compareRangeOf, comparisonCovered, coverageArgsOf, coverageOfQueryResult, coverageSlicing,
@@ -479,6 +479,33 @@ export async function buildFacts(
     ? await buildDailyReview({
         spec, period, range,
         ...(branchNum === undefined ? {} : { branchNum }),
+        // P2：固定成本/目标来自 forms 受管数据集（门店按月填报）；缺表/无提交 ⇒ 返回 null（按未维护处理）。
+        readFixedCosts: async (targetBranch, yearMonth, systemBook) => {
+          if (targetBranch === null) return null
+          try {
+            const params: unknown[] = [deps.org, FIXED_COST_FORM_ID, yearMonth, targetBranch]
+            let sql = `select payload from forms.submission
+                        where org = $1 and asset_id = $2
+                          and payload->>'month' = $3 and payload->>'branch_num' = $4`
+            if (systemBook !== undefined) {
+              sql += ` and payload->>'system_book' = $5`
+              params.push(systemBook)
+            }
+            sql += ` order by submitted_at desc limit 1`
+            const r = await deps.pool.query(sql, params)
+            const payload = r.rows[0]?.payload as Record<string, unknown> | undefined
+            if (payload === undefined) return null
+            const rent = Number(payload['rent'])
+            const utilities = Number(payload['utilities'])
+            const other = Number(payload['other'])
+            const target = Number(payload['target_net_margin'])
+            if (![rent, utilities, other, target].every((n) => Number.isFinite(n))) return null
+            return { yearMonth, rent, utilities, other, targetNetMargin: target / 100 }
+          } catch {
+            // forms 未部署/无表：固定成本未维护是正常态，不阻断日报。
+            return null
+          }
+        },
         readSeries: async (metricId, args) => {
           const out = await runQuery(
             queryDepsOf(deps), deps.org, deps.requester, metricId, args,

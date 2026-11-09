@@ -27,8 +27,10 @@ export const DAILY_REVIEW_METRICS = {
   expense: 'lemeng:expense:branch_net',
 } as const
 
-/** 净毛利率目标：P2 前固定 20%。 */
+/** 净毛利率目标默认 20%；P2 起由「门店固定成本」表单按店/月覆盖。 */
 export const NET_MARGIN_TARGET = 0.2
+/** 固定成本表单 assetId（forms 受管数据集；字段见 §P2 设计）。 */
+export const FIXED_COST_FORM_ID = 'branch-fixed-cost'
 /** 好/坏判定阈值：日环比 ±5%。 */
 const DELTA_THRESHOLD = 5
 
@@ -43,8 +45,26 @@ export type ReadDailySeries = (
   args: Record<string, unknown>,
 ) => Promise<DailySeries | null>
 
+/** 固定成本 + 目标配置（来自 forms 提交；缺省 = 未维护）。 */
+export interface FixedCostConfig {
+  yearMonth: string
+  rent: number
+  utilities: number
+  other: number
+  /** 0.2 = 20%；表单里存百分数（20）时由读取方换算。 */
+  targetNetMargin: number
+}
+
+export type ReadFixedCosts = (
+  branchNum: string | null,
+  yearMonth: string,
+  systemBook?: string,
+) => Promise<FixedCostConfig | null>
+
 export interface DailyReviewDeps {
   readSeries: ReadDailySeries
+  /** 固定成本读取（P2）；缺省 = 未维护，净毛利不含房租/水电。 */
+  readFixedCosts?: ReadFixedCosts
   spec: ReportSpec
   period: PeriodSpec
   range: DateRange
@@ -106,6 +126,11 @@ export interface DailyReviewBundle {
   }
   /** MTD 累计快照（累计值，不是日均）。 */
   mtd: DailySnapshot
+  /** 固定成本（月/日）与目标净毛利率（格式化）。 */
+  fixedCostMaintained: boolean
+  fixedCostMonthly: string
+  fixedCostDaily: string
+  targetNetMargin: string
   /** 销售侧/成本侧驱动，按绝对影响降序。 */
   drivers: DailyDriver[]
   /** 2–3 条可执行建议（已带金额/项目）。 */
@@ -216,6 +241,7 @@ function sumRange(m: Map<string, number>, from: string, to: string): number | nu
 function rawDayOf(
   m: { revenue: Map<string, number>; orders: Map<string, number>; gross: Map<string, number>; loss: Map<string, number>; expense: Map<string, number> },
   day: string,
+  fixedCost = 0,
 ): RawDay {
   const revenue = m.revenue.get(day) ?? null
   const orders = m.orders.get(day) ?? null
@@ -224,7 +250,7 @@ function rawDayOf(
   const expense = m.expense.get(day) ?? 0
   const aov = revenue !== null && orders !== null && orders > 0 ? revenue / orders : null
   const grossMargin = revenue !== null && gross !== null && revenue > 0 ? gross / revenue : null
-  const netGross = gross === null ? null : gross - loss - expense
+  const netGross = gross === null ? null : gross - loss - expense - fixedCost
   const netMargin = revenue !== null && netGross !== null && revenue > 0 ? netGross / revenue : null
   return { day, revenue, orders, gross, loss, expense, aov, grossMargin, netGross, netMargin }
 }
@@ -234,6 +260,7 @@ function rawPeriodOf(
   from: string,
   to: string,
   days: number,
+  fixedCostDaily = 0,
 ): RawPeriod {
   const revenue = sumRange(m.revenue, from, to)
   const orders = sumRange(m.orders, from, to)
@@ -245,7 +272,7 @@ function rawPeriodOf(
   const avgGross = gross === null ? null : gross / days
   const aov = revenue !== null && orders !== null && orders > 0 ? revenue / orders : null
   const grossMargin = revenue !== null && gross !== null && revenue > 0 ? gross / revenue : null
-  const netGross = avgGross === null ? null : avgGross - loss / days - expense / days
+  const netGross = avgGross === null ? null : avgGross - loss / days - expense / days - fixedCostDaily
   const netMargin = avgRevenue !== null && netGross !== null && avgRevenue > 0 ? netGross / avgRevenue : null
   return { from, to, days, revenue, orders, gross, loss, expense, avgRevenue, avgOrders, avgGross, aov, grossMargin, netGross, netMargin }
 }
@@ -371,15 +398,30 @@ export async function buildDailyReview(deps: DailyReviewDeps): Promise<DailyRevi
     : common.at(-1)
   if (targetDay === undefined) return null
 
-  const today = rawDayOf(m, targetDay)
+  // 固定成本/目标：按目标月 + 门店取 forms 最新提交；缺省 = 未维护（按 0 计，目标 20%）。
+  const fixed = deps.readFixedCosts === undefined
+    ? null
+    : await deps.readFixedCosts(
+        deps.branchNum ?? null,
+        targetDay.slice(0, 7),
+        typeof baseArgs['system_book'] === 'string' ? baseArgs['system_book'] : undefined,
+      )
+  const fixedMonthly = fixed === null
+    ? 0
+    : Math.max(0, fixed.rent) + Math.max(0, fixed.utilities) + Math.max(0, fixed.other)
+  const daysInMonth = dayjs(targetDay).daysInMonth()
+  const fixedDaily = fixedMonthly / daysInMonth
+  const targetNetMargin = fixed?.targetNetMargin ?? NET_MARGIN_TARGET
+
+  const today = rawDayOf(m, targetDay, fixedDaily)
   const yesterdayDay = dayjs(targetDay).subtract(1, 'day').format('YYYY-MM-DD')
-  const yesterdayRaw = rawDayOf(m, yesterdayDay)
+  const yesterdayRaw = rawDayOf(m, yesterdayDay, fixedDaily)
   const yesterday = yesterdayRaw.revenue === null && yesterdayRaw.gross === null ? null : yesterdayRaw
 
   const mtdDays = dayjs(targetDay).date()
-  const mtd = rawPeriodOf(m, monthStart, targetDay, mtdDays)
+  const mtd = rawPeriodOf(m, monthStart, targetDay, mtdDays, fixedDaily)
   const lyDay = Math.min(dayjs(targetDay).date(), dayjs(lastYearCeiling).daysInMonth())
-  const lastYear = rawPeriodOf(m, lastYearFrom, lastYearCeiling, lyDay)
+  const lastYear = rawPeriodOf(m, lastYearFrom, lastYearCeiling, lyDay, fixedDaily)
   const hasLastYear = lastYear.revenue !== null || lastYear.gross !== null
 
   const comparisons = {
@@ -433,9 +475,12 @@ export async function buildDailyReview(deps: DailyReviewDeps): Promise<DailyRevi
   drivers.sort((a, b) => b.impact - a.impact)
   const topDrivers = drivers.slice(0, 4).map(({ impact: _impact, ...d }) => d)
 
-  const notes: string[] = [
-    '净毛利 = 毛利 − 报损 − 费用；当前**未含房租、水电等固定成本**（P2 接智能表格后扣除）。',
-  ]
+  const notes: string[] = []
+  if (fixed === null) {
+    notes.push('固定成本未维护（房租/水电按 0）；净毛利未含房租、水电等固定成本。')
+  } else {
+    notes.push(`固定成本 ${fmt(fixedMonthly, 'currency')}/月 ÷ ${daysInMonth} 天 = ${fmt(fixedDaily, 'currency')}/天；来源 = 门店固定成本表单（${targetDay.slice(0, 7)}）。`)
+  }
   if (!lossR.ok) notes.push('报损指标查询失败/无权限，净毛利按报损 0 计，结果不可信。')
   if (!expenseR.ok) notes.push('费用指标查询失败/无权限，净毛利按费用 0 计，结果不可信。')
   if (comparisons.lastYearAvg === null) notes.push('去年同月无数据，无法比较去年同月日均。')
@@ -445,10 +490,10 @@ export async function buildDailyReview(deps: DailyReviewDeps): Promise<DailyRevi
   const suggestions: string[] = []
   const targetGap = today.netGross === null || today.revenue === null
     ? null
-    : today.netGross - today.revenue * NET_MARGIN_TARGET
-  if (today.netMargin !== null && today.netMargin < NET_MARGIN_TARGET) {
+    : today.netGross - today.revenue * targetNetMargin
+  if (today.netMargin !== null && today.netMargin < targetNetMargin) {
     suggestions.push(
-      `净毛利率 ${fmt(today.netMargin, 'percent')}，低于 ${fmt(NET_MARGIN_TARGET, 'percent')} 目标；当日净毛利缺口 ${signedAmount(targetGap)}，优先压降报损/费用并核对毛利。`,
+      `净毛利率 ${fmt(today.netMargin, 'percent')}，低于 ${fmt(targetNetMargin, 'percent')} 目标；当日净毛利缺口 ${signedAmount(targetGap)}，优先压降报损/费用并核对毛利。`,
     )
   }
   const revDelta = comparisons.yesterday?.delta.revenue ?? comparisons.mtdAvg.delta.revenue
@@ -490,6 +535,9 @@ export async function buildDailyReview(deps: DailyReviewDeps): Promise<DailyRevi
   for (const d of topDrivers) { add(d.value); add(d.delta) }
   for (const s of suggestions) for (const m of s.match(/-?\d[\d,]*(?:\.\d+)?(?:%|pp)?/g) ?? []) add(m)
   if (targetGap !== null) add(signedAmount(targetGap))
+  add(fmt(fixedMonthly, 'currency'))
+  add(fmt(fixedDaily, 'currency'))
+  add(fmt(targetNetMargin, 'percent'))
 
   const body = {
     targetDay,
@@ -515,6 +563,10 @@ export async function buildDailyReview(deps: DailyReviewDeps): Promise<DailyRevi
     drivers: topDrivers,
     suggestions,
     notes,
+    fixedCostMaintained: fixed !== null,
+    fixedCostMonthly: fmt(fixedMonthly, 'currency'),
+    fixedCostDaily: fmt(fixedDaily, 'currency'),
+    targetNetMargin: fmt(targetNetMargin, 'percent'),
     numbers: [...numbers],
     dataAsOf: null as string | null,
   }

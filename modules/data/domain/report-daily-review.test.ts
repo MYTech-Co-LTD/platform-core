@@ -86,4 +86,25 @@ describe('buildDailyReview', () => {
     expect(out!.today.netGross).toBe('-')
     expect(out!.notes.join(' ')).toContain('没有营业额数据')
   })
+
+  it('固定成本表单 + 25% 目标：净毛利扣固定成本，目标按表单', async () => {
+    const read = fake(base)
+    const out = await buildDailyReview({
+      spec,
+      period: { mode: 'day', day: DAY },
+      range: { from: DAY, to: DAY },
+      readFixedCosts: async () => ({ yearMonth: '2026-11', rent: 3100, utilities: 1000, other: 0, targetNetMargin: 0.25 }),
+      readSeries: (metricId) => read(metricId),
+    })
+    expect(out).not.toBeNull()
+    const dr = out!
+    expect(dr.fixedCostMaintained).toBe(true)
+    expect(dr.fixedCostMonthly).toBe('4,100.00')
+    expect(dr.fixedCostDaily).toBe('136.67')
+    expect(dr.targetNetMargin).toBe('25.00%')
+    // 172,983.20 - 1,000 - 5,000 - 4,100/30
+    expect(dr.today.netGross).toBe('166,846.53')
+    expect(dr.notes.join(' ')).toContain('固定成本 4,100.00/月')
+  })
+
 })

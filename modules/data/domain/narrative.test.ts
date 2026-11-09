@@ -514,6 +514,10 @@ describe('daily_review 模板', () => {
   const dr: DailyReviewBundle = {
     targetDay: '2026-11-08', yesterday: '2026-11-07',
     monthStart: '2026-11-01', lastYearFrom: '2025-11-01', lastYearTo: '2025-11-08',
+    fixedCostMaintained: false,
+    fixedCostMonthly: '0.00',
+    fixedCostDaily: '0.00',
+    targetNetMargin: '20.00%',
     today: snap('目标日', '2026-11-08'),
     comparisons: {
       yesterday: { baseline: snap('昨天', '2026-11-07'), delta },
