@@ -36,7 +36,8 @@ metadata:
   两条都挂「营业额」同义词）。**配送金额 `lemeng:branch:transfer_money` 不是营业额**——它只是出库的
   门店配送腿；把配送金额当营业额是**错答**，不是口径差异。
 - 回答必须带上**指标 id + 口径**（如「`lemeng:retail:sales`（不冲退货）」）；用户问营业额时，
-  默认报「不冲退货」，并注明另有「冲退货」口径。
+  默认报「不冲退货」`retail:sales`，并注明另有「冲退货」`retail:net_sales`。
+  ⚠️ 搜索结果的排序可能是 `net_sales` 在前（id 字典序）——**不要按搜索结果第一条选**，按本规则默认不冲退货。
 
 | 用户说法 | 首选指标 |
 |---|---|
@@ -47,6 +48,7 @@ metadata:
 | 外部批发金额 | `lemeng:outbound:external_wholesale` |
 | 体系内批发 | `lemeng:outbound:region_net` 的 `体系内批发` 通道（3120 批发镜像） |
 | 采购金额 / 采购 Top5 | `lemeng:purchase:amount`（按 `supplier_num` 分组 + Top-N） |
+| 配销差额 / 配销比 | = 销售金额 − 配送金额（`lemeng:retail:sales` − `lemeng:branch:transfer_money`）；两条分别查，**不要拿配送金额当销售金额** |
 | 门店数 / 门店销售 | `lemeng:branch:transfer_money`（门店配送）/ `retail:*` 系列 |
 
 ## 数据覆盖区间（「最早的数据 / 到几号」）
