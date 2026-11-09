@@ -1,4 +1,4 @@
-{{ config(store_failures=true, tags=['audit','audit_window']) }}
+{{ config(store_failures=true, tags=['audit_window']) }}
 -- ★ **2026-10-28（issue #761）**：裸 `::numeric` 在 pg_duckdb 里参与除法会被推成 DOUBLE
 --   （实测 542.2949999999998 vs 精确 542.295）⇒ 最终 2 位小数会差 1 分、间歇假红。
 --   本文件所有裸 `::numeric` 已改 `::decimal(38,10)`；`::numeric(20,2)` 最终 cast 保留。
