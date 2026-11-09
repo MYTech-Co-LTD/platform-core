@@ -492,7 +492,8 @@ describe('proposeMetricDeclarationImpl（路由实现，只读现行文件）', 
     expect(pieces[0].path).toBe('dbt/semantics/l1_metrics.yml')
     const re = parseDocument(pieces[0].content)
     expect(re.errors).toEqual([])
-    expect(metricNamesOf(pieces[0].content)).toHaveLength(51)
+    // 53 条声明 + 本条探针 = 54（2026-11-09 新增出库两分/营业额双口径的三条指标）
+    expect(metricNamesOf(pieces[0].content)).toHaveLength(54)
   })
 
   it('name / rationale 缺失 ⇒ bad_param（工具级错误）', async () => {
