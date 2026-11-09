@@ -1,6 +1,6 @@
 // gen-openclaw-skill.test.ts — 构建期渲染器与平台 render.ts 的输出必须逐字一致。
 import { execFileSync } from 'node:child_process'
-import { mkdtempSync, readFileSync, rmSync } from 'node:fs'
+import { cpSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -33,4 +33,49 @@ describe('gen-openclaw-skill.mjs', () => {
     expect(defs.map((d: { name: string }) => d.name).sort())
       .toEqual(contractView('openclaw').map((t) => t.channels.openclaw!.name).sort())
   })
+})
+
+/**
+ * 把脚本 + skill 正典复制到临时仓（脚本按自身位置定位 REPO_ROOT），
+ * 便于往 openclaw.md 注入坏占位符后黑盒验证生成器退出码。
+ */
+function makeSandbox(): string {
+  const root = mkdtempSync(join(tmpdir(), 'skillgen-bad-'))
+  mkdirSync(join(root, 'scripts'), { recursive: true })
+  cpSync(SCRIPT, join(root, 'scripts/gen-openclaw-skill.mjs'))
+  cpSync(join(ROOT, 'modules/data/skill'), join(root, 'modules/data/skill'), { recursive: true })
+  return root
+}
+
+/** 期望非 0 退出；返回 stderr+message 供断言错误文案。 */
+function runSandboxExpectThrow(root: string): string {
+  try {
+    execFileSync(
+      process.execPath,
+      [join(root, 'scripts/gen-openclaw-skill.mjs'), '--out', join(root, 'out')],
+      { cwd: root, stdio: 'pipe' },
+    )
+  } catch (err) {
+    const e = err as { message?: string; stderr?: Buffer }
+    return `${e.message ?? ''}\n${e.stderr?.toString() ?? ''}`
+  }
+  throw new Error('期望生成器失败，但它成功退出了')
+}
+
+describe('残留占位符必须让构建失败（与 render.ts 同判据）', () => {
+  for (const [label, broken] of [
+    ['未闭合 {{tool:query', '{{tool:query'],
+    ['空 {{}}', '{{}}'],
+  ] as const) {
+    it(`${label} → 非 0 退出`, () => {
+      const root = makeSandbox()
+      try {
+        const file = join(root, 'modules/data/skill/content/openclaw.md')
+        writeFileSync(file, `${readFileSync(file, 'utf8')}\n${broken}\n`)
+        expect(runSandboxExpectThrow(root)).toContain('未解析/未闭合/空占位符')
+      } finally {
+        rmSync(root, { recursive: true, force: true })
+      }
+    })
+  }
 })

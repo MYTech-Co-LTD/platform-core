@@ -6,7 +6,8 @@
 //   node scripts/gen-openclaw-skill.mjs --plugin-dir deploy/openclaw/data-query-plugin
 //   node scripts/gen-openclaw-skill.mjs --out /tmp/skill-out
 // 规则与 modules/data/skill/render.ts 保持一致；两份实现由 gen-openclaw-skill.test.ts 的
-// 同一组 golden 用例钉住。
+// 同一组 golden 用例钉住。残留占位符检查与 render.ts 的「替换 today 后仍含 {{」等价：
+// openclaw 内容没有 {{today}}，故直接检查任意剩余 {{（未解析/未闭合/空占位符都须炸）。
 import { mkdirSync, readFileSync, writeFileSync } from 'node:fs'
 import { dirname, join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -57,8 +58,11 @@ function renderFile(rel, depth = 0) {
     if (face === undefined) throw new Error(`gen-openclaw-skill: openclaw 通道没有工具 ${id}`)
     return face.name
   })
-  const left = text.match(/\{\{[^}]+\}\}/)
-  if (left !== null) throw new Error(`gen-openclaw-skill: 未解析占位符 ${left[0]}`)
+  // 任意剩余 {{ 都算错（含未闭合 `{{tool:query` 与空 `{{}}`）——与 render.ts 等价。
+  const left = text.indexOf('{{')
+  if (left >= 0) {
+    throw new Error(`gen-openclaw-skill: 未解析/未闭合/空占位符 ${text.slice(left, left + 30)}`)
+  }
   return text
 }
 
