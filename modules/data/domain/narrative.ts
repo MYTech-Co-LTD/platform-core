@@ -91,6 +91,14 @@ const ROOT_CAUSE_SYSTEM = [
   '全文不超过 500 个汉字；末尾单独一行写：数据截至 <dataAsOf>（缺失写「新鲜度未知」）。',
 ].join('\n')
 
+const DAILY_REVIEW_BASE = [
+  '你是门店经营分析助手。只能使用 facts 中的数字和项目名；不得编造、不得做 facts 之外的算术；缺失写 "-"。',
+  '数字必须逐字复制 facts.numbers 中的字符串（包括负号、千分位、百分号、小数位）；不得改写符号、去掉负号、取绝对值或做四舍五入。',
+  '日期一律写成 facts 里的 YYYY-MM-DD 形式；当前门店以 facts.branchName（缺省 branchNum）为准。',
+  '费用按项目是净额：写净额合计；有负数明细时说明主要冲减项，不要把正向大项相加当合计。',
+  '不要推测外部原因（天气/竞品/促销），只写数据内可见的构成与需要核对的事项。',
+].join('\n')
+
 const DAILY_REVIEW_SYSTEM = [
   '如果 facts.dailyReview 非空，按以下五段输出，纯文本，不要 Markdown 表格/HTML：',
   '结论：今天（targetDay）的营业额、订单数、客单价、毛利/毛利率，一句话判断比昨天好还是差。',
@@ -106,7 +114,7 @@ const DAILY_REVIEW_SYSTEM = [
 
 function systemOf(focus: AiTextPanel['focus']): string {
   if (focus === 'root_cause') return `${SYSTEM}\n${ROOT_CAUSE_SYSTEM}`
-  if (focus === 'daily_review') return `${SYSTEM}\n${DAILY_REVIEW_SYSTEM}`
+  if (focus === 'daily_review') return `${DAILY_REVIEW_BASE}\n${DAILY_REVIEW_SYSTEM}`
   return SYSTEM
 }
 
