@@ -141,14 +141,18 @@ describe('runDetailQuery（假执行器 + 假词表池，不需要湖）', () =>
     const out = await runDetailQuery(depsOf(pool, sqls), ORG, req(), 'drill:plain', ARGS, {})
     expect(out).toEqual({
       status: 'denied', metricId: 'drill:plain', reason: 'no_detail_binding', detail: NO_BINDING_DETAIL,
-      // 2026-11-09：明细不可用时给聚合面 Top-N 替代路径（维度取 grain 去掉 bizday）
-      alternative: {
-        tool: 'query_data',
-        args: { ...ARGS, dimensions: ['system_book'], orderBy: [{ column: 'value', dir: 'desc' }], limit: 5 },
-      },
     })
     expect(sqls).toEqual([])
     expect(audits[0].params[AUDIT_REASON]).toBe('no_detail_binding')
+  })
+
+  it('no_detail_binding 的 alternative 取一个业务维度（去掉 bizday/system_book）', async () => {
+    const { pool } = fakePool([{ ...NO_DRILL_ROW, id: 'drill:plain_dim', group_by: 'system_book, bizday, branch_num' }])
+    const out = await runDetailQuery(depsOf(pool, []), ORG, req(), 'drill:plain_dim', ARGS, {})
+    expect((out as { alternative?: unknown }).alternative).toEqual({
+      tool: 'query_data',
+      args: { ...ARGS, dimensions: ['branch_num'], orderBy: [{ column: 'value', dir: 'desc' }], limit: 5 },
+    })
   })
 
   it('词表里没有的 id ⇒ 门序先过 authorize：metric_not_declared（不是 no_detail_binding）', async () => {
@@ -328,10 +332,6 @@ describe('runDetailQuery（假执行器 + 假词表池，不需要湖）', () =>
     const out = await runDetailQuery(depsOf(pool, sqls), ORG, req(), 'drill:badcols', ARGS, {})
     expect(out).toEqual({
       status: 'denied', metricId: 'drill:badcols', reason: 'no_detail_binding', detail: NO_BINDING_DETAIL,
-      alternative: {
-        tool: 'query_data',
-        args: { ...ARGS, dimensions: ['system_book'], orderBy: [{ column: 'value', dir: 'desc' }], limit: 5 },
-      },
     })
     expect(sqls).toEqual([])
     expect(audits[0].params[AUDIT_REASON]).toBe('no_detail_binding')
