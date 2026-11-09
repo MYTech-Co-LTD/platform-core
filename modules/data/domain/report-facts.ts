@@ -457,6 +457,9 @@ export async function buildFacts(
   for (const d of [daily.min, daily.max]) if (d !== null) addNumber(d.value)
 
   const dataAsOf = earliestDataAsOf(asOfList)
+  const kpiArgs = spec.panels.find((p) => p.chart === 'kpi')
+  const reportSystemBook = kpiArgs !== undefined && typeof kpiArgs.args?.['system_book'] === 'string'
+    ? kpiArgs.args['system_book'] : null
   // 根因探针只在 `focus='root_cause'` 时跑：overview 的既有行为/缓存键一字不动。
   // 探针只走 `runDetailQuery` / `executeExplore`（与 /query、下钻、分析师面同一授权链）。
   let analysis = ai.focus === 'root_cause'
@@ -465,6 +468,7 @@ export async function buildFacts(
           pool: deps.pool, org: deps.org, requester: deps.requester,
           adoptedSources: deps.adoptedSources, execute: deps.execute,
           branchNum: branchNum ?? null,
+          systemBook: reportSystemBook,
           ...(deps.exploreExec === undefined ? {} : { exploreExec: deps.exploreExec }),
         },
         spec, range, period.mode,
@@ -533,6 +537,7 @@ export async function buildFacts(
           pool: deps.pool, org: deps.org, requester: deps.requester,
           adoptedSources: deps.adoptedSources, execute: deps.execute,
           branchNum: branchNum ?? null,
+          systemBook: reportSystemBook,
           skipDegenerate: true,
           extraMetrics: [{ metricId: 'lemeng:retail:item_profit', metricTitle: '零售商品毛利', format: 'currency' }],
           ...(deps.exploreExec === undefined ? {} : { exploreExec: deps.exploreExec }),

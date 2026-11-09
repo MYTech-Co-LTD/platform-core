@@ -77,6 +77,8 @@ export interface RootCauseDeps {
   dimensionLookup?: QueryDeps['dimensionLookup']
   /** 当前报表门店（筛选栏覆盖优先）：探针必须和报表同店，否则会拿别店订单当根因。 */
   branchNum?: string | null
+  /** 当前报表账套：配方/明细都必须同账套，否则会拿 64188 的商品当 3120 的根因。 */
+  systemBook?: string | null
   /** 日报的单日/单店场景：跳过 branch_num / 单日 bizday 这类退化维（只有一个值）。 */
   skipDegenerate?: boolean
   /** 额外候选（如日报的 order_line 商品维度）：聚合 KPI 没有 item 维，需单独点名。 */
@@ -269,6 +271,9 @@ async function detailProbe(
   if (deps.branchNum !== undefined && deps.branchNum !== null && metric.params.branch_num !== undefined) {
     args.branch_num = deps.branchNum
   }
+  if (deps.systemBook !== undefined && deps.systemBook !== null && metric.params.system_book !== undefined) {
+    args.system_book = deps.systemBook
+  }
   const cur = await runDetailQuery(
     qd, deps.org, deps.requester, metric.id, args,
     { dimensions: requested, orderBy: 'value', desc: true, limit: 100 },
@@ -327,6 +332,12 @@ async function recipeProbe(
     && (metric.params.branch_num !== undefined || dimensionNamesOf(metric).includes('branch_num'))) {
     for (const spec of compiled.specs) {
       spec.filters = [...(spec.filters ?? []), { column: 'branch_num', op: 'eq', value: deps.branchNum }]
+    }
+  }
+  if (deps.systemBook !== undefined && deps.systemBook !== null
+    && (metric.params.system_book !== undefined || dimensionNamesOf(metric).includes('system_book'))) {
+    for (const spec of compiled.specs) {
+      spec.filters = [...(spec.filters ?? []), { column: 'system_book', op: 'eq', value: deps.systemBook }]
     }
   }
   const exec = deps.exploreExec ?? ((sql, params) => runWarehouseSqlParams(analystPool(), sql, params))
