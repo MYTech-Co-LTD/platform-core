@@ -919,6 +919,7 @@ describePg('指标路由（需要 DATABASE_URL：词表读写）', () => {
     grain: ['system_book', 'bizday'],
     freshness_sla_days: 2,
     sources: ['s3://<bucket>/lemeng/retail_order_line/system_book=<账套>/bizday=<日期>/all.parquet'],
+    reads: [],
     ...over,
   })
 
@@ -944,6 +945,9 @@ describePg('指标路由（需要 DATABASE_URL：词表读写）', () => {
     expect((await createDeclaration({ declaration: tenantDecl({ name: L1_SALES.id }) })).status).toBe(409)
     expect((await createDeclaration({ declaration: tenantDecl({ name: 'tenant:retail:dup' }) })).status).toBe(201)
     expect((await createDeclaration({ declaration: tenantDecl({ name: 'tenant:retail:dup' }) })).status).toBe(409)
+    const noReads = await createDeclaration({ declaration: tenantDecl({ name: 'tenant:retail:noreads', reads: undefined }) })
+    expect(noReads.status).toBe(400)
+    expect((await noReads.json()).error).toBe('READS_REQUIRED')
     const bad = await createDeclaration({ declaration: tenantDecl({ name: 'tenant:retail:bad', owner: '' }) })
     expect(bad.status).toBe(400)
     const body = await bad.json()
@@ -969,6 +973,7 @@ describePg('指标路由（需要 DATABASE_URL：词表读写）', () => {
     grain: ['system_book', 'bizday'],
     freshness_sla_days: 2,
     sources: ['s3://<bucket>/lemeng/retail_order_line/system_book=<账套>/bizday=<日期>/all.parquet'],
+    reads: [],
     ...over,
   })
   const overrideReq = (method: string, path: string, body?: unknown, org = ORG) =>

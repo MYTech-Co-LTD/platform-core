@@ -3,9 +3,14 @@
 // 与 L2 写路径（metric-write.ts）分开：租户声明**不是**语义层的结构化树，而是与 L1 同形的
 // 「声明条目」。所以校验用 L1 同一套：`semanticsYamlPieceIssues`（apply 的重校验尺）+
 // `compileTenantDeclaration`（同源推导）。**不收 SQL**、不引入自由表达式语法。
+import { readdirSync, readFileSync } from 'node:fs'
+import { join } from 'node:path'
+import { fileURLToPath } from 'node:url'
 import type { Pool } from 'pg'
 import { parse as parseYaml, stringify as stringifyYaml } from 'yaml'
+import { DEFAULT_TIER_SCOPE } from './authz'
 import type { Requester } from './authz'
+import { sqlMentionsColumn } from './mask'
 import { compileTenantDeclaration } from './declaration-compiler'
 import type { DeclarationIssue } from './declaration-compiler'
 import { writeMetricAudit } from './metric-audit-store'
@@ -47,6 +52,69 @@ async function withTx<T>(pool: Pool, fn: (c: import('pg').PoolClient) => Promise
   } finally {
     client.release()
   }
+}
+
+const REPO_ROOT = fileURLToPath(new URL('../../../../', import.meta.url))
+
+/**
+ * 契约列敏感度（`<domain>.<table>.<column>` → sensitivity）。与
+ * `scripts/check-column-scope-monotonicity.mjs` 的 `loadSensitivity` **同一事实源格式**；
+ * 运行期需要它来给租户声明套默认整值掩码（与 L1 sync 的 `applyDefaultMaskTier` 同一条规则）。
+ * 进程内缓存：契约随部署变化，写路径不需要每次重读。
+ */
+let sensitivityCache: Map<string, string> | null = null
+function sensitivityMap(): Map<string, string> {
+  if (sensitivityCache !== null) return sensitivityCache
+  const m = new Map<string, string>()
+  const walk = (dir: string): void => {
+    for (const ent of readdirSync(dir, { withFileTypes: true })) {
+      const full = join(dir, ent.name)
+      if (ent.isDirectory()) { walk(full); continue }
+      if (!ent.name.endsWith('.json') || ent.name.startsWith('_')) continue
+      try {
+        const doc = JSON.parse(readFileSync(full, 'utf8')) as {
+          domain?: unknown; table?: unknown; columns?: Array<{ name?: unknown; sensitivity?: unknown }>
+        }
+        if (typeof doc.domain !== 'string' || typeof doc.table !== 'string' || !Array.isArray(doc.columns)) continue
+        for (const c of doc.columns) {
+          if (typeof c.name !== 'string') continue
+          m.set(`${doc.domain}.${doc.table}.${c.name}`, typeof c.sensitivity === 'string' ? c.sensitivity : 'none')
+        }
+      } catch { /* 坏契约由门禁报，这里跳过 */ }
+    }
+  }
+  try { walk(join(REPO_ROOT, 'contracts')) } catch { /* 无 contracts 目录（测试树）⇒ 空表 */ }
+  sensitivityCache = m
+  return m
+}
+
+/** 写前可执行性：warehouse 可用时跑 `EXPLAIN`（只出计划，不扫数据；pg_duckdb 实测支持）。 */
+async function explainOrReject(
+  deps: TenantDeclarationDeps, selectSql: string,
+): Promise<TenantDeclarationOutcome | null> {
+  if (deps.warehouse === undefined) return null
+  try {
+    await deps.warehouse.query(`explain ${selectSql}`)
+    return null
+  } catch (e) {
+    return { ok: false, http: 400, error: 'SQL_NOT_EXECUTABLE', extra: { detail: (e as Error).message.slice(0, 300) } }
+  }
+}
+
+/** `reads`（契约列全名数组）必填；命中的敏感列若无按列掩码 ⇒ 套默认整值掩码（同 L1 sync）。 */
+function applyTenantDefaultMask(
+  e: Record<string, unknown>, d: { selectSql: string; masks: import('./authz').MaskSpec[] | null },
+): TenantDeclarationOutcome | null {
+  const reads = Array.isArray(e.reads) ? e.reads.map(String) : null
+  if (reads === null) return { ok: false, http: 400, error: 'READS_REQUIRED' }
+  const sens = sensitivityMap()
+  const sensitive = reads.filter((k) => (sens.get(k) ?? 'none') !== 'none')
+  if (sensitive.length === 0) return null
+  const hasColumnMask = (d.masks ?? []).some((m) => m.column !== null && sqlMentionsColumn(d.selectSql, m.column))
+  if (!hasColumnMask) {
+    d.masks = [...(d.masks ?? []), { column: null, kind: 'nullify', grantedBy: DEFAULT_TIER_SCOPE }]
+  }
+  return null
 }
 
 /**
@@ -129,6 +197,10 @@ export async function createTenantDeclaration(
     return { ok: false, http: 400, error: 'DECLARATION_INVALID', extra: { issues: compiled.issues } }
   }
   const d = compiled.compiled
+  const maskIssue = applyTenantDefaultMask(e, d)
+  if (maskIssue !== null) return maskIssue
+  const sqlIssue = await explainOrReject(deps, d.selectSql)
+  if (sqlIssue !== null) return sqlIssue
 
   // ⑤ 同 org 同 id 已存在 ⇒ 409（不静默改既有口径；修改是另一条语义）
   const exists = await deps.pool.query(
@@ -228,6 +300,14 @@ export async function createOverrideDeclaration(
     return { ok: false, http: 400, error: 'DECLARATION_INVALID', extra: { issues: compiled.issues } }
   }
   const d = compiled.compiled
+  const maskIssue = applyTenantDefaultMask(e, d)
+  if (maskIssue !== null) return maskIssue
+  const sqlIssue = await explainOrReject(deps, d.selectSql)
+  if (sqlIssue !== null) return sqlIssue
+  // 覆盖不得**降低**平台口径的门：L1 有 required_scope ⇒ 覆盖必须同码（否则等于给没有该码的人开门）。
+  if (l1.requiredScope !== null && d.requiredScope !== l1.requiredScope) {
+    return { ok: false, http: 400, error: 'SCOPE_DOWNGRADE', extra: { expected: l1.requiredScope, got: d.requiredScope } }
+  }
 
   const exists = await deps.pool.query('select 1 from data.metrics where org = $1 and id = $2', [org, d.id])
   if ((exists.rowCount ?? 0) > 0) return { ok: false, http: 409, error: 'OVERRIDE_EXISTS' }
