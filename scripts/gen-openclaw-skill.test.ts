@@ -155,3 +155,10 @@ describe('输入缺失/损坏的报错带绝对路径', () => {
     expect(msg).toContain(join(root, 'modules/data/skill/content/shared.md'))
   }))
 })
+
+it('Dockerfile.openclaw 仍接线构建期渲染（防删 build stage 后静默退回旧文件）', () => {
+  const dockerfile = readFileSync(join(ROOT, 'deploy/Dockerfile.openclaw'), 'utf8')
+  expect(dockerfile).toContain('AS skillgen')
+  expect(dockerfile).toContain('gen-openclaw-skill.mjs')
+  expect(dockerfile).toContain('COPY --from=skillgen')
+})
