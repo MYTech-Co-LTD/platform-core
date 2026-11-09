@@ -57,6 +57,14 @@ describe('searchImpl', () => {
     const byTier = await searchImpl(d, { tier: 'custom' })
     expect((byTier.payload as { results: { id: string }[] }).results.map((r) => r.id)).toEqual(['acme:custom:1'])
   })
+  it('搜索按匹配强度排序：标题/同义词命中优先于「说明里顺带提过」', async () => {
+    const noisy = row({ id: 'lemeng:branch:transfer_money', title: '门店配送金额', description: '与外部批发互为镜像的口径' })
+    const exact = row({ id: 'lemeng:outbound:external_wholesale', title: '外部批发金额', description: '外部客户批发' })
+    const out = await searchImpl(deps([noisy, exact]), { kind: 'metric', q: '外部批发金额' })
+    const ids = (out.payload as { results: { id: string }[] }).results.map((r) => r.id)
+    expect(ids[0], '说明命中压过了标题命中 ⇒ 模型会选错指标').toBe('lemeng:outbound:external_wholesale')
+  })
+
   it('search_catalog 命中同义词', async () => {
     // W0（031）：q 的命中面除 id/title/description 外还含声明的同义词——问数入口说
     // 「营业额」时，指标 `net_sales`（标题「净销」）必须在结果里。
