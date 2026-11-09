@@ -332,10 +332,10 @@ metrics:
   - name: 'lemeng:retail:sales'
     label: 销售额（不冲退货）
     entity: branch
-    synonyms: [销售金额, 营业额]
+    synonyms: [销售金额, 营业额, 营业额（不冲退货）]
     unit: 元
     definition: >-
-      零售销售侧金额（**不冲退货**）= 2026-10-17 之前 `lemeng:retail:net_sales` 的原值。
+      **营业额（不冲退货口径）**。零售销售侧金额（**不冲退货**）= 2026-10-17 之前 `lemeng:retail:net_sales` 的原值。
       取 state=FINISHED 且 order_transaction_type=SALE_ORDER 的订单（**退货单不进本口径**），
       逐订单取「(Σ非赠品行额 + order_total_money) / 2」，按门店×日合计后再减 Σ分摊折扣；
       赠品行按判别式排除（std_price>0 且 sale_money>0 且 quantity>0 且
@@ -358,7 +358,7 @@ metrics:
     label: 净销售额
     entity: branch
     # 2026-11-05：按需求台账补别名（alias_gap：用户说 `net_sales` / `retail:net_sales`，词表里没有这个说法）。
-    synonyms: [净销售金额, net_sales, retail:net_sales]
+    synonyms: [净销售金额, net_sales, retail:net_sales, 营业额, 营业额（冲退货）]
     unit: 元
     definition: >-
       零售净销售额 = **销售侧 − 退货侧**（2026-10-17 起，issue #813；口径依据 = 客户裁1 的净额
@@ -635,8 +635,9 @@ metrics:
       出库净额按**一级战区 × 通道**归集（服务「各战区出库金额」）。三个通道：
       `自有门店配送`（transfer 域，战区 = 调入门店所在战区）、`体系内批发`（wholesale 域且客户是
       **另一个账套的门店**——客户名唯一命中对方门店档案，战区 = 那家门店的战区）、
-      `外部批发`（其余 wholesale 客户，**不硬摊战区**：外部批发商跨区采购常见，硬指派战区得到的
-      分布是假的；2026-10-30 用户裁决）。因此 `region_l1_bucket = '未归属'` 的那一档**只含外部批发**。
+      `外部批发`（其余 wholesale 客户，含**体系内但不在四大战区**的门店；**不硬摊战区**：外部批发商
+      跨区采购常见，硬指派战区得到的分布是假的；2026-10-30 用户裁决；四战区限定 2026-11-09 用户裁决）。
+      因此 `region_l1_bucket = '未归属'` 的那一档**只含外部批发**。
       ⚠️ 口径边界：本指标**只做归因、不重算金额**——`Σ(各战区各通道) 恒等于 Σ(fct_hq_outbound.r_net)`
       （`audit_lemeng__outbound__region_conservation` 逐账套逐日钉住）。批发侧的单头口径与退货
       冲减仍以 `outbound:net_amount` 为准，本条的每行数值是它的**分解**，不是另一套口径。
@@ -645,6 +646,67 @@ metrics:
       粒度 = 账套 × 业务日 × 一级战区桶 × 通道。
     expression: 'sum(fct_outbound_region.r_net)'
     grain: [system_book, bizday, region_l1_bucket, channel_type]
+    owner: data-platform
+    tier: experimental
+    source: lemeng
+    freshness_sla_days: 2
+    sources:
+      - 's3://<bucket>/lemeng/transfer_out/system_book=<账套>/bizday=<日期>/all.parquet'
+      - 's3://<bucket>/lemeng/wholesale_out/system_book=<账套>/bizday=<日期>/all.parquet'
+      - 's3://<bucket>/lemeng/wholesale_return/system_book=<账套>/bizday=<日期>/all.parquet'
+
+  - name: 'lemeng:outbound:store_delivery'
+    entity: outbound_order
+    label: 门店配送金额（出库口径）
+    unit: 元
+    definition: >-
+      **出库金额**的第一条腿（2026-11-09 用户裁决）：`fct_outbound_region` 里
+      `channel_type='自有门店配送'` 的 `r_net`（= transfer 域；与 `lemeng:branch:transfer_money` 逐日等值）。
+      ⚠️ `体系内批发`（3120 批发给 64188 门店）是 64188 侧调入 transfer 的**镜像**，已含在 transfer 内，
+      **不计入本指标、也不得与它相加**。
+      粒度 = 账套 × 业务日。
+    expression: 'sum(case when fct_outbound_region.channel_type = ''自有门店配送'' then fct_outbound_region.r_net else 0 end)'
+    grain: [system_book, bizday]
+    owner: data-platform
+    tier: experimental
+    source: lemeng
+    freshness_sla_days: 2
+    sources:
+      - 's3://<bucket>/lemeng/transfer_out/system_book=<账套>/bizday=<日期>/all.parquet'
+
+  - name: 'lemeng:outbound:external_wholesale'
+    entity: outbound_order
+    label: 外部批发金额
+    unit: 元
+    definition: >-
+      **出库金额**的第二条腿（2026-11-09 用户裁决）：`fct_outbound_region` 里
+      `channel_type='外部批发'` 的 `r_net`（外部客户 + **体系内但不在四大战区**的门店，后者按用户裁决归外部）。
+      不含内部批发（体系内四战区）——它与 transfer 镜像，不进本指标。
+      粒度 = 账套 × 业务日。
+    expression: 'sum(case when fct_outbound_region.channel_type = ''外部批发'' then fct_outbound_region.r_net else 0 end)'
+    grain: [system_book, bizday]
+    owner: data-platform
+    tier: experimental
+    source: lemeng
+    freshness_sla_days: 2
+    sources:
+      - 's3://<bucket>/lemeng/wholesale_out/system_book=<账套>/bizday=<日期>/all.parquet'
+      - 's3://<bucket>/lemeng/wholesale_return/system_book=<账套>/bizday=<日期>/all.parquet'
+
+  - name: 'lemeng:outbound:amount'
+    entity: outbound_order
+    label: 出库金额（集团去重口径）
+    unit: 元
+    definition: >-
+      出库金额 = **门店配送金额 + 外部批发金额**（2026-11-09 用户裁决）。实现 = `fct_outbound_region`
+      里 `channel_type in ('自有门店配送','外部批发')` 的 `r_net` 之和；**排除 `体系内批发`**
+      （3120→64188 门店批发是 64188 侧调入 transfer 的镜像，含它会重复计数）。
+      ⚠️ 与 certified 的 `lemeng:outbound:net_amount` 不同：后者是**账套视角**的 transfer+wholesale 全量
+      （含镜像），集团去重口径 = `net_amount − 体系内批发镜像`。2026-11-07 实测：
+      门店配送 177,875.53 + 外部批发 78,711.49 = **256,587.02**；net_amount 288,724.62 − 镜像 32,137.60 = 256,587.02。
+      粒度 = 账套 × 业务日。
+    expression: 'sum(case when fct_outbound_region.channel_type in (''自有门店配送'',''外部批发'') then fct_outbound_region.r_net else 0 end)'
+    grain: [system_book, bizday]
     owner: data-platform
     tier: experimental
     source: lemeng
@@ -1502,6 +1564,10 @@ metrics:
       锚：3120/店92/2026-10-01..19 合计 **32,114.96**（与乐檬源界面逐分对上；湖侧两面独立复算恒等）。
       ⚠️ tier=experimental：仅 3120 单账套 × 单指标 × 19 天验证，多指标/跨账套未复核前不升。
       粒度 = 账套 × 业务日 × 门店。
+      **出库口径（2026-11-09 用户裁决）**：本指标即「**门店配送金额**」，是出库金额的两条腿之一
+      （另一条 = `lemeng:outbound:external_wholesale`）。它与 `fct_outbound_region.channel_type='自有门店配送'`
+      逐日等值；`体系内批发`（3120 批给 64188 门店）是 64188 侧调入 transfer 的**镜像**，
+      **已在 D10 内，不得再与门店配送相加**。出库金额 = 本指标 + 外部批发金额。
     expression: 'sum(fct_branch_indicator.transfer_money)'
     grain: [system_book, bizday, branch_num]
     owner: data-platform
