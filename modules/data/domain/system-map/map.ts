@@ -70,7 +70,7 @@ export interface SystemMapMetricFact {
   entity?: string | null
   synonyms?: string[]
   source?: 'l1' | 'l2'
-  basis?: 'l1_tree' | 'column_agg'
+  basis?: 'l1_tree' | 'column_agg' | 'declared'
   certified?: 'certified' | 'draft'
   requiredScope?: string | null
   unit?: string | null
@@ -186,7 +186,7 @@ export interface SystemMapMetric {
   selectSql: string
   relations: string[]
   source: 'l1' | 'l2'
-  basis: 'l1_tree' | 'column_agg'
+  basis: 'l1_tree' | 'column_agg' | 'declared'
   certified: 'certified' | 'draft'
   requiredScope: string | null
   unit: string | null

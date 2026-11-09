@@ -21,7 +21,7 @@ import { Pool } from 'pg'
 import type { Hono } from 'hono'
 import mod from './index'
 import { applyMigrations, buildTestApp, makeIdentity } from './test-util'
-import { L1_ORG, upsertL1Metric, upsertMetric } from './domain/metric-store'
+import { L1_ORG, loadMergedCatalog, upsertL1Metric, upsertMetric } from './domain/metric-store'
 import type { L1MetricDef } from './domain/metric-store'
 import type { MetricDef } from './domain/authz'
 import type { SqlExecutor } from './domain/query-service'
@@ -307,6 +307,40 @@ describePg('消费面词表四通道一致（需要 DATABASE_URL）', () => {
     const res = await app().request('/metrics')
     const clash = (await res.json()).metrics.find((m: { id: string }) => m.id === CLASH_ID)
     expect(clash).toMatchObject({ title: '平台版', description: '平台版说明' })
+  })
+
+  // ── 租户口径覆盖（W8，041）：覆盖行只对本 org 胜出，他 org 仍看平台口径 ─────────────
+  it('W8 覆盖：同 id 的 override 行本 org 胜出、他 org 不受影响，且 /query 标注 override', async () => {
+    const OTHER_ORG = 'org-t8-consumers-other'
+    const insertOverride = () => pool.query(
+      `insert into data.metrics
+         (org,id,title,description,required_scope,subject_column,select_sql,group_by,params,source,updated_by,version,totalable,basis,override_of)
+       values ($1,$2,'租户覆盖版','本租户口径',null,'org','select sum(fct_t8c.l2_amount) as value from fct_t8c','','{}'::jsonb,'l2','fixture',1,false,'declared',$2)
+       on conflict (org,id) do update set
+         title=excluded.title, select_sql=excluded.select_sql, basis=excluded.basis, override_of=excluded.override_of`,
+      [ORG, CLASH_ID],
+    )
+    await insertOverride()
+    try {
+      const mine = (await loadMergedCatalog(pool, ORG)).filter((m) => m.id === CLASH_ID)
+      expect(mine, '覆盖后本 org 应恰好一条同 id 行').toHaveLength(1)
+      expect(mine[0]!.selectSql, '本 org 没走覆盖口径').toContain('fct_t8c.l2_amount')
+
+      const others = (await loadMergedCatalog(pool, OTHER_ORG)).filter((m) => m.id === CLASH_ID)
+      expect(others, '他 org 被别家的覆盖行影响了').toHaveLength(1)
+      expect(others[0]!.selectSql, '他 org 应仍看平台口径').toContain('fct_t8c.l1_amount')
+
+      const res = await post(app(), '/query', { metricId: CLASH_ID, args: {} })
+      expect(res.status).toBe(200)
+      expect(executed[0], '覆盖行存在时 /query 仍跑平台 SQL').toContain('fct_t8c.l2_amount')
+      const body = await res.json()
+      expect(body.override, 'HTTP 回答面没标注覆盖').toBe(true)
+      // GET /metrics 观看面也要带 override 标记
+      const listed = (await (await app().request('/metrics')).json()).metrics.find((m: { id: string }) => m.id === CLASH_ID)
+      expect(listed.override).toBe(true)
+    } finally {
+      await pool.query('delete from data.metrics where org=$1 and id=$2', [ORG, CLASH_ID])
+    }
   })
 
   // ── 源维度裁剪：四条面都不许放行「未接入源」的指标（计划 5 Task 5）────────────────

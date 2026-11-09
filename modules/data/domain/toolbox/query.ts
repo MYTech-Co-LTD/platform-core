@@ -115,6 +115,9 @@ export const queryMetricImpl: ToolImpl = async (deps, args) => {
         // 读侧推导口径与 tierOf 同源（L1 恒 certified），不在这里重新按 source 现推。
         caliber: metricRow.certified === 'certified' ? 'certified' : 'draft',
         basis: metricRow.basis,
+        // 租户口径覆盖（W8，041）：true ⇒ 本次回答用的是本租户覆盖的平台口径，
+        // bot 必须在回答里写「本租户口径」，不得当作平台默认值报。
+        override: metricRow.overrideOf != null,
       },
     } : {}),
     subject: { org: ok.subject, source: metricRow?.sourceSystem ?? deps.org, adoptedSources: [...deps.adoptedSources] },

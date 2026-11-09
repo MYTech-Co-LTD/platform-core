@@ -285,7 +285,9 @@ describePg('metric-store（需要 DATABASE_URL）', () => {
         // 实体 / 同义词（W0，031）：L2 行没有声明面 ⇒ 恒 null / []（读侧恒有值，不是可选）
         entity: null, synonyms: [],
         // 测度档与归档（W2，034）：L2 缺省档 = 树（l1_tree），未归档
-        basis: 'l1_tree', archivedAt: null })
+        basis: 'l1_tree', archivedAt: null,
+        // 租户覆盖（W8，041）：L2 普通行 = 非覆盖，映射恒带 null
+        overrideOf: null })
   })
 
   it('deleteMetric 返「是否真删了一行」，且只删本租户的', async () => {

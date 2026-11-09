@@ -53,7 +53,8 @@ export async function metricBasisOf(
     [org, metricId],
   )
   if (rows.length === 0) return null
-  return (rows[0] as { basis?: unknown }).basis === 'column_agg' ? 'column_agg' : 'l1_tree'
+  const b = (rows[0] as { basis?: unknown }).basis
+  return b === 'column_agg' ? 'column_agg' : b === 'declared' ? 'declared' : 'l1_tree'
 }
 
 /**
@@ -74,8 +75,11 @@ export async function saveMetricDraft(
     [org, metricId, creator],
   )
   if ((cur.rowCount ?? 0) === 0) return { ok: false, error: 'NOT_EDITABLE' }
-  const basis: MetricBasis =
-    (cur.rows[0] as { basis?: unknown }).basis === 'column_agg' ? 'column_agg' : 'l1_tree'
+  const rawBasis = (cur.rows[0] as { basis?: unknown }).basis
+  const basis: MetricBasis = rawBasis === 'column_agg' ? 'column_agg' : rawBasis === 'declared' ? 'declared' : 'l1_tree'
+  // declared（W8）：租户全额声明的修改走专用覆盖/声明工具，**不走**旧的 draft_spec 树形草稿路径
+  // （确认链会把声明当 L2 树编译，语义不同）。这里显式拒，别让它落成「确认不了的死草稿」。
+  if (basis === 'declared') return { ok: false, error: 'NOT_EDITABLE' }
   const isColumnAggDraft = (draftSpec as { kind?: unknown }).kind === 'column_agg'
   if ((basis === 'column_agg') !== isColumnAggDraft) return { ok: false, error: 'DRAFT_BASIS_MISMATCH' }
 

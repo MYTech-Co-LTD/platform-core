@@ -161,7 +161,7 @@ describePg('指标路由（需要 DATABASE_URL：词表读写）', () => {
     // 消费面投影：字段面 + 参数面形状——selectSql/subjectColumn/column 属实现细节，不外泄；
     // certified/source/createdBy 徽标在观看面就带（spec §10.2/§10.4：来源、可信度、「我的」判定）
     expect(body.metrics.find((m: { id: string }) => m.id === L1_SALES.id))
-      .toEqual({ id: L1_SALES.id, title: '净销售额', description: def().description, params: {}, certified: 'certified', source: 'l1', createdBy: null, bizDescription: null, unit: null, caliberNote: null })
+      .toEqual({ id: L1_SALES.id, title: '净销售额', description: def().description, params: {}, certified: 'certified', source: 'l1', createdBy: null, bizDescription: null, unit: null, caliberNote: null, override: false })
     // 元数据三件套（#1292 起）观看面带（消费方=移动卡）；未标注 = null 直投影
     const l1Admin = (await (await app(ORG, ['data:manage']).request('/metrics/all')).json()) as {
       metrics: { id: string; bizDescription: string | null; unit: string | null; caliberNote: string | null }[] }

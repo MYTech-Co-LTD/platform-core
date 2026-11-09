@@ -103,6 +103,8 @@ export const describeMetricImpl: ToolImpl = async (deps, args) => {
       // 空实体/空数组不是「有值」，把它们抛给消费方等于让它猜。
       ...(m.entity !== null ? { entity: m.entity } : {}),
       ...(m.synonyms.length > 0 ? { synonyms: m.synonyms } : {}),
+      // 租户口径覆盖（W8，041）：true ⇒ 该 id 在本租户被覆盖（回答须标注「本租户口径」）。
+      ...(m.overrideOf != null ? { override: true } : {}),
       ...(asOf !== undefined ? { asOf } : {}),
     },
     isError: false, auditMetricId: id, auditRowCount: null,
