@@ -106,12 +106,14 @@ const TextPanel = z.object({
  *
  * ⚠️ 只声明「生成什么」，不声明「说什么」——没有 `content`（那是静态 `text` 的事），
  *    写侧也不接受任何自由文本键：`.strict()` 下多一个 `content` 即 INVALID_SPEC。
- * ⚠️ `focus` 是**代码常量白名单**（v1 只有 `overview`）：加口径 = 改这里 + 事实包 + 提示词，走 PR。
+ * ⚠️ `focus` 是**代码常量白名单**：加口径 = 改这里 + 事实包 + 提示词，走 PR。
+ *   · `overview`：结论/异常/行动（既有行为）；
+ *   · `root_cause`：在事实包之外跑确定性的下钻/配方探针，输出「根因」段（不做对话）。
  */
 const AiTextPanel = z.object({
   chart: z.literal('ai_text'),
   title: z.string().trim().min(1).max(120).default('AI 分析'),
-  focus: z.enum(['overview']),
+  focus: z.enum(['overview', 'root_cause']),
   span: z.number().int().min(1).max(24).default(24),
 }).strict()
 
