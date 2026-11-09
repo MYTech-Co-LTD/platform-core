@@ -6,6 +6,7 @@
 #                         路径里带 run 变量 ⇒ **每跑一次一个新文件**（3120 实测 5 天 1.3G / 13k 文件）
 #   · `.duckle-stage/` —— 分片暂存（官方叫 cache：「stage outputs kept for reuse」）
 #   · `runs/receipts/` —— 运行回执，每跑一次一个文件
+#   · `logs/`          —— 每轮 run 的 NDJSON / 子管线 stdout（实测 15k 文件 / 676MB）
 # 而 console 的 `/api/pipelines`、`/api/runs` **递归扫 workspace** ⇒ 文件上万后单请求 >12s 不返回，
 # 进一步把调度器拖成 `overdue + misfire:skip`（2026-11-09 实测：09:00/09:02 的采集被整轮跳过）。
 #
@@ -26,6 +27,7 @@ set -u
 BOOKS=${1:-"3120 64188"}
 RAW_KEEP_DAYS=${GC_RAW_KEEP_DAYS:-1}
 STAGE_KEEP_DAYS=${GC_STAGE_KEEP_DAYS:-1}
+LOG_KEEP_DAYS=${GC_LOG_KEEP_DAYS:-7}
 WS_WARN_MB=${GC_WS_WARN_MB:-800}
 EMIT_PROBE=${GC_EMIT_PROBE:-/opt/lemeng-emit-probe.py}
 RC=0
@@ -71,13 +73,18 @@ for B in $BOOKS; do
   STG_DEL=$(find "$WS/.duckle-stage" -type f -mtime +"$STAGE_KEEP_DAYS" -print -delete 2>/dev/null | wc -l | tr -d ' ')
   find "$WS/.duckle-stage" -type d -empty -delete 2>/dev/null
   # 目录本身**必须保留**（src.rest 的 raw 路径是固定目录；缺目录会让当轮采集读不到自己的文件）
+  # logs/ 是**第三类**无界产物（2026-11-09 实测：15,488 文件 / 676MB，其中 14,373 个 >1 天）：
+  # 每轮 run 的 NDJSON/子管线 stdout 都往里写。保留 LOG_KEEP_DAYS 天用于排障；
+  # ⚠️ `duckle_metrics.prom` 是 console **持续追加**的指标文件，绝不删。
+  LOG_DEL=$(find "$WS/logs" -type f -mtime +"$LOG_KEEP_DAYS" ! -name 'duckle_metrics.prom' -print -delete 2>/dev/null | wc -l | tr -d ' ')
+  find "$WS/logs" -type d -empty -delete 2>/dev/null
 
   RAW_AFTER=$(size_mb "$WS/.duckle-raw")
   STG_AFTER=$(size_mb "$WS/.duckle-stage")
   REC_AFTER=$(size_mb "$WS/runs/receipts")
   WS_MB=$(size_mb "$WS")
 
-  echo "GC_OK:$B raw=${RAW_BEFORE}->${RAW_AFTER}MB(del=${RAW_DEL}) stage=${STG_BEFORE}->${STG_AFTER}MB(del=${STG_DEL}) receipts=${REC_BEFORE}->${REC_AFTER}MB ws=${WS_MB}MB"
+  echo "GC_OK:$B raw=${RAW_BEFORE}->${RAW_AFTER}MB(del=${RAW_DEL}) stage=${STG_BEFORE}->${STG_AFTER}MB(del=${STG_DEL}) logs(del=${LOG_DEL}) receipts=${REC_BEFORE}->${REC_AFTER}MB ws=${WS_MB}MB"
 
   # ③ 体积探针（判据在数据面；OO 只做预警面）
   if [ "$WS_MB" -ge "$WS_WARN_MB" ]; then
