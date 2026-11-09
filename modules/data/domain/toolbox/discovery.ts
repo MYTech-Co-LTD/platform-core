@@ -138,10 +138,18 @@ export const describeMetricImpl: ToolImpl = async (deps, args) => {
   // 覆盖区间是**按需**的：它要对指标关系跑一次 min/max（大表不是免费），
   // 普通 describe 不付这个成本；问「最早/到几号」时显式 coverage:true。
   const coverage = args.coverage === true ? await coverageOf(deps, m) : undefined
+  const grain = m.groupBy.split(',').map((d) => d.trim()).filter((d) => d !== '')
+  // 能力位（2026-11-09）：让模型**提前选路**——明细能不能下钻、能不能直接 Top-N，
+  // 而不是先撞 NO_DETAIL_BINDING 再改。detail 以存储里真实存在的 drill 绑定为准。
+  const capabilities = {
+    detail: m.drill !== undefined,
+    topN: m.totalable && grain.some((d) => d !== 'bizday'),
+  }
   return {
     payload: {
       status: 'ok', id, title: m.title, definition: m.description,
-      grain: m.groupBy.split(',').map((d) => d.trim()).filter((d) => d !== ''),
+      grain,
+      capabilities,
       params: paramFaceOf(m.params),
       owner: ownerOf(m, deps.org), tier: tierOf(m), version: m.version,
       // 实体与同义词（W0，031）：**未声明 = 字段缺席**（与 asOf/scopeNote 同一口径）——

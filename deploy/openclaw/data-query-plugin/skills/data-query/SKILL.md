@@ -127,13 +127,15 @@ metadata:
 - **问「多少行 / 哪几行 / 按商品看明细」**：`metricId=lemeng:retail:order_line`（如「10-20 有多少行」⇒ `query_detail({metricId:"lemeng:retail:order_line", args:{bizday:{from:"2026-10-20",to:"2026-10-20"}}})`；单日即 from=to，**别写成裸日期串**——bizday 是 `date_range`，形状不对回 `bad_param`/`invalid_value:bizday`。行数看 `rowCountTotal`，别用聚合面的 1000 行截断）。
 - **`args.bizday` 必传**：`{"from":"YYYY-MM-DD","to":"YYYY-MM-DD"}`（单日则 from=to）——明细直读数据湖，不带 bizday 会被拒。
 - **`rowCountTotal` 是行数的唯一权威**：它 = 该范围全量原始行数，返回 rows 只是截取。回答「多少行」用 rowCountTotal，**不要拿返回行数当全量**。
-- **回 `no_detail_binding` = 能力边界，不是权限问题**：如实告知「该指标暂不支持明细下钻，聚合口径可用 query_data 查询」，**不要重试、不要换参数试探**。
+- **回 `no_detail_binding` = 能力边界，不是权限问题**：如实告知「该指标暂不支持明细下钻，聚合口径可用 query_data 查询」，**不要重试、不要换参数试探**；回包带的 `alternative` 就是可直接改用的 `query_data` 调用（含 `dimensions/orderBy/limit`），照它走聚合面 Top-N。
 - **双时钟声明原样转述**：`clock_note`（⏱ 开头，明细直读查询时刻 vs 聚合口径截至日）原样转述、钉在答案末尾；`drill_as_of` / `data_as_of` 照抄不要自行换算。`scope_line`（📐）由系统在消息末尾自动附加（同 📅 机制）——不要自己写 📐 行。
 - **回包可能少一列**：`lemeng:retail:order_line` 的 `order_detail_std_price` 等条件列**需授权**才出现（无 `data:cost` ⇒ 该列不在 `columns`/`rows` 里）。这是**未授权**，不是「没有数据」、不是 NULL、不是 0——如实答「该列需授权」。
 
 ## 口径确认与新鲜度（Wave 2 三新工具）
 
 - **`describe_metric({ id })`**：args 键/维度名拿不准先调它——params（键与形状）、grain（维度全集）、口径定义都在回包里。**先 describe 再查**，不要凭记忆猜键名。
+  回包还有 `capabilities: { detail, topN }`：`detail=false` ⇒ **不要调 `query_detail`**（直接走聚合面）；
+  `topN=true` ⇒ 可以用 `query_data` 的 `dimensions/orderBy/limit` 直接排行。
 - **`sample_dimension_values({ metricId, dimension, q?, limit? })`**：确认「门店名等过滤值的确切写法」用它（dimension 必须是 grain 之一）。`truncated:true` = 值太多被截断，可加 `q` 收窄——它不是数据错误。
 - **`get_freshness({ scope? })`**：`scope` 缺省查全局水位。回 `status:"unknown"` = 新鲜度未知，如实说明。指标支回包的 `line`（📅 行）由系统自动附加到消息末尾——**不要自己写任何 📅 行**（写了也会被系统剥掉再统一附加）。
 
