@@ -74,6 +74,8 @@ export interface RootCauseDeps {
   exploreExec?: ToolboxDeps['exploreExec']
   raceRetryDelayMs?: number
   dimensionLookup?: QueryDeps['dimensionLookup']
+  /** 当前报表门店（筛选栏覆盖优先）：探针必须和报表同店，否则会拿别店订单当根因。 */
+  branchNum?: string | null
 }
 
 /** `buildRootCause` 只依赖事实包里的这几段（避免与 report-facts 形成运行时环）。 */
@@ -246,6 +248,8 @@ async function detailProbe(
 ): Promise<ProbeResult | null> {
   // 只跑**单日**（最低日；没有就取期间末日）：整段直读湖会把一次探针拖到分钟级。
   // 基期对比由 KPI 事实负责；这里的职责是「哪个维度/哪几行造成异常」。
+  // 单日窗口下 `bizday` 维度恒一行，是退化维（「最低日就是最低日」）——不作为明细根因。
+  if (dimension === 'bizday' && candidate.day !== undefined) return null
   const window = candidate.day === undefined
     ? { from: range.to, to: range.to }
     : { from: candidate.day, to: candidate.day }
@@ -256,8 +260,12 @@ async function detailProbe(
     pool: deps.pool, execute: deps.execute, adoptedSources: deps.adoptedSources,
     raceRetryDelayMs: deps.raceRetryDelayMs, dimensionLookup: deps.dimensionLookup,
   }
+  const args: Record<string, unknown> = { bizday: window }
+  if (deps.branchNum !== undefined && deps.branchNum !== null && metric.params.branch_num !== undefined) {
+    args.branch_num = deps.branchNum
+  }
   const cur = await runDetailQuery(
-    qd, deps.org, deps.requester, metric.id, { bizday: window },
+    qd, deps.org, deps.requester, metric.id, args,
     { dimensions: requested, orderBy: 'value', desc: true, limit: 100 },
   )
   if (cur.status !== 'ok') return null
@@ -309,6 +317,13 @@ async function recipeProbe(
   }
   const compiled = compileRecipe(req)
   if (!compiled.ok) return null
+  // 与报表同店：报表筛选栏的门店必须带进配方，否则会拿别店贡献当根因。
+  if (deps.branchNum !== undefined && deps.branchNum !== null
+    && (metric.params.branch_num !== undefined || dimensionNamesOf(metric).includes('branch_num'))) {
+    for (const spec of compiled.specs) {
+      spec.filters = [...(spec.filters ?? []), { column: 'branch_num', op: 'eq', value: deps.branchNum }]
+    }
+  }
   const exec = deps.exploreExec ?? ((sql, params) => runWarehouseSqlParams(analystPool(), sql, params))
   const results: Array<{ columns: string[]; rows: unknown[][] }> = []
   for (const spec of compiled.specs) {

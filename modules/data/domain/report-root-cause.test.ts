@@ -22,7 +22,10 @@ const metric: L1MetricDef = {
   requiredScope: null, subjectColumn: 'org',
   selectSql: 'select sum(fct_retail_sale.net_amount) as value, branch_num, bizday from fct_retail_sale',
   groupBy: 'branch_num, bizday',
-  params: { bizday: { column: 'bizday', type: 'date_range' } },
+  params: {
+    bizday: { column: 'bizday', type: 'date_range' },
+    branch_num: { column: 'branch_num', type: 'string' },
+  },
   sourceSystem: 'lemeng', slaDays: 1, freshnessRelations: [], masks: null,
   drill: {
     expr: 'sale_amount - return_amount',
@@ -89,13 +92,15 @@ describePg('buildRootCause（需要 DATABASE_URL）', () => {
     await pool.end().catch(() => {})
   })
 
-  it('KPI 有对比 + 声明了下钻 ⇒ 按最低日单日取 branch_num Top 主因', async () => {
+  it('KPI 有对比 + 声明了下钻 ⇒ 按最低日单日取 branch_num Top 主因，且与报表同店', async () => {
     await applyMigrations(pool)
     await upsertL1Metric(pool, metric)
+    const sqlLog: string[] = []
+    const exec = async (sql: string) => { sqlLog.push(sql); return execute(sql) }
     const analysis = await buildRootCause(
       {
         pool, org: ORG, requester: requester(), adoptedSources: new Set(['lemeng']),
-        execute,
+        execute: exec, branchNum: '92',
       },
       specOf(), { from: '2026-10-01', to: '2026-10-19' }, 'custom', facts,
     )
@@ -103,6 +108,8 @@ describePg('buildRootCause（需要 DATABASE_URL）', () => {
     const top = analysis!.findings.find((f) => f.kind === 'top' && f.dimension === 'branch_num')
     expect(top).toBeDefined()
     expect(top!.rows.find((r) => r.label === '92')).toMatchObject({ value: '500' })
+    // 探针必须带报表当前门店，否则会拿别店订单当根因
+    expect(sqlLog.some((s) => /branch_num\s*=\s*'92'/.test(s))).toBe(true)
     // 白名单：值进 numbers，narrative 的数字校验才放行
     expect(analysis!.numbers).toContain('500')
     expect(analysis!.hash).toMatch(/^[0-9a-f]{64}$/)
