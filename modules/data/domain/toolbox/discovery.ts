@@ -65,6 +65,19 @@ export const searchImpl: ToolImpl = async (deps, args) => {
   // 「certified」= 平台口径 + 管理员升过级的 L2；「custom」= 其余 L2。
   const wantCertified = args.tier === 'certified' ? true : args.tier === 'custom' ? false : null
   if (args.kind !== 'dataset') {
+    // 匹配强度（2026-11-09 真机教训）：只过滤不排序会让「说明里顺带提过」的指标排到前面
+    // ——问「外部批发金额」时 `branch:transfer_money`（说明里提到批发）压过了标题就叫
+    // 「外部批发金额」的那条。排序规则：精确命中 > 标题/同义词命中 > id 命中 > 说明命中。
+    const scoreOf = (m: MetricRow): number => {
+      if (q === null) return 1
+      const id = m.id.toLowerCase()
+      const title = m.title.toLowerCase()
+      const syns = m.synonyms.map((s) => s.toLowerCase())
+      if (id === q || title === q || syns.some((s) => s === q)) return 4
+      if (title.includes(q) || syns.some((s) => s.includes(q))) return 3
+      if (id.includes(q)) return 2
+      return 1
+    }
     const results = (await visibleRows(deps))
       .filter((m) => wantCertified === null || (m.certified === 'certified') === wantCertified)
       .filter((m) => q === null || m.id.toLowerCase().includes(q)
@@ -72,8 +85,10 @@ export const searchImpl: ToolImpl = async (deps, args) => {
         // 同义词（W0，031）：问数入口说「营业额」也要命中 net_sales。
         // MetricRow.synonyms 读侧恒数组（未声明 = []），不给 undefined 留门。
         || m.synonyms.some((s) => s.toLowerCase().includes(q)))
+      .map((m) => ({ m, score: scoreOf(m) }))
+      .sort((a, b) => b.score - a.score || a.m.id.localeCompare(b.m.id))
       .slice(0, SEARCH_LIMIT)
-      .map((m) => ({ id: m.id, title: m.title, tier: tierOf(m), owner: ownerOf(m, deps.org), oneLiner: oneLinerOf(m) }))
+      .map(({ m }) => ({ id: m.id, title: m.title, tier: tierOf(m), owner: ownerOf(m, deps.org), oneLiner: oneLinerOf(m) }))
     return { payload: { results }, isError: false, auditRowCount: null }
   }
   const r = await deps.wh('select table_schema, table_name from information_schema.tables order by table_schema, table_name')
