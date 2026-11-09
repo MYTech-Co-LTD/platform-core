@@ -110,6 +110,8 @@ export interface DailyReviewBundle {
   drivers: DailyDriver[]
   /** 2–3 条可执行建议（已带金额/项目）。 */
   suggestions: string[]
+  /** 目标净毛利率（格式化，P1 固定 20%）。 */
+  targetNetMargin: string
   /** 数据边界与口径说明（未含固定成本、数据缺失等）。 */
   notes: string[]
   /** 额外数字白名单（并入 FactBundle.numbers）。 */
@@ -521,6 +523,7 @@ export async function buildDailyReview(deps: DailyReviewDeps): Promise<DailyRevi
 
     drivers: topDrivers,
     suggestions,
+    targetNetMargin: fmt(NET_MARGIN_TARGET, 'percent'),
     notes,
     numbers: [...numbers],
     dataAsOf: null as string | null,
