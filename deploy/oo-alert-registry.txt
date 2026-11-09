@@ -16,6 +16,7 @@ ALERT data_alerts_failure                       data_alerts_wecom    t
 ALERT data_alerts_recovery                      data_alerts_wecom    t
 ALERT retail_tick_absent_business_hours         data_alerts_wecom    t
 ALERT casdoor_down                              wecom-robot-p1       t
+ALERT guokuan_health_missing                    wecom-robot-p1       t
 ALERT host_cpu_high                             wecom-robot-p1       t
 ALERT host_disk_high                            wecom-robot-p1       t
 ALERT host_mem_high                             wecom-robot-p1       t
