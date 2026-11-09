@@ -510,6 +510,7 @@ export async function buildDailyReview(deps: DailyReviewDeps): Promise<DailyRevi
   }
   for (const s of suggestions) for (const m of s.match(/[+-]?\d[\d,]*(?:\.\d+)?(?:%|pp)?/g) ?? []) add(m)
   if (targetGap !== null) add(signedAmount(targetGap))
+  add(fmt(NET_MARGIN_TARGET, 'percent'))
 
   const body = {
     targetDay,
