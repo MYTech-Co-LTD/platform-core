@@ -117,15 +117,17 @@ export async function runDetailQuery(
     await audit('denied', 'no_detail_binding', null, null, null)
     // 替代路径（2026-11-09）：明细不可用不等于 Top-N 不可用——把聚合面的切片写法直接给模型，
     // 免得它拉全量行自己排序（yangwei 采购 Top5 的真实轨迹）。
+    // 默认取一个**业务维度**（去掉日期与账套这类分组元维）——「按供应商 Top5」直接可用；
+    // 模型也可按问题换/删（alternative 是提示，不是强制）。
     const sliceDims = (metricRow?.groupBy ?? '').split(',').map((d) => d.trim())
-      .filter((d) => d !== '' && d !== 'bizday')
+      .filter((d) => d !== '' && d !== 'bizday' && d !== 'system_book')
     return {
       status: 'denied', metricId, reason: 'no_detail_binding',
       detail: '该指标未声明明细下钻（能力边界，非权限问题）——聚合口径可用 query_metric 查询',
       ...(sliceDims.length > 0 ? {
         alternative: {
           tool: 'query_data',
-          args: { ...args, dimensions: sliceDims, orderBy: [{ column: 'value', dir: 'desc' }], limit: 5 },
+          args: { ...args, dimensions: [sliceDims[0]!], orderBy: [{ column: 'value', dir: 'desc' }], limit: 5 },
         },
       } : {}),
     }
