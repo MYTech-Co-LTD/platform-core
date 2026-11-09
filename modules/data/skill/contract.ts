@@ -37,9 +37,23 @@ export interface SkillContract {
 
 const HERE = dirname(fileURLToPath(import.meta.url))
 
-export const CONTRACT: SkillContract = JSON.parse(
-  readFileSync(join(HERE, 'contract.json'), 'utf8'),
-) as SkillContract
+const CONTRACT_PATH = join(HERE, 'contract.json')
+
+function loadContract(): SkillContract {
+  let raw: string
+  try {
+    raw = readFileSync(CONTRACT_PATH, 'utf8')
+  } catch (err) {
+    throw new Error(`skill contract 读取失败：${CONTRACT_PATH}`, { cause: err })
+  }
+  try {
+    return JSON.parse(raw) as SkillContract
+  } catch (err) {
+    throw new Error(`skill contract 不是合法 JSON：${CONTRACT_PATH}`, { cause: err })
+  }
+}
+
+export const CONTRACT: SkillContract = loadContract()
 
 export function toolsFor(channel: SkillChannel): ContractTool[] {
   return CONTRACT.tools.filter((t) => t.channels[channel] !== undefined)

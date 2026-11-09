@@ -20,7 +20,7 @@ import type { MetricParamDef, Requester, SourceTaggedMetric } from '../authz'
 import { visibleMetrics } from '../authz'
 import type { SqlExecutor } from '../query-service'
 import { writeAudit } from '../audit-store'
-import { CONTRACT } from '../../skill/contract'
+import { CONTRACT, faceOf } from '../../skill/contract'
 
 export const TOOL_NAME_RE = /^[A-Za-z0-9_.-]+$/
 export const ANALYST_FACE_MAX_TOOLS = 14
@@ -51,7 +51,7 @@ const readOnly = { readOnlyHint: true }
 export const ANALYST_TOOLS: readonly ToolMeta[] = CONTRACT.tools
   .filter((t) => t.analyst && t.channels.mcp !== undefined)
   .map((t) => {
-    const face = t.channels.mcp!
+    const face = faceOf(t, 'mcp')
     return {
       name: face.name,
       group: t.group,
