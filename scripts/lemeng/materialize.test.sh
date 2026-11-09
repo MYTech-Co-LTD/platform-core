@@ -78,6 +78,32 @@ check "Nothing to do 优先于偶然的 PASS= 行（rc 1）" sh -c '[ "$1" = 1 ]
 check "日志文件不存在 ⇒ rc 1（fail-closed）" sh -c '[ "$1" = 1 ]' _ "$_rc_missing"
 rm -rf "$_lhb"
 
+# ── ③-c mat_built_table_models：tables 档的落账对象是**真建成的 table 模型** ─────────
+# 2026-11-09 实测：tables 档建了 16 个 table 模型，load_log 却按 `models/<域>/staging/*.sql`
+# 的文件名落账 ⇒ 只写 `stg_*` 行，「16 个 table 模型的新鲜度」在 load_log 里永远查不到。
+BTM_FN=$(extract mat_built_table_models)
+[ -n "$BTM_FN" ] || bad "mat_built_table_models 抽取失败（函数不存在或格式变了）"
+eval "$BTM_FN"
+_btm=$(mktemp -d)
+# 真机行形（含 ANSI 色码）+ 干扰项：增量模型、视图模型、数据测试都不该被当成 table 模型
+printf '\033[0m16:56:33  1 of 108 OK created sql table model staging.fct_transfer_line_quality .......... [\033[32mSELECT 98351\033[0m in 129.51s]\n' > "$_btm/log"
+printf '\033[0m16:58:38  2 of 108 OK created sql table model staging.fct_transfer_zero_cost_item ....... [\033[32mSELECT 709\033[0m in 124.92s]\n' >> "$_btm/log"
+printf '\033[0m17:00:00  3 of 108 OK created sql table model staging.fct_transfer_line_quality ......... [\033[32mSELECT 98351\033[0m in 120.00s]\n' >> "$_btm/log"
+printf '\033[0m17:01:00  4 of 108 OK created sql incremental model staging.fct_retail_sale ............. [\033[32mSELECT 10\033[0m in 1.00s]\n' >> "$_btm/log"
+printf '\033[0m17:02:00  5 of 108 OK created sql view model staging.stg_lemeng_a .......................... [\033[32mOK\033[0m in 0.10s]\n' >> "$_btm/log"
+printf '\033[0m17:11:37  Done. PASS=108 WARN=0 ERROR=0 SKIP=0 TOTAL=108\n' >> "$_btm/log"
+BTM_OUT=$(mat_built_table_models "$_btm/log")
+check "抽到两个 table 模型名（去 staging. 前缀）" \
+  sh -c '[ "$(printf "%s" "$1" | tr "\n" " ")" = "fct_transfer_line_quality fct_transfer_zero_cost_item" ]' _ "$BTM_OUT"
+check "增量模型 / 视图模型 / 汇总行**不算** table 模型" \
+  sh -c '! printf "%s" "$1" | grep -Eq "fct_retail_sale|stg_lemeng_a|PASS="' _ "$BTM_OUT"
+check "同名重复行只留一行（sort -u）" sh -c '[ "$(printf "%s\n" "$1" | grep -c .)" = 2 ]' _ "$BTM_OUT"
+printf 'Nothing to do.\n' > "$_btm/empty"
+BTM_EMPTY=$(mat_built_table_models "$_btm/empty")
+check "日志里没有建成的 table 模型 ⇒ 空输出（调用方据此告警，不凭空造名字）" \
+  sh -c '[ -z "$1" ]' _ "$BTM_EMPTY"
+rm -rf "$_btm"
+
 # ── ④ 静态接线：主流程真的用这两个函数（防「函数测绿但 docker run 没走它」）────
 SRC_CONTENT=$(cat "$SRC")
 if printf '%s\n' "$SRC_CONTENT" | grep -Fq -- '$(mat_env_args)'; then ok "docker run 行引用 \$(mat_env_args)（字面量在场）"; else bad "docker run 行引用 \$(mat_env_args)（字面量在场）"; fi
@@ -197,7 +223,8 @@ elif [ "$1" = exec ]; then
       *"coalesce(max(bizday)::text"*)
         printf '2026-11-06\n' ;;
       *)
-        printf 'stg_lemeng_a\nstg_lemeng_b\nstg_forms_submission\n' ;;
+        # 真机形态：information_schema 里既有源 staging 视图，也有落 schema staging 的 table 模型
+        printf 'stg_lemeng_a\nstg_lemeng_b\nstg_forms_submission\nfct_lemeng_x\nfct_lemeng_y\n' ;;
     esac
   fi
   [ "${STUB_EXEC_FAIL:-0}" = 1 ] && exit 1
@@ -225,6 +252,13 @@ elif [ "$1" = run ]; then
     printf 'Completed successfully\n'
     exit 0
   fi
+  # tables 档的建模型行（真机行形）：落账对象靠解析这些行得到，不是猜文件名。
+  case "$*" in
+    *"config.materialized:table"*)
+      printf '\033[0m1 of 2 OK created sql table model staging.fct_lemeng_x .......... [\033[32mSELECT 10\033[0m in 1.00s]\n'
+      printf '\033[0m2 of 2 OK created sql table model staging.fct_lemeng_y .......... [\033[32mSELECT 5\033[0m in 0.50s]\n'
+      ;;
+  esac
   printf 'Completed successfully\nDone. PASS=26 WARN=0 ERROR=0 SKIP=0 TOTAL=26\n'
 fi
 exit 0
@@ -293,6 +327,19 @@ check "tick：正常 ⇒ 退出码 0" sh -c '[ "$1" = 0 ]' _ "$st"
 check "tick：末行 MATERIALIZE_OK scope=tick" sh -c 'tail -n 1 "$1" | grep -qx "MATERIALIZE_OK scope=tick"' _ "$STUB_E2E/tick_ok/out"
 check "tick：选择器作为单个实参传下去（--select fct_retail_sale）" LOG_GREP tick_ok "--select fct_retail_sale"
 check "tick：水位只写 tick 模型一行" LOG_GREP tick_ok "VALUES ('fct_retail_sale', "
+unset SCOPE_FIXTURE
+
+# tables 档落账口径（2026-11-09）：落账对象是**本次真建成的 table 模型**，不是 staging 文件名。
+# 改动前：`_tables` 由 `models/<域>/staging/*.sql` 的文件名派生 ⇒ load_log 只写 stg_*，
+# 「16 个 table 模型的新鲜度」查不到（探活看不见自己的债）。
+SCOPE_FIXTURE=tables
+st=$(run_mat tables_ok)
+check "tables：正常 ⇒ 退出码 0" sh -c '[ "$1" = 0 ]' _ "$st"
+check "tables：末行 MATERIALIZE_OK scope=tables" sh -c 'tail -n 1 "$1" | grep -qx "MATERIALIZE_OK scope=tables"' _ "$STUB_E2E/tables_ok/out"
+check "tables：load_log 落的是 **table 模型**名（fct_lemeng_x）" LOG_GREP tables_ok "VALUES ('fct_lemeng_x', "
+check "tables：另一个 table 模型也落账（fct_lemeng_y）" LOG_GREP tables_ok "VALUES ('fct_lemeng_y', "
+check "tables：**不再**拿 staging 文件名冒充（stg_lemeng_a 无水位行）" \
+  sh -c '! grep -Fq "$2" "$1"' _ "$STUB_E2E/tables_ok/state/calls.log" "VALUES ('stg_lemeng_a', "
 unset SCOPE_FIXTURE
 
 # ★ #1537：tick 选择器空匹配 ⇒ dbt 退出 0 但 `Nothing to do.` ⇒ 必须判 noop，不许假绿

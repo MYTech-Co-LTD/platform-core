@@ -230,6 +230,15 @@ $(mat_watermark_sql "$_wp" "$_we" $_pairs)"
     || echo "materialize warn: load_log 落账失败（物化本身已成功；data_as_of 将停留旧值，新鲜度面降级）" >&2
 }
 
+# 本次**真建成的 table 模型名**（每行一个，去重排序）——从 dbt 输出解析，不猜、不抄名单。
+# 行形（真机，含 ANSI 色码）：
+#   `<esc>[0m16:56:33  1 of 108 OK created sql table model staging.fct_transfer_line_quality .. [<esc>[32mSELECT 98351<esc>[0m in 129.51s]`
+# 只认 `sql table model`：`sql incremental model`（增量档）与 `sql view model`（湖视图）**不算**，
+# 它们的落账由各自档位负责。纯函数（只吃文件路径）⇒ materialize.test.sh 抽真函数断言。
+mat_built_table_models() { # $1=dbt 输出日志 → 模型名（已剥 `staging.` 前缀）
+  sed -n 's/.*OK created sql table model staging\.\([a-z0-9_]*\).*/\1/p' "$1" | LC_ALL=C sort -u
+}
+
 # 本域的 staging 模型名（每行一个）——**从树派生**，不是手写名单。
 # 落点两处都扫：`dbt/models/<域>/staging/*.sql` 与域内的客户分叉
 # `dbt/models/<域>/customers/<客户>/staging/*.sql`（二维格子，见 dbt/models/README.md）。
@@ -341,12 +350,16 @@ if [ "$SCOPE" = tables ]; then
     echo "MATERIALIZE_FAILED:noop（tables 选择器没有匹配到可建节点，或输出缺 PASS= 汇总行）" >&2
     exit 1
   fi
+  # 落账对象 = **本次真建成的 table 模型**（从 dbt 输出里抽），不是 `models/<域>/staging/*.sql`
+  # 的文件名清单——后者是「源 staging」，而 tables 档建的是 fct_*/dim_* 那 16 个 table 模型
+  # （落 schema staging）。2026-11-09 实测：用文件清单落账 ⇒ load_log 里只有 `stg_*` 行，
+  # 「16 个 table 模型的新鲜度」在 load_log 里**永远查不到**（探活看不见自己的债）。
   _tables=''
-  for _m in $(mat_domain_staging_models "$R" "$TABLES_DOMAIN"); do
+  for _m in $(mat_built_table_models "$_log"); do
     case " ${MAT_TABLES_ALL} " in *" ${_m} "*) _tables="${_tables} ${_m}";; esac
   done
   if [ -z "$_tables" ]; then
-    echo "materialize warn: tables 档没有可落账的表（本域 staging 无含 bizday 列的表？）" >&2
+    echo "materialize warn: tables 档没有可落账的表（dbt 输出里没有建成的 table 模型？）" >&2
   else
     mat_write_load_log \
       "$(sed -n 's/.*PASS=\([0-9]*\).*/\1/p' "$_log" | tail -n 1)" \
