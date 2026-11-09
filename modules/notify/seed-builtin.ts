@@ -2,7 +2,9 @@
 // 正典：docs/superpowers/specs/2026-10-27-notification-infrastructure-design.md §5.4
 // - 模板：按 (key, body_hash) 去重；hash 变了才追加 revision 并移动 published_revision。
 // - 通道：do nothing（租户后续可改；seed 不覆盖租户配置）。
-// - 规则：derived upsert；NOTIFY_APPROVERS__<ORG> 配了就 upsert manual literal 规则（manual 优先）。
+// - 规则：按事件声明的 `defaults` 幂等派生（正典 §2.6）；NOTIFY_APPROVERS__<ORG> 配了就
+//   upsert manual literal 规则（manual 优先）。
+//   事件声明是事实源，本函数只**接收**已查好的 defaults（B1：模块不读 platform schema）。
 import { createHash } from 'node:crypto'
 import type { Pool } from 'pg'
 import { orgEnvKeyFor } from './domain/org-env'
@@ -15,14 +17,34 @@ export type SeedStats = {
   rules: number
 }
 
+/** 事件 manifest 的 `defaults` 形状（宿主校验已保证 recipient 已声明）。 */
+export type DerivedDefault = {
+  recipient: string
+  template: string
+  channels: string[]
+}
+
+/** eventKey → defaults（由 scripts/notify-seed-builtin.mjs 从 platform.event_catalog 注入）。 */
+export type EventDefaults = Record<string, DerivedDefault>
+
 const EVENT = 'aftersales.employee_approval.pending'
 const TEMPLATE = 'aftersales_employee_approval_pending'
 const CHANNELS = ['wecom_default', 'inapp_default']
+
+function isDerivedDefault(v: unknown): v is DerivedDefault {
+  if (v === null || typeof v !== 'object' || Array.isArray(v)) return false
+  const d = v as Record<string, unknown>
+  return typeof d.recipient === 'string' && d.recipient.length > 0
+    && typeof d.template === 'string' && d.template.length > 0
+    && Array.isArray(d.channels) && d.channels.length > 0
+    && d.channels.every((c) => typeof c === 'string' && c.length > 0)
+}
 
 export async function seedBuiltin(
   pool: Pool,
   env: NodeJS.ProcessEnv,
   orgs: string[],
+  defaultsByEvent: EventDefaults = {},
 ): Promise<SeedStats> {
   // B1：模块不读 platform schema；租户清单由 scripts/notify-seed-builtin.mjs 查好注入
   const targets = orgs
@@ -89,42 +111,35 @@ export async function seedBuiltin(
     )
     channels += inapp.rowCount ?? 0
 
-    const derived = await pool.query(
-      `insert into notify.rule
-         (org,id,enabled,event_key,scope,recipient_key,template_key,channels,origin,created_by)
-       values ($1,$2,true,$3,'*','approvers',$4,$5::text[],'derived','system')
-       on conflict (org,id) do update set enabled=true, template_key=excluded.template_key,
-         channels=excluded.channels`,
-      [org, `derived:aftersales:${EVENT}:*`, EVENT, TEMPLATE, CHANNELS],
-    )
-    rules += derived.rowCount ?? 0
-
-    // 集成健康 STALE 的派生规则（spec 2026-10-31 §2.4）：收件人 = 持 tenant:admin 的人；
-    // **只走 in_app**——企微通道本身可能正是坏掉的那一个，用坏通道报坏消息是自欺。
-    // 这也是变异验证的观察面：行会落到 notify.inbox / delivery。
-    const staleRule = await pool.query(
-      `insert into notify.rule
-         (org,id,enabled,event_key,scope,recipient_key,template_key,channels,origin,created_by)
-       values ($1,$2,true,$3,'*','admins',$4,'{inapp_default}'::text[],'derived','system')
-       on conflict (org,id) do update set enabled=true, template_key=excluded.template_key,
-         channels=excluded.channels`,
-      [org, 'derived:notify:notify.integration.stale:*', 'notify.integration.stale', 'notify_integration_stale'],
-    )
-    rules += staleRule.rowCount ?? 0
-
-    // 指标定义变更（spec 2026-11-01 §10.4 D6）：L2 草稿确认生效 ⇒ 看数人（持 data:query）
-    // 得知道口径变了。收件人 kind=scope_holders(scope=data:query)，与事件声明（modules/data
-    // 的 manifest notifications.events）的 recipients/defaults 三者必须同描——
-    // 「事件声明 + 模板 + 派生规则」是一根链，改任何一节要三处一起动。
-    const metricRule = await pool.query(
-      `insert into notify.rule
-         (org,id,enabled,event_key,scope,recipient_key,template_key,channels,origin,created_by)
-       values ($1,$2,true,$3,'*','viewers',$4,'{inapp_default}'::text[],'derived','system')
-       on conflict (org,id) do update set enabled=true, template_key=excluded.template_key,
-         channels=excluded.channels`,
-      [org, 'derived:data:data.metric.definition.changed:*', 'data.metric.definition.changed', 'data_metric_definition_changed'],
-    )
-    rules += metricRule.rowCount ?? 0
+    // 派生默认规则：**只认事件声明的 defaults**（正典 §2.6）。模板不在本仓内置集合里就跳过，
+    // 避免造出引用不存在模板的规则（preflight 会报 invalid）。模块 id = 事件 key 的首段
+    // （manifest 校验保证 key 前缀 = module id），与既有 derived:<module>:<event>:* 同形。
+    const builtinTemplateKeys = new Set(BUILTIN_TEMPLATES.map((t) => t.key))
+    for (const [eventKey, raw] of Object.entries(defaultsByEvent)) {
+      if (!isDerivedDefault(raw)) {
+        console.warn('notify-seed-builtin: 跳过形状非法的 defaults', { eventKey })
+        continue
+      }
+      if (!builtinTemplateKeys.has(raw.template)) {
+        console.warn('notify-seed-builtin: 跳过无内置模板的 defaults', { eventKey, template: raw.template })
+        continue
+      }
+      const dot = eventKey.indexOf('.')
+      const moduleId = dot > 0 ? eventKey.slice(0, dot) : ''
+      if (!moduleId) {
+        console.warn('notify-seed-builtin: 跳过无法推出 module id 的事件', { eventKey })
+        continue
+      }
+      const derived = await pool.query(
+        `insert into notify.rule
+           (org,id,enabled,event_key,scope,recipient_key,template_key,channels,origin,created_by)
+         values ($1,$2,true,$3,'*',$4,$5,$6::text[],'derived','system')
+         on conflict (org,id) do update set enabled=true, recipient_key=excluded.recipient_key,
+           template_key=excluded.template_key, channels=excluded.channels`,
+        [org, `derived:${moduleId}:${eventKey}:*`, eventKey, raw.recipient, raw.template, raw.channels],
+      )
+      rules += derived.rowCount ?? 0
+    }
 
     const names = (env[orgEnvKeyFor('NOTIFY_APPROVERS', org)] ?? '')
       .split(',')

@@ -66,6 +66,11 @@ notifications:
         link:     { type: url, required: true }
       recipients:
         assignee: { kind: field, field: assignee }
+      # 零配置就通：seed-builtin 按这份 defaults 幂等派生默认规则（正典 §2.6）。
+      defaults:
+        recipient: assignee
+        template: forms_form_assigned
+        channels: [wecom_default, inapp_default]
     - key: forms.form.due_reminder
       title: 表单催办
       scope: { key: assetId, label: 表单 }
@@ -75,3 +80,7 @@ notifications:
         link:     { type: url, required: true }
       recipients:
         assignee: { kind: field, field: assignee }
+      defaults:
+        recipient: assignee
+        template: forms_form_due_reminder
+        channels: [wecom_default, inapp_default]

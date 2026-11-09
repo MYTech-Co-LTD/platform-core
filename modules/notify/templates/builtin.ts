@@ -55,4 +55,36 @@ export const BUILTIN_TEMPLATES: BuiltinTemplate[] = [
       },
     },
   },
+  {
+    key: 'forms_form_assigned',
+    name: '表单指派',
+    eventKey: 'forms.form.assigned',
+    // §2.4 指派：reconcile 逐人入队，payload = { assetId, assignee, link }。
+    contents: {
+      wecom_chat: {
+        text: '【待填写】{{assetId}}\n填写人：{{assignee}}\n👉 [去填写]({{link}})',
+      },
+      in_app: {
+        title: '表单待填写：{{assetId}}',
+        body: '{{assignee}}，这张表单已指派给你',
+        link: '{{link}}',
+      },
+    },
+  },
+  {
+    key: 'forms_form_due_reminder',
+    name: '表单催办',
+    eventKey: 'forms.form.due_reminder',
+    // §2.4 催办：到期未提交者逐人入队；event_id 含日期 ⇒ 同日重跑天然去重。
+    contents: {
+      wecom_chat: {
+        text: '【催办】{{assetId}}\n填写人：{{assignee}}\n👉 [去填写]({{link}})',
+      },
+      in_app: {
+        title: '表单催办：{{assetId}}',
+        body: '{{assignee}}，这张表单已到期，请尽快填写',
+        link: '{{link}}',
+      },
+    },
+  },
 ]
