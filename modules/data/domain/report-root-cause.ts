@@ -76,6 +76,8 @@ export interface RootCauseDeps {
   dimensionLookup?: QueryDeps['dimensionLookup']
   /** 当前报表门店（筛选栏覆盖优先）：探针必须和报表同店，否则会拿别店订单当根因。 */
   branchNum?: string | null
+  /** 日报的单日/单店场景：跳过 branch_num / 单日 bizday 这类退化维（只有一个值）。 */
+  skipDegenerate?: boolean
 }
 
 /** `buildRootCause` 只依赖事实包里的这几段（避免与 report-facts 形成运行时环）。 */
@@ -428,7 +430,14 @@ export async function buildRootCause(
   for (const c of candidates) {
     const metric = catalog.find((m) => m.id === c.metricId)
     if (metric === undefined) continue
-    const dims = rankDimensions(metric)
+    // 单店视图/单日窗口下，branch_num / bizday 是退化维（只有一个值）——
+    // 拿它当「主因」会把探针浪费在恒 100% 的维度上，永远到不了商品/客户。
+    const dims = rankDimensions(metric).filter((d) => {
+      if (deps.skipDegenerate !== true) return true
+      if (deps.branchNum !== null && deps.branchNum !== undefined && d === 'branch_num') return false
+      if (range.from === range.to && d === 'bizday') return false
+      return true
+    })
     let best: ProbeResult | null = null
     for (const dim of dims) {
       if (probes >= MAX_PROBES) break

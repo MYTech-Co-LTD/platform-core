@@ -469,11 +469,25 @@ export async function buildDailyReview(deps: DailyReviewDeps): Promise<DailyRevi
   }
   suggestions.splice(3)
 
+  const mtdSnapshot: DailySnapshot = {
+    label: '本月累计',
+    day: `${monthStart} ~ ${targetDay}（${mtdDays} 天）`,
+    revenue: fmt(mtd.revenue, 'currency'),
+    orders: fmt(mtd.orders, 'number'),
+    aov: fmt(mtd.aov, 'currency'),
+    gross: fmt(mtd.gross, 'currency'),
+    grossMargin: fmt(mtd.grossMargin, 'percent'),
+    loss: fmt(mtd.loss, 'currency'),
+    expense: fmt(mtd.expense, 'currency'),
+    netGross: fmt(mtd.netGross === null ? null : mtd.netGross * mtdDays, 'currency'),
+    netMargin: fmt(mtd.netMargin, 'percent'),
+  }
   const snapshots = [
     snapshotOfDay(today, '目标日'),
     comparisons.yesterday?.baseline,
     comparisons.mtdAvg.baseline,
     comparisons.lastYearAvg?.baseline,
+    mtdSnapshot,
     snapshotOfAvg(mtd, '本月累计日均'),
   ].filter((x): x is DailySnapshot => x !== undefined)
   const numbers = new Set<string>([targetDay, yesterdayDay, monthStart, lastYearFrom, lastYearCeiling, String(mtdDays), String(lyDay)])
@@ -487,8 +501,12 @@ export async function buildDailyReview(deps: DailyReviewDeps): Promise<DailyRevi
     if (c === null) continue
     for (const v of Object.values(c.delta)) add(v)
   }
-  for (const d of topDrivers) { add(d.value); add(d.delta) }
-  for (const s of suggestions) for (const m of s.match(/-?\d[\d,]*(?:\.\d+)?(?:%|pp)?/g) ?? []) add(m)
+  for (const d of topDrivers) {
+    add(d.value)
+    add(d.delta)
+    for (const m of d.delta.match(/[+-]?\d[\d,]*(?:\.\d+)?(?:%|pp)?/g) ?? []) add(m)
+  }
+  for (const s of suggestions) for (const m of s.match(/[+-]?\d[\d,]*(?:\.\d+)?(?:%|pp)?/g) ?? []) add(m)
   if (targetGap !== null) add(signedAmount(targetGap))
 
   const body = {
@@ -499,19 +517,8 @@ export async function buildDailyReview(deps: DailyReviewDeps): Promise<DailyRevi
     lastYearTo: lastYearCeiling,
     today: snapshotOfDay(today, '目标日'),
     comparisons,
-    mtd: {
-      label: '本月累计',
-      day: `${monthStart} ~ ${targetDay}（${mtdDays} 天）`,
-      revenue: fmt(mtd.revenue, 'currency'),
-      orders: fmt(mtd.orders, 'number'),
-      aov: fmt(mtd.aov, 'currency'),
-      gross: fmt(mtd.gross, 'currency'),
-      grossMargin: fmt(mtd.grossMargin, 'percent'),
-      loss: fmt(mtd.loss, 'currency'),
-      expense: fmt(mtd.expense, 'currency'),
-      netGross: fmt(mtd.netGross === null ? null : mtd.netGross * mtdDays, 'currency'),
-      netMargin: fmt(mtd.netMargin, 'percent'),
-    } satisfies DailySnapshot,
+    mtd: mtdSnapshot,
+
     drivers: topDrivers,
     suggestions,
     notes,

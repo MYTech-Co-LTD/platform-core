@@ -106,6 +106,7 @@ const DAILY_REVIEW_SYSTEM = [
   '成本：毛利、报损、费用、净毛利/净毛利率；必须写「未含房租/水电等固定成本」。',
   'MTD：本月累计营业额/毛利/净毛利/净毛利率，以及与 20% 目标的关系。',
   '驱动：只引用 facts.dailyReview.drivers 的 label/value/delta，点明是销售侧还是成本侧。',
+  '根因：如果 facts.analysis 非空，引用第一条 finding 的维度/标签/值/变化量，点名是哪个商品/客户/门店/订单造成的；为空或全是 unavailable 时写「根因：当前数据不足以分解到具体商品/客户」。',
   '建议：2–3 条，每条绑定一个金额或项目，写可执行动作，不要空话。',
   '只引用 facts.dailyReview 里的数字；不得做 facts 之外的算术；缺失写 "-"。',
   '不要推测天气/竞品/促销等外部原因。',
@@ -186,7 +187,7 @@ function userPrompt(facts: FactBundle, strictNote = ''): string {
     facts.focus === 'root_cause'
       ? '重点：先写结论（当前门店/期间的关键值与对比），再写异常，再用 analysis.findings 写「根因」（点名维度值/明细行/变化量），最后写行动。根因只认 findings 里的数，不另做算术。'
       : facts.focus === 'daily_review'
-        ? '重点：按「结论/对比/成本/MTD/驱动/建议」写日报；三基线只引用 dailyReview.comparisons 的 delta；净毛利必须说明未含房租/水电；建议只引用 dailyReview.suggestions 的方向并绑定其中的金额/项目。'
+        ? '重点：按「结论/对比/成本/MTD/驱动/根因/建议」写日报；三基线只引用 dailyReview.comparisons 的 delta；净毛利必须说明未含房租/水电；建议只引用 dailyReview.suggestions 的方向并绑定其中的金额/项目。'
         : '重点：结论首句写当前门店（branchName，缺省 branchNum），再写销售额/订单/客单价与对比；异常写最低销售日、报损最大原因、费用最大正向项与主要冲减项（有负数才写）；行动 2-3 条，带金额/项目名。',
     ...(facts.hasData ? [] : ['facts.hasData=false：只写一句「该期间门店无有效数据（未接入或未物化）」，不要写异常/行动。']),
     ...(strictNote === '' ? [] : [strictNote]),
@@ -232,6 +233,10 @@ export function templateOf(f: FactBundle): string {
     const driverText = dr.drivers.slice(0, 3)
       .map((d) => `${d.side === 'sales' ? '销售侧' : '成本侧'} ${d.label} ${d.value}（${d.delta}）`)
       .join('；')
+    const rc = f.analysis?.findings.find((x) => x.kind !== 'unavailable' && x.rows.length > 0)
+    const rcText = rc === undefined
+      ? '根因：当前数据不足以分解到具体商品/客户。'
+      : `根因：${rc.metricTitle} 主要受 ${rc.dimension} ${rc.rows[0]!.label} 影响（${rc.rows[0]!.value}${rc.rows[0]!.delta === undefined ? '' : `，变化 ${rc.rows[0]!.delta}`}）。`
     const suggestionText = dr.suggestions.map((x, i) => `${i + 1}. ${x}`).join(' ')
     return [
       `结论：${branchLabel}${dr.targetDay} 营业额 ${dr.today.revenue}，订单 ${dr.today.orders}，客单价 ${dr.today.aov}；毛利 ${dr.today.gross}（毛利率 ${dr.today.grossMargin}）。`,
@@ -239,6 +244,7 @@ export function templateOf(f: FactBundle): string {
       `成本：报损 ${dr.today.loss}，费用 ${dr.today.expense}，净毛利 ${dr.today.netGross}（净毛利率 ${dr.today.netMargin}）；未含房租/水电等固定成本。`,
       `MTD：${dr.mtd.day} 累计营业额 ${dr.mtd.revenue}，毛利 ${dr.mtd.gross}，净毛利 ${dr.mtd.netGross}，净毛利率 ${dr.mtd.netMargin}。`,
       `驱动：${driverText === '' ? '-' : driverText}。`,
+      rcText,
       `建议：${suggestionText}`,
       asOfLine,
     ].join('\n')
