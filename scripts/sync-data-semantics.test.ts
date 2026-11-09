@@ -241,7 +241,7 @@ describe('deriveTotalable —— 可加判定（spec §8.4：表达式形状的�
     expect(() => additivityOf('stocks', 'm')).toThrow(/不在 flow\|stock\|non_additive/)
   })
 
-  it('★ 真 YAML 逐条断言（spec §8.4，真实事实源）：恰 31 条可加；十六条比率/去重计数/max/存量不给合计', () => {
+  it('★ 真 YAML 逐条断言（spec §8.4，真实事实源）：恰 36 条可加；十七条比率/去重计数/max/存量不给合计', () => {
     // 为什么钉真实 YAML：totalable 是物化产物，漏推导/推错不报错，只表现为线上多带或
     // 少带一个合计。期望集按各指标 expression 实文核对（比率用 ratio: 声明、去重计数用
     // count(distinct …)）——加指标时改这里的集合，两条计数会替你兜住条数漂移。
@@ -273,7 +273,7 @@ describe('deriveTotalable —— 可加判定（spec §8.4：表达式形状的�
       expect(row.totalable, `${row.id} 的 totalable 与 expression 形状不符`).toBe(!NOT_TOTALABLE.has(row.id))
     }
     // 「恰好」要有实证数：不是全体都可加、也不是全体都不可加
-    expect(rows.filter((r) => r.totalable === true).length, '可加条数（加/改指标时重核）').toBe(33)
+    expect(rows.filter((r) => r.totalable === true).length, '可加条数（加/改指标时重核）').toBe(36)
     expect(rows.filter((r) => r.totalable === false).length).toBe(17)
     // 抽样钉两条形态极值（brief 点名）
     expect(rows.find((r) => r.id === 'lemeng:retail:net_sales')?.totalable).toBe(true)
@@ -657,14 +657,14 @@ describe('真 YAML：47 条 sla_days / freshnessRelations 逐条断言（spec §
     'lemeng:retail:order_line',
   ])
 
-  it('恰 50 条；inventory 两指标 sla_days=3、retail 七条=1、其余 41 条=2（按实测发布时钟标定，#849）', () => {
-    expect(rows.length).toBe(50)
+  it('恰 53 条；inventory 两指标 sla_days=3、retail 七条=1、其余 44 条=2（按实测发布时钟标定，#849）', () => {
+    expect(rows.length).toBe(53)
     for (const row of rows) {
       const want = SLA3.has(row.id) ? 3 : SLA1.has(row.id) ? 1 : 2
       expect(row.slaDays, `${row.id} 的 sla_days 与标定不符`).toBe(want)
     }
     expect(rows.filter((r) => r.slaDays === 3).length).toBe(2)
-    expect(rows.filter((r) => r.slaDays === 2).length).toBe(41)
+    expect(rows.filter((r) => r.slaDays === 2).length).toBe(44)
     expect(rows.filter((r) => r.slaDays === 1).length).toBe(7)
   })
 
@@ -681,6 +681,10 @@ describe('真 YAML：47 条 sla_days / freshnessRelations 逐条断言（spec §
       'lemeng:outbound:net_amount': ['stg_lemeng_transfer_out', 'stg_lemeng_wholesale_out', 'stg_lemeng_wholesale_return'],
       // #1181（2026-10-30）：战区出库面——归因三源与 outbound:net_amount 同（不新增采集源）
       'lemeng:outbound:region_net': ['stg_lemeng_transfer_out', 'stg_lemeng_wholesale_out', 'stg_lemeng_wholesale_return'],
+      // 2026-11-09 出库两分口径：门店配送只读 transfer 源；外部批发读批发两源；出库金额=两者之和三源
+      'lemeng:outbound:store_delivery': ['stg_lemeng_transfer_out'],
+      'lemeng:outbound:external_wholesale': ['stg_lemeng_wholesale_out', 'stg_lemeng_wholesale_return'],
+      'lemeng:outbound:amount': ['stg_lemeng_transfer_out', 'stg_lemeng_wholesale_out', 'stg_lemeng_wholesale_return'],
       // #1182（2026-10-31）：批发明细读面——单源（退货侧无数据，未并入）
       'lemeng:wholesale:order_line': ['stg_lemeng_wholesale_out'],
       'lemeng:expense:branch_payable': ['stg_lemeng_branch_expense'],
@@ -739,7 +743,7 @@ describe('真 YAML：47 条 sla_days / freshnessRelations 逐条断言（spec §
     }
     // 推导一致性：**43 条全部**声明了 sources（2026-10-17 补齐前是 15 条，另 20 条水位恒未知）。
     // 计数兜底保留：以后新增指标若忘声明 sources，下面的 43 会立刻红。
-    expect(rows.filter((r) => (r.freshnessRelations ?? []).length > 0).length).toBe(50)
+    expect(rows.filter((r) => (r.freshnessRelations ?? []).length > 0).length).toBe(53)
     expect(rows.filter((r) => (r.freshnessRelations ?? []).length === 0).length).toBe(0)
   })
 })
@@ -1484,7 +1488,8 @@ describe('entity / synonyms 物化面（W0，031）', () => {
   it('仓内真实声明：net_sales 带实体与同义词（W0 Task 4 全量标注前的最小示例）', () => {
     const byId = new Map(readDeclarations(ROOT).map((r) => [r.id, r]))
     expect(byId.get('lemeng:retail:net_sales')?.entity).toBe('branch')
-    expect(byId.get('lemeng:retail:net_sales')?.synonyms).toEqual(['净销售金额', 'net_sales', 'retail:net_sales'])
+    // 2026-11-09 营业额双口径：净销售=冲退货口径，两条都挂「营业额」同义词（用户裁决）
+    expect(byId.get('lemeng:retail:net_sales')?.synonyms).toEqual(['净销售金额', 'net_sales', 'retail:net_sales', '营业额', '营业额（冲退货）'])
   })
 })
 

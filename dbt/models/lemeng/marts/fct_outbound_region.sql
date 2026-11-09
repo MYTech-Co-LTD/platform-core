@@ -7,7 +7,10 @@
 --     · `自有门店配送`：transfer 域，战区 = 调入门店的战区（`fct_hq_outbound.region_id`，本来就对）；
 --     · `体系内批发`：wholesale 域且客户是**另一个账套的门店**（`dim_lemeng_client.client_kind`），
 --       战区 = 那家门店的战区；
---     · `外部批发`：其余 wholesale，**战区不硬摊**（2026-10-30 用户裁决）⇒ `region_l1_bucket = '未归属'`。
+--     · `外部批发`：其余 wholesale（含**体系内但不在四大战区**的门店，2026-11-09 用户裁决），
+--       **战区不硬摊**（2026-10-30 用户裁决）⇒ `region_l1_bucket = '未归属'`。
+--   ⚠️ 2026-11-09 口径修订：`体系内批发` 仅收「客户本体门店在四大战区」的行；其余归外部批发。
+--   该修订影响历史行 ⇒ 本模型需一次 `--full-refresh` 重写历史（增量 7 天窗滚不到旧分区）。
 --
 -- 【为什么不改 fct_hq_outbound】那是既有 mart：列集 / 粒度 / 已声明的 certified 指标都钉在上面，
 --   为「多一个战区口径」去改它 = 动认证面。本模型只读它、**不重算任何金额**（`r_net/order_count/
@@ -52,7 +55,10 @@ select
     o.bizday,
     case
         when o.domain = 'transfer' then '自有门店配送'
-        when dc.client_kind = '体系内门店' then '体系内批发'
+        -- 体系内批发只认**四大战区门店**（2026-11-09 用户口径）：客户本体门店必须有战区归属；
+        -- 体系内但战区不在四战区（如「其他门店」）按用户裁决归**外部批发**。
+        when dc.client_kind = '体系内门店'
+         and r.region_l1 in ('东部战区','南部战区','西部战区','中部战区') then '体系内批发'
         else '外部批发'
     end::varchar as channel_type,
     -- 一级战区桶：transfer 用门店战区；wholesale 用客户本体门店战区；都没有 ⇒ 未归属

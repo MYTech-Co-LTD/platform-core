@@ -11,15 +11,14 @@ with base as (
     select f.system_book, f.bizday, f.domain, f.client_fid, f.region_id, f.r_net
     from {{ ref('fct_hq_outbound') }} f
 ),
-indep as (
+raw as (
     select
         b.system_book,
         b.bizday,
-        case when b.domain = 'transfer' then '自有门店配送'
-             when (select c.client_kind from {{ ref('dim_lemeng_client') }} c
-                    where c.system_book = b.system_book and c.client_fid = b.client_fid) = '体系内门店'
-             then '体系内批发'
-             else '外部批发' end as channel_type,
+        b.domain,
+        b.r_net,
+        (select c.client_kind from {{ ref('dim_lemeng_client') }} c
+          where c.system_book = b.system_book and c.client_fid = b.client_fid) as client_kind,
         coalesce((
             select r.region_l1
             from {{ ref('dim_region') }} r
@@ -29,10 +28,27 @@ indep as (
               and r.region_id  = case when b.domain = 'transfer' then b.region_id
                                        else (select c3.region_id from {{ ref('dim_lemeng_client') }} c3
                                               where c3.system_book = b.system_book and c3.client_fid = b.client_fid) end
-        ), '未归属') as region_l1_bucket,
-        sum(b.r_net)::numeric(20,2) as r_net
+        ), '未归属') as region_l1_bucket
     from base b
-    group by 1, 2, 3, 4
+),
+agg as (
+    select system_book, bizday, domain, client_kind, region_l1_bucket,
+           sum(r_net)::numeric(20,2) as r_net
+    from raw
+    group by 1, 2, 3, 4, 5
+),
+indep as (
+    select
+        system_book,
+        bizday,
+        case when domain = 'transfer' then '自有门店配送'
+             when client_kind = '体系内门店'
+              and region_l1_bucket in ('东部战区','南部战区','西部战区','中部战区')
+             then '体系内批发'
+             else '外部批发' end as channel_type,
+        region_l1_bucket,
+        r_net
+    from agg
 ),
 mart as (
     select system_book, bizday, channel_type, region_l1_bucket, r_net
@@ -64,7 +80,10 @@ union all
 select m.system_book, m.bizday, m.channel_type, m.region_l1_bucket, m.r_net, m.r_net,
        '通道与战区桶矛盾：外部批发不摊战区、体系内批发不得因映射缺失落未归属'
 from {{ ref('fct_outbound_region') }} m
-where (m.channel_type = '外部批发' and m.region_l1_bucket <> '未归属')
+-- 2026-11-09 口径修订后：外部批发可含「体系内但非四战区」的门店（桶=其他门店等），
+-- 因此判据收窄为「外部批发**不得落进四大战区**」；非战区的自成一档是合法可见信息。
+where (m.channel_type = '外部批发'
+       and m.region_l1_bucket in ('东部战区','南部战区','西部战区','中部战区'))
    or (m.channel_type = '体系内批发'
        and m.region_l1_bucket = '未归属'
        -- 用 exists 钉到「该日确有本体有一级战区、却没落上」的客户：
