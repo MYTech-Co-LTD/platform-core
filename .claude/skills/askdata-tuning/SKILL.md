@@ -39,6 +39,10 @@ description: Use when the 企微/OpenClaw 问数 bot 表现不确定——反复
 | `truncated` 后未收窄 | 指令面 | 写死「收窄或改 total:true」 |
 | `requesterSenderId` 缺失 | **身份链路**（不是问数逻辑） | 告知用户重发；别用其它工具绕过身份 |
 | 答的时间窗不对 | 口径面 | 查数据截止 + 日期基准，不是「模型不会算」 |
+| **猜指标 id / 多次 `DENIED`**（如 `branch:sale_money`） | **检索面** | SKILL 第 0 步：先 `search_catalog(q=用户原词)`；0 命中换同义词，**禁止猜 id** |
+| 按月/按季**循环回查数据边界**（「最早的数据」查 ~30 次） | **覆盖区间** | `describe_metric({id, coverage:true})` 一次拿 `min/max bizday`；禁止按月回查 |
+| Top-N 拉全量行**自己排序** | **切片面** | `query_data` 传 `dimensions/orderBy:[{column:"value",dir:"desc"}]/limit` |
+| 把**配送金额当营业额** / 业务词选错指标 | **口径护栏** | SKILL「业务词→指标」表 + 营业额双口径（配送金额 ≠ 营业额） |
 
 ## 第 3 步：四个杠杆（按优先级）
 
@@ -47,7 +51,7 @@ description: Use when the 企微/OpenClaw 问数 bot 表现不确定——反复
 真正管住 bot 的是 **`agents.entries.<id>.tools.allow`**（allow-list）。
 **全局 `tools.deny` 对已有 allow-list 的 agent 不起作用**——改了没反应就是这个原因。
 
-- 只给问数：`["list_metrics","query_data", ...]`
+- 只给问数：`["search_catalog","list_metrics","query_data", ...]`（搜索优先，list 只作全貌）
 - 还要干别的活（需要 shell）：把 `exec` **加进 allow**，再用杠杆 3 防止它抢先用
 - 改完**必须重启容器**（`config hot reload` 不一定覆盖工具面）
 
@@ -59,8 +63,8 @@ description: Use when the 企微/OpenClaw 问数 bot 表现不确定——反复
    —— 构建期 COPY 进镜像，随版本走；改完要**重建部署**才生效。
 2. **工作区 `AGENTS.md`**（状态卷 `workspace/AGENTS.md`）—— 立即生效，但 ⚠️ **卷重建会回退**。
 
-规则内容固定三段：取数只走 `list_metrics`/`query_data`；不要为取数用 `exec`/`curl`/读源码/翻 env；
-身份类报错如实告知用户重发，不要绕过身份检查。
+规则内容固定四段：**先用 `search_catalog` 按用户原词检索**（禁止猜 id）；取数只走 `list_metrics`/`query_data`；
+不要为取数用 `exec`/`curl`/读源码/翻 env；身份类报错如实告知用户重发，不要绕过身份检查。
 
 **杠杆 4 —— 回包面**：`error.detail` 要说清「哪个键、什么毛病」，`total` / `truncated` / `freshness_line`
 语义要硬；模型能自纠，就不用背规则。
