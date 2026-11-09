@@ -27,7 +27,7 @@ const lastUserIdBySession = new Map();
 const LIST_DEF = {
   name: "list_metrics",
   description:
-    "列出当前用户可见的问数指标（词表按人裁剪）。不确定有哪些指标、指标 id 或参数时先调它；以返回为准，不要凭记忆猜指标。",
+    "列出当前用户可见的全部指标（词表按人裁剪，可能很长）。**找指标先用 search_catalog 按用户原词检索**；只有搜索 0 命中或需要看全貌时才用本工具。以返回为准，不要凭记忆猜指标 id。",
   parameters: { type: "object", properties: {}, additionalProperties: false },
 };
 
