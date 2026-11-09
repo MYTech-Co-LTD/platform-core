@@ -357,7 +357,10 @@ export async function loadMergedCatalog(pool: Pool, org: string): Promise<Metric
   // 撞名仍丢——fail-closed，不让坏标记顶掉平台口径）。
   const overrideIds = new Set<string>()
   for (const row of rows) {
-    if (row.source === 'l2' && row.overrideOf !== null && row.overrideOf === row.id && l1Ids.has(row.id)) {
+    if (row.source === 'l2' && row.overrideOf !== null && row.overrideOf === row.id
+      && l1Ids.has(row.id) && row.certified === 'certified') {
+      // D6：覆盖是「修改已生效口径」，**草稿不生效**（确认后才胜出）。未确认的覆盖行按普通 L2 走，
+      // 撞名仍被 L1 丢弃 ⇒ 对读取完全不可见，直到 confirm 把它置为 certified。
       overrideIds.add(row.id)
     }
   }
@@ -632,15 +635,16 @@ export async function insertTenantDeclaration(
   d: CompiledTenantDeclaration,
   declaration: unknown,
   updatedBy: string,
+  opts?: { overrideOf?: string | null },
 ): Promise<boolean> {
   const r = await db.query(
     `insert into data.metrics
        (org, id, title, description, required_scope, subject_column, select_sql, group_by, params,
         source, source_system, updated_by, version, totalable, scope_note, sla_days,
-        freshness_relations, mask_spec, unit, entity, synonyms, basis, certified, created_by, declaration)
+        freshness_relations, mask_spec, unit, entity, synonyms, basis, certified, created_by, declaration, override_of)
      values ($1, $2, $3, $4, $5, $6, $7, $8, $9::jsonb,
              'l2', $10, $11, 1, $12, $13, $14,
-             $15::jsonb, $16::jsonb, $17, $18, $19::jsonb, 'declared', 'draft', $11, $20::jsonb)
+             $15::jsonb, $16::jsonb, $17, $18, $19::jsonb, 'declared', 'draft', $11, $20::jsonb, $21)
      on conflict (org, id) do nothing
      returning id`,
     [
@@ -648,8 +652,35 @@ export async function insertTenantDeclaration(
       d.groupBy, JSON.stringify(d.params), d.sourceSystem, updatedBy, d.totalable, d.scopeNote,
       d.slaDays, JSON.stringify(d.freshnessRelations),
       d.masks === null ? null : JSON.stringify(d.masks), d.unit, d.entity,
-      JSON.stringify(d.synonyms), JSON.stringify(declaration),
+      JSON.stringify(d.synonyms), JSON.stringify(declaration), opts?.overrideOf ?? null,
     ],
+  )
+  return (r.rowCount ?? 0) > 0
+}
+
+/** 确认一条租户覆盖（D6：草稿→确认→生效）。没有 draft 覆盖行 ⇒ false（调用方回 404）。 */
+export async function confirmOverrideDeclaration(
+  db: Pool | PoolClient, org: string, id: string, updatedBy: string,
+): Promise<boolean> {
+  const r = await db.query(
+    `update data.metrics
+        set certified = 'certified', updated_by = $3, version = version + 1, updated_at = now()
+      where org = $1 and id = $2 and source = 'l2' and override_of = $2 and certified = 'draft'
+      returning id`,
+    [org, id, updatedBy],
+  )
+  return (r.rowCount ?? 0) > 0
+}
+
+/** 删除一条租户覆盖（回落到平台 L1 口径）。返回是否真删了一行。 */
+export async function deleteOverrideDeclaration(
+  db: Pool | PoolClient, org: string, id: string,
+): Promise<boolean> {
+  const r = await db.query(
+    `delete from data.metrics
+      where org = $1 and id = $2 and source = 'l2' and override_of = $2
+      returning id`,
+    [org, id],
   )
   return (r.rowCount ?? 0) > 0
 }

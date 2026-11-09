@@ -314,10 +314,11 @@ describePg('消费面词表四通道一致（需要 DATABASE_URL）', () => {
     const OTHER_ORG = 'org-t8-consumers-other'
     const insertOverride = () => pool.query(
       `insert into data.metrics
-         (org,id,title,description,required_scope,subject_column,select_sql,group_by,params,source,updated_by,version,totalable,basis,override_of)
-       values ($1,$2,'租户覆盖版','本租户口径',null,'org','select sum(fct_t8c.l2_amount) as value from fct_t8c','','{}'::jsonb,'l2','fixture',1,false,'declared',$2)
+         (org,id,title,description,required_scope,subject_column,select_sql,group_by,params,source,updated_by,version,totalable,basis,override_of,certified)
+       values ($1,$2,'租户覆盖版','本租户口径',null,'org','select sum(fct_t8c.l2_amount) as value from fct_t8c','','{}'::jsonb,'l2','fixture',1,false,'declared',$2,'certified')
        on conflict (org,id) do update set
-         title=excluded.title, select_sql=excluded.select_sql, basis=excluded.basis, override_of=excluded.override_of`,
+         title=excluded.title, select_sql=excluded.select_sql, basis=excluded.basis,
+         override_of=excluded.override_of, certified=excluded.certified`,
       [ORG, CLASH_ID],
     )
     await insertOverride()
