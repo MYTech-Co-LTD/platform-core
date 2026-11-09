@@ -484,8 +484,13 @@ function buildSlicedPlan(p: {
   const totalSql = slicing !== undefined && slicing.total === true
     ? `SELECT sum(value) AS total FROM ( ${inner} ) t`
     : undefined
+  // 子集聚合也要吃 orderBy（Top-N）：外层输出列 = selDims + value，按 value/dim 排。
+  const ob = slicing?.orderBy ?? []
+  const orderSql = ob.length > 0
+    ? ` ORDER BY ${ob.map((o) => `${o.column} ${o.dir === 'asc' ? 'asc' : 'desc'}`).join(', ')}`
+    : ''
   return {
-    sql: `select ${selDims.join(', ')}, sum(value) as value from ( ${inner} ) t group by ${selDims.join(', ')} LIMIT ${limit}`,
+    sql: `select ${selDims.join(', ')}, sum(value) as value from ( ${inner} ) t group by ${selDims.join(', ')}${orderSql} LIMIT ${limit}`,
     ...(totalSql !== undefined ? { totalSql } : {}),
   }
 }
@@ -532,8 +537,12 @@ export function authorize(
     const orderScope = slicing.dimensions !== undefined
       ? (slicing.dimensions.length === 0 ? grain : [...new Set(slicing.dimensions)])
       : grain
+    // `value` 是聚合值的固定别名（内外层都叫它）——Top-N 必须能按它排序。
+    // 2026-11-09 真机：只允许维度列 ⇒ 「按供应商前 5」的 orderBy:[{column:'value'}] 被拒，
+    // 模型退化成 limit:500 拉回来自行排序。
+    const orderColumns = [...orderScope, 'value']
     for (const o of slicing.orderBy ?? []) {
-      if (!orderScope.includes(o.column) || !IDENT_RE.test(o.column)) {
+      if (!orderColumns.includes(o.column) || !IDENT_RE.test(o.column)) {
         return { ok: false, reason: 'bad_param', metricId, detail: `unknown_order_column:${o.column}` }
       }
       if (o.dir !== undefined && o.dir !== 'asc' && o.dir !== 'desc') {
