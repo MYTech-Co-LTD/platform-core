@@ -302,19 +302,6 @@
       "maximumAge": "36h"
     },
     {
-      "match": "/workspace/logs/metric-profile-summary.csv",
-      "owner": "data-eng",
-      "tags": [
-        "lemeng",
-        "metric-profile"
-      ],
-      "maximumAge": "9d",
-      "description": "W2 列画像周更**跑完**的凭证（父管线 lemeng.metric_profile.3120 收尾 snk.csv：一行 = org + relations（回声计数）+ status=ok + ts(UTC)）。为什么锚这里而不是仓表：sink 在 foreach 子管线里、父 run 记录不带 assets（实测）⇒ 直接锚 `postgres://metric_profiles` 会恒 stale。阈值 9d = 周更周期 7d + 2d 余量（吸收一次失败重试/调度延迟）；语义 = 距上次成功写入超过 9 天才判停更。⚠️ 不是「跨两个周末」——周更只有 7d，跨两个周末已经是 14d，9d 到不了。",
-      "pipelines": [
-        "lemeng.metric_profile.*"
-      ]
-    },
-    {
       "match": "minio://*/lemeng/business_collection/system_book=*/bizday=*/all.parquet",
       "owner": "data-eng",
       "description": "2026-11-07 补：#1588 排班但无 owner 规则",
