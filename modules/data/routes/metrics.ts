@@ -22,7 +22,7 @@ import { requesterOf, writeOutcome } from './context'
 import { saveMetricDraft, loadMetricDraft, clearMetricDraft, metricBasisOf } from '../domain/metric-governance'
 import { ColumnAggDraftSchema, MetricDraftSpecSchema } from '../domain/metric-governance'
 import { certifyMetric, updateMetricMeta } from '../domain/metric-write'
-import { createTenantDeclaration } from '../domain/tenant-declaration-write'
+import { confirmOverrideDeclaration, createOverrideDeclaration, createTenantDeclaration, deleteOverrideDeclaration } from '../domain/tenant-declaration-write'
 import { metricUsageStats, retireCandidatesOf } from '../domain/metric-usage'
 import { paramFaceOf, visibleMetrics } from '../domain/authz'
 import type { MetricParamDef, Requester } from '../domain/authz'
@@ -237,6 +237,44 @@ export function registerMetrics(r: ModuleHono, ctx: RouteCtx): void {
     )
     if (out.ok) return c.json({ ok: true, id: out.id }, 201)
     return writeOutcome(c, out, 201)
+  })
+
+  // 覆盖平台口径（W8 P2）：草稿→确认→生效（D6）。entry.name 必须等于被覆盖的 L1 id。
+  r.post('/metrics/:id/override', async (c) => {
+    const requester = requesterOf(c)
+    if (requester === null) return c.json({ error: 'UNAUTHENTICATED' }, 403)
+    const id = metricIdOf(c.req.param('id'))
+    if (id === null) return c.json({ error: 'NOT_FOUND' }, 404)
+    const body = await c.req.json().catch(() => null)
+    if (body === null || typeof body !== 'object' || !('declaration' in body)) {
+      return c.json({ error: 'INVALID_BODY' }, 400)
+    }
+    const out = await createOverrideDeclaration(
+      { pool: ctx.pool, ...(ctx.warehouse === undefined ? {} : { warehouse: ctx.warehouse }) },
+      orgOf(c), requester, id, (body as { declaration: unknown }).declaration,
+    )
+    if (out.ok) return c.json({ ok: true, id: out.id, certified: 'draft' }, 201)
+    return writeOutcome(c, out, 201)
+  })
+
+  r.post('/metrics/:id/override/confirm', async (c) => {
+    const requester = requesterOf(c)
+    if (requester === null) return c.json({ error: 'UNAUTHENTICATED' }, 403)
+    const id = metricIdOf(c.req.param('id'))
+    if (id === null) return c.json({ error: 'NOT_FOUND' }, 404)
+    const out = await confirmOverrideDeclaration({ pool: ctx.pool }, orgOf(c), requester, id)
+    if (out.ok) return c.json({ ok: true, id: out.id, certified: 'certified' })
+    return writeOutcome(c, out, 200)
+  })
+
+  r.delete('/metrics/:id/override', async (c) => {
+    const requester = requesterOf(c)
+    if (requester === null) return c.json({ error: 'UNAUTHENTICATED' }, 403)
+    const id = metricIdOf(c.req.param('id'))
+    if (id === null) return c.json({ error: 'NOT_FOUND' }, 404)
+    const out = await deleteOverrideDeclaration({ pool: ctx.pool }, orgOf(c), requester, id)
+    if (out.ok) return c.json({ ok: true, id: out.id })
+    return writeOutcome(c, out, 200)
   })
 
   r.put('/metrics/:id', async (c) => {

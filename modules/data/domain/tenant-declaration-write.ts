@@ -3,13 +3,24 @@
 // 与 L2 写路径（metric-write.ts）分开：租户声明**不是**语义层的结构化树，而是与 L1 同形的
 // 「声明条目」。所以校验用 L1 同一套：`semanticsYamlPieceIssues`（apply 的重校验尺）+
 // `compileTenantDeclaration`（同源推导）。**不收 SQL**、不引入自由表达式语法。
+import { readdirSync, readFileSync } from 'node:fs'
+import { join } from 'node:path'
+import { fileURLToPath } from 'node:url'
 import type { Pool } from 'pg'
 import { parse as parseYaml, stringify as stringifyYaml } from 'yaml'
+import { DEFAULT_TIER_SCOPE } from './authz'
 import type { Requester } from './authz'
+import { sqlMentionsColumn } from './mask'
 import { compileTenantDeclaration } from './declaration-compiler'
 import type { DeclarationIssue } from './declaration-compiler'
 import { writeMetricAudit } from './metric-audit-store'
-import { insertTenantDeclaration, loadPlatformCatalog } from './metric-store'
+import {
+  confirmOverrideDeclaration as confirmOverrideDeclarationStore,
+  deleteOverrideDeclaration as deleteOverrideDeclarationStore,
+  insertTenantDeclaration,
+  loadPlatformCatalog,
+  selectMetricSnapshot,
+} from './metric-store'
 import { loadRelationColumns } from './private-measure'
 import { readCurrentSemanticsYaml, semanticsYamlPieceIssues } from './pipelines/propose-metric'
 import { parseL1Select } from './semantic-compiler'
@@ -23,7 +34,7 @@ export interface TenantDeclarationDeps {
 
 export type TenantDeclarationOutcome =
   | { ok: true; id: string }
-  | { ok: false; http: 400 | 403 | 409 | 500; error: string; extra?: Record<string, unknown> }
+  | { ok: false; http: 400 | 403 | 404 | 409 | 500; error: string; extra?: Record<string, unknown> }
 
 const issueExtra = (issues: DeclarationIssue[]): Record<string, unknown> => ({ issues })
 
@@ -41,6 +52,69 @@ async function withTx<T>(pool: Pool, fn: (c: import('pg').PoolClient) => Promise
   } finally {
     client.release()
   }
+}
+
+const REPO_ROOT = fileURLToPath(new URL('../../../../', import.meta.url))
+
+/**
+ * 契约列敏感度（`<domain>.<table>.<column>` → sensitivity）。与
+ * `scripts/check-column-scope-monotonicity.mjs` 的 `loadSensitivity` **同一事实源格式**；
+ * 运行期需要它来给租户声明套默认整值掩码（与 L1 sync 的 `applyDefaultMaskTier` 同一条规则）。
+ * 进程内缓存：契约随部署变化，写路径不需要每次重读。
+ */
+let sensitivityCache: Map<string, string> | null = null
+function sensitivityMap(): Map<string, string> {
+  if (sensitivityCache !== null) return sensitivityCache
+  const m = new Map<string, string>()
+  const walk = (dir: string): void => {
+    for (const ent of readdirSync(dir, { withFileTypes: true })) {
+      const full = join(dir, ent.name)
+      if (ent.isDirectory()) { walk(full); continue }
+      if (!ent.name.endsWith('.json') || ent.name.startsWith('_')) continue
+      try {
+        const doc = JSON.parse(readFileSync(full, 'utf8')) as {
+          domain?: unknown; table?: unknown; columns?: Array<{ name?: unknown; sensitivity?: unknown }>
+        }
+        if (typeof doc.domain !== 'string' || typeof doc.table !== 'string' || !Array.isArray(doc.columns)) continue
+        for (const c of doc.columns) {
+          if (typeof c.name !== 'string') continue
+          m.set(`${doc.domain}.${doc.table}.${c.name}`, typeof c.sensitivity === 'string' ? c.sensitivity : 'none')
+        }
+      } catch { /* 坏契约由门禁报，这里跳过 */ }
+    }
+  }
+  try { walk(join(REPO_ROOT, 'contracts')) } catch { /* 无 contracts 目录（测试树）⇒ 空表 */ }
+  sensitivityCache = m
+  return m
+}
+
+/** 写前可执行性：warehouse 可用时跑 `EXPLAIN`（只出计划，不扫数据；pg_duckdb 实测支持）。 */
+async function explainOrReject(
+  deps: TenantDeclarationDeps, selectSql: string,
+): Promise<TenantDeclarationOutcome | null> {
+  if (deps.warehouse === undefined) return null
+  try {
+    await deps.warehouse.query(`explain ${selectSql}`)
+    return null
+  } catch (e) {
+    return { ok: false, http: 400, error: 'SQL_NOT_EXECUTABLE', extra: { detail: (e as Error).message.slice(0, 300) } }
+  }
+}
+
+/** `reads`（契约列全名数组）必填；命中的敏感列若无按列掩码 ⇒ 套默认整值掩码（同 L1 sync）。 */
+function applyTenantDefaultMask(
+  e: Record<string, unknown>, d: { selectSql: string; masks: import('./authz').MaskSpec[] | null },
+): TenantDeclarationOutcome | null {
+  const reads = Array.isArray(e.reads) ? e.reads.map(String) : null
+  if (reads === null) return { ok: false, http: 400, error: 'READS_REQUIRED' }
+  const sens = sensitivityMap()
+  const sensitive = reads.filter((k) => (sens.get(k) ?? 'none') !== 'none')
+  if (sensitive.length === 0) return null
+  const hasColumnMask = (d.masks ?? []).some((m) => m.column !== null && sqlMentionsColumn(d.selectSql, m.column))
+  if (!hasColumnMask) {
+    d.masks = [...(d.masks ?? []), { column: null, kind: 'nullify', grantedBy: DEFAULT_TIER_SCOPE }]
+  }
+  return null
 }
 
 /**
@@ -123,6 +197,10 @@ export async function createTenantDeclaration(
     return { ok: false, http: 400, error: 'DECLARATION_INVALID', extra: { issues: compiled.issues } }
   }
   const d = compiled.compiled
+  const maskIssue = applyTenantDefaultMask(e, d)
+  if (maskIssue !== null) return maskIssue
+  const sqlIssue = await explainOrReject(deps, d.selectSql)
+  if (sqlIssue !== null) return sqlIssue
 
   // ⑤ 同 org 同 id 已存在 ⇒ 409（不静默改既有口径；修改是另一条语义）
   const exists = await deps.pool.query(
@@ -157,4 +235,135 @@ export async function createTenantDeclaration(
   })
   if (!inserted) return { ok: false, http: 409, error: 'ID_EXISTS' }
   return { ok: true, id: d.id }
+}
+
+// ── P2：覆盖平台口径（草稿 → 确认 → 生效；D6）──────────────────────────────────
+
+/**
+ * 新建/重建一条**草稿**覆盖。`entry.name` 必须等于被覆盖的 L1 id；
+ * grain 必须与 L1 行同形（否则覆盖后合计/下钻语义断裂）。
+ * 草稿不生效（`loadMergedCatalog` 只认 certified 的覆盖行）；确认走 `confirmOverride`。
+ */
+export async function createOverrideDeclaration(
+  deps: TenantDeclarationDeps,
+  org: string,
+  requester: Requester,
+  id: string,
+  entry: unknown,
+): Promise<TenantDeclarationOutcome> {
+  const yamlText = readCurrentSemanticsYaml()
+  if (yamlText === null) return { ok: false, http: 500, error: 'SEMANTICS_YAML_UNAVAILABLE' }
+  const doc = parseYaml(yamlText) as { metrics?: unknown[]; entities?: Record<string, unknown> } | null
+  if (doc === null || typeof doc !== 'object' || !Array.isArray(doc.metrics)) {
+    return { ok: false, http: 500, error: 'SEMANTICS_YAML_UNPARSEABLE' }
+  }
+  const e = (entry ?? {}) as Record<string, unknown>
+  if (e.name !== id) return { ok: false, http: 400, error: 'NAME_MISMATCH' }
+
+  const catalog = await loadPlatformCatalog(deps.pool)
+  const l1 = catalog.find((m) => m.id === id)
+  if (l1 === undefined) return { ok: false, http: 404, error: 'NOT_FOUND' }
+
+  // grain 同形（L1 的 groupBy 是唯一事实源）
+  const grain = Array.isArray(e.grain) ? e.grain.map(String) : []
+  const l1Grain = l1.groupBy.split(',').map((s) => s.trim()).filter((s) => s !== '')
+  if (grain.join(',') !== l1Grain.join(',')) {
+    return { ok: false, http: 400, error: 'GRAIN_MISMATCH', extra: { expected: l1Grain, got: grain } }
+  }
+
+  // 覆盖不跑 `semanticsYamlPieceIssues`：被覆盖的是**已存在的 L1 id**（不是向仓库新增声明），
+  // 而该校验器的名字白名单会拒绝测试/保留前缀的既有 id。覆盖的判据由编译器（形状/关系/
+  // 掩码/实体/tier）+ L1 存在性 + grain 同形三条承担。
+  const allowedRelations = new Set<string>()
+  for (const m of catalog) {
+    try { allowedRelations.add(parseL1Select(m.selectSql).relation) } catch { /* 坏 L1 不授权 */ }
+  }
+  const entities = new Set(Object.keys(doc.entities ?? {}))
+  const preloaded = new Map<string, ReadonlySet<string>>()
+  let colsOf: ((relation: string) => ReadonlySet<string> | null) | undefined
+  if (deps.warehouse !== undefined) {
+    const warehouse = deps.warehouse
+    colsOf = (relation) => preloaded.get(relation) ?? null
+    const expr = typeof e.expression === 'string' ? e.expression : ''
+    const rel = expr.match(/([A-Za-z_][A-Za-z0-9_]*(?:\.[A-Za-z_][A-Za-z0-9_]*)*)\.([A-Za-z_][A-Za-z0-9_]*)/)?.[1] ?? null
+    if (rel !== null) {
+      try {
+        const cols = await loadRelationColumns(warehouse, rel)
+        preloaded.set(rel, new Set(cols.map((c) => c.name)))
+      } catch { /* 表不存在 ⇒ 编译器按关系白名单报 */ }
+    }
+  }
+  const compiled = compileTenantDeclaration(e, {
+    allowedRelations, entities, ...(colsOf === undefined ? {} : { columnsOf: colsOf }),
+  })
+  if (!compiled.ok) {
+    return { ok: false, http: 400, error: 'DECLARATION_INVALID', extra: { issues: compiled.issues } }
+  }
+  const d = compiled.compiled
+  const maskIssue = applyTenantDefaultMask(e, d)
+  if (maskIssue !== null) return maskIssue
+  const sqlIssue = await explainOrReject(deps, d.selectSql)
+  if (sqlIssue !== null) return sqlIssue
+  // 覆盖不得**降低**平台口径的门：L1 有 required_scope ⇒ 覆盖必须同码（否则等于给没有该码的人开门）。
+  if (l1.requiredScope !== null && d.requiredScope !== l1.requiredScope) {
+    return { ok: false, http: 400, error: 'SCOPE_DOWNGRADE', extra: { expected: l1.requiredScope, got: d.requiredScope } }
+  }
+
+  const exists = await deps.pool.query('select 1 from data.metrics where org = $1 and id = $2', [org, d.id])
+  if ((exists.rowCount ?? 0) > 0) return { ok: false, http: 409, error: 'OVERRIDE_EXISTS' }
+
+  const inserted = await withTx(deps.pool, async (c) => {
+    const ok = await insertTenantDeclaration(c, org, d, entry, requester.userId, { overrideOf: id })
+    if (!ok) return false
+    await writeMetricAudit(c, {
+      org, metricId: d.id, action: 'create', userId: requester.userId,
+      channel: requester.channel, keyId: requester.keyId, before: null,
+      after: {
+        title: d.title, description: d.description, subjectColumn: d.subjectColumn,
+        selectSql: d.selectSql, groupBy: d.groupBy, params: d.params, certified: 'draft',
+      },
+    })
+    return true
+  })
+  if (!inserted) return { ok: false, http: 409, error: 'OVERRIDE_EXISTS' }
+  return { ok: true, id: d.id }
+}
+
+/** 确认覆盖（草稿→certified）。确认后该 org 的读取改用本口径。 */
+export async function confirmOverrideDeclaration(
+  deps: TenantDeclarationDeps, org: string, requester: Requester, id: string,
+): Promise<TenantDeclarationOutcome> {
+  const before = await selectMetricSnapshot(deps.pool, org, id)
+  if (before === null) return { ok: false, http: 404, error: 'NOT_FOUND' }
+  const done = await withTx(deps.pool, async (c) => {
+    const ok = await confirmOverrideDeclarationStore(c, org, id, requester.userId)
+    if (!ok) return false
+    await writeMetricAudit(c, {
+      org, metricId: id, action: 'certify', userId: requester.userId,
+      channel: requester.channel, keyId: requester.keyId,
+      before, after: { ...before, certified: 'certified' },
+    })
+    return true
+  })
+  if (!done) return { ok: false, http: 404, error: 'NOT_FOUND' }
+  return { ok: true, id }
+}
+
+/** 删除覆盖（回落到平台 L1 口径）。 */
+export async function deleteOverrideDeclaration(
+  deps: TenantDeclarationDeps, org: string, requester: Requester, id: string,
+): Promise<TenantDeclarationOutcome> {
+  const before = await selectMetricSnapshot(deps.pool, org, id)
+  if (before === null) return { ok: false, http: 404, error: 'NOT_FOUND' }
+  const done = await withTx(deps.pool, async (c) => {
+    const ok = await deleteOverrideDeclarationStore(c, org, id)
+    if (!ok) return false
+    await writeMetricAudit(c, {
+      org, metricId: id, action: 'delete', userId: requester.userId,
+      channel: requester.channel, keyId: requester.keyId, before, after: null,
+    })
+    return true
+  })
+  if (!done) return { ok: false, http: 404, error: 'NOT_FOUND' }
+  return { ok: true, id }
 }

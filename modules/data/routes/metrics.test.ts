@@ -59,6 +59,11 @@ const L1_SALES = l1Def({
   selectSql: 'select sum(fct_retail_sale.net_amount) as value, system_book, bizday from fct_retail_sale',
   groupBy: 'system_book, bizday',
 })
+const L1_OVERRIDE = l1Def({
+  id: `${L1_ID_PREFIX}retail:net_sales`, title: '覆盖探针',
+  selectSql: 'select sum(fct_retail_sale.net_amount) as value, system_book, bizday from fct_retail_sale',
+  groupBy: 'system_book, bizday',
+})
 const L1_FINANCE = l1Def({
   id: `${L1_ID_PREFIX}margin`, title: '毛利', requiredScope: 'data:finance',
   selectSql: 'select sum(fct_retail_sale.margin) as value, system_book from fct_retail_sale',
@@ -134,6 +139,7 @@ describePg('指标路由（需要 DATABASE_URL：词表读写）', () => {
     // L1 行只能经 sync 脚本物化——测试里用 upsertL1Metric 直落，等价于 sync 的产物
     // （管理 API 侧没有任何途径写出 l1 行，见 metric-store 的两个写入口）。
     await upsertL1Metric(pool, L1_SALES)
+    await upsertL1Metric(pool, L1_OVERRIDE)
     await upsertL1Metric(pool, L1_FINANCE)
     await upsertL1Metric(pool, L1_FOREIGN)
     await upsertL1Metric(pool, L1_MASKED)
@@ -913,6 +919,7 @@ describePg('指标路由（需要 DATABASE_URL：词表读写）', () => {
     grain: ['system_book', 'bizday'],
     freshness_sla_days: 2,
     sources: ['s3://<bucket>/lemeng/retail_order_line/system_book=<账套>/bizday=<日期>/all.parquet'],
+    reads: [],
     ...over,
   })
 
@@ -938,6 +945,9 @@ describePg('指标路由（需要 DATABASE_URL：词表读写）', () => {
     expect((await createDeclaration({ declaration: tenantDecl({ name: L1_SALES.id }) })).status).toBe(409)
     expect((await createDeclaration({ declaration: tenantDecl({ name: 'tenant:retail:dup' }) })).status).toBe(201)
     expect((await createDeclaration({ declaration: tenantDecl({ name: 'tenant:retail:dup' }) })).status).toBe(409)
+    const noReads = await createDeclaration({ declaration: tenantDecl({ name: 'tenant:retail:noreads', reads: undefined }) })
+    expect(noReads.status).toBe(400)
+    expect((await noReads.json()).error).toBe('READS_REQUIRED')
     const bad = await createDeclaration({ declaration: tenantDecl({ name: 'tenant:retail:bad', owner: '' }) })
     expect(bad.status).toBe(400)
     const body = await bad.json()
@@ -949,6 +959,66 @@ describePg('指标路由（需要 DATABASE_URL：词表读写）', () => {
     const res = await createDeclaration({ declaration: tenantDecl({ name: 'tenant:retail:secret', expression: 'sum(secret_table.amount)' }) })
     expect(res.status).toBe(400)
     expect((await res.json()).issues.some((i: { message: string }) => i.message.includes('B11'))).toBe(true)
+  })
+
+  // ── 覆盖平台口径（W8 P2）：草稿不生效、确认才胜出、他 org 不受影响、删除回落 ─────────────
+  const overrideDecl = (over: Record<string, unknown> = {}) => ({
+    name: L1_OVERRIDE.id,
+    label: '本租户净销售额',
+    definition: '本租户口径的净销售额',
+    owner: 'data-platform',
+    tier: 'experimental',
+    source: 'lemeng',
+    expression: 'sum(fct_retail_sale.sale_amount)',
+    grain: ['system_book', 'bizday'],
+    freshness_sla_days: 2,
+    sources: ['s3://<bucket>/lemeng/retail_order_line/system_book=<账套>/bizday=<日期>/all.parquet'],
+    reads: [],
+    ...over,
+  })
+  const overrideReq = (method: string, path: string, body?: unknown, org = ORG) =>
+    app(org, ['data:manage']).request(path, {
+      method,
+      ...(body === undefined ? {} : { headers: { 'content-type': 'application/json' }, body: JSON.stringify(body) }),
+    })
+  const mergedRow = async (org = ORG) =>
+    (await loadMergedCatalog(pool, org)).find((m) => m.id === L1_OVERRIDE.id)!
+
+  it('W8 覆盖：草稿不生效 → confirm 后本 org 胜出且标注 override → delete 回落 L1；他 org 全程不受影响', async () => {
+    const create = await overrideReq('POST', `/metrics/${L1_OVERRIDE.id}/override`, { declaration: overrideDecl() })
+    expect(create.status).toBe(201)
+    // 草稿不生效（D6）：本 org 仍看 L1
+    expect((await mergedRow()).selectSql).toContain('net_amount')
+    expect((await mergedRow()).overrideOf ?? null).toBeNull()
+
+    const confirm = await overrideReq('POST', `/metrics/${L1_OVERRIDE.id}/override/confirm`)
+    expect(confirm.status).toBe(200)
+    expect((await mergedRow()).selectSql).toContain('sale_amount')
+    expect((await mergedRow()).overrideOf).toBe(L1_OVERRIDE.id)
+    const listed = (await (await app(ORG, ['data:query']).request('/metrics')).json()).metrics
+      .find((m: { id: string }) => m.id === L1_OVERRIDE.id)
+    expect(listed.override).toBe(true)
+    // 他 org 仍看平台口径
+    expect((await mergedRow('org-t8-other-override')).selectSql).toContain('net_amount')
+
+    const del = await overrideReq('DELETE', `/metrics/${L1_OVERRIDE.id}/override`)
+    expect(del.status).toBe(200)
+    expect((await mergedRow()).selectSql).toContain('net_amount')
+    expect((await mergedRow()).overrideOf ?? null).toBeNull()
+  })
+
+  it('W8 覆盖：重复建/ grain 不同形 被拒；对不存在的 L1 id 覆盖 ⇒ 404', async () => {
+    expect((await overrideReq('POST', `/metrics/${L1_OVERRIDE.id}/override`, { declaration: overrideDecl() })).status).toBe(201)
+    expect((await overrideReq('POST', `/metrics/${L1_OVERRIDE.id}/override`, { declaration: overrideDecl() })).status).toBe(409)
+    expect((await overrideReq('DELETE', `/metrics/${L1_OVERRIDE.id}/override`)).status).toBe(200)
+
+    const badGrain = await overrideReq('POST', `/metrics/${L1_OVERRIDE.id}/override`, {
+      declaration: overrideDecl({ grain: ['system_book'] }),
+    })
+    expect(badGrain.status).toBe(400)
+    expect((await badGrain.json()).error).toBe('GRAIN_MISMATCH')
+
+    expect((await overrideReq('POST', '/metrics/t8test:not_there/override', { declaration: overrideDecl({ name: 't8test:not_there' }) })).status).toBe(404)
   })
 
 })

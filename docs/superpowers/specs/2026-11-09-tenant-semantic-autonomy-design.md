@@ -57,11 +57,12 @@
 2. **表达式**：`parseL1Select`（禁自由 SQL）；`deriveRelation` 得到的 relation ∈ **L1 已用 relation 集合**
    （B11，租户不得引用未纳管表）。
 3. **列存在**：relation 的列必须在 `information_schema.columns`（运行时清单，不用契约列）。
-4. **敏感面**：`mask` 声明必须覆盖全部敏感列（`masksOf` / `applyDefaultMaskTier` 同源）；
-   `required_scope` 缺失且指标触及受限列 ⇒ 拒写（fail-closed）。
-5. **可执行**：对编译出的 `select_sql` 跑 `EXPLAIN`（pg_duckdb 实测支持，不扫数据）；
-   编译/解析失败即拒写。
+4. **敏感面**：`reads`（契约列全名数组）**必填**；命中的契约列在 contracts 里 `sensitivity !== 'none'`
+   且声明没有按列掩码 ⇒ 自动加默认整值掩码（`data:precise`，与 L1 sync `applyDefaultMaskTier` 同规则）。
+   运行期列级掩码仍按「全词表按列传播」（`effectiveMasks`）兜底。
+5. **可执行**：warehouse 可用时对 `select_sql` 跑 `EXPLAIN`（不扫数据）；失败即拒写。
 6. **粒度**：`grain` 非空；`override` 的 grain 必须与平台 L1 行**同形**（否则覆盖后合计/下钻语义断裂）。
+7. **不准降门**：覆盖的 `required_scope` 不得宽于/不同于 L1 行的 `required_scope`（L1 有码 ⇒ 覆盖必须同码）。
 
 ### 4.2 审计与回滚
 
