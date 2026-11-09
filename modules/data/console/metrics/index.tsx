@@ -13,6 +13,8 @@
 import { useEffect, useMemo, useState } from 'react'
 import { Button, Card, Drawer, Input, Modal, Popconfirm, Segmented, Select, Space, Switch, Table, Tag, Timeline, Typography, message } from 'antd'
 import { apiGet, apiSend, messageOf } from '../lib/api'
+import DeclarationModal from './DeclarationModal'
+import type { DeclarationMode, DeclarationSeed } from './DeclarationModal'
 import { useIsMobile } from '../lib/useIsMobile'
 
 interface MetricRow {
@@ -21,6 +23,7 @@ interface MetricRow {
   description: string
   requiredScope: string | null
   subjectColumn: string
+  selectSql: string
   groupBy: string
   source: 'l1' | 'l2'
   /** #489：最后操作人（L1 行走 sync 物化 ⇒ null）；列表两列的数据源。 */
@@ -33,6 +36,21 @@ interface MetricRow {
   bizDescription: string | null
   unit: string | null
   caliberNote: string | null
+  /** W8：测度档——declared = 租户全额声明（编辑走删除+重建，不走 L2 结构化编辑器）。 */
+  basis?: 'l1_tree' | 'column_agg' | 'declared'
+  /** W8：非空 = 本行是对该 L1 id 的口径覆盖（草稿或已确认）。 */
+  overrideOf?: string | null
+}
+
+/** W8 覆盖清单的一行（`GET /metrics/overrides` 的形状；草稿不在合并词表里，故单独拉）。 */
+interface OverrideRow {
+  id: string
+  title: string
+  certified: 'certified' | 'draft'
+  selectSql: string
+  updatedBy: string | null
+  version: number
+  updatedAt: string | null
 }
 
 /** 变更史的一行（`GET /metrics/:id/audit` 的形状）。 */
@@ -113,10 +131,18 @@ export default function MetricsPage() {
   const [metaDraft, setMetaDraft] = useState<{
     id: string; title: string; biz: string; unit: string; note: string
   } | null>(null)
+  // W8：契约声明弹窗 + 覆盖清单（草稿不可见，单独拉）
+  const [overrides, setOverrides] = useState<OverrideRow[]>([])
+  const [declOpen, setDeclOpen] = useState(false)
+  const [declMode, setDeclMode] = useState<DeclarationMode>('create')
+  const [declSeed, setDeclSeed] = useState<DeclarationSeed>({ id: '', title: '', description: '', expression: '', grain: [] })
   const [messageApi, ctx] = message.useMessage()
 
-  const load = () => apiGet('/metrics/all')
-    .then((b) => setRows((b as { metrics: MetricRow[] }).metrics))
+  const load = () => Promise.all([apiGet('/metrics/all'), apiGet('/metrics/overrides')])
+    .then(([all, ov]) => {
+      setRows((all as { metrics: MetricRow[] }).metrics)
+      setOverrides((ov as { overrides?: OverrideRow[] }).overrides ?? [])
+    })
     .catch((e) => messageApi.error(messageOf(e)))
   useEffect(() => { void load() }, [])
 
@@ -161,6 +187,35 @@ export default function MetricsPage() {
       setMetaDraft(null)
       await load()
     } catch (e) { messageApi.error(messageOf(e)) }
+  }
+
+  /** 从 L1 行的 select_sql 里反解表达式（仅用于表单预填；服务端仍按提交的声明重新编译）。 */
+  const exprOf = (sql: string): string => {
+    const m = /^select\s+([\s\S]+?)\s+as\s+value/i.exec(sql.trim())
+    return m?.[1]?.trim() ?? ''
+  }
+  const seedOfL1 = (r: MetricRow): DeclarationSeed => ({
+    id: r.id, title: r.title, description: r.description,
+    expression: exprOf(r.selectSql), grain: dimsOf(r),
+  })
+  function openDeclaration(mode: DeclarationMode, seed: DeclarationSeed) {
+    setDeclMode(mode); setDeclSeed(seed); setDeclOpen(true)
+  }
+  async function submitDeclaration(declaration: Record<string, unknown>) {
+    try {
+      if (declMode === 'override') await apiSend(`/metrics/${declSeed.id}/override`, 'POST', { declaration })
+      else await apiSend('/metrics/declarations', 'POST', { declaration })
+      setDeclOpen(false)
+      await load()
+    } catch (e) { messageApi.error(messageOf(e)) }
+  }
+  async function confirmOverride(id: string) {
+    try { await apiSend(`/metrics/${id}/override/confirm`, 'POST'); await load() }
+    catch (e) { messageApi.error(messageOf(e)) }
+  }
+  async function deleteOverride(id: string) {
+    try { await apiSend(`/metrics/${id}/override`, 'DELETE'); await load() }
+    catch (e) { messageApi.error(messageOf(e)) }
   }
 
   function openCreate() {
@@ -357,12 +412,16 @@ export default function MetricsPage() {
     <Space direction="vertical" style={{ width: '100%' }} size="middle">
       {ctx}
       <Space wrap>
-        <Button type="primary" onClick={openCreate} disabled={l1Rows.length === 0}>新建派生指标</Button>
+        <Button type="primary" onClick={() => openDeclaration('create', { id: '', title: '', description: '', expression: '', grain: [] })}>
+          新建声明（全额口径）
+        </Button>
+        <Button onClick={openCreate} disabled={l1Rows.length === 0}>新建派生指标</Button>
         <Button onClick={() => { if (usageDays === null) openUsage(30); else openUsage(usageDays) }}>
           使用统计
         </Button>
         <Typography.Text type="secondary">
-          派生指标只能<strong>裁剪 / 别名 / 过滤</strong>平台已声明的指标；口径本体改不了（要改口径请改 dbt 声明）。
+          全额声明与平台指标同表达力、<strong>即时生效</strong>；派生指标只能裁剪/别名/过滤平台指标。
+          改动平台口径用行内「覆盖口径」（草稿需确认）。
         </Typography.Text>
       </Space>
 
@@ -466,6 +525,36 @@ export default function MetricsPage() {
         </Card>
       )}
 
+      {overrides.length > 0 && (
+        <Card size="small" title={`本租户覆盖的平台口径（${overrides.length}）`}>
+          <Space direction="vertical" style={{ width: '100%' }} size={6}>
+            {overrides.map((o) => (
+              <div key={o.id} style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
+                <Tag color={o.certified === 'certified' ? 'green' : 'gold'}>
+                  {o.certified === 'certified' ? '已生效' : '草稿（未生效）'}
+                </Tag>
+                <Typography.Text strong>{o.title}</Typography.Text>
+                <Typography.Text type="secondary">{o.id} · v{o.version}</Typography.Text>
+                <span style={{ flex: 1 }} />
+                {o.certified === 'draft' ? (
+                  <Popconfirm title={`确认启用覆盖口径 ${o.id}？确认后本租户的查询改用该口径`}
+                              okText="确认启用" cancelText="取消" onConfirm={() => confirmOverride(o.id)}>
+                    <Button size="small" type="primary">确认启用</Button>
+                  </Popconfirm>
+                ) : null}
+                <Popconfirm title={`删除覆盖 ${o.id}？（回落到平台口径）`}
+                            okText="删除覆盖" cancelText="取消" onConfirm={() => deleteOverride(o.id)}>
+                  <Button size="small" danger>删除覆盖</Button>
+                </Popconfirm>
+              </div>
+            ))}
+            <Typography.Text type="secondary">
+              草稿对查询不可见（L1 继续生效）；确认后仅本租户改用覆盖口径，其他租户不受影响。
+            </Typography.Text>
+          </Space>
+        </Card>
+      )}
+
       {isMobile ? mobileCards : (
       <Table
         rowKey="id"
@@ -482,8 +571,12 @@ export default function MetricsPage() {
         { title: '标题', dataIndex: 'title', ellipsis: { showTitle: true } },
         { title: '说明', dataIndex: 'description', ellipsis: { showTitle: true } },
         // 来源：L1 = 平台词表（只读，改它要改 dbt 声明）；L2 = 本租户派生（可改可删）
-        { title: '来源', dataIndex: 'source', width: 110, render: (v: string) =>
-            v === 'l1' ? <Tag color="blue">平台（只读）</Tag> : <Tag color="green">本租户派生</Tag> },
+        { title: '来源', dataIndex: 'source', width: 130, render: (v: string, r: MetricRow) =>
+            v === 'l1'
+              ? <Tag color="blue">平台（只读）</Tag>
+              : r.basis === 'declared'
+                ? <Tag color="purple">租户声明（全额）</Tag>
+                : <Tag color="green">本租户派生</Tag> },
         { title: '所需 scope', dataIndex: 'requiredScope', width: 100, render: (v: string | null) => v ?? '不限' },
         // 主体列**显示出来**（只读）：它是主体钉死的依据，管理员必须能一眼看出这个指标按哪列隔离。
         { title: '主体列', dataIndex: 'subjectColumn', width: 80 },
@@ -497,11 +590,21 @@ export default function MetricsPage() {
             r.source === 'l1' ? <Typography.Text type="secondary">—</Typography.Text> : `v${v}` },
         { title: '操作', width: 260, render: (_: unknown, r: MetricRow) => (
             r.source === 'l1'
-              ? <Typography.Text type="secondary">平台词表经 API 只读</Typography.Text>
+              ? (
+                <Space>
+                  <Typography.Text type="secondary">平台词表经 API 只读</Typography.Text>
+                  <Button size="small" type="text" onClick={() => openDeclaration('override', seedOfL1(r))}>
+                    覆盖口径
+                  </Button>
+                  <Button size="small" type="text" onClick={() => openHistory(r.id)}>变更历史</Button>
+                </Space>
+                )
               : (
                 <Space>
                   <Button size="small" type="text" onClick={() => openHistory(r.id)}>变更历史</Button>
-                  <Button size="small" type="text" onClick={() => openEdit(r)}>编辑</Button>
+                  {r.basis === 'declared'
+                    ? <Typography.Text type="secondary">全额声明（编辑请删除后重建）</Typography.Text>
+                    : <Button size="small" type="text" onClick={() => openEdit(r)}>编辑</Button>}
                   {/* 元数据编辑只对 L2 开放（L1 平台口径，租户不得注解 ⇒ 后端 404，别放出假按钮） */}
                   {r.source === 'l2' && (
                     <Button size="small" type="text" onClick={() => openMeta(r)}>元数据</Button>
@@ -607,6 +710,14 @@ export default function MetricsPage() {
       </Drawer>
 
       {/* 元数据编辑（§10.4.3 P1）：三个标注字段独立于口径——不经编译点，审计动作词 meta。 */}
+      <DeclarationModal
+        open={declOpen}
+        mode={declMode}
+        seed={declSeed}
+        onCancel={() => setDeclOpen(false)}
+        onSubmit={submitDeclaration}
+      />
+
       <Modal title={`元数据：${metaDraft?.title ?? ''}`} open={metaDraft !== null}
              onCancel={() => setMetaDraft(null)} onOk={() => { void submitMeta() }} okText="保存">
         <Space direction="vertical" style={{ width: '100%' }} size="small">

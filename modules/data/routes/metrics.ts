@@ -26,7 +26,7 @@ import { confirmOverrideDeclaration, createOverrideDeclaration, createTenantDecl
 import { metricUsageStats, retireCandidatesOf } from '../domain/metric-usage'
 import { paramFaceOf, visibleMetrics } from '../domain/authz'
 import type { MetricParamDef, Requester } from '../domain/authz'
-import { loadMergedCatalog } from '../domain/metric-store'
+import { loadMergedCatalog, listOverrideDeclarations } from '../domain/metric-store'
 import { beijingTodayOf, freshnessFaceFor } from '../domain/query-service'
 import type { MetricFreshnessFace } from '../domain/query-service'
 import { warehouseConfigured, warehousePool } from '../domain/warehouse'
@@ -106,6 +106,8 @@ const adminView = (m: MetricRow) => ({
   // 元数据（030，§10.4.3）：治理标注三件套（管理面可编辑/可见）。
   bizDescription: m.bizDescription, unit: m.unit, caliberNote: m.caliberNote,
   overrideOf: m.overrideOf,
+  // 测度档（W8）：declared = 租户全额声明（编辑走「删除+重建」，不走 L2 结构化编辑器）
+  basis: m.basis,
 })
 
 /**
@@ -240,6 +242,11 @@ export function registerMetrics(r: ModuleHono, ctx: RouteCtx): void {
   })
 
   // 覆盖平台口径（W8 P2）：草稿→确认→生效（D6）。entry.name 必须等于被覆盖的 L1 id。
+  // 覆盖清单（W8 管理面）：草稿不在合并词表里（L1 赢），必须单独可见才能「确认/取消」。
+  r.get('/metrics/overrides', async (c) => {
+    return c.json({ overrides: await listOverrideDeclarations(ctx.pool, orgOf(c)) })
+  })
+
   r.post('/metrics/:id/override', async (c) => {
     const requester = requesterOf(c)
     if (requester === null) return c.json({ error: 'UNAUTHENTICATED' }, 403)

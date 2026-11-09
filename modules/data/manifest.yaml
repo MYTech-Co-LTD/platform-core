@@ -77,6 +77,7 @@ api:
     # 租户语义自治（W8，issue #1716）：新建全额声明（basis='declared'，只收声明不收 SQL）
     - { method: POST,   path: /metrics/declarations, scope: data:manage }
     # 覆盖平台口径（W8 P2）：草稿 → 确认 → 生效（D6）。name 必须等于被覆盖的 L1 id
+    - { method: GET,    path: /metrics/overrides,            scope: data:manage }
     - { method: POST,   path: /metrics/:id/override,         scope: data:manage }
     - { method: POST,   path: /metrics/:id/override/confirm, scope: data:manage }
     - { method: DELETE, path: /metrics/:id/override,         scope: data:manage }

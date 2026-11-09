@@ -168,7 +168,7 @@ export function compileTenantDeclaration(
   if (!isStr(name) || !TENANT_METRIC_NAME_RE.test(name)) {
     push('name', '指标名必须是 `<源>:<业务域>:<指标>` 三段小写蛇形')
   }
-  for (const f of ['expression', 'grain', 'owner', 'tier', 'definition', 'source', 'freshness_sla_days'] as const) {
+  for (const f of ['label', 'expression', 'grain', 'owner', 'tier', 'definition', 'source', 'freshness_sla_days'] as const) {
     if (e[f] === undefined || e[f] === null || e[f] === '') push(f, `必填字段缺失：${f}`)
   }
   if (e.ratio !== undefined) {
