@@ -492,8 +492,8 @@ describe('proposeMetricDeclarationImpl（路由实现，只读现行文件）', 
     expect(pieces[0].path).toBe('dbt/semantics/l1_metrics.yml')
     const re = parseDocument(pieces[0].content)
     expect(re.errors).toEqual([])
-    // 55 条声明 + 本条探针 = 56（2026-11-09 新增零售毛利/毛利率两条 L1）
-    expect(metricNamesOf(pieces[0].content)).toHaveLength(56)
+    // 56 条声明 + 本条探针 = 57（2026-11-10 新增零售商品毛利 L1）
+    expect(metricNamesOf(pieces[0].content)).toHaveLength(57)
   })
 
   it('name / rationale 缺失 ⇒ bad_param（工具级错误）', async () => {

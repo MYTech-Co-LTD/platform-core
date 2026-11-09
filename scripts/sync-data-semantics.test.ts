@@ -274,7 +274,7 @@ describe('deriveTotalable —— 可加判定（spec §8.4：表达式形状的�
       expect(row.totalable, `${row.id} 的 totalable 与 expression 形状不符`).toBe(!NOT_TOTALABLE.has(row.id))
     }
     // 「恰好」要有实证数：不是全体都可加、也不是全体都不可加
-    expect(rows.filter((r) => r.totalable === true).length, '可加条数（加/改指标时重核）').toBe(37)
+    expect(rows.filter((r) => r.totalable === true).length, '可加条数（加/改指标时重核）').toBe(38)
     expect(rows.filter((r) => r.totalable === false).length).toBe(18)
     // 抽样钉两条形态极值（brief 点名）
     expect(rows.find((r) => r.id === 'lemeng:retail:net_sales')?.totalable).toBe(true)
@@ -658,14 +658,14 @@ describe('真 YAML：55 条 sla_days / freshnessRelations 逐条断言（spec §
     'lemeng:retail:order_line',
   ])
 
-  it('恰 55 条；inventory 两指标 sla_days=3、retail 七条=1、其余 46 条=2（按实测发布时钟标定，#849）', () => {
-    expect(rows.length).toBe(55)
+  it('恰 56 条；inventory 两指标 sla_days=3、retail 七条=1、其余 47 条=2（按实测发布时钟标定，#849）', () => {
+    expect(rows.length).toBe(56)
     for (const row of rows) {
       const want = SLA3.has(row.id) ? 3 : SLA1.has(row.id) ? 1 : 2
       expect(row.slaDays, `${row.id} 的 sla_days 与标定不符`).toBe(want)
     }
     expect(rows.filter((r) => r.slaDays === 3).length).toBe(2)
-    expect(rows.filter((r) => r.slaDays === 2).length).toBe(46)
+    expect(rows.filter((r) => r.slaDays === 2).length).toBe(47)
     expect(rows.filter((r) => r.slaDays === 1).length).toBe(7)
   })
 
@@ -677,6 +677,7 @@ describe('真 YAML：55 条 sla_days / freshnessRelations 逐条断言（spec §
       // 2026-11-09 零售毛利（P0）：读 item_profit 湖资产 → stg_lemeng_item_profit
       'lemeng:retail:gross_profit': ['stg_lemeng_item_profit'],
       'lemeng:retail:gross_margin': ['stg_lemeng_item_profit'],
+      'lemeng:retail:item_profit': ['stg_lemeng_item_profit'],
       'lemeng:retail:net_quantity': ['stg_lemeng_retail_order_line'],
       'lemeng:retail:consecutive_no_sales_days': ['stg_lemeng_retail_order_line'],
       'lemeng:retail:comparable_growth_rate': ['stg_lemeng_retail_order_line'],
@@ -745,9 +746,9 @@ describe('真 YAML：55 条 sla_days / freshnessRelations 逐条断言（spec §
       const expected = DECLARED_SOURCES[row.id as keyof typeof DECLARED_SOURCES] ?? []
       expect(row.freshnessRelations, `${row.id} 的 freshness_relations 与 sources 推导不一致`).toEqual(expected)
     }
-    // 推导一致性：**55 条全部**声明了 sources（2026-10-17 补齐前是 15 条，另 20 条水位恒未知）。
-    // 计数兜底保留：以后新增指标若忘声明 sources，下面的 55 会立刻红。
-    expect(rows.filter((r) => (r.freshnessRelations ?? []).length > 0).length).toBe(55)
+    // 推导一致性：**56 条全部**声明了 sources（2026-10-17 补齐前是 15 条，另 20 条水位恒未知）。
+    // 计数兜底保留：以后新增指标若忘声明 sources，下面的 56 会立刻红。
+    expect(rows.filter((r) => (r.freshnessRelations ?? []).length > 0).length).toBe(56)
     expect(rows.filter((r) => (r.freshnessRelations ?? []).length === 0).length).toBe(0)
   })
 })
