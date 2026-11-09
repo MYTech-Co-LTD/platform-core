@@ -533,6 +533,7 @@ export async function buildFacts(
           pool: deps.pool, org: deps.org, requester: deps.requester,
           adoptedSources: deps.adoptedSources, execute: deps.execute,
           branchNum: branchNum ?? null,
+          skipDegenerate: true,
           ...(deps.exploreExec === undefined ? {} : { exploreExec: deps.exploreExec }),
         },
         spec,
