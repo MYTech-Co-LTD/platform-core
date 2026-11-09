@@ -26,6 +26,7 @@ import type { RecipeKind, RecipeRequest } from './analysis/recipes'
 import type { ExploreAgg } from './analysis/explore'
 import { formatValue } from './report-format'
 import { compareRangeOf } from './report-query'
+import { previousRangeOf } from './report-period'
 import type { FactBundle } from './report-facts'
 import type { KpiPanel, PeriodSpec, ReportSpec } from './report-spec'
 import { dimensionNamesOf } from './semantic-compiler'
@@ -78,6 +79,8 @@ export interface RootCauseDeps {
   branchNum?: string | null
   /** 日报的单日/单店场景：跳过 branch_num / 单日 bizday 这类退化维（只有一个值）。 */
   skipDegenerate?: boolean
+  /** 额外候选（如日报的 order_line 商品维度）：聚合 KPI 没有 item 维，需单独点名。 */
+  extraMetrics?: Array<{ metricId: string; metricTitle: string; format: KpiPanel['format'] }>
 }
 
 /** `buildRootCause` 只依赖事实包里的这几段（避免与 report-facts 形成运行时环）。 */
@@ -426,7 +429,12 @@ export async function buildRootCause(
     })
   }
 
-  const candidates = pickCandidates(spec, facts, range, periodMode)
+  const candidates = [
+    ...(deps.extraMetrics ?? []).map((m) => ({
+      ...m, kind: 'kpi_delta' as const, compare: previousRangeOf(range, 'prev_period'), day: range.to,
+    })),
+    ...pickCandidates(spec, facts, range, periodMode),
+  ].slice(0, 3)
   for (const c of candidates) {
     const metric = catalog.find((m) => m.id === c.metricId)
     if (metric === undefined) continue

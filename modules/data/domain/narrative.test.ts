@@ -523,6 +523,7 @@ describe('daily_review 模板', () => {
     mtd: { ...snap('本月累计', '2026-11-01 ~ 2026-11-08'), revenue: '4,007,322.21', netGross: '1,331,183.20' },
     drivers: [{ side: 'sales', label: '订单数', value: '1,000', delta: '+50 单' }],
     suggestions: ['净毛利率 32.91%，高于 20% 目标。'],
+    targetNetMargin: '20.00%',
     notes: ['净毛利 = 毛利 − 报损 − 费用；当前未含房租、水电等固定成本。'],
     numbers: ['507,322.21', '32.91%'],
     dataAsOf: '2026-11-09 06:00:00 +08:00',
