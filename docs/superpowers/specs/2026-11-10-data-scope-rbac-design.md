@@ -96,15 +96,17 @@ category_path 首段 = 生鲜              → 水果
 | 动作权限 | 平台 manifest 码 | `data:query`；成本角色 `data:cost`；`data:create`/`data:precise` 按需；`tenant:admin` 只给明确管理员 |
 | 数据范围 | `data.scope` + `data.scope_assignment` | `brand` / `store` / `category`；可层级、可 `all` |
 
-**角色默认动作（成本照旧；门禁/看板另定）**：
+**角色默认动作（成本照旧；按 Casdoor 实际 permission resources）**：
 
 | 角色（Casdoor 职能角色） | 平台码 |
 |---|---|
-| `总经理` / `财务总` / `战区总` / `小区经理` / `采购负责人` | `data:query` + `data:cost` |
+| `总经理` / `财务总` / `战区总` / `采购负责人` | `data:query` + `data:cost` |
+| `小区经理` | `data:query`（实际 Casdoor 权限里没有 `字段|成本可见`，照旧保留） |
 
-> **2026-11-10 用户拍板：成本照旧全给**——5 个职能角色都保留 `字段|成本可见` → `data:cost`。
-> `门禁|管理台` 仍不映射成 `tenant:admin`；`看板|*` 二期。迁移 dry-run 只列 `门禁`/`看板`
-> 的差异，不再列 `data:cost` 差异。
+> **2026-11-10 用户拍板「照旧」**：按 Casdoor 实际 permission resources 保留成本口径——
+> `总经理/财务总/战区总/采购负责人` 有 `字段|成本可见` → `data:cost`；`小区经理` 没有。
+> `门禁|管理台` 只有 `总经理` 有，仍不映射成 `tenant:admin`；`看板|*` 二期。
+> 迁移 dry-run 只列 `门禁`/`看板` 差异。
 
 **旧 Casdoor 角色 → 新模型**：
 
@@ -113,7 +115,7 @@ category_path 首段 = 生鲜              → 水果
 | 5 个职能角色（总经理/财务总/战区总/小区经理/采购负责人） | **1:1 保留为 5 个新职能角色**；成员迁入 |
 | 22 个 `范围|*` 角色（含 `全店`） | **不建角色**；转成 `store` scope + user-level assignment |
 | 5 职能角色 permission 里的 `品牌|*` / `品类|*` | role-level `brand` / `category` scope |
-| `字段|成本可见` | 平台码 `data:cost`（5 个职能角色都保留，照旧） |
+| `字段|成本可见` | 平台码 `data:cost`（总经理/财务总/战区总/采购负责人；小区经理没有，照旧） |
 | `门禁|报表中心` | 平台码 `data:query`（所有数据职能角色） |
 | `门禁|管理台` | 不映射；`tenant:admin` 另行指定 |
 | `看板|*` | 二期：报表可见性（资产 ACL `scope` 受让方） |
@@ -416,6 +418,21 @@ AND (system_book, item_num) IN (
 - 复合键：同 `branch_num` 在两账套不会串；
 - `scopeFilters` 注入的 SQL 在 `authorizeCore` 的输出里可见，且不改变既有 `subject` 钉死。
 
+### 7.1 Phase 0 dry-run（2026-11-10，只读 Casdoor）
+
+- 源：`shanhai` **27 角色 = 5 职能 + 22 范围**；75 条角色成员（**29 个唯一用户**）。
+- 目标：`shanhaiyiguo-org` 497 用户（237 禁用）。
+- 成员：**29/29 唯一用户全部命中**（4 个旧别名 `DongJiJuan_1` / `Dongjijuan` → `DongJiJuan`）。
+- 22 个 `范围|*`：**22/22** 映射到 `region_l1` / `region_name` / `all`；0 个未知 selector。
+- 5 职能角色资源：0 个未知资源；成本实际为：总经理/财务总/战区总/采购负责人有，`小区经理` 没有。
+- `门禁|管理台` 仅 `总经理` 有；按拍板不映射 `tenant:admin`。
+- `看板|*` 二期；旧数据有两组带空格/不带空格的看板名，保留原样待映射。
+- 两个异常需确认：
+  - `functionalOnly`：`ccccccccccccctv`（有职能角色、无 store scope；D2 会拒绝；疑似测试号）。
+  - `rangeOnly`：`DongJiJuan`（两个旧别名带来的 store scope，但无职能角色；D2 会拒绝；
+    需确认是否补一个职能角色，或按无数据权限处理）。
+- 匹配到的用户均非禁用；目标 237 个禁用用户不在角色成员中。
+
 ## 8. 风险与已知边界
 
 1. **Casdoor 是迁移源**：27 个角色 / `permission.resources` / `Role.Users` 都已可读；
@@ -425,8 +442,9 @@ AND (system_book, item_num) IN (
 3. **`category_group` 来源已实测**：平台 item 源的 level=1 根类别名与 data-analysis
    `category_path` 首段一致；按 `parent_id` 树取 `top_category_name` + 受控 seed 映射即可，
    不需要给 item 契约加 `category_path`。新增根类别未映射时 dbt test 会红，不静默落 `其他`。
-4. **成本/门禁/看板口径**：成本已拍板**照旧全给**（5 职能角色都 `data:cost`）；
-   `门禁|管理台` 不映射成 `tenant:admin`；`看板|*` 二期。迁移 dry-run 只列门禁/看板差异。
+4. **成本/门禁/看板口径**：成本**照旧**——总经理/财务总/战区总/采购负责人有 `data:cost`，
+   小区经理没有（按 Casdoor 实际资源）；`门禁|管理台` 只有总经理有，不映射成 `tenant:admin`；
+   `看板|*` 二期。迁移 dry-run 只列门禁/看板差异。
 5. **`dim_item_latest` 补列**：需改 dbt 模型并重跑数据面；列缺失时 category scope 应拒绝而不是放行。
 6. **`dim_lemeng_branch` 无契约**：`dimensions.yml` 已登记战区层级缺口；scope 解析可直接读该表，
    但语义层声明需后续补契约/稳定视图。
