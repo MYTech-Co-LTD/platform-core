@@ -557,10 +557,11 @@ export default function App({ initialTab = 'center' }: { initialTab?: 'center' |
     || (metricsData?.metrics ?? []).some((m) => m.source === 'l2' && m.createdBy !== undefined && m.createdBy !== null && m.createdBy === self)
 
   const [tab, setTab] = useState<'center' | 'reportsManage' | 'metricsManage'>(initialTab)
+  // 底部导航只用文字 + 细指示条：emoji 图标在业务后台里显得像演示稿（2026-11-10 反馈）。
   const tabs = [
-    { key: 'center' as const, label: '报表中心', icon: '📊' },
-    ...(reportManage ? [{ key: 'reportsManage' as const, label: '报表管理', icon: '🛠' }] : []),
-    ...(metricManage ? [{ key: 'metricsManage' as const, label: '指标管理', icon: '📈' }] : []),
+    { key: 'center' as const, label: '报表中心' },
+    ...(reportManage ? [{ key: 'reportsManage' as const, label: '报表管理' }] : []),
+    ...(metricManage ? [{ key: 'metricsManage' as const, label: '指标管理' }] : []),
   ]
   // 当前 tab 失去权限（数据刷新后）⇒ 回落报表中心
   const active = tabs.some((t) => t.key === tab) ? tab : 'center'
@@ -590,24 +591,35 @@ export default function App({ initialTab = 'center' }: { initialTab?: 'center' |
       <nav style={{
         position: 'fixed', left: 0, right: 0, bottom: 0, zIndex: 100,
         display: 'flex', background: '#fff', borderTop: '1px solid #ececec',
+        boxShadow: '0 -1px 6px rgba(0, 0, 0, 0.03)',
         paddingBottom: 'env(safe-area-inset-bottom, 0px)',
       }}>
-        {tabs.map((t) => (
-          <button
-            key={t.key}
-            type="button"
-            onClick={() => setTab(t.key)}
-            aria-current={active === t.key ? 'page' : undefined}
-            style={{
-              flex: 1, height: 56, border: 'none', background: 'none', cursor: 'pointer',
-              display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: 2,
-              fontSize: 11, color: active === t.key ? '#1677ff' : '#8c8c8c',
-            }}
-          >
-            <span aria-hidden style={{ fontSize: 18, lineHeight: 1 }}>{t.icon}</span>
-            <span>{t.label}</span>
-          </button>
-        ))}
+        {tabs.map((t) => {
+          const on = active === t.key
+          return (
+            <button
+              key={t.key}
+              type="button"
+              onClick={() => setTab(t.key)}
+              aria-current={on ? 'page' : undefined}
+              style={{
+                position: 'relative', flex: 1, height: 52, border: 'none', background: 'none',
+                cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center',
+                fontSize: 13, letterSpacing: 0.2,
+                fontWeight: on ? 600 : 400,
+                color: on ? '#1677ff' : '#8c8c8c',
+              }}
+            >
+              {on && (
+                <span aria-hidden style={{
+                  position: 'absolute', top: 0, left: '50%', transform: 'translateX(-50%)',
+                  width: 22, height: 2, borderRadius: 1, background: '#1677ff',
+                }} />
+              )}
+              {t.label}
+            </button>
+          )
+        })}
       </nav>
     </div>
   )

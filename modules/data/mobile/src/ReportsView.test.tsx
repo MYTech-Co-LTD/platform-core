@@ -63,13 +63,12 @@ describe('报表中心 / 报表管理（#1373 拆分）', () => {
     expect(frame.getAttribute('src')).toBe('/r/r2?preview=1')
   })
 
-  it('W5 定案 A：报表卡「口径与来源」深链 + 页头「体系地图」次级入口；无指标 id 不渲染链接', async () => {
+  it('W5 定案 A：报表卡「口径与来源」深链；报表中心不显示体系地图入口', async () => {
     renderView('center')
     await waitFor(() => expect(screen.getByText('门店销售日报')).toBeTruthy())
 
-    // 页头次级入口（不占底部 tab）
-    const mapEntry = screen.getByText('体系地图')
-    expect(mapEntry.getAttribute('href')).toBe('/api/modules/data/system-map#/overview')
+    // 报表中心是纯浏览页，不挂管理入口
+    expect(screen.queryByText('体系地图')).toBeNull()
 
     // 有 metricIds 的报表卡 → 指标详情深链（冒号编码，页面侧解码）
     const links = screen.getAllByText('口径与来源')
@@ -81,6 +80,13 @@ describe('报表中心 / 报表管理（#1373 拆分）', () => {
 
     // 没有 metricIds 的报表（r3/r4）不加链接
     expect(screen.queryByText(/口径与来源 · /)).toBeNull()
+  })
+
+  it('报表管理页才显示「体系地图」次级入口', async () => {
+    renderView('manage')
+    await waitFor(() => expect(screen.getByText('会员复购分析')).toBeTruthy())
+    const mapEntry = screen.getByText('体系地图')
+    expect(mapEntry.getAttribute('href')).toBe('/api/modules/data/system-map#/overview')
   })
 
   it('搜索过滤 + 无匹配空态', async () => {

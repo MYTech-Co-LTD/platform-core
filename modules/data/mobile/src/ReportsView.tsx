@@ -218,15 +218,16 @@ export default function ReportsView({ rows, reload, tab, self }: {
               </span>
             ) : null}
           </h3>
-          {/* 次级入口（定案 A）：体系地图是独立追溯页，不占底部 tab */}
-          {/* 同 tab 打开：从报表进详情后「← 返回」走 history.back() 回到本报表（Task 3 验收） */}
-          <a href={systemMapHref('#/overview')}
-             style={{
-               display: 'inline-flex', alignItems: 'center', minHeight: 44, padding: '0 4px',
-               fontSize: 13, color: '#1677ff', textDecoration: 'none', flex: '0 0 auto',
-             }}>
-            体系地图
-          </a>
+          {/* 体系地图只给「报表管理」口径的人看，且只在管理 tab 出现（报表中心纯浏览页不挂管理入口）。 */}
+          {tab === 'manage' && (
+            <a href={systemMapHref('#/overview')}
+               style={{
+                 display: 'inline-flex', alignItems: 'center', minHeight: 44, padding: '0 4px',
+                 fontSize: 13, color: '#1677ff', textDecoration: 'none', flex: '0 0 auto',
+               }}>
+              体系地图
+            </a>
+          )}
         </div>
         {/* 与指标页一致：不用 antd-mobile SearchBar（本仓 React 18 + hoisted 19 下渲染异常） */}
         <div style={{
