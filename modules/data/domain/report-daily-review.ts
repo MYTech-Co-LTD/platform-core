@@ -447,7 +447,12 @@ export async function buildDailyReview(deps: DailyReviewDeps): Promise<DailyRevi
   const monthStart = dayjs(ceiling).startOf('month').format('YYYY-MM-DD')
   const lastYearFrom = dayjs(ceiling).subtract(1, 'year').startOf('month').format('YYYY-MM-DD')
   const lastYearCeiling = dayjs(ceiling).subtract(1, 'year').format('YYYY-MM-DD')
-  const wideFrom = [deps.range.from, monthStart, lastYearFrom]
+  // 区间模式要对比「上一等长区间」，读窗口必须覆盖它（本月从 1 号开始时它在上个月）。
+  const approxDays = isRange ? dayjs(deps.range.to).diff(dayjs(deps.range.from), 'day') + 1 : 1
+  const prevFromApprox = isRange
+    ? dayjs(deps.range.from).subtract(approxDays, 'day').format('YYYY-MM-DD')
+    : deps.range.from
+  const wideFrom = [deps.range.from, monthStart, lastYearFrom, prevFromApprox]
     .reduce((a, b) => (a < b ? a : b))
   const wideTo = ceiling
 
