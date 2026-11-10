@@ -226,3 +226,30 @@ seeds:
         description: 指定战区（可空：留空则取 `home_branch_num` 在 `dim_region` 的 `region_id`）。
       - name: note
         description: 为什么需要这条覆盖（必填，供评审看）。
+
+  - name: dim_category_group_map
+    description: >-
+      **品类三分类受控映射**（spec 2026-11-10-data-scope-rbac-design §4.3）：
+      `top_category_name`（level=1 根类别名）→ `category_group`（水果 / 标品 / 耗材 / 其他）。
+      权威定义来自 data-analysis `dim_item.category_group`（`150_dim_item_category_group.sql` /
+      `067_category_three_class.sql`）；本 seed 是平台侧的**唯一映射事实源**——**不要**在 SQL 里
+      写 CASE，新增根类别走 PR 补一行。未收录的根类别由 dbt test
+      `assert_dim_item_category_root_mapped` **硬失败**（防止新根静默落 `其他` 而权限面漏裁）。
+      ⚠️ `生鲜 → 水果` 不是笔误：旧系统 `品类|水果` 对应的正是生鲜大类下的商品。
+    config:
+      column_types:
+        top_category_name: varchar
+        category_group: varchar
+        source_note: varchar
+    columns:
+      - name: top_category_name
+        description: level=1 根类别名（`stg_lemeng_item.item_category_level = 1` 的 `item_category_name`）。
+        tests: [{not_null: {}}, {unique: {}}]
+      - name: category_group
+        description: 三分类（水果 / 标品 / 耗材 / 其他）。权限面的 category scope 只认它。
+        tests:
+          - not_null
+          - accepted_values:
+              values: ['水果', '标品', '耗材', '其他']
+      - name: source_note
+        description: 映射依据（供评审）。

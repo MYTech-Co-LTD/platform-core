@@ -1,0 +1,7 @@
+top_category_name,category_group,source_note
+生鲜,水果,data-analysis dim_item.category_group 三类映射（150_dim_item_category_group.sql / 067_category_three_class.sql）；2026-11-10 实测 level=1 根名
+标品,标品,同上
+废弃档案,标品,同上（历史档案类仍在售商品会落在这里）
+广西柳州,标品,同上（64188 无此根）
+包装耗材,耗材,同上
+运费/仓储用耗材,耗材,同上

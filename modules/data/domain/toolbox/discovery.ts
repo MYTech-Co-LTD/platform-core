@@ -5,6 +5,7 @@ import { authorizeCore, paramFaceOf, sqlQuote, visibleMetrics } from '../authz'
 import type { MetricRow } from '../metric-store'
 import { loadMergedCatalog } from '../metric-store'
 import { watermarkSqlFor } from '../query-service'
+import { buildScopePlan, loadEffectiveScopes, scopeModeOf } from '../scope'
 import { parseL1Select } from '../semantic-compiler'
 import { SAMPLE_MAX_ROWS, type ToolImpl, type ToolImplResult, type ToolboxDeps } from './registry'
 
@@ -203,7 +204,34 @@ export const sampleDimensionValuesImpl: ToolImpl = async (deps, args) => {
   const catalog = visibleMetrics(all, deps.requester, deps.adoptedSources)
   const toolArgs = typeof args.args === 'object' && args.args !== null && !Array.isArray(args.args)
     ? args.args as Record<string, unknown> : {}
-  const core = authorizeCore(catalog, deps.requester, metricId, toolArgs, all, [])
+  // 数据范围门（spec 2026-11-10）：与 /query 同一份 plan；sample 也不能绕过范围。
+  const scopeMode = scopeModeOf(process.env)
+  let scopePlan: ReturnType<typeof buildScopePlan> | undefined
+  if (scopeMode !== 'off') {
+    const metric = catalog.find((m) => m.id === metricId)
+    if (metric !== undefined) {
+      try {
+        const effective = await loadEffectiveScopes(deps.pool, deps.org, deps.requester)
+        const plan = buildScopePlan(metric, effective, deps.org, deps.requester, scopeMode)
+        if (scopeMode === 'shadow') {
+          console.warn(JSON.stringify({
+            event: 'data_scope_shadow', org: deps.org, userId: deps.requester.userId,
+            metricId, tool: 'sample_dimension_values', filters: plan.filters,
+            denial: plan.denial, applied: plan.applied,
+          }))
+        } else {
+          scopePlan = plan
+        }
+      } catch (e) {
+        const detail = e instanceof Error ? e.message : String(e)
+        if (scopeMode === 'enforce') return denied('range_denied', 'scope_unavailable', metricId)
+        console.warn(JSON.stringify({
+          event: 'data_scope_unavailable', org: deps.org, metricId, error: detail,
+        }))
+      }
+    }
+  }
+  const core = authorizeCore(catalog, deps.requester, metricId, toolArgs, all, [], scopePlan)
   if (!core.ok) return denied(core.reason, core.detail, metricId)
   const grain = core.metric.groupBy.split(',').map((d) => d.trim()).filter((d) => d !== '')
   if (!grain.includes(dimension) || !IDENT_RE.test(dimension)) {

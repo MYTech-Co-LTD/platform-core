@@ -105,6 +105,7 @@ export function requesterOf(c: Context<ModuleVars>): Requester | null {
     ...(identity.sessionId !== undefined ? { sessionId: identity.sessionId } : {}),
     scopes: identity.scopes,
     hasScope: (code: string) => identity.hasScope(code),
+    ...(identity.roles !== undefined ? { roles: identity.roles } : {}),
   }
 }
 

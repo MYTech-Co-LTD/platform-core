@@ -15,6 +15,11 @@ export interface Identity {
   scopes: string[]
   hasScope(code: string): boolean
   /**
+   * 角色短名（Casdoor Role.Users 反查结果）。PAT / 渠道 C 已写入；会话通道 Phase 2 补。
+   * 数据范围 scope 的 role-level assignment 用；缺省 = 只走 user-level assignment。
+   */
+  roles?: string[]
+  /**
    * 正式态账户身份（账户统一设计 §3.1）：Casdoor name（会话载荷 `acct` 字段）。
    * 中间态/内部会话不设（undefined）——旧形状会话的 Identity 线上形状不变。
    */

@@ -55,6 +55,7 @@ export function wecomChannelIdentityMiddleware(deps: WecomChannelAuthDeps): Midd
 
     const tenant = c.get('tenant')
     let scopes: string[]
+    let roles: string[] = []
     try {
       const casdoor = deps.casdoor(tenant.casdoor_org)
       const user = await casdoor.getUser(userid)
@@ -63,7 +64,8 @@ export function wecomChannelIdentityMiddleware(deps: WecomChannelAuthDeps): Midd
       // 停用账户：PAT / 会话同一口径，即时 401
       if (user.isForbidden) return c.json({ error: 'USER_DISABLED' }, 401)
       const perms = await casdoor.getPermissions()
-      scopes = effectiveScopes(userid, user.roles ?? [], perms)
+      roles = user.roles ?? []
+      scopes = effectiveScopes(userid, roles, perms)
     } catch {
       return c.json({ error: 'CASDOOR_UNAVAILABLE' }, 503)
     }
@@ -75,6 +77,7 @@ export function wecomChannelIdentityMiddleware(deps: WecomChannelAuthDeps): Midd
       ...(c.req.header('x-session-id') ? { sessionId: c.req.header('x-session-id')!.slice(0, 200) } : {}),
       scopes,
       hasScope: (code: string) => scopes.includes(code),
+      roles,
     }
     c.set('identity', identity)
     c.set(REQUESTER_CHANNEL, 'wecom')

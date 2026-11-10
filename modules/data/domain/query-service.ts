@@ -8,6 +8,7 @@ import { loadMergedCatalog } from './metric-store'
 import { maskingAuditOf, writeAudit, type MaskingAudit } from './audit-store'
 import { DATA_WAREHOUSE_UNCONFIGURED, runWarehouseSql, warehousePool } from './warehouse'
 import { decorateWithLabels, loadDimensionLookup, type DimensionLookup } from './dimension-labels'
+import { buildScopePlan, loadEffectiveScopes, scopeModeOf, type DataScopePlan } from './scope'
 
 /** 湖 ETag 竞态的**窄匹配**（#452 定案 spec §3.1：宁可漏判也不误判——只认这一形状，
  *  不扩大到一般 5xx/超时；那类由 statement_timeout / job retry 语义管）。 */
@@ -404,7 +405,34 @@ export async function runQuery(
   // ② 刻意用**未裁剪**的：掩码只减信息，用看不见的行上的掩码掩自己 = fail-closed。
   const allMetrics = await loadMergedCatalog(deps.pool, org)
   const catalog = visibleMetrics(allMetrics, requester, deps.adoptedSources)
-  const authz = authorize(catalog, requester, metricId, args, allMetrics, slicing)
+  // 数据范围门（spec 2026-11-10）：off 不裁；shadow 只记录；enforce 传入 authorize。
+  const scopeMode = scopeModeOf(process.env)
+  let scopePlan: DataScopePlan | undefined
+  if (scopeMode !== 'off') {
+    const metric = catalog.find((m) => m.id === metricId)
+    if (metric !== undefined) {
+      try {
+        const effective = await loadEffectiveScopes(deps.pool, org, requester)
+        const plan = buildScopePlan(metric, effective, org, requester, scopeMode)
+        if (scopeMode === 'shadow') {
+          console.warn(JSON.stringify({
+            event: 'data_scope_shadow', org, userId: requester.userId, metricId,
+            filters: plan.filters, denial: plan.denial, applied: plan.applied,
+          }))
+        } else {
+          scopePlan = plan
+        }
+      } catch (e) {
+        const detail = e instanceof Error ? e.message : String(e)
+        if (scopeMode === 'enforce') {
+          await audit('denied', 'range_denied:scope_unavailable', null, null)
+          return { status: 'denied', metricId, reason: 'range_denied', detail: 'scope_unavailable' }
+        }
+        console.warn(JSON.stringify({ event: 'data_scope_unavailable', org, metricId, error: detail }))
+      }
+    }
+  }
+  const authz = authorize(catalog, requester, metricId, args, allMetrics, slicing, scopePlan)
   if (!authz.ok) {
     await audit('denied', authz.reason, null, null)
     return { status: 'denied', metricId, reason: authz.reason, detail: authz.detail }
