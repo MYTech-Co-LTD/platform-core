@@ -1,4 +1,4 @@
-import { afterAll, beforeEach, describe, expect, it } from 'vitest'
+import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest'
 import { Pool } from 'pg'
 import { runQuery, freshnessFaceFor, freshnessLineOf, freshnessRelationsOf, freshnessStatusOf, formatHumanDay, type QueryDeps, type SqlExecutor } from './query-service'
 import { L1_ORG, upsertL1Metric, upsertMetric } from './metric-store'
@@ -664,6 +664,13 @@ describePg('runQuery —— freshness_line（spec §10.7，需要 DATABASE_URL�
     }
   }
 
+  // 时间冻结：夹具按「今天」推算水位，而整段跑几十秒；正好跨北京时间零点时 seed 与断言
+  // 会各读一次壁钟（seed 23:59 / 断言 00:01）⇒ 基准差一天，测试假红（2026-11-10 main 实测）。
+  // 只冻结 Date，不禁用定时器（pg 连接/超时仍要用真 setTimeout）。
+  beforeAll(() => {
+    vi.useFakeTimers({ toFake: ['Date'] })
+    vi.setSystemTime(new Date('2026-10-15T03:27:00Z'))
+  })
   beforeEach(async () => {
     await applyMigrations(pool)
     await pool.query('delete from data.query_audit where org = $1', [ORG])
@@ -674,6 +681,7 @@ describePg('runQuery —— freshness_line（spec §10.7，需要 DATABASE_URL�
     planSqls.length = 0
   })
   afterAll(async () => {
+    vi.useRealTimers()
     await wh.query('drop table if exists data.load_log').catch(() => {})
     resetWarehousePool()
     delete process.env.DATA_WAREHOUSE_URL
