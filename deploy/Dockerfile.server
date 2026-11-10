@@ -50,9 +50,15 @@ FROM node:22-alpine AS build
 # integrity（sha512，574/574 条 resolution 全覆盖）校验，且实测同包两源 sha256 逐字节
 # 相同——registry 只是**传输通道**。收益实测（4.37MB tarball ×3）：npmmirror 5.7–8.0 MB/s
 # vs npmjs 0.6–1.9 MB/s。
+# 注：2026-11-10 起默认源切到腾讯镜像——npmmirror 当日全站超时。
+# 镜像源可构建期覆盖：默认腾讯镜像。2026-11-10 构建机实测 registry.npmmirror.com 全站
+# 8s 超时 / 0 B/s（同一 tarball：腾讯 0.22s、npmjs 1.52s），连续两次部署失败在
+# Dockerfile.server:119（issue #1839）。单点镜像再次故障时用
+# `docker build --build-arg NPM_REGISTRY=...` 覆盖，不必改代码。
+ARG NPM_REGISTRY=https://mirrors.cloud.tencent.com/npm
 ENV COREPACK_HOME=/opt/corepack \
-    COREPACK_NPM_REGISTRY=https://registry.npmmirror.com \
-    NPM_REGISTRY=https://registry.npmmirror.com
+    COREPACK_NPM_REGISTRY=${NPM_REGISTRY} \
+    NPM_REGISTRY=${NPM_REGISTRY}
 RUN corepack enable
 WORKDIR /app
 # pnpm 的镜像源腿（理由见上）：只落盘，**这一层不调 pnpm**。此刻 /app 还没有 package.json，
@@ -117,7 +123,9 @@ COPY contracts ./contracts
 # 镜像源。放这里而不是上一层的理由见那边注释（避免多下一份最新版 pnpm）。返回值带尾斜杠，
 # 故用子串匹配。
 RUN pnpm config get registry | grep -qF "$NPM_REGISTRY" \
-    && pnpm install --frozen-lockfile && pnpm -r --if-present build
+    && pnpm install --frozen-lockfile \
+        --fetch-timeout=300000 --fetch-retries=5 --fetch-retry-maxtimeout=120000 \
+    && pnpm -r --if-present build
 
 # ---- 运行阶段 ----
 FROM node:22-alpine AS runtime
