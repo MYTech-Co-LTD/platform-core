@@ -837,6 +837,7 @@ capabilities / policy 门禁 / run 回执」一句打包，**实测与其中两�
 | `data.dim_settlement_order_line`（取价面） | 上两行的 staging 归一 | 同上 | 同上 | 同上 | **⑦ 时段感知：上海 13 点前 −3、后 −2** | **T-3**（结构下限） |
 
 | `recon_run` / `recon_break`（口径对账**台账**） | 湖 `lemeng/recon_source`（父管线每日 T-3 线；console UTC `16:30` 64188 / `16:40` 3120） | **T-3**（管线按「上海日 −3」定稿） | UTC `27 3,7,9,11,13,15`（上海 11:27/15:27/17:27/19:27/21:27/23:27） | 同左（dbt 表整表替换） | **⑨ 台账覆盖（时段感知）**：上海 12 点前按 −4、之后按 −3，须在 `recon_run` 里有行；`not_evaluated`（源侧零返回）与 `source_cover_pct < 1` **各成一条**——探活断言 **⑪⑫⑬**（`wire-warehouse.sh`，advisory，见 §1.5.3） | **T-3** |
+| **`data.lemeng_daily_sealed`（封版 manifest 水位；#1872/#1886）** | `_DAILY/<book>-<bizday>.parquet` 标记（day 管线封版时写）+ reconcile 每 30 分钟对账 | **T-1**（close 上海 00:0x 封前一天） | CST `00:0x`（close 后 day 管线） | 同左（upsert，行级增量） | **⑯ ⑰（`wire-warehouse.sh`，advisory）**：`max(bizday)` ≥ 上海今天−1（**02:00 前按 −2**）；`max(sealed_at)` ≤ 180 分钟；视图定义含封版表且不含 `_DAILY`；最近封版日单日 count ≤ 15s | **T-1**（封版后） |
 | **`config_drift` 漂移行（OO `retail_day` 流，非发布面——即时信号）** | gd 节点「现算 vs 底账」双向 diff（`BRANCH_NUMS` 底账对账，#793 治本后每 run 发出） | **即时**（随 tick `*/5` 每 run 判一次） | —（不进湖，只落 OO 流） | — | **⑭ 近 2h 有 `status='config_drift'` 行 ⇒ ERR**（`wire-warehouse.sh`，advisory，探活周期 `*/5`；出处 #809）——漂移=新店未纳入或底账腐化，行本身不进湖、不阻断 | 即时（有行即红） |
 
 > 要点：调出/批发链「23:35 采 T-1 → 次日 11:43 发布」意味着**取价面每天零点必然停在 T-3**——
@@ -896,6 +897,15 @@ capabilities / policy 门禁 / run 回执」一句打包，**实测与其中两�
   `recovery mode` / `terminating any other active server processes` ⇒ ERR 进 `data_plane_probes`
   ⇒ 桥送企微；**不新建 OO 规则**，同 ⑩⑪⑫⑬⑭ 范式）。反向测试 `WIRE_PGCRASH_SELFTEST=1`。
   **反向测试见 #898**（`WIRE_REGION_SELFTEST` 造一次真红 ⇒ 企微收到）。
+  ✅ **⑯⑰ 封版 manifest 效果接线（2026-11-10，Phase 1 续刀；#1886，#1872 的收尾监控）**：
+  #1872 把明细视图的封版判定从 `_DAILY/*.parquet` glob（1,541 个小文件，>110s 且会打崩 pg_duckdb）
+  改成读仓内表 `data.lemeng_daily_sealed`。"效果"有三条腿会静默坏 ⇒ 两条 advisory 断言覆盖：
+  **⑯ `sealed_manifest`** = 表里 `max(bizday)` 跟到上海今天−1（02:00 前按 −2）+ `max(sealed_at)`
+  不超过 180 分钟（reconcile 每 30 分钟一轮）；**⑰ `detail_path`** = 视图定义必须含封版表、
+  不含 `_DAILY`，且最近封版日单日 count ≤ 15s（基线 0.7–8s）。前者抓「表停更 ⇒ 视图不排除
+  hot 小时 ⇒ 静默双算，而所有 job 全绿」；后者抓「换机/回滚把视图带回旧版 ⇒ 延迟回 >110s」。
+  均走 `data_plane_probes` → 桥 → 企微，**不新建 OO 规则、不翻 job rc**（红线③，同 ⑩⑪⑫⑬⑭⑮ 范式）。
+  反向测试：`WIRE_SEALED_SELFTEST=1` / `WIRE_DETAILPATH_SELFTEST=1`。
   **openship 通知不拆**双通道并行 1-2 周；**R12 存量 L2 判据**：「契约有 `sensitivity !== 'none'` 列 **且** `data.metrics` 存在 `source='l2'` 行」⇒ 逐行吐进 `data_plane_probes`。**契约侧闸已就位**（②b，`2026-10-18`）；**判据本体（运行期那条）待本 Phase 的流就位后接线**。 | **进行中**（第一刀 ✅ #898 战区未登记；✅ #905 口径对账台账 ⑪⑫⑬；其余仍挂着） |
 | 2 | 通知切换（数据面告警归 OO，openship 收敛 job 崩溃级）；**拆桥**（OO 升级修好投递腿后，桥接退役）；看门狗升级（search 凭据 → 证据年龄检查）；悬空 duckle→openship webhook 处置；本表翻绿 + 基建速查订正 | **未开工** |
 
