@@ -1,6 +1,6 @@
 # 列级与值级权限（CLS + 动态脱敏）—— 设计（spec）
 
-> 日期 2026-10-17 · issue #764 · 状态：**待评审**（P1 列级 / P2 值级；P3 只登记不设计）
+> 日期 2026-10-17 · issue #764（**2026-11-03 已关闭**）· 状态：**P1 列级 / P2 值级已实施**；P3 维度级只登记不设计
 > 本文 §2 每条事实都标了**文件:行**；凡标「未验」的一律**不许当已知**（本仓规矩：无案例不立标准）。
 
 ## §0 问题
@@ -54,8 +54,8 @@ domain/agent-loop.ts:158  chat  ┘   query-service.ts:200   authz.ts:255-271
 ```
 
 **「报表打 HTTP」这条有明文纪律撑腰**（2026-10-17 核实，不是我从调用图猜的）——
-`modules/data/console/reports/SpecView.tsx:200` 逐面板 `apiSend('/query', 'POST', { metricId, args })`，
-其头顶注释（`:10-12`）写着：
+`modules/data/console/reports/ReportView.tsx:512` 逐面板 `apiSend('/query', 'POST', ...)`，
+其文件头「数据纪律」段（同文件 `:9-14`）写明 args 只来自「规格声明 + 筛选栏覆盖」两个源头：
 
 > **通路纪律**（spec §5 / 计划 6 裁决 5）：面板数据走既有 `POST /query`，**一个面板一次**——
 > 语义裁剪、授权、按调用者身份注入主体值、逐查询落 `data.query_audit` 全部复用；

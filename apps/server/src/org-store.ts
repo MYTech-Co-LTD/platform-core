@@ -63,7 +63,7 @@ export async function membersOf(pool: Pool, tenantId: number, extId: string): Pr
   return r.rows.map((x) => x.user_name)
 }
 
-/** 某用户的全量部门归属（org-sync 判定/展示用；授权消费走「含祖先链」的扩展，Phase B 接线）。 */
+/** 某用户的全量部门归属（org-sync 判定/展示用；授权消费走 `dept-gate.ts` 的祖先闭包，Phase B 已接线）。 */
 export async function deptsOfUser(pool: Pool, tenantId: number, userName: string): Promise<string[]> {
   const r = await pool.query(
     'select ext_id from platform.org_membership where tenant_id = $1 and user_name = $2',

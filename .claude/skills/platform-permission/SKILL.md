@@ -9,10 +9,12 @@ description: 做新功能凡涉及接入平台权限时必用——新模块/新
 
 - 本 skill 是**流程执法器 + 指针**，不是第二事实源。权限语义正典：
   `docs/module-protocol.md`（manifest 判据 / 声明即授权）与 `docs/architecture.md`（不变量）；
-  部门门实现 = `modules/data/domain/dept-gate.ts`。本文件只负责「**别跳步、别自己造**」。
+  部门门实现 = `modules/data/domain/dept-gate.ts`；资产 ACL = `modules/data/domain/asset-auth.ts`；
+  列级/值级 = `modules/data/domain/authz.ts` / `mask.ts`。本文件只负责「**别跳步、别自己造**」。
 - 正典与本 skill 冲突时**正典赢**，并回来改本文件。
-- 列级/值级裁剪（按人裁列、脱敏值）**不存在现成原语**——那是开放 issue #764，
-  需求落在那一档时先推动 #764，**不要在业务侧自造**。
+- 列级/值级裁剪（按人裁列、脱敏值）**已有原语，但归属 `modules/data`**（spec 2026-10-17，
+  P1/P2 已实施；#764 已于 2026-11-03 关闭）。跨模块需求先评估是否抽成平台能力，
+  **不要在业务侧复制一套**。
 
 ## 第 0 步：选路（先判你要接的是哪一档，再动手）
 
@@ -20,7 +22,7 @@ description: 做新功能凡涉及接入平台权限时必用——新模块/新
 |---|---|---|
 | 功能能不能用（API / console 页） | **① 声明式权限** | manifest `permissions` + `api.internal[].scope` + `frontend.console[].scope` |
 | 数据按部门谁能看 | **② 部门门** | `requiredDepts` + `deptGatePasses` / `validateDeptGate` / `userDeptClosure` |
-| 按人裁列 / 裁值 / 脱敏 | **③ 未做** | issue #764——先立项，不自造 |
+| 按人裁列 / 裁值 / 脱敏 | **③ data 模块原语** | `modules/data/domain/authz.ts` + `mask.ts`（列/值级）；跨模块需求先评估抽象，不自造 |
 
 判不清时问一句：「挡的是**动作**（能不能调）还是**数据**（能看哪行）？」——动作走 ①，行级走 ②。
 
@@ -86,7 +88,8 @@ frontend:
 
 1. **不自造第二套权限**：不写模块内的检查逻辑、不发明 manifest 之外的码、不绕过宿主门卫直挂路由。
 2. **不做静默降级**：门卫失败就是 403/404，不"先放行再记日志"；部门门配不了就是拒绝，不建"永远过不了的门"。
-3. **列级/值级不自造**：需求落在 #764 那一档时先立项，不在业务侧各写一份裁剪。
+3. **列级/值级不自造**：data 模块已有原语（`authorize()` 单一执法点）；跨模块需求先评估抽象
+   （出现第二个真实消费方才抽），不在业务侧各写一份裁剪。
 
 ## 完工回写
 
