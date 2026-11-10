@@ -645,7 +645,7 @@ export async function buildFacts(
               analystPool(),
               `select bizday::text as day, item_name, sale_num::text as qty,
                       sale_money_no_coupon::text as revenue, sale_cost::text as cost
-                 from staging.fct_retail_item_profit
+                 from fct_retail_item_profit
                 where system_book = $1::int and branch_num = $2::int and item_num = $3::int
                   and bizday in ($4, $5)`,
               [reportSystemBook, branchNum, row.label, dailyReview.yesterday, dailyReview.targetDay],
