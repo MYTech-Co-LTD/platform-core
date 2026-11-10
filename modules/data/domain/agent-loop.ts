@@ -69,6 +69,7 @@ const LEGACY_TOOLS: ToolSpec[] = [
       '没有 total 字段（比率/去重计数类指标）就不要跨行求和（跨行求和是错数）。',
       '只要总数可传 args.total:true（布尔）——服务端求和恒返回单行合计；未声明 params 的指标只能空参查全量（可能返回大量行）——能用参数就用参数。',
       '答案末尾必须原样单独一行附回包的 freshness_line（服务端拼好的新鲜度说明，不混入正文、不改写不翻译；回包没有该字段 = 该指标未接新鲜度链路，不要自己编一行）。data_as_of（数据截止，已是北京时间 UTC+8，直接引用不要自行换算）可注明「数据截至 X」；没有该字段 = 新鲜度未知，如实说明，不要编；明细 rows 按 bizday 降序，首行即最新分区；当日数据是部分天，须标注。',
+      '回包 query.detailAvailable=true 表示该指标可下钻；query.detailKeyColumns 是原子粒度业务键——要追溯贡献行用 query_detail，聚合答案本身没有单一来源行。',
     ].join(''),
     inputSchema: {
       type: 'object',
@@ -93,6 +94,7 @@ const LEGACY_TOOLS: ToolSpec[] = [
       '「哪几行/哪几单贡献最大」用本工具；「合计多少」用 query_metric 的 total。',
       '回包带 drill_as_of（明细查询时刻）与 data_as_of（聚合口径截止）+ clock_note——两个时钟不同，逐行相加可能与聚合值不一致，以 clock_note 为准原样转述。scope_line 有则原样单独一行附在答案末尾。',
       '回包可能**少一列**（条件列）：那是未授权（如 data:cost），**不是没有数据/不是 NULL**——如实说明「该列需授权」。',
+      '回包 provenance：keyColumns 是原子粒度业务键，groupedBy 是本次分组（可能是其子集）——不要把 groupedBy 当源行键；auditId 可在 data.query_audit 复核；relation 是逻辑视图名，不要外传物理路径。',
     ].join(''),
     inputSchema: {
       type: 'object',

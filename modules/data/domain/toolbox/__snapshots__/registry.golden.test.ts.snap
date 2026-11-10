@@ -213,7 +213,7 @@ exports[`MCP 分析师面 golden > ANALYST_TOOLS 逐字快照 1`] = `
     "annotations": {
       "readOnlyHint": true,
     },
-    "description": "按指标 id 查数，回完整信任信封（口径版本/主体/数据截止/行集/审计 id）。主体由平台钉死；切片维度超出粒度即拒；行上限 1000。",
+    "description": "按指标 id 查数，回完整信任信封（口径版本/主体/数据截止/行集/审计 id）。主体由平台钉死；切片维度超出粒度即拒；行上限 1000。回包 query.detailAvailable=true 表示该指标可下钻；query.detailKeyColumns 是原子粒度业务键，用 query_detail 取贡献行。",
     "group": "query",
     "inputSchema": {
       "properties": {

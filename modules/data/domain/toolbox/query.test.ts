@@ -97,12 +97,36 @@ describe('queryMetricImpl：完整信任信封', () => {
     expect(env.metric.definitionHash).toBe('sha256:' + createHash('sha256').update(SELECT_SQL + '{}').digest('hex'))
     expect(env.subject).toMatchObject({ org: 'acme', source: 'lemeng', adoptedSources: ['lemeng'] })
     expect('asOf' in env).toBe(false)
-    expect(env.query).toMatchObject({ rowLimit: 1000, queryId: 'q_77' })
+    expect(env.query).toMatchObject({ rowLimit: 1000, queryId: 'q_77', detailAvailable: false })
     expect(env.result).toMatchObject({ rowCount: 1, truncated: false })
     expect(env.lineage).toMatchObject({ model: 'fct_retail_sale', upstream: ['stg_lemeng_retail_order_line'] })
     expect(env.audit).toMatchObject({ id: 77 })
     expect(out.auditMetricId).toBe('lemeng:retail:net_sales')
     expect(out.auditRowCount).toBe(1)
+  })
+
+  it('可下钻指标 ⇒ query.detailAvailable=true + detailKeyColumns（聚合本身仍无单一来源行）', async () => {
+    const drillPool = () => ({
+      query: async (sql: string) => sql.includes('from data.metrics')
+        ? { rows: [{
+            id: 'lemeng:retail:net_sales', title: '净销', description: '', required_scope: null,
+            subject_column: 'org', select_sql: SELECT_SQL, group_by: 'org, bizday', params: {},
+            source: 'l1', source_system: 'lemeng', updated_by: null, version: 3, totalable: true,
+            scope_note: '', sla_days: null, freshness_relations: null, mask_spec: null,
+            drill_expr: '(sum(v))', drill_dims: ['org', 'bizday'],
+            drill_detail: { relation: 'vw_t', filter: 'true' },
+          }] }
+        : { rows: [{ id: 77, created_at: new Date('2026-10-21T10:00:00Z') }] },
+    }) as never
+    const d = { ...deps(wh), pool: drillPool() }
+    const out = await queryMetricImpl(d, { metricId: 'lemeng:retail:net_sales' })
+    expect(out.isError).toBe(false)
+    const env = out.payload as Record<string, Record<string, unknown>>
+    expect(env.query).toMatchObject({
+      detailAvailable: true,
+      detailTool: 'query_detail',
+      detailKeyColumns: ['org', 'bizday'],
+    })
   })
 
   it('切片请求生效（dimensions → 外层聚合 SQL）；未知指标 denied 透传', async () => {

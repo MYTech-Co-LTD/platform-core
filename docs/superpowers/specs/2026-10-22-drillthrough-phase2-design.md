@@ -351,3 +351,30 @@ metrics:
 - ~~`detail.columns[].col` 无静态存在性校验~~ → **已由 #1009 落地**（`check-data-models` 规则 ⑤-x3：
   按 relation 的契约列集校验；只看有契约的视图，`org` 豁免；拼错 = 门禁期红，不再等到运行时）。
 - 列级掩码 × 条件列的语义缺口归 **#995**（今天结构性不可达；若落掩码必须「生效 ⇒ 整列缺席」）。
+
+## 9 S0：结果来源标注（provenance，2026-11-10）
+
+**目标**：让明细回包能自证「这条结果来自哪条关系、哪个原子粒度键、哪次审计」，不新增存储、不改 SQL、不改授权/掩码、不改声明面。
+
+**形状**（`modules/data/domain/drill.ts` 的 `DetailOk.provenance`）：
+
+```json
+{
+  "relation": "vw_lemeng_retail_order_line",
+  "keyColumns": ["system_book", "bizday", "branch_num", "order_no"],
+  "groupedBy": ["system_book", "bizday", "branch_num", "order_no"],
+  "rowCountTotal": 14935,
+  "drillAsOf": "2026-11-08 10:00:00 +08:00",
+  "dataAsOf": "2026-11-08 09:00:00 +08:00",
+  "auditId": 12345
+}
+```
+
+- `keyColumns` = 指标声明的 `dimensions`（原子粒度业务键）；`groupedBy` = 本次实际分组维度（可能是其子集）。
+- `relation` 是逻辑视图名（`vw_*`），**不**外传物理路径、桶名或凭据。
+- `auditId` 指向 `data.query_audit.id`，可独立复核本次查询。
+- 聚合面（`query_metric`）只给 `query.detailAvailable` / `detailTool` / `detailKeyColumns` 提示；**聚合值没有单一来源行**，追溯必须走 `query_detail`。
+
+**非目标**：不在聚合行上挂行号；不新增 `detail.keys` 声明（`detail` 仍是闭集 `{relation, filter, columns}`）；不引入 `batch_id` 级来源（待实机探针后再议）。
+
+**验收**：`drill.test.ts` 的 SQL 逐字断言不变；`query-detail.test.ts` 的 `columns/rows/rowCountTotal` 不变；`check-mcp-toolface` / `check-data-models` 绿；数据模块全量单测绿。

@@ -109,6 +109,15 @@ describe('POST /query/detail', () => {
     const body = await res.json()
     expect(body.status).toBe('ok')
     expect(body.rowCountTotal).toBe(15222)
+    // S0 provenance：HTTP 面与 MCP 面同一回包，纯附加字段。
+    expect(body.provenance).toMatchObject({
+      relation: 'vw_t',
+      keyColumns: ['system_book', 'bizday', 'branch_num', 'order_no'],
+      groupedBy: ['system_book', 'bizday', 'branch_num', 'order_no'],
+      rowCountTotal: 15222,
+      drillAsOf: body.drill_as_of,
+      auditId: 1,
+    })
     // execute 注入经 RouteCtx 透传（不碰真仓库）：明细 + count 两条
     expect(sqls).toHaveLength(2)
     expect(sqls.some((s) => /count\(\*\)/.test(s))).toBe(true)

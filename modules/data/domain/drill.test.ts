@@ -197,6 +197,15 @@ describe('runDetailQuery（假执行器 + 假词表池，不需要湖）', () =>
     expect(out.columns).toEqual(['system_book', 'bizday', 'branch_num', 'order_no', 'value'])
     expect(out.rows).toEqual([['3120', '2026-10-19', 142, 'SO001', 123.4]])
     expect(out.drill_as_of).toMatch(/^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2} \+08:00$/)
+    // S0 provenance：关系 / 原子粒度键 / 本次分组 / 审计行——全部取自已有值，不改 SQL。
+    expect(out.provenance).toEqual({
+      relation: DRILL.relation,
+      keyColumns: DRILL.dims,
+      groupedBy: DRILL.dims,
+      rowCountTotal: 15222,
+      drillAsOf: out.drill_as_of,
+      auditId: 1,
+    })
     expect('data_as_of' in out, '仓库未配 ⇒ 物化钟缺席（未知 ≠ 捏造）').toBe(false)
     expect('clock_note' in out).toBe(false)
     expect('scope_line' in out, '未声明射程 ⇒ 字段缺席').toBe(false)

@@ -127,6 +127,13 @@ export const queryMetricImpl: ToolImpl = async (deps, args) => {
       ...(slicing?.dimensions !== undefined ? { dimensions: slicing.dimensions } : {}),
       rowLimit: MAX_QUERY_ROWS,
       ...(ok.audit !== undefined ? { queryId: `q_${ok.audit.id}` } : {}),
+      // 下钻可用性（S0）：聚合答案本身没有单一来源行；要追溯贡献行，走 query_detail。
+      // detailKeyColumns 是明细面的原子粒度业务键（指标声明的 dimensions）。
+      detailAvailable: metricRow?.drill !== undefined,
+      ...(metricRow?.drill !== undefined ? {
+        detailTool: 'query_detail',
+        detailKeyColumns: [...metricRow.drill.dims],
+      } : {}),
     },
     result: {
       columns: ok.columns, rows: ok.rows, rowCount: ok.rows.length, truncated: ok.truncated,
