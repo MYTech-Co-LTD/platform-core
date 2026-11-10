@@ -98,18 +98,18 @@
   期望（2026-11-10 基线）：
   ```
   org-sync: org=shanhaiyiguo-org dryRun=true depts=279 users=494 \
-  created=8 renamed=0 reparented=0 disabled=1 reactivated=0 members+31 members-4 notInCasdoor=22
+  created=8 renamed=0 reparented=0 disabled=1 reactivated=0 members+31 members-4 notInCasdoor=22 usersCreated=0
   ```
   若 `depts/users` 大幅漂移或 fail-closed 门触发（`EMPTY_DEPARTMENTS` / `DEPT_COUNT_DROP`）⇒ **停**，先查
   `WECOM_SYNC_SECRET__SHANHAIYIGUO_ORG` 的可见范围与出口 IP。
 
-- [ ] **Step 2（决策门）：处理 `notInCasdoor=22`**
+- [ ] **Step 2（2026-11-10 变更）：`notInCasdoor` 自动建号**
 
-  `notInCasdoor` = 企微有 / Casdoor 无。同步**不会自动建号**。
-  - 先接受：这 22 人会进 `org_membership`，但组织树页成员列表仍按 Casdoor 用户过滤，通知部门展开会记
-    `unresolved`；不阻断本次 apply。
-  - 若要建号：走管理操作（console 用户管理或批量脚本），**不在本计划内自动建**。
-  - 记录决定（接受 / 建号）到 issue 评论。
+  用户拍板（#1847）：企微有 / Casdoor 无 ⇒ **apply 时自动建号**（不再人工决定）。
+  - `name=企微 userid`、`displayName=企微姓名`、`wecom=userid`、`registerSource=<org>/org-sync`；
+  - 企微 `status≠1`（未激活/禁用/退出）⇒ 建号即 `isForbidden=true`；`status=1` ⇒ 正常；
+  - 建号失败 ⇒ 整轮失败、不写 org 表；重跑幂等；
+  - **Casdoor 有 / 企微无 ⇒ 不同步、不反写、不自动禁用/删除**（只读企微）。
 
 - [ ] **Step 3：apply**
 
@@ -117,7 +117,8 @@
   docker exec openship-platform-core-shanhai-server sh -lc \
     'pnpm exec tsx scripts/org-sync-all.mjs --org shanhaiyiguo-org --apply'
   ```
-  期望：`dryRun=false`，`created=8 disabled=1 members+31 members-4`，exit 0。
+  期望：`dryRun=false`，`created=8 disabled=1 members+31 members-4`，`usersCreated=22`（首次带自动建号的
+  apply），exit 0。
 
 - [ ] **Step 4：验证写入与审计**
 

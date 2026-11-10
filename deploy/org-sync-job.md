@@ -13,7 +13,7 @@
 | 2 | 租户行有 `wecom_corp_id` | `platform.tenant.wecom_corp_id` |
 | 3 | 同步应用 secret 可读 | 优先 `WECOM_SYNC_SECRET__<ORG>`（openship env，isSecret）；缺省回落 `platform.tenant.wecom_secret`（脚本会打 warn） |
 | 4 | 该实例出口 IP 在企微可信名单 | 否则 `gettoken` / `department/list` 会 `60020`；**可见范围必须覆盖全量通讯录**（2026-10-26 缺 29 部门的教训） |
-| 5 | 容器内有 `DATABASE_URL`、`CASDOOR_URL`、`CASDOOR_ADMIN_USER`、`CASDOOR_ADMIN_PWD` | Casdoor 只用于 `usersNotInCasdoor` 清单；缺失时脚本 exit 2，不猜 |
+| 5 | 容器内有 `DATABASE_URL`、`CASDOOR_URL`、`CASDOOR_ADMIN_USER`、`CASDOOR_ADMIN_PWD` | Casdoor 用于 `usersNotInCasdoor` 清单**与自动建号**；缺失时脚本 exit 2，不猜 |
 
 > 凭证只写「在哪、怎么取」：`WECOM_SYNC_SECRET__<ORG>` 在 openship 项目 env（isSecret）；
 > 不要把它写进命令、日志或本文。
@@ -36,7 +36,8 @@ org-sync: org=<org> dryRun=true depts=... users=... created=... renamed=... repa
 核对：
 
 - `depts` 与企微通讯录部门数一致；`created/disabled` 的变化能逐条解释；
-- `notInCasdoor` 是「企微有 / Casdoor 无」的待建号清单（**不会自动建号**）；
+- `notInCasdoor` 是「企微有 / Casdoor 无」清单；**apply 会自动建号**（`usersCreated` 计数；
+  `status≠1` ⇒ 建号即 `isForbidden`；建号失败 ⇒ 整轮失败、不写 org 表）。dry-run 只列清单、不建号；
 - fail-closed 门触发时输出 `EMPTY_DEPARTMENTS` 或 `DEPT_COUNT_DROP` 并以 exit 1 结束——**不要绕过**，
   先查凭证可见范围（`WECOM_SYNC_SECRET__<ORG>` 是否指向通讯录应用、应用可见范围是否全量）。
 
@@ -103,6 +104,7 @@ select tenant_id, max(synced_at) from platform.org_node group by tenant_id;
 | `EMPTY_DEPARTMENTS` / `DEPT_COUNT_DROP` | 同步应用的可见范围 | 换 `WECOM_SYNC_SECRET__<ORG>` 为通讯录应用；确认可见范围全量 |
 | `SKIPPED`（无 corp/secret） | `platform.tenant` 行与 env | 补 `wecom_corp_id` / secret；无企微的租户属预期 |
 | Casdoor 失败 | `CASDOOR_URL` / admin 凭据 | 修凭据；同步本身可重跑 |
+| `CASDOOR_CREATE_FAILED` | `add-user` 被拒 / org 无 application / 权限不足 | 按报错修 Casdoor；整轮已中止，org 表未写；重跑幂等 |
 | 审计写失败 | 数据库连通性/权限 | 先修 DB；job 会 exit 1 |
 | 探针 STALE 但 job 绿 | 是否只跑了 dry-run / 是否最近 8h 内无 apply | 跑一次 `--apply`；核对审计行的 `dryRun` |
 

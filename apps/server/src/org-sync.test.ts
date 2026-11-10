@@ -19,7 +19,7 @@ const d = dbUrl ? describe : describe.skip
 
 /** 假企微 fetch：三段式（gettoken → department/list → user/list），形状按 2026-10-28 真机实测。 */
 function fakeWecom(depts: Array<{ id: number; name: string; parentid: number }>,
-  users: Array<{ userid: string; department: number[]; main_department?: number }>,
+  users: Array<{ userid: string; name?: string; status?: number; department: number[]; main_department?: number }>,
   token = 'tok') {
   return (async (input: RequestInfo | URL) => {
     const u = String(input)
@@ -37,10 +37,10 @@ const DEPTS = [
   { id: 2, name: '总经办', parentid: 1 },
 ]
 const USERS = [
-  { userid: 'yangwei', department: [57], main_department: 57 },
-  { userid: 'ZhangDuo', department: [2], main_department: 2 },
-  { userid: 'duo', department: [2, 57], main_department: 2 }, // 一人多部门
-  { userid: 'ghost', department: [57], main_department: 57 }, // 企微有/Casdoor 无
+  { userid: 'yangwei', name: '杨伟', status: 1, department: [57], main_department: 57 },
+  { userid: 'ZhangDuo', name: '张多', status: 1, department: [2], main_department: 2 },
+  { userid: 'duo', name: '多', status: 1, department: [2, 57], main_department: 2 }, // 一人多部门
+  { userid: 'ghost', name: '幽灵', status: 4, department: [57], main_department: 57 }, // 企微有/Casdoor 无（未激活）
 ]
 
 d('org-sync（企微组织 → 平台 org 表）', () => {
@@ -72,18 +72,20 @@ d('org-sync（企微组织 → 平台 org 表）', () => {
     ])
     expect(snap.memberships).toContainEqual({ userName: 'duo', extId: '2', isPrimary: true, externalId: 'duo' })
     expect(snap.memberships).toContainEqual({ userName: 'duo', extId: '57', isPrimary: false, externalId: 'duo' })
+    // 建号材料：姓名/状态来自企微（status=4 未激活 ⇒ 建号时 isForbidden）
+    expect(snap.users).toContainEqual({ userName: 'ghost', displayName: '幽灵', status: 4 })
   })
 
   it('fail-closed 门一：0 部门 ⇒ EMPTY_DEPARTMENTS（变异确认：门真的会被触发）', () => {
-    expect(() => assertSnapshotViable({ depts: [], memberships: [] }, 0))
+    expect(() => assertSnapshotViable({ depts: [], memberships: [], users: [] }, 0))
       .toThrowError(OrgSyncError)
-    expect(() => assertSnapshotViable({ depts: [], memberships: [] }, 0))
+    expect(() => assertSnapshotViable({ depts: [], memberships: [], users: [] }, 0))
       .toThrowError(/EMPTY_DEPARTMENTS/)
   })
 
   it('fail-closed 门二：部门数断崖（<现存 50%）⇒ DEPT_COUNT_DROP', () => {
     const existing = Array.from({ length: 100 }, (_, i) => ({ ext_id: String(i), name: 'n', parent_ext_id: null, status: 1 }))
-    expect(() => assertSnapshotViable({ depts: new Array(40).fill(0).map((_, i) => ({ extId: String(i), name: 'n', parentExtId: null })), memberships: [] }, existing.length))
+    expect(() => assertSnapshotViable({ depts: new Array(40).fill(0).map((_, i) => ({ extId: String(i), name: 'n', parentExtId: null })), memberships: [], users: [] }, existing.length))
       .toThrowError(/DEPT_COUNT_DROP/)
   })
 
@@ -129,6 +131,54 @@ d('org-sync（企微组织 → 平台 org 表）', () => {
       nodesCreated: 0, nodesRenamed: 0, nodesReparented: 0, nodesDisabled: 0,
       membersAdded: 0, membersRemoved: 0,
     })
+  })
+
+  it('★ 自动建号（#1847）：dry-run 不建；apply 只对缺失用户建号；source=casdoor 不建', async () => {
+    await clean()
+    const snap = await fetchWecomSnapshot({ corpId: 'ww1', secret: 's' }, fakeWecom(DEPTS, USERS))
+    const calls: Array<{ userName: string; status: number | null }> = []
+    const createUser = async (u: { userName: string; displayName: string | null; status: number | null }) => {
+      calls.push({ userName: u.userName, status: u.status })
+    }
+
+    const dry = await runOrgSync(pool, tenantId, snap, {
+      dryRun: true, casdoorNames: CASDOOR_NAMES, source: 'wecom', createUser,
+    })
+    expect(dry.usersCreated).toEqual([])
+    expect(calls).toEqual([])
+    expect(await countNodes(pool, tenantId)).toBe(0)
+
+    const applied = await runOrgSync(pool, tenantId, snap, {
+      dryRun: false, casdoorNames: CASDOOR_NAMES, source: 'wecom', createUser,
+    })
+    expect(applied.usersCreated).toEqual(['ghost'])
+    expect(calls).toEqual([{ userName: 'ghost', status: 4 }]) // 未激活 → 由调用方建号时置 isForbidden
+    expect(await countNodes(pool, tenantId)).toBe(4)
+
+    // source=casdoor 是「人已在 Casdoor」的种子路径：即使有 usersNotInCasdoor 也不建号
+    await clean()
+    calls.length = 0
+    const casSnap: OrgSnapshot = {
+      depts: [{ extId: '2', name: '总经办', parentExtId: null }],
+      memberships: [{ userName: 'legacy', extId: '2', isPrimary: false, externalId: null }],
+      users: [{ userName: 'legacy', displayName: null, status: null }],
+    }
+    const seeded = await runOrgSync(pool, tenantId, casSnap, {
+      dryRun: false, casdoorNames: new Set(), source: 'casdoor', createUser,
+    })
+    expect(seeded.usersNotInCasdoor).toEqual(['legacy'])
+    expect(seeded.usersCreated).toEqual([])
+    expect(calls).toEqual([])
+  })
+
+  it('★ 建号失败中止整轮且不写 org 表（#1847 fail-closed）', async () => {
+    await clean()
+    const snap = await fetchWecomSnapshot({ corpId: 'ww1', secret: 's' }, fakeWecom(DEPTS, USERS))
+    const createUser = async () => { throw new Error('casdoor down') }
+    await expect(runOrgSync(pool, tenantId, snap, {
+      dryRun: false, casdoorNames: CASDOOR_NAMES, source: 'wecom', createUser,
+    })).rejects.toThrow(/CASDOOR_CREATE_FAILED/)
+    expect(await countNodes(pool, tenantId)).toBe(0)
   })
 
   it('软删纪律：部门从快照消失 ⇒ status=0（不物理删），其成员退出计数/正查', async () => {
@@ -185,6 +235,7 @@ d('org-sync（企微组织 → 平台 org 表）', () => {
         { extId: '99', name: '孤儿', parentExtId: '不存在' },
       ],
       memberships: [],
+      users: [],
     }
     await applySnapshot(pool, tenantId, snap, 'wecom')
     const nodes = await listNodes(pool, tenantId)

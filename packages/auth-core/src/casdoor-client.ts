@@ -308,6 +308,50 @@ export class CasdoorClient {
     }
   }
 
+  /**
+   * 组织同步自动建号（issue #1847）：企微有 / Casdoor 无时建最小账号。
+   *
+   * 与 JIT `ensureUser` 的区别：带 `wecom=<企微 userid>`、`displayName=<企微姓名>`、
+   * `registerSource=<org>/org-sync`，并按企微状态写 `isForbidden`（未激活/禁用/退出 ⇒ true）。
+   * **不写 groups**（D-O5：Casdoor groups 已退役，组织树以平台 org 表为准）。
+   *
+   * 幂等：调用方先 `listUsers` 判缺失；本方法仍处理 add 竞态（重读验证目标状态）。
+   * `isForbidden` 是安全相关字段，写后回读必须与期望一致（三铁律③）。
+   */
+  async ensureWecomUser(
+    name: string,
+    opts: { wecom: string; displayName?: string | null; forbidden?: boolean },
+  ): Promise<void> {
+    const body = {
+      owner: this.#o.org,
+      name,
+      displayName: opts.displayName || name,
+      type: 'normal-user',
+      signupApplication: this.#o.application ?? 'app-built-in',
+      wecom: opts.wecom,
+      registerSource: `${this.#o.org}/org-sync`,
+      isForbidden: opts.forbidden === true,
+    }
+    try {
+      const j = await this.#adminJson('add-user', { method: 'POST', body })
+      if (j.status && j.status !== 'ok') throw new Error(`casdoor: ${j.msg || 'error'}`)
+    } catch (err) {
+      const existing = await this.getUser(name).catch(() => null)
+      if (existing !== null) return
+      throw new Error(
+        `casdoor: add-user 建号 ${name} 到 org ${this.#o.org} 失败：${(err as Error).message}`,
+        { cause: err },
+      )
+    }
+    const back = await this.getUser(name)
+    if (back === null) {
+      throw new Error(`casdoor ensure-wecom-user: 写后回读失败 ${this.#o.org}/${name}`)
+    }
+    if (opts.forbidden === true && back.isForbidden !== true) {
+      throw new Error(`casdoor ensure-wecom-user: ${name} 期望 isForbidden=true，回读为 false`)
+    }
+  }
+
     /**
    * 按 org 列订阅（admin 会话，spec 2026-09-13 SaaS 管理域）。
    * 真机实测（尖刺）：数据坏行（非 RFC3339 时间）会让该 org 的此接口整体 error——

@@ -37,9 +37,29 @@ describe('formatResult', () => {
       membersAdded: 2,
       membersRemoved: 0,
       usersNotInCasdoor: ['alice', 'bob'],
+      usersCreated: [],
     })
     expect(line).toContain('org=acme dryRun=true depts=3 users=5')
-    expect(line).toContain('notInCasdoor=2')
+    expect(line).toContain('notInCasdoor=2 usersCreated=0')
     expect(line).not.toContain('alice')
+  })
+
+  it('★ apply 自动建号：只输出数量，不打印用户名（#1847）', () => {
+    const line = formatResult('acme', {
+      dryRun: false,
+      deptCount: 3,
+      userCount: 5,
+      nodesCreated: 0,
+      nodesRenamed: 0,
+      nodesReparented: 0,
+      nodesDisabled: 0,
+      nodesReactivated: 0,
+      membersAdded: 0,
+      membersRemoved: 0,
+      usersNotInCasdoor: ['ghost'],
+      usersCreated: ['ghost'],
+    })
+    expect(line).toContain('notInCasdoor=1 usersCreated=1')
+    expect(line).not.toContain('ghost')
   })
 })
