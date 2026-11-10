@@ -89,6 +89,12 @@ select tenant_id, max(synced_at) from platform.org_node group by tenant_id;
 
 查看：控制台「集成健康」页，或 `GET /api/platform/admin/integrations`。
 
+> ⚠️ **探针循环本身要先在跑**：`INTEGRATION_PROBE_INTERVAL_MS=60000` 必须在 openship **项目 env**
+> 显式设置。只写在 `deploy/docker-compose.yml` 的 `environment` 里不够——2026-11-10 实测该部署的
+> 容器内变量为空，`platform.integration` 全空、集成健康页空白（探针循环按缺省 0=关）。
+> 修法：`patch_projects_by_id_env` upsert 该键后重部署；验证
+> `docker exec openship-platform-core-server printenv INTEGRATION_PROBE_INTERVAL_MS` 输出 `60000`。
+
 ## 5. 失败处置
 
 | 症状 | 首查 | 处置 |
