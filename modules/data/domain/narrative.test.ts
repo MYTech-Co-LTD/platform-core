@@ -186,6 +186,12 @@ describe('badNumbers（日期形态）', () => {
     const allowed = allowedNumbers(withDecimals)
     expect(badNumbers('费用 1,254.6 元，冲减 -410 元。', allowed)).toEqual([])
   })
+
+  it('负数允许写绝对值（facts -58.6%，模型写「下滑 58.6%」不再回退）', () => {
+    const withDelta: FactBundle = { ...facts, numbers: [...facts.numbers, '-58.6%'] }
+    const allowed = allowedNumbers(withDelta)
+    expect(badNumbers('营业额下滑 58.6%，订单 -58.6%。', allowed)).toEqual([])
+  })
 })
 
 describe('streamNarrative', () => {

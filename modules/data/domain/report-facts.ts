@@ -632,9 +632,12 @@ export async function buildFacts(
         for (const n of analysis.numbers) if (n !== '' && n !== '-') numbers.add(n)
         const top = analysis.findings.find((f) => (f.kind === 'variance' || f.kind === 'top') && f.rows.length > 0)
         const row = top?.rows[0]
-        if (top !== undefined && row !== undefined && !dailyReview.suggestions.some((s) => s.includes(row.label))) {
+        // 建议放在商品拆解之后再加：item_num 要先解析成商品名，不能把内部编码直接抛给读者。
+        const pushRootCauseSuggestion = (label: string): void => {
+          if (top === undefined || row === undefined) return
+          if (dailyReview.suggestions.some((s) => s.includes(row.label))) return
           const delta = row.delta === undefined ? '' : `，变化 ${row.delta}`
-          dailyReview.suggestions.unshift(`针对根因 ${top.dimension} ${row.label}（${row.value}${delta}），核对销量、售价与成本构成`)
+          dailyReview.suggestions.unshift(`针对根因 ${label}（${row.value}${delta}），核对销量、售价与成本构成`)
           dailyReview.suggestions.splice(3)
         }
         // 商品根因拆解：只对同店、单账套、有 item_num 的 finding 跑一条定点查询。
@@ -677,6 +680,7 @@ export async function buildFacts(
               const money = (v: number | null): string => v === null ? '-' : formatValue(v, 'currency').replace(/^¥/, '')
               const qty = (v: number): string => formatValue(v, 'number')
               const itemLabel = name === null ? `商品 ${row.label}` : `${name}（${row.label}）`
+              pushRootCauseSuggestion(itemLabel)
               let summary: string
               if (qtyT === 0 && qtyP > 0) {
                 summary = `${itemLabel} 当天无销售（昨天 ${qty(qtyP)} 件），毛利减少 ${money(Math.abs(deltaProfit))}；重点核对缺货/下架/漏单`
@@ -714,6 +718,11 @@ export async function buildFacts(
           } catch {
             // 商品拆解是增强项；取不到不影响主日报。
           }
+        }
+        // 拆解没跑成（非商品维度 / 缺门店 / 查询失败）时退回编码级建议；
+        // 已按商品名加过（上面）则这里的 includes 会命中并跳过。
+        if (top !== undefined && row !== undefined) {
+          pushRootCauseSuggestion(top.dimension === 'item_num' ? `商品 ${row.label}` : `${top.dimension} ${row.label}`)
         }
       }
     }

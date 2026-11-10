@@ -24,7 +24,7 @@ import {
 } from './report-narrative-store'
 
 /** 参与缓存键；**改提示词 = 升版本号**（旧缓存自然不再命中）。 */
-export const NARRATIVE_PROMPT_VERSION = 'narrative-v6'
+export const NARRATIVE_PROMPT_VERSION = 'narrative-v7'
 
 /** 与 spec §4.1 同形的 SSE 事件。`replace` 表示「已流出的内容作废」，客户端必须整段替换。 */
 export type NarrativeEvent =
@@ -106,6 +106,7 @@ const DAILY_REVIEW_SYSTEM = [
   '第 3 段：2–3 条按影响排序的动作，第一条必须回应最大负向驱动或根因；每条单独一行、以 `- ` 开头，写对象+动作+核对点，不要通用套话。',
   '天气只作背景，禁止断言天气导致销售；如要关联，写“可能与客流/销售相关，需结合客流验证”。',
   '只引用 facts.dailyReview / facts.analysis 里的数字；不得做 facts 之外的算术；缺失写 "-"。',
+  '提到商品时必须写商品名（facts.dailyReview.rootCauseDetail.itemName），编码只放在括号里；没有名称时写「商品 <编码>」，不要只丢一个 item_num。',
   '全文不超过 700 个汉字；不要写「数据截至」——卡片页脚已有新鲜度。',
 ].join('\n')
 
@@ -125,7 +126,7 @@ function systemOf(focus: AiTextPanel['focus']): string {
  */
 export function allowedNumbers(facts: FactBundle): Set<string> {
   const out = new Set<string>(['1', '2', '3', '-'])
-  for (const n of [...facts.numbers, ...facts.dates]) {
+  const add = (n: string): void => {
     out.add(n)
     const base = n.replace(/^¥/, '')
     // 「去逗号」「去正号」「去单位」「去尾零」组合都要能对上：模型不保证带哪一种。
@@ -135,13 +136,20 @@ export function allowedNumbers(facts: FactBundle): Set<string> {
         const unitMatch = /(%|pp|°C|℃|mm|cm)$/.exec(noSign)
         const unit = unitMatch?.[1] ?? ''
         const bare = unit === '' ? noSign : noSign.slice(0, -unit.length)
-        out.add(bare)
-        out.add(normalizeNum(bare))
-        // 单位保留的形态（5.10% 的模型常写 5.1%）
-        out.add(normalizeNum(bare) + unit)
+        const addBare = (v: string): void => {
+          out.add(v)
+          out.add(normalizeNum(v))
+          // 单位保留的形态（5.10% 的模型常写 5.1%）
+          out.add(normalizeNum(v) + unit)
+        }
+        addBare(bare)
+        // **负数允许写绝对值**：模型常写「下滑 58.6%」而不是「-58.6%」。
+        // 2026-11-10 实测：只放行 -58.6% 会把合规叙述判越界 ⇒ 整段回退模板（#1839 同日）。
+        if (bare.startsWith('-')) addBare(bare.slice(1))
       }
     }
   }
+  for (const n of [...facts.numbers, ...facts.dates]) add(n)
   return out
 }
 
