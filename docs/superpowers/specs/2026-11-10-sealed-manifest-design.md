@@ -295,3 +295,32 @@ not exists (
 - 标记写入：`scripts/lemeng/gen-retail-day-pipeline.mjs`
 - 标记删除：`scripts/lemeng/delete-supplanted-hour-partitions.py`
 - 正典：`docs/data-platform-handbook.md` §1.1 / §1.1.1
+
+---
+
+## 11. 验证补记：原生 `snk.postgres` upsert 已验（2026-11-10，实施前）
+
+在数据面 `lemeng-console-3120` 用 duckle MCP 实查并跑通最小管线：
+
+- `list_components(kind=sink)`：**81 个 sink**，含 **`snk.postgres` (available)**；
+- `get_component_schema('snk.postgres')` 真实字段：`connectionRef` / `host` / `port` / `database` /
+  `username` / `password`；目标 `schemaName` / `tableName` / **`mode`（overwrite|append|upsert|truncate）** /
+  **`conflictColumns`** / `connectTimeout` 等；
+- 最小管线：`src.inline`（1 行：3120 / 2026-11-08）→ `code.sql`（cast）→
+  `snk.postgres`（`connectionRef: pgduck`, `schemaName: data`, `tableName: zz_manifest_test`,
+  `mode: upsert`, `conflictColumns: [system_book, bizday]`）；
+- **两次 run 均 `status: ok`**（首次 14.5s，第二次 0.8s）；表 `count(*) = 1`、`source = 'seal'`
+  ⇒ **upsert 幂等已验证**；临时表已 drop。
+
+⇒ **封版 job 不需要自定义 API**：在 `msrc` 后并联一个原生 `snk.postgres` 节点即可；
+连接统一走 `connectionRef: pgduck`（workspace `connections/pgduck.json`，不内联密钥）。
+注意：`snk.postgres` 的 **append/upsert 不建表**，`data.lemeng_daily_sealed` 必须由 DDL 预建。
+
+### 审计修正（重要）
+
+**清单一致性/对账不能在 pg_duckdb 里读 `_DAILY/*.parquet`**——那正是 >110s + 崩库的路径。
+因此：
+
+- **对账/清单一致性**由 **console 对账 job（独立 DuckDB）**执行（读 `_DAILY` 14s，与表双向 diff，
+  补齐/告警）；它是批处理，不上查询路径；
+- **pg_duckdb 侧审计**只做：表的新鲜度、已封版日冷热双算=0；不读 `_DAILY`。
