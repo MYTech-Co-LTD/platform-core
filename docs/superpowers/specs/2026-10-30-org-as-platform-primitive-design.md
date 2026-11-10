@@ -196,7 +196,10 @@ platform.org_membership
 - 解析结果落审计：目标部门、展开人数、排除禁用数、**未解析（企微有平台无）数**——未解析数 > 0 记 warning，不阻断发送；
 - 接收人选择 UI：部门树多选 + 实时预览「将发送给 N 人」。
 
-**用户建号归 Casdoor**：同步 job 发现「企微有 / Casdoor 无」时不自动建号（保持 10-26 以来的口径：建号是对外动作，走管理操作/单独批量），只在 diff 中列出待建清单。
+**自动建号（2026-11-10 用户拍板，#1847）**：同步 apply 时发现「企微有 / Casdoor 无」⇒ 自动在
+Casdoor 建号（`name=企微 userid`、`displayName=企微姓名`、`wecom=userid`、
+`registerSource=<org>/org-sync`；企微 `status≠1` ⇒ `isForbidden=true`）。建号失败 ⇒ **整轮失败、
+不写 org 表**。**只读企微**：Casdoor 有 / 企微无 ⇒ 不同步、不反写、不自动禁用/删除。
 
 ### 3.6 与既有体系的关系
 
@@ -211,7 +214,9 @@ platform.org_membership
 - 表结构 + 迁移评审通过；
 - job 首跑：从企微拉 272/474，与 §1.6 基线 diff 为空（或差异逐条可解释）；
 - fail-closed 门：伪造空部门响应 ⇒ job 失败告警（变异验证，非仅 happy path）；
-- dry-run 输出可读清单；apply 后组织树页与企微逐节点一致；Casdoor 侧零写入。
+- dry-run 输出可读清单；apply 后组织树页与企微逐节点一致；
+- 自动建号（#1847）：企微有/Casdoor 无 ⇒ apply 后 Casdoor 可查；`status≠1` ⇒ `isForbidden=true`；
+  建号失败 ⇒ 整轮失败且不写 org 表。
 
 **Phase B（报表部门门）**：
 - NULL 门 = 存量行为逐字节不变（回归）；

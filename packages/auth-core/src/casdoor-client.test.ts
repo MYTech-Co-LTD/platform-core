@@ -523,6 +523,27 @@ describe('ensureUser（JIT 自动建号，issue #32）', () => {
       await m.stop()
     }
   })
+
+  it('★ ensureWecomUser（组织同步自动建号，#1847）：带 wecom/registerSource/displayName/isForbidden，写后回读', async () => {
+    const m = new MockCasdoor({ users: [], orgs: [{ name: 'acme' }] })
+    await m.start()
+    try {
+      const c = new CasdoorClient({
+        origin: m.origin, clientId: 'x', clientSecret: 'y', org: 'acme',
+        adminUser: 'admin', adminPwd: 'pw',
+      })
+      await c.ensureWecomUser('ghost', { wecom: 'ghost', displayName: '幽灵', forbidden: true })
+      expect(m.userIn('acme', 'ghost')).toMatchObject({
+        owner: 'acme', name: 'ghost', displayName: '幽灵', isForbidden: true,
+        wecom: 'ghost', registerSource: 'acme/org-sync', type: 'normal-user',
+        signupApplication: 'app-built-in',
+      })
+      // 写后回读（铁律③）：isForbidden 必须真的落上
+      expect((await c.getUser('ghost'))?.isForbidden).toBe(true)
+    } finally {
+      await m.stop()
+    }
+  })
 })
 
 // ── 订阅域（spec 2026-09-13 SaaS 管理域；真机尖刺三铁律见 casdoor-client.ts）──

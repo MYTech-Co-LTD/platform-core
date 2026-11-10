@@ -10,7 +10,8 @@
 // 双轨取 token（D-O2）：自建应用 gettoken(corpId, corpSecret)；代开发收敛到
 // gettoken(corpId, permanent_code)（spec §1.3 实测）——两者对数据接口完全同形，
 // 故本模块只认「已取到的 corp access_token」，取 token 差异留给调用方/配置。
-// 用户建号不做（spec §3.5）：发现「企微有/Casdoor 无」只在 diff 里列清单。
+// 建号（issue #1847）：企微有/Casdoor 无 ⇒ apply 时由调用方注入的 `createUser` 自动建号；
+// **只读企微**——本模块没有任何写通讯录的路径，Casdoor 有/企微无也不会反写或禁用。
 import type { Pool, PoolClient } from 'pg'
 
 /** 归一后的组织快照（两路来源——企微 API / Casdoor groups 种子——都汇到这个形状再入 apply）。 */
@@ -21,6 +22,12 @@ export interface OrgSnapshot {
    * 与 `userName`（平台标识）分开存：今天企微源两者同值，但语义不同（spec 2026-10-31 §3.1）。
    */
   memberships: Array<{ userName: string; extId: string; isPrimary: boolean; externalId: string | null }>
+  /**
+   * 用户维度的建号材料（issue #1847 自动建号）：
+   * `displayName` / `status` 只来自企微源；Casdoor 源没有（人已在 Casdoor，不需要建号）。
+   * `status`：企微 1=已激活、2=已禁用、4=未激活、5=退出企业；null = 源未提供。
+   */
+  users: Array<{ userName: string; displayName: string | null; status: number | null }>
 }
 
 /** 同步来源：写进 `org_membership.source`，解析时按它决定 external_id 能否当某渠道地址用。 */
@@ -36,12 +43,15 @@ export interface OrgSyncPlan {
   nodesReactivated: number
   membersAdded: number
   membersRemoved: number
-  /** 企微有 / Casdoor 无的用户（建号是管理动作，不自动——spec §3.5） */
+  /** 企微有 / Casdoor 无的用户（apply 时由 `createUser` 自动建号，spec §3.5 / #1847） */
   usersNotInCasdoor: string[]
 }
 
 export class OrgSyncError extends Error {
-  constructor(public code: 'EMPTY_DEPARTMENTS' | 'DEPT_COUNT_DROP' | 'WECOM_API', detail: string) {
+  constructor(
+    public code: 'EMPTY_DEPARTMENTS' | 'DEPT_COUNT_DROP' | 'WECOM_API' | 'CASDOOR_CREATE_FAILED',
+    detail: string,
+  ) {
     super(`${code}: ${detail}`)
   }
 }
@@ -68,7 +78,17 @@ export async function fetchWecomSnapshot(
   const rawDepts = dj.department ?? []
 
   const ur = await fetchFn(`${QYAPI}/cgi-bin/user/list?access_token=${tj.access_token}&department_id=1&fetch_child=1`)
-  const uj = (await ur.json()) as { errcode?: number; errmsg?: string; userlist?: Array<{ userid: string; department?: number[]; main_department?: number }> }
+  const uj = (await ur.json()) as {
+    errcode?: number
+    errmsg?: string
+    userlist?: Array<{
+      userid: string
+      name?: string
+      status?: number
+      department?: number[]
+      main_department?: number
+    }>
+  }
   if (uj.errcode) throw new OrgSyncError('WECOM_API', `user/list ${uj.errcode} ${uj.errmsg ?? ''}`)
   const rawUsers = uj.userlist ?? []
 
@@ -87,14 +107,20 @@ export async function fetchWecomSnapshot(
       externalId: u.userid, // 企微源：原生地址就是 userid
     })),
   )
-  return { depts, memberships }
+  // 建号材料（issue #1847）：只读企微，**没有任何写通讯录的路径**；status 用于建号时定 isForbidden。
+  const users = rawUsers.map((u) => ({
+    userName: u.userid,
+    displayName: typeof u.name === 'string' && u.name !== '' ? u.name : null,
+    status: typeof u.status === 'number' ? u.status : null,
+  }))
+  return { depts, memberships, users }
 }
 
 // ── Casdoor groups 种子（spec §3.6：首次切源的基线 = 2026-10-29 手工对齐结果）──
 // 结构化最小面：不耦合 CasdoorClient 具体类型，测试可注入同形状替身。
 export interface OrgSeedCasdoor {
   listGroups(): Promise<Array<{ name: string; displayName: string; parentId: string }>>
-  listUsers(): Promise<Array<{ name: string; groups?: string[] | null }>>
+  listUsers(): Promise<Array<{ name: string; displayName?: string | null; groups?: string[] | null }>>
 }
 
 export async function snapshotFromCasdoor(
@@ -118,7 +144,13 @@ export async function snapshotFromCasdoor(
       externalId: null, // Casdoor groups 不含渠道地址——**不知道就不猜**
     })),
   )
-  return { depts, memberships }
+  // 种子路径不建号（人已经在 Casdoor）；users 仍带出来，形状与企微源一致。
+  const usersOut = users.map((u) => ({
+    userName: u.name,
+    displayName: typeof u.displayName === 'string' && u.displayName !== '' ? u.displayName : null,
+    status: null,
+  }))
+  return { depts, memberships, users: usersOut }
 }
 
 // ── fail-closed 门 ─────────────────────────────────────────────────────────
@@ -263,13 +295,24 @@ async function recomputePaths(client: PoolClient, tenantId: number): Promise<voi
 
 export interface SyncResult extends OrgSyncPlan {
   dryRun: boolean
+  /** 本轮实际建号成功的用户名（dry-run / source=casdoor / 未注入 createUser 时为空）。 */
+  usersCreated: string[]
 }
 
 export async function runOrgSync(
   pool: Pool,
   tenantId: number,
   snapshot: OrgSnapshot,
-  opts: { dryRun: boolean; casdoorNames: Iterable<string>; source: OrgSyncSource },
+  opts: {
+    dryRun: boolean
+    casdoorNames: Iterable<string>
+    source: OrgSyncSource
+    /**
+     * 企微有 / Casdoor 无时的建号动作（issue #1847）。缺省 = 只列清单不建号
+     * （dry-run / 测试 / 无 Casdoor 客户端的场景）。只在 `source='wecom'` 且非 dry-run 时调用。
+     */
+    createUser?: (user: { userName: string; displayName: string | null; status: number | null }) => Promise<void>
+  },
 ): Promise<SyncResult> {
   const nodes = await pool.query(
     'select ext_id, name, parent_ext_id, status from platform.org_node where tenant_id = $1',
@@ -289,6 +332,26 @@ export async function runOrgSync(
   assertSnapshotViable(snapshot, existing.filter((n) => n.status === 1).length)
 
   const plan = planSync(snapshot, existing, existingMembers, new Set(opts.casdoorNames))
+
+  // 自动建号（issue #1847）：**先建号、后写 org 表**。建号失败 ⇒ 整轮失败（不写 org 表），
+  // 下次重跑幂等重试；绝不静默跳过缺失账号。
+  const usersCreated: string[] = []
+  if (!opts.dryRun && opts.source === 'wecom' && opts.createUser) {
+    const byName = new Map(snapshot.users.map((u) => [u.userName, u]))
+    for (const name of plan.usersNotInCasdoor) {
+      const u = byName.get(name) ?? { userName: name, displayName: null, status: null }
+      try {
+        await opts.createUser(u)
+      } catch (e) {
+        throw new OrgSyncError(
+          'CASDOOR_CREATE_FAILED',
+          `${name}: ${e instanceof Error ? e.message : String(e)}`,
+        )
+      }
+      usersCreated.push(name)
+    }
+  }
+
   if (!opts.dryRun) await applySnapshot(pool, tenantId, snapshot, opts.source)
-  return { ...plan, dryRun: opts.dryRun }
+  return { ...plan, dryRun: opts.dryRun, usersCreated }
 }

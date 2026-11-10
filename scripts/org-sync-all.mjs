@@ -41,7 +41,7 @@ export function formatResult(org, result) {
     + `created=${result.nodesCreated} renamed=${result.nodesRenamed} reparented=${result.nodesReparented} `
     + `disabled=${result.nodesDisabled} reactivated=${result.nodesReactivated} `
     + `members+${result.membersAdded} members-${result.membersRemoved} `
-    + `notInCasdoor=${result.usersNotInCasdoor.length}`
+    + `notInCasdoor=${result.usersNotInCasdoor.length} usersCreated=${result.usersCreated.length}`
 }
 
 async function main(argv) {
@@ -64,7 +64,7 @@ async function main(argv) {
   const missing = ['CASDOOR_URL', 'CASDOOR_ADMIN_USER', 'CASDOOR_ADMIN_PWD']
     .filter((k) => !process.env[k])
   if (missing.length > 0) {
-    // Casdoor 只用于 usersNotInCasdoor 清单；缺凭据时**不猜**（否则每个租户都会把全员列为待建）。
+    // Casdoor 用于 usersNotInCasdoor 清单与自动建号；缺凭据时**不猜**（否则每个租户都会把全员列为待建）。
     console.error(`org-sync-all: 缺 ${missing.join(' / ')}`)
     return 2
   }
@@ -121,6 +121,12 @@ async function main(argv) {
           dryRun: !apply,
           casdoorNames,
           source: 'wecom',
+          // 企微有 / Casdoor 无 ⇒ 自动建号（issue #1847）；未激活/禁用/退出 ⇒ 建号即 isForbidden。
+          createUser: async (u) => cas.ensureWecomUser(u.userName, {
+            wecom: u.userName,
+            displayName: u.displayName,
+            forbidden: u.status !== null && u.status !== 1,
+          }),
         })
         await writeAudit({ source: 'wecom', dryRun: !apply, ...result })
         console.log(formatResult(org, result))

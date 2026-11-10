@@ -386,14 +386,23 @@ export function adminRoutes(deps: AdminRoutesDeps): Hono<TenantEnv & SessionEnv>
       const snapshot = source === 'casdoor'
         ? await snapshotFromCasdoor(t.casdoor_org, cas)
         : await fetchWecomSnapshot(syncCredential(t, process.env), deps.wecomFetch)
-      const result = await runOrgSync(deps.pool, t.id, snapshot, { dryRun, casdoorNames, source })
+      const result = await runOrgSync(deps.pool, t.id, snapshot, {
+        dryRun, casdoorNames, source,
+        // 企微有 / Casdoor 无 ⇒ 自动建号（issue #1847）；未激活/禁用/退出 ⇒ 建号即 isForbidden。
+        createUser: async (u) => cas.ensureWecomUser(u.userName, {
+          wecom: u.userName,
+          displayName: u.displayName,
+          forbidden: u.status !== null && u.status !== 1,
+        }),
+      })
       await writeAudit(deps.pool, t.id, actor, 'admin.org-sync', { source, ...result })
       return c.json(result)
     } catch (e) {
       // 失败也落审计（失败即断的既有口径）：fail-closed 门与企微故障都在这里留痕
       const code = e instanceof OrgSyncError ? e.code : 'SYNC_FAILED'
       await writeAudit(deps.pool, t.id, actor, 'admin.org-sync', { source, dryRun, failed: code })
-      return c.json({ error: code }, e instanceof OrgSyncError && e.code !== 'WECOM_API' ? 400 : 502)
+      const upstream = e instanceof OrgSyncError && (e.code === 'WECOM_API' || e.code === 'CASDOOR_CREATE_FAILED')
+      return c.json({ error: code }, upstream ? 502 : 400)
     }
   })
 
