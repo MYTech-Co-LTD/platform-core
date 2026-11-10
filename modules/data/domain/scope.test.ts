@@ -44,17 +44,22 @@ describe('normalizeSelector', () => {
 })
 
 describe('loadEffectiveScopes', () => {
-  it('用户 + 角色 assignment 合并；坏 selector ⇒ 抛错（fail-closed）', async () => {
+  it('用户 + 角色 assignment 合并；全形角色名归一后参与匹配；坏 selector ⇒ 抛错（fail-closed）', async () => {
+    let seenParams: unknown[] = []
     const pool = {
-      query: async () => ({ rows: [
-        { kind: 'brand', selector: { system_book: ['3120'] } },
-        { kind: 'store', selector: { region_l1: ['东部战区'] } },
-        { kind: 'store', selector: { all: true } },
-      ] }),
+      query: async (_sql: string, params: unknown[]) => {
+        seenParams = params
+        return { rows: [
+          { kind: 'brand', selector: { system_book: ['3120'] } },
+          { kind: 'store', selector: { region_l1: ['东部战区'] } },
+          { kind: 'store', selector: { all: true } },
+        ] }
+      },
     } as unknown as Pool
-    const r = await loadEffectiveScopes(pool, 'org', requester({ roles: ['小区经理'] }))
+    const r = await loadEffectiveScopes(pool, 'org', requester({ roles: ['shanhai/小区经理'] }))
     expect(r.brand).toHaveLength(1)
     expect(r.store).toHaveLength(2)
+    expect(seenParams[2]).toEqual(['小区经理'])
     const bad = { query: async () => ({ rows: [{ kind: 'store', selector: { nope: ['x'] } }] }) } as unknown as Pool
     await expect(loadEffectiveScopes(bad, 'org', requester())).rejects.toThrow(/INVALID_SCOPE_SELECTOR/)
   })

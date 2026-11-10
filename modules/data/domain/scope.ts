@@ -77,7 +77,11 @@ export async function loadEffectiveScopes(
 ): Promise<EffectiveScopes> {
   const users = [...new Set([requester.accountName, requester.userId]
     .filter((x): x is string => typeof x === 'string' && x !== ''))]
-  const roles = [...new Set(requester.roles ?? [])]
+  // Casdoor 的 `user.roles` 可能是短名，也可能是全形 `org/role`（与 effectiveScopes.matchRoles
+  // 的「短名/全形双认」同源）；assignment 的 subject_id 一律存短名 ⇒ 这里归一再比。
+  const roles = [...new Set((requester.roles ?? [])
+    .map((r) => r.split('/').pop()?.trim() ?? '')
+    .filter((r) => r !== ''))]
   const out = emptyScopes()
   if (users.length === 0 && roles.length === 0) return out
   const r = await pool.query(
