@@ -969,7 +969,7 @@ git commit -m "feat(data): 新增 openclaw skill 构建期渲染器 (#$ISSUE)"
 ### Task 5: openclaw 插件改为消费生成物
 
 **Files:**
-- Modify: `deploy/openclaw/data-query-plugin/index.js:1-260`
+- Modify: `deploy/openclaw/data-query-plugin/index.js`
 - Modify: `deploy/openclaw/data-query-plugin/contracts.test.js`
 - Modify: `deploy/openclaw/data-query-plugin/package.json`
 - Modify: `.gitignore`
