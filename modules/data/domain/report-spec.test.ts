@@ -66,11 +66,12 @@ describe('B+C schema', () => {
     expect(parseReportSpec({ ...ok, period: { mode: 'custom', from: '2026-10-19', to: '2026-10-01' } }).ok).toBe(false)
   })
 
-  it('kpi 通过；compare 只能出现在 kpi', () => {
+  it('kpi / line / bar 都可带 compare；非法枚举拒', () => {
     const kpi = { chart: 'kpi', title: '客单价', metricId: 'm1', denominatorMetricId: 'm2', format: 'currency', compare: 'prev_month', span: 12 }
-    const spec = { panels: [kpi] }
-    expect(parseReportSpec(spec).ok).toBe(true)
-    const bad = { panels: [{ chart: 'line', title: 't', metricId: 'm', dims: [], args: {}, span: 24, compare: 'prev_month' }] }
+    expect(parseReportSpec({ panels: [kpi] }).ok).toBe(true)
+    const line = { chart: 'line', title: 't', metricId: 'm', dims: [], args: {}, span: 24, compare: 'prev_month', compareYoY: true }
+    expect(parseReportSpec({ panels: [line] }).ok).toBe(true)
+    const bad = { panels: [{ ...line, compare: 'last_year' }] }
     expect(parseReportSpec(bad).ok).toBe(false)
   })
 

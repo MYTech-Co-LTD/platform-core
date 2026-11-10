@@ -43,7 +43,7 @@ import { ApiError, apiGet, apiSend, messageOf } from '../lib/api'
 import { periodRangeOf, yearAgoRangeOf } from '../../domain/report-period'
 import type { DateRange } from '../../domain/report-period'
 import type { DataPanel } from '../../domain/report-query'
-import { compareRangeOf, panelArgsOf, panelQueryBodyOf } from '../../domain/report-query'
+import { chartCompareRangesOf, compareRangeOf, panelArgsOf, panelQueryBodyOf } from '../../domain/report-query'
 import type { PeriodSpec, ReportSpec } from '../../domain/report-spec'
 import { KpiCard } from './KpiCard'
 import AiTextPanel from './AiTextPanel'
@@ -77,6 +77,25 @@ type PanelResult =
   | { kind: 'error'; text: string }
 
 type OkResult = Extract<PanelResult, { kind: 'ok' }>
+
+/** /query 的 ok 回包 → 渲染结果（字段白名单；缺省不补假值）。 */
+function okResultOf(b: unknown): OkResult {
+  const out = b as {
+    columns?: string[]; rows?: unknown[][]; truncated?: boolean
+    masking?: Record<string, string>; data_as_of?: unknown
+    freshness_line?: string; total?: string | number | null
+  }
+  return {
+    kind: 'ok',
+    columns: out.columns ?? [],
+    rows: out.rows ?? [],
+    truncated: out.truncated === true,
+    ...(out.masking !== undefined ? { masking: out.masking } : {}),
+    ...(out.data_as_of !== undefined ? { data_as_of: out.data_as_of } : {}),
+    ...(out.freshness_line !== undefined ? { freshness_line: out.freshness_line } : {}),
+    ...(out.total !== undefined ? { total: out.total } : {}),
+  }
+}
 
 /**
  * 窄屏柱状图的类目轴策略（Task 13 走查的 390px 实测 + 真机截图校验）。
@@ -141,14 +160,19 @@ function displayValue(_column: string, v: unknown): string {
  * `dimensions` 是**渲染轴声明**：无 slice 时 = 面板 `dims`；有 slice 时 = 服务端分组维度
  * （`slice.dimensions`）——两者都来自规格，渲染器只是照抄。
  */
-function buildOption(chart: 'line' | 'bar', dimensions: string[], result: OkResult): EChartsCoreOption {
+interface ChartCells {
+  xLabels: string[]
+  seriesKeys: string[]
+  cells: Map<string, number>
+}
+
+function chartCellsOf(dimensions: string[], result: OkResult): ChartCells {
   const cols = result.columns
   // 声明的维度只有真出现在返回列里才能画（服务端分组不含的维度拿不到列——丢掉，不硬画）
   const dims = dimensions.filter((d) => cols.includes(d))
   // 度量列：语义编译器固定别名 `value`；兜底取第一个非维度列
   const valueCol = cols.includes('value') ? 'value' : cols.find((c) => !dims.includes(c)) ?? cols[0]
   const valueIdx = cols.indexOf(valueCol)
-
   const xIdx = dims.length > 0 ? cols.indexOf(dims[0]) : -1
   const seriesDims = dims.slice(1)
   const xLabels: string[] = []
@@ -170,18 +194,49 @@ function buildOption(chart: 'line' | 'bar', dimensions: string[], result: OkResu
     const key = `${x}\u0000${seriesKey}`
     cells.set(key, (cells.get(key) ?? 0) + num)
   }
-
   // #399 口径 A：x 轴按维度值**升序**（numeric 感知的 localeCompare——日期串、数字串、中文名
   // 都单调）。返回行序不可信：SQL 无 ORDER BY（LIMIT 截断后顺序未定义），乱序折线看起来与
   // 正确折线一模一样 = 「图在撒谎」。文本维的「升序」语义存疑是已知取舍——图表横轴单调成立
   // 本身是产品可辩护的默认（issue #399 方案 A）；需要自定义顺序时走 args.orderBy（方案 C，未开）。
   xLabels.sort((a, b) => a.localeCompare(b, 'zh', { numeric: true }))
+  return { xLabels, seriesKeys, cells }
+}
 
-  const series = (seriesKeys.length > 0 ? seriesKeys : ['']).map((seriesKey) => ({
-    name: seriesKey,
-    type: chart,
-    data: xLabels.map((x) => cells.get(`${x}\u0000${seriesKey}`) ?? null),
-  }))
+export function buildOption(
+  chart: 'line' | 'bar',
+  dimensions: string[],
+  result: OkResult,
+  compares: Array<{ label: string; result: OkResult }> = [],
+): EChartsCoreOption {
+  const base = chartCellsOf(dimensions, result)
+  const xLabels = base.xLabels
+  const bizdayX = dimensions[0] === 'bizday'
+  const currentKeys = base.seriesKeys.length > 0 ? base.seriesKeys : ['']
+  const series: Array<{ name: string; type: 'line' | 'bar'; data: Array<number | null> }> = []
+  const hasCompare = compares.length > 0
+  const nameOf = (key: string, suffix: string): string => key === '' ? suffix : `${key}·${suffix}`
+
+  for (const key of currentKeys) {
+    series.push({
+      name: hasCompare ? nameOf(key, '本期') : key,
+      type: chart,
+      data: xLabels.map((x) => base.cells.get(`${x}\u0000${key}`) ?? null),
+    })
+  }
+  for (const cmp of compares) {
+    const other = chartCellsOf(dimensions, cmp.result)
+    const keys = other.seriesKeys.length > 0 ? other.seriesKeys : ['']
+    for (const key of keys) {
+      if (!currentKeys.includes(key)) currentKeys.push(key)
+      // 日期轴按**序号**对齐（上期/去年同期的第 n 天 ↔ 本期的第 n 天）；类别轴按值对齐。
+      const data = xLabels.map((x, i) => {
+        const srcX = bizdayX ? other.xLabels[i] : x
+        if (srcX === undefined) return null
+        return other.cells.get(`${srcX}\u0000${key}`) ?? null
+      })
+      series.push({ name: nameOf(key, cmp.label), type: chart, data })
+    }
+  }
 
   const baseOption = {
     // option 半边：grid 显式留白——与 EChart 容器的 overflow:hidden 是同一坑的两半。
@@ -266,7 +321,9 @@ function TrustLine({ result }: { result: OkResult }) {
 }
 
 /** 单个面板的呈现：查询未回 ⇒ Spin；denied ⇒ 人话（不拖垮整页）；table ⇒ antd Table；图 ⇒ EChart。 */
-function PanelBody({ panel, result }: { panel: Panel; result: PanelResult | undefined }) {
+interface PanelCompare { label: string; result: OkResult }
+
+function PanelBody({ panel, result, compares = [] }: { panel: Panel; result: PanelResult | undefined; compares?: PanelCompare[] }) {
   // text / kpi 的呈现不经过查询结果（text 是静态文本，kpi 由 KpiCard 自取合计）——
   // ReportView 的渲染分支里已把它们分流，这里只是类型收口。
   if (panel.chart === 'text') {
@@ -330,7 +387,7 @@ function PanelBody({ panel, result }: { panel: Panel; result: PanelResult | unde
   }
   return (
     <>
-      <EChart option={buildOption(panel.chart, dimsOf(panel), result)} />
+      <EChart option={buildOption(panel.chart, dimsOf(panel), result, compares)} />
       <TrustLine result={result} />
     </>
   )
@@ -452,6 +509,7 @@ export default function ReportView({
   pinnedVersion?: number | null
 }) {
   const [results, setResults] = useState<Record<number, PanelResult>>({})
+  const [compareResults, setCompareResults] = useState<Record<number, PanelCompare[]>>({})
   // 期间：规格默认值即初值；调用方按 reportId 给 ReportView 换 key ⇒ 换报自然重置。
   // 钉了历史版本时保持规格原值；否则单日默认跟到昨天（日报 T-1）。
   const [period, setPeriod] = useState<PeriodSpec | null>(
@@ -525,30 +583,12 @@ export default function ReportView({
   // 一个面板 denied/出错**只塌自己那格**，不拖垮整页。
   useEffect(() => {
     setResults({})
+    setCompareResults({})
     panels.forEach((p, i) => {
       // text / ai_text 无数据面；kpi 的取数在 KpiCard 内部（显式合计），都不进这条循环
       if (p.chart === 'text' || p.chart === 'kpi' || p.chart === 'ai_text') return
       void apiSend('/query', 'POST', panelQueryBodyOf(p, argsOf(p)))
-        .then((b) => {
-          const out = b as {
-            columns?: string[]; rows?: unknown[][]; truncated?: boolean
-            masking?: Record<string, string>; data_as_of?: unknown
-            freshness_line?: string; total?: string | number | null
-          }
-          setResults((prev) => ({
-            ...prev,
-            [i]: {
-              kind: 'ok',
-              columns: out.columns ?? [],
-              rows: out.rows ?? [],
-              truncated: out.truncated === true,
-              ...(out.masking !== undefined ? { masking: out.masking } : {}),
-              ...(out.data_as_of !== undefined ? { data_as_of: out.data_as_of } : {}),
-              ...(out.freshness_line !== undefined ? { freshness_line: out.freshness_line } : {}),
-              ...(out.total !== undefined ? { total: out.total } : {}),
-            },
-          }))
-        })
+        .then((b) => setResults((prev) => ({ ...prev, [i]: okResultOf(b) })))
         .catch((e) => {
           // /query 的结局映射（routes/query.ts）：ok→200 / **denied→403** / error→502。
           // denied 的正文 `{status:'denied',reason}` 没有 `error` 字段 ⇒ apiSend 落成
@@ -558,6 +598,22 @@ export default function ReportView({
             [i]: e instanceof ApiError && e.status === 403 ? { kind: 'denied' } : { kind: 'error', text: messageOf(e) },
           }))
         })
+      // 折线/柱状图的历史对比：同一面板再查「上期 / 去年同期」，按序号或类目合并成交集。
+      if (p.chart !== 'line' && p.chart !== 'bar') return
+      const cmpRanges = chartCompareRangesOf(p, range, period?.mode)
+      if (cmpRanges.length === 0) return
+      void Promise.all(cmpRanges.map(async (c) => {
+        try {
+          const b = await apiSend('/query', 'POST', panelQueryBodyOf(p, { ...argsOf(p), bizday: c.range }))
+          return { label: c.label, result: okResultOf(b) }
+        } catch {
+          // 对比期失败（denied/错误）不塌主图：少一条曲线，主图照常。
+          return null
+        }
+      })).then((list) => {
+        const ok = list.filter((x): x is PanelCompare => x !== null)
+        if (ok.length > 0) setCompareResults((prev) => ({ ...prev, [i]: ok }))
+      })
     })
     // argsOf/range 都由 panels/override/period 派生 ⇒ 依赖里给这三者即可（避免每渲染重查）
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -668,7 +724,7 @@ export default function ReportView({
               />
             ) : (
               <Card size="small" title={p.title}>
-                <PanelBody panel={p} result={results[i]} />
+                <PanelBody panel={p} result={results[i]} compares={compareResults[i]} />
               </Card>
             )}
           </Col>

@@ -10,7 +10,7 @@
 import { describe, expect, it } from 'vitest'
 import type { DataPanel } from './report-query'
 import {
-  compareRangeOf, comparisonCovered, coverageArgsOf, coverageOfQueryResult, coverageQueryBodyOf,
+  chartCompareRangesOf, compareRangeOf, comparisonCovered, coverageArgsOf, coverageOfQueryResult, coverageQueryBodyOf,
   panelArgsOf, panelQueryBodyOf,
 } from './report-query'
 import type { KpiPanel } from './report-spec'
@@ -146,6 +146,22 @@ describe('coverageOfQueryResult', () => {
     expect(coverageOfQueryResult({ status: 'ok', columns: ['value'], rows: [[1]] })).toBeNull()
     expect(coverageOfQueryResult({ status: 'ok', columns: ['bizday'], rows: [['not-a-day']] })).toBeNull()
     expect(coverageOfQueryResult(null)).toBeNull()
+  })
+})
+
+describe('chartCompareRangesOf', () => {
+  const panel = { ...line, compare: 'prev_period' as const, compareYoY: true }
+
+  it('上期 + 去年同期两条基线', () => {
+    const out = chartCompareRangesOf(panel as any, RANGE, 'day')
+    expect(out.map((x) => x.label)).toEqual(['上期', '去年同期'])
+    expect(out[0]!.range).toEqual({ from: '2026-09-12', to: '2026-09-30' })
+    expect(out[1]!.range).toEqual({ from: '2025-10-01', to: '2025-10-19' })
+  })
+
+  it('compare=none / 无期间 ⇒ 不查对比', () => {
+    expect(chartCompareRangesOf({ ...panel, compare: 'none' } as any, RANGE, 'day')).toEqual([])
+    expect(chartCompareRangesOf(panel as any, null, 'day')).toEqual([])
   })
 })
 
