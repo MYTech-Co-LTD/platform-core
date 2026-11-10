@@ -288,11 +288,14 @@ function ensureDailySections(text: string, facts: FactBundle): string {
   if (facts.focus !== 'daily_review') return text
   const lines = templateOf(facts).split('\n')
   const missing: string[] = []
-  for (const [keyword, prefix] of [['驱动', '驱动：'], ['根因', '根因：'], ['建议', '建议：']] as const) {
-    if (!text.includes(keyword)) {
-      const line = lines.find((l) => l.startsWith(prefix))
-      if (line !== undefined) missing.push(line)
-    }
+  // 自然分析版不强制「驱动」段；建议可能写成「动作」。
+  if (!text.includes('根因')) {
+    const line = lines.find((l) => l.startsWith('根因：'))
+    if (line !== undefined) missing.push(line)
+  }
+  if (!text.includes('建议') && !text.includes('动作')) {
+    const line = lines.find((l) => l.startsWith('建议：'))
+    if (line !== undefined) missing.push(line)
   }
   return missing.length === 0 ? text : `${text.trim()}\n${missing.join('\n')}`
 }
