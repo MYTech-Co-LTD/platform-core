@@ -629,6 +629,7 @@ export default function ReportView({
               // 期间/门店/版本都是**当前观看态**：切期间即重生成，切门店即换切片。
               <Card size="small" title={<Space>{p.title}<Tag color="blue">AI</Tag></Space>}>
                 <AiTextPanel
+                  key={`${i}:${JSON.stringify(period)}:${aiBranchNum ?? ''}`}
                   reportId={reportId}
                   panelIndex={i}
                   focus={p.focus}

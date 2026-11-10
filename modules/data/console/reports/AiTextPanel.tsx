@@ -19,7 +19,7 @@
 //  ② **模块级 `streamPost`**（`../lib/api`）：前缀与失败体翻译与其余端点同一套；失败时抛
 //     `ApiError`，这里只上屏一句人话（状态码细节不暴露给观看面）。
 import { useEffect, useState } from 'react'
-import { Alert, Typography } from 'antd'
+import { Alert, Space, Spin, Tag, Typography } from 'antd'
 import { streamPost } from '../lib/api'
 import type { PeriodSpec } from '../../domain/report-spec'
 
@@ -139,19 +139,53 @@ export default function AiTextPanel({ reportId, panelIndex, focus, period, branc
 
   if (error !== null) return <Alert type="warning" showIcon message={error} />
 
+  const periodLabel = period === null
+    ? '未声明期间'
+    : period.mode === 'day'
+      ? period.day ?? '单日'
+      : period.mode === 'month'
+        ? period.month ?? '本月'
+        : period.mode === 'last_7_days'
+          ? '近 7 天'
+          : `${period.from ?? ''} ~ ${period.to ?? ''}`
+  const blocks = text.split(/\n{2,}/).filter((b) => b.trim() !== '')
+  const asOfLabel = dataAsOf === null ? '新鲜度未知' : dataAsOf.replace(/\s*\+08:00$/, '')
+
   return (
     <div data-testid="ai-text">
-      <Typography.Text type="secondary">
-        {phase === 'done' ? (fallback ? '数据摘要' : 'AI 分析') : label}
-      </Typography.Text>
-      <Typography.Paragraph style={{ whiteSpace: 'pre-wrap', marginTop: 8, marginBottom: 0 }}>
-        {text}
-        {phase !== 'done' && text !== '' ? '▍' : ''}
-      </Typography.Paragraph>
+      <Space size={8} wrap>
+        <Spin size="small" spinning={phase !== 'done'} />
+        <Typography.Text type="secondary">
+          {phase === 'done' ? (fallback ? '数据摘要' : 'AI 分析') : label}
+        </Typography.Text>
+        <Tag color="blue">{periodLabel}</Tag>
+      </Space>
+      <div style={{ marginTop: 10 }}>
+        {blocks.length === 0 && phase !== 'done' ? (
+          <Typography.Text type="secondary">模型正在分析，通常需要 20–40 秒…</Typography.Text>
+        ) : (
+          blocks.map((block, i) => (
+            <Typography.Paragraph
+              key={i}
+              style={{
+                lineHeight: 1.8, marginBottom: 12,
+                ...(i === 0 ? { background: '#fafafa', padding: '8px 12px', borderLeft: '3px solid #1677ff' } : {}),
+              }}
+            >
+              {block.split('\n').map((line, li) => (
+                line.trim().startsWith('- ')
+                  ? <div key={li} style={{ paddingLeft: 10 }}>• {line.trim().slice(2)}</div>
+                  : <span key={li}>{line}{li < block.split('\n').length - 1 ? <br /> : null}</span>
+              ))}
+              {phase !== 'done' && i === blocks.length - 1 ? '▍' : ''}
+            </Typography.Paragraph>
+          ))
+        )}
+      </div>
       {phase === 'done' && (
         <div style={{ marginTop: 4 }}>
           <Typography.Text type="secondary" style={{ fontSize: 12 }}>
-            数据截至 {dataAsOf ?? '新鲜度未知'}{cached ? ' · 已缓存' : ''}
+            数据截至 {asOfLabel}（北京时间）{cached ? ' · 已缓存' : ''}
           </Typography.Text>
         </div>
       )}
