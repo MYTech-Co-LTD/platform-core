@@ -24,7 +24,7 @@ import {
 } from './report-narrative-store'
 
 /** 参与缓存键；**改提示词 = 升版本号**（旧缓存自然不再命中）。 */
-export const NARRATIVE_PROMPT_VERSION = 'narrative-v9'
+export const NARRATIVE_PROMPT_VERSION = 'narrative-v10'
 
 /** 与 spec §4.1 同形的 SSE 事件。`replace` 表示「已流出的内容作废」，客户端必须整段替换。 */
 export type NarrativeEvent =
@@ -142,6 +142,12 @@ export function allowedNumbers(facts: FactBundle): Set<string> {
           out.add(normalizeNum(v))
           // 单位保留的形态（5.10% 的模型常写 5.1%）
           out.add(normalizeNum(v) + unit)
+          // 事实里是无单位数值、模型补了百分号：数值仍来自 facts，不算新数。
+          // （2026-11-10 实测：模型把 70.0 写成 70.0% 被误判越界 ⇒ 回退模板。）
+          if (unit === '') {
+            out.add(v + '%')
+            out.add(normalizeNum(v) + '%')
+          }
         }
         addBare(bare)
         // **负数允许写绝对值**：模型常写「下滑 58.6%」而不是「-58.6%」。
@@ -184,6 +190,15 @@ export function badNumbers(text: string, allowed: Set<string>): string[] {
     if (!allowed.has(raw) && !allowed.has(normalizeNum(raw))) out.push(raw)
   }
   return out
+}
+
+/** 失败日志带上下文：只记坏数字本身无法判断是商品名里的数字还是模型算出来的。 */
+function badContext(text: string, bad: string[]): string {
+  return bad.map((b) => {
+    const i = text.indexOf(b)
+    if (i < 0) return b
+    return `${b}@${text.slice(Math.max(0, i - 14), i + b.length + 14).replace(/\s+/g, ' ')}`
+  }).join(' | ')
 }
 
 function userPrompt(facts: FactBundle, strictNote = ''): string {
@@ -576,7 +591,7 @@ export async function* streamNarrative(
     const controller = new AbortController()
     // 与 JSON 端点同一口径（spec §4.4：`signal=AbortSignal.timeout(30000)`）：
     // 模型卡住 ⇒ 超时 abort ⇒ catch 走模板，绝不让浏览器无限等。
-    const timer = setTimeout(() => controller.abort(), 30000)
+    const timer = setTimeout(() => controller.abort(), 60000)
     let full = ''
     let pending = ''
     let sawContent = false
@@ -594,7 +609,7 @@ export async function* streamNarrative(
           },
         ],
         [],
-        { temperature: 0, maxTokens: 4000, signal: controller.signal },
+        { temperature: 0, maxTokens: 6000, signal: controller.signal },
       )) {
         if (d.content === undefined) continue // reasoning 不展示、也不拼进正文
         if (!sawContent) {
@@ -611,7 +626,7 @@ export async function* streamNarrative(
           if (bad.length > 0) {
             controller.abort()
             failed = 'number_check'
-            deps.log?.(`narrative_number_check: ${bad.join(',')}`)
+            deps.log?.(`narrative_number_check: ${badContext(full, bad)}`)
             break
           }
         }
@@ -620,7 +635,7 @@ export async function* streamNarrative(
       // 流结束再全文校验一次（末块可能停在数字上，逐块校验覆盖不到）
       if (failed === null && (full.trim() === '' || badNumbers(full, allowed).length > 0)) {
         failed = 'number_check'
-        deps.log?.(`narrative_number_check_failed: ${badNumbers(full, allowed).join(',')}`)
+        deps.log?.(`narrative_number_check_failed: ${badContext(full, badNumbers(full, allowed))}`)
       }
     } catch (err) {
       failed = 'llm_failed'
