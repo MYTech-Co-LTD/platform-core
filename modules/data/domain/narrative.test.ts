@@ -530,6 +530,7 @@ describe('daily_review 模板', () => {
   })
   const delta = { revenue: '+1.5%', orders: '+5.3%', aov: '-3.6%', gross: '+1.8%', netMargin: '+0.2pp' }
   const dr: DailyReviewBundle = {
+    mode: 'day',
     targetDay: '2026-11-08', yesterday: '2026-11-07',
     monthStart: '2026-11-01', lastYearFrom: '2025-11-01', lastYearTo: '2025-11-08',
     today: snap('目标日', '2026-11-08'),
@@ -549,6 +550,25 @@ describe('daily_review 模板', () => {
     dataAsOf: '2026-11-09 06:00:00 +08:00',
     hash: 'hash',
   }
+
+  it('range 模板用区间合计与「上一区间」，不再写成单日', () => {
+    const rangeDr: DailyReviewBundle = {
+      ...dr,
+      mode: 'range',
+      rangeFrom: '2026-11-01',
+      rangeTo: '2026-11-08',
+      rangeDays: 8,
+      rangeLabel: '2026-11-01 ~ 2026-11-08（8 天）',
+      yesterday: '2026-10-31',
+      comparisons: {
+        ...dr.comparisons,
+        yesterday: { baseline: snap('上一区间', '2026-10-24 ~ 2026-10-31'), delta },
+      },
+    }
+    const text = templateOf({ ...facts, focus: 'daily_review', dailyReview: rangeDr })
+    expect(text).toContain('2026-11-01 ~ 2026-11-08（8 天） 合计 营业额')
+    expect(text).toContain('vs 上一区间')
+  })
 
   it('模型在「建议：」处被截断 ⇒ 补回模板建议条目（不缓存空标题）', async () => {
     const dailyFacts: FactBundle = { ...facts, focus: 'daily_review', dailyReview: dr }

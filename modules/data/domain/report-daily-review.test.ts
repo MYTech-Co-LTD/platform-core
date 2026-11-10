@@ -79,6 +79,31 @@ describe('buildDailyReview', () => {
     expect(dr.hash).toMatch(/^[0-9a-f]{64}$/)
   })
 
+  it('区间模式（本月）：按区间合计分析，末日取区间内最新有数日', async () => {
+    const read = fake(base)
+    const out = await buildDailyReview({
+      spec,
+      period: { mode: 'month', month: '2026-11' },
+      range: { from: '2026-11-01', to: '2026-11-10' },
+      readSeries: (metricId) => read(metricId),
+    })
+    expect(out).not.toBeNull()
+    const dr = out!
+    expect(dr.mode).toBe('range')
+    expect(dr.targetDay).toBe('2026-11-08')
+    expect(dr.rangeFrom).toBe('2026-11-01')
+    expect(dr.rangeDays).toBe(8)
+    expect(dr.rangeLabel).toBe('2026-11-01 ~ 2026-11-08（8 天）')
+    // 合计而不是单日：7×500,000 + 507,322.21
+    expect(dr.today.revenue).toBe('4,007,322.21')
+    expect(dr.today.orders).toBe('7,650')
+    // 区间日均 vs MTD 日均（同一区间）⇒ 0
+    expect(dr.comparisons.mtdAvg.baseline.label).toBe('本月至今日均')
+    expect(dr.comparisons.mtdAvg.delta.revenue).toBe('+0.0%')
+    expect(dr.numbers).toContain('2026-11-01')
+    expect(dr.numbers).toContain('2026-11-08')
+  })
+
   it('目标日无数据 ⇒ 仍返回 bundle（today 为 -），不抛', async () => {
     const out = await buildDailyReview({
       spec,
