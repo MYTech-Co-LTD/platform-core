@@ -1,4 +1,4 @@
-// pages/admin/OrgTree.tsx — 组织架构（账户和权限体系 spec §3.4；Casdoor group 树代理视图）
+// pages/admin/OrgTree.tsx — 组织架构（账户和权限体系 spec §3.4；优先平台 org 表，空表回退 Casdoor groups）
 //
 // 数据源 /api/platform/admin/org-tree + /org-tree/members（后端已锁 org、剔锚用户）。
 // 授角色语义：setAdminRoleMembers 设置的是【角色的成员表】——给用户授/收角色 =
