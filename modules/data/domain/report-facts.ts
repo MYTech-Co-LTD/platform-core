@@ -280,6 +280,77 @@ async function readKpiValue(
  * 构建事实包。`panelIndex` 必须是 ai_text 面板（路由已先校验，这里是防御性断言）；
  * `period` 是**本次观看**的期间（可能来自 URL/筛选栏，不一定等于 spec.period）。
  */
+const WEATHER_BASE = process.env['WEATHER_API_BASE'] ?? 'https://api.open-meteo.com'
+const WEATHER_LAT = process.env['WEATHER_LAT'] ?? '25.60'
+const WEATHER_LON = process.env['WEATHER_LON'] ?? '103.82'
+
+/** WMO weather code → 中文描述（只用于背景陈述，不推断因果）。 */
+function weatherCondition(code: number): string {
+  if (code === 0) return '晴'
+  if (code <= 3) return '多云'
+  if (code === 45 || code === 48) return '雾'
+  if (code >= 51 && code <= 57) return '毛毛雨'
+  if (code >= 61 && code <= 67) return '雨'
+  if (code >= 71 && code <= 77) return '雪'
+  if (code >= 80 && code <= 82) return '阵雨'
+  if (code >= 85 && code <= 86) return '阵雪'
+  if (code >= 95) return '雷雨'
+  return `天气码 ${code}`
+}
+
+interface WeatherDayJson { day: string; tempMax: string; tempMin: string; precipitation: string; condition: string }
+
+async function fetchWeather(targetDay: string, yesterdayDay: string): Promise<{
+  target: WeatherDayJson; yesterday: WeatherDayJson | null; source: string; note: string
+} | null> {
+  const url = (base: string): string => {
+    const u = new URL('/v1/forecast', base)
+    if (base.includes('archive-api')) u.pathname = '/v1/archive'
+    u.searchParams.set('latitude', WEATHER_LAT)
+    u.searchParams.set('longitude', WEATHER_LON)
+    u.searchParams.set('daily', 'temperature_2m_max,temperature_2m_min,precipitation_sum,weathercode')
+    u.searchParams.set('start_date', yesterdayDay)
+    u.searchParams.set('end_date', targetDay)
+    u.searchParams.set('timezone', 'Asia/Shanghai')
+    return u.toString()
+  }
+  const parse = (raw: unknown): WeatherDayJson[] => {
+    const daily = (raw as { daily?: Record<string, unknown[]> } | null)?.daily
+    if (daily === undefined) return []
+    const times = daily['time'] as string[] | undefined
+    const tmax = daily['temperature_2m_max'] as number[] | undefined
+    const tmin = daily['temperature_2m_min'] as number[] | undefined
+    const precip = daily['precipitation_sum'] as number[] | undefined
+    const code = daily['weathercode'] as number[] | undefined
+    if (times === undefined || tmax === undefined || tmin === undefined || precip === undefined || code === undefined) return []
+    return times.map((day, i) => ({
+      day,
+      tempMax: `${Number(tmax[i]).toFixed(1)}°C`,
+      tempMin: `${Number(tmin[i]).toFixed(1)}°C`,
+      precipitation: `${Number(precip[i]).toFixed(1)}mm`,
+      condition: weatherCondition(Number(code[i])),
+    }))
+  }
+  for (const base of [WEATHER_BASE, 'https://archive-api.open-meteo.com']) {
+    try {
+      const res = await fetch(url(base), { signal: AbortSignal.timeout(6000) })
+      if (!res.ok) continue
+      const days = parse(await res.json())
+      const target = days.find((d) => d.day === targetDay)
+      if (target === undefined) continue
+      return {
+        target,
+        yesterday: days.find((d) => d.day === yesterdayDay) ?? null,
+        source: base.includes('archive') ? 'Open-Meteo Archive' : 'Open-Meteo',
+        note: '天气为格点近似，不是门店实测；只作背景解释，不推断因果。',
+      }
+    } catch {
+      // 天气 fail-open：取不到就不写，不阻断日报。
+    }
+  }
+  return null
+}
+
 export async function buildFacts(
   deps: FactsDeps,
   spec: ReportSpec,
@@ -483,6 +554,7 @@ export async function buildFacts(
     ? await buildDailyReview({
         spec, period, range,
         ...(branchNum === undefined ? {} : { branchNum }),
+        readWeather: fetchWeather,
         readSeries: async (metricId, args) => {
           const out = await runQuery(
             queryDepsOf(deps), deps.org, deps.requester, metricId, args,

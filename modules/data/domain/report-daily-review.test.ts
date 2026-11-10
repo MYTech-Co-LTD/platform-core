@@ -91,4 +91,23 @@ describe('buildDailyReview', () => {
     expect(out!.today.netGross).toBe('-')
     expect(out!.notes.join(' ')).toContain('没有营业额数据')
   })
+
+  it('天气背景：目标日/昨天进入 bundle 与白名单', async () => {
+    const read = fake(base)
+    const out = await buildDailyReview({
+      spec,
+      period: { mode: 'day', day: DAY },
+      range: { from: DAY, to: DAY },
+      readWeather: async () => ({
+        target: { day: DAY, tempMax: '13.5°C', tempMin: '7.0°C', precipitation: '18.7mm', condition: '阵雨' },
+        yesterday: { day: '2026-11-07', tempMax: '19.8°C', tempMin: '13.0°C', precipitation: '11.4mm', condition: '阵雨' },
+        source: 'Open-Meteo', note: '背景，不推断因果',
+      }),
+      readSeries: (metricId) => read(metricId),
+    })
+    expect(out?.weather?.target.condition).toBe('阵雨')
+    expect(out?.numbers).toContain('18.7mm')
+    expect(out?.numbers).toContain('13.5°C')
+  })
+
 })

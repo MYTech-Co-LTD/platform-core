@@ -516,6 +516,7 @@ describe('daily_review 模板', () => {
     monthStart: '2026-11-01', lastYearFrom: '2025-11-01', lastYearTo: '2025-11-08',
     today: snap('目标日', '2026-11-08'),
     assessment: { verdict: 'good', headline: '营业额 +1.5%，高于基线', primaryDriver: '订单数 1,000（+50 单）' },
+    weather: null,
     comparisons: {
       yesterday: { baseline: snap('昨天', '2026-11-07'), delta },
       mtdAvg: { baseline: snap('本月至今日均', '2026-11-01 ~ 2026-11-08'), delta },
