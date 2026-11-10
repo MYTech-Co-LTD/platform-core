@@ -145,6 +145,14 @@ describe('AiTextPanel', () => {
     expect(text).toContain('数据截止 2026-11-08 06:00:00 +08:00')
   })
 
+  it('★ **粗体** 渲染为 strong（富文本强调）', async () => {
+    m.mockResolvedValue(sseResponse([ev.done('结论：**下滑 58.6%**。\n\n建议：\n- 查客流')]))
+    renderPanel()
+
+    const strong = await screen.findByText('下滑 58.6%')
+    expect(strong.tagName).toBe('STRONG')
+  })
+
   it('★ 500ms 防抖 + 中止：窗口内连切期间只发最后一次请求', async () => {
     m.mockResolvedValue(sseResponse([ev.done('好')]))
     const { rerender } = renderPanel()
