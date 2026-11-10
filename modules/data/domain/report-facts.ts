@@ -684,7 +684,7 @@ export async function buildFacts(
         }
         // 商品根因拆解：只对同店、单账套、有 item_num 的 finding 跑一条定点查询。
         if (top?.dimension === 'item_num' && row !== undefined && branchNum !== undefined
-          && reportSystemBook !== null && dailyReview.yesterday !== null) {
+          && reportSystemBook !== null && dailyReview.yesterday !== null && dailyReview.mode === 'day') {
           const itemCode = row.rawLabel ?? row.label
           try {
             const out = await runWarehouseSqlParams(

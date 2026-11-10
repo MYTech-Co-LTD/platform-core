@@ -24,7 +24,7 @@ import {
 } from './report-narrative-store'
 
 /** 参与缓存键；**改提示词 = 升版本号**（旧缓存自然不再命中）。 */
-export const NARRATIVE_PROMPT_VERSION = 'narrative-v10'
+export const NARRATIVE_PROMPT_VERSION = 'narrative-v11'
 
 /** 与 spec §4.1 同形的 SSE 事件。`replace` 表示「已流出的内容作废」，客户端必须整段替换。 */
 export type NarrativeEvent =
@@ -111,9 +111,23 @@ const DAILY_REVIEW_SYSTEM = [
   '全文不超过 700 个汉字；不要写「数据截至」——卡片页脚已有新鲜度。',
 ].join('\n')
 
-function systemOf(focus: AiTextPanel['focus']): string {
-  if (focus === 'root_cause') return `${SYSTEM}\n${ROOT_CAUSE_SYSTEM}`
-  if (focus === 'daily_review') return `${DAILY_REVIEW_BASE}\n${DAILY_REVIEW_SYSTEM}`
+const RANGE_REVIEW_SYSTEM = [
+  '输出 3–5 段自然分析，每段 2–3 句；分析对象是**所选区间的合计**，不是区间里的某一天，不要写「当日」。',
+  '第 1 段：一句话判断 + 区间营业额/订单/客单价/毛利；明确这是区间合计，并给出对比的基线名称（上一区间 / 本月至今日均 / 去年同期日均）。',
+  '第 2 段：按重要性讲原因，引用 facts.dailyReview.drivers 与 facts.analysis；根因说明是销量/价格/成本/结构哪一类，并给出金额。',
+  '第 3 段：2–3 条按影响排序的动作，第一条回应最大负向驱动或根因；每条单独一行、以 `- ` 开头。',
+  '只引用 facts.dailyReview / facts.analysis 里的数字；不得做 facts 之外的算术；缺失写 "-"。',
+  '提到商品时必须写商品名，编码只放括号里；没有名称写「商品 <编码>」。',
+  '允许 Markdown：用 **粗体** 强调每段 1–2 个关键数字或判断；不要用标题、表格、HTML、代码块。',
+  '全文不超过 700 个汉字；不要写「数据截至」——卡片页脚已有新鲜度。',
+].join('\n')
+
+function systemOf(facts: FactBundle): string {
+  if (facts.focus === 'root_cause') return `${SYSTEM}\n${ROOT_CAUSE_SYSTEM}`
+  if (facts.focus === 'daily_review') {
+    const range = facts.dailyReview?.mode === 'range'
+    return `${DAILY_REVIEW_BASE}\n${range ? RANGE_REVIEW_SYSTEM : DAILY_REVIEW_SYSTEM}`
+  }
   return SYSTEM
 }
 
@@ -208,7 +222,9 @@ function userPrompt(facts: FactBundle, strictNote = ''): string {
     facts.focus === 'root_cause'
       ? '重点：先写结论（当前门店/期间的关键值与对比），再写异常，再用 analysis.findings 写「根因」（点名维度值/明细行/变化量），最后写行动。根因只认 findings 里的数，不另做算术。'
       : facts.focus === 'daily_review'
-        ? '重点：按「结论/对比/成本/MTD/驱动/根因/建议」写日报；三基线只引用 dailyReview.comparisons 的 delta；净毛利必须说明未含房租/水电；建议只引用 dailyReview.suggestions 的方向并绑定其中的金额/项目。'
+        ? facts.dailyReview?.mode === 'range'
+          ? '重点：分析 dailyReview.rangeLabel 这个**区间的合计**，不是单日；对比基线只引用 comparisons 的 delta；净毛利说明未含房租/水电；建议绑定 suggestions 里的金额/项目。'
+          : '重点：按「结论/对比/成本/MTD/驱动/根因/建议」写日报；三基线只引用 dailyReview.comparisons 的 delta；净毛利必须说明未含房租/水电；建议只引用 dailyReview.suggestions 的方向并绑定其中的金额/项目。'
         : '重点：结论首句写当前门店（branchName，缺省 branchNum），再写销售额/订单/客单价与对比；异常写最低销售日、报损最大原因、费用最大正向项与主要冲减项（有负数才写）；行动 2-3 条，带金额/项目名。',
     ...(facts.hasData ? [] : ['facts.hasData=false：只写一句「该期间门店无有效数据（未接入或未物化）」，不要写异常/行动。']),
     ...(strictNote === '' ? [] : [strictNote]),
@@ -244,13 +260,14 @@ export function templateOf(f: FactBundle): string {
     }
     const c = dr.comparisons
     const yd = c.yesterday
+    const targetLabel = dr.rangeLabel ?? dr.targetDay
     const yText = yd === null
-      ? '昨天数据不完整'
-      : `vs 昨天 营业额 ${yd.delta.revenue}、订单 ${yd.delta.orders}、客单价 ${yd.delta.aov}`
-    const mText = `vs 本月至今日均 营业额 ${c.mtdAvg.delta.revenue}、订单 ${c.mtdAvg.delta.orders}、客单价 ${c.mtdAvg.delta.aov}`
+      ? `${dr.mode === 'range' ? '上一区间' : '昨天'}数据不完整`
+      : `vs ${yd.baseline.label} 营业额 ${yd.delta.revenue}、订单 ${yd.delta.orders}、客单价 ${yd.delta.aov}`
+    const mText = `vs ${c.mtdAvg.baseline.label} 营业额 ${c.mtdAvg.delta.revenue}、订单 ${c.mtdAvg.delta.orders}、客单价 ${c.mtdAvg.delta.aov}`
     const lyText = c.lastYearAvg === null
-      ? '去年同月无数据'
-      : `vs 去年同月同日日均 营业额 ${c.lastYearAvg.delta.revenue}、订单 ${c.lastYearAvg.delta.orders}、客单价 ${c.lastYearAvg.delta.aov}`
+      ? '去年同期无数据'
+      : `vs ${c.lastYearAvg.baseline.label} 营业额 ${c.lastYearAvg.delta.revenue}、订单 ${c.lastYearAvg.delta.orders}、客单价 ${c.lastYearAvg.delta.aov}`
     const weatherText = dr.weather === null
       ? ''
       : `天气：${dr.weather.target.day} ${dr.weather.target.condition}，${dr.weather.target.tempMin}~${dr.weather.target.tempMax}，降水 ${dr.weather.target.precipitation}${dr.weather.yesterday === null ? '' : `；昨天 ${dr.weather.yesterday.condition}，降水 ${dr.weather.yesterday.precipitation}`}（只作背景，不推断因果）。`
@@ -265,7 +282,7 @@ export function templateOf(f: FactBundle): string {
         : `根因：${rc.metricTitle} 主要受 ${rc.dimension} ${rc.rows[0]!.label} 影响（${rc.rows[0]!.value}${rc.rows[0]!.delta === undefined ? '' : `，变化 ${rc.rows[0]!.delta}`}）。`
     const suggestionText = dr.suggestions.map((x) => `- ${x}`).join('\n')
     return [
-      `结论：${branchLabel}${dr.assessment.headline}。${dr.targetDay} 营业额 ${dr.today.revenue}，订单 ${dr.today.orders}，客单价 ${dr.today.aov}；毛利 ${dr.today.gross}（毛利率 ${dr.today.grossMargin}）。`,
+      `结论：${branchLabel}${dr.assessment.headline}。${targetLabel} ${dr.mode === 'range' ? '合计 ' : ''}营业额 ${dr.today.revenue}，订单 ${dr.today.orders}，客单价 ${dr.today.aov}；毛利 ${dr.today.gross}（毛利率 ${dr.today.grossMargin}）。`,
       `对比：${yText}；${mText}；${lyText}。`,
       ...(weatherText === '' ? [] : [weatherText]),
       `成本：报损 ${dr.today.loss}，费用 ${dr.today.expense}，净毛利 ${dr.today.netGross}（净毛利率 ${dr.today.netMargin}）；未含房租/水电等固定成本。`,
@@ -473,7 +490,7 @@ export async function generateNarrative(deps: NarrativeDeps): Promise<NarrativeR
       try {
         for await (const d of model.completeStream(
           [
-            { role: 'system', content: systemOf(deps.focus) },
+            { role: 'system', content: systemOf(deps.facts) },
             {
               role: 'user',
               content: userPrompt(
@@ -600,7 +617,7 @@ export async function* streamNarrative(
     try {
       for await (const d of model.completeStream(
         [
-          { role: 'system', content: systemOf(deps.focus) },
+          { role: 'system', content: systemOf(deps.facts) },
           {
             role: 'user',
             content: userPrompt(

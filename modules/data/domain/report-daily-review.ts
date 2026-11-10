@@ -135,9 +135,16 @@ export interface DailyDriver {
 }
 
 export interface DailyReviewBundle {
-  /** 目标营业日（YYYY-MM-DD）。 */
+  /** `day` = 单日日报；`range` = 本月/近 7 天/自定义的区间复盘。 */
+  mode: 'day' | 'range'
+  /** 目标营业日（range 模式 = 区间末日）。 */
   targetDay: string
-  /** 昨天；数据不全 ⇒ null。 */
+  /** range 模式的区间起止与天数（day 模式缺席）。 */
+  rangeFrom?: string
+  rangeTo?: string
+  rangeDays?: number
+  rangeLabel?: string
+  /** 昨天（range 模式 = 上一等长区间的末日）；数据不全 ⇒ null。 */
   yesterday: string | null
   /** MTD 起始日 / 去年同月同日区间。 */
   monthStart: string
@@ -305,6 +312,40 @@ function rawPeriodOf(
   return { from, to, days, revenue, orders, gross, loss, expense, avgRevenue, avgOrders, avgGross, aov, grossMargin, netGross, netMargin }
 }
 
+/** 区间**合计**当作一天的口径用（对比上一区间 / 驱动分解都按合计）。 */
+function totalsOf(raw: RawPeriod): RawDay {
+  const netGross = raw.gross === null ? null : raw.gross - raw.loss - raw.expense
+  const netMargin = raw.revenue !== null && netGross !== null && raw.revenue > 0 ? netGross / raw.revenue : null
+  return {
+    day: `${raw.from} ~ ${raw.to}`,
+    revenue: raw.revenue,
+    orders: raw.orders,
+    gross: raw.gross,
+    loss: raw.loss,
+    expense: raw.expense,
+    aov: raw.aov,
+    grossMargin: raw.grossMargin,
+    netGross,
+    netMargin,
+  }
+}
+
+/** 区间**日均**当作一天的口径用（对比 MTD/去年同期日均）。 */
+function dailyAvgOf(raw: RawPeriod): RawDay {
+  return {
+    day: `${raw.from} ~ ${raw.to}（日均）`,
+    revenue: raw.avgRevenue,
+    orders: raw.avgOrders,
+    gross: raw.avgGross,
+    loss: raw.loss / raw.days,
+    expense: raw.expense / raw.days,
+    aov: raw.aov,
+    grossMargin: raw.grossMargin,
+    netGross: raw.netGross,
+    netMargin: raw.netMargin,
+  }
+}
+
 function snapshotOfDay(raw: RawDay, label: string): DailySnapshot {
   return {
     label,
@@ -400,14 +441,18 @@ export async function buildDailyReview(deps: DailyReviewDeps): Promise<DailyRevi
   const baseArgs = baseArgsOf(deps.spec, deps.branchNum)
   if (baseArgs === null) return null
 
-  const ceiling = deps.period.mode === 'day' && deps.period.day !== undefined
-    ? deps.period.day
-    : deps.range.to
+  const isRange = !(deps.period.mode === 'day' && deps.period.day !== undefined)
+  const ceiling = isRange ? deps.range.to : deps.period.day!
   if (!dayjs(ceiling).isValid()) return null
   const monthStart = dayjs(ceiling).startOf('month').format('YYYY-MM-DD')
   const lastYearFrom = dayjs(ceiling).subtract(1, 'year').startOf('month').format('YYYY-MM-DD')
   const lastYearCeiling = dayjs(ceiling).subtract(1, 'year').format('YYYY-MM-DD')
-  const wideFrom = [deps.range.from, monthStart, lastYearFrom]
+  // 区间模式要对比「上一等长区间」，读窗口必须覆盖它（本月从 1 号开始时它在上个月）。
+  const approxDays = isRange ? dayjs(deps.range.to).diff(dayjs(deps.range.from), 'day') + 1 : 1
+  const prevFromApprox = isRange
+    ? dayjs(deps.range.from).subtract(approxDays, 'day').format('YYYY-MM-DD')
+    : deps.range.from
+  const wideFrom = [deps.range.from, monthStart, lastYearFrom, prevFromApprox]
     .reduce((a, b) => (a < b ? a : b))
   const wideTo = ceiling
 
@@ -426,31 +471,56 @@ export async function buildDailyReview(deps: DailyReviewDeps): Promise<DailyRevi
   const common = [...revenueR.map.keys()].filter(
     (d) => d <= ceiling && ordersR.map.has(d) && grossR.map.has(d),
   ).sort()
-  const targetDay = deps.period.mode === 'day' && deps.period.day !== undefined
-    ? deps.period.day
-    : common.at(-1)
+  // 区间模式：末日取区间内最新**有数**的一天（今天可能还没有数），不能拿未来空日当末日。
+  const targetDay = isRange ? common.at(-1) : deps.period.day!
   if (targetDay === undefined) return null
+  const rangeTo = targetDay
+  const rangeDays = isRange ? dayjs(rangeTo).diff(dayjs(deps.range.from), 'day') + 1 : 1
 
-  const today = rawDayOf(m, targetDay)
-  const yesterdayDay = dayjs(targetDay).subtract(1, 'day').format('YYYY-MM-DD')
-  const weather = deps.readWeather === undefined ? null : await deps.readWeather(targetDay, yesterdayDay)
-  const yesterdayRaw = rawDayOf(m, yesterdayDay)
-  const yesterday = yesterdayRaw.revenue === null && yesterdayRaw.gross === null ? null : yesterdayRaw
+  const periodRaw = isRange ? rawPeriodOf(m, deps.range.from, rangeTo, rangeDays) : null
+  const today = periodRaw === null ? rawDayOf(m, targetDay) : totalsOf(periodRaw)
+  const todayAvg = periodRaw === null ? today : dailyAvgOf(periodRaw)
+  const prevRangeTo = isRange ? dayjs(deps.range.from).subtract(1, 'day').format('YYYY-MM-DD') : null
+  const prevRangeFrom = isRange && prevRangeTo !== null
+    ? dayjs(prevRangeTo).subtract(rangeDays - 1, 'day').format('YYYY-MM-DD')
+    : null
+  const prevRaw = isRange && prevRangeFrom !== null
+    ? rawPeriodOf(m, prevRangeFrom, prevRangeTo!, rangeDays)
+    : null
+  const yesterdayDay = isRange ? prevRangeTo! : dayjs(targetDay).subtract(1, 'day').format('YYYY-MM-DD')
+  const weather = isRange || deps.readWeather === undefined
+    ? null
+    : await deps.readWeather(targetDay, yesterdayDay)
+  const yesterdayRaw = isRange
+    ? rawDayOf(m, targetDay) // 占位；区间模式用 prevRaw 合计
+    : rawDayOf(m, yesterdayDay)
+  const yesterday = isRange
+    ? (prevRaw === null || (prevRaw.revenue === null && prevRaw.gross === null) ? null : totalsOf(prevRaw))
+    : (yesterdayRaw.revenue === null && yesterdayRaw.gross === null ? null : yesterdayRaw)
 
-  const mtdDays = dayjs(targetDay).date()
-  const mtd = rawPeriodOf(m, monthStart, targetDay, mtdDays)
-  const lyDay = Math.min(dayjs(targetDay).date(), dayjs(lastYearCeiling).daysInMonth())
-  const lastYear = rawPeriodOf(m, lastYearFrom, lastYearCeiling, lyDay)
+  const mtdDays = dayjs(rangeTo).date()
+  const mtd = rawPeriodOf(m, monthStart, rangeTo, mtdDays)
+  // 去年同期口径跟「实际有数的末日」走：用 ceiling 会把 11-10 的空日也算进区间。
+  const lyFrom = dayjs(rangeTo).subtract(1, 'year').startOf('month').format('YYYY-MM-DD')
+  const lyCeiling = dayjs(rangeTo).subtract(1, 'year').format('YYYY-MM-DD')
+  const lyDay = Math.min(dayjs(rangeTo).date(), dayjs(lyCeiling).daysInMonth())
+  const lastYear = rawPeriodOf(m, lyFrom, lyCeiling, lyDay)
   const hasLastYear = lastYear.revenue !== null || lastYear.gross !== null
 
   const comparisons = {
-    yesterday: yesterday === null ? null : compareOf(today, yesterday, '昨天'),
-    mtdAvg: compareOf(today, mtd, '本月至今日均'),
-    lastYearAvg: hasLastYear ? compareOf(today, lastYear, '去年同月同日日均') : null,
+    yesterday: yesterday === null
+      ? null
+      : compareOf(today, yesterday, isRange ? '上一区间' : '昨天'),
+    // 区间模式的 today 是合计，与「日均」基线比较必须换成日均口径，否则百分比会放大 N 倍。
+    mtdAvg: compareOf(todayAvg, mtd, '本月至今日均'),
+    lastYearAvg: hasLastYear
+      ? compareOf(todayAvg, lastYear, isRange ? '去年同期日均' : '去年同月同日日均')
+      : null,
   }
 
-  // 驱动：优先用昨天；昨天缺失时退 MTD 日均。成本侧 = 毛利率变化 + 报损 + 费用。
+  // 驱动：优先用上一区间合计；缺失时退 MTD 日均。区间模式与日均基线比较时用区间日均。
   const base: RawDay | RawPeriod = yesterday ?? mtd
+  const dt = yesterday === null && isRange ? todayAvg : today
   const isPeriod = 'avgGross' in base
   const baseRevenue = isPeriod ? base.avgRevenue : base.revenue
   const baseOrders = isPeriod ? base.avgOrders : base.orders
@@ -462,34 +532,34 @@ export async function buildDailyReview(deps: DailyReviewDeps): Promise<DailyRevi
     if (value === null || baseValue === null) return
     drivers.push({ side, label, value: fmt(value, format), delta: text, impact })
   }
-  if (today.orders !== null && baseOrders !== null) {
-    const d = today.orders - baseOrders
-    pushDriver('sales', '订单数', today.orders, baseOrders, `${d >= 0 ? '+' : ''}${fmt(d, 'number')} 单`, Math.abs(d * (base.aov ?? 0)), 'number')
+  if (dt.orders !== null && baseOrders !== null) {
+    const d = dt.orders - baseOrders
+    pushDriver('sales', '订单数', dt.orders, baseOrders, `${d >= 0 ? '+' : ''}${fmt(d, 'number')} 单`, Math.abs(d * (base.aov ?? 0)), 'number')
   }
-  if (today.aov !== null && base.aov !== null) {
-    const d = today.aov - base.aov
-    pushDriver('sales', '客单价', today.aov, base.aov, signedAmount(d), Math.abs(d * (today.orders ?? 0)))
+  if (dt.aov !== null && base.aov !== null) {
+    const d = dt.aov - base.aov
+    pushDriver('sales', '客单价', dt.aov, base.aov, signedAmount(d), Math.abs(d * (dt.orders ?? 0)))
   }
-  if (today.gross !== null && baseGross !== null) {
-    const d = today.gross - baseGross
-    pushDriver('cost', '毛利', today.gross, baseGross, signedAmount(d), Math.abs(d))
+  if (dt.gross !== null && baseGross !== null) {
+    const d = dt.gross - baseGross
+    pushDriver('cost', '毛利', dt.gross, baseGross, signedAmount(d), Math.abs(d))
   }
-  if (today.revenue !== null && baseRevenue !== null && today.gross !== null && baseGross !== null) {
-    const cogsDelta = (today.revenue - baseRevenue) - (today.gross - baseGross)
+  if (dt.revenue !== null && baseRevenue !== null && dt.gross !== null && baseGross !== null) {
+    const cogsDelta = (dt.revenue - baseRevenue) - (dt.gross - baseGross)
     if (Math.abs(cogsDelta) > 0) {
       drivers.push({
-        side: 'cost', label: '销售成本', value: fmt(today.revenue - today.gross, 'currency'),
+        side: 'cost', label: '销售成本', value: fmt(dt.revenue - dt.gross, 'currency'),
         delta: signedAmount(cogsDelta), impact: Math.abs(cogsDelta),
       })
     }
   }
-  if (today.loss !== baseLoss) {
-    const d = today.loss - baseLoss
-    if (Math.abs(d) > 0) drivers.push({ side: 'cost', label: '报损', value: fmt(today.loss, 'currency'), delta: signedAmount(d), impact: Math.abs(d) })
+  if (dt.loss !== baseLoss) {
+    const d = dt.loss - baseLoss
+    if (Math.abs(d) > 0) drivers.push({ side: 'cost', label: '报损', value: fmt(dt.loss, 'currency'), delta: signedAmount(d), impact: Math.abs(d) })
   }
-  if (today.expense !== baseExpense) {
-    const d = today.expense - baseExpense
-    if (Math.abs(d) > 0) drivers.push({ side: 'cost', label: '费用', value: fmt(today.expense, 'currency'), delta: signedAmount(d), impact: Math.abs(d) })
+  if (dt.expense !== baseExpense) {
+    const d = dt.expense - baseExpense
+    if (Math.abs(d) > 0) drivers.push({ side: 'cost', label: '费用', value: fmt(dt.expense, 'currency'), delta: signedAmount(d), impact: Math.abs(d) })
   }
   drivers.sort((a, b) => b.impact - a.impact)
   const topDrivers = drivers.slice(0, 4).map(({ impact: _impact, ...d }) => d)
@@ -520,9 +590,9 @@ export async function buildDailyReview(deps: DailyReviewDeps): Promise<DailyRevi
   ]
   if (!lossR.ok) notes.push('报损指标查询失败/无权限，净毛利按报损 0 计，结果不可信。')
   if (!expenseR.ok) notes.push('费用指标查询失败/无权限，净毛利按费用 0 计，结果不可信。')
-  if (comparisons.lastYearAvg === null) notes.push('去年同月无数据，无法比较去年同月日均。')
-  if (yesterday === null) notes.push('昨天数据不完整，环比基线改用本月至今日均。')
-  if (today.revenue === null) notes.push('所选日期没有营业额数据。')
+  if (comparisons.lastYearAvg === null) notes.push('去年同期无数据，无法比较去年同期日均。')
+  if (yesterday === null) notes.push(`${isRange ? '上一区间' : '昨天'}数据不完整，环比基线改用本月至今日均。`)
+  if (today.revenue === null) notes.push(`${isRange ? '所选区间' : '所选日期'}没有营业额数据。`)
   if (weather !== null) notes.push('天气是外部背景（Open-Meteo），只作解释线索，不推断因果；需结合客流/订单验证。')
 
   const suggestions: string[] = []
@@ -531,7 +601,7 @@ export async function buildDailyReview(deps: DailyReviewDeps): Promise<DailyRevi
     : today.netGross - today.revenue * NET_MARGIN_TARGET
   if (today.netMargin !== null && today.netMargin < NET_MARGIN_TARGET) {
     suggestions.push(
-      `净毛利率 ${fmt(today.netMargin, 'percent')}，低于 ${fmt(NET_MARGIN_TARGET, 'percent')} 目标；当日净毛利缺口 ${signedAmount(targetGap)}，优先压降报损/费用并核对毛利。`,
+      `净毛利率 ${fmt(today.netMargin, 'percent')}，低于 ${fmt(NET_MARGIN_TARGET, 'percent')} 目标；${isRange ? '区间' : '当日'}净毛利缺口 ${signedAmount(targetGap)}，优先压降报损/费用并核对毛利。`,
     )
   }
   const revDelta = comparisons.yesterday?.delta.revenue ?? comparisons.mtdAvg.delta.revenue
@@ -545,7 +615,7 @@ export async function buildDailyReview(deps: DailyReviewDeps): Promise<DailyRevi
   const topCost = topDrivers.find((d) => d.side === 'cost' && d.delta.startsWith('+'))
   if (topCost !== undefined) suggestions.push(`${topCost.label}较基线 ${topCost.delta}（当日 ${topCost.value}），先复盘该项的明细原因。`)
   if (today.loss > 0 && dayjs(targetDay).date() > 1) {
-    suggestions.push(`报损当日 ${fmt(today.loss, 'currency')}，按原因取前 2 项核对是否存在集中报废/验收问题。`)
+    suggestions.push(`${isRange ? '区间报损' : '报损当日'} ${fmt(today.loss, 'currency')}，按原因取前 2 项核对是否存在集中报废/验收问题。`)
   }
   if (suggestions.length < 2) {
     suggestions.push('先核对当日数据完整性（营业额/毛利/报损/费用是否都已到齐），再做经营动作判断。')
@@ -566,14 +636,17 @@ export async function buildDailyReview(deps: DailyReviewDeps): Promise<DailyRevi
     netMargin: fmt(mtd.netMargin, 'percent'),
   }
   const snapshots = [
-    snapshotOfDay(today, '目标日'),
+    snapshotOfDay(today, isRange ? '目标区间合计' : '目标日'),
     comparisons.yesterday?.baseline,
     comparisons.mtdAvg.baseline,
     comparisons.lastYearAvg?.baseline,
     mtdSnapshot,
     snapshotOfAvg(mtd, '本月累计日均'),
   ].filter((x): x is DailySnapshot => x !== undefined)
-  const numbers = new Set<string>([targetDay, yesterdayDay, monthStart, lastYearFrom, lastYearCeiling, String(mtdDays), String(lyDay)])
+  const numbers = new Set<string>([
+    targetDay, yesterdayDay, monthStart, lyFrom, lyCeiling, String(mtdDays), String(lyDay),
+    ...(isRange ? [deps.range.from, rangeTo, String(rangeDays)] : []),
+  ])
   const add = (s: string): void => {
     if (s !== '' && s !== EMPTY && s !== '-') numbers.add(s)
   }
@@ -600,14 +673,21 @@ export async function buildDailyReview(deps: DailyReviewDeps): Promise<DailyRevi
   }
 
   const body = {
-    targetDay,
+    mode: isRange ? 'range' as const : 'day' as const,
+    targetDay: rangeTo,
+    ...(isRange ? {
+      rangeFrom: deps.range.from,
+      rangeTo,
+      rangeDays,
+      rangeLabel: `${deps.range.from} ~ ${rangeTo}（${rangeDays} 天）`,
+    } : {}),
     yesterday: yesterday === null ? null : yesterdayDay,
     assessment,
     weather,
     monthStart,
-    lastYearFrom,
-    lastYearTo: lastYearCeiling,
-    today: snapshotOfDay(today, '目标日'),
+    lastYearFrom: lyFrom,
+    lastYearTo: lyCeiling,
+    today: snapshotOfDay(today, isRange ? '目标区间合计' : '目标日'),
     comparisons,
     mtd: mtdSnapshot,
 
