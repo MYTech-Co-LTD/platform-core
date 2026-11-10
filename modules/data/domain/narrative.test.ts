@@ -548,6 +548,15 @@ describe('daily_review 模板', () => {
     expect(res.text).toMatch(/^- /m)
   })
 
+  it('模型已用 - 列表写动作（没写「建议：」）⇒ 不再补模板建议', async () => {
+    const dailyFacts: FactBundle = { ...facts, focus: 'daily_review', dailyReview: dr }
+    const { model } = fakeModel([{ content: '结论：下滑。\n\n- 查客流\n- 查排班' }])
+    const { pool } = fakePool()
+    const res = await generateNarrative(depsOf(pool, { model, facts: dailyFacts, focus: 'daily_review' }))
+    expect(res.fallback).toBe(false)
+    expect(res.text.split('\n').filter((l) => l.trim().startsWith('- '))).toHaveLength(2)
+  })
+
   it('包含三基线、净毛利、MTD 与建议，并标注未含房租', () => {
     const text = templateOf({ ...facts, focus: 'daily_review', dailyReview: dr })
     expect(text).toContain('vs 昨天')

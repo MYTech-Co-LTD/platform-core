@@ -36,6 +36,8 @@ import type { ToolboxDeps } from './toolbox/registry'
 /** 根因事实里的一行（值已格式化，白名单与展示同一把尺）。 */
 export interface RootCauseRow {
   label: string
+  /** item_num 行补过商品名后，原始编码留在这里（探针 SQL 仍按编码过滤）。 */
+  rawLabel?: string
   value: string
   /** variance 才有：本期 - 基期（格式化后的值）。 */
   delta?: string

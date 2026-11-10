@@ -24,7 +24,7 @@ import {
 } from './report-narrative-store'
 
 /** 参与缓存键；**改提示词 = 升版本号**（旧缓存自然不再命中）。 */
-export const NARRATIVE_PROMPT_VERSION = 'narrative-v8'
+export const NARRATIVE_PROMPT_VERSION = 'narrative-v9'
 
 /** 与 spec §4.1 同形的 SSE 事件。`replace` 表示「已流出的内容作废」，客户端必须整段替换。 */
 export type NarrativeEvent =
@@ -100,7 +100,7 @@ const DAILY_REVIEW_BASE = [
 ].join('\n')
 
 const DAILY_REVIEW_SYSTEM = [
-  '输出 3–4 段自然分析，不要使用“结论：/对比：/成本：/MTD：/驱动：/根因：/建议：”这类固定小标题，也不要逐项复刻所有对比。',
+  '输出 3–5 段自然分析，每段 2–3 句；不要写成一大段。不要使用“结论：/对比：/成本：/MTD：/驱动：/根因：/建议：”这类固定小标题，也不要逐项复刻所有对比。',
   '第 1 段：一句话判断（正文用 good/neutral/warning/bad/critical 的人话，critical 写“断崖式下滑，先排除闭店/采集缺口”）+ 1–2 个决定性数字。',
   '第 2 段：按重要性讲原因，引用 facts.dailyReview.drivers、天气和 facts.analysis 的 finding；根因必须说明是销量/价格/成本/结构哪一类，并给出金额。',
   '第 3 段：2–3 条按影响排序的动作，第一条必须回应最大负向驱动或根因；每条单独一行、以 `- ` 开头，写对象+动作+核对点，不要通用套话。',
@@ -307,7 +307,10 @@ function ensureDailySections(text: string, facts: FactBundle): string {
   // 只看标题会在缓存里留下一个空的「建议：」尾巴（2026-11-10 实测），必须按内容判。
   const suggestionAt = Math.max(text.lastIndexOf('建议'), text.lastIndexOf('动作'))
   const tail = suggestionAt < 0 ? '' : text.slice(suggestionAt)
-  const hasBullet = tail.split('\n').some((l) => l.trim().startsWith('- ') && l.trim().length > 2)
+  // 有标题就只看标题之后；没有标题时看全文——模型常把动作直接写成 `- ` 列表、不写「建议：」，
+  // 只认标题会把已有动作再补一遍（2026-11-10 实测：动作列表重复一轮）。
+  const hasBullet = (suggestionAt < 0 ? text : tail)
+    .split('\n').some((l) => l.trim().startsWith('- ') && l.trim().length > 2)
   if (!hasBullet) {
     const idx = lines.findIndex((l) => l.startsWith('建议：'))
     if (idx >= 0) {

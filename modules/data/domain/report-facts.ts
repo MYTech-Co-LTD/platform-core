@@ -630,6 +630,43 @@ export async function buildFacts(
       )
       if (analysis !== null) {
         for (const n of analysis.numbers) if (n !== '' && n !== '-') numbers.add(n)
+        // 商品维度的 finding 行只有 item_num；补一次名称映射，避免模型把内部编码当商品名输出
+        // （2026-11-10 实测：次一级商品全写成「商品 312005897」）。只查当日同店同账套，有界。
+        if (branchNum !== undefined && reportSystemBook !== null) {
+          const itemFindings = analysis.findings.filter((f) => f.dimension === 'item_num')
+          const codes = [...new Set(itemFindings.flatMap((f) => f.rows.map((r) => r.label)))]
+          if (codes.length > 0) {
+            try {
+              const out = await runWarehouseSqlParams(
+                analystPool(),
+                `select item_num::text as item_num, any_value(item_name) as item_name
+                   from fct_retail_item_profit
+                  where system_book = $1::int and branch_num = $2::int and bizday = $3
+                    and item_num::text = any($4::text[])
+                  group by item_num`,
+                [reportSystemBook, branchNum, dailyReview.targetDay, codes],
+              )
+              const nameOf = new Map<string, string>()
+              for (const r of out.rows) {
+                const rec = Object.fromEntries(out.columns.map((c, i) => [c, r[i]]))
+                const num = typeof rec['item_num'] === 'string' ? rec['item_num'] : ''
+                const name = typeof rec['item_name'] === 'string' ? rec['item_name'] : ''
+                if (num !== '' && name !== '') nameOf.set(num, name)
+              }
+              for (const f of itemFindings) {
+                for (const row of f.rows) {
+                  const name = nameOf.get(row.label)
+                  if (name !== undefined) {
+                    row.rawLabel = row.label
+                    row.label = `${name}（${row.label}）`
+                  }
+                }
+              }
+            } catch {
+              // 名称是增强项；取不到就保留编码，不影响主分析。
+            }
+          }
+        }
         const top = analysis.findings.find((f) => (f.kind === 'variance' || f.kind === 'top') && f.rows.length > 0)
         const row = top?.rows[0]
         // 建议放在商品拆解之后再加：item_num 要先解析成商品名，不能把内部编码直接抛给读者。
@@ -643,6 +680,7 @@ export async function buildFacts(
         // 商品根因拆解：只对同店、单账套、有 item_num 的 finding 跑一条定点查询。
         if (top?.dimension === 'item_num' && row !== undefined && branchNum !== undefined
           && reportSystemBook !== null && dailyReview.yesterday !== null) {
+          const itemCode = row.rawLabel ?? row.label
           try {
             const out = await runWarehouseSqlParams(
               analystPool(),
@@ -651,7 +689,7 @@ export async function buildFacts(
                  from fct_retail_item_profit
                 where system_book = $1::int and branch_num = $2::int and item_num = $3::int
                   and bizday in ($4, $5)`,
-              [reportSystemBook, branchNum, row.label, dailyReview.yesterday, dailyReview.targetDay],
+              [reportSystemBook, branchNum, itemCode, dailyReview.yesterday, dailyReview.targetDay],
             )
             const byDay = new Map<string, Record<string, unknown>>()
             for (const r of out.rows) {
@@ -679,7 +717,7 @@ export async function buildFacts(
               const name = typeof cur['item_name'] === 'string' && cur['item_name'] !== '' ? cur['item_name'] : null
               const money = (v: number | null): string => v === null ? '-' : formatValue(v, 'currency').replace(/^¥/, '')
               const qty = (v: number): string => formatValue(v, 'number')
-              const itemLabel = name === null ? `商品 ${row.label}` : `${name}（${row.label}）`
+              const itemLabel = name === null ? `商品 ${itemCode}` : `${name}（${itemCode}）`
               pushRootCauseSuggestion(itemLabel)
               let summary: string
               if (qtyT === 0 && qtyP > 0) {
@@ -692,7 +730,7 @@ export async function buildFacts(
                 summary = `${itemLabel} 主要因单位成本 ${money(unitCostP)}→${money(unitCostT)}（成本效应 ${money(costEffect)}），毛利减少 ${money(Math.abs(deltaProfit))}`
               }
               const detail: RootCauseDetail = {
-                itemNum: row.label,
+                itemNum: itemCode,
                 itemName: name,
                 day: dailyReview.targetDay,
                 prevDay: dailyReview.yesterday,
@@ -722,7 +760,11 @@ export async function buildFacts(
         // 拆解没跑成（非商品维度 / 缺门店 / 查询失败）时退回编码级建议；
         // 已按商品名加过（上面）则这里的 includes 会命中并跳过。
         if (top !== undefined && row !== undefined) {
-          pushRootCauseSuggestion(top.dimension === 'item_num' ? `商品 ${row.label}` : `${top.dimension} ${row.label}`)
+          pushRootCauseSuggestion(
+            top.dimension === 'item_num'
+              ? (row.rawLabel !== undefined ? row.label : `商品 ${row.label}`)
+              : `${top.dimension} ${row.label}`,
+          )
         }
       }
     }
