@@ -80,11 +80,42 @@ function sectionsOf(text: string): string[] {
   return out
 }
 
-/** 极简富文本：模型只被允许用 `**粗体**`，不为此引入整个 Markdown 渲染器。 */
-function renderInline(s: string): ReactNode {
+/**
+ * 数字高亮：日报的说服力全在数字上。不依赖模型一定写 `**`，渲染层主动把
+ * 数字加粗并按符号着色（负=红、正=绿），日期/时间保持原样不抢视觉。
+ */
+const NUM_TOKEN = /\d{4}-\d{2}-\d{2}|\d{1,2}:\d{2}(?::\d{2})?|[+-]?\d[\d,]*(?:\.\d+)?(?:%|pp|°C|℃|mm|cm|单|件|个|天|家)?/g
+function withNumbers(s: string): ReactNode {
+  const out: ReactNode[] = []
+  let last = 0
+  let hit = false
+  for (const m of s.matchAll(NUM_TOKEN)) {
+    const tok = m[0]
+    const at = m.index ?? 0
+    if (at > last) out.push(s.slice(last, at))
+    if (/^\d{4}-\d{2}-\d{2}$/.test(tok) || /^\d{1,2}:\d{2}/.test(tok)) {
+      out.push(tok)
+    } else {
+      hit = true
+      const color = tok.startsWith('-') ? '#cf1322' : tok.startsWith('+') ? '#389e0d' : '#1f1f1f'
+      out.push(<strong key={at} style={{ color, fontWeight: 600 }}>{tok}</strong>)
+    }
+    last = at + tok.length
+  }
+  if (!hit) return s
+  if (last < s.length) out.push(s.slice(last))
+  return <>{out}</>
+}
+
+/** 极简富文本：`**粗体**` + 数字高亮；不引入整个 Markdown 渲染器。 */
+function renderRich(s: string): ReactNode {
   const parts = s.split('**')
-  if (parts.length === 1) return s
-  return parts.map((p, i) => (i % 2 === 1 ? <strong key={i}>{p}</strong> : p))
+  if (parts.length === 1) return withNumbers(s)
+  return parts.map((p, i) =>
+    i % 2 === 1
+      ? <strong key={i} style={{ fontWeight: 650 }}>{p}</strong>
+      : <span key={i}>{withNumbers(p)}</span>,
+  )
 }
 
 /** 期间标签：11-08 这类裸日期要带上「单日/本月」语义，避免读者猜。 */
@@ -198,25 +229,47 @@ export default function AiTextPanel({ reportId, panelIndex, focus, period, branc
         {blocks.length === 0 && phase !== 'done' ? (
           <Typography.Text type="secondary">模型正在分析，通常需要 20–40 秒…</Typography.Text>
         ) : (
-          blocks.map((block, i) => (
-            <Typography.Paragraph
-              key={i}
-              style={{
-                lineHeight: 1.8, marginBottom: 12,
-                ...(i === 0 ? { background: '#fafafa', padding: '8px 12px', borderLeft: '3px solid #1677ff' } : {}),
-              }}
-            >
-              {block.split('\n').map((line, li) => {
-                const t = line.trim()
-                if (t.startsWith('- ')) {
-                  return <div key={li} style={{ paddingLeft: 10, marginTop: 4 }}>• {renderInline(t.slice(2))}</div>
-                }
-                // 每行独立成 div + 行距：模板回退只有单换行，靠 <br> 会挤成一坨。
-                return <div key={li} style={{ marginTop: li === 0 ? 0 : 6 }}>{renderInline(t)}</div>
-              })}
-              {phase !== 'done' && i === blocks.length - 1 ? '▍' : ''}
-            </Typography.Paragraph>
-          ))
+          blocks.map((block, i) => {
+            const lines = block.split('\n').map((l) => l.trim()).filter((l) => l !== '')
+            const prose = lines.filter((l) => !l.startsWith('- '))
+            const bullets = lines.filter((l) => l.startsWith('- '))
+            const first = i === 0
+            return (
+              <div
+                key={i}
+                style={{
+                  marginBottom: 14,
+                  ...(first
+                    ? { background: '#f6f9ff', padding: '10px 14px', borderLeft: '3px solid #1677ff', borderRadius: 6 }
+                    : {}),
+                }}
+              >
+                {prose.map((line, li) => (
+                  <Typography.Paragraph
+                    key={li}
+                    style={{
+                      margin: li === prose.length - 1 ? 0 : '0 0 8px',
+                      lineHeight: 1.9,
+                      fontSize: first ? 15 : 14,
+                      color: '#262626',
+                    }}
+                  >
+                    {renderRich(line)}
+                  </Typography.Paragraph>
+                ))}
+                {bullets.length > 0 && (
+                  <ul style={{ margin: prose.length > 0 ? '8px 0 0' : 0, paddingLeft: 20 }}>
+                    {bullets.map((b, bi) => (
+                      <li key={bi} style={{ marginBottom: bi === bullets.length - 1 ? 0 : 6, lineHeight: 1.8 }}>
+                        {renderRich(b.slice(2))}
+                      </li>
+                    ))}
+                  </ul>
+                )}
+                {phase !== 'done' && i === blocks.length - 1 ? <span style={{ color: '#1677ff' }}>▍</span> : null}
+              </div>
+            )
+          })
         )}
       </div>
       {phase === 'done' && (

@@ -117,7 +117,9 @@ describe('AiTextPanel', () => {
     ]))
     renderPanel()
 
-    expect(await screen.findByText('模板：本月销售额 51273.89', undefined, { timeout: 3000 })).toBeInTheDocument()
+    await waitFor(() => {
+      expect(screen.getByTestId('ai-text').textContent).toContain('模板：本月销售额 51273.89')
+    }, { timeout: 3000 })
     // 旧 delta 不能再出现（追加式实现的典型错法会留下「编造的结论 999」）
     expect(screen.queryByText(/999/)).not.toBeInTheDocument()
     expect(screen.getByText('数据摘要')).toBeInTheDocument()
@@ -140,8 +142,8 @@ describe('AiTextPanel', () => {
     const text = screen.getByTestId('ai-text').textContent ?? ''
     expect(text).toContain('结论：下滑。')
     expect(text).toContain('对比：营业额 -58.6%。')
-    expect(text).toContain('• 查客流')
-    expect(text).toContain('• 查排班')
+    expect(text).toContain('查客流')
+    expect(text).toContain('查排班')
     expect(text).toContain('数据截止 2026-11-08 06:00:00 +08:00')
   })
 
