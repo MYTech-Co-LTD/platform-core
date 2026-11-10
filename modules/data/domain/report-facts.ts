@@ -629,6 +629,13 @@ export async function buildFacts(
       )
       if (analysis !== null) {
         for (const n of analysis.numbers) if (n !== '' && n !== '-') numbers.add(n)
+        const top = analysis.findings.find((f) => (f.kind === 'variance' || f.kind === 'top') && f.rows.length > 0)
+        const row = top?.rows[0]
+        if (top !== undefined && row !== undefined && !dailyReview.suggestions.some((s) => s.includes(row.label))) {
+          const delta = row.delta === undefined ? '' : `，变化 ${row.delta}`
+          dailyReview.suggestions.unshift(`针对根因 ${top.dimension} ${row.label}（${row.value}${delta}），核对销量、售价与成本构成`)
+          dailyReview.suggestions.splice(3)
+        }
       }
     }
   }
