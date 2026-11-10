@@ -101,13 +101,13 @@ const DAILY_REVIEW_BASE = [
 
 const DAILY_REVIEW_SYSTEM = [
   '如果 facts.dailyReview 非空，按以下五段输出，纯文本，不要 Markdown 表格/HTML：',
-  '结论：今天（targetDay）的营业额、订单数、客单价、毛利/毛利率，一句话判断比昨天好还是差。',
+  '结论：先用 facts.dailyReview.assessment 的判断（good/neutral/warning/bad/critical）给一句话结论；critical 先写“断崖式下滑，先排除闭店/采集缺口”，不要只复述数字。',
   '对比：分别写 vs 昨天、vs 本月至今日均、vs 去年同月同日日均；每项带营业额/订单/客单价的变化。',
   '成本：毛利、报损、费用、净毛利/净毛利率；必须写「未含房租/水电等固定成本」。',
   'MTD：本月累计营业额/毛利/净毛利/净毛利率，以及与 20% 目标的关系。',
   '驱动：只引用 facts.dailyReview.drivers 的 label/value/delta，点明是销售侧还是成本侧。',
-  '根因：如果 facts.analysis 非空，引用第一条 finding 的维度/标签/值/变化量，点名是哪个商品/客户/门店/订单造成的；编号必须逐字复制完整 label（如 641884684），不得截断、加千分位或改写；为空或全是 unavailable 时写「根因：当前数据不足以分解到具体商品/客户」。',
-  '建议：2–3 条，每条绑定一个金额或项目，写可执行动作，不要空话。',
+  '根因：如果 facts.analysis 非空，引用第一条 finding 的维度/标签/值/变化量，点名是哪个商品/客户/门店/订单造成的；编号必须逐字复制完整 label（如 641884684），不得截断、加千分位或改写；为空或全是 unavailable 时写「根因：当前数据不足以分解到具体商品/客户」。根因必须说明是销量/价格/成本/结构哪一类，不能只说“商品 X 下降”。',
+  '建议：2–3 条，按影响金额排序；第一条必须回应最大负向驱动或根因 finding，写清对象+动作+核对点，不要写通用“核对排班/缺货”套话（除非营业额与订单同步大幅下降，此时先排除闭店/采集缺口）。',
   '只引用 facts.dailyReview 里的数字；不得做 facts 之外的算术；缺失写 "-"。',
   '不要推测天气/竞品/促销等外部原因。',
   '全文不超过 700 个汉字；末尾单独一行写：数据截至 <dataAsOf>（缺失写「新鲜度未知」）。',
@@ -239,7 +239,7 @@ export function templateOf(f: FactBundle): string {
       : `根因：${rc.metricTitle} 主要受 ${rc.dimension} ${rc.rows[0]!.label} 影响（${rc.rows[0]!.value}${rc.rows[0]!.delta === undefined ? '' : `，变化 ${rc.rows[0]!.delta}`}）。`
     const suggestionText = dr.suggestions.map((x, i) => `${i + 1}. ${x}`).join(' ')
     return [
-      `结论：${branchLabel}${dr.targetDay} 营业额 ${dr.today.revenue}，订单 ${dr.today.orders}，客单价 ${dr.today.aov}；毛利 ${dr.today.gross}（毛利率 ${dr.today.grossMargin}）。`,
+      `结论：${branchLabel}${dr.assessment.headline}。${dr.targetDay} 营业额 ${dr.today.revenue}，订单 ${dr.today.orders}，客单价 ${dr.today.aov}；毛利 ${dr.today.gross}（毛利率 ${dr.today.grossMargin}）。`,
       `对比：${yText}；${mText}；${lyText}。`,
       `成本：报损 ${dr.today.loss}，费用 ${dr.today.expense}，净毛利 ${dr.today.netGross}（净毛利率 ${dr.today.netMargin}）；未含房租/水电等固定成本。`,
       `MTD：${dr.mtd.day} 累计营业额 ${dr.mtd.revenue}，毛利 ${dr.mtd.gross}，净毛利 ${dr.mtd.netGross}，净毛利率 ${dr.mtd.netMargin}。`,

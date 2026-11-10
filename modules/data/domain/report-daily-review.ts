@@ -78,6 +78,14 @@ export interface DailyComparison {
   }
 }
 
+export interface DailyAssessment {
+  verdict: 'good' | 'neutral' | 'warning' | 'bad' | 'critical'
+  /** 一句话判断（先结论，不复述所有数字）。 */
+  headline: string
+  /** 最大负向驱动（label + 金额/差值）。 */
+  primaryDriver: string
+}
+
 export interface DailyDriver {
   side: 'sales' | 'cost'
   label: string
@@ -98,6 +106,8 @@ export interface DailyReviewBundle {
   lastYearTo: string
   /** 目标日快照。 */
   today: DailySnapshot
+  /** 一句话经营判断（强弱/断崖）。 */
+  assessment: DailyAssessment
   /** 三个基线对比；去年无数据 ⇒ null。 */
   comparisons: {
     yesterday: DailyComparison | null
@@ -334,6 +344,11 @@ function gradeDelta(d: string, goodDirection: 'up' | 'down' = 'up'): 'good' | 'b
   return goodDirection === 'up' ? (n > 0 ? 'good' : 'bad') : (n < 0 ? 'good' : 'bad')
 }
 
+function pctOf(text: string): number | null {
+  const m = /^(-?\d+(?:\.\d+)?)%$/.exec(text)
+  return m === null ? null : Number(m[1])
+}
+
 /**
  * 构建日报事实包。返回 null ⇒ 报表没有可用数据面板/指标查询全部失败；
  * 目标日无数据时仍返回 bundle（hasData 由调用方按 today 是否为空判断），让文本说「无有效数据」。
@@ -435,6 +450,27 @@ export async function buildDailyReview(deps: DailyReviewDeps): Promise<DailyRevi
   drivers.sort((a, b) => b.impact - a.impact)
   const topDrivers = drivers.slice(0, 4).map(({ impact: _impact, ...d }) => d)
 
+  const revDeltaText = comparisons.yesterday?.delta.revenue ?? comparisons.mtdAvg.delta.revenue
+  const orderDeltaText = comparisons.yesterday?.delta.orders ?? comparisons.mtdAvg.delta.orders
+  const revPct = pctOf(revDeltaText)
+  const orderPct = pctOf(orderDeltaText)
+  const verdict: DailyAssessment['verdict'] =
+    revPct !== null && orderPct !== null && revPct <= -30 && orderPct <= -30 ? 'critical'
+      : revPct !== null && revPct <= -10 ? 'bad'
+        : today.netMargin !== null && today.netMargin < NET_MARGIN_TARGET ? 'warning'
+          : revPct !== null && revPct >= 5 ? 'good' : 'neutral'
+  const primaryDriver = topDrivers[0] === undefined
+    ? '-'
+    : `${topDrivers[0].label} ${topDrivers[0].value}（${topDrivers[0].delta}）`
+  const headline = verdict === 'critical'
+    ? `断崖式下滑：营业额 ${revDeltaText}、订单 ${orderDeltaText}；先排除闭店/采集缺口`
+    : verdict === 'bad'
+      ? `营业额 ${revDeltaText}，主要拖累为 ${primaryDriver}`
+      : verdict === 'good'
+        ? `营业额 ${revDeltaText}，高于基线`
+        : `营业额 ${revDeltaText}，基本持平`
+  const assessment: DailyAssessment = { verdict, headline, primaryDriver }
+
   const notes: string[] = [
     '净毛利 = 毛利 − 报损 − 费用；当前**未含房租、水电等固定成本**（P2 接智能表格后扣除）。',
   ]
@@ -515,6 +551,7 @@ export async function buildDailyReview(deps: DailyReviewDeps): Promise<DailyRevi
   const body = {
     targetDay,
     yesterday: yesterday === null ? null : yesterdayDay,
+    assessment,
     monthStart,
     lastYearFrom,
     lastYearTo: lastYearCeiling,
