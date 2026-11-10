@@ -515,6 +515,9 @@ export default function ReportView({
   const [compareResults, setCompareResults] = useState<Record<number, PanelCompare[]>>({})
   // 对比查询按面板去重（results 每完成一格都会触发对比 effect，不能重复发起）。
   const compareLoaded = useRef(new Set<string>())
+  // 只有进入视口（含 300px 预取）的图表才查历史对比——首屏不再一次打 22 条。
+  const compareVisible = useRef(new Set<number>())
+  const [visibleTick, setVisibleTick] = useState(0)
   // 期间：规格默认值即初值；调用方按 reportId 给 ReportView 换 key ⇒ 换报自然重置。
   // 钉了历史版本时保持规格原值；否则单日默认跟到昨天（日报 T-1）。
   const [period, setPeriod] = useState<PeriodSpec | null>(
@@ -609,6 +612,33 @@ export default function ReportView({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [panels, override, period])
 
+  // 视口观察：只给「看得见」的图表查历史对比。
+  useEffect(() => {
+    const els = Array.from(document.querySelectorAll<HTMLElement>('[data-panel-index]'))
+    const markAll = (): void => {
+      panels.forEach((_, i) => compareVisible.current.add(i))
+      setVisibleTick((t) => t + 1)
+    }
+    if (typeof IntersectionObserver === 'undefined') {
+      markAll()
+      return
+    }
+    const obs = new IntersectionObserver((entries) => {
+      let changed = false
+      for (const e of entries) {
+        if (!e.isIntersecting) continue
+        const i = Number((e.target as HTMLElement).dataset.panelIndex)
+        if (!Number.isInteger(i) || compareVisible.current.has(i)) continue
+        compareVisible.current.add(i)
+        changed = true
+      }
+      if (changed) setVisibleTick((t) => t + 1)
+    }, { rootMargin: '300px' })
+    els.forEach((el) => obs.observe(el))
+    return () => obs.disconnect()
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [panels, period])
+
   /**
    * 历史对比**延后且限量**加载：先让主查询（11 格）出数，再最多 3 路并发补对比。
    * 同时发起 22 条对比查询会把 pg_duckdb 打满，首屏几十秒（2026-11-10 现场）。
@@ -622,6 +652,7 @@ export default function ReportView({
     panels.forEach((p, i) => {
       if (p.chart !== 'line' && p.chart !== 'bar') return
       if (results[i]?.kind !== 'ok') return
+      if (!compareVisible.current.has(i)) return
       const ranges = chartCompareRangesOf(p, range, period?.mode)
       if (ranges.length === 0) return
       const sig = `${i}:${JSON.stringify(ranges)}`
@@ -658,7 +689,7 @@ export default function ReportView({
     return () => { cancelled = true; clearTimeout(timer) }
     // argsOf/range 由 override/period 派生；results 变化只用于判断主查询完成。
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [panels, override, period, range, results])
+  }, [panels, override, period, range, results, visibleTick])
 
   const showRangePicker = period === null && defaults.bizday !== undefined
   const showBranchPicker = defaults.branch_num !== undefined
@@ -739,7 +770,7 @@ export default function ReportView({
       )}
       <Row gutter={[12, 12]}>
         {panels.map((p, i) => (
-          <Col key={i} span={p.span}>
+          <Col key={i} span={p.span} data-panel-index={i}>
             {p.chart === 'ai_text' ? (
               // ai_text 的正文在观看时由服务端流式生成（不进 /query、不读 spec 文案）。
               // 期间/门店/版本都是**当前观看态**：切期间即重生成，切门店即换切片。
