@@ -142,11 +142,12 @@ export function allowedNumbers(facts: FactBundle): Set<string> {
           out.add(normalizeNum(v))
           // 单位保留的形态（5.10% 的模型常写 5.1%）
           out.add(normalizeNum(v) + unit)
-          // 事实里是无单位数值、模型补了百分号：数值仍来自 facts，不算新数。
-          // （2026-11-10 实测：模型把 70.0 写成 70.0% 被误判越界 ⇒ 回退模板。）
-          if (unit === '') {
-            out.add(v + '%')
-            out.add(normalizeNum(v) + '%')
+          // `%` 与 `pp` 允许互换：facts 里是 `-70.0pp`，模型常写「-70.0%」。
+          // 数值仍来自 facts，单位差异不该判成「编造数字」⇒ 回退模板（2026-11-10 实测：
+          // 本月/近 7 天/自定义三种期间都卡在 70.0% 上）。
+          for (const u of ['%', 'pp']) {
+            out.add(v + u)
+            out.add(normalizeNum(v) + u)
           }
         }
         addBare(bare)

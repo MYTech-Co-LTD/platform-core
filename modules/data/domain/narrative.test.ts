@@ -187,6 +187,12 @@ describe('badNumbers（日期形态）', () => {
     expect(badNumbers('费用 1,254.6 元，冲减 -410 元。', allowed)).toEqual([])
   })
 
+  it('% 与 pp 允许互换（facts -70.0pp，模型写 -70.0%）', () => {
+    const withPp: FactBundle = { ...facts, numbers: [...facts.numbers, '-70.0pp'] }
+    const allowed = allowedNumbers(withPp)
+    expect(badNumbers('去年同月同日日均 -70.0%、-70.0pp。', allowed)).toEqual([])
+  })
+
   it('无单位数值允许补百分号（facts 70.0，模型写 70.0%）', () => {
     const withRatio: FactBundle = { ...facts, numbers: [...facts.numbers, '70.0'] }
     const allowed = allowedNumbers(withRatio)
