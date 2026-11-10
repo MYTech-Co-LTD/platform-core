@@ -5,7 +5,18 @@
 > **不要**把定时同步塞进 server 进程（应用进程不跑定时副作用）。
 > 运维入口一律走 openship MCP / dashboard，不裸 SSH。
 
-## 0. 前置条件（缺一不可）
+## 0. 生产实例（2026-11-10 建成）
+
+| 实例 | job key | serverId | cron (UTC) | 命令 |
+|---|---|---|---|---|
+| mytech | `custom:qvkapKmBf4jI4H6T` | `23a1091e-b29e-4716-96aa-786d3c90c0a5` | `13 */6 * * *` | `docker exec openship-platform-core-server sh -lc 'pnpm exec tsx scripts/org-sync-all.mjs --apply'` |
+| 山海 | `custom:dbuJg85a8UjjObB7` | `8281d598-af73-4d0b-99dd-bc8681fcc8bb` | `13 */6 * * *` | `docker exec openship-platform-core-shanhai-server sh -lc 'pnpm exec tsx scripts/org-sync-all.mjs --org shanhaiyiguo-org --apply'` |
+
+- 两例均 `notifyConfig.states=['failed']`，通道 `nch_XBUs425hd_KsA_lt`。
+- 2026-11-10 手动 run 均 success；山海首次带自动建号的 apply 为 `usersCreated=22`（3 个 `isForbidden`）。
+- `CASDOOR_APPLICATION` 在位时建号 `signupApplication` 用租户 application；未配置回落 `app-built-in`。
+
+## 0.1 前置条件（缺一不可）
 
 | # | 条件 | 说明 |
 |---|---|---|

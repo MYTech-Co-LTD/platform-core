@@ -112,6 +112,9 @@ async function main(argv) {
           clientId: process.env.CASDOOR_CLIENT_ID ?? '',
           clientSecret: process.env.CASDOOR_CLIENT_SECRET ?? '',
           org,
+          // 与 POST /org-sync 的租户 casdoorFactory 一致：建号的 signupApplication 用租户 application；
+          // 未配置时 CasdoorClient 内部回落 app-built-in（不要传空串——空串不是 nullish，会绕过回落）。
+          application: process.env.CASDOOR_APPLICATION,
           adminUser: process.env.CASDOOR_ADMIN_USER,
           adminPwd: process.env.CASDOOR_ADMIN_PWD,
         })
