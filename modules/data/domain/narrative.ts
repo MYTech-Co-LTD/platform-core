@@ -24,7 +24,7 @@ import {
 } from './report-narrative-store'
 
 /** 参与缓存键；**改提示词 = 升版本号**（旧缓存自然不再命中）。 */
-export const NARRATIVE_PROMPT_VERSION = 'narrative-v7'
+export const NARRATIVE_PROMPT_VERSION = 'narrative-v8'
 
 /** 与 spec §4.1 同形的 SSE 事件。`replace` 表示「已流出的内容作废」，客户端必须整段替换。 */
 export type NarrativeEvent =
@@ -71,7 +71,7 @@ const SYSTEM = [
   '你是门店经营分析助手。只能使用 facts 中的数字和项目名；不得编造、不得做 facts 之外的算术；缺失写 "-"。',
   '数字必须逐字复制 facts.numbers 中的字符串（包括负号、千分位、百分号、小数位）；不得改写符号、去掉负号、取绝对值或做四舍五入。',
   '例如 facts.numbers 里是 -1,234.56，正文必须写 -1,234.56，不能写 1,234.56；facts.numbers 之外的数字不要写。',
-  '输出三段，纯文本，不要 Markdown 表格/HTML：',
+  '输出三段；允许用 **粗体** 强调关键数字，不要 Markdown 表格/HTML/代码块：',
   '结论：…',
   '异常：…',
   '行动：…',
@@ -107,6 +107,7 @@ const DAILY_REVIEW_SYSTEM = [
   '天气只作背景，禁止断言天气导致销售；如要关联，写“可能与客流/销售相关，需结合客流验证”。',
   '只引用 facts.dailyReview / facts.analysis 里的数字；不得做 facts 之外的算术；缺失写 "-"。',
   '提到商品时必须写商品名（facts.dailyReview.rootCauseDetail.itemName），编码只放在括号里；没有名称时写「商品 <编码>」，不要只丢一个 item_num。',
+  '允许 Markdown：用 **粗体** 强调每段 1–2 个关键数字或判断；不要用标题、表格、HTML、代码块。',
   '全文不超过 700 个汉字；不要写「数据截至」——卡片页脚已有新鲜度。',
 ].join('\n')
 
@@ -302,9 +303,20 @@ function ensureDailySections(text: string, facts: FactBundle): string {
     const line = lines.find((l) => l.startsWith('根因：'))
     if (line !== undefined) missing.push(line)
   }
-  if (!text.includes('建议') && !text.includes('动作')) {
-    const line = lines.find((l) => l.startsWith('建议：'))
-    if (line !== undefined) missing.push(line)
+  // 模型可能在「建议：」处被 maxTokens 截断：标题在、后面一条 `- ` 都没有。
+  // 只看标题会在缓存里留下一个空的「建议：」尾巴（2026-11-10 实测），必须按内容判。
+  const suggestionAt = Math.max(text.lastIndexOf('建议'), text.lastIndexOf('动作'))
+  const tail = suggestionAt < 0 ? '' : text.slice(suggestionAt)
+  const hasBullet = tail.split('\n').some((l) => l.trim().startsWith('- ') && l.trim().length > 2)
+  if (!hasBullet) {
+    const idx = lines.findIndex((l) => l.startsWith('建议：'))
+    if (idx >= 0) {
+      const block = lines.slice(idx)
+      const lastLine = text.trimEnd().split('\n').pop()?.trim() ?? ''
+      // 正文已经收了标题行 ⇒ 只补条目，避免出现两个「建议：」。
+      const headerOnly = /^(建议|动作)[：:]$/.test(lastLine)
+      missing.push(...(headerOnly ? block.slice(1) : block))
+    }
   }
   return missing.length === 0 ? text : `${text.trim()}\n${missing.join('\n')}`
 }
@@ -452,7 +464,7 @@ export async function generateNarrative(deps: NarrativeDeps): Promise<NarrativeR
             },
           ],
           [],
-          { temperature: 0, maxTokens: 4000, signal: AbortSignal.timeout(45000) },
+          { temperature: 0, maxTokens: 6000, signal: AbortSignal.timeout(60000) },
         )) {
           // reason 只用于进度感，不进正文（不读即不泄）
           if (d.content !== undefined) text += d.content

@@ -19,6 +19,7 @@
 //  ② **模块级 `streamPost`**（`../lib/api`）：前缀与失败体翻译与其余端点同一套；失败时抛
 //     `ApiError`，这里只上屏一句人话（状态码细节不暴露给观看面）。
 import { useEffect, useState } from 'react'
+import type { ReactNode } from 'react'
 import { Alert, Space, Spin, Tag, Typography } from 'antd'
 import { streamPost } from '../lib/api'
 import type { PeriodSpec } from '../../domain/report-spec'
@@ -77,6 +78,13 @@ function sectionsOf(text: string): string[] {
   }
   flush()
   return out
+}
+
+/** 极简富文本：模型只被允许用 `**粗体**`，不为此引入整个 Markdown 渲染器。 */
+function renderInline(s: string): ReactNode {
+  const parts = s.split('**')
+  if (parts.length === 1) return s
+  return parts.map((p, i) => (i % 2 === 1 ? <strong key={i}>{p}</strong> : p))
 }
 
 /** 期间标签：11-08 这类裸日期要带上「单日/本月」语义，避免读者猜。 */
@@ -201,10 +209,10 @@ export default function AiTextPanel({ reportId, panelIndex, focus, period, branc
               {block.split('\n').map((line, li) => {
                 const t = line.trim()
                 if (t.startsWith('- ')) {
-                  return <div key={li} style={{ paddingLeft: 10, marginTop: 4 }}>• {t.slice(2)}</div>
+                  return <div key={li} style={{ paddingLeft: 10, marginTop: 4 }}>• {renderInline(t.slice(2))}</div>
                 }
                 // 每行独立成 div + 行距：模板回退只有单换行，靠 <br> 会挤成一坨。
-                return <div key={li} style={{ marginTop: li === 0 ? 0 : 6 }}>{t}</div>
+                return <div key={li} style={{ marginTop: li === 0 ? 0 : 6 }}>{renderInline(t)}</div>
               })}
               {phase !== 'done' && i === blocks.length - 1 ? '▍' : ''}
             </Typography.Paragraph>

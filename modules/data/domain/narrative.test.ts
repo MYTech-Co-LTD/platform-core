@@ -538,6 +538,16 @@ describe('daily_review 模板', () => {
     hash: 'hash',
   }
 
+  it('模型在「建议：」处被截断 ⇒ 补回模板建议条目（不缓存空标题）', async () => {
+    const dailyFacts: FactBundle = { ...facts, focus: 'daily_review', dailyReview: dr }
+    const { model } = fakeModel([{ content: '结论：下滑。\n\n建议：' }])
+    const { pool } = fakePool()
+    const res = await generateNarrative(depsOf(pool, { model, facts: dailyFacts, focus: 'daily_review' }))
+    expect(res.fallback).toBe(false)
+    expect(res.text.trimEnd().endsWith('建议：')).toBe(false)
+    expect(res.text).toMatch(/^- /m)
+  })
+
   it('包含三基线、净毛利、MTD 与建议，并标注未含房租', () => {
     const text = templateOf({ ...facts, focus: 'daily_review', dailyReview: dr })
     expect(text).toContain('vs 昨天')
