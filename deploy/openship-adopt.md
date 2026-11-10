@@ -144,7 +144,8 @@ curl -fsS -X PATCH "$OPENSHIP_URL/api/projects/$PROJECT_ID/env" \
       { "key": "CASDOOR_CLIENT_SECRET", "value": "<secret>",   "isSecret": true },
       { "key": "CASDOOR_ADMIN_USER",    "value": "<admin>",    "isSecret": true },
       { "key": "CASDOOR_ADMIN_PWD",     "value": "<admin pw>", "isSecret": true },
-      { "key": "PLATFORM_SESSION_SECRET","value": "<openssl rand -base64 48 生成的 ≥32 字符>", "isSecret": true }
+      { "key": "PLATFORM_SESSION_SECRET","value": "<openssl rand -base64 48 生成的 ≥32 字符>", "isSecret": true },
+      { "key": "INTEGRATION_PROBE_INTERVAL_MS", "value": "60000" }
     ],
     "deletes": []
   }'
@@ -163,6 +164,7 @@ curl -fsS -X PATCH "$OPENSHIP_URL/api/projects/$PROJECT_ID/env" \
 | `CASDOOR_APPLICATION` | `signupApplication` | 账密登录要它，否则真实 Casdoor 报 Unauthorized operation。**只管业务用户的登录方式**——业务 app 若只配扫码（密码登录关），**不要**用它当 admin 登录的 app |
 | `CASDOOR_ADMIN_APPLICATION` | **可省**（缺省 `app-built-in`） | **admin 会话登录**专用的 application（#911）。共享 Casdoor 新版严格校验 app 级登录方式：业务 app 只配扫码时，admin 登录被连坐 ⇒ 启动即挂（2026-10-18 双实例 crash loop）。缺省走内置应用（密码登录恒开）；内置被禁的交付才需显式指定 |
 | `PUBLIC_ORIGIN` | `https://<域名>` | 企微回调 `redirect_uri` 由它拼，必须与最终访问域名逐字一致 |
+| `INTEGRATION_PROBE_INTERVAL_MS` | `60000` | 集成探针循环；**只写 compose `environment` 在本实例不生效**（2026-11-10 实测容器内为空、`platform.integration` 全空），必须在项目 env 显式给，否则集成健康页永远空白 |
 | `SEED_DEMO` | **不要设** | 只在 dev/冒烟置 `1`；生产设了会种出 acme/beta 两个演示租户 |
 
 > ⚠️ **2026-09-13 实测：用本节的 curl（或 MCP `patch_projects_by_id_env`），别用 dashboard 的
