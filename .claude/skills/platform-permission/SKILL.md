@@ -61,7 +61,9 @@ frontend:
   多租户下不存在"只写一个 org"，漏一个 org 该租户全员模块 API 403
 - 供给失败**不再杀进程**（#579 起：降级 + 后台退避重试 + 集成页 `casdoor-admin-session` 变红）——
   看到「平台起了但模块全 403」先查 admin 会话，别怀疑自己的 manifest
-- **授权给人**：平台超管在 Casdoor 后台挂码；租户管理员在 console 角色页（码→角色→人）。
+- **授权给人**：平台专属码（`platformOnly`）只由平台运营在 Casdoor 后台挂码（2026-11-10 拍板 **A1**：
+  不建应用内平台超管，见 `docs/superpowers/specs/2026-11-10-platform-superadmin-and-cross-module-authz-design.md` §2.5）；
+  租户管理员在 console 角色页（码→角色→人）。
   交付新模块时把「要给谁挂哪个码」写进交付清单，别让码声明了却没人持有（症状：规则/页面配了但全员 403）
 
 ### D. 验证（顺序固定）
