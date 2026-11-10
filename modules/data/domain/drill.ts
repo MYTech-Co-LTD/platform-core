@@ -11,6 +11,10 @@ import { effectiveMasks, maskedSelectSql } from './mask'
 import { runWarehouseSql, warehousePool, DATA_WAREHOUSE_UNCONFIGURED } from './warehouse'
 import { decorateWithLabels, loadDimensionLookup } from './dimension-labels'
 import { DATA_AS_OF_SQL, execWithLakeRaceRetry, formatDataAsOf, isLakeRaceError, type QueryDeps } from './query-service'
+import { detailProvenance, type DetailProvenance } from './provenance'
+
+// 兼容旧导入：DetailProvenance 已迁到 provenance.ts（共享来源类型）。
+export type { DetailProvenance } from './provenance'
 
 /** limit 缺省/上限（spec §2.4：默认 50，上限 500，超出**静默夹紧**）。 */
 export const DETAIL_LIMIT_DEFAULT = 50
@@ -22,27 +26,6 @@ export interface DetailArgs {
   desc?: boolean
   limit?: number
   offset?: number
-}
-
-/**
- * 结果来源（S0 薄切片）：本次明细结果对应哪条关系、哪个原子粒度键、哪次审计。
- * 纯标注——不改 SQL / 授权 / 掩码；`relation` 是逻辑视图名，不含物理路径或凭据。
- */
-export interface DetailProvenance {
-  /** 直读湖的逻辑关系名（`vw_*`）。 */
-  relation: string
-  /** 原子粒度业务键（= 指标声明的 dimensions）；结果行可由此定位源行。 */
-  keyColumns: string[]
-  /** 本次实际分组维度（keyColumns 的子集；缺省 = 原子粒度）。 */
-  groupedBy: string[]
-  /** 同一 where 的全量行数（与回包 rowCountTotal 同源）。 */
-  rowCountTotal: number
-  /** 明细查询执行时刻。 */
-  drillAsOf: string
-  /** 聚合物化钟；缺席 = 未知。 */
-  dataAsOf?: string
-  /** 本次查询的审计行 id（`data.query_audit.id`）。 */
-  auditId: number
 }
 
 export interface DetailOk {
@@ -316,7 +299,7 @@ export async function runDetailQuery(
     rowCountTotal,
     truncated: result.rows.length >= limit,
     drill_as_of: drillAsOf,
-    provenance: {
+    provenance: detailProvenance({
       relation: drill.relation,
       keyColumns: [...drill.dims],
       groupedBy: [...requested],
@@ -324,7 +307,7 @@ export async function runDetailQuery(
       drillAsOf,
       ...(dataAsOf !== undefined ? { dataAsOf } : {}),
       auditId: okAudit.id,
-    },
+    }),
     ...(dataAsOf !== undefined ? {
       data_as_of: dataAsOf,
       clock_note: `⏱ 明细直读数据湖（查询时刻 ${drillAsOf}），聚合口径截至 ${dataAsOf}——两个时钟不同，逐行相加可能与聚合值不一致，以各自标注为准`,

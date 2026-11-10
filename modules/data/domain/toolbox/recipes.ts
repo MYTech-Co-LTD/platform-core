@@ -8,6 +8,7 @@ import { executeExplore } from '../analysis/explore-exec'
 import { applyRecipe, compileRecipe, recipeTargetOf } from '../analysis/recipes'
 import type { RecipeKind, RecipeRequest } from '../analysis/recipes'
 import { buildEvidencePack } from '../analysis/evidence'
+import { isoNow, recipeProvenance } from '../provenance'
 import type { ToolImpl } from './registry'
 
 const RECIPE_OF = new Set(['variance', 'top_contributors', 'baseline'])
@@ -151,14 +152,13 @@ export const exploreRecipeImpl: ToolImpl = async (deps, args) => {
       result: { rows: applied.rows, total: applied.total ?? null, skipped: applied.skipped ?? 0 },
       evidence,
       // 结果来源（S1）：配方的锚点是指标 + 关系 + 度量 + 执行时刻；口径证据仍在 evidence[]。
-      provenance: {
-        source: 'recipe',
+      provenance: recipeProvenance({
         metricId,
         relation: target.relation,
         measure: target.measure,
         recipe,
-        executedAt: (deps.now ?? (() => new Date()))().toISOString(),
-      },
+        executedAt: isoNow(deps.now),
+      }),
     },
     isError: false,
     auditMetricId: metricId,
