@@ -44,6 +44,14 @@ describe('写面的声明（不需要数据库）', () => {
         .filter((r) => r.method !== 'ALL').map((r) => `${r.method} ${r.path}`))
     expect([...registered].sort()).toEqual([...declared].sort())
   })
+
+  it('initialize 不回 instructions（写面不提供；字段整个省略，与旧版逐字节兼容）', async () => {
+    const app = buildTestApp(mod, makeIdentity({ orgId: ORG }), { pool: null as never })
+    const res = await rpc(app, { jsonrpc: '2.0', id: 1, method: 'initialize', params: {} })
+    const body = await res.json()
+    expect(body.result.serverInfo).toBeDefined()
+    expect('instructions' in body.result).toBe(false)
+  })
 })
 
 /** 一次 JSON-RPC POST 到**写面**端点。raw 给字符串可测「不可解析 body」。 */

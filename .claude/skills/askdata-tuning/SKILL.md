@@ -59,8 +59,9 @@ description: Use when the 企微/OpenClaw 问数 bot 表现不确定——反复
 
 **杠杆 3 —— 指令面，两处都要写**
 
-1. **仓内 SKILL** `deploy/openclaw/data-query-plugin/skills/data-query/SKILL.md`
-   —— 构建期 COPY 进镜像，随版本走；改完要**重建部署**才生效。
+1. **仓内 SKILL 正典** `modules/data/skill/content/openclaw.md`
+   —— 三通道同源正文；插件侧 `skills/data-query/SKILL.md` 由 `pnpm gen:skill` / 构建期生成
+   （gitignored），**不要直接改**；随版本走，改完要**重建部署**才生效。
 2. **工作区 `AGENTS.md`**（状态卷 `workspace/AGENTS.md`）—— 立即生效，但 ⚠️ **卷重建会回退**。
 
 规则内容固定四段：**先用 `search_catalog` 按用户原词检索**（禁止猜 id）；取数只走 `list_metrics`/`query_data`；

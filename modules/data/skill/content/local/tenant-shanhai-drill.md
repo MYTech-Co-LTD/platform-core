@@ -1,0 +1,1 @@
+`metricId=lemeng:retail:order_line`（如「10-20 有多少行」⇒ `{{tool:query_detail}}({metricId:"lemeng:retail:order_line", args:{bizday:{from:"2026-10-20",to:"2026-10-20"}}})`；单日即 from=to，**别写成裸日期串**——bizday 是 `date_range`，形状不对回 `bad_param`/`invalid_value:bizday`。行数看 `rowCountTotal`，别用聚合面的 1000 行截断）。

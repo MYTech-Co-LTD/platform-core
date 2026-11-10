@@ -5,6 +5,7 @@
 //   import 链上若混进运行时依赖，门禁就被迫另起一套「静态清单」= 第二事实源（必漂）。
 //   impl 模块（guide/discovery/health/query）也不在这里 import——注册在 toolbox/all.ts
 //   显式完成（避免「import registry 拉进 pg」的循环/传染）。
+//   · 契约读取用 node:fs（contract.ts），不是 pg/env/Hono；CI 的 tsx import 链仍然只碰静态文件。
 //
 // 不变量：
 //   · 工具面预算：分析师面 ≤14 工具、静态序列化 ≤10KB（常量在此，门禁断言同一来源）。
@@ -19,6 +20,7 @@ import type { MetricParamDef, Requester, SourceTaggedMetric } from '../authz'
 import { visibleMetrics } from '../authz'
 import type { SqlExecutor } from '../query-service'
 import { writeAudit } from '../audit-store'
+import { CONTRACT, faceOf } from '../../skill/contract'
 
 export const TOOL_NAME_RE = /^[A-Za-z0-9_.-]+$/
 export const ANALYST_FACE_MAX_TOOLS = 14
@@ -44,228 +46,24 @@ export interface ToolMeta {
 }
 
 const readOnly = { readOnlyHint: true }
-const obj = { type: 'object', properties: {}, required: [] }
 
-/** 分析师面 11 个固定工具的静态清单（预算：11 ≤14；impl 分册，注册在 toolbox/all.ts）。 */
-export const ANALYST_TOOLS: readonly ToolMeta[] = [
-  {
-    name: 'data_agent_guide', group: 'guide', title: '数据工作流指南',
-    description: '返回数据问数工作流（七步）与硬约束（主体钉死/新鲜度脚注/截断语义），以及今天的日期。开始任何数据任务前先调它。',
-    inputSchema: obj, outputSchema: { type: 'object' },
-    requiredScope: READ_SCOPE, mutating: false, annotations: readOnly,
-  },
-  {
-    name: 'data_harness_catalog', group: 'guide', title: '工具清单',
-    description: '列出本面全部工具（分组/scope/是否写）。与注册表逐条一致。',
-    inputSchema: obj, outputSchema: { type: 'object' },
-    requiredScope: READ_SCOPE, mutating: false, annotations: readOnly,
-  },
-  {
-    name: 'search_catalog', group: 'discovery', title: '搜索目录',
-    description: '按关键词搜索可见指标（或数据集）。搜指标时同义词也命中；数据集只按名称匹配。返回 id/标题/档位/归属/一句话说明，≤20 条。',
-    inputSchema: {
-      type: 'object',
-      properties: {
-        q: { type: 'string', description: '关键词（id/标题/说明/同义词的子串，大小写不敏感）' },
-        kind: { type: 'string', enum: ['metric', 'dataset'], description: '缺省 = metric' },
-        tier: { type: 'string', enum: ['certified', 'custom'], description: 'certified=平台口径(l1)，custom=本租户口径(l2)' },
-      },
-      required: [],
-    },
-    outputSchema: { type: 'object' },
-    requiredScope: READ_SCOPE, mutating: false, annotations: readOnly,
-  },
-  {
-    name: 'describe_metric', group: 'discovery', title: '指标详情',
-    description: '按 id 取指标详情：口径定义/粒度维度/参数/实体与同义词/归属/档位/版本/新鲜度。查数前必调（拿参数键名与维度）。',
-    inputSchema: {
-      type: 'object',
-      properties: {
-        id: { type: 'string', description: '指标 id（取自 search_catalog 或 list）' },
-        coverage: { type: 'boolean', description: '包含数据覆盖区间 {minBizday,maxBizday}（按需；问「最早/到几号」时传 true）' },
-      },
-      required: ['id'],
-    },
-    outputSchema: { type: 'object' },
-    requiredScope: READ_SCOPE, mutating: false, annotations: readOnly,
-  },
-  {
-    name: 'describe_dataset', group: 'discovery', title: '数据集详情',
-    description: '按 `schema.table` 取数据集的列/类型/归属/新鲜度。只见平台暴露的关系。',
-    inputSchema: {
-      type: 'object',
-      properties: { dataset: { type: 'string', description: '关系名（如 marts.fct_retail_sale）' } },
-      required: ['dataset'],
-    },
-    outputSchema: { type: 'object' },
-    requiredScope: READ_SCOPE, mutating: false, annotations: readOnly,
-  },
-  {
-    name: 'sample_dimension_values', group: 'discovery', title: '维度值抽样',
-    description: '取某指标某维度的取值与频次（≤50 行），用于确认过滤值的确切写法（如门店名）。',
-    inputSchema: {
-      type: 'object',
-      properties: {
-        metricId: { type: 'string' },
-        dimension: { type: 'string', description: '维度名（须是该指标粒度维度之一）' },
-        q: { type: 'string', description: '子串过滤（LIKE 包裹，转义通配）' },
-        limit: { type: 'integer', minimum: 1, maximum: 50, description: '缺省 50' },
-      },
-      required: ['metricId', 'dimension'],
-    },
-    outputSchema: { type: 'object' },
-    requiredScope: QUERY_SCOPE, mutating: false, annotations: readOnly,
-  },
-  {
-    name: 'preview_query', group: 'query', title: '预览查询计划',
-    description: '按指标+切片参数生成将执行的 SQL 与行数上限——只编译不执行（0 次仓库查询）。核对口径/过滤用。',
-    inputSchema: {
-      type: 'object',
-      properties: {
-        metricId: { type: 'string' },
-        args: { type: 'object', description: '指标声明参数（键名以 describe_metric 为准）' },
-        slicing: { type: 'object', description: '{dimensions?,filters?,orderBy?,limit?,total?}' },
-      },
-      required: ['metricId'],
-    },
-    outputSchema: { type: 'object' },
-    requiredScope: QUERY_SCOPE, mutating: false, annotations: readOnly,
-  },
-  {
-    name: 'query_metric', group: 'query', title: '受治理查询',
-    description: '按指标 id 查数，回完整信任信封（口径版本/主体/数据截止/行集/审计 id）。主体由平台钉死；切片维度超出粒度即拒；行上限 1000。',
-    inputSchema: {
-      type: 'object',
-      properties: {
-        metricId: { type: 'string' },
-        args: { type: 'object' },
-        dimensions: { type: 'array', items: { type: 'string' }, description: '聚合维度（⊆ 指标粒度；缺省 = 粒度明细）' },
-        filters: { type: 'object', description: '已声明参数或维度的等值/IN 过滤' },
-        orderBy: { type: 'array', items: { type: 'object', properties: { column: { type: 'string' }, dir: { type: 'string', enum: ['asc', 'desc'] } }, required: ['column'] } },
-        limit: { type: 'integer', minimum: 1, maximum: 1000 },
-        total: { type: 'boolean', description: '切片时显式 true 才回 total（部分合计≠全局合计）' },
-      },
-      required: ['metricId'],
-    },
-    outputSchema: { type: 'object' },
-    requiredScope: QUERY_SCOPE, mutating: false, annotations: readOnly,
-  },
-  {
-    name: 'explore_query', group: 'query', title: '受约束探索查询',
-    description:
-      '对 marts 做结构化聚合（**不收 SQL 文本**）：relation + joins + measures + dimensions + filters + limit。'
-      + 'org 由平台钉死；列必须真实存在；被掩码的列/整表拒用；行上限 1000。'
-      + '跨对象问题先 joins 声明语义关系（见 relations.yml），再用 `<关系名>.<列>` 引用被 join 表的列；'
-      + 'join 是内连接（空键/未匹配行不计）。用于「为什么/构成/对比」类分析；'
-      + '要拿已认证口径的数字仍用 query_metric。',
-    inputSchema: {
-      type: 'object',
-      properties: {
-        relation: { type: 'string', description: 'marts 模型名（如 fct_retail_sale）' },
-        joins: {
-          type: 'array',
-          items: { type: 'string' },
-          description: '语义关系名（relations.yml，≤5）；只有 verified 且命中率 ≥0.95 的关系可用',
-        },
-        measures: {
-          type: 'array',
-          description: '聚合列（1–10 项）',
-          items: {
-            type: 'object',
-            properties: {
-              agg: { type: 'string', enum: ['sum', 'avg', 'min', 'max', 'count', 'count_distinct'] },
-              column: { type: 'string' },
-              as: { type: 'string', description: '别名（缺省 <agg>_<column>）' },
-            },
-            required: ['agg', 'column'],
-          },
-        },
-        dimensions: { type: 'array', items: { type: 'string' }, description: '分组维度（≤4）' },
-        filters: {
-          type: 'array',
-          description: '过滤（≤10 项）；op ∈ eq/neq/in/gte/lte/between',
-          items: {
-            type: 'object',
-            properties: {
-              column: { type: 'string' },
-              op: { type: 'string', enum: ['eq', 'neq', 'in', 'gte', 'lte', 'between'] },
-              value: {},
-            },
-            required: ['column', 'op', 'value'],
-          },
-        },
-        orderBy: {
-          type: 'object',
-          properties: { key: { type: 'string' }, desc: { type: 'boolean' } },
-          required: ['key'],
-        },
-        limit: { type: 'integer', minimum: 1, maximum: 1000, description: '缺省 200' },
-      },
-      required: ['relation', 'measures'],
-    },
-    outputSchema: { type: 'object' },
-    requiredScope: QUERY_SCOPE, mutating: false, annotations: readOnly,
-  },
-  {
-    name: 'explore_recipe', group: 'query', title: '分析配方',
-    description:
-      '三个写死口径的分析配方：variance（两期方差分解）/ top_contributors（Top-N 贡献）/ baseline（基线异常，'
-      + '中位数+MAD，|score|≥3.5）。只支持单列聚合指标（复合口径请用 explore_query）。结果带证据包（SQL/口径/数据截至）。',
-    inputSchema: {
-      type: 'object',
-      properties: {
-        recipe: { type: 'string', enum: ['variance', 'top_contributors', 'baseline'] },
-        metricId: { type: 'string' },
-        dimension: { type: 'string', description: '分组维度（列名）' },
-        periodA: { type: 'object', description: 'variance 本期 {from,to}' },
-        periodB: { type: 'object', description: 'variance 基期 {from,to}' },
-        period: { type: 'object', description: 'top_contributors 窗口 {from,to}' },
-        asOf: { type: 'string', description: 'baseline 观测日 YYYY-MM-DD' },
-        topN: { type: 'integer', minimum: 1, maximum: 50, description: '缺省 10' },
-        baselineWindowDays: { type: 'integer', minimum: 7, maximum: 180, description: '缺省 28' },
-      },
-      required: ['recipe', 'metricId', 'dimension'],
-    },
-    outputSchema: { type: 'object' },
-    requiredScope: QUERY_SCOPE, mutating: false, annotations: readOnly,
-  },
-  {
-    name: 'get_freshness', group: 'health', title: '新鲜度',
-    description: '数据截止日/物化时刻/滞后秒。scope=指标 id 时回该指标链路水位与状态；缺省回全局水位。判据与发布面对齐表同源。',
-    inputSchema: {
-      type: 'object',
-      properties: { scope: { type: 'string', description: '指标 id（缺省 = 全局）' } },
-      required: [],
-    },
-    outputSchema: { type: 'object' },
-    requiredScope: READ_SCOPE, mutating: false, annotations: readOnly,
-  },
-  {
-    name: 'get_quality', group: 'health', title: '质量结论',
-    description: 'dbt tests/对账的最近结论。无结论源时**显式返回 unknown**——未知 ≠ 通过。',
-    inputSchema: {
-      type: 'object',
-      properties: { model: { type: 'string', description: 'dbt 模型名（缺省 = 全部已声明）' } },
-      required: [],
-    },
-    outputSchema: { type: 'object' },
-    requiredScope: READ_SCOPE, mutating: false, annotations: readOnly,
-  },
-  {
-    name: 'get_lineage', group: 'health', title: '血缘',
-    description: '有界上下游（depth≤3）。血缘源不可用时显式 unknown。',
-    inputSchema: {
-      type: 'object',
-      properties: {
-        id: { type: 'string', description: 'dbt 模型名或数据集名' },
-        depth: { type: 'integer', minimum: 1, maximum: 3, description: '缺省 1' },
-      },
-      required: ['id'],
-    },
-    outputSchema: { type: 'object' },
-    requiredScope: READ_SCOPE, mutating: false, annotations: readOnly,
-  },
-]
+/** 分析师面工具 = 契约里 analyst=true 且声明了 mcp 通道的条目。 */
+export const ANALYST_TOOLS: readonly ToolMeta[] = CONTRACT.tools
+  .filter((t) => t.analyst && t.channels.mcp !== undefined)
+  .map((t) => {
+    const face = faceOf(t, 'mcp')
+    return {
+      name: face.name,
+      group: t.group,
+      title: t.title,
+      description: face.description,
+      inputSchema: face.inputSchema,
+      outputSchema: face.outputSchema ?? { type: 'object' },
+      requiredScope: t.requiredScope,
+      mutating: t.mutating,
+      annotations: t.annotations,
+    }
+  })
 
 export function listAnalystTools(): readonly ToolMeta[] {
   return ANALYST_TOOLS

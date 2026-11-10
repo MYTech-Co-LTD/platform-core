@@ -142,104 +142,14 @@ test("toToolResult：content 恒为数组（回归锁，防再退回纯对象）
   }
 });
 
-// query_data 工具描述 = 模型可见的调用契约（与 agent-loop T1 同一性质：文案就是契约）。
-// index.js import openclaw SDK（peer dep，本机未装）⇒ 只能以源文本断言锁文案。
-test("query_data 工具描述含 total 自动合计规则（spec §8.4：直接引用 total，勿自己加总）", () => {
+// 工具描述/文案断言已迁到 modules/data/skill/render.test.ts（事实源改为 contract.json + 正典渲染）。
+// 这里只保留传输层形状：query_detail 的 HTTP 路径/方法与会话 scope 捕获。
+test("query_detail 注册形状：path/method 正确（描述断言已迁到 skill/render.test.ts）", () => {
   const src = readFileSync(new URL("./index.js", import.meta.url), "utf8");
-  // 关键规则下沉（spec §8.4：SKILL 正文对 flash 级模型是弱引导，规则必须在工具描述里）
-  assert.match(src, /total 字段/);
-  assert.match(src, /不要自己把明细行加总/);
-  assert.match(src, /不要跨行求和/);
-  // 显式「只要总数」形态保留
-  assert.match(src, /args\.total=true/);
-  // 旧布尔标记契约文案不再出现（total 字段语义已改为值）
-  assert.doesNotMatch(src, /明细与合计互斥/);
-});
-
-// 汇报纪律（spec §10.7.4，2026-10-16 改版）：新鲜度行改**系统自动附加**（message_sending 钩子
-// strip+append），模型只管不自己写 📅 行；data_as_of/首行最新/当日部分天仍是模型责任。
-// 同一性质：文案就是契约，源文本断言。
-test("query_data 工具描述改为系统自动附加口径（模型不写 📅 行；data_as_of 句保留）", () => {
-  const src = readFileSync(new URL("./index.js", import.meta.url), "utf8");
-  // 新契约：系统自动附加，模型无需复述/不需要自己拼新鲜度行
-  assert.match(src, /新鲜度与口径射程由系统自动附加/);
-  assert.match(src, /不要自己写任何 📅 \/ 📐 行/);
-  assert.match(src, /不要复述或拼接 freshness_line \/ scope_line/);
-  // 旧「模型自附」契约文案不许残留（两套口径并存会让 flash 级模型无所适从）
-  assert.doesNotMatch(src, /答案末尾必须原样单独一行附/);
-  // data_as_of 句保留（spec §10.7.4）
-  assert.match(src, /data_as_of/);
-  assert.match(src, /数据截止/);
-  assert.match(src, /新鲜度未知/);
-  assert.match(src, /部分天/);
-  // data_as_of 已是北京时间（UTC+8，spec §10.6）——模型直接引用，不要再自行换算
-  assert.match(src, /北京时间/);
-  assert.match(src, /UTC\+8/);
-});
-
-// SKILL 正文句级改版（不重写）：方法论 v2 的行数预算/total 规则原样，新鲜度条改为系统附加口径。
-test("data-query SKILL.md 新鲜度条改系统附加口径且既有判据句原样（spec §10.7.4）", () => {
-  const skill = readFileSync(new URL("./skills/data-query/SKILL.md", import.meta.url), "utf8");
-  // 新契约：系统自动附加，模型不写 📅 行、不复述数据更新时间
-  assert.match(skill, /新鲜度声明由系统自动附加/);
-  assert.match(skill, /不要自己写任何 📅 行/);
-  assert.match(skill, /不要复述数据更新时间/);
-  assert.doesNotMatch(skill, /原样\*\*附回包的/);
-  assert.match(skill, /data_as_of/);
-  assert.match(skill, /新鲜度未知/);
-  assert.match(skill, /部分天/);
-  // data_as_of 已是北京时间（UTC+8，spec §10.6）
-  assert.match(skill, /北京时间/);
-  assert.match(skill, /UTC\+8/);
-  // 既有判据句不许丢（句级微调，不是重写）
-  assert.match(skill, /truncated:true/);
-  assert.match(skill, /BAD_PARAM/);
-  assert.match(skill, /区间超过 4 天必用/);
-});
-
-// query_detail（明细下钻，2026-10-21 spec §2.6）：第四把工具。同一性质——文案就是契约，
-// SDK 装不上 ⇒ 源文本断言锁 flash 口径的行为规则。
-test("query_detail 工具注册：path/method、bizday 必传、rowCountTotal 权威、no_detail_binding 不重试、双时钟转述、scope 捕获", () => {
-  const src = readFileSync(new URL("./index.js", import.meta.url), "utf8");
-  // 注册形状：path/method 与平台 HTTP 面一致（routes/query-detail.ts POST /query/detail）
-  assert.match(src, /name: "query_detail"/);
+  assert.match(src, /"query_detail"/);
   assert.match(src, /path: "\/query\/detail"/);
   assert.match(src, /method: "POST"/);
-  // flash 口径行为规则（brief 逐条）：bizday 必传（防全史扫湖）；行数以 rowCountTotal 为权威；
-  // 能力边界如实告知不重试；两个时钟与口径行原样转述
-  assert.match(src, /bizday 必传/);
-  assert.match(src, /rowCountTotal/);
-  assert.match(src, /不要拿返回行数当全量/);
-  assert.match(src, /no_detail_binding/);
-  assert.match(src, /不要重试/);
-  assert.match(src, /clock_note/);
-  assert.match(src, /scope_line/);
-  assert.match(src, /原样转述/);
-  // 条件列缺席 = 未授权（2026-10-22 spec §2.3/§2.7）：别把「没权限看」答成「没有数据」。
-  // 两条分开断言（旧的 `/条件列|未授权/` 二选一太松：只写其中任一词都能过）。
-  assert.match(src, /少一列/);
-  assert.match(src, /该列需授权/);
-  // 口径行捕获：scope_line 在场才 capture（缺省不捕）——partial 入参 { scope } 合法
   assert.match(src, /capture\(sessionKey, \{ scope \}, runId\)/);
-});
-
-// SKILL 明细下钻节（2026-10-21 spec §2.6）：模型侧指引与工具描述同一套口径。
-test("data-query SKILL.md 明细下钻节：何时用 / bizday 必传 / rowCountTotal 权威 / 能力话术 / 双时钟", () => {
-  const skill = readFileSync(new URL("./skills/data-query/SKILL.md", import.meta.url), "utf8");
-  assert.match(skill, /query_detail/);
-  assert.match(skill, /明细下钻/);
-  assert.match(skill, /rowCountTotal/);
-  assert.match(skill, /bizday/);
-  assert.match(skill, /能力边界/);
-  assert.match(skill, /不要重试/);
-  assert.match(skill, /未授权/);
-  // 条件列话术锁（2026-10-22 spec §2.7）：缺席 = 未授权，须让模型答「该列需授权」
-  assert.match(skill, /该列需授权/);
-  // 路标例子锁（spec §2.7 明示要求 metricId=lemeng:retail:order_line 的例子）：
-  // 「多少行 / 哪几行 / 按商品看明细」必须能路由到该指标。
-  // 裸指标名不够严（条件列那条 bullet 里早就有它）；`metricId=` 前缀才锁得住**例子本身**。
-  assert.match(skill, /lemeng:retail:order_line/);
-  assert.match(skill, /metricId=lemeng:retail:order_line/);
 });
 
 // ── 新鲜度行确定性附加（message_sending 钩子纯逻辑，2026-10-16）──────────────────

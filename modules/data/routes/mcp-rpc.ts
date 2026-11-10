@@ -62,6 +62,8 @@ export interface McpToolResult {
 export interface McpToolSet {
   /** initialize 回给客户端的 `serverInfo.name`——两个端点各自可辨认。 */
   serverName: string
+  /** initialize 回给客户端的简洁提示（可选）。完整指南走 data_agent_guide。 */
+  instructions?: string
   list(deps: McpDeps): Promise<Record<string, unknown>[]>
   call(deps: McpDeps, name: string, args: Record<string, unknown>): Promise<McpToolResult>
 }
@@ -112,10 +114,13 @@ export function registerMcpEndpoint(
     }
 
     if (msg.method === 'initialize') {
+      // 只读一次 getter（实现可能是惰性计算/渲染），避免同一请求调用两次。
+      const instructions = toolset.instructions
       return reply({
         protocolVersion: PROTOCOL_VERSION,
         capabilities: { tools: {} },
         serverInfo: { name: toolset.serverName, version: '0.1.0' },
+        ...(instructions !== undefined ? { instructions } : {}),
       })
     }
     if (msg.method === 'ping') return reply({})

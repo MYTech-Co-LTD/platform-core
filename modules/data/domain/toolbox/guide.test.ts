@@ -56,3 +56,9 @@ describe('GUIDE_INVARIANTS（三通道同源内核，Wave 2 决策 D-G1）', () 
     expect(all).toContain('不要编')
   })
 })
+
+describe('guide 输出 golden（迁移前后逐字一致）', () => {
+  it('GUIDE_TEXT_BUILDER 快照', () => {
+    expect(GUIDE_TEXT_BUILDER('2026-01-02')).toMatchSnapshot()
+  })
+})

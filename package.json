@@ -15,7 +15,8 @@
     "smoke": "tsx scripts/smoke-load.mjs",
     "dev:stack": "tsx scripts/dev-stack.mjs",
     "build": "pnpm -r --if-present build",
-    "dev": "pnpm --filter @platform/server dev"
+    "dev": "pnpm --filter @platform/server dev",
+    "gen:skill": "node scripts/gen-openclaw-skill.mjs --plugin-dir deploy/openclaw/data-query-plugin"
   },
   "devDependencies": {
     "@types/node": "^22.0.0",

@@ -14,6 +14,7 @@ import { upsertL1Metric, upsertMetric } from '../domain/metric-store'
 import type { L1MetricDef } from '../domain/metric-store'
 import type { MetricDef } from '../domain/authz'
 import type { SqlExecutor } from '../domain/query-service'
+import { GUIDE_INVARIANTS } from '../domain/toolbox/guide'
 
 const dbUrl = process.env.DATABASE_URL
 const describePg = dbUrl ? describe : describe.skip
@@ -94,6 +95,16 @@ describe('POST /mcp 的协议面（不需要数据库）', () => {
     expect(typeof body.result.protocolVersion).toBe('string')
     expect(body.result.capabilities.tools).toBeDefined()
     expect(body.result.serverInfo).toBeDefined()
+    // initialize 只带「指针 + 四条硬约束」，不塞完整工作流（完整指南走 data_agent_guide）。
+    expect(typeof body.result.instructions).toBe('string')
+    expect(body.result.instructions).toContain('data_agent_guide')
+    expect(body.result.instructions).toContain('1000')
+    for (const line of GUIDE_INVARIANTS) expect(body.result.instructions).toContain(line)
+    expect(body.result.instructions).not.toContain('工作流七步')
+    // 结构性断言：一张指针行 + 四行硬约束，而不是整份指南。
+    const lines = body.result.instructions.split('\n')
+    expect(lines.length).toBeGreaterThanOrEqual(GUIDE_INVARIANTS.length + 1)
+    expect(lines.length).toBeLessThanOrEqual(10)
   })
 
   it('ping → 空 result（数字 id 同样原样回显）', async () => {

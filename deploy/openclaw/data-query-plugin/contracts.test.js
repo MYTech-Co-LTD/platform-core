@@ -1,51 +1,59 @@
 // contracts.test.js — 网关工具声明契约回归（#989）。
-// openclaw 网关按 openclaw.plugin.json 的 contracts.tools 决定放行哪些工具：插件注册了
-// contracts.tools 没登的名字 ⇒ 拒载（真机日志原文「plugin must declare contracts.tools for: …」，
-// 2026-10-22 shanhai 部署后实锤——Wave 2 三新工具因此全部不可用，企微冒烟全走旧路径）。
-// 本测试钉死：index.js 里每一个工具 DEF 的名字都必须已在 contracts.tools 登记——**防再漏**。
-// ⚠️ index.js import openclaw SDK，node --test 无法加载它 ⇒ 这里按源码文本提取 DEF 名
-// （DEF 形状固定：`name: "<snake_case>",` 下一行紧跟 `description:`——插件入口 definePluginEntry
-// 的 name 是 "Data Query"，大写带空格，不会误中）。为防正则静默匹配零条（测试假绿），
-// 先断言提取结果包含全部六个已知工具名，再做 ⊆ 断言。
+// 工具定义现在由 modules/data/skill/contract.json 构建期渲染到 generated/tools.js；
+// 本测试先确保生成物存在，再钉「注册名 ⊆ openclaw.plugin.json contracts.tools」。
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { execFileSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
 
-const indexSrc = readFileSync(new URL("./index.js", import.meta.url), "utf8");
+const pluginDir = fileURLToPath(new URL(".", import.meta.url));
+
+// 每次都重新生成：本地残留的旧 generated/ 不能让它「假绿」；CI 干净 checkout 也能自举。
+execFileSync(process.execPath, [
+  fileURLToPath(new URL("../../../scripts/gen-openclaw-skill.mjs", import.meta.url)),
+  "--plugin-dir", pluginDir,
+], { stdio: "inherit" });
+
+const { TOOL_DEFS } = await import("./generated/tools.js");
 const manifest = JSON.parse(readFileSync(new URL("./openclaw.plugin.json", import.meta.url), "utf8"));
+const defNames = TOOL_DEFS.map((d) => d.name);
 
-/** index.js 里全部工具 DEF 的名字（DEF 常量定义处，非 registerTool 第二参的引用）。 */
-const defNames = [...indexSrc.matchAll(/name:\s*"([a-z_]+)",\s*\n\s*description:/g)].map((m) => m[1]);
-
-/** 已知工具全集（六把：Wave 1 三把 + Wave 2 三把）。新加工具时这里与 plugin.json 一起动。 */
-const KNOWN_TOOLS = ["list_metrics", "query_data", "query_detail", "describe_metric", "sample_dimension_values", "get_freshness"];
-
-test("源码提取非空：六个已知工具名全部被正则捕获（防正则失配导致测试假绿）", () => {
-  for (const name of KNOWN_TOOLS) {
-    assert.ok(defNames.includes(name), `正则没从 index.js 提取到 ${name}——DEF 形状变了，先修提取再谈契约`);
-  }
+test("生成物非空：七个已知工具名全部在场（防渲染器静默产出空集）", () => {
+  const known = ["list_metrics", "query_data", "query_detail", "describe_metric", "sample_dimension_values", "get_freshness", "search_catalog"];
+  for (const name of known) assert.ok(defNames.includes(name), `生成物缺少 ${name}`);
 });
 
-test("index.js 全部工具 DEF 名 ⊆ openclaw.plugin.json contracts.tools（#989 防再漏）", () => {
+test("生成物工具名 ⊆ openclaw.plugin.json contracts.tools（#989 防再漏）", () => {
   const declared = manifest.contracts?.tools ?? [];
   for (const name of defNames) {
-    assert.ok(
-      declared.includes(name),
-      `工具 ${name} 已在 index.js 注册但未登记 openclaw.plugin.json contracts.tools——网关会拒载（#989）`,
-    );
+    assert.ok(declared.includes(name), `工具 ${name} 已生成但未登记 contracts.tools——网关会拒载`);
   }
 });
 
-test("contracts.tools 与 DEF 名集合一致（无陈旧残留；改名/下线工具时两侧一起动）", () => {
+test("contracts.tools 与生成物集合一致（无陈旧残留）", () => {
   const declared = manifest.contracts?.tools ?? [];
   const extra = declared.filter((n) => !defNames.includes(n));
-  assert.deepEqual(extra, [], `contracts.tools 里登记了 index.js 未注册的工具：${extra.join(", ")}`);
+  assert.deepEqual(extra, [], `contracts.tools 里登记了生成物没有的工具：${extra.join(", ")}`);
 });
 
-test("index.js 语法可解析（node --check）——未转义引号会把插件打成 crash loop", () => {
-  // 2026-11-09 真机：description 里的 ["supplier_num"] 未转义 ⇒ 插件加载 SyntaxError ⇒ 容器
-  // 重启循环；契约测试只读文本、不解析语法，漏掉了。这里补一道真解析。
+test("生成物恰 7 个工具（不多不少）", () => {
+  assert.equal(TOOL_DEFS.length, 7);
+});
+
+test("index.js 的 REGISTER_ORDER 集合 = 生成物 id 集合（防新增工具漏注册）", () => {
+  const src = readFileSync(new URL("./index.js", import.meta.url), "utf8");
+  const m = src.match(/const REGISTER_ORDER\s*=\s*(\[[^\]]*\])/);
+  assert.ok(m, "index.js 里找不到 REGISTER_ORDER 字面量");
+  const order = JSON.parse(m[1]);
+  assert.deepEqual([...order].sort(), TOOL_DEFS.map((d) => d.id).sort());
+});
+
+test("index.js 不再手写工具 description（防回退到两套事实源）", () => {
+  const src = readFileSync(new URL("./index.js", import.meta.url), "utf8");
+  assert.ok(!/name:\s*"[a-z_]+",\s*\n\s*description:/.test(src), "index.js 仍有手写 DEF；工具定义应来自 generated/tools.js");
+});
+
+test("index.js 语法可解析（node --check）", () => {
   execFileSync(process.execPath, ["--check", fileURLToPath(new URL("./index.js", import.meta.url))], { stdio: "pipe" });
 });
