@@ -12,6 +12,43 @@ import type { ToolImpl } from './registry'
 
 const RECIPE_OF = new Set(['variance', 'top_contributors', 'baseline'])
 
+type SpecResult = { columns: string[]; rows: unknown[][] }
+
+/**
+ * 一条 spec 的锚点值：该 spec 的度量合计（`value` 列求和）。
+ *
+ * 不拿 `rowCount` 冒充：行数是「读了多少行」，不是「这个数是多少」。baseline 的 spec 是分布，
+ * 没有单值锚点；截断或列缺失/非数值 ⇒ null（未知 ≠ 0）。
+ */
+function specAnchorValue(recipe: RecipeKind, out: SpecResult, truncated: boolean): number | null {
+  if (recipe === 'baseline' || truncated) return null
+  const i = out.columns.indexOf('value')
+  if (i < 0) return null
+  let total = 0
+  for (const r of out.rows) {
+    const v = r[i]
+    if (typeof v !== 'number' || !Number.isFinite(v)) return null
+    total += v
+  }
+  return total
+}
+
+/** 证据 params 要能区分 variance 的 A/B 与 baseline 的 baseline/current 两腿。 */
+function specParams(req: RecipeRequest, index: number): Record<string, unknown> {
+  const base = { recipe: req.recipe, dimension: req.dimension }
+  if (req.recipe === 'variance') {
+    return index === 0
+      ? { ...base, period: 'A', ...(req.periodA !== undefined ? { periodA: req.periodA } : {}) }
+      : { ...base, period: 'B', ...(req.periodB !== undefined ? { periodB: req.periodB } : {}) }
+  }
+  if (req.recipe === 'top_contributors') {
+    return { ...base, ...(req.period !== undefined ? { period: req.period } : {}) }
+  }
+  return index === 0
+    ? { ...base, phase: 'baseline', ...(req.baselineWindowDays !== undefined ? { baselineWindowDays: req.baselineWindowDays } : {}) }
+    : { ...base, phase: 'current', ...(req.asOf !== undefined ? { asOf: req.asOf } : {}) }
+}
+
 export const exploreRecipeImpl: ToolImpl = async (deps, args) => {
   if (deps.requester === null) {
     return { payload: { status: 'denied', reason: 'unauthenticated' }, isError: true }
@@ -59,7 +96,7 @@ export const exploreRecipeImpl: ToolImpl = async (deps, args) => {
   const results: Array<{ columns: string[]; rows: unknown[][] }> = []
   const evidence: unknown[] = []
   let rowCount = 0
-  for (const spec of compiled.specs) {
+  for (const [index, spec] of compiled.specs.entries()) {
     const out = await executeExplore(
       {
         pool: deps.pool,
@@ -82,8 +119,10 @@ export const exploreRecipeImpl: ToolImpl = async (deps, args) => {
     rowCount += out.rowCount
     evidence.push(buildEvidencePack({
       metricId,
-      params: { recipe, dimension, ...(req.asOf !== undefined ? { asOf: req.asOf } : {}) },
-      value: out.rowCount,
+      params: specParams(req, index),
+      // 锚的是该 spec 的度量合计，不是行数；baseline / 截断 ⇒ null（未知 ≠ 0）。
+      value: specAnchorValue(req.recipe, out, out.truncated),
+      slicing: { dimensions: [dimension] },
       sql: out.sql,
       sqlPreview: out.preview,
       // 数据截至用指标自己的水位（拿不到就 null / unknown，不冒充最新）
