@@ -38,6 +38,26 @@ export interface DailySeries {
   dataAsOf?: string | null
 }
 
+export interface WeatherDay {
+  day: string
+  tempMax: string
+  tempMin: string
+  precipitation: string
+  condition: string
+}
+
+export interface WeatherBundle {
+  target: WeatherDay
+  yesterday: WeatherDay | null
+  source: string
+  note: string
+}
+
+export type ReadWeather = (
+  targetDay: string,
+  yesterdayDay: string,
+) => Promise<WeatherBundle | null>
+
 export type ReadDailySeries = (
   metricId: string,
   args: Record<string, unknown>,
@@ -45,6 +65,7 @@ export type ReadDailySeries = (
 
 export interface DailyReviewDeps {
   readSeries: ReadDailySeries
+  readWeather?: ReadWeather
   spec: ReportSpec
   period: PeriodSpec
   range: DateRange
@@ -116,6 +137,8 @@ export interface DailyReviewBundle {
   }
   /** MTD 累计快照（累计值，不是日均）。 */
   mtd: DailySnapshot
+  /** 天气背景（外部上下文；null = 取不到，不阻断）。 */
+  weather: WeatherBundle | null
   /** 销售侧/成本侧驱动，按绝对影响降序。 */
   drivers: DailyDriver[]
   /** 2–3 条可执行建议（已带金额/项目）。 */
@@ -390,6 +413,7 @@ export async function buildDailyReview(deps: DailyReviewDeps): Promise<DailyRevi
 
   const today = rawDayOf(m, targetDay)
   const yesterdayDay = dayjs(targetDay).subtract(1, 'day').format('YYYY-MM-DD')
+  const weather = deps.readWeather === undefined ? null : await deps.readWeather(targetDay, yesterdayDay)
   const yesterdayRaw = rawDayOf(m, yesterdayDay)
   const yesterday = yesterdayRaw.revenue === null && yesterdayRaw.gross === null ? null : yesterdayRaw
 
@@ -479,6 +503,7 @@ export async function buildDailyReview(deps: DailyReviewDeps): Promise<DailyRevi
   if (comparisons.lastYearAvg === null) notes.push('去年同月无数据，无法比较去年同月日均。')
   if (yesterday === null) notes.push('昨天数据不完整，环比基线改用本月至今日均。')
   if (today.revenue === null) notes.push('所选日期没有营业额数据。')
+  if (weather !== null) notes.push('天气是外部背景（Open-Meteo），只作解释线索，不推断因果；需结合客流/订单验证。')
 
   const suggestions: string[] = []
   const targetGap = today.netGross === null || today.revenue === null
@@ -547,11 +572,18 @@ export async function buildDailyReview(deps: DailyReviewDeps): Promise<DailyRevi
   for (const s of suggestions) for (const m of s.match(/[+-]?\d[\d,]*(?:\.\d+)?(?:%|pp)?/g) ?? []) add(m)
   if (targetGap !== null) add(signedAmount(targetGap))
   add(fmt(NET_MARGIN_TARGET, 'percent'))
+  if (weather !== null) {
+    for (const w of [weather.target, weather.yesterday]) {
+      if (w === null) continue
+      add(w.tempMax); add(w.tempMin); add(w.precipitation)
+    }
+  }
 
   const body = {
     targetDay,
     yesterday: yesterday === null ? null : yesterdayDay,
     assessment,
+    weather,
     monthStart,
     lastYearFrom,
     lastYearTo: lastYearCeiling,

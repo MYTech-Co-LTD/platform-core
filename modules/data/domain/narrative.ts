@@ -103,6 +103,7 @@ const DAILY_REVIEW_SYSTEM = [
   '如果 facts.dailyReview 非空，按以下五段输出，纯文本，不要 Markdown 表格/HTML：',
   '结论：先用 facts.dailyReview.assessment 的判断（good/neutral/warning/bad/critical）给一句话结论；critical 先写“断崖式下滑，先排除闭店/采集缺口”，不要只复述数字。',
   '对比：分别写 vs 昨天、vs 本月至今日均、vs 去年同月同日日均；每项带营业额/订单/客单价的变化。',
+  '天气：如果 facts.dailyReview.weather 非空，写一句目标日/昨天的温度、降水、天气现象；只能陈述事实，禁止断言天气导致销售；如要关联，写“可能与客流/销售相关，需结合客流验证”。',
   '成本：毛利、报损、费用、净毛利/净毛利率；必须写「未含房租/水电等固定成本」。',
   'MTD：本月累计营业额/毛利/净毛利/净毛利率，以及与 20% 目标的关系。',
   '驱动：只引用 facts.dailyReview.drivers 的 label/value/delta，点明是销售侧还是成本侧。',
@@ -230,6 +231,9 @@ export function templateOf(f: FactBundle): string {
     const lyText = c.lastYearAvg === null
       ? '去年同月无数据'
       : `vs 去年同月同日日均 营业额 ${c.lastYearAvg.delta.revenue}、订单 ${c.lastYearAvg.delta.orders}、客单价 ${c.lastYearAvg.delta.aov}`
+    const weatherText = dr.weather === null
+      ? ''
+      : `天气：${dr.weather.target.day} ${dr.weather.target.condition}，${dr.weather.target.tempMin}~${dr.weather.target.tempMax}，降水 ${dr.weather.target.precipitation}${dr.weather.yesterday === null ? '' : `；昨天 ${dr.weather.yesterday.condition}，降水 ${dr.weather.yesterday.precipitation}`}（只作背景，不推断因果）。`
     const driverText = dr.drivers.slice(0, 3)
       .map((d) => `${d.side === 'sales' ? '销售侧' : '成本侧'} ${d.label} ${d.value}（${d.delta}）`)
       .join('；')
@@ -241,6 +245,7 @@ export function templateOf(f: FactBundle): string {
     return [
       `结论：${branchLabel}${dr.assessment.headline}。${dr.targetDay} 营业额 ${dr.today.revenue}，订单 ${dr.today.orders}，客单价 ${dr.today.aov}；毛利 ${dr.today.gross}（毛利率 ${dr.today.grossMargin}）。`,
       `对比：${yText}；${mText}；${lyText}。`,
+      ...(weatherText === '' ? [] : [weatherText]),
       `成本：报损 ${dr.today.loss}，费用 ${dr.today.expense}，净毛利 ${dr.today.netGross}（净毛利率 ${dr.today.netMargin}）；未含房租/水电等固定成本。`,
       `MTD：${dr.mtd.day} 累计营业额 ${dr.mtd.revenue}，毛利 ${dr.mtd.gross}，净毛利 ${dr.mtd.netGross}，净毛利率 ${dr.mtd.netMargin}。`,
       `驱动：${driverText === '' ? '-' : driverText}。`,
