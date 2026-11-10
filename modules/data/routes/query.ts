@@ -53,10 +53,19 @@ export function registerQuery(r: ModuleHono, ctx: RouteCtx): void {
           ...(body.total !== undefined ? { total: body.total } : {}),
         }
       : undefined
+    const startedAt = Date.now()
     const outcome = await runQuery(
       { pool: ctx.pool, execute: ctx.execute, adoptedSources },
       org, requesterOf(c), body.metricId, body.args, slicing,
     )
+    // 慢查询可观测（2026-11-10 报表首屏几十秒的定位面）：只记指标/维度/期间/耗时，
+    // 不打印 args 全量（可能有租户自定义过滤值）。
+    const elapsed = Date.now() - startedAt
+    if (elapsed >= 500) {
+      const bizday = (body.args as { bizday?: unknown }).bizday
+      const dims = body.dimensions ?? []
+      console.warn(`[data/query] slow ${elapsed}ms metric=${body.metricId} dims=${dims.join(',')} bizday=${JSON.stringify(bizday)} total=${String(body.total ?? false)}`)
+    }
 
     if (outcome.status === 'ok') return c.json(outcome)
     if (outcome.status === 'denied') {
