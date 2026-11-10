@@ -6,6 +6,7 @@
 import { useCallback, useRef, useState } from 'react'
 import { Button, Input, SpinLoading } from 'antd-mobile'
 import type { AgentEvent } from '../../domain/agent-loop'
+import { C, Icon, cardStyle, radius } from './ui'
 
 interface Bubble {
   kind: 'user' | 'activity' | 'answer' | 'error'
@@ -93,50 +94,63 @@ export default function AskView() {
   }, [busy, question])
 
   return (
-    <div style={{ display: 'flex', flexDirection: 'column', height: 'calc(100dvh - 110px)' }}>
-      <div ref={listRef} style={{ flex: 1, overflowY: 'auto', padding: '10px 12px' }}>
+    <div style={{ display: 'flex', flexDirection: 'column', height: 'calc(100dvh - 58px - env(safe-area-inset-bottom, 0px))' }}>
+      <div ref={listRef} style={{ flex: 1, overflowY: 'auto', padding: '16px' }}>
         {bubbles.length === 0 && !busy ? (
-          <div style={{ padding: '8px 0' }}>
-            <div style={{ fontSize: 13, color: '#999' }}>可以这样问：</div>
-            <div style={{ display: 'flex', flexDirection: 'column', gap: 8, marginTop: 10 }}>
+          <div>
+            <div style={{ fontSize: 14, fontWeight: 600, color: C.ink }}>可以这样问</div>
+            <div style={{ fontSize: 12, color: C.mute, marginTop: 4, lineHeight: 1.6 }}>
+              用自然语言问指标、门店和期间，答案只来自有权限的指标。
+            </div>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 10, marginTop: 18 }}>
               {SUGGESTIONS.map((sug) => (
                 <button
+                  className="m-card-btn"
                   key={sug}
                   type="button"
                   onClick={() => void ask(sug)}
                   style={{
-                    textAlign: 'left', padding: '12px 14px', fontSize: 14,
-                    background: '#fff', border: '1px solid #eee', borderRadius: 10, cursor: 'pointer',
-                    color: '#1f1f1f',
+                    ...cardStyle, textAlign: 'left', padding: '14px 16px', fontSize: 14,
+                    cursor: 'pointer', color: C.ink, display: 'flex', alignItems: 'center',
+                    justifyContent: 'space-between', gap: 12, lineHeight: 1.55,
                   }}
-                >{sug}</button>
+                >
+                  <span>{sug}</span>
+                  <Icon name="chevron" size={16} color={C.mute} />
+                </button>
               ))}
             </div>
           </div>
         ) : (
-          <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
             {bubbles.map((b, i) => (
               <div
                 key={i}
                 style={{
                   alignSelf: b.kind === 'user' ? 'flex-end' : 'stretch',
-                  maxWidth: b.kind === 'user' ? '80%' : '100%',
-                  background: b.kind === 'user' ? '#1677ff' : '#fff',
-                  color: b.kind === 'user' ? '#fff' : b.kind === 'error' ? '#ff4d4f' : '#1f1f1f',
-                  borderRadius: 12, padding: '10px 12px',
-                  fontSize: 14, lineHeight: 1.6,
-                  border: b.kind === 'user' ? 'none' : '1px solid #f0f0f0',
+                  maxWidth: b.kind === 'user' ? '82%' : '100%',
+                  background: b.kind === 'user' ? C.accentDeep : C.surface,
+                  color: b.kind === 'user' ? '#FFFFFF'
+                    : b.kind === 'error' ? C.danger : b.kind === 'activity' ? C.mute : C.ink,
+                  borderRadius: b.kind === 'user' ? '16px 16px 4px 16px' : '4px 16px 16px 16px',
+                  padding: '11px 14px',
+                  fontSize: b.kind === 'activity' ? 12 : 14, lineHeight: 1.7,
+                  border: b.kind === 'user' ? 'none' : `1px solid ${C.lineSoft}`,
                   whiteSpace: 'pre-wrap', wordBreak: 'break-word',
                 }}
               >
-                {b.kind === 'activity' ? <span style={{ color: '#999' }}>{b.text}</span> : b.text}
+                {b.text}
                 {b.table ? (
-                  <div style={{ marginTop: 8, overflowX: 'auto' }}>
-                    <table style={{ borderCollapse: 'collapse', fontSize: 12 }}>
+                  <div style={{ marginTop: 10, overflowX: 'auto' }}>
+                    <table style={{ borderCollapse: 'collapse', fontSize: 12, minWidth: '100%' }}>
                       <thead>
                         <tr>
                           {b.table.columns.map((c) => (
-                            <th key={c} style={{ border: '1px solid #eee', padding: '4px 8px', background: '#fafafa', textAlign: 'left' }}>{c}</th>
+                            <th key={c} style={{
+                              borderBottom: `1px solid ${C.line}`, padding: '6px 10px',
+                              background: C.lineSoft, textAlign: 'left', color: C.sub, fontWeight: 600,
+                              whiteSpace: 'nowrap',
+                            }}>{c}</th>
                           ))}
                         </tr>
                       </thead>
@@ -144,7 +158,10 @@ export default function AskView() {
                         {b.table.rows.map((row, ri) => (
                           <tr key={ri}>
                             {row.map((cell, ci) => (
-                              <td key={ci} style={{ border: '1px solid #eee', padding: '4px 8px' }}>{String(cell)}</td>
+                              <td key={ci} style={{
+                                borderBottom: `1px solid ${C.lineSoft}`, padding: '6px 10px',
+                                fontVariantNumeric: 'tabular-nums', whiteSpace: 'nowrap',
+                              }}>{String(cell)}</td>
                             ))}
                           </tr>
                         ))}
@@ -154,14 +171,20 @@ export default function AskView() {
                 ) : null}
               </div>
             ))}
-            {busy ? <div style={{ padding: 8 }}><SpinLoading style={{ '--size': '18px' }} /></div> : null}
+            {busy ? (
+              <div style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '4px 2px' }}>
+                <SpinLoading style={{ '--size': '16px', '--color': C.accent }} />
+                <span style={{ fontSize: 12, color: C.mute }}>正在查数…</span>
+              </div>
+            ) : null}
           </div>
         )}
       </div>
       <div style={{
-        display: 'flex', gap: 8, padding: '8px 12px',
-        paddingBottom: 'calc(8px + env(safe-area-inset-bottom, 0px))',
-        background: '#f5f5f5',
+        display: 'flex', gap: 10, padding: '10px 16px',
+        background: 'rgba(255,255,255,0.96)',
+        borderTop: `1px solid ${C.line}`,
+        backdropFilter: 'saturate(160%) blur(14px)', WebkitBackdropFilter: 'saturate(160%) blur(14px)',
       }}>
         <Input
           placeholder="问点什么，例如：上个月各门店销售额"
@@ -170,8 +193,9 @@ export default function AskView() {
           disabled={busy}
           onEnterPress={() => void ask()}
           style={{
-            flex: 1, '--placeholder-color': '#bbb',
-            background: '#fff', borderRadius: 10, border: '1px solid #e5e5e5',
+            flex: 1, '--placeholder-color': C.mute, '--font-size': '14px',
+            background: C.bg, borderRadius: radius.field, border: `1px solid ${C.line}`,
+            padding: '0 12px', height: 42,
           }}
         />
         <Button
@@ -179,7 +203,11 @@ export default function AskView() {
           onClick={() => void ask()}
           loading={busy}
           disabled={!question.trim()}
-          style={{ borderRadius: 10, minWidth: 76, height: 44 }}
+          style={{
+            borderRadius: radius.field, minWidth: 64, height: 42,
+            '--background-color': C.accent, '--border-color': C.accent,
+            fontWeight: 600, fontSize: 14,
+          }}
         >问数</Button>
       </div>
     </div>

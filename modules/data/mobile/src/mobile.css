@@ -1,0 +1,72 @@
+/* mobile.css — 移动数据 App 的浏览器面基线（选择/光标/滚动条/焦点环也属于设计）。 */
+:root {
+  --m-bg: #f3f5f7;
+  --m-surface: #ffffff;
+  --m-ink: #111827;
+  --m-sub: #6b7280;
+  --m-line: #e5e7eb;
+  --m-accent: #0f766e;
+}
+
+html,
+body {
+  margin: 0;
+  background: var(--m-bg);
+  color: var(--m-ink);
+  font-family: -apple-system, BlinkMacSystemFont, 'PingFang SC', 'Hiragino Sans GB',
+    'Microsoft YaHei', 'Helvetica Neue', Arial, sans-serif;
+  -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility;
+  overscroll-behavior-y: none;
+}
+
+* {
+  box-sizing: border-box;
+  -webkit-tap-highlight-color: transparent;
+}
+
+button,
+input,
+textarea,
+select {
+  font: inherit;
+}
+
+button:focus-visible,
+a:focus-visible,
+input:focus-visible,
+textarea:focus-visible,
+select:focus-visible {
+  outline: 2px solid var(--m-accent);
+  outline-offset: 2px;
+}
+
+input,
+textarea {
+  caret-color: var(--m-accent);
+}
+
+::selection {
+  background: rgba(15, 118, 110, 0.18);
+}
+
+/* 移动端隐藏滚动条，但不破坏滚动。 */
+::-webkit-scrollbar {
+  width: 0;
+  height: 0;
+}
+
+#root {
+  min-height: 100dvh;
+}
+
+/* antd-mobile 默认圆角/描边在业务面上偏圆，收一档。 */
+.adm-input-element::placeholder {
+  color: #a3a9b3;
+}
+
+/* 卡片按压反馈：移动端没有 hover，按下即是状态。 */
+.m-card-btn:active {
+  background: #f7f9fa;
+}
+

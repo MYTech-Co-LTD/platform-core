@@ -32,7 +32,7 @@ beforeEach(() => {
 describe('移动端问数（报表中心三 tab 之一）', () => {
   it('空态给可点的示例问题；点击 ⇒ POST /chat 带 question，渲染用户/过程/结论气泡与表格', async () => {
     render(<AskView />)
-    expect(screen.getByText('可以这样问：')).toBeTruthy()
+    expect(screen.getByText('可以这样问')).toBeTruthy()
 
     fireEvent.click(screen.getByText('上个月各门店销售额是多少'))
 

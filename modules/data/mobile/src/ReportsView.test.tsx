@@ -8,7 +8,7 @@ afterEach(cleanup)
 
 const ROWS: ReportRow[] = [
   { id: 'r1', title: '门店销售日报', renderer: 'platform', publishedVersion: 3, hasUnpublishedChanges: false, owner: 'admin1', canEdit: true, version: 5, metricIds: ['lemeng:retail:net_sales'] },
-  // 自己的未发布草稿：中心不显示；管理 tab 显示并可预览
+  // 自己的草稿：中心不显示；管理 tab 显示并可预览
   { id: 'r2', title: '会员复购分析', renderer: 'platform', publishedVersion: null, hasUnpublishedChanges: false, owner: 'admin1', canEdit: true, version: 2 },
   // 别人的已发布：中心显示；管理 tab 不显示（管别人的属配置面，在 PC）
   { id: 'r3', title: '库存周转看板', renderer: 'platform', publishedVersion: 2, hasUnpublishedChanges: true, owner: 'viewer1', ownerActive: false, canEdit: false, version: 4 },
@@ -19,7 +19,7 @@ const renderView = (tab: 'center' | 'manage', self = 'admin1') =>
   render(<ReportsView rows={ROWS} reload={async () => {}} tab={tab} self={self} />)
 
 describe('报表中心 / 报表管理（#1373 拆分）', () => {
-  it('中心：只列已发布（自己的+别人的），标 已发布/有更新/所有者；未发布草稿不出现', async () => {
+  it('中心：只列已发布（自己的+别人的），标 已发布/有更新/所有者；草稿不出现', async () => {
     renderView('center')
     await waitFor(() => expect(screen.getByText('门店销售日报')).toBeTruthy())
     expect(screen.getByText('库存周转看板')).toBeTruthy()
@@ -39,14 +39,14 @@ describe('报表中心 / 报表管理（#1373 拆分）', () => {
     expect(frame.getAttribute('src')).toBe('/r/r1')
   })
 
-  it('管理：只列**我创建的**（含未发布草稿）；别人的不出现；点卡弹管理面板（#1373）', async () => {
+  it('管理：只列**我创建的**（含草稿）；别人的不出现；点卡弹管理面板（#1373）', async () => {
     renderView('manage')
     await waitFor(() => expect(screen.getByText('会员复购分析')).toBeTruthy())
     expect(screen.getByText('门店销售日报')).toBeTruthy()          // 自己的已发布
     expect(screen.queryByText('库存周转看板')).toBeNull()          // 别人的 ⇒ 不在管理列表
-    expect(screen.getByText('未发布草稿')).toBeTruthy()
+    expect(screen.getByText('草稿')).toBeTruthy()
 
-    // 点卡 = 管理面板：打开/预览 + 发布（未发布草稿没有「下线」）
+    // 点卡 = 管理面板：打开/预览 + 发布（草稿没有「下线」）
     // 卡标题与面板标题同文 ⇒ 用 getAllByText 取卡片（面板未开前只有一个）
     fireEvent.click(screen.getAllByText('会员复购分析')[0]!)
     await waitFor(() => expect(screen.getAllByText('预览报表').length).toBeGreaterThan(0))
@@ -94,11 +94,11 @@ describe('报表中心 / 报表管理（#1373 拆分）', () => {
     await waitFor(() => expect(screen.getByText('门店销售日报')).toBeTruthy())
     const input = screen.getByPlaceholderText('搜索报表名称')
 
-    // 中心 tab 只有已发布 ⇒ 搜「会员」（未发布草稿）无命中
+    // 中心 tab 只有已发布 ⇒ 搜「会员」（草稿）无命中
     fireEvent.change(input, { target: { value: '会员' } })
     expect(screen.queryByText('会员复购分析')).toBeNull()
 
     fireEvent.change(input, { target: { value: '不存在' } })
-    expect(screen.getByText('没有匹配的报表，试试清空搜索。')).toBeTruthy()
+    expect(screen.getByText('没有匹配的报表')).toBeTruthy()
   })
 })

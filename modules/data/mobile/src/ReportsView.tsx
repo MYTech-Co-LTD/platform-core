@@ -9,8 +9,9 @@
 //   · 发布/下线用行上的 `version`（GET /reports 回带，写保护契约同 console）；
 //     共享/部门门/回收等配置动作不进移动端。
 import { useEffect, useRef, useState } from 'react'
-import { Dialog, Input, Tag, Toast } from 'antd-mobile'
+import { Dialog, Input, Toast } from 'antd-mobile'
 import { ApiError, apiGet, apiSend } from './api'
+import { C, Chip, EmptyState, Icon, cardStyle, pressable, radius } from './ui'
 
 export interface ReportRow {
   id: string
@@ -47,13 +48,14 @@ function SourceLinks({ metricIds }: { metricIds?: string[] }) {
   if (ids.length === 0) return null
   const shown = ids.slice(0, 3)
   const linkStyle = {
-    display: 'inline-flex', alignItems: 'center', minHeight: 44,
-    fontSize: 13, color: '#1677ff', textDecoration: 'none',
+    display: 'inline-flex', alignItems: 'center', gap: 5, minHeight: 38,
+    fontSize: 12, color: C.accentDeep, textDecoration: 'none',
   }
   return (
-    <div style={{ borderTop: '1px solid #f5f5f5', marginTop: 10, paddingTop: 4, display: 'flex', flexWrap: 'wrap', gap: 14 }}>
+    <div style={{ borderTop: `1px solid ${C.lineSoft}`, paddingTop: 2, display: 'flex', flexWrap: 'wrap', gap: 14 }}>
       {shown.map((id) => (
         <a key={id} href={systemMapHref(`#/metrics/${encodeURIComponent(id)}`)} style={linkStyle}>
+          <Icon name="source" size={13} />
           口径与来源{shown.length > 1 ? ` · ${id}` : ''}
         </a>
       ))}
@@ -206,121 +208,106 @@ export default function ReportsView({ rows, reload, tab, self }: {
   return (
     <div style={{ paddingBottom: 24 }}>
       <div style={{
-        position: 'sticky', top: 0, zIndex: 10, background: '#f5f5f5',
-        padding: '8px 12px 6px', borderBottom: '1px solid #eee',
+        position: 'sticky', top: 0, zIndex: 10,
+        background: 'rgba(243,245,247,0.92)',
+        backdropFilter: 'saturate(160%) blur(14px)', WebkitBackdropFilter: 'saturate(160%) blur(14px)',
+        padding: '14px 16px 10px', borderBottom: `1px solid ${C.lineSoft}`,
       }}>
-        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 8 }}>
-          <h3 style={{ margin: '0 0 2px', fontSize: 18 }}>
-            {tab === 'center' ? '报表中心' : '报表管理'}
-            {rows.length > 0 ? (
-              <span style={{ fontSize: 12, color: '#999', fontWeight: 400, marginLeft: 8 }}>
-                {q === '' ? `共 ${visible.length} 个` : `匹配 ${visible.length} / ${pool.length}`}
-              </span>
-            ) : null}
-          </h3>
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: 10 }}>
+          <div style={{ minWidth: 0 }}>
+            <h1 style={{
+              margin: 0, fontSize: 23, lineHeight: 1.2, fontWeight: 650,
+              letterSpacing: '-0.02em', color: C.ink,
+            }}>
+              {tab === 'center' ? '报表中心' : '报表管理'}
+            </h1>
+            <div style={{ fontSize: 12, color: C.mute, marginTop: 5 }}>
+              {q === '' ? `共 ${visible.length} 个报表` : `匹配 ${visible.length} / ${pool.length}`}
+            </div>
+          </div>
           {/* 体系地图只给「报表管理」口径的人看，且只在管理 tab 出现（报表中心纯浏览页不挂管理入口）。 */}
           {tab === 'manage' && (
             <a href={systemMapHref('#/overview')}
                style={{
-                 display: 'inline-flex', alignItems: 'center', minHeight: 44, padding: '0 4px',
-                 fontSize: 13, color: '#1677ff', textDecoration: 'none', flex: '0 0 auto',
+                 display: 'inline-flex', alignItems: 'center', gap: 5, minHeight: 34,
+                 padding: '0 11px', marginTop: 2, borderRadius: radius.chip,
+                 background: C.accentSoft, color: C.accentDeep,
+                 fontSize: 12, fontWeight: 500, textDecoration: 'none', flex: '0 0 auto',
                }}>
+              <Icon name="source" size={14} />
               体系地图
             </a>
           )}
         </div>
         {/* 与指标页一致：不用 antd-mobile SearchBar（本仓 React 18 + hoisted 19 下渲染异常） */}
         <div style={{
-          display: 'flex', alignItems: 'center', gap: 6,
-          background: '#fff', border: '1px solid #e5e5e5', borderRadius: 8, padding: '6px 10px',
+          display: 'flex', alignItems: 'center', gap: 8, marginTop: 12,
+          background: C.surface, border: `1px solid ${C.line}`, borderRadius: radius.field,
+          padding: '0 12px', height: 40,
         }}>
-          <span style={{ color: '#bbb', fontSize: 14 }}>⌕</span>
-          <Input placeholder="搜索报表名称" value={search} onChange={setSearch} style={{ '--font-size': '14px' }} />
+          <Icon name="search" size={16} color={C.mute} />
+          <Input placeholder="搜索报表名称" value={search} onChange={setSearch}
+                 style={{ '--font-size': '14px', flex: 1 }} />
         </div>
       </div>
 
-      <div style={{ padding: '10px 12px 0', display: 'flex', flexDirection: 'column', gap: 10 }}>
+      <div style={{ padding: '16px 16px 0', display: 'flex', flexDirection: 'column', gap: 12 }}>
         {pool.length === 0 ? (
-          <div style={{ color: '#999', textAlign: 'center', padding: 32, lineHeight: 1.8 }}>
-            {tab === 'center' ? (
-              <>
-                暂时没有对你可见的已发布报表
-                <br />
-                有权限的报表发布后会出现在这里
-              </>
-            ) : (
-              <>
-                你还没有自己创建的报表
-                <br />
-                在 PC 端创建后会出现在这里
-              </>
-            )}
-          </div>
+          <EmptyState
+            icon="reports"
+            title={tab === 'center' ? '暂时没有可见的报表' : '你还没有创建报表'}
+            hint={tab === 'center' ? '有权限的报表发布后会出现在这里' : '在 PC 端创建后会出现在这里'}
+          />
         ) : visible.length === 0 ? (
-          <div style={{ color: '#999', textAlign: 'center', padding: 32 }}>没有匹配的报表，试试清空搜索。</div>
+          <EmptyState icon="search" title="没有匹配的报表" hint="换个关键词，或清空搜索" />
         ) : visible.map((r) => {
           const published = r.renderer === 'metabase'
             ? true
             : r.publishedVersion !== null && r.publishedVersion !== undefined
+          const tone = r.renderer === 'metabase'
+            ? 'accent' as const
+            : published
+              ? (r.hasUnpublishedChanges ? 'warning' as const : 'success' as const)
+              : 'neutral' as const
+          const status = r.renderer === 'metabase'
+            ? 'Metabase'
+            : published
+              ? (r.hasUnpublishedChanges ? '有更新' : '已发布')
+              : '草稿'
+          const owner = r.owner ? `所有者 ${r.owner}` : '无所有者'
           // 交互按语境分开（#1373）：中心点卡 = 打开阅读；管理点卡 = 管理面板
-          if (tab === 'manage') {
-            return (
-              <div key={r.id} style={{ background: '#fff', borderRadius: 14, border: '1px solid #eee', overflow: 'hidden' }}>
-                <button
-                  type="button"
-                  onClick={() => setSheetFor(r)}
-                  style={{
-                    display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 10,
-                    width: '100%', textAlign: 'left', cursor: 'pointer',
-                    background: 'none', border: 'none', padding: '14px 16px',
-                  }}
-                >
-                  <span style={{ minWidth: 0 }}>
-                    <span style={{ display: 'block', fontSize: 16, fontWeight: 600, lineHeight: 1.4 }}>
-                      {r.title}
-                    </span>
-                    <span style={{ display: 'block', fontSize: 12, color: '#999', marginTop: 6 }}>
-                      {r.renderer === 'metabase' ? 'Metabase 报表'
-                        : published ? (r.hasUnpublishedChanges ? '已发布 · 有未发布改动' : '已发布') : '未发布草稿'}
-                    </span>
-                  </span>
-                  <span aria-hidden style={{ color: '#999', fontSize: 20, flex: '0 0 auto' }}>⋯</span>
-                </button>
-                <div style={{ padding: '0 16px' }}><SourceLinks metricIds={r.metricIds} /></div>
-              </div>
-            )
-          }
           return (
-            <div key={r.id} style={{ background: '#fff', borderRadius: 14, border: '1px solid #eee', overflow: 'hidden' }}>
+            <div key={r.id} style={{ ...cardStyle, overflow: 'hidden' }}>
               <button
+                className="m-card-btn"
                 type="button"
-                onClick={() => void open(r)}
+                onClick={tab === 'manage' ? () => setSheetFor(r) : () => void open(r)}
                 disabled={opening === r.id}
                 style={{
-                  display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 10,
-                  width: '100%', textAlign: 'left', cursor: 'pointer',
-                  background: 'none', border: 'none', padding: '14px 16px',
+                  ...pressable,
+                  display: 'flex', alignItems: 'center', gap: 12, width: '100%',
+                  textAlign: 'left', background: 'none', border: 'none', cursor: 'pointer',
+                  padding: '15px 16px', opacity: opening === r.id ? 0.55 : 1,
                 }}
               >
-                <span style={{ minWidth: 0 }}>
-                  <span style={{ display: 'block', fontSize: 16, fontWeight: 600, lineHeight: 1.4 }}>
-                    {r.title}
-                  </span>
-                  <span style={{ display: 'block', fontSize: 12, color: '#999', marginTop: 6 }}>
-                    {r.owner ? `所有者 ${r.owner}` : '无所有者'}
-                    {r.ownerActive === false ? '（已停用）' : ''}
+                <span style={{ flex: 1, minWidth: 0 }}>
+                  <span style={{
+                    display: 'block', fontSize: 16, fontWeight: 600, lineHeight: 1.45, color: C.ink,
+                    overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
+                  }}>{r.title}</span>
+                  <span style={{ display: 'flex', alignItems: 'center', gap: 8, marginTop: 7, minWidth: 0 }}>
+                    <Chip tone={tone}>{status}</Chip>
+                    <span style={{
+                      fontSize: 12, color: C.mute, overflow: 'hidden',
+                      textOverflow: 'ellipsis', whiteSpace: 'nowrap',
+                    }}>
+                      {owner}{r.ownerActive === false ? '（已停用）' : ''}
+                    </span>
                   </span>
                 </span>
-                <span style={{ display: 'flex', alignItems: 'center', gap: 8, flex: '0 0 auto' }}>
-                  {r.renderer === 'platform' && (
-                    published
-                      ? <Tag color="success" fill="outline" style={{ '--background-color': '#fff' }}>
-                          {r.hasUnpublishedChanges ? '有更新' : '已发布'}
-                        </Tag>
-                      : <Tag color="default" fill="outline" style={{ '--background-color': '#fff' }}>未发布</Tag>
-                  )}
-                  <span aria-hidden style={{ color: '#ccc', fontSize: 18 }}>›</span>
-                </span>
+                {tab === 'manage'
+                  ? <span aria-hidden style={{ color: C.mute, fontSize: 20, flex: '0 0 auto', lineHeight: 1 }}>⋯</span>
+                  : <Icon name="chevron" size={18} color={C.mute} />}
               </button>
               <div style={{ padding: '0 16px' }}><SourceLinks metricIds={r.metricIds} /></div>
             </div>
@@ -338,8 +325,12 @@ export default function ReportsView({ rows, reload, tab, self }: {
             style={{ background: '#fff', borderRadius: '14px 14px 0 0', paddingBottom: 'env(safe-area-inset-bottom, 0px)' }}
             onClick={(e) => e.stopPropagation()}
           >
-            <div style={{ padding: '14px 16px 8px', fontSize: 15, fontWeight: 600, borderBottom: '1px solid #f0f0f0' }}>
-              {sheetFor.title}
+            <div style={{ padding: '10px 16px 14px', borderBottom: `1px solid ${C.lineSoft}` }}>
+              <div style={{
+                width: 36, height: 4, borderRadius: 2, background: C.line,
+                margin: '0 auto 12px',
+              }} aria-hidden />
+              <div style={{ fontSize: 15, fontWeight: 600, color: C.ink }}>{sheetFor.title}</div>
             </div>
             {sheetActions(sheetFor).map((a) => (
               <button
@@ -347,9 +338,9 @@ export default function ReportsView({ rows, reload, tab, self }: {
                 type="button"
                 onClick={() => { setSheetFor(null); a.onClick() }}
                 style={{
-                  display: 'block', width: '100%', padding: '15px 24px',
+                  display: 'block', width: '100%', padding: '16px 24px',
                   border: 'none', background: 'none', textAlign: 'left', cursor: 'pointer',
-                  fontSize: 16, color: a.danger === true ? '#ff4d4f' : '#1f1f1f',
+                  fontSize: 16, color: a.danger === true ? C.danger : C.ink,
                 }}
               >{a.label}</button>
             ))}
@@ -357,9 +348,9 @@ export default function ReportsView({ rows, reload, tab, self }: {
               type="button"
               onClick={() => setSheetFor(null)}
               style={{
-                display: 'block', width: '100%', padding: '15px 24px', marginTop: 8,
-                border: 'none', borderTop: '1px solid #f0f0f0', background: '#fafafa',
-                textAlign: 'center', cursor: 'pointer', fontSize: 16, color: '#666',
+                display: 'block', width: '100%', padding: '16px 24px', marginTop: 6,
+                border: 'none', borderTop: `1px solid ${C.lineSoft}`, background: C.surface,
+                textAlign: 'center', cursor: 'pointer', fontSize: 15, color: C.sub,
               }}
             >取消</button>
           </div>
@@ -374,7 +365,7 @@ export default function ReportsView({ rows, reload, tab, self }: {
         }}>
           <div style={{
             display: 'flex', alignItems: 'center', gap: 4, padding: '2px 8px',
-            borderBottom: '1px solid #ececec', background: '#fff',
+            borderBottom: `1px solid ${C.line}`, background: C.surface,
             paddingTop: 'env(safe-area-inset-top, 0px)',
           }}>
             <button
@@ -383,16 +374,19 @@ export default function ReportsView({ rows, reload, tab, self }: {
               onClick={closeViewer}
               style={{
                 width: 44, height: 44, border: 'none', background: 'none',
-                fontSize: 26, lineHeight: '44px', cursor: 'pointer', color: '#1f1f1f',
+                cursor: 'pointer', color: C.ink, display: 'flex',
+                alignItems: 'center', justifyContent: 'center',
               }}
-            >‹</button>
+            >
+              <span style={{ display: 'flex', transform: 'rotate(180deg)' }}>
+                <Icon name="chevron" size={20} />
+              </span>
+            </button>
             <span style={{
-              flex: 1, minWidth: 0, fontSize: 16, fontWeight: 600,
+              flex: 1, minWidth: 0, fontSize: 15, fontWeight: 600, color: C.ink,
               overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
             }}>{viewing.title}</span>
-            {viewing.src.includes('preview=1') && (
-              <span style={{ fontSize: 12, color: '#fa8c16', border: '1px solid #fa8c16', borderRadius: 4, padding: '0 5px', flex: '0 0 auto' }}>预览</span>
-            )}
+            {viewing.src.includes('preview=1') && <Chip tone="warning">预览</Chip>}
           </div>
           <iframe
             key={viewing.id}

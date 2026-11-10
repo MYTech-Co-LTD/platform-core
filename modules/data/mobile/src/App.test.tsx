@@ -84,7 +84,7 @@ describe('移动指标页（spec 2026-11-01 §10.2）', () => {
     expect(screen.getByText('匹配 1 / 3')).toBeTruthy()
 
     fireEvent.change(input, { target: { value: '不存在的指标' } })
-    expect(screen.getByText('没有匹配的指标，试试清空搜索。')).toBeTruthy()
+    expect(screen.getByText('没有匹配的指标')).toBeTruthy()
   })
 
   it('「编辑草稿」只出现在自己的 L2 上（L1 只读、非我创建只读——判定表直译）', async () => {
@@ -225,7 +225,7 @@ describe('表达式指标编辑器（expr，两操作数算式条）', () => {
       throw new Error(`no mock for ${init?.method ?? 'GET'} ${url}`)
     }) as unknown as typeof fetch
     render(<App initialTab="metricsManage" />)
-    fireEvent.click(await waitFor(() => screen.getByText('新建表达式指标')))
+    fireEvent.click(await waitFor(() => screen.getByText('新建指标')))
     fireEvent.change(await waitFor(() => screen.getByPlaceholderText('指标 id')), { target: { value: 'xiongmao:gross_margin' } })
     // 先验禁用：数字项清空 ⇒ 不就绪，点「创建」不得发请求
     fireEvent.change(screen.getByPlaceholderText('数字'), { target: { value: '' } })
