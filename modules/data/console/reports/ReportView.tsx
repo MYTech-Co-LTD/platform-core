@@ -218,7 +218,7 @@ export function buildOption(
 
   for (const key of currentKeys) {
     series.push({
-      name: nameOf(key, hasCompare ? '本期' : key),
+      name: hasCompare ? nameOf(key, '本期') : key,
       type: chart,
       data: xLabels.map((x) => base.cells.get(`${x}\u0000${key}`) ?? null),
     })
