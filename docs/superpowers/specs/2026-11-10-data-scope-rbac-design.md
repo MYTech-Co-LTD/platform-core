@@ -47,7 +47,7 @@
 |---|---|
 | Casdoor 授权角色 | **5 职能**（`总经理`/`财务总`/`战区总`/`小区经理`/`采购负责人`）+ **22 范围**（`范围|X`）；见 `scripts/configure-casdoor-roles.sh` |
 | `roles` 表（UI/默认层） | `boss/zone_manager/manager/buyer/finance`；只作显示/默认/birthright，**不是** Casdoor 授权源 |
-| 实际 permission resources | 5 职能角色当前都带全部能力点（含 `字段|成本可见`、`门禁|管理台`、`看板|*`）；新设计按最小权限收敛（见 §3.1） |
+| 实际 permission resources | 5 职能角色当前都带全部能力点（含 `字段|成本可见`、`门禁|管理台`、`看板|*`）；新设计成本照旧全给，门禁/看板另定（见 §3.1） |
 | `roles` 表默认范围（参考） | boss/zone_manager/finance：全店/全品牌/全品类 + 成本可见；manager：全店/全品牌/全品类、无成本；buyer：全店/全品牌 + 默认品类 `水果`、无成本 |
 | 品牌 | `system_book_code`（3120 熊喵鲜生 / 64188 品品甜） |
 | 门店 | `first_level_region` / `second_level_region`（区域包）→ `branch_number`（跨账套复合键，如 `3120-0027`）；`范围|全店` = all |
@@ -96,17 +96,15 @@ category_path 首段 = 生鲜              → 水果
 | 动作权限 | 平台 manifest 码 | `data:query`；成本角色 `data:cost`；`data:create`/`data:precise` 按需；`tenant:admin` 只给明确管理员 |
 | 数据范围 | `data.scope` + `data.scope_assignment` | `brand` / `store` / `category`；可层级、可 `all` |
 
-**角色默认动作（按最小权限；实际 Casdoor 当前 CAPS 更宽，见下）**：
+**角色默认动作（成本照旧；门禁/看板另定）**：
 
 | 角色（Casdoor 职能角色） | 平台码 |
 |---|---|
-| `总经理` / `财务总` / `战区总` | `data:query` + `data:cost` |
-| `小区经理` / `采购负责人` | `data:query`（无成本） |
+| `总经理` / `财务总` / `战区总` / `小区经理` / `采购负责人` | `data:query` + `data:cost` |
 
-> ⚠️ data-analysis 的 `configure-casdoor-roles.sh` 当前给 5 个职能角色都挂了**全部能力点**
-> （含 `字段|成本可见`、`门禁|管理台`、`看板|*`）。本设计按最小权限收敛：`小区经理`/`采购负责人`
-> 不给 `data:cost`；`门禁|管理台` 不映射成 `tenant:admin`；`看板|*` 二期。迁移 dry-run 会把
-> 「实际 Casdoor 有 / 新设计不给」的差异逐项列出，供你决定是否保持旧授权。
+> **2026-11-10 用户拍板：成本照旧全给**——5 个职能角色都保留 `字段|成本可见` → `data:cost`。
+> `门禁|管理台` 仍不映射成 `tenant:admin`；`看板|*` 二期。迁移 dry-run 只列 `门禁`/`看板`
+> 的差异，不再列 `data:cost` 差异。
 
 **旧 Casdoor 角色 → 新模型**：
 
@@ -115,7 +113,7 @@ category_path 首段 = 生鲜              → 水果
 | 5 个职能角色（总经理/财务总/战区总/小区经理/采购负责人） | **1:1 保留为 5 个新职能角色**；成员迁入 |
 | 22 个 `范围|*` 角色（含 `全店`） | **不建角色**；转成 `store` scope + user-level assignment |
 | 5 职能角色 permission 里的 `品牌|*` / `品类|*` | role-level `brand` / `category` scope |
-| `字段|成本可见` | 平台码 `data:cost`（按上表最小权限决定给谁） |
+| `字段|成本可见` | 平台码 `data:cost`（5 个职能角色都保留，照旧） |
 | `门禁|报表中心` | 平台码 `data:query`（所有数据职能角色） |
 | `门禁|管理台` | 不映射；`tenant:admin` 另行指定 |
 | `看板|*` | 二期：报表可见性（资产 ACL `scope` 受让方） |
@@ -240,14 +238,26 @@ AND (system_book, branch_num) IN (
 
 旧 `品类|水果` / `品类|标品` / `品类|耗材` **直接映射**到 `category_group`，不需要猜部门/品类层级。
 
-平台侧需要把 `category_group` 物化到 item 维：
+平台侧物化（2026-11-10 实测数据面）：
 
-- 首选：在 item 契约/staging 增加 `category_path`（若源提供），按
-  `150_dim_item_category_group.sql` 的 CASE 生成 `category_group`；
-- 若新 item 源没有 `category_path`：增加一份**受控映射规则**
-  （`data.category_group_rule` 或 dbt seed），把 `item_category_name` / `item_department_name`
-  映射到 水果/标品/耗材/其他；映射必须业务确认，不猜；
-- `dim_item_latest` 增加 `category_group` 列（以及可选的 `top_category`），供 scope 解析直接读。
+- `stg_lemeng_item` 已有 `item_category_id` / `item_category_parent_id` /
+  `item_category_level` / `item_category_name`；**level=1 的根类别名正好是 data-analysis
+  `category_path` 的首段**：`生鲜 / 标品 / 废弃档案 / 广西柳州 / 包装耗材 / 运费/仓储用耗材`
+  （3120/64188 实测；64188 无 `广西柳州` 根）。
+- 因此**不要按叶子 `item_category_name` 或 `item_department_name` 直接映射**；正确做法是从
+  `item_category_id` 沿 `parent_id` 向上走到 `level=1`，取根类别名 `top_category_name`，再查
+  受控映射 seed `dim_category_group_map(top_category_name, category_group)`：
+  - `生鲜` → 水果
+  - `标品` / `废弃档案` / `广西柳州` → 标品
+  - `包装耗材` / `运费/仓储用耗材` → 耗材
+  - 其他 → 其他
+- 物化：`dim_item_latest`（或新 `dim_item`）增加 `top_category_name` / `category_group`；
+  由最新快照的类别树 join 得到。若源以后提供 `category_path`，可直接用；当前不需要改契约。
+- 质量门禁：
+  - dbt test：每个 level=1 根类别必须在 `dim_category_group_map` 中有映射（防止新根静默落 `其他`）；
+  - 监控 `category_group='其他'` 的数量（活跃商品数/销售额）；非 0 或增长 ⇒ 告警并补映射；
+  - 映射 seed 走 PR 评审，**不在多处 SQL 里写 CASE**。
+- 权限只用 `category_group`；细分类别树保留做下钻/分析，不作为授权维度。
 
 SQL（**复合键**）：
 
@@ -354,7 +364,7 @@ AND (system_book, item_num) IN (
 | 22 个 `范围|X` 角色（含 `全店`） | **不建角色**；转成 `store` scope + user-level assignment |
 | 职能角色 permission 里的 `品牌|*` | role-level `brand` scope（`system_book`） |
 | 职能角色 permission 里的 `品类|*` | role-level `category` scope（`category_group`） |
-| 职能角色 permission 里的 `字段|成本可见` | 平台码 `data:cost`（按 §3.1 最小权限决定给谁） |
+| 职能角色 permission 里的 `字段|成本可见` | 平台码 `data:cost`（5 个职能角色都保留，照旧） |
 | `门禁|报表中心` | 平台码 `data:query`（所有数据职能角色） |
 | `门禁|管理台` | 不映射；`tenant:admin` 另行指定 |
 | `看板|*` | 二期：报表可见性（资产 ACL `scope` 受让方） |
@@ -377,7 +387,7 @@ AND (system_book, item_num) IN (
 1. 只读读 Casdoor `shanhai` org：角色、`permission.resources`、`Role.Users`；
 2. 读平台 `dim_region` / `dim_brand` / `dim_item_latest(category_group)` 生成 selector；
 3. 输出 dry-run：新角色、scope、assignment、无法映射的用户/资源、无 store scope 的用户、
-   「实际 Casdoor 有 / 新设计最小权限不给」的差异清单；
+   「实际 Casdoor 有 / 新设计不给」的差异清单（门禁/看板）；
 4. 人工确认后 `--apply`；
 5. 写后回读：每个目标用户的有效 scope 预览；
 6. 旧系统置只读/冻结（流程动作，不改 Casdoor）。
@@ -412,11 +422,11 @@ AND (system_book, item_num) IN (
    不需要 data-analysis DB 才能做角色/成员迁移；DB 仅作可选交叉核验。
 2. **27 个角色就是 data-analysis 的授权层**：`configure-casdoor-roles.sh` 确认 5 职能 + 22 范围；
    `roles` 表的 `boss/zone_manager/manager/buyer/finance` 是另一层 UI/默认值，不要混用。
-3. **`category_group` 来源**：data-analysis 用 `category_path` 首段；平台 item 契约当前没有
-   `category_path`。优先补列；否则建受控映射规则（`item_category_name`/`item_department_name` →
-   `category_group`），必须业务确认，不猜。
-4. **实际 Casdoor CAPS 比最小权限宽**：5 职能角色当前都带 `字段|成本可见`、`门禁|管理台`、`看板|*`；
-   新设计按最小权限收敛（§3.1），dry-run 会列出差异，需你确认是否保持旧授权。
+3. **`category_group` 来源已实测**：平台 item 源的 level=1 根类别名与 data-analysis
+   `category_path` 首段一致；按 `parent_id` 树取 `top_category_name` + 受控 seed 映射即可，
+   不需要给 item 契约加 `category_path`。新增根类别未映射时 dbt test 会红，不静默落 `其他`。
+4. **成本/门禁/看板口径**：成本已拍板**照旧全给**（5 职能角色都 `data:cost`）；
+   `门禁|管理台` 不映射成 `tenant:admin`；`看板|*` 二期。迁移 dry-run 只列门禁/看板差异。
 5. **`dim_item_latest` 补列**：需改 dbt 模型并重跑数据面；列缺失时 category scope 应拒绝而不是放行。
 6. **`dim_lemeng_branch` 无契约**：`dimensions.yml` 已登记战区层级缺口；scope 解析可直接读该表，
    但语义层声明需后续补契约/稳定视图。
