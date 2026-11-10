@@ -100,7 +100,7 @@ describe('AiTextPanel', () => {
     // done 后标签换成「AI 分析」、光标消失；页脚如实给数据截止（cached=false 不写「已缓存」）
     expect(screen.getByText('AI 分析')).toBeInTheDocument()
     expect(screen.getByTestId('ai-text').textContent).not.toContain('▍')
-    expect(screen.getByText(/数据截至 2026-10-25/)).toBeInTheDocument()
+    expect(screen.getByText(/数据截止 2026-10-25/)).toBeInTheDocument()
     expect(screen.queryByText(/已缓存/)).not.toBeInTheDocument()
 
     expect(m).toHaveBeenCalledOnce()
@@ -121,7 +121,28 @@ describe('AiTextPanel', () => {
     // 旧 delta 不能再出现（追加式实现的典型错法会留下「编造的结论 999」）
     expect(screen.queryByText(/999/)).not.toBeInTheDocument()
     expect(screen.getByText('数据摘要')).toBeInTheDocument()
-    expect(screen.getByText('数据截至 新鲜度未知（北京时间） · 已缓存')).toBeInTheDocument()
+    expect(screen.getByText('数据截止 未知 · 已缓存')).toBeInTheDocument()
+  })
+
+  it('★ 模板回退按「结论/对比/建议」断段，期间标签带语义', async () => {
+    m.mockResolvedValue(sseResponse([
+      ev.done('结论：下滑。\n对比：营业额 -58.6%。\n建议：\n- 查客流\n- 查排班', {
+        fallback: true,
+        dataAsOf: '2026-11-08 06:00:00 +08:00',
+      }),
+    ]))
+    renderPanel({ period: { mode: 'day', day: '2026-11-08' } })
+
+    expect(await screen.findByText('单日 · 2026-11-08')).toBeInTheDocument()
+    await waitFor(() => {
+      expect(screen.getByTestId('ai-text').textContent).toContain('结论：下滑。')
+    })
+    const text = screen.getByTestId('ai-text').textContent ?? ''
+    expect(text).toContain('结论：下滑。')
+    expect(text).toContain('对比：营业额 -58.6%。')
+    expect(text).toContain('• 查客流')
+    expect(text).toContain('• 查排班')
+    expect(text).toContain('数据截止 2026-11-08 06:00:00 +08:00')
   })
 
   it('★ 500ms 防抖 + 中止：窗口内连切期间只发最后一次请求', async () => {

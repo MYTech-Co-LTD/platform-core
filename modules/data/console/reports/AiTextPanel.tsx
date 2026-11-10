@@ -53,6 +53,41 @@ function parseChunk(chunk: string): Ev | null {
   return JSON.parse(line.slice(6)) as Ev
 }
 
+/**
+ * 可读分段：优先按空行（模型自然段）。确定性模板只有单换行，且每段以
+ * 「结论/对比/成本…」打头——按标签断段，否则整段会挤成一坨。
+ */
+const SECTION_START = /^(结论|对比|天气|成本|MTD|驱动|根因|建议|行动|异常|现象)[：:]/
+function sectionsOf(text: string): string[] {
+  const out: string[] = []
+  let cur: string[] = []
+  const flush = (): void => {
+    if (cur.length > 0) {
+      out.push(cur.join('\n'))
+      cur = []
+    }
+  }
+  for (const line of text.split('\n')) {
+    if (line.trim() === '') {
+      flush()
+      continue
+    }
+    if (SECTION_START.test(line.trim()) && cur.length > 0) flush()
+    cur.push(line)
+  }
+  flush()
+  return out
+}
+
+/** 期间标签：11-08 这类裸日期要带上「单日/本月」语义，避免读者猜。 */
+function periodLabelOf(period: PeriodSpec | null): string {
+  if (period === null) return '未声明期间'
+  if (period.mode === 'day') return period.day === undefined ? '单日' : `单日 · ${period.day}`
+  if (period.mode === 'month') return period.month === undefined ? '本月' : `本月 · ${period.month}`
+  if (period.mode === 'last_7_days') return '近 7 天'
+  return `${period.from ?? ''} ~ ${period.to ?? ''}`
+}
+
 export default function AiTextPanel({ reportId, panelIndex, focus, period, branchNum, version }: Props) {
   const [phase, setPhase] = useState<Phase>('facts')
   const [label, setLabel] = useState('正在核对指标…')
@@ -139,17 +174,8 @@ export default function AiTextPanel({ reportId, panelIndex, focus, period, branc
 
   if (error !== null) return <Alert type="warning" showIcon message={error} />
 
-  const periodLabel = period === null
-    ? '未声明期间'
-    : period.mode === 'day'
-      ? period.day ?? '单日'
-      : period.mode === 'month'
-        ? period.month ?? '本月'
-        : period.mode === 'last_7_days'
-          ? '近 7 天'
-          : `${period.from ?? ''} ~ ${period.to ?? ''}`
-  const blocks = text.split(/\n{2,}/).filter((b) => b.trim() !== '')
-  const asOfLabel = dataAsOf === null ? '新鲜度未知' : dataAsOf.replace(/\s*\+08:00$/, '')
+  const periodLabel = periodLabelOf(period)
+  const blocks = sectionsOf(text)
 
   return (
     <div data-testid="ai-text">
@@ -172,11 +198,14 @@ export default function AiTextPanel({ reportId, panelIndex, focus, period, branc
                 ...(i === 0 ? { background: '#fafafa', padding: '8px 12px', borderLeft: '3px solid #1677ff' } : {}),
               }}
             >
-              {block.split('\n').map((line, li) => (
-                line.trim().startsWith('- ')
-                  ? <div key={li} style={{ paddingLeft: 10 }}>• {line.trim().slice(2)}</div>
-                  : <span key={li}>{line}{li < block.split('\n').length - 1 ? <br /> : null}</span>
-              ))}
+              {block.split('\n').map((line, li) => {
+                const t = line.trim()
+                if (t.startsWith('- ')) {
+                  return <div key={li} style={{ paddingLeft: 10, marginTop: 4 }}>• {t.slice(2)}</div>
+                }
+                // 每行独立成 div + 行距：模板回退只有单换行，靠 <br> 会挤成一坨。
+                return <div key={li} style={{ marginTop: li === 0 ? 0 : 6 }}>{t}</div>
+              })}
               {phase !== 'done' && i === blocks.length - 1 ? '▍' : ''}
             </Typography.Paragraph>
           ))
@@ -185,7 +214,7 @@ export default function AiTextPanel({ reportId, panelIndex, focus, period, branc
       {phase === 'done' && (
         <div style={{ marginTop: 4 }}>
           <Typography.Text type="secondary" style={{ fontSize: 12 }}>
-            数据截至 {asOfLabel}（北京时间）{cached ? ' · 已缓存' : ''}
+            数据截止 {dataAsOf ?? '未知'}{cached ? ' · 已缓存' : ''}
           </Typography.Text>
         </div>
       )}
