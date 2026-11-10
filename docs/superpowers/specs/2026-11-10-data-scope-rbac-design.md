@@ -25,26 +25,30 @@
 | D3 | **`范围|全店` = `all`**（该维度不裁）。 |
 | D4 | **4 个旧账号**（`DongJiJuan_1`、`Dongjijuan`）**别名到 `DongJiJuan`**（同一人；旧账号均 `isForbidden`）。 |
 
-### 1.1 一个必须修正的迁移源
+### 1.1 迁移源：Casdoor 已够（已实测）
 
-此前从共享 Casdoor `sso.hookflow.cn/shanhai` 看到的 **27 个角色 / 75 条成员**，**不是
-`data-analysis` 的角色层**。`data-analysis` 的真相在它自己的 DB/接口：
+`data-analysis` 的正式授权在 Casdoor `sso.shanhaiyiguo.com`（与 `sso.hookflow.cn` **同一实例**，
+同一 IP `113.249.101.33`）的 `shanhai` org。`scripts/configure-casdoor-roles.sh` 确认：
 
-- `org_users.role_codes`（5 个岗位角色）
-- `org_users.scope_resources`（Casdoor resource 投影）
-- `maps_branch_group`（区域包 → branch_number）
-- `dim_branch.first_level_region / second_level_region / branch_number`
-- `dim_item.category_group`
+- **5 个职能角色**：`总经理` / `财务总` / `战区总` / `小区经理` / `采购负责人`；
+  permission resources = 全部能力点（品牌/品类/字段/门禁/看板）。
+- **22 个范围角色**：每个一级/二级区域 + `全店`；permission resources = `范围|X`。
 
-**迁移源必须改为 `data-analysis` 的库/接口**；共享 Casdoor 27 角色只在确认与 `data-analysis`
-同源时才使用。
+合计 **27 个角色 / 75 条成员**——就是我们 2026-11-10 在 Casdoor 读到的那一组。
+
+`data-analysis` 的 `roles` 表（`boss/zone_manager/manager/buyer/finance`）是**另一层 UI/默认值/
+部门映射**，不是 Casdoor 的授权角色。迁移源以 **Casdoor 的 27 角色 / `permission.resources` /
+`Role.Users`** 为准；`data-analysis` DB 只在需要 `maps_branch_group`/`category_group` 原始投影时
+使用（本设计改用平台 `dim_region` / item 维重建，不依赖它）。
 
 ### 1.2 data-analysis 的参考口径（2026-11-10 代码库核对）
 
 | 维度 | data-analysis 定义 |
 |---|---|
-| 角色 | `boss`（老板/运营总）、`zone_manager`（战区主管）、`manager`（店长）、`buyer`（采购/业务）、`finance`（财务） |
-| 角色默认范围 | boss/zone_manager/finance：全店/全品牌/全品类 + 成本可见；manager：全店/全品牌/全品类、无成本；buyer：全店/全品牌 + 默认品类 `水果`、无成本 |
+| Casdoor 授权角色 | **5 职能**（`总经理`/`财务总`/`战区总`/`小区经理`/`采购负责人`）+ **22 范围**（`范围|X`）；见 `scripts/configure-casdoor-roles.sh` |
+| `roles` 表（UI/默认层） | `boss/zone_manager/manager/buyer/finance`；只作显示/默认/birthright，**不是** Casdoor 授权源 |
+| 实际 permission resources | 5 职能角色当前都带全部能力点（含 `字段|成本可见`、`门禁|管理台`、`看板|*`）；新设计按最小权限收敛（见 §3.1） |
+| `roles` 表默认范围（参考） | boss/zone_manager/finance：全店/全品牌/全品类 + 成本可见；manager：全店/全品牌/全品类、无成本；buyer：全店/全品牌 + 默认品类 `水果`、无成本 |
 | 品牌 | `system_book_code`（3120 熊喵鲜生 / 64188 品品甜） |
 | 门店 | `first_level_region` / `second_level_region`（区域包）→ `branch_number`（跨账套复合键，如 `3120-0027`）；`范围|全店` = all |
 | 品类 | **`dim_item.category_group` 三类**：水果 / 标品 / 耗材 / 其他 |
@@ -66,7 +70,7 @@ category_path 首段 = 生鲜              → 水果
 
 **目标**：
 
-1. 新系统只有 **5 个岗位角色**（boss/zone_manager/manager/buyer/finance），不继承旧范围角色；
+1. 新系统只有 **5 个职能角色**（总经理/财务总/战区总/小区经理/采购负责人）；22 个 `范围|*` 角色不建角色，转成 store scope；
 2. 数据范围作为一等实体：`brand` / `store` / `category` 三类 scope；
 3. 所有查询面（`/query`、MCP、问数/chat、报表、下钻）在 `authorizeCore()` 统一裁；
 4. 旧系统一次性迁移；迁移后冻结，不做双写；
@@ -88,38 +92,41 @@ category_path 首段 = 生鲜              → 水果
 | 概念 | 归属 | 说明 |
 |---|---|---|
 | 用户 | Casdoor `shanhaiyiguo-org` | 同一企微通讯录；按 `userid` 对齐 |
-| 岗位角色 | Casdoor Role | **5 个 data-analysis 角色**：`boss` / `zone_manager` / `manager` / `buyer` / `finance` |
+| 岗位角色 | Casdoor Role | **5 个职能角色**：`总经理` / `财务总` / `战区总` / `小区经理` / `采购负责人`（`roles` 表的 `boss/zone_manager/manager/buyer/finance` 只是 UI/默认层别名） |
 | 动作权限 | 平台 manifest 码 | `data:query`；成本角色 `data:cost`；`data:create`/`data:precise` 按需；`tenant:admin` 只给明确管理员 |
 | 数据范围 | `data.scope` + `data.scope_assignment` | `brand` / `store` / `category`；可层级、可 `all` |
 
-**角色默认动作（对齐 data-analysis）**：
+**角色默认动作（按最小权限；实际 Casdoor 当前 CAPS 更宽，见下）**：
 
-| 角色 | 中文名 | 平台码 |
-|---|---|---|
-| `boss` | 老板/运营总 | `data:query` + `data:cost` |
-| `zone_manager` | 战区主管 | `data:query` + `data:cost` |
-| `finance` | 财务 | `data:query` + `data:cost` |
-| `manager` | 店长 | `data:query`（无成本） |
-| `buyer` | 采购/业务 | `data:query`（无成本；默认品类 `水果`） |
+| 角色（Casdoor 职能角色） | 平台码 |
+|---|---|
+| `总经理` / `财务总` / `战区总` | `data:query` + `data:cost` |
+| `小区经理` / `采购负责人` | `data:query`（无成本） |
 
-**旧 Casdoor 中文角色 → 新角色**（仅用于迁移映射；旧 27 角色不是新模型）：
+> ⚠️ data-analysis 的 `configure-casdoor-roles.sh` 当前给 5 个职能角色都挂了**全部能力点**
+> （含 `字段|成本可见`、`门禁|管理台`、`看板|*`）。本设计按最小权限收敛：`小区经理`/`采购负责人`
+> 不给 `data:cost`；`门禁|管理台` 不映射成 `tenant:admin`；`看板|*` 二期。迁移 dry-run 会把
+> 「实际 Casdoor 有 / 新设计不给」的差异逐项列出，供你决定是否保持旧授权。
 
-| 旧 | 新 | 备注 |
-|---|---|---|
-| `总经理` | `boss` | |
-| `战区总` | `zone_manager` | |
-| `采购负责人` | `buyer` | |
-| `财务总` | `finance` | |
-| `小区经理` | **待定** | data-analysis 5 角色无此职位；按 data-analysis `role_codes` 导出结果决定映射到 `zone_manager` 还是 `manager`，不猜 |
-| `范围|*` | 不是角色 | 转成 `store` scope assignment |
+**旧 Casdoor 角色 → 新模型**：
+
+| 旧 Casdoor | 新 |
+|---|---|
+| 5 个职能角色（总经理/财务总/战区总/小区经理/采购负责人） | **1:1 保留为 5 个新职能角色**；成员迁入 |
+| 22 个 `范围|*` 角色（含 `全店`） | **不建角色**；转成 `store` scope + user-level assignment |
+| 5 职能角色 permission 里的 `品牌|*` / `品类|*` | role-level `brand` / `category` scope |
+| `字段|成本可见` | 平台码 `data:cost`（按上表最小权限决定给谁） |
+| `门禁|报表中心` | 平台码 `data:query`（所有数据职能角色） |
+| `门禁|管理台` | 不映射；`tenant:admin` 另行指定 |
+| `看板|*` | 二期：报表可见性（资产 ACL `scope` 受让方） |
 
 > `data:manage` / `tenant:admin` 不来自旧角色；它们是管理身份，单独授予，并**绕过数据范围**
 > （管理面需要看全量；与资产 ACL 的管理员代管同口径）。
 
 **岗位自动授予（birthright）**：采用 data-analysis 的 `dept_role_mapping` 思路，
-按 `platform.org_node` 的部门名映射角色（总经办/运营总/老板→boss；战区/区域/大区→zone_manager；
-店长/门店→manager；采购/业务/品类→buyer；财务→finance；未匹配→待配置，不默认最高权限）。
-首版可由迁移脚本/seed 落地，后续再做定时同步。
+按 `platform.org_node` 的部门名映射到 **5 个职能角色**（总经办/运营总/老板→总经理；
+财务→财务总；战区/区域/大区→战区总；采购/业务/品类→采购负责人；小区/门店/店长→小区经理；
+未匹配→待配置，不默认最高权限）。首版可由迁移脚本/seed 落地，后续再做定时同步。
 
 ### 3.2 数据范围
 
@@ -329,42 +336,48 @@ AND (system_book, item_num) IN (
 
 ### 6.1 迁移源与用户对齐
 
-- **源 = data-analysis 的 DB/接口**：`org_users.role_codes`、`org_users.scope_resources`、
-  `maps_branch_group`、`dim_branch`、`dim_item.category_group`；
-- 不再以共享 Casdoor `sso.hookflow.cn/shanhai` 的 27 角色/75 成员为迁移基线；
-- 用户按企微 `userid` 对齐；D4 的 4 个旧账号别名仅在 data-analysis 导出中存在时使用；
+- **源 = Casdoor**（`sso.shanhaiyiguo.com` / `sso.hookflow.cn` 同一实例，org `shanhai`）：
+  - 27 个角色（5 职能 + 22 范围）；
+  - 每个角色的 `permission.resources`；
+  - `Role.Users`（75 条成员）。
+- **不需要 data-analysis DB** 才能拿到角色/成员；DB 仅作可选的交叉核验
+  （`maps_branch_group`/`category_group` 原始投影）。
+- 用户按企微 `userid` 对齐；D4 的 4 个旧账号别名（`DongJiJuan_1`/`Dongjijuan` → `DongJiJuan`）
+  在 Casdoor `shanhai` org 中已确认是同一人；
 - 旧 `shanhai` org 全程**只读**；新 `shanhaiyiguo-org` 是写入目标。
 
-### 6.2 data-analysis 角色/范围 → 新模型
+### 6.2 Casdoor 角色/资源 → 新模型
 
-| data-analysis | 新 |
+| Casdoor（`shanhai`） | 新 |
 |---|---|
-| `role_codes` 中的 `boss/zone_manager/manager/buyer/finance` | 5 个 Casdoor 岗位角色；成员迁入 |
-| `scope_resources` / `get_user_perms` 的 `data_scope.brands` | `brand` scope（`system_book`） |
-| `data_scope.branch_nums` / `maps_branch_group` | `store` scope（区域包或 branch 复合键；`全店` = all） |
-| `data_scope.categories` | `category` scope（`category_group`） |
-| `fields.cost` / `field:cost` | 平台码 `data:cost` |
-| `data-analysis:admin` / 门禁 | 不映射到数据范围；`tenant:admin` 另行指定 |
-| 旧 `看板|*`/`view-board:*` | 二期：报表可见性（资产 ACL `scope`） |
+| 5 个职能角色（总经理/财务总/战区总/小区经理/采购负责人） | **1:1 保留为 5 个新职能角色**；`Role.Users` 迁入 |
+| 22 个 `范围|X` 角色（含 `全店`） | **不建角色**；转成 `store` scope + user-level assignment |
+| 职能角色 permission 里的 `品牌|*` | role-level `brand` scope（`system_book`） |
+| 职能角色 permission 里的 `品类|*` | role-level `category` scope（`category_group`） |
+| 职能角色 permission 里的 `字段|成本可见` | 平台码 `data:cost`（按 §3.1 最小权限决定给谁） |
+| `门禁|报表中心` | 平台码 `data:query`（所有数据职能角色） |
+| `门禁|管理台` | 不映射；`tenant:admin` 另行指定 |
+| `看板|*` | 二期：报表可见性（资产 ACL `scope` 受让方） |
 
 ### 6.3 范围 selector 生成
 
-- `范围|全店` / `branch_nums=["*"]` → `{ "all": true }`（D3）；
-- 区域包名（一级/二级）→ `{ "region_l1": [name] }` / `{ "region_name": [name] }`；
-- 直接 `branch_number`（`system_book-branch_num`）→ `{ "branch": [number] }`（**可选 selector**；
-  若使用，解析成 `(system_book, branch_num)` 复合键）；
-- `brands`（`system_book_code`）→ `{ "system_book": [code] }`；
-- `categories`（`category_group`）→ `{ "category_group": [group] }`；
-- 任一 selector 值不在对应维表 ⇒ dry-run 报错，人工确认（不猜）。
+- `范围|全店` → `{ "all": true }`（D3）；
+- 其余 `范围|*`：按名字查平台 `dim_region`：
+  - 命中 `region_name`（level=2）⇒ `{ "region_name": [name] }`
+  - 命中 `region_l1`（level=1）⇒ `{ "region_l1": [name] }`
+  - 未命中 ⇒ dry-run 报错，人工确认（不猜）；
+  - 2026-11-10 已核：22/22 全部命中；部分二级区只在单账套（按名字匹配自动落到实际账套）；
+- `品牌|*`：按 `dim_brand` 映射到 `system_book`；
+- `品类|*`：直接映射到 `category_group`（水果/标品/耗材）；不再猜 `item_department_name`/`item_category_name`。
 
 ### 6.4 迁移脚本
 
 一次性脚本（`scripts/migrate-data-scopes.mjs` 或 data 模块 CLI）：
 
-1. 只读导出 data-analysis 的 `org_users.role_codes` / `scope_resources` / `maps_branch_group`；
+1. 只读读 Casdoor `shanhai` org：角色、`permission.resources`、`Role.Users`；
 2. 读平台 `dim_region` / `dim_brand` / `dim_item_latest(category_group)` 生成 selector；
-3. 输出 dry-run：新角色、scope、assignment、无法映射的用户/资源、无岗位角色的用户、
-   `小区经理` 映射待定项；
+3. 输出 dry-run：新角色、scope、assignment、无法映射的用户/资源、无 store scope 的用户、
+   「实际 Casdoor 有 / 新设计最小权限不给」的差异清单；
 4. 人工确认后 `--apply`；
 5. 写后回读：每个目标用户的有效 scope 预览；
 6. 旧系统置只读/冻结（流程动作，不改 Casdoor）。
@@ -395,15 +408,15 @@ AND (system_book, item_num) IN (
 
 ## 8. 风险与已知边界
 
-1. **data-analysis DB/接口访问**：迁移源在其 DB/接口；需只读导出 `org_users.role_codes` /
-   `scope_resources` / `maps_branch_group`；没有访问就不能做真实 dry-run。
-2. **共享 Casdoor 27 角色不是 data-analysis 角色层**：不要拿之前的 27 角色/75 成员当迁移基线；
-   先确认 data-analysis 的实际 `role_codes`。
+1. **Casdoor 是迁移源**：27 个角色 / `permission.resources` / `Role.Users` 都已可读；
+   不需要 data-analysis DB 才能做角色/成员迁移；DB 仅作可选交叉核验。
+2. **27 个角色就是 data-analysis 的授权层**：`configure-casdoor-roles.sh` 确认 5 职能 + 22 范围；
+   `roles` 表的 `boss/zone_manager/manager/buyer/finance` 是另一层 UI/默认值，不要混用。
 3. **`category_group` 来源**：data-analysis 用 `category_path` 首段；平台 item 契约当前没有
    `category_path`。优先补列；否则建受控映射规则（`item_category_name`/`item_department_name` →
    `category_group`），必须业务确认，不猜。
-4. **`小区经理` 映射**：data-analysis 5 角色无此职位；按导出结果决定 `zone_manager` 或 `manager`，
-   或另立 `area_manager` 角色；不默认。
+4. **实际 Casdoor CAPS 比最小权限宽**：5 职能角色当前都带 `字段|成本可见`、`门禁|管理台`、`看板|*`；
+   新设计按最小权限收敛（§3.1），dry-run 会列出差异，需你确认是否保持旧授权。
 5. **`dim_item_latest` 补列**：需改 dbt 模型并重跑数据面；列缺失时 category scope 应拒绝而不是放行。
 6. **`dim_lemeng_branch` 无契约**：`dimensions.yml` 已登记战区层级缺口；scope 解析可直接读该表，
    但语义层声明需后续补契约/稳定视图。
@@ -421,10 +434,16 @@ AND (system_book, item_num) IN (
 
 - issue：#1883
 - **data-analysis 参考**（`MYTech-Co-LTD/data-analysis`）：
+  - `scripts/configure-casdoor-roles.sh`（**实际授权角色**：5 职能 + 22 范围；
+    permission resources = 全部能力点 / `范围|X`）
+  - `scripts/assign-roles-2026-08-19.sh`（角色成员的实际挂载）
+  - `scripts/backfill-scope-resources.mjs`（`org_users.scope_resources` 投影；
+    `品牌|/品类|/字段|/范围|` → `data-analysis:brand/category/field/branch:*`）
   - `docs/design/permission-architecture-longterm.md`（长期 PDP/PEP 提案，未实施）
   - `docs/ops/permission-boundary.md`（Casdoor/data-analysis 职责边界；`范围|X` 门店资源）
   - `docs/ops/permission-maintenance.md`（当前生产：Casdoor resources + `scope_resources` + RLS）
-  - `database/migrations/072_permission_roles.sql`（5 角色 + data_permissions 维度）
+  - `database/migrations/072_permission_roles.sql`（`roles` 表 5 个 UI 默认 code；
+    `data_permissions` 为 legacy，已 sunset）
   - `database/migrations/150_dim_item_category_group.sql` / `067_category_three_class.sql`
     （`category_group` 三类映射）
   - `database/migrations/199_scope_packs_dim_truth.sql` / `200_get_user_perms_scope_resources.sql`
