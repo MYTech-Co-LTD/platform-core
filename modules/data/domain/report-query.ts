@@ -18,7 +18,7 @@
 //    不做第三种加工，也不在前端「顺手」过滤未知键（那会让服务端的拒绝面变得不可观测）。
 import type { SlicingSpec } from './authz'
 import type { DateRange } from './report-period'
-import { previousRangeOf } from './report-period'
+import { previousRangeOf, yearAgoRangeOf } from './report-period'
 import type { KpiPanel, PeriodSpec, ReportSpec } from './report-spec'
 
 /** 有数据面的面板（text / ai_text 不查 /query）。 */
@@ -78,6 +78,36 @@ export function compareRangeOf(
   if (range === null || p.compare === 'none') return null
   const mode = p.compare === 'auto' ? (periodMode === 'month' ? 'prev_month' : 'prev_period') : p.compare
   return previousRangeOf(range, mode)
+}
+
+/** 图表的历史对比基线：`prev`（上期/上月）与可选的 `yoy`（去年同期）。 */
+export interface ChartCompareRange {
+  key: 'prev' | 'yoy'
+  label: string
+  range: DateRange
+}
+
+export function chartCompareRangesOf(
+  p: Extract<DataPanel, { chart: 'line' | 'bar' }>,
+  range: DateRange | null,
+  periodMode: PeriodSpec['mode'] | undefined,
+): ChartCompareRange[] {
+  if (range === null || p.compare === undefined || p.compare === 'none') return []
+  const mode = p.compare === 'prev_month'
+    ? 'prev_month'
+    : p.compare === 'prev_year' ? null : 'prev_period'
+  const out: ChartCompareRange[] = []
+  if (mode === null) {
+    out.push({ key: 'prev', label: '去年同期', range: yearAgoRangeOf(range) })
+  } else {
+    out.push({ key: 'prev', label: mode === 'prev_month' ? '上月同期' : '上期', range: previousRangeOf(range, mode) })
+  }
+  if (p.compareYoY === true && p.compare !== 'prev_year') {
+    out.push({ key: 'yoy', label: '去年同期', range: yearAgoRangeOf(range) })
+  }
+  // periodMode 目前不参与（auto 的月度语义已在 KPI 侧）；保留参数以便后续对齐。
+  void periodMode
+  return out
 }
 
 // ── 对比的数据覆盖度（issue #1078）──────────────────────────────────────────────

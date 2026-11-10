@@ -63,12 +63,23 @@ const metricBase = {
   timeScoped: z.boolean().default(true),
 }
 
+/** 图表的对比基线：`prev_*` 一条曲线，另可用 `compareYoY` 再叠去年同期。 */
+const ChartCompare = z.enum(['none', 'prev_period', 'prev_month', 'prev_year']).optional()
+
 const LinePanel = z.object({
   chart: z.literal('line'), ...metricBase,
   dims: z.array(z.string().min(1).max(64)).max(MAX_DIMS).default([]),
   slice: SliceSchema.optional(),
+  compare: ChartCompare,
+  compareYoY: z.boolean().optional(),
 }).strict()
-const BarPanel = z.object({ chart: z.literal('bar'), ...metricBase, dims: z.array(z.string().min(1).max(64)).max(MAX_DIMS).default([]), slice: SliceSchema.optional() }).strict()
+const BarPanel = z.object({
+  chart: z.literal('bar'), ...metricBase,
+  dims: z.array(z.string().min(1).max(64)).max(MAX_DIMS).default([]),
+  slice: SliceSchema.optional(),
+  compare: ChartCompare,
+  compareYoY: z.boolean().optional(),
+}).strict()
 
 /**
  * table 的**渲染期列投影**（设计 §7.3.1）：只影响展示，不进 `/query`。
