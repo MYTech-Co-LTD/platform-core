@@ -337,6 +337,15 @@ export function startIntegrationProbeLoop(opts: {
 
   if (opts.intervalMs <= 0) {
     // 关闭态：写一行说明，随后不启动定时器（本地/测试默认关）。
+    //
+    // ⚠️ 必须**打日志**（2026-11-10 生产实测）：`INTEGRATION_PROBE_INTERVAL_MS` 只写在 compose
+    // `environment` 里时没有进入容器，循环按 0=关静默不跑；`platform.integration` 全空、集成健康页
+    // 空白，只有人工排查才发现。心跳 `enabled=false` 仍写（看门狗据此区分「没启用」与「挂了」），
+    // 但启动日志是运维第一眼能看到的信号。
+    console.warn(JSON.stringify({
+      event: 'integration_probe_disabled',
+      hint: 'INTEGRATION_PROBE_INTERVAL_MS 未设置或为 0；生产应显式设 60000，否则 platform.integration 不会更新',
+    }))
     void beat(false).catch((e) => opts.onError?.(e))
     return { stop() {} }
   }

@@ -4,11 +4,13 @@
 //   ① registry 写错要**启动即炸**（kind/source/sla/id 重复）；
 //   ② `sql` 查回 NULL 是「确实没动静」（判 STALE），**不是**探针失败（判 PROBE_FAILED）；
 //   ③ 证据写回与判定用的是**刚采到的新证据**（不是旧行——那会慢一整个周期）。
-import { describe, it, expect } from 'vitest'
+import { describe, it, expect, vi, afterEach } from 'vitest'
 import type { Pool } from 'pg'
 import { existsSync } from 'node:fs'
 import { readFileSync } from 'node:fs'
-import { parseRegistry, probeEverySeconds, REGISTRY_PATH, runProbes } from './integration-probe'
+import {
+  parseRegistry, probeEverySeconds, REGISTRY_PATH, runProbes, startIntegrationProbeLoop,
+} from './integration-probe'
 
 const entry = (over: Record<string, unknown> = {}) => ({
   id: 'x', kind: 'channel', source: 'http-healthz:BRIDGE', slaSeconds: 600, ...over,
@@ -50,6 +52,27 @@ describe('probeEverySeconds', () => {
     expect(probeEverySeconds(300)).toBe(75)
     expect(probeEverySeconds(60)).toBe(60)
     expect(probeEverySeconds(93600)).toBe(3600)
+  })
+})
+
+describe('startIntegrationProbeLoop', () => {
+  afterEach(() => vi.restoreAllMocks())
+
+  it('★ intervalMs<=0：打 integration_probe_disabled warn，仍写 disabled 心跳（缺 env 不再静默）', async () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {})
+    const sqls: string[] = []
+    const pool = {
+      query: async (sql: string) => { sqls.push(sql); return { rows: [] } },
+    } as unknown as Pool
+    const h = startIntegrationProbeLoop({
+      pool, intervalMs: 0, registryPath: REGISTRY_PATH, casdoorGetUser: async () => null,
+    })
+    h.stop()
+    await vi.waitFor(() => {
+      expect(sqls.some((s) => s.includes('platform.probe_heartbeat'))).toBe(true)
+    })
+    expect(warn).toHaveBeenCalled()
+    expect(String(warn.mock.calls[0]?.[0])).toContain('integration_probe_disabled')
   })
 })
 
