@@ -521,8 +521,9 @@ const c=new Client({connectionString:process.env.DATA_WAREHOUSE_URL});
   if(sealedRefs<=0){console.log('ERR 视图定义不含封版表（sealed_refs=0）——读路径被改回别处');process.exit(1)}
   if(dailyRefs>0){console.log('ERR 视图定义仍含 _DAILY（daily_refs='+dailyRefs+'）——#1872 的慢/崩路径回来了');process.exit(1)}
   // ⚠️ 必须**先取日期再拼字面量**：实测（2026-11-10）子查询形态
-  //    `where bizday = (select max(bizday) from ...)` 会让 pg_duckdb 放弃文件裁剪 ⇒ >120s 超时；
-  //    字面量 `where bizday = date '2026-11-09'` 4.3s。日期只来自库内、且经 ISO 正则校验后才拼。
+  //    where bizday = (select max(bizday) from ...) 会让 pg_duckdb 放弃文件裁剪 ⇒ >120s 超时；
+  //    字面量 where bizday = date '2026-11-09' 4.3s。日期只来自库内、且经 ISO 正则校验后才拼。
+  //    ⚠️ 本段 JS 在**双引号**里（node -e "…"）：注释里不许出现反引号，否则被 shell 当命令替换。
   const dq=await c.query('select max(bizday)::text as d from ${SEALED_TABLE} where bizday > date \'1970-01-01\'');
   const day=dq.rows[0].d;
   if(!/^\\d{4}-\\d{2}-\\d{2}$/.test(day||'')){console.log('ERR 取不到最近封版日（max(bizday)='+day+'）');process.exit(1)}
