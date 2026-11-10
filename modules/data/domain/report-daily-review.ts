@@ -99,6 +99,24 @@ export interface DailyComparison {
   }
 }
 
+export interface RootCauseDetail {
+  itemNum: string
+  itemName: string | null
+  day: string
+  prevDay: string
+  qtyToday: string
+  qtyPrev: string
+  priceToday: string
+  pricePrev: string
+  costToday: string
+  costPrev: string
+  profitDelta: string
+  volumeEffect: string
+  priceEffect: string
+  costEffect: string
+  summary: string
+}
+
 export interface DailyAssessment {
   verdict: 'good' | 'neutral' | 'warning' | 'bad' | 'critical'
   /** 一句话判断（先结论，不复述所有数字）。 */
@@ -139,6 +157,8 @@ export interface DailyReviewBundle {
   mtd: DailySnapshot
   /** 天气背景（外部上下文；null = 取不到，不阻断）。 */
   weather: WeatherBundle | null
+  /** 根因商品拆解（销量/价格/成本）；非商品根因或取不到 ⇒ null。 */
+  rootCauseDetail?: RootCauseDetail | null
   /** 销售侧/成本侧驱动，按绝对影响降序。 */
   drivers: DailyDriver[]
   /** 2–3 条可执行建议（已带金额/项目）。 */

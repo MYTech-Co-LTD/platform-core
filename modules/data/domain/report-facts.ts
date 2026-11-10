@@ -23,13 +23,14 @@ import type { Pool } from 'pg'
 import type { Requester, SlicingSpec, SliceOrderBy } from './authz'
 import { runQuery, type QueryDeps, type SqlExecutor } from './query-service'
 import { buildRootCause, type RootCauseBundle } from './report-root-cause'
-import { buildDailyReview, DAILY_REVIEW_METRICS, type DailyReviewBundle } from './report-daily-review'
+import { buildDailyReview, DAILY_REVIEW_METRICS, type DailyReviewBundle, type RootCauseDetail } from './report-daily-review'
 import type { ToolboxDeps } from './toolbox/registry'
 import {
   compareRangeOf, comparisonCovered, coverageArgsOf, coverageOfQueryResult, coverageSlicing,
   panelArgsOf, panelQueryBodyOf, type CoverageInfo, type DataPanel,
 } from './report-query'
 import { periodRangeOf } from './report-period'
+import { analystPool, runWarehouseSqlParams } from './warehouse'
 import { formatDelta, formatValue } from './report-format'
 import type { AiTextPanel, KpiPanel, PeriodSpec, ReportSpec } from './report-spec'
 
@@ -635,6 +636,84 @@ export async function buildFacts(
           const delta = row.delta === undefined ? '' : `，变化 ${row.delta}`
           dailyReview.suggestions.unshift(`针对根因 ${top.dimension} ${row.label}（${row.value}${delta}），核对销量、售价与成本构成`)
           dailyReview.suggestions.splice(3)
+        }
+        // 商品根因拆解：只对同店、单账套、有 item_num 的 finding 跑一条定点查询。
+        if (top?.dimension === 'item_num' && row !== undefined && branchNum !== undefined
+          && reportSystemBook !== null && dailyReview.yesterday !== null) {
+          try {
+            const out = await runWarehouseSqlParams(
+              analystPool(),
+              `select bizday::text as day, item_name, sale_num::text as qty,
+                      sale_money_no_coupon::text as revenue, sale_cost::text as cost
+                 from fct_retail_item_profit
+                where system_book = $1::int and branch_num = $2::int and item_num = $3::int
+                  and bizday in ($4, $5)`,
+              [reportSystemBook, branchNum, row.label, dailyReview.yesterday, dailyReview.targetDay],
+            )
+            const byDay = new Map<string, Record<string, unknown>>()
+            for (const r of out.rows) {
+              const rec = Object.fromEntries(out.columns.map((c, i) => [c, r[i]]))
+              if (typeof rec['day'] === 'string') byDay.set(rec['day'], rec)
+            }
+            const cur = byDay.get(dailyReview.targetDay)
+            const prev = byDay.get(dailyReview.yesterday)
+            const qtyOf = (x: Record<string, unknown> | undefined): number => Number(x?.['qty'] ?? 0)
+            const numOf = (x: Record<string, unknown> | undefined, k: string): number => Number(x?.[k] ?? 0)
+            const qtyT = qtyOf(cur), qtyP = qtyOf(prev)
+            const revT = numOf(cur, 'revenue'), revP = numOf(prev, 'revenue')
+            const costT = numOf(cur, 'cost'), costP = numOf(prev, 'cost')
+            if (cur !== undefined && prev !== undefined && qtyT >= 0 && qtyP >= 0) {
+              const priceT = qtyT > 0 ? revT / qtyT : null
+              const priceP = qtyP > 0 ? revP / qtyP : null
+              const unitCostT = qtyT > 0 ? costT / qtyT : null
+              const unitCostP = qtyP > 0 ? costP / qtyP : null
+              const profitT = revT - costT
+              const profitP = revP - costP
+              const deltaProfit = profitT - profitP
+              const volumeEffect = priceP !== null && unitCostP !== null ? (qtyT - qtyP) * (priceP - unitCostP) : null
+              const priceEffect = priceT !== null && priceP !== null ? (priceT - priceP) * qtyT : null
+              const costEffect = unitCostT !== null && unitCostP !== null ? -(unitCostT - unitCostP) * qtyT : null
+              const name = typeof cur['item_name'] === 'string' && cur['item_name'] !== '' ? cur['item_name'] : null
+              const money = (v: number | null): string => v === null ? '-' : formatValue(v, 'currency').replace(/^¥/, '')
+              const qty = (v: number): string => formatValue(v, 'number')
+              const itemLabel = name === null ? `商品 ${row.label}` : `${name}（${row.label}）`
+              let summary: string
+              if (qtyT === 0 && qtyP > 0) {
+                summary = `${itemLabel} 当天无销售（昨天 ${qty(qtyP)} 件），毛利减少 ${money(Math.abs(deltaProfit))}；重点核对缺货/下架/漏单`
+              } else if (volumeEffect !== null && Math.abs(volumeEffect) >= Math.abs(priceEffect ?? 0) && Math.abs(volumeEffect) >= Math.abs(costEffect ?? 0)) {
+                summary = `${itemLabel} 主要因销量 ${qty(qtyP)}→${qty(qtyT)}（销量效应 ${money(volumeEffect)}），毛利减少 ${money(Math.abs(deltaProfit))}`
+              } else if (priceEffect !== null && Math.abs(priceEffect) >= Math.abs(costEffect ?? 0)) {
+                summary = `${itemLabel} 主要因单价 ${money(priceP)}→${money(priceT)}（价格效应 ${money(priceEffect)}），毛利减少 ${money(Math.abs(deltaProfit))}`
+              } else {
+                summary = `${itemLabel} 主要因单位成本 ${money(unitCostP)}→${money(unitCostT)}（成本效应 ${money(costEffect)}），毛利减少 ${money(Math.abs(deltaProfit))}`
+              }
+              const detail: RootCauseDetail = {
+                itemNum: row.label,
+                itemName: name,
+                day: dailyReview.targetDay,
+                prevDay: dailyReview.yesterday,
+                qtyToday: qty(qtyT),
+                qtyPrev: qty(qtyP),
+                priceToday: money(priceT),
+                pricePrev: money(priceP),
+                costToday: money(unitCostT),
+                costPrev: money(unitCostP),
+                profitDelta: money(deltaProfit),
+                volumeEffect: money(volumeEffect),
+                priceEffect: money(priceEffect),
+                costEffect: money(costEffect),
+                summary,
+              }
+              dailyReview.rootCauseDetail = detail
+              for (const v of [detail.qtyToday, detail.qtyPrev, detail.priceToday, detail.pricePrev,
+                detail.costToday, detail.costPrev, detail.profitDelta, detail.volumeEffect,
+                detail.priceEffect, detail.costEffect]) {
+                if (v !== '-' && v !== '') numbers.add(v)
+              }
+            }
+          } catch {
+            // 商品拆解是增强项；取不到不影响主日报。
+          }
         }
       }
     }
