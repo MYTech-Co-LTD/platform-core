@@ -54,8 +54,8 @@ domain/agent-loop.ts:158  chat  ┘   query-service.ts:200   authz.ts:255-271
 ```
 
 **「报表打 HTTP」这条有明文纪律撑腰**（2026-10-17 核实，不是我从调用图猜的）——
-`modules/data/console/reports/SpecView.tsx:200` 逐面板 `apiSend('/query', 'POST', { metricId, args })`，
-其头顶注释（`:10-12`）写着：
+`modules/data/console/reports/ReportView.tsx:512` 逐面板 `apiSend('/query', 'POST', ...)`，
+其文件头「数据纪律」段（同文件 `:9-14`）写明 args 只来自「规格声明 + 筛选栏覆盖」两个源头：
 
 > **通路纪律**（spec §5 / 计划 6 裁决 5）：面板数据走既有 `POST /query`，**一个面板一次**——
 > 语义裁剪、授权、按调用者身份注入主体值、逐查询落 `data.query_audit` 全部复用；
