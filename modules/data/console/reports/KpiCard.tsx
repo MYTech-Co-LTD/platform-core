@@ -21,14 +21,31 @@ import {
 import { formatDelta, formatValue, toneOf } from '../../domain/report-format'
 import type { KpiPanel } from '../../domain/report-spec'
 
+/**
+ * 合计查询缓存（30s + in-flight 去重）。
+ *
+ * 一张报表的 8 张 KPI 会复用同一批指标：销售额被 3 张卡用、订单数/报损/费用各被 2 张用；
+ * 同比/环比又各查一遍 ⇒ 不去重就是 ~36 次合计查询（2026-11-10 现场：报表首屏几十秒）。
+ * 只缓存**成功的合计**；失败/异常立即剔除，不把一次瞬时错误钉 30 秒。
+ */
+const TOTAL_TTL_MS = 30_000
+const totalCache = new Map<string, { at: number; value: Promise<number | null> }>()
+
 /** 单个指标的显式合计。回包没有 `total` 字段（不可加 / 空集为 null）⇒ 一律 null。 */
 async function totalOf(metricId: string, args: Record<string, unknown>): Promise<number | null> {
-  const body = await apiSend('/query', 'POST', { metricId, args: { ...args, total: true } }) as {
-    total?: number | string | null
-  }
-  if (body.total === undefined || body.total === null) return null
-  const n = Number(body.total) // pg numeric 常以字符串回来
-  return Number.isFinite(n) ? n : null
+  const bodyKeys = { metricId, args: { ...args, total: true } }
+  const key = JSON.stringify(bodyKeys)
+  const hit = totalCache.get(key)
+  if (hit !== undefined && Date.now() - hit.at < TOTAL_TTL_MS) return hit.value
+  const value = (async (): Promise<number | null> => {
+    const body = await apiSend('/query', 'POST', bodyKeys) as { total?: number | string | null }
+    if (body.total === undefined || body.total === null) return null
+    const n = Number(body.total) // pg numeric 常以字符串回来
+    return Number.isFinite(n) ? n : null
+  })()
+  totalCache.set(key, { at: Date.now(), value })
+  value.catch(() => { totalCache.delete(key) })
+  return value
 }
 
 /** KPI 值：单指标 = 合计；比率 = 分子 ÷ 分母（任一环节缺数 ⇒ null）。 */
@@ -51,9 +68,10 @@ async function valueOf(panel: KpiPanel, args: Record<string, unknown>): Promise<
 const COVERAGE_TTL_MS = 60_000
 const coverageCache = new Map<string, { at: number; value: Promise<CoverageInfo | null> }>()
 
-/** 测试钩子：清空覆盖探测缓存（用例之间 mock 结果不同）。 */
+/** 测试钩子：清空覆盖探测 / 合计缓存（用例之间 mock 结果不同）。 */
 export function resetCoverageCache(): void {
   coverageCache.clear()
+  totalCache.clear()
 }
 
 async function coverageOf(metricId: string, args: Record<string, unknown>): Promise<CoverageInfo | null> {

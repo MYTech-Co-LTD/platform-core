@@ -513,6 +513,8 @@ export default function ReportView({
 }) {
   const [results, setResults] = useState<Record<number, PanelResult>>({})
   const [compareResults, setCompareResults] = useState<Record<number, PanelCompare[]>>({})
+  // 对比查询按面板去重（results 每完成一格都会触发对比 effect，不能重复发起）。
+  const compareLoaded = useRef(new Set<string>())
   // 期间：规格默认值即初值；调用方按 reportId 给 ReportView 换 key ⇒ 换报自然重置。
   // 钉了历史版本时保持规格原值；否则单日默认跟到昨天（日报 T-1）。
   const [period, setPeriod] = useState<PeriodSpec | null>(
@@ -587,6 +589,7 @@ export default function ReportView({
   useEffect(() => {
     setResults({})
     setCompareResults({})
+    compareLoaded.current.clear()
     panels.forEach((p, i) => {
       // text / ai_text 无数据面；kpi 的取数在 KpiCard 内部（显式合计），都不进这条循环
       if (p.chart === 'text' || p.chart === 'kpi' || p.chart === 'ai_text') return
@@ -601,26 +604,61 @@ export default function ReportView({
             [i]: e instanceof ApiError && e.status === 403 ? { kind: 'denied' } : { kind: 'error', text: messageOf(e) },
           }))
         })
-      // 折线/柱状图的历史对比：同一面板再查「上期 / 去年同期」，按序号或类目合并成交集。
-      if (p.chart !== 'line' && p.chart !== 'bar') return
-      const cmpRanges = chartCompareRangesOf(p, range, period?.mode)
-      if (cmpRanges.length === 0) return
-      void Promise.all(cmpRanges.map(async (c) => {
-        try {
-          const b = await apiSend('/query', 'POST', panelQueryBodyOf(p, { ...argsOf(p), bizday: c.range }))
-          return { label: c.label, result: okResultOf(b) }
-        } catch {
-          // 对比期失败（denied/错误）不塌主图：少一条曲线，主图照常。
-          return null
-        }
-      })).then((list) => {
-        const ok = list.filter((x): x is PanelCompare => x !== null)
-        if (ok.length > 0) setCompareResults((prev) => ({ ...prev, [i]: ok }))
-      })
     })
     // argsOf/range 都由 panels/override/period 派生 ⇒ 依赖里给这三者即可（避免每渲染重查）
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [panels, override, period])
+
+  /**
+   * 历史对比**延后且限量**加载：先让主查询（11 格）出数，再最多 3 路并发补对比。
+   * 同时发起 22 条对比查询会把 pg_duckdb 打满，首屏几十秒（2026-11-10 现场）。
+   */
+  useEffect(() => {
+    const jobs: Array<{
+      i: number
+      ranges: ReturnType<typeof chartCompareRangesOf>
+      panel: Extract<Panel, { chart: 'line' | 'bar' }>
+    }> = []
+    panels.forEach((p, i) => {
+      if (p.chart !== 'line' && p.chart !== 'bar') return
+      if (results[i]?.kind !== 'ok') return
+      const ranges = chartCompareRangesOf(p, range, period?.mode)
+      if (ranges.length === 0) return
+      const sig = `${i}:${JSON.stringify(ranges)}`
+      if (compareLoaded.current.has(sig)) return
+      compareLoaded.current.add(sig)
+      jobs.push({ i, panel: p, ranges })
+    })
+    if (jobs.length === 0) return
+    let cancelled = false
+    const run = async (): Promise<void> => {
+      const queue = [...jobs]
+      const worker = async (): Promise<void> => {
+        for (;;) {
+          const job = queue.shift()
+          if (job === undefined || cancelled) return
+          const list = await Promise.all(job.ranges.map(async (c) => {
+            try {
+              const b = await apiSend('/query', 'POST', panelQueryBodyOf(job.panel, { ...argsOf(job.panel), bizday: c.range }))
+              return { label: c.label, result: okResultOf(b) }
+            } catch {
+              // 对比期失败不塌主图：少一条曲线。
+              return null
+            }
+          }))
+          if (cancelled) return
+          const ok = list.filter((x): x is PanelCompare => x !== null)
+          if (ok.length > 0) setCompareResults((prev) => ({ ...prev, [job.i]: ok }))
+        }
+      }
+      await Promise.all([worker(), worker(), worker()])
+    }
+    // 让主图先完成首帧，再补历史曲线。
+    const timer = setTimeout(() => { void run() }, 800)
+    return () => { cancelled = true; clearTimeout(timer) }
+    // argsOf/range 由 override/period 派生；results 变化只用于判断主查询完成。
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [panels, override, period, range, results])
 
   const showRangePicker = period === null && defaults.bizday !== undefined
   const showBranchPicker = defaults.branch_num !== undefined
