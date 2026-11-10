@@ -325,6 +325,10 @@ const SELFTEST='${REGION_SELFTEST}';
 
 # ⑪ 台账覆盖（advisory；见头注）：目标营业日必须在 `recon_run` 里有行，且期望的
 #    (账套, control) 组合一个不缺。期望集取自**近 7 天出现过**的组合——不硬编码账套。
+# ⚠️ 目标日 = **今天 − 4**（固定），不再按「12 点前后」切 T-4/T-3：
+#    台账只由 `lemeng-recon-restate` 推进，而它排在 **CST 23:25**（避开每小时物化的锁），
+#    跑完才把 T-3 补上。按 12 点切会在 12:00–23:25 之间**必然判红**（2026-11-10 实测）。
+#    T-4 仍能抓「整整两天没推进」的真实停摆，只是不再要求「当天中午就得有昨天的账」。
 assert_recon_ledger_cover() {
   printf '⑪ 口径对账台账覆盖（recon_run 目标日）—— '
   docker exec -w /app/apps/server "$PLATFORM_CONTAINER" node -e "
@@ -333,7 +337,7 @@ const c=new Client({connectionString:process.env.DATA_WAREHOUSE_URL});
 const SELFTEST='${RECON_SELFTEST}';
 (async()=>{try{
   await c.connect();
-  const r=await c.query(\"with t as (select ((now() at time zone 'Asia/Shanghai')::date - case when (now() at time zone 'Asia/Shanghai')::time < time '12:00:00' then 4 else 3 end) as d), b as (select distinct system_book, control from recon_run where bizday > (select d from t) - 7) select b.system_book, b.control, r.status from b left join recon_run r on r.system_book = b.system_book and r.control = b.control and r.bizday = (select d from t) order by 1, 2\");
+  const r=await c.query(\"with t as (select ((now() at time zone 'Asia/Shanghai')::date - 4) as d), b as (select distinct system_book, control from recon_run where bizday > (select d from t) - 7) select b.system_book, b.control, r.status from b left join recon_run r on r.system_book = b.system_book and r.control = b.control and r.bizday = (select d from t) order by 1, 2\");
   await c.end();
   const rows=r.rows.slice();
   if(SELFTEST){rows.push({system_book:'SELFTEST',control:'caliber_net',status:null})}
