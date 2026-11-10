@@ -233,9 +233,11 @@ export function templateOf(f: FactBundle): string {
       .map((d) => `${d.side === 'sales' ? '销售侧' : '成本侧'} ${d.label} ${d.value}（${d.delta}）`)
       .join('；')
     const rc = f.analysis?.findings.find((x) => x.kind !== 'unavailable' && x.rows.length > 0)
-    const rcText = rc === undefined
-      ? '根因：当前数据不足以分解到具体商品/客户。'
-      : `根因：${rc.metricTitle} 主要受 ${rc.dimension} ${rc.rows[0]!.label} 影响（${rc.rows[0]!.value}${rc.rows[0]!.delta === undefined ? '' : `，变化 ${rc.rows[0]!.delta}`}）。`
+    const rcText = dr.rootCauseDetail !== null && dr.rootCauseDetail !== undefined
+      ? `根因：${dr.rootCauseDetail.summary}（销量效应 ${dr.rootCauseDetail.volumeEffect}，价格效应 ${dr.rootCauseDetail.priceEffect}，成本效应 ${dr.rootCauseDetail.costEffect}）。`
+      : rc === undefined
+        ? '根因：当前数据不足以分解到具体商品/客户。'
+        : `根因：${rc.metricTitle} 主要受 ${rc.dimension} ${rc.rows[0]!.label} 影响（${rc.rows[0]!.value}${rc.rows[0]!.delta === undefined ? '' : `，变化 ${rc.rows[0]!.delta}`}）。`
     const suggestionText = dr.suggestions.map((x, i) => `${i + 1}. ${x}`).join(' ')
     return [
       `结论：${branchLabel}${dr.assessment.headline}。${dr.targetDay} 营业额 ${dr.today.revenue}，订单 ${dr.today.orders}，客单价 ${dr.today.aov}；毛利 ${dr.today.gross}（毛利率 ${dr.today.grossMargin}）。`,
