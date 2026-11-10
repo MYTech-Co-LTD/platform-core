@@ -137,7 +137,7 @@ export function allowedNumbers(facts: FactBundle): Set<string> {
     for (const noComma of [base, base.replaceAll(',', '')]) {
       for (const noSign of [noComma, noComma.replace(/^\+/, '')]) {
         out.add(noSign)
-        const unitMatch = /(%|pp)$/.exec(noSign)
+        const unitMatch = /(%|pp|°C|℃|mm|cm)$/.exec(noSign)
         const unit = unitMatch?.[1] ?? ''
         const bare = unit === '' ? noSign : noSign.slice(0, -unit.length)
         out.add(bare)
