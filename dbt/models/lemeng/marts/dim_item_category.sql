@@ -25,6 +25,7 @@ cat_tree as (
     -- 每个类别节点取最新快照的属性；全部快照并集保证父链完整。
     select distinct on (system_book, item_category_id)
         system_book,
+        snapshot,
         item_category_id      as category_id,
         item_category_parent_id as parent_id,
         item_category_level   as level,
