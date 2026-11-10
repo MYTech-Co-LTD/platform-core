@@ -1,6 +1,6 @@
 // console-schedules-tz.test.ts — 业务排班时区统一门禁（spec 2026-10-15 §10.6，2026-10-16 用户拍板）。
 //
-// 钉什么：deploy/duckle/console/schedules/ 下三本种子（3120×33 + 64188×29 + forms×1，共 63 条）必须
+// 钉什么：deploy/duckle/console/schedules/ 下三本种子（3120×34 + 64188×30 + forms×1，共 65 条）必须
 //   ① 全部显式 `timezone: 'Asia/Shanghai'`（含原先缺省无字段的 9 条）；
 //   ② `kind.expr` 与 §10.6 转换表**逐字**一致（旧 UTC expr +8h）。
 //   ⚠️ **2026-11-07 订正（#1624）**：非销售采集由「每 2 小时 5 轮」改为**每小时 15 轮**，
@@ -62,6 +62,8 @@ const EXPECTED: Record<string, Record<string, string>> = {
     'panel-lemeng.recon.preagg': '40 0 * * *',
     // W2（2026-11-05）：duckle profiler 周更；CST 周日 05:10 跑 21 个 L1 关系的列画像
     'panel-lemeng.metric_profile.3120': '10 5 * * 0',
+    // #1872：封版 manifest 对账（读 `_DAILY` → upsert 仓内表），每 30 分钟
+    'panel-lemeng.retail_order_line.daily_sealed.reconcile': '7,37 * * * *',
   },
   '64188': {
     'panel-lemeng.inventory.movement.seg1.l0.64188': '15 4 * * *',
@@ -96,6 +98,8 @@ const EXPECTED: Record<string, Record<string, string>> = {
     'panel-lemeng.member.summary.l0.64188': '45 9-23 * * *',
     'panel-lemeng.transfer.in.l0.64188': '24 9-23 * * *',
     'panel-lemeng.transfer.out.l0.64188': '30 9-23 * * *',
+    // #1872：封版 manifest 对账，每 30 分钟（与 3120 错峰）
+    'panel-lemeng.retail_order_line.daily_sealed.reconcile': '17,47 * * * *',
   },
   // forms（#729 M1.4，**非乐檬域**，有自己的 console）：新增即按 CST 写，无 UTC→CST 转换行。
   // 日批 00:20 CST（刚过零点采集，业务日的提交 T+1 可见；水位=id 键集游标 ⇒ 错峰不影响完整性）。
@@ -139,8 +143,8 @@ describe('console 排班时区统一（spec §10.6）：全显式 Asia/Shanghai 
     })
   }
 
-  it('合计恰 55 条（3120×30 + 64188×24 + forms×1）——条数漂移必须显式改 spec §10.6 与本测试', () => {
+  it('合计恰 65 条（3120×34 + 64188×30 + forms×1）——条数漂移必须显式改 spec §10.6 与本测试', () => {
     const total = Object.values(EXPECTED).reduce((n, m) => n + Object.keys(m).length, 0)
-    expect(total).toBe(63)
+    expect(total).toBe(65)
   })
 })

@@ -691,5 +691,26 @@
     "last_run_duration_ms": null,
     "last_run_error": null,
     "next_run_at": null
+  },
+  {
+    "id": "panel-lemeng.retail_order_line.daily_sealed.reconcile",
+    "pipeline_id": "lemeng.retail_order_line.daily_sealed.reconcile",
+    "name": "lemeng.retail_order_line.daily_sealed.reconcile",
+    "enabled": true,
+    "kind": {
+      "type": "cron",
+      "expr": "7,37 * * * *"
+    },
+    "timezone": "Asia/Shanghai",
+    "misfire": "skip",
+    "catchup": {
+      "maxCatchupRuns": 2,
+      "maxCatchupAgeDays": 1
+    },
+    "last_run_at": null,
+    "last_run_status": null,
+    "last_run_duration_ms": null,
+    "last_run_error": null,
+    "next_run_at": null
   }
 ]

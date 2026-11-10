@@ -6214,6 +6214,29 @@
      "compression": "zstd"
     }
    }
+  },
+  {
+   "id": "mst",
+   "type": "sink",
+   "position": {
+    "x": 1760,
+    "y": 380
+   },
+   "data": {
+    "label": "封版标记 → data.lemeng_daily_sealed",
+    "componentId": "snk.postgres",
+    "properties": {
+     "connectionRef": "pgduck",
+     "schemaName": "data",
+     "tableName": "lemeng_daily_sealed",
+     "mode": "upsert",
+     "conflictColumns": [
+      "system_book",
+      "bizday"
+     ],
+     "connectTimeout": 30
+    }
+   }
   }
  ],
  "edges": [
@@ -7261,6 +7284,16 @@
    "id": "e_msrc_msink",
    "source": "msrc",
    "target": "msink",
+   "sourceHandle": "main",
+   "targetHandle": "main",
+   "data": {
+    "connectionType": "main"
+   }
+  },
+  {
+   "id": "e_msrc_mst",
+   "source": "msrc",
+   "target": "mst",
    "sourceHandle": "main",
    "targetHandle": "main",
    "data": {
