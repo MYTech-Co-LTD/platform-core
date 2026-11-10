@@ -7,10 +7,11 @@
 // 徽标：certified（平台认证/草稿）+ 新鲜度（绿 SLA 内 / 黄 偏慢 / 红 滞后 / 灰 未知）。
 // 「数据至 M月D日」的口径与后端固定行同源（watermark 是日历日，+8 不吃钟点）。
 import { useCallback, useEffect, useState } from 'react'
-import { Button, Input, Popup, PullToRefresh, Skeleton, TextArea, Tag, Toast } from 'antd-mobile'
+import { Button, Input, Popup, PullToRefresh, Skeleton, TextArea, Toast } from 'antd-mobile'
 import ReportsView from './ReportsView'
 import type { ReportRow } from './ReportsView'
 import AskView from './AskView'
+import { C, Chip, EmptyState, Icon, cardStyle, pressable, radius } from './ui'
 import { apiGet, apiSend, ApiError } from './api'
 
 interface MetricItem {
@@ -40,17 +41,22 @@ function humanDay(iso: string): string {
 }
 
 const FRESHNESS_LABEL: Record<string, { text: string; color: string }> = {
-  normal: { text: '正常', color: '#00b578' },
-  late: { text: '偏慢', color: '#ff8f1f' },
-  alert: { text: '滞后', color: '#fa3150' },
+  normal: { text: '正常', color: C.success },
+  late: { text: '偏慢', color: C.warning },
+  alert: { text: '滞后', color: C.danger },
 }
 
 function FreshnessBadge({ m }: { m: MetricItem }) {
   const f = m.freshness
-  if (f === undefined) return <span style={{ fontSize: 12, color: '#999' }}>新鲜度未知</span>
-  const label = FRESHNESS_LABEL[f.status] ?? { text: '未知', color: '#999' }
-  const till = f.watermark !== null ? `· 数据至 ${humanDay(f.watermark)}` : ''
-  return <span style={{ fontSize: 12, color: label.color }}>● {label.text} {till}</span>
+  if (f === undefined) return <span style={{ fontSize: 12, color: C.mute }}>新鲜度未知</span>
+  const label = FRESHNESS_LABEL[f.status] ?? { text: '未知', color: C.mute }
+  const till = f.watermark !== null ? ` · 数据至 ${humanDay(f.watermark)}` : ''
+  return (
+    <span style={{ display: 'inline-flex', alignItems: 'center', gap: 5, fontSize: 12, color: label.color }}>
+      <span style={{ width: 6, height: 6, borderRadius: 3, background: label.color }} aria-hidden />
+      {label.text}{till}
+    </span>
+  )
 }
 
 /** 算式条的一个「项」（#1298）：两枚小按钮切「指标 / 数字」，移动端零层级。 */
@@ -162,90 +168,102 @@ function MetricsView({ data, reload }: { data: MetricsResponse; reload: () => Pr
     <div style={{ paddingBottom: 24 }}>
       {/* 顶部固定区（移动端首屏最重要的两件事：我在看什么、怎么找）。滚动时保持可见。 */}
       <div style={{
-        position: 'sticky', top: 0, zIndex: 10, background: '#f5f5f5',
-        padding: '8px 12px 6px', borderBottom: '1px solid #eee',
+        position: 'sticky', top: 0, zIndex: 10,
+        background: 'rgba(243,245,247,0.92)',
+        backdropFilter: 'saturate(160%) blur(14px)', WebkitBackdropFilter: 'saturate(160%) blur(14px)',
+        padding: '14px 16px 10px', borderBottom: `1px solid ${C.lineSoft}`,
       }}>
-        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-          <h3 style={{ margin: '0 0 2px', fontSize: 18 }}>
-            指标
-            {metrics.length > 0 ? (
-              <span style={{ fontSize: 12, color: '#999', fontWeight: 400, marginLeft: 8 }}>
-                {q === '' ? `共 ${metrics.length} 个` : `匹配 ${visible.length} / ${metrics.length}`}
-              </span>
-            ) : null}
-          </h3>
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: 10 }}>
+          <div>
+            <h1 style={{
+              margin: 0, fontSize: 23, lineHeight: 1.2, fontWeight: 650,
+              letterSpacing: '-0.02em', color: C.ink,
+            }}>指标</h1>
+            <div style={{ fontSize: 12, color: C.mute, marginTop: 5 }}>
+              {q === '' ? `共 ${metrics.length} 个` : `匹配 ${visible.length} / ${metrics.length}`}
+            </div>
+          </div>
           {isAdmin ? (
-            <Button size='small' color='primary' fill='outline' onClick={() => setCreatingExpr(true)}>新建表达式指标</Button>
+            <Button size='small' color='primary' fill='outline'
+                    style={{ '--border-color': C.line, '--text-color': C.accentDeep, borderRadius: radius.chip, fontSize: 12 }}
+                    onClick={() => setCreatingExpr(true)}>新建指标</Button>
           ) : null}
         </div>
         {/* ⚠️ 不用 antd-mobile SearchBar：它在本仓（React 18 页面 + hoisted React 19）下
             渲染时报 "Objects are not valid as a React child"（真机正常、单测必炸）。
             已用 Input 组合同款外观，行为一致（2026-11-03）。 */}
         <div style={{
-          display: 'flex', alignItems: 'center', gap: 6,
-          background: '#fff', border: '1px solid #e5e5e5', borderRadius: 8, padding: '6px 10px',
+          display: 'flex', alignItems: 'center', gap: 8, marginTop: 12,
+          background: C.surface, border: `1px solid ${C.line}`, borderRadius: radius.field,
+          padding: '0 12px', height: 40,
         }}>
-          <span style={{ color: '#bbb', fontSize: 14 }}>⌕</span>
+          <Icon name="search" size={16} color={C.mute} />
           <Input
             placeholder='搜索名称 / 说明'
             value={search}
             onChange={setSearch}
-            style={{ '--font-size': '14px' }}
+            style={{ '--font-size': '14px', flex: 1 }}
           />
         </div>
       </div>
       <PullToRefresh onRefresh={() => reload()}>
-        <div style={{ padding: '10px 12px 0', minHeight: '60vh' }}>
+        <div style={{ padding: '16px 16px 0', minHeight: '60vh' }}>
       {metrics.length === 0 ? (
-        <div style={{ color: '#999', textAlign: 'center', padding: 32 }}>没有可见的指标（需要管理员开通数据问数权限）。</div>
+        <EmptyState icon="metrics" title="没有可见的指标" hint="需要管理员开通数据问数权限" />
       ) : visible.length === 0 ? (
-        <div style={{ color: '#999', textAlign: 'center', padding: 32 }}>没有匹配的指标，试试清空搜索。</div>
+        <EmptyState icon="search" title="没有匹配的指标" hint="换个关键词，或清空搜索" />
       ) : (
-        <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
           {visible.map((m) => (
-            <div key={m.id} style={{ background: '#fff', borderRadius: 12, padding: 14, border: '1px solid #f0f0f0' }}>
-              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                <span style={{ fontSize: 16, fontWeight: 600 }}>{m.title}</span>
-                <span>
-                  {m.source === 'l1'
-                    ? <Tag color='primary' fill='outline' style={{ '--background-color': '#fff' }}>平台口径</Tag>
-                    : <Tag color='default' fill='outline' style={{ '--background-color': '#fff' }}>自建</Tag>}
-                  {isMine(m) ? <Tag color='warning' fill='outline' style={{ '--background-color': '#fff', marginLeft: 4 }}>我的</Tag> : null}
+            <div key={m.id} style={{ ...cardStyle, padding: 16 }}>
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: 10 }}>
+                <span style={{ fontSize: 16, fontWeight: 600, color: C.ink, lineHeight: 1.4, minWidth: 0 }}>
+                  {m.title}
+                </span>
+                <span style={{ display: 'flex', gap: 5, flex: '0 0 auto' }}>
+                  <Chip tone={m.source === 'l1' ? 'accent' : 'neutral'}>{m.source === 'l1' ? '平台口径' : '自建'}</Chip>
+                  {isMine(m) ? <Chip tone="warning">我的</Chip> : null}
                 </span>
               </div>
               <div style={{
-                fontSize: 12, color: '#666', margin: '6px 0',
+                fontSize: 13, color: C.sub, marginTop: 8, lineHeight: 1.65,
                 display: '-webkit-box', WebkitLineClamp: 2, WebkitBoxOrient: 'vertical', overflow: 'hidden',
               }}>{m.description}</div>
               {/* 元数据（§10.4.3，#1292）：业务描述 + 单位给看数人读；未标注 = 灰字「未标注」（不编默认值）。 */}
-              <div style={{ fontSize: 12, margin: '4px 0', color: m.bizDescription ? '#444' : '#aaa' }}>
+              <div style={{
+                marginTop: 12, paddingTop: 12, borderTop: `1px solid ${C.lineSoft}`,
+                fontSize: 12, lineHeight: 1.7, color: m.bizDescription ? C.sub : C.mute,
+              }}>
                 {(m.bizDescription ? `业务描述：${m.bizDescription}` : '业务描述：未标注')
                   + (m.unit ? ` · 单位：${m.unit}` : '')}
               </div>
-              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginTop: 10 }}>
                 <FreshnessBadge m={m} />
-                <span>
-                  {m.certified === 'certified' ? <Tag color='success' fill='outline' style={{ '--background-color': '#fff' }}>平台认证</Tag> : null}
-                  {m.certified === 'draft' ? <Tag color='warning' fill='outline' style={{ '--background-color': '#fff' }}>未认证</Tag> : null}
+                <span style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                  {m.certified === 'certified' ? <Chip tone="success">平台认证</Chip> : null}
+                  {m.certified === 'draft' ? <Chip tone="warning">未认证</Chip> : null}
                   {isAdmin && m.source === 'l2' ? (
-                    <Button size='mini' fill='none' style={{ padding: 0, marginLeft: 6 }}
-                            onClick={() => void toggleCertified(m)}>
+                    <button type="button" onClick={() => void toggleCertified(m)}
+                            style={{
+                              border: 'none', background: 'none', padding: '4px 0', cursor: 'pointer',
+                              fontSize: 12, color: C.accentDeep,
+                            }}>
                       {m.certified === 'certified' ? '撤回认证' : '标记认证'}
-                    </Button>
+                    </button>
                   ) : null}
                 </span>
               </div>
               {/* 管理入口只出现在自己的 L2 上（判定表：L1 只读、非我创建只读） */}
               {isMine(m) ? (
-                <div style={{ marginTop: 8, display: 'flex', gap: 14 }}>
-                  <Button size='small' color='primary' fill='none' style={{ padding: 0 }}
-                          onClick={() => setEditing(m)}>
+                <div style={{ marginTop: 12, paddingTop: 12, borderTop: `1px solid ${C.lineSoft}`, display: 'flex', gap: 18 }}>
+                  <button type="button" onClick={() => setEditing(m)}
+                          style={{ border: 'none', background: 'none', padding: 0, cursor: 'pointer', fontSize: 13, color: C.accentDeep, fontWeight: 500 }}>
                     编辑草稿
-                  </Button>
-                  <Button size='small' fill='none' style={{ padding: 0 }}
-                          onClick={() => setMetaEditing(m)}>
+                  </button>
+                  <button type="button" onClick={() => setMetaEditing(m)}
+                          style={{ border: 'none', background: 'none', padding: 0, cursor: 'pointer', fontSize: 13, color: C.sub }}>
                     元数据
-                  </Button>
+                  </button>
                 </div>
               ) : null}
             </div>
@@ -557,11 +575,11 @@ export default function App({ initialTab = 'center' }: { initialTab?: 'center' |
     || (metricsData?.metrics ?? []).some((m) => m.source === 'l2' && m.createdBy !== undefined && m.createdBy !== null && m.createdBy === self)
 
   const [tab, setTab] = useState<'center' | 'reportsManage' | 'metricsManage'>(initialTab)
-  // 底部导航只用文字 + 细指示条：emoji 图标在业务后台里显得像演示稿（2026-11-10 反馈）。
+  // 线性图标 + 文字：emoji 在业务后台里像演示稿（2026-11-10 反馈）。
   const tabs = [
-    { key: 'center' as const, label: '报表中心' },
-    ...(reportManage ? [{ key: 'reportsManage' as const, label: '报表管理' }] : []),
-    ...(metricManage ? [{ key: 'metricsManage' as const, label: '指标管理' }] : []),
+    { key: 'center' as const, label: '报表', icon: 'reports' as const },
+    ...(reportManage ? [{ key: 'reportsManage' as const, label: '管理', icon: 'file' as const }] : []),
+    ...(metricManage ? [{ key: 'metricsManage' as const, label: '指标', icon: 'metrics' as const }] : []),
   ]
   // 当前 tab 失去权限（数据刷新后）⇒ 回落报表中心
   const active = tabs.some((t) => t.key === tab) ? tab : 'center'
@@ -580,7 +598,7 @@ export default function App({ initialTab = 'center' }: { initialTab?: 'center' |
   }
 
   return (
-    <div style={{ minHeight: '100dvh', background: '#f5f5f5', paddingBottom: 'calc(56px + env(safe-area-inset-bottom, 0px))' }}>
+    <div style={{ minHeight: '100dvh', background: C.bg, paddingBottom: 'calc(62px + env(safe-area-inset-bottom, 0px))' }}>
       {active === 'center' ? (
         <ReportsView rows={reportRows} reload={reload} tab="center" self={self ?? ''} />
       ) : active === 'reportsManage' ? (
@@ -590,8 +608,9 @@ export default function App({ initialTab = 'center' }: { initialTab?: 'center' |
       )}
       <nav style={{
         position: 'fixed', left: 0, right: 0, bottom: 0, zIndex: 100,
-        display: 'flex', background: '#fff', borderTop: '1px solid #ececec',
-        boxShadow: '0 -1px 6px rgba(0, 0, 0, 0.03)',
+        display: 'flex', background: 'rgba(255,255,255,0.94)',
+        backdropFilter: 'saturate(180%) blur(16px)', WebkitBackdropFilter: 'saturate(180%) blur(16px)',
+        borderTop: `1px solid ${C.line}`,
         paddingBottom: 'env(safe-area-inset-bottom, 0px)',
       }}>
         {tabs.map((t) => {
@@ -603,19 +622,20 @@ export default function App({ initialTab = 'center' }: { initialTab?: 'center' |
               onClick={() => setTab(t.key)}
               aria-current={on ? 'page' : undefined}
               style={{
-                position: 'relative', flex: 1, height: 52, border: 'none', background: 'none',
-                cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center',
-                fontSize: 13, letterSpacing: 0.2,
-                fontWeight: on ? 600 : 400,
-                color: on ? '#1677ff' : '#8c8c8c',
+                position: 'relative', flex: 1, height: 58, border: 'none', background: 'none',
+                cursor: 'pointer', display: 'flex', flexDirection: 'column', alignItems: 'center',
+                justifyContent: 'center', gap: 3, fontSize: 11, letterSpacing: 0.2,
+                fontWeight: on ? 600 : 400, color: on ? C.accent : C.sub,
+                WebkitTapHighlightColor: 'transparent',
               }}
             >
               {on && (
                 <span aria-hidden style={{
                   position: 'absolute', top: 0, left: '50%', transform: 'translateX(-50%)',
-                  width: 22, height: 2, borderRadius: 1, background: '#1677ff',
+                  width: 20, height: 2, borderRadius: 1, background: C.accent,
                 }} />
               )}
+              <Icon name={t.icon} size={21} color={on ? C.accent : C.sub} />
               {t.label}
             </button>
           )
