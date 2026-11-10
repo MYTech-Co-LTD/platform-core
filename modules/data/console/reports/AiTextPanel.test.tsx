@@ -121,7 +121,7 @@ describe('AiTextPanel', () => {
     // 旧 delta 不能再出现（追加式实现的典型错法会留下「编造的结论 999」）
     expect(screen.queryByText(/999/)).not.toBeInTheDocument()
     expect(screen.getByText('数据摘要')).toBeInTheDocument()
-    expect(screen.getByText('数据截至 新鲜度未知 · 已缓存')).toBeInTheDocument()
+    expect(screen.getByText('数据截至 新鲜度未知（北京时间） · 已缓存')).toBeInTheDocument()
   })
 
   it('★ 500ms 防抖 + 中止：窗口内连切期间只发最后一次请求', async () => {

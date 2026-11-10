@@ -103,10 +103,10 @@ const DAILY_REVIEW_SYSTEM = [
   '输出 3–4 段自然分析，不要使用“结论：/对比：/成本：/MTD：/驱动：/根因：/建议：”这类固定小标题，也不要逐项复刻所有对比。',
   '第 1 段：一句话判断（正文用 good/neutral/warning/bad/critical 的人话，critical 写“断崖式下滑，先排除闭店/采集缺口”）+ 1–2 个决定性数字。',
   '第 2 段：按重要性讲原因，引用 facts.dailyReview.drivers、天气和 facts.analysis 的 finding；根因必须说明是销量/价格/成本/结构哪一类，并给出金额。',
-  '第 3 段：2–3 条按影响排序的动作，第一条必须回应最大负向驱动或根因；写对象+动作+核对点，不要通用套话。',
+  '第 3 段：2–3 条按影响排序的动作，第一条必须回应最大负向驱动或根因；每条单独一行、以 `- ` 开头，写对象+动作+核对点，不要通用套话。',
   '天气只作背景，禁止断言天气导致销售；如要关联，写“可能与客流/销售相关，需结合客流验证”。',
   '只引用 facts.dailyReview / facts.analysis 里的数字；不得做 facts 之外的算术；缺失写 "-"。',
-  '全文不超过 700 个汉字；末尾单独一行写：数据截至 <dataAsOf>（缺失写「新鲜度未知」）。',
+  '全文不超过 700 个汉字；不要写「数据截至」——卡片页脚已有新鲜度。',
 ].join('\n')
 
 function systemOf(focus: AiTextPanel['focus']): string {
@@ -238,7 +238,7 @@ export function templateOf(f: FactBundle): string {
       : rc === undefined
         ? '根因：当前数据不足以分解到具体商品/客户。'
         : `根因：${rc.metricTitle} 主要受 ${rc.dimension} ${rc.rows[0]!.label} 影响（${rc.rows[0]!.value}${rc.rows[0]!.delta === undefined ? '' : `，变化 ${rc.rows[0]!.delta}`}）。`
-    const suggestionText = dr.suggestions.map((x, i) => `${i + 1}. ${x}`).join(' ')
+    const suggestionText = dr.suggestions.map((x) => `- ${x}`).join('\n')
     return [
       `结论：${branchLabel}${dr.assessment.headline}。${dr.targetDay} 营业额 ${dr.today.revenue}，订单 ${dr.today.orders}，客单价 ${dr.today.aov}；毛利 ${dr.today.gross}（毛利率 ${dr.today.grossMargin}）。`,
       `对比：${yText}；${mText}；${lyText}。`,
@@ -247,8 +247,7 @@ export function templateOf(f: FactBundle): string {
       `MTD：${dr.mtd.day} 累计营业额 ${dr.mtd.revenue}，毛利 ${dr.mtd.gross}，净毛利 ${dr.mtd.netGross}，净毛利率 ${dr.mtd.netMargin}。`,
       `驱动：${driverText === '' ? '-' : driverText}。`,
       rcText,
-      `建议：${suggestionText}`,
-      asOfLine,
+      `建议：\n${suggestionText}`,
     ].join('\n')
   }
   // 缺数据时不输出空括号：`-（）` / `-（- -）` 只会让回退文本更像故障（#1083）。
