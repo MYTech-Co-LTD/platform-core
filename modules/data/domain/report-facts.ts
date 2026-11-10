@@ -659,6 +659,11 @@ export async function buildFacts(
                   if (name !== undefined) {
                     row.rawLabel = row.label
                     row.label = `${name}（${row.label}）`
+                    // 商品名自带数字（如「沙琪玛260g」）必须进白名单，否则模型照抄名称会被判越界。
+                    for (const m of name.match(/\d+/g) ?? []) {
+                      numbers.add(m)
+                      analysis.numbers.push(m)
+                    }
                   }
                 }
               }
