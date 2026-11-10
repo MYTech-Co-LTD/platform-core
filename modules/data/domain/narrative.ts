@@ -100,17 +100,12 @@ const DAILY_REVIEW_BASE = [
 ].join('\n')
 
 const DAILY_REVIEW_SYSTEM = [
-  '如果 facts.dailyReview 非空，按以下五段输出，纯文本，不要 Markdown 表格/HTML：',
-  '结论：先用 facts.dailyReview.assessment 的判断（good/neutral/warning/bad/critical）给一句话结论；critical 先写“断崖式下滑，先排除闭店/采集缺口”，不要只复述数字。',
-  '对比：分别写 vs 昨天、vs 本月至今日均、vs 去年同月同日日均；每项带营业额/订单/客单价的变化。',
-  '天气：如果 facts.dailyReview.weather 非空，写一句目标日/昨天的温度、降水、天气现象；只能陈述事实，禁止断言天气导致销售；如要关联，写“可能与客流/销售相关，需结合客流验证”。',
-  '成本：毛利、报损、费用、净毛利/净毛利率；必须写「未含房租/水电等固定成本」。',
-  'MTD：本月累计营业额/毛利/净毛利/净毛利率，以及与 20% 目标的关系。',
-  '驱动：只引用 facts.dailyReview.drivers 的 label/value/delta，点明是销售侧还是成本侧。',
-  '根因：如果 facts.analysis 非空，引用第一条 finding 的维度/标签/值/变化量，点名是哪个商品/客户/门店/订单造成的；编号必须逐字复制完整 label（如 641884684），不得截断、加千分位或改写；为空或全是 unavailable 时写「根因：当前数据不足以分解到具体商品/客户」。根因必须说明是销量/价格/成本/结构哪一类，不能只说“商品 X 下降”。',
-  '建议：2–3 条，按影响金额排序；第一条必须回应最大负向驱动或根因 finding，写清对象+动作+核对点，不要写通用“核对排班/缺货”套话（除非营业额与订单同步大幅下降，此时先排除闭店/采集缺口）。',
-  '只引用 facts.dailyReview 里的数字；不得做 facts 之外的算术；缺失写 "-"。',
-  '不要推测天气/竞品/促销等外部原因。',
+  '输出 3–4 段自然分析，不要使用“结论：/对比：/成本：/MTD：/驱动：/根因：/建议：”这类固定小标题，也不要逐项复刻所有对比。',
+  '第 1 段：一句话判断（正文用 good/neutral/warning/bad/critical 的人话，critical 写“断崖式下滑，先排除闭店/采集缺口”）+ 1–2 个决定性数字。',
+  '第 2 段：按重要性讲原因，引用 facts.dailyReview.drivers、天气和 facts.analysis 的 finding；根因必须说明是销量/价格/成本/结构哪一类，并给出金额。',
+  '第 3 段：2–3 条按影响排序的动作，第一条必须回应最大负向驱动或根因；写对象+动作+核对点，不要通用套话。',
+  '天气只作背景，禁止断言天气导致销售；如要关联，写“可能与客流/销售相关，需结合客流验证”。',
+  '只引用 facts.dailyReview / facts.analysis 里的数字；不得做 facts 之外的算术；缺失写 "-"。',
   '全文不超过 700 个汉字；末尾单独一行写：数据截至 <dataAsOf>（缺失写「新鲜度未知」）。',
 ].join('\n')
 
@@ -293,8 +288,8 @@ function ensureDailySections(text: string, facts: FactBundle): string {
   if (facts.focus !== 'daily_review') return text
   const lines = templateOf(facts).split('\n')
   const missing: string[] = []
-  for (const prefix of ['驱动：', '根因：', '建议：']) {
-    if (!text.includes(prefix)) {
+  for (const [keyword, prefix] of [['驱动', '驱动：'], ['根因', '根因：'], ['建议', '建议：']] as const) {
+    if (!text.includes(keyword)) {
       const line = lines.find((l) => l.startsWith(prefix))
       if (line !== undefined) missing.push(line)
     }
