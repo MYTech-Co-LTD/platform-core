@@ -520,14 +520,20 @@ const c=new Client({connectionString:process.env.DATA_WAREHOUSE_URL});
   const sealedRefs=d.rows[0].sealed_refs, dailyRefs=d.rows[0].daily_refs;
   if(sealedRefs<=0){console.log('ERR 视图定义不含封版表（sealed_refs=0）——读路径被改回别处');process.exit(1)}
   if(dailyRefs>0){console.log('ERR 视图定义仍含 _DAILY（daily_refs='+dailyRefs+'）——#1872 的慢/崩路径回来了');process.exit(1)}
+  // ⚠️ 必须**先取日期再拼字面量**：实测（2026-11-10）子查询形态
+  //    `where bizday = (select max(bizday) from ...)` 会让 pg_duckdb 放弃文件裁剪 ⇒ >120s 超时；
+  //    字面量 `where bizday = date '2026-11-09'` 4.3s。日期只来自库内、且经 ISO 正则校验后才拼。
+  const dq=await c.query('select max(bizday)::text as d from ${SEALED_TABLE} where bizday > date \'1970-01-01\'');
+  const day=dq.rows[0].d;
+  if(!/^\\d{4}-\\d{2}-\\d{2}$/.test(day||'')){console.log('ERR 取不到最近封版日（max(bizday)='+day+'）');process.exit(1)}
   const t0=Date.now();
-  const r=await c.query('select count(*)::bigint as n from ${DETAIL_VIEW} where bizday = (select max(bizday) from ${SEALED_TABLE} where bizday > date \'1970-01-01\')');
+  const r=await c.query('select count(*)::bigint as n from ${DETAIL_VIEW} where bizday = date \''+day+'\'');
   const ms=Date.now()-t0;
   await c.end();
   const n=Number(r.rows[0].n);
   if(n<=0){console.log('ERR 最近封版日单日 count=0（视图读不到数据）');process.exit(1)}
   if(ms>${DETAIL_MAX_MS}){console.log('ERR 单日 count 延迟 '+ms+'ms > ${DETAIL_MAX_MS}ms（rows='+n+'）');process.exit(1)}
-  console.log('OK sealed_refs='+sealedRefs+' daily_refs=0 rows='+n+' '+ms+'ms');
+  console.log('OK sealed_refs='+sealedRefs+' daily_refs=0 day='+day+' rows='+n+' '+ms+'ms');
 }catch(e){console.log('ERR '+e.message);process.exit(1)}})()
 "
 }
