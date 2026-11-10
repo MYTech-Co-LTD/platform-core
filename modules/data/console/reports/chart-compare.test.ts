@@ -23,6 +23,9 @@ describe('buildOption 历史对比', () => {
     expect(opt.series[1].name).toBe('上期')
     expect(opt.series[1].data).toEqual([5, 6, 7])
     expect(opt.xAxis.data).toEqual(['2026-11-01', '2026-11-02', '2026-11-03'])
+    // 图例放底部，避免压住折线
+    expect(opt.legend.bottom).toBe(0)
+    expect(opt.grid.bottom).toBe(34)
   })
 
   it('类目轴按值对齐：柱状图按原因/项目并列', () => {

@@ -238,11 +238,13 @@ export function buildOption(
     }
   }
 
+  const multi = series.length > 1
   const baseOption = {
     // option 半边：grid 显式留白——与 EChart 容器的 overflow:hidden 是同一坑的两半。
-    grid: GRID_MARGINS,
+    // 图例放底部：放顶部会压住折线/柱体（本期/上期/去年同期三系列时尤其明显）。
+    grid: { ...GRID_MARGINS, bottom: multi ? 34 : GRID_MARGINS.bottom },
     tooltip: { trigger: 'axis' },
-    ...(series.length > 1 ? { legend: {} } : {}),
+    ...(multi ? { legend: { type: 'scroll', bottom: 0, itemWidth: 10, itemHeight: 6 } } : {}),
     xAxis: { type: 'category', data: xLabels },
     yAxis: { type: 'value' },
     series,
@@ -257,7 +259,8 @@ export function buildOption(
     media: [{
       query: { maxWidth: NARROW_BAR_MAX_WIDTH },
       option: {
-        grid: { bottom: 24 },
+        // 底部要同时容纳 45° 类目标签 + 图例。
+        grid: { bottom: multi ? 64 : 24 },
         xAxis: { axisLabel: NARROW_BAR_AXIS_LABEL },
       },
     }],
