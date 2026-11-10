@@ -343,6 +343,22 @@ function shanghaiToday(): string {
   }).format(new Date())
 }
 
+function shanghaiYesterday(): string {
+  return new Intl.DateTimeFormat('en-CA', {
+    timeZone: 'Asia/Shanghai', year: 'numeric', month: '2-digit', day: '2-digit',
+  }).format(new Date(Date.now() - 24 * 60 * 60 * 1000))
+}
+
+/**
+ * 日报的默认单日：规格里钉的日期会随发布陈旧（如 11-08 的规格在 11-10 打开）。
+ * 未钉历史版本时，默认跟到「昨天」——日报数据都是 T-1，今天还没营业结束。
+ */
+function initialPeriodOf(p: PeriodSpec | null, pinned: boolean): PeriodSpec | null {
+  if (p === null || pinned || p.mode !== 'day' || p.day === undefined) return p
+  const y = shanghaiYesterday()
+  return p.day < y ? { ...p, day: y } : p
+}
+
 /** 切换期间模式时的合法默认值（mode=custom 必须有 from/to，否则 periodRangeOf 会抛）。 */
 function switchPeriodMode(mode: PeriodSpec['mode'], current: PeriodSpec, range: DateRange | null): PeriodSpec {
   if (mode === 'month') {
@@ -437,7 +453,10 @@ export default function ReportView({
 }) {
   const [results, setResults] = useState<Record<number, PanelResult>>({})
   // 期间：规格默认值即初值；调用方按 reportId 给 ReportView 换 key ⇒ 换报自然重置。
-  const [period, setPeriod] = useState<PeriodSpec | null>(spec.period ?? null)
+  // 钉了历史版本时保持规格原值；否则单日默认跟到昨天（日报 T-1）。
+  const [period, setPeriod] = useState<PeriodSpec | null>(
+    () => initialPeriodOf(spec.period ?? null, pinnedVersion !== null && pinnedVersion !== undefined),
+  )
   // 筛选栏（#1047）：defaults 从规格 args 反推（键级），override 是用户改选的值；
   // 查询时 {...panel.args, ...override}——覆盖键 ⊆ args 键，值仍走服务端授权链（见文件头）。
   const [override, setOverride] = useState<Record<string, unknown>>({})
