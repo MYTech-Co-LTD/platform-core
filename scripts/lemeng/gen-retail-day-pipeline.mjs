@@ -180,8 +180,10 @@ nodes.push(
       properties: { path: '/workspace/logs/retail-windows/${ITER_ITEM_BIZDAY}.csv', mode: 'overwrite' },
     },
   },
-  // ── 封版标记（`_DAILY/<book>-<bizday>.parquet`）────────────────────────────────────
-  // 读侧靠它决定「这一天的小时文件要不要排除」（architecture.md §5.3）。
+  // ── 封版标记（`_DAILY/<book>-<bizday>.parquet` + `data.lemeng_daily_sealed`）──────────
+  // `_DAILY/` 标记仍是**封版事实源**；同一条 `msrc` 行同时 upsert 到仓内表
+  // `data.lemeng_daily_sealed`，读侧判定改读该表（#1872：1,541 个小文件 glob 会 >110s 且打崩 pg_duckdb）。
+  // 表由 DDL 预建（`deploy/duckle/console/lemeng_daily_sealed.ddl.sql`），upsert 不建表。
   // ⚠️ 必须在**天文件落盘之后**才写：`ordered`（ctl.anchor）→ 本节点是 **trigger** 边，
   //    与收据 `summ` 同一手法。写早了会让读侧去排除一片还不存在/没写完的小时文件。
   // ⚠️ 标记**不能落进 `system_book=*/**/*.parquet` 射程**：这里放表根 `_DAILY/`，
@@ -212,6 +214,24 @@ nodes.push(
       },
     },
   },
+  {
+    id: 'mst',
+    type: 'sink',
+    position: { x: 1760, y: 380 },
+    data: {
+      label: '封版标记 → data.lemeng_daily_sealed',
+      componentId: 'snk.postgres',
+      properties: {
+        // 连接走 workspace 的 saved connection（同 W2 profiler 先例，不内联密钥）。
+        connectionRef: 'pgduck',
+        schemaName: 'data',
+        tableName: 'lemeng_daily_sealed',
+        mode: 'upsert',
+        conflictColumns: ['system_book', 'bizday'],
+        connectTimeout: 30,
+      },
+    },
+  },
 )
 
 const wire = (/** @type {string} */ source, /** @type {string} */ target) =>
@@ -232,6 +252,7 @@ wire('summ', 'receipt')
 // 封版标记：数据边来自 gate，**排序边**来自 ordered（先落盘再写标记），与 summ 同构
 wire('gate', 'msrc')
 wire('msrc', 'msink')
+wire('msrc', 'mst')
 // ⚠️ `ordered → summ` 是**排序边、不是数据边**：必须 `connectionType: "trigger"`。
 //    写成 `"main"` 会被验证器判「2 路进一个端口、只读一路」（2026-10-20 实测拦下）。
 //    `ctl.anchor` 的语义是「上游 sink 先落盘，再放行下游」——它是触发关系，不搬数据。

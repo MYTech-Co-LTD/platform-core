@@ -61,7 +61,7 @@ with recheck_raw as (
     ) r
     where r['bizday']::date < CAST(now() AT TIME ZONE 'Asia/Shanghai' AS DATE)
       and r['state']::varchar = 'FINISHED'
-      and not exists (select 1 from read_parquet('s3://{{ var("zos_bucket") }}/{{ var("lemeng_retail_order_line_prefix") }}/_DAILY/*.parquet') m where cast(m['system_book'] as varchar) = cast(r['system_book'] as varchar) and cast(m['bizday'] as date) = cast(r['bizday'] as date))
+      and not exists (select 1 from data.lemeng_daily_sealed m where cast(m.system_book as varchar) = cast(r['system_book'] as varchar) and cast(m.bizday as date) = cast(r['bizday'] as date))
 ),
 recheck as (
     select

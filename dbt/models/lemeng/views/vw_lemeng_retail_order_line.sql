@@ -164,12 +164,12 @@ select
   r['order_detail_online_qty']::numeric(14,3) as order_detail_online_qty,
   r['order_total_money']::numeric(14,2) as order_total_money
 -- ══ 热：未封版日子的小时文件 ═══════════════════════════════════════════════════════════════
--- ⚠️ **必须排除已封版的日子**（`_DAILY/` 有该 (账套, 日) 的标记）。不排除的后果是**双算**：
+-- ⚠️ **必须排除已封版的日子**（`data.lemeng_daily_sealed` 有该 (账套, 日) 的行）。不排除的后果是**双算**：
 --   「写天文件」与「删小时目录」之间必然有一个两者并存的窗口，而 glob 会把两份都读进来。
 --   带上排除之后，删小时只是**变慢**（多开几个文件），不会错数 ⇒ 正确性与删除时机解耦。
--- ⚠️ `_DAILY/` 必须**永远至少有一个对象**：空 glob 不是「读到 0 行」，是 `No files found that
---   match the pattern` **建计划就失败**（真机实测）⇒ 迁移第 0 步先落 `_DAILY/_bootstrap.parquet`
---   （system_book='' / bizday=1970-01-01，不匹配任何真日子）。
+-- ⚠️ 读侧判定读**仓内封版表** `data.lemeng_daily_sealed`（#1872），不再 glob `_DAILY/`：
+--   1,541 个一行小文件在 pg_duckdb 上 >110s 且会打崩后端。`_DAILY/` 标记仍由日管线写，
+--   作为表的事实源/回填；表由 DDL 预建，回填必须含 `_bootstrap` 行（system_book='' / bizday=1970-01-01）。
 -- ⚠️ 子查询里的 `select 1 from …` 要**写成一行**（`from` 不换行）：`gen-data-projection.mjs` 的
 --   位点识别要求「后续位点必须是行首 select」，内联写法才不会被当成第三个投影位点。
 from read_parquet(
@@ -180,7 +180,7 @@ from read_parquet(
   ) sealed
 where sealed['schema_version'] = 3
   and not exists (
-    select 1 from read_parquet('s3://{{ var("zos_bucket") }}/{{ var("lemeng_retail_order_line_prefix") }}/_DAILY/*.parquet') m
-    where cast(m['system_book'] as varchar) = cast(r['system_book'] as varchar)
-      and cast(m['bizday'] as date) = cast(r['bizday'] as date)
+    select 1 from data.lemeng_daily_sealed m
+    where cast(m.system_book as varchar) = cast(r['system_book'] as varchar)
+      and cast(m.bizday as date) = cast(r['bizday'] as date)
   )

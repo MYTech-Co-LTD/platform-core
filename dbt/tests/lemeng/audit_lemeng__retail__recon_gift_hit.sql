@@ -93,7 +93,7 @@ with recheck_raw as (
       and r['quantity']::numeric > 0
       and abs(r['discount_money']::numeric - r['order_detail_std_price']::numeric * r['quantity']::numeric) <= 0.02
       and r['bizday']::date < CAST(now() AT TIME ZONE 'Asia/Shanghai' AS DATE)
-      and not exists (select 1 from read_parquet('s3://{{ var("zos_bucket") }}/{{ var("lemeng_retail_order_line_prefix") }}/_DAILY/*.parquet') m where cast(m['system_book'] as varchar) = cast(r['system_book'] as varchar) and cast(m['bizday'] as date) = cast(r['bizday'] as date))
+      and not exists (select 1 from data.lemeng_daily_sealed m where cast(m.system_book as varchar) = cast(r['system_book'] as varchar) and cast(m.bizday as date) = cast(r['bizday'] as date))
 ),
 recheck as (
     -- 复算聚合：按归零公式的消费粒度 (账套,日,店,商品) 聚合命中集（#984 拆腿后聚合式不变）。
@@ -168,6 +168,6 @@ where not exists (select 1 from recheck)
               's3://{{ var("zos_bucket") }}/{{ var("lemeng_retail_order_line_prefix") }}/system_book=*/bizday=*/hour=*/all.parquet'
           ) r
           where r['state'] = 'FINISHED' and r['sale_money']::numeric > 0
-            and not exists (select 1 from read_parquet('s3://{{ var("zos_bucket") }}/{{ var("lemeng_retail_order_line_prefix") }}/_DAILY/*.parquet') m where cast(m['system_book'] as varchar) = cast(r['system_book'] as varchar) and cast(m['bizday'] as date) = cast(r['bizday'] as date))
+            and not exists (select 1 from data.lemeng_daily_sealed m where cast(m.system_book as varchar) = cast(r['system_book'] as varchar) and cast(m.bizday as date) = cast(r['bizday'] as date))
       ) src_any
   )

@@ -1,0 +1,76 @@
+{
+ "name": "lemeng.retail_order_line.daily_sealed.reconcile",
+ "_note": [
+  "封版 manifest 对账/回填（#1872）：读 `_DAILY/*.parquet`（事实源）→ upsert 仓内 `data.lemeng_daily_sealed`。",
+  "为什么不在 pg_duckdb 里做：`_DAILY` 1,541 个一行小文件在 pg_duckdb 上 >110s 且会打崩后端；本 job 跑在独立 DuckDB（console），14s 级。",
+  "snk.postgres upsert 幂等；重复跑不会产生重复行。表必须由 DDL 预建（deploy/duckle/console/lemeng_daily_sealed.ddl.sql）。",
+  "表多行（`_DAILY` 已被删但表还在）本 job 不删，只由审计告警；标记是 append-only，正常不会出现。",
+  "调度：每 30 分钟一次（见 schedules/3120.json 与 schedules/64188.json）；两个账套 console 都跑，幂等。",
+  "连接统一走 workspace saved connection：`zos`（读湖）/ `pgduck`（写仓），不内联密钥。"
+ ],
+ "nodes": [
+  {
+   "id": "s",
+   "type": "source",
+   "position": { "x": 0, "y": 0 },
+   "data": {
+    "label": "_DAILY markers",
+    "componentId": "src.minio",
+    "properties": {
+     "connectionRef": "zos",
+     "bucket": "${ENV:ZOS_BUCKET}",
+     "key": "lemeng/retail_order_line/_DAILY/*.parquet",
+     "glob": true,
+     "format": "parquet"
+    }
+   }
+  },
+  {
+   "id": "c",
+   "type": "transform",
+   "position": { "x": 220, "y": 0 },
+   "data": {
+    "label": "cast keys",
+    "componentId": "code.sql",
+    "properties": {
+     "sql": "select distinct cast(system_book as varchar) as system_book, cast(bizday as date) as bizday from input"
+    }
+   }
+  },
+  {
+   "id": "k",
+   "type": "sink",
+   "position": { "x": 440, "y": 0 },
+   "data": {
+    "label": "upsert data.lemeng_daily_sealed",
+    "componentId": "snk.postgres",
+    "properties": {
+     "connectionRef": "pgduck",
+     "schemaName": "data",
+     "tableName": "lemeng_daily_sealed",
+     "mode": "upsert",
+     "conflictColumns": ["system_book", "bizday"],
+     "connectTimeout": 30
+    }
+   }
+  }
+ ],
+ "edges": [
+  {
+   "id": "e_s_c",
+   "source": "s",
+   "target": "c",
+   "sourceHandle": "main",
+   "targetHandle": "main",
+   "data": { "connectionType": "main" }
+  },
+  {
+   "id": "e_c_k",
+   "source": "c",
+   "target": "k",
+   "sourceHandle": "main",
+   "targetHandle": "main",
+   "data": { "connectionType": "main" }
+  }
+ ]
+}
