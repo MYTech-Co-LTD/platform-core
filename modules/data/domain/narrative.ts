@@ -636,9 +636,10 @@ export async function* streamNarrative(
         }
         full += d.content
         pending += d.content
-        // 只校验已闭合的数字：以数字/逗号/点/空白结尾说明 token 可能还没完
-        // （空白后可能接「年/月/日/时」——模型会把日期写成「10 月 21 日」），留到下一块。
-        if (!/[0-9,.\s]$/.test(pending)) {
+        // 只在**句子闭合**时做增量校验：流式 chunk 会从任意字符处切开，按「不以数字结尾」
+        // 判断仍会把 `2026-11-04` 这类日期切残，误报 `04` ⇒ 整段回退（2026-11-10 实测）。
+        // 整段结束仍有全文校验兜底，增量校验只是为了尽早止损。
+        if (/[。！？；\n]$/.test(pending)) {
           const bad = badNumbers(pending, allowed)
           pending = ''
           if (bad.length > 0) {
