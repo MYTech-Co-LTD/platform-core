@@ -78,7 +78,7 @@ describePg('channel-probe', () => {
   it('★ 取到 token ⇒ last_ok_at 前进、last_error 清空', async () => {
     await addChannel({ transport: 'direct' })
     await upsertCredential(pool, ORG, 'wecom', { appKey: 'ww1', agentId: '1', secret: 's' }, 't', env)
-    const s = await probeDirectChannels({ pool, env, fetchImpl: fakeFetch({ fail: false, calls: 0 }) })
+    const s = await probeDirectChannels({ pool, env, fetchImpl: fakeFetch({ fail: false, calls: 0 }), orgs: [ORG] })
     expect(s.probed).toBe(1)
     expect(s.ok).toEqual([`${ORG}/wecom_chat`])
     const row = await probeRow()
@@ -86,17 +86,39 @@ describePg('channel-probe', () => {
     expect(row?.last_error).toBeNull()
   })
 
+  it('★ orgs 过滤：其他 org 的直连通道不计入（并行测试/多租户隔离）', async () => {
+    const OTHER = 'org-chan-probe-other'
+    await addChannel({ transport: 'direct' })
+    await upsertCredential(pool, ORG, 'wecom', { appKey: 'ww1', agentId: '1', secret: 's' }, 't', env)
+    await pool.query(
+      `insert into notify.channel(org, id, provider, enabled, config, secret_refs, created_by)
+       values ($1,'wecom-main','wecom_chat',true,'{"transport":"direct"}','{}'::jsonb,'test')`,
+      [OTHER],
+    )
+    await upsertCredential(pool, OTHER, 'wecom', { appKey: 'ww-other', agentId: '2', secret: 's' }, 't', env)
+    try {
+      const s = await probeDirectChannels({ pool, env, fetchImpl: fakeFetch({ fail: false, calls: 0 }), orgs: [ORG] })
+      expect(s.probed).toBe(1)
+      expect(s.ok).toEqual([`${ORG}/wecom_chat`])
+      expect(s.failed).toEqual([])
+    } finally {
+      await pool.query('delete from notify.channel_probe where org=$1', [OTHER]).catch(() => {})
+      await pool.query('delete from notify.channel where org=$1', [OTHER]).catch(() => {})
+      await pool.query('delete from notify.channel_credential where org=$1', [OTHER]).catch(() => {})
+    }
+  })
+
   it('★ 取不到 token ⇒ last_error 有原因，且 last_ok_at 不倒退（线索是「沉默多久」）', async () => {
     await addChannel({ transport: 'direct' })
     await upsertCredential(pool, ORG, 'wecom', { appKey: 'ww1', agentId: '1', secret: 's' }, 't', env)
-    await probeDirectChannels({ pool, env, fetchImpl: fakeFetch({ fail: false, calls: 0 }) })
+    await probeDirectChannels({ pool, env, fetchImpl: fakeFetch({ fail: false, calls: 0 }), orgs: [ORG] })
     const before = await probeRow()
     // 强制到点（否则限频会跳过）
     await pool.query("update notify.channel_probe set checked_at = now() - interval '10 minutes' where org=$1", [ORG])
     // 凭据换了：token 缓存必须清，否则探针会拿旧 token 判「还活着」（假绿）
     __resetTokenCache()
 
-    const s = await probeDirectChannels({ pool, env, fetchImpl: fakeFetch({ fail: true, calls: 0 }) })
+    const s = await probeDirectChannels({ pool, env, fetchImpl: fakeFetch({ fail: true, calls: 0 }), orgs: [ORG] })
     expect(s.failed).toHaveLength(1)
     const after = await probeRow()
     expect(after?.last_error).toMatch(/40013|invalid corpid/)
@@ -105,7 +127,7 @@ describePg('channel-probe', () => {
 
   it('★ 没配凭据 ⇒ 跳过且不写失败（「还没接」≠「坏了」）', async () => {
     await addChannel({ transport: 'direct' })
-    const s = await probeDirectChannels({ pool, env, fetchImpl: fakeFetch({ fail: false, calls: 0 }) })
+    const s = await probeDirectChannels({ pool, env, fetchImpl: fakeFetch({ fail: false, calls: 0 }), orgs: [ORG] })
     expect(s.skipped).toBe(1)
     expect(await probeRow()).toBeUndefined()
   })
@@ -114,7 +136,7 @@ describePg('channel-probe', () => {
     await addChannel({ transport: 'bridge' })
     await upsertCredential(pool, ORG, 'wecom', { appKey: 'ww1', agentId: '1', secret: 's' }, 't', env)
     const state = { fail: false, calls: 0 }
-    const s = await probeDirectChannels({ pool, env, fetchImpl: fakeFetch(state) })
+    const s = await probeDirectChannels({ pool, env, fetchImpl: fakeFetch(state), orgs: [ORG] })
     expect(s.probed).toBe(0)
     expect(state.calls).toBe(0)
     expect(await probeRow()).toBeUndefined()
@@ -124,10 +146,10 @@ describePg('channel-probe', () => {
     await addChannel({ transport: 'direct' })
     await upsertCredential(pool, ORG, 'wecom', { appKey: 'ww1', agentId: '1', secret: 's' }, 't', env)
     const state = { fail: false, calls: 0 }
-    await probeDirectChannels({ pool, env, fetchImpl: fakeFetch(state) })
+    await probeDirectChannels({ pool, env, fetchImpl: fakeFetch(state), orgs: [ORG] })
     const first = state.calls
     expect(first).toBeGreaterThan(0)
-    const s2 = await probeDirectChannels({ pool, env, fetchImpl: fakeFetch(state) })
+    const s2 = await probeDirectChannels({ pool, env, fetchImpl: fakeFetch(state), orgs: [ORG] })
     expect(s2.probed).toBe(0)
     expect(state.calls).toBe(first)
     // 间隔常量是 300s（与 spec「每 5 分钟一次 gettoken」一致）
@@ -139,7 +161,7 @@ describePg('channel-probe', () => {
     await upsertCredential(pool, ORG, 'wecom', { appKey: 'ww-sample', agentId: '9', secret: 's' }, 't', env)
     let asked = 0
     const opts = {
-      pool, env,
+      pool, env, orgs: [ORG],
       fetchImpl: fakeFetch({ fail: false, calls: 0, badUsers: ['ghost'] }),
       sampleAddresses: async (_org: string, limit: number) => {
         asked = limit
@@ -159,14 +181,14 @@ describePg('channel-probe', () => {
   it('采样器缺省 / 抽不到人 ⇒ 统计列为 null（「不知道」≠「0 可达」）', async () => {
     await addChannel({ transport: 'direct' })
     await upsertCredential(pool, ORG, 'wecom', { appKey: 'ww-sample2', agentId: '9', secret: 's' }, 't', env)
-    await probeDirectChannels({ pool, env, fetchImpl: fakeFetch({ fail: false, calls: 0 }) })
+    await probeDirectChannels({ pool, env, fetchImpl: fakeFetch({ fail: false, calls: 0 }), orgs: [ORG] })
     const r1 = await pool.query('select reachable, unreachable from notify.channel_probe where org=$1', [ORG])
     expect(r1.rows[0]).toEqual({ reachable: null, unreachable: null })
 
     await pool.query("update notify.channel_probe set checked_at = now() - interval '10 minutes' where org=$1", [ORG])
     __resetTokenCache()
     await probeDirectChannels({
-      pool, env, fetchImpl: fakeFetch({ fail: false, calls: 0 }), sampleAddresses: async () => [],
+      pool, env, fetchImpl: fakeFetch({ fail: false, calls: 0 }), orgs: [ORG], sampleAddresses: async () => [],
     })
     const r2 = await pool.query('select reachable, unreachable from notify.channel_probe where org=$1', [ORG])
     expect(r2.rows[0]).toEqual({ reachable: null, unreachable: null })
@@ -175,7 +197,7 @@ describePg('channel-probe', () => {
   it('★ 停用的通道不探', async () => {
     await addChannel({ transport: 'direct' }, false)
     await upsertCredential(pool, ORG, 'wecom', { appKey: 'ww1', agentId: '1', secret: 's' }, 't', env)
-    const s = await probeDirectChannels({ pool, env, fetchImpl: fakeFetch({ fail: false, calls: 0 }) })
+    const s = await probeDirectChannels({ pool, env, fetchImpl: fakeFetch({ fail: false, calls: 0 }), orgs: [ORG] })
     expect(s.probed).toBe(0)
   })
 })

@@ -42,6 +42,11 @@ interface ProbeDep {
   /** 测试注入：绕过最小间隔（生产不传） */
   minIntervalSeconds?: number
   /**
+   * 只探这些 org（缺省 = 全部）。worker 不传；测试用它隔离并行文件/其他 org 的直连通道，
+   * 也可供「只重探某个 org」的运维入口复用。
+   */
+  orgs?: readonly string[]
+  /**
    * 采样器（宿主注入）：抽 N 个成员的渠道原生地址。
    * 缺省 ⇒ 不做个人级抽样（只证凭据），不是「0 可达」。
    */
@@ -67,8 +72,9 @@ export async function probeDirectChannels(dep: ProbeDep): Promise<ProbeSummary> 
       where c.enabled
         and c.config->>'transport' = 'direct'
         and (p.checked_at is null or p.checked_at < now() - ($1::int * interval '1 second'))
+        and ($2::text[] is null or c.org = any($2))
       order by c.org, c.provider`,
-    [minInterval],
+    [minInterval, dep.orgs ? [...dep.orgs] : null],
   )
 
   for (const r of rows as Array<{ org: string; provider: string }>) {
