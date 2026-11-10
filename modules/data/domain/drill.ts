@@ -24,6 +24,27 @@ export interface DetailArgs {
   offset?: number
 }
 
+/**
+ * 结果来源（S0 薄切片）：本次明细结果对应哪条关系、哪个原子粒度键、哪次审计。
+ * 纯标注——不改 SQL / 授权 / 掩码；`relation` 是逻辑视图名，不含物理路径或凭据。
+ */
+export interface DetailProvenance {
+  /** 直读湖的逻辑关系名（`vw_*`）。 */
+  relation: string
+  /** 原子粒度业务键（= 指标声明的 dimensions）；结果行可由此定位源行。 */
+  keyColumns: string[]
+  /** 本次实际分组维度（keyColumns 的子集；缺省 = 原子粒度）。 */
+  groupedBy: string[]
+  /** 同一 where 的全量行数（与回包 rowCountTotal 同源）。 */
+  rowCountTotal: number
+  /** 明细查询执行时刻。 */
+  drillAsOf: string
+  /** 聚合物化钟；缺席 = 未知。 */
+  dataAsOf?: string
+  /** 本次查询的审计行 id（`data.query_audit.id`）。 */
+  auditId: number
+}
+
 export interface DetailOk {
   status: 'ok'; subject: string; metricId: string
   /** 本次生效的分组维度（= 原子粒度或其子集，声明序）。 */
@@ -41,6 +62,8 @@ export interface DetailOk {
   /** 口径射程行（与聚合面同规则：声明了才有）。 */
   scope_line?: string
   masking?: Record<string, string>
+  /** 结果来源（S0）：关系 / 原子粒度键 / 时钟 / 审计行。 */
+  provenance: DetailProvenance
 }
 export type DetailOutcome = DetailOk
   | { status: 'denied'; metricId: string; reason: string; detail?: string; alternative?: { tool: string; args: Record<string, unknown> } }
@@ -278,7 +301,7 @@ export async function runDetailQuery(
 
   const scopeNote = typeof metricRow.scopeNote === 'string' ? metricRow.scopeNote.trim() : ''
   const hasMasking = Object.keys(masked.applied).length > 0
-  await audit('ok', retried ? 'lake_race_retry' : null, result.rows.length,
+  const okAudit = await audit('ok', retried ? 'lake_race_retry' : null, result.rows.length,
     maskingAuditOf(masked.applied, masked.exempted),
     { dimensions: requested, rowCountTotal, grantedColumns: effectiveGranted.map((c) => c.col),
       ...(maskedOutColumns.length > 0 ? { maskedOutColumns } : {}) })
@@ -293,6 +316,15 @@ export async function runDetailQuery(
     rowCountTotal,
     truncated: result.rows.length >= limit,
     drill_as_of: drillAsOf,
+    provenance: {
+      relation: drill.relation,
+      keyColumns: [...drill.dims],
+      groupedBy: [...requested],
+      rowCountTotal,
+      drillAsOf,
+      ...(dataAsOf !== undefined ? { dataAsOf } : {}),
+      auditId: okAudit.id,
+    },
     ...(dataAsOf !== undefined ? {
       data_as_of: dataAsOf,
       clock_note: `⏱ 明细直读数据湖（查询时刻 ${drillAsOf}），聚合口径截至 ${dataAsOf}——两个时钟不同，逐行相加可能与聚合值不一致，以各自标注为准`,
