@@ -107,6 +107,23 @@
 #      **这是本断言的验收判据**（同 ⑩⑪⑫⑬⑭）。
 #    真实检测验证：`WIRE_PGCRASH_WINDOW=24h sh $0 --check` 应命中当天的 signal 11（历史日志）。
 
+# ── ⑯⑰ 封版 manifest 效果（2026-11-10 新增；#1872 的收尾监控，issue #1886）──────────────
+#    #1872 把明细视图的封版判定从 `_DAILY/*.parquet` glob 改成读仓内表 `data.lemeng_daily_sealed`
+#    （1,541 个小文件 glob 单次 >110s 且会打崩 pg_duckdb）。效果有三条腿会**静默坏**，各一条断言：
+#
+#    ⑯ 封版水位：表里 max(bizday) 必须跟到「上海今天−1」（02:00 前按 −2），且 max(sealed_at)
+#       不超过 WIRE_SEALED_MAX_AGE_MIN（默认 180 分钟；reconcile 每 30 分钟一轮，等于连续 6 轮没跑）。
+#       抓的形状：reconcile 管线停 ⇒ 新的一天没进表 ⇒ 视图读侧不排除该日 hot 小时 ⇒ **静默双算**，
+#       而所有 job 都是绿的（表只是旧，没有任何报错）。同时覆盖「day 管线 mst 节点没写」。
+#
+#    ⑰ 读路径未回退：视图定义必须**含** `lemeng_daily_sealed` 且**不含** `_DAILY`，再实测一次
+#       「最近封版日」的单日 count 延迟 ≤ WIRE_DETAIL_MAX_MS（默认 15000ms，基线 0.7–8s）。
+#       抓的形状：换机/回滚把视图定义带回旧版 ⇒ 延迟回到 >110s 且可能再崩后端——结构判据先红，
+#       不必等用户点明细。
+#
+#    两条都走 advisory（判红只进 `data_plane_probes`，桥送企微，不翻 job rc，红线③）。
+#    反向测试：`WIRE_SEALED_SELFTEST=1` / `WIRE_DETAILPATH_SELFTEST=1` ⇒ 各吐一行 ERR。
+
 set -eu
 
 PLATFORM_NET=${WIRE_PLATFORM_NET:-openship-platform-core-shanhai}
@@ -129,6 +146,13 @@ DRIFT_SELFTEST=${WIRE_DRIFT_SELFTEST:-}
 # ⑮ 崩溃日志窗口与反向测试钩子（#1517）：窗口默认 15m（*/5 的 3 倍）；SELFTEST 直接吐 ERR。
 PGCRASH_WINDOW=${WIRE_PGCRASH_WINDOW:-15m}
 PGCRASH_SELFTEST=${WIRE_PGCRASH_SELFTEST:-}
+# ⑯⑰ 封版 manifest 效果（#1872 收尾）：表名/视图名可覆盖（换站不必改仓），阈值两条。
+SEALED_TABLE=${WIRE_SEALED_TABLE:-data.lemeng_daily_sealed}
+DETAIL_VIEW=${WIRE_DETAIL_VIEW:-staging.vw_lemeng_retail_order_line}
+SEALED_MAX_AGE_MIN=${WIRE_SEALED_MAX_AGE_MIN:-180}
+DETAIL_MAX_MS=${WIRE_DETAIL_MAX_MS:-15000}
+SEALED_SELFTEST=${WIRE_SEALED_SELFTEST:-}
+DETAILPATH_SELFTEST=${WIRE_DETAILPATH_SELFTEST:-}
 
 die() { echo "WIRE_FAILED: $*" >&2; exit 1; }
 
@@ -454,15 +478,69 @@ assert_pg_crash_free() {
   echo "OK 近 ${PGCRASH_WINDOW} 无 signal 11 / recovery"
 }
 
+# ⑯ 封版水位（#1872 收尾）：max(bizday) 跟到 上海今天−1（02:00 前按 −2）+ max(sealed_at) 未超龄。
+#    容差来源：day 管线在 CST 00:0x 封前一天；reconcile 每 30 分钟一轮 ⇒ 3h ≈ 连续 6 轮没跑。
+assert_sealed_manifest() {
+  printf '⑯ 封版 manifest 水位（%s）—— ' "$SEALED_TABLE"
+  if [ -n "$SEALED_SELFTEST" ]; then
+    echo 'ERR 自测注入：模拟封版水位停更（WIRE_SEALED_SELFTEST）'
+    return 1
+  fi
+  docker exec -w /app/apps/server "$PLATFORM_CONTAINER" node -e "
+const {Client}=require('pg');
+const c=new Client({connectionString:process.env.DATA_WAREHOUSE_URL});
+(async()=>{try{
+  await c.connect();
+  const r=await c.query('select (count(*) filter (where bizday > date \'1970-01-01\'))::int as n, coalesce(max(bizday)::text,\'\') as maxday, coalesce(round(extract(epoch from (now() - max(sealed_at)))/60)::int,-1) as age_min, ((now() at time zone \'Asia/Shanghai\')::date - case when (now() at time zone \'Asia/Shanghai\')::time < time \'02:00:00\' then 2 else 1 end)::text as cutoff from ${SEALED_TABLE}');
+  const {n,maxday,age_min,cutoff}=r.rows[0];
+  await c.end();
+  if(n<=0){console.log('ERR 表里没有有效封版行（n=0，只有 bootstrap 或为空）');process.exit(1)}
+  if(maxday<cutoff){console.log('ERR 封版水位停更 max='+maxday+' < 容差线='+cutoff+'（reconcile/day 管线没写进来）');process.exit(1)}
+  if(age_min<0||age_min>${SEALED_MAX_AGE_MIN}){console.log('ERR reconcile 停摆：max(sealed_at) 距今 '+(age_min<0?'(空)':age_min+' 分钟')+' > ${SEALED_MAX_AGE_MIN} 分钟');process.exit(1)}
+  console.log('OK max='+maxday+'（容差线 '+cutoff+'）'+' sealed_age='+age_min+'m');
+}catch(e){console.log('ERR '+e.message);process.exit(1)}})()
+"
+}
+
+# ⑰ 读路径未回退（#1872 收尾）：视图定义含封版表、不含 `_DAILY`，且单日 count 延迟在阈值内。
+#    结构判据先行——回退到 `_DAILY` glob 时延迟会先炸，不必等用户点明细才发现。
+assert_detail_path() {
+  printf '⑰ 明细读路径（%s：结构 + 单日延迟 ≤ %sms）—— ' "$DETAIL_VIEW" "$DETAIL_MAX_MS"
+  if [ -n "$DETAILPATH_SELFTEST" ]; then
+    echo 'ERR 自测注入：模拟视图回退到 `_DAILY`（WIRE_DETAILPATH_SELFTEST）'
+    return 1
+  fi
+  docker exec -w /app/apps/server "$PLATFORM_CONTAINER" node -e "
+const {Client}=require('pg');
+const c=new Client({connectionString:process.env.DATA_WAREHOUSE_URL});
+(async()=>{try{
+  await c.connect();
+  const d=await c.query('select position(\'lemeng_daily_sealed\' in definition) as sealed_refs, position(\'_DAILY\' in definition) as daily_refs from pg_views where schemaname=\$1 and viewname=\$2',['${DETAIL_VIEW%.*}','${DETAIL_VIEW#*.}']);
+  if(d.rows.length===0){console.log('ERR 视图不存在：${DETAIL_VIEW}');process.exit(1)}
+  const sealedRefs=d.rows[0].sealed_refs, dailyRefs=d.rows[0].daily_refs;
+  if(sealedRefs<=0){console.log('ERR 视图定义不含封版表（sealed_refs=0）——读路径被改回别处');process.exit(1)}
+  if(dailyRefs>0){console.log('ERR 视图定义仍含 _DAILY（daily_refs='+dailyRefs+'）——#1872 的慢/崩路径回来了');process.exit(1)}
+  const t0=Date.now();
+  const r=await c.query('select count(*)::bigint as n from ${DETAIL_VIEW} where bizday = (select max(bizday) from ${SEALED_TABLE} where bizday > date \'1970-01-01\')');
+  const ms=Date.now()-t0;
+  await c.end();
+  const n=Number(r.rows[0].n);
+  if(n<=0){console.log('ERR 最近封版日单日 count=0（视图读不到数据）');process.exit(1)}
+  if(ms>${DETAIL_MAX_MS}){console.log('ERR 单日 count 延迟 '+ms+'ms > ${DETAIL_MAX_MS}ms（rows='+n+'）');process.exit(1)}
+  console.log('OK sealed_refs='+sealedRefs+' daily_refs=0 rows='+n+' '+ms+'ms');
+}catch(e){console.log('ERR '+e.message);process.exit(1)}})()
+"
+}
+
 # advisory 断言集（判红**不进 rc**、只吐判红行）：语义判据**不走 openship 通知**（红线③），
 # 通知由桥承担（`oo-notify-bridge.sh` 通道② 读 `verdict <> 'OK'` → 企微）。加新条目**先想清它归谁**。
-ADVISORY_CHECKS=" region_registered recon_ledger_cover recon_not_evaluated recon_source_cover config_drift pg_crash_free "
+ADVISORY_CHECKS=" region_registered recon_ledger_cover recon_not_evaluated recon_source_cover config_drift pg_crash_free sealed_manifest detail_path "
 
 do_check() {
   # #538 Phase 1：逐断言产出判红行（probe 观测面）——执行与观测同行，判定逻辑不变。
   rc=0
   _vf=$(mktemp ${TMPDIR:-/tmp}/ww-verdicts.XXXXXX)
-  for _step in dns tcp query fresh marts_fresh metrics dims item_price settlement_face region_registered recon_ledger_cover recon_not_evaluated recon_source_cover config_drift pg_crash_free; do
+  for _step in dns tcp query fresh marts_fresh metrics dims item_price settlement_face region_registered recon_ledger_cover recon_not_evaluated recon_source_cover config_drift pg_crash_free sealed_manifest detail_path; do
     _mode=hard
     case "$ADVISORY_CHECKS" in *" ${_step} "*) _mode=advisory ;; esac
     if _out=$(eval "assert_${_step}" 2>&1); then
