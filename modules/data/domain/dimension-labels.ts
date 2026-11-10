@@ -30,6 +30,11 @@ export interface DimensionLookup {
    * 键不带账套，是因为按客户切片时 `system_book` 未必在结果列里（`dimensions:["client_fid"]`）。
    */
   clientNameByFid: Map<string, string>
+  /**
+   * `supplier_num` → 供应商名（`fct_purchase.supplier_name`，#1825）。
+   * 同客户名：**跨账套同名才收**（`count(distinct supplier_name) = 1`），有歧义就不给名。
+   */
+  supplierNameByNum: Map<string, string>
 }
 
 /** 键列 → 紧跟其后插入的标签列。顺序即插入顺序。 */
@@ -38,6 +43,7 @@ const LABELS_OF_KEY: Readonly<Record<string, readonly string[]>> = {
   branch_num: ['branch_name'],
   region_id: ['region_name', 'region_l1'],
   client_fid: ['client_name'],
+  supplier_num: ['supplier_name'],
 }
 
 /** 维度侧用于查门店名的 SQL：**按门店取最新快照**（今天改名/新开店都跟着走），只取需要的三列。 */
@@ -72,6 +78,20 @@ const REGION_NAME_SQL =
 const CLIENT_NAME_SQL = `
   select client_fid::varchar as c, min(client_name) as name, count(*) as n
   from dim_lemeng_client
+  group by 1`
+
+/**
+ * 供应商名（`fct_purchase.supplier_name` 随行落库，#1825）。
+ *
+ * - 没有独立供应商维（乐檬档案里供应商档案未接），事实表就是唯一可用来源；
+ * - 只扫最近 180 天（`fct_purchase` 全表也就十来万行，但按日裁剪更稳）；
+ * - **同名唯一才收**：`count(distinct supplier_name) = 1`，同号多名字（改名/串账套）⇒ 不给名。
+ */
+const SUPPLIER_NAME_SQL = `
+  select supplier_num::varchar as s, min(supplier_name) as name,
+         count(distinct supplier_name) as n
+  from fct_purchase
+  where bizday >= current_date - 180
   group by 1`
 
 /** 执行器形状（与 `runWarehouseSql` 一致；测试可注入）。 */
@@ -134,7 +154,22 @@ export async function loadDimensionLookup(exec: Exec): Promise<DimensionLookup |
     } catch {
       // 维表缺席 / 查询失败 ⇒ 客户名缺席（其余标签照常）
     }
-    return { brandByBook, branchNameByKey, regionByKey, clientNameByFid }
+    // 供应商名同样是**后加的独立源**（#1825）：拿不到只少这一列，不牵连其余标签。
+    const supplierNameByNum = new Map<string, string>()
+    try {
+      const sup = await exec(SUPPLIER_NAME_SQL)
+      for (const row of sup.rows) {
+        const num = row[0]
+        const name = row[1]
+        const n = Number(row[2])
+        if (typeof num === 'string' && typeof name === 'string' && n === 1) {
+          supplierNameByNum.set(num, name)
+        }
+      }
+    } catch {
+      // 采购表缺席 / 查询失败 ⇒ 供应商名缺席（其余标签照常）
+    }
+    return { brandByBook, branchNameByKey, regionByKey, clientNameByFid, supplierNameByNum }
   } catch {
     return null
   }
@@ -171,6 +206,7 @@ export function decorateWithLabels(
   const branchIdx = result.columns.indexOf('branch_num')
   const regionIdx = result.columns.indexOf('region_id')
   const clientIdx = result.columns.indexOf('client_fid')
+  const supplierIdx = result.columns.indexOf('supplier_num')
 
   const rows = result.rows.map((row) => {
     const book = bookIdx >= 0 && row[bookIdx] != null ? String(row[bookIdx]) : ''
@@ -181,11 +217,15 @@ export function decorateWithLabels(
     const clientName = clientIdx >= 0 && row[clientIdx] != null
       ? (lookup.clientNameByFid.get(String(row[clientIdx])) ?? null)
       : null
-    /** 标签列 → 该行该格的值。键列只有四类，按 (键列, 标签列) 取值即可。 */
+    const supplierName = supplierIdx >= 0 && row[supplierIdx] != null
+      ? (lookup.supplierNameByNum.get(String(row[supplierIdx])) ?? null)
+      : null
+    /** 标签列 → 该行该格的值。键列只有五类，按 (键列, 标签列) 取值即可。 */
     const valueOf = (col: string, label: string): unknown => {
       if (col === 'system_book') return lookup.brandByBook.get(book) ?? null
       if (col === 'branch_num') return branchKey === null ? null : (lookup.branchNameByKey.get(branchKey) ?? null)
       if (col === 'client_fid') return clientName
+      if (col === 'supplier_num') return supplierName
       return label === 'region_name' ? (region?.name ?? null) : (region?.l1 ?? null)
     }
     const out: unknown[] = []

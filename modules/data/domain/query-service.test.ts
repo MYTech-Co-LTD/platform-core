@@ -249,6 +249,7 @@ describePg('runQuery（需要 DATABASE_URL）', () => {
         branchNameByKey: new Map([['3120|142', '品品甜折扣昆明壹号广场店']]),
         regionByKey: new Map(),
         clientNameByFid: new Map(),
+        supplierNameByNum: new Map(),
       }),
     }
     const out = await runQuery(withDim, ORG, req(), 'sales_daily', {})

@@ -21,6 +21,9 @@ const LOOKUP: DimensionLookup = {
   clientNameByFid: new Map([
     ['003120990000212', '品品甜保山腾冲1店'],
   ]),
+  supplierNameByNum: new Map([
+    ['312000885', '云南某某食品有限公司'],
+  ]),
 }
 
 describe('decorateWithLabels —— 键之后插标签，原 key 保留', () => {
@@ -113,6 +116,24 @@ describe('decorateWithLabels —— 键之后插标签，原 key 保留', () => 
     ])
   })
 
+  it('D10 supplier_num ⇒ 紧跟 supplier_name；查不到给 null，原 key 保留', () => {
+    const out = decorateWithLabels(
+      {
+        columns: ['system_book', 'supplier_num', 'value'],
+        rows: [
+          ['3120', '312000885', 60800.85],
+          ['3120', '999999999', 12],
+        ],
+      },
+      LOOKUP,
+    )
+    expect(out.columns).toEqual(['system_book', 'brand_name', 'supplier_num', 'supplier_name', 'value'])
+    expect(out.rows).toEqual([
+      ['3120', '熊喵鲜生', '312000885', '云南某某食品有限公司', 60800.85],
+      ['3120', '熊喵鲜生', '999999999', null, 12],
+    ])
+  })
+
   it('D8 标签列全已存在 ⇒ 无重名列，且表头与行体**同长**（不错位）', () => {
     const out = decorateWithLabels(
       {
@@ -146,6 +167,12 @@ describe('loadDimensionLookup —— 取不到就返回 null（缺账不反噬�
           rows: [['003120990000212', '品品甜保山腾冲1店', 1], ['000000000000001', '两账套同名号', 2]],
         }
       }
+      if (sql.includes('fct_purchase')) {
+        return {
+          columns: ['s', 'name', 'n'],
+          rows: [['312000885', '云南某某食品有限公司', 1], ['312000404', '同名多写', 2]],
+        }
+      }
       return { columns: ['b', 'n', 'name'], rows: [['3120', 142, '某店']] }
     }
     const lk = await loadDimensionLookup(exec)
@@ -155,6 +182,21 @@ describe('loadDimensionLookup —— 取不到就返回 null（缺账不反噬�
     expect(lk?.regionByKey.get('3120|21278')).toEqual({ name: '其余门店1', l1: null })
     expect(lk?.clientNameByFid.get('003120990000212')).toBe('品品甜保山腾冲1店')
     expect(lk?.clientNameByFid.has('000000000000001')).toBe(false)
+    expect(lk?.supplierNameByNum.get('312000885')).toBe('云南某某食品有限公司')
+    expect(lk?.supplierNameByNum.has('312000404')).toBe(false)
+  })
+
+  it('L4 采购表缺席 ⇒ 只有供应商名缺席，其余照常', async () => {
+    const exec = async (sql: string) => {
+      if (sql.includes('dim_brand')) return { columns: ['b', 'brand_name'], rows: [['3120', '熊喵鲜生']] }
+      if (sql.includes('dim_region')) return { columns: ['b', 'r', 'region_name', 'region_l1'], rows: [] }
+      if (sql.includes('dim_lemeng_client')) return { columns: ['c', 'name', 'n'], rows: [] }
+      if (sql.includes('fct_purchase')) throw new Error('relation "fct_purchase" does not exist')
+      return { columns: ['b', 'n', 'name'], rows: [['3120', 142, '某店']] }
+    }
+    const lk = await loadDimensionLookup(exec)
+    expect(lk?.branchNameByKey.get('3120|142')).toBe('某店')
+    expect(lk?.supplierNameByNum.size).toBe(0)
   })
 
   it('L3 客户维缺席（只有它抛错）⇒ 其余三张映射照常，客户名缺席（不反噬）', async () => {
