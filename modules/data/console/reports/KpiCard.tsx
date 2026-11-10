@@ -77,57 +77,70 @@ async function coverageOf(metricId: string, args: Record<string, unknown>): Prom
 }
 
 export function KpiCard({
-  panel, args, compareRange,
+  panel, args, compareRange, yoyRange = null,
 }: {
   panel: KpiPanel
   args: Record<string, unknown>
   compareRange: DateRange | null
+  /** 去年同期区间（同比）；null = 不展示同比。 */
+  yoyRange?: DateRange | null
 }) {
   // undefined = 还没回来（渲染 …）；null = 已知没有数（渲染 -）。两者不可混：缺点面要可辨。
   const [current, setCurrent] = useState<number | null | undefined>(undefined)
   const [previous, setPrevious] = useState<number | null | undefined>(undefined)
+  const [yoy, setYoy] = useState<number | null | undefined>(undefined)
   // `-` 的原因（#1085）：覆盖不足 / 覆盖未知 / 对比期无数据，别让用户以为坏了。
   const [compareNote, setCompareNote] = useState<string | null>(null)
+  const [yoyNote, setYoyNote] = useState<string | null>(null)
 
   useEffect(() => {
     let alive = true
     setCurrent(undefined)
     setPrevious(undefined)
+    setYoy(undefined)
     setCompareNote(null)
+    setYoyNote(null)
+    /** 取一个对比区间的值；整段落在覆盖内才返回数（否则 note 说明原因）。 */
+    async function baselineOf(range: DateRange, label: string): Promise<{ value: number | null; note: string | null }> {
+      const [cov, denCov] = await Promise.all([
+        coverageOf(panel.metricId, args),
+        panel.denominatorMetricId === undefined
+          ? Promise.resolve<CoverageInfo | null>(null)
+          : coverageOf(panel.denominatorMetricId, args),
+      ])
+      const numCovered = comparisonCovered(range, cov)
+      const denCovered = panel.denominatorMetricId === undefined || comparisonCovered(range, denCov)
+      if (!numCovered || !denCovered) {
+        const unknown = cov === null || (panel.denominatorMetricId !== undefined && denCov === null)
+        const from = !numCovered ? cov?.from : denCov?.from
+        return {
+          value: null,
+          note: unknown
+            ? `对比期数据覆盖未知，暂不展示${label}`
+            : from === undefined
+              ? `对比期数据覆盖不足，暂不展示${label}`
+              : `对比期数据覆盖不足（数据自 ${from} 起）`,
+        }
+      }
+      const value = await valueOf(panel, { ...args, bizday: range })
+      return { value, note: value === null ? '对比期无数据或基数无定义' : null }
+    }
     async function load() {
       try {
         const cur = await valueOf(panel, args)
         if (!alive) return
         setCurrent(cur)
         if (compareRange !== null) {
-          // 对比期**整段**落在覆盖内才出环比；比率要分子/分母都覆盖。
-          const [cov, denCov] = await Promise.all([
-            coverageOf(panel.metricId, args),
-            panel.denominatorMetricId === undefined
-              ? Promise.resolve<CoverageInfo | null>(null)
-              : coverageOf(panel.denominatorMetricId, args),
-          ])
+          const prev = await baselineOf(compareRange, '环比')
           if (!alive) return
-          const numCovered = comparisonCovered(compareRange, cov)
-          const denCovered = panel.denominatorMetricId === undefined
-            || comparisonCovered(compareRange, denCov)
-          if (numCovered && denCovered) {
-            const prev = await valueOf(panel, { ...args, bizday: compareRange })
-            if (!alive) return
-            setPrevious(prev)
-            setCompareNote(prev === null ? '对比期无数据或基数无定义' : null)
-          } else {
-            setPrevious(null)
-            const unknown = cov === null || (panel.denominatorMetricId !== undefined && denCov === null)
-            const from = !numCovered ? cov?.from : denCov?.from
-            setCompareNote(
-              unknown
-                ? '对比期数据覆盖未知，暂不展示环比'
-                : from === undefined
-                  ? '对比期数据覆盖不足，暂不展示环比'
-                  : `对比期数据覆盖不足（数据自 ${from} 起）`,
-            )
-          }
+          setPrevious(prev.value)
+          setCompareNote(prev.note)
+        }
+        if (yoyRange !== null) {
+          const y = await baselineOf(yoyRange, '同比')
+          if (!alive) return
+          setYoy(y.value)
+          setYoyNote(y.note)
         }
       } catch {
         // denied / 上游错误与「没有数」同呈现（-）：KPI 卡不承担错误详情，
@@ -135,6 +148,7 @@ export function KpiCard({
         if (alive) {
           setCurrent(null)
           if (compareRange !== null) setPrevious(null)
+          if (yoyRange !== null) setYoy(null)
         }
       }
     }
@@ -143,14 +157,16 @@ export function KpiCard({
     // args/compareRange 是每次渲染的新对象：按内容（JSON）比对，避免父级重渲染触发重查。
     // panel 的身份字段参与依赖；format/goodDirection 只影响呈现，不触发取数。
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [panel.metricId, panel.denominatorMetricId, JSON.stringify(args), JSON.stringify(compareRange)])
+  }, [panel.metricId, panel.denominatorMetricId, JSON.stringify(args), JSON.stringify(compareRange), JSON.stringify(yoyRange)])
 
-  const delta = current === undefined || current === null || previous === undefined || previous === null
-    ? '-'
-    : formatDelta(current, previous, panel.format)
-  const tone = current === undefined || current === null || previous === undefined || previous === null
-    ? 'secondary'
-    : toneOf(panel, current, previous)
+  const deltaOf = (v: number | null | undefined): string =>
+    current === undefined || current === null || v === undefined || v === null
+      ? '-'
+      : formatDelta(current, v, panel.format)
+  const toneOfValue = (v: number | null | undefined): 'secondary' | 'success' | 'danger' =>
+    current === undefined || current === null || v === undefined || v === null
+      ? 'secondary'
+      : toneOf(panel, current, v)
 
   return (
     <Card size="small" title={panel.title}>
@@ -158,14 +174,28 @@ export function KpiCard({
         {current === undefined ? '…' : formatValue(current, panel.format)}
       </Typography.Title>
       {compareRange !== null && (
-        <Typography.Text
-          data-testid="kpi-delta"
-          type={tone}
-          style={{ fontSize: 12 }}
-          title={compareNote ?? undefined}
-        >
-          {previous === undefined ? '…' : delta}
-        </Typography.Text>
+        <div>
+          <Typography.Text
+            data-testid="kpi-delta"
+            type={toneOfValue(previous)}
+            style={{ fontSize: 12 }}
+            title={compareNote ?? undefined}
+          >
+            环比 {previous === undefined ? '…' : deltaOf(previous)}
+          </Typography.Text>
+        </div>
+      )}
+      {yoyRange !== null && (
+        <div>
+          <Typography.Text
+            data-testid="kpi-yoy"
+            type={toneOfValue(yoy)}
+            style={{ fontSize: 12 }}
+            title={yoyNote ?? undefined}
+          >
+            同比 {yoy === undefined ? '…' : deltaOf(yoy)}
+          </Typography.Text>
+        </div>
       )}
     </Card>
   )

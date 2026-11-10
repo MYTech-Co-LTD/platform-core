@@ -42,6 +42,14 @@ export function periodRangeOf(period: PeriodSpec, now: Date): DateRange {
   return { from: start.format(FMT), to }
 }
 
+/** 去年同期：同月同日、等长区间（2/29 → 2/28 由 dayjs 自动夹取）。 */
+export function yearAgoRangeOf(range: DateRange): DateRange {
+  return {
+    from: dayjs(range.from).subtract(1, 'year').format(FMT),
+    to: dayjs(range.to).subtract(1, 'year').format(FMT),
+  }
+}
+
 export function previousRangeOf(range: DateRange, mode: 'prev_period' | 'prev_month'): DateRange {
   if (mode === 'prev_period') {
     const len = dayjs(range.to).diff(dayjs(range.from), 'day') + 1

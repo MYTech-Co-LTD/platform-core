@@ -54,6 +54,31 @@ function mockApi(opts: { from?: string | null; to?: string | null; cur?: number;
 beforeEach(() => { resetCoverageCache(); m.mockReset() })
 afterEach(() => { cleanup() })
 
+describe('KpiCard 同比/环比', () => {
+  it('同时给出环比与同比两行', async () => {
+    const YOY = { from: '2025-10-01', to: '2025-10-19' }
+    m.mockImplementation(async (_path, _method, body) => {
+      const b = (body ?? {}) as Body
+      if (b.orderBy !== undefined) {
+        return {
+          status: 'ok',
+          columns: ['value', 'bizday'],
+          rows: [[1, '2020-01-01T00:00:00.000Z']],
+          watermark: '2026-10-26',
+        }
+      }
+      const from = ((b.args ?? {}).bizday as { from?: string } | undefined)?.from
+      if (from === YOY.from) return { total: 80 }
+      if (from === PREV.from) return { total: 125 }
+      return { total: 100 }
+    })
+    render(<KpiCard panel={panelOf()} args={ARGS} compareRange={PREV} yoyRange={YOY} />)
+
+    expect(await screen.findByTestId('kpi-delta')).toHaveTextContent('环比 -20.0%')
+    expect(await screen.findByTestId('kpi-yoy')).toHaveTextContent('同比 +25.0%')
+  })
+})
+
 describe('KpiCard 对比覆盖', () => {
   it('对比期起点早于数据起点 ⇒ 环比 `-`，且不发对比期合计查询', async () => {
     mockApi({ from: '2026-09-23', to: '2026-10-26' })

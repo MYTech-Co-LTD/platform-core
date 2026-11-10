@@ -40,7 +40,7 @@ import { BarChart, LineChart } from 'echarts/charts'
 import { GridComponent, LegendComponent, TooltipComponent } from 'echarts/components'
 import { CanvasRenderer } from 'echarts/renderers'
 import { ApiError, apiGet, apiSend, messageOf } from '../lib/api'
-import { periodRangeOf } from '../../domain/report-period'
+import { periodRangeOf, yearAgoRangeOf } from '../../domain/report-period'
 import type { DateRange } from '../../domain/report-period'
 import type { DataPanel } from '../../domain/report-query'
 import { compareRangeOf, panelArgsOf, panelQueryBodyOf } from '../../domain/report-query'
@@ -660,7 +660,12 @@ export default function ReportView({
             ) : p.chart === 'kpi' ? (
               // KpiCard 自带卡片与标题（与面板同款 size="small"），这里不再套第二层 Card
               // 对比段：auto 依当前期间模式（月 → 上月同日段；其余 → 等长前移）
-              <KpiCard panel={p} args={argsOf(p)} compareRange={compareRangeOf(p, period?.mode, range)} />
+              <KpiCard
+                panel={p}
+                args={argsOf(p)}
+                compareRange={compareRangeOf(p, period?.mode, range)}
+                yoyRange={p.compareYoY && range !== null ? yearAgoRangeOf(range) : null}
+              />
             ) : (
               <Card size="small" title={p.title}>
                 <PanelBody panel={p} result={results[i]} />

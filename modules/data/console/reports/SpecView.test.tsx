@@ -599,7 +599,7 @@ describe('Task 6：期间 / slice / KPI / 文本 / 信任信号', () => {
 
     expect(await screen.findByText('¥50.00')).toBeInTheDocument()
     // 对比期：分子 null ⇒ 已知无数（「-」），不是 0 也不是空白
-    await waitFor(() => expect(screen.getByTestId('kpi-delta').textContent).toBe('-'))
+    await waitFor(() => expect(screen.getByTestId('kpi-delta').textContent).toBe('环比 -'))
     // 取数纪律：当前段 2 次（分子+分母）+ 对比段 1 次（分子已缺数 ⇒ 分母不再查）——
     // **全部**是显式合计，对比段的 bizday 被替换为上个等长段；另有 2 次覆盖探测（分子+分母）。
     const bodies = queryBodies()

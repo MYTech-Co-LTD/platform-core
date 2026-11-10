@@ -93,6 +93,8 @@ const KpiPanel = z.object({
   args: ArgsSchema,
   format: z.enum(['currency', 'number', 'percent']),
   compare: z.enum(['auto', 'prev_period', 'prev_month', 'none']).default('auto'),
+  /** 额外展示「去年同期」对比（同比）；默认关闭，避免所有 KPI 多一倍查询。 */
+  compareYoY: z.boolean().optional(),
   goodDirection: z.enum(['up', 'down', 'none']).default('none'),
   span: z.number().int().min(1).max(24).default(12),
   timeScoped: z.boolean().default(true),
