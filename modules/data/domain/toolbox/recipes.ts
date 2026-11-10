@@ -111,6 +111,15 @@ export const exploreRecipeImpl: ToolImpl = async (deps, args) => {
       notes: compiled.notes,
       result: { rows: applied.rows, total: applied.total ?? null, skipped: applied.skipped ?? 0 },
       evidence,
+      // 结果来源（S1）：配方的锚点是指标 + 关系 + 度量 + 执行时刻；口径证据仍在 evidence[]。
+      provenance: {
+        source: 'recipe',
+        metricId,
+        relation: target.relation,
+        measure: target.measure,
+        recipe,
+        executedAt: (deps.now ?? (() => new Date()))().toISOString(),
+      },
     },
     isError: false,
     auditMetricId: metricId,
