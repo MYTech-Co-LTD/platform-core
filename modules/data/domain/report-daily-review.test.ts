@@ -52,6 +52,7 @@ describe('buildDailyReview', () => {
     expect(out).not.toBeNull()
     const dr = out!
     expect(dr.targetDay).toBe(DAY)
+    expect(dr.assessment.verdict).toBe('neutral')
     expect(dr.yesterday).toBe('2026-11-07')
     expect(dr.today.revenue).toBe('507,322.21')
     expect(dr.today.orders).toBe('1,000')
