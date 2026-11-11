@@ -56,10 +56,10 @@
     "y": 0
    },
    "data": {
-    "label": "按 bizday/branch/order 排序",
+    "label": "契约投影（25 列同序）+ 排序",
     "componentId": "code.sql",
     "properties": {
-     "sql": "select * from input order by bizday, branch_num, order_no"
+     "sql": "SELECT input.batch_id AS batch_id, input.system_book AS system_book, input.bizday AS bizday, input.hour AS hour, input.order_no AS order_no, input.order_detail_num AS order_detail_num, input.branch_num AS branch_num, input.branch_name AS branch_name, input.order_time AS order_time, input.order_operate_time AS order_operate_time, input.state AS state, input.order_source AS order_source, input.item_num AS item_num, input.item_code AS item_code, input.sale_money AS sale_money, input.discount_money AS discount_money, input.payment_money AS payment_money, input.quantity AS quantity, input.order_transaction_type AS order_transaction_type, input.order_ref_billno AS order_ref_billno, input.order_detail_share_discount AS order_detail_share_discount, input.order_detail_std_price AS order_detail_std_price, input.order_detail_price AS order_detail_price, input.order_detail_online_qty AS order_detail_online_qty, input.order_total_money AS order_total_money\nFROM input\nORDER BY bizday, branch_num, order_no"
     }
    }
   },
