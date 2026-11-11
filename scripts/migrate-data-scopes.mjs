@@ -51,8 +51,16 @@ export const EXTRA_USER_SCOPES = [
   { user: 'ccccccccccccctv', kind: 'store', selector: { all: true }, legacyLabel: '拍板|全店' },
 ]
 
-/** `品类|*` 展开为三分类（spec §6.3；`其他` 是兜底组，不授予）。 */
+/** 品类三分类（用于识别「收窄到具体品类」的 selector；`其他` 是兜底组，不授予）。 */
 export const CATEGORY_ALL = ['水果', '标品', '耗材']
+
+/**
+ * **门店层级角色**：品类对它不是关注维度（2026-11-11 用户口径：「品类只对总部，门店层级
+ * 应该对品类不关注」）⇒ 无论源资源写了什么，category 一律 `{all:true}`（不裁、不拒）。
+ * 为什么必须显式给 all 而不是「不给」：运行期 `buildScopePlan` 对「无 category scope」
+ * 是 fail-closed 拒绝，不给 scope = 门店层级直接被拒（与「不关注」相反）。
+ */
+export const STORE_LEVEL_ROLES = new Set(['战区总', '小区经理'])
 
 /** Casdoor users 可能是全形 `org/name`，也可能是短名。 */
 export function shortName(u) {
@@ -228,12 +236,17 @@ export function planMigration(input) {
       }
       groups.add(value)
     }
-    const categorySelector = catAll
-      ? { category_group: CATEGORY_ALL.filter((g) => categoryGroups.length === 0 || categoryGroups.includes(g)) }
+    // 品类映射（2026-11-11 口径）：
+    //   · 门店层级角色 ⇒ `all`（品类不是它的关注维度，不能因 D1 把门店总量指标全拒掉）；
+    //   · `品类|*` ⇒ `all`（`*` 就是「全部」，不是「三个具体组」——之前映成三组会触发 D1）；
+    //   · `品类|水果` 这类收窄 ⇒ 具体组（保留 D1：无 item 维度的指标拒绝，不静默给全量总量）。
+    const categorySelector = STORE_LEVEL_ROLES.has(role) || catAll
+      ? { all: true }
       : (groups.size > 0 ? { category_group: [...groups] } : null)
     let categoryScope = null
-    if (categorySelector !== null && categorySelector.category_group.length > 0) {
-      categoryScope = addScope('category', categorySelector, catAll ? '品类|*' : `品类|${[...groups].join('+')}`)
+    if (categorySelector !== null) {
+      categoryScope = addScope('category', categorySelector,
+        categorySelector.all === true ? '品类|全品类' : `品类|${[...groups].join('+')}`)
       assignments.push({ subjectType: 'role', subjectId: role, scopeName: categoryScope })
       for (const u of users) addUserScope(userCategoryScope, u, categoryScope)
     }
@@ -451,6 +464,19 @@ async function main(argv) {
           [targetOrg, a.subjectType, a.subjectId, id],
         )
       }
+      // 迁移自有 scope 的**收敛**：本次计划里不再出现的旧行（如品类从「三组」改「全品类」后
+      // 遗留的 `品类|水果+标品+耗材`）连同分配一起删。只认 `legacy_label is not null`（迁移
+      // 创建的行），**绝不**动运营在 console 手工建的 scope（它们 legacy_label 为空）。
+      const plannedNames = new Set(plan.scopes.map((x) => x.name))
+      const stale = await client.query(
+        'select id, name from data.scope where org = $1 and legacy_label is not null', [targetOrg],
+      )
+      const pruned = []
+      for (const row of stale.rows) {
+        if (plannedNames.has(row.name)) continue
+        await client.query('delete from data.scope where org = $1 and id = $2', [targetOrg, row.id])
+        pruned.push(row.name)
+      }
       await client.query(
         `insert into data.scope_audit(org, actor, action, detail)
          values ($1, $2, $3, $4::jsonb)`,
@@ -458,6 +484,7 @@ async function main(argv) {
           sourceOrg,
           scopes: plan.scopes.length,
           assignments: plan.assignments.length,
+          pruned,
           usersWithoutStore: plan.usersWithoutStore,
           unmappedResources: plan.unmappedResources,
         })],

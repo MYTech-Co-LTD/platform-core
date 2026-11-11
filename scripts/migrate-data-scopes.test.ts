@@ -77,16 +77,18 @@ describe('planMigration', () => {
     const gm = p.functional.find((f) => f.role === '总经理')!
     expect(gm.users.sort()).toEqual(['DongJiJuan', 'alice', 'ccccccccccccctv'])
     expect(gm.brandScope).toBe('品牌|3120+64188')
-    expect(gm.categoryScope).toBe('品类|水果+标品+耗材')
+    expect(gm.categoryScope).toBe('品类|全品类')   // 品类|* ⇒ all（三组会触发 D1）
     expect(gm.codes).toEqual({ query: true, cost: true })
     expect(p.functional.find((f) => f.role === '小区经理')!.codes?.cost).toBe(false)
+    // 门店层级「对品类不关注」：源写 品类|水果 也强制 all（否则 D1 把门店总量全拒）
+    expect(p.functional.find((f) => f.role === '小区经理')!.categoryScope).toBe('品类|全品类')
     expect(p.functional.find((f) => f.role === '采购负责人')!.present).toBe(true)
 
     // role-level assignment（后续维护面）
     expect(p.assignments).toContainEqual({ subjectType: 'role', subjectId: '总经理', scopeName: '品牌|3120+64188' })
     // user-level 兜底（spec §6.4）
     expect(p.assignments).toContainEqual({ subjectType: 'user', subjectId: 'alice', scopeName: '品牌|3120+64188' })
-    expect(p.assignments).toContainEqual({ subjectType: 'user', subjectId: 'carol', scopeName: '品类|水果' })
+    expect(p.assignments).toContainEqual({ subjectType: 'user', subjectId: 'carol', scopeName: '品类|全品类' })
   })
 
   it('★ 22 范围角色 → store scope；全店 = all；别名归一；未命中不猜', () => {

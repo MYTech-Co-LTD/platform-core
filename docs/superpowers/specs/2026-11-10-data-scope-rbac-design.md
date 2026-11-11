@@ -262,6 +262,15 @@ AND (system_book, branch_num) IN (
   - 监控 `category_group='其他'` 的数量（`warn_category_group_other`）；非 0 或增长 ⇒ 告警并补映射；
   - 映射 seed 走 PR 评审，**不在多处 SQL 里写 CASE**。
 
+**2026-11-11 口径修订（用户拍板）——「品类只对总部，门店层级不关注品类」**：
+
+- **门店层级角色**（`战区总` / `小区经理`）：category 一律 `{all:true}`（不裁、不拒）。
+  ⚠️ 必须显式给 `all` 而不是「不给」：运行期对「无 category scope」是 **fail-closed 拒绝**。
+- **`品类|*`** 映射为 `{all:true}`（不是「水果+标品+耗材」三组）。`*` 的语义就是全部；
+  之前映成三组会让**所有非管理员**在门店总量指标上撞 D1（实测：29 用户全被拒）。
+- **只有真正收窄的 selector**（如 `品类|水果`）才保留 `category_group`，并在无 `item_num`
+  维度的指标上按 D1 **拒绝**——这仍然正确：不能拿是全量的总量冒充"只看水果"。
+
 **2026-11-11 真机实测（shanhai 数据面）——祖先链缺口（issue #1913）**：
 
 `stg_lemeng_item` 只带商品**自己被指派的类别**（id/parent_id/level/name），中间层节点
@@ -409,7 +418,9 @@ AND (system_book, item_num) IN (
   - 未命中 ⇒ dry-run 报错，人工确认（不猜）；
   - 2026-11-10 已核：22/22 全部命中；部分二级区只在单账套（按名字匹配自动落到实际账套）；
 - `品牌|*`：按 `dim_brand` 映射到 `system_book`；
-- `品类|*`：直接映射到 `category_group`（水果/标品/耗材）；不再猜 `item_department_name`/`item_category_name`。
+- `品类|*`：映射为 `{all:true}`（2026-11-11 口径修订，见 §4.3）；`品类|水果` 这类**收窄**才映
+  `category_group`。门店层级角色（战区总/小区经理）无论源写什么，一律 `all`。
+  不再猜 `item_department_name`/`item_category_name`。
 
 ### 6.4 迁移脚本
 
