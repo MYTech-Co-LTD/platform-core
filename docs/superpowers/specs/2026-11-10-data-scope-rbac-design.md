@@ -351,8 +351,9 @@ AND (system_book, item_num) IN (
 | `enforce` | 真正裁/拒绝 |
 
 - 生产上线顺序：`off` → `shadow` → `enforce`；每次切换都留审计；
-- `data.query_audit` 增加 `scope_plan jsonb` / `scope_denial text`（迁移）；
-- scope 变更落 `data.scope_audit`（新建/修改/assignment）。
+- `data.query_audit` 增加 `scope_plan jsonb` / `scope_denial text`（**043 迁移，2026-11-11 已落地**）：
+  shadow 也落（记录「本来会裁成什么样」），denial 与成功查询都能按人/按指标聚合；
+- scope 变更落 `data.scope_audit`（新建/修改/assignment），管理面 `GET /scopes/audit` 只读回溯。
 
 ### 5.5 管理面
 
@@ -474,6 +475,7 @@ AND (system_book, item_num) IN (
 | 品类物化 | `dbt/models/lemeng/marts/dim_item_category.sql` + `dim_item_latest` 补 `top_category_name`/`category_group` + 受控 seed `dim_category_group_map` + 2 条硬断言 + 2 条 warn 哨兵 | ✅ 真机已建（281 类；`其他` 4.3% 系祖先链缺口，见 #1913） |
 | 一次性迁移 | `scripts/migrate-data-scopes.mjs`（dry-run 默认；`--apply` 写 DB + Casdoor 5 职能角色） | ✅ 真机已 apply + 回读（2026-11-11） |
 | scope 管理端点 | §5.5：六条 `data:manage` 端点（list/effective/create/update/delete/assignments）+ selector 维表校验 + 写后回读 + audit | ✅ 后端（domain/scope-admin.ts + routes/scopes.ts） |
+| 判定入审计 | `043_query_audit_scope.sql` + `audit-store.ScopeAudit`（shadow/enforce 都落） | ✅ 端到端测试（enforce 真拆 SQL / shadow 只记） |
 | scope 管理 UI | console「数据范围」页签（`data:manage` 才出现）：scope CRUD + assignment 整组替换 Drawer + 有效范围预览卡 | ✅ `console/scopes/index.tsx` |
 
 仍未做 / 上线顺序：

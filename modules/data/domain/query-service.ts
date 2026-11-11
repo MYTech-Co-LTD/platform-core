@@ -5,7 +5,7 @@
 import type { Pool } from 'pg'
 import { MAX_QUERY_ROWS, authorize, sqlQuote, visibleMetrics, type DenyReason, type Requester, type SlicingSpec } from './authz'
 import { loadMergedCatalog } from './metric-store'
-import { maskingAuditOf, writeAudit, type MaskingAudit } from './audit-store'
+import { maskingAuditOf, writeAudit, type MaskingAudit, type ScopeAudit } from './audit-store'
 import { DATA_WAREHOUSE_UNCONFIGURED, runWarehouseSql, warehousePool } from './warehouse'
 import { decorateWithLabels, loadDimensionLookup, type DimensionLookup } from './dimension-labels'
 import { buildScopePlan, loadEffectiveScopes, scopeModeOf, type DataScopePlan } from './scope'
@@ -356,6 +356,9 @@ export async function runQuery(
   args: Record<string, unknown>,
   slicing?: SlicingSpec,
 ): Promise<QueryOutcome> {
+  // 数据范围判定（spec 2026-11-10 §5.4）：在下方的 scope 计算处赋值；audit 闭包读它。
+  // shadow 也落（查询没被裁），——对照期要能按人/按指标聚合「本来会裁成什么样」。
+  let scopeAudit: ScopeAudit | null = null
   const audit = (
     verdict: 'ok' | 'denied' | 'error', reason: string | null, rowCount: number | null,
     // 值级脱敏审计（spec §4.4 / §4.4.1 三态）：只有真的展开过掩码才带记录；未展开传 **null**（不是 {}）。
@@ -377,6 +380,8 @@ export async function runQuery(
     verdict,
     reason,
     masking,
+    scopePlan: scopeAudit,
+    scopeDenial: scopeAudit?.denial ?? null,
     ...(deps.tool !== undefined ? { tool: deps.tool } : {}),
   })
 
@@ -414,6 +419,9 @@ export async function runQuery(
       try {
         const effective = await loadEffectiveScopes(deps.pool, org, requester)
         const plan = buildScopePlan(metric, effective, org, requester, scopeMode)
+        scopeAudit = {
+          mode: scopeMode, applied: plan.applied, filters: [...plan.filters], denial: plan.denial,
+        }
         if (scopeMode === 'shadow') {
           console.warn(JSON.stringify({
             event: 'data_scope_shadow', org, userId: requester.userId, metricId,
@@ -425,6 +433,7 @@ export async function runQuery(
       } catch (e) {
         const detail = e instanceof Error ? e.message : String(e)
         if (scopeMode === 'enforce') {
+          scopeAudit = { mode: 'enforce', applied: [], filters: [], denial: 'scope_unavailable' }
           await audit('denied', 'range_denied:scope_unavailable', null, null)
           return { status: 'denied', metricId, reason: 'range_denied', detail: 'scope_unavailable' }
         }
