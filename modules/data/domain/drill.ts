@@ -70,6 +70,57 @@ function rollupOver(inner: string, dims: string[], orderBy: string, desc: boolea
   return `select ${d}, sum(value) as value${extra} from ( ${inner} ) t group by ${d} order by ${orderBy} ${desc ? 'desc' : 'asc'} limit ${limit} offset ${offset}`
 }
 
+
+// ── 月感知服务视图（#1916 P2）─────────────────────────────────────────────────────
+// 为什么需要：月文件按 `month=` 分区，过滤 `bizday` **用不上分区裁剪**（bizday 是数据列），
+// glob `month=*` 会把 52 个月文件全打开（实测 30 天 3.5s）；带上 `month between` 只开 1–2 个
+// （实测 600ms）。本函数把「请求的 bizday 范围」翻译成「服务关系 + month 谓词」。
+//
+// 边界（有意收窄，fail-open 回主视图）：范围缺失/形状不对/跨月数 >MAX_MONTHS ⇒ 原样返回主视图。
+// 事项：服务视图与主视图的等价性由 dbt 测试 `assert_serving_view_matches_main` 逐日对账。
+export const MONTH_SERVING_VIEW = 'vw_lemeng_retail_order_line_month'
+const MONTH_SERVING_MAX_MONTHS = 5
+const ISO_DAY = /^\d{4}-\d{2}-\d{2}$/
+
+/** `YYYY-MM-DD` → `YYYY-MM`（纯字符串切片；调用方已校验形状）。 */
+function ymOf(day: string): string {
+  return day.slice(0, 7)
+}
+
+/** 闭区间内跨越的月份数（含首尾）。 */
+export function monthsSpanned(from: string, to: string): number {
+  const fy = Number(from.slice(0, 4)); const fm = Number(from.slice(5, 7))
+  const ty = Number(to.slice(0, 4)); const tm = Number(to.slice(5, 7))
+  return (ty - fy) * 12 + (tm - fm) + 1
+}
+
+/**
+ * 选择下钻关系：范围可换算且跨度 ≤5 个月 ⇒ 用月感知服务视图并附带 `month` 谓词；
+ * 否则原样返回（主视图，任何谓词都正确，只是慢）。
+ *
+ * @param relation 目录里声明的下钻关系（一般 = `vw_lemeng_retail_order_line`）
+ * @param bizday   `args.bizday` 的原始值（`date_range` 形状 `{from,to}` 才认）
+ */
+export function servingRelationFor(
+  relation: string,
+  bizday: unknown,
+): { relation: string; monthFilter: string } {
+  const noop = { relation, monthFilter: '' }
+  if (relation !== 'vw_lemeng_retail_order_line') return noop
+  if (typeof bizday !== 'object' || bizday === null) return noop
+  const from = (bizday as { from?: unknown }).from
+  const to = (bizday as { to?: unknown }).to
+  if (typeof from !== 'string' || typeof to !== 'string') return noop
+  if (!ISO_DAY.test(from) || !ISO_DAY.test(to)) return noop
+  if (from > to) return noop
+  if (monthsSpanned(from, to) > MONTH_SERVING_MAX_MONTHS) return noop
+  // 值只来自已校验的 ISO 日期 ⇒ 拼接安全（与 paramFilters 同源校验）。
+  return {
+    relation: MONTH_SERVING_VIEW,
+    monthFilter: ` AND month BETWEEN '${ymOf(from)}' AND '${ymOf(to)}'`,
+  }
+}
+
 /** 两段下钻 SQL（**纯函数**）：内层原子粒度求组件、外层请求维度上卷 + 排序分页；
  * rowCountSql = 同一 where 的裸 count(*)（spec §2.4：rowCountTotal 的唯一来源）。 */
 export function buildDrillSql(
@@ -211,7 +262,11 @@ export async function runDetailQuery(
   }
   const where = `${metricRow.subjectColumn} = ${sqlQuote(authz.plan.subject)} AND ${drill.filter}${pf.filters.join('')}`
 
-  const plan = buildDrillSql(drill, requested, where, orderBy, desc, limit, offset, effectiveGranted)
+  // 月感知服务视图：范围可换算 ⇒ 换关系 + 附 month 谓词（分区裁剪）；否则原样。
+  const serving = servingRelationFor(drill.relation, args.bizday)
+  const drillEff = serving.relation === drill.relation ? drill : { ...drill, relation: serving.relation }
+  const whereEff = where + serving.monthFilter
+  const plan = buildDrillSql(drillEff, requested, whereEff, orderBy, desc, limit, offset, effectiveGranted)
   // 掩码（spec §2.5 细节 1）：在场判定按**下钻 SQL**——拿合成行（selectSql 换成投影串）复用
   // effectiveMasks，本文件不写第二份掩码判定。只掩**投影串**（value 头与列），WHERE/count
   // 不掩：Phase 1 掩码只有整值形态（value 头）；但**列掩码不再结构性不可达**——投影里含裸条件列，
@@ -220,7 +275,7 @@ export async function runDetailQuery(
   // 正交。投影 value-first（dims 在后）——理由见下方
   // rollupOver 处的 ⚠️（终审 C1：mask.ts 头部替换按 value-first 形状设计）。投影串含 from
   //（整值掩码尾锚要求 value 后跟 `,` 或 `from`）。
-  const projection = `select (${drill.expr}) as value, ${requested.join(', ')}${extra} from ${drill.relation}`
+  const projection = `select (${drill.expr}) as value, ${requested.join(', ')}${extra} from ${drillEff.relation}`
   const masked = maskedSelectSql(
     projection,
     effectiveMasks(allMetrics, { ...metricRow, selectSql: projection }),
@@ -233,7 +288,7 @@ export async function runDetailQuery(
   // （终审 C1，2026-10-22 实机执行 mask 函数证实。）无掩码时 masked.sql 与 buildDrillSql 的
   // inner 仅列序不同，语义等价（外层 sum 后同值）；形状逐字一致的说法只对掩码前的串成立。
   const sql = rollupOver(
-    `${masked.sql} where ${where} group by ${drill.dims.join(', ')}`,
+    `${masked.sql} where ${whereEff} group by ${drill.dims.join(', ')}`,
     requested, orderBy, desc, limit, offset, extra,
   )
 
@@ -300,7 +355,7 @@ export async function runDetailQuery(
     truncated: result.rows.length >= limit,
     drill_as_of: drillAsOf,
     provenance: detailProvenance({
-      relation: drill.relation,
+      relation: serving.relation,
       keyColumns: [...drill.dims],
       groupedBy: [...requested],
       rowCountTotal,
