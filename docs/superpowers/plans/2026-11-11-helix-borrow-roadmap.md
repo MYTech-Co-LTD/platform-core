@@ -52,6 +52,7 @@
 | **Wave 2.2a skill contract 版本门** | PR #1974：`SUPPORTED_CONTRACT_VERSION` + `contractViolations()`，装载期不一致 ⇒ 抛错 ⇒ 模块装载失败；**变异确认**：version 改 2 ⇒ `check-mcp-toolface` exit 1 并指名该常量 |
 | **Wave 2.2b 契约跨字段六条** | PR #1976：`check-data-contract.mjs` 新增 `crossFieldViolations()`（README §4.2 ①–⑥）；`readContractDoc()` 补 `partitionBy`/`markerColumn`；例外收敛成显式表 `PARTITION_KEY_ALIASES`（recon_source 的 chunk↔chunk_no）；实测 30 份契约里 recon_source 是唯一命中，经别名判过；门禁单测 29 条 |
 | **Wave 2.3 通知链补通** | PR #1980：forms 两个事件此前**只有声明**（模板/规则/默认都没有，dispatch 恒 `no_rules`）；现补两条内置文案 + 两条 derived 规则（`recipient_key=assignee`）+ manifest `defaults`；新增 `templates/builtin.test.ts` 静态护栏（声明⇔模板双向一致）；OO org 显示名文档订正（miyuan→mytech）。**生产实测**：mytech 的 seed job（`custom:NWK_D7nKpsC7hdhe`）自动跑出 `templates=2 rules=5` 并查到两条 `derived:forms:*` 规则；**shanhai 手动 seed 后**同样补齐（`templates=3`：此前连 `data.metric.definition.changed` 的文案都没有）。⚠️ 发现的新缺口：**notify 四个作业只挂 mytech（serverId 23a1091e）**，shanhai 无 seed/reconcile/health/retention —— 已入待办 |
+| **Wave 3 卫生（第一批）** | PR #1984：history view 双 config/错头注清理；`materialize.sh` 档位白名单（未知档 exit 2，此前会静默落全史物化）；明细四处池调用改 `analystPool()`（只读）；`data-plane-manifest.txt` 登记「刻意不投递」脚本。验证：1499 tests / materialize.test.sh 104 项 / gates 全绿；数据面 sync 到 `38cdb1d`：`SYNC_OK 429/429`（revision 已推进；`outside-scope 1136` 是清单头部登记过的已知边界） |
 
 ### 待办（Wave 见 §4）
 
@@ -62,7 +63,7 @@
 | 契约**元 schema 本体**仍未被执行（`_schema.schema.json` 是 2020-12 JSON Schema，仓内无校验器；§4.2 六条已由 2.2b 补齐） | 需引入 ajv 或等价实现（依赖决策） | 2.2 残项 |
 | 列级血缘 | dbt core manifest 无列级边 | 2.4（触发式） |
 | notify **retention** 仍未在 shanhai 部署（seed/reconcile/health 已于 2026-11-11 补齐并验过）；dead/历史投递不会自动清理，积压会让 health 重新变红 | 用户裁决：暂不加删行作业；届时二选一（加 retention 需点名 / health 改时间窗判据） | 2.3 残项 |
-| history view 双 config；materialize 未知档落 full；cron 文档冲突；14 脚本不在 lock；detail 走可写池 | 盘点发现 | 3 |
+| Wave 3 余项：cron 文档冲突（未逐条核）；data-plane 多机副本（OO 机 /opt）靠手工投递 | 盘点发现 | 3 |
 
 ---
 
@@ -114,3 +115,4 @@
 | 2026-11-11 | Wave 1.4 完成入账（含 job 首跑）；新增候选池 console 页缺口行 | 证据：PR #1971 + 部署 `dep_WLs9IiueWMqmI9d6` + job `custom:tB6ulrsKtgW852WL` 首跑 exit 0（见 §3） |
 | 2026-11-11 | Wave 2.2a/2.2b 完成入账；2.2 残项收敛为「元 schema 本体未执行」 | 证据：PR #1974（变异确认 exit 1）+ PR #1976（30 份契约实跑，29 条门禁单测） |
 | 2026-11-11 | Wave 2.3 完成入账 | 证据：PR #1980 + 服务端 notify 120 passed + seed 规则 4→6 / 模板 3→5 落库断言 |
+| 2026-11-12 | Wave 3 第一批入账（4 项）；余项收敛为 cron 文档核对与多机副本手工投递 | 证据：PR #1984 + 1499 tests + materialize.test.sh 104 项 |
