@@ -240,7 +240,10 @@ export function planMigration(input) {
     //   · 门店层级角色 ⇒ `all`（品类不是它的关注维度，不能因 D1 把门店总量指标全拒掉）；
     //   · `品类|*` ⇒ `all`（`*` 就是「全部」，不是「三个具体组」——之前映成三组会触发 D1）；
     //   · `品类|水果` 这类收窄 ⇒ 具体组（保留 D1：无 item 维度的指标拒绝，不静默给全量总量）。
-    const categorySelector = STORE_LEVEL_ROLES.has(role) || catAll
+    // 「收窄」的判据是**覆盖不全**，不是资源写法：源实际把三组写成三条独立资源
+    // （`品类|水果`/`品类|标品`/`品类|耗材`），覆盖全集 = 没有收窄 = all（否则总部角色会撞 D1）。
+    const coversAll = catAll || CATEGORY_ALL.every((g) => groups.has(g))
+    const categorySelector = STORE_LEVEL_ROLES.has(role) || coversAll
       ? { all: true }
       : (groups.size > 0 ? { category_group: [...groups] } : null)
     let categoryScope = null

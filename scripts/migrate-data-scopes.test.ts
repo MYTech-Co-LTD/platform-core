@@ -59,7 +59,7 @@ describe('planMigration', () => {
       { name: '范围|火星战区', users: ['shanhai/eve'] },
     ],
     permissions: [
-      { roles: ['shanhai/总经理'], resources: ['品牌|*', '品类|*', '字段|成本可见', '门禁|报表中心', '门禁|管理台', '看板|*'] },
+      { roles: ['shanhai/总经理'], resources: ['品牌|*', '品类|水果', '品类|标品', '品类|耗材', '字段|成本可见', '门禁|报表中心', '门禁|管理台', '看板|*'] },
       { roles: ['shanhai/战区总'], resources: ['品牌|*', '品类|*', '字段|成本可见', '门禁|报表中心'] },
       { roles: ['shanhai/小区经理'], resources: ['品牌|*', '品类|水果', '门禁|报表中心'] },
       { roles: ['shanhai/采购负责人'], resources: ['品牌|*', '品类|*', '字段|成本可见', '门禁|报表中心'] },
