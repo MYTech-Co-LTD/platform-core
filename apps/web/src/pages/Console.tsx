@@ -19,6 +19,7 @@ import {
   DatabaseOutlined,
   ExperimentOutlined,
   FileTextOutlined,
+  KeyOutlined,
   MoonOutlined,
   SettingOutlined,
   SunOutlined,
@@ -64,6 +65,7 @@ const CONSOLE_ICONS: Record<string, ReactNode> = {
   DatabaseOutlined: <DatabaseOutlined />,
   ExperimentOutlined: <ExperimentOutlined />,
   FileTextOutlined: <FileTextOutlined />,
+  KeyOutlined: <KeyOutlined />,
   SettingOutlined: <SettingOutlined />,
   TeamOutlined: <TeamOutlined />,
 }
@@ -289,6 +291,7 @@ function ConsoleLayout({
       logo={branding.logo || undefined}
       layout="mix"
       fixSiderbar
+      contentStyle={{ maxWidth: 1360, width: '100%', margin: '0 auto' }}
       location={{ pathname: location.pathname }}
       route={{ path: '/', routes: menuItems }}
       menuItemRender={(item, dom) => (item.path ? <Link to={item.path}>{dom}</Link> : dom)}
@@ -339,13 +342,13 @@ export function ConsoleOverview() {
         {entries.length === 0 ? (
           <Typography.Text type="secondary">当前没有可用的模块</Typography.Text>
         ) : (
-          <div style={{ display: 'flex', flexWrap: 'wrap', gap: 16 }}>
+          // 自适应网格：条目少时铺满整行（固定 240px 会在宽屏留下半屏空白）
+          <div style={{ display: 'grid', gap: 16, gridTemplateColumns: isMobile ? '1fr' : 'repeat(auto-fit, minmax(220px, 1fr))' }}>
             {entries.map((e) => (
               <Card
                 key={e.path}
                 hoverable
-                // 移动端：整宽单列（固定 240px 在 390 屏上会只占半行，看着像没加载完）
-                style={{ width: isMobile ? '100%' : 240, borderRadius: 12 }}
+                style={{ width: '100%', borderRadius: 12 }}
                 styles={{ body: { padding: isMobile ? 16 : 24 } }}
                 onClick={() => navigate(e.path)}
               >

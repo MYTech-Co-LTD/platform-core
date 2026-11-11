@@ -119,13 +119,14 @@ export function buildConsoleMenu(
   const pinned = entries.filter((e) => PINNED_MODULE_IDS.includes(e.moduleId))
   const rest = entries.filter((e) => !PINNED_MODULE_IDS.includes(e.moduleId))
   const items: MenuDataItem[] = [
-    { path: '/console', name: '概览' },
+    { path: '/console', name: '概览', icon: iconMap['DashboardOutlined'] },
     // 个人 Key（issue #894）：**免闸门**——与「概览」同档（任何登录账号都该能管自己的 token）
-    { path: '/console/me/keys', name: '个人 Key' },
+    { path: '/console/me/keys', name: '个人 Key', icon: iconMap['KeyOutlined'] },
     ...[...pinned, ...rest].map((e) => ({
       path: e.path,
       name: e.title,
-      icon: iconMap[e.icon ?? ''],
+      // 模块没声明图标时回落到通用图标：否则折叠侧栏只显示标题首字（768px 实测）
+      icon: iconMap[e.icon ?? ''] ?? iconMap['AppstoreOutlined'],
     })),
   ]
   return session.scopes.includes(TENANT_ADMIN_SCOPE) ? [...items, adminGroup(iconMap, admin)] : items
