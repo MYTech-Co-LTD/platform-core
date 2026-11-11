@@ -22,7 +22,7 @@ select
   r['snapshot']::date as snapshot,
   r['category_id']::bigint as category_id,
   r['parent_id']::bigint as parent_id,
-  r['level']::integer as level,
+  r['level']::int as level,
   r['category_name']::varchar as category_name,
   r['category_code']::varchar as category_code,
   r['deleted_flag']::boolean as deleted_flag
