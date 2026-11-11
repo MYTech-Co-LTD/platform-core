@@ -356,10 +356,19 @@ AND (system_book, item_num) IN (
 
 ### 5.5 管理面
 
-- `GET/POST/PUT/DELETE /data/scopes`（`data:manage` 或 `tenant:admin`）；
+- `GET/POST/PUT/DELETE /data/scopes`（`data:manage`）；
 - `PUT /data/scopes/:id/assignments`（role/user 整组替换）；
-- `GET /data/scopes/effective?user=`（预览有效 scope，dry-run）；
+- `GET /data/scopes/effective?user=&roles=`（预览有效 scope，dry-run）；
 - 全部写后回读 + 审计；selector 值必须存在于受控维表。
+- **已落地（2026-11-11）**：`modules/data/domain/scope-admin.ts`（判定链单实现）+
+  `routes/scopes.ts`（HTTP 形状映射）+ manifest 六条声明。细节取舍：
+  - brand selector 不允许 `all`（运行期只读 `system_book`，`all` 会造成「看起来配了、
+    其实恒 no_brand_scope」的坏门，配置面直接拦）；
+  - `subject_id` 不做 Casdoor 存在性校验（模块拿不到用户/角色清单，B1）——配错主体是
+    惰性的（解析时空匹配），无越权面；
+  - preview 的 granted/effective 按 (kind, JSON 形状) 去重——SQL 按 assignment 行返回，
+    user+role 双路命中同一 scope 会重复；
+  - UI（console 角色页/用户页挂分配控件）下一个 PR。
 
 ## 6. 迁移（data-analysis 只读，一次性）
 
@@ -461,8 +470,9 @@ AND (system_book, item_num) IN (
 | 唯一执法点接线 | `authz.ts` `authorizeCore(..., scopePlan)` + `query-service.ts` + `toolbox/discovery.ts` | ✅ 单测 |
 | 会话 `roles` | `SessionPayload.roles` + `signSession`/`verifySession` + 三条登录路 + 会话刷新重签 | ✅ 单测 |
 | 品类物化 | `dbt/models/lemeng/marts/dim_item_category.sql` + `dim_item_latest` 补 `top_category_name`/`category_group` + 受控 seed `dim_category_group_map` + 2 条硬断言 + 2 条 warn 哨兵 | ✅ 真机已建（281 类；`其他` 4.3% 系祖先链缺口，见 #1913） |
-| 一次性迁移 | `scripts/migrate-data-scopes.mjs`（dry-run 默认；`--apply` 写 DB + Casdoor 5 职能角色） | ✅ 纯函数单测，待真机 dry-run |
-| scope 管理端点/UI | §5.5 | ⏳ 未做（Phase 3 前置） |
+| 一次性迁移 | `scripts/migrate-data-scopes.mjs`（dry-run 默认；`--apply` 写 DB + Casdoor 5 职能角色） | ✅ 真机已 apply + 回读（2026-11-11） |
+| scope 管理端点 | §5.5：六条 `data:manage` 端点（list/effective/create/update/delete/assignments）+ selector 维表校验 + 写后回读 + audit | ✅ 后端（domain/scope-admin.ts + routes/scopes.ts） |
+| scope 管理 UI | console 角色页/用户页挂分配控件 | ⏳ 未做（下一个 PR） |
 
 仍未做 / 上线顺序：
 

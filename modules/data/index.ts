@@ -15,6 +15,7 @@ import { registerChat } from './routes/chat'
 import { registerToolbox } from './routes/toolbox'
 import { registerReports } from './routes/reports'
 import { registerSystemMap } from './routes/system-map'
+import { registerScopes } from './routes/scopes'
 
 // 装配形状照 modules/demo/index.ts 与 modules/aftersales/index.ts（本仓模块的唯一范式）。
 // 门禁由宿主按 manifest 声明施加——模块侧【不写】requireScope。
@@ -59,6 +60,7 @@ export default defineModule({
     registerChat(r, _ctx) // T9
     registerReports(r, _ctx) // #150 T7：Metabase 报表 facade
     registerSystemMap(r, _ctx) // W5 Task 4：数据体系地图（只读单文件 HTML，#1455）
+    registerScopes(r, _ctx) // 数据范围 scope 管理面（spec 2026-11-10 §5.5；#1901）
     return r
   },
   // 模块端口（约束 14）：**本模块已不再声明任何端口**——原 `resolvePatKey` 随 PAT 密钥表
