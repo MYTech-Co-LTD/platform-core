@@ -66,6 +66,22 @@ EMPTY_SHA = hashlib.sha256(b"").hexdigest()
 PREFIX = "lemeng/retail_order_line"
 
 
+def day_file_keys(book: str, y: str) -> list[str]:
+    """天文件的候选 key（**兼容两代布局**）。
+
+    ⚠️ 2026-11-11 根因（性能）：本工具原先只查旧布局
+    `{PREFIX}/system_book=<B>/bizday=<Y>/all.parquet`；冷数据迁到 `_DAY_DATA/` 之后
+    天文件不在那儿 ⇒ 每天都被判 `sealed_but_day_file_missing` **恒跳过**，
+    小时对象从 2026-10-27 起再没被删过（实测积到 671 个）⇒ 视图热腿扫全部死文件，
+    30 天查询 47s 全花在这里（冷腿只要 5.9s）。删与不删都不错数（读侧已排除），
+    但**不删就是性能事故**——所以两代路径都要认。
+    """
+    return [
+        f"{PREFIX}/_DAY_DATA/system_book={book}/bizday={y}/all.parquet",
+        f"{PREFIX}/system_book={book}/bizday={y}/all.parquet",
+    ]
+
+
 # ── 纯函数（可离线测）─────────────────────────────────────────────────────────
 def eligible(
     sealed: set[tuple[str, str]],
@@ -201,6 +217,10 @@ def self_test() -> int:
     # 变异确认：把 before 提前到 10-01，10-01 也应被窗口挡掉
     ok3, skip3 = eligible(sealed, day_files, "3120", "2026-10-01")
     assert ok3 == [] and dict(skip3)["2026-10-01"] == "within_restate_window", (ok3, skip3)
+    # 天文件两代布局都要认（否则恒跳过；见 day_file_keys 的根因注释）
+    ks = day_file_keys("3120", "2026-10-01")
+    assert any("/_DAY_DATA/" in k for k in ks), ks
+    assert any("/_DAY_DATA/" not in k for k in ks), ks
     print("self-test OK")
     return 0
 
@@ -261,7 +281,7 @@ def main() -> int:
     for y in days_between(frm, before):
         if s3.exists(f"{PREFIX}/_DAILY/{book}-{y}.parquet"):
             sealed.add((book, y))
-        if s3.exists(f"{PREFIX}/system_book={book}/bizday={y}/all.parquet"):
+        if any(s3.exists(k) for k in day_file_keys(book, y)):
             day_files.add((book, y))
 
     ok, skip = eligible(sealed, day_files, book, before)
