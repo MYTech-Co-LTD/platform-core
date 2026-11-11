@@ -116,11 +116,15 @@ select
   r['order_detail_price']::numeric(14,2) as order_detail_price,
   r['order_detail_online_qty']::numeric(14,3) as order_detail_online_qty,
   r['order_total_money']::numeric(14,2) as order_total_money
--- ══ 冷：已封版的**天文件**（关闭日，每账套每天 1 个）════════════════════════════════════════
--- 2026-10-20 起明细的湖布局是**热/冷混合**（正典 docs/architecture.md §5.3）：
---   热 = 今天，仍按小时分区；冷 = 关闭日，整天重采落一个天文件。
--- 两条 glob **互不重叠**：天文件只在关闭日有，小时文件只在「今天 / 尚未重采的昨天」有。
--- ⚠️ 次序无关，但**两块都要在**——只留热侧会在迁移期丢已封版的日子，只留冷侧会丢今天。
+-- ══ 冷：月度合并文件（#1916 P1/P2）════════════════════════════════════════════════════════
+-- 冷数据由 `lemeng.retail_order_line.month.compact` 把已封版日合并成
+-- `_MONTH/system_book=<B>/month=<YYYY-MM>/all.parquet`（只含已封版日，无需 anti-join）。
+-- 为什么不再直接 glob `_DAY_DATA`：30 天要打开 60 个 ~300KB 日文件 × 25 列逐列 range 请求
+-- （~1,500 次 × 5ms ≈ 7.8s）；月文件后同样范围只开 1–2 个文件（实测 ~0.6s）。
+-- ⚠️ 新鲜度：刚封版、但所在月文件还没重建的日子，由**热腿**兜底——热腿的 anti-join 只在
+--   `lake_month_index.built_at >= sealed_at`（月文件已包含这次封版）时才排除小时文件。
+--   ⇒ 封版 → 月文件重建之间的窗口由小时文件供数，不会出现空洞；GC 在 2 天后才删小时文件，
+--     月度合并每天跑，窗口远小于 GC 保留期（积压 >2 天由 dbt 测试判红）。
 from read_parquet(
   's3://{{ var("zos_bucket") }}/lemeng/retail_order_line_month/_MONTH/system_book=*/month=*/all.parquet'
 ) r,
@@ -135,48 +139,6 @@ from read_parquet(
     's3://{{ var("zos_bucket") }}/{{ var("lemeng_retail_order_line_prefix") }}/_SCHEMA/v3.parquet'
   ) sealed
 where sealed['schema_version'] = 3
--- ══ 冷·补：月文件构建后才封版的日子（月文件里没有，必须回日文件取）══════════════════════
--- 谓词 `sealed_at > built_at` 精确表达「这一天的封版晚于所在月文件的构建时刻」；
--- `bizday >= current_date - 3` 是**给文件裁剪用的常量下界**（否则子查询会让 pg_duckdb 打开全部 1,543 个日文件）。
--- 稳态：月度合并每天 04:10 跑，缺口最多 1 天；若合并连续失败 >3 天，探针会先红。
-union all
-select
-  r['batch_id']::varchar as batch_id,
-  r['system_book']::varchar as system_book,
-  {{ subject_org() }}       as org,
-  r['bizday']::date as bizday,
-  r['hour']::int as hour,
-  r['order_no']::varchar as order_no,
-  r['order_detail_num']::varchar as order_detail_num,
-  r['branch_num']::int as branch_num,
-  r['branch_name']::varchar as branch_name,
-  r['order_time']::timestamp as order_time,
-  r['order_operate_time']::timestamp as order_operate_time,
-  r['state']::varchar as state,
-  r['order_source']::varchar as order_source,
-  r['item_num']::varchar as item_num,
-  r['item_code']::varchar as item_code,
-  r['sale_money']::numeric(14,2) as sale_money,
-  r['discount_money']::numeric(14,2) as discount_money,
-  r['payment_money']::numeric(14,2) as payment_money,
-  r['quantity']::numeric(14,3) as quantity,
-  r['order_transaction_type']::varchar as order_transaction_type,
-  r['order_ref_billno']::varchar as order_ref_billno,
-  r['order_detail_share_discount']::numeric(14,2) as order_detail_share_discount,
-  r['order_detail_std_price']::numeric(14,2) as order_detail_std_price,
-  r['order_detail_price']::numeric(14,2) as order_detail_price,
-  r['order_detail_online_qty']::numeric(14,3) as order_detail_online_qty,
-  r['order_total_money']::numeric(14,2) as order_total_money
-from read_parquet(
-  's3://{{ var("zos_bucket") }}/{{ var("lemeng_retail_order_line_prefix") }}/_DAY_DATA/system_book=*/bizday=*/all.parquet'
-) r,
-  read_parquet(
-    's3://{{ var("zos_bucket") }}/{{ var("lemeng_retail_order_line_prefix") }}/_SCHEMA/v3.parquet'
-  ) sealed
-where sealed['schema_version'] = 3
-  and r['bizday']::date >= current_date - 3
-  and exists (select 1 from data.lemeng_daily_sealed s left join data.lake_month_index i on i.system_book = s.system_book and i.ym = strftime(s.bizday, '%Y-%m') where s.system_book = r['system_book'] and s.bizday = r['bizday'] and (i.system_book is null or s.sealed_at > i.built_at))
-union all
 select
   r['batch_id']::varchar as batch_id,
   r['system_book']::varchar as system_book,
@@ -205,9 +167,10 @@ select
   r['order_detail_online_qty']::numeric(14,3) as order_detail_online_qty,
   r['order_total_money']::numeric(14,2) as order_total_money
 -- ══ 热：未封版日子的小时文件 ═══════════════════════════════════════════════════════════════
--- ⚠️ **必须排除已封版的日子**（`data.lemeng_daily_sealed` 有该 (账套, 日) 的行）。不排除的后果是**双算**：
---   「写天文件」与「删小时目录」之间必然有一个两者并存的窗口，而 glob 会把两份都读进来。
---   带上排除之后，删小时只是**变慢**（多开几个文件），不会错数 ⇒ 正确性与删除时机解耦。
+-- ⚠️ **排除条件不是「已封版」，而是「已封版且所在月文件已包含它」**（`built_at >= sealed_at`）。
+--   只按「已封版」排除会与月文件之间出现空洞（封版到月文件重建之间两份都没有）；
+--   按「月文件已包含」排除则：窗口内由小时文件供数，合并完成后自动切换，**正确性与合并时机解耦**。
+--   不做排除的后果是双算（月文件与小时文件并存）。
 -- ⚠️ 读侧判定读**仓内封版表** `data.lemeng_daily_sealed`（#1872），不再 glob `_DAILY/`：
 --   1,541 个一行小文件在 pg_duckdb 上 >110s 且会打崩后端。`_DAILY/` 标记仍由日管线写，
 --   作为表的事实源/回填；表由 DDL 预建，回填必须含 `_bootstrap` 行（system_book='' / bizday=1970-01-01）。
@@ -222,6 +185,9 @@ from read_parquet(
 where sealed['schema_version'] = 3
   and not exists (
     select 1 from data.lemeng_daily_sealed m
+    join data.lake_month_index i
+      on i.system_book = m.system_book and i.ym = strftime(m.bizday, '%Y-%m')
     where cast(m.system_book as varchar) = cast(r['system_book'] as varchar)
       and cast(m.bizday as date) = cast(r['bizday'] as date)
+      and i.built_at >= m.sealed_at
   )
