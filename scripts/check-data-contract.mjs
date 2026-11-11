@@ -92,6 +92,95 @@ export { extractPipelineAliases, extractStagingAliases, INJECTED_STAGING_COLUMNS
  * @typedef {{ file: string, message: string }} Violation
  */
 
+/** 维度面的湖前缀是 `dim_` 段（契约 README §4.2 ② 的已知例外；lemma 见 lemeng 采集设计 §5）。 */
+const DIM_PREFIX_SEGMENT = 'dim_'
+
+/**
+ * 已知「**分区目录名 ≠ 载荷列名**」的例外（键 = `domain/table`，值 = { 目录键: 列名 }）。
+ *
+ * 只收**已核实**的：`lemeng/recon_source` 的湖路径是 `…/chunk=<n>/all.parquet`，而载荷列叫
+ * `chunk_no`——父管线 `lemeng.recon.preagg.item` 的 lakeout key 与 `code.sql` 投影逐字如此
+ * （2026-11-11 核对）。改路径名会动既有湖布局（按日重跑覆盖的历史块），不值得为「名字对齐」做迁移。
+ *
+ * 新增例外 = 改这里 + `contracts/README.md` §4.2 ① 同步。门禁吃的是**这张显式表**，
+ * 不是「找不到列就放过」的模糊判据——那会把真笔误一起放过。
+ */
+/** @type {Record<string, Record<string, string>>} */
+const PARTITION_KEY_ALIASES = { 'lemeng/recon_source': { chunk: 'chunk_no' } }
+
+/**
+ * 契约的**跨字段约束**（`contracts/README.md` §4.2 的六条）。
+ *
+ * 为什么必须在这里补：元 schema（`common/_schema.schema.json`）是单文档内约束，
+ * **JSON Schema 表达不了跨字段引用**；README §4.2 明文写着「过了 schema 也可能不合规，
+ * 校验器必须补」——而本仓此前**没有任何校验器**（README §4.3 原文）。这一条就是那个补位。
+ *
+ * 纯函数：输入 `readContractDoc()` 的投影（已归一成单形状对象），输出违规文案。
+ * `file` 由调用方补——测试可以直接调它，不必造仓。
+ *
+ * @param {{
+ *   domain: string, table: string, prefix: string, partitionBy: string[],
+ *   markerColumn: string, columns: { name: string, type: string, nullable: boolean, precision?: number, scale?: number }[],
+ * }} c
+ * @returns {string[]}
+ */
+export function crossFieldViolations(c) {
+  /** @type {string[]} */
+  const out = []
+  const names = c.columns.map((x) => x.name)
+  const nameSet = new Set(names)
+
+  // ① 分区键必须是已声明的列（否则落盘时无处安放）；目录名与列名的显式例外见下表
+  const aliases = PARTITION_KEY_ALIASES[`${c.domain}/${c.table}`] ?? {}
+  for (const key of c.partitionBy) {
+    const alias = aliases[key]
+    if (nameSet.has(key)) continue
+    if (alias !== undefined && nameSet.has(alias)) continue
+    out.push(`layout.partitionBy 的 \`${key}\` 不是 columns 里声明的列（§4.2 ①）`)
+  }
+
+  // ② prefix 必须 = domain/table；维度面按湖布局带 dim_ 段（README 明文的例外，按规则判而非白名单）
+  const expected = `${c.domain}/${c.table}`
+  const expectedDim = `${c.domain}/${DIM_PREFIX_SEGMENT}${c.table}`
+  if (c.prefix !== expected && c.prefix !== expectedDim) {
+    out.push(
+      `layout.prefix \`${c.prefix}\` 应等于 \`${expected}\`` +
+      `${c.table === '' || c.domain === '' ? '' : `（维度面例外：\`${expectedDim}\`）`}（§4.2 ②）`,
+    )
+  }
+
+  // ③ 列名不得重复（重复会让「按名比对」的整条链——投影同序、staging 前缀——失去意义）
+  const dupes = names.filter((n, i) => names.indexOf(n) !== i)
+  for (const d of new Set(dupes)) out.push(`columns 里列名 \`${d}\` 重复（§4.2 ③）`)
+
+  // ④ 批次标记列必须是已声明的列
+  if (c.markerColumn !== '' && !nameSet.has(c.markerColumn)) {
+    out.push(`batch.markerColumn \`${c.markerColumn}\` 不是 columns 里声明的列（§4.2 ④）`)
+  }
+
+  // ⑤ decimal 的 scale ≤ precision
+  for (const col of c.columns) {
+    if (col.type !== 'decimal') continue
+    const { precision, scale } = col
+    if (typeof precision !== 'number' || typeof scale !== 'number') continue // 缺键由元 schema 管
+    if (scale > precision) {
+      out.push(`列 \`${col.name}\` 的 decimal scale(${scale}) > precision(${precision})（§4.2 ⑤）`)
+    }
+  }
+
+  // ⑥ 分区键列不得声明 nullable = true（空了在落盘时无处安放）；别名同样算分区键
+  const partitionCols = new Set(
+    c.partitionBy.flatMap((key) => [key, aliases[key]]).filter((x) => typeof x === 'string'),
+  )
+  for (const col of c.columns) {
+    if (col.nullable && partitionCols.has(col.name)) {
+      out.push(`分区键列 \`${col.name}\` 不得声明 nullable=true（§4.2 ⑥）`)
+    }
+  }
+
+  return out
+}
+
 /**
  * 跑全部门禁判据。
  *
@@ -114,6 +203,10 @@ export function checkDataContract(rootDir) {
     const where = `${c.domain}/${c.table}`
     /** 契约列名序列——本门禁通篇按「名」比对（`readContractDoc` 的列是单形状对象，故取 `.name`）。 */
     const colNames = c.columns.map((x) => x.name)
+
+    // 跨字段约束六条（contracts/README §4.2）。元 schema 是单文档内约束、表达不了跨字段引用，
+    // README §4.3 明写「校验器不存在」——这里补上的就是那个位置。
+    for (const message of crossFieldViolations(c)) violations.push({ file: rel, message })
 
     // ⑤ sensitivity 闭集（元 schema 无校验器 ⇒ 这里才是真闸）
     for (const col of c.columns) {

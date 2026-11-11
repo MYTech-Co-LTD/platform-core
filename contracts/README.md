@@ -86,6 +86,10 @@ JSON Schema 没有跨字段引用能力。以下六条**过了 schema 也可能�
 里同样记着这一份清单 —— 两处必须同步改：
 
 1. partitionBy 里的每个键必须是 columns 里出现过的列名
+   ⚠️ **已知例外（2026-11-11 登记）**：`common/lemeng.recon_source.json` 的湖路径是
+   `…/chunk=<n>/`，而载荷列叫 `chunk_no`（父管线 `lemeng.recon.preagg.item` 的 lakeout key
+   与投影逐字如此）。例外收敛在 `scripts/check-data-contract.mjs` 的 `PARTITION_KEY_ALIASES`
+   **显式表**里（不是「找不到就放过」）；新增例外必须改那张表并同步本节。
 2. layout.prefix 必须等于 domain + '/' + table
    ⚠️ **本仓「维度面」是这条的已知例外**（只登记口径，不改校验逻辑）：按
    `docs/superpowers/specs/2026-09-24-lemeng-collection-pipeline-design.md` §5 的湖布局，
