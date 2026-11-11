@@ -12,6 +12,7 @@ import { runWarehouseSql, warehousePool, DATA_WAREHOUSE_UNCONFIGURED } from './w
 import { decorateWithLabels, loadDimensionLookup } from './dimension-labels'
 import { DATA_AS_OF_SQL, execWithLakeRaceRetry, formatDataAsOf, isLakeRaceError, type QueryDeps } from './query-service'
 import { detailProvenance, type DetailProvenance } from './provenance'
+import { cacheGet, cacheKey, cacheSet } from './result-cache'
 
 // 兼容旧导入：DetailProvenance 已迁到 provenance.ts（共享来源类型）。
 export type { DetailProvenance } from './provenance'
@@ -325,24 +326,44 @@ export async function runDetailQuery(
     return { status: 'error', metricId, reason, detail: msg }
   }
 
-  let retried = false
-  let rowCountTotal = 0
-  let result: { columns: string[]; rows: unknown[][] }
-  try {
+  // 结果缓存（#1945 后续）：键 = 最终 SQL 的 sha256（含 org/掩码/月份谓词/分页）。
+  // ⚠️ 只在**生产执行器**上启用：测试注入 `deps.execute` 时不缓存，保证调用次数断言确定。
+  const cacheable = deps.execute === undefined
+  const cacheK = cacheable ? cacheKey(sql, plan.rowCountSql) : ''
+  const cached = cacheable ? cacheGet(cacheK) : null
+
+  /** 执行主计划 + count；成功则写缓存。返回统一形状，便于缓存命中走同一路径。 */
+  const execAll = async (): Promise<{
+    result: { columns: string[]; rows: unknown[][] }
+    rowCountTotal: number
+    retried: boolean
+  }> => {
     const r = await execWithLakeRaceRetry(() => execOnce(sql), deps.raceRetryDelayMs ?? 1_000)
-    retried = r.retried
-    result = r.result
+    let retried = r.retried
     const cnt = await execWithLakeRaceRetry(() => execOnce(plan.rowCountSql), deps.raceRetryDelayMs ?? 1_000)
-    // ⚠️ brief 草稿此处写 `cnt.rows[0]`——execWithLakeRaceRetry 回的是 `{ result, retried }`，
-    // cnt.rows 恒 undefined ⇒ TypeError「reading '0'」（ok 路径整体 500 化）。须取 cnt.result。
-    rowCountTotal = Number(cnt.result.rows[0]?.[0] ?? 0)
-    // count 腿的竞态也要并入审计 reason（与 query-service「主计划 + totalSql 多处累计」同一
-    // 纪律）：count 单独撞 ETag 时，ok 行若记 reason=null，spec §3.5 判「重试是否长期够用」
-    // 的数据源就漏了 count 这一半。
     if (cnt.retried) retried = true
-  } catch (err) {
-    return await toError(err)
+    const rowCountTotal = Number(cnt.result.rows[0]?.[0] ?? 0)
+    const out = { result: r.result, rowCountTotal, retried }
+    if (cacheable) cacheSet(cacheK, { columns: r.result.columns, rows: r.result.rows, rowCountTotal, retried })
+    return out
   }
+
+  let outcome: { result: { columns: string[]; rows: unknown[][] }; rowCountTotal: number; retried: boolean }
+  if (cached !== null) {
+    outcome = {
+      result: { columns: cached.columns, rows: cached.rows },
+      rowCountTotal: cached.rowCountTotal,
+      retried: cached.retried,
+    }
+  } else {
+    try {
+      outcome = await execAll()
+    } catch (err) {
+      return await toError(err)
+    }
+  }
+  let { retried, rowCountTotal } = outcome
+  let result = outcome.result
 
   // 维度名称解析（与聚合面同一装饰器；失败 ⇒ 名称列缺席，主结果照常交付）。
   const lookup = await (deps.dimensionLookup
