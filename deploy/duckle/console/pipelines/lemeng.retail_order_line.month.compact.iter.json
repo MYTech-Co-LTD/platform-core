@@ -26,7 +26,7 @@
      "connectTimeout": 60,
      "schemaName": "data",
      "tableName": "lemeng_daily_sealed",
-     "sql": "SELECT * FROM read_parquet('${ITER_ITEM_GLOB_PATH}') ORDER BY bizday, branch_num, order_no"
+     "sql": "SELECT\nr['batch_id']::varchar as batch_id,\nr['system_book']::varchar as system_book,\nr['bizday']::date as bizday,\nr['hour']::int as hour,\nr['order_no']::varchar as order_no,\nr['order_detail_num']::varchar as order_detail_num,\nr['branch_num']::int as branch_num,\nr['branch_name']::varchar as branch_name,\nr['order_time']::timestamp as order_time,\nr['order_operate_time']::timestamp as order_operate_time,\nr['state']::varchar as state,\nr['order_source']::varchar as order_source,\nr['item_num']::varchar as item_num,\nr['item_code']::varchar as item_code,\nr['sale_money']::numeric(14,2) as sale_money,\nr['discount_money']::numeric(14,2) as discount_money,\nr['payment_money']::numeric(14,2) as payment_money,\nr['quantity']::numeric(14,3) as quantity,\nr['order_transaction_type']::varchar as order_transaction_type,\nr['order_ref_billno']::varchar as order_ref_billno,\nr['order_detail_share_discount']::numeric(14,2) as order_detail_share_discount,\nr['order_detail_std_price']::numeric(14,2) as order_detail_std_price,\nr['order_detail_price']::numeric(14,2) as order_detail_price,\nr['order_detail_online_qty']::numeric(14,3) as order_detail_online_qty,\nr['order_total_money']::numeric(14,2) as order_total_money\nFROM read_parquet('${ITER_ITEM_GLOB_PATH}') r\nORDER BY bizday, branch_num, order_no"
     }
    }
   },
