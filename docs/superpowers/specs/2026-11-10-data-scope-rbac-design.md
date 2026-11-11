@@ -368,7 +368,9 @@ AND (system_book, item_num) IN (
     惰性的（解析时空匹配），无越权面；
   - preview 的 granted/effective 按 (kind, JSON 形状) 去重——SQL 按 assignment 行返回，
     user+role 双路命中同一 scope 会重复；
-  - UI（console 角色页/用户页挂分配控件）下一个 PR。
+  - UI（2026-11-11 落地）：console 第四页签「数据范围」（`data:manage` 才出现，菜单过滤只是
+    入口姿态、API 门卫才是真闸）——scope CRUD 表单（按 kind 切换输入面）+ assignment
+    整组替换 Drawer + 有效范围预览卡；配置错值由服务端点名回显（`VALUE_NOT_IN_DIMS` + detail）。
 
 ## 6. 迁移（data-analysis 只读，一次性）
 
@@ -472,7 +474,7 @@ AND (system_book, item_num) IN (
 | 品类物化 | `dbt/models/lemeng/marts/dim_item_category.sql` + `dim_item_latest` 补 `top_category_name`/`category_group` + 受控 seed `dim_category_group_map` + 2 条硬断言 + 2 条 warn 哨兵 | ✅ 真机已建（281 类；`其他` 4.3% 系祖先链缺口，见 #1913） |
 | 一次性迁移 | `scripts/migrate-data-scopes.mjs`（dry-run 默认；`--apply` 写 DB + Casdoor 5 职能角色） | ✅ 真机已 apply + 回读（2026-11-11） |
 | scope 管理端点 | §5.5：六条 `data:manage` 端点（list/effective/create/update/delete/assignments）+ selector 维表校验 + 写后回读 + audit | ✅ 后端（domain/scope-admin.ts + routes/scopes.ts） |
-| scope 管理 UI | console 角色页/用户页挂分配控件 | ⏳ 未做（下一个 PR） |
+| scope 管理 UI | console「数据范围」页签（`data:manage` 才出现）：scope CRUD + assignment 整组替换 Drawer + 有效范围预览卡 | ✅ `console/scopes/index.tsx` |
 
 仍未做 / 上线顺序：
 

@@ -90,4 +90,29 @@ describe('数据模块 console 入口（三页签）', () => {
     expect(link?.getAttribute('href')).toBe('/api/modules/data/system-map#/overview')
     expect(link?.getAttribute('target')).toBe('_blank')
   })
+
+  it('★ data:manage 用户可见「数据范围」页签，普通用户不可见（#1901）', async () => {
+    // 普通（只有 data:query）：菜单没有「数据范围」
+    renderAt('/console/data/query')
+    expect(screen.queryByText('数据范围')).toBeNull()
+    cleanup()
+    // 管理员：菜单出现，且深链渲染出管理页内容（预览卡标题是本页独有）
+    const router = createMemoryRouter(
+      [
+        {
+          element: <Outlet context={{ session: { scopes: ['data:query', 'data:manage'] } }} />,
+          children: [{ path: '/console/*', element: <DataConsolePage /> }],
+        },
+      ],
+      { initialEntries: ['/console/data/scopes'] },
+    )
+    m.mockImplementation(async (url: string) => {
+      if (url.includes('/scopes')) return json({ scopes: [] })
+      return json({})
+    })
+    render(<RouterProvider router={router} />)
+    expect(screen.getByText('数据范围')).toBeTruthy()
+    await waitFor(() => expect(screen.getByText('有效范围预览（谁看得见什么）')).toBeTruthy())
+    expect(router.state.location.pathname).toBe('/console/data/scopes')
+  })
 })
