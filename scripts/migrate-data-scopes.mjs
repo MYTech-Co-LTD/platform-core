@@ -26,7 +26,9 @@
 //   pnpm exec tsx scripts/migrate-data-scopes.mjs                  # dry-run（默认源/目标 org）
 //   pnpm exec tsx scripts/migrate-data-scopes.mjs --apply          # 写入
 //   pnpm exec tsx scripts/migrate-data-scopes.mjs --skip-casdoor   # 只写 DB（Casdoor 角色后做）
-// 环境：DATABASE_URL / CASDOOR_URL / CASDOOR_ADMIN_USER / CASDOOR_ADMIN_PWD
+// 环境：DATABASE_URL（scope 表所在平台库）/ DATA_WAREHOUSE_URL（数据面库，读 dim_region /
+//      dim_brand / dim_item_latest；缺省回落 DATABASE_URL——单库私有化部署）
+//      / CASDOOR_URL / CASDOOR_ADMIN_USER / CASDOOR_ADMIN_PWD
 //      （可选 DIM_SCHEMA，缺省 staging；CASDOOR_APPLICATION 透传给写侧）。
 import { pathToFileURL } from 'node:url'
 import { parseArgs } from 'node:util'
@@ -345,6 +347,8 @@ async function main(argv) {
 
   const databaseUrl = process.env.DATABASE_URL?.trim()
   if (!databaseUrl) { console.error('migrate-data-scopes: 缺 DATABASE_URL'); return 2 }
+  // 维度表在**数据面**库（pg_duckdb 物化）；单库私有化部署可缺省回落平台库。
+  const warehouseUrl = process.env.DATA_WAREHOUSE_URL?.trim() || databaseUrl
   const missing = ['CASDOOR_URL', 'CASDOOR_ADMIN_USER', 'CASDOOR_ADMIN_PWD'].filter((k) => !process.env[k])
   if (missing.length > 0) { console.error(`migrate-data-scopes: 缺 ${missing.join(' / ')}`); return 2 }
 
@@ -363,6 +367,7 @@ async function main(argv) {
   })
 
   const pool = new Pool({ connectionString: databaseUrl })
+  const whPool = new Pool({ connectionString: warehouseUrl })
   try {
     const source = clientFor(sourceOrg)
     const target = clientFor(targetOrg)
@@ -370,15 +375,15 @@ async function main(argv) {
     const [sourceRoles, permissions] = await Promise.all([source.listRoles(), source.getPermissions()])
     const targetUsers = (await target.listUsers()).map((u) => u.name)
 
-    const { rows: brands } = await pool.query(
+    const { rows: brands } = await whPool.query(
       `select system_book, brand_name from ${dimSchema}.dim_brand order by system_book`,
     )
-    const { rows: regions } = await pool.query(
+    const { rows: regions } = await whPool.query(
       `select system_book, region_name, region_l1, level from ${dimSchema}.dim_region`,
     )
     let categoryGroups = []
     try {
-      const r = await pool.query(
+      const r = await whPool.query(
         `select distinct category_group from ${dimSchema}.dim_item_latest where category_group is not null order by 1`,
       )
       categoryGroups = r.rows.map((x) => x.category_group)
@@ -476,6 +481,7 @@ async function main(argv) {
     return 0
   } finally {
     await pool.end()
+    await whPool.end()
   }
 }
 

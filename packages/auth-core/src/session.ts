@@ -23,6 +23,9 @@ export interface SessionPayload {
   acct?: string
   // 绑定集合（可选）：该账户已绑定的身份（openid 等）；不设 = 旧形状会话
   ext?: string[]
+  // 角色短名（可选）：Casdoor `Role.Users` 反查结果 / `get-user` 的 roles；不设 = 旧形状会话。
+  // 数据范围 scope 的 role-level assignment 用它（spec 2026-11-10 §5.2）。
+  roles?: string[]
   iat: number // 签发时刻（Unix 秒）
   exp: number // 过期时刻（Unix 秒）
   sfa: number // scopes fetched at —— scopes 上次刷新时刻，needsScopeRefresh 的基准
@@ -53,6 +56,7 @@ export async function signSession(
   }
   if (p.acct !== undefined) claims.acct = p.acct
   if (p.ext !== undefined) claims.ext = p.ext
+  if (p.roles !== undefined) claims.roles = p.roles
   return await new SignJWT(claims)
     .setProtectedHeader({ alg: 'HS256' })
     .setSubject(p.sub)
@@ -78,6 +82,7 @@ export async function verifySession(token: string, secret: string): Promise<Sess
       authVia: claims.authVia as SessionPayload['authVia'], // 载荷已过签名验证，cast 合理
       acct: claims.acct === undefined ? undefined : String(claims.acct),
       ext: Array.isArray(claims.ext) ? claims.ext.map(String) : undefined,
+      roles: Array.isArray(claims.roles) ? claims.roles.map(String) : undefined,
       iat: claims.iat as number,
       exp: claims.exp as number,
       sfa: claims.sfa as number,

@@ -396,11 +396,12 @@ export function wecomRoutes(deps: WecomRoutesDeps) {
         deps.limiter.record(t.id, 'wecom', null, false)
         return fail('NO_ACCOUNT')
       }
-      const scopes = effectiveScopes(name, user.roles ?? [], perms)
+      const roles = user.roles ?? []
+      const scopes = effectiveScopes(name, roles, perms)
 
       const now = Math.floor(Date.now() / 1000)
       const token = await signSession(
-        { sub: name, org: t.casdoor_org, name, scopes, authVia: via },
+        { sub: name, org: t.casdoor_org, name, scopes, authVia: via, roles },
         deps.sessionSecret,
         now,
       )

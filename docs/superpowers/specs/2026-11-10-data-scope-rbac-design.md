@@ -443,23 +443,22 @@ AND (system_book, item_num) IN (
 | scope schema | `modules/data/migrations/042_data_scope.sql`（`scope` / `scope_assignment` / `scope_audit`） | ✅ |
 | 解析/合并/谓词 | `modules/data/domain/scope.ts`（`loadEffectiveScopes` / `buildScopePlan` / `scopeModeOf`） | ✅ 单测 |
 | 唯一执法点接线 | `authz.ts` `authorizeCore(..., scopePlan)` + `query-service.ts` + `toolbox/discovery.ts` | ✅ 单测 |
-| 会话 `roles` | `Identity.roles` / `Requester.roles`；PAT/企微已写，**会话中间件待 Phase 2** | 部分 |
+| 会话 `roles` | `SessionPayload.roles` + `signSession`/`verifySession` + 三条登录路 + 会话刷新重签 | ✅ 单测 |
 | 品类物化 | `dbt/models/lemeng/marts/dim_item_category.sql` + `dim_item_latest` 补 `top_category_name`/`category_group` + 受控 seed `dim_category_group_map` + 3 条 dbt test + 1 条 warn 哨兵 | ✅ 代码，待真机 dbt 跑 |
 | 一次性迁移 | `scripts/migrate-data-scopes.mjs`（dry-run 默认；`--apply` 写 DB + Casdoor 5 职能角色） | ✅ 纯函数单测，待真机 dry-run |
 | scope 管理端点/UI | §5.5 | ⏳ 未做（Phase 3 前置） |
 
 仍未做 / 上线顺序：
 
-1. **会话 `roles`**（§5.2）：会话通道的 `Identity` 尚未写 `roles` ⇒ 兼容期内只靠 user-level
-   assignment（迁移脚本已兜底），role-level 维护面在会话补上后才生效。
-2. **真机验证**：dbt 跑 `dim_item_category`（`assert_dim_item_category_root_mapped` 必须零行）；
-   迁移脚本 `--org shanhaiyiguo-org` dry-run 核对 29 用户/22 范围；两者都没在本文写作时跑过。
-3. **上线顺序**：`DATA_SCOPE_MODE=off` → `shadow`（对照 data-analysis 抽样）→ `enforce`；
+1. **真机验证**：dbt 跑 `dim_item_category`（`assert_dim_item_category_root_mapped` 必须零行）；
+   迁移脚本 `--source-org shanhai --target-org shanhaiyiguo-org` dry-run 核对 29 用户/22 范围；
+   两者都没在本文写作时跑过。
+2. **上线顺序**：`DATA_SCOPE_MODE=off` → `shadow`（对照 data-analysis 抽样）→ `enforce`；
    切换要留审计。`shadow` 日志事件为 `data_scope_shadow`（含 filters/denial/applied）。
-4. **`其他` 品类的授权口径**：`品类|*` 只展开 水果/标品/耗材（本文 §6.3），`其他` 商品对
+3. **`其他` 品类的授权口径**：`品类|*` 只展开 水果/标品/耗材（本文 §6.3），`其他` 商品对
    非管理员不可见；`warn_category_group_other` 负责让这个数量可见——若业务要求「至少一人能看
    `其他`」，需在此明确后改迁移脚本。
-5. **`data:cost` 的迁移**：脚本按源 `permission.resources` 的 `字段|成本可见` 授予
+4. **`data:cost` 的迁移**：脚本按源 `permission.resources` 的 `字段|成本可见` 授予
    （2026-11-10 实测：小区经理无、其余 4 个有）；不按角色名硬编码。
 
 ## 8. 风险与已知边界

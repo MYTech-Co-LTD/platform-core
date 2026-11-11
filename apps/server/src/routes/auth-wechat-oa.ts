@@ -321,6 +321,7 @@ export function wechatOaRoutes(deps: WechatOaRoutesDeps) {
               authVia: 'wechat-oa',
               acct,
               ext,
+              roles: user.roles ?? [],
             },
             deps.sessionSecret,
             now,
