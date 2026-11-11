@@ -1,118 +1,100 @@
-# Helix Foundry 借鉴线：开发地图（防漂移）
+# 平台开发地图（v2）：全系统体检 + 波次
 
-> **本文件是这条线的唯一导航面。** 开工前先读 §2 台账；主线产品功能与
-> `2026-11-04-auto-metric-derivation-roadmap.md`（AMD 路线图）**不在此**，别混。
+> **本文件是当前开发主线的唯一导航面。** 开工前先读 §3 台账；AMD 指标路线见图
+> `2026-11-04-auto-metric-derivation-roadmap.md`（W0–W8 已完成/观察中），不在此。
 >
-> 来源：`HelixDB/helix-foundry` 源码调研（main @ `c900024`）+ 架构师评估（2026-11-06）。
-> 结论原文：**「用他们的信任原语，补我们的证据层；用我们的治理能力，补他们的确定性。」**
-> 不搬图数据库、不用 LLM ontology 替代受治理指标层。
+> v1（2026-11-11 上午）只按 Helix 借鉴清单排期；v2 基于**全系统四路盘点**
+> （数据面 / 应用权限 / 信任治理 / 运行观测）重排：**按「上线风险 × 不可逆性」排序**，
+> Helix 清单只是输入之一。
 
 ---
 
-## §1 当时的方案（原文，按优先级）
+## §1 定位
 
-| 档 | 项 | 一句话 |
+- 我们当前的主要矛盾不是「缺新能力」，而是**「以为有的东西其实没有 / 有了但不安全」**：
+  血缘生产恒 unknown、evidence 三字段写死 unknown、数据范围有绕过面、连接池无上限、缓存可能返回旧数。
+- 所以 v2 的优先级：**先让系统「说的和做的一致」，再谈新能力。**
+
+---
+
+## §2 系统实况（2026-11-11 盘点，证据为文件:行号）
+
+| 层 | 规模 | 关键事实 |
 |---|---|---|
-| **P0** | ① 答案级证据链 | 被引用的值带 `source_ref`（行/列/时刻/run id）；文档来源带 span；**冲突不自动裁决**，进 review |
-| **P0** | ② 问数边界契约化 | 工具面 vendored 契约 + `VERSION`；部署时校验，**不匹配启动失败**；Ask 走 idempotency + durable question + 202/poll + 预算租约 |
-| **P1** | ③ 语义版本 | 指标/语义发布 = 不可变 release + `current` 指针 + 同数据多版本对比；回滚 = 拨指针 |
-| **P1** | ④ 采集能力接口 + 快照钉住 | 源声明 `capture: [full, cursor, events, log, snapshot, pushed]`；每次 run **pin 住输入快照**（S3 key + seq） |
-| **P2** | ⑤ 凭据代理 + 可见性下推 | 外部 agent 只拿 per-run scoped token；可见性尽量下推到查询层 |
-| **P2** | ⑥ 自愈审计 | nightly 扫「声明了但没列 / 长期不新鲜 / 长期不对账」→ 生成待办 |
+| 应用 | 5 模块 / 43 宿主路由 / 148 模块路由 / 20 权限码 | 「声明即授权」fail-closed 扎实；**路由集合双向核对只在启动时**（`loader.ts:289-333`），CI 不查 |
+| 权限 | 部门门 + 数据范围 RBAC | 部门门只覆盖报表资产（`asset-auth.ts`）；`DATA_SCOPE_MODE` 默认 off（`scope.ts:39-45`）；**detail/explore 不裁**（`drill.ts:185-186`） |
+| 数据面 | 62 模型（table18/inc18/view26）、131 测试、118 管线、66 排班、56 指标 | 仅 16 certified；12/26 staging 无键唯一测试；6/31 marts 无测试；forms 域 0 测试 0 指标 |
+| 契约 | 27 份（24×v1） | `consumerVersion` CI 有；**元 schema 无人校验**；README 与门禁漂移 |
+| 信任 | provenance/evidence/verified/candidates | detail provenance 可用；query_metric 无 provenance；explore/recipe 无 auditId；evidence 的 dataAsOf/freshness/reconcile **写死 unknown**（`recipes.ts:130-138`） |
+| 血缘 | get_lineage / get_quality | **生产恒 unknown**：`DATA_DBT_MANIFEST_PATH` 未设、容器未挂载（实测） |
+| 运行 | 3 池 / 18 探针 / 13 规则 | **池无 max**（默认 10 × 1.5GB vs 4g）；审计无 latency/path/cache；advisory 不翻 rc；桥 12h 冷却 |
 
 ---
 
-## §2 完成度台账（**每完成一项必须更新这里**）
+## §3 台账（每完成一项更新：状态 / 证据 / PR / 实测）
 
-| 项 | 状态 | 证据 | 备注 |
-|---|---|---|---|
-| ① 行级证据链 | **已完成（行级）** | `modules/data/domain/provenance.ts`（共享类型）；`drill.ts` 回包 `provenance{relation,keyColumns,groupedBy,rowCountTotal,drillAsOf,dataAsOf,auditId}`；`toolbox/query.ts` 回包 `detailAvailable/detailTool/detailKeyColumns`；`toolbox/explore.ts`/`recipes.ts` 同款 provenance；S3 收敛 PR #1865 | **不含文档 span**（我们无文档来源）；**不含冲突评审**（单源，见 §3-C1） |
-| ② 契约版本门 | **未做** | `modules/data/skill/contract.json` 已有 `version: 1`，但运行时**零校验**（仅 `contract.test.ts` 断言「是正整数」）；无 idempotency / 202+poll | §3-A1 |
-| ② 问数作业化 | **未做** | 全仓 grep `idempotency` = 0 命中；问数仍是同步调用 | §3-A2（视 bot 超时/重复提交的实际问题） |
-| ③ 语义 release + 指针 + 对比 | **未做** | 有 dbt/git 版本化 + W8 租户声明/覆盖（`basis='declared'`/`override_of`），但无「同一份数据上两个语义版本并存可对比」 | §3-C2 |
-| ④ 采集能力声明 | **未做** | 仍是每源一条 duckle 管线（单源深度强） | §3-B2（低优先） |
-| ④ per-run 快照钉住 | **未做** | duckle checkpoint 解决「从哪继续」；没有「这次 run 读了哪份 S3 key/seq」的钉住 | §3-B1（值得做） |
-| ⑤ 凭据代理 | **未做** | askdata/插件用 env 凭据；console 落盘 `connections/pgduck.json`（已知，见 console README） | §3-C3（触发式） |
-| ⑤ 可见性下推 | **部分** | 数据范围 RBAC（#1901）把 scope 编译进 SQL（等同下推到查询层）；引擎级「部分视图 + 显式告知隐藏属性」未做 | 等 #1901 切 enforce 后再评估 |
-| ⑥ 自愈审计 | **部分** | W5 体系地图有健康五数/孤儿检查；`report-daily-review.ts` 有业务建议，但**没有**「扫描 → 生成待办」的 heal findings 链 | §3-C4 |
+### 已完成（含证据，别重做）
 
-### 已完成、**不在原清单**（别当欠账，也别重做）
+| 项 | 证据 |
+|---|---|
+| 明细执行层：封版 manifest / 监控 ⑯⑰ / 月文件 / 月感知视图 / 历史视图 / 结果缓存 | 30 天明细 7.8s→0.7s（热），重复查询 <10ms；两实例已上线 |
+| 行级证据链 S0–S3（detail/explore/recipe provenance、detailAvailable、锚点语义、共享类型） | `provenance.ts`、`drill.ts`、`toolbox/*` |
+| 数据范围 RBAC 表/端点/UI/预检 | `042/043` 迁移、`routes/scopes.ts`、`scripts/scope-preflight.mjs` |
+| Helix 借鉴线 v1 地图 | PR #1949 |
 
-- 明细执行层：封版 manifest 表（#1872/#1880）、效果监控 ⑯⑰（#1886）、月度合并 + 月感知视图 + 结果缓存（#1916/#1942/#1945/#1947）——
-  **30 天明细 7.8s → 0.7s（热连接），重复查询 <10ms**；这是「执行层」加固，属主线。
-- `channel-probe` 并行 flake 修复（#1867）。
+### 待办（Wave 见 §4）
 
----
-
-## §3 剩余项：判据、依赖、触发条件
-
-### Wave A（现在可做，按序）
-
-**A1 契约版本门**（原 P0② 的硬约束一半）
-- 范围：`skill/contract.json` 的 `version` 与后端/插件声明的契约版本**启动时比对**，不匹配 ⇒ **启动失败**（不是 warn）。
-- 判据：① 版本不一致时进程起不来且日志点名两侧版本；② 一致时零行为变化；③ 单测覆盖「不匹配拒绝」与「匹配放行」。
-- 依赖：无。
-- 明确不做：不做热更新/双版本共存。
-
-**A2 问数作业化**（原 P0② 的另一半）
-- 前置判据：**先有证据**——bot 出现「超时后重试导致重复扣费/重复审计」或「长查询被中断无恢复」的真实案例。
-- 没有案例 ⇒ 标「待沉淀」，不写实现（公司规则：无案例不立标准）。
-- 若做：idempotency key + 202 + poll + durable question（存储 + 租约），范围与验收另立 spec。
-
-### Wave B（接第二个源之前）
-
-**B1 per-run 快照钉住**
-- 范围：每次采集/物化 run 记录「读到的 S3 key + 版本/etag + row count」到 `data.load_log`（或平行表），重试/复核读同一份。
-- 判据：① 同一次 run 重试时读回同一批 key；② 回填/对账能回答「这个数读的是哪一版」；③ 不改变现有 checkpoint 语义。
-- 依赖：无（可先于第二源）。
-
-**B2 采集能力声明**
-- 触发条件：**接第二个源**且出现「同一种能力在两条管线里各写一遍」≥2 次。
-- 不做：不推翻 duckle，不做通用 connector 框架。
-
-### Wave C（触发式，不做也不算欠账）
-
-**C1 冲突评审队列**（原 P0① 剩余）
-- 触发条件：出现「同一业务属性有两个来源」的场景（如第二源也有营业额）。
-- 做法：冲突行 → review 表 → 人工裁决；AI 答案标注「口径未决」。
-
-**C2 语义 release + 指针 + 对比**
-- 触发条件：出现「同一份数据要同时看两个语义版本」的真实需求（当前 W8 声明/覆盖已覆盖大部分）。
-- 不做：不为「多版本并存」给每条明细打 load id（成本在湖扫描，不在写入）。
-
-**C3 凭据代理**
-- 触发条件：引入**外部 agent/插件进程**且它能触达数据库。届时给 per-run scoped token，不给库密码。
-
-**C4 自愈审计**
-- 触发条件：W5 健康五数出现「长期不达标但无人处理」≥2 类。届时做 nightly 扫描 → 待办清单。
+| 项 | 现状证据 | 波次 |
+|---|---|---|
+| 池无 max / 无并发闸 | `warehouse.ts:25,67`（无 max）；1.5GB×N vs 4g | **0.1** |
+| 缓存无数据版本；TTL=0 关不掉 | `result-cache.ts:30,37-40`；`Number('0')\|\|60000` | **0.2** |
+| 数据范围绕过 detail/explore | `drill.ts:185-186`；`explore-exec.ts` 无 scope | **0.3** |
+| 双算告警不翻 rc + 桥 12h 冷却 | `wire-warehouse.sh:587`；`oo-notify-bridge.sh:135-159` | **0.4** |
+| manifest 未投递（血缘/质量恒 unknown） | env 未设、无挂载（实测）；`.env.example:167` 空值 | **1.1** |
+| evidence 三字段写死 unknown | `recipes.ts:130-138` | **1.2** |
+| query_metric 无 provenance；explore/recipe 无 auditId | `toolbox/query.ts:107-144`；`explore.ts:49-54` | **1.3** |
+| 回归/候选 job 未入仓；候选无 list/reject/调度 | `deploy/` 零命中；`private-measures.ts:190,227,297` | **1.4** |
+| 测试覆盖不均（12 staging / 6 marts / schema.yml） | 见 §2 | 2.1 |
+| 契约元 schema 未校验 + 文档漂移 + 版本门 | `contracts/README.md:101,112`；`contract.ts:33-36` 无校验 | 2.2 |
+| OO registry 与文档不一致；forms 事件无模板 | `oo-alert-registry.txt:15-28`；`builtin.ts:10-57` | 2.3 |
+| 列级血缘 | dbt core manifest 无列级边 | 2.4（触发式） |
+| history view 双 config；materialize 未知档落 full；cron 文档冲突；14 脚本不在 lock；detail 走可写池 | 盘点发现 | 3 |
 
 ---
 
-## §4 顺序与波次（一句话版）
+## §4 波次（按「上线风险 × 不可逆性」）
 
-```
-Wave A: A1 契约版本门 ──▶（有案例才做）A2 问数作业化
-Wave B: B1 快照钉住 ──▶（接第二源后）B2 能力声明
-Wave C: C1 冲突评审 / C2 语义 release / C3 凭据代理 / C4 自愈审计   ← 全部触发式
-```
+### Wave 0 · 上线前（必须）
+- **0.1 资源与准入**：`pool.max` 按内存预算 + 明细并发闸/排队 + 超时可配；验收：3 并发明细 0 reset。
+- **0.2 缓存正确性**：键含数据版本（`max(sealed_at)` + `month.built_at`）；`TTL=0` 真关闭；审计记 `cached`。
+- **0.3 权限收口**：detail/explore 接 `scopePlan`；做不到就明确「enforce 只覆盖聚合」并在 UI/契约标注。
+- **0.4 告警有效性**：⑯ 升 hard 或独立规则；取消 ⑯ 的 12h 冷却；OO registry 与文档对齐。
 
-**波内硬约束**：不改同一文件、不跨波次顺手改（`dispatch-and-visibility` §1）。
+### Wave 1 · 信任链补真（不补就是「看起来有」）
+- **1.1 manifest 投递** → lineage/quality/query_metric.lineage 可用。
+- **1.2 evidence 真值**（接不上就删字段，不留假证据）。
+- **1.3 provenance 补齐**（query_metric + auditId）。
+- **1.4 回归/候选接线**（job 入仓、候选 list/reject、生成调度）。
 
----
+### Wave 2 · 质量与治理
+- 2.1 测试补齐；2.2 契约元 schema + 版本门 + 文档漂移；2.3 OO/forms 事件；2.4 列级血缘（触发式）。
 
-## §5 防漂移规则（每条都是动作）
-
-1. **开工前读 §2 台账**；台账说「已完成」的，回去看证据再决定要不要动。
-2. **完成一项才更新台账**：状态 / 证据（文件 + PR + 实测数字）/ 偏离；没证据不翻绿。
-3. **新想法先写 §6 候选池**，不进当前波次——想加波次必须改本文件并说明为什么插队。
-4. **边界**：本线只做「信任原语」（证据、契约、可复现、代理）。性能/治理/产品功能属主线或 AMD 路线图，
-   不要借「顺手」混进来（明细执行层那轮是主线，别记到本线欠账里）。
-5. **明确不照搬**（原文 §五）：图数据库当主存储、LLM ontology 替代指标层、拆 8 个服务、
-   为多版本给每条明细打 load id、单写者模型。
+### Wave 3 · 工程卫生
+- history view 双 config、materialize 档位校验、cron 文档、lock 覆盖、detail 只读池。
 
 ---
 
-## §6 候选池（未排期，想到就记这里）
+## §5 防漂移规则
+
+1. 开工前读 §3；台账说已完成的，回去看证据再决定要不要动。
+2. 完成一项才更新台账（状态/证据/PR/实测）；**没证据不翻绿**。
+3. 新想法进 §6 候选池；插队必须改本文件并说明理由。
+4. 排序规则：**上线风险 × 不可逆性**，不按任何参考产品的清单顺序。
+5. 不做：图数据库当主存储、LLM ontology 替代指标层、拆 8 服务、为多版本给每条明细打 load id、单写者模型。
+
+---
+
+## §6 候选池
 
 - （空）
 
@@ -122,4 +104,5 @@ Wave C: C1 冲突评审 / C2 语义 release / C3 凭据代理 / C4 自愈审计 
 
 | 日期 | 变更 | 理由 |
 |---|---|---|
-| 2026-11-11 | 建图：回顾 2026-11-06 方案，登记 ①–⑥ 的完成度与触发条件 | 用户要求「别中途跑偏」，需要一个可核对的导航面 |
+| 2026-11-11 | v1：Helix 借鉴线地图（六项 P0/P1/P2） | 回顾 2026-11-06 方案 |
+| 2026-11-11 | **v2：改为全系统开发地图**，Wave 0 新增资源准入/缓存正确性/权限收口/告警有效性；Helix 六项映射进 Wave 1–2 | 四路盘点发现「以为有其实没有 / 有了但不安全」，按上线风险重排 |
