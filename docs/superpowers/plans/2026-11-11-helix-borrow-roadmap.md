@@ -49,6 +49,8 @@
 | **Wave 1.2 证据真值** | PR #1967：`dataAsOf`/`freshness` 走 `freshnessFaceFor`（与问数面同一判据）；`reconcile` 读物化 job 的 `run_results.json`（mtime 缓存），状态扩 `ok|failed|missing|unknown`——「没跑」≠「通过」。**已知边界**：`run_results.json` 只记**最近一次 dbt 调用**；小时级增量跑只覆盖少数模型（实测 14:25 一轮 9 节点 / 0 条对账测试 ⇒ `unknown`，13:42 全量一轮 103 条测试 ⇒ 有结论）。`executedAt` 如实给出那次调用时刻，读侧据此判断新鲜度 |
 | **Wave 1.3 来源补齐** | PR #1967：`query_metric.provenance`（source=metric/relation/executedAt/auditId）+ `callTool` 单点回填 `auditId`（不新建、不覆盖） |
 | **Wave 1.4 回归/候选接线** | PR #1971：`GET /metrics/candidates`（status/origin/relation/limit）+ `POST :id/reject`（CAS 只认 pending，其余 409）；`scripts/metric-candidates-job.mjs`（画像表驱动 org 清单，rc 0/1/2，域名层 `orgsWithProfiles`）；`deploy/metric-candidates-job.md` + `deploy/verify-regression-job.md` 入仓。实测：部署 `dep_WLs9IiueWMqmI9d6`（v268）后建 job `custom:tB6ulrsKtgW852WL`（cron `40 6 * * *` UTC），手动首跑 `jrun_x0nb662U3mApMrID` exit 0 / 1.96s：`orgs=1 failed=0 added=104 refreshed=167 expired=111 pendingAfter=269`（退役路径确实在跑；池级上限 21×20 成立）；新端点未鉴权访问返回 401（路由已注册、门卫生效）。数据模块服务端 1499 passed |
+| **Wave 2.2a skill contract 版本门** | PR #1974：`SUPPORTED_CONTRACT_VERSION` + `contractViolations()`，装载期不一致 ⇒ 抛错 ⇒ 模块装载失败；**变异确认**：version 改 2 ⇒ `check-mcp-toolface` exit 1 并指名该常量 |
+| **Wave 2.2b 契约跨字段六条** | PR #1976：`check-data-contract.mjs` 新增 `crossFieldViolations()`（README §4.2 ①–⑥）；`readContractDoc()` 补 `partitionBy`/`markerColumn`；例外收敛成显式表 `PARTITION_KEY_ALIASES`（recon_source 的 chunk↔chunk_no）；实测 30 份契约里 recon_source 是唯一命中，经别名判过；门禁单测 29 条 |
 
 ### 待办（Wave 见 §4）
 
@@ -56,7 +58,7 @@
 |---|---|---|
 | 测试覆盖不均（12 staging / 6 marts / schema.yml） | 见 §2 | 2.1 |
 | 候选池缺 console 页（spec §3 声明「console 可浏览、一键采用」；现只有 HTTP 面） | `modules/data/console/` 无 candidates 页 | 2.x（UI） |
-| 契约元 schema 未校验 + 文档漂移 + 版本门 | `contracts/README.md:101,112`；`contract.ts:33-36` 无校验 | 2.2 |
+| 契约**元 schema 本体**仍未被执行（`_schema.schema.json` 是 2020-12 JSON Schema，仓内无校验器；§4.2 六条已由 2.2b 补齐） | 需引入 ajv 或等价实现（依赖决策） | 2.2 残项 |
 | OO registry 与文档不一致；forms 事件无模板 | `oo-alert-registry.txt:15-28`；`builtin.ts:10-57` | 2.3 |
 | 列级血缘 | dbt core manifest 无列级边 | 2.4（触发式） |
 | history view 双 config；materialize 未知档落 full；cron 文档冲突；14 脚本不在 lock；detail 走可写池 | 盘点发现 | 3 |
@@ -109,3 +111,4 @@
 | 2026-11-11 | **v2：改为全系统开发地图**，Wave 0 新增资源准入/缓存正确性/权限收口/告警有效性；Helix 六项映射进 Wave 1–2 | 四路盘点发现「以为有其实没有 / 有了但不安全」，按上线风险重排 |
 | 2026-11-11 | Wave 1.1/1.2/1.3 完成入账；待办表清掉 0.2 残留行 | 证据：PR #1967 + 部署 `dep_ejqOe_l_7Z-Sc6rc` 容器内实测（见 §3） |
 | 2026-11-11 | Wave 1.4 完成入账（含 job 首跑）；新增候选池 console 页缺口行 | 证据：PR #1971 + 部署 `dep_WLs9IiueWMqmI9d6` + job `custom:tB6ulrsKtgW852WL` 首跑 exit 0（见 §3） |
+| 2026-11-11 | Wave 2.2a/2.2b 完成入账；2.2 残项收敛为「元 schema 本体未执行」 | 证据：PR #1974（变异确认 exit 1）+ PR #1976（30 份契约实跑，29 条门禁单测） |
