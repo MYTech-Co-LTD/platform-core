@@ -1,356 +1,369 @@
 {
-  "_note": [
-    "duckle 引擎原生告警规则。seed 进各账套 console 的 workspace 卷（与 pipelines/ schedules/ 同路），",
-    "落地路径 = <该账套 console 的 /workspace>/alerts.json —— 它**不在** /workspace/pipelines/ 里。",
-    "",
-    "①【字段来源】duckle v0.7.3（tag v0.7.3, commit 088dd96）源码 crates/duckdb-engine/src/alerts.rs。",
-    "   ⚠️ 不是 crates/duckle-runner/src/alerts.rs —— 那条路径在本版本**不存在**，别照抄。",
-    "   顶层形状 {\"rules\":[...]}（Alerts struct 只有 rules 一个字段）；规则字段：",
-    "     · match          glob，比管线 id；\"*\" = 整个 workspace（源码 AlertRule.pattern，serde rename 成 match）",
-    "     · on             事件数组，小写；缺省 = [\"failure\",\"recovery\"]（success 必须显式订阅）",
-    "     · cooldownMinutes 同一「规则×管线×事件」的静默窗口，缺省 15",
-    "     · owner / tags   路由过滤，**只对资产/SLA 那条通路（notify_subject）生效**",
-    "     · channel        内联：{\"channel\":\"webhook\",\"url\":...,\"headers\":{...}}（tag=channel，故与规则字段同级）",
-    "   ⚠️ channel 是 serde flatten **必填**（非 Option）：去掉通道的规则解析失败 = **整个文件作废**，",
-    "      连 lastStatus 都不写（load() Err → notify() 提前返回）——「只留规则不留通道」不存在。",
-    "   事件集共五个：failure / recovery / success / stale / refreshed（Event enum，rename_all=lowercase）。",
-    "   POST 的 body（Message，camelCase）：{event,pipeline,status,durationMs,error?,category?,text}；",
-    "   其中 event 是 **as_str() 的小写字面量**（\"failure\"/\"recovery\"——不是首字母大写；2026-09-27 按",
-    "   v0.7.3 源码复核，OO 告警条件按小写配）；status 是 run 终态（如 \"error\"/\"ok\"）；text 是一行摘要。",
-    "   ⚠️ owner / tags 对本文件**无意义**：管线走 notify()，它只比对 glob，根本不读 owner/tags",
-    "      （只有 notify_subject() 才调 routes()）。给管线规则写 owner/tags 会被**静默忽略**。",
-    "   冷却键 = \"{管线}|{事件}|{规则 match}|{通道 id}\"，通道 id 是 \"webhook:{host}\"（只取 host，丢掉含密钥的 path）",
-    "      ⇒ 冷却按「规则 × 管线 × 事件」计，同一条管线挂两条规则互不抢冷却。",
-    "      2026-09-27 切到 OO 后 host 变成 observe.hookflow.cn ⇒ 冷却键整体换了一批（旧 state 不迁移也不碍事）。",
-    "   recovery / refreshed 是 all-clear：**跳过冷却检查**，永远发出（源码 Event::is_all_clear）。",
-    "   url 与每个 header 值都过 resolve_env（正则 replace_all）⇒ 一个串里多个 ${ENV:NAME} 都会展开。",
-    "   **fail-closed 语义（分层）**：url 里残留未定义占位符 ⇒ **拒发并打 stderr**，绝不把占位符当字面 URL",
-    "   POST（源码 deliver 对 url 做残留检查）；header 值不在检查之列——缺 env 会把占位符字面发出去，",
-    "   但 OO 回**真 HTTP 状态码**（401=凭据坏），4xx/5xx 引擎侧即报 Err + stderr、不写 lastSent ⇒ 也不是假绿。",
-    "   综上：OO_* 键没配好时这条通道是**响亮地失败**，不是静默绿（与旧版企微 errcode 假绿本质不同）。",
-    "",
-    "②【链路：经 OpenObserve 转投企微（2026-09-27 用户拍板定案；推翻「引擎直发企微」与「经 Novu 落个人」",
-    "   两条前案——前者被 errcode 40008 实证不通，后者见 README 的路线对比）】",
-    "   url = ${ENV:OO_BASE}/api/${ENV:OO_ORG}/data_alerts/_json（OO 的 JSON 摄取端点，引擎固定 body 原样入流）；",
-    "   headers.Authorization = \"Basic ${ENV:OO_AUTH}\"。",
-    "   三键与数据面机 /etc/openobserve-ingest.env **同名同值**（那份是宿主进程的凭据面，2026-09-27 按探活机",
-    "   同构落位；**console 容器不读宿主文件**——容器侧走 openship project env 整体注入，WECOM_WEBHOOK_URL",
-    "   即先例：不在 compose environment 里、照样进容器 env）。OO_AUTH 是 isSecret；仓里绝不出现值。",
-    "",
-    "③【OO 侧四件（org=miyuan）】流 data_alerts（logs）；模板 data_alerts_wecom_markdown（http，",
-    "   body=企微 markdown 形状 {\"msgtype\":\"markdown\",\"markdown\":{\"content\":…}}，引用行字段",
-    "   {event}{pipeline}{status}{durationms}{error}{text}——OO 模板用单大括号变量，行字段直取；",
-    "   ⚠️ 字段名按**流 schema 的小写**写：引擎 POST 的 durationMs 进 OO 流被归一成 durationms",
-    "   （StreamSchema 实测），模板引用 {durationMs} 会渲染成空（2026-09-27 R1 已修，全部被引用",
-    "   字段对照过流 schema 大小写）。",
-    "   目的地 data_alerts_wecom（http + 该模板；**企微群机器人 URL 只存在 OO 服务端，不进仓**）；",
-    "   告警**两条**（scheduled，1 分钟频次）：data_alerts_failure（event='failure'）与",
-    "   data_alerts_recovery（event='recovery'）——不是 realtime：realtime 评估器在本部署实测",
-    "   **不触发**（2026-09-27，现存 12 条生产告警也全是 scheduled），故用 1 分钟调度频次（延迟≤1 分钟）。",
-    "   分两条是因为 OO 条件数组只 AND 不能 OR，合一条会把恢复消息用 silence 存没；silence=10 分钟，",
-    "   与引擎侧 cooldownMinutes=15 **刻意错开**。触发记录/投递错误在 OO 告警历史里可见。",
-    "",
-    "④【与既有 notify_fail 并存，不替换】既有做法见 deploy/duckle/console/README.md「失败告警怎么接」",
-    "   与 scripts/lemeng/run-retail-day.sh 的 notify_fail：wrapper 的 EXIT trap + 企微机器人",
-    "   （URL 走 project env 的 WECOM_WEBHOOK_URL——**wrapper 还在用它**，本文件不再用），",
-    "   仅当 LEMENG_NOTIFY=1（薄管线会设）才发，缺 URL 打 NOTIFY_SKIPPED。",
-    "   两条覆盖不同面，谁也替代不了谁：",
-    "     · wrapper 那条：覆盖「wrapper 自己判红」（采集/自证失败），它甚至跑在管线之外；",
-    "     · 本文件这条：覆盖「引擎把这次 run 记成非 ok」——**包含 wrapper 之前就失败的路径**",
-    "       （源文件不存在、DuckDB 起不来、code.shell 之后判据失败等），这是 wrapper 看不见的。",
-    "   两条都**不改退出码**（告警绝不把判红变成绿）。",
-    "",
-    "⑤【覆盖边界：只有本 console 工作区】match:\"*\" 覆盖的是**打进这个 console 的 run**，即",
-    "   /workspace/pipelines/ 下的薄管线（2026-09-27 实测 3 条：lemeng.dim.branch.run / lemeng.dim.item.run /",
-    "   lemeng.retail.windows.run —— 第三条在该 console 的 schedules.json 里 enabled:false，故平时不被调度，",
-    "   但它在 /workspace/pipelines/ 里，手工/API 触发同样会打进本规则）。",
-    "   ⚠️ 零售的每日生产 run 走 openship job，落在**另一个卷**（platform-core-data_duckle-workspace），",
-    "      本规则**看不到它** ⇒ 零售面的告警待 W2。别把本文件读成「采集全链路的告警」。",
-    "   另：账套 64188 的 console 卷**尚未 seed 这版**（它还是旧的「直发企微」版，那条本来就不通）——",
-    "   要不要切是个独立决定，别顺手带。",
-    "   （2026-09-28 订正：W2（#265）后零售日批已迁入本 console——retail.windows.run 调度 enabled、",
-    "   run record 每天落本工作区；上面「零售面的告警待 W2」「看不到零售 run」两句已过时，现行形状见 ⑧。）",
-    "   （2026-09-28 再订正：上面「64188 的 console 卷尚未 seed 这版」也已过时——当日上午已完成 seed，",
-    "   sha 与机器树对齐；「要不要切」仍按上句口径：独立决定，别顺手带。）",
-    "",
-    "⑥【排障路径（2026-09-27 端到端实测通过后的口径）】三跳分开查，别只看「有没有报错」：",
-    "   a. 引擎→OO：SearchSQL 查 data_alerts 流里有没有那行。deliver() 只看传输成功的老坑在「引擎→OO」",
-    "      这跳已消——OO 对摄取回**真 HTTP 状态码**，POST 200 且流里见行 = 真摄取；",
-    "   b. OO 告警：看两条 scheduled（1 分钟）告警的触发记录（流里有行但告警没响 = 条件没中/被",
-    "      silence 压住；scheduled 有最多 1 分钟评估延迟，别按 realtime 预期秒回）；",
-    "   c. OO→企微：OO 告警历史里的目的地投递错误（模板/URL 坏了在那里可见）；**群侧有没有消息只能人看**。",
-    "   ⚠️ 旧版「HTTP 200 + errcode 40008 假绿」是企微原生端点的形状问题，已随链路切换消失，",
-    "      排障时别再按那套找。",
-    "",
-    "⑦【SLA 巡检事件订阅（2026-09-27 Task 8 起；源码级+实测）】on 现为四事件：",
-    "   failure / recovery / stale / refreshed。stale/refreshed 来自引擎的新鲜度巡检",
-    "   （owners.json 的 maximumAge，60s 一轮），走 notify_subject()（alerts.rs :414-487）——",
-    "   它与 run 事件共用本文件：同样过 on 过滤（:439，漏订就整个滤掉）、同样按",
-    "   「subject|事件|规则 match|通道 id」计冷却（subject=资产路径）、refreshed 同样跳冷却。",
-    "   ⚠️ owner/tags 路由**只对这条通路生效**（notify_subject 才调 routes()）——规则里不写",
-    "   owner/tags = 全收（现配即如此）；写了就按 owners.json 规则的 owner/tags 过滤。",
-    "   stale 的 body：pipeline 字段装的是**资产路径**（不是管线名），durationMs=0，",
-    "   status=event 字面量，text 是一行摘要（含 limit 与 last written）。",
-    "   ⚠️ **进流不进群**：OO 侧两条告警（data_alerts_failure/data_alerts_recovery）只匹配",
-    "   event=failure/recovery ⇒ stale/refreshed 只落 data_alerts 流、**不会发企微群**。",
-    "   要让停更也吵群 = 另加一条匹配 event='stale' 的 OO 告警，那是独立决定，别默认已生效。",
-    "   巡检声明本体见 owners.json（阈值/字段语义/为什么不用 expectedAfterSchedule 都在那头）。",
-    "",
-    "⑧【2026-09-28 重推导（#260：零售 tick 提频到 5 分钟、192 次/天量级）——规则从单条 * 拆成五条】",
-    "   引擎事实（源码 notify / notify_subject 都是 for rule in rules 全量循环、冷却键含规则 match，见 ①）：",
-    "   **所有命中规则各自独立发**，没有先到先得 ⇒ 若保留一条覆盖 * 的 failure 规则，tick 失败风暴",
-    "   仍会经它每 15 分钟重发，60 分钟冷却形同虚设。拆分不是风格选择，是引擎语义所迫：",
-    "     · * 规则只订 stale/refreshed——这两个事件按**资产路径**匹配（notify_subject 的 subject 占",
-    "       pipeline 的位，见 ⑦），资产 SLA 依旧全兜；failure/recovery 改为按管线显式分组。",
-    "     · lemeng.dim.*.run 与 lemeng.retail.windows.run = 日批节奏（一天一跑，失败风暴结构上不可能），",
-    "       冷却 15（行为与拆分前一致）。",
-    "     · lemeng.retail.tick.run / lemeng.retail.close.run = 高频节奏，冷却 60：失败风暴降噪上限 =",
-    "       每小时至多一条；风暴期间的静默缺口由 OO 侧「营业时段 tick 缺席」告警兜（它按缺席触发，",
-    "       与本文件按失败触发互补）。recovery 是 all-clear 不吃冷却（见 ①），恢复消息不会被 60 分钟吞掉。",
-    "   ⚠️ 有意代价：failure 不再有 * 兜底 ⇒ **往本 console 加新管线必须同步在这里加它的",
-    "   failure/recovery 规则**，否则该管线失败静默（引擎不会替你发现漏配）。stale/refreshed 不受影响。",
-    "   channel 整块随每条规则复制（serde flatten 必填，见 ①——漏一条整个文件作废）。",
-    "   OO 侧对应物：data_alerts_failure / data_alerts_recovery 两条不变（按 event 字段路由，与本文",
-    "   规则怎么拆无关）；「营业时段 tick 缺席」是独立 scheduled alert，建为 paused（tick 未投递前启用",
-    "   = 立刻假告警刷屏），Task 6 投递并验证 _ops 行落地后才启用——阈值取舍见 owners.json ④。",
-    "",
-    "⑨【2026-09-28 Wave 1 观测面接线（L0 首航前置；#276）——新增 dim 的 L0 形态规则】",
-    "   match = \"lemeng.dim.*.l0\"，on failure/recovery，cooldown 15。",
-    "   · 为什么按**形态末段**分组：L0 形态管线的 id 统一以 `.l0` 结尾（现 lemeng.dim.branch.l0；",
-    "     后续 dim.item 回迁同形）⇒ 条数不随新增管线线性增长，且节奏与日批同档（15 分钟冷却，同 ⑧ 的",
-    "     `lemeng.dim.*.run` 那一组）。",
-    "   ⚠️ **为什么不改成更宽的 `lemeng.dim.*`（本次评估过，明确不采纳）**：⑧ 的拆分判据是**节奏**，",
-    "     而 `lemeng.dim.*` 的 `*` 会把将来的 `lemeng.dim.*.tick` 一类高频管线一并吞进来 ⇒ 它同时命中",
-    "     「宽规则(15)」与「显式 tick 规则(60)」，而引擎是**所有命中规则各自独立发**（见 ① 与 ⑧）",
-    "     ⇒ 15 分钟冷却重新统治，正是 ⑧ 拆掉的那场风暴。**宽 glob 表达不了节奏** ⇒ 按",
-    "     `<family>.<face>.<形态>` 分组，形态段即节奏档。",
-    "   ⚠️ 旧规则 `lemeng.dim.*.run`（薄壳）**保留不动**：并行期薄壳仍是 dim 面的生产路径，",
-    "     它的退役在 Task 5 Step 3（届时连这条规则一起删）。",
-    "   ⚠️ ⑧ 那条「往本 console 加新管线必须同步加规则」的有意代价，本次**再次应验**——L0 管线",
-    "     2026-09-28 合入时没有任何一条规则匹配它（`lemeng.dim.*.run` 不匹配 `lemeng.dim.branch.l0`）",
-    "     ⇒ 失败静默。**唯一的防线是「加管线的那个 PR 里带一条规则」**：引擎不替你发现漏配；",
-    "     `catalog lint` 只查 owners 的**死规则**（匹配不到任何资产），不查 alerts 的**漏规则**",
-    "     ——方向相反的两件事，别指望它兜（见 owners.json ⑧）。",
-    "   📌 生效前提：seed 进卷才生效（与 pipelines/ 同路），落地路径 = /workspace/alerts.json。",
-    "",
-    "⑩【2026-09-29 Wave B 投递准备：retail 切 L1 的告警接线（#330；依据 #324 定案）】",
-    "   · 新增 `lemeng.retail.windows.l1`（failure/recovery，冷却 15）——L1 双点火 2 次/天，日批节奏档",
-    "     （⑧ 的分档判据：失败风暴结构上不可能），冷却与 windows.run / dim 两组同档。",
-    "   · 为什么**不**用 `lemeng.retail.*.l1` 宽 glob（L1 管线 _note ⑦ 曾这样草拟）：retail 各 face",
-    "     节奏不同档（windows 日批 / tick 5 分钟 / close 日批），tick 若将来迁 L1 属高频档、需冷却 60 ⇒",
-    "     宽 glob 表达不了节奏（⑨ 判据原文），按 face 精确列；tick/close 迁 L1 时各自补自己的规则。",
-    "   · 薄壳 `lemeng.retail.windows.run` 规则**保留**——「被退役资产同批删」在本批**不适用**：本文件",
-    "     seed 到两个 console（⑤），64188 侧薄壳 retail 调度仍 enabled（schedules/64188.json；Wave B",
-    "     只切 3120）⇒ 现在删规则 = 64188 日批失败静默（⑧ 的「漏规则即静默」正是要避免的形状）。",
-    "     先例：`lemeng.dim.*.run` 在 3120 侧薄壳已 disabled 后仍保留至今，同一个理由。待 64188 也切",
-    "     L1（独立决定，别顺手带）的那一批，再把薄壳规则连同 3120 侧残留一起删。",
-    "   · 子管线 `lemeng.retail_order_line.window` 的 run（名带 @<hour> 后缀）**有意不配规则**：窗级",
-    "     失败经父管线 continueOnFailure + 末尾判红（WINDOWS_FAILED）汇成父 run 红 ⇒ 走本条规则告警；",
-    "     逐窗配规则会让一次缺口刷最多 24 条告警（冷却还压不住首轮）。窗级明细看",
-    "     /workspace/logs/retail-windows-summary.csv（父管线 _note ⑤）。",
-    "   📌 生效前提同 ⑨：seed 进卷 + 投递批次「重建 catalog」之后 L1 的湖对象锚才起算（owners.json ⑩）。",
-    "",
-    "⑪【2026-09-29 Wave C：retail tick / close 的 **L1 形**规则（#332；声明态，随管线同批 seed）】",
-    "   · 新增 `lemeng.retail.tick.l1`（failure/recovery，冷却 **60**）——tick 5 分钟一次、192 次/营业日，",
-    "     与薄壳 `lemeng.retail.tick.run` 同档（⑧ 的分档判据：**节奏**）。",
-    "   · 新增 `lemeng.retail.close.l1`（failure/recovery，冷却 **15**）——close 日批一次（16:00Z），日批档，",
-    "     与 `lemeng.retail.windows.l1` / dim 两组同档。",
-    "   ⚠️ **有意不一致，别顺手「对齐」**：薄壳 `lemeng.retail.close.run` 的冷却是 60（⑧ 写的口径是",
-    "      「tick/close 同属高频节奏」），但 close 的调度一直是 `0 16 * * *` 日批一次——⑧ 那半句对 close 是**过宽**的。",
-    "      本次不为薄壳改值（它在 64188 侧仍是生产路径，改它就是另一批的事）；只让新的 L1 规则按 ⑨ 的判据",
-    "      （形态段即节奏档）取 15。两者并行期内 close 面由薄壳规则先行，冷却差 45 分钟不影响任何告警的可见性。",
-    "   · 为什么不合并成一条 `lemeng.retail.*.l1`：⑩ 已定案——retail 各 face 节奏不同档，宽 glob 表达不了节奏。",
-    "   ⚠️ ⑧ 那条「加管线必须同批加规则」的有意代价**本次没有踩**：两个新管线 id 在本批就带上了自己的规则",
-    "      （这正是 ⑨ 末那句「唯一的防线是加管线的那个 PR 里带一条规则」的执行）。",
-    "   · 子管线 `lemeng.retail_order_line.tick` / `.window` 的逐窗 run **有意不配规则**：窗级失败经父管线",
-    "      continueOnFailure + 末尾判红（TICK_FAILED / CLOSE_FAILED）汇成**父 run 红** ⇒ 走本组规则告警；",
-    "      逐窗配规则会让一次 192 次/天的高频面刷出最多 2 条/轮的告警（同 ⑩ 的理由）。",
-    "   📌 生效前提同 ⑨⑩：seed 进卷；且**调度仍 enabled:false**（声明就绪、不激活，激活是投递批次的独立决定）",
-    "      ⇒ 现在不会产出任何 run 事件。",
-    "⑫【2026-09-29 Wave D 薄壳退役（#361 之后两账套都切完 L0/L1）】按 ⑧ ⑩ 记下的先例，本批把 4 条薄壳规则（`lemeng.dim.*.run` / `lemeng.retail.windows.run` / `lemeng.retail.tick.run` / `lemeng.retail.close.run`）**连同 3120 侧残留一起删除**——判据正是先例那句：**规则的生死由两个账套的并集决定**；两侧都切完后并集为空。保留 5 条：`*`（SLA）+ `lemeng.dim.*.l0` + 三条 retail `.l1`。⚠️ 与「删薄管线文件」**同批**做（仓内文件 + 卷内文件 + 调度条目 + 本规则）——只删一半的话，残留物会**不再被任何规则覆盖**，正是 ⑧ 要避免的那类静默。",
-    "⑬【2026-10-10 账套专属 L0 管线（`.l0.<账套号>`）的 failure/recovery 规则（#538）】",
-    "   触发案例：2026-10-10T11:15Z `lemeng.dim.item_price.l0.3120` 增量 run 撞 AGI 网关 429 失败，",
-    "   **引擎未发任何告警**（价目面新鲜度另有探活兜，但那要等窗口）。",
-    "   · 根因 = **规则漏配，不是引擎缺陷**（⑧⑨ 记的「漏规则即静默」第三次应验）：本文件按 ⑨ 的",
-    "     判据把 L0 形态统一写作 `.l0` 收尾，而 3120 账套的专属管线 id 带**账套号后缀**",
-    "     ——`lemeng.dim.item_price.l0.3120` 以 `.3120` 收尾 ⇒ `lemeng.dim.*.l0` **匹配不到** ⇒ 无命中 ⇒ 静默。",
-    "   · **证据订正**：此前记为「10-08 同管线有发，个案」的说法**作废**——引擎自写的",
-    "     /workspace/.duckle/alert-state.json 的 lastSent 台账里**没有任何含 item_price 的键**，",
-    "     四条 `.3120` 管线**零发送记录**；10-08 那条 failure 发送实为 `lemeng.retail.tick.l1|failure|",
-    "     lemeng.retail.tick.l1`（2026-10-08T06:00:07Z，**另一条管线**）。⇒「引擎对个别失败不尝试",
-    "     发告警」的遗留观察**撤销**：它自始就是覆盖问题，engine 侧无缺陷。",
-    "   · 新增规则 match = `lemeng.*.l0.3120`，on failure/recovery，冷却 **15**。一次覆盖四条同形态同节奏的",
-    "     3120 专属 L0 管线：dim.item_price / transfer.out / wholesale.out / client（schedules/3120.json：",
-    "     11:15 / 15:35 / 15:45 / 15:55 UTC，均日批一次）。",
-    "     ⚠️ **为何用 `*` 而不逐条列**：判据同 ⑨——**形态段即节奏档**。四条形态段都是 `l0.3120`、节奏都是",
-    "     日批，同档即可合一条（条数不随管线线性增长）；⑩⑪ 的「按 face 精确列」是在**节奏不同档**时的要求。",
-    "     ⚠️ **为何 `*` 在这里不会重现 ⑧ 的风暴**：⑨ 否掉宽 glob 的理由是「它会吞掉将来的高频 `.tick` 形态」；",
-    "     本 pattern **要求以字面 `.l0.3120` 收尾** ⇒ 结构上匹配不到任何 `.tick.3120` 一类高频形态，",
-    "     即「宽 glob 表达不了节奏」的顾虑在此不成立（节奏被尾部钉死）。`*` 能跨段匹配点号，由既有规则",
-    "     `lemeng.recon.*`（命中 `lemeng.recon.preagg.item`）与 `lemeng.dim.*.l0`（命中 `lemeng.dim.alerttest.l0`，",
-    "     见 lastSent 09-29 发送记录）两处实证。本新规则**未在真引擎上端到端复现**——告警只在 `duckle serve` 里求值，一次性的 `duckle --pipeline` CLI 路径**根本不评估告警**（2026-10-10 沙箱实测：匹配中的管线也**不生成 alert-state.json**、无任何投递尝试）。采用它的依据是①上述两条**同形 glob**（都是「字面段 + 中间 `*` + 字面尾」）的台账实证 + ②尾部字面 `.l0.3120` 使「结构上超配」不可能；且即便语义判断有误，失败模式**只会是漏报**（与今日同），不会新增风暴。",
-    "     ⚠️ **残余边界**：本 pattern 只认账套号 `3120`。将来若出现**别的账套号**的专属 L0 管线（如 `.64188`），",
-    "     须**另加同形规则**——引擎不会替你发现漏配（⑧⑨）。",
-    "   · 有意**不**覆盖（同 ⑩⑪）：子管线 `lemeng.retail_order_line.tick` / `.window`（窗级失败汇成父 run 红）；",
-    "     `lemeng.retail.windows.backfill`（未排期，手动/一次性）。",
-    "   📌 生效前提同 ⑨：seed 进卷（/workspace/alerts.json）才生效。"
-  ],
-  "rules": [
-    {
-      "match": "*",
-      "on": [
-        "stale",
-        "refreshed"
-      ],
-      "cooldownMinutes": 15,
-      "channel": "webhook",
-      "url": "${ENV:OO_BASE}/api/${ENV:OO_ORG}/data_alerts/_json",
-      "headers": {
-        "Authorization": "Basic ${ENV:OO_AUTH}"
-      }
-    },
-    {
-      "match": "lemeng.dim.*.l0",
-      "on": [
-        "failure",
-        "recovery"
-      ],
-      "cooldownMinutes": 15,
-      "channel": "webhook",
-      "url": "${ENV:OO_BASE}/api/${ENV:OO_ORG}/data_alerts/_json",
-      "headers": {
-        "Authorization": "Basic ${ENV:OO_AUTH}"
-      }
-    },
-    {
-      "match": "lemeng.*.l0.3120",
-      "on": [
-        "failure",
-        "recovery"
-      ],
-      "cooldownMinutes": 15,
-      "channel": "webhook",
-      "url": "${ENV:OO_BASE}/api/${ENV:OO_ORG}/data_alerts/_json",
-      "headers": {
-        "Authorization": "Basic ${ENV:OO_AUTH}"
-      }
-    },
-    {
-      "match": "lemeng.inventory.snapshot.catchup.3120",
-      "on": [
-        "failure",
-        "recovery"
-      ],
-      "cooldownMinutes": 15,
-      "channel": "webhook",
-      "url": "${ENV:OO_BASE}/api/${ENV:OO_ORG}/data_alerts/_json",
-      "headers": {
-        "Authorization": "Basic ${ENV:OO_AUTH}"
-      }
-    },
-    {
-      "match": "lemeng.retail.windows.l1",
-      "on": [
-        "failure",
-        "recovery"
-      ],
-      "cooldownMinutes": 15,
-      "channel": "webhook",
-      "url": "${ENV:OO_BASE}/api/${ENV:OO_ORG}/data_alerts/_json",
-      "headers": {
-        "Authorization": "Basic ${ENV:OO_AUTH}"
-      }
-    },
-    {
-      "match": "lemeng.retail.tick.l1",
-      "on": [
-        "failure",
-        "recovery"
-      ],
-      "cooldownMinutes": 60,
-      "channel": "webhook",
-      "url": "${ENV:OO_BASE}/api/${ENV:OO_ORG}/data_alerts/_json",
-      "headers": {
-        "Authorization": "Basic ${ENV:OO_AUTH}"
-      }
-    },
-    {
-      "match": "lemeng.retail.close.l1",
-      "on": [
-        "failure",
-        "recovery"
-      ],
-      "cooldownMinutes": 15,
-      "channel": "webhook",
-      "url": "${ENV:OO_BASE}/api/${ENV:OO_ORG}/data_alerts/_json",
-      "headers": {
-        "Authorization": "Basic ${ENV:OO_AUTH}"
-      }
-    },
-    {
-      "match": "lemeng.recon.*",
-      "on": [
-        "failure",
-        "recovery"
-      ],
-      "cooldownMinutes": 15,
-      "channel": "webhook",
-      "url": "${ENV:OO_BASE}/api/${ENV:OO_ORG}/data_alerts/_json",
-      "headers": {
-        "Authorization": "Basic ${ENV:OO_AUTH}"
-      }
-    },
-    {
-      "match": "lemeng.metric_profile.*",
-      "on": [
-        "failure",
-        "recovery"
-      ],
-      "cooldownMinutes": 15,
-      "channel": "webhook",
-      "url": "${ENV:OO_BASE}/api/${ENV:OO_ORG}/data_alerts/_json",
-      "headers": {
-        "Authorization": "Basic ${ENV:OO_AUTH}"
-      }
-    },
-    {
-      "match": "lemeng.*.l0.64188",
-      "on": [
-        "failure",
-        "recovery"
-      ],
-      "cooldownMinutes": 15,
-      "channel": "webhook",
-      "url": "${ENV:OO_BASE}/api/${ENV:OO_ORG}/data_alerts/_json",
-      "headers": {
-        "Authorization": "Basic ${ENV:OO_AUTH}"
-      }
-    },
-    {
-      "match": "lemeng.inventory.snapshot.catchup.64188",
-      "on": [
-        "failure",
-        "recovery"
-      ],
-      "cooldownMinutes": 15,
-      "channel": "webhook",
-      "url": "${ENV:OO_BASE}/api/${ENV:OO_ORG}/data_alerts/_json",
-      "headers": {
-        "Authorization": "Basic ${ENV:OO_AUTH}"
-      }
-    },
-    {
-      "match": "lemeng.retail_order_line.daily_sealed.reconcile",
-      "on": [
-        "failure",
-        "recovery"
-      ],
-      "cooldownMinutes": 15,
-      "channel": "webhook",
-      "url": "${ENV:OO_BASE}/api/${ENV:OO_ORG}/data_alerts/_json",
-      "headers": {
-        "Authorization": "Basic ${ENV:OO_AUTH}"
-      }
-    }
-  ]
+ "_note": [
+  "duckle 引擎原生告警规则。seed 进各账套 console 的 workspace 卷（与 pipelines/ schedules/ 同路），",
+  "落地路径 = <该账套 console 的 /workspace>/alerts.json —— 它**不在** /workspace/pipelines/ 里。",
+  "",
+  "①【字段来源】duckle v0.7.3（tag v0.7.3, commit 088dd96）源码 crates/duckdb-engine/src/alerts.rs。",
+  "   ⚠️ 不是 crates/duckle-runner/src/alerts.rs —— 那条路径在本版本**不存在**，别照抄。",
+  "   顶层形状 {\"rules\":[...]}（Alerts struct 只有 rules 一个字段）；规则字段：",
+  "     · match          glob，比管线 id；\"*\" = 整个 workspace（源码 AlertRule.pattern，serde rename 成 match）",
+  "     · on             事件数组，小写；缺省 = [\"failure\",\"recovery\"]（success 必须显式订阅）",
+  "     · cooldownMinutes 同一「规则×管线×事件」的静默窗口，缺省 15",
+  "     · owner / tags   路由过滤，**只对资产/SLA 那条通路（notify_subject）生效**",
+  "     · channel        内联：{\"channel\":\"webhook\",\"url\":...,\"headers\":{...}}（tag=channel，故与规则字段同级）",
+  "   ⚠️ channel 是 serde flatten **必填**（非 Option）：去掉通道的规则解析失败 = **整个文件作废**，",
+  "      连 lastStatus 都不写（load() Err → notify() 提前返回）——「只留规则不留通道」不存在。",
+  "   事件集共五个：failure / recovery / success / stale / refreshed（Event enum，rename_all=lowercase）。",
+  "   POST 的 body（Message，camelCase）：{event,pipeline,status,durationMs,error?,category?,text}；",
+  "   其中 event 是 **as_str() 的小写字面量**（\"failure\"/\"recovery\"——不是首字母大写；2026-09-27 按",
+  "   v0.7.3 源码复核，OO 告警条件按小写配）；status 是 run 终态（如 \"error\"/\"ok\"）；text 是一行摘要。",
+  "   ⚠️ owner / tags 对本文件**无意义**：管线走 notify()，它只比对 glob，根本不读 owner/tags",
+  "      （只有 notify_subject() 才调 routes()）。给管线规则写 owner/tags 会被**静默忽略**。",
+  "   冷却键 = \"{管线}|{事件}|{规则 match}|{通道 id}\"，通道 id 是 \"webhook:{host}\"（只取 host，丢掉含密钥的 path）",
+  "      ⇒ 冷却按「规则 × 管线 × 事件」计，同一条管线挂两条规则互不抢冷却。",
+  "      2026-09-27 切到 OO 后 host 变成 observe.hookflow.cn ⇒ 冷却键整体换了一批（旧 state 不迁移也不碍事）。",
+  "   recovery / refreshed 是 all-clear：**跳过冷却检查**，永远发出（源码 Event::is_all_clear）。",
+  "   url 与每个 header 值都过 resolve_env（正则 replace_all）⇒ 一个串里多个 ${ENV:NAME} 都会展开。",
+  "   **fail-closed 语义（分层）**：url 里残留未定义占位符 ⇒ **拒发并打 stderr**，绝不把占位符当字面 URL",
+  "   POST（源码 deliver 对 url 做残留检查）；header 值不在检查之列——缺 env 会把占位符字面发出去，",
+  "   但 OO 回**真 HTTP 状态码**（401=凭据坏），4xx/5xx 引擎侧即报 Err + stderr、不写 lastSent ⇒ 也不是假绿。",
+  "   综上：OO_* 键没配好时这条通道是**响亮地失败**，不是静默绿（与旧版企微 errcode 假绿本质不同）。",
+  "",
+  "②【链路：经 OpenObserve 转投企微（2026-09-27 用户拍板定案；推翻「引擎直发企微」与「经 Novu 落个人」",
+  "   两条前案——前者被 errcode 40008 实证不通，后者见 README 的路线对比）】",
+  "   url = ${ENV:OO_BASE}/api/${ENV:OO_ORG}/data_alerts/_json（OO 的 JSON 摄取端点，引擎固定 body 原样入流）；",
+  "   headers.Authorization = \"Basic ${ENV:OO_AUTH}\"。",
+  "   三键与数据面机 /etc/openobserve-ingest.env **同名同值**（那份是宿主进程的凭据面，2026-09-27 按探活机",
+  "   同构落位；**console 容器不读宿主文件**——容器侧走 openship project env 整体注入，WECOM_WEBHOOK_URL",
+  "   即先例：不在 compose environment 里、照样进容器 env）。OO_AUTH 是 isSecret；仓里绝不出现值。",
+  "",
+  "③【OO 侧四件（org=miyuan）】流 data_alerts（logs）；模板 data_alerts_wecom_markdown（http，",
+  "   body=企微 markdown 形状 {\"msgtype\":\"markdown\",\"markdown\":{\"content\":…}}，引用行字段",
+  "   {event}{pipeline}{status}{durationms}{error}{text}——OO 模板用单大括号变量，行字段直取；",
+  "   ⚠️ 字段名按**流 schema 的小写**写：引擎 POST 的 durationMs 进 OO 流被归一成 durationms",
+  "   （StreamSchema 实测），模板引用 {durationMs} 会渲染成空（2026-09-27 R1 已修，全部被引用",
+  "   字段对照过流 schema 大小写）。",
+  "   目的地 data_alerts_wecom（http + 该模板；**企微群机器人 URL 只存在 OO 服务端，不进仓**）；",
+  "   告警**两条**（scheduled，1 分钟频次）：data_alerts_failure（event='failure'）与",
+  "   data_alerts_recovery（event='recovery'）——不是 realtime：realtime 评估器在本部署实测",
+  "   **不触发**（2026-09-27，现存 12 条生产告警也全是 scheduled），故用 1 分钟调度频次（延迟≤1 分钟）。",
+  "   分两条是因为 OO 条件数组只 AND 不能 OR，合一条会把恢复消息用 silence 存没；silence=10 分钟，",
+  "   与引擎侧 cooldownMinutes=15 **刻意错开**。触发记录/投递错误在 OO 告警历史里可见。",
+  "",
+  "④【与既有 notify_fail 并存，不替换】既有做法见 deploy/duckle/console/README.md「失败告警怎么接」",
+  "   与 scripts/lemeng/run-retail-day.sh 的 notify_fail：wrapper 的 EXIT trap + 企微机器人",
+  "   （URL 走 project env 的 WECOM_WEBHOOK_URL——**wrapper 还在用它**，本文件不再用），",
+  "   仅当 LEMENG_NOTIFY=1（薄管线会设）才发，缺 URL 打 NOTIFY_SKIPPED。",
+  "   两条覆盖不同面，谁也替代不了谁：",
+  "     · wrapper 那条：覆盖「wrapper 自己判红」（采集/自证失败），它甚至跑在管线之外；",
+  "     · 本文件这条：覆盖「引擎把这次 run 记成非 ok」——**包含 wrapper 之前就失败的路径**",
+  "       （源文件不存在、DuckDB 起不来、code.shell 之后判据失败等），这是 wrapper 看不见的。",
+  "   两条都**不改退出码**（告警绝不把判红变成绿）。",
+  "",
+  "⑤【覆盖边界：只有本 console 工作区】match:\"*\" 覆盖的是**打进这个 console 的 run**，即",
+  "   /workspace/pipelines/ 下的薄管线（2026-09-27 实测 3 条：lemeng.dim.branch.run / lemeng.dim.item.run /",
+  "   lemeng.retail.windows.run —— 第三条在该 console 的 schedules.json 里 enabled:false，故平时不被调度，",
+  "   但它在 /workspace/pipelines/ 里，手工/API 触发同样会打进本规则）。",
+  "   ⚠️ 零售的每日生产 run 走 openship job，落在**另一个卷**（platform-core-data_duckle-workspace），",
+  "      本规则**看不到它** ⇒ 零售面的告警待 W2。别把本文件读成「采集全链路的告警」。",
+  "   另：账套 64188 的 console 卷**尚未 seed 这版**（它还是旧的「直发企微」版，那条本来就不通）——",
+  "   要不要切是个独立决定，别顺手带。",
+  "   （2026-09-28 订正：W2（#265）后零售日批已迁入本 console——retail.windows.run 调度 enabled、",
+  "   run record 每天落本工作区；上面「零售面的告警待 W2」「看不到零售 run」两句已过时，现行形状见 ⑧。）",
+  "   （2026-09-28 再订正：上面「64188 的 console 卷尚未 seed 这版」也已过时——当日上午已完成 seed，",
+  "   sha 与机器树对齐；「要不要切」仍按上句口径：独立决定，别顺手带。）",
+  "",
+  "⑥【排障路径（2026-09-27 端到端实测通过后的口径）】三跳分开查，别只看「有没有报错」：",
+  "   a. 引擎→OO：SearchSQL 查 data_alerts 流里有没有那行。deliver() 只看传输成功的老坑在「引擎→OO」",
+  "      这跳已消——OO 对摄取回**真 HTTP 状态码**，POST 200 且流里见行 = 真摄取；",
+  "   b. OO 告警：看两条 scheduled（1 分钟）告警的触发记录（流里有行但告警没响 = 条件没中/被",
+  "      silence 压住；scheduled 有最多 1 分钟评估延迟，别按 realtime 预期秒回）；",
+  "   c. OO→企微：OO 告警历史里的目的地投递错误（模板/URL 坏了在那里可见）；**群侧有没有消息只能人看**。",
+  "   ⚠️ 旧版「HTTP 200 + errcode 40008 假绿」是企微原生端点的形状问题，已随链路切换消失，",
+  "      排障时别再按那套找。",
+  "",
+  "⑦【SLA 巡检事件订阅（2026-09-27 Task 8 起；源码级+实测）】on 现为四事件：",
+  "   failure / recovery / stale / refreshed。stale/refreshed 来自引擎的新鲜度巡检",
+  "   （owners.json 的 maximumAge，60s 一轮），走 notify_subject()（alerts.rs :414-487）——",
+  "   它与 run 事件共用本文件：同样过 on 过滤（:439，漏订就整个滤掉）、同样按",
+  "   「subject|事件|规则 match|通道 id」计冷却（subject=资产路径）、refreshed 同样跳冷却。",
+  "   ⚠️ owner/tags 路由**只对这条通路生效**（notify_subject 才调 routes()）——规则里不写",
+  "   owner/tags = 全收（现配即如此）；写了就按 owners.json 规则的 owner/tags 过滤。",
+  "   stale 的 body：pipeline 字段装的是**资产路径**（不是管线名），durationMs=0，",
+  "   status=event 字面量，text 是一行摘要（含 limit 与 last written）。",
+  "   ⚠️ **进流不进群**：OO 侧两条告警（data_alerts_failure/data_alerts_recovery）只匹配",
+  "   event=failure/recovery ⇒ stale/refreshed 只落 data_alerts 流、**不会发企微群**。",
+  "   要让停更也吵群 = 另加一条匹配 event='stale' 的 OO 告警，那是独立决定，别默认已生效。",
+  "   巡检声明本体见 owners.json（阈值/字段语义/为什么不用 expectedAfterSchedule 都在那头）。",
+  "",
+  "⑧【2026-09-28 重推导（#260：零售 tick 提频到 5 分钟、192 次/天量级）——规则从单条 * 拆成五条】",
+  "   引擎事实（源码 notify / notify_subject 都是 for rule in rules 全量循环、冷却键含规则 match，见 ①）：",
+  "   **所有命中规则各自独立发**，没有先到先得 ⇒ 若保留一条覆盖 * 的 failure 规则，tick 失败风暴",
+  "   仍会经它每 15 分钟重发，60 分钟冷却形同虚设。拆分不是风格选择，是引擎语义所迫：",
+  "     · * 规则只订 stale/refreshed——这两个事件按**资产路径**匹配（notify_subject 的 subject 占",
+  "       pipeline 的位，见 ⑦），资产 SLA 依旧全兜；failure/recovery 改为按管线显式分组。",
+  "     · lemeng.dim.*.run 与 lemeng.retail.windows.run = 日批节奏（一天一跑，失败风暴结构上不可能），",
+  "       冷却 15（行为与拆分前一致）。",
+  "     · lemeng.retail.tick.run / lemeng.retail.close.run = 高频节奏，冷却 60：失败风暴降噪上限 =",
+  "       每小时至多一条；风暴期间的静默缺口由 OO 侧「营业时段 tick 缺席」告警兜（它按缺席触发，",
+  "       与本文件按失败触发互补）。recovery 是 all-clear 不吃冷却（见 ①），恢复消息不会被 60 分钟吞掉。",
+  "   ⚠️ 有意代价：failure 不再有 * 兜底 ⇒ **往本 console 加新管线必须同步在这里加它的",
+  "   failure/recovery 规则**，否则该管线失败静默（引擎不会替你发现漏配）。stale/refreshed 不受影响。",
+  "   channel 整块随每条规则复制（serde flatten 必填，见 ①——漏一条整个文件作废）。",
+  "   OO 侧对应物：data_alerts_failure / data_alerts_recovery 两条不变（按 event 字段路由，与本文",
+  "   规则怎么拆无关）；「营业时段 tick 缺席」是独立 scheduled alert，建为 paused（tick 未投递前启用",
+  "   = 立刻假告警刷屏），Task 6 投递并验证 _ops 行落地后才启用——阈值取舍见 owners.json ④。",
+  "",
+  "⑨【2026-09-28 Wave 1 观测面接线（L0 首航前置；#276）——新增 dim 的 L0 形态规则】",
+  "   match = \"lemeng.dim.*.l0\"，on failure/recovery，cooldown 15。",
+  "   · 为什么按**形态末段**分组：L0 形态管线的 id 统一以 `.l0` 结尾（现 lemeng.dim.branch.l0；",
+  "     后续 dim.item 回迁同形）⇒ 条数不随新增管线线性增长，且节奏与日批同档（15 分钟冷却，同 ⑧ 的",
+  "     `lemeng.dim.*.run` 那一组）。",
+  "   ⚠️ **为什么不改成更宽的 `lemeng.dim.*`（本次评估过，明确不采纳）**：⑧ 的拆分判据是**节奏**，",
+  "     而 `lemeng.dim.*` 的 `*` 会把将来的 `lemeng.dim.*.tick` 一类高频管线一并吞进来 ⇒ 它同时命中",
+  "     「宽规则(15)」与「显式 tick 规则(60)」，而引擎是**所有命中规则各自独立发**（见 ① 与 ⑧）",
+  "     ⇒ 15 分钟冷却重新统治，正是 ⑧ 拆掉的那场风暴。**宽 glob 表达不了节奏** ⇒ 按",
+  "     `<family>.<face>.<形态>` 分组，形态段即节奏档。",
+  "   ⚠️ 旧规则 `lemeng.dim.*.run`（薄壳）**保留不动**：并行期薄壳仍是 dim 面的生产路径，",
+  "     它的退役在 Task 5 Step 3（届时连这条规则一起删）。",
+  "   ⚠️ ⑧ 那条「往本 console 加新管线必须同步加规则」的有意代价，本次**再次应验**——L0 管线",
+  "     2026-09-28 合入时没有任何一条规则匹配它（`lemeng.dim.*.run` 不匹配 `lemeng.dim.branch.l0`）",
+  "     ⇒ 失败静默。**唯一的防线是「加管线的那个 PR 里带一条规则」**：引擎不替你发现漏配；",
+  "     `catalog lint` 只查 owners 的**死规则**（匹配不到任何资产），不查 alerts 的**漏规则**",
+  "     ——方向相反的两件事，别指望它兜（见 owners.json ⑧）。",
+  "   📌 生效前提：seed 进卷才生效（与 pipelines/ 同路），落地路径 = /workspace/alerts.json。",
+  "",
+  "⑩【2026-09-29 Wave B 投递准备：retail 切 L1 的告警接线（#330；依据 #324 定案）】",
+  "   · 新增 `lemeng.retail.windows.l1`（failure/recovery，冷却 15）——L1 双点火 2 次/天，日批节奏档",
+  "     （⑧ 的分档判据：失败风暴结构上不可能），冷却与 windows.run / dim 两组同档。",
+  "   · 为什么**不**用 `lemeng.retail.*.l1` 宽 glob（L1 管线 _note ⑦ 曾这样草拟）：retail 各 face",
+  "     节奏不同档（windows 日批 / tick 5 分钟 / close 日批），tick 若将来迁 L1 属高频档、需冷却 60 ⇒",
+  "     宽 glob 表达不了节奏（⑨ 判据原文），按 face 精确列；tick/close 迁 L1 时各自补自己的规则。",
+  "   · 薄壳 `lemeng.retail.windows.run` 规则**保留**——「被退役资产同批删」在本批**不适用**：本文件",
+  "     seed 到两个 console（⑤），64188 侧薄壳 retail 调度仍 enabled（schedules/64188.json；Wave B",
+  "     只切 3120）⇒ 现在删规则 = 64188 日批失败静默（⑧ 的「漏规则即静默」正是要避免的形状）。",
+  "     先例：`lemeng.dim.*.run` 在 3120 侧薄壳已 disabled 后仍保留至今，同一个理由。待 64188 也切",
+  "     L1（独立决定，别顺手带）的那一批，再把薄壳规则连同 3120 侧残留一起删。",
+  "   · 子管线 `lemeng.retail_order_line.window` 的 run（名带 @<hour> 后缀）**有意不配规则**：窗级",
+  "     失败经父管线 continueOnFailure + 末尾判红（WINDOWS_FAILED）汇成父 run 红 ⇒ 走本条规则告警；",
+  "     逐窗配规则会让一次缺口刷最多 24 条告警（冷却还压不住首轮）。窗级明细看",
+  "     /workspace/logs/retail-windows-summary.csv（父管线 _note ⑤）。",
+  "   📌 生效前提同 ⑨：seed 进卷 + 投递批次「重建 catalog」之后 L1 的湖对象锚才起算（owners.json ⑩）。",
+  "",
+  "⑪【2026-09-29 Wave C：retail tick / close 的 **L1 形**规则（#332；声明态，随管线同批 seed）】",
+  "   · 新增 `lemeng.retail.tick.l1`（failure/recovery，冷却 **60**）——tick 5 分钟一次、192 次/营业日，",
+  "     与薄壳 `lemeng.retail.tick.run` 同档（⑧ 的分档判据：**节奏**）。",
+  "   · 新增 `lemeng.retail.close.l1`（failure/recovery，冷却 **15**）——close 日批一次（16:00Z），日批档，",
+  "     与 `lemeng.retail.windows.l1` / dim 两组同档。",
+  "   ⚠️ **有意不一致，别顺手「对齐」**：薄壳 `lemeng.retail.close.run` 的冷却是 60（⑧ 写的口径是",
+  "      「tick/close 同属高频节奏」），但 close 的调度一直是 `0 16 * * *` 日批一次——⑧ 那半句对 close 是**过宽**的。",
+  "      本次不为薄壳改值（它在 64188 侧仍是生产路径，改它就是另一批的事）；只让新的 L1 规则按 ⑨ 的判据",
+  "      （形态段即节奏档）取 15。两者并行期内 close 面由薄壳规则先行，冷却差 45 分钟不影响任何告警的可见性。",
+  "   · 为什么不合并成一条 `lemeng.retail.*.l1`：⑩ 已定案——retail 各 face 节奏不同档，宽 glob 表达不了节奏。",
+  "   ⚠️ ⑧ 那条「加管线必须同批加规则」的有意代价**本次没有踩**：两个新管线 id 在本批就带上了自己的规则",
+  "      （这正是 ⑨ 末那句「唯一的防线是加管线的那个 PR 里带一条规则」的执行）。",
+  "   · 子管线 `lemeng.retail_order_line.tick` / `.window` 的逐窗 run **有意不配规则**：窗级失败经父管线",
+  "      continueOnFailure + 末尾判红（TICK_FAILED / CLOSE_FAILED）汇成**父 run 红** ⇒ 走本组规则告警；",
+  "      逐窗配规则会让一次 192 次/天的高频面刷出最多 2 条/轮的告警（同 ⑩ 的理由）。",
+  "   📌 生效前提同 ⑨⑩：seed 进卷；且**调度仍 enabled:false**（声明就绪、不激活，激活是投递批次的独立决定）",
+  "      ⇒ 现在不会产出任何 run 事件。",
+  "⑫【2026-09-29 Wave D 薄壳退役（#361 之后两账套都切完 L0/L1）】按 ⑧ ⑩ 记下的先例，本批把 4 条薄壳规则（`lemeng.dim.*.run` / `lemeng.retail.windows.run` / `lemeng.retail.tick.run` / `lemeng.retail.close.run`）**连同 3120 侧残留一起删除**——判据正是先例那句：**规则的生死由两个账套的并集决定**；两侧都切完后并集为空。保留 5 条：`*`（SLA）+ `lemeng.dim.*.l0` + 三条 retail `.l1`。⚠️ 与「删薄管线文件」**同批**做（仓内文件 + 卷内文件 + 调度条目 + 本规则）——只删一半的话，残留物会**不再被任何规则覆盖**，正是 ⑧ 要避免的那类静默。",
+  "⑬【2026-10-10 账套专属 L0 管线（`.l0.<账套号>`）的 failure/recovery 规则（#538）】",
+  "   触发案例：2026-10-10T11:15Z `lemeng.dim.item_price.l0.3120` 增量 run 撞 AGI 网关 429 失败，",
+  "   **引擎未发任何告警**（价目面新鲜度另有探活兜，但那要等窗口）。",
+  "   · 根因 = **规则漏配，不是引擎缺陷**（⑧⑨ 记的「漏规则即静默」第三次应验）：本文件按 ⑨ 的",
+  "     判据把 L0 形态统一写作 `.l0` 收尾，而 3120 账套的专属管线 id 带**账套号后缀**",
+  "     ——`lemeng.dim.item_price.l0.3120` 以 `.3120` 收尾 ⇒ `lemeng.dim.*.l0` **匹配不到** ⇒ 无命中 ⇒ 静默。",
+  "   · **证据订正**：此前记为「10-08 同管线有发，个案」的说法**作废**——引擎自写的",
+  "     /workspace/.duckle/alert-state.json 的 lastSent 台账里**没有任何含 item_price 的键**，",
+  "     四条 `.3120` 管线**零发送记录**；10-08 那条 failure 发送实为 `lemeng.retail.tick.l1|failure|",
+  "     lemeng.retail.tick.l1`（2026-10-08T06:00:07Z，**另一条管线**）。⇒「引擎对个别失败不尝试",
+  "     发告警」的遗留观察**撤销**：它自始就是覆盖问题，engine 侧无缺陷。",
+  "   · 新增规则 match = `lemeng.*.l0.3120`，on failure/recovery，冷却 **15**。一次覆盖四条同形态同节奏的",
+  "     3120 专属 L0 管线：dim.item_price / transfer.out / wholesale.out / client（schedules/3120.json：",
+  "     11:15 / 15:35 / 15:45 / 15:55 UTC，均日批一次）。",
+  "     ⚠️ **为何用 `*` 而不逐条列**：判据同 ⑨——**形态段即节奏档**。四条形态段都是 `l0.3120`、节奏都是",
+  "     日批，同档即可合一条（条数不随管线线性增长）；⑩⑪ 的「按 face 精确列」是在**节奏不同档**时的要求。",
+  "     ⚠️ **为何 `*` 在这里不会重现 ⑧ 的风暴**：⑨ 否掉宽 glob 的理由是「它会吞掉将来的高频 `.tick` 形态」；",
+  "     本 pattern **要求以字面 `.l0.3120` 收尾** ⇒ 结构上匹配不到任何 `.tick.3120` 一类高频形态，",
+  "     即「宽 glob 表达不了节奏」的顾虑在此不成立（节奏被尾部钉死）。`*` 能跨段匹配点号，由既有规则",
+  "     `lemeng.recon.*`（命中 `lemeng.recon.preagg.item`）与 `lemeng.dim.*.l0`（命中 `lemeng.dim.alerttest.l0`，",
+  "     见 lastSent 09-29 发送记录）两处实证。本新规则**未在真引擎上端到端复现**——告警只在 `duckle serve` 里求值，一次性的 `duckle --pipeline` CLI 路径**根本不评估告警**（2026-10-10 沙箱实测：匹配中的管线也**不生成 alert-state.json**、无任何投递尝试）。采用它的依据是①上述两条**同形 glob**（都是「字面段 + 中间 `*` + 字面尾」）的台账实证 + ②尾部字面 `.l0.3120` 使「结构上超配」不可能；且即便语义判断有误，失败模式**只会是漏报**（与今日同），不会新增风暴。",
+  "     ⚠️ **残余边界**：本 pattern 只认账套号 `3120`。将来若出现**别的账套号**的专属 L0 管线（如 `.64188`），",
+  "     须**另加同形规则**——引擎不会替你发现漏配（⑧⑨）。",
+  "   · 有意**不**覆盖（同 ⑩⑪）：子管线 `lemeng.retail_order_line.tick` / `.window`（窗级失败汇成父 run 红）；",
+  "     `lemeng.retail.windows.backfill`（未排期，手动/一次性）。",
+  "   📌 生效前提同 ⑨：seed 进卷（/workspace/alerts.json）才生效。"
+ ],
+ "rules": [
+  {
+   "match": "*",
+   "on": [
+    "stale",
+    "refreshed"
+   ],
+   "cooldownMinutes": 15,
+   "channel": "webhook",
+   "url": "${ENV:OO_BASE}/api/${ENV:OO_ORG}/data_alerts/_json",
+   "headers": {
+    "Authorization": "Basic ${ENV:OO_AUTH}"
+   }
+  },
+  {
+   "match": "lemeng.dim.*.l0",
+   "on": [
+    "failure",
+    "recovery"
+   ],
+   "cooldownMinutes": 15,
+   "channel": "webhook",
+   "url": "${ENV:OO_BASE}/api/${ENV:OO_ORG}/data_alerts/_json",
+   "headers": {
+    "Authorization": "Basic ${ENV:OO_AUTH}"
+   }
+  },
+  {
+   "match": "lemeng.*.l0.3120",
+   "on": [
+    "failure",
+    "recovery"
+   ],
+   "cooldownMinutes": 15,
+   "channel": "webhook",
+   "url": "${ENV:OO_BASE}/api/${ENV:OO_ORG}/data_alerts/_json",
+   "headers": {
+    "Authorization": "Basic ${ENV:OO_AUTH}"
+   }
+  },
+  {
+   "match": "lemeng.inventory.snapshot.catchup.3120",
+   "on": [
+    "failure",
+    "recovery"
+   ],
+   "cooldownMinutes": 15,
+   "channel": "webhook",
+   "url": "${ENV:OO_BASE}/api/${ENV:OO_ORG}/data_alerts/_json",
+   "headers": {
+    "Authorization": "Basic ${ENV:OO_AUTH}"
+   }
+  },
+  {
+   "match": "lemeng.retail.windows.l1",
+   "on": [
+    "failure",
+    "recovery"
+   ],
+   "cooldownMinutes": 15,
+   "channel": "webhook",
+   "url": "${ENV:OO_BASE}/api/${ENV:OO_ORG}/data_alerts/_json",
+   "headers": {
+    "Authorization": "Basic ${ENV:OO_AUTH}"
+   }
+  },
+  {
+   "match": "lemeng.retail.tick.l1",
+   "on": [
+    "failure",
+    "recovery"
+   ],
+   "cooldownMinutes": 60,
+   "channel": "webhook",
+   "url": "${ENV:OO_BASE}/api/${ENV:OO_ORG}/data_alerts/_json",
+   "headers": {
+    "Authorization": "Basic ${ENV:OO_AUTH}"
+   }
+  },
+  {
+   "match": "lemeng.retail.close.l1",
+   "on": [
+    "failure",
+    "recovery"
+   ],
+   "cooldownMinutes": 15,
+   "channel": "webhook",
+   "url": "${ENV:OO_BASE}/api/${ENV:OO_ORG}/data_alerts/_json",
+   "headers": {
+    "Authorization": "Basic ${ENV:OO_AUTH}"
+   }
+  },
+  {
+   "match": "lemeng.recon.*",
+   "on": [
+    "failure",
+    "recovery"
+   ],
+   "cooldownMinutes": 15,
+   "channel": "webhook",
+   "url": "${ENV:OO_BASE}/api/${ENV:OO_ORG}/data_alerts/_json",
+   "headers": {
+    "Authorization": "Basic ${ENV:OO_AUTH}"
+   }
+  },
+  {
+   "match": "lemeng.metric_profile.*",
+   "on": [
+    "failure",
+    "recovery"
+   ],
+   "cooldownMinutes": 15,
+   "channel": "webhook",
+   "url": "${ENV:OO_BASE}/api/${ENV:OO_ORG}/data_alerts/_json",
+   "headers": {
+    "Authorization": "Basic ${ENV:OO_AUTH}"
+   }
+  },
+  {
+   "match": "lemeng.*.l0.64188",
+   "on": [
+    "failure",
+    "recovery"
+   ],
+   "cooldownMinutes": 15,
+   "channel": "webhook",
+   "url": "${ENV:OO_BASE}/api/${ENV:OO_ORG}/data_alerts/_json",
+   "headers": {
+    "Authorization": "Basic ${ENV:OO_AUTH}"
+   }
+  },
+  {
+   "match": "lemeng.inventory.snapshot.catchup.64188",
+   "on": [
+    "failure",
+    "recovery"
+   ],
+   "cooldownMinutes": 15,
+   "channel": "webhook",
+   "url": "${ENV:OO_BASE}/api/${ENV:OO_ORG}/data_alerts/_json",
+   "headers": {
+    "Authorization": "Basic ${ENV:OO_AUTH}"
+   }
+  },
+  {
+   "match": "lemeng.retail_order_line.daily_sealed.reconcile",
+   "on": [
+    "failure",
+    "recovery"
+   ],
+   "cooldownMinutes": 15,
+   "channel": "webhook",
+   "url": "${ENV:OO_BASE}/api/${ENV:OO_ORG}/data_alerts/_json",
+   "headers": {
+    "Authorization": "Basic ${ENV:OO_AUTH}"
+   }
+  },
+  {
+   "match": "lemeng.retail_order_line.month.compact",
+   "on": [
+    "failure",
+    "recovery"
+   ],
+   "cooldownMinutes": 15,
+   "channel": "webhook",
+   "url": "${ENV:OO_BASE}/api/${ENV:OO_ORG}/data_alerts/_json",
+   "headers": {
+    "Authorization": "Basic ${ENV:OO_AUTH}"
+   }
+  }
+ ]
 }
