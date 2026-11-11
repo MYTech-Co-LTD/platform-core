@@ -45,15 +45,14 @@
 | **Wave 0.2 缓存正确性** | PR #1956：缓存键含数据版本（封版水位 + 月文件构建时刻，5s 进程缓存）；`TTL=0` 真关闭 |
 | **Wave 0.3 权限收口** | PR #1958：明细接 `scopePlan`（audit 写 scope_plan/denial）；explore enforce 下仅管理员放行 |
 | **Wave 0.4 告警有效性** | PR #1961：桥 v5 `PROBE_NO_COOLDOWN=sealed_manifest`（冷却已存在时仍推送，反向测试 `probes=1`）；正典 OO 口径订正为 14 ALERT/13 enabled |
+| **Wave 1.1 manifest 投递** | 生产 server 服务加 `/opt/platform-core-data/platform-core/dbt/target:/app/dbt-target:ro` + `DATA_DBT_MANIFEST_PATH`；部署 `dep_ejqOe_l_7Z-Sc6rc`（v267）容器内实测：nodes 427 / child_map 454 / schema v12，`dependsOnOf('fct_retail_sale')=['stg_lemeng_retail_order_line']`、`testCountOf('vw_lemeng_retail_order_line')=6` ⇒ lineage/quality 不再 `dbt_manifest_unavailable` |
+| **Wave 1.2 证据真值** | PR #1967：`dataAsOf`/`freshness` 走 `freshnessFaceFor`（与问数面同一判据）；`reconcile` 读物化 job 的 `run_results.json`（mtime 缓存），状态扩 `ok|failed|missing|unknown`——「没跑」≠「通过」。**已知边界**：`run_results.json` 只记**最近一次 dbt 调用**；小时级增量跑只覆盖少数模型（实测 14:25 一轮 9 节点 / 0 条对账测试 ⇒ `unknown`，13:42 全量一轮 103 条测试 ⇒ 有结论）。`executedAt` 如实给出那次调用时刻，读侧据此判断新鲜度 |
+| **Wave 1.3 来源补齐** | PR #1967：`query_metric.provenance`（source=metric/relation/executedAt/auditId）+ `callTool` 单点回填 `auditId`（不新建、不覆盖） |
 
 ### 待办（Wave 见 §4）
 
 | 项 | 现状证据 | 波次 |
 |---|---|---|
-| 缓存无数据版本；TTL=0 关不掉 | `result-cache.ts:30,37-40`；`Number('0')\|\|60000` | **0.2** |
-| manifest 未投递（血缘/质量恒 unknown） | env 未设、无挂载（实测）；`.env.example:167` 空值 | **1.1** |
-| evidence 三字段写死 unknown | `recipes.ts:130-138` | **1.2** |
-| query_metric 无 provenance；explore/recipe 无 auditId | `toolbox/query.ts:107-144`；`explore.ts:49-54` | **1.3** |
 | 回归/候选 job 未入仓；候选无 list/reject/调度 | `deploy/` 零命中；`private-measures.ts:190,227,297` | **1.4** |
 | 测试覆盖不均（12 staging / 6 marts / schema.yml） | 见 §2 | 2.1 |
 | 契约元 schema 未校验 + 文档漂移 + 版本门 | `contracts/README.md:101,112`；`contract.ts:33-36` 无校验 | 2.2 |
@@ -107,3 +106,4 @@
 |---|---|---|
 | 2026-11-11 | v1：Helix 借鉴线地图（六项 P0/P1/P2） | 回顾 2026-11-06 方案 |
 | 2026-11-11 | **v2：改为全系统开发地图**，Wave 0 新增资源准入/缓存正确性/权限收口/告警有效性；Helix 六项映射进 Wave 1–2 | 四路盘点发现「以为有其实没有 / 有了但不安全」，按上线风险重排 |
+| 2026-11-11 | Wave 1.1/1.2/1.3 完成入账；待办表清掉 0.2 残留行 | 证据：PR #1967 + 部署 `dep_ejqOe_l_7Z-Sc6rc` 容器内实测（见 §3） |
