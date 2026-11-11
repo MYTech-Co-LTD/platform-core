@@ -196,6 +196,19 @@ api:
     #    草稿预览（preview:'draft'）另要 canEditAsset（owner ∪ data:manage）；跨租户 / 无门一律 404。──
     - { method: POST,   path: /reports/:id/narrative,                 scope: data:query }
     - { method: POST,   path: /reports/:id/narrative/stream,          scope: data:query }
+    # ── 数据范围 scope 管理面（spec 2026-11-10 §5.5；issue #1901）──
+    # 全部 data:manage（授权变更是管理动作；运行期执法在 authorizeCore，这里只有配置面）。
+    # 判定链在 domain/scope-admin.ts：selector 闭集 + 受控维表存在性校验（fail-closed，
+    # 不建「永远没人能满足」的门）+ 写后回读 + data.scope_audit。effective 是预览（dry-run），
+    # 给运营排查「为什么他看不见东部一区」——?user= 必填，?roles=a,b 可选。
+    # ⚠️ 六条声明必须与 registerScopes（routes/scopes.ts）注册的集合逐条一致
+    #    （装载期双向核对：漏声明 ⇒ 恒 403；多声明 ⇒ 装载失败）。
+    - { method: GET,    path: /scopes,                    scope: data:manage }
+    - { method: GET,    path: /scopes/effective,          scope: data:manage }
+    - { method: POST,   path: /scopes,                    scope: data:manage }
+    - { method: PUT,    path: /scopes/:id,                scope: data:manage }
+    - { method: DELETE, path: /scopes/:id,                scope: data:manage }
+    - { method: PUT,    path: /scopes/:id/assignments,    scope: data:manage }
 # 通知事件（模块协议 12：先声明再发；spec 2026-11-01 §10.4 D6「生效必发通知」）。
 # 收件人 = 持 data:query 的人（scope_holders；指标查看面唯一门就是这个码，声明侧没有
 # 逐指标 viewer 清单，这是 P0 的诚实近似——资产级 ACL 到指标是后续议题）。defaults 幂等
