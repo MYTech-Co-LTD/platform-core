@@ -33,7 +33,7 @@
     "label": "cast keys",
     "componentId": "code.sql",
     "properties": {
-     "sql": "select distinct cast(system_book as varchar) as system_book, cast(bizday as date) as bizday from input"
+     "sql": "select distinct cast(system_book as varchar) as system_book, cast(bizday as date) as bizday, now() as checked_at from input"
     }
    }
   },

@@ -111,7 +111,7 @@
 #    #1872 把明细视图的封版判定从 `_DAILY/*.parquet` glob 改成读仓内表 `data.lemeng_daily_sealed`
 #    （1,541 个小文件 glob 单次 >110s 且会打崩 pg_duckdb）。效果有三条腿会**静默坏**，各一条断言：
 #
-#    ⑯ 封版水位：表里 max(bizday) 必须跟到「上海今天−1」（02:00 前按 −2），且 max(sealed_at)
+#    ⑯ 封版水位：表里 max(bizday) 必须跟到「上海今天−1」（02:00 前按 −2），且 max(checked_at)
 #       不超过 WIRE_SEALED_MAX_AGE_MIN（默认 180 分钟；reconcile 每 30 分钟一轮，等于连续 6 轮没跑）。
 #       抓的形状：reconcile 管线停 ⇒ 新的一天没进表 ⇒ 视图读侧不排除该日 hot 小时 ⇒ **静默双算**，
 #       而所有 job 都是绿的（表只是旧，没有任何报错）。同时覆盖「day 管线 mst 节点没写」。
@@ -490,7 +490,7 @@ assert_pg_crash_free() {
   echo "OK 近 ${PGCRASH_WINDOW} 无 signal 11 / recovery"
 }
 
-# ⑯ 封版水位（#1872 收尾）：max(bizday) 跟到 上海今天−1（02:00 前按 −2）+ max(sealed_at) 未超龄。
+# ⑯ 封版水位（#1872 收尾）：max(bizday) 跟到 上海今天−1（02:00 前按 −2）+ max(checked_at) 未超龄。
 #    容差来源：day 管线在 CST 00:0x 封前一天；reconcile 每 30 分钟一轮 ⇒ 3h ≈ 连续 6 轮没跑。
 assert_sealed_manifest() {
   printf '⑯ 封版 manifest 水位（%s）—— ' "$SEALED_TABLE"
@@ -503,12 +503,12 @@ const {Client}=require('pg');
 const c=new Client({connectionString:process.env.DATA_WAREHOUSE_URL});
 (async()=>{try{
   await c.connect();
-  const r=await c.query('select (count(*) filter (where bizday > date \'1970-01-01\'))::int as n, coalesce(max(bizday)::text,\'\') as maxday, coalesce(round(extract(epoch from (now() - max(sealed_at)))/60)::int,-1) as age_min, ((now() at time zone \'Asia/Shanghai\')::date - case when (now() at time zone \'Asia/Shanghai\')::time < time \'02:00:00\' then 2 else 1 end)::text as cutoff from ${SEALED_TABLE}');
+  const r=await c.query('select (count(*) filter (where bizday > date \'1970-01-01\'))::int as n, coalesce(max(bizday)::text,\'\') as maxday, coalesce(round(extract(epoch from (now() - max(checked_at)))/60)::int,-1) as age_min, ((now() at time zone \'Asia/Shanghai\')::date - case when (now() at time zone \'Asia/Shanghai\')::time < time \'02:00:00\' then 2 else 1 end)::text as cutoff from ${SEALED_TABLE}');
   const {n,maxday,age_min,cutoff}=r.rows[0];
   await c.end();
   if(n<=0){console.log('ERR 表里没有有效封版行（n=0，只有 bootstrap 或为空）');process.exit(1)}
   if(maxday<cutoff){console.log('ERR 封版水位停更 max='+maxday+' < 容差线='+cutoff+'（reconcile/day 管线没写进来）');process.exit(1)}
-  if(age_min<0||age_min>${SEALED_MAX_AGE_MIN}){console.log('ERR reconcile 停摆：max(sealed_at) 距今 '+(age_min<0?'(空)':age_min+' 分钟')+' > ${SEALED_MAX_AGE_MIN} 分钟');process.exit(1)}
+  if(age_min<0||age_min>${SEALED_MAX_AGE_MIN}){console.log('ERR reconcile 停摆：max(checked_at) 距今 '+(age_min<0?'(空)':age_min+' 分钟')+' > ${SEALED_MAX_AGE_MIN} 分钟');process.exit(1)}
   console.log('OK max='+maxday+'（容差线 '+cutoff+'）'+' sealed_age='+age_min+'m');
 }catch(e){console.log('ERR '+e.message);process.exit(1)}})()
 "
@@ -570,7 +570,7 @@ const c=new Client({connectionString:process.env.DATA_WAREHOUSE_URL});
   await c.connect();
   // glob() 走 pg_duckdb 的持久 S3 secret（与视图同一通道）；不读数据，只列对象。
   // ⚠️ 外层 PG 不能直接 select n：pg_duckdb 的 duckdb.query() 是 record 返回，PG 解析
-  //    列名会报 `column \"n\" does not exist`（2026-11-11 实测）。用 select * 由 pg 取字段名。
+  //    列名会报 column n does not exist（2026-11-11 实测）。用 select * 由 pg 取字段名。
   const sql=\"select * from duckdb.query('select count(*) as n from glob(''${HOT_GLOB}'')') t\";
   const r=await c.query(sql);
   await c.end();
