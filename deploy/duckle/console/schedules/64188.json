@@ -48,7 +48,7 @@
     "enabled": true,
     "kind": {
       "type": "cron",
-      "expr": "38 9-23 * * *"
+      "expr": "42 9-23 * * *"
     },
     "timezone": "Asia/Shanghai",
     "misfire": "skip",
@@ -153,7 +153,7 @@
     "enabled": true,
     "kind": {
       "type": "cron",
-      "expr": "26 9-23 * * *"
+      "expr": "28 9-23 * * *"
     },
     "timezone": "Asia/Shanghai",
     "misfire": "skip",
@@ -174,7 +174,7 @@
     "enabled": true,
     "kind": {
       "type": "cron",
-      "expr": "17 9-23 * * *"
+      "expr": "22 9-23 * * *"
     },
     "timezone": "Asia/Shanghai",
     "misfire": "skip",
@@ -195,7 +195,7 @@
     "enabled": true,
     "kind": {
       "type": "cron",
-      "expr": "22 9-23 * * *"
+      "expr": "24 9-23 * * *"
     },
     "timezone": "Asia/Shanghai",
     "misfire": "skip",
@@ -216,7 +216,7 @@
     "enabled": true,
     "kind": {
       "type": "cron",
-      "expr": "28 9-23 * * *"
+      "expr": "32 9-23 * * *"
     },
     "timezone": "Asia/Shanghai",
     "misfire": "skip",
@@ -237,7 +237,7 @@
     "enabled": true,
     "kind": {
       "type": "cron",
-      "expr": "34 9-23 * * *"
+      "expr": "36 9-23 * * *"
     },
     "timezone": "Asia/Shanghai",
     "misfire": "skip",
@@ -258,7 +258,7 @@
     "enabled": true,
     "kind": {
       "type": "cron",
-      "expr": "42 9-23 * * *"
+      "expr": "44 9-23 * * *"
     },
     "timezone": "Asia/Shanghai",
     "misfire": "skip",
@@ -279,7 +279,7 @@
     "enabled": true,
     "kind": {
       "type": "cron",
-      "expr": "46 9-23 * * *"
+      "expr": "48 9-23 * * *"
     },
     "timezone": "Asia/Shanghai",
     "misfire": "skip",
@@ -342,7 +342,7 @@
     "enabled": true,
     "kind": {
       "type": "cron",
-      "expr": "48 9-23 * * *"
+      "expr": "52 9-23 * * *"
     },
     "timezone": "Asia/Shanghai",
     "misfire": "skip",
@@ -363,7 +363,7 @@
     "enabled": true,
     "kind": {
       "type": "cron",
-      "expr": "24 9-23 * * *"
+      "expr": "26 9-23 * * *"
     },
     "timezone": "Asia/Shanghai",
     "misfire": "skip",
@@ -384,7 +384,7 @@
     "enabled": true,
     "kind": {
       "type": "cron",
-      "expr": "44 9-23 * * *"
+      "expr": "46 9-23 * * *"
     },
     "timezone": "Asia/Shanghai",
     "misfire": "skip",
@@ -573,7 +573,7 @@
     "enabled": true,
     "kind": {
       "type": "cron",
-      "expr": "36 9-23 * * *"
+      "expr": "38 9-23 * * *"
     },
     "timezone": "Asia/Shanghai",
     "misfire": "all",
@@ -594,7 +594,7 @@
     "enabled": true,
     "kind": {
       "type": "cron",
-      "expr": "32 9-23 * * *"
+      "expr": "34 9-23 * * *"
     },
     "timezone": "Asia/Shanghai",
     "misfire": "all",
@@ -622,6 +622,27 @@
     "catchup": {
       "maxCatchupRuns": 2,
       "maxCatchupAgeDays": 1
+    },
+    "last_run_at": null,
+    "last_run_status": null,
+    "last_run_duration_ms": null,
+    "last_run_error": null,
+    "next_run_at": null
+  },
+  {
+    "id": "panel-lemeng.dim.item_category.l0",
+    "pipeline_id": "lemeng.dim.item_category.l0",
+    "name": "lemeng.dim.item_category.l0",
+    "enabled": true,
+    "kind": {
+      "type": "cron",
+      "expr": "17 9-23 * * *"
+    },
+    "timezone": "Asia/Shanghai",
+    "misfire": "skip",
+    "catchup": {
+      "maxCatchupRuns": 31,
+      "maxCatchupAgeDays": 45
     },
     "last_run_at": null,
     "last_run_status": null,

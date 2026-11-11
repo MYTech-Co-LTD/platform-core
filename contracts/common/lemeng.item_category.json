@@ -1,0 +1,87 @@
+{
+  "$schema": "./_schema.schema.json",
+  "contractVersion": 2,
+  "schemaVersion": 1,
+  "consumerVersion": 1,
+  "domain": "lemeng",
+  "table": "item_category",
+  "owner": "data-platform",
+  "description": "乐檬商品类别树（nhsoft.base.ai.item.category.find 全量快照，**单次返回、无分页**）。两账套各采各的（PAT 绑定单账套）。【行粒度】一行 = 一个账套在一个快照日的一个类别节点；自然键 `(system_book, snapshot, category_id)`，实体键 `(system_book, category_id)`。【用途】数据范围 RBAC 的品类映射：沿 `parent_id` 走到 `level=1` 根类别，替代此前从商品档案反推祖先——`stg_lemeng_item` 只带商品被指派的叶子，中间层节点不出现 ⇒ 77 个类别 / 1,828 个商品（4.3%）落 `其他`（issue #1913）。【字段口径（2026-11-11 真机实测）】3120 = 163 节点（level 1:6 / 2:27 / 3:98 / 4:19 / 5:13），64188 = 167 节点；根节点 `parent_id` 为空、`deleted_flag` 当前恒 false（保留以对接未来软删）；`path` / `code_path` 实测恒 null（故仍靠 parent_id 走链，不依赖源侧路径）。【layout 说明】prefix 写 `lemeng/dim_item_category`（本域维度表落湖一律带 `dim_` 段，与 `dim_branch` / `dim_item` 同形），故它**不等于** `domain/table`（= `lemeng/item_category`）—— 与 `lemeng.branch.json` 同款既有口径，不是笔误。",
+  "layout": {
+    "prefix": "lemeng/dim_item_category",
+    "partitionStyle": "hive",
+    "partitionBy": ["system_book", "snapshot"],
+    "fileName": "all.parquet"
+  },
+  "batch": {
+    "markerColumn": "batch_id",
+    "type": "varchar",
+    "unique": false,
+    "note": "= 采集 run id。同快照重跑换新 run id，幂等靠对象覆盖写。"
+  },
+  "columns": [
+    {
+      "name": "batch_id",
+      "type": "varchar",
+      "nullable": false,
+      "description": "批次标记",
+      "expr": "'dim-' || '${ENV:SYSTEM_BOOK}' || '-item-category-' || replace(replace('${datetime}','-',''),'_','T') || 'Z'"
+    },
+    {
+      "name": "system_book",
+      "type": "varchar",
+      "nullable": false,
+      "description": "账套（3120/64188）；分区键，来源=采集侧常量注入（`ENV:SYSTEM_BOOK`）",
+      "expr": "'${ENV:SYSTEM_BOOK}'"
+    },
+    {
+      "name": "snapshot",
+      "type": "date",
+      "nullable": false,
+      "description": "快照日（Asia/Shanghai 日历日）；分区键",
+      "expr": "CAST('${date+8h}' AS DATE)"
+    },
+    {
+      "name": "category_id",
+      "type": "bigint",
+      "nullable": false,
+      "description": "类别 id（源 `id`）；实体键之一；与 `stg_lemeng_item.item_category_id` 同空间",
+      "expr": "CAST(o.id AS BIGINT)"
+    },
+    {
+      "name": "parent_id",
+      "type": "bigint",
+      "nullable": true,
+      "description": "父类别 id；根节点为 NULL",
+      "expr": "CAST(o.parent_id AS BIGINT)"
+    },
+    {
+      "name": "level",
+      "type": "integer",
+      "nullable": false,
+      "description": "类别层级（1 = 根；实测 1..5）",
+      "expr": "CAST(o.level AS INTEGER)"
+    },
+    {
+      "name": "category_name",
+      "type": "varchar",
+      "nullable": true,
+      "description": "类别名（根名为数据范围 `category_group` 映射的输入）",
+      "expr": "CAST(o.category_name AS VARCHAR)"
+    },
+    {
+      "name": "category_code",
+      "type": "varchar",
+      "nullable": true,
+      "description": "类别编码（如 SX / BP / PK）",
+      "expr": "CAST(o.category_code AS VARCHAR)"
+    },
+    {
+      "name": "deleted_flag",
+      "type": "boolean",
+      "nullable": true,
+      "description": "源侧软删标记（实测当前恒 false；保留以对接未来软删，不在本层过滤）",
+      "expr": "CAST(o.deleted_flag AS BOOLEAN)"
+    }
+  ]
+}

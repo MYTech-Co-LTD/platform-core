@@ -1,6 +1,6 @@
 // console-schedules-tz.test.ts — 业务排班时区统一门禁（spec 2026-10-15 §10.6，2026-10-16 用户拍板）。
 //
-// 钉什么：deploy/duckle/console/schedules/ 下三本种子（3120×35 + 64188×30 + forms×1，共 66 条）必须
+// 钉什么：deploy/duckle/console/schedules/ 下三本种子（3120×36 + 64188×31 + forms×1，共 68 条）必须
 //   ① 全部显式 `timezone: 'Asia/Shanghai'`（含原先缺省无字段的 9 条）；
 //   ② `kind.expr` 与 §10.6 转换表**逐字**一致（旧 UTC expr +8h）。
 //   ⚠️ **2026-11-07 订正（#1624）**：非销售采集由「每 2 小时 5 轮」改为**每小时 15 轮**，
@@ -38,27 +38,29 @@ const EXPECTED: Record<string, Record<string, string>> = {
     'panel-lemeng.dim.item.l0': '3 9-23 * * *',
     'panel-lemeng.retail.close.l1': '0 0 * * *',
     'panel-lemeng.dim.branch.l0': '0 9-23 * * *',
-    'panel-lemeng.branch.expense.l0.3120': '6 9-23 * * *',
-    'panel-lemeng.branch_indicator.l0.3120': '12 9-23 * * *',
+    // #1913：品类树（双账套各一条 L0）
+    'panel-lemeng.dim.item_category.l0': '17 9-23 * * *',
+    'panel-lemeng.branch.expense.l0.3120': '34 9-23 * * *',
+    'panel-lemeng.branch_indicator.l0.3120': '22 9-23 * * *',
     // 2026-11-06 营业收款三件套（门店汇总 / 门店收款构成 / 卡券汇总）
-    'panel-lemeng.business_collection.l0.3120': '39 9-23 * * *',
-    'panel-lemeng.business_collection_receive.l0.3120': '45 9-23 * * *',
+    'panel-lemeng.business_collection.l0.3120': '26 9-23 * * *',
+    'panel-lemeng.business_collection_receive.l0.3120': '36 9-23 * * *',
     'panel-lemeng.business_collection_coupon.l0.3120': '42 9-23 * * *',
-    'panel-lemeng.loss.adjustment.l0.3120': '9 9-23 * * *',
-    'panel-lemeng.dim.item_price.l0.3120': '18 9-23 * * *',
-    'panel-lemeng.client.expense.l0.3120': '15 9-23 * * *',
-    'panel-lemeng.request.order.l0.3120': '21 9-23 * * *',
-    'panel-lemeng.transfer.in.l0.3120': '24 9-23 * * *',
+    'panel-lemeng.loss.adjustment.l0.3120': '48 9-23 * * *',
+    'panel-lemeng.dim.item_price.l0.3120': '46 9-23 * * *',
+    'panel-lemeng.client.expense.l0.3120': '28 9-23 * * *',
+    'panel-lemeng.request.order.l0.3120': '54 9-23 * * *',
+    'panel-lemeng.transfer.in.l0.3120': '44 9-23 * * *',
     'panel-lemeng.retail.windows.l1': '30 10,18 * * *',
-    'panel-lemeng.transfer.out.l0.3120': '30 9-23 * * *',
+    'panel-lemeng.transfer.out.l0.3120': '38 9-23 * * *',
     'panel-lemeng.inventory.snapshot.l0.3120': '27 9-23 * * *',
     // #1079 兜底轮：主轮（T-2）当天全空时补前一日（T-3），每日 00:35 CST 一轮
     'panel-lemeng.inventory.snapshot.catchup.3120': '35 0 * * *',
-    'panel-lemeng.purchase.analysis.l0.3120': '33 9-23 * * *',
-    'panel-lemeng.wholesale.out.l0.3120': '36 9-23 * * *',
-    'panel-lemeng.client.l0.3120': '48 9-23 * * *',
-    'panel-lemeng.wholesale.return.l0.3120': '54 9-23 * * *',
-    'panel-lemeng.member.summary.l0.3120': '51 9-23 * * *',
+    'panel-lemeng.purchase.analysis.l0.3120': '58 9-23 * * *',
+    'panel-lemeng.wholesale.out.l0.3120': '24 9-23 * * *',
+    'panel-lemeng.client.l0.3120': '56 9-23 * * *',
+    'panel-lemeng.wholesale.return.l0.3120': '32 9-23 * * *',
+    'panel-lemeng.member.summary.l0.3120': '52 9-23 * * *',
     'panel-lemeng.recon.preagg': '40 0 * * *',
     // W2（2026-11-05）：duckle profiler 周更；CST 周日 05:10 跑 21 个 L1 关系的列画像
     'panel-lemeng.metric_profile.3120': '10 5 * * 0',
@@ -77,29 +79,31 @@ const EXPECTED: Record<string, Record<string, string>> = {
     'panel-lemeng.item_sales.l0.64188': '0 3 * * *',
     'panel-lemeng.item_profit.l0.64188': '5 5,9 * * *',
     'panel-lemeng.dim.branch.l0': '0 9-23 * * *',
+    // #1913：品类树（双账套各一条 L0）
+    'panel-lemeng.dim.item_category.l0': '17 9-23 * * *',
     'panel-lemeng.dim.item.l0': '3 9-23 * * *',
-    'panel-lemeng.dim.item_price.l0': '18 9-23 * * *',
+    'panel-lemeng.dim.item_price.l0': '42 9-23 * * *',
     'panel-lemeng.retail.windows.l1': '30 10,18 * * *',
     'panel-lemeng.retail.tick.l1': '*/10 9-23 * * *',
     'panel-lemeng.retail.close.l1': '0 0 * * *',
     'panel-lemeng.recon.preagg': '30 0 * * *',
     // 2026-10-27（#1088）64188 补采：要货/采购/报损/库存(主+兜底)/门店费用/客户费用/门店指标/会员汇总。
     // 批发与配送**明确不采**（用户 2026-10-27 裁决），故无 transfer.* / wholesale.* 条目。
-    'panel-lemeng.branch.expense.l0.64188': '6 9-23 * * *',
-    'panel-lemeng.branch_indicator.l0.64188': '12 9-23 * * *',
+    'panel-lemeng.branch.expense.l0.64188': '28 9-23 * * *',
+    'panel-lemeng.branch_indicator.l0.64188': '22 9-23 * * *',
     // 2026-11-06 营业收款三件套（与 3120 同批）
-    'panel-lemeng.business_collection.l0.64188': '36 9-23 * * *',
-    'panel-lemeng.business_collection_receive.l0.64188': '42 9-23 * * *',
-    'panel-lemeng.business_collection_coupon.l0.64188': '39 9-23 * * *',
-    'panel-lemeng.loss.adjustment.l0.64188': '9 9-23 * * *',
-    'panel-lemeng.request.order.l0.64188': '21 9-23 * * *',
+    'panel-lemeng.business_collection.l0.64188': '24 9-23 * * *',
+    'panel-lemeng.business_collection_receive.l0.64188': '32 9-23 * * *',
+    'panel-lemeng.business_collection_coupon.l0.64188': '36 9-23 * * *',
+    'panel-lemeng.loss.adjustment.l0.64188': '44 9-23 * * *',
+    'panel-lemeng.request.order.l0.64188': '48 9-23 * * *',
     'panel-lemeng.inventory.snapshot.l0.64188': '27 9-23 * * *',
     'panel-lemeng.inventory.snapshot.catchup.64188': '35 0 * * *',
-    'panel-lemeng.purchase.analysis.l0.64188': '33 9-23 * * *',
-    'panel-lemeng.client.expense.l0.64188': '15 9-23 * * *',
-    'panel-lemeng.member.summary.l0.64188': '45 9-23 * * *',
-    'panel-lemeng.transfer.in.l0.64188': '24 9-23 * * *',
-    'panel-lemeng.transfer.out.l0.64188': '30 9-23 * * *',
+    'panel-lemeng.purchase.analysis.l0.64188': '52 9-23 * * *',
+    'panel-lemeng.client.expense.l0.64188': '26 9-23 * * *',
+    'panel-lemeng.member.summary.l0.64188': '46 9-23 * * *',
+    'panel-lemeng.transfer.in.l0.64188': '38 9-23 * * *',
+    'panel-lemeng.transfer.out.l0.64188': '34 9-23 * * *',
     // #1872：封版 manifest 对账，每 30 分钟（与 3120 错峰）
     'panel-lemeng.retail_order_line.daily_sealed.reconcile': '17,47 * * * *',
   },
@@ -145,8 +149,8 @@ describe('console 排班时区统一（spec §10.6）：全显式 Asia/Shanghai 
     })
   }
 
-  it('合计恰 66 条（3120×35 + 64188×30 + forms×1）——条数漂移必须显式改 spec §10.6 与本测试', () => {
+  it('合计恰 68 条（3120×36 + 64188×31 + forms×1）——条数漂移必须显式改 spec §10.6 与本测试', () => {
     const total = Object.values(EXPECTED).reduce((n, m) => n + Object.keys(m).length, 0)
-    expect(total).toBe(66)
+    expect(total).toBe(68)
   })
 })

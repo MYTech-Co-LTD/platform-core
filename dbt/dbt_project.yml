@@ -71,6 +71,8 @@ vars:
   # 出处：contracts/common/lemeng.item.json 的 `layout.prefix` / `partitionBy`（hive 两级分区）。
   # 消费者 = `stg_lemeng_item`（唯一）；分域单点：每个域一个 var，谁读哪个见对应 staging 的头注。
   lemeng_item_prefix: 'lemeng/dim_item'
+  # 商品类别树（#1913）：全量快照，单次返回无分页。消费者 = stg_lemeng_item_category（唯一）。
+  lemeng_item_category_prefix: 'lemeng/dim_item_category'
   # 乐檬**门店商品应用价**前缀（#481 价格批；R1 增量；不含 bucket / 协议）：
   # s3://<bucket>/lemeng/item_price/system_book=<账套>/bizday=<YYYY-MM-DD>/<run 时间戳>/all.parquet
   # 出处：contracts/common/lemeng.item_price.json 的 `layout.prefix` / `partitionBy`（hive 两级分区；
