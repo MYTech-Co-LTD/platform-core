@@ -185,9 +185,19 @@ export function buildScopePlan(
       )
       applied.push('store')
     } else if (dims.has('region_l1') || dims.has('region_name')) {
+      // 指标直接暴露战区维（无 branch_num）。selector 的层级与指标层级可能错位——
+      // 用受控维 dim_region 做**同一份映射**（2026-11-11 真机：14 个二级区用户对战区
+      // 粒度指标恒拒；错位不是「配错了」，是 selector 与 grain 的合法组合）：
+      //   · 指标是 region_l1、selector 是 region_name ⇒ region_l1 IN (select … where region_name in …)
+      //   · 指标是 region_name、selector 是 region_l1 ⇒ region_name IN (select … where region_l1 in …)
+      // dim_region 是按租户 schema 隔离的（无 org 列），故子查询不带 org。
       const regionParts = [
         ...(l1.length > 0 && dims.has('region_l1') ? [`region_l1 IN (${placeholders(l1)})`] : []),
         ...(l2.length > 0 && dims.has('region_name') ? [`region_name IN (${placeholders(l2)})`] : []),
+        ...(l1.length === 0 && l2.length > 0 && dims.has('region_l1')
+          ? [`region_l1 IN (SELECT region_l1 FROM dim_region WHERE region_name IN (${placeholders(l2)}))`] : []),
+        ...(l2.length === 0 && l1.length > 0 && dims.has('region_name')
+          ? [`region_name IN (SELECT region_name FROM dim_region WHERE region_l1 IN (${placeholders(l1)}))`] : []),
       ]
       if (regionParts.length === 0) return deny('range_dimension_missing:store')
       filters.push(` AND (${regionParts.join(' OR ')})`)

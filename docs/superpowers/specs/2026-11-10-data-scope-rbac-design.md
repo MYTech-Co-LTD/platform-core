@@ -314,6 +314,9 @@ AND (system_book, item_num) IN (
 
 - 复合键要求 `system_book` 在粒度里；没有 ⇒ 拒绝（防跨账套串号）；
 - 指标粒度含 `region_l1`/`region_name` 但无 `branch_num` 时，可直接用 region 谓词；
+  **selector 与 grain 层级错位**（二级区 selector × `region_l1` 粒度，或反之）由 `dim_region`
+  在同一谓词内映射（`region_l1 IN (SELECT region_l1 FROM dim_region WHERE region_name IN (…))`）
+  ——2026-11-11 真机：14 个二级区用户在战区粒度指标上恒拒，改为映射后零拒绝；
 - 指标粒度含 `category_group` 但无 `item_num` 时，可直接用 category 谓词。
 
 ## 5. 执法与接线
