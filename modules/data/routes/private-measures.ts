@@ -29,8 +29,8 @@ import type { PrivateMeasureWriteDeps } from '../domain/metric-write'
 import { loadPlatformCatalog } from '../domain/metric-store'
 import type { MetricRow } from '../domain/metric-store'
 import { whitelistedRelations } from '../domain/private-measure'
-import { claimCandidate, getCandidate, setCandidateStatus } from '../domain/metric-candidates'
-import type { Candidate } from '../domain/metric-candidates'
+import { claimCandidate, getCandidate, listCandidates, rejectCandidate, setCandidateStatus } from '../domain/metric-candidates'
+import type { Candidate, CandidateOrigin, CandidateStatus } from '../domain/metric-candidates'
 import { generateCandidates } from '../domain/candidate-generator'
 import type { CandidateGeneratorDeps } from '../domain/candidate-generator'
 import { listArchivedPrivateMeasures } from '../domain/private-measure-lifecycle'
@@ -39,6 +39,15 @@ import { composeMetricDeclaration, readCurrentSemanticsYaml, SEMANTICS_YAML_REL 
 import { NOTE } from '../domain/pipelines/propose'
 
 const orgOf = (c: Context<ModuleVars>): string => c.get('tenant').casdoor_org
+
+/** 候选状态词表（读面过滤用）。域层 `CandidateStatus` 是唯一事实源——这里只判「是不是其中一员」。 */
+const CANDIDATE_STATUSES: ReadonlySet<string> = new Set<CandidateStatus>([
+  'pending', 'created', 'promoted', 'rejected', 'expired',
+])
+const CANDIDATE_ORIGINS: ReadonlySet<string> = new Set<CandidateOrigin>(['profile', 'demand'])
+/** 读面上限（候选池可能很大；不传按 200 收口，传大了也按 500 收口——不让一次请求拖垮连接）。 */
+const CANDIDATE_LIST_DEFAULT = 200
+const CANDIDATE_LIST_MAX = 500
 
 /**
  * POST body：行属性（id/title/description）+ 列级聚合声明（agg/column/dims/relation）。
@@ -222,6 +231,69 @@ export function registerPrivateMeasures(r: ModuleHono, ctx: RouteCtx): void {
       )
     }
     return c.json(result.report)
+  })
+
+  // ── 候选池读面（Wave 1.4）：人得先「看得见」才谈得上决策 ──────────────────────────
+  // 默认全状态、按置信降序；`status` / `origin` 过滤走域层（枚举校验在这里，域层只收窄）。
+  // 与 GET /metrics/verified 同口径：**无身份不列任何行**（不是报错，也不是全租户数据）。
+  r.get('/metrics/candidates', async (c) => {
+    const requester = requesterOf(c)
+    if (requester === null) return c.json({ candidates: [] })
+
+    const statusRaw = c.req.query('status')
+    if (statusRaw !== undefined && !CANDIDATE_STATUSES.has(statusRaw)) {
+      return c.json({ error: 'INVALID_STATUS', allowed: [...CANDIDATE_STATUSES] }, 400)
+    }
+    const originRaw = c.req.query('origin')
+    if (originRaw !== undefined && !CANDIDATE_ORIGINS.has(originRaw)) {
+      return c.json({ error: 'INVALID_ORIGIN', allowed: [...CANDIDATE_ORIGINS] }, 400)
+    }
+    const relation = c.req.query('relation')
+    // limit：非数字/非正 ⇒ 400（静默回默认会让调用方以为「给了就被尊重」）；超上限按上限收口。
+    const limitRaw = c.req.query('limit')
+    let limit = CANDIDATE_LIST_DEFAULT
+    if (limitRaw !== undefined) {
+      const n = Number(limitRaw)
+      if (!Number.isInteger(n) || n < 1) return c.json({ error: 'INVALID_LIMIT' }, 400)
+      limit = Math.min(n, CANDIDATE_LIST_MAX)
+    }
+    return c.json({
+      candidates: await listCandidates(ctx.pool, orgOf(c), {
+        ...(statusRaw === undefined ? {} : { status: statusRaw as CandidateStatus }),
+        ...(originRaw === undefined ? {} : { origin: originRaw as CandidateOrigin }),
+        ...(relation === undefined || relation === '' ? {} : { relation }),
+        limit,
+      }),
+      limit,
+    })
+  })
+
+  // 候选 → rejected（人工决策面）。与 adopt 同款 CAS 纪律：
+  //   ① 只认 pending（其余状态都是已经发生的决策，静默覆盖会抹掉「谁先决定的」）；
+  //   ② 抢不到时**重读**一次判 404 / 409——不把并发失败当成「不存在」。
+  r.post('/metrics/candidates/:id/reject', async (c) => {
+    const requester = requesterOf(c)
+    // 拒绝要能归属到人：审批链、复盘都靠这一条（与 adopt 同口径）。
+    if (requester === null || requester.userId.trim() === '') {
+      return c.json({ error: 'UNAUTHENTICATED' }, 403)
+    }
+    const candidateId = parseIdParam(c.req.param('id'))
+    if (candidateId === null) return c.json({ error: 'NOT_FOUND' }, 404)
+
+    const org = orgOf(c)
+    const candidate = await getCandidate(ctx.pool, org, candidateId)
+    if (candidate === null) return c.json({ error: 'NOT_FOUND' }, 404)
+    if (candidate.status !== 'pending') {
+      return c.json({ error: 'CANDIDATE_NOT_REJECTABLE', status: candidate.status }, 409)
+    }
+    const rejected = await rejectCandidate(ctx.pool, org, candidateId)
+    if (!rejected) {
+      // 并发输了：别人先用了/拒了/退役了。重读拿真实状态（读不到 = 刚被别人删掉 ⇒ 404）。
+      const current = await getCandidate(ctx.pool, org, candidateId)
+      if (current === null) return c.json({ error: 'NOT_FOUND' }, 404)
+      return c.json({ error: 'CANDIDATE_NOT_REJECTABLE', status: current.status }, 409)
+    }
+    return c.json({ ok: true, candidateStatus: 'rejected' }, 200)
   })
 
   r.post('/metrics/candidates/:id/adopt', async (c) => {

@@ -18,7 +18,7 @@ import type { MetricRow } from './metric-store'
 import type { RelationColumn } from './private-measure'
 import { applyMigrations } from '../test-util'
 import { listCandidates, setCandidateStatus } from './metric-candidates'
-import { generateCandidates, loadLatestProfiles, samePhysicalRelation } from './candidate-generator'
+import { generateCandidates, loadLatestProfiles, orgsWithProfiles, samePhysicalRelation } from './candidate-generator'
 import type { CandidateGeneratorDeps, ProfileRow } from './candidate-generator'
 
 const dbUrl = process.env.DATABASE_URL
@@ -466,5 +466,21 @@ describePg('loadLatestProfiles（仓库侧默认加载器）', () => {
       relation: 'staging.fct_x', column: 'a', profiledAt: '2026-11-04T00:00:00.000Z',
     })
     expect(rows[1]!.stats).toEqual({})
+  })
+})
+
+describe('orgsWithProfiles（定时生成 job 的驱动清单，Wave 1.4）', () => {
+  it('只取有画像行的 org，去重排序；空串/null 不进清单', async () => {
+    const calls: Array<{ sql: string; params: unknown[] }> = []
+    const fake = {
+      query: async (sql: string, params: unknown[]) => {
+        calls.push({ sql, params })
+        return { rows: [{ org: 'b-org' }, { org: 'a-org' }, { org: '' }, { org: null }] }
+      },
+    } as unknown as Pool
+    expect(await orgsWithProfiles(fake)).toEqual(['b-org', 'a-org'])
+    expect(calls[0]!.sql).toContain('data.metric_profiles')
+    expect(calls[0]!.sql).toContain('distinct org')
+    expect(calls[0]!.params ?? []).toEqual([])
   })
 })
