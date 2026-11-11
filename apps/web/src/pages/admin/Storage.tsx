@@ -139,7 +139,7 @@ export default function AdminStoragePage() {
       <Space orientation="vertical" size="middle" style={{ display: 'flex' }}>
         {storage && <StatusNotice storage={storage} />}
 
-        <Form<AdminStorageInput> form={form} layout="vertical" disabled={busy} onFinish={onSave}>
+        <Form<AdminStorageInput> form={form} layout="vertical" disabled={busy} onFinish={onSave} style={{ maxWidth: 560 }}>
           <Form.Item label="Endpoint" name="endpoint" rules={[{ required: true, message: '请填写 Endpoint' }]}>
             <Input placeholder="https://zos.example.com（不写协议默认补 https://）" autoComplete="off" />
           </Form.Item>

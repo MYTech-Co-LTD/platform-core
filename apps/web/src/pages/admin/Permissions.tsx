@@ -51,7 +51,7 @@ export default function AdminPermissionsPage() {
       title: '名称',
       dataIndex: 'name',
       key: 'name',
-      width: 160,
+      width: 240,
       render: (v: string, p) => (
         <>
           {v}
@@ -67,6 +67,7 @@ export default function AdminPermissionsPage() {
       title: '已授权用户',
       dataIndex: 'users',
       key: 'users',
+      width: 360,
       render: (users: string[], p) => (
         <>
           {users.map((u) => (
