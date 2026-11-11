@@ -113,6 +113,10 @@ api:
     # 两条都是管理动作（没有「creator 是谁」的歧义）⇒ data:manage。
     - { method: POST,   path: /metrics/candidates/generate,       scope: data:manage }
     - { method: POST,   path: /metrics/candidates/:id/adopt,      scope: data:manage }
+    # Wave 1.4（#1969）：候选池**读面**与**拒绝面**。读面同档 data:manage——候选 rationale 会
+    # 带画像统计（列基数/空值率），与 /metrics/verified 的取舍一致（管理动作，不是内容读）。
+    - { method: GET,    path: /metrics/candidates,                scope: data:manage }
+    - { method: POST,   path: /metrics/candidates/:id/reject,     scope: data:manage }
     # W3（#1401）：候选 → L1 声明**草案**。零写盘——piece 只进回包，写动作仍走 MCP 工具面
     # apply_pipeline_proposal（人复核后开 draft PR）。管理动作（与 adopt 同档）⇒ data:manage。
     - { method: POST,   path: /metrics/candidates/:id/propose-l1, scope: data:manage }

@@ -20,7 +20,7 @@ import { applyMigrations, buildTestApp, makeIdentity } from '../test-util'
 import { L1_ORG, upsertL1Metric } from '../domain/metric-store'
 import type { L1MetricDef } from '../domain/metric-store'
 import { listCandidates, setCandidateStatus, upsertCandidate } from '../domain/metric-candidates'
-import type { CandidateInput } from '../domain/metric-candidates'
+import type { Candidate, CandidateInput } from '../domain/metric-candidates'
 
 const dbUrl = process.env.DATABASE_URL
 const describePg = dbUrl ? describe : describe.skip
@@ -842,6 +842,99 @@ metrics:
       expect(res.status).toBe(400)
       expect(await res.json()).toEqual({ error: 'INVALID_BODY' })
     }
+  })
+
+  describe('候选池读面 / 拒绝面（Wave 1.4，#1969）', () => {
+    const cand = (over: Partial<CandidateInput> = {}) => upsertCandidate(pool, ORG, {
+      relation: `${SCHEMA}.fct_sales`,
+      expr: { agg: 'avg', column: 'amount' },
+      origin: 'profile',
+      ...over,
+    })
+
+    it('GET /metrics/candidates：列本租户候选；status / origin / limit 生效；跨租户不可见', async () => {
+      const mine = await cand()
+      await setCandidateStatus(pool, ORG, mine.id, 'rejected')
+      const pending = await cand({ expr: { agg: 'sum', column: 'amount' } })
+      const demand = await cand({ origin: 'demand', expr: { agg: 'count', column: 'branch' } })
+      await cand({ ...{}, origin: 'profile', expr: { agg: 'min', column: 'amount' } })
+      const foreign = await upsertCandidate(pool, OTHER_ORG, {
+        relation: `${SCHEMA}.fct_sales`, expr: { agg: 'max', column: 'amount' }, origin: 'profile',
+      })
+
+      const appRead = appWithWarehouse(warehouseWithProfiles([]))
+      const all = await (await appRead.request('/metrics/candidates?limit=100')).json() as { candidates: Candidate[] }
+      const ids = all.candidates.map((c) => c.id)
+      expect(ids).toContain(mine.id)
+      expect(ids).toContain(pending.id)
+      expect(ids).not.toContain(foreign.id)   // 跨租户隔离（org 进 WHERE）
+
+      const rejected = await (await appRead.request('/metrics/candidates?status=rejected')).json() as { candidates: Candidate[] }
+      expect(rejected.candidates.map((c) => c.id)).toEqual([mine.id])
+
+      const demands = await (await appRead.request('/metrics/candidates?origin=demand')).json() as { candidates: Candidate[] }
+      expect(demands.candidates.map((c) => c.id)).toEqual([demand.id])
+
+      const limited = await (await appRead.request('/metrics/candidates?limit=1')).json() as { candidates: Candidate[]; limit: number }
+      expect(limited.candidates).toHaveLength(1)
+      expect(limited.limit).toBe(1)
+    })
+
+    it('GET /metrics/candidates：无身份 ⇒ 空列表（不报错、也不是全租户数据）；坏参数 ⇒ 400', async () => {
+      const anon = buildTestApp(mod, makeIdentity({ orgId: ORG, scopes: [], userId: '' }), { pool }, { id: 1, casdoor_org: ORG }, [])
+      // requesterOf 的归一化在宿主；这里直接断言「不 500、不泄露行」的契约
+      const res = await anon.request('/metrics/candidates')
+      expect(res.status).toBe(200)
+      const body = await res.json() as { candidates: Candidate[] }
+      expect(body.candidates).toEqual([])
+
+      const appRead = appWithWarehouse(warehouseWithProfiles([]))
+      expect((await appRead.request('/metrics/candidates?status=nope')).status).toBe(400)
+      expect((await appRead.request('/metrics/candidates?origin=nope')).status).toBe(400)
+      expect((await appRead.request('/metrics/candidates?limit=0')).status).toBe(400)
+      expect((await appRead.request('/metrics/candidates?limit=abc')).status).toBe(400)
+    })
+
+    it('POST /:id/reject：pending → rejected；非 pending ⇒ 409；不存在 / 别家 org ⇒ 404；无身份 ⇒ 403', async () => {
+      const appWrite = appWithWarehouse(warehouseWithProfiles([]))
+      const target = await cand()
+      const ok = await appWrite.request(`/metrics/candidates/${target.id}/reject`, { method: 'POST' })
+      expect(ok.status).toBe(200)
+      expect(await ok.json()).toEqual({ ok: true, candidateStatus: 'rejected' })
+      const row = (await listCandidates(pool, ORG)).find((c) => c.id === target.id)!
+      expect(row.status).toBe('rejected')
+
+      // 已 rejected ⇒ 再拒一次是覆盖既有决策 ⇒ 409（不是幂等 200）
+      const again = await appWrite.request(`/metrics/candidates/${target.id}/reject`, { method: 'POST' })
+      expect(again.status).toBe(409)
+      expect(await again.json()).toMatchObject({ error: 'CANDIDATE_NOT_REJECTABLE', status: 'rejected' })
+
+      // created（已被采用）不是可拒状态
+      const created = await cand({ expr: { agg: 'sum', column: 'amount' } })
+      await setCandidateStatus(pool, ORG, created.id, 'created')
+      const notRejectable = await appWrite.request(`/metrics/candidates/${created.id}/reject`, { method: 'POST' })
+      expect(notRejectable.status).toBe(409)
+      expect(await notRejectable.json()).toMatchObject({ status: 'created' })
+
+      expect((await appWrite.request('/metrics/candidates/999999999/reject', { method: 'POST' })).status).toBe(404)
+
+      const foreign = await upsertCandidate(pool, OTHER_ORG, {
+        relation: `${SCHEMA}.fct_sales`, expr: { agg: 'avg', column: 'amount' }, origin: 'profile',
+      })
+      expect((await appWrite.request(`/metrics/candidates/${foreign.id}/reject`, { method: 'POST' })).status).toBe(404)
+
+      const anon = buildTestApp(mod, makeIdentity({ orgId: ORG, scopes: [], userId: '' }), { pool }, { id: 1, casdoor_org: ORG }, [])
+      const unauth = await anon.request(`/metrics/candidates/${foreign.id}/reject`, { method: 'POST' })
+      // 无身份 = 拒绝进写面；具体码由路由给出（403），不能落到域层 500
+      expect(unauth.status).toBe(403)
+    })
+
+    it('manifest：两条新端点都声明为 data:manage（双向核对由 module.test.ts 兜底）', () => {
+      const list = mod.manifest.api?.internal?.find((e) => e.path === '/metrics/candidates')
+      const reject = mod.manifest.api?.internal?.find((e) => e.path === '/metrics/candidates/:id/reject')
+      expect(list).toMatchObject({ method: 'GET', scope: 'data:manage' })
+      expect(reject).toMatchObject({ method: 'POST', scope: 'data:manage' })
+    })
   })
 })
 

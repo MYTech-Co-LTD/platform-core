@@ -261,6 +261,25 @@ export async function claimCandidate(pool: Pool, org: string, id: number): Promi
 }
 
 /**
+ * 人工**拒绝**一条候选（Wave 1.4 的决策面）。返回是否改成了。
+ *
+ * 与 `claimCandidate` 同款 CAS，但目标是终态 `rejected`：只认 `pending`——`created` / `promoted`
+ * 是已经发生的事实（有对应测度/提案），`expired` 是规则退役、`rejected` 是人的既有决策；
+ * 对它们「再拒一次」会把谁先做的决定抹掉，所以抢不到 ⇒ 路由层回 409。
+ *
+ * `org` 必须进 WHERE（理由同 `setCandidateStatus`：先按 id 查再判 org 是静默越权）。
+ */
+export async function rejectCandidate(pool: Pool, org: string, id: number): Promise<boolean> {
+  const r = await pool.query(
+    `update data.metric_candidates
+        set status = 'rejected', updated_at = now()
+      where org = $1 and id = $2 and status = 'pending'`,
+    [org, id],
+  )
+  return (r.rowCount ?? 0) > 0
+}
+
+/**
  * 人工/流程改状态。返回是否命中本租户的行（false = id 不存在或属于别的 org ⇒ 路由层回 404）。
  *
  * ⚠️ `org` 必须进 WHERE（不是先查再改）：跨租户改状态是静默越权，且没有任何日志能看出改错。

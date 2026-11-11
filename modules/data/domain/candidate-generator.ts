@@ -156,6 +156,22 @@ const LATEST_PROFILES_SQL = `select distinct on (relation, "column") relation, "
   where org = $1
   order by relation, "column", profiled_at desc`
 
+/**
+ * 有画像的租户（定时生成 job 的驱动清单）：只取画像表里真出现过的 org。
+ *
+ * 为什么不遍历平台租户表：没有画像的 org 跑生成只会得到「0 条候选 + 全量 skipped」，
+ * 日志里看不出它到底是「没东西可推」还是「profiler 没投递」——用画像表驱动，
+ * `orgs=0` 本身就是那条告警信号（Wave 1.4）。
+ */
+export async function orgsWithProfiles(pool: Pool): Promise<string[]> {
+  const r = await pool.query(
+    `select distinct org from data.metric_profiles where org is not null and org <> '' order by org`,
+  )
+  return r.rows
+    .map((row) => String((row as { org?: unknown }).org ?? ''))
+    .filter((org) => org !== '')
+}
+
 /** 关系名最后一段（白名单与画像可能一边带 schema、一边不带）。 */
 function lastSegment(relation: string): string {
   const parts = relation.split('.')

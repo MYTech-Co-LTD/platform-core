@@ -227,12 +227,14 @@ describe('报表面声明（不需要数据库）', () => {
     // +2：私有测度（W2 三档闭环：POST /metrics/private 申报 data:query + 归档读面 data:manage）；
     // +2：候选池（W2 Task 5：generate / adopt 两条管理动作，data:manage）；
     // +1：候选升级 propose-l1（W3 #1401：候选 → L1 声明草案，零写盘，data:manage））；
+    // +2：候选池读/拒两面（Wave 1.4 #1969：GET /metrics/candidates + POST :id/reject，
+    // 与 generate/adopt 同档 data:manage——候选 rationale 带画像统计，属管理面）；
     // +1：体系地图 GET /system-map（W5 Task 4 #1455：只读单文件 HTML，data:query））；
     // +7：数据范围 scope 管理面（spec 2026-11-10 §5.5，#1901：list/effective/create/update/
     // delete/assignments 六条，全部 data:manage——授权变更是管理动作）：
     // 穷举口径（同 module.test.ts 的表清单）——别处加端点而漏改这里会红，
     // 逼着声明与测试一起动。
-    expect(declared).toHaveLength(64)
+    expect(declared).toHaveLength(66)
     // scope 管理面：六条全 data:manage（运行期执法在 authorizeCore，这里只是配置面）
     for (const p of ['/scopes', '/scopes/effective']) {
       expect(declared.get(`GET ${p}`)).toBe('data:manage')
