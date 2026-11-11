@@ -44,6 +44,27 @@ export function scopeModeOf(env: NodeJS.ProcessEnv): ScopeMode {
   return 'off'
 }
 
+/**
+ * 启动期一次性告警：`DATA_SCOPE_MODE` **设了值但不认识**（`enfore` / `Shadow` 之类）。
+ *
+ * 为什么单独一个函数而不是塞进 `scopeModeOf`：后者是**纯函数**（每次请求都调），
+ * 在里面打日志会按请求刷屏；而且「配置拼错」是**启动期**问题，只在装配时喊一次就够。
+ * 静默回落 off 是最危险的形态——运营以为切了 enforce，实际一条都没裁。
+ */
+export function warnIfScopeModeUnrecognized(
+  env: NodeJS.ProcessEnv,
+  warn: (msg: string) => void = console.warn,
+): void {
+  const raw = env.DATA_SCOPE_MODE
+  if (raw === undefined || raw === '') return
+  if (raw === 'off' || raw === 'shadow' || raw === 'enforce') return
+  warn(JSON.stringify({
+    event: 'data_scope_mode_unrecognized',
+    value: raw,
+    effect: 'treated as off（不裁）—— 拼写错误会让 enforce 静默失效',
+  }))
+}
+
 const emptyScopes = (): EffectiveScopes => ({ brand: [], store: [], category: [] })
 
 /** selector 闭集校验：只接受已知键与字符串数组 / all:true；坏形状 fail-closed。 */
