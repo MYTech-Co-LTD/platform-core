@@ -24,7 +24,7 @@
      "readOnly": true,
      "pushdown": true,
      "connectTimeout": 30,
-     "sql": "select s.system_book, s.ym from (select system_book, strftime(bizday, '%Y-%m') as ym, max(sealed_at) as last_seal from data.lemeng_daily_sealed where system_book <> '' group by 1, 2) s left join data.lake_month_index i on i.system_book = s.system_book and i.ym = s.ym where i.system_book is null or i.built_at < s.last_seal order by s.system_book, s.ym",
+     "sql": "select s.system_book, s.ym, s.first_day as ymd from (select system_book, strftime(bizday, '%Y-%m') as ym, max(sealed_at) as last_seal, min(bizday) as first_day from data.lemeng_daily_sealed where system_book <> '' group by 1, 2) s left join data.lake_month_index i on i.system_book = s.system_book and i.ym = s.ym where i.system_book is null or i.built_at < s.last_seal order by s.system_book, s.ym",
      "schemaName": "data",
      "tableName": "lemeng_daily_sealed"
     }

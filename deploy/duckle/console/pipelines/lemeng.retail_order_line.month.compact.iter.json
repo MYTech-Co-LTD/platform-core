@@ -12,7 +12,9 @@
   "⚠️ 云 sink 的 partitionBy 被静默忽略（0.7.4 实测）⇒ 不能一条管线分区写多月；每月一 sink、由 foreach 驱动 key（retail.day.backfill 同款）。",
   "幂等：mode=overwrite，重跑 = 整月重写；重封版后由父管线按 built_at < last_seal 判定重建。",
   "手动跑本子管线必败（ITER 变量缺）——验收只能驱动父管线。",
-  "⚠️ key 里不能用 ? 通配：httpfs 把 ? 当 URL query 分隔符（实测 IO Error: Invalid query parameters）；月份前缀已钉死，用 * 不误匹配。"
+  "⚠️ src.minio 的 glob 跨不了目录层（mid-path `*` 恒 0 行，2026-11-11 两次实测；最后一段 star 如 `_DAILY/*` 才行）",
+  "⇒ 真正的月度 glob 由 code.sql 的 read_parquet 做（DuckDB 原生 glob 实测 422,829 行正确）；",
+  "  s 节点是 337B 的 _DAILY 标记锚：①满足「必须有 source」②注册 connectionRef zos 的 S3 secret（code.sql 不支持 connectionRef，实测同管线先跑一个 connectionRef 节点即可）③顺带证该月已封版。"
  ],
  "nodes": [
   {
@@ -23,13 +25,12 @@
     "y": 0
    },
    "data": {
-    "label": "该月全部日文件",
+    "label": "锚点：该月最早封版日的 _DAILY 标记（注册 S3 secret + 证该月已封版）",
     "componentId": "src.minio",
     "properties": {
      "connectionRef": "zos",
      "bucket": "${ENV:ZOS_BUCKET}",
-     "key": "lemeng/retail_order_line/_DAY_DATA/system_book=${ITER_ITEM_SYSTEM_BOOK}/bizday=${ITER_ITEM_YM}-*/all.parquet",
-     "glob": true,
+     "key": "lemeng/retail_order_line/_DAILY/${ITER_ITEM_SYSTEM_BOOK}-${ITER_ITEM_YMD}.parquet",
      "format": "parquet"
     }
    }
@@ -58,10 +59,10 @@
     "y": 0
    },
    "data": {
-    "label": "契约 25 列同序投影 + 排序",
+    "label": "读该月日文件（DuckDB 原生 glob）+ 排序",
     "componentId": "code.sql",
     "properties": {
-     "sql": "SELECT input.batch_id AS batch_id, input.system_book AS system_book, input.bizday AS bizday, input.hour AS hour, input.order_no AS order_no, input.order_detail_num AS order_detail_num, input.branch_num AS branch_num, input.branch_name AS branch_name, input.order_time AS order_time, input.order_operate_time AS order_operate_time, input.state AS state, input.order_source AS order_source, input.item_num AS item_num, input.item_code AS item_code, input.sale_money AS sale_money, input.discount_money AS discount_money, input.payment_money AS payment_money, input.quantity AS quantity, input.order_transaction_type AS order_transaction_type, input.order_ref_billno AS order_ref_billno, input.order_detail_share_discount AS order_detail_share_discount, input.order_detail_std_price AS order_detail_std_price, input.order_detail_price AS order_detail_price, input.order_detail_online_qty AS order_detail_online_qty, input.order_total_money AS order_total_money\nFROM input\nORDER BY bizday, branch_num, order_no"
+     "sql": "SELECT * FROM read_parquet('s3://${ENV:ZOS_BUCKET}/lemeng/retail_order_line/_DAY_DATA/system_book=${ITER_ITEM_SYSTEM_BOOK}/bizday=${ITER_ITEM_YM}-*/all.parquet') ORDER BY bizday, branch_num, order_no"
     }
    }
   },
