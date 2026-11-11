@@ -25,6 +25,7 @@ Casdoor 后台运营，租户管理员在 console 自建页管理——spec D4 �
 | 接/改**出站渠道**（企微直连、凭据、判据、可达性、飞书/钉钉预留） | `docs/superpowers/specs/2026-10-31-multi-channel-im-provider-design.md`（transport 开关、`channel_credential` 密文、`sql:{at,error}` 判据）+ `2026-10-31-recipient-identity-mapping-design.md`（地址解析三级顺序）；观测面计划 `2026-10-31-recipient-reachability-observability.md` |
 | **调问答效果** / 问数 bot 表现不确定（反复尝试、用 exec/curl 翻插件源码或猜参数、同一调用原样重试、答错时间窗、拿不到数） | `.claude/skills/askdata-tuning`（测→定位→改→验的判据表 + 四个杠杆；实现与实测在 `scripts/askdata/` 与 `docs/superpowers/notes/2026-10-16-t0-span-inventory.md`） |
 | **源数据自动推导指标 / 私有测度 / 指标可信度与淘汰**（改这一版块任何东西） | **先读路线图**（唯一导航面 + 进度台账）：`docs/superpowers/plans/2026-11-04-auto-metric-derivation-roadmap.md`；为什么/边界见 `specs/2026-11-04-auto-metric-derivation-design.md`。**开工前先看台账确认这波到哪了，别重做** |
+| **Helix 借鉴线**（答案级证据链 / 契约版本门 / 快照钉住 / 凭据代理 / 自愈审计） | `docs/superpowers/plans/2026-11-11-helix-borrow-roadmap.md`（**唯一导航面 + 进度台账**；开工前先看台账，别重做已完成项） |
 | 设计稿与实施计划 | `docs/superpowers/specs/`、`docs/superpowers/plans/`（按日期命名；SaaS 管理域 spec 是现行主线的正典）——**动手前先 `ls` 这两个目录、按文件名挑 2–3 份读完**（文件名语义可靠：盲测 8/8 命中正确文档；但**清单只用来定位，拿到候选必须打开读**，阴性对照 2/4 误配）。**别指望关键词检索**：`orca search` 整句自然语言 0 命中，须用 2–3 个空格分隔的关键词 |
 | 部署 / 接入 / 回滚 | `deploy/openship-adopt.md`（含自动部署与控制面 API 前缀坑）、`deploy/branch-protection-runbook.md` |
 | 冒烟验收 | `docs/m0-smoke-checklist.md` |
