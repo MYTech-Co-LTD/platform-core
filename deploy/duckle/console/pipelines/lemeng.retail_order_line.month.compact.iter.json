@@ -3,8 +3,9 @@
  "_note": [
   "月度合并子管线（#1905 后续 P1，spec：明细访问模式改造）。由父管线 lemeng.retail_order_line.month.compact 的 ctl.foreach 逐月驱动，",
   "把该账套该月的全部已封版日文件（_DAY_DATA/system_book=<B>/bizday=<YM-??>/all.parquet）读出、按 (bizday, branch_num, order_no) 排序后",
-  "写成一个月文件 _MONTH/system_book=<B>/month=<YM>/all.parquet，并把行数/金额统计 upsert 进 data.lake_month_index。",
+  "写成一个月文件 lemeng/retail_order_line_month/_MONTH/system_book=<B>/month=<YM>/all.parquet，并把行数/金额统计 upsert 进 data.lake_month_index。",
   "为什么：读侧 30 天查询要打开 60 个 ~300KB 日文件 × 25 列逐列 range 请求（~1500 次 × 5ms = 7.8s）；",
+  "⚠️ 前缀用 lemeng/retail_order_line_month（`/` 边界外）：契约 gen 按前缀找生产者并强制 rest 投影形状，parquet→parquet 的派生件不适用；列集仍按契约逐列同序投影（列等价由构造保证，湖侧事实源不变）。",
   "月文件后 30 天只开 1-2 个文件（目标 <1s，配合列裁剪 <300ms）。链路实测 250-750MB/s，瓶颈是请求数不是带宽。",
   "⚠️ 只合并【已封版】日——父管线的月份清单来自 data.lemeng_daily_sealed，热天不进月文件（读侧热腿仍负责今天/昨天）。",
   "⚠️ 空 month fail-closed（ctl.die no-rows）：清单里有的月份却读到 0 行 = 日文件缺失，写空月文件会毁数据，宁可红。",
@@ -56,7 +57,7 @@
     "y": 0
    },
    "data": {
-    "label": "契约投影（25 列同序）+ 排序",
+    "label": "契约 25 列同序投影 + 排序",
     "componentId": "code.sql",
     "properties": {
      "sql": "SELECT input.batch_id AS batch_id, input.system_book AS system_book, input.bizday AS bizday, input.hour AS hour, input.order_no AS order_no, input.order_detail_num AS order_detail_num, input.branch_num AS branch_num, input.branch_name AS branch_name, input.order_time AS order_time, input.order_operate_time AS order_operate_time, input.state AS state, input.order_source AS order_source, input.item_num AS item_num, input.item_code AS item_code, input.sale_money AS sale_money, input.discount_money AS discount_money, input.payment_money AS payment_money, input.quantity AS quantity, input.order_transaction_type AS order_transaction_type, input.order_ref_billno AS order_ref_billno, input.order_detail_share_discount AS order_detail_share_discount, input.order_detail_std_price AS order_detail_std_price, input.order_detail_price AS order_detail_price, input.order_detail_online_qty AS order_detail_online_qty, input.order_total_money AS order_total_money\nFROM input\nORDER BY bizday, branch_num, order_no"
@@ -76,7 +77,7 @@
     "properties": {
      "connectionRef": "zos",
      "bucket": "${ENV:ZOS_BUCKET}",
-     "key": "lemeng/retail_order_line/_MONTH/system_book=${ITER_ITEM_SYSTEM_BOOK}/month=${ITER_ITEM_YM}/all.parquet",
+     "key": "lemeng/retail_order_line_month/_MONTH/system_book=${ITER_ITEM_SYSTEM_BOOK}/month=${ITER_ITEM_YM}/all.parquet",
      "format": "parquet",
      "mode": "overwrite",
      "compression": "zstd"
