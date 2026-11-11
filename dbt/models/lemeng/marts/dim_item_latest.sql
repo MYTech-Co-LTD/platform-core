@@ -15,7 +15,7 @@
 -- ⚠️ join **必须**带 `system_book`：两账套类别 id 空间不相交，裸 `category_id` 会串账套。
 -- ⚠️ join 是 left：类别缺失（源数据缺字段）仍照出商品行，`category_group` 为 null ⇒ scope 的
 --    category 谓词会把它裁掉（fail-closed）；该情形由 `assert_dim_item_category_root_mapped`
---    与 `warn_category_group_other` 盯着，不静默。
+--    （硬）与 `assert_dim_item_category_root_resolved` / `warn_category_group_other`（warn）盯着。
 {{
     config(
         materialized='table',

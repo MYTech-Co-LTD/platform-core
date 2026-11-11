@@ -257,9 +257,25 @@ AND (system_book, branch_num) IN (
 - 物化：`dim_item_latest`（或新 `dim_item`）增加 `top_category_name` / `category_group`；
   由最新快照的类别树 join 得到。若源以后提供 `category_path`，可直接用；当前不需要改契约。
 - 质量门禁：
-  - dbt test：每个 level=1 根类别必须在 `dim_category_group_map` 中有映射（防止新根静默落 `其他`）；
-  - 监控 `category_group='其他'` 的数量（活跃商品数/销售额）；非 0 或增长 ⇒ 告警并补映射；
+  - dbt test：每个 level=1 根类别必须在 `dim_category_group_map` 中有映射
+    （`assert_dim_item_category_root_mapped`，**硬失败**，防止新根静默落 `其他`）；
+  - 监控 `category_group='其他'` 的数量（`warn_category_group_other`）；非 0 或增长 ⇒ 告警并补映射；
   - 映射 seed 走 PR 评审，**不在多处 SQL 里写 CASE**。
+
+**2026-11-11 真机实测（shanhai 数据面）——祖先链缺口（issue #1913）**：
+
+`stg_lemeng_item` 只带商品**自己被指派的类别**（id/parent_id/level/name），中间层节点
+（level 2–4）若没有商品直接挂它，就**不在任何快照里出现** ⇒ 沿 `parent_id` 走不到根：
+
+- 类别 281，其中 **77 个**（level 3: 36 / 4: 29 / 5: 12）`top_category_name` 为 null；
+- 涉及 **1,828 个在售商品（4.3%）**，落 `category_group='其他'`；
+- 源契约无 `category_path` / `parent_name`（`contracts/common/lemeng.item.json` 已核）。
+
+处置：`assert_dim_item_category_root_resolved` 定为 **warn**（不是 error）——后果是 fail-closed
+（这些商品对 水果/标品/耗材 scope 的人不可见，admin/全店不受影响），而 error 会让整个 lemeng 域
+物化失败、冻结全部新鲜度水位（同 `warn_region_unregistered` 的裁决）。补数路径：接乐檬品类树或
+一次性导入祖先节点（#1913）。**不可按 `item_department_name` 映射**：实测同名部门跨多个根
+（root=标品/废弃档案 都有 dept=零食部）。
 - 权限只用 `category_group`；细分类别树保留做下钻/分析，不作为授权维度。
 
 SQL（**复合键**）：
@@ -444,15 +460,15 @@ AND (system_book, item_num) IN (
 | 解析/合并/谓词 | `modules/data/domain/scope.ts`（`loadEffectiveScopes` / `buildScopePlan` / `scopeModeOf`） | ✅ 单测 |
 | 唯一执法点接线 | `authz.ts` `authorizeCore(..., scopePlan)` + `query-service.ts` + `toolbox/discovery.ts` | ✅ 单测 |
 | 会话 `roles` | `SessionPayload.roles` + `signSession`/`verifySession` + 三条登录路 + 会话刷新重签 | ✅ 单测 |
-| 品类物化 | `dbt/models/lemeng/marts/dim_item_category.sql` + `dim_item_latest` 补 `top_category_name`/`category_group` + 受控 seed `dim_category_group_map` + 3 条 dbt test + 1 条 warn 哨兵 | ✅ 代码，待真机 dbt 跑 |
+| 品类物化 | `dbt/models/lemeng/marts/dim_item_category.sql` + `dim_item_latest` 补 `top_category_name`/`category_group` + 受控 seed `dim_category_group_map` + 2 条硬断言 + 2 条 warn 哨兵 | ✅ 真机已建（281 类；`其他` 4.3% 系祖先链缺口，见 #1913） |
 | 一次性迁移 | `scripts/migrate-data-scopes.mjs`（dry-run 默认；`--apply` 写 DB + Casdoor 5 职能角色） | ✅ 纯函数单测，待真机 dry-run |
 | scope 管理端点/UI | §5.5 | ⏳ 未做（Phase 3 前置） |
 
 仍未做 / 上线顺序：
 
-1. **真机验证**：dbt 跑 `dim_item_category`（`assert_dim_item_category_root_mapped` 必须零行）；
-   迁移脚本 `--source-org shanhai --target-org shanhaiyiguo-org` dry-run 核对 29 用户/22 范围；
-   两者都没在本文写作时跑过。
+1. **真机验证**：dbt 已在 shanhai 数据面跑过（2026-11-11：`dim_item_category` 281 行，
+   根映射/唯一性 PASS；祖先缺口见 #1913）；**迁移脚本 dry-run 仍未跑**——
+   `--source-org shanhai --target-org shanhaiyiguo-org` 核对 29 用户/22 范围。
 2. **上线顺序**：`DATA_SCOPE_MODE=off` → `shadow`（对照 data-analysis 抽样）→ `enforce`；
    切换要留审计。`shadow` 日志事件为 `data_scope_shadow`（含 filters/denial/applied）。
 3. **`其他` 品类的授权口径**：`品类|*` 只展开 水果/标品/耗材（本文 §6.3），`其他` 商品对

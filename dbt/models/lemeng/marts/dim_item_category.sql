@@ -15,8 +15,10 @@
 --   属性（改名以最新为准）。
 --
 -- 【失败姿态】走不到 `level=1` 祖先的类别，`top_category_name` 为 null、`category_group` 落
---   `其他`。`其他` 由 dbt test 与哨兵盯着（`assert_dim_item_category_root_mapped` 硬失败 +
---   `warn_category_group_other` 告警），不静默。
+--   `其他`。**新根名**（level=1 不在 seed 里）仍是硬失败（`assert_dim_item_category_root_mapped`）；
+--   **祖先不可达**（中间层节点从未被商品直接挂过）是 warn（`assert_dim_item_category_root_resolved`）
+--   ——2026-11-11 真机实测 77 个类别 / 1,828 商品（4.3%），源契约无 category_path，
+--   补数路径见 issue #1913。`warn_category_group_other` 持续报数。
 --
 -- 【粒度】`(system_book, category_id)` 唯一（`assert_dim_item_category_unique` 钉住）——
 --   `dim_item_latest` 按 `(system_book, item_category_id)` left join，重复会放大商品行。
