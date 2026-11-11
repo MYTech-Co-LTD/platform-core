@@ -79,6 +79,7 @@ function rollupOver(inner: string, dims: string[], orderBy: string, desc: boolea
 // 边界（有意收窄，fail-open 回主视图）：范围缺失/形状不对/跨月数 >MAX_MONTHS ⇒ 原样返回主视图。
 // 事项：服务视图与主视图的等价性由 dbt 测试 `assert_serving_view_matches_main` 逐日对账。
 export const MONTH_SERVING_VIEW = 'vw_lemeng_retail_order_line_month'
+export const MONTH_HISTORY_VIEW = 'vw_lemeng_retail_order_line_month_history'
 const MONTH_SERVING_MAX_MONTHS = 5
 const ISO_DAY = /^\d{4}-\d{2}-\d{2}$/
 
@@ -104,6 +105,7 @@ export function monthsSpanned(from: string, to: string): number {
 export function servingRelationFor(
   relation: string,
   bizday: unknown,
+  today: string = shanghaiToday(),
 ): { relation: string; monthFilter: string } {
   const noop = { relation, monthFilter: '' }
   if (relation !== 'vw_lemeng_retail_order_line') return noop
@@ -114,11 +116,30 @@ export function servingRelationFor(
   if (!ISO_DAY.test(from) || !ISO_DAY.test(to)) return noop
   if (from > to) return noop
   if (monthsSpanned(from, to) > MONTH_SERVING_MAX_MONTHS) return noop
+  // 历史范围（to <= 上海今天−2）⇒ 用**只有月文件腿**的视图：省掉热腿/UNION/anti-join
+  // （实测 30 天 1.12s → ~0.55s）。边界取 −2 而不是 −1：热腿覆盖今天+昨天，GC 在 2 天后
+  // 才删小时文件；to=今天−2 时该日的月文件必已由每日 04:10 的合并重建（积压 >2 天有测试判红）。
   // 值只来自已校验的 ISO 日期 ⇒ 拼接安全（与 paramFilters 同源校验）。
+  const historical = to <= addDays(today, -2)
   return {
-    relation: MONTH_SERVING_VIEW,
+    relation: historical ? MONTH_HISTORY_VIEW : MONTH_SERVING_VIEW,
     monthFilter: ` AND month BETWEEN '${ymOf(from)}' AND '${ymOf(to)}'`,
   }
+}
+
+/** 上海今天（`YYYY-MM-DD`）。下钻按上海业务日判定「历史范围」。 */
+export function shanghaiToday(now: Date = new Date()): string {
+  // en-CA 的 short 形就是 YYYY-MM-DD；显式给时区，避免服务器时区影响判定。
+  return new Intl.DateTimeFormat('en-CA', {
+    timeZone: 'Asia/Shanghai', year: 'numeric', month: '2-digit', day: '2-digit',
+  }).format(now)
+}
+
+/** `YYYY-MM-DD` 加减天数（纯 UTC 运算，日期串不受时区影响）。 */
+export function addDays(day: string, delta: number): string {
+  const t = Date.UTC(Number(day.slice(0, 4)), Number(day.slice(5, 7)) - 1, Number(day.slice(8, 10)))
+  const d = new Date(t + delta * 86400_000)
+  return d.toISOString().slice(0, 10)
 }
 
 /** 两段下钻 SQL（**纯函数**）：内层原子粒度求组件、外层请求维度上卷 + 排序分页；

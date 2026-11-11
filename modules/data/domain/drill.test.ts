@@ -6,7 +6,7 @@
 // 湖竞态重试与审计面。
 import { beforeEach, describe, expect, it } from 'vitest'
 import type { Pool } from 'pg'
-import { buildDrillSql, monthsSpanned, runDetailQuery, servingRelationFor } from './drill'
+import { addDays, buildDrillSql, monthsSpanned, runDetailQuery, servingRelationFor, shanghaiToday } from './drill'
 import type { DrillBinding, Requester } from './authz'
 import type { QueryDeps } from './query-service'
 import { resetWarehousePool } from './warehouse'
@@ -464,29 +464,29 @@ describe('buildDrillSql 条件列（纯函数）', () => {
 })
 
 describe('servingRelationFor（月感知服务视图选路，#1916 P2）', () => {
-  it('单日范围 ⇒ 服务视图 + 精确 month 谓词', () => {
-    const r = servingRelationFor('vw_lemeng_retail_order_line', { from: '2026-11-09', to: '2026-11-09' })
+  it('昨天范围（to = 今天−1）⇒ 含热腿的月视图 + 精确 month 谓词', () => {
+    const r = servingRelationFor('vw_lemeng_retail_order_line', { from: '2026-11-10', to: '2026-11-10' }, '2026-11-11')
     expect(r.relation).toBe('vw_lemeng_retail_order_line_month')
     expect(r.monthFilter).toBe(" AND month BETWEEN '2026-11' AND '2026-11'")
   })
 
-  it('跨 3 个月仍在阈值内 ⇒ 服务视图', () => {
-    const r = servingRelationFor('vw_lemeng_retail_order_line', { from: '2026-09-15', to: '2026-11-02' })
-    expect(r.relation).toBe('vw_lemeng_retail_order_line_month')
+  it('跨 3 个月且完全历史 ⇒ 历史视图（只月文件腿）', () => {
+    const r = servingRelationFor('vw_lemeng_retail_order_line', { from: '2026-09-15', to: '2026-11-02' }, '2026-11-11')
+    expect(r.relation).toBe('vw_lemeng_retail_order_line_month_history')
     expect(r.monthFilter).toBe(" AND month BETWEEN '2026-09' AND '2026-11'")
   })
 
   it('跨 6 个月超过阈值 ⇒ 回退主视图（不加谓词）', () => {
-    expect(servingRelationFor('vw_lemeng_retail_order_line', { from: '2025-12-01', to: '2026-05-01' }))
+    expect(servingRelationFor('vw_lemeng_retail_order_line', { from: '2025-12-01', to: '2026-05-01' }, '2026-11-11'))
       .toEqual({ relation: 'vw_lemeng_retail_order_line', monthFilter: '' })
   })
 
   it('形状不对 / 缺范围 / 逆序 / 非目标关系 ⇒ 一律回退', () => {
     for (const bad of [undefined, null, '2026-11-09', { from: '2026-11-09' }, { from: 'x', to: 'y' }, { from: '2026-11-09', to: '2026-11-01' }]) {
-      expect(servingRelationFor('vw_lemeng_retail_order_line', bad))
+      expect(servingRelationFor('vw_lemeng_retail_order_line', bad, '2026-11-11'))
         .toEqual({ relation: 'vw_lemeng_retail_order_line', monthFilter: '' })
     }
-    expect(servingRelationFor('some_other_view', { from: '2026-11-09', to: '2026-11-09' }))
+    expect(servingRelationFor('some_other_view', { from: '2026-11-09', to: '2026-11-09' }, '2026-11-11'))
       .toEqual({ relation: 'some_other_view', monthFilter: '' })
   })
 
@@ -494,5 +494,24 @@ describe('servingRelationFor（月感知服务视图选路，#1916 P2）', () =>
     expect(monthsSpanned('2026-11-01', '2026-11-30')).toBe(1)
     expect(monthsSpanned('2026-10-31', '2026-11-01')).toBe(2)
     expect(monthsSpanned('2025-11-01', '2026-11-01')).toBe(13)
+  })
+})
+
+describe('历史范围选路（#1916 P2）', () => {
+  it('to = 今天−2 ⇒ 历史视图（只有月文件腿）', () => {
+    const r = servingRelationFor('vw_lemeng_retail_order_line', { from: '2026-10-12', to: '2026-11-09' }, '2026-11-11')
+    expect(r.relation).toBe('vw_lemeng_retail_order_line_month_history')
+    expect(r.monthFilter).toBe(" AND month BETWEEN '2026-10' AND '2026-11'")
+  })
+
+  it('to = 今天−1 ⇒ 仍走含热腿的视图（昨天的小时文件可能仍未并入）', () => {
+    const r = servingRelationFor('vw_lemeng_retail_order_line', { from: '2026-10-12', to: '2026-11-10' }, '2026-11-11')
+    expect(r.relation).toBe('vw_lemeng_retail_order_line_month')
+  })
+
+  it('addDays / shanghaiToday 边界', () => {
+    expect(addDays('2026-11-11', -2)).toBe('2026-11-09')
+    expect(addDays('2026-03-01', -1)).toBe('2026-02-28')
+    expect(shanghaiToday(new Date('2026-11-10T16:30:00Z'))).toBe('2026-11-11') // UTC 16:30 = 上海次日 00:30
   })
 })
