@@ -8,60 +8,58 @@
 // 3. 裸条目路径规范化到默认页签：让 URL 与页面内容始终一致（否则深链/刷新语义含混）。
 import { useEffect } from 'react'
 import { Layout, Menu, Segmented } from 'antd'
-import { useLocation, useNavigate } from 'react-router-dom'
+import { useLocation, useNavigate, useOutletContext } from 'react-router-dom'
 import QueryPage from './query'
 import MetricsPage from './metrics'
 import ReportsPage from './reports'
+import ScopesPage from './scopes'
 import { useIsMobile } from './lib/useIsMobile'
 
 const TABS = [
   { key: 'query', label: '问数' },
   { key: 'metrics', label: '指标' },
   { key: 'reports', label: '报表' },
+  // data:manage 才出现（#1901 scope 管理面）：菜单过滤只是入口姿态，API 门卫才是真闸
+  { key: 'scopes', label: '数据范围', manageOnly: true },
 ] as const
 
 type TabKey = (typeof TABS)[number]['key']
-const TAB_KEYS: readonly string[] = TABS.map((t) => t.key)
 const DEFAULT_TAB: TabKey = 'query'
 
 /**
- * PC 菜单项：三个页签 + 一个**外链**（W5 Task 4 定案 A）。
+ * PC 菜单项：可见页签 + 一个**外链**（W5 Task 4 定案 A）。
  * 体系地图是独立追溯页（服务端渲染单文件 HTML，hash 路由），不是本 console 的路由页签——
  * 写成页签会让 `navigate(basePath/key)` 指到一个不存在的 console 路由（白屏）。
+ * 菜单项在组件内按 session.scopes 现算（manageOnly 页签过滤），不再提成模块级常量。
  */
-const MENU_ITEMS = [
-  ...TABS.map((t) => ({ key: t.key, label: t.label })),
-  {
-    key: 'system-map',
-    label: (
-      <a href="/api/modules/data/system-map#/overview" target="_blank" rel="noopener">
-        体系地图
-      </a>
-    ),
-  },
-]
 
-/** 末段是不是页签段（决定当前 URL 是「页签」还是「裸条目路径」） */
-function isTabSegment(seg: string): seg is TabKey {
-  return TAB_KEYS.includes(seg)
+/** 末段是不是页签段（决定当前 URL 是「页签」还是「裸条目路径」）；manageOnly 页签对无码者不可达 */
+function isTabSegment(seg: string, canManage: boolean): seg is TabKey {
+  const hit = TABS.find((t) => t.key === seg)
+  if (hit === undefined) return false
+  return !('manageOnly' in hit && hit.manageOnly === true) || canManage
 }
 
 export default function DataConsolePage() {
   const isMobile = useIsMobile()
   const navigate = useNavigate()
   const { pathname } = useLocation()
+  // 入口过滤用（reports 页同款；API 门卫才是真闸）
+  const { session } = useOutletContext<{ session: { scopes: string[] } }>()
+  const canManage = session.scopes.includes('data:manage')
+  const visibleTabs = TABS.filter((t) => !('manageOnly' in t && t.manageOnly === true) || canManage)
   const last = pathname.split('/').filter(Boolean).pop() ?? ''
-  const active: TabKey = isTabSegment(last) ? last : DEFAULT_TAB
+  const active: TabKey = isTabSegment(last, canManage) ? last : DEFAULT_TAB
   // 末段是页签 ⇒ 基路径 = 去掉末段；否则当前 pathname 就是基路径（裸条目路径）
-  const basePath = isTabSegment(last) ? pathname.slice(0, pathname.lastIndexOf('/')) : pathname
+  const basePath = isTabSegment(last, canManage) ? pathname.slice(0, pathname.lastIndexOf('/')) : pathname
 
   // 裸 /console/data 规范化到问数页：让 URL 与「页面上显示的内容」始终一致
   useEffect(() => {
-    if (!isTabSegment(last)) navigate(`${pathname}/${DEFAULT_TAB}`, { replace: true })
-  }, [last, pathname, navigate])
+    if (!isTabSegment(last, canManage)) navigate(`${pathname}/${DEFAULT_TAB}`, { replace: true })
+  }, [last, pathname, navigate, canManage])
 
   const PAGES: Record<TabKey, () => React.JSX.Element> = {
-    query: QueryPage, metrics: MetricsPage, reports: ReportsPage,
+    query: QueryPage, metrics: MetricsPage, reports: ReportsPage, scopes: ScopesPage,
   }
   const Active = PAGES[active]
 
@@ -73,13 +71,23 @@ export default function DataConsolePage() {
           block
           value={active}
           onChange={(v) => navigate(`${basePath}/${String(v)}`)}
-          options={TABS.map((t) => ({ label: t.label, value: t.key }))}
+          options={visibleTabs.map((t) => ({ label: t.label, value: t.key }))}
           style={{ marginBottom: 12 }}
         />
       ) : (
         <Menu mode="horizontal" selectedKeys={[active]}
-              items={MENU_ITEMS}
-              onClick={({ key }) => { if (isTabSegment(key)) navigate(`${basePath}/${key}`) }}
+              items={[
+                ...visibleTabs.map((t) => ({ key: t.key, label: t.label })),
+                {
+                  key: 'system-map',
+                  label: (
+                    <a href="/api/modules/data/system-map#/overview" target="_blank" rel="noopener">
+                      体系地图
+                    </a>
+                  ),
+                },
+              ]}
+              onClick={({ key }) => { if (isTabSegment(key, canManage)) navigate(`${basePath}/${key}`) }}
               style={{ marginBottom: 16 }} />
       )}
       <Active />
