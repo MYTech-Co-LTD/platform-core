@@ -6,6 +6,16 @@
 --
 -- 本模型只做一件事：**每个商品保留最新一版**，一个商品一行（按 `snapshot` 取最新）。
 -- 唯一性由 `dbt/tests/lemeng/assert_dim_item_latest_unique.sql` 钉住。
+--
+-- 数据范围权限（spec 2026-11-10 §4.3）在这里补上 `category_group`：category scope 按
+-- `(system_book, item_num)` 子查询裁行，读的就是本模型的这两列。类别树/映射在
+-- `dim_item_category`（单独模型，避免本模型再长一棵递归 CTE）；`top_category_name` 保留供
+-- 分析面追溯「这个商品为什么落这个组」。
+--
+-- ⚠️ join **必须**带 `system_book`：两账套类别 id 空间不相交，裸 `category_id` 会串账套。
+-- ⚠️ join 是 left：类别缺失（源数据缺字段）仍照出商品行，`category_group` 为 null ⇒ scope 的
+--    category 谓词会把它裁掉（fail-closed）；该情形由 `assert_dim_item_category_root_mapped`
+--    与 `warn_category_group_other` 盯着，不静默。
 {{
     config(
         materialized='table',
@@ -14,16 +24,22 @@
     )
 }}
 
-select distinct on (system_book, item_num)
+select distinct on (i.system_book, i.item_num)
     {{ subject_org() }} as org,
-    system_book,
-    item_num,
-    item_code,
-    item_name,
-    item_type,
-    unit_name,
-    spec,
-    snapshot,
-    eliminate_flag
-from {{ ref('stg_lemeng_item') }}
-order by system_book, item_num, snapshot desc
+    i.system_book,
+    i.item_num,
+    i.item_code,
+    i.item_name,
+    i.item_type,
+    i.unit_name,
+    i.spec,
+    i.snapshot,
+    i.item_category_id,
+    c.top_category_name,
+    c.category_group,
+    i.eliminate_flag
+from {{ ref('stg_lemeng_item') }} i
+left join {{ ref('dim_item_category') }} c
+    on c.system_book = i.system_book
+   and c.category_id = i.item_category_id
+order by i.system_book, i.item_num, i.snapshot desc

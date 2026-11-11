@@ -161,6 +161,20 @@ export interface Requester {
   sessionId?: string
   scopes: string[]
   hasScope: (code: string) => boolean
+  /**
+   * 角色短名（Casdoor Role.Users 反查结果）。会话通道 Phase 2 才写入；PAT/渠道 C 已带。
+   * 数据范围 scope 的 role-level assignment 用它；缺省 [] ⇒ 只走 user-level assignment。
+   */
+  roles?: string[]
+}
+
+/**
+ * 数据范围计划（spec 2026-11-10 §5）：由 `scope.ts` 在请求期计算，`authorizeCore` 只消费。
+ * `denial` 非空 ⇒ 拒绝（`range_denied`）；否则 `filters` 追加到 WHERE。
+ */
+export interface ScopePlan {
+  filters: readonly string[]
+  denial: string | null
 }
 
 /** 单次查询行数上界（原型用 10 是演示；产品面 1000，超出即 truncated）。 */
@@ -180,6 +194,8 @@ export type DenyReason =
   | 'metric_not_authorized'
   | 'subject_pinned_by_platform'
   | 'bad_param'
+  // 数据范围门拒绝（spec 2026-11-10 §5）：detail 携带 no_store_scope / range_dimension_missing…
+  | 'range_denied'
   // 能力陈述不是权限拒绝——该指标未声明下钻（spec §2.6），消费面必须据此换措辞
   | 'no_detail_binding'
 
@@ -396,12 +412,17 @@ function sliceFilterFragments(
 export function authorizeCore(
   catalog: MetricDef[], requester: Requester, metricId: string,
   args: Record<string, unknown>, maskCatalog: MetricDef[], extraFilters: string[],
+  scopePlan?: ScopePlan,
 ): { ok: true; inner: string; subject: string; metric: MetricDef; applied: Record<string, string>; exempted: string[]; wantTotal: boolean }
   | { ok: false; reason: DenyReason; metricId: string; detail?: string } {
   const metric = catalog.find((m) => m.id === metricId)
   if (!metric) return { ok: false, reason: 'metric_not_declared', metricId }
   if (metric.requiredScope !== null && !requester.hasScope(metric.requiredScope)) {
     return { ok: false, reason: 'metric_not_authorized', metricId }
+  }
+  // 数据范围门：scope 不够/维度不可用 ⇒ 拒绝；detail 保留可解释原因（不静默放行）。
+  if (scopePlan?.denial !== undefined && scopePlan.denial !== null) {
+    return { ok: false, reason: 'range_denied', metricId, detail: scopePlan.denial }
   }
 
   for (const key of Object.keys(args)) {
@@ -421,6 +442,8 @@ export function authorizeCore(
   const filters = pf.filters
   // 切片维度过滤（sliceFilterFragments 产物）与声明参数同一位置拼装（spec §5：filters = 声明参数 + 维度等值/IN）。
   filters.push(...extraFilters)
+  // 数据范围 filters（spec 2026-11-10）：与声明参数/切片维度同一位置，绝不事后拼到 GROUP BY 之后。
+  if (scopePlan?.filters !== undefined) filters.push(...scopePlan.filters)
   for (const [name, param] of Object.entries(metric.params)) {
     const v = args[name]
     if (param.required && (v === undefined || v === null || v === '')) {
@@ -502,6 +525,7 @@ function buildSlicedPlan(p: {
 export function authorize(
   catalog: MetricDef[], requester: Requester, metricId: string,
   args: Record<string, unknown>, maskCatalog: MetricDef[], slicing?: SlicingSpec,
+  scopePlan?: ScopePlan,
 ): AuthzResult {
   const metric = catalog.find((m) => m.id === metricId)
   if (!metric) return { ok: false, reason: 'metric_not_declared', metricId }
@@ -554,7 +578,7 @@ export function authorize(
     }
     const fragments = sliceFilterFragments(metric, slicing)
     if (!fragments.ok) return { ok: false, reason: 'bad_param', metricId, detail: fragments.detail }
-    const core = authorizeCore(catalog, requester, metricId, mergedArgs, maskCatalog, fragments.fragments)
+    const core = authorizeCore(catalog, requester, metricId, mergedArgs, maskCatalog, fragments.fragments, scopePlan)
     if (!core.ok) return core
     return {
       ok: true,
@@ -566,7 +590,7 @@ export function authorize(
     }
   }
   // slicing 缺省：与现状同一条路径（buildSlicedPlan 对 undefined 的输出 = 旧三段逐字节）
-  const core = authorizeCore(catalog, requester, metricId, args, maskCatalog, [])
+  const core = authorizeCore(catalog, requester, metricId, args, maskCatalog, [], scopePlan)
   if (!core.ok) return core
   return {
     ok: true,

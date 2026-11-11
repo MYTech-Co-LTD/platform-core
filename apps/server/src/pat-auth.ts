@@ -96,13 +96,15 @@ export function patIdentityMiddleware(deps: PatAuthDeps): MiddlewareHandler<Requ
     else w.count += 1
 
     let scopes: string[]
+    let roles: string[] = []
     try {
       const casdoor = deps.casdoor(tenant.casdoor_org)
       const user = await casdoor.getUser(key.casdoorUser)
       if (user === null) return c.json({ error: 'USER_GONE' }, 401)
       if (user.isForbidden) return c.json({ error: 'USER_DISABLED' }, 401)
       const perms = await casdoor.getPermissions()
-      scopes = effectiveScopes(key.casdoorUser, user.roles ?? [], perms)
+      roles = user.roles ?? []
+      scopes = effectiveScopes(key.casdoorUser, roles, perms)
     } catch {
       // 无缓存可降级 ⇒ fail-closed（没有任何第二套权限状态可以拿来用）
       return c.json({ error: 'CASDOOR_UNAVAILABLE' }, 503)
@@ -114,6 +116,7 @@ export function patIdentityMiddleware(deps: PatAuthDeps): MiddlewareHandler<Requ
       displayName: key.casdoorUser,
       scopes,
       hasScope: (code: string) => scopes.includes(code),
+      roles,
     }
     c.set('identity', identity)
     c.set(REQUESTER_CHANNEL, 'pat')

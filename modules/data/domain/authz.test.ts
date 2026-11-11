@@ -627,3 +627,40 @@ describe('authorize slicing：切片计划（授权核心唯一扩展点）', ()
     expect(r.ok && r.plan.sql.includes(' from ( ')).toBe(true)
   })
 })
+
+describe('authorize —— 数据范围 scopePlan（spec 2026-11-10）', () => {
+  const metricOf = (groupBy: string): MetricDef => ({
+    id: 'm_scope', title: 'm', description: '', requiredScope: 'data:query', subjectColumn: 'org',
+    selectSql: 'SELECT org, sum(value) AS value FROM marts.f', groupBy, params: {},
+  })
+
+  it('denial ⇒ range_denied（detail 原样透出，含具体原因）', () => {
+    const r = authorize([metricOf('org')], req(), 'm_scope', {}, [], undefined,
+      { filters: [], denial: 'no_store_scope' })
+    expect(r).toEqual({ ok: false, reason: 'range_denied', metricId: 'm_scope', detail: 'no_store_scope' })
+  })
+
+  it('filters 在 GROUP BY **之前**拼进内层（与声明参数同一位置）', () => {
+    const r = authorize([metricOf('org')], req(), 'm_scope', {}, [], undefined,
+      { filters: [" AND org IN ('org_a_lemeng')"], denial: null })
+    expect(r.ok).toBe(true)
+    if (!r.ok) return
+    const groupIdx = r.plan.sql.indexOf('GROUP BY org')
+    expect(groupIdx).toBeGreaterThan(-1)
+    expect(r.plan.sql.indexOf("AND org IN ('org_a_lemeng')")).toBeLessThan(groupIdx)
+  })
+
+  it('切片形态同样吃到 scope filters（两条路径都接线）', () => {
+    const m = { ...metricOf('org, bizday'), totalable: true }
+    const r = authorize([m], req(), 'm_scope', {}, [m],
+      { dimensions: ['org'] }, { filters: [" AND bizday >= '2026-01-01'::date"], denial: null })
+    expect(r.ok).toBe(true)
+    if (r.ok) expect(r.plan.sql).toContain("AND bizday >= '2026-01-01'::date")
+  })
+
+  it('未传 scopePlan（旧调用方）⇒ 行为逐字节不变', () => {
+    const a = authorize([metricOf('org')], req(), 'm_scope', {}, [])
+    const b = authorize([metricOf('org')], req(), 'm_scope', {}, [], undefined, undefined)
+    expect(a).toEqual(b)
+  })
+})
