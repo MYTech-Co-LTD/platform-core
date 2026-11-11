@@ -7,7 +7,42 @@
 import { Pool } from 'pg'
 
 export const DATA_WAREHOUSE_UNCONFIGURED = 'DATA_WAREHOUSE_UNCONFIGURED'
-const STATEMENT_TIMEOUT_MS = 30_000
+
+// ── 连接与资源预算（#1951 Wave 0.1）────────────────────────────────────────────────
+// 为什么必须显式配：pg_duckdb **每条连接一个 DuckDB 实例**、`duckdb.memory_limit=1536MB`，
+// 而数据面容器 `mem_limit` 默认 4g。node-pg 的默认 `max=10` ⇒ 理论 10 × 1.5GB 直接超容器上限，
+// 表现是 backend 被 OOM kill / postmaster `terminating any other active server processes`。
+// 我们**两个池**（写池 + 分析师只读池）各连同一实例，所以每个池的上限都要单独算。
+//
+// 默认值取 3：`3 × 1.5GB = 4.5GB` 略高于 4g，但 DuckDB 的 memory_limit 是**上限**不是常驻；
+// 实测 3 路并发 30 天明細（各约 40MB 扫描）峰值远低于预算。要更保守可设 2。
+const DEFAULT_POOL_MAX = 3
+const DEFAULT_IDLE_TIMEOUT_MS = 30_000
+const DEFAULT_CONNECT_TIMEOUT_MS = 10_000
+const DEFAULT_STATEMENT_TIMEOUT_MS = 30_000
+
+/** 读一个正整数 env；非法/缺失回落默认值（不抛：配置错误不该让进程起不来）。 */
+function positiveInt(env: Record<string, string | undefined>, key: string, def: number): number {
+  const raw = env[key]?.trim()
+  if (raw === undefined || raw === '') return def
+  const n = Number(raw)
+  return Number.isInteger(n) && n > 0 ? n : def
+}
+
+/** Pool 配置的唯一构造点（写池与只读池共用；测试直接断言本函数）。 */
+export function warehousePoolConfig(env: Record<string, string | undefined> = process.env): {
+  max: number
+  idleTimeoutMillis: number
+  connectionTimeoutMillis: number
+  statement_timeout: number
+} {
+  return {
+    max: positiveInt(env, 'DATA_WAREHOUSE_POOL_MAX', DEFAULT_POOL_MAX),
+    idleTimeoutMillis: positiveInt(env, 'DATA_WAREHOUSE_IDLE_MS', DEFAULT_IDLE_TIMEOUT_MS),
+    connectionTimeoutMillis: positiveInt(env, 'DATA_WAREHOUSE_CONNECT_MS', DEFAULT_CONNECT_TIMEOUT_MS),
+    statement_timeout: positiveInt(env, 'DATA_QUERY_TIMEOUT_MS', DEFAULT_STATEMENT_TIMEOUT_MS),
+  }
+}
 
 export function warehouseConfigured(env: Record<string, string | undefined> = process.env): boolean {
   const v = env.DATA_WAREHOUSE_URL?.trim()
@@ -22,7 +57,7 @@ export function warehousePool(env: Record<string, string | undefined> = process.
   if (singleton) return singleton
   const url = env.DATA_WAREHOUSE_URL?.trim()
   if (!url) throw new Error(DATA_WAREHOUSE_UNCONFIGURED)
-  singleton = new Pool({ connectionString: url, statement_timeout: STATEMENT_TIMEOUT_MS })
+  singleton = new Pool({ connectionString: url, ...warehousePoolConfig(env) })
   return singleton
 }
 
@@ -64,7 +99,7 @@ export function analystPool(env: Record<string, string | undefined> = process.en
   if (analystSingleton) return analystSingleton
   const url = env.DATA_WAREHOUSE_URL?.trim()
   if (!url) throw new Error(DATA_WAREHOUSE_UNCONFIGURED)
-  const pool = new Pool({ connectionString: url, statement_timeout: STATEMENT_TIMEOUT_MS })
+  const pool = new Pool({ connectionString: url, ...warehousePoolConfig(env) })
   pool.on('connect', (client) => { void client.query('set default_transaction_read_only = on') })
   analystSingleton = pool
   return analystSingleton
