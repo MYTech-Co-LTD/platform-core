@@ -51,6 +51,7 @@
 | **Wave 1.4 回归/候选接线** | PR #1971：`GET /metrics/candidates`（status/origin/relation/limit）+ `POST :id/reject`（CAS 只认 pending，其余 409）；`scripts/metric-candidates-job.mjs`（画像表驱动 org 清单，rc 0/1/2，域名层 `orgsWithProfiles`）；`deploy/metric-candidates-job.md` + `deploy/verify-regression-job.md` 入仓。实测：部署 `dep_WLs9IiueWMqmI9d6`（v268）后建 job `custom:tB6ulrsKtgW852WL`（cron `40 6 * * *` UTC），手动首跑 `jrun_x0nb662U3mApMrID` exit 0 / 1.96s：`orgs=1 failed=0 added=104 refreshed=167 expired=111 pendingAfter=269`（退役路径确实在跑；池级上限 21×20 成立）；新端点未鉴权访问返回 401（路由已注册、门卫生效）。数据模块服务端 1499 passed |
 | **Wave 2.2a skill contract 版本门** | PR #1974：`SUPPORTED_CONTRACT_VERSION` + `contractViolations()`，装载期不一致 ⇒ 抛错 ⇒ 模块装载失败；**变异确认**：version 改 2 ⇒ `check-mcp-toolface` exit 1 并指名该常量 |
 | **Wave 2.2b 契约跨字段六条** | PR #1976：`check-data-contract.mjs` 新增 `crossFieldViolations()`（README §4.2 ①–⑥）；`readContractDoc()` 补 `partitionBy`/`markerColumn`；例外收敛成显式表 `PARTITION_KEY_ALIASES`（recon_source 的 chunk↔chunk_no）；实测 30 份契约里 recon_source 是唯一命中，经别名判过；门禁单测 29 条 |
+| **Wave 2.3 通知链补通** | PR #1980：forms 两个事件此前**只有声明**（模板/规则/默认都没有，dispatch 恒 `no_rules`）；现补两条内置文案 + 两条 derived 规则（`recipient_key=assignee`）+ manifest `defaults`；新增 `templates/builtin.test.ts` 静态护栏（声明⇔模板双向一致）；OO org 显示名文档订正（miyuan→mytech）。**生产实测**：mytech 的 seed job（`custom:NWK_D7nKpsC7hdhe`）自动跑出 `templates=2 rules=5` 并查到两条 `derived:forms:*` 规则；**shanhai 手动 seed 后**同样补齐（`templates=3`：此前连 `data.metric.definition.changed` 的文案都没有）。⚠️ 发现的新缺口：**notify 四个作业只挂 mytech（serverId 23a1091e）**，shanhai 无 seed/reconcile/health/retention —— 已入待办 |
 
 ### 待办（Wave 见 §4）
 
@@ -59,8 +60,8 @@
 | 测试覆盖不均（12 staging / 6 marts / schema.yml） | 见 §2 | 2.1 |
 | 候选池缺 console 页（spec §3 声明「console 可浏览、一键采用」；现只有 HTTP 面） | `modules/data/console/` 无 candidates 页 | 2.x（UI） |
 | 契约**元 schema 本体**仍未被执行（`_schema.schema.json` 是 2020-12 JSON Schema，仓内无校验器；§4.2 六条已由 2.2b 补齐） | 需引入 ajv 或等价实现（依赖决策） | 2.2 残项 |
-| OO registry 与文档不一致；forms 事件无模板 | `oo-alert-registry.txt:15-28`；`builtin.ts:10-57` | 2.3 |
 | 列级血缘 | dbt core manifest 无列级边 | 2.4（触发式） |
+| notify 四作业（seed/reconcile/health/retention）只挂 mytech；shanhai 无 —— 模板/规则漂移与指派入队都不会自动发生 | 2026-11-11 实测：shanhai 靠手动 seed 补齐 | 2.3 残项（需人裁决 retention 会删行） |
 | history view 双 config；materialize 未知档落 full；cron 文档冲突；14 脚本不在 lock；detail 走可写池 | 盘点发现 | 3 |
 
 ---
@@ -112,3 +113,4 @@
 | 2026-11-11 | Wave 1.1/1.2/1.3 完成入账；待办表清掉 0.2 残留行 | 证据：PR #1967 + 部署 `dep_ejqOe_l_7Z-Sc6rc` 容器内实测（见 §3） |
 | 2026-11-11 | Wave 1.4 完成入账（含 job 首跑）；新增候选池 console 页缺口行 | 证据：PR #1971 + 部署 `dep_WLs9IiueWMqmI9d6` + job `custom:tB6ulrsKtgW852WL` 首跑 exit 0（见 §3） |
 | 2026-11-11 | Wave 2.2a/2.2b 完成入账；2.2 残项收敛为「元 schema 本体未执行」 | 证据：PR #1974（变异确认 exit 1）+ PR #1976（30 份契约实跑，29 条门禁单测） |
+| 2026-11-11 | Wave 2.3 完成入账 | 证据：PR #1980 + 服务端 notify 120 passed + seed 规则 4→6 / 模板 3→5 落库断言 |
