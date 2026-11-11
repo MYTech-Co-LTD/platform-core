@@ -1,8 +1,8 @@
--- assert_lake_month_index_not_stale.sql — 月文件积压不得超过 3 天（#1916 P2）。
+-- assert_lake_month_index_not_stale.sql — 月文件积压不得超过 2 天（#1916 P2）。
 --
 -- 读视图的「日文件补腿」只回溯 `current_date - 3`。若某月 `built_at < 该月 max(sealed_at)`
--- 且这个缺口**超过 3 天**（重封版后合并一直没跑），补腿也覆盖不到 → 该月数字会静默变旧。
--- 缺口 ≤3 天是合并排班（CST 04:10）的正常窗口，不判红。
+-- 且这个缺口**超过 2 天**（重封版后合并一直没跑），小时文件已被 GC 删掉 → 该月数字会静默变旧。
+-- 缺口 ≤2 天是合并排班（CST 04:10）的正常窗口，不判红。
 --
 -- 返回任何行即失败。
 with lag as (
@@ -19,4 +19,4 @@ from lag l
 join data.lake_month_index i
   on i.system_book = l.system_book and i.ym = l.ym
 where i.built_at < l.last_seal
-  and l.last_seal < now() - interval '3 days'
+  and l.last_seal < now() - interval '2 days'
