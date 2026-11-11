@@ -5,7 +5,7 @@
 // effectiveMasks，不改 mask.ts 一个字。
 import type { DrillBinding, DrillColumn, Requester } from './authz'
 import { authorize, paramFilters, sqlQuote, visibleMetrics } from './authz'
-import { maskingAuditOf, writeAudit } from './audit-store'
+import { maskingAuditOf, writeAudit, type ScopeAudit } from './audit-store'
 import { loadMergedCatalog } from './metric-store'
 import { effectiveMasks, maskedSelectSql } from './mask'
 import { runWarehouseSql, warehousePool, DATA_WAREHOUSE_UNCONFIGURED } from './warehouse'
@@ -15,6 +15,7 @@ import { detailProvenance, type DetailProvenance } from './provenance'
 import { cacheGet, cacheKey, cacheSet } from './result-cache'
 import { DetailGateBusyError, detailGate } from './detail-gate'
 import { dataVersionOf } from './data-version'
+import { buildScopePlan, loadEffectiveScopes, scopeModeOf, type DataScopePlan } from './scope'
 
 // 兼容旧导入：DetailProvenance 已迁到 provenance.ts（共享来源类型）。
 export type { DetailProvenance } from './provenance'
@@ -165,6 +166,8 @@ export async function runDetailQuery(
   deps: QueryDeps, org: string, requester: Requester | null,
   metricId: string, args: Record<string, unknown>, detail: DetailArgs,
 ): Promise<DetailOutcome> {
+  // 数据范围判定结果（#1957）：null = 未发生（off/管理员/未认证）。
+  let scopeAudit: ScopeAudit | null = null
   const audit = (
     verdict: 'ok' | 'denied' | 'error', reason: string | null, rowCount: number | null,
     masking: ReturnType<typeof maskingAuditOf>,
@@ -174,6 +177,8 @@ export async function runDetailQuery(
     keyId: requester?.keyId ?? null, metricId, params: { ...args, ...(detail.dimensions !== undefined ? { dimensions: detail.dimensions } : {}) },
     rowCount, verdict, reason, masking,
     ...(drillFacet !== null ? { drill: drillFacet } : {}),
+    scopePlan: scopeAudit,
+    scopeDenial: scopeAudit?.denial ?? null,
   })
 
   if (!requester) {
@@ -183,9 +188,38 @@ export async function runDetailQuery(
 
   const allMetrics = await loadMergedCatalog(deps.pool, org)
   const catalog = visibleMetrics(allMetrics, requester, deps.adoptedSources)
+  // 数据范围门（#1957）：与 runQuery **同一实现**（`buildScopePlan`），否则 enforce 下会出现
+  // 「聚合看不到、明细看得到」的绕过面。off 不裁；shadow 只记录；enforce 传入 authorize。
+  const scopeMode = scopeModeOf(process.env)
+  let scopePlan: DataScopePlan | undefined
+  if (scopeMode !== 'off') {
+    const metric = catalog.find((m) => m.id === metricId)
+    if (metric !== undefined) {
+      try {
+        const effective = await loadEffectiveScopes(deps.pool, org, requester)
+        const plan = buildScopePlan(metric, effective, org, requester, scopeMode)
+        scopeAudit = { mode: scopeMode, applied: plan.applied, filters: [...plan.filters], denial: plan.denial }
+        if (scopeMode === 'shadow') {
+          console.warn(JSON.stringify({
+            event: 'data_scope_shadow', org, userId: requester.userId, metricId,
+            filters: plan.filters, denial: plan.denial, applied: plan.applied,
+          }))
+        } else {
+          scopePlan = plan
+        }
+      } catch (e) {
+        const detail = e instanceof Error ? e.message : String(e)
+        if (scopeMode === 'enforce') {
+          await audit('denied', 'range_denied:scope_unavailable', null, null, null)
+          return { status: 'denied', metricId, reason: 'range_denied', detail: 'scope_unavailable' }
+        }
+        console.warn(JSON.stringify({ event: 'data_scope_unavailable', org, metricId, error: detail }))
+      }
+    }
+  }
   // authorize 只是**门**（拒绝链 + 参数校验）；它拼的聚合计划在这里被丢弃——下钻 SQL 由
   // buildDrillSql 另拼，但 where 的参数连接词必须与它同源（paramFilters，Task 1 抽取）。
-  const authz = authorize(catalog, requester, metricId, args, allMetrics)
+  const authz = authorize(catalog, requester, metricId, args, allMetrics, undefined, scopePlan)
   if (!authz.ok) {
     await audit('denied', authz.reason, null, null, null)
     return { status: 'denied', metricId, reason: authz.reason, detail: authz.detail }

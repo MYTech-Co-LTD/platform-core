@@ -60,3 +60,26 @@ describe('exploreQueryImpl：provenance（S1）', () => {
     expect('auditId' in payload.provenance).toBe(false)
   })
 })
+
+describe('exploreQueryImpl：数据范围 enforce（#1957）', () => {
+  it('enforce 下非管理员 ⇒ range_denied:explore_not_scoped（任意 SQL 无法编译范围谓词）', async () => {
+    process.env.DATA_SCOPE_MODE = 'enforce'
+    const noAdmin: Requester = { ...requester, scopes: ['data:query'], hasScope: (s) => s === 'data:query' }
+    const out = await exploreQueryImpl({ ...deps(), requester: noAdmin }, { relation: 'fct_retail_sale' })
+    expect(out.isError).toBe(true)
+    expect(out.payload).toMatchObject({ status: 'denied', reason: 'range_denied', detail: 'explore_not_scoped' })
+    delete process.env.DATA_SCOPE_MODE
+  })
+
+  it('enforce 下管理员放行（不受范围限制的主体）', async () => {
+    process.env.DATA_SCOPE_MODE = 'enforce'
+    mocks.executeExplore.mockResolvedValue({
+      ok: true, columns: ['a'], rows: [[1]], rowCount: 1, truncated: false,
+      sql: 'select 1', preview: 'select 1', auditId: null,
+    })
+    const admin: Requester = { ...requester, scopes: ['data:query', 'data:manage'], hasScope: () => true }
+    const out = await exploreQueryImpl({ ...deps(), requester: admin }, { relation: 'fct_retail_sale' })
+    expect(out.payload).toMatchObject({ status: 'ok' })
+    delete process.env.DATA_SCOPE_MODE
+  })
+})
