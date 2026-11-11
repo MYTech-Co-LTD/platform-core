@@ -421,7 +421,7 @@ describe('templateOf', () => {
       numbers: [...facts.numbers, '-800.00', '92'],
     }
     const text = templateOf(rootFacts)
-    expect(text).toContain('根因：销售额 主要受 branch_num 92 影响（1,024.50，变化 -800.00）')
+    expect(text).toContain('根因：销售额 主要受门店「92」影响（1,024.50，变化 -800.00）')
     // 模型输出引用分析数字 ⇒ 数字校验通过（不是越界）
     const { model, calls } = fakeModel([{ content: '根因：门店 92 的销售额为 1,024.50，变化 -800.00。' }])
     const { pool } = fakePool()
@@ -568,6 +568,34 @@ describe('daily_review 模板', () => {
     const text = templateOf({ ...facts, focus: 'daily_review', dailyReview: rangeDr })
     expect(text).toContain('2026-11-01 ~ 2026-11-08（8 天） 合计 营业额')
     expect(text).toContain('vs 上一区间')
+  })
+
+  it('range 提示词嵌入区间标签本身，不把字段名交给模型（2026-11-11 实测「rangeLabel」被写进正文）', async () => {
+    const rangeDr: DailyReviewBundle = {
+      ...dr,
+      mode: 'range',
+      rangeFrom: '2026-11-01',
+      rangeTo: '2026-11-08',
+      rangeDays: 8,
+      rangeLabel: '2026-11-01 ~ 2026-11-08（8 天）',
+      yesterday: '2026-10-31',
+      comparisons: {
+        ...dr.comparisons,
+        yesterday: { baseline: snap('上一区间', '2026-10-24 ~ 2026-10-31'), delta },
+      },
+    }
+    const { model, calls } = fakeModel([{ content: '结论：区间合计如上。\n\n- 先核对数据完整性。' }])
+    const { pool } = fakePool()
+    await generateNarrative(depsOf(pool, {
+      model, facts: { ...facts, focus: 'daily_review', dailyReview: rangeDr }, focus: 'daily_review',
+    }))
+    const user = calls[0]!.messages.filter((m) => m.role === 'user').map((m) => m.content).join('\n')
+    const system = calls[0]!.messages.filter((m) => m.role === 'system').map((m) => m.content).join('\n')
+    // 提示词给「区间标签本身」，不再让模型去认字段名
+    expect(user).toContain('分析「2026-11-01 ~ 2026-11-08（8 天）」这个**区间的合计**')
+    expect(user).not.toContain('dailyReview.rangeLabel')
+    // facts 的 JSON 里必然还有键名，另外用 system 约束禁止把字段名写进正文
+    expect(system).toContain('不要把 facts 的字段名')
   })
 
   it('模型在「建议：」处被截断 ⇒ 补回模板建议条目（不缓存空标题）', async () => {
