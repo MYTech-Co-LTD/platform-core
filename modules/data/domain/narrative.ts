@@ -24,7 +24,7 @@ import {
 } from './report-narrative-store'
 
 /** 参与缓存键；**改提示词 = 升版本号**（旧缓存自然不再命中）。 */
-export const NARRATIVE_PROMPT_VERSION = 'narrative-v11'
+export const NARRATIVE_PROMPT_VERSION = 'narrative-v12'
 
 /** 与 spec §4.1 同形的 SSE 事件。`replace` 表示「已流出的内容作废」，客户端必须整段替换。 */
 export type NarrativeEvent =
@@ -97,6 +97,7 @@ const DAILY_REVIEW_BASE = [
   '日期一律写成 facts 里的 YYYY-MM-DD 形式；当前门店以 facts.branchName（缺省 branchNum）为准。',
   '费用按项目是净额：写净额合计；有负数明细时说明主要冲减项，不要把正向大项相加当合计。',
   '不要推测外部原因（天气/竞品/促销），只写数据内可见的构成与需要核对的事项。',
+  '不要把 facts 的字段名（如 rangeLabel、item_num、branchNum、factsHash）写进正文——只写业务语言（区间、商品、门店）。',
 ].join('\n')
 
 const DAILY_REVIEW_SYSTEM = [
@@ -223,13 +224,27 @@ function userPrompt(facts: FactBundle, strictNote = ''): string {
       ? '重点：先写结论（当前门店/期间的关键值与对比），再写异常，再用 analysis.findings 写「根因」（点名维度值/明细行/变化量），最后写行动。根因只认 findings 里的数，不另做算术。'
       : facts.focus === 'daily_review'
         ? facts.dailyReview?.mode === 'range'
-          ? '重点：分析 dailyReview.rangeLabel 这个**区间的合计**，不是单日；对比基线只引用 comparisons 的 delta；净毛利说明未含房租/水电；建议绑定 suggestions 里的金额/项目。'
+          ? `重点：分析「${facts.dailyReview?.rangeLabel ?? '该区间'}」这个**区间的合计**，不是单日；合计按「所有指标都有数据的最新共同日」截止——若按日序列里出现该窗口之外的日期，说明部分指标数据未到齐，按「未到齐」描述，不要写成口径错误；对比基线只引用 comparisons 的 delta；净毛利说明未含房租/水电；建议绑定 suggestions 里的金额/项目。`
           : '重点：按「结论/对比/成本/MTD/驱动/根因/建议」写日报；三基线只引用 dailyReview.comparisons 的 delta；净毛利必须说明未含房租/水电；建议只引用 dailyReview.suggestions 的方向并绑定其中的金额/项目。'
         : '重点：结论首句写当前门店（branchName，缺省 branchNum），再写销售额/订单/客单价与对比；异常写最低销售日、报损最大原因、费用最大正向项与主要冲减项（有负数才写）；行动 2-3 条，带金额/项目名。',
     ...(facts.hasData ? [] : ['facts.hasData=false：只写一句「该期间门店无有效数据（未接入或未物化）」，不要写异常/行动。']),
     ...(strictNote === '' ? [] : [strictNote]),
     `facts=${JSON.stringify(facts)}`,
   ].join('\n')
+}
+
+/** 维度内部名 → 人话。回退模板直接面向读者，不能把 `item_num` 这类列名丢出来。 */
+const DIMENSION_LABELS: Record<string, string> = {
+  item_num: '商品',
+  branch_num: '门店',
+  bizday: '日期',
+  order_no: '订单',
+  order_sale_type_name: '销售类型',
+  category_name: '品类',
+  brand_name: '品牌',
+}
+function dimensionLabel(dimension: string): string {
+  return DIMENSION_LABELS[dimension] ?? dimension
 }
 
 /** 确定性模板：只用 facts 的格式化值，缺失项写 `-`（spec §6 逐字结构）。 */
@@ -279,7 +294,7 @@ export function templateOf(f: FactBundle): string {
       ? `根因：${dr.rootCauseDetail.summary}（销量效应 ${dr.rootCauseDetail.volumeEffect}，价格效应 ${dr.rootCauseDetail.priceEffect}，成本效应 ${dr.rootCauseDetail.costEffect}）。`
       : rc === undefined
         ? '根因：当前数据不足以分解到具体商品/客户。'
-        : `根因：${rc.metricTitle} 主要受 ${rc.dimension} ${rc.rows[0]!.label} 影响（${rc.rows[0]!.value}${rc.rows[0]!.delta === undefined ? '' : `，变化 ${rc.rows[0]!.delta}`}）。`
+        : `根因：${rc.metricTitle} 主要受${dimensionLabel(rc.dimension)}「${rc.rows[0]!.label}」影响（${rc.rows[0]!.value}${rc.rows[0]!.delta === undefined ? '' : `，变化 ${rc.rows[0]!.delta}`}）。`
     const suggestionText = dr.suggestions.map((x) => `- ${x}`).join('\n')
     return [
       `结论：${branchLabel}${dr.assessment.headline}。${targetLabel} ${dr.mode === 'range' ? '合计 ' : ''}营业额 ${dr.today.revenue}，订单 ${dr.today.orders}，客单价 ${dr.today.aov}；毛利 ${dr.today.gross}（毛利率 ${dr.today.grossMargin}）。`,
@@ -311,8 +326,8 @@ export function templateOf(f: FactBundle): string {
     const detail = f.analysis?.findings.find((x) => x.kind === 'detail' && x.rows.length > 0)
     const detailText = detail === undefined
       ? ''
-      : `；明细 ${detail.dimension} ${detail.rows[0]!.label}（${detail.rows[0]!.value}）`
-    return `根因：${rc.metricTitle} 主要受 ${rc.dimension} ${top.label} 影响（${top.value}${delta}${detailText}）。`
+      : `；明细${dimensionLabel(detail.dimension)}「${detail.rows[0]!.label}」（${detail.rows[0]!.value}）`
+    return `根因：${rc.metricTitle} 主要受${dimensionLabel(rc.dimension)}「${top.label}」影响（${top.value}${delta}${detailText}）。`
   })()
   return [
     `结论：${branchLabel}本期销售额 ${k('销售额')?.current ?? '-'}，订单 ${k('订单数')?.current ?? '-'}，客单价 ${k('客单价')?.current ?? '-'}；会员销售占比 ${k('会员销售占比')?.current ?? '-'}。`,
