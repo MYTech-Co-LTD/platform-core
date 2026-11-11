@@ -3,7 +3,7 @@
 // 只读 + 吊销：**不代建**（key 是「每个账号自己的」——代建等于把别人的凭据经你手发出去）。
 // 门禁由 App.tsx 的 <AdminGate> 施加（本页不自判 scope，与其它管理页同构）。
 import { useCallback, useEffect, useState } from 'react'
-import { Button, Card, Popconfirm, Table, Tag, message } from 'antd'
+import { Button, Card, Popconfirm, Table, Tag, Typography, message } from 'antd'
 import { listAllKeys, revokeAnyKey, type AdminApiKeyRow } from '../../lib/api'
 import { ConsolePage } from '../../components/ConsolePage'
 
@@ -37,8 +37,8 @@ export default function AdminKeysPage() {
 
   return (
     <ConsolePage
-      title="Key 管理"
-      description="本租户全部个人 Key。只可吊销，不可代建——Key 是账号自己的凭据，代建等于把别人的 token 经你手发出去。用户自助入口在「个人 Key」页。"
+      title="API Key"
+      description="本租户全部个人 API Key。这里只可吊销、不可代建——Key 是账号自己的凭据，代建等于把别人的 token 经你手发出去；用户自助创建入口在「我的 Key」页。"
     >
       <Card>
       <Table<AdminApiKeyRow>
@@ -46,6 +46,15 @@ export default function AdminKeysPage() {
         loading={loading}
         dataSource={rows}
         pagination={{ pageSize: 20 }}
+        locale={{
+          emptyText: (
+            <div style={{ padding: '32px 0' }}>
+              <Typography.Text type="secondary">
+                本租户还没有任何 API Key。Key 由账号在「个人 Key」页自助创建；你在这里只负责吊销。
+              </Typography.Text>
+            </div>
+          ),
+        }}
         size="small"
         columns={[
           { title: '账号', dataIndex: 'casdoorUser', width: 160 },

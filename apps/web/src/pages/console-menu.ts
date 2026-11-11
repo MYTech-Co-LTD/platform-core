@@ -43,6 +43,12 @@ export function visibleAdminEntries(
 export interface AdminMenuInput {
   adminEntries: VisibleAdminEntry[]
   storageVisible: boolean
+  /**
+   * 「数据范围」入口是否可见（数据模块已启用 + 持 `data:manage`）。
+   * 它物理上住在数据模块 console（`/console/data/scopes`），但概念上属于「权限」——
+   * 用户找「谁能看哪些门店」会来管理台，不会钻进报表中心（#1953 IA 收口）。
+   */
+  dataScopesVisible: boolean
 }
 
 /**
@@ -53,15 +59,23 @@ export interface AdminMenuInput {
  * 按 manifest 声明序平铺在尾部。
  */
 function adminGroup(iconMap: Record<string, ReactNode>, admin: AdminMenuInput): MenuDataItem {
-  const children: MenuDataItem[] = [
-    { path: '/console/admin/users', name: '用户管理' },
+  // 按「用户的任务」分三段（#1953 IA 收口）：管人 / 配权限 / 接系统。
+  // 平铺 8 项会让「用户管理 vs 组织架构」「角色管理 vs 角色与授权」看起来是同一件事。
+  const members: MenuDataItem[] = [
+    { path: '/console/admin/users', name: '成员' },
     { path: '/console/admin/org-tree', name: '组织架构' },
-    { path: '/console/admin/roles', name: '角色管理' },
-    { path: '/console/admin/permissions', name: '角色与授权' },
+  ]
+  const permissions: MenuDataItem[] = [
+    { path: '/console/admin/roles', name: '角色' },
+    { path: '/console/admin/permissions', name: '权限码授权' },
+    ...(admin.dataScopesVisible
+      ? [{ path: '/console/data/scopes', name: '数据范围' }]
+      : []),
+  ]
+  const settings: MenuDataItem[] = [
     { path: '/console/admin/subscriptions', name: '我的订阅' },
-    { path: '/console/admin/keys', name: 'Key 管理' },
+    { path: '/console/admin/keys', name: 'API Key' },
     // 集成健康（spec 2026-10-31）：把「出站集成还有没有动静」变成一屏可见。
-    // 排在订阅之后、模块 admin 页之前——它是平台内置页，不走 registry。
     { path: '/console/admin/integrations', name: '集成健康' },
     // 存储配置（M3c）：能力联动——启用的模块里至少一个声明 storage 才显示；
     // **不设图标** —— CONSOLE_ICONS 要求图标名先登记才渲染，不设就不欠这笔账
@@ -72,7 +86,11 @@ function adminGroup(iconMap: Record<string, ReactNode>, admin: AdminMenuInput): 
     path: '/console/admin',
     name: '管理',
     icon: iconMap['TeamOutlined'],
-    children,
+    children: [
+      { name: '成员与组织', children: members },
+      { name: '角色与权限', children: permissions },
+      { name: '接入与设置', children: settings },
+    ],
   }
 }
 

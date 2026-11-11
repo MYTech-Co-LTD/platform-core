@@ -264,6 +264,8 @@ function ConsoleLayout({
       buildConsoleMenu(visibleConsoleEntries(config, session, consoleRegistry), CONSOLE_ICONS, session, {
         adminEntries: visibleAdminEntries(config, session, consoleRegistry),
         storageVisible: storageDeclarers.some((id) => config.modules.some((m) => m.id === id)),
+        // 「数据范围」入口：数据模块已启用 + 持 data:manage（页面物理上在模块 console 内）
+        dataScopesVisible: config.modules.some((m) => m.id === 'data') && session.scopes.includes('data:manage'),
       }),
     [config, session],
   )

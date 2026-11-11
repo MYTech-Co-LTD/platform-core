@@ -3,6 +3,7 @@ import { describe, expect, it } from 'vitest'
 import type { ComponentType } from 'react'
 import { TENANT_ADMIN_SCOPE, buildConsoleMenu, visibleAdminEntries, visibleConsoleEntries } from './console-menu'
 import type { ConsoleRegistryEntry } from '../console-registry.gen'
+import type { MenuDataItem } from '@ant-design/pro-components'
 
 const CONFIG = {
   tenant: { slug: 'acme', org: 'acme-org' },
@@ -55,29 +56,59 @@ describe('visibleConsoleEntries（三重过滤 + 去重）', () => {
   })
 })
 
+/** 管理组是按「用户任务」分段的嵌套结构（#1953）；断言一律比叶子路径，避免绑死分组层级数。 */
+function leafPaths(node: MenuDataItem | undefined): string[] {
+  if (!node) return []
+  const kids = node.children ?? []
+  if (kids.length === 0) return node.path ? [node.path] : []
+  return kids.flatMap((c) => leafPaths(c))
+}
+
 describe('buildConsoleMenu（spec §3 位置规则）', () => {
   it('概览恒第 1；case-engine 模块页钉第 2（即使 manifest 声明在后）；其余按声明序', () => {
-    const menu = buildConsoleMenu(visibleConsoleEntries(CONFIG, SESSION, REGISTRY), {}, SESSION, { adminEntries: [], storageVisible: true })
+    const menu = buildConsoleMenu(visibleConsoleEntries(CONFIG, SESSION, REGISTRY), {}, SESSION, {
+      adminEntries: [],
+      storageVisible: true,
+      dataScopesVisible: false,
+    })
     expect(menu.map((m) => m.path)).toEqual(['/console', '/console/me/keys', '/console/case-engine', '/console/first/a'])
   })
   it('case-engine 未落地/无权限时该位自然缺席，不产生空位', () => {
-    const menu = buildConsoleMenu(visibleConsoleEntries(CONFIG, SESSION_PARTIAL, REGISTRY), {}, SESSION_PARTIAL, { adminEntries: [], storageVisible: true })
+    const menu = buildConsoleMenu(visibleConsoleEntries(CONFIG, SESSION_PARTIAL, REGISTRY), {}, SESSION_PARTIAL, {
+      adminEntries: [],
+      storageVisible: true,
+      dataScopesVisible: false,
+    })
     expect(menu.map((m) => m.path)).toEqual(['/console', '/console/me/keys', '/console/first/a'])
   })
 })
 
 // ---- M3：管理组（tenant:admin 门禁，spec D4/D9，issue #46）----
 describe('buildConsoleMenu 管理组', () => {
-  it('有 tenant:admin → 尾部追加「管理」组（八项子菜单）', () => {
-    const menu = buildConsoleMenu([], {}, { scopes: ['tenant:admin'] }, { adminEntries: [], storageVisible: true })
+  it('有 tenant:admin → 尾部追加「管理」组，按 成员/权限/接入 三段分组', () => {
+    const menu = buildConsoleMenu([], {}, { scopes: ['tenant:admin'] }, {
+      adminEntries: [],
+      storageVisible: true,
+      dataScopesVisible: true,
+    })
     const group = menu.at(-1)
     expect(group?.name).toBe('管理')
-    // 组织架构/角色管理（账户和权限体系 Task 11）：平台内置页，插在用户管理之后
-    expect(group?.children?.map((c) => c.path)).toEqual([
+    expect(group?.children?.map((c) => c.name)).toEqual(['成员与组织', '角色与权限', '接入与设置'])
+    expect(group?.children?.[0]?.children?.map((c) => c.path)).toEqual([
+      '/console/admin/users',
+      '/console/admin/org-tree',
+    ])
+    expect(group?.children?.[1]?.children?.map((c) => c.path)).toEqual([
+      '/console/admin/roles',
+      '/console/admin/permissions',
+      '/console/data/scopes',
+    ])
+    expect(leafPaths(group)).toEqual([
       '/console/admin/users',
       '/console/admin/org-tree',
       '/console/admin/roles',
       '/console/admin/permissions',
+      '/console/data/scopes',
       '/console/admin/subscriptions',
       '/console/admin/keys',
       '/console/admin/integrations',
@@ -85,8 +116,21 @@ describe('buildConsoleMenu 管理组', () => {
     ])
   })
 
+  it('无 data:manage（dataScopesVisible=false）→ 数据范围入口不出现', () => {
+    const menu = buildConsoleMenu([], {}, { scopes: ['tenant:admin'] }, {
+      adminEntries: [],
+      storageVisible: true,
+      dataScopesVisible: false,
+    })
+    expect(leafPaths(menu.at(-1))).not.toContain('/console/data/scopes')
+  })
+
   it('无 tenant:admin → 不出现管理组（模块页照旧）', () => {
-    const menu = buildConsoleMenu([], {}, { scopes: ['demo:view'] }, { adminEntries: [], storageVisible: true })
+    const menu = buildConsoleMenu([], {}, { scopes: ['demo:view'] }, {
+      adminEntries: [],
+      storageVisible: true,
+      dataScopesVisible: false,
+    })
     expect(menu.some((m) => m.name === '管理')).toBe(false)
   })
 
@@ -109,8 +153,12 @@ describe('管理组联动', () => {
   })
 
   it('storageVisible=false → 存储配置消失（组织架构/角色管理恒在）', () => {
-    const menu = buildConsoleMenu([], {}, ADMIN_SESSION, { adminEntries: [], storageVisible: false })
-    expect(menu.at(-1)?.children?.map((c) => c.path)).toEqual([
+    const menu = buildConsoleMenu([], {}, ADMIN_SESSION, {
+      adminEntries: [],
+      storageVisible: false,
+      dataScopesVisible: false,
+    })
+    expect(leafPaths(menu.at(-1))).toEqual([
       '/console/admin/users',
       '/console/admin/org-tree',
       '/console/admin/roles',
@@ -125,8 +173,9 @@ describe('管理组联动', () => {
     const menu = buildConsoleMenu([], {}, ADMIN_SESSION, {
       adminEntries: [{ moduleId: 'demo', path: '/console/admin/demo/x', title: '演示管理页' }],
       storageVisible: true,
+      dataScopesVisible: false,
     })
-    expect(menu.at(-1)?.children?.map((c) => c.path)).toEqual([
+    expect(leafPaths(menu.at(-1))).toEqual([
       '/console/admin/users',
       '/console/admin/org-tree',
       '/console/admin/roles',

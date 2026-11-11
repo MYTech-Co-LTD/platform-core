@@ -111,7 +111,8 @@ describe('数据模块 console 入口（三页签）', () => {
       return json({})
     })
     render(<RouterProvider router={router} />)
-    expect(screen.getByText('数据范围')).toBeTruthy()
+    // 页签 + 页内标题都会出现「数据范围」（#1953 页面标题收口），故取全量
+    expect(screen.getAllByText('数据范围').length).toBeGreaterThan(0)
     await waitFor(() => expect(screen.getByText('有效范围预览（谁看得见什么）')).toBeTruthy())
     expect(router.state.location.pathname).toBe('/console/data/scopes')
   })

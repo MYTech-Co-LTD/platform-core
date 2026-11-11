@@ -5,7 +5,7 @@
 // 对每个变更角色算「现成员 ± 该用户」整组替换（见 onGrant 注释），不是改「用户的角色列表」。
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import { useOutletContext } from 'react-router-dom'
-import { App, Card, Form, Input, Modal, Select, Table, Tag, Tree } from 'antd'
+import { App, Card, Form, Input, Modal, Select, Table, Tag, Tree, Typography } from 'antd'
 import type { ColumnsType } from 'antd/es/table'
 import {
   ApiError,
@@ -132,6 +132,7 @@ export default function AdminOrgTreePage() {
   return (
     <ConsolePage
       title="组织架构"
+      description="部门树同步自企微通讯录。点左侧部门筛人，点右侧「授角色」调整这个人能干什么；数据按部门可见也以这棵树为准（部门没同步到 = 挂不上）。"
       extra={
         <Input.Search
           placeholder="搜索姓名/账号"
@@ -159,6 +160,13 @@ export default function AdminOrgTreePage() {
             columns={columns}
             dataSource={shown}
             pagination={false}
+            locale={{
+              emptyText: (
+                <Typography.Text type="secondary">
+                  {search ? `没有匹配「${search}」的成员` : '该部门暂无成员'}
+                </Typography.Text>
+              ),
+            }}
           />
         </Card>
       </div>
