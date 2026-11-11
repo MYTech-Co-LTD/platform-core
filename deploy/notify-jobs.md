@@ -24,6 +24,28 @@
 - 命令用 `docker exec` 进 server 容器（仓内脚本与 `node_modules` 都在），**不是** `docker run` 一次性容器
   —— 与 `notify-reconcile` 的既有范式一致（本机验证过这条路径能跑）。
 
+## shanhai 实例的同名作业（2026-11-11 补，Wave 2.3）
+
+此前四件套**只挂在 mytech**（`serverId 23a1091e`），shanhai（`8281d598`，platform.shanhaiyiguo.com）一个都没有
+⇒ 模板/规则从不被新版本 seed 覆盖、表单指派也不会入队（实测：shanhai 连 `data.metric.definition.changed`
+的文案都没有，是手动跑一次 seed 才补上的）。现按用户裁决补**三项**（retention 未加——它删历史行，需单独决定）：
+
+| job | key | cron（UTC） | 命令（在 shanhai server 容器里跑） |
+|---|---|---|---|
+| `notify-seed-builtin (shanhai)` | `custom:A3p5ilPtZOR0gyaM` | `13 * * * *` | `pnpm exec tsx scripts/notify-seed-builtin.mjs` |
+| `notify-reconcile (shanhai)` | `custom:QSr7oZ5KBAVOqx5j` | `7 * * * *` | `pnpm exec tsx scripts/notify-reconcile.mjs --json` |
+| `notify-health (shanhai)` | `custom:8DfKdSACzb8Q5b4a` | `*/5 * * * *` | `pnpm exec tsx scripts/notify-health.mjs` |
+
+- 三项都 `notifyConfig={states:['failed'], channels:['nch_XBUs425hd_KsA_lt']}`，`timeoutMs=300000`；
+  reconcile 另带 `retry={maxAttempts:2, backoffSeconds:60}`（与 mytech 同款）。
+- **首次真机跑**（2026-11-11 16:23Z，均 exit 0 除 health 首跑）：seed `{"templates":0,"rules":5}`（幂等）、
+  reconcile `{"targets":0,"emitted":0,"duplicates":0}`、health 首跑 `dead=4`（2026-10-31 的历史投递：
+  企微 81013「用户不在应用可见范围」×2 + `missing_channel_address`×2）。
+- **处置（已裁决）**：按用户点名删除那 4 条历史 dead 行（`status='dead' and created_at < '2026-11-01'`），
+  复跑 health → `dead=0 stale=0 workers=1`，作业保持启用。
+- ⚠️ **retention 仍未部署**：dead/历史投递不会自动清理；将来积压会让 health 重新变红——
+  届时要么加 retention（删行需点名），要么把 health 的 dead 判据改成时间窗。
+
 ## 1. `notify-health`（每 5 分钟）
 
 ```bash

@@ -61,7 +61,7 @@
 | 候选池缺 console 页（spec §3 声明「console 可浏览、一键采用」；现只有 HTTP 面） | `modules/data/console/` 无 candidates 页 | 2.x（UI） |
 | 契约**元 schema 本体**仍未被执行（`_schema.schema.json` 是 2020-12 JSON Schema，仓内无校验器；§4.2 六条已由 2.2b 补齐） | 需引入 ajv 或等价实现（依赖决策） | 2.2 残项 |
 | 列级血缘 | dbt core manifest 无列级边 | 2.4（触发式） |
-| notify 四作业（seed/reconcile/health/retention）只挂 mytech；shanhai 无 —— 模板/规则漂移与指派入队都不会自动发生 | 2026-11-11 实测：shanhai 靠手动 seed 补齐 | 2.3 残项（需人裁决 retention 会删行） |
+| notify **retention** 仍未在 shanhai 部署（seed/reconcile/health 已于 2026-11-11 补齐并验过）；dead/历史投递不会自动清理，积压会让 health 重新变红 | 用户裁决：暂不加删行作业；届时二选一（加 retention 需点名 / health 改时间窗判据） | 2.3 残项 |
 | history view 双 config；materialize 未知档落 full；cron 文档冲突；14 脚本不在 lock；detail 走可写池 | 盘点发现 | 3 |
 
 ---
