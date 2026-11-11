@@ -6,7 +6,7 @@
 // 湖竞态重试与审计面。
 import { beforeEach, describe, expect, it } from 'vitest'
 import type { Pool } from 'pg'
-import { buildDrillSql, runDetailQuery } from './drill'
+import { buildDrillSql, monthsSpanned, runDetailQuery, servingRelationFor } from './drill'
 import type { DrillBinding, Requester } from './authz'
 import type { QueryDeps } from './query-service'
 import { resetWarehousePool } from './warehouse'
@@ -460,5 +460,39 @@ describe('buildDrillSql 条件列（纯函数）', () => {
       [{ col: 'order_detail_std_price', grantedBy: 'data:cost' }])
     expect(p.sql).toContain(', max(order_detail_std_price) as order_detail_std_price from vw_t')
     expect(p.sql).toContain('sum(value) as value, max(order_detail_std_price) as order_detail_std_price from (')
+  })
+})
+
+describe('servingRelationFor（月感知服务视图选路，#1916 P2）', () => {
+  it('单日范围 ⇒ 服务视图 + 精确 month 谓词', () => {
+    const r = servingRelationFor('vw_lemeng_retail_order_line', { from: '2026-11-09', to: '2026-11-09' })
+    expect(r.relation).toBe('vw_lemeng_retail_order_line_month')
+    expect(r.monthFilter).toBe(" AND month BETWEEN '2026-11' AND '2026-11'")
+  })
+
+  it('跨 3 个月仍在阈值内 ⇒ 服务视图', () => {
+    const r = servingRelationFor('vw_lemeng_retail_order_line', { from: '2026-09-15', to: '2026-11-02' })
+    expect(r.relation).toBe('vw_lemeng_retail_order_line_month')
+    expect(r.monthFilter).toBe(" AND month BETWEEN '2026-09' AND '2026-11'")
+  })
+
+  it('跨 6 个月超过阈值 ⇒ 回退主视图（不加谓词）', () => {
+    expect(servingRelationFor('vw_lemeng_retail_order_line', { from: '2025-12-01', to: '2026-05-01' }))
+      .toEqual({ relation: 'vw_lemeng_retail_order_line', monthFilter: '' })
+  })
+
+  it('形状不对 / 缺范围 / 逆序 / 非目标关系 ⇒ 一律回退', () => {
+    for (const bad of [undefined, null, '2026-11-09', { from: '2026-11-09' }, { from: 'x', to: 'y' }, { from: '2026-11-09', to: '2026-11-01' }]) {
+      expect(servingRelationFor('vw_lemeng_retail_order_line', bad))
+        .toEqual({ relation: 'vw_lemeng_retail_order_line', monthFilter: '' })
+    }
+    expect(servingRelationFor('some_other_view', { from: '2026-11-09', to: '2026-11-09' }))
+      .toEqual({ relation: 'some_other_view', monthFilter: '' })
+  })
+
+  it('monthsSpanned：闭区间含首尾', () => {
+    expect(monthsSpanned('2026-11-01', '2026-11-30')).toBe(1)
+    expect(monthsSpanned('2026-10-31', '2026-11-01')).toBe(2)
+    expect(monthsSpanned('2025-11-01', '2026-11-01')).toBe(13)
   })
 })
