@@ -49,7 +49,7 @@ describe('resourcesByRole', () => {
 describe('planMigration', () => {
   const base = () => ({
     sourceRoles: [
-      { name: '总经理', users: ['shanhai/alice', 'shanhai/Dongjijuan'] },
+      { name: '总经理', users: ['shanhai/alice', 'shanhai/Dongjijuan', 'shanhai/ccccccccccccctv'] },
       { name: '战区总', users: ['shanhai/bob'] },
       { name: '小区经理', users: ['shanhai/carol'] },
       { name: '采购负责人', users: [] },
@@ -67,7 +67,7 @@ describe('planMigration', () => {
     brands,
     regions,
     categoryGroups: CATEGORY_ALL,
-    targetUsers: ['alice', 'bob', 'carol', 'dave', 'DongJiJuan'],
+    targetUsers: ['alice', 'bob', 'carol', 'dave', 'DongJiJuan', 'ccccccccccccctv'],
     targetOrg: 'shanhaiyiguo-org',
     sourceOrg: 'shanhai',
   })
@@ -75,7 +75,7 @@ describe('planMigration', () => {
   it('★ 职能角色：品牌/品类 role-level + user-level 兜底；成本按实际 resources（小区经理无）', () => {
     const p = planMigration(base())
     const gm = p.functional.find((f) => f.role === '总经理')!
-    expect(gm.users.sort()).toEqual(['DongJiJuan', 'alice'])
+    expect(gm.users.sort()).toEqual(['DongJiJuan', 'alice', 'ccccccccccccctv'])
     expect(gm.brandScope).toBe('品牌|3120+64188')
     expect(gm.categoryScope).toBe('品类|水果+标品+耗材')
     expect(gm.codes).toEqual({ query: true, cost: true })
@@ -117,6 +117,11 @@ describe('planMigration', () => {
     const p = planMigration(base())
     expect(p.usersWithoutStore).toContain('DongJiJuan')   // 总经理但无范围角色
     expect(p.usersWithoutStore).not.toContain('alice')     // 全店
+    // 陈超：源无范围角色，但用户拍板给全店（EXTRA_USER_SCOPES）⇒ 不再缺 store
+    expect(p.usersWithoutStore).not.toContain('ccccccccccccctv')
+    expect(p.assignments).toContainEqual({
+      subjectType: 'user', subjectId: 'ccccccccccccctv', scopeName: '门店|全店',
+    })
     expect(p.usersMissingInTarget).toEqual([])
   })
 
