@@ -11,7 +11,7 @@
 // 安全纪律（与 lib/api.ts 同源）：**AK/SK 永不回显**。表单里这两项初始为空，
 // 留空 = 保持原值（服务端语义），故「不改凭据」不需要用户重贴密钥。
 import { useCallback, useEffect, useState } from 'react'
-import { Alert, App, Button, Card, Form, Input, Popconfirm, Space, Tag, Typography } from 'antd'
+import { Alert, App, Button, Card, Form, Input, Popconfirm, Popover, Space, Tag, Typography } from 'antd'
 import {
   ApiError,
   clearAdminStorage,
@@ -177,12 +177,20 @@ export default function AdminStoragePage() {
           </Popconfirm>
         </Space>
 
-        {/* 运维必须看到的三句（每条都对应一个真实的失败形态） */}
-        <ul style={{ color: 'rgba(0, 0, 0, 0.45)', margin: 0, paddingInlineStart: 20 }}>
-          <li>保存时会做一次连通性探测，探测不通过不会写入（预签名是本地计算，请求路径上发现不了配置坏）。</li>
-          <li>未配置 = 使用平台默认存储；配置后<strong>新</strong>附件写入你的桶（存量附件仍按其写入时的桶读取）。</li>
-          <li>生效窗口：single 部署下最长 60 秒（租户行有 60s 进程内缓存）。</li>
-        </ul>
+        {/* 三句运维须知收进 Popover：按需展开，不占版面（每条都对应一个真实的失败形态） */}
+        <Popover
+          placement="topLeft"
+          title="配置说明"
+          content={
+            <ul style={{ maxWidth: 420, margin: 0, paddingInlineStart: 20 }}>
+              <li>保存时会做一次连通性探测，探测不通过不会写入（预签名是本地计算，请求路径上发现不了配置坏）。</li>
+              <li>未配置 = 使用平台默认存储；配置后<strong>新</strong>附件写入你的桶（存量附件仍按其写入时的桶读取）。</li>
+              <li>生效窗口：single 部署下最长 60 秒（租户行有 60s 进程内缓存）。</li>
+            </ul>
+          }
+        >
+          <Typography.Link>配置说明</Typography.Link>
+        </Popover>
       </Space>
     </Card>
     </ConsolePage>

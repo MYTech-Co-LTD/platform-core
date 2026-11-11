@@ -152,7 +152,23 @@ export default function AdminRolesPage() {
       }
     >
     <Card>
-      <Table<AdminRoleRow> rowKey="name" columns={columns} dataSource={roles} size="small" pagination={false} />
+      <Table<AdminRoleRow>
+        rowKey="name"
+        columns={columns}
+        dataSource={roles}
+        size="small"
+        pagination={false}
+        locale={{
+          emptyText: (
+            <div style={{ padding: '32px 0' }}>
+              <Typography.Paragraph type="secondary" style={{ marginBottom: 12 }}>
+                还没有角色。角色把权限码打包，再分配给成员——先建角色，再去「成员」里挂码。
+              </Typography.Paragraph>
+              <Button type="primary" onClick={() => setCreating(true)}>新建角色</Button>
+            </div>
+          ),
+        }}
+      />
 
       <Modal
         title="新建角色"

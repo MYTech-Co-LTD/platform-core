@@ -152,14 +152,15 @@ export default function AdminOrgTreePage() {
             <span style={{ color: '#999' }}>（暂无组织数据——待企微通讯录同步）</span>
           )}
         </Card>
-        <Table<AdminMember>
-          style={{ flex: 1 }}
-          size="small"
-          rowKey="name"
-          columns={columns}
-          dataSource={shown}
-          pagination={false}
-        />
+        <Card size="small" style={{ flex: 1 }}>
+          <Table<AdminMember>
+            size="small"
+            rowKey="name"
+            columns={columns}
+            dataSource={shown}
+            pagination={false}
+          />
+        </Card>
       </div>
       <Modal
         title={granting ? `授予角色：${granting.displayName || granting.name}` : ''}

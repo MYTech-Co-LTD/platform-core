@@ -7,7 +7,7 @@
 // 纪律：**判定在服务端**（`integration-health.ts` 纯函数）。本页只渲染结论与原因，不自己算
 // 「多久算超期」——两处口径一旦分叉，最先失效的恰好是这一屏该守住的东西。
 import { useCallback, useEffect, useState } from 'react'
-import { Alert, App, Button, Card, Space, Table, Tag, Typography } from 'antd'
+import { Alert, App, Button, Card, Popover, Space, Table, Tag, Typography } from 'antd'
 import type { ColumnsType } from 'antd/es/table'
 import { ApiError, listAdminIntegrations, type AdminIntegration } from '../../lib/api'
 import { ConsolePage } from '../../components/ConsolePage'
@@ -91,14 +91,26 @@ export default function AdminIntegrationsPage() {
   return (
     <ConsolePage
       title="集成健康"
+      description={
+        <Space size={8}>
+          <span>回调型看「多久没动静」，凭据型靠主动换一次探活。</span>
+          <Popover
+            title="判据说明"
+            content={
+              <div style={{ maxWidth: 360 }}>
+                「回调」型集成没有调用方，坏了也不会报错——所以要盯它「多久没动静」；
+                「凭据」型要主动换一次才知道还活着。允许静默时长按各自的推送/使用周期设定。
+              </div>
+            }
+          >
+            <Typography.Link>判据说明</Typography.Link>
+          </Popover>
+        </Space>
+      }
       extra={<Button onClick={() => void load()} loading={loading}>刷新</Button>}
     >
     <Card>
       <Space direction="vertical" size="middle" style={{ width: '100%' }}>
-        <Typography.Paragraph type="secondary" style={{ marginBottom: 0 }}>
-          「回调」型集成没有调用方，坏了也不会报错——所以要看它「多久没动静」；
-          「凭据」型要主动换一次才知道还活着。阈值（允许静默时长）按各自的推送/使用周期设定。
-        </Typography.Paragraph>
         {summary.stale > 0 && (
           <Alert
             type="error"
@@ -122,7 +134,18 @@ export default function AdminIntegrationsPage() {
           columns={columns}
           dataSource={rows}
           pagination={false}
-          locale={{ emptyText: '还没有登记任何集成（Phase 3 起：新接通道/回调必须先登记判据）' }}
+          locale={{
+            emptyText: (
+              <div style={{ padding: '32px 0' }}>
+                <Typography.Paragraph type="secondary" style={{ marginBottom: 4 }}>
+                  还没有登记任何集成。
+                </Typography.Paragraph>
+                <Typography.Text type="secondary">
+                  新接通道/回调需先在集成注册表登记判据，登记后这里会自动出现。
+                </Typography.Text>
+              </div>
+            ),
+          }}
         />
       </Space>
     </Card>
