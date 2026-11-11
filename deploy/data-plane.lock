@@ -1,4 +1,4 @@
-sha256-of-rest 434e76f4341319c170d94d8261180e02ed8f0e7b06d8ca502ca6e50b78aac757
+sha256-of-rest d485291748652c275b2557479b880014e7aa4ec6f9a7cc410b1208d8c1083207
 08938c10c6b4a688c8afda6cd7d1ad3dbf2c20f83cf8c4e7023055ad34eddc70 contracts/README.md ${REPO}/contracts/README.md 0644
 fcc8189e1012d5fbb8e2505025bed637dd01c7b4465ab86125d3eaa7f330eff3 contracts/common/_schema.schema.json ${REPO}/contracts/common/_schema.schema.json 0644
 1730119518c3371f3c2ff3492f4c15cd731688047c6d40805ec4d2c65892f3ff contracts/common/_template.contract.json ${REPO}/contracts/common/_template.contract.json 0644
@@ -100,7 +100,7 @@ b8e4e19e657c3020583660bcf911d2ede27c63555110f048b194080e6ab3a93c dbt/models/leme
 d8bc0c51af0ae782ab6898f1c3e7ecd0ef79cfa6034cea18359c8df420153200 dbt/models/lemeng/staging/stg_lemeng_transfer_out.sql ${REPO}/dbt/models/lemeng/staging/stg_lemeng_transfer_out.sql 0644
 97acdb6944fffd4922b372ddbd578d2851b0c66f1d2f3e6138ebfda061b509a3 dbt/models/lemeng/staging/stg_lemeng_wholesale_out.sql ${REPO}/dbt/models/lemeng/staging/stg_lemeng_wholesale_out.sql 0644
 7b4e581458e9b23cf0ed2aa36b5c0ba97f772039bdabfb790490a42004e53e5f dbt/models/lemeng/staging/stg_lemeng_wholesale_return.sql ${REPO}/dbt/models/lemeng/staging/stg_lemeng_wholesale_return.sql 0644
-ef0dcf13f3dfe10e108e260d7e8bd443993350fa5d22e8d485dfdc2b35d3628a dbt/models/lemeng/views/vw_lemeng_retail_order_line.sql ${REPO}/dbt/models/lemeng/views/vw_lemeng_retail_order_line.sql 0644
+08b8f7cfad14f5a7eccac84f518881ec69061b2add928d5b33a08bc7651b61e5 dbt/models/lemeng/views/vw_lemeng_retail_order_line.sql ${REPO}/dbt/models/lemeng/views/vw_lemeng_retail_order_line.sql 0644
 f89cf4bd9f5503e1ec1200b9862da4ed803e89de682eb4db1b2a53b865ca951f dbt/models/lemeng/views/vw_lemeng_wholesale_out.sql ${REPO}/dbt/models/lemeng/views/vw_lemeng_wholesale_out.sql 0644
 e35ce8e83454c44745e744ea45edc91662c9f73ec6e6c187ab5b292fa1ebf4cd dbt/profiles.example.yml ${REPO}/dbt/profiles.example.yml 0644
 d4f8f1ee7cd0b9b2847ff9d060e9c3dbc14d82a37c9b24f6bc2faadc1f389ac6 dbt/seeds/dim_brand.csv ${REPO}/dbt/seeds/dim_brand.csv 0644
