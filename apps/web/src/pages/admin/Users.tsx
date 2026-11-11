@@ -16,6 +16,7 @@ import {
   type AdminUser,
 } from '../../lib/api'
 import type { ConsoleOutletContext } from '../Console'
+import { ConsolePage } from '../../components/ConsolePage'
 
 export default function AdminUsersPage() {
   const { session } = useOutletContext<ConsoleOutletContext>()
@@ -136,10 +137,11 @@ export default function AdminUsersPage() {
   ]
 
   return (
-    <Card
+    <ConsolePage
       title="用户管理"
       extra={<Button type="primary" onClick={() => setCreating(true)}>新建用户</Button>}
     >
+    <Card>
       <Table<AdminUser>
         rowKey="name"
         size="small"
@@ -179,5 +181,6 @@ export default function AdminUsersPage() {
         </Form>
       </Modal>
     </Card>
+    </ConsolePage>
   )
 }

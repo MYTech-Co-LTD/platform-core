@@ -21,6 +21,7 @@ import {
   type AdminStorage,
   type AdminStorageInput,
 } from '../../lib/api'
+import { ConsolePage } from '../../components/ConsolePage'
 
 /** 失败文案：**必须带上 reason**（服务端只回分类 + endpoint host）。
  *  「操作失败」四个字对排障毫无价值——用户拿着它没有任何下一步可做。 */
@@ -134,7 +135,8 @@ export default function AdminStoragePage() {
   }
 
   return (
-    <Card title="存储配置" loading={loading}>
+    <ConsolePage title="存储配置" description="本租户的对象存储配置；未配置时回落平台默认存储。">
+    <Card loading={loading}>
       {/* antd v6：`direction` 已废弃 ⇒ `orientation`（照控制台其余页面同一口径，别引新弃用告警） */}
       <Space orientation="vertical" size="middle" style={{ display: 'flex' }}>
         {storage && <StatusNotice storage={storage} />}
@@ -183,5 +185,6 @@ export default function AdminStoragePage() {
         </ul>
       </Space>
     </Card>
+    </ConsolePage>
   )
 }

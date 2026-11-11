@@ -18,6 +18,7 @@ import {
   type AdminRoleRow,
 } from '../../lib/api'
 import type { ConsoleOutletContext } from '../Console'
+import { ConsolePage } from '../../components/ConsolePage'
 
 /** AdminGroupNode → antd TreeDataNode（displayName + 孤儿标记 + 成员数） */
 function toTreeData(nodes: AdminGroupNode[]): { title: string; key: string; children: ReturnType<typeof toTreeData> }[] {
@@ -129,7 +130,7 @@ export default function AdminOrgTreePage() {
   ]
 
   return (
-    <Card
+    <ConsolePage
       title="组织架构"
       extra={
         <Input.Search
@@ -178,6 +179,6 @@ export default function AdminOrgTreePage() {
           </Form.Item>
         </Form>
       </Modal>
-    </Card>
+    </ConsolePage>
   )
 }
