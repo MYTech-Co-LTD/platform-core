@@ -41,4 +41,17 @@ describe('session', () => {
     expect('acct' in claims).toBe(false)
     expect('ext' in claims).toBe(false)
   })
+  it('roles 往返保真', async () => {
+    const t = await signSession(
+      { sub: 'n1', org: 'org1', name: 'n1', scopes: [], authVia: 'password', roles: ['总经理', '范围|全店'] },
+      secret, 1000,
+    )
+    expect((await verifySession(t, secret))?.roles).toEqual(['总经理', '范围|全店'])
+  })
+  it('不设 roles：验签得到 undefined，载荷不含 roles 键（旧 token 逐字节兼容）', async () => {
+    const t = await signSession({ sub: 'n1', org: 'org1', name: 'n1', scopes: [], authVia: 'password' }, secret, 1000)
+    expect((await verifySession(t, secret))?.roles).toBeUndefined()
+    const claims = JSON.parse(Buffer.from(t.split('.')[1], 'base64url').toString()) as Record<string, unknown>
+    expect('roles' in claims).toBe(false)
+  })
 })

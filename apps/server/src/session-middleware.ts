@@ -133,6 +133,8 @@ function toIdentity(p: SessionPayload): Identity {
     // 账户统一（Task 5）：正式态才带；不设即 undefined，内部/中间态会话的 Identity 形状不变
     accountName: p.acct,
     boundExternalIds: p.ext,
+    // 数据范围 scope 的 role-level assignment（spec 2026-11-10 §5.2）；旧会话不设 = undefined
+    roles: p.roles,
   }
 }
 
@@ -177,6 +179,8 @@ export const sessionMiddleware = (
       let refreshOk = false
       let userGone = false
       let ext = p.ext // 绑定集合：重算成功才换新，失败/未注入沿用旧值（undefined = 旧形状会话）
+      // 角色短名（spec 2026-11-10 §5.2）：与 scopes 同一次 Casdoor 读取刷新；失败沿用旧值。
+      let roles = p.roles
       if (wantRefresh) {
         if (p.authVia === 'wechat-oa' && p.acct !== undefined) {
           // 正式态账户分支（账户统一 Task 5）：校验键是 acct（Casdoor name），不是 openid——
@@ -191,6 +195,7 @@ export const sessionMiddleware = (
             } else {
               const perms = await casdoor.getPermissions()
               scopes = effectiveScopes(p.acct, user.roles ?? [], perms)
+              roles = user.roles ?? []
               refreshOk = true
             }
           } catch (err) {
@@ -237,6 +242,7 @@ export const sessionMiddleware = (
             } else {
               const perms = await casdoor.getPermissions()
               scopes = effectiveScopes(p.name, user.roles ?? [], perms)
+              roles = user.roles ?? []
               refreshOk = true
             }
           } catch (err) {
@@ -254,6 +260,7 @@ export const sessionMiddleware = (
           ...p,
           scopes,
           ext, // 重算成功才换新（失败沿用 p.ext）；旧形状会话 undefined ⇒ 签发不带该字段（逐字节兼容）
+          roles, // 同上：重算成功才换新；旧形状会话 undefined ⇒ 签发不带该字段
           iat: now,
           exp: now + SESSION_TTL_SEC,
           sfa: now,

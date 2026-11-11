@@ -124,6 +124,7 @@ function makeApp(pool: Pool, opts: MakeAppOpts) {
         scopes: id.scopes,
         accountName: id.accountName,
         boundExternalIds: id.boundExternalIds,
+        roles: id.roles,
       })
     })
 }
@@ -188,6 +189,7 @@ describe.skipIf(!dbUrl)('session 中间件正式态分支（账户统一 Task 5�
     expect(p?.scopes).toEqual(['ticket:admin', 'ticket:view']) // stale 被换为 Casdoor 真值
     expect(p?.sub).toBe(OPENID) // openid 锚不变（正典修订：sub 仍 = openid）
     expect(p?.acct).toBe(ACCT) // 账户身份保留
+    expect(p?.roles).toEqual(['store_ops']) // 角色短名随 scopes 同一次刷新写入（spec §5.2）
     expect(p?.authVia).toBe('wechat-oa')
     expect(p?.sfa).toBeGreaterThanOrEqual(t0) // 刷新点已推进（基准取自请求前，见上）
     expect([...(p?.ext ?? [])].sort()).toEqual([OPENID, 'wecom_user_1'].sort()) // ext 重算（不赌 DB 序）
@@ -197,10 +199,12 @@ describe.skipIf(!dbUrl)('session 中间件正式态分支（账户统一 Task 5�
       accountName?: string
       boundExternalIds?: string[]
       scopes: string[]
+      roles?: string[]
     }
     expect(body.accountName).toBe(ACCT) // Identity 扩展字段投影（Task 9 契约面）
     expect([...(body.boundExternalIds ?? [])].sort()).toEqual([OPENID, 'wecom_user_1'].sort())
     expect(body.scopes).toEqual(['ticket:admin', 'ticket:view']) // 本请求即见新 scopes
+    expect(body.roles).toEqual(['store_ops']) // Identity 带 roles（数据范围 role-level 用）
   })
 
   it('正式态：getUser=null ⇒ 清会话（与内部路同唯一清会话分支）', async () => {

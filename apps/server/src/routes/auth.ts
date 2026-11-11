@@ -183,6 +183,7 @@ export function authRoutes(deps: AuthRoutesDeps) {
       // 有效会话必须带可信 scopes：取不到就拒绝登录（fail loudly；已持有会话者的刷新降级
       // 在会话中间件做——可用性优先的边界划在那里，不在签发口）
       let scopes: string[]
+      let roles: string[] = []
       try {
         const [user, perms] = await Promise.all([casdoor.getUser(name), casdoor.getPermissions()])
         // 密码已验证通过却查无此人 = 上游不一致（M1 闭债 R3）：绝不发一个"没有角色派生
@@ -199,14 +200,15 @@ export function authRoutes(deps: AuthRoutesDeps) {
           await writeAudit(deps.pool, t.id, name, 'login.fail', { via: 'password', reason: 'forbidden' })
           return c.json({ error: 'BAD_CREDENTIALS' }, 401)
         }
-        scopes = effectiveScopes(name, user.roles ?? [], perms)
+        roles = user.roles ?? []
+        scopes = effectiveScopes(name, roles, perms)
       } catch {
         return c.json({ error: 'CASDOOR_UNAVAILABLE' }, 502)
       }
 
       const now = Math.floor(Date.now() / 1000)
       const token = await signSession(
-        { sub: name, org: t.casdoor_org, name, scopes, authVia: 'password' },
+        { sub: name, org: t.casdoor_org, name, scopes, authVia: 'password', roles },
         deps.sessionSecret,
         now,
       )
