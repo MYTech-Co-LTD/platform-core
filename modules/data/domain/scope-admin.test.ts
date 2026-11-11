@@ -5,7 +5,7 @@ import { describe, expect, it } from 'vitest'
 import type { Pool } from 'pg'
 import type { EffectiveScopes } from './scope'
 import {
-  createScope, deleteScope, listScopes, previewEffective, replaceAssignments,
+  createScope, deleteScope, listScopeAudit, listScopes, previewEffective, replaceAssignments,
   updateScope, validateSelectorShape, type ScopeAdminDeps,
 } from './scope-admin'
 
@@ -123,6 +123,13 @@ function makePool(db: DbState): Pool {
       return { rows: hit.map((g) => db.scopes.find((x) => x.id === g.scope_id)).filter((s) => s !== undefined).map((s) => ({ kind: s.kind, selector: s.selector })) }
     }
     // ── audit ──
+    if (/select id, actor, action, detail, created_at from data\.scope_audit/.test(text)) {
+      return {
+        rows: db.audits.slice().reverse().slice(0, params[1] as number).map((a, i) => ({
+          id: i + 1, actor: a.actor, action: a.action, detail: a.detail, created_at: new Date('2026-11-11T00:00:00Z'),
+        })),
+      }
+    }
     if (/insert into data\.scope_audit/.test(text)) {
       db.audits.push({ org: params[0] as string, actor: params[1] as string, action: params[2] as string, detail: JSON.parse(params[3] as string) })
       return { rows: [] }
@@ -254,6 +261,17 @@ describe('listScopes / previewEffective（读面）', () => {
     const list = await listScopes(makePool(makeDb()), ORG)
     expect(list.map((s) => s.name)).toEqual(['品牌|3120+64188', '门店|全店'])
     expect(list.find((s) => s.id === 11)?.assignments).toEqual([{ subjectType: 'user', subjectId: 'alice' }])
+  })
+
+  it('变更历史：倒序、limit 夹在 1..200', async () => {
+    const db = makeDb()
+    await createScope(depsOf(db), ORG, 'alice', { name: '门店|东部一区', kind: 'store', selector: { region_name: ['东部一区'] } })
+    await createScope(depsOf(db), ORG, 'bob', { name: '门店|西部二区', kind: 'store', selector: { region_name: ['西部二区'] } })
+    const rows = await listScopeAudit(makePool(db), ORG, 50)
+    expect(rows).toHaveLength(2)
+    expect(rows[0]?.actor).toBe('bob')          // 倒序：最新在前
+    const clamped = await listScopeAudit(makePool(db), ORG, 0)
+    expect(clamped).toHaveLength(1)             // limit 0 ⇒ 夹到 1
   })
 
   it('★ preview：user 直接 ∪ roles，与 loadEffectiveScopes 同一语义', async () => {

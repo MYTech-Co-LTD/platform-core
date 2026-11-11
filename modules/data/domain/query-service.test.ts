@@ -1,4 +1,4 @@
-import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest'
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest'
 import { Pool } from 'pg'
 import { runQuery, freshnessFaceFor, freshnessLineOf, freshnessRelationsOf, freshnessStatusOf, formatHumanDay, type QueryDeps, type SqlExecutor } from './query-service'
 import { L1_ORG, upsertL1Metric, upsertMetric } from './metric-store'
@@ -1020,9 +1020,13 @@ describe('runQuery 分析师面接线', () => {
     const auditCall = inserts.find((c) => c.sql.includes('insert into data.query_audit'))
     expect(auditCall?.sql).toContain(', tool')
     expect(auditCall?.sql).toContain('session_id')
-    // 会话键列在最后（$13）；非企微通道没有会话 ⇒ null，绝不按时间猜
-    expect(auditCall?.values?.at(-1)).toBeNull()
-    expect(auditCall?.values?.at(-2)).toBe('query_metric')
+    // 043 起两列在末尾：$14 scope_plan / $15 scope_denial（本用例未开 scope ⇒ 双 NULL）
+    expect(auditCall?.sql).toContain('scope_plan')
+    expect(auditCall?.values?.at(-1)).toBeNull()   // scope_denial
+    expect(auditCall?.values?.at(-2)).toBeNull()   // scope_plan
+    // 会话键列（$13）在 scope 两列之前；非企微通道没有会话 ⇒ null，绝不按时间猜
+    expect(auditCall?.values?.at(-3)).toBeNull()
+    expect(auditCall?.values?.at(-4)).toBe('query_metric')
   })
 
   it('slicing 透传 authorize（切片 SQL 生效）', async () => {
@@ -1108,5 +1112,124 @@ describe('freshnessFaceFor（纯逻辑 · 无需库）', () => {
     const ugly = fakePool({ r1: 'not-a-date' })
     const out2 = await freshnessFaceFor(ugly, [row('a', 2, ['r1'])], TODAY)
     expect(out2.get('a')).toEqual({ status: 'unknown', watermark: null })
+  })
+})
+
+/**
+ * 数据范围 **enforce 端到端**（spec 2026-11-10 §5；issue #1901）。
+ *
+ * 为什么单列：`buildScopePlan` 的纯函数单测只证明「算得对」，不证明「接线接上了」——
+ * 这里用真库（scope/assignment 表）跑 `runQuery`，断言最终交给执行器的 SQL 真带 filter、
+ * 无 scope 真被拒、审计真落 scope_plan。切 enforce 前这是唯一能证明端到端的那一层。
+ */
+describePg('runQuery —— 数据范围 enforce/shadow（端到端）', () => {
+  const pool = new Pool({ connectionString: dbUrl })
+  const SCOPE_METRIC = {
+    id: 'scope_e2e', title: '范围端到端', description: '',
+    requiredScope: 'data:query', subjectColumn: 'org',
+    selectSql: 'SELECT org, system_book, branch_num, bizday, sum(value) AS value FROM marts.f',
+    groupBy: 'system_book, branch_num, bizday', params: {},
+  }
+  let lastSql = ''
+  const deps: QueryDeps = {
+    pool,
+    adoptedSources: new Set<string>(),
+    execute: async (sql) => {
+      lastSql = sql
+      return { columns: ['system_book', 'branch_num', 'bizday', 'value'], rows: [['3120', 101, '2026-11-10', 1]] }
+    },
+  }
+
+  /** 给某主体挂 scope（kind/selector）；返回 scope id 供清理。 */
+  async function assign(subjectId: string, kind: string, selector: unknown, subjectType = 'user'): Promise<number> {
+    const r = await pool.query(
+      `insert into data.scope(org, name, kind, selector) values ($1, $2, $3, $4::jsonb) returning id`,
+      [ORG, `${kind}|e2e|${subjectId}|${Math.random().toString(36).slice(2, 8)}`, kind, JSON.stringify(selector)],
+    )
+    const id = Number(r.rows[0].id)
+    await pool.query(
+      `insert into data.scope_assignment(org, subject_type, subject_id, scope_id) values ($1, $2, $3, $4)`,
+      [ORG, subjectType, subjectId, id],
+    )
+    return id
+  }
+
+  beforeEach(async () => {
+    await applyMigrations(pool)
+    await pool.query('delete from data.scope where org = $1', [ORG])   // assignment 随 cascade
+    await pool.query('delete from data.query_audit where org = $1', [ORG])
+    await upsertMetric(pool, ORG, SCOPE_METRIC, 'fixture')
+    lastSql = ''
+  })
+  afterEach(() => { delete process.env.DATA_SCOPE_MODE })
+  afterAll(async () => {
+    await pool.query('delete from data.scope where org = $1', [ORG]).catch(() => {})
+    await pool.query('delete from data.metrics where org = $1', [ORG]).catch(() => {})
+    await pool.query('delete from data.query_audit where org = $1', [ORG]).catch(() => {})
+    await pool.end().catch(() => {})
+  })
+
+  it('★ enforce：有 brand+store scope ⇒ SQL 带复合键谓词，审计落 scope_plan', async () => {
+    process.env.DATA_SCOPE_MODE = 'enforce'
+    await assign('alice', 'brand', { system_book: ['3120'] })
+    await assign('alice', 'store', { region_name: ['东部一区'] })
+    await assign('alice', 'category', { all: true })   // 迁移给每个业务用户的兜底（品类不裁）
+
+    const out = await runQuery(deps, ORG, req(), 'scope_e2e', {})
+    expect(out.status).toBe('ok')
+    expect(lastSql).toContain("AND system_book IN ('3120')")
+    expect(lastSql).toContain('(system_book, branch_num) IN (')
+    expect(lastSql).toContain("region_name IN ('东部一区')")
+    // 谓词必须在 GROUP BY 之前（拼到后面 = SQL 语法错）
+    expect(lastSql.indexOf('AND system_book IN')).toBeLessThan(lastSql.indexOf('GROUP BY'))
+
+    const a = await pool.query(
+      `select scope_plan, scope_denial from data.query_audit where org = $1 order by id desc limit 1`, [ORG],
+    )
+    expect(a.rows[0].scope_denial).toBeNull()
+    expect(a.rows[0].scope_plan).toMatchObject({
+      mode: 'enforce', applied: ['brand', 'store', 'category'], denial: null,
+    })
+  })
+
+  it('★ enforce：只有品牌、没有门店 scope ⇒ 拒绝（D2），执行器一次都不跑，审计带 scope_denial', async () => {
+    process.env.DATA_SCOPE_MODE = 'enforce'
+    await assign('alice', 'brand', { system_book: ['3120'] })
+
+    const out = await runQuery(deps, ORG, req(), 'scope_e2e', {})
+    expect(out).toMatchObject({ status: 'denied', reason: 'range_denied', detail: 'no_store_scope' })
+    expect(lastSql).toBe('')   // 没有拼出任何 SQL
+
+    const a = await pool.query(
+      `select verdict, reason, scope_plan, scope_denial from data.query_audit where org = $1 order by id desc limit 1`, [ORG],
+    )
+    expect(a.rows[0]).toMatchObject({ verdict: 'denied', reason: 'range_denied', scope_denial: 'no_store_scope' })
+    expect(a.rows[0].scope_plan).toMatchObject({ mode: 'enforce', denial: 'no_store_scope' })
+  })
+
+  it('★ shadow：同样的用户不拒、SQL 不带范围谓词，但审计记下「本来会拒」', async () => {
+    process.env.DATA_SCOPE_MODE = 'shadow'
+    await assign('alice', 'brand', { system_book: ['3120'] })
+
+    const out = await runQuery(deps, ORG, req(), 'scope_e2e', {})
+    expect(out.status).toBe('ok')
+    expect(lastSql).not.toContain("system_book IN ('3120')")
+
+    const a = await pool.query(
+      `select scope_plan, scope_denial from data.query_audit where org = $1 order by id desc limit 1`, [ORG],
+    )
+    expect(a.rows[0].scope_plan).toMatchObject({ mode: 'shadow', denial: 'no_store_scope' })
+    expect(a.rows[0].scope_denial).toBe('no_store_scope')
+  })
+
+  it('管理员（data:manage）即便无任何 scope 也不裁、不拒', async () => {
+    process.env.DATA_SCOPE_MODE = 'enforce'
+    const out = await runQuery(deps, ORG, req({ scopes: ['data:query', 'data:manage'] }), 'scope_e2e', {})
+    expect(out.status).toBe('ok')
+    expect(lastSql).not.toContain('system_book IN')
+    const a = await pool.query(
+      `select scope_plan from data.query_audit where org = $1 order by id desc limit 1`, [ORG],
+    )
+    expect(a.rows[0].scope_plan).toMatchObject({ mode: 'enforce', applied: [], denial: null })
   })
 })

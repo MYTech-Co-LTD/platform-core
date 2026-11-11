@@ -382,3 +382,29 @@ export async function previewEffective(
     granted,
   }
 }
+
+export interface ScopeAuditRow {
+  id: number
+  actor: string
+  action: string
+  detail: Record<string, unknown>
+  createdAt: string
+}
+
+/**
+ * 变更历史（管理面读侧）。**只读**，按时间倒序、limit 夹在 1..200。
+ * 写侧在每次 CRUD/assignment 替换时同事务落 `data.scope_audit`——这里不补写、不推断。
+ */
+export async function listScopeAudit(pool: Pool, org: string, limit: number): Promise<ScopeAuditRow[]> {
+  const n = Number.isFinite(limit) ? Math.min(Math.max(Math.trunc(limit), 1), 200) : 50
+  const r = await pool.query(
+    `select id, actor, action, detail, created_at from data.scope_audit
+      where org = $1 order by id desc limit $2`,
+    [org, n],
+  )
+  return (r.rows as Array<{ id: number; actor: string; action: string; detail: Record<string, unknown>; created_at: Date | string }>)
+    .map((x) => ({
+      id: Number(x.id), actor: x.actor, action: x.action, detail: x.detail,
+      createdAt: (x.created_at instanceof Date ? x.created_at : new Date(x.created_at)).toISOString(),
+    }))
+}

@@ -205,6 +205,8 @@ api:
     #    （装载期双向核对：漏声明 ⇒ 恒 403；多声明 ⇒ 装载失败）。
     - { method: GET,    path: /scopes,                    scope: data:manage }
     - { method: GET,    path: /scopes/effective,          scope: data:manage }
+    # 变更历史（只读）：CRUD/分配每次写都落 data.scope_audit，这里给管理面回溯
+    - { method: GET,    path: /scopes/audit,              scope: data:manage }
     - { method: POST,   path: /scopes,                    scope: data:manage }
     - { method: PUT,    path: /scopes/:id,                scope: data:manage }
     - { method: DELETE, path: /scopes/:id,                scope: data:manage }

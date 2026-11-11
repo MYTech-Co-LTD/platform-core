@@ -48,6 +48,23 @@ export interface AuditEntry {
    *   · HTTP /query、chat 等无工具通路缺省（列落 null）。
    */
   tool?: string | null
+  /**
+   * 数据范围判定（spec 2026-11-10 §5.4）：本次生效的 kind 与 render 后的 SQL 片段。
+   * `null`/缺省 = 未发生 scope 判定（mode=off / 管理员 / 未认证）。形状：
+   * `{ mode: 'shadow'|'enforce', applied: ['brand','store'], filters: [...], denial: null }`。
+   * shadow 也落（只是查询没被裁）——对照期要能按人/按指标查「本来会裁成什么样」。
+   */
+  scopePlan?: ScopeAudit | null
+  /** 拒绝原因（`no_store_scope` / `range_dimension_missing:category` …）；无拒绝 = null。 */
+  scopeDenial?: string | null
+}
+
+/** 数据范围审计载荷（独立类型：读侧将来按它反解，别塞进 params）。 */
+export interface ScopeAudit {
+  mode: 'shadow' | 'enforce'
+  applied: string[]
+  filters: string[]
+  denial: string | null
 }
 
 /**
@@ -60,8 +77,9 @@ export interface AuditEntry {
 export async function writeAudit(pool: Pool, entry: AuditEntry): Promise<{ id: number; createdAt: Date }> {
   const r = await pool.query(
     `insert into data.query_audit
-       (org, user_id, channel, key_id, metric_id, params, row_count, verdict, reason, masking, drill, tool, session_id)
-     values ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11::jsonb, $12, $13)
+       (org, user_id, channel, key_id, metric_id, params, row_count, verdict, reason, masking, drill, tool, session_id,
+        scope_plan, scope_denial)
+     values ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11::jsonb, $12, $13, $14::jsonb, $15)
      returning id, created_at`,
     [
       entry.org, entry.userId, entry.channel, entry.keyId, entry.metricId,
@@ -72,6 +90,8 @@ export async function writeAudit(pool: Pool, entry: AuditEntry): Promise<{ id: n
       entry.drill === undefined || entry.drill === null ? null : JSON.stringify(entry.drill),
       entry.tool ?? null,
       entry.sessionId ?? null,
+      entry.scopePlan === undefined || entry.scopePlan === null ? null : JSON.stringify(entry.scopePlan),
+      entry.scopeDenial ?? null,
     ],
   )
   // 信封的 audit 节要用（spec 2026-10-21 §4：回包可独立核对审计行）；既有调用方不消费返回值。

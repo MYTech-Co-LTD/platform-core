@@ -7,8 +7,8 @@ import type { Context } from 'hono'
 import type { ModuleHono, ModuleVars, RouteCtx } from './context'
 import { parseIdParam, requesterOf } from './context'
 import {
-  createScope, deleteScope, listScopes, previewEffective, replaceAssignments, updateScope,
-  type AdminErr,
+  createScope, deleteScope, listScopeAudit, listScopes, previewEffective, replaceAssignments,
+  updateScope, type AdminErr,
 } from '../domain/scope-admin'
 
 const orgOf = (c: Context<ModuleVars>): string => c.get('tenant').casdoor_org
@@ -42,6 +42,12 @@ export function registerScopes(r: ModuleHono, ctx: RouteCtx): void {
     if (user === '') return c.json({ error: 'INVALID_QUERY' }, 400)
     const roles = (c.req.query('roles') ?? '').split(',').map((x) => x.trim()).filter((x) => x !== '')
     return c.json(await previewEffective(ctx.pool, orgOf(c), user, roles))
+  })
+
+  // 变更历史（只读）：运营改错 scope 时要能回溯「谁改了什么」。
+  r.get('/scopes/audit', async (c) => {
+    const limit = Number(c.req.query('limit') ?? '50')
+    return c.json({ audit: await listScopeAudit(ctx.pool, orgOf(c), Number.isFinite(limit) ? limit : 50) })
   })
 
   r.post('/scopes', async (c) => {

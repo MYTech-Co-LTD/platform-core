@@ -86,6 +86,10 @@ export default function ScopesPage() {
   const [assigning, setAssigning] = useState<ScopeView | null>(null)
   const [assignRows, setAssignRows] = useState<AssignmentItem[]>([])
 
+  const [auditOpen, setAuditOpen] = useState(false)
+  const [auditRows, setAuditRows] = useState<Array<{ id: number; actor: string; action: string; detail: Record<string, unknown>; createdAt: string }>>([])
+  const [auditLoading, setAuditLoading] = useState(false)
+
   const [pUser, setPUser] = useState('')
   const [pRoles, setPRoles] = useState('')
   const [preview, setPreview] = useState<EffectivePreview | null>(null)
@@ -106,6 +110,16 @@ export default function ScopesPage() {
 
   if (!canManage) {
     return <Alert type="warning" showIcon message="需要 data:manage 权限才能管理数据范围。" />
+  }
+
+  const openAudit = async () => {
+    setAuditOpen(true); setAuditLoading(true)
+    try {
+      const b = await apiGet('/scopes/audit?limit=100') as { audit: typeof auditRows }
+      setAuditRows(b.audit)
+    } catch (e) {
+      message.error(errText(e))
+    } finally { setAuditLoading(false) }
   }
 
   const openCreate = () => { setForm(EMPTY_FORM); setEditing({ id: null }) }
@@ -174,7 +188,7 @@ export default function ScopesPage() {
     <Space orientation="vertical" size={16} style={{ width: '100%' }}>
       <Card
         title="数据范围（scope）"
-        extra={<Button type="primary" onClick={openCreate}>新建范围</Button>}
+        extra={<Space><Button onClick={() => void openAudit()}>变更历史</Button><Button type="primary" onClick={openCreate}>新建范围</Button></Space>}
       >
         {loadErr !== null && <Alert type="error" showIcon style={{ marginBottom: 12 }} message={loadErr} />}
         <Table<ScopeView>
@@ -310,6 +324,17 @@ export default function ScopesPage() {
           ))}
           <Button block onClick={() => setAssignRows([...assignRows, { subjectType: 'user', subjectId: '' }])}>+ 添加</Button>
         </Space>
+      </Drawer>
+      <Drawer title="变更历史（data.scope_audit）" width={560} open={auditOpen} onClose={() => setAuditOpen(false)}>
+        <Table
+          rowKey="id" size="small" loading={auditLoading} dataSource={auditRows} pagination={false}
+          columns={[
+            { title: '时间', dataIndex: 'createdAt', width: 170, render: (v: string) => new Date(v).toLocaleString('zh-CN') },
+            { title: '操作人', dataIndex: 'actor', width: 150 },
+            { title: '动作', dataIndex: 'action', width: 170, render: (v: string) => <Tag>{v}</Tag> },
+            { title: '详情', render: (_: unknown, r) => <Typography.Text code style={{ fontSize: 11 }}>{JSON.stringify(r.detail)}</Typography.Text> },
+          ]}
+        />
       </Drawer>
     </Space>
   )
