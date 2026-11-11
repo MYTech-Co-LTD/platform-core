@@ -815,7 +815,7 @@ capabilities / policy 门禁 / run 回执」一句打包，**实测与其中两�
 
 | 面 | 覆盖 | 门槛 |
 |---|---|---|
-| **引擎原生 `alerts.json`** —— **L0/L1 的告警面**（✅ 转投链路 2026-09-27 拍板并配置在位：引擎 → OO org=miyuan `data_alerts` 流 → OO 规则 → 企微；机制正文唯一出处 = `deploy/duckle/console/README.md` §引擎原生告警。⚠️ 覆盖面：仅已 seed `alerts.json` 的 console（3120 ✓，64188 未 seed）；企微侧端到端开环确认遗留（#210）。分工终局见 §1.5.3 / #538） | 打进本 console 的**任何非 ok run**（含 wrapper 之前就失败的路径：源不存在、DuckDB 起不来、判据失败…） | **无门槛** |
+| **引擎原生 `alerts.json`** —— **L0/L1 的告警面**（✅ 转投链路 2026-09-27 拍板并配置在位：引擎 → OO org=mytech（显示名；旧称 miyuan，identifier 不变）`data_alerts` 流 → OO 规则 → 企微；机制正文唯一出处 = `deploy/duckle/console/README.md` §引擎原生告警。⚠️ 覆盖面：仅已 seed `alerts.json` 的 console（3120 ✓，64188 未 seed）；企微侧端到端开环确认遗留（#210）。分工终局见 §1.5.3 / #538） | 打进本 console 的**任何非 ok run**（含 wrapper 之前就失败的路径：源不存在、DuckDB 起不来、判据失败…） | **无门槛** |
 | wrapper 的 `EXIT` trap —— **仅薄壳形态适用**（已退役） | 只有 wrapper **自己判红**的路径 | 仅 `LEMENG_NOTIFY=1`（薄管线会设 ⇒ 人工/诊断跑不刷群） |
 
 **wrapper 侧细节**（供历史形态排障）：接在 wrapper 的 `EXIT` trap（覆盖**所有**失败路径，且只有一份代码），

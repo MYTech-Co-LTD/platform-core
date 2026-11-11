@@ -55,4 +55,36 @@ export const BUILTIN_TEMPLATES: BuiltinTemplate[] = [
       },
     },
   },
+  {
+    key: 'forms_form_assigned',
+    name: '表单指派',
+    eventKey: 'forms.form.assigned',
+    // payload 只有 assetId/assignee/link（没有标题字段）——文案不硬编表单名，避免「表单 A」出现在
+    // 表单 B 的通知里；细节走链接（#44 教训：链接必须闭合）。
+    contents: {
+      wecom_chat: {
+        text: '【表单指派】你有一份新表单待填写\n👉 [去填写]({{link}})',
+      },
+      in_app: {
+        title: '表单指派',
+        body: '你有一份新表单待填写',
+        link: '{{link}}',
+      },
+    },
+  },
+  {
+    key: 'forms_form_due_reminder',
+    name: '表单催办',
+    eventKey: 'forms.form.due_reminder',
+    contents: {
+      wecom_chat: {
+        text: '【表单催办】这份表单还在等你填写\n👉 [去填写]({{link}})',
+      },
+      in_app: {
+        title: '表单催办',
+        body: '这份表单还在等你填写',
+        link: '{{link}}',
+      },
+    },
+  },
 ]

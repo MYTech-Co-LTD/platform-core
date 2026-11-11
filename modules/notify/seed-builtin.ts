@@ -126,6 +126,25 @@ export async function seedBuiltin(
     )
     rules += metricRule.rowCount ?? 0
 
+    // 表单指派/催办（Wave 2.3）：收件人 = 事件 payload 里的 `assignee`（recipients.assignee
+    // kind=field）⇒ 规则只写 recipient_key='assignee'，具体人由派发时按 payload 解析。
+    // 这一条此前**完全缺失**：forms 声明了两个事件、却没有模板也没有规则，dispatch 结果是
+    // `no_rules`（静默不进收件箱）——与 2026-10-27「漏 seed ⇒ 零投递」同型。
+    for (const [event, template] of [
+      ['forms.form.assigned', 'forms_form_assigned'],
+      ['forms.form.due_reminder', 'forms_form_due_reminder'],
+    ] as const) {
+      const formsRule = await pool.query(
+        `insert into notify.rule
+           (org,id,enabled,event_key,scope,recipient_key,template_key,channels,origin,created_by)
+         values ($1,$2,true,$3,'*','assignee',$4,$5::text[],'derived','system')
+         on conflict (org,id) do update set enabled=true, template_key=excluded.template_key,
+           channels=excluded.channels`,
+        [org, `derived:forms:${event}:*`, event, template, CHANNELS],
+      )
+      rules += formsRule.rowCount ?? 0
+    }
+
     const names = (env[orgEnvKeyFor('NOTIFY_APPROVERS', org)] ?? '')
       .split(',')
       .map((s) => s.trim())

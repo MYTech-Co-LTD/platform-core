@@ -395,7 +395,7 @@ print(r['status'], r.get('at'), 'assets=', [a['id'] for a in r.get('assets',[])]
 
 ### 判据 5 — 无失败告警
 
-- 引擎原生规则经 OpenObserve 转投：引擎 POST → OO 流 `data_alerts`（org `miyuan`）→ OO 告警 → 企微群。
+- 引擎原生规则经 OpenObserve 转投：引擎 POST → OO 流 `data_alerts`（org 显示名 `mytech`，旧称 `miyuan`）→ OO 告警 → 企微群。
 - 判据：观察窗口内，`data_alerts` 流里本批三条管线 id 的 **`event='failure'` 行数为 0**，且企微群无失败消息。
 - 覆盖边界：**只有打进这个 console 的 run**（`/workspace/pipelines/` 下的管线）。
   **别把它读成「采集全链路的告警」**；~~64188 的卷未 seed 这版 alerts~~（**订正 2026-10-10**：64188 卷已 seed 同版 `alerts.json`/`owners.json`（2026-10-06 落盘，容器 `OO_*` 三键齐备），本行旧文作废）。

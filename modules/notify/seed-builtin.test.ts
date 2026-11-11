@@ -44,9 +44,11 @@ describePg('seedBuiltin', () => {
     const env = { NOTIFY_APPROVERS__ORG_SEED2: 'alice, bob' }
     await seedBuiltin(pool, env, [ORG])
     const first = await counts()
-    // templates/revisions 3：内置文案 = 员工登记审批 + 集成活性超期（Phase 2b）+ 指标定义变更（spec 2026-11-01 §10.4 D6）
-    // rules 4：derived(aftersales) + derived(notify.integration.stale) + derived(data.metric.definition.changed) + manual
-    expect(first).toEqual({ templates: 3, revisions: 3, channels: 2, rules: 4 })
+    // templates/revisions 5：员工登记审批 + 集成活性超期（Phase 2b）+ 指标定义变更（2026-11-01 §10.4 D6）
+    //   + 表单指派/表单催办（Wave 2.3：此前只有事件声明、没有模板也没有规则 ⇒ dispatch 恒 no_rules）
+    // rules 6：derived(aftersales) + derived(stale) + derived(metric) + derived(forms.assigned)
+    //   + derived(forms.due_reminder) + manual
+    expect(first).toEqual({ templates: 5, revisions: 5, channels: 2, rules: 6 })
 
     const manual = await pool.query(
       "select recipient_key, recipient_literal from notify.rule where org=$1 and id like 'manual:%'",
@@ -58,12 +60,64 @@ describePg('seedBuiltin', () => {
     expect(await counts()).toEqual(first)
   })
 
-  it('无 NOTIFY_APPROVERS ⇒ 只剩三条 derived 规则（含集成健康与指标变更）', async () => {
+  it('无 NOTIFY_APPROVERS ⇒ 只剩五条 derived 规则（aftersales/集成健康/指标变更/表单两条）', async () => {
     await seedBuiltin(pool, {}, [ORG])
-    expect((await counts()).rules).toBe(3)
+    expect((await counts()).rules).toBe(5)
     const stale = await pool.query(
       "select channels from notify.rule where org=$1 and event_key='notify.integration.stale'", [ORG])
     // 只用 in_app：企微通道本身可能正是坏掉的那个（坏通道报坏消息 = 自欺）
     expect(stale.rows[0].channels).toEqual(['inapp_default'])
+  })
+})
+
+describePg('seedBuiltin：声明了 defaults 的事件必须真的有派生规则（Wave 2.3）', () => {
+  let pool: Pool
+  beforeAll(async () => {
+    pool = new Pool({ connectionString: url })
+    await applyMigrations(pool)
+  })
+  afterAll(async () => { await pool.end() })
+
+  it('forms 两个事件各有一条 derived 规则，template/recipient 与 defaults 一致', async () => {
+    const org = `${ORG}-forms`
+    await pool.query('delete from notify.rule where org=$1', [org])
+    await pool.query('delete from notify.template_revision where org=$1', [org])
+    await pool.query('delete from notify.template where org=$1', [org])
+    try {
+      await seedBuiltin(pool, {}, [org])
+      const r = await pool.query(
+        `select id, recipient_key, template_key, channels from notify.rule
+          where org=$1 and event_key like 'forms.%' order by event_key`,
+        [org],
+      )
+      expect(r.rows).toEqual([
+        {
+          id: 'derived:forms:forms.form.assigned:*',
+          recipient_key: 'assignee',
+          template_key: 'forms_form_assigned',
+          channels: ['wecom_default', 'inapp_default'],
+        },
+        {
+          id: 'derived:forms:forms.form.due_reminder:*',
+          recipient_key: 'assignee',
+          template_key: 'forms_form_due_reminder',
+          channels: ['wecom_default', 'inapp_default'],
+        },
+      ])
+      // 模板也真的落库了（有模板但没规则 = 同样投不出去）
+      const tpl = await pool.query(
+        "select key, event_key from notify.template where org=$1 and key like 'forms_%' order by key",
+        [org],
+      )
+      expect(tpl.rows).toEqual([
+        { key: 'forms_form_assigned', event_key: 'forms.form.assigned' },
+        { key: 'forms_form_due_reminder', event_key: 'forms.form.due_reminder' },
+      ])
+    } finally {
+      await pool.query('delete from notify.rule where org=$1', [org])
+      await pool.query('delete from notify.channel where org=$1', [org])
+      await pool.query('delete from notify.template_revision where org=$1', [org])
+      await pool.query('delete from notify.template where org=$1', [org])
+    }
   })
 })
