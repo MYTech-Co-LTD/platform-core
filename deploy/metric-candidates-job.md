@@ -42,10 +42,22 @@ metric-candidates: orgs=1 failed=0 added=3 refreshed=12 expired=2 revived=0 pend
 
 | 字段 | 值 |
 |---|---|
-| key | 由控制面创建后回填（创建时用 `post_jobs`） |
+| key | `custom:tB6ulrsKtgW852WL`（`job_9Hf_OKt12BYvMthm`，2026-11-11 建） |
 | serverId | `8281d598`（山海数据机） |
-| cron | `40 */6 * * *`（UTC，每 6 小时 :40——画像本身是低频更新的，不必每小时） |
+| cron | `40 6 * * *`（UTC = 北京 14:40，每日一次） |
 | 命令 | 见上 |
 | `notifyConfig` | `states=['failed']`，通道与其余数据面 job 同一条 |
 
-**首次真机跑之后再回填 key 与首次结果**（无实测不写死；本文件按「无案例不立标准」纪律留白）。
+排班依据：画像管线 `lemeng.metric_profile.3120` 是 **每周**（`10 5 * * 0`）跑的，候选生成按日跑已足够覆盖新画像；更密只会重复产出相同候选（幂等但仍占库）。
+
+## 首次真机跑（2026-11-11T14:58Z，手动触发 `jrun_x0nb662U3mApMrID`，1.96s，exit 0）
+
+```
+metric-candidates: org=shanhaiyiguo-org profiles=264 relations=21 added=104 refreshed=167 expired=111 revived=0 pendingAfter=269 skipped=137 capped=28 maxPerRelation=20
+metric-candidates: orgs=1 failed=0 added=104 refreshed=167 expired=111 revived=0 pendingAfter=269
+```
+
+- `orgs=1`：只有 `shanhaiyiguo-org` 有画像行（与 `data.metric_profiles` 实况一致）。
+- `added=104` 是候选池**第一次**被定时任务填充；同时 `expired=111` 证明退役路径真的在跑。
+- `pendingAfter=269` ≤ 21 关系 × 20/关系（=420）——池级上限成立。
+
