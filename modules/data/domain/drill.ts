@@ -14,6 +14,7 @@ import { DATA_AS_OF_SQL, execWithLakeRaceRetry, formatDataAsOf, isLakeRaceError,
 import { detailProvenance, type DetailProvenance } from './provenance'
 import { cacheGet, cacheKey, cacheSet } from './result-cache'
 import { DetailGateBusyError, detailGate } from './detail-gate'
+import { dataVersionOf } from './data-version'
 
 // 兼容旧导入：DetailProvenance 已迁到 provenance.ts（共享来源类型）。
 export type { DetailProvenance } from './provenance'
@@ -330,7 +331,12 @@ export async function runDetailQuery(
   // 结果缓存（#1945 后续）：键 = 最终 SQL 的 sha256（含 org/掩码/月份谓词/分页）。
   // ⚠️ 只在**生产执行器**上启用：测试注入 `deps.execute` 时不缓存，保证调用次数断言确定。
   const cacheable = deps.execute === undefined
-  const cacheK = cacheable ? cacheKey(sql, plan.rowCountSql) : ''
+  // 数据版本进键（#1953）：封版/月文件重建后键立即变化，不会在 TTL 窗口里返回旧数。
+  // 版本查询自身有 5s 进程内缓存，失败退化为 ''（等价于没有版本戳，不阻断）。
+  const ver = cacheable
+    ? await dataVersionOf(warehousePool()).catch(() => '')
+    : ''
+  const cacheK = cacheable ? cacheKey(sql, plan.rowCountSql, ver) : ''
   const cached = cacheable ? cacheGet(cacheK) : null
 
   /** 执行主计划 + count；成功则写缓存。返回统一形状，便于缓存命中走同一路径。 */

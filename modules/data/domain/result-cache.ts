@@ -27,16 +27,26 @@ interface Entry {
 }
 
 const MAX = Math.max(1, Number(process.env.RESULT_CACHE_MAX ?? 200) || 200)
-const TTL_MS = Math.max(0, Number(process.env.RESULT_CACHE_TTL_MS ?? 60_000) || 60_000)
+// ⚠️ 0 = 关闭缓存，必须能生效。旧写法 `Number(x) || 60_000` 把 0 吞成默认值（"以为关了，其实还开着"）。
+const TTL_MS = (() => {
+  const raw = process.env.RESULT_CACHE_TTL_MS?.trim()
+  if (raw === undefined || raw === '') return 60_000
+  const n = Number(raw)
+  return Number.isFinite(n) && n >= 0 ? n : 60_000
+})()
 
 const store = new Map<string, Entry>()
 let hits = 0
 let misses = 0
 let evictions = 0
 
-/** 缓存键：最终 SQL 的 sha256（同时把 count SQL 纳入，避免两者口径漂开）。 */
-export function cacheKey(sql: string, countSql: string): string {
-  return createHash('sha256').update(sql).update('\u0000').update(countSql).digest('hex')
+/** 缓存键：最终 SQL + count SQL + **数据版本**的 sha256（#1953）。
+ *  数据版本（封版水位 + 月文件构建时刻）一变，键就变 ⇒ 旧条目自然失效，
+ *  不会在封版/重物化后的 TTL 窗口里返回旧数。 */
+export function cacheKey(sql: string, countSql: string, dataVersion: string = ''): string {
+  return createHash('sha256')
+    .update(sql).update('\u0000').update(countSql).update('\u0000').update(dataVersion)
+    .digest('hex')
 }
 
 export function cacheGet(key: string, now: number = Date.now()): CachedDetail | null {
