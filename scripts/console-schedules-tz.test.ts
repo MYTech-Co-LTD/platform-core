@@ -80,7 +80,7 @@ const EXPECTED: Record<string, Record<string, string>> = {
     'panel-lemeng.item_profit.l0.64188': '5 5,9 * * *',
     'panel-lemeng.dim.branch.l0': '0 9-23 * * *',
     // #1913：品类树（双账套各一条 L0）
-    'panel-lemeng.dim.item_category.l0.64188': '8 9-23 * * *',
+    'panel-lemeng.dim.item_category.l0': '8 9-23 * * *',
     'panel-lemeng.dim.item.l0': '3 9-23 * * *',
     'panel-lemeng.dim.item_price.l0': '18 9-23 * * *',
     'panel-lemeng.retail.windows.l1': '30 10,18 * * *',

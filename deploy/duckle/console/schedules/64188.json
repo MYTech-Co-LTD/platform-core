@@ -630,9 +630,9 @@
   "next_run_at": null
  },
  {
-  "id": "panel-lemeng.dim.item_category.l0.64188",
-  "pipeline_id": "lemeng.dim.item_category.l0.64188",
-  "name": "lemeng.dim.item_category.l0.64188",
+  "id": "panel-lemeng.dim.item_category.l0",
+  "pipeline_id": "lemeng.dim.item_category.l0",
+  "name": "lemeng.dim.item_category.l0",
   "enabled": true,
   "kind": {
    "type": "cron",
