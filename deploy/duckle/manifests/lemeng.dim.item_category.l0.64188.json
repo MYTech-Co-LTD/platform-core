@@ -1,0 +1,66 @@
+{
+ "id": "lemeng.dim.item_category.l0.64188",
+ "domain": "lemeng",
+ "account": "64188",
+ "identityGate": true,
+ "source": {
+  "connectionRef": "lemeng",
+  "url": "https://cloud.nhsoft.cn/agi/api/nhsoft.base.ai.item.category.find",
+  "method": "POST",
+  "body": "{}",
+  "responsePath": "/result",
+  "retryAttempts": 3,
+  "retryBackoffMs": 2000,
+  "schema": [
+   {
+    "name": "system_book_code",
+    "type": "string"
+   },
+   {
+    "name": "id",
+    "type": "int64"
+   },
+   {
+    "name": "parent_id",
+    "type": "int64"
+   },
+   {
+    "name": "level",
+    "type": "int32"
+   },
+   {
+    "name": "category_name",
+    "type": "string"
+   },
+   {
+    "name": "category_code",
+    "type": "string"
+   },
+   {
+    "name": "deleted_flag",
+    "type": "bool"
+   }
+  ]
+ },
+ "transform": {
+  "sql": "SELECT\n  'dim-' || '${ENV:SYSTEM_BOOK}' || '-item-category-' || replace(replace('${datetime}','-',''),'_','T') || 'Z' AS batch_id,\n  '${ENV:SYSTEM_BOOK}' AS system_book,\n  CAST('${date+8h}' AS DATE) AS snapshot,\n  CAST(o.id AS BIGINT) AS category_id,\n  CAST(o.parent_id AS BIGINT) AS parent_id,\n  CAST(o.level AS INTEGER) AS level,\n  CAST(o.category_name AS VARCHAR) AS category_name,\n  CAST(o.category_code AS VARCHAR) AS category_code,\n  CAST(o.deleted_flag AS BOOLEAN) AS deleted_flag\nFROM input o"
+ },
+ "gate": {
+  "rules": {
+   "batch_id": "not_null",
+   "system_book": "not_null",
+   "snapshot": "not_null",
+   "category_id": "not_null",
+   "level": "not_null"
+  }
+ },
+ "sink": {
+  "type": "minio",
+  "connectionRef": "zos",
+  "bucket": "shanhai-data",
+  "key": "lemeng/dim_item_category/system_book=${ENV:SYSTEM_BOOK}/snapshot=${date+8h}/chunk=all.parquet",
+  "format": "parquet",
+  "mode": "overwrite",
+  "compression": "zstd"
+ }
+}
