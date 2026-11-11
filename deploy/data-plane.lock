@@ -1,4 +1,4 @@
-sha256-of-rest a5e87ad2502e56010695ffd3cbcfa5ea4657f46778f59c6a64753d471f34bf0d
+sha256-of-rest 545458539caf81bd2b24f25a8b947a79a26033276fb118676e247ea477cf5306
 08938c10c6b4a688c8afda6cd7d1ad3dbf2c20f83cf8c4e7023055ad34eddc70 contracts/README.md ${REPO}/contracts/README.md 0644
 fcc8189e1012d5fbb8e2505025bed637dd01c7b4465ab86125d3eaa7f330eff3 contracts/common/_schema.schema.json ${REPO}/contracts/common/_schema.schema.json 0644
 1730119518c3371f3c2ff3492f4c15cd731688047c6d40805ec4d2c65892f3ff contracts/common/_template.contract.json ${REPO}/contracts/common/_template.contract.json 0644
@@ -102,6 +102,7 @@ d8bc0c51af0ae782ab6898f1c3e7ecd0ef79cfa6034cea18359c8df420153200 dbt/models/leme
 7b4e581458e9b23cf0ed2aa36b5c0ba97f772039bdabfb790490a42004e53e5f dbt/models/lemeng/staging/stg_lemeng_wholesale_return.sql ${REPO}/dbt/models/lemeng/staging/stg_lemeng_wholesale_return.sql 0644
 08b8f7cfad14f5a7eccac84f518881ec69061b2add928d5b33a08bc7651b61e5 dbt/models/lemeng/views/vw_lemeng_retail_order_line.sql ${REPO}/dbt/models/lemeng/views/vw_lemeng_retail_order_line.sql 0644
 31edb43d0be88e28336e72afb49d7fea61fafe398d3558819f81947193f8c9d6 dbt/models/lemeng/views/vw_lemeng_retail_order_line_month.sql ${REPO}/dbt/models/lemeng/views/vw_lemeng_retail_order_line_month.sql 0644
+2a8841b65a61a43d69b57690267e4b0c1870128726d10308bb4073e2172689f9 dbt/models/lemeng/views/vw_lemeng_retail_order_line_month_history.sql ${REPO}/dbt/models/lemeng/views/vw_lemeng_retail_order_line_month_history.sql 0644
 f89cf4bd9f5503e1ec1200b9862da4ed803e89de682eb4db1b2a53b865ca951f dbt/models/lemeng/views/vw_lemeng_wholesale_out.sql ${REPO}/dbt/models/lemeng/views/vw_lemeng_wholesale_out.sql 0644
 e35ce8e83454c44745e744ea45edc91662c9f73ec6e6c187ab5b292fa1ebf4cd dbt/profiles.example.yml ${REPO}/dbt/profiles.example.yml 0644
 d4f8f1ee7cd0b9b2847ff9d060e9c3dbc14d82a37c9b24f6bc2faadc1f389ac6 dbt/seeds/dim_brand.csv ${REPO}/dbt/seeds/dim_brand.csv 0644
@@ -155,7 +156,7 @@ bbf1722eb597dce4616bf2d6bf7c4ee99c2fd4138674d5bbde7e7dc60d30c4b9 dbt/tests/lemen
 c7eb580f5a97f2e0a2b62f43be16d304b7f5e5939e71abdbff5e93ddb9946660 dbt/tests/lemeng/assert_lake_month_index_not_stale.sql ${REPO}/dbt/tests/lemeng/assert_lake_month_index_not_stale.sql 0644
 5fa14c6a6f101945141d78b8dfd5ae939f7eaa1a0c1d6c96c437565e76eddf40 dbt/tests/lemeng/assert_recon_break_grain_unique.sql ${REPO}/dbt/tests/lemeng/assert_recon_break_grain_unique.sql 0644
 5fe8c8aa48184e75bba1a8e341388f8a331ccfdb5b5dbe2cca69a784a6f5966a dbt/tests/lemeng/assert_recon_run_grain_unique.sql ${REPO}/dbt/tests/lemeng/assert_recon_run_grain_unique.sql 0644
-4dc7741c998f4d899790a93f07c288ae650242f198f6fc9448b6d946941ed7d2 dbt/tests/lemeng/assert_serving_view_columns_match_contract.sql ${REPO}/dbt/tests/lemeng/assert_serving_view_columns_match_contract.sql 0644
+02a75b188e88f5d454103a88d7b9af3b209ca40374e0d97fc64fa3eb2b603593 dbt/tests/lemeng/assert_serving_view_columns_match_contract.sql ${REPO}/dbt/tests/lemeng/assert_serving_view_columns_match_contract.sql 0644
 934230f7d6920d4f4d5ba5c2cb79664f675ae18213989667b3f73007b315027e dbt/tests/lemeng/assert_serving_view_matches_main.sql ${REPO}/dbt/tests/lemeng/assert_serving_view_matches_main.sql 0644
 8d4e35b1c5dec27dd177728c451801c79c40214f97a616c3c69f13b6b3c5bf12 dbt/tests/lemeng/assert_stg_lemeng_branch_expense_key_unique.sql ${REPO}/dbt/tests/lemeng/assert_stg_lemeng_branch_expense_key_unique.sql 0644
 e8ffbf302bc98198d4d7de157db720568c42817e42ee3e564e5f229c50b4baa9 dbt/tests/lemeng/assert_stg_lemeng_branch_key_unique.sql ${REPO}/dbt/tests/lemeng/assert_stg_lemeng_branch_key_unique.sql 0644
