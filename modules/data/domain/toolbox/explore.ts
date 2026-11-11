@@ -3,6 +3,7 @@
 // 只做装配：身份 → 依赖 → `executeExplore`。**审计不在这里写**——`callTool` 是唯一分发点
 // （registry 不变量），本 impl 只回填 `auditMetricId` / `auditRowCount` 让它记在正确的位置。
 import { executeExplore } from '../analysis/explore-exec'
+import { scopeModeOf } from '../scope'
 import { exploreProvenance, isoNow } from '../provenance'
 import type { ToolImpl } from './registry'
 
@@ -13,6 +14,17 @@ export const exploreQueryImpl: ToolImpl = async (deps, args) => {
   if (deps.exploreExec === undefined) {
     // 没配仓库的部署（或测试漏配）⇒ 明确报错，不静默返回空集。
     return { payload: { status: 'error', reason: 'warehouse_unconfigured' }, isError: true }
+  }
+  // 数据范围门（#1957）：explore 是**任意 SQL**，无法把范围谓词编译进去 ⇒ enforce 模式下
+  // 只放行不受范围限制的主体（管理员），其余 fail-closed。否则会形成「聚合规、探索不合规」的绕过面。
+  if (scopeModeOf(process.env) === 'enforce'
+      && !deps.requester.hasScope('data:manage') && !deps.requester.hasScope('tenant:admin')) {
+    return {
+      payload: { status: 'denied', reason: 'range_denied', detail: 'explore_not_scoped' },
+      isError: true,
+      auditMetricId: 'explore:denied',
+      auditRowCount: null,
+    }
   }
   const out = await executeExplore(
     {
