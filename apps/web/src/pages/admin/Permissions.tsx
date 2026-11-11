@@ -12,6 +12,7 @@ import {
   revokeAdminPermission,
   type AdminPermission,
 } from '../../lib/api'
+import { ConsolePage } from '../../components/ConsolePage'
 
 export default function AdminPermissionsPage() {
   const { message } = App.useApp()
@@ -101,7 +102,8 @@ export default function AdminPermissionsPage() {
   ]
 
   return (
-    <Card title="角色与授权">
+    <ConsolePage title="角色与授权">
+    <Card>
       <Table<AdminPermission> rowKey="code" size="small" loading={loading} columns={columns} dataSource={permissions} pagination={false} />
       <Modal
         title={`授权：${granting?.name ?? ''}（${granting?.code ?? ''}）`}
@@ -124,5 +126,6 @@ export default function AdminPermissionsPage() {
         </Form>
       </Modal>
     </Card>
+    </ConsolePage>
   )
 }

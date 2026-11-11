@@ -20,6 +20,7 @@ import {
   type AdminRoleRow,
 } from '../../lib/api'
 import type { ConsoleOutletContext } from '../Console'
+import { ConsolePage } from '../../components/ConsolePage'
 
 /** 与后端 RoleNameSchema 同源：Casdoor name 禁用字符集 `"/?:#&%=+;"` + 长度上限 */
 const ROLE_NAME_RE = /^[^/?:#&%=+;]{1,64}$/
@@ -142,7 +143,7 @@ export default function AdminRolesPage() {
   )
 
   return (
-    <Card
+    <ConsolePage
       title="角色管理"
       extra={
         <Button type="primary" onClick={() => setCreating(true)}>
@@ -150,6 +151,7 @@ export default function AdminRolesPage() {
         </Button>
       }
     >
+    <Card>
       <Table<AdminRoleRow> rowKey="name" columns={columns} dataSource={roles} size="small" pagination={false} />
 
       <Modal
@@ -206,5 +208,6 @@ export default function AdminRolesPage() {
         />
       </Modal>
     </Card>
+    </ConsolePage>
   )
 }

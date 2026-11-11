@@ -6,6 +6,7 @@ import { useEffect, useState } from 'react'
 import { App, Card, Table, Tag, Typography } from 'antd'
 import type { ColumnsType } from 'antd/es/table'
 import { ApiError, listAdminSubscriptions, type AdminSubscription } from '../../lib/api'
+import { ConsolePage } from '../../components/ConsolePage'
 
 export default function AdminSubscriptionsPage() {
   const { message } = App.useApp()
@@ -43,10 +44,11 @@ export default function AdminSubscriptionsPage() {
   ]
 
   return (
-    <Card
+    <ConsolePage
       title="我的订阅"
       extra={<Typography.Text type="secondary">订阅由平台运营管理；退订后菜单在 1 分钟内自动隐藏</Typography.Text>}
     >
+    <Card>
       <Table<AdminSubscription>
         rowKey={(s) => s.moduleId}
         size="small"
@@ -57,5 +59,6 @@ export default function AdminSubscriptionsPage() {
         locale={{ emptyText: '暂无订阅' }}
       />
     </Card>
+    </ConsolePage>
   )
 }

@@ -10,6 +10,7 @@ import { useCallback, useEffect, useState } from 'react'
 import { Alert, App, Button, Card, Space, Table, Tag, Typography } from 'antd'
 import type { ColumnsType } from 'antd/es/table'
 import { ApiError, listAdminIntegrations, type AdminIntegration } from '../../lib/api'
+import { ConsolePage } from '../../components/ConsolePage'
 
 /** 结论 → 徽标。四态：STALE 红（真没动静）、PROBE_FAILED 橙（探不了，别误判）、OK 绿、DISABLED 灰。 */
 function VerdictTag({ verdict }: { verdict: AdminIntegration['health']['verdict'] }) {
@@ -88,10 +89,11 @@ export default function AdminIntegrationsPage() {
   ]
 
   return (
-    <Card
+    <ConsolePage
       title="集成健康"
       extra={<Button onClick={() => void load()} loading={loading}>刷新</Button>}
     >
+    <Card>
       <Space direction="vertical" size="middle" style={{ width: '100%' }}>
         <Typography.Paragraph type="secondary" style={{ marginBottom: 0 }}>
           「回调」型集成没有调用方，坏了也不会报错——所以要看它「多久没动静」；
@@ -124,5 +126,6 @@ export default function AdminIntegrationsPage() {
         />
       </Space>
     </Card>
+    </ConsolePage>
   )
 }
