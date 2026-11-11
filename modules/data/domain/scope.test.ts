@@ -104,6 +104,22 @@ describe('buildScopePlan', () => {
     expect(p.filters.join('\n')).not.toContain('dim_lemeng_branch')
   })
 
+  it('★ selector 与 grain 层级错位：二级区 selector 对 region_l1 粒度 ⇒ 经 dim_region 映射', () => {
+    const p = buildScopePlan(metric('system_book, region_l1'), scopes({
+      store: [{ region_name: ['东部一区'] }],
+      category: [{ all: true }],
+    }), 'org', requester(), 'enforce')
+    expect(p.denial).toBeNull()
+    expect(p.filters.join('\n')).toContain('region_l1 IN (SELECT region_l1 FROM dim_region WHERE region_name IN (\'东部一区\'))')
+    // 反向：一级 selector 对 region_name 粒度
+    const q = buildScopePlan(metric('system_book, region_name'), scopes({
+      store: [{ region_l1: ['东部战区'] }],
+      category: [{ all: true }],
+    }), 'org', requester(), 'enforce')
+    expect(q.denial).toBeNull()
+    expect(q.filters.join('\n')).toContain('region_name IN (SELECT region_name FROM dim_region WHERE region_l1 IN (\'东部战区\'))')
+  })
+
   it('无 store scope ⇒ no_store_scope', () => {
     const p = buildScopePlan(metric('system_book, branch_num'), scopes({ store: [] }), 'org', requester(), 'enforce')
     expect(p.denial).toBe('no_store_scope')
