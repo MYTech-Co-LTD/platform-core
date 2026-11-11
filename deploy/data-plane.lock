@@ -1,4 +1,4 @@
-sha256-of-rest 545458539caf81bd2b24f25a8b947a79a26033276fb118676e247ea477cf5306
+sha256-of-rest dc42ddd2b40b4c0d9672c43ab9fd1bde170899edd065d156a934b54fc6096083
 08938c10c6b4a688c8afda6cd7d1ad3dbf2c20f83cf8c4e7023055ad34eddc70 contracts/README.md ${REPO}/contracts/README.md 0644
 fcc8189e1012d5fbb8e2505025bed637dd01c7b4465ab86125d3eaa7f330eff3 contracts/common/_schema.schema.json ${REPO}/contracts/common/_schema.schema.json 0644
 1730119518c3371f3c2ff3492f4c15cd731688047c6d40805ec4d2c65892f3ff contracts/common/_template.contract.json ${REPO}/contracts/common/_template.contract.json 0644
@@ -415,7 +415,7 @@ ffeddbeba2f0b7df748a60e737009cd45689320dad2ea1233230c20eb541acba scripts/lemeng/
 725179d02ffdc81940eb5a3b242c108d2f6fc210dcec60da1825c5b1af3d5a6c scripts/lemeng/materialize.sh /opt/lemeng-materialize.sh 0755
 c67f6edec71c9576ecb4d9ee1f146ce1218b4da809fc41aae99e7f40be53d3ae scripts/lemeng/nightly-backfill.sh /opt/lemeng-nightly-backfill.sh 0755
 98074d99903bd7092dc8e8179ebec4a968e123e72884502a2a2664e08607eeb9 scripts/lemeng/oo-config-audit.sh /opt/lemeng-oo-config-audit.sh 0755
-0b012d978cd2601491c474ef5c25cf52d6467d9dc5ff5a48061725b74058f844 scripts/lemeng/oo-notify-bridge.sh /opt/lemeng-oo-notify-bridge.sh 0755
+7a81135e5d096b2792647d0c4b9d3686f1ef74d13f9169d0339fb0f9c9c215cb scripts/lemeng/oo-notify-bridge.sh /opt/lemeng-oo-notify-bridge.sh 0755
 bc36151a11daaf0d74da820e02ecda1c5a147f246e8b02b735420e02e2ddeed7 scripts/lemeng/oo-watchdog.sh /opt/lemeng-oo-watchdog.sh 0755
 b4449dcb10a616e83094cb9fc6af0765da9400b1be72500b87a89b18378a1900 scripts/lemeng/readback-helper.sh ${REPO}/lemeng-readback.sh 0755
 7b8dd12898373cdbc23e60ce7191de3b025522a3792576ab191f25effc36bb6f scripts/lemeng/recon-day-heal.sh /opt/lemeng-recon-day-heal.sh 0755
