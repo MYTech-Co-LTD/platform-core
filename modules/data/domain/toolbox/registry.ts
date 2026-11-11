@@ -127,6 +127,18 @@ export interface ToolboxDeps {
 }
 
 /**
+ * 回填审计行 id（Wave 1.3）：impl 组装回包时审计行还没写，`provenance.auditId` 只能由这个
+ * 唯一写入点补上。只在**已有 provenance 对象**且**尚未带 id**时补——不新建 provenance
+ * （没有来源面的工具不凭空多一个字段），也不覆盖 impl 自己写的 id（自带审计的通道）。
+ */
+function withAuditId(base: ToolImplResult, auditId: number): ToolImplResult {
+  const p = base.payload.provenance
+  if (p === null || typeof p !== 'object' || Array.isArray(p)) return base
+  if (Object.prototype.hasOwnProperty.call(p, 'auditId')) return base
+  return { ...base, payload: { ...base.payload, provenance: { ...(p as Record<string, unknown>), auditId } } }
+}
+
+/**
  * tools/call 的**唯一**分发点。顺序（fail-closed 链）：
  *   未知工具 → 空身份 → mutating 闸 → 执行 → （impl 抛 = error）。
  * 每个结局都写审计（verdict=ok|denied|error，tool 恒写，metric_id 取 impl 或 ''）。
@@ -137,7 +149,7 @@ export async function callTool(deps: ToolboxDeps, name: string, args: Record<str
     base: ToolImplResult, verdict: 'ok' | 'denied' | 'error', reason: string,
   ): Promise<ToolImplResult> => {
     // 单点审计（spec §8：拒绝/出错也写）。调用入参原样进 params（排障可重放这次调用）。
-    await writeAudit(deps.pool, {
+    const audit = await writeAudit(deps.pool, {
       org: deps.org,
       userId: deps.requester?.userId ?? '(anonymous)',
       channel: deps.requester?.channel ?? 'session',
@@ -148,7 +160,7 @@ export async function callTool(deps: ToolboxDeps, name: string, args: Record<str
       verdict, reason: reason === '' ? null : reason,
       masking: null, tool: name,
     })
-    return base
+    return withAuditId(base, audit.id)
   }
   if (!meta) {
     return finish({ payload: { status: 'denied', reason: 'unknown_tool', name }, isError: true }, 'denied', 'unknown_tool')

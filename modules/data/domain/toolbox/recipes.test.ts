@@ -98,3 +98,62 @@ describe('exploreRecipeImpl：证据锚点（S2）', () => {
     expect(payload.evidence[0]!.anchor.value).toBeNull()
   })
 })
+
+describe('exploreRecipeImpl：证据真值（Wave 1.2）', () => {
+  const withFreshness = (over: Partial<Record<string, unknown>> = {}) => {
+    const d = deps()
+    ;(d as { pool: unknown }).pool = {
+      query: async (sql: string) => {
+        if (sql.includes('from data.metrics')) return { rows: [{ ...METRIC_ROW, ...over }] }
+        if (sql.includes('data.load_log')) return { rows: [{ watermark: '2026-11-09' }] }
+        return { rows: [{ id: 77, created_at: new Date('2026-11-10T00:00:00Z') }] }
+      },
+    }
+    return d
+  }
+
+  it('dataAsOf / freshness 走问数面同一判据（load_log 水位 + 指标自己的 sla）', async () => {
+    mocks.executeExplore.mockResolvedValue(specOk())
+    const out = await exploreRecipeImpl(withFreshness({ freshness_relations: ['fct_retail_sale'], sla_days: 3 }), {
+      recipe: 'top_contributors', metricId: 'lemeng:retail:net_sales', dimension: 'branch_num',
+      period: period('2026-11-01', '2026-11-07'),
+    })
+    const ev = (out.payload as { evidence: Array<Record<string, any>> }).evidence[0]!
+    expect(ev.dataAsOf).toBe('2026-11-09')
+    expect(ev.freshness).toEqual({ status: 'normal', slaDays: 3 })
+  })
+
+  it('拿不到水位 ⇒ null + unknown（不冒充最新）', async () => {
+    mocks.executeExplore.mockResolvedValue(specOk())
+    const out = await exploreRecipeImpl(withFreshness({ freshness_relations: [] }), {
+      recipe: 'top_contributors', metricId: 'lemeng:retail:net_sales', dimension: 'branch_num',
+      period: period('2026-11-01', '2026-11-07'),
+    })
+    const ev = (out.payload as { evidence: Array<Record<string, any>> }).evidence[0]!
+    expect(ev.dataAsOf).toBeNull()
+    expect(ev.freshness.status).toBe('unknown')
+  })
+
+  it('对账：文件名恒为真（映射自门禁）；run_results 读不到 ⇒ status=unknown 而不是 ok', async () => {
+    mocks.executeExplore.mockResolvedValue(specOk())
+    const prev = process.env.DATA_DBT_MANIFEST_PATH
+    const prevR = process.env.DATA_DBT_RUN_RESULTS_PATH
+    process.env.DATA_DBT_MANIFEST_PATH = '/nonexistent/dir/manifest.json'
+    delete process.env.DATA_DBT_RUN_RESULTS_PATH
+    try {
+      const out = await exploreRecipeImpl(deps(), {
+        recipe: 'top_contributors', metricId: 'lemeng:retail:net_sales', dimension: 'branch_num',
+        period: period('2026-11-01', '2026-11-07'),
+      })
+      const ev = (out.payload as { evidence: Array<Record<string, any>> }).evidence[0]!
+      expect(ev.reconcile).toEqual({
+        auditFile: 'audit_lemeng__retail__net_sales.sql', status: 'unknown', executedAt: null,
+      })
+    } finally {
+      if (prev === undefined) delete process.env.DATA_DBT_MANIFEST_PATH
+      else process.env.DATA_DBT_MANIFEST_PATH = prev
+      if (prevR === undefined) delete process.env.DATA_DBT_RUN_RESULTS_PATH
+      else process.env.DATA_DBT_RUN_RESULTS_PATH = prevR
+    }
+  })
+})

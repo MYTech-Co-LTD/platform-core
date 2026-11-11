@@ -11,7 +11,7 @@ const base = (over: Partial<EvidenceInput> = {}): EvidenceInput => ({
   dataAsOf: '2026-11-05',
   freshness: { status: 'normal', slaDays: 2 },
   caliber: { tier: 'certified', basis: 'l1_tree', certifiedBy: 'data-platform', version: 7 },
-  reconcile: { auditFile: 'audit_lemeng__retail__net_sales.sql', status: 'ok' },
+  reconcile: { auditFile: 'audit_lemeng__retail__net_sales.sql', status: 'ok', executedAt: '2026-11-06T03:00:00.000Z' },
   ...over,
 })
 
@@ -33,8 +33,8 @@ describe('buildEvidencePack（W6 Task 1：证据包契约）', () => {
   })
 
   it('对账状态原样透传：missing 不会被写成 ok', () => {
-    const pack = buildEvidencePack(base({ reconcile: { auditFile: null, status: 'missing' } }))
-    expect(pack.reconcile).toEqual({ auditFile: null, status: 'missing' })
+    const pack = buildEvidencePack(base({ reconcile: { auditFile: null, status: 'missing', executedAt: null } }))
+    expect(pack.reconcile).toEqual({ auditFile: null, status: 'missing', executedAt: null })
   })
 
   it('generatedAt 用注入时钟（可复算：同一输入同一输出）', () => {
