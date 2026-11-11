@@ -2,7 +2,7 @@
  "name": "lemeng.retail_order_line.month.compact.iter",
  "_note": [
   "月度合并子管线（#1905 后续 P1，spec：明细访问模式改造）。由父管线 lemeng.retail_order_line.month.compact 的 ctl.foreach 逐月驱动，",
-  "把该账套该月的全部已封版日文件（_DAY_DATA/system_book=<B>/bizday=<YM-??>/all.parquet）读出、按 (bizday, branch_num, order_no) 排序后",
+  "把该账套该月的全部已封版日文件（_DAY_DATA/system_book=<B>/bizday=<YM-*>/all.parquet）读出、按 (bizday, branch_num, order_no) 排序后",
   "写成一个月文件 lemeng/retail_order_line_month/_MONTH/system_book=<B>/month=<YM>/all.parquet，并把行数/金额统计 upsert 进 data.lake_month_index。",
   "为什么：读侧 30 天查询要打开 60 个 ~300KB 日文件 × 25 列逐列 range 请求（~1500 次 × 5ms = 7.8s）；",
   "⚠️ 前缀用 lemeng/retail_order_line_month（`/` 边界外）：契约 gen 按前缀找生产者并强制 rest 投影形状，parquet→parquet 的派生件不适用；列集仍按契约逐列同序投影（列等价由构造保证，湖侧事实源不变）。",
@@ -11,7 +11,8 @@
   "⚠️ 空 month fail-closed（ctl.die no-rows）：清单里有的月份却读到 0 行 = 日文件缺失，写空月文件会毁数据，宁可红。",
   "⚠️ 云 sink 的 partitionBy 被静默忽略（0.7.4 实测）⇒ 不能一条管线分区写多月；每月一 sink、由 foreach 驱动 key（retail.day.backfill 同款）。",
   "幂等：mode=overwrite，重跑 = 整月重写；重封版后由父管线按 built_at < last_seal 判定重建。",
-  "手动跑本子管线必败（ITER 变量缺）——验收只能驱动父管线。"
+  "手动跑本子管线必败（ITER 变量缺）——验收只能驱动父管线。",
+  "⚠️ key 里不能用 ? 通配：httpfs 把 ? 当 URL query 分隔符（实测 IO Error: Invalid query parameters）；月份前缀已钉死，用 * 不误匹配。"
  ],
  "nodes": [
   {
@@ -27,7 +28,7 @@
     "properties": {
      "connectionRef": "zos",
      "bucket": "${ENV:ZOS_BUCKET}",
-     "key": "lemeng/retail_order_line/_DAY_DATA/system_book=${ITER_ITEM_SYSTEM_BOOK}/bizday=${ITER_ITEM_YM}-??/all.parquet",
+     "key": "lemeng/retail_order_line/_DAY_DATA/system_book=${ITER_ITEM_SYSTEM_BOOK}/bizday=${ITER_ITEM_YM}-*/all.parquet",
      "glob": true,
      "format": "parquet"
     }
