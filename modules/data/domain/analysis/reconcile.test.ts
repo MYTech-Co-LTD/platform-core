@@ -6,6 +6,9 @@ import {
   auditFileOf, loadRunResults, parseRunResults, reconcileFaceFor, reconcileFaceOf,
   reconcileStatusOf, resetRunResultsCache, runResultsPathOf, testNameOfUniqueId,
 } from './reconcile'
+// @ts-expect-error TS7016: scripts 不是 workspace 包、没有 .d.ts（与 system-map/health.ts 同一豁免）；
+// 这里**故意**import 门禁的导出，用来证明本地那一行映射与门禁同源。
+import { metricToAuditFileName } from '../../../../scripts/check-data-models.mjs'
 
 const dirs: string[] = []
 const tmp = (): string => {
@@ -23,8 +26,22 @@ const runResults = (results: Array<{ unique_id: string; status: string }>, gener
   results,
 })
 
-describe('auditFileOf（映射不另造）', () => {
-  it('与门禁同一个映射：`:` → `__`', () => {
+describe('auditFileOf（与门禁同一映射，逐条比对）', () => {
+  it('与 check-data-models.mjs 的 metricToAuditFileName 完全一致（规则漂了就红）', () => {
+    // 直接 import 门禁的导出：这是「同一张映射」的运行时证据，不是靠注释声称。
+    // 取样覆盖真实指标形态 + `:` 与 `__` 易混形态。
+    for (const id of [
+      'lemeng:retail:net_sales',
+      'lemeng:retail:order_line',
+      'lemeng:inventory:qty',
+      'a:b:c',
+      'x:y:z__w',
+      'no_colon',
+    ]) {
+      expect(auditFileOf(id)).toBe(metricToAuditFileName(id))
+    }
+  })
+  it('形状：`:` → `__`', () => {
     expect(auditFileOf('lemeng:retail:net_sales')).toBe('audit_lemeng__retail__net_sales.sql')
   })
 })

@@ -11,7 +11,6 @@
 // 读文件是 IO，但按 mtime 缓存——run_results 只在物化跑完时变一次，不会每个请求解析 2MB。
 import { readFileSync, statSync } from 'node:fs'
 import { dirname, join } from 'node:path'
-import { metricToAuditFileName } from '../../../../scripts/check-data-models.mjs'
 
 import type { ReconcileStatus } from './evidence'
 
@@ -35,8 +34,13 @@ export interface RunResultsIndex {
  * 而门禁说「没有」。
  */
 export function auditFileOf(metricId: string): string {
-  return metricToAuditFileName(metricId)
+  return `audit_${metricId.replace(/:/g, '__')}.sql`
 }
+// ⚠️ 上面这一行是 `scripts/check-data-models.mjs` 里 `metricToAuditFileName()` 的**同一规则**，
+// 不是第二把尺：scripts 不是 workspace 包、没有 .d.ts，跨包 import 在严格 tsconfig 下必然
+// TS7016（同目录 health.ts / map.ts 用的是 `@ts-expect-error`，但那是**已经存在**的豁免，
+// 新文件不该再添一个）。真正的防线在测试里——`reconcile.test.ts` 直接 import 门禁的导出，
+// 对同一批指标 id（含 `:` 与 `__` 易混形态）逐条比对，规则一变这里就红。
 
 /** dbt 测试节点 id → 测试名（`test.<pkg>.<name>.<hash>`）。形状不符 = null。 */
 export function testNameOfUniqueId(uniqueId: string): string | null {

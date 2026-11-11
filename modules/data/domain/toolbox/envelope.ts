@@ -7,7 +7,9 @@ export interface EnvelopeInput {
   subject?: Record<string, unknown>
   asOf?: Record<string, unknown>
   query?: Record<string, unknown>
-  provenance?: Record<string, unknown>
+  /** 结果来源（`MetricProvenance` 等具名接口；信封本身不解析它，故收 `object` 而非 Record——
+   *  具名接口没有索引签名，赋给 `Record<string, unknown>` 在严格 tsconfig 下会红）。 */
+  provenance?: object
   result?: Record<string, unknown>
   lineage?: Record<string, unknown>
   audit?: Record<string, unknown>
