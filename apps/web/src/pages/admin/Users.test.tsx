@@ -52,7 +52,7 @@ describe('AdminUsersPage 渲染冒烟', () => {
     )
     expect(await screen.findByText('alice')).toBeInTheDocument()
     expect(screen.getByText('bob')).toBeInTheDocument()
-    expect(screen.getByRole('button', { name: '新建用户' })).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: '新建成员' })).toBeInTheDocument()
   })
 })
 
@@ -74,7 +74,7 @@ describe('AdminUsersPage 创建后刷新（回归：issue #46 浏览器实测发
     )
     await screen.findByText('alice')
     // 打开弹窗、填表、提交
-    fireEvent.click(screen.getByRole('button', { name: '新建用户' }))
+    fireEvent.click(screen.getByRole('button', { name: '新建成员' }))
     const { createAdminUser } = await import('../../lib/api')
     vi.mocked(createAdminUser).mockResolvedValueOnce({ name: 'newuser' })
     const dialog = await screen.findByRole('dialog')

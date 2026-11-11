@@ -4,7 +4,7 @@
 // 写操作（建/禁启/重置密码/删）走 adminWrite 通道：现取 csrf + x-csrf-token。
 import { useCallback, useEffect, useState } from 'react'
 import { useOutletContext } from 'react-router-dom'
-import { App, Button, Card, Form, Input, Modal, Popconfirm, Switch, Table, Tag } from 'antd'
+import { App, Button, Card, Form, Input, Modal, Popconfirm, Space, Switch, Table, Tag, Typography } from 'antd'
 import type { ColumnsType } from 'antd/es/table'
 import {
   ApiError,
@@ -24,6 +24,7 @@ export default function AdminUsersPage() {
   const [users, setUsers] = useState<AdminUser[]>([])
   const [loading, setLoading] = useState(false)
   const [creating, setCreating] = useState(false)
+  const [search, setSearch] = useState('')
   const [form] = Form.useForm<{ username: string; displayName?: string; password: string }>()
 
   const reload = useCallback(async () => {
@@ -52,6 +53,11 @@ export default function AdminUsersPage() {
       message.error(e instanceof ApiError ? `创建失败：${e.code}` : '创建失败')
     }
   }
+
+  // 成员多起来后靠肉眼扫表找不到人——列表页一律给搜索框（#1953 交互收口）
+  const shown = users.filter(
+    (u) => !search || u.name.includes(search) || (u.displayName ?? '').includes(search),
+  )
 
   const columns: ColumnsType<AdminUser> = [
     { title: '用户名', dataIndex: 'name', key: 'name' },
@@ -138,8 +144,20 @@ export default function AdminUsersPage() {
 
   return (
     <ConsolePage
-      title="用户管理"
-      extra={<Button type="primary" onClick={() => setCreating(true)}>新建用户</Button>}
+      title="成员"
+      description="能登录本后台的账号。禁用立即生效；删除不可恢复。成员只是「人」，能干什么由角色决定——先去「角色」把权限码打包。"
+      extra={
+        <Space wrap>
+          <Input.Search
+            placeholder="搜索用户名/显示名"
+            allowClear
+            value={search}
+            onChange={(e) => setSearch(e.target.value)}
+            style={{ width: 220 }}
+          />
+          <Button type="primary" onClick={() => setCreating(true)}>新建成员</Button>
+        </Space>
+      }
     >
     <Card>
       <Table<AdminUser>
@@ -147,11 +165,23 @@ export default function AdminUsersPage() {
         size="small"
         loading={loading}
         columns={columns}
-        dataSource={users}
+        dataSource={shown}
         pagination={false}
+        locale={{
+          emptyText: search ? (
+            <Typography.Text type="secondary">没有匹配「{search}」的成员</Typography.Text>
+          ) : (
+            <div style={{ padding: '32px 0' }}>
+              <Typography.Paragraph type="secondary" style={{ marginBottom: 12 }}>
+                还没有成员。建完账号后，到「角色」页把权限码打包成角色，再回「组织架构」把人挂进角色。
+              </Typography.Paragraph>
+              <Button type="primary" onClick={() => setCreating(true)}>新建成员</Button>
+            </div>
+          ),
+        }}
       />
       <Modal
-        title="新建用户"
+        title="新建成员"
         open={creating}
         onCancel={() => setCreating(false)}
         onOk={() => void form.submit()}

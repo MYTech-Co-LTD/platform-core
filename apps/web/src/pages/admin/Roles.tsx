@@ -144,7 +144,8 @@ export default function AdminRolesPage() {
 
   return (
     <ConsolePage
-      title="角色管理"
+      title="角色"
+      description="角色是一包权限码：新建后点「编辑」勾选权限码与成员；成员的最终权限 = 所有角色的码之并。"
       extra={
         <Button type="primary" onClick={() => setCreating(true)}>
           新建角色
@@ -162,7 +163,7 @@ export default function AdminRolesPage() {
           emptyText: (
             <div style={{ padding: '32px 0' }}>
               <Typography.Paragraph type="secondary" style={{ marginBottom: 12 }}>
-                还没有角色。角色把权限码打包，再分配给成员——先建角色，再去「成员」里挂码。
+                还没有角色。先建一个角色，勾上它该有的权限码，再到「组织架构」把成员挂进这个角色。
               </Typography.Paragraph>
               <Button type="primary" onClick={() => setCreating(true)}>新建角色</Button>
             </div>

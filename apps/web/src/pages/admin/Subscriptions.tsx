@@ -8,6 +8,12 @@ import type { ColumnsType } from 'antd/es/table'
 import { ApiError, listAdminSubscriptions, type AdminSubscription } from '../../lib/api'
 import { ConsolePage } from '../../components/ConsolePage'
 
+function fmtTime(v: string | null): string {
+  if (!v) return '—'
+  const d = new Date(v)
+  return Number.isNaN(d.getTime()) ? v : d.toLocaleString()
+}
+
 export default function AdminSubscriptionsPage() {
   const { message } = App.useApp()
   const [subscriptions, setSubscriptions] = useState<AdminSubscription[]>([])
@@ -39,14 +45,15 @@ export default function AdminSubscriptionsPage() {
       width: 110,
       render: (v: string) => (v === 'Active' ? <Tag color="green">生效中</Tag> : <Tag>{v || '未知'}</Tag>),
     },
-    { title: '开始', dataIndex: 'startTime', key: 'startTime', render: (v: string | null) => v ?? '—' },
-    { title: '到期', dataIndex: 'endTime', key: 'endTime', render: (v: string | null) => v ?? '—' },
+    // Casdoor 回的是 RFC3339 UTC（如 2026-01-01T00:00:00Z）；直接摆原串没人读得懂，转本地时间
+    { title: '开始', dataIndex: 'startTime', key: 'startTime', render: fmtTime },
+    { title: '到期', dataIndex: 'endTime', key: 'endTime', render: fmtTime },
   ]
 
   return (
     <ConsolePage
       title="我的订阅"
-      extra={<Typography.Text type="secondary">订阅由平台运营管理；退订后菜单在 1 分钟内自动隐藏</Typography.Text>}
+      description="本租户已开通的模块。订阅由平台运营发放/退订，租户侧只读；退订后对应菜单 1 分钟内自动消失（不用手动清缓存）。"
     >
     <Card>
       <Table<AdminSubscription>
@@ -56,7 +63,13 @@ export default function AdminSubscriptionsPage() {
         columns={columns}
         dataSource={subscriptions}
         pagination={false}
-        locale={{ emptyText: '暂无订阅' }}
+        locale={{
+          emptyText: (
+            <div style={{ padding: '32px 0' }}>
+              <Typography.Text type="secondary">还没有订阅任何模块。需要开通模块请联系平台运营。</Typography.Text>
+            </div>
+          ),
+        }}
       />
     </Card>
     </ConsolePage>

@@ -3,7 +3,7 @@
 // 每行 = 一个权限码（宇宙 = 平台内置 + 已装载模块）；已授权用户以可关闭 Tag 展示，
 // 关闭即回收；「授权」弹窗输入用户名（仅字母数字）。tenant:admin 行有交接警示文案。
 import { useCallback, useEffect, useState } from 'react'
-import { App, Button, Card, Form, Input, Modal, Table, Tag, Typography } from 'antd'
+import { App, Button, Card, Form, Input, Modal, Space, Table, Tag, Typography } from 'antd'
 import type { ColumnsType } from 'antd/es/table'
 import {
   ApiError,
@@ -19,6 +19,7 @@ export default function AdminPermissionsPage() {
   const [permissions, setPermissions] = useState<AdminPermission[]>([])
   const [loading, setLoading] = useState(false)
   const [granting, setGranting] = useState<AdminPermission | null>(null)
+  const [search, setSearch] = useState('')
   const [form] = Form.useForm<{ user: string }>()
 
   const reload = useCallback(async () => {
@@ -45,6 +46,15 @@ export default function AdminPermissionsPage() {
       message.error(e instanceof ApiError ? `授权失败：${e.code}` : '授权失败')
     }
   }
+
+  // 码宇宙 = 平台内置 + 已装载模块，几十上百条；搜索同时匹配码名与持有人
+  const shown = permissions.filter(
+    (p) =>
+      !search ||
+      p.code.includes(search) ||
+      (p.name ?? '').includes(search) ||
+      p.users.some((u) => u.includes(search)),
+  )
 
   const columns: ColumnsType<AdminPermission> = [
     { title: '权限码', dataIndex: 'code', key: 'code', width: 200 },
@@ -102,9 +112,37 @@ export default function AdminPermissionsPage() {
   ]
 
   return (
-    <ConsolePage title="角色与授权">
+    <ConsolePage
+      title="权限码授权"
+      description="每个权限码能干什么、现在谁持有。日常成批授权走「角色」；这里只用于给某个人单独补一个码（点行内「授权」）。"
+      extra={
+        <Space wrap>
+          <Input.Search
+            placeholder="搜索权限码/名称/用户名"
+            allowClear
+            value={search}
+            onChange={(e) => setSearch(e.target.value)}
+            style={{ width: 240 }}
+          />
+        </Space>
+      }
+    >
     <Card>
-      <Table<AdminPermission> rowKey="code" size="small" loading={loading} columns={columns} dataSource={permissions} pagination={false} />
+      <Table<AdminPermission>
+        rowKey="code"
+        size="small"
+        loading={loading}
+        columns={columns}
+        dataSource={shown}
+        pagination={false}
+        locale={{
+          emptyText: (
+            <Typography.Text type="secondary">
+              {search ? `没有匹配「${search}」的权限码` : '暂无权限码——模块装载后会自动出现'}
+            </Typography.Text>
+          ),
+        }}
+      />
       <Modal
         title={`授权：${granting?.name ?? ''}（${granting?.code ?? ''}）`}
         open={!!granting}
