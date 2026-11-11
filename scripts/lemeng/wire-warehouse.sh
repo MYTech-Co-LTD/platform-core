@@ -123,6 +123,14 @@
 #
 #    两条都走 advisory（判红只进 `data_plane_probes`，桥送企微，不翻 job rc，红线③）。
 #    反向测试：`WIRE_SEALED_SELFTEST=1` / `WIRE_DETAILPATH_SELFTEST=1` ⇒ 各吐一行 ERR。
+#
+# ── ⑱ 热小时对象回收水位（2026-11-11 新增；#1905 收尾）────────────────────────────────
+#    热/冷布局里，小时对象是**暂存区**；天文件落盘后应被 GC 删掉。不删 ⇒ 视图热腿
+#    `system_book=*/bizday=*/hour=*/all.parquet` 把它们全部打开 ⇒ 成本随天数线性增长。
+#    实测（2026-11-11）：积了 671 个 ⇒ 30 天明细 47.4s（冷腿只要 5.9s）；清理后 20 个、7.8s。
+#    ⚠️ ⑰ 用「单日」做延迟判据，只碰 ~34 个文件，**测不出**这类线性劣化——故单列文件数。
+#    判据：glob 计数 > WIRE_HOT_MAX_FILES（默认 100 ≈ 3 天不回收）⇒ ERR。
+#    反向测试：`WIRE_HOT_SELFTEST=1` ⇒ 吐一行 ERR。
 
 set -eu
 
@@ -153,6 +161,10 @@ SEALED_MAX_AGE_MIN=${WIRE_SEALED_MAX_AGE_MIN:-180}
 DETAIL_MAX_MS=${WIRE_DETAIL_MAX_MS:-15000}
 SEALED_SELFTEST=${WIRE_SEALED_SELFTEST:-}
 DETAILPATH_SELFTEST=${WIRE_DETAILPATH_SELFTEST:-}
+# ⑱ 热小时对象回收水位（#1905 收尾）：glob 计数 + 阈值 + 反向测试钩子。
+HOT_GLOB=${WIRE_HOT_GLOB:-s3://shanhai-data/lemeng/retail_order_line/system_book=*/bizday=*/hour=*/all.parquet}
+HOT_MAX_FILES=${WIRE_HOT_MAX_FILES:-100}
+HOT_SELFTEST=${WIRE_HOT_SELFTEST:-}
 
 die() { echo "WIRE_FAILED: $*" >&2; exit 1; }
 
@@ -539,15 +551,44 @@ const c=new Client({connectionString:process.env.DATA_WAREHOUSE_URL});
 "
 }
 
+# ⑱ 热小时对象回收水位（#1905 收尾）：glob 计数，> WIRE_HOT_MAX_FILES 判红。
+#    为什么盯「文件数」而不是只盯延迟：热小时对象是热/冷布局的暂存区，天文件落盘后应被
+#    GC 删掉；不删 ⇒ 视图热腿把它们全部打开，成本随天数线性增长（671 个 → 30 天 47s）。
+#    实测清理后稳定在 ~20（当天的小时）；阈值 100 ≈ 3 天不回收。延迟探针 ⑰ 用的是
+#    「最近封版日单日」，它只碰 ~34 个文件 ⇒ **测不出这类线性劣化**，故单列一条。
+#    反向测试：WIRE_HOT_SELFTEST=1 ⇒ 吐一行 ERR。
+assert_hot_partitions() {
+  printf '⑱ 热小时对象回收（%s 文件数 ≤ %s）—— ' "$HOT_GLOB" "$HOT_MAX_FILES"
+  if [ -n "$HOT_SELFTEST" ]; then
+    echo 'ERR 自测注入：模拟热小时对象积压（WIRE_HOT_SELFTEST）'
+    return 1
+  fi
+  docker exec -w /app/apps/server "$PLATFORM_CONTAINER" node -e "
+const {Client}=require('pg');
+const c=new Client({connectionString:process.env.DATA_WAREHOUSE_URL});
+(async()=>{try{
+  await c.connect();
+  // glob() 走 pg_duckdb 的持久 S3 secret（与视图同一通道）；不读数据，只列对象。
+  const sql=\"select n from duckdb.query('select count(*) as n from glob(''${HOT_GLOB}'')') t\";
+  const r=await c.query(sql);
+  await c.end();
+  const n=Number(r.rows[0].n);
+  if(!Number.isFinite(n)){console.log('ERR glob 结果不可解析');process.exit(1)}
+  if(n>${HOT_MAX_FILES}){console.log('ERR 热小时对象 '+n+' > 阈值 ${HOT_MAX_FILES}（GC 没跑/失效；视图热腿会线性变慢）');process.exit(1)}
+  console.log('OK hot_files='+n+'（阈值 ${HOT_MAX_FILES}）');
+}catch(e){console.log('ERR '+e.message);process.exit(1)}})()
+"
+}
+
 # advisory 断言集（判红**不进 rc**、只吐判红行）：语义判据**不走 openship 通知**（红线③），
 # 通知由桥承担（`oo-notify-bridge.sh` 通道② 读 `verdict <> 'OK'` → 企微）。加新条目**先想清它归谁**。
-ADVISORY_CHECKS=" region_registered recon_ledger_cover recon_not_evaluated recon_source_cover config_drift pg_crash_free sealed_manifest detail_path "
+ADVISORY_CHECKS=" region_registered recon_ledger_cover recon_not_evaluated recon_source_cover config_drift pg_crash_free sealed_manifest detail_path hot_partitions "
 
 do_check() {
   # #538 Phase 1：逐断言产出判红行（probe 观测面）——执行与观测同行，判定逻辑不变。
   rc=0
   _vf=$(mktemp ${TMPDIR:-/tmp}/ww-verdicts.XXXXXX)
-  for _step in dns tcp query fresh marts_fresh metrics dims item_price settlement_face region_registered recon_ledger_cover recon_not_evaluated recon_source_cover config_drift pg_crash_free sealed_manifest detail_path; do
+  for _step in dns tcp query fresh marts_fresh metrics dims item_price settlement_face region_registered recon_ledger_cover recon_not_evaluated recon_source_cover config_drift pg_crash_free sealed_manifest detail_path hot_partitions; do
     _mode=hard
     case "$ADVISORY_CHECKS" in *" ${_step} "*) _mode=advisory ;; esac
     if _out=$(eval "assert_${_step}" 2>&1); then

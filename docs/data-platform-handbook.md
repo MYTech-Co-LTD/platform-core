@@ -906,6 +906,12 @@ capabilities / policy 门禁 / run 回执」一句打包，**实测与其中两�
   hot 小时 ⇒ 静默双算，而所有 job 全绿」；后者抓「换机/回滚把视图带回旧版 ⇒ 延迟回 >110s」。
   均走 `data_plane_probes` → 桥 → 企微，**不新建 OO 规则、不翻 job rc**（红线③，同 ⑩⑪⑫⑬⑭⑮ 范式）。
   反向测试：`WIRE_SEALED_SELFTEST=1` / `WIRE_DETAILPATH_SELFTEST=1`。
+  ✅ **⑱ 热小时对象回收水位（2026-11-11；#1905 收尾）**：`glob` 计数热小时对象，
+  `> WIRE_HOT_MAX_FILES`（默认 100 ≈ 3 天不回收）⇒ ERR 进 `data_plane_probes` → 桥 → 企微。
+  由来：小时对象是天文件落盘后的暂存残留，读侧 glob 仍会打开 ⇒ 不删就线性变慢。
+  2026-11-11 实测积 **671 个** ⇒ 30 天明细 **47.4s**（冷腿仅 5.9s）；清理后 **7.8s**。
+  ⚠️ ⑰ 的单日延迟判据只碰 ~34 个文件，**测不出**这类线性劣化；故单列文件数判据。
+  反向测试：`WIRE_HOT_SELFTEST=1`。回收本体 = openship job `lemeng-gc-hot-hours`（CST 03:20）。
   **openship 通知不拆**双通道并行 1-2 周；**R12 存量 L2 判据**：「契约有 `sensitivity !== 'none'` 列 **且** `data.metrics` 存在 `source='l2'` 行」⇒ 逐行吐进 `data_plane_probes`。**契约侧闸已就位**（②b，`2026-10-18`）；**判据本体（运行期那条）待本 Phase 的流就位后接线**。 | **进行中**（第一刀 ✅ #898 战区未登记；✅ #905 口径对账台账 ⑪⑫⑬；其余仍挂着） |
 | 2 | 通知切换（数据面告警归 OO，openship 收敛 job 崩溃级）；**拆桥**（OO 升级修好投递腿后，桥接退役）；看门狗升级（search 凭据 → 证据年龄检查）；悬空 duckle→openship webhook 处置；本表翻绿 + 基建速查订正 | **未开工** |
 
