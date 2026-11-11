@@ -42,6 +42,15 @@ export const USER_ALIASES = new Map([
   ['Dongjijuan', 'DongJiJuan'],
 ])
 
+/**
+ * 用户拍板的补充 scope（spec §7.1 Phase 0 结论，2026-11-10）：源 Casdoor 里没有、但业务确认要给。
+ * 陈超（总经理，`ccccccccccccctv`）没有任何范围角色 ⇒ D2 会拒绝 ⇒ 拍板给全店。
+ * **只在这里补数据**——不要回写旧 org（全程只读）。
+ */
+export const EXTRA_USER_SCOPES = [
+  { user: 'ccccccccccccctv', kind: 'store', selector: { all: true }, legacyLabel: '拍板|全店' },
+]
+
 /** `品类|*` 展开为三分类（spec §6.3；`其他` 是兜底组，不授予）。 */
 export const CATEGORY_ALL = ['水果', '标品', '耗材']
 
@@ -254,6 +263,14 @@ export function planMigration(input) {
     const scopeName = addScope('store', hit.selector, `范围|${rangeName}`)
     for (const u of users) addUserScope(userStoreScope, u, scopeName)
     rangeScopes.push({ role: src.name, selector: hit.selector, matchedBy: hit.matchedBy, users, scopeName })
+  }
+
+  // ── 用户拍板的补充 scope（EXTRA_USER_SCOPES）：只补、不覆盖源数据 ────────────────
+  for (const extra of EXTRA_USER_SCOPES) {
+    const scopeName = addScope(extra.kind, extra.selector, extra.legacyLabel)
+    const m = extra.kind === 'brand' ? userBrandScope
+      : extra.kind === 'store' ? userStoreScope : userCategoryScope
+    addUserScope(m, extra.user, scopeName)
   }
 
   // 每个 store / 品牌 / 品类 scope 的 user-level 兜底 assignment
