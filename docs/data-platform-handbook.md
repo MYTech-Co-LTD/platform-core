@@ -861,7 +861,7 @@ capabilities / policy 门禁 / run 回执」一句打包，**实测与其中两�
 
 | 层 | 职责 | 明确不做 |
 |---|---|---|
-| **OpenObserve** | 数据面**预警面**：对管线 run 事件（现网 `data_alerts` 流，**org=mytech**——⚠️ 2026-10-22 订正：显示名已由 miyuan 改为 mytech，identifier `3IJ5tM4en3A06FzcJQhoHMTl4Xe` 不变）配规则（status≠ok / 该来的没来），通知企微；全量观测检索（run 史/判红史/基建日志一处 SQL）。**已在位**：管线失败/恢复、tick 缺席、基建探活（casdoor/novu/wecom）、宿主资源、桥自警共 10 条 enabled 规则（2026-10-22 抖音源退役，5 条抖音规则删除；在位清单唯一事实源 = `deploy/oo-alert-registry.txt`，对账 job 每 30 分钟核）。⚠️ 该构建定时规则**流静默即评估跳过 ⇒ 状态机冻结**（恢复永不来、silence 到期重发成风暴；复位 = disable→enable，2026-10-22 `wecom_bridge_delivery_failed` 实证，详见 WeKnora「OO 告警链路排障」条目） | **不是探测器**：不 docker exec、不持库凭据、**不在 OO SQL 里写对账/新鲜度语义**（阈值与缺席规则只消费数据面吐出的判红结论） |
+| **OpenObserve** | 数据面**预警面**：对管线 run 事件（现网 `data_alerts` 流，**org=mytech**——⚠️ 2026-10-22 订正：显示名已由 miyuan 改为 mytech，identifier `3IJ5tM4en3A06FzcJQhoHMTl4Xe` 不变）配规则（status≠ok / 该来的没来），通知企微；全量观测检索（run 史/判红史/基建日志一处 SQL）。**已在位**：管线失败/恢复、tick 缺席、基建探活（casdoor/novu/wecom）、宿主资源、桥自警等（2026-10-22 抖音源退役，5 条抖音规则删除；**在位清单唯一事实源 = `deploy/oo-alert-registry.txt`，对账 job 每 30 分钟核**。2026-11-11 实测该文件为 **14 条 ALERT（13 enabled）+ 5 DEST + 2 SCRIPT**；旧文「10 条 enabled」为过期口径，以 registry 为准）。⚠️ 该构建定时规则**流静默即评估跳过 ⇒ 状态机冻结**（恢复永不来、silence 到期重发成风暴；复位 = disable→enable，2026-10-22 `wecom_bridge_delivery_failed` 实证，详见 WeKnora「OO 告警链路排障」条目） | **不是探测器**：不 docker exec、不持库凭据、**不在 OO SQL 里写对账/新鲜度语义**（阈值与缺席规则只消费数据面吐出的判红结论） |
 | **openship** | 机器/进程/任务层：容器 crash_loop、服务器不可达、部署结果、job 崩溃；**告警兜底看门狗**（盯 OO 内最后证据年龄，OO 闪断即红——OO 2026-10-09 实测有 unreachable→0s 闪断，看门狗是切换前置） | 不承载语义判据脚本（历史遗留的探活/物化 job 保留，Phase 2 起通知收敛为 job 崩溃级） |
 | **数据面** | **判据本体**：对账、新鲜度容差（§1.5.2 对齐表）、契约 gate——脚本/qa gate 实现，判红结论**逐行吐进 OO 流**（带 org/账套标签） | — |
 
@@ -906,6 +906,8 @@ capabilities / policy 门禁 / run 回执」一句打包，**实测与其中两�
   hot 小时 ⇒ 静默双算，而所有 job 全绿」；后者抓「换机/回滚把视图带回旧版 ⇒ 延迟回 >110s」。
   均走 `data_plane_probes` → 桥 → 企微，**不新建 OO 规则、不翻 job rc**（红线③，同 ⑩⑪⑫⑬⑭⑮ 范式）。
   反向测试：`WIRE_SEALED_SELFTEST=1` / `WIRE_DETAILPATH_SELFTEST=1`。
+  ⚠️ **⑯ 豁免 bridge 的 12h 冷却**（2026-11-11，#1960）：封版/对账停摆 = **静默双算**，
+  必须在每一轮探活都叫醒，不能被冷却吞掉；其余 advisory 仍按 12h 收敛（`PROBE_NO_COOLDOWN`，默认 `sealed_manifest`）。
   ✅ **⑱ 热小时对象回收水位（2026-11-11；#1905 收尾）**：`glob` 计数热小时对象，
   `> WIRE_HOT_MAX_FILES`（默认 100 ≈ 3 天不回收）⇒ ERR 进 `data_plane_probes` → 桥 → 企微。
   由来：小时对象是天文件落盘后的暂存残留，读侧 glob 仍会打开 ⇒ 不删就线性变慢。
