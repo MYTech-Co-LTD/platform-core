@@ -3,7 +3,7 @@ import { describe, it, expect } from 'vitest'
 import type { Pool } from 'pg'
 import type { MetricDef, Requester } from './authz'
 import {
-  buildScopePlan, loadEffectiveScopes, normalizeSelector, scopeModeOf,
+  buildScopePlan, loadEffectiveScopes, normalizeSelector, scopeModeOf, warnIfScopeModeUnrecognized,
   type EffectiveScopes,
 } from './scope'
 
@@ -121,5 +121,29 @@ describe('buildScopePlan', () => {
       .toBe('no_brand_scope')
     expect(buildScopePlan(metric('system_book, branch_num, item_num'), scopes({ category: [] }), 'org', requester(), 'enforce').denial)
       .toBe('no_category_scope')
+  })
+})
+
+describe('warnIfScopeModeUnrecognized（启动期告警）', () => {
+  const collect = () => { const out: string[] = []; return { out, warn: (m: string) => out.push(m) } }
+
+  it('未设 / 空串 / 三个合法值 ⇒ 不告警', () => {
+    for (const v of [undefined, '', 'off', 'shadow', 'enforce']) {
+      const { out, warn } = collect()
+      warnIfScopeModeUnrecognized(v === undefined ? {} : { DATA_SCOPE_MODE: v }, warn)
+      expect(out).toEqual([])
+    }
+  })
+
+  it('★ 拼错（enfore / Shadow）⇒ 告警并说明「会静默回落 off」', () => {
+    for (const v of ['enfore', 'Shadow', 'ENFORCE']) {
+      const { out, warn } = collect()
+      warnIfScopeModeUnrecognized({ DATA_SCOPE_MODE: v }, warn)
+      expect(out).toHaveLength(1)
+      expect(out[0]).toContain('data_scope_mode_unrecognized')
+      expect(out[0]).toContain('treated as off')
+      // 仍然按 off 运行（与运行时口径一致，不是改行为）
+      expect(scopeModeOf({ DATA_SCOPE_MODE: v })).toBe('off')
+    }
   })
 })
