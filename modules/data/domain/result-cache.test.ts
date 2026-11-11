@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it } from 'vitest'
+import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { cacheClear, cacheGet, cacheKey, cacheSet, cacheStats } from './result-cache'
 
 const v = (n: number) => ({ columns: ['a'], rows: [[n]], rowCountTotal: n, retried: false })
@@ -6,10 +6,24 @@ const v = (n: number) => ({ columns: ['a'], rows: [[n]], rowCountTotal: n, retri
 describe('result-cache（明细结果缓存）', () => {
   beforeEach(() => cacheClear())
 
-  it('键 = 最终 SQL 的 sha256：SQL 同 ⇒ 同键；任一字节不同 ⇒ 不同键', () => {
+  it('键 = SQL + count SQL + 数据版本：任一不同 ⇒ 不同键', () => {
     expect(cacheKey('select 1', 'select count(*)')).toBe(cacheKey('select 1', 'select count(*)'))
     expect(cacheKey('select 1', 'select count(*)')).not.toBe(cacheKey('select 2', 'select count(*)'))
     expect(cacheKey('select 1', 'select count(*)')).not.toBe(cacheKey('select 1', 'select count(2)'))
+    // 数据版本变化（封版/月文件重建）⇒ 键变化，旧条目自然失效
+    expect(cacheKey('select 1', 'select count(*)', 'v1')).not.toBe(cacheKey('select 1', 'select count(*)', 'v2'))
+  })
+
+  it('RESULT_CACHE_TTL_MS=0 真正关闭缓存（旧写法会把 0 吞成 60s）', async () => {
+    vi.resetModules()
+    process.env.RESULT_CACHE_TTL_MS = '0'
+    const m = await import('./result-cache')
+    const k = m.cacheKey('s', 'c')
+    m.cacheSet(k, v(1))
+    expect(m.cacheGet(k)).toBeNull()
+    expect(m.cacheStats().ttlMs).toBe(0)
+    delete process.env.RESULT_CACHE_TTL_MS
+    vi.resetModules()
   })
 
   it('命中返回值并累计 stats', () => {
