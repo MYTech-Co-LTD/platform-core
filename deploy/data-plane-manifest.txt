@@ -18,6 +18,17 @@
 # **根**的崩溃残留（同步器的标记临时件 `..data-plane-revision.tmp.*`——注意是**双**首点）不在任何
 # 目录条目子树里 ⇒ 属作用域外、**只计数不删**（`# outside-scope` 跳变即信号，需要时手工删）。
 #
+# **刻意不进表的脚本**（2026-11-12 卫生项登记；审计时别把它们当漏项）：
+#   · `scripts/lemeng/*.test.sh` —— 测试夹具，只在仓/CI 跑，数据面不需要、也不会被执行；
+#   · `scripts/lemeng/sync-data-plane.sh` —— **同步程序本身**：它由开机器时的 bootstrap 手工落成
+#     数据面机上的 `/opt/lemeng-sync.sh`（SOP §E.3），之后**不再由自己覆盖自己**（自举鸡生蛋：
+#     它还没到位时没法用自己投递自己）。改它之后要按 SOP §E.5 手工投递一次；
+#   · `scripts/lemeng/authoring-ws.sh` / `backfill-lab.sh` —— 桌面 authoring 工作区与本地回环 S3
+#     实验台，运行位置是操作机，不是数据面；
+#   · `scripts/lemeng/backfill-item-price-once.py` —— #499 价格批首载的**一次性**脚本（H 段登记例外），
+#     已跑完，留仓留档。
+#   新增脚本先问一句「它要在数据面机上被执行吗」：是 ⇒ 进表；否 ⇒ 追加到本清单并写清理由。
+
 # ⚠️ 改动本表覆盖的**任一文件**后，必须重跑下面这条重新生成 lock，否则 CI 的 gates 会红
 #    （守卫：scripts/check-data-plane-lock.mjs，失败信息里会复述这条命令）：
 #      pnpm exec tsx scripts/lemeng/data-plane-lock.mjs

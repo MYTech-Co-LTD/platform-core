@@ -12,27 +12,9 @@
 {{
     config(materialized='view')
 }}
--- vw_lemeng_retail_order_line_month.sql — 明细读路径的**月感知服务视图**（drill 专用，#1916 P2）。
---
--- 与 `vw_lemeng_retail_order_line` 的关系：列集完全相同（25 列），**多一列 `month`**。
--- 多这一列的唯一目的：让查询能对**路径分区列**下谓词 —— `month between 'YYYY-MM' and 'YYYY-MM'`
--- 会让 DuckDB 只打开对应的 1–2 个月文件（实测 2 个月 600ms vs 全量 52 个月 3.5s）；
--- 而过滤 `bizday` 用不上分区裁剪（bizday 是数据列，不是分区列）。
---
--- ⚠️ 为什么本文件不经 `gen-data-projection`：它引用的是 `lemeng/retail_order_line_month` 前缀，
---   不在契约 prefix `lemeng/retail_order_line/` 的 `/` 边界内 ⇒ 生成器不认它作生产者。
---   代价：**25 列投影是手写的**，与契约有漂移风险 ⇒ 由 `assert_serving_view_columns_match_contract`
---   逐列比对（漂移即红）。
---
--- 冷腿 = `_MONTH` 月文件；热腿 = 未并入月文件的小时文件（`built_at >= sealed_at` 才排除）。
--- 正确性由 `assert_serving_view_matches_main` 对账（同一范围逐日行数必须与主视图相等）。
-{{
-    config(materialized='view')
-}}
 
-
--- 以下正文（含分层纪律、分区键定型、取列形态、契约列集、冷/热两段 FROM）**逐字取自 staging**，
--- 其说明同样适用于本视图。
+-- 以下正文（含分层纪律、分区键定型、取列形态、契约列集、冷腿 FROM 段）**逐字取自 staging**，
+-- 其说明同样适用于本视图（热腿相关段落不适用：本视图只有月文件一条腿）。
 -- 正文出自 stg_lemeng_retail_order_line.sql — 乐檬零售订单明细 staging（**新湖**，2026-09-24 契约；
 -- layered §3：**一对一、只规范化不改义**）。
 --

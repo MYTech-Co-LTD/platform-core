@@ -8,7 +8,7 @@ import { authorize, paramFilters, sqlQuote, visibleMetrics } from './authz'
 import { maskingAuditOf, writeAudit, type ScopeAudit } from './audit-store'
 import { loadMergedCatalog } from './metric-store'
 import { effectiveMasks, maskedSelectSql } from './mask'
-import { runWarehouseSql, warehousePool, DATA_WAREHOUSE_UNCONFIGURED } from './warehouse'
+import { analystPool, runWarehouseSql, DATA_WAREHOUSE_UNCONFIGURED } from './warehouse'
 import { decorateWithLabels, loadDimensionLookup } from './dimension-labels'
 import { DATA_AS_OF_SQL, execWithLakeRaceRetry, formatDataAsOf, isLakeRaceError, type QueryDeps } from './query-service'
 import { detailProvenance, type DetailProvenance } from './provenance'
@@ -350,8 +350,12 @@ export async function runDetailQuery(
     requested, orderBy, desc, limit, offset, extra,
   )
 
+  // 明细执行走**分析师只读池**（`analystPool`：每条连接先 `set default_transaction_read_only=on`）。
+  // 2026-11-12 卫生项：此前这里（以及 dataVersion / 维度 lookup / DATA_AS_OF 三处辅助读）走的是
+  // 可写池 `warehousePool()` —— 明细面是纯读面，没有任何理由持有可写连接；写池留给 dbt 物化。
+  // 池配置（max/timeout）两者同源（`warehousePoolConfig`），换池不改变并发预算。
   const execOnce = (q: string) =>
-    deps.execute ? deps.execute(q) : runWarehouseSql(warehousePool(), q)
+    deps.execute ? deps.execute(q) : runWarehouseSql(analystPool(), q)
   const toError = async (err: unknown): Promise<DetailOutcome> => {
     const msg = err instanceof Error ? err.message : String(err)
     const reason =
@@ -368,7 +372,7 @@ export async function runDetailQuery(
   // 数据版本进键（#1953）：封版/月文件重建后键立即变化，不会在 TTL 窗口里返回旧数。
   // 版本查询自身有 5s 进程内缓存，失败退化为 ''（等价于没有版本戳，不阻断）。
   const ver = cacheable
-    ? await dataVersionOf(warehousePool()).catch(() => '')
+    ? await dataVersionOf(analystPool()).catch(() => '')
     : ''
   const cacheK = cacheable ? cacheKey(sql, plan.rowCountSql, ver) : ''
   const cached = cacheable ? cacheGet(cacheK) : null
@@ -418,14 +422,14 @@ export async function runDetailQuery(
 
   // 维度名称解析（与聚合面同一装饰器；失败 ⇒ 名称列缺席，主结果照常交付）。
   const lookup = await (deps.dimensionLookup
-    ?? (() => loadDimensionLookup((q) => runWarehouseSql(warehousePool(), q))))()
+    ?? (() => loadDimensionLookup((q) => runWarehouseSql(analystPool(), q))))()
   if (lookup !== null) result = decorateWithLabels(result, lookup)
 
   // 两只时钟（spec §2.6）：data_as_of = 物化钟（聚合面）；drill_as_of = 查询执行时刻（明细面
   // 直读湖）。结构上恒不一致 ⇒ 有 data_as_of 就附平台声明，不靠模型自觉。
   let dataAsOf: string | undefined
   try {
-    const fresh = await runWarehouseSql(warehousePool(), DATA_AS_OF_SQL)
+    const fresh = await runWarehouseSql(analystPool(), DATA_AS_OF_SQL)
     if (fresh.rows[0]?.[0] instanceof Date) dataAsOf = formatDataAsOf(fresh.rows[0][0])
   } catch { /* load_log 缺席 ⇒ 缺席（未知 ≠ 捏造） */ }
   const drillAsOf = formatDataAsOf(new Date())
