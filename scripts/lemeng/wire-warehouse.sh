@@ -569,10 +569,12 @@ const c=new Client({connectionString:process.env.DATA_WAREHOUSE_URL});
 (async()=>{try{
   await c.connect();
   // glob() 走 pg_duckdb 的持久 S3 secret（与视图同一通道）；不读数据，只列对象。
-  const sql=\"select n from duckdb.query('select count(*) as n from glob(''${HOT_GLOB}'')') t\";
+  // ⚠️ 外层 PG 不能直接 select n：pg_duckdb 的 duckdb.query() 是 record 返回，PG 解析
+  //    列名会报 `column \"n\" does not exist`（2026-11-11 实测）。用 select * 由 pg 取字段名。
+  const sql=\"select * from duckdb.query('select count(*) as n from glob(''${HOT_GLOB}'')') t\";
   const r=await c.query(sql);
   await c.end();
-  const n=Number(r.rows[0].n);
+  const n=Number(r.rows[0] && r.rows[0].n);
   if(!Number.isFinite(n)){console.log('ERR glob 结果不可解析');process.exit(1)}
   if(n>${HOT_MAX_FILES}){console.log('ERR 热小时对象 '+n+' > 阈值 ${HOT_MAX_FILES}（GC 没跑/失效；视图热腿会线性变慢）');process.exit(1)}
   console.log('OK hot_files='+n+'（阈值 ${HOT_MAX_FILES}）');
