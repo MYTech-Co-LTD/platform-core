@@ -139,6 +139,7 @@ from read_parquet(
     's3://{{ var("zos_bucket") }}/{{ var("lemeng_retail_order_line_prefix") }}/_SCHEMA/v3.parquet'
   ) sealed
 where sealed['schema_version'] = 3
+union all
 select
   r['batch_id']::varchar as batch_id,
   r['system_book']::varchar as system_book,
