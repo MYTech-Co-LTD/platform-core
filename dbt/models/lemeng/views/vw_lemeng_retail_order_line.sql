@@ -122,7 +122,7 @@ select
 -- 两条 glob **互不重叠**：天文件只在关闭日有，小时文件只在「今天 / 尚未重采的昨天」有。
 -- ⚠️ 次序无关，但**两块都要在**——只留热侧会在迁移期丢已封版的日子，只留冷侧会丢今天。
 from read_parquet(
-  's3://{{ var("zos_bucket") }}/{{ var("lemeng_retail_order_line_prefix") }}/_DAY_DATA/system_book=*/bizday=*/all.parquet'
+  's3://{{ var("zos_bucket") }}/lemeng/retail_order_line_month/_MONTH/system_book=*/month=*/all.parquet'
 ) r,
 -- ── 封版断言（正典 §5.2 ③）：`_SCHEMA/v<N>.parquet` 是「这套文件是齐的」的唯一凭据 ──────────
 -- 它不在 ⇒ 404 ⇒ **带名字地失败**，而不是把半写的湖静默读成完整（实测过：392 行 vs 完整 796 行，rc=0）。
@@ -135,6 +135,47 @@ from read_parquet(
     's3://{{ var("zos_bucket") }}/{{ var("lemeng_retail_order_line_prefix") }}/_SCHEMA/v3.parquet'
   ) sealed
 where sealed['schema_version'] = 3
+-- ══ 冷·补：月文件构建后才封版的日子（月文件里没有，必须回日文件取）══════════════════════
+-- 谓词 `sealed_at > built_at` 精确表达「这一天的封版晚于所在月文件的构建时刻」；
+-- `bizday >= current_date - 3` 是**给文件裁剪用的常量下界**（否则子查询会让 pg_duckdb 打开全部 1,543 个日文件）。
+-- 稳态：月度合并每天 04:10 跑，缺口最多 1 天；若合并连续失败 >3 天，探针会先红。
+union all
+select
+  r['batch_id']::varchar as batch_id,
+  r['system_book']::varchar as system_book,
+  {{ subject_org() }}       as org,
+  r['bizday']::date as bizday,
+  r['hour']::int as hour,
+  r['order_no']::varchar as order_no,
+  r['order_detail_num']::varchar as order_detail_num,
+  r['branch_num']::int as branch_num,
+  r['branch_name']::varchar as branch_name,
+  r['order_time']::timestamp as order_time,
+  r['order_operate_time']::timestamp as order_operate_time,
+  r['state']::varchar as state,
+  r['order_source']::varchar as order_source,
+  r['item_num']::varchar as item_num,
+  r['item_code']::varchar as item_code,
+  r['sale_money']::numeric(14,2) as sale_money,
+  r['discount_money']::numeric(14,2) as discount_money,
+  r['payment_money']::numeric(14,2) as payment_money,
+  r['quantity']::numeric(14,3) as quantity,
+  r['order_transaction_type']::varchar as order_transaction_type,
+  r['order_ref_billno']::varchar as order_ref_billno,
+  r['order_detail_share_discount']::numeric(14,2) as order_detail_share_discount,
+  r['order_detail_std_price']::numeric(14,2) as order_detail_std_price,
+  r['order_detail_price']::numeric(14,2) as order_detail_price,
+  r['order_detail_online_qty']::numeric(14,3) as order_detail_online_qty,
+  r['order_total_money']::numeric(14,2) as order_total_money
+from read_parquet(
+  's3://{{ var("zos_bucket") }}/{{ var("lemeng_retail_order_line_prefix") }}/_DAY_DATA/system_book=*/bizday=*/all.parquet'
+) r,
+  read_parquet(
+    's3://{{ var("zos_bucket") }}/{{ var("lemeng_retail_order_line_prefix") }}/_SCHEMA/v3.parquet'
+  ) sealed
+where sealed['schema_version'] = 3
+  and r['bizday']::date >= current_date - 3
+  and exists (select 1 from data.lemeng_daily_sealed s left join data.lake_month_index i on i.system_book = s.system_book and i.ym = strftime(s.bizday, '%Y-%m') where s.system_book = r['system_book'] and s.bizday = r['bizday'] and (i.system_book is null or s.sealed_at > i.built_at))
 union all
 select
   r['batch_id']::varchar as batch_id,
