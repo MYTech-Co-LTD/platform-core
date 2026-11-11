@@ -59,7 +59,7 @@
 
 > **本节是本链路的机制细节唯一正文**（三跳链路/凭据/模板/排障口径）；监控**职责分工终局**与执行状态
 > 在正典 `docs/data-platform-handbook.md` §1.5.3（执法器 skill `data-monitor`），两处冲突以正典为准。
-> ⚠️ 排障/审计口径：OO **API 认 org identifier 不认显示名**（miyuan 的 identifier 是长随机串）——
+> ⚠️ 排障/审计口径：OO **API 认 org identifier 不认显示名**（org 显示名 2026-10-22 起是 `mytech`，旧称 `miyuan`；identifier 是长随机串）——
 > 先列全 org 再查，别按显示名猜（2026-10-10 错查 `default` 得「0 规则」假阴性的教训）。
 
 **与上面那条并存，不替换** —— 两条覆盖不同的面：
@@ -73,7 +73,7 @@
 
 - **投递链路（2026-09-27 用户拍板 + 端到端实测通过；机器侧证据止于 OO 告警 firing——企微群侧两条消息为目视确认开环，见 #210 待确认项）**：引擎 POST → OO JSON 摄取
   （`${ENV:OO_BASE}/api/${ENV:OO_ORG}/data_alerts/_json`，`Authorization: Basic ${ENV:OO_AUTH}`）
-  → OO 告警（org=miyuan，**scheduled 1 分钟频次**两条：`data_alerts_failure` / `data_alerts_recovery`
+  → OO 告警（org=mytech，旧称 miyuan；**scheduled 1 分钟频次**两条：`data_alerts_failure` / `data_alerts_recovery`
   ——⚠️ realtime 评估器在本部署实测**不触发**（现存 12 条生产告警也全是 scheduled），故用调度频次，
   延迟 ≤1 分钟；silence 10 分钟与引擎冷却 15 **刻意错开**；分两条是因 OO 条件只 AND 不能 OR，
   合并会把恢复消息用 silence 存没）

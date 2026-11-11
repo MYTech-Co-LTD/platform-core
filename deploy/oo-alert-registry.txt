@@ -9,7 +9,8 @@
 #   DEST  <name>                                   —— OO 通知目的地
 #   SCRIPT <绝对路径>                              —— OO 机上应在位的桥/看门狗脚本
 #
-# 审计范围：org=miyuan 全部规则（含他群 wecom_bot/infra——只记账不转发，见 #538）。
+# 审计范围：org 显示名 **mytech**（2026-10-22 由 miyuan 改名；identifier `3IJ5tM4en3A06FzcJQhoHMTl4Xe` 不变——
+#   OO API 认 identifier 不认显示名）的全部规则（含他群 wecom_bot/infra——只记账不转发，见 #538）。
 # 对账 job：openship `OO 预警配置对账（#538）`，30 分钟周期。
 
 ALERT data_alerts_failure                       data_alerts_wecom    t
