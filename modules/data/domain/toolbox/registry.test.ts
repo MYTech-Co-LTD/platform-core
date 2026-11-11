@@ -127,3 +127,34 @@ describe('listAnalystTools：T1 阶段 impl 未注册，清单照出（清单是
     expect(() => registerImpl('data_agent_guide', impl)).toThrow()
   })
 })
+
+describe('callTool：审计 id 回填 provenance（Wave 1.3）', () => {
+  const deps = (pool: unknown): ToolboxDeps => ({
+    pool: pool as never, org: 'acme',
+    requester: { userId: 'u', orgId: 'acme', channel: 'pat', keyId: 1, scopes: ['data:query'], hasScope: () => true },
+    adoptedSources: new Set<string>(), wh: async () => ({ columns: [], rows: [] }),
+  })
+  const pool = { query: async () => ({ rows: [{ id: 7, created_at: new Date('2026-10-21T10:00:00Z') }] }) }
+
+  it('impl 先返回、审计后写 ⇒ 由 callTool 把 id 补进已有 provenance', async () => {
+    registerImpl('get_quality', async () => ({
+      payload: { status: 'ok', provenance: { source: 'test', relation: 'r' } }, isError: false,
+    }))
+    const out = await callTool(deps(pool), 'get_quality', {})
+    expect(out.payload.provenance).toEqual({ source: 'test', relation: 'r', auditId: 7 })
+  })
+
+  it('impl 自己带的 auditId 不被覆盖（自带审计的通道）', async () => {
+    registerImpl('get_lineage', async () => ({
+      payload: { status: 'ok', provenance: { source: 'test', auditId: 99 } }, isError: false,
+    }))
+    const out = await callTool(deps(pool), 'get_lineage', {})
+    expect((out.payload.provenance as Record<string, unknown>).auditId).toBe(99)
+  })
+
+  it('没有 provenance 的工具不凭空多一个字段', async () => {
+    registerImpl('get_freshness', async () => ({ payload: { status: 'ok' }, isError: false }))
+    const out = await callTool(deps(pool), 'get_freshness', {})
+    expect(out.payload).toEqual({ status: 'ok' })
+  })
+})

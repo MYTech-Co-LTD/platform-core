@@ -103,3 +103,25 @@ export function recipeProvenance(input: {
     executedAt: input.executedAt,
   }
 }
+
+/** 指标聚合查询的来源（`query_metric.provenance`）。 */
+export interface MetricProvenance extends ProvenanceBase {
+  source: 'metric'
+  metricId: string
+  executedAt: string
+}
+
+export function metricProvenance(input: {
+  metricId: string
+  relation: string
+  executedAt: string
+  auditId?: number | null
+}): MetricProvenance {
+  return {
+    source: 'metric',
+    metricId: input.metricId,
+    relation: input.relation,
+    executedAt: input.executedAt,
+    ...auditField(input.auditId),
+  }
+}

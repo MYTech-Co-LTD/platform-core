@@ -20,6 +20,12 @@ export interface EvidenceAnchor {
   value: number | null
 }
 
+/**
+ * 对账状态词表（Wave 1.2）：`ok` 跑过且通过 / `failed` 跑过但没过 / `missing` 没有对账文件 /
+ * `unknown` 读不到结果或本次没真跑。**「没跑」不等于「通过」**——这是这张词表存在的理由。
+ */
+export type ReconcileStatus = 'ok' | 'failed' | 'missing' | 'unknown'
+
 export interface EvidencePack {
   anchor: EvidenceAnchor
   sql: string
@@ -34,7 +40,8 @@ export interface EvidencePack {
     certifiedBy: string | null
     version: number | null
   }
-  reconcile: { auditFile: string | null; status: 'ok' | 'missing' | 'unknown' }
+  /** 独立复算：文件是谁、最近一次运行过没过、那次运行是什么时候。 */
+  reconcile: { auditFile: string | null; status: ReconcileStatus; executedAt: string | null }
   generatedAt: string
 }
 

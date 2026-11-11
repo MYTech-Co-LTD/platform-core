@@ -7,12 +7,13 @@ export interface EnvelopeInput {
   subject?: Record<string, unknown>
   asOf?: Record<string, unknown>
   query?: Record<string, unknown>
+  provenance?: Record<string, unknown>
   result?: Record<string, unknown>
   lineage?: Record<string, unknown>
   audit?: Record<string, unknown>
 }
 
-const SECTION_ORDER = ['metric', 'subject', 'asOf', 'query', 'result', 'lineage', 'audit'] as const
+const SECTION_ORDER = ['metric', 'subject', 'asOf', 'query', 'provenance', 'result', 'lineage', 'audit'] as const
 
 export function buildEnvelope(input: EnvelopeInput): Record<string, unknown> {
   const out: Record<string, unknown> = { status: input.status ?? 'ok' }
@@ -31,6 +32,7 @@ export const ENVELOPE_SCHEMA: Record<string, unknown> = {
     subject: { type: 'object', description: 'org/source/adoptedSources——主体钉死的回声' },
     asOf: { type: 'object', description: 'dataThrough/freshnessLagSeconds/lastDbtRun/tests' },
     query: { type: 'object', description: 'sql/params/dimensions/rowLimit/queryId' },
+    provenance: { type: 'object', description: 'source=metric/metricId/relation/executedAt/auditId——结果来源（S3）' },
     result: { type: 'object', description: 'columns/rows/rowCount/truncated/total?' },
     lineage: { type: 'object', description: 'model/upstream（源缺席时本节缺席）' },
     audit: { type: 'object', description: 'id/ts——可独立核对 data.query_audit' },

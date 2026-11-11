@@ -8,6 +8,8 @@ import { executeExplore } from '../analysis/explore-exec'
 import { applyRecipe, compileRecipe, recipeTargetOf } from '../analysis/recipes'
 import type { RecipeKind, RecipeRequest } from '../analysis/recipes'
 import { buildEvidencePack } from '../analysis/evidence'
+import { reconcileFaceFor } from '../analysis/reconcile'
+import { beijingTodayOf, freshnessFaceFor } from '../query-service'
 import { isoNow, recipeProvenance } from '../provenance'
 import type { ToolImpl } from './registry'
 
@@ -94,6 +96,14 @@ export const exploreRecipeImpl: ToolImpl = async (deps, args) => {
     return { payload: { status: 'denied', reason: compiled.code, detail: compiled.detail ?? null }, isError: true, auditMetricId: metricId }
   }
 
+  // 证据的真值（Wave 1.2）：水位/状态走问数面同一判据（`freshnessFaceFor`：按指标声明的
+  // freshness_relations 在 load_log 上取木桶短板），对账读物化 job 的 run_results.json。
+  // 两者都 fail-open 成 unknown——证据面坏了不能反噬配方本身的执行。
+  const face = await freshnessFaceFor(deps.pool, [row], beijingTodayOf((deps.now ?? (() => new Date()))()))
+    .then((m) => m.get(metricId) ?? { status: 'unknown' as const, watermark: null })
+    .catch(() => ({ status: 'unknown' as const, watermark: null }))
+  const reconcile = reconcileFaceFor(metricId)
+
   const results: Array<{ columns: string[]; rows: unknown[][] }> = []
   const evidence: unknown[] = []
   let rowCount = 0
@@ -127,15 +137,15 @@ export const exploreRecipeImpl: ToolImpl = async (deps, args) => {
       sql: out.sql,
       sqlPreview: out.preview,
       // 数据截至用指标自己的水位（拿不到就 null / unknown，不冒充最新）
-      dataAsOf: null,
-      freshness: { status: 'unknown', slaDays: row.slaDays ?? null },
+      dataAsOf: face.watermark,
+      freshness: { status: face.status, slaDays: row.slaDays ?? null },
       caliber: {
         tier: row.certified === 'certified' ? 'certified' : 'draft',
         basis: row.basis ?? 'l1_tree',
         certifiedBy: row.createdBy ?? null,
         version: row.version ?? null,
       },
-      reconcile: { auditFile: null, status: 'unknown' },
+      reconcile,
     }))
   }
 

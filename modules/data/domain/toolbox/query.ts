@@ -7,6 +7,7 @@ import { authorize, MAX_QUERY_ROWS, visibleMetrics, type SlicingSpec } from '../
 import { loadMergedCatalog, type MetricRow } from '../metric-store'
 import { runQuery, type QueryOk } from '../query-service'
 import { buildEnvelope } from './envelope'
+import { isoNow, metricProvenance } from '../provenance'
 import type { ToolImpl, ToolboxDeps } from './registry'
 
 const sha256 = (s: string): string => createHash('sha256').update(s).digest('hex')
@@ -135,6 +136,14 @@ export const queryMetricImpl: ToolImpl = async (deps, args) => {
         detailKeyColumns: [...metricRow.drill.dims],
       } : {}),
     },
+    // 结果来源（S3）：指标面锚点是「哪条指标 / 哪张逻辑关系 / 什么时刻 / 哪行审计」。
+    // relation 缺席（selectSql 里没有 schema.name 形态）时退到指标 id 之外的空串——不编模型名。
+    provenance: metricProvenance({
+      metricId,
+      relation: model ?? '',
+      executedAt: isoNow(deps.now),
+      auditId: ok.audit?.id,
+    }),
     result: {
       columns: ok.columns, rows: ok.rows, rowCount: ok.rows.length, truncated: ok.truncated,
       ...(ok.total !== undefined ? { total: ok.total } : {}),

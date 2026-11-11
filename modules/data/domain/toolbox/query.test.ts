@@ -100,6 +100,10 @@ describe('queryMetricImpl：完整信任信封', () => {
     expect(env.query).toMatchObject({ rowLimit: 1000, queryId: 'q_77', detailAvailable: false })
     expect(env.result).toMatchObject({ rowCount: 1, truncated: false })
     expect(env.lineage).toMatchObject({ model: 'fct_retail_sale', upstream: ['stg_lemeng_retail_order_line'] })
+    // 结果来源（S3）：锚点 = 指标 + 逻辑关系 + 执行时刻 + 本次审计行
+    expect(env.provenance).toMatchObject({
+      source: 'metric', metricId: 'lemeng:retail:net_sales', relation: 'fct_retail_sale', auditId: 77,
+    })
     expect(env.audit).toMatchObject({ id: 77 })
     expect(out.auditMetricId).toBe('lemeng:retail:net_sales')
     expect(out.auditRowCount).toBe(1)
