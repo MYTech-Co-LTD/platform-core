@@ -48,6 +48,20 @@
 #    ⚠️ 本文件里 `$VAR` 相邻中文一律写 `${VAR}`（issue #212，bash 3.2 会把多字节首字节吃进变量名）。
 set -eu
 
+# 档位白名单（2026-11-12 卫生项）：**拼错的档位必须响亮失败**，不能落进全量档。
+# 为什么：下面的分支只认 tables/tick/audit/hourly，其余一律走文件末尾的「全量构建」——
+# 把 `hourly` 写成 `hourl` 的代价是**一次全史物化**（小时级、与 tick 抢锁），而日志里
+# 只有一行 `scope=hourl mode=full_build`，没人会注意到。放在**任何 env 探查之前**判，
+# 这样连容器不在的机器上也能立刻得到「档位拼错了」而不是 missing_env。
+SCOPE=${MATERIALIZE_SCOPE:-full}
+case "$SCOPE" in
+  full|tables|tick|audit|hourly) ;;
+  *)
+    echo "materialize: 未知档位 MATERIALIZE_SCOPE='${SCOPE}'（允许：full / tables / tick / audit / hourly）" >&2
+    exit 2
+    ;;
+esac
+
 R=${MATERIALIZE_REPO_DIR:-/opt/platform-core-data/platform-core}
 PG_CT=${MATERIALIZE_PG_CT:-openship-platform-core-shanhai-data-pg_duckdb}
 CONSOLE_CT=${MATERIALIZE_CONSOLE_CT:-openship-platform-core-shanhai-data-lemeng-console-3120}

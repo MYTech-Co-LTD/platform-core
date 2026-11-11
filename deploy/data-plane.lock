@@ -1,4 +1,4 @@
-sha256-of-rest 926277f31d16a5ac2be31f9b09262e132204d4a22a926a8b148b8369460e09d0
+sha256-of-rest d37f7dd666ac19699067705e9580afd9ba25e7a6adf9c8a3d375f3ab9d616935
 97b2a20c2642ae819b7a00515e298f32af61380ddb9c19fc58c39670865e8833 contracts/README.md ${REPO}/contracts/README.md 0644
 fcc8189e1012d5fbb8e2505025bed637dd01c7b4465ab86125d3eaa7f330eff3 contracts/common/_schema.schema.json ${REPO}/contracts/common/_schema.schema.json 0644
 1730119518c3371f3c2ff3492f4c15cd731688047c6d40805ec4d2c65892f3ff contracts/common/_template.contract.json ${REPO}/contracts/common/_template.contract.json 0644
@@ -104,7 +104,7 @@ d8bc0c51af0ae782ab6898f1c3e7ecd0ef79cfa6034cea18359c8df420153200 dbt/models/leme
 7b4e581458e9b23cf0ed2aa36b5c0ba97f772039bdabfb790490a42004e53e5f dbt/models/lemeng/staging/stg_lemeng_wholesale_return.sql ${REPO}/dbt/models/lemeng/staging/stg_lemeng_wholesale_return.sql 0644
 08b8f7cfad14f5a7eccac84f518881ec69061b2add928d5b33a08bc7651b61e5 dbt/models/lemeng/views/vw_lemeng_retail_order_line.sql ${REPO}/dbt/models/lemeng/views/vw_lemeng_retail_order_line.sql 0644
 31edb43d0be88e28336e72afb49d7fea61fafe398d3558819f81947193f8c9d6 dbt/models/lemeng/views/vw_lemeng_retail_order_line_month.sql ${REPO}/dbt/models/lemeng/views/vw_lemeng_retail_order_line_month.sql 0644
-2a8841b65a61a43d69b57690267e4b0c1870128726d10308bb4073e2172689f9 dbt/models/lemeng/views/vw_lemeng_retail_order_line_month_history.sql ${REPO}/dbt/models/lemeng/views/vw_lemeng_retail_order_line_month_history.sql 0644
+63ba639e4bd28e9b1665e4ec707dca6724092b3c374da8a7e3670d75612d1d31 dbt/models/lemeng/views/vw_lemeng_retail_order_line_month_history.sql ${REPO}/dbt/models/lemeng/views/vw_lemeng_retail_order_line_month_history.sql 0644
 f89cf4bd9f5503e1ec1200b9862da4ed803e89de682eb4db1b2a53b865ca951f dbt/models/lemeng/views/vw_lemeng_wholesale_out.sql ${REPO}/dbt/models/lemeng/views/vw_lemeng_wholesale_out.sql 0644
 e35ce8e83454c44745e744ea45edc91662c9f73ec6e6c187ab5b292fa1ebf4cd dbt/profiles.example.yml ${REPO}/dbt/profiles.example.yml 0644
 d4f8f1ee7cd0b9b2847ff9d060e9c3dbc14d82a37c9b24f6bc2faadc1f389ac6 dbt/seeds/dim_brand.csv ${REPO}/dbt/seeds/dim_brand.csv 0644
@@ -416,7 +416,7 @@ ffeddbeba2f0b7df748a60e737009cd45689320dad2ea1233230c20eb541acba scripts/lemeng/
 11802d4ad217623f340aac3429bba62da61e3f40f6a12a947c8055043a4c28a7 scripts/lemeng/diagnose.sh /opt/lemeng-diagnose.sh 0755
 465fee98255167a80bd21a6e1921bfe21399c4a9eda24130545701fc9dd73cf3 scripts/lemeng/emit-probe.py /opt/lemeng-emit-probe.py 0755
 2ac1faaa0b9631d97968ae992705c0c7976b5ee64b1882255320b7f64fc19afb scripts/lemeng/gc-hot-hours.sh /opt/lemeng-gc-hot-hours.sh 0755
-725179d02ffdc81940eb5a3b242c108d2f6fc210dcec60da1825c5b1af3d5a6c scripts/lemeng/materialize.sh /opt/lemeng-materialize.sh 0755
+53175e88267abd83a8b69b2232d79162eb4a686e0ce24131aeb69015cde54818 scripts/lemeng/materialize.sh /opt/lemeng-materialize.sh 0755
 c67f6edec71c9576ecb4d9ee1f146ce1218b4da809fc41aae99e7f40be53d3ae scripts/lemeng/nightly-backfill.sh /opt/lemeng-nightly-backfill.sh 0755
 98074d99903bd7092dc8e8179ebec4a968e123e72884502a2a2664e08607eeb9 scripts/lemeng/oo-config-audit.sh /opt/lemeng-oo-config-audit.sh 0755
 7a81135e5d096b2792647d0c4b9d3686f1ef74d13f9169d0339fb0f9c9c215cb scripts/lemeng/oo-notify-bridge.sh /opt/lemeng-oo-notify-bridge.sh 0755
