@@ -328,15 +328,19 @@ fi
 # 2026-11-04 起停更（数据面探活 `recon_ledger_cover` 长期 ERR，就是这条欠账）。
 # table 模型总量可控（最重 stg_lemeng_item 1.8M 行、fct_contribution 111k），夜间窗口单跑一轮
 # 即可，**不必**把停用的全量档拉起来（那档还会连带跑全史 audit，正是当初 OOM 的来源）。
-# 选择器是**交集**（逗号）：`config.materialized:table,path:models/<域>` —— 只本域的 table 模型。
+# 选择器是**交集**（逗号）：`config.materialized:table,path:models/<域>` —— 只本域的 table 模型；
+# **并上** `config.materialized:seed`（空格 = 并集）：2026-11-11 真机实测——tables 档原先不含种子，
+# 新加的 seed（dim_category_group_map）永远建不出来，依赖它的模型直接
+# `relation "staging.dim_category_group_map" does not exist` ⇒ 整档红。种子是全域共享的 7 个小
+# CSV（全量刷新、幂等），夜间顺带走一遍代价可忽略；这样「新 seed 落地」不再依赖已停用的全量档。
 TABLES_DOMAIN=${MATERIALIZE_TABLES_DOMAIN:-lemeng}
 if [ "$SCOPE" = tables ]; then
-  echo "── tables: config.materialized:table（domain=${TABLES_DOMAIN}；夜间窗口）──"
+  echo "── tables: config.materialized:table + seeds（domain=${TABLES_DOMAIN}；夜间窗口）──"
   _log="$_WORK/dbt.tables.log"
   _rc="$_WORK/dbt.tables.rc"
   ( if DATA_PLANE_DOMAINS="$TABLES_DOMAIN" docker run --rm --network "$NETWORK" -v "$R/dbt:/usr/app" \
       $(mat_env_args) "$IMAGE" $(mat_dbt_args) \
-      --select "config.materialized:table,path:models/$TABLES_DOMAIN" \
+      --select "config.materialized:table,path:models/$TABLES_DOMAIN config.materialized:seed" \
       --exclude "path:tests/$TABLES_DOMAIN" --exclude tag:audit 2>&1; then
     echo 0 >"$_rc"
   else
