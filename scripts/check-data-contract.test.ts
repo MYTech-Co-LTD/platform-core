@@ -4,7 +4,7 @@
 // 变异，确认门禁**真的会红**（本仓规矩：一个从不红的判据等于没有判据）。
 // 取列器另有一组单元用例——它要能同时认对「投影列」和**不认**「类型名 / 表别名」。
 
-import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from 'node:fs'
+import { mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
@@ -12,6 +12,7 @@ import { afterAll, describe, expect, it, vi } from 'vitest'
 
 import {
   checkDataContract,
+  crossFieldViolations,
   extractPipelineAliases,
   extractStagingAliases,
 } from './check-data-contract.mjs'
@@ -57,7 +58,8 @@ function fixture(over: {
     layout: { prefix: 'x/y', partitionStyle: 'hive', partitionBy: ['bizday'], fileName: 'all.parquet' },
     batch: { markerColumn: 'batch_id', type: 'varchar' },
     columns: cc.map((name) => ({
-      name, type: 'varchar', nullable: true,
+      // 分区键列不得 nullable=true（§4.2 ⑥）——夹具的 `bizday` 就是分区键，故这里显式非空
+      name, type: 'varchar', nullable: name !== 'bizday',
       ...(over.sensitivity?.[name] ? { sensitivity: over.sensitivity[name] } : {}),
     })),
   }
@@ -294,5 +296,86 @@ describe('sensitivity 闭集（元 schema 无校验器 ⇒ 这里才是真闸）
 
   it('不声明 sensitivity 不报违规（缺省 = none）', () => {
     expect(checkDataContract(fixture())).toHaveLength(0)
+  })
+})
+
+describe('跨字段约束六条（contracts/README §4.2；元 schema 表达不了，这里是唯一机检）', () => {
+  it('① 分区键不是已声明列 ⇒ 红', () => {
+    const root = fixture()
+    const p = join(root, 'contracts/common/x.y.json')
+    const doc = JSON.parse(readFileSync(p, 'utf8'))
+    doc.layout.partitionBy = ['bizday', 'no_such_col']
+    writeFileSync(p, JSON.stringify(doc))
+    const v = checkDataContract(root)
+    expect(v.some((x) => x.message.includes('no_such_col') && x.message.includes('§4.2 ①'))).toBe(true)
+  })
+
+  it('① 显式别名例外：lemeng/recon_source 的 `chunk` 目录 ↔ `chunk_no` 列；换 domain 不成立', () => {
+    const base = {
+      domain: 'lemeng', table: 'recon_source', prefix: 'lemeng/recon_source',
+      partitionBy: ['system_book', 'bizday', 'chunk'], markerColumn: 'batch_id',
+      columns: [
+        { name: 'batch_id', type: 'varchar', nullable: false },
+        { name: 'system_book', type: 'int', nullable: false },
+        { name: 'bizday', type: 'varchar', nullable: false },
+        { name: 'chunk_no', type: 'int', nullable: false },
+      ],
+    }
+    expect(crossFieldViolations(base)).toEqual([])
+    // 例外按 `domain/table` 精确匹配，不是「找不到列就放过」
+    expect(crossFieldViolations({ ...base, domain: 'x' }).some((m) => m.includes('chunk'))).toBe(true)
+  })
+
+  it('② prefix ≠ domain/table ⇒ 红；维度面 x/dim_y 放行', () => {
+    const bad = fixture()
+    const bp = join(bad, 'contracts/common/x.y.json')
+    const bdoc = JSON.parse(readFileSync(bp, 'utf8'))
+    bdoc.layout.prefix = 'wrong/prefix'
+    writeFileSync(bp, JSON.stringify(bdoc))
+    expect(checkDataContract(bad).some((x) => x.message.includes('§4.2 ②'))).toBe(true)
+
+    const dim = fixture()
+    const dp = join(dim, 'contracts/common/x.y.json')
+    const ddoc = JSON.parse(readFileSync(dp, 'utf8'))
+    ddoc.layout.prefix = 'x/dim_y'
+    writeFileSync(dp, JSON.stringify(ddoc))
+    expect(checkDataContract(dim).some((x) => x.message.includes('§4.2 ②'))).toBe(false)
+  })
+
+  it('③ 列名重复 ⇒ 红', () => {
+    const root = fixture({ contractCols: COLS, pipelineCols: COLS, stagingCols: COLS })
+    const p = join(root, 'contracts/common/x.y.json')
+    const doc = JSON.parse(readFileSync(p, 'utf8'))
+    doc.columns = [...doc.columns, { name: 'amount', type: 'varchar', nullable: true }]
+    writeFileSync(p, JSON.stringify(doc))
+    expect(checkDataContract(root).some((x) => x.message.includes('§4.2 ③'))).toBe(true)
+  })
+
+  it('④ batch.markerColumn 不是已声明列 ⇒ 红', () => {
+    const root = fixture()
+    const p = join(root, 'contracts/common/x.y.json')
+    const doc = JSON.parse(readFileSync(p, 'utf8'))
+    doc.batch.markerColumn = 'nope'
+    writeFileSync(p, JSON.stringify(doc))
+    expect(checkDataContract(root).some((x) => x.message.includes('§4.2 ④'))).toBe(true)
+  })
+
+  it('⑤ decimal scale > precision ⇒ 红', () => {
+    const root = fixture()
+    const p = join(root, 'contracts/common/x.y.json')
+    const doc = JSON.parse(readFileSync(p, 'utf8'))
+    doc.columns[0] = { name: doc.columns[0].name, type: 'decimal', precision: 5, scale: 7, nullable: false }
+    writeFileSync(p, JSON.stringify(doc))
+    expect(checkDataContract(root).some((x) => x.message.includes('§4.2 ⑤'))).toBe(true)
+  })
+
+  it('⑥ 分区键列 nullable=true ⇒ 红', () => {
+    const root = fixture()
+    const p = join(root, 'contracts/common/x.y.json')
+    const doc = JSON.parse(readFileSync(p, 'utf8'))
+    doc.columns = doc.columns.map((c: Record<string, unknown>) =>
+      c.name === 'bizday' ? { ...c, nullable: true } : c)
+    writeFileSync(p, JSON.stringify(doc))
+    expect(checkDataContract(root).some((x) => x.message.includes('§4.2 ⑥'))).toBe(true)
   })
 })

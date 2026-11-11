@@ -215,7 +215,7 @@ export function findStagingModelRel(root, domain, table) {
  *
  * @param {string} root
  * @param {string} rel
- * @returns {{ rel: string, domain: string, table: string, prefix: string, schemaVersion: unknown, consumerVersion: unknown, columns: { name: string, type: string, nullable: boolean, expr: string, precision?: number, scale?: number, sensitivity?: string }[] } | null}
+ * @returns {{ rel: string, domain: string, table: string, prefix: string, partitionBy: string[], markerColumn: string, schemaVersion: unknown, consumerVersion: unknown, columns: { name: string, type: string, nullable: boolean, expr: string, precision?: number, scale?: number, sensitivity?: string }[] } | null}
  */
 export function readContractDoc(root, rel) {
   /** @type {any} */
@@ -227,11 +227,16 @@ export function readContractDoc(root, rel) {
   }
   const layout = doc && typeof doc.layout === 'object' && doc.layout !== null ? doc.layout : {}
   const cols = Array.isArray(doc?.columns) ? doc.columns : []
+  const batch = doc && typeof doc.batch === 'object' && doc.batch !== null ? doc.batch : {}
   return {
     rel,
     domain: String(doc?.domain ?? ''),
     table: String(doc?.table ?? ''),
     prefix: String(layout.prefix ?? ''),
+    // 分区键与批次标记列：跨字段约束（contracts/README §4.2 ①②④⑥）要它们，
+    // 但**加字段必须保持「不 coerce 成看似合法」**——缺省就是空数组 / ''，门禁自己判。
+    partitionBy: Array.isArray(layout.partitionBy) ? layout.partitionBy.map(String) : [],
+    markerColumn: typeof batch.markerColumn === 'string' ? batch.markerColumn : '',
     schemaVersion: doc?.schemaVersion,
     consumerVersion: doc?.consumerVersion,
     columns: cols.map((/** @type {any} */ c) => ({
