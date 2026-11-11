@@ -26,6 +26,13 @@ if [ "${MODE}" = "apply" ]; then
   fi
 fi
 
+# 桶名落库（值来自容器 env，不回显）
+BUCKET=$(docker exec "${CT}" printenv ZOS_BUCKET 2>/dev/null || true)
+if [ -n "${BUCKET}" ]; then
+  printf "insert into data.lake_config(key, value) values ('zos_bucket', '%s') on conflict (key) do update set value = excluded.value;\n" "${BUCKET}" \
+    | docker exec -i "${CT}" sh -c 'psql -q -v ON_ERROR_STOP=1 -U "${POSTGRES_USER}" -d "${POSTGRES_DB}"' >/dev/null
+fi
+
 N=$(printf "%s\n" "select count(*) from information_schema.tables where table_schema = 'data' and table_name = 'lake_month_index';" \
   | docker exec -i "${CT}" sh -c 'psql -tAq -v ON_ERROR_STOP=1 -U "${POSTGRES_USER}" -d "${POSTGRES_DB}"' | tr -d '[:space:]')
 if [ "${N}" != "1" ]; then

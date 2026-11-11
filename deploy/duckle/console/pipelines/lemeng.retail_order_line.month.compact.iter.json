@@ -1,21 +1,11 @@
 {
  "name": "lemeng.retail_order_line.month.compact.iter",
  "_note": [
-  "月度合并子管线（#1905 后续 P1，spec：明细访问模式改造）。由父管线 lemeng.retail_order_line.month.compact 的 ctl.foreach 逐月驱动，",
-  "把该账套该月的全部已封版日文件（_DAY_DATA/system_book=<B>/bizday=<YM-*>/all.parquet）读出、按 (bizday, branch_num, order_no) 排序后",
-  "写成一个月文件 lemeng/retail_order_line_month/_MONTH/system_book=<B>/month=<YM>/all.parquet，并把行数/金额统计 upsert 进 data.lake_month_index。",
-  "为什么：读侧 30 天查询要打开 60 个 ~300KB 日文件 × 25 列逐列 range 请求（~1500 次 × 5ms = 7.8s）；",
-  "⚠️ 前缀用 lemeng/retail_order_line_month（`/` 边界外）：契约 gen 按前缀找生产者并强制 rest 投影形状，parquet→parquet 的派生件不适用；列集仍按契约逐列同序投影（列等价由构造保证，湖侧事实源不变）。",
-  "月文件后 30 天只开 1-2 个文件（目标 <1s，配合列裁剪 <300ms）。链路实测 250-750MB/s，瓶颈是请求数不是带宽。",
-  "⚠️ 只合并【已封版】日——父管线的月份清单来自 data.lemeng_daily_sealed，热天不进月文件（读侧热腿仍负责今天/昨天）。",
-  "⚠️ 空 month fail-closed（ctl.die no-rows）：清单里有的月份却读到 0 行 = 日文件缺失，写空月文件会毁数据，宁可红。",
-  "⚠️ 云 sink 的 partitionBy 被静默忽略（0.7.4 实测）⇒ 不能一条管线分区写多月；每月一 sink、由 foreach 驱动 key（retail.day.backfill 同款）。",
-  "幂等：mode=overwrite，重跑 = 整月重写；重封版后由父管线按 built_at < last_seal 判定重建。",
-  "手动跑本子管线必败（ITER 变量缺）——验收只能驱动父管线。",
-  "⚠️ src.minio 的 glob 跨不了目录层（mid-path `*` 恒 0 行，2026-11-11 两次实测；最后一段 star 如 `_DAILY/*` 才行）",
-  "⇒ 真正的月度 glob 由 code.sql 的 read_parquet 做（DuckDB 原生 glob 实测 422,829 行正确）；",
-  "  s 节点是 337B 的 _DAILY 标记锚：①满足「必须有 source」②注册 connectionRef zos 的 S3 secret（code.sql 不支持 connectionRef，实测同管线先跑一个 connectionRef 节点即可）③顺带证该月已封版。",
-  "⚠️ DAG 顺序：s(锚点) → c(月读取) → g(空月守卫) → k(sink)/st(统计)。守卫必须在 c 之后——挂在锚点后只会检查 1 行标记（2026-11-11 实测误报「0 行」）。"
+  "月度合并子管线（#1905 后续 P1）。由父管线 ctl.foreach 逐月驱动：读该月全部已封版日 → 按 (bizday,branch_num,order_no) 排序 → 写 _MONTH 月文件 + upsert 清单表。",
+  "⚠️ 读取用 src.postgres（pg_duckdb）而不是 src.minio：①src.minio 的 glob 只认最后一段 star（mid-path 恒 0 行，两次实测）②code.sql 里的 ${ENV:...} 不展开（实测路径原样带 ${}）③pg_duckdb 自带持久 S3 secret，read_parquet 可直接 glob 跨目录层。",
+  "⚠️ glob 的完整路径由父管线拼好经 ${ITER_ITEM_GLOB_PATH} 传入（桶名来自 data.lake_config，ENV 不进 SQL）。",
+  "⚠️ 空月 fail-closed：清单说已封版却 0 行 = 日文件缺失，写空月文件会毁数据。",
+  "幂等：month 文件 overwrite；清单 upsert；重封版由父管线按 built_at < last_seal 判定重建。"
  ],
  "nodes": [
   {
@@ -26,13 +16,17 @@
     "y": 0
    },
    "data": {
-    "label": "锚点：该月最早封版日的 _DAILY 标记（注册 S3 secret + 证该月已封版）",
-    "componentId": "src.minio",
+    "label": "读该月日文件（pg_duckdb read_parquet，持久 S3 secret）",
+    "componentId": "src.postgres",
     "properties": {
-     "connectionRef": "zos",
-     "bucket": "${ENV:ZOS_BUCKET}",
-     "key": "lemeng/retail_order_line/_DAILY/${ITER_ITEM_SYSTEM_BOOK}-${ITER_ITEM_YMD}.parquet",
-     "format": "parquet"
+     "connectionRef": "pgduck",
+     "mode": "sql",
+     "readOnly": true,
+     "pushdown": true,
+     "connectTimeout": 60,
+     "schemaName": "data",
+     "tableName": "lemeng_daily_sealed",
+     "sql": "SELECT * FROM read_parquet('${ITER_ITEM_GLOB_PATH}') ORDER BY bizday, branch_num, order_no"
     }
    }
   },
@@ -40,7 +34,7 @@
    "id": "g",
    "type": "control",
    "position": {
-    "x": 440,
+    "x": 220,
     "y": 0
    },
    "data": {
@@ -53,25 +47,10 @@
    }
   },
   {
-   "id": "c",
-   "type": "transform",
-   "position": {
-    "x": 220,
-    "y": 0
-   },
-   "data": {
-    "label": "读该月日文件（DuckDB 原生 glob）+ 排序",
-    "componentId": "code.sql",
-    "properties": {
-     "sql": "SELECT * FROM read_parquet('s3://${ENV:ZOS_BUCKET}/lemeng/retail_order_line/_DAY_DATA/system_book=${ITER_ITEM_SYSTEM_BOOK}/bizday=${ITER_ITEM_YM}-*/all.parquet') ORDER BY bizday, branch_num, order_no"
-    }
-   }
-  },
-  {
    "id": "k",
    "type": "sink",
    "position": {
-    "x": 660,
+    "x": 440,
     "y": 0
    },
    "data": {
@@ -91,7 +70,7 @@
    "id": "st",
    "type": "transform",
    "position": {
-    "x": 660,
+    "x": 440,
     "y": 180
    },
    "data": {
@@ -106,7 +85,7 @@
    "id": "i",
    "type": "sink",
    "position": {
-    "x": 880,
+    "x": 660,
     "y": 180
    },
    "data": {
@@ -128,18 +107,8 @@
  ],
  "edges": [
   {
-   "id": "e_s_c",
+   "id": "e_s_g",
    "source": "s",
-   "target": "c",
-   "sourceHandle": "main",
-   "targetHandle": "main",
-   "data": {
-    "connectionType": "main"
-   }
-  },
-  {
-   "id": "e_c_g",
-   "source": "c",
    "target": "g",
    "sourceHandle": "main",
    "targetHandle": "main",

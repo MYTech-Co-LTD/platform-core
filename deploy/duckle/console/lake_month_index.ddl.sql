@@ -17,3 +17,10 @@ create table if not exists data.lake_month_index (
   built_at       timestamptz  not null default now(),
   primary key (system_book, ym)
 );
+
+-- 桶名等部署期常量：ENV 在 code.sql/src.postgres 的 SQL 里**不展开**（实测 2026-11-11），
+-- 由 ensure 脚本从容器 env 落库，管线的 SQL 直接 join 本表。
+create table if not exists data.lake_config (
+  key   text primary key,
+  value text not null
+);

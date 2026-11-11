@@ -5,7 +5,8 @@
   "过期判定：lake_month_index.built_at < 该月 max(sealed_at)（重封版 ⇒ 该月重建）；缺失 = 清单没有该月。",
   "只跑 3120 一家 console（排班只在 schedules/3120.json；月文件覆盖两账套——清单按账套枚举，与环境 SYSTEM_BOOK 无关）。",
   "排班：CST 每日 04:10（close 00:0x 封版、GC 03:20 清热文件之后，dbt hourly 09:05 之前）。",
-  "0 个月待建 = 正常 noop（全部月文件新鲜），不判红。"
+  "0 个月待建 = 正常 noop（全部月文件新鲜），不判红。",
+  "⚠️ glob_path 在父管线里拼好（桶名取 data.lake_config）；子管线只收 ${ITER_ITEM_GLOB_PATH}——ENV 在 SQL 里不展开（实测）。"
  ],
  "nodes": [
   {
@@ -24,7 +25,7 @@
      "readOnly": true,
      "pushdown": true,
      "connectTimeout": 30,
-     "sql": "select s.system_book, s.ym, s.first_day as ymd from (select system_book, strftime(bizday, '%Y-%m') as ym, max(sealed_at) as last_seal, min(bizday) as first_day from data.lemeng_daily_sealed where system_book <> '' group by 1, 2) s left join data.lake_month_index i on i.system_book = s.system_book and i.ym = s.ym where i.system_book is null or i.built_at < s.last_seal order by s.system_book, s.ym",
+     "sql": "select s.system_book, s.ym, s.first_day as ymd,\n       's3://' || c.value || '/lemeng/retail_order_line/_DAY_DATA/system_book=' || s.system_book || '/bizday=' || s.ym || '-*/all.parquet' as glob_path\nfrom (select system_book, strftime(bizday, '%Y-%m') as ym, max(sealed_at) as last_seal, min(bizday) as first_day\n      from data.lemeng_daily_sealed where system_book <> '' group by 1, 2) s\ncross join (select value from data.lake_config where key = 'zos_bucket') c\nleft join data.lake_month_index i on i.system_book = s.system_book and i.ym = s.ym\nwhere i.system_book is null or i.built_at < s.last_seal\norder by s.system_book, s.ym",
      "schemaName": "data",
      "tableName": "lemeng_daily_sealed"
     }
