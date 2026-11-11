@@ -44,13 +44,13 @@
 | **Wave 0.1 资源准入** | PR #1952：`warehousePoolConfig`（max 默认 3）+ `detail-gate`（2 名额/15s）+ 6 env + 8 单测 |
 | **Wave 0.2 缓存正确性** | PR #1956：缓存键含数据版本（封版水位 + 月文件构建时刻，5s 进程缓存）；`TTL=0` 真关闭 |
 | **Wave 0.3 权限收口** | PR #1958：明细接 `scopePlan`（audit 写 scope_plan/denial）；explore enforce 下仅管理员放行 |
+| **Wave 0.4 告警有效性** | PR #1961：桥 v5 `PROBE_NO_COOLDOWN=sealed_manifest`（冷却已存在时仍推送，反向测试 `probes=1`）；正典 OO 口径订正为 14 ALERT/13 enabled |
 
 ### 待办（Wave 见 §4）
 
 | 项 | 现状证据 | 波次 |
 |---|---|---|
 | 缓存无数据版本；TTL=0 关不掉 | `result-cache.ts:30,37-40`；`Number('0')\|\|60000` | **0.2** |
-| 双算告警不翻 rc + 桥 12h 冷却 | `wire-warehouse.sh:587`；`oo-notify-bridge.sh:135-159` | **0.4** |
 | manifest 未投递（血缘/质量恒 unknown） | env 未设、无挂载（实测）；`.env.example:167` 空值 | **1.1** |
 | evidence 三字段写死 unknown | `recipes.ts:130-138` | **1.2** |
 | query_metric 无 provenance；explore/recipe 无 auditId | `toolbox/query.ts:107-144`；`explore.ts:49-54` | **1.3** |
