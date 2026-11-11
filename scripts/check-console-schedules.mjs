@@ -124,6 +124,7 @@ const EXEMPT_GLOBAL = new Map([
   ['lemeng.retail_order_line.tick', '旧零售族残留——已被 retail.tick.l1 取代，待退役（§2 台账）'],
   ['lemeng.retail_order_line.window', '旧零售族残留——已被 retail.windows.l1 取代，待退役（§2 台账）'],
   ['lemeng.retail_order_line.day', '**foreach 子管线**——由 lemeng.retail.windows.l1 的 ctl.foreach 逐天驱动（2026-10-20 起整天重采），不单独排班；排班在父管线'],
+  ['lemeng.retail_order_line.month.compact.iter', '**foreach 子管线**——由 lemeng.retail_order_line.month.compact 的 ctl.foreach 逐月驱动（#1916 月度合并），不单独排班；排班在父管线'],
   ['lemeng.retail.day.backfill', '回填专用（整天重采某一天，${BIZDAY} 由驱动脚本经 POST /api/run 的 params 传入，handbook §1.3 阶段 H）'],
   ['lemeng.retail_order_line.day.hp', '**foreach 子管线 + 容量溢出变体**（160 页，#1168）——由 lemeng.retail.day.backfill.hp 驱动，只在整天行数击穿 96 页上限的日子（春节峰）手动用；排班在 windows.l1 / backfill'],
   ['lemeng.retail.day.backfill.hp', '回填专用·容量溢出变体（#1168，pipelineRef 指向 160 页 hp 子管线）——仅当 day.backfill 因容量哨兵停机时换用，${BIZDAY} 参数化'],
@@ -188,6 +189,9 @@ const EXEMPT_GLOBAL = new Map([
 const EXEMPT_BY_BOOK = new Map([
   ['3120', new Map([
     ['lemeng.dim.item_price.l0', '3120 排 .3120 后缀版（R1 增量模型）；无后缀共享版只归 64188'],
+  ])],
+  ['64188', new Map([
+    ['lemeng.retail_order_line.month.compact', '月度合并单跑手——只在 3120 console 排班（#1916；清单按账套枚举，一个跑手覆盖两账套，双跑徒增写放大）'],
   ])],
 ])
 

@@ -1,0 +1,66 @@
+{
+ "name": "lemeng.retail_order_line.month.compact",
+ "_note": [
+  "月度合并父管线（#1905 后续 P1）：从 data.lemeng_daily_sealed 算出【缺失或过期】的 (system_book, 月)，ctl.foreach 逐月驱动子管线。",
+  "过期判定：lake_month_index.built_at < 该月 max(sealed_at)（重封版 ⇒ 该月重建）；缺失 = 清单没有该月。",
+  "只跑 3120 一家 console（排班只在 schedules/3120.json；月文件覆盖两账套——清单按账套枚举，与环境 SYSTEM_BOOK 无关）。",
+  "排班：CST 每日 04:10（close 00:0x 封版、GC 03:20 清热文件之后，dbt hourly 09:05 之前）。",
+  "0 个月待建 = 正常 noop（全部月文件新鲜），不判红。"
+ ],
+ "nodes": [
+  {
+   "id": "q",
+   "type": "source",
+   "position": {
+    "x": 0,
+    "y": 0
+   },
+   "data": {
+    "label": "待建/过期月份清单",
+    "componentId": "src.postgres",
+    "properties": {
+     "connectionRef": "pgduck",
+     "mode": "sql",
+     "readOnly": true,
+     "pushdown": true,
+     "connectTimeout": 30,
+     "sql": "select s.system_book, s.ym from (select system_book, strftime(bizday, '%Y-%m') as ym, max(sealed_at) as last_seal from data.lemeng_daily_sealed where system_book <> '' group by 1, 2) s left join data.lake_month_index i on i.system_book = s.system_book and i.ym = s.ym where i.system_book is null or i.built_at < s.last_seal order by s.system_book, s.ym",
+     "schemaName": "data",
+     "tableName": "lemeng_daily_sealed"
+    }
+   }
+  },
+  {
+   "id": "fe",
+   "type": "transform",
+   "position": {
+    "x": 260,
+    "y": 0
+   },
+   "data": {
+    "label": "逐月跑合并子管线",
+    "componentId": "ctl.foreach",
+    "properties": {
+     "pipelineRef": "${workspace}/pipelines/lemeng.retail_order_line.month.compact.iter.json",
+     "itemKey": "ym",
+     "concurrency": 1,
+     "retryAttempts": 2,
+     "retryBackoffMs": 30000,
+     "continueOnFailure": false
+    }
+   }
+  }
+ ],
+ "edges": [
+  {
+   "id": "e_q_fe",
+   "source": "q",
+   "target": "fe",
+   "sourceHandle": "main",
+   "targetHandle": "main",
+   "data": {
+    "connectionType": "main"
+   }
+  }
+ ]
+}

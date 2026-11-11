@@ -712,5 +712,26 @@
     "last_run_duration_ms": null,
     "last_run_error": null,
     "next_run_at": null
+  },
+  {
+    "id": "panel-lemeng.retail_order_line.month.compact",
+    "pipeline_id": "lemeng.retail_order_line.month.compact",
+    "name": "lemeng.retail_order_line.month.compact",
+    "enabled": true,
+    "kind": {
+      "type": "cron",
+      "expr": "10 20 * * *"
+    },
+    "timezone": "Asia/Shanghai",
+    "misfire": "skip",
+    "catchup": {
+      "maxCatchupRuns": 1,
+      "maxCatchupAgeDays": 1
+    },
+    "last_run_at": null,
+    "last_run_status": null,
+    "last_run_duration_ms": null,
+    "last_run_error": null,
+    "next_run_at": null
   }
 ]
