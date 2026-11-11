@@ -14,7 +14,8 @@
   "手动跑本子管线必败（ITER 变量缺）——验收只能驱动父管线。",
   "⚠️ src.minio 的 glob 跨不了目录层（mid-path `*` 恒 0 行，2026-11-11 两次实测；最后一段 star 如 `_DAILY/*` 才行）",
   "⇒ 真正的月度 glob 由 code.sql 的 read_parquet 做（DuckDB 原生 glob 实测 422,829 行正确）；",
-  "  s 节点是 337B 的 _DAILY 标记锚：①满足「必须有 source」②注册 connectionRef zos 的 S3 secret（code.sql 不支持 connectionRef，实测同管线先跑一个 connectionRef 节点即可）③顺带证该月已封版。"
+  "  s 节点是 337B 的 _DAILY 标记锚：①满足「必须有 source」②注册 connectionRef zos 的 S3 secret（code.sql 不支持 connectionRef，实测同管线先跑一个 connectionRef 节点即可）③顺带证该月已封版。",
+  "⚠️ DAG 顺序：s(锚点) → c(月读取) → g(空月守卫) → k(sink)/st(统计)。守卫必须在 c 之后——挂在锚点后只会检查 1 行标记（2026-11-11 实测误报「0 行」）。"
  ],
  "nodes": [
   {
@@ -39,7 +40,7 @@
    "id": "g",
    "type": "control",
    "position": {
-    "x": 220,
+    "x": 440,
     "y": 0
    },
    "data": {
@@ -55,7 +56,7 @@
    "id": "c",
    "type": "transform",
    "position": {
-    "x": 440,
+    "x": 220,
     "y": 0
    },
    "data": {
@@ -90,7 +91,7 @@
    "id": "st",
    "type": "transform",
    "position": {
-    "x": 440,
+    "x": 660,
     "y": 180
    },
    "data": {
@@ -105,7 +106,7 @@
    "id": "i",
    "type": "sink",
    "position": {
-    "x": 660,
+    "x": 880,
     "y": 180
    },
    "data": {
@@ -127,8 +128,18 @@
  ],
  "edges": [
   {
-   "id": "e_s_g",
+   "id": "e_s_c",
    "source": "s",
+   "target": "c",
+   "sourceHandle": "main",
+   "targetHandle": "main",
+   "data": {
+    "connectionType": "main"
+   }
+  },
+  {
+   "id": "e_c_g",
+   "source": "c",
    "target": "g",
    "sourceHandle": "main",
    "targetHandle": "main",
@@ -137,9 +148,9 @@
    }
   },
   {
-   "id": "e_g_c",
+   "id": "e_g_k",
    "source": "g",
-   "target": "c",
+   "target": "k",
    "sourceHandle": "main",
    "targetHandle": "main",
    "data": {
@@ -150,16 +161,6 @@
    "id": "e_g_st",
    "source": "g",
    "target": "st",
-   "sourceHandle": "main",
-   "targetHandle": "main",
-   "data": {
-    "connectionType": "main"
-   }
-  },
-  {
-   "id": "e_c_k",
-   "source": "c",
-   "target": "k",
    "sourceHandle": "main",
    "targetHandle": "main",
    "data": {
