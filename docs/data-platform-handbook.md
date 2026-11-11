@@ -1109,6 +1109,7 @@ capabilities / policy 门禁 / run 回执」一句打包，**实测与其中两�
 | 数据面编排 | `deploy/data-compose.yml`（部署单元 B；全仓只两份 compose，B7 守） |
 | **物化调度** | **openship job**（归口）：`lemeng-dbt-materialize`（`custom:yNWqnvY65iWz1unf`，UTC `27 3 * * *`（2026-10-06 由 `20 3` 错峰，#452 E1：避开 tick `*/5` 同分钟点火），重试 2×/300s，仅 `failed` 告警）——2026-09-28 订正：**已在跑**，命令形态见 `deploy/data-plane-deploy-sop.md` §F.6 |
 | **L1 语义词表物化** | **openship job** `L1 词表物化`（`custom:tuQ06mlxBe_2TlTo`，UTC `33 4 * * *`，重试 2×/300s）——2026-10-03 注册、当日首跑（原「无 job」状态已消，#297）。⚠️ 它物化的是**平台镜像里那份 `dbt/` 快照**（镜像更新前新声明进不了词表——分叉与比对机制见 **#300**）；对账 `--check` job **有意未注册**（#300 落地前近乎恒绿 = 假保险，裁决见 `dbt/README.md` §11.4 回填表）。「词表被清空 / PG 停更」由探活 job 的 ④⑤⑥⑦ 断言盯（SOP §P8b；⑥⑦ 判据见 §7 #4） |
+| **热小时对象回收** | **openship job** `lemeng-gc-hot-hours`（CST 每日 03:20，即 UTC `20 19 * * *`；薄壳 `sh /opt/lemeng-gc-hot-hours.sh`）——清理 `bizday < 上海今天−2` **且**已有天文件+封版标记的小时对象（工具 `scripts/lemeng/delete-supplanted-hour-partitions.py`，默认 dry-run/删前双证）。**为什么必须有**：小时对象是热/冷布局的暂存区，但读侧 glob 仍会打开它们 ⇒ 不回收 = 查询成本随天数线性增长。2026-11-11 实测积了 **671** 个死文件，30 天 `query_detail` **47.4s** 全花在热腿（冷腿 5.9s）；清理后 **7.8s**。⚠️ 工具曾只认旧天文件布局 ⇒ 恒 `SKIP` 静默失效（#1905/#1906），改布局时必须双读双删。 |
 
 ---
 

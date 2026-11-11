@@ -39,6 +39,7 @@ scripts/lemeng/recon-preagg.sh           /opt/lemeng-recon-preagg.sh            
 scripts/lemeng/recon-restate.sh          /opt/lemeng-recon-restate.sh           0755
 scripts/lemeng/seed-console.sh            /opt/lemeng-seed-console.sh             0755
 scripts/lemeng/delete-supplanted-hour-partitions.py  ${REPO}/scripts/lemeng/delete-supplanted-hour-partitions.py  0644
+scripts/lemeng/gc-hot-hours.sh /opt/lemeng-gc-hot-hours.sh 0755
 scripts/lemeng/backfill-daily-partitions.py          ${REPO}/scripts/lemeng/backfill-daily-partitions.py          0644
 scripts/lemeng/backfill-history.py                   ${REPO}/scripts/lemeng/backfill-history.py                   0644
 scripts/lemeng/check-zero-row-days.py                /opt/lemeng-check-zero-row-days.py                           0755
