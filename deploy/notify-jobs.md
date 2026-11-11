@@ -21,6 +21,11 @@
   seed → `{"tenants":1,"templates":0,"channels":0,"rules":1}` exit 0（幂等：已存在的模板/通道不再新建）。
 - **为什么 seed 也要定时跑**：2026-10-27 生产首次上线时**漏跑 seed**，导致模板/通道/规则全空、
   事件进来零投递。做成小时级幂等 job 后，新租户开通也会被自动兜住。
+- **规则来源 = 事件声明的 `defaults`**（正典 §2.6）：seed 读 `platform.event_catalog` 里 active
+  且 `defaults` 非空的事件，按 `derived:<module>:<event>:*` 幂等 upsert；模板不在内置集合里
+  或形状非法则跳过并 warn。**新增事件只要在 manifest 写 `defaults`，下一轮 seed 自动补规则**，
+  不再需要改 `seed-builtin.ts`。同理，模板必须先进 `modules/notify/templates/builtin.ts`。
+- `NOTIFY_APPROVERS__<ORG>` 仍会 seed 一条 `manual` literal 规则（manual 优先于 derived）。
 - 命令用 `docker exec` 进 server 容器（仓内脚本与 `node_modules` 都在），**不是** `docker run` 一次性容器
   —— 与 `notify-reconcile` 的既有范式一致（本机验证过这条路径能跑）。
 

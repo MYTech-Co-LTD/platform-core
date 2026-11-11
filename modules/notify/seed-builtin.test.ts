@@ -1,12 +1,49 @@
-// seed-builtin.test.ts — 内置模板/通道/默认规则 seed 幂等 + literal 兜底
+// seed-builtin.test.ts — 内置模板/通道/默认规则：按事件 defaults 派生 + 幂等
 import { describe, it, expect, beforeAll, afterAll, beforeEach } from 'vitest'
 import { Pool } from 'pg'
 import { applyMigrations } from './test-util'
-import { seedBuiltin } from './seed-builtin'
+import { seedBuiltin, type EventDefaults } from './seed-builtin'
 
 const url = process.env.DATABASE_URL
 const describePg = url ? describe : describe.skip
 const ORG = 'org-seed2'
+
+const AFT = {
+  recipient: 'approvers',
+  template: 'aftersales_employee_approval_pending',
+  channels: ['wecom_default', 'inapp_default'],
+}
+const STALE = {
+  recipient: 'admins',
+  template: 'notify_integration_stale',
+  channels: ['inapp_default'],
+}
+const METRIC = {
+  recipient: 'viewers',
+  template: 'data_metric_definition_changed',
+  channels: ['inapp_default'],
+}
+const ASSIGNED = {
+  recipient: 'assignee',
+  template: 'forms_form_assigned',
+  channels: ['wecom_default', 'inapp_default'],
+}
+const REMIND = {
+  recipient: 'assignee',
+  template: 'forms_form_due_reminder',
+  channels: ['wecom_default', 'inapp_default'],
+}
+
+const DEFAULTS: EventDefaults = {
+  'aftersales.employee_approval.pending': AFT,
+  'notify.integration.stale': STALE,
+  'data.metric.definition.changed': METRIC,
+}
+const WITH_FORMS: EventDefaults = {
+  ...DEFAULTS,
+  'forms.form.assigned': ASSIGNED,
+  'forms.form.due_reminder': REMIND,
+}
 
 describePg('seedBuiltin', () => {
   let pool: Pool
@@ -40,13 +77,13 @@ describePg('seedBuiltin', () => {
     }
   }
 
-  it('首轮建模板/通道/derived+manual 规则；第二轮不新增', async () => {
+  it('首轮按 defaults 建规则 + manual 兜底；第二轮不新增', async () => {
     const env = { NOTIFY_APPROVERS__ORG_SEED2: 'alice, bob' }
-    await seedBuiltin(pool, env, [ORG])
+    await seedBuiltin(pool, env, [ORG], DEFAULTS)
     const first = await counts()
-    // templates/revisions 3：内置文案 = 员工登记审批 + 集成活性超期（Phase 2b）+ 指标定义变更（spec 2026-11-01 §10.4 D6）
-    // rules 4：derived(aftersales) + derived(notify.integration.stale) + derived(data.metric.definition.changed) + manual
-    expect(first).toEqual({ templates: 3, revisions: 3, channels: 2, rules: 4 })
+    // templates/revisions 5：内置文案 = 员工审批 + 集成超期 + 指标变更 + 表单指派 + 表单催办
+    // rules 4：3 条 defaults 派生 + 1 条 manual
+    expect(first).toEqual({ templates: 5, revisions: 5, channels: 2, rules: 4 })
 
     const manual = await pool.query(
       "select recipient_key, recipient_literal from notify.rule where org=$1 and id like 'manual:%'",
@@ -54,16 +91,66 @@ describePg('seedBuiltin', () => {
     )
     expect(manual.rows[0]).toEqual({ recipient_key: 'approvers_manual', recipient_literal: ['alice', 'bob'] })
 
-    await seedBuiltin(pool, env, [ORG])
+    await seedBuiltin(pool, env, [ORG], DEFAULTS)
     expect(await counts()).toEqual(first)
   })
 
-  it('无 NOTIFY_APPROVERS ⇒ 只剩三条 derived 规则（含集成健康与指标变更）', async () => {
-    await seedBuiltin(pool, {}, [ORG])
-    expect((await counts()).rules).toBe(3)
+  it('无 NOTIFY_APPROVERS ⇒ 只剩 defaults 派生的三条规则', async () => {
+    await seedBuiltin(pool, {}, [ORG], DEFAULTS)
+    expect(await counts()).toEqual({ templates: 5, revisions: 5, channels: 2, rules: 3 })
     const stale = await pool.query(
       "select channels from notify.rule where org=$1 and event_key='notify.integration.stale'", [ORG])
     // 只用 in_app：企微通道本身可能正是坏掉的那个（坏通道报坏消息 = 自欺）
     expect(stale.rows[0].channels).toEqual(['inapp_default'])
+  })
+
+  it('forms 事件按 defaults 建模板与规则（指派/催办零配置可通）', async () => {
+    await seedBuiltin(pool, {}, [ORG], WITH_FORMS)
+    expect(await counts()).toEqual({ templates: 5, revisions: 5, channels: 2, rules: 5 })
+
+    const rules = await pool.query(
+      `select id, recipient_key, template_key, channels
+         from notify.rule where org=$1 and event_key like 'forms.%' order by event_key`,
+      [ORG],
+    )
+    expect(rules.rows).toEqual([
+      {
+        id: 'derived:forms:forms.form.assigned:*',
+        recipient_key: 'assignee',
+        template_key: 'forms_form_assigned',
+        channels: ['wecom_default', 'inapp_default'],
+      },
+      {
+        id: 'derived:forms:forms.form.due_reminder:*',
+        recipient_key: 'assignee',
+        template_key: 'forms_form_due_reminder',
+        channels: ['wecom_default', 'inapp_default'],
+      },
+    ])
+
+    const tpl = await pool.query(
+      "select key from notify.template where org=$1 and key like 'forms_%' order by key", [ORG])
+    expect(tpl.rows.map((r) => r.key)).toEqual(['forms_form_assigned', 'forms_form_due_reminder'])
+  })
+
+  it('无 defaults ⇒ 只 seed 模板/通道，不建规则', async () => {
+    await seedBuiltin(pool, {}, [ORG], {})
+    expect(await counts()).toEqual({ templates: 5, revisions: 5, channels: 2, rules: 0 })
+  })
+
+  it('defaults 指向不存在的内置模板 ⇒ 跳过，不造孤儿规则', async () => {
+    await seedBuiltin(pool, {}, [ORG], {
+      'demo.note.created': {
+        recipient: 'author', template: 'missing_template', channels: ['inapp_default'],
+      },
+    })
+    expect((await counts()).rules).toBe(0)
+  })
+
+  it('defaults 形状非法 ⇒ 跳过', async () => {
+    await seedBuiltin(pool, {}, [ORG], {
+      'demo.note.created': { recipient: '', template: 'x', channels: [] },
+    })
+    expect((await counts()).rules).toBe(0)
   })
 })

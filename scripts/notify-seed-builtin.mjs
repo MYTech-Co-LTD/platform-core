@@ -14,10 +14,21 @@ if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) 
   const { Pool } = createRequire(import.meta.url)('pg')
   const pool = new Pool({ connectionString: url })
   try {
-    // B1：租户清单在 scripts/ 查（platform schema），模块只收 orgs
+    // B1：租户清单与事件目录在 scripts/ 查（platform schema），模块只收注入值
     /** @type {{ rows: Array<{ casdoor_org: string }> }} */
     const { rows } = await pool.query('select casdoor_org from platform.tenant order by casdoor_org')
-    const s = await seedBuiltin(pool, process.env, rows.map((r) => r.casdoor_org))
+    // 事件声明是 defaults 的事实源（manifest → platform.event_catalog 快照）；
+    // 只取 active 的：未加载模块的事件不建规则。
+    /** @type {{ rows: Array<{ key: string, defaults: unknown }> }} */
+    const { rows: events } = await pool.query(
+      `select key, defaults from platform.event_catalog
+        where active and defaults is not null order by key`,
+    )
+    const defaultsByEvent = /** @type {import('../modules/notify/seed-builtin.ts').EventDefaults} */ (
+      Object.fromEntries(events.map((e) => [e.key, e.defaults]))
+    )
+    const s = await seedBuiltin(
+      pool, process.env, rows.map((r) => r.casdoor_org), defaultsByEvent)
     console.log(JSON.stringify(s))
   } catch (e) {
     console.error('notify-seed-builtin 失败:', e instanceof Error ? e.message : e)
