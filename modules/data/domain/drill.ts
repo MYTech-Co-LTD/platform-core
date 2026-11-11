@@ -13,6 +13,7 @@ import { decorateWithLabels, loadDimensionLookup } from './dimension-labels'
 import { DATA_AS_OF_SQL, execWithLakeRaceRetry, formatDataAsOf, isLakeRaceError, type QueryDeps } from './query-service'
 import { detailProvenance, type DetailProvenance } from './provenance'
 import { cacheGet, cacheKey, cacheSet } from './result-cache'
+import { DetailGateBusyError, detailGate } from './detail-gate'
 
 // 兼容旧导入：DetailProvenance 已迁到 provenance.ts（共享来源类型）。
 export type { DetailProvenance } from './provenance'
@@ -356,10 +357,20 @@ export async function runDetailQuery(
       retried: cached.retried,
     }
   } else {
+    // 并发准入门（#1951）：明细是最吃 DuckDB 内存的一类查询；超预算宁可快速失败（可重试），
+    // 也不把 pg_duckdb 推过 mem_limit 让 backend 被 OOM kill。缓存命中不占名额（不执行）。
+    let release: (() => void) | null = null
     try {
+      release = await detailGate().acquire()
       outcome = await execAll()
     } catch (err) {
+      if (err instanceof DetailGateBusyError) {
+        await audit('error', 'warehouse_transient', null, null, null)
+        return { status: 'error', metricId, reason: 'warehouse_transient', detail: 'warehouse_busy' }
+      }
       return await toError(err)
+    } finally {
+      release?.()
     }
   }
   let { retried, rowCountTotal } = outcome
