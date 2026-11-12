@@ -3,6 +3,10 @@
 import type { Pool } from 'pg'
 import { z } from 'zod'
 import { exceedsNesting, L2ExprDeclarationSchema, L2RefineDeclarationSchema } from './semantic-compiler'
+import type { L2Declaration } from './semantic-compiler'
+import type { MetricWriteDeps, MetricWriteOutcome, MetricMetaPatch } from './metric-write'
+import { writeL2Declaration, updateMetricMeta, deleteMetricDeclaration } from './metric-write'
+import type { PreviewSnapshot } from './metric-change-preview'
 
 export type ChangeKind = 'create' | 'update' | 'meta' | 'delete'
 export type ChangeStatus = 'draft' | 'preview_ready' | 'preview_failed' | 'adopted' | 'rejected' | 'superseded' | 'withdrawn'
@@ -110,6 +114,70 @@ export async function withdrawChange(pool: Pool, org: string, id: number, userId
     `update data.metric_change set status = 'withdrawn', decided_by = $3, decided_at = now()
       where org = $1 and id = $2 and submitted_by = $3 and status = any($4)`,
     [org, id, userId, PENDING_STATUSES],
+  )
+  return (r.rowCount ?? 0) > 0
+}
+
+export type DecideOutcome =
+  | (MetricWriteOutcome & { snapshot?: PreviewSnapshot })
+  | { ok: false; http: 409; error: 'PREVIEW_UNAVAILABLE' | 'CHANGE_STATE_CHANGED' | 'REASON_REQUIRED' }
+
+/** 已决/已离场状态：单据已被处理或被顶掉，任何裁决动作都不再吃它（CAS 语义）。 */
+const DECIDED_STATUSES: readonly ChangeStatus[] = ['adopted', 'rejected', 'superseded', 'withdrawn']
+
+/**
+ * 采纳：preview_ready 才可；按 kind 分发到既有唯一编译点（本函数不自造第二条写路径）。
+ * 写成功后才翻状态（CAS）；被并发抢先 ⇒ 409 CHANGE_STATE_CHANGED。
+ * 注意：生效写本身幂等（upsert/meta 幂等；delete 重试会 404 如实返回）——
+ * 真正要防的是「同一单被吃两次」，由状态机单守。
+ */
+export async function adoptChange(deps: MetricWriteDeps, org: string, id: number): Promise<DecideOutcome> {
+  const cur = await getChange(deps.pool, org, id)
+  if (cur === null) return { ok: false, http: 404, error: 'NOT_FOUND' }
+  // 两种 409 语义分开：已决/离场 = 状态被并发或先前裁决改变（CAS 输了）；
+  // draft/preview_failed = 还没试算好，没有可采纳的快照凭据。
+  if (DECIDED_STATUSES.includes(cur.status)) return { ok: false, http: 409, error: 'CHANGE_STATE_CHANGED' }
+  if (cur.status !== 'preview_ready') return { ok: false, http: 409, error: 'PREVIEW_UNAVAILABLE' }
+
+  let out: MetricWriteOutcome
+  if (cur.kind === 'create' || cur.kind === 'update') {
+    out = await writeL2Declaration(deps, org, cur.metricId, cur.payload as unknown as L2Declaration)
+  } else if (cur.kind === 'meta') {
+    // 逐字段透传（**不补默认值**）：updateMetricMeta 的契约是 `undefined`=不改该字段、
+    // `''`=显式清空（routes/metrics.ts PUT /metrics/:id/meta 同款用法）。
+    // 若把缺席键补成 ''，一张只改 unit 的单会把 bizDescription 静默清掉。
+    const p = cur.payload as Partial<MetricMetaPatch>
+    const patch: MetricMetaPatch = {}
+    if (p.bizDescription !== undefined) patch.bizDescription = p.bizDescription
+    if (p.unit !== undefined) patch.unit = p.unit
+    if (p.caliberNote !== undefined) patch.caliberNote = p.caliberNote
+    out = await updateMetricMeta(deps, org, cur.metricId, patch)
+  } else {
+    // kind = 'delete'。'override' 档 P1 才接（表值已备，P0 写侧只会产出前四值）。
+    out = await deleteMetricDeclaration(deps, org, cur.metricId)
+  }
+  if (!out.ok) return out
+
+  // CAS 收尾：写成功后才翻状态；被并发抢先 ⇒ 409（写本身幂等，见函数头注）
+  const mark = await deps.pool.query(
+    `update data.metric_change set status = 'adopted', decided_by = $3, decided_at = now(), adopted_snapshot = $4::jsonb
+      where org = $1 and id = $2 and status = 'preview_ready'`,
+    [org, id, deps.requester.userId, JSON.stringify(cur.preview ?? {})],
+  )
+  if ((mark.rowCount ?? 0) === 0) return { ok: false, http: 409, error: 'CHANGE_STATE_CHANGED' }
+  return { ok: true, snapshot: (cur.preview ?? undefined) as PreviewSnapshot | undefined }
+}
+
+/**
+ * 驳回：必填原因（trim 后非空、≤500 字），任何未决态（draft/preview_ready/preview_failed）都可驳——
+ * 「没试算完就看出不对」是合法驳回路径。已决/离场单不吃第二次驳回（WHERE 钉 PENDING_STATUSES）。
+ */
+export async function rejectChange(pool: Pool, org: string, id: number, reviewerId: string, reason: string): Promise<boolean> {
+  if (reason.trim() === '' || reason.length > 500) return false
+  const r = await pool.query(
+    `update data.metric_change set status = 'rejected', decided_by = $3, decided_at = now(), reject_reason = $4
+      where org = $1 and id = $2 and status = any($5)`,
+    [org, id, reviewerId, reason.trim(), PENDING_STATUSES],
   )
   return (r.rowCount ?? 0) > 0
 }
