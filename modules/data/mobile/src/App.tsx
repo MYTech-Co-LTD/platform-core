@@ -134,8 +134,6 @@ function MetricsView({ data, reload }: { data: MetricsResponse; reload: () => Pr
   const [editing, setEditing] = useState<MetricItem | null>(null)
   /** 元数据编辑中的 L2 id（#1284 的 PUT /metrics/:id/meta；null = 关） */
   const [metaEditing, setMetaEditing] = useState<MetricItem | null>(null)
-  /** 新建表达式指标弹窗（#1298；POST /metrics 需 data:manage，入口按 isAdmin 显隐） */
-  const [creatingExpr, setCreatingExpr] = useState(false)
 
   const self = data.self?.userId
   const isMine = (m: MetricItem): boolean => m.source === 'l2' && m.createdBy !== undefined && m.createdBy !== null && m.createdBy === self
@@ -182,11 +180,11 @@ function MetricsView({ data, reload }: { data: MetricsResponse; reload: () => Pr
               {q === '' ? `共 ${metrics.length} 个` : `匹配 ${visible.length} / ${metrics.length}`}
             </div>
           </div>
-          {isAdmin ? (
-            <Button size='small' color='primary' fill='outline'
-                    style={{ '--border-color': C.line, '--text-color': C.accentDeep, borderRadius: radius.chip, fontSize: 12 }}
-                    onClick={() => setCreatingExpr(true)}>新建指标</Button>
-          ) : null}
+        </div>
+        {/* 2026-11-12 定案：指标实现（id/基底/表达式）由 agent 创建，人只做确认与标注——
+            手机上手填算式是最容易出错的入口，故不再提供「新建指标」。 */}
+        <div style={{ fontSize: 12, color: C.mute, marginTop: 6, lineHeight: 1.6 }}>
+          指标由 agent 创建；这里只做确认与标注。
         </div>
         {/* ⚠️ 不用 antd-mobile SearchBar：它在本仓（React 18 页面 + hoisted React 19）下
             渲染时报 "Objects are not valid as a React child"（真机正常、单测必炸）。
@@ -273,8 +271,6 @@ function MetricsView({ data, reload }: { data: MetricsResponse; reload: () => Pr
       </PullToRefresh>
       <DraftSheet metric={editing} bases={bases} onClose={() => setEditing(null)} onDone={() => { setEditing(null); void reload() }} />
       <MetaSheet metric={metaEditing} onClose={() => setMetaEditing(null)} onDone={() => { setMetaEditing(null); void reload() }} />
-      <CreateExprSheet open={creatingExpr} bases={bases} onClose={() => setCreatingExpr(false)}
-                       onDone={() => { setCreatingExpr(false); void reload() }} />
     </div>
   )
 }
@@ -449,86 +445,6 @@ function MetaSheet({ metric, onClose, onDone }: {
   )
 }
 
-/**
- * 新建表达式指标（#1298）：id + 别名 + 两操作数算式 → POST /metrics（expr 声明）。
- * 门在宿主（data:manage，manifest 申报）；入口仅在 isAdmin 时渲染——别给普通人放假按钮。
- * 复合多步公式走 API（移动端 V1 边界，见 ExprFormulaBar 注）。
- */
-function CreateExprSheet({ open, bases, onClose, onDone }: {
-  open: boolean
-  bases: MetricItem[]
-  onClose: () => void
-  onDone: () => void
-}) {
-  const [id, setId] = useState('')
-  const [alias, setAlias] = useState('')
-  const [op, setOp] = useState<ExprOp>('add')
-  const [left, setLeft] = useState<ExprTerm>({ kind: 'ref', id: '' })
-  const [right, setRight] = useState<ExprTerm>({ kind: 'num', value: 1 })
-  const [busy, setBusy] = useState(false)
-
-  useEffect(() => {
-    if (open) {
-      setId(''); setAlias(''); setOp('add')
-      setLeft({ kind: 'ref', id: bases[0]?.id ?? '' })
-      setRight({ kind: 'num', value: 1 })
-    }
-  }, [open, bases])
-
-  if (!open) return null
-
-  const ready = id.trim() !== '' && validTerm(left) && validTerm(right)
-
-  const submit = async (): Promise<void> => {
-    setBusy(true)
-    try {
-      await apiSend('POST', '/api/modules/data/metrics', {
-        id: id.trim(),
-        op: { kind: 'expr', expr: composeExpr(left, op, right) },
-        ...(alias.trim() !== '' ? { alias: alias.trim() } : {}),
-      })
-      Toast.show({ content: '表达式指标已创建' })
-      onDone()
-    } catch (e) {
-      if (e instanceof ApiError) {
-        const code = typeof e.body.error === 'string' ? e.body.error : ''
-        const msg: Record<string, string> = {
-          INVALID_BODY: '声明不合法（id 1–64 字符；数字须为有限数）',
-          ID_RESERVED_BY_L1: '这个 id 属于平台口径，换一个',
-          L1_BASE_NOT_FOUND: '引用的指标不存在或不可见',
-          METRIC_SOURCE_NOT_ADOPTED: '引用的指标数据源本租户未接入',
-          L2_BASE_MASKED: '被引用的指标带值级掩码，不能派生',
-        }
-        Toast.show({ content: msg[code] ?? `创建失败（${e.status}）` })
-      } else {
-        Toast.show({ content: '网络异常，请重试' })
-      }
-    } finally { setBusy(false) }
-  }
-
-  return (
-    <Popup visible bodyStyle={{ borderTopLeftRadius: 12, borderTopRightRadius: 12, padding: 16, minHeight: 300 }}
-           onClose={onClose}>
-      <div style={{ fontSize: 16, fontWeight: 600, marginBottom: 12 }}>新建表达式指标</div>
-      <div style={{ marginBottom: 10 }}>
-        <div style={{ fontSize: 13, color: '#999', marginBottom: 4 }}>指标 id（英数/冒号，如 xiongmao:gross_margin）</div>
-        <Input placeholder='指标 id' value={id} maxLength={64} onChange={setId} clearable />
-      </div>
-      <div style={{ marginBottom: 10 }}>
-        <div style={{ fontSize: 13, color: '#999', marginBottom: 4 }}>别名（可选）</div>
-        <Input placeholder='显示名' value={alias} onChange={setAlias} clearable />
-      </div>
-      <div style={{ marginBottom: 16 }}>
-        <div style={{ fontSize: 13, color: '#999', marginBottom: 4 }}>算式（两操作数）</div>
-        <ExprFormulaBar left={left} op={op} right={right}
-                        setLeft={setLeft} setOp={setOp} setRight={setRight} bases={bases} />
-      </div>
-      <Button block color='primary' disabled={busy || !ready} loading={busy} onClick={() => void submit()}>
-        创建
-      </Button>
-    </Popup>
-  )
-}
 
 
 /**
