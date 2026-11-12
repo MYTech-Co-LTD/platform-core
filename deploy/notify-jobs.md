@@ -43,8 +43,9 @@
   企微 81013「用户不在应用可见范围」×2 + `missing_channel_address`×2）。
 - **处置（已裁决）**：按用户点名删除那 4 条历史 dead 行（`status='dead' and created_at < '2026-11-01'`），
   复跑 health → `dead=0 stale=0 workers=1`，作业保持启用。
-- ⚠️ **retention 仍未部署**：dead/历史投递不会自动清理；将来积压会让 health 重新变红——
-  届时要么加 retention（删行需点名），要么把 health 的 dead 判据改成时间窗。
+- **retention 仍未部署**（删行需点名），但 health 的 `dead` 判据已改成**近 7 天窗口**
+  （2026-11-12，`DEAD_WINDOW_DAYS`）：终态失败不会自愈，全表计数会让一条历史失败永久按红。
+  健康面回答的是「现在投得出去吗」；更早的历史属于审计，由 retention 负责清理（未部署也不会误导健康面）。
 
 ## 1. `notify-health`（每 5 分钟）
 
@@ -55,7 +56,7 @@ DATABASE_URL=<平台库> pnpm exec tsx scripts/notify-health.mjs
 | 退出码 | 含义 |
 |---|---|
 | 0 | 干净 |
-| 1 | 有 `dead` / 最老 `pending` > 10 分钟 / worker 心跳 > 2 分钟 / 近 1 小时失败 > 50 |
+| 1 | **窗口内**有 `dead`（近 7 天，`DEAD_WINDOW_DAYS`）/ 最老 `pending` > 10 分钟 / worker 心跳 > 2 分钟 / 近 1 小时失败 > 50 |
 | 2 | 查不成账（缺 `DATABASE_URL` / 查询失败） |
 
 stdout 一行：`notify-health: dead=… stale=… workers=… oldestPending=…s failedLastHour=… channelErrors=… noRecipients=… noChannel=… invalid=…`
