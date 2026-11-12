@@ -72,14 +72,14 @@ describe('buildConsoleMenu（spec §3 位置规则）', () => {
       adminEntries: [],
       storageVisible: true,
     })
-    expect(menu.map((m) => m.path)).toEqual(['/console', '/console/me/keys', '/console/case-engine', '/console/first/a'])
+    expect(menu.map((m) => m.path)).toEqual(['/console', '/console/case-engine', '/console/first/a'])
   })
   it('case-engine 未落地/无权限时该位自然缺席，不产生空位', () => {
     const menu = buildConsoleMenu(visibleConsoleEntries(CONFIG, SESSION_PARTIAL, REGISTRY), {}, SESSION_PARTIAL, {
       adminEntries: [],
       storageVisible: true,
     })
-    expect(menu.map((m) => m.path)).toEqual(['/console', '/console/me/keys', '/console/first/a'])
+    expect(menu.map((m) => m.path)).toEqual(['/console', '/console/first/a'])
   })
 })
 

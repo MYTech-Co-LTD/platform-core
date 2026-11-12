@@ -47,8 +47,10 @@ function entriesFor(moduleId, manifest) {
         path: item.path,
         title: item.title,
         group,
-        // icon 可选；字符串透传（AntD 图标名，Console 壳负责名→组件映射）
+        // icon / description 可选；icon 字符串透传（AntD 图标名，Console 壳负责名→组件映射），
+        // description 是「这页能干什么」的一句话，宿主统一渲染在页头（#1953 三期）
         ...(typeof item.icon === 'string' ? { icon: item.icon } : {}),
+        ...(typeof item.description === 'string' && item.description !== '' ? { description: item.description } : {}),
         scope: item.scope,
         // entry 形如 ./console/main.tsx —— import 说明符只需去掉 ./ 前缀
         entry: item.entry.replace(/^\.\//, ''),
@@ -126,6 +128,8 @@ export interface ConsoleRegistryEntry {
   moduleId: string
   /** AntD 图标名（字符串透传；Console 壳按名映射，未知名不渲染图标） */
   icon?: string
+  /** 一句话说明「这页能干什么」；宿主统一渲染成页头说明（#1953 三期） */
+  description?: string
   /** 访问该页所需权限 scope（session.scopes 成员判定） */
   scope: string
   /** 构建期聚合的懒加载器：模块 console 页模块的 default 导出（组件） */
