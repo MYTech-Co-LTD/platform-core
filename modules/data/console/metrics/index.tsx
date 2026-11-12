@@ -11,7 +11,7 @@
 // 入参会以 400 `TARGET_NOT_SUPPORTED` 被**显式拒绝**（不静默丢弃）。所以这里也不摆一个
 // 按了会报错的输入框——见 README「L2 的已知边界」。
 import { useEffect, useMemo, useState } from 'react'
-import { Button, Card, Drawer, Input, Modal, Popconfirm, Segmented, Select, Space, Switch, Table, Tag, Timeline, Typography, message } from 'antd'
+import { Alert, Button, Card, Drawer, Input, Modal, Popconfirm, Segmented, Select, Space, Switch, Table, Tag, Timeline, Typography, message } from 'antd'
 import { apiGet, apiSend, messageOf } from '../lib/api'
 import DeclarationModal from './DeclarationModal'
 import type { DeclarationMode, DeclarationSeed } from './DeclarationModal'
@@ -135,6 +135,18 @@ export default function MetricsPage() {
   const [declMode, setDeclMode] = useState<DeclarationMode>('create')
   const [declSeed, setDeclSeed] = useState<DeclarationSeed>({ id: '', title: '', description: '', expression: '', grain: [] })
   const [messageApi, ctx] = message.useMessage()
+  // 候选指标的发现入口（#1953 四期）：候选不是「指标的子类」，而是**上游管道**——
+  // 用户不会每天主动去翻管理面列表，所以在指标页顶部把「有待处理的」推到眼前。
+  // 不做前端 scope 判断：该端点门是 data:manage，无码者拿 403 就静默不显示（入口姿态，
+  // 真闸在 API）。这样也免了 useNavigate/useOutletContext —— 本页单测不套 Router。
+  const [pendingCandidates, setPendingCandidates] = useState<number | null>(null)
+  useEffect(() => {
+    let alive = true
+    apiGet('/metrics/candidates?limit=200&status=pending')
+      .then((b) => { if (alive) setPendingCandidates(((b as { candidates?: unknown[] }).candidates ?? []).length) })
+      .catch(() => { if (alive) setPendingCandidates(null) })
+    return () => { alive = false }
+  }, [])
 
   const load = () => Promise.all([apiGet('/metrics/all'), apiGet('/metrics/overrides')])
     .then(([all, ov]) => {
@@ -406,6 +418,15 @@ export default function MetricsPage() {
   return (
     <Space direction="vertical" style={{ width: '100%' }} size="middle">
       {ctx}
+      {pendingCandidates !== null && pendingCandidates > 0 && (
+        <Alert
+          type="info"
+          showIcon
+          message={`有 ${pendingCandidates}${pendingCandidates >= 200 ? '+' : ''} 个候选指标待采用`}
+          description="它们由源数据自动推导而来，采用后才会出现在下面的指标清单里。"
+          action={<Button size="small" href="/console/data/candidates">去查看</Button>}
+        />
+      )}
       <Space wrap>
         <Button onClick={() => { if (usageDays === null) openUsage(30); else openUsage(usageDays) }}>
           使用统计

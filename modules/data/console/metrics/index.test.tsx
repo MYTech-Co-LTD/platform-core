@@ -17,6 +17,8 @@ const m = vi.mocked(platformFetch)
 const calls: Array<{ url: string; method: string; body: unknown }> = []
 /** W8：覆盖清单夹具（每个用例可改写；默认空）。 */
 let OVERRIDES: Array<Record<string, unknown>> = []
+/** 候选池夹具（#1953 四期：指标页顶部「待采用」提示）。 */
+let CANDIDATES: unknown[] = []
 
 const json = (b: unknown) =>
   new Response(JSON.stringify(b), { status: 200, headers: { 'content-type': 'application/json' } })
@@ -54,6 +56,7 @@ const AUDIT = {
 beforeEach(() => {
   calls.length = 0
   OVERRIDES = []
+  CANDIDATES = []
   m.mockReset()
   m.mockImplementation(async (url: string, init?: RequestInit) => {
     calls.push({
@@ -62,6 +65,7 @@ beforeEach(() => {
       body: typeof init?.body === 'string' ? JSON.parse(init.body) : undefined,
     })
     if (url.includes('/metrics/overrides')) return json({ overrides: OVERRIDES })
+    if (url.includes('/metrics/candidates')) return json({ candidates: CANDIDATES })
     if (url.includes('/metrics/all')) return json(CATALOG)
     if (url.includes('/audit')) return json(AUDIT)
     return json({ ok: true })
@@ -79,6 +83,21 @@ const renderPage = () => render(<MetricsPage />)
  */
 const button = (label: string) =>
   screen.getByRole('button', { name: new RegExp(`^${label.split('').join('\\s*')}$`) })
+
+describe('指标管理页 · 候选指标入口（#1953 四期）', () => {
+  it('有候选 ⇒ 顶部提示「N 个待采用」并给入口；无候选 ⇒ 不出现', async () => {
+    CANDIDATES = [{ id: 'c1' }, { id: 'c2' }]
+    render(<MetricsPage />)
+    expect(await screen.findByText(/2 个候选指标待采用/)).toBeInTheDocument()
+    const link = screen.getByRole('link', { name: /去查看/ })
+    expect(link).toHaveAttribute('href', '/console/data/candidates')
+    cleanup()
+
+    CANDIDATES = []
+    render(<MetricsPage />)
+    await waitFor(() => expect(screen.queryByText(/候选指标待采用/)).toBeNull())
+  })
+})
 
 describe('指标管理页', () => {
   it('列出两层：L1 标「平台（只读）」且不给删改，L2 给编辑/删除', async () => {
