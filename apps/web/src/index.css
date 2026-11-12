@@ -34,3 +34,7 @@ body {
 }
 .ant-table-tbody > tr > td { height: 52px; border-bottom: 1px solid #F2F3F5 !important; }
 .ant-table-tbody > tr:hover > td { background: #FAFBFC !important; }
+
+/* 表头竖向分隔线去掉：DeepSeek 的表头只有一条下边线，不画格子 */
+.ant-table-thead > tr > th::before { display: none !important; }
+.ant-table.ant-table-bordered > .ant-table-container { border-inline: none; }

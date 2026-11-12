@@ -110,7 +110,8 @@ describe('配置权限动线（#1953 二期）', () => {
       </AntdApp>,
     )
     await screen.findByText('alice')
-    const [first] = screen.getAllByRole('button', { name: '配置权限' })
+    // #2054：行内主操作改为文字链接（按钮一列描边太吵）
+    const [first] = screen.getAllByText('配置权限')
     fireEvent.click(first!)
 
     expect(await screen.findByText(/配置权限 · Alice/)).toBeInTheDocument()

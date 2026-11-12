@@ -112,9 +112,7 @@ export default function AdminUsersPage() {
         return (
           <Space size={4}>
             {/* 主操作只有一个：配置权限。其余动作收进「更多」，避免一行三个按钮抢注意力 */}
-            <Button size="small" type="primary" ghost onClick={() => setAccessUser(u)}>
-              配置权限
-            </Button>
+            <Typography.Link onClick={() => setAccessUser(u)}>配置权限</Typography.Link>
             <Dropdown
               trigger={['click']}
               menu={{
