@@ -298,7 +298,14 @@ function ConsoleLayout({
       contentStyle={{ maxWidth: 1360, width: '100%', margin: '0 auto' }}
       location={{ pathname: location.pathname }}
       route={{ path: '/', routes: menuItems }}
-      menuItemRender={(item, dom) => (item.path ? <Link to={item.path}>{dom}</Link> : dom)}
+      menuItemRender={(item, dom) => {
+        const p = item.path ?? ''
+        // 非 console 路由 = 模块外链（如体系地图，服务端渲染的独立页）→ 新窗口打开
+        if (p !== '' && !p.startsWith('/console')) {
+          return <a href={p} target="_blank" rel="noopener noreferrer">{dom}</a>
+        }
+        return p !== '' ? <Link to={p}>{dom}</Link> : dom
+      }}
       avatarProps={{
         title: session.user.displayName,
         icon: <Avatar icon={<UserOutlined />} />,

@@ -8,6 +8,18 @@ import type { MenuDataItem } from '@ant-design/pro-components'
 import type { ConsoleRegistryEntry } from '../console-registry.gen'
 import type { PlatformConfig } from '../lib/api'
 
+/**
+ * 模块自带的**外部页**（不在 console 路由里，宿主按菜单项外链打开）。
+ *
+ * 为什么放在宿主而不是 manifest：这类页不是 console 路由（ConsoleModulePage 按
+ * `/console/*` 前缀匹配、分组按 path 前缀嵌套），塞进 frontend.console 会让「path = 路由」
+ * 的假设破掉。宿主侧一张小表最省，模块真需要通用能力时再抽到协议里。
+ */
+export const MODULE_EXTERNAL_LINKS: Record<string, ReadonlyArray<{ name: string; href: string; scope: string }>> = {
+  // 体系地图：服务端渲染的独立追溯页（hash 路由），W5 Task 4 定案 A
+  data: [{ name: '体系地图', href: '/api/modules/data/system-map#/overview', scope: 'data:query' }],
+}
+
 /** spec §3 第 2 位：AI 助手（case-engine 模块）。模块未落地时该位自然缺席。 */
 const PINNED_MODULE_IDS: readonly string[] = ['case-engine']
 
@@ -145,6 +157,7 @@ export function visibleConsoleEntries(
 export function entriesToMenuItems(
   entries: VisibleConsoleEntry[],
   iconMap: Record<string, ReactNode>,
+  scopes: readonly string[] = [],
 ): MenuDataItem[] {
   const isChildOf = (e: VisibleConsoleEntry, p: VisibleConsoleEntry): boolean =>
     e !== p && e.path.startsWith(`${p.path}/`)
@@ -155,11 +168,16 @@ export function entriesToMenuItems(
     // 直接子页（只收一层：孙页也挂在父下，避免 manifest 写错时静默丢条目）
     const children = visible.filter((c) => isChildOf(c, e))
     const icon = iconMap[e.icon ?? ''] ?? iconMap['AppstoreOutlined']
-    if (children.length === 0) return { path: e.path, name: e.title, icon }
+    // 模块外链（如体系地图）挂在该模块分组末尾；scope 不过就不出现
+    const links = (MODULE_EXTERNAL_LINKS[e.moduleId] ?? [])
+      .filter((l) => scopes.includes(l.scope))
+      .map((l) => ({ path: l.href, name: l.name }))
+    if (children.length === 0 && links.length === 0) return { path: e.path, name: e.title, icon }
+    if (children.length === 0) return { name: e.title, icon, children: links }
     return {
       name: e.title,
       icon,
-      children: children.map((c) => ({ path: c.path, name: c.title })),
+      children: [...children.map((c) => ({ path: c.path, name: c.title })), ...links],
     }
   })
 }
@@ -178,7 +196,7 @@ export function buildConsoleMenu(
     // 个人 Key 不在侧栏（#1953 三期）：它是**账号设置**不是业务功能，已移到头像下拉菜单。
     // 路由 /console/me/keys 不变（免闸门，任何登录账号都能管自己的 token）。
     // 模块没声明图标时回落到通用图标：否则折叠侧栏只显示标题首字（768px 实测）
-    ...entriesToMenuItems([...pinned, ...rest], iconMap),
+    ...entriesToMenuItems([...pinned, ...rest], iconMap, session.scopes),
   ]
   return session.scopes.includes(TENANT_ADMIN_SCOPE) ? [...items, adminGroup(iconMap, admin)] : items
 }

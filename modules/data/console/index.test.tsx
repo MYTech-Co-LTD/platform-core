@@ -79,11 +79,9 @@ describe('数据模块 console 入口（URL 选页）', () => {
     await waitFor(() => expect(urls.some((u) => u.includes('/reports'))).toBe(true))
   })
 
-  it('W5 定案 A：仍保留「体系地图」外链（独立追溯页，不是 console 路由页签）', () => {
+  it('体系地图外链已上移到宿主左侧菜单（#1953 四期），页面内不再重复', () => {
     renderAt('/console/data/metrics')
-    const link = screen.getByText(/体系地图/).closest('a')
-    expect(link?.getAttribute('href')).toBe('/api/modules/data/system-map#/overview')
-    expect(link?.getAttribute('target')).toBe('_blank')
+    expect(screen.queryByText(/体系地图/)).toBeNull()
   })
 
   it('★ 深链 /scopes 渲染「数据范围」页（#1901；入口显隐由宿主菜单按 data:manage 过滤）', async () => {

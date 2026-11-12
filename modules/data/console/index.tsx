@@ -10,7 +10,7 @@
 // 2. **导航必须用绝对路径**：相对导航会以壳的 splat 为基准解析到 `/console/`，把 `data` 段丢掉。
 // 3. 裸条目路径规范化到默认页：让 URL 与页面内容始终一致（否则深链/刷新语义含混）。
 import { useEffect } from 'react'
-import { Layout, Segmented, Typography } from 'antd'
+import { Layout, Segmented } from 'antd'
 import { useLocation, useNavigate, useOutletContext } from 'react-router-dom'
 import MetricsPage from './metrics'
 import ReportsPage from './reports'
@@ -81,19 +81,7 @@ export default function DataConsolePage() {
           options={visibleTabs.map((t) => ({ label: t.label, value: t.key }))}
           style={{ marginBottom: 12 }}
         />
-      ) : (
-        // 体系地图是独立追溯页（服务端渲染单文件 HTML，hash 路由），不是本 console 的路由页——
-        // 保留为外链（W5 定案 A），不塞回菜单
-        <div style={{ textAlign: 'right', marginBottom: 4 }}>
-          <Typography.Link
-            href="/api/modules/data/system-map#/overview"
-            target="_blank"
-            rel="noopener"
-          >
-            体系地图 ↗
-          </Typography.Link>
-        </div>
-      )}
+      ) : null}
       <Active />
     </Layout>
   )
