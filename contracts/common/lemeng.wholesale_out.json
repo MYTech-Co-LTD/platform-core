@@ -60,7 +60,7 @@
     },
     {
       "name": "state_code",
-      "type": "int",
+      "type": "integer",
       "nullable": true,
       "description": "单据状态码（state.state_code；3=制单|审核）",
       "expr": "CAST(json_extract_string(CAST(o.state AS JSON), '$.state_code') AS INTEGER)"
@@ -102,7 +102,7 @@
     },
     {
       "name": "branch_num",
-      "type": "int",
+      "type": "integer",
       "nullable": true,
       "description": "发货方编号（99=管理中心/批发仓）",
       "expr": "CAST(o.branch_num AS INTEGER)"
@@ -116,7 +116,7 @@
     },
     {
       "name": "order_detail_num",
-      "type": "int",
+      "type": "integer",
       "nullable": false,
       "description": "行号（同单内唯一；自然键之一）",
       "expr": "CAST(json_extract_string(u.d, '$.order_detail_num') AS INTEGER)"
@@ -158,28 +158,28 @@
     },
     {
       "name": "quantity",
-      "type": "decimal(14,6)",
+      "type": "decimal", "precision": 14, "scale": 6,
       "nullable": true,
       "description": "基本单位数量（order_detail_qty）",
       "expr": "CAST(json_extract_string(u.d, '$.order_detail_qty') AS DECIMAL(14,6))"
     },
     {
       "name": "price",
-      "type": "decimal(18,8)",
+      "type": "decimal", "precision": 18, "scale": 8,
       "nullable": true,
       "description": "基本单位批发单价（order_detail_price；工单金额依据候选源）",
       "expr": "CAST(json_extract_string(u.d, '$.order_detail_price') AS DECIMAL(18,8))"
     },
     {
       "name": "money",
-      "type": "decimal(14,2)",
+      "type": "decimal", "precision": 14, "scale": 2,
       "nullable": true,
       "description": "行金额 = price × quantity",
       "expr": "CAST(json_extract_string(u.d, '$.order_detail_money') AS DECIMAL(14,2))"
     },
     {
       "name": "cost",
-      "type": "decimal(18,8)",
+      "type": "decimal", "precision": 18, "scale": 8,
       "nullable": true,
       "description": "行成本单价（毛利推演用）",
       "expr": "CAST(json_extract_string(u.d, '$.order_detail_cost') AS DECIMAL(18,8))"
@@ -193,7 +193,7 @@
     },
     {
       "name": "present_qty",
-      "type": "decimal(14,6)",
+      "type": "decimal", "precision": 14, "scale": 6,
       "nullable": true,
       "description": "基本单位赠送数量",
       "expr": "CAST(json_extract_string(u.d, '$.order_detail_present_qty') AS DECIMAL(14,6))"
@@ -207,35 +207,35 @@
     },
     {
       "name": "use_qty",
-      "type": "decimal(14,6)",
+      "type": "decimal", "precision": 14, "scale": 6,
       "nullable": true,
       "description": "使用单位数量",
       "expr": "CAST(json_extract_string(u.d, '$.order_detail_use_qty') AS DECIMAL(14,6))"
     },
     {
       "name": "use_price",
-      "type": "decimal(18,8)",
+      "type": "decimal", "precision": 18, "scale": 8,
       "nullable": true,
       "description": "使用单位单价",
       "expr": "CAST(json_extract_string(u.d, '$.order_detail_use_price') AS DECIMAL(18,8))"
     },
     {
       "name": "use_rate",
-      "type": "decimal(18,8)",
+      "type": "decimal", "precision": 18, "scale": 8,
       "nullable": true,
       "description": "使用单位换算率（基本数量 = 使用数量 × 换算率）",
       "expr": "CAST(json_extract_string(u.d, '$.order_detail_use_rate') AS DECIMAL(18,8))"
     },
     {
       "name": "total_money",
-      "type": "decimal(14,2)",
+      "type": "decimal", "precision": 14, "scale": 2,
       "nullable": true,
       "description": "单头含税总金额（=接口 wholesale_order_total_money；⚠️ 单头列随行冗余——行级 sum 会重复计，聚合前 per_order 取 max。客户公式 R 的 wholesale 侧构件）。v2 补采",
       "expr": "CAST(o.wholesale_order_total_money AS DECIMAL(14,2))"
     },
     {
       "name": "cost_money",
-      "type": "decimal(14,2)",
+      "type": "decimal", "precision": 14, "scale": 2,
       "nullable": true,
       "description": "单头成本金额（=接口 wholesale_order_cost_money；单头随行冗余，同上 per_order 取 max。客户公式 C 的 wholesale 侧构件；含赠品成本与否随系统口径，勾稽在 fct/audit）。v2 补采",
       "expr": "CAST(o.wholesale_order_cost_money AS DECIMAL(14,2))"

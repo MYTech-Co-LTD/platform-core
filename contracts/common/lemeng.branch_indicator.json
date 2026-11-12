@@ -32,7 +32,7 @@
     },
     {
       "name": "system_book",
-      "type": "int",
+      "type": "integer",
       "nullable": false,
       "description": "账套（采集范围=3120）；分区键",
       "expr": "CAST(system_book AS INTEGER)"
@@ -46,7 +46,7 @@
     },
     {
       "name": "branch_num",
-      "type": "int",
+      "type": "integer",
       "nullable": false,
       "description": "门店编号（与 dim_branch.branch_num 同键）",
       "expr": "CAST(branch_num AS INTEGER)"
@@ -67,7 +67,7 @@
     },
     {
       "name": "branch_region_num",
-      "type": "int",
+      "type": "integer",
       "nullable": true,
       "description": "门店所属区域编号",
       "expr": "CAST(branch_region_num AS INTEGER)"
@@ -88,21 +88,21 @@
     },
     {
       "name": "actual_value",
-      "type": "decimal(20,2)",
+      "type": "decimal", "precision": 20, "scale": 2,
       "nullable": false,
       "description": "指标实际值（源 periods[].actual_value）",
       "expr": "CAST(actual_value AS DECIMAL(20,2))"
     },
     {
       "name": "target_value",
-      "type": "decimal(20,2)",
+      "type": "decimal", "precision": 20, "scale": 2,
       "nullable": true,
       "description": "指标目标值（源 periods[].target_value；无目标时 0.00，非 NULL）",
       "expr": "CAST(target_value AS DECIMAL(20,2))"
     },
     {
       "name": "actual_rate",
-      "type": "decimal(20,6)",
+      "type": "decimal", "precision": 20, "scale": 6,
       "nullable": true,
       "description": "达成率（源 periods[].actual_rate；无目标时 0.000000）",
       "expr": "CAST(actual_rate AS DECIMAL(20,6))"

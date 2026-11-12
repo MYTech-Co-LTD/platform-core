@@ -102,8 +102,14 @@ JSON Schema 没有跨字段引用能力。以下六条**过了 schema 也可能�
 5. decimal 的 scale 必须 ≤ precision
 6. 分区键列不得声明 nullable = true
 
-### 4.3 校验器：**当前不存在**（这是本任务最大的一条欠账）
+### 4.3 校验器：**已在 CI 里跑**（2026-11-12 起）
 
+> ✅ **2026-11-12 补上校验器**：`scripts/check-data-contract.mjs` 现在用 `scripts/lib/json-schema-lite.mjs`
+> 执行本目录的元 schema（`common/_schema.schema.json`），跑在 CI `gates`；同批还把 22 份契约里
+> `decimal(14,2)` / `int` / `bool` / `timestamp_tz` 这类**非枚举拼写**归一成 `decimal`+`precision`/`scale`、
+> `integer`、`boolean`、`timestamptz`（生成器按归一后的形状产出 `numeric(p,s)`，语义等价）。
+> 校验器**只实现元 schema 用到的关键字子集，遇到不认识的关键字直接抛错**（不静默放过）。
+>
 > ⚠️ **2026-10-06 订正：本目录已有消费方** —— `scripts/check-data-contract.mjs`（B10 门禁，把契约钉成「湖列集的唯一事实源」）**已消费 `contracts/**`**；同一实施计划（`docs/superpowers/plans/2026-10-06-contract-projection-generator.md`）的契约生成器 `scripts/gen-data-projection.mjs` **也已落地**（把管线投影与 staging 投影变成**生成物**）。**本节原文「本仓没有任何脚本消费 `contracts/`」已过时**——保留下文作历史记录，别照抄它的结论。
 >
 > **生成器入口（改列集只动契约一处）**：
@@ -146,7 +152,7 @@ m=json.load(open('contracts/common/_schema.schema.json'));V.check_schema(m); \
 
 | 约定 | 谁在守 |
 |---|---|
-| 元 schema 的字段级约束 | ⚠️ **只有你手动跑** §4.3 那条命令。CI 不跑 |
+| 元 schema 的字段级约束 | ✅ CI `gates` 跑（`check-data-contract` → `json-schema-lite`） |
 | §4.2 的六条跨字段规则 | ❌ **没人守**——连元 schema 都表达不了 |
 | 「新源必须先有契约再落盘」的**顺序** | ❌ 流程约束，无机器判据 |
 | `_` 前缀语义 | ❌ 只在自动发现场景才有意义，而自动发现尚不存在 |

@@ -15,7 +15,7 @@ select
   r['business_date']::varchar as business_date,
   r['state_code']::int as state_code,
   r['state_name']::varchar as state_name,
-  r['total_money']::decimal(14,2) as total_money,
+  r['total_money']::numeric(14,2) as total_money,
   r['operator']::varchar as operator,
   r['memo']::varchar as memo,
   r['department']::varchar as department,

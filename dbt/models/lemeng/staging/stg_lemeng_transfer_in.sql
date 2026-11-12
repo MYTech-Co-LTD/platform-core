@@ -24,11 +24,11 @@ select
   r['item_name']::varchar as item_name,
   r['item_spec']::varchar as item_spec,
   r['item_unit']::varchar as item_unit,
-  r['quantity']::decimal(14,6) as quantity,
-  r['use_quantity']::decimal(14,6) as use_quantity,
+  r['quantity']::numeric(14,6) as quantity,
+  r['use_quantity']::numeric(14,6) as use_quantity,
   r['use_unit']::varchar as use_unit,
-  r['subtotal']::decimal(14,2) as subtotal,
-  r['use_rate']::decimal(18,8) as use_rate,
+  r['subtotal']::numeric(14,2) as subtotal,
+  r['use_rate']::numeric(18,8) as use_rate,
   r['lot_number']::varchar as lot_number,
   r['production_date']::date as production_date
 from read_parquet(

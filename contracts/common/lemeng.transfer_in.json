@@ -60,7 +60,7 @@
     },
     {
       "name": "branch_num",
-      "type": "int",
+      "type": "integer",
       "nullable": false,
       "description": "调入门店编号（收货方）",
       "expr": "CAST(o.branch_num AS INTEGER)"
@@ -81,7 +81,7 @@
     },
     {
       "name": "out_branch_num",
-      "type": "int",
+      "type": "integer",
       "nullable": true,
       "description": "调出方编号（99=管理中心）",
       "expr": "CAST(o.out_branch_num AS INTEGER)"
@@ -158,14 +158,14 @@
     },
     {
       "name": "quantity",
-      "type": "decimal(14,6)",
+      "type": "decimal", "precision": 14, "scale": 6,
       "nullable": true,
       "description": "基本单位调入数量",
       "expr": "CAST(json_extract_string(u.d, '$.quantity') AS DECIMAL(14,6))"
     },
     {
       "name": "use_quantity",
-      "type": "decimal(14,6)",
+      "type": "decimal", "precision": 14, "scale": 6,
       "nullable": true,
       "description": "使用单位数量",
       "expr": "CAST(json_extract_string(u.d, '$.use_quantity') AS DECIMAL(14,6))"
@@ -179,14 +179,14 @@
     },
     {
       "name": "subtotal",
-      "type": "decimal(14,2)",
+      "type": "decimal", "precision": 14, "scale": 2,
       "nullable": true,
       "description": "调入金额小计",
       "expr": "CAST(json_extract_string(u.d, '$.subtotal') AS DECIMAL(14,2))"
     },
     {
       "name": "use_rate",
-      "type": "decimal(18,8)",
+      "type": "decimal", "precision": 18, "scale": 8,
       "nullable": true,
       "description": "使用单位换算率",
       "expr": "CAST(json_extract_string(u.d, '$.use_rate') AS DECIMAL(18,8))"

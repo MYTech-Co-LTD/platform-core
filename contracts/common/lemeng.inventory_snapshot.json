@@ -23,7 +23,7 @@
     { "name": "batch_id", "type": "varchar", "nullable": false, "description": "批次标记（采集 run id）", "expr": "'iv-' || '${ENV:SYSTEM_BOOK}' || '-inventory_snapshot-' || replace(replace('${datetime}','-',''),'_','T') || 'Z'" },
     { "name": "system_book", "type": "varchar", "nullable": false, "description": "账套（采集范围=3120）；分区键", "expr": "'${ENV:SYSTEM_BOOK}'" },
     { "name": "bizday", "type": "date", "nullable": false, "description": "快照日（=T-2；源端发布滞后实测 46.6~48.2h，T-1 在采集时点尚未发布）；分区键", "expr": "CAST('${date-2d}' AS DATE)" },
-    { "name": "branch_num", "type": "int", "nullable": false, "description": "门店编号", "expr": "CAST(o.branch_num AS INTEGER)" },
+    { "name": "branch_num", "type": "integer", "nullable": false, "description": "门店编号", "expr": "CAST(o.branch_num AS INTEGER)" },
     { "name": "branch_code", "type": "varchar", "nullable": true, "description": "门店编码", "expr": "CAST(o.branch_code AS VARCHAR)" },
     { "name": "branch_name", "type": "varchar", "nullable": true, "description": "门店名", "expr": "CAST(o.branch_name AS VARCHAR)" },
     { "name": "storehouse_num", "type": "bigint", "nullable": false, "description": "仓库编号（粒度键之一；真样本 312000161）", "expr": "CAST(o.storehouse_num AS BIGINT)" },
@@ -35,13 +35,13 @@
     { "name": "item_name", "type": "varchar", "nullable": true, "description": "商品名", "expr": "CAST(o.item_name AS VARCHAR)" },
     { "name": "item_spec", "type": "varchar", "nullable": true, "description": "商品规格", "expr": "CAST(o.item_spec AS VARCHAR)" },
     { "name": "item_unit", "type": "varchar", "nullable": true, "description": "基本单位", "expr": "CAST(o.item_unit AS VARCHAR)" },
-    { "name": "inventory_quantity", "type": "decimal(14,6)", "nullable": true, "description": "库存数量（基本单位；真样本含 0 库存行）", "expr": "CAST(o.inventory_quantity AS DECIMAL(14,6))" },
-    { "name": "inventory_assist_quantity", "type": "decimal(14,6)", "nullable": true, "description": "库存辅助数量", "expr": "CAST(o.inventory_assist_quantity AS DECIMAL(14,6))" },
-    { "name": "inventory_use_quantity", "type": "decimal(14,6)", "nullable": true, "description": "库存使用单位数量", "expr": "CAST(o.inventory_use_quantity AS DECIMAL(14,6))" },
-    { "name": "inventory_money", "type": "decimal(14,2)", "nullable": true, "description": "库存金额", "expr": "CAST(o.inventory_money AS DECIMAL(14,2))" },
-    { "name": "carry_cost_price", "type": "decimal(18,8)", "nullable": true, "description": "滚动成本价", "expr": "CAST(o.carry_cost_price AS DECIMAL(18,8))" },
-    { "name": "sale_price", "type": "decimal(18,8)", "nullable": true, "description": "销售价", "expr": "CAST(o.sale_price AS DECIMAL(18,8))" },
-    { "name": "difference_quantity", "type": "decimal(14,6)", "nullable": true, "description": "差异数量", "expr": "CAST(o.difference_quantity AS DECIMAL(14,6))" },
-    { "name": "difference_money", "type": "decimal(14,2)", "nullable": true, "description": "差异金额", "expr": "CAST(o.difference_money AS DECIMAL(14,2))" }
+    { "name": "inventory_quantity", "type": "decimal", "precision": 14, "scale": 6, "nullable": true, "description": "库存数量（基本单位；真样本含 0 库存行）", "expr": "CAST(o.inventory_quantity AS DECIMAL(14,6))" },
+    { "name": "inventory_assist_quantity", "type": "decimal", "precision": 14, "scale": 6, "nullable": true, "description": "库存辅助数量", "expr": "CAST(o.inventory_assist_quantity AS DECIMAL(14,6))" },
+    { "name": "inventory_use_quantity", "type": "decimal", "precision": 14, "scale": 6, "nullable": true, "description": "库存使用单位数量", "expr": "CAST(o.inventory_use_quantity AS DECIMAL(14,6))" },
+    { "name": "inventory_money", "type": "decimal", "precision": 14, "scale": 2, "nullable": true, "description": "库存金额", "expr": "CAST(o.inventory_money AS DECIMAL(14,2))" },
+    { "name": "carry_cost_price", "type": "decimal", "precision": 18, "scale": 8, "nullable": true, "description": "滚动成本价", "expr": "CAST(o.carry_cost_price AS DECIMAL(18,8))" },
+    { "name": "sale_price", "type": "decimal", "precision": 18, "scale": 8, "nullable": true, "description": "销售价", "expr": "CAST(o.sale_price AS DECIMAL(18,8))" },
+    { "name": "difference_quantity", "type": "decimal", "precision": 14, "scale": 6, "nullable": true, "description": "差异数量", "expr": "CAST(o.difference_quantity AS DECIMAL(14,6))" },
+    { "name": "difference_money", "type": "decimal", "precision": 14, "scale": 2, "nullable": true, "description": "差异金额", "expr": "CAST(o.difference_money AS DECIMAL(14,2))" }
   ]
 }

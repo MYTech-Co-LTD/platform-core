@@ -17,9 +17,9 @@ select
   r['branch_region_num']::int as branch_region_num,
   r['branch_region_name']::varchar as branch_region_name,
   r['metric']::varchar as metric,
-  r['actual_value']::decimal(20,2) as actual_value,
-  r['target_value']::decimal(20,2) as target_value,
-  r['actual_rate']::decimal(20,6) as actual_rate,
+  r['actual_value']::numeric(20,2) as actual_value,
+  r['target_value']::numeric(20,2) as target_value,
+  r['actual_rate']::numeric(20,6) as actual_rate,
   r['computed_at']::timestamptz as computed_at
 from read_parquet(
   's3://{{ var("zos_bucket") }}/{{ var("lemeng_branch_indicator_prefix") }}/*/bizday=**/*.parquet'

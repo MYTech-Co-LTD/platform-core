@@ -24,8 +24,8 @@ select
   r['bizday']::date as bizday,
   r['chunk_no']::int as chunk_no,
   r['branch_num']::bigint as branch_num,
-  r['source_sale']::decimal(20,2) as source_sale,
-  r['source_net']::decimal(20,2) as source_net,
+  r['source_sale']::numeric(20,2) as source_sale,
+  r['source_net']::numeric(20,2) as source_net,
   r['computed_at']::timestamptz as computed_at
 from read_parquet(
   's3://{{ var("zos_bucket") }}/{{ var("lemeng_recon_source_prefix") }}/*/bizday=**/chunk=*/all.parquet'

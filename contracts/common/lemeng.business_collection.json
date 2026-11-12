@@ -88,63 +88,63 @@
     },
     {
       "name": "payment_receipt_money",
-      "type": "decimal(20,2)",
+      "type": "decimal", "precision": 20, "scale": 2,
       "nullable": true,
       "description": "实收金额（元）",
       "expr": "CAST(payment_receipt_money AS DECIMAL(20, 2))"
     },
     {
       "name": "payment_receipt_total_money",
-      "type": "decimal(20,2)",
+      "type": "decimal", "precision": 20, "scale": 2,
       "nullable": true,
       "description": "应收金额（含优惠前）（元）",
       "expr": "CAST(payment_receipt_total_money AS DECIMAL(20, 2))"
     },
     {
       "name": "all_order_post_fee",
-      "type": "decimal(20,2)",
+      "type": "decimal", "precision": 20, "scale": 2,
       "nullable": true,
       "description": "全部订单附加费（元）",
       "expr": "CAST(all_order_post_fee AS DECIMAL(20, 2))"
     },
     {
       "name": "order_total_discount_money",
-      "type": "decimal(20,2)",
+      "type": "decimal", "precision": 20, "scale": 2,
       "nullable": true,
       "description": "订单总优惠（元）",
       "expr": "CAST(order_total_discount_money AS DECIMAL(20, 2))"
     },
     {
       "name": "un_paid_money",
-      "type": "decimal(20,2)",
+      "type": "decimal", "precision": 20, "scale": 2,
       "nullable": true,
       "description": "未收金额（元）",
       "expr": "CAST(un_paid_money AS DECIMAL(20, 2))"
     },
     {
       "name": "make_up_money",
-      "type": "decimal(20,2)",
+      "type": "decimal", "precision": 20, "scale": 2,
       "nullable": true,
       "description": "补录金额（选 shift/terminal/cashier 维时不返回）（元）",
       "expr": "CAST(make_up_money AS DECIMAL(20, 2))"
     },
     {
       "name": "cash_system_money",
-      "type": "decimal(20,2)",
+      "type": "decimal", "precision": 20, "scale": 2,
       "nullable": true,
       "description": "系统现金（仅 date_type=bizday 返回）（元）",
       "expr": "CAST(cash_system_money AS DECIMAL(20, 2))"
     },
     {
       "name": "cash_difference_money",
-      "type": "decimal(20,2)",
+      "type": "decimal", "precision": 20, "scale": 2,
       "nullable": true,
       "description": "现金长短款（仅 date_type=bizday 返回）（元）",
       "expr": "CAST(cash_difference_money AS DECIMAL(20, 2))"
     },
     {
       "name": "shift_table_actual_cash_money",
-      "type": "decimal(20,2)",
+      "type": "decimal", "precision": 20, "scale": 2,
       "nullable": true,
       "description": "班次表实盘现金（仅 date_type=bizday 返回）（元）",
       "expr": "CAST(shift_table_actual_cash_money AS DECIMAL(20, 2))"
@@ -158,21 +158,21 @@
     },
     {
       "name": "card_deposit_total_money",
-      "type": "decimal(20,2)",
+      "type": "decimal", "precision": 20, "scale": 2,
       "nullable": true,
       "description": "储值卡充值总额（含赠送）（元）",
       "expr": "CAST(card_deposit_total_money AS DECIMAL(20, 2))"
     },
     {
       "name": "card_consume_self_money",
-      "type": "decimal(20,2)",
+      "type": "decimal", "precision": 20, "scale": 2,
       "nullable": true,
       "description": "储值卡消费本金（元）",
       "expr": "CAST(card_consume_self_money AS DECIMAL(20, 2))"
     },
     {
       "name": "card_consume_present_money",
-      "type": "decimal(20,2)",
+      "type": "decimal", "precision": 20, "scale": 2,
       "nullable": true,
       "description": "储值卡消费赠送（元）",
       "expr": "CAST(card_consume_present_money AS DECIMAL(20, 2))"
@@ -186,7 +186,7 @@
     },
     {
       "name": "prepaid_card_total_money",
-      "type": "decimal(20,2)",
+      "type": "decimal", "precision": 20, "scale": 2,
       "nullable": true,
       "description": "付费会员卡购买总额（元）",
       "expr": "CAST(prepaid_card_total_money AS DECIMAL(20, 2))"
@@ -200,28 +200,28 @@
     },
     {
       "name": "pick_up_card_total_money",
-      "type": "decimal(20,2)",
+      "type": "decimal", "precision": 20, "scale": 2,
       "nullable": true,
       "description": "提货卡总额（元）",
       "expr": "CAST(pick_up_card_total_money AS DECIMAL(20, 2))"
     },
     {
       "name": "coupon_amount",
-      "type": "decimal(20,2)",
+      "type": "decimal", "precision": 20, "scale": 2,
       "nullable": true,
       "description": "券面额合计（元）",
       "expr": "CAST(coupon_amount AS DECIMAL(20, 2))"
     },
     {
       "name": "coupon_detail_sale_money",
-      "type": "decimal(20,2)",
+      "type": "decimal", "precision": 20, "scale": 2,
       "nullable": true,
       "description": "券明细销售额（元）",
       "expr": "CAST(coupon_detail_sale_money AS DECIMAL(20, 2))"
     },
     {
       "name": "order_coupon_total_money",
-      "type": "decimal(20,2)",
+      "type": "decimal", "precision": 20, "scale": 2,
       "nullable": true,
       "description": "订单券总额（元）",
       "expr": "CAST(order_coupon_total_money AS DECIMAL(20, 2))"
@@ -235,21 +235,21 @@
     },
     {
       "name": "other_inout_total_money",
-      "type": "decimal(20,2)",
+      "type": "decimal", "precision": 20, "scale": 2,
       "nullable": true,
       "description": "其他收支总额（元）",
       "expr": "CAST(other_inout_total_money AS DECIMAL(20, 2))"
     },
     {
       "name": "online_payment_receipt_money",
-      "type": "decimal(20,2)",
+      "type": "decimal", "precision": 20, "scale": 2,
       "nullable": true,
       "description": "线上实收金额（元）",
       "expr": "CAST(online_payment_receipt_money AS DECIMAL(20, 2))"
     },
     {
       "name": "online_coupon_amount",
-      "type": "decimal(20,2)",
+      "type": "decimal", "precision": 20, "scale": 2,
       "nullable": true,
       "description": "线上券面额（元）",
       "expr": "CAST(online_coupon_amount AS DECIMAL(20, 2))"
@@ -263,7 +263,7 @@
     },
     {
       "name": "computed_at",
-      "type": "timestamp_tz",
+      "type": "timestamptz",
       "nullable": false,
       "description": "采集写入时刻",
       "expr": "CAST(computed_at AS TIMESTAMPTZ)"

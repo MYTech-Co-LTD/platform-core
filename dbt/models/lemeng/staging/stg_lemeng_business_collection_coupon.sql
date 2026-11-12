@@ -17,12 +17,12 @@ select
   r['branch_region_name']::varchar as branch_region_name,
   r['branch_type']::varchar as branch_type,
   r['coupon_type_name']::varchar as coupon_type_name,
-  r['coupon_amount']::decimal(20,2) as coupon_amount,
-  r['coupon_detail_sale_money']::decimal(20,2) as coupon_detail_sale_money,
-  r['coupon_discount_money']::decimal(20,2) as coupon_discount_money,
-  r['coupon_value']::decimal(20,2) as coupon_value,
-  r['exchange_card_sale_money']::decimal(20,2) as exchange_card_sale_money,
-  r['exchange_card_total_money']::decimal(20,2) as exchange_card_total_money,
+  r['coupon_amount']::numeric(20,2) as coupon_amount,
+  r['coupon_detail_sale_money']::numeric(20,2) as coupon_detail_sale_money,
+  r['coupon_discount_money']::numeric(20,2) as coupon_discount_money,
+  r['coupon_value']::numeric(20,2) as coupon_value,
+  r['exchange_card_sale_money']::numeric(20,2) as exchange_card_sale_money,
+  r['exchange_card_total_money']::numeric(20,2) as exchange_card_total_money,
   r['exchange_card_verification_count']::int as exchange_card_verification_count,
   r['computed_at']::timestamptz as computed_at
 from read_parquet(

@@ -24,12 +24,12 @@ select
   r['branch_num']::int as branch_num,
   r['client_fid']::varchar as client_fid,
   r['audit_time']::varchar as audit_time,
-  r['total_money']::decimal(14,2) as total_money,
-  r['cost_money']::decimal(14,2) as cost_money,
+  r['total_money']::numeric(14,2) as total_money,
+  r['cost_money']::numeric(14,2) as cost_money,
   r['order_detail_num']::varchar as order_detail_num,
   r['item_num']::bigint as item_num,
-  r['return_detail_money']::decimal(14,2) as return_detail_money,
-  r['return_detail_cost_money']::decimal(14,2) as return_detail_cost_money
+  r['return_detail_money']::numeric(14,2) as return_detail_money,
+  r['return_detail_cost_money']::numeric(14,2) as return_detail_cost_money
 from read_parquet(
   's3://{{ var("zos_bucket") }}/{{ var("lemeng_wholesale_return_prefix") }}/*/bizday=**/*.parquet'
 ) r

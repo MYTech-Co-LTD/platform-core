@@ -60,7 +60,7 @@
     },
     {
       "name": "state_code",
-      "type": "int",
+      "type": "integer",
       "nullable": true,
       "description": "单据状态码（1=制单 3=审核；实测审核与制单同刻）",
       "expr": "CAST(o.state_code AS INTEGER)"
@@ -88,7 +88,7 @@
     },
     {
       "name": "branch_num",
-      "type": "int",
+      "type": "integer",
       "nullable": false,
       "description": "调入门店编号（收货门店；发布 join 键 → stg_lemeng_branch.branch_num 解析 code）",
       "expr": "CAST(o.branch_num AS INTEGER)"
@@ -109,7 +109,7 @@
     },
     {
       "name": "out_branch_num",
-      "type": "int",
+      "type": "integer",
       "nullable": true,
       "description": "调出方编号（99=管理中心/配送中心；其余=店间直调）",
       "expr": "CAST(o.out_branch_num AS INTEGER)"
@@ -123,7 +123,7 @@
     },
     {
       "name": "total_money",
-      "type": "decimal(14,2)",
+      "type": "decimal", "precision": 14, "scale": 2,
       "nullable": true,
       "description": "单据含税总金额（单头，随行冗余）",
       "expr": "CAST(o.total_money AS DECIMAL(14,2))"
@@ -186,14 +186,14 @@
     },
     {
       "name": "quantity",
-      "type": "decimal(14,6)",
+      "type": "decimal", "precision": 14, "scale": 6,
       "nullable": true,
       "description": "基本单位数量（基本单位价 = out_money ÷ quantity）",
       "expr": "CAST(json_extract_string(u.d, '$.quantity') AS DECIMAL(14,6))"
     },
     {
       "name": "use_quantity",
-      "type": "decimal(14,6)",
+      "type": "decimal", "precision": 14, "scale": 6,
       "nullable": true,
       "description": "使用（常用）单位数量",
       "expr": "CAST(json_extract_string(u.d, '$.use_quantity') AS DECIMAL(14,6))"
@@ -207,14 +207,14 @@
     },
     {
       "name": "use_rate",
-      "type": "decimal(18,8)",
+      "type": "decimal", "precision": 18, "scale": 8,
       "nullable": true,
       "description": "使用单位换算率（基本数量 = 使用数量 × 换算率）",
       "expr": "CAST(json_extract_string(u.d, '$.use_rate') AS DECIMAL(18,8))"
     },
     {
       "name": "present_quantity",
-      "type": "decimal(14,6)",
+      "type": "decimal", "precision": 14, "scale": 6,
       "nullable": true,
       "description": "基本单位赠送数量（配送赠品；售后计价边界）",
       "expr": "CAST(json_extract_string(u.d, '$.present_quantity') AS DECIMAL(14,6))"
@@ -228,35 +228,35 @@
     },
     {
       "name": "unit_price",
-      "type": "decimal(18,8)",
+      "type": "decimal", "precision": 18, "scale": 8,
       "nullable": true,
       "description": "常用单位业务单价（无价格权限返回 null——当前 PAT 已实证拿到真价）",
       "expr": "CAST(json_extract_string(u.d, '$.unit_price') AS DECIMAL(18,8))"
     },
     {
       "name": "subtotal",
-      "type": "decimal(14,2)",
+      "type": "decimal", "precision": 14, "scale": 2,
       "nullable": true,
       "description": "商品明细小计（按基本单位×成本口径，实测=cost_subtotal）",
       "expr": "CAST(json_extract_string(u.d, '$.subtotal') AS DECIMAL(14,2))"
     },
     {
       "name": "out_money",
-      "type": "decimal(14,2)",
+      "type": "decimal", "precision": 14, "scale": 2,
       "nullable": true,
       "description": "实际调出金额（总部结算口径；工单金额依据的源）",
       "expr": "CAST(json_extract_string(u.d, '$.out_money') AS DECIMAL(14,2))"
     },
     {
       "name": "in_money",
-      "type": "decimal(14,2)",
+      "type": "decimal", "precision": 14, "scale": 2,
       "nullable": true,
       "description": "实际调入金额（=调出金额，收货侧对照）",
       "expr": "CAST(json_extract_string(u.d, '$.in_money') AS DECIMAL(14,2))"
     },
     {
       "name": "cost",
-      "type": "decimal(18,8)",
+      "type": "decimal", "precision": 18, "scale": 8,
       "nullable": true,
       "description": "明细成本单价（毛利推演用；实测样例 24 = 27售价−3毛利/公斤）",
       "expr": "CAST(json_extract_string(u.d, '$.cost') AS DECIMAL(18,8))"

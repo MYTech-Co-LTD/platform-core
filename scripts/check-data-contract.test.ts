@@ -51,7 +51,7 @@ function fixture(over: {
   const pc = over.pipelineCols ?? cc
   const sc = over.stagingCols ?? cc
   const contract: Record<string, unknown> = {
-    contractVersion: 1,
+    contractVersion: 2,
     domain: 'x',
     table: 'y',
     owner: 't',
@@ -118,6 +118,12 @@ function fixture(over: {
   const root = mkdtempSync(join(tmpdir(), 'ddc-'))
   roots.push(root)
   mkdirSync(join(root, 'contracts/common'), { recursive: true })
+  // 元 schema 必须随夹具一起落盘：门禁拿的是**目标仓的** schema（不是仓里那份兜底——
+  // 兜底会让「换了 schema 会怎样」测不出来）。
+  writeFileSync(
+    join(root, 'contracts/common/_schema.schema.json'),
+    readFileSync(new URL('../contracts/common/_schema.schema.json', import.meta.url), 'utf8'),
+  )
   mkdirSync(join(root, 'deploy/duckle/console/pipelines'), { recursive: true })
   mkdirSync(join(root, 'dbt/models/common/staging'), { recursive: true })
   writeFileSync(join(root, 'contracts/common/x.y.json'), JSON.stringify(contract, null, 2))
@@ -177,10 +183,10 @@ describe('check-data-contract', () => {
     expect(v[0]!.message).toContain('消费者读的版本还不存在')
   })
 
-  it('缺 consumerVersion ⇒ 红', () => {
+  it('缺 consumerVersion ⇒ 红（门禁自己一条 + 元 schema 一条 required，都点名同字段）', () => {
     const v = checkDataContract(fixture({ consumerVersion: null }))
-    expect(v).toHaveLength(1)
-    expect(v[0]!.message).toContain('consumerVersion')
+    expect(v.length).toBeGreaterThanOrEqual(1)
+    expect(v.every((x) => x.message.includes('consumerVersion'))).toBe(true)
   })
 
   it('管线投影少一列 ⇒ 红（点名「恰好一个」判据）', () => {
@@ -285,9 +291,9 @@ describe('sensitivity 闭集（元 schema 无校验器 ⇒ 这里才是真闸）
   it('打错的值必须报违规——否则血缘门会把它当「不敏感」静默放行', () => {
     const root = fixture({ sensitivity: { amount: 'coast' } }) // 注意是 coast 不是 cost
     const v = checkDataContract(root)
-    expect(v).toHaveLength(1)
-    expect(v[0]!.message).toContain('sensitivity')
-    expect(v[0]!.message).toContain('coast')
+    // 门禁自己一条（闭集）+ 元 schema 的 enum 一条，都点名该值
+    expect(v.length).toBeGreaterThanOrEqual(1)
+    expect(v.some((x) => x.message.includes('coast'))).toBe(true)
   })
 
   it('合法值（cost）不报违规', () => {
@@ -377,5 +383,35 @@ describe('跨字段约束六条（contracts/README §4.2；元 schema 表达不�
       c.name === 'bizday' ? { ...c, nullable: true } : c)
     writeFileSync(p, JSON.stringify(doc))
     expect(checkDataContract(root).some((x) => x.message.includes('§4.2 ⑥'))).toBe(true)
+  })
+})
+
+describe('元 schema 校验（2026-11-12 起真的在跑）', () => {
+  it('多写一个未知字段 ⇒ 红（additionalProperties=false）——校验器不是摆设', () => {
+    const root = fixture()
+    const p = join(root, 'contracts/common/x.y.json')
+    const doc = JSON.parse(readFileSync(p, 'utf8'))
+    doc.bogusField = 1
+    writeFileSync(p, JSON.stringify(doc))
+    const v = checkDataContract(root)
+    expect(v.some((x) => x.message.includes("未知字段 'bogusField'"))).toBe(true)
+  })
+
+  it('类型写成非枚举形态（如 int）⇒ 红；元 schema 的 enum 是闭集', () => {
+    const root = fixture()
+    const p = join(root, 'contracts/common/x.y.json')
+    const doc = JSON.parse(readFileSync(p, 'utf8'))
+    doc.columns[0].type = 'int'
+    writeFileSync(p, JSON.stringify(doc))
+    const v = checkDataContract(root)
+    expect(v.some((x) => x.message.includes('元 schema') && x.message.includes('"int"'))).toBe(true)
+  })
+
+  it('元 schema 读不出来 ⇒ 逐份报「读不出来」（不静默跳过）', () => {
+    const root = fixture()
+    rmSync(join(root, 'contracts/common/_schema.schema.json'))
+    const v = checkDataContract(root)
+    expect(v.every((x) => x.message.includes('元 schema 读不出来'))).toBe(true)
+    expect(v.length).toBeGreaterThan(0)
   })
 })

@@ -46,18 +46,18 @@ select
   r['item_name']::varchar as item_name,
   r['item_spec']::varchar as item_spec,
   r['item_unit']::varchar as item_unit,
-  r['quantity']::decimal(14,6) as quantity,
-  r['price']::decimal(18,8) as price,
-  r['money']::decimal(14,2) as money,
-  r['cost']::decimal(18,8) as cost,
+  r['quantity']::numeric(14,6) as quantity,
+  r['price']::numeric(18,8) as price,
+  r['money']::numeric(14,2) as money,
+  r['cost']::numeric(18,8) as cost,
   r['lot_number']::varchar as lot_number,
-  r['present_qty']::decimal(14,6) as present_qty,
+  r['present_qty']::numeric(14,6) as present_qty,
   r['use_unit']::varchar as use_unit,
-  r['use_qty']::decimal(14,6) as use_qty,
-  r['use_price']::decimal(18,8) as use_price,
-  r['use_rate']::decimal(18,8) as use_rate,
-  r['total_money']::decimal(14,2) as total_money,
-  r['cost_money']::decimal(14,2) as cost_money
+  r['use_qty']::numeric(14,6) as use_qty,
+  r['use_price']::numeric(18,8) as use_price,
+  r['use_rate']::numeric(18,8) as use_rate,
+  r['total_money']::numeric(14,2) as total_money,
+  r['cost_money']::numeric(14,2) as cost_money
 from read_parquet(
   's3://{{ var("zos_bucket") }}/{{ var("lemeng_wholesale_out_prefix") }}/*/bizday=**/*.parquet'
 ) r

@@ -71,6 +71,7 @@ import {
   maskSqlComments,
   readContractDoc,
 } from './lib/data-contract.mjs'
+import { validate as validateJsonSchema } from './lib/json-schema-lite.mjs'
 
 /** 脚本名（输出前缀）。 */
 export const SCRIPT_NAME = 'check-data-contract'
@@ -91,6 +92,25 @@ export { extractPipelineAliases, extractStagingAliases, INJECTED_STAGING_COLUMNS
 /**
  * @typedef {{ file: string, message: string }} Violation
  */
+
+/**
+ * 契约元 schema（`contracts/common/_schema.schema.json`）——**单文档内约束**的唯一事实源。
+ * 2026-11-12 之前**没有任何东西执行它**（`contracts/README.md` §4.3 原文「校验器当前不存在」），
+ * 于是「字段多写一个 / 类型写错」只能靠人看。这里用 `json-schema-lite` 执行它：
+ * 只支持本 schema 用到的关键字子集，遇到不认识的关键字会**抛错**（不静默放过）。
+ */
+/**
+ * @param {string} rootDir
+ * @returns {any}
+ */
+function loadMetaSchema(rootDir) {
+  const p = join(rootDir, CONTRACT_DIR, 'common', '_schema.schema.json')
+  try {
+    return JSON.parse(readFileSync(p, 'utf8'))
+  } catch (e) {
+    return { __loadError: e instanceof Error ? e.message : String(e) }
+  }
+}
 
 /** 维度面的湖前缀是 `dim_` 段（契约 README §4.2 ② 的已知例外；lemma 见 lemeng 采集设计 §5）。 */
 const DIM_PREFIX_SEGMENT = 'dim_'
@@ -194,6 +214,8 @@ export function checkDataContract(rootDir) {
     (p) => !NON_CONTRACT.has(p.split('/').pop() ?? ''),
   )
 
+  const meta = loadMetaSchema(rootDir)
+
   for (const rel of contractFiles) {
     const c = readContractDoc(rootDir, rel)
     if (c === null) {
@@ -207,6 +229,15 @@ export function checkDataContract(rootDir) {
     // 跨字段约束六条（contracts/README §4.2）。元 schema 是单文档内约束、表达不了跨字段引用，
     // README §4.3 明写「校验器不存在」——这里补上的就是那个位置。
     for (const message of crossFieldViolations(c)) violations.push({ file: rel, message })
+
+    // 元 schema（单文档内约束）：必填 / 未知字段 / 类型 / 枚举 / 常量 / 形态。
+    if (meta.__loadError !== undefined) {
+      violations.push({ file: rel, message: `元 schema 读不出来：${meta.__loadError}` })
+    } else if (validateJsonSchema !== undefined) {
+      for (const v of validateJsonSchema(meta, meta, c.raw)) {
+        violations.push({ file: rel, message: `元 schema：${v.path} ${v.message}` })
+      }
+    }
 
     // ⑤ sensitivity 闭集（元 schema 无校验器 ⇒ 这里才是真闸）
     for (const col of c.columns) {
