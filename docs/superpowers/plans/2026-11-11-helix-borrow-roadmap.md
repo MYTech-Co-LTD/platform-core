@@ -80,7 +80,7 @@
 | 项 | 现状证据 | 波次 |
 |---|---|---|
 | **P0 终审缓办清单** | ① 预览快照可被重跑替换（采纳存最新，无历史）；② create 撞已有 id 静默覆盖（writeL2Declaration 是 upsert）；③ delete 采纳不发通知；④ 空/全缺 meta 拒收判据应收成「三键全缺」（现把显式清空 `{unit:''}` 也拒了）；⑤ check-mcp-toolface 只测 MANAGE_TOOLS 代理不测合并面（P0 已实证会漏：10308→9997）；⑥ adopt 写后 CAS 与 reject 的竞态（审计态可混淆） | Wave 5 P1（接手时逐条销） |
-| **P1 概念与归属** | L2 行不写 `entity`/`synonyms`（031 迁移注释）；无 `owner_dept` | Wave 5 P1 |
+| **P1 概念与归属** | L2 行不写 `entity`/`synonyms`（031 迁移注释）；无 `owner_dept`；生产同名冲突组=0（2026-11-12 取证，唯一索引可直接建） | **Wave 5 P1（计划：`2026-11-12-metric-ownership-p1.md`，8 任务含缓办 6 条全销 + override 档）** |
 | **P2 指标可见性** | `visibleMetrics` 只判 scope+源（`authz.ts:254`）；`/query` 按 id 无部门判定 | Wave 5 P2（前置：组织一致性检查） |
 | **P3 解析与澄清** | `search_catalog` 无 tie 检测（`toolbox/discovery.ts:77-91`） | Wave 5 P3 |
 | **P4 写面收口** | `customize_metric` 仍直接写生效行（`mcp-metric-tools.ts:80`）；PC 指标页仍有编辑/元数据/覆盖/删除 | Wave 5 P4 |
@@ -186,3 +186,4 @@
 | 2026-11-12 | 新增候选：**指标语义治理**（P0–P6，含试算硬门/变更单/部门归属/同名解析/报表交集） | 用户定案三点（agent 只提案、人只采纳；同名必须可区分；指标接入部门权限）；spec 已出，待拆实施计划 |
 | 2026-11-12 | **候选池升格为 Wave 5（现行主线）**；待办表按 P0–P6 重排 | 用户认可 spec（含部门链=自身∪祖先∪后代、认证并入采纳两处代决）；P0 计划另出 |
 | 2026-11-12 | **Wave 5 P0 完成入账**（变更单+试算硬门+采纳驳回+会话闸+MCP 工具+待核对页） | PR #2046 + 部署 v289 容器实测；终审缓办 6 条转 P1 接手清单 |
+| 2026-11-12 | P1 计划出台（概念归属+同名互斥+缓办销账+override 档，8 任务） | 生产取证：同名冲突组 0、镜像内 semantics YAML 在；计划 `2026-11-12-metric-ownership-p1.md` |
