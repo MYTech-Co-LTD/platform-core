@@ -53,16 +53,18 @@
 | **Wave 2.2b 契约跨字段六条** | PR #1976：`check-data-contract.mjs` 新增 `crossFieldViolations()`（README §4.2 ①–⑥）；`readContractDoc()` 补 `partitionBy`/`markerColumn`；例外收敛成显式表 `PARTITION_KEY_ALIASES`（recon_source 的 chunk↔chunk_no）；实测 30 份契约里 recon_source 是唯一命中，经别名判过；门禁单测 29 条 |
 | **Wave 2.3 通知链补通** | PR #1980：forms 两个事件此前**只有声明**（模板/规则/默认都没有，dispatch 恒 `no_rules`）；现补两条内置文案 + 两条 derived 规则（`recipient_key=assignee`）+ manifest `defaults`；新增 `templates/builtin.test.ts` 静态护栏（声明⇔模板双向一致）；OO org 显示名文档订正（miyuan→mytech）。**生产实测**：mytech 的 seed job（`custom:NWK_D7nKpsC7hdhe`）自动跑出 `templates=2 rules=5` 并查到两条 `derived:forms:*` 规则；**shanhai 手动 seed 后**同样补齐（`templates=3`：此前连 `data.metric.definition.changed` 的文案都没有）。⚠️ 发现的新缺口：**notify 四个作业只挂 mytech（serverId 23a1091e）**，shanhai 无 seed/reconcile/health/retention —— 已入待办 |
 | **Wave 3 卫生（第一批）** | PR #1984：history view 双 config/错头注清理；`materialize.sh` 档位白名单（未知档 exit 2，此前会静默落全史物化）；明细四处池调用改 `analystPool()`（只读）；`data-plane-manifest.txt` 登记「刻意不投递」脚本。验证：1499 tests / materialize.test.sh 104 项 / gates 全绿；数据面 sync 到 `38cdb1d`：`SYNC_OK 429/429`（revision 已推进；`outside-scope 1136` 是清单头部登记过的已知边界） |
+| **通知健康判据（2.3 残项①）** | PR #1987：`dead` 从全表改成 **7 天时间窗**（`DEAD_WINDOW_DAYS`）。dead 是终态、不会自愈，全表计数会让一条历史失败永久按红（shanghai 10-31 的 4 条就是这样）。单测钉住窗口语义（窗口外不变 / 窗口内 +1）；**不加 retention**（删行需点名） |
+| **Wave 2.1 第一批（marts）** | PR #1989：仅存的 2 个零测试 marts（`recon_fact` 账套×日×门店、`fct_transfer_zero_cost_item` 账套×日×商品）补粒度唯一断言。staging 那 14 个**不批量补**：read_parquet 视图全表扫要整片湖（分析池实测超时），猜错一条 = 每晚 tables 档变红 |
+| **候选池 console 页** | PR #1991：新页签「候选池」（data:manage）——列表/过滤/采用（弹窗填指标 id）/拒绝；判定全委托服务端；`index.test.tsx` 补「普通用户不可见 + 管理员深链请求 /metrics/candidates」 |
+| **契约元 schema 校验器（2.2 残项）** | PR #1993：`scripts/lib/json-schema-lite.mjs`（零依赖，只实现元 schema 用到的关键字子集，**不认识的关键字抛错**）接进 `check-data-contract`。第一轮抓出 **190 处漂移**（154 `decimal(p,s)` 当 type、29 非枚举拼写、1 个 `contractVersion:1`）并归一；投射与 lock 重生成；README §4.3/§5 改为「已在 CI 跑」 |
 
 ### 待办（Wave 见 §4）
 
 | 项 | 现状证据 | 波次 |
 |---|---|---|
 | 测试覆盖不均（12 staging / 6 marts / schema.yml） | 见 §2 | 2.1 |
-| 候选池缺 console 页（spec §3 声明「console 可浏览、一键采用」；现只有 HTTP 面） | `modules/data/console/` 无 candidates 页 | 2.x（UI） |
-| 契约**元 schema 本体**仍未被执行（`_schema.schema.json` 是 2020-12 JSON Schema，仓内无校验器；§4.2 六条已由 2.2b 补齐） | 需引入 ajv 或等价实现（依赖决策） | 2.2 残项 |
 | 列级血缘 | dbt core manifest 无列级边 | 2.4（触发式） |
-| notify **retention** 仍未在 shanhai 部署（seed/reconcile/health 已于 2026-11-11 补齐并验过）；dead/历史投递不会自动清理，积压会让 health 重新变红 | 用户裁决：暂不加删行作业；届时二选一（加 retention 需点名 / health 改时间窗判据） | 2.3 残项 |
+| notify **retention** 未部署（删行需点名）。**已不阻塞**：health 现在只看近 7 天（PR #1987），历史 dead 不会再把健康面按红 | 用户裁决暂不加；真要清理历史行时再单独决定 | 2.3 残项（低） |
 | Wave 3 余项：cron 文档冲突（未逐条核）；data-plane 多机副本（OO 机 /opt）靠手工投递 | 盘点发现 | 3 |
 
 ---
@@ -116,3 +118,4 @@
 | 2026-11-11 | Wave 2.2a/2.2b 完成入账；2.2 残项收敛为「元 schema 本体未执行」 | 证据：PR #1974（变异确认 exit 1）+ PR #1976（30 份契约实跑，29 条门禁单测） |
 | 2026-11-11 | Wave 2.3 完成入账 | 证据：PR #1980 + 服务端 notify 120 passed + seed 规则 4→6 / 模板 3→5 落库断言 |
 | 2026-11-12 | Wave 3 第一批入账（4 项）；余项收敛为 cron 文档核对与多机副本手工投递 | 证据：PR #1984 + 1499 tests + materialize.test.sh 104 项 |
+| 2026-11-12 | 四个残项收口：health 时间窗、marts 断言、候选池页、元 schema 校验器 | PR #1987 / #1989 / #1991 / #1993；元 schema 一轮抓出 190 处漂移并归一 |
