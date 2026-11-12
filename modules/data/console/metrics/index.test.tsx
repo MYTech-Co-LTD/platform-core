@@ -316,7 +316,7 @@ describe('指标管理页', () => {
 
 describe('口径列：单页双层（Wave 4.3）', () => {
   it('默认层给业务说法；技术细节里才有表达式 / 维度 / 权限码（折叠，不隐藏）', async () => {
-    renderPage(['data:query', 'data:manage'], '/console/data/metrics')
+    renderPage()
     await waitFor(() => expect(screen.getByText('lemeng:retail:net_sales')).toBeInTheDocument())
     // 默认层：说明文字（夹具里没有 bizDescription，回落 description）
     expect(screen.getAllByText('口径定义').length).toBeGreaterThan(0)
