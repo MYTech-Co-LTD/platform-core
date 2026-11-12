@@ -71,6 +71,7 @@ describe('buildConsoleMenu（spec §3 位置规则）', () => {
     const menu = buildConsoleMenu(visibleConsoleEntries(CONFIG, SESSION, REGISTRY), {}, SESSION, {
       adminEntries: [],
       storageVisible: true,
+      dataScopesVisible: false,
     })
     expect(menu.map((m) => m.path)).toEqual(['/console', '/console/case-engine', '/console/first/a'])
   })
@@ -78,6 +79,7 @@ describe('buildConsoleMenu（spec §3 位置规则）', () => {
     const menu = buildConsoleMenu(visibleConsoleEntries(CONFIG, SESSION_PARTIAL, REGISTRY), {}, SESSION_PARTIAL, {
       adminEntries: [],
       storageVisible: true,
+      dataScopesVisible: false,
     })
     expect(menu.map((m) => m.path)).toEqual(['/console', '/console/first/a'])
   })
@@ -121,6 +123,7 @@ describe('buildConsoleMenu 管理组', () => {
     const menu = buildConsoleMenu([], {}, { scopes: ['tenant:admin'] }, {
       adminEntries: [],
       storageVisible: true,
+      dataScopesVisible: false,
     })
     const group = menu.at(-1)
     expect(group?.name).toBe('管理')
@@ -146,10 +149,37 @@ describe('buildConsoleMenu 管理组', () => {
   })
 
 
+  it('数据范围：只在「管理 → 角色与权限」出现一次；模块侧栏不再重复（menu:false）', () => {
+    const menu = buildConsoleMenu(
+      [
+        { moduleId: 'data', moduleName: '数据分析', path: '/console/data', title: '数据分析' },
+        { moduleId: 'data', moduleName: '数据分析', path: '/console/data/metrics', title: '指标' },
+        { moduleId: 'data', moduleName: '数据分析', path: '/console/data/scopes', title: '数据范围', menuHidden: true },
+      ],
+      {},
+      { scopes: ['tenant:admin', 'data:manage'] },
+      { adminEntries: [], storageVisible: false, dataScopesVisible: true },
+    )
+    const dataGroup = menu.find((m) => m.name === '数据分析')
+    expect(dataGroup?.children?.map((c) => c.path)).toEqual(['/console/data/metrics'])
+    const admin = menu.find((m) => m.name === '管理')
+    const paths = (admin?.children ?? []).flatMap((g) => (g.children ?? []).map((c) => c.path))
+    expect(paths.filter((p) => p === '/console/data/scopes')).toHaveLength(1)
+  })
+
+  it('无 data:manage → 管理组里也不出现数据范围', () => {
+    const menu = buildConsoleMenu([], {}, { scopes: ['tenant:admin'] }, {
+      adminEntries: [], storageVisible: true, dataScopesVisible: false,
+    })
+    const paths = (menu.at(-1)?.children ?? []).flatMap((g) => (g.children ?? []).map((c) => c.path))
+    expect(paths).not.toContain('/console/data/scopes')
+  })
+
   it('无 tenant:admin → 不出现管理组（模块页照旧）', () => {
     const menu = buildConsoleMenu([], {}, { scopes: ['demo:view'] }, {
       adminEntries: [],
       storageVisible: true,
+      dataScopesVisible: false,
     })
     expect(menu.some((m) => m.name === '管理')).toBe(false)
   })
@@ -176,6 +206,7 @@ describe('管理组联动', () => {
     const menu = buildConsoleMenu([], {}, ADMIN_SESSION, {
       adminEntries: [],
       storageVisible: false,
+      dataScopesVisible: false,
     })
     expect(leafPaths(menu.at(-1))).toEqual([
       '/console/admin/users',
@@ -192,6 +223,7 @@ describe('管理组联动', () => {
     const menu = buildConsoleMenu([], {}, ADMIN_SESSION, {
       adminEntries: [{ moduleId: 'demo', path: '/console/admin/demo/x', title: '演示管理页' }],
       storageVisible: true,
+      dataScopesVisible: false,
     })
     expect(leafPaths(menu.at(-1))).toEqual([
       '/console/admin/users',

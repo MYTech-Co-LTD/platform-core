@@ -15,6 +15,8 @@ export interface ConsoleRegistryEntry {
   icon?: string
   /** 一句话说明「这页能干什么」；宿主统一渲染成页头说明（#1953 三期） */
   description?: string
+  /** true = 不进模块侧栏（路由仍可达；入口由宿主另行提供） */
+  menuHidden?: boolean
   /** 访问该页所需权限 scope（session.scopes 成员判定） */
   scope: string
   /** 构建期聚合的懒加载器：模块 console 页模块的 default 导出（组件） */
@@ -127,6 +129,7 @@ export const consoleRegistry: ConsoleRegistryEntry[] = [
     group: "main",
     moduleId: "data",
     description: "决定谁能看哪些品牌/门店/品类：先建范围，再分配到部门（主）、角色或人（例外）。",
+    menuHidden: true,
     scope: "data:manage",
     load: () => import("../../../modules/data/console/index.tsx"),
   },

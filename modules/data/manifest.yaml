@@ -252,8 +252,9 @@ frontend:
     # ⚠️ 站内问数已于 2026-11-12 退役（问数只经 MCP）⇒ 不再有 /console/data/query 菜单项
     - { path: /console/data/metrics, title: 指标, description: 指标是「一个数怎么算」的唯一定义；口径改这里，报表和问数一起生效。, scope: data:query, entry: ./console/index.tsx }
     - { path: /console/data/reports, title: 报表, description: 把指标拼成业务看板；每张报表可单独设部门可见范围。, scope: data:query, entry: ./console/index.tsx }
-    # 数据范围管理面（#1901）：入口按 data:manage 过滤；API 门卫才是真闸
-    - { path: /console/data/scopes, title: 数据范围, description: 决定谁能看哪些品牌/门店/品类：先建范围，再分配到部门（主）、角色或人（例外）。, scope: data:manage, entry: ./console/index.tsx }
+    # 数据范围管理面（#1901）：**不进模块侧栏**（menu:false）——它是权限配置，入口挂在
+    # 「管理 → 角色与权限」（#1953 四期）。路由仍在此，门卫仍是 data:manage。
+    - { path: /console/data/scopes, title: 数据范围, description: 决定谁能看哪些品牌/门店/品类：先建范围，再分配到部门（主）、角色或人（例外）。, scope: data:manage, entry: ./console/index.tsx, menu: false }
     # 候选池（Wave 2.3 / 2026-11-12 补菜单项）：页面标签用业务说法「可能的指标」
     - { path: /console/data/candidates, title: 可能的指标, description: 从源数据自动推导出的候选指标；采用后才会变成正式指标。, scope: data:manage, entry: ./console/index.tsx }
   # 移动端「报表中心」（#1369；2026-11-12 起**没有问数 tab**）：报表 / 管理 / 指标；/m 入口卡片按 scope=data:query 过滤——
