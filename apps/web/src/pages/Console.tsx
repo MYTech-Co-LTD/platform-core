@@ -406,9 +406,12 @@ export function ConsoleModulePage() {
   // （`/console/aftersales` 之下挂 `tickets`/`rules`/…）。全等匹配会让深链
   // `/console/aftersales/stores` 直接落进下面的 404 分支——菜单点得进去、URL 一贴就白页。
   // 用 `${r.path}/` 收尾而不是裸 startsWith：否则 `/console/aftersalesXyz` 会误命中本条目。
-  const entry = consoleRegistry.find(
-    (r) => pathname === r.path || pathname.startsWith(`${r.path}/`),
-  )
+  // **最长前缀匹配**（#1953 三期）：模块现在会声明多条（父 `/console/data` + 子 `/console/data/scopes`），
+  // 用 `find` 会命中先出现的那条父条目 ⇒ 页头标题/页门 scope 全按父条目算（子页的 data:manage
+  // 形同虚设）。取匹配集里 path 最长的一条，才是「用户实际打开的那一页」。
+  const entry = consoleRegistry
+    .filter((r) => pathname === r.path || pathname.startsWith(`${r.path}/`))
+    .sort((a, b) => b.path.length - a.path.length)[0]
   // config 启用门（#127）：registry 命中但 config 无此模块 = 服务端停用 ⇒ 与菜单同隐
   const moduleEnabled = entry ? config.modules.some((m) => m.id === entry.moduleId) : false
   const Lazy = useMemo(() => (entry ? lazy(entry.load) : null), [entry])

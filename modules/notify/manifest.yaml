@@ -79,10 +79,10 @@ frontend:
   # 子页 scope 用**读取门**（view）——写操作各自的门由页面内按钮 role 与 API 门卫施加。
   console:
     - { path: /console/notify, title: 通知, icon: BellOutlined, scope: notify:view, entry: ./console/index.tsx }
-    - { path: /console/notify/events, title: 事件目录, scope: notify:view, entry: ./console/index.tsx }
-    - { path: /console/notify/rules, title: 规则, scope: notify:view, entry: ./console/index.tsx }
-    - { path: /console/notify/templates, title: 模板, scope: notify:view, entry: ./console/index.tsx }
-    - { path: /console/notify/channels, title: 通道, scope: notify:view, entry: ./console/index.tsx }
-    - { path: /console/notify/deliveries, title: 投递, scope: notify:view, entry: ./console/index.tsx }
-    - { path: /console/notify/inbox, title: 收件箱, scope: notify:view, entry: ./console/index.tsx }
+    - { path: /console/notify/events, title: 事件目录, description: 各模块声明了哪些可订阅的事件；配规则时从这里选事件。,  scope: notify:view, entry: ./console/index.tsx }
+    - { path: /console/notify/rules, title: 规则, description: 谁在什么情况下收到通知：事件 × 作用域 × 收件人 × 模板 × 通道。,  scope: notify:view, entry: ./console/index.tsx }
+    - { path: /console/notify/templates, title: 模板, description: 通知文案按通道编辑、预览、发版；发错了可回滚到上一版。,  scope: notify:view, entry: ./console/index.tsx }
+    - { path: /console/notify/channels, title: 通道, description: 出站渠道（企微群/邮件…）的凭据状态与健康检查；密钥只显示 env 键名。,  scope: notify:view, entry: ./console/index.tsx }
+    - { path: /console/notify/deliveries, title: 投递, description: 每条通知投给谁、成没成；失败的可以单条重试。,  scope: notify:view, entry: ./console/index.tsx }
+    - { path: /console/notify/inbox, title: 收件箱, description: 发给我的通知副本；已读不代表已办。,  scope: notify:view, entry: ./console/index.tsx }
 migrations: { dir: ./migrations }
