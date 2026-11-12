@@ -5,3 +5,32 @@ body {
     -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'PingFang SC',
     'Hiragino Sans GB', 'Microsoft YaHei', sans-serif;
 }
+
+/* ── 设计语言：DeepSeek 风格（2026-11-13）────────────────────────────────
+   胶囊形控件是这套语言最显眼的符号，但 antd 没有全局 token 能表达 radius=999，
+   所以在这一层兜。作用域限定在 antd 组件类上，不影响自绘布局。 */
+.ant-btn:not(.ant-btn-circle):not(.ant-btn-icon-only),
+.ant-input,
+.ant-input-affix-wrapper,
+.ant-input-group-addon,
+.ant-select .ant-select-selector,
+.ant-input-search .ant-input-group .ant-input,
+.ant-input-search-button,
+.ant-segmented {
+  border-radius: 999px !important;
+}
+.ant-tag { border-radius: 999px; }
+/* 搜索框里的圆角要跟着外层走，否则内层直角露出来 */
+.ant-input-group .ant-input:first-child { border-start-start-radius: 999px !important; border-end-start-radius: 999px !important; }
+.ant-input-group .ant-input:last-child { border-start-end-radius: 999px !important; border-end-end-radius: 999px !important; }
+
+/* 表格：表头不铺底色、行更高（DeepSeek 的松弛感） */
+.ant-table-thead > tr > th {
+  background: transparent !important;
+  color: #9AA0A6 !important;
+  font-size: 12px;
+  font-weight: 500;
+  border-bottom: 1px solid #EBEDF0 !important;
+}
+.ant-table-tbody > tr > td { height: 52px; border-bottom: 1px solid #F2F3F5 !important; }
+.ant-table-tbody > tr:hover > td { background: #FAFBFC !important; }

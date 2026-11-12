@@ -17,7 +17,8 @@ export interface Branding {
 /** branding 取失败时的兜底品牌（登录页永远可渲染） */
 export const DEFAULT_BRANDING: Branding = {
   productName: 'Platform',
-  primaryColor: '#1890ff',
+  // DeepSeek 风格默认主色（2026-11-13 定案）：蓝紫 #4D6BFE，可在品牌配置里覆盖
+  primaryColor: '#4D6BFE',
   loginMethods: ['password'],
 }
 

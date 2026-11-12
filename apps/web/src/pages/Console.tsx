@@ -176,7 +176,19 @@ export default function ConsoleShell() {
     <ConfigProvider
       theme={{
         algorithm: dark ? theme.darkAlgorithm : theme.defaultAlgorithm,
-        token: { colorPrimary: branding.primaryColor },
+        // 设计语言（2026-11-13 定案，参考 DeepSeek）：蓝紫主色、大圆角、更松弛的控件高度，
+        // 背景走 #FAFBFC 的浅灰而不是纯白。胶囊形（999）由 index.css 兜，antd token 表达不了。
+        token: {
+          colorPrimary: branding.primaryColor,
+          borderRadius: 12,
+          colorBgLayout: '#FAFBFC',
+          colorBorder: '#EBEDF0',
+          colorBorderSecondary: '#F2F3F5',
+          colorText: '#1B1C1E',
+          colorTextSecondary: '#6B7280',
+          fontSize: 13,
+          controlHeight: 34,
+        },
       }}
     >
       {/* antd <App> 必须在 ConfigProvider **之内**（issue #106）：它渲染 message/notification/

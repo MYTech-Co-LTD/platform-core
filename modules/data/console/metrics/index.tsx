@@ -158,6 +158,7 @@ export default function MetricsPage() {
   useEffect(() => { void load() }, [])
 
   const l1Rows = useMemo(() => rows.filter((r) => r.source === 'l1'), [rows])
+  const l2Rows = useMemo(() => rows.filter((r) => r.source === 'l2'), [rows])
   const base = useMemo(() => rows.find((r) => r.id === draft?.baseMetric), [rows, draft?.baseMetric])
   const baseDims = useMemo(() => dimsOf(base), [base])
 
@@ -428,6 +429,25 @@ export default function MetricsPage() {
           action={<Button size="small" href="/console/data/candidates">去查看</Button>}
         />
       )}
+      {/* 关键数字条（2026-11-13 布局优化）：先给「有多少」，再给明细。
+          数字等宽、标签小而灰——DeepSeek 风格的「数据优先」落点。 */}
+      <div style={{ display: 'flex', gap: 40, alignItems: 'flex-end', padding: '4px 2px 8px' }}>
+        {[
+          { k: '平台指标', v: l1Rows.length, d: '随数据面接入自动更新' },
+          { k: '本租户派生', v: l2Rows.length, d: '由 agent 或人工声明' },
+          { k: '待采用候选', v: pendingCandidates, d: pendingCandidates === null ? '—' : '采用后成为正式指标' },
+        ].map((x) => (
+          <div key={x.k} style={{ minWidth: 110 }}>
+            <div style={{ fontSize: 12, color: '#9AA0A6' }}>{x.k}</div>
+            <div style={{
+              fontSize: 28, fontWeight: 600, lineHeight: 1.2, letterSpacing: '-0.02em',
+              fontVariantNumeric: 'tabular-nums', color: '#1B1C1E',
+            }}>{x.v === null ? '—' : x.v >= 200 ? '200+' : x.v}</div>
+            <div style={{ fontSize: 12, color: '#6B7280', marginTop: 2 }}>{x.d}</div>
+          </div>
+        ))}
+      </div>
+
       <Space wrap>
         <Button onClick={() => { if (usageDays === null) openUsage(30); else openUsage(usageDays) }}>
           使用统计
