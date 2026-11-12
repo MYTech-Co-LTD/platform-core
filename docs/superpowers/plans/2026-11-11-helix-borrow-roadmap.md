@@ -73,12 +73,13 @@
 | **产品面 4.5（指标创建收口）** | PR #2030：删人工「新建」入口——PC「新建派生指标 / 新建声明（全额口径）」、移动端「新建指标（表达式）」；页面改为指向 agent（企微 / MCP）。**保留**源码 API/MCP 写面与应用内编辑（既有 L2 恒 PUT）；决策面全留（草稿确认 / 元数据 / 认证 / 覆盖口径 / 候选采用）。用户定档「删实现面、留决策面」。测试先红后绿：PC 编辑 body 仍无自由 SQL 字段、移动端 admin 也无新建入口；`modules/data` 1687 / scripts guard 911 / 全仓 typecheck 绿 |
 | **OO 机 `/opt` 副本核对** | 2026-11-12 实测：`/opt/lemeng-oo-{notify-bridge,watchdog,config-audit}.sh` + `lemeng-emit-probe.py` 四个 sha256 与仓内**逐字节一致**（bridge `7a81135e…` / watchdog `bc36151a…` / audit `98074d99…` / probe `465fee98…`），当前无漂移、无需投递；SOP §E.5 的手工投递形态与版本握手仍然有效 |
 | **retention 处置（证据化关闭）** | 2026-11-12 实测 shanhai `notify` 表极小（inbox 4 / delivery 10 / event 6 / attempt 20），且 health 已改 7 天窗口（PR #1987）⇒ **当前不需要**。留作观察项：任一表破 10 万行或 health 因积压变红时再议（届时删行需点名） |
+| **Wave 5 P0（变更单 + 试算硬门）** | PR #2046（squash `0c415f84`，issue #2038，15 提交逐任务评审+终审+修复波）：`data.metric_change`（迁移 046，同指标仅一张未决单）+ 状态机（supersede/withdraw）+ 试算（compileL2 编译不生效 → 只读池 → 快照含 baseline Δ；**未试算不可采纳**）+ 7 端点（**采纳/驳回只认会话**，PAT/企微 ⇒ 403 `DECISION_REQUIRES_SESSION`，结构性反自审经终审确认）+ MCP `submit_metric_change`（提交即试算）/`list_metric_changes`（含驳回原因；无采纳工具）+ console「待核对」页（人话默认层 + TechDetails；采纳/驳回/跑试算）。验证：本地全仓测试+guard 927+typecheck+双门禁绿，modules/data 1720 用例；CI 全绿；部署 `dep_guN95NvCpBmRJAnb`（v289）容器实测：046 在位、生产库表+三索引+14 列+2 check、未鉴权 401、产物含「待核对」。终审缓办 6 条见待办表 |
 
 ### 待办（Wave 见 §4）
 
 | 项 | 现状证据 | 波次 |
 |---|---|---|
-| **P0 变更单 + 试算硬门** | spec §6/§7；`draft_spec` creator-scoped 且不可查询（`metric-governance.ts:74`）⇒ 评审闭环必须新建 | **Wave 5 P0（计划：`2026-11-12-metric-change-review-p0.md`）** |
+| **P0 终审缓办清单** | ① 预览快照可被重跑替换（采纳存最新，无历史）；② create 撞已有 id 静默覆盖（writeL2Declaration 是 upsert）；③ delete 采纳不发通知；④ 空/全缺 meta 拒收判据应收成「三键全缺」（现把显式清空 `{unit:''}` 也拒了）；⑤ check-mcp-toolface 只测 MANAGE_TOOLS 代理不测合并面（P0 已实证会漏：10308→9997）；⑥ adopt 写后 CAS 与 reject 的竞态（审计态可混淆） | Wave 5 P1（接手时逐条销） |
 | **P1 概念与归属** | L2 行不写 `entity`/`synonyms`（031 迁移注释）；无 `owner_dept` | Wave 5 P1 |
 | **P2 指标可见性** | `visibleMetrics` 只判 scope+源（`authz.ts:254`）；`/query` 按 id 无部门判定 | Wave 5 P2（前置：组织一致性检查） |
 | **P3 解析与澄清** | `search_catalog` 无 tie 检测（`toolbox/discovery.ts:77-91`） | Wave 5 P3 |
@@ -121,9 +122,9 @@
 > ② 同名不同义 = 不同 id + 部门内同名互斥 + 歧义必须澄清；③ 指标接入权限体系
 > （归属部门决定可见范围，**按 id 查询也拦**）。
 
-- **P0 变更单 + 试算硬门**：`data.metric_change` + 提交即试算（快照含参照值 Δ）+
+- **P0 变更单 + 试算硬门**：✅ 已落地（PR #2046，部署 v289 实测）——`data.metric_change` + 提交即试算（快照含参照值 Δ）+
   采纳/驳回（会话限定）+ MCP `submit_metric_change` / `list_metric_changes` + console「待核对」页。
-  P0 的 kind 范围：`create | update | meta | delete`（override/declared 档随 P1 接入）。
+  P0 的 kind 范围：`create | update | meta | delete`（override/declared 档随 P1 接入）；终审缓办 6 条在待办表。
 - **P1 概念与归属**：`owner_dept` / `variant_note` / entity 开放给 L2 / 概念表 / 部门内同名唯一 / override 档接入。
 - **P2 指标可见性**：`canViewMetric` 单一实现 + 五个执法点 + `reveal` 两档（前置：组织架构一致性检查）。
 - **P3 解析与澄清**：`search_catalog` tie 检测 + 答案 `caliber` 标注。
@@ -184,3 +185,4 @@
 | 2026-11-12 | **新增 4.5 指标创建收口**：删人工新建入口，实现面交给 agent | 用户拍板「删实现面、留决策面」（三档选项见 issue #2029）：删 PC 两个新建按钮与移动端表达式新建；API/MCP 写面与决策动作全留。PR #2030 |
 | 2026-11-12 | 新增候选：**指标语义治理**（P0–P6，含试算硬门/变更单/部门归属/同名解析/报表交集） | 用户定案三点（agent 只提案、人只采纳；同名必须可区分；指标接入部门权限）；spec 已出，待拆实施计划 |
 | 2026-11-12 | **候选池升格为 Wave 5（现行主线）**；待办表按 P0–P6 重排 | 用户认可 spec（含部门链=自身∪祖先∪后代、认证并入采纳两处代决）；P0 计划另出 |
+| 2026-11-12 | **Wave 5 P0 完成入账**（变更单+试算硬门+采纳驳回+会话闸+MCP 工具+待核对页） | PR #2046 + 部署 v289 容器实测；终审缓办 6 条转 P1 接手清单 |
