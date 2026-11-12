@@ -24,8 +24,12 @@ const ORG = 'org-t6-metrics'
 const OTHER_ORG = 'org-t6-metrics-other'
 
 function def(over: Partial<MetricDef> = {}): MetricDef {
+  const id = over.id ?? 'sales_daily'
   return {
-    id: 'sales_daily', title: '销售日明细', description: '按日销售',
+    id,
+    // title 派生自 id（显式 title 照旧覆盖）：047 部门内同名互斥后，同 org 未显式给
+    // title 的夹具共用一个字面标题会互相顶掉（metrics_title_per_dept_uq）。
+    title: `销售日明细·${id}`, description: '按日销售',
     requiredScope: null, subjectColumn: 'org',
     selectSql: 'SELECT org, day FROM marts.mart_sales_daily',
     groupBy: '', params: {},
@@ -55,7 +59,9 @@ const L1_ID_PREFIX = 't6test:'
 const l1Def = (over: Partial<L1MetricDef> = {}): L1MetricDef =>
   ({ ...def(over), sourceSystem: 'lemeng', slaDays: 1, freshnessRelations: [], masks: null })
 const L1_SALES = l1Def({
-  id: `${L1_ID_PREFIX}net_sales`, title: '净销售额',
+  // title 带 id 前缀缀尾：与真实物化行（lemeng:retail:net_sales = 「净销售额」）错开，
+  // 047 同名互斥在平台桶（org='platform'）同样执法（本地共享库有真行，CI 全新库没有）。
+  id: `${L1_ID_PREFIX}net_sales`, title: '净销售额·t6test',
   selectSql: 'select sum(fct_retail_sale.net_amount) as value, system_book, bizday from fct_retail_sale',
   groupBy: 'system_book, bizday',
 })
@@ -99,6 +105,9 @@ const l2Body = (over: Record<string, unknown> = {}) => ({
   id: 'l2_net_sales_xiongmao',
   baseMetric: L1_SALES.id,
   op: { kind: 'refine' },
+  // alias 随 id 错开（显式 alias 照旧覆盖）：L2 无 alias 时编译产物 title = base.title，
+  // 047 部门内同名互斥后同 org 多条无别名 L2 会互相顶掉（metrics_title_per_dept_uq）。
+  alias: `净销售额·${over.id ?? 'l2_net_sales_xiongmao'}`,
   ...over,
 })
 
@@ -113,6 +122,8 @@ const exprBody = (over: Record<string, unknown> = {}) => ({
     kind: 'expr',
     expr: { kind: 'div', left: { kind: 'ref', id: L1_SALES.id }, right: { kind: 'num', value: 2 } },
   },
+  // 同 l2Body：expr 支缺省 title = `派生(<refIds>)`，同 org 多条会撞 047 同名互斥。
+  alias: `均价·${over.id ?? 'l2_avg_price'}`,
   ...over,
 })
 
@@ -167,7 +178,7 @@ describePg('指标路由（需要 DATABASE_URL：词表读写）', () => {
     // 消费面投影：字段面 + 参数面形状——selectSql/subjectColumn/column 属实现细节，不外泄；
     // certified/source/createdBy 徽标在观看面就带（spec §10.2/§10.4：来源、可信度、「我的」判定）
     expect(body.metrics.find((m: { id: string }) => m.id === L1_SALES.id))
-      .toEqual({ id: L1_SALES.id, title: '净销售额', description: def().description, params: {}, certified: 'certified', source: 'l1', createdBy: null, bizDescription: null, unit: null, caliberNote: null, override: false })
+      .toEqual({ id: L1_SALES.id, title: '净销售额·t6test', description: def().description, params: {}, certified: 'certified', source: 'l1', createdBy: null, bizDescription: null, unit: null, caliberNote: null, override: false })
     // 元数据三件套（#1292 起）观看面带（消费方=移动卡）；未标注 = null 直投影
     const l1Admin = (await (await app(ORG, ['data:manage']).request('/metrics/all')).json()) as {
       metrics: { id: string; bizDescription: string | null; unit: string | null; caliberNote: string | null }[] }
@@ -207,7 +218,8 @@ describePg('指标路由（需要 DATABASE_URL：词表读写）', () => {
 
     const all = await (await app(ORG, ['data:manage']).request('/metrics/all')).json()
     const row = all.metrics.find((m: { id: string }) => m.id === 'l2_net_sales_xiongmao')
-    expect(row).toMatchObject({ source: 'l2', title: '净销售额', groupBy: 'system_book, bizday' })
+    // title = 编译产物（decl.alias）——夹具 alias 随 id 派生（见 l2Body 注释，047 同名互斥）
+    expect(row).toMatchObject({ source: 'l2', title: '净销售额·l2_net_sales_xiongmao', groupBy: 'system_book, bizday' })
     // 编译产物落库：值表达式来自 L1（L2 改不了口径）
     expect(row.selectSql).toContain('sum(fct_retail_sale.net_amount) as value')
     // 主体列继承 L1（租户改不了它）
@@ -346,7 +358,7 @@ describePg('指标路由（需要 DATABASE_URL：词表读写）', () => {
     // L1 行安然无恙（没被改名也没被删）
     const all = await (await app(ORG, ['data:manage']).request('/metrics/all')).json()
     expect(all.metrics.find((m: { id: string }) => m.id === L1_SALES.id)).toMatchObject({
-      title: '净销售额', source: 'l1',
+      title: '净销售额·t6test', source: 'l1',
     })
   })
 
@@ -943,7 +955,8 @@ describePg('指标路由（需要 DATABASE_URL：词表读写）', () => {
 
   it('W8 新建声明：撞 L1 id ⇒ 409；重复建 ⇒ 409；坏声明 ⇒ 400 带 issues', async () => {
     expect((await createDeclaration({ declaration: tenantDecl({ name: L1_SALES.id }) })).status).toBe(409)
-    expect((await createDeclaration({ declaration: tenantDecl({ name: 'tenant:retail:dup' }) })).status).toBe(201)
+    // label 错开：上一条用例已建同 label 的声明行（title=label），047 同名互斥后同 org 同 label 会顶掉
+    expect((await createDeclaration({ declaration: tenantDecl({ name: 'tenant:retail:dup', label: '本租户销售额·dup' }) })).status).toBe(201)
     expect((await createDeclaration({ declaration: tenantDecl({ name: 'tenant:retail:dup' }) })).status).toBe(409)
     const noReads = await createDeclaration({ declaration: tenantDecl({ name: 'tenant:retail:noreads', reads: undefined }) })
     expect(noReads.status).toBe(400)
@@ -1019,7 +1032,9 @@ describePg('指标路由（需要 DATABASE_URL：词表读写）', () => {
 
     // 已存在的 declared 行：PUT /metrics/:id（L2 结构化编辑）⇒ 409
     const declId = 'tenant:retail:edit_guard'
-    expect((await createDeclaration({ declaration: tenantDecl({ name: declId }) })).status).toBe(201)
+    // label 同理错开（前面用例已占「本租户销售额」这个 title）
+    const editGuardDecl = tenantDecl({ name: declId, label: '本租户销售额·edit_guard' })
+    expect((await createDeclaration({ declaration: editGuardDecl })).status).toBe(201)
     const put = await app(ORG, ['data:manage']).request(`/metrics/${declId}`, {
       method: 'PUT', headers: { 'content-type': 'application/json' },
       body: JSON.stringify({ ...l2Body(), id: declId }),

@@ -18,7 +18,7 @@ const METRIC_ITEM = 'rc:item_net_sales'
 const PERIOD: PeriodSpec = { mode: 'custom', from: '2026-10-01', to: '2026-10-19' }
 
 const metric: L1MetricDef = {
-  id: METRIC, title: '净销售额', description: '根因测试夹具',
+  id: METRIC, title: '净销售额·根因', description: '根因测试夹具',
   requiredScope: null, subjectColumn: 'org',
   selectSql: 'select sum(fct_retail_sale.net_amount) as value, branch_num, bizday from fct_retail_sale',
   groupBy: 'branch_num, bizday',

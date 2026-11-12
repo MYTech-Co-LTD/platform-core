@@ -44,6 +44,8 @@ const PANEL_METRIC: L1MetricDef = {
 const PANELS: L1MetricDef[] = ['a', 'b', 'c'].map((s) => ({
   ...PANEL_METRIC,
   id: `${L1_PREFIX}panel_${s}`,
+  // title 随 id 错开：047 部门内同名互斥后，平台桶里同 title 的夹具行会互相顶掉。
+  title: `面板营收·${s}`,
   selectSql: `select org, day, sum(t6q_fct.panel_${s}) as value from t6q_fct`,
 }))
 
@@ -82,6 +84,7 @@ const SLICING_RATIO = {
 const SLICING_TOTALABLE: L1MetricDef = {
   ...PANEL_METRIC,
   id: `${L1_PREFIX}slicing_totalable`,
+  title: `面板营收·totalable`,
   selectSql: 'select org, bizday, sum(t6q_fct.day_amount) as value from t6q_fct',
   groupBy: 'bizday',
   totalable: true,

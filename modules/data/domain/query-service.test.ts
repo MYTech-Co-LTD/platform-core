@@ -307,7 +307,7 @@ describePg('runQuery（需要 DATABASE_URL）', () => {
         `insert into qp3_total_face values
            ('org_a','2026-10-08',100),('org_a','2026-10-09',47.5),('org_b','2026-10-08',999)`)
       await upsertMetric(pool, ORG, {
-        ...METRIC, id: 'sales_total_fixture',
+        ...METRIC, id: 'sales_total_fixture', title: '销售日明细·total_face',
         // 照真实 L1 形态（buildSelectSql：`select <聚合 expr> as value, <grain> from <rel>`）：
         // 内层 GROUP BY 要求 value 是聚合列——裸列会被 Postgres 拒（上面实测过）。
         selectSql: 'SELECT sum(v) AS value, org, bizday FROM qp3_total_face',
@@ -334,7 +334,7 @@ describePg('runQuery（需要 DATABASE_URL）', () => {
     // L1 夹具（totalable 只有 L1 物化路径带值）；id 带本文件专用前缀，afterAll 按前缀清理
     // 平台桶（理由同 metric-store.test.ts 的 L1_ID_PREFIX：不带前缀会被 sync --check 读成删除漂移）。
     await upsertL1Metric(pool, {
-      ...METRIC, id: L1_TOTAL_PREFIX + 'auto',
+      ...METRIC, id: L1_TOTAL_PREFIX + 'auto', title: '销售日明细·total_auto',
       selectSql: 'SELECT sum(v) AS value, org, bizday FROM qp3_total_auto',
       groupBy: 'org, bizday',
       sourceSystem: 'lemeng', totalable: true, slaDays: 1, freshnessRelations: [], masks: null,
@@ -386,7 +386,7 @@ describePg('runQuery（需要 DATABASE_URL）', () => {
         `insert into qp3_total_auto values
            ('org_a','2026-10-08',100),('org_a','2026-10-09',47.5),('org_b','2026-10-08',999)`)
       await upsertL1Metric(pool, {
-        ...METRIC, id: L1_TOTAL_PREFIX + 'sem',
+        ...METRIC, id: L1_TOTAL_PREFIX + 'sem', title: '销售日明细·total_sem',
         selectSql: 'SELECT sum(v) AS value, org, bizday FROM qp3_total_auto',
         groupBy: 'org, bizday',
         sourceSystem: 'lemeng', totalable: true, slaDays: 1, freshnessRelations: [], masks: null,
@@ -634,7 +634,7 @@ describePg('runQuery —— freshness_line（spec §10.7，需要 DATABASE_URL�
   /** L1 夹具（带新鲜度链路；id 走本文件既有平台桶前缀，afterAll 按前缀清）。 */
   const seedFreshMetric = async (over: { slaDays?: number | null; relations?: string[] } = {}) => {
     await upsertL1Metric(pool, {
-      ...METRIC, id: `${L1_TOTAL_PREFIX}fresh`, groupBy: 'bizday',
+      ...METRIC, id: `${L1_TOTAL_PREFIX}fresh`, title: '销售日明细·fresh', groupBy: 'bizday',
       selectSql: 'SELECT sum(v) AS value, bizday FROM qp3_fresh_face',
       sourceSystem: 'lemeng', totalable: false,
       slaDays: over.slaDays ?? 1,

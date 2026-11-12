@@ -30,6 +30,9 @@ const L1_FIXTURE = {
   masks: null,
 }
 const DECL_ADOPT = { baseMetric: L1_ID, op: { kind: 'refine' }, alias: '我的销售' }
+// 删档用例单用一份声明（别名错开）：047 部门内同名互斥后，x:adopt_me 与 x:del_me 两个 id
+// 共用「我的销售」会在同 org 同桶撞 metrics_title_per_dept_uq（这正是 P1 要的行为）。
+const DECL_DEL = { baseMetric: L1_ID, op: { kind: 'refine' }, alias: '我的销售·删档' }
 
 /** 身份夹具（同 metric-write.test.ts 形状）：pat 通道带 keyId，审计身份三件套非空。 */
 const REQ: Requester = {
@@ -165,7 +168,7 @@ describePg('adoptChange / rejectChange', () => {
   })
 
   it('delete 档采纳：唯一编译点删除 L2 行，单据 adopted 留凭据', async () => {
-    const mk = await submitChange(pool, ORG, { userId: 'a', channel: 'pat' }, 'x:del_me', 'create', DECL_ADOPT)
+    const mk = await submitChange(pool, ORG, { userId: 'a', channel: 'pat' }, 'x:del_me', 'create', DECL_DEL)
     if (!mk.ok) throw new Error('unreachable')
     await markReady(mk.change.id)
     expect((await adoptChange(writeDeps(pool), ORG, mk.change.id)).ok).toBe(true)
