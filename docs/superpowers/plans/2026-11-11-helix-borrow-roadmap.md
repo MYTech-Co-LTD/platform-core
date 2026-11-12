@@ -6,6 +6,10 @@
 > v1（2026-11-11 上午）只按 Helix 借鉴清单排期；v2 基于**全系统四路盘点**
 > （数据面 / 应用权限 / 信任治理 / 运行观测）重排：**按「上线风险 × 不可逆性」排序**，
 > Helix 清单只是输入之一。
+>
+> ✅ **2026-11-12：Wave 0–3 主线全部收口。** §1 列的四个「以为有其实没有」都已修（连接池上限、
+> 缓存数据版本、数据范围绕过面、血缘/证据恒 unknown）。本文件转为**存量台账**：
+> 新工作按 §5 规则先改这里再动手；剩余的只有 §3 待办表里的「触发式」与「观察项」。
 
 ---
 
@@ -61,15 +65,18 @@
 | **Wave 2.1 第三批（列级非空面）** | PR #1999：契约 `nullable=false` ⇔ `schema.yml` 的 `not_null` 绑成门禁；补 36 个漏配（11 个已登记模型，5 列连列条目都补上）。补前先在生产取证：11 模型 × 窗口 `count(*) filter (where col is null)` 全 0。14 个整体未登记的 staging 模型**跳过而不假装覆盖** |
 | **Wave 2.1 第四批（schema.yml 全覆盖）** | PR #2002：16 个此前**整体未登记**的 staging 模型补 schema.yml，89 列 not_null（只写契约 nullable=false 的列，不复制契约描述）；补前逐模型生产取证 16 模型 89 列全 0。非空面门禁现在覆盖**全部 28 个** staging 模型，`missing: []` |
 | **cron 文档逐条核对** | PR #2004：按控制面导出 + `schedules/*.json` 核对，纠四处漂移——`lemeng-dbt-materialize` 文档当现役其实 **2026-11-07 已停用**（OOM），现役是 tick/hourly/tables/audit×2 分档；notify-reconcile 补实际 `7 * * * *`；维度面排班与 item_price 分钟按排班文件订正 |
+| **stg_forms_submission 粒度断言** | PR #2007：取证渠道补上——mytech 数据面（project `platform-core-data` 的 pg_duckdb）有该域，实测 `count(*) = count(distinct (org, submission_id)) = 1`（样本 1 行，头注如实记录；shanhai 无该域）。至此 **14/14** 个此前无测试的 staging 都有粒度断言 |
+| **OO 机 `/opt` 副本核对** | 2026-11-12 实测：`/opt/lemeng-oo-{notify-bridge,watchdog,config-audit}.sh` + `lemeng-emit-probe.py` 四个 sha256 与仓内**逐字节一致**（bridge `7a81135e…` / watchdog `bc36151a…` / audit `98074d99…` / probe `465fee98…`），当前无漂移、无需投递；SOP §E.5 的手工投递形态与版本握手仍然有效 |
+| **retention 处置（证据化关闭）** | 2026-11-12 实测 shanhai `notify` 表极小（inbox 4 / delivery 10 / event 6 / attempt 20），且 health 已改 7 天窗口（PR #1987）⇒ **当前不需要**。留作观察项：任一表破 10 万行或 health 因积压变红时再议（届时删行需点名） |
 
 ### 待办（Wave 见 §4）
 
 | 项 | 现状证据 | 波次 |
 |---|---|---|
-| Wave 2.1 余项：`stg_forms_submission` 粒度断言（本实例未物化 forms 域，无法取证） | 见 #1988/#1995 | 2.1 |
-| 列级血缘 | dbt core manifest 无列级边 | 2.4（触发式） |
-| notify **retention** 未部署（删行需点名）。**已不阻塞**：health 现在只看近 7 天（PR #1987），历史 dead 不会再把健康面按红 | 用户裁决暂不加；真要清理历史行时再单独决定 | 2.3 残项（低） |
-| Wave 3 余项：data-plane 多机副本（OO 机 `/opt`）靠手工投递（SOP §E.5，有版本握手兜底） | cron 文档已于 2026-11-12 逐条核对（PR #2004） | 3（低） |
+| 列级血缘 | dbt core manifest 无列级边（dbt core 不产出列级 edge） | 2.4（**触发式**：等真的有「按列追影响」的需求再做） |
+| retention（可选） | 当前各表极小、health 已按 7 天窗口判；破 10 万行或积压变红时再议（删行需点名） | 观察项（无动作） |
+
+> **Wave 0–3 主线已全部收口（2026-11-12）**：待办表只剩一个「触发式」与一个「观察项」。
 
 ---
 
@@ -127,3 +134,4 @@
 | 2026-11-12 | Wave 2.1 第三批：契约 nullable=false ⇔ not_null 门禁 + 补 36 列 | PR #1999；补前生产取证全 0 |
 | 2026-11-12 | Wave 2.1 第四批：16 个 staging 补 schema.yml（89 列），非空面覆盖 28/28 | PR #2002；16 模型 89 列取证全 0 |
 | 2026-11-12 | cron 文档逐条核对完成 | PR #2004；四处漂移（含停用作业被当现役） |
+| 2026-11-12 | **Wave 0–3 主线全部收口**；最后三项（forms 断言 / OO 副本核对 / retention 证据化关闭）入账 | PR #2007 + 控制面实测（OO 四脚本 sha256 一致；notify 表 4/10/6/20 行） |
