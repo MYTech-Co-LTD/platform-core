@@ -55,7 +55,7 @@
 // 本文件保留旧公开名（`maskSqlComments` / `extractPipelineAliases` / `extractStagingAliases` /
 // `INJECTED_STAGING_COLUMNS`）原样 re-export，故既有测试与调用方一字不改。
 
-import { existsSync, readFileSync } from 'node:fs'
+import { existsSync, readdirSync, readFileSync } from 'node:fs'
 import { join, relative, sep } from 'node:path'
 
 import {
@@ -72,6 +72,7 @@ import {
   readContractDoc,
 } from './lib/data-contract.mjs'
 import { validate as validateJsonSchema } from './lib/json-schema-lite.mjs'
+import { parse as parseYaml } from 'yaml'
 
 /** 脚本名（输出前缀）。 */
 export const SCRIPT_NAME = 'check-data-contract'
@@ -110,6 +111,54 @@ function loadMetaSchema(rootDir) {
   } catch (e) {
     return { __loadError: e instanceof Error ? e.message : String(e) }
   }
+}
+
+/**
+ * 列级非空面的索引：`staging/<域>/schema.yml` 里每个模型**带 `not_null` 测试**的列集合。
+ *
+ * 为什么把「契约 nullable=false」和「schema.yml 的 not_null」绑起来：空值性是契约声明的性质，
+ * 但真正会跑的是 dbt 的 not_null test；契约写了、yml 没写 ⇒ **声明了却没人守**。
+ * 只对**已登记在某个 schema.yml 的模型**生效：另有 14 个 staging 模型整体尚未登记，
+ * 那是台账里记着的已知缺口（本函数不假装覆盖，也不静默通过——跳过即跳过）。
+ *
+ * @param {string} rootDir
+ * @returns {Map<string, Set<string>>} 模型名 → 有 not_null 的列集合
+ */
+function loadNotNullIndex(rootDir) {
+  /** @type {Map<string, Set<string>>} */
+  const out = new Map()
+  /** @param {string} dir */
+  const walk = (dir) => {
+    /** @type {import('node:fs').Dirent[]} */
+    let entries
+    try {
+      entries = readdirSync(dir, { withFileTypes: true })
+    } catch {
+      return
+    }
+    for (const ent of entries) {
+      const p = join(dir, ent.name)
+      if (ent.isDirectory()) { walk(p); continue }
+      if (ent.name !== 'schema.yml') continue
+      /** @type {any} */
+      let doc
+      try { doc = parseYaml(readFileSync(p, 'utf8')) } catch { continue }
+      for (const m of doc?.models ?? []) {
+        const name = String(m?.name ?? '')
+        if (name === '') continue
+        const set = out.get(name) ?? new Set()
+        for (const c of m?.columns ?? []) {
+          const tests = Array.isArray(c?.tests) ? c.tests : []
+          const has = tests.some((/** @type {any} */ t) =>
+            t === 'not_null' || (t !== null && typeof t === 'object' && 'not_null' in t))
+          if (has) set.add(String(c?.name ?? ''))
+        }
+        out.set(name, set)
+      }
+    }
+  }
+  walk(join(rootDir, 'dbt/models'))
+  return out
 }
 
 /** 维度面的湖前缀是 `dim_` 段（契约 README §4.2 ② 的已知例外；lemma 见 lemeng 采集设计 §5）。 */
@@ -215,6 +264,7 @@ export function checkDataContract(rootDir) {
   )
 
   const meta = loadMetaSchema(rootDir)
+  const notNullIndex = loadNotNullIndex(rootDir)
 
   for (const rel of contractFiles) {
     const c = readContractDoc(rootDir, rel)
@@ -229,6 +279,19 @@ export function checkDataContract(rootDir) {
     // 跨字段约束六条（contracts/README §4.2）。元 schema 是单文档内约束、表达不了跨字段引用，
     // README §4.3 明写「校验器不存在」——这里补上的就是那个位置。
     for (const message of crossFieldViolations(c)) violations.push({ file: rel, message })
+
+    // 列级非空面：契约 nullable=false 的列，其 staging 模型在 schema.yml 里必须有 not_null test。
+    const notNull = notNullIndex.get(`stg_${c.domain}_${c.table}`)
+    if (notNull !== undefined) {
+      for (const col of c.columns) {
+        if (col.nullable === false && !notNull.has(col.name)) {
+          violations.push({
+            file: rel,
+            message: `列 \`${col.name}\` 契约声明 nullable=false，但 \`stg_${c.domain}_${c.table}\` 的 schema.yml 里没有 not_null 测试——声明了却没人守`,
+          })
+        }
+      }
+    }
 
     // 元 schema（单文档内约束）：必填 / 未知字段 / 类型 / 枚举 / 常量 / 形态。
     if (meta.__loadError !== undefined) {

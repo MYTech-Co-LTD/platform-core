@@ -35,6 +35,8 @@ models:
       - name: system_book
         description: '账套（3120 熊喵 / 64188 品品甜）。**hive 分区键**：路径 `system_book=<账套>/` 推断，湖里被自动转成 BIGINT，本层 `::varchar` 定型回契约类型。'
       # ── dbt 注入的主体列（非契约列；行级授权谓词 WHERE org = … 的着力点）────────────────
+        tests:
+          - not_null
       - name: org
         description: '主体列 = 该部署租户的 casdoor_org（经 env `LEMENG_SUBJECT_ORG` 注入，值不落仓）。**不是契约列**：契约只有 24 列（v2），本列由 dbt 层加（dbt/macros/subject_org.sql）。'
         tests:
@@ -43,9 +45,13 @@ models:
                 where: "bizday < CAST(now() AT TIME ZONE 'Asia/Shanghai' AS DATE)"
       - name: bizday
         description: '营业日（**hive 分区键**，路径 `bizday=<日期>/` 推断为 DATE；管线侧由 shift_table_bizday 定型）。'
+        tests:
+          - not_null
       - name: hour
         description: '成交时间所在小时 0-23（**hive 分区键**，路径 `hour=<时>/` 推断；零填充目录读回 VARCHAR、无前导零目录读回 BIGINT ⇒ 本层 `::int` 统一）。'
       # ── 自然键两列（行粒度）──────────────────────────────────────────────────────────
+        tests:
+          - not_null
       - name: order_no
         description: '订单号。**自然键之一**（行粒度键 = order_no × order_detail_num）。'
         tests:
@@ -61,8 +67,12 @@ models:
       # ── 其余列（一对一透传，语义见契约；这里只登记形状，不做口径）────────────────────
       - name: batch_id
         description: '批次标记（采集 run id）。**载荷列**（`batch.unique=false`）：同窗重跑会换值，幂等靠对象覆盖写 —— 别拿它做去重或幂等判据。'
+        tests:
+          - not_null
       - name: branch_num
         description: '门店号（账套内编号）。'
+        tests:
+          - not_null
       - name: branch_name
         description: '门店名（契约里可空）。'
       - name: order_time
@@ -88,6 +98,8 @@ models:
         description: '订单来源（契约里可空）。'
       - name: item_num
         description: '商品号（账套内编号，varchar 防撑爆）。'
+        tests:
+          - not_null
       - name: item_code
         description: '上游订单 API 无此字段（PosOrderDetailAiVO/PosOrderAiVO 均无），恒空串；跨品牌归并键职责由 dim_item.item_code 承担（实测两账套 100% 有值），join 键 item_num。'
       - name: sale_money
@@ -125,9 +137,13 @@ models:
       # ── 分区键两列 + 载荷列（由路径字符串重推断 + 显式 cast 定型）────────────
       - name: batch_id
         description: '批次标记（采集 run id）。**载荷列**（契约 `batch.unique=false`）：同快照重跑会换值，幂等靠对象覆盖写 —— 别拿它做去重或幂等判据（幂等由 singular test 断言）。'
+        tests:
+          - not_null
       - name: system_book
         description: '账套（3120 熊喵 / 64188 品品甜）。**hive 分区键**：路径 `system_book=<账套>/` 推断，湖里被自动转成 BIGINT，本层 `::varchar` 定型回契约类型。'
       # ── dbt 注入的主体列（非契约列；行级授权谓词 WHERE org = … 的着力点）────────────────
+        tests:
+          - not_null
       - name: org
         description: '主体列 = 该部署租户的 casdoor_org（经 env `LEMENG_SUBJECT_ORG` 注入，值不落仓）。**不是契约列**：契约只有 16 列，本列由 dbt 层加（dbt/macros/subject_org.sql）。'
         tests:
@@ -135,6 +151,8 @@ models:
       - name: snapshot
         description: '快照日（Asia/Shanghai 日历日）。**hive 分区键**：路径 `snapshot=<YYYY-MM-DD>/` 推断，本层 `::date` 定型。'
       # ── 自然键一列（全量快照的行粒度键 = 账套 × 快照日 × 门店号）─────────────
+        tests:
+          - not_null
       - name: branch_num
         description: '门店号（账套内编号）。**自然键之一**（自然键 = system_book × snapshot × branch_num：全量快照下一行一店）。'
         tests:
@@ -167,9 +185,13 @@ models:
       # ── 注入 3 列：分区键两列（显式 cast 定型）+ 载荷列 ──────────────────────
       - name: batch_id
         description: '批次标记（采集 run id）。**载荷列**（契约 `batch.unique=false`）：同快照重跑会换值，幂等靠对象覆盖写 —— 别拿它做去重或幂等判据（幂等由 singular test 断言）。'
+        tests:
+          - not_null
       - name: system_book
         description: '账套（3120 熊喵 / 64188 品品甜）。**hive 分区键**：路径 `system_book=<账套>/` 推断，湖里被自动转成 BIGINT，本层 `::varchar` 定型回契约类型。'
       # ── dbt 注入的主体列（非契约列；行级授权谓词 WHERE org = … 的着力点）────────────────
+        tests:
+          - not_null
       - name: org
         description: '主体列 = 该部署租户的 casdoor_org（经 env `LEMENG_SUBJECT_ORG` 注入，值不落仓）。**不是契约列**：契约只有 108 列，本列由 dbt 层加（dbt/macros/subject_org.sql）。'
         tests:
@@ -177,6 +199,8 @@ models:
       - name: snapshot
         description: '快照日（Asia/Shanghai 日历日）。**hive 分区键**：路径 `snapshot=<YYYY-MM-DD>/` 推断，本层 `::date` 定型。'
       # ── 自然键列（全量快照的行粒度键 = 账套 × 快照日 × 商品号）───────────────
+        tests:
+          - not_null
       - name: item_num
         description: '商品号（账套内编号）。**自然键之一**（自然键 = system_book × snapshot × item_num）。契约类型 `varchar`（外部系统编号，长度不受我们控制）；源 API 把该字段声明为 int，定型落在管线 `code.sql` 的逐列 cast，本层不重复 cast。'
         tests:
@@ -303,8 +327,12 @@ models:
     columns:
       - name: batch_id
         description: '批次标记（采集 run id）。**载荷列**（契约 `batch.unique=false`）：同快照重跑会换值，幂等靠对象覆盖写。'
+        tests:
+          - not_null
       - name: system_book
         description: '账套（3120 熊喵 / 64188 品品甜）。**hive 分区键**：路径推断，本层 `::varchar` 定型。'
+        tests:
+          - not_null
       - name: org
         description: '主体列（经 env `LEMENG_SUBJECT_ORG` 注入，值不落仓）。**不是契约列**。'
         tests:
@@ -327,6 +355,10 @@ models:
         description: '分级商品号；主商品行为 null（自然键含它：null 参与分组不误报）。'
       - name: regular_real_price
         description: '最终应用标准售价（ticket 金额依据的源列）。可空/0 = 源侧未单独设置（全量实测 1.07%），发布面过滤。'
+      - name: bizday
+        description: '业务日（hive 分区键）。契约 nullable=false。'
+        tests:
+          - not_null
 
   - name: stg_lemeng_transfer_out
     description: >-
@@ -338,14 +370,20 @@ models:
     columns:
       - name: batch_id
         description: '批次标记（采集 run id）。载荷列。'
+        tests:
+          - not_null
       - name: system_book
         description: '账套（采集范围=3120）。hive 分区键。'
+        tests:
+          - not_null
       - name: org
         description: '主体列（env `LEMENG_SUBJECT_ORG` 注入）。不是契约列。'
         tests:
           - not_null
       - name: bizday
         description: '单据制单日。hive 分区键。'
+        tests:
+          - not_null
       - name: branch_num
         description: '收货门店编号。自然键之一 + 发布 join 键。'
         tests:
@@ -376,14 +414,20 @@ models:
     columns:
       - name: batch_id
         description: '批次标记（采集 run id）。载荷列。'
+        tests:
+          - not_null
       - name: system_book
         description: '账套（采集范围=3120）。hive 分区键。'
+        tests:
+          - not_null
       - name: org
         description: '主体列（env `LEMENG_SUBJECT_ORG` 注入）。不是契约列。'
         tests:
           - not_null
       - name: bizday
         description: '单据制单日。hive 分区键。'
+        tests:
+          - not_null
       - name: order_no
         description: '批发销售单号（WO…）。自然键之一。'
         tests:
@@ -414,14 +458,20 @@ models:
     columns:
       - name: batch_id
         description: '批次标记（采集 run id）。载荷列。'
+        tests:
+          - not_null
       - name: system_book
         description: '账套（采集范围=3120）。hive 分区键。'
+        tests:
+          - not_null
       - name: org
         description: '主体列（env `LEMENG_SUBJECT_ORG` 注入）。不是契约列。'
         tests:
           - not_null
       - name: bizday
         description: '单据制单日。hive 分区键。'
+        tests:
+          - not_null
       - name: wholesale_return_fid
         description: '退货单号。自然键之一。'
         tests:
@@ -457,12 +507,16 @@ models:
     columns:
       - name: system_book
         description: 账套。hive 分区键。
+        tests:
+          - not_null
       - name: org
         description: 主体列。
         tests:
           - not_null
       - name: bizday
         description: 制单/快照日。hive 分区键。
+        tests:
+          - not_null
       - name: order_no
         description: 自然键之一。
         tests:
@@ -473,6 +527,10 @@ models:
           - not_null
       - name: item_num
         description: 自然键之一。
+        tests:
+          - not_null
+      - name: batch_id
+        description: '批次标记（采集 run id）。载荷列；契约 nullable=false。'
         tests:
           - not_null
 
@@ -482,12 +540,16 @@ models:
     columns:
       - name: system_book
         description: 账套。hive 分区键。
+        tests:
+          - not_null
       - name: org
         description: 主体列。
         tests:
           - not_null
       - name: bizday
         description: 制单/快照日。hive 分区键。
+        tests:
+          - not_null
       - name: order_no
         description: 自然键之一。
         tests:
@@ -500,6 +562,10 @@ models:
         description: 自然键之一。
         tests:
           - not_null
+      - name: batch_id
+        description: '批次标记（采集 run id）。载荷列；契约 nullable=false。'
+        tests:
+          - not_null
 
   - name: stg_lemeng_inventory_snapshot
     description: >-
@@ -507,12 +573,16 @@ models:
     columns:
       - name: system_book
         description: 账套。hive 分区键。
+        tests:
+          - not_null
       - name: org
         description: 主体列。
         tests:
           - not_null
       - name: bizday
         description: 制单/快照日。hive 分区键。
+        tests:
+          - not_null
       - name: branch_num
         description: 自然键之一。
         tests:
@@ -525,6 +595,10 @@ models:
         description: 自然键之一。
         tests:
           - not_null
+      - name: batch_id
+        description: '批次标记（采集 run id）。载荷列；契约 nullable=false。'
+        tests:
+          - not_null
 
   - name: stg_lemeng_item_purchase
     description: >-
@@ -533,18 +607,26 @@ models:
     columns:
       - name: system_book
         description: 账套。hive 分区键。
+        tests:
+          - not_null
       - name: org
         description: 主体列。
         tests:
           - not_null
       - name: bizday
         description: 采购审核日（取请求参数）。hive 分区键。
+        tests:
+          - not_null
       - name: supplier_num
         description: 自然键之一（供应商）。
         tests:
           - not_null
       - name: item_num
         description: 自然键之一（商品）。
+        tests:
+          - not_null
+      - name: batch_id
+        description: '批次标记（采集 run id）。载荷列；契约 nullable=false。'
         tests:
           - not_null
 
