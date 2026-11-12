@@ -10,6 +10,7 @@ import type { L2Declaration } from './semantic-compiler'
 import type { MetricWriteDeps, MetricWriteOutcome, MetricMetaPatch } from './metric-write'
 import { writeL2Declaration, updateMetricMeta, deleteMetricDeclaration } from './metric-write'
 import { createOverrideDeclaration } from './tenant-declaration-write'
+import type { TenantDeclarationOutcome } from './tenant-declaration-write'
 import { loadPlatformCatalog } from './metric-store'
 import type { MetricOwnership } from './metric-store'
 import { assertConcept, assertTitleFree, OwnershipError } from './metric-ownership'
@@ -210,8 +211,7 @@ export async function submitChange(
   // ① metricId 必须是现行 L1 id（404 fail-early；编译尺/grain 同形/scope 降档全在采纳期
   //    createOverrideDeclaration，透传成 400）；② 概念归属（payload 带 entity 才判，同
   //    create/update 档一把尺）；③ 部门内同名互斥——覆盖行的 title 就是 entry.label
-  //    （compileTenantDeclaration：label 空 ⇒ 回落 name），落在租户桶、owner_dept 缺省 null，
-  //    故桶取 payload.ownerDept（缺席 = null 桶，与 assertTitleFree 的 coalesce 判据同构）。
+  //    （compileTenantDeclaration：label 空 ⇒ 回落 name），桶恒 null（fix2 裁定，见下方注释）。
   if (kind === 'override') {
     const parsed = OverridePayload.safeParse(payload)
     if (!parsed.success || parsed.data.name !== metricId) {
@@ -229,9 +229,13 @@ export async function submitChange(
     }
     const label = p.label.trim()
     const title = label !== '' ? label : metricId
-    const dept = typeof p.ownerDept === 'string' && p.ownerDept !== '' ? p.ownerDept : null
+    // 同名判据桶**恒 null**（P1 Task 7 fix2 裁定）：覆盖行经 insertTenantDeclaration 落库时
+    // owner_dept 恒为 null（列清单不含它）——判据桶必须与落库桶**同构**，否则 payload 带
+    // ownerDept 时就是「判据查 A 桶、行落 null 桶」的假拒/假放。把 owner_dept 管道接进
+    // insertTenantDeclaration 是 P2 可见性波的活；在那之前 payload.ownerDept 不作桶参数
+    //（概念归属 assertConcept 照旧按 payload.entity 判）。
     try {
-      await assertTitleFree(pool, org, dept, title)
+      await assertTitleFree(pool, org, null, title)
     } catch (e) {
       if (e instanceof OwnershipError) return { ok: false, http: 409, error: 'TITLE_EXISTS_IN_DEPT' }
       throw e
@@ -397,10 +401,24 @@ export async function adoptChange(deps: MetricWriteDeps, org: string, id: number
       // EXPLAIN；缺省跳过，与 routes/metrics.ts 的 override 端点同款布线）。
       // 采纳 = 在租户桶立**草稿**覆盖行（certified='draft'）；确认启用仍走既有 W8 confirm 流
       // （POST /metrics/:id/override/confirm）——生效时点不变，采纳只是把提案落成草稿。
-      const o = await createOverrideDeclaration(
-        { pool: deps.pool, ...(deps.warehouse === undefined ? {} : { warehouse: deps.warehouse }) },
-        org, deps.requester, cur.metricId, cur.payload,
-      )
+      let o: TenantDeclarationOutcome
+      try {
+        o = await createOverrideDeclaration(
+          { pool: deps.pool, ...(deps.warehouse === undefined ? {} : { warehouse: deps.warehouse }) },
+          org, deps.requester, cur.metricId, cur.payload,
+        )
+      } catch (e) {
+        // 与 create/update 支同款映射（Task 4 引入，fix2 补齐 override 支）：submit→adopt 的
+        // 窗口被并发占名 ⇒ insertTenantDeclaration 撞 metrics_title_per_dept_uq 的 23505
+        //（on conflict (org, id) 只吸收 id 冲突，title 唯一索引会真抛出来）。映射 409
+        // TITLE_EXISTS_IN_DEPT（与提交期同名判据同码同义），别裸 500。只捕 23505，其余照抛：
+        // (org,id) 主键冲突已被 on conflict do nothing 吃掉（返回 false ⇒ 409 OVERRIDE_EXISTS），
+        // 能到这里的 23505 实际只有 title 唯一索引一条路。
+        if ((e as { code?: string }).code === '23505') {
+          return { ok: false, http: 409, error: 'TITLE_EXISTS_IN_DEPT' }
+        }
+        throw e
+      }
       out = o.ok ? { ok: true } : o
     } else {
       // kind = 'delete'
