@@ -203,13 +203,6 @@ export default function ScopesPage() {
 
   return (
     <Space orientation="vertical" size={16} style={{ width: '100%' }}>
-      <div>
-        <Typography.Title level={4} style={{ margin: 0 }}>数据范围</Typography.Title>
-        <Typography.Text type="secondary" style={{ display: 'block', marginTop: 4 }}>
-          决定「谁能看哪些品牌/门店/品类」。两步：先建范围（勾数据），再分配到角色或人；
-          没被任何范围覆盖的用户在报表里看到的是空数据（fail-closed，不是出错）。
-        </Typography.Text>
-      </div>
       <Card
         title="范围清单"
         extra={<Space><Button onClick={() => void openAudit()}>变更历史</Button><Button type="primary" onClick={openCreate}>新建范围</Button></Space>}

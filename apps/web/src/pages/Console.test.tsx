@@ -282,7 +282,9 @@ describe('Console 壳（菜单聚合 + 权限门禁）', () => {
     renderApp()
 
     expect(await screen.findByText('概览')).toBeInTheDocument()
-    expect(screen.getByRole('button', { name: '退出登录' })).toBeInTheDocument()
+    // 退出登录已收进头像下拉（#1953 三期）：先点头像，菜单项才出现在 DOM
+    fireEvent.click(screen.getByText('Alice 陈'))
+    expect(await screen.findByText('退出登录')).toBeInTheDocument()
     // 概览页（index 路由）= 工作台（issue #36）：欢迎卡（租户/用户）+ 空模块态
     expect(await screen.findByText(/租户 acme/)).toBeInTheDocument()
     expect(screen.getAllByText(/Alice 陈/).length).toBeGreaterThan(0)
@@ -536,7 +538,8 @@ describe('Console 壳（菜单聚合 + 权限门禁）', () => {
     })
 
     renderApp()
-    fireEvent.click(await screen.findByRole('button', { name: '退出登录' }))
+    fireEvent.click(await screen.findByText('Alice 陈'))
+    fireEvent.click(await screen.findByText('退出登录'))
 
     // 等 logout 调用落trace（getSession → logout 是两次异步接力）
     await waitFor(() => {

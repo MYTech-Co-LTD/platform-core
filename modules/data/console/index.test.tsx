@@ -106,8 +106,7 @@ describe('数据模块 console 入口（URL 选页）', () => {
       return json({})
     })
     render(<RouterProvider router={router} />)
-    // 页签 + 页内标题都会出现「数据范围」（#1953 页面标题收口），故取全量
-    expect(screen.getAllByText('数据范围').length).toBeGreaterThan(0)
+    // 页面标题由宿主统一渲染（#1953 三期：模块不再自画标题），模块测试只断言内容
     await waitFor(() => expect(screen.getByText('有效范围预览（谁看得见什么）')).toBeTruthy())
     expect(router.state.location.pathname).toBe('/console/data/scopes')
   })

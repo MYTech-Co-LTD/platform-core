@@ -162,8 +162,8 @@ export function buildConsoleMenu(
   const rest = entries.filter((e) => !PINNED_MODULE_IDS.includes(e.moduleId))
   const items: MenuDataItem[] = [
     { path: '/console', name: '概览', icon: iconMap['DashboardOutlined'] },
-    // 个人 Key（issue #894）：**免闸门**——与「概览」同档（任何登录账号都该能管自己的 token）
-    { path: '/console/me/keys', name: '个人 Key', icon: iconMap['KeyOutlined'] },
+    // 个人 Key 不在侧栏（#1953 三期）：它是**账号设置**不是业务功能，已移到头像下拉菜单。
+    // 路由 /console/me/keys 不变（免闸门，任何登录账号都能管自己的 token）。
     // 模块没声明图标时回落到通用图标：否则折叠侧栏只显示标题首字（768px 实测）
     ...entriesToMenuItems([...pinned, ...rest], iconMap),
   ]

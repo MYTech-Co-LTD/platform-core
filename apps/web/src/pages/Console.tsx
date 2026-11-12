@@ -32,6 +32,7 @@ import {
   Button,
   Card,
   ConfigProvider,
+  Dropdown,
   Result,
   Spin,
   Typography,
@@ -39,6 +40,7 @@ import {
 } from 'antd'
 import { useIsMobile } from '../lib/useIsMobile'
 import { consoleRegistry, storageDeclarers } from '../console-registry.gen'
+import { ConsolePage } from '../components/ConsolePage'
 import { buildConsoleMenu, visibleAdminEntries, visibleConsoleEntries } from './console-menu'
 import {
   ApiError,
@@ -281,6 +283,7 @@ function ConsoleLayout({
     }
   }
 
+  const navigate = useNavigate()
   if (isMobile && !forceDesktop) {
     return <MobileConfigNotice branding={branding} dark={dark} onToggleDark={onToggleDark} />
   }
@@ -300,6 +303,28 @@ function ConsoleLayout({
         icon: <Avatar icon={<UserOutlined />} />,
         size: 'small',
         style: { marginLeft: 8 },
+        // 个人设置归到这里（#1953 三期）：侧栏只放「工作」，账号级的东西（API Key、退出）
+        // 放头像菜单——这是 b 端后台的通行位置，也避免「个人 Key」在业务菜单里冒充业务功能。
+        render: (_props, dom) => (
+          <Dropdown
+            menu={{
+              items: [
+                { key: 'identity', label: <Typography.Text type="secondary">{session.user.name} · {session.org}</Typography.Text>, disabled: true },
+                { type: 'divider' },
+                { key: 'keys', label: '我的 API Key' },
+                { type: 'divider' },
+                { key: 'logout', label: loggingOut ? '正在退出…' : '退出登录', danger: true },
+              ],
+              onClick: ({ key }: { key: string }) => {
+                if (key === 'keys') navigate('/console/me/keys')
+                if (key === 'logout' && !loggingOut) void onLogout()
+              },
+            }}
+            trigger={['click']}
+          >
+            {dom}
+          </Dropdown>
+        ),
       }}
       actionsRender={() => [
         <Button
@@ -309,9 +334,6 @@ function ConsoleLayout({
           icon={dark ? <SunOutlined /> : <MoonOutlined />}
           onClick={onToggleDark}
         />,
-        <Button key="logout" size="small" loading={loggingOut} onClick={() => void onLogout()}>
-          退出登录
-        </Button>,
       ]}
     >
       <Outlet context={{ session, config, branding } satisfies ConsoleOutletContext} />
@@ -399,14 +421,18 @@ export function ConsoleModulePage() {
     return <Result status="403" title="无权访问" subTitle={`需要权限 ${entry.scope}`} />
   }
   return (
-    <Suspense
-      fallback={
-        <div style={{ padding: 96, textAlign: 'center' }}>
-          <Spin size="large" />
-        </div>
-      }
-    >
-      <Lazy />
-    </Suspense>
+    // 统一页头（#1953 三期）：模块页与管理页同一版式——标题 + 一句话说明由宿主按 manifest 渲染，
+    // 模块内部不再各画各的标题。页面级主操作仍由模块自己放在内容区（壳不猜模块的动作）。
+    <ConsolePage title={entry.title} description={entry.description}>
+      <Suspense
+        fallback={
+          <div style={{ padding: 96, textAlign: 'center' }}>
+            <Spin size="large" />
+          </div>
+        }
+      >
+        <Lazy />
+      </Suspense>
+    </ConsolePage>
   )
 }
