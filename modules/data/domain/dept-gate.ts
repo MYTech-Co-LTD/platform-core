@@ -41,6 +41,28 @@ export async function userDeptClosure(
 }
 
 /**
+ * 用户**直属**部门（不展开祖先）。与 `userDeptClosure` 的分工：
+ * - 范围挂「含下级部门」⇒ 用闭包（店 → 区 → 战区 都能命中上级范围）；
+ * - 范围挂「仅直属」⇒ 用本函数（战区范围只给挂在战区部门上的人，区/店不继承）。
+ *
+ * 为什么单独一条查询而不是从闭包反推：闭包是祖先集合，**丢失了「哪一个是本人部门」**的信息。
+ */
+export async function userDirectDepts(
+  pool: Pool, tenantId: number, userNames: string | readonly string[],
+): Promise<Set<string>> {
+  const names = typeof userNames === 'string' ? [userNames] : [...new Set(userNames)]
+  if (names.length === 0) return new Set()
+  const r = await pool.query(
+    `select distinct m.ext_id
+       from platform.v_org_membership m
+       join platform.v_org_node n on n.tenant_id = m.tenant_id and n.ext_id = m.ext_id and n.status = 1
+      where m.tenant_id = $1 and m.user_name = any($2::text[])`,
+    [tenantId, names],
+  )
+  return new Set((r.rows as Array<{ ext_id: string }>).map((x) => x.ext_id))
+}
+
+/**
  * 请求者 → org 表的候选用户键（顺序即查询顺序，去重）。
  * `accountName`（Casdoor name，账户统一设计的正式态身份）优先——org_membership 就是按它灌的；
  * 中间态 / 旧形状会话没有 `acct`，退回 `userId`（企微登录下两者同值）。

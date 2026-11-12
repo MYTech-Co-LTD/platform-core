@@ -83,6 +83,22 @@ describe('loadEffectiveScopes · 部门主体（2026-11-12）', () => {
     expect(assign?.params[3]).toEqual(expect.arrayContaining(['49', '57']))
   })
 
+  it('部门口径：含下级的按闭包匹配，仅直属的按直属部门匹配（两条 SQL 条件并存）', async () => {
+    const calls: Array<{ sql: string }> = []
+    const pool = {
+      query: async (sql: string) => {
+        calls.push({ sql })
+        if (sql.includes('v_org_membership') && sql.includes('distinct m.ext_id')) return { rows: [{ ext_id: '21' }] }
+        if (sql.includes('v_org_membership')) return { rows: [{ path: '19.20.21' }] }
+        return { rows: [] }
+      },
+    } as unknown as Pool
+    await loadEffectiveScopes(pool, 'org', requester({ tenantId: 7 }))
+    const assign = calls.find((c) => c.sql.includes('data.scope_assignment'))
+    expect(assign?.sql).toMatch(/include_children and a\.subject_id = any\(\$4/)
+    expect(assign?.sql).toMatch(/not a\.include_children and a\.subject_id = any\(\$5/)
+  })
+
   it('tenantId 缺失 ⇒ 不发部门查询（dept 主体不参与），并在 stderr 记一条 structured warn', async () => {
     const calls: string[] = []
     const pool = {
