@@ -103,6 +103,25 @@ describe('待核对页', () => {
     expect(screen.getByText('试算 3（1 行）')).toBeInTheDocument()
   })
 
+  it('坏 payload 不炸页（终审 Item 1）：ownerDept/entity 非 string 显 —，整页照常渲染', async () => {
+    // override payload 是 .passthrough()：MCP/PAT 提交面不收口形状，ownerDept 可以是任意 JSON。
+    // 对象/数组进 React 子位 = render 抛错 = 整张待核对列表卸载 ⇒ 一个坏工单瘫痪租户的采纳/驳回闭环。
+    const BAD = {
+      ...PENDING.changes[0]!, id: 12, metricId: 'x:bad_payload',
+      payload: { ...PENDING.changes[0]!.payload, ownerDept: { x: 1 }, entity: [1] },
+    }
+    m.mockImplementation(async (url: string | URL, init?: RequestInit) => {
+      const u = String(url)
+      if (u.includes('/metric-changes') && (init?.method ?? 'GET') === 'GET') return json({ changes: [BAD] })
+      return json({})
+    })
+    render(<ChangesPage />)
+    await waitFor(() => expect(screen.getByText(/x:bad_payload/)).toBeInTheDocument())
+    const detailText = [...document.querySelectorAll('details')].map((d) => d.textContent ?? '').join('\n')
+    expect(detailText).toContain('归属：—')
+    expect(detailText).toContain('概念：—')
+  })
+
   it('试算历史（P1 Task 5）：有 previewHistory 的行在展开层显「之前试过 N 次」，无历史行不显', async () => {
     const HIST_ROW = {
       ...PENDING.changes[0]!, id: 11, metricId: 'x:with_hist',

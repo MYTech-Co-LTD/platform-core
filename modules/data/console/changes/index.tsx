@@ -23,6 +23,11 @@ type Row = {
 }
 const KIND_LABEL: Record<Row['kind'], string> = { create: '新建指标', update: '修改口径', meta: '改标注', delete: '删除指标', override: '覆盖平台口径' }
 
+/** payload 顶层的 ownerDept/entity 走 override 的 .passthrough()（MCP/PAT 提交面不收口形状），
+ *  可能是任意 JSON；非 string 一律按「未声明」显 —。裸 as string 是撒谎的转型：对象进
+ *  React 子位 = render 抛错 = 整张待核对列表卸载（终审 Item 1）。 */
+const s = (x: unknown) => (typeof x === 'string' ? x : '—')
+
 export default function ChangesPage() {
   const [rows, setRows] = useState<Row[]>([])
   const [loading, setLoading] = useState(false)
@@ -132,7 +137,7 @@ export default function ChangesPage() {
                   <div>窗口：{r.preview?.window ? `${r.preview.window.from} ~ ${r.preview.window.to}` : '—'}</div>
                   {/* 归属随单可见（P1 Task 8a，spec §5.1 payload 顶层 ownerDept/entity）——
                       人话一行放在原始声明 dump 之上；缺席 = 未声明 → —，不编默认值 */}
-                  <div>归属：{(r.payload.ownerDept as string | undefined) ?? '—'}　概念：{(r.payload.entity as string | undefined) ?? '—'}</div>
+                  <div>归属：{s(r.payload.ownerDept)}　概念：{s(r.payload.entity)}</div>
                   <div>原始声明：{JSON.stringify(r.payload)}</div>
                   <div>快照：{JSON.stringify(r.preview)}</div>
                   {/* 试算历史（P1 Task 5）：被顶掉的旧快照，最新在前；只进展开层，默认层不加词 */}
