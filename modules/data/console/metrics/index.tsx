@@ -606,12 +606,17 @@ export default function MetricsPage() {
         { title: '口径', dataIndex: 'description', ellipsis: { showTitle: true }, render: (_: unknown, r: MetricRow) =>
             r.bizDescription ?? (r.description !== '' ? r.description : '未标注') },
         // 来源：L1 = 平台词表（只读，改它要改 dbt 声明）；L2 = 本租户派生（可改可删）
-        { title: '来源', dataIndex: 'source', width: 130, render: (v: string, r: MetricRow) =>
-            v === 'l1'
-              ? <Tag color="blue">平台（只读）</Tag>
-              : r.basis === 'declared'
-                ? <Tag color="purple">租户声明（全额）</Tag>
-                : <Tag color="green">本租户派生</Tag> },
+        // 来源：与成员页同一套「圆点 + 文字」——色块会把整列染花，数据行只该有一个视觉锚点
+        { title: '来源', dataIndex: 'source', width: 130, render: (v: string, r: MetricRow) => {
+            const label = v === 'l1' ? '平台（只读）' : r.basis === 'declared' ? '租户声明（全额）' : '本租户派生'
+            const color = v === 'l1' ? '#C9CDD4' : r.basis === 'declared' ? '#4D6BFE' : '#0FA958'
+            return (
+              <span style={{ display: 'inline-flex', alignItems: 'center', gap: 6, color: '#1B1C1E' }}>
+                <i style={{ width: 6, height: 6, borderRadius: '50%', background: color, display: 'inline-block' }} />
+                {label}
+              </span>
+            )
+        } },
         { title: '更新', key: 'updated', width: 180, render: (_: unknown, r: MetricRow) =>
             r.source === 'l1'
               ? <Typography.Text type="secondary">平台物化</Typography.Text>
