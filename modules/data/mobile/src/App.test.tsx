@@ -213,11 +213,9 @@ describe('表达式指标编辑器（expr，两操作数算式条）', () => {
     expect(body.draftSpec.op.expr.right).toEqual({ kind: 'num', value: 1 })
   })
 
-  it('新建流（admin）：填 id → 创建 → POST 载荷带 expr；数字项清空 ⇒ 创建按钮禁用（不发请求）', async () => {
-    const posts: string[] = []
+  it('★ admin 也没有手动新建指标入口：创建交给 agent，移动端只做确认与标注', async () => {
     globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
       const url = String(input)
-      if (init?.method === 'POST' && url.endsWith('/api/modules/data/metrics')) { posts.push(String(init.body)); return json(201, { ok: true }) }
       if (url.includes('/api/modules/data/reports') && (init?.method ?? 'GET') === 'GET') return json(200, { reports: [] })
       if (url.includes('/api/modules/data/metrics') && (init?.method ?? 'GET') === 'GET') {
         return json(200, { ...LIST, self: { userId: 'u-admin', scopes: ['data:query', 'data:manage'] } })
@@ -225,20 +223,13 @@ describe('表达式指标编辑器（expr，两操作数算式条）', () => {
       throw new Error(`no mock for ${init?.method ?? 'GET'} ${url}`)
     }) as unknown as typeof fetch
     render(<App initialTab="metricsManage" />)
-    fireEvent.click(await waitFor(() => screen.getByText('新建指标')))
-    fireEvent.change(await waitFor(() => screen.getByPlaceholderText('指标 id')), { target: { value: 'xiongmao:gross_margin' } })
-    // 先验禁用：数字项清空 ⇒ 不就绪，点「创建」不得发请求
-    fireEvent.change(screen.getByPlaceholderText('数字'), { target: { value: '' } })
-    fireEvent.click(screen.getByText('创建'))
-    await new Promise((r) => setTimeout(r, 50))
-    expect(posts.length).toBe(0)
-    // 填回数字 → 创建成功，POST 载荷逐字断言
-    fireEvent.change(screen.getByPlaceholderText('数字'), { target: { value: '2' } })
-    fireEvent.click(screen.getByText('创建'))
-    await waitFor(() => expect(posts.length).toBeGreaterThan(0))
-    const body = JSON.parse(posts[0]!) as { id: string; op: { kind: string; expr: { kind: string; right: { kind: string; value: number } } } }
-    expect(body.id).toBe('xiongmao:gross_margin')
-    expect(body.op.kind).toBe('expr')
-    expect(body.op.expr.right).toEqual({ kind: 'num', value: 2 })
+    await waitFor(() => expect(screen.getByText('净销售额')).toBeTruthy())
+
+    // 实现面：手机上手填 id + 写算式的入口必须不存在（admin 也不给）
+    expect(screen.queryByText('新建指标')).toBeNull()
+    // 页面要回答「指标从哪来」
+    expect(screen.getByText(/指标由 agent 创建/)).toBeTruthy()
+    // 决策面仍在：管理员可标记/撤回认证
+    expect(screen.getAllByText(/标记认证|撤回认证/).length).toBeGreaterThan(0)
   })
 })

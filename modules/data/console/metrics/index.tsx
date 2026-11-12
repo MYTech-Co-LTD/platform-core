@@ -99,10 +99,6 @@ interface Draft {
   filters: FilterDraft[]
 }
 
-const emptyDraft = (): Draft => ({
-  id: '', baseMetric: '', alias: '', restrictDims: false, dims: [], filters: [],
-})
-
 /** `group_by` 文本 → 维度名数组（服务端拼的就是 `a, b` 这一形态，两处口径必须一致）。 */
 const dimsOf = (row: MetricRow | undefined): string[] =>
   (row?.groupBy ?? '').split(',').map((d) => d.trim()).filter((d) => d !== '')
@@ -220,10 +216,6 @@ export default function MetricsPage() {
     catch (e) { messageApi.error(messageOf(e)) }
   }
 
-  function openCreate() {
-    setDraft({ ...emptyDraft(), baseMetric: l1Rows[0]?.id ?? '' })
-  }
-
   function openEdit(r: MetricRow) {
     // 从**库里那行**反推草稿：只能还原出编译产物能表达的部分（visibility 与 filters 已经
     // 烘进 select_sql，不再是结构化字段）⇒ 编辑时按「继承全部维度、无过滤」起步，
@@ -253,8 +245,9 @@ export default function MetricsPage() {
     if (filters.length > 0) body.filters = filters
 
     try {
-      const editing = rows.some((r) => r.id === body.id && r.source === 'l2')
-      await apiSend(editing ? `/metrics/${String(body.id)}` : '/metrics', editing ? 'PUT' : 'POST', body)
+      // 只改不改建（2026-11-12 定案：实现面收口给 agent）——表单只能打开既有 L2，
+      // id 输入框对既有行是 disabled。故这里恒 PUT；POST /metrics 仍存在，但只由 agent 走。
+      await apiSend(`/metrics/${String(body.id)}`, 'PUT', body)
       setDraft(null)
       await load()
     } catch (e) { messageApi.error(messageOf(e)) }
@@ -276,7 +269,7 @@ export default function MetricsPage() {
 
   // ── 移动布局（<768px）：表格在手机上不可用 ⇒ 卡片列表（信息与桌面列等价 + 「更多」动作菜单）。
   const emptyText = rows.length === 0
-    ? '还没有指标。平台指标随数据面接入自动出现；本租户可基于平台指标新建派生指标。'
+    ? '还没有指标。平台指标随数据面接入自动出现；本租户的新指标由 agent 创建。'
     : '没有匹配的指标，试试清空搜索或切换筛选'
 
   const confirmRemove = (r: MetricRow) => {
@@ -414,16 +407,12 @@ export default function MetricsPage() {
     <Space direction="vertical" style={{ width: '100%' }} size="middle">
       {ctx}
       <Space wrap>
-        <Button type="primary" onClick={() => openDeclaration('create', { id: '', title: '', description: '', expression: '', grain: [] })}>
-          新建声明（全额口径）
-        </Button>
-        <Button onClick={openCreate} disabled={l1Rows.length === 0}>新建派生指标</Button>
         <Button onClick={() => { if (usageDays === null) openUsage(30); else openUsage(usageDays) }}>
           使用统计
         </Button>
         <Typography.Text type="secondary">
-          全额声明与平台指标同表达力、<strong>即时生效</strong>；派生指标只能裁剪/别名/过滤平台指标。
-          改动平台口径用行内「覆盖口径」（草稿需确认）。
+          指标由 agent 创建：在企微里对机器人说要什么指标，或经 MCP 提交。
+          这里负责确认、标注与改口径——改动平台口径用行内「覆盖口径」（草稿需确认）。
         </Typography.Text>
       </Space>
 
@@ -458,7 +447,7 @@ export default function MetricsPage() {
       )}
 
       {draft !== null && (
-        <Card size="small" title={draft.id === '' ? '新建派生指标（L2）' : `编辑 ${draft.id}`}>
+        <Card size="small" title={`编辑 ${draft.id}`}>
           <Space direction="vertical" style={{ width: '100%' }} size="small">
             <Input placeholder="指标 id（如 xiongmao:net_sales）" value={draft.id} maxLength={64}
                    disabled={rows.some((r) => r.id === draft.id && r.source === 'l2')}
@@ -563,11 +552,7 @@ export default function MetricsPage() {
         dataSource={visibleRows}
         pagination={false}
         scroll={{ x: 1080 }}
-        locale={{
-          emptyText: rows.length === 0
-            ? '还没有指标。平台指标随数据面接入自动出现；本租户可基于平台指标新建派生指标。'
-            : '没有匹配的指标，试试清空搜索或切换筛选',
-        }}
+        locale={{ emptyText }}
         columns={[
         { title: 'id', dataIndex: 'id', width: 180, ellipsis: { showTitle: true } },
         { title: '标题', dataIndex: 'title', ellipsis: { showTitle: true } },

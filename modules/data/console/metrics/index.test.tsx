@@ -95,40 +95,38 @@ describe('指标管理页', () => {
     expect(screen.getByText('xiongmao:net_sales')).toBeInTheDocument()
   })
 
-  it('★ 提交的 body 是结构化 L2 声明：只含 baseMetric/op/别名/维度，**不含任何 SQL 字段**', async () => {
+  it('★ 编辑保存的 body 是结构化 L2 声明：只含 baseMetric/op/别名/维度，**不含任何 SQL 字段**', async () => {
     renderPage()
-    await waitFor(() => expect(screen.getByText('新建派生指标')).toBeInTheDocument())
-    fireEvent.click(screen.getByText('新建派生指标'))
+    await waitFor(() => expect(screen.getByText('xiongmao:net_sales')).toBeInTheDocument())
+    fireEvent.click(button('编辑'))
 
-    // 填 id 与别名（base 默认取第一条 L1）
-    fireEvent.change(screen.getByPlaceholderText('指标 id（如 xiongmao:net_sales）'), {
-      target: { value: 'xiongmao:gross' },
-    })
-    fireEvent.change(screen.getByPlaceholderText('别名（可选；不填则沿用平台指标的标题）'), {
-      target: { value: '熊喵毛利' },
-    })
+    const card = (await screen.findByText('编辑 xiongmao:net_sales')).closest('.ant-card') as HTMLElement
+    // 编辑态不预填基底（编译产物单向：select_sql 已烘进过滤与维度）⇒ 手动选一条 L1
+    fireEvent.mouseDown(within(card).getByRole('combobox'))
+    fireEvent.click(await screen.findByTitle('lemeng:retail:net_sales（净销售额）'))
 
-    // 打开维度裁剪并选一个维度：打开后组合框顺序 = [基准指标, 可见维度]
-    fireEvent.click(screen.getByRole('switch'))
-    await waitFor(() => expect(screen.getByText(/可见维度（不选/)).toBeInTheDocument())
-    const combos = screen.getAllByRole('combobox')
+    // 打开维度裁剪并选一个维度：组合框顺序 = [基准指标, 可见维度]
+    fireEvent.click(within(card).getByRole('switch'))
+    await waitFor(() => expect(within(card).getByText(/可见维度（不选/)).toBeInTheDocument())
+    const combos = within(card).getAllByRole('combobox')
     fireEvent.mouseDown(combos[combos.length - 1])
     fireEvent.click(await screen.findByTitle('system_book'))
 
     fireEvent.click(button('保存'))
 
     await waitFor(() => {
-      const post = calls.find((c) => c.method === 'POST')
-      expect(post, '没有发出 POST').toBeTruthy()
-      expect(post?.body).toMatchObject({
-        id: 'xiongmao:gross',
+      const put = calls.find((c) => c.method === 'PUT')
+      expect(put, '没有发出 PUT').toBeTruthy()
+      expect(put?.url).toContain('/metrics/xiongmao:net_sales')
+      expect(put?.body).toMatchObject({
+        id: 'xiongmao:net_sales',
         baseMetric: 'lemeng:retail:net_sales',
         op: { kind: 'refine' },
-        alias: '熊喵毛利',
+        alias: '熊喵净销售',
         visibility: { dims: ['system_book'] },
       })
       // ★ 关键断言：结构化声明里**没有**自由 SQL 面
-      const body = post?.body as Record<string, unknown>
+      const body = put?.body as Record<string, unknown>
       for (const forbidden of ['selectSql', 'subjectColumn', 'groupBy', 'source', 'params']) {
         expect(body[forbidden], `提交体里出现了 ${forbidden} ⇒ UI 又能写自由 SQL 了`).toBeUndefined()
       }
@@ -137,19 +135,23 @@ describe('指标管理页', () => {
 
   it('别名留空 ⇒ 不带 alias 字段（服务端沿用平台标题；空串会被 zod 的 min(1) 判成非法）', async () => {
     renderPage()
-    await waitFor(() => expect(screen.getByText('新建派生指标')).toBeInTheDocument())
-    fireEvent.click(screen.getByText('新建派生指标'))
-    fireEvent.change(screen.getByPlaceholderText('指标 id（如 xiongmao:net_sales）'), {
-      target: { value: 'xiongmao:plain' },
+    await waitFor(() => expect(screen.getByText('xiongmao:net_sales')).toBeInTheDocument())
+    fireEvent.click(button('编辑'))
+
+    const card = (await screen.findByText('编辑 xiongmao:net_sales')).closest('.ant-card') as HTMLElement
+    fireEvent.mouseDown(within(card).getByRole('combobox'))
+    fireEvent.click(await screen.findByTitle('lemeng:retail:net_sales（净销售额）'))
+    fireEvent.change(within(card).getByPlaceholderText('别名（可选；不填则沿用平台指标的标题）'), {
+      target: { value: '' },
     })
     fireEvent.click(button('保存'))
 
     await waitFor(() => {
-      const post = calls.find((c) => c.method === 'POST')
-      expect(post?.body).toMatchObject({ id: 'xiongmao:plain', baseMetric: 'lemeng:retail:net_sales' })
-      expect((post?.body as Record<string, unknown>).alias).toBeUndefined()
+      const put = calls.find((c) => c.method === 'PUT')
+      expect(put?.body).toMatchObject({ id: 'xiongmao:net_sales', baseMetric: 'lemeng:retail:net_sales' })
+      expect((put?.body as Record<string, unknown>).alias).toBeUndefined()
       // 未裁剪维度 ⇒ 不带 visibility（= 继承平台指标的全部维度，而不是「零维度」）
-      expect((post?.body as Record<string, unknown>).visibility).toBeUndefined()
+      expect((put?.body as Record<string, unknown>).visibility).toBeUndefined()
     })
   })
 
@@ -219,7 +221,7 @@ describe('指标管理页', () => {
   it('★ 空清单（UX）：给「指标从哪来」的说明，而不是裸「暂无数据」', async () => {
     m.mockImplementation(async () => json({ metrics: [] }))
     renderPage()
-    expect(await screen.findByText('还没有指标。平台指标随数据面接入自动出现；本租户可基于平台指标新建派生指标。'))
+    expect(await screen.findByText('还没有指标。平台指标随数据面接入自动出现；本租户的新指标由 agent 创建。'))
       .toBeInTheDocument()
   })
 
@@ -258,39 +260,19 @@ describe('指标管理页', () => {
     })
   })
 
-  it('W8：新建全额声明表单 → POST /metrics/declarations，body 只有声明（不含 SQL 字段）', async () => {
+  it('★ 人不再手动新建指标/声明：两个新建入口都已移除，页面改为指向 agent；决策面（编辑/覆盖口径）保留', async () => {
     renderPage()
     await screen.findByText('lemeng:retail:net_sales')
-    fireEvent.click(button('新建声明（全额口径）'))
-    const dialog = await screen.findByRole('dialog')
-    fireEvent.change(within(dialog).getByPlaceholderText('如 lemeng:retail:gross_sales'), {
-      target: { value: 'tenant:retail:gross' },
-    })
-    fireEvent.change(within(dialog).getByPlaceholderText('口径定义（必填）'), {
-      target: { value: '本租户口径' },
-    })
-    fireEvent.change(within(dialog).getByPlaceholderText('sum(fct_retail_sale.sale_amount)'), {
-      target: { value: 'sum(fct_retail_sale.sale_amount)' },
-    })
-    fireEvent.change(within(dialog).getByPlaceholderText(/system_book, bizday/), {
-      target: { value: 'system_book, bizday' },
-    })
-    fireEvent.change(within(dialog).getByPlaceholderText('lemeng.retail_order_line.sale_amount'), {
-      target: { value: 'lemeng.retail_order_line.sale_amount' },
-    })
-    fireEvent.click(within(dialog).getByRole('button', { name: /^创\s*建$/ }))
-    await waitFor(() => {
-      const c = calls.find((x) => x.url.includes('/metrics/declarations'))
-      expect(c?.method).toBe('POST')
-      const d = (c?.body as { declaration: Record<string, unknown> }).declaration
-      expect(d.name).toBe('tenant:retail:gross')
-      expect(d.expression).toBe('sum(fct_retail_sale.sale_amount)')
-      expect(d.grain).toEqual(['system_book', 'bizday'])
-      expect(d.reads).toEqual(['lemeng.retail_order_line.sale_amount'])
-      // 结构上写不出 SQL：body 里没有 selectSql/subjectColumn/groupBy
-      expect(d.selectSql).toBeUndefined()
-      expect(d.groupBy).toBeUndefined()
-    })
+
+    // 实现面：新建入口必须不存在（不是置灰——留着按钮就等于留着「手填 id/表达式」的风险面）
+    expect(screen.queryByText('新建派生指标')).toBeNull()
+    expect(screen.queryByText(/新建声明/)).toBeNull()
+    // 页面上给出「指标从哪来」的答案，而不是让人找不到入口
+    expect(screen.getByText(/指标由 agent 创建/)).toBeInTheDocument()
+
+    // 决策面保留：编辑既有 L2 / 覆盖平台口径（草稿→确认）仍是人的动作
+    expect(button('编辑')).toBeInTheDocument()
+    expect(button('覆盖口径')).toBeInTheDocument()
   })
 
   it('W8：覆盖清单显示草稿，确认启用 → POST confirm；删除 → DELETE override', async () => {
