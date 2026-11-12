@@ -84,6 +84,13 @@ const renderPage = () => render(<MetricsPage />)
 const button = (label: string) =>
   screen.getByRole('button', { name: new RegExp(`^${label.split('').join('\\s*')}$`) })
 
+/** B 方案（左列表 + 右详情）：操作按钮只属于**选中行**，测试先选中再点。 */
+const selectRow = (id: string) => {
+  const row = screen.getAllByText(id)[0]!.closest('button')
+  expect(row, `列表里找不到 ${id} 这一行`).toBeTruthy()
+  fireEvent.click(row!)
+}
+
 describe('指标管理页 · 候选指标入口（#1953 四期）', () => {
   it('有候选 ⇒ 顶部提示「N 个待采用」并给入口；无候选 ⇒ 不出现', async () => {
     CANDIDATES = [{ id: 'c1' }, { id: 'c2' }]
@@ -102,21 +109,23 @@ describe('指标管理页 · 候选指标入口（#1953 四期）', () => {
 describe('指标管理页', () => {
   it('列出两层：L1 标「平台（只读）」且不给删改，L2 给编辑/删除', async () => {
     renderPage()
-    await waitFor(() => expect(screen.getByText('lemeng:retail:net_sales')).toBeInTheDocument())
+    await waitFor(() => expect(screen.getAllByText('lemeng:retail:net_sales').length).toBeGreaterThan(0))
 
-    expect(screen.getByText('平台（只读）')).toBeInTheDocument()
-    expect(screen.getByText('本租户派生')).toBeInTheDocument()
-    // L1 行不给操作按钮（只读的落点）；L2 行给
+    expect(screen.getAllByText('平台（只读）').length).toBeGreaterThan(0)
+    expect(screen.getAllByText('本租户派生').length).toBeGreaterThan(0)
+    // 默认选中第一条（L1）⇒ 详情给只读说明，没有编辑/删除
     expect(screen.getByText('平台词表经 API 只读')).toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: /^编\s*辑$/ })).toBeNull()
+    // 切到 L2 ⇒ 出现编辑/删除（只读/可改是**逐行**判的，不是整页一刀切）
+    selectRow('xiongmao:net_sales')
     expect(button('编辑')).toBeInTheDocument()
     expect(button('删除')).toBeInTheDocument()
-    // 两行都在表里 ⇒ 只读/可改是**逐行**判的，不是整页一刀切
-    expect(screen.getByText('xiongmao:net_sales')).toBeInTheDocument()
   })
 
   it('★ 编辑保存的 body 是结构化 L2 声明：只含 baseMetric/op/别名/维度，**不含任何 SQL 字段**', async () => {
     renderPage()
-    await waitFor(() => expect(screen.getByText('xiongmao:net_sales')).toBeInTheDocument())
+    await waitFor(() => expect(screen.getAllByText('xiongmao:net_sales').length).toBeGreaterThan(0))
+    selectRow('xiongmao:net_sales')
     fireEvent.click(button('编辑'))
 
     const card = (await screen.findByText('编辑 xiongmao:net_sales')).closest('.ant-card') as HTMLElement
@@ -154,7 +163,8 @@ describe('指标管理页', () => {
 
   it('别名留空 ⇒ 不带 alias 字段（服务端沿用平台标题；空串会被 zod 的 min(1) 判成非法）', async () => {
     renderPage()
-    await waitFor(() => expect(screen.getByText('xiongmao:net_sales')).toBeInTheDocument())
+    await waitFor(() => expect(screen.getAllByText('xiongmao:net_sales').length).toBeGreaterThan(0))
+    selectRow('xiongmao:net_sales')
     fireEvent.click(button('编辑'))
 
     const card = (await screen.findByText('编辑 xiongmao:net_sales')).closest('.ant-card') as HTMLElement
@@ -176,7 +186,8 @@ describe('指标管理页', () => {
 
   it('L2 行的删除走 DELETE（L1 行没有删除入口）', async () => {
     renderPage()
-    await waitFor(() => expect(screen.getByText('xiongmao:net_sales')).toBeInTheDocument())
+    await waitFor(() => expect(screen.getAllByText('xiongmao:net_sales').length).toBeGreaterThan(0))
+    selectRow('xiongmao:net_sales')
     fireEvent.click(button('删除'))
     // 确认按钮的文案由组件**显式**给定（okText="确认删除"）：Popconfirm 的默认 okText 随 locale
     // 漂（未配 zh_CN 时是 "OK"），删除是不可逆动作，它的确认面代码里钉死更好
@@ -186,21 +197,23 @@ describe('指标管理页', () => {
     })
   })
 
-  it('★ 两列：L2 显示「最后操作人 + v 版本」，L1 显示「平台物化（追溯走 git）」', async () => {
+  it('★ 详情显示「最后操作人 + v 版本」，L1 显示「平台物化（追溯走 git）」', async () => {
     renderPage()
-    await waitFor(() => expect(screen.getByText('xiongmao:net_sales')).toBeInTheDocument())
-    expect(screen.getByText('ZhangDuo')).toBeInTheDocument()                 // L2 的最后操作人
-    expect(screen.getByText('v3')).toBeInTheDocument()                       // L2 的版本
-    expect(screen.getByText('平台物化（追溯走 git）')).toBeInTheDocument()      // L1：不显示空白（否则读成「缺数据」）
+    await waitFor(() => expect(screen.getAllByText('xiongmao:net_sales').length).toBeGreaterThan(0))
+    // L1（默认选中）：平台物化，不显示空白（否则读成「缺数据」）
+    expect(screen.getByText(/平台物化（追溯走 git）/)).toBeInTheDocument()
+    selectRow('xiongmao:net_sales')
+    expect(screen.getAllByText(/ZhangDuo/).length).toBeGreaterThan(0)        // L2 的最后操作人
+    expect(screen.getAllByText(/v3/).length).toBeGreaterThan(0)              // L2 的版本
   })
 
   it('★ 工具条（UX）：搜索指标、来源筛选、无匹配空态', async () => {
     renderPage()
-    await waitFor(() => expect(screen.getByText('lemeng:retail:net_sales')).toBeInTheDocument())
+    await waitFor(() => expect(screen.getAllByText('lemeng:retail:net_sales').length).toBeGreaterThan(0))
     const search = screen.getByPlaceholderText('搜索指标 id / 标题 / 说明')
 
     fireEvent.change(search, { target: { value: '熊喵' } })
-    expect(screen.getByText('xiongmao:net_sales')).toBeInTheDocument()
+    expect(screen.getAllByText('xiongmao:net_sales').length).toBeGreaterThan(0)
     expect(screen.queryByText('lemeng:retail:net_sales')).toBeNull()
 
     fireEvent.change(search, { target: { value: '不存在的指标' } })
@@ -208,11 +221,11 @@ describe('指标管理页', () => {
 
     fireEvent.change(search, { target: { value: '' } })
     fireEvent.click(screen.getByText('平台指标'))
-    expect(screen.getByText('lemeng:retail:net_sales')).toBeInTheDocument()
+    expect(screen.getAllByText('lemeng:retail:net_sales').length).toBeGreaterThan(0)
     expect(screen.queryByText('xiongmao:net_sales')).toBeNull()
 
     fireEvent.click(screen.getByText('派生指标'))
-    expect(screen.getByText('xiongmao:net_sales')).toBeInTheDocument()
+    expect(screen.getAllByText('xiongmao:net_sales').length).toBeGreaterThan(0)
     expect(screen.queryByText('lemeng:retail:net_sales')).toBeNull()
   })
 
@@ -246,9 +259,9 @@ describe('指标管理页', () => {
 
   it('★ 变更历史抽屉：点开 → 拉 /metrics/:id/audit → 渲染动作与口径摘要（删除行的摘要来自 before）', async () => {
     renderPage()
-    await waitFor(() => expect(screen.getByText('xiongmao:net_sales')).toBeInTheDocument())
-    const l2row = screen.getByText('xiongmao:net_sales').closest('tr')!
-    within(l2row).getByRole('button', { name: /^变\s*更\s*历\s*史$/ }).click()
+    await waitFor(() => expect(screen.getAllByText('xiongmao:net_sales').length).toBeGreaterThan(0))
+    selectRow('xiongmao:net_sales')
+    screen.getByRole('button', { name: /^变\s*更\s*历\s*史$/ }).click()
 
     await waitFor(() => expect(screen.getByText(/变更历史：xiongmao:net_sales/)).toBeInTheDocument())
     // ⚠️ 行内「删除」按钮与审计标签同文（text 按钮不像描边按钮那样自动插空格）⇒ 抽屉内断言
@@ -262,7 +275,7 @@ describe('指标管理页', () => {
   // ── W8：全额声明 / 覆盖平台口径 ────────────────────────────────────────────────
   it('W8：平台行可「覆盖口径」，保存草稿点 → POST override（name/grain 预填自 L1）', async () => {
     renderPage()
-    await screen.findByText('lemeng:retail:net_sales')
+    await screen.findAllByText('lemeng:retail:net_sales')
     fireEvent.click(button('覆盖口径'))
     const dialog = await screen.findByRole('dialog')
     expect(within(dialog).getByText(/覆盖平台口径：lemeng:retail:net_sales/)).toBeInTheDocument()
@@ -281,7 +294,7 @@ describe('指标管理页', () => {
 
   it('★ 人不再手动新建指标/声明：两个新建入口都已移除，页面改为指向 agent；决策面（编辑/覆盖口径）保留', async () => {
     renderPage()
-    await screen.findByText('lemeng:retail:net_sales')
+    await screen.findAllByText('lemeng:retail:net_sales')
 
     // 实现面：新建入口必须不存在（不是置灰——留着按钮就等于留着「手填 id/表达式」的风险面）
     expect(screen.queryByText('新建派生指标')).toBeNull()
@@ -289,9 +302,10 @@ describe('指标管理页', () => {
     // 页面上给出「指标从哪来」的答案，而不是让人找不到入口
     expect(screen.getByText(/指标由 agent 创建/)).toBeInTheDocument()
 
-    // 决策面保留：编辑既有 L2 / 覆盖平台口径（草稿→确认）仍是人的动作
-    expect(button('编辑')).toBeInTheDocument()
+    // 决策面保留：覆盖平台口径（L1 行）/ 编辑既有 L2（选中后）仍是人的动作
     expect(button('覆盖口径')).toBeInTheDocument()
+    selectRow('xiongmao:net_sales')
+    expect(button('编辑')).toBeInTheDocument()
   })
 
   it('W8：覆盖清单显示草稿，确认启用 → POST confirm；删除 → DELETE override', async () => {
@@ -318,7 +332,7 @@ describe('指标管理页', () => {
 describe('口径列：单页双层（Wave 4.3）', () => {
   it('默认层给业务说法；技术细节里才有表达式 / 维度 / 权限码（折叠，不隐藏）', async () => {
     renderPage()
-    await waitFor(() => expect(screen.getByText('lemeng:retail:net_sales')).toBeInTheDocument())
+    await waitFor(() => expect(screen.getAllByText('lemeng:retail:net_sales').length).toBeGreaterThan(0))
     // 默认层：说明文字（夹具里没有 bizDescription，回落 description）
     expect(screen.getAllByText('口径定义').length).toBeGreaterThan(0)
     // 技术细节：原生 <details> 折起时内容仍在 DOM ⇒ 专家展开即可见，且不会被藏到别页
