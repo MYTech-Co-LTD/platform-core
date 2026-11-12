@@ -60,6 +60,7 @@
 | **Wave 2.1 第二批（staging）** | PR #1996：13 个 staging 补粒度唯一断言，**每个先在生产取证**（`count(*)` vs `count(distinct 键)`，2026-11-01..11-12 窗口；13/13 n=d）。取证还证伪了两个「看起来该进键」的列：`loss_adjustment.direction`、`inventory_movement.item_num`（加进去不改变唯一性）。`stg_forms_submission` 留空：本实例未物化 forms 域，无法取证 |
 | **Wave 2.1 第三批（列级非空面）** | PR #1999：契约 `nullable=false` ⇔ `schema.yml` 的 `not_null` 绑成门禁；补 36 个漏配（11 个已登记模型，5 列连列条目都补上）。补前先在生产取证：11 模型 × 窗口 `count(*) filter (where col is null)` 全 0。14 个整体未登记的 staging 模型**跳过而不假装覆盖** |
 | **Wave 2.1 第四批（schema.yml 全覆盖）** | PR #2002：16 个此前**整体未登记**的 staging 模型补 schema.yml，89 列 not_null（只写契约 nullable=false 的列，不复制契约描述）；补前逐模型生产取证 16 模型 89 列全 0。非空面门禁现在覆盖**全部 28 个** staging 模型，`missing: []` |
+| **cron 文档逐条核对** | PR #2004：按控制面导出 + `schedules/*.json` 核对，纠四处漂移——`lemeng-dbt-materialize` 文档当现役其实 **2026-11-07 已停用**（OOM），现役是 tick/hourly/tables/audit×2 分档；notify-reconcile 补实际 `7 * * * *`；维度面排班与 item_price 分钟按排班文件订正 |
 
 ### 待办（Wave 见 §4）
 
@@ -68,7 +69,7 @@
 | Wave 2.1 余项：`stg_forms_submission` 粒度断言（本实例未物化 forms 域，无法取证） | 见 #1988/#1995 | 2.1 |
 | 列级血缘 | dbt core manifest 无列级边 | 2.4（触发式） |
 | notify **retention** 未部署（删行需点名）。**已不阻塞**：health 现在只看近 7 天（PR #1987），历史 dead 不会再把健康面按红 | 用户裁决暂不加；真要清理历史行时再单独决定 | 2.3 残项（低） |
-| Wave 3 余项：cron 文档冲突（未逐条核）；data-plane 多机副本（OO 机 /opt）靠手工投递 | 盘点发现 | 3 |
+| Wave 3 余项：data-plane 多机副本（OO 机 `/opt`）靠手工投递（SOP §E.5，有版本握手兜底） | cron 文档已于 2026-11-12 逐条核对（PR #2004） | 3（低） |
 
 ---
 
@@ -125,3 +126,4 @@
 | 2026-11-12 | Wave 2.1 第二批：13 个 staging 粒度断言（逐个取证后落地） | PR #1996；13/13 n=d，样本 3–191,679 行 |
 | 2026-11-12 | Wave 2.1 第三批：契约 nullable=false ⇔ not_null 门禁 + 补 36 列 | PR #1999；补前生产取证全 0 |
 | 2026-11-12 | Wave 2.1 第四批：16 个 staging 补 schema.yml（89 列），非空面覆盖 28/28 | PR #2002；16 模型 89 列取证全 0 |
+| 2026-11-12 | cron 文档逐条核对完成 | PR #2004；四处漂移（含停用作业被当现役） |
