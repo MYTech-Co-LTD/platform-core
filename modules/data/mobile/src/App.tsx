@@ -10,7 +10,6 @@ import { useCallback, useEffect, useState } from 'react'
 import { Button, Input, Popup, PullToRefresh, Skeleton, TextArea, Toast } from 'antd-mobile'
 import ReportsView from './ReportsView'
 import type { ReportRow } from './ReportsView'
-import AskView from './AskView'
 import { C, Chip, EmptyState, Icon, cardStyle, pressable, radius } from './ui'
 import { apiGet, apiSend, ApiError } from './api'
 
@@ -209,7 +208,7 @@ function MetricsView({ data, reload }: { data: MetricsResponse; reload: () => Pr
       <PullToRefresh onRefresh={() => reload()}>
         <div style={{ padding: '16px 16px 0', minHeight: '60vh' }}>
       {metrics.length === 0 ? (
-        <EmptyState icon="metrics" title="没有可见的指标" hint="需要管理员开通数据问数权限" />
+        <EmptyState icon="metrics" title="没有可见的指标" hint="需要管理员开通数据查询权限" />
       ) : visible.length === 0 ? (
         <EmptyState icon="search" title="没有匹配的指标" hint="换个关键词，或清空搜索" />
       ) : (
@@ -533,12 +532,12 @@ function CreateExprSheet({ open, bases, onClose, onDone }: {
 
 
 /**
- * 报表中心（2026-11-04，#1369）：移动数据 App = 三个 tab「报表 / 指标 / 问数」，全接权限——
+ * 报表中心（2026-11-04，#1369；2026-11-12 站内问数退役）：移动数据 App = 「报表 / 管理 / 指标」，全接权限——
  *   · 整个 App 先过 userApp.scope=data:query（没权限的人连卡片都看不到）；
  *   · 报表 tab：服务端按数据范围（页门/部门门/ACL）过滤；管理动作只对 canEdit（owner ∪
  *     data:manage）出现——无管理权限的人只看到所有人已发布且有权限看的报表；
  *   · 指标 tab：L1/L2 他人指标只读；creator ∪ data:manage 才有编辑/元数据入口；
- *   · 问数 tab：纯使用（同一 data:query 门），无管理动作。
+ *   · **没有问数 tab**（2026-11-12 定案）：问数只经 MCP 给 openclaw 与三方 agent。
  * 配置菜单不进移动端（产品口径见 memory surface-split-pc-config-mobile-business）。
  */
 export default function App({ initialTab = 'center' }: { initialTab?: 'center' | 'reportsManage' | 'metricsManage' } = {}) {

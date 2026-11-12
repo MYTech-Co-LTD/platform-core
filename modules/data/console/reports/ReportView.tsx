@@ -351,7 +351,7 @@ function PanelBody({ panel, result, compares = [] }: { panel: Panel; result: Pan
   }
   if (result.kind === 'error') return <Alert type="error" showIcon message={result.text} />
   if (panel.chart === 'table') {
-    // table 不进 echarts（图型白名单里它是纯 DOM 呈现）；行值 String 化照 console/query 的先例。
+    // table 不进 echarts（图型白名单里它是纯 DOM 呈现）；行值 String 化照原 console/query（站内问数，2026-11-12 退役）的先例。
     // 窄屏（企微内置浏览器 ~390px）：外层 overflowX:auto + scroll.x=max-content 让横向滚动
     // 收敛在卡片内部（#1047 报表页移动端实测顶破）。
     //
