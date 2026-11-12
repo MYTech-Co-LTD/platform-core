@@ -4,7 +4,7 @@
 // 写操作（建/禁启/重置密码/删）走 adminWrite 通道：现取 csrf + x-csrf-token。
 import { useCallback, useEffect, useState } from 'react'
 import { useOutletContext } from 'react-router-dom'
-import { App, Button, Card, Dropdown, Form, Input, Modal, Space, Switch, Table, Tag, Typography } from 'antd'
+import { App, Button, Card, Dropdown, Form, Input, Modal, Space, Switch, Table, Typography } from 'antd'
 import type { ColumnsType } from 'antd/es/table'
 import {
   ApiError,
@@ -72,7 +72,16 @@ export default function AdminUsersPage() {
       dataIndex: 'isForbidden',
       key: 'isForbidden',
       width: 90,
-      render: (v: boolean) => (v ? <Tag color="red">已禁用</Tag> : <Tag color="green">正常</Tag>),
+      // 圆点 + 文字（2026-11-13 设计语言）：状态不用色块，避免整列被颜色占满
+      render: (v: boolean) => (
+        <span style={{ display: 'inline-flex', alignItems: 'center', gap: 6, color: v ? '#6B7280' : '#1B1C1E' }}>
+          <i style={{
+            width: 6, height: 6, borderRadius: '50%',
+            background: v ? '#C9CDD4' : '#0FA958', display: 'inline-block',
+          }} />
+          {v ? '已禁用' : '正常'}
+        </span>
+      ),
     },
     {
       title: '启用',

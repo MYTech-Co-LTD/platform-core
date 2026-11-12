@@ -114,8 +114,8 @@ describe('指标管理页', () => {
     renderPage()
     await waitFor(() => expect(screen.getByText('lemeng:retail:net_sales')).toBeInTheDocument())
 
-    expect(screen.getByText('平台（只读）')).toBeInTheDocument()
-    expect(screen.getByText('本租户派生')).toBeInTheDocument()
+    expect(screen.getAllByText('平台（只读）').length).toBeGreaterThan(0)
+    expect(screen.getAllByText('本租户派生').length).toBeGreaterThan(0)
     // L1 行的 ⋯ 菜单只有只读动作（覆盖口径 / 变更历史），没有编辑/删除
     openRowMenu('lemeng:retail:net_sales')
     expect(await screen.findByRole('menuitem', { name: '覆盖口径' })).toBeInTheDocument()
@@ -223,11 +223,12 @@ describe('指标管理页', () => {
     expect(screen.getByText('没有匹配的指标，试试清空搜索或切换筛选')).toBeInTheDocument()
 
     fireEvent.change(search, { target: { value: '' } })
-    fireEvent.click(screen.getByText('平台指标'))
+    // KPI 条里也有「平台指标」字样 ⇒ 取筛选控件（button/radio）那一个
+    fireEvent.click(screen.getAllByText('平台指标').at(-1)!)
     expect(screen.getByText('lemeng:retail:net_sales')).toBeInTheDocument()
     expect(screen.queryByText('xiongmao:net_sales')).toBeNull()
 
-    fireEvent.click(screen.getByText('派生指标'))
+    fireEvent.click(screen.getAllByText('派生指标').at(-1)!)
     expect(screen.getByText('xiongmao:net_sales')).toBeInTheDocument()
     expect(screen.queryByText('lemeng:retail:net_sales')).toBeNull()
   })
