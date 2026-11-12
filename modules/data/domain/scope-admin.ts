@@ -15,7 +15,7 @@
 //    主体是**惰性**的（解析时自然空匹配），无越权面——登记在案，不做假校验。
 import type { Pool } from 'pg'
 import { loadEffectiveScopes, normalizeSelector, type EffectiveScopes, type ScopeKind, type ScopeSelector } from './scope'
-import { deptNamesOf, userDeptClosure } from './dept-gate'
+import { deptNamesOf, userDeptClosure, userDirectDepts } from './dept-gate'
 import { warehousePool } from './warehouse'
 
 /** kind 允许的 selector 键集（闭集；混用 ⇒ INVALID_SELECTOR）。brand 不允许 all——
@@ -40,7 +40,15 @@ export interface ScopeAdminDeps {
  * - role：岗位包（跨部门职能岗）；
  * - user：例外（临时补漏），保留但不鼓励。
  */
-export interface AssignmentItem { subjectType: 'dept' | 'role' | 'user'; subjectId: string }
+export interface AssignmentItem {
+  subjectType: 'dept' | 'role' | 'user'
+  subjectId: string
+  /**
+   * 仅 dept 有意义（045）：true（默认）= 含下级部门（按闭包匹配）；false = 只匹配直属成员。
+   * 战区内分级的实现就靠它：战区范围挂 dept 且 false，区/店不继承。
+   */
+  includeChildren?: boolean
+}
 
 export interface ScopeView {
   id: number
@@ -154,12 +162,19 @@ export async function listScopes(pool: Pool, org: string): Promise<ScopeView[]> 
     'select id, name, kind, selector, legacy_label from data.scope where org = $1 order by kind, name', [org],
   )
   const grants = await pool.query(
-    'select scope_id, subject_type, subject_id from data.scope_assignment where org = $1 order by subject_type, subject_id', [org],
+    'select scope_id, subject_type, subject_id, include_children from data.scope_assignment where org = $1 order by subject_type, subject_id', [org],
   )
   const byScope = new Map<number, AssignmentItem[]>()
-  for (const g of grants.rows as Array<{ scope_id: number; subject_type: 'role' | 'user'; subject_id: string }>) {
+  for (const g of grants.rows as Array<{
+    scope_id: number; subject_type: 'dept' | 'role' | 'user'; subject_id: string; include_children: boolean
+  }>) {
     const list = byScope.get(g.scope_id) ?? []
-    list.push({ subjectType: g.subject_type, subjectId: g.subject_id })
+    list.push({
+      subjectType: g.subject_type,
+      subjectId: g.subject_id,
+      // 只给 dept 回传口径；user/role 恒 true，回传会让 UI 误以为可选择
+      ...(g.subject_type === 'dept' ? { includeChildren: g.include_children } : {}),
+    })
     byScope.set(g.scope_id, list)
   }
   return (scopes.rows as ScopeRow[]).map((r) => viewOf(r, byScope.get(r.id) ?? []))
@@ -228,7 +243,7 @@ export async function updateScope(
     // 回读：update ... returning 即目标行；空行 = 并发删除 ⇒ NOT_FOUND（不静默）
     if (updated.rows.length === 0) { await client.query('rollback'); return err('NOT_FOUND') }
     const grants = await client.query(
-      'select subject_type, subject_id from data.scope_assignment where org = $1 and scope_id = $2', [org, id],
+      'select subject_type, subject_id, include_children from data.scope_assignment where org = $1 and scope_id = $2', [org, id],
     )
     await writeAudit(client, org, actor, 'scope.update', {
       id, before: viewOf(before.rows[0] as ScopeRow, []),
@@ -238,8 +253,12 @@ export async function updateScope(
     return {
       ok: true,
       value: viewOf(updated.rows[0] as ScopeRow,
-        (grants.rows as Array<{ subject_type: 'role' | 'user'; subject_id: string }>)
-          .map((g) => ({ subjectType: g.subject_type, subjectId: g.subject_id }))),
+        (grants.rows as Array<{ subject_type: 'dept' | 'role' | 'user'; subject_id: string; include_children: boolean }>)
+          .map((g) => ({
+            subjectType: g.subject_type,
+            subjectId: g.subject_id,
+            ...(g.subject_type === 'dept' ? { includeChildren: g.include_children } : {}),
+          }))),
     }
   } catch (e) {
     await client.query('rollback').catch(() => {})
@@ -315,10 +334,13 @@ export async function replaceAssignments(
       || subjectId === '' || subjectId.length > 200) {
       return err('INVALID_ASSIGNMENTS')
     }
-    const key = `${subjectType}:${subjectId}`
-    if (seen.has(key)) continue          // 同主体重复 = 幂等合并，不是错
+    const includeChildren = subjectType === 'dept'
+      ? (it as { includeChildren?: unknown }).includeChildren !== false  // 缺省 true（存量行为）
+      : undefined
+    const key = `${subjectType}:${subjectId}:${includeChildren ?? ''}`
+    if (seen.has(key)) continue          // 同主体同口径重复 = 幂等合并，不是错
     seen.add(key)
-    parsed.push({ subjectType, subjectId })
+    parsed.push({ subjectType, subjectId, ...(includeChildren !== undefined ? { includeChildren } : {}) })
   }
   // dept 主体必须能解析到活部门：否则就是「配了但永远没人满足」的静默门（与 validateDeptGate 同一 fail-closed 口径）
   const deptIds = parsed.filter((p) => p.subjectType === 'dept').map((p) => p.subjectId)
@@ -332,21 +354,21 @@ export async function replaceAssignments(
     const scope = await client.query('select name from data.scope where org = $1 and id = $2', [org, scopeId])
     if (scope.rows.length === 0) { await client.query('rollback'); return err('NOT_FOUND') }
     const before = await client.query(
-      'select subject_type, subject_id from data.scope_assignment where org = $1 and scope_id = $2', [org, scopeId],
+      'select subject_type, subject_id, include_children from data.scope_assignment where org = $1 and scope_id = $2', [org, scopeId],
     )
     await client.query('delete from data.scope_assignment where org = $1 and scope_id = $2', [org, scopeId])
     for (const p of parsed) {
       await client.query(
-        'insert into data.scope_assignment(org, subject_type, subject_id, scope_id) values ($1, $2, $3, $4)',
-        [org, p.subjectType, p.subjectId, scopeId],
+        'insert into data.scope_assignment(org, subject_type, subject_id, scope_id, include_children) values ($1, $2, $3, $4, $5)',
+        [org, p.subjectType, p.subjectId, scopeId, p.includeChildren ?? true],
       )
     }
     const back = await client.query(
-      'select subject_type, subject_id from data.scope_assignment where org = $1 and scope_id = $2', [org, scopeId],
+      'select subject_type, subject_id, include_children from data.scope_assignment where org = $1 and scope_id = $2', [org, scopeId],
     )
-    const got = new Set((back.rows as Array<{ subject_type: string; subject_id: string }>)
-      .map((r) => `${r.subject_type}:${r.subject_id}`))
-    const want = new Set(parsed.map((p) => `${p.subjectType}:${p.subjectId}`))
+    const got = new Set((back.rows as Array<{ subject_type: string; subject_id: string; include_children: boolean }>)
+      .map((r) => `${r.subject_type}:${r.subject_id}:${r.subject_type === 'dept' ? String(r.include_children) : ''}`))
+    const want = new Set(parsed.map((p) => `${p.subjectType}:${p.subjectId}:${p.subjectType === 'dept' ? String(p.includeChildren ?? true) : ''}`))
     if (got.size !== want.size || ![...want].every((k) => got.has(k))) {
       throw new Error('ASSIGNMENTS_READBACK_MISMATCH')
     }
@@ -382,16 +404,19 @@ export async function previewEffective(
     ...(tenantId !== undefined ? { tenantId } : {}),
   }
   const effective = await loadEffectiveScopes(pool, org, requester)
-  // 部门闭包：预览要如实反映「这条范围是通过哪个部门给他的」，否则排障时看不到来源
-  const depts = tenantId !== undefined ? [...await userDeptClosure(pool, tenantId, deptNamesOf({ userId: user }))] : []
+  // 部门两种口径：预览要如实反映「这条范围是通过哪个部门给他的」，否则排障时看不到来源
+  const names2 = deptNamesOf({ userId: user })
+  const depts = tenantId !== undefined ? [...await userDeptClosure(pool, tenantId, names2)] : []
+  const directDepts = tenantId !== undefined ? [...await userDirectDepts(pool, tenantId, names2)] : []
   const names = await pool.query(
     `select s.name, s.kind from data.scope_assignment a
        join data.scope s on s.id = a.scope_id and s.org = a.org
       where a.org = $1
         and ((a.subject_type = 'user' and a.subject_id = $2)
           or (a.subject_type = 'role' and a.subject_id = any($3::text[]))
-          or (a.subject_type = 'dept' and a.subject_id = any($4::text[])))`,
-    [org, user, [...roles], depts],
+          or (a.subject_type = 'dept' and a.include_children and a.subject_id = any($4::text[]))
+          or (a.subject_type = 'dept' and not a.include_children and a.subject_id = any($5::text[])))`,
+    [org, user, [...roles], depts, directDepts],
   )
   // 同一 scope 经 user 与 role 两条路命中会产生多行（SQL 按 assignment 行返回）——
   // 名单语义是「命中了哪些 scope」，按 (name, kind) 去重。

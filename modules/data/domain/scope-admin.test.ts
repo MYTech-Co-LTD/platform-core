@@ -14,7 +14,7 @@ const ORG = 'org_a'
 // ── 假池：内存库 + SQL 形状分派（写路径走 client，读路径走 pool.query，同一份 exec）──
 interface DbState {
   scopes: Array<{ id: number; org: string; name: string; kind: string; selector: unknown; legacy_label: string | null }>
-  grants: Array<{ org: string; subject_type: 'dept' | 'role' | 'user'; subject_id: string; scope_id: number }>
+  grants: Array<{ org: string; subject_type: 'dept' | 'role' | 'user'; subject_id: string; scope_id: number; include_children?: boolean }>
   audits: Array<{ org: string; actor: string; action: string; detail: Record<string, unknown> }>
   nextId: number
   /** 活部门 ext_id（dept 主体校验用） */
@@ -93,13 +93,13 @@ function makePool(db: DbState): Pool {
       return { rows: [], rowCount: before.length }
     }
     // ── scope_assignment ──
-    if (/select scope_id, subject_type, subject_id from data\.scope_assignment/.test(text)) {
-      return { rows: db.grants.filter((g) => g.org === params[0]).map((g) => ({ ...g })) }
+    if (/select scope_id, subject_type, subject_id, include_children from data\.scope_assignment/.test(text)) {
+      return { rows: db.grants.filter((g) => g.org === params[0]).map((g) => ({ ...g, include_children: g.include_children ?? true })) }
     }
-    if (/select subject_type, subject_id from data\.scope_assignment/.test(text)) {
+    if (/select subject_type, subject_id, include_children from data\.scope_assignment/.test(text)) {
       return {
         rows: db.grants.filter((g) => g.org === params[0] && g.scope_id === params[1])
-          .map((g) => ({ subject_type: g.subject_type, subject_id: g.subject_id })),
+          .map((g) => ({ subject_type: g.subject_type, subject_id: g.subject_id, include_children: g.include_children ?? true })),
       }
     }
     if (/select count\(\*\)::int as n from data\.scope_assignment/.test(text)) {
@@ -110,7 +110,13 @@ function makePool(db: DbState): Pool {
       return { rows: [] }
     }
     if (/insert into data\.scope_assignment\(/.test(text)) {
-      db.grants.push({ org: params[0] as string, subject_type: params[1] as 'role' | 'user', subject_id: params[2] as string, scope_id: params[3] as number })
+      db.grants.push({
+        org: params[0] as string,
+        subject_type: params[1] as 'dept' | 'role' | 'user',
+        subject_id: params[2] as string,
+        scope_id: params[3] as number,
+        include_children: params[4] as boolean,
+      })
       return { rows: [] }
     }
     // ── previewEffective：loadEffectiveScopes（select s.kind, s.selector …）与 granted 名单
@@ -314,9 +320,21 @@ describe('replaceAssignments · 部门主体（2026-11-12）', () => {
     expect(ok.ok).toBe(true)
     if (!ok.ok) return
     expect(ok.value.assignments).toEqual([
-      { subjectType: 'dept', subjectId: '49' },
+      { subjectType: 'dept', subjectId: '49', includeChildren: true },  // 缺省 true = 含下级
       { subjectType: 'user', subjectId: 'alice' },
     ])
     expect(db.grants.some((g) => g.scope_id === 11 && g.subject_type === 'dept' && g.subject_id === '49')).toBe(true)
+  })
+
+  it('部门口径可切换：includeChildren=false 落库为 false，回读原样带回（战区内分级）', async () => {
+    const db = makeDb()
+    const pool = makePool(db)
+    const r = await replaceAssignments(pool, ORG, 'admin', 11, [
+      { subjectType: 'dept', subjectId: '49', includeChildren: false },
+    ])
+    expect(r.ok).toBe(true)
+    if (!r.ok) return
+    expect(r.value.assignments).toEqual([{ subjectType: 'dept', subjectId: '49', includeChildren: false }])
+    expect(db.grants.find((g) => g.scope_id === 11 && g.subject_type === 'dept')?.include_children).toBe(false)
   })
 })

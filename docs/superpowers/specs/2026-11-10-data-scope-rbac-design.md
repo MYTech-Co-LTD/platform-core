@@ -185,6 +185,11 @@ category_path 首段 = 生鲜              → 水果
 | `user` | **例外**（临时补漏） | 最脆弱：人走了没人记得收；配置面默认折叠，并要求写明原因 |
 
 - 部门闭包 = 本人部门 + 全部祖先，复用报表部门门同一实现（`userDeptClosure`，物化 `path` 拆段）。
+- **部门主体两种口径（045，2026-11-12）**：`include_children`（默认 true）
+  - true = 含下级部门（闭包匹配）——区级范围给整棵树；
+  - false = 仅直属成员（只允许 op 直挂）——**战区内分级靠它**：战区范围挂战区部门且 false，
+    战区总看全战区，区/店不继承。
+  真机验收暴露的问题：只有闭包时，战区范围会把该战区下所有区的人都放开（并集吞掉分级）。
 - 闭包的租户 id 由路由侧注入（`Requester.tenantId`）；缺失时不静默降级，记
   `data_scope_dept_unresolved` 结构化告警（enforce 下表现为多拒绝，fail-closed 方向）。
 - 配置期校验：`dept` 主体必须命中 `platform.v_org_node` 活节点，否则 `UNKNOWN_DEPT` 拒写

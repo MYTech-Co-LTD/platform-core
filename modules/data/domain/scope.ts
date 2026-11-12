@@ -13,7 +13,7 @@
 // `(system_book, branch_num)` / `(system_book, item_num)`，禁止裸 branch_num/item_num。
 import type { Pool } from 'pg'
 import { sqlQuote, type MetricDef, type Requester, type ScopePlan } from './authz'
-import { deptNamesOf, userDeptClosure } from './dept-gate'
+import { deptNamesOf, userDeptClosure, userDirectDepts } from './dept-gate'
 
 export type ScopeKind = 'brand' | 'store' | 'category'
 export type ScopeMode = 'off' | 'shadow' | 'enforce'
@@ -110,15 +110,21 @@ export async function loadEffectiveScopes(
   const roles = [...new Set((requester.roles ?? [])
     .map((r) => r.split('/').pop()?.trim() ?? '')
     .filter((r) => r !== ''))]
-  // 部门闭包（本人 + 祖先，物化 path 拆段）——与报表部门门同一实现，别另写一套。
+  // 部门两种口径（045 迁移）：
+  // - subtree：闭包（本人 + 祖先）——店 → 区 → 战区 都能命中上级范围；
+  // - self   ：只匹配直属部门——战区范围只给挂在战区部门上的人，区/店不继承。
+  // 闭包与直属集各查一次；任一为空不影响另一条。
   let depts: string[] = []
+  let directDepts: string[] = []
   if (requester.tenantId === undefined) {
     console.warn(JSON.stringify({
       event: 'data_scope_dept_unresolved', org, userId: requester.userId,
       effect: 'dept 主体不参与本请求（enforce 下会多拒绝）——检查 requesterOf 是否注入了 tenantId',
     }))
   } else {
-    depts = [...await userDeptClosure(pool, requester.tenantId, deptNamesOf(requester))]
+    const names = deptNamesOf(requester)
+    depts = [...await userDeptClosure(pool, requester.tenantId, names)]
+    directDepts = [...await userDirectDepts(pool, requester.tenantId, names)]
   }
   const out = emptyScopes()
   if (users.length === 0 && roles.length === 0 && depts.length === 0) return out
@@ -129,8 +135,9 @@ export async function loadEffectiveScopes(
       where a.org = $1
         and ((a.subject_type = 'user' and a.subject_id = any($2::text[]))
           or (a.subject_type = 'role' and a.subject_id = any($3::text[]))
-          or (a.subject_type = 'dept' and a.subject_id = any($4::text[])))`,
-    [org, users, roles, depts],
+          or (a.subject_type = 'dept' and a.include_children and a.subject_id = any($4::text[]))
+          or (a.subject_type = 'dept' and not a.include_children and a.subject_id = any($5::text[])))`,
+    [org, users, roles, depts, directDepts],
   )
   for (const row of r.rows as Array<{ kind: ScopeKind; selector: unknown }>) {
     const kind = row.kind

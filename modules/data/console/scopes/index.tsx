@@ -7,7 +7,7 @@
 import { useCallback, useEffect, useState } from 'react'
 import { useOutletContext } from 'react-router-dom'
 import {
-  Alert, Button, Card, Drawer, Input, Modal, Popconfirm, Select, Space, Switch,
+  Alert, Button, Card, Checkbox, Drawer, Input, Modal, Popconfirm, Select, Space, Switch,
   Table, Tag, Typography, message,
 } from 'antd'
 import { apiGet, apiSend, ApiError } from '../lib/api'
@@ -17,7 +17,12 @@ interface ConsoleContext { session: { scopes: string[] } }
 
 type Kind = 'brand' | 'store' | 'category'
 type Selector = { system_book?: string[]; region_l1?: string[]; region_name?: string[]; category_group?: string[]; all?: boolean }
-interface AssignmentItem { subjectType: 'dept' | 'role' | 'user'; subjectId: string }
+interface AssignmentItem {
+  subjectType: 'dept' | 'role' | 'user'
+  subjectId: string
+  /** 仅 dept：true（默认）= 该部门及其下级都生效；false = 只给直属成员（战区内分级靠它） */
+  includeChildren?: boolean
+}
 interface DeptOption { ext_id: string; name: string; path: string }
 interface ScopeView {
   id: number; name: string; kind: Kind; selector: Selector
@@ -340,6 +345,7 @@ export default function ScopesPage() {
         <Typography.Paragraph type="secondary">
           保存即**整组替换**该范围的全部分配（不是追加）。
           优先用「部门」——人调岗自动跟随；「角色」用于跨部门的职能岗；「用户」只作例外。
+          「含下级部门」取消勾选 = 只给该部门**直属成员**（战区内分级：战区范围只给战区总，区/店不继承）。
         </Typography.Paragraph>
         <Space orientation="vertical" size={8} style={{ width: '100%' }}>
           {assignRows.map((a, i) => (
@@ -351,6 +357,14 @@ export default function ScopesPage() {
                         { value: 'user', label: '用户' },
                       ]}
                       onChange={(subjectType) => setAssignRows(assignRows.map((x, j) => j === i ? { ...x, subjectType } : x))} />
+              {a.subjectType === 'dept' && (
+                <Checkbox
+                  checked={a.includeChildren !== false}
+                  onChange={(e) => setAssignRows(assignRows.map((x, j) => j === i ? { ...x, includeChildren: e.target.checked } : x))}
+                >
+                  含下级部门
+                </Checkbox>
+              )}
               {a.subjectType === 'dept' && depts.length > 0 ? (
                 <Select
                   showSearch
