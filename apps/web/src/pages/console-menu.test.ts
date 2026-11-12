@@ -175,6 +175,33 @@ describe('buildConsoleMenu 管理组', () => {
     expect(paths).not.toContain('/console/data/scopes')
   })
 
+  it('模块外链（体系地图）：持 data:query 时挂在「数据分析」组末尾，路径是外链地址', () => {
+    const menu = buildConsoleMenu(
+      [
+        { moduleId: 'data', moduleName: '数据分析', path: '/console/data', title: '数据分析' },
+        { moduleId: 'data', moduleName: '数据分析', path: '/console/data/metrics', title: '指标' },
+      ],
+      {},
+      { scopes: ['data:query'] },
+      { adminEntries: [], storageVisible: false, dataScopesVisible: false },
+    )
+    const grp = menu.find((m) => m.name === '数据分析')
+    expect(grp?.children?.map((c) => [c.name, c.path])).toEqual([
+      ['指标', '/console/data/metrics'],
+      ['体系地图', '/api/modules/data/system-map#/overview'],
+    ])
+  })
+
+  it('模块外链：无 data:query 时不出现', () => {
+    const menu = buildConsoleMenu(
+      [{ moduleId: 'data', moduleName: '数据分析', path: '/console/data', title: '数据分析' }],
+      {},
+      { scopes: ['other:view'] },
+      { adminEntries: [], storageVisible: false, dataScopesVisible: false },
+    )
+    expect(JSON.stringify(menu)).not.toContain('system-map')
+  })
+
   it('无 tenant:admin → 不出现管理组（模块页照旧）', () => {
     const menu = buildConsoleMenu([], {}, { scopes: ['demo:view'] }, {
       adminEntries: [],
