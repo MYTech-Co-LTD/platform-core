@@ -61,10 +61,10 @@ describe('数据模块 console 入口（URL 选页）', () => {
   })
 
 
-  it('★ 深链到 /metrics 时，指标页内容真的渲染出来（「主体列」是指标页独有表头）', async () => {
+  it('★ 深链到 /metrics 时，指标页内容真的渲染出来（指标名是这页独有的内容）', async () => {
     renderAt('/console/data/metrics')
-    // 指标表也开了横向滚动 ⇒ antd 量尺行会重复表头文本（同报表页 2026-11-03 UX 改动）
-    await waitFor(() => expect(screen.getAllByText(/主体列/).length).toBeGreaterThan(0))
+    // #2050 返工后表格只留 5 列（口径/主体列等进详情抽屉），用指标名做「真的渲染了这页」的锚点
+    await waitFor(() => expect(screen.getAllByText('销售日明细').length).toBeGreaterThan(0))
     await waitFor(() => expect(urls.some((u) => u.includes('/metrics/all'))).toBe(true))
   })
 
