@@ -48,7 +48,7 @@
 
 ## 5. 数据模型
 
-### 5.1 `data.metrics` 增列（迁移 046）
+### 5.1 `data.metrics` 增列（P1 落地；编号按仓内下一可用，预计 047）
 
 ```sql
 alter table data.metrics
@@ -72,7 +72,7 @@ create unique index if not exists metrics_title_per_dept_uq
   平台桶（`org='platform'`）天然不受影响；同部门第三个「营业额」在写入时被数据库拒绝。
 - `reveal='report'` 用于成本/毛利/工资一类：无权限即整表拒（见 §9.4）。
 
-### 5.2 `data.metric_change` 新表（迁移 047）
+### 5.2 `data.metric_change` 新表（**P0 落地**；迁移 046——P0 先于 P1 合入）
 
 ```sql
 create table if not exists data.metric_change (
@@ -106,7 +106,7 @@ create index if not exists metric_change_queue_idx
 
 - 复用 L1 声明里的 `entities`（`dbt/semantics/l1_metrics.yml`，已含 synonyms / identity_keys /
   system_of_record / merge_rule / owner）。
-- 租户新增概念落 `data.metric_concept`（迁移 048，`org/name/label/synonyms/owner_dept`），
+- 租户新增概念落 `data.metric_concept`（P1 落地，`org/name/label/synonyms/owner_dept`），
   写侧校验 `entity ∈ 平台概念 ∪ 本租户概念`；平台概念只读。
 - **不新建第二套概念词表**：L1 的 `entity` 是同一字段。
 
