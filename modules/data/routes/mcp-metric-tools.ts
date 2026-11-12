@@ -52,11 +52,12 @@ const METRIC_TOOL_NAMES = manageFaceOfSlice('metric').map((t) => t.name)
 /**
  * 变更单提案入参（P0 Task 6）：形状闸在本文件（与 customize/delete 同规，INVALID_BODY）；
  * 「能不能立单」的语义闸在 domain/metric-change（与 HTTP 面同一份 submitChange）。
- * `payload` 形状按 kind 分派给域层 zod（refine/expr union / meta 三键 / delete 空对象），面级不复制。
+ * `payload` 形状按 kind 分派给域层 zod（refine/expr union / meta 三键 / delete 空对象 /
+ * override=W8 声明 entry，P1 Task 7），面级不复制。
  */
 const SubmitArgs = z.object({
   metricId: z.string().min(1).max(128),
-  kind: z.enum(['create', 'update', 'meta', 'delete']),
+  kind: z.enum(['create', 'update', 'meta', 'delete', 'override']),
   payload: z.unknown().optional(),
 }).strict()
 /** list 的可选档：pending（默认，待人工裁决的队列）与 rejected（读驳回原因）。 */

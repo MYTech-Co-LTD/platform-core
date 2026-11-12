@@ -22,6 +22,8 @@ const describePg = dbUrl ? describe : describe.skip
 const ORG = 'org-mcp-manage'
 /** 种进 platform 桶的平台 L1（基底；也是「撞 L1 保留 id」用例的被撞者）。 */
 const L1_ID = 'mw_l1_sales_daily'
+/** P1 Task 7 修复用例的覆盖单夹具 L1：三段蛇形（entry.name 必须过编译器名字白名单），本文件专属前缀。 */
+const OVR_ID = 'mw:mcp:sales'
 /** 本租户自建的 L2（happy path 用）。 */
 const L2_ID = 'mw_l2_mine'
 
@@ -73,7 +75,9 @@ describePg('写面（需要 DATABASE_URL）', () => {
   afterAll(async () => {
     await pool.query('delete from data.metric_change where org = $1', [ORG]).catch(() => {})
     await pool.query('delete from data.metrics where org = $1', [ORG]).catch(() => {})
-    await pool.query(`delete from data.metrics where org = 'platform' and id = $1`, [L1_ID]).catch(() => {})
+    // 平台桶按精确 id 回收（OVR_ID = P1 Task 7 修复用例的覆盖单夹具）
+    await pool.query('delete from data.metrics where org = $1 and id = any($2::text[])',
+      ['platform', [L1_ID, OVR_ID]]).catch(() => {})
     await pool.end().catch(() => {})
   })
 
@@ -293,6 +297,48 @@ describePg('写面（需要 DATABASE_URL）', () => {
 
       // 生效路径未被触碰：独立回读存储层，不采信工具自述
       const live = await pool.query(`select 1 from data.metrics where org = $1 and id = 'x:via_mcp'`, [ORG])
+      expect(live.rowCount).toBe(0)
+    } finally {
+      if (prev === undefined) delete process.env.DATA_MCP_ALLOW_MUTATING
+      else process.env.DATA_MCP_ALLOW_MUTATING = prev
+    }
+  })
+
+  it('★ override 档经 MCP 提单（P1 Task 7 修复）：落单 kind=override 且**不生效**——工具不接采纳，租户桶无覆盖行', async () => {
+    await seedL1()
+    // override 的 entry.name 必须 = L1 id 且过编译器名字白名单（三段蛇形）；expression 关系
+    // 复用本文件 L1 的 mart_sales_daily ⇒ B11 白名单天然在集（与 Task 7 routes 夹具同构）。
+    await upsertL1Metric(pool, {
+      id: OVR_ID, title: '销售(覆盖单夹具)', description: 'mcp-manage override 夹具',
+      requiredScope: null, subjectColumn: 'org',
+      selectSql: 'select sum(mart_sales_daily.revenue) as value, bizday from mart_sales_daily',
+      groupBy: 'bizday', params: {}, sourceSystem: 'lemeng', slaDays: 1, freshnessRelations: [], masks: null,
+    })
+    const prev = process.env.DATA_MCP_ALLOW_MUTATING
+    process.env.DATA_MCP_ALLOW_MUTATING = 'true'
+    try {
+      const submitted = await (await rpc(app(), {
+        jsonrpc: '2.0', id: 22, method: 'tools/call',
+        params: { name: 'submit_metric_change', arguments: {
+          metricId: OVR_ID, kind: 'override',
+          payload: {
+            name: OVR_ID, label: '本租户销售（MCP 单）', definition: '覆盖单测试', owner: 'data-platform',
+            tier: 'experimental', source: 'lemeng', expression: 'sum(mart_sales_daily.revenue)',
+            grain: ['bizday'], freshness_sla_days: 1, reads: [],
+          },
+        } },
+      })).json()
+      const out = toolText(submitted as never)
+      expect(out.status).toBe('ok')
+      expect(out.state).toBe('preview_ready')
+      expect(typeof out.changeId).toBe('number')
+
+      // 单据 kind=override 在 list 里可见（不采信工具自述的 state，落库事实独立回读）
+      const row = await pool.query('select kind, status, metric_id from data.metric_change where id = $1', [out.changeId])
+      expect(row.rows[0]).toMatchObject({ kind: 'override', status: 'preview_ready', metric_id: OVR_ID })
+
+      // 生效路径未被触碰：工具不接采纳 ⇒ 租户桶没有覆盖行（连草稿都没有——那是人采纳之后的事）
+      const live = await pool.query('select 1 from data.metrics where org = $1 and id = $2', [ORG, OVR_ID])
       expect(live.rowCount).toBe(0)
     } finally {
       if (prev === undefined) delete process.env.DATA_MCP_ALLOW_MUTATING

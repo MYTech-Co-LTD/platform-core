@@ -96,8 +96,8 @@ const METRIC_FACE: readonly ManageFaceTool[] = [
       type: 'object',
       properties: {
         metricId: { type: 'string', description: '目标口径 id' },
-        kind: { type: 'string', enum: ['create', 'update', 'meta', 'delete'] },
-        payload: { type: 'object', description: 'create/update=口径声明；meta=业务键；delete 留空' },
+        kind: { type: 'string', enum: ['create', 'update', 'meta', 'delete', 'override'] },
+        payload: { type: 'object', description: 'create/update=口径声明；meta=业务键；delete 留空；override=覆盖声明（name=目标 id，grain 与平台口径同形）' },
       },
       required: ['metricId', 'kind'],
     },
