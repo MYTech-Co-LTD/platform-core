@@ -415,3 +415,32 @@ describe('元 schema 校验（2026-11-12 起真的在跑）', () => {
     expect(v.length).toBeGreaterThan(0)
   })
 })
+
+describe('列级非空面（契约 nullable=false ⇔ schema.yml 的 not_null）', () => {
+  const yml = (tests: string) => `version: 2
+models:
+  - name: stg_x_y
+    columns:
+      - name: bizday
+        description: 分区键
+${tests}`
+
+  it('契约声明 nullable=false，但 schema.yml 没有 not_null ⇒ 红（声明了却没人守）', () => {
+    const root = fixture()
+    writeFileSync(join(root, 'dbt/models/common/staging/schema.yml'), yml(''))
+    const v = checkDataContract(root)
+    expect(v.some((x) => x.message.includes('nullable=false') && x.message.includes('not_null'))).toBe(true)
+  })
+
+  it('补上 not_null ⇒ 这条不再报', () => {
+    const root = fixture()
+    writeFileSync(join(root, 'dbt/models/common/staging/schema.yml'), yml('        tests:\n          - not_null\n'))
+    const v = checkDataContract(root)
+    expect(v.some((x) => x.message.includes('nullable=false'))).toBe(false)
+  })
+
+  it('模型根本没登记 schema.yml ⇒ 本规则跳过（已知缺口，不假装覆盖）', () => {
+    const v = checkDataContract(fixture())
+    expect(v.some((x) => x.message.includes('nullable=false'))).toBe(false)
+  })
+})
