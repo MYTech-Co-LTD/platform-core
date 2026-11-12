@@ -1,7 +1,9 @@
 // console-menu.test.ts — 菜单位置规则（spec §3）与三重过滤的纯函数测试（issue #36）
 import { describe, expect, it } from 'vitest'
 import type { ComponentType } from 'react'
-import { TENANT_ADMIN_SCOPE, buildConsoleMenu, visibleAdminEntries, visibleConsoleEntries } from './console-menu'
+import {
+  TENANT_ADMIN_SCOPE, buildConsoleMenu, entriesToMenuItems, visibleAdminEntries, visibleConsoleEntries,
+} from './console-menu'
 import type { ConsoleRegistryEntry } from '../console-registry.gen'
 import type { MenuDataItem } from '@ant-design/pro-components'
 
@@ -69,7 +71,6 @@ describe('buildConsoleMenu（spec §3 位置规则）', () => {
     const menu = buildConsoleMenu(visibleConsoleEntries(CONFIG, SESSION, REGISTRY), {}, SESSION, {
       adminEntries: [],
       storageVisible: true,
-      dataScopesVisible: false,
     })
     expect(menu.map((m) => m.path)).toEqual(['/console', '/console/me/keys', '/console/case-engine', '/console/first/a'])
   })
@@ -77,9 +78,40 @@ describe('buildConsoleMenu（spec §3 位置规则）', () => {
     const menu = buildConsoleMenu(visibleConsoleEntries(CONFIG, SESSION_PARTIAL, REGISTRY), {}, SESSION_PARTIAL, {
       adminEntries: [],
       storageVisible: true,
-      dataScopesVisible: false,
     })
     expect(menu.map((m) => m.path)).toEqual(['/console', '/console/me/keys', '/console/first/a'])
+  })
+})
+
+// ---- #1953 二期：左侧多级菜单 ----
+describe('entriesToMenuItems（模块区二级菜单）', () => {
+  const entry = (path: string, title: string, icon?: string) => ({
+    moduleId: path.split('/')[2] ?? '',
+    moduleName: title,
+    path,
+    title,
+    ...(icon !== undefined ? { icon } : {}),
+  })
+
+  it('父条目收成分组标题，子页按声明序排在下面（父不可点，避免与首个子页重复）', () => {
+    const items = entriesToMenuItems([
+      entry('/console/data', '数据分析', 'BarChartOutlined'),
+      entry('/console/data/query', '问数'),
+      entry('/console/data/metrics', '指标'),
+    ], {})
+    expect(items).toHaveLength(1)
+    expect(items[0]?.path).toBeUndefined()
+    expect(items[0]?.name).toBe('数据分析')
+    expect(items[0]?.children?.map((c) => [c.path, c.name])).toEqual([
+      ['/console/data/query', '问数'],
+      ['/console/data/metrics', '指标'],
+    ])
+  })
+
+  it('没有子页的条目仍是可点叶子（path 保留）', () => {
+    const items = entriesToMenuItems([entry('/console/demo', '演示', 'ExperimentOutlined')], {})
+    expect(items.map((m) => m.path)).toEqual(['/console/demo'])
+    expect(items[0]?.children).toBeUndefined()
   })
 })
 
@@ -89,7 +121,6 @@ describe('buildConsoleMenu 管理组', () => {
     const menu = buildConsoleMenu([], {}, { scopes: ['tenant:admin'] }, {
       adminEntries: [],
       storageVisible: true,
-      dataScopesVisible: true,
     })
     const group = menu.at(-1)
     expect(group?.name).toBe('管理')
@@ -101,14 +132,12 @@ describe('buildConsoleMenu 管理组', () => {
     expect(group?.children?.[1]?.children?.map((c) => c.path)).toEqual([
       '/console/admin/roles',
       '/console/admin/permissions',
-      '/console/data/scopes',
     ])
     expect(leafPaths(group)).toEqual([
       '/console/admin/users',
       '/console/admin/org-tree',
       '/console/admin/roles',
       '/console/admin/permissions',
-      '/console/data/scopes',
       '/console/admin/subscriptions',
       '/console/admin/keys',
       '/console/admin/integrations',
@@ -116,20 +145,11 @@ describe('buildConsoleMenu 管理组', () => {
     ])
   })
 
-  it('无 data:manage（dataScopesVisible=false）→ 数据范围入口不出现', () => {
-    const menu = buildConsoleMenu([], {}, { scopes: ['tenant:admin'] }, {
-      adminEntries: [],
-      storageVisible: true,
-      dataScopesVisible: false,
-    })
-    expect(leafPaths(menu.at(-1))).not.toContain('/console/data/scopes')
-  })
 
   it('无 tenant:admin → 不出现管理组（模块页照旧）', () => {
     const menu = buildConsoleMenu([], {}, { scopes: ['demo:view'] }, {
       adminEntries: [],
       storageVisible: true,
-      dataScopesVisible: false,
     })
     expect(menu.some((m) => m.name === '管理')).toBe(false)
   })
@@ -156,7 +176,6 @@ describe('管理组联动', () => {
     const menu = buildConsoleMenu([], {}, ADMIN_SESSION, {
       adminEntries: [],
       storageVisible: false,
-      dataScopesVisible: false,
     })
     expect(leafPaths(menu.at(-1))).toEqual([
       '/console/admin/users',
@@ -173,7 +192,6 @@ describe('管理组联动', () => {
     const menu = buildConsoleMenu([], {}, ADMIN_SESSION, {
       adminEntries: [{ moduleId: 'demo', path: '/console/admin/demo/x', title: '演示管理页' }],
       storageVisible: true,
-      dataScopesVisible: false,
     })
     expect(leafPaths(menu.at(-1))).toEqual([
       '/console/admin/users',

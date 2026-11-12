@@ -71,8 +71,16 @@ api:
 # （apps/web/src/pages/console-menu.ts 只给平台「管理」组做了 children），而 frontend.console
 # 是扁平数组、协议不支持嵌套 ⇒ 五个页面收进一个条目，页内用真子路由分区（spec §3.1）。
 frontend:
+  # 左侧多级菜单（#1953 二期）：父条目 = 分组标题（不可点），子页 = 菜单叶子
   console:
     - { path: /console/aftersales, title: 售后管理, icon: ToolOutlined, scope: aftersales:manage, entry: ./console/index.tsx }
+    - { path: /console/aftersales/tickets, title: 工单, scope: aftersales:manage, entry: ./console/index.tsx }
+    - { path: /console/aftersales/rules, title: 规则, scope: aftersales:manage, entry: ./console/index.tsx }
+    - { path: /console/aftersales/employees, title: 员工, scope: aftersales:manage, entry: ./console/index.tsx }
+    - { path: /console/aftersales/products, title: 商品, scope: aftersales:manage, entry: ./console/index.tsx }
+    - { path: /console/aftersales/stores, title: 门店, scope: aftersales:manage, entry: ./console/index.tsx }
+    - { path: /console/aftersales/approvals, title: 申请审批, scope: aftersales:manage, entry: ./console/index.tsx }
+    - { path: /console/aftersales/links, title: 身份绑定, scope: aftersales:manage, entry: ./console/index.tsx }
   # 移动端 userApp（M3b-2）：Vite 壳 + Vue 3.5 + TDesign，搬自 wuji-2 的两个保留页。
   # mount 与 mobile/vite.config.ts 的 `base` **必须一致**（不一致 ⇒ 产物引用错前缀）。
   # dist 相对**模块目录**解析（loader 的 path.resolve(m.dir, dist)）。

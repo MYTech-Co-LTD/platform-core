@@ -262,6 +262,22 @@ export const grantAdminPermissionRole = (code: string, role: string) =>
 export const revokeAdminPermissionRole = (code: string, role: string) =>
   csrfWrite<{ ok: true }>(`/api/platform/admin/permissions/${encodeURIComponent(code)}/roles`, 'DELETE', { role })
 
+// ---- 数据范围（data 模块管理面，跨模块调用；门 = data:manage）----
+
+/** 与 modules/data/console/scopes 同一形状（服务端契约在 routes/scopes.ts） */
+export interface DataScopeRow {
+  id: number
+  name: string
+  kind: 'brand' | 'store' | 'category'
+  selector: { system_book?: string[]; region_l1?: string[]; region_name?: string[]; category_group?: string[]; all?: boolean }
+  legacyLabel: string | null
+  assignments: Array<{ subjectType: 'role' | 'user'; subjectId: string }>
+}
+export const listDataScopes = () => request<{ scopes: DataScopeRow[] }>('/api/modules/data/scopes')
+/** 整组替换（不是增量）：传「本范围应有的全部主体」 */
+export const putDataScopeAssignments = (id: number, assignments: DataScopeRow['assignments']) =>
+  csrfWrite<{ scopeId: number }>(`/api/modules/data/scopes/${id}/assignments`, 'PUT', { assignments })
+
 // ---- 租户级存储配置（M3c）----
 
 /**

@@ -4,7 +4,7 @@
 // 写操作（建/禁启/重置密码/删）走 adminWrite 通道：现取 csrf + x-csrf-token。
 import { useCallback, useEffect, useState } from 'react'
 import { useOutletContext } from 'react-router-dom'
-import { App, Button, Card, Form, Input, Modal, Popconfirm, Space, Switch, Table, Tag, Typography } from 'antd'
+import { App, Button, Card, Dropdown, Form, Input, Modal, Space, Switch, Table, Tag, Typography } from 'antd'
 import type { ColumnsType } from 'antd/es/table'
 import {
   ApiError,
@@ -17,14 +17,19 @@ import {
 } from '../../lib/api'
 import type { ConsoleOutletContext } from '../Console'
 import { ConsolePage } from '../../components/ConsolePage'
+import { UserAccessDrawer } from './UserAccessDrawer'
 
 export default function AdminUsersPage() {
-  const { session } = useOutletContext<ConsoleOutletContext>()
+  const { session, config } = useOutletContext<ConsoleOutletContext>()
+  // 数据范围那一节只在「数据模块启用 + 持 data:manage」时出现（跨模块 API 门卫仍是真闸）
+  const dataScopesEnabled =
+    config.modules.some((m) => m.id === 'data') && session.scopes.includes('data:manage')
   const { message } = App.useApp()
   const [users, setUsers] = useState<AdminUser[]>([])
   const [loading, setLoading] = useState(false)
   const [creating, setCreating] = useState(false)
   const [search, setSearch] = useState('')
+  const [accessUser, setAccessUser] = useState<AdminUser | null>(null)
   const [form] = Form.useForm<{ username: string; displayName?: string; password: string }>()
 
   const reload = useCallback(async () => {
@@ -92,51 +97,65 @@ export default function AdminUsersPage() {
     {
       title: '操作',
       key: 'ops',
-      width: 200,
+      width: 190,
       render: (_, u) => {
         const self = u.name === session.user.id
         return (
-          <>
-            <Button
-              size="small"
-              onClick={() => {
-                Modal.confirm({
-                  title: `重置 ${u.name} 的密码`,
-                  content: '新密码至少 8 位，请线下安全渠道告知用户。',
-                  okText: '重置为随机密码',
-                  onOk: async () => {
-                    // 随机初始密码（一次一密，不落日志；audit 只记 reset:true）
-                    const pwd = crypto.randomUUID().slice(0, 13) + 'Aa1'
-                    try {
-                      await resetAdminUserPassword(u.name, pwd)
-                      Modal.success({ title: '新密码（仅本次显示）', content: pwd })
-                      void reload()
-                    } catch (e) {
-                      message.error(e instanceof ApiError ? `重置失败：${e.code}` : '重置失败')
-                    }
-                  },
-                })
+          <Space size={4}>
+            {/* 主操作只有一个：配置权限。其余动作收进「更多」，避免一行三个按钮抢注意力 */}
+            <Button size="small" type="primary" ghost onClick={() => setAccessUser(u)}>
+              配置权限
+            </Button>
+            <Dropdown
+              trigger={['click']}
+              menu={{
+                items: [
+                  { key: 'reset', label: '重置密码' },
+                  { key: 'delete', label: '删除成员', danger: true, disabled: self },
+                ],
+                onClick: ({ key }) => {
+                  if (key === 'reset') {
+                    Modal.confirm({
+                      title: `重置 ${u.name} 的密码`,
+                      content: '新密码至少 8 位，请线下安全渠道告知用户。',
+                      okText: '重置为随机密码',
+                      onOk: async () => {
+                        // 随机初始密码（一次一密，不落日志；audit 只记 reset:true）
+                        const pwd = crypto.randomUUID().slice(0, 13) + 'Aa1'
+                        try {
+                          await resetAdminUserPassword(u.name, pwd)
+                          Modal.success({ title: '新密码（仅本次显示）', content: pwd })
+                          void reload()
+                        } catch (e) {
+                          message.error(e instanceof ApiError ? `重置失败：${e.code}` : '重置失败')
+                        }
+                      },
+                    })
+                    return
+                  }
+                  // 删除走二次确认（Dropdown 的菜单项本身不弹确认，用 Popconfirm 包不住，
+                  // 所以这里显式 confirm —— 与旧版 Popconfirm 同一道闸）
+                  Modal.confirm({
+                    title: `删除用户 ${u.name}？`,
+                    content: '该操作不可恢复',
+                    okText: '删除',
+                    okButtonProps: { danger: true },
+                    onOk: async () => {
+                      try {
+                        await deleteAdminUser(u.name)
+                        message.success(`已删除 ${u.name}`)
+                        void reload()
+                      } catch (e) {
+                        message.error(e instanceof ApiError ? `删除失败：${e.code}` : '删除失败')
+                      }
+                    },
+                  })
+                },
               }}
             >
-              重置密码
-            </Button>{' '}
-            <Popconfirm
-              title={`删除用户 ${u.name}？`}
-              description="该操作不可恢复"
-              disabled={self}
-              onConfirm={async () => {
-                try {
-                  await deleteAdminUser(u.name)
-                  message.success(`已删除 ${u.name}`)
-                  void reload()
-                } catch (e) {
-                  message.error(e instanceof ApiError ? `删除失败：${e.code}` : '删除失败')
-                }
-              }}
-            >
-              <Button size="small" danger disabled={self}>删除</Button>
-            </Popconfirm>
-          </>
+              <Button size="small">更多</Button>
+            </Dropdown>
+          </Space>
         )
       },
     },
@@ -211,6 +230,15 @@ export default function AdminUsersPage() {
         </Form>
       </Modal>
     </Card>
+    {accessUser && (
+      <UserAccessDrawer
+        user={accessUser}
+        open
+        dataScopesEnabled={dataScopesEnabled}
+        onClose={() => setAccessUser(null)}
+        onSaved={() => void reload()}
+      />
+    )}
     </ConsolePage>
   )
 }

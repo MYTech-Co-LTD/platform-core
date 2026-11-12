@@ -75,6 +75,14 @@ notifications:
         channels: [inapp_default]
 
 frontend:
+  # 左侧多级菜单（#1953 二期）：父条目 = 分组标题（不可点），子页 = 菜单叶子。
+  # 子页 scope 用**读取门**（view）——写操作各自的门由页面内按钮 role 与 API 门卫施加。
   console:
     - { path: /console/notify, title: 通知, icon: BellOutlined, scope: notify:view, entry: ./console/index.tsx }
+    - { path: /console/notify/events, title: 事件目录, scope: notify:view, entry: ./console/index.tsx }
+    - { path: /console/notify/rules, title: 规则, scope: notify:view, entry: ./console/index.tsx }
+    - { path: /console/notify/templates, title: 模板, scope: notify:view, entry: ./console/index.tsx }
+    - { path: /console/notify/channels, title: 通道, scope: notify:view, entry: ./console/index.tsx }
+    - { path: /console/notify/deliveries, title: 投递, scope: notify:view, entry: ./console/index.tsx }
+    - { path: /console/notify/inbox, title: 收件箱, scope: notify:view, entry: ./console/index.tsx }
 migrations: { dir: ./migrations }

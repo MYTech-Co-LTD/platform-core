@@ -43,12 +43,6 @@ export function visibleAdminEntries(
 export interface AdminMenuInput {
   adminEntries: VisibleAdminEntry[]
   storageVisible: boolean
-  /**
-   * 「数据范围」入口是否可见（数据模块已启用 + 持 `data:manage`）。
-   * 它物理上住在数据模块 console（`/console/data/scopes`），但概念上属于「权限」——
-   * 用户找「谁能看哪些门店」会来管理台，不会钻进报表中心（#1953 IA 收口）。
-   */
-  dataScopesVisible: boolean
 }
 
 /**
@@ -68,9 +62,9 @@ function adminGroup(iconMap: Record<string, ReactNode>, admin: AdminMenuInput): 
   const permissions: MenuDataItem[] = [
     { path: '/console/admin/roles', name: '角色' },
     { path: '/console/admin/permissions', name: '权限码授权' },
-    ...(admin.dataScopesVisible
-      ? [{ path: '/console/data/scopes', name: '数据范围' }]
-      : []),
+    // 「数据范围」不再在这里并列一条：它已作为「数据分析」的二级菜单叶子存在
+    // （manifest 声明 /console/data/scopes）。同一 path 在菜单里出现两次会让 antd Menu
+    // 双高亮并告警；管理员的逐人分配动线在「成员 → 配置权限」抽屉里。
   ]
   const settings: MenuDataItem[] = [
     { path: '/console/admin/subscriptions', name: '我的订阅' },
@@ -127,7 +121,37 @@ export function visibleConsoleEntries(
   return out
 }
 
-/** 顶栏菜单：概览 → pinned 模块页 → 其余模块页（manifest 序）→ 管理组（tenant:admin 门禁，动态聚合） */
+/**
+ * 模块区条目 → 左侧菜单项（#1953 二期：多级菜单）。
+ *
+ * 收口规则：manifest 里「一条 console 声明」= 和「一个菜单叶子」。模块声明了子页时
+ * （子页 path = 父 path + `/`），父条目收成**分组标题**（不可点，避免和首个子页重复），
+ * 子页按声明序排在下面。只有一层：树深再涨说明该模块该拆，别在菜单里做无限嵌套。
+ *
+ * 为什么不再用「模块页内横向 tabs」：页内 tabs 把「找功能」变成二次导航——用户得先记住
+ * 模块、再在模块里找 tab；左侧菜单一次展开即可见全部功能，且深链/收藏/权限过滤是同一套路径。
+ */
+export function entriesToMenuItems(
+  entries: VisibleConsoleEntry[],
+  iconMap: Record<string, ReactNode>,
+): MenuDataItem[] {
+  const isChildOf = (e: VisibleConsoleEntry, p: VisibleConsoleEntry): boolean =>
+    e !== p && e.path.startsWith(`${p.path}/`)
+  const top = entries.filter((e) => !entries.some((p) => isChildOf(e, p)))
+  return top.map((e) => {
+    // 直接子页（只收一层：孙页也挂在父下，避免 manifest 写错时静默丢条目）
+    const children = entries.filter((c) => isChildOf(c, e))
+    const icon = iconMap[e.icon ?? ''] ?? iconMap['AppstoreOutlined']
+    if (children.length === 0) return { path: e.path, name: e.title, icon }
+    return {
+      name: e.title,
+      icon,
+      children: children.map((c) => ({ path: c.path, name: c.title })),
+    }
+  })
+}
+
+/** 顶栏菜单：概览 → pinned 模块页 → 其余模块页（manifest 序，可二级）→ 管理组（tenant:admin 门禁，动态聚合） */
 export function buildConsoleMenu(
   entries: VisibleConsoleEntry[],
   iconMap: Record<string, ReactNode>,
@@ -140,12 +164,8 @@ export function buildConsoleMenu(
     { path: '/console', name: '概览', icon: iconMap['DashboardOutlined'] },
     // 个人 Key（issue #894）：**免闸门**——与「概览」同档（任何登录账号都该能管自己的 token）
     { path: '/console/me/keys', name: '个人 Key', icon: iconMap['KeyOutlined'] },
-    ...[...pinned, ...rest].map((e) => ({
-      path: e.path,
-      name: e.title,
-      // 模块没声明图标时回落到通用图标：否则折叠侧栏只显示标题首字（768px 实测）
-      icon: iconMap[e.icon ?? ''] ?? iconMap['AppstoreOutlined'],
-    })),
+    // 模块没声明图标时回落到通用图标：否则折叠侧栏只显示标题首字（768px 实测）
+    ...entriesToMenuItems([...pinned, ...rest], iconMap),
   ]
   return session.scopes.includes(TENANT_ADMIN_SCOPE) ? [...items, adminGroup(iconMap, admin)] : items
 }

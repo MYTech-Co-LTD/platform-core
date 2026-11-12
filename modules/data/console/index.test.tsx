@@ -1,8 +1,8 @@
-// index.test.tsx — 数据模块 console 入口：三页签的路由壳（问数/指标/报表）。
-// 【变更】原第四页「我的 Key」已上移宿主（issue #894，正典 §1.5）⇒ 页签与断言同删。
+// index.test.tsx — 数据模块 console 入口的路由壳（问数/指标/报表/数据范围）。
+// 【变更】原第四页「我的 Key」已上移宿主（issue #894）；#1953 二期页内 tabs 撤掉，
+// 四页改为宿主左侧菜单子项 ⇒ 本文件只测「URL 驱动哪一页」与裸路径规范化。
 // 挂载形态照宿主壳的真实结构（同 aftersales/console/index.test.tsx）：
 // `{ path: '*', element: <ConsoleModulePage/> }` 挂在 `/console` 下。
-// 只测「URL 驱动哪一页」：裸路径规范化、页签点击走绝对路径、深链真的渲染出那页的内容。
 import '@testing-library/jest-dom/vitest'
 import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { Outlet, RouterProvider, createMemoryRouter } from 'react-router-dom'
@@ -47,12 +47,11 @@ function renderAt(path: string) {
   return router
 }
 
-describe('数据模块 console 入口（三页签）', () => {
-  it('三个页签都在菜单里', () => {
+describe('数据模块 console 入口（URL 选页）', () => {
+  it('页内不再渲染页签导航（#1953 二期：改由宿主左侧菜单承担）', () => {
     renderAt('/console/data/query')
-    for (const label of ['问数', '指标', '报表']) {
-      expect(screen.getAllByText(label).length).toBeGreaterThan(0)
-    }
+    // 页签文案来自宿主菜单，模块页自己不该再出现「指标 / 报表」这类导航项
+    expect(screen.queryByRole('menuitem', { name: '指标' })).toBeNull()
   })
 
   it('裸 /console/data 规范化到默认页签 query（URL 与内容一致）', async () => {
@@ -60,11 +59,6 @@ describe('数据模块 console 入口（三页签）', () => {
     await waitFor(() => expect(router.state.location.pathname).toBe('/console/data/query'))
   })
 
-  it('★ 点页签导航到**绝对**路径，不丢模块段（data）', async () => {
-    const router = renderAt('/console/data/query')
-    fireEvent.click(screen.getByText('指标'))
-    await waitFor(() => expect(router.state.location.pathname).toBe('/console/data/metrics'))
-  })
 
   it('★ 深链到 /metrics 时，指标页内容真的渲染出来（「主体列」是指标页独有表头）', async () => {
     renderAt('/console/data/metrics')
@@ -84,19 +78,19 @@ describe('数据模块 console 入口（三页签）', () => {
     await waitFor(() => expect(urls.some((u) => u.includes('/reports'))).toBe(true))
   })
 
-  it('W5 定案 A：菜单含「体系地图」外链（独立追溯页，不是 console 路由页签）', () => {
+  it('W5 定案 A：仍保留「体系地图」外链（独立追溯页，不是 console 路由页签）', () => {
     renderAt('/console/data/query')
-    const link = screen.getByText('体系地图').closest('a')
+    const link = screen.getByText(/体系地图/).closest('a')
     expect(link?.getAttribute('href')).toBe('/api/modules/data/system-map#/overview')
     expect(link?.getAttribute('target')).toBe('_blank')
   })
 
-  it('★ data:manage 用户可见「数据范围」页签，普通用户不可见（#1901）', async () => {
-    // 普通（只有 data:query）：菜单没有「数据范围」
-    renderAt('/console/data/query')
-    expect(screen.queryByText('数据范围')).toBeNull()
+  it('★ 深链 /scopes 渲染「数据范围」页（#1901；入口显隐由宿主菜单按 data:manage 过滤）', async () => {
+    // 普通用户深链：末段不是他可用的页 ⇒ 规范回默认页，不渲染管理页
+    const plain = renderAt('/console/data/scopes')
+    await waitFor(() => expect(plain.state.location.pathname).toBe('/console/data/query'))
     cleanup()
-    // 管理员：菜单出现，且深链渲染出管理页内容（预览卡标题是本页独有）
+    // 管理员：深链直达，渲染出管理页内容（预览卡标题是本页独有）
     const router = createMemoryRouter(
       [
         {
