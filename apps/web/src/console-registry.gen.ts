@@ -95,14 +95,6 @@ export const consoleRegistry: ConsoleRegistryEntry[] = [
     load: () => import("../../../modules/data/console/index.tsx"),
   },
   {
-    path: "/console/data/query",
-    title: "问数",
-    group: "main",
-    moduleId: "data",
-    scope: "data:query",
-    load: () => import("../../../modules/data/console/index.tsx"),
-  },
-  {
     path: "/console/data/metrics",
     title: "指标",
     group: "main",
@@ -121,6 +113,14 @@ export const consoleRegistry: ConsoleRegistryEntry[] = [
   {
     path: "/console/data/scopes",
     title: "数据范围",
+    group: "main",
+    moduleId: "data",
+    scope: "data:manage",
+    load: () => import("../../../modules/data/console/index.tsx"),
+  },
+  {
+    path: "/console/data/candidates",
+    title: "可能的指标",
     group: "main",
     moduleId: "data",
     scope: "data:manage",
