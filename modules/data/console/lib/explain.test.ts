@@ -17,6 +17,15 @@ describe('humanError', () => {
     expect(humanError({ code: 'CANDIDATE_NOT_REJECTABLE' }).text).toContain('刷新')
   })
 
+  it('变更单四码（P0 终审 F2）：说下一步，不说状态机术语', () => {
+    expect(humanError({ code: 'CHANGE_STATE_CHANGED' }).text).toContain('刷新')
+    expect(humanError({ code: 'PREVIEW_UNAVAILABLE' }).text).toContain('跑试算')
+    expect(humanError({ code: 'DECISION_REQUIRES_SESSION' }).text).toContain('登录')
+    expect(humanError({ code: 'REASON_REQUIRED' }).text).toContain('驳回')
+    // 原码永远保留（回落纪律不变）
+    expect(humanError({ code: 'PREVIEW_UNAVAILABLE' }).code).toBe('PREVIEW_UNAVAILABLE')
+  })
+
   it('表外的码 ⇒ 通用句 + 原码仍保留', () => {
     const h = humanError({ code: 'SOME_NEW_CODE' })
     expect(h.text).toContain('重试')

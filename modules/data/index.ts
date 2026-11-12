@@ -6,6 +6,7 @@ import type { ModuleHono, ModuleVars, RouteCtx } from './routes/context'
 import { registerMcp } from './routes/mcp'
 import { registerMcpManage } from './routes/mcp-manage'
 import { registerMetrics } from './routes/metrics'
+import { registerMetricChanges } from './routes/metric-changes'
 import { registerPrivateMeasures } from './routes/private-measures'
 import { registerVerifiedQuestions } from './routes/verified-questions'
 import { registerQuery } from './routes/query'
@@ -50,6 +51,7 @@ export default defineModule({
     // T6，T8 收紧写路径：POST/PUT 只收结构化 L2Declaration（SQL 由 domain/semantic-compiler.ts
     // 这个**唯一编译点**生成）；`source='l1'` 的行经 API 只读。端点集合未变 ⇒ 本清单无新声明。
     registerMetrics(r, _ctx)
+    registerMetricChanges(r, _ctx) // Wave 5 P0：指标变更单（agent 只提案，决策端点只认会话——spec 2026-11-12 §6/§7）
     registerPrivateMeasures(r, _ctx) // W2：私有测度创建 + 归档读面
     registerVerifiedQuestions(r, _ctx) // W1：已验证问答（列/确认/拒绝）
     registerQuery(r, _ctx) // T6

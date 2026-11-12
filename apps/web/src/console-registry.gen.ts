@@ -143,6 +143,15 @@ export const consoleRegistry: ConsoleRegistryEntry[] = [
     load: () => import("../../../modules/data/console/index.tsx"),
   },
   {
+    path: "/console/data/changes",
+    title: "待核对",
+    group: "main",
+    moduleId: "data",
+    description: "agent 提交的指标变更单；看清试算值与参照值的差异再决定采纳或驳回。",
+    scope: "data:manage",
+    load: () => import("../../../modules/data/console/index.tsx"),
+  },
+  {
     path: "/console/demo",
     title: "演示",
     group: "main",

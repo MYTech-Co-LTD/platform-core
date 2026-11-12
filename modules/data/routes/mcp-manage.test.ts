@@ -71,6 +71,7 @@ function toolText(body: { result: { content: { text: string }[] } }): Record<str
 describePg('写面（需要 DATABASE_URL）', () => {
   const pool = new Pool({ connectionString: dbUrl })
   afterAll(async () => {
+    await pool.query('delete from data.metric_change where org = $1', [ORG]).catch(() => {})
     await pool.query('delete from data.metrics where org = $1', [ORG]).catch(() => {})
     await pool.query(`delete from data.metrics where org = 'platform' and id = $1`, [L1_ID]).catch(() => {})
     await pool.end().catch(() => {})
@@ -78,7 +79,11 @@ describePg('写面（需要 DATABASE_URL）', () => {
 
   function app(): Hono {
     // 第 4 参是 tenant（宿主投影的租户行）——不传会用默认 'test' 租户，断言全错。
-    return buildTestApp(mod, makeIdentity({ orgId: ORG }), { pool }, { id: 1, casdoor_org: ORG })
+    // execute：试算的测试缝（mcp-rpc 组装处 wh = ctx.execute 透传）——submit_metric_change
+    // 的「提交即试算」不碰真仓库（与 metric-changes.test.ts 同款假执行器，恒回同一行）。
+    return buildTestApp(mod, makeIdentity({ orgId: ORG }),
+      { pool, execute: async () => ({ rows: [{ rows: 5, value: 100 }] }) } as never,
+      { id: 1, casdoor_org: ORG })
   }
 
   /** 种一条平台 L1：写面的基底，也是「撞 L1 保留 id」用例的被撞者。 */
@@ -95,9 +100,10 @@ describePg('写面（需要 DATABASE_URL）', () => {
     })
   }
 
-  /** 口径片 + 报表片：设计稿 §6#7 的结构约束（多出发布/回收类 = 「能提不能发」被破坏）。 */
+  /** 口径片 + 报表片 + 变更单提案两件（P0 Task 6）：结构约束（多出发布/回收类 = 「能提不能发」被破坏）。 */
   const METRIC_REPORT_TOOL_NAMES = ['customize_metric', 'delete_custom_metric', 'list_metrics',
-    'list_reports', 'propose_report', 'revise_report_spec', 'get_report_spec']
+    'list_reports', 'propose_report', 'revise_report_spec', 'get_report_spec',
+    'submit_metric_change', 'list_metric_changes']
   /** Wave 3 提案面（spec §7）+ W3 L1 声明提案（#1401）：九个，缺一或多一都算漂。 */
   const PIPELINE_TOOL_NAMES = ['apply_pipeline_proposal', 'get_pipeline', 'get_pipeline_run', 'list_pipeline_runs', 'list_pipelines',
     'propose_contract_change', 'propose_metric_declaration', 'propose_pipeline_change', 'run_pipeline_sandbox']
@@ -239,6 +245,59 @@ describePg('写面（需要 DATABASE_URL）', () => {
       params: { name: 'customize_metric', arguments: { id: 'x3' } },   // 缺 baseMetric
     })).json()
     expect(toolText(body as never).error).toBe('INVALID_BODY')
+  })
+
+  it('★ submit_metric_change：写总闸关→denied 不立单；开闸后只提案不生效（未决态）；list 看得到自己的单', async () => {
+    await seedL1()
+    const args = {
+      name: 'submit_metric_change',
+      arguments: {
+        metricId: 'x:via_mcp', kind: 'create',
+        payload: { baseMetric: L1_ID, op: { kind: 'refine' }, alias: '经 MCP 提的' },
+      },
+    }
+    // 写总闸缺省关（与管线提案片同一开关 DATA_MCP_ALLOW_MUTATING）：连单都不立
+    const gated = toolText(await (await rpc(app(), {
+      jsonrpc: '2.0', id: 19, method: 'tools/call', params: args,
+    })).json() as never)
+    expect(gated.status).toBe('denied')
+    expect(gated.reason).toBe('mutating_disabled')
+
+    // 开闸只作用本用例（try/finally 还原，不向同 worker 的其他文件泄漏）
+    const prev = process.env.DATA_MCP_ALLOW_MUTATING
+    process.env.DATA_MCP_ALLOW_MUTATING = 'true'
+    try {
+      const submitted = await (await rpc(app(), {
+        jsonrpc: '2.0', id: 20, method: 'tools/call', params: args,
+      })).json()
+      const out = toolText(submitted as never)
+      expect(out.status).toBe('ok')
+      // 提交即试算（与 HTTP 面 POST /metric-changes 同契，P0 终审 F1）：注入执行器在位 ⇒
+      // preview_ready（控制台的采纳按钮只认这个态）；且永不直接生效
+      expect(out.state).toBe('preview_ready')
+      expect(typeof out.changeId).toBe('number')
+
+      // 自己的单在 list 里可见（带 kind/metricId；驳回原因是人裁决后才有的字段，未决时为 null）
+      const listed = await (await rpc(app(), {
+        jsonrpc: '2.0', id: 21, method: 'tools/call',
+        params: { name: 'list_metric_changes', arguments: {} },
+      })).json()
+      const changes = toolText(listed as never).changes as
+        { id: number; metricId: string; kind: string; status: string; preview: { rows?: number } | null; rejectReason: string | null }[]
+      const mine = changes.find((c) => c.id === out.changeId)
+      expect(mine).toBeDefined()
+      expect(mine!.metricId).toBe('x:via_mcp')
+      expect(mine!.kind).toBe('create')
+      expect(mine!.status).toBe('preview_ready')
+      expect(mine!.preview).toMatchObject({ rows: 5 })
+
+      // 生效路径未被触碰：独立回读存储层，不采信工具自述
+      const live = await pool.query(`select 1 from data.metrics where org = $1 and id = 'x:via_mcp'`, [ORG])
+      expect(live.rowCount).toBe(0)
+    } finally {
+      if (prev === undefined) delete process.env.DATA_MCP_ALLOW_MUTATING
+      else process.env.DATA_MCP_ALLOW_MUTATING = prev
+    }
   })
 
   it('协议面：通知回 202；未解析 body → -32700；未知方法 → -32601', async () => {

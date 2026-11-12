@@ -16,6 +16,7 @@ import MetricsPage from './metrics'
 import ReportsPage from './reports'
 import ScopesPage from './scopes'
 import CandidatesPage from './candidates'
+import ChangesPage from './changes'
 import { useIsMobile } from './lib/useIsMobile'
 
 /** 本模块在宿主壳的挂载基路径（manifest frontend.console 首条 path）。 */
@@ -29,6 +30,8 @@ const TABS = [
   // 候选池（Wave 2.3，spec §3「console 可浏览、一键采用」）：同样是管理面。
   // 标签用业务说法「可能的指标」——页面默认层不出现「候选池/置信度/聚合」这类工程词。
   { key: 'candidates', label: '可能的指标', manageOnly: true },
+  // 待核对（Wave 5 P0）：agent 提案单的评审面——人只做采纳/驳回（决策端点只认会话）。
+  { key: 'changes', label: '待核对', manageOnly: true },
 ] as const
 
 type TabKey = (typeof TABS)[number]['key']
@@ -66,6 +69,7 @@ export default function DataConsolePage() {
   const PAGES: Record<TabKey, () => React.JSX.Element> = {
     metrics: MetricsPage, reports: ReportsPage, scopes: ScopesPage,
     candidates: CandidatesPage,
+    changes: ChangesPage,
   }
   const Active = PAGES[active]
 

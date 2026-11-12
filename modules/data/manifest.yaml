@@ -220,6 +220,17 @@ api:
     - { method: PUT,    path: /scopes/:id,                scope: data:manage }
     - { method: DELETE, path: /scopes/:id,                scope: data:manage }
     - { method: PUT,    path: /scopes/:id/assignments,    scope: data:manage }
+    # ── 指标变更单（Wave 5 P0，spec 2026-11-12 §6/§7）：agent 只提案，人只采纳 ──
+    # 提交/重跑试算/撤回 = data:manage（agent 写面）；**采纳/驳回虽也声明 data:manage，
+    # 但路由内另判会话通道**（PAT/企微 ⇒ 403 DECISION_REQUIRES_SESSION）——页门管不了通道，
+    # 这是有意的第二道闸（结构性禁止自审）。
+    - { method: POST,   path: /metric-changes,              scope: data:manage }
+    - { method: GET,    path: /metric-changes,              scope: data:manage }
+    - { method: GET,    path: /metric-changes/:id,          scope: data:manage }
+    - { method: POST,   path: /metric-changes/:id/preview,  scope: data:manage }
+    - { method: POST,   path: /metric-changes/:id/adopt,    scope: data:manage }
+    - { method: POST,   path: /metric-changes/:id/reject,   scope: data:manage }
+    - { method: POST,   path: /metric-changes/:id/withdraw, scope: data:manage }
 # 通知事件（模块协议 12：先声明再发；spec 2026-11-01 §10.4 D6「生效必发通知」）。
 # 收件人 = 持 data:query 的人（scope_holders；指标查看面唯一门就是这个码，声明侧没有
 # 逐指标 viewer 清单，这是 P0 的诚实近似——资产级 ACL 到指标是后续议题）。defaults 幂等
@@ -257,6 +268,8 @@ frontend:
     - { path: /console/data/scopes, title: 数据范围, description: 决定谁能看哪些品牌/门店/品类：先建范围，再分配到部门（主）、角色或人（例外）。, scope: data:manage, entry: ./console/index.tsx, menu: false }
     # 候选池（Wave 2.3 / 2026-11-12 补菜单项）：页面标签用业务说法「可能的指标」
     - { path: /console/data/candidates, title: 可能的指标, description: 从源数据自动推导出的候选指标；采用后才会变成正式指标。, scope: data:manage, entry: ./console/index.tsx }
+    # 待核对（Wave 5 P0）：agent 提案单的评审面——只有采纳/驳回两个动作
+    - { path: /console/data/changes, title: 待核对, description: agent 提交的指标变更单；看清试算值与参照值的差异再决定采纳或驳回。, scope: data:manage, entry: ./console/index.tsx }
   # 移动端「报表中心」（#1369；2026-11-12 起**没有问数 tab**）：报表 / 管理 / 指标；/m 入口卡片按 scope=data:query 过滤——
   # 「谁能看到这个版块」的唯一事实源还是平台 scopes（不造第二套）。dist 由 @data/mobile 构建产
   userApp:

@@ -212,7 +212,7 @@ function gatedApp(identity: ReturnType<typeof makeIdentity>, pool: Pool | null) 
 }
 
 describe('报表面声明（不需要数据库）', () => {
-  it('报表端点都声明了（api.internal 全模块共 76 条），且页门分档：管理动作=data:manage，观看面=data:query', () => {
+  it('报表端点都声明了（api.internal 全模块共 74 条），且页门分档：管理动作=data:manage，观看面=data:query', () => {
     const declared = new Map(
       (mod.manifest.api?.internal ?? []).map((d) => [`${d.method} ${d.path}`, d.scope]),
     )
@@ -234,9 +234,19 @@ describe('报表面声明（不需要数据库）', () => {
     // delete/assignments 六条，全部 data:manage——授权变更是管理动作）：
     // +1：可分配部门 GET /scopes/depts（2026-11-12 部门主体上线：assignment 的 dept 候选，
     // 与 scope 管理面同档 data:manage）。
+    // +7：指标变更单（Wave 5 P0，spec 2026-11-12 §6/§7：提交/列表/详情/重跑试算/采纳/驳回/撤回，
+    // 全部 data:manage——采纳/驳回的**会话通道闸在路由内**，manifest 页门管不了通道）。
     // 穷举口径（同 module.test.ts 的表清单）——别处加端点而漏改这里会红，
     // 逼着声明与测试一起动。
-    expect(declared).toHaveLength(67)
+    expect(declared).toHaveLength(74)
+    // 指标变更单：七条全 data:manage；采纳/驳回的会话限定是路由内的第二道闸（不在这张表上）
+    for (const p of [
+      'POST /metric-changes', 'GET /metric-changes', 'GET /metric-changes/:id',
+      'POST /metric-changes/:id/preview', 'POST /metric-changes/:id/adopt',
+      'POST /metric-changes/:id/reject', 'POST /metric-changes/:id/withdraw',
+    ]) {
+      expect(declared.get(p)).toBe('data:manage')
+    }
     // scope 管理面：六条全 data:manage（运行期执法在 authorizeCore，这里只是配置面）
     for (const p of ['/scopes', '/scopes/effective']) {
       expect(declared.get(`GET ${p}`)).toBe('data:manage')
