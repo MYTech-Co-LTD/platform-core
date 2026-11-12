@@ -274,6 +274,12 @@ export interface DataScopeRow {
   assignments: Array<{ subjectType: 'role' | 'user'; subjectId: string }>
 }
 export const listDataScopes = () => request<{ scopes: DataScopeRow[] }>('/api/modules/data/scopes')
+/** 有效范围预览（部门/角色继承 + 个人直挂的合成结果）——配置抽屉拿它区分「继承」与「例外」 */
+export const previewDataScopeFor = (user: string, roles: string[]) =>
+  request<{ granted: Array<{ name: string; kind: string }> }>(
+    `/api/modules/data/scopes/effective?user=${encodeURIComponent(user)}${roles.length > 0 ? `&roles=${encodeURIComponent(roles.join(','))}` : ''}`,
+  )
+
 /** 整组替换（不是增量）：传「本范围应有的全部主体」 */
 export const putDataScopeAssignments = (id: number, assignments: DataScopeRow['assignments']) =>
   csrfWrite<{ scopeId: number }>(`/api/modules/data/scopes/${id}/assignments`, 'PUT', { assignments })

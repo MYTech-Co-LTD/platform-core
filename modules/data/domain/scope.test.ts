@@ -1,5 +1,5 @@
 // scope.test.ts — 数据范围 scope 的纯函数与加载（spec 2026-11-10）。
-import { describe, it, expect } from 'vitest'
+import { describe, it, expect, vi } from 'vitest'
 import type { Pool } from 'pg'
 import type { MetricDef, Requester } from './authz'
 import {
@@ -62,6 +62,40 @@ describe('loadEffectiveScopes', () => {
     expect(seenParams[2]).toEqual(['小区经理'])
     const bad = { query: async () => ({ rows: [{ kind: 'store', selector: { nope: ['x'] } }] }) } as unknown as Pool
     await expect(loadEffectiveScopes(bad, 'org', requester())).rejects.toThrow(/INVALID_SCOPE_SELECTOR/)
+  })
+})
+
+describe('loadEffectiveScopes · 部门主体（2026-11-12）', () => {
+  it('tenantId 存在 ⇒ 部门闭包（本人 + 祖先）作为 dept 主体参与匹配', async () => {
+    const calls: Array<{ sql: string; params: unknown[] }> = []
+    const pool = {
+      query: async (sql: string, params: unknown[]) => {
+        calls.push({ sql, params })
+        if (sql.includes('v_org_membership')) return { rows: [{ path: '49.57' }] }
+        return { rows: [{ kind: 'store', selector: { region_l1: ['东部战区'] } }] }
+      },
+    } as unknown as Pool
+    const r = await loadEffectiveScopes(pool, 'org', requester({ tenantId: 7 }))
+    expect(r.store).toHaveLength(1)
+    const assign = calls.find((c) => c.sql.includes('data.scope_assignment'))
+    expect(assign?.sql).toMatch(/subject_type = 'dept'/)
+    // path "49.57" 拆段 ⇒ 祖先 49 + 自身 57 都参与
+    expect(assign?.params[3]).toEqual(expect.arrayContaining(['49', '57']))
+  })
+
+  it('tenantId 缺失 ⇒ 不发部门查询（dept 主体不参与），并在 stderr 记一条 structured warn', async () => {
+    const calls: string[] = []
+    const pool = {
+      query: async (sql: string) => {
+        calls.push(sql)
+        return { rows: [] }
+      },
+    } as unknown as Pool
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {})
+    await loadEffectiveScopes(pool, 'org', requester())
+    expect(calls.some((q) => q.includes('v_org_membership'))).toBe(false)
+    expect(warn.mock.calls.some((c) => String(c[0]).includes('data_scope_dept_unresolved'))).toBe(true)
+    warn.mockRestore()
   })
 })
 

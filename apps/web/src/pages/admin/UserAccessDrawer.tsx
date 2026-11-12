@@ -20,6 +20,7 @@ import {
   listAdminRoles,
   listDataScopes,
   putDataScopeAssignments,
+  previewDataScopeFor,
   revokeAdminPermission,
   setAdminRoleMembers,
   type AdminPermission,
@@ -61,6 +62,8 @@ export function UserAccessDrawer({ user, open, onClose, onSaved, dataScopesEnabl
   const [roles, setRoles] = useState<AdminRoleRow[]>([])
   const [perms, setPerms] = useState<AdminPermission[]>([])
   const [scopes, setScopes] = useState<DataScopeRow[]>([])
+  // 继承来的范围名（部门闭包 / 角色）——只读展示，让管理员知道「不勾也有」
+  const [inherited, setInherited] = useState<string[]>([])
   // 三组勾选（初始值来自服务端；保存时只提交差集）
   const [pickedRoles, setPickedRoles] = useState<Set<string>>(new Set())
   const [pickedCodes, setPickedCodes] = useState<Set<string>>(new Set())
@@ -91,6 +94,14 @@ export function UserAccessDrawer({ user, open, onClose, onSaved, dataScopesEnabl
         )
         setPickedScopes(mine)
         setInitialScopes(mine)
+        // 继承面 = 生效范围 − 个人直接分配（部门闭包 ∪ 角色）。拿不到就留空，不阻断配置。
+        try {
+          const eff = await previewDataScopeFor(user.name, [...userRoles])
+          const direct = new Set(list.filter((s) => mine.has(s.id)).map((s) => s.name))
+          setInherited(eff.granted.map((g) => g.name).filter((n) => !direct.has(n)))
+        } catch {
+          setInherited([])
+        }
       }
     } catch (e) {
       message.error(e instanceof ApiError ? `加载失败：${e.code}` : '加载失败')
@@ -230,15 +241,24 @@ export function UserAccessDrawer({ user, open, onClose, onSaved, dataScopesEnabl
           {dataScopesEnabled && (
             <section>
               <Space size={12} wrap style={{ marginBottom: 2 }}>
-                <Typography.Title level={5} style={{ margin: 0 }}>② 他能看哪些数据 · 数据范围</Typography.Title>
+                <Typography.Title level={5} style={{ margin: 0 }}>② 他能看哪些数据 · 个人例外</Typography.Title>
                 {/* 范围定义本身不在这屏（属于数据面配置）⇒ 给明确出口，别让人在这里找「新建范围」 */}
                 <Typography.Link href="/console/data/scopes" target="_blank" rel="noopener" style={{ fontSize: 12 }}>
                   管理范围定义 ↗
                 </Typography.Link>
               </Space>
               <Typography.Paragraph type="secondary" style={{ marginTop: -4 }}>
-                不勾任何范围 = 报表里看不到数据（这是「默认不可见」，不是出错）。按部门/区域给范围即可。
+                范围默认按**部门**继承（人调岗自动跟随）；这里只配「例外」。不勾任何范围 = 报表里看不到数据（默认不可见，不是出错）。
               </Typography.Paragraph>
+              {inherited.length > 0 && (
+                <Alert
+                  type="success"
+                  showIcon
+                  style={{ marginBottom: 8 }}
+                  message={`已通过部门/角色继承：${inherited.join('、')}`}
+                  description="这些不用在这里勾；要调整请改部门归属或角色配置。"
+                />
+              )}
               {scopes.length === 0 ? (
                 <Empty
                   image={Empty.PRESENTED_IMAGE_SIMPLE}

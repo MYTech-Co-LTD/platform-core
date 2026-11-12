@@ -18,7 +18,7 @@ function outcome(c: Context<ModuleVars>, r: { ok: true; value: unknown } | { ok:
   if (r.ok) return c.json(r.value, okStatus)
   const http: Record<AdminErr, 400 | 404 | 409 | 503> = {
     INVALID_NAME: 400, INVALID_KIND: 400, INVALID_SELECTOR: 400, VALUE_NOT_IN_DIMS: 400,
-    INVALID_ASSIGNMENTS: 400, DUP_NAME: 409, NOT_FOUND: 404, DIMS_UNAVAILABLE: 503,
+    INVALID_ASSIGNMENTS: 400, UNKNOWN_DEPT: 400, DUP_NAME: 409, NOT_FOUND: 404, DIMS_UNAVAILABLE: 503,
   }
   return c.json({ error: r.code, ...(r.detail !== undefined ? { detail: r.detail } : {}) }, http[r.code])
 }
@@ -41,7 +41,17 @@ export function registerScopes(r: ModuleHono, ctx: RouteCtx): void {
     const user = (c.req.query('user') ?? '').trim()
     if (user === '') return c.json({ error: 'INVALID_QUERY' }, 400)
     const roles = (c.req.query('roles') ?? '').split(',').map((x) => x.trim()).filter((x) => x !== '')
-    return c.json(await previewEffective(ctx.pool, orgOf(c), user, roles))
+    return c.json(await previewEffective(ctx.pool, orgOf(c), user, roles, c.get('tenant').id))
+  })
+
+  // 可分配的部门（只读）：assignment 的 dept 主体从这里选，避免手敲 ext_id 敲错。
+  // 只回活节点（status=1）；组织未同步 ⇒ 空数组（配置期校验会拒写 dept 主体）。
+  r.get('/scopes/depts', async (c) => {
+    const r2 = await ctx.pool.query(
+      `select ext_id, name, path from platform.v_org_node
+        where status = 1 order by path limit 2000`,
+    )
+    return c.json({ depts: r2.rows as Array<{ ext_id: string; name: string; path: string }> })
   })
 
   // 变更历史（只读）：运营改错 scope 时要能回溯「谁改了什么」。

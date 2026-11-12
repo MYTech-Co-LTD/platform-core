@@ -17,7 +17,8 @@ interface ConsoleContext { session: { scopes: string[] } }
 
 type Kind = 'brand' | 'store' | 'category'
 type Selector = { system_book?: string[]; region_l1?: string[]; region_name?: string[]; category_group?: string[]; all?: boolean }
-interface AssignmentItem { subjectType: 'role' | 'user'; subjectId: string }
+interface AssignmentItem { subjectType: 'dept' | 'role' | 'user'; subjectId: string }
+interface DeptOption { ext_id: string; name: string; path: string }
 interface ScopeView {
   id: number; name: string; kind: Kind; selector: Selector
   legacyLabel: string | null; assignments: AssignmentItem[]
@@ -85,6 +86,8 @@ export default function ScopesPage() {
 
   const [assigning, setAssigning] = useState<ScopeView | null>(null)
   const [assignRows, setAssignRows] = useState<AssignmentItem[]>([])
+  // 部门候选（dept 主体选择用）；打不开就退化成手填 ext_id，不阻断
+  const [depts, setDepts] = useState<DeptOption[]>([])
 
   const [auditOpen, setAuditOpen] = useState(false)
   const [auditRows, setAuditRows] = useState<Array<{ id: number; actor: string; action: string; detail: Record<string, unknown>; createdAt: string }>>([])
@@ -152,7 +155,16 @@ export default function ScopesPage() {
     }
   }
 
-  const openAssign = (s: ScopeView) => { setAssigning(s); setAssignRows(s.assignments.map((a) => ({ ...a }))) }
+  const openAssign = async (s: ScopeView) => {
+    setAssigning(s)
+    setAssignRows(s.assignments.map((a) => ({ ...a })))
+    try {
+      const r = await apiGet('/scopes/depts') as { depts: DeptOption[] }
+      setDepts(r.depts)
+    } catch {
+      setDepts([]) // 组织没同步也能配 role/user；dept 退化成手填
+    }
+  }
 
   const saveAssign = async () => {
     if (assigning === null) return
@@ -326,20 +338,37 @@ export default function ScopesPage() {
         extra={<Button type="primary" loading={saving} onClick={() => void saveAssign()}>整组替换</Button>}
       >
         <Typography.Paragraph type="secondary">
-          保存即**整组替换**该范围的全部分配（不是追加）。user = Casdoor 用户名；role = Casdoor 角色短名。
+          保存即**整组替换**该范围的全部分配（不是追加）。
+          优先用「部门」——人调岗自动跟随；「角色」用于跨部门的职能岗；「用户」只作例外。
         </Typography.Paragraph>
         <Space orientation="vertical" size={8} style={{ width: '100%' }}>
           {assignRows.map((a, i) => (
             <Space key={i} style={{ width: '100%' }}>
               <Select value={a.subjectType} style={{ width: 90 }}
-                      options={[{ value: 'user', label: '用户' }, { value: 'role', label: '角色' }]}
+                      options={[
+                        { value: 'dept', label: '部门' },
+                        { value: 'role', label: '角色' },
+                        { value: 'user', label: '用户' },
+                      ]}
                       onChange={(subjectType) => setAssignRows(assignRows.map((x, j) => j === i ? { ...x, subjectType } : x))} />
-              <Input placeholder="subjectId" style={{ width: 220 }} value={a.subjectId}
-                     onChange={(e) => setAssignRows(assignRows.map((x, j) => j === i ? { ...x, subjectId: e.target.value } : x))} />
+              {a.subjectType === 'dept' && depts.length > 0 ? (
+                <Select
+                  showSearch
+                  optionFilterProp="label"
+                  placeholder="选择部门"
+                  style={{ width: 260 }}
+                  value={a.subjectId === '' ? undefined : a.subjectId}
+                  options={depts.map((d) => ({ value: d.ext_id, label: `${d.name}（${d.path}）` }))}
+                  onChange={(subjectId) => setAssignRows(assignRows.map((x, j) => j === i ? { ...x, subjectId } : x))}
+                />
+              ) : (
+                <Input placeholder={a.subjectType === 'dept' ? '部门 ext_id' : 'subjectId'} style={{ width: 220 }} value={a.subjectId}
+                       onChange={(e) => setAssignRows(assignRows.map((x, j) => j === i ? { ...x, subjectId: e.target.value } : x))} />
+              )}
               <Button size="small" danger onClick={() => setAssignRows(assignRows.filter((_, j) => j !== i))}>删</Button>
             </Space>
           ))}
-          <Button block onClick={() => setAssignRows([...assignRows, { subjectType: 'user', subjectId: '' }])}>+ 添加</Button>
+          <Button block onClick={() => setAssignRows([...assignRows, { subjectType: 'dept', subjectId: '' }])}>+ 添加</Button>
         </Space>
       </Drawer>
       <Drawer title="变更历史（data.scope_audit）" width={560} open={auditOpen} onClose={() => setAuditOpen(false)}>

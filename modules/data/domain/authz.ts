@@ -154,6 +154,12 @@ export interface Requester {
   accountName?: string
   /** 主体值（SQL 里 WHERE <subjectColumn> = '<orgId>'）——**只**来自身份解析 */
   orgId: string
+  /**
+   * 租户数字 id（`platform.tenant.id`）。**只给**部门闭包用（`platform.v_org_membership.tenant_id`），
+   * 由路由侧 `requesterOf(c)` 从 `c.get('tenant').id` 注入。
+   * 测试夹具可缺省——缺省时 dept 主体不参与（并记 structured warn），见 scope.ts。
+   */
+  tenantId?: number
   channel: Channel
   /** 仅 pat 通道 */
   keyId: number | null

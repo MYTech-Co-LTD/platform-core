@@ -14,9 +14,11 @@ const ORG = 'org_a'
 // ── 假池：内存库 + SQL 形状分派（写路径走 client，读路径走 pool.query，同一份 exec）──
 interface DbState {
   scopes: Array<{ id: number; org: string; name: string; kind: string; selector: unknown; legacy_label: string | null }>
-  grants: Array<{ org: string; subject_type: 'role' | 'user'; subject_id: string; scope_id: number }>
+  grants: Array<{ org: string; subject_type: 'dept' | 'role' | 'user'; subject_id: string; scope_id: number }>
   audits: Array<{ org: string; actor: string; action: string; detail: Record<string, unknown> }>
   nextId: number
+  /** 活部门 ext_id（dept 主体校验用） */
+  depts: string[]
 }
 
 function makeDb(): DbState {
@@ -32,6 +34,7 @@ function makeDb(): DbState {
     ],
     audits: [],
     nextId: 100,
+    depts: ['49', '57'],
   }
 }
 
@@ -56,6 +59,15 @@ function makePool(db: DbState): Pool {
     if (/select 1 from data\.scope where org = \$1 and id = \$2/.test(text)) {
       return { rows: db.scopes.filter((s) => s.org === params[0] && s.id === params[1]).length > 0 ? [{}] : [] }
     }
+    // ── 组织节点（dept 主体校验）──：只认 db.depts 里的活节点
+    if (/from platform\.v_org_node where status = 1/.test(text)) {
+      const ids = (params[0] as string[]) ?? []
+      return { rows: db.depts.filter((d) => ids.includes(d)).map((ext_id) => ({ ext_id })) }
+    }
+    if (/from platform\.v_org_node\b/.test(text)) {
+      return { rows: db.depts.map((ext_id) => ({ ext_id, name: ext_id, path: ext_id })) }
+    }
+    if (/from platform\.v_org_membership/.test(text)) return { rows: [] }
     if (/select name from data\.scope where org/.test(text)) {
       const hit = db.scopes.find((s) => s.org === params[0] && s.id === params[1])
       return { rows: hit === undefined ? [] : [{ name: hit.name }] }
@@ -284,5 +296,27 @@ describe('listScopes / previewEffective（读面）', () => {
     const bob = await previewEffective(makePool(makeDb()), ORG, 'bob', [])
     expect(bob.granted).toEqual([])
     expect(bob.effective.brand).toEqual([])
+  })
+})
+
+describe('replaceAssignments · 部门主体（2026-11-12）', () => {
+  it('dept 主体落库；未知部门 ⇒ UNKNOWN_DEPT 且不写入（fail-closed）', async () => {
+    const db = makeDb()
+    const pool = makePool(db)
+    const bad = await replaceAssignments(pool, ORG, 'admin', 11, [{ subjectType: 'dept', subjectId: '999' }])
+    expect(bad).toMatchObject({ ok: false, code: 'UNKNOWN_DEPT', detail: '999' })
+    expect(db.grants.filter((g) => g.scope_id === 11 && g.subject_type === 'dept')).toHaveLength(0)
+
+    const ok = await replaceAssignments(pool, ORG, 'admin', 11, [
+      { subjectType: 'dept', subjectId: '49' },
+      { subjectType: 'user', subjectId: 'alice' },
+    ])
+    expect(ok.ok).toBe(true)
+    if (!ok.ok) return
+    expect(ok.value.assignments).toEqual([
+      { subjectType: 'dept', subjectId: '49' },
+      { subjectType: 'user', subjectId: 'alice' },
+    ])
+    expect(db.grants.some((g) => g.scope_id === 11 && g.subject_type === 'dept' && g.subject_id === '49')).toBe(true)
   })
 })

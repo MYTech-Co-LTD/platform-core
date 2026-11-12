@@ -100,6 +100,8 @@ export function requesterOf(c: Context<ModuleVars>): Requester | null {
     userId: identity.userId,
     accountName: identity.accountName,
     orgId: identity.orgId,
+    // 部门闭包查询要数字租户 id（v_org_membership.tenant_id）——路由层是唯一拿得到它的地方
+    tenantId: c.get('tenant').id,
     channel: c.get(REQUESTER_CHANNEL) ?? 'session',
     keyId: c.get(REQUESTER_KEY_ID) ?? null,
     ...(identity.sessionId !== undefined ? { sessionId: identity.sessionId } : {}),

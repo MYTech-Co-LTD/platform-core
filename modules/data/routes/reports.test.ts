@@ -212,7 +212,7 @@ function gatedApp(identity: ReturnType<typeof makeIdentity>, pool: Pool | null) 
 }
 
 describe('报表面声明（不需要数据库）', () => {
-  it('报表端点都声明了（api.internal 全模块共 57 条），且页门分档：管理动作=data:manage，观看面=data:query', () => {
+  it('报表端点都声明了（api.internal 全模块共 76 条），且页门分档：管理动作=data:manage，观看面=data:query', () => {
     const declared = new Map(
       (mod.manifest.api?.internal ?? []).map((d) => [`${d.method} ${d.path}`, d.scope]),
     )
@@ -232,9 +232,11 @@ describe('报表面声明（不需要数据库）', () => {
     // +1：体系地图 GET /system-map（W5 Task 4 #1455：只读单文件 HTML，data:query））；
     // +7：数据范围 scope 管理面（spec 2026-11-10 §5.5，#1901：list/effective/create/update/
     // delete/assignments 六条，全部 data:manage——授权变更是管理动作）：
+    // +1：可分配部门 GET /scopes/depts（2026-11-12 部门主体上线：assignment 的 dept 候选，
+    // 与 scope 管理面同档 data:manage）。
     // 穷举口径（同 module.test.ts 的表清单）——别处加端点而漏改这里会红，
     // 逼着声明与测试一起动。
-    expect(declared).toHaveLength(66)
+    expect(declared).toHaveLength(67)
     // scope 管理面：六条全 data:manage（运行期执法在 authorizeCore，这里只是配置面）
     for (const p of ['/scopes', '/scopes/effective']) {
       expect(declared.get(`GET ${p}`)).toBe('data:manage')
