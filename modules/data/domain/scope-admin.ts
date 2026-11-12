@@ -15,6 +15,7 @@
 //    主体是**惰性**的（解析时自然空匹配），无越权面——登记在案，不做假校验。
 import type { Pool } from 'pg'
 import { loadEffectiveScopes, normalizeSelector, type EffectiveScopes, type ScopeKind, type ScopeSelector } from './scope'
+import { deptNamesOf, userDeptClosure } from './dept-gate'
 import { warehousePool } from './warehouse'
 
 /** kind 允许的 selector 键集（闭集；混用 ⇒ INVALID_SELECTOR）。brand 不允许 all——
@@ -33,7 +34,13 @@ export interface ScopeAdminDeps {
   warehouse?: Pool
 }
 
-export interface AssignmentItem { subjectType: 'role' | 'user'; subjectId: string }
+/**
+ * 分配主体（2026-11-12 扩 dept）：
+ * - dept：组织节点 ext_id（含祖先闭包）——**主路径**，人调岗自动跟随；
+ * - role：岗位包（跨部门职能岗）；
+ * - user：例外（临时补漏），保留但不鼓励。
+ */
+export interface AssignmentItem { subjectType: 'dept' | 'role' | 'user'; subjectId: string }
 
 export interface ScopeView {
   id: number
@@ -60,6 +67,7 @@ export type AdminErr =
   | 'DUP_NAME'            // (org,name) 撞车
   | 'NOT_FOUND'           // id 不在本 org
   | 'INVALID_ASSIGNMENTS' // assignment 列表形状坏
+  | 'UNKNOWN_DEPT'        // dept 主体不在本租户 org 表（活节点）⇒ 拒绝配置（detail 列未知 ext_id）
 export type AdminResult<T> = { ok: true; value: T } | { ok: false; code: AdminErr; detail?: string }
 
 const err = <T>(code: AdminErr, detail?: string): AdminResult<T> => ({ ok: false, code, ...(detail !== undefined ? { detail } : {}) })
@@ -273,6 +281,26 @@ export async function deleteScope(
 }
 
 /** assignment **整组替换**：先删本 scope 全部、再插入清单，回读做集合相等比对。 */
+/**
+ * dept 主体的配置期校验：ext_id 必须存在于 `platform.v_org_node` 的**活节点**。
+ *
+ * 为什么在配置期拦：部门门（validateDeptGate）先例——组织没同步时配出来的门恒不成立，
+ * 现场表现是「明明配了却看不见」，排障成本远高于当场拒绝。
+ * org 表为空（未同步）时同样拒绝：此时任何 dept 主体都恒不生效。
+ */
+async function validateAssignableDepts(
+  pool: Pool, deptIds: readonly string[],
+): Promise<AdminResult<null>> {
+  const r = await pool.query(
+    'select ext_id from platform.v_org_node where status = 1 and ext_id = any($1::text[])',
+    [[...new Set(deptIds)]],
+  )
+  const known = new Set((r.rows as Array<{ ext_id: string }>).map((x) => x.ext_id))
+  const unknown = [...new Set(deptIds)].filter((d) => !known.has(d))
+  if (unknown.length > 0) return { ok: false, code: 'UNKNOWN_DEPT', detail: unknown.join(',') }
+  return { ok: true, value: null }
+}
+
 export async function replaceAssignments(
   pool: Pool, org: string, actor: string, scopeId: number, items: unknown,
 ): Promise<AdminResult<{ scopeId: number; assignments: AssignmentItem[] }>> {
@@ -283,13 +311,20 @@ export async function replaceAssignments(
     const subjectType = (it as { subjectType?: unknown })?.subjectType
     const subjectId = typeof (it as { subjectId?: unknown })?.subjectId === 'string'
       ? (it as { subjectId: string }).subjectId.trim() : ''
-    if ((subjectType !== 'role' && subjectType !== 'user') || subjectId === '' || subjectId.length > 200) {
+    if ((subjectType !== 'dept' && subjectType !== 'role' && subjectType !== 'user')
+      || subjectId === '' || subjectId.length > 200) {
       return err('INVALID_ASSIGNMENTS')
     }
     const key = `${subjectType}:${subjectId}`
     if (seen.has(key)) continue          // 同主体重复 = 幂等合并，不是错
     seen.add(key)
     parsed.push({ subjectType, subjectId })
+  }
+  // dept 主体必须能解析到活部门：否则就是「配了但永远没人满足」的静默门（与 validateDeptGate 同一 fail-closed 口径）
+  const deptIds = parsed.filter((p) => p.subjectType === 'dept').map((p) => p.subjectId)
+  if (deptIds.length > 0) {
+    const deptCheck = await validateAssignableDepts(pool, deptIds)
+    if (!deptCheck.ok) return deptCheck
   }
   const client = await pool.connect()
   try {
@@ -339,19 +374,24 @@ export interface EffectivePreview {
 
 /** 有效 scope 预览（dry-run）：给运营排查「为什么他看不见东部一区」。 */
 export async function previewEffective(
-  pool: Pool, org: string, user: string, roles: readonly string[],
+  pool: Pool, org: string, user: string, roles: readonly string[], tenantId?: number,
 ): Promise<EffectivePreview> {
-  const effective = await loadEffectiveScopes(pool, org, {
-    userId: user, orgId: org, channel: 'session', keyId: null,
+  const requester = {
+    userId: user, orgId: org, channel: 'session' as const, keyId: null,
     scopes: [], hasScope: () => false, roles: [...roles],
-  })
+    ...(tenantId !== undefined ? { tenantId } : {}),
+  }
+  const effective = await loadEffectiveScopes(pool, org, requester)
+  // 部门闭包：预览要如实反映「这条范围是通过哪个部门给他的」，否则排障时看不到来源
+  const depts = tenantId !== undefined ? [...await userDeptClosure(pool, tenantId, deptNamesOf({ userId: user }))] : []
   const names = await pool.query(
     `select s.name, s.kind from data.scope_assignment a
        join data.scope s on s.id = a.scope_id and s.org = a.org
       where a.org = $1
         and ((a.subject_type = 'user' and a.subject_id = $2)
-          or (a.subject_type = 'role' and a.subject_id = any($3::text[])))`,
-    [org, user, [...roles]],
+          or (a.subject_type = 'role' and a.subject_id = any($3::text[]))
+          or (a.subject_type = 'dept' and a.subject_id = any($4::text[])))`,
+    [org, user, [...roles], depts],
   )
   // 同一 scope 经 user 与 role 两条路命中会产生多行（SQL 按 assignment 行返回）——
   // 名单语义是「命中了哪些 scope」，按 (name, kind) 去重。

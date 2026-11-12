@@ -148,8 +148,8 @@ category_path 首段 = 生鲜              → 水果
 | 列 | 说明 |
 |---|---|
 | `org` | 租户 |
-| `subject_type` | `role` / `user` |
-| `subject_id` | Casdoor role 短名 / Casdoor user name |
+| `subject_type` | `dept` / `role` / `user` |
+| `subject_id` | `dept`=org_node ext_id（企微部门 id）· `role`=Casdoor role 短名 · `user`=Casdoor user name |
 | `scope_id` | → `data.scope(id)` |
 | 主键 | `(org, subject_type, subject_id, scope_id)` |
 
@@ -172,9 +172,23 @@ category_path 首段 = 生鲜              → 水果
 ### 3.3 有效范围
 
 ```
-有效 scope = 用户直接 assignment ∪ 用户所属角色的 assignment
+有效 scope = 用户直接 assignment ∪ 用户所属角色的 assignment ∪ 用户部门闭包的 assignment
 同 kind：并集（union）；任一 all ⇒ 该 kind 不裁
 不同 kind：AND（brand AND store AND category）
+
+**主体优先级（2026-11-12 定案，迁移 044）**：
+
+| 主体 | 定位 | 理由 |
+|---|---|---|
+| `dept` | **主路径** | 人属于哪个部门是一个事实；调岗/离职自动跟随，不会烂权限 |
+| `role` | 岗位包（跨部门职能岗） | 显式维护，适合总部的跨区角色 |
+| `user` | **例外**（临时补漏） | 最脆弱：人走了没人记得收；配置面默认折叠，并要求写明原因 |
+
+- 部门闭包 = 本人部门 + 全部祖先，复用报表部门门同一实现（`userDeptClosure`，物化 `path` 拆段）。
+- 闭包的租户 id 由路由侧注入（`Requester.tenantId`）；缺失时不静默降级，记
+  `data_scope_dept_unresolved` 结构化告警（enforce 下表现为多拒绝，fail-closed 方向）。
+- 配置期校验：`dept` 主体必须命中 `platform.v_org_node` 活节点，否则 `UNKNOWN_DEPT` 拒写
+  （与 `validateDeptGate` 同口径：拒绝「配了但永远没人满足」的静默门）。
 ```
 
 **默认拒绝**（对普通 `data:query` 用户）：
@@ -371,7 +385,8 @@ AND (system_book, item_num) IN (
 ### 5.5 管理面
 
 - `GET/POST/PUT/DELETE /data/scopes`（`data:manage`）；
-- `PUT /data/scopes/:id/assignments`（role/user 整组替换）；
+- `PUT /data/scopes/:id/assignments`（dept/role/user 整组替换）；
+- `GET /data/scopes/depts`（可分配部门候选：`platform.v_org_node` 活节点；2026-11-12 起）；
 - `GET /data/scopes/effective?user=&roles=`（预览有效 scope，dry-run）；
 - 全部写后回读 + 审计；selector 值必须存在于受控维表。
 - **已落地（2026-11-11）**：`modules/data/domain/scope-admin.ts`（判定链单实现）+

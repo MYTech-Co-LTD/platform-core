@@ -13,6 +13,7 @@
 // `(system_book, branch_num)` / `(system_book, item_num)`，禁止裸 branch_num/item_num。
 import type { Pool } from 'pg'
 import { sqlQuote, type MetricDef, type Requester, type ScopePlan } from './authz'
+import { deptNamesOf, userDeptClosure } from './dept-gate'
 
 export type ScopeKind = 'brand' | 'store' | 'category'
 export type ScopeMode = 'off' | 'shadow' | 'enforce'
@@ -86,10 +87,16 @@ export function normalizeSelector(raw: unknown): ScopeSelector | null {
 }
 
 /**
- * 加载用户的有效 scope：用户直接 assignment ∪ 用户角色 assignment。
+ * 加载用户的有效 scope：用户直接 assignment ∪ 用户角色 assignment ∪ **部门闭包** assignment。
  *
- * `roles` 目前只在 PAT/渠道 C 的 Identity 上；会话通道 Phase 2 补。迁移会给每个业务用户写
- * user-level assignment 兜底，因此会话用户不会因缺 roles 而失权。
+ * 三种主体的取舍（2026-11-12 定案，见 044 迁移头注）：
+ * - `dept` = 组织节点（ext_id，含祖先闭包）——主路径：人调岗，范围自动跟着走；
+ * - `role` = 岗位包（跨部门的职能岗）；
+ * - `user` = 例外（临时补漏），保留但不当主路径。
+ *
+ * 部门闭包依赖 `requester.tenantId`（由路由侧 `requesterOf` 注入）。**缺失时不静默降级**：
+ * 该用户拿到的 scope 会少掉「部门给的那部分」⇒ 在 enforce 下表现为多拒绝（fail-closed 方向），
+ * 同时记一条 structured warn，便于排障时立刻看出「是角色/个人配了但部门那条没生效」。
  */
 export async function loadEffectiveScopes(
   pool: Pool,
@@ -103,16 +110,27 @@ export async function loadEffectiveScopes(
   const roles = [...new Set((requester.roles ?? [])
     .map((r) => r.split('/').pop()?.trim() ?? '')
     .filter((r) => r !== ''))]
+  // 部门闭包（本人 + 祖先，物化 path 拆段）——与报表部门门同一实现，别另写一套。
+  let depts: string[] = []
+  if (requester.tenantId === undefined) {
+    console.warn(JSON.stringify({
+      event: 'data_scope_dept_unresolved', org, userId: requester.userId,
+      effect: 'dept 主体不参与本请求（enforce 下会多拒绝）——检查 requesterOf 是否注入了 tenantId',
+    }))
+  } else {
+    depts = [...await userDeptClosure(pool, requester.tenantId, deptNamesOf(requester))]
+  }
   const out = emptyScopes()
-  if (users.length === 0 && roles.length === 0) return out
+  if (users.length === 0 && roles.length === 0 && depts.length === 0) return out
   const r = await pool.query(
     `select s.kind, s.selector
        from data.scope_assignment a
        join data.scope s on s.id = a.scope_id and s.org = a.org
       where a.org = $1
         and ((a.subject_type = 'user' and a.subject_id = any($2::text[]))
-          or (a.subject_type = 'role' and a.subject_id = any($3::text[])))`,
-    [org, users, roles],
+          or (a.subject_type = 'role' and a.subject_id = any($3::text[]))
+          or (a.subject_type = 'dept' and a.subject_id = any($4::text[])))`,
+    [org, users, roles, depts],
   )
   for (const row of r.rows as Array<{ kind: ScopeKind; selector: unknown }>) {
     const kind = row.kind

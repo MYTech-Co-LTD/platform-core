@@ -214,6 +214,8 @@ api:
     - { method: GET,    path: /scopes/effective,          scope: data:manage }
     # 变更历史（只读）：CRUD/分配每次写都落 data.scope_audit，这里给管理面回溯
     - { method: GET,    path: /scopes/audit,              scope: data:manage }
+    # 可分配部门（assignment 的 dept 主体候选；2026-11-12 部门主体上线）
+    - { method: GET,    path: /scopes/depts,              scope: data:manage }
     - { method: POST,   path: /scopes,                    scope: data:manage }
     - { method: PUT,    path: /scopes/:id,                scope: data:manage }
     - { method: DELETE, path: /scopes/:id,                scope: data:manage }
