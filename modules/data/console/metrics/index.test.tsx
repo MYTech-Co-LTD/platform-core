@@ -37,6 +37,8 @@ const CATALOG = {
       subjectColumn: 'org', selectSql: 'select sum(fct_retail_sale.net_amount) as value, system_book from fct_retail_sale',
       groupBy: 'system_book', params: {}, source: 'l2',
       updatedBy: 'ZhangDuo', version: 3,
+      // P1 Task 8a（047 列）：归属面随 /metrics/all 透传（adminView camelCase），展开层消费
+      ownerDept: '熊喵门店组', entity: '销售额', variantNote: '不含退货（平台口径含退货冲减）',
     },
   ],
 }
@@ -355,5 +357,15 @@ describe('口径列：单页双层（Wave 4.3）', () => {
     expect(text).toContain('表达式：')
     expect(text).toContain('sum(fct_retail_sale.net_amount)')
     expect(text).toContain('所需权限：')
+    // 归属面（P1 Task 8a，047 列）：展开层带归属部门/概念/差异说明，值随 /metrics/all 透传
+    expect(text).toContain('归属部门：')
+    expect(text).toContain('归属部门：熊喵门店组')
+    expect(text).toContain('概念：销售额')
+    expect(text).toContain('差异说明：不含退货')
+    // 默认层零新增词（P1 纪律）：摘掉全部 details 后，正文里不得出现归属三词
+    const bare = document.body.cloneNode(true) as HTMLElement
+    bare.querySelectorAll('details').forEach((d) => d.remove())
+    expect(bare.textContent ?? '').not.toContain('归属部门')
+    expect(bare.textContent ?? '').not.toContain('差异说明')
   })
 })

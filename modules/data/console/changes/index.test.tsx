@@ -43,6 +43,10 @@ describe('待核对页', () => {
     expect(screen.getByRole('button', { name: /驳\s*回/ })).toBeInTheDocument()
     // 原始声明/快照收进展开层（TechDetails）
     expect(document.querySelectorAll('details').length).toBeGreaterThan(0)
+    // 归属行（P1 Task 8a）：展开层给人话的「归属：…　概念：…」（夹具 payload 无归属字段 ⇒ 占位 —）
+    const detailText = [...document.querySelectorAll('details')].map((d) => d.textContent ?? '').join('\n')
+    expect(detailText).toContain('归属：')
+    expect(detailText).toContain('概念：')
   })
 
   it('驳回必填原因：空原因点驳回不发请求', async () => {

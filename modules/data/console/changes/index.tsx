@@ -130,6 +130,9 @@ export default function ChangesPage() {
                 </Typography.Paragraph>
                 <TechDetails>
                   <div>窗口：{r.preview?.window ? `${r.preview.window.from} ~ ${r.preview.window.to}` : '—'}</div>
+                  {/* 归属随单可见（P1 Task 8a，spec §5.1 payload 顶层 ownerDept/entity）——
+                      人话一行放在原始声明 dump 之上；缺席 = 未声明 → —，不编默认值 */}
+                  <div>归属：{(r.payload.ownerDept as string | undefined) ?? '—'}　概念：{(r.payload.entity as string | undefined) ?? '—'}</div>
                   <div>原始声明：{JSON.stringify(r.payload)}</div>
                   <div>快照：{JSON.stringify(r.preview)}</div>
                   {/* 试算历史（P1 Task 5）：被顶掉的旧快照，最新在前；只进展开层，默认层不加词 */}

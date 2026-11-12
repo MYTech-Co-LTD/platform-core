@@ -108,6 +108,13 @@ const adminView = (m: MetricRow) => ({
   overrideOf: m.overrideOf,
   // 测度档（W8）：declared = 租户全额声明（编辑走「删除+重建」，不走 L2 结构化编辑器）
   basis: m.basis,
+  // 归属面（047 列，P1 Task 8a）：部门桶（同名互斥的判据桶）/ 概念 / 差异说明。
+  // 真值来自变更单写入（opts.ownership）；L1 行 ownerDept/variantNote 恒 null、entity 由物化带。
+  // 只进管理面投影（console 口径展开层消费）：GET /metrics 的词表面（publicView）不扩——
+  // 消费方（移动卡 / agent 词表）没有这个读面，「默认层零新增词」同样适用于 API 词表形状。
+  ownerDept: m.ownerDept ?? null,
+  entity: m.entity,
+  variantNote: m.variantNote ?? null,
 })
 
 /**

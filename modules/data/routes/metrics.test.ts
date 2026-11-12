@@ -200,6 +200,14 @@ describePg('指标路由（需要 DATABASE_URL：词表读写）', () => {
     expect(byId.get('other_org_l2')).toBeUndefined()
   })
 
+  it('GET /metrics/all 带归属面（P1 Task 8a）：owner_dept/variant_note/entity 以 camelCase 透传（console 口径展开层消费）', async () => {
+    await upsertMetric(pool, ORG, def({ id: 'ownership_probe' }), 'fixture',
+      { ownership: { ownerDept: '门店一组', entity: '销售', variantNote: '不含退货' } })
+    const body = await (await app(ORG, ['data:manage']).request('/metrics/all')).json()
+    const row = body.metrics.find((m: { id: string }) => m.id === 'ownership_probe')
+    expect(row).toMatchObject({ ownerDept: '门店一组', entity: '销售', variantNote: '不含退货' })
+  })
+
   // ── 写路径：只收结构化声明 ───────────────────────────────────────────────────
   it('★ 病态超深 expr ⇒ 干净 400（不是 500）：线性预检须先于递归 schema（#593）', async () => {
     // 递归 z.lazy 的校验**先于**迭代深度闸执行 ⇒ 超深输入在 zod 里爆栈（实测 1600 层过、3200 层
