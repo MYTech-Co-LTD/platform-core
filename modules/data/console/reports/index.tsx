@@ -709,60 +709,7 @@ export default function ReportsPage() {
           r.requiredScope !== null ? `页门 ${r.requiredScope}` : null,
           deptN > 0 ? `部门门 ${deptN} 个部门` : null,
         ].filter(Boolean).join(' · ')
-        // 「这个数怎么来的」抽屉（Wave 4.3）：默认层 = 用到的指标 / 时间范围 / 谁看得到；细节折叠。
-  const provenanceDrawer = (
-    <Drawer
-      title={srcFor === null ? '这个数怎么来的' : `这个数怎么来的：${srcFor.title}`}
-      open={srcFor !== null}
-      onClose={() => setSrcFor(null)}
-      width={520}
-    >
-      {srcErr !== null && (
-        <div style={{ marginBottom: 12, color: '#b42318' }}>
-          {srcErr.text}
-          <TechDetails style={{ marginTop: 4 }}>
-            <div>错误码：{srcErr.code}</div>
-            {srcErr.detail !== undefined && <div>定位信息：{srcErr.detail}</div>}
-          </TechDetails>
-        </div>
-      )}
-      {srcSpec !== null && (
-        <>
-          <Typography.Paragraph style={{ marginBottom: 8 }}>
-            <strong>用到的指标：</strong>
-            {(srcSpec.panels ?? []).filter((x) => x.metricId !== undefined).length === 0
-              ? '这一版没有数据面板（纯文字报表）'
-              : (srcSpec.panels ?? [])
-                .filter((x) => x.metricId !== undefined)
-                .map((x) => x.title ?? x.metricId)
-                .join('、')}
-          </Typography.Paragraph>
-          <Typography.Paragraph style={{ marginBottom: 8 }}>
-            <strong>时间范围：</strong>{periodText(srcSpec.period)}
-          </Typography.Paragraph>
-          <Typography.Paragraph style={{ marginBottom: 8 }}>
-            <strong>谁看得到：</strong>
-            {srcAcl === null
-              ? '（共享名单只有报表所有者或管理员能查）'
-              : srcAcl.visibility === 'tenant'
-                ? '本租户内、有权限的人都能看'
-                : srcAcl.viewers > 0
-                  ? `仅共享名单里的 ${srcAcl.viewers} 个人/部门`
-                  : '目前只有你自己'}
-          </Typography.Paragraph>
-          <TechDetails title="技术细节（面板与规格原文）">
-            <pre style={{ whiteSpace: 'pre-wrap', margin: 0, fontSize: 11 }}>
-              {JSON.stringify(srcSpec, null, 2)}
-            </pre>
-          </TechDetails>
-        </>
-      )}
-      {srcSpec === null && srcErr === null && (
-        <Typography.Text type="secondary">正在读取这一版的来源…</Typography.Text>
-      )}
-    </Drawer>
-  )
-
+      
   return (
           <div
             key={r.id}
@@ -880,6 +827,60 @@ export default function ReportsPage() {
           textAlign: 'center', cursor: 'pointer', fontSize: 16, color: '#666',
         }}
       >取消</button>
+    </Drawer>
+  )
+
+  // 「这个数怎么来的」抽屉（Wave 4.3）：默认层 = 用到的指标 / 时间范围 / 谁看得到；细节折叠。
+  const provenanceDrawer = (
+    <Drawer
+      title={srcFor === null ? '这个数怎么来的' : `这个数怎么来的：${srcFor.title}`}
+      open={srcFor !== null}
+      onClose={() => setSrcFor(null)}
+      width={520}
+    >
+      {srcErr !== null && (
+        <div style={{ marginBottom: 12, color: '#b42318' }}>
+          {srcErr.text}
+          <TechDetails style={{ marginTop: 4 }}>
+            <div>错误码：{srcErr.code}</div>
+            {srcErr.detail !== undefined && <div>定位信息：{srcErr.detail}</div>}
+          </TechDetails>
+        </div>
+      )}
+      {srcSpec !== null && (
+        <>
+          <Typography.Paragraph style={{ marginBottom: 8 }}>
+            <strong>用到的指标：</strong>
+            {(srcSpec.panels ?? []).filter((x) => x.metricId !== undefined).length === 0
+              ? '这一版没有数据面板（纯文字报表）'
+              : (srcSpec.panels ?? [])
+                .filter((x) => x.metricId !== undefined)
+                .map((x) => x.title ?? x.metricId)
+                .join('、')}
+          </Typography.Paragraph>
+          <Typography.Paragraph style={{ marginBottom: 8 }}>
+            <strong>时间范围：</strong>{periodText(srcSpec.period)}
+          </Typography.Paragraph>
+          <Typography.Paragraph style={{ marginBottom: 8 }}>
+            <strong>谁看得到：</strong>
+            {srcAcl === null
+              ? '（共享名单只有报表所有者或管理员能查）'
+              : srcAcl.visibility === 'tenant'
+                ? '本租户内、有权限的人都能看'
+                : srcAcl.viewers > 0
+                  ? `仅共享名单里的 ${srcAcl.viewers} 个人/部门`
+                  : '目前只有你自己'}
+          </Typography.Paragraph>
+          <TechDetails title="技术细节（面板与规格原文）">
+            <pre style={{ whiteSpace: 'pre-wrap', margin: 0, fontSize: 11 }}>
+              {JSON.stringify(srcSpec, null, 2)}
+            </pre>
+          </TechDetails>
+        </>
+      )}
+      {srcSpec === null && srcErr === null && (
+        <Typography.Text type="secondary">正在读取这一版的来源…</Typography.Text>
+      )}
     </Drawer>
   )
 
