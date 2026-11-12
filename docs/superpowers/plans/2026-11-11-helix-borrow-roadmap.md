@@ -66,6 +66,8 @@
 | **Wave 2.1 第四批（schema.yml 全覆盖）** | PR #2002：16 个此前**整体未登记**的 staging 模型补 schema.yml，89 列 not_null（只写契约 nullable=false 的列，不复制契约描述）；补前逐模型生产取证 16 模型 89 列全 0。非空面门禁现在覆盖**全部 28 个** staging 模型，`missing: []` |
 | **cron 文档逐条核对** | PR #2004：按控制面导出 + `schedules/*.json` 核对，纠四处漂移——`lemeng-dbt-materialize` 文档当现役其实 **2026-11-07 已停用**（OOM），现役是 tick/hourly/tables/audit×2 分档；notify-reconcile 补实际 `7 * * * *`；维度面排班与 item_price 分钟按排班文件订正 |
 | **stg_forms_submission 粒度断言** | PR #2007：取证渠道补上——mytech 数据面（project `platform-core-data` 的 pg_duckdb）有该域，实测 `count(*) = count(distinct (org, submission_id)) = 1`（样本 1 行，头注如实记录；shanhai 无该域）。至此 **14/14** 个此前无测试的 staging 都有粒度断言 |
+| **产品面 4.1（站内问数退役）** | PR #2013：console 问数页 + 移动 AskView 删除；默认页签改 metrics；manifest 模块名「数据问数」→「数据」、权限显示名→「数据查询」（码不变）；`/chat` 保留并加注无一等消费方；architecture §2 同步 |
+| **产品面 4.2（单页双层基件 + 候选池改造）** | PR #2011：`<TechDetails>` + `lib/explain.ts`（表外码回落但原码必留）；候选池默认层改人话、采用预填名称/标识、细节收进展开层；explain 单测 5 条 |
 | **OO 机 `/opt` 副本核对** | 2026-11-12 实测：`/opt/lemeng-oo-{notify-bridge,watchdog,config-audit}.sh` + `lemeng-emit-probe.py` 四个 sha256 与仓内**逐字节一致**（bridge `7a81135e…` / watchdog `bc36151a…` / audit `98074d99…` / probe `465fee98…`），当前无漂移、无需投递；SOP §E.5 的手工投递形态与版本握手仍然有效 |
 | **retention 处置（证据化关闭）** | 2026-11-12 实测 shanhai `notify` 表极小（inbox 4 / delivery 10 / event 6 / attempt 20），且 health 已改 7 天窗口（PR #1987）⇒ **当前不需要**。留作观察项：任一表破 10 万行或 health 因积压变红时再议（届时删行需点名） |
 
@@ -74,6 +76,8 @@
 | 项 | 现状证据 | 波次 |
 |---|---|---|
 | 列级血缘 | dbt core manifest 无列级边（dbt core 不产出列级 edge） | 2.4（**触发式**：等真的有「按列追影响」的需求再做） |
+| **产品面 4.3**：指标页/报表页接双层 + 「这个数怎么来的」抽屉 | 目前只有候选池做了双层；指标/报表仍是单一层次 | Wave 4.3 |
+| **产品面 4.4**：术语词典（`Explain` 数据源） | `lib/explain.ts` 只有错误码表；术语解释仍是散落的 | Wave 4.4 |
 | retention（可选） | 当前各表极小、health 已按 7 天窗口判；破 10 万行或积压变红时再议（删行需点名） | 观察项（无动作） |
 
 > **Wave 0–3 主线已全部收口（2026-11-12）**：待办表只剩一个「触发式」与一个「观察项」。
@@ -99,6 +103,18 @@
 
 ### Wave 3 · 工程卫生
 - history view 双 config、materialize 档位校验、cron 文档、lock 覆盖、detail 只读池。
+
+### Wave 4 · 产品面：单页双层（2026-11-12 定案）
+
+> **两条约束（用户拍板，别再讨论）**：① **本系统不做问数**——问数只经 MCP 给 openclaw 与三方 agent；
+> ② **不做按角色的多页面**——同一页两层：默认层人话、展开层全量细节。
+
+- **4.1 站内问数退役**：console 问数页 + 移动 AskView 删除；`POST /chat` 保留但注明无一等消费方。
+- **4.2 双层基件**：`<TechDetails>`（只折叠不隐藏）+ `lib/explain.ts`（错误码→人话，原码必留）；
+  候选池改成「可能的指标」——默认层一句人话 + 「加进我的指标 / 不要」，细节进展开层。
+- **4.3 指标页 / 报表页接双层**：默认层结论+动作，展开层口径/血缘/证据/ACL；报表加
+  「这个数怎么来的」抽屉（人话 + SQL/血缘原文）。
+- **4.4 术语词典**：`Explain` 的数据源集中维护，全站复用；新增页面只准用这两个组件写专业信息。
 
 ---
 
@@ -135,3 +151,4 @@
 | 2026-11-12 | Wave 2.1 第四批：16 个 staging 补 schema.yml（89 列），非空面覆盖 28/28 | PR #2002；16 模型 89 列取证全 0 |
 | 2026-11-12 | cron 文档逐条核对完成 | PR #2004；四处漂移（含停用作业被当现役） |
 | 2026-11-12 | **Wave 0–3 主线全部收口**；最后三项（forms 断言 / OO 副本核对 / retention 证据化关闭）入账 | PR #2007 + 控制面实测（OO 四脚本 sha256 一致；notify 表 4/10/6/20 行） |
+| 2026-11-12 | **新增 Wave 4：产品面单页双层**；4.1/4.2 已完成，4.3/4.4 待办 | 用户定案：不做问数（只走 MCP）、不做多页面（同页两层）；PR #2011 / #2013 |
