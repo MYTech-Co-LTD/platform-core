@@ -6,6 +6,7 @@ import { afterAll, beforeAll, describe, expect, it } from 'vitest'
 import { Hono } from 'hono'
 import { Pool } from 'pg'
 import { REQUESTER_CHANNEL } from '@platform/sdk'
+import type { NotifyPort } from '@platform/sdk'
 import { applyMigrations, buildTestApp, makeIdentity } from '../test-util'
 import type { ModuleVars } from './context'
 import mod from '../index'
@@ -157,6 +158,42 @@ describePg('POST /metric-changes/:id/preview（重跑试算的租户与状态闸
     const body = await res.json() as { change: { status: string; preview: { rows: number } } }
     expect(body.change.status).toBe('preview_failed')
     expect(body.change.preview).toMatchObject({ error: 'METRIC_NOT_FOUND' })
+  })
+})
+
+describePg('★ 采纳 happy path 全链（P0 终审 F4）：提交即试算 → 会话采纳 → meta 变更 → 再采纳', () => {
+  it('两条单全走路由 ⇒ 200；data.metrics 落行且 unit 写入；每次采纳 emit 一枚变更通知', async () => {
+    const emitted: Array<{ eventKey?: string; payload?: Record<string, unknown> }> = []
+    const notify: NotifyPort = { emit: async (_i, e) => { emitted.push(e); return { accepted: true } } }
+    // 会话通道壳（REQUESTER_CHANNEL 不设 = session ⇒ 决策闸放行）；execute 注入让提交即试算
+    // 不碰真仓库；sources=['lemeng'] 投影宿主的已接入源（L1 夹具 sourceSystem='lemeng'，写闸放行）。
+    const app = buildTestApp(mod, identityOf(),
+      { pool, execute: async () => ({ rows: [{ rows: 3, value: 9 }] }), notify } as never,
+      { id: 1, casdoor_org: ORG }, ['lemeng'])
+    const post = (path: string, body?: unknown) => app.request(path, {
+      method: 'POST',
+      ...(body === undefined ? {} : { body: JSON.stringify(body), headers: { 'content-type': 'application/json' } }),
+    })
+    // ① create 提案：提交即试算（注入执行器）→ preview_ready → 会话采纳 ⇒ 200
+    const c1 = await post('/metric-changes',
+      { metricId: 'x:e2e', kind: 'create', payload: { baseMetric: L1_ID, op: { kind: 'refine' }, alias: '端到端夹具' } })
+    expect(c1.status).toBe(200)
+    const b1 = await c1.json() as { change: { id: number; status: string } }
+    expect(b1.change.status).toBe('preview_ready')
+    const a1 = await post(`/metric-changes/${b1.change.id}/adopt`)
+    expect(a1.status).toBe(200)
+    // ② meta 变更单：同链再来一遍（meta 试算读已生效行的当前口径）⇒ 200
+    const c2 = await post('/metric-changes', { metricId: 'x:e2e', kind: 'meta', payload: { unit: '元' } })
+    expect(c2.status).toBe(200)
+    const b2 = await c2.json() as { change: { id: number; status: string } }
+    expect(b2.change.status).toBe('preview_ready')
+    const a2 = await post(`/metric-changes/${b2.change.id}/adopt`)
+    expect(a2.status).toBe(200)
+    // 落库事实（不采信路由自述）：行在、unit 已写
+    const row = await pool.query(`select unit from data.metrics where org = $1 and id = 'x:e2e'`, [ORG])
+    expect(row.rows[0]?.unit).toBe('元')
+    // 变更通知：每次采纳一枚（fail-open；事件已在 manifest 声明）
+    expect(emitted.filter((e) => e.eventKey === 'data.metric.definition.changed')).toHaveLength(2)
   })
 })
 
