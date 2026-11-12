@@ -2,7 +2,7 @@
 import { describe, it, expect, beforeAll, afterAll } from 'vitest'
 import { Pool } from 'pg'
 import { applyMigrations } from './test-util'
-import { FAILED_LAST_HOUR_LIMIT, checkHealth, healthVerdict, type Health } from './health'
+import { DEAD_WINDOW_DAYS, FAILED_LAST_HOUR_LIMIT, checkHealth, healthVerdict, type Health } from './health'
 
 const url = process.env.DATABASE_URL
 const describePg = url ? describe : describe.skip
@@ -70,6 +70,22 @@ describePg('checkHealth', () => {
     await pool.query(
       `insert into notify.worker_heartbeat(id,beat_at) values ('test-health',now())
        on conflict (id) do update set beat_at=now()`)
+
+    // dead 只看窗口内（DEAD_WINDOW_DAYS）：窗口外的历史失败不计入健康面。
+    // 2026-11-12：shanhai 因为 10-31 的 4 条终态失败被永久按红 —— 健康面回答的是「现在投得出去吗」。
+    const before = (await checkHealth(pool)).dead
+    await pool.query(
+      `insert into notify.delivery
+         (org,event_id,event_key,rule_id,recipient,channel,address,template_key,revision,rendered,status,created_at)
+       values ($1,'h-window-old','m.a.b','r1','u9','wecom_default','u9','t1',1,'{}','dead',now() - ($2 || ' days')::interval)`,
+      [ORG, DEAD_WINDOW_DAYS + 20])
+    expect((await checkHealth(pool)).dead).toBe(before)   // 窗口外 ⇒ 不变
+    await pool.query(
+      `insert into notify.delivery
+         (org,event_id,event_key,rule_id,recipient,channel,address,template_key,revision,rendered,status,created_at)
+       values ($1,'h-window-new','m.a.b','r1','u9','wecom_default','u9','t1',1,'{}','dead',now()-interval '1 day')`,
+      [ORG])
+    expect((await checkHealth(pool)).dead).toBe(before + 1)   // 窗口内 ⇒ +1
 
     const r = await checkHealth(pool)
     expect(r.dead).toBeGreaterThanOrEqual(1)
