@@ -161,6 +161,34 @@ describePg('POST /metric-changes/:id/preview（重跑试算的租户与状态闸
   })
 })
 
+describePg('GET /metric-changes（读面带 previewHistory，P1 Task 5）', () => {
+  it('列表与详情回包都带 previewHistory 数组；提交即试算 + 补跑 ⇒ 历史恰 1 条', async () => {
+    const app = appOf(async () => ({ rows: [{ rows: 7, value: 42 }] }))
+    // 走路由提交（提交即试算：meta 档目标指标不存在 ⇒ 首枚失败快照落 preview）
+    const post = await app.request('/metric-changes', {
+      method: 'POST', headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ metricId: 'x:rh', kind: 'meta', payload: { unit: '元' } }),
+    })
+    expect(post.status).toBe(200)
+    const submitted = await post.json() as { change: { id: number; previewHistory: unknown[] } }
+    expect(submitted.change.previewHistory).toEqual([]) // 首跑无历史
+    // 补跑一次 ⇒ 首枚快照进历史，history 恰 1 条
+    const rerun = await app.request(`/metric-changes/${submitted.change.id}/preview`, { method: 'POST' })
+    expect(rerun.status).toBe(200)
+    const list = await app.request('/metric-changes?status=preview_failed')
+    expect(list.status).toBe(200)
+    const body = await list.json() as { changes: Array<{ id: number; previewHistory: unknown[] }> }
+    const row = body.changes.find((c) => c.id === submitted.change.id)
+    expect(row).toBeDefined()
+    expect(Array.isArray(row?.previewHistory)).toBe(true)
+    expect(row?.previewHistory).toHaveLength(1)
+    expect(row?.previewHistory?.[0]).toMatchObject({ error: 'METRIC_NOT_FOUND' })
+    const detail = await app.request(`/metric-changes/${submitted.change.id}`)
+    const dbody = await detail.json() as { change: { previewHistory: unknown[] } }
+    expect(dbody.change.previewHistory).toEqual(row?.previewHistory)
+  })
+})
+
 describePg('★ 采纳 happy path 全链（P0 终审 F4）：提交即试算 → 会话采纳 → meta 变更 → 再采纳', () => {
   it('两条单全走路由 ⇒ 200；data.metrics 落行且 unit 写入；每次采纳 emit 一枚变更通知', async () => {
     const emitted: Array<{ eventKey?: string; payload?: Record<string, unknown> }> = []
@@ -194,6 +222,208 @@ describePg('★ 采纳 happy path 全链（P0 终审 F4）：提交即试算 →
     expect(row.rows[0]?.unit).toBe('元')
     // 变更通知：每次采纳一枚（fail-open；事件已在 manifest 声明）
     expect(emitted.filter((e) => e.eventKey === 'data.metric.definition.changed')).toHaveLength(2)
+    // P1 Task 4（销缓办③）：title 取**采纳动作之前**的快照——meta 档采纳前行已在 ⇒ 快照 title；
+    // create 档采纳前行不存在 ⇒ 回退 metricId（快照语义的代价，计划写明）。
+    expect(emitted[0]?.payload).toMatchObject({ metricId: 'x:e2e', title: 'x:e2e' })
+    expect(emitted[1]?.payload).toMatchObject({ metricId: 'x:e2e', title: '端到端夹具' })
+  })
+})
+
+describePg('★ delete 档采纳也发通知（P1 Task 4，销缓办③）', () => {
+  it('delete 采纳 ⇒ emit 一枚，title 用**删前**快照（P0 时代采纳后 join 落空 ⇒ 永远无通知）', async () => {
+    const emitted: Array<{ eventKey?: string; payload?: Record<string, unknown> }> = []
+    const notify: NotifyPort = { emit: async (_i, e) => { emitted.push(e); return { accepted: true } } }
+    const app = buildTestApp(mod, identityOf(),
+      { pool, execute: async () => ({ rows: [{ rows: 3, value: 9 }] }), notify } as never,
+      { id: 1, casdoor_org: ORG }, ['lemeng'])
+    const post = (path: string, body?: unknown) => app.request(path, {
+      method: 'POST',
+      ...(body === undefined ? {} : { body: JSON.stringify(body), headers: { 'content-type': 'application/json' } }),
+    })
+    // ① create 全链生效（行 title = 端到端删除夹具）
+    const c1 = await post('/metric-changes',
+      { metricId: 'x:e2e_del', kind: 'create', payload: { baseMetric: L1_ID, op: { kind: 'refine' }, alias: '端到端删除夹具' } })
+    expect(c1.status).toBe(200)
+    const b1 = await c1.json() as { change: { id: number } }
+    expect((await post(`/metric-changes/${b1.change.id}/adopt`)).status).toBe(200)
+    // ② delete 单全链采纳 ⇒ 200
+    const d = await post('/metric-changes', { metricId: 'x:e2e_del', kind: 'delete' })
+    expect(d.status).toBe(200)
+    const bd = await d.json() as { change: { id: number; status: string } }
+    expect(bd.change.status).toBe('preview_ready')
+    expect((await post(`/metric-changes/${bd.change.id}/adopt`)).status).toBe(200)
+    // 落库事实：行已删
+    const live = await pool.query(`select 1 from data.metrics where org = $1 and id = 'x:e2e_del'`, [ORG])
+    expect(live.rows).toHaveLength(0)
+    // create 一枚 + delete 一枚；delete 那枚的 title 是**删前**快照（行在时快照必非空，不吃 metricId 回退）
+    const evts = emitted.filter((e) => e.eventKey === 'data.metric.definition.changed')
+    expect(evts).toHaveLength(2)
+    expect(evts[1]?.payload).toMatchObject({ metricId: 'x:e2e_del', title: '端到端删除夹具' })
+  })
+})
+
+// ── P1 Task 7：override 档接入变更单 ────────────────────────────────────────────
+// 隔离键 org-p1-mo-ovr（任务约定 org-p1-mo-*）。夹具 L1 的 id 必须是**三段蛇形**
+//（entry.name = L1 id，而 compileTenantDeclaration 的名字白名单是 `<源>:<域>:<指标>` 三段），
+// 且带本文件专用前缀（平台桶是跨文件共用桶，afterAll 按 id 精确回收，见 metrics.test.ts 的教训）。
+describePg('P1 Task 7：override 档', () => {
+  const OORG = 'org-p1-mo-ovr'
+  const L1_OVR_A = 'p1mo:t7:sales_a'
+  const L1_OVR_B = 'p1mo:t7:sales_b'
+  const l1OvrFixture = (id: string) => ({
+    id, title: `覆盖单夹具·${id}`, description: 'metric-changes Task 7 夹具',
+    requiredScope: null, subjectColumn: 'org',
+    selectSql: 'select sum(fct_retail_sale.net_amount) as value, system_book, bizday from fct_retail_sale',
+    groupBy: 'system_book, bizday', params: {}, sourceSystem: 'lemeng',
+    slaDays: 1, freshnessRelations: [], masks: null,
+  })
+  /** W8 声明 entry（与 POST /metrics/:id/override 的 declaration 同形同源）。label 各用例错开。 */
+  const ovrEntry = (over: Record<string, unknown> = {}) => ({
+    name: L1_OVR_A, label: '本租户销售口径（变更单）', definition: '覆盖单测试', owner: 'data-platform',
+    tier: 'experimental', source: 'lemeng', expression: 'sum(fct_retail_sale.sale_amount)',
+    grain: ['system_book', 'bizday'], freshness_sla_days: 1, reads: [], ...over,
+  })
+  /** 本块专属壳：tenant 钉 OORG（文件级 appOf 钉的是本文件的 ORG，租户桶会落错 org）。 */
+  const oappOf = (execute: unknown) =>
+    buildTestApp(mod, identityOf(), { pool, execute } as never, { id: 1, casdoor_org: OORG })
+  const post = (app: { request: (p: string, o?: RequestInit) => Response | Promise<Response> }, body: unknown) =>
+    app.request('/metric-changes', {
+      method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body),
+    })
+
+  beforeAll(async () => {
+    await pool.query('delete from data.metric_change where org = $1', [OORG])
+    await pool.query('delete from data.metrics where org = $1', [OORG])
+    await upsertL1Metric(pool, l1OvrFixture(L1_OVR_A))
+    await upsertL1Metric(pool, l1OvrFixture(L1_OVR_B))
+  })
+  afterAll(async () => {
+    // 平台桶按精确 id 回收（不碰真实物化 L1）；租户桶按本文件专属 org 清。
+    await pool.query("delete from data.metrics where org = 'platform' and source = 'l1' and id = any($1)",
+      [[L1_OVR_A, L1_OVR_B]])
+    await pool.query('delete from data.metric_change where org = $1', [OORG])
+    await pool.query('delete from data.metrics where org = $1', [OORG])
+  })
+
+  it('提交 → 试算（注入 execute，baseline=被覆盖 L1）→ 会话采纳 ⇒ 租户桶 override_of 草稿行，L1 不动', async () => {
+    const app = oappOf(async () => ({ rows: [{ rows: 4, value: 77 }] }))
+    const res = await post(app, { metricId: L1_OVR_A, kind: 'override', payload: ovrEntry() })
+    expect(res.status).toBe(200)
+    const body = await res.json() as { change: { id: number; status: string; preview: { value: number; baseline: { id: string } | null } } }
+    expect(body.change.status).toBe('preview_ready')
+    expect(body.change.preview.value).toBe(77)
+    // baseline = 被 override 的 L1 同窗值（P1 Task 7 的试算语义）
+    expect(body.change.preview.baseline?.id).toBe(L1_OVR_A)
+
+    const adopt = await app.request(`/metric-changes/${body.change.id}/adopt`, { method: 'POST' })
+    expect(adopt.status).toBe(200)
+    // 落库事实：租户桶出现覆盖**草稿**行（确认启用仍走既有 W8 confirm 流）；单据翻 adopted
+    const row = await pool.query(
+      'select source, override_of, certified, select_sql from data.metrics where org = $1 and id = $2',
+      [OORG, L1_OVR_A])
+    expect(row.rows[0]).toMatchObject({
+      source: 'l2', override_of: L1_OVR_A, certified: 'draft',
+      select_sql: 'select sum(fct_retail_sale.sale_amount) as value, system_book, bizday from fct_retail_sale',
+    })
+    const ticket = await pool.query('select status from data.metric_change where id = $1', [body.change.id])
+    expect(ticket.rows[0]?.status).toBe('adopted')
+    // L1 平台行原样（口径没被顶掉——草稿不生效，D6）
+    const l1 = await pool.query(
+      "select source, select_sql from data.metrics where org = 'platform' and source = 'l1' and id = $1", [L1_OVR_A])
+    expect(l1.rows).toHaveLength(1)
+    expect(l1.rows[0]).toMatchObject({ source: 'l1', select_sql: l1OvrFixture(L1_OVR_A).selectSql })
+  })
+
+  it('grain 不同形 ⇒ 提交/试算照走，采纳 400 透传写路径判据（GRAIN_MISMATCH），单据不被 CAS 翻转', async () => {
+    const app = oappOf(async () => ({ rows: [{ rows: 1, value: 1 }] }))
+    const res = await post(app, {
+      metricId: L1_OVR_A, kind: 'override',
+      payload: ovrEntry({ label: '本租户销售口径·异形粒度', grain: ['system_book'] }),
+    })
+    expect(res.status).toBe(200)
+    const body = await res.json() as { change: { id: number; status: string } }
+    // 编译尺不含「对行」判据 ⇒ 试算能出快照；grain 同形是采纳期的裁决
+    expect(body.change.status).toBe('preview_ready')
+    const adopt = await app.request(`/metric-changes/${body.change.id}/adopt`, { method: 'POST' })
+    expect(adopt.status).toBe(400)
+    expect(await adopt.json()).toMatchObject({ error: 'GRAIN_MISMATCH' })
+    const still = await pool.query('select status from data.metric_change where id = $1', [body.change.id])
+    expect(still.rows[0]?.status).toBe('preview_ready')
+  })
+
+  it('L1 不存在 ⇒ 提交即 404 NOT_FOUND（fail-early，深校验前的廉价闸）', async () => {
+    const app = oappOf(async () => ({ rows: [] }))
+    const res = await post(app, {
+      metricId: 'p1mo:t7:ghost', kind: 'override',
+      payload: ovrEntry({ name: 'p1mo:t7:ghost', label: '本租户销售口径·幽灵' }),
+    })
+    expect(res.status).toBe(404)
+    expect(await res.json()).toMatchObject({ error: 'NOT_FOUND' })
+  })
+
+  it('宽预检：payload 缺 label / name≠metricId ⇒ 400；同名互斥**自夹具**（不跨用例依赖）＋桶恒 null 裁定', async () => {
+    const app = oappOf(async () => ({ rows: [] }))
+    const noLabel = await post(app, { metricId: L1_OVR_A, kind: 'override', payload: ovrEntry({ label: undefined }) })
+    expect(noLabel.status).toBe(400)
+    expect(await noLabel.json()).toMatchObject({ error: 'INVALID_DECLARATION' })
+    const nameMismatch = await post(app, {
+      metricId: L1_OVR_A, kind: 'override',
+      payload: ovrEntry({ label: '本租户销售口径·名错', name: 'p1mo:t7:other' }),
+    })
+    expect(nameMismatch.status).toBe(400)
+    expect(await nameMismatch.json()).toMatchObject({ error: 'INVALID_DECLARATION' })
+
+    // ── 同名互斥（P1 Task 7 fix2 起自夹具，删跨用例依赖）：预置同租户 **null 桶**同名行 ⇒ 409
+    //（预置行清理交 afterAll 的 org 级整桶清）
+    const dupTitle = '本租户销售口径·自夹具撞名'
+    await pool.query(
+      `insert into data.metrics (org, id, title, subject_column, select_sql)
+       values ($1, 'p1mo:t7:dup_probe', $2, 'org', 'select 1 as value from probe')`,
+      [OORG, dupTitle])
+    const dup = await post(app, {
+      metricId: L1_OVR_B, kind: 'override',
+      payload: ovrEntry({ name: L1_OVR_B, label: dupTitle }),
+    })
+    expect(dup.status).toBe(409)
+    expect(await dup.json()).toMatchObject({ error: 'TITLE_EXISTS_IN_DEPT' })
+
+    // ── 桶恒 null 裁定（P1 Task 7 fix2）：覆盖行经 insertTenantDeclaration 落库 owner_dept 恒
+    // null ⇒ 判据桶必须恒 null（payload.ownerDept 不作桶参数）。预置行在「财务部」桶、payload
+    // 带同桶 ownerDept——判据若吃 payload.ownerDept 就假拒 409；裁定下放行（200 落单）。
+    const probeTitle = '本租户销售口径·桶对齐探针'
+    await pool.query(
+      `insert into data.metrics (org, id, title, subject_column, select_sql, owner_dept)
+       values ($1, 'p1mo:t7:dept_probe', $2, 'org', 'select 1 as value from probe', '财务部')`,
+      [OORG, probeTitle])
+    const ignored = await post(app, {
+      metricId: L1_OVR_B, kind: 'override',
+      payload: ovrEntry({ name: L1_OVR_B, label: probeTitle, ownerDept: '财务部' }),
+    })
+    expect(ignored.status).toBe(200)
+  })
+
+  it('采纳撞 metrics_title_per_dept_uq ⇒ 409 TITLE_EXISTS_IN_DEPT（fix2：submit→adopt 并发占名窗口不裸 500）', async () => {
+    const app = oappOf(async () => ({ rows: [{ rows: 1, value: 1 }] }))
+    const winTitle = '本租户销售口径·并发窗口'
+    // 先提单（此刻无同名行 ⇒ 提交期同名判据放行），再预置 null 桶同名行模拟 submit→adopt
+    // 窗口里的并发占名——采纳期 insertTenantDeclaration 撞 title 唯一索引的 23505。
+    const res = await post(app, {
+      metricId: L1_OVR_B, kind: 'override',
+      payload: ovrEntry({ name: L1_OVR_B, label: winTitle }),
+    })
+    expect(res.status).toBe(200)
+    const body = await res.json() as { change: { id: number; status: string } }
+    expect(body.change.status).toBe('preview_ready')
+    await pool.query(
+      `insert into data.metrics (org, id, title, subject_column, select_sql)
+       values ($1, 'p1mo:t7:win_probe', $2, 'org', 'select 1 as value from probe')`,
+      [OORG, winTitle])
+    const adopt = await app.request(`/metric-changes/${body.change.id}/adopt`, { method: 'POST' })
+    expect(adopt.status).toBe(409)
+    expect(await adopt.json()).toMatchObject({ error: 'TITLE_EXISTS_IN_DEPT' })
+    // 写失败 ⇒ CAS 未到，单据停在 preview_ready（终态未动，可驳回可重提）
+    const still = await pool.query('select status from data.metric_change where id = $1', [body.change.id])
+    expect(still.rows[0]?.status).toBe('preview_ready')
   })
 })
 

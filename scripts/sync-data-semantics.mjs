@@ -1458,7 +1458,12 @@ async function main() {
 // 只在作为脚本直接运行时执行 main（被测试 import 时不执行——本文件导出的纯函数可单测）
 if (process.argv[1] !== undefined && import.meta.url === new URL(`file://${path.resolve(process.argv[1])}`).href) {
   main().catch((/** @type {unknown} */ e) => {
-    console.error(`${SCRIPT_NAME}: ${e instanceof Error ? e.message : String(e)}`)
+    // pg 错误的 collision 定位只在 `detail`（如 metrics_title_per_dept_uq 撞键时点名的
+    // `(org, coalesce(owner_dept,''), lower(title))` 值三元组），message 只有笼统的
+    // duplicate key —— 丢掉 detail 就得靠猜（终审 Item 2）。
+    const detail = /** @type {{detail?: unknown}} */ (e)?.detail
+    console.error(`${SCRIPT_NAME}: ${e instanceof Error ? e.message : String(e)}`
+      + `${typeof detail === 'string' && detail !== '' ? ` | pg detail: ${detail}` : ''}`)
     process.exit(1)
   })
 }

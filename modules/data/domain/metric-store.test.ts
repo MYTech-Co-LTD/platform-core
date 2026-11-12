@@ -36,9 +36,12 @@ const L1_ID_PREFIX = 't8test:'
 
 /** 词表形状照 domain/authz.ts 的 `MetricDef`（原型 CATALOG 同形）。 */
 function def(over: Partial<MetricDef> = {}): MetricDef {
+  const id = over.id ?? 'mart_sales_daily'
   return {
-    id: 'mart_sales_daily',
-    title: '销售日明细',
+    id,
+    // 047 起部门内同名互斥（metrics_title_per_dept_uq）：同 org 未显式给 title 的夹具
+    // 派生自各自 id，免得多行夹具共用一个默认标题互相顶掉（显式 title 照旧覆盖）。
+    title: `销售日明细·${id}`,
     description: '按主体分日的销售明细',
     requiredScope: null,
     subjectColumn: 'org',
@@ -200,7 +203,7 @@ describePg('metric-store（需要 DATABASE_URL）', () => {
 
     // 租户写路径撞上同 (org, id) 的 L1 行：内容被覆盖，但 sla_days / freshness_relations
     // **不**被抹成 null（与 source/totalable 同一条纪律——一次租户写不能把平台行的新鲜度链路清掉）
-    await put(L1_ORG, def({ id, title: '租户路径覆盖同 id 行' }))
+    await put(L1_ORG, def({ id, title: '租户路径覆盖同 id 行·sla' }))
     const after = (await pool.query(
       'select sla_days, freshness_relations from data.metrics where org = $1 and id = $2', [L1_ORG, id],
     )).rows[0]
@@ -284,6 +287,8 @@ describePg('metric-store（需要 DATABASE_URL）', () => {
         bizDescription: null, unit: null, caliberNote: null,
         // 实体 / 同义词（W0，031）：L2 行没有声明面 ⇒ 恒 null / []（读侧恒有值，不是可选）
         entity: null, synonyms: [],
+        // 归属列（047，P1 Task 3）：经变更单才写 ⇒ 存储侧行恒携带（无归属 = null，不是键缺席）
+        ownerDept: null, variantNote: null,
         // 测度档与归档（W2，034）：L2 缺省档 = 树（l1_tree），未归档
         basis: 'l1_tree', archivedAt: null,
         // 租户覆盖（W8，041）：L2 普通行 = 非覆盖，映射恒带 null
@@ -302,8 +307,12 @@ describePg('metric-store（需要 DATABASE_URL）', () => {
 
   // ── T8：L1（平台）与 L2（租户）两层 ──────────────────────────────────────────────
   describe('L1 / L2 两层', () => {
-    const l1Def = (over: Partial<MetricDef> = {}) =>
-      l1({ id: `${L1_ID_PREFIX}net_sales`, title: '净销售额', ...over })
+    const l1Def = (over: Partial<MetricDef> = {}) => {
+      const id = over.id ?? `${L1_ID_PREFIX}net_sales`
+      // title 派生自 id（显式 title 照旧覆盖）：047 部门内同名互斥后，多行夹具共用
+      // 一个字面标题会在平台桶里互相顶掉（org='platform' 同 lower(title) 即冲突）。
+      return l1({ id, title: `净销售额·${id}`, ...over })
+    }
 
     it('loadPlatformCatalog 只回 org=platform 的 l1 行（不含任何 l2 行）', async () => {
       await upsertL1Metric(pool, l1Def())

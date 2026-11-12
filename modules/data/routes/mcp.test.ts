@@ -54,7 +54,7 @@ const RANGE_DAILY: MetricDef = {
  * id 带前缀、afterAll 按前缀清。
  */
 const DRILL_NET: L1MetricDef = {
-  id: `${L1_PREFIX}drill_net_sales`, title: '净销售额', description: '带明细下钻的销售指标',
+  id: `${L1_PREFIX}drill_net_sales`, title: '净销售额·mcp', description: '带明细下钻的销售指标',
   requiredScope: null, subjectColumn: 'org',
   selectSql: 'SELECT org, system_book, bizday, sum(net) AS value FROM fct_t GROUP BY system_book, bizday',
   groupBy: 'system_book, bizday',

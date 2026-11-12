@@ -7,6 +7,7 @@ import { describe, expect, it } from 'vitest'
 import { checkToolface } from './check-mcp-toolface.mjs'
 import { ANALYST_TOOLS, ANALYST_FACE_MAX_LIST_BYTES, ANALYST_FACE_MAX_TOOLS } from '../modules/data/domain/toolbox/registry.ts'
 import { MANAGE_FACE_MAX_TOOLS, MANAGE_TOOLS } from '../modules/data/domain/manage-face.ts'
+import { MANAGE_FACE_COMBINED_MAX_TOOLS, MANAGE_FACE_MAX_LIST_BYTES, MANAGE_FACE_TOOLS } from '../modules/data/routes/mcp-manage-face.ts'
 
 describe('checkToolface：四条判据', () => {
   const meta = (over: Record<string, unknown> = {}) => ({
@@ -42,6 +43,39 @@ describe('真仓 manage 面清单本身过门（防清单漂移，不等 CI 才�
     expect(checkToolface(MANAGE_TOOLS, { maxTools: MANAGE_FACE_MAX_TOOLS })).toEqual([])
     expect(MANAGE_TOOLS.length).toBe(MANAGE_FACE_MAX_TOOLS)
     expect(JSON.stringify(MANAGE_TOOLS).length).toBeLessThanOrEqual(ANALYST_FACE_MAX_LIST_BYTES)
+  })
+})
+
+describe('真仓合并 manage 面（三片静态事实源 mcp-manage-face.ts，P1 Task 6 扩面）', () => {
+  it('超限桩 face ⇒ 红且点名（体积量的是 wire——tools/list 的真实形状）', () => {
+    const stub = [{
+      name: 'stub_tool', mutating: false, requiredScope: null, annotations: { readOnlyHint: true },
+      wire: { name: 'stub_tool', description: 'x'.repeat(MANAGE_FACE_MAX_LIST_BYTES) },
+    }]
+    const out = checkToolface(stub, { maxTools: MANAGE_FACE_COMBINED_MAX_TOOLS, maxBytes: MANAGE_FACE_MAX_LIST_BYTES })
+    expect(out).toHaveLength(1)
+    expect(out[0]).toContain('[TOOLFACE]')
+    expect(out[0]).toContain('字节')
+  })
+
+  it('wire 小而元数据大 ⇒ 不误红（bytes 走 wire 投影，不吃元数据的治理字段）', () => {
+    const stub = [{ name: 'ok_tool', mutating: false, requiredScope: null, annotations: { readOnlyHint: true }, wire: { name: 'ok_tool' } }]
+    expect(checkToolface(stub, { maxBytes: 100 })).toEqual([])
+  })
+
+  it('工具数超限 ⇒ 红（合并面上限是独立常数，不是借用代理面的 11）', () => {
+    const stubs = Array.from({ length: MANAGE_FACE_COMBINED_MAX_TOOLS + 1 }, (_, i) => ({
+      name: `tool_${i}`, mutating: false, requiredScope: null, annotations: { readOnlyHint: true },
+      wire: { name: `tool_${i}` },
+    }))
+    const out = checkToolface(stubs, { maxTools: MANAGE_FACE_COMBINED_MAX_TOOLS, maxBytes: MANAGE_FACE_MAX_LIST_BYTES })
+    expect(out.some((s) => s.includes('个 > 上限'))).toBe(true)
+  })
+
+  it('真仓合并面 20 件过门：wire 序列化 ≤10KB、名字全合法、mutating 全有注解与 scope', () => {
+    expect(MANAGE_FACE_TOOLS).toHaveLength(20)
+    expect(checkToolface(MANAGE_FACE_TOOLS, { maxTools: MANAGE_FACE_COMBINED_MAX_TOOLS, maxBytes: MANAGE_FACE_MAX_LIST_BYTES })).toEqual([])
+    expect(JSON.stringify(MANAGE_FACE_TOOLS.map((t) => t.wire)).length).toBeLessThanOrEqual(MANAGE_FACE_MAX_LIST_BYTES)
   })
 })
 

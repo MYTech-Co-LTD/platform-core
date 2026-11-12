@@ -35,7 +35,7 @@ describePg('metric-store 下钻三列（迁移 021，需要 DATABASE_URL）', ()
 
   it('upsertL1Metric 写入下钻三列，loadMergedCatalog 读回 DrillBinding', async () => {
     await upsertL1Metric(pool, {
-      id: 'drillstore:retail:net_sales', title: 't', description: 'd',
+      id: 'drillstore:retail:net_sales', title: 't·net_sales', description: 'd',
       requiredScope: null, subjectColumn: 'org',
       selectSql: "select sum(fct_t.net_amount) as value, system_book from fct_t where state = 'FINISHED' group by system_book",
       groupBy: 'system_book', params: {}, sourceSystem: 'lemeng',
@@ -49,7 +49,7 @@ describePg('metric-store 下钻三列（迁移 021，需要 DATABASE_URL）', ()
 
   it('drill.columns 往返保真：条件列必须落进 drill_detail jsonb（写漏这一跳 = 功能不生效 + --check 恒报更新）', async () => {
     await upsertL1Metric(pool, {
-      id: 'drillstore:retail:with_columns', title: 't', description: 'd',
+      id: 'drillstore:retail:with_columns', title: 't·with_columns', description: 'd',
       requiredScope: null, subjectColumn: 'org',
       selectSql: "select sum(fct_t.net_amount) as value, system_book from fct_t where state = 'FINISHED' group by system_book",
       groupBy: 'system_book', params: {}, sourceSystem: 'lemeng',

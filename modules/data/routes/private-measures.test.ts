@@ -32,9 +32,12 @@ const SCHEMA = 'pm_route'
 let pool: Pool
 
 function l1Def(over: Partial<L1MetricDef>): L1MetricDef {
+  const id = over.id ?? `${L1_PREFIX}net_sales`
   return {
-    id: `${L1_PREFIX}net_sales`,
-    title: '私有测度白名单基底',
+    id,
+    // title 派生自 id（显式 title 照旧覆盖）：047 部门内同名互斥后，平台桶里多行
+    // 共用一个字面标题会互相顶掉（同 org 同桶 lower(title) 冲突）。
+    title: `私有测度白名单基底·${id}`,
     description: '',
     requiredScope: null,
     subjectColumn: 'org',
@@ -392,7 +395,7 @@ describePg('私有测度 HTTP 面（需要 DATABASE_URL）', () => {
 
   it('★ 归档读面：归档后从 GET /metrics 消失，但 GET /metrics/private/archived 可见（租户隔离）', async () => {
     expect((await post(body())).status).toBe(201)
-    expect((await post(body({ id: 'pm_route_active' }))).status).toBe(201)
+    expect((await post(body({ id: 'pm_route_active', title: '按日销售额·活跃行' }))).status).toBe(201)
     await pool.query(
       `update data.metrics set archived_at = now() where org = $1 and id = 'pm_route_sales'`, [ORG])
     // 别家 org 也有一条归档行——不得串进来

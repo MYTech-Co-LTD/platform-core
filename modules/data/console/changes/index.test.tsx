@@ -43,6 +43,10 @@ describe('待核对页', () => {
     expect(screen.getByRole('button', { name: /驳\s*回/ })).toBeInTheDocument()
     // 原始声明/快照收进展开层（TechDetails）
     expect(document.querySelectorAll('details').length).toBeGreaterThan(0)
+    // 归属行（P1 Task 8a）：展开层给人话的「归属：…　概念：…」（夹具 payload 无归属字段 ⇒ 占位 —）
+    const detailText = [...document.querySelectorAll('details')].map((d) => d.textContent ?? '').join('\n')
+    expect(detailText).toContain('归属：')
+    expect(detailText).toContain('概念：')
   })
 
   it('驳回必填原因：空原因点驳回不发请求', async () => {
@@ -97,5 +101,47 @@ describe('待核对页', () => {
     await waitFor(() => expect(screen.getByText(/x:draft_one/)).toBeInTheDocument())
     expect(screen.getAllByRole('button', { name: /跑试算/ }).length).toBe(1)
     expect(screen.getByText('试算 3（1 行）')).toBeInTheDocument()
+  })
+
+  it('坏 payload 不炸页（终审 Item 1）：ownerDept/entity 非 string 显 —，整页照常渲染', async () => {
+    // override payload 是 .passthrough()：MCP/PAT 提交面不收口形状，ownerDept 可以是任意 JSON。
+    // 对象/数组进 React 子位 = render 抛错 = 整张待核对列表卸载 ⇒ 一个坏工单瘫痪租户的采纳/驳回闭环。
+    const BAD = {
+      ...PENDING.changes[0]!, id: 12, metricId: 'x:bad_payload',
+      payload: { ...PENDING.changes[0]!.payload, ownerDept: { x: 1 }, entity: [1] },
+    }
+    m.mockImplementation(async (url: string | URL, init?: RequestInit) => {
+      const u = String(url)
+      if (u.includes('/metric-changes') && (init?.method ?? 'GET') === 'GET') return json({ changes: [BAD] })
+      return json({})
+    })
+    render(<ChangesPage />)
+    await waitFor(() => expect(screen.getByText(/x:bad_payload/)).toBeInTheDocument())
+    const detailText = [...document.querySelectorAll('details')].map((d) => d.textContent ?? '').join('\n')
+    expect(detailText).toContain('归属：—')
+    expect(detailText).toContain('概念：—')
+  })
+
+  it('试算历史（P1 Task 5）：有 previewHistory 的行在展开层显「之前试过 N 次」，无历史行不显', async () => {
+    const HIST_ROW = {
+      ...PENDING.changes[0]!, id: 11, metricId: 'x:with_hist',
+      previewHistory: [
+        { window: { from: '2026-11-04', to: '2026-11-11' }, value: 900, rows: 12 },
+        { window: { from: '2026-10-28', to: '2026-11-04' }, value: 800, rows: 11 },
+      ],
+    }
+    m.mockImplementation(async (url: string | URL, init?: RequestInit) => {
+      const u = String(url)
+      if (u.includes('/metric-changes') && (init?.method ?? 'GET') === 'GET') {
+        return json({ changes: [PENDING.changes[0]!, HIST_ROW] })
+      }
+      return json({})
+    })
+    render(<ChangesPage />)
+    await waitFor(() => expect(screen.getByText(/x:with_hist/)).toBeInTheDocument())
+    // 展开层（TechDetails）里有人话提示，不在默认层句子
+    expect(screen.getByText(/之前试过 2 次/)).toBeInTheDocument()
+    // 无历史的行（PENDING 第一行 previewHistory 缺席）不得出现该提示
+    expect(screen.queryByText(/之前试过 0 次/)).not.toBeInTheDocument()
   })
 })

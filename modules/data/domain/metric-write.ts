@@ -10,6 +10,7 @@ import type { Pool, PoolClient } from 'pg'
 import type { Requester } from './authz'
 import type { CandidateOrigin } from './metric-candidates'
 import { deleteMetric, loadPlatformCatalog, selectMetricSnapshot, upsertMetric } from './metric-store'
+import type { MetricOwnership } from './metric-store'
 import { writeMetricAudit } from './metric-audit-store'
 import type { MetricCertification } from './metric-governance'
 import { validatePrivateMeasure } from './private-measure'
@@ -31,6 +32,12 @@ export interface MetricWriteDeps {
   /** 谁在写（#489）。**必填**——审计要记人；无身份必须在入口被拒（见 routes/metrics.ts 的守卫），
    *  不能流到这里来（留，等于允许写一条「无主」审计）。 */
   requester: Requester
+  /**
+   * 数据面连接（P1 Task 7 起可选接入，与 routes/metrics.ts 的 override 端点同款布线）：
+   * 只被 override 档采纳（createOverrideDeclaration）用于列存在性与 EXPLAIN——
+   * 缺省 = 跳过那两道（其余校验不降级，TenantDeclarationDeps 同语义）。
+   */
+  warehouse?: Pool
 }
 
 /**
@@ -88,8 +95,15 @@ async function isL1Id(deps: { pool: Pool }, id: string): Promise<boolean> {
 
 export async function writeL2Declaration(
   deps: MetricWriteDeps, org: string, id: string, decl: L2DeclarationBody,
-  /** 透传 upsertMetric：确认生效路径 keepDraft（草稿由 confirm 的条件清除收尾，见那里）。 */
-  opts?: { keepDraft?: boolean },
+  /**
+   * 透传 upsertMetric：
+   * · `keepDraft`：确认生效路径（草稿由 confirm 的条件清除收尾，见那里）。
+   * · `ownership`（047，P1 Task 3）：归属四字段，**只来自变更单采纳路径**（adoptChange 从
+   *   payload 顶层解出；HTTP 的 PUT / MCP 的 customize 直写面不带 ⇒ 归属按 upsert 的
+   *   「缺席 = 保留」语义原样留存）。归属不进 `L2DeclarationBody`——它随**行**不随声明，
+   *   声明形状契约（zod/strict）不为它开口子。
+   */
+  opts?: { keepDraft?: boolean; ownership?: MetricOwnership },
 ): Promise<MetricWriteOutcome> {
   // `target` 在 data.metrics 里**没有存储列**（003 只加了 source）。显式拒绝而不是静默丢弃：
   // 静默丢弃会让调用方以为目标值生效了。见 README「L2 的已知边界」。

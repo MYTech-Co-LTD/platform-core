@@ -37,6 +37,8 @@ const CATALOG = {
       subjectColumn: 'org', selectSql: 'select sum(fct_retail_sale.net_amount) as value, system_book from fct_retail_sale',
       groupBy: 'system_book', params: {}, source: 'l2',
       updatedBy: 'ZhangDuo', version: 3,
+      // P1 Task 8a（047 列）：归属面随 /metrics/all 透传（adminView camelCase），展开层消费
+      ownerDept: '熊喵门店组', entity: '销售额', variantNote: '不含退货（平台口径含退货冲减）',
     },
   ],
 }
@@ -345,8 +347,9 @@ describe('口径列：单页双层（Wave 4.3）', () => {
     await waitFor(() => expect(screen.getByText('lemeng:retail:net_sales')).toBeInTheDocument())
     // 默认层：说明文字（夹具里没有 bizDescription，回落 description）
     expect(screen.getAllByText('口径定义').length).toBeGreaterThan(0)
-    // 技术细节现在在「详情」抽屉里（#2050 返工：表格只负责扫，读一次的进抽屉）
-    const row = screen.getAllByText('lemeng:retail:net_sales')[0]!.closest('tr')!
+    // 技术细节现在在「详情」抽屉里（#2050 返工：表格只负责扫，读一次的进抽屉）。
+    // 归属面断言打在 L2 行（夹具里归属三字段在 L2）——正好验证「带归属的行走抽屉全链」
+    const row = screen.getAllByText('xiongmao:net_sales')[0]!.closest('tr')!
     fireEvent.click(within(row).getByRole('button', { name: /^详\s*情$/ }))
     await waitFor(() => expect(document.querySelectorAll('details').length).toBeGreaterThan(0))
     const details = document.querySelectorAll('details')
@@ -355,5 +358,15 @@ describe('口径列：单页双层（Wave 4.3）', () => {
     expect(text).toContain('表达式：')
     expect(text).toContain('sum(fct_retail_sale.net_amount)')
     expect(text).toContain('所需权限：')
+    // 归属面（P1 Task 8a，047 列）：展开层带归属部门/概念/差异说明，值随 /metrics/all 透传
+    expect(text).toContain('归属部门：')
+    expect(text).toContain('归属部门：熊喵门店组')
+    expect(text).toContain('概念：销售额')
+    expect(text).toContain('差异说明：不含退货')
+    // 默认层零新增词（P1 纪律）：摘掉全部 details 后，正文里不得出现归属三词
+    const bare = document.body.cloneNode(true) as HTMLElement
+    bare.querySelectorAll('details').forEach((d) => d.remove())
+    expect(bare.textContent ?? '').not.toContain('归属部门')
+    expect(bare.textContent ?? '').not.toContain('差异说明')
   })
 })

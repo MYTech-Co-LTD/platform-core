@@ -33,7 +33,7 @@ const L1_FIXTURE = {
 function row(kind: MetricChangeRow['kind'], payload: unknown, metricId = 'x:net'): MetricChangeRow {
   return {
     id: 1, org: ORG, metricId, kind, payload: payload as Record<string, unknown>,
-    status: 'draft', preview: null, submittedBy: 'a', submittedChannel: 'pat',
+    status: 'draft', preview: null, previewHistory: [], submittedBy: 'a', submittedChannel: 'pat',
     submittedAt: '2026-11-12T00:00:00Z', decidedBy: null, decidedAt: null, rejectReason: null,
   }
 }
@@ -131,5 +131,96 @@ describePg('applyPreview', () => {
     const failed = await getChange(pool, ORG, sub.change.id)
     expect(failed?.status).toBe('preview_failed')
     expect(failed?.preview).toMatchObject({ error: 'PREVIEW_TIMEOUT' })
+  })
+
+  it('已终态单（adopted）上 applyPreview 不改状态（P1 Task 4 修复②：UPDATE 钉 PENDING，重跑落后于采纳不得复活单据）', async () => {
+    const sub = await submitChange(pool, ORG, { userId: 'agent1', channel: 'pat' }, 'x:ap_done', 'meta', { unit: '元' })
+    if (!sub.ok) throw new Error('unreachable')
+    await pool.query(
+      `update data.metric_change set status = 'adopted', decided_by = 'r', decided_at = now() where id = $1`,
+      [sub.change.id],
+    )
+    const snapshot = {
+      window: { from: '2026-11-04', to: '2026-11-11' }, value: 1, rows: 2, baseline: null,
+      sample: [], compiledHash: 'a'.repeat(64), ranAt: '2026-11-12T00:00:00Z', durationMs: 3,
+    }
+    // 成功路径：rowCount=0 ⇒ 静默跳过（单已终态，试算结果作废），状态不得被写回 preview_ready
+    await applyPreview(pool, sub.change.id, { ok: true, snapshot })
+    expect((await getChange(pool, ORG, sub.change.id))?.status).toBe('adopted')
+    // 失败路径同款：终态单也不得被写成 preview_failed
+    await applyPreview(pool, sub.change.id, { ok: false, error: 'PREVIEW_TIMEOUT' })
+    expect((await getChange(pool, ORG, sub.change.id))?.status).toBe('adopted')
+  })
+})
+
+describePg('applyPreview 快照历史（P1 Task 5，销缓办①）', () => {
+  const snapOf = (v: number) => ({
+    window: { from: '2026-11-04', to: '2026-11-11' }, value: v, rows: v * 2, baseline: null,
+    sample: [], compiledHash: 'a'.repeat(64), ranAt: `2026-11-12T00:00:0${v}Z`, durationMs: v,
+  })
+  const submit = (metricId: string, payload: Record<string, unknown>) =>
+    submitChange(pool, ORG, { userId: 'agent1', channel: 'pat' }, metricId, 'meta', payload)
+
+  it('首跑：history 归一为空数组（不是 null）', async () => {
+    const sub = await submit('x:hist_first', { unit: '元' })
+    if (!sub.ok) throw new Error('unreachable')
+    await applyPreview(pool, sub.change.id, { ok: true, snapshot: snapOf(1) })
+    const after = await getChange(pool, ORG, sub.change.id)
+    expect(after?.previewHistory).toEqual([])
+  })
+
+  it('重跑两次：history 长 1、最新在前（被顶掉的首跑快照在 history[0]）', async () => {
+    const sub = await submit('x:hist_two', { unit: '个' })
+    if (!sub.ok) throw new Error('unreachable')
+    await applyPreview(pool, sub.change.id, { ok: true, snapshot: snapOf(1) })
+    await applyPreview(pool, sub.change.id, { ok: true, snapshot: snapOf(2) })
+    const after = await getChange(pool, ORG, sub.change.id)
+    expect(after?.status).toBe('preview_ready')
+    expect(after?.preview).toMatchObject({ value: 2 })
+    expect(after?.previewHistory).toHaveLength(1)
+    expect(after?.previewHistory?.[0]).toMatchObject({ value: 1 })
+  })
+
+  it('封顶 5 条 FIFO：第 6 条进 history 时丢最旧，最新始终在前', async () => {
+    const sub = await submit('x:hist_cap', { caliberNote: 'cap' })
+    if (!sub.ok) throw new Error('unreachable')
+    for (const v of [1, 2, 3, 4, 5, 6]) await applyPreview(pool, sub.change.id, { ok: true, snapshot: snapOf(v) })
+    const atSix = await getChange(pool, ORG, sub.change.id)
+    expect(atSix?.previewHistory?.map((s) => s.value)).toEqual([5, 4, 3, 2, 1]) // 封顶先到，尚无丢失
+    await applyPreview(pool, sub.change.id, { ok: true, snapshot: snapOf(7) })
+    const after = await getChange(pool, ORG, sub.change.id)
+    expect(after?.preview).toMatchObject({ value: 7 })
+    expect(after?.previewHistory?.map((s) => s.value)).toEqual([6, 5, 4, 3, 2]) // 最旧（1）已丢
+  })
+
+  it('失败回写也保历史：旧成功快照进 history，失败错误对象成为当前 preview', async () => {
+    const sub = await submit('x:hist_fail', { unit: '件' })
+    if (!sub.ok) throw new Error('unreachable')
+    await applyPreview(pool, sub.change.id, { ok: true, snapshot: snapOf(1) })
+    await applyPreview(pool, sub.change.id, { ok: false, error: 'PREVIEW_TIMEOUT' })
+    const after = await getChange(pool, ORG, sub.change.id)
+    expect(after?.status).toBe('preview_failed')
+    expect(after?.preview).toMatchObject({ error: 'PREVIEW_TIMEOUT' })
+    expect(after?.previewHistory).toHaveLength(1)
+    expect(after?.previewHistory?.[0]).toMatchObject({ value: 1 })
+  })
+
+  it('终态单（adopted）整行不动：history 不写、preview 不换、adopted_snapshot 仍是采纳时刻快照', async () => {
+    const sub = await submit('x:hist_done', { bizDescription: '历史钉' })
+    if (!sub.ok) throw new Error('unreachable')
+    await applyPreview(pool, sub.change.id, { ok: true, snapshot: snapOf(1) })
+    // 采纳时刻的凭据 = 当时的 preview（snapOf(1)）；直接翻状态模拟采纳落账
+    await pool.query(
+      `update data.metric_change set status = 'adopted', decided_by = 'r', decided_at = now(), adopted_snapshot = preview where id = $1`,
+      [sub.change.id],
+    )
+    const before = await getChange(pool, ORG, sub.change.id)
+    // 迟到的重跑（成功+失败各一次）都不得碰任何列
+    await applyPreview(pool, sub.change.id, { ok: true, snapshot: snapOf(9) })
+    await applyPreview(pool, sub.change.id, { ok: false, error: 'PREVIEW_TIMEOUT' })
+    const after = await getChange(pool, ORG, sub.change.id)
+    expect(after).toEqual(before)
+    const snap = await pool.query('select adopted_snapshot from data.metric_change where id = $1', [sub.change.id])
+    expect(snap.rows[0]?.adopted_snapshot).toMatchObject({ value: 1 }) // 采纳时刻的 preview，未被 9 污染
   })
 })

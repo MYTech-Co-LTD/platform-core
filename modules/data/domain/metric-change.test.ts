@@ -3,7 +3,9 @@ import { afterAll, beforeAll, describe, expect, it } from 'vitest'
 import { Pool } from 'pg'
 import { applyMigrations } from '../test-util'
 import { submitChange, listChanges, getChange, withdrawChange, adoptChange, rejectChange } from './metric-change'
+import { applyPreview } from './metric-change-preview'
 import { upsertL1Metric } from './metric-store'
+import { writeL2Declaration } from './metric-write'
 import type { MetricWriteDeps } from './metric-write'
 import type { Requester } from './authz'
 
@@ -30,6 +32,9 @@ const L1_FIXTURE = {
   masks: null,
 }
 const DECL_ADOPT = { baseMetric: L1_ID, op: { kind: 'refine' }, alias: '我的销售' }
+// 删档用例单用一份声明（别名错开）：047 部门内同名互斥后，x:adopt_me 与 x:del_me 两个 id
+// 共用「我的销售」会在同 org 同桶撞 metrics_title_per_dept_uq（这正是 P1 要的行为）。
+const DECL_DEL = { baseMetric: L1_ID, op: { kind: 'refine' }, alias: '我的销售·删档' }
 
 /** 身份夹具（同 metric-write.test.ts 形状）：pat 通道带 keyId，审计身份三件套非空。 */
 const REQ: Requester = {
@@ -87,14 +92,17 @@ describePg('submitChange', () => {
     expect(bad).toMatchObject({ ok: false, error: 'INVALID_META' })
   })
 
-  it('meta 档全空（空对象 / 三键全空串）⇒ INVALID_META（终局不可采纳单不立，P0 终审 F3）；有实质内容照常立单', async () => {
-    // 空对象：adoptChange 会撞 updateMetricMeta 的 EMPTY_META_PATCH ⇒ 提交时就拒，不让它进队列
+  it('meta 档判据（P1 Task 3 订正，销缓办④）：三键全缺（{}）⇒ INVALID_META；带键但值空（{unit:\'\'} / 三键全空串）是显式清空提案，合法立单', async () => {
+    // 空对象：采纳链一个字段都不动（EMPTY_META_PATCH 死单）⇒ 提交时就拒，不让它进队列（P0 终审 F3 保留）
     const empty = await submitChange(pool, ORG, { userId: 'a', channel: 'session' }, 'x:meta_empty', 'meta', {})
     expect(empty).toMatchObject({ ok: false, error: 'INVALID_META' })
-    // 三键全是空串：clean 后同样一个字段都不动（EMPTY_META_PATCH），与空对象同罪
+    // 带键但值空：updateMetricMeta 把 '' 收口成 null 写库（显式清空契约），单是可采纳的——P0 判它
+    // 「恒死单」是注释错案，P1 订正（采纳后置 null 的端到端断言在 adoptChange 组）
+    const clear = await submitChange(pool, ORG, { userId: 'a', channel: 'session' }, 'x:meta_clear_unit', 'meta', { unit: '' })
+    expect(clear.ok).toBe(true)
     const blank = await submitChange(pool, ORG, { userId: 'a', channel: 'session' }, 'x:meta_blank', 'meta',
       { bizDescription: '', unit: '', caliberNote: '' })
-    expect(blank).toMatchObject({ ok: false, error: 'INVALID_META' })
+    expect(blank.ok).toBe(true)
     // 至少一键有实质内容（非空白）⇒ 仍是合法提案
     const one = await submitChange(pool, ORG, { userId: 'a', channel: 'session' }, 'x:meta_unit', 'meta', { unit: '元' })
     expect(one.ok).toBe(true)
@@ -135,6 +143,30 @@ describePg('adoptChange / rejectChange', () => {
     expect(after?.preview).toMatchObject({ rows: 1 })
   })
 
+  it('adopted_snapshot = 采纳时刻的 preview；采纳后的迟到重跑不污染（P1 Task 5 Step1 钉死）', async () => {
+    await upsertL1Metric(pool, L1_FIXTURE)
+    const s = await submitChange(pool, ORG, { userId: 'a', channel: 'pat' }, 'x:snap_pin', 'create',
+      { ...DECL_ADOPT, alias: '我的销售·快照钉' })
+    if (!s.ok) throw new Error('unreachable')
+    const snapOf = (v: number) => ({
+      window: { from: '2026-11-04', to: '2026-11-11' }, value: v, rows: v, baseline: null,
+      sample: [], compiledHash: 'b'.repeat(64), ranAt: `2026-11-12T01:00:0${v}Z`, durationMs: v,
+    })
+    await applyPreview(pool, s.change.id, { ok: true, snapshot: snapOf(1) })
+    const out = await adoptChange(writeDeps(pool), ORG, s.change.id)
+    expect(out.ok).toBe(true)
+    const snap1 = await pool.query('select adopted_snapshot, status from data.metric_change where id = $1', [s.change.id])
+    expect(snap1.rows[0]?.status).toBe('adopted')
+    expect(snap1.rows[0]?.adopted_snapshot).toMatchObject({ value: 1 }) // 采纳时刻的 preview
+    // 采纳后的迟到重跑：UPDATE 钉 PENDING ⇒ 整行不动，快照不被新值污染
+    await applyPreview(pool, s.change.id, { ok: true, snapshot: snapOf(2) })
+    const snap2 = await pool.query('select adopted_snapshot, status, preview, preview_history from data.metric_change where id = $1', [s.change.id])
+    expect(snap2.rows[0]?.adopted_snapshot).toMatchObject({ value: 1 })
+    expect(snap2.rows[0]?.preview).toMatchObject({ value: 1 })
+    expect(snap2.rows[0]?.preview_history).toEqual([])
+    expect(snap2.rows[0]?.status).toBe('adopted')
+  })
+
   it('重复采纳 ⇒ 409 CHANGE_STATE_CHANGED（CAS：已决单不再吃第二次采纳）', async () => {
     const adopted = (await listChanges(pool, ORG, 'adopted')).find((c) => c.metricId === 'x:adopt_me')
     if (adopted === undefined) throw new Error('前置缺失')
@@ -164,8 +196,18 @@ describePg('adoptChange / rejectChange', () => {
     expect(row2.rows[0]?.unit).toBe('万元')
   })
 
+  it('meta 档显式清空（{unit:\'\'}）采纳后 unit 置 null（P1 Task 3，销缓办④的显式清空契约）', async () => {
+    // 前置：上一用例把 x:adopt_me 的 unit 改成 '万元'；本单只带 unit:'' ⇒ 显式清空
+    const s = await submitChange(pool, ORG, { userId: 'a', channel: 'pat' }, 'x:adopt_me', 'meta', { unit: '' })
+    if (!s.ok) throw new Error('unreachable')
+    await markReady(s.change.id)
+    expect((await adoptChange(writeDeps(pool), ORG, s.change.id)).ok).toBe(true)
+    const row = await pool.query(`select unit from data.metrics where org = $1 and id = 'x:adopt_me'`, [ORG])
+    expect(row.rows[0]?.unit).toBeNull()
+  })
+
   it('delete 档采纳：唯一编译点删除 L2 行，单据 adopted 留凭据', async () => {
-    const mk = await submitChange(pool, ORG, { userId: 'a', channel: 'pat' }, 'x:del_me', 'create', DECL_ADOPT)
+    const mk = await submitChange(pool, ORG, { userId: 'a', channel: 'pat' }, 'x:del_me', 'create', DECL_DEL)
     if (!mk.ok) throw new Error('unreachable')
     await markReady(mk.change.id)
     expect((await adoptChange(writeDeps(pool), ORG, mk.change.id)).ok).toBe(true)
@@ -180,7 +222,8 @@ describePg('adoptChange / rejectChange', () => {
   })
 
   it('驳回必填原因；驳回后单据 rejected 且原因可读', async () => {
-    const s = await submitChange(pool, ORG, { userId: 'a', channel: 'pat' }, 'x:rej', 'create', DECL)
+    // P1 起提交面有部门内同名互斥：x:adopt_me 已带「我的销售」生效行，这里 alias 必须错开
+    const s = await submitChange(pool, ORG, { userId: 'a', channel: 'pat' }, 'x:rej', 'create', { ...DECL, alias: '我的销售·驳回' })
     if (!s.ok) throw new Error('unreachable')
     expect(await rejectChange(pool, ORG, s.change.id, 'reviewer', '')).toBe(false)
     expect(await rejectChange(pool, ORG, s.change.id, 'reviewer', '差 12%，疑似含退货')).toBe(true)
@@ -190,5 +233,236 @@ describePg('adoptChange / rejectChange', () => {
     expect(after?.decidedBy).toBe('reviewer')
     // 已决单不可再驳回（状态机单向）
     expect(await rejectChange(pool, ORG, s.change.id, 'reviewer', '再驳一次')).toBe(false)
+  })
+})
+
+// ── P1 Task 3（2026-11-12）：payload 带归属 + create 撞 id + 同名互斥 ──────────────
+// 隔离键独立（org-p1-mo-change，计划全局约束）：同名互斥与撞 id 判据都是
+// (org, coalesce(owner_dept,''), lower(title)) / (org, id) 作用域——与上方 P0 用例的 org
+// 互不可见。概念判据用**租户概念**（data.metric_concept 插行），不依赖仓内 YAML 的实体清单。
+describePg('P1 Task 3：归属随单 + 同名互斥 + 撞 id 拒收', () => {
+  const PORG = 'org-p1-mo-change'
+  const CONCEPT = 'p1mo_concept'
+  const OWN_DECL = {
+    baseMetric: L1_ID, op: { kind: 'refine' }, alias: '部门毛利·P1MO',
+    entity: CONCEPT, synonyms: ['毛利别名'], ownerDept: 'dept-mo', variantNote: '只算自营仓',
+  }
+
+  beforeAll(async () => {
+    await pool.query('delete from data.metric_change where org = $1', [PORG])
+    await pool.query('delete from data.metrics where org = $1', [PORG])
+    await pool.query('delete from data.metric_concept where org = $1', [PORG])
+    await pool.query(
+      'insert into data.metric_concept (org, name, label, created_by) values ($1, $2, $3, $4)',
+      [PORG, CONCEPT, 'P1MO 测试概念', 'fixture'])
+    await upsertL1Metric(pool, L1_FIXTURE)
+  })
+  afterAll(async () => {
+    await pool.query('delete from data.metric_change where org = $1', [PORG])
+    await pool.query('delete from data.metrics where org = $1', [PORG])
+    await pool.query('delete from data.metric_concept where org = $1', [PORG])
+  })
+
+  it('带归属 create：提交落单 → 采纳后 data.metrics 行带 owner_dept/variant_note/entity/synonyms', async () => {
+    const s = await submitChange(pool, PORG, { userId: 'a', channel: 'pat' }, 'x:p1mo_m1', 'create', OWN_DECL)
+    expect(s.ok).toBe(true)
+    if (s.ok) {
+      // 单据 payload 原样保留归属字段（采纳读它；声明形状校验不得吞键）
+      expect(s.change.payload).toMatchObject({ entity: CONCEPT, ownerDept: 'dept-mo', variantNote: '只算自营仓' })
+      await markReady(s.change.id)
+      expect((await adoptChange(writeDeps(pool), PORG, s.change.id)).ok).toBe(true)
+    }
+    const row = await pool.query(
+      `select owner_dept, variant_note, entity, synonyms from data.metrics where org = $1 and id = 'x:p1mo_m1'`, [PORG])
+    expect(row.rows[0]).toMatchObject({
+      owner_dept: 'dept-mo', variant_note: '只算自营仓', entity: CONCEPT, synonyms: ['毛利别名'],
+    })
+  })
+
+  it('同名互斥：同部门同名 409 TITLE_EXISTS_IN_DEPT；异部门桶放行；update 档保留自身 title 放行', async () => {
+    // 前置：x:p1mo_m1 已生效（title=部门毛利·P1MO，桶 dept-mo）
+    const same = await submitChange(pool, PORG, { userId: 'a', channel: 'pat' }, 'x:p1mo_m2', 'create', { ...OWN_DECL })
+    expect(same).toMatchObject({ ok: false, http: 409, error: 'TITLE_EXISTS_IN_DEPT' })
+    // 同 title 换部门桶 = 另一个命名空间，放行
+    const otherDept = await submitChange(pool, PORG, { userId: 'a', channel: 'pat' }, 'x:p1mo_m2', 'create',
+      { ...OWN_DECL, ownerDept: 'dept-other' })
+    expect(otherDept.ok).toBe(true)
+    // update 档：保留自身 title（excludeMetricId = 自身）⇒ 放行（不是 409）
+    const self = await submitChange(pool, PORG, { userId: 'a', channel: 'pat' }, 'x:p1mo_m1', 'update', OWN_DECL)
+    expect(self.ok).toBe(true)
+  })
+
+  it('无 alias 的 refine：生效 title 继承基底 L1 行 title（与编译点同推导），同 title 即 409', async () => {
+    const r1 = await submitChange(pool, PORG, { userId: 'a', channel: 'pat' }, 'x:p1mo_r1', 'create',
+      { baseMetric: L1_ID, op: { kind: 'refine' } })
+    expect(r1.ok).toBe(true)
+    if (r1.ok) {
+      await markReady(r1.change.id)
+      expect((await adoptChange(writeDeps(pool), PORG, r1.change.id)).ok).toBe(true)
+    }
+    // 基底 title（'销售(采纳夹具)'）已被 r1 的生效行占用 ⇒ 第二条无 alias 的 refine 提交即 409
+    const r2 = await submitChange(pool, PORG, { userId: 'a', channel: 'pat' }, 'x:p1mo_r2', 'create',
+      { baseMetric: L1_ID, op: { kind: 'refine' } })
+    expect(r2).toMatchObject({ ok: false, http: 409, error: 'TITLE_EXISTS_IN_DEPT' })
+  })
+
+  it('无 alias 的 expr：生效 title = 派生 title（compileExpr 同式），同式即 409', async () => {
+    const exprDecl = { op: { kind: 'expr', expr: { kind: 'ref', id: L1_ID } } }
+    const e1 = await submitChange(pool, PORG, { userId: 'a', channel: 'pat' }, 'x:p1mo_e1', 'create', exprDecl)
+    expect(e1.ok).toBe(true)
+    if (e1.ok) {
+      await markReady(e1.change.id)
+      expect((await adoptChange(writeDeps(pool), PORG, e1.change.id)).ok).toBe(true)
+    }
+    const e2 = await submitChange(pool, PORG, { userId: 'a', channel: 'pat' }, 'x:p1mo_e2', 'create', exprDecl)
+    expect(e2).toMatchObject({ ok: false, http: 409, error: 'TITLE_EXISTS_IN_DEPT' })
+  })
+
+  it('未知概念 ⇒ 400 UNKNOWN_CONCEPT（平台 entities ∪ 租户概念并集之外）', async () => {
+    const s = await submitChange(pool, PORG, { userId: 'a', channel: 'pat' }, 'x:p1mo_c1', 'create',
+      { ...OWN_DECL, alias: '未知概念夹具', entity: 'p1mo_nope_xyz' })
+    expect(s).toMatchObject({ ok: false, http: 400, error: 'UNKNOWN_CONCEPT' })
+  })
+
+  it('create 撞已有 (org, id) 行 ⇒ 400 METRIC_ID_EXISTS；update 档仍走 upsert 语义', async () => {
+    // x:p1mo_m1 已在第一个用例生效
+    const s = await submitChange(pool, PORG, { userId: 'a', channel: 'pat' }, 'x:p1mo_m1', 'create', OWN_DECL)
+    expect(s).toMatchObject({ ok: false, http: 400, error: 'METRIC_ID_EXISTS' })
+    const u = await submitChange(pool, PORG, { userId: 'a', channel: 'pat' }, 'x:p1mo_m1', 'update', OWN_DECL)
+    expect(u.ok).toBe(true)
+  })
+
+  it('归属字段形状越界（synonyms >16 项）⇒ 400 INVALID_DECLARATION；缺席键采纳后保留既有值（coalesce）', async () => {
+    const bad = await submitChange(pool, PORG, { userId: 'a', channel: 'pat' }, 'x:p1mo_z', 'create',
+      { ...OWN_DECL, synonyms: Array.from({ length: 17 }, (_, i) => `同义词${i}`) })
+    expect(bad).toMatchObject({ ok: false, http: 400, error: 'INVALID_DECLARATION' })
+    // update 只带 variantNote ⇒ entity/synonyms/owner_dept 保留（缺席 = 不改），variant_note 更新
+    const s = await submitChange(pool, PORG, { userId: 'a', channel: 'pat' }, 'x:p1mo_m1', 'update',
+      { baseMetric: L1_ID, op: { kind: 'refine' }, alias: '部门毛利·P1MO', variantNote: '改口：含加盟仓' })
+    expect(s.ok).toBe(true)
+    if (s.ok) {
+      await markReady(s.change.id)
+      expect((await adoptChange(writeDeps(pool), PORG, s.change.id)).ok).toBe(true)
+    }
+    const row = await pool.query(
+      `select owner_dept, variant_note, entity, synonyms from data.metrics where org = $1 and id = 'x:p1mo_m1'`, [PORG])
+    expect(row.rows[0]).toMatchObject({
+      owner_dept: 'dept-mo', entity: CONCEPT, synonyms: ['毛利别名'], variant_note: '改口：含加盟仓',
+    })
+  })
+})
+
+// ── P1 Task 4（2026-11-13）：决策竞态串行化（销缓办⑥）+ 23505 映射 ────────────────
+// 隔离键独立（org-p1-mo-race，计划全局约束）：竞态用例会故意制造占名行，不能与上方
+// Task 3 describe 的同名判据夹具互相污染。锁键 = hashtext(org || ':mc:' || 变更单 id)，
+// adopt 与 reject 争的是同一张单——org 隔离即锁键隔离。
+describePg('P1 Task 4：决策竞态串行化 + adopt 撞名映射 409', () => {
+  const RORG = 'org-p1-mo-race'
+
+  beforeAll(async () => {
+    await pool.query('delete from data.metric_change where org = $1', [RORG])
+    await pool.query('delete from data.metrics where org = $1', [RORG])
+    await upsertL1Metric(pool, L1_FIXTURE)
+  })
+  afterAll(async () => {
+    await pool.query('delete from data.metric_change where org = $1', [RORG])
+    await pool.query('delete from data.metrics where org = $1', [RORG])
+  })
+
+  /** 立一张 preview_ready 的 create 单（竞态/持锁/占名用例的公共前置）。 */
+  async function readyCreate(mid: string, alias: string): Promise<number> {
+    const s = await submitChange(pool, RORG, { userId: 'a', channel: 'pat' }, mid, 'create',
+      { baseMetric: L1_ID, op: { kind: 'refine' }, alias })
+    if (!s.ok) throw new Error('unreachable')
+    await markReady(s.change.id)
+    return s.change.id
+  }
+
+  it('锁机制：外部持锁时 adoptChange 排队等待（不偷跑写），放锁后才采纳', async () => {
+    const id = await readyCreate('x:race_hold', '持锁夹具')
+    const holder = await pool.connect()
+    try {
+      const key = `${RORG}:mc:${id}`
+      await holder.query('select pg_advisory_lock(hashtext($1))', [key])
+      let settled = false
+      const adoptP = adoptChange(writeDeps(pool), RORG, id).then((r) => { settled = true; return r })
+      // 持锁期间 adopt 不得完成、更不得落行（无锁实现此刻早已偷跑完写 + 翻状态）
+      await new Promise((r) => setTimeout(r, 80))
+      expect(settled).toBe(false)
+      const mid = await pool.query('select 1 from data.metrics where org = $1 and id = $2', [RORG, 'x:race_hold'])
+      expect(mid.rows).toHaveLength(0)
+      await holder.query('select pg_advisory_unlock(hashtext($1))', [key])
+      expect((await adoptP).ok).toBe(true)
+    } finally {
+      holder.release()
+    }
+  })
+
+  it('并发 adopt+reject（Promise.all 两连接真并发）⇒ 恰一胜，无「写已生效但单据 rejected」形态', async () => {
+    for (let round = 0; round < 3; round++) {
+      const mid = `x:race_rr${round}`
+      const id = await readyCreate(mid, `竞态夹具·第${round}轮`)
+      const [adopt, rej] = await Promise.all([
+        adoptChange(writeDeps(pool), RORG, id),
+        rejectChange(pool, RORG, id, 'reviewer', `并发驳回·第${round}轮`),
+      ])
+      const adoptWon = adopt.ok === true
+      const rejectWon = rej === true
+      expect(adoptWon).not.toBe(rejectWon)
+      const live = await pool.query('select 1 from data.metrics where org = $1 and id = $2', [RORG, mid])
+      if (rejectWon) {
+        // 驳回赢 ⇒ 采纳必须停在域写之前（锁内先读态后写）——毒形态：行已生效 + 单据 rejected
+        expect(adopt).toMatchObject({ ok: false, http: 409 })
+        expect(live.rows).toHaveLength(0)
+      } else {
+        expect(live.rows).toHaveLength(1)
+      }
+    }
+  })
+
+  it('reject 同锁：并发双 reject 恰一枚生效；adopt 已采纳后再 reject ⇒ false', async () => {
+    const id = await readyCreate('x:race_rj', '双驳夹具')
+    const [r1, r2] = await Promise.all([
+      rejectChange(pool, RORG, id, 'reviewer1', '先到'),
+      rejectChange(pool, RORG, id, 'reviewer2', '后到'),
+    ])
+    // 两把同键锁串行：第一枚把状态推离 PENDING，第二枚 WHERE 钉 PENDING ⇒ 恰一 true
+    expect(r1).not.toBe(r2)
+    expect(await rejectChange(pool, RORG, id, 'reviewer3', '三驳')).toBe(false)
+  })
+
+  it('并发 adopt+withdraw（Promise.all 同键真并发）⇒ 恰一胜，无「写已生效但单据 withdrawn」形态', async () => {
+    for (let round = 0; round < 3; round++) {
+      const mid = `x:race_wd${round}`
+      const id = await readyCreate(mid, `撤回竞态·第${round}轮`)
+      const [adopt, wd] = await Promise.all([
+        adoptChange(writeDeps(pool), RORG, id),
+        // readyCreate 以 userId 'a' 立单 ⇒ 只有 'a' 能撤（withdraw 是提交者私权）
+        withdrawChange(pool, RORG, id, 'a'),
+      ])
+      const adoptWon = adopt.ok === true
+      const wdWon = wd === true
+      expect(adoptWon).not.toBe(wdWon)
+      const live = await pool.query('select 1 from data.metrics where org = $1 and id = $2', [RORG, mid])
+      if (wdWon) {
+        // 撤回赢 ⇒ 采纳必须停在域写之前（锁内先读态后写）——毒形态：行已生效 + 单据 withdrawn
+        expect(adopt).toMatchObject({ ok: false, http: 409 })
+        expect(live.rows).toHaveLength(0)
+      } else {
+        expect(live.rows).toHaveLength(1)
+      }
+    }
+  })
+
+  it('adopt 撞 metrics_title_per_dept_uq（submit→adopt 窗口被并发占名）⇒ 409 TITLE_EXISTS_IN_DEPT，不是裸 23505', async () => {
+    const id = await readyCreate('x:race_title', '撞名窗口夹具')
+    // 占名：另一条 L2 用同 alias 直接生效（模拟「别人的单先被采纳」——决策锁不覆盖这个窗口）
+    const snatcher = await writeL2Declaration(writeDeps(pool), RORG, 'x:race_snatcher',
+      { baseMetric: L1_ID, op: { kind: 'refine' }, alias: '撞名窗口夹具' })
+    expect(snatcher.ok).toBe(true)
+    const out = await adoptChange(writeDeps(pool), RORG, id)
+    expect(out).toMatchObject({ ok: false, http: 409, error: 'TITLE_EXISTS_IN_DEPT' })
+    // 单据保持 preview_ready（域写回滚 + CAS 未跑）：评审者可驳回，或占名行删除后重试
+    expect((await getChange(pool, RORG, id))?.status).toBe('preview_ready')
   })
 })

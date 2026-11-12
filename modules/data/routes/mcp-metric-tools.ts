@@ -22,6 +22,7 @@ import type { ChangeKind } from '../domain/metric-change'
 import { applyPreview, runPreview } from '../domain/metric-change-preview'
 import { analystPool, runWarehouseSqlParams } from '../domain/warehouse'
 import { mutatingAllowed } from '../domain/toolbox/registry'
+import { manageFaceOfSlice } from './mcp-manage-face'
 import type { McpDeps, McpToolGroup, McpToolResult } from './mcp-rpc'
 
 /**
@@ -45,14 +46,18 @@ const CustomizeArgs = z.union([CustomizeRefineArgs, CustomizeExprArgs])
 
 const DeleteArgs = z.object({ id: z.string().min(1).max(64) }).strict()
 
+/** 本片认领的工具名单（= face 文件里 metric 片的 name 集合；list 与 call 同源）。 */
+const METRIC_TOOL_NAMES = manageFaceOfSlice('metric').map((t) => t.name)
+
 /**
  * 变更单提案入参（P0 Task 6）：形状闸在本文件（与 customize/delete 同规，INVALID_BODY）；
  * 「能不能立单」的语义闸在 domain/metric-change（与 HTTP 面同一份 submitChange）。
- * `payload` 形状按 kind 分派给域层 zod（refine/expr union / meta 三键 / delete 空对象），面级不复制。
+ * `payload` 形状按 kind 分派给域层 zod（refine/expr union / meta 三键 / delete 空对象 /
+ * override=W8 声明 entry，P1 Task 7），面级不复制。
  */
 const SubmitArgs = z.object({
   metricId: z.string().min(1).max(128),
-  kind: z.enum(['create', 'update', 'meta', 'delete']),
+  kind: z.enum(['create', 'update', 'meta', 'delete', 'override']),
   payload: z.unknown().optional(),
 }).strict()
 /** list 的可选档：pending（默认，待人工裁决的队列）与 rejected（读驳回原因）。 */
@@ -107,79 +112,17 @@ const view = (m: Parameters<typeof dimensionNamesOf>[0] & { id: string; title: s
 
 export const metricTools: McpToolGroup = {
   async list(deps: McpDeps) {
-    // M3 守卫同读面：空身份 ⇒ 空工具面。守卫必须在加载词表**之前**（否则空身份先炸在加载上）。
+    // M3 守卫同读面：空身份 ⇒ 空工具面。
     if (deps.requester === null) return []
-    const all = await loadMergedCatalog(deps.pool, deps.org)
-    const bases = visibleMetrics(
-      all.filter((m) => m.source === 'l1'), deps.requester, deps.adoptedSources)
-    const custom = all.filter((m) => m.source === 'l2')
-    return [
-      {
-        name: 'list_metrics',
-        description: '列出可用作基底的平台口径（含可用维度），以及本租户已定义的口径。定义前先调它。',
-        inputSchema: { type: 'object', properties: {}, required: [] },
-      },
-      {
-        name: 'customize_metric',
-        description: [
-          '基于已有平台口径定义本租户口径：裁剪 / 改名 / 收窄可见维度 / 加过滤（refine），',
-          '或用**受限算术**把多条口径组合成新测度（expr，例如两条口径相除得客单价）。',
-          '**只能基于已有口径裁剪，不能凭空造新指标**：baseMetric 必须是 list_metrics 里出现的',
-          '平台口径 id，expr 里的 ref 也只能指向它们；可用维度以基底为准（越界会被拒）。',
-        ].join(''),
-        inputSchema: {
-          type: 'object',
-          properties: {
-            id: { type: 'string', description: '本租户口径的 id（≤64 字，不能与平台口径重名）' },
-            baseMetric: { type: 'string', description: '基底平台口径 id（取自 list_metrics）' },
-            expr: { type: 'object', description: '受限算术表达式树（与 baseMetric 二选一）；节点 kind ∈ ref/num/add/sub/mul/div' },
-            alias: { type: 'string', description: '展示名' },
-            visibility: { type: 'object', description: '可见维度（决定外层聚合口径）' },
-            filters: { type: 'array', description: '等值过滤' },
-          },
-          required: ['id'],
-          anyOf: [{ required: ['baseMetric'] }, { required: ['expr'] }],
-        },
-      },
-      {
-        name: 'delete_custom_metric',
-        description: '删除本租户自定义的口径。**平台口径不可删**（会被拒）。',
-        inputSchema: {
-          type: 'object',
-          properties: { id: { type: 'string', description: '口径 id' } },
-          required: ['id'],
-        },
-      },
-      {
-        // 描述从紧：合并面 tools/list 有 10KB 静态预算（本片不在 check-mcp-toolface 的
-        // 三份代理清单里，门禁测不到——加字前先用合并面自测脚本量，见 task-6 报告）。
-        name: 'submit_metric_change',
-        description: '提交指标变更单：**只提案不生效，等待人工采纳**；采纳/驳回仅人工，不提供工具。驳回原因在 list_metric_changes 里读。',
-        inputSchema: {
-          type: 'object',
-          properties: {
-            metricId: { type: 'string', description: '目标口径 id' },
-            kind: { type: 'string', enum: ['create', 'update', 'meta', 'delete'] },
-            payload: { type: 'object', description: 'create/update=口径声明；meta=业务键；delete 留空' },
-          },
-          required: ['metricId', 'kind'],
-        },
-      },
-      {
-        name: 'list_metric_changes',
-        description: '列出本租户指标变更单：默认 pending；status=rejected 读驳回原因。',
-        inputSchema: {
-          type: 'object',
-          properties: { status: { type: 'string', enum: ['pending', 'rejected'] } },
-        },
-      },
-    ]
+    // 定义取自纯文件 mcp-manage-face（单一事实源：门禁量的合并面预算就是这份 wire；
+    // 旧实现在这里空载 loadMergedCatalog 后丢弃结果——定义本就是静态的，顺带省一次词表查询）。
+    return manageFaceOfSlice('metric').map((t) => t.wire)
   },
 
   async call(deps: McpDeps, name: string, args: Record<string, unknown>): Promise<McpToolResult | null> {
-    // 认领判定：不是口径片的工具 ⇒ 交回合成方（差别**只有**这一行与其返回类型）
-    if (name !== 'customize_metric' && name !== 'delete_custom_metric' && name !== 'list_metrics'
-      && name !== 'submit_metric_change' && name !== 'list_metric_changes') return null
+    // 认领判定：不是口径片的工具 ⇒ 交回合成方（差别**只有**这一行与其返回类型）。
+    // 认领名单与 list() 同源（face 文件），新增本片工具只改 mcp-manage-face.ts 一处。
+    if (!(METRIC_TOOL_NAMES as readonly string[]).includes(name)) return null
     if (deps.requester === null) {
       return { text: JSON.stringify({ status: 'error', reason: 'unauthenticated' }), isError: true }
     }

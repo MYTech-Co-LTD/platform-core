@@ -41,6 +41,12 @@ interface MetricRow {
   basis?: 'l1_tree' | 'column_agg' | 'declared'
   /** W8：非空 = 本行是对该 L1 id 的口径覆盖（草稿或已确认）。 */
   overrideOf?: string | null
+  /** P1 Task 8a（047 列）：归属面——部门桶 / 概念 / 差异说明，只进口径展开层（默认层零新增词）。
+   *  ownerDept/variantNote 由变更单写入（L1 恒 null）；entity L1 由物化带、L2 由变更单带。
+   *  可选（与 overrideOf? 同一条理由）：历史响应缺键 = 未声明。 */
+  ownerDept?: string | null
+  entity?: string | null
+  variantNote?: string | null
 }
 
 /** W8 覆盖清单的一行（`GET /metrics/overrides` 的形状；草稿不在合并词表里，故单独拉）。 */
@@ -687,6 +693,10 @@ export default function MetricsPage() {
                 <div>分组维度：{dimsOf(detailFor).join('、') || '—'}</div>
                 <div>所需权限：{detailFor.requiredScope ?? '不限'}　主体列：{detailFor.subjectColumn}</div>
                 <div>版本：{detailFor.source === 'l1' ? '平台物化（追溯走 git）' : `v${detailFor.version}`}　最后操作人：{detailFor.updatedBy ?? (detailFor.source === 'l1' ? '平台物化' : '—')}</div>
+                {/* 归属面（P1 Task 8a，047 列）：只进展开层（默认层零新增词）；缺席 = 未声明 → —，不编默认值 */}
+                <div>归属部门：{detailFor.ownerDept ?? '—'}</div>
+                <div>概念：{detailFor.entity ?? '—'}</div>
+                <div>差异说明：{detailFor.variantNote ?? '—'}</div>
                 {detailFor.overrideOf != null && <div>口径覆盖：本行覆盖平台指标 <code>{detailFor.overrideOf}</code></div>}
                 <div style={{ marginTop: 4, opacity: 0.75 }}>原始定义：{detailFor.selectSql ?? '—'}</div>
               </TechDetails>

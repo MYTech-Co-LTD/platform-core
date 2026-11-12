@@ -44,7 +44,9 @@ const pmDeps = (pool: Pool, over: Partial<PrivateMeasureWriteDeps> = {}): Privat
 
 const pmInput = (over: Record<string, unknown> = {}) => ({
   id: 'ma_pm_sales',
-  title: '自定义销售额',
+  // title 派生自 id（显式 title 照旧覆盖）：047 部门内同名互斥后，多行夹具共用一个
+  // 默认标题会在同 org 里互相顶掉（同 owner_dept 桶 lower(title) 冲突）。
+  title: `自定义销售额·${(over.id as string) ?? 'ma_pm_sales'}`,
   description: '按日汇总',
   agg: 'sum' as const,
   column: 'amount',
@@ -318,7 +320,7 @@ describePg('私有测度写入：生效列 + basis + draft + create 审计', () 
     expect(again).toMatchObject({ ok: false, http: 409, error: 'METRIC_EXISTS' })
     const row = (await pool.query(
       `select title, version from data.metrics where org = $1 and id = 'ma_pm_exists'`, [ORG])).rows[0]
-    expect(row).toMatchObject({ title: '自定义销售额', version: 1 })
+    expect(row).toMatchObject({ title: '自定义销售额·ma_pm_exists', version: 1 })
   })
 
   it('★ 归档行可复活：creator（或 data:manage）重建立即回到在用；别人 403 且仍归档', async () => {
