@@ -79,7 +79,11 @@ describePg('写面（需要 DATABASE_URL）', () => {
 
   function app(): Hono {
     // 第 4 参是 tenant（宿主投影的租户行）——不传会用默认 'test' 租户，断言全错。
-    return buildTestApp(mod, makeIdentity({ orgId: ORG }), { pool }, { id: 1, casdoor_org: ORG })
+    // execute：试算的测试缝（mcp-rpc 组装处 wh = ctx.execute 透传）——submit_metric_change
+    // 的「提交即试算」不碰真仓库（与 metric-changes.test.ts 同款假执行器，恒回同一行）。
+    return buildTestApp(mod, makeIdentity({ orgId: ORG }),
+      { pool, execute: async () => ({ rows: [{ rows: 5, value: 100 }] }) } as never,
+      { id: 1, casdoor_org: ORG })
   }
 
   /** 种一条平台 L1：写面的基底，也是「撞 L1 保留 id」用例的被撞者。 */
@@ -268,8 +272,9 @@ describePg('写面（需要 DATABASE_URL）', () => {
       })).json()
       const out = toolText(submitted as never)
       expect(out.status).toBe('ok')
-      // 落的是**未决态**（MCP 面不做自动试算 ⇒ draft），且永不直接生效
-      expect(['draft', 'preview_ready', 'preview_failed']).toContain(out.state)
+      // 提交即试算（与 HTTP 面 POST /metric-changes 同契，P0 终审 F1）：注入执行器在位 ⇒
+      // preview_ready（控制台的采纳按钮只认这个态）；且永不直接生效
+      expect(out.state).toBe('preview_ready')
       expect(typeof out.changeId).toBe('number')
 
       // 自己的单在 list 里可见（带 kind/metricId；驳回原因是人裁决后才有的字段，未决时为 null）
@@ -278,11 +283,13 @@ describePg('写面（需要 DATABASE_URL）', () => {
         params: { name: 'list_metric_changes', arguments: {} },
       })).json()
       const changes = toolText(listed as never).changes as
-        { id: number; metricId: string; kind: string; status: string; rejectReason: string | null }[]
+        { id: number; metricId: string; kind: string; status: string; preview: { rows?: number } | null; rejectReason: string | null }[]
       const mine = changes.find((c) => c.id === out.changeId)
       expect(mine).toBeDefined()
       expect(mine!.metricId).toBe('x:via_mcp')
       expect(mine!.kind).toBe('create')
+      expect(mine!.status).toBe('preview_ready')
+      expect(mine!.preview).toMatchObject({ rows: 5 })
 
       // 生效路径未被触碰：独立回读存储层，不采信工具自述
       const live = await pool.query(`select 1 from data.metrics where org = $1 and id = 'x:via_mcp'`, [ORG])

@@ -19,6 +19,8 @@ import { deleteMetricDeclaration, writeL2Declaration } from '../domain/metric-wr
 import type { L2DeclarationBody, MetricWriteOutcome } from '../domain/metric-write'
 import { listChanges, submitChange } from '../domain/metric-change'
 import type { ChangeKind } from '../domain/metric-change'
+import { applyPreview, runPreview } from '../domain/metric-change-preview'
+import { analystPool, runWarehouseSqlParams } from '../domain/warehouse'
 import { mutatingAllowed } from '../domain/toolbox/registry'
 import type { McpDeps, McpToolGroup, McpToolResult } from './mcp-rpc'
 
@@ -57,6 +59,24 @@ const SubmitArgs = z.object({
 const ListChangesArgs = z.object({
   status: z.enum(['pending', 'rejected']).optional(),
 }).strict()
+
+/**
+ * 试算执行器（与 routes/metric-changes.ts 的 previewExecOf **同构**，注入缝不同——那边是
+ * RouteCtx.execute，这边是壳组装的 `deps.wh`）：
+ * · `deps.wh` 注入（测试缝）＝对象行假执行器，直接透传。`SqlExecutor` 的「数组行」形状是 query
+ *   面的契约，预览面统一对象行——这里的 cast 是**显式表态**（两个注入面形状不同，不是疏忽）。
+ * · 生产（deps.wh 缺省）＝ `analystPool` 只读池。⚠️ 用 `runWarehouseSqlParams` 而不是
+ *   `runWarehouseSql`：后者**不收 params**（窗口过滤 `between $1 and $2` 参数送不进库），
+ *   且回的是列优先的数组行——这里把它 zip 回对象行归一到 PreviewDeps 形状。
+ */
+type PreviewExec = (sql: string, params?: unknown[]) => Promise<{ rows: Record<string, unknown>[] }>
+const previewExecOf = (deps: McpDeps): PreviewExec =>
+  deps.wh !== undefined
+    ? deps.wh as unknown as PreviewExec
+    : async (sql, params) => {
+        const r = await runWarehouseSqlParams(analystPool(), sql, params ?? [])
+        return { rows: r.rows.map((row) => Object.fromEntries(r.columns.map((c, i) => [c, row[i]]))) }
+      }
 
 const ok = (o: Record<string, unknown>) => ({ text: JSON.stringify({ status: 'ok', ...o }), isError: false })
 
@@ -187,9 +207,21 @@ export const metricTools: McpToolGroup = {
       const out = await submitChange(deps.pool, deps.org,
         { userId: requester.userId, channel: 'mcp' },
         parsed.data.metricId, parsed.data.kind as ChangeKind, parsed.data.payload ?? {})
-      // **只提案**：生效只发生在人采纳（adoptChange）之后，本工具不接 preview/adopt。
       if (!out.ok) return { text: JSON.stringify({ status: 'refused', error: out.error }), isError: true }
-      return ok({ changeId: out.change.id, state: out.change.status })
+      // 提交即试算（与 HTTP 面 POST /metric-changes 同契，P0 终审 F1）：试算成功 ⇒ preview_ready
+      //（控制台的采纳按钮只认这个态，见 console/changes）；失败 ⇒ preview_failed——单据仍可见、
+      // 可驳，不是死单。生效依旧只发生在人采纳（adoptChange）之后，本工具不接 adopt/reject。
+      // 试算任何环节出意外都不 error 工具调用：单已立，人能在控制台重跑试算或驳回。
+      let state = out.change.status
+      try {
+        const preview = await runPreview({ pool: deps.pool, execute: previewExecOf(deps) }, deps.org, out.change)
+        await applyPreview(deps.pool, out.change.id, preview)
+        state = preview.ok ? 'preview_ready' : 'preview_failed'
+      } catch (e) {
+        console.warn('[data] submit_metric_change 试算意外失败（单据保留提交态，仍可驳回）:',
+          e instanceof Error ? e.message : e)
+      }
+      return ok({ changeId: out.change.id, state })
     }
 
     if (name === 'list_metric_changes') {

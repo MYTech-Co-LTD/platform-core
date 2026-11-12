@@ -27,6 +27,8 @@ export default function ChangesPage() {
   const [err, setErr] = useState<HumanError | null>(null)
   const [rejecting, setRejecting] = useState<Row | null>(null)
   const [reason, setReason] = useState('')
+  /** 补跑试算的在飞标记（行 id）：按钮 loading 即禁点，防同一单并发重跑。 */
+  const [previewing, setPreviewing] = useState<number | null>(null)
   const [messageApi, ctx] = message.useMessage()
 
   const load = useCallback(async () => {
@@ -66,6 +68,20 @@ export default function ChangesPage() {
       setErr(humanError(e))
     }
   }
+  // 补跑试算（draft / preview_failed 行）：走既有重跑端点；失败走 humanError（PREVIEW_UNAVAILABLE
+  // 等码已在 lib/explain 的表里），成功靠 load() 拉最新状态。
+  const runPreview = async (r: Row) => {
+    setErr(null)
+    setPreviewing(r.id)
+    try {
+      await apiSend(`/metric-changes/${r.id}/preview`, 'POST')
+      await load()
+    } catch (e) {
+      setErr(humanError(e))
+    } finally {
+      setPreviewing(null)
+    }
+  }
 
   return (
     <Card title="待核对" extra={<Button size="small" loading={loading} onClick={() => void load()}>刷新</Button>}>
@@ -100,13 +116,15 @@ export default function ChangesPage() {
                   <Typography.Text type="secondary">{r.submittedBy} · {r.submittedAt.slice(0, 16).replace('T', ' ')}</Typography.Text>
                 </Space>
                 <Typography.Paragraph type="secondary" style={{ margin: '6px 0 0', fontSize: 13 }}>
-                  {r.preview?.error !== undefined
-                    ? `试算没跑成：${r.preview.error}（不可采纳）`
-                    : r.preview?.baseline != null && r.preview.baseline.deltaPct !== null
-                      ? `试算 ${r.preview.value?.toLocaleString?.() ?? r.preview.value}（${r.preview.rows ?? 0} 行），`
-                        + `参照 ${r.preview.baseline.id} ${r.preview.baseline.value?.toLocaleString?.() ?? r.preview.baseline.value}，`
-                        + `差 ${r.preview.baseline.deltaPct > 0 ? '+' : ''}${r.preview.baseline.deltaPct}%`
-                      : `试算 ${r.preview?.value?.toLocaleString?.() ?? r.preview?.value ?? '—'}（${r.preview?.rows ?? 0} 行）`}
+                  {r.status === 'draft'
+                    ? '试算还没跑完'
+                    : r.preview?.error !== undefined
+                      ? `试算没跑成：${r.preview.error}（不可采纳）`
+                      : r.preview?.baseline != null && r.preview.baseline.deltaPct !== null
+                        ? `试算 ${r.preview.value?.toLocaleString?.() ?? r.preview.value}（${r.preview.rows ?? 0} 行），`
+                          + `参照 ${r.preview.baseline.id} ${r.preview.baseline.value?.toLocaleString?.() ?? r.preview.baseline.value}，`
+                          + `差 ${r.preview.baseline.deltaPct > 0 ? '+' : ''}${r.preview.baseline.deltaPct}%`
+                        : `试算 ${r.preview?.value?.toLocaleString?.() ?? r.preview?.value ?? '—'}（${r.preview?.rows ?? 0} 行）`}
                 </Typography.Paragraph>
                 <TechDetails>
                   <div>窗口：{r.preview?.window ? `${r.preview.window.from} ~ ${r.preview.window.to}` : '—'}</div>
@@ -115,8 +133,14 @@ export default function ChangesPage() {
                 </TechDetails>
               </div>
               <Space>
+                {/* 补跑试算：只有还没跑成（draft / preview_failed）的行需要；preview_ready 行数已在场 */}
+                {(r.status === 'draft' || r.status === 'preview_failed') && (
+                  <Button size="small" loading={previewing === r.id} onClick={() => void runPreview(r)}>跑试算</Button>
+                )}
                 <Button type="primary" disabled={r.status !== 'preview_ready'} onClick={() => void adopt(r)}>采纳</Button>
-                <Button disabled={r.status !== 'preview_ready'} onClick={() => setRejecting(r)}>驳回</Button>
+                {/* 驳回对全部未决态开放（domain rejectChange 收 draft/preview_ready/preview_failed）——
+                    「没试算完就看出不对」是合法驳回路径，不该逼人先跑完试算才能拒 */}
+                <Button onClick={() => setRejecting(r)}>驳回</Button>
               </Space>
             </Space>
           </Card>

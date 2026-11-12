@@ -52,4 +52,50 @@ describe('待核对页', () => {
     const calls = m.mock.calls.filter(([u, i]) => String(u).includes('/reject') && i?.method === 'POST')
     expect(calls.length).toBe(0)
   })
+
+  it('draft/preview_failed 行（P0 终审 F1）：驳回可用、采纳仍禁；「跑试算」补跑后列表刷新；draft 显「试算还没跑完」', async () => {
+    const DRAFT_ROW = {
+      id: 9, metricId: 'x:draft_one', kind: 'meta', status: 'draft',
+      payload: { unit: '元' }, preview: null,
+      submittedBy: 'agent', submittedChannel: 'mcp', submittedAt: '2026-11-12T03:00:00Z',
+      decidedBy: null, decidedAt: null, rejectReason: null,
+    }
+    const FAILED_ROW = {
+      ...DRAFT_ROW, id: 10, metricId: 'x:failed_one', status: 'preview_failed',
+      preview: { error: 'METRIC_NOT_FOUND', ranAt: '2026-11-12T03:01:00Z' },
+    }
+    let list: { changes: Record<string, unknown>[] } = { changes: [DRAFT_ROW, FAILED_ROW] }
+    m.mockImplementation(async (url: string | URL, init?: RequestInit) => {
+      const u = String(url)
+      if (u.includes('/metric-changes') && (init?.method ?? 'GET') === 'GET') return json(list)
+      if (u.includes('/preview') && init?.method === 'POST') {
+        // 补跑成功：draft 行翻 preview_ready，重进待办；failed 行留在原地
+        list = { changes: [{ ...DRAFT_ROW, status: 'preview_ready', preview: { value: 3, rows: 1 } }, FAILED_ROW] }
+        return json({ ok: true })
+      }
+      if (u.includes('/adopt') || u.includes('/reject')) return json({ ok: true })
+      return json({})
+    })
+    render(<ChangesPage />)
+    await waitFor(() => expect(screen.getByText(/x:draft_one/)).toBeInTheDocument())
+    // draft 行的默认层句子是「试算还没跑完」，不是裸的「试算 —（0 行）」
+    expect(screen.getByText('试算还没跑完')).toBeInTheDocument()
+    // 两行都未到 preview_ready ⇒ 采纳全禁；驳回对全部未决态可用
+    const adoptButtons = screen.getAllByRole('button', { name: /采\s*纳/ })
+    expect(adoptButtons.length).toBe(2)
+    expect(adoptButtons.every((b) => b.hasAttribute('disabled'))).toBe(true)
+    const rejectButtons = screen.getAllByRole('button', { name: /驳\s*回/ })
+    expect(rejectButtons.length).toBe(2)
+    expect(rejectButtons.every((b) => !b.hasAttribute('disabled'))).toBe(true)
+    // 「跑试算」只在 draft/preview_failed 行出现；点 draft 行的 → POST /preview → 列表刷新
+    expect(screen.getAllByRole('button', { name: /跑试算/ }).length).toBe(2)
+    fireEvent.click(screen.getAllByRole('button', { name: /跑试算/ })[0])
+    await waitFor(() => expect(
+      m.mock.calls.some(([u, i]) => String(u).endsWith('/metric-changes/9/preview') && i?.method === 'POST'),
+    ).toBe(true))
+    // 刷新后 draft 行已是 preview_ready：句子里有试算值，且不再有它的「跑试算」（只剩 failed 行那颗）
+    await waitFor(() => expect(screen.getByText(/x:draft_one/)).toBeInTheDocument())
+    expect(screen.getAllByRole('button', { name: /跑试算/ }).length).toBe(1)
+    expect(screen.getByText('试算 3（1 行）')).toBeInTheDocument()
+  })
 })
