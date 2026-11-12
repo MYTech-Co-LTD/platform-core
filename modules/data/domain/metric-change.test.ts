@@ -87,6 +87,19 @@ describePg('submitChange', () => {
     expect(bad).toMatchObject({ ok: false, error: 'INVALID_META' })
   })
 
+  it('meta 档全空（空对象 / 三键全空串）⇒ INVALID_META（终局不可采纳单不立，P0 终审 F3）；有实质内容照常立单', async () => {
+    // 空对象：adoptChange 会撞 updateMetricMeta 的 EMPTY_META_PATCH ⇒ 提交时就拒，不让它进队列
+    const empty = await submitChange(pool, ORG, { userId: 'a', channel: 'session' }, 'x:meta_empty', 'meta', {})
+    expect(empty).toMatchObject({ ok: false, error: 'INVALID_META' })
+    // 三键全是空串：clean 后同样一个字段都不动（EMPTY_META_PATCH），与空对象同罪
+    const blank = await submitChange(pool, ORG, { userId: 'a', channel: 'session' }, 'x:meta_blank', 'meta',
+      { bizDescription: '', unit: '', caliberNote: '' })
+    expect(blank).toMatchObject({ ok: false, error: 'INVALID_META' })
+    // 至少一键有实质内容（非空白）⇒ 仍是合法提案
+    const one = await submitChange(pool, ORG, { userId: 'a', channel: 'session' }, 'x:meta_unit', 'meta', { unit: '元' })
+    expect(one.ok).toBe(true)
+  })
+
   it('withdraw 只允许提交者本人', async () => {
     const r = await submitChange(pool, ORG, { userId: 'u1', channel: 'pat' }, 'x:w', 'create', DECL)
     if (!r.ok) throw new Error('unreachable')

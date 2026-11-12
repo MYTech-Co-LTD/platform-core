@@ -31,6 +31,15 @@ const MetaPayload = z.object({
 }).strict()
 
 /**
+ * meta 档必须至少有一个字段带实质内容（trim 后非空）。全空提案立了也采纳不了——
+ * adoptChange 把 payload 透传给 updateMetricMeta，clean 后一个字段都不动 ⇒ 恒 400
+ * EMPTY_META_PATCH，变成一张永远卡在队列里的死单（P0 终审 F3）。所以在提交时就拒。
+ */
+function metaHasContent(p: { bizDescription?: string; unit?: string; caliberNote?: string }): boolean {
+  return [p.bizDescription, p.unit, p.caliberNote].some((v) => v !== undefined && v.trim() !== '')
+}
+
+/**
  * 声明档 payload：refine/expr 判别式 union（复用编译器的 zod——第二份形状就是第二事实源）。
  * 写入闸在共享 schema 之上再收紧一档 `.strict()`（**返回派生实例，不改共享 schema**）：
  * `L2RefineDeclarationSchema` 本体按既有约定是非 strict（多余键被 strip，见 semantic-compiler.ts），
@@ -65,7 +74,10 @@ export async function submitChange(
 ): Promise<SubmitOutcome> {
   if (metricId.trim() === '' || metricId.length > 128) return { ok: false, http: 400, error: 'INVALID_DECLARATION' }
   if ((kind === 'create' || kind === 'update') && !parseDeclaration(payload)) return { ok: false, http: 400, error: 'INVALID_DECLARATION' }
-  if (kind === 'meta' && !MetaPayload.safeParse(payload).success) return { ok: false, http: 400, error: 'INVALID_META' }
+  const meta = kind === 'meta' ? MetaPayload.safeParse(payload) : null
+  if (kind === 'meta' && (meta === null || !meta.success || !metaHasContent(meta.data))) {
+    return { ok: false, http: 400, error: 'INVALID_META' }
+  }
   if (kind === 'delete' && payload !== null && typeof payload === 'object' && Object.keys(payload as object).length > 0) {
     return { ok: false, http: 400, error: 'INVALID_DECLARATION' }
   }
