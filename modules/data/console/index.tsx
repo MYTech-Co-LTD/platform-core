@@ -12,7 +12,6 @@
 import { useEffect } from 'react'
 import { Layout, Segmented, Typography } from 'antd'
 import { useLocation, useNavigate, useOutletContext } from 'react-router-dom'
-import QueryPage from './query'
 import MetricsPage from './metrics'
 import ReportsPage from './reports'
 import ScopesPage from './scopes'
@@ -23,7 +22,6 @@ import { useIsMobile } from './lib/useIsMobile'
 const BASE = '/console/data'
 
 const TABS = [
-  { key: 'query', label: '问数' },
   { key: 'metrics', label: '指标' },
   { key: 'reports', label: '报表' },
   // data:manage 才出现（#1901 scope 管理面）：菜单过滤只是入口姿态，API 门卫才是真闸
@@ -34,7 +32,7 @@ const TABS = [
 ] as const
 
 type TabKey = (typeof TABS)[number]['key']
-const DEFAULT_TAB: TabKey = 'query'
+const DEFAULT_TAB: TabKey = 'metrics'
 
 /**
  * 体系地图是独立追溯页（服务端渲染单文件 HTML，hash 路由），不是本 console 的路由页——
@@ -66,7 +64,7 @@ export default function DataConsolePage() {
   }, [last, navigate, canManage])
 
   const PAGES: Record<TabKey, () => React.JSX.Element> = {
-    query: QueryPage, metrics: MetricsPage, reports: ReportsPage, scopes: ScopesPage,
+    metrics: MetricsPage, reports: ReportsPage, scopes: ScopesPage,
     candidates: CandidatesPage,
   }
   const Active = PAGES[active]
