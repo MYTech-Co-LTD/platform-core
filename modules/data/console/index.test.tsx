@@ -116,4 +116,32 @@ describe('数据模块 console 入口（三页签）', () => {
     await waitFor(() => expect(screen.getByText('有效范围预览（谁看得见什么）')).toBeTruthy())
     expect(router.state.location.pathname).toBe('/console/data/scopes')
   })
+
+  it('★ data:manage 用户可见「候选池」页签并请求 /metrics/candidates；普通用户不可见（Wave 2.3）', async () => {
+    // 普通用户：菜单里没有「候选池」
+    renderAt('/console/data/query')
+    expect(screen.queryByText('候选池')).toBeNull()
+    cleanup()
+
+    urls.length = 0
+    m.mockImplementation(async (url: string) => {
+      urls.push(url)
+      if (url.includes('/metrics/candidates')) return json({ candidates: [], limit: 200 })
+      return json({})
+    })
+    const router = createMemoryRouter(
+      [
+        {
+          element: <Outlet context={{ session: { scopes: ['data:query', 'data:manage'] } }} />,
+          children: [{ path: '/console/*', element: <DataConsolePage /> }],
+        },
+      ],
+      { initialEntries: ['/console/data/candidates'] },
+    )
+    render(<RouterProvider router={router} />)
+    // 页签与卡片标题都会出现「候选池」
+    expect(screen.getAllByText('候选池').length).toBeGreaterThan(0)
+    await waitFor(() => expect(urls.some((u) => u.includes('/metrics/candidates'))).toBe(true))
+    expect(router.state.location.pathname).toBe('/console/data/candidates')
+  })
 })
