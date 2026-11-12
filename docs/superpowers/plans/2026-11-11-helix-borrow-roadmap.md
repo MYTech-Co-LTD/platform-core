@@ -78,6 +78,13 @@
 
 | 项 | 现状证据 | 波次 |
 |---|---|---|
+| **P0 变更单 + 试算硬门** | spec §6/§7；`draft_spec` creator-scoped 且不可查询（`metric-governance.ts:74`）⇒ 评审闭环必须新建 | **Wave 5 P0（计划：`2026-11-12-metric-change-review-p0.md`）** |
+| **P1 概念与归属** | L2 行不写 `entity`/`synonyms`（031 迁移注释）；无 `owner_dept` | Wave 5 P1 |
+| **P2 指标可见性** | `visibleMetrics` 只判 scope+源（`authz.ts:254`）；`/query` 按 id 无部门判定 | Wave 5 P2（前置：组织一致性检查） |
+| **P3 解析与澄清** | `search_catalog` 无 tie 检测（`toolbox/discovery.ts:77-91`） | Wave 5 P3 |
+| **P4 写面收口** | `customize_metric` 仍直接写生效行（`mcp-metric-tools.ts:80`）；PC 指标页仍有编辑/元数据/覆盖/删除 | Wave 5 P4 |
+| **P5 报表 × 指标** | 发布无「受众 ⊆ 面板指标可见范围」校验；Metabase 只能整表级 | Wave 5 P5 |
+| **P6 证据与治理** | 声明类无对账证据接入；下线候选已有面（/metrics/usage）未接评审 | Wave 5 P6 |
 | 列级血缘 | dbt core manifest 无列级边（dbt core 不产出列级 edge） | 2.4（**触发式**：等真的有「按列追影响」的需求再做） |
 
 
@@ -107,6 +114,23 @@
 ### Wave 3 · 工程卫生
 - history view 双 config、materialize 档位校验、cron 文档、lock 覆盖、detail 只读池。
 
+### Wave 5 · 指标语义治理（2026-11-12 定案，**现行主线**）
+
+> spec（唯一事实源）：`docs/superpowers/specs/2026-11-12-metric-semantic-governance-design.md`。
+> 三条拍板：① agent 只提案、人只采纳（**未试算不可采纳**，决策端点只认会话）；
+> ② 同名不同义 = 不同 id + 部门内同名互斥 + 歧义必须澄清；③ 指标接入权限体系
+> （归属部门决定可见范围，**按 id 查询也拦**）。
+
+- **P0 变更单 + 试算硬门**：`data.metric_change` + 提交即试算（快照含参照值 Δ）+
+  采纳/驳回（会话限定）+ MCP `submit_metric_change` / `list_metric_changes` + console「待核对」页。
+  P0 的 kind 范围：`create | update | meta | delete`（override/declared 档随 P1 接入）。
+- **P1 概念与归属**：`owner_dept` / `variant_note` / entity 开放给 L2 / 概念表 / 部门内同名唯一 / override 档接入。
+- **P2 指标可见性**：`canViewMetric` 单一实现 + 五个执法点 + `reveal` 两档（前置：组织架构一致性检查）。
+- **P3 解析与澄清**：`search_catalog` tie 检测 + 答案 `caliber` 标注。
+- **P4 写面收口**：`customize_metric` 改为落变更单；人面写入口全删（含回滚开关 `DATA_METRIC_REVIEW_MODE` 退役旧路径）。
+- **P5 报表 × 指标**：发布门 + 渲染闸 + 每日一致性巡检（Metabase 整表级）。
+- **P6 证据与治理**：声明类对账证据接入采纳 + 使用统计→下线候选。
+
 ### Wave 4 · 产品面：单页双层（2026-11-12 定案）
 
 > **两条约束（用户拍板，别再讨论）**：① **本系统不做问数**——问数只经 MCP 给 openclaw 与三方 agent；
@@ -133,7 +157,7 @@
 
 ## §6 候选池
 
-- **指标语义治理（变更单 · 试算 · 归属 · 解析）** —— 已排期，设计已定：`docs/superpowers/specs/2026-11-12-metric-semantic-governance-design.md`（P0–P6 待拆实施计划）。三条拍板：① agent 只提案、人只采纳（未试算不可采纳）；② 同名不同义必须 id 不同 + 部门内同名互斥 + 歧义澄清；③ 指标接入权限体系（归属部门决定可见范围，按 id 也拦）。
+- （空）
 
 ---
 
@@ -159,3 +183,4 @@
 | 2026-11-12 | **Wave 4 全部完成**（4.4 术语词典） | PR #2025；产品面四批 4.1–4.4 均已上线 |
 | 2026-11-12 | **新增 4.5 指标创建收口**：删人工新建入口，实现面交给 agent | 用户拍板「删实现面、留决策面」（三档选项见 issue #2029）：删 PC 两个新建按钮与移动端表达式新建；API/MCP 写面与决策动作全留。PR #2030 |
 | 2026-11-12 | 新增候选：**指标语义治理**（P0–P6，含试算硬门/变更单/部门归属/同名解析/报表交集） | 用户定案三点（agent 只提案、人只采纳；同名必须可区分；指标接入部门权限）；spec 已出，待拆实施计划 |
+| 2026-11-12 | **候选池升格为 Wave 5（现行主线）**；待办表按 P0–P6 重排 | 用户认可 spec（含部门链=自身∪祖先∪后代、认证并入采纳两处代决）；P0 计划另出 |
