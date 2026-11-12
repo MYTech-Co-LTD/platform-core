@@ -167,7 +167,11 @@ export interface MetricRow extends MetricDef {
  * L2 归属四字段的**可选写面形状**（P1 Task 3，spec §5.1）：create/update 变更单 payload 顶层的
  * `entity/synonyms/ownerDept/variantNote` 经 adoptChange → writeL2Declaration opts 透传到这里。
  * **缺席键 = 保留行上既有值**（upsert 冲突分支 coalesce）——「一次不带归属的普通写不得把
- * 已声明的归属静默洗掉」；显式清空不是 P1 的案例（提交面 zod 拒空串）。
+ * 已声明的归属静默洗掉」。
+ * ⚠️ 唯一的显式清空案例是 `synonyms: []`（终审 Item 4 订正：docstring 曾错写「显式清空不是
+ * P1 的案例」）——提交面 zod 允许空数组（只限元素、不限个数），而空数组参数化成 `'[]'`
+ * 非 NULL，coalesce 挡不住 ⇒ 冲突分支照写，既有同义词被清空。entity/ownerDept/variantNote
+ * 的显式清空确实不是 P1 案例（提交面 zod 拒空串，只能换值、不能清）。
  */
 export interface MetricOwnership {
   entity?: string

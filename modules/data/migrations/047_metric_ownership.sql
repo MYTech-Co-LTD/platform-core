@@ -4,11 +4,13 @@ alter table data.metrics
   add column if not exists owner_dept    text,
   add column if not exists visible_depts text[],
   add column if not exists variant_note  text,
-  add column if not exists reveal        text;
+  -- reveal 照 spec §5.1 原文：not null default 'panel'（终审 Item 3 订正：先前写成可空，
+  -- 与 spec 偏离；null 态会让 P2 执法的 canViewMetric 多出一条「null 怎么判」的歧路面）。
+  add column if not exists reveal        text not null default 'panel';
 
 alter table data.metrics drop constraint if exists metrics_reveal_check;
 alter table data.metrics add constraint metrics_reveal_check
-  check (reveal is null or reveal in ('panel','report'));
+  check (reveal in ('panel','report'));
 
 -- 部门内同名互斥（spec §5.1）。生产已取证零冲突，可直接建；
 -- coalesce 把「平台通用」（owner_dept 为空）也纳入互斥（平台桶内同名同样拒绝）。
