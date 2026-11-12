@@ -132,4 +132,23 @@ describePg('applyPreview', () => {
     expect(failed?.status).toBe('preview_failed')
     expect(failed?.preview).toMatchObject({ error: 'PREVIEW_TIMEOUT' })
   })
+
+  it('已终态单（adopted）上 applyPreview 不改状态（P1 Task 4 修复②：UPDATE 钉 PENDING，重跑落后于采纳不得复活单据）', async () => {
+    const sub = await submitChange(pool, ORG, { userId: 'agent1', channel: 'pat' }, 'x:ap_done', 'meta', { unit: '元' })
+    if (!sub.ok) throw new Error('unreachable')
+    await pool.query(
+      `update data.metric_change set status = 'adopted', decided_by = 'r', decided_at = now() where id = $1`,
+      [sub.change.id],
+    )
+    const snapshot = {
+      window: { from: '2026-11-04', to: '2026-11-11' }, value: 1, rows: 2, baseline: null,
+      sample: [], compiledHash: 'a'.repeat(64), ranAt: '2026-11-12T00:00:00Z', durationMs: 3,
+    }
+    // 成功路径：rowCount=0 ⇒ 静默跳过（单已终态，试算结果作废），状态不得被写回 preview_ready
+    await applyPreview(pool, sub.change.id, { ok: true, snapshot })
+    expect((await getChange(pool, ORG, sub.change.id))?.status).toBe('adopted')
+    // 失败路径同款：终态单也不得被写成 preview_failed
+    await applyPreview(pool, sub.change.id, { ok: false, error: 'PREVIEW_TIMEOUT' })
+    expect((await getChange(pool, ORG, sub.change.id))?.status).toBe('adopted')
+  })
 })

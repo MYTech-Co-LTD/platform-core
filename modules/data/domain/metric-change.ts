@@ -233,12 +233,16 @@ export async function getChange(pool: Pool, org: string, id: number): Promise<Me
 }
 
 export async function withdrawChange(pool: Pool, org: string, id: number, userId: string): Promise<boolean> {
-  const r = await pool.query(
-    `update data.metric_change set status = 'withdrawn', decided_by = $3, decided_at = now()
-      where org = $1 and id = $2 and submitted_by = $3 and status = any($4)`,
-    [org, id, userId, PENDING_STATUSES],
-  )
-  return (r.rowCount ?? 0) > 0
+  // 同决策锁（P1 Task 4 修复①，与 adopt/reject 同键）：withdraw 也是把未决单推离 PENDING 的
+  // 裁决动作，裸 UPDATE 与 adopt 交错同样是「写已生效但单据 withdrawn」的毒丸形态。
+  return withDecisionLock(pool, org, id, async () => {
+    const r = await pool.query(
+      `update data.metric_change set status = 'withdrawn', decided_by = $3, decided_at = now()
+        where org = $1 and id = $2 and submitted_by = $3 and status = any($4)`,
+      [org, id, userId, PENDING_STATUSES],
+    )
+    return (r.rowCount ?? 0) > 0
+  })
 }
 
 export type DecideOutcome =

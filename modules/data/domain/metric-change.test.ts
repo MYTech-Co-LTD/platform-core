@@ -406,6 +406,29 @@ describePg('P1 Task 4：决策竞态串行化 + adopt 撞名映射 409', () => {
     expect(await rejectChange(pool, RORG, id, 'reviewer3', '三驳')).toBe(false)
   })
 
+  it('并发 adopt+withdraw（Promise.all 同键真并发）⇒ 恰一胜，无「写已生效但单据 withdrawn」形态', async () => {
+    for (let round = 0; round < 3; round++) {
+      const mid = `x:race_wd${round}`
+      const id = await readyCreate(mid, `撤回竞态·第${round}轮`)
+      const [adopt, wd] = await Promise.all([
+        adoptChange(writeDeps(pool), RORG, id),
+        // readyCreate 以 userId 'a' 立单 ⇒ 只有 'a' 能撤（withdraw 是提交者私权）
+        withdrawChange(pool, RORG, id, 'a'),
+      ])
+      const adoptWon = adopt.ok === true
+      const wdWon = wd === true
+      expect(adoptWon).not.toBe(wdWon)
+      const live = await pool.query('select 1 from data.metrics where org = $1 and id = $2', [RORG, mid])
+      if (wdWon) {
+        // 撤回赢 ⇒ 采纳必须停在域写之前（锁内先读态后写）——毒形态：行已生效 + 单据 withdrawn
+        expect(adopt).toMatchObject({ ok: false, http: 409 })
+        expect(live.rows).toHaveLength(0)
+      } else {
+        expect(live.rows).toHaveLength(1)
+      }
+    }
+  })
+
   it('adopt 撞 metrics_title_per_dept_uq（submit→adopt 窗口被并发占名）⇒ 409 TITLE_EXISTS_IN_DEPT，不是裸 23505', async () => {
     const id = await readyCreate('x:race_title', '撞名窗口夹具')
     // 占名：另一条 L2 用同 alias 直接生效（模拟「别人的单先被采纳」——决策锁不覆盖这个窗口）

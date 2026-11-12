@@ -4,6 +4,7 @@ import { createHash } from 'node:crypto'
 import type { Pool } from 'pg'
 import { compileL2, resolveL1Base } from './semantic-compiler'
 import { loadMergedCatalog } from './metric-store'
+import { PENDING_STATUSES } from './metric-change'
 import type { MetricChangeRow } from './metric-change'
 
 export const PREVIEW_TIMEOUT_MS = 10_000
@@ -113,17 +114,27 @@ export async function runPreview(deps: PreviewDeps, org: string, change: MetricC
   }
 }
 
-/** 把试算结果写回变更单：成功 ⇒ preview_ready；失败 ⇒ preview_failed（仍不可采纳）。 */
+/**
+ * 把试算结果写回变更单：成功 ⇒ preview_ready；失败 ⇒ preview_failed（仍不可采纳）。
+ * UPDATE **钉 PENDING_STATUSES**（P1 Task 4 修复②）：重跑试算若在采纳的 CAS 翻状态之后
+ * 才落地，无条件 `where id=$1` 会把 ADOPTED 单复活成 preview_ready（可二次采纳）。
+ * 路由在调本函数前已 getChange 闸过一次（Task 3 评审遗留的那层），这里钉的是「闸过后、
+ * 写落地前」的残余窗口。rowCount=0 ⇒ 单已终态（adopted/rejected/superseded/withdrawn），
+ * 试算结果作废即可——warn 留痕不抛（这不是错误路径，是竞态输家的正常下场）。
+ */
 export async function applyPreview(pool: Pool, id: number, outcome: PreviewOutcome): Promise<void> {
-  if (outcome.ok) {
-    await pool.query(
-      `update data.metric_change set status = 'preview_ready', preview = $2::jsonb where id = $1`,
-      [id, JSON.stringify(outcome.snapshot)],
-    )
-  } else {
-    await pool.query(
-      `update data.metric_change set status = 'preview_failed', preview = $2::jsonb where id = $1`,
-      [id, JSON.stringify({ error: outcome.error, ranAt: new Date().toISOString() })],
-    )
+  const r = outcome.ok
+    ? await pool.query(
+        `update data.metric_change set status = 'preview_ready', preview = $2::jsonb
+          where id = $1 and status = any($3)`,
+        [id, JSON.stringify(outcome.snapshot), PENDING_STATUSES],
+      )
+    : await pool.query(
+        `update data.metric_change set status = 'preview_failed', preview = $2::jsonb
+          where id = $1 and status = any($3)`,
+        [id, JSON.stringify({ error: outcome.error, ranAt: new Date().toISOString() }), PENDING_STATUSES],
+      )
+  if ((r.rowCount ?? 0) === 0) {
+    console.warn(`[data] applyPreview skipped: change ${id} 已终态，试算结果作废（重跑落后于裁决）`)
   }
 }
