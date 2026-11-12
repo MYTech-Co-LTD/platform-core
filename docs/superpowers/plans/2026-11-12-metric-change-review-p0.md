@@ -664,8 +664,8 @@ export async function rejectChange(pool: Pool, org: string, id: number, reviewer
   if (reason.trim() === '' || reason.length > 500) return false
   const r = await pool.query(
     `update data.metric_change set status='rejected', decided_by=$3, decided_at=now(), reject_reason=$4
-      where org=$1 and id=$2 and status='preview_ready'`,
-    [org, id, reviewerId, reason.trim()],
+      where org=$1 and id=$2 and status = any($5)`,
+    [org, id, reviewerId, reason.trim(), PENDING_STATUSES],
   )
   return (r.rowCount ?? 0) > 0
 }
