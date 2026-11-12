@@ -25,6 +25,9 @@
   ⚠️ 本文早期写的「一次性容器跑 `docker run`」是**示意**，生产未采用。
 - **cron 按 UTC 解释**（`deploy/data-plane-deploy-sop.md` §E.7 已实测）：要「每日 08:00 CST」
   须写 UTC `0 0 * * *`；建议**小时级**（见上）。
+- **生产实际（2026-11-12 核对）**：`custom:KJ_JBrbq68jAHVlO`，cron **`7 * * * *`**（每小时 :07 UTC，
+  即北京 :07），`retry 2×/60s`、`timeoutMs 300s`、仅 `failed` 告警。shanhai 实例同款
+  `custom:QSr7oZ5KBAVOqx5j`（同 cron，容器名换成 `openship-platform-core-shanhai-server`）。
 
 ## 配置从哪取（不写明文）
 

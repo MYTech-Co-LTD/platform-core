@@ -750,8 +750,9 @@ curl -s -H "Authorization: Bearer $DUCKLE_TOKEN" http://127.0.0.1:<port>/api/sch
 
 ### F.3 排班与时区
 
-容器 **TZ = UTC**（实测）⇒ **排班按 UTC 写**（与 openship cron 同口径）。当前：门店维 `0 2 * * *`、
-商品维 `0 11 * * *`（= 北京 10:00 / 19:00）。
+容器 **TZ = UTC**（实测）⇒ **排班按 UTC 写**（与 openship cron 同口径）。当前（2026-11-12 按
+`deploy/duckle/console/schedules/*.json` 核对，Asia/Shanghai）：门店维 `15 9-23 * * *`、商品维 `2 9-23 * * *`
+（营业时段每小时；旧文「门店 `0 2` / 商品 `0 11`（北京 10:00 / 19:00）」已过期）。
 ⚠️ **快照日由 wrapper 显式钉 `Asia/Shanghai` 推**（同 §E.7 的道理）：引擎的 `current_date` 是
 **会话时区的今天**，在 UTC 容器里夜间跑会算成**前一天**并写进**前一天的分区**，且**不报错**。
 
@@ -776,6 +777,21 @@ curl -s -H "Authorization: Bearer $DUCKLE_TOKEN" http://127.0.0.1:<port>/api/sch
   零售链路**全程未动** ⇒ 无需恢复。
 
 ### F.6 物化 job（dbt）——「非 duckle runner ⇒ openship job」那条口径的实例
+
+> 📌 **2026-11-12 现状（核对控制面导出）**：本节写的 `lemeng-dbt-materialize` **已停用**
+> （`enabled=false`，2026-11-07 14:24 CST OOM 后停用，`updatedAt 2026-11-07T06:57Z`）。
+> **现役是分档作业**（均 `serverId=8281d598`，UTC）：
+>
+> | job | key | cron | 干什么 |
+> |---|---|---|---|
+> | `lemeng-dbt-tick` | `custom:IV9T40QO8YgIgWP0` | `2-59/10 1-15 * * *` | CST 9-23 每 10 分钟，只跑 `fct_retail_sale` |
+> | `lemeng-dbt-hourly` | `custom:-pcqo9fNxWml7Lsg` | `5 1-15 * * *` | 增量模型 + 9 条窗口对账 |
+> | `lemeng-dbt-tables` | `custom:JFTeo_oFbCTy9gTN` | `20 16 * * *` | CST 00:20 table 模型夜间重建 |
+> | `lemeng-dbt-audit-a1` | `custom:xpWQVUqJFWy1l2kq` | `10 18 * * *` | CST 02:10 视图面全史对账 |
+> | `lemeng-dbt-audit-a2` | `custom:8ydQ7LgP3VCKNQ2q` | `10 19 * * *` | CST 03:10 表模型面全史对账 |
+>
+> 下面的命令形态与踩坑**仍然适用**（它们讲的是「怎么在这个栈上跑 dbt」，与分不分档无关）；
+> 但**别把本节标题里的那个 job 当现役入口**去 enable「补跑」——先查 2026-11-07 的 OOM 根因。
 
 **job**：`lemeng-dbt-materialize`（`custom:yNWqnvY65iWz1unf`），cron **`27 3 * * *` UTC**
 （2026-10-06 由 `20 3` 错峰：与 tick `*/5` 同分钟点火天天撞 ETag，#452 E1 定案；retry 配置未变），
