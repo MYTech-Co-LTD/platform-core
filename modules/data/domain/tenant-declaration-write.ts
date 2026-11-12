@@ -12,7 +12,7 @@ import { DEFAULT_TIER_SCOPE } from './authz'
 import type { Requester } from './authz'
 import { sqlMentionsColumn } from './mask'
 import { compileTenantDeclaration } from './declaration-compiler'
-import type { DeclarationIssue } from './declaration-compiler'
+import type { CompiledTenantDeclaration, DeclarationIssue } from './declaration-compiler'
 import { writeMetricAudit } from './metric-audit-store'
 import {
   confirmOverrideDeclaration as confirmOverrideDeclarationStore,
@@ -21,6 +21,7 @@ import {
   loadPlatformCatalog,
   selectMetricSnapshot,
 } from './metric-store'
+import type { MetricRow } from './metric-store'
 import { loadRelationColumns } from './private-measure'
 import { readCurrentSemanticsYaml, semanticsYamlPieceIssues } from './pipelines/propose-metric'
 import { parseL1Select } from './semantic-compiler'
@@ -242,38 +243,34 @@ export async function createTenantDeclaration(
 
 // ── P2：覆盖平台口径（草稿 → 确认 → 生效；D6）──────────────────────────────────
 
+/** TenantDeclarationOutcome 的败支（编译段失败只产败支，调用方原样透传给 HTTP 面）。 */
+type TenantDeclarationRejection = Exclude<TenantDeclarationOutcome, { ok: true }>
+
+export type OverrideCompileOutcome =
+  | { ok: true; compiled: CompiledTenantDeclaration; /** 平台目录（调用方免二次加载）。 */ catalog: MetricRow[] }
+  | { ok: false; /** 失败以败支形态透传（500 YAML / 400 DECLARATION_INVALID）。 */ outcome: TenantDeclarationRejection }
+
 /**
- * 新建/重建一条**草稿**覆盖。`entry.name` 必须等于被覆盖的 L1 id；
- * grain 必须与 L1 行同形（否则覆盖后合计/下钻语义断裂）。
- * 草稿不生效（`loadMergedCatalog` 只认 certified 的覆盖行）；确认走 `confirmOverride`。
+ * override 声明的**编译段**（P1 Task 7 从 createOverrideDeclaration 抽出并导出）：
+ * YAML 实体集 + L1 关系白名单 + （有 warehouse 时）列预热 → `compileTenantDeclaration`。
+ * 抽出动机：变更单试算（metric-change-preview）要与写路径用**同一把编译尺**——两处各拼一份
+ * 上下文就是两把尺，漂了就是「试算一个形状、生效另一个形状」。
+ * 只编译、不复刻「对行」判据（L1 存在性 / grain 同形 / scope 降档 / 撞行）——那些留在
+ * createOverrideDeclaration（采纳期深校验）；试算面用同一编译尺但少那几道，正是
+ * 「先试后断」的语义：grain 不同形的单要能立、能试算、在采纳时被透传的 400 拒掉。
  */
-export async function createOverrideDeclaration(
-  deps: TenantDeclarationDeps,
-  org: string,
-  requester: Requester,
-  id: string,
-  entry: unknown,
-): Promise<TenantDeclarationOutcome> {
+export async function compileOverrideDeclaration(
+  deps: TenantDeclarationDeps, entry: unknown, preloadedCatalog?: MetricRow[],
+): Promise<OverrideCompileOutcome> {
   const yamlText = readCurrentSemanticsYaml()
-  if (yamlText === null) return { ok: false, http: 500, error: 'SEMANTICS_YAML_UNAVAILABLE' }
+  if (yamlText === null) {
+    return { ok: false, outcome: { ok: false, http: 500, error: 'SEMANTICS_YAML_UNAVAILABLE' } }
+  }
   const doc = parseYaml(yamlText) as { metrics?: unknown[]; entities?: Record<string, unknown> } | null
   if (doc === null || typeof doc !== 'object' || !Array.isArray(doc.metrics)) {
-    return { ok: false, http: 500, error: 'SEMANTICS_YAML_UNPARSEABLE' }
+    return { ok: false, outcome: { ok: false, http: 500, error: 'SEMANTICS_YAML_UNPARSEABLE' } }
   }
-  const e = (entry ?? {}) as Record<string, unknown>
-  if (e.name !== id) return { ok: false, http: 400, error: 'NAME_MISMATCH' }
-
-  const catalog = await loadPlatformCatalog(deps.pool)
-  const l1 = catalog.find((m) => m.id === id)
-  if (l1 === undefined) return { ok: false, http: 404, error: 'NOT_FOUND' }
-
-  // grain 同形（L1 的 groupBy 是唯一事实源）
-  const grain = Array.isArray(e.grain) ? e.grain.map(String) : []
-  const l1Grain = l1.groupBy.split(',').map((s) => s.trim()).filter((s) => s !== '')
-  if (grain.join(',') !== l1Grain.join(',')) {
-    return { ok: false, http: 400, error: 'GRAIN_MISMATCH', extra: { expected: l1Grain, got: grain } }
-  }
-
+  const catalog = preloadedCatalog ?? (await loadPlatformCatalog(deps.pool))
   // 覆盖不跑 `semanticsYamlPieceIssues`：被覆盖的是**已存在的 L1 id**（不是向仓库新增声明），
   // 而该校验器的名字白名单会拒绝测试/保留前缀的既有 id。覆盖的判据由编译器（形状/关系/
   // 掩码/实体/tier）+ L1 存在性 + grain 同形三条承担。
@@ -282,6 +279,7 @@ export async function createOverrideDeclaration(
     try { allowedRelations.add(parseL1Select(m.selectSql).relation) } catch { /* 坏 L1 不授权 */ }
   }
   const entities = new Set(Object.keys(doc.entities ?? {}))
+  const e = (entry ?? {}) as Record<string, unknown>
   const preloaded = new Map<string, ReadonlySet<string>>()
   let colsOf: ((relation: string) => ReadonlySet<string> | null) | undefined
   if (deps.warehouse !== undefined) {
@@ -300,9 +298,47 @@ export async function createOverrideDeclaration(
     allowedRelations, entities, ...(colsOf === undefined ? {} : { columnsOf: colsOf }),
   })
   if (!compiled.ok) {
-    return { ok: false, http: 400, error: 'DECLARATION_INVALID', extra: { issues: compiled.issues } }
+    return {
+      ok: false,
+      outcome: { ok: false, http: 400, error: 'DECLARATION_INVALID', extra: { issues: compiled.issues } },
+    }
   }
-  const d = compiled.compiled
+  return { ok: true, compiled: compiled.compiled, catalog }
+}
+
+/**
+ * 新建/重建一条**草稿**覆盖。`entry.name` 必须等于被覆盖的 L1 id；
+ * grain 必须与 L1 行同形（否则覆盖后合计/下钻语义断裂）。
+ * 草稿不生效（`loadMergedCatalog` 只认 certified 的覆盖行）；确认走 `confirmOverride`。
+ */
+export async function createOverrideDeclaration(
+  deps: TenantDeclarationDeps,
+  org: string,
+  requester: Requester,
+  id: string,
+  entry: unknown,
+): Promise<TenantDeclarationOutcome> {
+  const e = (entry ?? {}) as Record<string, unknown>
+  if (e.name !== id) return { ok: false, http: 400, error: 'NAME_MISMATCH' }
+
+  const catalog = await loadPlatformCatalog(deps.pool)
+  const l1 = catalog.find((m) => m.id === id)
+  if (l1 === undefined) return { ok: false, http: 404, error: 'NOT_FOUND' }
+
+  // grain 同形（L1 的 groupBy 是唯一事实源）
+  const grain = Array.isArray(e.grain) ? e.grain.map(String) : []
+  const l1Grain = l1.groupBy.split(',').map((s) => s.trim()).filter((s) => s !== '')
+  if (grain.join(',') !== l1Grain.join(',')) {
+    return { ok: false, http: 400, error: 'GRAIN_MISMATCH', extra: { expected: l1Grain, got: grain } }
+  }
+
+  // 编译段（与变更单试算同一把尺，见 compileOverrideDeclaration 头注；catalog 传入免二次加载）。
+  // 刻意放在 name/L1/grain 三道**之后**：对行判据优先于编译尺——覆盖不存在的 L1 必须如实 404，
+  // 不能被编译器的形状报错（DECLARATION_INVALID）遮住。
+  const pre = await compileOverrideDeclaration(deps, entry, catalog)
+  if (!pre.ok) return pre.outcome
+  const d = pre.compiled
+
   const maskIssue = applyTenantDefaultMask(e, d)
   if (maskIssue !== null) return maskIssue
   const sqlIssue = await explainOrReject(deps, d.selectSql, d.groupBy)

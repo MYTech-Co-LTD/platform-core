@@ -9,12 +9,14 @@ import {
 import type { L2Declaration } from './semantic-compiler'
 import type { MetricWriteDeps, MetricWriteOutcome, MetricMetaPatch } from './metric-write'
 import { writeL2Declaration, updateMetricMeta, deleteMetricDeclaration } from './metric-write'
+import { createOverrideDeclaration } from './tenant-declaration-write'
 import { loadPlatformCatalog } from './metric-store'
 import type { MetricOwnership } from './metric-store'
 import { assertConcept, assertTitleFree, OwnershipError } from './metric-ownership'
 import type { PreviewSnapshot } from './metric-change-preview'
 
-export type ChangeKind = 'create' | 'update' | 'meta' | 'delete'
+/** override 档 P1 Task 7 接入（046 建表时 kind 已按 spec 五值备全）。 */
+export type ChangeKind = 'create' | 'update' | 'meta' | 'delete' | 'override'
 export type ChangeStatus = 'draft' | 'preview_ready' | 'preview_failed' | 'adopted' | 'rejected' | 'superseded' | 'withdrawn'
 export const PENDING_STATUSES: readonly ChangeStatus[] = ['draft', 'preview_ready', 'preview_failed']
 
@@ -30,16 +32,32 @@ export interface MetricChangeRow {
 
 export type SubmitOutcome =
   | { ok: true; change: MetricChangeRow }
-  | { ok: false; http: 400 | 409; error:
+  | { ok: false; http: 400 | 404 | 409; error:
       | 'INVALID_DECLARATION' | 'INVALID_META' | 'CHANGE_ALREADY_PENDING'
       // P1 Task 3（spec §13）：概念归属未知（400）/ 部门内同名互斥（409）/ create 撞已有 id（400）
-      | 'UNKNOWN_CONCEPT' | 'TITLE_EXISTS_IN_DEPT' | 'METRIC_ID_EXISTS' }
+      | 'UNKNOWN_CONCEPT' | 'TITLE_EXISTS_IN_DEPT' | 'METRIC_ID_EXISTS'
+      // P1 Task 7（override 档）：metricId 不是现行 L1 id ⇒ 提交即 404（fail-early 的廉价闸）
+      | 'NOT_FOUND' }
 
 const MetaPayload = z.object({
   bizDescription: z.string().max(500).optional(),
   unit: z.string().max(32).optional(),
   caliberNote: z.string().max(500).optional(),
 }).strict()
+
+/**
+ * override 档 payload 的**宽预检**（P1 Task 7）：payload = W8 声明 entry（与
+ * POST /metrics/:id/override 的 `declaration` 同形同源，故 passthrough 放行其余字段）。
+ * 这里只拦形状级错误（name/label/expression/grain 在位且 name==metricId）；深校验
+ * （YAML 尺/关系白名单/grain 同形/列存在性/掩码/scope 降档）全在采纳期的
+ * `createOverrideDeclaration`——第二份深校验就是第二事实源，不复制。
+ */
+const OverridePayload = z.object({
+  name: z.string().min(1),
+  label: z.string(),
+  expression: z.string(),
+  grain: z.array(z.string()),
+}).passthrough()
 
 /**
  * meta 档判据（P1 Task 3 订正，销缓办④）：「**三键全缺**」才拒——`{}` 立了也采纳不了
@@ -186,6 +204,37 @@ export async function submitChange(
         if (e instanceof OwnershipError) return { ok: false, http: 409, error: 'TITLE_EXISTS_IN_DEPT' }
         throw e
       }
+    }
+  }
+  // override 档（P1 Task 7）：提交期只收**形状级**闸（宽预检见 OverridePayload）+ 三道廉价闸——
+  // ① metricId 必须是现行 L1 id（404 fail-early；编译尺/grain 同形/scope 降档全在采纳期
+  //    createOverrideDeclaration，透传成 400）；② 概念归属（payload 带 entity 才判，同
+  //    create/update 档一把尺）；③ 部门内同名互斥——覆盖行的 title 就是 entry.label
+  //    （compileTenantDeclaration：label 空 ⇒ 回落 name），落在租户桶、owner_dept 缺省 null，
+  //    故桶取 payload.ownerDept（缺席 = null 桶，与 assertTitleFree 的 coalesce 判据同构）。
+  if (kind === 'override') {
+    const parsed = OverridePayload.safeParse(payload)
+    if (!parsed.success || parsed.data.name !== metricId) {
+      return { ok: false, http: 400, error: 'INVALID_DECLARATION' }
+    }
+    const p = parsed.data
+    const catalog = await loadPlatformCatalog(pool)
+    if (!catalog.some((m) => m.id === metricId)) return { ok: false, http: 404, error: 'NOT_FOUND' }
+    const entity = typeof p.entity === 'string' && p.entity !== '' ? p.entity : null
+    try {
+      await assertConcept(pool, org, entity)
+    } catch (e) {
+      if (e instanceof OwnershipError) return { ok: false, http: 400, error: 'UNKNOWN_CONCEPT' }
+      throw e
+    }
+    const label = p.label.trim()
+    const title = label !== '' ? label : metricId
+    const dept = typeof p.ownerDept === 'string' && p.ownerDept !== '' ? p.ownerDept : null
+    try {
+      await assertTitleFree(pool, org, dept, title)
+    } catch (e) {
+      if (e instanceof OwnershipError) return { ok: false, http: 409, error: 'TITLE_EXISTS_IN_DEPT' }
+      throw e
     }
   }
   const meta = kind === 'meta' ? MetaPayload.safeParse(payload) : null
@@ -341,8 +390,20 @@ export async function adoptChange(deps: MetricWriteDeps, org: string, id: number
       if (p.unit !== undefined) patch.unit = p.unit
       if (p.caliberNote !== undefined) patch.caliberNote = p.caliberNote
       out = await updateMetricMeta(deps, org, cur.metricId, patch)
+    } else if (cur.kind === 'override') {
+      // override 档采纳（P1 Task 7）：复用 W8 写路径 createOverrideDeclaration（**不造第二条
+      // 写路径**），outcome 形态与 MetricWriteOutcome 同构、错误原样透传（DECLARATION_INVALID /
+      // GRAIN_MISMATCH / SCOPE_DOWNGRADE / OVERRIDE_EXISTS…）。warehouse 随 deps 透传（列检查 +
+      // EXPLAIN；缺省跳过，与 routes/metrics.ts 的 override 端点同款布线）。
+      // 采纳 = 在租户桶立**草稿**覆盖行（certified='draft'）；确认启用仍走既有 W8 confirm 流
+      // （POST /metrics/:id/override/confirm）——生效时点不变，采纳只是把提案落成草稿。
+      const o = await createOverrideDeclaration(
+        { pool: deps.pool, ...(deps.warehouse === undefined ? {} : { warehouse: deps.warehouse }) },
+        org, deps.requester, cur.metricId, cur.payload,
+      )
+      out = o.ok ? { ok: true } : o
     } else {
-      // kind = 'delete'。'override' 档 P1 才接（表值已备，P0 写侧只会产出前四值）。
+      // kind = 'delete'
       out = await deleteMetricDeclaration(deps, org, cur.metricId)
     }
     if (!out.ok) return out

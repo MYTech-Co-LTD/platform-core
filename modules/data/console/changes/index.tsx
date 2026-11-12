@@ -12,7 +12,7 @@ import { humanError, type HumanError } from '../lib/explain'
 import { TechDetails } from '../components/TechDetails'
 
 type Row = {
-  id: number; metricId: string; kind: 'create' | 'update' | 'meta' | 'delete'
+  id: number; metricId: string; kind: 'create' | 'update' | 'meta' | 'delete' | 'override'
   status: string; payload: Record<string, unknown>
   preview: { window?: { from: string; to: string }; value?: number | null; rows?: number
     baseline?: { id: string; value: number | null; deltaPct: number | null } | null
@@ -21,7 +21,7 @@ type Row = {
   previewHistory?: Record<string, unknown>[] | null
   submittedBy: string; submittedAt: string
 }
-const KIND_LABEL: Record<Row['kind'], string> = { create: '新建指标', update: '修改口径', meta: '改标注', delete: '删除指标' }
+const KIND_LABEL: Record<Row['kind'], string> = { create: '新建指标', update: '修改口径', meta: '改标注', delete: '删除指标', override: '覆盖平台口径' }
 
 export default function ChangesPage() {
   const [rows, setRows] = useState<Row[]>([])

@@ -262,6 +262,124 @@ describePg('★ delete 档采纳也发通知（P1 Task 4，销缓办③）', () 
   })
 })
 
+// ── P1 Task 7：override 档接入变更单 ────────────────────────────────────────────
+// 隔离键 org-p1-mo-ovr（任务约定 org-p1-mo-*）。夹具 L1 的 id 必须是**三段蛇形**
+//（entry.name = L1 id，而 compileTenantDeclaration 的名字白名单是 `<源>:<域>:<指标>` 三段），
+// 且带本文件专用前缀（平台桶是跨文件共用桶，afterAll 按 id 精确回收，见 metrics.test.ts 的教训）。
+describePg('P1 Task 7：override 档', () => {
+  const OORG = 'org-p1-mo-ovr'
+  const L1_OVR_A = 'p1mo:t7:sales_a'
+  const L1_OVR_B = 'p1mo:t7:sales_b'
+  const l1OvrFixture = (id: string) => ({
+    id, title: `覆盖单夹具·${id}`, description: 'metric-changes Task 7 夹具',
+    requiredScope: null, subjectColumn: 'org',
+    selectSql: 'select sum(fct_retail_sale.net_amount) as value, system_book, bizday from fct_retail_sale',
+    groupBy: 'system_book, bizday', params: {}, sourceSystem: 'lemeng',
+    slaDays: 1, freshnessRelations: [], masks: null,
+  })
+  /** W8 声明 entry（与 POST /metrics/:id/override 的 declaration 同形同源）。label 各用例错开。 */
+  const ovrEntry = (over: Record<string, unknown> = {}) => ({
+    name: L1_OVR_A, label: '本租户销售口径（变更单）', definition: '覆盖单测试', owner: 'data-platform',
+    tier: 'experimental', source: 'lemeng', expression: 'sum(fct_retail_sale.sale_amount)',
+    grain: ['system_book', 'bizday'], freshness_sla_days: 1, reads: [], ...over,
+  })
+  /** 本块专属壳：tenant 钉 OORG（文件级 appOf 钉的是本文件的 ORG，租户桶会落错 org）。 */
+  const oappOf = (execute: unknown) =>
+    buildTestApp(mod, identityOf(), { pool, execute } as never, { id: 1, casdoor_org: OORG })
+  const post = (app: { request: (p: string, o?: RequestInit) => Response | Promise<Response> }, body: unknown) =>
+    app.request('/metric-changes', {
+      method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body),
+    })
+
+  beforeAll(async () => {
+    await pool.query('delete from data.metric_change where org = $1', [OORG])
+    await pool.query('delete from data.metrics where org = $1', [OORG])
+    await upsertL1Metric(pool, l1OvrFixture(L1_OVR_A))
+    await upsertL1Metric(pool, l1OvrFixture(L1_OVR_B))
+  })
+  afterAll(async () => {
+    // 平台桶按精确 id 回收（不碰真实物化 L1）；租户桶按本文件专属 org 清。
+    await pool.query("delete from data.metrics where org = 'platform' and source = 'l1' and id = any($1)",
+      [[L1_OVR_A, L1_OVR_B]])
+    await pool.query('delete from data.metric_change where org = $1', [OORG])
+    await pool.query('delete from data.metrics where org = $1', [OORG])
+  })
+
+  it('提交 → 试算（注入 execute，baseline=被覆盖 L1）→ 会话采纳 ⇒ 租户桶 override_of 草稿行，L1 不动', async () => {
+    const app = oappOf(async () => ({ rows: [{ rows: 4, value: 77 }] }))
+    const res = await post(app, { metricId: L1_OVR_A, kind: 'override', payload: ovrEntry() })
+    expect(res.status).toBe(200)
+    const body = await res.json() as { change: { id: number; status: string; preview: { value: number; baseline: { id: string } | null } } }
+    expect(body.change.status).toBe('preview_ready')
+    expect(body.change.preview.value).toBe(77)
+    // baseline = 被 override 的 L1 同窗值（P1 Task 7 的试算语义）
+    expect(body.change.preview.baseline?.id).toBe(L1_OVR_A)
+
+    const adopt = await app.request(`/metric-changes/${body.change.id}/adopt`, { method: 'POST' })
+    expect(adopt.status).toBe(200)
+    // 落库事实：租户桶出现覆盖**草稿**行（确认启用仍走既有 W8 confirm 流）；单据翻 adopted
+    const row = await pool.query(
+      'select source, override_of, certified, select_sql from data.metrics where org = $1 and id = $2',
+      [OORG, L1_OVR_A])
+    expect(row.rows[0]).toMatchObject({
+      source: 'l2', override_of: L1_OVR_A, certified: 'draft',
+      select_sql: 'select sum(fct_retail_sale.sale_amount) as value, system_book, bizday from fct_retail_sale',
+    })
+    const ticket = await pool.query('select status from data.metric_change where id = $1', [body.change.id])
+    expect(ticket.rows[0]?.status).toBe('adopted')
+    // L1 平台行原样（口径没被顶掉——草稿不生效，D6）
+    const l1 = await pool.query(
+      "select source, select_sql from data.metrics where org = 'platform' and source = 'l1' and id = $1", [L1_OVR_A])
+    expect(l1.rows).toHaveLength(1)
+    expect(l1.rows[0]).toMatchObject({ source: 'l1', select_sql: l1OvrFixture(L1_OVR_A).selectSql })
+  })
+
+  it('grain 不同形 ⇒ 提交/试算照走，采纳 400 透传写路径判据（GRAIN_MISMATCH），单据不被 CAS 翻转', async () => {
+    const app = oappOf(async () => ({ rows: [{ rows: 1, value: 1 }] }))
+    const res = await post(app, {
+      metricId: L1_OVR_A, kind: 'override',
+      payload: ovrEntry({ label: '本租户销售口径·异形粒度', grain: ['system_book'] }),
+    })
+    expect(res.status).toBe(200)
+    const body = await res.json() as { change: { id: number; status: string } }
+    // 编译尺不含「对行」判据 ⇒ 试算能出快照；grain 同形是采纳期的裁决
+    expect(body.change.status).toBe('preview_ready')
+    const adopt = await app.request(`/metric-changes/${body.change.id}/adopt`, { method: 'POST' })
+    expect(adopt.status).toBe(400)
+    expect(await adopt.json()).toMatchObject({ error: 'GRAIN_MISMATCH' })
+    const still = await pool.query('select status from data.metric_change where id = $1', [body.change.id])
+    expect(still.rows[0]?.status).toBe('preview_ready')
+  })
+
+  it('L1 不存在 ⇒ 提交即 404 NOT_FOUND（fail-early，深校验前的廉价闸）', async () => {
+    const app = oappOf(async () => ({ rows: [] }))
+    const res = await post(app, {
+      metricId: 'p1mo:t7:ghost', kind: 'override',
+      payload: ovrEntry({ name: 'p1mo:t7:ghost', label: '本租户销售口径·幽灵' }),
+    })
+    expect(res.status).toBe(404)
+    expect(await res.json()).toMatchObject({ error: 'NOT_FOUND' })
+  })
+
+  it('宽预检：payload 缺 label / name≠metricId ⇒ 400 INVALID_DECLARATION；撞部门内同名 ⇒ 409', async () => {
+    const app = oappOf(async () => ({ rows: [] }))
+    const noLabel = await post(app, { metricId: L1_OVR_A, kind: 'override', payload: ovrEntry({ label: undefined }) })
+    expect(noLabel.status).toBe(400)
+    expect(await noLabel.json()).toMatchObject({ error: 'INVALID_DECLARATION' })
+    const nameMismatch = await post(app, {
+      metricId: L1_OVR_A, kind: 'override',
+      payload: ovrEntry({ label: '本租户销售口径·名错', name: 'p1mo:t7:other' }),
+    })
+    expect(nameMismatch.status).toBe(400)
+    expect(await nameMismatch.json()).toMatchObject({ error: 'INVALID_DECLARATION' })
+    // 首条用例的采纳已在租户桶立了 label='本租户销售口径（变更单）' 的行 ⇒ 同名再立 409
+    //（assertTitleFree 用 payload.ownerDept 缺省 null 桶——与覆盖行的落桶同判据）
+    const dup = await post(app, { metricId: L1_OVR_B, kind: 'override', payload: ovrEntry({ name: L1_OVR_B }) })
+    expect(dup.status).toBe(409)
+    expect(await dup.json()).toMatchObject({ error: 'TITLE_EXISTS_IN_DEPT' })
+  })
+})
+
 describePg('POST /metric-changes/:id/withdraw（提交者本人）', () => {
   it('本人撤回 ⇒ 200 withdrawn；别人 ⇒ 403 FORBIDDEN', async () => {
     // 壳身份 = 提交者本人（withdrawChange 按 submitted_by = requester.userId 判）

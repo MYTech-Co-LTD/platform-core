@@ -4,6 +4,7 @@ import { createHash } from 'node:crypto'
 import type { Pool } from 'pg'
 import { compileL2, resolveL1Base } from './semantic-compiler'
 import { loadMergedCatalog } from './metric-store'
+import { compileOverrideDeclaration } from './tenant-declaration-write'
 import { PENDING_STATUSES } from './metric-change'
 import type { MetricChangeRow } from './metric-change'
 
@@ -64,7 +65,8 @@ function withTimeout<T>(p: Promise<T>, ms: number): Promise<T> {
 
 /**
  * 试算一条变更单。create/update 档：编译草稿声明（compileL2，不落库）；
- * meta/delete 档：编译「当前生效口径」（证明改前/删前这个数仍算得出来）。
+ * override 档：W8 声明经与写路径同一把编译尺编译（P1 Task 7），baseline = 被 override 的
+ * L1 同窗值；meta/delete 档：编译「当前生效口径」（证明改前/删前这个数仍算得出来）。
  */
 export async function runPreview(deps: PreviewDeps, org: string, change: MetricChangeRow): Promise<PreviewOutcome> {
   const startedAt = Date.now()
@@ -85,6 +87,22 @@ export async function runPreview(deps: PreviewDeps, org: string, change: MetricC
         const base = resolveL1Base(l1, decl.baseMetric)
         const b = await withTimeout(evalSql(deps, base.selectSql, base.groupBy, win), PREVIEW_TIMEOUT_MS)
         baseline = { id: base.id, value: b.value, deltaPct: null }
+      }
+    } else if (change.kind === 'override') {
+      // override 档试算（P1 Task 7）：与写路径**同一把编译尺**——compileOverrideDeclaration
+      // 就是从 createOverrideDeclaration 抽出的编译段（不复制上下文拼装）。编译失败 ⇒
+      // preview_failed（错误码透传：DECLARATION_INVALID / SEMANTICS_YAML_*）。
+      // 刻意不复刻「对行」判据（grain 同形等）：这类单要能试算、在采纳时被透传的 400 拒——
+      // 先试后断，与 create/update 档「试算能红、采纳把关」同语义。
+      const pre = await compileOverrideDeclaration({ pool: deps.pool }, change.payload)
+      if (!pre.ok) return { ok: false, error: pre.outcome.error }
+      selectSql = pre.compiled.selectSql
+      groupBy = pre.compiled.groupBy
+      // baseline = 被 override 的 L1 同窗值（编译段顺带带回平台目录，按 id 取行）
+      const l1 = pre.catalog.find((m) => m.id === change.metricId)
+      if (l1 !== undefined) {
+        const b = await withTimeout(evalSql(deps, l1.selectSql, l1.groupBy, win), PREVIEW_TIMEOUT_MS)
+        baseline = { id: l1.id, value: b.value, deltaPct: null }
       }
     } else {
       const cur = await deps.pool.query(

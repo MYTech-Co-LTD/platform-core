@@ -33,7 +33,7 @@ import { analystPool, runWarehouseSqlParams } from '../domain/warehouse'
 
 const SubmitBody = z.object({
   metricId: z.string().min(1).max(128),
-  kind: z.enum(['create', 'update', 'meta', 'delete']),
+  kind: z.enum(['create', 'update', 'meta', 'delete', 'override']),
   payload: z.unknown().optional(),
 })
 const RejectBody = z.object({ reason: z.string().min(1).max(500) })
@@ -134,7 +134,10 @@ export function registerMetricChanges(r: ModuleHono, ctx: RouteCtx): void {
          from data.metric_change ch left join data.metrics m on m.org = ch.org and m.id = ch.metric_id
         where ch.org = $1 and ch.id = $2`, [org, id])
     const out = await adoptChange(
-      { pool: ctx.pool, adoptedSources: new Set(c.get(TENANT_SOURCES) ?? []), requester },
+      { pool: ctx.pool, adoptedSources: new Set(c.get(TENANT_SOURCES) ?? []), requester,
+        // override 档采纳（P1 Task 7）经 createOverrideDeclaration 用到数据面（列检查/EXPLAIN）；
+        // 与 routes/metrics.ts 的 override 端点同款布线（缺省 = 跳那两道，其余校验不降级）。
+        ...(ctx.warehouse === undefined ? {} : { warehouse: ctx.warehouse }) },
       org, id,
     )
     if (!out.ok) return c.json({ error: out.error }, out.http)

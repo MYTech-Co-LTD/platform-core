@@ -32,6 +32,12 @@ export interface MetricWriteDeps {
   /** 谁在写（#489）。**必填**——审计要记人；无身份必须在入口被拒（见 routes/metrics.ts 的守卫），
    *  不能流到这里来（留，等于允许写一条「无主」审计）。 */
   requester: Requester
+  /**
+   * 数据面连接（P1 Task 7 起可选接入，与 routes/metrics.ts 的 override 端点同款布线）：
+   * 只被 override 档采纳（createOverrideDeclaration）用于列存在性与 EXPLAIN——
+   * 缺省 = 跳过那两道（其余校验不降级，TenantDeclarationDeps 同语义）。
+   */
+  warehouse?: Pool
 }
 
 /**
