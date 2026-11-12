@@ -29,6 +29,8 @@ import { Button, Drawer, Input, Modal, Popconfirm, Segmented, Space, Table, Tag,
 import { ApiError, apiGet, apiSend, messageOf } from '../lib/api'
 import { useIsMobile } from '../lib/useIsMobile'
 import SpecView from './SpecView'
+import { TechDetails } from '../components/TechDetails'
+import { humanError, type HumanError } from '../lib/explain'
 
 /** Console 壳 Outlet context 的结构子集（壳侧真实形状见 apps/web ConsoleOutletContext；demo 模块先例） */
 interface ConsoleContext {
@@ -65,6 +67,24 @@ interface ReportRow {
    * 前端**不复制判据**，只消费这个布尔——按钮显示与后端授权永远同源。
    */
   canEdit: boolean
+}
+
+/** 报表规格的最小投影（只读 provenance 抽屉用；完整 JSON 收在技术细节里）。 */
+interface SpecLike {
+  period?: { mode?: string; month?: string; day?: string; from?: string; to?: string }
+  panels?: Array<{ chart?: string; title?: string; metricId?: string; dims?: string[] }>
+}
+
+/** 时间范围的人话（默认层不出现 mode=custom 这类词）。 */
+function periodText(p: SpecLike['period']): string {
+  if (p === undefined) return '跟随页面筛选（未固定）'
+  switch (p.mode) {
+    case 'month': return `${p.month ?? ''} 整月`
+    case 'day': return p.day ?? '单日'
+    case 'last_7_days': return '最近 7 天'
+    case 'custom': return `${p.from ?? ''} ~ ${p.to ?? ''}`
+    default: return '跟随页面筛选'
+  }
 }
 
 /** `GET /reports/dept-options` 的一行：活节点平表（前端按 `parentExtId` 组树）。 */
@@ -117,6 +137,32 @@ export default function ReportsPage() {
   // `editRow` 记住当前要编辑的那一行：兜底按钮要用它**重新领票**（票据一次性，见 JSX 注）。
   const [editRow, setEditRow] = useState<ReportRow | null>(null)
   const [gateEdit, setGateEdit] = useState<ReportRow | null>(null)
+  // 「这个数怎么来的」抽屉（Wave 4.3）：默认层人话，技术细节折叠
+  const [srcFor, setSrcFor] = useState<ReportRow | null>(null)
+  const [srcSpec, setSrcSpec] = useState<SpecLike | null>(null)
+  const [srcAcl, setSrcAcl] = useState<{ visibility: string; viewers: number } | null>(null)
+  const [srcErr, setSrcErr] = useState<HumanError | null>(null)
+
+  /** 打开「这个数怎么来的」：默认层给人话（用到的指标 / 时间范围 / 谁看得到），细节收进技术细节。 */
+  const openProvenance = async (r: ReportRow) => {
+    setSrcFor(r); setSrcSpec(null); setSrcAcl(null); setSrcErr(null)
+    try {
+      // 快照形状：{ title, spec, version, requiredScope, requiredDepts, publishedAt }
+      const snap = (await apiGet(`/reports/${r.id}/published-spec`)) as { spec?: SpecLike }
+      setSrcSpec(snap.spec ?? null)
+    } catch (e) {
+      setSrcErr(humanError(e))
+    }
+    if (r.canEdit) {
+      // 共享名单只有 owner / data:manage 读得到；读不到就不显示这一节（不猜）
+      try {
+        const acl = (await apiGet(`/reports/${r.id}/acl`)) as { visibility: string; viewers: unknown[] }
+        setSrcAcl({ visibility: acl.visibility, viewers: Array.isArray(acl.viewers) ? acl.viewers.length : 0 })
+      } catch {
+        setSrcAcl(null)
+      }
+    }
+  }
   const [gateDraft, setGateDraft] = useState('')
   // 部门门（spec 2026-10-30 §3.4）：编辑态目标行 + 全量部门选项（首开时拉一次、缓存）
   // + 勾选集合（`ext_id`）。两渲染器共用同一个入口（服务端 `PUT /reports/:id/dept-gate`）。
@@ -663,7 +709,61 @@ export default function ReportsPage() {
           r.requiredScope !== null ? `页门 ${r.requiredScope}` : null,
           deptN > 0 ? `部门门 ${deptN} 个部门` : null,
         ].filter(Boolean).join(' · ')
-        return (
+        // 「这个数怎么来的」抽屉（Wave 4.3）：默认层 = 用到的指标 / 时间范围 / 谁看得到；细节折叠。
+  const provenanceDrawer = (
+    <Drawer
+      title={srcFor === null ? '这个数怎么来的' : `这个数怎么来的：${srcFor.title}`}
+      open={srcFor !== null}
+      onClose={() => setSrcFor(null)}
+      width={520}
+    >
+      {srcErr !== null && (
+        <div style={{ marginBottom: 12, color: '#b42318' }}>
+          {srcErr.text}
+          <TechDetails style={{ marginTop: 4 }}>
+            <div>错误码：{srcErr.code}</div>
+            {srcErr.detail !== undefined && <div>定位信息：{srcErr.detail}</div>}
+          </TechDetails>
+        </div>
+      )}
+      {srcSpec !== null && (
+        <>
+          <Typography.Paragraph style={{ marginBottom: 8 }}>
+            <strong>用到的指标：</strong>
+            {(srcSpec.panels ?? []).filter((x) => x.metricId !== undefined).length === 0
+              ? '这一版没有数据面板（纯文字报表）'
+              : (srcSpec.panels ?? [])
+                .filter((x) => x.metricId !== undefined)
+                .map((x) => x.title ?? x.metricId)
+                .join('、')}
+          </Typography.Paragraph>
+          <Typography.Paragraph style={{ marginBottom: 8 }}>
+            <strong>时间范围：</strong>{periodText(srcSpec.period)}
+          </Typography.Paragraph>
+          <Typography.Paragraph style={{ marginBottom: 8 }}>
+            <strong>谁看得到：</strong>
+            {srcAcl === null
+              ? '（共享名单只有报表所有者或管理员能查）'
+              : srcAcl.visibility === 'tenant'
+                ? '本租户内、有权限的人都能看'
+                : srcAcl.viewers > 0
+                  ? `仅共享名单里的 ${srcAcl.viewers} 个人/部门`
+                  : '目前只有你自己'}
+          </Typography.Paragraph>
+          <TechDetails title="技术细节（面板与规格原文）">
+            <pre style={{ whiteSpace: 'pre-wrap', margin: 0, fontSize: 11 }}>
+              {JSON.stringify(srcSpec, null, 2)}
+            </pre>
+          </TechDetails>
+        </>
+      )}
+      {srcSpec === null && srcErr === null && (
+        <Typography.Text type="secondary">正在读取这一版的来源…</Typography.Text>
+      )}
+    </Drawer>
+  )
+
+  return (
           <div
             key={r.id}
             role="button"
@@ -785,6 +885,7 @@ export default function ReportsPage() {
 
   return (
     <Space direction="vertical" style={{ width: '100%' }} size="middle">
+      {provenanceDrawer}
       {ctx}
       {isMobile ? (
         // 移动端一屏优先：搜索 + 一个「筛选」按钮（当前状态写在按钮上），不再常驻 4 个筛选项
@@ -910,6 +1011,8 @@ export default function ReportsPage() {
                   {(r.requiredDepts ?? []).length === 0 ? '配部门门' : '改部门门'}
                 </Button>
               )}
+              {/* 「这个数怎么来的」（Wave 4.3）：所有看得到这行的人都能问；默认层人话，细节折叠 */}
+              <Button size="small" type="text" onClick={() => void openProvenance(r)}>这个数怎么来的</Button>
               {/* 资产级共享（spec 2026-11-01 §4）：**谁被允许看**。授权在服务端
                   （owner ∪ data:manage），这里不看 canManage——被共享的 owner 也要能改。 */}
               <Button size="small" type="text" onClick={() => void openShare(r)}>共享</Button>

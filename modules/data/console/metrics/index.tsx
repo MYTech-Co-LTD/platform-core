@@ -16,6 +16,7 @@ import { apiGet, apiSend, messageOf } from '../lib/api'
 import DeclarationModal from './DeclarationModal'
 import type { DeclarationMode, DeclarationSeed } from './DeclarationModal'
 import { useIsMobile } from '../lib/useIsMobile'
+import { TechDetails } from '../components/TechDetails'
 
 interface MetricRow {
   id: string
@@ -570,6 +571,23 @@ export default function MetricsPage() {
         { title: 'id', dataIndex: 'id', width: 180, ellipsis: { showTitle: true } },
         { title: '标题', dataIndex: 'title', ellipsis: { showTitle: true } },
         { title: '说明', dataIndex: 'description', ellipsis: { showTitle: true } },
+        // 口径（单页双层，2026-11-12）：默认层给**业务说法**（元数据里的「业务描述」优先，退到说明），
+        // 专业读者展开「技术细节」才看到表达式 / 维度 / 版本 / 权限码 / 覆盖来源。
+        { title: '口径', width: 220, render: (_: unknown, r: MetricRow) => (
+            <div style={{ minWidth: 0 }}>
+              <Typography.Text ellipsis={{ tooltip: r.bizDescription ?? r.description }}>
+                {r.bizDescription ?? (r.description !== '' ? r.description : '未标注')}
+              </Typography.Text>
+              <TechDetails>
+                <div>表达式：{exprOf(r.selectSql) || r.selectSql}</div>
+                <div>分组维度：{dimsOf(r).join('、') || '—'}</div>
+                <div>所需权限：{r.requiredScope ?? '不限'}　主体列：{r.subjectColumn}</div>
+                <div>版本：{r.source === 'l1' ? '平台物化（追溯走 git）' : `v${r.version}`}　最后操作人：{r.updatedBy ?? (r.source === 'l1' ? '平台物化' : '—')}</div>
+                {r.overrideOf != null && <div>口径覆盖：本行覆盖平台指标 <code>{r.overrideOf}</code></div>}
+                <div style={{ marginTop: 4, opacity: 0.75 }}>原始定义：{r.selectSql}</div>
+              </TechDetails>
+            </div>
+        ) },
         // 来源：L1 = 平台词表（只读，改它要改 dbt 声明）；L2 = 本租户派生（可改可删）
         { title: '来源', dataIndex: 'source', width: 130, render: (v: string, r: MetricRow) =>
             v === 'l1'
