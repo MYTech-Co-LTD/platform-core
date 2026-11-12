@@ -17,6 +17,7 @@ import DeclarationModal from './DeclarationModal'
 import type { DeclarationMode, DeclarationSeed } from './DeclarationModal'
 import { useIsMobile } from '../lib/useIsMobile'
 import { TechDetails } from '../components/TechDetails'
+import { Explain } from '../components/Explain'
 
 interface MetricRow {
   id: string
@@ -573,7 +574,7 @@ export default function MetricsPage() {
         { title: '说明', dataIndex: 'description', ellipsis: { showTitle: true } },
         // 口径（单页双层，2026-11-12）：默认层给**业务说法**（元数据里的「业务描述」优先，退到说明），
         // 专业读者展开「技术细节」才看到表达式 / 维度 / 版本 / 权限码 / 覆盖来源。
-        { title: '口径', width: 220, render: (_: unknown, r: MetricRow) => (
+        { title: <Explain term="caliber">口径</Explain>, width: 220, render: (_: unknown, r: MetricRow) => (
             <div style={{ minWidth: 0 }}>
               <Typography.Text ellipsis={{ tooltip: r.bizDescription ?? r.description }}>
                 {r.bizDescription ?? (r.description !== '' ? r.description : '未标注')}

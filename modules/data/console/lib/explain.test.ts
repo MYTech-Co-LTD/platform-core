@@ -2,7 +2,7 @@
 //
 // 两条纪律：① 常见码必须给具体人话；② 表外的码**回落**但**原码不许丢**（丢了排障就瞎了）。
 import { describe, expect, it } from 'vitest'
-import { humanError } from './explain'
+import { humanError, TERMS, termEntry } from './explain'
 
 describe('humanError', () => {
   it('常见码 → 具体人话 + 保留原码', () => {
@@ -31,5 +31,25 @@ describe('humanError', () => {
 
   it('空 detail 视为没给（不在文案后留空括号）', () => {
     expect(humanError({ code: 'NOT_FOUND', detail: '' }).detail).toBeUndefined()
+  })
+})
+
+describe('术语词典（Wave 4.4）', () => {
+  it('每个术语都有 label 与一句话解释（空解释 = 界面上出现空提示）', () => {
+    for (const [key, entry] of Object.entries(TERMS)) {
+      expect(entry.label, key).not.toBe('')
+      expect(entry.text.length, key).toBeGreaterThan(10)
+    }
+  })
+
+  it('未登记的 term ⇒ null（组件据此不渲染问号，而不是渲染空 tooltip）', () => {
+    expect(termEntry('no_such_term')).toBeNull()
+    expect(termEntry('caliber')?.label).toBe('口径')
+  })
+
+  it('解释里不出现「物化/水位/SQL」这类工程词（默认层纪律）', () => {
+    for (const [key, entry] of Object.entries(TERMS)) {
+      expect(entry.text, key).not.toMatch(/物化|水位|SQL|DBT|dbt/)
+    }
   })
 })

@@ -30,6 +30,7 @@ import { ApiError, apiGet, apiSend, messageOf } from '../lib/api'
 import { useIsMobile } from '../lib/useIsMobile'
 import SpecView from './SpecView'
 import { TechDetails } from '../components/TechDetails'
+import { Explain } from '../components/Explain'
 import { humanError, type HumanError } from '../lib/explain'
 
 /** Console 壳 Outlet context 的结构子集（壳侧真实形状见 apps/web ConsoleOutletContext；demo 模块先例） */
@@ -862,7 +863,7 @@ export default function ReportsPage() {
             <strong>时间范围：</strong>{periodText(srcSpec.period)}
           </Typography.Paragraph>
           <Typography.Paragraph style={{ marginBottom: 8 }}>
-            <strong>谁看得到：</strong>
+            <strong><Explain term="visibility">谁看得到</Explain>：</strong>
             {srcAcl === null
               ? '（共享名单只有报表所有者或管理员能查）'
               : srcAcl.visibility === 'tenant'
