@@ -31,5 +31,12 @@ create table if not exists data.metric_concept (
   primary key (org, name)
 );
 
+-- 试算快照历史（P1 Task 5，销缓办①）：applyPreview 重跑时把被顶掉的旧 preview unshift 进来
+-- （最新在前），FIFO 封顶 5 条（表达式内 limit，见 metric-change-preview.ts）；读侧
+-- （MetricChangeRow.previewHistory）把 null 归一为 []。列放 047 而非新迁移：047 尚未部署。
+alter table data.metric_change
+  add column if not exists preview_history jsonb;
+
 -- 刻意**不建** metric_change (org, id) 索引：id 已是 pkey（唯一且自带索引），
 -- org 前缀扫描由 046 的 metric_change_queue_idx (org, status, …) 承担——纯冗余，不落。
+-- preview_history 同理不建索引：随行整读、从不按它过滤，jsonb 数组上建 GIN 纯属写放大。

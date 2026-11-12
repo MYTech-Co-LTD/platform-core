@@ -161,6 +161,34 @@ describePg('POST /metric-changes/:id/preview（重跑试算的租户与状态闸
   })
 })
 
+describePg('GET /metric-changes（读面带 previewHistory，P1 Task 5）', () => {
+  it('列表与详情回包都带 previewHistory 数组；提交即试算 + 补跑 ⇒ 历史恰 1 条', async () => {
+    const app = appOf(async () => ({ rows: [{ rows: 7, value: 42 }] }))
+    // 走路由提交（提交即试算：meta 档目标指标不存在 ⇒ 首枚失败快照落 preview）
+    const post = await app.request('/metric-changes', {
+      method: 'POST', headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ metricId: 'x:rh', kind: 'meta', payload: { unit: '元' } }),
+    })
+    expect(post.status).toBe(200)
+    const submitted = await post.json() as { change: { id: number; previewHistory: unknown[] } }
+    expect(submitted.change.previewHistory).toEqual([]) // 首跑无历史
+    // 补跑一次 ⇒ 首枚快照进历史，history 恰 1 条
+    const rerun = await app.request(`/metric-changes/${submitted.change.id}/preview`, { method: 'POST' })
+    expect(rerun.status).toBe(200)
+    const list = await app.request('/metric-changes?status=preview_failed')
+    expect(list.status).toBe(200)
+    const body = await list.json() as { changes: Array<{ id: number; previewHistory: unknown[] }> }
+    const row = body.changes.find((c) => c.id === submitted.change.id)
+    expect(row).toBeDefined()
+    expect(Array.isArray(row?.previewHistory)).toBe(true)
+    expect(row?.previewHistory).toHaveLength(1)
+    expect(row?.previewHistory?.[0]).toMatchObject({ error: 'METRIC_NOT_FOUND' })
+    const detail = await app.request(`/metric-changes/${submitted.change.id}`)
+    const dbody = await detail.json() as { change: { previewHistory: unknown[] } }
+    expect(dbody.change.previewHistory).toEqual(row?.previewHistory)
+  })
+})
+
 describePg('★ 采纳 happy path 全链（P0 终审 F4）：提交即试算 → 会话采纳 → meta 变更 → 再采纳', () => {
   it('两条单全走路由 ⇒ 200；data.metrics 落行且 unit 写入；每次采纳 emit 一枚变更通知', async () => {
     const emitted: Array<{ eventKey?: string; payload?: Record<string, unknown> }> = []

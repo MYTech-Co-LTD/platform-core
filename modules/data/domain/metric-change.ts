@@ -22,6 +22,8 @@ export interface MetricChangeRow {
   id: number; org: string; metricId: string; kind: ChangeKind
   payload: Record<string, unknown>; status: ChangeStatus
   preview: Record<string, unknown> | null
+  /** 被顶掉的旧试算快照（P1 Task 5，最新在前，FIFO 封顶 5；DB null 归一为 []）。 */
+  previewHistory: Record<string, unknown>[]
   submittedBy: string; submittedChannel: string; submittedAt: string
   decidedBy: string | null; decidedAt: string | null; rejectReason: string | null
 }
@@ -123,13 +125,14 @@ function parseDeclaration(payload: unknown): boolean {
   return expr.success
 }
 
-const COLS = 'id, org, metric_id, kind, payload, status, preview, submitted_by, submitted_channel, submitted_at, decided_by, decided_at, reject_reason'
+const COLS = 'id, org, metric_id, kind, payload, status, preview, preview_history, submitted_by, submitted_channel, submitted_at, decided_by, decided_at, reject_reason'
 type DbRow = Record<string, unknown>
 function toRow(r: DbRow): MetricChangeRow {
   return {
     id: Number(r.id), org: String(r.org), metricId: String(r.metric_id), kind: String(r.kind) as ChangeKind,
     payload: (r.payload ?? {}) as Record<string, unknown>, status: String(r.status) as ChangeStatus,
     preview: (r.preview ?? null) as Record<string, unknown> | null,
+    previewHistory: Array.isArray(r.preview_history) ? (r.preview_history as Record<string, unknown>[]) : [],
     submittedBy: String(r.submitted_by), submittedChannel: String(r.submitted_channel),
     submittedAt: new Date(r.submitted_at as string).toISOString(),
     decidedBy: r.decided_by === null ? null : String(r.decided_by),

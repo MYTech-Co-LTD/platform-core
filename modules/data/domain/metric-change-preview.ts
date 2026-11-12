@@ -115,6 +115,27 @@ export async function runPreview(deps: PreviewDeps, org: string, change: MetricC
 }
 
 /**
+ * 快照历史回写表达式（P1 Task 5，销缓办①）：UPDATE 的 SET 里**同一语句内**读旧行值——
+ * 把被新快照顶掉的旧 `preview` unshift 进 `preview_history`（最新在前），FIFO 封顶 5 条
+ * （子查询 `limit 5` 截头＝丢最旧）；首跑无旧快照（preview is null）⇒ 归一 `[]`，不写
+ * jsonb null。纯 SQL 而非「先读后写」：读改写两次往返有并发窗，同语句表达式的行值读取
+ * 对本行天然一致。成功/失败两分支共用同一段——失败回写同样保历史（旧成功快照是
+ * 「之前试过什么」的证据，不能被失败对象冲掉），只是新落地的 preview 换成错误对象。
+ * 终态单不受影响：整个 UPDATE 仍钉 PENDING_STATUSES（Task 4 修复②），rowCount=0 连
+ * history 都不写。
+ */
+const PREVIEW_HISTORY_SET = `preview_history = (
+    select coalesce(jsonb_agg(v order by o), '[]'::jsonb)
+    from (
+      select v, o from jsonb_array_elements(
+        (case when preview is null then '[]'::jsonb else jsonb_build_array(preview) end)
+          || coalesce(preview_history, '[]'::jsonb)
+      ) with ordinality as x(v, o)
+      limit 5
+    ) q
+  )`
+
+/**
  * 把试算结果写回变更单：成功 ⇒ preview_ready；失败 ⇒ preview_failed（仍不可采纳）。
  * UPDATE **钉 PENDING_STATUSES**（P1 Task 4 修复②）：重跑试算若在采纳的 CAS 翻状态之后
  * 才落地，无条件 `where id=$1` 会把 ADOPTED 单复活成 preview_ready（可二次采纳）。
@@ -125,12 +146,12 @@ export async function runPreview(deps: PreviewDeps, org: string, change: MetricC
 export async function applyPreview(pool: Pool, id: number, outcome: PreviewOutcome): Promise<void> {
   const r = outcome.ok
     ? await pool.query(
-        `update data.metric_change set status = 'preview_ready', preview = $2::jsonb
+        `update data.metric_change set status = 'preview_ready', preview = $2::jsonb, ${PREVIEW_HISTORY_SET}
           where id = $1 and status = any($3)`,
         [id, JSON.stringify(outcome.snapshot), PENDING_STATUSES],
       )
     : await pool.query(
-        `update data.metric_change set status = 'preview_failed', preview = $2::jsonb
+        `update data.metric_change set status = 'preview_failed', preview = $2::jsonb, ${PREVIEW_HISTORY_SET}
           where id = $1 and status = any($3)`,
         [id, JSON.stringify({ error: outcome.error, ranAt: new Date().toISOString() }), PENDING_STATUSES],
       )

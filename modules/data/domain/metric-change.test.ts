@@ -3,6 +3,7 @@ import { afterAll, beforeAll, describe, expect, it } from 'vitest'
 import { Pool } from 'pg'
 import { applyMigrations } from '../test-util'
 import { submitChange, listChanges, getChange, withdrawChange, adoptChange, rejectChange } from './metric-change'
+import { applyPreview } from './metric-change-preview'
 import { upsertL1Metric } from './metric-store'
 import { writeL2Declaration } from './metric-write'
 import type { MetricWriteDeps } from './metric-write'
@@ -140,6 +141,30 @@ describePg('adoptChange / rejectChange', () => {
     expect(after?.decidedBy).toBe('reviewer')
     expect(after?.decidedAt).not.toBeNull()
     expect(after?.preview).toMatchObject({ rows: 1 })
+  })
+
+  it('adopted_snapshot = 采纳时刻的 preview；采纳后的迟到重跑不污染（P1 Task 5 Step1 钉死）', async () => {
+    await upsertL1Metric(pool, L1_FIXTURE)
+    const s = await submitChange(pool, ORG, { userId: 'a', channel: 'pat' }, 'x:snap_pin', 'create',
+      { ...DECL_ADOPT, alias: '我的销售·快照钉' })
+    if (!s.ok) throw new Error('unreachable')
+    const snapOf = (v: number) => ({
+      window: { from: '2026-11-04', to: '2026-11-11' }, value: v, rows: v, baseline: null,
+      sample: [], compiledHash: 'b'.repeat(64), ranAt: `2026-11-12T01:00:0${v}Z`, durationMs: v,
+    })
+    await applyPreview(pool, s.change.id, { ok: true, snapshot: snapOf(1) })
+    const out = await adoptChange(writeDeps(pool), ORG, s.change.id)
+    expect(out.ok).toBe(true)
+    const snap1 = await pool.query('select adopted_snapshot, status from data.metric_change where id = $1', [s.change.id])
+    expect(snap1.rows[0]?.status).toBe('adopted')
+    expect(snap1.rows[0]?.adopted_snapshot).toMatchObject({ value: 1 }) // 采纳时刻的 preview
+    // 采纳后的迟到重跑：UPDATE 钉 PENDING ⇒ 整行不动，快照不被新值污染
+    await applyPreview(pool, s.change.id, { ok: true, snapshot: snapOf(2) })
+    const snap2 = await pool.query('select adopted_snapshot, status, preview, preview_history from data.metric_change where id = $1', [s.change.id])
+    expect(snap2.rows[0]?.adopted_snapshot).toMatchObject({ value: 1 })
+    expect(snap2.rows[0]?.preview).toMatchObject({ value: 1 })
+    expect(snap2.rows[0]?.preview_history).toEqual([])
+    expect(snap2.rows[0]?.status).toBe('adopted')
   })
 
   it('重复采纳 ⇒ 409 CHANGE_STATE_CHANGED（CAS：已决单不再吃第二次采纳）', async () => {

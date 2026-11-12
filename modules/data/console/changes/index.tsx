@@ -17,6 +17,8 @@ type Row = {
   preview: { window?: { from: string; to: string }; value?: number | null; rows?: number
     baseline?: { id: string; value: number | null; deltaPct: number | null } | null
     error?: string } | null
+  /** 被顶掉的旧试算快照（P1 Task 5，最新在前）：>0 条时展开层给「之前试过 N 次」。 */
+  previewHistory?: Record<string, unknown>[] | null
   submittedBy: string; submittedAt: string
 }
 const KIND_LABEL: Record<Row['kind'], string> = { create: '新建指标', update: '修改口径', meta: '改标注', delete: '删除指标' }
@@ -130,6 +132,12 @@ export default function ChangesPage() {
                   <div>窗口：{r.preview?.window ? `${r.preview.window.from} ~ ${r.preview.window.to}` : '—'}</div>
                   <div>原始声明：{JSON.stringify(r.payload)}</div>
                   <div>快照：{JSON.stringify(r.preview)}</div>
+                  {/* 试算历史（P1 Task 5）：被顶掉的旧快照，最新在前；只进展开层，默认层不加词 */}
+                  {(r.previewHistory?.length ?? 0) > 0 && (
+                    <>
+                      <div>之前试过 {r.previewHistory!.length} 次，历史快照（最新在前）：{JSON.stringify(r.previewHistory)}</div>
+                    </>
+                  )}
                 </TechDetails>
               </div>
               <Space>

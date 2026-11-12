@@ -98,4 +98,27 @@ describe('待核对页', () => {
     expect(screen.getAllByRole('button', { name: /跑试算/ }).length).toBe(1)
     expect(screen.getByText('试算 3（1 行）')).toBeInTheDocument()
   })
+
+  it('试算历史（P1 Task 5）：有 previewHistory 的行在展开层显「之前试过 N 次」，无历史行不显', async () => {
+    const HIST_ROW = {
+      ...PENDING.changes[0]!, id: 11, metricId: 'x:with_hist',
+      previewHistory: [
+        { window: { from: '2026-11-04', to: '2026-11-11' }, value: 900, rows: 12 },
+        { window: { from: '2026-10-28', to: '2026-11-04' }, value: 800, rows: 11 },
+      ],
+    }
+    m.mockImplementation(async (url: string | URL, init?: RequestInit) => {
+      const u = String(url)
+      if (u.includes('/metric-changes') && (init?.method ?? 'GET') === 'GET') {
+        return json({ changes: [PENDING.changes[0]!, HIST_ROW] })
+      }
+      return json({})
+    })
+    render(<ChangesPage />)
+    await waitFor(() => expect(screen.getByText(/x:with_hist/)).toBeInTheDocument())
+    // 展开层（TechDetails）里有人话提示，不在默认层句子
+    expect(screen.getByText(/之前试过 2 次/)).toBeInTheDocument()
+    // 无历史的行（PENDING 第一行 previewHistory 缺席）不得出现该提示
+    expect(screen.queryByText(/之前试过 0 次/)).not.toBeInTheDocument()
+  })
 })
