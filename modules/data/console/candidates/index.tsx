@@ -10,6 +10,7 @@ import { Alert, Button, Card, Empty, Input, Modal, Select, Space, Tag, Typograph
 import { apiGet, apiSend } from '../lib/api'
 import { humanError, type HumanError } from '../lib/explain'
 import { TechDetails } from '../components/TechDetails'
+import { Explain } from '../components/Explain'
 
 type CandidateStatus = 'pending' | 'created' | 'promoted' | 'rejected' | 'expired'
 type CandidateOrigin = 'profile' | 'demand'
@@ -189,7 +190,7 @@ export default function CandidatesPage() {
                 <TechDetails>
                   <div>关系：{r.relation}</div>
                   <div>算式：{r.expr.agg}({r.expr.column}){(r.expr.dims ?? []).length > 0 ? `，维度 ${(r.expr.dims ?? []).join(', ')}` : ''}</div>
-                  <div>置信度：{r.confidence.toFixed(2)}　来源：{r.origin}　候选 id：{r.id}</div>
+                  <div><Explain term="confidence" />：{r.confidence.toFixed(2)}　来源：{r.origin}　候选 id：{r.id}</div>
                   <div>产生时间：{r.created_at}</div>
                 </TechDetails>
               </div>

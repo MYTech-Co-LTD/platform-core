@@ -77,3 +77,59 @@ function detailOf(e: unknown): string | undefined {
   }
   return undefined
 }
+
+// ── 术语词典（Wave 4.4）───────────────────────────────────────────────────────
+//
+// 目的：把界面上出现的「工程词」集中解释一次，全站复用同一个组件（`<Explain term>`），
+// 各页不各写一套文案。**只收默认层会出现的词**——纯工程细节（SQL/聚合函数）不进这里，
+// 它们本来就在 `<TechDetails>` 里，且有错误码表兜底。
+//
+// 写法纪律：一句话说「是什么 + 对我意味着什么」，不解释实现。出现新术语 ⇒ 加一行 + 在界面上用
+// （`explain.test.ts` 断言「被引用的术语都存在」，防止 `term` 打错后静默空提示）。
+
+export interface TermEntry {
+  /** 术语本身（标题）。 */
+  label: string
+  /** 人话解释（一句话，可两句）。 */
+  text: string
+}
+
+export const TERMS: Record<string, TermEntry> = {
+  caliber: {
+    label: '口径',
+    text: '这个数是怎么算出来的规则（含哪些数据、怎么加总）。平台口径由数据平台维护；租户口径是本租户自己的算法。',
+  },
+  certified: {
+    label: '已认证 / 草稿口径',
+    text: '已认证 = 平台复核过的口径，可直接用于对外报表；草稿口径 = 还在验证中，重要结论请先跟数据管理员确认。',
+  },
+  override: {
+    label: '口径覆盖',
+    text: '本租户把平台口径换成了自己的算法。看到「覆盖」标记，说明这个数与其他租户的同名指标可能不一样。',
+  },
+  confidence: {
+    label: '置信度',
+    text: '系统对「这条建议靠不靠谱」的打分，越高越可能是你真要的指标。只是参考，最终由你决定要不要。',
+  },
+  visibility: {
+    label: '谁看得到',
+    text: '这份报表的可见范围：全租户可看，或者只有你和共享名单里的人/部门能看。',
+  },
+  deptGate: {
+    label: '部门门',
+    text: '按组织架构限制谁能看：只有指定部门（含下属部门）的人能看到这份报表。',
+  },
+  freshness: {
+    label: '数据截至',
+    text: '这份数据里最新一天的日期。它比今天早，通常是正常的数据更新延迟；比平时晚太多才需要留意。',
+  },
+  scope: {
+    label: '所需权限',
+    text: '要查看这个指标需要开通的权限码。看不到数时先看这一项，再找管理员开通。',
+  },
+}
+
+/** 取术语解释；未登记的 term 返回 null（调用方不渲染问号，避免空提示）。 */
+export function termEntry(term: string): TermEntry | null {
+  return TERMS[term] ?? null
+}
