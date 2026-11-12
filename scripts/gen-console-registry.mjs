@@ -141,11 +141,12 @@ export const consoleRegistry: ConsoleRegistryEntry[] = [`
 const body = entries
   .map((e) => {
     const iconLine = e.icon === undefined ? '' : `\n    icon: ${JSON.stringify(e.icon)},`
+    const descLine = e.description === undefined ? '' : `\n    description: ${JSON.stringify(e.description)},`
     return `  {
     path: ${JSON.stringify(e.path)},
     title: ${JSON.stringify(e.title)},
     group: ${JSON.stringify(e.group)},
-    moduleId: ${JSON.stringify(e.moduleId)},${iconLine}
+    moduleId: ${JSON.stringify(e.moduleId)},${iconLine}${descLine}
     scope: ${JSON.stringify(e.scope)},
     load: () => import(${relModuleImport(e)}),
   },`

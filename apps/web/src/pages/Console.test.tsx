@@ -436,6 +436,23 @@ describe('Console 壳（菜单聚合 + 权限门禁）', () => {
     expect(screen.queryByText('演示模块页面内容')).not.toBeInTheDocument()
   })
 
+  it('②c-2 多条目模块：子页按**最长前缀**取条目 ⇒ 页门 scope 用子页自己的（#1953 三期回归）', async () => {
+    const loadParent = vi.fn(() => Promise.resolve({ default: DemoPage }))
+    setRegistry([
+      { path: '/console/demo', title: '演示', group: 'main', moduleId: 'demo', scope: 'demo:console', load: loadParent },
+      { path: '/console/demo/secret', title: '演示管理页', group: 'main', moduleId: 'demo', scope: 'demo:secret', load: loadParent },
+    ])
+    mockApi({
+      // 只有父页的门（demo:console），没有子页的 demo:secret
+      '/api/platform/auth/session': () => jsonResponse(SESSION),
+      '/api/platform/config': () => jsonResponse(CONFIG_DEMO_ONLY),
+    })
+    renderApp('/console/demo/secret')
+    // find 命中父条目的话这里会放行——断言拦住「子页门形同虚设」
+    expect(await screen.findByText('需要权限 demo:secret')).toBeInTheDocument()
+    expect(loadParent).not.toHaveBeenCalled()
+  })
+
   // ---- #127：路由层吃 config + 模块 admin 页组门 ----
   it('②d 停用模块（config 缺席）+ 持码用户直敲模块页 → 「模块可能未启用」Result（路由吃 config）', async () => {
     const load = vi.fn(() => Promise.resolve({ default: OtherPage }))
