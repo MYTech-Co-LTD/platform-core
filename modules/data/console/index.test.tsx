@@ -138,4 +138,32 @@ describe('数据模块 console 入口（URL 选页）', () => {
     await waitFor(() => expect(urls.some((u) => u.includes('/metrics/candidates'))).toBe(true))
     expect(router.state.location.pathname).toBe('/console/data/candidates')
   })
+
+  it('★ 深链 /changes 渲染「待核对」页并请求 /metric-changes；普通用户不可见（Wave 5 P0）', async () => {
+    // 普通用户：manageOnly 页不可达 ⇒ 规范回默认页
+    const plain = renderAt('/console/data/changes')
+    await waitFor(() => expect(plain.state.location.pathname).toBe('/console/data/metrics'))
+    expect(screen.queryByText('待核对')).toBeNull()
+    cleanup()
+
+    urls.length = 0
+    m.mockImplementation(async (url: string) => {
+      urls.push(url)
+      if (url.includes('/metric-changes')) return json({ changes: [] })
+      return json({})
+    })
+    const router = createMemoryRouter(
+      [
+        {
+          element: <Outlet context={{ session: { scopes: ['data:query', 'data:manage'] } }} />,
+          children: [{ path: '/console/*', element: <DataConsolePage /> }],
+        },
+      ],
+      { initialEntries: ['/console/data/changes'] },
+    )
+    render(<RouterProvider router={router} />)
+    expect(screen.getAllByText('待核对').length).toBeGreaterThan(0)
+    await waitFor(() => expect(urls.some((u) => u.includes('/metric-changes'))).toBe(true))
+    expect(router.state.location.pathname).toBe('/console/data/changes')
+  })
 })
