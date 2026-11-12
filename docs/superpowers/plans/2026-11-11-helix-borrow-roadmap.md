@@ -58,12 +58,13 @@
 | **候选池 console 页** | PR #1991：新页签「候选池」（data:manage）——列表/过滤/采用（弹窗填指标 id）/拒绝；判定全委托服务端；`index.test.tsx` 补「普通用户不可见 + 管理员深链请求 /metrics/candidates」 |
 | **契约元 schema 校验器（2.2 残项）** | PR #1993：`scripts/lib/json-schema-lite.mjs`（零依赖，只实现元 schema 用到的关键字子集，**不认识的关键字抛错**）接进 `check-data-contract`。第一轮抓出 **190 处漂移**（154 `decimal(p,s)` 当 type、29 非枚举拼写、1 个 `contractVersion:1`）并归一；投射与 lock 重生成；README §4.3/§5 改为「已在 CI 跑」 |
 | **Wave 2.1 第二批（staging）** | PR #1996：13 个 staging 补粒度唯一断言，**每个先在生产取证**（`count(*)` vs `count(distinct 键)`，2026-11-01..11-12 窗口；13/13 n=d）。取证还证伪了两个「看起来该进键」的列：`loss_adjustment.direction`、`inventory_movement.item_num`（加进去不改变唯一性）。`stg_forms_submission` 留空：本实例未物化 forms 域，无法取证 |
+| **Wave 2.1 第三批（列级非空面）** | PR #1999：契约 `nullable=false` ⇔ `schema.yml` 的 `not_null` 绑成门禁；补 36 个漏配（11 个已登记模型，5 列连列条目都补上）。补前先在生产取证：11 模型 × 窗口 `count(*) filter (where col is null)` 全 0。14 个整体未登记的 staging 模型**跳过而不假装覆盖** |
 
 ### 待办（Wave 见 §4）
 
 | 项 | 现状证据 | 波次 |
 |---|---|---|
-| Wave 2.1 余项：`stg_forms_submission` 粒度断言（本实例未物化 forms 域，待首次物化取证）；`schema.yml` 列级 not_null 面仍不全 | 见 issue #1988/#1995 | 2.1 |
+| Wave 2.1 余项：`stg_forms_submission` 粒度断言（本实例未物化 forms 域）；**14 个 staging 模型整体未登记 schema.yml**（列级描述+not_null 面） | 见 #1988/#1995/#1998 | 2.1 |
 | 列级血缘 | dbt core manifest 无列级边 | 2.4（触发式） |
 | notify **retention** 未部署（删行需点名）。**已不阻塞**：health 现在只看近 7 天（PR #1987），历史 dead 不会再把健康面按红 | 用户裁决暂不加；真要清理历史行时再单独决定 | 2.3 残项（低） |
 | Wave 3 余项：cron 文档冲突（未逐条核）；data-plane 多机副本（OO 机 /opt）靠手工投递 | 盘点发现 | 3 |
@@ -121,3 +122,4 @@
 | 2026-11-12 | Wave 3 第一批入账（4 项）；余项收敛为 cron 文档核对与多机副本手工投递 | 证据：PR #1984 + 1499 tests + materialize.test.sh 104 项 |
 | 2026-11-12 | 四个残项收口：health 时间窗、marts 断言、候选池页、元 schema 校验器 | PR #1987 / #1989 / #1991 / #1993；元 schema 一轮抓出 190 处漂移并归一 |
 | 2026-11-12 | Wave 2.1 第二批：13 个 staging 粒度断言（逐个取证后落地） | PR #1996；13/13 n=d，样本 3–191,679 行 |
+| 2026-11-12 | Wave 2.1 第三批：契约 nullable=false ⇔ not_null 门禁 + 补 36 列 | PR #1999；补前生产取证全 0 |
