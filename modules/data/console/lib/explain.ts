@@ -36,6 +36,12 @@ const BY_CODE: Record<string, string> = {
   CANDIDATE_NOT_ADOPTABLE: '这条候选已经被处理过（采用/拒绝/过期），刷新列表看看最新状态',
   CANDIDATE_NOT_REJECTABLE: '这条候选已经不是待处理状态，刷新列表看看',
   CANDIDATE_NOT_PROMOTABLE: '这条候选当前不能升级为平台口径',
+
+  // 指标变更单（Wave 5 P0）
+  CHANGE_STATE_CHANGED: '这条已经被处理过了，刷新列表看看最新状态',
+  PREVIEW_UNAVAILABLE: '还没跑成试算，不能采纳；先点「跑试算」',
+  DECISION_REQUIRES_SESSION: '这个操作只能本人登录后做，不能用程序身份',
+  REASON_REQUIRED: '驳回要写清哪里不对',
   COLUMN_NOT_NUMERIC: '这一列不是数值，做不了求和/平均这类计算',
   COLUMN_NOT_FOUND: '候选里引用的列在仓库里不存在，可能源表结构变了',
   DIM_MASKED: '这个字段被脱敏了，不能用来分组',
