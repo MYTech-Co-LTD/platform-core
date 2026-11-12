@@ -17,6 +17,7 @@ import type { ReportSpec } from '../domain/report-spec'
 import { deriveRequiredScope, validatePanelMetrics } from '../domain/report-scope'
 import { getReport, getReportVersion, listReports, updateSpec, upsertReport } from '../domain/report-store'
 import { getVersion } from '../domain/report-version'
+import { manageFaceOfSlice } from './mcp-manage-face'
 import type { McpDeps, McpToolGroup, McpToolResult } from './mcp-rpc'
 
 /**
@@ -38,7 +39,8 @@ const ReviseArgs = z.object({
 
 const GetSpecArgs = z.object({ id: z.string().min(1) }).strict()
 
-const NAMES = ['list_reports', 'propose_report', 'revise_report_spec', 'get_report_spec'] as const
+/** 本片认领的工具名单（= face 文件里 report 片的 name 集合；list 与 call 同源，P1 Task 6 起不再手写第二份）。 */
+const NAMES: readonly string[] = manageFaceOfSlice('report').map((t) => t.name)
 const ok = (o: Record<string, unknown>): McpToolResult =>
   ({ text: JSON.stringify({ status: 'ok', ...o }), isError: false })
 const refused = (error: string, extra: Record<string, unknown> = {}): McpToolResult =>
@@ -72,49 +74,12 @@ async function validateSpec(deps: McpDeps, spec: ReportSpec): Promise<McpToolRes
 export const reportTools: McpToolGroup = {
   async list(deps: McpDeps) {
     if (deps.requester === null) return []
-    return [
-      { name: 'list_reports',
-        description: '列出本租户已有报表（标题 / 渲染器 / 页门 / 版本 / 面板数 / 已发布版本 / 是否有未发布改动）。**提议新报表前先调它查重**。',
-        inputSchema: { type: 'object', properties: {}, required: [] } },
-      { name: 'get_report_spec',
-        description: '读一张报表的当前规格与版本（改报前先读，不要凭记忆重写整份 spec）。已发布的报表另带 publishedVersion / publishedAt。',
-        inputSchema: { type: 'object', properties: { id: { type: 'string' } }, required: ['id'] } },
-      { name: 'propose_report',
-        description: [
-          '提议一张新的平台自绘报表。**只是提议**：建出来的一定是未发布状态（页门挂在管理档），',
-          '要发布得由人在控制台改页门。**不能凭空发明指标**——metricId 必须是 list_metrics 里出现的 id；',
-          '图型支持 line / bar / table / kpi / text / ai_text。ai_text = 观看时按当前期间服务端生成的',
-          '分析文本：focus=overview（结论/异常/行动）、focus=root_cause（在事实包之外跑确定性',
-          '下钻/配方探针，输出「根因」段）；不写 content；必须与至少一个数据面板同报，且报表要带',
-          'period。**标题不能与已有报表重名**（重名会被拒，不会覆盖）。',
-        ].join(''),
-        inputSchema: {
-          type: 'object',
-          properties: {
-            title: { type: 'string', description: '报表标题（不得与已有报表重名）' },
-            spec: { type: 'object', description: '声明式规格：{ panels: [{ chart, title, metricId, dims, args, span }] }' },
-          },
-          required: ['title', 'spec'],
-        } },
-      { name: 'revise_report_spec',
-        description: [
-          '修改**尚未发布**的报表的规格（已发布的会被拒——那要人在控制台改）。带 expectedVersion（取自 list_reports）。',
-          '可用图型与 propose_report 相同（含 ai_text：focus=overview/root_cause/daily_review，需与数据面板同报且报表带 period）。',
-        ].join(''),
-        inputSchema: {
-          type: 'object',
-          properties: {
-            id: { type: 'string', description: '报表 id（取自 list_reports）' },
-            spec: { type: 'object', description: '新的声明式规格' },
-            expectedVersion: { type: 'number', description: '当前版本（取自 list_reports；陈旧会被拒）' },
-          },
-          required: ['id', 'spec', 'expectedVersion'],
-        } },
-    ]
+    // 定义取自纯文件 mcp-manage-face（单一事实源：门禁量的合并面预算就是这份 wire）。
+    return manageFaceOfSlice('report').map((t) => t.wire)
   },
 
   async call(deps: McpDeps, name: string, args: Record<string, unknown>): Promise<McpToolResult | null> {
-    if (!(NAMES as readonly string[]).includes(name)) return null      // 不是我的工具 ⇒ 交给下一片
+    if (!NAMES.includes(name)) return null      // 不是我的工具 ⇒ 交给下一片
     if (deps.requester === null) {
       return { text: JSON.stringify({ status: 'error', reason: 'unauthenticated' }), isError: true }
     }

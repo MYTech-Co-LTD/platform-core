@@ -14,7 +14,6 @@
 import { writeAudit } from '../domain/audit-store'
 import { mutatingAllowed } from '../domain/toolbox/registry'
 import { MANAGE_TOOLS, manageToolMeta } from '../domain/manage-face'
-import type { ManageToolMeta } from '../domain/manage-face'
 import { callDemandTool } from '../domain/demand/handlers'
 import { rootsOf } from '../domain/pipelines/defs'
 import type { PipelineRoots } from '../domain/pipelines/defs'
@@ -32,6 +31,7 @@ import { runPipelineSandboxImpl } from '../domain/pipelines/sandbox'
 import { sandboxRunnerFromEnv } from '../domain/pipelines/sandbox-runner'
 import type { SandboxRunner } from '../domain/pipelines/sandbox-runner'
 import type { McpDeps, McpToolGroup, McpToolResult } from './mcp-rpc'
+import { manageFaceOfSlice } from './mcp-manage-face'
 
 export interface PipelineWiring {
   roots: PipelineRoots
@@ -87,11 +87,6 @@ for (const t of MANAGE_TOOLS) {
     throw new Error(`manage tools: 「${t.name}」没有实现（IMPLS / callDemandTool 漏登记）`)
   }
 }
-
-const entryOf = (t: ManageToolMeta): Record<string, unknown> => ({
-  name: t.name, title: t.title, description: t.description,
-  inputSchema: t.inputSchema, outputSchema: t.outputSchema, annotations: t.annotations,
-})
 
 /**
  * 审计判决的**唯一**映射（纯函数，可脱库单测）。
@@ -155,7 +150,9 @@ export function makePipelineTools(wiring: PipelineWiring = defaultPipelineWiring
   return {
     async list(d: McpDeps) {
       if (d.requester === null) return []
-      return MANAGE_TOOLS.map(entryOf)
+      // wire 投影（P1 Task 6 起）取自纯文件 mcp-manage-face（与门禁量预算同一份事实）；
+      // 判定/分派用的治理元数据仍走 MANAGE_TOOLS（上游同源：face 的 pipeline 组就是它投影的）。
+      return manageFaceOfSlice('pipeline').map((t) => t.wire)
     },
 
     async call(d: McpDeps, name: string, args: Record<string, unknown>): Promise<McpToolResult | null> {

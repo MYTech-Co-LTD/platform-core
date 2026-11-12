@@ -321,3 +321,30 @@ describe('管理面工具片：跨片名字不重（新增片必过）', () => {
     expect(new Set(names).size).toBe(names.length)
   })
 })
+
+describe('合并面事实源：三片 list() 取自纯文件 face（P1 Task 6，销缓办⑤）', () => {
+  /** 与上面同款假 deps（不需要数据库；metric 片 list 不再碰词表）。 */
+  const fake = {
+    pool: { query: async () => ({ rows: [] }) } as never,
+    org: 'acme', adoptedSources: new Set<string>(),
+    requester: { userId: 'u', orgId: 'acme', channel: 'pat' as const, keyId: 1, scopes: ['data:manage'], hasScope: () => true },
+  }
+
+  it('每片 list() ≡ face 里本片 wire 投影（谁手改定义不进 face ⇒ 红）', async () => {
+    const { GROUPS } = await import('./mcp-manage')
+    const { manageFaceOfSlice } = await import('./mcp-manage-face')
+    const slices = ['metric', 'report', 'pipeline'] as const
+    expect(GROUPS).toHaveLength(slices.length)   // 新增片必须同时扩 face（两处同改，本断言绊线）
+    for (let i = 0; i < GROUPS.length; i++) {
+      expect(await GROUPS[i].list(fake as never)).toEqual(manageFaceOfSlice(slices[i]).map((t) => t.wire))
+    }
+  })
+
+  it('合并清单 = face 全集（20 件：口径 5 + 报表 4 + 管线提案/需求 11）', async () => {
+    const { GROUPS } = await import('./mcp-manage')
+    const { MANAGE_FACE_TOOLS } = await import('./mcp-manage-face')
+    const names = (await Promise.all(GROUPS.map((g) => g.list(fake as never)))).flat().map((t) => t.name)
+    expect(names.sort()).toEqual(MANAGE_FACE_TOOLS.map((t) => t.name).sort())
+    expect(MANAGE_FACE_TOOLS).toHaveLength(20)
+  })
+})
