@@ -902,3 +902,31 @@ describe('部门门配置（组织架构树多选）', () => {
     })
   })
 })
+
+describe('「这个数怎么来的」抽屉（Wave 4.3）', () => {
+  it('默认层给 用到的指标 / 时间范围 / 谁看得到；规格原文收在技术细节里', async () => {
+    m.mockImplementation(async (url: string, init?: RequestInit) => {
+      calls.push({ url, init })
+      if (url.endsWith('/reports')) return json({ reports: ROWS.filter((r) => r.requiredScope === null) })
+      if (/\/reports\/[^/]+\/published-spec$/.test(url)) {
+        return json({
+          spec: {
+            period: { mode: 'month', month: '2026-10' },
+            panels: [{ chart: 'kpi', title: '销售额', metricId: 'lemeng:retail:net_sales' }],
+          },
+        })
+      }
+      return json({})
+    })
+    renderPage(['data:query'])
+    await waitFor(() => expect(screen.getByText('自绘大盘')).toBeInTheDocument())
+    fireEvent.click(rowButton('自绘大盘', '这个数怎么来的'))
+    await waitFor(() => expect(screen.getByText('销售额')).toBeInTheDocument())
+    expect(screen.getByText('2026-10 整月')).toBeInTheDocument()
+    // 共享名单：普通观看者读不到 ⇒ 如实说「只有所有者/管理员能查」，不猜
+    expect(screen.getByText(/共享名单只有报表所有者或管理员能查/)).toBeInTheDocument()
+    // 规格原文在技术细节里（展开即全量，不是简化版）
+    const detailsText = [...document.querySelectorAll('details')].map((d) => d.textContent ?? '').join('\n')
+    expect(detailsText).toContain('lemeng:retail:net_sales')
+  })
+})

@@ -313,3 +313,19 @@ describe('指标管理页', () => {
   })
 
 })
+
+describe('口径列：单页双层（Wave 4.3）', () => {
+  it('默认层给业务说法；技术细节里才有表达式 / 维度 / 权限码（折叠，不隐藏）', async () => {
+    renderPage()
+    await waitFor(() => expect(screen.getByText('lemeng:retail:net_sales')).toBeInTheDocument())
+    // 默认层：说明文字（夹具里没有 bizDescription，回落 description）
+    expect(screen.getAllByText('口径定义').length).toBeGreaterThan(0)
+    // 技术细节：原生 <details> 折起时内容仍在 DOM ⇒ 专家展开即可见，且不会被藏到别页
+    const details = document.querySelectorAll('details')
+    expect(details.length).toBeGreaterThan(0)
+    const text = [...details].map((d) => d.textContent ?? '').join('\n')
+    expect(text).toContain('表达式：')
+    expect(text).toContain('sum(fct_retail_sale.net_amount)')
+    expect(text).toContain('所需权限：')
+  })
+})
