@@ -111,10 +111,10 @@ describe('数据模块 console 入口（URL 选页）', () => {
     expect(router.state.location.pathname).toBe('/console/data/scopes')
   })
 
-  it('★ data:manage 用户可见「候选池」页签并请求 /metrics/candidates；普通用户不可见（Wave 2.3）', async () => {
-    // 普通用户：菜单里没有「候选池」
+  it('★ data:manage 用户可见「可能的指标」页签并请求 /metrics/candidates；普通用户不可见（Wave 2.3）', async () => {
+    // 普通用户：菜单里没有「可能的指标」
     renderAt('/console/data/query')
-    expect(screen.queryByText('候选池')).toBeNull()
+    expect(screen.queryByText('可能的指标')).toBeNull()
     cleanup()
 
     urls.length = 0
@@ -133,8 +133,8 @@ describe('数据模块 console 入口（URL 选页）', () => {
       { initialEntries: ['/console/data/candidates'] },
     )
     render(<RouterProvider router={router} />)
-    // 页签与卡片标题都会出现「候选池」
-    expect(screen.getAllByText('候选池').length).toBeGreaterThan(0)
+    // 页签与卡片标题都会出现「可能的指标」
+    expect(screen.getAllByText('可能的指标').length).toBeGreaterThan(0)
     await waitFor(() => expect(urls.some((u) => u.includes('/metrics/candidates'))).toBe(true))
     expect(router.state.location.pathname).toBe('/console/data/candidates')
   })

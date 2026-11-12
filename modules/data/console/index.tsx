@@ -28,8 +28,9 @@ const TABS = [
   { key: 'reports', label: '报表' },
   // data:manage 才出现（#1901 scope 管理面）：菜单过滤只是入口姿态，API 门卫才是真闸
   { key: 'scopes', label: '数据范围', manageOnly: true },
-  // 候选池（Wave 2.3，spec §3「console 可浏览、一键采用」）：同样是管理面
-  { key: 'candidates', label: '候选池', manageOnly: true },
+  // 候选池（Wave 2.3，spec §3「console 可浏览、一键采用」）：同样是管理面。
+  // 标签用业务说法「可能的指标」——页面默认层不出现「候选池/置信度/聚合」这类工程词。
+  { key: 'candidates', label: '可能的指标', manageOnly: true },
 ] as const
 
 type TabKey = (typeof TABS)[number]['key']

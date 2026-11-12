@@ -1,15 +1,15 @@
-// console/candidates/index.tsx — 「候选池」页签（data:manage；Wave 2.3 补齐 spec 说的「console 可浏览」）。
+// console/candidates/index.tsx — 「候选池」页签（data:manage；Wave 2.3 补齐 spec 的「console 可浏览」）。
 //
-// 定位：自动推导（画像 → 规则筛）产出的候选只进池、不自动上台。本页让人**先看得见再决策**：
-// 浏览 / 过滤 / 采用（→ 私有测度）/ 拒绝。判定全在服务端（路由 + 域层 CAS），本页只做展示与转发，
-// 不复制任何校验逻辑：409 / 400 的 code 原样回显，别在本页猜「为什么不行」。
-//
-// 页签只在持 data:manage 时出现（入口按 session.scopes 过滤；API 门卫仍是真闸）。
+// **单页双层**（2026-11-12 与用户定案）：不做按角色的多页面。同一页两种读法——
+//   ① 默认层（业务读）：一张卡一句人话 + 两个动作「加进我的指标 / 不要」；
+//   ② 展开层（专业读）：关系 / 算式 / 维度 / 置信度 / 证据 JSON，收在 `<TechDetails>` 里。
+// 判定全部委托服务端（路由 + 域层 CAS），本页不复制校验；错误走 `humanError()`：
+// 主句是人话，原码与 detail 收在技术细节里。
 import { useCallback, useEffect, useState } from 'react'
-import {
-  Alert, Button, Card, Input, Modal, Popconfirm, Select, Space, Table, Tag, Typography, message,
-} from 'antd'
-import { apiGet, apiSend, ApiError } from '../lib/api'
+import { Alert, Button, Card, Empty, Input, Modal, Select, Space, Tag, Typography, message } from 'antd'
+import { apiGet, apiSend } from '../lib/api'
+import { humanError, type HumanError } from '../lib/explain'
+import { TechDetails } from '../components/TechDetails'
 
 type CandidateStatus = 'pending' | 'created' | 'promoted' | 'rejected' | 'expired'
 type CandidateOrigin = 'profile' | 'demand'
@@ -27,29 +27,30 @@ interface Candidate {
 }
 
 const STATUS_LABEL: Record<CandidateStatus, string> = {
-  pending: '待处理', created: '已采用', promoted: '已升级', rejected: '已拒绝', expired: '已过期',
+  pending: '待处理', created: '已加入', promoted: '已升级', rejected: '已忽略', expired: '已过期',
 }
 const STATUS_COLOR: Record<CandidateStatus, string> = {
   pending: 'processing', created: 'success', promoted: 'success', rejected: 'default', expired: 'warning',
 }
-const ORIGIN_LABEL: Record<CandidateOrigin, string> = { profile: '画像推导', demand: '需求对话' }
-
-function errText(e: unknown): string {
-  if (e instanceof ApiError) return e.detail === undefined ? e.code : `${e.code}：${e.detail}`
-  return e instanceof Error ? e.message : String(e)
+const ORIGIN_LABEL: Record<CandidateOrigin, string> = { profile: '系统自动发现', demand: '来自需求对话' }
+/** 聚合函数的业务说法（默认层不出现 sum/avg 这类词）。 */
+const AGG_LABEL: Record<string, string> = {
+  sum: '合计', avg: '平均', min: '最小值', max: '最大值', count: '条数', count_distinct: '去重条数',
 }
+const aggLabel = (agg: string): string => AGG_LABEL[agg] ?? agg
 
-/** 算式的人读形态：`avg(fct_x.amount)` + 维度。 */
-function exprText(c: Candidate): string {
-  const base = `${c.expr.agg}(${c.expr.column})`
-  const dims = c.expr.dims ?? []
-  return dims.length === 0 ? base : `${base} 按 ${dims.join('、')}`
+/** 关系的最后一段（默认层不显示 `staging.` 这类库前缀）。 */
+const relLabel = (relation: string): string => relation.split('.').filter(Boolean).pop() ?? relation
+/** 建议指标名：`<域>:<表>:<列>_<聚合>`，三段小写蛇形（与平台的指标命名规则同形）。 */
+function suggestId(c: Candidate): string {
+  const seg = (s: string): string => s.toLowerCase().replace(/[^a-z0-9]+/g, '_').replace(/^_+|_+$/g, '') || 'x'
+  return `custom:${seg(relLabel(c.relation))}:${seg(c.expr.column)}_${seg(c.expr.agg)}`
 }
 
 export default function CandidatesPage() {
   const [rows, setRows] = useState<Candidate[]>([])
   const [loading, setLoading] = useState(false)
-  const [loadErr, setLoadErr] = useState<string | null>(null)
+  const [err, setErr] = useState<HumanError | null>(null)
   const [status, setStatus] = useState<CandidateStatus | ''>('pending')
   const [origin, setOrigin] = useState<CandidateOrigin | ''>('')
   const [adopting, setAdopting] = useState<Candidate | null>(null)
@@ -59,7 +60,7 @@ export default function CandidatesPage() {
 
   const load = useCallback(async () => {
     setLoading(true)
-    setLoadErr(null)
+    setErr(null)
     try {
       const qs = new URLSearchParams({ limit: '200' })
       if (status !== '') qs.set('status', status)
@@ -67,7 +68,7 @@ export default function CandidatesPage() {
       const body = (await apiGet(`/metrics/candidates?${qs.toString()}`)) as { candidates?: Candidate[] }
       setRows(Array.isArray(body.candidates) ? body.candidates : [])
     } catch (e) {
-      setLoadErr(errText(e))
+      setErr(humanError(e))
     } finally {
       setLoading(false)
     }
@@ -76,36 +77,36 @@ export default function CandidatesPage() {
   useEffect(() => { void load() }, [load])
 
   const reject = async (c: Candidate) => {
+    setErr(null)
     try {
       await apiSend(`/metrics/candidates/${c.id}/reject`, 'POST')
-      message.success('已拒绝')
+      message.success('已忽略，以后不会再把这条推给你')
       await load()
     } catch (e) {
-      message.error(errText(e))
+      setErr(humanError(e))
     }
   }
 
   const openAdopt = (c: Candidate) => {
     setAdopting(c)
-    // 预填一个合规 id 骨架（`<源>:<域>:<指标>`），人可改——标识符是人的决定，不替人拍。
-    setMetricId('')
-    setTitle('')
+    setMetricId(suggestId(c))
+    setTitle(`${relLabel(c.relation)} ${c.expr.column} ${aggLabel(c.expr.agg)}`)
   }
 
   const adopt = async () => {
     if (adopting === null) return
     setSaving(true)
+    setErr(null)
     try {
       await apiSend(`/metrics/candidates/${adopting.id}/adopt`, 'POST', {
         id: metricId.trim(),
         ...(title.trim() === '' ? {} : { title: title.trim() }),
       })
-      message.success('已采用为私有测度')
+      message.success('已加入「我的指标」，可以继续去指标页完善')
       setAdopting(null)
       await load()
     } catch (e) {
-      // 服务端会点名原因（ID_RESERVED_BY_L1 / COLUMN_NOT_NUMERIC / DIM_MASKED / METRIC_EXISTS…）
-      message.error(errText(e))
+      setErr(humanError(e))
     } finally {
       setSaving(false)
     }
@@ -113,7 +114,7 @@ export default function CandidatesPage() {
 
   return (
     <Card
-      title="候选池"
+      title="可能的指标"
       extra={(
         <Space wrap>
           <Select
@@ -128,7 +129,7 @@ export default function CandidatesPage() {
           />
           <Select
             size="small"
-            style={{ width: 110 }}
+            style={{ width: 130 }}
             value={origin}
             onChange={(v) => setOrigin(v)}
             options={[
@@ -141,81 +142,93 @@ export default function CandidatesPage() {
       )}
     >
       <Typography.Paragraph type="secondary" style={{ marginBottom: 12 }}>
-        自动推导产出的候选<strong>只进池、不自动上台</strong>。采用后会成为本租户的私有测度（草案口径），
-        拒绝是终态，不会在后续生成里复活（人工决策优先于自动规则）。
+        系统每天从已接入的数据里找「可能是你想要的指标」，<strong>不会自动上线</strong>。
+        觉得有用就点「加进我的指标」，没用就点「不要」——忽略过的不会再推给你。
       </Typography.Paragraph>
-      {loadErr !== null && <Alert type="error" showIcon style={{ marginBottom: 12 }} message={loadErr} />}
-      <Table<Candidate>
-        rowKey="id"
-        size="small"
-        loading={loading}
-        dataSource={rows}
-        pagination={{ pageSize: 20, hideOnSinglePage: true }}
-        scroll={{ x: 860 }}
-        columns={[
-          { title: '关系', dataIndex: 'relation', width: 220, ellipsis: true },
-          { title: '算式', render: (_: unknown, r) => exprText(r), ellipsis: true },
-          {
-            title: '置信度', dataIndex: 'confidence', width: 90,
-            render: (v: number) => v.toFixed(2),
-          },
-          {
-            title: '来源', dataIndex: 'origin', width: 100,
-            render: (o: CandidateOrigin) => <Tag>{ORIGIN_LABEL[o]}</Tag>,
-          },
-          {
-            title: '状态', dataIndex: 'status', width: 90,
-            render: (s: CandidateStatus) => <Tag color={STATUS_COLOR[s]}>{STATUS_LABEL[s]}</Tag>,
-          },
-          { title: '依据', dataIndex: 'rationale', ellipsis: true },
-          {
-            title: '操作', width: 140, fixed: 'right',
-            render: (_: unknown, r) => (r.status === 'pending'
-              ? (
-                <Space size={4}>
-                  <Button size="small" type="primary" onClick={() => openAdopt(r)}>采用</Button>
-                  <Popconfirm title="拒绝这条候选？" description="拒绝是终态，后续自动生成不会复活它。" onConfirm={() => void reject(r)}>
-                    <Button size="small" danger>拒绝</Button>
-                  </Popconfirm>
+
+      {err !== null && (
+        <Alert
+          type="error"
+          showIcon
+          style={{ marginBottom: 12 }}
+          message={err.text}
+          description={(
+            <TechDetails title="技术细节">
+              <div>错误码：{err.code}</div>
+              {err.detail !== undefined && <div>定位信息：{err.detail}</div>}
+            </TechDetails>
+          )}
+        />
+      )}
+
+      {!loading && rows.length === 0
+        ? (
+          <Empty
+            description={(
+              <span>
+                这个筛选下没有候选。系统每天自动找一次；如果你刚接入新数据源，等下一轮即可。
+              </span>
+            )}
+          />
+        )
+        : rows.map((r) => (
+          <Card key={r.id} size="small" style={{ marginBottom: 10 }}>
+            <Space align="start" style={{ width: '100%', justifyContent: 'space-between' }} wrap>
+              <div style={{ minWidth: 260, flex: 1 }}>
+                <Space size={6} wrap>
+                  <Typography.Text strong style={{ fontSize: 15 }}>
+                    {relLabel(r.relation)} 的 {r.expr.column}（{aggLabel(r.expr.agg)}
+                    {(r.expr.dims ?? []).length > 0 ? `，按 ${(r.expr.dims ?? []).join('、')} 拆分` : ''}）
+                  </Typography.Text>
+                  <Tag color={STATUS_COLOR[r.status]}>{STATUS_LABEL[r.status]}</Tag>
+                  <Tag>{ORIGIN_LABEL[r.origin]}</Tag>
                 </Space>
-              )
-              : <Typography.Text type="secondary">—</Typography.Text>),
-          },
-        ]}
-        locale={{
-          emptyText: (
-            <div style={{ padding: '32px 0' }}>
-              <Typography.Paragraph type="secondary" style={{ marginBottom: 0 }}>
-                这个筛选下没有候选。候选由「画像 → 规则筛」定时生成（每日一次），
-                也可以由管理员手动触发一次生成。
-              </Typography.Paragraph>
-            </div>
-          ),
-        }}
-      />
+                <Typography.Paragraph type="secondary" style={{ margin: '6px 0 0', fontSize: 13 }}>
+                  {r.rationale}
+                </Typography.Paragraph>
+                <TechDetails>
+                  <div>关系：{r.relation}</div>
+                  <div>算式：{r.expr.agg}({r.expr.column}){(r.expr.dims ?? []).length > 0 ? `，维度 ${(r.expr.dims ?? []).join(', ')}` : ''}</div>
+                  <div>置信度：{r.confidence.toFixed(2)}　来源：{r.origin}　候选 id：{r.id}</div>
+                  <div>产生时间：{r.created_at}</div>
+                </TechDetails>
+              </div>
+              {r.status === 'pending' && (
+                <Space>
+                  <Button type="primary" onClick={() => openAdopt(r)}>加进我的指标</Button>
+                  <Button onClick={() => void reject(r)}>不要</Button>
+                </Space>
+              )}
+            </Space>
+          </Card>
+        ))}
+      <Typography.Paragraph type="secondary" style={{ marginTop: 8, fontSize: 12 }}>
+        想批量处理？这里一屏最多 200 条，按「待处理」筛选后逐条点即可；全部处理完页面会变空。
+      </Typography.Paragraph>
 
       <Modal
-        title={adopting === null ? '采用候选' : `采用：${exprText(adopting)}`}
+        title="加进我的指标"
         open={adopting !== null}
         confirmLoading={saving}
+        okText="加进我的指标"
         okButtonProps={{ disabled: metricId.trim() === '' }}
         onOk={() => void adopt()}
         onCancel={() => setAdopting(null)}
         destroyOnHidden
       >
-        <Space orientation="vertical" size={8} style={{ width: '100%' }}>
-          <Input
-            placeholder="指标 id（<源>:<域>:<指标>，如 lemeng:retail:avg_order_value）"
-            value={metricId}
-            onChange={(e) => setMetricId(e.target.value)}
-          />
-          <Input
-            placeholder="标题（可空，缺省用「关系 聚合(列)」）"
-            value={title}
-            onChange={(e) => setTitle(e.target.value)}
-          />
-          <Typography.Text type="secondary">
-            采用后成为本租户私有测度（草案口径），可在「指标」页继续编辑；id 不能与平台 L1 撞名。
+        <Space orientation="vertical" size={10} style={{ width: '100%' }}>
+          <div>
+            <Typography.Text type="secondary" style={{ fontSize: 12 }}>指标名称</Typography.Text>
+            <Input value={title} onChange={(e) => setTitle(e.target.value)} />
+          </div>
+          <div>
+            <Typography.Text type="secondary" style={{ fontSize: 12 }}>
+              指标标识（系统已按命名规则填好，一般不用改）
+            </Typography.Text>
+            <Input value={metricId} onChange={(e) => setMetricId(e.target.value)} />
+          </div>
+          <Typography.Text type="secondary" style={{ fontSize: 12 }}>
+            加入后是「草稿」状态：在「指标」页再确认一次才会生效。标识不能与平台已有指标重名。
           </Typography.Text>
         </Space>
       </Modal>
