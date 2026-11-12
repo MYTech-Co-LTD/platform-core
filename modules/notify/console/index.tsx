@@ -1,7 +1,7 @@
 // console/index.tsx — 通知 console 入口（六区；照 forms/aftersales 姿势）。
-// frontend.console 是扁平数组、协议不支持嵌套 ⇒ 页内 tabs + URL 深链；导航必须绝对路径。
+// 导航：宿主左侧菜单按 manifest 子路径直达；本组件按 URL 末段选页（导航必须绝对路径）。
 import { useEffect } from 'react'
-import { Layout, Menu } from 'antd'
+import { Layout } from 'antd'
 import { useLocation, useNavigate } from 'react-router-dom'
 import EventsTab from './events'
 import RulesTab from './rules'
@@ -37,15 +37,9 @@ export default function NotifyConsolePage() {
     if (rest !== `/${active}`) navigate(`${BASE}/${active}`, { replace: true })
   }, [rest, active, navigate])
 
+  // #1953 二期：页内 tabs 已撤，六页改为宿主左侧菜单子项（manifest 声明 6 个子路径）。
   return (
     <Layout style={{ background: 'transparent' }}>
-      <Menu
-        mode="horizontal"
-        selectedKeys={[active]}
-        items={TABS.map((t) => ({ key: t.key, label: t.label }))}
-        onClick={({ key }) => navigate(`${BASE}/${key}`)}
-        style={{ marginBottom: 16 }}
-      />
       {active === 'events' && <EventsTab />}
       {active === 'rules' && <RulesTab />}
       {active === 'templates' && <TemplatesTab />}

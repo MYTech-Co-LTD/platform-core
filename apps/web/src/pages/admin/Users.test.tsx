@@ -22,6 +22,14 @@ vi.mock('../../lib/api', () => ({
   setAdminUserForbidden: vi.fn(),
   resetAdminUserPassword: vi.fn(),
   deleteAdminUser: vi.fn(),
+  // 「配置权限」抽屉（#1953 二期）：角色 / 权限码 / 数据范围三组读
+  listAdminRoles: vi.fn(async () => ({ roles: [] })),
+  listAdminPermissions: vi.fn(async () => ({ permissions: [] })),
+  listDataScopes: vi.fn(async () => ({ scopes: [] })),
+  setAdminRoleMembers: vi.fn(),
+  grantAdminPermission: vi.fn(),
+  revokeAdminPermission: vi.fn(),
+  putDataScopeAssignments: vi.fn(),
 }))
 
 import UsersPage from './Users'
@@ -85,5 +93,32 @@ describe('AdminUsersPage 创建后刷新（回归：issue #46 浏览器实测发
     // 等 async 链跑完
     await waitFor(() => expect(vi.mocked(createAdminUser)).toHaveBeenCalledTimes(1))
     await waitFor(() => expect(spy.mock.calls.length).toBeGreaterThanOrEqual(2), { timeout: 3000 })
+  })
+})
+
+describe('配置权限动线（#1953 二期）', () => {
+  it('行内主操作是「配置权限」，点开抽屉给出 ①角色 / ③个人追加 与保存', async () => {
+    render(
+      <AntdApp>
+        <MemoryRouter>
+          <Routes>
+            <Route path="/" element={<Outlet context={ctx} />}>
+              <Route index element={<UsersPage />} />
+            </Route>
+          </Routes>
+        </MemoryRouter>
+      </AntdApp>,
+    )
+    await screen.findByText('alice')
+    const [first] = screen.getAllByRole('button', { name: '配置权限' })
+    fireEvent.click(first!)
+
+    expect(await screen.findByText(/配置权限 · Alice/)).toBeInTheDocument()
+    expect(screen.getByText('① 他能干什么 · 角色')).toBeInTheDocument()
+    expect(screen.getByText(/③ 个人追加权限码/)).toBeInTheDocument()
+    // antd 会给两字中文按钮自动插空格（「保 存」）⇒ 用正则匹配
+    expect(screen.getByRole('button', { name: /保\s*存/ })).toBeInTheDocument()
+    // 无数据模块 → 数据范围那一节整节不出现（不是空节）
+    expect(screen.queryByText('② 他能看哪些数据 · 数据范围')).toBeNull()
   })
 })

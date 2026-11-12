@@ -48,19 +48,9 @@ function renderAt(path: string) {
 }
 
 describe('售后 console 入口', () => {
-  it('七个页签都在菜单里', () => {
+  it('页内不再渲染页签导航（#1953 二期：七页改由宿主左侧菜单承担）', () => {
     renderAt('/console/aftersales/tickets')
-    for (const label of ['工单', '规则', '员工', '商品', '门店', '申请审批', '身份绑定']) {
-      expect(screen.getAllByText(label).length).toBeGreaterThan(0)
-    }
-  })
-
-  it('★ ② 点页签导航到**绝对**路径，不丢模块段', async () => {
-    const router = renderAt('/console/aftersales/tickets')
-    // 等首屏那次数据请求落地，确保已挂载
-    await waitFor(() => expect(urls.some((u) => u.includes('/tickets'))).toBe(true))
-    fireEvent.click(screen.getByText('规则'))
-    await waitFor(() => expect(router.state.location.pathname).toBe('/console/aftersales/rules'))
+    expect(screen.queryByRole('menuitem', { name: '规则' })).toBeNull()
   })
 
   it('★ ③ 深链到 /stores 时，**门店页的内容真的渲染出来**（不只是 URL 对）', async () => {

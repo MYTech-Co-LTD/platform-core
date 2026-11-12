@@ -240,8 +240,15 @@ notifications:
 # 业务面承载端（#1266 机检）：console ⇒ pc；移动指标页（spec 2026-11-01 §10.2，userApp）⇒ mobile。
 surfaces: [pc, mobile]
 frontend:
+  # 左侧多级菜单（#1953 二期）：父条目 = 分组标题（不可点），子页 = 菜单叶子。
+  # 子页共用同一个 entry 组件——它按 pathname 末段选页（见 console/index.tsx 的三条实测结论）。
   console:
-    - { path: /console/data, title: 数据问数, icon: BarChartOutlined, scope: data:query, entry: ./console/index.tsx }
+    - { path: /console/data, title: 数据分析, icon: BarChartOutlined, scope: data:query, entry: ./console/index.tsx }
+    - { path: /console/data/query, title: 问数, scope: data:query, entry: ./console/index.tsx }
+    - { path: /console/data/metrics, title: 指标, scope: data:query, entry: ./console/index.tsx }
+    - { path: /console/data/reports, title: 报表, scope: data:query, entry: ./console/index.tsx }
+    # 数据范围管理面（#1901）：入口按 data:manage 过滤；API 门卫才是真闸
+    - { path: /console/data/scopes, title: 数据范围, scope: data:manage, entry: ./console/index.tsx }
   # 移动端「报表中心」（#1369）：报表 / 指标 / 问数 三 tab；/m 入口卡片按 scope=data:query 过滤——
   # 「谁能看到这个版块」的唯一事实源还是平台 scopes（不造第二套）。dist 由 @data/mobile 构建产
   userApp:

@@ -230,6 +230,16 @@ frontend:
 - **服务端 config 不暴露 admin 清单**：前端按 registry∩config 自判（菜单与路由同源），零后端改动。
 - **path 约束双向**：admin 必须落 `/console/admin/` 下；`frontend.console[].path` 不得占用
   该前缀（schema 双拦——防串组：菜单把 console 条目当模块区平铺页）。
+- **一个声明 = 一个菜单叶子，二级菜单用路径前缀表达（#1953 二期，2026-11-12）**：
+  `frontend.console` 可声明**多条**，子页 `path` = 父条目 `path` + `/`（如
+  `/console/data` 与 `/console/data/metrics`）。宿主把有子页的父条目渲染成**分组标题**
+  （不可点），子页按声明序排在下面——不要再在模块页内做横向 tabs（二次导航，且深链/
+  权限过滤要走两套路径）。约束：
+  - **只支持一层**（父 → 直接子）；更深的层级说明该模块该拆，不在菜单里无限嵌套。
+  - 子页与父条目共用同一个 `entry` 组件：组件按 `pathname` 选页（宿主 `ConsoleModulePage`
+    对 registry 条目做前缀匹配），因此**子路径不要另写组件入口**。
+  - 每条声明各自带 `scope`：宿主菜单按 `session.scopes` 逐条过滤（例如「数据范围」子页
+    用 `data:manage`，没码的人菜单里看不到，深链会被模块页规范回默认页）。
 - **管理组 children 顺序**：平台内置三项（用户/角色/我的订阅）→ 存储配置（能力联动：
   `storageDeclarers ∩ 启用模块 ≠ ∅`，见下）→ 模块 admin 页（manifest 声明序）。
 - **存储配置页归属**：留宿主（管的是 `platform.tenant` 租户全局五列，非模块私有配置）；
