@@ -194,6 +194,43 @@ describePg('★ 采纳 happy path 全链（P0 终审 F4）：提交即试算 →
     expect(row.rows[0]?.unit).toBe('元')
     // 变更通知：每次采纳一枚（fail-open；事件已在 manifest 声明）
     expect(emitted.filter((e) => e.eventKey === 'data.metric.definition.changed')).toHaveLength(2)
+    // P1 Task 4（销缓办③）：title 取**采纳动作之前**的快照——meta 档采纳前行已在 ⇒ 快照 title；
+    // create 档采纳前行不存在 ⇒ 回退 metricId（快照语义的代价，计划写明）。
+    expect(emitted[0]?.payload).toMatchObject({ metricId: 'x:e2e', title: 'x:e2e' })
+    expect(emitted[1]?.payload).toMatchObject({ metricId: 'x:e2e', title: '端到端夹具' })
+  })
+})
+
+describePg('★ delete 档采纳也发通知（P1 Task 4，销缓办③）', () => {
+  it('delete 采纳 ⇒ emit 一枚，title 用**删前**快照（P0 时代采纳后 join 落空 ⇒ 永远无通知）', async () => {
+    const emitted: Array<{ eventKey?: string; payload?: Record<string, unknown> }> = []
+    const notify: NotifyPort = { emit: async (_i, e) => { emitted.push(e); return { accepted: true } } }
+    const app = buildTestApp(mod, identityOf(),
+      { pool, execute: async () => ({ rows: [{ rows: 3, value: 9 }] }), notify } as never,
+      { id: 1, casdoor_org: ORG }, ['lemeng'])
+    const post = (path: string, body?: unknown) => app.request(path, {
+      method: 'POST',
+      ...(body === undefined ? {} : { body: JSON.stringify(body), headers: { 'content-type': 'application/json' } }),
+    })
+    // ① create 全链生效（行 title = 端到端删除夹具）
+    const c1 = await post('/metric-changes',
+      { metricId: 'x:e2e_del', kind: 'create', payload: { baseMetric: L1_ID, op: { kind: 'refine' }, alias: '端到端删除夹具' } })
+    expect(c1.status).toBe(200)
+    const b1 = await c1.json() as { change: { id: number } }
+    expect((await post(`/metric-changes/${b1.change.id}/adopt`)).status).toBe(200)
+    // ② delete 单全链采纳 ⇒ 200
+    const d = await post('/metric-changes', { metricId: 'x:e2e_del', kind: 'delete' })
+    expect(d.status).toBe(200)
+    const bd = await d.json() as { change: { id: number; status: string } }
+    expect(bd.change.status).toBe('preview_ready')
+    expect((await post(`/metric-changes/${bd.change.id}/adopt`)).status).toBe(200)
+    // 落库事实：行已删
+    const live = await pool.query(`select 1 from data.metrics where org = $1 and id = 'x:e2e_del'`, [ORG])
+    expect(live.rows).toHaveLength(0)
+    // create 一枚 + delete 一枚；delete 那枚的 title 是**删前**快照（行在时快照必非空，不吃 metricId 回退）
+    const evts = emitted.filter((e) => e.eventKey === 'data.metric.definition.changed')
+    expect(evts).toHaveLength(2)
+    expect(evts[1]?.payload).toMatchObject({ metricId: 'x:e2e_del', title: '端到端删除夹具' })
   })
 })
 

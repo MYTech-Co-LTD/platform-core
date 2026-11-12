@@ -4,6 +4,7 @@ import { Pool } from 'pg'
 import { applyMigrations } from '../test-util'
 import { submitChange, listChanges, getChange, withdrawChange, adoptChange, rejectChange } from './metric-change'
 import { upsertL1Metric } from './metric-store'
+import { writeL2Declaration } from './metric-write'
 import type { MetricWriteDeps } from './metric-write'
 import type { Requester } from './authz'
 
@@ -323,5 +324,97 @@ describePg('P1 Task 3：归属随单 + 同名互斥 + 撞 id 拒收', () => {
     expect(row.rows[0]).toMatchObject({
       owner_dept: 'dept-mo', entity: CONCEPT, synonyms: ['毛利别名'], variant_note: '改口：含加盟仓',
     })
+  })
+})
+
+// ── P1 Task 4（2026-11-13）：决策竞态串行化（销缓办⑥）+ 23505 映射 ────────────────
+// 隔离键独立（org-p1-mo-race，计划全局约束）：竞态用例会故意制造占名行，不能与上方
+// Task 3 describe 的同名判据夹具互相污染。锁键 = hashtext(org || ':mc:' || 变更单 id)，
+// adopt 与 reject 争的是同一张单——org 隔离即锁键隔离。
+describePg('P1 Task 4：决策竞态串行化 + adopt 撞名映射 409', () => {
+  const RORG = 'org-p1-mo-race'
+
+  beforeAll(async () => {
+    await pool.query('delete from data.metric_change where org = $1', [RORG])
+    await pool.query('delete from data.metrics where org = $1', [RORG])
+    await upsertL1Metric(pool, L1_FIXTURE)
+  })
+  afterAll(async () => {
+    await pool.query('delete from data.metric_change where org = $1', [RORG])
+    await pool.query('delete from data.metrics where org = $1', [RORG])
+  })
+
+  /** 立一张 preview_ready 的 create 单（竞态/持锁/占名用例的公共前置）。 */
+  async function readyCreate(mid: string, alias: string): Promise<number> {
+    const s = await submitChange(pool, RORG, { userId: 'a', channel: 'pat' }, mid, 'create',
+      { baseMetric: L1_ID, op: { kind: 'refine' }, alias })
+    if (!s.ok) throw new Error('unreachable')
+    await markReady(s.change.id)
+    return s.change.id
+  }
+
+  it('锁机制：外部持锁时 adoptChange 排队等待（不偷跑写），放锁后才采纳', async () => {
+    const id = await readyCreate('x:race_hold', '持锁夹具')
+    const holder = await pool.connect()
+    try {
+      const key = `${RORG}:mc:${id}`
+      await holder.query('select pg_advisory_lock(hashtext($1))', [key])
+      let settled = false
+      const adoptP = adoptChange(writeDeps(pool), RORG, id).then((r) => { settled = true; return r })
+      // 持锁期间 adopt 不得完成、更不得落行（无锁实现此刻早已偷跑完写 + 翻状态）
+      await new Promise((r) => setTimeout(r, 80))
+      expect(settled).toBe(false)
+      const mid = await pool.query('select 1 from data.metrics where org = $1 and id = $2', [RORG, 'x:race_hold'])
+      expect(mid.rows).toHaveLength(0)
+      await holder.query('select pg_advisory_unlock(hashtext($1))', [key])
+      expect((await adoptP).ok).toBe(true)
+    } finally {
+      holder.release()
+    }
+  })
+
+  it('并发 adopt+reject（Promise.all 两连接真并发）⇒ 恰一胜，无「写已生效但单据 rejected」形态', async () => {
+    for (let round = 0; round < 3; round++) {
+      const mid = `x:race_rr${round}`
+      const id = await readyCreate(mid, `竞态夹具·第${round}轮`)
+      const [adopt, rej] = await Promise.all([
+        adoptChange(writeDeps(pool), RORG, id),
+        rejectChange(pool, RORG, id, 'reviewer', `并发驳回·第${round}轮`),
+      ])
+      const adoptWon = adopt.ok === true
+      const rejectWon = rej === true
+      expect(adoptWon).not.toBe(rejectWon)
+      const live = await pool.query('select 1 from data.metrics where org = $1 and id = $2', [RORG, mid])
+      if (rejectWon) {
+        // 驳回赢 ⇒ 采纳必须停在域写之前（锁内先读态后写）——毒形态：行已生效 + 单据 rejected
+        expect(adopt).toMatchObject({ ok: false, http: 409 })
+        expect(live.rows).toHaveLength(0)
+      } else {
+        expect(live.rows).toHaveLength(1)
+      }
+    }
+  })
+
+  it('reject 同锁：并发双 reject 恰一枚生效；adopt 已采纳后再 reject ⇒ false', async () => {
+    const id = await readyCreate('x:race_rj', '双驳夹具')
+    const [r1, r2] = await Promise.all([
+      rejectChange(pool, RORG, id, 'reviewer1', '先到'),
+      rejectChange(pool, RORG, id, 'reviewer2', '后到'),
+    ])
+    // 两把同键锁串行：第一枚把状态推离 PENDING，第二枚 WHERE 钉 PENDING ⇒ 恰一 true
+    expect(r1).not.toBe(r2)
+    expect(await rejectChange(pool, RORG, id, 'reviewer3', '三驳')).toBe(false)
+  })
+
+  it('adopt 撞 metrics_title_per_dept_uq（submit→adopt 窗口被并发占名）⇒ 409 TITLE_EXISTS_IN_DEPT，不是裸 23505', async () => {
+    const id = await readyCreate('x:race_title', '撞名窗口夹具')
+    // 占名：另一条 L2 用同 alias 直接生效（模拟「别人的单先被采纳」——决策锁不覆盖这个窗口）
+    const snatcher = await writeL2Declaration(writeDeps(pool), RORG, 'x:race_snatcher',
+      { baseMetric: L1_ID, op: { kind: 'refine' }, alias: '撞名窗口夹具' })
+    expect(snatcher.ok).toBe(true)
+    const out = await adoptChange(writeDeps(pool), RORG, id)
+    expect(out).toMatchObject({ ok: false, http: 409, error: 'TITLE_EXISTS_IN_DEPT' })
+    // 单据保持 preview_ready（域写回滚 + CAS 未跑）：评审者可驳回，或占名行删除后重试
+    expect((await getChange(pool, RORG, id))?.status).toBe('preview_ready')
   })
 })

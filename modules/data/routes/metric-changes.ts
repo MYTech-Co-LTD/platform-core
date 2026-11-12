@@ -124,6 +124,15 @@ export function registerMetricChanges(r: ModuleHono, ctx: RouteCtx): void {
     const id = parseIdParam(c.req.param('id'))
     if (id === null) return c.json({ error: 'NOT_FOUND' }, 404)
     const org = c.get('tenant').casdoor_org
+    // {title, version} 快照必须在**采纳动作之前**取（P1 Task 4，销缓办③）：delete 档采纳后
+    // 行已删，事后 join 落空 ⇒ 那张单永远发不出变更通知。left join：create 档采纳前行还不存在
+    // ⇒ 快照缺 —— title 回退 metricId、version 记 0（行为变化如实记：create 的通知 title 从
+    // 「新 title」变为 metricId，这是快照语义的代价，计划写明）。查询失败在采纳前 fail-fast
+    // （此时零写入，不存在半态）；emit 仍 fail-open（见下）。
+    const snap = await ctx.pool.query(
+      `select ch.metric_id, m.title, m.version
+         from data.metric_change ch left join data.metrics m on m.org = ch.org and m.id = ch.metric_id
+        where ch.org = $1 and ch.id = $2`, [org, id])
     const out = await adoptChange(
       { pool: ctx.pool, adoptedSources: new Set(c.get(TENANT_SOURCES) ?? []), requester },
       org, id,
@@ -133,12 +142,9 @@ export function registerMetricChanges(r: ModuleHono, ctx: RouteCtx): void {
     // 收件人由 notify 层按绑定规则解析（scope_holders: data:query）——模块只报事实，不自己找收件人。
     if (ctx.notify) {
       try {
-        // 一条 join 同时取 metricId/title/version（metric_id 存在单据行上，不必两趟查询）
-        const row = await ctx.pool.query(
-          `select m.id as metric_id, m.title, m.version
-             from data.metric_change ch join data.metrics m on m.org = ch.org and m.id = ch.metric_id
-            where ch.org = $1 and ch.id = $2`, [org, id])
-        const hit = row.rows[0] as { metric_id: string; title: string | null; version: number | string } | undefined
+        // metric_id 在单据行上（adopt 已成功 ⇒ 行必在）；title/version 用**采纳前**快照——
+        // delete 档行已删也发（P0 时代 delete 采纳从不发通知）。
+        const hit = snap.rows[0] as { metric_id: string; title: string | null; version: number | string | null } | undefined
         if (hit !== undefined) {
           const metricId = String(hit.metric_id)
           await ctx.notify.emit(c.get('identity'), {

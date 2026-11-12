@@ -266,61 +266,104 @@ function ownershipOfPayload(payload: unknown): MetricOwnership | undefined {
 }
 
 /**
+ * 决策串行闸（P1 Task 4，销缓办⑥）：同一张单的 adopt 与 reject 全程共用一把
+ * **session 级** advisory lock（键 = `hashtext(org || ':mc:' || 变更单 id)`——两张裁决争的是
+ * 同一张单，org 隔离即键隔离）。为什么不用 `pg_advisory_xact_lock`：adopt/reject **不在单一
+ * 事务里**（adopt 是「域写各自 withTx 开自己的连接 → 再 CAS 翻状态」的两段式，reject 是裸
+ * UPDATE）——xact 锁随调用方事务结束即放，罩不住「域写已提交、CAS 未翻状态」的竞态窗口。
+ * 所以用独立连接持 session 锁排队，`pg_advisory_unlock` 放在 finally（fn 抛错也必放锁）。
+ * 域写在锁内调用不冲突：它们开自己的连接，advisory lock 只是排队闸、不是数据锁。
+ * 锁内顺序：getChange 校验 → 域写 → CAS 翻状态 → 解锁；并发后到者看到终态 ⇒
+ * false / 409 CHANGE_STATE_CHANGED——消灭「写已生效但单据被驳回」的审计混淆形态。
+ */
+async function withDecisionLock<T>(pool: Pool, org: string, id: number, fn: () => Promise<T>): Promise<T> {
+  const key = `${org}:mc:${id}`
+  const client = await pool.connect()
+  try {
+    await client.query('select pg_advisory_lock(hashtext($1))', [key])
+    try {
+      return await fn()
+    } finally {
+      await client.query('select pg_advisory_unlock(hashtext($1))', [key])
+    }
+  } finally {
+    client.release()
+  }
+}
+
+/**
  * 采纳：preview_ready 才可；按 kind 分发到既有唯一编译点（本函数不自造第二条写路径）。
  * 写成功后才翻状态（CAS）；被并发抢先 ⇒ 409 CHANGE_STATE_CHANGED。
  * 注意：生效写本身幂等（upsert/meta 幂等；delete 重试会 404 如实返回）——
- * 真正要防的是「同一单被吃两次」，由状态机单守。
+ * 真正要防的是「同一单被吃两次」：决策锁（withDecisionLock）把同一张单的 adopt/reject
+ * 串行化（P1 Task 4），CAS 仍是锁内的最后一道自查。
  */
 export async function adoptChange(deps: MetricWriteDeps, org: string, id: number): Promise<DecideOutcome> {
-  const cur = await getChange(deps.pool, org, id)
-  if (cur === null) return { ok: false, http: 404, error: 'NOT_FOUND' }
-  // 两种 409 语义分开：已决/离场 = 状态被并发或先前裁决改变（CAS 输了）；
-  // draft/preview_failed = 还没试算好，没有可采纳的快照凭据。
-  if (DECIDED_STATUSES.includes(cur.status)) return { ok: false, http: 409, error: 'CHANGE_STATE_CHANGED' }
-  if (cur.status !== 'preview_ready') return { ok: false, http: 409, error: 'PREVIEW_UNAVAILABLE' }
+  return withDecisionLock(deps.pool, org, id, async (): Promise<DecideOutcome> => {
+    const cur = await getChange(deps.pool, org, id)
+    if (cur === null) return { ok: false, http: 404, error: 'NOT_FOUND' }
+    // 两种 409 语义分开：已决/离场 = 状态被并发或先前裁决改变（CAS 输了）；
+    // draft/preview_failed = 还没试算好，没有可采纳的快照凭据。
+    if (DECIDED_STATUSES.includes(cur.status)) return { ok: false, http: 409, error: 'CHANGE_STATE_CHANGED' }
+    if (cur.status !== 'preview_ready') return { ok: false, http: 409, error: 'PREVIEW_UNAVAILABLE' }
 
-  let out: MetricWriteOutcome
-  if (cur.kind === 'create' || cur.kind === 'update') {
-    // 归属随单透传（P1 Task 3，spec §5.1）：payload 顶层的 entity/synonyms/ownerDept/variantNote
-    // 不进声明（L2DeclarationBody 不动），经 opts.ownership 落到行上；缺席键 = 保留行上既有值。
-    out = await writeL2Declaration(deps, org, cur.metricId, cur.payload as unknown as L2Declaration,
-      { ownership: ownershipOfPayload(cur.payload) })
-  } else if (cur.kind === 'meta') {
-    // 逐字段透传（**不补默认值**）：updateMetricMeta 的契约是 `undefined`=不改该字段、
-    // `''`=显式清空（routes/metrics.ts PUT /metrics/:id/meta 同款用法）。
-    // 若把缺席键补成 ''，一张只改 unit 的单会把 bizDescription 静默清掉。
-    const p = cur.payload as Partial<MetricMetaPatch>
-    const patch: MetricMetaPatch = {}
-    if (p.bizDescription !== undefined) patch.bizDescription = p.bizDescription
-    if (p.unit !== undefined) patch.unit = p.unit
-    if (p.caliberNote !== undefined) patch.caliberNote = p.caliberNote
-    out = await updateMetricMeta(deps, org, cur.metricId, patch)
-  } else {
-    // kind = 'delete'。'override' 档 P1 才接（表值已备，P0 写侧只会产出前四值）。
-    out = await deleteMetricDeclaration(deps, org, cur.metricId)
-  }
-  if (!out.ok) return out
+    let out: MetricWriteOutcome
+    if (cur.kind === 'create' || cur.kind === 'update') {
+      // 归属随单透传（P1 Task 3，spec §5.1）：payload 顶层的 entity/synonyms/ownerDept/variantNote
+      // 不进声明（L2DeclarationBody 不动），经 opts.ownership 落到行上；缺席键 = 保留行上既有值。
+      try {
+        out = await writeL2Declaration(deps, org, cur.metricId, cur.payload as unknown as L2Declaration,
+          { ownership: ownershipOfPayload(cur.payload) })
+      } catch (e) {
+        // Task 3 评审转入（P1 Task 4 顺带）：submit→adopt 的窗口被并发占名 ⇒ upsert 撞
+        // metrics_title_per_dept_uq 的 23505。映射 409 TITLE_EXISTS_IN_DEPT（与提交期同名判据
+        // 同码同义），别裸 500。只捕 23505：(org,id) 主键已被 upsert 冲突分支吃掉，能到这里
+        // 的 23505 只有 title 唯一索引；其余错误照抛。
+        if ((e as { code?: string }).code === '23505') {
+          return { ok: false, http: 409, error: 'TITLE_EXISTS_IN_DEPT' }
+        }
+        throw e
+      }
+    } else if (cur.kind === 'meta') {
+      // 逐字段透传（**不补默认值**）：updateMetricMeta 的契约是 `undefined`=不改该字段、
+      // `''`=显式清空（routes/metrics.ts PUT /metrics/:id/meta 同款用法）。
+      // 若把缺席键补成 ''，一张只改 unit 的单会把 bizDescription 静默清掉。
+      const p = cur.payload as Partial<MetricMetaPatch>
+      const patch: MetricMetaPatch = {}
+      if (p.bizDescription !== undefined) patch.bizDescription = p.bizDescription
+      if (p.unit !== undefined) patch.unit = p.unit
+      if (p.caliberNote !== undefined) patch.caliberNote = p.caliberNote
+      out = await updateMetricMeta(deps, org, cur.metricId, patch)
+    } else {
+      // kind = 'delete'。'override' 档 P1 才接（表值已备，P0 写侧只会产出前四值）。
+      out = await deleteMetricDeclaration(deps, org, cur.metricId)
+    }
+    if (!out.ok) return out
 
-  // CAS 收尾：写成功后才翻状态；被并发抢先 ⇒ 409（写本身幂等，见函数头注）
-  const mark = await deps.pool.query(
-    `update data.metric_change set status = 'adopted', decided_by = $3, decided_at = now(), adopted_snapshot = $4::jsonb
-      where org = $1 and id = $2 and status = 'preview_ready'`,
-    [org, id, deps.requester.userId, JSON.stringify(cur.preview ?? {})],
-  )
-  if ((mark.rowCount ?? 0) === 0) return { ok: false, http: 409, error: 'CHANGE_STATE_CHANGED' }
-  return { ok: true, snapshot: (cur.preview ?? undefined) as PreviewSnapshot | undefined }
+    // CAS 收尾：写成功后才翻状态；被并发抢先 ⇒ 409（写本身幂等，见函数头注）
+    const mark = await deps.pool.query(
+      `update data.metric_change set status = 'adopted', decided_by = $3, decided_at = now(), adopted_snapshot = $4::jsonb
+        where org = $1 and id = $2 and status = 'preview_ready'`,
+      [org, id, deps.requester.userId, JSON.stringify(cur.preview ?? {})],
+    )
+    if ((mark.rowCount ?? 0) === 0) return { ok: false, http: 409, error: 'CHANGE_STATE_CHANGED' }
+    return { ok: true, snapshot: (cur.preview ?? undefined) as PreviewSnapshot | undefined }
+  })
 }
 
 /**
  * 驳回：必填原因（trim 后非空、≤500 字），任何未决态（draft/preview_ready/preview_failed）都可驳——
  * 「没试算完就看出不对」是合法驳回路径。已决/离场单不吃第二次驳回（WHERE 钉 PENDING_STATUSES）。
+ * 与 adoptChange 同锁（P1 Task 4，销缓办⑥）：并发 adopt/reject 串行，后到者看到终态 ⇒ false。
  */
 export async function rejectChange(pool: Pool, org: string, id: number, reviewerId: string, reason: string): Promise<boolean> {
   if (reason.trim() === '' || reason.length > 500) return false
-  const r = await pool.query(
-    `update data.metric_change set status = 'rejected', decided_by = $3, decided_at = now(), reject_reason = $4
-      where org = $1 and id = $2 and status = any($5)`,
-    [org, id, reviewerId, reason.trim(), PENDING_STATUSES],
-  )
-  return (r.rowCount ?? 0) > 0
+  return withDecisionLock(pool, org, id, async () => {
+    const r = await pool.query(
+      `update data.metric_change set status = 'rejected', decided_by = $3, decided_at = now(), reject_reason = $4
+        where org = $1 and id = $2 and status = any($5)`,
+      [org, id, reviewerId, reason.trim(), PENDING_STATUSES],
+    )
+    return (r.rowCount ?? 0) > 0
+  })
 }
