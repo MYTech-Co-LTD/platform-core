@@ -131,28 +131,26 @@ export const metricTools: McpToolGroup = {
         },
       },
       {
+        // 描述从紧：合并面 tools/list 有 10KB 静态预算（本片不在 check-mcp-toolface 的
+        // 三份代理清单里，门禁测不到——加字前先用合并面自测脚本量，见 task-6 报告）。
         name: 'submit_metric_change',
-        description: [
-          '提交指标变更单（create/update/meta/delete）：**只提案不生效，等待人工采纳**；',
-          '采纳与驳回是人（控制台）专属动作，不提供工具。驳回原因在 list_metric_changes 里读（status=rejected）。',
-          'MCP 面不做自动试算：提交后为 draft，试算预览由人在控制台触发后单据才可被采纳。',
-        ].join(''),
+        description: '提交指标变更单：**只提案不生效，等待人工采纳**；采纳/驳回仅人工，不提供工具。驳回原因在 list_metric_changes 里读。',
         inputSchema: {
           type: 'object',
           properties: {
-            metricId: { type: 'string', description: '目标口径 id（create=新 id，≤128 字；update/meta=已有自定义口径；delete=要删的自定义口径）' },
-            kind: { type: 'string', enum: ['create', 'update', 'meta', 'delete'], description: '变更类型' },
-            payload: { type: 'object', description: 'create/update=声明档（baseMetric 必填，alias/visibility/filters 或 expr）；meta={bizDescription?,unit?,caliberNote?}；delete 留空' },
+            metricId: { type: 'string', description: '目标口径 id' },
+            kind: { type: 'string', enum: ['create', 'update', 'meta', 'delete'] },
+            payload: { type: 'object', description: 'create/update=口径声明；meta=业务键；delete 留空' },
           },
-          required: ['metricId', 'kind', 'payload'],
+          required: ['metricId', 'kind'],
         },
       },
       {
         name: 'list_metric_changes',
-        description: '列出本租户的指标变更单：默认 pending（待人工裁决队列，提交后用它确认自己的单）；status=rejected 读驳回原因。',
+        description: '列出本租户指标变更单：默认 pending；status=rejected 读驳回原因。',
         inputSchema: {
           type: 'object',
-          properties: { status: { type: 'string', enum: ['pending', 'rejected'], description: '缺省 pending' } },
+          properties: { status: { type: 'string', enum: ['pending', 'rejected'] } },
         },
       },
     ]
