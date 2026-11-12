@@ -149,6 +149,31 @@ export interface MetricRow extends MetricDef {
    * L1 行恒 null（平台口径的生命周期由声明/PR 管，不由租户归档动作管）。
    */
   archivedAt: string | null
+  /**
+   * 部门归属（047 迁移，P1 Task 3）：**部门内同名互斥**（`metrics_title_per_dept_uq`）的桶键——
+   * null = 平台通用桶（coalesce 后与空串同桶参与互斥）。真值只来自变更单（submitChange 校验
+   * `assertConcept`/`assertTitleFree` 后经 opts.ownership 落库）；L1 物化路径不写，恒 null。
+   * 类型可选（与 `overrideOf?` 同一条理由）：历史夹具不必补字段，读侧 `toMetricRow` 恒产出。
+   */
+  ownerDept?: string | null
+  /**
+   * 差异说明（047 迁移，P1 Task 3）：「这条变体与平台口径差在哪」的人读注记，纯治理标注
+   * （口径本身在 select_sql/声明里，这里不做权威）。同 `ownerDept`：变更单写入，L1 恒 null。
+   */
+  variantNote?: string | null
+}
+
+/**
+ * L2 归属四字段的**可选写面形状**（P1 Task 3，spec §5.1）：create/update 变更单 payload 顶层的
+ * `entity/synonyms/ownerDept/variantNote` 经 adoptChange → writeL2Declaration opts 透传到这里。
+ * **缺席键 = 保留行上既有值**（upsert 冲突分支 coalesce）——「一次不带归属的普通写不得把
+ * 已声明的归属静默洗掉」；显式清空不是 P1 的案例（提交面 zod 拒空串）。
+ */
+export interface MetricOwnership {
+  entity?: string
+  synonyms?: string[]
+  ownerDept?: string
+  variantNote?: string
 }
 
 /**
@@ -248,6 +273,9 @@ function toMetricRow(row: Record<string, unknown>): MetricRow {
     // （坏值宁可当「未归档」也不让整个词表加载因一行脏时间戳抛错——读路径不抛是既有纪律）。
     basis: row.basis === 'column_agg' ? 'column_agg' : row.basis === 'declared' ? 'declared' : 'l1_tree',
     archivedAt: archivedAtOf(row.archived_at),
+    // 归属列（047，P1 Task 3）：nullable 直读——NULL = 无归属（L1 行与未带归属的 L2 行的自然态）
+    ownerDept: (row.owner_dept ?? null) as string | null,
+    variantNote: (row.variant_note ?? null) as string | null,
   }
 }
 
@@ -290,7 +318,7 @@ function drillBindingOf(row: Record<string, unknown>): DrillBinding | undefined 
 
 /** 投影列清单（三处查询共用一处写法——少写/写错一列是「字段静默变 undefined」的经典来源）。 */
 const ROW_COLUMNS =
-  'id, title, description, required_scope, subject_column, select_sql, group_by, params, source, source_system, updated_by, version, totalable, scope_note, sla_days, freshness_relations, mask_spec, drill_expr, drill_dims, drill_detail, certified, created_by, biz_description, unit, caliber_note, entity, synonyms, basis, archived_at, override_of'
+  'id, title, description, required_scope, subject_column, select_sql, group_by, params, source, source_system, updated_by, version, totalable, scope_note, sla_days, freshness_relations, mask_spec, drill_expr, drill_dims, drill_detail, certified, created_by, biz_description, unit, caliber_note, entity, synonyms, basis, archived_at, override_of, owner_dept, variant_note'
 
 /**
  * 本 org 的 L2 行（**不含** L1 平台行）。`order by id`：顺序确定。
@@ -424,19 +452,22 @@ export async function upsertMetric(
   /**
    * `keepDraft`：确认生效路径专用——草稿的清除由 confirm 的**内容条件清除**收尾（竞态守卫），这里别抢。
    * `basis`：测度档（W2，034）。缺省 `l1_tree`（树形）；私有测度创建时显式传 `column_agg`。
+   * `ownership`：归属四字段（047，P1 Task 3，spec §5.1）——变更单采纳路径经 writeL2Declaration
+   *   透传；**缺席键 = 保留行上既有值**（冲突分支 coalesce），显式清空不是 P1 的案例。
    */
-  opts?: { keepDraft?: boolean; basis?: MetricBasis },
+  opts?: { keepDraft?: boolean; basis?: MetricBasis; ownership?: MetricOwnership },
 ): Promise<void> {
   // see SQL 里的 draft_spec 分支：keepDraft = 确认路径（草稿清不清由调用方的条件清除决定）
   const keepDraft = opts?.keepDraft === true
   const basis: MetricBasis = opts?.basis === 'column_agg' ? 'column_agg' : 'l1_tree'
+  const own = opts?.ownership
   // ★ `updatedBy` 是**必填**（不给默认值）：给了默认值就等于留一条「不写人也能写库」的暗道，
   //   而 #489 的全部意义就是堵它。⚠️ 调用方若直接传 Pool（如夹具），参数照传即可——
   //   生产写路径（domain/metric-write）传的是事务里的 client，审计与变更同生共死。
   await db.query(
     `insert into data.metrics
-       (org, id, title, description, required_scope, subject_column, select_sql, group_by, params, source, source_system, updated_by, version, totalable, sla_days, freshness_relations, created_by, certified, basis)
-     values ($1, $2, $3, $4, $5, $6, $7, $8, $9, 'l2', null, $10, 1, false, null, null, $10, 'draft', $11)
+       (org, id, title, description, required_scope, subject_column, select_sql, group_by, params, source, source_system, updated_by, version, totalable, sla_days, freshness_relations, created_by, certified, basis, entity, synonyms, owner_dept, variant_note)
+     values ($1, $2, $3, $4, $5, $6, $7, $8, $9, 'l2', null, $10, 1, false, null, null, $10, 'draft', $11, $12, $13::jsonb, $14, $15)
      on conflict (org, id) do update set
        title          = excluded.title,
        description    = excluded.description,
@@ -453,10 +484,24 @@ export async function upsertMetric(
        --   ⚠️ 例外：确认生效路径（keepDraft）不在这里清——草稿的清除由 confirm 的内容条件
        --      清除收尾，这里抢清会把「load→清」的竞态守卫架空（并发新稿被静默吞掉）。
        ${keepDraft ? '' : 'draft_spec     = null,'}
+       -- ★ 归属四列（047，P1 Task 3）：**缺席 = 保留**（coalesce 落到行上现值）——upsert 是
+       --   内容写，一次不带归属的普通写（PUT/draft 确认/私有测度复活）不得把已声明的归属
+       --   静默洗掉（与 created_at 不碰同一条纪律）。synonyms 的「缺席」以 NULL 表达
+       --   （参数侧缺席键写 NULL 而非 '[]'，见下方参数注释）——jsonb 列可空，读侧归一成 []。
+       entity       = coalesce(excluded.entity, data.metrics.entity),
+       synonyms     = coalesce(excluded.synonyms, data.metrics.synonyms),
+       owner_dept   = coalesce(excluded.owner_dept, data.metrics.owner_dept),
+       variant_note = coalesce(excluded.variant_note, data.metrics.variant_note),
        updated_at     = now()`,
     [
       org, def.id, def.title, def.description, def.requiredScope,
       def.subjectColumn, def.selectSql, def.groupBy, JSON.stringify(def.params), updatedBy, basis,
+      // 归属四列：缺席键一律 NULL（= 冲突分支「保留」信号；新行则落 NULL = 无归属）。
+      // synonyms 刻意**不在缺席时写 '[]'**——'[]' 非 NULL，coalesce 挡不住，会把既有同义词洗成空。
+      own?.entity ?? null,
+      own?.synonyms === undefined ? null : JSON.stringify(own.synonyms),
+      own?.ownerDept ?? null,
+      own?.variantNote ?? null,
     ],
   )
 }

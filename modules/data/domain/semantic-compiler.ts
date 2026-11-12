@@ -656,6 +656,15 @@ function compileRefine(l1Catalog: readonly MetricRow[], decl: L2RefineDeclaratio
 }
 
 /**
+ * expr 档无 alias 时的派生 title（`派生(ref1 / ref2)`）。
+ *
+ * 独立导出的理由（P1 Task 3）：变更单提交面的**同名互斥判据**要在编译发生前推算「生效 title」，
+ * 它必须与 `compileExpr` 落库用的 title 逐字同串——否则会出现「提交判据放行、采纳落库撞 23505」
+ * 的裂缝（与 047 唯一索引 / assertTitleFree 同一条「两把尺必须同构」纪律）。字符串只此一处。
+ */
+export const derivedExprTitle = (refIds: readonly string[]): string => `派生(${refIds.join(' / ')})`
+
+/**
  * B 中档（expr）的编译。
  *
  * 产物形状与 refine **同形**：`select <树> as value[, 可见维度] from <关系>` ——
@@ -709,7 +718,7 @@ function compileExpr(l1Catalog: readonly MetricRow[], decl: L2ExprDeclaration): 
   const dimSelect = visibleDims.length > 0 ? `, ${visibleDims.join(', ')}` : ''
   return {
     selectSql: `select ${renderExprNode(decl.op.expr, refExpr)} as value${dimSelect} from ${sharedShape.relation}`,
-    title: decl.alias ?? `派生(${refIds.join(' / ')})`,
+    title: decl.alias ?? derivedExprTitle(refIds),
     description: `L2 派生自 (${refIds.join(', ')})`,
     subjectColumn: first.subjectColumn,
     groupBy: visibleDims.join(', '),

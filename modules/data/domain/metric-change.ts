@@ -1,11 +1,17 @@
-// metric-change.ts —— 指标变更单状态机（spec §5.2/§7，P0）。
+// metric-change.ts —— 指标变更单状态机（spec §5.2/§7，P0；归属/同名/撞id 判据 P1 Task 3）。
 // 本文件不生效任何指标：生效在 adoptChange（Task 4）分发到既有唯一编译点。
 import type { Pool } from 'pg'
 import { z } from 'zod'
-import { exceedsNesting, L2ExprDeclarationSchema, L2RefineDeclarationSchema } from './semantic-compiler'
+import {
+  collectRefIds, derivedExprTitle, exceedsNesting, L2ExprDeclarationSchema, L2RefineDeclarationSchema,
+  resolveL1Base, SemanticCompileError,
+} from './semantic-compiler'
 import type { L2Declaration } from './semantic-compiler'
 import type { MetricWriteDeps, MetricWriteOutcome, MetricMetaPatch } from './metric-write'
 import { writeL2Declaration, updateMetricMeta, deleteMetricDeclaration } from './metric-write'
+import { loadPlatformCatalog } from './metric-store'
+import type { MetricOwnership } from './metric-store'
+import { assertConcept, assertTitleFree, OwnershipError } from './metric-ownership'
 import type { PreviewSnapshot } from './metric-change-preview'
 
 export type ChangeKind = 'create' | 'update' | 'meta' | 'delete'
@@ -22,7 +28,10 @@ export interface MetricChangeRow {
 
 export type SubmitOutcome =
   | { ok: true; change: MetricChangeRow }
-  | { ok: false; http: 400 | 409; error: 'INVALID_DECLARATION' | 'INVALID_META' | 'CHANGE_ALREADY_PENDING' }
+  | { ok: false; http: 400 | 409; error:
+      | 'INVALID_DECLARATION' | 'INVALID_META' | 'CHANGE_ALREADY_PENDING'
+      // P1 Task 3（spec §13）：概念归属未知（400）/ 部门内同名互斥（409）/ create 撞已有 id（400）
+      | 'UNKNOWN_CONCEPT' | 'TITLE_EXISTS_IN_DEPT' | 'METRIC_ID_EXISTS' }
 
 const MetaPayload = z.object({
   bizDescription: z.string().max(500).optional(),
@@ -31,12 +40,73 @@ const MetaPayload = z.object({
 }).strict()
 
 /**
- * meta 档必须至少有一个字段带实质内容（trim 后非空）。全空提案立了也采纳不了——
- * adoptChange 把 payload 透传给 updateMetricMeta，clean 后一个字段都不动 ⇒ 恒 400
- * EMPTY_META_PATCH，变成一张永远卡在队列里的死单（P0 终审 F3）。所以在提交时就拒。
+ * meta 档判据（P1 Task 3 订正，销缓办④）：「**三键全缺**」才拒——`{}` 立了也采纳不了
+ * （adoptChange 把 payload 透传给 updateMetricMeta，一个字段都不进 SET ⇒ 恒 400
+ * EMPTY_META_PATCH，变成一张永远卡在队列里的死单，P0 终审 F3），所以在提交时就拒。
+ *
+ * ⚠️ P0 注释曾把判据写成「至少一键有实质内容（trim 非空）」——那是**错的**：
+ * 带键但值空的提案（如 `{unit:''}`，乃至三键全空串）会被 updateMetricMeta 的 clean 收口成
+ * null **进 SET**（显式清空契约），根本不是空补丁、不是死单。把显式清空拒在提交期，
+ * 等于堵死了「下架单位标注」这条合法治理路径。P1 订正：只有三键全缺才拒。
  */
-function metaHasContent(p: { bizDescription?: string; unit?: string; caliberNote?: string }): boolean {
-  return [p.bizDescription, p.unit, p.caliberNote].some((v) => v !== undefined && v.trim() !== '')
+function metaAllKeysAbsent(p: { bizDescription?: string; unit?: string; caliberNote?: string }): boolean {
+  return p.bizDescription === undefined && p.unit === undefined && p.caliberNote === undefined
+}
+
+/**
+ * create/update 档 payload 顶层的**归属字段**（047，P1 Task 3，spec §5.1）。
+ * 设计定案：归属**不进** `L2DeclarationBody`（声明形状契约不为它开口子）——它随**行**不随声明，
+ * 与声明字段同栖一个 payload 顶层，采纳时拆出来经 opts.ownership 落库（见 adoptChange）。
+ */
+const OwnershipPayload = z.object({
+  entity: z.string().min(1).max(128).optional(),
+  synonyms: z.array(z.string().min(1).max(32)).max(16).optional(),
+  ownerDept: z.string().min(1).max(128).optional(),
+  variantNote: z.string().min(1).max(500).optional(),
+}).strict()
+
+/** payload 顶层四个归属键（与 OwnershipPayload 逐字同集——多一个键都不算归属键）。 */
+const OWNERSHIP_KEYS: ReadonlySet<string> = new Set(['entity', 'synonyms', 'ownerDept', 'variantNote'])
+
+/**
+ * 把 payload 拆成「声明部分」与「归属部分」：声明部分进共享 schema 校验（strict 不得被
+ * 归属键打脏），归属部分单独按 OwnershipPayload 校验。payload 不是平面对象（数组/标量）
+ * 时原样留给声明校验去拒——不在这里猜形状。
+ */
+function splitOwnershipPayload(payload: unknown): { decl: unknown; own: Record<string, unknown> } {
+  if (payload === null || typeof payload !== 'object' || Array.isArray(payload)) return { decl: payload, own: {} }
+  const decl: Record<string, unknown> = {}
+  const own: Record<string, unknown> = {}
+  for (const [k, v] of Object.entries(payload as Record<string, unknown>)) {
+    if (OWNERSHIP_KEYS.has(k)) own[k] = v
+    else decl[k] = v
+  }
+  return { decl, own }
+}
+
+/**
+ * 生效 title——同名互斥判据（assertTitleFree）的尺子，与编译点**同一条推导**：
+ *   refine 档 = alias ?? 基底 L1 行的 title（compileRefine：`decl.alias ?? base.title`）；
+ *   expr 档   = alias ?? derivedExprTitle(refIds)（compileExpr 同源，串只此一处）。
+ * 解不出（基底不在 L1 词表 / expr 只有字面量）⇒ 返回 null：**跳过提交期同名判据**——
+ * 这类单试算必失败（compileL2 响亮拒绝 ⇒ preview_failed 恒不可采纳），同名闸在采纳前天然闭环，
+ * 不会放行任何能生效的同名行；唯一索引兜 adopt 期的并发窗口。
+ */
+async function effectiveTitleOf(pool: Pool, decl: unknown): Promise<string | null> {
+  const d = decl as { alias?: unknown; op?: { kind?: unknown } }
+  if (typeof d.alias === 'string' && d.alias !== '') return d.alias
+  const kind = d.op === null || typeof d.op !== 'object' ? undefined : d.op.kind
+  const refIds = collectRefIds(decl as L2Declaration)
+  if (kind === 'expr') return refIds.length === 0 ? null : derivedExprTitle(refIds)
+  if (kind === 'refine' && refIds.length === 1) {
+    try {
+      return resolveL1Base(await loadPlatformCatalog(pool), refIds[0]!).title
+    } catch (e) {
+      if (e instanceof SemanticCompileError) return null
+      throw e
+    }
+  }
+  return null
 }
 
 /**
@@ -73,9 +143,50 @@ export async function submitChange(
   metricId: string, kind: ChangeKind, payload: unknown,
 ): Promise<SubmitOutcome> {
   if (metricId.trim() === '' || metricId.length > 128) return { ok: false, http: 400, error: 'INVALID_DECLARATION' }
-  if ((kind === 'create' || kind === 'update') && !parseDeclaration(payload)) return { ok: false, http: 400, error: 'INVALID_DECLARATION' }
+  // create/update 档（P1 Task 3）：声明形状 + 归属字段形状 + 概念归属 + 同名互斥 + create 撞 id，
+  // 全部在**提交期**收口——把可读错误给在立单前，而不是让人在采纳期撞裸 23505/编译错。
+  let ownership: MetricOwnership | undefined
+  if (kind === 'create' || kind === 'update') {
+    const { decl, own } = splitOwnershipPayload(payload)
+    if (!parseDeclaration(decl)) return { ok: false, http: 400, error: 'INVALID_DECLARATION' }
+    const ownParsed = OwnershipPayload.safeParse(own)
+    // 归属字段形状越界（超长/超量/错型）⇒ 与声明形状同罪：payload 整体不可立单
+    if (!ownParsed.success) return { ok: false, http: 400, error: 'INVALID_DECLARATION' }
+    ownership = Object.keys(ownParsed.data).length > 0 ? ownParsed.data : undefined
+    // 缓办②销账：create 撞已有 (org, id) 行 ⇒ 拒收。update 档保留 upsert 语义（「改已生效
+    // 口径」是 update 的本体）；archived 行同判——它仍是 (org, id) 的一行，静默复活是私有测度
+    // 复活路径的职权（要过 creator/manage 闸），不是 create 的。
+    if (kind === 'create') {
+      const exists = await pool.query('select 1 from data.metrics where org = $1 and id = $2', [org, metricId])
+      if ((exists.rowCount ?? 0) > 0) return { ok: false, http: 400, error: 'METRIC_ID_EXISTS' }
+    }
+    // 概念归属（spec §5.3）：entity 必须在 平台 entities ∪ 租户概念 的并集里（null/缺省 = 未声明，放行）
+    try {
+      await assertConcept(pool, org, ownership?.entity ?? null)
+    } catch (e) {
+      if (e instanceof OwnershipError) return { ok: false, http: 400, error: 'UNKNOWN_CONCEPT' }
+      throw e
+    }
+    // 部门内同名互斥（spec §5.1）：按**生效 title** 判（alias ?? 基底/派生 title，见 effectiveTitleOf）；
+    // update 档排除自身——「保留旧 title 只改口径」是合法改法，不能被自己的旧行绊倒。
+    const title = await effectiveTitleOf(pool, decl)
+    if (title !== null) {
+      let bucket = ownership?.ownerDept ?? null
+      if (kind === 'update' && ownership?.ownerDept === undefined) {
+        // update 不换桶时，生效桶 = 行上既有 owner_dept（缺席 = 保留，与 upsertMetric 冲突分支同语义）
+        const cur = await pool.query('select owner_dept from data.metrics where org = $1 and id = $2', [org, metricId])
+        bucket = (cur.rows[0]?.owner_dept as string | null | undefined) ?? null
+      }
+      try {
+        await assertTitleFree(pool, org, bucket, title, kind === 'update' ? metricId : undefined)
+      } catch (e) {
+        if (e instanceof OwnershipError) return { ok: false, http: 409, error: 'TITLE_EXISTS_IN_DEPT' }
+        throw e
+      }
+    }
+  }
   const meta = kind === 'meta' ? MetaPayload.safeParse(payload) : null
-  if (kind === 'meta' && (meta === null || !meta.success || !metaHasContent(meta.data))) {
+  if (kind === 'meta' && (meta === null || !meta.success || metaAllKeysAbsent(meta.data))) {
     return { ok: false, http: 400, error: 'INVALID_META' }
   }
   if (kind === 'delete' && payload !== null && typeof payload === 'object' && Object.keys(payload as object).length > 0) {
@@ -138,6 +249,23 @@ export type DecideOutcome =
 const DECIDED_STATUSES: readonly ChangeStatus[] = ['adopted', 'rejected', 'superseded', 'withdrawn']
 
 /**
+ * 从单据 payload 顶层解出归属字段（P1 Task 3）：只认**真值形状**——P0 时代的历史单、
+ * 形状漂移的手改行，都不会把垃圾写进 upsert 参数；全缺 ⇒ undefined（= upsert 冲突分支
+ * 全 coalesce 保留，行为与 P0 逐字一致）。形状校验的权威在提交期（OwnershipPayload），
+ * 这里只做防御性收口。
+ */
+function ownershipOfPayload(payload: unknown): MetricOwnership | undefined {
+  if (payload === null || typeof payload !== 'object' || Array.isArray(payload)) return undefined
+  const raw = payload as Record<string, unknown>
+  const own: MetricOwnership = {}
+  if (typeof raw.entity === 'string' && raw.entity !== '') own.entity = raw.entity
+  if (Array.isArray(raw.synonyms)) own.synonyms = raw.synonyms.filter((s): s is string => typeof s === 'string')
+  if (typeof raw.ownerDept === 'string' && raw.ownerDept !== '') own.ownerDept = raw.ownerDept
+  if (typeof raw.variantNote === 'string' && raw.variantNote !== '') own.variantNote = raw.variantNote
+  return Object.keys(own).length > 0 ? own : undefined
+}
+
+/**
  * 采纳：preview_ready 才可；按 kind 分发到既有唯一编译点（本函数不自造第二条写路径）。
  * 写成功后才翻状态（CAS）；被并发抢先 ⇒ 409 CHANGE_STATE_CHANGED。
  * 注意：生效写本身幂等（upsert/meta 幂等；delete 重试会 404 如实返回）——
@@ -153,7 +281,10 @@ export async function adoptChange(deps: MetricWriteDeps, org: string, id: number
 
   let out: MetricWriteOutcome
   if (cur.kind === 'create' || cur.kind === 'update') {
-    out = await writeL2Declaration(deps, org, cur.metricId, cur.payload as unknown as L2Declaration)
+    // 归属随单透传（P1 Task 3，spec §5.1）：payload 顶层的 entity/synonyms/ownerDept/variantNote
+    // 不进声明（L2DeclarationBody 不动），经 opts.ownership 落到行上；缺席键 = 保留行上既有值。
+    out = await writeL2Declaration(deps, org, cur.metricId, cur.payload as unknown as L2Declaration,
+      { ownership: ownershipOfPayload(cur.payload) })
   } else if (cur.kind === 'meta') {
     // 逐字段透传（**不补默认值**）：updateMetricMeta 的契约是 `undefined`=不改该字段、
     // `''`=显式清空（routes/metrics.ts PUT /metrics/:id/meta 同款用法）。

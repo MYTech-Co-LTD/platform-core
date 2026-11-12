@@ -287,6 +287,8 @@ describePg('metric-store（需要 DATABASE_URL）', () => {
         bizDescription: null, unit: null, caliberNote: null,
         // 实体 / 同义词（W0，031）：L2 行没有声明面 ⇒ 恒 null / []（读侧恒有值，不是可选）
         entity: null, synonyms: [],
+        // 归属列（047，P1 Task 3）：经变更单才写 ⇒ 存储侧行恒携带（无归属 = null，不是键缺席）
+        ownerDept: null, variantNote: null,
         // 测度档与归档（W2，034）：L2 缺省档 = 树（l1_tree），未归档
         basis: 'l1_tree', archivedAt: null,
         // 租户覆盖（W8，041）：L2 普通行 = 非覆盖，映射恒带 null
