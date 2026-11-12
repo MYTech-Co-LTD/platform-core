@@ -645,3 +645,395 @@ models:
 # stg_lemeng_retail_order_line 的形状一致 —— 它也只给同名的两个自然键列挂）。
 # 契约里 batch_id / system_book / snapshot 同样 `nullable=false`，但这三列在本层是
 # 「路径推断 + cast」的产物，非空性由上游分区结构保证；要不要把它们也升成断言属**独立决定**。
+
+  # ═══════════════════════════════════════════════════════════════════════════════════
+  # 2026-11-12（Wave 2.1 第三批）：补齐此前**整体未登记**的 16 个 staging 模型。
+  #
+  # 登记口径：**列集与空值性的事实源是契约**（`contracts/common/lemeng.<table>.json`），
+  # 这里只登记「本层要守的形状」——给契约里 `nullable=false` 的列挂 `not_null`
+  # （门禁：契约说了却没人守 = 红，见 `scripts/check-data-contract.mjs`）。
+  # 因此多数列**不写 description**：本层没有引入新语义，复制契约文字只会漂（见文件头注）。
+  # 挂 not_null 前逐列在生产取证过（窗口内 null 计数全 0，见 PR #1999 之后的批次记录）。
+  # ═══════════════════════════════════════════════════════════════════════════════════
+
+  - name: stg_lemeng_branch_expense
+    description: >-
+      乐檬 `branch_expense` staging（新湖）。列集与空值性以 `contracts/common/lemeng.branch_expense.json` 为准；
+      本层只做取列/命名/透传/分区键定型（layered §3：一对一、只规范化不改义）。
+      下面只登记契约 `nullable=false` 的列（not_null），不复制契约逐列描述。
+    columns:
+      - name: batch_id
+        tests:
+          - not_null
+      - name: system_book
+        tests:
+          - not_null
+      - name: bizday
+        tests:
+          - not_null
+      - name: bill_no
+        tests:
+          - not_null
+      - name: branch_num
+        tests:
+          - not_null
+      - name: expense_type
+        tests:
+          - not_null
+      - name: direction
+        tests:
+          - not_null
+  - name: stg_lemeng_branch_indicator
+    description: >-
+      乐檬 `branch_indicator` staging（新湖）。列集与空值性以 `contracts/common/lemeng.branch_indicator.json` 为准；
+      本层只做取列/命名/透传/分区键定型（layered §3：一对一、只规范化不改义）。
+      下面只登记契约 `nullable=false` 的列（not_null），不复制契约逐列描述。
+    columns:
+      - name: batch_id
+        tests:
+          - not_null
+      - name: system_book
+        tests:
+          - not_null
+      - name: bizday
+        tests:
+          - not_null
+      - name: branch_num
+        tests:
+          - not_null
+      - name: metric
+        tests:
+          - not_null
+      - name: actual_value
+        tests:
+          - not_null
+      - name: computed_at
+        tests:
+          - not_null
+  - name: stg_lemeng_business_collection
+    description: >-
+      乐檬 `business_collection` staging（新湖）。列集与空值性以 `contracts/common/lemeng.business_collection.json` 为准；
+      本层只做取列/命名/透传/分区键定型（layered §3：一对一、只规范化不改义）。
+      下面只登记契约 `nullable=false` 的列（not_null），不复制契约逐列描述。
+    columns:
+      - name: batch_id
+        tests:
+          - not_null
+      - name: system_book
+        tests:
+          - not_null
+      - name: bizday
+        tests:
+          - not_null
+      - name: branch_num
+        tests:
+          - not_null
+      - name: computed_at
+        tests:
+          - not_null
+  - name: stg_lemeng_business_collection_coupon
+    description: >-
+      乐檬 `business_collection_coupon` staging（新湖）。列集与空值性以 `contracts/common/lemeng.business_collection_coupon.json` 为准；
+      本层只做取列/命名/透传/分区键定型（layered §3：一对一、只规范化不改义）。
+      下面只登记契约 `nullable=false` 的列（not_null），不复制契约逐列描述。
+    columns:
+      - name: batch_id
+        tests:
+          - not_null
+      - name: system_book
+        tests:
+          - not_null
+      - name: bizday
+        tests:
+          - not_null
+      - name: branch_num
+        tests:
+          - not_null
+      - name: computed_at
+        tests:
+          - not_null
+  - name: stg_lemeng_business_collection_receive
+    description: >-
+      乐檬 `business_collection_receive` staging（新湖）。列集与空值性以 `contracts/common/lemeng.business_collection_receive.json` 为准；
+      本层只做取列/命名/透传/分区键定型（layered §3：一对一、只规范化不改义）。
+      下面只登记契约 `nullable=false` 的列（not_null），不复制契约逐列描述。
+    columns:
+      - name: batch_id
+        tests:
+          - not_null
+      - name: system_book
+        tests:
+          - not_null
+      - name: bizday
+        tests:
+          - not_null
+      - name: branch_num
+        tests:
+          - not_null
+      - name: computed_at
+        tests:
+          - not_null
+  - name: stg_lemeng_client
+    description: >-
+      乐檬 `client` staging（新湖）。列集与空值性以 `contracts/common/lemeng.client.json` 为准；
+      本层只做取列/命名/透传/分区键定型（layered §3：一对一、只规范化不改义）。
+      下面只登记契约 `nullable=false` 的列（not_null），不复制契约逐列描述。
+    columns:
+      - name: batch_id
+        tests:
+          - not_null
+      - name: system_book
+        tests:
+          - not_null
+      - name: snapshot
+        tests:
+          - not_null
+      - name: client_fid
+        tests:
+          - not_null
+  - name: stg_lemeng_client_expense
+    description: >-
+      乐檬 `client_expense` staging（新湖）。列集与空值性以 `contracts/common/lemeng.client_expense.json` 为准；
+      本层只做取列/命名/透传/分区键定型（layered §3：一对一、只规范化不改义）。
+      下面只登记契约 `nullable=false` 的列（not_null），不复制契约逐列描述。
+    columns:
+      - name: batch_id
+        tests:
+          - not_null
+      - name: system_book
+        tests:
+          - not_null
+      - name: bizday
+        tests:
+          - not_null
+      - name: other_inout_bill_no
+        tests:
+          - not_null
+      - name: client_fid
+        tests:
+          - not_null
+      - name: other_inout_flag
+        tests:
+          - not_null
+      - name: other_inout_kind
+        tests:
+          - not_null
+  - name: stg_lemeng_customer_analysis
+    description: >-
+      乐檬 `customer_analysis` staging（新湖）。列集与空值性以 `contracts/common/lemeng.customer_analysis.json` 为准；
+      本层只做取列/命名/透传/分区键定型（layered §3：一对一、只规范化不改义）。
+      下面只登记契约 `nullable=false` 的列（not_null），不复制契约逐列描述。
+    columns:
+      - name: batch_id
+        tests:
+          - not_null
+      - name: system_book
+        tests:
+          - not_null
+      - name: bizday
+        tests:
+          - not_null
+      - name: branch_num
+        tests:
+          - not_null
+      - name: time_period
+        tests:
+          - not_null
+      - name: computed_at
+        tests:
+          - not_null
+  - name: stg_lemeng_inventory_movement
+    description: >-
+      乐檬 `inventory_movement` staging（新湖）。列集与空值性以 `contracts/common/lemeng.inventory_movement.json` 为准；
+      本层只做取列/命名/透传/分区键定型（layered §3：一对一、只规范化不改义）。
+      下面只登记契约 `nullable=false` 的列（not_null），不复制契约逐列描述。
+    columns:
+      - name: batch_id
+        tests:
+          - not_null
+      - name: system_book
+        tests:
+          - not_null
+      - name: bizday
+        tests:
+          - not_null
+      - name: movement_id
+        tests:
+          - not_null
+      - name: branch_num
+        tests:
+          - not_null
+      - name: item_num
+        tests:
+          - not_null
+      - name: computed_at
+        tests:
+          - not_null
+  - name: stg_lemeng_item_category
+    description: >-
+      乐檬 `item_category` staging（新湖）。列集与空值性以 `contracts/common/lemeng.item_category.json` 为准；
+      本层只做取列/命名/透传/分区键定型（layered §3：一对一、只规范化不改义）。
+      下面只登记契约 `nullable=false` 的列（not_null），不复制契约逐列描述。
+    columns:
+      - name: batch_id
+        tests:
+          - not_null
+      - name: system_book
+        tests:
+          - not_null
+      - name: snapshot
+        tests:
+          - not_null
+      - name: category_id
+        tests:
+          - not_null
+      - name: level
+        tests:
+          - not_null
+  - name: stg_lemeng_item_profit
+    description: >-
+      乐檬 `item_profit` staging（新湖）。列集与空值性以 `contracts/common/lemeng.item_profit.json` 为准；
+      本层只做取列/命名/透传/分区键定型（layered §3：一对一、只规范化不改义）。
+      下面只登记契约 `nullable=false` 的列（not_null），不复制契约逐列描述。
+    columns:
+      - name: batch_id
+        tests:
+          - not_null
+      - name: system_book
+        tests:
+          - not_null
+      - name: bizday
+        tests:
+          - not_null
+      - name: branch_num
+        tests:
+          - not_null
+      - name: item_num
+        tests:
+          - not_null
+      - name: sale_money
+        tests:
+          - not_null
+      - name: computed_at
+        tests:
+          - not_null
+  - name: stg_lemeng_item_sales
+    description: >-
+      乐檬 `item_sales` staging（新湖）。列集与空值性以 `contracts/common/lemeng.item_sales.json` 为准；
+      本层只做取列/命名/透传/分区键定型（layered §3：一对一、只规范化不改义）。
+      下面只登记契约 `nullable=false` 的列（not_null），不复制契约逐列描述。
+    columns:
+      - name: batch_id
+        tests:
+          - not_null
+      - name: system_book
+        tests:
+          - not_null
+      - name: bizday
+        tests:
+          - not_null
+      - name: branch_num
+        tests:
+          - not_null
+      - name: item_num
+        tests:
+          - not_null
+      - name: sale_num
+        tests:
+          - not_null
+      - name: computed_at
+        tests:
+          - not_null
+  - name: stg_lemeng_loss_adjustment
+    description: >-
+      乐檬 `loss_adjustment` staging（新湖）。列集与空值性以 `contracts/common/lemeng.loss_adjustment.json` 为准；
+      本层只做取列/命名/透传/分区键定型（layered §3：一对一、只规范化不改义）。
+      下面只登记契约 `nullable=false` 的列（not_null），不复制契约逐列描述。
+    columns:
+      - name: batch_id
+        tests:
+          - not_null
+      - name: system_book
+        tests:
+          - not_null
+      - name: bizday
+        tests:
+          - not_null
+      - name: order_no
+        tests:
+          - not_null
+      - name: branch_num
+        tests:
+          - not_null
+      - name: cause
+        tests:
+          - not_null
+  - name: stg_lemeng_member_summary
+    description: >-
+      乐檬 `member_summary` staging（新湖）。列集与空值性以 `contracts/common/lemeng.member_summary.json` 为准；
+      本层只做取列/命名/透传/分区键定型（layered §3：一对一、只规范化不改义）。
+      下面只登记契约 `nullable=false` 的列（not_null），不复制契约逐列描述。
+    columns:
+      - name: batch_id
+        tests:
+          - not_null
+      - name: system_book
+        tests:
+          - not_null
+      - name: bizday
+        tests:
+          - not_null
+      - name: order_sale_type
+        tests:
+          - not_null
+      - name: branch_num
+        tests:
+          - not_null
+  - name: stg_lemeng_recon_source
+    description: >-
+      乐檬 `recon_source` staging（新湖）。列集与空值性以 `contracts/common/lemeng.recon_source.json` 为准；
+      本层只做取列/命名/透传/分区键定型（layered §3：一对一、只规范化不改义）。
+      下面只登记契约 `nullable=false` 的列（not_null），不复制契约逐列描述。
+    columns:
+      - name: batch_id
+        tests:
+          - not_null
+      - name: system_book
+        tests:
+          - not_null
+      - name: bizday
+        tests:
+          - not_null
+      - name: chunk_no
+        tests:
+          - not_null
+      - name: branch_num
+        tests:
+          - not_null
+      - name: computed_at
+        tests:
+          - not_null
+  - name: stg_lemeng_saler_commission
+    description: >-
+      乐檬 `saler_commission` staging（新湖）。列集与空值性以 `contracts/common/lemeng.saler_commission.json` 为准；
+      本层只做取列/命名/透传/分区键定型（layered §3：一对一、只规范化不改义）。
+      下面只登记契约 `nullable=false` 的列（not_null），不复制契约逐列描述。
+    columns:
+      - name: batch_id
+        tests:
+          - not_null
+      - name: system_book
+        tests:
+          - not_null
+      - name: bizday
+        tests:
+          - not_null
+      - name: branch_num
+        tests:
+          - not_null
+      - name: saler
+        tests:
+          - not_null
+      - name: computed_at
+        tests:
+          - not_null
