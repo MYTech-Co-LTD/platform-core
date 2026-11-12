@@ -17,6 +17,9 @@ import { loadMergedCatalog } from '../domain/metric-store'
 import { L2RefineDeclarationSchema, L2ExprDeclarationSchema, ExprNodeSchema, dimensionNamesOf } from '../domain/semantic-compiler'
 import { deleteMetricDeclaration, writeL2Declaration } from '../domain/metric-write'
 import type { L2DeclarationBody, MetricWriteOutcome } from '../domain/metric-write'
+import { listChanges, submitChange } from '../domain/metric-change'
+import type { ChangeKind } from '../domain/metric-change'
+import { mutatingAllowed } from '../domain/toolbox/registry'
 import type { McpDeps, McpToolGroup, McpToolResult } from './mcp-rpc'
 
 /**
@@ -39,6 +42,21 @@ const CustomizeExprArgs = L2ExprDeclarationSchema
 const CustomizeArgs = z.union([CustomizeRefineArgs, CustomizeExprArgs])
 
 const DeleteArgs = z.object({ id: z.string().min(1).max(64) }).strict()
+
+/**
+ * 变更单提案入参（P0 Task 6）：形状闸在本文件（与 customize/delete 同规，INVALID_BODY）；
+ * 「能不能立单」的语义闸在 domain/metric-change（与 HTTP 面同一份 submitChange）。
+ * `payload` 形状按 kind 分派给域层 zod（refine/expr union / meta 三键 / delete 空对象），面级不复制。
+ */
+const SubmitArgs = z.object({
+  metricId: z.string().min(1).max(128),
+  kind: z.enum(['create', 'update', 'meta', 'delete']),
+  payload: z.unknown().optional(),
+}).strict()
+/** list 的可选档：pending（默认，待人工裁决的队列）与 rejected（读驳回原因）。 */
+const ListChangesArgs = z.object({
+  status: z.enum(['pending', 'rejected']).optional(),
+}).strict()
 
 const ok = (o: Record<string, unknown>) => ({ text: JSON.stringify({ status: 'ok', ...o }), isError: false })
 
@@ -112,12 +130,38 @@ export const metricTools: McpToolGroup = {
           required: ['id'],
         },
       },
+      {
+        name: 'submit_metric_change',
+        description: [
+          '提交指标变更单（create/update/meta/delete）：**只提案不生效，等待人工采纳**；',
+          '采纳与驳回是人（控制台）专属动作，不提供工具。驳回原因在 list_metric_changes 里读（status=rejected）。',
+          'MCP 面不做自动试算：提交后为 draft，试算预览由人在控制台触发后单据才可被采纳。',
+        ].join(''),
+        inputSchema: {
+          type: 'object',
+          properties: {
+            metricId: { type: 'string', description: '目标口径 id（create=新 id，≤128 字；update/meta=已有自定义口径；delete=要删的自定义口径）' },
+            kind: { type: 'string', enum: ['create', 'update', 'meta', 'delete'], description: '变更类型' },
+            payload: { type: 'object', description: 'create/update=声明档（baseMetric 必填，alias/visibility/filters 或 expr）；meta={bizDescription?,unit?,caliberNote?}；delete 留空' },
+          },
+          required: ['metricId', 'kind', 'payload'],
+        },
+      },
+      {
+        name: 'list_metric_changes',
+        description: '列出本租户的指标变更单：默认 pending（待人工裁决队列，提交后用它确认自己的单）；status=rejected 读驳回原因。',
+        inputSchema: {
+          type: 'object',
+          properties: { status: { type: 'string', enum: ['pending', 'rejected'], description: '缺省 pending' } },
+        },
+      },
     ]
   },
 
   async call(deps: McpDeps, name: string, args: Record<string, unknown>): Promise<McpToolResult | null> {
     // 认领判定：不是口径片的工具 ⇒ 交回合成方（差别**只有**这一行与其返回类型）
-    if (name !== 'customize_metric' && name !== 'delete_custom_metric' && name !== 'list_metrics') return null
+    if (name !== 'customize_metric' && name !== 'delete_custom_metric' && name !== 'list_metrics'
+      && name !== 'submit_metric_change' && name !== 'list_metric_changes') return null
     if (deps.requester === null) {
       return { text: JSON.stringify({ status: 'error', reason: 'unauthenticated' }), isError: true }
     }
@@ -130,6 +174,34 @@ export const metricTools: McpToolGroup = {
       const bases = visibleMetrics(
         all.filter((m) => m.source === 'l1'), deps.requester, deps.adoptedSources)
       return ok({ bases: bases.map(view), custom: all.filter((m) => m.source === 'l2').map(view) })
+    }
+
+    if (name === 'submit_metric_change') {
+      // 写总闸与管线提案片同规（DATA_MCP_ALLOW_MUTATING 恰为 'true' 才开）：
+      // 拒的形态也同款（denied/mutating_disabled，工具级错误）。
+      if (!mutatingAllowed(process.env as Record<string, string | undefined>)) {
+        return { text: JSON.stringify({ status: 'denied', reason: 'mutating_disabled' }), isError: true }
+      }
+      const parsed = SubmitArgs.safeParse(args)
+      if (!parsed.success) return refused({ ok: false, http: 400, error: 'INVALID_BODY' })
+      // submitted_channel 用 'mcp'（不是 'pat'）：区分「工具面提的单」与「HTTP 面提的单」，
+      // 决策端点的 session-only 闸只看 requester.channel，不受此值影响。
+      const out = await submitChange(deps.pool, deps.org,
+        { userId: requester.userId, channel: 'mcp' },
+        parsed.data.metricId, parsed.data.kind as ChangeKind, parsed.data.payload ?? {})
+      // **只提案**：生效只发生在人采纳（adoptChange）之后，本工具不接 preview/adopt。
+      if (!out.ok) return { text: JSON.stringify({ status: 'refused', error: out.error }), isError: true }
+      return ok({ changeId: out.change.id, state: out.change.status })
+    }
+
+    if (name === 'list_metric_changes') {
+      const parsed = ListChangesArgs.safeParse(args)
+      if (!parsed.success) return refused({ ok: false, http: 400, error: 'INVALID_BODY' })
+      const changes = await listChanges(deps.pool, deps.org, parsed.data.status ?? 'pending')
+      return ok({ changes: changes.map((c) => ({
+        id: c.id, metricId: c.metricId, kind: c.kind, status: c.status, preview: c.preview,
+        submittedBy: c.submittedBy, submittedAt: c.submittedAt, rejectReason: c.rejectReason,
+      })) })
     }
 
     if (name === 'customize_metric') {
