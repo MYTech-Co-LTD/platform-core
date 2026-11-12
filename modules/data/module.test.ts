@@ -60,7 +60,7 @@ describePg('迁移（需要 DATABASE_URL）', () => {
     }
   })
 
-  it('二十四张表建成（001 三张 + 002 报表登记 + 009 三张发布维 + 010 口径审计 + 011 价格批 + 012 调出单 + 013 批发单 + 014 取价面 + 015 客户对照 + 022 报表版本 + 023 AI 文本缓存 + 026 资产 ACL/审计 + 032 已验证问答 + 034 测度候选 + 036 需求台账 + 042 数据范围），且 data.query_keys.token_hash 唯一', async () => {
+  it('二十五张表建成（001 三张 + 002 报表登记 + 009 三张发布维 + 010 口径审计 + 011 价格批 + 012 调出单 + 013 批发单 + 014 取价面 + 015 客户对照 + 022 报表版本 + 023 AI 文本缓存 + 026 资产 ACL/审计 + 032 已验证问答 + 034 测度候选 + 036 需求台账 + 042 数据范围 + 046 变更单），且 data.query_keys.token_hash 唯一', async () => {
     await applyMigrations(pool)
     const t = await pool.query(
       `select table_name from information_schema.tables
@@ -71,7 +71,7 @@ describePg('迁移（需要 DATABASE_URL）', () => {
     expect(t.rows.map((r) => r.table_name)).toEqual([
       'asset_acl', 'asset_audit',
       'client_store_override', 'demand_mining_state', 'demand_signals',
-      'dim_branch', 'dim_item', 'dim_item_price', 'dim_settlement_order_line', 'dim_transfer_out', 'dim_wholesale_out', 'metric_audit', 'metric_candidates', 'metrics', 'query_audit', 'query_keys', 'report_narratives', 'report_versions', 'reports', 'scope', 'scope_assignment', 'scope_audit', 'semantic_relation', 'verified_questions',
+      'dim_branch', 'dim_item', 'dim_item_price', 'dim_settlement_order_line', 'dim_transfer_out', 'dim_wholesale_out', 'metric_audit', 'metric_candidates', 'metric_change', 'metrics', 'query_audit', 'query_keys', 'report_narratives', 'report_versions', 'reports', 'scope', 'scope_assignment', 'scope_audit', 'semantic_relation', 'verified_questions',
     ])
 
     // 口径两条（都是开工实测订正，别按口味改回去）：
