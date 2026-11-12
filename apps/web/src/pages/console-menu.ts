@@ -43,6 +43,8 @@ export function visibleAdminEntries(
 export interface AdminMenuInput {
   adminEntries: VisibleAdminEntry[]
   storageVisible: boolean
+  /** 「数据范围」入口：data 模块启用 + 持 data:manage（页面本体仍在数据模块路由上） */
+  dataScopesVisible: boolean
 }
 
 /**
@@ -62,9 +64,12 @@ function adminGroup(iconMap: Record<string, ReactNode>, admin: AdminMenuInput): 
   const permissions: MenuDataItem[] = [
     { path: '/console/admin/roles', name: '角色' },
     { path: '/console/admin/permissions', name: '权限码授权' },
-    // 「数据范围」不再在这里并列一条：它已作为「数据分析」的二级菜单叶子存在
-    // （manifest 声明 /console/data/scopes）。同一 path 在菜单里出现两次会让 antd Menu
-    // 双高亮并告警；管理员的逐人分配动线在「成员 → 配置权限」抽屉里。
+    // 数据范围是**权限配置**，归这里（#1953 四期）。它的页面/API 仍住在 data 模块
+    // （manifest 该条目 menu:false，见 docs/design/console-ui-conventions.md §1），
+    // 所以 path 指向模块路由；菜单里只出现这一次，不会双高亮。
+    ...(admin.dataScopesVisible
+      ? [{ path: '/console/data/scopes', name: '数据范围' }]
+      : []),
   ]
   const settings: MenuDataItem[] = [
     { path: '/console/admin/subscriptions', name: '我的订阅' },
@@ -94,6 +99,8 @@ export interface VisibleConsoleEntry {
   path: string
   title: string
   icon?: string
+  /** manifest `menu:false`：有路由但不进模块侧栏（入口在别处，例如「管理 → 数据范围」） */
+  menuHidden?: boolean
 }
 
 export interface ScopeLike {
@@ -115,7 +122,11 @@ export function visibleConsoleEntries(
       const reg = registry.find((r) => r.path === c.path)
       if (!reg) continue // config 有但构建期没挂载（新模块未发布）→ 不可见
       if (!session.scopes.includes(c.scope)) continue // 权限门禁
-      out.push({ moduleId: m.id, moduleName: m.name, path: reg.path, title: c.title, icon: c.icon ?? reg.icon })
+      out.push({
+        moduleId: m.id, moduleName: m.name, path: reg.path, title: c.title,
+        icon: c.icon ?? reg.icon,
+        ...(reg.menuHidden === true ? { menuHidden: true } : {}),
+      })
     }
   }
   return out
@@ -137,10 +148,12 @@ export function entriesToMenuItems(
 ): MenuDataItem[] {
   const isChildOf = (e: VisibleConsoleEntry, p: VisibleConsoleEntry): boolean =>
     e !== p && e.path.startsWith(`${p.path}/`)
-  const top = entries.filter((e) => !entries.some((p) => isChildOf(e, p)))
+  // menuHidden 的条目只保留路由、不出现在菜单里（如数据范围 → 管理组）
+  const visible = entries.filter((e) => e.menuHidden !== true)
+  const top = visible.filter((e) => !visible.some((p) => isChildOf(e, p)))
   return top.map((e) => {
     // 直接子页（只收一层：孙页也挂在父下，避免 manifest 写错时静默丢条目）
-    const children = entries.filter((c) => isChildOf(c, e))
+    const children = visible.filter((c) => isChildOf(c, e))
     const icon = iconMap[e.icon ?? ''] ?? iconMap['AppstoreOutlined']
     if (children.length === 0) return { path: e.path, name: e.title, icon }
     return {

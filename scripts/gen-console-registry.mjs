@@ -51,6 +51,8 @@ function entriesFor(moduleId, manifest) {
         // description 是「这页能干什么」的一句话，宿主统一渲染在页头（#1953 三期）
         ...(typeof item.icon === 'string' ? { icon: item.icon } : {}),
         ...(typeof item.description === 'string' && item.description !== '' ? { description: item.description } : {}),
+        // menu:false ⇒ 该页有路由但**不进模块侧栏**（由宿主在别处给入口，如「管理→数据范围」）
+        ...(item.menu === false ? { menuHidden: true } : {}),
         scope: item.scope,
         // entry 形如 ./console/main.tsx —— import 说明符只需去掉 ./ 前缀
         entry: item.entry.replace(/^\.\//, ''),
@@ -130,6 +132,8 @@ export interface ConsoleRegistryEntry {
   icon?: string
   /** 一句话说明「这页能干什么」；宿主统一渲染成页头说明（#1953 三期） */
   description?: string
+  /** true = 不进模块侧栏（路由仍可达；入口由宿主另行提供） */
+  menuHidden?: boolean
   /** 访问该页所需权限 scope（session.scopes 成员判定） */
   scope: string
   /** 构建期聚合的懒加载器：模块 console 页模块的 default 导出（组件） */
@@ -142,11 +146,12 @@ const body = entries
   .map((e) => {
     const iconLine = e.icon === undefined ? '' : `\n    icon: ${JSON.stringify(e.icon)},`
     const descLine = e.description === undefined ? '' : `\n    description: ${JSON.stringify(e.description)},`
+    const hiddenLine = e.menuHidden === true ? '\n    menuHidden: true,' : ''
     return `  {
     path: ${JSON.stringify(e.path)},
     title: ${JSON.stringify(e.title)},
     group: ${JSON.stringify(e.group)},
-    moduleId: ${JSON.stringify(e.moduleId)},${iconLine}${descLine}
+    moduleId: ${JSON.stringify(e.moduleId)},${iconLine}${descLine}${hiddenLine}
     scope: ${JSON.stringify(e.scope)},
     load: () => import(${relModuleImport(e)}),
   },`

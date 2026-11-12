@@ -266,6 +266,7 @@ function ConsoleLayout({
       buildConsoleMenu(visibleConsoleEntries(config, session, consoleRegistry), CONSOLE_ICONS, session, {
         adminEntries: visibleAdminEntries(config, session, consoleRegistry),
         storageVisible: storageDeclarers.some((id) => config.modules.some((m) => m.id === id)),
+        dataScopesVisible: config.modules.some((m) => m.id === 'data') && session.scopes.includes('data:manage'),
       }),
     [config, session],
   )
