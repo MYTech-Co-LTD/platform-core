@@ -17,7 +17,6 @@ import DeclarationModal from './DeclarationModal'
 import type { DeclarationMode, DeclarationSeed } from './DeclarationModal'
 import { useIsMobile } from '../lib/useIsMobile'
 import { TechDetails } from '../components/TechDetails'
-import { Explain } from '../components/Explain'
 
 interface MetricRow {
   id: string
@@ -135,6 +134,9 @@ export default function MetricsPage() {
   const [declMode, setDeclMode] = useState<DeclarationMode>('create')
   const [declSeed, setDeclSeed] = useState<DeclarationSeed>({ id: '', title: '', description: '', expression: '', grain: [] })
   const [messageApi, ctx] = message.useMessage()
+  // B 方案（2026-11-12）：左列表 + 右详情。选中行决定右侧展示与操作；
+  // 默认选第一条（筛选变化后若原选中被过滤掉，回落第一条）。
+  const [selectedId, setSelectedId] = useState<string | null>(null)
   // 候选指标的发现入口（#1953 四期）：候选不是「指标的子类」，而是**上游管道**——
   // 用户不会每天主动去翻管理面列表，所以在指标页顶部把「有待处理的」推到眼前。
   // 不做前端 scope 判断：该端点门是 data:manage，无码者拿 403 就静默不显示（入口姿态，
@@ -200,8 +202,10 @@ export default function MetricsPage() {
   }
 
   /** 从 L1 行的 select_sql 里反解表达式（仅用于表单预填；服务端仍按提交的声明重新编译）。 */
-  const exprOf = (sql: string): string => {
-    const m = /^select\s+([\s\S]+?)\s+as\s+value/i.exec(sql.trim())
+  // selectSql 在部分调用方（console 壳的测试夹具/旧数据）可能缺省——这里兜住，
+  // 否则详情面板常驻渲染时 .trim() 会把整页打成 React 错误边界（真机少见，测试必现）。
+  const exprOf = (sql: string | null | undefined): string => {
+    const m = /^select\s+([\s\S]+?)\s+as\s+value/i.exec((sql ?? '').trim())
     return m?.[1]?.trim() ?? ''
   }
   const seedOfL1 = (r: MetricRow): DeclarationSeed => ({
@@ -567,83 +571,112 @@ export default function MetricsPage() {
         </Card>
       )}
 
-      {isMobile ? mobileCards : (
-      <Table
-        rowKey="id"
-        dataSource={visibleRows}
-        pagination={false}
-        scroll={{ x: 1080 }}
-        locale={{ emptyText }}
-        columns={[
-        { title: 'id', dataIndex: 'id', width: 180, ellipsis: { showTitle: true } },
-        { title: '标题', dataIndex: 'title', ellipsis: { showTitle: true } },
-        { title: '说明', dataIndex: 'description', ellipsis: { showTitle: true } },
-        // 口径（单页双层，2026-11-12）：默认层给**业务说法**（元数据里的「业务描述」优先，退到说明），
-        // 专业读者展开「技术细节」才看到表达式 / 维度 / 版本 / 权限码 / 覆盖来源。
-        { title: <Explain term="caliber">口径</Explain>, width: 220, render: (_: unknown, r: MetricRow) => (
-            <div style={{ minWidth: 0 }}>
-              <Typography.Text ellipsis={{ tooltip: r.bizDescription ?? r.description }}>
-                {r.bizDescription ?? (r.description !== '' ? r.description : '未标注')}
-              </Typography.Text>
-              <TechDetails>
-                <div>表达式：{exprOf(r.selectSql) || r.selectSql}</div>
-                <div>分组维度：{dimsOf(r).join('、') || '—'}</div>
-                <div>所需权限：{r.requiredScope ?? '不限'}　主体列：{r.subjectColumn}</div>
-                <div>版本：{r.source === 'l1' ? '平台物化（追溯走 git）' : `v${r.version}`}　最后操作人：{r.updatedBy ?? (r.source === 'l1' ? '平台物化' : '—')}</div>
-                {r.overrideOf != null && <div>口径覆盖：本行覆盖平台指标 <code>{r.overrideOf}</code></div>}
-                <div style={{ marginTop: 4, opacity: 0.75 }}>原始定义：{r.selectSql}</div>
-              </TechDetails>
-            </div>
-        ) },
-        // 来源：L1 = 平台词表（只读，改它要改 dbt 声明）；L2 = 本租户派生（可改可删）
-        { title: '来源', dataIndex: 'source', width: 130, render: (v: string, r: MetricRow) =>
-            v === 'l1'
-              ? <Tag color="blue">平台（只读）</Tag>
-              : r.basis === 'declared'
-                ? <Tag color="purple">租户声明（全额）</Tag>
-                : <Tag color="green">本租户派生</Tag> },
-        { title: '所需 scope', dataIndex: 'requiredScope', width: 100, render: (v: string | null) => v ?? '不限' },
-        // 主体列**显示出来**（只读）：它是主体钉死的依据，管理员必须能一眼看出这个指标按哪列隔离。
-        { title: '主体列', dataIndex: 'subjectColumn', width: 80 },
-        // #489 两列：谁最后动的、动过几次。L1 行**不显示空白**——空白会被读成「这里缺数据」，
-        // 而真相是「平台口径的变更史在 git 里」（见 README 的边界一节）。
-        { title: '最后操作人', dataIndex: 'updatedBy', ellipsis: { showTitle: true }, render: (v: string | null, r: MetricRow) =>
-            r.source === 'l1'
-              ? <Typography.Text type="secondary">平台物化（追溯走 git）</Typography.Text>
-              : (v ?? '—') },
-        { title: '版本', dataIndex: 'version', width: 60, render: (v: number, r: MetricRow) =>
-            r.source === 'l1' ? <Typography.Text type="secondary">—</Typography.Text> : `v${v}` },
-        { title: '操作', width: 260, render: (_: unknown, r: MetricRow) => (
-            r.source === 'l1'
-              ? (
-                <Space>
-                  <Typography.Text type="secondary">平台词表经 API 只读</Typography.Text>
-                  <Button size="small" type="text" onClick={() => openDeclaration('override', seedOfL1(r))}>
-                    覆盖口径
-                  </Button>
-                  <Button size="small" type="text" onClick={() => openHistory(r.id)}>变更历史</Button>
-                </Space>
+      {isMobile ? mobileCards : (() => {
+        const sel = visibleRows.find((r) => r.id === selectedId) ?? visibleRows[0] ?? null
+        return (
+          <div style={{ display: 'flex', gap: 16, alignItems: 'flex-start' }}>
+            {/* 左：列表。每行三行文本（名称 / id / 说明），与右详情一一对应 */}
+            <div style={{
+              flex: '1 1 auto', minWidth: 0, background: '#fff',
+              border: '1px solid #e8eaee', borderRadius: 12, overflow: 'hidden',
+            }}>
+              {visibleRows.length === 0 ? (
+                <div style={{ color: '#999', textAlign: 'center', padding: '48px 0', lineHeight: 1.8 }}>{emptyText}</div>
+              ) : visibleRows.map((r) => {
+                const on = sel?.id === r.id
+                return (
+                  <button
+                    key={r.id}
+                    type="button"
+                    onClick={() => setSelectedId(r.id)}
+                    style={{
+                      display: 'block', width: '100%', textAlign: 'left', cursor: 'pointer',
+                      padding: '14px 18px', border: 'none', borderTop: '1px solid #f0f1f3',
+                      background: on ? '#f4f5ff' : '#fff',
+                      boxShadow: on ? 'inset 3px 0 0 #5b6cff' : 'none',
+                    }}
+                  >
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                      <span style={{ fontSize: 14.5, fontWeight: 560 }}>{r.title}</span>
+                      {r.source === 'l1'
+                        ? <Tag color="blue" style={{ marginInlineEnd: 0 }}>平台（只读）</Tag>
+                        : r.basis === 'declared'
+                          ? <Tag color="purple" style={{ marginInlineEnd: 0 }}>租户声明（全额）</Tag>
+                          : <Tag color="green" style={{ marginInlineEnd: 0 }}>本租户派生</Tag>}
+                    </div>
+                    <div style={{ fontFamily: 'ui-monospace, SFMono-Regular, Menlo, monospace', fontSize: 12, color: '#8b93a1', marginTop: 3 }}>
+                      {r.id}
+                    </div>
+                    <div style={{ fontSize: 13, color: '#5b6472', marginTop: 3, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                      {r.bizDescription ?? r.description}
+                    </div>
+                  </button>
                 )
-              : (
-                <Space>
-                  <Button size="small" type="text" onClick={() => openHistory(r.id)}>变更历史</Button>
-                  {r.basis === 'declared'
-                    ? <Typography.Text type="secondary">全额声明（编辑请删除后重建）</Typography.Text>
-                    : <Button size="small" type="text" onClick={() => openEdit(r)}>编辑</Button>}
-                  {/* 元数据编辑只对 L2 开放（L1 平台口径，租户不得注解 ⇒ 后端 404，别放出假按钮） */}
-                  {r.source === 'l2' && (
-                    <Button size="small" type="text" onClick={() => openMeta(r)}>元数据</Button>
-                  )}
-                  {/* okText 显式写中文：Popconfirm 的默认 okText 取**locale**（未配 zh_CN 时是 "OK"），
-                      而删除是不可逆动作——确认按钮上的字应当自己掌握，不随宿主是否配了 locale 漂。 */}
-                  <Popconfirm title={`删除派生指标 ${r.id}？`} okText="确认删除" cancelText="取消"
-                              onConfirm={() => remove(r.id)}>
-                    <Button type="text" danger size="small">删除</Button>
-                  </Popconfirm>
+              })}
+            </div>
+
+            {/* 右：详情。口径、来源、权限、版本与全部操作都在这里（列表行不再堆操作链接） */}
+            <aside style={{
+              width: 420, flex: '0 0 420px', background: '#fff',
+              border: '1px solid #e8eaee', borderRadius: 12, padding: '20px 20px 24px',
+            }}>
+              {sel === null ? (
+                <Typography.Text type="secondary">左侧选择一条指标查看详情</Typography.Text>
+              ) : (
+                <Space direction="vertical" size={12} style={{ width: '100%' }}>
+                  <div>
+                    <div style={{ fontSize: 18, fontWeight: 600 }}>{sel.title}</div>
+                    <div style={{ fontFamily: 'ui-monospace, SFMono-Regular, Menlo, monospace', fontSize: 12, color: '#8b93a1', marginTop: 2 }}>{sel.id}</div>
+                  </div>
+
+                  <div>
+                    <div style={{ fontSize: 11, letterSpacing: '0.08em', color: '#9aa1ae' }}>口径</div>
+                    <div style={{ fontSize: 13.5, color: '#3f4756', marginTop: 4 }}>{sel.bizDescription ?? (sel.description !== '' ? sel.description : '未标注')}</div>
+                    <TechDetails>
+                      <div>表达式：{exprOf(sel.selectSql) || (sel.selectSql ?? '—')}</div>
+                      <div>分组维度：{dimsOf(sel).join('、') || '—'}</div>
+                      <div>所需权限：{sel.requiredScope ?? '不限'}　主体列：{sel.subjectColumn}</div>
+                      <div>版本：{sel.source === 'l1' ? '平台物化（追溯走 git）' : `v${sel.version}`}　最后操作人：{sel.updatedBy ?? (sel.source === 'l1' ? '平台物化' : '—')}</div>
+                      {sel.overrideOf != null && <div>口径覆盖：本行覆盖平台指标 <code>{sel.overrideOf}</code></div>}
+                      <div style={{ marginTop: 4, opacity: 0.75 }}>原始定义：{sel.selectSql ?? '—'}</div>
+                    </TechDetails>
+                  </div>
+
+                  <div>
+                    <div style={{ fontSize: 11, letterSpacing: '0.08em', color: '#9aa1ae' }}>属性</div>
+                    <div style={{ fontSize: 13, color: '#3f4756', marginTop: 4, lineHeight: 2 }}>
+                      来源：{sel.source === 'l1' ? '平台口径（只读）' : sel.basis === 'declared' ? '租户声明（全额）' : '本租户派生'}<br />
+                      版本：{sel.source === 'l1' ? '平台物化' : `v${sel.version}`}<br />
+                      更新：{sel.updatedBy ?? (sel.source === 'l1' ? '平台物化' : '—')}
+                    </div>
+                  </div>
+
+                  <Space wrap>
+                    {sel.source === 'l1' ? (
+                      <>
+                        <Typography.Text type="secondary" style={{ fontSize: 12 }}>平台词表经 API 只读</Typography.Text>
+                        <Button size="small" onClick={() => openDeclaration('override', seedOfL1(sel))}>覆盖口径</Button>
+                        <Button size="small" onClick={() => openHistory(sel.id)}>变更历史</Button>
+                      </>
+                    ) : (
+                      <>
+                        <Button size="small" onClick={() => openHistory(sel.id)}>变更历史</Button>
+                        {sel.basis === 'declared'
+                          ? <Typography.Text type="secondary" style={{ fontSize: 12 }}>全额声明（编辑请删除后重建）</Typography.Text>
+                          : <Button size="small" type="primary" onClick={() => openEdit(sel)}>编辑</Button>}
+                        <Button size="small" onClick={() => openMeta(sel)}>元数据</Button>
+                        <Popconfirm title={`删除派生指标 ${sel.id}？`} okText="确认删除" cancelText="取消" onConfirm={() => remove(sel.id)}>
+                          <Button size="small" danger>删除</Button>
+                        </Popconfirm>
+                      </>
+                    )}
+                  </Space>
                 </Space>
-                )) },
-      ]} />
-      )}
+              )}
+            </aside>
+          </div>
+        )
+      })()}
       {isMobile ? mobileSheet : null}
       {isMobile ? mobileFilterSheet : null}
 
