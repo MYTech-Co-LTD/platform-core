@@ -172,42 +172,42 @@
     },
     {
       "name": "quantity",
-      "type": "decimal(18,6)",
+      "type": "decimal", "precision": 18, "scale": 6,
       "nullable": true,
       "description": "数量",
       "expr": "CAST(quantity AS DECIMAL(18,6))"
     },
     {
       "name": "assist_quantity",
-      "type": "decimal(18,6)",
+      "type": "decimal", "precision": 18, "scale": 6,
       "nullable": true,
       "description": "辅数量",
       "expr": "CAST(assist_quantity AS DECIMAL(18,6))"
     },
     {
       "name": "unit_price",
-      "type": "decimal(18,8)",
+      "type": "decimal", "precision": 18, "scale": 8,
       "nullable": true,
       "description": "单价",
       "expr": "CAST(unit_price AS DECIMAL(18,8))"
     },
     {
       "name": "money",
-      "type": "decimal(18,2)",
+      "type": "decimal", "precision": 18, "scale": 2,
       "nullable": true,
       "description": "金额",
       "expr": "CAST(money AS DECIMAL(18,2))"
     },
     {
       "name": "inventory_balance",
-      "type": "decimal(18,6)",
+      "type": "decimal", "precision": 18, "scale": 6,
       "nullable": true,
       "description": "结存数量",
       "expr": "CAST(inventory_balance AS DECIMAL(18,6))"
     },
     {
       "name": "assist_inventory_balance",
-      "type": "decimal(18,6)",
+      "type": "decimal", "precision": 18, "scale": 6,
       "nullable": true,
       "description": "辅结存数量",
       "expr": "CAST(assist_inventory_balance AS DECIMAL(18,6))"

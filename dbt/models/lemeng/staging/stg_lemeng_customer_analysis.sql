@@ -16,10 +16,10 @@ select
   r['time_period']::varchar as time_period,
   r['customer_nums']::bigint as customer_nums,
   r['customer_vip_nums']::bigint as customer_vip_nums,
-  r['customer_vip_money']::decimal(14,2) as customer_vip_money,
-  r['receive_money']::decimal(14,2) as receive_money,
-  r['item_sale_cost']::decimal(14,2) as item_sale_cost,
-  r['item_sale_profit']::decimal(14,2) as item_sale_profit,
+  r['customer_vip_money']::numeric(14,2) as customer_vip_money,
+  r['receive_money']::numeric(14,2) as receive_money,
+  r['item_sale_cost']::numeric(14,2) as item_sale_cost,
+  r['item_sale_profit']::numeric(14,2) as item_sale_profit,
   r['computed_at']::timestamptz as computed_at
 from read_parquet(
   's3://{{ var("zos_bucket") }}/{{ var("lemeng_customer_analysis_prefix") }}/*/bizday=**/*.parquet'

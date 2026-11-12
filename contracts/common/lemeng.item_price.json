@@ -46,7 +46,7 @@
     },
     {
       "name": "branch_num",
-      "type": "int",
+      "type": "integer",
       "nullable": false,
       "description": "门店内部编号（发布 join 键 → stg_lemeng_branch.branch_num 解析 code）",
       "expr": "CAST(o.branch_num AS INTEGER)"
@@ -123,7 +123,7 @@
     },
     {
       "name": "spec_rate",
-      "type": "decimal(18,8)",
+      "type": "decimal", "precision": 18, "scale": 8,
       "nullable": true,
       "description": "规格换算率（基本单位换算的钥匙；口径验证 = 计划 Task 7 未验环节①）",
       "expr": "CAST(json_extract_string(CAST(o.pos_variant AS JSON), '$.spec_rate') AS DECIMAL(18,8))"
@@ -158,84 +158,84 @@
     },
     {
       "name": "regular_price",
-      "type": "decimal(18,8)",
+      "type": "decimal", "precision": 18, "scale": 8,
       "nullable": true,
       "description": "门店标准售价（0 = 未单独设置）",
       "expr": "CAST(o.branch_item_regular_price AS DECIMAL(18,8))"
     },
     {
       "name": "level2_price",
-      "type": "decimal(18,8)",
+      "type": "decimal", "precision": 18, "scale": 8,
       "nullable": true,
       "description": "门店二级售价（0 = 未单独设置）",
       "expr": "CAST(o.branch_item_level2_price AS DECIMAL(18,8))"
     },
     {
       "name": "level3_price",
-      "type": "decimal(18,8)",
+      "type": "decimal", "precision": 18, "scale": 8,
       "nullable": true,
       "description": "门店三级售价（0 = 未单独设置）",
       "expr": "CAST(o.branch_item_level3_price AS DECIMAL(18,8))"
     },
     {
       "name": "level4_price",
-      "type": "decimal(18,8)",
+      "type": "decimal", "precision": 18, "scale": 8,
       "nullable": true,
       "description": "门店四级售价（0 = 未单独设置）",
       "expr": "CAST(o.branch_item_level4_price AS DECIMAL(18,8))"
     },
     {
       "name": "max_price",
-      "type": "decimal(18,8)",
+      "type": "decimal", "precision": 18, "scale": 8,
       "nullable": true,
       "description": "门店最高售价（0 = 未单独设置）",
       "expr": "CAST(o.branch_item_max_price AS DECIMAL(18,8))"
     },
     {
       "name": "min_price",
-      "type": "decimal(18,8)",
+      "type": "decimal", "precision": 18, "scale": 8,
       "nullable": true,
       "description": "门店最低售价（0 = 未单独设置）",
       "expr": "CAST(o.branch_item_min_price AS DECIMAL(18,8))"
     },
     {
       "name": "regular_real_price",
-      "type": "decimal(18,8)",
+      "type": "decimal", "precision": 18, "scale": 8,
       "nullable": true,
       "description": "最终应用标准售价（按启用状态→门店价→规格价→档案价回退链算好；ticket 金额依据的源；0/空实测存在 = 未单独设置）",
       "expr": "CAST(o.branch_item_regular_real_price AS DECIMAL(18,8))"
     },
     {
       "name": "level2_real_price",
-      "type": "decimal(18,8)",
+      "type": "decimal", "precision": 18, "scale": 8,
       "nullable": true,
       "description": "最终应用二级售价",
       "expr": "CAST(o.branch_item_level2_real_price AS DECIMAL(18,8))"
     },
     {
       "name": "level3_real_price",
-      "type": "decimal(18,8)",
+      "type": "decimal", "precision": 18, "scale": 8,
       "nullable": true,
       "description": "最终应用三级售价",
       "expr": "CAST(o.branch_item_level3_real_price AS DECIMAL(18,8))"
     },
     {
       "name": "level4_real_price",
-      "type": "decimal(18,8)",
+      "type": "decimal", "precision": 18, "scale": 8,
       "nullable": true,
       "description": "最终应用四级售价",
       "expr": "CAST(o.branch_item_level4_real_price AS DECIMAL(18,8))"
     },
     {
       "name": "max_real_price",
-      "type": "decimal(18,8)",
+      "type": "decimal", "precision": 18, "scale": 8,
       "nullable": true,
       "description": "最终应用最高售价（未启用门店价时可为空，实测）",
       "expr": "CAST(o.branch_item_max_real_price AS DECIMAL(18,8))"
     },
     {
       "name": "min_real_price",
-      "type": "decimal(18,8)",
+      "type": "decimal", "precision": 18, "scale": 8,
       "nullable": true,
       "description": "最终应用最低售价（未启用门店价时可为空，实测）",
       "expr": "CAST(o.branch_item_min_real_price AS DECIMAL(18,8))"

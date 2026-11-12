@@ -57,7 +57,7 @@
     },
     {
       "name": "branch_num",
-      "type": "int",
+      "type": "integer",
       "nullable": false,
       "description": "门店/发货主体编号（文档已核字段；与 wholesale_out 同名列，fct join 键）",
       "expr": "CAST(o.branch_num AS INTEGER)"
@@ -78,14 +78,14 @@
     },
     {
       "name": "total_money",
-      "type": "decimal(14,2)",
+      "type": "decimal", "precision": 14, "scale": 2,
       "nullable": true,
       "description": "单头退货总金额（=接口 wholesale_return_total_money；⚠️ 单头列随行冗余——行级 sum 会重复计，聚合前 per_order 取 max；列名去前缀与 wholesale_out.total_money 对齐，fct 两侧同构）",
       "expr": "CAST(o.wholesale_return_total_money AS DECIMAL(14,2))"
     },
     {
       "name": "cost_money",
-      "type": "decimal(14,2)",
+      "type": "decimal", "precision": 14, "scale": 2,
       "nullable": true,
       "description": "单头退货成本（=接口 wholesale_return_cost_money；单头随行冗余，同上 per_order 取 max）",
       "expr": "CAST(o.wholesale_return_cost_money AS DECIMAL(14,2))"
@@ -106,14 +106,14 @@
     },
     {
       "name": "return_detail_money",
-      "type": "decimal(14,2)",
+      "type": "decimal", "precision": 14, "scale": 2,
       "nullable": true,
       "description": "明细退货金额（文档已核字段；**符号未实证**——退货金额按该接口实际符号确认后统一为扣减口径，不得与 D02 红字重复扣（客户文档 D03 使用边界原文）；真样本到来时先核符号）",
       "expr": "CAST(json_extract_string(u.d, '$.return_detail_money') AS DECIMAL(14,2))"
     },
     {
       "name": "return_detail_cost_money",
-      "type": "decimal(14,2)",
+      "type": "decimal", "precision": 14, "scale": 2,
       "nullable": true,
       "description": "明细退货成本（文档已核字段；符号边界同上）",
       "expr": "CAST(json_extract_string(u.d, '$.return_detail_cost_money') AS DECIMAL(14,2))"

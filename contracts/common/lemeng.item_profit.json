@@ -109,70 +109,70 @@
     },
     {
       "name": "sale_num",
-      "type": "decimal(20,4)",
+      "type": "decimal", "precision": 20, "scale": 4,
       "nullable": true,
       "description": "商品销售数量",
       "expr": "CAST(sale_num AS DECIMAL(20,4))"
     },
     {
       "name": "sale_count",
-      "type": "decimal(20,4)",
+      "type": "decimal", "precision": 20, "scale": 4,
       "nullable": true,
       "description": "销售次数",
       "expr": "CAST(sale_count AS DECIMAL(20,4))"
     },
     {
       "name": "customer_nums",
-      "type": "decimal(20,4)",
+      "type": "decimal", "precision": 20, "scale": 4,
       "nullable": true,
       "description": "客数",
       "expr": "CAST(customer_nums AS DECIMAL(20,4))"
     },
     {
       "name": "sale_money",
-      "type": "decimal(20,2)",
+      "type": "decimal", "precision": 20, "scale": 2,
       "nullable": false,
       "description": "销售金额（券售价）",
       "expr": "CAST(sale_money AS DECIMAL(20,2))"
     },
     {
       "name": "sale_money_no_coupon",
-      "type": "decimal(20,2)",
+      "type": "decimal", "precision": 20, "scale": 2,
       "nullable": true,
       "description": "销售金额（不含券）",
       "expr": "CAST(sale_money_no_coupon AS DECIMAL(20,2))"
     },
     {
       "name": "sale_cost",
-      "type": "decimal(20,2)",
+      "type": "decimal", "precision": 20, "scale": 2,
       "nullable": true,
       "description": "销售成本（需成本查询权限；缺权限列可能为空）",
       "expr": "CAST(sale_cost AS DECIMAL(20,2))"
     },
     {
       "name": "profit_money",
-      "type": "decimal(20,2)",
+      "type": "decimal", "precision": 20, "scale": 2,
       "nullable": true,
       "description": "毛利额",
       "expr": "CAST(profit_money AS DECIMAL(20,2))"
     },
     {
       "name": "profit_rate",
-      "type": "decimal(20,6)",
+      "type": "decimal", "precision": 20, "scale": 6,
       "nullable": true,
       "description": "毛利率",
       "expr": "CAST(profit_rate AS DECIMAL(20,6))"
     },
     {
       "name": "profit_money_no_coupon",
-      "type": "decimal(20,2)",
+      "type": "decimal", "precision": 20, "scale": 2,
       "nullable": true,
       "description": "毛利额（不含券）",
       "expr": "CAST(profit_money_no_coupon AS DECIMAL(20,2))"
     },
     {
       "name": "profit_rate_no_coupon",
-      "type": "decimal(20,6)",
+      "type": "decimal", "precision": 20, "scale": 6,
       "nullable": true,
       "description": "毛利率（不含券）",
       "expr": "CAST(profit_rate_no_coupon AS DECIMAL(20,6))"

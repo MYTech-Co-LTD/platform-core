@@ -95,42 +95,42 @@
     },
     {
       "name": "coupon_amount",
-      "type": "decimal(20,2)",
+      "type": "decimal", "precision": 20, "scale": 2,
       "nullable": true,
       "description": "券面额合计（元）",
       "expr": "CAST(coupon_amount AS DECIMAL(20, 2))"
     },
     {
       "name": "coupon_detail_sale_money",
-      "type": "decimal(20,2)",
+      "type": "decimal", "precision": 20, "scale": 2,
       "nullable": true,
       "description": "券明细销售额（元）",
       "expr": "CAST(coupon_detail_sale_money AS DECIMAL(20, 2))"
     },
     {
       "name": "coupon_discount_money",
-      "type": "decimal(20,2)",
+      "type": "decimal", "precision": 20, "scale": 2,
       "nullable": true,
       "description": "券优惠金额（元）",
       "expr": "CAST(coupon_discount_money AS DECIMAL(20, 2))"
     },
     {
       "name": "coupon_value",
-      "type": "decimal(20,2)",
+      "type": "decimal", "precision": 20, "scale": 2,
       "nullable": true,
       "description": "券核销值（源文档未明确定义，按源端原值落湖）（元）",
       "expr": "CAST(coupon_value AS DECIMAL(20, 2))"
     },
     {
       "name": "exchange_card_sale_money",
-      "type": "decimal(20,2)",
+      "type": "decimal", "precision": 20, "scale": 2,
       "nullable": true,
       "description": "兑换卡销售额（元）",
       "expr": "CAST(exchange_card_sale_money AS DECIMAL(20, 2))"
     },
     {
       "name": "exchange_card_total_money",
-      "type": "decimal(20,2)",
+      "type": "decimal", "precision": 20, "scale": 2,
       "nullable": true,
       "description": "兑换卡总额（元）",
       "expr": "CAST(exchange_card_total_money AS DECIMAL(20, 2))"
@@ -144,7 +144,7 @@
     },
     {
       "name": "computed_at",
-      "type": "timestamp_tz",
+      "type": "timestamptz",
       "nullable": false,
       "description": "采集写入时刻",
       "expr": "CAST(computed_at AS TIMESTAMPTZ)"

@@ -88,28 +88,28 @@
     },
     {
       "name": "customer_vip_money",
-      "type": "decimal(14,2)",
+      "type": "decimal", "precision": 14, "scale": 2,
       "nullable": true,
       "description": "会员消费金额",
       "expr": "CAST(customer_vip_money AS DECIMAL(14,2))"
     },
     {
       "name": "receive_money",
-      "type": "decimal(14,2)",
+      "type": "decimal", "precision": 14, "scale": 2,
       "nullable": true,
       "description": "实收金额",
       "expr": "CAST(receive_money AS DECIMAL(14,2))"
     },
     {
       "name": "item_sale_cost",
-      "type": "decimal(14,2)",
+      "type": "decimal", "precision": 14, "scale": 2,
       "nullable": true,
       "description": "商品销售成本",
       "expr": "CAST(item_sale_cost AS DECIMAL(14,2))"
     },
     {
       "name": "item_sale_profit",
-      "type": "decimal(14,2)",
+      "type": "decimal", "precision": 14, "scale": 2,
       "nullable": true,
       "description": "商品销售毛利",
       "expr": "CAST(item_sale_profit AS DECIMAL(14,2))"

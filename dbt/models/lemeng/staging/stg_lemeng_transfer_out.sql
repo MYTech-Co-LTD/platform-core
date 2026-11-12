@@ -27,7 +27,7 @@ select
   r['branch_name']::varchar as branch_name,
   r['out_branch_num']::int as out_branch_num,
   r['out_branch_name']::varchar as out_branch_name,
-  r['total_money']::decimal(14,2) as total_money,
+  r['total_money']::numeric(14,2) as total_money,
   r['item_num']::bigint as item_num,
   r['item_grade_num']::bigint as item_grade_num,
   r['item_code']::varchar as item_code,
@@ -36,17 +36,17 @@ select
   r['item_spec']::varchar as item_spec,
   r['item_unit']::varchar as item_unit,
   r['lot_number']::varchar as lot_number,
-  r['quantity']::decimal(14,6) as quantity,
-  r['use_quantity']::decimal(14,6) as use_quantity,
+  r['quantity']::numeric(14,6) as quantity,
+  r['use_quantity']::numeric(14,6) as use_quantity,
   r['use_unit']::varchar as use_unit,
-  r['use_rate']::decimal(18,8) as use_rate,
-  r['present_quantity']::decimal(14,6) as present_quantity,
+  r['use_rate']::numeric(18,8) as use_rate,
+  r['present_quantity']::numeric(14,6) as present_quantity,
   r['production_date']::varchar as production_date,
-  r['unit_price']::decimal(18,8) as unit_price,
-  r['subtotal']::decimal(14,2) as subtotal,
-  r['out_money']::decimal(14,2) as out_money,
-  r['in_money']::decimal(14,2) as in_money,
-  r['cost']::decimal(18,8) as cost
+  r['unit_price']::numeric(18,8) as unit_price,
+  r['subtotal']::numeric(14,2) as subtotal,
+  r['out_money']::numeric(14,2) as out_money,
+  r['in_money']::numeric(14,2) as in_money,
+  r['cost']::numeric(18,8) as cost
 from read_parquet(
   's3://{{ var("zos_bucket") }}/{{ var("lemeng_transfer_out_prefix") }}/*/bizday=**/*.parquet'
 ) r

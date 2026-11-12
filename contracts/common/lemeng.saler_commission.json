@@ -67,35 +67,35 @@
     },
     {
       "name": "sale_commission",
-      "type": "decimal(14,2)",
+      "type": "decimal", "precision": 14, "scale": 2,
       "nullable": true,
       "description": "提成金额",
       "expr": "CAST(sale_commission AS DECIMAL(14,2))"
     },
     {
       "name": "turnover_with_coupon_price",
-      "type": "decimal(14,2)",
+      "type": "decimal", "precision": 14, "scale": 2,
       "nullable": true,
       "description": "含券售价营业额",
       "expr": "CAST(turnover_with_coupon_price AS DECIMAL(14,2))"
     },
     {
       "name": "sale_money_no_coupon",
-      "type": "decimal(14,2)",
+      "type": "decimal", "precision": 14, "scale": 2,
       "nullable": true,
       "description": "不含券销售额",
       "expr": "CAST(sale_money_no_coupon AS DECIMAL(14,2))"
     },
     {
       "name": "sale_cost",
-      "type": "decimal(14,2)",
+      "type": "decimal", "precision": 14, "scale": 2,
       "nullable": true,
       "description": "销售成本",
       "expr": "CAST(sale_cost AS DECIMAL(14,2))"
     },
     {
       "name": "commission_rate",
-      "type": "decimal(14,8)",
+      "type": "decimal", "precision": 14, "scale": 8,
       "nullable": true,
       "description": "提成率",
       "expr": "CAST(commission_rate AS DECIMAL(14,8))"

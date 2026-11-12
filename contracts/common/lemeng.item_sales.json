@@ -102,70 +102,70 @@
     },
     {
       "name": "sale_count",
-      "type": "decimal(20,4)",
+      "type": "decimal", "precision": 20, "scale": 4,
       "nullable": true,
       "description": "销售次数（源：sale_count）",
       "expr": "CAST(sale_count AS DECIMAL(20,4))"
     },
     {
       "name": "sale_num",
-      "type": "decimal(20,4)",
+      "type": "decimal", "precision": 20, "scale": 4,
       "nullable": false,
       "description": "商品销售数量（基本单位）",
       "expr": "CAST(sale_num AS DECIMAL(20,4))"
     },
     {
       "name": "total_num",
-      "type": "decimal(20,4)",
+      "type": "decimal", "precision": 20, "scale": 4,
       "nullable": true,
       "description": "商品销售数量（含退货口径，源口径见文档）",
       "expr": "CAST(total_num AS DECIMAL(20,4))"
     },
     {
       "name": "sale_money",
-      "type": "decimal(20,2)",
+      "type": "decimal", "precision": 20, "scale": 2,
       "nullable": true,
       "description": "销售金额",
       "expr": "CAST(sale_money AS DECIMAL(20,2))"
     },
     {
       "name": "item_price",
-      "type": "decimal(20,6)",
+      "type": "decimal", "precision": 20, "scale": 6,
       "nullable": true,
       "description": "销售均价",
       "expr": "CAST(item_price AS DECIMAL(20,6))"
     },
     {
       "name": "return_num",
-      "type": "decimal(20,4)",
+      "type": "decimal", "precision": 20, "scale": 4,
       "nullable": true,
       "description": "退货数量",
       "expr": "CAST(return_num AS DECIMAL(20,4))"
     },
     {
       "name": "return_money",
-      "type": "decimal(20,2)",
+      "type": "decimal", "precision": 20, "scale": 2,
       "nullable": true,
       "description": "退货金额",
       "expr": "CAST(return_money AS DECIMAL(20,2))"
     },
     {
       "name": "present_num",
-      "type": "decimal(20,4)",
+      "type": "decimal", "precision": 20, "scale": 4,
       "nullable": true,
       "description": "赠品数量",
       "expr": "CAST(present_num AS DECIMAL(20,4))"
     },
     {
       "name": "discount_money",
-      "type": "decimal(20,2)",
+      "type": "decimal", "precision": 20, "scale": 2,
       "nullable": true,
       "description": "折扣金额",
       "expr": "CAST(discount_money AS DECIMAL(20,2))"
     },
     {
       "name": "order_detail_share_discount",
-      "type": "decimal(20,2)",
+      "type": "decimal", "precision": 20, "scale": 2,
       "nullable": true,
       "description": "订单明细分摊金额",
       "expr": "CAST(order_detail_share_discount AS DECIMAL(20,2))"

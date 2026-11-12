@@ -60,7 +60,7 @@
     },
     {
       "name": "branch_num",
-      "type": "int",
+      "type": "integer",
       "nullable": false,
       "description": "归属门店编号（报损计入哪家店）",
       "expr": "CAST(o.branch_num AS INTEGER)"
@@ -74,7 +74,7 @@
     },
     {
       "name": "state_code",
-      "type": "int",
+      "type": "integer",
       "nullable": true,
       "description": "单据状态码（3=制单|审核）",
       "expr": "CAST(o.state_code AS INTEGER)"
@@ -88,7 +88,7 @@
     },
     {
       "name": "total_money",
-      "type": "decimal(14,2)",
+      "type": "decimal", "precision": 14, "scale": 2,
       "nullable": true,
       "description": "调整金额（出库报损为正数原值）",
       "expr": "CAST(o.total_money AS DECIMAL(14,2))"

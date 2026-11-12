@@ -20,14 +20,14 @@ select
   r['item_name']::varchar as item_name,
   r['item_spec']::varchar as item_spec,
   r['item_unit']::varchar as item_unit,
-  r['inventory_quantity']::decimal(14,6) as inventory_quantity,
-  r['inventory_assist_quantity']::decimal(14,6) as inventory_assist_quantity,
-  r['inventory_use_quantity']::decimal(14,6) as inventory_use_quantity,
-  r['inventory_money']::decimal(14,2) as inventory_money,
-  r['carry_cost_price']::decimal(18,8) as carry_cost_price,
-  r['sale_price']::decimal(18,8) as sale_price,
-  r['difference_quantity']::decimal(14,6) as difference_quantity,
-  r['difference_money']::decimal(14,2) as difference_money
+  r['inventory_quantity']::numeric(14,6) as inventory_quantity,
+  r['inventory_assist_quantity']::numeric(14,6) as inventory_assist_quantity,
+  r['inventory_use_quantity']::numeric(14,6) as inventory_use_quantity,
+  r['inventory_money']::numeric(14,2) as inventory_money,
+  r['carry_cost_price']::numeric(18,8) as carry_cost_price,
+  r['sale_price']::numeric(18,8) as sale_price,
+  r['difference_quantity']::numeric(14,6) as difference_quantity,
+  r['difference_money']::numeric(14,2) as difference_money
 from read_parquet(
   's3://{{ var("zos_bucket") }}/{{ var("lemeng_inventory_snapshot_prefix") }}/*/bizday=**/*.parquet'
 ) r

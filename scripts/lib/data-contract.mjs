@@ -215,7 +215,7 @@ export function findStagingModelRel(root, domain, table) {
  *
  * @param {string} root
  * @param {string} rel
- * @returns {{ rel: string, domain: string, table: string, prefix: string, partitionBy: string[], markerColumn: string, schemaVersion: unknown, consumerVersion: unknown, columns: { name: string, type: string, nullable: boolean, expr: string, precision?: number, scale?: number, sensitivity?: string }[] } | null}
+ * @returns {{ rel: string, raw: unknown, domain: string, table: string, prefix: string, partitionBy: string[], markerColumn: string, schemaVersion: unknown, consumerVersion: unknown, columns: { name: string, type: string, nullable: boolean, expr: string, precision?: number, scale?: number, sensitivity?: string }[] } | null}
  */
 export function readContractDoc(root, rel) {
   /** @type {any} */
@@ -230,6 +230,8 @@ export function readContractDoc(root, rel) {
   const batch = doc && typeof doc.batch === 'object' && doc.batch !== null ? doc.batch : {}
   return {
     rel,
+    // 原始文档（元 schema 校验要用**未经归一**的形状：归一后的对象看起来永远合法）
+    raw: doc,
     domain: String(doc?.domain ?? ''),
     table: String(doc?.table ?? ''),
     prefix: String(layout.prefix ?? ''),

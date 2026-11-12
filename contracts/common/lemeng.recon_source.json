@@ -61,14 +61,14 @@
     },
     {
       "name": "source_sale",
-      "type": "decimal(20,2)",
+      "type": "decimal", "precision": 20, "scale": 2,
       "nullable": true,
       "description": "**源侧销售金额** = 乐檬报表 `sale_money`。⚠️ **可空**：端点这次没返回这家店 ⇒ NULL（≠ 0）——dbt 侧据此判 `missing_side='source'`",
       "expr": "CAST(source_sale AS DECIMAL(20, 2))"
     },
     {
       "name": "source_net",
-      "type": "decimal(20,2)",
+      "type": "decimal", "precision": 20, "scale": 2,
       "nullable": true,
       "description": "**源侧净额** = 乐檬报表 `sale_money − return_money`。⚠️ **可空**：端点这次没返回这家店 ⇒ NULL（≠ 0）——dbt 侧据此判 `missing_side='source'`",
       "expr": "CAST(source_net AS DECIMAL(20, 2))"

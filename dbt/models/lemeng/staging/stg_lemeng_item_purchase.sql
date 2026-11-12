@@ -18,14 +18,14 @@ select
   r['item_name']::varchar as item_name,
   r['item_spec']::varchar as item_spec,
   r['base_unit']::varchar as base_unit,
-  r['purchase_item_amount']::decimal(14,6) as purchase_item_amount,
-  r['purchase_item_money']::decimal(14,2) as purchase_item_money,
-  r['purchase_present_amount']::decimal(14,6) as purchase_present_amount,
-  r['purchase_present_money']::decimal(14,2) as purchase_present_money,
-  r['purchase_item_return_amount']::decimal(14,6) as purchase_item_return_amount,
-  r['purchase_item_return_money']::decimal(14,2) as purchase_item_return_money,
-  r['amount_total']::decimal(14,6) as amount_total,
-  r['money_total']::decimal(14,2) as money_total
+  r['purchase_item_amount']::numeric(14,6) as purchase_item_amount,
+  r['purchase_item_money']::numeric(14,2) as purchase_item_money,
+  r['purchase_present_amount']::numeric(14,6) as purchase_present_amount,
+  r['purchase_present_money']::numeric(14,2) as purchase_present_money,
+  r['purchase_item_return_amount']::numeric(14,6) as purchase_item_return_amount,
+  r['purchase_item_return_money']::numeric(14,2) as purchase_item_return_money,
+  r['amount_total']::numeric(14,6) as amount_total,
+  r['money_total']::numeric(14,2) as money_total
 from read_parquet(
   's3://{{ var("zos_bucket") }}/{{ var("lemeng_item_purchase_prefix") }}/*/bizday=**/*.parquet'
 ) r

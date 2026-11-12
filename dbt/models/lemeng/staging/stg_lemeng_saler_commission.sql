@@ -13,11 +13,11 @@ select
   r['branch_num']::int as branch_num,
   r['branch_name']::varchar as branch_name,
   r['saler']::varchar as saler,
-  r['sale_commission']::decimal(14,2) as sale_commission,
-  r['turnover_with_coupon_price']::decimal(14,2) as turnover_with_coupon_price,
-  r['sale_money_no_coupon']::decimal(14,2) as sale_money_no_coupon,
-  r['sale_cost']::decimal(14,2) as sale_cost,
-  r['commission_rate']::decimal(14,8) as commission_rate,
+  r['sale_commission']::numeric(14,2) as sale_commission,
+  r['turnover_with_coupon_price']::numeric(14,2) as turnover_with_coupon_price,
+  r['sale_money_no_coupon']::numeric(14,2) as sale_money_no_coupon,
+  r['sale_cost']::numeric(14,2) as sale_cost,
+  r['commission_rate']::numeric(14,8) as commission_rate,
   r['sale_order_count']::bigint as sale_order_count,
   r['computed_at']::timestamptz as computed_at
 from read_parquet(

@@ -74,14 +74,14 @@
     },
     {
       "name": "receive_money",
-      "type": "decimal(20,2)",
+      "type": "decimal", "precision": 20, "scale": 2,
       "nullable": true,
       "description": "收款金额（元）",
       "expr": "CAST(receive_money AS DECIMAL(20, 2))"
     },
     {
       "name": "receive_money_rate",
-      "type": "decimal(20,6)",
+      "type": "decimal", "precision": 20, "scale": 6,
       "nullable": true,
       "description": "收款金额占比（占比，0–1 小数）",
       "expr": "CAST(receive_money_rate AS DECIMAL(20, 6))"
@@ -95,14 +95,14 @@
     },
     {
       "name": "order_count_rate",
-      "type": "decimal(20,6)",
+      "type": "decimal", "precision": 20, "scale": 6,
       "nullable": true,
       "description": "笔数占比（占比，0–1 小数）",
       "expr": "CAST(order_count_rate AS DECIMAL(20, 6))"
     },
     {
       "name": "pos_order_receive_money",
-      "type": "decimal(20,2)",
+      "type": "decimal", "precision": 20, "scale": 2,
       "nullable": true,
       "description": "已结账单收款金额（元）",
       "expr": "CAST(pos_order_receive_money AS DECIMAL(20, 2))"
@@ -116,7 +116,7 @@
     },
     {
       "name": "card_deposit_receive_money",
-      "type": "decimal(20,2)",
+      "type": "decimal", "precision": 20, "scale": 2,
       "nullable": true,
       "description": "卡存款收款金额（元）",
       "expr": "CAST(card_deposit_receive_money AS DECIMAL(20, 2))"
@@ -130,7 +130,7 @@
     },
     {
       "name": "card_relate_receive_money",
-      "type": "decimal(20,2)",
+      "type": "decimal", "precision": 20, "scale": 2,
       "nullable": true,
       "description": "会员续卡收款金额（元）",
       "expr": "CAST(card_relate_receive_money AS DECIMAL(20, 2))"
@@ -144,7 +144,7 @@
     },
     {
       "name": "card_replace_receive_money",
-      "type": "decimal(20,2)",
+      "type": "decimal", "precision": 20, "scale": 2,
       "nullable": true,
       "description": "会员换卡收款金额（元）",
       "expr": "CAST(card_replace_receive_money AS DECIMAL(20, 2))"
@@ -158,7 +158,7 @@
     },
     {
       "name": "exchange_card_receive_money",
-      "type": "decimal(20,2)",
+      "type": "decimal", "precision": 20, "scale": 2,
       "nullable": true,
       "description": "次卡收款金额（元）",
       "expr": "CAST(exchange_card_receive_money AS DECIMAL(20, 2))"
@@ -172,7 +172,7 @@
     },
     {
       "name": "other_receive_money",
-      "type": "decimal(20,2)",
+      "type": "decimal", "precision": 20, "scale": 2,
       "nullable": true,
       "description": "其他收支收款金额（元）",
       "expr": "CAST(other_receive_money AS DECIMAL(20, 2))"
@@ -186,7 +186,7 @@
     },
     {
       "name": "purchase_records_receive_money",
-      "type": "decimal(20,2)",
+      "type": "decimal", "precision": 20, "scale": 2,
       "nullable": true,
       "description": "付费会员收款金额（元）",
       "expr": "CAST(purchase_records_receive_money AS DECIMAL(20, 2))"
@@ -200,7 +200,7 @@
     },
     {
       "name": "computed_at",
-      "type": "timestamp_tz",
+      "type": "timestamptz",
       "nullable": false,
       "description": "采集写入时刻",
       "expr": "CAST(computed_at AS TIMESTAMPTZ)"
