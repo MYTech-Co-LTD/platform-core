@@ -304,6 +304,7 @@ describe('报表面声明（不需要数据库）', () => {
     expect(declared.get('GET /reports/:id/spec')).toBe('data:query')
     expect(declared.get('GET /reports/:id/review')).toBe('data:query')
     expect(declared.get('GET /reports/templates')).toBe('data:query')
+    expect(declared.get('GET /reports/narrative-stats')).toBe('data:manage')
     expect(declared.get('POST /reports/templates/:id/compile')).toBe('data:query')
     expect(declared.get('PUT /reports/:id/spec')).toBe('data:query')
     // ── 定义版本（月报重做 Task 10）：发布/下线/回滚/历史/草稿 = 单资产读写（canEditAsset）；

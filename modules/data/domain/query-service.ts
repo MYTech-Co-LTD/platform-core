@@ -7,9 +7,12 @@ import { MAX_QUERY_ROWS, authorize, sqlQuote, visibleMetrics, type DenyReason, t
 import { deptContextIfOwned } from './metric-visibility'
 import { loadMergedCatalog } from './metric-store'
 import { maskingAuditOf, writeAudit, type MaskingAudit, type ScopeAudit } from './audit-store'
-import { DATA_WAREHOUSE_UNCONFIGURED, runWarehouseSql, warehousePool } from './warehouse'
+import { analystPool, DATA_WAREHOUSE_UNCONFIGURED, runWarehouseSql, warehousePool } from './warehouse'
 import { decorateWithLabels, loadDimensionLookup, type DimensionLookup } from './dimension-labels'
 import { buildScopePlan, loadEffectiveScopes, scopeModeOf, type DataScopePlan } from './scope'
+import { cacheGet, cacheKey, cacheSet } from './result-cache'
+import { dataVersionOf } from './data-version'
+import { singleFlight } from './single-flight'
 
 /** 湖 ETag 竞态的**窄匹配**（#452 定案 spec §3.1：宁可漏判也不误判——只认这一形状，
  *  不扩大到一般 5xx/超时；那类由 statement_timeout / job retry 语义管）。 */
@@ -336,6 +339,8 @@ export interface QueryOk {
    * 不得当精确值转述；记号与 SQL 里实际展开的掩码一一对应（授权层同一份 applied 透传）。
    */
   masking?: Record<string, string>
+  /** 结果来自进程内缓存（R4）：只用于观测，语义同真跑。 */
+  cached?: true
 }
 export interface QueryDenied {
   status: 'denied'; metricId: string
@@ -348,6 +353,11 @@ export interface QueryError {
   reason: 'warehouse_unconfigured' | 'warehouse_transient' | 'warehouse_error'; detail: string
 }
 export type QueryOutcome = QueryOk | QueryDenied | QueryError
+
+// 同请求内并发去重（R4）：键 = 主/合计计划 SQL + 数据版本。只在真执行器（可缓存）路径使用。
+type FlightAgg = { columns: string[]; rows: unknown[][]; retried: boolean }
+const mainFlight = new Map<string, Promise<FlightAgg>>()
+const totalFlight = new Map<string, Promise<string | number | null | undefined>>()
 
 export async function runQuery(
   deps: QueryDeps,
@@ -451,6 +461,13 @@ export async function runQuery(
     return { status: 'denied', metricId, reason: authz.reason, detail: authz.detail }
   }
 
+  // 结果缓存（R4）：键 = 计划 SQL + 本租户数据版本（封版/月文件一变即失效），只在**真执行器**
+  // 上启用（测试注入 `deps.execute` 时不缓存，保证调用次数断言确定——与 drill 同一条纪律）。
+  // 缓存只替代「仓库执行 + 维度名装饰」这一步；鉴权、参数校验、审计、新鲜度每次照走。
+  const cacheable = deps.execute === undefined
+  const dataVer = cacheable ? await dataVersionOf(analystPool()).catch(() => '') : ''
+  const mainKey = cacheable ? cacheKey(authz.plan.sql, '', dataVer) : ''
+
   // 湖 ETag 竞态（#452 定案 A）：tick 在上海 08:00–24:00 每 5 分钟重写当天 cur/prev 两个分区，
   // 任意时刻的读可能撞上重写窗 ⇒ 咽喉处退避 ~1s 重试**恰一次**（本通路全为只读 SELECT，天然幂等）。
   // 重试成功也把 `lake_race_retry` 写进审计 reason——那是 spec §3.5「重试是否长期够用」的数据源。
@@ -479,29 +496,59 @@ export async function runQuery(
     return { status: 'error', metricId, reason, detail }
   }
 
-  try {
-    result = await execWithRaceRetry(authz.plan.sql)
-  } catch (err) {
-    return await toError(err)
+  // 命中缓存 ⇒ 连维度名装饰一并复用（存的是**装饰后**的结果）；未命中 ⇒ 执行 + 装饰 + 回填。
+  type CachedAgg = { columns: string[]; rows: unknown[][]; retried: boolean }
+  let fromCache = false
+  const cachedMain = mainKey === '' ? null : cacheGet<CachedAgg>(mainKey)
+  if (cachedMain !== null) {
+    result = { columns: cachedMain.columns, rows: cachedMain.rows }
+    if (cachedMain.retried) raceRetried = true
+    fromCache = true
+  } else {
+    // 执行 + 装饰 + 回填缓存收进一个闭包：它同时是「单飞」的执行体（并发同键只跑一次）。
+    const loadMain = async (): Promise<CachedAgg> => {
+      const r = await execWithRaceRetry(authz.plan.sql)
+      // 维度名称解析（issue #857）：事实表只存键，名称在**展示层**贴——把 `brand_name` 插在
+      // `system_book` 之后、`branch_name` 插在 `branch_num` 之后，**原 key 保留**（可追溯/可下钻）。
+      // 只作用于明细行：`args.total` 的单行 `['total']` 没有键列，天然跳过。
+      // 维度缺席/查询失败 ⇒ 名称列缺席，主查询照常交付（fail-soft，与新鲜度面同一姿态）。
+      // 走真仓库池而非 `deps.execute`：后者是主计划 SQL 的测试缝，假执行器认不得这两条小查询。
+      const lookup = await (deps.dimensionLookup ?? (() => loadDimensionLookup(whExec)))()
+      const decorated = lookup === null ? r : decorateWithLabels(r, lookup)
+      const value: CachedAgg = { columns: decorated.columns, rows: decorated.rows, retried: raceRetried }
+      if (mainKey !== '') cacheSet(mainKey, value)
+      return value
+    }
+    let main: CachedAgg
+    try {
+      main = mainKey === '' ? await loadMain() : await singleFlight(mainFlight, mainKey, loadMain)
+    } catch (err) {
+      return await toError(err)
+    }
+    result = { columns: main.columns, rows: main.rows }
+    if (main.retried) raceRetried = true
   }
-
-  // 维度名称解析（issue #857）：事实表只存键，名称在**展示层**贴——把 `brand_name` 插在
-  // `system_book` 之后、`branch_name` 插在 `branch_num` 之后，**原 key 保留**（可追溯/可下钻）。
-  // 只作用于明细行：`args.total` 的单行 `['total']` 没有键列，天然跳过。
-  // 维度缺席/查询失败 ⇒ 名称列缺席，主查询照常交付（fail-soft，与新鲜度面同一姿态）。
-  // 走真仓库池而非 `deps.execute`：后者是主计划 SQL 的测试缝，假执行器认不得这两条小查询。
-  const lookup = await (deps.dimensionLookup ?? (() => loadDimensionLookup(whExec)))()
-  if (lookup !== null) result = decorateWithLabels(result, lookup)
 
   // 自动伴随（spec §8.4）：plan.totalSql 在场 ⇒ 再执行合计计划，把值附到响应 total 字段。
   // sum() 对空集也回一行（NULL）⇒ rows[0][0] 即值；合计失败与主查询同一错误面（warehouse_*）。
   let totalValue: string | number | null | undefined
   if (authz.plan.totalSql !== undefined) {
-    try {
-      const t = await execWithRaceRetry(authz.plan.totalSql)
-      totalValue = (t.rows[0]?.[0] as string | number | null | undefined) ?? null
-    } catch (err) {
-      return await toError(err)
+    const totalKey = cacheable ? cacheKey(authz.plan.totalSql, '', dataVer) : ''
+    const cachedTotal = totalKey === '' ? null : cacheGet<{ value: string | number | null }>(totalKey)
+    if (cachedTotal !== null) {
+      totalValue = cachedTotal.value
+    } else {
+      const loadTotal = async (): Promise<string | number | null | undefined> => {
+        const t = await execWithRaceRetry(authz.plan.totalSql!)
+        const v = (t.rows[0]?.[0] as string | number | null | undefined) ?? null
+        if (totalKey !== '') cacheSet(totalKey, { value: v })
+        return v
+      }
+      try {
+        totalValue = totalKey === '' ? await loadTotal() : await singleFlight(totalFlight, totalKey, loadTotal)
+      } catch (err) {
+        return await toError(err)
+      }
     }
   }
 
@@ -602,5 +649,7 @@ export async function runQuery(
     //   不该喂给模型/前端）⇒ 形状必须分家；但「有没有掩码」这个判据仍只有一份实现
     //   （`hasMasking`），#824 要防的「同一判据两处各写一遍、将来漂开」仍被防住。
     ...(hasMasking ? { masking: authz.plan.applied } : {}),
+    // 缓存命中标记（R4）：只用于观测/排障，不改变语义。缺席 = 本次真跑。
+    ...(fromCache ? { cached: true } : {}),
   }
 }

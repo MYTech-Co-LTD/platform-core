@@ -14,7 +14,7 @@ const anyObject = { type: 'object' }
 export const DEMAND_TOOLS: readonly DemandToolMeta[] = [
   {
     name: 'list_demand_signals', group: 'demand', title: '需求台账清单',
-    description: '列出从真实用法挖出的「想要但词表没有」的需求（alias_gap 别名缺口 / new_metric 真缺指标 / drill_gap 下钻缺口 / metric_hunt 口径寻路），按出现次数降序。每条带 resolved 自动判定：词表已补齐的条目标 resolved=true（metric_hunt 永不自动消解，只能人工否决）。默认不含已否决条目。',
+    description: '列出从真实用法挖出的需求（alias_gap / new_metric / drill_gap / metric_hunt），按出现次数降序；带 resolved 自动判定（metric_hunt 只能人工否决）。默认不含已否决。',
     inputSchema: {
       type: 'object',
       properties: {
@@ -29,7 +29,7 @@ export const DEMAND_TOOLS: readonly DemandToolMeta[] = [
   },
   {
     name: 'dismiss_demand_signal', group: 'demand', title: '否决一条需求',
-    description: '把一条需求标记为「不建」（写 dismissed_at/by/reason），此后默认不再出现在清单里。重复否决幂等（回原否决信息）。受写总闸 DATA_MCP_ALLOW_MUTATING 门控。',
+    description: '把需求标记为「不建」（幂等）。受写总闸 DATA_MCP_ALLOW_MUTATING 门控。',
     inputSchema: {
       type: 'object',
       properties: {

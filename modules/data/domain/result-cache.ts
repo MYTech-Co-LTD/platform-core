@@ -23,7 +23,7 @@ export interface CachedDetail {
 
 interface Entry {
   at: number
-  value: CachedDetail
+  value: unknown
 }
 
 const MAX = Math.max(1, Number(process.env.RESULT_CACHE_MAX ?? 200) || 200)
@@ -49,7 +49,7 @@ export function cacheKey(sql: string, countSql: string, dataVersion: string = ''
     .digest('hex')
 }
 
-export function cacheGet(key: string, now: number = Date.now()): CachedDetail | null {
+export function cacheGet<T = CachedDetail>(key: string, now: number = Date.now()): T | null {
   const e = store.get(key)
   if (e === undefined) {
     misses += 1
@@ -64,10 +64,10 @@ export function cacheGet(key: string, now: number = Date.now()): CachedDetail | 
   store.delete(key)
   store.set(key, e)
   hits += 1
-  return e.value
+  return e.value as T
 }
 
-export function cacheSet(key: string, value: CachedDetail, now: number = Date.now()): void {
+export function cacheSet(key: string, value: unknown, now: number = Date.now()): void {
   if (TTL_MS === 0) return
   store.delete(key)
   store.set(key, { at: now, value })

@@ -128,3 +128,16 @@ describe('ai_text（AI 生成文本组件，focus=overview/root_cause/daily_revi
       .toEqual({ ok: false, code: 'INVALID_SPEC' })
   })
 })
+
+describe('text 面板 format（R3）', () => {
+  const parse = (panel: unknown) => parseReportSpec({ panels: [panel] })
+
+  it('缺省 plain；显式 markdown 合法；未知格式拒', () => {
+    const plain = parse({ chart: 'text', content: '说明' })
+    expect(plain.ok).toBe(true)
+    if (plain.ok) expect(plain.spec.panels[0]).toMatchObject({ chart: 'text', format: 'plain' })
+
+    expect(parse({ chart: 'text', content: '**说明**', format: 'markdown' }).ok).toBe(true)
+    expect(parse({ chart: 'text', content: '说明', format: 'html' }).ok).toBe(false)
+  })
+})

@@ -19,7 +19,7 @@
 //  ② **模块级 `streamPost`**（`../lib/api`）：前缀与失败体翻译与其余端点同一套；失败时抛
 //     `ApiError`，这里只上屏一句人话（状态码细节不暴露给观看面）。
 import { useEffect, useState } from 'react'
-import type { ReactNode } from 'react'
+import { RichText } from '../lib/rich-text'
 import { Alert, Space, Spin, Tag, Typography } from 'antd'
 import { streamPost } from '../lib/api'
 import type { PeriodSpec } from '../../domain/report-spec'
@@ -78,44 +78,6 @@ function sectionsOf(text: string): string[] {
   }
   flush()
   return out
-}
-
-/**
- * 数字高亮：日报的说服力全在数字上。不依赖模型一定写 `**`，渲染层主动把
- * 数字加粗并按符号着色（负=红、正=绿），日期/时间保持原样不抢视觉。
- */
-const NUM_TOKEN = /\d{4}-\d{2}-\d{2}|\d{1,2}:\d{2}(?::\d{2})?|[+-]?\d[\d,]*(?:\.\d+)?(?:%|pp|°C|℃|mm|cm|单|件|个|天|家)?/g
-function withNumbers(s: string): ReactNode {
-  const out: ReactNode[] = []
-  let last = 0
-  let hit = false
-  for (const m of s.matchAll(NUM_TOKEN)) {
-    const tok = m[0]
-    const at = m.index ?? 0
-    if (at > last) out.push(s.slice(last, at))
-    if (/^\d{4}-\d{2}-\d{2}$/.test(tok) || /^\d{1,2}:\d{2}/.test(tok)) {
-      out.push(tok)
-    } else {
-      hit = true
-      const color = tok.startsWith('-') ? '#cf1322' : tok.startsWith('+') ? '#389e0d' : '#1f1f1f'
-      out.push(<strong key={at} style={{ color, fontWeight: 600 }}>{tok}</strong>)
-    }
-    last = at + tok.length
-  }
-  if (!hit) return s
-  if (last < s.length) out.push(s.slice(last))
-  return <>{out}</>
-}
-
-/** 极简富文本：`**粗体**` + 数字高亮；不引入整个 Markdown 渲染器。 */
-function renderRich(s: string): ReactNode {
-  const parts = s.split('**')
-  if (parts.length === 1) return withNumbers(s)
-  return parts.map((p, i) =>
-    i % 2 === 1
-      ? <strong key={i} style={{ fontWeight: 650 }}>{p}</strong>
-      : <span key={i}>{withNumbers(p)}</span>,
-  )
 }
 
 /** 期间标签：11-08 这类裸日期要带上「单日/本月」语义，避免读者猜。 */
@@ -254,14 +216,14 @@ export default function AiTextPanel({ reportId, panelIndex, focus, period, branc
                       color: '#262626',
                     }}
                   >
-                    {renderRich(line)}
+                    <RichText text={line} highlightNumbers />
                   </Typography.Paragraph>
                 ))}
                 {bullets.length > 0 && (
                   <ul style={{ margin: prose.length > 0 ? '8px 0 0' : 0, paddingLeft: 20 }}>
                     {bullets.map((b, bi) => (
                       <li key={bi} style={{ marginBottom: bi === bullets.length - 1 ? 0 : 6, lineHeight: 1.8 }}>
-                        {renderRich(b.slice(2))}
+                        <RichText text={b} highlightNumbers />
                       </li>
                     ))}
                   </ul>
