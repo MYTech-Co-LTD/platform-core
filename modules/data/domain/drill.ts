@@ -6,6 +6,7 @@
 import type { DrillBinding, DrillColumn, Requester } from './authz'
 import { authorize, paramFilters, sqlQuote, visibleMetrics } from './authz'
 import { maskingAuditOf, writeAudit, type ScopeAudit } from './audit-store'
+import { deptContextIfOwned } from './metric-visibility'
 import { loadMergedCatalog } from './metric-store'
 import { effectiveMasks, maskedSelectSql } from './mask'
 import { analystPool, runWarehouseSql, DATA_WAREHOUSE_UNCONFIGURED } from './warehouse'
@@ -187,7 +188,10 @@ export async function runDetailQuery(
   }
 
   const allMetrics = await loadMergedCatalog(deps.pool, org)
-  const catalog = visibleMetrics(allMetrics, requester, deps.adoptedSources)
+  // 部门可见（P2 Task 4 接线）：与 runQuery **同一守卫**（deptContextIfOwned）——明细面不得
+  // 比聚合面多看一行（「聚合看不到、明细看得到」是 #1957 修过的同一类绕过面）。
+  const deptCtx = await deptContextIfOwned(deps.pool, requester.tenantId, requester, allMetrics)
+  const catalog = visibleMetrics(allMetrics, requester, deps.adoptedSources, deptCtx)
   // 数据范围门（#1957）：与 runQuery **同一实现**（`buildScopePlan`），否则 enforce 下会出现
   // 「聚合看不到、明细看得到」的绕过面。off 不裁；shadow 只记录；enforce 传入 authorize。
   const scopeMode = scopeModeOf(process.env)

@@ -13,6 +13,7 @@
 //   （「unknown_tool」兜底随之上移到合成方，见 mcp-manage.ts）。
 import { z } from 'zod'
 import { visibleMetrics } from '../domain/authz'
+import { deptContextIfOwned } from '../domain/metric-visibility'
 import { loadMergedCatalog } from '../domain/metric-store'
 import { L2RefineDeclarationSchema, L2ExprDeclarationSchema, ExprNodeSchema, dimensionNamesOf } from '../domain/semantic-compiler'
 import { deleteMetricDeclaration, writeL2Declaration } from '../domain/metric-write'
@@ -132,8 +133,12 @@ export const metricTools: McpToolGroup = {
 
     if (name === 'list_metrics') {
       const all = await loadMergedCatalog(deps.pool, deps.org)
+      // 部门可见（P2 Task 4 接线）：bases 与 GET /metrics 同一把裁剪尺。
+      // ⚠️ custom 分支（L2 全量直出）是**既有行为**（scope/源维度同样不裁）——P2 不在本工具
+      //    改它的执法面，避免顺手扩围；缺口已记 Task 4 报告，归管理面语义统一时处置。
+      const deptCtx = await deptContextIfOwned(deps.pool, deps.requester.tenantId, deps.requester, all)
       const bases = visibleMetrics(
-        all.filter((m) => m.source === 'l1'), deps.requester, deps.adoptedSources)
+        all.filter((m) => m.source === 'l1'), deps.requester, deps.adoptedSources, deptCtx)
       return ok({ bases: bases.map(view), custom: all.filter((m) => m.source === 'l2').map(view) })
     }
 

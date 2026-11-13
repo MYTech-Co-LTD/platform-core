@@ -4,6 +4,7 @@ import type { Pool } from 'pg'
 import type { MetricDef, MetricParamFace, Requester } from './authz'
 import { paramFaceOf, visibleMetrics } from './authz'
 import { runDetailQuery } from './drill'
+import { deptContextIfOwned } from './metric-visibility'
 import { loadMergedCatalog } from './metric-store'
 import { runQuery } from './query-service'
 import type { SqlExecutor } from './query-service'
@@ -134,8 +135,11 @@ export async function* runAgentLoop(
   //   （它连"看不见"都不会说——`list_metrics` 里直接没有这条 id）。T8 评审 C1。
   // ★ 裁剪带**源维度**（计划 5 §3⑧）：agent 只该看到「本租户已接入源」的指标——否则单源
   //   租户会看到别的源的同名口径，只能停下来问人（spec 实测的那个歧义）。
-  const catalog = visibleMetrics(
-    await loadMergedCatalog(deps.pool, deps.org), requester, deps.adoptedSources)
+  const allMetrics = await loadMergedCatalog(deps.pool, deps.org)
+  // 部门可见（P2 Task 4 接线）：与 /query 同一守卫——agent 记住 id 硬编码重放也绕不过
+  // （runQuery 内部再裁一次，双面同判）。词表无归属行 ⇒ 不发查询（懒加载）。
+  const deptCtx = await deptContextIfOwned(deps.pool, requester.tenantId, requester, allMetrics)
+  const catalog = visibleMetrics(allMetrics, requester, deps.adoptedSources, deptCtx)
   const messages: ChatMessage[] = [
     { role: 'system', content: SYSTEM_PROMPT },
     { role: 'user', content: question },

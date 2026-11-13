@@ -18,6 +18,7 @@ import { createHash } from 'node:crypto'
 import type { Pool } from 'pg'
 import { visibleMetrics, type MetricDef, type Requester } from './authz'
 import { runDetailQuery } from './drill'
+import { deptContextIfOwned } from './metric-visibility'
 import { loadMergedCatalog, type MetricRow } from './metric-store'
 import type { QueryDeps, SqlExecutor } from './query-service'
 import { executeExplore } from './analysis/explore-exec'
@@ -426,10 +427,11 @@ export async function buildRootCause(
   deps: RootCauseDeps, spec: ReportSpec, range: { from: string; to: string },
   periodMode: PeriodSpec['mode'] | undefined, facts: RootCauseFacts,
 ): Promise<RootCauseBundle | null> {
-  // 与所有消费通道同一把裁剪尺：不可见/未接入源的指标不做探针。
-  const catalog = visibleMetrics(
-    await loadMergedCatalog(deps.pool, deps.org), deps.requester, deps.adoptedSources,
-  )
+  // 与所有消费通道同一把裁剪尺：不可见/未接入源/**部门外归属**的指标不做探针。
+  const allMetrics = await loadMergedCatalog(deps.pool, deps.org)
+  // 部门可见（P2 Task 4 接线）：同一守卫——报表根因探针不得比问数面多看一行。
+  const deptCtx = await deptContextIfOwned(deps.pool, deps.requester.tenantId, deps.requester, allMetrics)
+  const catalog = visibleMetrics(allMetrics, deps.requester, deps.adoptedSources, deptCtx)
   const numbers = new Set<string>()
   const findings: RootCauseFinding[] = []
   const tried: string[] = []

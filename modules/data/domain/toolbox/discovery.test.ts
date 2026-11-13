@@ -1,10 +1,11 @@
 // discovery.test.ts — 四个发现工具：词表裁剪复用 visibleMetrics、样本走 authorizeCore、行限 ≤50。
-import { afterAll, describe, expect, it } from 'vitest'
+import { afterAll, beforeAll, describe, expect, it } from 'vitest'
 import { Pool } from 'pg'
 import { describeDatasetImpl, describeMetricImpl, sampleDimensionValuesImpl, searchImpl } from './discovery'
 import type { ToolboxDeps } from './registry'
-import type { MetricRow } from '../metric-store'
+import { upsertMetric, type MetricRow } from '../metric-store'
 import type { Requester } from '../authz'
+import { applyMigrations, applyPlatformMigrations } from '../../test-util'
 
 const row = (over: Partial<MetricRow>): MetricRow => ({
   id: 'lemeng:retail:net_sales', title: '净销', description: '净销售额\n第二行',
@@ -233,5 +234,98 @@ describe('describeDatasetImpl', () => {
     const out = await describeDatasetImpl(d, { dataset: 'marts.fct_retail_sale' })
     expect(out.payload).toMatchObject({ status: 'ok', dataset: 'marts.fct_retail_sale', org: 'acme' })
     expect((out.payload as { columns: unknown[] }).columns).toEqual([{ name: 'org', dataType: 'text' }, { name: 'bizday', dataType: 'date' }])
+  })
+})
+
+// ── P2 Task 4：六面接线（部门可见性）——discovery/search 列表面代表用例 ────────────────
+// 真库夹具（platform.org_* 底层真表 + data.metrics 行），org 与合成租户独立隔离。
+describePg('searchImpl × 部门可见性（P2 Task 4）', () => {
+  const pool = new Pool({ connectionString: dbUrl })
+  const ORG_D = 'org-p2-vis-search'
+  const TENANT_D = 9308 // query-service.test.ts 用 9307、metric-visibility 用 9207——错开
+  const ROOT = 'org-p2-vis-s-root'
+  const CHILD = 'org-p2-vis-s-child'
+  const SIB = 'org-p2-vis-s-sib'
+  const U_CHILD = 'org-p2-vis-s-u-child'
+  const U_SIB = 'org-p2-vis-s-u-sib'
+
+  const ownedRow = {
+    id: 'p2_vis_search_owned', title: '部门归属的搜索面指标', description: '',
+    requiredScope: null, subjectColumn: 'org',
+    selectSql: 'SELECT org, day FROM marts.p2_vis_search_owned', groupBy: '', params: {},
+  }
+  const plainRow = {
+    id: 'p2_vis_search_plain', title: '平台通用的搜索面指标', description: '',
+    requiredScope: null, subjectColumn: 'org',
+    selectSql: 'SELECT org, day FROM marts.p2_vis_search_plain', groupBy: '', params: {},
+  }
+
+  const realDeps = (requester: Requester): ToolboxDeps => ({
+    pool, org: ORG_D, requester, adoptedSources: new Set<string>(), // 夹具全 L2 ⇒ 源维度不裁
+    wh: async () => ({ columns: [], rows: [] }),
+  })
+  const reqOf = (userName: string, over: Partial<Requester> = {}): Requester => {
+    const scopes = ['data:query']
+    return {
+      userId: userName, accountName: userName, orgId: ORG_D, channel: 'session', keyId: null,
+      scopes, hasScope: (c) => scopes.includes(c), tenantId: TENANT_D, ...over,
+    }
+  }
+
+  beforeAll(async () => {
+    await applyMigrations(pool)
+    await applyPlatformMigrations(pool)
+    await pool.query(
+      'insert into platform.tenant(id, slug, casdoor_org) values ($1, $2, $3) on conflict (id) do nothing',
+      [TENANT_D, 'org-p2-vis-s-fixture', ORG_D],
+    )
+    await pool.query('delete from platform.org_membership where tenant_id = $1', [TENANT_D])
+    await pool.query('delete from platform.org_node where tenant_id = $1', [TENANT_D])
+    const insDept = async (extId: string, parent: string | null, path: string) => {
+      await pool.query(
+        `insert into platform.org_node(tenant_id, ext_id, name, parent_ext_id, path, status)
+         values ($1, $2, $3, $4, $5, 1)
+         on conflict (tenant_id, ext_id) do update set parent_ext_id = excluded.parent_ext_id, path = excluded.path, status = 1`,
+        [TENANT_D, extId, extId, parent, path],
+      )
+    }
+    await insDept(ROOT, null, ROOT)
+    await insDept(CHILD, ROOT, `${ROOT}.${CHILD}`)
+    await insDept(SIB, null, SIB)
+    const insMember = async (userName: string, extId: string) => {
+      await pool.query(
+        'insert into platform.org_membership(tenant_id, user_name, ext_id, is_primary) values ($1, $2, $3, true) on conflict do nothing',
+        [TENANT_D, userName, extId],
+      )
+    }
+    await insMember(U_CHILD, CHILD)
+    await insMember(U_SIB, SIB)
+
+    await pool.query('delete from data.metrics where org = $1', [ORG_D])
+    await upsertMetric(pool, ORG_D, ownedRow, 'fixture')
+    await upsertMetric(pool, ORG_D, plainRow, 'fixture')
+    // 写侧暂无归属 API 面（P1 只建列）：夹具直改库设归属
+    await pool.query('update data.metrics set owner_dept = $1 where org = $2 and id = $3', [CHILD, ORG_D, ownedRow.id])
+  })
+
+  afterAll(async () => {
+    await pool.query('delete from data.metrics where org = $1', [ORG_D]).catch(() => {})
+    await pool.query('delete from platform.org_membership where tenant_id = $1', [TENANT_D]).catch(() => {})
+    await pool.query('delete from platform.org_node where tenant_id = $1', [TENANT_D]).catch(() => {})
+    await pool.query('delete from platform.tenant where id = $1', [TENANT_D]).catch(() => {})
+    await pool.end().catch(() => {})
+  })
+
+  it('链外观看者（直属 sib）：owned 行被过滤，平台桶行照列', async () => {
+    const out = await searchImpl(realDeps(reqOf(U_SIB)), { kind: 'metric' })
+    const ids = (out.payload as { results: { id: string }[] }).results.map((r) => r.id)
+    expect(ids).not.toContain(ownedRow.id)
+    expect(ids).toContain(plainRow.id)
+  })
+
+  it('链上观看者（直属 child，含祖先链）：owned 行照列（回归锁）', async () => {
+    const out = await searchImpl(realDeps(reqOf(U_CHILD)), { kind: 'metric' })
+    const ids = (out.payload as { results: { id: string }[] }).results.map((r) => r.id)
+    expect(ids).toEqual([ownedRow.id, plainRow.id].sort())
   })
 })

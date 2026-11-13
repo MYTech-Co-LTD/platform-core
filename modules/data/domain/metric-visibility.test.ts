@@ -9,7 +9,7 @@
 import { afterAll, beforeAll, describe, expect, it } from 'vitest'
 import { Pool } from 'pg'
 import { applyPlatformMigrations } from '../test-util'
-import { loadDeptContext, metricVisibleWithDept } from './metric-visibility'
+import { deptContextIfOwned, loadDeptContext, metricVisibleWithDept } from './metric-visibility'
 import type { DeptContext } from './metric-visibility'
 
 // ── 纯谓词真值表（无库）──────────────────────────────────────────────
@@ -79,6 +79,34 @@ describe('metricVisibleWithDept（真值表）', () => {
     expect(metricVisibleWithDept({ ownerDept: '80', visibleDepts: ['80'] }, two)).toBe(true)
     // 反向也不误伤：链外指标的共享部门不在 memberOf 照样假
     expect(metricVisibleWithDept({ ownerDept: '90', visibleDepts: ['66'] }, two)).toBe(false)
+  })
+})
+
+// ── deptContextIfOwned（Task 4 接线入口：懒加载 + fail-closed 分支）──────
+describe('deptContextIfOwned（懒加载守卫，fake pool 计数）', () => {
+  const fakePool = (rows: unknown[] = []) => {
+    let calls = 0
+    const pool = { query: async () => { calls += 1; return { rows } } }
+    return { pool: pool as never, calls: () => calls }
+  }
+  const requester = { userId: 'u', accountName: 'acct' }
+
+  it('词表无归属行 ⇒ undefined 且**不发查询**（懒加载：无归属时行为零变化）', async () => {
+    const f = fakePool()
+    expect(await deptContextIfOwned(f.pool, 1, requester, [{ ownerDept: null }, {}])).toBeUndefined()
+    expect(f.calls()).toBe(0)
+  })
+
+  it('ownerDept 空串也算平台桶（与谓词同一归一，不因它发查询）', async () => {
+    const f = fakePool()
+    expect(await deptContextIfOwned(f.pool, 1, requester, [{ ownerDept: '' }])).toBeUndefined()
+    expect(f.calls()).toBe(0)
+  })
+
+  it('有归属行但 requester 无 tenantId ⇒ undefined（fail-closed）且不发查询', async () => {
+    const f = fakePool()
+    expect(await deptContextIfOwned(f.pool, undefined, requester, [{ ownerDept: '57' }])).toBeUndefined()
+    expect(f.calls()).toBe(0)
   })
 })
 
@@ -161,5 +189,13 @@ describePg('loadDeptContext（真库，platform.org_* 夹具）', () => {
     const c = await loadDeptContext(pool, TENANT, { userId: 'org-p2-vis-ghost' })
     expect(c.memberOf.size).toBe(0)
     expect(c.canOwn.size).toBe(0)
+  })
+
+  it('deptContextIfOwned 经真库取上下文：归属行在链上 ⇒ 有 ctx；含祖先与后代', async () => {
+    const c = await deptContextIfOwned(pool, TENANT, { userId: U1 }, [{ ownerDept: CHILD }])
+    expect(c).toBeDefined()
+    expect(c?.canOwn.has(GRAND)).toBe(true) // 后代
+    expect(c?.canOwn.has(ROOT)).toBe(true) // 祖先
+    expect(c?.memberOf.has(CHILD)).toBe(true) // 直属
   })
 })

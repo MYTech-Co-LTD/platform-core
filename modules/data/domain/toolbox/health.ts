@@ -2,6 +2,7 @@
 // 「无结论必须显式未知」（spec §5 get_quality 验收锚）：seam 缺席/坏形状一律 unknown——
 // 未知 ≠ 通过 ≠ 编数字。manifest 投递链（随 data-plane.lock）未验证，待真机案例沉淀。
 import { visibleMetrics } from '../authz'
+import { deptContextIfOwned } from '../metric-visibility'
 import { loadMergedCatalog } from '../metric-store'
 import { freshnessLineOf, freshnessStatusOf, watermarkSqlFor } from '../query-service'
 import { readFileSync } from 'node:fs'
@@ -116,7 +117,9 @@ export const freshnessImpl: ToolImpl = async (deps, args) => {
   // 指标支：可见词表（裁剪走 visibleMetrics）→ 链路水位 + 状态 + 固定展示行（与 query-service 同源判据）
   if (deps.requester === null) return { payload: { status: 'denied', reason: 'unauthenticated' }, isError: true, auditRowCount: null }
   const all = await loadMergedCatalog(deps.pool, deps.org)
-  const m = visibleMetrics(all, deps.requester, deps.adoptedSources).find((x) => x.id === scope)
+  // 部门可见（P2 Task 4 接线）：健康面与查询面同一守卫——看不见的指标连新鲜度都不该探。
+  const deptCtx = await deptContextIfOwned(deps.pool, deps.requester.tenantId, deps.requester, all)
+  const m = visibleMetrics(all, deps.requester, deps.adoptedSources, deptCtx).find((x) => x.id === scope)
   if (m === undefined) return unknownOf('scope_not_found', { scope })
   const relations = Array.isArray(m.freshnessRelations) ? m.freshnessRelations.filter((r) => r !== '') : []
   if (m.slaDays === null || relations.length === 0) return unknownOf('no_freshness_chain', { scope })

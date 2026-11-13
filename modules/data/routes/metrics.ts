@@ -26,6 +26,7 @@ import { confirmOverrideDeclaration, createOverrideDeclaration, createTenantDecl
 import { metricUsageStats, retireCandidatesOf } from '../domain/metric-usage'
 import { paramFaceOf, visibleMetrics } from '../domain/authz'
 import type { MetricParamDef, Requester } from '../domain/authz'
+import { deptContextIfOwned } from '../domain/metric-visibility'
 import { loadMergedCatalog, listOverrideDeclarations } from '../domain/metric-store'
 import { beijingTodayOf, freshnessFaceFor } from '../domain/query-service'
 import type { MetricFreshnessFace } from '../domain/query-service'
@@ -180,7 +181,10 @@ export function registerMetrics(r: ModuleHono, ctx: RouteCtx): void {
     if (requester === null) return c.json({ metrics: [] })
     // 消费面词表 = L1（平台）∪ L2（本 org），再按 **scope + 已接入源** 裁（计划 5 §3⑧）
     const all = await loadMergedCatalog(ctx.pool, orgOf(c))
-    const visible = visibleMetrics(all, requester, adoptedSourcesOf(c))
+    // 部门可见（P2 Task 4 接线）：console 词表与问数面同一把裁剪尺——列表照列、按 id 拒，
+    // 两条面不得对同一 id 给出相反答案（T8 评审 C1 的教训）。
+    const deptCtx = await deptContextIfOwned(ctx.pool, requester.tenantId, requester, all)
+    const visible = visibleMetrics(all, requester, adoptedSourcesOf(c), deptCtx)
     // 新鲜度面（spec §10.4.2）：水位查询走**仓库池**（load_log 在数据面，与 data_as_of 同通路，
     // 不走 ctx.pool）；按关系集分组（同组共享一次 load_log 查询）；整面 fail-open——
     // 仓库未配/查询失败都降级成 unknown（字段缺席），词表本身绝不因徽标面 500。

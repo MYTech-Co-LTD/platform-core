@@ -65,6 +65,33 @@ export async function loadDeptContext(
 }
 
 /**
+ * 调用点接线入口（P2 Task 4，六面共用这一份守卫）：词表里**没有**归属行 ⇒ ctx 不影响
+ * 输出，返回 undefined 且**不发查询**（懒加载——现网 57 行全 null，这条让接线后的生产行为
+ * 逐字节不变）；有归属行才按 `requester.tenantId`（路由侧 `requesterOf` 从 `c.get('tenant').id`
+ * 注入的**租户数字 id**，不是 casdoor_org）加载上下文。
+ *
+ * `tenantId` 缺位（测试夹具 / 未注入的通道）⇒ 返回 undefined——owned 行对该请求不可见
+ * （fail-closed，宁少勿错），并记一条 structured warn：这是「配了归属但观看通道没带租户 id」
+ * 的错配态，应当可观测（与 scope.ts 的 `data_scope_dept_unresolved` 同一告警口径）。
+ */
+export async function deptContextIfOwned(
+  pool: Pool, tenantId: number | undefined, requester: { userId: string; accountName?: string },
+  catalog: ReadonlyArray<{ ownerDept?: string | null }>,
+): Promise<DeptContext | undefined> {
+  // `'' → null` 归一与谓词同一口径：空串归属 = 平台通用桶，不因它发查询
+  const hasOwned = catalog.some((m) => (m.ownerDept ?? '') !== '')
+  if (!hasOwned) return undefined
+  if (tenantId === undefined) {
+    console.warn(JSON.stringify({
+      event: 'metric_dept_ctx_unresolved', userId: requester.userId,
+      effect: '词表含部门归属指标但 requester 无 tenantId ⇒ 这些行按 fail-closed 隐藏——检查 requesterOf 是否注入了 tenantId',
+    }))
+    return undefined
+  }
+  return loadDeptContext(pool, tenantId, requester)
+}
+
+/**
  * 部门可见判定（**纯谓词**，spec §8.1 真值表——列表与按 id 查询共用这一份）：
  * - `ownerDept` 空（null / **缺席** / 空串）⇒ 真——平台通用指标，无论 ctx 在不在
  *   （与今天行为逐字节相同）。三个入参形状都收口在第一行：

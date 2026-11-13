@@ -4,6 +4,7 @@
 //   「合并词表 → visibleMetrics → authorize」链（与 runQuery 同序），只算计划、零仓库调用。
 import { createHash } from 'node:crypto'
 import { authorize, MAX_QUERY_ROWS, visibleMetrics, type SlicingSpec } from '../authz'
+import { deptContextIfOwned } from '../metric-visibility'
 import { loadMergedCatalog, type MetricRow } from '../metric-store'
 import { runQuery, type QueryOk } from '../query-service'
 import { buildEnvelope } from './envelope'
@@ -44,7 +45,10 @@ function slicingOf(args: Record<string, unknown>): { slicing: SlicingSpec | unde
 
 const visibleOf = async (deps: ToolboxDeps) => {
   if (deps.requester === null) return []
-  return visibleMetrics(await loadMergedCatalog(deps.pool, deps.org), deps.requester, deps.adoptedSources)
+  const all = await loadMergedCatalog(deps.pool, deps.org)
+  // 部门可见（P2 Task 4 接线）：同一守卫，requester 非空 ⇒ tenantId 由路由侧注入。
+  const deptCtx = await deptContextIfOwned(deps.pool, deps.requester.tenantId, deps.requester, all)
+  return visibleMetrics(all, deps.requester, deps.adoptedSources, deptCtx)
 }
 
 export const previewImpl: ToolImpl = async (deps, args) => {
@@ -54,7 +58,10 @@ export const previewImpl: ToolImpl = async (deps, args) => {
     return { payload: { status: 'denied', reason: 'unauthenticated', metricId }, isError: true, auditMetricId: metricId, auditRowCount: null }
   }
   const all = await loadMergedCatalog(deps.pool, deps.org)
-  const catalog = visibleMetrics(all, deps.requester, deps.adoptedSources)
+  // 部门可见（P2 Task 4 接线）：与 queryMetricImpl 的 visibleOf 同一守卫（preview 只编译不执行，
+  // 也不得比执行面多看一行）。
+  const deptCtx = await deptContextIfOwned(deps.pool, deps.requester.tenantId, deps.requester, all)
+  const catalog = visibleMetrics(all, deps.requester, deps.adoptedSources, deptCtx)
   const authz = authorize(catalog, deps.requester, metricId, mergedArgs, all, slicing)
   if (!authz.ok) {
     return {

@@ -2,6 +2,7 @@
 // 权限判定不自建：词表裁剪只走 visibleMetrics；sample 的主体过滤只走 authorizeCore（授权核心）。
 // 仓库读一律 deps.wh（分析师面 = 只读池）。
 import { authorizeCore, paramFaceOf, sqlQuote, visibleMetrics } from '../authz'
+import { deptContextIfOwned } from '../metric-visibility'
 import type { MetricRow } from '../metric-store'
 import { loadMergedCatalog } from '../metric-store'
 import { watermarkSqlFor } from '../query-service'
@@ -30,7 +31,10 @@ const denied = (reason: string, detail: string | undefined, metricId: string): T
 /** 可见词表（裁剪只走 visibleMetrics；requester null 的防御分支兜底 fail-closed）。 */
 const visibleRows = async (deps: ToolboxDeps): Promise<MetricRow[]> => {
   if (deps.requester === null) return []
-  return visibleMetrics(await loadMergedCatalog(deps.pool, deps.org), deps.requester, deps.adoptedSources)
+  const all = await loadMergedCatalog(deps.pool, deps.org)
+  // 部门可见（P2 Task 4 接线）：search/describe 列表面与按 id 面同一守卫。
+  const deptCtx = await deptContextIfOwned(deps.pool, deps.requester.tenantId, deps.requester, all)
+  return visibleMetrics(all, deps.requester, deps.adoptedSources, deptCtx)
 }
 
 /** 指标链路水位（声明了 freshnessRelations 才查；查不到/未声明 ⇒ undefined，未知≠编造）。 */
@@ -201,7 +205,9 @@ export const sampleDimensionValuesImpl: ToolImpl = async (deps, args) => {
   if (deps.requester === null) return denied('unauthenticated', undefined, metricId)
   // 词表裁剪 + 主体钉死全部出自 authorizeCore：本文件不拼任何 WHERE 主语（授权核心单实现）。
   const all = await loadMergedCatalog(deps.pool, deps.org)
-  const catalog = visibleMetrics(all, deps.requester, deps.adoptedSources)
+  // 部门可见（P2 Task 4 接线）：与 visibleRows 同一守卫——sample 不得比 search 多看一行。
+  const deptCtx = await deptContextIfOwned(deps.pool, deps.requester.tenantId, deps.requester, all)
+  const catalog = visibleMetrics(all, deps.requester, deps.adoptedSources, deptCtx)
   const toolArgs = typeof args.args === 'object' && args.args !== null && !Array.isArray(args.args)
     ? args.args as Record<string, unknown> : {}
   // 数据范围门（spec 2026-11-10）：与 /query 同一份 plan；sample 也不能绕过范围。

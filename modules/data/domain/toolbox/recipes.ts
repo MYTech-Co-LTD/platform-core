@@ -4,6 +4,7 @@
 // 审计仍由 `callTool` 单点写（本 impl 只回填 auditMetricId / auditRowCount）。
 import { loadMergedCatalog } from '../metric-store'
 import { visibleMetrics } from '../authz'
+import { deptContextIfOwned } from '../metric-visibility'
 import { executeExplore } from '../analysis/explore-exec'
 import { applyRecipe, compileRecipe, recipeTargetOf } from '../analysis/recipes'
 import type { RecipeKind, RecipeRequest } from '../analysis/recipes'
@@ -66,7 +67,9 @@ export const exploreRecipeImpl: ToolImpl = async (deps, args) => {
   const metricId = String(args.metricId ?? '')
   const dimension = String(args.dimension ?? '')
   const catalog = await loadMergedCatalog(deps.pool, deps.org)
-  const row = visibleMetrics(catalog, deps.requester, deps.adoptedSources).find((m) => m.id === metricId)
+  // 部门可见（P2 Task 4 接线）：探针面与查询面同一守卫。
+  const deptCtx = await deptContextIfOwned(deps.pool, deps.requester.tenantId, deps.requester, catalog)
+  const row = visibleMetrics(catalog, deps.requester, deps.adoptedSources, deptCtx).find((m) => m.id === metricId)
   if (row === undefined) {
     return { payload: { status: 'denied', reason: 'metric_not_found', metricId }, isError: true, auditMetricId: metricId }
   }

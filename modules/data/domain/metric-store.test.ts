@@ -265,6 +265,10 @@ describePg('metric-store（需要 DATABASE_URL）', () => {
     })
     await put(ORG, mine)
     await put(OTHER_ORG, def({ id: 'other_org_only', title: '别家的' }))
+    // 显式共享（047 `visible_depts`，P2 Task 4 读侧接线）：写侧暂无 API 面，直改库设值——
+    // 判据是「列里的数组经 ROW_COLUMNS → toMetricRow 原样到达 MetricRow.visibleDepts」。
+    await pool.query('update data.metrics set visible_depts = $1 where org = $2 and id = $3',
+      [['dept_a', 'dept_b'], ORG, 'finance_margin'])
 
     const catalog = await loadOrgCatalog(pool, ORG)
     expect(catalog.map((m) => m.id)).toContain('finance_margin')
@@ -289,6 +293,8 @@ describePg('metric-store（需要 DATABASE_URL）', () => {
         entity: null, synonyms: [],
         // 归属列（047，P1 Task 3）：经变更单才写 ⇒ 存储侧行恒携带（无归属 = null，不是键缺席）
         ownerDept: null, variantNote: null,
+        // 显式共享（047，P2 Task 4 读侧接线）：上面直改库设的数组原样到达（不是键缺席）
+        visibleDepts: ['dept_a', 'dept_b'],
         // 测度档与归档（W2，034）：L2 缺省档 = 树（l1_tree），未归档
         basis: 'l1_tree', archivedAt: null,
         // 租户覆盖（W8，041）：L2 普通行 = 非覆盖，映射恒带 null
