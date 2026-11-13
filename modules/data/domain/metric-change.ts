@@ -38,7 +38,13 @@ export type SubmitOutcome =
       // P1 Task 3（spec §13）：概念归属未知（400）/ 部门内同名互斥（409）/ create 撞已有 id（400）
       | 'UNKNOWN_CONCEPT' | 'TITLE_EXISTS_IN_DEPT' | 'METRIC_ID_EXISTS'
       // P1 Task 7（override 档）：metricId 不是现行 L1 id ⇒ 提交即 404（fail-early 的廉价闸）
-      | 'NOT_FOUND' }
+      | 'NOT_FOUND'
+      // P4 收口（2026-11-13）：id 级/档级判据在**提交期**收口（与写域同码）——
+      //   · 撞 L1 保留 id / delete 平台口径 / declared 行不可结构化编辑 / column_agg 跨档；
+      //   · delete 不存在的 id ⇒ 404 METRIC_NOT_FOUND（不再落 preview_failed 死单）。
+      // 原先只有 MCP 两把旧工具内联这套预检，REST /metric-changes 与 submit_metric_change 可绕过。
+      | 'ID_RESERVED_BY_L1' | 'READONLY_L1' | 'DECLARED_NOT_EDITABLE' | 'BASIS_CONFLICT'
+      | 'METRIC_NOT_FOUND' }
 
 const MetaPayload = z.object({
   bizDescription: z.string().max(500).optional(),
@@ -160,11 +166,56 @@ function toRow(r: DbRow): MetricChangeRow {
   }
 }
 
+/** 该 id 是否属于平台词表（L1）。判据与 metric-write 的 isL1Id 同源：`loadPlatformCatalog`。 */
+const isPlatformIdOf = async (pool: Pool, id: string): Promise<boolean> =>
+  (await loadPlatformCatalog(pool)).some((m) => m.id === id)
+
+/**
+ * 提交期 fail-early 预检（P4 收口，2026-11-13）：**所有提交面共用这一份**。
+ *
+ * 为什么必须在提交期拒：试算只编译 payload，不看 id 也不看既有行档位——放过 L1 保留 id
+ * 会得到 preview_ready 的**绿单**（采纳才 409），declared / column_agg 行的单同样绿单后
+ * 死在采纳期。这些都是**立单前**就能判定的，不该让人在队列里白点一次。
+ *
+ * 与写域的码保持一致（ID_RESERVED_BY_L1 / READONLY_L1 / DECLARED_NOT_EDITABLE /
+ * BASIS_CONFLICT）；HTTP 状态按「提交期校验」取 400（不是生效写的 409）——变更单**没落**，
+ * 调用方改入参重提即可。delete 的「行不存在」是 404 METRIC_NOT_FOUND（fail-early 的廉价闸）。
+ *
+ * `override` 档的 NOT_FOUND 判据在下方自己的块里（它只收 L1 id），不在这里重复。
+ */
+async function precheckOf(pool: Pool, org: string, metricId: string, kind: ChangeKind): Promise<SubmitOutcome | null> {
+  if (kind === 'create' || kind === 'update') {
+    if (await isPlatformIdOf(pool, metricId)) return { ok: false, http: 400, error: 'ID_RESERVED_BY_L1' }
+    const cur = await pool.query(
+      "select basis from data.metrics where org = $1 and id = $2 and source = 'l2'", [org, metricId])
+    const basis = cur.rows[0]?.basis as string | undefined
+    // 租户全额声明（W8）不走 L2 结构化编辑：编辑 = 删除后重建（与 metric-write 同判据）。
+    if (basis === 'declared') return { ok: false, http: 400, error: 'DECLARED_NOT_EDITABLE' }
+    // 私有测度（column_agg）同款：树形写会翻档 ⇒ 与写域 BASIS_CONFLICT 同码。
+    if (basis === 'column_agg') return { ok: false, http: 400, error: 'BASIS_CONFLICT' }
+    return null
+  }
+  if (kind === 'delete') {
+    // 顺序与 deleteMetricDeclaration 同款：**先看本租户 L2 行，删不到才判 L1**——
+    // 「租户先建 L2、平台事后同 id 物化」是合法时序；先判 L1 会让可删的行恒 READONLY_L1。
+    const tenant = await pool.query(
+      "select 1 from data.metrics where org = $1 and id = $2 and source = 'l2'", [org, metricId])
+    if ((tenant.rowCount ?? 0) > 0) return null
+    if (await isPlatformIdOf(pool, metricId)) return { ok: false, http: 400, error: 'READONLY_L1' }
+    // 不存在的 id：立单只会得到 preview_failed + METRIC_NOT_FOUND 的死单 ⇒ 提交期就直接 404。
+    return { ok: false, http: 404, error: 'METRIC_NOT_FOUND' }
+  }
+  return null
+}
+
 export async function submitChange(
   pool: Pool, org: string, submitter: { userId: string; channel: string },
   metricId: string, kind: ChangeKind, payload: unknown,
 ): Promise<SubmitOutcome> {
   if (metricId.trim() === '' || metricId.length > 128) return { ok: false, http: 400, error: 'INVALID_DECLARATION' }
+  // id 级/档级预检先于形状校验：与 MCP 旧内联预检的「提交即拒」顺序一致（错因更准）。
+  const pre = await precheckOf(pool, org, metricId, kind)
+  if (pre !== null) return pre
   // create/update 档（P1 Task 3）：声明形状 + 归属字段形状 + 概念归属 + 同名互斥 + create 撞 id，
   // 全部在**提交期**收口——把可读错误给在立单前，而不是让人在采纳期撞裸 23505/编译错。
   let ownership: MetricOwnership | undefined

@@ -109,6 +109,71 @@ describePg('POST /metric-changes（提交即试算）', () => {
   })
 })
 
+// ── P4 收口（2026-11-13）：提交期预检下沉 submitChange —— **所有提交面共用一份** ──────
+// 原先只有 MCP 两把旧工具内联这套判据，REST /metric-changes 与 submit_metric_change 可绕过；
+// 放过的单会在试算里得到 preview_ready 的「绿单」，采纳期才死在同一个码上（白点一次）。
+describePg('P4 收口：提交期预检（id 级 / 档级 / 不存在）', () => {
+  const post = (body: unknown) => appOf(async () => ({ rows: [{ rows: 1, value: 1 }] })).request('/metric-changes', {
+    method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body),
+  })
+  const ticketsOf = async (metricId: string): Promise<number> => {
+    const r = await pool.query('select count(*)::int as n from data.metric_change where org = $1 and metric_id = $2', [ORG, metricId])
+    return r.rows[0].n as number
+  }
+  /** 本租户一条指定 basis 的行（列清单照 insertTenantDeclaration / mcp-manage 夹具最小集）。 */
+  const seedBasisRow = async (id: string, basis: 'declared' | 'column_agg'): Promise<void> => {
+    await pool.query(
+      `insert into data.metrics
+         (org, id, title, description, required_scope, subject_column, select_sql, group_by, params,
+          source, updated_by, version, totalable, sla_days, freshness_relations, basis, certified, created_by)
+       values ($1, $2, $3, '', null, 'org',
+               'select sum(mart_sales_daily.revenue) as value, bizday from mart_sales_daily',
+               'bizday', '{}'::jsonb, 'l2', 'u', 1, true, 1, '[]'::jsonb, $4, 'draft', 'u')`,
+      [ORG, id, `档位夹具·${basis}`, basis])
+  }
+
+  it('★ REST submit 打 L1 保留 id ⇒ 400 ID_RESERVED_BY_L1，且不落单', async () => {
+    const res = await post({ metricId: L1_ID, kind: 'create', payload: { baseMetric: L1_ID, op: { kind: 'refine' } } })
+    expect(res.status).toBe(400)
+    expect(await res.json()).toEqual({ error: 'ID_RESERVED_BY_L1' })
+    expect(await ticketsOf(L1_ID)).toBe(0)
+  })
+
+  it('★ delete 平台口径 ⇒ 400 READONLY_L1，且不落单', async () => {
+    const res = await post({ metricId: L1_ID, kind: 'delete' })
+    expect(res.status).toBe(400)
+    expect(await res.json()).toEqual({ error: 'READONLY_L1' })
+    expect(await ticketsOf(L1_ID)).toBe(0)
+  })
+
+  it('★ delete 不存在的 id ⇒ 提交期 404 METRIC_NOT_FOUND（不再落 preview_failed 死单）', async () => {
+    const res = await post({ metricId: 'x:p4_no_such_metric', kind: 'delete' })
+    expect(res.status).toBe(404)
+    expect(await res.json()).toEqual({ error: 'METRIC_NOT_FOUND' })
+    expect(await ticketsOf('x:p4_no_such_metric')).toBe(0)
+  })
+
+  it('★ update 打 declared 行 ⇒ 400 DECLARED_NOT_EDITABLE；打 column_agg 行 ⇒ 400 BASIS_CONFLICT', async () => {
+    const declaredId = 'x:p4_declared'
+    const columnAggId = 'x:p4_column_agg'
+    await seedBasisRow(declaredId, 'declared')
+    await seedBasisRow(columnAggId, 'column_agg')
+    try {
+      const declared = await post({ metricId: declaredId, kind: 'update', payload: { baseMetric: L1_ID, op: { kind: 'refine' } } })
+      expect(declared.status).toBe(400)
+      expect(await declared.json()).toEqual({ error: 'DECLARED_NOT_EDITABLE' })
+      expect(await ticketsOf(declaredId)).toBe(0)
+
+      const columnAgg = await post({ metricId: columnAggId, kind: 'update', payload: { baseMetric: L1_ID, op: { kind: 'refine' } } })
+      expect(columnAgg.status).toBe(400)
+      expect(await columnAgg.json()).toEqual({ error: 'BASIS_CONFLICT' })
+      expect(await ticketsOf(columnAggId)).toBe(0)
+    } finally {
+      await pool.query('delete from data.metrics where org = $1 and id = any($2)', [ORG, [declaredId, columnAggId]])
+    }
+  })
+})
+
 describePg('POST /metric-changes/:id/adopt（决策端点只认会话）', () => {
   it('PAT 通道 ⇒ 403 DECISION_REQUIRES_SESSION；会话通道（缺省）⇒ 过闸进域层（404=指标不存在，链路真）', async () => {
     const app = appOf(async () => ({ rows: [{ rows: 1, value: 1 }] }))
