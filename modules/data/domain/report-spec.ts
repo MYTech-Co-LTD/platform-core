@@ -142,13 +142,149 @@ export const ReportSpecSchema = z.object({
   panels: z.array(z.discriminatedUnion('chart', [LinePanel, BarPanel, TablePanel, KpiPanel, TextPanel, AiTextPanel])).max(MAX_PANELS),
 }).strict()
 
+
+
+// ── IR v2（R3 / V1）：datasets + blocks（+ filters，V4 前不支持非空）─────────────────
+// 存储仍写**规范化后的 v1**（flattenV2）：渲染/facts/版本通路在 V2/V3 迁移前零改动。
+// 判别唯一：`ir === 2` ⇒ v2；否则按 v1。两套键同时出现 ⇒ INVALID_SPEC（v1 的 strict 会拒）。
+
+const V2Dataset = z.object({
+  key: z.string().min(1).max(64),
+  metricId: z.string().min(1).max(128),
+  dims: z.array(z.string().min(1).max(64)).max(MAX_DIMS).default([]),
+  args: ArgsSchema,
+  timeScoped: z.boolean().default(true),
+}).strict()
+
+const V2Filter = z.object({
+  key: z.string().min(1).max(64),
+  column: z.string().min(1).max(128),
+  label: z.string().trim().min(1).max(64),
+  type: z.enum(['string', 'number', 'date_range']),
+}).strict()
+
+const V2KpiBlock = z.object({
+  type: z.literal('kpi'), dataset: z.string().min(1).max(64),
+  title: z.string().trim().min(1).max(120),
+  format: z.enum(['currency', 'number', 'percent']),
+  compare: z.enum(['auto', 'prev_period', 'prev_month', 'none']).default('auto'),
+  compareYoY: z.boolean().optional(),
+  goodDirection: z.enum(['up', 'down', 'none']).default('none'),
+  span: z.number().int().min(1).max(24).default(12),
+}).strict()
+
+const V2ChartBlock = z.object({
+  type: z.literal('chart'), chart: z.enum(['line', 'bar']), dataset: z.string().min(1).max(64),
+  title: z.string().trim().min(1).max(120),
+  slice: SliceSchema.optional(),
+  compare: z.enum(['none', 'prev_period', 'prev_month', 'prev_year']).optional(),
+  compareYoY: z.boolean().optional(),
+  span: z.number().int().min(1).max(24).default(12),
+}).strict()
+
+const V2TableBlock = z.object({
+  type: z.literal('table'), dataset: z.string().min(1).max(64),
+  title: z.string().trim().min(1).max(120),
+  dims: z.array(z.string().min(1).max(64)).max(MAX_DIMS).optional(),
+  columns: TableColumnsSchema.optional(),
+  span: z.number().int().min(1).max(24).default(12),
+}).strict()
+
+const V2TextBlock = z.object({
+  type: z.literal('text'),
+  title: z.string().trim().min(1).max(120).optional(),
+  content: z.string().min(1).max(MAX_TEXT),
+  format: z.enum(['plain', 'markdown']).default('plain'),
+  span: z.number().int().min(1).max(24).default(24),
+}).strict()
+
+const V2AiTextBlock = z.object({
+  type: z.literal('ai_text'),
+  title: z.string().trim().min(1).max(120).default('AI 分析'),
+  focus: z.enum(['overview', 'root_cause', 'daily_review']),
+  dataset: z.string().min(1).max(64).optional(),
+  span: z.number().int().min(1).max(24).default(24),
+}).strict()
+
+export const ReportSpecV2Schema = z.object({
+  ir: z.literal(2),
+  period: PeriodSchema.optional(),
+  filters: z.array(V2Filter).max(20).optional(),
+  datasets: z.array(V2Dataset).min(1).max(MAX_PANELS),
+  blocks: z.array(z.discriminatedUnion('type', [
+    V2KpiBlock, V2ChartBlock, V2TableBlock, V2TextBlock, V2AiTextBlock,
+  ])).min(1).max(MAX_PANELS),
+}).strict()
+
+export type ReportSpecV2 = z.infer<typeof ReportSpecV2Schema>
+
+/** v2 → v1 扁平化（存储/渲染的统一形态）。数据集字段内联进面板，块顺序即面板顺序。 */
+export function flattenReportSpecV2(v2: ReportSpecV2): { ok: true; spec: ReportSpec } | { ok: false; code: SpecErrorCode } {
+  const datasets = new Map(v2.datasets.map((d) => [d.key, d]))
+  const panels: unknown[] = []
+  for (const b of v2.blocks) {
+    if (b.type === 'text') {
+      panels.push({ chart: 'text', title: b.title, content: b.content, format: b.format, span: b.span })
+      continue
+    }
+    if (b.type === 'ai_text') {
+      panels.push({ chart: 'ai_text', title: b.title, focus: b.focus, span: b.span })
+      continue
+    }
+    const dataset = datasets.get(b.dataset)
+    if (dataset === undefined) return { ok: false, code: 'INVALID_SPEC' }
+    const base = {
+      title: b.title, metricId: dataset.metricId, args: dataset.args,
+      span: b.span, timeScoped: dataset.timeScoped,
+    }
+    if (b.type === 'kpi') {
+      panels.push({
+        ...base, chart: 'kpi', format: b.format, compare: b.compare,
+        ...(b.compareYoY === undefined ? {} : { compareYoY: b.compareYoY }),
+        goodDirection: b.goodDirection,
+      })
+    } else if (b.type === 'chart') {
+      panels.push({
+        ...base, chart: b.chart, dims: dataset.dims,
+        ...(b.slice === undefined ? {} : { slice: b.slice }),
+        ...(b.compare === undefined ? {} : { compare: b.compare }),
+        ...(b.compareYoY === undefined ? {} : { compareYoY: b.compareYoY }),
+      })
+    } else {
+      panels.push({
+        ...base, chart: 'table', dims: b.dims ?? dataset.dims,
+        ...(b.columns === undefined ? {} : { columns: b.columns }),
+      })
+    }
+  }
+  return parseReportSpec({ ...(v2.period === undefined ? {} : { period: v2.period }), panels })
+}
+
+/**
+ * 写入侧统一入口：v1 原样、v2 扁平化后按 v1 校验。
+ * `ir` 只用于观测/审计，存储与下游消费在 V2/V3 迁移前一概是 v1。
+ */
+export function parseReportInput(input: unknown): { ok: true; spec: ReportSpec; ir: 1 | 2 } | { ok: false; code: SpecErrorCode } {
+  const ir = (input as { ir?: unknown } | null)?.ir
+  if (ir === 2) {
+    const parsed = ReportSpecV2Schema.safeParse(input)
+    if (!parsed.success) return { ok: false, code: 'INVALID_SPEC' }
+    // 共享筛选在 V4 才接运行期；非空时拒绝，避免「声明了却不生效」的静默失真。
+    if ((parsed.data.filters ?? []).length > 0) return { ok: false, code: 'IR_V2_FILTERS_UNSUPPORTED' }
+    const flat = flattenReportSpecV2(parsed.data)
+    return flat.ok ? { ok: true, spec: flat.spec, ir: 2 } : flat
+  }
+  const v1 = parseReportSpec(input)
+  return v1.ok ? { ok: true, spec: v1.spec, ir: 1 } : v1
+}
+
 export type ReportSpec = z.infer<typeof ReportSpecSchema>
 export type PeriodSpec = z.infer<typeof PeriodSchema>
 export type MetricPanel = z.infer<typeof LinePanel> | z.infer<typeof BarPanel> | z.infer<typeof TablePanel>
 export type KpiPanel = z.infer<typeof KpiPanel>
 export type TextPanel = z.infer<typeof TextPanel>
 export type AiTextPanel = z.infer<typeof AiTextPanel>
-export type SpecErrorCode = 'INVALID_SPEC' | 'UNKNOWN_CHART_TYPE' | 'UNKNOWN_AI_FOCUS' | 'SPEC_TOO_LARGE'
+export type SpecErrorCode = 'INVALID_SPEC' | 'UNKNOWN_CHART_TYPE' | 'UNKNOWN_AI_FOCUS' | 'SPEC_TOO_LARGE' | 'IR_V2_FILTERS_UNSUPPORTED'
 
 export function parseReportSpec(input: unknown): { ok: true; spec: ReportSpec } | { ok: false; code: SpecErrorCode } {
   const panels = (input as { panels?: unknown })?.panels

@@ -24,8 +24,7 @@ import type { Pool, PoolClient } from 'pg'
 import { loadMergedCatalog } from './metric-store'
 import { withObjectLock } from './object-lock'
 import { deriveRequiredScope, validatePanelMetrics } from './report-scope'
-import { parseReportSpec } from './report-spec'
-import type { ReportSpec } from './report-spec'
+import { parseReportInput, parseReportSpec, type ReportSpec } from './report-spec'
 import { lintBlocksPublish, lintReportSpec, type LintIssue } from './report-lint'
 import { getReport } from './report-store'
 
@@ -226,7 +225,7 @@ export async function publishVersion(
 
     // 重新解析而不是信任库里的对象：`spec` 列是 jsonb，历史写入可能来自更早的白名单
     // （含可执行字段的旧形态）——发布是「上线定义」的动作，必须再过一遍白名单。
-    const parsed = parseReportSpec(cur.spec)
+    const parsed = parseReportInput(cur.spec)
     if (!parsed.ok) return { ok: false, reason: 'INVALID_SPEC', detail: parsed.code }
 
     const catalog = await loadMergedCatalog(pool, org)
@@ -386,7 +385,7 @@ export async function rollbackVersion(
     if (target === null) return { ok: false, reason: 'NOT_FOUND' }
     if (cur.version !== expectedVersion) return { ok: false, reason: 'STALE_WRITE' }
 
-    const parsed = parseReportSpec(target.spec)
+    const parsed = parseReportInput(target.spec)
     if (!parsed.ok) return { ok: false, reason: 'INVALID_SPEC', detail: parsed.code }
 
     const catalog = await loadMergedCatalog(pool, org)
