@@ -45,6 +45,8 @@ type Props = {
   branchNum?: string
   /** 钉住的历史版本（独立页 `?v=N`）；缺席 = 最新发布快照。 */
   version?: number
+  /** 报表共享筛选的运行期取值（V4b）：与屏幕上的筛选同源，facts 不得多看/少看。 */
+  filters?: Record<string, unknown>
 }
 
 /** 把 SSE 原始块拆成事件（`data: <json>` 行；注释/心跳行忽略）。 */
@@ -89,7 +91,7 @@ function periodLabelOf(period: PeriodSpec | null): string {
   return `${period.from ?? ''} ~ ${period.to ?? ''}`
 }
 
-export default function AiTextPanel({ reportId, panelIndex, focus, period, branchNum, version }: Props) {
+export default function AiTextPanel({ reportId, panelIndex, focus, period, branchNum, version, filters }: Props) {
   const [phase, setPhase] = useState<Phase>('facts')
   const [label, setLabel] = useState('正在核对指标…')
   const [text, setText] = useState('')
@@ -100,6 +102,7 @@ export default function AiTextPanel({ reportId, panelIndex, focus, period, branc
 
   // `period` 是对象：用序列化值做依赖，父级重渲染（兄弟面板结果到达）不会把生成重跑一遍。
   const periodKey = JSON.stringify(period)
+  const filtersKey = JSON.stringify(filters ?? {})
 
   useEffect(() => {
     if (period === null) {
@@ -123,6 +126,7 @@ export default function AiTextPanel({ reportId, panelIndex, focus, period, branc
             panelIndex,
             period,
             ...(branchNum !== undefined ? { branchNum } : {}),
+            ...(filters === undefined ? {} : { filters }),
             ...(version !== undefined ? { version } : {}),
           },
           ac.signal,
@@ -171,7 +175,7 @@ export default function AiTextPanel({ reportId, panelIndex, focus, period, branc
       ac.abort()
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps -- period 的对象身份不稳定，按序列化值判等
-  }, [reportId, panelIndex, focus, periodKey, branchNum, version])
+  }, [reportId, panelIndex, focus, periodKey, branchNum, version, filtersKey])
 
   if (error !== null) return <Alert type="warning" showIcon message={error} />
 
