@@ -74,13 +74,13 @@
 | **OO 机 `/opt` 副本核对** | 2026-11-12 实测：`/opt/lemeng-oo-{notify-bridge,watchdog,config-audit}.sh` + `lemeng-emit-probe.py` 四个 sha256 与仓内**逐字节一致**（bridge `7a81135e…` / watchdog `bc36151a…` / audit `98074d99…` / probe `465fee98…`），当前无漂移、无需投递；SOP §E.5 的手工投递形态与版本握手仍然有效 |
 | **retention 处置（证据化关闭）** | 2026-11-12 实测 shanhai `notify` 表极小（inbox 4 / delivery 10 / event 6 / attempt 20），且 health 已改 7 天窗口（PR #1987）⇒ **当前不需要**。留作观察项：任一表破 10 万行或 health 因积压变红时再议（届时删行需点名） |
 | **Wave 5 P0（变更单 + 试算硬门）** | PR #2046（squash `0c415f84`，issue #2038，15 提交逐任务评审+终审+修复波）：`data.metric_change`（迁移 046，同指标仅一张未决单）+ 状态机（supersede/withdraw）+ 试算（compileL2 编译不生效 → 只读池 → 快照含 baseline Δ；**未试算不可采纳**）+ 7 端点（**采纳/驳回只认会话**，PAT/企微 ⇒ 403 `DECISION_REQUIRES_SESSION`，结构性反自审经终审确认）+ MCP `submit_metric_change`（提交即试算）/`list_metric_changes`（含驳回原因；无采纳工具）+ console「待核对」页（人话默认层 + TechDetails；采纳/驳回/跑试算）。验证：本地全仓测试+guard 927+typecheck+双门禁绿，modules/data 1720 用例；CI 全绿；部署 `dep_guN95NvCpBmRJAnb`（v289）容器实测：046 在位、生产库表+三索引+14 列+2 check、未鉴权 401、产物含「待核对」。终审缓办 6 条见待办表 |
+| **Wave 5 P1（概念归属 + 缓办销账 + override 档）** | PR #2058（squash `f27240d7`，issue #2049）：迁移 047（owner_dept/visible_depts/variant_note/reveal `not null default 'panel'` + `metrics_title_per_dept_uq`（生产同名冲突组=0 取证后直建）+ `metric_concept` 表 + `preview_history`）；概念校验与同名判据（与索引逐字同构）；变更单带归属（UNKNOWN_CONCEPT/TITLE_EXISTS_IN_DEPT/METRIC_ID_EXISTS）；**P0 缓办 6 条全销**（快照历史 FIFO5/撞 id 拒收/delete 通知+采纳前快照/meta 三键全缺/**toolface 门禁真测合并 20 面纯文件单源**/决策 advisory lock+applyPreview 钉态+23505→409）；override 档端到端（复用 createOverrideDeclaration 零复制；同名判据桶恒 null 与落库同构）；读面归属进 TechDetails（默认层零新词机检）。验证：全仓测试+guard+typecheck+双门禁绿（modules/data 1763）；CI 全绿（rebase 适配 #2050-2057 指标页返工）；部署 `dep_D7iKOIq7e6X0KozD`（v293）容器实测：047 在位、title_uq/概念表/preview_history 在、reveal 57 行全 panel、产物含「归属部门」、未鉴权 401。⚠️ 部署遇平台取消 worker 挂死互斥（用户授权 SSH 重启 openship-api-1 解锁，留档 openship-platform PR #34） |
 
 ### 待办（Wave 见 §4）
 
 | 项 | 现状证据 | 波次 |
 |---|---|---|
-| **P0 终审缓办清单** | ① 预览快照可被重跑替换（采纳存最新，无历史）；② create 撞已有 id 静默覆盖（writeL2Declaration 是 upsert）；③ delete 采纳不发通知；④ 空/全缺 meta 拒收判据应收成「三键全缺」（现把显式清空 `{unit:''}` 也拒了）；⑤ check-mcp-toolface 只测 MANAGE_TOOLS 代理不测合并面（P0 已实证会漏：10308→9997）；⑥ adopt 写后 CAS 与 reject 的竞态（审计态可混淆） | Wave 5 P1（接手时逐条销） |
-| **P1 概念与归属** | L2 行不写 `entity`/`synonyms`（031 迁移注释）；无 `owner_dept`；生产同名冲突组=0（2026-11-12 取证，唯一索引可直接建） | **Wave 5 P1（计划：`2026-11-12-metric-ownership-p1.md`，8 任务含缓办 6 条全销 + override 档）** |
+| **P1 终审缓办（转 P2+）** | ① L1 label 撞名预检进 check-semantics（今天零冲突；sync catch 已带 pg detail）② 旧直写面（PUT/POST /metrics、override 直写、customize_metric——P4 退役）撞 title 索引=裸 500 无映射 ③ override 行 owner_dept 恒 null：接进 insertTenantDeclaration 归 P2 可见性波 ④ report 工具 mutating:false 不对称（若总闸应管报表提案需裁决）⑤ notify eventId 去重吞重建事件（修法：eventId 拼变更单 id）⑥ preview_failed 回包不带 issues 明细 | Wave 5 P2（接手逐条销） |
 | **P2 指标可见性** | `visibleMetrics` 只判 scope+源（`authz.ts:254`）；`/query` 按 id 无部门判定 | Wave 5 P2（前置：组织一致性检查） |
 | **P3 解析与澄清** | `search_catalog` 无 tie 检测（`toolbox/discovery.ts:77-91`） | Wave 5 P3 |
 | **P4 写面收口** | `customize_metric` 仍直接写生效行（`mcp-metric-tools.ts:80`）；PC 指标页仍有编辑/元数据/覆盖/删除 | Wave 5 P4 |
@@ -125,7 +125,7 @@
 - **P0 变更单 + 试算硬门**：✅ 已落地（PR #2046，部署 v289 实测）——`data.metric_change` + 提交即试算（快照含参照值 Δ）+
   采纳/驳回（会话限定）+ MCP `submit_metric_change` / `list_metric_changes` + console「待核对」页。
   P0 的 kind 范围：`create | update | meta | delete`（override/declared 档随 P1 接入）；终审缓办 6 条在待办表。
-- **P1 概念与归属**：`owner_dept` / `variant_note` / entity 开放给 L2 / 概念表 / 部门内同名唯一 / override 档接入。
+- **P1 概念与归属**：✅ 已落地（PR #2058，部署 v293 实测）——归属四列+同名唯一索引+概念表+变更单带归属；P0 缓办 6 条全销；override 档接入；toolface 门禁测合并面
 - **P2 指标可见性**：`canViewMetric` 单一实现 + 五个执法点 + `reveal` 两档（前置：组织架构一致性检查）。
 - **P3 解析与澄清**：`search_catalog` tie 检测 + 答案 `caliber` 标注。
 - **P4 写面收口**：`customize_metric` 改为落变更单；人面写入口全删（含回滚开关 `DATA_METRIC_REVIEW_MODE` 退役旧路径）。
@@ -187,3 +187,4 @@
 | 2026-11-12 | **候选池升格为 Wave 5（现行主线）**；待办表按 P0–P6 重排 | 用户认可 spec（含部门链=自身∪祖先∪后代、认证并入采纳两处代决）；P0 计划另出 |
 | 2026-11-12 | **Wave 5 P0 完成入账**（变更单+试算硬门+采纳驳回+会话闸+MCP 工具+待核对页） | PR #2046 + 部署 v289 容器实测；终审缓办 6 条转 P1 接手清单 |
 | 2026-11-12 | P1 计划出台（概念归属+同名互斥+缓办销账+override 档，8 任务） | 生产取证：同名冲突组 0、镜像内 semantics YAML 在；计划 `2026-11-12-metric-ownership-p1.md` |
+| 2026-11-13 | **Wave 5 P1 完成入账**（概念归属+同名互斥+缓办 6 条全销+override 档）；P1 终审缓办（L1 label 预检/旧直写面 500 边界/report 工具 mutating 不对称等）按裁决入 P2+ | PR #2058 + 部署 v293 容器实测；openship 取消 worker 挂死事故留档 openship-platform #34 |
