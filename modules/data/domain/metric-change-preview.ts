@@ -28,6 +28,30 @@ export function previewTooRecent(preview: unknown, now = Date.now()): boolean {
   return now - ranAtMs < PREVIEW_RERUN_MIN_INTERVAL_MS
 }
 
+/**
+ * 提交即试算的限速判据（P6 Task 3）：取**最近一条带快照且未被决策的单**
+ * （superseded 计入，adopted/rejected/withdrawn 排除）。
+ *
+ * · superseded 计入：连续 N 次重提时第 N 次仍命中（否则每次重提又烧一轮，限速只挡一次
+ *   等于没挡）；
+ * · adopted / rejected / withdrawn 排除：它们的快照绑定旧 payload/旧定义，不是新提交的
+ *   有效判据——人刚决策后 60s 内的改稿重提必须照常试算。
+ * 被限速跳过的单 preview 为 null，不作判据（`preview->>'ranAt' is not null` 排除）。
+ * 时间比较复用 previewTooRecent——时钟判据只此一份。
+ */
+export async function recentPreviewFor(
+  pool: Pool, org: string, metricId: string, now = Date.now(),
+): Promise<boolean> {
+  const r = await pool.query(
+    `select preview from data.metric_change
+      where org = $1 and metric_id = $2 and preview->>'ranAt' is not null
+        and status not in ('adopted', 'rejected', 'withdrawn')
+      order by id desc limit 1`,
+    [org, metricId],
+  )
+  return previewTooRecent(r.rows[0]?.preview, now)
+}
+
 export interface PreviewSnapshot {
   window: { from: string; to: string } | null
   value: number | null

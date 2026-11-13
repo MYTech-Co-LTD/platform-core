@@ -24,8 +24,8 @@ const req = (userId = 'ZhangDuo', scopes: string[] = ['data:manage']): Requester
   userId, orgId: ORG, channel: 'pat', keyId: 3, scopes,
   hasScope: (c) => scopes.includes(c),
 })
-const deps = (pool: Pool, userId = 'ZhangDuo') =>
-  ({ pool, adoptedSources: new Set<string>(), requester: req(userId) })
+const deps = (pool: Pool, userId = 'ZhangDuo', scopes: string[] = ['data:manage']) =>
+  ({ pool, adoptedSources: new Set<string>(), requester: req(userId, scopes) })
 
 /** 私有测度路径的「实际列」（information_schema 的归一形状）。 */
 const PM_COLUMNS: RelationColumn[] = [
@@ -114,6 +114,22 @@ describePg('写路径的审计（#489）', () => {
     expect(rows[0]!.keyId).toBe(3)
   })
 
+  it('★ reveal 入审计快照（P6 Task 4 修复）：panel→report 翻转的前后态可读', async () => {
+    const id = 'ma_reveal_audit'
+    expect((await writeL2Declaration(deps(pool), ORG, id, { ...decl, alias: '审计 reveal' })).ok).toBe(true)
+    expect((await writeL2Declaration(deps(pool), ORG, id, { ...decl, alias: '审计 reveal' },
+      { ownership: { reveal: 'report' } })).ok).toBe(true)
+
+    const rows = await listMetricAudit(pool, ORG, id)
+    expect(rows.map((r) => r.action)).toEqual(['update', 'create'])
+    // 首建：列默认 panel（快照读的是落库真值，不是入参）
+    expect(rows[1]!.before).toBeNull()
+    expect(rows[1]!.after!.reveal).toBe('panel')
+    // 翻转：安全相关字段的「从什么到什么」必须能从审计直接读出
+    expect(rows[0]!.before!.reveal).toBe('panel')
+    expect(rows[0]!.after!.reveal).toBe('report')
+  })
+
   it('★ 审计与变更同生共死：审计写失败 ⇒ 行也必须回滚（不留半成品）', async () => {
     // userId=null 会让 metric_audit.user_id（not null）拒绝 ⇒ 整个事务回滚
     const broken = deps(pool, null as unknown as string)
@@ -168,26 +184,32 @@ describePg('写路径的审计（#489）', () => {
 
   // ── creator 闸（spec 2026-11-01 §10.2；评审 PR #1271 发现 #4）──────────────────
   // 「L2 非我创建 ⇒ 只读」是域层判定（HTTP PUT 与 MCP customize 共用本函数 = 共用这份闸）。
-  // 没有这道闸，任何 data:manage 都能绕过草稿流直改别人的口径——正是 D6 草稿流要堵的事。
-  it('★ creator 闸：非 creator 改/删别人的 L2 ⇒ 403，行原样不动', async () => {
+  // P6 Task 2 修复轮：域层门 = **creator ∪ data:manage**（与 updateMetricMeta :348-351 同形）——
+  // 提交人 ≠ 采纳人（agent 提案、人决策），决策端点本身已要求 data:manage，域层不认 manage
+  // 会让「agent 提单 + 管理员采纳」恒 403。
+  it('★ creator 闸：非 creator 且无 data:manage 改/删别人的 L2 ⇒ 403，行原样不动', async () => {
     const id = 'ma_gate_l2'
     expect((await writeL2Declaration(deps(pool), ORG, id, decl)).ok).toBe(true)   // creator = ZhangDuo
     const before = await pool.query(
       `select version, title from data.metrics where org = $1 and id = $2`, [ORG, id])
-    const r = await writeL2Declaration(deps(pool, 'WangDuo'), ORG, id, { ...decl, alias: '别人改的' })
+    const r = await writeL2Declaration(deps(pool, 'WangDuo', ['data:query']), ORG, id, { ...decl, alias: '别人改的' })
     expect(r).toMatchObject({ ok: false, http: 403, error: 'NOT_METRIC_CREATOR' })
-    const d = await deleteMetricDeclaration(deps(pool, 'WangDuo'), ORG, id)
+    const d = await deleteMetricDeclaration(deps(pool, 'WangDuo', ['data:query']), ORG, id)
     expect(d).toMatchObject({ ok: false, http: 403, error: 'NOT_METRIC_CREATOR' })
     const after = await pool.query(
       `select version, title from data.metrics where org = $1 and id = $2`, [ORG, id])
     expect(after.rows[0].version).toBe(before.rows[0].version)     // ★ 一个字节都没动
     expect((await listMetricAudit(pool, ORG, id)).length).toBe(1)  // 也别记成一次变更
-    // creator 自己：update 与 delete 都通（同一闸，同一份判定）
-    expect((await writeL2Declaration(deps(pool), ORG, id, { ...decl, alias: '本人改的' })).ok).toBe(true)
-    expect((await deleteMetricDeclaration(deps(pool), ORG, id)).ok).toBe(true)
+    // creator 自己（**无** data:manage）：update 与 delete 都通（同一闸，同一份判定）
+    expect((await writeL2Declaration(deps(pool, 'ZhangDuo', ['data:query']), ORG, id,
+      { ...decl, alias: '本人改的' })).ok).toBe(true)
+    // data:manage 豁免（P6 Task 2 修复轮）：持 manage 的第三人可改/删
+    expect((await writeL2Declaration(deps(pool, 'WangDuo'), ORG, id,
+      { ...decl, alias: '管理员改的' })).ok).toBe(true)
+    expect((await deleteMetricDeclaration(deps(pool, 'WangDuo'), ORG, id)).ok).toBe(true)
   })
 
-  it('★ creator 闸：created_by 为 NULL 的存量行 fail-closed（METRIC_CREATOR_UNKNOWN）', async () => {
+  it('★ creator 闸：created_by 为 NULL 的存量行 fail-closed；持 data:manage 则放行（P6 Task 2 修复轮）', async () => {
     const id = 'ma_gate_legacy'
     // 直接落一条 created_by=NULL 的 L2（模拟「027 前的存量且无 create 审计」——028 也回填不出）
     await pool.query(
@@ -196,11 +218,13 @@ describePg('写路径的审计（#489）', () => {
           params, source, source_system, updated_by, version, totalable, sla_days, freshness_relations, created_by, certified)
        values ($1, $2, '存量', '', null, 'org', 'select 1 as value', '', '{}'::jsonb, 'l2', null, 'legacy', 1, false, null, null, null, 'draft')`,
       [ORG, id])
-    const r = await writeL2Declaration(deps(pool), ORG, id, decl)
+    const r = await writeL2Declaration(deps(pool, 'ZhangDuo', ['data:query']), ORG, id, decl)
     expect(r).toMatchObject({ ok: false, http: 403, error: 'METRIC_CREATOR_UNKNOWN' })
-    const d = await deleteMetricDeclaration(deps(pool), ORG, id)
+    const d = await deleteMetricDeclaration(deps(pool, 'ZhangDuo', ['data:query']), ORG, id)
     expect(d).toMatchObject({ ok: false, http: 403, error: 'METRIC_CREATOR_UNKNOWN' })
-    await pool.query(`delete from data.metrics where org = $1 and id = $2`, [ORG, id])
+    // data:manage 豁免：孤儿行由管理员接管（否则没有任何人能修）
+    expect((await writeL2Declaration(deps(pool), ORG, id, decl)).ok).toBe(true)
+    expect((await deleteMetricDeclaration(deps(pool), ORG, id)).ok).toBe(true)
   })
 })
 

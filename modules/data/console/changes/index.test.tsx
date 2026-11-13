@@ -57,7 +57,7 @@ describe('待核对页', () => {
     expect(calls.length).toBe(0)
   })
 
-  it('draft/preview_failed 行（P0 终审 F1）：驳回可用、采纳仍禁；「跑试算」补跑后列表刷新；draft 显「试算还没跑完」', async () => {
+  it('draft/preview_failed 行（P0 终审 F1）：驳回可用、采纳仍禁；「跑试算」补跑后列表刷新；draft 显「试算未完成，可点「跑试算」补」', async () => {
     const DRAFT_ROW = {
       id: 9, metricId: 'x:draft_one', kind: 'meta', status: 'draft',
       payload: { unit: '元' }, preview: null,
@@ -82,8 +82,8 @@ describe('待核对页', () => {
     })
     render(<ChangesPage />)
     await waitFor(() => expect(screen.getByText(/x:draft_one/)).toBeInTheDocument())
-    // draft 行的默认层句子是「试算还没跑完」，不是裸的「试算 —（0 行）」
-    expect(screen.getByText('试算还没跑完')).toBeInTheDocument()
+    // draft 行的默认层句子是「试算未完成，可点「跑试算」补」，不是裸的「试算 —（0 行）」
+    expect(screen.getByText('试算未完成，可点「跑试算」补')).toBeInTheDocument()
     // 两行都未到 preview_ready ⇒ 采纳全禁；驳回对全部未决态可用
     const adoptButtons = screen.getAllByRole('button', { name: /采\s*纳/ })
     expect(adoptButtons.length).toBe(2)

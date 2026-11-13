@@ -225,6 +225,18 @@ create index if not exists metric_change_queue_idx
 | `panel`（默认） | 面板级降级 |
 | `report` | 报表中存在任一此类指标且观看者无权 ⇒ **整表 404**（防「总数 − 其他」反推） |
 
+**谁能设 `reveal`**：只有**租户 L2 行 / 覆盖行**可设（变更单 payload 是唯一写入口）。平台
+L1 行恒 `panel`——成本 / 毛利 / 工资一类敏感口径若落在平台词表上，**本机制覆盖不到**；若平台
+口径也需要 `report` 语义，需另设写入机制（如 sync 声明带上该字段），**本波不做，记待议**。
+租户自建的同名变体（L2 / 覆盖）可按下面的 payload 面设 `report`。
+
+**写入面（P6 Task 4 起）**：**变更单 payload 是唯一写入口**——create/update 档顶层（与
+`entity/synonyms/ownerDept/variantNote` 同栖）以及 override/declaration 档 entry 顶层都可带
+`reveal: 'panel' | 'report'`。提交期 zod 校验闭集，列 CHECK（047）兜底（23514 ⇒ 400），
+非字符串值采纳期 400（不静默）。缺席语义：**新行 = `panel`**（列默认）；**update 缺席 =
+保留既有**（coalesce，普通内容写不得把泄露策略洗回 `panel`）。L1 sync 声明没有这个字段
+（平台行恒 `panel`，见上）。
+
 ### 9.4 一致性巡检
 
 每日 job 校验「已发布报表受众 vs 面板指标可见范围」，漂移入待办（不自动改报表）。
@@ -314,4 +326,8 @@ create index if not exists metric_change_queue_idx
 | **P3** | 解析 tie 检测 + 答案 `caliber` 标注 | 两部门同名必澄清；答案自带口径 |
 | **P4** | agent 工具统一 + 人面写入口全删 | 全仓 UI 无写入口；agent 无法调决策端点 |
 | **P5** | 发布门 + 渲染闸 + 巡检 | 受众超范围发布被拒；兄弟部门面板降级 |
-| **P6** | 声明类对账证据接入 + 度量治理（使用统计下线） | 无证据不可采纳；零使用口径进下线候选 |
+| **P6** | 证据与治理收口 T1–T5：门结果分类 / 采纳期 `creator ∪ data:manage` / 提交试算限速 / `reveal` 写入面 / 回滚·ACL·部门门变更重跑发布门 | 巡检「判不了」exit 1；跨 creator 提案由持 `data:manage` 的采纳人落地；重复提交不烧算力；`reveal` 经变更单写入；受众漂移的旧快照在回滚/受众变更时 409 |
+
+> **P6 定义订正（2026-11-14）**：本表原写「声明类对账证据接入 + 度量治理（使用统计下线）」，
+> 实际交付的是「证据与治理收口 T1–T5」（计划 `docs/superpowers/plans/2026-11-14-evidence-governance-p6.md`）。
+> 原两项**未丢失**，已移入 roadmap 候选池（`2026-11-11-helix-borrow-roadmap.md` §6）。

@@ -511,6 +511,12 @@ describePg('私有测度 HTTP 面（需要 DATABASE_URL）', () => {
     const audit = (await pool.query(
       `select row_after from data.metric_audit where org = $1 and metric_id = 'pm_from_candidate'`, [ORG])).rows[0]
     expect(audit.row_after.origin).toBe('profile')
+    // P6 Task 2 回归：候选采用走 writePrivateMeasure（**不经 submitChange，也不走树形 L2 的
+    // creator 门**）——creator 门扩展 data:manage 不得影响候选采用路径（不让它留下变更单）。
+    const tickets = await pool.query(
+      'select count(*)::int as n from data.metric_change where org = $1 and metric_id = $2',
+      [ORG, 'pm_from_candidate'])
+    expect(tickets.rows[0].n).toBe(0)
   })
 
   it('对话即时路径：POST /metrics/private 缺省 origin=demand（审计留证，不新增列）', async () => {

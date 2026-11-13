@@ -817,11 +817,11 @@ describePg('指标路由（需要 DATABASE_URL：词表读写）', () => {
     expect(bad.status).toBe(400)
   })
 
-  it('★ creator 闸（spec §10.2 面级）：非 creator 改/删别人的 L2 ⇒ 403 NOT_METRIC_CREATOR', async () => {
+  it('★ creator 闸（spec §10.2 面级）：非 creator 且无 manage 改/删别人的 L2 ⇒ 403；manage 可代改', async () => {
     const id = 'l2_creator_gate'
     expect((await post(l2Body({ id }))).status).toBe(201)          // creator = u-test
-    // 另一个人（data:manage 齐全但不是 creator）PUT 同一条 ⇒ 403（走唯一编译点的路径也不例外）
-    const other = makeIdentity({ orgId: ORG, scopes: ['data:manage', 'data:query'], userId: 'u-other' })
+    // 另一个人（无 data:manage、也不是 creator）PUT/DELETE 同一条 ⇒ 403（走唯一编译点的路径也不例外）
+    const other = makeIdentity({ orgId: ORG, scopes: ['data:query'], userId: 'u-other' })
     const otherApp = buildTestApp(mod, other, { pool }, { id: 1, casdoor_org: ORG }, ADOPTED)
     const put = await otherApp.request(`/metrics/${id}`, {
       method: 'PUT', headers: { 'content-type': 'application/json' },
@@ -839,6 +839,17 @@ describePg('指标路由（需要 DATABASE_URL：词表读写）', () => {
       body: JSON.stringify(l2Body({ id, alias: '本人改的' })),
     })
     expect(self.status).toBe(200)
+    // P6 Task 2 修复轮：域层门 = creator ∪ data:manage —— 持 manage 的第三人可代改/代删
+    // （采纳人是另一个人；决策端点本身要求 manage，域层不认 manage 会让跨 creator 采纳恒 403）
+    const admin = buildTestApp(mod,
+      makeIdentity({ orgId: ORG, scopes: ['data:manage', 'data:query'], userId: 'u-admin' }),
+      { pool }, { id: 1, casdoor_org: ORG }, ADOPTED)
+    const adminPut = await admin.request(`/metrics/${id}`, {
+      method: 'PUT', headers: { 'content-type': 'application/json' },
+      body: JSON.stringify(l2Body({ id, alias: '管理员改的' })),
+    })
+    expect(adminPut.status).toBe(200)
+    expect((await admin.request(`/metrics/${id}`, { method: 'DELETE' })).status).toBe(200)
   })
 
   // ── 新鲜度徽标面（spec 2026-11-01 §10.4.2；判据与 §10.7.3 同一份）────────────

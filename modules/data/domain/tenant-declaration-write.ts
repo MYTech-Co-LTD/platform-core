@@ -21,7 +21,7 @@ import {
   loadPlatformCatalog,
   selectMetricSnapshot,
 } from './metric-store'
-import type { MetricRow } from './metric-store'
+import type { MetricReveal, MetricRow } from './metric-store'
 import { loadRelationColumns } from './private-measure'
 import { readCurrentSemanticsYaml, semanticsYamlPieceIssues } from './pipelines/propose-metric'
 import { parseL1Select } from './semantic-compiler'
@@ -221,6 +221,12 @@ export async function createTenantDeclaration(
   org: string,
   requester: Requester,
   entry: unknown,
+  /**
+   * P6 Task 4：`reveal` 是**行属性**（不在声明形状里，编译器不认）= payload 顶层随单透传；
+   * 缺席 ⇒ 列默认 `panel`（本入口只新建，没有更新分支）。HTTP 直写面已退役（410），
+   * 目前唯一调用方是变更单采纳（adoptChange 从 payload 顶层解出）。
+   */
+  opts?: { reveal?: MetricReveal },
 ): Promise<TenantDeclarationOutcome> {
   const pre = await compileNewDeclaration(deps, entry)
   if (!pre.ok) return pre.outcome
@@ -240,7 +246,7 @@ export async function createTenantDeclaration(
 
   // ⑥ 插入 + 审计同事务
   const inserted = await withTx(deps.pool, async (c) => {
-    const ok = await insertTenantDeclaration(c, org, d, entry, requester.userId)
+    const ok = await insertTenantDeclaration(c, org, d, entry, requester.userId, { reveal: opts?.reveal })
     if (!ok) return false
     await writeMetricAudit(c, {
       org,
@@ -257,6 +263,8 @@ export async function createTenantDeclaration(
         selectSql: d.selectSql,
         groupBy: d.groupBy,
         params: d.params,
+        // 泄露策略（P6 Task 4 修复轮）：新建行的实际值；缺席 = 列默认 panel。
+        reveal: opts?.reveal ?? 'panel',
         certified: 'draft',
       },
     })
@@ -339,6 +347,8 @@ export async function createOverrideDeclaration(
   requester: Requester,
   id: string,
   entry: unknown,
+  /** P6 Task 4：同 createTenantDeclaration——`reveal` 随 payload 顶层，缺席 = 列默认 `panel`。 */
+  opts?: { reveal?: MetricReveal },
 ): Promise<TenantDeclarationOutcome> {
   const e = (entry ?? {}) as Record<string, unknown>
   if (e.name !== id) return { ok: false, http: 400, error: 'NAME_MISMATCH' }
@@ -374,7 +384,8 @@ export async function createOverrideDeclaration(
   if ((exists.rowCount ?? 0) > 0) return { ok: false, http: 409, error: 'OVERRIDE_EXISTS' }
 
   const inserted = await withTx(deps.pool, async (c) => {
-    const ok = await insertTenantDeclaration(c, org, d, entry, requester.userId, { overrideOf: id })
+    const ok = await insertTenantDeclaration(c, org, d, entry, requester.userId,
+      { overrideOf: id, reveal: opts?.reveal })
     if (!ok) return false
     await writeMetricAudit(c, {
       org, metricId: d.id, action: 'create', userId: requester.userId,
@@ -382,6 +393,8 @@ export async function createOverrideDeclaration(
       after: {
         title: d.title, description: d.description, subjectColumn: d.subjectColumn,
         selectSql: d.selectSql, groupBy: d.groupBy, params: d.params, certified: 'draft',
+        // 泄露策略（P6 Task 4 修复轮）：同 createTenantDeclaration。
+        reveal: opts?.reveal ?? 'panel',
       },
     })
     return true

@@ -157,6 +157,9 @@ describe('messageOf', () => {
     ]))
     // 三种出路都在（缩受众 / 显式共享指标 / 换指标）
     expect(msg).toContain('缩窄报表受众')
+    // 文案必须与动作无关：同一码也从 ACL 保存 / 部门门修改 / 回滚返回（P6 Task 5）
+    expect(msg).toContain('操作已被拦截')
+    expect(msg).not.toContain('发布已拦截')
     expect(msg).toContain('显式共享')
     expect(msg).toContain('换用可见范围匹配的指标')
     // 面板定位：不是只回一个原始码

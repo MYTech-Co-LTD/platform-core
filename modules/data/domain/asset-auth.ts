@@ -112,9 +112,10 @@ export function canViewVersionedContent(
 //   ③ 词表里**查不到**的指标（归档 / 陈旧行 / 未同步）同样按被拒处理（fail-closed，
 //      reason `metric_unknown`）——否则「指标被删了」会变成「面板原样展示 + 不触发 reveal」。
 //
-// ⚠️ `reveal` 目前**只有读侧**：变更单 payload 与 L1 sync 声明都还没有这个字段，生产恒
-//    `'panel'`（测试直改库）。写入面待 **P6**（变更单 payload 或 sync 声明）落——这是产品
-//    缺口，不是本函数的判定缺口。
+// ✅ 写入面（P6 Task 4）：**变更单 payload** 是唯一写入口，且只对**租户 L2 / 覆盖行**生效
+//    （create/update/override/declaration 四档顶层 `reveal`；缺席 = 新行 `panel` / 更新保留
+//    既有）。L1 sync 声明没有这个字段（平台行恒 `panel`）——平台口径要用 `report` 需另设机制
+//    （spec §9.3 记待议）。
 
 /** 渲染闸所需的最小指标形状（`MetricRow` 结构性满足——不拖整个存储行进来）。 */
 export interface RenderGateMetric {

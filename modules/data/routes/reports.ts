@@ -73,7 +73,10 @@ import {
 import { PeriodSchema, parseReportInput, parseReportSpec, parseStoredSpec } from '../domain/report-spec'
 import type { AiTextPanel, ReportSpec } from '../domain/report-spec'
 import { deriveRequiredScope, metricIdsOf, validatePanelMetrics } from '../domain/report-scope'
-import { reportScopeViolations } from '../domain/report-scope-gate'
+import {
+  gateBlocks, reportScopeViolations, scopeMismatchBody,
+} from '../domain/report-scope-gate'
+import type { ReportScopeRow } from '../domain/report-scope-gate'
 import {
   getPublishedSpec,
   getVersion,
@@ -833,12 +836,65 @@ export function registerReports(r: ModuleHono, ctx: RouteCtx): void {
       subjectId: v.subjectId,
       relation: 'viewer' as const,
     }))
+    // ── 发布门重跑（P6 Task 5）：ACL 变更 = 受众变化，写入前按**变更后**的受众重判 ──────
+    // 扩宽会把兄弟部门/具名用户带进受众（最常见的不匹配来源）；收窄一般不新造违规，但存量行
+    // 可能与词表漂移（指标归属改过）——所以**一律重判**、不做「有没有变化」的短路，
+    // 宁可拒，让人显式处理。owner 主体不计入受众，故保留原行、只替换 viewer。
+    const nextAcl: AclRow[] = [...acl.filter((a) => a.relation !== 'viewer'), ...viewers]
+    // ⚠️ 判定输入必须取**已发布快照**，不能取 `row` 的草稿值（`spec` / `requiredDepts` 是
+    //    「下次发布」的内容）。ACL 是**资产级**、对已发布版本**立刻生效**，而线上内容在
+    //    `report_versions` 快照里（观看闸 `canViewVersionedContent` 与每日巡检的 `scopeInputOf`
+    //    都按快照判）。用草稿判会假放行：发布一张含部门口径的报表 → 编辑草稿改为只引用无部门
+    //    口径的指标 → ACL 放宽给兄弟部门 ⇒ 门看干净草稿放行，线上报表却已多出看不见该面板的部门。
+    //    `visibility` 与 `nextAcl` 仍取当前值：那是受众入口本身，不属于版本内容。
+    //    **未发布** ⇒ 回退 `row`（没有线上内容可判，与发布/部门门判草稿的口径一致）。
+    //    **已发布但快照读不出/解析失败** ⇒ 不静默回退：线上内容不可知，回退草稿 = fail-open
+    //    （巡检对同态记 `published_spec_unparseable` 并 exit 1，这里必须同向 fail-closed）。
+    const publishedVersionId = row.renderer === 'platform' ? row.publishedVersionId : null
+    const published = publishedVersionId !== null
+      ? await getPublishedSpec(ctx.pool, org, id)
+      : null
+    if (publishedVersionId !== null && published === null) {
+      console.warn(
+        `[data.reports] published snapshot unreadable org=${org} report=${id} `
+        + `version=${row.publishedVersion ?? '?'}`,
+      )
+      return c.json({
+        error: 'PUBLISHED_SNAPSHOT_UNREADABLE',
+        reportId: id,
+        version: row.publishedVersion,
+      }, 409)
+    }
+    const gateReport: ReportScopeRow = published === null
+      ? row
+      : {
+          renderer: 'platform',
+          spec: published.spec,
+          requiredScope: published.requiredScope,
+          requiredDepts: published.requiredDepts,
+          visibility: row.visibility,
+        }
+    const gate = await reportScopeViolations({
+      pool: ctx.pool,
+      tenantId: c.get('tenant').id,
+      org,
+      report: gateReport,
+      acl: nextAcl,
+    })
+    const scopeIssues = gate?.issues ?? []
+    if (gateBlocks(gate)) return c.json(scopeMismatchBody(gate), 409)
     await replaceViewers(ctx.pool, org, id, viewers, requester.userId)
     await writeAssetAudit(ctx.pool, {
       org, assetId: id, actor: requester.userId, action: 'acl.update',
       detail: { viewers }, byAdmin: isAdminOverride(acl, requester, MANAGE_SCOPE),
     })
-    return c.json({ ok: true, viewers: viewers.map((v) => ({ subjectType: v.subjectType, subjectId: v.subjectId })) })
+    // 成功路径也带门的「判不了」诊断（与发布 200 的 `scopeIssues` 同形）：有则带、空则不带。
+    // 判不了 ≠ 干净——ACL 保存不该把它吞掉。
+    return c.json({
+      ok: true,
+      viewers: viewers.map((v) => ({ subjectType: v.subjectType, subjectId: v.subjectId })),
+      ...(scopeIssues.length === 0 ? {} : { scopeIssues }),
+    })
   })
 
   // 所有者转移（spec §4.4）：离职/换负责人时**唯一 owner 换人**，旧 owner 不再有特权。
@@ -893,6 +949,22 @@ export function registerReports(r: ModuleHono, ctx: RouteCtx): void {
       // 资产写权限（#1325）：owner 可改自己报表的部门门。
       const denied = await denyUnlessCanEdit(c, ctx.pool, requester, org, id)
       if (denied !== null) return denied
+      // ── 发布门重跑（P6 Task 5）：部门门变更 = 受众变化，写入前按**新门**重判 ──────────
+      // 判定输入与发布门同源：行的当前 spec/visibility + 变更后的 required_depts + 当前 ACL。
+      // 违规 ⇒ 409，门与版本都不动；issues（判不了）不阻断。
+      // ⚠️ 有意放在 `updateGates` 的 expectedVersion 校验**之前**：受众漂移优先于 STALE_WRITE
+      //    暴露（与发布门同一裁决——漂移是真实上线风险，重试不会让它消失）。回滚是**相反**顺序：
+      //    先判 STALE_WRITE（见 domain/report-version.ts）。
+      const acl = await loadAssetAcl(ctx.pool, org, id)
+      const gate = await reportScopeViolations({
+        pool: ctx.pool,
+        tenantId: c.get('tenant').id,
+        org,
+        report: { ...current, requiredDepts: parsed.data.requiredDepts },
+        acl,
+      })
+      const scopeIssues = gate?.issues ?? []
+      if (gateBlocks(gate)) return c.json(scopeMismatchBody(gate), 409)
       // 页门原值回写（`updateGates` 要求两列同写）：锁内读到的值就是这一行此刻的值
       const row = await updateGates(
         ctx.pool, org, id,
@@ -905,7 +977,13 @@ export function registerReports(r: ModuleHono, ctx: RouteCtx): void {
         if (cur === null) return c.json({ error: 'NOT_FOUND' }, 404)
         return c.json({ error: 'STALE_WRITE', currentVersion: cur }, 409)
       }
-      return c.json({ id: row.id, requiredDepts: row.requiredDepts, version: row.version })
+      // 成功路径带门的非阻断诊断（与发布 200 的 `scopeIssues` 同形）：有则带、空则不带。
+      return c.json({
+        id: row.id,
+        requiredDepts: row.requiredDepts,
+        version: row.version,
+        ...(scopeIssues.length === 0 ? {} : { scopeIssues }),
+      })
     })
   })
 
@@ -1144,7 +1222,7 @@ export function registerReports(r: ModuleHono, ctx: RouteCtx): void {
     //    测试钉住：`发布门先于 STALE_WRITE/unchanged`。
     // `denyUnlessCanEdit` 内部已取过 ACL 但只做判定不回传；这里再取一次（单行查询），
     // 保持那个共享守卫的签名不变（14 个调用点不为本门改形）。
-    // Metabase 行没有平台面板 ⇒ 函数内跳过并回 warning（真正的渲染器拒绝仍由
+    // Metabase 行没有平台面板 ⇒ 函数内跳过并回 issue（真正的渲染器拒绝仍由
     // publishVersion 的 RENDERER_NOT_SELF_DRAWN 负责）。
     const gate = await reportScopeViolations({
       pool: ctx.pool,
@@ -1153,28 +1231,28 @@ export function registerReports(r: ModuleHono, ctx: RouteCtx): void {
       report,
       acl: await loadAssetAcl(ctx.pool, org, id),
     })
-    // 门的 warning 是 `string[]`，而 `publishVersion` 成功回包的 `warnings` 是发布 lint 的
-    // `LintIssue[]`——**不合并两种形状**（评审 Minor）。门自己的提示走独立字段 `scopeWarnings`。
-    const scopeWarnings = gate?.warnings ?? []
-    if (gate !== null && gate.panels.length > 0) {
-      return c.json({
-        error: 'REPORT_METRIC_SCOPE_MISMATCH',
-        panels: gate.panels,
-        ...(scopeWarnings.length === 0 ? {} : { scopeWarnings }),
-      }, 409)
+    // 门的 issue 是 `{ reason, panelIndex, metricId? }[]`，而 `publishVersion` 回包的
+    // `warnings` 是发布 lint 的 `LintIssue[]`——**不合并两种形状**（评审 Minor）。门自己的
+    // 「判不了」走独立字段 `scopeIssues`（P6 Task 1）：它是**诊断字段**，附在失败路径
+    // （400/409）回包上（issue 本身不参与 409 判定）；200 路径只有「门读完目录、
+    // publishVersion 复核前指标恰好出现」的目录竞态才可能带它。
+    const scopeIssues = gate?.issues ?? []
+    if (gateBlocks(gate)) {
+      // 统一回包构建器（发布 / 回滚 / ACL / 部门门共用）：码与形状不许在四条写路径上漂移。
+      return c.json(scopeMismatchBody(gate), 409)
     }
     const out = await publishVersion(
       ctx.pool, org, id, body.data.expectedVersion,
       requester.userId, body.data.note, new Set(c.get(TENANT_SOURCES) ?? []),
     )
-    // 非阻断提示（Metabase 无法判定等）随成功/失败回包带出，调用方/巡检都看得见。
+    // 非阻断 issue（Metabase 无法判定 / 目录缺失等）随成功/失败回包带出，调用方/巡检都看得见。
     if (!out.ok) {
       return c.json(
-        scopeWarnings.length === 0 ? out : { ...out, scopeWarnings },
+        scopeIssues.length === 0 ? out : { ...out, scopeIssues },
         statusOfVersionFailure(out.reason),
       )
     }
-    return c.json(scopeWarnings.length === 0 ? out : { ...out, scopeWarnings })
+    return c.json(scopeIssues.length === 0 ? out : { ...out, scopeIssues })
   })
 
   r.post('/reports/:id/unpublish', async (c) => {
@@ -1218,10 +1296,18 @@ export function registerReports(r: ModuleHono, ctx: RouteCtx): void {
     if (report === null) return c.json({ error: 'NOT_FOUND' }, 404)
     const denied = await denyUnlessCanEdit(c, ctx.pool, requester, org, id)
     if (denied !== null) return denied
+    // 回滚门（P6 Task 5）在 `rollbackVersion` 的对象锁内、任何写入之前重跑；这里提供与发布门
+    // 同一份受众输入（当前 ACL）。`denyUnlessCanEdit` 内部取过 ACL 但只判不回传，故再取一次。
     const out = await rollbackVersion(
       ctx.pool, org, id, version, body.data.expectedVersion,
       requester.userId, body.data.note, new Set(c.get(TENANT_SOURCES) ?? []),
+      { tenantId: c.get('tenant').id, acl: await loadAssetAcl(ctx.pool, org, id) },
     )
+    // 门违规与发布同码同形（409 REPORT_METRIC_SCOPE_MISMATCH + panels[/scopeIssues]）。
+    // 域层携带**整份**门结果，这里原样拼回包（不重建形状，避免与发布门漂移）。
+    if (!out.ok && out.reason === 'SCOPE_MISMATCH') {
+      return c.json(scopeMismatchBody(out.scopeGate), 409)
+    }
     if (!out.ok) return c.json(out, statusOfVersionFailure(out.reason))
     return c.json(out)
   })

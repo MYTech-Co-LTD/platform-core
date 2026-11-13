@@ -3452,6 +3452,371 @@ describePg('报表路由（需要 DATABASE_URL）', () => {
       }
     })
 
+    // ── P6 Task 1：门结果分类（issues）与发布回包 `scopeIssues` ─────────────────────────
+    it('★ 目录缺失的指标 ⇒ 门不判 409，回包 scopeIssues 记 metric_unknown（判不了 ≠ 干净）', async () => {
+      const app = admin()
+      // 先以**合法**指标建行（写侧校验放行），再绕过写面直写一份指向词表外指标的草稿。
+      const created = await post(app, {
+        title: '门结果分类-目录缺失', renderer: 'platform',
+        spec: { panels: [{ chart: 'table', title: '正常口径', metricId: OPEN_METRIC }] },
+      })
+      expect(created.status).toBe(201)
+      const id = (await created.json()).id as string
+      const parsed = parseReportSpec({
+        panels: [{ chart: 'table', title: '幽灵口径', metricId: 'p6r:ghost' }],
+      })
+      if (!parsed.ok) throw new Error(`夹具规格应通过白名单：${parsed.code}`)
+      await updateSpec(pool, ORG, id, parsed.spec, await versionOf(app, id))
+
+      const res = await publish(app, id, await versionOf(app, id))
+      const body = await res.json() as {
+        ok?: boolean
+        reason?: string
+        scopeIssues?: { reason: string; panelIndex: number; metricId?: string }[]
+      }
+      // 门本身不阻断（不是 409 REPORT_METRIC_SCOPE_MISMATCH）；本次拒来自发布写侧的存在性校验。
+      expect(res.status).toBe(400)
+      expect(body).toMatchObject({ ok: false, reason: 'UNKNOWN_PANEL_METRIC' })
+      expect(body.scopeIssues).toEqual([
+        { reason: 'metric_unknown', panelIndex: 0, metricId: 'p6r:ghost' },
+      ])
+    })
+
+    // ── P6 Task 5：回滚 / ACL / 部门门变更后**重跑发布门**（写入前判定，违规 = 409）─────────
+    // 三处都是「可见面/内容面变化」，与发布同风险：受众漂移后的旧快照、被 ACL 扩宽的受众、
+    // 被部门门扩宽的受众，都必须在**写入前**与面板指标的可见范围重新对账（宁可拒，让人显式处理）。
+    it('★ 回滚门：当前受众已漂移 ⇒ 409 且零新版本；无漂移的回滚照常落版本', async () => {
+      const ROLL_METRIC = 'p6t5:rollback-dept'
+      await upsertMetric(pool, ORG, {
+        id: ROLL_METRIC, title: '回滚门口径', description: '', requiredScope: null,
+        subjectColumn: 'org', selectSql: 'select 1 as value', groupBy: '', params: {},
+      }, 'fixture', { ownership: { ownerDept: CHILD_DEPT } })
+      try {
+        const app = admin()
+        const created = await post(app, {
+          title: '回滚门', renderer: 'platform', requiredDepts: [CHILD_DEPT],
+          spec: { panels: [{ chart: 'table', title: '口径', metricId: ROLL_METRIC }] },
+        })
+        expect(created.status).toBe(201)
+        const id = (await created.json()).id as string
+        const rollback = (rid: string, expectedVersion: number) =>
+          app.request(`/reports/${rid}/versions/1/rollback`, {
+            method: 'POST', headers: { 'content-type': 'application/json' },
+            body: JSON.stringify({ expectedVersion }),
+          })
+        const versionCount = async (rid: string): Promise<number> =>
+          (await pool.query(
+            'select count(*)::int as n from data.report_versions where org = $1 and report_id = $2', [ORG, rid],
+          )).rows[0].n
+
+        expect((await publish(app, id, await versionOf(app, id))).status).toBe(200)
+        // ① 无漂移：回滚 v1 正常 = 新版本 v2（写真的落了，不是一律拒）
+        expect((await rollback(id, await versionOf(app, id))).status).toBe(200)
+        expect(await versionCount(id)).toBe(2)
+
+        // ② 受众漂移：ACL 直接点一个兄弟部门 viewer（模拟门上线前/旁路写入的存量）
+        await pool.query(
+          `insert into data.asset_acl(org, asset_id, subject_type, subject_id, relation, granted_by)
+           values ($1, $2, 'dept', $3, 'viewer', 'fixture') on conflict do nothing`,
+          [ORG, id, SIBLING_DEPT],
+        )
+        const denied = await rollback(id, await versionOf(app, id))
+        expect(denied.status).toBe(409)
+        const body = await denied.json() as { error: string; panels: Array<Record<string, unknown>> }
+        expect(body.error).toBe('REPORT_METRIC_SCOPE_MISMATCH')
+        expect(body.panels).toEqual([{
+          index: 0, metricId: ROLL_METRIC, missingDepts: [SIBLING_DEPT],
+          reason: 'audience_dept_outside_metric_scope',
+        }])
+        expect(await versionCount(id)).toBe(2) // 拒 = 一条版本都不落
+      } finally {
+        await pool.query('delete from data.metrics where org = $1 and id = $2', [ORG, ROLL_METRIC])
+      }
+    })
+
+    it('★ ACL 门：加兄弟部门 viewer 而面板指标归属本部门 ⇒ 409 且 ACL 不变；范围内 ⇒ 200 落库', async () => {
+      const ACL_METRIC = 'p6t5:acl-dept'
+      await upsertMetric(pool, ORG, {
+        id: ACL_METRIC, title: 'ACL 门口径', description: '', requiredScope: null,
+        subjectColumn: 'org', selectSql: 'select 1 as value', groupBy: '', params: {},
+      }, 'fixture', { ownership: { ownerDept: CHILD_DEPT } })
+      try {
+        const app = admin()
+        const created = await post(app, {
+          title: 'ACL 门', renderer: 'platform', requiredDepts: [CHILD_DEPT],
+          spec: { panels: [{ chart: 'table', title: '口径', metricId: ACL_METRIC }] },
+        })
+        expect(created.status).toBe(201)
+        const id = (await created.json()).id as string
+        const putAcl = (viewers: Array<{ subjectType: string; subjectId: string }>) =>
+          app.request(`/reports/${id}/acl`, {
+            method: 'PUT', headers: { 'content-type': 'application/json' },
+            body: JSON.stringify({ viewers }),
+          })
+        const viewersOf = async (): Promise<Array<Record<string, string>>> =>
+          (await pool.query(
+            `select subject_type, subject_id from data.asset_acl
+              where org = $1 and asset_id = $2 and relation = 'viewer' order by subject_id`,
+            [ORG, id],
+          )).rows
+
+        // 扩宽到指标归属部门之外的兄弟部门 ⇒ 拒，且 ACL 未被替换（不是先写后判）
+        const denied = await putAcl([{ subjectType: 'dept', subjectId: SIBLING_DEPT }])
+        expect(denied.status).toBe(409)
+        const deniedBody = await denied.json() as { error: string; panels: Array<Record<string, unknown>> }
+        expect(deniedBody.error).toBe('REPORT_METRIC_SCOPE_MISMATCH')
+        expect(deniedBody.panels[0]).toMatchObject({
+          metricId: ACL_METRIC, missingDepts: [SIBLING_DEPT], reason: 'audience_dept_outside_metric_scope',
+        })
+        expect(await viewersOf()).toEqual([])
+
+        // 仍落在指标可见范围内的扩宽（父部门在归属链上）⇒ 通过且落库
+        const ok = await putAcl([{ subjectType: 'dept', subjectId: ROOT_DEPT }])
+        expect(ok.status).toBe(200)
+        expect(await viewersOf()).toEqual([{ subject_type: 'dept', subject_id: ROOT_DEPT }])
+      } finally {
+        await pool.query('delete from data.metrics where org = $1 and id = $2', [ORG, ACL_METRIC])
+      }
+    })
+
+    it('★ ACL 门按**已发布快照**判：发布后把草稿改成无部门口径 ⇒ 放宽仍 409（草稿不能洗白线上）', async () => {
+      const SNAP_METRIC = 'p6t5:acl-snapshot-dept'
+      await upsertMetric(pool, ORG, {
+        id: SNAP_METRIC, title: 'ACL 快照口径', description: '', requiredScope: null,
+        subjectColumn: 'org', selectSql: 'select 1 as value', groupBy: '', params: {},
+      }, 'fixture', { ownership: { ownerDept: CHILD_DEPT } })
+      try {
+        const app = admin()
+        const created = await post(app, {
+          title: 'ACL 快照门', renderer: 'platform', requiredDepts: [CHILD_DEPT],
+          spec: { panels: [{ chart: 'table', title: '口径', metricId: SNAP_METRIC }] },
+        })
+        expect(created.status).toBe(201)
+        const id = (await created.json()).id as string
+        const putAcl = (viewers: Array<{ subjectType: string; subjectId: string }>) =>
+          app.request(`/reports/${id}/acl`, {
+            method: 'PUT', headers: { 'content-type': 'application/json' },
+            body: JSON.stringify({ viewers }),
+          })
+
+        expect((await publish(app, id, await versionOf(app, id))).status).toBe(200)
+
+        // 发布后把**草稿**改成只引用无部门归属的指标——那是「下次发布」的内容，不是线上内容。
+        const draft = parseReportSpec({ panels: [{ chart: 'table', title: '公开', metricId: OPEN_METRIC }] })
+        if (!draft.ok) throw new Error(`夹具规格应通过白名单：${draft.code}`)
+        // 断言真的写进去了：版本不匹配时 updateSpec 回 null（空转），后续断言会因草稿未变而失去意义。
+        const updated = await updateSpec(pool, ORG, id, draft.spec, await versionOf(app, id))
+        expect(updated).not.toBeNull()
+
+        // ACL 是资产级、**对已发布版本立刻生效** ⇒ 门必须按快照判：线上仍有部门口径，
+        // 放宽到兄弟部门必须 409。用草稿判（无部门口径 ⇒ 干净）会假放行。
+        const denied = await putAcl([{ subjectType: 'dept', subjectId: SIBLING_DEPT }])
+        expect(denied.status).toBe(409)
+        const body = await denied.json() as { error: string; panels: Array<Record<string, unknown>> }
+        expect(body.error).toBe('REPORT_METRIC_SCOPE_MISMATCH')
+        expect(body.panels[0]).toMatchObject({
+          metricId: SNAP_METRIC, missingDepts: [SIBLING_DEPT],
+          reason: 'audience_dept_outside_metric_scope',
+        })
+
+        // 同部门（在指标归属链上）⇒ 200 落库
+        expect((await putAcl([{ subjectType: 'dept', subjectId: CHILD_DEPT }])).status).toBe(200)
+      } finally {
+        await pool.query('delete from data.metrics where org = $1 and id = $2', [ORG, SNAP_METRIC])
+      }
+    })
+
+    it('★ ACL 门 fail-closed：已发布但快照不可读 ⇒ 409 PUBLISHED_SNAPSHOT_UNREADABLE 且 ACL 不写', async () => {
+      const BROKEN_METRIC = 'p6t5:acl-broken-snapshot'
+      await upsertMetric(pool, ORG, {
+        id: BROKEN_METRIC, title: '快照不可读口径', description: '', requiredScope: null,
+        subjectColumn: 'org', selectSql: 'select 1 as value', groupBy: '', params: {},
+      }, 'fixture', { ownership: { ownerDept: CHILD_DEPT } })
+      try {
+        const app = admin()
+        const created = await post(app, {
+          title: 'ACL 快照不可读', renderer: 'platform', requiredDepts: [CHILD_DEPT],
+          spec: { panels: [{ chart: 'table', title: '口径', metricId: BROKEN_METRIC }] },
+        })
+        expect(created.status).toBe(201)
+        const id = (await created.json()).id as string
+        const putAcl = (viewers: Array<{ subjectType: string; subjectId: string }>) =>
+          app.request(`/reports/${id}/acl`, {
+            method: 'PUT', headers: { 'content-type': 'application/json' },
+            body: JSON.stringify({ viewers }),
+          })
+        const viewersOf = async (): Promise<Array<Record<string, string>>> =>
+          (await pool.query(
+            `select subject_type, subject_id from data.asset_acl
+              where org = $1 and asset_id = $2 and relation = 'viewer' order by subject_id`,
+            [ORG, id],
+          )).rows
+
+        expect((await publish(app, id, await versionOf(app, id))).status).toBe(200)
+        const pubVersion = (await pool.query(
+          `select version from data.report_versions
+            where org = $1 and report_id = $2 order by version desc limit 1`, [ORG, id],
+        )).rows[0].version as number
+
+        // 草稿改成干净内容——若「已发布但快照读不出」被静默回退成草稿，门会放行（fail-open）。
+        const draft = parseReportSpec({ panels: [{ chart: 'table', title: '公开', metricId: OPEN_METRIC }] })
+        if (!draft.ok) throw new Error(`夹具规格应通过白名单：${draft.code}`)
+        expect(await updateSpec(pool, ORG, id, draft.spec, await versionOf(app, id))).not.toBeNull()
+
+        // 人为破坏已发布快照的 spec（模拟读不出/解析失败）；行上的发布指针仍在。
+        await pool.query(
+          `update data.report_versions set spec = '{"panels":"broken"}'::jsonb
+            where org = $1 and report_id = $2`, [ORG, id],
+        )
+
+        const res = await putAcl([{ subjectType: 'dept', subjectId: SIBLING_DEPT }])
+        expect(res.status).toBe(409)
+        expect(await res.json()).toEqual({
+          error: 'PUBLISHED_SNAPSHOT_UNREADABLE', reportId: id, version: pubVersion,
+        })
+        // 拒 = ACL 一个字节都没写
+        expect(await viewersOf()).toEqual([])
+      } finally {
+        await pool.query('delete from data.metrics where org = $1 and id = $2', [ORG, BROKEN_METRIC])
+      }
+    })
+
+    it('★ 部门门重跑：放宽到指标归属之外 ⇒ 409 且门/版本不变；范围内 ⇒ 200 落库', async () => {
+      const GATE_METRIC = 'p6t5:gate-dept'
+      await upsertMetric(pool, ORG, {
+        id: GATE_METRIC, title: '部门门口径', description: '', requiredScope: null,
+        subjectColumn: 'org', selectSql: 'select 1 as value', groupBy: '', params: {},
+      }, 'fixture', { ownership: { ownerDept: CHILD_DEPT } })
+      try {
+        const app = admin()
+        const created = await post(app, {
+          title: '部门门重跑', renderer: 'platform', requiredDepts: [ROOT_DEPT],
+          spec: { panels: [{ chart: 'table', title: '口径', metricId: GATE_METRIC }] },
+        })
+        expect(created.status).toBe(201)
+        const id = (await created.json()).id as string
+        const v0 = await versionOf(app, id)
+        const gateRow = async (): Promise<{ required_depts: string[]; version: number }> =>
+          (await pool.query('select required_depts, version from data.reports where org = $1 and id = $2', [ORG, id]))
+            .rows[0]
+
+        // 放宽到兄弟部门（指标归属本部门）⇒ 拒：门没被改、版本没前进
+        const denied = await putDeptGate(app, id, [SIBLING_DEPT], v0)
+        expect(denied.status).toBe(409)
+        const deniedBody = await denied.json() as { error: string; panels: Array<Record<string, unknown>> }
+        expect(deniedBody.error).toBe('REPORT_METRIC_SCOPE_MISMATCH')
+        expect(deniedBody.panels[0]).toMatchObject({
+          metricId: GATE_METRIC, missingDepts: [SIBLING_DEPT], reason: 'audience_dept_outside_metric_scope',
+        })
+        expect(await gateRow()).toEqual({ required_depts: [ROOT_DEPT], version: v0 })
+
+        // 仍在指标可见范围内的收紧（子部门在归属链上）⇒ 通过且落库
+        const ok = await putDeptGate(app, id, [CHILD_DEPT], v0)
+        expect(ok.status).toBe(200)
+        expect((await ok.json() as { requiredDepts: string[] }).requiredDepts).toEqual([CHILD_DEPT])
+      } finally {
+        await pool.query('delete from data.metrics where org = $1 and id = $2', [ORG, GATE_METRIC])
+      }
+    })
+
+    // ── P6 Task 5 修复：issues-only（判不了）不阻断写路径，且成功回包带诊断 ────────────
+    // 门的 `panels` 才是违规；`issues`（指标不在词表 / Metabase 无面板）是诊断位。
+    // 三条新写路径各钉一次：只有 issues ⇒ 放行且写入落地。
+    it('★ ACL 门 issues-only：面板指标不在词表 ⇒ 不阻断，ACL 落库 + 回包带 scopeIssues', async () => {
+      const app = admin()
+      const created = await post(app, {
+        title: 'ACL issues-only', renderer: 'platform', requiredDepts: [CHILD_DEPT],
+        spec: { panels: [{ chart: 'table', title: '正常口径', metricId: OPEN_METRIC }] },
+      })
+      expect(created.status).toBe(201)
+      const id = (await created.json()).id as string
+      // 绕过写面直写一份指向词表外指标的草稿（存在性/漂移问题，门判不了）
+      const parsed = parseReportSpec({
+        panels: [{ chart: 'table', title: '幽灵口径', metricId: 'p6t5:ghost-acl' }],
+      })
+      if (!parsed.ok) throw new Error(`夹具规格应通过白名单：${parsed.code}`)
+      await updateSpec(pool, ORG, id, parsed.spec, await versionOf(app, id))
+
+      const res = await app.request(`/reports/${id}/acl`, {
+        method: 'PUT', headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ viewers: [{ subjectType: 'dept', subjectId: SIBLING_DEPT }] }),
+      })
+      expect(res.status).toBe(200)
+      const body = await res.json() as {
+        ok?: boolean; scopeIssues?: Array<{ reason: string; panelIndex: number; metricId?: string }>
+      }
+      expect(body.ok).toBe(true)
+      expect(body.scopeIssues).toEqual([
+        { reason: 'metric_unknown', panelIndex: 0, metricId: 'p6t5:ghost-acl' },
+      ])
+      // 写真的落了（不是「判不了 ⇒ 拒」）
+      expect((await pool.query(
+        `select subject_id from data.asset_acl
+          where org = $1 and asset_id = $2 and relation = 'viewer'`, [ORG, id],
+      )).rows).toEqual([{ subject_id: SIBLING_DEPT }])
+    })
+
+    it('★ 部门门 issues-only：面板指标不在词表 ⇒ 不阻断，门落库 + 回包带 scopeIssues', async () => {
+      const app = admin()
+      const created = await post(app, {
+        title: '部门门 issues-only', renderer: 'platform', requiredDepts: [CHILD_DEPT],
+        spec: { panels: [{ chart: 'table', title: '正常口径', metricId: OPEN_METRIC }] },
+      })
+      expect(created.status).toBe(201)
+      const id = (await created.json()).id as string
+      const parsed = parseReportSpec({
+        panels: [{ chart: 'table', title: '幽灵口径', metricId: 'p6t5:ghost-gate' }],
+      })
+      if (!parsed.ok) throw new Error(`夹具规格应通过白名单：${parsed.code}`)
+      await updateSpec(pool, ORG, id, parsed.spec, await versionOf(app, id))
+
+      const res = await putDeptGate(app, id, [SIBLING_DEPT], await versionOf(app, id))
+      expect(res.status).toBe(200)
+      const body = await res.json() as {
+        requiredDepts: string[]; scopeIssues?: Array<{ reason: string; panelIndex: number; metricId?: string }>
+      }
+      expect(body.requiredDepts).toEqual([SIBLING_DEPT])
+      expect(body.scopeIssues).toEqual([
+        { reason: 'metric_unknown', panelIndex: 0, metricId: 'p6t5:ghost-gate' },
+      ])
+    })
+
+    it('★ 回滚 issues-only 结构性不可达：写侧校验先拒未知指标（400），门不参与且零新版本', async () => {
+      // 诚实记录：回滚门与发布写侧**共用同一份词表**，`validatePanelMetrics` 在门之前就把
+      // 未知指标判成 400 UNKNOWN_PANEL_METRIC；平台行也不可能是 Metabase 的 no_panel_metrics。
+      // 因此「issues-only 放行」在回滚路径不可构造（评审要求的 ACL/部门门两条已钉住）。
+      // 本用例钉的是顺序本身：快照含幽灵指标 ⇒ 400，且一条版本都不落。
+      const app = admin()
+      const created = await post(app, {
+        title: '回滚 issues-only', renderer: 'platform', requiredDepts: [CHILD_DEPT],
+        spec: { panels: [{ chart: 'table', title: '正常口径', metricId: OPEN_METRIC }] },
+      })
+      expect(created.status).toBe(201)
+      const id = (await created.json()).id as string
+      expect((await publish(app, id, await versionOf(app, id))).status).toBe(200)
+      const ghost = parseReportSpec({
+        panels: [{ chart: 'table', title: '幽灵口径', metricId: 'p6t5:ghost-rollback' }],
+      })
+      if (!ghost.ok) throw new Error(`夹具规格应通过白名单：${ghost.code}`)
+      // 直接把 v1 快照改成幽灵指标（发布通路会拒，故走 SQL 构造「历史坏快照」）
+      await pool.query(
+        'update data.report_versions set spec = $3 where org = $1 and report_id = $2 and version = 1',
+        [ORG, id, JSON.stringify(ghost.spec)],
+      )
+      const versionCount = async (): Promise<number> =>
+        (await pool.query(
+          'select count(*)::int as n from data.report_versions where org = $1 and report_id = $2', [ORG, id],
+        )).rows[0].n
+
+      const res = await app.request(`/reports/${id}/versions/1/rollback`, {
+        method: 'POST', headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ expectedVersion: await versionOf(app, id) }),
+      })
+      expect(res.status).toBe(400)
+      expect(await res.json()).toMatchObject({ ok: false, reason: 'UNKNOWN_PANEL_METRIC' })
+      expect(await versionCount()).toBe(1)
+    })
+
     it('部门选择器：转发宿主注入的平表（含直属人数）', async () => {
       const res = await admin().request('/reports/dept-options')
       expect(res.status).toBe(200)

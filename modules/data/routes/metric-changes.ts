@@ -28,7 +28,7 @@ import { parseIdParam, requesterOf } from './context'
 import { adoptChange, getChange, listChanges, rejectChange, submitChange, withdrawChange } from '../domain/metric-change'
 import type { ChangeStatus } from '../domain/metric-change'
 import { PENDING_STATUSES } from '../domain/metric-change'
-import { applyPreview, previewTooRecent, runPreview } from '../domain/metric-change-preview'
+import { applyPreview, previewTooRecent, recentPreviewFor, runPreview } from '../domain/metric-change-preview'
 import { analystPool, runWarehouseSqlParams } from '../domain/warehouse'
 
 const SubmitBody = z.object({
@@ -74,10 +74,20 @@ export function registerMetricChanges(r: ModuleHono, ctx: RouteCtx): void {
     const parsed = SubmitBody.safeParse(await c.req.json().catch(() => null))
     if (!parsed.success) return c.json({ error: 'INVALID_BODY' }, 400)
     const org = c.get('tenant').casdoor_org
+    // 提交即试算的限速（P6 Task 3）：取最近一条带快照且未被决策的单（superseded 计入，
+    // adopted/rejected/withdrawn 排除）。命中 ⇒ 仍落单（提交是合法业务动作，不拒绝），但跳过
+    // 试算——单停在 draft，人可在待核对页按「跑试算」补。
+    const rateLimited = await recentPreviewFor(ctx.pool, org, parsed.data.metricId)
     const out = await submitChange(ctx.pool, org,
       { userId: requester.userId, channel: requester.channel },
       parsed.data.metricId, parsed.data.kind, parsed.data.payload ?? {})
     if (!out.ok) return c.json({ error: out.error }, out.http)
+    if (rateLimited) {
+      return c.json({
+        change: await getChange(ctx.pool, org, out.change.id),
+        previewSkipped: 'rate_limited',
+      }, 200)
+    }
     const preview = await runPreview({ pool: ctx.pool, execute: previewExecOf(ctx) }, org, out.change)
     await applyPreview(ctx.pool, out.change.id, preview)
     return c.json({ change: await getChange(ctx.pool, org, out.change.id) }, 200)
@@ -112,7 +122,8 @@ export function registerMetricChanges(r: ModuleHono, ctx: RouteCtx): void {
     if (change === null) return c.json({ error: 'NOT_FOUND' }, 404)
     if (!PENDING_STATUSES.includes(change.status)) return c.json({ error: 'CHANGE_STATE_CHANGED' }, 409)
     // 重跑限速（P4 Task 4，销缓办①）：提交即试算已刚落过 ranAt，60s 内连打不再烧执行资源。
-    // 只挡本端点——POST /metric-changes（首立单）不走这里（新单 preview 恒 null，判据天然放行）。
+    // 提交面有各自的限速（P6 Task 3：recentPreviewFor，命中时跳过试算而不是 409）——两处
+    // 共用 previewTooRecent 这一份时钟判据，但拒绝形态不同（重跑 409 / 提交照落单）。
     if (previewTooRecent(change.preview)) return c.json({ error: 'PREVIEW_RATE_LIMITED' }, 409)
     const preview = await runPreview({ pool: ctx.pool, execute: previewExecOf(ctx) }, org, change)
     await applyPreview(ctx.pool, change.id, preview)

@@ -8,7 +8,7 @@ import { getChange, submitChange } from './metric-change'
 import type { MetricChangeRow } from './metric-change'
 import {
   applyPreview, PREVIEW_RERUN_MIN_INTERVAL_MS, PREVIEW_TIMEOUT_MS, previewTooRecent, previewWindow,
-  runPreview, timeColumnOf,
+  recentPreviewFor, runPreview, timeColumnOf,
 } from './metric-change-preview'
 import { upsertL1Metric } from './metric-store'
 
@@ -346,5 +346,43 @@ describePg('applyPreview 快照历史（P1 Task 5，销缓办①）', () => {
     expect(after).toEqual(before)
     const snap = await pool.query('select adopted_snapshot from data.metric_change where id = $1', [sub.change.id])
     expect(snap.rows[0]?.adopted_snapshot).toMatchObject({ value: 1 }) // 采纳时刻的 preview，未被 9 污染
+  })
+})
+
+// ── P6 Task 3：提交限速判据 recentPreviewFor（真库：状态过滤与空快照语义）────────────
+describePg('recentPreviewFor（P6 Task 3：提交限速判据）', () => {
+  const NOW = Date.parse('2026-11-13T10:00:00.000Z')
+  const at = (msAgo: number): string => new Date(NOW - msAgo).toISOString()
+  const insert = (metricId: string, status: string, preview: unknown): Promise<unknown> =>
+    pool.query(
+      `insert into data.metric_change (org, metric_id, kind, payload, status, preview, submitted_by, submitted_channel)
+       values ($1, $2, 'meta', '{}'::jsonb, $3, $4::jsonb, 'u', 'pat')`,
+      [ORG, metricId, status, preview === null ? null : JSON.stringify(preview)],
+    )
+
+  it('无单 / preview=null / 超窗 ⇒ false；未决（draft）与 superseded 的近期快照 ⇒ true', async () => {
+    expect(await recentPreviewFor(pool, ORG, 'x:p6_recent_none', NOW)).toBe(false)
+    await insert('x:p6_recent_null', 'draft', null)
+    expect(await recentPreviewFor(pool, ORG, 'x:p6_recent_null', NOW)).toBe(false)
+    await insert('x:p6_recent_stale', 'draft', { ranAt: at(61_000) })
+    expect(await recentPreviewFor(pool, ORG, 'x:p6_recent_stale', NOW)).toBe(false)
+    await insert('x:p6_recent_draft', 'draft', { ranAt: at(1_000) })
+    expect(await recentPreviewFor(pool, ORG, 'x:p6_recent_draft', NOW)).toBe(true)
+    // superseded 保留：连续重提时第 N 次仍命中（限速要守的性质）
+    await insert('x:p6_recent_superseded', 'superseded', { ranAt: at(1_000) })
+    expect(await recentPreviewFor(pool, ORG, 'x:p6_recent_superseded', NOW)).toBe(true)
+  })
+
+  it('已决/离场单（adopted / rejected / withdrawn）不作判据 ⇒ false；最新空快照不抹掉更早的近期快照', async () => {
+    await insert('x:p6_recent_adopted', 'adopted', { ranAt: at(1_000) })
+    expect(await recentPreviewFor(pool, ORG, 'x:p6_recent_adopted', NOW)).toBe(false)
+    await insert('x:p6_recent_rejected', 'rejected', { ranAt: at(1_000) })
+    expect(await recentPreviewFor(pool, ORG, 'x:p6_recent_rejected', NOW)).toBe(false)
+    await insert('x:p6_recent_withdrawn', 'withdrawn', { ranAt: at(1_000) })
+    expect(await recentPreviewFor(pool, ORG, 'x:p6_recent_withdrawn', NOW)).toBe(false)
+    // 最新一条 = 被限速跳过的空快照（draft preview null）；更早一条 superseded 有近期快照 ⇒ 仍命中
+    await insert('x:p6_recent_nullmask', 'superseded', { ranAt: at(1_000) })
+    await insert('x:p6_recent_nullmask', 'draft', null)
+    expect(await recentPreviewFor(pool, ORG, 'x:p6_recent_nullmask', NOW)).toBe(true)
   })
 })

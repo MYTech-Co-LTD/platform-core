@@ -39,6 +39,11 @@ export interface MetricRowSnapshot {
    * （不进 select_sql / 不参与授权），故放审计快照而不是新增指标列。
    */
   origin?: CandidateOrigin
+  /**
+   * 泄露策略（047 `reveal`；P6 Task 4 修复轮）：安全相关字段必须能从审计读出「从什么到什么」。
+   * 可选是为历史快照（字段缺席 = 早于该字段的审计行）留兼容；新写的快照恒带。
+   */
+  reveal?: 'panel' | 'report'
 }
 
 export interface MetricAuditEntry {

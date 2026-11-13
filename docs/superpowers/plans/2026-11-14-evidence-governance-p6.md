@@ -38,21 +38,29 @@
 **语义：**
 1. `reportScopeViolations` 返回 `{ panels: [...], issues: Array<{ reason: 'metric_unknown' | 'audience_unbounded' | ..., panelIndex, metricId? }> }`——把 P5 里「目录缺失只发 warning」的形态显式成 `issues`（判不了 ≠ 干净）。
 2. 巡检：`violations` 与 `issues` **都判红**（exit 1），输出分两段（`✗ [violation]` / `⚠ [issue]`），文档同步改回「有漂移就 exit 1」。
-3. 发布行为**不变**：issues 不阻断发布（P5 语义），只在回包 `scopeIssues` 里可见。
+3. 发布行为**不变**：门的 issue 不参与 409 判定；`scopeIssues` 是**失败路径（400/409）的诊断字段**（200 仅目录竞态可能出现）。
 
-- [ ] 失败测试：目录缺失的指标 ⇒ 发布 200 + scopeIssues 含 metric_unknown；巡检对该报表 exit 1 且输出 `[issue]` 行；干净报表 exit 0。
+- [x] 失败测试：目录缺失 ⇒ 发布路径 400 且回包带 scopeIssues（诊断位）；巡检读已发布快照仍能判红 `[issue]`；干净报表 exit 0。
 - [ ] RED → GREEN → Commit `feat(data): 发布门结果分类+巡检按 issue 判红（P6 Task 1）`。
 
 ---
 
-### Task 2: 提交期 creator 预检（消「绿单死采纳」）
+### Task 2: creator 判据落在**采纳期**（采纳即授权）
 
-**Files:** Modify `domain/metric-change.ts`（`precheckOf`）+ 测试。
+**Files:** Modify `domain/metric-write.ts` + 测试（`domain/metric-change.ts` 的 `precheckOf` **不**判 creator）。
 
-**语义：** create/update/delete/meta 档若目标行存在且 `created_by` 既非提交者、提交者又不持 `data:manage` ⇒ 提交期 `403 NOT_METRIC_CREATOR`（域层同码），不落单。`declaration`/`override` 档不适用（前者新建、后者走 L1 归属判据）。
+**语义（实现的模型）：** 采纳期写域判 **`creator ∪ data:manage`**（采纳即授权）——目标行是 L2 且
+`created_by` 既非采纳人、采纳人又不持 `data:manage` ⇒ `403 NOT_METRIC_CREATOR`，写入不落；
+`created_by` 为 NULL 的存量行 fail-closed，但持 manage 放行（否则孤儿行没人能修）。
+create 不判（行不存在 = 谁建谁就是 creator）。
 
-- [ ] 失败测试：他人 L2 的 update/delete/meta ⇒ 403 且无单据；本人 ⇒ 通过；管理员（持 manage）⇒ 通过。
-- [ ] RED → GREEN → Commit `feat(data): 提交期 creator 预检（P6 Task 2）`。
+**⚠️ 提交期不判 creator（已撤回「提交期 creator 预检」，见 `bb3da0dd`）**：提交人 ≠ 采纳人
+（agent 提案、人决策），真正决定写入的是**采纳人**；提交期按提交人预判必然错位（agent 的 PAT
+无 manage、人采纳有 manage），且它**预测不了采纳结果**——只会把合法提案拦死在队列外。
+别再「好心恢复」成提交期预检；要收紧只能在采纳期收。
+
+- [x] 失败测试：采纳他人 L2 的 update/delete/meta ⇒ 403 `NOT_METRIC_CREATOR` 且写入不落；本人 ⇒ 通过；持 `data:manage` 的采纳人 ⇒ 通过。
+- [x] RED → GREEN → Commit（`feat(data): 提交期 creator 预检` → 修复轮 `bb3da0dd` 撤回并改为采纳期 `creator ∪ data:manage`）。
 
 ---
 

@@ -5,7 +5,7 @@
 import { afterAll, beforeAll, describe, expect, it } from 'vitest'
 import { Hono } from 'hono'
 import { Pool } from 'pg'
-import { REQUESTER_CHANNEL } from '@platform/sdk'
+import { REQUESTER_CHANNEL, TENANT_SOURCES, declaredScopeGate } from '@platform/sdk'
 import type { NotifyPort } from '@platform/sdk'
 import { applyMigrations, buildTestApp, makeIdentity } from '../test-util'
 import type { ModuleVars } from './context'
@@ -61,6 +61,14 @@ const identityOf = () => makeIdentity({ orgId: ORG, scopes: ['data:query', 'data
 /** 会话通道壳（REQUESTER_CHANNEL 不设 = session）：tenant 钉本文件的 ORG。 */
 const appOf = (execute: unknown) =>
   buildTestApp(mod, identityOf(), { pool, execute } as never, { id: 1, casdoor_org: ORG })
+
+/** 把该 org 下该 metricId 所有有快照的单 preview.ranAt 拨旧（模拟时间流逝，绕开提交限速；P6 Task 3）。 */
+const agePreviewsFor = (org: string, metricId: string, msAgo = 120_000): Promise<unknown> =>
+  pool.query(
+    `update data.metric_change
+        set preview = jsonb_set(preview, '{ranAt}', to_jsonb($3::text))
+      where org = $1 and metric_id = $2 and preview is not null`,
+    [org, metricId, new Date(Date.now() - msAgo).toISOString()])
 
 /** 把单据 preview.ranAt 拨到 N 毫秒前（模拟时间流逝，绕开 60s 重跑限速；P4 Task 4）。 */
 const agePreview = (id: number, msAgo: number): Promise<unknown> =>
@@ -400,9 +408,11 @@ describePg('★ 采纳 happy path 全链（P0 终审 F4）：提交即试算 →
     const a1 = await post(`/metric-changes/${b1.change.id}/adopt`)
     expect(a1.status).toBe(200)
     // ② meta 变更单：同链再来一遍（meta 试算读已生效行的当前口径）⇒ 200
+    // P6 Task 3 修复轮：已采纳单的快照不作限速判据 ⇒ 这里无需拨旧 ranAt，meta 单照常试算
     const c2 = await post('/metric-changes', { metricId: 'x:e2e', kind: 'meta', payload: { unit: '元' } })
     expect(c2.status).toBe(200)
-    const b2 = await c2.json() as { change: { id: number; status: string } }
+    const b2 = await c2.json() as { change: { id: number; status: string }; previewSkipped?: string }
+    expect(b2.previewSkipped).toBeUndefined()
     expect(b2.change.status).toBe('preview_ready')
     const a2 = await post(`/metric-changes/${b2.change.id}/adopt`)
     expect(a2.status).toBe(200)
@@ -435,6 +445,7 @@ describePg('★ delete 档采纳也发通知（P1 Task 4，销缓办③）', () 
     expect(c1.status).toBe(200)
     const b1 = await c1.json() as { change: { id: number } }
     expect((await post(`/metric-changes/${b1.change.id}/adopt`)).status).toBe(200)
+    // P6 Task 3 修复轮：已采纳单的快照不作限速判据 ⇒ 删除单照常试算（本用例验的是删除采纳全链）
     // ② delete 单全链采纳 ⇒ 200
     const d = await post('/metric-changes', { metricId: 'x:e2e_del', kind: 'delete' })
     expect(d.status).toBe(200)
@@ -472,6 +483,7 @@ describePg('★ adopt eventId 拼变更单 id（P4 Task 4，销缓办⑤：同 m
     }
     const MID = 'x:e2e_evt'
     // ① create 生效 → ② delete 删掉 → ③ 重建（delete→re-create 正是 P1 实证被去重吞的形状）
+    // P6 Task 3 修复轮：每单采纳后即为已决单（不作限速判据）⇒ 下一单照常试算，无需拨旧 ranAt
     const cId = await submit({ metricId: MID, kind: 'create', payload: { baseMetric: L1_ID, op: { kind: 'refine' }, alias: '单号夹具' } })
     await adopt(cId)
     const dId = await submit({ metricId: MID, kind: 'delete' })
@@ -568,6 +580,7 @@ describePg('P1 Task 7：override 档', () => {
 
   it('坏声明（引用未纳管关系）⇒ preview_failed 且 preview.issues 非空（P4 Task 4，销缓办⑥）', async () => {
     const app = oappOf(async () => ({ rows: [] }))
+    // P6 Task 3 修复轮：上一用例的单已采纳（已决单不作判据）⇒ 本用例照常试算
     const res = await post(app, {
       metricId: L1_OVR_A, kind: 'override',
       payload: ovrEntry({ label: '本租户销售口径·坏关系', expression: 'sum(no_such_relation.amount)' }),
@@ -585,6 +598,8 @@ describePg('P1 Task 7：override 档', () => {
 
   it('grain 不同形 ⇒ 提交/试算照走，采纳 400 透传写路径判据（GRAIN_MISMATCH），单据不被 CAS 翻转', async () => {
     const app = oappOf(async () => ({ rows: [{ rows: 1, value: 1 }] }))
+    // P6 Task 3：上一用例（坏声明）留下了同 metricId 的未决单，先拨旧 ranAt 让本用例照常试算
+    await agePreviewsFor(OORG, L1_OVR_A)
     const res = await post(app, {
       metricId: L1_OVR_A, kind: 'override',
       payload: ovrEntry({ label: '本租户销售口径·异形粒度', grain: ['system_book'] }),
@@ -654,6 +669,8 @@ describePg('P1 Task 7：override 档', () => {
   it('采纳撞 metrics_title_per_dept_uq ⇒ 409 TITLE_EXISTS_IN_DEPT（fix2：submit→adopt 并发占名窗口不裸 500）', async () => {
     const app = oappOf(async () => ({ rows: [{ rows: 1, value: 1 }] }))
     const winTitle = '本租户销售口径·并发窗口'
+    // P6 Task 3：上一用例留下了同 metricId 的未决单，先拨旧 ranAt 让本用例照常试算
+    await agePreviewsFor(OORG, L1_OVR_B)
     // 先提单（此刻无同名行 ⇒ 提交期同名判据放行），再预置 null 桶同名行模拟 submit→adopt
     // 窗口里的并发占名——采纳期 insertTenantDeclaration 撞 title 唯一索引的 23505。
     const res = await post(app, {
@@ -676,6 +693,70 @@ describePg('P1 Task 7：override 档', () => {
   })
 })
 
+// ── P6 Task 2 修复轮（2026-11-14）：采纳即授权 —— 决策端点两层 ─────────────────────
+// ① 宿主门：manifest `POST /metric-changes/:id/adopt ⇒ data:manage`（declaredScopeGate 施加）；
+// ② 域层门：creator ∪ data:manage（metric-write.ts，采纳期按**采纳人**判）。
+// 两层缺一不可：只靠域层 = 非 manage 也能进域层；只靠宿主 = agent 提单后无 manage 管理员可采纳
+// 但域层仍 403（P4 以来的错位，本修复轮钉住）。
+describePg('P6 Task 2 修复轮：采纳授权（宿主门 + 域层 creator 门）', () => {
+  const AID = 'x:p6_adopt_authz'
+  /** 与 manifest 声明逐字同形的门卫壳（identity/tenant/sources 注入同 buildTestApp）。 */
+  const gatedApp = (identity: ReturnType<typeof makeIdentity>) => {
+    const shell = new Hono<ModuleVars>()
+    shell.use('*', async (c, next) => {
+      c.set('identity', identity)
+      c.set('tenant', { id: 1, casdoor_org: ORG })
+      c.set(TENANT_SOURCES, ['lemeng'])
+      await next()
+    })
+    shell.use('/metric-changes/:id/adopt', declaredScopeGate([
+      { method: 'POST', path: '/metric-changes/:id/adopt', scope: 'data:manage' },
+    ]))
+    shell.route('/', mod.createRouter({ pool } as never))
+    return shell
+  }
+  const seedOwnedL2 = async (): Promise<void> => {
+    await pool.query('delete from data.metric_change where org = $1 and metric_id = $2', [ORG, AID])
+    await pool.query('delete from data.metrics where org = $1 and id = $2', [ORG, AID])
+    await pool.query(
+      `insert into data.metrics
+         (org, id, title, description, required_scope, subject_column, select_sql, group_by, params,
+          source, updated_by, version, totalable, sla_days, freshness_relations, basis, certified, created_by)
+       values ($1, $2, '采纳授权·路由夹具', '', null, 'org',
+               'select sum(mart_sales_daily.revenue) as value, bizday from mart_sales_daily',
+               'bizday', '{}'::jsonb, 'l2', 'u-owner', 1, true, 1, '[]'::jsonb, 'l1_tree', 'draft', 'u-owner')`,
+      [ORG, AID])
+  }
+  /** agent（PAT、无 manage）提单 update → 直接推到 preview_ready（决策端点只关心快照在位）。 */
+  const submitUpdateAsAgent = async (): Promise<number> => {
+    const s = await submitChange(pool, ORG, { userId: 'u-agent', channel: 'pat' }, AID, 'update',
+      { baseMetric: L1_ID, op: { kind: 'refine' }, alias: '采纳授权·路由' })
+    if (!s.ok) throw new Error(`agent 提单被拒: ${s.error}`)
+    await pool.query(
+      `update data.metric_change set status='preview_ready', preview='{"rows":1}'::jsonb where id=$1`,
+      [s.change.id])
+    return s.change.id
+  }
+
+  it('★ 非 manage 第三人采纳 ⇒ 宿主门 403 need data:manage；admin 采纳同一单 ⇒ 200（域层 manage 豁免）', async () => {
+    await seedOwnedL2()
+    const id = await submitUpdateAsAgent()
+    const third = await gatedApp(makeIdentity({ orgId: ORG, scopes: ['data:query'], userId: 'u-third' }))
+      .request(`/metric-changes/${id}/adopt`, { method: 'POST' })
+    expect(third.status).toBe(403)
+    expect(await third.json()).toEqual({ error: 'FORBIDDEN', need: 'data:manage' })
+    // 门卫拒在路由之前：单据未被消耗
+    const still = await pool.query('select status from data.metric_change where id = $1', [id])
+    expect(still.rows[0]?.status).toBe('preview_ready')
+    // admin（持 manage）过宿主门 → 域层 creator ∪ data:manage 放行 ⇒ 200，行按提案改写
+    const admin = await gatedApp(makeIdentity({ orgId: ORG, scopes: ['data:query', 'data:manage'], userId: 'u-admin' }))
+      .request(`/metric-changes/${id}/adopt`, { method: 'POST' })
+    expect(admin.status).toBe(200)
+    const row = await pool.query('select title from data.metrics where org = $1 and id = $2', [ORG, AID])
+    expect(row.rows[0]?.title).toBe('采纳授权·路由')
+  })
+})
+
 describePg('POST /metric-changes/:id/withdraw（提交者本人）', () => {
   it('本人撤回 ⇒ 200 withdrawn；别人 ⇒ 403 FORBIDDEN', async () => {
     // 壳身份 = 提交者本人（withdrawChange 按 submitted_by = requester.userId 判）
@@ -689,5 +770,161 @@ describePg('POST /metric-changes/:id/withdraw（提交者本人）', () => {
     expect(after.rows[0]?.status).toBe('withdrawn')
     const again = await app.request(`/metric-changes/${s.change.id}/withdraw`, { method: 'POST' })
     expect(again.status).toBe(403)
+  })
+})
+
+// ── P6 Task 3：提交试算限速（同 metricId 60s 内重复提交不烧第二次算力）──────────────
+// 语义：提交本身是合法动作 ⇒ 仍落单；只跳过试算（单留 draft，人面按「跑试算」补）。
+// 判据看**最近一条带快照且未被决策的单**（superseded 计入，adopted/rejected/withdrawn 排除）：
+// 被跳过的单没有快照，不能把判据抹回 false；看完成的连续提交（第三、第四次…）仍命中。
+describePg('P6 Task 3：提交即试算的限速（POST /metric-changes）', () => {
+  const CREATE_PAYLOAD = { baseMetric: L1_ID, op: { kind: 'refine' } }
+  const submit = (app: ReturnType<typeof appOf>, metricId: string) => app.request('/metric-changes', {
+    method: 'POST', headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ metricId, kind: 'create', payload: CREATE_PAYLOAD }),
+  })
+
+  it('60s 内同 metricId 二次提交 ⇒ 仍落单（draft）+ previewSkipped: rate_limited；不同 metricId 不受限', async () => {
+    const app = appOf(async () => ({ rows: [{ rows: 2, value: 20 }] }))
+    const first = await submit(app, 'x:p6_submit_rate')
+    expect(first.status).toBe(200)
+    const b1 = await first.json() as { change: { id: number; status: string }; previewSkipped?: string }
+    expect(b1.previewSkipped).toBeUndefined()
+    expect(b1.change.status).toBe('preview_ready')
+
+    // 二次提交：旧未决单被 superseded，新单照落但跳过试算（不拒绝提交）
+    const second = await submit(app, 'x:p6_submit_rate')
+    expect(second.status).toBe(200)
+    const b2 = await second.json() as { change: { id: number; status: string }; previewSkipped?: string }
+    expect(b2.previewSkipped).toBe('rate_limited')
+    expect(b2.change.status).toBe('draft')
+    // 落库事实：试算确实没跑（无快照）
+    const row = await pool.query('select status, preview from data.metric_change where id = $1', [b2.change.id])
+    expect(row.rows[0]).toMatchObject({ status: 'draft', preview: null })
+
+    // 连打第三次：被跳过的单没有快照 ⇒ 判据看**最近一次真跑过**的试算，仍跳过
+    //（否则 agent 每次重提都会再烧一轮，限速只挡一次等于没挡）
+    const third = await submit(app, 'x:p6_submit_rate')
+    expect(third.status).toBe(200)
+    const b4 = await third.json() as { change: { status: string }; previewSkipped?: string }
+    expect(b4.previewSkipped).toBe('rate_limited')
+    expect(b4.change.status).toBe('draft')
+
+    // 不同 metricId 不受限（同一时刻仍正常试算）
+    const other = await submit(app, 'x:p6_submit_rate_other')
+    expect(other.status).toBe(200)
+    const b3 = await other.json() as { change: { status: string }; previewSkipped?: string }
+    expect(b3.previewSkipped).toBeUndefined()
+    expect(b3.change.status).toBe('preview_ready')
+  })
+
+  it('把首单 ranAt 拨到 61s 前 ⇒ 同 metricId 再提交恢复正常试算（时间流逝解除限速）', async () => {
+    const app = appOf(async () => ({ rows: [{ rows: 2, value: 20 }] }))
+    const first = await submit(app, 'x:p6_submit_rate_age')
+    expect(first.status).toBe(200)
+    const b1 = await first.json() as { change: { id: number; status: string } }
+    await agePreview(b1.change.id, 61_000)
+    const second = await submit(app, 'x:p6_submit_rate_age')
+    expect(second.status).toBe(200)
+    const b2 = await second.json() as { change: { status: string }; previewSkipped?: string }
+    expect(b2.previewSkipped).toBeUndefined()
+    expect(b2.change.status).toBe('preview_ready')
+  })
+
+  it('已采纳 / 已驳回单不作判据：60s 内同 metricId 改稿重提 ⇒ 正常试算（旧快照绑定旧 payload）', async () => {
+    // 采纳写路径要过源闸 ⇒ 与 happy path 同款壳（sources=['lemeng']，L1 夹具 sourceSystem='lemeng'）
+    const app = buildTestApp(mod, identityOf(),
+      { pool, execute: async () => ({ rows: [{ rows: 3, value: 9 }] }) } as never,
+      { id: 1, casdoor_org: ORG }, ['lemeng'])
+    const post = (path: string, body?: unknown) => app.request(path, {
+      method: 'POST',
+      ...(body === undefined ? {} : { body: JSON.stringify(body), headers: { 'content-type': 'application/json' } }),
+    })
+    const MID = 'x:p6_adopted_rework'
+    const c1 = await post('/metric-changes', {
+      metricId: MID, kind: 'create', payload: { baseMetric: L1_ID, op: { kind: 'refine' } },
+    })
+    expect(c1.status).toBe(200)
+    const b1 = await c1.json() as { change: { id: number; status: string } }
+    expect(b1.change.status).toBe('preview_ready')
+    expect((await post(`/metric-changes/${b1.change.id}/adopt`)).status).toBe(200)
+
+    // 采纳后 60s 内立刻改稿重提：已采纳单的快照不作判据 ⇒ 照常试算
+    const c2 = await post('/metric-changes', { metricId: MID, kind: 'meta', payload: { unit: '元' } })
+    expect(c2.status).toBe(200)
+    const b2 = await c2.json() as { change: { id: number; status: string }; previewSkipped?: string }
+    expect(b2.previewSkipped).toBeUndefined()
+    expect(b2.change.status).toBe('preview_ready')
+
+    // 驳回同理：驳回后再改稿重提，仍照常试算（已驳回单的快照同样绑定旧 payload）
+    expect((await post(`/metric-changes/${b2.change.id}/reject`, { reason: '改稿重提' })).status).toBe(200)
+    const c3 = await post('/metric-changes', { metricId: MID, kind: 'meta', payload: { unit: '件' } })
+    expect(c3.status).toBe(200)
+    const b3 = await c3.json() as { change: { status: string }; previewSkipped?: string }
+    expect(b3.previewSkipped).toBeUndefined()
+    expect(b3.change.status).toBe('preview_ready')
+  })
+
+  it('已撤回单不作判据：撤回后 60s 内同 metricId 重提 ⇒ 正常试算（旧快照对应旧 payload）', async () => {
+    const app = appOf(async () => ({ rows: [{ rows: 2, value: 20 }] }))
+    // 专属 alias：同文件「采纳」用例已在 data.metrics 落了基底 title 的行，复用会撞同名互斥
+    const post = (metricId: string) => app.request('/metric-changes', {
+      method: 'POST', headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ metricId, kind: 'create', payload: { ...CREATE_PAYLOAD, alias: '撤回重提夹具' } }),
+    })
+    const first = await post('x:p6_withdrawn_rework')
+    expect(first.status).toBe(200)
+    const b1 = await first.json() as { change: { id: number; status: string } }
+    expect(b1.change.status).toBe('preview_ready')
+    // 提交者本人撤回（withdraw 按 submitted_by = requester.userId 判）
+    expect((await app.request(`/metric-changes/${b1.change.id}/withdraw`, { method: 'POST' })).status).toBe(200)
+    const second = await post('x:p6_withdrawn_rework')
+    expect(second.status).toBe(200)
+    const b2 = await second.json() as { change: { status: string }; previewSkipped?: string }
+    expect(b2.previewSkipped).toBeUndefined()
+    expect(b2.change.status).toBe('preview_ready')
+  })
+})
+
+// ── P6 Task 4：reveal 写入面（变更单 payload → 采纳落列）──────────────────────────────
+// 列自 047 起存在（CHECK panel|report，default panel），此前只有读侧（P5 渲染闸）；
+// 本波把变更单 payload 接成唯一写入面。
+describePg('P6 Task 4：reveal 随变更单 payload 落列（POST → adopt）', () => {
+  it('create 带 reveal=report ⇒ 采纳后列 report；不传 ⇒ panel；非法值 ⇒ 提交期 400', async () => {
+    // 显式投影已接入源（L1 夹具 sourceSystem='lemeng'）：appOf 不带 sources ⇒ 采纳期写闸
+    // METRIC_SOURCE_NOT_ADOPTED（403）。与端到端用例同一布线。
+    const app = buildTestApp(mod, identityOf(),
+      { pool, execute: async () => ({ rows: [{ rows: 1, value: 1 }] }) } as never,
+      { id: 1, casdoor_org: ORG }, ['lemeng'])
+    const submit = (metricId: string, reveal?: string) => app.request('/metric-changes', {
+      method: 'POST', headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({
+        metricId, kind: 'create',
+        payload: { baseMetric: L1_ID, op: { kind: 'refine' }, alias: `reveal·${metricId}`, ...(reveal === undefined ? {} : { reveal }) },
+      }),
+    })
+    const adopt = async (metricId: string, reveal?: string): Promise<number> => {
+      const res = await submit(metricId, reveal)
+      expect(res.status).toBe(200)
+      const body = await res.json() as { change: { id: number; status: string } }
+      expect(body.change.status).toBe('preview_ready')
+      expect((await app.request(`/metric-changes/${body.change.id}/adopt`, { method: 'POST' })).status).toBe(200)
+      return body.change.id
+    }
+    // reveal=report ⇒ 落列
+    await adopt('x:p6rv_route_report', 'report')
+    const report = await pool.query('select reveal from data.metrics where org = $1 and id = $2', [ORG, 'x:p6rv_route_report'])
+    expect(report.rows[0]?.reveal).toBe('report')
+    // 不传 ⇒ 列默认 panel
+    await adopt('x:p6rv_route_default')
+    const def = await pool.query('select reveal from data.metrics where org = $1 and id = $2', [ORG, 'x:p6rv_route_default'])
+    expect(def.rows[0]?.reveal).toBe('panel')
+    // 非法值 ⇒ 提交期 400（zod enum），不落单
+    const bad = await submit('x:p6rv_route_bad', 'half')
+    expect(bad.status).toBe(400)
+    expect(await bad.json()).toMatchObject({ error: 'INVALID_DECLARATION' })
+    const n = await pool.query(
+      "select count(*)::int as n from data.metric_change where org = $1 and metric_id = 'x:p6rv_route_bad'", [ORG])
+    expect(n.rows[0]?.n).toBe(0)
   })
 })

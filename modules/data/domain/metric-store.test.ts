@@ -303,6 +303,26 @@ describePg('metric-store（需要 DATABASE_URL）', () => {
         overrideOf: null })
   })
 
+  it('upsertMetric 的 ownership.reveal（P6 Task 4）：首插缺省 panel / 带值落列 / 缺席 = 保留既有', async () => {
+    // 首插不带 reveal ⇒ 列默认 'panel'
+    await put(ORG, def({ id: 'reveal_row' }))
+    const revealOf = async (id: string): Promise<string | undefined> =>
+      (await pool.query('select reveal from data.metrics where org = $1 and id = $2', [ORG, id])).rows[0]?.reveal as string | undefined
+    expect(await revealOf('reveal_row')).toBe('panel')
+    // 带值 update ⇒ 落列
+    await upsertMetric(pool, ORG, def({ id: 'reveal_row' }), 'fixture', { ownership: { reveal: 'report' } })
+    expect(await revealOf('reveal_row')).toBe('report')
+    // 缺席键的普通写 ⇒ 保留既有（coalesce；一次内容写不得把泄露策略洗回 panel）
+    await put(ORG, def({ id: 'reveal_row', title: '销售日明细·reveal 保留' }))
+    expect(await revealOf('reveal_row')).toBe('report')
+    // 显式改回 panel ⇒ 落列
+    await upsertMetric(pool, ORG, def({ id: 'reveal_row' }), 'fixture', { ownership: { reveal: 'panel' } })
+    expect(await revealOf('reveal_row')).toBe('panel')
+    // 新行带 report ⇒ 首插落 report
+    await upsertMetric(pool, ORG, def({ id: 'reveal_new' }), 'fixture', { ownership: { reveal: 'report' } })
+    expect(await revealOf('reveal_new')).toBe('report')
+  })
+
   it('deleteMetric 返「是否真删了一行」，且只删本租户的', async () => {
     await put(ORG, def({ id: 'to_delete' }))
     expect(await deleteMetric(pool, ORG, 'to_delete')).toBe(true)

@@ -6,13 +6,15 @@
 //      IS NULL` 会同时造成漏判（快照门非 null 的已发布行）与误判（没有线上内容的草稿行）；
 //   ② 判据输入**取快照还是取行**：platform 行的行上是草稿/下次发布的门，线上是 `report_versions`
 //      快照；取错就判错对象。
-// 另加 formatReport 的干净/违规两态（job 判红只看退出码，退出码由这两态推出）。
+// 另加 formatReport 的三态（干净 / 违规 / issue；job 判红只看退出码，退出码由这三态推出）。
 import { createRequire } from 'node:module'
 import { afterAll, beforeAll, describe, expect, it } from 'vitest'
 // 迁移引导与 modules/data 的测试同源（不另写一份 runMigrations）：
 // 本文件必须**自足**——单独 `pnpm run test:guard`（库里没跑过 data 迁移）也要能建表。
 // 只跑 data 迁移：scanOrg 只读 data.reports / data.report_versions，不碰平台原语。
 import { applyMigrations } from '../modules/data/test-util.ts'
+import { reportScopeViolations } from '../modules/data/domain/report-scope-gate.ts'
+import { parseReportSpec } from '../modules/data/domain/report-spec.ts'
 import {
   SCRIPT_NAME,
   classifyReport,
@@ -105,10 +107,10 @@ describe('parseOrgArg', () => {
   })
 })
 
-describe('formatReport（干净 / 违规两态）', () => {
+describe('formatReport（干净 / 违规 / issue 三态）', () => {
   const cleanOrg = {
     org: 'org-a', tenantId: 3, reports: 4, published: 2, metabase: 1,
-    violations: [], warnings: [], errors: [],
+    violations: [], issues: [], errors: [],
   }
 
   it('干净：exit 0 的形态（OK + 覆盖行 + 总账）', () => {
@@ -116,9 +118,10 @@ describe('formatReport（干净 / 违规两态）', () => {
     expect(text).toContain(`${SCRIPT_NAME}: org=org-a tenant=3 reports=4 published=2`)
     expect(text).toContain(
       `${SCRIPT_NAME}: OK（orgs 1 / reports 4 / published 2 / metabase 1`
-      + ' / violations 0 / warnings 0 / errors 0）',
+      + ' / violations 0 / issues 0 / errors 0）',
     )
     expect(text).not.toContain('✗')
+    expect(text).not.toContain('⚠')
   })
 
   it('违规：exit 1 的形态（逐条点名 + FAIL + 差集部门）', () => {
@@ -132,7 +135,7 @@ describe('formatReport（干净 / 违规两态）', () => {
       }],
     })
     expect(text).toContain(
-      '✗ [audience_dept_outside_metric_scope] org=org-a report r-9「门店月报」'
+      '✗ [violation] [audience_dept_outside_metric_scope] org=org-a report r-9「门店月报」'
       + ' panel 2 metric=lemeng:net_sales missingDepts=sib-1,sib-2',
     )
     expect(text).toContain('/ violations 1 /')
@@ -150,23 +153,30 @@ describe('formatReport（干净 / 违规两态）', () => {
     expect(text).toContain(`${SCRIPT_NAME}: FAIL`)
   })
 
-  it('warnings 不判 FAIL，并标 [warn]（别让读日志的人以为已覆盖）', () => {
+  it('★ issues 判 FAIL，并输出独立的 ⚠ [issue] 段（判不了 ≠ 干净）', () => {
     const text = formatReport({
-      orgs: [{ ...cleanOrg, warnings: ['report r-1「月报」 面板 0 的指标 m:1 不在词表中 ⇒ 可见范围无法判定，已跳过'] }],
+      orgs: [{
+        ...cleanOrg,
+        issues: [{
+          reason: 'metric_unknown', panelIndex: 0, metricId: 'm:1',
+          reportId: 'r-1', title: '旧月报',
+        }],
+      }],
     })
-    expect(text).toContain('[warn] org=org-a report r-1')
-    expect(text).toContain(`${SCRIPT_NAME}: OK`)
+    expect(text).toContain('⚠ [issue] [metric_unknown] org=org-a report r-1「旧月报」 panel 0 metric=m:1')
+    expect(text).toContain('/ issues 1 /')
+    expect(text).toContain(`${SCRIPT_NAME}: FAIL`)
   })
 })
 
 describe('verdictOf（告警判据唯一实现）', () => {
   const org = {
     org: 'o', tenantId: 1, reports: 1, published: 1, metabase: 0,
-    violations: [], warnings: [], errors: [],
+    violations: [], issues: [], errors: [],
   }
-  it('干净与只有 warning ⇒ OK；violation 或 error ⇒ FAIL', () => {
+  it('干净与只有 issue ⇒ 只有前者 OK；violation / issue / error ⇒ FAIL', () => {
     expect(verdictOf({ orgs: [org] })).toBe('OK')
-    expect(verdictOf({ orgs: [{ ...org, warnings: ['x'] }] })).toBe('OK')
+    expect(verdictOf({ orgs: [{ ...org, issues: [{ reason: 'metric_unknown', panelIndex: 0 }] }] })).toBe('FAIL')
     expect(verdictOf({ orgs: [{ ...org, violations: [{ index: 0, metricId: 'm' }] }] })).toBe('FAIL')
     expect(verdictOf({ orgs: [{ ...org, errors: [{ kind: 'x' }] }] })).toBe('FAIL')
   })
@@ -223,6 +233,7 @@ describePg('scanOrg（真库夹具）', () => {
        values ($1,'r-missing','快照丢失',0,'data:manage','platform',1,$2::jsonb,'v-missing',null,'tenant')`,
       [ORG_DB, JSON.stringify(SNAP_SPEC)],
     )
+
   })
 
   afterAll(async () => {
@@ -238,7 +249,7 @@ describePg('scanOrg（真库夹具）', () => {
         calls.push(d)
         return {
           panels: [{ index: 0, metricId: 'm:1', reason: 'audience_unbounded' }],
-          warnings: [],
+          issues: [],
         }
       },
     }), ORG_DB, TENANT_DB) as any
@@ -258,6 +269,44 @@ describePg('scanOrg（真库夹具）', () => {
     expect(input.spec).toEqual(SNAP_SPEC)
     // 违规行标题来自快照（'线上标题'），不是行上草稿标题（'草稿标题'）
     expect(out.violations[0]!.title).toBe('线上标题')
+  })
+
+  it('★ 目录缺失的指标 ⇒ 巡检收集 issue、verdictOf=FAIL、输出 [issue] 行（判不了 ≠ 干净）', async () => {
+    // 本用例自带夹具（不放进 beforeAll：别改变「取快照」用例的 published 计数）。
+    const GHOST_SPEC = { panels: [{ chart: 'table', title: '幽灵口径', metricId: 'p6scan:ghost' }] }
+    await pool.query('delete from data.report_versions where org = $1 and report_id = $2', [ORG_DB, 'r-ghost'])
+    await pool.query('delete from data.reports where org = $1 and id = $2', [ORG_DB, 'r-ghost'])
+    try {
+      await pool.query(
+        `insert into data.reports(org,id,title,metabase_id,required_scope,renderer,version,spec,
+                                  published_version_id,required_depts,visibility)
+         values ($1,'r-ghost','目录缺失报表',0,'data:manage','platform',1,$2::jsonb,'v-ghost',null,'tenant')`,
+        [ORG_DB, JSON.stringify(GHOST_SPEC)],
+      )
+      await pool.query(
+        `insert into data.report_versions(id,org,report_id,version,title,spec,required_scope,
+                                          required_depts,draft_version,published_by,note)
+         values ('v-ghost',$1,'r-ghost',1,'目录缺失报表',$2::jsonb,'data:manage',null,1,'fixture','')`,
+        [ORG_DB, JSON.stringify(GHOST_SPEC)],
+      )
+      // 判据用**真门**（gate: reportScopeViolations）+ 空词表：`p6scan:ghost` 必然查不到。
+      const out = await scanOrg(stubDeps({
+        gate: reportScopeViolations,
+        parseSpec: parseReportSpec,
+      }), ORG_DB, TENANT_DB) as any
+      const ghost = out.issues.find((i: { reportId: string }) => i.reportId === 'r-ghost')
+      expect(ghost).toMatchObject({
+        reason: 'metric_unknown', panelIndex: 0, metricId: 'p6scan:ghost',
+        reportId: 'r-ghost', title: '目录缺失报表',
+      })
+      // 判红链路的唯一实现：verdictOf 数 issues；formatReport 输出独立 ⚠ [issue] 段。
+      expect(verdictOf({ orgs: [out] })).toBe('FAIL')
+      expect(formatReport({ orgs: [out] }))
+        .toContain('⚠ [issue] [metric_unknown] org=org-p5scan-scan report r-ghost「目录缺失报表」 panel 0 metric=p6scan:ghost')
+    } finally {
+      await pool.query('delete from data.report_versions where org = $1 and report_id = $2', [ORG_DB, 'r-ghost'])
+      await pool.query('delete from data.reports where org = $1 and id = $2', [ORG_DB, 'r-ghost'])
+    }
   })
 
   it('租户未登记 ⇒ tenant_not_registered（fail-closed，不静默跳过）', async () => {
