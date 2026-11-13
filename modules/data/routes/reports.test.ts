@@ -2951,6 +2951,20 @@ describePg('报表路由（需要 DATABASE_URL）', () => {
       expect(csv).toContain('2026-10-02,234')
     })
 
+    it('★ 用户输入自己的数 ⇒ 差额 + 用按日组成解释（少算首日）', async () => {
+      const id = await createPublishedReceipt(receiptShell(adminIdentity()))
+      const app = receiptShell(viewerIdentity())
+      const res = await receiptOf(app, id, { userValue: 234 })
+      expect(res.status).toBe(200)
+      const r = await res.json() as {
+        delta: { explained: boolean; difference: string; candidates: Array<{ label: string; detail: string }> }
+      }
+      expect(r.delta.explained).toBe(true)
+      expect(r.delta.difference).toBe('-1000.00')
+      expect(r.delta.candidates[0]?.label).toBe('2026-10-02 ~ 2026-10-02（1 天）的合计')
+      expect(r.delta.candidates[0]?.detail).toBe('少了 2026-10-01')
+    })
+
     it('非 kpi 面板 ⇒ 400 PANEL_NOT_KPI（凭证只回答「一个数」）', async () => {
       const id = await createPublishedReceipt(receiptShell(adminIdentity()))
       const app = receiptShell(viewerIdentity())

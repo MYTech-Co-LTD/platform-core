@@ -2,7 +2,7 @@
 import { describe, expect, it } from 'vitest'
 import type { MetricRow } from './metric-store'
 import type { KpiPanel } from './report-spec'
-import { receiptCsv, seriesSupported, type ReportReceipt } from './report-receipt'
+import { explainDelta, receiptCsv, seriesSupported, type ReportReceipt } from './report-receipt'
 
 const panel = (over: Partial<KpiPanel> = {}): KpiPanel => ({
   chart: 'kpi', title: '销售额', metricId: 'm:sales', args: {},
@@ -24,7 +24,7 @@ const receipt = (over: Partial<ReportReceipt> = {}): ReportReceipt => ({
     { day: '2026-10-01', value: 1000, formatted: '1,000' },
     { day: '2026-10-02', value: 234, formatted: '234' },
   ],
-  seriesSum: '1,234', consistent: true, notes: [],
+  seriesSum: '1,234', consistent: true, notes: [], delta: null,
   ...over,
 })
 
@@ -49,5 +49,41 @@ describe('receiptCsv', () => {
   })
   it('没有组成 ⇒ 只有表头（调用方应先以 409 拦住，这里保证不抛）', () => {
     expect(receiptCsv(receipt({ series: null }))).toBe('bizday,value\n')
+  })
+})
+
+describe('explainDelta', () => {
+  const series = [
+    { day: '2026-10-01', value: 1000, formatted: '1,000' },
+    { day: '2026-10-02', value: 200, formatted: '200' },
+    { day: '2026-10-03', value: 34, formatted: '34' },
+  ]
+
+  it('用户数与系统一致 ⇒ 直接判一致', () => {
+    const d = explainDelta(series, 1234, 1234, 'number')
+    expect(d.explained).toBe(true)
+    expect(d.difference).toBe('+0.00')
+    expect(d.candidates[0]?.kind).toBe('full')
+  })
+
+  it('用户少算了首日 ⇒ 指出少了 10-01（连续子区间）', () => {
+    const d = explainDelta(series, 1234, 234, 'number')
+    expect(d.explained).toBe(true)
+    expect(d.candidates[0]?.label).toBe('2026-10-02 ~ 2026-10-03（2 天）的合计')
+    expect(d.candidates[0]?.amount).toBe('234')
+    expect(d.candidates[0]?.detail).toBe('少了 2026-10-01')
+  })
+
+  it('解释不了 ⇒ 不编原因，明确提示核对口径', () => {
+    const d = explainDelta(series, 1234, 999, 'number')
+    expect(d.explained).toBe(false)
+    expect(d.candidates).toEqual([])
+    expect(d.note).toContain('无法由按日组成解释')
+  })
+
+  it('没有按日组成 ⇒ 说明不可解释', () => {
+    const d = explainDelta(null, 1234, 999, 'number')
+    expect(d.explained).toBe(false)
+    expect(d.note).toContain('没有按日组成')
   })
 })

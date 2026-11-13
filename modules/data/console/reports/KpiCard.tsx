@@ -12,7 +12,7 @@
 //  · 值与差值的格式化 / 颜色语义在 domain/report-format.ts（AI 文本事实包与模板共用同一套，
 //    两处数字文案才逐字一致）；本组件只管取数与呈现。
 import { useEffect, useState } from 'react'
-import { Alert, Button, Card, Descriptions, Drawer, Table, Typography } from 'antd'
+import { Alert, Button, Card, Descriptions, Drawer, InputNumber, Table, Typography } from 'antd'
 import { apiPostBlob, apiSend, messageOf } from '../lib/api'
 import type { DateRange } from '../../domain/report-period'
 import {
@@ -129,22 +129,25 @@ export function KpiCard({
   const [receipt, setReceipt] = useState<ReportReceipt | null>(null)
   const [receiptErr, setReceiptErr] = useState<string | null>(null)
   const [exportBusy, setExportBusy] = useState(false)
+  /** 用户手工算的数（R1 差异分解）：只在点「对一下」时随请求发给服务端。 */
+  const [userValue, setUserValue] = useState<number | null>(null)
 
-  const receiptBody = () => ({
+  const receiptBody = (withUser?: number | null) => ({
     panelIndex: receiptCtx!.panelIndex,
     period: receiptCtx!.period,
     ...(receiptCtx!.branchNum === undefined ? {} : { branchNum: receiptCtx!.branchNum }),
     ...(receiptCtx!.version === undefined ? {} : { version: receiptCtx!.version }),
     ...(receiptCtx!.preview === undefined ? {} : { preview: receiptCtx!.preview }),
+    ...(withUser === undefined || withUser === null ? {} : { userValue: withUser }),
   })
 
-  const openReceipt = async (): Promise<void> => {
+  const openReceipt = async (withUser?: number | null): Promise<void> => {
     if (receiptCtx === undefined) return
     setReceiptOpen(true)
     setReceiptBusy(true)
     setReceiptErr(null)
     try {
-      setReceipt(await apiSend(`/reports/${receiptCtx.reportId}/receipt`, 'POST', receiptBody()) as ReportReceipt)
+      setReceipt(await apiSend(`/reports/${receiptCtx.reportId}/receipt`, 'POST', receiptBody(withUser)) as ReportReceipt)
     } catch (e) {
       setReceiptErr(messageOf(e))
     } finally {
@@ -349,6 +352,37 @@ export function KpiCard({
                     ]}
                     dataSource={receipt.series}
                   />
+                )}
+                <div style={{ marginTop: 12, display: 'flex', gap: 8 }}>
+                  <InputNumber
+                    style={{ flex: 1 }} placeholder="我算的是…（可选）"
+                    value={userValue}
+                    onChange={(v) => setUserValue(typeof v === 'number' ? v : null)}
+                  />
+                  <Button loading={receiptBusy} onClick={() => void openReceipt(userValue)}>
+                    对一下
+                  </Button>
+                </div>
+                {receipt.delta !== null && (
+                  <div style={{ marginTop: 10 }}>
+                    <Typography.Text strong>
+                      你算的 {receipt.delta.userValue}，差额 {receipt.delta.difference}
+                    </Typography.Text>
+                    {receipt.delta.candidates.length > 0 ? (
+                      <ul style={{ margin: '6px 0 0 16px', padding: 0, fontSize: 12 }}>
+                        {receipt.delta.candidates.map((c, i) => (
+                          <li key={i}>
+                            {c.label}：{c.amount}
+                            {c.detail === '' ? null : `（${c.detail}）`}
+                          </li>
+                        ))}
+                      </ul>
+                    ) : (
+                      <Typography.Paragraph type="warning" style={{ fontSize: 12, marginTop: 6 }}>
+                        {receipt.delta.note}
+                      </Typography.Paragraph>
+                    )}
+                  </div>
                 )}
                 <div style={{ marginTop: 12 }}>
                   <Button

@@ -1311,6 +1311,8 @@ export function registerReports(r: ModuleHono, ctx: RouteCtx): void {
     branchNum: z.string().min(1).max(64).optional(),
     version: z.number().int().positive().optional(),
     preview: z.literal('draft').optional(),
+    /** 用户手工算出的数；给了才做差异分解（不影响凭证本身）。 */
+    userValue: z.number().finite().optional(),
   }).strict()
 
   type ReceiptErr = { error: string; status: 400 | 403 | 404 | 409 | 502; detail?: string }
@@ -1352,6 +1354,7 @@ export function registerReports(r: ModuleHono, ctx: RouteCtx): void {
         range,
         args: panelArgsOf(panel, range, body.branchNum),
         ...(body.branchNum === undefined ? {} : { branchNum: body.branchNum }),
+        ...(body.userValue === undefined ? {} : { userValue: body.userValue }),
         metric,
       },
     )
