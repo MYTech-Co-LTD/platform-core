@@ -6,6 +6,9 @@
 // `docs/superpowers/plans/2026-11-13-report-ir-v2.md` §2/§3。
 import type { PeriodSpec, ReportSpec } from './report-spec'
 
+/** 观看面降级占位符（`asset-auth` 对不可见面板的原位替换）：没有 chart/metricId。 */
+export interface DeniedPanel { index: number; denied: true }
+
 /** 数据集：一次取数所需的全部输入（v1 下每个数据面板一个匿名数据集）。 */
 export interface PlanDataset {
   key: string
@@ -18,11 +21,11 @@ export interface PlanDataset {
 /** 与 blocks/panels 一一对应；`index` 即对外 `panelIndex`（叙事缓存键、审计、前端都沿用它）。 */
 export interface PlanPanel {
   index: number
-  kind: ReportSpec['panels'][number]['chart']
+  kind: ReportSpec['panels'][number]['chart'] | 'denied'
   title: string
   datasetKey: string | null
-  /** 原始面板（呈现字段：format/compare/slice/focus/content…）。 */
-  panel: ReportSpec['panels'][number]
+  /** 原始面板或降级占位符（呈现字段：format/compare/slice/focus/content…）。 */
+  panel: ReportSpec['panels'][number] | DeniedPanel
 }
 
 export interface ReportPlan {
@@ -33,13 +36,16 @@ export interface ReportPlan {
   panels: PlanPanel[]
 }
 
-const isDataPanel = (p: ReportSpec['panels'][number]): boolean =>
-  p.chart !== 'text' && p.chart !== 'ai_text'
+const isDenied = (p: ReportSpec['panels'][number] | DeniedPanel): p is DeniedPanel => 'denied' in p && p.denied === true
 
-/** v1 → plan（V0）。纯函数，无 IO。 */
-export function toReportPlan(spec: ReportSpec): ReportPlan {
+const isDataPanel = (p: ReportSpec['panels'][number] | DeniedPanel): boolean =>
+  !isDenied(p) && p.chart !== 'text' && p.chart !== 'ai_text'
+
+/** v1 → plan（V0/V2）。纯函数，无 IO；降级占位符原位保留（索引不变）。 */
+export function toReportPlan(spec: { period?: PeriodSpec; panels: readonly (ReportSpec['panels'][number] | DeniedPanel)[] }): ReportPlan {
   const datasets: PlanDataset[] = []
   const panels: PlanPanel[] = spec.panels.map((panel, index) => {
+    if (isDenied(panel)) return { index, kind: 'denied', title: '', datasetKey: null, panel }
     const title = 'title' in panel && typeof panel.title === 'string' ? panel.title : ''
     if (!isDataPanel(panel) || !('metricId' in panel)) {
       return { index, kind: panel.chart, title, datasetKey: null, panel }

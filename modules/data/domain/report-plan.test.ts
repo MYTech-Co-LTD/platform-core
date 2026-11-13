@@ -53,10 +53,25 @@ describe('toReportPlan（v1）', () => {
   it('文本面板保留原始 panel（呈现字段不改写）', () => {
     const plan = toReportPlan(specOf(SPEC))
     const text = plan.panels[3]!
+    if ('denied' in text.panel) throw new Error('fixture 是真面板')
     expect(text.panel.chart).toBe('text')
     if (text.panel.chart === 'text') {
       expect(text.panel.content).toBe('**说明**')
       expect(text.panel.format).toBe('markdown')
     }
+  })
+
+  it('降级占位符原位保留：index 不变、无数据集', () => {
+    const plan = toReportPlan({
+      period: { mode: 'last_7_days' },
+      panels: [
+        { chart: 'kpi', title: '可见', metricId: 'm:sales', format: 'number', compare: 'none', goodDirection: 'none', span: 12, args: {}, timeScoped: true },
+        { index: 1, denied: true },
+      ],
+    })
+    expect(plan.panels.map((p) => p.index)).toEqual([0, 1])
+    expect(plan.panels[1]!.kind).toBe('denied')
+    expect(plan.panels[1]!.datasetKey).toBeNull()
+    expect(plan.datasets).toHaveLength(1)
   })
 })
