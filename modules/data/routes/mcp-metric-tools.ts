@@ -14,7 +14,7 @@
 import { z } from 'zod'
 import { visibleMetrics } from '../domain/authz'
 import { deptContextIfOwned, metricVisibleWithDept } from '../domain/metric-visibility'
-import { loadMergedCatalog } from '../domain/metric-store'
+import { loadMergedCatalog, loadPlatformCatalog } from '../domain/metric-store'
 import { L2RefineDeclarationSchema, L2ExprDeclarationSchema, ExprNodeSchema, dimensionNamesOf } from '../domain/semantic-compiler'
 import { deleteMetricDeclaration, writeL2Declaration } from '../domain/metric-write'
 import type { L2DeclarationBody, MetricWriteOutcome } from '../domain/metric-write'
@@ -210,15 +210,31 @@ export const metricTools: McpToolGroup = {
         body = { ...decl, op: { kind: 'refine' } }
       }
       // 回滚开关（P4 Task 1，spec §14）：缺省（!== 'off'）⇒ 只提案——落变更单（P0 已建），
-      // 等待人工采纳，本租户已有生效行 = update 提案、否则 = create 提案（与 submitChange 的
-      // create 撞 id 判据同一条廉价查询，语义对应旧直写的 upsert 两分支）。kind 判据故意只此
-      // 一查：L1 保留 id / 基底不存在等编译类判据移到提交后的试算与采纳期（提案失败在人面可读，
-      // 见 list_metric_changes 的 preview.error），不在这里复刻第二份域层判定。
+      // 等待人工采纳，本租户已有生效行 = update 提案、否则 = create 提案。
+      //
+      // 提交期 fail-early 预检（P4 修复轮 1①）：**id 级与档级判据必须在提交前拒**，不能指望
+      // 试算兜住——试算只编译 payload，不看 id 也不看既有行档位：放过 L1 保留 id 会得到
+      // preview_ready 的**绿单**（采纳才 409 ID_RESERVED_BY_L1，白点一次）；declared /
+      // column_agg 行的 update 单同样绿单后死在采纳期。判据与域层同码同序（metric-write 的
+      // isL1Id → basis 两闸），catalog 只取一次（照 submitChange 的 override 分支形态）。
+      // 编译类判据（基底不存在 / 未知维度）仍留给试算：它们能如实进 preview_failed 快照。
       // 注：mutating 总闸（DATA_MCP_ALLOW_MUTATING）本工具的直写路径从来不吃（不对称是
       // P1 缓办④，涉总闸语义、P4 明确不做）⇒ 提案路径同样不加闸——提案不生效，只弱化不强化。
       if (process.env.DATA_METRIC_REVIEW_MODE !== 'off') {
-        const exists = await deps.pool.query('select 1 from data.metrics where org = $1 and id = $2', [deps.org, id])
-        const kind: ChangeKind = (exists.rowCount ?? 0) > 0 ? 'update' : 'create'
+        if ((await loadPlatformCatalog(deps.pool)).some((m) => m.id === id)) {
+          return refused({ ok: false, http: 409, error: 'ID_RESERVED_BY_L1' })
+        }
+        const cur = await deps.pool.query(
+          'select source, basis from data.metrics where org = $1 and id = $2', [deps.org, id])
+        const existing = cur.rows[0] as { source: string; basis: string } | undefined
+        if (existing !== undefined && existing.source === 'l2') {
+          if (existing.basis === 'declared') return refused({ ok: false, http: 409, error: 'DECLARED_NOT_EDITABLE' })
+          // 私有测度（column_agg）同款：L2 结构化写会翻它的档，域层采纳期 409 BASIS_CONFLICT
+          if (existing.basis === 'column_agg') {
+            return refused({ ok: false, http: 409, error: 'BASIS_CONFLICT', extra: { existing_basis: existing.basis } })
+          }
+        }
+        const kind: ChangeKind = existing === undefined ? 'create' : 'update'
         return submitResultOf(deps, await submitChange(
           deps.pool, deps.org, { userId: requester.userId, channel: 'mcp' }, id, kind, body))
       }
@@ -232,7 +248,16 @@ export const metricTools: McpToolGroup = {
     if (!parsed.success) return refused({ ok: false, http: 400, error: 'INVALID_BODY' })
     // 回滚开关（P4 Task 1，spec §14）：缺省落删除提案（kind=delete，试算 = 编译「当前生效口径」，
     // 生效只发生在人采纳之后）；'off' ⇒ 旧直删路径原样保留。
+    // 提交期 fail-early 预检（P4 修复轮 1①）：平台口径必须**提交即拒** READONLY_L1——试算的
+    // delete 支只查本租户行，查不到会给 preview_failed + METRIC_NOT_FOUND（错误诊断，真因是
+    // 「它在平台桶，只能改 dbt 声明再物化」）。判定顺序与域层 deleteMetricDeclaration 同款
+    // （先看本租户 L2 行、删不到才判 L1：租户先建 L2、平台事后同 id 物化是合法时序）。
     if (process.env.DATA_METRIC_REVIEW_MODE !== 'off') {
+      const tenant = await deps.pool.query(
+        "select 1 from data.metrics where org = $1 and id = $2 and source = 'l2'", [deps.org, parsed.data.id])
+      if ((tenant.rowCount ?? 0) === 0 && (await loadPlatformCatalog(deps.pool)).some((m) => m.id === parsed.data.id)) {
+        return refused({ ok: false, http: 409, error: 'READONLY_L1' })
+      }
       return submitResultOf(deps, await submitChange(
         deps.pool, deps.org, { userId: requester.userId, channel: 'mcp' }, parsed.data.id, 'delete', {}))
     }

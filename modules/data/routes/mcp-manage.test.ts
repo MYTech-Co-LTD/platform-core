@@ -204,6 +204,15 @@ describePg('写面（需要 DATABASE_URL）', () => {
     const row = await pool.query('select kind, status, metric_id from data.metric_change where id = $1', [out.changeId])
     expect(row.rows[0]).toMatchObject({ kind: 'create', status: 'preview_ready', metric_id: L2_ID })
 
+    // 再用**工具面**核对（不只直读表）：list_metric_changes 看得到这张单，preview 快照可读
+    const changes = toolText(await (await rpc(app(), {
+      jsonrpc: '2.0', id: 41, method: 'tools/call',
+      params: { name: 'list_metric_changes', arguments: {} },
+    })).json() as never).changes as { id: number; metricId: string; kind: string; status: string }[]
+    expect(changes.find((c) => c.id === out.changeId)).toMatchObject({
+      metricId: L2_ID, kind: 'create', status: 'preview_ready',
+    })
+
     // 编译坏单照落单：试算失败 ⇒ preview_failed（仍可驳），不是工具级 error——
     // 编译错误码从「提交即拒」移到「preview 快照」里，由人在 list_metric_changes 读。
     const bad = toolText(await (await rpc(app(), {
@@ -280,6 +289,67 @@ describePg('写面（需要 DATABASE_URL）', () => {
 
     const row = await pool.query('select kind, status, metric_id from data.metric_change where id = $1', [out.changeId])
     expect(row.rows[0]).toMatchObject({ kind: 'delete', status: 'preview_ready', metric_id: L2_ID })
+
+    // 工具面核对：list_metric_changes 看得到这张删除单
+    const changes = toolText(await (await rpc(app(), {
+      jsonrpc: '2.0', id: 52, method: 'tools/call',
+      params: { name: 'list_metric_changes', arguments: {} },
+    })).json() as never).changes as { id: number; metricId: string; kind: string }[]
+    expect(changes.find((c) => c.id === out.changeId)).toMatchObject({ metricId: L2_ID, kind: 'delete' })
+  })
+
+  it('★ customize_metric 打平台口径 id（on）→ 提交即拒 ID_RESERVED_BY_L1，且不落单（修复轮 1①）', async () => {
+    await seedL1()
+    const body = await (await rpc(app(), {
+      jsonrpc: '2.0', id: 60, method: 'tools/call',
+      params: { name: 'customize_metric', arguments: { id: L1_ID, baseMetric: L1_ID } },
+    })).json()
+    const out = toolText(body as never)
+    expect(out.status).toBe('refused')
+    expect(out.error).toBe('ID_RESERVED_BY_L1')
+    expect((body as { result: { isError: boolean } }).result.isError).toBe(true)
+    // 不落「注定失败」的单：提交期就拒，变更单表零行
+    const tickets = await pool.query('select 1 from data.metric_change where org = $1 and metric_id = $2', [ORG, L1_ID])
+    expect(tickets.rowCount).toBe(0)
+  })
+
+  it('★ delete_custom_metric 打平台口径（on）→ 提交即拒 READONLY_L1，且不落单（修复轮 1①）', async () => {
+    await seedL1()
+    const body = await (await rpc(app(), {
+      jsonrpc: '2.0', id: 61, method: 'tools/call',
+      params: { name: 'delete_custom_metric', arguments: { id: L1_ID } },
+    })).json()
+    const out = toolText(body as never)
+    expect(out.status).toBe('refused')
+    expect(out.error).toBe('READONLY_L1')
+    expect((body as { result: { isError: boolean } }).result.isError).toBe(true)
+    const tickets = await pool.query('select 1 from data.metric_change where org = $1 and metric_id = $2', [ORG, L1_ID])
+    expect(tickets.rowCount).toBe(0)
+  })
+
+  it('★ customize_metric 打租户 declared 行（W8 覆盖）→ 提交即拒 DECLARED_NOT_EDITABLE，且不落单（修复轮 1②）', async () => {
+    await seedL1()
+    // 夹具：本租户桶一条 basis='declared' 的行（W8 声明形态；列清单照 insertTenantDeclaration 最小集）
+    const declaredId = 'mw_l2_declared'
+    await pool.query(
+      `insert into data.metrics
+         (org, id, title, description, required_scope, subject_column, select_sql, group_by, params,
+          source, updated_by, version, totalable, sla_days, freshness_relations, basis, certified, created_by)
+       values ($1, $2, $3, '', null, 'org',
+               'select sum(mart_sales_daily.revenue) as value, bizday from mart_sales_daily',
+               'bizday', '{}'::jsonb, 'l2', 'u', 1, true, 1, '[]'::jsonb, 'declared', 'draft', 'u')`,
+      [ORG, declaredId, '声明行夹具'])
+    const body = await (await rpc(app(), {
+      jsonrpc: '2.0', id: 62, method: 'tools/call',
+      params: { name: 'customize_metric', arguments: { id: declaredId, baseMetric: L1_ID } },
+    })).json()
+    const out = toolText(body as never)
+    expect(out.status).toBe('refused')
+    expect(out.error).toBe('DECLARED_NOT_EDITABLE')
+    expect((body as { result: { isError: boolean } }).result.isError).toBe(true)
+    const tickets = await pool.query(
+      'select 1 from data.metric_change where org = $1 and metric_id = $2', [ORG, declaredId])
+    expect(tickets.rowCount).toBe(0)
   })
 
   it('★ happy path（off 模式直写，应急回滚路径）：customize 成功 → 落库可读回（且 list 里出现在「自定义」面）', async () => {

@@ -78,7 +78,7 @@ const METRIC_FACE: readonly ManageFaceTool[] = [
     },
   }),
   faceOf('metric', 'delete_custom_metric', true, {
-    description: '提交删除本租户自定义口径的提案（平台口径不可删，会被拒）。**不直接生效**，等待人工采纳；状态与驳回原因见 list_metric_changes。',
+    description: '提交删除本租户自定义口径的提案（平台口径不可提案删除，提交即拒）。**不直接生效**，等待人工采纳；状态与驳回原因见 list_metric_changes。',
     inputSchema: {
       type: 'object',
       properties: { id: { type: 'string', description: '口径 id' } },
