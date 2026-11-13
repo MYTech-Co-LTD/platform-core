@@ -26,16 +26,19 @@ function emptyPool(): { pool: Pool; calls: () => number } {
 
 function appWithGate(identityOverride?: ReturnType<typeof makeIdentity>) {
   const shell = new Hono<ModuleVars>()
-  if (identityOverride !== undefined) {
-    shell.use('/system-map', async (c, next) => {
-      c.set('identity', identityOverride)
-      c.set('tenant', { id: 1, casdoor_org: identityOverride.orgId })
-      await next()
-    })
+  for (const p of ['/system-map', '/system-map/graph']) {
+    if (identityOverride !== undefined) {
+      shell.use(p, async (c, next) => {
+        c.set('identity', identityOverride)
+        c.set('tenant', { id: 1, casdoor_org: identityOverride.orgId })
+        await next()
+      })
+    }
+    shell.use(p, declaredScopeGate([
+      { method: 'GET', path: '/system-map', scope: 'data:query' },
+      { method: 'GET', path: '/system-map/graph', scope: 'data:query' },
+    ]))
   }
-  shell.use('/system-map', declaredScopeGate([
-    { method: 'GET', path: '/system-map', scope: 'data:query' },
-  ]))
   shell.route('/', mod.createRouter({ pool: emptyPool().pool }))
   return shell as unknown as Hono
 }
@@ -116,5 +119,40 @@ describe('GET /system-map（数据体系地图）', () => {
     const b = buildTestApp(mod, makeIdentity({ orgId: 'org-other' }), { pool: p.pool })
     await b.request('/system-map')
     expect(p.calls()).toBeGreaterThan(afterA)
+  })
+})
+
+describe('GET /system-map/graph（本体图 JSON）', () => {
+  it('未登录 ⇒ 401；缺 data:query ⇒ 403（与 HTML 页同档）', async () => {
+    expect((await appWithGate().request('/system-map/graph')).status).toBe(401)
+    const denied = await appWithGate(makeIdentity({ orgId: ORG, scopes: ['data:manage'] })).request('/system-map/graph')
+    expect(denied.status).toBe(403)
+  })
+
+  it('有 data:query ⇒ 200 JSON：health + ontology{nodes,edges} + warnings', async () => {
+    const res = await buildTestApp(mod, identity, { pool: emptyPool().pool }).request('/system-map/graph')
+    expect(res.status).toBe(200)
+    expect(res.headers.get('content-type')).toContain('application/json')
+    const body = await res.json() as {
+      generatedAt: string
+      health: { metricTotal: number }
+      ontology: { nodes: unknown[]; edges: unknown[] }
+      warnings: unknown[]
+    }
+    expect(typeof body.generatedAt).toBe('string')
+    expect(body.health.metricTotal).toBe(0)
+    expect(Array.isArray(body.ontology.nodes)).toBe(true)
+    expect(Array.isArray(body.ontology.edges)).toBe(true)
+    expect(Array.isArray(body.warnings)).toBe(true)
+  })
+
+  it('与 HTML 页共用一份模型缓存：先开 HTML 再取图，不重复查库', async () => {
+    const p = emptyPool()
+    const app = buildTestApp(mod, identity, { pool: p.pool })
+    await app.request('/system-map')
+    const afterHtml = p.calls()
+    const g = await app.request('/system-map/graph')
+    expect(g.status).toBe(200)
+    expect(p.calls()).toBe(afterHtml)
   })
 })

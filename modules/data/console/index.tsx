@@ -17,6 +17,7 @@ import ReportsPage from './reports'
 import ScopesPage from './scopes'
 import CandidatesPage from './candidates'
 import ChangesPage from './changes'
+import SystemMapPage from './system-map'
 import { useIsMobile } from './lib/useIsMobile'
 
 /** 本模块在宿主壳的挂载基路径（manifest frontend.console 首条 path）。 */
@@ -32,14 +33,18 @@ const TABS = [
   { key: 'candidates', label: '可能的指标', manageOnly: true },
   // 待核对（Wave 5 P0）：agent 提案单的评审面——人只做采纳/驳回（决策端点只认会话）。
   { key: 'changes', label: '待核对', manageOnly: true },
+  // 体系地图（2026-11-13）：原来是从菜单外链打开的服务端 HTML 页，现在内嵌成本页——
+  // 同一套壳与设计 token，本体图（entities + relations）是主内容。
+  { key: 'system-map', label: '体系地图' },
 ] as const
 
 type TabKey = (typeof TABS)[number]['key']
 const DEFAULT_TAB: TabKey = 'metrics'
 
 /**
- * 体系地图是独立追溯页（服务端渲染单文件 HTML，hash 路由），不是本 console 的路由页——
- * 写成路由会让 `navigate` 指到一个不存在的 console 路径（白屏），故保留为页内外链（W5 定案 A）。
+ * 体系地图（2026-11-13 起）是本 console 的路由页（`system-map`），用 `/system-map/graph`
+ * 的 JSON 画本体图。旧的单文件 HTML 页（`/api/modules/data/system-map`）保留给移动端与旧书签，
+ * 不再是菜单入口。
  */
 
 /** 末段是不是页签段（决定当前 URL 是「页签」还是「裸条目路径」）；manageOnly 页签对无码者不可达 */
@@ -70,6 +75,7 @@ export default function DataConsolePage() {
     metrics: MetricsPage, reports: ReportsPage, scopes: ScopesPage,
     candidates: CandidatesPage,
     changes: ChangesPage,
+    'system-map': SystemMapPage,
   }
   const Active = PAGES[active]
 

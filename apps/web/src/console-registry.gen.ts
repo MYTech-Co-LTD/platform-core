@@ -152,6 +152,15 @@ export const consoleRegistry: ConsoleRegistryEntry[] = [
     load: () => import("../../../modules/data/console/index.tsx"),
   },
   {
+    path: "/console/data/system-map",
+    title: "体系地图",
+    group: "main",
+    moduleId: "data",
+    description: "从业务对象到源表的完整关系图；点节点看口径与来源。",
+    scope: "data:query",
+    load: () => import("../../../modules/data/console/index.tsx"),
+  },
+  {
     path: "/console/demo",
     title: "演示",
     group: "main",

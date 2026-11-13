@@ -49,6 +49,10 @@ api:
     # 数据源 / 需求台账 + 五步回溯链 + W4 维度与不变量清单）。事实源 = 仓内声明 + 运行库；
     # 与问数面同档 data:query。页面零写操作、零外链。
     - { method: GET,  path: /system-map, scope: data:query }
+    # 本体图 JSON（2026-11-13）：控制台内嵌页 `/console/data/system-map` 用。
+    # 与 HTML 页共用同一份 `SystemMapModel` 与 10 分钟缓存；形状 = entities + relations
+    # （见 domain/system-map/ontology.ts）。HTML 页保留给移动端与旧链接。
+    - { method: GET,  path: /system-map/graph, scope: data:query }
     # 通道 A：系统内问数（SSE 流式；LLM 编排在平台后端）
     - { method: POST, path: /chat,    scope: data:query }
     # MCP 端点（通道 B 的 JSON-RPC 单入口；协议错误自兜，授权仍走同一核心）
@@ -289,6 +293,8 @@ frontend:
     - { path: /console/data/candidates, title: 可能的指标, description: 从源数据自动推导出的候选指标；采用后才会变成正式指标。, scope: data:manage, entry: ./console/index.tsx }
     # 待核对（Wave 5 P0）：agent 提案单的评审面——只有采纳/驳回两个动作
     - { path: /console/data/changes, title: 待核对, description: agent 提交的指标变更单；看清试算值与参照值的差异再决定采纳或驳回。, scope: data:manage, entry: ./console/index.tsx }
+    # 体系地图（2026-11-13）：从「外链新标签打开的 HTML 页」搬成本页——本体图是主内容。
+    - { path: /console/data/system-map, title: 体系地图, description: 从业务对象到源表的完整关系图；点节点看口径与来源。, scope: data:query, entry: ./console/index.tsx }
   # 移动端「报表中心」（#1369；2026-11-12 起**没有问数 tab**）：报表 / 管理 / 指标；/m 入口卡片按 scope=data:query 过滤——
   # 「谁能看到这个版块」的唯一事实源还是平台 scopes（不造第二套）。dist 由 @data/mobile 构建产
   userApp:

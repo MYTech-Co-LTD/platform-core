@@ -212,7 +212,7 @@ function gatedApp(identity: ReturnType<typeof makeIdentity>, pool: Pool | null) 
 }
 
 describe('报表面声明（不需要数据库）', () => {
-  it('报表端点都声明了（api.internal 全模块共 81 条），且页门分档：管理动作=data:manage，观看面=data:query', () => {
+  it('报表端点都声明了（api.internal 全模块共 82 条），且页门分档：管理动作=data:manage，观看面=data:query', () => {
     const declared = new Map(
       (mod.manifest.api?.internal ?? []).map((d) => [`${d.method} ${d.path}`, d.scope]),
     )
@@ -230,6 +230,9 @@ describe('报表面声明（不需要数据库）', () => {
     // +2：候选池读/拒两面（Wave 1.4 #1969：GET /metrics/candidates + POST :id/reject，
     // 与 generate/adopt 同档 data:manage——候选 rationale 带画像统计，属管理面）；
     // +1：体系地图 GET /system-map（W5 Task 4 #1455：只读单文件 HTML，data:query））；
+    // +1：体系地图本体图 GET /system-map/graph（2026-11-13 #2105：控制台内嵌页用，data:query，
+    // 与 HTML 页共用模型与缓存）；
+    // +1：叙事运行统计 GET /reports/narrative-stats（R5 #2103，data:query——只读计数）；
     // +7：数据范围 scope 管理面（spec 2026-11-10 §5.5，#1901：list/effective/create/update/
     // delete/assignments 六条，全部 data:manage——授权变更是管理动作）：
     // +1：可分配部门 GET /scopes/depts（2026-11-12 部门主体上线：assignment 的 dept 候选，
@@ -240,7 +243,7 @@ describe('报表面声明（不需要数据库）', () => {
     // 观看面 data:query；页门/快照门/草稿分档与 narrative 共用 loadViewableSpec）。
     // 穷举口径（同 module.test.ts 的表清单）——别处加端点而漏改这里会红，
     // 逼着声明与测试一起动。
-    expect(declared).toHaveLength(81)
+    expect(declared).toHaveLength(82)
     // 指标变更单：七条全 data:manage；采纳/驳回的会话限定是路由内的第二道闸（不在这张表上）
     for (const p of [
       'POST /metric-changes', 'GET /metric-changes', 'GET /metric-changes/:id',
