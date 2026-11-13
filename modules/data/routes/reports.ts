@@ -34,6 +34,7 @@ import type { StreamingChatModel } from '../domain/llm'
 import { buildFacts } from '../domain/report-facts'
 import { buildReportReceipt, exportDetailCsv, receiptCsv, type ReportReceipt } from '../domain/report-receipt'
 import { buildReportReview } from '../domain/report-review'
+import { compileTemplate, REPORT_TEMPLATES, templateById } from '../domain/report-templates'
 import { panelArgsOf } from '../domain/report-query'
 import type { QueryDeps } from '../domain/query-service'
 import { periodRangeOf, type DateRange } from '../domain/report-period'
@@ -242,6 +243,34 @@ async function userStatusOf(ctx: RouteCtx, org: string, name: string): Promise<U
 }
 
 export function registerReports(r: ModuleHono, ctx: RouteCtx): void {
+
+  // ── 报表模板（R2）：把「自由写 spec」收窄成「选模板 + 填指标」────────────────────────
+  // 模板是**仓内数据**（`domain/report-templates.ts`），这里只读；编译只产出 spec，
+  // 不落库、不发布——创建仍走 `POST /reports` 的既有权限/校验链。
+  r.get('/reports/templates', async (c) => {
+    if (requesterOf(c) === null) return c.json({ error: 'UNAUTHENTICATED' }, 403)
+    return c.json({ templates: REPORT_TEMPLATES })
+  })
+
+  const CompileTemplateBody = z.object({
+    values: z.record(z.string().min(1).max(64), z.string().min(1).max(128)).default({}),
+  }).strict()
+
+  r.post('/reports/templates/:id/compile', async (c) => {
+    if (requesterOf(c) === null) return c.json({ error: 'UNAUTHENTICATED' }, 403)
+    const template = templateById(c.req.param('id'))
+    if (template === undefined) return c.json({ error: 'TEMPLATE_NOT_FOUND' }, 404)
+    const body = CompileTemplateBody.safeParse(await c.req.json().catch(() => null))
+    if (!body.success) return c.json({ error: 'INVALID_BODY' }, 400)
+    const out = compileTemplate(template, body.data.values)
+    if (!out.ok) {
+      return c.json(
+        { error: out.reason, ...(out.keys === undefined ? {} : { keys: out.keys }), ...(out.detail === undefined ? {} : { detail: out.detail }) },
+        400,
+      )
+    }
+    return c.json({ spec: out.spec })
+  })
   r.post('/reports', async (c) => {
     // 入口先判身份：不给匿名者「本站有没有接报表服务」的探测信号（fail-closed）
     const requester = requesterOf(c)

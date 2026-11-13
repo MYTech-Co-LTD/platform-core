@@ -212,7 +212,7 @@ function gatedApp(identity: ReturnType<typeof makeIdentity>, pool: Pool | null) 
 }
 
 describe('报表面声明（不需要数据库）', () => {
-  it('报表端点都声明了（api.internal 全模块共 78 条），且页门分档：管理动作=data:manage，观看面=data:query', () => {
+  it('报表端点都声明了（api.internal 全模块共 80 条），且页门分档：管理动作=data:manage，观看面=data:query', () => {
     const declared = new Map(
       (mod.manifest.api?.internal ?? []).map((d) => [`${d.method} ${d.path}`, d.scope]),
     )
@@ -240,7 +240,7 @@ describe('报表面声明（不需要数据库）', () => {
     // 观看面 data:query；页门/快照门/草稿分档与 narrative 共用 loadViewableSpec）。
     // 穷举口径（同 module.test.ts 的表清单）——别处加端点而漏改这里会红，
     // 逼着声明与测试一起动。
-    expect(declared).toHaveLength(78)
+    expect(declared).toHaveLength(80)
     // 指标变更单：七条全 data:manage；采纳/驳回的会话限定是路由内的第二道闸（不在这张表上）
     for (const p of [
       'POST /metric-changes', 'GET /metric-changes', 'GET /metric-changes/:id',
@@ -301,6 +301,8 @@ describe('报表面声明（不需要数据库）', () => {
     // ── 自绘规格读写（#391 计划 6 Task 3）：读=观看面；写=单资产写（同上 canEditAsset）。──
     expect(declared.get('GET /reports/:id/spec')).toBe('data:query')
     expect(declared.get('GET /reports/:id/review')).toBe('data:query')
+    expect(declared.get('GET /reports/templates')).toBe('data:query')
+    expect(declared.get('POST /reports/templates/:id/compile')).toBe('data:query')
     expect(declared.get('PUT /reports/:id/spec')).toBe('data:query')
     // ── 定义版本（月报重做 Task 10）：发布/下线/回滚/历史/草稿 = 单资产读写（canEditAsset）；
     //    只有「读已发布快照」是观看面（独立链接 /r/:id 的用户只有 data:query）。──
@@ -2285,6 +2287,31 @@ describePg('报表路由（需要 DATABASE_URL）', () => {
         method: 'POST', headers: { 'content-type': 'application/json' },
         body: JSON.stringify({ expectedVersion }),
       })
+
+    it('模板：列表 + 槽位编译；缺必填槽 400 带 keys，未知模板 404', async () => {
+      const { app } = manage()
+      const list = await app.request('/reports/templates')
+      expect(list.status).toBe(200)
+      const body = await list.json() as { templates: Array<{ id: string }> }
+      expect(body.templates.some((t) => t.id === 'daily_ops')).toBe(true)
+
+      const compile = (id: string, values: Record<string, string>) =>
+        app.request(`/reports/templates/${id}/compile`, {
+          method: 'POST', headers: { 'content-type': 'application/json' },
+          body: JSON.stringify({ values }),
+        })
+
+      const ok = await compile('daily_ops', { revenue: 'm:1', orders: 'm:2', trend: 'm:1' })
+      expect(ok.status).toBe(200)
+      const compiled = await ok.json() as { spec: { panels: unknown[] } }
+      expect(compiled.spec.panels.length).toBeGreaterThan(0)
+
+      const bad = await compile('daily_ops', { revenue: 'm:1' })
+      expect(bad.status).toBe(400)
+      expect(await bad.json()).toMatchObject({ error: 'MISSING_REQUIRED_SLOT' })
+
+      expect((await compile('nope', {})).status).toBe(404)
+    })
 
     it('审阅面：改草稿后 diff 点名字段；非 owner 无权（403）', async () => {
       const { app } = manage()
