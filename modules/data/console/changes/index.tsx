@@ -12,7 +12,7 @@ import { humanError, type HumanError } from '../lib/explain'
 import { TechDetails } from '../components/TechDetails'
 
 type Row = {
-  id: number; metricId: string; kind: 'create' | 'update' | 'meta' | 'delete' | 'override'
+  id: number; metricId: string; kind: 'create' | 'update' | 'meta' | 'delete' | 'override' | 'declaration'
   status: string; payload: Record<string, unknown>
   preview: { window?: { from: string; to: string }; value?: number | null; rows?: number
     baseline?: { id: string; value: number | null; deltaPct: number | null } | null
@@ -21,7 +21,10 @@ type Row = {
   previewHistory?: Record<string, unknown>[] | null
   submittedBy: string; submittedAt: string
 }
-const KIND_LABEL: Record<Row['kind'], string> = { create: '新建指标', update: '修改口径', meta: '改标注', delete: '删除指标', override: '覆盖平台口径' }
+const KIND_LABEL: Record<Row['kind'], string> = {
+  create: '新建指标', update: '修改口径', meta: '改标注', delete: '删除指标',
+  override: '覆盖平台口径', declaration: '新建全额声明',
+}
 
 /** payload 顶层的 ownerDept/entity 走 override 的 .passthrough()（MCP/PAT 提交面不收口形状），
  *  可能是任意 JSON；非 string 一律按「未声明」显 —。裸 as string 是撒谎的转型：对象进

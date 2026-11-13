@@ -540,4 +540,43 @@ describePg('P5 Task 1：declaration 档（能力归还）', () => {
     expect(live.rows[0]?.declaration).toMatchObject({ name: ENTRY.name, source: 'lemeng' })
     expect((await getChange(pool, DORG, s.change.id))?.status).toBe('adopted')
   })
+
+  it('同 null 桶已有同名 ⇒ 提交期 409 TITLE_EXISTS_IN_DEPT，且不落单（不留绿单死在采纳期）', async () => {
+    const TITLE = 'P5 声明·同名夹具'
+    // 落库桶 = null（insertTenantDeclaration 列清单不含 owner_dept）⇒ 判据桶必须同构
+    await pool.query(
+      `insert into data.metrics (org, id, title, subject_column, select_sql)
+       values ($1, 'p5mc:retail:title_probe', $2, 'org', 'select 1 as value from probe')`,
+      [DORG, TITLE])
+    try {
+      const r = await submitChange(pool, DORG, { userId: 'a', channel: 'pat' }, 'p5mc:retail:title_dup',
+        'declaration', { ...ENTRY, name: 'p5mc:retail:title_dup', label: TITLE })
+      expect(r).toMatchObject({ ok: false, http: 409, error: 'TITLE_EXISTS_IN_DEPT' })
+      const n = await pool.query(
+        'select count(*)::int as n from data.metric_change where org = $1 and metric_id = $2',
+        [DORG, 'p5mc:retail:title_dup'])
+      expect(n.rows[0]?.n).toBe(0)
+    } finally {
+      await pool.query('delete from data.metrics where org = $1 and id = $2', [DORG, 'p5mc:retail:title_probe'])
+    }
+  })
+
+  it('采纳撞同名唯一索引（submit→adopt 并发窗口）⇒ 409 TITLE_EXISTS_IN_DEPT 而非 500；单据仍 preview_ready', async () => {
+    const RACE = { ...ENTRY, name: 'p5mc:retail:race_decl', label: 'P5 声明·并发窗口' }
+    const s = await submitChange(pool, DORG, { userId: 'a', channel: 'pat' }, RACE.name, 'declaration', RACE)
+    if (!s.ok) throw new Error('unreachable')
+    await markReady(s.change.id)
+    // 提单之后才出现的同名行：模拟决策锁覆盖不到的「submit→adopt」占名窗口
+    await pool.query(
+      `insert into data.metrics (org, id, title, subject_column, select_sql)
+       values ($1, 'p5mc:retail:race_probe', $2, 'org', 'select 1 as value from probe')`,
+      [DORG, RACE.label])
+    try {
+      const out = await adoptChange(writeDeps(pool), DORG, s.change.id)
+      expect(out).toMatchObject({ ok: false, http: 409, error: 'TITLE_EXISTS_IN_DEPT' })
+      expect((await getChange(pool, DORG, s.change.id))?.status).toBe('preview_ready')
+    } finally {
+      await pool.query('delete from data.metrics where org = $1 and id = $2', [DORG, 'p5mc:retail:race_probe'])
+    }
+  })
 })

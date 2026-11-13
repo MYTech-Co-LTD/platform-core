@@ -137,7 +137,7 @@ export type NewDeclarationCompileOutcome =
  * 漂了就是「试算一个形状、生效另一个形状」。
  */
 export async function compileNewDeclaration(
-  deps: TenantDeclarationDeps, entry: unknown, preloadedCatalog?: MetricRow[],
+  deps: TenantDeclarationDeps, entry: unknown,
 ): Promise<NewDeclarationCompileOutcome> {
   const yamlText = readCurrentSemanticsYaml()
   if (yamlText === null) {
@@ -151,7 +151,7 @@ export async function compileNewDeclaration(
   const name = typeof e.name === 'string' ? e.name : ''
 
   // ② 撞 L1（YAML 侧先说清楚；DB 侧同判据再兜一次）
-  const catalog = preloadedCatalog ?? (await loadPlatformCatalog(deps.pool))
+  const catalog = await loadPlatformCatalog(deps.pool)
   if (name !== '' && (catalog.some((m) => m.id === name) || doc.metrics.some((m) => (m as { name?: unknown })?.name === name))) {
     return { ok: false, outcome: { ok: false, http: 409, error: 'ID_RESERVED_BY_L1' } }
   }

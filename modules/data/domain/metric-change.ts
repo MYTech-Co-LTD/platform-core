@@ -203,6 +203,9 @@ async function precheckOf(pool: Pool, org: string, metricId: string, kind: Chang
     // P5 Task 1：声明是**新建**（无基底、无 upsert 语义）——撞平台保留 id 与 create 同判据，
     // 本 org 已有同 id 行（含 declared / column_agg）在采纳期必然 ID_EXISTS，都是立单前就能
     // 判定的死单 ⇒ 提交期就拒（与 P4 收口同一条「别让人在队列里白点一次」）。
+    // ⚠️ 本守卫只看 **DB 目录**（已物化的 L1）：YAML-only、尚未物化的 L1 id 会放过这里，
+    // 在试算期才被 compileNewDeclaration 的 YAML 尺拒成 preview_failed（单可见可驳回）；
+    // 一旦该 id 物化进 DB，下一次提交就由本目录拦下。
     if (await isPlatformIdOf(pool, metricId)) return { ok: false, http: 400, error: 'ID_RESERVED_BY_L1' }
     const exists = await pool.query('select 1 from data.metrics where org = $1 and id = $2', [org, metricId])
     if ((exists.rowCount ?? 0) > 0) return { ok: false, http: 400, error: 'METRIC_ID_EXISTS' }
@@ -323,6 +326,19 @@ export async function submitChange(
     const parsed = DeclarationPayload.safeParse(payload)
     if (!parsed.success || parsed.data.name !== metricId) {
       return { ok: false, http: 400, error: 'INVALID_DECLARATION' }
+    }
+    // 部门内同名互斥在**提交期**收口（P5 修复轮）：与 override 档同一把尺。
+    // 桶恒 null 与落库桶同构——insertTenantDeclaration 的列清单不含 owner_dept（override 档
+    // 已证明同构），判据若吃别的桶就是「查 A 桶、落 null 桶」的假拒/假放。
+    // 生效 title 的取法与编译点同式（compileTenantDeclaration：label 空 ⇒ 回落 name）；
+    // 形状闸已保证 label 是非空串，trim 后为空（纯空白）才回落 name。
+    const label = parsed.data.label.trim()
+    const title = label !== '' ? label : metricId
+    try {
+      await assertTitleFree(pool, org, null, title)
+    } catch (e) {
+      if (e instanceof OwnershipError) return { ok: false, http: 409, error: 'TITLE_EXISTS_IN_DEPT' }
+      throw e
     }
   }
   const meta = kind === 'meta' ? MetaPayload.safeParse(payload) : null

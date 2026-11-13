@@ -122,6 +122,29 @@ describe('待核对页', () => {
     expect(detailText).toContain('概念：—')
   })
 
+  it('declaration 单（P5 Task 1）：kind 文案是「新建全额声明」，不是空 Tag', async () => {
+    const DECL_ROW = {
+      id: 13, metricId: 'p5mc:retail:decl_sales', kind: 'declaration', status: 'preview_ready',
+      payload: { name: 'p5mc:retail:decl_sales', label: 'P5 声明·销售额' },
+      preview: { window: { from: '2026-11-04', to: '2026-11-11' }, value: 88, rows: 4, baseline: null, sample: [] },
+      submittedBy: 'agent', submittedChannel: 'pat', submittedAt: '2026-11-13T02:00:00Z',
+      decidedBy: null, decidedAt: null, rejectReason: null,
+    }
+    m.mockImplementation(async (url: string | URL, init?: RequestInit) => {
+      const u = String(url)
+      if (u.includes('/metric-changes') && (init?.method ?? 'GET') === 'GET') return json({ changes: [DECL_ROW] })
+      return json({})
+    })
+    render(<ChangesPage />)
+    // 精确匹配指标 id：payload 的 JSON dump 里也含同名（正则会撞成多元素）
+    await waitFor(() => expect(screen.getByText('p5mc:retail:decl_sales')).toBeInTheDocument())
+    expect(screen.getByText('新建全额声明')).toBeInTheDocument()
+    // 不是空 Tag：该行所有 Tag 都有文案（缺 label 时 antd Tag 会渲染成空壳）
+    const tagTexts = [...document.querySelectorAll('.ant-tag')].map((t) => (t.textContent ?? '').trim())
+    expect(tagTexts).toContain('新建全额声明')
+    expect(tagTexts.every((t) => t !== '')).toBe(true)
+  })
+
   it('试算历史（P1 Task 5）：有 previewHistory 的行在展开层显「之前试过 N 次」，无历史行不显', async () => {
     const HIST_ROW = {
       ...PENDING.changes[0]!, id: 11, metricId: 'x:with_hist',
