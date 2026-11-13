@@ -45,6 +45,7 @@ import type { DateRange } from '../../domain/report-period'
 import type { DataPanel } from '../../domain/report-query'
 import { chartCompareRangesOf, compareRangeOf, panelArgsOf, panelQueryBodyOf } from '../../domain/report-query'
 import type { PeriodSpec, ReportSpec } from '../../domain/report-spec'
+import { toReportPlan, type DeniedPanel } from '../../domain/report-plan'
 import { KpiCard } from './KpiCard'
 import AiTextPanel from './AiTextPanel'
 import { RichText } from '../lib/rich-text'
@@ -56,7 +57,6 @@ type Panel = ReportSpec['panels'][number]
  * 把该面板原位替换成 `{ index, denied: true }`（**不带** metricId/chart/title/args）。
  * 视为「本格无内容」：不取数、不参与筛选栏默认值、只渲染一行「无此口径权限」。
  */
-interface DeniedPanel { index: number; denied: true }
 type ViewPanel = Panel | DeniedPanel
 const isDeniedPanel = (p: ViewPanel): p is DeniedPanel => 'denied' in p && p.denied === true
 
@@ -543,7 +543,9 @@ export default function ReportView({
   const [branches, setBranches] = useState<Array<{ branchNum: string; name: string }> | null>(null)
 
   // 观看面可能带降级占位符（`{index,denied:true}`）——类型上并入，运行期用 `isDeniedPanel` 分流。
-  const panels: ViewPanel[] = spec.panels
+  // V2：面板清单统一从 plan 取（索引与 spec.panels 一一对应，占位符原位保留）。
+  const plan = useMemo(() => toReportPlan(spec), [spec])
+  const panels: ViewPanel[] = useMemo(() => plan.panels.map((p) => p.panel), [plan])
 
   // 期间 → 具体日期段（custom 形态写侧已校验 from<=to；坏规格兜底成「无期间」而不是崩页）。
   const range = useMemo<DateRange | null>(() => {
