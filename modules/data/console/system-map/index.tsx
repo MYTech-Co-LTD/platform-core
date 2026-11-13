@@ -146,7 +146,8 @@ export default function SystemMapPage() {
           typeLabel: TYPE_LABEL[n.type],
           symbolSize: TYPE_SIZE[n.type],
           // 指标节点太多，默认不挂标签；搜索出来的节点强制显示（否则搜了也看不出是哪一个）。
-          label: { show: n.type !== 'metric' || query.trim() !== '' },
+          // 维度标签靠左：它的名字最长（「商品（部门 → 品类 → 单品）」），靠右会在画布右缘被切掉
+          label: { show: n.type !== 'metric' || query.trim() !== '', ...(n.type === 'dimension' ? { position: 'left' } : {}) },
           itemStyle: { color: TYPE_COLOR[n.type], borderColor: '#FFFFFF', borderWidth: 2 },
         })),
         edges: view.edges.map((e) => ({ source: e.from, target: e.to, edgeLabel: EDGE_LABEL[e.type] })),
