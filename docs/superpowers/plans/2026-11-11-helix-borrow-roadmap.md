@@ -83,7 +83,7 @@
 | 项 | 现状证据 | 波次 |
 |---|---|---|
 | **P1 终审缓办（转 P2+）** | ① L1 label 撞名预检进 check-semantics（今天零冲突；sync catch 已带 pg detail）② 旧直写面（PUT/POST /metrics、override 直写、customize_metric——P4 退役）撞 title 索引=裸 500 无映射 ③ override 行 owner_dept 恒 null：接进 insertTenantDeclaration 归 P2 可见性波 ④ report 工具 mutating:false 不对称（若总闸应管报表提案需裁决）⑤ notify eventId 去重吞重建事件（修法：eventId 拼变更单 id）⑥ preview_failed 回包不带 issues 明细 | Wave 5 P2（接手逐条销） |
-| **P4 写面收口** | `customize_metric` 仍直接写生效行（`mcp-metric-tools.ts:80`）；PC 指标页仍有编辑/元数据/覆盖/删除 | Wave 5 P4 |
+| **P4 写面收口** | `customize_metric` 仍直接写生效行（`mcp-metric-tools.ts:187-210`）；console 剩编辑/元数据/删除/覆盖口径四写入口 | **Wave 5 P4（计划：`2026-11-13-metric-writeface-p4.md`，5 任务含销缓办三笔）** |
 | **P5 报表 × 指标** | 发布无「受众 ⊆ 面板指标可见范围」校验；Metabase 只能整表级 | Wave 5 P5 |
 | **P6 证据与治理** | 声明类无对账证据接入；下线候选已有面（/metrics/usage）未接评审 | Wave 5 P6 |
 | 列级血缘 | dbt core manifest 无列级边（dbt core 不产出列级 edge） | 2.4（**触发式**：等真的有「按列追影响」的需求再做） |
@@ -192,3 +192,4 @@
 | 2026-11-13 | **Wave 5 P2 完成入账**（指标可见性：前置门+纯谓词+咽喉扩参+13 点接线）；P2 终审缓办按裁决转 P3+ | PR #2062 + 部署 v294 容器实测（owned=0/57 零变化证明） |
 | 2026-11-13 | P3 计划出台（tie 检测+caliber 补全+第 5 条硬约束） | 取证：scoreOf 有序无名检测；envelope metric 段已在；shared.md 恰 4 行有行数断言；预算余量 192B 禁加描述 | 支 PR 见下 |
 | 2026-11-13 | **Wave 5 P3 完成入账**（tie 检测+caliber+第 5 条硬约束）；P3 终审缓办（search 描述补词待预算、id==q 边界）转 P4 | PR #2066 + 部署 v295 容器实测 |
+| 2026-11-13 | P4 计划出台（工具落单+开关+人面删入口+REST 410 退役+销缓办三笔） | 取证：工具直调点、四写入口、REST 11 写端点清单 | 支 PR 见下 |
