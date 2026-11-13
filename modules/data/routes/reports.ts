@@ -553,7 +553,12 @@ export function registerReports(r: ModuleHono, ctx: RouteCtx): void {
     const gateIds = new Set<string>()
     for (const row of visibleRows) {
       if (editableOf(row) || row.spec === null) continue
-      for (const metricId of metricIdsOfSpec(row.spec)) gateIds.add(metricId)
+      // ⚠️ 必须用 `metricIdsOf`（**含** KPI 分母），不能用 `metricIdsOfSpec`（只取主 metricId）：
+      // 门内部按 `metricIdsOf` 判整格，缩小后的目录会把「分母被过滤掉」误判成 metric_unknown
+      // ⇒ 完全可见的 KPI 面板被整块剥掉（修复轮 3 的 High）。
+      for (const panel of row.spec.panels) {
+        for (const metricId of metricIdsOf(panel)) gateIds.add(metricId)
+      }
     }
     const gateRows = gateIds.size === 0
       ? []

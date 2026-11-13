@@ -3678,6 +3678,51 @@ describePg('报表路由（需要 DATABASE_URL）', () => {
         const ownerRow = ownerList.reports.find((r) => r.id === id)
         expect(ownerRow?.metricIds).toEqual([OWNED, OPEN_METRIC])
       })
+
+      it('★ 列表 gateIds 必须覆盖 KPI 分母：主指标与 denominatorMetricId 都可见 ⇒ 面板不被误剥', async () => {
+        // KPI 需要 `totalable` 指标 ⇒ 用 L1 夹具（L2 恒 totalable=false）。分母用独立 id，
+        // 才能咬住「gateIds 只取主 metricId ⇒ 缩小后的目录喂给门 ⇒ 分母被判 metric_unknown」。
+        const DENOM = 'p5rg:kpi-denom'
+        await upsertL1Metric(pool, {
+          id: DENOM, title: 'p5rg KPI 分母', description: '', requiredScope: null,
+          subjectColumn: 'org', selectSql: 'select 1 as value', groupBy: '', params: {},
+          sourceSystem: null, slaDays: 1, freshnessRelations: [], masks: null, totalable: true,
+        })
+        try {
+          const app = admin()
+          const created = await post(app, {
+            title: '渲染闸-列表 KPI 分母', renderer: 'platform',
+            spec: {
+              panels: [{
+                chart: 'kpi', title: '客单价',
+                metricId: ADDITIVE_METRIC, denominatorMetricId: DENOM, format: 'number',
+              }],
+            },
+          })
+          expect(created.status).toBe(201)
+          const id = (await created.json()).id as string
+
+          type ListBody = { reports: Array<{ id: string; metricIds: string[]; canEdit: boolean }> }
+          // 分母可见（平台口径）⇒ KPI 面板完整，主 metricId 不能被剥
+          const visibleList = await (await watcher(ALICE).request('/reports')).json() as ListBody
+          const visibleRow = visibleList.reports.find((r) => r.id === id)
+          expect(visibleRow?.canEdit).toBe(false)
+          expect(visibleRow?.metricIds).toEqual([ADDITIVE_METRIC])
+
+          // 分母被划归销售部 ⇒ ALICE 看不见分母 ⇒ 整个 KPI 面板不可见，主 metricId 一并剔除
+          await pool.query(
+            'update data.metrics set owner_dept = $2 where org = $1 and id = $3',
+            ['platform', SIBLING_DEPT, DENOM],
+          )
+          const deniedList = await (await watcher(ALICE).request('/reports')).json() as ListBody
+          expect(deniedList.reports.find((r) => r.id === id)?.metricIds).toEqual([])
+          // owner（编辑者）保持全量
+          const ownerList = await (await app.request('/reports')).json() as ListBody
+          expect(ownerList.reports.find((r) => r.id === id)?.metricIds).toEqual([ADDITIVE_METRIC])
+        } finally {
+          await pool.query("delete from data.metrics where org = 'platform' and id = $1", [DENOM])
+        }
+      })
     })
   })
 })
