@@ -2,7 +2,7 @@ import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } 
 import { Pool } from 'pg'
 import { runQuery, freshnessFaceFor, freshnessLineOf, freshnessRelationsOf, freshnessStatusOf, formatHumanDay, type QueryDeps, type SqlExecutor } from './query-service'
 import { L1_ORG, upsertL1Metric, upsertMetric } from './metric-store'
-import { applyMigrations } from '../test-util'
+import { applyMigrations, applyPlatformMigrations } from '../test-util'
 import { MAX_QUERY_ROWS, type MaskSpec, type Requester } from './authz'
 import { DATA_WAREHOUSE_UNCONFIGURED, resetWarehousePool, runWarehouseSql, warehousePool } from './warehouse'
 
@@ -1231,5 +1231,157 @@ describePg('runQuery —— 数据范围 enforce/shadow（端到端）', () => {
       `select scope_plan from data.query_audit where org = $1 order by id desc limit 1`, [ORG],
     )
     expect(a.rows[0].scope_plan).toMatchObject({ mode: 'enforce', applied: [], denial: null })
+  })
+})
+
+// ── P2 Task 4：六面接线（部门可见性）——query 面代表用例 ─────────────────────────────
+// 夹具树沿用 metric-visibility.test.ts 的种法（platform.org_node/org_membership 底层真表）；
+// 归属列写侧暂无 API 面（P1 只建列），按任务书口径对夹具行直改库设 owner_dept / visible_depts。
+// 独立 org（org-p2-vis-q）+ 独立合成租户（9307）隔离，afterAll 清场。
+describePg('runQuery × 部门可见性（P2 Task 4）', () => {
+  const pool = new Pool({ connectionString: dbUrl })
+  const ORG_V = 'org-p2-vis-q'
+  const TENANT_V = 9307 // metric-visibility.test.ts 用 9207、reports 用 9107——错开
+  const ROOT = 'org-p2-vis-q-root'
+  const CHILD = 'org-p2-vis-q-child'
+  const SIB = 'org-p2-vis-q-sib'
+  const U_CHILD = 'org-p2-vis-q-u-child' // 直属 child
+  const U_SIB = 'org-p2-vis-q-u-sib' // 直属 sib（child 的兄弟部门）
+
+  const OWNED = {
+    id: 'p2_vis_owned_daily', title: '部门归属指标', description: '',
+    requiredScope: null, subjectColumn: 'org',
+    selectSql: 'SELECT org, day FROM marts.p2_vis_owned', groupBy: '', params: {},
+  }
+  const PLAIN = {
+    id: 'p2_vis_plain_daily', title: '平台通用指标', description: '',
+    requiredScope: null, subjectColumn: 'org',
+    selectSql: 'SELECT org, day FROM marts.p2_vis_plain', groupBy: '', params: {},
+  }
+  const SHARED = {
+    id: 'p2_vis_shared_daily', title: '显式共享指标', description: '',
+    requiredScope: null, subjectColumn: 'org',
+    selectSql: 'SELECT org, day FROM marts.p2_vis_shared', groupBy: '', params: {},
+  }
+
+  let lastSql = ''
+  const deps = (): QueryDeps => ({
+    pool,
+    adoptedSources: new Set<string>(), // 夹具全是 L2 行（sourceSystem null）⇒ 源维度不裁
+    execute: async (sql) => { lastSql = sql; return { columns: ['org', 'day'], rows: [['org-p2-vis-q', '2026-11-13']] } },
+  })
+  const reqOf = (over: Partial<Requester> = {}): Requester => {
+    const scopes = ['data:query']
+    return {
+      userId: 'p2-vis-viewer', orgId: ORG_V, channel: 'session', keyId: null, scopes,
+      hasScope: (c) => scopes.includes(c), ...over,
+    }
+  }
+
+  beforeAll(async () => {
+    await applyMigrations(pool)
+    await applyPlatformMigrations(pool) // org 视图 / platform.tenant（单测无宿主，自己拉）
+    await pool.query(
+      'insert into platform.tenant(id, slug, casdoor_org) values ($1, $2, $3) on conflict (id) do nothing',
+      [TENANT_V, 'org-p2-vis-q-fixture', ORG_V],
+    )
+    // 上一次跑挂残留也幂等：先清本租户再种
+    await pool.query('delete from platform.org_membership where tenant_id = $1', [TENANT_V])
+    await pool.query('delete from platform.org_node where tenant_id = $1', [TENANT_V])
+    const insDept = async (extId: string, parent: string | null, path: string) => {
+      await pool.query(
+        `insert into platform.org_node(tenant_id, ext_id, name, parent_ext_id, path, status)
+         values ($1, $2, $3, $4, $5, 1)
+         on conflict (tenant_id, ext_id) do update set parent_ext_id = excluded.parent_ext_id, path = excluded.path, status = 1`,
+        [TENANT_V, extId, extId, parent, path],
+      )
+    }
+    await insDept(ROOT, null, ROOT)
+    await insDept(CHILD, ROOT, `${ROOT}.${CHILD}`)
+    await insDept(SIB, null, SIB)
+    const insMember = async (userName: string, extId: string) => {
+      await pool.query(
+        'insert into platform.org_membership(tenant_id, user_name, ext_id, is_primary) values ($1, $2, $3, true) on conflict do nothing',
+        [TENANT_V, userName, extId],
+      )
+    }
+    await insMember(U_CHILD, CHILD)
+    await insMember(U_SIB, SIB)
+
+    await pool.query('delete from data.metrics where org = $1', [ORG_V])
+    await upsertMetric(pool, ORG_V, OWNED, 'fixture')
+    await upsertMetric(pool, ORG_V, PLAIN, 'fixture')
+    await upsertMetric(pool, ORG_V, SHARED, 'fixture')
+    // 写侧暂无归属 API 面（P1 只建列）：夹具直改库——owned 归 child；shared 归 sib、显式共享给 child
+    await pool.query('update data.metrics set owner_dept = $1 where org = $2 and id = $3', [CHILD, ORG_V, OWNED.id])
+    await pool.query('update data.metrics set owner_dept = $1, visible_depts = $2 where org = $3 and id = $4',
+      [SIB, [CHILD], ORG_V, SHARED.id])
+  })
+
+  afterAll(async () => {
+    await pool.query('delete from data.query_audit where org = $1', [ORG_V]).catch(() => {})
+    await pool.query('delete from data.metrics where org = $1', [ORG_V]).catch(() => {})
+    await pool.query('delete from platform.org_membership where tenant_id = $1', [TENANT_V]).catch(() => {})
+    await pool.query('delete from platform.org_node where tenant_id = $1', [TENANT_V]).catch(() => {})
+    await pool.query('delete from platform.tenant where id = $1', [TENANT_V]).catch(() => {})
+    await pool.end().catch(() => {})
+  })
+
+  it('链上观看者（直属 child）：owned 指标查询 ok', async () => {
+    const out = await runQuery(deps(), ORG_V,
+      reqOf({ userId: U_CHILD, accountName: U_CHILD, tenantId: TENANT_V }), OWNED.id, {})
+    expect(out.status).toBe('ok')
+  })
+
+  it('兄弟观看者（直属 sib）：owned 指标 **不可见**＝未声明（no-probe），不触仓库', async () => {
+    lastSql = ''
+    const out = await runQuery(deps(), ORG_V,
+      reqOf({ userId: U_SIB, accountName: U_SIB, tenantId: TENANT_V }), OWNED.id, {})
+    expect(out).toEqual({ status: 'denied', metricId: OWNED.id, reason: 'metric_not_declared' })
+    expect(lastSql).toBe('') // 看不见 ⇒ 连 SQL 都没编译执行（404-no-probe 契约，不是报错）
+  })
+
+  it('回归锁：平台桶指标（owner_dept 空）对兄弟观看者**照常可见**', async () => {
+    const out = await runQuery(deps(), ORG_V,
+      reqOf({ userId: U_SIB, accountName: U_SIB, tenantId: TENANT_V }), PLAIN.id, {})
+    expect(out.status).toBe('ok')
+  })
+
+  it('visible_depts 显式共享命中**直属**部门 ⇒ 兄弟部门开门（child 看到 sib 归属的指标）', async () => {
+    const out = await runQuery(deps(), ORG_V,
+      reqOf({ userId: U_CHILD, accountName: U_CHILD, tenantId: TENANT_V }), SHARED.id, {})
+    expect(out.status).toBe('ok')
+  })
+
+  it('org 表无此人（无部门上下文）⇒ owned 不可见（fail-closed）', async () => {
+    lastSql = ''
+    const out = await runQuery(deps(), ORG_V,
+      reqOf({ userId: 'org-p2-vis-q-ghost', tenantId: TENANT_V }), OWNED.id, {})
+    expect(out).toEqual({ status: 'denied', metricId: OWNED.id, reason: 'metric_not_declared' })
+    expect(lastSql).toBe('') // 同一 no-probe 契约：无上下文也按「看不见＝未声明」收口，不触仓库
+  })
+
+  it('requester 无 tenantId（租户数字 id 缺位）⇒ owned 不可见（fail-closed，宁少勿错）', async () => {
+    // 部门名认识（accountName = U_CHILD）但没有 tenantId 就无从查 org 表 ⇒ 按「无 ctx」收口
+    lastSql = ''
+    const out = await runQuery(deps(), ORG_V,
+      reqOf({ userId: U_CHILD, accountName: U_CHILD }), OWNED.id, {})
+    expect(out).toEqual({ status: 'denied', metricId: OWNED.id, reason: 'metric_not_declared' })
+    expect(lastSql).toBe('') // 同一 no-probe 契约：拒绝发生在授权层，SQL 从未编译执行
+  })
+
+  it('告警面钉死（P2 终审修复）：无 tenantId 的 fail-closed 收口必须记 metric_dept_ctx_unresolved warn', async () => {
+    // structured warn 是这条错配态（配了归属但观看通道没带租户 id）的唯一观测面——没它
+    // fail-closed 静默吞掉可见性。spy + finally 还原，不向同 worker 其他文件泄漏。
+    const spy = vi.spyOn(console, 'warn').mockImplementation(() => {})
+    try {
+      const out = await runQuery(deps(), ORG_V,
+        reqOf({ userId: U_CHILD, accountName: U_CHILD }), OWNED.id, {})
+      expect(out).toEqual({ status: 'denied', metricId: OWNED.id, reason: 'metric_not_declared' })
+      expect(spy).toHaveBeenCalledTimes(1)
+      expect(String(spy.mock.calls[0]![0])).toContain('metric_dept_ctx_unresolved')
+    } finally {
+      spy.mockRestore()
+    }
   })
 })

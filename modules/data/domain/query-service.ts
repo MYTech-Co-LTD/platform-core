@@ -4,6 +4,7 @@
 // 审计在**所有**结局都写（spec §5 约束 7）——包括被拒与出错，否则「为什么被拒」查不出来。
 import type { Pool } from 'pg'
 import { MAX_QUERY_ROWS, authorize, sqlQuote, visibleMetrics, type DenyReason, type Requester, type SlicingSpec } from './authz'
+import { deptContextIfOwned } from './metric-visibility'
 import { loadMergedCatalog } from './metric-store'
 import { maskingAuditOf, writeAudit, type MaskingAudit, type ScopeAudit } from './audit-store'
 import { DATA_WAREHOUSE_UNCONFIGURED, runWarehouseSql, warehousePool } from './warehouse'
@@ -409,7 +410,10 @@ export async function runQuery(
   // 全量 catalog 同时供两个用途：① 裁剪出可见集（问数面）；② 掩码按列解析的输入。
   // ② 刻意用**未裁剪**的：掩码只减信息，用看不见的行上的掩码掩自己 = fail-closed。
   const allMetrics = await loadMergedCatalog(deps.pool, org)
-  const catalog = visibleMetrics(allMetrics, requester, deps.adoptedSources)
+  // 部门可见（P2 Task 4 接线）：词表含归属行才加载 ctx（懒加载）；tenantId 来自 requester
+  // （requesterOf 注入的租户数字 id）。无归属行/无 tenantId ⇒ undefined ⇒ owned 行隐藏（fail-closed）。
+  const deptCtx = await deptContextIfOwned(deps.pool, requester.tenantId, requester, allMetrics)
+  const catalog = visibleMetrics(allMetrics, requester, deps.adoptedSources, deptCtx)
   // 数据范围门（spec 2026-11-10）：off 不裁；shadow 只记录；enforce 传入 authorize。
   const scopeMode = scopeModeOf(process.env)
   let scopePlan: DataScopePlan | undefined

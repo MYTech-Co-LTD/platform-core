@@ -13,13 +13,20 @@ import { afterAll, describe, expect, it } from 'vitest'
 import { Pool } from 'pg'
 import type { Hono } from 'hono'
 import mod from '../index'
-import { applyMigrations, buildTestApp, makeIdentity } from '../test-util'
+import { applyMigrations, applyPlatformMigrations, buildTestApp, makeIdentity } from '../test-util'
 import { upsertL1Metric } from '../domain/metric-store'
 
 const dbUrl = process.env.DATABASE_URL
 const describePg = dbUrl ? describe : describe.skip
 /** 隔离键（text，值 = 该租户的 Casdoor org）——与其它测试文件互不相同，避免互相擦数据。 */
 const ORG = 'org-mcp-manage'
+/** P2 终审修复用例的合成租户（与 domain 侧 9107/9207/9307/9308 错开）+ 夹具树前缀。 */
+const TENANT_M = 9407
+const M_ROOT = 'org-mcp-mg-root'
+const M_CHILD = 'org-mcp-mg-child'
+const M_SIB = 'org-mcp-mg-sib'
+const M_U_OWNER = 'org-mcp-mg-u-owner' // 直属 child（owned L2 的归属方）
+const M_U_SIB = 'org-mcp-mg-u-sib'     // 直属 sib（child 的兄弟部门）
 /** 种进 platform 桶的平台 L1（基底；也是「撞 L1 保留 id」用例的被撞者）。 */
 const L1_ID = 'mw_l1_sales_daily'
 /** P1 Task 7 修复用例的覆盖单夹具 L1：三段蛇形（entry.name 必须过编译器名字白名单），本文件专属前缀。 */
@@ -78,6 +85,10 @@ describePg('写面（需要 DATABASE_URL）', () => {
     // 平台桶按精确 id 回收（OVR_ID = P1 Task 7 修复用例的覆盖单夹具）
     await pool.query('delete from data.metrics where org = $1 and id = any($2::text[])',
       ['platform', [L1_ID, OVR_ID]]).catch(() => {})
+    // P2 终审修复用例的 org 树夹具（TENANT_M 专用，不碰别人的租户）
+    await pool.query('delete from platform.org_membership where tenant_id = $1', [TENANT_M]).catch(() => {})
+    await pool.query('delete from platform.org_node where tenant_id = $1', [TENANT_M]).catch(() => {})
+    await pool.query('delete from platform.tenant where id = $1', [TENANT_M]).catch(() => {})
     await pool.end().catch(() => {})
   })
 
@@ -88,6 +99,13 @@ describePg('写面（需要 DATABASE_URL）', () => {
     return buildTestApp(mod, makeIdentity({ orgId: ORG }),
       { pool, execute: async () => ({ rows: [{ rows: 5, value: 100 }] }) } as never,
       { id: 1, casdoor_org: ORG })
+  }
+
+  /** 指定身份的写面壳（其余装配与 app() 相同）：部门可见用例给合成租户 + org 树身份。 */
+  function appAs(userId: string): Hono {
+    return buildTestApp(mod, makeIdentity({ orgId: ORG, scopes: ['data:manage'], userId, accountName: userId }),
+      { pool, execute: async () => ({ rows: [{ rows: 5, value: 100 }] }) } as never,
+      { id: TENANT_M, casdoor_org: ORG })
   }
 
   /** 种一条平台 L1：写面的基底，也是「撞 L1 保留 id」用例的被撞者。 */
@@ -201,6 +219,64 @@ describePg('写面（需要 DATABASE_URL）', () => {
       params: { name: 'list_metrics', arguments: {} },
     })).json()
     expect((toolText(listed as never).custom as { id: string }[]).map((c) => c.id)).not.toContain(L2_ID)
+  })
+
+  it('★ list_metrics 部门可见（P2 终审修复）：兄弟部门 data:manage 持有者看不到别家归属的自建口径——custom 过同一把裁剪尺', async () => {
+    await seedL1()
+    await applyPlatformMigrations(pool)
+    // org 树夹具（真表种法与 metric-visibility.test.ts 同款）：ROOT → CHILD；SIB 另一支。
+    await pool.query(
+      'insert into platform.tenant(id, slug, casdoor_org) values ($1, $2, $3) on conflict (id) do nothing',
+      [TENANT_M, 'org-mcp-mg', ORG])
+    await pool.query('delete from platform.org_membership where tenant_id = $1', [TENANT_M])
+    await pool.query('delete from platform.org_node where tenant_id = $1', [TENANT_M])
+    const insDept = async (extId: string, parent: string | null, path: string) => {
+      await pool.query(
+        `insert into platform.org_node(tenant_id, ext_id, name, parent_ext_id, path, status)
+         values ($1, $2, $3, $4, $5, 1)
+         on conflict (tenant_id, ext_id) do update set parent_ext_id = excluded.parent_ext_id, path = excluded.path, status = 1`,
+        [TENANT_M, extId, extId, parent, path],
+      )
+    }
+    const insMember = async (userName: string, extId: string) => {
+      await pool.query(
+        'insert into platform.org_membership(tenant_id, user_name, ext_id, is_primary) values ($1, $2, $3, true) on conflict do nothing',
+        [TENANT_M, userName, extId],
+      )
+    }
+    await insDept(M_ROOT, null, M_ROOT)
+    await insDept(M_CHILD, M_ROOT, `${M_ROOT}.${M_CHILD}`)
+    await insDept(M_SIB, null, M_SIB)
+    await insMember(M_U_OWNER, M_CHILD)
+    await insMember(M_U_SIB, M_SIB)
+
+    // owner 建出自建口径；归属列写侧暂无 API 面（P1 只建列）⇒ 夹具直改库（query 面用例同款）
+    const created = await (await rpc(appAs(M_U_OWNER), {
+      jsonrpc: '2.0', id: 30, method: 'tools/call',
+      params: {
+        name: 'customize_metric',
+        arguments: { id: L2_ID, baseMetric: L1_ID, alias: '归属部门的自建口径', visibility: { dims: ['bizday'] } },
+      },
+    })).json()
+    expect(toolText(created as never).status).toBe('ok')
+    await pool.query('update data.metrics set owner_dept = $1 where org = $2 and id = $3', [M_CHILD, ORG, L2_ID])
+
+    // 兄弟部门的 data:manage 持有者：平台桶 L1 照常在 bases（不受裁剪影响），owned L2 不在 custom
+    const sibBody = await (await rpc(appAs(M_U_SIB), {
+      jsonrpc: '2.0', id: 31, method: 'tools/call',
+      params: { name: 'list_metrics', arguments: {} },
+    })).json()
+    const sibOut = toolText(sibBody as never)
+    expect(sibOut.status).toBe('ok')
+    expect((sibOut.bases as { id: string }[]).map((b) => b.id)).toContain(L1_ID)
+    expect((sibOut.custom as { id: string }[]).map((c) => c.id)).not.toContain(L2_ID)
+
+    // 归属方本人照常看到自己的口径——裁剪尺只切链外，没多切
+    const ownBody = await (await rpc(appAs(M_U_OWNER), {
+      jsonrpc: '2.0', id: 32, method: 'tools/call',
+      params: { name: 'list_metrics', arguments: {} },
+    })).json()
+    expect((toolText(ownBody as never).custom as { id: string }[]).map((c) => c.id)).toContain(L2_ID)
   })
 
   it('customize_metric 撞 L1 保留 id → ID_RESERVED_BY_L1，且 isError:true', async () => {

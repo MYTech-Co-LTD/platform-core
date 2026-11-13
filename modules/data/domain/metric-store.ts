@@ -161,6 +161,13 @@ export interface MetricRow extends MetricDef {
    * （口径本身在 select_sql/声明里，这里不做权威）。同 `ownerDept`：变更单写入，L1 恒 null。
    */
   variantNote?: string | null
+  /**
+   * 显式共享（047 迁移 `visible_depts`，P2 Task 4 读侧接线）：归属部门把指标开给哪些
+   * **直属**部门（兄弟开门的唯一途径——判定只认直属，见 `metric-visibility.ts` 谓词）。
+   * NULL = 仅按 `owner_dept` 部门链。恒有值（null，不是键缺席）——与 `ownerDept` 同一条
+   * 「读侧恒产出」纪律。写侧暂无 API 面（P2 只接读；共享要走授权变更，归后续波次）。
+   */
+  visibleDepts?: string[] | null
 }
 
 /**
@@ -280,6 +287,9 @@ function toMetricRow(row: Record<string, unknown>): MetricRow {
     // 归属列（047，P1 Task 3）：nullable 直读——NULL = 无归属（L1 行与未带归属的 L2 行的自然态）
     ownerDept: (row.owner_dept ?? null) as string | null,
     variantNote: (row.variant_note ?? null) as string | null,
+    // 显式共享（047，P2 Task 4 读侧接线）：数组直读，坏形状/缺席 ⇒ null（= 未共享，不编空数组
+    // ——「声明共享为空」与「没共享」在本判定里同待遇，见谓词的 `(visibleDepts ?? [])` 收口）
+    visibleDepts: Array.isArray(row.visible_depts) ? row.visible_depts.map(String) : null,
   }
 }
 
@@ -322,7 +332,7 @@ function drillBindingOf(row: Record<string, unknown>): DrillBinding | undefined 
 
 /** 投影列清单（三处查询共用一处写法——少写/写错一列是「字段静默变 undefined」的经典来源）。 */
 const ROW_COLUMNS =
-  'id, title, description, required_scope, subject_column, select_sql, group_by, params, source, source_system, updated_by, version, totalable, scope_note, sla_days, freshness_relations, mask_spec, drill_expr, drill_dims, drill_detail, certified, created_by, biz_description, unit, caliber_note, entity, synonyms, basis, archived_at, override_of, owner_dept, variant_note'
+  'id, title, description, required_scope, subject_column, select_sql, group_by, params, source, source_system, updated_by, version, totalable, scope_note, sla_days, freshness_relations, mask_spec, drill_expr, drill_dims, drill_detail, certified, created_by, biz_description, unit, caliber_note, entity, synonyms, basis, archived_at, override_of, owner_dept, variant_note, visible_depts'
 
 /**
  * 本 org 的 L2 行（**不含** L1 平台行）。`order by id`：顺序确定。

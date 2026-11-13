@@ -8,7 +8,9 @@
 //
 // 原型实测 11/11：/tmp/iam-lab/mcp_authz_server.py + run_matrix.py（同序拒绝链）。
 // 本文件**不得** import 任何 pool / env / Hono —— 它是纯的，才能被三通道共用且可单测。
+// （`./metric-visibility` 在此纪律内：`pg` 只以 type 进入，其运行时依赖 `dept-gate` 同纯。）
 import { effectiveMasks, maskedSelectSql } from './mask'
+import { metricVisibleWithDept, type DeptContext } from './metric-visibility'
 
 export type MetricParamType = 'date' | 'date_range' | 'string' | 'number'
 export interface MetricParamDef {
@@ -102,6 +104,14 @@ export interface MetricDef {
   scopeNote?: string
   /** 明细下钻绑定（下钻 spec 2026-10-21 §2.3），形状见 DrillBinding；未声明 = 字段缺席。 */
   drill?: DrillBinding
+  /**
+   * 部门归属（047 迁移，P1 Task 3）与显式共享（047 `visible_depts`，P2 消费）。
+   * **可选**，与 `scopeNote?` 同一条理由：合成契约与历史夹具可以不带；缺席与 null 同义，
+   * 判定侧（`metricVisibleWithDept`）统一按 null 收口 = 平台通用桶（全租户可见）。
+   * 真值只来自存储行（`MetricRow.ownerDept`；`visible_depts` 的读侧接线在 P2 Task 4）。
+   */
+  ownerDept?: string | null
+  visibleDepts?: string[] | null
 }
 
 /** 下钻的条件列（spec 2026-10-22 §2.3）：持 `grantedBy` 才投影；无码 ⇒ 该列**不在场**。 */
@@ -237,15 +247,23 @@ export type AuthzResult =
 /**
  * 词表裁剪：**看不见**，不是调了报错（spec §5 约束 3）。
  *
- * 两个维度**都要**过才可见（`&&`，不是二选一）：
+ * 三个维度**都要**过才可见（`&&`，不是二选一）：
  *   ① `requiredScope`：无门槛（null）或调用方持有该码；
  *   ② `sourceSystem`（spec §3⑧ 的源维度）：**L1 行**只在「本租户已接入该源」时可见；
  *      **L2 行**（`sourceSystem === null`）**恒可见**——它是本租户自己写的声明，没有源维度。
+ *   ③ 部门可见（P2，spec 2026-11-12 §8.2 的 AND）：`ownerDept` 空 = 平台通用桶恒过；
+ *      否则归属在观看者部门链上、或 `visible_depts` 共享命中其**直属**——判定只经纯谓词
+ *      `metricVisibleWithDept`（单一实现，authz.test.ts 静态断言钉住），本文件不自写第二份。
  *
  * 第三参**必填**（不是可选 + 默认空集）：漏传是编译错。若给它一个「恒空 / 不裁」的默认值，
  * 「某个消费通道忘了接投影」就退化成**静默错答**——而它的两种错法都不可观测：
  * 默认空集 ⇒ 该通道整片平台指标消失（fail-closed 但仍无声）；默认不裁 ⇒ 放行未接入源的指标
  * （fail-open，正是 spec 要堵的）。故这里没有默认值这个选项。
+ *
+ * 第四参 `deptCtx` **可选**，缺省 `undefined` ⇒ owned 行（`ownerDept` 非空）一律不可见
+ * （fail-closed：未接线的调用点宁可少给、不可多给；方向与第三参相反——这里缺省只会**多拒**，
+ * 不会静默放行）。且 owner_dept 空的行不受影响：现网 57 行全 null ⇒ 接线与否生产行为零变化。
+ * 六个调用点在 P2 Task 4 接线（`loadDeptContext` 一次解析、各咽喉透传）。
  *
  * 收口一处：四个消费方（`routes/metrics.ts`、`routes/mcp.ts`、`domain/agent-loop.ts`、
  * `domain/query-service.ts`）**都**经本函数；机器判据在 `catalog-consumers.test.ts`
@@ -255,10 +273,12 @@ export function visibleMetrics<T extends SourceTaggedMetric>(
   catalog: readonly T[],
   requester: Requester,
   adoptedSources: ReadonlySet<string>,
+  deptCtx?: DeptContext,
 ): T[] {
   return catalog.filter((m) =>
     (m.requiredScope === null || requester.hasScope(m.requiredScope)) &&
-    (m.sourceSystem === null || adoptedSources.has(m.sourceSystem)))
+    (m.sourceSystem === null || adoptedSources.has(m.sourceSystem)) &&
+    metricVisibleWithDept(m, deptCtx))
 }
 
 /**

@@ -18,6 +18,7 @@
 import type { Pool } from 'pg'
 import type { MetricParamDef, Requester, SourceTaggedMetric } from '../authz'
 import { visibleMetrics } from '../authz'
+import type { DeptContext } from '../metric-visibility'
 import type { SqlExecutor } from '../query-service'
 import { writeAudit } from '../audit-store'
 import { CONTRACT, faceOf } from '../../skill/contract'
@@ -207,17 +208,20 @@ function paramSchema(p: MetricParamDef): Record<string, unknown> {
 
 /**
  * 可见指标 → legacy 工具（sanitized 名 + readOnly 注解）。
- * 裁剪只走 `visibleMetrics`（授权核心单实现，此处不自建判定）。
+ * 裁剪只走 `visibleMetrics`（授权核心单实现，此处不自建判定）；部门上下文（P2 Task 4）
+ * 由调用方（routes/mcp.ts 有 pool）先经 `deptContextIfOwned` 解析好再传入——本函数是纯的，
+ * 不 import pool（文件头不变量）。
  * 撞名跳过（fail-closed）：与分析师面固定工具同名、或两指标 sanitize 后同名的，**后面的丢**——
  * 被跳过的指标仍可经 `query_metric` 查，但绝不冒名成另一个工具。
  */
 export function legacyMetricTools<T extends SourceTaggedMetric>(
   catalog: readonly T[], requester: Requester, adoptedSources: ReadonlySet<string>,
+  deptCtx?: DeptContext,
 ): { tool: { name: string; description: string; inputSchema: Record<string, unknown>; annotations: ToolAnnotations }; metricId: string }[] {
   const fixedNames = new Set(ANALYST_TOOLS.map((t) => t.name))
   const taken = new Set<string>(fixedNames)
   const out: { tool: { name: string; description: string; inputSchema: Record<string, unknown>; annotations: ToolAnnotations }; metricId: string }[] = []
-  for (const m of visibleMetrics(catalog, requester, adoptedSources)) {
+  for (const m of visibleMetrics(catalog, requester, adoptedSources, deptCtx)) {
     const name = sanitizeToolName(m.id)
     if (taken.has(name)) continue
     taken.add(name)

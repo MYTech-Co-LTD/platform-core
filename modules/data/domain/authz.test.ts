@@ -1,8 +1,10 @@
+import { readFileSync } from 'node:fs'
 import { describe, expect, it } from 'vitest'
 import {
   MAX_QUERY_ROWS, authorize, paramFilters, sqlQuote, visibleMetrics,
   type MaskSpec, type MetricDef, type MetricParamType, type Requester, type SourceTaggedMetric,
 } from './authz'
+import type { DeptContext } from './metric-visibility'
 
 /**
  * 本文件里**没有可见性裁剪**的用例：掩码词表 = 可见词表。
@@ -124,6 +126,92 @@ describe('visibleMetrics —— 源维度裁剪（spec §3⑧：未接入源的�
       { ...CATALOG[2]!, id: 'l1_lemeng_finance', sourceSystem: 'lemeng' },
     ]
     expect(visibleMetrics(both, req(), LEMENG)).toEqual([])
+  })
+})
+
+describe('visibleMetrics —— 部门可见性（P2 Task 3 咽喉扩参，spec 2026-11-12 §8）', () => {
+  /** 夹具 ctx 与 metric-visibility.test.ts 同一棵注释树：直属 57 ⇒ canOwn={49,57,66}、memberOf={57}。 */
+  const VIEWER = (): DeptContext => ({
+    canOwn: new Set(['49', '57', '66']),
+    memberOf: new Set(['57']),
+  })
+  /**
+   * 归属词表的四种行形状：字段缺席（历史夹具/合成契约的自然态）、显式 null（Task 4 接线后
+   * DB 行的常态）、归属 57（观看者直属）、归属 80（链外兄弟）。前两种 = 平台通用桶。
+   */
+  const OWNED: SourceTaggedMetric[] = [
+    { ...CATALOG[0]!, id: 'platform_absent' },
+    { ...CATALOG[0]!, id: 'platform_null', ownerDept: null },
+    { ...CATALOG[0]!, id: 'dept_57_row', ownerDept: '57' },
+    { ...CATALOG[0]!, id: 'dept_49_row', ownerDept: '49' },
+    { ...CATALOG[0]!, id: 'dept_66_row', ownerDept: '66' },
+    { ...CATALOG[0]!, id: 'dept_80_row', ownerDept: '80' },
+  ]
+
+  it('★ 回归锁：owner_dept 全空的词表，传 ctx 与不传输出完全一致（现网 57 行零变化）', () => {
+    // 现网 57 行 owner_dept 全 null ⇒ 无论接线与否，词表必须逐字节不变（P2 计划硬承诺）。
+    // 上面三组既有用例（不传 ctx 全绿）是同一承诺的另一半。
+    const allPlatform: SourceTaggedMetric[] = [
+      { ...CATALOG[0]!, id: 'p_absent' },
+      { ...CATALOG[0]!, id: 'p_null', ownerDept: null },
+    ]
+    const bare = visibleMetrics(allPlatform, req(), LEMENG)
+    expect(visibleMetrics(allPlatform, req(), LEMENG, VIEWER())).toEqual(bare)
+    expect(bare.map((m) => m.id)).toEqual(['p_absent', 'p_null'])
+  })
+
+  it('★ fail-closed：不传 deptCtx（缺省 undefined）⇒ owned 行全部不可见', () => {
+    // 有意的缺省：未接线的调用点宁可少给不可多给。平台行不受影响。
+    expect(visibleMetrics(OWNED, req(), LEMENG).map((m) => m.id))
+      .toEqual(['platform_absent', 'platform_null'])
+  })
+
+  it('★ owned + ctx：归属在部门链上（自身/祖先/后代）⇒ 留；兄弟 ⇒ 滤', () => {
+    const ids = visibleMetrics(OWNED, req(), LEMENG, VIEWER()).map((m) => m.id)
+    expect(ids, '直属归属行被滤掉 ⇒ 部门链没参与判定').toContain('dept_57_row') // 自身
+    expect(ids, '祖先归属行被滤掉 ⇒ canOwn 没含祖先').toContain('dept_49_row')
+    expect(ids, '后代归属行被滤掉 ⇒ canOwn 没含后代').toContain('dept_66_row')
+    expect(ids, '链外兄弟行放行 ⇒ fail-open').not.toContain('dept_80_row')
+    expect(ids).toEqual(['platform_absent', 'platform_null', 'dept_57_row', 'dept_49_row', 'dept_66_row'])
+  })
+
+  it('owned + ctx：visible_depts 显式共享给观看者**直属** ⇒ 留（兄弟开门唯一途径）', () => {
+    const shared: SourceTaggedMetric[] = [
+      { ...CATALOG[0]!, id: 'dept_80_shared', ownerDept: '80', visibleDepts: ['57'] },
+    ]
+    expect(visibleMetrics(shared, req(), LEMENG, VIEWER()).map((m) => m.id)).toEqual(['dept_80_shared'])
+    // 共享给非直属（祖先 49）不吃放行——语义钉在谓词真值表，这里钉它穿过咽喉仍成立
+    const toAncestor: SourceTaggedMetric[] = [
+      { ...CATALOG[0]!, id: 'dept_80_shared_anc', ownerDept: '80', visibleDepts: ['49'] },
+    ]
+    expect(visibleMetrics(toAncestor, req(), LEMENG, VIEWER())).toEqual([])
+  })
+
+  it('三条件 AND：部门放行救不了 scope 拒绝（顺序与既有两维不变）', () => {
+    const financeOwned: SourceTaggedMetric[] = [
+      { ...CATALOG[2]!, id: 'finance_owned', ownerDept: '57' }, // data:finance + 归属在链上
+    ]
+    // req() 只有 data:query：部门维放行，scope 维照拒——部门可见是追加的 AND 条件，不是替换
+    expect(visibleMetrics(financeOwned, req(), LEMENG, VIEWER())).toEqual([])
+  })
+
+  it('ownerDept 空串归一成 null ⇒ 平台桶（P1 台账边界：与同名互斥索引 coalesce 同桶）', () => {
+    const blank: SourceTaggedMetric[] = [{ ...CATALOG[0]!, id: 'blank_dept', ownerDept: '' }]
+    expect(visibleMetrics(blank, req(), LEMENG).map((m) => m.id)).toEqual(['blank_dept'])
+  })
+})
+
+describe('visibleMetrics —— 单一实现纪律（静态断言，P2 Global Constraints）', () => {
+  const authzSrc = readFileSync(new URL('./authz.ts', import.meta.url), 'utf8')
+
+  it('authz.ts 的部门可见判定只经纯谓词 metricVisibleWithDept（不得自写第二份）', () => {
+    expect(authzSrc, 'authz.ts 没引用唯一谓词 ⇒ 部门判定被自写了一份（Global Constraint 失守）')
+      .toMatch(/\bmetricVisibleWithDept\b/)
+  })
+
+  it('authz.ts 不直接摸部门链集合（canOwn/memberOf 语义只属于 metric-visibility.ts）', () => {
+    expect(authzSrc, 'authz.ts 出现 .canOwn ⇒ 部门链判定漏进了授权核心').not.toMatch(/\.canOwn\b/)
+    expect(authzSrc, 'authz.ts 出现 .memberOf ⇒ 直属判定漏进了授权核心').not.toMatch(/\.memberOf\b/)
   })
 })
 

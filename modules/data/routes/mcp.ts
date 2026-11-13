@@ -10,6 +10,7 @@
 // 授权仍不自建：词表裁剪只调 visibleMetrics、执行只调 runQuery / runDetailQuery / registry.callTool
 // （保留键拒 / 未声明拒 / 未授权拒全部出自那条链——本文件不做第二份判定）。
 import { loadMergedCatalog } from '../domain/metric-store'
+import { deptContextIfOwned } from '../domain/metric-visibility'
 import { runDetailQuery } from '../domain/drill'
 import { runQuery } from '../domain/query-service'
 import { analystPool, runWarehouseSql } from '../domain/warehouse'
@@ -92,8 +93,10 @@ const readToolset: McpToolSet = {
     if (deps.requester === null) return []
     // 合并加载器（L1 ∪ 本 org）+ 源维度裁剪——与 /query、chat、GET /metrics 同一落点（T8 评审 C1）。
     const catalog = await loadMergedCatalog(deps.pool, deps.org)
+    // 部门可见（P2 Task 4 接线）：tools/list 与 tools/call 用同一份 ctx（同一函数同一裁剪尺）。
+    const deptCtx = await deptContextIfOwned(deps.pool, deps.requester.tenantId, deps.requester, catalog)
     return [
-      ...legacyMetricTools(catalog, deps.requester, deps.adoptedSources).map((x) => x.tool),
+      ...legacyMetricTools(catalog, deps.requester, deps.adoptedSources, deptCtx).map((x) => x.tool),
       ...analystListEntries(),
       ...STATIC_MCP_TOOLS,
     ]
@@ -138,7 +141,9 @@ const readToolset: McpToolSet = {
     //    （runQuery 的解析路径也裁源，与 tools/list 同一份事实）。
     if (deps.requester !== null) {
       const catalog = await loadMergedCatalog(deps.pool, deps.org)
-      const hit = legacyMetricTools(catalog, deps.requester, deps.adoptedSources).find((x) => x.tool.name === name)
+      // 部门可见（P2 Task 4 接线）：与 list() 同一份 ctx——list 不列、call 也不解析（no-probe）。
+      const deptCtx = await deptContextIfOwned(deps.pool, deps.requester.tenantId, deps.requester, catalog)
+      const hit = legacyMetricTools(catalog, deps.requester, deps.adoptedSources, deptCtx).find((x) => x.tool.name === name)
       if (hit !== undefined) {
         const out = await runQuery(
           {
