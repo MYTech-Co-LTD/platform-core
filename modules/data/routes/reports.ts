@@ -95,6 +95,7 @@ import {
   canViewAsset,
   canViewVersionedContent,
   ensureOwner,
+  factsSpecOf,
   isAdminOverride,
   loadAssetAcl,
   loadAssetAcls,
@@ -267,7 +268,7 @@ async function reportRenderGate(
   pool: Pool, requester: Requester, org: string, id: string, spec: ReportSpec,
 ): Promise<RenderGateResult> {
   const usedIds = new Set(spec.panels.flatMap((panel) => metricIdsOf(panel)))
-  if (usedIds.size === 0) return { blocked: false, deniedPanels: [], spec }
+  if (usedIds.size === 0) return { blocked: false, deniedPanels: [], denials: [], spec }
 
   const catalog = await loadMergedCatalog(pool, org)
   const usedRows = catalog.filter((m) => usedIds.has(m.id))
@@ -278,9 +279,9 @@ async function reportRenderGate(
     try {
       await writeAssetAudit(pool, {
         org, assetId: id, actor: requester.userId, action: 'report.panel_denied',
-        // 只记位置与整表拒标记：审计要回答「谁被挡了几格 / 是否触发了 reveal」，
+        // 只记位置、原因与整表拒标记：审计要回答「谁被挡了几格 / 为什么 / 是否触发 reveal」，
         // 不需要把口径 id 再抄一份（metricId 在快照与词表里都能追）。
-        detail: { deniedPanels: gate.deniedPanels, revealReport: gate.blocked },
+        detail: { deniedPanels: gate.deniedPanels, denials: gate.denials, revealReport: gate.blocked },
       })
     } catch (e) {
       console.warn(JSON.stringify({
@@ -933,11 +934,10 @@ export function registerReports(r: ModuleHono, ctx: RouteCtx): void {
     })
   })
 
-  // ⚠️ 本端点**不做** P5 Task 3 的面板级降级（有意）：它是草稿/编辑面（`canViewAsset` 通过后
-  //    返回**可编辑**的规格），消费方是 console 编辑视图与 `?preview=1` 的显式预览；把人已能
-  //    编辑的规格裁成 `{index,denied:true}` 会让「改规格」当场变得不可执行，而草稿本来就受
-  //    owner ∪ ACL ∪ data:manage 约束。观看面的降级只发生在 `published-spec`（及叙述/凭证的
-  //    `reveal='report'` 整表拒）——那是真正给观看者出内容的通路。
+  // ⚠️ 本端点**两种视角**（P5 Task 3 修复轮 Important）：console「打开」走的正是它
+  //    （reports/index.tsx → SpecView），所以它对**非编辑者**同样是观看面，必须过渲染闸；
+  //    而 owner ∪ data:manage（`canEditAsset`）需要能改规格 ⇒ 拿全量。
+  //    判定顺序：canViewAsset（谁能看这份内容）→ canEditAsset 分档 → 渲染闸（口径可见性）。
   r.get('/reports/:id/spec', async (c) => {
     const requester = requesterOf(c)
     if (requester === null) return c.json({ error: 'UNAUTHENTICATED' }, 403)
@@ -960,7 +960,14 @@ export function registerReports(r: ModuleHono, ctx: RouteCtx): void {
     // 渲染器通道守卫：metabase 行的「内容」在 Metabase 侧，没有可读的 spec（列必为 null）
     // ⇒ 显式 409，与 embed-url/edit-url 的守卫同族。
     if (row.renderer !== 'platform') return c.json({ error: 'RENDERER_NOT_SELF_DRAWN' }, 409)
-    return c.json({ spec: row.spec, version: row.version })
+    // 编辑者：全量（要能继续改规格——占位符会让编辑器不可用）。
+    if (canEditAsset(specAcl, requester, MANAGE_SCOPE) || row.spec === null) {
+      return c.json({ spec: row.spec, version: row.version, deniedPanels: [] })
+    }
+    // 观看者：与 published-spec 同一把渲染闸（口径不可见 ⇒ 原位剥成占位符；reveal 整表拒）。
+    const render = await reportRenderGate(ctx.pool, requester, org, row.id, row.spec)
+    if (render.blocked) return c.json({ error: 'NOT_FOUND' }, 404)
+    return c.json({ spec: render.spec, version: row.version, deniedPanels: render.deniedPanels })
   })
 
   // ── 定义版本：发布 / 下线 / 回滚 / 历史 / 已发布快照 / 草稿（月报重做 Task 10）──────────────
@@ -1370,15 +1377,16 @@ export function registerReports(r: ModuleHono, ctx: RouteCtx): void {
       const snapshotDepts = await userDeptClosure(ctx.pool, c.get('tenant').id, deptNamesOf(requester))
       if (!deptGatePasses(snapshot.requiredDepts, snapshotDepts)) return { error: 'NOT_FOUND' }
     }
-    // 渲染闸（P5 Task 3）：叙述/计算凭证与 spec 读面**共用同一个观看者门**——`reveal='report'`
-    // 的指标不可见时整表拒（否则可以从 AI 文本 / 计算凭证绕着拿到同一份数）。
-    // ⚠️ 这里**只**执行整表拒，不把 spec 换成年面板占位符：narrative 的事实包按 data 面板
-    //    装配（降级占位符没有 chart/metricId，会打断 facts）；而这些消费面取数都走
-    //    `runQuery` 授权链，隐藏口径本来就会 403（与 /query 同一条 fail-closed 通路）。
+    // 渲染闸（P5 Task 3）：叙述/计算凭证与 spec 读面**共用同一个观看者门**。
+    //   · `reveal='report'` 的指标不可见 ⇒ 整表拒（不能从 AI 文本 / 计算凭证绕开）；
+    //   · 其余被拒面板 ⇒ 用 `factsSpecOf` 把它们换成**空文本面板**：事实装配天然跳过 text，
+    //     被拒口径的**标题**不会经 `missing.push(p.title)` 进 LLM prompt，也不再多打一次必被
+    //     403 的 `/query`。回包不返回这份 specs（只用于内部事实装配）。
     const render = await reportRenderGate(ctx.pool, requester, org, id, snapshot.spec)
     if (render.blocked) return { error: 'NOT_FOUND' }
     return {
-      requester, report, spec: snapshot.spec,
+      requester, report,
+      spec: render.deniedPanels.length === 0 ? snapshot.spec : factsSpecOf(render.spec),
       specKey: `published:${snapshot.version}`, title: snapshot.title,
     }
   }

@@ -5,10 +5,12 @@ import { describe, it, expect, beforeAll, afterAll, beforeEach } from 'vitest'
 import { Pool } from 'pg'
 import { applyMigrations } from '../test-util'
 import {
-  canEditAsset, canViewAsset, ensureOwner, isAdminOverride, isOwner,
+  applyPanelRenderGate, canEditAsset, canViewAsset, ensureOwner, factsSpecOf, isAdminOverride, isOwner,
   loadAssetAcl, replaceViewers, writeAssetAudit,
-  type AclRow,
+  type AclRow, type RenderGateMetric,
 } from './asset-auth'
+import type { DeptContext } from './metric-visibility'
+import { parseReportSpec } from './report-spec'
 
 const url = process.env.DATABASE_URL
 const describePg = url ? describe : describe.skip
@@ -128,5 +130,79 @@ describePg('asset-auth 存储', () => {
       'select actor, action, by_admin from data.asset_audit where org=$1', [ORG],
     )
     expect(rows[0]).toMatchObject({ actor: 'admin', action: 'acl.update', by_admin: true })
+  })
+})
+
+// ── 渲染闸（P5 Task 3）：纯函数判据 ─────────────────────────────────────────────
+const specOf = (panels: unknown[]) => {
+  const parsed = parseReportSpec({ panels })
+  if (!parsed.ok) throw new Error(`夹具规格应通过白名单：${parsed.code}`)
+  return parsed.spec
+}
+const deptCtx = (canOwn: string[], memberOf: string[]): DeptContext => ({
+  canOwn: new Set(canOwn), memberOf: new Set(memberOf),
+})
+const panel = (metricId: string, extra: Record<string, unknown> = {}) =>
+  ({ chart: 'table', title: `标题-${metricId}`, metricId, ...extra })
+
+describe('applyPanelRenderGate', () => {
+  it('可见指标原样；不可见指标所在面板只剩 {index,denied:true}（无 title/metricId/chart/args）', () => {
+    const spec = specOf([
+      panel('m:owned', { args: { branch_num: '92' } }),
+      panel('m:open'),
+    ])
+    const catalog: RenderGateMetric[] = [
+      { id: 'm:owned', ownerDept: '57', reveal: 'panel' },
+      { id: 'm:open', ownerDept: null },
+    ]
+    const out = applyPanelRenderGate(spec, catalog, deptCtx(['80'], ['80']))
+    expect(out.blocked).toBe(false)
+    expect(out.deniedPanels).toEqual([0])
+    expect(out.denials).toEqual([{ index: 0, reason: 'metric_invisible' }])
+    expect(out.spec.panels[0]).toEqual({ index: 0, denied: true })
+    expect(JSON.stringify(out.spec.panels[0])).not.toMatch(/metricId|chart|title|args/)
+    expect(out.spec.panels[1]).toEqual(spec.panels[1])
+  })
+
+  it('★ 词表里查不到的指标 fail-closed（reason=metric_unknown），不触发 reveal、不保留面板', () => {
+    const spec = specOf([panel('m:gone'), panel('m:open')])
+    const catalog: RenderGateMetric[] = [{ id: 'm:open', ownerDept: null }]
+    const out = applyPanelRenderGate(spec, catalog, undefined)
+    expect(out.blocked).toBe(false) // 没有行可读 reveal ⇒ 不冒充整表拒
+    expect(out.deniedPanels).toEqual([0])
+    expect(out.denials).toEqual([{ index: 0, reason: 'metric_unknown' }])
+    expect(out.spec.panels[0]).toEqual({ index: 0, denied: true })
+  })
+
+  it('★ 不可见 + reveal=report ⇒ blocked（防「总数−其他」反推）', () => {
+    const spec = specOf([panel('m:secret')])
+    const out = applyPanelRenderGate(
+      spec, [{ id: 'm:secret', ownerDept: '57', reveal: 'report' }], deptCtx(['80'], ['80']),
+    )
+    expect(out.blocked).toBe(true)
+    expect(out.deniedPanels).toEqual([0])
+  })
+
+  it('★ kpi 分母不可见 ⇒ 整格降级（分母口径同样泄露）', () => {
+    const spec = specOf([{
+      chart: 'kpi', title: '客单价', metricId: 'm:sales', denominatorMetricId: 'm:orders', format: 'number',
+    }])
+    const out = applyPanelRenderGate(spec, [
+      { id: 'm:sales', ownerDept: null },
+      { id: 'm:orders', ownerDept: '57' },
+    ], deptCtx(['80'], ['80']))
+    expect(out.deniedPanels).toEqual([0])
+    expect(out.denials).toEqual([{ index: 0, reason: 'metric_invisible' }])
+  })
+
+  it('factsSpecOf：降级占位符换成**空文本面板**（叙述事实包不再看到标题/metricId）', () => {
+    const spec = specOf([panel('m:owned'), panel('m:open')])
+    const gate = applyPanelRenderGate(
+      spec, [{ id: 'm:owned', ownerDept: '57' }, { id: 'm:open', ownerDept: null }], deptCtx(['80'], ['80']),
+    )
+    const factsSpec = factsSpecOf(gate.spec)
+    expect(factsSpec.panels[0]).toEqual({ chart: 'text', content: '', span: 12 })
+    expect(JSON.stringify(factsSpec.panels[0])).not.toMatch(/metricId|标题|table/)
+    expect(factsSpec.panels[1]).toEqual(spec.panels[1])
   })
 })

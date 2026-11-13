@@ -171,8 +171,10 @@ export interface MetricRow extends MetricDef {
   /**
    * 泄露策略（047 迁移 `reveal`，P5 Task 3 读侧接线）：`panel`（默认）= 不可见时面板级降级；
    * `report` = 报表里存在任一不可见指标就**整表 404**（防「总数 − 其他」反推）。
-   * 恒有值（`toMetricRow` 归一：列缺省/坏值 ⇒ `panel`）——列是 `not null default 'panel'`；
-   * 写面（变更单 / L1 物化）暂无该字段，现网恒 `panel`。类型保持可选以便历史夹具不补字段。
+   * 恒有值（`toMetricRow` 归一：列缺省/坏值 ⇒ `panel`）——列是 `not null default 'panel'`。
+   * ⚠️ **写入面待 P6**（变更单 payload 或 sync 声明），当前两条写路径都没有该字段 ⇒ 生产
+   * 恒 `panel`（测试直改库）。这是产品缺口，已在台账；本行只负责读侧接线。
+   * 类型保持可选以便历史夹具不补字段。
    */
   reveal?: MetricReveal
 }
