@@ -26,6 +26,13 @@ describe('result-cache（明细结果缓存）', () => {
     vi.resetModules()
   })
 
+  it('聚合形状（R4）：columns/rows/retried 可原样存取（与明细形状共用同一份缓存）', () => {
+    const k = cacheKey('select sum(x) from t', '')
+    const agg = { columns: ['value'], rows: [[42]], retried: true }
+    cacheSet(k, agg)
+    expect(cacheGet<typeof agg>(k)).toEqual(agg)
+  })
+
   it('命中返回值并累计 stats', () => {
     const k = cacheKey('s', 'c')
     cacheSet(k, v(1))
