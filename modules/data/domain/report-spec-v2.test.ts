@@ -134,13 +134,18 @@ describe('IR v2：解析与扁平化等价', () => {
     expect(parsed).toMatchObject({ ok: true, ir: 1 })
   })
 
-  it('非空 filters ⇒ IR_V2_FILTERS_UNSUPPORTED（V4 前不静默丢）', () => {
+  it('非空 filters：接受并随扁平化保留（V4）', () => {
     const parsed = parseReportInput({
       ir: 2, datasets: [{ key: 's', metricId: 'm:sales' }],
       blocks: [{ type: 'kpi', dataset: 's', title: 'x', format: 'number' }],
       filters: [{ key: 'branch', column: 'branch_num', label: '门店', type: 'string' }],
     })
-    expect(parsed).toEqual({ ok: false, code: 'IR_V2_FILTERS_UNSUPPORTED' })
+    expect(parsed.ok).toBe(true)
+    if (!parsed.ok) return
+    expect(parsed.ir).toBe(2)
+    expect(parsed.spec.filters).toEqual([
+      { key: 'branch', column: 'branch_num', label: '门店', type: 'string' },
+    ])
   })
 
   it('未知数据集引用 ⇒ INVALID_SPEC', () => {

@@ -359,6 +359,8 @@ export async function buildFacts(
   panelIndex: number,
   period: PeriodSpec,
   branchNum?: string,
+  /** 报表共享筛选的运行期取值（V4）：值按 key 并入每个数据面板的 args。 */
+  filterValues?: Readonly<Record<string, unknown>>,
 ): Promise<FactBundle> {
   // V3：面板清单统一从 plan 取。降级占位符（不可见指标）**原位跳过**，不再可能被
   // 误当成数据面板（占位符没有 chart 字段，旧写法 `p.chart !== 'text'` 会放行它）。
@@ -416,7 +418,12 @@ export async function buildFacts(
   }
 
   for (const p of dataPanels) {
-    const args = panelArgsOf(p, range, branchNum)
+    const args = panelArgsOf(
+      p, range, branchNum,
+      (spec.filters ?? []).length === 0
+        ? undefined
+        : { defs: spec.filters ?? [], values: filterValues ?? {} },
+    )
     const q = queryOfPanel(p, args)
 
     if (p.chart === 'kpi') {

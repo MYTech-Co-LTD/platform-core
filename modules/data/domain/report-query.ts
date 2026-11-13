@@ -19,7 +19,7 @@
 import type { SlicingSpec } from './authz'
 import type { DateRange } from './report-period'
 import { previousRangeOf, yearAgoRangeOf } from './report-period'
-import type { KpiPanel, PeriodSpec, ReportSpec } from './report-spec'
+import type { KpiPanel, PeriodSpec, ReportFilter, ReportSpec } from './report-spec'
 
 /** 有数据面的面板（text / ai_text 不查 /query）。 */
 export type DataPanel = Exclude<ReportSpec['panels'][number], { chart: 'text' } | { chart: 'ai_text' }>
@@ -34,8 +34,17 @@ export function panelArgsOf(
   p: DataPanel,
   range: DateRange | null,
   branchNum?: string,
+  filters?: { defs: readonly ReportFilter[]; values: Readonly<Record<string, unknown>> },
 ): Record<string, unknown> {
+  // 优先级（V4，写进计划 §6）：面板 args < 报表共享筛选 < 请求期门店覆盖 < 当前期间。
   const args: Record<string, unknown> = { ...(p.args ?? {}) }
+  if (filters !== undefined) {
+    for (const f of filters.defs) {
+      const v = filters.values[f.key]
+      if (v === undefined || v === null || v === '') continue
+      args[f.key] = v
+    }
+  }
   if (branchNum !== undefined && Object.hasOwn(p.args ?? {}, 'branch_num')) args.branch_num = branchNum
   if (range !== null && p.timeScoped !== false) args.bizday = range
   return args
