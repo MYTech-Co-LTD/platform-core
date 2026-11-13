@@ -12,7 +12,7 @@
 import { z } from 'zod'
 import { withObjectLock } from '../domain/object-lock'
 import { loadMergedCatalog } from '../domain/metric-store'
-import { parseReportSpec } from '../domain/report-spec'
+import { parseReportInput, parseReportSpec } from '../domain/report-spec'
 import type { ReportSpec } from '../domain/report-spec'
 import { deriveRequiredScope, validatePanelMetrics } from '../domain/report-scope'
 import { compileTemplate, REPORT_TEMPLATES, templateById } from '../domain/report-templates'
@@ -143,7 +143,7 @@ export const reportTools: McpToolGroup = {
         }
         rawSpec = composed.spec
       }
-      const spec = parseReportSpec(rawSpec)
+      const spec = parseReportInput(rawSpec)
       if (!spec.ok) return refused(spec.code)
       // 写入侧校验先于落库：词表里没有的指标 / 未接入源 / 不可加指标画线 ⇒ 拒，不建行。
       const invalid = await validateSpec(deps, spec.spec)
@@ -161,7 +161,7 @@ export const reportTools: McpToolGroup = {
     // revise_report_spec（NAMES 判定后唯一剩下的工具）
     const parsed = ReviseArgs.safeParse(args)
     if (!parsed.success) return refused('INVALID_BODY')
-    const spec = parseReportSpec(parsed.data.spec)
+    const spec = parseReportInput(parsed.data.spec)
     if (!spec.ok) return refused(spec.code)
     const { id } = parsed.data
     // 与 HTTP 面**同 key** 的对象锁：本流程是「先读行分流 → 条件 UPDATE」，

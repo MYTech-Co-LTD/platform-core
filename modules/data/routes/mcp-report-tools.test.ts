@@ -324,6 +324,22 @@ describePg('报表工具面（能提、不能发）', () => {
     expect(out).toEqual({ status: 'refused', error: 'AI_TEXT_REQUIRES_PERIOD' })
   })
 
+  it('IR v2：propose_report 接受 v2（扁平化存储），get_report_spec 回 v1 panels', async () => {
+    const out = await call('propose_report', {
+      title: 'IR2 提报',
+      spec: {
+        ir: 2, period: { mode: 'last_7_days' },
+        datasets: [{ key: 's', metricId: NET_ID, dims: ['bizday'] }],
+        blocks: [{ type: 'table', dataset: 's', title: '按日' }],
+      },
+    })
+    expect(out.status).toBe('ok')
+    const got = await call('get_report_spec', { id: out.id })
+    const spec = got.spec as { ir?: unknown; panels: Array<{ chart: string; metricId: string }> }
+    expect(spec.ir).toBeUndefined()
+    expect(spec.panels[0]).toMatchObject({ chart: 'table', metricId: NET_ID })
+  })
+
   it('模板模式：list_reports 带模板；propose 用 templateId+values 建出报表', async () => {
     const listed = await call('list_reports')
     const templates = listed.templates as Array<{ id: string; slots: Array<{ key: string }> }>
