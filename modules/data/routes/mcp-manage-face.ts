@@ -112,7 +112,7 @@ const METRIC_FACE: readonly ManageFaceTool[] = [
 
 const REPORT_FACE: readonly ManageFaceTool[] = [
   faceOf('report', 'list_reports', false, {
-    description: '列出本租户已有报表（标题 / 渲染器 / 页门 / 版本 / 面板数 / 已发布版本 / 是否有未发布改动）。**提议新报表前先调它查重**。',
+    description: '列出本租户已有报表（标题 / 渲染器 / 页门 / 版本 / 面板数 / 已发布版本 / 是否有未发布改动），以及可用报表模板与槽位。**提议新报表前先调它查重、看模板**。',
     inputSchema: { type: 'object', properties: {}, required: [] },
   }),
   faceOf('report', 'get_report_spec', false, {
@@ -126,15 +126,17 @@ const REPORT_FACE: readonly ManageFaceTool[] = [
       '图型支持 line / bar / table / kpi / text / ai_text。ai_text = 观看时按当前期间服务端生成的',
       '分析文本：focus=overview（结论/异常/行动）、focus=root_cause（在事实包之外跑确定性',
       '下钻/配方探针，输出「根因」段）；不写 content；必须与至少一个数据面板同报，且报表要带',
-      'period。**标题不能与已有报表重名**（重名会被拒，不会覆盖）。',
+      'period。**标题不能与已有报表重名**（重名会被拒，不会覆盖）。也可用模板模式：`templateId` + `values`（槽位→metricId）替代 `spec`。',
     ].join(''),
     inputSchema: {
       type: 'object',
       properties: {
         title: { type: 'string', description: '报表标题（不得与已有报表重名）' },
-        spec: { type: 'object', description: '声明式规格：{ panels: [{ chart, title, metricId, dims, args, span }] }' },
+        spec: { type: 'object', description: '声明式规格（与 templateId 二选一）' },
+        templateId: { type: 'string', description: '模板 id（取自 list_reports.templates）' },
+        values: { type: 'object', description: '槽位键 → metricId' },
       },
-      required: ['title', 'spec'],
+      required: ['title'],
     },
   }),
   faceOf('report', 'revise_report_spec', false, {

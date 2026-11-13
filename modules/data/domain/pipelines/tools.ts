@@ -78,7 +78,7 @@ export const PIPELINE_TOOLS: readonly PipelineToolMeta[] = [
   },
   {
     name: 'run_pipeline_sandbox', group: 'pipeline', title: '沙箱试跑（校验 + 执行）',
-    description: '对一份管线草案先做三道校验——结构、组件策略（只允许 xf/src/snk/qa/ctl 族；code.* 与 ctl.foreach 一律拒）、沙箱写入面（湖写入的 key 必须以 __sandbox/ 开头、本地落盘必须在 /workspace/logs/sandbox/ 下、不得含 webhook 出口）；通过后在沙箱 console 里**真跑一次**（同步等待到跑完）。默认档不带任何生产凭据（源端只能是公开/无鉴权端点）。结果 status：ok / failed（管线跑了但失败，看 error）/ refused + reason=engine_parse_error（引擎不认这份草案，一个节点都没跑，看 error 原话）/ unknown + reason=sandbox_run_timeout（到了等待上限、**不知道**终态；引擎侧仍在跑，用 runId 继续追）/ unknown + reason=sandbox_unreachable（执行面不可达）/ not_executed（本部署没接执行面）。',
+    description: '对管线草案做三道校验（结构 / 组件策略 / 沙箱写入面），通过后在沙箱 console 真跑一次（同步等待）。默认不带生产凭据。status：ok / failed（看 error）/ refused（engine_parse_error）/ unknown（sandbox_run_timeout 用 runId 继续追，或 sandbox_unreachable）/ not_executed（本部署没接执行面）。',
     inputSchema: {
       type: 'object',
       properties: {
@@ -120,7 +120,7 @@ export const PIPELINE_TOOLS: readonly PipelineToolMeta[] = [
   },
   {
     name: 'apply_pipeline_proposal', group: 'pipeline', title: '提案应用：落盘并开 draft PR',
-    description: '把 propose_* 的回包原样回传，经 GitHub API 落到提案分支并开 **draft PR**（每文件一个 commit；body 带 downstream 清单与 validation 结论）。三道前置：目标文件与基线不同 ⇒ 拒绝并回当前内容摘要（不自动合并）；piece 路径白名单——contracts/ 或 deploy/duckle/console/pipelines/ 下且为 .json，或精确 dbt/semantics/l1_metrics.yml（YAML），或 dbt/tests/ 下 .sql（audit test）；内容重校验不过 ⇒ 拒绝。本服务未配 DATA_MCP_GITHUB_TOKEN 时回 not_executed（不生效）；写总闸关闭时整个工具不可用。',
+    description: '把 propose_* 回包原样回传，经 GitHub 落到提案分支并开 draft PR（每文件一个 commit）。前置：目标文件与基线不同 ⇒ 拒；路径白名单（contracts/、console/pipelines/*.json、l1_metrics.yml、dbt/tests/*.sql）；内容重校验不过 ⇒ 拒。未配 token ⇒ not_executed；写总闸关闭 ⇒ 工具不可用。',
     inputSchema: {
       type: 'object',
       properties: { proposal: { type: 'object', description: 'propose_pipeline_change / propose_contract_change 的完整回包（原样回传，不要改写）' } },
@@ -130,14 +130,14 @@ export const PIPELINE_TOOLS: readonly PipelineToolMeta[] = [
   },
   {
     name: 'propose_metric_declaration', group: 'pipeline', title: '提案：L1 指标声明',
-    description: '把一条 L1 指标声明（可从私有测度/候选升级而来）组装成 dbt/semantics/l1_metrics.yml 的**全量文件草案**（新条目按 name 字典序插进 metrics[]，其余内容逐字保留）+ 可选对账 test 草案（auditSql 原文）。只产出、不落盘、不开 PR。同名指标已存在 ⇒ 修改模式（definition 必须变；输入不管的键从原条目带过）。新指标缺 auditSql 不拒——PR 合并前 gate ⑦（audit test）会红，draft PR 带红是预期。',
+    description: '把 L1 指标声明组装成 l1_metrics.yml 全量草案（按 name 字典序插入，其余逐字保留）+ 可选对账 test。只产出、不落盘、不开 PR。同名 ⇒ 修改模式（definition 必须变）。缺 auditSql 不拒：合并前 gate ⑦ 会红，draft PR 带红是预期。',
     inputSchema: {
       type: 'object',
       properties: {
-        name: { type: 'string', description: '指标名：`<源>:<业务域>:<指标>` 三段小写蛇形（如 lemeng:retail:net_sales）' },
+        name: { type: 'string', description: '指标名 `<源>:<业务域>:<指标>`，三段小写蛇形' },
         label: { type: 'string', description: '人读名字' },
-        definition: { type: 'string', description: '口径的逐字定义（单行；折叠排版由工具处理）' },
-        expression: { type: 'string', description: 'sum|avg|min|max|count[ distinct](relation.column)——与 ratio 互斥' },
+        definition: { type: 'string', description: '口径逐字定义（单行）' },
+        expression: { type: 'string', description: 'sum/avg/min/max/count(distinct)(relation.column)；与 ratio 互斥' },
         ratio: { type: 'object', properties: { numerator: { type: 'string' }, denominator: { type: 'string' } }, required: ['numerator', 'denominator'], description: '率类声明（分母自动包 nullif）——与 expression 互斥' },
         grain: { type: 'array', items: { type: 'string' }, description: '可聚合维度清单（非空）' },
         owner: { type: 'string', description: '口径负责人' },
@@ -146,8 +146,8 @@ export const PIPELINE_TOOLS: readonly PipelineToolMeta[] = [
         freshnessSlaDays: { type: 'integer', minimum: 0, description: '新鲜度 SLA 承诺天数（非负整数）' },
         entity: { type: 'string', description: '选填：顶层 entities: 里已声明的实体名' },
         synonyms: { type: 'array', items: { type: 'string' }, description: '选填：问数入口的同义说法' },
-        auditSql: { type: 'string', description: '选填：对账 singular test 原文；缺省时 downstream 点名 required，PR 合并前 gate ⑦ 会红' },
-        rationale: { type: 'string', description: '为什么提（入审计与提案摘要）' },
+        auditSql: { type: 'string', description: '选填：对账 test 原文；缺省 ⇒ downstream required' },
+        rationale: { type: 'string', description: '提案理由（入审计）' },
       },
       required: ['name', 'label', 'definition', 'grain', 'owner', 'tier', 'source', 'freshnessSlaDays', 'rationale'],
     },
