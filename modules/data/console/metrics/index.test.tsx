@@ -112,97 +112,22 @@ describe('指标管理页 · 候选指标入口（#1953 四期）', () => {
 })
 
 describe('指标管理页', () => {
-  it('列出两层：L1 标「平台（只读）」且不给删改，L2 给编辑/删除', async () => {
+  it('列出两层：L1 标「平台（只读）」、L2 标「本租户派生」；行内动作只剩只读的「变更历史」', async () => {
     renderPage()
     await waitFor(() => expect(screen.getByText('lemeng:retail:net_sales')).toBeInTheDocument())
 
     expect(screen.getAllByText('平台（只读）').length).toBeGreaterThan(0)
     expect(screen.getAllByText('本租户派生').length).toBeGreaterThan(0)
-    // L1 行的 ⋯ 菜单只有只读动作（覆盖口径 / 变更历史），没有编辑/删除
+    // P4 人面收口：两层菜单都只剩「变更历史」，写入口（覆盖口径/编辑/元数据/删除）都不在
     openRowMenu('lemeng:retail:net_sales')
-    expect(await screen.findByRole('menuitem', { name: '覆盖口径' })).toBeInTheDocument()
-    expect(screen.queryByRole('menuitem', { name: '编辑' })).toBeNull()
-    expect(screen.queryByRole('menuitem', { name: '删除' })).toBeNull()
+    expect((await screen.findAllByRole('menuitem', { name: '变更历史' })).length).toBeGreaterThan(0)
+    expect(screen.queryByRole('menuitem', { name: '覆盖口径' })).toBeNull()
     fireEvent.keyDown(document.body, { key: 'Escape' })
-    // L2 行给编辑/元数据/删除
     openRowMenu('xiongmao:net_sales')
-    expect(await screen.findByRole('menuitem', { name: '编辑' })).toBeInTheDocument()
-    expect(screen.getByRole('menuitem', { name: '删除' })).toBeInTheDocument()
-  })
-
-  it('★ 编辑保存的 body 是结构化 L2 声明：只含 baseMetric/op/别名/维度，**不含任何 SQL 字段**', async () => {
-    renderPage()
-    await waitFor(() => expect(screen.getByText('xiongmao:net_sales')).toBeInTheDocument())
-    openRowMenu('xiongmao:net_sales')
-    await clickMenuItem('编辑')
-
-    const card = (await screen.findByText('编辑 xiongmao:net_sales')).closest('.ant-card') as HTMLElement
-    // 编辑态不预填基底（编译产物单向：select_sql 已烘进过滤与维度）⇒ 手动选一条 L1
-    fireEvent.mouseDown(within(card).getByRole('combobox'))
-    fireEvent.click(await screen.findByTitle('lemeng:retail:net_sales（净销售额）'))
-
-    // 打开维度裁剪并选一个维度：组合框顺序 = [基准指标, 可见维度]
-    fireEvent.click(within(card).getByRole('switch'))
-    await waitFor(() => expect(within(card).getByText(/可见维度（不选/)).toBeInTheDocument())
-    const combos = within(card).getAllByRole('combobox')
-    fireEvent.mouseDown(combos[combos.length - 1])
-    fireEvent.click(await screen.findByTitle('system_book'))
-
-    fireEvent.click(button('保存'))
-
-    await waitFor(() => {
-      const put = calls.find((c) => c.method === 'PUT')
-      expect(put, '没有发出 PUT').toBeTruthy()
-      expect(put?.url).toContain('/metrics/xiongmao:net_sales')
-      expect(put?.body).toMatchObject({
-        id: 'xiongmao:net_sales',
-        baseMetric: 'lemeng:retail:net_sales',
-        op: { kind: 'refine' },
-        alias: '熊喵净销售',
-        visibility: { dims: ['system_book'] },
-      })
-      // ★ 关键断言：结构化声明里**没有**自由 SQL 面
-      const body = put?.body as Record<string, unknown>
-      for (const forbidden of ['selectSql', 'subjectColumn', 'groupBy', 'source', 'params']) {
-        expect(body[forbidden], `提交体里出现了 ${forbidden} ⇒ UI 又能写自由 SQL 了`).toBeUndefined()
-      }
-    })
-  })
-
-  it('别名留空 ⇒ 不带 alias 字段（服务端沿用平台标题；空串会被 zod 的 min(1) 判成非法）', async () => {
-    renderPage()
-    await waitFor(() => expect(screen.getByText('xiongmao:net_sales')).toBeInTheDocument())
-    openRowMenu('xiongmao:net_sales')
-    await clickMenuItem('编辑')
-
-    const card = (await screen.findByText('编辑 xiongmao:net_sales')).closest('.ant-card') as HTMLElement
-    fireEvent.mouseDown(within(card).getByRole('combobox'))
-    fireEvent.click(await screen.findByTitle('lemeng:retail:net_sales（净销售额）'))
-    fireEvent.change(within(card).getByPlaceholderText('别名（可选；不填则沿用平台指标的标题）'), {
-      target: { value: '' },
-    })
-    fireEvent.click(button('保存'))
-
-    await waitFor(() => {
-      const put = calls.find((c) => c.method === 'PUT')
-      expect(put?.body).toMatchObject({ id: 'xiongmao:net_sales', baseMetric: 'lemeng:retail:net_sales' })
-      expect((put?.body as Record<string, unknown>).alias).toBeUndefined()
-      // 未裁剪维度 ⇒ 不带 visibility（= 继承平台指标的全部维度，而不是「零维度」）
-      expect((put?.body as Record<string, unknown>).visibility).toBeUndefined()
-    })
-  })
-
-  it('L2 行的删除走 DELETE（L1 行没有删除入口）', async () => {
-    renderPage()
-    await waitFor(() => expect(screen.getByText('xiongmao:net_sales')).toBeInTheDocument())
-    openRowMenu('xiongmao:net_sales')
-    await clickMenuItem('删除')
-    // 确认按钮的文案由组件**显式**给定（okText="确认删除"）：Popconfirm 的默认 okText 随 locale
-    // 漂（未配 zh_CN 时是 "OK"），删除是不可逆动作，它的确认面代码里钉死更好
-    fireEvent.click(await screen.findByRole('button', { name: /^确认删除$/ }))
-    await waitFor(() => {
-      expect(calls.some((c) => c.method === 'DELETE' && c.url.endsWith('/metrics/xiongmao:net_sales'))).toBe(true)
-    })
+    expect((await screen.findAllByRole('menuitem', { name: '变更历史' })).length).toBeGreaterThan(0)
+    expect(screen.queryByRole('menuitem', { name: '编辑' })).toBeNull()
+    expect(screen.queryByRole('menuitem', { name: '元数据' })).toBeNull()
+    expect(screen.queryByRole('menuitem', { name: '删除' })).toBeNull()
   })
 
   it('★ 更新列：L2 显示「人 + v 版本」，L1 显示「平台物化」', async () => {
@@ -250,7 +175,11 @@ describe('指标管理页', () => {
       expect(screen.getAllByRole('button', { name: '更多操作' })).toHaveLength(1)
       expect(screen.getByText('只读')).toBeInTheDocument()
       fireEvent.click(screen.getByRole('button', { name: '更多操作' }))
-      expect(await screen.findByText('删除指标')).toBeInTheDocument()
+      // P4：移动面板同样只剩只读动作
+      expect(await screen.findByText('变更历史')).toBeInTheDocument()
+      expect(screen.queryByText('删除指标')).toBeNull()
+      expect(screen.queryByText('编辑')).toBeNull()
+      expect(screen.queryByText('元数据')).toBeNull()
     } finally {
       vi.unstubAllGlobals()
     }
@@ -279,47 +208,42 @@ describe('指标管理页', () => {
     // 拉的是本条的审计（不是 /metrics/all）
     expect(calls.some((c) => c.url.includes('/metrics/xiongmao:net_sales/audit'))).toBe(true)
   })
-  // ── W8：全额声明 / 覆盖平台口径 ────────────────────────────────────────────────
-  it('W8：平台行可「覆盖口径」，保存草稿点 → POST override（name/grain 预填自 L1）', async () => {
-    renderPage()
-    await screen.findByText('lemeng:retail:net_sales')
-    openRowMenu('lemeng:retail:net_sales')
-    await clickMenuItem('覆盖口径')
-    await screen.findByText(/覆盖平台口径：lemeng:retail:net_sales/)
-    const dialogs = screen.getAllByRole('dialog')
-    const dialog = dialogs[dialogs.length - 1]!
-    expect(within(dialog).getByText(/覆盖平台口径：lemeng:retail:net_sales/)).toBeInTheDocument()
-    // name 锁死
-    expect(within(dialog).getByDisplayValue('lemeng:retail:net_sales')).toBeDisabled()
-    fireEvent.click(within(dialog).getByRole('button', { name: /保\s*存\s*草\s*稿/ }))
-    await waitFor(() => {
-      const c = calls.find((x) => x.url.includes('/metrics/lemeng:retail:net_sales/override'))
-      expect(c?.method).toBe('POST')
-      expect((c?.body as { declaration: { name: string; grain: string[] } }).declaration.name)
-        .toBe('lemeng:retail:net_sales')
-      expect((c?.body as { declaration: { grain: string[] } }).declaration.grain)
-        .toEqual(['system_book', 'bizday'])
-    })
-  })
-
-  it('★ 人不再手动新建指标/声明：两个新建入口都已移除，页面改为指向 agent；决策面（编辑/覆盖口径）保留', async () => {
+  // ── P4 人面收口：写入口全删，读面/决策面保留 ────────────────────────────────────
+  it('★ 人面写入口全部移除：行菜单 / 详情抽屉 / 移动面板只剩「变更历史」，说明指向 agent 提案 → 待核对', async () => {
     renderPage()
     await screen.findByText('lemeng:retail:net_sales')
 
-    // 实现面：新建入口必须不存在（不是置灰——留着按钮就等于留着「手填 id/表达式」的风险面）
+    // 顶部说明改为「agent 提案 → 待核对页采纳」（P4 Task 2 文案）
+    expect(screen.getByText(/指标变更一律由 agent 提案（企微\/MCP）/)).toBeInTheDocument()
+    expect(screen.getByText(/待核对/)).toBeInTheDocument()
+    // 新建入口必须不存在（不是置灰——留着按钮就等于留着「手填 id/表达式」的风险面）
     expect(screen.queryByText('新建派生指标')).toBeNull()
     expect(screen.queryByText(/新建声明/)).toBeNull()
     // 常驻教程已删（#2058）：来源说明只在空态出现——有数据时不占版面
     expect(screen.queryByText(/指标由 agent 创建/)).toBeNull()
 
-    // 决策面保留：覆盖平台口径（L1）/ 编辑既有 L2 仍在 ⋯ 菜单里
-    openRowMenu('lemeng:retail:net_sales')
-    expect(await screen.findByRole('menuitem', { name: '覆盖口径' })).toBeInTheDocument()
+    // L1 详情抽屉：覆盖口径入口已删；只读的变更历史还在
+    const l1Row = screen.getAllByText('lemeng:retail:net_sales')[0]!.closest('tr')!
+    fireEvent.click(within(l1Row).getByRole('button', { name: /^详\s*情$/ }))
+    let drawer = screen.getAllByRole('dialog').at(-1)!
+    expect(await within(drawer).findByRole('button', { name: /^变\s*更\s*历\s*史$/ })).toBeInTheDocument()
+    expect(within(drawer).queryByRole('button', { name: /^覆\s*盖\s*口\s*径$/ })).toBeNull()
     fireEvent.keyDown(document.body, { key: 'Escape' })
-    openRowMenu('xiongmao:net_sales')
-    expect(await screen.findByRole('menuitem', { name: '编辑' })).toBeInTheDocument()
+
+    // L2 详情抽屉：编辑 / 元数据 / 删除三个按钮都不在
+    const l2Row = screen.getAllByText('xiongmao:net_sales')[0]!.closest('tr')!
+    fireEvent.click(within(l2Row).getByRole('button', { name: /^详\s*情$/ }))
+    drawer = screen.getAllByRole('dialog').at(-1)!
+    expect(await within(drawer).findByRole('button', { name: /^变\s*更\s*历\s*史$/ })).toBeInTheDocument()
+    expect(within(drawer).queryByRole('button', { name: /^编\s*辑$/ })).toBeNull()
+    expect(within(drawer).queryByRole('button', { name: /^元\s*数\s*据$/ })).toBeNull()
+    expect(within(drawer).queryByRole('button', { name: /^删\s*除$/ })).toBeNull()
+
+    // KEEP 的读面动作仍在
+    expect(screen.getByRole('button', { name: /^使\s*用\s*统\s*计$/ })).toBeInTheDocument()
   })
 
+  // ── W8：覆盖清单（KEEP：两步决策流的确认步）────────────────────────────────────
   it('W8：覆盖清单显示草稿，确认启用 → POST confirm；删除 → DELETE override', async () => {
     OVERRIDES = [{ id: 'lemeng:retail:net_sales', title: '本租户口径', certified: 'draft',
       selectSql: 'select sum(x) as value from t', updatedBy: 'u', version: 1, updatedAt: null }]
