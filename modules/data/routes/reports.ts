@@ -1143,7 +1143,9 @@ export function registerReports(r: ModuleHono, ctx: RouteCtx): void {
     })
     // 门的 issue 是 `{ reason, panelIndex, metricId? }[]`，而 `publishVersion` 回包的
     // `warnings` 是发布 lint 的 `LintIssue[]`——**不合并两种形状**（评审 Minor）。门自己的
-    // 「判不了」走独立字段 `scopeIssues`（P6 Task 1）：它**不阻断发布**，只让人面/巡检看得见。
+    // 「判不了」走独立字段 `scopeIssues`（P6 Task 1）：它是**诊断字段**，附在失败路径
+    // （400/409）回包上（issue 本身不参与 409 判定）；200 路径只有「门读完目录、
+    // publishVersion 复核前指标恰好出现」的目录竞态才可能带它。
     const scopeIssues = gate?.issues ?? []
     if (gate !== null && gate.panels.length > 0) {
       return c.json({

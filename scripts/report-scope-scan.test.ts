@@ -6,7 +6,7 @@
 //      IS NULL` 会同时造成漏判（快照门非 null 的已发布行）与误判（没有线上内容的草稿行）；
 //   ② 判据输入**取快照还是取行**：platform 行的行上是草稿/下次发布的门，线上是 `report_versions`
 //      快照；取错就判错对象。
-// 另加 formatReport 的干净/违规两态（job 判红只看退出码，退出码由这两态推出）。
+// 另加 formatReport 的三态（干净 / 违规 / issue；job 判红只看退出码，退出码由这三态推出）。
 import { createRequire } from 'node:module'
 import { afterAll, beforeAll, describe, expect, it } from 'vitest'
 // 迁移引导与 modules/data 的测试同源（不另写一份 runMigrations）：

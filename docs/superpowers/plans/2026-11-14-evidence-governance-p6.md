@@ -38,9 +38,9 @@
 **语义：**
 1. `reportScopeViolations` 返回 `{ panels: [...], issues: Array<{ reason: 'metric_unknown' | 'audience_unbounded' | ..., panelIndex, metricId? }> }`——把 P5 里「目录缺失只发 warning」的形态显式成 `issues`（判不了 ≠ 干净）。
 2. 巡检：`violations` 与 `issues` **都判红**（exit 1），输出分两段（`✗ [violation]` / `⚠ [issue]`），文档同步改回「有漂移就 exit 1」。
-3. 发布行为**不变**：issues 不阻断发布（P5 语义），只在回包 `scopeIssues` 里可见。
+3. 发布行为**不变**：门的 issue 不参与 409 判定；`scopeIssues` 是**失败路径（400/409）的诊断字段**（200 仅目录竞态可能出现）。
 
-- [ ] 失败测试：目录缺失的指标 ⇒ 发布 200 + scopeIssues 含 metric_unknown；巡检对该报表 exit 1 且输出 `[issue]` 行；干净报表 exit 0。
+- [x] 失败测试：目录缺失 ⇒ 发布路径 400 且回包带 scopeIssues（诊断位）；巡检读已发布快照仍能判红 `[issue]`；干净报表 exit 0。
 - [ ] RED → GREEN → Commit `feat(data): 发布门结果分类+巡检按 issue 判红（P6 Task 1）`。
 
 ---

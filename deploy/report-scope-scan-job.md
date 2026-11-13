@@ -19,8 +19,10 @@
 - `issues`：**判不了**——面板指标在词表里查不到（归档/删除/未同步），或 Metabase 无面板指标
   无法判定。判不了 ≠ 干净：巡检对它同样 **exit 1**，输出独立的 `⚠ [issue]` 段。
 
-发布门本身**不**因 issue 返回 409（P5 语义：发布放行、渲染 fail-closed、巡检告警）；两类面
-读同一份 `ReportScopeIssue[]`，只是动作不同。
+发布门的 issue **不参与 409 判定**（只有 `panels` 违规才 409）。`scopeIssues` 是**诊断字段**，
+实际附在失败路径（400/409）回包上；`200` 路径只有在「门读完目录、`publishVersion` 复核前指标
+恰好出现」（目录竞态）时才可能带它——**不要**把「发布 200 + scopeIssues」当验收面。巡检读的是
+已发布快照，仍按同一份 `ReportScopeIssue[]` 判红。
 
 ## 命令
 
@@ -190,7 +192,8 @@ MCP get_jobs_by_key(key=<key>) / get_jobs_by_key_runs(key=<key>)
   修法由人按上节 runbook 执行（改草稿 → 重新发布）。
 - **Metabase 报表**：无面板指标可判（spec §9.2 明确做不到面板级）⇒ 只计数，不判红。
 - **归档/删除的指标**：目录里查不到 ⇒ `⚠ [issue] [metric_unknown]`，**exit 1**（P6 Task 1）。
-  发布门对同一形态仍放行（不因 unknown 返回 409）——两边读同一份 `issues`，动作不同。
+  发布门对同一形态**不产生 409 判定**；`scopeIssues` 是失败路径（400/409）的诊断字段
+  （200 仅目录竞态可能出现），巡检读已发布快照仍判红——两边共用同一份 `issues` 形状。
 - **平台行草稿**：不在巡检范围（发布门负责，草稿允许中间态）。
 - **未登记 org**：巡检面 = `platform.tenant` ∪ `data.reports` 的 org；未登记且有已发布平台报表 ⇒
   记 `tenant_not_registered` 报错（不静默漏判）。
