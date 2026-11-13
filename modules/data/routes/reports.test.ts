@@ -212,7 +212,7 @@ function gatedApp(identity: ReturnType<typeof makeIdentity>, pool: Pool | null) 
 }
 
 describe('报表面声明（不需要数据库）', () => {
-  it('报表端点都声明了（api.internal 全模块共 76 条），且页门分档：管理动作=data:manage，观看面=data:query', () => {
+  it('报表端点都声明了（api.internal 全模块共 77 条），且页门分档：管理动作=data:manage，观看面=data:query', () => {
     const declared = new Map(
       (mod.manifest.api?.internal ?? []).map((d) => [`${d.method} ${d.path}`, d.scope]),
     )
@@ -236,11 +236,11 @@ describe('报表面声明（不需要数据库）', () => {
     // 与 scope 管理面同档 data:manage）。
     // +7：指标变更单（Wave 5 P0，spec 2026-11-12 §6/§7：提交/列表/详情/重跑试算/采纳/驳回/撤回，
     // 全部 data:manage——采纳/驳回的**会话通道闸在路由内**，manifest 页门管不了通道）。
-    // +2：计算凭证（R1：POST /reports/:id/receipt + /receipt/export，观看面 data:query；
-    // 页门/快照门/草稿分档与 narrative 共用 loadViewableSpec）。
+    // +3：计算凭证（R1：POST /reports/:id/receipt + /receipt/export + /receipt/detail，
+    // 观看面 data:query；页门/快照门/草稿分档与 narrative 共用 loadViewableSpec）。
     // 穷举口径（同 module.test.ts 的表清单）——别处加端点而漏改这里会红，
     // 逼着声明与测试一起动。
-    expect(declared).toHaveLength(76)
+    expect(declared).toHaveLength(77)
     // 指标变更单：七条全 data:manage；采纳/驳回的会话限定是路由内的第二道闸（不在这张表上）
     for (const p of [
       'POST /metric-changes', 'GET /metric-changes', 'GET /metric-changes/:id',
@@ -320,6 +320,7 @@ describe('报表面声明（不需要数据库）', () => {
     // 计算凭证：观看面；更细的页门/快照门/草稿分档在 handler（loadViewableSpec）
     expect(declared.get('POST /reports/:id/receipt')).toBe('data:query')
     expect(declared.get('POST /reports/:id/receipt/export')).toBe('data:query')
+    expect(declared.get('POST /reports/:id/receipt/detail')).toBe('data:query')
   })
 
   it('★ 页门负测：只有 data:query ⇒ 管理清单（跨资产视图）403', async () => {
@@ -2949,6 +2950,17 @@ describePg('报表路由（需要 DATABASE_URL）', () => {
       expect(csv.split('\n')[0]).toBe('bizday,value')
       expect(csv).toContain('2026-10-01,1000')
       expect(csv).toContain('2026-10-02,234')
+    })
+
+    it('明细导出：指标未声明下钻 ⇒ 409 DETAIL_NOT_AVAILABLE（不是空 CSV）', async () => {
+      const id = await createPublishedReceipt(receiptShell(adminIdentity()))
+      const app = receiptShell(viewerIdentity())
+      const res = await app.request(`/reports/${id}/receipt/detail`, {
+        method: 'POST', headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ panelIndex: 0, period: RECEIPT_PERIOD }),
+      })
+      expect(res.status).toBe(409)
+      expect(await res.json()).toMatchObject({ error: 'DETAIL_NOT_AVAILABLE' })
     })
 
     it('★ 用户输入自己的数 ⇒ 差额 + 用按日组成解释（少算首日）', async () => {

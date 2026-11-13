@@ -207,6 +207,7 @@ api:
     #    （loadViewableSpec），取数只经 runQuery（授权/掩码/审计同链）。导出同码。──
     - { method: POST,   path: /reports/:id/receipt,                   scope: data:query }
     - { method: POST,   path: /reports/:id/receipt/export,            scope: data:query }
+    - { method: POST,   path: /reports/:id/receipt/detail,            scope: data:query }
     # ── 数据范围 scope 管理面（spec 2026-11-10 §5.5；issue #1901）──
     # 全部 data:manage（授权变更是管理动作；运行期执法在 authorizeCore，这里只有配置面）。
     # 判定链在 domain/scope-admin.ts：selector 闭集 + 受控维表存在性校验（fail-closed，
