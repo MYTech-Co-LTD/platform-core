@@ -82,7 +82,7 @@
 | 项 | 现状证据 | 波次 |
 |---|---|---|
 | **P1 终审缓办（转 P2+）** | ① L1 label 撞名预检进 check-semantics（今天零冲突；sync catch 已带 pg detail）② 旧直写面（PUT/POST /metrics、override 直写、customize_metric——P4 退役）撞 title 索引=裸 500 无映射 ③ override 行 owner_dept 恒 null：接进 insertTenantDeclaration 归 P2 可见性波 ④ report 工具 mutating:false 不对称（若总闸应管报表提案需裁决）⑤ notify eventId 去重吞重建事件（修法：eventId 拼变更单 id）⑥ preview_failed 回包不带 issues 明细 | Wave 5 P2（接手逐条销） |
-| **P3 解析与澄清** | `search_catalog` 无 tie 检测（`toolbox/discovery.ts:77-91`） | Wave 5 P3 |
+| **P3 解析与澄清** | `search_catalog` 无 tie 检测（`toolbox/discovery.ts:77-91`）；信封无 dept/variantNote | **Wave 5 P3（计划：`2026-11-13-metric-ambiguity-p3.md`，4 任务）** |
 | **P4 写面收口** | `customize_metric` 仍直接写生效行（`mcp-metric-tools.ts:80`）；PC 指标页仍有编辑/元数据/覆盖/删除 | Wave 5 P4 |
 | **P5 报表 × 指标** | 发布无「受众 ⊆ 面板指标可见范围」校验；Metabase 只能整表级 | Wave 5 P5 |
 | **P6 证据与治理** | 声明类无对账证据接入；下线候选已有面（/metrics/usage）未接评审 | Wave 5 P6 |
@@ -190,3 +190,4 @@
 | 2026-11-13 | **Wave 5 P1 完成入账**（概念归属+同名互斥+缓办 6 条全销+override 档）；P1 终审缓办（L1 label 预检/旧直写面 500 边界/report 工具 mutating 不对称等）按裁决入 P2+ | PR #2058 + 部署 v293 容器实测；openship 取消 worker 挂死事故留档 openship-platform #34 |
 | 2026-11-13 | P2 计划出台（部门上下文+纯谓词+咽喉扩参+六面接线；组织树检查为前置门） | 取证：visibleMetrics 唯一咽喉、现网 57 行 owner_dept 全空 ⇒ 上线零行为变化 | 支 PR 见下 |
 | 2026-11-13 | **Wave 5 P2 完成入账**（指标可见性：前置门+纯谓词+咽喉扩参+13 点接线）；P2 终审缓办按裁决转 P3+ | PR #2062 + 部署 v294 容器实测（owned=0/57 零变化证明） |
+| 2026-11-13 | P3 计划出台（tie 检测+caliber 补全+第 5 条硬约束） | 取证：scoreOf 有序无名检测；envelope metric 段已在；shared.md 恰 4 行有行数断言；预算余量 192B 禁加描述 | 支 PR 见下 |
