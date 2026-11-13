@@ -145,7 +145,7 @@ export default function AdminRolesPage() {
   return (
     <ConsolePage
       title="角色"
-      description="角色是一包权限码：新建后点「编辑」勾选权限码与成员；成员的最终权限 = 所有角色的码之并。"
+      description="角色 = 一包权限码 + 一组成员。"
       extra={
         <Button type="primary" onClick={() => setCreating(true)}>
           新建角色

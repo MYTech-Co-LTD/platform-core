@@ -7,7 +7,7 @@
 import { useCallback, useEffect, useState } from 'react'
 import { useOutletContext } from 'react-router-dom'
 import {
-  Alert, Button, Card, Checkbox, Collapse, Drawer, Input, Modal, Popconfirm, Select, Space, Switch,
+  Alert, Button, Card, Checkbox, Drawer, Input, Modal, Popconfirm, Select, Space, Switch,
   Table, Tag, Typography, message,
 } from 'antd'
 import { apiGet, apiSend, ApiError } from '../lib/api'
@@ -203,73 +203,45 @@ export default function ScopesPage() {
 
   return (
     <Space orientation="vertical" size={16} style={{ width: '100%' }}>
-      {/* 用法说明（2026-11-12 真机反馈：管理员看得懂表，但不知道整体怎么用）：
-          这一段只讲「三步 + 两条判定规则」，不写实现细节。 */}
-      <Collapse
-        items={[{
-          key: 'how',
-          label: '怎么用：三步看清「谁能看什么」',
-          children: (
-            <Space orientation="vertical" size={8} style={{ width: '100%' }}>
-              <Typography.Text>
-                <b>① 建范围</b>：一条范围就是一个数据切片——品牌（账套）/ 门店（战区或区）/ 品类。
-                例如「门店|东部一区」= 东部一区下的所有门店。
-              </Typography.Text>
-              <Typography.Text>
-                <b>② 分配</b>：把范围发给「谁」。<b>部门是主路径</b>（人调岗自动跟随），
-                角色用于跨部门岗位，个人只作例外。部门行有「含下级部门」开关：
-                区级范围勾上（整个区生效），战区级范围取消勾选（只给战区总，区/店不继承）。
-              </Typography.Text>
-              <Typography.Text>
-                <b>③ 判定</b>：按人算。<b>同类型取并集</b>（部门给一区 + 个人给二区 = 两个区都能看）；
-                <b>三种类型缺一不可</b>（品牌、门店、品类任一没有 ⇒ 查询被拒，不是部分显示）。
-                没有门店范围的人看不到门店数据——这是默认拒绝，不是出错。
-              </Typography.Text>
-              <Typography.Text type="secondary">
-                排查「某人为什么看不见 / 看得太宽」：用下面的「试算」输入他的账号，直接看他最终拿到什么。
-              </Typography.Text>
-            </Space>
-          ),
-        }]}
-      />
-
-      <Card title="试算：输入一个账号，看他最终能看什么">
-        <Space wrap style={{ marginBottom: 12 }}>
-          <Input placeholder="用户名（Casdoor name / 企微 userid）" style={{ width: 260 }}
+      {/* 试算（保留）：它不是教程，是「输入账号 → 直接给出结果」的工具，
+          比任何说明文字更能回答「他为什么看不见」。 */}
+      <Card size="small">
+        <Space wrap>
+          <span style={{ color: '#9AA0A6', fontSize: 12 }}>试算</span>
+          <Input placeholder="账号（Casdoor name / 企微 userid）" style={{ width: 240 }}
                  value={pUser} onChange={(e) => setPUser(e.target.value)} />
-          <Input placeholder="角色（逗号分隔，可空）" style={{ width: 220 }}
+          <Input placeholder="角色（可空，逗号分隔）" style={{ width: 200 }}
                  value={pRoles} onChange={(e) => setPRoles(e.target.value)} />
-          <Button loading={previewing} onClick={() => void runPreview()}>预览</Button>
+          <Button loading={previewing} onClick={() => void runPreview()}>查看</Button>
         </Space>
-        {preview === null
-          ? <Typography.Text type="secondary">
-              填用户名后预览其有效品牌 / 门店 / 品类范围（只读，不改动任何配置）。
-              例：`caohongye`（东部一区的店员）应看到 品牌 + 东部一区 + 品类。
-            </Typography.Text>
-          : (
-            <Space orientation="vertical" size={4}>
-              <div>
-                命中范围：
-                {preview.granted.length === 0
-                  ? <Typography.Text type="warning"> 无（enforce 下该用户的数据查询会被拒绝）</Typography.Text>
-                  : preview.granted.map((g) => <Tag key={`${g.kind}:${g.name}`}>{g.name}</Tag>)}
-              </div>
-              <div>品牌：{preview.effective.brand.map((s, i) => <Tag key={i}>{selectorText('brand', s)}</Tag>)}</div>
-              <div>门店：{preview.effective.store.length === 0 ? <Tag color="warning">无</Tag>
-                : preview.effective.store.map((s, i) => <Tag key={i}>{selectorText('store', s)}</Tag>)}</div>
-              <div>品类：{preview.effective.category.map((s, i) => <Tag key={i}>{selectorText('category', s)}</Tag>)}</div>
-              {preview.effective.brand.length === 0 || preview.effective.store.length === 0 || preview.effective.category.length === 0
-                ? (
-                  <Typography.Text type="warning">
-                    结论：三项不全 ⇒ 在 enforce 下他的查询会被拒绝（原因码：
-                    {preview.effective.brand.length === 0 ? ' no_brand_scope' : ''}
-                    {preview.effective.store.length === 0 ? ' no_store_scope' : ''}
-                    {preview.effective.category.length === 0 ? ' no_category_scope' : ''}）。
-                  </Typography.Text>
-                )
-                : <Typography.Text type="success">结论：三项齐全，可以正常查数。</Typography.Text>}
+        {preview !== null && (
+          <Space orientation="vertical" size={4} style={{ marginTop: 12 }}>
+            <Space wrap>
+              <span style={{ color: '#9AA0A6', fontSize: 12 }}>命中</span>
+              {preview.granted.length === 0
+                ? <Tag>无</Tag>
+                : preview.granted.map((g) => <Tag key={`${g.kind}:${g.name}`}>{g.name}</Tag>)}
             </Space>
-          )}
+            <Space wrap><span style={{ color: '#9AA0A6', fontSize: 12 }}>品牌</span>
+              {preview.effective.brand.length === 0 ? <Tag color="warning">无</Tag>
+                : preview.effective.brand.map((s, i) => <Tag key={i}>{selectorText('brand', s)}</Tag>)}</Space>
+            <Space wrap><span style={{ color: '#9AA0A6', fontSize: 12 }}>门店</span>
+              {preview.effective.store.length === 0 ? <Tag color="warning">无</Tag>
+                : preview.effective.store.map((s, i) => <Tag key={i}>{selectorText('store', s)}</Tag>)}</Space>
+            <Space wrap><span style={{ color: '#9AA0A6', fontSize: 12 }}>品类</span>
+              {preview.effective.category.length === 0 ? <Tag color="warning">无</Tag>
+                : preview.effective.category.map((s, i) => <Tag key={i}>{selectorText('category', s)}</Tag>)}</Space>
+            <Typography.Text type={preview.effective.brand.length && preview.effective.store.length && preview.effective.category.length ? 'success' : 'warning'}>
+              {preview.effective.brand.length && preview.effective.store.length && preview.effective.category.length
+                ? '三项齐全，可以正常查数'
+                : `缺项 ⇒ 查询会被拒绝（${[
+                  preview.effective.brand.length === 0 ? '品牌' : '',
+                  preview.effective.store.length === 0 ? '门店' : '',
+                  preview.effective.category.length === 0 ? '品类' : '',
+                ].filter(Boolean).join('、')}）`}
+            </Typography.Text>
+          </Space>
+        )}
       </Card>
 
       <Card
@@ -292,9 +264,17 @@ export default function ScopesPage() {
             { title: '范围', render: (_: unknown, r) => selectorText(r.kind, r.selector) },
             {
               title: '分配', width: 90,
-              render: (_: unknown, r) => (
-                <Button size="small" onClick={() => openAssign(r)}>{r.assignments.length} 条</Button>
-              ),
+              render: (_: unknown, r) => {
+                const n = (t: string) => r.assignments.filter((a) => a.subjectType === t).length
+                const parts = [['部门', n('dept')], ['角色', n('role')], ['用户', n('user')]]
+                  .filter(([, v]) => (v as number) > 0)
+                  .map(([k, v]) => `${k} ${v}`)
+                return (
+                  <Button size="small" type="link" onClick={() => openAssign(r)}>
+                    {parts.length > 0 ? parts.join(' · ') : '未分配'}
+                  </Button>
+                )
+              },
             },
             {
               title: '操作', width: 150,

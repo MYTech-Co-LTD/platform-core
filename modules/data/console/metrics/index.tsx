@@ -289,7 +289,7 @@ export default function MetricsPage() {
 
   // ── 移动布局（<768px）：表格在手机上不可用 ⇒ 卡片列表（信息与桌面列等价 + 「更多」动作菜单）。
   const emptyText = rows.length === 0
-    ? '还没有指标。平台指标随数据面接入自动出现；本租户的新指标由 agent 创建。'
+    ? '还没有指标。平台指标随数据面接入自动出现；新指标在企微里对机器人说一声，或经 MCP 提交。'
     : '没有匹配的指标，试试清空搜索或切换筛选'
 
   const confirmRemove = (r: MetricRow) => {
@@ -430,8 +430,7 @@ export default function MetricsPage() {
         <Alert
           type="info"
           showIcon
-          message={`有 ${pendingCandidates}${pendingCandidates >= 200 ? '+' : ''} 个候选指标待采用`}
-          description="它们由源数据自动推导而来，采用后才会出现在下面的指标清单里。"
+          message={`${pendingCandidates}${pendingCandidates >= 200 ? '+' : ''} 个候选指标待采用`}
           action={<Button size="small" href="/console/data/candidates">去查看</Button>}
         />
       )}
@@ -454,15 +453,13 @@ export default function MetricsPage() {
         ))}
       </div>
 
-      <Space wrap>
+      {/* 常驻教程删掉了（#2058）：指标从哪来属于「第一次看见空列表」时才需要的信息，
+          放在空态里；有数据时不该占一整行文字。 */}
+      <div>
         <Button onClick={() => { if (usageDays === null) openUsage(30); else openUsage(usageDays) }}>
           使用统计
         </Button>
-        <Typography.Text type="secondary">
-          指标由 agent 创建：在企微里对机器人说要什么指标，或经 MCP 提交。
-          这里负责确认、标注与改口径——改动平台口径用行内「覆盖口径」（草稿需确认）。
-        </Typography.Text>
-      </Space>
+      </div>
 
       {isMobile ? (
         <div style={{ display: 'flex', gap: 8 }}>

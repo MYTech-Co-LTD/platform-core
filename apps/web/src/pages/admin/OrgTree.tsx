@@ -132,7 +132,7 @@ export default function AdminOrgTreePage() {
   return (
     <ConsolePage
       title="组织架构"
-      description="部门树同步自企微通讯录。点左侧部门筛人，点右侧「授角色」调整这个人能干什么；数据按部门可见也以这棵树为准（部门没同步到 = 挂不上）。"
+      description="部门树来自企微通讯录；右侧可授角色。"
       extra={
         <Input.Search
           placeholder="搜索姓名/账号"

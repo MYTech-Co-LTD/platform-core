@@ -259,7 +259,7 @@ describe('指标管理页', () => {
   it('★ 空清单（UX）：给「指标从哪来」的说明，而不是裸「暂无数据」', async () => {
     m.mockImplementation(async () => json({ metrics: [] }))
     renderPage()
-    expect(await screen.findByText('还没有指标。平台指标随数据面接入自动出现；本租户的新指标由 agent 创建。'))
+    expect(await screen.findByText('还没有指标。平台指标随数据面接入自动出现；新指标在企微里对机器人说一声，或经 MCP 提交。'))
       .toBeInTheDocument()
   })
 
@@ -309,8 +309,8 @@ describe('指标管理页', () => {
     // 实现面：新建入口必须不存在（不是置灰——留着按钮就等于留着「手填 id/表达式」的风险面）
     expect(screen.queryByText('新建派生指标')).toBeNull()
     expect(screen.queryByText(/新建声明/)).toBeNull()
-    // 页面上给出「指标从哪来」的答案，而不是让人找不到入口
-    expect(screen.getByText(/指标由 agent 创建/)).toBeInTheDocument()
+    // 常驻教程已删（#2058）：来源说明只在空态出现——有数据时不占版面
+    expect(screen.queryByText(/指标由 agent 创建/)).toBeNull()
 
     // 决策面保留：覆盖平台口径（L1）/ 编辑既有 L2 仍在 ⋯ 菜单里
     openRowMenu('lemeng:retail:net_sales')
