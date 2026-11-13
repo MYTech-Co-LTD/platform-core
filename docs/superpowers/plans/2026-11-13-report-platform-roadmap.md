@@ -203,7 +203,7 @@
 | R3 | 进行中 | 2026-11-13 | — | issue #2107 | 第一增量：**共享 RichText**（唯一实现，白名单语法，无 innerHTML；AiTextPanel 与 text 面板复用）+ `text` 面板 `format: plain|markdown`。待办：IR v2（datasets/blocks/shared filters）、6 组件、多页/打印、L2 语义内嵌 token |
 | R4 | 进行中 | 2026-11-13 | — | issue #2099 | 第一增量：`runQuery` 主计划/合计接入结果缓存（键 = SQL + 数据版本，仅真执行器启用，命中回包 `cached:true`）。**同请求内并发去重**已交付（`single-flight`，#2101；与缓存互补）。待办：跨面板查询合并（同一 metric+dims+窗口只发一次）、批量端点、p95 基线 |
 | R5 | 进行中 | 2026-11-13 | — | issue #2103 | 第一增量：**叙事运行台账**（048，每次尝试一行）+ `GET /reports/narrative-stats`（回退率/p95/按版本按天）+ **20 条叙事金标**进 unit。待办：console 面板 + 告警阈值、金标扩到模板必含段 |
-| R6 | 未开始 | — | — | — | — |
+| R6 | 进行中 | 2026-11-13 | — | issue #2110 | 第一增量：**发布前可见面预览**（`GET /reports/:id/publish-preview` + 发布 Modal 摘要/提示）。待办：发布队列与线上 commit 对照（需 OpenShip 控制面支持，另案）、30 天零访问归档、`report_versions` DB 级不可变 |
 
 **状态取值**：`未开始` / `进行中` / `已完成` / `部分完成(见偏离)` / `已取消(见变更记录)`。
 **偏离登记**：任何缩水、跳过、延后，写进「偏离与备注」列——不许静默丢。

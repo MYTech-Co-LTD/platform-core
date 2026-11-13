@@ -34,6 +34,7 @@ import type { StreamingChatModel } from '../domain/llm'
 import { buildFacts } from '../domain/report-facts'
 import { buildReportReceipt, exportDetailCsv, receiptCsv, type ReportReceipt } from '../domain/report-receipt'
 import { buildReportReview } from '../domain/report-review'
+import { summarizeExposure } from '../domain/publish-preview'
 import { compileTemplate, REPORT_TEMPLATES, templateById } from '../domain/report-templates'
 import { panelArgsOf } from '../domain/report-query'
 import type { QueryDeps } from '../domain/query-service'
@@ -942,6 +943,48 @@ export function registerReports(r: ModuleHono, ctx: RouteCtx): void {
   // 宿主投影的「本租户已接入源」。没投影（`undefined`）按「一个源都没接」处理——
   // 发布是写入动作，fail-closed：未接入源的指标宁可拒发布，也不上线（它的 `/query` 会 403）。
   // 写法是 `new Set(c.get(TENANT_SOURCES) ?? [])`（不抽 helper：各调用点一行，抽了要额外引 Context 类型）。
+
+  // 发布前「谁能看到」预览（R6）：发布是不可逆的可见面变化，点确认前先把门解释清楚。
+  // 只解释已配置的门（visibility/scope/dept/ACL），不枚举 Casdoor 成员（运行期解析，量可能很大）。
+  r.get('/reports/:id/publish-preview', async (c) => {
+    const requester = requesterOf(c)
+    if (requester === null) return c.json({ error: 'UNAUTHENTICATED' }, 403)
+    const id = reportIdOf(c.req.param('id'))
+    if (id === null) return c.json({ error: 'NOT_FOUND' }, 404)
+    const org = c.get('tenant').casdoor_org
+    const report = await getReport(ctx.pool, org, id)
+    if (report === null) return c.json({ error: 'NOT_FOUND' }, 404)
+    const denied = await denyUnlessCanEdit(c, ctx.pool, requester, org, id)
+    if (denied !== null) return denied
+    if (report.renderer !== 'platform') return c.json({ error: 'RENDERER_NOT_SELF_DRAWN' }, 409)
+    if (report.spec === null) return c.json({ error: 'NO_SPEC' }, 409)
+    const parsed = parseReportSpec(report.spec)
+    if (!parsed.ok) return c.json({ error: 'INVALID_SPEC', detail: parsed.code }, 400)
+    const catalog = await loadMergedCatalog(ctx.pool, org)
+    const scope = deriveRequiredScope(parsed.spec, catalog)
+    const acl = await loadAssetAcl(ctx.pool, org, id)
+    const exposure = summarizeExposure({
+      visibility: report.visibility,
+      requiredScope: scope.ok ? scope.requiredScope : null,
+      requiredDepts: report.requiredDepts ?? [],
+      acl,
+    })
+    return c.json({
+      report: {
+        id, title: report.title, version: report.version,
+        publishedVersion: report.publishedVersion,
+      },
+      gate: scope.ok
+        ? { requiredScope: scope.requiredScope }
+        : {
+            error: scope.reason,
+            detail: 'metricId' in scope ? scope.metricId : scope.scopes.join(','),
+          },
+      requiredDepts: report.requiredDepts ?? [],
+      acl: acl.map((a) => ({ subjectType: a.subjectType, subjectId: a.subjectId, relation: a.relation })),
+      exposure,
+    })
+  })
 
   r.post('/reports/:id/publish', async (c) => {
     const requester = requesterOf(c)

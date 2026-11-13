@@ -134,6 +134,10 @@ beforeEach(() => {
     // 顺序 matters：/reports/manage 与 /reports/:id/embed-url 都以 /reports 开头，长的先判
     if (url.endsWith('/reports/manage')) return json({ reports: editableRows() })
     if (/\/reports\/[^/]+\/embed-url$/.test(url)) return json({ url: 'https://mb.test/embed/abc' })
+    // 发布前可见面预览（R6）：给出合法形状，避免个别用例的兜底 `{}` 触发渲染分支。
+    if (/\/reports\/[^/]+\/publish-preview$/.test(url)) {
+      return json({ gate: { requiredScope: null }, exposure: { summary: '发布后可见：本租户所有持 data:query 的成员。', warnings: [] } })
+    }
     // 默认（非 owner）：观看清单行 canEdit=false —— 下面的双视图用例据此断言「无资产动作」
     if (url.endsWith('/reports')) return json({ reports: ROWS.filter((r) => r.requiredScope === null) })
     if (init?.method === 'PUT') return json({ ok: true })

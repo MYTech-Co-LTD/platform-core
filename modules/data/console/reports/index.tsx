@@ -25,7 +25,7 @@
 //     `PUT` 对 platform 行回 409 `USE_PUBLISH_ENDPOINT`）。
 import { useEffect, useRef, useState } from 'react'
 import { useOutletContext, useSearchParams } from 'react-router-dom'
-import { Button, Drawer, Dropdown, Input, Modal, Popconfirm, Segmented, Space, Table, Tag, Tooltip, Tree, Typography, message } from 'antd'
+import { Alert, Button, Drawer, Dropdown, Input, Modal, Popconfirm, Segmented, Space, Table, Tag, Tooltip, Tree, Typography, message } from 'antd'
 import { ApiError, apiGet, apiSend, messageOf } from '../lib/api'
 import { useIsMobile } from '../lib/useIsMobile'
 import SpecView from './SpecView'
@@ -202,6 +202,14 @@ export default function ReportsPage() {
   const [deptChecked, setDeptChecked] = useState<string[]>([])
   // 版本通路（platform 行）的三种面：发布备注 Modal / 版本历史抽屉 / 抽屉里的行快照。
   const [publishTarget, setPublishTarget] = useState<ReportRow | null>(null)
+  // 发布前可见面预览（R6）：打开发布 Modal 时拉一次，点确认前先看清「谁能看到」。
+  const [publishPreview, setPublishPreview] = useState<{
+    loading: boolean; error: string | null
+    data: {
+      exposure?: { summary: string; warnings: string[] }
+      gate?: { requiredScope?: string | null; error?: string }
+    } | null
+  } | null>(null)
   const [publishNote, setPublishNote] = useState('')
   const [versions, setVersions] = useState<{ row: ReportRow; rows: VersionRow[] } | null>(null)
   // 审阅面（R2）：草稿 diff / 说明书 / lint
@@ -209,6 +217,20 @@ export default function ReportsPage() {
     row: ReportRow; data: ReviewPayload | null; loading: boolean; error: string | null
   } | null>(null)
   const [messageApi, ctx] = message.useMessage()
+
+  useEffect(() => {
+    if (publishTarget === null) { setPublishPreview(null); return }
+    let alive = true
+    setPublishPreview({ loading: true, error: null, data: null })
+    apiGet(`/reports/${publishTarget.id}/publish-preview`)
+      .then((b) => {
+        if (alive) setPublishPreview({ loading: false, error: null, data: b as never })
+      })
+      .catch((e) => {
+        if (alive) setPublishPreview({ loading: false, error: messageOf(e), data: null })
+      })
+    return () => { alive = false }
+  }, [publishTarget])
 
   /**
    * 拉清单。**返回值 = 本次落地的行**（null = 失败）：回滚成功后要拿刷新后的行去换抽屉里的
@@ -1199,6 +1221,27 @@ export default function ReportsPage() {
         <Typography.Paragraph type="secondary">
           发布会对当前草稿生成不可变快照；独立链接从现在起展示这一版。发布备注可选（随版本永久留存）。
         </Typography.Paragraph>
+        {publishPreview === null ? null : publishPreview.loading ? (
+          <Typography.Text type="secondary">正在核对可见面…</Typography.Text>
+        ) : publishPreview.error !== null ? (
+          <Alert type="error" showIcon message={`可见面预览失败：${publishPreview.error}`} />
+        ) : publishPreview.data?.exposure === undefined ? null : (
+          <div style={{ marginBottom: 12 }}>
+            <Typography.Text strong>{publishPreview.data.exposure.summary}</Typography.Text>
+            {publishPreview.data.gate?.error === undefined ? null : (
+              <Alert
+                style={{ marginTop: 6 }} type="error" showIcon
+                message={`页门派生失败：${publishPreview.data.gate.error}`}
+              />
+            )}
+            {publishPreview.data.exposure.warnings.map((w) => (
+              <div key={w} style={{ marginTop: 4 }}>
+                <Tag color="orange">注意</Tag>
+                <Typography.Text style={{ fontSize: 13 }}>{w}</Typography.Text>
+              </div>
+            ))}
+          </div>
+        )}
         <Input value={publishNote} maxLength={200}
                onChange={(e) => setPublishNote(e.target.value)}
                placeholder="发布备注（可选）" />
