@@ -114,6 +114,22 @@ describePg('写路径的审计（#489）', () => {
     expect(rows[0]!.keyId).toBe(3)
   })
 
+  it('★ reveal 入审计快照（P6 Task 4 修复）：panel→report 翻转的前后态可读', async () => {
+    const id = 'ma_reveal_audit'
+    expect((await writeL2Declaration(deps(pool), ORG, id, { ...decl, alias: '审计 reveal' })).ok).toBe(true)
+    expect((await writeL2Declaration(deps(pool), ORG, id, { ...decl, alias: '审计 reveal' },
+      { ownership: { reveal: 'report' } })).ok).toBe(true)
+
+    const rows = await listMetricAudit(pool, ORG, id)
+    expect(rows.map((r) => r.action)).toEqual(['update', 'create'])
+    // 首建：列默认 panel（快照读的是落库真值，不是入参）
+    expect(rows[1]!.before).toBeNull()
+    expect(rows[1]!.after!.reveal).toBe('panel')
+    // 翻转：安全相关字段的「从什么到什么」必须能从审计直接读出
+    expect(rows[0]!.before!.reveal).toBe('panel')
+    expect(rows[0]!.after!.reveal).toBe('report')
+  })
+
   it('★ 审计与变更同生共死：审计写失败 ⇒ 行也必须回滚（不留半成品）', async () => {
     // userId=null 会让 metric_audit.user_id（not null）拒绝 ⇒ 整个事务回滚
     const broken = deps(pool, null as unknown as string)

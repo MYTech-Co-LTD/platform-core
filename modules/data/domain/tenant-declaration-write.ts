@@ -263,6 +263,8 @@ export async function createTenantDeclaration(
         selectSql: d.selectSql,
         groupBy: d.groupBy,
         params: d.params,
+        // 泄露策略（P6 Task 4 修复轮）：新建行的实际值；缺席 = 列默认 panel。
+        reveal: opts?.reveal ?? 'panel',
         certified: 'draft',
       },
     })
@@ -391,6 +393,8 @@ export async function createOverrideDeclaration(
       after: {
         title: d.title, description: d.description, subjectColumn: d.subjectColumn,
         selectSql: d.selectSql, groupBy: d.groupBy, params: d.params, certified: 'draft',
+        // 泄露策略（P6 Task 4 修复轮）：同 createTenantDeclaration。
+        reveal: opts?.reveal ?? 'panel',
       },
     })
     return true

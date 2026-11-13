@@ -425,6 +425,13 @@ export type DecideOutcome =
 const DECIDED_STATUSES: readonly ChangeStatus[] = ['adopted', 'rejected', 'superseded', 'withdrawn']
 
 /**
+ * `payload.reveal` 形状非法（非字符串；null/number/bool/对象）。
+ * 提交期由 zod 闭集挡；采纳期遇到手改单/历史单必须**响亮**（400），不得静默忽略——
+ * 静默忽略会让「想设 report 的治理动作」变成一次无声的 panel 写。
+ */
+class InvalidRevealError extends Error {}
+
+/**
  * 从单据 payload 顶层解出归属字段（P1 Task 3）：只认**真值形状**——P0 时代的历史单、
  * 形状漂移的手改行，都不会把垃圾写进 upsert 参数；全缺 ⇒ undefined（= upsert 冲突分支
  * 全 coalesce 保留，行为与 P0 逐字一致）。形状校验的权威在提交期（OwnershipPayload），
@@ -438,9 +445,12 @@ function ownershipOfPayload(payload: unknown): MetricOwnership | undefined {
   if (Array.isArray(raw.synonyms)) own.synonyms = raw.synonyms.filter((s): s is string => typeof s === 'string')
   if (typeof raw.ownerDept === 'string' && raw.ownerDept !== '') own.ownerDept = raw.ownerDept
   if (typeof raw.variantNote === 'string' && raw.variantNote !== '') own.variantNote = raw.variantNote
-  // 泄露策略（P6 Task 4）：这里只做**类型**收口（不重跑 zod 的闭集）——提交期的权威是
-  // OwnershipPayload，采纳期的手改单/历史单由列 CHECK 兜底（23514 ⇒ adopt 映射 400）。
-  if (typeof raw.reveal === 'string') own.reveal = raw.reveal as NonNullable<MetricOwnership['reveal']>
+  // 泄露策略（P6 Task 4）：类型**必须**是字符串——非字符串不静默丢弃（那会把治理动作变成
+  // 无声的 panel 写）；闭集之外的字符串留给列 CHECK 兜底（23514 ⇒ adopt 映射 400）。
+  if (raw.reveal !== undefined) {
+    if (typeof raw.reveal !== 'string') throw new InvalidRevealError('reveal 必须是字符串')
+    own.reveal = raw.reveal as NonNullable<MetricOwnership['reveal']>
+  }
   return Object.keys(own).length > 0 ? own : undefined
 }
 
@@ -452,7 +462,9 @@ function ownershipOfPayload(payload: unknown): MetricOwnership | undefined {
 function revealOfPayload(payload: unknown): NonNullable<MetricOwnership['reveal']> | undefined {
   if (payload === null || typeof payload !== 'object' || Array.isArray(payload)) return undefined
   const v = (payload as Record<string, unknown>).reveal
-  return typeof v === 'string' ? v as NonNullable<MetricOwnership['reveal']> : undefined
+  if (v === undefined) return undefined
+  if (typeof v !== 'string') throw new InvalidRevealError('reveal 必须是字符串')
+  return v as NonNullable<MetricOwnership['reveal']>
 }
 
 /**
@@ -506,6 +518,8 @@ export async function adoptChange(deps: MetricWriteDeps, org: string, id: number
         out = await writeL2Declaration(deps, org, cur.metricId, cur.payload as unknown as L2Declaration,
           { ownership: ownershipOfPayload(cur.payload) })
       } catch (e) {
+        // 非法 reveal 形状（P6 Task 4 修复轮）：提交期 zod 已挡，手改单/历史单在这里响亮拒。
+        if (e instanceof InvalidRevealError) return { ok: false, http: 400, error: 'INVALID_DECLARATION' }
         // Task 3 评审转入（P1 Task 4 顺带）：submit→adopt 的窗口被并发占名 ⇒ upsert 撞
         // metrics_title_per_dept_uq 的 23505。映射 409 TITLE_EXISTS_IN_DEPT（与提交期同名判据
         // 同码同义），别裸 500。只捕 23505：(org,id) 主键已被 upsert 冲突分支吃掉，能到这里
@@ -545,6 +559,8 @@ export async function adoptChange(deps: MetricWriteDeps, org: string, id: number
           { reveal: revealOfPayload(cur.payload) },
         )
       } catch (e) {
+        // 非法 reveal 形状（P6 Task 4 修复轮）：同 create/update 支。
+        if (e instanceof InvalidRevealError) return { ok: false, http: 400, error: 'INVALID_DECLARATION' }
         // 与 create/update 支同款映射（Task 4 引入，fix2 补齐 override 支）：submit→adopt 的
         // 窗口被并发占名 ⇒ insertTenantDeclaration 撞 metrics_title_per_dept_uq 的 23505
         //（on conflict (org, id) 只吸收 id 冲突，title 唯一索引会真抛出来）。映射 409
@@ -573,6 +589,8 @@ export async function adoptChange(deps: MetricWriteDeps, org: string, id: number
           { reveal: revealOfPayload(cur.payload) },
         )
       } catch (e) {
+        // 非法 reveal 形状（P6 Task 4 修复轮）：同 create/update 支。
+        if (e instanceof InvalidRevealError) return { ok: false, http: 400, error: 'INVALID_DECLARATION' }
         // submit→adopt 窗口被并发占名 ⇒ insertTenantDeclaration 撞 metrics_title_per_dept_uq
         // 的 23505（on conflict (org,id) 只吸收 id 冲突）。映射 409 TITLE_EXISTS_IN_DEPT
         //（与其它档同码同义），别裸 500；只捕 23505，其余照抛。

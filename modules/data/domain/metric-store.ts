@@ -671,7 +671,7 @@ export async function selectMetricSnapshot(
   db: Pool | PoolClient, org: string, id: string,
 ): Promise<MetricRowSnapshot | null> {
   const r = await db.query(
-    `select title, description, subject_column, select_sql, group_by, params, certified
+    `select title, description, subject_column, select_sql, group_by, params, certified, reveal
        from data.metrics where org = $1 and id = $2 and source = 'l2'`,
     [org, id],
   )
@@ -686,6 +686,9 @@ export async function selectMetricSnapshot(
     params: row.params as Record<string, unknown>,
     // 可信度（027，spec §10.4 D7）：certify 动作的前后态要带它（唯一变化物）；NULL（存量）按 draft
     certified: row.certified === 'certified' ? 'certified' : 'draft',
+    // 泄露策略（P6 Task 4 修复轮）：读落库真值（列 not null default 'panel'）——审计要能看出
+    // panel→report 的翻转，不能只依赖变更单 payload。
+    reveal: row.reveal === 'report' ? 'report' : 'panel',
   }
 }
 

@@ -231,6 +231,9 @@ export async function writeL2Declaration(
       after: {
         title: row.title, description: row.description, subjectColumn: row.subjectColumn,
         selectSql: row.selectSql, groupBy: row.groupBy, params: row.params,
+        // 泄露策略（P6 Task 4 修复轮）：落库后的实际值——缺席 = 保留既有（before），
+        // 新行缺席 = 列默认 panel。安全相关字段必须在审计里可读。
+        reveal: opts?.ownership?.reveal ?? before?.reveal ?? 'panel',
       },
     })
     return { ok: true }

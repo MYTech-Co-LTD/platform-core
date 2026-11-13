@@ -830,4 +830,65 @@ describePg('P6 Task 4：reveal 随变更单落列', () => {
     expect(live.rows).toHaveLength(0)
     await pool.query('delete from data.metric_change where id = $1', [id])
   })
+
+  it('绕过 zod 的非字符串 reveal（null/number/bool）⇒ 采纳期 400，不静默忽略（三档都拒绝）', async () => {
+    // 自足起点：清掉前序用例的覆盖行与遗留未决单（pending 唯一索引会挡直插）。
+    await pool.query('delete from data.metrics where org = $1 and id = $2', [RORG, OVR_L1.id])
+    await pool.query(
+      "delete from data.metric_change where org = $1 and status in ('draft','preview_ready','preview_failed')", [RORG])
+    // 提交期 zod 已挡（`z.enum` 只收两个字符串）；这里模拟手改库/历史单直插单据。
+    const mkTicket = async (metricId: string, kind: 'create' | 'override' | 'declaration', payload: unknown): Promise<number> => {
+      const ins = await pool.query(
+        `insert into data.metric_change (org, metric_id, kind, payload, submitted_by, submitted_channel, status)
+         values ($1, $2, $3, $4::jsonb, 'p6-reveal', 'pat', 'preview_ready')
+         returning id`,
+        [RORG, metricId, kind, JSON.stringify(payload)])
+      return Number(ins.rows[0]!.id)
+    }
+    const cases: Array<[string, 'create' | 'override' | 'declaration', unknown]> = [
+      ['x:p6rv_nonstr_num', 'create', { baseMetric: L1_ID, op: { kind: 'refine' }, alias: 'reveal·非串', reveal: 123 }],
+      ['x:p6rv_nonstr_null', 'create', { baseMetric: L1_ID, op: { kind: 'refine' }, alias: 'reveal·null', reveal: null }],
+      [OVR_L1.id, 'override', { ...OVR_ENTRY, label: 'P6 覆盖·非串 reveal', reveal: false }],
+      ['p6mc:retail:reveal_nonstr_decl', 'declaration',
+        { ...DECL_ENTRY, name: 'p6mc:retail:reveal_nonstr_decl', label: 'P6 声明·非串 reveal', reveal: true }],
+    ]
+    for (const [i, [metricId, kind, payload]] of cases.entries()) {
+      const id = await mkTicket(metricId, kind, payload)
+      const out = await adoptChange(writeDeps(pool), RORG, id)
+      expect(out, `case ${i}`).toMatchObject({ ok: false, http: 400, error: 'INVALID_DECLARATION' })
+      expect((await getChange(pool, RORG, id))?.status, `case ${i}`).toBe('preview_ready')
+      const live = await pool.query('select 1 from data.metrics where org = $1 and id = $2', [RORG, metricId])
+      expect(live.rows, `case ${i} 不得落行`).toHaveLength(0)
+      await pool.query('delete from data.metric_change where id = $1', [id])
+    }
+  })
+
+  it('列 CHECK 兜底对称覆盖：override / declaration 档的非法字符串 reveal 同样 400（非裸 500）', async () => {
+    // 前置用例已采纳一条覆盖草稿行；本用例要走到 INSERT（而非 409 OVERRIDE_EXISTS）⇒ 先清掉。
+    await pool.query('delete from data.metrics where org = $1 and id = $2', [RORG, OVR_L1.id])
+    await pool.query(
+      "delete from data.metric_change where org = $1 and status in ('draft','preview_ready','preview_failed')", [RORG])
+    const mkTicket = async (metricId: string, kind: 'override' | 'declaration', payload: unknown): Promise<number> => {
+      const ins = await pool.query(
+        `insert into data.metric_change (org, metric_id, kind, payload, submitted_by, submitted_channel, status)
+         values ($1, $2, $3, $4::jsonb, 'p6-reveal', 'pat', 'preview_ready')
+         returning id`,
+        [RORG, metricId, kind, JSON.stringify(payload)])
+      return Number(ins.rows[0]!.id)
+    }
+    const cases: Array<[string, 'override' | 'declaration', unknown]> = [
+      [OVR_L1.id, 'override', { ...OVR_ENTRY, label: 'P6 覆盖·CHECK', reveal: 'half' }],
+      ['p6mc:retail:reveal_check_decl', 'declaration',
+        { ...DECL_ENTRY, name: 'p6mc:retail:reveal_check_decl', label: 'P6 声明·CHECK', reveal: 'half' }],
+    ]
+    for (const [i, [metricId, kind, payload]] of cases.entries()) {
+      const id = await mkTicket(metricId, kind, payload)
+      const out = await adoptChange(writeDeps(pool), RORG, id)
+      expect(out, `case ${i}`).toMatchObject({ ok: false, http: 400, error: 'INVALID_DECLARATION' })
+      expect((await getChange(pool, RORG, id))?.status, `case ${i}`).toBe('preview_ready')
+      const live = await pool.query('select 1 from data.metrics where org = $1 and id = $2', [RORG, metricId])
+      expect(live.rows, `case ${i} 不得落行`).toHaveLength(0)
+      await pool.query('delete from data.metric_change where id = $1', [id])
+    }
+  })
 })

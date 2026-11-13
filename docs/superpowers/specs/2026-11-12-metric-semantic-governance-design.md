@@ -225,14 +225,17 @@ create index if not exists metric_change_queue_idx
 | `panel`（默认） | 面板级降级 |
 | `report` | 报表中存在任一此类指标且观看者无权 ⇒ **整表 404**（防「总数 − 其他」反推） |
 
-**该用 `report` 的指标**：成本 / 毛利 / 工资一类——它们的单值本身敏感（配合维度可反推个体或
-经营底价），被拒后留在面板里仍会泄露。其余通用指标保持默认 `panel`。
+**谁能设 `reveal`**：只有**租户 L2 行 / 覆盖行**可设（变更单 payload 是唯一写入口）。平台
+L1 行恒 `panel`——成本 / 毛利 / 工资一类敏感口径若落在平台词表上，**本机制覆盖不到**；若平台
+口径也需要 `report` 语义，需另设写入机制（如 sync 声明带上该字段），**本波不做，记待议**。
+租户自建的同名变体（L2 / 覆盖）可按下面的 payload 面设 `report`。
 
 **写入面（P6 Task 4 起）**：**变更单 payload 是唯一写入口**——create/update 档顶层（与
 `entity/synonyms/ownerDept/variantNote` 同栖）以及 override/declaration 档 entry 顶层都可带
-`reveal: 'panel' | 'report'`。提交期 zod 校验闭集，列 CHECK（047）兜底（23514 ⇒ 400）。
-缺席语义：**新行 = `panel`**（列默认）；**update 缺席 = 保留既有**（coalesce，普通内容写不得
-把泄露策略洗回 `panel`）。L1 sync 声明没有这个字段（平台行恒 `panel`）。
+`reveal: 'panel' | 'report'`。提交期 zod 校验闭集，列 CHECK（047）兜底（23514 ⇒ 400），
+非字符串值采纳期 400（不静默）。缺席语义：**新行 = `panel`**（列默认）；**update 缺席 =
+保留既有**（coalesce，普通内容写不得把泄露策略洗回 `panel`）。L1 sync 声明没有这个字段
+（平台行恒 `panel`，见上）。
 
 ### 9.4 一致性巡检
 
