@@ -83,7 +83,7 @@ export const searchImpl: ToolImpl = async (deps, args) => {
       if (id.includes(q)) return 2
       return 1
     }
-    const results = (await visibleRows(deps))
+    const scored = (await visibleRows(deps))
       .filter((m) => wantCertified === null || (m.certified === 'certified') === wantCertified)
       .filter((m) => q === null || m.id.toLowerCase().includes(q)
         || m.title.toLowerCase().includes(q) || m.description.toLowerCase().includes(q)
@@ -92,9 +92,31 @@ export const searchImpl: ToolImpl = async (deps, args) => {
         || m.synonyms.some((s) => s.toLowerCase().includes(q)))
       .map((m) => ({ m, score: scoreOf(m) }))
       .sort((a, b) => b.score - a.score || a.m.id.localeCompare(b.m.id))
+    // 同名 tie 检测（P3 Task 1）：顶分集合（score === topScore）里 ≥2 条不同 id 的
+    // lower(title) 相同 ⇒ ambiguous。判定在 slice **之前**（被切掉的顶分同样是歧义）；
+    // 结果不再静默取先——稳定排序让同组候选都贴在 results 顶部，调用方见 ambiguous
+    // 即应问辨而非猜。同义词交叉命中（q 恰为 A 的 title 又恰为 B 的 synonym）记 P4，
+    // 本判定只认 title。
+    let ambiguous = false
+    const topScore = scored[0]?.score ?? 0
+    const titleOwner = new Map<string, string>()
+    for (const { m, score } of scored) {
+      if (score !== topScore) break // 已按分数降序 ⇒ 顶分集合到此为止
+      const key = m.title.toLowerCase()
+      const first = titleOwner.get(key)
+      if (first !== undefined && first !== m.id) { ambiguous = true; break }
+      titleOwner.set(key, m.id)
+    }
+    const results = scored
       .slice(0, SEARCH_LIMIT)
-      .map(({ m }) => ({ id: m.id, title: m.title, tier: tierOf(m), owner: ownerOf(m, deps.org), oneLiner: oneLinerOf(m) }))
-    return { payload: { results }, isError: false, auditRowCount: null }
+      .map(({ m }) => ({
+        id: m.id, title: m.title, tier: tierOf(m), owner: ownerOf(m, deps.org), oneLiner: oneLinerOf(m),
+        // 口径速览（P3 Task 1）：归属部门与变体注记随行投影——同名候选可当场按口径辨析，
+        // 不必逐条 describe。未声明 = null（MetricRow 恒有值，P1/P2 接线）。
+        dept: m.ownerDept ?? null, variantNote: m.variantNote ?? null,
+      }))
+    // ambiguous 只在为真时出现（缺省 = 不歧义，旧消费者零破坏）。
+    return { payload: { results, ...(ambiguous ? { ambiguous: true as const } : {}) }, isError: false, auditRowCount: null }
   }
   const r = await deps.wh('select table_schema, table_name from information_schema.tables order by table_schema, table_name')
   const results = r.rows

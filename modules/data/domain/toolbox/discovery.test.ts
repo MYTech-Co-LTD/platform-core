@@ -24,21 +24,32 @@ const row = (over: Partial<MetricRow>): MetricRow => ({
 
 const requester: Requester = { userId: 'u', orgId: 'acme', channel: 'pat', keyId: 1, scopes: ['data:query'], hasScope: (c) => c === 'data:query' }
 
-function deps(catalog: MetricRow[], wh: ToolboxDeps['wh'] = async () => ({ columns: [], rows: [] })): ToolboxDeps {
+function deps(
+  catalog: MetricRow[],
+  wh: ToolboxDeps['wh'] = async () => ({ columns: [], rows: [] }),
+  // 观看者的直属部门（P3 Task 1 投影测试用）：夹具行带 owner_dept 时，部门可见守卫
+  // （deptContextIfOwned → loadDeptContext）会对 pool 发 v_org_membership 查询——
+  // 假执行器按 SQL 形状分流：部门查询回直属集，其余照旧回词表行。
+  deptDirect: string[] = [],
+): ToolboxDeps {
   return {
     pool: {
-      query: async () => ({ rows: catalog.map((m) => ({
-        id: m.id, title: m.title, description: m.description, required_scope: m.requiredScope,
-        subject_column: m.subjectColumn, select_sql: m.selectSql, group_by: m.groupBy,
-        params: m.params, source: m.source, source_system: m.sourceSystem,
-        updated_by: m.updatedBy, version: m.version, totalable: m.totalable, scope_note: m.scopeNote,
-        sla_days: m.slaDays, freshness_relations: m.freshnessRelations, mask_spec: m.masks,
-        entity: m.entity, synonyms: m.synonyms,
-        // 下钻三列（capabilities.detail 的判据）：夹具带 drill 时同形映射，缺省 NULL
-        drill_expr: m.drill?.expr ?? null, drill_dims: m.drill?.dims ?? null,
-        drill_detail: m.drill === undefined ? null
-          : { relation: m.drill.relation, filter: m.drill.filter, ...(m.drill.columns === undefined ? {} : { columns: m.drill.columns }) },
-      })) }),
+      query: async (sql: string) => sql.includes('v_org_membership')
+        ? { rows: deptDirect.map((extId) => ({ direct_id: extId, direct_path: extId, desc_id: null })) }
+        : { rows: catalog.map((m) => ({
+          id: m.id, title: m.title, description: m.description, required_scope: m.requiredScope,
+          subject_column: m.subjectColumn, select_sql: m.selectSql, group_by: m.groupBy,
+          params: m.params, source: m.source, source_system: m.sourceSystem,
+          updated_by: m.updatedBy, version: m.version, totalable: m.totalable, scope_note: m.scopeNote,
+          sla_days: m.slaDays, freshness_relations: m.freshnessRelations, mask_spec: m.masks,
+          entity: m.entity, synonyms: m.synonyms,
+          // 下钻三列（capabilities.detail 的判据）：夹具带 drill 时同形映射，缺省 NULL
+          drill_expr: m.drill?.expr ?? null, drill_dims: m.drill?.dims ?? null,
+          drill_detail: m.drill === undefined ? null
+            : { relation: m.drill.relation, filter: m.drill.filter, ...(m.drill.columns === undefined ? {} : { columns: m.drill.columns }) },
+          // 归属三列（P1/P2）：投影测试要带值走通可见守卫，缺省 NULL（= 平台通用桶）
+          owner_dept: m.ownerDept ?? null, variant_note: m.variantNote ?? null, visible_depts: m.visibleDepts ?? null,
+        })) },
     } as never,
     org: 'acme', requester, adoptedSources: new Set(['lemeng']), wh,
   }
@@ -76,6 +87,45 @@ describe('searchImpl', () => {
     const out = await searchImpl(deps([row({ synonyms: ['营业额'] })]), { kind: 'metric', q: '营业额' })
     const results = (out.payload as { results: { id: string }[] }).results
     expect(results.map((r) => r.id)).toContain('lemeng:retail:net_sales')
+  })
+  // ── P3 Task 1：同名 tie 检测 + 投影带口径 ─────────────────────────────────────
+  it('同名 tie：顶分集合里 ≥2 条不同 id 的 title 相同 ⇒ ambiguous:true 且两条都在 results', async () => {
+    const a = row({ id: 'acme:custom:yingye_a', source: 'l2' as const, sourceSystem: null, title: '营业额' })
+    const b = row({ id: 'lemeng:retail:yingye_b', title: '营业额' })
+    const out = await searchImpl(deps([a, b]), { kind: 'metric', q: '营业额' })
+    const payload = out.payload as { results: { id: string }[]; ambiguous?: true }
+    // 歧义必须显式回给调用方——同分组静默取先 = 模型拿到哪条算哪条（错答温床）
+    expect(payload.ambiguous).toBe(true)
+    expect(payload.results.map((r) => r.id).sort()).toEqual(['acme:custom:yingye_a', 'lemeng:retail:yingye_b'])
+  })
+  it('同名但分数不同（一精确命中一说明顺带）⇒ 无 ambiguous 键', async () => {
+    const exact = row({ id: 'acme:custom:yingye_exact', source: 'l2' as const, sourceSystem: null, title: '营业额' })
+    const noisy = row({ id: 'lemeng:retail:other', title: '别的指标', description: '说明里顺带提到营业额' })
+    const out = await searchImpl(deps([exact, noisy]), { kind: 'metric', q: '营业额' })
+    const payload = out.payload as { results: { id: string }[]; ambiguous?: true }
+    expect(payload.results[0]!.id).toBe('acme:custom:yingye_exact')
+    // ambiguous 只在为真时出现（缺省 = 不歧义，旧消费者零破坏）
+    expect('ambiguous' in payload).toBe(false)
+  })
+  it('单条命中 ⇒ 无 ambiguous 键', async () => {
+    const out = await searchImpl(deps([row({})]), { kind: 'metric', q: '净销' })
+    expect('ambiguous' in out.payload).toBe(false)
+    expect((out.payload as { results: unknown[] }).results).toHaveLength(1)
+  })
+  it('投影带 dept/variantNote：声明了带值，未声明为 null', async () => {
+    const owned = row({
+      id: 'acme:custom:owned', source: 'l2' as const, sourceSystem: null,
+      title: '部门营业额', description: '部门口径的营业额', ownerDept: 'd1', variantNote: '含税口径',
+    })
+    // 带 owner_dept 的行走真实可见守卫：viewer 直属 d1 ⇒ 链上可见（fail-closed 的反面即本例）
+    const d = { ...deps([owned, row({})], undefined, ['d1']), requester: { ...requester, tenantId: 1, accountName: 'u' } }
+    const out = await searchImpl(d, { kind: 'metric', q: '部门营业额' })
+    const results = out.payload as { results: { id: string; dept: string | null; variantNote: string | null }[] }
+    expect(results.results).toHaveLength(1)
+    expect(results.results[0]).toMatchObject({ id: 'acme:custom:owned', dept: 'd1', variantNote: '含税口径' })
+    const plain = await searchImpl(d, { kind: 'metric', q: '净销' })
+    const pr = plain.payload as { results: { id: string; dept: string | null; variantNote: string | null }[] }
+    expect(pr.results[0]).toMatchObject({ id: 'lemeng:retail:net_sales', dept: null, variantNote: null })
   })
   it('kind=dataset：DENYLIST schema 不出现', async () => {
     const d = deps([], async () => ({ columns: ['table_schema', 'table_name'], rows: [['pg_catalog', 'pg_class'], ['marts', 'fct_retail_sale']] }))
