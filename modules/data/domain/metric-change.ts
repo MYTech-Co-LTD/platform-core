@@ -64,6 +64,9 @@ const OverridePayload = z.object({
   label: z.string(),
   expression: z.string(),
   grain: z.array(z.string()),
+  // 泄露策略（P6 Task 4）：声明 entry 里没有这个形状（编译器不认）；它是**行属性**，随
+  // payload 顶层单独解出、采纳时落列。放这里只为让非法值在提交期就 400（passthrough 不会校验）。
+  reveal: z.enum(['panel', 'report']).optional(),
 }).passthrough()
 
 /**
@@ -79,6 +82,8 @@ const DeclarationPayload = z.object({
   definition: z.string().min(1),
   expression: z.string().min(1),
   grain: z.array(z.string().min(1)).min(1),
+  // 泄露策略（P6 Task 4）：同 OverridePayload——行属性，不是声明形状；这里只为提交期拒非法值。
+  reveal: z.enum(['panel', 'report']).optional(),
 }).passthrough()
 
 /**
@@ -105,10 +110,13 @@ const OwnershipPayload = z.object({
   synonyms: z.array(z.string().min(1).max(32)).max(16).optional(),
   ownerDept: z.string().min(1).max(128).optional(),
   variantNote: z.string().min(1).max(500).optional(),
+  // 泄露策略（P6 Task 4）：行属性，与归属同栖 payload 顶层；闭集与列 CHECK 一致
+  // （zod 是提交期第一道，DB CHECK 是采纳期兜底——历史单/手改行可能绕过这里）。
+  reveal: z.enum(['panel', 'report']).optional(),
 }).strict()
 
-/** payload 顶层四个归属键（与 OwnershipPayload 逐字同集——多一个键都不算归属键）。 */
-const OWNERSHIP_KEYS: ReadonlySet<string> = new Set(['entity', 'synonyms', 'ownerDept', 'variantNote'])
+/** payload 顶层归属键（与 OwnershipPayload 逐字同集——多一个键都不算归属键）。 */
+const OWNERSHIP_KEYS: ReadonlySet<string> = new Set(['entity', 'synonyms', 'ownerDept', 'variantNote', 'reveal'])
 
 /**
  * 把 payload 拆成「声明部分」与「归属部分」：声明部分进共享 schema 校验（strict 不得被
@@ -430,7 +438,21 @@ function ownershipOfPayload(payload: unknown): MetricOwnership | undefined {
   if (Array.isArray(raw.synonyms)) own.synonyms = raw.synonyms.filter((s): s is string => typeof s === 'string')
   if (typeof raw.ownerDept === 'string' && raw.ownerDept !== '') own.ownerDept = raw.ownerDept
   if (typeof raw.variantNote === 'string' && raw.variantNote !== '') own.variantNote = raw.variantNote
+  // 泄露策略（P6 Task 4）：这里只做**类型**收口（不重跑 zod 的闭集）——提交期的权威是
+  // OwnershipPayload，采纳期的手改单/历史单由列 CHECK 兜底（23514 ⇒ adopt 映射 400）。
+  if (typeof raw.reveal === 'string') own.reveal = raw.reveal as NonNullable<MetricOwnership['reveal']>
   return Object.keys(own).length > 0 ? own : undefined
+}
+
+/**
+ * declaration / override 档的 payload 就是 W8 声明 entry（宽形状）——`reveal` 与
+ * create/update 档一样是**行属性**、同栖顶层，但这两档不经过 `MetricOwnership`（它们走
+ * insertTenantDeclaration），故单独解出。类型收口与兜底语义同 `ownershipOfPayload`。
+ */
+function revealOfPayload(payload: unknown): NonNullable<MetricOwnership['reveal']> | undefined {
+  if (payload === null || typeof payload !== 'object' || Array.isArray(payload)) return undefined
+  const v = (payload as Record<string, unknown>).reveal
+  return typeof v === 'string' ? v as NonNullable<MetricOwnership['reveal']> : undefined
 }
 
 /**
@@ -479,6 +501,7 @@ export async function adoptChange(deps: MetricWriteDeps, org: string, id: number
     if (cur.kind === 'create' || cur.kind === 'update') {
       // 归属随单透传（P1 Task 3，spec §5.1）：payload 顶层的 entity/synonyms/ownerDept/variantNote
       // 不进声明（L2DeclarationBody 不动），经 opts.ownership 落到行上；缺席键 = 保留行上既有值。
+      // `reveal`（P6 Task 4）同理同栖归属包（它是行属性，不是声明形状）。
       try {
         out = await writeL2Declaration(deps, org, cur.metricId, cur.payload as unknown as L2Declaration,
           { ownership: ownershipOfPayload(cur.payload) })
@@ -489,6 +512,11 @@ export async function adoptChange(deps: MetricWriteDeps, org: string, id: number
         // 的 23505 只有 title 唯一索引；其余错误照抛。
         if ((e as { code?: string }).code === '23505') {
           return { ok: false, http: 409, error: 'TITLE_EXISTS_IN_DEPT' }
+        }
+        // 列 CHECK 兜底（P6 Task 4，reveal 闭集）：绕过提交期 zod 的历史单/手改单会在这里
+        // 撞 23514。调用方能修的是入参 ⇒ 400（不是裸 500）；单据保持 preview_ready 可重提。
+        if ((e as { code?: string }).code === '23514') {
+          return { ok: false, http: 400, error: 'INVALID_DECLARATION' }
         }
         throw e
       }
@@ -514,6 +542,7 @@ export async function adoptChange(deps: MetricWriteDeps, org: string, id: number
         o = await createOverrideDeclaration(
           { pool: deps.pool, ...(deps.warehouse === undefined ? {} : { warehouse: deps.warehouse }) },
           org, deps.requester, cur.metricId, cur.payload,
+          { reveal: revealOfPayload(cur.payload) },
         )
       } catch (e) {
         // 与 create/update 支同款映射（Task 4 引入，fix2 补齐 override 支）：submit→adopt 的
@@ -524,6 +553,10 @@ export async function adoptChange(deps: MetricWriteDeps, org: string, id: number
         // 能到这里的 23505 实际只有 title 唯一索引一条路。
         if ((e as { code?: string }).code === '23505') {
           return { ok: false, http: 409, error: 'TITLE_EXISTS_IN_DEPT' }
+        }
+        // 列 CHECK 兜底（P6 Task 4，reveal 闭集）⇒ 400，见 create/update 支同款映射。
+        if ((e as { code?: string }).code === '23514') {
+          return { ok: false, http: 400, error: 'INVALID_DECLARATION' }
         }
         throw e
       }
@@ -537,6 +570,7 @@ export async function adoptChange(deps: MetricWriteDeps, org: string, id: number
         o = await createTenantDeclaration(
           { pool: deps.pool, ...(deps.warehouse === undefined ? {} : { warehouse: deps.warehouse }) },
           org, deps.requester, cur.payload,
+          { reveal: revealOfPayload(cur.payload) },
         )
       } catch (e) {
         // submit→adopt 窗口被并发占名 ⇒ insertTenantDeclaration 撞 metrics_title_per_dept_uq
@@ -544,6 +578,10 @@ export async function adoptChange(deps: MetricWriteDeps, org: string, id: number
         //（与其它档同码同义），别裸 500；只捕 23505，其余照抛。
         if ((e as { code?: string }).code === '23505') {
           return { ok: false, http: 409, error: 'TITLE_EXISTS_IN_DEPT' }
+        }
+        // 列 CHECK 兜底（P6 Task 4，reveal 闭集）⇒ 400，见 create/update 支同款映射。
+        if ((e as { code?: string }).code === '23514') {
+          return { ok: false, http: 400, error: 'INVALID_DECLARATION' }
         }
         throw e
       }

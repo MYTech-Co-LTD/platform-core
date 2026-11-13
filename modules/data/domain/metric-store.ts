@@ -169,11 +169,12 @@ export interface MetricRow extends MetricDef {
    */
   visibleDepts?: string[] | null
   /**
-   * 泄露策略（047 迁移 `reveal`，P5 Task 3 读侧接线）：`panel`（默认）= 不可见时面板级降级；
-   * `report` = 报表里存在任一不可见指标就**整表 404**（防「总数 − 其他」反推）。
+   * 泄露策略（047 迁移 `reveal`，P5 Task 3 读侧接线；P6 Task 4 接写入面）：`panel`（默认）=
+   * 不可见时面板级降级；`report` = 报表里存在任一不可见指标就**整表 404**（防「总数 − 其他」反推）。
    * 恒有值（`toMetricRow` 归一：列缺省/坏值 ⇒ `panel`）——列是 `not null default 'panel'`。
-   * ⚠️ **写入面待 P6**（变更单 payload 或 sync 声明），当前两条写路径都没有该字段 ⇒ 生产
-   * 恒 `panel`（测试直改库）。这是产品缺口，已在台账；本行只负责读侧接线。
+   * **唯一写入面是变更单 payload**（create/update 走 `MetricOwnership.reveal`，
+   * declaration/override 走各自 payload 顶层）：语义与归属四字段同一条「缺席 = 保留既有」，
+   * 新行缺席由列默认落 `panel`。L1 物化路径不写（平台声明没有这个概念，恒 `panel`）。
    * 类型保持可选以便历史夹具不补字段。
    */
   reveal?: MetricReveal
@@ -197,6 +198,11 @@ export interface MetricOwnership {
   synonyms?: string[]
   ownerDept?: string
   variantNote?: string
+  /**
+   * 泄露策略（047 `reveal`，P6 Task 4 写入面）：两档闭集，与列 CHECK 一致。
+   * 缺席 = 保留既有（冲突分支 coalesce），新行缺席由列默认落 `panel`。
+   */
+  reveal?: MetricReveal
 }
 
 /**
@@ -495,8 +501,8 @@ export async function upsertMetric(
   //   生产写路径（domain/metric-write）传的是事务里的 client，审计与变更同生共死。
   await db.query(
     `insert into data.metrics
-       (org, id, title, description, required_scope, subject_column, select_sql, group_by, params, source, source_system, updated_by, version, totalable, sla_days, freshness_relations, created_by, certified, basis, entity, synonyms, owner_dept, variant_note)
-     values ($1, $2, $3, $4, $5, $6, $7, $8, $9, 'l2', null, $10, 1, false, null, null, $10, 'draft', $11, $12, $13::jsonb, $14, $15)
+       (org, id, title, description, required_scope, subject_column, select_sql, group_by, params, source, source_system, updated_by, version, totalable, sla_days, freshness_relations, created_by, certified, basis, entity, synonyms, owner_dept, variant_note, reveal)
+     values ($1, $2, $3, $4, $5, $6, $7, $8, $9, 'l2', null, $10, 1, false, null, null, $10, 'draft', $11, $12, $13::jsonb, $14, $15, coalesce($16, 'panel'))
      on conflict (org, id) do update set
        title          = excluded.title,
        description    = excluded.description,
@@ -521,6 +527,10 @@ export async function upsertMetric(
        synonyms     = coalesce(excluded.synonyms, data.metrics.synonyms),
        owner_dept   = coalesce(excluded.owner_dept, data.metrics.owner_dept),
        variant_note = coalesce(excluded.variant_note, data.metrics.variant_note),
+       -- ★ 泄露策略（P6 Task 4）：与归属四列同一条「缺席 = 保留」；但列是 not null，
+       --   VALUES 侧已把缺席 coalesce 成 'panel' ⇒ 这里**不能用 excluded.reveal**
+       --   （那会把既有 report 静默洗回 panel），必须回看**原始参数** $16（缺席 = NULL）。
+       reveal       = coalesce($16, data.metrics.reveal),
        updated_at     = now()`,
     [
       org, def.id, def.title, def.description, def.requiredScope,
@@ -531,6 +541,8 @@ export async function upsertMetric(
       own?.synonyms === undefined ? null : JSON.stringify(own.synonyms),
       own?.ownerDept ?? null,
       own?.variantNote ?? null,
+      // 泄露策略（P6 Task 4）：缺席 = NULL（= 冲突分支保留信号；新行由 VALUES 侧兜成 panel）。
+      own?.reveal ?? null,
     ],
   )
 }
@@ -709,16 +721,20 @@ export async function insertTenantDeclaration(
   d: CompiledTenantDeclaration,
   declaration: unknown,
   updatedBy: string,
-  opts?: { overrideOf?: string | null },
+  opts?: {
+    overrideOf?: string | null
+    /** 泄露策略（P6 Task 4）：payload 顶层 `reveal`；缺席 = 列默认 `panel`（新行语义，无更新分支）。 */
+    reveal?: MetricReveal
+  },
 ): Promise<boolean> {
   const r = await db.query(
     `insert into data.metrics
        (org, id, title, description, required_scope, subject_column, select_sql, group_by, params,
         source, source_system, updated_by, version, totalable, scope_note, sla_days,
-        freshness_relations, mask_spec, unit, entity, synonyms, basis, certified, created_by, declaration, override_of)
+        freshness_relations, mask_spec, unit, entity, synonyms, basis, certified, created_by, declaration, override_of, reveal)
      values ($1, $2, $3, $4, $5, $6, $7, $8, $9::jsonb,
              'l2', $10, $11, 1, $12, $13, $14,
-             $15::jsonb, $16::jsonb, $17, $18, $19::jsonb, 'declared', 'draft', $11, $20::jsonb, $21)
+             $15::jsonb, $16::jsonb, $17, $18, $19::jsonb, 'declared', 'draft', $11, $20::jsonb, $21, coalesce($22, 'panel'))
      on conflict (org, id) do nothing
      returning id`,
     [
@@ -727,6 +743,7 @@ export async function insertTenantDeclaration(
       d.slaDays, JSON.stringify(d.freshnessRelations),
       d.masks === null ? null : JSON.stringify(d.masks), d.unit, d.entity,
       JSON.stringify(d.synonyms), JSON.stringify(declaration), opts?.overrideOf ?? null,
+      opts?.reveal ?? null,
     ],
   )
   return (r.rowCount ?? 0) > 0

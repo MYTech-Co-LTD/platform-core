@@ -686,3 +686,148 @@ describePg('P6 Task 2 修复轮：采纳即授权（creator ∪ data:manage）',
     expect(row.rows[0]?.title).toBe('采纳授权·存量改')
   })
 })
+
+// ── P6 Task 4（2026-11-14）：reveal 写入面 —— 变更单 payload ──────────────────────────
+// `reveal` 是 P1（047）就有的列（CHECK panel|report，default panel），P5 只接了读侧；
+// 本波让 create/update/override/declaration 四档 payload 都能带它，采纳时落列。
+// 语义：新行缺席 ⇒ 'panel'；update 缺席 ⇒ 保留既有（与归属四字段同一条 coalesce 纪律）。
+describePg('P6 Task 4：reveal 随变更单落列', () => {
+  const RORG = 'org-p6-reveal'
+  const OVR_L1 = {
+    id: 'p6mc:l1:reveal_ovr_sales',
+    title: 'P6 reveal 覆盖夹具',
+    description: 'P6 Task 4 override 档夹具',
+    requiredScope: null,
+    subjectColumn: 'org',
+    selectSql: 'select sum(fct_retail_sale.sale_amount) as value, system_book, bizday from fct_retail_sale',
+    groupBy: 'system_book, bizday',
+    params: {},
+    sourceSystem: 'lemeng',
+    slaDays: 1,
+    freshnessRelations: [],
+    masks: null,
+  }
+  const DECL_ENTRY = {
+    name: 'p6mc:retail:reveal_decl_sales',
+    label: 'P6 声明·reveal 成本',
+    definition: 'P6 Task 4 reveal 落列夹具（declaration 档）',
+    owner: 'data-platform',
+    tier: 'experimental',
+    source: 'lemeng',
+    expression: 'sum(fct_retail_sale.sale_amount)',
+    grain: ['system_book', 'bizday'],
+    freshness_sla_days: 1,
+    reads: [],
+    reveal: 'report',
+  }
+  const OVR_ENTRY = {
+    name: OVR_L1.id,
+    label: 'P6 覆盖·reveal 毛利',
+    definition: 'P6 Task 4 reveal 落列夹具（override 档）',
+    owner: 'data-platform',
+    tier: 'experimental',
+    source: 'lemeng',
+    expression: 'sum(fct_retail_sale.sale_amount)',
+    grain: ['system_book', 'bizday'],
+    freshness_sla_days: 1,
+    reads: [],
+    reveal: 'report',
+  }
+  const revealOf = async (id: string): Promise<string | undefined> =>
+    (await pool.query('select reveal from data.metrics where org = $1 and id = $2', [RORG, id])).rows[0]?.reveal as string | undefined
+  const submit = (metricId: string, kind: 'create' | 'update' | 'override' | 'declaration', payload: unknown) =>
+    submitChange(pool, RORG, { userId: 'p6-reveal', channel: 'pat' }, metricId, kind, payload)
+  const adopt = async (s: Awaited<ReturnType<typeof submit>>): Promise<void> => {
+    if (!s.ok) throw new Error(`提单失败: ${s.error}`)
+    await markReady(s.change.id)
+    const out = await adoptChange(writeDeps(pool), RORG, s.change.id)
+    if (!out.ok) throw new Error(`采纳失败: ${out.error}`)
+  }
+
+  beforeAll(async () => {
+    await pool.query('delete from data.metric_change where org = $1', [RORG])
+    await pool.query('delete from data.metrics where org = $1', [RORG])
+    await upsertL1Metric(pool, L1_FIXTURE)
+    await upsertL1Metric(pool, DECL_REL_L1)
+    await upsertL1Metric(pool, OVR_L1)
+  })
+  afterAll(async () => {
+    await pool.query('delete from data.metric_change where org = $1', [RORG])
+    await pool.query('delete from data.metrics where org = $1', [RORG])
+    await pool.query("delete from data.metrics where org = 'platform' and source = 'l1' and id = any($1)",
+      [[DECL_REL_L1_ID, OVR_L1.id]])
+  })
+
+  it('create 带 reveal=report ⇒ 采纳后列值 report（直查库，不采信回包）', async () => {
+    const s = await submit('x:p6rv_create', 'create',
+      { baseMetric: L1_ID, op: { kind: 'refine' }, alias: 'reveal·create', reveal: 'report' })
+    expect(s.ok).toBe(true)
+    if (s.ok) expect(s.change.payload).toMatchObject({ reveal: 'report' })
+    await adopt(s)
+    expect(await revealOf('x:p6rv_create')).toBe('report')
+  })
+
+  it('update 缺席 reveal ⇒ 保留既有 report；显式带 panel ⇒ 改回 panel', async () => {
+    // 前置：create 已落 report 行（上一用例）
+    const keep = await submit('x:p6rv_create', 'update',
+      { baseMetric: L1_ID, op: { kind: 'refine' }, alias: 'reveal·create' })
+    await adopt(keep)
+    expect(await revealOf('x:p6rv_create')).toBe('report')
+    const back = await submit('x:p6rv_create', 'update',
+      { baseMetric: L1_ID, op: { kind: 'refine' }, alias: 'reveal·create', reveal: 'panel' })
+    await adopt(back)
+    expect(await revealOf('x:p6rv_create')).toBe('panel')
+  })
+
+  it('新行不传 reveal ⇒ 列默认 panel', async () => {
+    const s = await submit('x:p6rv_default', 'create',
+      { baseMetric: L1_ID, op: { kind: 'refine' }, alias: 'reveal·默认' })
+    await adopt(s)
+    expect(await revealOf('x:p6rv_default')).toBe('panel')
+  })
+
+  it('declaration 档带 reveal ⇒ 采纳后列值 report', async () => {
+    const s = await submit(DECL_ENTRY.name, 'declaration', DECL_ENTRY)
+    await adopt(s)
+    expect(await revealOf(DECL_ENTRY.name)).toBe('report')
+  })
+
+  it('override 档带 reveal ⇒ 采纳后列值 report', async () => {
+    const s = await submit(OVR_ENTRY.name, 'override', OVR_ENTRY)
+    await adopt(s)
+    expect(await revealOf(OVR_ENTRY.name)).toBe('report')
+  })
+
+  it('非法值（四档）⇒ 提交期 400 INVALID_DECLARATION，且不落单（zod 形状闸）', async () => {
+    const cases: Array<['create' | 'update' | 'override' | 'declaration', string, unknown]> = [
+      ['create', 'x:p6rv_bad_create', { baseMetric: L1_ID, op: { kind: 'refine' }, alias: 'reveal·坏', reveal: 'half' }],
+      ['update', 'x:p6rv_bad_update', { baseMetric: L1_ID, op: { kind: 'refine' }, alias: 'reveal·坏', reveal: 'half' }],
+      ['declaration', 'p6mc:retail:reveal_bad_decl', { ...DECL_ENTRY, name: 'p6mc:retail:reveal_bad_decl', label: 'P6 声明·坏 reveal', reveal: 'half' }],
+      ['override', OVR_L1.id, { ...OVR_ENTRY, label: 'P6 覆盖·坏 reveal', reveal: 'half' }],
+    ]
+    for (const [i, [kind, metricId, payload]] of cases.entries()) {
+      const r = await submit(metricId, kind, payload)
+      expect(r, `case ${i}`).toMatchObject({ ok: false, http: 400, error: 'INVALID_DECLARATION' })
+      const n = await pool.query(
+        'select count(*)::int as n from data.metric_change where org = $1 and metric_id = $2 and payload->>\'reveal\' = \'half\'',
+        [RORG, metricId])
+      expect(n.rows[0]?.n, `case ${i} 不得落单`).toBe(0)
+    }
+  })
+
+  it('绕过 zod 的手改单（列 CHECK 兜底）⇒ 采纳期 23514 映射 400，不裸 500；单据仍 preview_ready', async () => {
+    // 直接插单绕过 submitChange 的 zod：模拟历史单/手工改库——DB CHECK 是最后一道闸。
+    const ins = await pool.query(
+      `insert into data.metric_change (org, metric_id, kind, payload, submitted_by, submitted_channel, status)
+       values ($1, 'x:p6rv_check', 'create', $2::jsonb, 'p6-reveal', 'pat', 'preview_ready')
+       returning id`,
+      [RORG, JSON.stringify({ baseMetric: L1_ID, op: { kind: 'refine' }, alias: 'reveal·CHECK', reveal: 'half' })])
+    const id = Number(ins.rows[0]!.id)
+    const out = await adoptChange(writeDeps(pool), RORG, id)
+    expect(out).toMatchObject({ ok: false, http: 400, error: 'INVALID_DECLARATION' })
+    expect((await getChange(pool, RORG, id))?.status).toBe('preview_ready')
+    const live = await pool.query('select 1 from data.metrics where org = $1 and id = $2', [RORG, 'x:p6rv_check'])
+    expect(live.rows).toHaveLength(0)
+    await pool.query('delete from data.metric_change where id = $1', [id])
+  })
+})

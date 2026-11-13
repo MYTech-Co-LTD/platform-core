@@ -885,3 +885,46 @@ describePg('P6 Task 3：提交即试算的限速（POST /metric-changes）', () 
     expect(b2.change.status).toBe('preview_ready')
   })
 })
+
+// ── P6 Task 4：reveal 写入面（变更单 payload → 采纳落列）──────────────────────────────
+// 列自 047 起存在（CHECK panel|report，default panel），此前只有读侧（P5 渲染闸）；
+// 本波把变更单 payload 接成唯一写入面。
+describePg('P6 Task 4：reveal 随变更单 payload 落列（POST → adopt）', () => {
+  it('create 带 reveal=report ⇒ 采纳后列 report；不传 ⇒ panel；非法值 ⇒ 提交期 400', async () => {
+    // 显式投影已接入源（L1 夹具 sourceSystem='lemeng'）：appOf 不带 sources ⇒ 采纳期写闸
+    // METRIC_SOURCE_NOT_ADOPTED（403）。与端到端用例同一布线。
+    const app = buildTestApp(mod, identityOf(),
+      { pool, execute: async () => ({ rows: [{ rows: 1, value: 1 }] }) } as never,
+      { id: 1, casdoor_org: ORG }, ['lemeng'])
+    const submit = (metricId: string, reveal?: string) => app.request('/metric-changes', {
+      method: 'POST', headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({
+        metricId, kind: 'create',
+        payload: { baseMetric: L1_ID, op: { kind: 'refine' }, alias: `reveal·${metricId}`, ...(reveal === undefined ? {} : { reveal }) },
+      }),
+    })
+    const adopt = async (metricId: string, reveal?: string): Promise<number> => {
+      const res = await submit(metricId, reveal)
+      expect(res.status).toBe(200)
+      const body = await res.json() as { change: { id: number; status: string } }
+      expect(body.change.status).toBe('preview_ready')
+      expect((await app.request(`/metric-changes/${body.change.id}/adopt`, { method: 'POST' })).status).toBe(200)
+      return body.change.id
+    }
+    // reveal=report ⇒ 落列
+    await adopt('x:p6rv_route_report', 'report')
+    const report = await pool.query('select reveal from data.metrics where org = $1 and id = $2', [ORG, 'x:p6rv_route_report'])
+    expect(report.rows[0]?.reveal).toBe('report')
+    // 不传 ⇒ 列默认 panel
+    await adopt('x:p6rv_route_default')
+    const def = await pool.query('select reveal from data.metrics where org = $1 and id = $2', [ORG, 'x:p6rv_route_default'])
+    expect(def.rows[0]?.reveal).toBe('panel')
+    // 非法值 ⇒ 提交期 400（zod enum），不落单
+    const bad = await submit('x:p6rv_route_bad', 'half')
+    expect(bad.status).toBe(400)
+    expect(await bad.json()).toMatchObject({ error: 'INVALID_DECLARATION' })
+    const n = await pool.query(
+      "select count(*)::int as n from data.metric_change where org = $1 and metric_id = 'x:p6rv_route_bad'", [ORG])
+    expect(n.rows[0]?.n).toBe(0)
+  })
+})

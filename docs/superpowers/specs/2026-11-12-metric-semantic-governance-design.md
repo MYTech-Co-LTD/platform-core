@@ -225,6 +225,15 @@ create index if not exists metric_change_queue_idx
 | `panel`（默认） | 面板级降级 |
 | `report` | 报表中存在任一此类指标且观看者无权 ⇒ **整表 404**（防「总数 − 其他」反推） |
 
+**该用 `report` 的指标**：成本 / 毛利 / 工资一类——它们的单值本身敏感（配合维度可反推个体或
+经营底价），被拒后留在面板里仍会泄露。其余通用指标保持默认 `panel`。
+
+**写入面（P6 Task 4 起）**：**变更单 payload 是唯一写入口**——create/update 档顶层（与
+`entity/synonyms/ownerDept/variantNote` 同栖）以及 override/declaration 档 entry 顶层都可带
+`reveal: 'panel' | 'report'`。提交期 zod 校验闭集，列 CHECK（047）兜底（23514 ⇒ 400）。
+缺席语义：**新行 = `panel`**（列默认）；**update 缺席 = 保留既有**（coalesce，普通内容写不得
+把泄露策略洗回 `panel`）。L1 sync 声明没有这个字段（平台行恒 `panel`）。
+
 ### 9.4 一致性巡检
 
 每日 job 校验「已发布报表受众 vs 面板指标可见范围」，漂移入待办（不自动改报表）。
