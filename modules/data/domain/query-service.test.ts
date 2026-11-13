@@ -1354,15 +1354,34 @@ describePg('runQuery × 部门可见性（P2 Task 4）', () => {
   })
 
   it('org 表无此人（无部门上下文）⇒ owned 不可见（fail-closed）', async () => {
+    lastSql = ''
     const out = await runQuery(deps(), ORG_V,
       reqOf({ userId: 'org-p2-vis-q-ghost', tenantId: TENANT_V }), OWNED.id, {})
     expect(out).toEqual({ status: 'denied', metricId: OWNED.id, reason: 'metric_not_declared' })
+    expect(lastSql).toBe('') // 同一 no-probe 契约：无上下文也按「看不见＝未声明」收口，不触仓库
   })
 
   it('requester 无 tenantId（租户数字 id 缺位）⇒ owned 不可见（fail-closed，宁少勿错）', async () => {
     // 部门名认识（accountName = U_CHILD）但没有 tenantId 就无从查 org 表 ⇒ 按「无 ctx」收口
+    lastSql = ''
     const out = await runQuery(deps(), ORG_V,
       reqOf({ userId: U_CHILD, accountName: U_CHILD }), OWNED.id, {})
     expect(out).toEqual({ status: 'denied', metricId: OWNED.id, reason: 'metric_not_declared' })
+    expect(lastSql).toBe('') // 同一 no-probe 契约：拒绝发生在授权层，SQL 从未编译执行
+  })
+
+  it('告警面钉死（P2 终审修复）：无 tenantId 的 fail-closed 收口必须记 metric_dept_ctx_unresolved warn', async () => {
+    // structured warn 是这条错配态（配了归属但观看通道没带租户 id）的唯一观测面——没它
+    // fail-closed 静默吞掉可见性。spy + finally 还原，不向同 worker 其他文件泄漏。
+    const spy = vi.spyOn(console, 'warn').mockImplementation(() => {})
+    try {
+      const out = await runQuery(deps(), ORG_V,
+        reqOf({ userId: U_CHILD, accountName: U_CHILD }), OWNED.id, {})
+      expect(out).toEqual({ status: 'denied', metricId: OWNED.id, reason: 'metric_not_declared' })
+      expect(spy).toHaveBeenCalledTimes(1)
+      expect(String(spy.mock.calls[0]![0])).toContain('metric_dept_ctx_unresolved')
+    } finally {
+      spy.mockRestore()
+    }
   })
 })

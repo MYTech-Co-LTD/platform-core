@@ -13,7 +13,7 @@
 //   （「unknown_tool」兜底随之上移到合成方，见 mcp-manage.ts）。
 import { z } from 'zod'
 import { visibleMetrics } from '../domain/authz'
-import { deptContextIfOwned } from '../domain/metric-visibility'
+import { deptContextIfOwned, metricVisibleWithDept } from '../domain/metric-visibility'
 import { loadMergedCatalog } from '../domain/metric-store'
 import { L2RefineDeclarationSchema, L2ExprDeclarationSchema, ExprNodeSchema, dimensionNamesOf } from '../domain/semantic-compiler'
 import { deleteMetricDeclaration, writeL2Declaration } from '../domain/metric-write'
@@ -133,13 +133,15 @@ export const metricTools: McpToolGroup = {
 
     if (name === 'list_metrics') {
       const all = await loadMergedCatalog(deps.pool, deps.org)
-      // 部门可见（P2 Task 4 接线）：bases 与 GET /metrics 同一把裁剪尺。
-      // ⚠️ custom 分支（L2 全量直出）是**既有行为**（scope/源维度同样不裁）——P2 不在本工具
-      //    改它的执法面，避免顺手扩围；缺口已记 Task 4 报告，归管理面语义统一时处置。
+      // 部门可见（P2 Task 4 接线）：bases 与 GET /metrics 同一把裁剪尺；custom 分支（P2 终审
+      // 修复）也过**同一份纯谓词**——原先 L2 全量直出，兄弟部门的 manage 持有者能看到别家
+      // 归属的自建口径。既有语义不动：custom 分支的 scope/源维度仍不裁（那是另一条已记档的
+      // 管理面语义统一缓办，本修复不扩围）。
       const deptCtx = await deptContextIfOwned(deps.pool, deps.requester.tenantId, deps.requester, all)
       const bases = visibleMetrics(
         all.filter((m) => m.source === 'l1'), deps.requester, deps.adoptedSources, deptCtx)
-      return ok({ bases: bases.map(view), custom: all.filter((m) => m.source === 'l2').map(view) })
+      const custom = all.filter((m) => m.source === 'l2' && metricVisibleWithDept(m, deptCtx))
+      return ok({ bases: bases.map(view), custom: custom.map(view) })
     }
 
     if (name === 'submit_metric_change') {
