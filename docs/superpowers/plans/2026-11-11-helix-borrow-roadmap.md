@@ -76,13 +76,13 @@
 | **Wave 5 P0（变更单 + 试算硬门）** | PR #2046（squash `0c415f84`，issue #2038，15 提交逐任务评审+终审+修复波）：`data.metric_change`（迁移 046，同指标仅一张未决单）+ 状态机（supersede/withdraw）+ 试算（compileL2 编译不生效 → 只读池 → 快照含 baseline Δ；**未试算不可采纳**）+ 7 端点（**采纳/驳回只认会话**，PAT/企微 ⇒ 403 `DECISION_REQUIRES_SESSION`，结构性反自审经终审确认）+ MCP `submit_metric_change`（提交即试算）/`list_metric_changes`（含驳回原因；无采纳工具）+ console「待核对」页（人话默认层 + TechDetails；采纳/驳回/跑试算）。验证：本地全仓测试+guard 927+typecheck+双门禁绿，modules/data 1720 用例；CI 全绿；部署 `dep_guN95NvCpBmRJAnb`（v289）容器实测：046 在位、生产库表+三索引+14 列+2 check、未鉴权 401、产物含「待核对」。终审缓办 6 条见待办表 |
 | **Wave 5 P1（概念归属 + 缓办销账 + override 档）** | PR #2058（squash `f27240d7`，issue #2049）：迁移 047（owner_dept/visible_depts/variant_note/reveal `not null default 'panel'` + `metrics_title_per_dept_uq`（生产同名冲突组=0 取证后直建）+ `metric_concept` 表 + `preview_history`）；概念校验与同名判据（与索引逐字同构）；变更单带归属（UNKNOWN_CONCEPT/TITLE_EXISTS_IN_DEPT/METRIC_ID_EXISTS）；**P0 缓办 6 条全销**（快照历史 FIFO5/撞 id 拒收/delete 通知+采纳前快照/meta 三键全缺/**toolface 门禁真测合并 20 面纯文件单源**/决策 advisory lock+applyPreview 钉态+23505→409）；override 档端到端（复用 createOverrideDeclaration 零复制；同名判据桶恒 null 与落库同构）；读面归属进 TechDetails（默认层零新词机检）。验证：全仓测试+guard+typecheck+双门禁绿（modules/data 1763）；CI 全绿（rebase 适配 #2050-2057 指标页返工）；部署 `dep_D7iKOIq7e6X0KozD`（v293）容器实测：047 在位、title_uq/概念表/preview_history 在、reveal 57 行全 panel、产物含「归属部门」、未鉴权 401。⚠️ 部署遇平台取消 worker 挂死互斥（用户授权 SSH 重启 openship-api-1 解锁，留档 openship-platform PR #34） |
 | **Wave 5 P2（指标可见性）** | PR #2062（squash `f9a3f1b7`，issue #2061）：组织树一致性检查（五判据+脚本；**生产取证 errors=0**：1 租户/280 节点/522 挂载/13 空分支告警——前置门过）；部门上下文（CTE 单往返 直属∪祖先∪后代）+ 纯谓词（fail-closed；显式共享只认直属；''→null 单点归一）；`visibleMetrics` 扩可选参（缺省 fail-closed，双回归锁）；**13/13 调用点接线**（集中式 `deptContextIfOwned` 懒守卫；含词表/list_metrics/custom 分支）；visible_depts 读侧零投影。验证：全仓测试+guard+typecheck+双门禁绿（modules/data 1810+）；终审（opus）**merge-ready 零 MUST-FIX**（跨面接缝全走通：fail-closed×懒守卫三态、无绕过、性能零增）；修复波 3/3 复核 clean。部署 `dep_0NzD63UvVngmEJbT`（v294）容器实测：新代码在位、**owned/total=0/57（零变化证明）**、/query 与 /metrics 401 正常、healthz 200。部门可见性自第一条归属指标出现时自动生效 |
+| **Wave 5 P3（解析与澄清）** | PR #2066（squash `000b1d73`，issue #2065）：`search_catalog` tie 检测——顶分内两条不同 id 的**命中面**（{lower(title)} ∪ {恰等于 q 的 synonyms}）有交集 ⇒ `ambiguous:true`（键只在真歧义时出现；判测在 slice 前，截断藏不住；浏览态 q=null 跳过）；results 投影与答案信封 metric 段补 dept/variantNote（caliber 拼图：id/标题/部门/差异）；**shared.md 第 5 条硬约束**（同名必须澄清、不许挑第一个；答案说明口径）经单一事实源分发 A/B/C 三通道。终审（opus）fix-first：实证「营业额」在生产 L1 目录恰是 synonyms 双精确命中形态（sales/net_sales 同义词表都含）——title 判据静默猜（#813 形态）⇒ 修复波扩命中面判据（测试复刻生产数据钉住）+ 浏览态跳过 + envelope 补 override。验证：modules/data 全量 1818 + CI 全绿 + 预算零字节变化；部署 `dep_gqonneYP1sZRCgmU`（v295）容器实测：shared.md 5 行、GUIDE_INVARIANTS 运行时 5 条含「澄清」、discovery 含 ambiguous 逻辑、toolbox 401/healthz 200 |
 
 ### 待办（Wave 见 §4）
 
 | 项 | 现状证据 | 波次 |
 |---|---|---|
 | **P1 终审缓办（转 P2+）** | ① L1 label 撞名预检进 check-semantics（今天零冲突；sync catch 已带 pg detail）② 旧直写面（PUT/POST /metrics、override 直写、customize_metric——P4 退役）撞 title 索引=裸 500 无映射 ③ override 行 owner_dept 恒 null：接进 insertTenantDeclaration 归 P2 可见性波 ④ report 工具 mutating:false 不对称（若总闸应管报表提案需裁决）⑤ notify eventId 去重吞重建事件（修法：eventId 拼变更单 id）⑥ preview_failed 回包不带 issues 明细 | Wave 5 P2（接手逐条销） |
-| **P3 解析与澄清** | `search_catalog` 无 tie 检测（`toolbox/discovery.ts:77-91`）；信封无 dept/variantNote | **Wave 5 P3（计划：`2026-11-13-metric-ambiguity-p3.md`，4 任务）** |
 | **P4 写面收口** | `customize_metric` 仍直接写生效行（`mcp-metric-tools.ts:80`）；PC 指标页仍有编辑/元数据/覆盖/删除 | Wave 5 P4 |
 | **P5 报表 × 指标** | 发布无「受众 ⊆ 面板指标可见范围」校验；Metabase 只能整表级 | Wave 5 P5 |
 | **P6 证据与治理** | 声明类无对账证据接入；下线候选已有面（/metrics/usage）未接评审 | Wave 5 P6 |
@@ -127,7 +127,7 @@
   P0 的 kind 范围：`create | update | meta | delete`（override/declared 档随 P1 接入）；终审缓办 6 条在待办表。
 - **P1 概念与归属**：✅ 已落地（PR #2058，部署 v293 实测）——归属四列+同名唯一索引+概念表+变更单带归属；P0 缓办 6 条全销；override 档接入；toolface 门禁测合并面
 - **P2 指标可见性**：✅ 已落地（PR #2062，部署 v294 实测）——组织树检查（前置门过）+ 部门上下文/纯谓词 + visibleMetrics 扩参（唯一咽喉，13/13 点接线，fail-closed 缺省）；reveal 消费归 P5 渲染闸
-- **P3 解析与澄清**：`search_catalog` tie 检测 + 答案 `caliber` 标注。
+- **P3 解析与澄清**：✅ 已落地（PR #2066，部署 v295 实测）——tie 检测（命中面=title∪synonyms 精确命中，slice 前）+ caliber（dept/variantNote）+ 第 5 条硬约束三通道分发
 - **P4 写面收口**：`customize_metric` 改为落变更单；人面写入口全删（含回滚开关 `DATA_METRIC_REVIEW_MODE` 退役旧路径）。
 - **P5 报表 × 指标**：发布门 + 渲染闸 + 每日一致性巡检（Metabase 整表级）。
 - **P6 证据与治理**：声明类对账证据接入采纳 + 使用统计→下线候选。
@@ -191,3 +191,4 @@
 | 2026-11-13 | P2 计划出台（部门上下文+纯谓词+咽喉扩参+六面接线；组织树检查为前置门） | 取证：visibleMetrics 唯一咽喉、现网 57 行 owner_dept 全空 ⇒ 上线零行为变化 | 支 PR 见下 |
 | 2026-11-13 | **Wave 5 P2 完成入账**（指标可见性：前置门+纯谓词+咽喉扩参+13 点接线）；P2 终审缓办按裁决转 P3+ | PR #2062 + 部署 v294 容器实测（owned=0/57 零变化证明） |
 | 2026-11-13 | P3 计划出台（tie 检测+caliber 补全+第 5 条硬约束） | 取证：scoreOf 有序无名检测；envelope metric 段已在；shared.md 恰 4 行有行数断言；预算余量 192B 禁加描述 | 支 PR 见下 |
+| 2026-11-13 | **Wave 5 P3 完成入账**（tie 检测+caliber+第 5 条硬约束）；P3 终审缓办（search 描述补词待预算、id==q 边界）转 P4 | PR #2066 + 部署 v295 容器实测 |
