@@ -86,7 +86,6 @@
 | 项 | 现状证据 | 波次 |
 |---|---|---|
 | **P1 终审缓办（转 P2+）** | ① L1 label 撞名预检进 check-semantics（今天零冲突；sync catch 已带 pg detail）② 旧直写面（PUT/POST /metrics、override 直写、customize_metric——P4 退役）撞 title 索引=裸 500 无映射 ③ override 行 owner_dept 恒 null：接进 insertTenantDeclaration 归 P2 可见性波 ④ report 工具 mutating:false 不对称（若总闸应管报表提案需裁决）⑤ notify eventId 去重吞重建事件（修法：eventId 拼变更单 id）⑥ preview_failed 回包不带 issues 明细 | Wave 5 P2（接手逐条销） |
-| **P6 证据与治理** | 门结果无分类（判不了=不告警）、creator 预检只在域层、限速不覆盖提交、`reveal` 无写入面、回滚/ACL 变更不重跑门 | **Wave 5 P6（计划：`2026-11-14-evidence-governance-p6.md`，6 任务）** |
 | 列级血缘 | dbt core manifest 无列级边（dbt core 不产出列级 edge） | 2.4（**触发式**：等真的有「按列追影响」的需求再做） |
 
 
@@ -131,7 +130,7 @@
 - **P3 解析与澄清**：✅ 已落地（PR #2066，部署 v295 实测）——tie 检测（命中面=title∪synonyms 精确命中，slice 前）+ caliber（dept/variantNote）+ 第 5 条硬约束三通道分发
 - **P4 写面收口**：✅ 已落地（PR #2086，部署 v296 实测）——两把写工具落变更单+开关、提交期预检下沉共用、console 与移动端人面写入口全删、REST 8 端点 410；存活写面清单见台账
 - **P5 报表 × 指标**：✅ 已落地（PR #2109，部署 `2d85f8e6` 实测）——发布门（受众含子树展开、无界受众判违规）+ 渲染闸（面板降级/reveal 整表 404）+ 巡检脚本；**declaration 档已恢复**（P4 暂停的能力归还）；Metabase 整表判定仍不可实现（无 metricIds 字段）
-- **P6 证据与治理**：✅ 已交付「证据与治理收口 T1–T5」（计划 `2026-11-14-evidence-governance-p6.md`）——①门结果分类（`issues` 可判红、巡检 exit 1）；②creator 判据落**采纳期**（`creator ∪ data:manage`，撤回提交期预检）；③试算限速覆盖提交路径；④`reveal` 写入面（变更单 payload）；⑤回滚 / ACL / 部门门变更重跑发布门。
+- **P6 证据与治理**：✅ 已交付「证据与治理收口 T1–T5」（计划 `2026-11-14-evidence-governance-p6.md`；PR #2141 + 部署实测）——①门结果分类（`issues` 可判红、巡检 exit 1）；②creator 判据落**采纳期**（`creator ∪ data:manage`，撤回提交期预检）；③试算限速覆盖提交路径；④`reveal` 写入面（变更单 payload）；⑤回滚 / ACL / 部门门变更重跑发布门。
   （原定「声明类对账证据接入 + 使用统计→下线候选」洞见**未丢**，移入 §6 候选池。）
 
 ### Wave 4 · 产品面：单页双层（2026-11-12 定案）
@@ -200,3 +199,4 @@
 | 2026-11-13 | P5 计划出台（declaration 档恢复 + 发布门 + 渲染闸/reveal + 巡检） | 取证：publish 入口在 denyUnlessCanEdit 之后；panel→metricId 投影已在 report-store；指标侧判定复用 P2 | 支 PR 见下 |
 | 2026-11-14 | **Wave 5 P5 完成入账**（发布门/渲染闸/巡检 + declaration 档恢复，销 P4「能力退役」条目） | PR #2109 + 部署实测；**如实记为能力缺口**：Metabase 无 `metricIds` 字段 ⇒ 整表级判定当前不可实现；`reveal` 无写入面（整表 404 分支休眠）；rollback 与 ACL/部门门变更后不复跑发布门；归档指标只 warn 不判红（需 P6 门结果分类）；reason 契约改 `audience_unbounded`、owner 豁免新语义；迁移与 main 撞号（048 两份，ledger 按全名记账，可跑但需下波规避） |
 | 2026-11-14 | P6 计划出台（门结果分类+creator 预检+提交限速+reveal 写入+门重跑） | 取证：门返回 string[] warnings；rollbackVersion 直调 publish；metricIdsOf 全可选形状 | 支 PR 见下 |
+| 2026-11-14 | **Wave 5 P6 完成入账 = Wave 5 全部收口**（门结果分类/授权模型纠正/提交限速/reveal 写入/四处重跑门）；原 §18 P6 两项移入候选池 | PR #2141（`67604c93`）+ 部署实测：`gateBlocks`/`PUBLISHED_SNAPSHOT_UNREADABLE`/`canManage` 三处/`previewSkipped` 双面/`revealOfPayload` 均在容器。**关键纠正**：采纳时的 creator 门原比对采纳人 ⇒ 「agent 提单、人采纳」对非本人指标必 403（P4 以来的真实缺口），已改为 `creator ∪ data:manage` 并撤回提交期预检。遗留：Metabase 整表判定不可实现、L1 reveal 无写入面、confirmPrivateMeasureDraft 仍 creator-only（on 模式不可达）、PUBLISHED_SNAPSHOT_UNREADABLE 未进 console 消息表 |
