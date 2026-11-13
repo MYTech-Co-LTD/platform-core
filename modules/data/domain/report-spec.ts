@@ -147,6 +147,9 @@ export const ReportFilterSchema = z.object({
 
 export type ReportFilter = z.infer<typeof ReportFilterSchema>
 
+/** 库里可能存的两种形态（V5 起新写入保留 v2）。读面必须用 `parseStoredSpec` 归一。 */
+export type StoredReportSpec = ReportSpec | ReportSpecV2
+
 export const ReportSpecSchema = z.object({
   period: PeriodSchema.optional(),
   filters: z.array(ReportFilterSchema).max(20).optional(),
@@ -272,16 +275,21 @@ export function flattenReportSpecV2(v2: ReportSpecV2): { ok: true; spec: ReportS
  * 写入侧统一入口：v1 原样、v2 扁平化后按 v1 校验。
  * `ir` 只用于观测/审计，存储与下游消费在 V2/V3 迁移前一概是 v1。
  */
-export function parseReportInput(input: unknown): { ok: true; spec: ReportSpec; ir: 1 | 2 } | { ok: false; code: SpecErrorCode } {
+/** 读已存储的 spec（v1 或 v2）⇒ 统一 v1 规范形态。读面专用：挂库数据可能是 v2。 */
+export function parseStoredSpec(input: unknown): { ok: true; spec: ReportSpec; ir: 1 | 2; raw: StoredReportSpec } | { ok: false; code: SpecErrorCode } {
+  return parseReportInput(input)
+}
+
+export function parseReportInput(input: unknown): { ok: true; spec: ReportSpec; ir: 1 | 2; raw: StoredReportSpec } | { ok: false; code: SpecErrorCode } {
   const ir = (input as { ir?: unknown } | null)?.ir
   if (ir === 2) {
     const parsed = ReportSpecV2Schema.safeParse(input)
     if (!parsed.success) return { ok: false, code: 'INVALID_SPEC' }
     const flat = flattenReportSpecV2(parsed.data)
-    return flat.ok ? { ok: true, spec: flat.spec, ir: 2 } : flat
+    return flat.ok ? { ok: true, spec: flat.spec, ir: 2, raw: parsed.data } : flat
   }
   const v1 = parseReportSpec(input)
-  return v1.ok ? { ok: true, spec: v1.spec, ir: 1 } : v1
+  return v1.ok ? { ok: true, spec: v1.spec, ir: 1, raw: v1.spec } : v1
 }
 
 export type ReportSpec = z.infer<typeof ReportSpecSchema>

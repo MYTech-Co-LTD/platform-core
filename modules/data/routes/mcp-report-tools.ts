@@ -12,7 +12,7 @@
 import { z } from 'zod'
 import { withObjectLock } from '../domain/object-lock'
 import { loadMergedCatalog } from '../domain/metric-store'
-import { parseReportInput, parseReportSpec } from '../domain/report-spec'
+import { parseReportInput, parseReportSpec, parseStoredSpec } from '../domain/report-spec'
 import type { ReportSpec } from '../domain/report-spec'
 import { deriveRequiredScope, validatePanelMetrics } from '../domain/report-scope'
 import { compileTemplate, REPORT_TEMPLATES, templateById } from '../domain/report-templates'
@@ -81,6 +81,13 @@ async function validateSpec(deps: McpDeps, spec: ReportSpec): Promise<McpToolRes
   return null
 }
 
+/** 面板数（V5：库里可能是 v2）——读面统一走 parseStoredSpec 归一。 */
+function panelsCountOf(stored: unknown): number | null {
+  if (stored === null || stored === undefined) return null
+  const parsed = parseStoredSpec(stored)
+  return parsed.ok ? parsed.spec.panels.length : null
+}
+
 export const reportTools: McpToolGroup = {
   async list(deps: McpDeps) {
     if (deps.requester === null) return []
@@ -99,7 +106,7 @@ export const reportTools: McpToolGroup = {
       const rows = await listReports(deps.pool, org)
       return ok({ reports: rows.map((r) => ({
         id: r.id, title: r.title, renderer: r.renderer, requiredScope: r.requiredScope,
-        version: r.version, panels: r.spec?.panels.length ?? null,
+        version: r.version, panels: panelsCountOf(r.spec),
         // 「已发布」看的是**发布指针**（`publishedVersion != null`），不是页门：发布时页门
         // 会被重算成快照口径（可能仍是 null），指针才是唯一状态来源。
         publishedVersion: r.publishedVersion,
@@ -122,9 +129,12 @@ export const reportTools: McpToolGroup = {
       const published = row.publishedVersion === null
         ? null
         : await getVersion(deps.pool, org, row.id, row.publishedVersion)
+      const normalized = row.spec === null ? null : parseStoredSpec(row.spec)
       return ok({
         id: row.id, title: row.title, renderer: row.renderer,
-        requiredScope: row.requiredScope, version: row.version, spec: row.spec,
+        requiredScope: row.requiredScope, version: row.version,
+        // V5：读面归一为 v1（agent 拿到的一直是 v1 形态；v2 只存在于存储）。
+        spec: normalized === null ? null : normalized.ok ? normalized.spec : row.spec,
         publishedVersion: row.publishedVersion,
         publishedAt: published?.publishedAt ?? null,
       })
@@ -151,7 +161,8 @@ export const reportTools: McpToolGroup = {
       // ★ 原子 create-only：撞名 ⇒ 什么都不写、返回 null ⇒ 这里拒掉（§3.3④）
       const id = await upsertReport(deps.pool, org, {
         title: parsed.data.title, metabaseId: 0, embedParams: {},
-        requiredScope: FORCED_GATE, renderer: 'platform', spec: spec.spec,
+        requiredScope: FORCED_GATE, renderer: 'platform',
+        spec: spec.raw,
       }, 'create-only')
       if (id === null) return refused('TITLE_TAKEN')
       const row = await getReport(deps.pool, org, id)
@@ -178,7 +189,7 @@ export const reportTools: McpToolGroup = {
       // 「指标不存在」这种**改不了**的错——那会误导 agent 去修一个它无权修的东西。
       const invalid = await validateSpec(deps, spec.spec)
       if (invalid !== null) return invalid
-      const updated = await updateSpec(deps.pool, org, id, spec.spec, parsed.data.expectedVersion)
+      const updated = await updateSpec(deps.pool, org, id, spec.raw, parsed.data.expectedVersion)
       if (updated === null) {
         const cur = await getReportVersion(deps.pool, org, id)
         return cur === null ? refused('NOT_FOUND') : refused('STALE_WRITE', { currentVersion: cur })

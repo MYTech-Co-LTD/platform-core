@@ -24,7 +24,7 @@ import type { Pool, PoolClient } from 'pg'
 import { loadMergedCatalog } from './metric-store'
 import { withObjectLock } from './object-lock'
 import { deriveRequiredScope, validatePanelMetrics } from './report-scope'
-import { parseReportInput, parseReportSpec, type ReportSpec } from './report-spec'
+import { parseReportInput, parseReportSpec, parseStoredSpec, type ReportSpec } from './report-spec'
 import { lintBlocksPublish, lintReportSpec, type LintIssue } from './report-lint'
 import { getReport } from './report-store'
 
@@ -302,7 +302,7 @@ export async function publishVersion(
            (id, org, report_id, version, title, spec, required_scope, required_depts, draft_version, published_by, note)
          values ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
          returning published_at`,
-        [vid, org, id, version, cur.title, JSON.stringify(parsed.spec),
+        [vid, org, id, version, cur.title, JSON.stringify(cur.spec),
           scope.requiredScope,
           cur.requiredDepts == null ? null : JSON.stringify(cur.requiredDepts),
           cur.version, userId, note.slice(0, MAX_NOTE)],
@@ -419,7 +419,7 @@ export async function rollbackVersion(
              (id, org, report_id, version, title, spec, required_scope, required_depts, draft_version, published_by, note)
            values ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
            returning published_at`,
-          [vid, org, id, newVersion, target.title, JSON.stringify(parsed.spec),
+          [vid, org, id, newVersion, target.title, JSON.stringify(target.spec),
             scope.requiredScope,
             target.requiredDepts == null ? null : JSON.stringify(target.requiredDepts),
             newDraftVersion, userId, rollbackNote.slice(0, MAX_NOTE)],
@@ -432,7 +432,7 @@ export async function rollbackVersion(
               set title = $1, spec = $2, required_scope = $3, required_depts = $4,
                   published_version_id = $5, version = version + 1, updated_at = now()
             where org = $6 and id = $7 and version = $8`,
-          [target.title, JSON.stringify(parsed.spec), scope.requiredScope,
+          [target.title, JSON.stringify(target.spec), scope.requiredScope,
             target.requiredDepts == null ? null : JSON.stringify(target.requiredDepts),
             vid, org, id, expectedVersion],
         )
@@ -485,7 +485,7 @@ export async function getPublishedSpec(
     title: string; spec: unknown; version: number
     required_scope: string | null; required_depts: string[] | null; published_at: unknown
   }
-  const parsed = parseReportSpec(row.spec)
+  const parsed = parseStoredSpec(row.spec)
   if (!parsed.ok) return null
   return {
     title: row.title,

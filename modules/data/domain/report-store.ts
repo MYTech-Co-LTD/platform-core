@@ -8,7 +8,7 @@
 // `platform` = 平台自绘，**没有** Metabase dashboard（`metabase_id` 落 0，见 ReportRow）。
 import { randomUUID } from 'node:crypto'
 import type { Pool } from 'pg'
-import type { ReportSpec } from './report-spec'
+import type { ReportSpec, StoredReportSpec } from './report-spec'
 
 /** 渲染器取值域，与库侧 check 约束 `data_reports_renderer_check` 同域（列默认 'metabase'）。 */
 export type ReportRenderer = 'metabase' | 'platform'
@@ -183,7 +183,7 @@ export interface UpsertReportInput {
   embedParams: Record<string, string>
   requiredScope: string | null
   renderer?: ReportRenderer
-  spec?: ReportSpec | null
+  spec?: StoredReportSpec | null
   /** 部门门（可空，迁移 025）；缺省 null = 无门——既有调用方零改动 */
   requiredDepts?: string[] | null
   /** 资产可见面（spec 2026-11-01 §4）：**只在新建时生效**；缺省 'tenant'（历史语义） */
@@ -299,7 +299,7 @@ export async function updateGates(
  * 误用会撞上跨列 check（metabase ⇒ spec 必须 null）而抛错——库侧兜底，不是静默写坏。
  */
 export async function updateSpec(
-  pool: Pool, org: string, id: string, spec: ReportSpec, expectedVersion: number,
+  pool: Pool, org: string, id: string, spec: StoredReportSpec, expectedVersion: number,
 ): Promise<ReportRow | null> {
   const r = await pool.query(
     `with updated as (
@@ -332,7 +332,7 @@ export async function updateSpec(
  * 形参版则要靠逐个调用点读实参才知道。
  */
 export async function updateSpecAndScope(
-  pool: Pool, org: string, id: string, spec: ReportSpec, requiredScope: string | null, expectedVersion: number,
+  pool: Pool, org: string, id: string, spec: StoredReportSpec, requiredScope: string | null, expectedVersion: number,
 ): Promise<ReportRow | null> {
   const r = await pool.query(
     `with updated as (

@@ -2295,7 +2295,7 @@ describePg('报表路由（需要 DATABASE_URL）', () => {
         body: JSON.stringify({ expectedVersion }),
       })
 
-    it('IR v2：POST /reports 接受 v2，存储为扁平化 v1；发布成功', async () => {
+    it('IR v2：POST /reports 接受 v2；V5 起存储保留 v2，读面归一为 v1', async () => {
       const { app } = manage()
       const res = await post(app, {
         title: 'IR2 报表', renderer: 'platform',
