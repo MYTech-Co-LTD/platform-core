@@ -47,6 +47,7 @@ import { chartCompareRangesOf, compareRangeOf, panelArgsOf, panelQueryBodyOf } f
 import type { PeriodSpec, ReportSpec } from '../../domain/report-spec'
 import { KpiCard } from './KpiCard'
 import AiTextPanel from './AiTextPanel'
+import { RichText } from '../lib/rich-text'
 
 type Panel = ReportSpec['panels'][number]
 
@@ -330,8 +331,10 @@ function PanelBody({ panel, result, compares = [] }: { panel: Panel; result: Pan
   // text / kpi 的呈现不经过查询结果（text 是静态文本，kpi 由 KpiCard 自取合计）——
   // ReportView 的渲染分支里已把它们分流，这里只是类型收口。
   if (panel.chart === 'text') {
-    // 纯文本，**不**渲染 HTML（content 来自 spec，写侧已限长；渲染侧仍按纯文本对待）
-    return <Typography.Paragraph style={{ whiteSpace: 'pre-wrap', margin: 0 }}>{panel.content}</Typography.Paragraph>
+    // 纯文本 / 受限富文本（R3）。两者都**不**渲染 HTML：markdown 走 RichText 的 React 节点。
+    return panel.format === 'markdown'
+      ? <div style={{ lineHeight: 1.85 }}><RichText text={panel.content} /></div>
+      : <Typography.Paragraph style={{ whiteSpace: 'pre-wrap', margin: 0 }}>{panel.content}</Typography.Paragraph>
   }
   if (panel.chart === 'kpi') return null
   // ai_text：内容在**观看时**由服务端生成，不经过 /query 结果。渲染（SSE + AI 感）是
