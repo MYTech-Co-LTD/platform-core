@@ -26,6 +26,13 @@ describe('humanError', () => {
     expect(humanError({ code: 'PREVIEW_UNAVAILABLE' }).code).toBe('PREVIEW_UNAVAILABLE')
   })
 
+  it('PREVIEW_RATE_LIMITED（P4 Task 4）：给等待动作，不落通用句', () => {
+    const h = humanError({ code: 'PREVIEW_RATE_LIMITED' })
+    expect(h.text).toContain('稍等')
+    expect(h.text).not.toContain('重试一次') // 通用回落句的指纹：说明命中了具体条目
+    expect(h.code).toBe('PREVIEW_RATE_LIMITED')
+  })
+
   it('表外的码 ⇒ 通用句 + 原码仍保留', () => {
     const h = humanError({ code: 'SOME_NEW_CODE' })
     expect(h.text).toContain('重试')

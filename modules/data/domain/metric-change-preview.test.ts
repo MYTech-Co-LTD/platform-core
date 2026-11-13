@@ -89,6 +89,9 @@ describe('previewTooRecent（重跑限速判据，P4 Task 4 销缓办①；纯�
     expect(previewTooRecent({ ranAt: at(60_000) }, NOW)).toBe(false)
     expect(previewTooRecent({ ranAt: at(120_000) }, NOW)).toBe(false)
   })
+  it('未来时间戳（时钟回拨）⇒ true（收缩不放开：宁可多挡 60s 也不错放）', () => {
+    expect(previewTooRecent({ ranAt: new Date(NOW + 30_000).toISOString() }, NOW)).toBe(true)
+  })
   it('null / 非对象 / 缺 ranAt / 坏时间串 ⇒ false（首跑与历史脏数据不误伤）', () => {
     expect(previewTooRecent(null, NOW)).toBe(false)
     expect(previewTooRecent(undefined, NOW)).toBe(false)

@@ -92,6 +92,9 @@ describePg('POST /metric-changes（提交即试算）', () => {
     expect(body.change.status).toBe('preview_failed')
     expect(typeof body.change.preview.error).toBe('string')
     expect(body.change.preview.error!.length).toBeGreaterThan(0)
+    // L1_BASE_NOT_FOUND 是 SemanticCompileError 档 ⇒ 明细一并回写（P4 Task 4 修复轮补测）
+    expect(Array.isArray(body.change.preview.issues)).toBe(true)
+    expect(body.change.preview.issues!.length).toBeGreaterThan(0)
   })
 
   it('声明带自由 SQL 字段 ⇒ 400 INVALID_DECLARATION（结构化声明纪律，提交不落库）', async () => {
@@ -179,12 +182,19 @@ describePg('POST /metric-changes/:id/preview（重跑试算的租户与状态闸
     expect(created.status).toBe(200)
     const body = await created.json() as { change: { id: number; status: string } }
     // 首跑（提交即试算）刚落地 ranAt ⇒ 立刻重跑被限速
+    const ranAtOf = async (): Promise<string | undefined> => {
+      const q = await pool.query("select preview->>'ranAt' as ran_at from data.metric_change where id = $1", [body.change.id])
+      return q.rows[0]?.ran_at as string | undefined
+    }
+    const ranAtBefore = await ranAtOf()
+    expect(typeof ranAtBefore).toBe('string')
     const tooSoon = await app.request(`/metric-changes/${body.change.id}/preview`, { method: 'POST' })
     expect(tooSoon.status).toBe(409)
     expect(await tooSoon.json()).toMatchObject({ error: 'PREVIEW_RATE_LIMITED' })
-    // 单据不被限速改动（仍是首跑落地的 preview_failed：meta 档目标指标不存在）
+    // 单据不被限速改动（仍是首跑落地的 preview_failed：meta 档目标指标不存在；ranAt 原样）
     const still = await pool.query('select status from data.metric_change where id = $1', [body.change.id])
     expect(still.rows[0]?.status).toBe('preview_failed')
+    expect(await ranAtOf()).toBe(ranAtBefore)
     // 时间流逝（拨旧 ranAt）⇒ 解除限速，正常重跑
     await agePreview(body.change.id, 120_000)
     const ok = await app.request(`/metric-changes/${body.change.id}/preview`, { method: 'POST' })
@@ -338,11 +348,12 @@ describePg('★ adopt eventId 拼变更单 id（P4 Task 4，销缓办⑤：同 m
     const eventIds = evts.map((e) => e.eventId)
     // 去重键 = eventId：三条必须互不相同（同一 metricId 不再复用 version 段）
     expect(new Set(eventIds).size).toBe(3)
-    // 末段是**变更单 id**（每单唯一），delete→re-create 各自产生新事件
+    // 末段是 `ch:<变更单 id>`（`ch:` 前缀让命名空间与 confirm-draft 的 `<metricId>:<version>`
+    // 永不相交：同 org+metric 下整数撞车不会造成永久去重）
     expect(eventIds).toEqual([
-      `data.metric.definition.changed:${ORG}:${MID}:${cId}`,
-      `data.metric.definition.changed:${ORG}:${MID}:${dId}`,
-      `data.metric.definition.changed:${ORG}:${MID}:${rId}`,
+      `data.metric.definition.changed:${ORG}:${MID}:ch:${cId}`,
+      `data.metric.definition.changed:${ORG}:${MID}:ch:${dId}`,
+      `data.metric.definition.changed:${ORG}:${MID}:ch:${rId}`,
     ])
   })
 })

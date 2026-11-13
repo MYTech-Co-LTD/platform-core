@@ -155,9 +155,12 @@ export function registerMetricChanges(r: ModuleHono, ctx: RouteCtx): void {
           const metricId = String(hit.metric_id)
           // eventId 末段拼**变更单 id**（P4 Task 4，销缓办⑤）：P1 实证「delete→re-create 同
           // metricId」会复用 metric 版本号 ⇒ 被 notify 去重吞。单号每单唯一，重建即新事件。
+          // ★ `ch:` 前缀是命名空间隔离（修复轮）：confirm-draft（routes/metrics.ts）仍发
+          // `...:{metricId}:{version}`，两边末段都是整数——不加前缀时同 org+metric 下 changeId
+          // 撞上历史 version 会被 notify 永久去重。`ch:` 让两族 eventId 永不相交。
           await ctx.notify.emit(c.get('identity'), {
             eventKey: 'data.metric.definition.changed',
-            eventId: `data.metric.definition.changed:${org}:${metricId}:${id}`,
+            eventId: `data.metric.definition.changed:${org}:${metricId}:ch:${id}`,
             scope: metricId,
             payload: {
               metricId,
