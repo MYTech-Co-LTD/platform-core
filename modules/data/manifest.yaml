@@ -169,6 +169,9 @@ api:
     - { method: GET,    path: /reports/:id/edit-url,  scope: data:query }
     - { method: DELETE, path: /reports/:id,           scope: data:query }
     - { method: POST,   path: /reports/reconcile,     scope: data:manage }
+    # ── 报表模板（R2）：列表 + 槽位编译。只读仓内模板，编译不落库、不发布。──
+    - { method: GET,    path: /reports/templates,             scope: data:query }
+    - { method: POST,   path: /reports/templates/:id/compile, scope: data:query }
     # 管理清单（跨资产视图）：管理面 data:manage，**不做 visibleTo 行裁剪**——页门未放行
     # 的行对管理员必须可见可改（观看面 GET /reports 才裁）。
     # 「发布」= requiredScope 置 null，没有独立的 published 列（见 report-store 头注）。
