@@ -3648,6 +3648,36 @@ describePg('报表路由（需要 DATABASE_URL）', () => {
         expect((await narrate(BOB)).status).not.toBe(404)
         await pool.query('delete from data.asset_audit where org = $1 and asset_id = $2', [ORG, id])
       })
+
+      it('★ GET /reports 列表的 metricIds 也按观看者裁剪：不可见面板的 metricId 不出现；owner 全量', async () => {
+        const OWNED = 'p5rg:list-owned'
+        await seedMetric(OWNED, '列表部门口径指标')
+        const app = admin()
+        const created = await post(app, {
+          title: '渲染闸-列表 metricIds', renderer: 'platform',
+          spec: {
+            panels: [
+              { chart: 'table', title: '部门口径', metricId: OWNED },
+              { chart: 'table', title: '公开口径', metricId: OPEN_METRIC },
+            ],
+          },
+        })
+        expect(created.status).toBe(201)
+        const id = (await created.json()).id as string
+        await drift(OWNED, { ownerDept: SIBLING_DEPT })
+
+        type ListBody = { reports: Array<{ id: string; metricIds: string[]; canEdit: boolean }> }
+        const viewerList = await (await watcher(ALICE).request('/reports')).json() as ListBody
+        const viewerRow = viewerList.reports.find((r) => r.id === id)
+        expect(viewerRow?.canEdit).toBe(false)
+        // 不可见面板的 metricId（OWNED）不能出现在列表里——否则与「denied 面板不得暴露 metricId」自相矛盾
+        expect(viewerRow?.metricIds).toEqual([OPEN_METRIC])
+
+        // 编辑者/owner：深链要能指到全部口径
+        const ownerList = await (await app.request('/reports')).json() as ListBody
+        const ownerRow = ownerList.reports.find((r) => r.id === id)
+        expect(ownerRow?.metricIds).toEqual([OWNED, OPEN_METRIC])
+      })
     })
   })
 })

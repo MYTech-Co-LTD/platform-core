@@ -3,10 +3,14 @@
 // 计划 2026-10-26 Task 13。三条硬约束：
 //  ① 数据源默认只有 `GET /reports/:id/published-spec`——未发布 / 已下线 / 跨租户一律 404；
 //     独立页**绝不**回退 `/draft`（草稿是管理面，独立链接能看到草稿等于绕过发布闸）。
+//     P5 Task 3 起该响应可能带 `deniedPanels` 与 `{index,denied:true}` 占位符（观看者无权看
+//     某面板口径）：`ReportView` 对占位符只渲染「无此口径权限」，不取数、不显示任何口径信息。
 //  ①b 例外 = **显式** `?preview=1`（#1367）：数据源改走 `GET /reports/:id/spec`（返回
-//     `{spec,version}`，无标题 ⇒ 标题「预览」），并显示「预览草稿」标签。该端点本就受
-//     `canViewAsset`（owner ∪ ACL ∪ manage）保护 ⇒ 无权者 403，页面显示错误、**不回退**
-//     published-spec。带 `?v=N` 时 v 优先（保持「旧链接按那一版判」契约），preview 被忽略。
+//     `{spec,version,deniedPanels}`，无标题 ⇒ 标题「预览」），并显示「预览草稿」标签。
+//     该端点受 `canViewAsset`（ACL / 可见性 / 旧页门与部门门）保护 ⇒ 无权者 403，页面显示
+//     错误、**不回退** published-spec。⚠️ P5 Task 3 起 /spec 对**非编辑者**同样过渲染闸
+//     （不可见面板剥成 `{index,denied:true}`），编辑者（owner ∪ data:manage）才拿全量。
+//     带 `?v=N` 时 v 优先（保持「旧链接按那一版判」契约），preview 被忽略。
 //  ② 无导航 / 菜单 / 关闭按钮：路由挂在宿主 `/console` 壳之外（`App.tsx` 顶层 `/r/:id`），
 //     渲染只走 `ReportView chrome="standalone"`——本期不另造一套渲染器。
 //  ③ `?v=N` 原样透传给服务端（钉住历史版本），并交给 ReportView 显示「历史版本 vN」标签。

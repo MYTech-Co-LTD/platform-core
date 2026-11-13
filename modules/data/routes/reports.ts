@@ -506,15 +506,20 @@ export function registerReports(r: ModuleHono, ctx: RouteCtx): void {
   })
 
   /**
-   * 报表规格里出现的指标 id（去重、保序）。`text` / `ai_text` 面板没有 metricId。
+   * 报表规格里出现的指标 id（去重、保序）。`text` / `ai_text` 面板 / 渲染闸降级占位符
+   * （`{index,denied:true}`）都没有 metricId。
    * 只回**实际声明过的** id——移动壳的「口径与来源」深链靠它，前端不猜。
+   *
+   * 入参放宽到 `{panels}` 结构面：既服务原始 `ReportSpec`，也服务渲染闸的 `ViewableSpec`
+   * （列表侧按观看者裁剪 metricIds 时用降级后的面板集合算）。
    */
-  const metricIdsOfSpec = (spec: ReportSpec | null): string[] => {
+  const metricIdsOfSpec = (spec: { panels: ReadonlyArray<object> } | null): string[] => {
     if (spec === null) return []
     const ids: string[] = []
     for (const panel of spec.panels) {
-      if ('metricId' in panel && typeof panel.metricId === 'string' && !ids.includes(panel.metricId)) {
-        ids.push(panel.metricId)
+      if ('metricId' in panel && typeof (panel as { metricId?: unknown }).metricId === 'string'
+        && !ids.includes((panel as { metricId: string }).metricId)) {
+        ids.push((panel as { metricId: string }).metricId)
       }
     }
     return ids
@@ -534,27 +539,56 @@ export function registerReports(r: ModuleHono, ctx: RouteCtx): void {
     const userDepts = needsDepts
       ? await userDeptClosure(ctx.pool, c.get('tenant').id, deptNamesOf(requester))
       : undefined
+    const visibleRows = rows.filter((row) => canViewAsset(row, requester, acls.get(row.id) ?? [], userDepts))
+    const editableOf = (row: (typeof rows)[number]): boolean =>
+      canEditAsset(acls.get(row.id) ?? [], requester, MANAGE_SCOPE)
+
+    // ── 渲染闸（P5 Task 3，列表侧）─────────────────────────────────────────────────
+    // `metricIds` 是移动壳「口径与来源」深链的来源；它**不能**把观看者看不到的口径 id
+    // 原样列出来（与 `/spec`、`published-spec` 的「denied 面板零数据字段」同一条不变量）。
+    // 编辑者/管理员保持全量（他们要能深链到全部口径并继续编辑）。
+    //
+    // 成本：词表**一次**加载，且只喂「非编辑者可见行」实际引用的 id；`deptContextIfOwned`
+    // 继续懒加载（这些行里没有部门归属 ⇒ 零额外查询，与 P2 的全租户零影响纪律一致）。
+    const gateIds = new Set<string>()
+    for (const row of visibleRows) {
+      if (editableOf(row) || row.spec === null) continue
+      for (const metricId of metricIdsOfSpec(row.spec)) gateIds.add(metricId)
+    }
+    const gateRows = gateIds.size === 0
+      ? []
+      : (await loadMergedCatalog(ctx.pool, org)).filter((m) => gateIds.has(m.id))
+    const gateDeptCtx = gateRows.length === 0
+      ? undefined
+      : await deptContextIfOwned(ctx.pool, requester.tenantId, requester, gateRows)
+    /** 观看者可见的 metricIds：不可见面板（含 kpi 分母不可见）整格剔除。 */
+    const metricIdsShown = (row: (typeof rows)[number], editable: boolean): string[] => {
+      if (row.spec === null || editable) return metricIdsOfSpec(row.spec)
+      return metricIdsOfSpec(applyPanelRenderGate(row.spec, gateRows, gateDeptCtx).spec)
+    }
+
     // 只投影消费面要的字段：metabase_id / embed_params 是实现细节，不外泄
     return c.json({
-      reports: rows.filter((row) => canViewAsset(row, requester, acls.get(row.id) ?? [], userDepts))
-        .map((row) => ({
+      reports: visibleRows.map((row) => {
+        // #1327：写保护的读侧值 + 服务端算好的「能不能改」。
+        // `canEdit` 唯一实现仍是 `canEditAsset`（owner ∪ data:manage）——前端只消费结论，
+        // 不复制判据（复制必然漂移，#1179 的教训）。
+        const canEdit = editableOf(row)
+        return {
           id: row.id, title: row.title, requiredScope: row.requiredScope,
           requiredDepts: row.requiredDepts, renderer: row.renderer,
-          // #1327：写保护的读侧值 + 服务端算好的「能不能改」。
-          // `canEdit` 唯一实现仍是 `canEditAsset`（owner ∪ data:manage）——前端只消费结论，
-          // 不复制判据（复制必然漂移，#1179 的教训）。
           version: row.version,
-          // W5 Task 4 定案 A：移动壳「口径与来源」深链的唯一来源（规格里的指标 id）。
           // 没有指标 id（metabase 行 / 纯文本报表）⇒ 空数组，前端据此不渲染链接。
-          metricIds: metricIdsOfSpec(row.spec),
-          canEdit: canEditAsset(acls.get(row.id) ?? [], requester, MANAGE_SCOPE),
+          metricIds: metricIdsShown(row, canEdit),
+          canEdit,
           // 所有者列（#1327）：owner-only 用户也在看这份清单，缺它会把自己的报表显示成「无所有者」
           owner: (acls.get(row.id) ?? []).find((a) => a.relation === 'owner')?.subjectId ?? null,
           // 版本徽标/发布按钮对 owner（可能无 manage 码）同样要有数据来源（#1327）
           publishedVersion: row.publishedVersion,
           hasUnpublishedChanges:
             row.publishedVersionId !== null && row.version > (row.publishedDraftVersion ?? 0),
-        })),
+        }
+      }),
     })
   })
 
