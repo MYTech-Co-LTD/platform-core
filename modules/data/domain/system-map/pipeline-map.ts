@@ -32,6 +32,11 @@ export interface PipelineMapModel {
 
 export interface PipelineMapInput {
   pipelines: ReadonlyArray<{ id: string; lakeKeys: readonly string[] }>
+  /**
+   * staging → 湖前缀（来自契约 `layout.prefix`）。**优先于命名约定**：
+   * `lemeng/dim_branch` 对应的 staging 叫 `stg_lemeng_branch`，命名约定在 dim_* 上会判成断点。
+   */
+  contractLakes?: ReadonlyMap<string, string>
   /** pipelineId → 调度条目（来源 = 账套文件名）。 */
   schedules: ReadonlyMap<string, ReadonlyArray<{ source: string; cron: string | null; enabled: boolean }>>
   /** dbt staging 模型名（`stg_...`）。 */
@@ -76,10 +81,18 @@ export function buildPipelineMap(input: PipelineMapInput): PipelineMapModel {
     }
   }
 
+  // 契约给的 lake ⇄ staging 对照（反向：lake → staging）
+  const stagingOfLake = new Map<string, string>()
+  for (const [stg, lake] of input.contractLakes ?? []) {
+    if (!stagingSet.has(stg)) continue
+    stagingOfLake.set(lake, stg)
+  }
+
   const assets: PipelineMapAsset[] = []
   for (const lake of [...byLake.keys()].sort((a, b) => a.localeCompare(b))) {
     const [domain, table] = lake.split('/')
-    const stagingName = `stg_${domain}_${table}`
+    const conventional = `stg_${domain}_${table}`
+    const stagingName = stagingOfLake.get(lake) ?? conventional
     const staging = stagingSet.has(stagingName) ? stagingName : null
     assets.push({
       lake,
@@ -91,8 +104,9 @@ export function buildPipelineMap(input: PipelineMapInput): PipelineMapModel {
 
   // 反向断点：有 staging 模型，但没有任何管线写到它对应的湖前缀
   const lakesWithPipelines = new Set(assets.map((a) => a.lake))
+  const stagedLakes = new Set(assets.map((a) => a.staging).filter((x): x is string => x !== null))
   const orphanStaging = input.staging
-    .filter((s) => s.startsWith('stg_') && !lakesWithPipelines.has(lakeOf(s)))
+    .filter((s) => s.startsWith('stg_') && !stagedLakes.has(s) && !lakesWithPipelines.has(lakeOf(s)))
     .sort((a, b) => a.localeCompare(b))
 
   const warnings: string[] = []

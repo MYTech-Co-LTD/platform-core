@@ -65,6 +65,20 @@ describe('链路投影', () => {
     expect(trail.notes.join('\n')).toContain('没有读到这个指标的 staging 上游')
   })
 
+  it('契约给了湖前缀 ⇒ 用契约（dim_* 资产的 staging 名不带 dim）', () => {
+    const model = modelOf({
+      metrics: [{ ...METRIC, relations: ['fct_branch_dim'] }],
+      sources: [{
+        name: 'fct_branch_dim', modelPath: null, metricIds: [],
+        upstream: [{ name: 'stg_lemeng_branch', depth: 1, path: null, contracts: [] }], contracts: [],
+      }],
+    })
+    const trail = buildMetricTrail(model, 'lemeng:retail:net_sales', [], new Map([['stg_lemeng_branch', 'lemeng/dim_branch']]))!
+    const lake = trail.steps.find((s) => s.kind === 'lake')!
+    expect(lake.label).toBe('lemeng/dim_branch')
+    expect(lake.from).toBe('declared')
+  })
+
   it('指标不存在 ⇒ null（路由给 404，不编链路）', () => {
     expect(buildMetricTrail(MODEL, 'no:such:metric', [])).toBeNull()
   })
