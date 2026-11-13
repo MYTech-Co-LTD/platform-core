@@ -73,6 +73,7 @@ import {
 import { PeriodSchema, parseReportSpec } from '../domain/report-spec'
 import type { AiTextPanel, ReportSpec } from '../domain/report-spec'
 import { deriveRequiredScope, validatePanelMetrics } from '../domain/report-scope'
+import { reportScopeViolations } from '../domain/report-scope-gate'
 import {
   getPublishedSpec,
   getVersion,
@@ -999,12 +1000,41 @@ export function registerReports(r: ModuleHono, ctx: RouteCtx): void {
     if (report === null) return c.json({ error: 'NOT_FOUND' }, 404)
     const denied = await denyUnlessCanEdit(c, ctx.pool, requester, org, id)
     if (denied !== null) return denied
+    // ── 发布门（P5 Task 2，spec 2026-11-12 §9.1）：受众 ⊆ 每个面板指标的可见范围 ─────────
+    // 位置是契约的一半：**在 `publishVersion` 之前**（任何发布写入之前）——被拒 = 一条版本都不落。
+    // `denyUnlessCanEdit` 内部已取过 ACL 但只做判定不回传；这里再取一次（单行查询），
+    // 保持那个共享守卫的签名不变（14 个调用点不为本门改形）。
+    // Metabase 行没有平台面板 ⇒ 函数内跳过并回 warning（真正的渲染器拒绝仍由
+    // publishVersion 的 RENDERER_NOT_SELF_DRAWN 负责）。
+    const gate = await reportScopeViolations({
+      pool: ctx.pool,
+      tenantId: c.get('tenant').id,
+      org,
+      report,
+      acl: await loadAssetAcl(ctx.pool, org, id),
+    })
+    const gateWarnings = gate?.warnings ?? []
+    if (gate !== null && gate.panels.length > 0) {
+      return c.json({
+        error: 'REPORT_METRIC_SCOPE_MISMATCH',
+        panels: gate.panels,
+        ...(gateWarnings.length === 0 ? {} : { warnings: gateWarnings }),
+      }, 409)
+    }
     const out = await publishVersion(
       ctx.pool, org, id, body.data.expectedVersion,
       requester.userId, body.data.note, new Set(c.get(TENANT_SOURCES) ?? []),
     )
-    if (!out.ok) return c.json(out, statusOfVersionFailure(out.reason))
-    return c.json(out)
+    // 非阻断提示（Metabase 无法判定等）并进回包：成功与失败都带，调用方/巡检都看得见。
+    if (!out.ok) {
+      return c.json(
+        gateWarnings.length === 0 ? out : { ...out, warnings: gateWarnings },
+        statusOfVersionFailure(out.reason),
+      )
+    }
+    return c.json(gateWarnings.length === 0
+      ? out
+      : { ...out, warnings: [...(out.warnings ?? []), ...gateWarnings] })
   })
 
   r.post('/reports/:id/unpublish', async (c) => {

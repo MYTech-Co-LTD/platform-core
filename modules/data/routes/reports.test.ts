@@ -3320,6 +3320,56 @@ describePg('报表路由（需要 DATABASE_URL）', () => {
       expect((await narrate(ALICE)).status).toBe(400)
     })
 
+    // ── 发布门（P5 Task 2，spec 2026-11-12 §9.1）：受众 ⊆ 面板指标可见范围 ─────────────
+    it('★ 发布门：受众含兄弟部门 + 面板指标归属本部门 ⇒ 409 并指名；同部门/无部门约束各自判', async () => {
+      const FIN_METRIC = 'p5r:dept-finance'
+      await upsertMetric(pool, ORG, {
+        id: FIN_METRIC, title: '部门口径指标', description: '', requiredScope: null,
+        subjectColumn: 'org', selectSql: 'select 1 as value', groupBy: '', params: {},
+      }, 'fixture', { ownership: { ownerDept: CHILD_DEPT } })
+
+      const app = admin()
+      const createWithGate = async (requiredDepts: string[] | null, title: string): Promise<string> => {
+        const res = await post(app, {
+          title, renderer: 'platform', requiredDepts,
+          spec: { panels: [{ chart: 'table', title: '口径', metricId: FIN_METRIC }] },
+        })
+        expect(res.status).toBe(201)
+        return (await res.json()).id as string
+      }
+      const versionCount = async (id: string): Promise<number> =>
+        (await pool.query(
+          'select count(*)::int as n from data.report_versions where org = $1 and report_id = $2', [ORG, id],
+        )).rows[0].n
+
+      // ① 受众 = 兄弟部门（销售部），指标归属数字技术部 ⇒ 409 并指名差集部门
+      const sibling = await createWithGate([SIBLING_DEPT], '兄弟部门受众')
+      const denied = await publish(app, sibling, await versionOf(app, sibling))
+      expect(denied.status).toBe(409)
+      const deniedBody = await denied.json() as {
+        error: string; panels: { index: number; metricId: string; missingDepts?: string[]; reason: string }[]
+      }
+      expect(deniedBody.error).toBe('REPORT_METRIC_SCOPE_MISMATCH')
+      expect(deniedBody.panels).toEqual([{
+        index: 0, metricId: FIN_METRIC, missingDepts: [SIBLING_DEPT],
+        reason: 'audience_dept_outside_metric_scope',
+      }])
+      expect(await versionCount(sibling)).toBe(0) // 拒 = 一条版本都不落
+
+      // ② 受众 = 指标归属部门 ⇒ 放行
+      const same = await createWithGate([CHILD_DEPT], '同部门受众')
+      expect((await publish(app, same, await versionOf(app, same))).status).toBe(200)
+
+      // ③ 受众无部门约束（scope-only = 所有 data:query 持有者）⇒ 归属指标不可判定为更窄 ⇒ 409
+      const open = await createWithGate(null, '无部门受众')
+      const openRes = await publish(app, open, await versionOf(app, open))
+      expect(openRes.status).toBe(409)
+      expect((await openRes.json() as { panels: unknown[] }).panels[0])
+        .toMatchObject({ metricId: FIN_METRIC, reason: 'audience_wider_than_dept' })
+
+      await pool.query('delete from data.metrics where org = $1 and id = $2', [ORG, FIN_METRIC])
+    })
+
     it('部门选择器：转发宿主注入的平表（含直属人数）', async () => {
       const res = await admin().request('/reports/dept-options')
       expect(res.status).toBe(200)

@@ -65,6 +65,46 @@ export async function loadDeptContext(
 }
 
 /**
+ * 任意部门的**部门链**（自身 ∪ 全部祖先 ∪ 全部后代）——发布门（P5 Task 2，spec §9.1）用。
+ *
+ * 与 `loadDeptContext` 的区别是**输入不是观看者**：报表发布门要判「指标归属部门的可见范围」，
+ * 归属部门由指标行给出，与被谁请求无关。所以不能拿 requester 的上下文顶替（那是另一条语义）。
+ *
+ * SQL 与 `loadDeptContext` 同一套 org 惯例：
+ *   · `platform.v_org_node` 只读视图、`status = 1`（软删即失权）；
+ *   · 祖先链用物化 `path` 拆段（含自身），后代用 `path like self.path || '.%'`（严格子树，
+ *     "49.5%" 不会误吃 "49.57"）——无需递归。
+ *
+ * 部门不存在 / 已软删 ⇒ **空集**（fail-closed：受众里任何部门都不在链上 ⇒ 发布门拒）。
+ * 一次查询取全（self CTE + 自联后代），272 节点租户下与两条往返同阶。
+ */
+export async function deptChainOf(
+  pool: Pool, tenantId: number, deptId: string,
+): Promise<Set<string>> {
+  const chain = new Set<string>()
+  if (deptId === '') return chain
+  const r = await pool.query(
+    `with self as (
+        select n.ext_id, n.path
+          from platform.v_org_node n
+         where n.tenant_id = $1 and n.ext_id = $2 and n.status = 1
+     )
+     select s.ext_id as self_id, s.path as self_path, x.ext_id as desc_id
+       from self s
+       left join platform.v_org_node x
+         on x.tenant_id = $1 and x.status = 1 and x.path like s.path || '.%'`,
+    [tenantId, deptId],
+  )
+  for (const row of r.rows as Array<{ self_id: string; self_path: string; desc_id: string | null }>) {
+    chain.add(row.self_id)
+    // path "49.57.66" ⇒ 祖先链 49、57、66 都入链（含自身，dept-gate 同一惯例）
+    for (const seg of row.self_path.split('.')) if (seg !== '') chain.add(seg)
+    if (row.desc_id !== null) chain.add(row.desc_id)
+  }
+  return chain
+}
+
+/**
  * 调用点接线入口（P2 Task 4，六面共用这一份守卫）：词表里**没有**归属行 ⇒ ctx 不影响
  * 输出，返回 undefined 且**不发查询**（懒加载——现网 57 行全 null，这条让接线后的生产行为
  * 逐字节不变）；有归属行才按 `requester.tenantId`（路由侧 `requesterOf` 从 `c.get('tenant').id`

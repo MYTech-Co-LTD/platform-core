@@ -42,8 +42,10 @@ const DATA_CHARTS = new Set<ReportSpec['panels'][number]['chart']>(['line', 'bar
  *    「指向不存在的指标」拒掉，文字块就没法进报表。
  * ⚠️ kpi 的分母是**第二个指标**：它的 scope 与源接入情况同样约束报表可见性，
  *    漏掉分母 = 「主指标可见、分母 403」的报表在运行时才炸。
+ *
+ * 发布门（`report-scope-gate.ts`）也 import 这一份：分母的**可见性**与它的 scope/源同样要判。
  */
-function metricIdsOf(panel: ReportSpec['panels'][number]): string[] {
+export function metricIdsOf(panel: ReportSpec['panels'][number]): string[] {
   if (panel.chart === 'text' || panel.chart === 'ai_text') return []
   if (panel.chart === 'kpi' && panel.denominatorMetricId !== undefined) {
     return [panel.metricId, panel.denominatorMetricId]
