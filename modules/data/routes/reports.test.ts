@@ -212,7 +212,7 @@ function gatedApp(identity: ReturnType<typeof makeIdentity>, pool: Pool | null) 
 }
 
 describe('报表面声明（不需要数据库）', () => {
-  it('报表端点都声明了（api.internal 全模块共 82 条），且页门分档：管理动作=data:manage，观看面=data:query', () => {
+  it('报表端点都声明了（api.internal 全模块共 83 条），且页门分档：管理动作=data:manage，观看面=data:query', () => {
     const declared = new Map(
       (mod.manifest.api?.internal ?? []).map((d) => [`${d.method} ${d.path}`, d.scope]),
     )
@@ -243,7 +243,7 @@ describe('报表面声明（不需要数据库）', () => {
     // 观看面 data:query；页门/快照门/草稿分档与 narrative 共用 loadViewableSpec）。
     // 穷举口径（同 module.test.ts 的表清单）——别处加端点而漏改这里会红，
     // 逼着声明与测试一起动。
-    expect(declared).toHaveLength(82)
+    expect(declared).toHaveLength(83)
     // 指标变更单：七条全 data:manage；采纳/驳回的会话限定是路由内的第二道闸（不在这张表上）
     for (const p of [
       'POST /metric-changes', 'GET /metric-changes', 'GET /metric-changes/:id',
@@ -304,6 +304,7 @@ describe('报表面声明（不需要数据库）', () => {
     // ── 自绘规格读写（#391 计划 6 Task 3）：读=观看面；写=单资产写（同上 canEditAsset）。──
     expect(declared.get('GET /reports/:id/spec')).toBe('data:query')
     expect(declared.get('GET /reports/:id/review')).toBe('data:query')
+    expect(declared.get('GET /reports/:id/publish-preview')).toBe('data:query')
     expect(declared.get('GET /reports/templates')).toBe('data:query')
     expect(declared.get('GET /reports/narrative-stats')).toBe('data:manage')
     expect(declared.get('POST /reports/templates/:id/compile')).toBe('data:query')
@@ -2291,6 +2292,23 @@ describePg('报表路由（需要 DATABASE_URL）', () => {
         method: 'POST', headers: { 'content-type': 'application/json' },
         body: JSON.stringify({ expectedVersion }),
       })
+
+    it('发布前可见面预览：解释页门/部门门/ACL；非 owner 无权（403）', async () => {
+      const { app } = manage()
+      const id = await createVersioned(app, '预览报表', [openPanel])
+      const res = await app.request(`/reports/${id}/publish-preview`)
+      expect(res.status).toBe(200)
+      const body = await res.json() as {
+        gate: { requiredScope: string | null }
+        exposure: { audience: string; summary: string; warnings: string[] }
+      }
+      expect(body.gate.requiredScope).toBeNull()          // 无码面板 ⇒ 页门 null
+      expect(body.exposure.summary).toContain('发布后可见')
+      expect(Array.isArray(body.exposure.warnings)).toBe(true)
+
+      const other = shell(makeIdentity({ orgId: ORG, userId: 'u-other', scopes: ['data:query'] })).app
+      expect((await other.request(`/reports/${id}/publish-preview`)).status).toBe(403)
+    })
 
     it('模板：列表 + 槽位编译；缺必填槽 400 带 keys，未知模板 404', async () => {
       const { app } = manage()
