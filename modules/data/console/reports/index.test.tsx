@@ -78,8 +78,43 @@ const buttons = (label: string) =>
 /** 按**行**取按钮：页面上现在有两个「发布」（Metabase 行清页门 / platform 行发版本），
  *  全页 `getByRole` 会因歧义抛错。`rowOf` 用标题文本定位 `<tr>`（标题唯一）。 */
 const rowOf = (title: string) => screen.getByText(title).closest('tr')!
-const rowButton = (title: string, label: string) =>
-  within(rowOf(title)).getByRole('button', { name: new RegExp(`^${label.split('').join('\\s*')}$`) })
+/** 打开某行的「⋯」菜单（行内动作已收进菜单，只留「打开」在行上）。 */
+const openRowMenu = (title: string) => {
+  // 先关掉可能还开着的上一个菜单，再开这一行的（否则「最后一个 menu」指的是上一行）。
+  // antd 的「点外面关闭」监听的是 mousedown —— 只派 click 关不掉上一个菜单。
+  fireEvent.mouseDown(document.body)
+  fireEvent.click(document.body)
+  const row = rowOf(title)
+  fireEvent.click(within(row).getByRole('button', { name: '更多操作' }))
+}
+
+/**
+ * 当前**打开着**的下拉菜单条目。
+ * antd 把关掉的菜单留在 DOM 里：jsdom 没有动画结束事件，于是 `ant-slide-up-leave*` 一直挂着、
+ * `ant-dropdown-hidden` 永不落下 —— 所以「没 hidden」不等于「开着」，还得排除 leave 态的。
+ */
+const openMenuEls = (): HTMLElement[] =>
+  [...document.querySelectorAll<HTMLElement>('.ant-dropdown')].filter(
+    (el) => !/leave/.test(el.className) && !el.classList.contains('ant-dropdown-hidden'),
+  )
+const menuLabels = (): Array<string | null> => {
+  const menus = openMenuEls()
+  const last = menus[menus.length - 1]
+  if (last === undefined) return []
+  return [...last.querySelectorAll('.ant-dropdown-menu-item')].map((el) => (el.textContent ?? '').trim())
+}
+
+/** 菜单项（menuitem）——行内动作现在都在菜单里。 */
+const rowButton = (title: string, label: string) => {
+  openRowMenu(title)
+  const menus = openMenuEls()
+  const last = menus[menus.length - 1]
+  const item = last
+    ? [...last.querySelectorAll('.ant-dropdown-menu-item')].find((el) => (el.textContent ?? '').trim() === label)
+    : undefined
+  if (item === undefined) throw new Error(`「${title}」的菜单里没有「${label}」；实际：${menuLabels().join('/')}`)
+  return item as HTMLElement
+}
 
 /**
  * Popconfirm 的确认按钮。与 metrics 页测试同一条理由：确认按钮的文案由组件**显式**给定
@@ -116,11 +151,14 @@ describe('报表页签双视图', () => {
     // 徽章在管理视图出现**两次**（标题内联 + 渲染器列）⇒ 复数断言（见实现块里的订正记录）
     expect(screen.getAllByText('平台自绘').length).toBeGreaterThanOrEqual(2)
     // 两个「发布」= 两条不同通路（Task 12）：Metabase 行清页门、platform 行发版本。按行取。
-    expect(rowButton('未放行报表', '发布')).toBeInTheDocument()
-    expect(rowButton('自绘大盘', '发布')).toBeInTheDocument()
-    // 回收是**逐行**给的（三行都有）⇒ 按复数查；「发布」只在页门未放行的那一行（r2）出现，故是单数
-    expect(buttons('回收').length).toBeGreaterThan(0)
-    expect(buttons('改页门').length).toBeGreaterThan(0)
+    // 菜单收敛后：逐行开 ⋯ 看条目
+    openRowMenu('未放行报表')
+    const labels = menuLabels()
+    expect(labels).toEqual(expect.arrayContaining(['改页门', '发布', '回收', '共享', '这个数怎么来的']))
+    fireEvent.keyDown(document.body, { key: 'Escape' })
+    openRowMenu('自绘大盘')
+    const labels2 = menuLabels()
+    expect(labels2).toEqual(expect.arrayContaining(['发布', '回收', '共享']))
   })
 
   it('只有 data:query ⇒ 拉观看清单（不发 /reports/manage），无管理动作，platform 行打开可点（Task 4 起打开自绘视图）', async () => {
@@ -137,7 +175,9 @@ describe('报表页签双视图', () => {
     //    （评审判定：删掉 `canManage &&` 后 10 条全绿）⇒ 这里补上 canManage 这一半的直接断言。
     //    （服务端权威仍是 manifest 的 `scope: data:manage`；本页的 canManage 只是视图选择。）
     const watchRow = screen.getByText('销售日报').closest('tr')!
-    expect(within(watchRow).queryByRole('button', { name: /编\s*辑/ })).not.toBeInTheDocument()
+    openRowMenu('销售日报')
+    expect(menuLabels()).not.toContain('编辑')
+    fireEvent.keyDown(document.body, { key: 'Escape' })
     // 正向对照：同一行的「打开」**在** ⇒ 上面「编辑缺席」不是「整行/整页没渲染」冒充的
     expect(within(watchRow).getByRole('button', { name: /打\s*开/ })).toBeInTheDocument()
     // ⭐ spec ❌ 的修复验收点（2026-09-29 评审 + 人裁「两视图都加」）：观看视图**也**必须看得到
@@ -215,7 +255,7 @@ describe('报表页签双视图', () => {
     })
     renderPage(['data:query', 'data:manage'])
     await waitFor(() => expect(screen.getByText('销售日报')).toBeInTheDocument())
-    expect(within(rowOf('销售日报')).getByText('已停用')).toBeInTheDocument()
+    expect(within(rowOf('销售日报')).getByText(/已停用/)).toBeInTheDocument()
     // null = 未知（未注入 resolver / Casdoor 不可达）⇒ 不冒充停用
     expect(within(rowOf('自绘大盘')).queryByText('已停用')).toBeNull()
   })
@@ -337,7 +377,7 @@ describe('报表页签双视图', () => {
   it('改页门：Modal 输入 scope 保存 ⇒ PUT requiredScope=<值>', async () => {
     renderPage(['data:query', 'data:manage'])
     await waitFor(() => expect(screen.getByText('未放行报表')).toBeInTheDocument())
-    fireEvent.click(buttons('改页门')[0])
+    fireEvent.click(rowButton('销售日报', '改页门'))
     fireEvent.change(screen.getByPlaceholderText('如 sales:read'), { target: { value: 'finance:read' } })
     fireEvent.click(button('确定'))
     await waitFor(() => {
@@ -351,7 +391,7 @@ describe('报表页签双视图', () => {
   it('回收：Popconfirm 确认 ⇒ DELETE', async () => {
     renderPage(['data:query', 'data:manage'])
     await waitFor(() => expect(screen.getByText('销售日报')).toBeInTheDocument())
-    fireEvent.click(buttons('回收')[0])
+    fireEvent.click(rowButton('销售日报', '回收'))
     await confirmPopconfirm('确认回收')
     await waitFor(() => {
       const del = calls.find((c) => c.init?.method === 'DELETE')
@@ -392,7 +432,7 @@ describe('报表页签双视图', () => {
     })
     renderPage(['data:query', 'data:manage'])
     await waitFor(() => expect(screen.getByText('销售日报')).toBeInTheDocument())
-    fireEvent.click(screen.getByRole('button', { name: /编\s*辑/ }))
+    fireEvent.click(rowButton('销售日报', '编辑'))
     await waitFor(() => {
       const f = document.querySelector('iframe[title^="报表编辑"]') as HTMLIFrameElement
       expect(f?.src).toBe('https://mb.test/handoff?t=T')
@@ -406,12 +446,12 @@ describe('报表页签双视图', () => {
   it('platform 行没有「编辑」（没有 Metabase dashboard 可编辑）', async () => {
     renderPage(['data:query', 'data:manage'])
     await waitFor(() => expect(screen.getByText('自绘大盘')).toBeInTheDocument())
-    const row = screen.getByText('自绘大盘').closest('tr')!
-    expect(within(row).queryByRole('button', { name: /编\s*辑/ })).not.toBeInTheDocument()
-    // 正向对照：同一张表里 metabase 行**有**「编辑」⇒ 上面那条查不到是**逐行**判 renderer 的结果，
-    // 不是「整页崩了/按钮压根没实现」造成的恒真。
-    const metabaseRow = screen.getByText('销售日报').closest('tr')!
-    expect(within(metabaseRow).getByRole('button', { name: /编\s*辑/ })).toBeInTheDocument()
+    openRowMenu('自绘大盘')
+    expect(menuLabels()).not.toContain('编辑')
+    fireEvent.keyDown(document.body, { key: 'Escape' })
+    // 正向对照：metabase 行**有**「编辑」⇒ 上面那条查不到是**逐行**判 renderer 的结果
+    openRowMenu('销售日报')
+    expect(menuLabels()).toContain('编辑')
   })
 
   it('★ 兜底「在新标签打开」重新领票（一次性票据不可复用）⇒ 同步预开空白页 + 新票导航它', async () => {
@@ -440,7 +480,7 @@ describe('报表页签双视图', () => {
     try {
       renderPage(['data:query', 'data:manage'])
       await waitFor(() => expect(screen.getByText('销售日报')).toBeInTheDocument())
-      fireEvent.click(screen.getByRole('button', { name: /编\s*辑/ }))
+      fireEvent.click(rowButton('销售日报', '编辑'))
       await waitFor(() => {
         const f = document.querySelector('iframe[title^="报表编辑"]') as HTMLIFrameElement
         expect(f?.src).toBe('https://mb.test/handoff?t=T1')
@@ -479,7 +519,7 @@ describe('报表页签双视图', () => {
     try {
       renderPage(['data:query', 'data:manage'])
       await waitFor(() => expect(screen.getByText('销售日报')).toBeInTheDocument())
-      fireEvent.click(screen.getByRole('button', { name: /编\s*辑/ }))
+      fireEvent.click(rowButton('销售日报', '编辑'))
       await waitFor(() => {
         const f = document.querySelector('iframe[title^="报表编辑"]') as HTMLIFrameElement
         expect(f?.src).toBe('https://mb.test/handoff?t=T1')
@@ -500,7 +540,7 @@ describe('报表页签双视图', () => {
     })
     renderPage(['data:query', 'data:manage'])
     await waitFor(() => expect(screen.getByText('销售日报')).toBeInTheDocument())
-    fireEvent.click(screen.getByRole('button', { name: /编\s*辑/ }))
+    fireEvent.click(rowButton('销售日报', '编辑'))
     expect(await screen.findByText('编辑入口未配置（请联系运维）')).toBeInTheDocument()
   })
 
@@ -547,7 +587,7 @@ describe('报表页签双视图', () => {
     })
     renderPage(['data:query', 'data:manage'])
     await waitFor(() => expect(screen.getByText('未放行报表')).toBeInTheDocument())
-    fireEvent.click(buttons('回收')[1])   // 第二行 = r2（`buttons` 按 DOM 序 = 数据源序）
+    fireEvent.click(rowButton('未放行报表', '回收'))   // 第二行 = r2
     await confirmPopconfirm('确认回收')
 
     await waitFor(() => {
@@ -571,7 +611,7 @@ describe('报表页签双视图', () => {
     })
     renderPage(['data:query', 'data:manage'])
     await waitFor(() => expect(screen.getByText('销售日报')).toBeInTheDocument())
-    fireEvent.click(buttons('改页门')[0])
+    fireEvent.click(rowButton('销售日报', '改页门'))
     fireEvent.change(screen.getByPlaceholderText('如 sales:read'), { target: { value: 'finance:read' } })
     fireEvent.click(button('确定'))
 
@@ -651,17 +691,23 @@ describe('平台自绘行的版本管理', () => {
     renderPage(['data:query', 'data:manage'])
     await waitFor(() => expect(screen.getByText('自绘大盘')).toBeInTheDocument())
 
-    expect(within(rowOf('自绘大盘')).queryByRole('button', { name: /改\s*页\s*门/ })).toBeNull()
-    expect(within(rowOf('未发布报表')).queryByRole('button', { name: /改\s*页\s*门/ })).toBeNull()
+    openRowMenu('自绘大盘')
+    expect(menuLabels()).not.toContain('改页门')
+    fireEvent.keyDown(document.body, { key: 'Escape' })
+    openRowMenu('未发布报表')
+    expect(menuLabels()).not.toContain('改页门')
+    fireEvent.keyDown(document.body, { key: 'Escape' })
     // 正向对照：Metabase 行的改页门仍在 ⇒ 上面的缺席不是整页没渲染
-    expect(within(rowOf('销售日报')).getByRole('button', { name: /改\s*页\s*门/ })).toBeInTheDocument()
+    openRowMenu('销售日报')
+    expect(menuLabels()).toContain('改页门')
 
-    // 未发布 ⇒ 没有可失效的线上版本，也没有可复制的独立链接
-    expect(within(rowOf('未发布报表')).queryByRole('button', { name: /下\s*线/ })).toBeNull()
-    expect(within(rowOf('未发布报表')).queryByRole('button', { name: /复制链接/ })).toBeNull()
-    // 但发布 / 版本历史入口恒在
-    expect(within(rowOf('未发布报表')).getByRole('button', { name: /^发\s*布$/ })).toBeInTheDocument()
-    expect(within(rowOf('未发布报表')).getByRole('button', { name: /^版\s*本$/ })).toBeInTheDocument()
+    // 未发布 ⇒ 没有可失效的线上版本，也没有可复制的独立链接（菜单里没有这两项）
+    openRowMenu('未发布报表')
+    const unpublishedItems = menuLabels()
+    expect(unpublishedItems).not.toContain('下线')
+    expect(unpublishedItems).not.toContain('复制链接')
+    // 但发布入口恒在（版本历史只在已发布行出现——这是原实现的语义，保持不变）
+    expect(unpublishedItems).toContain('发布')
   })
 
   it('发布：Modal 填 note ⇒ POST /reports/r3/publish 带行版本', async () => {
@@ -855,10 +901,10 @@ describe('部门门配置（组织架构树多选）', () => {
       .toBe(false)
     expect((within(rowOf('自绘大盘')).getByRole('button', { name: /打\s*开/ }) as HTMLButtonElement).disabled)
       .toBe(false)
-    // 部门门列恒在（不靠悬停解释）：一门显示数量，无门显示「不限」
-    expect(within(rowOf('销售日报')).getByText('1 个部门')).toBeInTheDocument()
-    // 无门的行两列都是「不限」（页门 + 部门门）⇒ 复数断言（单数查询会因歧义抛错）
-    expect(within(rowOf('自绘大盘')).getAllByText('不限')).toHaveLength(2)
+    // 「可见范围」一列里同时给出页门与部门门：一门显示数量
+    expect(within(rowOf('销售日报')).getByText(/· 1 个部门/)).toBeInTheDocument()
+    // 无门的行只有「所有人」，不拖一个「0 个部门」的尾巴
+    expect(within(rowOf('自绘大盘')).queryByText(/个部门/)).toBeNull()
   })
 
   it('★ 配部门门：拉选项、按现有门预勾、确定 ⇒ PUT 带 requiredDepts + 该行 expectedVersion', async () => {

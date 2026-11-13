@@ -25,7 +25,7 @@
 //     `PUT` 对 platform 行回 409 `USE_PUBLISH_ENDPOINT`）。
 import { useEffect, useRef, useState } from 'react'
 import { useOutletContext, useSearchParams } from 'react-router-dom'
-import { Button, Drawer, Input, Modal, Popconfirm, Segmented, Space, Table, Tag, Tooltip, Tree, Typography, message } from 'antd'
+import { Button, Drawer, Dropdown, Input, Modal, Popconfirm, Segmented, Space, Table, Tag, Tooltip, Tree, Typography, message } from 'antd'
 import { ApiError, apiGet, apiSend, messageOf } from '../lib/api'
 import { useIsMobile } from '../lib/useIsMobile'
 import SpecView from './SpecView'
@@ -981,7 +981,13 @@ export default function ReportsPage() {
           title: '报表标题', dataIndex: 'title', width: 280,
           render: (v: string, r: ReportRow) => (
             <Space size={4} wrap>
-              {v}
+              <span>
+                <span style={{ fontWeight: 500 }}>{v}</span>
+                {/* 所有者降为副文本：它是「这行归谁」的附加信息，不值得独占一列 */}
+                <span style={{ display: 'block', fontSize: 11.5, color: '#9AA0A6' }}>
+                  {r.owner ?? '无所有者'}{r.ownerActive === false ? ' · 已停用' : ''}
+                </span>
+              </span>
               {/* 管理视图有独立「渲染器」列 ⇒ 标题里不再重复（#UX 去噪）；观看视图没有该列，保留标签 */}
               {!canManage && r.renderer === 'platform' && <Tag color="purple">平台自绘</Tag>}
               {/* 版本徽标（月报重做 Task 12；设计 §8.2）：只有管理清单带 `publishedVersion` /
@@ -1001,114 +1007,95 @@ export default function ReportsPage() {
           title: '渲染器', dataIndex: 'renderer', width: 110,
           render: (v: ReportRow['renderer']) => (v === 'platform' ? <Tag color="purple">平台自绘</Tag> : <Tag>Metabase</Tag>),
         }] : []),
-        { title: '页门', dataIndex: 'requiredScope', width: 110, render: (v: string | null) => v ?? '不限' },
-        // 部门门（spec 2026-10-30 §3.4）：恒在的列（不依赖悬停）——它是「打开」置灰的另一半理由。
-        // 显示的是**门里配的部门数**（子树继承意味着实际覆盖更多），悬停给出 ext_id。
+        // 可见范围：页门（scope）+ 部门门（组织）合成一列——两扇门回答同一个问题
+        // 「谁能看」，分两列会让读者自己去拼。悬停给完整信息。
         {
-          title: '部门门', dataIndex: 'requiredDepts', width: 120,
-          render: (v: string[] | null | undefined) => {
-            const gate = v ?? []
-            if (gate.length === 0) return '不限'
+          title: '可见范围', key: 'visibility', width: 220,
+          render: (_: unknown, r: ReportRow) => {
+            const gate = r.requiredDepts ?? []
+            const scopeText = r.requiredScope === null ? '所有人' : r.requiredScope
             return (
-              <Tooltip title={`限定部门（含其子部门）：${gate.join('、')}`}>
-                <Tag color="blue">{`${gate.length} 个部门`}</Tag>
+              <Tooltip title={`页门：${r.requiredScope ?? '不限'}${gate.length > 0 ? `　部门门：${gate.join('、')}（含子部门）` : ''}`}>
+                <span style={{ fontSize: 12.5, color: '#4B5563' }}>
+                  {scopeText}
+                  {gate.length > 0 ? ` · ${gate.length} 个部门` : ''}
+                </span>
               </Tooltip>
             )
           },
         },
         {
-          // 无所有者（历史资产，spec §4.4）：只读标注——交接清理时一眼看见；转移走
-          // `PUT /reports/:id/owner`（owner 或 data:manage）
-          title: '所有者', width: 150, render: (_: unknown, r: ReportRow) => (
-            r.owner == null
-              ? <Tooltip title="历史资产：创建者未知（ACL 落地前）。管理员可转移一个负责人"><Tag color="orange">无所有者</Tag></Tooltip>
-              : (
-                <Space size={4}>
-                  <span>{r.owner}</span>
-                  {/* #1333：停用/离职标注供交接清理；null=未知 ⇒ 不标（不冒充） */}
-                  {r.ownerActive === false && (
-                    <Tooltip title="Casdoor 里已停用或查无此人。建议把资产转移给在职负责人（共享 → 所有者转移）">
-                      <Tag color="red">已停用</Tag>
-                    </Tooltip>
-                  )}
-                </Space>
-              )
-          ),
-        },
-        {
-          title: '操作', width: 300, render: (_: unknown, r: ReportRow) => (
-            <Space size="small">
-              {openBtn(r)}
-              {/* 「编辑」与「打开」是**两条不同通路**：打开 = 嵌入预览（embed-url，只读令牌）；
-                  编辑 = 专用入口反代会话（edit-url，可写）。平台自绘行没有 Metabase dashboard 可编辑，
-                  故按 renderer 逐行给按钮（服务端同守卫：409 RENDERER_NOT_EDITABLE）。 */}
-              {r.canEdit && r.renderer === 'metabase' && (
-                <Button size="small" type="text" onClick={() => void edit(r)}>编辑</Button>
-              )}
-              {/* 部门门：**与渲染器无关**（自绘行也要能配），故放在两支条件之外。
-                  与「改页门」的区别：页门按 scope，部门门按组织架构（子树继承）。 */}
-              {r.canEdit && (
-                <Button size="small" type="text" onClick={() => void openDeptGate(r)}>
-                  {(r.requiredDepts ?? []).length === 0 ? '配部门门' : '改部门门'}
-                </Button>
-              )}
-              {/* 「这个数怎么来的」（Wave 4.3）：所有看得到这行的人都能问；默认层人话，细节折叠 */}
-              <Button size="small" type="text" onClick={() => void openProvenance(r)}>这个数怎么来的</Button>
-              {/* 资产级共享（spec 2026-11-01 §4）：**谁被允许看**。授权在服务端
-                  （owner ∪ data:manage），这里不看 canManage——被共享的 owner 也要能改。 */}
-              <Button size="small" type="text" onClick={() => void openShare(r)}>共享</Button>
-              {/* ── Metabase 行：既有管理动作**一字不动**（改页门/发布=清页门/回收）────────── */}
-              {r.canEdit && r.renderer === 'metabase' && (
-                <>
-                  <Button size="small" type="text" onClick={() => { setGateEdit(r); setGateDraft(r.requiredScope ?? '') }}>
-                    改页门
-                  </Button>
-                  {r.requiredScope !== null && (
-                    // okText/cancelText 显式写中文：Popconfirm 的默认 okText 取 **locale**
-                    // （未配 zh_CN 时是 "OK"）——发布是对全租户可见的动作，确认按钮上的字
-                    // 应当自己掌握，不随宿主是否配了 locale 漂（同 console/metrics 的裁决）。
-                    <Popconfirm title={`发布后所有拿到本模块的人都能看到「${r.title}」，确定？`}
-                                okText="确认发布" cancelText="取消"
-                                onConfirm={() => void publishGate(r)}>
-                      <Button size="small" type="text">发布</Button>
-                    </Popconfirm>
-                  )}
-                  <Popconfirm title={`回收会删除「${r.title}」及其报表本体，确定？`}
-                              okText="确认回收" cancelText="取消"
-                              okButtonProps={{ danger: true }}
-                              onConfirm={() => void recycle(r)}>
-                    <Button size="small" type="text" danger>回收</Button>
-                  </Popconfirm>
-                </>
-              )}
-              {/* ── platform 行：版本通路（设计 §6.4）。**没有「改页门」**——页门由发布时从面板
-                     派生并随快照钉死；手改会与线上快照不一致（服务端 PUT 对该类行 409）。────── */}
-              {r.canEdit && r.renderer === 'platform' && (
-                <>
-                  <Button size="small" type="text" onClick={() => { setPublishTarget(r); setPublishNote('') }}>发布</Button>
-                  {r.publishedVersion !== null && (
-                    <Popconfirm title={`下线后独立链接立即失效（历史版本保留），确定下线「${r.title}」？`}
-                                okText="确认下线" cancelText="取消"
-                                onConfirm={() => void unpublish(r)}>
-                      <Button size="small" type="text">下线</Button>
-                    </Popconfirm>
-                  )}
-                  <Button size="small" type="text" onClick={() => void openVersions(r)}>版本</Button>
-                  {r.publishedVersion !== null && (
-                    <Button size="small" type="text" onClick={() => void copyLink(r)}>复制链接</Button>
-                  )}
-                  {/* 回收连带删 report_versions（on delete cascade）⇒ 文案必须写明历史一并删除
-                      （设计 §6.4），否则会有人以为还能找回旧版本。 */}
-                  <Popconfirm title={`回收会删除「${r.title}」、报表本体及其全部历史版本，确定？`}
-                              okText="确认回收" cancelText="取消"
-                              okButtonProps={{ danger: true }}
-                              onConfirm={() => void recycle(r)}>
-                    <Button size="small" type="text" danger>回收</Button>
-                  </Popconfirm>
-                </>
-              )}
-            </Space>
-          ),
+          // 操作收敛：主操作「打开」始终可见，其余进「⋯」——
+          // 7 个描边按钮并排会让每行的主动作被淹没。危险动作（回收/下线）走确认弹窗。
+          title: '操作', width: 150, fixed: 'right' as const,
+          render: (_: unknown, r: ReportRow) => {
+            const items: Array<{ key: string; label: string; danger?: boolean }> = []
+            if (r.canEdit && r.renderer === 'metabase') items.push({ key: 'edit', label: '编辑' })
+            if (r.canEdit) items.push({ key: 'dept', label: (r.requiredDepts ?? []).length === 0 ? '配部门门' : '改部门门' })
+            items.push({ key: 'provenance', label: '这个数怎么来的' })
+            items.push({ key: 'share', label: '共享' })
+            if (r.canEdit && r.renderer === 'metabase') {
+              items.push({ key: 'gate', label: '改页门' })
+              if (r.requiredScope !== null) items.push({ key: 'publish-gate', label: '发布' })
+              items.push({ key: 'recycle', label: '回收', danger: true })
+            }
+            if (r.canEdit && r.renderer === 'platform') {
+              items.push({ key: 'publish', label: '发布' })
+              if (r.publishedVersion !== null) {
+                items.push({ key: 'unpublish', label: '下线' })
+                items.push({ key: 'versions', label: '版本' })
+                items.push({ key: 'copy', label: '复制链接' })
+              }
+              items.push({ key: 'recycle', label: '回收', danger: true })
+            }
+            return (
+              <Space size={4}>
+                {openBtn(r)}
+                <Dropdown
+                  trigger={['click']}
+                  menu={{
+                    items,
+                    onClick: ({ key }: { key: string }) => {
+                      if (key === 'edit') void edit(r)
+                      if (key === 'dept') void openDeptGate(r)
+                      if (key === 'provenance') void openProvenance(r)
+                      if (key === 'share') void openShare(r)
+                      if (key === 'gate') { setGateEdit(r); setGateDraft(r.requiredScope ?? '') }
+                      if (key === 'publish-gate') {
+                        Modal.confirm({
+                          title: `发布后所有拿到本模块的人都能看到「${r.title}」，确定？`,
+                          okText: '确认发布', cancelText: '取消',
+                          onOk: () => publishGate(r),
+                        })
+                      }
+                      if (key === 'publish') { setPublishTarget(r); setPublishNote('') }
+                      if (key === 'unpublish') {
+                        Modal.confirm({
+                          title: `下线后独立链接立即失效（历史版本保留），确定下线「${r.title}」？`,
+                          okText: '确认下线', cancelText: '取消',
+                          onOk: () => unpublish(r),
+                        })
+                      }
+                      if (key === 'versions') void openVersions(r)
+                      if (key === 'copy') void copyLink(r)
+                      if (key === 'recycle') {
+                        Modal.confirm({
+                          title: r.renderer === 'platform'
+                            ? `回收会删除「${r.title}」、报表本体及其全部历史版本，确定？`
+                            : `回收会删除「${r.title}」及其报表本体，确定？`,
+                          okText: '确认回收', cancelText: '取消',
+                          okButtonProps: { danger: true },
+                          onOk: () => recycle(r),
+                        })
+                      }
+                    },
+                  }}
+                >
+                  <Button size="small" type="text" aria-label="更多操作">⋯</Button>
+                </Dropdown>
+              </Space>
+            )
+          },
         },
       ]} />
       )}
