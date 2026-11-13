@@ -123,6 +123,8 @@ export default function SystemMapPage() {
         type: 'graph',
         layout: 'force',
         roam: true,
+        // 布局盒留边：不留的话力导向会把节点推到画布边缘被裁掉，图例也会压住左上角的节点
+        left: 24, right: 24, top: 44, bottom: 24,
         draggable: true,
         // 悬停只亮邻域：90 个节点的图不这样压，看到的就是一团线。
         focus: 'adjacency',
