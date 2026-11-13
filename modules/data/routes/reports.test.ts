@@ -3602,7 +3602,9 @@ describePg('报表路由（需要 DATABASE_URL）', () => {
         // 发布后把**草稿**改成只引用无部门归属的指标——那是「下次发布」的内容，不是线上内容。
         const draft = parseReportSpec({ panels: [{ chart: 'table', title: '公开', metricId: OPEN_METRIC }] })
         if (!draft.ok) throw new Error(`夹具规格应通过白名单：${draft.code}`)
-        await updateSpec(pool, ORG, id, draft.spec, await versionOf(app, id))
+        // 断言真的写进去了：版本不匹配时 updateSpec 回 null（空转），后续断言会因草稿未变而失去意义。
+        const updated = await updateSpec(pool, ORG, id, draft.spec, await versionOf(app, id))
+        expect(updated).not.toBeNull()
 
         // ACL 是资产级、**对已发布版本立刻生效** ⇒ 门必须按快照判：线上仍有部门口径，
         // 放宽到兄弟部门必须 409。用草稿判（无部门口径 ⇒ 干净）会假放行。
@@ -3619,6 +3621,61 @@ describePg('报表路由（需要 DATABASE_URL）', () => {
         expect((await putAcl([{ subjectType: 'dept', subjectId: CHILD_DEPT }])).status).toBe(200)
       } finally {
         await pool.query('delete from data.metrics where org = $1 and id = $2', [ORG, SNAP_METRIC])
+      }
+    })
+
+    it('★ ACL 门 fail-closed：已发布但快照不可读 ⇒ 409 PUBLISHED_SNAPSHOT_UNREADABLE 且 ACL 不写', async () => {
+      const BROKEN_METRIC = 'p6t5:acl-broken-snapshot'
+      await upsertMetric(pool, ORG, {
+        id: BROKEN_METRIC, title: '快照不可读口径', description: '', requiredScope: null,
+        subjectColumn: 'org', selectSql: 'select 1 as value', groupBy: '', params: {},
+      }, 'fixture', { ownership: { ownerDept: CHILD_DEPT } })
+      try {
+        const app = admin()
+        const created = await post(app, {
+          title: 'ACL 快照不可读', renderer: 'platform', requiredDepts: [CHILD_DEPT],
+          spec: { panels: [{ chart: 'table', title: '口径', metricId: BROKEN_METRIC }] },
+        })
+        expect(created.status).toBe(201)
+        const id = (await created.json()).id as string
+        const putAcl = (viewers: Array<{ subjectType: string; subjectId: string }>) =>
+          app.request(`/reports/${id}/acl`, {
+            method: 'PUT', headers: { 'content-type': 'application/json' },
+            body: JSON.stringify({ viewers }),
+          })
+        const viewersOf = async (): Promise<Array<Record<string, string>>> =>
+          (await pool.query(
+            `select subject_type, subject_id from data.asset_acl
+              where org = $1 and asset_id = $2 and relation = 'viewer' order by subject_id`,
+            [ORG, id],
+          )).rows
+
+        expect((await publish(app, id, await versionOf(app, id))).status).toBe(200)
+        const pubVersion = (await pool.query(
+          `select version from data.report_versions
+            where org = $1 and report_id = $2 order by version desc limit 1`, [ORG, id],
+        )).rows[0].version as number
+
+        // 草稿改成干净内容——若「已发布但快照读不出」被静默回退成草稿，门会放行（fail-open）。
+        const draft = parseReportSpec({ panels: [{ chart: 'table', title: '公开', metricId: OPEN_METRIC }] })
+        if (!draft.ok) throw new Error(`夹具规格应通过白名单：${draft.code}`)
+        expect(await updateSpec(pool, ORG, id, draft.spec, await versionOf(app, id))).not.toBeNull()
+
+        // 人为破坏已发布快照的 spec（模拟读不出/解析失败）；行上的发布指针仍在。
+        await pool.query(
+          `update data.report_versions set spec = '{"panels":"broken"}'::jsonb
+            where org = $1 and report_id = $2`, [ORG, id],
+        )
+
+        const res = await putAcl([{ subjectType: 'dept', subjectId: SIBLING_DEPT }])
+        expect(res.status).toBe(409)
+        expect(await res.json()).toEqual({
+          error: 'PUBLISHED_SNAPSHOT_UNREADABLE', reportId: id, version: pubVersion,
+        })
+        // 拒 = ACL 一个字节都没写
+        expect(await viewersOf()).toEqual([])
+      } finally {
+        await pool.query('delete from data.metrics where org = $1 and id = $2', [ORG, BROKEN_METRIC])
       }
     })
 

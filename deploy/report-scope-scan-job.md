@@ -18,7 +18,7 @@
 - `violations`：受众确实比面板指标可见范围更宽（`REPORT_METRIC_SCOPE_MISMATCH` 同源判据）；
 - `issues`：**判不了**——面板指标在词表里查不到（归档/删除/未同步）。判不了 ≠ 干净：巡检对它
   同样 **exit 1**，输出独立的 `⚠ [issue]` 段。Metabase 行**只计数、不进判据**，故巡检不会产出
-  `no_panel_metrics`——该 reason 只出现在发布回包 `scopeIssues`（见下方原因表）。
+  `no_panel_metrics`——该 reason 只出现在写路径诊断位（发布 / ACL / 部门门），巡检不产出（见下方原因表）。
 
 发布门的 issue **不参与 409 判定**（只有 `panels` 违规才 409）。`scopeIssues` 是**诊断字段**，
 实际附在失败路径（400/409）回包上；`200` 路径只有在「门读完目录、`publishVersion` 复核前指标
@@ -89,7 +89,7 @@ issue 的 reason（**判不了，同样 exit 1**；与上面的 violation 分段
 | reason | 含义 | 修法方向 |
 |---|---|---|
 | `metric_unknown` | 面板指标在词表里查不到（归档/删除/未同步）⇒ 可见范围无从判定 | 恢复/重建该指标，或把报表改成引用现存指标后重新发布；别指望「查不到 = 干净」 |
-| `no_panel_metrics` | 渲染器没有面板指标可判（Metabase；spec §9.2 做不到面板级）⇒ 结构性无法判定 | 已知能力缺口：需要产品先声明 Metabase 的 `metricIds`。当前巡检不会把 Metabase 行送进判据（只计数），此 reason 主要出现在发布回包 `scopeIssues` |
+| `no_panel_metrics` | 渲染器没有面板指标可判（Metabase；spec §9.2 做不到面板级）⇒ 结构性无法判定 | 已知能力缺口：需要产品先声明 Metabase 的 `metricIds`。当前巡检不会把 Metabase 行送进判据（只计数），此 reason 只出现在写路径诊断位（发布 / ACL / 部门门），巡检不产出 |
 
 errors 的 kind：`tenant_not_registered`（org 没登记进 `platform.tenant`，部门链无法解析）、
 `org_not_found`（显式 `--org` 查无此 org）、`published_snapshot_missing` /

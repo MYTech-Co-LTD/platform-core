@@ -837,10 +837,24 @@ export function registerReports(r: ModuleHono, ctx: RouteCtx): void {
     //    都按快照判）。用草稿判会假放行：发布一张含部门口径的报表 → 编辑草稿改为只引用无部门
     //    口径的指标 → ACL 放宽给兄弟部门 ⇒ 门看干净草稿放行，线上报表却已多出看不见该面板的部门。
     //    `visibility` 与 `nextAcl` 仍取当前值：那是受众入口本身，不属于版本内容。
-    //    未发布 / 快照缺失 ⇒ 回退 `row`（没有线上内容可判，与发布/部门门判草稿的口径一致）。
-    const published = row.renderer === 'platform' && row.publishedVersionId !== null
+    //    **未发布** ⇒ 回退 `row`（没有线上内容可判，与发布/部门门判草稿的口径一致）。
+    //    **已发布但快照读不出/解析失败** ⇒ 不静默回退：线上内容不可知，回退草稿 = fail-open
+    //    （巡检对同态记 `published_spec_unparseable` 并 exit 1，这里必须同向 fail-closed）。
+    const publishedVersionId = row.renderer === 'platform' ? row.publishedVersionId : null
+    const published = publishedVersionId !== null
       ? await getPublishedSpec(ctx.pool, org, id)
       : null
+    if (publishedVersionId !== null && published === null) {
+      console.warn(
+        `[data.reports] published snapshot unreadable org=${org} report=${id} `
+        + `version=${row.publishedVersion ?? '?'}`,
+      )
+      return c.json({
+        error: 'PUBLISHED_SNAPSHOT_UNREADABLE',
+        reportId: id,
+        version: row.publishedVersion,
+      }, 409)
+    }
     const gateReport: ReportScopeRow = published === null
       ? row
       : {
