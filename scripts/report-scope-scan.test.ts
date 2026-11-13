@@ -237,7 +237,7 @@ describePg('scanOrg（真库夹具）', () => {
       gate: async (d: { report: Record<string, unknown> }) => {
         calls.push(d)
         return {
-          panels: [{ index: 0, metricId: 'm:1', reason: 'audience_wider_than_dept' }],
+          panels: [{ index: 0, metricId: 'm:1', reason: 'audience_unbounded' }],
           warnings: [],
         }
       },

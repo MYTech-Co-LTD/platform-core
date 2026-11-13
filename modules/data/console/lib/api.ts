@@ -6,6 +6,14 @@ import { platformFetch } from '@platform/sdk/web'
 /** 三同纪律：模块 id = DB schema = API 前缀。 */
 const PREFIX = '/api/modules/data'
 
+/** 发布门（`REPORT_METRIC_SCOPE_MISMATCH`）回包里的逐面板违规项。 */
+export interface ApiErrorPanel {
+  index?: number
+  metricId?: string
+  missingDepts?: string[]
+  reason?: string
+}
+
 export class ApiError extends Error {
   constructor(
     readonly status: number,
@@ -16,6 +24,11 @@ export class ApiError extends Error {
      * ——既有 `{ error }` 端点不带它，构造点也照旧两参。
      */
     readonly detail?: string,
+    /**
+     * 发布门的逐面板违规（只有 `REPORT_METRIC_SCOPE_MISMATCH` 带）。挂在结构字段上而不是
+     * 塞进 `detail` 字符串：界面可以只显示前几块面板，排障时也能拿到原样数组。
+     */
+    readonly panels?: readonly ApiErrorPanel[],
   ) {
     super(code)
     this.name = 'ApiError'
@@ -32,13 +45,17 @@ export class ApiError extends Error {
  */
 async function toError(res: Response): Promise<ApiError> {
   try {
-    const body = (await res.json()) as { error?: unknown; reason?: unknown; detail?: unknown }
+    const body = (await res.json()) as {
+      error?: unknown; reason?: unknown; detail?: unknown; panels?: unknown
+    }
     const code = typeof body.error === 'string'
       ? body.error
       : typeof body.reason === 'string' ? body.reason : `HTTP_${res.status}`
     // 空串当没给：`detail: ''` 不该在文案后面留一个空括号。
     const detail = typeof body.detail === 'string' && body.detail !== '' ? body.detail : undefined
-    return new ApiError(res.status, code, detail)
+    // 发布门的逐面板违规（`{ error, panels: [...] }`）。非数组一律当没给。
+    const panels = Array.isArray(body.panels) ? (body.panels as ApiErrorPanel[]) : undefined
+    return new ApiError(res.status, code, detail, panels)
   } catch {
     return new ApiError(res.status, `HTTP_${res.status}`)
   }
@@ -176,17 +193,38 @@ const MESSAGES: Record<string, string> = {
   KPI_NOT_TOTALABLE: 'KPI 大数字本身就是合计值，不能放不可加的指标（比率/去重计数）',
   CONFLICTING_PANEL_SCOPES: '报表里的面板跨越了不同页门，拆到不同报表里再发布',
   NO_SPEC: '这份报表还没有规格内容，先编辑草稿再发布',
+  // 发布门（P5 Task 2）：受众比面板指标的可见范围宽。**必须给三种出路**——这条不是
+  // 「输入格式错」，而是「授权模型与内容不匹配」，只说「校验未通过」用户无从下手。
+  REPORT_METRIC_SCOPE_MISMATCH:
+    '报表受众比其中面板指标的可见范围更宽，发布已拦截。三种出路：① 缩窄报表受众（部门门 / 共享设置）；'
+    + '② 给指标显式共享到受众部门（visible_depts）；③ 换用可见范围匹配的指标',
+}
+
+/** 面板违规的紧凑摘要（最多列 3 块）：`面板 0（指标 x，缺部门 a、b）`。 */
+function panelSummary(panels: readonly ApiErrorPanel[] | undefined): string | undefined {
+  if (panels === undefined || panels.length === 0) return undefined
+  const parts = panels.slice(0, 3).map((p) => {
+    const pos = typeof p.index === 'number' ? `面板 ${p.index}` : '面板'
+    const metric = typeof p.metricId === 'string' && p.metricId !== '' ? `指标 ${p.metricId}` : ''
+    const depts = Array.isArray(p.missingDepts) && p.missingDepts.length > 0
+      ? `缺部门 ${p.missingDepts.join('、')}` : ''
+    const inner = [metric, depts].filter(Boolean).join('，')
+    return inner === '' ? pos : `${pos}（${inner}）`
+  })
+  return panels.length > parts.length ? `${parts.join('；')} 等 ${panels.length} 块` : parts.join('；')
 }
 
 /**
  * 已知码给中文文案；未知码回落成码本身（便于排障）。
- * 服务端给了 `detail`（如出问题的 metricId）就附在文案后——**精确到哪一项**，
- * 而不是只知道「有东西没通过」。
+ * 服务端给了 `detail`（如出问题的 metricId）或 `panels`（发布门的逐面板违规）就附在文案后
+ * ——**精确到哪一项**，而不是只知道「有东西没通过」。
  */
 export function messageOf(err: unknown): string {
   if (err instanceof ApiError) {
     const text = MESSAGES[err.code] ?? err.code
-    return err.detail === undefined ? text : `${text}：${err.detail}`
+    const extra = [err.detail, panelSummary(err.panels)]
+      .filter((x): x is string => x !== undefined && x !== '').join('；')
+    return extra === '' ? text : `${text}：${extra}`
   }
   return '网络异常，请稍后重试'
 }

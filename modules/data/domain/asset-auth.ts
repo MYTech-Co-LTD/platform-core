@@ -154,9 +154,19 @@ export interface RenderGateResult {
   spec: ViewableSpec
 }
 
+/** 词表索引（id → 行）。列表页同一请求要跑多份报表 ⇒ 建**一次**复用，别逐行重建 Map。 */
+export function indexRenderCatalog(
+  catalog: ReadonlyArray<RenderGateMetric>,
+): ReadonlyMap<string, RenderGateMetric> {
+  return new Map(catalog.map((m) => [m.id, m]))
+}
+
 /**
  * 按观看者的部门上下文逐面板降级规格。**纯函数**（判定只走 `metricVisibleWithDept`，
  * 不另写第二份可见性实现）；词表与部门上下文由调用方一次加载后传入。
+ *
+ * `catalog` 可以是行数组（单报表路径）或**预先建好的索引 Map**（列表页请求级构建一次）——
+ * 两种输入走同一份判定，不给调用方留第二套实现。
  *
  * 面板含多个指标时（kpi 分母）**任一不可见即整格降级**——分母不可见时展示比率同样泄露口径。
  *
@@ -166,10 +176,12 @@ export interface RenderGateResult {
  */
 export function applyPanelRenderGate(
   spec: ReportSpec,
-  catalog: ReadonlyArray<RenderGateMetric>,
+  catalog: ReadonlyArray<RenderGateMetric> | ReadonlyMap<string, RenderGateMetric>,
   deptCtx: DeptContext | undefined,
 ): RenderGateResult {
-  const byId = new Map(catalog.map((m) => [m.id, m]))
+  const byId = Array.isArray(catalog)
+    ? indexRenderCatalog(catalog)
+    : catalog as ReadonlyMap<string, RenderGateMetric>
   const deniedPanels: number[] = []
   const denials: RenderGateDenial[] = []
   let blocked = false

@@ -54,7 +54,7 @@ docker exec openship-platform-core-shanhai-server sh -lc 'pnpm exec tsx scripts/
 ## 判据（stdout + 退出码）
 
 ```
-  ✗ [audience_wider_than_dept] org=shanhaiyiguo-org report r-9「门店月报」 panel 2 metric=lemeng:net_sales
+  ✗ [audience_unbounded] org=shanhaiyiguo-org report r-9「门店月报」 panel 2 metric=lemeng:net_sales
   [warn] org=shanhaiyiguo-org report r-10「旧月报」 面板 1 的指标 lemeng:legacy 不在词表中 ⇒ 可见范围无法判定，已跳过
 report-scope-scan: org=shanhaiyiguo-org tenant=3 reports=12 published=9 metabase=2 violations=1 warnings=1 errors=0
 report-scope-scan: FAIL（orgs 1 / reports 12 / published 9 / metabase 2 / violations 1 / warnings 1 / errors 0）
@@ -68,13 +68,14 @@ report-scope-scan: FAIL（orgs 1 / reports 12 / published 9 / metabase 2 / viola
 | 1 | **有受众漂移**（violations）**或**有判不了的项（errors，含单 org 读取失败 `scan_failed`）——都要人看 |
 | 2 | **环境/连接类**查不成账：缺 `DATABASE_URL`、连库失败、读全局租户或 org 清单失败。**单 org 的读取失败不是 2**（记 `scan_failed`、exit 1，其余 org 照扫）；用法错（`--org ''` / 纯空白）同样 exit 2，不扫任何 org |
 
-三条违规 reason：
+两条违规 reason：
 
 | reason | 含义 | 修法方向 |
 |---|---|---|
-| `audience_wider_than_dept` | 报表受众没有任何部门约束（scope/公开）⇒ 比部门归属指标宽 | 给报表加部门门，或给指标加 `visible_depts` |
-| `audience_user_only` | 只共享给具名个人 ⇒ 无法证明落在指标可见范围内（fail-closed） | 改成部门受众（ACL `dept` 主体 / 报表部门门） |
+| `audience_unbounded` | 受众**无法用部门集合界定**：`visibility='tenant'` 且无部门门（全租户），或 ACL 里有 `scope`/`user` viewer（拿到某码的所有人 / 具名个人）⇒ 对部门归属指标 fail-closed | 收窄成部门受众（报表部门门 / ACL `dept` 主体），或给指标加 `visible_depts` 显式共享 |
 | `audience_dept_outside_metric_scope` | 行尾 `missingDepts=` 点名的部门不在指标链/`visible_depts` 里 | 收窄受众，或把差集部门加进指标 `visible_depts` |
+
+> owner（ACL `owner` 主体）**不计入受众**：可以管理自己读不到数的报表，观看视图由渲染闸兜住。
 
 errors 的 kind：`tenant_not_registered`（org 没登记进 `platform.tenant`，部门链无法解析）、
 `org_not_found`（显式 `--org` 查无此 org）、`published_snapshot_missing` /

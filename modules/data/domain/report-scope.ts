@@ -36,20 +36,37 @@ export type ValidateResult =
 const DATA_CHARTS = new Set<ReportSpec['panels'][number]['chart']>(['line', 'bar', 'table', 'kpi'])
 
 /**
+ * `metricIdsOf` 的最小输入形状：**故意全可选**——除了真实面板，观看面还会出现降级占位符
+ * `{ index, denied: true }`（`ViewableSpec`）。占位符没有任何指标字段，必须**返回空数组**，
+ * 而不是 `[undefined]`（后者会让调用方把 undefined 当指标 id 查词表、拼 `Set`、写日志）。
+ */
+export interface MetricIdPanel {
+  chart?: string
+  metricId?: string
+  denominatorMetricId?: string
+}
+
+/**
  * 面板引用的指标 id（**全部**，不是只取主指标）。
  *
  * ⚠️ text / ai_text 面板没有 metricId ⇒ 必须跳过：按 `panel.metricId` 硬取会把它当成
  *    「指向不存在的指标」拒掉，文字块就没法进报表。
+ * ⚠️ **降级占位符** `{ index, denied: true }` 也没有 chart/metricId ⇒ 同样跳过（守卫见下）；
+ *    否则会返回 `[undefined]`，污染调用方的 id 集合。
  * ⚠️ kpi 的分母是**第二个指标**：它的 scope 与源接入情况同样约束报表可见性，
  *    漏掉分母 = 「主指标可见、分母 403」的报表在运行时才炸。
  *
  * 发布门（`report-scope-gate.ts`）也 import 这一份：分母的**可见性**与它的 scope/源同样要判。
  */
-export function metricIdsOf(panel: ReportSpec['panels'][number]): string[] {
-  if (panel.chart === 'text' || panel.chart === 'ai_text') return []
-  const ids = panel.chart === 'kpi' && panel.denominatorMetricId !== undefined
-    ? [panel.metricId, panel.denominatorMetricId]
-    : [panel.metricId]
+export function metricIdsOf(panel: MetricIdPanel): string[] {
+  if (panel.chart === undefined || panel.chart === 'text' || panel.chart === 'ai_text') return []
+  const metricId = panel.metricId
+  // 无 metricId（降级占位符 / 陈旧形状）⇒ 没有指标可判，跳过而不是产出 undefined。
+  if (metricId === undefined || metricId === '') return []
+  const denominator = panel.denominatorMetricId
+  const ids = panel.chart === 'kpi' && denominator !== undefined && denominator !== ''
+    ? [metricId, denominator]
+    : [metricId]
   // 分母与主指标同 id 时只留一份：发布门会逐项回报违规，重复会让同一面板报两条。
   return [...new Set(ids)]
 }

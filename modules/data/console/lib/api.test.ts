@@ -79,6 +79,33 @@ describe('失败体 → ApiError', () => {
     await expect(apiGet('/reports/r1')).rejects.toMatchObject({ code: 'INVALID_BODY' })
   })
 
+  it('★ 发布门回包：code 取 error，panels 原样带出（不塌成裸码）', async () => {
+    m.mockImplementation(async () => json({
+      error: 'REPORT_METRIC_SCOPE_MISMATCH',
+      panels: [
+        { index: 0, metricId: 'lemeng:net_sales', reason: 'audience_unbounded' },
+        { index: 2, metricId: 'lemeng:cost', missingDepts: ['D2'], reason: 'audience_dept_outside_metric_scope' },
+      ],
+    }, 409))
+    const err = await apiGet('/reports/r1/publish').catch((e: unknown) => e)
+    expect(err).toBeInstanceOf(ApiError)
+    expect(err).toMatchObject({
+      status: 409,
+      code: 'REPORT_METRIC_SCOPE_MISMATCH',
+      panels: [
+        { index: 0, metricId: 'lemeng:net_sales', reason: 'audience_unbounded' },
+        { index: 2, metricId: 'lemeng:cost', missingDepts: ['D2'], reason: 'audience_dept_outside_metric_scope' },
+      ],
+    })
+  })
+
+  it('panels 非数组 ⇒ 当没给（不因坏形状炸解析）', async () => {
+    m.mockImplementation(async () => json({ error: 'REPORT_METRIC_SCOPE_MISMATCH', panels: 'oops' }, 409))
+    await expect(apiGet('/reports/r1/publish')).rejects.toMatchObject({
+      code: 'REPORT_METRIC_SCOPE_MISMATCH', panels: undefined,
+    })
+  })
+
   it('两者都不是 / 非 JSON ⇒ 回落成 HTTP_<status>（不因解析失败吞掉状态码）', async () => {
     m.mockImplementation(async () => json({ ok: false }, 400))
     await expect(apiGet('/reports/r1')).rejects.toMatchObject({ status: 400, code: 'HTTP_400' })
@@ -121,6 +148,21 @@ describe('messageOf', () => {
   it('版本拒绝码有专属文案（不塌成 HTTP_400）', () => {
     expect(messageOf(new ApiError(400, 'KPI_NOT_TOTALABLE'))).toContain('KPI')
     expect(messageOf(new ApiError(400, 'UNKNOWN_PANEL_METRIC'))).toContain('词表')
+  })
+
+  it('★ 发布门：人话含三种出路，并把 panels 摘要附在文案后', () => {
+    const msg = messageOf(new ApiError(409, 'REPORT_METRIC_SCOPE_MISMATCH', undefined, [
+      { index: 0, metricId: 'lemeng:net_sales', reason: 'audience_unbounded' },
+      { index: 2, metricId: 'lemeng:cost', missingDepts: ['D2'], reason: 'audience_dept_outside_metric_scope' },
+    ]))
+    // 三种出路都在（缩受众 / 显式共享指标 / 换指标）
+    expect(msg).toContain('缩窄报表受众')
+    expect(msg).toContain('显式共享')
+    expect(msg).toContain('换用可见范围匹配的指标')
+    // 面板定位：不是只回一个原始码
+    expect(msg).toContain('面板 0（指标 lemeng:net_sales）')
+    expect(msg).toContain('面板 2（指标 lemeng:cost，缺部门 D2）')
+    expect(msg).not.toBe('REPORT_METRIC_SCOPE_MISMATCH')
   })
 
   it('有 detail 就附在文案后 ⇒ 精确到哪个指标', () => {

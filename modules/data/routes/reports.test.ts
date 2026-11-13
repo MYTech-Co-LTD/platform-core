@@ -3088,6 +3088,26 @@ describePg('报表路由（需要 DATABASE_URL）', () => {
       expect(await res.json()).toMatchObject({ error: 'PANEL_NOT_KPI' })
     })
 
+    it('★ 被渲染闸拒绝的 KPI 面板 ⇒ 404（不是 400 PANEL_NOT_KPI：无权限与「不是 KPI」同形）', async () => {
+      const id = await createPublishedReceipt(receiptShell(adminIdentity()))
+      const app = receiptShell(viewerIdentity())
+      try {
+        // 发布后词表漂移：KPI 指标归属到观看者不在的部门 ⇒ 渲染闸把它降级成空文本面板。
+        await pool.query(
+          'update data.metrics set owner_dept = $3 where org = $1 and id = $2',
+          ['platform', ADDITIVE_METRIC, 'T7D3'],
+        )
+        const res = await receiptOf(app, id, {})
+        expect(res.status).toBe(404)
+        expect(await res.json()).toMatchObject({ error: 'NOT_FOUND' })
+      } finally {
+        await pool.query(
+          'update data.metrics set owner_dept = null where org = $1 and id = $2',
+          ['platform', ADDITIVE_METRIC],
+        )
+      }
+    })
+
     it('未发布且非草稿预览 ⇒ 404 NOT_PUBLISHED；草稿预览要求管理面', async () => {
       const adminApp = receiptShell(adminIdentity())
       const res = await post(adminApp, { title: '未发布', renderer: 'platform', spec: specOf() })
@@ -3362,14 +3382,51 @@ describePg('报表路由（需要 DATABASE_URL）', () => {
       const same = await createWithGate([CHILD_DEPT], '同部门受众')
       expect((await publish(app, same, await versionOf(app, same))).status).toBe(200)
 
-      // ③ 受众无部门约束（scope-only = 所有 data:query 持有者）⇒ 归属指标不可判定为更窄 ⇒ 409
+      // ③ 受众无部门约束（visibility=tenant 且无部门门）⇒ 归属指标不可判定为更窄 ⇒ 409
       const open = await createWithGate(null, '无部门受众')
       const openRes = await publish(app, open, await versionOf(app, open))
       expect(openRes.status).toBe(409)
       expect((await openRes.json() as { panels: unknown[] }).panels[0])
-        .toMatchObject({ metricId: FIN_METRIC, reason: 'audience_wider_than_dept' })
+        .toMatchObject({ metricId: FIN_METRIC, reason: 'audience_unbounded' })
 
       await pool.query('delete from data.metrics where org = $1 and id = $2', [ORG, FIN_METRIC])
+    })
+
+    it('★ 发布门先于 STALE_WRITE/unchanged：指标归属漂移后的重发拿到 409 受众不匹配', async () => {
+      // 受众 = 数字技术部（有界）；指标初始归属同一部门 ⇒ 首发通过。
+      const DRIFT_METRIC = 'p5r:dept-drift'
+      await upsertMetric(pool, ORG, {
+        id: DRIFT_METRIC, title: '归属漂移口径', description: '', requiredScope: null,
+        subjectColumn: 'org', selectSql: 'select 1 as value', groupBy: '', params: {},
+      }, 'fixture', { ownership: { ownerDept: CHILD_DEPT } })
+      const app = admin()
+      const created = await post(app, {
+        title: '发布门-归属漂移', renderer: 'platform', requiredDepts: [CHILD_DEPT],
+        spec: { panels: [{ chart: 'table', title: '口径', metricId: DRIFT_METRIC }] },
+      })
+      expect(created.status).toBe(201)
+      const id = (await created.json()).id as string
+      expect((await publish(app, id, await versionOf(app, id))).status).toBe(200)
+
+      try {
+        // 发布后词表漂移：归属改到兄弟部门 ⇒ 当前受众不再 ⊆ 指标可见范围。
+        await pool.query(
+          'update data.metrics set owner_dept = $3 where org = $1 and id = $2',
+          [ORG, DRIFT_METRIC, SIBLING_DEPT],
+        )
+        // ① 无变更重发 + 当前版本 ⇒ 门先返回 409 受众不匹配（不是 200 unchanged）
+        const cur = await publish(app, id, await versionOf(app, id))
+        expect(cur.status).toBe(409)
+        const curBody = await cur.json() as { error: string; panels: Array<{ reason: string }> }
+        expect(curBody.error).toBe('REPORT_METRIC_SCOPE_MISMATCH')
+        expect(curBody.panels[0]).toMatchObject({ reason: 'audience_dept_outside_metric_scope' })
+        // ② 陈旧版本同样先撞发布门（受众漂移优先于 STALE_WRITE 暴露——有意的先后，见 handler 注释）
+        const stale = await publish(app, id, (await versionOf(app, id)) + 1)
+        expect(stale.status).toBe(409)
+        expect((await stale.json() as { error: string }).error).toBe('REPORT_METRIC_SCOPE_MISMATCH')
+      } finally {
+        await pool.query('delete from data.metrics where org = $1 and id = $2', [ORG, DRIFT_METRIC])
+      }
     })
 
     it('部门选择器：转发宿主注入的平表（含直属人数）', async () => {
@@ -3474,6 +3531,31 @@ describePg('报表路由（需要 DATABASE_URL）', () => {
         )
         expect(audit.rowCount).toBeGreaterThan(0)
         expect(audit.rows[0].detail).toMatchObject({ deniedPanels: [0] })
+        await pool.query('delete from data.asset_audit where org = $1 and asset_id = $2', [ORG, id])
+      })
+
+      it('★ 同 viewer+report+日 的连续被拒观看只记一条审计（读路径不刷长表）', async () => {
+        const OWNED = 'p5rg:audit-dedupe'
+        await seedMetric(OWNED, '审计去重口径')
+        const id = await createPublished(admin(), '渲染闸-审计去重', [
+          { chart: 'table', title: '部门口径', metricId: OWNED },
+        ])
+        await drift(OWNED, { ownerDept: SIBLING_DEPT })
+        const alice = watcher(ALICE)
+        expect((await alice.request(`/reports/${id}/published-spec`)).status).toBe(200)
+        expect((await alice.request(`/reports/${id}/published-spec`)).status).toBe(200)
+        expect((await alice.request(`/reports/${id}/published-spec`)).status).toBe(200)
+
+        const countOf = async (actor: string): Promise<number> =>
+          (await pool.query(
+            `select count(*)::int as n from data.asset_audit
+              where org = $1 and asset_id = $2 and action = 'report.panel_denied' and actor = $3`,
+            [ORG, id, actor],
+          )).rows[0].n
+        expect(await countOf(ALICE)).toBe(1)
+        // 去重粒度是 viewer：另一个被拒观看者仍各记一条
+        expect((await watcher(CAROL).request(`/reports/${id}/published-spec`)).status).toBe(200)
+        expect(await countOf(CAROL)).toBe(1)
         await pool.query('delete from data.asset_audit where org = $1 and asset_id = $2', [ORG, id])
       })
 
@@ -3646,6 +3728,38 @@ describePg('报表路由（需要 DATABASE_URL）', () => {
         expect((await narrate(ALICE)).status).toBe(404)
         // 有权看该口径的人照常进入事实包装配（不是把整条叙述通道关掉）
         expect((await narrate(BOB)).status).not.toBe(404)
+        await pool.query('delete from data.asset_audit where org = $1 and asset_id = $2', [ORG, id])
+      })
+
+      it('★ 叙述请求指向被拒面板 ⇒ 404（不是 400 NOT_AI_TEXT_PANEL：无权限与「不是该类型」同形）', async () => {
+        const SECRET = 'p5rg:narr-denied'
+        await seedMetric(SECRET, '叙述被拒面板口径')
+        const app = admin()
+        const created = await post(app, {
+          title: '渲染闸-叙述被拒面板', renderer: 'platform',
+          spec: {
+            period: { mode: 'custom', from: '2026-10-01', to: '2026-10-19' },
+            panels: [
+              { chart: 'ai_text', title: 'AI 分析', focus: 'overview' },
+              { chart: 'table', title: '成本', metricId: SECRET },
+            ],
+          },
+        })
+        expect(created.status).toBe(201)
+        const id = (await created.json()).id as string
+        expect((await publish(app, id, await versionOf(app, id))).status).toBe(200)
+        await drift(SECRET, { ownerDept: SIBLING_DEPT })
+
+        // 面板 1 被渲染闸降级成空文本 ⇒ 过去会回 400 NOT_AI_TEXT_PANEL（「不是 AI 文本」），
+        // 实际语义是「无权限」。与不存在同形 ⇒ 404。
+        const res = await watcher(ALICE).request(`/reports/${id}/narrative`, {
+          method: 'POST', headers: { 'content-type': 'application/json' },
+          body: JSON.stringify({
+            panelIndex: 1, period: { mode: 'custom', from: '2026-10-01', to: '2026-10-19' },
+          }),
+        })
+        expect(res.status).toBe(404)
+        expect(await res.json()).toEqual({ error: 'NOT_FOUND' })
         await pool.query('delete from data.asset_audit where org = $1 and asset_id = $2', [ORG, id])
       })
 

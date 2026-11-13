@@ -5,18 +5,28 @@
 // 可见范围更宽，发布即 409——而不是让它上线后「报表看着正常、点进去某个口径 403/空面板」。
 //
 // 受众模型（计划 §Task 2 的规则式判定，**不做**观看者上下文的逆运算）：
-//   受众 dept 集 = 报表 `required_depts` 的具名部门 ∪ ACL 里 `relation='viewer'` 且
-//                 `subject_type='dept'` 的部门，**每个具名部门再展开「自身∪严格后代」**
-//                 （渲染期 `required_depts=[P]` / ACL dept=P 放行的是 P 的整棵子树——
-//                 dept-gate D-O3 + 观看者闭包含祖先；不展开会把 `required_depts=[父部门]`
-//                 的兄弟支误判成干净）。展开用 `subtreeOf`，**不用** `deptChainOf`（含祖先，
-//                 而 visible_depts 只认直属 ⇒ 祖先入受众会反向误杀）。
-//   `required_scope` 与 ACL 的 user/scope 主体被视作**全局**（不带来部门——它们是「谁」，
-//   不是「哪个部门」）。因此受众**一个部门都没有**时，等价于「拿到 scope 的所有人」⇒ 对
-//   部门归属指标而言必然更宽（reason `audience_wider_than_dept`）。
-//   ⚠️ 只共享给**具名个人**（ACL user 主体，没有 dept 主体/部门门）时同样 fail-closed，
-//   但 reason 单列为 `audience_user_only`：这类报表暂不能带部门归属指标发布；后续可按
-//   `org_membership` 把收件人收窄成部门再放行（不在本轮）。
+//
+//   ① **有界受众**（可用部门集合表达）：报表 `required_depts` 的具名部门 ∪ ACL 里
+//      `relation='viewer'` 且 `subject_type='dept'` 的部门，**每个具名部门再展开
+//      「自身∪严格后代」**（渲染期 `required_depts=[P]` / ACL dept=P 放行的是 P 的整棵子树——
+//      dept-gate D-O3 + 观看者闭包含祖先；不展开会把 `required_depts=[父部门]` 的兄弟支
+//      误判成干净）。展开用 `subtreeOf`，**不用** `deptChainOf`（含祖先，而 visible_depts
+//      只认直属 ⇒ 祖先入受众会反向误杀）。
+//
+//   ② **受众无法界定**（unbindable）——**独立**由「受众入口」推出，**绝不用「已收集到的部门
+//      集合是否为空」当代理**（历史 bug：只要有一个 dept viewer 在场，user/scope/tenant 类
+//      受众就被静默丢掉不判，`visibility` 从未被读取）：
+//        · `visibility === 'tenant'` 且 `required_depts` 为空 ⇒ 旧粗门「拿到本模块的人都可见」，
+//          全租户无部门约束；
+//        · ACL 里存在 `relation='viewer'` 且 `subject_type ∈ {'scope','user'}` 的主体 ⇒
+//          「拿到某权限码的所有人」/「某个具名个人」，人可能在任意部门。
+//      ACL 是**加性**的，不会收窄 `visibility='tenant'` ⇒ 两类入口同时存在时受众仍是全集。
+//      ⇒ unbindable 时**每个部门归属面板**都判违规（reason `audience_unbounded`）。
+//
+//   ③ **owner 豁免**（显式裁定）：ACL 的 `owner` 主体**不计入受众**——「能改配置」≠「以受众
+//      身份读数」。因此发布门不为 owner 判违规：管理员可以管理自己读不到数的报表；owner 的
+//      观看视图由渲染闸（`asset-auth.ts` 的 `applyPanelRenderGate`）逐面板降级兜住。
+//      本豁免有测试钉住（`owner 豁免`），勿静默改动。
 //
 // 指标侧判定：`owner_dept` 为空的平台口径恒通过；非空时要求受众**每个** dept ∈
 // （归属部门链 ∪ `visible_depts`）。部门链 = 自身 ∪ 全部祖先 ∪ 全部后代（`deptChainOf`）；
@@ -37,10 +47,12 @@ import type { ReportSpec } from './report-spec'
 import { metricIdsOf } from './report-scope'
 
 export type ReportScopeViolationReason =
-  /** 受众没有任何部门约束（scope 主体 / 公开）⇒ 「所有拿到 scope 的人」比部门链宽。 */
-  | 'audience_wider_than_dept'
-  /** 受众只有具名个人（ACL user 主体）⇒ 人可能在任意部门，无法证明 ⊆ 部门链（fail-closed）。 */
-  | 'audience_user_only'
+  /**
+   * 受众**无法用部门集合界定**：`visibility='tenant'` 且无部门门（全租户），或 ACL 里有
+   * `scope` / `user` 的 viewer（拿到某码的所有人 / 某个具名个人）。
+   * 人的部门不确定 ⇒ 对**任何**部门归属指标都 fail-closed。
+   */
+  | 'audience_unbounded'
   /** 受众里这些部门不在指标可见范围内（既非归属部门链，也不在 visible_depts）。 */
   | 'audience_dept_outside_metric_scope'
 
@@ -101,15 +113,20 @@ function namedAudienceDeptsOf(report: ReportScopeRow, acl: readonly AclRow[]): S
   return depts
 }
 
-/** 受众里是否有**具名个人**（只给个人共享的报表——无部门可判）。 */
-function hasNamedUserAudience(acl: readonly AclRow[]): boolean {
-  return acl.some((a) => a.relation === 'viewer' && a.subjectType === 'user' && a.subjectId !== '')
-}
-
-/** 受众里是否有**全局 scope**（报表页门或 ACL 的 scope 主体）——它与「具名个人」互斥解释。 */
-function hasGlobalScopeAudience(report: ReportScopeRow, acl: readonly AclRow[]): boolean {
-  if (report.requiredScope !== null) return true
-  return acl.some((a) => a.relation === 'viewer' && a.subjectType === 'scope' && a.subjectId !== '')
+/**
+ * 受众是否**无法用部门集合界定**。看的是「受众入口」本身，不是收集到的 dept 集合
+ * （后者为空可能只是「还没收集」，不能反推「没有无界入口」）。
+ *
+ * - `visibility='tenant'` 且无部门门 ⇒ 旧粗门：全租户；
+ * - ACL 有 viewer 的 `scope` / `user` 主体 ⇒ 拿到权限码的所有人 / 某个具名个人。
+ *
+ * `owner` 主体**不在**此列（owner 豁免，见文件头 ③）。
+ */
+function isUnbindableAudience(report: ReportScopeRow, acl: readonly AclRow[]): boolean {
+  const tenantOpen = report.visibility === 'tenant' && (report.requiredDepts ?? []).length === 0
+  if (tenantOpen) return true
+  return acl.some((a) => a.relation === 'viewer'
+    && (a.subjectType === 'scope' || a.subjectType === 'user') && a.subjectId !== '')
 }
 
 /**
@@ -171,9 +188,9 @@ export async function reportScopeViolations(
     }
     for (const d of await subtree) audienceDepts.add(d)
   }
-  const userOnly = audienceDepts.size === 0
-    && hasNamedUserAudience(acl)
-    && !hasGlobalScopeAudience(report, acl)
+  // 无法界定的受众：每块部门归属面板都违规。**先于**部门集判定——否则「有一个 dept viewer」
+  // 会让 user/scope/tenant 入口被静默掩盖（历史 bug）。
+  const unbindable = isUnbindableAudience(report, acl)
   const panels: ReportScopeViolation[] = []
 
   for (const { index, metricId } of panelMetrics) {
@@ -188,12 +205,12 @@ export async function reportScopeViolations(
     const ownerDept = metric.ownerDept === '' ? null : (metric.ownerDept ?? null)
     if (ownerDept === null) continue
 
-    if (audienceDepts.size === 0) {
-      // 没有部门约束：只共享给个人（人可能在任意部门）或「拿到 scope 的所有人」——
-      // 两者都比部门归属指标更宽，都 fail-closed，只是 reason 区分（可观测、可解释）。
-      panels.push({ index, metricId, reason: userOnly ? 'audience_user_only' : 'audience_wider_than_dept' })
+    if (unbindable) {
+      panels.push({ index, metricId, reason: 'audience_unbounded' })
       continue
     }
+    // 走到这里受众是**有界**的；部门集为空 = 只有 owner 能被点名（owner 豁免，见文件头 ③）
+    // ⇒ 没有「受众部门」需要证明落在指标可见范围内，通过。
 
     const chain = await chainFor(ownerDept)
     const visibleDepts = new Set(metric.visibleDepts ?? [])

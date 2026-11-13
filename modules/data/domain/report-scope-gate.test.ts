@@ -1,7 +1,9 @@
 // report-scope-gate.test.ts — 报表发布门（P5 Task 2，spec 2026-11-12 §9.1）。
 //
-// 判定是纯规则的（不做 requester 上下文的逆运算）：受众 dept 集 = 报表 requiredDepts ∪
-// ACL 里 relation=viewer 的 dept 主体；scope/user 主体被视作全局（不带来部门）。
+// 判定是纯规则的（不做 requester 上下文的逆运算）：有界受众的 dept 集 = 报表 requiredDepts ∪
+// ACL 里 relation=viewer 的 dept 主体。若存在**无界入口**（visibility=tenant 且无部门门，
+// 或 ACL 里有 user/scope viewer）⇒ 受众无法用部门集合界定，每块部门归属面板都违规
+// （reason audience_unbounded）。owner 主体不计入受众（owner 豁免，见 domain 文件头）。
 // 指标归属部门非空时，受众**每个** dept 必须 ∈（归属部门链 ∪ visible_depts）。
 //
 // 真库夹具：指标走 `upsertMetric`（L2，本 org 独占），部门链走 `platform.v_org_node`
@@ -152,8 +154,9 @@ describePg('reportScopeViolations（发布门，真库夹具）', () => {
   })
 
   it('★ ACL dept 主体同样展开子树：授给祖先部门 ⇒ 兄弟支被点名', async () => {
+    // 有界受众需要 restricted：tenant 行即使加了 dept ACL 也仍是全租户（ACL 只加不减）。
     const out = await gate({
-      report: { requiredDepts: null, spec: specOf(tablePanel(FIN_METRIC)) },
+      report: { visibility: 'restricted', requiredDepts: null, spec: specOf(tablePanel(FIN_METRIC)) },
       acl: [viewerDept(ROOT)],
     })
     expect(out?.panels[0]).toMatchObject({
@@ -166,29 +169,62 @@ describePg('reportScopeViolations（发布门，真库夹具）', () => {
     expect(await gate({ report: { requiredDepts: null, spec: specOf(tablePanel(PLATFORM_METRIC)) } })).toBeNull()
   })
 
-  it('★ 受众无任何部门（scope-only）+ 归属指标 ⇒ 违规 reason=audience_wider_than_dept', async () => {
+  it('★ 受众无任何部门（tenant + scope）+ 归属指标 ⇒ 违规 reason=audience_unbounded', async () => {
     const out = await gate({
       report: { requiredScope: 'data:query', requiredDepts: null, spec: specOf(tablePanel(FIN_METRIC)) },
     })
-    expect(out?.panels).toEqual([{ index: 0, metricId: FIN_METRIC, reason: 'audience_wider_than_dept' }])
+    expect(out?.panels).toEqual([{ index: 0, metricId: FIN_METRIC, reason: 'audience_unbounded' }])
   })
 
-  it('ACL user 主体不带来部门 ⇒ 仍 fail-closed，但 reason 区分 audience_user_only', async () => {
+  it('ACL user 主体 = 具名个人（人可能在任意部门）⇒ audience_unbounded', async () => {
     const out = await gate({
       report: { requiredDepts: null, spec: specOf(tablePanel(FIN_METRIC)) },
       acl: [viewerUser('p5g-user')],
     })
-    expect(out?.panels[0]).toMatchObject({ metricId: FIN_METRIC, reason: 'audience_user_only' })
+    expect(out?.panels[0]).toMatchObject({ metricId: FIN_METRIC, reason: 'audience_unbounded' })
   })
 
   it('ACL dept 主体进受众：兄弟部门 ⇒ 违规（union 口径）', async () => {
     const out = await gate({
-      report: { requiredDepts: null, spec: specOf(tablePanel(FIN_METRIC)) },
+      report: { visibility: 'restricted', requiredDepts: null, spec: specOf(tablePanel(FIN_METRIC)) },
       acl: [viewerDept(SIB)],
     })
     expect(out?.panels[0]).toMatchObject({
       metricId: FIN_METRIC, missingDepts: [SIB], reason: 'audience_dept_outside_metric_scope',
     })
+  })
+
+  // ── 受众「无法界定」的三条钉子（终审 Important：不能拿 dept 集合当代理）──────────────────
+  it('★ 混合 dept + user viewer（restricted）⇒ 部门归属面板一律违规（dept 部分在链上也不放行）', async () => {
+    const out = await gate({
+      report: { visibility: 'restricted', requiredDepts: null, spec: specOf(tablePanel(FIN_METRIC)) },
+      // FIN 本身在指标归属链上——若只看 dept 集合这条会「通过」；user viewer 让受众无界。
+      acl: [viewerDept(FIN), viewerUser('p5g-user')],
+    })
+    expect(out?.panels).toEqual([{ index: 0, metricId: FIN_METRIC, reason: 'audience_unbounded' }])
+  })
+
+  it('★ 历史 tenant 行（无部门门）+ 部门 ACL ⇒ 仍按全租户判（ACL 加性，不收窄 tenant）', async () => {
+    const out = await gate({
+      report: {
+        visibility: 'tenant', requiredDepts: null, requiredScope: null,
+        spec: specOf(tablePanel(FIN_METRIC)),
+      },
+      acl: [viewerDept(FIN)],
+    })
+    expect(out?.panels).toEqual([{ index: 0, metricId: FIN_METRIC, reason: 'audience_unbounded' }])
+  })
+
+  it('★ owner 豁免：ACL owner 主体不计入受众，不触发 audience_unbounded', async () => {
+    const out = await gate({
+      report: { visibility: 'restricted', requiredDepts: [FIN], spec: specOf(tablePanel(FIN_METRIC)) },
+      acl: [{ subjectType: 'user', subjectId: 'p5g-owner', relation: 'owner' }],
+    })
+    expect(out).toBeNull()
+    // restricted 且无任何 viewer ⇒ 实际受众 = owner 一人（豁免）⇒ 同样不判违规
+    expect(await gate({
+      report: { visibility: 'restricted', requiredDepts: null, spec: specOf(tablePanel(FIN_METRIC)) },
+    })).toBeNull()
   })
 
   it('visible_depts 显式共享兄弟部门 ⇒ 通过', async () => {
