@@ -28,6 +28,29 @@ export function previewTooRecent(preview: unknown, now = Date.now()): boolean {
   return now - ranAtMs < PREVIEW_RERUN_MIN_INTERVAL_MS
 }
 
+/**
+ * 提交即试算的限速判据（P6 Task 3）：同一 org 下该 metricId 是否刚跑过一次试算。
+ *
+ * 判据必须在 `submitChange` **之前**读：提交会先把旧的未决单 superseded 再落新单，
+ * 事后再读就看不到它了（本函数因此由提交路径在 submitChange 前调用）。
+ *
+ * 取**最新一条有快照的单**（任何状态）：刚被顶掉/已决的单也代表「这个 metricId 刚落过
+ * 一次试算」，连打十次提交时不该只挡第二次——第 N 次仍要命中（否则 agent 每次重提又烧一轮）。
+ * 被限速跳过的单 preview 为 null，不能当判据（`preview->>'ranAt' is not null` 把它们排除）。
+ * 时间比较复用 previewTooRecent——时钟判据只此一份。
+ */
+export async function recentPreviewFor(
+  pool: Pool, org: string, metricId: string, now = Date.now(),
+): Promise<boolean> {
+  const r = await pool.query(
+    `select preview from data.metric_change
+      where org = $1 and metric_id = $2 and preview->>'ranAt' is not null
+      order by id desc limit 1`,
+    [org, metricId],
+  )
+  return previewTooRecent(r.rows[0]?.preview, now)
+}
+
 export interface PreviewSnapshot {
   window: { from: string; to: string } | null
   value: number | null

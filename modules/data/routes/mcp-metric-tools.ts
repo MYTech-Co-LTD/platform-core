@@ -19,8 +19,8 @@ import { L2RefineDeclarationSchema, L2ExprDeclarationSchema, ExprNodeSchema, dim
 import { deleteMetricDeclaration, writeL2Declaration } from '../domain/metric-write'
 import type { L2DeclarationBody, MetricWriteOutcome } from '../domain/metric-write'
 import { listChanges, submitChange } from '../domain/metric-change'
-import type { ChangeKind, MetricChangeRow, SubmitOutcome } from '../domain/metric-change'
-import { applyPreview, runPreview } from '../domain/metric-change-preview'
+import type { ChangeKind, MetricChangeRow } from '../domain/metric-change'
+import { applyPreview, recentPreviewFor, runPreview } from '../domain/metric-change-preview'
 import { analystPool, runWarehouseSqlParams } from '../domain/warehouse'
 import { mutatingAllowed } from '../domain/toolbox/registry'
 import { manageFaceOfSlice } from './mcp-manage-face'
@@ -105,9 +105,24 @@ const previewStateOf = async (deps: McpDeps, change: MetricChangeRow) => {
   }
 }
 
-/** submitChange 结局 → 工具回包（三个提交口共用）：refused 原样给码；成功 = {changeId, state}。 */
-const submitResultOf = async (deps: McpDeps, out: SubmitOutcome): Promise<McpToolResult> => {
+/**
+ * 提交 + 提交即试算（三个提交口共用；P6 Task 3 收口为单一入口）。
+ *
+ * 限速判据 `recentPreviewFor` 必须在 `submitChange` **之前**读：`submitChange` 会先把旧的
+ * 未决单 superseded，提交后再读就看不到它了。命中 ⇒ 提交仍照常落单（提交是合法业务动作），
+ * 只跳过试算——单停在 draft，人可在待核对页按「跑试算」补；回包带 `previewSkipped`。
+ *
+ * refused 原样给码；成功 = {changeId, state}（跳过时 state=draft）。
+ */
+const submitAndPreview = async (
+  deps: McpDeps, requester: { userId: string },
+  metricId: string, kind: ChangeKind, payload: unknown,
+): Promise<McpToolResult> => {
+  const rateLimited = await recentPreviewFor(deps.pool, deps.org, metricId)
+  const out = await submitChange(deps.pool, deps.org,
+    { userId: requester.userId, channel: 'mcp' }, metricId, kind, payload)
   if (!out.ok) return { text: JSON.stringify({ status: 'refused', error: out.error }), isError: true }
+  if (rateLimited) return ok({ changeId: out.change.id, state: out.change.status, previewSkipped: 'rate_limited' })
   return ok({ changeId: out.change.id, state: await previewStateOf(deps, out.change) })
 }
 
@@ -179,10 +194,8 @@ export const metricTools: McpToolGroup = {
       if (!parsed.success) return refused({ ok: false, http: 400, error: 'INVALID_BODY' })
       // submitted_channel 用 'mcp'（不是 'pat'）：区分「工具面提的单」与「HTTP 面提的单」，
       // 决策端点的 session-only 闸只看 requester.channel，不受此值影响。
-      const out = await submitChange(deps.pool, deps.org,
-        { userId: requester.userId, channel: 'mcp' },
+      return submitAndPreview(deps, requester,
         parsed.data.metricId, parsed.data.kind as ChangeKind, parsed.data.payload ?? {})
-      return submitResultOf(deps, out)
     }
 
     if (name === 'list_metric_changes') {
@@ -223,8 +236,7 @@ export const metricTools: McpToolGroup = {
         const cur = await deps.pool.query(
           'select 1 from data.metrics where org = $1 and id = $2', [deps.org, id])
         const kind: ChangeKind = (cur.rowCount ?? 0) === 0 ? 'create' : 'update'
-        return submitResultOf(deps, await submitChange(
-          deps.pool, deps.org, { userId: requester.userId, channel: 'mcp' }, id, kind, body))
+        return submitAndPreview(deps, requester, id, kind, body)
       }
       // 以下为应急回滚路径（DATA_METRIC_REVIEW_MODE='off'），原样保留——一个发布周期后删。
       const r = await writeL2Declaration(writeDeps, deps.org, id, body)
@@ -240,8 +252,7 @@ export const metricTools: McpToolGroup = {
     // 404 METRIC_NOT_FOUND，均已下沉 `submitChange`（所有提交面共用；顺序 = 先本租户 L2、
     // 删不到才判 L1，与 deleteMetricDeclaration 同款）。本文件不再内联。
     if (process.env.DATA_METRIC_REVIEW_MODE !== 'off') {
-      return submitResultOf(deps, await submitChange(
-        deps.pool, deps.org, { userId: requester.userId, channel: 'mcp' }, parsed.data.id, 'delete', {}))
+      return submitAndPreview(deps, requester, parsed.data.id, 'delete', {})
     }
     // 以下为应急回滚路径（DATA_METRIC_REVIEW_MODE='off'），原样保留——一个发布周期后删。
     const r = await deleteMetricDeclaration(writeDeps, deps.org, parsed.data.id)

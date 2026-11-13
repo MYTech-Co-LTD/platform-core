@@ -62,6 +62,14 @@ const identityOf = () => makeIdentity({ orgId: ORG, scopes: ['data:query', 'data
 const appOf = (execute: unknown) =>
   buildTestApp(mod, identityOf(), { pool, execute } as never, { id: 1, casdoor_org: ORG })
 
+/** 把该 org 下该 metricId 所有有快照的单 preview.ranAt 拨旧（模拟时间流逝，绕开提交限速；P6 Task 3）。 */
+const agePreviewsFor = (org: string, metricId: string, msAgo = 120_000): Promise<unknown> =>
+  pool.query(
+    `update data.metric_change
+        set preview = jsonb_set(preview, '{ranAt}', to_jsonb($3::text))
+      where org = $1 and metric_id = $2 and preview is not null`,
+    [org, metricId, new Date(Date.now() - msAgo).toISOString()])
+
 /** 把单据 preview.ranAt 拨到 N 毫秒前（模拟时间流逝，绕开 60s 重跑限速；P4 Task 4）。 */
 const agePreview = (id: number, msAgo: number): Promise<unknown> =>
   pool.query(
@@ -399,6 +407,8 @@ describePg('★ 采纳 happy path 全链（P0 终审 F4）：提交即试算 →
     expect(b1.change.status).toBe('preview_ready')
     const a1 = await post(`/metric-changes/${b1.change.id}/adopt`)
     expect(a1.status).toBe(200)
+    // P6 Task 3：首单刚落过试算 ⇒ 先拨旧 ranAt，让 meta 单照常试算（本用例验的是采纳全链）
+    await agePreviewsFor(ORG, 'x:e2e')
     // ② meta 变更单：同链再来一遍（meta 试算读已生效行的当前口径）⇒ 200
     const c2 = await post('/metric-changes', { metricId: 'x:e2e', kind: 'meta', payload: { unit: '元' } })
     expect(c2.status).toBe(200)
@@ -435,6 +445,8 @@ describePg('★ delete 档采纳也发通知（P1 Task 4，销缓办③）', () 
     expect(c1.status).toBe(200)
     const b1 = await c1.json() as { change: { id: number } }
     expect((await post(`/metric-changes/${b1.change.id}/adopt`)).status).toBe(200)
+    // P6 Task 3：首单刚落过试算 ⇒ 先拨旧 ranAt，让删除单照常试算（本用例验的是删除采纳全链）
+    await agePreviewsFor(ORG, 'x:e2e_del')
     // ② delete 单全链采纳 ⇒ 200
     const d = await post('/metric-changes', { metricId: 'x:e2e_del', kind: 'delete' })
     expect(d.status).toBe(200)
@@ -474,8 +486,11 @@ describePg('★ adopt eventId 拼变更单 id（P4 Task 4，销缓办⑤：同 m
     // ① create 生效 → ② delete 删掉 → ③ 重建（delete→re-create 正是 P1 实证被去重吞的形状）
     const cId = await submit({ metricId: MID, kind: 'create', payload: { baseMetric: L1_ID, op: { kind: 'refine' }, alias: '单号夹具' } })
     await adopt(cId)
+    // P6 Task 3：每单刚落过试算 ⇒ 下一单提交前先拨旧 ranAt（本用例验的是 eventId 拼单号）
+    await agePreviewsFor(ORG, MID)
     const dId = await submit({ metricId: MID, kind: 'delete' })
     await adopt(dId)
+    await agePreviewsFor(ORG, MID)
     const rId = await submit({ metricId: MID, kind: 'create', payload: { baseMetric: L1_ID, op: { kind: 'refine' }, alias: '单号夹具·重建' } })
     await adopt(rId)
 
@@ -568,6 +583,8 @@ describePg('P1 Task 7：override 档', () => {
 
   it('坏声明（引用未纳管关系）⇒ preview_failed 且 preview.issues 非空（P4 Task 4，销缓办⑥）', async () => {
     const app = oappOf(async () => ({ rows: [] }))
+    // P6 Task 3：上一用例的首单刚落过试算 ⇒ 先拨旧 ranAt 让本用例照常跑（验的是坏声明快照）
+    await agePreviewsFor(OORG, L1_OVR_A)
     const res = await post(app, {
       metricId: L1_OVR_A, kind: 'override',
       payload: ovrEntry({ label: '本租户销售口径·坏关系', expression: 'sum(no_such_relation.amount)' }),
@@ -585,6 +602,8 @@ describePg('P1 Task 7：override 档', () => {
 
   it('grain 不同形 ⇒ 提交/试算照走，采纳 400 透传写路径判据（GRAIN_MISMATCH），单据不被 CAS 翻转', async () => {
     const app = oappOf(async () => ({ rows: [{ rows: 1, value: 1 }] }))
+    // P6 Task 3：上一用例（坏声明）留下了同 metricId 的未决单，先拨旧 ranAt 让本用例照常试算
+    await agePreviewsFor(OORG, L1_OVR_A)
     const res = await post(app, {
       metricId: L1_OVR_A, kind: 'override',
       payload: ovrEntry({ label: '本租户销售口径·异形粒度', grain: ['system_book'] }),
@@ -654,6 +673,8 @@ describePg('P1 Task 7：override 档', () => {
   it('采纳撞 metrics_title_per_dept_uq ⇒ 409 TITLE_EXISTS_IN_DEPT（fix2：submit→adopt 并发占名窗口不裸 500）', async () => {
     const app = oappOf(async () => ({ rows: [{ rows: 1, value: 1 }] }))
     const winTitle = '本租户销售口径·并发窗口'
+    // P6 Task 3：上一用例留下了同 metricId 的未决单，先拨旧 ranAt 让本用例照常试算
+    await agePreviewsFor(OORG, L1_OVR_B)
     // 先提单（此刻无同名行 ⇒ 提交期同名判据放行），再预置 null 桶同名行模拟 submit→adopt
     // 窗口里的并发占名——采纳期 insertTenantDeclaration 撞 title 唯一索引的 23505。
     const res = await post(app, {
@@ -753,5 +774,64 @@ describePg('POST /metric-changes/:id/withdraw（提交者本人）', () => {
     expect(after.rows[0]?.status).toBe('withdrawn')
     const again = await app.request(`/metric-changes/${s.change.id}/withdraw`, { method: 'POST' })
     expect(again.status).toBe(403)
+  })
+})
+
+// ── P6 Task 3：提交试算限速（同 metricId 60s 内重复提交不烧第二次算力）──────────────
+// 语义：提交本身是合法动作 ⇒ 仍落单；只跳过试算（单留 draft，人面按「跑试算」补）。
+// 判据看**最近一次真跑过的试算**（任何状态）：被跳过的单没有快照，不能把判据抹回 false；
+// 看完的连续提交（第三、第四次…）仍命中，这才是「不烧算力」的本意。
+describePg('P6 Task 3：提交即试算的限速（POST /metric-changes）', () => {
+  const CREATE_PAYLOAD = { baseMetric: L1_ID, op: { kind: 'refine' } }
+  const submit = (app: ReturnType<typeof appOf>, metricId: string) => app.request('/metric-changes', {
+    method: 'POST', headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ metricId, kind: 'create', payload: CREATE_PAYLOAD }),
+  })
+
+  it('60s 内同 metricId 二次提交 ⇒ 仍落单（draft）+ previewSkipped: rate_limited；不同 metricId 不受限', async () => {
+    const app = appOf(async () => ({ rows: [{ rows: 2, value: 20 }] }))
+    const first = await submit(app, 'x:p6_submit_rate')
+    expect(first.status).toBe(200)
+    const b1 = await first.json() as { change: { id: number; status: string }; previewSkipped?: string }
+    expect(b1.previewSkipped).toBeUndefined()
+    expect(b1.change.status).toBe('preview_ready')
+
+    // 二次提交：旧未决单被 superseded，新单照落但跳过试算（不拒绝提交）
+    const second = await submit(app, 'x:p6_submit_rate')
+    expect(second.status).toBe(200)
+    const b2 = await second.json() as { change: { id: number; status: string }; previewSkipped?: string }
+    expect(b2.previewSkipped).toBe('rate_limited')
+    expect(b2.change.status).toBe('draft')
+    // 落库事实：试算确实没跑（无快照）
+    const row = await pool.query('select status, preview from data.metric_change where id = $1', [b2.change.id])
+    expect(row.rows[0]).toMatchObject({ status: 'draft', preview: null })
+
+    // 连打第三次：被跳过的单没有快照 ⇒ 判据看**最近一次真跑过**的试算，仍跳过
+    //（否则 agent 每次重提都会再烧一轮，限速只挡一次等于没挡）
+    const third = await submit(app, 'x:p6_submit_rate')
+    expect(third.status).toBe(200)
+    const b4 = await third.json() as { change: { status: string }; previewSkipped?: string }
+    expect(b4.previewSkipped).toBe('rate_limited')
+    expect(b4.change.status).toBe('draft')
+
+    // 不同 metricId 不受限（同一时刻仍正常试算）
+    const other = await submit(app, 'x:p6_submit_rate_other')
+    expect(other.status).toBe(200)
+    const b3 = await other.json() as { change: { status: string }; previewSkipped?: string }
+    expect(b3.previewSkipped).toBeUndefined()
+    expect(b3.change.status).toBe('preview_ready')
+  })
+
+  it('把首单 ranAt 拨到 61s 前 ⇒ 同 metricId 再提交恢复正常试算（时间流逝解除限速）', async () => {
+    const app = appOf(async () => ({ rows: [{ rows: 2, value: 20 }] }))
+    const first = await submit(app, 'x:p6_submit_rate_age')
+    expect(first.status).toBe(200)
+    const b1 = await first.json() as { change: { id: number; status: string } }
+    await agePreview(b1.change.id, 61_000)
+    const second = await submit(app, 'x:p6_submit_rate_age')
+    expect(second.status).toBe(200)
+    const b2 = await second.json() as { change: { status: string }; previewSkipped?: string }
+    expect(b2.previewSkipped).toBeUndefined()
+    expect(b2.change.status).toBe('preview_ready')
   })
 })

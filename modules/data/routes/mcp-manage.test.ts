@@ -157,6 +157,18 @@ describePg('写面（需要 DATABASE_URL）', () => {
     })
   }
 
+  /**
+   * 把该 metricId 所有有快照的单 preview.ranAt 拨旧（P6 Task 3）：提交限速看 60s 内是否
+   * 刚跑过试算；同一测试文件里多张单复用同一 metricId 时，用它模拟时间流逝，让后续提交照常试算。
+   */
+  async function agePreviewsFor(metricId: string): Promise<void> {
+    await pool.query(
+      `update data.metric_change
+          set preview = jsonb_set(preview, '{ranAt}', to_jsonb($3::text))
+        where org = $1 and metric_id = $2 and preview is not null`,
+      [ORG, metricId, new Date(Date.now() - 120_000).toISOString()])
+  }
+
   /** 口径片 + 报表片 + 变更单提案两件（P0 Task 6）：结构约束（多出发布/回收类 = 「能提不能发」被破坏）。 */
   const METRIC_REPORT_TOOL_NAMES = ['customize_metric', 'delete_custom_metric', 'list_metrics',
     'list_reports', 'propose_report', 'revise_report_spec', 'get_report_spec',
@@ -261,6 +273,9 @@ describePg('写面（需要 DATABASE_URL）', () => {
       restore()
     }
 
+    // P6 Task 3：上一条 L2_ID 未决单刚落过试算 ⇒ 先拨旧 ranAt，本用例验的是 update 提案本身
+    await agePreviewsFor(L2_ID)
+
     const revised = await (await rpc(app(), {
       jsonrpc: '2.0', id: 45, method: 'tools/call',
       params: {
@@ -294,6 +309,9 @@ describePg('写面（需要 DATABASE_URL）', () => {
     } finally {
       restore()
     }
+
+    // P6 Task 3：上一条 L2_ID 未决单刚落过试算 ⇒ 先拨旧 ranAt，本用例验的是删除提案本身
+    await agePreviewsFor(L2_ID)
 
     const del = await (await rpc(app(), {
       jsonrpc: '2.0', id: 51, method: 'tools/call',
@@ -711,6 +729,52 @@ describePg('写面（需要 DATABASE_URL）', () => {
       // 工具不接采纳 ⇒ 不生效
       const live = await pool.query('select 1 from data.metrics where org = $1 and id = $2', [ORG, entry.name])
       expect(live.rowCount).toBe(0)
+    } finally {
+      if (prev === undefined) delete process.env.DATA_MCP_ALLOW_MUTATING
+      else process.env.DATA_MCP_ALLOW_MUTATING = prev
+    }
+  })
+
+  it('★ P6 Task 3：submit_metric_change 同样受限速——60s 内同 metricId 二次提交 ⇒ 落单但跳过试算；拨旧 ranAt ⇒ 恢复', async () => {
+    await seedL1()
+    const prev = process.env.DATA_MCP_ALLOW_MUTATING
+    process.env.DATA_MCP_ALLOW_MUTATING = 'true'
+    const submit = async (metricId: string): Promise<Record<string, unknown>> => toolText(await (await rpc(app(), {
+      jsonrpc: '2.0', id: 70, method: 'tools/call',
+      params: {
+        name: 'submit_metric_change',
+        arguments: { metricId, kind: 'create', payload: { baseMetric: L1_ID, op: { kind: 'refine' } } },
+      },
+    })).json() as never)
+    try {
+      // 首单：正常试算
+      const first = await submit('x:mcp_submit_rate')
+      expect(first.status).toBe('ok')
+      expect(first.previewSkipped).toBeUndefined()
+      expect(first.state).toBe('preview_ready')
+
+      // 二次提交（同 metricId，60s 内）：仍 ok/落单，但跳过试算（draft）
+      const second = await submit('x:mcp_submit_rate')
+      expect(second.status).toBe('ok')
+      expect(second.previewSkipped).toBe('rate_limited')
+      expect(second.state).toBe('draft')
+      const row = await pool.query('select status, preview from data.metric_change where id = $1', [second.changeId])
+      expect(row.rows[0]).toMatchObject({ status: 'draft', preview: null })
+
+      // 连打第三次：被跳过的单无快照 ⇒ 判据仍看最近一次真跑过的试算，继续跳过
+      const third = await submit('x:mcp_submit_rate')
+      expect(third.status).toBe('ok')
+      expect(third.previewSkipped).toBe('rate_limited')
+      expect(third.state).toBe('draft')
+
+      // 时间流逝：另一 metricId 的首单 ranAt 拨到 61s 前 ⇒ 同 metricId 再提交恢复正常试算
+      const aged = await submit('x:mcp_submit_rate_age')
+      expect(aged.state).toBe('preview_ready')
+      await agePreviewsFor('x:mcp_submit_rate_age')
+      const afterAge = await submit('x:mcp_submit_rate_age')
+      expect(afterAge.status).toBe('ok')
+      expect(afterAge.previewSkipped).toBeUndefined()
+      expect(afterAge.state).toBe('preview_ready')
     } finally {
       if (prev === undefined) delete process.env.DATA_MCP_ALLOW_MUTATING
       else process.env.DATA_MCP_ALLOW_MUTATING = prev
