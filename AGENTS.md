@@ -28,6 +28,7 @@ Casdoor 后台运营，租户管理员在 console 自建页管理——spec D4 �
 | **Helix 借鉴线**（答案级证据链 / 契约版本门 / 快照钉住 / 凭据代理 / 自愈审计） | `docs/superpowers/plans/2026-11-11-helix-borrow-roadmap.md`（**唯一导航面 + 进度台账**；开工前先看台账，别重做已完成项） |
 | **任何视觉/UI 改动** | **根目录 `DESIGN.md`（设计正典：颜色/字体/圆角/间距/表格规格）** |
 | 改控制台 UI / 新增页面 / 调菜单归属 | `docs/design/console-ui-conventions.md`（菜单归属三分法、页面骨架、列表/空态/措辞规范、提交前检查单） |
+| **报表生成 / 组合语义 / 呈现层**（报表 spec、窗口与对比、模板与验收、组件与富文本） | **先读路线图**（唯一导航面 + 台账）：`docs/superpowers/plans/2026-11-13-report-platform-roadmap.md`（R0–R6、N1–N5、L0–L5 自由度阶梯）。指标定义不在这条线，见上一行 |
 | 设计稿与实施计划 | `docs/superpowers/specs/`、`docs/superpowers/plans/`（按日期命名；SaaS 管理域 spec 是现行主线的正典）——**动手前先 `ls` 这两个目录、按文件名挑 2–3 份读完**（文件名语义可靠：盲测 8/8 命中正确文档；但**清单只用来定位，拿到候选必须打开读**，阴性对照 2/4 误配）。**别指望关键词检索**：`orca search` 整句自然语言 0 命中，须用 2–3 个空格分隔的关键词 |
 | 部署 / 接入 / 回滚 | `deploy/openship-adopt.md`（含自动部署与控制面 API 前缀坑）、`deploy/branch-protection-runbook.md` |
 | 冒烟验收 | `docs/m0-smoke-checklist.md` |
