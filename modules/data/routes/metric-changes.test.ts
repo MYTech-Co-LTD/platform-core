@@ -34,6 +34,29 @@ const L1_FIXTURE = {
   masks: null,
 }
 
+/**
+ * declaration 档的**关系白名单夹具**（P5 CI 修复）：B11 白名单来自平台桶 L1 行的 selectSql
+ * 关系（`compileNewDeclaration` 的 `allowedRelations`）。空库里没有真实物化的
+ * `fct_retail_sale` ⇒ declaration 的 expression 会被判「未纳管关系」。本地曾因其它测试文件
+ * 残留的 L1 行假绿——这里自建一条同关系的 L1，让白名单自足，不依赖执行顺序/残留数据。
+ * id 与 title 均文件专属（平台桶跨文件共用；文件并行时各删各的）。
+ */
+const DECL_REL_L1_ID = 'p5mc:l1:route_sales_fixture'
+const DECL_REL_L1 = {
+  id: DECL_REL_L1_ID,
+  title: '声明关系白名单·routes',
+  description: 'declaration 档 B11 关系白名单夹具',
+  requiredScope: null,
+  subjectColumn: 'org',
+  selectSql: 'select sum(fct_retail_sale.sale_amount) as value, system_book, bizday from fct_retail_sale',
+  groupBy: 'system_book, bizday',
+  params: {},
+  sourceSystem: 'lemeng',
+  slaDays: 1,
+  freshnessRelations: [],
+  masks: null,
+}
+
 const identityOf = () => makeIdentity({ orgId: ORG, scopes: ['data:query', 'data:manage'] })
 /** 会话通道壳（REQUESTER_CHANNEL 不设 = session）：tenant 钉本文件的 ORG。 */
 const appOf = (execute: unknown) =>
@@ -126,6 +149,15 @@ describePg('P5 Task 1：POST /metric-changes 的 declaration 档', () => {
   }
   const post = (body: unknown) => appOf(async () => ({ rows: [{ rows: 3, value: 30 }] })).request('/metric-changes', {
     method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body),
+  })
+
+  beforeAll(async () => {
+    // 编译尺的 B11 关系白名单（空库自足；见 DECL_REL_L1 注释）
+    await upsertL1Metric(pool, DECL_REL_L1)
+  })
+  afterAll(async () => {
+    await pool.query("delete from data.metrics where org = 'platform' and source = 'l1' and id = $1",
+      [DECL_REL_L1_ID])
   })
 
   it('提交合法声明 ⇒ 自动试算 preview_ready；kind/metricId 落在单上', async () => {

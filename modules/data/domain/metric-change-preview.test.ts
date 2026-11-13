@@ -10,11 +10,34 @@ import {
   applyPreview, PREVIEW_RERUN_MIN_INTERVAL_MS, PREVIEW_TIMEOUT_MS, previewTooRecent, previewWindow,
   runPreview, timeColumnOf,
 } from './metric-change-preview'
+import { upsertL1Metric } from './metric-store'
 
 const dbUrl = process.env.DATABASE_URL
 const describePg = dbUrl ? describe : describe.skip
 const ORG = 'org-p0-mc-preview'
 const L1_ID = 'b:p0mc_preview_sales'
+/**
+ * declaration 档的**关系白名单夹具**（P5 CI 修复）：B11 白名单来自平台桶 L1 行的 selectSql
+ * 关系（`compileNewDeclaration` 的 `allowedRelations`）。空库里没有真实物化的
+ * `fct_retail_sale` ⇒ declaration 的 expression 会被判「未纳管关系」。本地曾因其它测试文件
+ * 残留的 L1 行假绿——这里自建一条同关系的 L1，让白名单自足，不依赖执行顺序/残留数据。
+ * id 与 title 均文件专属（平台桶跨文件共用；文件并行时各删各的）。
+ */
+const DECL_REL_L1_ID = 'p5mc:l1:preview_sales_fixture'
+const DECL_REL_L1 = {
+  id: DECL_REL_L1_ID,
+  title: '声明关系白名单·preview',
+  description: 'declaration 档 B11 关系白名单夹具',
+  requiredScope: null,
+  subjectColumn: 'org',
+  selectSql: 'select sum(fct_retail_sale.sale_amount) as value, system_book, bizday from fct_retail_sale',
+  groupBy: 'system_book, bizday',
+  params: {},
+  sourceSystem: 'lemeng',
+  slaDays: 1,
+  freshnessRelations: [],
+  masks: null,
+}
 /** L1 夹具：字段以 metric-store.ts 的 L1MetricDef 为准（masks/slaDays/freshnessRelations/sourceSystem 必填）。 */
 const L1_FIXTURE = {
   id: L1_ID,
@@ -123,7 +146,6 @@ describe('runPreview（delete/meta 档：纯函数，execute 全注入）', () =
 describePg('runPreview（create 档：编译 L1 夹具）', () => {
   it('create(refine)：值 + 行数 + baseline Δ + 样本 + 哈希', async () => {
     // 编译需要 L1 目录：夹具一条（平台桶，文件专属 id）
-    const { upsertL1Metric } = await import('./metric-store')
     await upsertL1Metric(pool, L1_FIXTURE)
     const calls: string[] = []
     const execute = async (sql: string, params?: unknown[]) => {
@@ -168,6 +190,15 @@ describePg('runPreview（declaration 档：W8 声明，P5 Task 1）', () => {
   const execute = async (sql: string) => (sql.includes('count(*)')
     ? { rows: [{ rows: 4, value: 88 }] }
     : { rows: [{ system_book: 'A', bizday: '2026-11-11', value: 88 }] })
+
+  beforeAll(async () => {
+    // 编译尺的 B11 关系白名单（空库自足；见 DECL_REL_L1 注释）
+    await upsertL1Metric(pool, DECL_REL_L1)
+  })
+  afterAll(async () => {
+    await pool.query("delete from data.metrics where org = 'platform' and source = 'l1' and id = $1",
+      [DECL_REL_L1_ID])
+  })
 
   it('合法声明 ⇒ 编译 + 只读求值；baseline 无（新声明无基底）', async () => {
     const out = await runPreview({ pool, execute }, ORG, row('declaration', ENTRY, ENTRY.name))

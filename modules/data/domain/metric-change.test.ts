@@ -32,6 +32,28 @@ const L1_FIXTURE = {
   masks: null,
 }
 const DECL_ADOPT = { baseMetric: L1_ID, op: { kind: 'refine' }, alias: '我的销售' }
+/**
+ * declaration 档的**关系白名单夹具**（P5 CI 修复）：B11 白名单来自平台桶 L1 行的 selectSql
+ * 关系（`compileNewDeclaration` 的 `allowedRelations`）。空库里没有真实物化的
+ * `fct_retail_sale` ⇒ declaration 的 expression 会被判「未纳管关系」。本地曾因其它测试文件
+ * 残留的 L1 行假绿——这里自建一条同关系的 L1，让白名单自足，不依赖执行顺序/残留数据。
+ * id 与 title 均文件专属（平台桶跨文件共用；文件并行时各删各的）。
+ */
+const DECL_REL_L1_ID = 'p5mc:l1:decl_sales_fixture'
+const DECL_REL_L1 = {
+  id: DECL_REL_L1_ID,
+  title: '声明关系白名单·metric-change',
+  description: 'declaration 档 B11 关系白名单夹具',
+  requiredScope: null,
+  subjectColumn: 'org',
+  selectSql: 'select sum(fct_retail_sale.sale_amount) as value, system_book, bizday from fct_retail_sale',
+  groupBy: 'system_book, bizday',
+  params: {},
+  sourceSystem: 'lemeng',
+  slaDays: 1,
+  freshnessRelations: [],
+  masks: null,
+}
 // 删档用例单用一份声明（别名错开）：047 部门内同名互斥后，x:adopt_me 与 x:del_me 两个 id
 // 共用「我的销售」会在同 org 同桶撞 metrics_title_per_dept_uq（这正是 P1 要的行为）。
 const DECL_DEL = { baseMetric: L1_ID, op: { kind: 'refine' }, alias: '我的销售·删档' }
@@ -492,10 +514,14 @@ describePg('P5 Task 1：declaration 档（能力归还）', () => {
     await pool.query('delete from data.metrics where org = $1', [DORG])
     // 撞名判据的被撞者：平台桶 L1 夹具（upsertL1Metric 固定写 org='platform'）
     await upsertL1Metric(pool, L1_FIXTURE)
+    // 编译尺的 B11 关系白名单（空库自足；见 DECL_REL_L1 注释）
+    await upsertL1Metric(pool, DECL_REL_L1)
   })
   afterAll(async () => {
     await pool.query('delete from data.metric_change where org = $1', [DORG])
     await pool.query('delete from data.metrics where org = $1', [DORG])
+    await pool.query("delete from data.metrics where org = 'platform' and source = 'l1' and id = $1",
+      [DECL_REL_L1_ID])
   })
 
   it('提交合法声明 ⇒ 落单 kind=declaration，metricId = entry.name', async () => {
