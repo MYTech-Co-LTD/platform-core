@@ -15,7 +15,9 @@
 import { createHash } from 'node:crypto'
 import dayjs from 'dayjs'
 import { formatDelta, formatValue } from './report-format'
-import type { DateRange } from './report-period'
+import {
+  lastYearMonthToDate, monthStartOf, monthToDate, previousRangeOf, type DateRange,
+} from './report-period'
 import type { KpiPanel, PeriodSpec, ReportSpec } from './report-spec'
 
 /** 日报固定使用的 L1 指标（与报表 panel 是否展示无关；授权/掩码仍由 runQuery 负责）。 */
@@ -444,13 +446,14 @@ export async function buildDailyReview(deps: DailyReviewDeps): Promise<DailyRevi
   const isRange = !(deps.period.mode === 'day' && deps.period.day !== undefined)
   const ceiling = isRange ? deps.range.to : deps.period.day!
   if (!dayjs(ceiling).isValid()) return null
-  const monthStart = dayjs(ceiling).startOf('month').format('YYYY-MM-DD')
-  const lastYearFrom = dayjs(ceiling).subtract(1, 'year').startOf('month').format('YYYY-MM-DD')
-  const lastYearCeiling = dayjs(ceiling).subtract(1, 'year').format('YYYY-MM-DD')
+  const monthStart = monthStartOf(ceiling)
+  const lyCeilingWindow = lastYearMonthToDate(ceiling)
+  const lastYearFrom = lyCeilingWindow.from
+  const lastYearCeiling = lyCeilingWindow.to
   // 区间模式要对比「上一等长区间」，读窗口必须覆盖它（本月从 1 号开始时它在上个月）。
-  const approxDays = isRange ? dayjs(deps.range.to).diff(dayjs(deps.range.from), 'day') + 1 : 1
+  // 用**请求窗口**算下界（比实际有数的末日更早，是安全下界）；窗口语义只经 report-period。
   const prevFromApprox = isRange
-    ? dayjs(deps.range.from).subtract(approxDays, 'day').format('YYYY-MM-DD')
+    ? previousRangeOf(deps.range, 'prev_period').from
     : deps.range.from
   const wideFrom = [deps.range.from, monthStart, lastYearFrom, prevFromApprox]
     .reduce((a, b) => (a < b ? a : b))
@@ -480,10 +483,10 @@ export async function buildDailyReview(deps: DailyReviewDeps): Promise<DailyRevi
   const periodRaw = isRange ? rawPeriodOf(m, deps.range.from, rangeTo, rangeDays) : null
   const today = periodRaw === null ? rawDayOf(m, targetDay) : totalsOf(periodRaw)
   const todayAvg = periodRaw === null ? today : dailyAvgOf(periodRaw)
-  const prevRangeTo = isRange ? dayjs(deps.range.from).subtract(1, 'day').format('YYYY-MM-DD') : null
-  const prevRangeFrom = isRange && prevRangeTo !== null
-    ? dayjs(prevRangeTo).subtract(rangeDays - 1, 'day').format('YYYY-MM-DD')
-    : null
+  // 上一区间 = 等长前移，与 KPI/图表对比同一个实现（report-period.previousRangeOf）。
+  const prevWindow = isRange ? previousRangeOf({ from: deps.range.from, to: rangeTo }, 'prev_period') : null
+  const prevRangeTo = prevWindow === null ? null : prevWindow.to
+  const prevRangeFrom = prevWindow === null ? null : prevWindow.from
   const prevRaw = isRange && prevRangeFrom !== null
     ? rawPeriodOf(m, prevRangeFrom, prevRangeTo!, rangeDays)
     : null
@@ -498,11 +501,15 @@ export async function buildDailyReview(deps: DailyReviewDeps): Promise<DailyRevi
     ? (prevRaw === null || (prevRaw.revenue === null && prevRaw.gross === null) ? null : totalsOf(prevRaw))
     : (yesterdayRaw.revenue === null && yesterdayRaw.gross === null ? null : yesterdayRaw)
 
+  // MTD 跟随「实际有数的末日」所在的自然月——跨月自定义区间时，`ceiling` 的月份可能不是
+  // 数据所在月份（2026-11-13 补）。窗口语义只经 report-period。
+  const mtdWindow = monthToDate(rangeTo)
   const mtdDays = dayjs(rangeTo).date()
-  const mtd = rawPeriodOf(m, monthStart, rangeTo, mtdDays)
+  const mtd = rawPeriodOf(m, mtdWindow.from, mtdWindow.to, mtdDays)
   // 去年同期口径跟「实际有数的末日」走：用 ceiling 会把 11-10 的空日也算进区间。
-  const lyFrom = dayjs(rangeTo).subtract(1, 'year').startOf('month').format('YYYY-MM-DD')
-  const lyCeiling = dayjs(rangeTo).subtract(1, 'year').format('YYYY-MM-DD')
+  const lyWindow = lastYearMonthToDate(rangeTo)
+  const lyFrom = lyWindow.from
+  const lyCeiling = lyWindow.to
   const lyDay = Math.min(dayjs(rangeTo).date(), dayjs(lyCeiling).daysInMonth())
   const lastYear = rawPeriodOf(m, lyFrom, lyCeiling, lyDay)
   const hasLastYear = lastYear.revenue !== null || lastYear.gross !== null
@@ -624,7 +631,7 @@ export async function buildDailyReview(deps: DailyReviewDeps): Promise<DailyRevi
 
   const mtdSnapshot: DailySnapshot = {
     label: '本月累计',
-    day: `${monthStart} ~ ${targetDay}（${mtdDays} 天）`,
+    day: `${mtdWindow.from} ~ ${targetDay}（${mtdDays} 天）`,
     revenue: fmt(mtd.revenue, 'currency'),
     orders: fmt(mtd.orders, 'number'),
     aov: fmt(mtd.aov, 'currency'),
