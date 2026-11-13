@@ -25,6 +25,24 @@ export interface ReceiptSeriesRow {
   formatted: string
 }
 
+/** 差异分解的一条候选：只用按日组成的**连续子区间**解释用户的数，不猜口径。 */
+export interface ReceiptDeltaCandidate {
+  kind: 'full' | 'subset'
+  label: string
+  amount: string
+  detail: string
+}
+
+export interface ReceiptDelta {
+  userValue: string
+  /** 用户值 − 系统值（带符号）。 */
+  difference: string
+  candidates: ReceiptDeltaCandidate[]
+  /** 差额是否被组成解释。false 时 `note` 说明「解释不了」而不是编原因。 */
+  explained: boolean
+  note: string | null
+}
+
 export interface ReportReceipt {
   metric: {
     id: string
@@ -52,6 +70,8 @@ export interface ReportReceipt {
   consistent: boolean | null
   /** 供人读的事实说明（不含推测）。 */
   notes: string[]
+  /** 用户输入「我算的是 X」时的差异分解；未输入为 null。 */
+  delta: ReceiptDelta | null
 }
 
 export interface ReceiptInput {
@@ -61,6 +81,8 @@ export interface ReceiptInput {
   args: Record<string, unknown>
   branchNum?: string
   metric: MetricRow
+  /** 用户手工算出来的数；给了才做差异分解。 */
+  userValue?: number
 }
 
 export type ReceiptOutcome =
@@ -188,7 +210,89 @@ export async function buildReportReceipt(
       seriesSum: seriesSumRaw === null ? null : formatValue(seriesSumRaw, panel.format),
       consistent,
       notes,
+      delta: input.userValue === undefined
+        ? null
+        : explainDelta(series, rawValue, input.userValue, panel.format),
     },
+  }
+}
+
+/** 差异分解：只用按日组成的**连续子区间**解释用户的数（不猜口径、不编原因）。 */
+export function explainDelta(
+  series: ReceiptSeriesRow[] | null,
+  systemValue: number | null,
+  userValue: number,
+  format: KpiPanel['format'],
+): ReceiptDelta {
+  const signed = (d: number): string => `${d >= 0 ? '+' : ''}${d.toFixed(2)}`
+  const userText = formatValue(userValue, format)
+  if (systemValue === null) {
+    return {
+      userValue: userText, difference: '-', candidates: [], explained: false,
+      note: '系统合计不可用，无法比较',
+    }
+  }
+  const diff = userValue - systemValue
+  if (Math.abs(diff) <= 0.01) {
+    return {
+      userValue: userText, difference: signed(diff),
+      candidates: [{
+        kind: 'full', label: '与系统合计一致',
+        amount: formatValue(systemValue, format), detail: '窗口与组成相同',
+      }],
+      explained: true, note: null,
+    }
+  }
+  if (series === null) {
+    return {
+      userValue: userText, difference: signed(diff), candidates: [], explained: false,
+      note: '该指标没有按日组成（不可加或未声明 bizday），无法从组成解释差额；请核对口径或下载明细',
+    }
+  }
+
+  // 连续子区间求和：O(n²)，n 为窗口内天数（≤366），一次点击可接受。
+  const n = series.length
+  const matches: Array<{ i: number; j: number; sum: number }> = []
+  for (let i = 0; i < n; i++) {
+    let sum = 0
+    for (let j = i; j < n; j++) {
+      sum += series[j]!.value
+      if (Math.abs(sum - userValue) <= 0.01) matches.push({ i, j, sum })
+    }
+  }
+  // 优先「少掉的日期最少」；同长按起点靠前。
+  matches.sort((a, b) => (b.j - b.i) - (a.j - a.i) || a.i - b.i)
+
+  const candidates: ReceiptDeltaCandidate[] = matches.slice(0, 3).map((m) => {
+    const before = series.slice(0, m.i)
+    const after = series.slice(m.j + 1)
+    const dropped: string[] = []
+    if (before.length > 0) {
+      dropped.push(before.length === 1
+        ? `少了 ${before[0]!.day}`
+        : `少了 ${before[0]!.day} ~ ${before[before.length - 1]!.day}（${before.length} 天）`)
+    }
+    if (after.length > 0) {
+      dropped.push(after.length === 1
+        ? `少了 ${after[0]!.day}`
+        : `少了 ${after[0]!.day} ~ ${after[after.length - 1]!.day}（${after.length} 天）`)
+    }
+    return {
+      kind: 'subset',
+      label: `${series[m.i]!.day} ~ ${series[m.j]!.day}（${m.j - m.i + 1} 天）的合计`,
+      amount: formatValue(m.sum, format),
+      detail: dropped.join('；'),
+    }
+  })
+
+  return {
+    userValue: userText,
+    difference: signed(diff),
+    candidates,
+    explained: candidates.length > 0,
+    note: candidates.length > 0
+      ? null
+      : '差额无法由按日组成解释（可能是账套/退货/赠品/口径差异）；建议下载明细逐笔核对',
   }
 }
 
