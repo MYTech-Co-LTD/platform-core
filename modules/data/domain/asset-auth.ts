@@ -13,7 +13,7 @@
 import type { Pool } from 'pg'
 import { deptGatePasses } from './dept-gate'
 import { metricVisibleWithDept, type DeptContext } from './metric-visibility'
-import type { ReportSpec } from './report-spec'
+import type { ReportSpec, TextPanel } from './report-spec'
 import { metricIdsOf } from './report-scope'
 
 export type AclSubjectType = 'user' | 'dept' | 'scope'
@@ -214,6 +214,13 @@ export function applyPanelRenderGate(
 }
 
 /**
+ * 空文本面板的**常量**（P5 CI 修复2）：显式标注为 `TextPanel` 具体变体，而不是让
+ * `panels.map(...)` 在 `ReportSpec['panels']` 联合体上做推断——不同 TS/依赖解析环境下
+ * 联合体推断的收敛结果不一致（CI 报 TS2322，本地干净）。类型写死到具体变体即消除差异。
+ */
+const BLANK_TEXT_PANEL: TextPanel = { chart: 'text', content: '', span: 12 }
+
+/**
  * 把降级占位符换成**空文本面板**（无标题 / 无 metricId），供叙述 / 计算凭证的事实装配使用。
  *
  * 为什么不是直接喂 `ViewableSpec`：`buildFacts` 按 `chart !== 'text'` 识别数据面板，占位符
@@ -228,7 +235,7 @@ export function factsSpecOf(spec: ViewableSpec): ReportSpec {
   return {
     ...spec,
     panels: spec.panels.map((p): ReportSpec['panels'][number] =>
-      ('denied' in p ? { chart: 'text', content: '', span: 12 } : p)),
+      ('denied' in p ? BLANK_TEXT_PANEL : p)),
   }
 }
 
