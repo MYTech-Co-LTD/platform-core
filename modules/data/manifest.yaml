@@ -73,6 +73,14 @@ api:
     #     ⚠️ 平台超管（org='platform' 的 l2 行 / 全租户可见）**当前无门可落**：仓内没有平台超管
     #     identity 信号（唯一平台内置码 tenant:admin 是**租户级**的，loader.ts:137）⇒ 本轮不开口，
     #     见 README「L2 的已知边界」。**这就是拍板 #5 的平台超管那一半尚未落地的唯一原因。**
+    # ⚠️ P4 写面收口（2026-11-13 Task 3）：下列六条**声明保留、行为已退役**——
+    #    DATA_METRIC_REVIEW_MODE 缺省（on）⇒ 410 `{error:'USE_METRIC_CHANGES',
+    #    changeEndpoint:'/metric-changes'}`（指标变更一律走变更单：agent 提案 → 人采纳）；
+    #    `'off'` = 应急回滚一个发布周期。声明不删是因为路由还在（装载期双向核对不破），
+    #    下波随路由一起真删：
+    #      POST /metrics、POST /metrics/declarations、POST /metrics/:id/override、
+    #      PUT /metrics/:id、DELETE /metrics/:id、PUT /metrics/:id/meta
+    #    仍未退役（决策流）：override 的 confirm/delete（W8）、草稿流、certified、读面。
     - { method: GET,    path: /metrics/all, scope: data:manage }
     # 口径变更史（#489）：谁、何时、从什么到什么。门与 /metrics/all 同档（能看到「谁改的」＝管理信息）
     - { method: GET,    path: /metrics/:id/audit, scope: data:manage }

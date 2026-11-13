@@ -143,6 +143,37 @@ async function post(body: unknown, org = ORG, scopes = ['data:manage', 'data:que
 
 let pool: Pool
 
+/**
+ * P4 写面收口开关（`DATA_METRIC_REVIEW_MODE`，计划 2026-11-13 Task 3）：
+ *   · 缺省 = on ⇒ REST 直写端点一律 410（指路 `/metric-changes`）；
+ *   · `'off'` = 应急回滚 ⇒ 各 handler 原行为（一个发布周期后删）。
+ *
+ * 本文件既有的写路径用例（POST/PUT/DELETE/meta/override/declarations）测的是 **off 的原行为**
+ * ——它们是回滚路径的回归面，故文件级 beforeAll 置 'off'、afterAll 还原；
+ * **on（缺省）模式的 410** 由文件末尾「P4 写面收口」块现场切换（模式同 mcp-manage.test.ts 的
+ * reviewModeOff：call 时读 env + try/finally 还原，不向同 worker 的兄弟文件泄漏）。
+ */
+function reviewMode(value: 'on' | 'off'): () => void {
+  const prev = process.env.DATA_METRIC_REVIEW_MODE
+  // on = 缺省：**删掉** env 而不是写 'on'——测「部署没配开关」的真实形态（不是配了 on）
+  if (value === 'on') delete process.env.DATA_METRIC_REVIEW_MODE
+  else process.env.DATA_METRIC_REVIEW_MODE = 'off'
+  return () => {
+    if (prev === undefined) delete process.env.DATA_METRIC_REVIEW_MODE
+    else process.env.DATA_METRIC_REVIEW_MODE = prev
+  }
+}
+
+let prevReviewMode: string | undefined
+beforeAll(() => {
+  prevReviewMode = process.env.DATA_METRIC_REVIEW_MODE
+  process.env.DATA_METRIC_REVIEW_MODE = 'off'
+})
+afterAll(() => {
+  if (prevReviewMode === undefined) delete process.env.DATA_METRIC_REVIEW_MODE
+  else process.env.DATA_METRIC_REVIEW_MODE = prevReviewMode
+})
+
 describePg('指标路由（需要 DATABASE_URL：词表读写）', () => {
   beforeAll(async () => {
     pool = new Pool({ connectionString: dbUrl })
@@ -1063,6 +1094,83 @@ describePg('指标路由（需要 DATABASE_URL：词表读写）', () => {
     expect((await badGrain.json()).error).toBe('GRAIN_MISMATCH')
 
     expect((await overrideReq('POST', '/metrics/t8test:not_there/override', { declaration: overrideDecl({ name: 't8test:not_there' }) })).status).toBe(404)
+  })
+
+  // ── P4 写面收口（计划 2026-11-13 Task 3）：REST 直写端点 410 + 回滚开关 ──────────────
+  // 本块现场切 on（缺省）——上面的用例都在文件级 beforeAll 的 'off'（应急回滚原行为）下跑。
+  describe('P4 写面收口：直写端点 410 + 开关', () => {
+    const RETIRED = { error: 'USE_METRIC_CHANGES', changeEndpoint: '/metric-changes' }
+
+    it('★ on（缺省，env 未配）⇒ 六条直写端点一律 410 + 指路体（参数路由与非参数路由都覆盖）', async () => {
+      const restore = reviewMode('on')
+      try {
+        const cases: Array<[string, string, unknown]> = [
+          // 非参数路由
+          ['POST', '/metrics', l2Body({ id: 'l2_p4_retired_post' })],
+          // 租户全额声明（Task 2 审查补的洞：console 调用方已删，REST 侧不留直写漏口）
+          ['POST', '/metrics/declarations', { declaration: {} }],
+          // 参数路由
+          ['POST', `/metrics/${L1_OVERRIDE.id}/override`, { declaration: {} }],
+          ['PUT', '/metrics/l2_p4_retired_put', l2Body({ id: 'l2_p4_retired_put' })],
+          ['PUT', '/metrics/l2_p4_retired_meta/meta', { unit: '元' }],
+          ['DELETE', '/metrics/l2_p4_retired_delete', undefined as unknown],
+        ]
+        for (const [method, path, body] of cases) {
+          const res = await app(ORG, ['data:manage', 'data:query']).request(path, {
+            method,
+            ...(body === undefined ? {} : { headers: { 'content-type': 'application/json' }, body: JSON.stringify(body) }),
+          })
+          expect(res.status, `${method} ${path} 没被退役（应为 410）`).toBe(410)
+          expect(await res.json(), `${method} ${path} 的指路体不对`).toEqual(RETIRED)
+        }
+        // 410 是「拒在写之前」：一条行都没落（不是先写后 410）
+        const rows = await pool.query(
+          "select count(*)::int as n from data.metrics where org = $1 and id like 'l2_p4_retired%'", [ORG])
+        expect(rows.rows[0].n).toBe(0)
+      } finally { restore() }
+    })
+
+    it('off（应急回滚）⇒ POST /metrics 原行为：201 且落行（开关不是摆设）', async () => {
+      const restore = reviewMode('off')
+      try {
+        const id = 'l2_p4_off_post'
+        const res = await post(l2Body({ id }))
+        expect(res.status).toBe(201)
+        expect(await res.json()).toEqual({ ok: true })
+        const row = await pool.query('select source from data.metrics where org = $1 and id = $2', [ORG, id])
+        expect(row.rowCount).toBe(1)
+        await pool.query('delete from data.metrics where org = $1 and id = $2', [ORG, id])
+      } finally { restore() }
+    })
+
+    it('★ KEEP 端点不受影响（on 模式）：草稿/确认生效与可信度升降照常工作，GET 读面照常 200', async () => {
+      const restore = reviewMode('on')
+      try {
+        const id = 'l2_p4_keep_draft'
+        await upsertMetric(pool, ORG, def({ id, title: `销售日明细·${id}` }), 'u-test')
+        // PUT /metrics/:id/draft（KEEP：采纳后续流）——creator 带 data:query 即可
+        const put = await app(ORG, ['data:query']).request(`/metrics/${id}/draft`, {
+          method: 'PUT', headers: { 'content-type': 'application/json' },
+          body: JSON.stringify({ draftSpec: { baseMetric: L1_SALES.id, op: { kind: 'refine' }, alias: '保留流别名' } }),
+        })
+        expect(put.status, 'KEEP 端点 PUT /metrics/:id/draft 被误退役了').toBe(200)
+        // POST confirm-draft（KEEP）在 on 模式照常生效（不是 410）
+        const confirm = await app(ORG, ['data:query']).request(`/metrics/${id}/confirm-draft`, { method: 'POST' })
+        expect(confirm.status, 'KEEP 端点 POST /metrics/:id/confirm-draft 被误退役了').toBe(200)
+        // PUT /metrics/:id/certified（KEEP：治理决策）照常 200
+        const cert = await app(ORG, ['data:manage']).request(`/metrics/${id}/certified`, {
+          method: 'PUT', headers: { 'content-type': 'application/json' },
+          body: JSON.stringify({ certified: 'certified' }),
+        })
+        expect(cert.status, 'KEEP 端点 PUT /metrics/:id/certified 被误退役了').toBe(200)
+        // 读面不受影响
+        expect((await app(ORG, ['data:query']).request('/metrics')).status).toBe(200)
+        // W8 覆盖确认流（KEEP）：无草稿时的域层结局不是 410（路由本身活着）
+        const w8 = await app(ORG, ['data:manage']).request(`/metrics/${L1_OVERRIDE.id}/override/confirm`, { method: 'POST' })
+        expect(w8.status).not.toBe(410)
+        await pool.query('delete from data.metrics where org = $1 and id = $2', [ORG, id])
+      } finally { restore() }
+    })
   })
 
 })

@@ -134,6 +134,22 @@ const metricIdOf = (raw: string | undefined): string | null =>
 const orgOf = (c: Context<ModuleVars>): string => c.get('tenant').casdoor_org
 
 /**
+ * P4 写面收口（计划 2026-11-13 Task 3）：REST **直写**端点退役，410 指路 `/metric-changes`。
+ *
+ * 指标定义的变更一律走变更单（P0 已建：agent 提交 → 人采纳），不再由 REST 直写生效行。
+ * **410 而不是 404**：旧调用方（脚本 / agent 缓存 / 未更新的客户端）要拿到可读的迁移信号；
+ * 一个发布周期后再真删路由与 manifest 声明（本波只改行为、不拆声明——装载期双向核对不破）。
+ *
+ * 开关 `DATA_METRIC_REVIEW_MODE`（与 MCP 写工具的 Task 1 同款）：`'off'` ⇒ 应急回滚，走各 handler
+ * 的**原行为**（原代码原样保留在 early return 之下，一个发布周期后随退役一起删）。
+ * 缺省（未配/非 off）⇒ 退役——不是「部署漏配开关就裸奔」。
+ */
+function retired(c: Context): Response | null {
+  if ((process.env.DATA_METRIC_REVIEW_MODE ?? 'on') === 'off') return null
+  return c.json({ error: 'USE_METRIC_CHANGES', changeEndpoint: '/metric-changes' }, 410)
+}
+
+/**
  * 宿主投影的「本租户已接入源」（计划 5）→ 裁剪/写闸用的集合。
  *
  * `?? []` 的语义是**刻意的 fail-closed**：宿主没投影（本模块没声明 `tenantSources`、或请求
@@ -222,6 +238,9 @@ export function registerMetrics(r: ModuleHono, ctx: RouteCtx): void {
   })
 
   r.post('/metrics', async (c) => {
+    // P4 写面收口：直写退役 ⇒ 410 指路变更单（off = 应急回滚，走下方原路径）。
+    const gone = retired(c)
+    if (gone !== null) return gone
     const requester = requesterOf(c)
     // 写入必须能归属到人（审计要记人）——无身份 ⇒ 拒，**不写一条「无主」审计**（#489）
     if (requester === null) return c.json({ error: 'UNAUTHENTICATED' }, 403)
@@ -238,6 +257,9 @@ export function registerMetrics(r: ModuleHono, ctx: RouteCtx): void {
   // 租户语义自治（W8，issue #1716）：新建全额声明。只收声明（YAML 条目等价物），不收 SQL；
   // 校验与 L1/apply 同一把尺，写库后即时生效（无需部署）。覆盖平台口径是 P2 的独立入口。
   r.post('/metrics/declarations', async (c) => {
+    // P4 写面收口：直写退役 ⇒ 410（console 声明入口已删；REST 侧不留直写漏口）。
+    const gone = retired(c)
+    if (gone !== null) return gone
     const requester = requesterOf(c)
     if (requester === null) return c.json({ error: 'UNAUTHENTICATED' }, 403)
     const body = await c.req.json().catch(() => null)
@@ -259,6 +281,9 @@ export function registerMetrics(r: ModuleHono, ctx: RouteCtx): void {
   })
 
   r.post('/metrics/:id/override', async (c) => {
+    // P4 写面收口：覆盖创建的**写**动作退役 ⇒ 410；确认/删除（W8 两步决策流的确认步）保留。
+    const gone = retired(c)
+    if (gone !== null) return gone
     const requester = requesterOf(c)
     if (requester === null) return c.json({ error: 'UNAUTHENTICATED' }, 403)
     const id = metricIdOf(c.req.param('id'))
@@ -296,6 +321,9 @@ export function registerMetrics(r: ModuleHono, ctx: RouteCtx): void {
   })
 
   r.put('/metrics/:id', async (c) => {
+    // P4 写面收口：直写退役 ⇒ 410 指路变更单（off = 应急回滚，走下方原路径）。
+    const gone = retired(c)
+    if (gone !== null) return gone
     const requester = requesterOf(c)
     if (requester === null) return c.json({ error: 'UNAUTHENTICATED' }, 403)
     const id = metricIdOf(c.req.param('id'))
@@ -313,6 +341,9 @@ export function registerMetrics(r: ModuleHono, ctx: RouteCtx): void {
   })
 
   r.delete('/metrics/:id', async (c) => {
+    // P4 写面收口：直删退役 ⇒ 410 指路变更单（off = 应急回滚，走下方原路径）。
+    const gone = retired(c)
+    if (gone !== null) return gone
     const requester = requesterOf(c)
     if (requester === null) return c.json({ error: 'UNAUTHENTICATED' }, 403)
     const id = metricIdOf(c.req.param('id'))
@@ -433,6 +464,9 @@ export function registerMetrics(r: ModuleHono, ctx: RouteCtx): void {
   // 并集——取低档让双方都能进门，真判据 updateMetricMeta 在域层；持有 data:manage 的 PAT
   // 需同时持 data:query 才能走此端，与草稿端点的取舍一致）。
   r.put('/metrics/:id/meta', async (c) => {
+    // P4 写面收口：元数据直写退役 ⇒ 410（变更单的 meta 档是唯一通路）。
+    const gone = retired(c)
+    if (gone !== null) return gone
     const requester = requesterOf(c)
     if (requester === null) return c.json({ error: 'UNAUTHENTICATED' }, 403)
     const id = metricIdOf(c.req.param('id'))
