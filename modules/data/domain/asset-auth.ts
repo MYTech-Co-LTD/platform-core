@@ -218,7 +218,7 @@ export function applyPanelRenderGate(
  * `panels.map(...)` 在 `ReportSpec['panels']` 联合体上做推断——不同 TS/依赖解析环境下
  * 联合体推断的收敛结果不一致（CI 报 TS2322，本地干净）。类型写死到具体变体即消除差异。
  */
-const BLANK_TEXT_PANEL: TextPanel = { chart: 'text', content: '', span: 12 }
+const BLANK_TEXT_PANEL: TextPanel = { chart: 'text', content: '', span: 12, format: 'plain' }
 
 /**
  * 把降级占位符换成**空文本面板**（无标题 / 无 metricId），供叙述 / 计算凭证的事实装配使用。

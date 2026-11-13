@@ -201,7 +201,7 @@ describe('applyPanelRenderGate', () => {
       spec, [{ id: 'm:owned', ownerDept: '57' }, { id: 'm:open', ownerDept: null }], deptCtx(['80'], ['80']),
     )
     const factsSpec = factsSpecOf(gate.spec)
-    expect(factsSpec.panels[0]).toEqual({ chart: 'text', content: '', span: 12 })
+    expect(factsSpec.panels[0]).toEqual({ chart: 'text', content: '', span: 12, format: 'plain' })
     expect(JSON.stringify(factsSpec.panels[0])).not.toMatch(/metricId|标题|table/)
     expect(factsSpec.panels[1]).toEqual(spec.panels[1])
   })
