@@ -3577,6 +3577,51 @@ describePg('报表路由（需要 DATABASE_URL）', () => {
       }
     })
 
+    it('★ ACL 门按**已发布快照**判：发布后把草稿改成无部门口径 ⇒ 放宽仍 409（草稿不能洗白线上）', async () => {
+      const SNAP_METRIC = 'p6t5:acl-snapshot-dept'
+      await upsertMetric(pool, ORG, {
+        id: SNAP_METRIC, title: 'ACL 快照口径', description: '', requiredScope: null,
+        subjectColumn: 'org', selectSql: 'select 1 as value', groupBy: '', params: {},
+      }, 'fixture', { ownership: { ownerDept: CHILD_DEPT } })
+      try {
+        const app = admin()
+        const created = await post(app, {
+          title: 'ACL 快照门', renderer: 'platform', requiredDepts: [CHILD_DEPT],
+          spec: { panels: [{ chart: 'table', title: '口径', metricId: SNAP_METRIC }] },
+        })
+        expect(created.status).toBe(201)
+        const id = (await created.json()).id as string
+        const putAcl = (viewers: Array<{ subjectType: string; subjectId: string }>) =>
+          app.request(`/reports/${id}/acl`, {
+            method: 'PUT', headers: { 'content-type': 'application/json' },
+            body: JSON.stringify({ viewers }),
+          })
+
+        expect((await publish(app, id, await versionOf(app, id))).status).toBe(200)
+
+        // 发布后把**草稿**改成只引用无部门归属的指标——那是「下次发布」的内容，不是线上内容。
+        const draft = parseReportSpec({ panels: [{ chart: 'table', title: '公开', metricId: OPEN_METRIC }] })
+        if (!draft.ok) throw new Error(`夹具规格应通过白名单：${draft.code}`)
+        await updateSpec(pool, ORG, id, draft.spec, await versionOf(app, id))
+
+        // ACL 是资产级、**对已发布版本立刻生效** ⇒ 门必须按快照判：线上仍有部门口径，
+        // 放宽到兄弟部门必须 409。用草稿判（无部门口径 ⇒ 干净）会假放行。
+        const denied = await putAcl([{ subjectType: 'dept', subjectId: SIBLING_DEPT }])
+        expect(denied.status).toBe(409)
+        const body = await denied.json() as { error: string; panels: Array<Record<string, unknown>> }
+        expect(body.error).toBe('REPORT_METRIC_SCOPE_MISMATCH')
+        expect(body.panels[0]).toMatchObject({
+          metricId: SNAP_METRIC, missingDepts: [SIBLING_DEPT],
+          reason: 'audience_dept_outside_metric_scope',
+        })
+
+        // 同部门（在指标归属链上）⇒ 200 落库
+        expect((await putAcl([{ subjectType: 'dept', subjectId: CHILD_DEPT }])).status).toBe(200)
+      } finally {
+        await pool.query('delete from data.metrics where org = $1 and id = $2', [ORG, SNAP_METRIC])
+      }
+    })
+
     it('★ 部门门重跑：放宽到指标归属之外 ⇒ 409 且门/版本不变；范围内 ⇒ 200 落库', async () => {
       const GATE_METRIC = 'p6t5:gate-dept'
       await upsertMetric(pool, ORG, {

@@ -73,7 +73,10 @@ import {
 import { PeriodSchema, parseReportInput, parseReportSpec } from '../domain/report-spec'
 import type { AiTextPanel, ReportSpec } from '../domain/report-spec'
 import { deriveRequiredScope, metricIdsOf, validatePanelMetrics } from '../domain/report-scope'
-import { gateBlocks, reportScopeViolations, scopeMismatchBody } from '../domain/report-scope-gate'
+import {
+  gateBlocks, reportScopeViolations, scopeMismatchBody,
+} from '../domain/report-scope-gate'
+import type { ReportScopeRow } from '../domain/report-scope-gate'
 import {
   getPublishedSpec,
   getVersion,
@@ -828,11 +831,30 @@ export function registerReports(r: ModuleHono, ctx: RouteCtx): void {
     // 可能与词表漂移（指标归属改过）——所以**一律重判**、不做「有没有变化」的短路，
     // 宁可拒，让人显式处理。owner 主体不计入受众，故保留原行、只替换 viewer。
     const nextAcl: AclRow[] = [...acl.filter((a) => a.relation !== 'viewer'), ...viewers]
+    // ⚠️ 判定输入必须取**已发布快照**，不能取 `row` 的草稿值（`spec` / `requiredDepts` 是
+    //    「下次发布」的内容）。ACL 是**资产级**、对已发布版本**立刻生效**，而线上内容在
+    //    `report_versions` 快照里（观看闸 `canViewVersionedContent` 与每日巡检的 `scopeInputOf`
+    //    都按快照判）。用草稿判会假放行：发布一张含部门口径的报表 → 编辑草稿改为只引用无部门
+    //    口径的指标 → ACL 放宽给兄弟部门 ⇒ 门看干净草稿放行，线上报表却已多出看不见该面板的部门。
+    //    `visibility` 与 `nextAcl` 仍取当前值：那是受众入口本身，不属于版本内容。
+    //    未发布 / 快照缺失 ⇒ 回退 `row`（没有线上内容可判，与发布/部门门判草稿的口径一致）。
+    const published = row.renderer === 'platform' && row.publishedVersionId !== null
+      ? await getPublishedSpec(ctx.pool, org, id)
+      : null
+    const gateReport: ReportScopeRow = published === null
+      ? row
+      : {
+          renderer: 'platform',
+          spec: published.spec,
+          requiredScope: published.requiredScope,
+          requiredDepts: published.requiredDepts,
+          visibility: row.visibility,
+        }
     const gate = await reportScopeViolations({
       pool: ctx.pool,
       tenantId: c.get('tenant').id,
       org,
-      report: row,
+      report: gateReport,
       acl: nextAcl,
     })
     const scopeIssues = gate?.issues ?? []
