@@ -112,6 +112,37 @@ describe('searchImpl', () => {
     expect('ambiguous' in out.payload).toBe(false)
     expect((out.payload as { results: unknown[] }).results).toHaveLength(1)
   })
+  it('同义词 tie：title 不同但 synonyms 都精确含 q ⇒ ambiguous 且两条都在 results（#813 毛/净形态）', async () => {
+    // 生产 L1 词表实况（dbt/semantics/l1_metrics.yml）：sales 与 net_sales 的 synonyms 都含
+    // 「营业额」而 title 不同——旧判据只按 lower(title) 分组 ⇒ 不歧义 ⇒ 静默按 id 序取
+    // net_sales，正是 #813 毛/净口径混淆的形态。tie 键必须扩到「共享精确命中面」。
+    const gross = row({
+      id: 'lemeng:retail:sales', title: '销售额（不冲退货）',
+      synonyms: ['销售金额', '营业额', '营业额（不冲退货）'],
+    })
+    const net = row({
+      id: 'lemeng:retail:net_sales', title: '净销售额',
+      synonyms: ['净销售金额', '营业额', '营业额（冲退货）'],
+    })
+    const out = await searchImpl(deps([gross, net]), { kind: 'metric', q: '营业额' })
+    const payload = out.payload as { results: { id: string }[]; ambiguous?: true }
+    expect(payload.ambiguous).toBe(true)
+    expect(payload.results.map((r) => r.id).sort())
+      .toEqual(['lemeng:retail:net_sales', 'lemeng:retail:sales'])
+  })
+  it('顶分并列但无共享命中面（title/同义词皆不同）⇒ 无 ambiguous 键（顶分+共享面双条件）', async () => {
+    const a = row({ id: 'acme:custom:jia', source: 'l2' as const, sourceSystem: null, title: '甲指标' })
+    const b = row({ id: 'lemeng:retail:yi', title: '乙指标' })
+    const out = await searchImpl(deps([a, b]), { kind: 'metric', q: '指标' })
+    expect('ambiguous' in out.payload).toBe(false)
+  })
+  it('浏览态（q 缺席）⇒ 永不 ambiguous（哪怕有同名对）', async () => {
+    const a = row({ id: 'acme:custom:yingye_a', source: 'l2' as const, sourceSystem: null, title: '营业额' })
+    const b = row({ id: 'lemeng:retail:yingye_b', title: '营业额' })
+    const out = await searchImpl(deps([a, b]), { kind: 'metric' })
+    expect('ambiguous' in out.payload).toBe(false)
+    expect((out.payload as { results: unknown[] }).results).toHaveLength(2)
+  })
   it('投影带 dept/variantNote：声明了带值，未声明为 null', async () => {
     const owned = row({
       id: 'acme:custom:owned', source: 'l2' as const, sourceSystem: null,

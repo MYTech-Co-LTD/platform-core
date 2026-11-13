@@ -92,20 +92,26 @@ export const searchImpl: ToolImpl = async (deps, args) => {
         || m.synonyms.some((s) => s.toLowerCase().includes(q)))
       .map((m) => ({ m, score: scoreOf(m) }))
       .sort((a, b) => b.score - a.score || a.m.id.localeCompare(b.m.id))
-    // 同名 tie 检测（P3 Task 1）：顶分集合（score === topScore）里 ≥2 条不同 id 的
-    // lower(title) 相同 ⇒ ambiguous。判定在 slice **之前**（被切掉的顶分同样是歧义）；
-    // 结果不再静默取先——稳定排序让同组候选都贴在 results 顶部，调用方见 ambiguous
-    // 即应问辨而非猜。同义词交叉命中（q 恰为 A 的 title 又恰为 B 的 synonym）记 P4，
-    // 本判定只认 title。
+    // tie 检测（P3 Task 1 + 终审修复）：顶分集合（score === topScore）里 ≥2 条不同 id 的
+    // 「精确命中面」相交 ⇒ ambiguous。命中面 = {lower(title)} ∪ {lower(synonyms) 中恰等于
+    // q 的那些}——生产 L1 词表里 sales/net_sales 的 synonyms 都含「营业额」（title 不同，
+    // #813 毛/净形态），只按 title 分组会把这条静默放行。title 共享是命中面相交的特例
+    // （既有用例不破）；顶分并列但命中面不相交 ≠ 歧义（顶分+共享面双条件）。
+    // q === null（浏览态）跳过：全体同分且命中面恒只含 title，标记无意义。
+    // 判定在 slice **之前**（被切掉的顶分同样是歧义）；结果不再静默取先——稳定排序让
+    // 同组候选都贴在 results 顶部，调用方见 ambiguous 即应问辨而非猜。
     let ambiguous = false
     const topScore = scored[0]?.score ?? 0
-    const titleOwner = new Map<string, string>()
-    for (const { m, score } of scored) {
-      if (score !== topScore) break // 已按分数降序 ⇒ 顶分集合到此为止
-      const key = m.title.toLowerCase()
-      const first = titleOwner.get(key)
-      if (first !== undefined && first !== m.id) { ambiguous = true; break }
-      titleOwner.set(key, m.id)
+    if (q !== null) {
+      const faceOwner = new Map<string, string>()
+      for (const { m, score } of scored) {
+        if (score !== topScore) break // 已按分数降序 ⇒ 顶分集合到此为止
+        const faces = [m.title.toLowerCase(), ...m.synonyms.map((s) => s.toLowerCase()).filter((s) => s === q)]
+        if (faces.some((f) => { const first = faceOwner.get(f); return first !== undefined && first !== m.id })) {
+          ambiguous = true; break
+        }
+        for (const f of faces) faceOwner.set(f, m.id)
+      }
     }
     const results = scored
       .slice(0, SEARCH_LIMIT)

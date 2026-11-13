@@ -30,7 +30,7 @@ export const ENVELOPE_SCHEMA: Record<string, unknown> = {
   type: 'object',
   properties: {
     status: { type: 'string', enum: ['ok'] },
-    metric: { type: 'object', description: 'id/version/definitionHash/tier/caliber/basis/owner/title/dept/variantNote（caliber=draft ⇒ 回答首行标注「草稿口径」）' },
+    metric: { type: 'object', description: 'id/version/definitionHash/tier/caliber/basis/owner/title/dept/variantNote/override（caliber=draft ⇒ 回答首行标注「草稿口径」）' },
     subject: { type: 'object', description: 'org/source/adoptedSources——主体钉死的回声' },
     asOf: { type: 'object', description: 'dataThrough/freshnessLagSeconds/lastDbtRun/tests' },
     query: { type: 'object', description: 'sql/params/dimensions/rowLimit/queryId' },
