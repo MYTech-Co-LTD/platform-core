@@ -67,21 +67,30 @@ describe('queryMetricImpl：完整信任信封', () => {
   })
 
   it('#1409：私有测度（L2/column_agg/draft）⇒ caliber=draft，徽标字段随回包', async () => {
+    // 归属行走真实部门可见守卫（P2 Task 4）：假池按 SQL 形状分流——部门查询回直属集，
+    // 其余照旧回词表/审计行（discovery.test.ts P3 Task 1 同手法）。
     const draftPool = () => ({
-      query: async (sql: string) => sql.includes('from data.metrics')
-        ? { rows: [{
-            id: 'acme:custom:gm', title: '毛利率', description: '', required_scope: null,
-            subject_column: 'org', select_sql: SELECT_SQL, group_by: 'org, bizday', params: {},
-            source: 'l2', source_system: 'lemeng', updated_by: 'u', version: 1, totalable: false,
-            scope_note: '', sla_days: null, freshness_relations: null, mask_spec: null,
-            certified: 'draft', basis: 'column_agg',
-          }] }
-        : { rows: [{ id: 77, created_at: new Date('2026-10-21T10:00:00Z') }] },
+      query: async (sql: string) => {
+        if (sql.includes('v_org_membership')) {
+          return { rows: [{ direct_id: '门店运营部', direct_path: '门店运营部', desc_id: null }] }
+        }
+        return sql.includes('from data.metrics')
+          ? { rows: [{
+              id: 'acme:custom:gm', title: '毛利率', description: '', required_scope: null,
+              subject_column: 'org', select_sql: SELECT_SQL, group_by: 'org, bizday', params: {},
+              source: 'l2', source_system: 'lemeng', updated_by: 'u', version: 1, totalable: false,
+              scope_note: '', sla_days: null, freshness_relations: null, mask_spec: null,
+              certified: 'draft', basis: 'column_agg',
+              owner_dept: '门店运营部', variant_note: '不含批发调拨',
+            }] }
+          : { rows: [{ id: 77, created_at: new Date('2026-10-21T10:00:00Z') }] }
+      },
     }) as never
-    const d = { ...deps(wh), pool: draftPool() }
+    const d = { ...deps(wh), pool: draftPool(), requester: { ...requester, tenantId: 1, accountName: 'u' } }
     const out = await queryMetricImpl(d, { metricId: 'acme:custom:gm' })
     const env = out.payload as Record<string, Record<string, unknown>>
-    expect(env.metric).toMatchObject({ caliber: 'draft', basis: 'column_agg', tier: 'custom' })
+    // P3 Task 2：metric 段带归属与差异说明（带值态）——caliber 拼图：id + title + dept + variantNote
+    expect(env.metric).toMatchObject({ caliber: 'draft', basis: 'column_agg', tier: 'custom', dept: '门店运营部', variantNote: '不含批发调拨' })
   })
 
   it('信封七节（本例 load_log/水位缺席 ⇒ asOf 缺席——可辨不编造）', async () => {
@@ -91,6 +100,9 @@ describe('queryMetricImpl：完整信任信封', () => {
     const env = out.payload as Record<string, Record<string, unknown>>
     expect(env.status).toBe('ok')
     expect(env.metric).toMatchObject({ id: 'lemeng:retail:net_sales', version: 3, tier: 'certified', owner: 'data-platform', title: '净销' })
+    // P3 Task 2：metric 段带归属与差异说明——L1 无归属 ⇒ 恒 null（键在场，缺席 = 不可辨）
+    expect(env.metric.dept).toBeNull()
+    expect(env.metric.variantNote).toBeNull()
     // #1409：回答面徽标字段（L1 恒 certified / 树形口径）
     expect(env.metric.caliber).toBe('certified')
     expect(env.metric.basis).toBe('l1_tree')

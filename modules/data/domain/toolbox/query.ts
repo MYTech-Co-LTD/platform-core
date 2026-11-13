@@ -126,6 +126,10 @@ export const queryMetricImpl: ToolImpl = async (deps, args) => {
         // 租户口径覆盖（W8，041）：true ⇒ 本次回答用的是本租户覆盖的平台口径，
         // bot 必须在回答里写「本租户口径」，不得当作平台默认值报。
         override: metricRow.overrideOf != null,
+        // 归属与差异说明（P3 Task 2，spec §10）：caliber 拼图收口——id 钉死 + title 人话
+        // + dept 归属 + variantNote 差异。未声明恒 null（键在场；与 search_catalog 行投影同源同名）。
+        dept: metricRow.ownerDept ?? null,
+        variantNote: metricRow.variantNote ?? null,
       },
     } : {}),
     subject: { org: ok.subject, source: metricRow?.sourceSystem ?? deps.org, adoptedSources: [...deps.adoptedSources] },
