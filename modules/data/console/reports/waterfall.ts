@@ -43,6 +43,18 @@ export function waterfallBarsOf(
     .filter((b) => Math.abs(b.delta) > 1e-9)
     .sort((a, b) => Math.abs(b.delta) - Math.abs(a.delta))
   if (bars.length === 0) return []
+  // 维度值过多时只画贡献最大的 10 项，其余合并成一根（合并后合计不变，仍可校验）。
+  const MAX_DELTAS = 10
+  if (bars.length > MAX_DELTAS) {
+    const head = bars.slice(0, MAX_DELTAS)
+    const rest = bars.slice(MAX_DELTAS)
+    head.push({
+      label: `其他（${rest.length} 项）`,
+      delta: rest.reduce((sum, b) => sum + b.delta, 0),
+      kind: 'delta',
+    })
+    bars.splice(0, bars.length, ...head)
+  }
   const total = bars.reduce((s, b) => s + b.delta, 0)
   bars.push({ label: '合计变化', delta: total, kind: 'total' })
   return bars

@@ -32,3 +32,18 @@ describe('waterfallBarsOf', () => {
     expect(waterfallBarsOf({ columns: ['value'], rows: [[1]] }, prev, ['branch_name'])).toEqual([])
   })
 })
+
+describe('维度值过多（R3 组件②）', () => {
+  it('超过 12 项 ⇒ 前 11 项 + 其他，合计不变', () => {
+    const rows: unknown[][] = Array.from({ length: 20 }, (_, i) => [`店${i}`, i + 1])
+    const cur = { columns: ['branch_name', 'value'], rows }
+    const prev = { columns: ['branch_name', 'value'], rows: [] as unknown[][] }
+    const bars = waterfallBarsOf(cur, prev, ['branch_name'])
+    expect(bars).toHaveLength(12)                       // 11 + 其他 + 合计
+    expect(bars[11]!.label).toBe('合计变化')
+    const other = bars.find((b) => b.label.startsWith('其他'))
+    expect(other).toBeDefined()
+    const sum = bars.filter((b) => b.kind === 'delta').reduce((s, b) => s + b.delta, 0)
+    expect(sum).toBe(210)                               // 1..20 = 210，合并后仍守恒
+  })
+})
