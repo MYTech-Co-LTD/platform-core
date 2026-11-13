@@ -41,7 +41,7 @@ const lastOption = () => {
   const calls = chart.setOption.mock.calls
   return calls[calls.length - 1]?.[0] as {
     series: Array<{ data: Array<{ id: string; name: string }>; edges: unknown[] }>
-  }
+  } | undefined
 }
 
 beforeEach(() => {
@@ -64,8 +64,8 @@ describe('体系地图·本体图', () => {
     expect(screen.getAllByText('98.2%')).toHaveLength(2)
     expect(screen.getByText('17')).toBeInTheDocument()
     expect(screen.getByText(/4 个节点 · 2 条关系/)).toBeInTheDocument()
-    // 图拿到的是全量节点
-    expect(lastOption().series[0]!.data).toHaveLength(4)
+    // 图拿到的是全量节点（setOption 在数据到达后的 effect 里 ⇒ 用 waitFor 等它）
+    await waitFor(() => expect(lastOption()?.series[0]!.data).toHaveLength(4))
   })
 
   it('搜索：只保留命中节点 + 一跳邻居', async () => {
@@ -76,7 +76,8 @@ describe('体系地图·本体图', () => {
     fireEvent.change(screen.getByPlaceholderText('搜指标、业务对象或源表'), { target: { value: '净销售额' } })
     // 净销售额 + 它的两个邻居（门店、源表）；「订单数」被筛掉
     await waitFor(() => expect(screen.getByText(/3 个节点/)).toBeInTheDocument())
-    expect(lastOption().series[0]!.data.map((n) => n.id)).not.toContain('metric:lemeng:retail:order_count')
+    await waitFor(() => expect(lastOption()?.series[0]!.data.map((n) => n.id))
+      .not.toContain('metric:lemeng:retail:order_count'))
 
     // 清空恢复全图
     fireEvent.change(screen.getByPlaceholderText('搜指标、业务对象或源表'), { target: { value: '' } })
