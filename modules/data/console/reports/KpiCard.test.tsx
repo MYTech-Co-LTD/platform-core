@@ -144,3 +144,21 @@ describe('KpiCard 对比覆盖', () => {
     expect(screen.getByTestId('kpi-delta')).toHaveAttribute('title', '对比期数据覆盖未知，暂不展示环比')
   })
 })
+
+describe('计算凭证入口（R1）', () => {
+  it('给了 receiptCtx ⇒ 显示「计算过程」；没给 ⇒ 不显示（默认不增加入口）', async () => {
+    mockApi({ from: '2026-01-01', to: '2026-10-26' })
+    const ctx = {
+      reportId: 'r1', panelIndex: 0,
+      period: { mode: 'day' as const, day: '2026-10-19' },
+    }
+    const withCtx = render(<KpiCard panel={panelOf()} args={ARGS} compareRange={PREV} receiptCtx={ctx} />)
+    await waitFor(() => expect(screen.getByTestId('kpi-value')).toBeInTheDocument())
+    expect(screen.getByTestId('kpi-receipt')).toBeInTheDocument()
+    withCtx.unmount()
+
+    render(<KpiCard panel={panelOf()} args={ARGS} compareRange={PREV} />)
+    await waitFor(() => expect(screen.getByTestId('kpi-value')).toBeInTheDocument())
+    expect(screen.queryByTestId('kpi-receipt')).toBeNull()
+  })
+})

@@ -498,11 +498,11 @@ function rangePickerValue(override: Record<string, unknown>, defaults: Record<st
  * 本组件只认已过闸的 `ReportSpec`。
  */
 export default function ReportView({
-  reportId, title, spec, chrome, onClose, pinnedVersion,
+  reportId, title, spec, chrome, onClose, pinnedVersion, preview,
 }: {
   /**
-   * 报表 id：`ai_text` 的流式端点按它定位（`/reports/:id/narrative/stream`）。
-   * 其余面板走 `/query`，不需要 id。
+   * 报表 id：`ai_text` 的流式端点按它定位（`/reports/:id/narrative/stream`）；
+   * KPI 的「计算过程」也按它定位（`/reports/:id/receipt`）。其余面板走 `/query`。
    */
   reportId: string
   title: string
@@ -510,6 +510,8 @@ export default function ReportView({
   chrome: 'console' | 'standalone'
   onClose?: () => void
   pinnedVersion?: number | null
+  /** 草稿预览：计算凭证按草稿内容取（未发布报表只能预览，不能按快照取）。 */
+  preview?: 'draft'
 }) {
   const [results, setResults] = useState<Record<number, PanelResult>>({})
   const [compareResults, setCompareResults] = useState<Record<number, PanelCompare[]>>({})
@@ -793,6 +795,14 @@ export default function ReportView({
                 args={argsOf(p)}
                 compareRange={compareRangeOf(p, period?.mode, range)}
                 yoyRange={p.compareYoY && range !== null ? yearAgoRangeOf(range) : null}
+                receiptCtx={{
+                  reportId,
+                  panelIndex: i,
+                  period,
+                  ...(aiBranchNum === undefined ? {} : { branchNum: aiBranchNum }),
+                  ...(pinnedVersion === null || pinnedVersion === undefined ? {} : { version: pinnedVersion }),
+                  ...(preview === undefined ? {} : { preview }),
+                }}
               />
             ) : (
               <Card size="small" title={p.title}>

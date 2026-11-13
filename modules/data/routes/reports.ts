@@ -32,6 +32,9 @@ import type { UserStatus } from '@platform/sdk'
 import { llmFromEnv, openAiCompatModel } from '../domain/llm'
 import type { StreamingChatModel } from '../domain/llm'
 import { buildFacts } from '../domain/report-facts'
+import { buildReportReceipt, receiptCsv, type ReportReceipt } from '../domain/report-receipt'
+import { panelArgsOf } from '../domain/report-query'
+import { periodRangeOf } from '../domain/report-period'
 import type { FactBundle } from '../domain/report-facts'
 import { generateNarrative, streamNarrative } from '../domain/narrative'
 import type { NarrativeEvent } from '../domain/narrative'
@@ -1124,9 +1127,22 @@ export function registerReports(r: ModuleHono, ctx: RouteCtx): void {
     model: (StreamingChatModel & { id?: string }) | null
   }
 
-  async function loadNarrativeContext(
-    c: Context<ModuleVars>, id: string, body: z.infer<typeof NarrativeBody>,
-  ): Promise<NarrativeContextOk | NarrativeContextErr> {
+  /** 观看面内容的**共享解析**：身份 → 报表 → 资产面/快照门 → 规格。
+   *  叙述（narrative）与计算凭证（receipt）共用这一份，避免两处各写一遍 ACL。 */
+  type ViewSpecOk = {
+    requester: Requester
+    report: NonNullable<Awaited<ReturnType<typeof getReport>>>
+    spec: ReportSpec
+    specKey: string
+    title: string
+  }
+  type ViewSpecErr = {
+    error: 'UNAUTHENTICATED' | 'NOT_FOUND' | 'NOT_PUBLISHED' | 'NO_SPEC' | 'RENDERER_NOT_SELF_DRAWN'
+  }
+
+  async function loadViewableSpec(
+    c: Context<ModuleVars>, id: string, body: { version?: number; preview?: 'draft' },
+  ): Promise<ViewSpecOk | ViewSpecErr> {
     const requester = requesterOf(c)
     if (requester === null) return { error: 'UNAUTHENTICATED' }
     const org = c.get('tenant').casdoor_org
@@ -1134,61 +1150,59 @@ export function registerReports(r: ModuleHono, ctx: RouteCtx): void {
     if (report === null) return { error: 'NOT_FOUND' }
     // 资产面先于渲染器判定：restricted 行对非受让人一律 404（否则 RENDERER_NOT_SELF_DRAWN
     // 之类的非 404 会给非受让人当存在性探针用）。判据与 published-spec 同一份 canViewAsset。
-    const narrativeAcl = await loadAssetAcl(ctx.pool, org, id)
-    const narrativeDepts = narrativeAcl.some((a) => a.subjectType === 'dept')
+    const acl = await loadAssetAcl(ctx.pool, org, id)
+    const depts = acl.some((a) => a.subjectType === 'dept')
       ? await userDeptClosure(ctx.pool, c.get('tenant').id, deptNamesOf(requester))
       : undefined
-    // 粗门由快照（或 draft 预览的 data:manage 闸）判，资产面只看 visibility + ACL。
-    if (!canViewVersionedContent(report, requester, narrativeAcl, narrativeDepts)) {
-      return { error: 'NOT_FOUND' }
-    }
+    if (!canViewVersionedContent(report, requester, acl, depts)) return { error: 'NOT_FOUND' }
     if (report.renderer !== 'platform') return { error: 'RENDERER_NOT_SELF_DRAWN' }
 
-    let spec: ReportSpec
-    let specKey: string
-    let title: string
     if (body.preview === 'draft') {
       // 草稿 = 未发布内容（同 `GET /reports/:id/draft` 的分档）：owner ∪ 管理码才可预览，其余 404。
-      if (!canEditAsset(narrativeAcl, requester, MANAGE_SCOPE)) return { error: 'NOT_FOUND' }
+      if (!canEditAsset(acl, requester, MANAGE_SCOPE)) return { error: 'NOT_FOUND' }
       if (report.spec === null) return { error: 'NO_SPEC' }
-      spec = report.spec
-      specKey = `draft:${report.version}`
-      title = report.title
-    } else {
-      const snapshot = body.version !== undefined
-        ? await getPublishedSpec(ctx.pool, org, id, body.version)
-        : await getPublishedSpec(ctx.pool, org, id)
-      if (snapshot === null) return { error: 'NOT_PUBLISHED' }
-      if (snapshot.requiredScope !== null && !requester.hasScope(snapshot.requiredScope)) {
-        return { error: 'NOT_FOUND' }
-      }
-      // 部门门同样跟快照走（spec §3.4）：AI 文本是报表内容的一部分，门不过就没有内容可讲。
-      if ((snapshot.requiredDepts ?? []).length > 0) {
-        const depts = await userDeptClosure(ctx.pool, c.get('tenant').id, deptNamesOf(requester))
-        if (!deptGatePasses(snapshot.requiredDepts, depts)) return { error: 'NOT_FOUND' }
-      }
-      spec = snapshot.spec
-      specKey = `published:${snapshot.version}`
-      title = snapshot.title
+      return { requester, report, spec: report.spec, specKey: `draft:${report.version}`, title: report.title }
     }
+    const snapshot = body.version !== undefined
+      ? await getPublishedSpec(ctx.pool, org, id, body.version)
+      : await getPublishedSpec(ctx.pool, org, id)
+    if (snapshot === null) return { error: 'NOT_PUBLISHED' }
+    if (snapshot.requiredScope !== null && !requester.hasScope(snapshot.requiredScope)) {
+      return { error: 'NOT_FOUND' }
+    }
+    // 部门门同样跟快照走（spec §3.4）：内容是报表的一部分，门不过就没有内容可看。
+    if ((snapshot.requiredDepts ?? []).length > 0) {
+      const snapshotDepts = await userDeptClosure(ctx.pool, c.get('tenant').id, deptNamesOf(requester))
+      if (!deptGatePasses(snapshot.requiredDepts, snapshotDepts)) return { error: 'NOT_FOUND' }
+    }
+    return {
+      requester, report, spec: snapshot.spec,
+      specKey: `published:${snapshot.version}`, title: snapshot.title,
+    }
+  }
 
-    const panel = spec.panels[body.panelIndex]
+  async function loadNarrativeContext(
+    c: Context<ModuleVars>, id: string, body: z.infer<typeof NarrativeBody>,
+  ): Promise<NarrativeContextOk | NarrativeContextErr> {
+    const v = await loadViewableSpec(c, id, body)
+    if ('error' in v) return { error: v.error }
+    const panel = v.spec.panels[body.panelIndex]
     if (panel === undefined || panel.chart !== 'ai_text') return { error: 'NOT_AI_TEXT_PANEL' }
 
     const facts = await buildFacts(
       {
         pool: ctx.pool,
-        org,
-        requester,
+        org: c.get('tenant').casdoor_org,
+        requester: v.requester,
         // `[]` = 「本租户一个源都没接」（宿主投影了空集），与「宿主没投影」同形——事实包
         // 的源裁剪输入必须显式给（见 `FactsDeps.adoptedSources`）。
         adoptedSources: new Set(c.get(TENANT_SOURCES) ?? []),
         execute: ctx.execute,
         ...(ctx.exploreExec === undefined ? {} : { exploreExec: ctx.exploreExec }),
-        reportTitle: title,
-        specKey,
+        reportTitle: v.title,
+        specKey: v.specKey,
       },
-      spec,
+      v.spec,
       body.panelIndex,
       body.period,
       body.branchNum,
@@ -1199,7 +1213,7 @@ export function registerReports(r: ModuleHono, ctx: RouteCtx): void {
     const model = ctx.llm !== undefined
       ? ctx.llm()
       : cfg === null ? null : { ...openAiCompatModel(cfg), id: cfg.model }
-    return { requester, facts, focus: panel.focus, specKey, model }
+    return { requester: v.requester, facts, focus: panel.focus, specKey: v.specKey, model }
   }
 
   r.post('/reports/:id/narrative', async (c) => {
@@ -1285,6 +1299,102 @@ export function registerReports(r: ModuleHono, ctx: RouteCtx): void {
         connection: 'keep-alive',
         'x-accel-buffering': 'no',
       },
+    })
+  })
+
+  // ── 计算凭证（R1）──────────────────────────────────────────────────────────────────
+  // 只服务 **kpi 面板**：凭证回答「这一个数怎么来的」。取数只经 runQuery（授权/掩码/审计
+  // 与 /query 同链）；组成（按日）只对可加指标给，比率不给——宁缺，不给误导性组成。
+  const ReceiptBody = z.object({
+    panelIndex: z.number().int().min(0),
+    period: PeriodSchema,
+    branchNum: z.string().min(1).max(64).optional(),
+    version: z.number().int().positive().optional(),
+    preview: z.literal('draft').optional(),
+  }).strict()
+
+  type ReceiptErr = { error: string; status: 400 | 403 | 404 | 409 | 502; detail?: string }
+
+  /** 凭证的唯一装配点：路由 / 导出共用，避免两份 ACL 与参数装配。 */
+  async function receiptOf(
+    c: Context<ModuleVars>, id: string, body: z.infer<typeof ReceiptBody>,
+  ): Promise<{ ok: true; receipt: ReportReceipt } | { ok: false; error: ReceiptErr }> {
+    const v = await loadViewableSpec(c, id, body)
+    if ('error' in v) {
+      const status = v.error === 'UNAUTHENTICATED' ? 403
+        : (v.error === 'NOT_FOUND' || v.error === 'NOT_PUBLISHED') ? 404 : 400
+      return { ok: false, error: { error: v.error, status } }
+    }
+    const panel = v.spec.panels[body.panelIndex]
+    if (panel === undefined || panel.chart !== 'kpi') {
+      return { ok: false, error: { error: 'PANEL_NOT_KPI', status: 400 } }
+    }
+    let range
+    try {
+      range = periodRangeOf(body.period, new Date())
+    } catch {
+      return { ok: false, error: { error: 'INVALID_PERIOD', status: 400 } }
+    }
+    const org = c.get('tenant').casdoor_org
+    const metric = (await loadMergedCatalog(ctx.pool, org)).find((m) => m.id === panel.metricId)
+    if (metric === undefined) return { ok: false, error: { error: 'METRIC_NOT_FOUND', status: 404 } }
+
+    const out = await buildReportReceipt(
+      {
+        pool: ctx.pool,
+        execute: ctx.execute,
+        adoptedSources: new Set(c.get(TENANT_SOURCES) ?? []),
+      },
+      org,
+      v.requester,
+      {
+        panel,
+        range,
+        args: panelArgsOf(panel, range, body.branchNum),
+        ...(body.branchNum === undefined ? {} : { branchNum: body.branchNum }),
+        metric,
+      },
+    )
+    if (!out.ok) {
+      return {
+        ok: false,
+        error: out.reason === 'denied'
+          ? { error: 'FORBIDDEN', status: 403, detail: out.detail }
+          : { error: 'QUERY_FAILED', status: 502 },
+      }
+    }
+    return { ok: true, receipt: out.receipt }
+  }
+
+  r.post('/reports/:id/receipt', async (c) => {
+    const id = reportIdOf(c.req.param('id'))
+    if (id === null) return c.json({ error: 'NOT_FOUND' }, 404)
+    const body = ReceiptBody.safeParse(await c.req.json().catch(() => null))
+    if (!body.success) return c.json({ error: 'INVALID_BODY' }, 400)
+    try {
+      const out = await receiptOf(c, id, body.data)
+      if (!out.ok) return c.json({ error: out.error.error, ...(out.error.detail === undefined ? {} : { detail: out.error.detail }) }, out.error.status)
+      return c.json(out.receipt)
+    } catch (e) {
+      console.error(`[data/receipt] ${id} failed: ${e instanceof Error ? e.message : String(e)}`)
+      return c.json({ error: 'RECEIPT_FAILED' }, 502)
+    }
+  })
+
+  r.post('/reports/:id/receipt/export', async (c) => {
+    const id = reportIdOf(c.req.param('id'))
+    if (id === null) return c.json({ error: 'NOT_FOUND' }, 404)
+    const body = ReceiptBody.safeParse(await c.req.json().catch(() => null))
+    if (!body.success) return c.json({ error: 'INVALID_BODY' }, 400)
+    const out = await receiptOf(c, id, body.data)
+    if (!out.ok) return c.json({ error: out.error.error, ...(out.error.detail === undefined ? {} : { detail: out.error.detail }) }, out.error.status)
+    // 没有按日组成（比率/不可加）⇒ 不导出：导出「没有组成」的凭证只会让人以为能复算。
+    if (out.receipt.series === null) return c.json({ error: 'NO_SERIES' }, 409)
+    const filename = `receipt-${out.receipt.metric.id.replace(/[^a-zA-Z0-9_-]/g, '_')}-${out.receipt.window.from}_${out.receipt.window.to}.csv`
+    return c.body(receiptCsv(out.receipt), 200, {
+      'content-type': 'text/csv; charset=utf-8',
+      'content-disposition': `attachment; filename="${filename}"`,
+      'cache-control': 'no-store',
     })
   })
 

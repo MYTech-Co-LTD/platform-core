@@ -60,6 +60,22 @@ export async function apiSend(path: string, method: 'POST' | 'PUT' | 'DELETE', b
 }
 
 /**
+ * POST 取二进制/文本附件（计算凭证的 CSV 导出）：失败体仍走 `toError`，
+ * 成功时把服务端 `content-disposition` 的文件名回给调用方。
+ */
+export async function apiPostBlob(
+  path: string, body?: unknown,
+): Promise<{ blob: Blob; filename: string | null }> {
+  const res = await platformFetch(PREFIX + path, {
+    method: 'POST',
+    ...(body === undefined ? {} : { body: JSON.stringify(body), headers: { 'Content-Type': 'application/json' } }),
+  })
+  if (!res.ok) throw await toError(res)
+  const cd = res.headers.get('content-disposition') ?? ''
+  return { blob: await res.blob(), filename: /filename="([^"]+)"/.exec(cd)?.[1] ?? null }
+}
+
+/**
  * 流式 POST（`ai_text` 的 SSE）：与 `apiSend` 同前缀、同失败体翻译，但**不解析 body**——
  * 调用方拿 `res.body` 自己读事件流。
  *

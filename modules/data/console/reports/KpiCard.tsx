@@ -12,14 +12,15 @@
 //  · 值与差值的格式化 / 颜色语义在 domain/report-format.ts（AI 文本事实包与模板共用同一套，
 //    两处数字文案才逐字一致）；本组件只管取数与呈现。
 import { useEffect, useState } from 'react'
-import { Card, Typography } from 'antd'
-import { apiSend } from '../lib/api'
+import { Alert, Button, Card, Descriptions, Drawer, Table, Typography } from 'antd'
+import { apiPostBlob, apiSend, messageOf } from '../lib/api'
 import type { DateRange } from '../../domain/report-period'
 import {
   comparisonCovered, coverageOfQueryResult, coverageQueryBodyOf, type CoverageInfo,
 } from '../../domain/report-query'
 import { formatDelta, formatValue, toneOf } from '../../domain/report-format'
-import type { KpiPanel } from '../../domain/report-spec'
+import type { KpiPanel, PeriodSpec } from '../../domain/report-spec'
+import type { ReportReceipt } from '../../domain/report-receipt'
 
 /**
  * 合计查询缓存（30s + in-flight 去重）。
@@ -94,14 +95,26 @@ async function coverageOf(metricId: string, args: Record<string, unknown>): Prom
   return value
 }
 
+/** 计算凭证的调用上下文（R1）：缺省 = 这张卡不提供「计算过程」。 */
+export interface ReceiptCtx {
+  reportId: string
+  panelIndex: number
+  period: PeriodSpec | null
+  branchNum?: string
+  version?: number
+  preview?: 'draft'
+}
+
 export function KpiCard({
-  panel, args, compareRange, yoyRange = null,
+  panel, args, compareRange, yoyRange = null, receiptCtx,
 }: {
   panel: KpiPanel
   args: Record<string, unknown>
   compareRange: DateRange | null
   /** 去年同期区间（同比）；null = 不展示同比。 */
   yoyRange?: DateRange | null
+  /** 计算凭证（口径/窗口/范围/按日组成 + 明细导出）；缺省不显示入口。 */
+  receiptCtx?: ReceiptCtx
 }) {
   // undefined = 还没回来（渲染 …）；null = 已知没有数（渲染 -）。两者不可混：缺点面要可辨。
   const [current, setCurrent] = useState<number | null | undefined>(undefined)
@@ -110,6 +123,52 @@ export function KpiCard({
   // `-` 的原因（#1085）：覆盖不足 / 覆盖未知 / 对比期无数据，别让用户以为坏了。
   const [compareNote, setCompareNote] = useState<string | null>(null)
   const [yoyNote, setYoyNote] = useState<string | null>(null)
+  // 计算凭证：只在点击时取数（多数观看不会打开，不为它增加首屏查询）。
+  const [receiptOpen, setReceiptOpen] = useState(false)
+  const [receiptBusy, setReceiptBusy] = useState(false)
+  const [receipt, setReceipt] = useState<ReportReceipt | null>(null)
+  const [receiptErr, setReceiptErr] = useState<string | null>(null)
+  const [exportBusy, setExportBusy] = useState(false)
+
+  const receiptBody = () => ({
+    panelIndex: receiptCtx!.panelIndex,
+    period: receiptCtx!.period,
+    ...(receiptCtx!.branchNum === undefined ? {} : { branchNum: receiptCtx!.branchNum }),
+    ...(receiptCtx!.version === undefined ? {} : { version: receiptCtx!.version }),
+    ...(receiptCtx!.preview === undefined ? {} : { preview: receiptCtx!.preview }),
+  })
+
+  const openReceipt = async (): Promise<void> => {
+    if (receiptCtx === undefined) return
+    setReceiptOpen(true)
+    setReceiptBusy(true)
+    setReceiptErr(null)
+    try {
+      setReceipt(await apiSend(`/reports/${receiptCtx.reportId}/receipt`, 'POST', receiptBody()) as ReportReceipt)
+    } catch (e) {
+      setReceiptErr(messageOf(e))
+    } finally {
+      setReceiptBusy(false)
+    }
+  }
+
+  const downloadReceipt = async (): Promise<void> => {
+    if (receiptCtx === undefined) return
+    setExportBusy(true)
+    try {
+      const { blob, filename } = await apiPostBlob(`/reports/${receiptCtx.reportId}/receipt/export`, receiptBody())
+      const url = URL.createObjectURL(blob)
+      const a = document.createElement('a')
+      a.href = url
+      a.download = filename ?? 'receipt.csv'
+      a.click()
+      URL.revokeObjectURL(url)
+    } catch (e) {
+      setReceiptErr(messageOf(e))
+    } finally {
+      setExportBusy(false)
+    }
+  }
 
   useEffect(() => {
     let alive = true
@@ -214,6 +273,100 @@ export function KpiCard({
             同比 {yoy === undefined ? '…' : deltaOf(yoy)}
           </Typography.Text>
         </div>
+      )}
+      {receiptCtx !== undefined && (
+        <>
+          <div style={{ marginTop: 6 }}>
+            <Button
+              type="link" size="small" data-testid="kpi-receipt"
+              style={{ padding: 0, height: 'auto', fontSize: 12 }}
+              onClick={() => void openReceipt()}
+            >
+              计算过程
+            </Button>
+          </div>
+          <Drawer
+            title={`计算过程 · ${panel.title}`}
+            width={420}
+            open={receiptOpen}
+            onClose={() => setReceiptOpen(false)}
+            destroyOnClose
+          >
+            {receiptErr !== null ? (
+              <Alert type="error" showIcon message={receiptErr} />
+            ) : receiptBusy ? (
+              <Typography.Text type="secondary">正在核对…</Typography.Text>
+            ) : receipt === null ? null : (
+              <>
+                <Descriptions
+                  column={1} size="small" bordered
+                  items={[
+                    { key: 'metric', label: '指标', children: `${receipt.metric.title}（${receipt.metric.id}）` },
+                    { key: 'definition', label: '口径', children: receipt.metric.definition ?? '未声明口径原文' },
+                    ...(receipt.metric.unit === null ? [] : [{ key: 'unit', label: '单位', children: receipt.metric.unit }]),
+                    {
+                      key: 'window', label: '窗口',
+                      children: `${receipt.window.from} ~ ${receipt.window.to}（${receipt.window.mode === 'day' ? '单日' : '区间'}）`,
+                    },
+                    {
+                      key: 'scope', label: '范围',
+                      children: [
+                        receipt.scope.branchNum === null ? null : `门店 ${receipt.scope.branchNum}`,
+                        Object.keys(receipt.scope.args).length === 0 ? null : JSON.stringify(receipt.scope.args),
+                      ].filter((x) => x !== null).join(' · ') || '租户范围（无额外过滤）',
+                    },
+                    {
+                      key: 'asof', label: '数据截至',
+                      children: receipt.dataAsOf ?? receipt.watermark ?? '未知',
+                    },
+                    { key: 'value', label: '值', children: receipt.value },
+                  ]}
+                />
+                {receipt.consistent === true ? (
+                  <Alert
+                    style={{ marginTop: 12 }} type="success" showIcon
+                    message={`按日合计 ${receipt.seriesSum} 与合计值一致`}
+                  />
+                ) : receipt.consistent === false ? (
+                  <Alert
+                    style={{ marginTop: 12 }} type="error" showIcon
+                    message="按日合计与合计值不一致，请勿据此复算"
+                  />
+                ) : (
+                  <Alert
+                    style={{ marginTop: 12 }} type="warning" showIcon
+                    message="该指标不提供按日合计校验（不可加或未声明 bizday 粒度）"
+                  />
+                )}
+                {receipt.series !== null && (
+                  <Table
+                    style={{ marginTop: 12 }}
+                    size="small" rowKey="day" pagination={false}
+                    scroll={{ y: 240 }}
+                    columns={[
+                      { title: '营业日', dataIndex: 'day' },
+                      { title: '值', dataIndex: 'formatted', align: 'right' as const },
+                    ]}
+                    dataSource={receipt.series}
+                  />
+                )}
+                <div style={{ marginTop: 12 }}>
+                  <Button
+                    disabled={receipt.series === null} loading={exportBusy}
+                    onClick={() => void downloadReceipt()}
+                  >
+                    下载按日明细 CSV
+                  </Button>
+                </div>
+                {receipt.notes.length > 0 && (
+                  <Typography.Paragraph type="secondary" style={{ fontSize: 12, marginTop: 12 }}>
+                    {receipt.notes.join('；')}
+                  </Typography.Paragraph>
+                )}
+              </>
+            )}
+          </Drawer>
+        </>
       )}
     </Card>
   )
