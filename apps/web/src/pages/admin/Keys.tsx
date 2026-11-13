@@ -38,7 +38,7 @@ export default function AdminKeysPage() {
   return (
     <ConsolePage
       title="API Key"
-      description="本租户全部个人 API Key。这里只可吊销、不可代建——Key 是账号自己的凭据，代建等于把别人的 token 经你手发出去；用户自助创建入口在「我的 Key」页。"
+      description="本租户全部 API Key，只可吊销。创建入口在「我的 Key」。"
     >
       <Card>
       <Table<AdminApiKeyRow>

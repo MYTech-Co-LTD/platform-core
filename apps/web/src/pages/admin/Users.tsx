@@ -171,7 +171,7 @@ export default function AdminUsersPage() {
   return (
     <ConsolePage
       title="成员"
-      description="能登录本后台的账号。禁用立即生效；删除不可恢复。成员只是「人」，能干什么由角色决定——先去「角色」把权限码打包。"
+      description="每人一个账号；禁用立即生效，删除不可恢复。"
       extra={
         <Space wrap>
           <Input.Search

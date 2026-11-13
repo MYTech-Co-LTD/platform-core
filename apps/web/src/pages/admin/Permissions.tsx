@@ -114,7 +114,7 @@ export default function AdminPermissionsPage() {
   return (
     <ConsolePage
       title="权限码授权"
-      description="每个权限码能干什么、现在谁持有。日常成批授权走「角色」；这里只用于给某个人单独补一个码（点行内「授权」）。"
+      description="权限码与持有人。成批授权请用「角色」。"
       extra={
         <Space wrap>
           <Input.Search

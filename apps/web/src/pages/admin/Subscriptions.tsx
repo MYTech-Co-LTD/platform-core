@@ -53,7 +53,7 @@ export default function AdminSubscriptionsPage() {
   return (
     <ConsolePage
       title="我的订阅"
-      description="本租户已开通的模块。订阅由平台运营发放/退订，租户侧只读；退订后对应菜单 1 分钟内自动消失（不用手动清缓存）。"
+      description="已开通的模块，由平台运营发放。"
     >
     <Card>
       <Table<AdminSubscription>

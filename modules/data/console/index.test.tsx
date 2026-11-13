@@ -105,7 +105,7 @@ describe('数据模块 console 入口（URL 选页）', () => {
     })
     render(<RouterProvider router={router} />)
     // 页面标题由宿主统一渲染（#1953 三期：模块不再自画标题），模块测试只断言内容
-    await waitFor(() => expect(screen.getByText('试算：输入一个账号，看他最终能看什么')).toBeTruthy())
+    await waitFor(() => expect(screen.getByText('范围清单')).toBeTruthy())
     expect(router.state.location.pathname).toBe('/console/data/scopes')
   })
 
