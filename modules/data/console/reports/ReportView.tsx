@@ -48,6 +48,7 @@ import type { PeriodSpec, ReportSpec } from '../../domain/report-spec'
 import { toReportPlan, type DeniedPanel } from '../../domain/report-plan'
 import { KpiCard } from './KpiCard'
 import AiTextPanel from './AiTextPanel'
+import { pivotOf } from './cross-table'
 import { RichText } from '../lib/rich-text'
 
 type Panel = ReportSpec['panels'][number]
@@ -307,7 +308,7 @@ function EChart({ option }: { option: EChartsCoreOption }) {
 
 /** 渲染轴：有 slice 时以服务端分组维度为准，否则用面板声明的 dims（两者都是规格声明）。 */
 function dimsOf(panel: Panel): string[] {
-  if (panel.chart === 'text' || panel.chart === 'kpi' || panel.chart === 'ai_text') return []
+  if (panel.chart === 'text' || panel.chart === 'kpi' || panel.chart === 'ai_text' || panel.chart === 'cross_table') return []
   return panel.slice?.dimensions ?? panel.dims
 }
 
@@ -362,6 +363,28 @@ function PanelBody({ panel, result, compares = [] }: { panel: Panel; result: Pan
     )
   }
   if (result.kind === 'error') return <Alert type="error" showIcon message={result.text} />
+  if (panel.chart === 'cross_table') {
+    const data = pivotOf(result, panel.rows, panel.columns, panel.format)
+    if (data.rowLabels.length === 0) {
+      return <Typography.Text type="secondary">没有可展示的数据</Typography.Text>
+    }
+    return (
+      <>
+        <Table
+          size="small" pagination={false} scroll={{ x: 'max-content' }}
+          dataSource={data.rowLabels.map((label) => ({
+            key: label, __label: label,
+            ...Object.fromEntries(data.colLabels.map((c) => [c, data.cells.get(label)?.get(c) ?? '-'])),
+          }))}
+          columns={[
+            { title: '', dataIndex: '__label', fixed: 'left' as const },
+            ...data.colLabels.map((c) => ({ title: c, dataIndex: c, align: 'right' as const })),
+          ]}
+        />
+        <TrustLine result={result} />
+      </>
+    )
+  }
   if (panel.chart === 'table') {
     // table 不进 echarts（图型白名单里它是纯 DOM 呈现）；行值 String 化照原 console/query（站内问数，2026-11-12 退役）的先例。
     // 窄屏（企微内置浏览器 ~390px）：外层 overflowX:auto + scroll.x=max-content 让横向滚动
