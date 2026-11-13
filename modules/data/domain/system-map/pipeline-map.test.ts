@@ -65,6 +65,19 @@ describe('buildPipelineMap', () => {
     expect(m.assets[0]!.pipelines).toHaveLength(2)
   })
 
+  it('契约优先：lemeng/dim_branch 的 staging 是 stg_lemeng_branch（命名约定会误判成断点）', () => {
+    const m = buildPipelineMap({
+      pipelines: [{ id: 'lemeng.dim.branch.l0', lakeKeys: ['lemeng/dim_branch/snapshot=1/all.parquet'] }],
+      schedules: new Map(),
+      contractLakes: new Map([['stg_lemeng_branch', 'lemeng/dim_branch']]),
+      staging: ['stg_lemeng_branch'],
+      marts: [],
+    })
+    expect(m.assets[0]).toMatchObject({ lake: 'lemeng/dim_branch', staging: 'stg_lemeng_branch' })
+    expect(m.orphanStaging).toEqual([])
+    expect(m.warnings).toEqual([])
+  })
+
   it('accountOf：尾段是数字才算账套', () => {
     expect(accountOf('lemeng.x.l0.3120')).toBe('3120')
     expect(accountOf('lemeng.retail.tick.l1')).toBeNull()

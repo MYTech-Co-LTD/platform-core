@@ -17,9 +17,10 @@ import {
 } from '../domain/system-map/map'
 import type { SystemMapInput, SystemMapModel } from '../domain/system-map/map'
 import { buildSystemMapOntology } from '../domain/system-map/ontology'
-import { buildMetricTrail, pipelineIdsOf, stagingRelationsOf } from '../domain/system-map/trail'
+import { buildMetricTrail, lakeStagingFromContracts, pipelineIdsOf, stagingRelationsOf } from '../domain/system-map/trail'
 import { buildPipelineMap } from '../domain/system-map/pipeline-map'
-import { loadPipelines, loadSchedules, rootsOf } from '../domain/pipelines/defs'
+import { loadContracts, loadPipelines, loadSchedules, rootsOf } from '../domain/pipelines/defs'
+import { warehousePool } from '../domain/warehouse'
 import { runSourceFromEnv } from '../domain/pipelines/run-source'
 
 const CACHE_TTL_MS = 10 * 60 * 1000
@@ -95,29 +96,37 @@ export function registerSystemMap(r: ModuleHono, ctx: RouteCtx): void {
 
     const roots = rootsOf(process.env, ctx.repoRoot)
     const loaded = loadPipelines(roots)
+    const loadedContracts = loadContracts(roots)
     const trail = buildMetricTrail(
       result,
       c.req.param('id'),
       [...loaded.defs.values()].map((d) => ({ id: d.id, lakeKeys: d.lakeKeys })),
+      lakeStagingFromContracts(loadedContracts.contracts),
     )
     if (trail === null) return c.json({ error: 'NO_SUCH_METRIC' }, 404)
 
-    // 最近 run：链路里的第一条管线（通常就是写入方）
+    // 最近 run：链路里**所有**管线里挑时间最新的一条（不能只取第一条——同一条链路常有
+    // day/window/tick 多条，字母序第一条未必在跑）
     const pipeIds = pipelineIdsOf(trail)
     const runs = runSourceFromEnv(process.env)
     let lastRun: { runId: string; at: string; status: string; durationMs?: number; error?: string } | null = null
+    let lastRunPipeline: string | null = null
     if (runs !== null && pipeIds.length > 0) {
-      try {
-        const list = await runs.list({ pipelineId: pipeIds[0], limit: 1 })
-        const r0 = list.runs[0]
-        if (r0 !== undefined) {
-          lastRun = {
-            runId: r0.runId, at: r0.startedAt, status: r0.status,
-            ...(r0.durationMs === undefined ? {} : { durationMs: r0.durationMs }),
-            ...(r0.error === undefined ? {} : { error: r0.error }),
+      for (const pid of pipeIds) {
+        try {
+          const list = await runs.list({ pipelineId: pid, limit: 1 })
+          const r0 = list.runs[0]
+          if (r0 === undefined) continue
+          if (lastRun === null || r0.startedAt > lastRun.at) {
+            lastRun = {
+              runId: r0.runId, at: r0.startedAt, status: r0.status,
+              ...(r0.durationMs === undefined ? {} : { durationMs: r0.durationMs }),
+              ...(r0.error === undefined ? {} : { error: r0.error }),
+            }
+            lastRunPipeline = pid
           }
-        }
-      } catch { /* 读不到 ⇒ 缺席（未知 ≠ 没跑过） */ }
+        } catch { /* 读不到 ⇒ 缺席（未知 ≠ 没跑过） */ }
+      }
     } else if (pipeIds.length > 0) {
       trail.notes.push('本服务未配置运行记录挂载（DATA_RUN_DIRS），看不到最近一次跑没跑')
     }
@@ -128,7 +137,9 @@ export function registerSystemMap(r: ModuleHono, ctx: RouteCtx): void {
     let maxBizday: string | null = null
     if (rels.length > 0) {
       try {
-        const pool = ctx.warehouse ?? ctx.pool
+        // 物化钟在**仓库库**（pg_duckdb）；平台库常态没有 load_log ⇒ 用 warehousePool，
+        // 未配置时退回平台池（仍可能缺席，catch 里给 note）。
+        const pool = ctx.warehouse ?? safeWarehousePool() ?? ctx.pool
         const res = await pool.query(
           "select max(materialized_at) as materialized_at, min(max_bizday) as max_bizday from data.load_log where status='ok' and relation = any($1)",
           [rels],
@@ -141,7 +152,7 @@ export function registerSystemMap(r: ModuleHono, ctx: RouteCtx): void {
       }
     }
 
-    trail.runtime = { pipelineId: pipeIds[0] ?? null, lastRun, materializedAt, maxBizday }
+    trail.runtime = { pipelineId: lastRunPipeline ?? pipeIds[0] ?? null, lastRun, materializedAt, maxBizday }
     return c.json({ trail })
   })
 
@@ -158,6 +169,7 @@ export function registerSystemMap(r: ModuleHono, ctx: RouteCtx): void {
     const roots = rootsOf(process.env, ctx.repoRoot)
     const loadedPipelines = loadPipelines(roots)
     const loadedSchedules = loadSchedules(roots)
+    const loadedContracts = loadContracts(roots)
     const models = loadDbtModels(ctx.repoRoot)
     const staging = models.filter((m) => m.name.startsWith('stg_')).map((m) => m.name)
     const marts = models.filter((m) => m.name.startsWith('fct_') || m.name.startsWith('dim_') || m.name.startsWith('recon_'))
@@ -166,6 +178,7 @@ export function registerSystemMap(r: ModuleHono, ctx: RouteCtx): void {
     const map = buildPipelineMap({
       pipelines: [...loadedPipelines.defs.values()].map((d) => ({ id: d.id, lakeKeys: d.lakeKeys })),
       schedules: loadedSchedules.byPipeline,
+      contractLakes: lakeStagingFromContracts(loadedContracts.contracts),
       staging,
       marts,
     })
@@ -195,6 +208,11 @@ export function registerSystemMap(r: ModuleHono, ctx: RouteCtx): void {
     pipelineCache.set('global', { body, expiresAt: now + PIPELINE_CACHE_TTL_MS })
     return c.json(body)
   })
+}
+
+/** warehousePool 在未配 `DATA_WAREHOUSE_URL` 时会抛——这里吞掉，交给 catch 的 note。 */
+function safeWarehousePool(): ReturnType<typeof warehousePool> | null {
+  try { return warehousePool() } catch { return null }
 }
 
 const PIPELINE_CACHE_TTL_MS = 60 * 1000

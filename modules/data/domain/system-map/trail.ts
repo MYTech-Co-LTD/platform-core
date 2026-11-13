@@ -43,6 +43,25 @@ export function lakeOfStaging(staging: string): string | null {
   return m === null ? null : `${m[1]}/${m[2]}`
 }
 
+/**
+ * 契约声明↔staging 的权威对照：`domain` + `table` + `layout.prefix`。
+ * 命名约定在 `dim_*` 上会失效（`lemeng/dim_branch` 的 staging 叫 `stg_lemeng_branch`），
+ * 所以**先查契约**、查不到再退回命名约定（并标 inferred）。
+ */
+export interface ContractLike { domain: string; table: string; doc: unknown }
+
+export function lakeStagingFromContracts(contracts: readonly ContractLike[]): Map<string, string> {
+  const out = new Map<string, string>()
+  for (const c of contracts) {
+    if (c.domain === '' || c.table === '') continue
+    const doc = (typeof c.doc === 'object' && c.doc !== null ? c.doc : {}) as { layout?: { prefix?: unknown } }
+    const prefix = typeof doc.layout?.prefix === 'string' ? doc.layout.prefix : ''
+    if (prefix === '') continue
+    out.set(`stg_${c.domain}_${c.table}`, prefix)
+  }
+  return out
+}
+
 /** 管线 sink key ⇒ 湖前缀（取前两段；`${ENV:...}` 段或过短 key 不算）。 */
 export function lakePrefixOfKey(key: string): string | null {
   if (key.includes('${')) {
@@ -67,6 +86,7 @@ export function buildMetricTrail(
   model: SystemMapModel,
   metricId: string,
   pipelines: readonly TrailPipelineRef[],
+  contractLakes: ReadonlyMap<string, string> = new Map(),
 ): MetricTrail | null {
   const metric = model.metrics.find((m) => m.id === metricId)
   if (metric === undefined) return null
@@ -96,15 +116,16 @@ export function buildMetricTrail(
     }
     for (const stg of stagings) {
       push({ kind: 'staging', label: stg.name, detail: 'dbt staging 模型', from: 'declared' })
-      const lake = lakeOfStaging(stg.name)
-      if (lake === null) continue
+      const declaredLake = contractLakes.get(stg.name)
+      const lake = declaredLake ?? lakeOfStaging(stg.name)
+      if (lake === null || lake === undefined) continue
       const refs = pipelinesOfLake(lake)
       push({
         kind: 'lake',
         label: lake,
         detail: refs.length > 0 ? `${refs.length} 条管线写入` : '没有在仓内管线里找到写入方',
-        // 管线定义里命中 = 声明锚；没命中 ⇒ 只有命名约定，标明是推断
-        from: refs.length > 0 ? 'declared' : 'inferred',
+        // 契约命中 or 管线定义命中 = 声明锚；都没有 ⇒ 只有命名约定，标明是推断
+        from: declaredLake !== undefined || refs.length > 0 ? 'declared' : 'inferred',
       })
       for (const p of refs) push({ kind: 'pipeline', label: p.id, detail: 'duckle 管线', from: 'declared' })
     }
