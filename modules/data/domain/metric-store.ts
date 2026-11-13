@@ -173,7 +173,7 @@ export interface MetricRow extends MetricDef {
    * 不可见时面板级降级；`report` = 报表里存在任一不可见指标就**整表 404**（防「总数 − 其他」反推）。
    * 恒有值（`toMetricRow` 归一：列缺省/坏值 ⇒ `panel`）——列是 `not null default 'panel'`。
    * **唯一写入面是变更单 payload**（create/update 走 `MetricOwnership.reveal`，
-   * declaration/override 走各自 payload 顶层）：语义与归属四字段同一条「缺席 = 保留既有」，
+   * declaration/override 走各自 payload 顶层）：语义与归属/策略字段同一条「缺席 = 保留既有」，
    * 新行缺席由列默认落 `panel`。L1 物化路径不写（平台声明没有这个概念，恒 `panel`）。
    * 类型保持可选以便历史夹具不补字段。
    */
@@ -184,7 +184,7 @@ export interface MetricRow extends MetricDef {
 export type MetricReveal = 'panel' | 'report'
 
 /**
- * L2 归属四字段的**可选写面形状**（P1 Task 3，spec §5.1）：create/update 变更单 payload 顶层的
+ * L2 归属/策略字段的**可选写面形状**（P1 Task 3，spec §5.1；`reveal` P6 Task 4 并入）：create/update 变更单 payload 顶层的
  * `entity/synonyms/ownerDept/variantNote` 经 adoptChange → writeL2Declaration opts 透传到这里。
  * **缺席键 = 保留行上既有值**（upsert 冲突分支 coalesce）——「一次不带归属的普通写不得把
  * 已声明的归属静默洗掉」。
@@ -487,7 +487,7 @@ export async function upsertMetric(
   /**
    * `keepDraft`：确认生效路径专用——草稿的清除由 confirm 的**内容条件清除**收尾（竞态守卫），这里别抢。
    * `basis`：测度档（W2，034）。缺省 `l1_tree`（树形）；私有测度创建时显式传 `column_agg`。
-   * `ownership`：归属四字段（047，P1 Task 3，spec §5.1）——变更单采纳路径经 writeL2Declaration
+   * `ownership`：归属/策略字段（047，P1 Task 3；`reveal` P6 Task 4 并入，spec §5.1）——变更单采纳路径经 writeL2Declaration
    *   透传；**缺席键 = 保留行上既有值**（冲突分支 coalesce），显式清空不是 P1 的案例。
    */
   opts?: { keepDraft?: boolean; basis?: MetricBasis; ownership?: MetricOwnership },
@@ -519,7 +519,7 @@ export async function upsertMetric(
        --   ⚠️ 例外：确认生效路径（keepDraft）不在这里清——草稿的清除由 confirm 的内容条件
        --      清除收尾，这里抢清会把「load→清」的竞态守卫架空（并发新稿被静默吞掉）。
        ${keepDraft ? '' : 'draft_spec     = null,'}
-       -- ★ 归属四列（047，P1 Task 3）：**缺席 = 保留**（coalesce 落到行上现值）——upsert 是
+       -- ★ 归属/策略列（047，P1 Task 3；reveal P6 Task 4 并入）：**缺席 = 保留**（coalesce 落到行上现值）——upsert 是
        --   内容写，一次不带归属的普通写（PUT/draft 确认/私有测度复活）不得把已声明的归属
        --   静默洗掉（与 created_at 不碰同一条纪律）。synonyms 的「缺席」以 NULL 表达
        --   （参数侧缺席键写 NULL 而非 '[]'，见下方参数注释）——jsonb 列可空，读侧归一成 []。
@@ -527,7 +527,7 @@ export async function upsertMetric(
        synonyms     = coalesce(excluded.synonyms, data.metrics.synonyms),
        owner_dept   = coalesce(excluded.owner_dept, data.metrics.owner_dept),
        variant_note = coalesce(excluded.variant_note, data.metrics.variant_note),
-       -- ★ 泄露策略（P6 Task 4）：与归属四列同一条「缺席 = 保留」；但列是 not null，
+       -- ★ 泄露策略（P6 Task 4）：与归属/策略字段同一条「缺席 = 保留」；但列是 not null，
        --   VALUES 侧已把缺席 coalesce 成 'panel' ⇒ 这里**不能用 excluded.reveal**
        --   （那会把既有 report 静默洗回 panel），必须回看**原始参数** $16（缺席 = NULL）。
        reveal       = coalesce($16, data.metrics.reveal),
@@ -535,7 +535,7 @@ export async function upsertMetric(
     [
       org, def.id, def.title, def.description, def.requiredScope,
       def.subjectColumn, def.selectSql, def.groupBy, JSON.stringify(def.params), updatedBy, basis,
-      // 归属四列：缺席键一律 NULL（= 冲突分支「保留」信号；新行则落 NULL = 无归属）。
+      // 归属/策略字段：缺席键一律 NULL（= 冲突分支「保留」信号；新行则落 NULL = 无归属/列默认）。
       // synonyms 刻意**不在缺席时写 '[]'**——'[]' 非 NULL，coalesce 挡不住，会把既有同义词洗成空。
       own?.entity ?? null,
       own?.synonyms === undefined ? null : JSON.stringify(own.synonyms),

@@ -16,8 +16,9 @@
 **判红的两类结果**（P6 Task 1；门结果从字符串提示升级为带类别的 issue）：
 
 - `violations`：受众确实比面板指标可见范围更宽（`REPORT_METRIC_SCOPE_MISMATCH` 同源判据）；
-- `issues`：**判不了**——面板指标在词表里查不到（归档/删除/未同步），或 Metabase 无面板指标
-  无法判定。判不了 ≠ 干净：巡检对它同样 **exit 1**，输出独立的 `⚠ [issue]` 段。
+- `issues`：**判不了**——面板指标在词表里查不到（归档/删除/未同步）。判不了 ≠ 干净：巡检对它
+  同样 **exit 1**，输出独立的 `⚠ [issue]` 段。Metabase 行**只计数、不进判据**，故巡检不会产出
+  `no_panel_metrics`——该 reason 只出现在发布回包 `scopeIssues`（见下方原因表）。
 
 发布门的 issue **不参与 409 判定**（只有 `panels` 违规才 409）。`scopeIssues` 是**诊断字段**，
 实际附在失败路径（400/409）回包上；`200` 路径只有在「门读完目录、`publishVersion` 复核前指标

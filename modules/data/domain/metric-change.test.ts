@@ -690,7 +690,7 @@ describePg('P6 Task 2 修复轮：采纳即授权（creator ∪ data:manage）',
 // ── P6 Task 4（2026-11-14）：reveal 写入面 —— 变更单 payload ──────────────────────────
 // `reveal` 是 P1（047）就有的列（CHECK panel|report，default panel），P5 只接了读侧；
 // 本波让 create/update/override/declaration 四档 payload 都能带它，采纳时落列。
-// 语义：新行缺席 ⇒ 'panel'；update 缺席 ⇒ 保留既有（与归属四字段同一条 coalesce 纪律）。
+// 语义：新行缺席 ⇒ 'panel'；update 缺席 ⇒ 保留既有（与归属/策略字段同一条 coalesce 纪律）。
 describePg('P6 Task 4：reveal 随变更单落列', () => {
   const RORG = 'org-p6-reveal'
   const OVR_L1 = {

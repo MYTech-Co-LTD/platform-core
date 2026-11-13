@@ -98,7 +98,7 @@ export async function writeL2Declaration(
   /**
    * 透传 upsertMetric：
    * · `keepDraft`：确认生效路径（草稿由 confirm 的条件清除收尾，见那里）。
-   * · `ownership`（047，P1 Task 3）：归属四字段，**只来自变更单采纳路径**（adoptChange 从
+   * · `ownership`（047，P1 Task 3；`reveal` P6 Task 4 并入）：归属/策略字段，**只来自变更单采纳路径**（adoptChange 从
    *   payload 顶层解出；HTTP 的 PUT / MCP 的 customize 直写面不带 ⇒ 归属按 upsert 的
    *   「缺席 = 保留」语义原样留存）。归属不进 `L2DeclarationBody`——它随**行**不随声明，
    *   声明形状契约（zod/strict）不为它开口子。
