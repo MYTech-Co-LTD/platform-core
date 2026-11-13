@@ -174,6 +174,8 @@ const NarrativeBody = z.object({
   panelIndex: z.number().int().min(0),
   period: PeriodSchema,
   branchNum: z.string().min(1).max(64).optional(),
+  /** 报表共享筛选的运行期取值（V4）：与屏幕上的筛选同源，facts 不得比屏幕多看/少看。 */
+  filters: z.record(z.string().max(64), z.unknown()).optional(),
   /** 钉住历史快照（仍要求报表处于已发布状态，同 `GET /published-spec?v=`）。 */
   version: z.number().int().positive().optional(),
   preview: z.literal('draft').optional(),
@@ -1499,6 +1501,7 @@ export function registerReports(r: ModuleHono, ctx: RouteCtx): void {
       body.panelIndex,
       body.period,
       body.branchNum,
+      body.filters,
     )
 
     // 未配 LLM ⇒ null（模板回退，`fallback:true`）——不是错误路径。

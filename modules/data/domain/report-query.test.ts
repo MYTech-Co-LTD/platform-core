@@ -32,6 +32,26 @@ describe('panelArgsOf', () => {
     expect(panelArgsOf(fixed, RANGE, '93')).toEqual({ branch_num: '93' })
   })
 
+  it('共享筛选（V4）：筛选值覆盖面板 args；门店与期间仍在最后', () => {
+    const args = panelArgsOf(line, RANGE, '99', {
+      defs: [
+        { key: 'region', column: 'region', label: '区域', type: 'string' },
+        { key: 'branch_num', column: 'branch_num', label: '门店', type: 'string' },
+      ],
+      values: { region: 'B', branch_num: '77' },
+    })
+    expect(args).toEqual({
+      region: 'B',
+      branch_num: '99',                       // 请求期门店覆盖优先于筛选值
+      bizday: { from: '2026-10-01', to: '2026-10-19' },
+    })
+    // 空值不写入（用户清空筛选 = 回到面板默认）
+    expect(panelArgsOf(line, null, undefined, {
+      defs: [{ key: 'region', column: 'region', label: '区域', type: 'string' }],
+      values: { region: '' },
+    })).toEqual({ branch_num: '92' })
+  })
+
   it('branch 只覆盖声明过的面板；无期间 ⇒ 不动 bizday', () => {
     // 未声明 branch_num 的面板：branchNum 不注入（筛选栏只在规格 args 声明过的键上覆盖）
     const noBranch: DataPanel = { ...line, args: { system_book: '3120' } }

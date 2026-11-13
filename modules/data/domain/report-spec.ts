@@ -137,8 +137,19 @@ const AiTextPanel = z.object({
   span: z.number().int().min(1).max(24).default(24),
 }).strict()
 
+/** 报表级共享筛选（R3 V4）：声明一次，运行时把值并入每个面板的 args（面板 args 会被覆盖）。 */
+export const ReportFilterSchema = z.object({
+  key: z.string().min(1).max(64),
+  column: z.string().min(1).max(128),
+  label: z.string().trim().min(1).max(64),
+  type: z.enum(['string', 'number', 'date_range']),
+}).strict()
+
+export type ReportFilter = z.infer<typeof ReportFilterSchema>
+
 export const ReportSpecSchema = z.object({
   period: PeriodSchema.optional(),
+  filters: z.array(ReportFilterSchema).max(20).optional(),
   panels: z.array(z.discriminatedUnion('chart', [LinePanel, BarPanel, TablePanel, KpiPanel, TextPanel, AiTextPanel])).max(MAX_PANELS),
 }).strict()
 
@@ -154,13 +165,6 @@ const V2Dataset = z.object({
   dims: z.array(z.string().min(1).max(64)).max(MAX_DIMS).default([]),
   args: ArgsSchema,
   timeScoped: z.boolean().default(true),
-}).strict()
-
-const V2Filter = z.object({
-  key: z.string().min(1).max(64),
-  column: z.string().min(1).max(128),
-  label: z.string().trim().min(1).max(64),
-  type: z.enum(['string', 'number', 'date_range']),
 }).strict()
 
 const V2KpiBlock = z.object({
@@ -209,7 +213,7 @@ const V2AiTextBlock = z.object({
 export const ReportSpecV2Schema = z.object({
   ir: z.literal(2),
   period: PeriodSchema.optional(),
-  filters: z.array(V2Filter).max(20).optional(),
+  filters: z.array(ReportFilterSchema).max(20).optional(),
   datasets: z.array(V2Dataset).min(1).max(MAX_PANELS),
   blocks: z.array(z.discriminatedUnion('type', [
     V2KpiBlock, V2ChartBlock, V2TableBlock, V2TextBlock, V2AiTextBlock,
@@ -257,7 +261,11 @@ export function flattenReportSpecV2(v2: ReportSpecV2): { ok: true; spec: ReportS
       })
     }
   }
-  return parseReportSpec({ ...(v2.period === undefined ? {} : { period: v2.period }), panels })
+  return parseReportSpec({
+    ...(v2.period === undefined ? {} : { period: v2.period }),
+    ...(v2.filters === undefined ? {} : { filters: v2.filters }),
+    panels,
+  })
 }
 
 /**
@@ -269,8 +277,6 @@ export function parseReportInput(input: unknown): { ok: true; spec: ReportSpec; 
   if (ir === 2) {
     const parsed = ReportSpecV2Schema.safeParse(input)
     if (!parsed.success) return { ok: false, code: 'INVALID_SPEC' }
-    // 共享筛选在 V4 才接运行期；非空时拒绝，避免「声明了却不生效」的静默失真。
-    if ((parsed.data.filters ?? []).length > 0) return { ok: false, code: 'IR_V2_FILTERS_UNSUPPORTED' }
     const flat = flattenReportSpecV2(parsed.data)
     return flat.ok ? { ok: true, spec: flat.spec, ir: 2 } : flat
   }

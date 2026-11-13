@@ -55,6 +55,28 @@ describe('lintReportSpec', () => {
     expect(lintBlocksPublish(issues)).toBe(false)
   })
 
+  it('共享筛选（V4）：未绑定到面板 / 覆盖面板 args ⇒ warn', () => {
+    const spec = specOf({
+      period: { mode: 'day', day: '2026-11-09' },
+      filters: [
+        { key: 'region', column: 'region', label: '区域', type: 'string' },
+      ],
+      panels: [kpi({ args: { branch_num: '92' } })],
+    })
+    const issues = lintReportSpec(spec)
+    expect(codes(issues)).toContain('FILTER_KEY_UNBOUND')
+
+    const bound = specOf({
+      period: { mode: 'day', day: '2026-11-09' },
+      filters: [{ key: 'branch_num', column: 'branch_num', label: '门店', type: 'string' }],
+      panels: [kpi({ args: { branch_num: '92' } })],
+    })
+    const i2 = lintReportSpec(bound)
+    expect(codes(i2)).toContain('FILTER_KEY_OVERRIDES_PANEL')
+    expect(codes(i2)).not.toContain('FILTER_KEY_UNBOUND')
+    expect(lintBlocksPublish(i2)).toBe(false)   // 两条都是 warn
+  })
+
   it('timeScoped=false 声明对比 ⇒ 错（对比无定义）', () => {
     const spec = specOf({
       period: { mode: 'day', day: '2026-11-09' },

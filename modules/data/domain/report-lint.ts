@@ -103,6 +103,31 @@ export function lintReportSpec(spec: ReportSpec): LintIssue[] {
     })
   }
 
+  // ⑥ 共享筛选（V4）：声明了却没有任何面板带同名 args ⇒ 运行期会被授权层判 unknown_param
+  const filters = spec.filters ?? []
+  if (filters.length > 0) {
+    const declaredKeys = new Set<string>()
+    for (const { panel } of dataPanels) {
+      for (const k of Object.keys(panel.args ?? {})) declaredKeys.add(k)
+    }
+    const unbound = filters.filter((f) => !declaredKeys.has(f.key))
+    if (unbound.length > 0) {
+      issues.push({
+        level: 'warn',
+        code: 'FILTER_KEY_UNBOUND',
+        message: `筛选 ${unbound.map((f) => f.key).join('、')} 未被任何面板声明；请确认指标参数支持它，否则查询会被拒`,
+      })
+    }
+    const override = filters.filter((f) => declaredKeys.has(f.key))
+    if (override.length > 0) {
+      issues.push({
+        level: 'warn',
+        code: 'FILTER_KEY_OVERRIDES_PANEL',
+        message: `筛选 ${override.map((f) => f.key).join('、')} 与面板 args 同名：运行期筛选值会覆盖面板默认值`,
+      })
+    }
+  }
+
   // ⑤ 没有声明期间却有按时间取数的面板：前端会兜底成「昨天」，与作者意图可能不符。
   if (!hasPeriod && dataPanels.some(({ panel }) => panel.timeScoped !== false)) {
     issues.push({
