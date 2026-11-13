@@ -60,12 +60,9 @@ const METRIC_FACE: readonly ManageFaceTool[] = [
     inputSchema: { type: 'object', properties: {}, required: [] },
   }),
   faceOf('metric', 'customize_metric', true, {
-    description: [
-      '基于已有平台口径定义本租户口径：裁剪 / 改名 / 收窄可见维度 / 加过滤（refine），',
-      '或用**受限算术**把多条口径组合成新测度（expr，例如两条口径相除得客单价）。',
-      '**只能基于已有口径裁剪，不能凭空造新指标**：baseMetric 必须是 list_metrics 里出现的',
-      '平台口径 id，expr 里的 ref 也只能指向它们；可用维度以基底为准（越界会被拒）。',
-    ].join(''),
+    // 提案版语义（P4 Task 1，spec §11）：只提案不生效；refine/expr 双档细节删（入参 schema 自描述），
+    // 正文只留「提案 + 指路 list_metric_changes」与各一句入参——预算门禁（check-mcp-toolface）实测。
+    description: '提交指标变更提案（基于已有平台口径裁剪，或用受限算术组合多条口径；**不能凭空造新指标**）。**不直接生效**，等待人工采纳；状态与驳回原因见 list_metric_changes。',
     inputSchema: {
       type: 'object',
       properties: {
@@ -81,7 +78,7 @@ const METRIC_FACE: readonly ManageFaceTool[] = [
     },
   }),
   faceOf('metric', 'delete_custom_metric', true, {
-    description: '删除本租户自定义的口径。**平台口径不可删**（会被拒）。',
+    description: '提交删除本租户自定义口径的提案（平台口径不可删，会被拒）。**不直接生效**，等待人工采纳；状态与驳回原因见 list_metric_changes。',
     inputSchema: {
       type: 'object',
       properties: { id: { type: 'string', description: '口径 id' } },

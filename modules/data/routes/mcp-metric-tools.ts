@@ -19,7 +19,7 @@ import { L2RefineDeclarationSchema, L2ExprDeclarationSchema, ExprNodeSchema, dim
 import { deleteMetricDeclaration, writeL2Declaration } from '../domain/metric-write'
 import type { L2DeclarationBody, MetricWriteOutcome } from '../domain/metric-write'
 import { listChanges, submitChange } from '../domain/metric-change'
-import type { ChangeKind } from '../domain/metric-change'
+import type { ChangeKind, MetricChangeRow, SubmitOutcome } from '../domain/metric-change'
 import { applyPreview, runPreview } from '../domain/metric-change-preview'
 import { analystPool, runWarehouseSqlParams } from '../domain/warehouse'
 import { mutatingAllowed } from '../domain/toolbox/registry'
@@ -85,6 +85,31 @@ const previewExecOf = (deps: McpDeps): PreviewExec =>
       }
 
 const ok = (o: Record<string, unknown>) => ({ text: JSON.stringify({ status: 'ok', ...o }), isError: false })
+
+/**
+ * 提交即试算（P0 终审 F1 的 MCP 内嵌形态；P4 Task 1 抽公共段——customize/delete 落单后走
+ * 同一段，不复制）：成功 ⇒ preview_ready（控制台的采纳按钮只认这个态，见 console/changes）；
+ * 失败 ⇒ preview_failed——单据仍可见、可驳，不是死单。生效只发生在人采纳（adoptChange）之后，
+ * 本面不接 adopt/reject。试算任何环节出意外都不 error 工具调用：单已立，人能在控制台重跑
+ * 试算或驳回（单据保留提交态）。
+ */
+const previewStateOf = async (deps: McpDeps, change: MetricChangeRow) => {
+  try {
+    const preview = await runPreview({ pool: deps.pool, execute: previewExecOf(deps) }, deps.org, change)
+    await applyPreview(deps.pool, change.id, preview)
+    return preview.ok ? 'preview_ready' : 'preview_failed'
+  } catch (e) {
+    console.warn('[data] 指标变更单试算意外失败（单据保留提交态，仍可驳回）:',
+      e instanceof Error ? e.message : e)
+    return change.status
+  }
+}
+
+/** submitChange 结局 → 工具回包（三个提交口共用）：refused 原样给码；成功 = {changeId, state}。 */
+const submitResultOf = async (deps: McpDeps, out: SubmitOutcome): Promise<McpToolResult> => {
+  if (!out.ok) return { text: JSON.stringify({ status: 'refused', error: out.error }), isError: true }
+  return ok({ changeId: out.change.id, state: await previewStateOf(deps, out.change) })
+}
 
 /** 域层判别式结果 → 工具级错误。`http` **不出现在工具面**（那是 HTTP 语义），只留可解释的 error 码。 */
 const refused = (r: MetricWriteOutcome) => ({
@@ -157,21 +182,7 @@ export const metricTools: McpToolGroup = {
       const out = await submitChange(deps.pool, deps.org,
         { userId: requester.userId, channel: 'mcp' },
         parsed.data.metricId, parsed.data.kind as ChangeKind, parsed.data.payload ?? {})
-      if (!out.ok) return { text: JSON.stringify({ status: 'refused', error: out.error }), isError: true }
-      // 提交即试算（与 HTTP 面 POST /metric-changes 同契，P0 终审 F1）：试算成功 ⇒ preview_ready
-      //（控制台的采纳按钮只认这个态，见 console/changes）；失败 ⇒ preview_failed——单据仍可见、
-      // 可驳，不是死单。生效依旧只发生在人采纳（adoptChange）之后，本工具不接 adopt/reject。
-      // 试算任何环节出意外都不 error 工具调用：单已立，人能在控制台重跑试算或驳回。
-      let state = out.change.status
-      try {
-        const preview = await runPreview({ pool: deps.pool, execute: previewExecOf(deps) }, deps.org, out.change)
-        await applyPreview(deps.pool, out.change.id, preview)
-        state = preview.ok ? 'preview_ready' : 'preview_failed'
-      } catch (e) {
-        console.warn('[data] submit_metric_change 试算意外失败（单据保留提交态，仍可驳回）:',
-          e instanceof Error ? e.message : e)
-      }
-      return ok({ changeId: out.change.id, state })
+      return submitResultOf(deps, out)
     }
 
     if (name === 'list_metric_changes') {
@@ -198,6 +209,20 @@ export const metricTools: McpToolGroup = {
       } else {
         body = { ...decl, op: { kind: 'refine' } }
       }
+      // 回滚开关（P4 Task 1，spec §14）：缺省（!== 'off'）⇒ 只提案——落变更单（P0 已建），
+      // 等待人工采纳，本租户已有生效行 = update 提案、否则 = create 提案（与 submitChange 的
+      // create 撞 id 判据同一条廉价查询，语义对应旧直写的 upsert 两分支）。kind 判据故意只此
+      // 一查：L1 保留 id / 基底不存在等编译类判据移到提交后的试算与采纳期（提案失败在人面可读，
+      // 见 list_metric_changes 的 preview.error），不在这里复刻第二份域层判定。
+      // 注：mutating 总闸（DATA_MCP_ALLOW_MUTATING）本工具的直写路径从来不吃（不对称是
+      // P1 缓办④，涉总闸语义、P4 明确不做）⇒ 提案路径同样不加闸——提案不生效，只弱化不强化。
+      if (process.env.DATA_METRIC_REVIEW_MODE !== 'off') {
+        const exists = await deps.pool.query('select 1 from data.metrics where org = $1 and id = $2', [deps.org, id])
+        const kind: ChangeKind = (exists.rowCount ?? 0) > 0 ? 'update' : 'create'
+        return submitResultOf(deps, await submitChange(
+          deps.pool, deps.org, { userId: requester.userId, channel: 'mcp' }, id, kind, body))
+      }
+      // 以下为应急回滚路径（DATA_METRIC_REVIEW_MODE='off'），原样保留——一个发布周期后删。
       const r = await writeL2Declaration(writeDeps, deps.org, id, body)
       return r.ok ? ok({ id }) : refused(r)
     }
@@ -205,6 +230,13 @@ export const metricTools: McpToolGroup = {
     // delete_custom_metric（唯一剩下的认领工具；上面的判定已保证 name 合法）
     const parsed = DeleteArgs.safeParse(args)
     if (!parsed.success) return refused({ ok: false, http: 400, error: 'INVALID_BODY' })
+    // 回滚开关（P4 Task 1，spec §14）：缺省落删除提案（kind=delete，试算 = 编译「当前生效口径」，
+    // 生效只发生在人采纳之后）；'off' ⇒ 旧直删路径原样保留。
+    if (process.env.DATA_METRIC_REVIEW_MODE !== 'off') {
+      return submitResultOf(deps, await submitChange(
+        deps.pool, deps.org, { userId: requester.userId, channel: 'mcp' }, parsed.data.id, 'delete', {}))
+    }
+    // 以下为应急回滚路径（DATA_METRIC_REVIEW_MODE='off'），原样保留——一个发布周期后删。
     const r = await deleteMetricDeclaration(writeDeps, deps.org, parsed.data.id)
     return r.ok ? ok({ id: parsed.data.id }) : refused(r)
   },
