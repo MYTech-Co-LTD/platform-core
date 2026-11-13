@@ -162,3 +162,19 @@ describe('cross_table（R3 组件①）', () => {
     expect(parse({ ...base, slice: { dimensions: ['x'] } }).ok).toBe(false)
   })
 })
+
+describe('waterfall（R3 组件②）', () => {
+  const parse = (panel: unknown) => parseReportSpec({ panels: [panel] })
+  const base = { chart: 'waterfall', title: '门店贡献', metricId: 'm:sales', dims: ['branch_name'] }
+
+  it('缺省 compare=prev_period、format=number、span=24', () => {
+    const out = parse(base)
+    expect(out.ok).toBe(true)
+    if (out.ok) expect(out.spec.panels[0]).toMatchObject({ chart: 'waterfall', compare: 'prev_period', format: 'number', span: 24 })
+  })
+
+  it('维度必须恰好 1 个', () => {
+    expect(parse({ ...base, dims: [] }).ok).toBe(false)
+    expect(parse({ ...base, dims: ['a', 'b'] }).ok).toBe(false)
+  })
+})

@@ -67,6 +67,8 @@ export function panelQueryBodyOf(
   if (p.chart === 'cross_table') {
     return { metricId: p.metricId, args, dimensions: [...p.rows, p.columns] }
   }
+  // 瀑布：单维度分组（对比期由调用方换 bizday 再查一次）。
+  if (p.chart === 'waterfall') return { metricId: p.metricId, args, dimensions: p.dims }
   const body: Record<string, unknown> = { metricId: p.metricId, args }
   const slice = p.slice
   if (slice === undefined) return body
@@ -101,7 +103,7 @@ export interface ChartCompareRange {
 }
 
 export function chartCompareRangesOf(
-  p: Extract<DataPanel, { chart: 'line' | 'bar' }>,
+  p: Extract<DataPanel, { chart: 'line' | 'bar' | 'waterfall' }>,
   range: DateRange | null,
   periodMode: PeriodSpec['mode'] | undefined,
 ): ChartCompareRange[] {
@@ -115,7 +117,7 @@ export function chartCompareRangesOf(
   } else {
     out.push({ key: 'prev', label: mode === 'prev_month' ? '上月同期' : '上期', range: previousRangeOf(range, mode) })
   }
-  if (p.compareYoY === true && p.compare !== 'prev_year') {
+  if ('compareYoY' in p && p.compareYoY === true && p.compare !== 'prev_year') {
     out.push({ key: 'yoy', label: '去年同期', range: yearAgoRangeOf(range) })
   }
   // periodMode 目前不参与（auto 的月度语义已在 KPI 侧）；保留参数以便后续对齐。

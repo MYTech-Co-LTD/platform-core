@@ -9,7 +9,7 @@
 //     「渲染器能力」与「平台代码」脱钩 ⇒ 库里加了图型而渲染器不认 = **静默空白**。
 import { z } from 'zod'
 
-export const CHART_TYPES = ['line', 'bar', 'table', 'cross_table', 'kpi', 'text', 'ai_text'] as const
+export const CHART_TYPES = ['line', 'bar', 'table', 'cross_table', 'waterfall', 'kpi', 'text', 'ai_text'] as const
 export const MAX_PANELS = 24
 export const MAX_DIMS = 4
 export const MAX_TEXT = 2000
@@ -104,6 +104,22 @@ const CrossTablePanel = z.object({
   timeScoped: z.boolean().default(true),
 }).strict()
 
+/**
+ * 瀑布图（R3 组件②）：**环比的差异分解**。每根 = 某维度值对「本期 − 上期」的贡献，
+ * 最后一根 = 合计变化（校验位）。维度固定 1 个（多维度会让贡献不可读）。
+ */
+const WaterfallPanel = z.object({
+  chart: z.literal('waterfall'),
+  title: z.string().trim().min(1).max(120),
+  metricId: z.string().min(1).max(128),
+  args: ArgsSchema,
+  dims: z.array(z.string().min(1).max(64)).length(1),
+  compare: z.enum(['prev_period', 'prev_month']).default('prev_period'),
+  format: z.enum(['currency', 'number', 'percent']).default('number'),
+  span: z.number().int().min(1).max(24).default(24),
+  timeScoped: z.boolean().default(true),
+}).strict()
+
 const TablePanel = z.object({
   chart: z.literal('table'), ...metricBase,
   dims: z.array(z.string().min(1).max(64)).max(MAX_DIMS).default([]),
@@ -168,7 +184,7 @@ export type StoredReportSpec = ReportSpec | ReportSpecV2
 export const ReportSpecSchema = z.object({
   period: PeriodSchema.optional(),
   filters: z.array(ReportFilterSchema).max(20).optional(),
-  panels: z.array(z.discriminatedUnion('chart', [LinePanel, BarPanel, TablePanel, CrossTablePanel, KpiPanel, TextPanel, AiTextPanel])).max(MAX_PANELS),
+  panels: z.array(z.discriminatedUnion('chart', [LinePanel, BarPanel, TablePanel, CrossTablePanel, WaterfallPanel, KpiPanel, TextPanel, AiTextPanel])).max(MAX_PANELS),
 }).strict()
 
 
