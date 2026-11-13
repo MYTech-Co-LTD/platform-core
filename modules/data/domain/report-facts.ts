@@ -30,6 +30,7 @@ import {
   panelArgsOf, panelQueryBodyOf, type CoverageInfo, type DataPanel,
 } from './report-query'
 import { periodRangeOf } from './report-period'
+import { toReportPlan } from './report-plan'
 import { analystPool, runWarehouseSqlParams } from './warehouse'
 import { formatDelta, formatValue } from './report-format'
 import type { AiTextPanel, KpiPanel, PeriodSpec, ReportSpec } from './report-spec'
@@ -359,11 +360,18 @@ export async function buildFacts(
   period: PeriodSpec,
   branchNum?: string,
 ): Promise<FactBundle> {
-  const ai = spec.panels[panelIndex]
-  if (ai === undefined || ai.chart !== 'ai_text') throw new Error('NOT_AI_TEXT_PANEL')
+  // V3：面板清单统一从 plan 取。降级占位符（不可见指标）**原位跳过**，不再可能被
+  // 误当成数据面板（占位符没有 chart 字段，旧写法 `p.chart !== 'text'` 会放行它）。
+  const plan = toReportPlan(spec)
+  const aiEntry = plan.panels[panelIndex]
+  if (aiEntry === undefined || aiEntry.kind !== 'ai_text') throw new Error('NOT_AI_TEXT_PANEL')
+  const ai = aiEntry.panel as AiTextPanel
+  const realPanels = plan.panels
+    .filter((p) => p.kind !== 'denied')
+    .map((p) => p.panel as ReportSpec['panels'][number])
 
   const range = periodRangeOf(period, new Date())
-  const dataPanels = spec.panels.filter(
+  const dataPanels = realPanels.filter(
     (p): p is DataPanel => p.chart !== 'text' && p.chart !== 'ai_text',
   )
   const dates = [range.from, range.to]
@@ -379,7 +387,7 @@ export async function buildFacts(
   // 指标格式：bar/table/line 面板本身不声明 format；同名 KPI 的 format 是作者的口径声明，
   // 用它来格式化拆解值与日极值（否则金额会丢尾零：1,254.6 / 1,136）。无同名 KPI ⇒ number。
   const formatByMetric = new Map<string, KpiPanel['format']>()
-  for (const panel of spec.panels) {
+  for (const panel of realPanels) {
     if (panel.chart === 'kpi' && !formatByMetric.has(panel.metricId)) {
       formatByMetric.set(panel.metricId, panel.format)
     }
@@ -529,7 +537,7 @@ export async function buildFacts(
   for (const d of [daily.min, daily.max]) if (d !== null) addNumber(d.value)
 
   const dataAsOf = earliestDataAsOf(asOfList)
-  const kpiArgs = spec.panels.find((p) => p.chart === 'kpi')
+  const kpiArgs = realPanels.find((p) => p.chart === 'kpi')
   const reportSystemBook = kpiArgs !== undefined && typeof kpiArgs.args?.['system_book'] === 'string'
     ? kpiArgs.args['system_book'] : null
   // 根因探针只在 `focus='root_cause'` 时跑：overview 的既有行为/缓存键一字不动。
@@ -579,7 +587,7 @@ export async function buildFacts(
       const prev = dailyReview.comparisons.yesterday?.baseline
         ?? dailyReview.comparisons.mtdAvg.baseline
       const syntheticKpis: FactKpi[] = []
-      for (const p of spec.panels) {
+      for (const p of realPanels) {
         if (p.chart !== 'kpi') continue
         const isAov = p.metricId === DAILY_REVIEW_METRICS.revenue
           && p.denominatorMetricId === DAILY_REVIEW_METRICS.orders
