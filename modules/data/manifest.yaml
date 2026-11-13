@@ -53,6 +53,11 @@ api:
     # 与 HTML 页共用同一份 `SystemMapModel` 与 10 分钟缓存；形状 = entities + relations
     # （见 domain/system-map/ontology.ts）。HTML 页保留给移动端与旧链接。
     - { method: GET,  path: /system-map/graph, scope: data:query }
+    # 指标链路（2026-11-14）：节点抽屉用——结构（marts/staging/湖/管线）+ 运行态（最近 run/物化钟/水位）。
+    # 运行态有时效，每次现查，不进图缓存的 10 分钟。
+    - { method: GET,  path: /system-map/metrics/:id/trail, scope: data:query }
+    # 管线视角全局图（2026-11-14）：资产（湖前缀）→ staging → marts + 每条管线最近一次 run。
+    - { method: GET,  path: /system-map/pipelines, scope: data:query }
     # 通道 A：系统内问数（SSE 流式；LLM 编排在平台后端）
     - { method: POST, path: /chat,    scope: data:query }
     # MCP 端点（通道 B 的 JSON-RPC 单入口；协议错误自兜，授权仍走同一核心）
@@ -296,6 +301,8 @@ frontend:
     - { path: /console/data/changes, title: 待核对, description: agent 提交的指标变更单；看清试算值与参照值的差异再决定采纳或驳回。, scope: data:manage, entry: ./console/index.tsx }
     # 体系地图（2026-11-13）：从「外链新标签打开的 HTML 页」搬成本页——本体图是主内容。
     - { path: /console/data/system-map, title: 体系地图, description: 从业务对象到源表的完整关系图；点节点看口径与来源。, scope: data:query, entry: ./console/index.tsx }
+    # 管线地图（2026-11-14）：反过来从管线看——资产（湖前缀）→ staging → marts 三层通没通
+    - { path: /console/data/pipelines, title: 管线地图, description: 从管线看数据链路：哪些资产接上了 staging 与 marts，哪一段断了。, scope: data:query, entry: ./console/index.tsx }
   # 移动端「报表中心」（#1369；2026-11-12 起**没有问数 tab**）：报表 / 管理 / 指标；/m 入口卡片按 scope=data:query 过滤——
   # 「谁能看到这个版块」的唯一事实源还是平台 scopes（不造第二套）。dist 由 @data/mobile 构建产
   userApp:

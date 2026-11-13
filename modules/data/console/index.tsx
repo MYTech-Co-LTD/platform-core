@@ -18,6 +18,7 @@ import ScopesPage from './scopes'
 import CandidatesPage from './candidates'
 import ChangesPage from './changes'
 import SystemMapPage from './system-map'
+import PipelinesPage from './pipelines'
 import { useIsMobile } from './lib/useIsMobile'
 
 /** 本模块在宿主壳的挂载基路径（manifest frontend.console 首条 path）。 */
@@ -36,6 +37,8 @@ const TABS = [
   // 体系地图（2026-11-13）：原来是从菜单外链打开的服务端 HTML 页，现在内嵌成本页——
   // 同一套壳与设计 token，本体图（entities + relations）是主内容。
   { key: 'system-map', label: '体系地图' },
+  // 管线地图（2026-11-14）：与体系地图相反的视角——从管线看资产/staging/marts 三层通没通。
+  { key: 'pipelines', label: '管线地图' },
 ] as const
 
 type TabKey = (typeof TABS)[number]['key']
@@ -76,6 +79,7 @@ export default function DataConsolePage() {
     candidates: CandidatesPage,
     changes: ChangesPage,
     'system-map': SystemMapPage,
+    pipelines: PipelinesPage,
   }
   const Active = PAGES[active]
 

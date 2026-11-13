@@ -82,3 +82,34 @@ interface OntologyEdge { from: string; to: string; type: OntologyEdgeType }
 
 - 单测：ontology 投影（去重/悬空/计数）、路由（鉴权/形状/缓存）、页面（KPI、搜索、点节点开抽屉）。
 - 真机：山海实例打开 `/console/data/system-map`，节点数与 `SystemMapModel` 一致，点指标能看到口径与源表。
+
+## 6. 追加（2026-11-14）：链路条 + 管线地图
+
+两个新面（用户定案「b 和 c」）：
+
+### B. 指标链路（体系地图节点抽屉）
+
+`GET /system-map/metrics/:id/trail`（`data:query`）：
+
+- 结构（纯函数 `domain/system-map/trail.ts`）：指标 → marts → staging → 湖前缀 → 管线；
+  每一步标 `from: declared|inferred`——staging 来自 dbt 模型图上溯（声明），
+  湖前缀来自 `stg_<domain>_<table>` ⇔ `<domain>/<table>` 命名约定（约定，且管线 lakeKeys 命中时才升为声明）。
+- 运行态（路由层现查，不进 10 分钟图缓存）：链路管线的最近一次 run（`DATA_RUN_DIRS`）、
+  物化钟与水位（仓库库 `data.load_log`）。三个都可能缺席——缺席一律显示「未知」并带 note，
+  不显示成「正常/没跑过」。
+- UI：指标节点抽屉里多一段「链路」，逐行 kind + label，推断步加「推断」标签。
+
+### C. 管线地图（`/console/data/pipelines`）
+
+`GET /system-map/pipelines`（`data:query`，60 秒缓存）：
+
+- 三层 DAG：资产（湖前缀，来自管线 `snk.minio` key 前两段）→ staging（命名约定 + dbt 模型存在性）
+  → marts（`ref('stg_…')` 反查）。
+- 管线不占一列：挂在资产节点上（119 条管线挤一列必成毛球），点资产看清单
+  （账套 / cron / 是否启用 / 最近一次 run 状态）。
+- 账套过滤（全部 / 3120 / 64188 / 共享）+ 搜索（命中节点 + 一跳邻居）。
+- 断点判定：`staging === null` 的资产、以及没有管线写对应湖前缀的 staging（`orphanStaging`），
+  在 KPI 与告警里显式列出。
+
+已知边界：湖前缀→staging 仍是命名约定（`sources.yml` 文件头写明「声明 ↔ 实际路径」没有机检）；
+运行记录未挂载时 `runsWired=false`，前端一律标「运行记录未知」。

@@ -26,7 +26,7 @@ function emptyPool(): { pool: Pool; calls: () => number } {
 
 function appWithGate(identityOverride?: ReturnType<typeof makeIdentity>) {
   const shell = new Hono<ModuleVars>()
-  for (const p of ['/system-map', '/system-map/graph']) {
+  for (const p of ['/system-map', '/system-map/graph', '/system-map/metrics/*', '/system-map/pipelines']) {
     if (identityOverride !== undefined) {
       shell.use(p, async (c, next) => {
         c.set('identity', identityOverride)
@@ -37,6 +37,8 @@ function appWithGate(identityOverride?: ReturnType<typeof makeIdentity>) {
     shell.use(p, declaredScopeGate([
       { method: 'GET', path: '/system-map', scope: 'data:query' },
       { method: 'GET', path: '/system-map/graph', scope: 'data:query' },
+      { method: 'GET', path: '/system-map/metrics/:id/trail', scope: 'data:query' },
+      { method: 'GET', path: '/system-map/pipelines', scope: 'data:query' },
     ]))
   }
   shell.route('/', mod.createRouter({ pool: emptyPool().pool }))
@@ -154,5 +156,46 @@ describe('GET /system-map/graph（本体图 JSON）', () => {
     const g = await app.request('/system-map/graph')
     expect(g.status).toBe(200)
     expect(p.calls()).toBe(afterHtml)
+  })
+})
+
+describe('GET /system-map/metrics/:id/trail（指标链路）', () => {
+  it('未登录 ⇒ 401；缺 data:query ⇒ 403', async () => {
+    expect((await appWithGate().request('/system-map/metrics/x/trail')).status).toBe(401)
+    expect((await appWithGate(makeIdentity({ orgId: ORG, scopes: ['data:manage'] })).request('/system-map/metrics/x/trail')).status).toBe(403)
+  })
+
+  it('未知指标 ⇒ 404 NO_SUCH_METRIC（不编一条链路出来）', async () => {
+    const res = await buildTestApp(mod, identity, { pool: emptyPool().pool }).request('/system-map/metrics/no:such:metric/trail')
+    expect(res.status).toBe(404)
+    expect(await res.json()).toEqual({ error: 'NO_SUCH_METRIC' })
+  })
+
+  // 200 分支的模型来自运行库（data.metrics）；本文件用空 pool ⇒ 没有指标可查。
+  // 结构正确性由 domain/system-map/trail.test.ts 钉住，端到端在真机验收。
+})
+
+describe('GET /system-map/pipelines（管线全局图）', () => {
+  it('未登录 ⇒ 401；缺 data:query ⇒ 403', async () => {
+    expect((await appWithGate().request('/system-map/pipelines')).status).toBe(401)
+    expect((await appWithGate(makeIdentity({ orgId: ORG, scopes: ['data:manage'] })).request('/system-map/pipelines')).status).toBe(403)
+  })
+
+  it('200：资产层非空，且每条资产带 staging/marts/pipelines 三件套', async () => {
+    const res = await buildTestApp(mod, identity, { pool: emptyPool().pool }).request('/system-map/pipelines')
+    expect(res.status).toBe(200)
+    const body = await res.json() as {
+      assets: Array<{ lake: string; staging: string | null; marts: string[]; pipelines: unknown[] }>
+      warnings: string[]
+      runsWired: boolean
+    }
+    expect(body.assets.length).toBeGreaterThan(0)
+    for (const a of body.assets.slice(0, 5)) {
+      expect(typeof a.lake).toBe('string')
+      expect(Array.isArray(a.marts)).toBe(true)
+      expect(Array.isArray(a.pipelines)).toBe(true)
+    }
+    expect(body.runsWired).toBe(false)
+    expect(Array.isArray(body.warnings)).toBe(true)
   })
 })
