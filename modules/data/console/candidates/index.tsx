@@ -6,7 +6,7 @@
 // 判定全部委托服务端（路由 + 域层 CAS），本页不复制校验；错误走 `humanError()`：
 // 主句是人话，原码与 detail 收在技术细节里。
 import { useCallback, useEffect, useState } from 'react'
-import { Alert, Button, Card, Empty, Input, Modal, Select, Space, Tag, Typography, message } from 'antd'
+import { Alert, Button, Card, Empty, Input, Modal, Select, Space, Typography, message } from 'antd'
 import { apiGet, apiSend } from '../lib/api'
 import { humanError, type HumanError } from '../lib/explain'
 import { TechDetails } from '../components/TechDetails'
@@ -30,8 +30,9 @@ interface Candidate {
 const STATUS_LABEL: Record<CandidateStatus, string> = {
   pending: '待处理', created: '已加入', promoted: '已升级', rejected: '已忽略', expired: '已过期',
 }
+/** 圆点颜色（#2072 起状态一律圆点+文字，不用色块）：主色=待处理，绿=已进指标，灰=已忽略，橙=过期。 */
 const STATUS_COLOR: Record<CandidateStatus, string> = {
-  pending: 'processing', created: 'success', promoted: 'success', rejected: 'default', expired: 'warning',
+  pending: '#4D6BFE', created: '#0FA958', promoted: '#0FA958', rejected: '#C9CDD4', expired: '#E08A00',
 }
 const ORIGIN_LABEL: Record<CandidateOrigin, string> = { profile: '系统自动发现', demand: '来自需求对话' }
 /** 聚合函数的业务说法（默认层不出现 sum/avg 这类词）。 */
@@ -142,11 +143,6 @@ export default function CandidatesPage() {
         </Space>
       )}
     >
-      <Typography.Paragraph type="secondary" style={{ marginBottom: 12 }}>
-        系统每天从已接入的数据里找「可能是你想要的指标」，<strong>不会自动上线</strong>。
-        觉得有用就点「加进我的指标」，没用就点「不要」——忽略过的不会再推给你。
-      </Typography.Paragraph>
-
       {err !== null && (
         <Alert
           type="error"
@@ -167,7 +163,8 @@ export default function CandidatesPage() {
           <Empty
             description={(
               <span>
-                这个筛选下没有候选。系统每天自动找一次；如果你刚接入新数据源，等下一轮即可。
+                没有候选。系统每天从已接入数据里自动找「可能想要的指标」，不会自动上线；
+                接入新数据源后等下一轮即可。
               </span>
             )}
           />
@@ -181,8 +178,11 @@ export default function CandidatesPage() {
                     {relLabel(r.relation)} 的 {r.expr.column}（{aggLabel(r.expr.agg)}
                     {(r.expr.dims ?? []).length > 0 ? `，按 ${(r.expr.dims ?? []).join('、')} 拆分` : ''}）
                   </Typography.Text>
-                  <Tag color={STATUS_COLOR[r.status]}>{STATUS_LABEL[r.status]}</Tag>
-                  <Tag>{ORIGIN_LABEL[r.origin]}</Tag>
+                  <span style={{ display: 'inline-flex', alignItems: 'center', gap: 6, fontSize: 12, color: '#6B7280' }}>
+                    <i style={{ width: 6, height: 6, borderRadius: '50%', display: 'inline-block', background: STATUS_COLOR[r.status] }} />
+                    {STATUS_LABEL[r.status]}
+                  </span>
+                  <span style={{ fontSize: 12, color: '#9AA0A6' }}>{ORIGIN_LABEL[r.origin]}</span>
                 </Space>
                 <Typography.Paragraph type="secondary" style={{ margin: '6px 0 0', fontSize: 13 }}>
                   {r.rationale}
@@ -203,10 +203,6 @@ export default function CandidatesPage() {
             </Space>
           </Card>
         ))}
-      <Typography.Paragraph type="secondary" style={{ marginTop: 8, fontSize: 12 }}>
-        想批量处理？这里一屏最多 200 条，按「待处理」筛选后逐条点即可；全部处理完页面会变空。
-      </Typography.Paragraph>
-
       <Modal
         title="加进我的指标"
         open={adopting !== null}
