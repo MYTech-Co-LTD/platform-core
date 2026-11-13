@@ -77,7 +77,7 @@ const readToolset: McpToolSet = {
 
   // 惰性 + fail-soft：读契约/渲染失败时 initialize 不能 500（initialize 失败会让客户端直接连不上）；
   // shared.md 缺失会在模块加载期 fail-fast（GUIDE_INVARIANTS 已 eager 加载）。
-  // 只放指针 + 四条硬约束，完整工作流走 data_agent_guide（按需拉取）。
+  // 只放指针 + 五条硬约束，完整工作流走 data_agent_guide（按需拉取）。
   get instructions(): string {
     try {
       return renderInstructions()

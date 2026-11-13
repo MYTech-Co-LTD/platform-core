@@ -36,8 +36,8 @@ describe('guideImpl / harnessCatalogImpl', () => {
 })
 
 describe('GUIDE_INVARIANTS（三通道同源内核，Wave 2 决策 D-G1）', () => {
-  it('恰四行，每行都进 GUIDE_TEXT_BUILDER 输出（B 通道同源现状不破）', () => {
-    expect(GUIDE_INVARIANTS).toHaveLength(4)
+  it('恰五行，每行都进 GUIDE_TEXT_BUILDER 输出（B 通道同源现状不破）', () => {
+    expect(GUIDE_INVARIANTS).toHaveLength(5)
     const built = GUIDE_TEXT_BUILDER('2026-10-22')
     for (const line of GUIDE_INVARIANTS) expect(built).toContain(line)
   })
@@ -46,7 +46,7 @@ describe('GUIDE_INVARIANTS（三通道同源内核，Wave 2 决策 D-G1）', () 
       expect(line.includes('search_catalog') || line.includes('preview_query') || line.includes('data_harness_catalog')).toBe(false)
     }
   })
-  it('四行分别钉住：主体钉死 / 截断语义（含 1000）/ total 语义 / 新鲜度如实', () => {
+  it('五行分别钉住：主体钉死 / 截断语义（含 1000）/ total 语义 / 新鲜度如实 / 同名澄清', () => {
     const all = GUIDE_INVARIANTS.join('\n')
     expect(all).toContain('钉死')
     expect(all).toContain('1000')
@@ -54,6 +54,7 @@ describe('GUIDE_INVARIANTS（三通道同源内核，Wave 2 决策 D-G1）', () 
     expect(all).toContain('total')
     expect(all).toContain('新鲜度')
     expect(all).toContain('不要编')
+    expect(all).toContain('澄清')
   })
 })
 
