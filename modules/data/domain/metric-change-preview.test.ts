@@ -6,7 +6,10 @@ import { Pool } from 'pg'
 import { applyMigrations } from '../test-util'
 import { getChange, submitChange } from './metric-change'
 import type { MetricChangeRow } from './metric-change'
-import { applyPreview, PREVIEW_TIMEOUT_MS, previewWindow, runPreview, timeColumnOf } from './metric-change-preview'
+import {
+  applyPreview, PREVIEW_RERUN_MIN_INTERVAL_MS, PREVIEW_TIMEOUT_MS, previewTooRecent, previewWindow,
+  runPreview, timeColumnOf,
+} from './metric-change-preview'
 
 const dbUrl = process.env.DATABASE_URL
 const describePg = dbUrl ? describe : describe.skip
@@ -65,6 +68,35 @@ describe('timeColumnOf / previewWindow', () => {
   })
   it('PREVIEW_TIMEOUT_MS 常量钉住（Task 4/5 引用它）', () => {
     expect(PREVIEW_TIMEOUT_MS).toBe(10_000)
+  })
+})
+
+describe('previewTooRecent（重跑限速判据，P4 Task 4 销缓办①；纯函数，时钟注入）', () => {
+  const NOW = Date.parse('2026-11-13T10:00:00.000Z')
+  const at = (msAgo: number): string => new Date(NOW - msAgo).toISOString()
+
+  it('窗口常量钉住：60s', () => {
+    expect(PREVIEW_RERUN_MIN_INTERVAL_MS).toBe(60_000)
+  })
+  it('成功快照 ranAt 在窗口内（<60s）⇒ true', () => {
+    expect(previewTooRecent({ ranAt: at(30_000) }, NOW)).toBe(true)
+    expect(previewTooRecent({ value: 1, rows: 2, ranAt: at(1_000) }, NOW)).toBe(true)
+  })
+  it('失败对象也有 ranAt（preview_failed 同样限速）⇒ true', () => {
+    expect(previewTooRecent({ error: 'METRIC_NOT_FOUND', ranAt: at(5_000) }, NOW)).toBe(true)
+  })
+  it('边界：恰好/超过 60s ⇒ false（窗口外可重跑，不锁单）', () => {
+    expect(previewTooRecent({ ranAt: at(60_000) }, NOW)).toBe(false)
+    expect(previewTooRecent({ ranAt: at(120_000) }, NOW)).toBe(false)
+  })
+  it('null / 非对象 / 缺 ranAt / 坏时间串 ⇒ false（首跑与历史脏数据不误伤）', () => {
+    expect(previewTooRecent(null, NOW)).toBe(false)
+    expect(previewTooRecent(undefined, NOW)).toBe(false)
+    expect(previewTooRecent('2026-11-13T09:59:30.000Z', NOW)).toBe(false)
+    expect(previewTooRecent([], NOW)).toBe(false)
+    expect(previewTooRecent({}, NOW)).toBe(false)
+    expect(previewTooRecent({ ranAt: 'not-a-date' }, NOW)).toBe(false)
+    expect(previewTooRecent({ ranAt: 123 }, NOW)).toBe(false)
   })
 })
 
@@ -131,6 +163,21 @@ describePg('applyPreview', () => {
     const failed = await getChange(pool, ORG, sub.change.id)
     expect(failed?.status).toBe('preview_failed')
     expect(failed?.preview).toMatchObject({ error: 'PREVIEW_TIMEOUT' })
+  })
+
+  it('失败回写带 issues ⇒ preview 一并落库（P4 Task 4，销缓办⑥：失败明细不只剩一个错误码）', async () => {
+    const sub = await submitChange(pool, ORG, { userId: 'agent1', channel: 'pat' }, 'x:ap_issues', 'meta', { unit: '元' })
+    if (!sub.ok) throw new Error('unreachable')
+    await applyPreview(pool, sub.change.id, {
+      ok: false, error: 'DECLARATION_INVALID', issues: [{ path: 'expression', message: 'relation 不在白名单' }],
+    })
+    const after = await getChange(pool, ORG, sub.change.id)
+    expect(after?.status).toBe('preview_failed')
+    expect(after?.preview).toMatchObject({
+      error: 'DECLARATION_INVALID',
+      issues: [{ path: 'expression', message: 'relation 不在白名单' }],
+    })
+    expect(typeof after?.preview?.ranAt).toBe('string')
   })
 
   it('已终态单（adopted）上 applyPreview 不改状态（P1 Task 4 修复②：UPDATE 钉 PENDING，重跑落后于采纳不得复活单据）', async () => {
