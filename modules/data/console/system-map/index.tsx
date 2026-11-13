@@ -36,6 +36,25 @@ interface GraphResponse {
   warnings: string[]
 }
 
+type TrailStepKind = 'metric' | 'mart' | 'staging' | 'lake' | 'pipeline'
+interface TrailStep { kind: TrailStepKind; label: string; detail?: string; from: 'declared' | 'inferred' }
+interface MetricTrail {
+  metricId: string
+  title: string
+  steps: TrailStep[]
+  runtime: {
+    pipelineId: string | null
+    lastRun: { runId: string; at: string; status: string; durationMs?: number; error?: string } | null
+    materializedAt: string | null
+    maxBizday: string | null
+  }
+  notes: string[]
+}
+const STEP_LABEL: Record<TrailStepKind, string> = {
+  metric: '指标', mart: '表', staging: 'staging', lake: '湖', pipeline: '管线',
+}
+const RUN_DOT: Record<string, string> = { ok: '#0FA958', failed: '#E5484D', running: '#4D6BFE', cancelled: '#C9CDD4', interrupted: '#E08A00', unknown: '#C9CDD4' }
+
 const TYPE_LABEL: Record<NodeType, string> = { entity: '业务对象', metric: '指标', source: '源表', dimension: '维度' }
 const TYPE_COLOR: Record<NodeType, string> = {
   entity: '#4D6BFE', metric: '#0FA958', source: '#E08A00', dimension: '#8B5CF6',
@@ -59,8 +78,26 @@ export default function SystemMapPage() {
   const [error, setError] = useState<HumanError | null>(null)
   const [query, setQuery] = useState('')
   const [selected, setSelected] = useState<OntologyNode | null>(null)
+  const [trail, setTrail] = useState<MetricTrail | null>(null)
+  const [trailError, setTrailError] = useState<string | null>(null)
   const boxRef = useRef<HTMLDivElement>(null)
   const chartRef = useRef<echarts.ECharts | null>(null)
+
+  // 指标节点：打开抽屉时现查链路（结构 + 运行态；运行态不进图缓存的 10 分钟）
+  useEffect(() => {
+    setTrail(null)
+    setTrailError(null)
+    if (selected === null || selected.type !== 'metric') return
+    const id = selected.id.startsWith('metric:') ? selected.id.slice('metric:'.length) : selected.id
+    let alive = true
+    apiGet(`/system-map/metrics/${encodeURIComponent(id)}/trail`)
+      .then((r) => {
+        const t = (r as { trail?: MetricTrail }).trail
+        if (alive) setTrail(t ?? null)
+      })
+      .catch((e: unknown) => { if (alive) setTrailError(humanError(e).text) })
+    return () => { alive = false }
+  }, [selected])
 
   const load = useCallback(() => {
     setError(null)
@@ -240,6 +277,51 @@ export default function SystemMapPage() {
                 <div key={o} style={{ fontSize: 13, color: '#1B1C1E', lineHeight: 2 }}>{o}</div>
               ))}
             </div>
+            {selected.type === 'metric' && (
+              <div>
+                <div style={{ fontSize: 12, color: '#9AA0A6', marginBottom: 6 }}>链路</div>
+                {trailError !== null && (
+                  <Typography.Text type="secondary" style={{ fontSize: 12 }}>{trailError}</Typography.Text>
+                )}
+                {trailError === null && trail === null && (
+                  <Typography.Text type="secondary" style={{ fontSize: 12 }}>读取中…</Typography.Text>
+                )}
+                {trail !== null && (
+                  <div>
+                    {trail.steps.map((st, i) => (
+                      <div key={`${st.kind}:${st.label}`} style={{ display: 'flex', alignItems: 'baseline', gap: 8, padding: '3px 0' }}>
+                        <span style={{
+                          fontSize: 11, color: '#9AA0A6', width: 44, flex: 'none',
+                          paddingLeft: i === 0 ? 0 : 8, borderLeft: i === 0 ? 'none' : '1px solid #EBEDF0',
+                        }}>{STEP_LABEL[st.kind]}</span>
+                        <span style={{ fontSize: 13, color: '#1B1C1E' }}>{st.label}</span>
+                        {st.from === 'inferred' && <Tag style={{ borderRadius: 999, fontSize: 11 }}>推断</Tag>}
+                        {st.detail !== undefined && (
+                          <span style={{ fontSize: 11.5, color: '#9AA0A6' }}>{st.detail}</span>
+                        )}
+                      </div>
+                    ))}
+                    <div style={{ marginTop: 10, fontSize: 12, color: '#6B7280', lineHeight: 1.9 }}>
+                      <div>
+                        最近一次运行：{trail.runtime.lastRun === null
+                          ? (trail.notes.some((n) => n.includes('DATA_RUN_DIRS')) ? '未接入运行记录' : '没有记录')
+                          : (
+                            <span>
+                              <span style={{ display: 'inline-block', width: 6, height: 6, borderRadius: 6, marginRight: 6,
+                                background: RUN_DOT[trail.runtime.lastRun.status] ?? '#C9CDD4' }} />
+                              {trail.runtime.lastRun.status} · {new Date(trail.runtime.lastRun.at).toLocaleString('zh-CN')}
+                              {trail.runtime.lastRun.durationMs === undefined ? '' : ` · ${Math.round(trail.runtime.lastRun.durationMs / 1000)}s`}
+                            </span>
+                          )}
+                      </div>
+                      <div>物化钟：{trail.runtime.materializedAt === null ? '未知' : new Date(trail.runtime.materializedAt).toLocaleString('zh-CN')}</div>
+                      <div>数据水位：{trail.runtime.maxBizday ?? '未知'}</div>
+                      {trail.notes.map((n) => <div key={n} style={{ color: '#9AA0A6' }}>{n}</div>)}
+                    </div>
+                  </div>
+                )}
+              </div>
+            )}
             {selected.type === 'metric' && (
               <Button size="small" href={`/console/data/metrics`}>去指标页看变更历史</Button>
             )}

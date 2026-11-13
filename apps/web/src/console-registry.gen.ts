@@ -161,6 +161,15 @@ export const consoleRegistry: ConsoleRegistryEntry[] = [
     load: () => import("../../../modules/data/console/index.tsx"),
   },
   {
+    path: "/console/data/pipelines",
+    title: "管线地图",
+    group: "main",
+    moduleId: "data",
+    description: "从管线看数据链路：哪些资产接上了 staging 与 marts，哪一段断了。",
+    scope: "data:query",
+    load: () => import("../../../modules/data/console/index.tsx"),
+  },
+  {
     path: "/console/demo",
     title: "演示",
     group: "main",

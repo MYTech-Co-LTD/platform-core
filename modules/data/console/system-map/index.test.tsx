@@ -18,6 +18,20 @@ const chart = { setOption: vi.fn(), on: vi.fn(), off: vi.fn(), resize: vi.fn() }
 const json = (b: unknown) =>
   new Response(JSON.stringify(b), { status: 200, headers: { 'content-type': 'application/json' } })
 
+const TRAIL = {
+  metricId: 'lemeng:retail:net_sales',
+  title: '净销售额',
+  steps: [
+    { kind: 'metric', label: '净销售额', detail: 'lemeng:retail:net_sales', from: 'declared' },
+    { kind: 'mart', label: 'fct_retail_sale', detail: 'marts 表', from: 'declared' },
+    { kind: 'staging', label: 'stg_lemeng_retail_order_line', detail: 'dbt staging 模型', from: 'declared' },
+    { kind: 'lake', label: 'lemeng/retail_order_line', detail: '1 条管线写入', from: 'declared' },
+    { kind: 'pipeline', label: 'lemeng.retail_order_line.l0.3120', detail: 'duckle 管线', from: 'declared' },
+  ],
+  runtime: { pipelineId: 'lemeng.retail_order_line.l0.3120', lastRun: { runId: 'r1', at: '2026-11-14T00:00:00.000Z', status: 'ok', durationMs: 12000 }, materializedAt: '2026-11-14T00:10:00.000Z', maxBizday: '2026-11-13' },
+  notes: [],
+}
+
 const GRAPH = {
   generatedAt: '2026-11-13T00:00:00.000Z',
   health: { metricTotal: 57, entityBoundPct: 98.2, auditCoveredPct: 98.2, zeroUse: 17 },
@@ -84,8 +98,8 @@ describe('体系地图·本体图', () => {
     await waitFor(() => expect(screen.getByText(/4 个节点/)).toBeInTheDocument())
   })
 
-  it('点节点 ⇒ 右侧抽屉给出 observations；关掉后不残留', async () => {
-    m.mockImplementation(async () => json(GRAPH))
+  it('点节点 ⇒ 右侧抽屉给出 observations 与链路；关掉后不残留', async () => {
+    m.mockImplementation(async (url: string) => url.includes('/trail') ? json({ trail: TRAIL }) : json(GRAPH))
     render(<SystemMapPage />)
     await waitFor(() => expect(screen.getByText('57')).toBeInTheDocument())
 
@@ -99,6 +113,11 @@ describe('体系地图·本体图', () => {
     await waitFor(() => expect(screen.getByText('口径：按门店日结净额汇总')).toBeInTheDocument())
     expect(screen.getByText('近 30 天使用 12 次')).toBeInTheDocument()
     expect(screen.getByText('关联 2 条关系')).toBeInTheDocument()
+    // 链路：marts → staging → 湖 → 管线，以及运行态
+    await waitFor(() => expect(screen.getByText('fct_retail_sale')).toBeInTheDocument())
+    expect(screen.getByText('stg_lemeng_retail_order_line')).toBeInTheDocument()
+    expect(screen.getByText(/最近一次运行/)).toBeInTheDocument()
+    expect(screen.getByText('数据水位：2026-11-13')).toBeInTheDocument()
 
     fireEvent.click(screen.getByRole('button', { name: /close/i }))
     await waitFor(() => expect(screen.queryByText('口径：按门店日结净额汇总')).toBeNull())
