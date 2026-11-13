@@ -57,23 +57,12 @@ export default function AdminPermissionsPage() {
   )
 
   const columns: ColumnsType<AdminPermission> = [
-    { title: '权限码', dataIndex: 'code', key: 'code', width: 200 },
-    {
-      title: '名称',
-      dataIndex: 'name',
-      key: 'name',
-      width: 240,
-      render: (v: string, p) => (
-        <>
-          {v}
-          {p.code === 'tenant:admin' && (
-            <Typography.Text type="warning" style={{ display: 'block', fontSize: 12 }}>
-              授予此码 = 租户管理员；谨慎交接
-            </Typography.Text>
-          )}
-        </>
-      ),
-    },
+    { title: '权限码', dataIndex: 'code', key: 'code', width: 220, render: (v: string, p: AdminPermission) => (
+      <div>
+        <div style={{ fontFamily: 'ui-monospace, Menlo, monospace', fontSize: 12.5 }}>{v}</div>
+        <div style={{ fontSize: 12, color: '#9AA0A6' }}>{p.name}</div>
+      </div>
+    ) },
     {
       title: '已授权用户',
       dataIndex: 'users',

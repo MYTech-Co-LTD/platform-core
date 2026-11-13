@@ -3,7 +3,7 @@
 // 只读 + 吊销：**不代建**（key 是「每个账号自己的」——代建等于把别人的凭据经你手发出去）。
 // 门禁由 App.tsx 的 <AdminGate> 施加（本页不自判 scope，与其它管理页同构）。
 import { useCallback, useEffect, useState } from 'react'
-import { Button, Card, Popconfirm, Table, Tag, Typography, message } from 'antd'
+import { Button, Card, Popconfirm, Table, Typography, message } from 'antd'
 import { listAllKeys, revokeAnyKey, type AdminApiKeyRow } from '../../lib/api'
 import { ConsolePage } from '../../components/ConsolePage'
 
@@ -57,8 +57,12 @@ export default function AdminKeysPage() {
         }}
         size="small"
         columns={[
-          { title: '账号', dataIndex: 'casdoorUser', width: 160 },
-          { title: '名称', dataIndex: 'name' },
+          { title: 'Key', dataIndex: 'name', render: (v: string, r: AdminApiKeyRow) => (
+            <div>
+              <div style={{ fontWeight: 500 }}>{v}</div>
+              <div style={{ fontFamily: 'ui-monospace, Menlo, monospace', fontSize: 11.5, color: '#9AA0A6' }}>{r.casdoorUser}</div>
+            </div>
+          ) },
           { title: '创建于', dataIndex: 'createdAt', width: 200 },
           {
             title: '最近使用',
@@ -70,7 +74,12 @@ export default function AdminKeysPage() {
             title: '状态',
             dataIndex: 'revoked',
             width: 90,
-            render: (revoked: boolean) => (revoked ? <Tag>已吊销</Tag> : <Tag color="green">有效</Tag>),
+            render: (revoked: boolean) => (
+              <span style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}>
+                <i style={{ width: 6, height: 6, borderRadius: '50%', display: 'inline-block', background: revoked ? '#C9CDD4' : '#0FA958' }} />
+                {revoked ? '已吊销' : '有效'}
+              </span>
+            ),
           },
           {
             title: '操作',

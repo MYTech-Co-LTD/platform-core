@@ -117,8 +117,14 @@ export default function AdminRolesPage() {
 
   const columns: ColumnsType<AdminRoleRow> = useMemo(
     () => [
-      { title: '角色', dataIndex: 'displayName', render: (v: string, r) => v || r.name },
-      { title: '成员数', dataIndex: 'members', width: 90 },
+      { title: '角色', dataIndex: 'displayName', render: (v: string, r) => (
+        <div>
+          <div style={{ fontWeight: 500 }}>{v || r.name}</div>
+          {v ? <div style={{ fontFamily: 'ui-monospace, Menlo, monospace', fontSize: 11.5, color: '#9AA0A6' }}>{r.name}</div> : null}
+        </div>
+      ) },
+      { title: '成员', dataIndex: 'members', width: 90, align: 'right' as const,
+        render: (v: number) => <span style={{ fontVariantNumeric: 'tabular-nums' }}>{v}</span> },
       {
         title: '挂码',
         dataIndex: 'codes',
