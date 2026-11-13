@@ -127,7 +127,7 @@ export default function ChangesPage() {
                 </Space>
                 <Typography.Paragraph type="secondary" style={{ margin: '6px 0 0', fontSize: 13 }}>
                   {r.status === 'draft'
-                    ? '试算还没跑完'
+                    ? '试算未完成，可点「跑试算」补'
                     : r.preview?.error !== undefined
                       ? `试算没跑成：${r.preview.error}（不可采纳）`
                       : r.preview?.baseline != null && r.preview.baseline.deltaPct !== null

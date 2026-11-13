@@ -407,12 +407,12 @@ describePg('★ 采纳 happy path 全链（P0 终审 F4）：提交即试算 →
     expect(b1.change.status).toBe('preview_ready')
     const a1 = await post(`/metric-changes/${b1.change.id}/adopt`)
     expect(a1.status).toBe(200)
-    // P6 Task 3：首单刚落过试算 ⇒ 先拨旧 ranAt，让 meta 单照常试算（本用例验的是采纳全链）
-    await agePreviewsFor(ORG, 'x:e2e')
     // ② meta 变更单：同链再来一遍（meta 试算读已生效行的当前口径）⇒ 200
+    // P6 Task 3 修复轮：已采纳单的快照不作限速判据 ⇒ 这里无需拨旧 ranAt，meta 单照常试算
     const c2 = await post('/metric-changes', { metricId: 'x:e2e', kind: 'meta', payload: { unit: '元' } })
     expect(c2.status).toBe(200)
-    const b2 = await c2.json() as { change: { id: number; status: string } }
+    const b2 = await c2.json() as { change: { id: number; status: string }; previewSkipped?: string }
+    expect(b2.previewSkipped).toBeUndefined()
     expect(b2.change.status).toBe('preview_ready')
     const a2 = await post(`/metric-changes/${b2.change.id}/adopt`)
     expect(a2.status).toBe(200)
@@ -445,8 +445,7 @@ describePg('★ delete 档采纳也发通知（P1 Task 4，销缓办③）', () 
     expect(c1.status).toBe(200)
     const b1 = await c1.json() as { change: { id: number } }
     expect((await post(`/metric-changes/${b1.change.id}/adopt`)).status).toBe(200)
-    // P6 Task 3：首单刚落过试算 ⇒ 先拨旧 ranAt，让删除单照常试算（本用例验的是删除采纳全链）
-    await agePreviewsFor(ORG, 'x:e2e_del')
+    // P6 Task 3 修复轮：已采纳单的快照不作限速判据 ⇒ 删除单照常试算（本用例验的是删除采纳全链）
     // ② delete 单全链采纳 ⇒ 200
     const d = await post('/metric-changes', { metricId: 'x:e2e_del', kind: 'delete' })
     expect(d.status).toBe(200)
@@ -484,13 +483,11 @@ describePg('★ adopt eventId 拼变更单 id（P4 Task 4，销缓办⑤：同 m
     }
     const MID = 'x:e2e_evt'
     // ① create 生效 → ② delete 删掉 → ③ 重建（delete→re-create 正是 P1 实证被去重吞的形状）
+    // P6 Task 3 修复轮：每单采纳后即为已决单（不作限速判据）⇒ 下一单照常试算，无需拨旧 ranAt
     const cId = await submit({ metricId: MID, kind: 'create', payload: { baseMetric: L1_ID, op: { kind: 'refine' }, alias: '单号夹具' } })
     await adopt(cId)
-    // P6 Task 3：每单刚落过试算 ⇒ 下一单提交前先拨旧 ranAt（本用例验的是 eventId 拼单号）
-    await agePreviewsFor(ORG, MID)
     const dId = await submit({ metricId: MID, kind: 'delete' })
     await adopt(dId)
-    await agePreviewsFor(ORG, MID)
     const rId = await submit({ metricId: MID, kind: 'create', payload: { baseMetric: L1_ID, op: { kind: 'refine' }, alias: '单号夹具·重建' } })
     await adopt(rId)
 
@@ -583,8 +580,7 @@ describePg('P1 Task 7：override 档', () => {
 
   it('坏声明（引用未纳管关系）⇒ preview_failed 且 preview.issues 非空（P4 Task 4，销缓办⑥）', async () => {
     const app = oappOf(async () => ({ rows: [] }))
-    // P6 Task 3：上一用例的首单刚落过试算 ⇒ 先拨旧 ranAt 让本用例照常跑（验的是坏声明快照）
-    await agePreviewsFor(OORG, L1_OVR_A)
+    // P6 Task 3 修复轮：上一用例的单已采纳（已决单不作判据）⇒ 本用例照常试算
     const res = await post(app, {
       metricId: L1_OVR_A, kind: 'override',
       payload: ovrEntry({ label: '本租户销售口径·坏关系', expression: 'sum(no_such_relation.amount)' }),
@@ -833,5 +829,39 @@ describePg('P6 Task 3：提交即试算的限速（POST /metric-changes）', () 
     const b2 = await second.json() as { change: { status: string }; previewSkipped?: string }
     expect(b2.previewSkipped).toBeUndefined()
     expect(b2.change.status).toBe('preview_ready')
+  })
+
+  it('已采纳 / 已驳回单不作判据：60s 内同 metricId 改稿重提 ⇒ 正常试算（旧快照绑定旧 payload）', async () => {
+    // 采纳写路径要过源闸 ⇒ 与 happy path 同款壳（sources=['lemeng']，L1 夹具 sourceSystem='lemeng'）
+    const app = buildTestApp(mod, identityOf(),
+      { pool, execute: async () => ({ rows: [{ rows: 3, value: 9 }] }) } as never,
+      { id: 1, casdoor_org: ORG }, ['lemeng'])
+    const post = (path: string, body?: unknown) => app.request(path, {
+      method: 'POST',
+      ...(body === undefined ? {} : { body: JSON.stringify(body), headers: { 'content-type': 'application/json' } }),
+    })
+    const MID = 'x:p6_adopted_rework'
+    const c1 = await post('/metric-changes', {
+      metricId: MID, kind: 'create', payload: { baseMetric: L1_ID, op: { kind: 'refine' } },
+    })
+    expect(c1.status).toBe(200)
+    const b1 = await c1.json() as { change: { id: number; status: string } }
+    expect(b1.change.status).toBe('preview_ready')
+    expect((await post(`/metric-changes/${b1.change.id}/adopt`)).status).toBe(200)
+
+    // 采纳后 60s 内立刻改稿重提：已采纳单的快照不作判据 ⇒ 照常试算
+    const c2 = await post('/metric-changes', { metricId: MID, kind: 'meta', payload: { unit: '元' } })
+    expect(c2.status).toBe(200)
+    const b2 = await c2.json() as { change: { id: number; status: string }; previewSkipped?: string }
+    expect(b2.previewSkipped).toBeUndefined()
+    expect(b2.change.status).toBe('preview_ready')
+
+    // 驳回同理：驳回后再改稿重提，仍照常试算（已驳回单的快照同样绑定旧 payload）
+    expect((await post(`/metric-changes/${b2.change.id}/reject`, { reason: '改稿重提' })).status).toBe(200)
+    const c3 = await post('/metric-changes', { metricId: MID, kind: 'meta', payload: { unit: '件' } })
+    expect(c3.status).toBe(200)
+    const b3 = await c3.json() as { change: { status: string }; previewSkipped?: string }
+    expect(b3.previewSkipped).toBeUndefined()
+    expect(b3.change.status).toBe('preview_ready')
   })
 })

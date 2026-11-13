@@ -31,12 +31,15 @@ export function previewTooRecent(preview: unknown, now = Date.now()): boolean {
 /**
  * 提交即试算的限速判据（P6 Task 3）：同一 org 下该 metricId 是否刚跑过一次试算。
  *
- * 判据必须在 `submitChange` **之前**读：提交会先把旧的未决单 superseded 再落新单，
- * 事后再读就看不到它了（本函数因此由提交路径在 submitChange 前调用）。
+ * 判据在 `submitChange` **之前**读（顺序仍要保持）：提交会先把旧的未决单 superseded 再落
+ * 新单；事后读到的「最新一条」就是自己刚落的单（preview 为 null），判据会指向错误的单。
  *
- * 取**最新一条有快照的单**（任何状态）：刚被顶掉/已决的单也代表「这个 metricId 刚落过
- * 一次试算」，连打十次提交时不该只挡第二次——第 N 次仍要命中（否则 agent 每次重提又烧一轮）。
- * 被限速跳过的单 preview 为 null，不能当判据（`preview->>'ranAt' is not null` 把它们排除）。
+ * 取**最新一条有快照、且非已决（adopted/rejected）的单**：
+ * · superseded 保留——连续 N 次重提时，第 N 次仍要命中（否则每次重提又烧一轮，限速只挡
+ *   一次等于没挡），而 superseded 正是「同一提交链上刚落过的试算」；
+ * · adopted / rejected **排除**——它们的快照绑定的是旧 payload/旧定义，不是新提交的有效
+ *   判据；人刚采纳/刚驳回后 60s 内的改稿重提必须照常试算（否则单落 draft 还得人补点一次）。
+ * 被限速跳过的单 preview 为 null，不作判据（`preview->>'ranAt' is not null` 排除）。
  * 时间比较复用 previewTooRecent——时钟判据只此一份。
  */
 export async function recentPreviewFor(
@@ -45,6 +48,7 @@ export async function recentPreviewFor(
   const r = await pool.query(
     `select preview from data.metric_change
       where org = $1 and metric_id = $2 and preview->>'ranAt' is not null
+        and status not in ('adopted', 'rejected')
       order by id desc limit 1`,
     [org, metricId],
   )

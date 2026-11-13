@@ -108,9 +108,10 @@ const previewStateOf = async (deps: McpDeps, change: MetricChangeRow) => {
 /**
  * 提交 + 提交即试算（三个提交口共用；P6 Task 3 收口为单一入口）。
  *
- * 限速判据 `recentPreviewFor` 必须在 `submitChange` **之前**读：`submitChange` 会先把旧的
- * 未决单 superseded，提交后再读就看不到它了。命中 ⇒ 提交仍照常落单（提交是合法业务动作），
- * 只跳过试算——单停在 draft，人可在待核对页按「跑试算」补；回包带 `previewSkipped`。
+ * 限速判据 `recentPreviewFor` 在 `submitChange` **之前**读：提交会先把旧的未决单 superseded
+ * 再落新单，事后读到的「最新一条」是自己刚落的单（preview 为 null），判据会指向错误的单。
+ * 命中 ⇒ 提交仍照常落单（提交是合法业务动作），只跳过试算——单停在 draft，人可在待核对页
+ * 按「跑试算」补；回包带 `previewSkipped`。
  *
  * refused 原样给码；成功 = {changeId, state}（跳过时 state=draft）。
  */
