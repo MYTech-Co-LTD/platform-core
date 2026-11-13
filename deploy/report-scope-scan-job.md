@@ -13,10 +13,14 @@
 指标可以改归属（`owner_dept`）/ 改 `visible_depts` ⇒ 线上出现「能看到报表的人里，
 有人打不开某个面板」。本 job 每天把**已发布**报表按同一判据重判一遍，**有受众漂移就 exit 1**。
 
-⚠️ **覆盖边界（与实现一致，别读成更强）**：指标在词表里**查不到**（归档/删除）目前只输出
-`[warn]` 行、**不判红**——这条判据属于「存在性/漂移」，在 `report-scope-gate.ts` 里是 warning
-分支（门头注明确把它交给别的面）。要让「归档指标还挂在已发布报表上」变成告警，需要给门的
-返回值加分类（计划外，**P6 决策**），本轮不做。读日志的人不要把 `[warn]` 当作已覆盖的告警。
+**判红的两类结果**（P6 Task 1；门结果从字符串提示升级为带类别的 issue）：
+
+- `violations`：受众确实比面板指标可见范围更宽（`REPORT_METRIC_SCOPE_MISMATCH` 同源判据）；
+- `issues`：**判不了**——面板指标在词表里查不到（归档/删除/未同步），或 Metabase 无面板指标
+  无法判定。判不了 ≠ 干净：巡检对它同样 **exit 1**，输出独立的 `⚠ [issue]` 段。
+
+发布门本身**不**因 issue 返回 409（P5 语义：发布放行、渲染 fail-closed、巡检告警）；两类面
+读同一份 `ReportScopeIssue[]`，只是动作不同。
 
 ## 命令
 
@@ -54,18 +58,18 @@ docker exec openship-platform-core-shanhai-server sh -lc 'pnpm exec tsx scripts/
 ## 判据（stdout + 退出码）
 
 ```
-  ✗ [audience_unbounded] org=shanhaiyiguo-org report r-9「门店月报」 panel 2 metric=lemeng:net_sales
-  [warn] org=shanhaiyiguo-org report r-10「旧月报」 面板 1 的指标 lemeng:legacy 不在词表中 ⇒ 可见范围无法判定，已跳过
-report-scope-scan: org=shanhaiyiguo-org tenant=3 reports=12 published=9 metabase=2 violations=1 warnings=1 errors=0
-report-scope-scan: FAIL（orgs 1 / reports 12 / published 9 / metabase 2 / violations 1 / warnings 1 / errors 0）
+  ✗ [violation] [audience_unbounded] org=shanhaiyiguo-org report r-9「门店月报」 panel 2 metric=lemeng:net_sales
+  ⚠ [issue] [metric_unknown] org=shanhaiyiguo-org report r-10「旧月报」 panel 1 metric=lemeng:legacy
+report-scope-scan: org=shanhaiyiguo-org tenant=3 reports=12 published=9 metabase=2 violations=1 issues=1 errors=0
+report-scope-scan: FAIL（orgs 1 / reports 12 / published 9 / metabase 2 / violations 1 / issues 1 / errors 0）
 ```
 
-违规行的标题是**发布快照的标题**（观看者看到的那份），不是行上草稿标题。
+违规/issue 行的标题是**发布快照的标题**（观看者看到的那份），不是行上草稿标题。
 
 | 退出码 | 含义 |
 |---|---|
-| 0 | 干净（`[warn]` 行不判红：如「面板指标不在词表」是存在性提示；Metabase 无法判定只计数） |
-| 1 | **有受众漂移**（violations）**或**有判不了的项（errors，含单 org 读取失败 `scan_failed`）——都要人看 |
+| 0 | 干净（没有任何 violation / issue / error） |
+| 1 | **有受众漂移**（violations）**或**有判不了的项（`issues` + `errors`，含单 org 读取失败 `scan_failed`）——都要人看 |
 | 2 | **环境/连接类**查不成账：缺 `DATABASE_URL`、连库失败、读全局租户或 org 清单失败。**单 org 的读取失败不是 2**（记 `scan_failed`、exit 1，其余 org 照扫）；用法错（`--org ''` / 纯空白）同样 exit 2，不扫任何 org |
 
 两条违规 reason：
@@ -76,6 +80,13 @@ report-scope-scan: FAIL（orgs 1 / reports 12 / published 9 / metabase 2 / viola
 | `audience_dept_outside_metric_scope` | 行尾 `missingDepts=` 点名的部门不在指标链/`visible_depts` 里 | 收窄受众，或把差集部门加进指标 `visible_depts` |
 
 > owner（ACL `owner` 主体）**不计入受众**：可以管理自己读不到数的报表，观看视图由渲染闸兜住。
+
+issue 的 reason（**判不了，同样 exit 1**；与上面的 violation 分段输出）：
+
+| reason | 含义 | 修法方向 |
+|---|---|---|
+| `metric_unknown` | 面板指标在词表里查不到（归档/删除/未同步）⇒ 可见范围无从判定 | 恢复/重建该指标，或把报表改成引用现存指标后重新发布；别指望「查不到 = 干净」 |
+| `no_panel_metrics` | 渲染器没有面板指标可判（Metabase；spec §9.2 做不到面板级）⇒ 结构性无法判定 | 已知能力缺口：需要产品先声明 Metabase 的 `metricIds`。当前巡检不会把 Metabase 行送进判据（只计数），此 reason 主要出现在发布回包 `scopeIssues` |
 
 errors 的 kind：`tenant_not_registered`（org 没登记进 `platform.tenant`，部门链无法解析）、
 `org_not_found`（显式 `--org` 查无此 org）、`published_snapshot_missing` /
@@ -178,7 +189,8 @@ MCP get_jobs_by_key(key=<key>) / get_jobs_by_key_runs(key=<key>)
 - 按 spec §9.4：巡检**只报不自动改报表**——漂移「入待办」的方式就是 job 判红 + 通知，
   修法由人按上节 runbook 执行（改草稿 → 重新发布）。
 - **Metabase 报表**：无面板指标可判（spec §9.2 明确做不到面板级）⇒ 只计数，不判红。
-- **归档/删除的指标**：目录里查不到 ⇒ `[warn]` 不判红（门的存在性分支）；变红需 P6 给门加分类。
+- **归档/删除的指标**：目录里查不到 ⇒ `⚠ [issue] [metric_unknown]`，**exit 1**（P6 Task 1）。
+  发布门对同一形态仍放行（不因 unknown 返回 409）——两边读同一份 `issues`，动作不同。
 - **平台行草稿**：不在巡检范围（发布门负责，草稿允许中间态）。
 - **未登记 org**：巡检面 = `platform.tenant` ∪ `data.reports` 的 org；未登记且有已发布平台报表 ⇒
   记 `tenant_not_registered` 报错（不静默漏判）。

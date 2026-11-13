@@ -3450,6 +3450,36 @@ describePg('报表路由（需要 DATABASE_URL）', () => {
       }
     })
 
+    // ── P6 Task 1：门结果分类（issues）与发布回包 `scopeIssues` ─────────────────────────
+    it('★ 目录缺失的指标 ⇒ 门不判 409，回包 scopeIssues 记 metric_unknown（判不了 ≠ 干净）', async () => {
+      const app = admin()
+      // 先以**合法**指标建行（写侧校验放行），再绕过写面直写一份指向词表外指标的草稿。
+      const created = await post(app, {
+        title: '门结果分类-目录缺失', renderer: 'platform',
+        spec: { panels: [{ chart: 'table', title: '正常口径', metricId: OPEN_METRIC }] },
+      })
+      expect(created.status).toBe(201)
+      const id = (await created.json()).id as string
+      const parsed = parseReportSpec({
+        panels: [{ chart: 'table', title: '幽灵口径', metricId: 'p6r:ghost' }],
+      })
+      if (!parsed.ok) throw new Error(`夹具规格应通过白名单：${parsed.code}`)
+      await updateSpec(pool, ORG, id, parsed.spec, await versionOf(app, id))
+
+      const res = await publish(app, id, await versionOf(app, id))
+      const body = await res.json() as {
+        ok?: boolean
+        reason?: string
+        scopeIssues?: { reason: string; panelIndex: number; metricId?: string }[]
+      }
+      // 门本身不阻断（不是 409 REPORT_METRIC_SCOPE_MISMATCH）；本次拒来自发布写侧的存在性校验。
+      expect(res.status).toBe(400)
+      expect(body).toMatchObject({ ok: false, reason: 'UNKNOWN_PANEL_METRIC' })
+      expect(body.scopeIssues).toEqual([
+        { reason: 'metric_unknown', panelIndex: 0, metricId: 'p6r:ghost' },
+      ])
+    })
+
     it('部门选择器：转发宿主注入的平表（含直属人数）', async () => {
       const res = await admin().request('/reports/dept-options')
       expect(res.status).toBe(200)

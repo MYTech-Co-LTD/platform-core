@@ -131,7 +131,7 @@ describePg('reportScopeViolations（发布门，真库夹具）', () => {
   it('★ 受众含兄弟部门 + 面板指标归属财务 ⇒ 违规并点名差集部门', async () => {
     const out = await gate({ report: { requiredDepts: [SIB], spec: specOf(tablePanel(FIN_METRIC)) } })
     expect(out).not.toBeNull()
-    expect(out?.warnings).toEqual([])
+    expect(out?.issues).toEqual([])
     expect(out?.panels).toEqual([{
       index: 0, metricId: FIN_METRIC, missingDepts: [SIB], reason: 'audience_dept_outside_metric_scope',
     }])
@@ -248,12 +248,34 @@ describePg('reportScopeViolations（发布门，真库夹具）', () => {
     expect(out?.panels[0]).toMatchObject({ index: 0, metricId: FIN_METRIC })
   })
 
-  it('★ Metabase 行无面板（metricIds 空）⇒ 跳过（不阻断）+ warning', async () => {
+  it('★ Metabase 行无面板（metricIds 空）⇒ 跳过（不阻断）+ issue=no_panel_metrics', async () => {
     const out = await gate({ report: { renderer: 'metabase', spec: null, requiredScope: 'data:query' } })
     expect(out).not.toBeNull()
     expect(out?.panels).toEqual([])
-    expect(out?.warnings).toHaveLength(1)
-    expect(out?.warnings[0]).toContain('metabase')
+    expect(out?.issues).toEqual([{ reason: 'no_panel_metrics', panelIndex: -1 }])
+  })
+
+  // ── P6 Task 1：判不了 ≠ 干净（目录缺失显式成 issues，与受众违规分开）────────────────────
+  it('★ 面板指标不在词表（归档/删除）⇒ issues 记 metric_unknown，panels 保持空', async () => {
+    const out = await gate({
+      report: { requiredDepts: [FIN], spec: specOf(tablePanel('p5g:archived')) },
+    })
+    expect(out).not.toBeNull()
+    expect(out?.panels).toEqual([])
+    expect(out?.issues).toEqual([
+      { reason: 'metric_unknown', panelIndex: 0, metricId: 'p5g:archived' },
+    ])
+  })
+
+  it('未知指标与受众违规并存：panels 与 issues 各自分类，不混形状', async () => {
+    const spec = specOf(tablePanel(FIN_METRIC), tablePanel('p5g:archived'))
+    const out = await gate({ report: { requiredDepts: [SIB], spec } })
+    expect(out?.panels).toEqual([{
+      index: 0, metricId: FIN_METRIC, missingDepts: [SIB], reason: 'audience_dept_outside_metric_scope',
+    }])
+    expect(out?.issues).toEqual([
+      { reason: 'metric_unknown', panelIndex: 1, metricId: 'p5g:archived' },
+    ])
   })
 
   it('文本面板（无 metricId）⇒ 视为无面板，不误判', async () => {

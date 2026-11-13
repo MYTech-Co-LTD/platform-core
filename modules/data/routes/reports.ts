@@ -1132,7 +1132,7 @@ export function registerReports(r: ModuleHono, ctx: RouteCtx): void {
     //    测试钉住：`发布门先于 STALE_WRITE/unchanged`。
     // `denyUnlessCanEdit` 内部已取过 ACL 但只做判定不回传；这里再取一次（单行查询），
     // 保持那个共享守卫的签名不变（14 个调用点不为本门改形）。
-    // Metabase 行没有平台面板 ⇒ 函数内跳过并回 warning（真正的渲染器拒绝仍由
+    // Metabase 行没有平台面板 ⇒ 函数内跳过并回 issue（真正的渲染器拒绝仍由
     // publishVersion 的 RENDERER_NOT_SELF_DRAWN 负责）。
     const gate = await reportScopeViolations({
       pool: ctx.pool,
@@ -1141,28 +1141,29 @@ export function registerReports(r: ModuleHono, ctx: RouteCtx): void {
       report,
       acl: await loadAssetAcl(ctx.pool, org, id),
     })
-    // 门的 warning 是 `string[]`，而 `publishVersion` 成功回包的 `warnings` 是发布 lint 的
-    // `LintIssue[]`——**不合并两种形状**（评审 Minor）。门自己的提示走独立字段 `scopeWarnings`。
-    const scopeWarnings = gate?.warnings ?? []
+    // 门的 issue 是 `{ reason, panelIndex, metricId? }[]`，而 `publishVersion` 回包的
+    // `warnings` 是发布 lint 的 `LintIssue[]`——**不合并两种形状**（评审 Minor）。门自己的
+    // 「判不了」走独立字段 `scopeIssues`（P6 Task 1）：它**不阻断发布**，只让人面/巡检看得见。
+    const scopeIssues = gate?.issues ?? []
     if (gate !== null && gate.panels.length > 0) {
       return c.json({
         error: 'REPORT_METRIC_SCOPE_MISMATCH',
         panels: gate.panels,
-        ...(scopeWarnings.length === 0 ? {} : { scopeWarnings }),
+        ...(scopeIssues.length === 0 ? {} : { scopeIssues }),
       }, 409)
     }
     const out = await publishVersion(
       ctx.pool, org, id, body.data.expectedVersion,
       requester.userId, body.data.note, new Set(c.get(TENANT_SOURCES) ?? []),
     )
-    // 非阻断提示（Metabase 无法判定等）随成功/失败回包带出，调用方/巡检都看得见。
+    // 非阻断 issue（Metabase 无法判定 / 目录缺失等）随成功/失败回包带出，调用方/巡检都看得见。
     if (!out.ok) {
       return c.json(
-        scopeWarnings.length === 0 ? out : { ...out, scopeWarnings },
+        scopeIssues.length === 0 ? out : { ...out, scopeIssues },
         statusOfVersionFailure(out.reason),
       )
     }
-    return c.json(scopeWarnings.length === 0 ? out : { ...out, scopeWarnings })
+    return c.json(scopeIssues.length === 0 ? out : { ...out, scopeIssues })
   })
 
   r.post('/reports/:id/unpublish', async (c) => {

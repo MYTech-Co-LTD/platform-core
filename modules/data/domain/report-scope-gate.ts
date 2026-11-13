@@ -35,10 +35,11 @@
 // 边界（诚实记录）：
 //   · `reveal='report'` 的指标与 `panel` 档在这里**同判**：reveal 只在渲染期更严
 //     （整表 404），发布期的可见范围约束不改。
-//   · 词表里找不到的面板指标（已删/未同步）⇒ 非阻断 warning：这是**存在性/漂移**问题，
-//     由发布路径既有的 `UNKNOWN_PANEL_METRIC` / 巡检脚本负责，不在可见性门上编判定。
-//   · Metabase 行没有平台面板（`spec` 恒 null ⇒ metricIds 空）⇒ 无法判定，跳过并回 warning
-//     （详见 spec §9.2：Metabase 做不到面板级）。
+//   · 词表里找不到的面板指标（已删/未同步）⇒ **`issues`（判不了）**，不是 `panels`（违规）：
+//     这是**存在性/漂移**问题，本门不编可见性判定。发布不因它阻断（P5 语义），但巡检按
+//     issue 判红（P6 Task 1：判不了 ≠ 干净）。
+//   · Metabase 行没有平台面板（`spec` 恒 null ⇒ metricIds 空）⇒ 无法判定，跳过并记
+//     `issues`（详见 spec §9.2：Metabase 做不到面板级）。
 import type { Pool } from 'pg'
 import type { AclRow } from './asset-auth'
 import { deptChainOf, subtreeOf } from './metric-visibility'
@@ -65,10 +66,29 @@ export interface ReportScopeViolation {
   reason: ReportScopeViolationReason
 }
 
-/** 判定结果：`null` = 通过且无提示；`panels` 空但 `warnings` 非空 = 通过但有无法判定项。 */
+/**
+ * 门 `issues` 的 reason：**判不了**（与 `panels` 的「判为违规」是两种形状）。
+ *
+ * - `metric_unknown`：面板指标不在词表（归档/删除/未同步）⇒ 可见范围无从判定。
+ * - `no_panel_metrics`：渲染器没有面板指标可判（Metabase；spec §9.2 做不到面板级）。
+ */
+export type ReportScopeIssueReason = 'metric_unknown' | 'no_panel_metrics'
+
+/** 无法判定项（P6 Task 1）。发布不阻断（P5 语义），巡检按它判红。 */
+export interface ReportScopeIssue {
+  reason: ReportScopeIssueReason
+  /**
+   * 出问题的 `spec.panels` 下标。没有单个面板可指时（`no_panel_metrics`）为 `-1`——
+   * 用负数而不是 0，避免把「整表判不了」误读成「第 0 块面板有问题」。
+   */
+  panelIndex: number
+  metricId?: string
+}
+
+/** 判定结果：`null` = 通过且无提示；`panels` 空但 `issues` 非空 = 通过但有无法判定项。 */
 export interface ReportScopeGateResult {
   panels: ReportScopeViolation[]
-  warnings: string[]
+  issues: ReportScopeIssue[]
 }
 
 /** 判定所需的最小报表形状（`ReportRow` 结构性满足——不绑存储类型，巡检脚本可复用）。 */
@@ -130,8 +150,8 @@ function isUnbindableAudience(report: ReportScopeRow, acl: readonly AclRow[]): b
 }
 
 /**
- * 发布门判定。返回 `null` = 通过且无提示；否则回 `{ panels, warnings }`（`panels` 空 =
- * 仅有无害提示，如 Metabase 无法判定）。
+ * 发布门判定。返回 `null` = 通过且无提示；否则回 `{ panels, issues }`（`panels` 空 =
+ * 仅有无法判定项，如 Metabase 无面板 / 面板指标不在词表）。
  *
  * 纯读：本函数**不写任何东西**——任一路径（HTTP 发布 / 每日巡检）都可以放心调用。
  * 词表只加载一次；部门链/子树按部门去重缓存（同一报表里同部门只查一次）。
@@ -140,9 +160,9 @@ export async function reportScopeViolations(
   deps: ReportScopeGateDeps,
 ): Promise<ReportScopeGateResult | null> {
   const { report, acl } = deps
-  const warnings: string[] = []
+  const issues: ReportScopeIssue[] = []
 
-  // 面板指标（含 kpi 分母；text/ai_text 没有）。没有可判的面板 ⇒ Metabase 行记一条 warning，
+  // 面板指标（含 kpi 分母；text/ai_text 没有）。没有可判的面板 ⇒ Metabase 行记一条 issue，
   // 平台行（空草稿 / 纯文本）静默通过。
   const panelMetrics: Array<{ index: number; metricId: string }> = []
   if (report.spec !== null) {
@@ -152,12 +172,10 @@ export async function reportScopeViolations(
   }
   if (panelMetrics.length === 0) {
     if (report.renderer === 'metabase') {
-      warnings.push(
-        '报表为 metabase 渲染器且没有面板指标（metricIds 为空）⇒ 无法判定受众与指标可见范围，发布门已跳过（不阻断）',
-      )
-      return { panels: [], warnings }
+      issues.push({ reason: 'no_panel_metrics', panelIndex: -1 })
+      return { panels: [], issues }
     }
-    return warnings.length === 0 ? null : { panels: [], warnings }
+    return issues.length === 0 ? null : { panels: [], issues }
   }
 
   const catalog = deps.catalog ?? await loadMergedCatalog(deps.pool, deps.org)
@@ -196,9 +214,9 @@ export async function reportScopeViolations(
   for (const { index, metricId } of panelMetrics) {
     const metric = catalog.find((m) => m.id === metricId)
     if (metric === undefined) {
-      // 存在性/漂移不在可见性门里判（发布路径的 UNKNOWN_PANEL_METRIC 会响亮拒）——
-      // 但巡检面要看得见，故记 warning。
-      warnings.push(`面板 ${index} 的指标 ${metricId} 不在词表中 ⇒ 可见范围无法判定，已跳过`)
+      // 存在性/漂移不在可见性门里判（发布写侧另有 UNKNOWN_PANEL_METRIC）——但「判不了」
+      // 必须可被巡检判红，故显式记 issue，而不是一句会被当干净的提示。
+      issues.push({ reason: 'metric_unknown', panelIndex: index, metricId })
       continue
     }
     // 空串归属 = 平台桶（与 metricVisibleWithDept 同一归一）
@@ -222,5 +240,5 @@ export async function reportScopeViolations(
     }
   }
 
-  return panels.length === 0 && warnings.length === 0 ? null : { panels, warnings }
+  return panels.length === 0 && issues.length === 0 ? null : { panels, issues }
 }
