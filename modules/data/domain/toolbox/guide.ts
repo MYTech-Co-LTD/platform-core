@@ -11,8 +11,8 @@ import { guideInvariants, renderSkill } from '../../skill/render'
  * 专属工具名；通道特有机制（A 的 freshness_line 附行、C 的 📅 传输层自动附加）留各通道本地
  * 文案，不进这里。
  *
- * ⚠️ 加载期只对 content/shared.md 做 eager fail-fast：这四行是安全关键约束，构建产物缺
- * shared.md 时必须起不来，而不是静默退化成三行/零行。content/mcp.md 是调用期读取
+ * ⚠️ 加载期只对 content/shared.md 做 eager fail-fast：这五行是安全关键约束，构建产物缺
+ * shared.md 时必须起不来，而不是静默退化成四行/零行。content/mcp.md 是调用期读取
  * （renderSkill），缺失时由 guideImpl 的 try/catch 转成工具级 guide_unavailable。
  */
 export const GUIDE_INVARIANTS: readonly string[] = guideInvariants()

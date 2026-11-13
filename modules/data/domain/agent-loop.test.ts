@@ -385,7 +385,7 @@ describePg('runAgentLoop（需要 DATABASE_URL）', () => {
       expect(events.at(-1)).toMatchObject({ type: 'final', text: '数据截至 2026-10-20。' })
     })
 
-    it('SYSTEM_PROMPT 已含 GUIDE_INVARIANTS 四行（A 通道同源 = 编译期 import）', async () => {
+    it('SYSTEM_PROMPT 已含 GUIDE_INVARIANTS 五行（A 通道同源 = 编译期 import）', async () => {
       await upsertMetric(pool, ORG, SALES_DAILY, 'fixture')
       const model = new FakeChatModel([{ content: '好', toolCalls: [] }])
       await collect(runAgentLoop({ pool, org: ORG, adoptedSources: NO_SOURCES }, sessionRequester(), model, 'hi'))

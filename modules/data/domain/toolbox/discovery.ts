@@ -83,7 +83,7 @@ export const searchImpl: ToolImpl = async (deps, args) => {
       if (id.includes(q)) return 2
       return 1
     }
-    const results = (await visibleRows(deps))
+    const scored = (await visibleRows(deps))
       .filter((m) => wantCertified === null || (m.certified === 'certified') === wantCertified)
       .filter((m) => q === null || m.id.toLowerCase().includes(q)
         || m.title.toLowerCase().includes(q) || m.description.toLowerCase().includes(q)
@@ -92,9 +92,37 @@ export const searchImpl: ToolImpl = async (deps, args) => {
         || m.synonyms.some((s) => s.toLowerCase().includes(q)))
       .map((m) => ({ m, score: scoreOf(m) }))
       .sort((a, b) => b.score - a.score || a.m.id.localeCompare(b.m.id))
+    // tie 检测（P3 Task 1 + 终审修复）：顶分集合（score === topScore）里 ≥2 条不同 id 的
+    // 「精确命中面」相交 ⇒ ambiguous。命中面 = {lower(title)} ∪ {lower(synonyms) 中恰等于
+    // q 的那些}——生产 L1 词表里 sales/net_sales 的 synonyms 都含「营业额」（title 不同，
+    // #813 毛/净形态），只按 title 分组会把这条静默放行。title 共享是命中面相交的特例
+    // （既有用例不破）；顶分并列但命中面不相交 ≠ 歧义（顶分+共享面双条件）。
+    // q === null（浏览态）跳过：全体同分且命中面恒只含 title，标记无意义。
+    // 判定在 slice **之前**（被切掉的顶分同样是歧义）；结果不再静默取先——稳定排序让
+    // 同组候选都贴在 results 顶部，调用方见 ambiguous 即应问辨而非猜。
+    let ambiguous = false
+    const topScore = scored[0]?.score ?? 0
+    if (q !== null) {
+      const faceOwner = new Map<string, string>()
+      for (const { m, score } of scored) {
+        if (score !== topScore) break // 已按分数降序 ⇒ 顶分集合到此为止
+        const faces = [m.title.toLowerCase(), ...m.synonyms.map((s) => s.toLowerCase()).filter((s) => s === q)]
+        if (faces.some((f) => { const first = faceOwner.get(f); return first !== undefined && first !== m.id })) {
+          ambiguous = true; break
+        }
+        for (const f of faces) faceOwner.set(f, m.id)
+      }
+    }
+    const results = scored
       .slice(0, SEARCH_LIMIT)
-      .map(({ m }) => ({ id: m.id, title: m.title, tier: tierOf(m), owner: ownerOf(m, deps.org), oneLiner: oneLinerOf(m) }))
-    return { payload: { results }, isError: false, auditRowCount: null }
+      .map(({ m }) => ({
+        id: m.id, title: m.title, tier: tierOf(m), owner: ownerOf(m, deps.org), oneLiner: oneLinerOf(m),
+        // 口径速览（P3 Task 1）：归属部门与变体注记随行投影——同名候选可当场按口径辨析，
+        // 不必逐条 describe。未声明 = null（MetricRow 恒有值，P1/P2 接线）。
+        dept: m.ownerDept ?? null, variantNote: m.variantNote ?? null,
+      }))
+    // ambiguous 只在为真时出现（缺省 = 不歧义，旧消费者零破坏）。
+    return { payload: { results, ...(ambiguous ? { ambiguous: true as const } : {}) }, isError: false, auditRowCount: null }
   }
   const r = await deps.wh('select table_schema, table_name from information_schema.tables order by table_schema, table_name')
   const results = r.rows

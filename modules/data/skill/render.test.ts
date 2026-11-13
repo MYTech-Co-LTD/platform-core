@@ -59,7 +59,7 @@ describe('renderText（纯函数，注入 reader）', () => {
 })
 
 describe('renderSkill（真实 content/*.md）', () => {
-  it('mcp 正文包含七步工作流、四行硬约束、注入日期', () => {
+  it('mcp 正文包含七步工作流、五行硬约束、注入日期', () => {
     const text = renderSkill('mcp', { today: '2026-01-02' })
     expect(text).toContain('今天是 2026-01-02')
     expect(text).toContain('工作流七步')
@@ -78,8 +78,12 @@ describe('renderSkill（真实 content/*.md）', () => {
 })
 
 describe('guideInvariants', () => {
-  it('恰 4 行', () => {
-    expect(guideInvariants()).toHaveLength(4)
+  it('恰 5 行', () => {
+    expect(guideInvariants()).toHaveLength(5)
+  })
+
+  it('第 5 条：同名多候选必须澄清（含「澄清」关键词）', () => {
+    expect(guideInvariants().some((l) => l.includes('澄清'))).toBe(true)
   })
 })
 
@@ -114,7 +118,7 @@ describe('contractView', () => {
 })
 
 describe('openclaw 渲染', () => {
-  it('包含四行硬约束、租户指标 id，且工具名已按 openclaw 通道替换', () => {
+  it('包含五行硬约束、租户指标 id，且工具名已按 openclaw 通道替换', () => {
     const text = renderSkill('openclaw')
     for (const line of guideInvariants()) expect(text).toContain(line)
     expect(text).toContain('lemeng:retail:sales')

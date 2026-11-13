@@ -31,7 +31,7 @@
 
 | 文件 | 角色 |
 |---|---|
-| `shared.md` | 通道中性内容（四行硬约束），`mcp.md` / `openclaw.md` 用 `{{include:shared.md}}` 引用 |
+| `shared.md` | 通道中性内容（五行硬约束），`mcp.md` / `openclaw.md` 用 `{{include:shared.md}}` 引用 |
 | `mcp.md` | 平台 MCP 通道正文（含 `{{today}}`、七步工作流） |
 | `openclaw.md` | openclaw 通道正文；frontmatter 由 Task 4 的 `openclaw.frontmatter.md` 提供，不写在这里 |
 | `local/tenant-*.md` | 租户/部署专属内容，**只在 openclaw 渲染时**由 `openclaw.md` 的 `{{include:...}}` 拼接，不进入平台 MCP 指令面 |
