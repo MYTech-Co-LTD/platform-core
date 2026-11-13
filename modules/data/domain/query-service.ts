@@ -12,6 +12,7 @@ import { decorateWithLabels, loadDimensionLookup, type DimensionLookup } from '.
 import { buildScopePlan, loadEffectiveScopes, scopeModeOf, type DataScopePlan } from './scope'
 import { cacheGet, cacheKey, cacheSet } from './result-cache'
 import { dataVersionOf } from './data-version'
+import { singleFlight } from './single-flight'
 
 /** 湖 ETag 竞态的**窄匹配**（#452 定案 spec §3.1：宁可漏判也不误判——只认这一形状，
  *  不扩大到一般 5xx/超时；那类由 statement_timeout / job retry 语义管）。 */
@@ -353,6 +354,11 @@ export interface QueryError {
 }
 export type QueryOutcome = QueryOk | QueryDenied | QueryError
 
+// 同请求内并发去重（R4）：键 = 主/合计计划 SQL + 数据版本。只在真执行器（可缓存）路径使用。
+type FlightAgg = { columns: string[]; rows: unknown[][]; retried: boolean }
+const mainFlight = new Map<string, Promise<FlightAgg>>()
+const totalFlight = new Map<string, Promise<string | number | null | undefined>>()
+
 export async function runQuery(
   deps: QueryDeps,
   org: string,
@@ -499,19 +505,28 @@ export async function runQuery(
     if (cachedMain.retried) raceRetried = true
     fromCache = true
   } else {
+    // 执行 + 装饰 + 回填缓存收进一个闭包：它同时是「单飞」的执行体（并发同键只跑一次）。
+    const loadMain = async (): Promise<CachedAgg> => {
+      const r = await execWithRaceRetry(authz.plan.sql)
+      // 维度名称解析（issue #857）：事实表只存键，名称在**展示层**贴——把 `brand_name` 插在
+      // `system_book` 之后、`branch_name` 插在 `branch_num` 之后，**原 key 保留**（可追溯/可下钻）。
+      // 只作用于明细行：`args.total` 的单行 `['total']` 没有键列，天然跳过。
+      // 维度缺席/查询失败 ⇒ 名称列缺席，主查询照常交付（fail-soft，与新鲜度面同一姿态）。
+      // 走真仓库池而非 `deps.execute`：后者是主计划 SQL 的测试缝，假执行器认不得这两条小查询。
+      const lookup = await (deps.dimensionLookup ?? (() => loadDimensionLookup(whExec)))()
+      const decorated = lookup === null ? r : decorateWithLabels(r, lookup)
+      const value: CachedAgg = { columns: decorated.columns, rows: decorated.rows, retried: raceRetried }
+      if (mainKey !== '') cacheSet(mainKey, value)
+      return value
+    }
+    let main: CachedAgg
     try {
-      result = await execWithRaceRetry(authz.plan.sql)
+      main = mainKey === '' ? await loadMain() : await singleFlight(mainFlight, mainKey, loadMain)
     } catch (err) {
       return await toError(err)
     }
-    // 维度名称解析（issue #857）：事实表只存键，名称在**展示层**贴——把 `brand_name` 插在
-    // `system_book` 之后、`branch_name` 插在 `branch_num` 之后，**原 key 保留**（可追溯/可下钻）。
-    // 只作用于明细行：`args.total` 的单行 `['total']` 没有键列，天然跳过。
-    // 维度缺席/查询失败 ⇒ 名称列缺席，主查询照常交付（fail-soft，与新鲜度面同一姿态）。
-    // 走真仓库池而非 `deps.execute`：后者是主计划 SQL 的测试缝，假执行器认不得这两条小查询。
-    const lookup = await (deps.dimensionLookup ?? (() => loadDimensionLookup(whExec)))()
-    if (lookup !== null) result = decorateWithLabels(result, lookup)
-    if (mainKey !== '') cacheSet(mainKey, { columns: result.columns, rows: result.rows, retried: raceRetried })
+    result = { columns: main.columns, rows: main.rows }
+    if (main.retried) raceRetried = true
   }
 
   // 自动伴随（spec §8.4）：plan.totalSql 在场 ⇒ 再执行合计计划，把值附到响应 total 字段。
@@ -523,10 +538,14 @@ export async function runQuery(
     if (cachedTotal !== null) {
       totalValue = cachedTotal.value
     } else {
+      const loadTotal = async (): Promise<string | number | null | undefined> => {
+        const t = await execWithRaceRetry(authz.plan.totalSql!)
+        const v = (t.rows[0]?.[0] as string | number | null | undefined) ?? null
+        if (totalKey !== '') cacheSet(totalKey, { value: v })
+        return v
+      }
       try {
-        const t = await execWithRaceRetry(authz.plan.totalSql)
-        totalValue = (t.rows[0]?.[0] as string | number | null | undefined) ?? null
-        if (totalKey !== '') cacheSet(totalKey, { value: totalValue })
+        totalValue = totalKey === '' ? await loadTotal() : await singleFlight(totalFlight, totalKey, loadTotal)
       } catch (err) {
         return await toError(err)
       }
