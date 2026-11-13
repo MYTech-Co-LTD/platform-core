@@ -212,7 +212,7 @@ function gatedApp(identity: ReturnType<typeof makeIdentity>, pool: Pool | null) 
 }
 
 describe('报表面声明（不需要数据库）', () => {
-  it('报表端点都声明了（api.internal 全模块共 74 条），且页门分档：管理动作=data:manage，观看面=data:query', () => {
+  it('报表端点都声明了（api.internal 全模块共 76 条），且页门分档：管理动作=data:manage，观看面=data:query', () => {
     const declared = new Map(
       (mod.manifest.api?.internal ?? []).map((d) => [`${d.method} ${d.path}`, d.scope]),
     )
@@ -236,9 +236,11 @@ describe('报表面声明（不需要数据库）', () => {
     // 与 scope 管理面同档 data:manage）。
     // +7：指标变更单（Wave 5 P0，spec 2026-11-12 §6/§7：提交/列表/详情/重跑试算/采纳/驳回/撤回，
     // 全部 data:manage——采纳/驳回的**会话通道闸在路由内**，manifest 页门管不了通道）。
+    // +2：计算凭证（R1：POST /reports/:id/receipt + /receipt/export，观看面 data:query；
+    // 页门/快照门/草稿分档与 narrative 共用 loadViewableSpec）。
     // 穷举口径（同 module.test.ts 的表清单）——别处加端点而漏改这里会红，
     // 逼着声明与测试一起动。
-    expect(declared).toHaveLength(74)
+    expect(declared).toHaveLength(76)
     // 指标变更单：七条全 data:manage；采纳/驳回的会话限定是路由内的第二道闸（不在这张表上）
     for (const p of [
       'POST /metric-changes', 'GET /metric-changes', 'GET /metric-changes/:id',
@@ -315,6 +317,9 @@ describe('报表面声明（不需要数据库）', () => {
     // ── AI 文本（ai_text，计划 2026-10-26 Task 7）：观看面；更细的页门按快照另判（handler）。──
     expect(declared.get('POST /reports/:id/narrative')).toBe('data:query')
     expect(declared.get('POST /reports/:id/narrative/stream')).toBe('data:query')
+    // 计算凭证：观看面；更细的页门/快照门/草稿分档在 handler（loadViewableSpec）
+    expect(declared.get('POST /reports/:id/receipt')).toBe('data:query')
+    expect(declared.get('POST /reports/:id/receipt/export')).toBe('data:query')
   })
 
   it('★ 页门负测：只有 data:query ⇒ 管理清单（跨资产视图）403', async () => {
@@ -374,7 +379,10 @@ describePg('报表路由（需要 DATABASE_URL）', () => {
     const l1 = (id: string, totalable: boolean, sourceSystem: string | null) => ({
       id, title: id, description: '', requiredScope: null, subjectColumn: 'org',
       selectSql: 'select sum(mart_sales_daily.revenue) as value, bizday from mart_sales_daily',
-      groupBy: 'bizday', params: {}, sourceSystem, slaDays: 1, freshnessRelations: [], masks: null, totalable,
+      groupBy: 'bizday',
+      // 与生产 L1 同形：声明 bizday 过滤参数（否则带期间窗口的查询会被授权层判 bad_param）。
+      params: { bizday: { column: 'bizday', type: 'date_range' as const } },
+      sourceSystem, slaDays: 1, freshnessRelations: [], masks: null, totalable,
     })
     await upsertL1Metric(pool, l1(ADDITIVE_METRIC, true, null))
     await upsertL1Metric(pool, l1(SOURCED_METRIC, true, 'lemeng'))
@@ -2837,6 +2845,132 @@ describePg('报表路由（需要 DATABASE_URL）', () => {
       const ok = await narrate(app, id, { preview: 'draft' })
       expect(ok.status).toBe(200)
       expect(await ok.json()).toMatchObject({ text: SAFE_TEXT, fallback: false })
+    })
+  })
+
+  // ── 计算凭证（R1）─────────────────────────────────────────────────────────────────
+  // 判据落在路由层：ACL/快照解析、kpi 限制、按日组成与合计自洽、CSV 形状；
+  // 凭证自身的组成语义在 domain 层，不在这里重测。
+  describe('计算凭证（receipt）', () => {
+    const RECEIPT_PERIOD = { mode: 'custom' as const, from: '2026-10-01', to: '2026-10-02' }
+    const AS_OF_INSTANT = new Date('2026-10-24T22:00:00Z')
+
+    /** 假仓库：合计 + 按日组成 + 新鲜度；其余空集（与 narrativeExec 同款卫生）。 */
+    const receiptExec: SqlExecutor = async (sql) => {
+      if (sql.includes('data.load_log')) return { columns: ['data_as_of'], rows: [[AS_OF_INSTANT]] }
+      if (sql.includes('dim_brand') || sql.includes('stg_lemeng_branch') || sql.includes('dim_region')) {
+        return { columns: [], rows: [] }
+      }
+      // 显式合计先判：其内层 select 也含 bizday，不能先被组成分支吃掉。
+      if (sql.includes('AS total')) return { columns: ['total'], rows: [[1234]] }
+      if (sql.includes('bizday')) {
+        return { columns: ['bizday', 'value'], rows: [['2026-10-01', 1000], ['2026-10-02', 234]] }
+      }
+      return { columns: [], rows: [] }
+    }
+
+    const receiptShell = (identity: ReturnType<typeof makeIdentity>): Hono => {
+      const app = new Hono<ModuleVars>()
+      app.use('*', async (c, next) => {
+        c.set('identity', identity)
+        c.set('tenant', { id: TENANT, casdoor_org: identity.orgId })
+        c.set(TENANT_SOURCES, [])
+        await next()
+      })
+      registerReports(app, { pool, execute: receiptExec })
+      return app as unknown as Hono
+    }
+
+    const specOf = () => ({
+      period: RECEIPT_PERIOD,
+      panels: [
+        {
+          chart: 'kpi', title: '销售额', metricId: ADDITIVE_METRIC,
+          format: 'number', compare: 'none',
+        },
+        { chart: 'text', title: '说明', content: '静态说明' },
+      ],
+    })
+
+    async function createPublishedReceipt(app: Hono): Promise<string> {
+      const res = await post(app, { title: '凭证月报', renderer: 'platform', spec: specOf() })
+      expect(res.status).toBe(201)
+      const { id } = await res.json() as { id: string }
+      const pub = await app.request(`/reports/${id}/publish`, {
+        method: 'POST', headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ expectedVersion: await versionOf(app, id) }),
+      })
+      expect(pub.status).toBe(200)
+      return id
+    }
+
+    const receiptOf = (app: Hono, id: string, body: Record<string, unknown>) =>
+      app.request(`/reports/${id}/receipt`, {
+        method: 'POST', headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ panelIndex: 0, period: RECEIPT_PERIOD, ...body }),
+      })
+
+    const adminIdentity = () => makeIdentity({ orgId: ORG, scopes: ['data:query', 'data:manage'] })
+    const viewerIdentity = () => makeIdentity({ orgId: ORG, scopes: ['data:query'] })
+
+    it('★ 返回口径/窗口/范围/截至 + 按日组成，且组成合计与页面值自洽', async () => {
+      const id = await createPublishedReceipt(receiptShell(adminIdentity()))
+      const app = receiptShell(viewerIdentity())
+      const res = await receiptOf(app, id, {})
+      expect(res.status).toBe(200)
+      const r = await res.json() as {
+        metric: { id: string; caliber: string }
+        window: { from: string; to: string; mode: string }
+        value: string
+        series: Array<{ day: string; value: number }>
+        seriesSum: string
+        consistent: boolean
+      }
+      expect(r.metric.id).toBe(ADDITIVE_METRIC)
+      expect(r.metric.caliber).toBe('certified')
+      expect(r.window).toMatchObject({ from: '2026-10-01', to: '2026-10-02', mode: 'range' })
+      expect(r.value).toBe('1,234')
+      expect(r.series.map((x) => x.day)).toEqual(['2026-10-01', '2026-10-02'])
+      expect(r.seriesSum).toBe('1,234')
+      expect(r.consistent).toBe(true)
+    })
+
+    it('★ 导出：text/csv + 按日两行（与凭证组成逐分一致）', async () => {
+      const id = await createPublishedReceipt(receiptShell(adminIdentity()))
+      const app = receiptShell(viewerIdentity())
+      const res = await app.request(`/reports/${id}/receipt/export`, {
+        method: 'POST', headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ panelIndex: 0, period: RECEIPT_PERIOD }),
+      })
+      expect(res.status).toBe(200)
+      expect(res.headers.get('content-type')).toContain('text/csv')
+      expect(res.headers.get('content-disposition')).toContain('attachment')
+      const csv = await res.text()
+      expect(csv.split('\n')[0]).toBe('bizday,value')
+      expect(csv).toContain('2026-10-01,1000')
+      expect(csv).toContain('2026-10-02,234')
+    })
+
+    it('非 kpi 面板 ⇒ 400 PANEL_NOT_KPI（凭证只回答「一个数」）', async () => {
+      const id = await createPublishedReceipt(receiptShell(adminIdentity()))
+      const app = receiptShell(viewerIdentity())
+      const res = await receiptOf(app, id, { panelIndex: 1 })
+      expect(res.status).toBe(400)
+      expect(await res.json()).toMatchObject({ error: 'PANEL_NOT_KPI' })
+    })
+
+    it('未发布且非草稿预览 ⇒ 404 NOT_PUBLISHED；草稿预览要求管理面', async () => {
+      const adminApp = receiptShell(adminIdentity())
+      const res = await post(adminApp, { title: '未发布', renderer: 'platform', spec: specOf() })
+      const { id } = await res.json() as { id: string }
+      const viewer = receiptShell(viewerIdentity())
+      expect((await receiptOf(viewer, id, {})).status).toBe(404)
+      // 非 owner 的观看面用户不能预览草稿（与 narrative 同一条分档）；owner 自己可以。
+      const other = receiptShell(makeIdentity({ orgId: ORG, userId: 'u-other', scopes: ['data:query'] }))
+      expect((await receiptOf(other, id, { preview: 'draft' })).status).toBe(404)
+
+      const draft = await receiptOf(adminApp, id, { preview: 'draft' })
+      expect(draft.status).toBe(200)
     })
   })
 

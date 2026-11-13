@@ -95,6 +95,7 @@ export default function StandaloneReport() {
       spec={data.spec}
       chrome="standalone"
         pinnedVersion={v === null ? null : Number(v)}
+        {...(preview ? { preview: 'draft' as const } : {})}
       />
     </>
   )
