@@ -37,6 +37,9 @@ export type TenantDeclarationOutcome =
   | { ok: true; id: string }
   | { ok: false; http: 400 | 403 | 404 | 409 | 500; error: string; extra?: Record<string, unknown> }
 
+/** TenantDeclarationOutcome 的败支（编译段失败只产败支，调用方原样透传给 HTTP 面）。 */
+type TenantDeclarationRejection = Exclude<TenantDeclarationOutcome, { ok: true }>
+
 const issueExtra = (issues: DeclarationIssue[]): Record<string, unknown> => ({ issues })
 
 /** 事务包裹（审计与变更同生共死；同 metric-write.ts 的口径）。 */
@@ -121,45 +124,43 @@ function applyTenantDefaultMask(
   return null
 }
 
+export type NewDeclarationCompileOutcome =
+  | { ok: true; compiled: CompiledTenantDeclaration; catalog: MetricRow[] }
+  | { ok: false; /** 失败以败支形态透传（500 YAML / 409 撞 L1 / 400 DECLARATION_INVALID）。 */ outcome: TenantDeclarationRejection }
+
 /**
- * 新建一条租户声明。`entry` 是 YAML 条目等价的 JSON 对象（`name` 即指标 id）。
- *
- * 校验顺序（全部在写库之前）：
- *   ① 现行 YAML 可读（不可读 ⇒ 500，不在坏基线上写）
- *   ② 名字不撞 L1（撞 ⇒ 409；覆盖走 P2 的专用入口）
- *   ③ `semanticsYamlPieceIssues`（与 apply 同一把尺：路径白名单/形状/关系白名单）
- *   ④ `compileTenantDeclaration`（派生 + 掩码/实体/tier 校验；有 warehouse 时含列存在性）
- *   ⑤ 本 org 同 id 未存在（存在 ⇒ 409）
- *   ⑥ 插入 + `metric_audit`（同一事务）
+ * 新建声明的**编译段**（P5 Task 1 从 createTenantDeclaration 抽出并导出）：
+ * ① 现行 YAML 可读 → ② 名字不撞 L1 → ③ `semanticsYamlPieceIssues`（与 apply 同一把尺：
+ * 路径白名单/形状/关系白名单）→ ④ `compileTenantDeclaration`（派生 + 掩码/实体/tier；
+ * 有 warehouse 时含列存在性）。
+ * 抽出动机：变更单试算必须与写路径用**同一把尺**——两处各拼一份上下文就是两把尺，
+ * 漂了就是「试算一个形状、生效另一个形状」。
  */
-export async function createTenantDeclaration(
-  deps: TenantDeclarationDeps,
-  org: string,
-  requester: Requester,
-  entry: unknown,
-): Promise<TenantDeclarationOutcome> {
+export async function compileNewDeclaration(
+  deps: TenantDeclarationDeps, entry: unknown, preloadedCatalog?: MetricRow[],
+): Promise<NewDeclarationCompileOutcome> {
   const yamlText = readCurrentSemanticsYaml()
   if (yamlText === null) {
-    return { ok: false, http: 500, error: 'SEMANTICS_YAML_UNAVAILABLE' }
+    return { ok: false, outcome: { ok: false, http: 500, error: 'SEMANTICS_YAML_UNAVAILABLE' } }
   }
   const doc = parseYaml(yamlText) as { metrics?: unknown[]; entities?: Record<string, unknown> } | null
   if (doc === null || typeof doc !== 'object' || !Array.isArray(doc.metrics)) {
-    return { ok: false, http: 500, error: 'SEMANTICS_YAML_UNPARSEABLE' }
+    return { ok: false, outcome: { ok: false, http: 500, error: 'SEMANTICS_YAML_UNPARSEABLE' } }
   }
   const e = (entry ?? {}) as Record<string, unknown>
   const name = typeof e.name === 'string' ? e.name : ''
 
   // ② 撞 L1（YAML 侧先说清楚；DB 侧同判据再兜一次）
-  const catalog = await loadPlatformCatalog(deps.pool)
+  const catalog = preloadedCatalog ?? (await loadPlatformCatalog(deps.pool))
   if (name !== '' && (catalog.some((m) => m.id === name) || doc.metrics.some((m) => (m as { name?: unknown })?.name === name))) {
-    return { ok: false, http: 409, error: 'ID_RESERVED_BY_L1' }
+    return { ok: false, outcome: { ok: false, http: 409, error: 'ID_RESERVED_BY_L1' } }
   }
 
   // ③ 与 apply 同一把尺：把新条目拼进现行文件后重校验
   const piece = stringifyYaml({ ...doc, metrics: [...doc.metrics, e] })
   const pieceIssues = semanticsYamlPieceIssues(piece, yamlText)
   if (pieceIssues.length > 0) {
-    return { ok: false, http: 400, error: 'DECLARATION_INVALID', extra: { issues: pieceIssues } }
+    return { ok: false, outcome: { ok: false, http: 400, error: 'DECLARATION_INVALID', extra: { issues: pieceIssues } } }
   }
 
   // ④ 编译（含 B11 关系白名单 / 掩码 / 实体 / tier）
@@ -198,9 +199,33 @@ export async function createTenantDeclaration(
     ...(colsOf === undefined ? {} : { columnsOf: colsOf }),
   })
   if (!compiled.ok) {
-    return { ok: false, http: 400, error: 'DECLARATION_INVALID', extra: { issues: compiled.issues } }
+    return { ok: false, outcome: { ok: false, http: 400, error: 'DECLARATION_INVALID', extra: { issues: compiled.issues } } }
   }
-  const d = compiled.compiled
+  return { ok: true, compiled: compiled.compiled, catalog }
+}
+
+/**
+ * 新建一条租户声明。`entry` 是 YAML 条目等价的 JSON 对象（`name` 即指标 id）。
+ *
+ * 校验顺序（全部在写库之前）：
+ *   ① 现行 YAML 可读（不可读 ⇒ 500，不在坏基线上写）
+ *   ② 名字不撞 L1（撞 ⇒ 409；覆盖走 P2 的专用入口）
+ *   ③ `semanticsYamlPieceIssues`（与 apply 同一把尺：路径白名单/形状/关系白名单）
+ *   ④ `compileTenantDeclaration`（派生 + 掩码/实体/tier 校验；有 warehouse 时含列存在性）
+ *   ⑤ 本 org 同 id 未存在（存在 ⇒ 409）
+ *   ⑥ 插入 + `metric_audit`（同一事务）
+ * ①②③④ 收在 compileNewDeclaration（变更单 declaration 档试算复用同一段，P5 Task 1）。
+ */
+export async function createTenantDeclaration(
+  deps: TenantDeclarationDeps,
+  org: string,
+  requester: Requester,
+  entry: unknown,
+): Promise<TenantDeclarationOutcome> {
+  const pre = await compileNewDeclaration(deps, entry)
+  if (!pre.ok) return pre.outcome
+  const d = pre.compiled
+  const e = (entry ?? {}) as Record<string, unknown>
   const maskIssue = applyTenantDefaultMask(e, d)
   if (maskIssue !== null) return maskIssue
   const sqlIssue = await explainOrReject(deps, d.selectSql, d.groupBy)
@@ -242,9 +267,6 @@ export async function createTenantDeclaration(
 }
 
 // ── P2：覆盖平台口径（草稿 → 确认 → 生效；D6）──────────────────────────────────
-
-/** TenantDeclarationOutcome 的败支（编译段失败只产败支，调用方原样透传给 HTTP 面）。 */
-type TenantDeclarationRejection = Exclude<TenantDeclarationOutcome, { ok: true }>
 
 export type OverrideCompileOutcome =
   | { ok: true; compiled: CompiledTenantDeclaration; /** 平台目录（调用方免二次加载）。 */ catalog: MetricRow[] }

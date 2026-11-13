@@ -466,3 +466,78 @@ describePg('P1 Task 4：决策竞态串行化 + adopt 撞名映射 409', () => {
     expect((await getChange(pool, RORG, id))?.status).toBe('preview_ready')
   })
 })
+
+// ── P5 Task 1（2026-11-13）：恢复 declaration 档（能力归还）─────────────────────
+// P4 把 `POST /metrics/declarations` 退役成 410，而变更单 kind 集不含 declaration ⇒「新租户
+// 全额声明」失去提案通路。本档把 W8 声明搬回变更单：提交宽校验 + L1 撞名 fail-early、试算
+// 复用写路径编译尺、采纳调用既有唯一写路径 createTenantDeclaration（**直接生效**，无草稿）。
+describePg('P5 Task 1：declaration 档（能力归还）', () => {
+  const DORG = 'org-p5-decl'
+  /** W8 全量声明条目（与 POST /metrics/declarations 的 `declaration` 同形；reads 供默认掩码判据）。 */
+  const ENTRY = {
+    name: 'p5mc:retail:decl_sales',
+    label: 'P5 声明·销售额',
+    definition: 'P5 Task 1 恢复 declaration 档的夹具口径',
+    owner: 'data-platform',
+    tier: 'experimental',
+    source: 'lemeng',
+    expression: 'sum(fct_retail_sale.sale_amount)',
+    grain: ['system_book', 'bizday'],
+    freshness_sla_days: 1,
+    reads: [],
+  }
+
+  beforeAll(async () => {
+    await pool.query('delete from data.metric_change where org = $1', [DORG])
+    await pool.query('delete from data.metrics where org = $1', [DORG])
+    // 撞名判据的被撞者：平台桶 L1 夹具（upsertL1Metric 固定写 org='platform'）
+    await upsertL1Metric(pool, L1_FIXTURE)
+  })
+  afterAll(async () => {
+    await pool.query('delete from data.metric_change where org = $1', [DORG])
+    await pool.query('delete from data.metrics where org = $1', [DORG])
+  })
+
+  it('提交合法声明 ⇒ 落单 kind=declaration，metricId = entry.name', async () => {
+    const r = await submitChange(pool, DORG, { userId: 'a', channel: 'pat' }, ENTRY.name, 'declaration', ENTRY)
+    expect(r.ok).toBe(true)
+    if (r.ok) {
+      expect(r.change.kind).toBe('declaration')
+      expect(r.change.metricId).toBe(ENTRY.name)
+    }
+  })
+
+  it('name 撞 L1 ⇒ 400 ID_RESERVED_BY_L1，且不落单（fail-early）', async () => {
+    const r = await submitChange(pool, DORG, { userId: 'a', channel: 'pat' }, L1_ID, 'declaration',
+      { ...ENTRY, name: L1_ID })
+    expect(r).toMatchObject({ ok: false, http: 400, error: 'ID_RESERVED_BY_L1' })
+    const n = await pool.query(
+      'select count(*)::int as n from data.metric_change where org = $1 and metric_id = $2', [DORG, L1_ID])
+    expect(n.rows[0]?.n).toBe(0)
+  })
+
+  it('宽校验：缺 expression / grain 空 / name 与 metricId 不一致 ⇒ 400 INVALID_DECLARATION', async () => {
+    const cases: Array<Record<string, unknown>> = [
+      { ...ENTRY, expression: '' },
+      { ...ENTRY, grain: [] },
+      { ...ENTRY, name: 'p5mc:retail:other' },
+    ]
+    for (const [i, payload] of cases.entries()) {
+      const r = await submitChange(pool, DORG, { userId: 'a', channel: 'pat' }, ENTRY.name, 'declaration', payload)
+      expect(r, `case ${i}`).toMatchObject({ ok: false, http: 400, error: 'INVALID_DECLARATION' })
+    }
+  })
+
+  it('采纳 ⇒ 走既有唯一写路径：data.metrics 出现 basis=declared 行且 declaration 列有值', async () => {
+    const s = await submitChange(pool, DORG, { userId: 'a', channel: 'pat' }, ENTRY.name, 'declaration', ENTRY)
+    if (!s.ok) throw new Error('unreachable')
+    await markReady(s.change.id)
+    const out = await adoptChange(writeDeps(pool), DORG, s.change.id)
+    expect(out.ok).toBe(true)
+    const live = await pool.query(
+      'select basis, declaration, title from data.metrics where org = $1 and id = $2', [DORG, ENTRY.name])
+    expect(live.rows[0]).toMatchObject({ basis: 'declared', title: ENTRY.label })
+    expect(live.rows[0]?.declaration).toMatchObject({ name: ENTRY.name, source: 'lemeng' })
+    expect((await getChange(pool, DORG, s.change.id))?.status).toBe('adopted')
+  })
+})

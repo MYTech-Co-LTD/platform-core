@@ -109,6 +109,45 @@ describePg('POST /metric-changes（提交即试算）', () => {
   })
 })
 
+// ── P5 Task 1（2026-11-13）：declaration 档经 REST 提交（能力归还）──────────────────
+// 枚举加值只是入口；语义闸（撞名/宽校验）与试算仍走域层同一份（不复制）。
+describePg('P5 Task 1：POST /metric-changes 的 declaration 档', () => {
+  const ENTRY = {
+    name: 'p5mc:retail:route_decl',
+    label: 'P5 路由·声明销售额',
+    definition: 'P5 Task 1 declaration 路由夹具',
+    owner: 'data-platform',
+    tier: 'experimental',
+    source: 'lemeng',
+    expression: 'sum(fct_retail_sale.sale_amount)',
+    grain: ['system_book', 'bizday'],
+    freshness_sla_days: 1,
+    reads: [],
+  }
+  const post = (body: unknown) => appOf(async () => ({ rows: [{ rows: 3, value: 30 }] })).request('/metric-changes', {
+    method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body),
+  })
+
+  it('提交合法声明 ⇒ 自动试算 preview_ready；kind/metricId 落在单上', async () => {
+    const res = await post({ metricId: ENTRY.name, kind: 'declaration', payload: ENTRY })
+    expect(res.status).toBe(200)
+    const body = await res.json() as { change: { kind: string; metricId: string; status: string; preview: { rows: number } } }
+    expect(body.change.kind).toBe('declaration')
+    expect(body.change.metricId).toBe(ENTRY.name)
+    expect(body.change.status).toBe('preview_ready')
+    expect(body.change.preview.rows).toBe(3)
+  })
+
+  it('撞 L1 名 ⇒ 400 ID_RESERVED_BY_L1，且不落单', async () => {
+    const res = await post({ metricId: L1_ID, kind: 'declaration', payload: { ...ENTRY, name: L1_ID } })
+    expect(res.status).toBe(400)
+    expect(await res.json()).toEqual({ error: 'ID_RESERVED_BY_L1' })
+    const n = await pool.query(
+      'select count(*)::int as n from data.metric_change where org = $1 and metric_id = $2', [ORG, L1_ID])
+    expect(n.rows[0]?.n).toBe(0)
+  })
+})
+
 // ── P4 收口（2026-11-13）：提交期预检下沉 submitChange —— **所有提交面共用一份** ──────
 // 原先只有 MCP 两把旧工具内联这套判据，REST /metric-changes 与 submit_metric_change 可绕过；
 // 放过的单会在试算里得到 preview_ready 的「绿单」，采纳期才死在同一个码上（白点一次）。

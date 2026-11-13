@@ -58,7 +58,7 @@ const METRIC_TOOL_NAMES = manageFaceOfSlice('metric').map((t) => t.name)
  */
 const SubmitArgs = z.object({
   metricId: z.string().min(1).max(128),
-  kind: z.enum(['create', 'update', 'meta', 'delete', 'override']),
+  kind: z.enum(['create', 'update', 'meta', 'delete', 'override', 'declaration']),
   payload: z.unknown().optional(),
 }).strict()
 /** list 的可选档：pending（默认，待人工裁决的队列）与 rejected（读驳回原因）。 */

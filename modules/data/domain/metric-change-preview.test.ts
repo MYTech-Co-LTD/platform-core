@@ -149,6 +149,49 @@ describePg('runPreview（create 档：编译 L1 夹具）', () => {
   })
 })
 
+// ── P5 Task 1（2026-11-13）：declaration 档试算 ─────────────────────────────────
+// 与写路径同一把编译尺（compileNewDeclaration 从 createTenantDeclaration 抽出），baseline
+// 恒 null——新声明没有可比的基底。
+describePg('runPreview（declaration 档：W8 声明，P5 Task 1）', () => {
+  const ENTRY = {
+    name: 'p5mc:retail:preview_decl',
+    label: 'P5 试算·声明销售额',
+    definition: 'P5 Task 1 declaration 试算夹具',
+    owner: 'data-platform',
+    tier: 'experimental',
+    source: 'lemeng',
+    expression: 'sum(fct_retail_sale.sale_amount)',
+    grain: ['system_book', 'bizday'],
+    freshness_sla_days: 1,
+    reads: [],
+  }
+  const execute = async (sql: string) => (sql.includes('count(*)')
+    ? { rows: [{ rows: 4, value: 88 }] }
+    : { rows: [{ system_book: 'A', bizday: '2026-11-11', value: 88 }] })
+
+  it('合法声明 ⇒ 编译 + 只读求值；baseline 无（新声明无基底）', async () => {
+    const out = await runPreview({ pool, execute }, ORG, row('declaration', ENTRY, ENTRY.name))
+    expect(out.ok).toBe(true)
+    if (out.ok) {
+      expect(out.snapshot.baseline).toBeNull()
+      expect(out.snapshot.rows).toBe(4)
+      expect(out.snapshot.value).toBe(88)
+      expect(out.snapshot.compiledHash).toMatch(/^[0-9a-f]{64}$/)
+    }
+  })
+
+  it('坏声明（relation 不在 L1 白名单）⇒ preview_failed 带 issues（DECLARATION_INVALID）', async () => {
+    const out = await runPreview({ pool, execute }, ORG,
+      row('declaration', { ...ENTRY, expression: 'sum(marts.f.amt)' }, ENTRY.name))
+    expect(out.ok).toBe(false)
+    if (!out.ok) {
+      expect(out.error).toBe('DECLARATION_INVALID')
+      expect(Array.isArray(out.issues)).toBe(true)
+      expect(out.issues!.length).toBeGreaterThan(0)
+    }
+  })
+})
+
 describePg('applyPreview', () => {
   it('成功 ⇒ preview_ready + 快照落库；失败 ⇒ preview_failed', async () => {
     const sub = await submitChange(pool, ORG, { userId: 'agent1', channel: 'pat' }, 'x:ap', 'meta', { bizDescription: '试算回写' })

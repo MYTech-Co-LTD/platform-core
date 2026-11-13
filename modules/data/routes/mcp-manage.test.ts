@@ -660,6 +660,40 @@ describePg('写面（需要 DATABASE_URL）', () => {
     }
   })
 
+  it('★ declaration 档经 MCP 提单（P5 Task 1）：kind 枚举接受 declaration，落单且不生效', async () => {
+    await seedL1()
+    const entry = {
+      name: 'p5mc:retail:mcp_decl',
+      label: 'P5 MCP·声明销售额',
+      definition: 'P5 Task 1 MCP declaration 夹具',
+      owner: 'data-platform', tier: 'experimental', source: 'lemeng',
+      // 关系必须同时过两把尺：语义 YAML 的 L1 关系白名单（piece 校验）+ 平台目录（编译器）。
+      expression: 'sum(fct_retail_sale.sale_amount)', grain: ['system_book', 'bizday'], freshness_sla_days: 1, reads: [],
+    }
+    const prev = process.env.DATA_MCP_ALLOW_MUTATING
+    process.env.DATA_MCP_ALLOW_MUTATING = 'true'
+    try {
+      const submitted = await (await rpc(app(), {
+        jsonrpc: '2.0', id: 23, method: 'tools/call',
+        params: { name: 'submit_metric_change', arguments: { metricId: entry.name, kind: 'declaration', payload: entry } },
+      })).json()
+      const out = toolText(submitted as never)
+      expect(out.status).toBe('ok')
+      expect(out.state).toBe('preview_ready')
+      expect(typeof out.changeId).toBe('number')
+
+      // 落库事实独立回读（不采信工具自述）
+      const row = await pool.query('select kind, status, metric_id from data.metric_change where id = $1', [out.changeId])
+      expect(row.rows[0]).toMatchObject({ kind: 'declaration', status: 'preview_ready', metric_id: entry.name })
+      // 工具不接采纳 ⇒ 不生效
+      const live = await pool.query('select 1 from data.metrics where org = $1 and id = $2', [ORG, entry.name])
+      expect(live.rowCount).toBe(0)
+    } finally {
+      if (prev === undefined) delete process.env.DATA_MCP_ALLOW_MUTATING
+      else process.env.DATA_MCP_ALLOW_MUTATING = prev
+    }
+  })
+
   it('协议面：通知回 202；未解析 body → -32700；未知方法 → -32601', async () => {
     expect((await rpc(app(), { jsonrpc: '2.0', method: 'ping' })).status).toBe(202)
     const bad = await (await rpc(app(), 'not json')).json()

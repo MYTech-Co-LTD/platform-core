@@ -4,7 +4,7 @@ import { createHash } from 'node:crypto'
 import type { Pool } from 'pg'
 import { compileL2, resolveL1Base, SemanticCompileError } from './semantic-compiler'
 import { loadMergedCatalog } from './metric-store'
-import { compileOverrideDeclaration } from './tenant-declaration-write'
+import { compileNewDeclaration, compileOverrideDeclaration } from './tenant-declaration-write'
 import { PENDING_STATUSES } from './metric-change'
 import type { MetricChangeRow } from './metric-change'
 
@@ -87,7 +87,9 @@ function withTimeout<T>(p: Promise<T>, ms: number): Promise<T> {
 /**
  * 试算一条变更单。create/update 档：编译草稿声明（compileL2，不落库）；
  * override 档：W8 声明经与写路径同一把编译尺编译（P1 Task 7），baseline = 被 override 的
- * L1 同窗值；meta/delete 档：编译「当前生效口径」（证明改前/删前这个数仍算得出来）。
+ * L1 同窗值；declaration 档（P5 Task 1）：W8 全量声明经 compileNewDeclaration（与
+ * createTenantDeclaration 同一段），baseline 恒 null；meta/delete 档：编译「当前生效口径」
+ * （证明改前/删前这个数仍算得出来）。
  */
 export async function runPreview(deps: PreviewDeps, org: string, change: MetricChangeRow): Promise<PreviewOutcome> {
   const startedAt = Date.now()
@@ -131,6 +133,18 @@ export async function runPreview(deps: PreviewDeps, org: string, change: MetricC
         const b = await withTimeout(evalSql(deps, l1.selectSql, l1.groupBy, win), PREVIEW_TIMEOUT_MS)
         baseline = { id: l1.id, value: b.value, deltaPct: null }
       }
+    } else if (change.kind === 'declaration') {
+      // declaration 档试算（P5 Task 1）：与写路径**同一把编译尺**——compileNewDeclaration
+      // 就是从 createTenantDeclaration 抽出的①②③④（YAML 尺 + 关系白名单 + 实体 + tier +
+      // 有 warehouse 时的列存在性）。编译失败 ⇒ preview_failed（DECLARATION_INVALID 带 issues）。
+      // baseline 恒 null：新声明没有可比的基底（不是覆盖，没有 L1 同窗值）。
+      const pre = await compileNewDeclaration({ pool: deps.pool }, change.payload)
+      if (!pre.ok) {
+        const issues = pre.outcome.extra?.issues
+        return { ok: false, error: pre.outcome.error, ...(Array.isArray(issues) ? { issues } : {}) }
+      }
+      selectSql = pre.compiled.selectSql
+      groupBy = pre.compiled.groupBy
     } else {
       const cur = await deps.pool.query(
         'select select_sql, group_by from data.metrics where org = $1 and id = $2', [org, change.metricId],

@@ -33,7 +33,7 @@ import { analystPool, runWarehouseSqlParams } from '../domain/warehouse'
 
 const SubmitBody = z.object({
   metricId: z.string().min(1).max(128),
-  kind: z.enum(['create', 'update', 'meta', 'delete', 'override']),
+  kind: z.enum(['create', 'update', 'meta', 'delete', 'override', 'declaration']),
   payload: z.unknown().optional(),
 })
 const RejectBody = z.object({ reason: z.string().min(1).max(500) })
