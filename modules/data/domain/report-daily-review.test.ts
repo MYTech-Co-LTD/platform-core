@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import { buildDailyReview, DAILY_REVIEW_METRICS, type DailySeries } from './report-daily-review'
+import { lastYearMonthToDate, previousRangeOf } from './report-period'
 import type { ReportSpec } from './report-spec'
 
 const DAY = '2026-11-08'
@@ -102,6 +103,55 @@ describe('buildDailyReview', () => {
     expect(dr.comparisons.mtdAvg.delta.revenue).toBe('+0.0%')
     expect(dr.numbers).toContain('2026-11-01')
     expect(dr.numbers).toContain('2026-11-08')
+  })
+
+  it('R0：区间窗口来自 report-period 同一原语（上一区间 / 去年同月同日）', async () => {
+    // 上一区间 10-24..10-31 必须有数，否则 bundle.yesterday 为 null（那不是窗口问题）
+    const prevDays = Array.from({ length: 8 }, (_, i) => `2026-10-${24 + i}`)
+    const withPrev = Object.fromEntries(
+      prevDays.map((d) => [d, 400_000]),
+    )
+    const values = {
+      revenue: { ...base.revenue, ...withPrev },
+      orders: { ...base.orders, ...Object.fromEntries(prevDays.map((d) => [d, 900])) },
+      gross: { ...base.gross, ...Object.fromEntries(prevDays.map((d) => [d, 130_000])) },
+      loss: base.loss,
+      expense: base.expense,
+    }
+    const read = fake(values)
+    const out = await buildDailyReview({
+      spec,
+      period: { mode: 'month', month: '2026-11' },
+      range: { from: '2026-11-01', to: '2026-11-10' },
+      readSeries: (metricId) => read(metricId),
+    })
+    const dr = out!
+    const prev = previousRangeOf({ from: '2026-11-01', to: dr.targetDay! }, 'prev_period')
+    // 上一区间：末日 = 区间首日前一天；首日 = 等长前移（与 KPI/图表对比同一个函数）
+    expect(dr.yesterday).toBe(prev.to)
+    expect(dr.yesterday).toBe('2026-10-31')
+    // 去年同期：去年同月 1 日 ~ 去年同日（不是等长平移）
+    const ly = lastYearMonthToDate(dr.targetDay!)
+    expect(dr.lastYearFrom).toBe(ly.from)
+    expect(dr.lastYearTo).toBe(ly.to)
+    expect(dr.lastYearFrom).toBe('2025-11-01')
+    expect(dr.lastYearTo).toBe('2025-11-08')
+  })
+
+  it('R0：跨月区间且当月无数据 ⇒ MTD 跟随有数末日所在的自然月', async () => {
+    const oct = Object.fromEntries(
+      Array.from({ length: 31 }, (_, i) => [`2026-10-${String(i + 1).padStart(2, '0')}`, 1_000]),
+    )
+    const out = await buildDailyReview({
+      spec,
+      period: { mode: 'custom', from: '2026-10-25', to: '2026-11-10' },
+      range: { from: '2026-10-25', to: '2026-11-10' },
+      readSeries: fake({ revenue: oct, orders: oct, gross: oct }),
+    })
+    const dr = out!
+    expect(dr.targetDay).toBe('2026-10-31')
+    expect(dr.mtd.day).toBe('2026-10-01 ~ 2026-10-31（31 天）')
+    expect(dr.mtd.revenue).toBe('31,000.00')
   })
 
   it('目标日无数据 ⇒ 仍返回 bundle（today 为 -），不抛', async () => {
