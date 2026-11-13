@@ -73,7 +73,7 @@ import {
 import { PeriodSchema, parseReportInput, parseReportSpec } from '../domain/report-spec'
 import type { AiTextPanel, ReportSpec } from '../domain/report-spec'
 import { deriveRequiredScope, metricIdsOf, validatePanelMetrics } from '../domain/report-scope'
-import { reportScopeViolations, scopeMismatchBody } from '../domain/report-scope-gate'
+import { gateBlocks, reportScopeViolations, scopeMismatchBody } from '../domain/report-scope-gate'
 import {
   getPublishedSpec,
   getVersion,
@@ -835,13 +835,20 @@ export function registerReports(r: ModuleHono, ctx: RouteCtx): void {
       report: row,
       acl: nextAcl,
     })
-    if (gate !== null && gate.panels.length > 0) return c.json(scopeMismatchBody(gate), 409)
+    const scopeIssues = gate?.issues ?? []
+    if (gateBlocks(gate)) return c.json(scopeMismatchBody(gate), 409)
     await replaceViewers(ctx.pool, org, id, viewers, requester.userId)
     await writeAssetAudit(ctx.pool, {
       org, assetId: id, actor: requester.userId, action: 'acl.update',
       detail: { viewers }, byAdmin: isAdminOverride(acl, requester, MANAGE_SCOPE),
     })
-    return c.json({ ok: true, viewers: viewers.map((v) => ({ subjectType: v.subjectType, subjectId: v.subjectId })) })
+    // 成功路径也带门的「判不了」诊断（与发布 200 的 `scopeIssues` 同形）：有则带、空则不带。
+    // 判不了 ≠ 干净——ACL 保存不该把它吞掉。
+    return c.json({
+      ok: true,
+      viewers: viewers.map((v) => ({ subjectType: v.subjectType, subjectId: v.subjectId })),
+      ...(scopeIssues.length === 0 ? {} : { scopeIssues }),
+    })
   })
 
   // 所有者转移（spec §4.4）：离职/换负责人时**唯一 owner 换人**，旧 owner 不再有特权。
@@ -899,6 +906,9 @@ export function registerReports(r: ModuleHono, ctx: RouteCtx): void {
       // ── 发布门重跑（P6 Task 5）：部门门变更 = 受众变化，写入前按**新门**重判 ──────────
       // 判定输入与发布门同源：行的当前 spec/visibility + 变更后的 required_depts + 当前 ACL。
       // 违规 ⇒ 409，门与版本都不动；issues（判不了）不阻断。
+      // ⚠️ 有意放在 `updateGates` 的 expectedVersion 校验**之前**：受众漂移优先于 STALE_WRITE
+      //    暴露（与发布门同一裁决——漂移是真实上线风险，重试不会让它消失）。回滚是**相反**顺序：
+      //    先判 STALE_WRITE（见 domain/report-version.ts）。
       const acl = await loadAssetAcl(ctx.pool, org, id)
       const gate = await reportScopeViolations({
         pool: ctx.pool,
@@ -907,7 +917,8 @@ export function registerReports(r: ModuleHono, ctx: RouteCtx): void {
         report: { ...current, requiredDepts: parsed.data.requiredDepts },
         acl,
       })
-      if (gate !== null && gate.panels.length > 0) return c.json(scopeMismatchBody(gate), 409)
+      const scopeIssues = gate?.issues ?? []
+      if (gateBlocks(gate)) return c.json(scopeMismatchBody(gate), 409)
       // 页门原值回写（`updateGates` 要求两列同写）：锁内读到的值就是这一行此刻的值
       const row = await updateGates(
         ctx.pool, org, id,
@@ -920,7 +931,13 @@ export function registerReports(r: ModuleHono, ctx: RouteCtx): void {
         if (cur === null) return c.json({ error: 'NOT_FOUND' }, 404)
         return c.json({ error: 'STALE_WRITE', currentVersion: cur }, 409)
       }
-      return c.json({ id: row.id, requiredDepts: row.requiredDepts, version: row.version })
+      // 成功路径带门的非阻断诊断（与发布 200 的 `scopeIssues` 同形）：有则带、空则不带。
+      return c.json({
+        id: row.id,
+        requiredDepts: row.requiredDepts,
+        version: row.version,
+        ...(scopeIssues.length === 0 ? {} : { scopeIssues }),
+      })
     })
   })
 
@@ -1172,7 +1189,7 @@ export function registerReports(r: ModuleHono, ctx: RouteCtx): void {
     // （400/409）回包上（issue 本身不参与 409 判定）；200 路径只有「门读完目录、
     // publishVersion 复核前指标恰好出现」的目录竞态才可能带它。
     const scopeIssues = gate?.issues ?? []
-    if (gate !== null && gate.panels.length > 0) {
+    if (gateBlocks(gate)) {
       // 统一回包构建器（发布 / 回滚 / ACL / 部门门共用）：码与形状不许在四条写路径上漂移。
       return c.json(scopeMismatchBody(gate), 409)
     }
@@ -1239,11 +1256,9 @@ export function registerReports(r: ModuleHono, ctx: RouteCtx): void {
       { tenantId: c.get('tenant').id, acl: await loadAssetAcl(ctx.pool, org, id) },
     )
     // 门违规与发布同码同形（409 REPORT_METRIC_SCOPE_MISMATCH + panels[/scopeIssues]）。
+    // 域层携带**整份**门结果，这里原样拼回包（不重建形状，避免与发布门漂移）。
     if (!out.ok && out.reason === 'SCOPE_MISMATCH') {
-      return c.json(scopeMismatchBody({
-        panels: out.panels ?? [],
-        issues: out.scopeIssues ?? [],
-      }), 409)
+      return c.json(scopeMismatchBody(out.scopeGate), 409)
     }
     if (!out.ok) return c.json(out, statusOfVersionFailure(out.reason))
     return c.json(out)

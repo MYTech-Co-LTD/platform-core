@@ -25,9 +25,10 @@ import type { AclRow } from './asset-auth'
 import { loadMergedCatalog } from './metric-store'
 import { withObjectLock } from './object-lock'
 import {
+  gateBlocks,
   reportScopeViolations,
+  type ReportScopeGateResult,
   type ReportScopeIssue,
-  type ReportScopeViolation,
 } from './report-scope-gate'
 import { deriveRequiredScope, validatePanelMetrics } from './report-scope'
 import { parseReportInput, parseReportSpec, type ReportSpec } from './report-spec'
@@ -83,6 +84,11 @@ export interface PublishOutcome {
   unchanged?: boolean
   /** 语义 lint 的非阻断项（发布成功也回传，供界面提示）。 */
   warnings?: LintIssue[]
+  /**
+   * 门的**非阻断**「判不了」项（P6 Task 5）：有则带、空则不带，与发布 200 的 `scopeIssues`
+   * 同形。回滚成功也把它带出——判不了 ≠ 干净，别在成功路径上吞掉诊断。
+   */
+  scopeIssues?: ReportScopeIssue[]
 }
 
 export type PublishErrorReason =
@@ -102,15 +108,23 @@ export type PublishErrorReason =
   /** 回滚门：目标快照的受众 ⊄ 面板指标可见范围（P6 Task 5；发布门在路由层，域层只有回滚）。 */
   | 'SCOPE_MISMATCH'
 
-export type PublishError = {
-  ok: false; reason: PublishErrorReason; detail?: string
-  /** 结构化 lint 结果（机器可读；detail 里另给人话摘要）。 */
-  issues?: LintIssue[]
-  /** 发布门违规项（仅 `SCOPE_MISMATCH`）；路由层用 `scopeMismatchBody` 拼统一 409 回包。 */
-  panels?: ReportScopeViolation[]
-  /** 门的「判不了」项（诊断，非阻断）；形状与 `issues`（lint）不同，别合并。 */
-  scopeIssues?: ReportScopeIssue[]
-}
+export type PublishError =
+  | {
+      ok: false
+      reason: Exclude<PublishErrorReason, 'SCOPE_MISMATCH'>
+      detail?: string
+      /** 结构化 lint 结果（机器可读；detail 里另给人话摘要）。 */
+      issues?: LintIssue[]
+    }
+  | {
+      ok: false
+      reason: 'SCOPE_MISMATCH'
+      /**
+       * **整份**门结果（panels + issues）。路由层直接 `scopeMismatchBody(scopeGate)` 原样回包，
+       * 不在这里重建 `{panels, issues}` 形状——重建就可能与发布门漂移（P6 Task 5 修复）。
+       */
+      scopeGate: ReportScopeGateResult
+    }
 export type PublishResult = PublishOutcome | PublishError
 
 /** 已发布快照的读面（`GET /reports/:id/published-spec` 的正体）。 */
@@ -397,6 +411,9 @@ export async function rollbackVersion(
     if (cur.renderer !== 'platform') return { ok: false, reason: 'RENDERER_NOT_SELF_DRAWN' }
     const target = await getVersion(pool, org, id, version)
     if (target === null) return { ok: false, reason: 'NOT_FOUND' }
+    // ⚠️ 回滚**先**判 STALE_WRITE、后跑发布门（与部门门路由相反：那里门先于 expectedVersion）。
+    //    这是有意为之：回滚是「按版本号重放」，陈旧版本根本不知道用户想回放哪一版，
+    //    先让他刷新；而受众漂移是发布/门变更侧的优先风险，见 routes/reports.ts 的部门门注释。
     if (cur.version !== expectedVersion) return { ok: false, reason: 'STALE_WRITE' }
 
     const parsed = parseReportInput(target.spec)
@@ -435,19 +452,18 @@ export async function rollbackVersion(
       acl: gate.acl,
       catalog,
     })
-    if (gateResult !== null && gateResult.panels.length > 0) {
-      return {
-        ok: false,
-        reason: 'SCOPE_MISMATCH',
-        panels: gateResult.panels,
-        ...(gateResult.issues.length === 0 ? {} : { scopeIssues: gateResult.issues }),
-      }
+    // 判不了 ≠ 干净：成功路径也要把 issue 带出（与发布 200 同形；空则不带）。
+    // 先取再判，避免类型谓词把 `gateResult` 收窄成 null 后还要再碰它。
+    const scopeIssues = gateResult?.issues ?? []
+    if (gateBlocks(gateResult)) {
+      // 整份带回去（调用方原样用 `scopeMismatchBody` 拼 409），不在域层重建形状。
+      return { ok: false, reason: 'SCOPE_MISMATCH', scopeGate: gateResult }
     }
 
     const rollbackNote = note.trim() === '' ? `rollback from v${version}` : note
 
     try {
-      return await withTx(pool, async (c) => {
+      const outcome = await withTx(pool, async (c) => {
         const latest = await c.query(
           'select coalesce(max(version), 0) as max_version from data.report_versions where org = $1 and report_id = $2',
           [org, id],
@@ -487,6 +503,7 @@ export async function rollbackVersion(
           requiredDepts: target.requiredDepts ?? null,
         }
       })
+      return scopeIssues.length === 0 ? outcome : { ...outcome, scopeIssues }
     } catch (e) {
       if (e instanceof StaleWriteError) return { ok: false, reason: 'STALE_WRITE' }
       if (isUniqueViolation(e)) return { ok: false, reason: 'STALE_WRITE' }

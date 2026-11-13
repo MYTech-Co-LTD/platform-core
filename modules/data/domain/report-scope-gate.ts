@@ -115,6 +115,19 @@ export function scopeMismatchBody(gate: ReportScopeGateResult): ReportScopeMisma
   }
 }
 
+/**
+ * 门是否**阻断写入**——四条写路径（发布 / 回滚 / ACL / 部门门）的唯一判据。
+ *
+ * 只有 `panels`（判为违规）阻断；`issues`（判不了：指标不在词表 / Metabase 无面板）
+ * **不阻断**（P5 既定语义，P6 Task 1 只把它们变成可判红的诊断）。`null` = 干净通过。
+ *
+ * 为什么抽成函数：四条路径各自写 `gate.panels.length > 0` 时，任何一处在「加个 issues 判定」
+ * 的改动上走偏，就会把诊断位变成阻断位（或反之）。单一实现让语义只有一个落点。
+ */
+export function gateBlocks(gate: ReportScopeGateResult | null): gate is ReportScopeGateResult {
+  return gate !== null && gate.panels.length > 0
+}
+
 /** 判定所需的最小报表形状（`ReportRow` 结构性满足——不绑存储类型，巡检脚本可复用）。 */
 export interface ReportScopeRow {
   renderer: 'metabase' | 'platform'

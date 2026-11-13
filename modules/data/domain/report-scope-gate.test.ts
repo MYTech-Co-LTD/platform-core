@@ -16,8 +16,8 @@ import { deptChainOf, subtreeOf } from './metric-visibility'
 import { upsertMetric } from './metric-store'
 import { parseReportSpec } from './report-spec'
 import type { ReportSpec } from './report-spec'
-import { reportScopeViolations } from './report-scope-gate'
-import type { ReportScopeRow } from './report-scope-gate'
+import { gateBlocks, reportScopeViolations, scopeMismatchBody } from './report-scope-gate'
+import type { ReportScopeGateResult, ReportScopeRow } from './report-scope-gate'
 
 const dbUrl = process.env.DATABASE_URL
 const describePg = dbUrl ? describe : describe.skip
@@ -281,5 +281,38 @@ describePg('reportScopeViolations（发布门，真库夹具）', () => {
   it('文本面板（无 metricId）⇒ 视为无面板，不误判', async () => {
     const spec = specOf({ chart: 'text', content: '说明' })
     expect(await gate({ report: { requiredDepts: null, spec } })).toBeNull()
+  })
+})
+
+// ── 阻塞判据 / 统一回包的单一实现（P6 Task 5 修复）────────────────────────────────
+// 四条写路径（发布 / 回滚 / ACL / 部门门）都调这两个函数；这里把语义钉死，别处不再各写一份。
+describe('gateBlocks / scopeMismatchBody（纯函数）', () => {
+  const violation = {
+    index: 0, metricId: 'm1', missingDepts: ['D9'], reason: 'audience_dept_outside_metric_scope' as const,
+  }
+  const issue = { reason: 'metric_unknown' as const, panelIndex: 0, metricId: 'ghost' }
+
+  it('null（干净通过）不阻断', () => {
+    expect(gateBlocks(null)).toBe(false)
+  })
+
+  it('★ issues-only 不阻断：判不了 ≠ 违规（P5 语义，写路径据此放行）', () => {
+    expect(gateBlocks({ panels: [], issues: [issue] })).toBe(false)
+    expect(gateBlocks({ panels: [], issues: [] })).toBe(false)
+  })
+
+  it('panels 非空即阻断（即使同时有 issues）', () => {
+    expect(gateBlocks({ panels: [violation], issues: [] })).toBe(true)
+    expect(gateBlocks({ panels: [violation], issues: [issue] })).toBe(true)
+  })
+
+  it('回包统一：有 issues 才带 scopeIssues，码恒为 REPORT_METRIC_SCOPE_MISMATCH', () => {
+    const withIssues: ReportScopeGateResult = { panels: [violation], issues: [issue] }
+    expect(scopeMismatchBody(withIssues)).toEqual({
+      error: 'REPORT_METRIC_SCOPE_MISMATCH', panels: [violation], scopeIssues: [issue],
+    })
+    expect(scopeMismatchBody({ panels: [violation], issues: [] })).toEqual({
+      error: 'REPORT_METRIC_SCOPE_MISMATCH', panels: [violation],
+    })
   })
 })
