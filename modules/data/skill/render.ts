@@ -17,15 +17,15 @@ function read(rel: string): string {
   return cache.get(rel)!
 }
 
-/** 四个硬约束行（从 shared.md 取，供 GUIDE_INVARIANTS 兼容层）。 */
+/** 五个硬约束行（从 shared.md 取，供 GUIDE_INVARIANTS 兼容层）。 */
 export function guideInvariants(): readonly string[] {
   const lines = read('shared.md')
     .split('\n')
     .map((l) => l.trim())
     .filter((l) => l.startsWith('· '))
   // 防静默丢硬约束：shared.md 被改成非「· 」前缀时必须炸，而不是悄悄少几行。
-  if (lines.length !== 4) {
-    throw new Error(`render: shared.md 硬约束应为 4 行，实际 ${lines.length} 行`)
+  if (lines.length !== 5) {
+    throw new Error(`render: shared.md 硬约束应为 5 行，实际 ${lines.length} 行`)
   }
   return lines
 }
@@ -80,7 +80,7 @@ export function contractView(channel: SkillChannel): ContractTool[] {
   return toolsFor(channel)
 }
 
-/** MCP initialize.instructions：只放指针 + 四条硬约束，不放整份工作流。 */
+/** MCP initialize.instructions：只放指针 + 五条硬约束，不放整份工作流。 */
 export function renderInstructions(): string {
   const guide = toolsFor('mcp').find((t) => t.id === 'guide')
   if (guide === undefined) throw new Error('render: 契约缺 guide 的 mcp 通道')
