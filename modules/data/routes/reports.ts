@@ -39,7 +39,8 @@ import { panelArgsOf } from '../domain/report-query'
 import type { QueryDeps } from '../domain/query-service'
 import { periodRangeOf, type DateRange } from '../domain/report-period'
 import type { FactBundle } from '../domain/report-facts'
-import { generateNarrative, streamNarrative } from '../domain/narrative'
+import { generateNarrative, NARRATIVE_PROMPT_VERSION, streamNarrative } from '../domain/narrative'
+import { narrativeStats, recordNarrativeRun, type NarrativeOutcome } from '../domain/narrative-runs'
 import type { NarrativeEvent } from '../domain/narrative'
 import { signEditHandoff } from '../domain/edit-handoff'
 import { withObjectLock } from '../domain/object-lock'
@@ -1285,6 +1286,7 @@ export function registerReports(r: ModuleHono, ctx: RouteCtx): void {
     if (id === null) return c.json({ error: 'NOT_FOUND' }, 404)
     const body = NarrativeBody.safeParse(await c.req.json().catch(() => null))
     if (!body.success) return c.json({ error: 'INVALID_BODY' }, 400)
+    const started = Date.now()
     try {
       const n = await loadNarrativeContext(c, id, body.data)
       if ('error' in n) return c.json(n, narrativeErrorStatus(n))
@@ -1300,6 +1302,15 @@ export function registerReports(r: ModuleHono, ctx: RouteCtx): void {
         model: n.model,
         // 失败原因只进日志（#1083：此前没接线，回退在生产里完全不可诊断）。
         log: (m) => console.warn(`[data/narrative] ${id} ${m}`),
+      })
+      // 运行台账（R5）：best-effort，不阻塞响应。
+      void recordNarrativeRun(ctx.pool, {
+        org: c.get('tenant').casdoor_org, reportId: id, focus: n.focus,
+        mode: n.facts.dailyReview?.mode ?? 'day', model: n.model?.id ?? null,
+        promptVersion: NARRATIVE_PROMPT_VERSION,
+        outcome: out.cached ? 'cached' : out.fallback ? 'fallback' : 'ok',
+        reason: out.fallback ? 'template_fallback' : null,
+        durationMs: Date.now() - started,
       })
       return c.json(out)
     } catch (e) {
@@ -1328,6 +1339,10 @@ export function registerReports(r: ModuleHono, ctx: RouteCtx): void {
     }
     if ('error' in n) return c.json(n, narrativeErrorStatus(n))
 
+    const started = Date.now()
+    const streamOrg = c.get('tenant').casdoor_org
+    let outcome: NarrativeOutcome = 'error'
+    let outcomeReason: string | null = 'stream_failed'
     const stream = new ReadableStream({
       async start(controller) {
         const enc = new TextEncoder()
@@ -1345,12 +1360,30 @@ export function registerReports(r: ModuleHono, ctx: RouteCtx): void {
             userId: n.requester.userId,
             model: n.model,
             log: (m) => console.warn(`[data/narrative] ${id} ${m}`),
-          })) send(ev)
+          })) {
+            if (ev.type === 'done') {
+              outcome = ev.fallback ? 'fallback' : ev.cached ? 'cached' : 'ok'
+              outcomeReason = ev.fallback ? 'template_fallback' : null
+            } else if (ev.type === 'error') {
+              outcome = 'error'
+              outcomeReason = ev.reason
+            } else if (ev.type === 'replace') {
+              outcomeReason = ev.reason === 'number_check' ? 'number_check' : 'llm_failed'
+            }
+            send(ev)
+          }
         } catch (e) {
           console.error(`[data/narrative] ${id} stream failed: ${e instanceof Error ? e.message : String(e)}`)
           // 流已开（200 已发）⇒ 只能用事件收敛状态，改不了状态码。
           send({ type: 'error', reason: 'NARRATIVE_FAILED' })
         } finally {
+          await recordNarrativeRun(ctx.pool, {
+            org: streamOrg, reportId: id, focus: n.focus,
+            mode: n.facts.dailyReview?.mode ?? 'day', model: n.model?.id ?? null,
+            promptVersion: NARRATIVE_PROMPT_VERSION,
+            outcome, reason: outcomeReason,
+            durationMs: Date.now() - started,
+          })
           controller.close()
         }
       },
@@ -1364,6 +1397,14 @@ export function registerReports(r: ModuleHono, ctx: RouteCtx): void {
         'x-accel-buffering': 'no',
       },
     })
+  })
+
+  // 叙事质量面板数据（R5）：回退率 / 分布 / p95。管理面（观测口径，不是业务数据）。
+  r.get('/reports/narrative-stats', async (c) => {
+    if (requesterOf(c) === null) return c.json({ error: 'UNAUTHENTICATED' }, 403)
+    const raw = Number(c.req.query('days') ?? '7')
+    const days = Number.isFinite(raw) ? Math.min(90, Math.max(1, Math.trunc(raw))) : 7
+    return c.json(await narrativeStats(ctx.pool, c.get('tenant').casdoor_org, days))
   })
 
   // ── 计算凭证（R1）──────────────────────────────────────────────────────────────────
