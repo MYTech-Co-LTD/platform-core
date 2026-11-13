@@ -9,15 +9,15 @@ import {
 import type { L2Declaration } from './semantic-compiler'
 import type { MetricWriteDeps, MetricWriteOutcome, MetricMetaPatch } from './metric-write'
 import { writeL2Declaration, updateMetricMeta, deleteMetricDeclaration } from './metric-write'
-import { createOverrideDeclaration } from './tenant-declaration-write'
+import { createOverrideDeclaration, createTenantDeclaration } from './tenant-declaration-write'
 import type { TenantDeclarationOutcome } from './tenant-declaration-write'
 import { loadPlatformCatalog } from './metric-store'
 import type { MetricOwnership } from './metric-store'
 import { assertConcept, assertTitleFree, OwnershipError } from './metric-ownership'
 import type { PreviewSnapshot } from './metric-change-preview'
 
-/** override 档 P1 Task 7 接入（046 建表时 kind 已按 spec 五值备全）。 */
-export type ChangeKind = 'create' | 'update' | 'meta' | 'delete' | 'override'
+/** override 档 P1 Task 7 接入；declaration 档 P5 Task 1 恢复（048 迁移扩 CHECK）。 */
+export type ChangeKind = 'create' | 'update' | 'meta' | 'delete' | 'override' | 'declaration'
 export type ChangeStatus = 'draft' | 'preview_ready' | 'preview_failed' | 'adopted' | 'rejected' | 'superseded' | 'withdrawn'
 export const PENDING_STATUSES: readonly ChangeStatus[] = ['draft', 'preview_ready', 'preview_failed']
 
@@ -64,6 +64,21 @@ const OverridePayload = z.object({
   label: z.string(),
   expression: z.string(),
   grain: z.array(z.string()),
+}).passthrough()
+
+/**
+ * declaration 档 payload 的**宽预检**（P5 Task 1）：payload = W8 全量声明 entry（与
+ * `POST /metrics/declarations` 的 `declaration` 同形同源，故 passthrough 放行其余字段）。
+ * 只拦形状级必填（name/label/definition/expression/grain；name 必须等于 metricId——id 就是
+ * 声明名）；深校验（YAML 尺/关系白名单/实体/tier/列存在性）全在试算与采纳期共用的
+ * `compileNewDeclaration` / `createTenantDeclaration`——第二份深校验就是第二事实源，不复制。
+ */
+const DeclarationPayload = z.object({
+  name: z.string().min(1),
+  label: z.string().min(1),
+  definition: z.string().min(1),
+  expression: z.string().min(1),
+  grain: z.array(z.string().min(1)).min(1),
 }).passthrough()
 
 /**
@@ -184,6 +199,18 @@ const isPlatformIdOf = async (pool: Pool, id: string): Promise<boolean> =>
  * `override` 档的 NOT_FOUND 判据在下方自己的块里（它只收 L1 id），不在这里重复。
  */
 async function precheckOf(pool: Pool, org: string, metricId: string, kind: ChangeKind): Promise<SubmitOutcome | null> {
+  if (kind === 'declaration') {
+    // P5 Task 1：声明是**新建**（无基底、无 upsert 语义）——撞平台保留 id 与 create 同判据，
+    // 本 org 已有同 id 行（含 declared / column_agg）在采纳期必然 ID_EXISTS，都是立单前就能
+    // 判定的死单 ⇒ 提交期就拒（与 P4 收口同一条「别让人在队列里白点一次」）。
+    // ⚠️ 本守卫只看 **DB 目录**（已物化的 L1）：YAML-only、尚未物化的 L1 id 会放过这里，
+    // 在试算期才被 compileNewDeclaration 的 YAML 尺拒成 preview_failed（单可见可驳回）；
+    // 一旦该 id 物化进 DB，下一次提交就由本目录拦下。
+    if (await isPlatformIdOf(pool, metricId)) return { ok: false, http: 400, error: 'ID_RESERVED_BY_L1' }
+    const exists = await pool.query('select 1 from data.metrics where org = $1 and id = $2', [org, metricId])
+    if ((exists.rowCount ?? 0) > 0) return { ok: false, http: 400, error: 'METRIC_ID_EXISTS' }
+    return null
+  }
   if (kind === 'create' || kind === 'update') {
     if (await isPlatformIdOf(pool, metricId)) return { ok: false, http: 400, error: 'ID_RESERVED_BY_L1' }
     const cur = await pool.query(
@@ -285,6 +312,28 @@ export async function submitChange(
     // ownerDept 时就是「判据查 A 桶、行落 null 桶」的假拒/假放。把 owner_dept 管道接进
     // insertTenantDeclaration 是 P2 可见性波的活；在那之前 payload.ownerDept 不作桶参数
     //（概念归属 assertConcept 照旧按 payload.entity 判）。
+    try {
+      await assertTitleFree(pool, org, null, title)
+    } catch (e) {
+      if (e instanceof OwnershipError) return { ok: false, http: 409, error: 'TITLE_EXISTS_IN_DEPT' }
+      throw e
+    }
+  }
+  // declaration 档（P5 Task 1）：宽预检（必填五键 + name==metricId）；深校验交给试算/采纳期
+  // 与写路径共用的编译尺。metricId 就是声明名（entry.name）——不一致时 payload 会写到另一个
+  // id 上，直接在提交期拒。
+  if (kind === 'declaration') {
+    const parsed = DeclarationPayload.safeParse(payload)
+    if (!parsed.success || parsed.data.name !== metricId) {
+      return { ok: false, http: 400, error: 'INVALID_DECLARATION' }
+    }
+    // 部门内同名互斥在**提交期**收口（P5 修复轮）：与 override 档同一把尺。
+    // 桶恒 null 与落库桶同构——insertTenantDeclaration 的列清单不含 owner_dept（override 档
+    // 已证明同构），判据若吃别的桶就是「查 A 桶、落 null 桶」的假拒/假放。
+    // 生效 title 的取法与编译点同式（compileTenantDeclaration：label 空 ⇒ 回落 name）；
+    // 形状闸已保证 label 是非空串，trim 后为空（纯空白）才回落 name。
+    const label = parsed.data.label.trim()
+    const title = label !== '' ? label : metricId
     try {
       await assertTitleFree(pool, org, null, title)
     } catch (e) {
@@ -465,6 +514,26 @@ export async function adoptChange(deps: MetricWriteDeps, org: string, id: number
         // TITLE_EXISTS_IN_DEPT（与提交期同名判据同码同义），别裸 500。只捕 23505，其余照抛：
         // (org,id) 主键冲突已被 on conflict do nothing 吃掉（返回 false ⇒ 409 OVERRIDE_EXISTS），
         // 能到这里的 23505 实际只有 title 唯一索引一条路。
+        if ((e as { code?: string }).code === '23505') {
+          return { ok: false, http: 409, error: 'TITLE_EXISTS_IN_DEPT' }
+        }
+        throw e
+      }
+      out = o.ok ? { ok: true } : o
+    } else if (cur.kind === 'declaration') {
+      // declaration 档采纳（P5 Task 1）：复用 W8 唯一写路径 createTenantDeclaration（**不造第二条
+      // 写路径**），成功即 `basis='declared'` 直接生效——与 create/update 档一致，不经草稿/确认
+      // 两步（覆盖档才有 draft→confirm 语义）。warehouse 随 deps 透传（列检查 + EXPLAIN）。
+      let o: TenantDeclarationOutcome
+      try {
+        o = await createTenantDeclaration(
+          { pool: deps.pool, ...(deps.warehouse === undefined ? {} : { warehouse: deps.warehouse }) },
+          org, deps.requester, cur.payload,
+        )
+      } catch (e) {
+        // submit→adopt 窗口被并发占名 ⇒ insertTenantDeclaration 撞 metrics_title_per_dept_uq
+        // 的 23505（on conflict (org,id) 只吸收 id 冲突）。映射 409 TITLE_EXISTS_IN_DEPT
+        //（与其它档同码同义），别裸 500；只捕 23505，其余照抛。
         if ((e as { code?: string }).code === '23505') {
           return { ok: false, http: 409, error: 'TITLE_EXISTS_IN_DEPT' }
         }

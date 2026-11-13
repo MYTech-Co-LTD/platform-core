@@ -72,7 +72,8 @@ import {
 } from '../domain/report-store'
 import { PeriodSchema, parseReportSpec } from '../domain/report-spec'
 import type { AiTextPanel, ReportSpec } from '../domain/report-spec'
-import { deriveRequiredScope, validatePanelMetrics } from '../domain/report-scope'
+import { deriveRequiredScope, metricIdsOf, validatePanelMetrics } from '../domain/report-scope'
+import { reportScopeViolations } from '../domain/report-scope-gate'
 import {
   getPublishedSpec,
   getVersion,
@@ -89,10 +90,13 @@ import {
   deptGatePasses, deptNamesOf, userDeptClosure, validateDeptGate,
 } from '../domain/dept-gate'
 import {
+  applyPanelRenderGate,
   canEditAsset,
   canViewAsset,
   canViewVersionedContent,
   ensureOwner,
+  factsSpecOf,
+  indexRenderCatalog,
   isAdminOverride,
   loadAssetAcl,
   loadAssetAcls,
@@ -101,7 +105,9 @@ import {
   writeAssetAudit,
   type AclRow,
   type AclSubjectType,
+  type RenderGateResult,
 } from '../domain/asset-auth'
+import { deptContextIfOwned } from '../domain/metric-visibility'
 import {
   TENANT_PARAM_ID, TENANT_SLUG, publishWithTenantBinding, readDashboardContent,
 } from '../domain/report-content'
@@ -242,6 +248,72 @@ async function denyUnlessCanEdit(
  */
 async function userStatusOf(ctx: RouteCtx, org: string, name: string): Promise<UserStatus> {
   return ctx.userStatus === undefined ? 'unknown' : ctx.userStatus(org, name)
+}
+
+/**
+ * 渲染闸审计去重（P5 终审 Minor ⑤）：读路径按「org + report + viewer + UTC 日」只记**首条**。
+ *
+ * 为什么在进程内：被拒面板的观看是**高频读**，每次都写 `asset_audit` 会把审计表刷成长表、
+ * 淹没真正的管理动作。SQL 侧 `not exists` 要先查再插（仍可能并发双写、且每次读多一查），
+ * 进程内 Map 是更简单的取舍：多实例/重启会各记一条——目标只是「不刷屏」，不是「绝对唯一」。
+ * 每个 key 存当日桶；跨日自然覆盖重记；超过上限时顺手清掉非当日的 key（防无界增长）。
+ */
+const RENDER_AUDIT_SEEN = new Map<string, string>() // `${org}|${reportId}|${viewer}` → `YYYY-MM-DD`
+const RENDER_AUDIT_MAX_KEYS = 5000
+function shouldAuditPanelDenied(org: string, reportId: string, viewer: string): boolean {
+  const day = new Date().toISOString().slice(0, 10) // UTC 日；跨时区差一天只影响「多记一条」
+  const key = `${org}|${reportId}|${viewer}`
+  if (RENDER_AUDIT_SEEN.get(key) === day) return false
+  if (RENDER_AUDIT_SEEN.size > RENDER_AUDIT_MAX_KEYS) {
+    for (const [k, v] of RENDER_AUDIT_SEEN) if (v !== day) RENDER_AUDIT_SEEN.delete(k)
+  }
+  RENDER_AUDIT_SEEN.set(key, day)
+  return true
+}
+
+/**
+ * 渲染闸（P5 Task 3）：**观看面**规格按观看者的指标可见范围逐面板降级。
+ *
+ * 插入位置在 `canViewVersionedContent` + 快照页门/部门门**之后**：那两道管「报表该不该给这个人」，
+ * 本闸管「报表里的每个口径该不该给这个人」。
+ *
+ * 三次取数的惰性纪律（与 P2 Task 4 同一条：现网 57 行 `owner_dept` 全空，不该因接线多打库）：
+ *   · 规格里一个指标都没有（纯文本 / ai_text）⇒ 直接回原样，**零查询**；
+ *   · 词表按需加载一次（`loadMergedCatalog`，L1 platform ∪ 本 org L2）；
+ *   · 部门上下文再按「本次报表实际引用的指标里有没有归属部门」决定取不取
+ *     （`deptContextIfOwned` 懒加载；无归属行 ⇒ 不查、不发 warn）。
+ *
+ * 审计沿用 `data.asset_audit`（`action='report.panel_denied'`）——不为一次观看写新表；
+ * 同 viewer+report+UTC 日**只记首条**（`shouldAuditPanelDenied`）：这是读路径，逐次写会把
+ * 审计表刷成长表。审计写失败**不阻断观看**（可观测性副作用不该把页面打 500），落 warn 兜底。
+ */
+async function reportRenderGate(
+  pool: Pool, requester: Requester, org: string, id: string, spec: ReportSpec,
+): Promise<RenderGateResult> {
+  const usedIds = new Set(spec.panels.flatMap((panel) => metricIdsOf(panel)))
+  if (usedIds.size === 0) return { blocked: false, deniedPanels: [], denials: [], spec }
+
+  const catalog = await loadMergedCatalog(pool, org)
+  const usedRows = catalog.filter((m) => usedIds.has(m.id))
+  const deptCtx = await deptContextIfOwned(pool, requester.tenantId, requester, usedRows)
+  const gate = applyPanelRenderGate(spec, usedRows, deptCtx)
+
+  if (gate.deniedPanels.length > 0 && shouldAuditPanelDenied(org, id, requester.userId)) {
+    try {
+      await writeAssetAudit(pool, {
+        org, assetId: id, actor: requester.userId, action: 'report.panel_denied',
+        // 只记位置、原因与整表拒标记：审计要回答「谁被挡了几格 / 为什么 / 是否触发 reveal」，
+        // 不需要把口径 id 再抄一份（metricId 在快照与词表里都能追）。
+        detail: { deniedPanels: gate.deniedPanels, denials: gate.denials, revealReport: gate.blocked },
+      })
+    } catch (e) {
+      console.warn(JSON.stringify({
+        event: 'report_panel_denied_audit_failed', reportId: id,
+        error: e instanceof Error ? e.message : String(e),
+      }))
+    }
+  }
+  return gate
 }
 
 export function registerReports(r: ModuleHono, ctx: RouteCtx): void {
@@ -457,15 +529,20 @@ export function registerReports(r: ModuleHono, ctx: RouteCtx): void {
   })
 
   /**
-   * 报表规格里出现的指标 id（去重、保序）。`text` / `ai_text` 面板没有 metricId。
+   * 报表规格里出现的指标 id（去重、保序）。`text` / `ai_text` 面板 / 渲染闸降级占位符
+   * （`{index,denied:true}`）都没有 metricId。
    * 只回**实际声明过的** id——移动壳的「口径与来源」深链靠它，前端不猜。
+   *
+   * 入参放宽到 `{panels}` 结构面：既服务原始 `ReportSpec`，也服务渲染闸的 `ViewableSpec`
+   * （列表侧按观看者裁剪 metricIds 时用降级后的面板集合算）。
    */
-  const metricIdsOfSpec = (spec: ReportSpec | null): string[] => {
+  const metricIdsOfSpec = (spec: { panels: ReadonlyArray<object> } | null): string[] => {
     if (spec === null) return []
     const ids: string[] = []
     for (const panel of spec.panels) {
-      if ('metricId' in panel && typeof panel.metricId === 'string' && !ids.includes(panel.metricId)) {
-        ids.push(panel.metricId)
+      if ('metricId' in panel && typeof (panel as { metricId?: unknown }).metricId === 'string'
+        && !ids.includes((panel as { metricId: string }).metricId)) {
+        ids.push((panel as { metricId: string }).metricId)
       }
     }
     return ids
@@ -485,27 +562,63 @@ export function registerReports(r: ModuleHono, ctx: RouteCtx): void {
     const userDepts = needsDepts
       ? await userDeptClosure(ctx.pool, c.get('tenant').id, deptNamesOf(requester))
       : undefined
+    const visibleRows = rows.filter((row) => canViewAsset(row, requester, acls.get(row.id) ?? [], userDepts))
+    const editableOf = (row: (typeof rows)[number]): boolean =>
+      canEditAsset(acls.get(row.id) ?? [], requester, MANAGE_SCOPE)
+
+    // ── 渲染闸（P5 Task 3，列表侧）─────────────────────────────────────────────────
+    // `metricIds` 是移动壳「口径与来源」深链的来源；它**不能**把观看者看不到的口径 id
+    // 原样列出来（与 `/spec`、`published-spec` 的「denied 面板零数据字段」同一条不变量）。
+    // 编辑者/管理员保持全量（他们要能深链到全部口径并继续编辑）。
+    //
+    // 成本：词表**一次**加载，且只喂「非编辑者可见行」实际引用的 id；`deptContextIfOwned`
+    // 继续懒加载（这些行里没有部门归属 ⇒ 零额外查询，与 P2 的全租户零影响纪律一致）。
+    const gateIds = new Set<string>()
+    for (const row of visibleRows) {
+      if (editableOf(row) || row.spec === null) continue
+      // ⚠️ 必须用 `metricIdsOf`（**含** KPI 分母），不能用 `metricIdsOfSpec`（只取主 metricId）：
+      // 门内部按 `metricIdsOf` 判整格，缩小后的目录会把「分母被过滤掉」误判成 metric_unknown
+      // ⇒ 完全可见的 KPI 面板被整块剥掉（修复轮 3 的 High）。
+      for (const panel of row.spec.panels) {
+        for (const metricId of metricIdsOf(panel)) gateIds.add(metricId)
+      }
+    }
+    const gateRows = gateIds.size === 0
+      ? []
+      : (await loadMergedCatalog(ctx.pool, org)).filter((m) => gateIds.has(m.id))
+    const gateDeptCtx = gateRows.length === 0
+      ? undefined
+      : await deptContextIfOwned(ctx.pool, requester.tenantId, requester, gateRows)
+    // 词表索引**请求级建一次**：下面每行报表都跑闸，逐行 `new Map` 是纯浪费。
+    const gateById = indexRenderCatalog(gateRows)
+    /** 观看者可见的 metricIds：不可见面板（含 kpi 分母不可见）整格剔除。 */
+    const metricIdsShown = (row: (typeof rows)[number], editable: boolean): string[] => {
+      if (row.spec === null || editable) return metricIdsOfSpec(row.spec)
+      return metricIdsOfSpec(applyPanelRenderGate(row.spec, gateById, gateDeptCtx).spec)
+    }
+
     // 只投影消费面要的字段：metabase_id / embed_params 是实现细节，不外泄
     return c.json({
-      reports: rows.filter((row) => canViewAsset(row, requester, acls.get(row.id) ?? [], userDepts))
-        .map((row) => ({
+      reports: visibleRows.map((row) => {
+        // #1327：写保护的读侧值 + 服务端算好的「能不能改」。
+        // `canEdit` 唯一实现仍是 `canEditAsset`（owner ∪ data:manage）——前端只消费结论，
+        // 不复制判据（复制必然漂移，#1179 的教训）。
+        const canEdit = editableOf(row)
+        return {
           id: row.id, title: row.title, requiredScope: row.requiredScope,
           requiredDepts: row.requiredDepts, renderer: row.renderer,
-          // #1327：写保护的读侧值 + 服务端算好的「能不能改」。
-          // `canEdit` 唯一实现仍是 `canEditAsset`（owner ∪ data:manage）——前端只消费结论，
-          // 不复制判据（复制必然漂移，#1179 的教训）。
           version: row.version,
-          // W5 Task 4 定案 A：移动壳「口径与来源」深链的唯一来源（规格里的指标 id）。
           // 没有指标 id（metabase 行 / 纯文本报表）⇒ 空数组，前端据此不渲染链接。
-          metricIds: metricIdsOfSpec(row.spec),
-          canEdit: canEditAsset(acls.get(row.id) ?? [], requester, MANAGE_SCOPE),
+          metricIds: metricIdsShown(row, canEdit),
+          canEdit,
           // 所有者列（#1327）：owner-only 用户也在看这份清单，缺它会把自己的报表显示成「无所有者」
           owner: (acls.get(row.id) ?? []).find((a) => a.relation === 'owner')?.subjectId ?? null,
           // 版本徽标/发布按钮对 owner（可能无 manage 码）同样要有数据来源（#1327）
           publishedVersion: row.publishedVersion,
           hasUnpublishedChanges:
             row.publishedVersionId !== null && row.version > (row.publishedDraftVersion ?? 0),
-        })),
+        }
+      }),
     })
   })
 
@@ -885,6 +998,10 @@ export function registerReports(r: ModuleHono, ctx: RouteCtx): void {
     })
   })
 
+  // ⚠️ 本端点**两种视角**（P5 Task 3 修复轮 Important）：console「打开」走的正是它
+  //    （reports/index.tsx → SpecView），所以它对**非编辑者**同样是观看面，必须过渲染闸；
+  //    而 owner ∪ data:manage（`canEditAsset`）需要能改规格 ⇒ 拿全量。
+  //    判定顺序：canViewAsset（谁能看这份内容）→ canEditAsset 分档 → 渲染闸（口径可见性）。
   r.get('/reports/:id/spec', async (c) => {
     const requester = requesterOf(c)
     if (requester === null) return c.json({ error: 'UNAUTHENTICATED' }, 403)
@@ -907,7 +1024,14 @@ export function registerReports(r: ModuleHono, ctx: RouteCtx): void {
     // 渲染器通道守卫：metabase 行的「内容」在 Metabase 侧，没有可读的 spec（列必为 null）
     // ⇒ 显式 409，与 embed-url/edit-url 的守卫同族。
     if (row.renderer !== 'platform') return c.json({ error: 'RENDERER_NOT_SELF_DRAWN' }, 409)
-    return c.json({ spec: row.spec, version: row.version })
+    // 编辑者：全量（要能继续改规格——占位符会让编辑器不可用）。
+    if (canEditAsset(specAcl, requester, MANAGE_SCOPE) || row.spec === null) {
+      return c.json({ spec: row.spec, version: row.version, deniedPanels: [] })
+    }
+    // 观看者：与 published-spec 同一把渲染闸（口径不可见 ⇒ 原位剥成占位符；reveal 整表拒）。
+    const render = await reportRenderGate(ctx.pool, requester, org, row.id, row.spec)
+    if (render.blocked) return c.json({ error: 'NOT_FOUND' }, 404)
+    return c.json({ spec: render.spec, version: row.version, deniedPanels: render.deniedPanels })
   })
 
   // ── 定义版本：发布 / 下线 / 回滚 / 历史 / 已发布快照 / 草稿（月报重做 Task 10）──────────────
@@ -999,12 +1123,46 @@ export function registerReports(r: ModuleHono, ctx: RouteCtx): void {
     if (report === null) return c.json({ error: 'NOT_FOUND' }, 404)
     const denied = await denyUnlessCanEdit(c, ctx.pool, requester, org, id)
     if (denied !== null) return denied
+    // ── 发布门（P5 Task 2，spec 2026-11-12 §9.1）：受众 ⊆ 每个面板指标的可见范围 ─────────
+    // 位置是契约的一半：**在 `publishVersion` 之前**（任何发布写入之前）——被拒 = 一条版本都不落。
+    // ⚠️ **有意的先后**（P5 终审 Minor ⑦）：门先于 `publishVersion` 的 `expectedVersion` 校验，
+    //    因此「指标归属漂移后的无变更重发」会先拿到 409 REPORT_METRIC_SCOPE_MISMATCH，
+    //    而不是 409 STALE_WRITE 或 200 unchanged。这是设计选择：**受众漂移优先暴露**——
+    //    它是真实的上线风险（报表看着正常、点进去 403），而 refresh/重试不会让它消失。
+    //    测试钉住：`发布门先于 STALE_WRITE/unchanged`。
+    // `denyUnlessCanEdit` 内部已取过 ACL 但只做判定不回传；这里再取一次（单行查询），
+    // 保持那个共享守卫的签名不变（14 个调用点不为本门改形）。
+    // Metabase 行没有平台面板 ⇒ 函数内跳过并回 warning（真正的渲染器拒绝仍由
+    // publishVersion 的 RENDERER_NOT_SELF_DRAWN 负责）。
+    const gate = await reportScopeViolations({
+      pool: ctx.pool,
+      tenantId: c.get('tenant').id,
+      org,
+      report,
+      acl: await loadAssetAcl(ctx.pool, org, id),
+    })
+    // 门的 warning 是 `string[]`，而 `publishVersion` 成功回包的 `warnings` 是发布 lint 的
+    // `LintIssue[]`——**不合并两种形状**（评审 Minor）。门自己的提示走独立字段 `scopeWarnings`。
+    const scopeWarnings = gate?.warnings ?? []
+    if (gate !== null && gate.panels.length > 0) {
+      return c.json({
+        error: 'REPORT_METRIC_SCOPE_MISMATCH',
+        panels: gate.panels,
+        ...(scopeWarnings.length === 0 ? {} : { scopeWarnings }),
+      }, 409)
+    }
     const out = await publishVersion(
       ctx.pool, org, id, body.data.expectedVersion,
       requester.userId, body.data.note, new Set(c.get(TENANT_SOURCES) ?? []),
     )
-    if (!out.ok) return c.json(out, statusOfVersionFailure(out.reason))
-    return c.json(out)
+    // 非阻断提示（Metabase 无法判定等）随成功/失败回包带出，调用方/巡检都看得见。
+    if (!out.ok) {
+      return c.json(
+        scopeWarnings.length === 0 ? out : { ...out, scopeWarnings },
+        statusOfVersionFailure(out.reason),
+      )
+    }
+    return c.json(scopeWarnings.length === 0 ? out : { ...out, scopeWarnings })
   })
 
   r.post('/reports/:id/unpublish', async (c) => {
@@ -1153,7 +1311,12 @@ export function registerReports(r: ModuleHono, ctx: RouteCtx): void {
       const depts = await userDeptClosure(ctx.pool, c.get('tenant').id, deptNamesOf(requester))
       if (!deptGatePasses(snapshot.requiredDepts, depts)) return c.json({ error: 'NOT_FOUND' }, 404)
     }
-    return c.json(snapshot)
+    // ⑤ 渲染闸（P5 Task 3，spec §9.2/§9.3）：报表门过了，面板里的**指标**还各有可见范围。
+    //    不可见面板在原位替换为 `{ index, denied: true }`（不带数据字段），并回 `deniedPanels`；
+    //    任一被拒指标 `reveal='report'` ⇒ 整表 404（与 not-found 同形，防「总数 − 其他」反推）。
+    const render = await reportRenderGate(ctx.pool, requester, org, id, snapshot.spec)
+    if (render.blocked) return c.json({ error: 'NOT_FOUND' }, 404)
+    return c.json({ ...snapshot, spec: render.spec, deniedPanels: render.deniedPanels })
   })
 
   r.get('/reports/:id/draft', async (c) => {
@@ -1241,6 +1404,13 @@ export function registerReports(r: ModuleHono, ctx: RouteCtx): void {
     requester: Requester
     report: NonNullable<Awaited<ReturnType<typeof getReport>>>
     spec: ReportSpec
+    /**
+     * 被渲染闸降级的面板下标（升序）。`spec` 里这些位已经是**空文本面板**（`factsSpecOf`，
+     * 只用于内部事实装配）；调用方要按 `deniedPanels` 才能把「被拒」与「本来就不是目标面板」
+     * 区分开——否则被拒面板会以 `PANEL_NOT_KPI` / `NOT_AI_TEXT_PANEL`（400）回应，
+     * 语义是「不是那个类型」而实际是「无权限」（存在性/权限探测信号）。
+     */
+    deniedPanels: number[]
     specKey: string
     title: string
   }
@@ -1269,7 +1439,11 @@ export function registerReports(r: ModuleHono, ctx: RouteCtx): void {
       // 草稿 = 未发布内容（同 `GET /reports/:id/draft` 的分档）：owner ∪ 管理码才可预览，其余 404。
       if (!canEditAsset(acl, requester, MANAGE_SCOPE)) return { error: 'NOT_FOUND' }
       if (report.spec === null) return { error: 'NO_SPEC' }
-      return { requester, report, spec: report.spec, specKey: `draft:${report.version}`, title: report.title }
+      // 草稿预览是编辑面（owner ∪ data:manage），不过渲染闸 ⇒ 没有被拒面板。
+      return {
+        requester, report, spec: report.spec, deniedPanels: [],
+        specKey: `draft:${report.version}`, title: report.title,
+      }
     }
     const snapshot = body.version !== undefined
       ? await getPublishedSpec(ctx.pool, org, id, body.version)
@@ -1283,8 +1457,16 @@ export function registerReports(r: ModuleHono, ctx: RouteCtx): void {
       const snapshotDepts = await userDeptClosure(ctx.pool, c.get('tenant').id, deptNamesOf(requester))
       if (!deptGatePasses(snapshot.requiredDepts, snapshotDepts)) return { error: 'NOT_FOUND' }
     }
+    // 渲染闸（P5 Task 3）：叙述/计算凭证与 spec 读面**共用同一个观看者门**。
+    //   · `reveal='report'` 的指标不可见 ⇒ 整表拒（不能从 AI 文本 / 计算凭证绕开）；
+    //   · 其余被拒面板 ⇒ 用 `factsSpecOf` 把它们换成**空文本面板**：事实装配天然跳过 text，
+    //     被拒口径的**标题**不会经 `missing.push(p.title)` 进 LLM prompt，也不再多打一次必被
+    //     403 的 `/query`。回包不返回这份 specs（只用于内部事实装配）。
+    const render = await reportRenderGate(ctx.pool, requester, org, id, snapshot.spec)
+    if (render.blocked) return { error: 'NOT_FOUND' }
     return {
-      requester, report, spec: snapshot.spec,
+      requester, report, deniedPanels: render.deniedPanels,
+      spec: render.deniedPanels.length === 0 ? snapshot.spec : factsSpecOf(render.spec),
       specKey: `published:${snapshot.version}`, title: snapshot.title,
     }
   }
@@ -1294,6 +1476,9 @@ export function registerReports(r: ModuleHono, ctx: RouteCtx): void {
   ): Promise<NarrativeContextOk | NarrativeContextErr> {
     const v = await loadViewableSpec(c, id, body)
     if ('error' in v) return { error: v.error }
+    // 被拒绝的面板与「不存在 / 不是目标类型」同形：一律 404（不把「有权限判定挡在这里」
+    // 暴露成 400——那会让被拒面板与真实类型不符可被区分，给存在性/权限探针）。
+    if (v.deniedPanels.includes(body.panelIndex)) return { error: 'NOT_FOUND' }
     const panel = v.spec.panels[body.panelIndex]
     if (panel === undefined || panel.chart !== 'ai_text') return { error: 'NOT_AI_TEXT_PANEL' }
 
@@ -1483,6 +1668,10 @@ export function registerReports(r: ModuleHono, ctx: RouteCtx): void {
       const status = v.error === 'UNAUTHENTICATED' ? 403
         : (v.error === 'NOT_FOUND' || v.error === 'NOT_PUBLISHED') ? 404 : 400
       return { ok: false, error: { error: v.error, status } }
+    }
+    // 被拒面板 = 无权限，**不是**「不是 KPI」：回 404（与不存在同形，避免权限/存在性探测）。
+    if (v.deniedPanels.includes(body.panelIndex)) {
+      return { ok: false, error: { error: 'NOT_FOUND', status: 404 } }
     }
     const panel = v.spec.panels[body.panelIndex]
     if (panel === undefined || panel.chart !== 'kpi') {

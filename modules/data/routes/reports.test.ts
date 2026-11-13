@@ -20,6 +20,7 @@ import { registerReports } from './reports'
 import type { ChatMessage, StreamDelta, StreamOpts, StreamingChatModel, ToolSpec } from '../domain/llm'
 import type { SqlExecutor } from '../domain/query-service'
 import { updateSpec, upsertReport } from '../domain/report-store'
+import { getPublishedSpec } from '../domain/report-version'
 import { upsertL1Metric, upsertMetric } from '../domain/metric-store'
 import { parseReportSpec } from '../domain/report-spec'
 import { applyMigrations, applyPlatformMigrations, buildTestApp, makeIdentity } from '../test-util'
@@ -1511,7 +1512,8 @@ describePg('报表路由（需要 DATABASE_URL）', () => {
     const allowed = shell(makeIdentity({ orgId: ORG, scopes: ['data:query', 'sales:read'] })).app
     const read = await allowed.request(`/reports/${id}/spec`)
     expect(read.status).toBe(200)
-    expect(await read.json()).toEqual({ spec: { panels: [] }, version: 1 })
+    // 非编辑者的观看面还带渲染闸结果（P5 Task 3）；全可见 ⇒ 空数组
+    expect(await read.json()).toEqual({ spec: { panels: [] }, version: 1, deniedPanels: [] })
 
     // PUT /spec 缺 expectedVersion ⇒ 400（strict + 必填）；多余键同样 400（.strict()）
     const missing = await app.request(`/reports/${id}/spec`, {
@@ -3086,6 +3088,26 @@ describePg('报表路由（需要 DATABASE_URL）', () => {
       expect(await res.json()).toMatchObject({ error: 'PANEL_NOT_KPI' })
     })
 
+    it('★ 被渲染闸拒绝的 KPI 面板 ⇒ 404（不是 400 PANEL_NOT_KPI：无权限与「不是 KPI」同形）', async () => {
+      const id = await createPublishedReceipt(receiptShell(adminIdentity()))
+      const app = receiptShell(viewerIdentity())
+      try {
+        // 发布后词表漂移：KPI 指标归属到观看者不在的部门 ⇒ 渲染闸把它降级成空文本面板。
+        await pool.query(
+          'update data.metrics set owner_dept = $3 where org = $1 and id = $2',
+          ['platform', ADDITIVE_METRIC, 'T7D3'],
+        )
+        const res = await receiptOf(app, id, {})
+        expect(res.status).toBe(404)
+        expect(await res.json()).toMatchObject({ error: 'NOT_FOUND' })
+      } finally {
+        await pool.query(
+          'update data.metrics set owner_dept = null where org = $1 and id = $2',
+          ['platform', ADDITIVE_METRIC],
+        )
+      }
+    })
+
     it('未发布且非草稿预览 ⇒ 404 NOT_PUBLISHED；草稿预览要求管理面', async () => {
       const adminApp = receiptShell(adminIdentity())
       const res = await post(adminApp, { title: '未发布', renderer: 'platform', spec: specOf() })
@@ -3320,6 +3342,93 @@ describePg('报表路由（需要 DATABASE_URL）', () => {
       expect((await narrate(ALICE)).status).toBe(400)
     })
 
+    // ── 发布门（P5 Task 2，spec 2026-11-12 §9.1）：受众 ⊆ 面板指标可见范围 ─────────────
+    it('★ 发布门：受众含兄弟部门 + 面板指标归属本部门 ⇒ 409 并指名；同部门/无部门约束各自判', async () => {
+      const FIN_METRIC = 'p5r:dept-finance'
+      await upsertMetric(pool, ORG, {
+        id: FIN_METRIC, title: '部门口径指标', description: '', requiredScope: null,
+        subjectColumn: 'org', selectSql: 'select 1 as value', groupBy: '', params: {},
+      }, 'fixture', { ownership: { ownerDept: CHILD_DEPT } })
+
+      const app = admin()
+      const createWithGate = async (requiredDepts: string[] | null, title: string): Promise<string> => {
+        const res = await post(app, {
+          title, renderer: 'platform', requiredDepts,
+          spec: { panels: [{ chart: 'table', title: '口径', metricId: FIN_METRIC }] },
+        })
+        expect(res.status).toBe(201)
+        return (await res.json()).id as string
+      }
+      const versionCount = async (id: string): Promise<number> =>
+        (await pool.query(
+          'select count(*)::int as n from data.report_versions where org = $1 and report_id = $2', [ORG, id],
+        )).rows[0].n
+
+      // ① 受众 = 兄弟部门（销售部），指标归属数字技术部 ⇒ 409 并指名差集部门
+      const sibling = await createWithGate([SIBLING_DEPT], '兄弟部门受众')
+      const denied = await publish(app, sibling, await versionOf(app, sibling))
+      expect(denied.status).toBe(409)
+      const deniedBody = await denied.json() as {
+        error: string; panels: { index: number; metricId: string; missingDepts?: string[]; reason: string }[]
+      }
+      expect(deniedBody.error).toBe('REPORT_METRIC_SCOPE_MISMATCH')
+      expect(deniedBody.panels).toEqual([{
+        index: 0, metricId: FIN_METRIC, missingDepts: [SIBLING_DEPT],
+        reason: 'audience_dept_outside_metric_scope',
+      }])
+      expect(await versionCount(sibling)).toBe(0) // 拒 = 一条版本都不落
+
+      // ② 受众 = 指标归属部门 ⇒ 放行
+      const same = await createWithGate([CHILD_DEPT], '同部门受众')
+      expect((await publish(app, same, await versionOf(app, same))).status).toBe(200)
+
+      // ③ 受众无部门约束（visibility=tenant 且无部门门）⇒ 归属指标不可判定为更窄 ⇒ 409
+      const open = await createWithGate(null, '无部门受众')
+      const openRes = await publish(app, open, await versionOf(app, open))
+      expect(openRes.status).toBe(409)
+      expect((await openRes.json() as { panels: unknown[] }).panels[0])
+        .toMatchObject({ metricId: FIN_METRIC, reason: 'audience_unbounded' })
+
+      await pool.query('delete from data.metrics where org = $1 and id = $2', [ORG, FIN_METRIC])
+    })
+
+    it('★ 发布门先于 STALE_WRITE/unchanged：指标归属漂移后的重发拿到 409 受众不匹配', async () => {
+      // 受众 = 数字技术部（有界）；指标初始归属同一部门 ⇒ 首发通过。
+      const DRIFT_METRIC = 'p5r:dept-drift'
+      await upsertMetric(pool, ORG, {
+        id: DRIFT_METRIC, title: '归属漂移口径', description: '', requiredScope: null,
+        subjectColumn: 'org', selectSql: 'select 1 as value', groupBy: '', params: {},
+      }, 'fixture', { ownership: { ownerDept: CHILD_DEPT } })
+      const app = admin()
+      const created = await post(app, {
+        title: '发布门-归属漂移', renderer: 'platform', requiredDepts: [CHILD_DEPT],
+        spec: { panels: [{ chart: 'table', title: '口径', metricId: DRIFT_METRIC }] },
+      })
+      expect(created.status).toBe(201)
+      const id = (await created.json()).id as string
+      expect((await publish(app, id, await versionOf(app, id))).status).toBe(200)
+
+      try {
+        // 发布后词表漂移：归属改到兄弟部门 ⇒ 当前受众不再 ⊆ 指标可见范围。
+        await pool.query(
+          'update data.metrics set owner_dept = $3 where org = $1 and id = $2',
+          [ORG, DRIFT_METRIC, SIBLING_DEPT],
+        )
+        // ① 无变更重发 + 当前版本 ⇒ 门先返回 409 受众不匹配（不是 200 unchanged）
+        const cur = await publish(app, id, await versionOf(app, id))
+        expect(cur.status).toBe(409)
+        const curBody = await cur.json() as { error: string; panels: Array<{ reason: string }> }
+        expect(curBody.error).toBe('REPORT_METRIC_SCOPE_MISMATCH')
+        expect(curBody.panels[0]).toMatchObject({ reason: 'audience_dept_outside_metric_scope' })
+        // ② 陈旧版本同样先撞发布门（受众漂移优先于 STALE_WRITE 暴露——有意的先后，见 handler 注释）
+        const stale = await publish(app, id, (await versionOf(app, id)) + 1)
+        expect(stale.status).toBe(409)
+        expect((await stale.json() as { error: string }).error).toBe('REPORT_METRIC_SCOPE_MISMATCH')
+      } finally {
+        await pool.query('delete from data.metrics where org = $1 and id = $2', [ORG, DRIFT_METRIC])
+      }
+    })
+
     it('部门选择器：转发宿主注入的平表（含直属人数）', async () => {
       const res = await admin().request('/reports/dept-options')
       expect(res.status).toBe(200)
@@ -3341,6 +3450,393 @@ describePg('报表路由（需要 DATABASE_URL）', () => {
       const res = await bare.request('/reports/dept-options')
       expect(res.status).toBe(503)
       expect(await res.json()).toEqual({ error: 'ORG_RESOLVER_UNAVAILABLE' })
+    })
+
+    // ── 渲染闸（P5 Task 3，spec 2026-11-12 §9.2/§9.3）：面板级降级 + reveal 整表拒 ────────
+    // 夹具规律：先以**平台口径**（owner_dept=null）建报表并发布（发布门放行），发布后把指标
+    // 归属改成 SIBLING_DEPT —— 模拟「发布后词表漂移」。这样观看者能过报表门，但过不了指标
+    // 可见性，正好行使渲染闸（发布期受众收窄的用例由上面 Task 2 那条覆盖）。
+    describe('渲染闸（面板级降级 / reveal）', () => {
+      // 每个用例独占 `p5rg:` 前缀的指标（本块会「发布后直改 owner_dept」模拟漂移；
+      // 清场保证失败重跑不被上一轮的归属/标题唯一索引绊住）。
+      beforeEach(async () => {
+        await pool.query("delete from data.metrics where org = $1 and id like 'p5rg:%'", [ORG])
+      })
+      const seedMetric = async (id: string, title: string): Promise<void> => {
+        await upsertMetric(pool, ORG, {
+          id, title, description: '', requiredScope: null,
+          subjectColumn: 'org', selectSql: 'select 1 as value', groupBy: '', params: {},
+        }, 'fixture')
+        // 幂等复位：失败重跑时上一轮可能已把归属/共享/reveal 改过（本块用「发布后直改库」模拟漂移）。
+        // 标题随 id 一一对应（唯一索引 `(org, coalesce(owner_dept,''), lower(title))` 会把同桶同名顶掉）。
+        await pool.query(
+          `update data.metrics set owner_dept = null, visible_depts = null, reveal = 'panel'
+            where org = $1 and id = $2`,
+          [ORG, id],
+        )
+      }
+      const drift = async (id: string, patch: { ownerDept?: string; reveal?: 'panel' | 'report' }) => {
+        await pool.query(
+          `update data.metrics set owner_dept = coalesce($3, owner_dept), reveal = coalesce($4, reveal)
+            where org = $1 and id = $2`,
+          [ORG, id, patch.ownerDept ?? null, patch.reveal ?? null],
+        )
+      }
+      const createPublished = async (
+        app: Hono, title: string, panels: unknown[],
+      ): Promise<string> => {
+        const res = await post(app, { title, renderer: 'platform', spec: { panels } })
+        expect(res.status).toBe(201)
+        const id = (await res.json()).id as string
+        expect((await publish(app, id, await versionOf(app, id))).status).toBe(200)
+        return id
+      }
+
+      it('★ 指标不可见 ⇒ 该面板只留 {index,denied:true}（无数据字段）；其余面板原样；deniedPanels 点名', async () => {
+        const OWNED = 'p5rg:owned'
+        await seedMetric(OWNED, '财务口径指标（面板降级）')
+        const app = admin()
+        const id = await createPublished(app, '渲染闸-面板降级', [
+          // args / title / metricId 都是「被剥掉的数据字段」的样本
+          { chart: 'table', title: '财务口径', metricId: OWNED, args: { branch_num: '92' } },
+          { chart: 'table', title: '公开口径', metricId: OPEN_METRIC },
+        ])
+        const before = await (await app.request(`/reports/${id}/published-spec`)).json()
+        await drift(OWNED, { ownerDept: SIBLING_DEPT }) // ALICE 在 ROOT 子树内，但不在销售部链上
+
+        const res = await watcher(ALICE).request(`/reports/${id}/published-spec`)
+        expect(res.status).toBe(200)
+        const body = await res.json() as {
+          deniedPanels: number[]; spec: { panels: Record<string, unknown>[] }
+          version: number; title: string
+        }
+        expect(body.deniedPanels).toEqual([0])
+        // 被拒面板**只剩** index/denied——任何数据字段都不泄露
+        expect(body.spec.panels[0]).toEqual({ index: 0, denied: true })
+        expect(JSON.stringify(body.spec.panels[0])).not.toMatch(/metricId|chart|title|args/)
+        // 其余面板逐字节原样
+        expect(body.spec.panels[1]).toEqual(before.spec.panels[1])
+        expect(body.version).toBe(before.version)
+        expect(body.title).toBe(before.title)
+        // 可见的人不受影响（降级是「按观看者」，不是把报表改坏）
+        const bobBody = await (await watcher(BOB).request(`/reports/${id}/published-spec`)).json()
+        expect(bobBody.deniedPanels).toEqual([])
+        expect(bobBody.spec.panels[0]).toMatchObject({ chart: 'table', metricId: OWNED })
+        // 审计：沿用 reports 既有 asset_audit（不新造表）
+        const audit = await pool.query(
+          `select detail from data.asset_audit
+            where org = $1 and asset_id = $2 and action = 'report.panel_denied'
+            order by id desc limit 1`,
+          [ORG, id],
+        )
+        expect(audit.rowCount).toBeGreaterThan(0)
+        expect(audit.rows[0].detail).toMatchObject({ deniedPanels: [0] })
+        await pool.query('delete from data.asset_audit where org = $1 and asset_id = $2', [ORG, id])
+      })
+
+      it('★ 同 viewer+report+日 的连续被拒观看只记一条审计（读路径不刷长表）', async () => {
+        const OWNED = 'p5rg:audit-dedupe'
+        await seedMetric(OWNED, '审计去重口径')
+        const id = await createPublished(admin(), '渲染闸-审计去重', [
+          { chart: 'table', title: '部门口径', metricId: OWNED },
+        ])
+        await drift(OWNED, { ownerDept: SIBLING_DEPT })
+        const alice = watcher(ALICE)
+        expect((await alice.request(`/reports/${id}/published-spec`)).status).toBe(200)
+        expect((await alice.request(`/reports/${id}/published-spec`)).status).toBe(200)
+        expect((await alice.request(`/reports/${id}/published-spec`)).status).toBe(200)
+
+        const countOf = async (actor: string): Promise<number> =>
+          (await pool.query(
+            `select count(*)::int as n from data.asset_audit
+              where org = $1 and asset_id = $2 and action = 'report.panel_denied' and actor = $3`,
+            [ORG, id, actor],
+          )).rows[0].n
+        expect(await countOf(ALICE)).toBe(1)
+        // 去重粒度是 viewer：另一个被拒观看者仍各记一条
+        expect((await watcher(CAROL).request(`/reports/${id}/published-spec`)).status).toBe(200)
+        expect(await countOf(CAROL)).toBe(1)
+        await pool.query('delete from data.asset_audit where org = $1 and asset_id = $2', [ORG, id])
+      })
+
+      it('★ reveal=report 且不可见 ⇒ 整表 404（防「总数−其他」反推）；可见者照常 200', async () => {
+        const SECRET = 'p5rg:secret'
+        await seedMetric(SECRET, '成本口径指标（reveal）')
+        const app = admin()
+        const id = await createPublished(app, '渲染闸-reveal 整表拒', [
+          { chart: 'table', title: '成本', metricId: SECRET },
+        ])
+        await drift(SECRET, { ownerDept: SIBLING_DEPT, reveal: 'report' })
+
+        const denied = await watcher(ALICE).request(`/reports/${id}/published-spec`)
+        expect(denied.status).toBe(404)
+        expect(await denied.json()).toEqual({ error: 'NOT_FOUND' })
+        // 可见的人不因别人的不可见被 404
+        const ok = await watcher(BOB).request(`/reports/${id}/published-spec`)
+        expect(ok.status).toBe(200)
+        expect((await ok.json()).deniedPanels).toEqual([])
+        await pool.query('delete from data.asset_audit where org = $1 and asset_id = $2', [ORG, id])
+      })
+
+      it('★ 回归锁：全部可见 ⇒ spec 与快照逐字节相同（只多一个 deniedPanels: []）', async () => {
+        const id = await createPublished(admin(), '渲染闸-全可见', [
+          { chart: 'table', title: '公开', metricId: OPEN_METRIC },
+        ])
+        // 今日载荷的正体 = getPublishedSpec 的返回值（旧 handler 直接 `c.json(snapshot)`）。
+        const snap = await getPublishedSpec(pool, ORG, id)
+        expect(snap).not.toBeNull()
+        for (const who of [ALICE, BOB, CAROL]) {
+          const res = await watcher(who).request(`/reports/${id}/published-spec`)
+          expect(res.status).toBe(200)
+          const body = await res.json() as Record<string, unknown> & { deniedPanels: number[] }
+          // 新载荷只多 deniedPanels 键，其余逐字段等于旧快照
+          expect(Object.keys(body).sort()).toEqual([
+            'deniedPanels', 'publishedAt', 'requiredDepts', 'requiredScope', 'spec', 'title', 'version',
+          ])
+          expect(body).toMatchObject({ ...snap!, deniedPanels: [] })
+          expect(JSON.stringify(body.spec)).toBe(JSON.stringify(snap!.spec))
+        }
+      })
+
+      it('★ 观看者无部门上下文 ⇒ 部门归属面板 fail-closed 降级（不是「没部门就放行」）', async () => {
+        const OWNED = 'p5rg:owned-nodept'
+        await seedMetric(OWNED, '部门口径指标（无部门观看者）')
+        const id = await createPublished(admin(), '渲染闸-无部门观看者', [
+          { chart: 'table', title: '部门口径', metricId: OWNED },
+          { chart: 'table', title: '公开口径', metricId: OPEN_METRIC },
+        ])
+        await drift(OWNED, { ownerDept: SIBLING_DEPT })
+        // CAROL 在 org 表里没有成员行 ⇒ loadDeptContext 空集 ⇒ 归属指标不可见
+        const body = await (await watcher(CAROL).request(`/reports/${id}/published-spec`)).json()
+        expect(body.deniedPanels).toEqual([0])
+        expect(body.spec.panels[0]).toEqual({ index: 0, denied: true })
+        expect(body.spec.panels[1]).toMatchObject({ metricId: OPEN_METRIC })
+        await pool.query('delete from data.asset_audit where org = $1 and asset_id = $2', [ORG, id])
+      })
+
+      it('★ 词表里查不到的指标（归档/陈旧行）⇒ fail-closed 降级，审计 reason=metric_unknown', async () => {
+        const GONE = 'p5rg:gone'
+        await seedMetric(GONE, '将被移除的指标（未知）')
+        const id = await createPublished(admin(), '渲染闸-未知指标', [
+          { chart: 'table', title: '陈旧口径', metricId: GONE },
+          { chart: 'table', title: '公开口径', metricId: OPEN_METRIC },
+        ])
+        // 发布后指标被删（词表加载器只取 archived_at is null 的在用行）——面板引用还在快照里
+        await pool.query('delete from data.metrics where org = $1 and id = $2', [ORG, GONE])
+
+        const res = await watcher(ALICE).request(`/reports/${id}/published-spec`)
+        expect(res.status).toBe(200)
+        const body = await res.json() as { deniedPanels: number[]; spec: { panels: Record<string, unknown>[] } }
+        expect(body.deniedPanels).toEqual([0])
+        expect(body.spec.panels[0]).toEqual({ index: 0, denied: true })
+        expect(body.spec.panels[0]).not.toHaveProperty('metricId')
+        const audit = await pool.query(
+          `select detail from data.asset_audit
+            where org = $1 and asset_id = $2 and action = 'report.panel_denied'
+            order by id desc limit 1`,
+          [ORG, id],
+        )
+        expect(audit.rows[0].detail).toMatchObject({
+          deniedPanels: [0], denials: [{ index: 0, reason: 'metric_unknown' }],
+        })
+        await pool.query('delete from data.asset_audit where org = $1 and asset_id = $2', [ORG, id])
+      })
+
+      it('★ GET /spec 是观看面：非编辑者面板被剥；编辑者（owner）拿全量', async () => {
+        const OWNED = 'p5rg:spec-owned'
+        await seedMetric(OWNED, 'spec 部门口径指标')
+        const app = admin()
+        const created = await post(app, {
+          title: '渲染闸-spec 观看面', renderer: 'platform',
+          spec: {
+            panels: [
+              { chart: 'table', title: '部门口径', metricId: OWNED },
+              { chart: 'table', title: '公开口径', metricId: OPEN_METRIC },
+            ],
+          },
+        })
+        expect(created.status).toBe(201)
+        const id = (await created.json()).id as string
+        await drift(OWNED, { ownerDept: SIBLING_DEPT })
+
+        // viewer（data:query，非 owner）——console「打开」走的正是这条
+        const viewerRes = await watcher(ALICE).request(`/reports/${id}/spec`)
+        expect(viewerRes.status).toBe(200)
+        const viewerBody = await viewerRes.json() as {
+          deniedPanels: number[]; spec: { panels: Record<string, unknown>[] }
+        }
+        expect(viewerBody.deniedPanels).toEqual([0])
+        expect(viewerBody.spec.panels[0]).toEqual({ index: 0, denied: true })
+        expect(JSON.stringify(viewerBody.spec.panels[0])).not.toMatch(/metricId|chart|title|args/)
+        expect(viewerBody.spec.panels[1]).toMatchObject({ metricId: OPEN_METRIC })
+
+        // 编辑者 = owner（canEditAsset 真）⇒ 全量（要能改规格，不能被占位符挡住）
+        const editorRes = await app.request(`/reports/${id}/spec`)
+        expect(editorRes.status).toBe(200)
+        const editorBody = await editorRes.json() as {
+          deniedPanels: number[]; spec: { panels: Record<string, unknown>[] }
+        }
+        expect(editorBody.deniedPanels).toEqual([])
+        expect(editorBody.spec.panels[0]).toMatchObject({ chart: 'table', metricId: OWNED, title: '部门口径' })
+        await pool.query('delete from data.asset_audit where org = $1 and asset_id = $2', [ORG, id])
+      })
+
+      it('★ /spec 上 reveal=report + 不可见 ⇒ 整表 404（编辑者不受影响）', async () => {
+        const SECRET = 'p5rg:spec-secret'
+        await seedMetric(SECRET, 'spec 成本口径指标')
+        const app = admin()
+        const created = await post(app, {
+          title: '渲染闸-spec reveal', renderer: 'platform',
+          spec: { panels: [{ chart: 'table', title: '成本', metricId: SECRET }] },
+        })
+        const id = (await created.json()).id as string
+        await drift(SECRET, { ownerDept: SIBLING_DEPT, reveal: 'report' })
+
+        expect((await watcher(ALICE).request(`/reports/${id}/spec`)).status).toBe(404)
+        // 编辑者仍拿全量（草稿要能继续改）
+        const editor = await app.request(`/reports/${id}/spec`)
+        expect(editor.status).toBe(200)
+        expect((await editor.json()).spec.panels[0]).toMatchObject({ metricId: SECRET })
+        await pool.query('delete from data.asset_audit where org = $1 and asset_id = $2', [ORG, id])
+      })
+
+      it('★ 叙述面：reveal=report + 不可见 ⇒ loadViewableSpec 整表 404（不能从 AI 文本绕开）', async () => {
+        const SECRET = 'p5rg:narr-secret'
+        await seedMetric(SECRET, '叙述成本口径指标')
+        const app = admin()
+        // ai_text 的写入侧结构闸要求「有数据面板 + 规格带 period」，否则 400（不是本用例要测的）
+        const created = await post(app, {
+          title: '渲染闸-叙述整表拒', renderer: 'platform',
+          spec: {
+            period: { mode: 'custom', from: '2026-10-01', to: '2026-10-19' },
+            panels: [
+              { chart: 'ai_text', title: 'AI 分析', focus: 'overview' },
+              { chart: 'table', title: '成本', metricId: SECRET },
+            ],
+          },
+        })
+        expect(created.status).toBe(201)
+        const id = (await created.json()).id as string
+        expect((await publish(app, id, await versionOf(app, id))).status).toBe(200)
+        await drift(SECRET, { ownerDept: SIBLING_DEPT, reveal: 'report' })
+        const narrate = (userId: string) => watcher(userId).request(`/reports/${id}/narrative`, {
+          method: 'POST', headers: { 'content-type': 'application/json' },
+          body: JSON.stringify({
+            panelIndex: 0, period: { mode: 'custom', from: '2026-10-01', to: '2026-10-19' },
+          }),
+        })
+        expect((await narrate(ALICE)).status).toBe(404)
+        // 有权看该口径的人照常进入事实包装配（不是把整条叙述通道关掉）
+        expect((await narrate(BOB)).status).not.toBe(404)
+        await pool.query('delete from data.asset_audit where org = $1 and asset_id = $2', [ORG, id])
+      })
+
+      it('★ 叙述请求指向被拒面板 ⇒ 404（不是 400 NOT_AI_TEXT_PANEL：无权限与「不是该类型」同形）', async () => {
+        const SECRET = 'p5rg:narr-denied'
+        await seedMetric(SECRET, '叙述被拒面板口径')
+        const app = admin()
+        const created = await post(app, {
+          title: '渲染闸-叙述被拒面板', renderer: 'platform',
+          spec: {
+            period: { mode: 'custom', from: '2026-10-01', to: '2026-10-19' },
+            panels: [
+              { chart: 'ai_text', title: 'AI 分析', focus: 'overview' },
+              { chart: 'table', title: '成本', metricId: SECRET },
+            ],
+          },
+        })
+        expect(created.status).toBe(201)
+        const id = (await created.json()).id as string
+        expect((await publish(app, id, await versionOf(app, id))).status).toBe(200)
+        await drift(SECRET, { ownerDept: SIBLING_DEPT })
+
+        // 面板 1 被渲染闸降级成空文本 ⇒ 过去会回 400 NOT_AI_TEXT_PANEL（「不是 AI 文本」），
+        // 实际语义是「无权限」。与不存在同形 ⇒ 404。
+        const res = await watcher(ALICE).request(`/reports/${id}/narrative`, {
+          method: 'POST', headers: { 'content-type': 'application/json' },
+          body: JSON.stringify({
+            panelIndex: 1, period: { mode: 'custom', from: '2026-10-01', to: '2026-10-19' },
+          }),
+        })
+        expect(res.status).toBe(404)
+        expect(await res.json()).toEqual({ error: 'NOT_FOUND' })
+        await pool.query('delete from data.asset_audit where org = $1 and asset_id = $2', [ORG, id])
+      })
+
+      it('★ GET /reports 列表的 metricIds 也按观看者裁剪：不可见面板的 metricId 不出现；owner 全量', async () => {
+        const OWNED = 'p5rg:list-owned'
+        await seedMetric(OWNED, '列表部门口径指标')
+        const app = admin()
+        const created = await post(app, {
+          title: '渲染闸-列表 metricIds', renderer: 'platform',
+          spec: {
+            panels: [
+              { chart: 'table', title: '部门口径', metricId: OWNED },
+              { chart: 'table', title: '公开口径', metricId: OPEN_METRIC },
+            ],
+          },
+        })
+        expect(created.status).toBe(201)
+        const id = (await created.json()).id as string
+        await drift(OWNED, { ownerDept: SIBLING_DEPT })
+
+        type ListBody = { reports: Array<{ id: string; metricIds: string[]; canEdit: boolean }> }
+        const viewerList = await (await watcher(ALICE).request('/reports')).json() as ListBody
+        const viewerRow = viewerList.reports.find((r) => r.id === id)
+        expect(viewerRow?.canEdit).toBe(false)
+        // 不可见面板的 metricId（OWNED）不能出现在列表里——否则与「denied 面板不得暴露 metricId」自相矛盾
+        expect(viewerRow?.metricIds).toEqual([OPEN_METRIC])
+
+        // 编辑者/owner：深链要能指到全部口径
+        const ownerList = await (await app.request('/reports')).json() as ListBody
+        const ownerRow = ownerList.reports.find((r) => r.id === id)
+        expect(ownerRow?.metricIds).toEqual([OWNED, OPEN_METRIC])
+      })
+
+      it('★ 列表 gateIds 必须覆盖 KPI 分母：主指标与 denominatorMetricId 都可见 ⇒ 面板不被误剥', async () => {
+        // KPI 需要 `totalable` 指标 ⇒ 用 L1 夹具（L2 恒 totalable=false）。分母用独立 id，
+        // 才能咬住「gateIds 只取主 metricId ⇒ 缩小后的目录喂给门 ⇒ 分母被判 metric_unknown」。
+        const DENOM = 'p5rg:kpi-denom'
+        await upsertL1Metric(pool, {
+          id: DENOM, title: 'p5rg KPI 分母', description: '', requiredScope: null,
+          subjectColumn: 'org', selectSql: 'select 1 as value', groupBy: '', params: {},
+          sourceSystem: null, slaDays: 1, freshnessRelations: [], masks: null, totalable: true,
+        })
+        try {
+          const app = admin()
+          const created = await post(app, {
+            title: '渲染闸-列表 KPI 分母', renderer: 'platform',
+            spec: {
+              panels: [{
+                chart: 'kpi', title: '客单价',
+                metricId: ADDITIVE_METRIC, denominatorMetricId: DENOM, format: 'number',
+              }],
+            },
+          })
+          expect(created.status).toBe(201)
+          const id = (await created.json()).id as string
+
+          type ListBody = { reports: Array<{ id: string; metricIds: string[]; canEdit: boolean }> }
+          // 分母可见（平台口径）⇒ KPI 面板完整，主 metricId 不能被剥
+          const visibleList = await (await watcher(ALICE).request('/reports')).json() as ListBody
+          const visibleRow = visibleList.reports.find((r) => r.id === id)
+          expect(visibleRow?.canEdit).toBe(false)
+          expect(visibleRow?.metricIds).toEqual([ADDITIVE_METRIC])
+
+          // 分母被划归销售部 ⇒ ALICE 看不见分母 ⇒ 整个 KPI 面板不可见，主 metricId 一并剔除
+          await pool.query(
+            'update data.metrics set owner_dept = $2 where org = $1 and id = $3',
+            ['platform', SIBLING_DEPT, DENOM],
+          )
+          const deniedList = await (await watcher(ALICE).request('/reports')).json() as ListBody
+          expect(deniedList.reports.find((r) => r.id === id)?.metricIds).toEqual([])
+          // owner（编辑者）保持全量
+          const ownerList = await (await app.request('/reports')).json() as ListBody
+          expect(ownerList.reports.find((r) => r.id === id)?.metricIds).toEqual([ADDITIVE_METRIC])
+        } finally {
+          await pool.query("delete from data.metrics where org = 'platform' and id = $1", [DENOM])
+        }
+      })
     })
   })
 })

@@ -1,6 +1,6 @@
 // report-scope.test.ts — 报表写入侧校验的单测（requiredScope 派生 + 面板指标校验）。纯函数，不连库。
 import { describe, expect, it } from 'vitest'
-import { deriveRequiredScope, validatePanelMetrics } from './report-scope'
+import { deriveRequiredScope, metricIdsOf, validatePanelMetrics } from './report-scope'
 import type { ReportSpec } from './report-spec'
 
 /**
@@ -157,5 +157,32 @@ describe('ai_text 的写侧结构闸（必须有数据面板 + 报表期间）',
     const spec = { ...specOf(ai, line), period }
     expect(validatePanelMetrics(spec, catRows, adopted)).toEqual({ ok: true })
     expect(deriveRequiredScope(spec, catRows)).toEqual({ ok: true, requiredScope: null })
+  })
+})
+
+describe('metricIdsOf（面板 → 指标 id 列表）', () => {
+  it('table 面板取主指标；kpi 取主指标 + 分母；同 id 去重', () => {
+    expect(metricIdsOf({ chart: 'table', metricId: 'm1' })).toEqual(['m1'])
+    expect(metricIdsOf({ chart: 'kpi', metricId: 'm1', denominatorMetricId: 'm2' })).toEqual(['m1', 'm2'])
+    expect(metricIdsOf({ chart: 'kpi', metricId: 'm1', denominatorMetricId: 'm1' })).toEqual(['m1'])
+  })
+
+  it('text / ai_text 面板没有指标 ⇒ 空数组', () => {
+    expect(metricIdsOf({ chart: 'text' })).toEqual([])
+    expect(metricIdsOf({ chart: 'ai_text' })).toEqual([])
+  })
+
+  it('★ 降级占位符 {index,denied:true} ⇒ 空数组（不产出 undefined）', () => {
+    // 观看面 `ViewableSpec` 的面板位可能是占位符；把它喂进来不应污染 id 集合。
+    const placeholder = { index: 0, denied: true }
+    const ids = metricIdsOf(placeholder as never)
+    expect(ids).toEqual([])
+    expect(ids).not.toContain(undefined)
+  })
+
+  it('无 metricId / 空串的陈旧形状同样跳过（fail-safe，不产出 undefined）', () => {
+    expect(metricIdsOf({ chart: 'table' })).toEqual([])
+    expect(metricIdsOf({ chart: 'table', metricId: '' })).toEqual([])
+    expect(metricIdsOf({ chart: 'kpi', metricId: 'm1', denominatorMetricId: '' })).toEqual(['m1'])
   })
 })

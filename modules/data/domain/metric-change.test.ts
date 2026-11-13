@@ -32,6 +32,28 @@ const L1_FIXTURE = {
   masks: null,
 }
 const DECL_ADOPT = { baseMetric: L1_ID, op: { kind: 'refine' }, alias: '我的销售' }
+/**
+ * declaration 档的**关系白名单夹具**（P5 CI 修复）：B11 白名单来自平台桶 L1 行的 selectSql
+ * 关系（`compileNewDeclaration` 的 `allowedRelations`）。空库里没有真实物化的
+ * `fct_retail_sale` ⇒ declaration 的 expression 会被判「未纳管关系」。本地曾因其它测试文件
+ * 残留的 L1 行假绿——这里自建一条同关系的 L1，让白名单自足，不依赖执行顺序/残留数据。
+ * id 与 title 均文件专属（平台桶跨文件共用；文件并行时各删各的）。
+ */
+const DECL_REL_L1_ID = 'p5mc:l1:decl_sales_fixture'
+const DECL_REL_L1 = {
+  id: DECL_REL_L1_ID,
+  title: '声明关系白名单·metric-change',
+  description: 'declaration 档 B11 关系白名单夹具',
+  requiredScope: null,
+  subjectColumn: 'org',
+  selectSql: 'select sum(fct_retail_sale.sale_amount) as value, system_book, bizday from fct_retail_sale',
+  groupBy: 'system_book, bizday',
+  params: {},
+  sourceSystem: 'lemeng',
+  slaDays: 1,
+  freshnessRelations: [],
+  masks: null,
+}
 // 删档用例单用一份声明（别名错开）：047 部门内同名互斥后，x:adopt_me 与 x:del_me 两个 id
 // 共用「我的销售」会在同 org 同桶撞 metrics_title_per_dept_uq（这正是 P1 要的行为）。
 const DECL_DEL = { baseMetric: L1_ID, op: { kind: 'refine' }, alias: '我的销售·删档' }
@@ -464,5 +486,123 @@ describePg('P1 Task 4：决策竞态串行化 + adopt 撞名映射 409', () => {
     expect(out).toMatchObject({ ok: false, http: 409, error: 'TITLE_EXISTS_IN_DEPT' })
     // 单据保持 preview_ready（域写回滚 + CAS 未跑）：评审者可驳回，或占名行删除后重试
     expect((await getChange(pool, RORG, id))?.status).toBe('preview_ready')
+  })
+})
+
+// ── P5 Task 1（2026-11-13）：恢复 declaration 档（能力归还）─────────────────────
+// P4 把 `POST /metrics/declarations` 退役成 410，而变更单 kind 集不含 declaration ⇒「新租户
+// 全额声明」失去提案通路。本档把 W8 声明搬回变更单：提交宽校验 + L1 撞名 fail-early、试算
+// 复用写路径编译尺、采纳调用既有唯一写路径 createTenantDeclaration（**直接生效**，无草稿）。
+describePg('P5 Task 1：declaration 档（能力归还）', () => {
+  const DORG = 'org-p5-decl'
+  /** W8 全量声明条目（与 POST /metrics/declarations 的 `declaration` 同形；reads 供默认掩码判据）。 */
+  const ENTRY = {
+    name: 'p5mc:retail:decl_sales',
+    label: 'P5 声明·销售额',
+    definition: 'P5 Task 1 恢复 declaration 档的夹具口径',
+    owner: 'data-platform',
+    tier: 'experimental',
+    source: 'lemeng',
+    expression: 'sum(fct_retail_sale.sale_amount)',
+    grain: ['system_book', 'bizday'],
+    freshness_sla_days: 1,
+    reads: [],
+  }
+
+  beforeAll(async () => {
+    await pool.query('delete from data.metric_change where org = $1', [DORG])
+    await pool.query('delete from data.metrics where org = $1', [DORG])
+    // 撞名判据的被撞者：平台桶 L1 夹具（upsertL1Metric 固定写 org='platform'）
+    await upsertL1Metric(pool, L1_FIXTURE)
+    // 编译尺的 B11 关系白名单（空库自足；见 DECL_REL_L1 注释）
+    await upsertL1Metric(pool, DECL_REL_L1)
+  })
+  afterAll(async () => {
+    await pool.query('delete from data.metric_change where org = $1', [DORG])
+    await pool.query('delete from data.metrics where org = $1', [DORG])
+    await pool.query("delete from data.metrics where org = 'platform' and source = 'l1' and id = $1",
+      [DECL_REL_L1_ID])
+  })
+
+  it('提交合法声明 ⇒ 落单 kind=declaration，metricId = entry.name', async () => {
+    const r = await submitChange(pool, DORG, { userId: 'a', channel: 'pat' }, ENTRY.name, 'declaration', ENTRY)
+    expect(r.ok).toBe(true)
+    if (r.ok) {
+      expect(r.change.kind).toBe('declaration')
+      expect(r.change.metricId).toBe(ENTRY.name)
+    }
+  })
+
+  it('name 撞 L1 ⇒ 400 ID_RESERVED_BY_L1，且不落单（fail-early）', async () => {
+    const r = await submitChange(pool, DORG, { userId: 'a', channel: 'pat' }, L1_ID, 'declaration',
+      { ...ENTRY, name: L1_ID })
+    expect(r).toMatchObject({ ok: false, http: 400, error: 'ID_RESERVED_BY_L1' })
+    const n = await pool.query(
+      'select count(*)::int as n from data.metric_change where org = $1 and metric_id = $2', [DORG, L1_ID])
+    expect(n.rows[0]?.n).toBe(0)
+  })
+
+  it('宽校验：缺 expression / grain 空 / name 与 metricId 不一致 ⇒ 400 INVALID_DECLARATION', async () => {
+    const cases: Array<Record<string, unknown>> = [
+      { ...ENTRY, expression: '' },
+      { ...ENTRY, grain: [] },
+      { ...ENTRY, name: 'p5mc:retail:other' },
+    ]
+    for (const [i, payload] of cases.entries()) {
+      const r = await submitChange(pool, DORG, { userId: 'a', channel: 'pat' }, ENTRY.name, 'declaration', payload)
+      expect(r, `case ${i}`).toMatchObject({ ok: false, http: 400, error: 'INVALID_DECLARATION' })
+    }
+  })
+
+  it('采纳 ⇒ 走既有唯一写路径：data.metrics 出现 basis=declared 行且 declaration 列有值', async () => {
+    const s = await submitChange(pool, DORG, { userId: 'a', channel: 'pat' }, ENTRY.name, 'declaration', ENTRY)
+    if (!s.ok) throw new Error('unreachable')
+    await markReady(s.change.id)
+    const out = await adoptChange(writeDeps(pool), DORG, s.change.id)
+    expect(out.ok).toBe(true)
+    const live = await pool.query(
+      'select basis, declaration, title from data.metrics where org = $1 and id = $2', [DORG, ENTRY.name])
+    expect(live.rows[0]).toMatchObject({ basis: 'declared', title: ENTRY.label })
+    expect(live.rows[0]?.declaration).toMatchObject({ name: ENTRY.name, source: 'lemeng' })
+    expect((await getChange(pool, DORG, s.change.id))?.status).toBe('adopted')
+  })
+
+  it('同 null 桶已有同名 ⇒ 提交期 409 TITLE_EXISTS_IN_DEPT，且不落单（不留绿单死在采纳期）', async () => {
+    const TITLE = 'P5 声明·同名夹具'
+    // 落库桶 = null（insertTenantDeclaration 列清单不含 owner_dept）⇒ 判据桶必须同构
+    await pool.query(
+      `insert into data.metrics (org, id, title, subject_column, select_sql)
+       values ($1, 'p5mc:retail:title_probe', $2, 'org', 'select 1 as value from probe')`,
+      [DORG, TITLE])
+    try {
+      const r = await submitChange(pool, DORG, { userId: 'a', channel: 'pat' }, 'p5mc:retail:title_dup',
+        'declaration', { ...ENTRY, name: 'p5mc:retail:title_dup', label: TITLE })
+      expect(r).toMatchObject({ ok: false, http: 409, error: 'TITLE_EXISTS_IN_DEPT' })
+      const n = await pool.query(
+        'select count(*)::int as n from data.metric_change where org = $1 and metric_id = $2',
+        [DORG, 'p5mc:retail:title_dup'])
+      expect(n.rows[0]?.n).toBe(0)
+    } finally {
+      await pool.query('delete from data.metrics where org = $1 and id = $2', [DORG, 'p5mc:retail:title_probe'])
+    }
+  })
+
+  it('采纳撞同名唯一索引（submit→adopt 并发窗口）⇒ 409 TITLE_EXISTS_IN_DEPT 而非 500；单据仍 preview_ready', async () => {
+    const RACE = { ...ENTRY, name: 'p5mc:retail:race_decl', label: 'P5 声明·并发窗口' }
+    const s = await submitChange(pool, DORG, { userId: 'a', channel: 'pat' }, RACE.name, 'declaration', RACE)
+    if (!s.ok) throw new Error('unreachable')
+    await markReady(s.change.id)
+    // 提单之后才出现的同名行：模拟决策锁覆盖不到的「submit→adopt」占名窗口
+    await pool.query(
+      `insert into data.metrics (org, id, title, subject_column, select_sql)
+       values ($1, 'p5mc:retail:race_probe', $2, 'org', 'select 1 as value from probe')`,
+      [DORG, RACE.label])
+    try {
+      const out = await adoptChange(writeDeps(pool), DORG, s.change.id)
+      expect(out).toMatchObject({ ok: false, http: 409, error: 'TITLE_EXISTS_IN_DEPT' })
+      expect((await getChange(pool, DORG, s.change.id))?.status).toBe('preview_ready')
+    } finally {
+      await pool.query('delete from data.metrics where org = $1 and id = $2', [DORG, 'p5mc:retail:race_probe'])
+    }
   })
 })

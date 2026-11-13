@@ -31,6 +31,27 @@ const M_U_SIB = 'org-mcp-mg-u-sib'     // 直属 sib（child 的兄弟部门）
 const L1_ID = 'mw_l1_sales_daily'
 /** P1 Task 7 修复用例的覆盖单夹具 L1：三段蛇形（entry.name 必须过编译器名字白名单），本文件专属前缀。 */
 const OVR_ID = 'mw:mcp:sales'
+/**
+ * declaration 档的**关系白名单夹具**（P5 CI 修复）：B11 白名单来自平台桶 L1 行的 selectSql
+ * 关系（`compileNewDeclaration` 的 `allowedRelations`）。空库里没有真实物化的
+ * `fct_retail_sale` ⇒ declaration 的 expression 会被判「未纳管关系」。本地曾因其它测试文件
+ * 残留的 L1 行假绿——这里自建一条同关系的 L1，让白名单自足，不依赖执行顺序/残留数据。
+ */
+const DECL_REL_L1_ID = 'p5mc:l1:mcp_sales_fixture'
+const DECL_REL_L1 = {
+  id: DECL_REL_L1_ID,
+  title: '声明关系白名单·mcp',
+  description: 'declaration 档 B11 关系白名单夹具',
+  requiredScope: null,
+  subjectColumn: 'org',
+  selectSql: 'select sum(fct_retail_sale.sale_amount) as value, system_book, bizday from fct_retail_sale',
+  groupBy: 'system_book, bizday',
+  params: {},
+  sourceSystem: 'lemeng',
+  slaDays: 1,
+  freshnessRelations: [],
+  masks: null,
+}
 /** 本租户自建的 L2（happy path 用）。 */
 const L2_ID = 'mw_l2_mine'
 
@@ -96,9 +117,9 @@ describePg('写面（需要 DATABASE_URL）', () => {
   afterAll(async () => {
     await pool.query('delete from data.metric_change where org = $1', [ORG]).catch(() => {})
     await pool.query('delete from data.metrics where org = $1', [ORG]).catch(() => {})
-    // 平台桶按精确 id 回收（OVR_ID = P1 Task 7 修复用例的覆盖单夹具）
+    // 平台桶按精确 id 回收（OVR_ID = P1 Task 7 修复用例的覆盖单夹具；DECL_REL_L1_ID = declaration 白名单夹具）
     await pool.query('delete from data.metrics where org = $1 and id = any($2::text[])',
-      ['platform', [L1_ID, OVR_ID]]).catch(() => {})
+      ['platform', [L1_ID, OVR_ID, DECL_REL_L1_ID]]).catch(() => {})
     // P2 终审修复用例的 org 树夹具（TENANT_M 专用，不碰别人的租户）
     await pool.query('delete from platform.org_membership where tenant_id = $1', [TENANT_M]).catch(() => {})
     await pool.query('delete from platform.org_node where tenant_id = $1', [TENANT_M]).catch(() => {})
@@ -653,6 +674,42 @@ describePg('写面（需要 DATABASE_URL）', () => {
 
       // 生效路径未被触碰：工具不接采纳 ⇒ 租户桶没有覆盖行（连草稿都没有——那是人采纳之后的事）
       const live = await pool.query('select 1 from data.metrics where org = $1 and id = $2', [ORG, OVR_ID])
+      expect(live.rowCount).toBe(0)
+    } finally {
+      if (prev === undefined) delete process.env.DATA_MCP_ALLOW_MUTATING
+      else process.env.DATA_MCP_ALLOW_MUTATING = prev
+    }
+  })
+
+  it('★ declaration 档经 MCP 提单（P5 Task 1）：kind 枚举接受 declaration，落单且不生效', async () => {
+    await seedL1()
+    // 编译器 B11 关系白名单（空库自足；见 DECL_REL_L1 注释）
+    await upsertL1Metric(pool, DECL_REL_L1)
+    const entry = {
+      name: 'p5mc:retail:mcp_decl',
+      label: 'P5 MCP·声明销售额',
+      definition: 'P5 Task 1 MCP declaration 夹具',
+      owner: 'data-platform', tier: 'experimental', source: 'lemeng',
+      // 关系必须同时过两把尺：语义 YAML 的 L1 关系白名单（piece 校验）+ 平台目录（编译器）。
+      expression: 'sum(fct_retail_sale.sale_amount)', grain: ['system_book', 'bizday'], freshness_sla_days: 1, reads: [],
+    }
+    const prev = process.env.DATA_MCP_ALLOW_MUTATING
+    process.env.DATA_MCP_ALLOW_MUTATING = 'true'
+    try {
+      const submitted = await (await rpc(app(), {
+        jsonrpc: '2.0', id: 23, method: 'tools/call',
+        params: { name: 'submit_metric_change', arguments: { metricId: entry.name, kind: 'declaration', payload: entry } },
+      })).json()
+      const out = toolText(submitted as never)
+      expect(out.status).toBe('ok')
+      expect(out.state).toBe('preview_ready')
+      expect(typeof out.changeId).toBe('number')
+
+      // 落库事实独立回读（不采信工具自述）
+      const row = await pool.query('select kind, status, metric_id from data.metric_change where id = $1', [out.changeId])
+      expect(row.rows[0]).toMatchObject({ kind: 'declaration', status: 'preview_ready', metric_id: entry.name })
+      // 工具不接采纳 ⇒ 不生效
+      const live = await pool.query('select 1 from data.metrics where org = $1 and id = $2', [ORG, entry.name])
       expect(live.rowCount).toBe(0)
     } finally {
       if (prev === undefined) delete process.env.DATA_MCP_ALLOW_MUTATING

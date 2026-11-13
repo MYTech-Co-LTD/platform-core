@@ -168,7 +168,19 @@ export interface MetricRow extends MetricDef {
    * 「读侧恒产出」纪律。写侧暂无 API 面（P2 只接读；共享要走授权变更，归后续波次）。
    */
   visibleDepts?: string[] | null
+  /**
+   * 泄露策略（047 迁移 `reveal`，P5 Task 3 读侧接线）：`panel`（默认）= 不可见时面板级降级；
+   * `report` = 报表里存在任一不可见指标就**整表 404**（防「总数 − 其他」反推）。
+   * 恒有值（`toMetricRow` 归一：列缺省/坏值 ⇒ `panel`）——列是 `not null default 'panel'`。
+   * ⚠️ **写入面待 P6**（变更单 payload 或 sync 声明），当前两条写路径都没有该字段 ⇒ 生产
+   * 恒 `panel`（测试直改库）。这是产品缺口，已在台账；本行只负责读侧接线。
+   * 类型保持可选以便历史夹具不补字段。
+   */
+  reveal?: MetricReveal
 }
+
+/** 指标泄露策略（`data.metrics.reveal`，P5 Task 3）。 */
+export type MetricReveal = 'panel' | 'report'
 
 /**
  * L2 归属四字段的**可选写面形状**（P1 Task 3，spec §5.1）：create/update 变更单 payload 顶层的
@@ -290,6 +302,9 @@ function toMetricRow(row: Record<string, unknown>): MetricRow {
     // 显式共享（047，P2 Task 4 读侧接线）：数组直读，坏形状/缺席 ⇒ null（= 未共享，不编空数组
     // ——「声明共享为空」与「没共享」在本判定里同待遇，见谓词的 `(visibleDepts ?? [])` 收口）
     visibleDepts: Array.isArray(row.visible_depts) ? row.visible_depts.map(String) : null,
+    // 泄露策略（047，P5 Task 3）：列 not null default 'panel'；坏值/缺列归 'panel'
+    // （宁按面板级降级，也不让 undefined 冒充「整表拒」）。
+    reveal: row.reveal === 'report' ? 'report' : 'panel',
   }
 }
 
@@ -332,7 +347,7 @@ function drillBindingOf(row: Record<string, unknown>): DrillBinding | undefined 
 
 /** 投影列清单（三处查询共用一处写法——少写/写错一列是「字段静默变 undefined」的经典来源）。 */
 const ROW_COLUMNS =
-  'id, title, description, required_scope, subject_column, select_sql, group_by, params, source, source_system, updated_by, version, totalable, scope_note, sla_days, freshness_relations, mask_spec, drill_expr, drill_dims, drill_detail, certified, created_by, biz_description, unit, caliber_note, entity, synonyms, basis, archived_at, override_of, owner_dept, variant_note, visible_depts'
+  'id, title, description, required_scope, subject_column, select_sql, group_by, params, source, source_system, updated_by, version, totalable, scope_note, sla_days, freshness_relations, mask_spec, drill_expr, drill_dims, drill_detail, certified, created_by, biz_description, unit, caliber_note, entity, synonyms, basis, archived_at, override_of, owner_dept, variant_note, visible_depts, reveal'
 
 /**
  * 本 org 的 L2 行（**不含** L1 平台行）。`order by id`：顺序确定。

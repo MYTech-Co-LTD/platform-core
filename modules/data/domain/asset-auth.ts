@@ -12,6 +12,9 @@
 //   · `required_scope`   —— **内容门**：在本域 NULL 还兼「已发布」语义（report-store 头注）
 import type { Pool } from 'pg'
 import { deptGatePasses } from './dept-gate'
+import { metricVisibleWithDept, type DeptContext } from './metric-visibility'
+import type { ReportSpec, TextPanel } from './report-spec'
+import { metricIdsOf } from './report-scope'
 
 export type AclSubjectType = 'user' | 'dept' | 'scope'
 export type AclRelation = 'owner' | 'viewer'
@@ -94,6 +97,146 @@ export function canViewVersionedContent(
   return canViewAsset(
     { ...row, requiredScope: null, requiredDepts: null }, requester, acl, userDepts,
   )
+}
+
+// ── 渲染闸（P5 Task 3，spec 2026-11-12 §9.2/§9.3）────────────────────────────
+// 过了 `canViewVersionedContent` 只说明「这份报表该给这个人」；面板里的**指标**还有自己的
+// 可见范围（部门归属 / 显式共享，P2 的 `metricVisibleWithDept`）。两者是两把尺子：
+// 报表发布门（P5 Task 2）拦「受众比指标宽」的发布；本闸负责**发布之后**的漂移与历史行——
+// 以及「这个人过了报表门、但过不了某个口径」的观看期裁剪。
+//
+// 语义只有三条：
+//   ① 不可见指标所在面板 ⇒ 在**回包**里替换成占位符 `{ index, denied: true }`（不带任何数据
+//      字段：metricId/chart/title/args 全剥），其余面板原样；
+//   ② 被拒指标里任一条 `reveal='report'` ⇒ 整表拒（调用方回 404），防「总数 − 其他」反推；
+//   ③ 词表里**查不到**的指标（归档 / 陈旧行 / 未同步）同样按被拒处理（fail-closed，
+//      reason `metric_unknown`）——否则「指标被删了」会变成「面板原样展示 + 不触发 reveal」。
+//
+// ⚠️ `reveal` 目前**只有读侧**：变更单 payload 与 L1 sync 声明都还没有这个字段，生产恒
+//    `'panel'`（测试直改库）。写入面待 **P6**（变更单 payload 或 sync 声明）落——这是产品
+//    缺口，不是本函数的判定缺口。
+
+/** 渲染闸所需的最小指标形状（`MetricRow` 结构性满足——不拖整个存储行进来）。 */
+export interface RenderGateMetric {
+  id: string
+  ownerDept?: string | null
+  visibleDepts?: string[] | null
+  reveal?: 'panel' | 'report'
+}
+
+/** 被降级的面板占位符：**只有** index/denied，没有任何数据字段（不泄露 metricId/图型/标题）。 */
+export interface DeniedPanelRef {
+  index: number
+  denied: true
+}
+
+/** 观看面规格：面板位可能是降级占位符。 */
+export type ViewableSpec = Omit<ReportSpec, 'panels'> & {
+  panels: Array<ReportSpec['panels'][number] | DeniedPanelRef>
+}
+
+/** 面板被降级的原因（审计/巡检可解释；`metric_unknown` 是 fail-closed 的存在性失败）。 */
+export type RenderGateDenialReason = 'metric_invisible' | 'metric_unknown'
+
+export interface RenderGateDenial {
+  index: number
+  reason: RenderGateDenialReason
+}
+
+export interface RenderGateResult {
+  /** true ⇒ 整表拒（任一被拒指标 `reveal='report'`）；调用方回与 not-found 同形的 404。 */
+  blocked: boolean
+  /** 被降级面板的下标（升序）。 */
+  deniedPanels: number[]
+  /** 与 `deniedPanels` 一一对应的原因。 */
+  denials: RenderGateDenial[]
+  /** 已按观看者降级的规格（`blocked` 时调用方不应使用）。 */
+  spec: ViewableSpec
+}
+
+/** 词表索引（id → 行）。列表页同一请求要跑多份报表 ⇒ 建**一次**复用，别逐行重建 Map。 */
+export function indexRenderCatalog(
+  catalog: ReadonlyArray<RenderGateMetric>,
+): ReadonlyMap<string, RenderGateMetric> {
+  return new Map(catalog.map((m) => [m.id, m]))
+}
+
+/**
+ * 按观看者的部门上下文逐面板降级规格。**纯函数**（判定只走 `metricVisibleWithDept`，
+ * 不另写第二份可见性实现）；词表与部门上下文由调用方一次加载后传入。
+ *
+ * `catalog` 可以是行数组（单报表路径）或**预先建好的索引 Map**（列表页请求级构建一次）——
+ * 两种输入走同一份判定，不给调用方留第二套实现。
+ *
+ * 面板含多个指标时（kpi 分母）**任一不可见即整格降级**——分母不可见时展示比率同样泄露口径。
+ *
+ * 词表里找不到的指标 **fail-closed 降级**（reason `metric_unknown`）：发布快照可能引用已被
+ * 删除 / 归档的口径，保留面板等于「看不到判定、却照常把口径摆出来」；且它不会触发 reveal
+ * 判定（没有行可读），必须按最保守档处理。
+ */
+export function applyPanelRenderGate(
+  spec: ReportSpec,
+  catalog: ReadonlyArray<RenderGateMetric> | ReadonlyMap<string, RenderGateMetric>,
+  deptCtx: DeptContext | undefined,
+): RenderGateResult {
+  const byId = Array.isArray(catalog)
+    ? indexRenderCatalog(catalog)
+    : catalog as ReadonlyMap<string, RenderGateMetric>
+  const deniedPanels: number[] = []
+  const denials: RenderGateDenial[] = []
+  let blocked = false
+  const panels = spec.panels.map((panel, index): ReportSpec['panels'][number] | DeniedPanelRef => {
+    let reason: RenderGateDenialReason | null = null
+    for (const metricId of metricIdsOf(panel)) {
+      const metric = byId.get(metricId)
+      if (metric === undefined) {
+        // 存在性失败优先于可见性：没有行就无从判 reveal，按最保守档整格降级。
+        reason = 'metric_unknown'
+        continue
+      }
+      if (metricVisibleWithDept(metric, deptCtx)) continue
+      if (reason !== 'metric_unknown') reason = 'metric_invisible'
+      // 泄露策略只在**不可见且指标真实存在**时生效：可见的人照常看到整表。
+      if (metric.reveal === 'report') blocked = true
+    }
+    if (reason === null) return panel
+    deniedPanels.push(index)
+    denials.push({ index, reason })
+    // 占位符只带位置：回包不能出现任何可反推口径的数据字段。
+    return { index, denied: true }
+  })
+  return {
+    blocked,
+    deniedPanels,
+    denials,
+    spec: { ...spec, panels },
+  }
+}
+
+/**
+ * 空文本面板的**常量**（P5 CI 修复2）：显式标注为 `TextPanel` 具体变体，而不是让
+ * `panels.map(...)` 在 `ReportSpec['panels']` 联合体上做推断——不同 TS/依赖解析环境下
+ * 联合体推断的收敛结果不一致（CI 报 TS2322，本地干净）。类型写死到具体变体即消除差异。
+ */
+const BLANK_TEXT_PANEL: TextPanel = { chart: 'text', content: '', span: 12, format: 'plain' }
+
+/**
+ * 把降级占位符换成**空文本面板**（无标题 / 无 metricId），供叙述 / 计算凭证的事实装配使用。
+ *
+ * 为什么不是直接喂 `ViewableSpec`：`buildFacts` 按 `chart !== 'text'` 识别数据面板，占位符
+ * 没有 chart 会被当成数据面板并炸在 `p.args` 上；而**保留原面板**又会让 `missing.push(p.title)`
+ * 把被拒口径的标题带进 LLM prompt（P5-T3 修复轮 Important）。空文本面板两头都满足：
+ * 所有消费方（buildFacts / 根因 pickCandidates / 日报 baseArgsOf）天然跳过 text，
+ * 被拒面板只剩 `deniedPanels` 里的下标。
+ *
+ * ⚠️ 仅用于服务端内部（叙述/凭证），**不**作为 HTTP 回包返回。
+ */
+export function factsSpecOf(spec: ViewableSpec): ReportSpec {
+  return {
+    ...spec,
+    panels: spec.panels.map((p): ReportSpec['panels'][number] =>
+      ('denied' in p ? BLANK_TEXT_PANEL : p)),
+  }
 }
 
 /**
