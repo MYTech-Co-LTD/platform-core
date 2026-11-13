@@ -1013,28 +1013,28 @@ export function registerReports(r: ModuleHono, ctx: RouteCtx): void {
       report,
       acl: await loadAssetAcl(ctx.pool, org, id),
     })
-    const gateWarnings = gate?.warnings ?? []
+    // 门的 warning 是 `string[]`，而 `publishVersion` 成功回包的 `warnings` 是发布 lint 的
+    // `LintIssue[]`——**不合并两种形状**（评审 Minor）。门自己的提示走独立字段 `scopeWarnings`。
+    const scopeWarnings = gate?.warnings ?? []
     if (gate !== null && gate.panels.length > 0) {
       return c.json({
         error: 'REPORT_METRIC_SCOPE_MISMATCH',
         panels: gate.panels,
-        ...(gateWarnings.length === 0 ? {} : { warnings: gateWarnings }),
+        ...(scopeWarnings.length === 0 ? {} : { scopeWarnings }),
       }, 409)
     }
     const out = await publishVersion(
       ctx.pool, org, id, body.data.expectedVersion,
       requester.userId, body.data.note, new Set(c.get(TENANT_SOURCES) ?? []),
     )
-    // 非阻断提示（Metabase 无法判定等）并进回包：成功与失败都带，调用方/巡检都看得见。
+    // 非阻断提示（Metabase 无法判定等）随成功/失败回包带出，调用方/巡检都看得见。
     if (!out.ok) {
       return c.json(
-        gateWarnings.length === 0 ? out : { ...out, warnings: gateWarnings },
+        scopeWarnings.length === 0 ? out : { ...out, scopeWarnings },
         statusOfVersionFailure(out.reason),
       )
     }
-    return c.json(gateWarnings.length === 0
-      ? out
-      : { ...out, warnings: [...(out.warnings ?? []), ...gateWarnings] })
+    return c.json(scopeWarnings.length === 0 ? out : { ...out, scopeWarnings })
   })
 
   r.post('/reports/:id/unpublish', async (c) => {

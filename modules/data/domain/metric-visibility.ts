@@ -82,7 +82,54 @@ export async function deptChainOf(
   pool: Pool, tenantId: number, deptId: string,
 ): Promise<Set<string>> {
   const chain = new Set<string>()
-  if (deptId === '') return chain
+  for (const row of await deptRowsOf(pool, tenantId, deptId)) {
+    chain.add(row.self_id)
+    // path "49.57.66" ⇒ 祖先链 49、57、66 都入链（含自身，dept-gate 同一惯例）
+    for (const seg of row.self_path.split('.')) if (seg !== '') chain.add(seg)
+    if (row.desc_id !== null) chain.add(row.desc_id)
+  }
+  return chain
+}
+
+/**
+ * 任意部门的**子树**（自身 ∪ 全部严格后代，**不含祖先**）——发布门的受众侧展开用
+ * （P5 Task 2 评审 Important）。
+ *
+ * 为什么受众侧要展开：报表 `required_depts=[P]` 在渲染期放行的是 P 的**整棵子树**
+ * （dept-gate D-O3 / 观看者闭包含祖先）；ACL 的 `dept=P` 受让方同理（`userDeptClosure` 含祖先）。
+ * 发布门若只拿具名部门 `{P}` 去比，`required_depts=[父部门]` 会把「兄弟支也能看」误判成干净。
+ *
+ * 为什么**不能**复用 `deptChainOf`：它含祖先。`visible_depts` 只认**直属**部门（见
+ * `metricVisibleWithDept`），把祖先当成受众成员会造出反向误杀（祖先既不在归属链、
+ * 也不该被要求出现在 visible_depts 里）。所以两个集合分开：链给指标侧，子树给受众侧。
+ *
+ * 同一套 path 惯例与 fail-closed 口径：`status = 1`；部门不存在/已软删 ⇒ 空集
+ * （调用方仍会把具名部门本身留在受众里，从而被点名，而不是静默放行）。
+ */
+export async function subtreeOf(
+  pool: Pool, tenantId: number, deptId: string,
+): Promise<Set<string>> {
+  const out = new Set<string>()
+  for (const row of await deptRowsOf(pool, tenantId, deptId)) {
+    out.add(row.self_id)
+    if (row.desc_id !== null) out.add(row.desc_id)
+  }
+  return out
+}
+
+interface DeptRow {
+  self_id: string
+  self_path: string
+  desc_id: string | null
+}
+
+/**
+ * `deptChainOf` / `subtreeOf` 的共用取数（一次查询）：自己一行 + 每个严格后代一行。
+ * 祖先信息在 `self_path` 里（物化 path 拆段即得），后代用 `path like self.path || '.%'`
+ * （严格子树："49.5%" 不会误吃 "49.57"）。两个消费方按需要决定要不要祖先。
+ */
+async function deptRowsOf(pool: Pool, tenantId: number, deptId: string): Promise<DeptRow[]> {
+  if (deptId === '') return []
   const r = await pool.query(
     `with self as (
         select n.ext_id, n.path
@@ -95,13 +142,7 @@ export async function deptChainOf(
          on x.tenant_id = $1 and x.status = 1 and x.path like s.path || '.%'`,
     [tenantId, deptId],
   )
-  for (const row of r.rows as Array<{ self_id: string; self_path: string; desc_id: string | null }>) {
-    chain.add(row.self_id)
-    // path "49.57.66" ⇒ 祖先链 49、57、66 都入链（含自身，dept-gate 同一惯例）
-    for (const seg of row.self_path.split('.')) if (seg !== '') chain.add(seg)
-    if (row.desc_id !== null) chain.add(row.desc_id)
-  }
-  return chain
+  return r.rows as DeptRow[]
 }
 
 /**

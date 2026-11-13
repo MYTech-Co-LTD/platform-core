@@ -47,10 +47,11 @@ const DATA_CHARTS = new Set<ReportSpec['panels'][number]['chart']>(['line', 'bar
  */
 export function metricIdsOf(panel: ReportSpec['panels'][number]): string[] {
   if (panel.chart === 'text' || panel.chart === 'ai_text') return []
-  if (panel.chart === 'kpi' && panel.denominatorMetricId !== undefined) {
-    return [panel.metricId, panel.denominatorMetricId]
-  }
-  return [panel.metricId]
+  const ids = panel.chart === 'kpi' && panel.denominatorMetricId !== undefined
+    ? [panel.metricId, panel.denominatorMetricId]
+    : [panel.metricId]
+  // 分母与主指标同 id 时只留一份：发布门会逐项回报违规，重复会让同一面板报两条。
+  return [...new Set(ids)]
 }
 
 /**

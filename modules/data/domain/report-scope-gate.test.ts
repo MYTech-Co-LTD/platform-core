@@ -10,7 +10,7 @@ import { afterAll, beforeAll, describe, expect, it } from 'vitest'
 import { Pool } from 'pg'
 import { applyMigrations, applyPlatformMigrations } from '../test-util'
 import type { AclRow } from './asset-auth'
-import { deptChainOf } from './metric-visibility'
+import { deptChainOf, subtreeOf } from './metric-visibility'
 import { upsertMetric } from './metric-store'
 import { parseReportSpec } from './report-spec'
 import type { ReportSpec } from './report-spec'
@@ -118,6 +118,14 @@ describePg('reportScopeViolations（发布门，真库夹具）', () => {
     expect(chain.has(DEAD)).toBe(false)
   })
 
+  it('subtreeOf：自身 ∪ 严格后代（不含祖先/兄弟/软删）', async () => {
+    const sub = await subtreeOf(pool, TENANT, FIN)
+    expect([...sub].sort()).toEqual([FIN, GRAND].sort())
+    expect(sub.has(ROOT)).toBe(false) // 祖先不进
+    expect(sub.has(SIB)).toBe(false)
+    expect(sub.has(DEAD)).toBe(false)
+  })
+
   it('★ 受众含兄弟部门 + 面板指标归属财务 ⇒ 违规并点名差集部门', async () => {
     const out = await gate({ report: { requiredDepts: [SIB], spec: specOf(tablePanel(FIN_METRIC)) } })
     expect(out).not.toBeNull()
@@ -132,6 +140,27 @@ describePg('reportScopeViolations（发布门，真库夹具）', () => {
     expect(await gate({ report: { requiredDepts: [GRAND], spec: specOf(tablePanel(FIN_METRIC)) } })).toBeNull()
   })
 
+  it('★ 受众挂祖先部门 ⇒ 展开子树后**兄弟支**被点名（不因父部门在链上就放行）', async () => {
+    // requiredDepts=[ROOT] 的实际受众 = ROOT 整棵子树 {ROOT, FIN, GRAND, SIB}；
+    // 指标归属 FIN ⇒ SIB 支的人渲染时面板不可见 ⇒ 必须拒。
+    const out = await gate({ report: { requiredDepts: [ROOT], spec: specOf(tablePanel(FIN_METRIC)) } })
+    expect(out?.panels).toEqual([{
+      index: 0, metricId: FIN_METRIC, missingDepts: [SIB], reason: 'audience_dept_outside_metric_scope',
+    }])
+    // 挂归属部门自身仍通过（子树 ⊆ 归属链）
+    expect(await gate({ report: { requiredDepts: [FIN], spec: specOf(tablePanel(FIN_METRIC)) } })).toBeNull()
+  })
+
+  it('★ ACL dept 主体同样展开子树：授给祖先部门 ⇒ 兄弟支被点名', async () => {
+    const out = await gate({
+      report: { requiredDepts: null, spec: specOf(tablePanel(FIN_METRIC)) },
+      acl: [viewerDept(ROOT)],
+    })
+    expect(out?.panels[0]).toMatchObject({
+      metricId: FIN_METRIC, missingDepts: [SIB], reason: 'audience_dept_outside_metric_scope',
+    })
+  })
+
   it('平台指标（owner_dept 空）⇒ 恒通过，与受众部门无关', async () => {
     expect(await gate({ report: { requiredDepts: [SIB], spec: specOf(tablePanel(PLATFORM_METRIC)) } })).toBeNull()
     expect(await gate({ report: { requiredDepts: null, spec: specOf(tablePanel(PLATFORM_METRIC)) } })).toBeNull()
@@ -144,12 +173,12 @@ describePg('reportScopeViolations（发布门，真库夹具）', () => {
     expect(out?.panels).toEqual([{ index: 0, metricId: FIN_METRIC, reason: 'audience_wider_than_dept' }])
   })
 
-  it('ACL user 主体不带来部门 ⇒ 同上（无部门约束）', async () => {
+  it('ACL user 主体不带来部门 ⇒ 仍 fail-closed，但 reason 区分 audience_user_only', async () => {
     const out = await gate({
       report: { requiredDepts: null, spec: specOf(tablePanel(FIN_METRIC)) },
       acl: [viewerUser('p5g-user')],
     })
-    expect(out?.panels[0]).toMatchObject({ metricId: FIN_METRIC, reason: 'audience_wider_than_dept' })
+    expect(out?.panels[0]).toMatchObject({ metricId: FIN_METRIC, reason: 'audience_user_only' })
   })
 
   it('ACL dept 主体进受众：兄弟部门 ⇒ 违规（union 口径）', async () => {
@@ -173,6 +202,14 @@ describePg('reportScopeViolations（发布门，真库夹具）', () => {
     expect(out?.panels).toEqual([{
       index: 0, metricId: DENOM_METRIC, missingDepts: [SIB], reason: 'audience_dept_outside_metric_scope',
     }])
+  })
+
+  it('kpi 主指标 = 分母（同 id）⇒ 去重，同一面板只报一条', async () => {
+    const out = await gate({
+      report: { requiredDepts: [SIB], spec: specOf(kpiPanel(FIN_METRIC, FIN_METRIC)) },
+    })
+    expect(out?.panels).toHaveLength(1)
+    expect(out?.panels[0]).toMatchObject({ index: 0, metricId: FIN_METRIC })
   })
 
   it('★ Metabase 行无面板（metricIds 空）⇒ 跳过（不阻断）+ warning', async () => {
