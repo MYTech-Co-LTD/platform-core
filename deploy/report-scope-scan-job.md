@@ -66,7 +66,7 @@ report-scope-scan: FAIL（orgs 1 / reports 12 / published 9 / metabase 2 / viola
 |---|---|
 | 0 | 干净（`[warn]` 行不判红：如「面板指标不在词表」是存在性提示；Metabase 无法判定只计数） |
 | 1 | **有受众漂移**（violations）**或**有判不了的项（errors，含单 org 读取失败 `scan_failed`）——都要人看 |
-| 2 | **环境/连接类**查不成账：缺 `DATABASE_URL`、连库失败、读全局租户或 org 清单失败。**单 org 的读取失败不是 2**（记 `scan_failed`、exit 1，其余 org 照扫） |
+| 2 | **环境/连接类**查不成账：缺 `DATABASE_URL`、连库失败、读全局租户或 org 清单失败。**单 org 的读取失败不是 2**（记 `scan_failed`、exit 1，其余 org 照扫）；用法错（`--org ''` / 纯空白）同样 exit 2，不扫任何 org |
 
 三条违规 reason：
 

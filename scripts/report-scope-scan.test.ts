@@ -9,6 +9,10 @@
 // 另加 formatReport 的干净/违规两态（job 判红只看退出码，退出码由这两态推出）。
 import { createRequire } from 'node:module'
 import { afterAll, beforeAll, describe, expect, it } from 'vitest'
+// 迁移引导与 modules/data 的测试同源（不另写一份 runMigrations）：
+// 本文件必须**自足**——单独 `pnpm run test:guard`（库里没跑过 data 迁移）也要能建表。
+// 只跑 data 迁移：scanOrg 只读 data.reports / data.report_versions，不碰平台原语。
+import { applyMigrations } from '../modules/data/test-util.ts'
 import {
   SCRIPT_NAME,
   classifyReport,
@@ -191,6 +195,8 @@ describePg('scanOrg（真库夹具）', () => {
   })
 
   beforeAll(async () => {
+    // 自足：先应用本仓 data 迁移（幂等、有空库建表能力）。不依赖「别的测试套件恰好先跑过」。
+    await applyMigrations(pool)
     // 幂等清场（专用 org，不碰别人）
     await pool.query('delete from data.report_versions where org = $1', [ORG_DB])
     await pool.query('delete from data.reports where org = $1', [ORG_DB])
