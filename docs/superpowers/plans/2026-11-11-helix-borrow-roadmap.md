@@ -84,7 +84,7 @@
 | 项 | 现状证据 | 波次 |
 |---|---|---|
 | **P1 终审缓办（转 P2+）** | ① L1 label 撞名预检进 check-semantics（今天零冲突；sync catch 已带 pg detail）② 旧直写面（PUT/POST /metrics、override 直写、customize_metric——P4 退役）撞 title 索引=裸 500 无映射 ③ override 行 owner_dept 恒 null：接进 insertTenantDeclaration 归 P2 可见性波 ④ report 工具 mutating:false 不对称（若总闸应管报表提案需裁决）⑤ notify eventId 去重吞重建事件（修法：eventId 拼变更单 id）⑥ preview_failed 回包不带 issues 明细 | Wave 5 P2（接手逐条销） |
-| **P5 报表 × 指标** | 发布无「受众 ⊆ 面板指标可见范围」校验；Metabase 只能整表级 | Wave 5 P5 |
+| **P5 报表 × 指标 + declaration 档** | 发布无「受众 ⊆ 面板指标可见范围」校验；Metabase 只能整表级；**P4 退役了 `/metrics/declarations` 且变更单无 declared 档 ⇒ 新建全额租户声明暂停，本波补档恢复** | **Wave 5 P5（计划：`2026-11-13-report-metric-gate-p5.md`，5 任务）** |
 | **P6 证据与治理** | 声明类无对账证据接入；下线候选已有面（/metrics/usage）未接评审 | Wave 5 P6 |
 | 列级血缘 | dbt core manifest 无列级边（dbt core 不产出列级 edge） | 2.4（**触发式**：等真的有「按列追影响」的需求再做） |
 
@@ -194,3 +194,4 @@
 | 2026-11-13 | **Wave 5 P3 完成入账**（tie 检测+caliber+第 5 条硬约束）；P3 终审缓办（search 描述补词待预算、id==q 边界）转 P4 | PR #2066 + 部署 v295 容器实测 |
 | 2026-11-13 | P4 计划出台（工具落单+开关+人面删入口+REST 410 退役+销缓办三笔） | 取证：工具直调点、四写入口、REST 11 写端点清单 | 支 PR 见下 |
 | 2026-11-13 | **Wave 5 P4 完成入账**（写面收口）；**如实撤下「唯一写通路」表述**：存活写面 = `POST /metrics/private` + 候选 adopt（私有测度即时生效，外部 bot 在用）、W8 覆盖 confirm/delete、`PUT /metrics/:id/certified`（状态非定义）。**能力退役**：`POST /metrics/declarations` 410 后无替代通路（变更单无 declared 档）⇒ 新建全额租户声明暂停，P5 补档恢复 | PR #2086 + 部署 v296 实测；缓办转 P5：NOT_METRIC_CREATOR 仍只在域层、限速不覆盖 submit 路径（既有 DoS-ish）、org-tree 判据增补、regressionRequester 策略 |
+| 2026-11-13 | P5 计划出台（declaration 档恢复 + 发布门 + 渲染闸/reveal + 巡检） | 取证：publish 入口在 denyUnlessCanEdit 之后；panel→metricId 投影已在 report-store；指标侧判定复用 P2 | 支 PR 见下 |
