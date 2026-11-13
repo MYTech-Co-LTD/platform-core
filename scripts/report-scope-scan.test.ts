@@ -7,13 +7,16 @@
 //   ② 判据输入**取快照还是取行**：platform 行的行上是草稿/下次发布的门，线上是 `report_versions`
 //      快照；取错就判错对象。
 // 另加 formatReport 的干净/违规两态（job 判红只看退出码，退出码由这两态推出）。
-import { describe, expect, it } from 'vitest'
+import { createRequire } from 'node:module'
+import { afterAll, beforeAll, describe, expect, it } from 'vitest'
 import {
   SCRIPT_NAME,
   classifyReport,
   formatReport,
   parseOrgArg,
+  scanOrg,
   scopeInputOf,
+  verdictOf,
 } from './report-scope-scan.mjs'
 
 /** 一行 `queryOrgReports` 的形状（默认：未发布平台行）。 */
@@ -143,11 +146,120 @@ describe('formatReport（干净 / 违规两态）', () => {
     expect(text).toContain(`${SCRIPT_NAME}: FAIL`)
   })
 
-  it('warnings 不判 FAIL（结构性提示不制造假红）', () => {
+  it('warnings 不判 FAIL，并标 [warn]（别让读日志的人以为已覆盖）', () => {
     const text = formatReport({
       orgs: [{ ...cleanOrg, warnings: ['report r-1「月报」 面板 0 的指标 m:1 不在词表中 ⇒ 可见范围无法判定，已跳过'] }],
     })
-    expect(text).toContain('⚠ org=org-a report r-1')
+    expect(text).toContain('[warn] org=org-a report r-1')
     expect(text).toContain(`${SCRIPT_NAME}: OK`)
   })
 })
+
+describe('verdictOf（告警判据唯一实现）', () => {
+  const org = {
+    org: 'o', tenantId: 1, reports: 1, published: 1, metabase: 0,
+    violations: [], warnings: [], errors: [],
+  }
+  it('干净与只有 warning ⇒ OK；violation 或 error ⇒ FAIL', () => {
+    expect(verdictOf({ orgs: [org] })).toBe('OK')
+    expect(verdictOf({ orgs: [{ ...org, warnings: ['x'] }] })).toBe('OK')
+    expect(verdictOf({ orgs: [{ ...org, violations: [{ index: 0, metricId: 'm' }] }] })).toBe('FAIL')
+    expect(verdictOf({ orgs: [{ ...org, errors: [{ kind: 'x' }] }] })).toBe('FAIL')
+  })
+})
+
+// ── 真库：scanOrg 的取数与列别名（DATABASE_URL 缺失时跳过）─────────────────────────
+const dbUrl = process.env.DATABASE_URL
+const describePg = dbUrl ? describe : describe.skip
+
+const TENANT_DB = 9898
+const ORG_DB = 'org-p5scan-scan'
+const SNAP_SPEC = { panels: [{ chart: 'table', title: '口径', metricId: 'm:1' }] }
+
+describePg('scanOrg（真库夹具）', () => {
+  // pg 只在 apps/server 的依赖里（与 scripts/*.mjs 同款解析）
+  const { Pool } = createRequire(new URL('../apps/server/package.json', import.meta.url))('pg')
+  const pool = new Pool({ connectionString: dbUrl })
+
+  const stubDeps = (over: Record<string, unknown> = {}) => ({
+    pool,
+    gate: async () => null,
+    loadCatalog: async () => [],
+    loadAcls: async () => new Map(),
+    parseSpec: (v: unknown) => ({ ok: true, spec: v }),
+    ...over,
+  })
+
+  beforeAll(async () => {
+    // 幂等清场（专用 org，不碰别人）
+    await pool.query('delete from data.report_versions where org = $1', [ORG_DB])
+    await pool.query('delete from data.reports where org = $1', [ORG_DB])
+
+    // r-alias：行与快照的门/标题/规格**刻意不同**，钉住「取快照」与 SQL 列别名
+    // （published_title / published_scope / published_depts / published_spec 任一写错都会红）。
+    await pool.query(
+      `insert into data.reports(org,id,title,metabase_id,required_scope,renderer,version,spec,
+                                published_version_id,required_depts,visibility)
+       values ($1,'r-alias','草稿标题',0,'row-scope','platform',2,$2::jsonb,'v-alias',$3::jsonb,'tenant')`,
+      [ORG_DB, JSON.stringify(SNAP_SPEC), JSON.stringify(['row-dept'])],
+    )
+    await pool.query(
+      `insert into data.report_versions(id,org,report_id,version,title,spec,required_scope,
+                                        required_depts,draft_version,published_by,note)
+       values ('v-alias',$1,'r-alias',2,'线上标题',$2::jsonb,'snap-scope',$3::jsonb,2,'fixture','')`,
+      [ORG_DB, JSON.stringify(SNAP_SPEC), JSON.stringify(['snap-dept'])],
+    )
+
+    // r-missing：发布指针非空但没有版本行（悬空指针）⇒ 必须报 published_snapshot_missing。
+    await pool.query(
+      `insert into data.reports(org,id,title,metabase_id,required_scope,renderer,version,spec,
+                                published_version_id,required_depts,visibility)
+       values ($1,'r-missing','快照丢失',0,'data:manage','platform',1,$2::jsonb,'v-missing',null,'tenant')`,
+      [ORG_DB, JSON.stringify(SNAP_SPEC)],
+    )
+  })
+
+  afterAll(async () => {
+    await pool.query('delete from data.report_versions where org = $1', [ORG_DB]).catch(() => {})
+    await pool.query('delete from data.reports where org = $1', [ORG_DB]).catch(() => {})
+    await pool.end()
+  })
+
+  it('判据输入取快照（SQL 列别名 published_*）；违规行用快照标题', async () => {
+    const calls: Array<{ report: Record<string, unknown> }> = []
+    const out = await scanOrg(stubDeps({
+      gate: async (d: { report: Record<string, unknown> }) => {
+        calls.push(d)
+        return {
+          panels: [{ index: 0, metricId: 'm:1', reason: 'audience_wider_than_dept' }],
+          warnings: [],
+        }
+      },
+    }), ORG_DB, TENANT_DB) as any
+
+    // 悬空指针那张被点名，且没有被当成「判过」
+    expect(out.errors.map((e: { kind: string }) => e.kind)).toContain('published_snapshot_missing')
+    expect(out.errors.find((e: { kind: string; detail: string }) => e.kind === 'published_snapshot_missing')!.detail)
+      .toContain('r-missing')
+    expect(out.published).toBe(1)
+
+    // 别名 / 快照取值的唯一真值源
+    const input = calls[0]!.report as {
+      requiredScope: unknown; requiredDepts: unknown; spec: unknown
+    }
+    expect(input.requiredScope).toBe('snap-scope') // 行上是 'row-scope'
+    expect(input.requiredDepts).toEqual(['snap-dept']) // 行上是 ['row-dept']
+    expect(input.spec).toEqual(SNAP_SPEC)
+    // 违规行标题来自快照（'线上标题'），不是行上草稿标题（'草稿标题'）
+    expect(out.violations[0]!.title).toBe('线上标题')
+  })
+
+  it('租户未登记 ⇒ tenant_not_registered（fail-closed，不静默跳过）', async () => {
+    const out = await scanOrg(stubDeps(), ORG_DB, null) as any
+    expect(out.errors.map((e: { kind: string }) => e.kind)).toContain('tenant_not_registered')
+    expect(out.errors.find((e: { kind: string }) => e.kind === 'tenant_not_registered')!.detail)
+      .toContain('部门链无法解析')
+    expect(out.published).toBe(0)
+  })
+})
+

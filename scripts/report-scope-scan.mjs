@@ -6,8 +6,12 @@
 // report-scope-scan.mjs — 报表**受众漂移**的每日巡检（P5 Task 4，spec 2026-11-12 §9.1）。
 //
 // 它补的是发布门**管不到的那一类漂移**：发布门只在「发布那一刻」判受众 ⊆ 面板指标可见范围；
-// 发布之后指标可以改归属 / 改 visible_depts / 被归档，报表一行没动也可能变得「受众比指标宽」。
-// 巡检每天把**已发布**报表重新判一遍，有漂移就点名（exit 1 ⇒ openship job 失败通知）。
+// 发布之后指标可以改归属 / 改 visible_depts，报表一行没动也可能变得「受众比指标宽」。
+// 巡检每天把**已发布**报表重新判一遍，有受众漂移就点名（exit 1 ⇒ openship job 失败通知）。
+//
+// ⚠️ **目录里查不到的指标（归档/删除）目前只是 warning，不判红**：那一条判据在
+// report-scope-gate.ts 的「存在性/漂移不在可见性门里判」分支里，输出 `[warn]` 行。
+// 要让「归档指标挂在已发布报表上」变成红，需要给门的返回值加分类（计划外，P6 决策）。
 //
 // ── 「已发布」的判据（本轮核对过，与 report-store 头顶注一致，但**两种渲染器不同源**）──────
 //   · metabase 行：没有定义版本通路，`required_scope IS NULL` **就是**「已发布」（页门放行）；
@@ -20,12 +24,13 @@
 //     线上门与草稿门不同步时漏判。
 //   平台行的**草稿**不在本巡检范围（发布门负责；草稿允许未知指标等中间态）。
 //
-// ── 退出码（供 openship job 判红）──────────────────────────────────────────────
-//   0 干净（warnings 不判红：如「面板指标不在词表」是存在性/漂移提示，非受众问题；
+// ── 退出码（供 openship job 判红；判据唯一实现在 verdictOf）─────────────────────
+//   0 干净（`[warn]` 行不判红：面板指标不在词表 = 存在性/漂移提示，非受众问题；
 //     Metabase 已发布行的「无法判定」是结构性的，只计数）
-//   1 有受众漂移（violations）**或**有判不了的项（errors：租户未登记 / 快照缺失 / 快照不可解析 /
-//     单租户扫描异常）——两者都要人看，别把「判不了」当干净
-//   2 查不成账（缺 DATABASE_URL / 读租户或报表清单失败）
+//   1 有受众漂移（violations）**或**有判不了的项（errors：租户未登记 / org 不存在 / 快照缺失 /
+//     快照不可解析 / 渲染器未知 / **单 org 读取异常 scan_failed**）——都要人看，别把「判不了」当干净
+//   2 环境/连接类查不成账（缺 DATABASE_URL、连库失败、读全局租户或 org 清单失败）；
+//     **单 org 的读取失败是 exit 1（scan_failed），不是 2**——其他 org 仍会被扫完
 //
 // 用法：
 //   pnpm exec tsx scripts/report-scope-scan.mjs                # 全部租户（platform.tenant ∪ data.reports 的 org）
@@ -83,6 +88,14 @@ function formatViolation(org, v) {
 }
 
 /**
+ * 通过/失败判定的**唯一实现**（job 告警只看它；formatReport 与 main 都调它，不各写一份）。
+ * violations 与 errors 都判 FAIL；warnings 不判（见文件头 exit 0 的口径）。
+ */
+export function verdictOf(scan) {
+  return scan.orgs.some((o) => o.violations.length > 0 || o.errors.length > 0) ? 'FAIL' : 'OK'
+}
+
+/**
  * 人读输出（纯函数，单测钉住干净/违规两态）。逐条细节在前，每 org 一行覆盖，末尾总账。
  *
  * @param {{
@@ -101,7 +114,8 @@ export function formatReport(scan) {
     for (const e of o.errors) lines.push(`  ✗ [${e.kind}] org=${o.org}${e.detail === undefined ? '' : `：${e.detail}`}`)
   }
   for (const o of scan.orgs) {
-    for (const w of o.warnings) lines.push(`  ⚠ org=${o.org} ${w}`)
+    // `[warn]` 前缀是刻意的：这些行**不判红**，读日志的人不应把它们当成「已覆盖的告警」。
+    for (const w of o.warnings) lines.push(`  [warn] org=${o.org} ${w}`)
   }
   for (const o of scan.orgs) {
     const tenant = o.tenantId === null ? '未登记' : String(o.tenantId)
@@ -122,9 +136,8 @@ export function formatReport(scan) {
     }),
     { reports: 0, published: 0, metabase: 0, violations: 0, warnings: 0, errors: 0 },
   )
-  const head = totals.violations > 0 || totals.errors > 0 ? 'FAIL' : 'OK'
   lines.push(
-    `${SCRIPT_NAME}: ${head}（orgs ${scan.orgs.length} / reports ${totals.reports}`
+    `${SCRIPT_NAME}: ${verdictOf(scan)}（orgs ${scan.orgs.length} / reports ${totals.reports}`
     + ` / published ${totals.published} / metabase ${totals.metabase}`
     + ` / violations ${totals.violations} / warnings ${totals.warnings} / errors ${totals.errors}）`,
   )
@@ -139,6 +152,7 @@ async function queryOrgReports(pool, org) {
   const r = await pool.query(
     `select r.id, r.title, r.renderer, r.visibility, r.required_scope, r.required_depts,
             r.published_version_id,
+            v.title           as published_title,
             v.spec            as published_spec,
             v.required_scope  as published_scope,
             v.required_depts  as published_depts
@@ -152,8 +166,11 @@ async function queryOrgReports(pool, org) {
   return r.rows
 }
 
-/** 判一个 org。任何单 org 异常折成 error（不吞掉、不中断其他 org）。 */
-async function scanOrg({ pool, gate, loadCatalog, loadAcls, parseSpec }, org, tenantId) {
+/**
+ * 判一个 org。任何单 org 异常折成 error（不吞掉、不中断其他 org）。
+ * 导出是为了单测能直接钉住：未登记租户 / 快照缺失 / SQL 列别名（`published_*`）。
+ */
+export async function scanOrg({ pool, gate, loadCatalog, loadAcls, parseSpec }, org, tenantId) {
   const out = {
     org, tenantId, reports: 0, published: 0, metabase: 0,
     violations: [], warnings: [], errors: [],
@@ -237,8 +254,10 @@ async function scanOrg({ pool, gate, loadCatalog, loadAcls, parseSpec }, org, te
       continue
     }
     if (result === null) continue
-    for (const v of result.panels) out.violations.push({ ...v, reportId: row.id, title: row.title })
-    for (const w of result.warnings) out.warnings.push(`report ${row.id}「${row.title}」 ${w}`)
+    // 标题取**快照**（观看者看到的那份），行上是草稿标题——发布后改过标题时两者不同。
+    const title = row.published_title ?? row.title
+    for (const v of result.panels) out.violations.push({ ...v, reportId: row.id, title })
+    for (const w of result.warnings) out.warnings.push(`report ${row.id}「${title}」 ${w}`)
   }
   return out
 }
@@ -300,11 +319,18 @@ async function main(argv) {
     }
     const scan = { orgs: [] }
     for (const org of orgs) {
-      scan.orgs.push(await scanOrg(deps, org, tenantOf.has(org) ? tenantOf.get(org) : null))
+      const o = await scanOrg(deps, org, tenantOf.has(org) ? tenantOf.get(org) : null)
+      // 显式 `--org` 却查无此 org（既无租户行、也无任何报表）= 拼写/环境错，不能 exit 0 假绿。
+      if (orgFilter !== undefined && o.tenantId === null && o.reports === 0) {
+        o.errors.push({
+          kind: 'org_not_found',
+          detail: '--org 指定的 org 既不在 platform.tenant、也没有任何报表（拼写错误？）',
+        })
+      }
+      scan.orgs.push(o)
     }
     console.log(formatReport(scan))
-    const failed = scan.orgs.some((o) => o.violations.length > 0 || o.errors.length > 0)
-    return failed ? 1 : 0
+    return verdictOf(scan) === 'FAIL' ? 1 : 0
   } finally {
     await pool.end()
   }

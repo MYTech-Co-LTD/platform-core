@@ -10,8 +10,13 @@
 ## 它补的是哪条断链
 
 发布门只在**发布那一刻**判「报表受众 ⊆ 面板指标的可见范围」。发布之后，报表一行没动，
-指标可以改归属（`owner_dept`）/ 改 `visible_depts` / 被归档 ⇒ 线上出现「能看到报表的人里，
-有人打不开某个面板」。本 job 每天把**已发布**报表按同一判据重判一遍，有漂移就 exit 1。
+指标可以改归属（`owner_dept`）/ 改 `visible_depts` ⇒ 线上出现「能看到报表的人里，
+有人打不开某个面板」。本 job 每天把**已发布**报表按同一判据重判一遍，**有受众漂移就 exit 1**。
+
+⚠️ **覆盖边界（与实现一致，别读成更强）**：指标在词表里**查不到**（归档/删除）目前只输出
+`[warn]` 行、**不判红**——这条判据属于「存在性/漂移」，在 `report-scope-gate.ts` 里是 warning
+分支（门头注明确把它交给别的面）。要让「归档指标还挂在已发布报表上」变成告警，需要给门的
+返回值加分类（计划外，**P6 决策**），本轮不做。读日志的人不要把 `[warn]` 当作已覆盖的告警。
 
 ## 命令
 
@@ -26,6 +31,15 @@ docker exec openship-platform-core-shanhai-server sh -lc 'pnpm exec tsx scripts/
 - env：只需要 `DATABASE_URL`（平台库）。它已在 server 容器的项目 env 里；**job 不注入 secret**。
 - 两实例各有自己的库 ⇒ **每实例一个 job**（mytech 的 job 看不到山海的报表，反之亦然）。
 - 排障可加 `--org <casdoor org>` 只跑一个 org；缺省 = `platform.tenant` ∪ `data.reports` 里出现过的全部 org。
+  ⚠️ `--org` 拼错（既无租户行、也无任何报表）⇒ **exit 1 `org_not_found`**，不会 exit 0 假绿。
+
+### 前置条件（缺一不可）
+
+| # | 条件 | 说明 |
+|---|---|---|
+| 1 | 目标实例的镜像里**已有** `scripts/report-scope-scan.mjs` | mytech 合并后自动部署；**山海是手动更版**（`deploy/delivery-private.md`）。未更版就建 job ⇒ 第 2 步手动跑会 `Cannot find module …/report-scope-scan.mjs` |
+| 2 | 容器里有 `DATABASE_URL`（平台库） | 走 server 的项目 env，job 不另注入 |
+| 3 | 该实例的报表库可读（迁移已跑：`data.reports` / `data.report_versions`） | 脚本只读，不写表 |
 
 ## 「已发布」的判据（与发布门同源，勿改单边）
 
@@ -41,15 +55,18 @@ docker exec openship-platform-core-shanhai-server sh -lc 'pnpm exec tsx scripts/
 
 ```
   ✗ [audience_wider_than_dept] org=shanhaiyiguo-org report r-9「门店月报」 panel 2 metric=lemeng:net_sales
-report-scope-scan: org=shanhaiyiguo-org tenant=3 reports=12 published=9 metabase=2 violations=1 warnings=0 errors=0
-report-scope-scan: FAIL（orgs 1 / reports 12 / published 9 / metabase 2 / violations 1 / warnings 0 / errors 0）
+  [warn] org=shanhaiyiguo-org report r-10「旧月报」 面板 1 的指标 lemeng:legacy 不在词表中 ⇒ 可见范围无法判定，已跳过
+report-scope-scan: org=shanhaiyiguo-org tenant=3 reports=12 published=9 metabase=2 violations=1 warnings=1 errors=0
+report-scope-scan: FAIL（orgs 1 / reports 12 / published 9 / metabase 2 / violations 1 / warnings 1 / errors 0）
 ```
+
+违规行的标题是**发布快照的标题**（观看者看到的那份），不是行上草稿标题。
 
 | 退出码 | 含义 |
 |---|---|
-| 0 | 干净（`warnings` 不判红：如「面板指标不在词表」是存在性提示） |
-| 1 | **有受众漂移**（violations）**或**有判不了的项（errors）——两者都要人看 |
-| 2 | 查不成账（缺 `DATABASE_URL` / 读租户或报表清单失败） |
+| 0 | 干净（`[warn]` 行不判红：如「面板指标不在词表」是存在性提示；Metabase 无法判定只计数） |
+| 1 | **有受众漂移**（violations）**或**有判不了的项（errors，含单 org 读取失败 `scan_failed`）——都要人看 |
+| 2 | **环境/连接类**查不成账：缺 `DATABASE_URL`、连库失败、读全局租户或 org 清单失败。**单 org 的读取失败不是 2**（记 `scan_failed`、exit 1，其余 org 照扫） |
 
 三条违规 reason：
 
@@ -60,9 +77,9 @@ report-scope-scan: FAIL（orgs 1 / reports 12 / published 9 / metabase 2 / viola
 | `audience_dept_outside_metric_scope` | 行尾 `missingDepts=` 点名的部门不在指标链/`visible_depts` 里 | 收窄受众，或把差集部门加进指标 `visible_depts` |
 
 errors 的 kind：`tenant_not_registered`（org 没登记进 `platform.tenant`，部门链无法解析）、
-`published_snapshot_missing` / `published_spec_unparseable`（发布快照坏了）、
-`unknown_renderer`（库里出现第三种渲染器，库/代码不同步）、
-`catalog_unavailable` / `acl_unavailable` / `gate_failed` / `scan_failed`（读失败或异常）。
+`org_not_found`（显式 `--org` 查无此 org）、`published_snapshot_missing` /
+`published_spec_unparseable`（发布快照坏了）、`unknown_renderer`（库里出现第三种渲染器，
+库/代码不同步）、`catalog_unavailable` / `acl_unavailable` / `gate_failed` / `scan_failed`（读失败或异常）。
 
 ## openship job（**尚未创建——建 job 是运维动作，须由人点名后执行**）
 
@@ -150,6 +167,7 @@ MCP get_jobs_by_key(key=<key>) / get_jobs_by_key_runs(key=<key>)
    `docs/data-platform-handbook.md` §1.5.3 的监控职责分工升级，别在 job 里加白名单吞掉。
 4. **errors 类**：
    - `tenant_not_registered` ⇒ 把该 org 登记进 `platform.tenant`（或修正 `data.reports.org` 的脏值）；
+   - `org_not_found` ⇒ `--org` 拼写/环境错；改为缺省（全量）或核对 casdoor org 文本；
    - `published_snapshot_missing` / `published_spec_unparseable` ⇒ 线上发布链接已 404，查发布历史
      （`GET /reports/:id/versions`）后重新发布一个合法版本；
    - `*_unavailable` / `scan_failed` ⇒ 平台库读失败，按普通 DB 故障排（不要当违规处理）。
@@ -159,6 +177,7 @@ MCP get_jobs_by_key(key=<key>) / get_jobs_by_key_runs(key=<key>)
 - 按 spec §9.4：巡检**只报不自动改报表**——漂移「入待办」的方式就是 job 判红 + 通知，
   修法由人按上节 runbook 执行（改草稿 → 重新发布）。
 - **Metabase 报表**：无面板指标可判（spec §9.2 明确做不到面板级）⇒ 只计数，不判红。
+- **归档/删除的指标**：目录里查不到 ⇒ `[warn]` 不判红（门的存在性分支）；变红需 P6 给门加分类。
 - **平台行草稿**：不在巡检范围（发布门负责，草稿允许中间态）。
 - **未登记 org**：巡检面 = `platform.tenant` ∪ `data.reports` 的 org；未登记且有已发布平台报表 ⇒
   记 `tenant_not_registered` 报错（不静默漏判）。
