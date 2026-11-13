@@ -126,8 +126,9 @@ export default function SystemMapPage() {
         draggable: true,
         // 悬停只亮邻域：90 个节点的图不这样压，看到的就是一团线。
         focus: 'adjacency',
-        force: { repulsion: 260, edgeLength: [70, 160], gravity: 0.06, layoutAnimation: true },
-        label: { show: false, fontSize: 11, color: '#1B1C1E' },
+        force: { repulsion: 200, edgeLength: [60, 130], gravity: 0.12, layoutAnimation: true },
+        // 标签放节点右侧：默认的 inside 会把「fct_xxx」压在圆点上，糊成一团
+        label: { show: false, position: 'right', distance: 4, fontSize: 11, color: '#4B5563' },
         emphasis: { focus: 'adjacency', label: { show: true }, lineStyle: { width: 2 } },
         lineStyle: { color: '#D5D8DE', width: 1, curveness: 0.08, opacity: 0.9 },
         edgeSymbol: ['none', 'arrow'], edgeSymbolSize: 5,
