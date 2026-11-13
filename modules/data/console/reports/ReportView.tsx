@@ -52,6 +52,15 @@ import { RichText } from '../lib/rich-text'
 type Panel = ReportSpec['panels'][number]
 
 /**
+ * 服务端渲染闸（P5 Task 3）的降级占位符：观看者无权看某个面板的口径时，`published-spec`
+ * 把该面板原位替换成 `{ index, denied: true }`（**不带** metricId/chart/title/args）。
+ * 视为「本格无内容」：不取数、不参与筛选栏默认值、只渲染一行「无此口径权限」。
+ */
+interface DeniedPanel { index: number; denied: true }
+type ViewPanel = Panel | DeniedPanel
+const isDeniedPanel = (p: ViewPanel): p is DeniedPanel => 'denied' in p && p.denied === true
+
+/**
  * echarts 按需注册清单（最小集：折线/柱状 + 网格/提示/图例 + canvas 渲染器）。
  * ⚠️ 不 `import * as echarts`：全量包体积数倍于此。
  * **导出清单供机检断言**：漏注册某 chart 时组件测试**照绿**（`use` 在测试里是桩，不真装配）
@@ -533,7 +542,8 @@ export default function ReportView({
   const [override, setOverride] = useState<Record<string, unknown>>({})
   const [branches, setBranches] = useState<Array<{ branchNum: string; name: string }> | null>(null)
 
-  const panels = spec.panels
+  // 观看面可能带降级占位符（`{index,denied:true}`）——类型上并入，运行期用 `isDeniedPanel` 分流。
+  const panels: ViewPanel[] = spec.panels
 
   // 期间 → 具体日期段（custom 形态写侧已校验 from<=to；坏规格兜底成「无期间」而不是崩页）。
   const range = useMemo<DateRange | null>(() => {
@@ -550,6 +560,7 @@ export default function ReportView({
   const defaults = useMemo(() => {
     const merged: Record<string, unknown> = {}
     for (const p of panels) {
+      if (isDeniedPanel(p)) continue
       if (p.chart === 'text' || p.chart === 'ai_text') continue
       for (const [k, v] of Object.entries(p.args ?? {})) {
         if (!(k in merged)) merged[k] = v
@@ -599,7 +610,8 @@ export default function ReportView({
     setCompareResults({})
     compareLoaded.current.clear()
     panels.forEach((p, i) => {
-      // text / ai_text 无数据面；kpi 的取数在 KpiCard 内部（显式合计），都不进这条循环
+      // 降级占位符 / text / ai_text 无数据面；kpi 的取数在 KpiCard 内部（显式合计），都不进这条循环
+      if (isDeniedPanel(p)) return
       if (p.chart === 'text' || p.chart === 'kpi' || p.chart === 'ai_text') return
       void apiSend('/query', 'POST', panelQueryBodyOf(p, argsOf(p)))
         .then((b) => setResults((prev) => ({ ...prev, [i]: okResultOf(b) })))
@@ -655,6 +667,7 @@ export default function ReportView({
       panel: Extract<Panel, { chart: 'line' | 'bar' }>
     }> = []
     panels.forEach((p, i) => {
+      if (isDeniedPanel(p)) return
       if (p.chart !== 'line' && p.chart !== 'bar') return
       if (results[i]?.kind !== 'ok') return
       if (!compareVisible.current.has(i)) return
@@ -775,8 +788,14 @@ export default function ReportView({
       )}
       <Row gutter={[12, 12]}>
         {panels.map((p, i) => (
-          <Col key={i} span={p.span} data-panel-index={i}>
-            {p.chart === 'ai_text' ? (
+          <Col key={i} span={isDeniedPanel(p) ? 12 : p.span} data-panel-index={i}>
+            {isDeniedPanel(p) ? (
+              // 渲染闸（P5 Task 3）：该格的口径对这个观看者不可见。**不显示**任何口径信息
+              // （标题/图型/metricId 服务端已剥掉），只留一句中性说明。
+              <Card size="small">
+                <Alert type="warning" showIcon title="无此口径权限" />
+              </Card>
+            ) : p.chart === 'ai_text' ? (
               // ai_text 的正文在观看时由服务端流式生成（不进 /query、不读 spec 文案）。
               // 期间/门店/版本都是**当前观看态**：切期间即重生成，切门店即换切片。
               <Card size="small" title={<Space>{p.title}<Tag color="blue">AI</Tag></Space>}>

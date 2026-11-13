@@ -295,6 +295,8 @@ describePg('metric-store（需要 DATABASE_URL）', () => {
         ownerDept: null, variantNote: null,
         // 显式共享（047，P2 Task 4 读侧接线）：上面直改库设的数组原样到达（不是键缺席）
         visibleDepts: ['dept_a', 'dept_b'],
+        // 泄露策略（047，P5 Task 3 读侧接线）：L2 写面没有该字段 ⇒ 列默认 'panel'
+        reveal: 'panel',
         // 测度档与归档（W2，034）：L2 缺省档 = 树（l1_tree），未归档
         basis: 'l1_tree', archivedAt: null,
         // 租户覆盖（W8，041）：L2 普通行 = 非覆盖，映射恒带 null

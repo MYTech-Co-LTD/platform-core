@@ -12,6 +12,9 @@
 //   · `required_scope`   —— **内容门**：在本域 NULL 还兼「已发布」语义（report-store 头注）
 import type { Pool } from 'pg'
 import { deptGatePasses } from './dept-gate'
+import { metricVisibleWithDept, type DeptContext } from './metric-visibility'
+import type { ReportSpec } from './report-spec'
+import { metricIdsOf } from './report-scope'
 
 export type AclSubjectType = 'user' | 'dept' | 'scope'
 export type AclRelation = 'owner' | 'viewer'
@@ -94,6 +97,84 @@ export function canViewVersionedContent(
   return canViewAsset(
     { ...row, requiredScope: null, requiredDepts: null }, requester, acl, userDepts,
   )
+}
+
+// ── 渲染闸（P5 Task 3，spec 2026-11-12 §9.2/§9.3）────────────────────────────
+// 过了 `canViewVersionedContent` 只说明「这份报表该给这个人」；面板里的**指标**还有自己的
+// 可见范围（部门归属 / 显式共享，P2 的 `metricVisibleWithDept`）。两者是两把尺子：
+// 报表发布门（P5 Task 2）拦「受众比指标宽」的发布；本闸负责**发布之后**的漂移与历史行——
+// 以及「这个人过了报表门、但过不了某个口径」的观看期裁剪。
+//
+// 语义只有两条：
+//   ① 不可见指标所在面板 ⇒ 在**回包**里替换成占位符 `{ index, denied: true }`（不带任何数据
+//      字段：metricId/chart/title/args 全剥），其余面板原样；
+//   ② 被拒指标里任一条 `reveal='report'` ⇒ 整表拒（调用方回 404），防「总数 − 其他」反推。
+
+/** 渲染闸所需的最小指标形状（`MetricRow` 结构性满足——不拖整个存储行进来）。 */
+export interface RenderGateMetric {
+  id: string
+  ownerDept?: string | null
+  visibleDepts?: string[] | null
+  reveal?: 'panel' | 'report'
+}
+
+/** 被降级的面板占位符：**只有** index/denied，没有任何数据字段（不泄露 metricId/图型/标题）。 */
+export interface DeniedPanelRef {
+  index: number
+  denied: true
+}
+
+/** 观看面规格：面板位可能是降级占位符。 */
+export type ViewableSpec = Omit<ReportSpec, 'panels'> & {
+  panels: Array<ReportSpec['panels'][number] | DeniedPanelRef>
+}
+
+export interface RenderGateResult {
+  /** true ⇒ 整表拒（任一被拒指标 `reveal='report'`）；调用方回与 not-found 同形的 404。 */
+  blocked: boolean
+  /** 被降级面板的下标（升序）。 */
+  deniedPanels: number[]
+  /** 已按观看者降级的规格（`blocked` 时调用方不应使用）。 */
+  spec: ViewableSpec
+}
+
+/**
+ * 按观看者的部门上下文逐面板降级规格。**纯函数**（判定只走 `metricVisibleWithDept`，
+ * 不另写第二份可见性实现）；词表与部门上下文由调用方一次加载后传入。
+ *
+ * 面板含多个指标时（kpi 分母）**任一不可见即整格降级**——分母不可见时展示比率同样泄露口径。
+ *
+ * 词表里找不到的指标**不在这里判**（存在性/漂移由发布路径的 `UNKNOWN_PANEL_METRIC` 与
+ * P5-T4 巡检负责）；它的 `/query` 会 403，面板照常落 `denied` 结果态。
+ */
+export function applyPanelRenderGate(
+  spec: ReportSpec,
+  catalog: ReadonlyArray<RenderGateMetric>,
+  deptCtx: DeptContext | undefined,
+): RenderGateResult {
+  const byId = new Map(catalog.map((m) => [m.id, m]))
+  const deniedPanels: number[] = []
+  let blocked = false
+  const panels = spec.panels.map((panel, index): ReportSpec['panels'][number] | DeniedPanelRef => {
+    let denied = false
+    for (const metricId of metricIdsOf(panel)) {
+      const metric = byId.get(metricId)
+      if (metric === undefined) continue
+      if (metricVisibleWithDept(metric, deptCtx)) continue
+      denied = true
+      // 泄露策略只在**不可见**时生效：可见的人照常看到整表。
+      if (metric.reveal === 'report') blocked = true
+    }
+    if (!denied) return panel
+    deniedPanels.push(index)
+    // 占位符只带位置：回包不能出现任何可反推口径的数据字段。
+    return { index, denied: true }
+  })
+  return {
+    blocked,
+    deniedPanels,
+    spec: { ...spec, panels },
+  }
 }
 
 /**

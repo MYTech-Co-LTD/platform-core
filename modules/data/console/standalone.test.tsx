@@ -141,4 +141,17 @@ describe('StandaloneReport（/r/:id 独立页）', () => {
     expect(await screen.findByText('报表规格不合法，请联系平台侧')).toBeInTheDocument()
     expect(screen.queryByText('结论')).toBeNull()
   })
+
+  it('⑥ 渲染闸降级面板（{index,denied:true}）⇒ 该格「无此口径权限」，其余面板正常（P5 Task 3）', async () => {
+    // 服务端把无权面板替换成 { index, denied: true }（不带任何数据字段）
+    mockPublished({
+      title: '月报', version: 2, deniedPanels: [0],
+      spec: { panels: [{ index: 0, denied: true }, { chart: 'text', content: '结论', span: 24 }] },
+    })
+
+    renderAt('/r/r1')
+
+    expect(await screen.findByText('无此口径权限')).toBeInTheDocument()
+    expect(screen.getByText('结论')).toBeInTheDocument()
+  })
 })

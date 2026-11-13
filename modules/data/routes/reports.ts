@@ -72,7 +72,7 @@ import {
 } from '../domain/report-store'
 import { PeriodSchema, parseReportSpec } from '../domain/report-spec'
 import type { AiTextPanel, ReportSpec } from '../domain/report-spec'
-import { deriveRequiredScope, validatePanelMetrics } from '../domain/report-scope'
+import { deriveRequiredScope, metricIdsOf, validatePanelMetrics } from '../domain/report-scope'
 import { reportScopeViolations } from '../domain/report-scope-gate'
 import {
   getPublishedSpec,
@@ -90,6 +90,7 @@ import {
   deptGatePasses, deptNamesOf, userDeptClosure, validateDeptGate,
 } from '../domain/dept-gate'
 import {
+  applyPanelRenderGate,
   canEditAsset,
   canViewAsset,
   canViewVersionedContent,
@@ -102,7 +103,9 @@ import {
   writeAssetAudit,
   type AclRow,
   type AclSubjectType,
+  type RenderGateResult,
 } from '../domain/asset-auth'
+import { deptContextIfOwned } from '../domain/metric-visibility'
 import {
   TENANT_PARAM_ID, TENANT_SLUG, publishWithTenantBinding, readDashboardContent,
 } from '../domain/report-content'
@@ -243,6 +246,50 @@ async function denyUnlessCanEdit(
  */
 async function userStatusOf(ctx: RouteCtx, org: string, name: string): Promise<UserStatus> {
   return ctx.userStatus === undefined ? 'unknown' : ctx.userStatus(org, name)
+}
+
+/**
+ * 渲染闸（P5 Task 3）：**观看面**规格按观看者的指标可见范围逐面板降级。
+ *
+ * 插入位置在 `canViewVersionedContent` + 快照页门/部门门**之后**：那两道管「报表该不该给这个人」，
+ * 本闸管「报表里的每个口径该不该给这个人」。
+ *
+ * 三次取数的惰性纪律（与 P2 Task 4 同一条：现网 57 行 `owner_dept` 全空，不该因接线多打库）：
+ *   · 规格里一个指标都没有（纯文本 / ai_text）⇒ 直接回原样，**零查询**；
+ *   · 词表按需加载一次（`loadMergedCatalog`，L1 platform ∪ 本 org L2）；
+ *   · 部门上下文再按「本次报表实际引用的指标里有没有归属部门」决定取不取
+ *     （`deptContextIfOwned` 懒加载；无归属行 ⇒ 不查、不发 warn）。
+ *
+ * 审计沿用 `data.asset_audit`（`action='report.panel_denied'`）——不为一次观看写新表；
+ * 审计写失败**不阻断观看**（可观测性副作用不该把页面打 500），落 structured warn 兜底。
+ */
+async function reportRenderGate(
+  pool: Pool, requester: Requester, org: string, id: string, spec: ReportSpec,
+): Promise<RenderGateResult> {
+  const usedIds = new Set(spec.panels.flatMap((panel) => metricIdsOf(panel)))
+  if (usedIds.size === 0) return { blocked: false, deniedPanels: [], spec }
+
+  const catalog = await loadMergedCatalog(pool, org)
+  const usedRows = catalog.filter((m) => usedIds.has(m.id))
+  const deptCtx = await deptContextIfOwned(pool, requester.tenantId, requester, usedRows)
+  const gate = applyPanelRenderGate(spec, usedRows, deptCtx)
+
+  if (gate.deniedPanels.length > 0) {
+    try {
+      await writeAssetAudit(pool, {
+        org, assetId: id, actor: requester.userId, action: 'report.panel_denied',
+        // 只记位置与整表拒标记：审计要回答「谁被挡了几格 / 是否触发了 reveal」，
+        // 不需要把口径 id 再抄一份（metricId 在快照与词表里都能追）。
+        detail: { deniedPanels: gate.deniedPanels, revealReport: gate.blocked },
+      })
+    } catch (e) {
+      console.warn(JSON.stringify({
+        event: 'report_panel_denied_audit_failed', reportId: id,
+        error: e instanceof Error ? e.message : String(e),
+      }))
+    }
+  }
+  return gate
 }
 
 export function registerReports(r: ModuleHono, ctx: RouteCtx): void {
@@ -886,6 +933,11 @@ export function registerReports(r: ModuleHono, ctx: RouteCtx): void {
     })
   })
 
+  // ⚠️ 本端点**不做** P5 Task 3 的面板级降级（有意）：它是草稿/编辑面（`canViewAsset` 通过后
+  //    返回**可编辑**的规格），消费方是 console 编辑视图与 `?preview=1` 的显式预览；把人已能
+  //    编辑的规格裁成 `{index,denied:true}` 会让「改规格」当场变得不可执行，而草稿本来就受
+  //    owner ∪ ACL ∪ data:manage 约束。观看面的降级只发生在 `published-spec`（及叙述/凭证的
+  //    `reveal='report'` 整表拒）——那是真正给观看者出内容的通路。
   r.get('/reports/:id/spec', async (c) => {
     const requester = requesterOf(c)
     if (requester === null) return c.json({ error: 'UNAUTHENTICATED' }, 403)
@@ -1183,7 +1235,12 @@ export function registerReports(r: ModuleHono, ctx: RouteCtx): void {
       const depts = await userDeptClosure(ctx.pool, c.get('tenant').id, deptNamesOf(requester))
       if (!deptGatePasses(snapshot.requiredDepts, depts)) return c.json({ error: 'NOT_FOUND' }, 404)
     }
-    return c.json(snapshot)
+    // ⑤ 渲染闸（P5 Task 3，spec §9.2/§9.3）：报表门过了，面板里的**指标**还各有可见范围。
+    //    不可见面板在原位替换为 `{ index, denied: true }`（不带数据字段），并回 `deniedPanels`；
+    //    任一被拒指标 `reveal='report'` ⇒ 整表 404（与 not-found 同形，防「总数 − 其他」反推）。
+    const render = await reportRenderGate(ctx.pool, requester, org, id, snapshot.spec)
+    if (render.blocked) return c.json({ error: 'NOT_FOUND' }, 404)
+    return c.json({ ...snapshot, spec: render.spec, deniedPanels: render.deniedPanels })
   })
 
   r.get('/reports/:id/draft', async (c) => {
@@ -1313,6 +1370,13 @@ export function registerReports(r: ModuleHono, ctx: RouteCtx): void {
       const snapshotDepts = await userDeptClosure(ctx.pool, c.get('tenant').id, deptNamesOf(requester))
       if (!deptGatePasses(snapshot.requiredDepts, snapshotDepts)) return { error: 'NOT_FOUND' }
     }
+    // 渲染闸（P5 Task 3）：叙述/计算凭证与 spec 读面**共用同一个观看者门**——`reveal='report'`
+    // 的指标不可见时整表拒（否则可以从 AI 文本 / 计算凭证绕着拿到同一份数）。
+    // ⚠️ 这里**只**执行整表拒，不把 spec 换成年面板占位符：narrative 的事实包按 data 面板
+    //    装配（降级占位符没有 chart/metricId，会打断 facts）；而这些消费面取数都走
+    //    `runQuery` 授权链，隐藏口径本来就会 403（与 /query 同一条 fail-closed 通路）。
+    const render = await reportRenderGate(ctx.pool, requester, org, id, snapshot.spec)
+    if (render.blocked) return { error: 'NOT_FOUND' }
     return {
       requester, report, spec: snapshot.spec,
       specKey: `published:${snapshot.version}`, title: snapshot.title,
