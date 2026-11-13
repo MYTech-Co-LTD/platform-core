@@ -21,8 +21,14 @@
 // 版本是**定义版本**，不是数据快照：`?v=N` 用 vN 的定义查**当前**湖里的数据。
 import { randomUUID } from 'node:crypto'
 import type { Pool, PoolClient } from 'pg'
+import type { AclRow } from './asset-auth'
 import { loadMergedCatalog } from './metric-store'
 import { withObjectLock } from './object-lock'
+import {
+  reportScopeViolations,
+  type ReportScopeIssue,
+  type ReportScopeViolation,
+} from './report-scope-gate'
 import { deriveRequiredScope, validatePanelMetrics } from './report-scope'
 import { parseReportInput, parseReportSpec, type ReportSpec } from './report-spec'
 import { lintBlocksPublish, lintReportSpec, type LintIssue } from './report-lint'
@@ -93,11 +99,17 @@ export type PublishErrorReason =
   | 'AI_TEXT_REQUIRES_DATA_PANEL'
   | 'AI_TEXT_REQUIRES_PERIOD'
   | 'SPEC_LINT_FAILED'
+  /** 回滚门：目标快照的受众 ⊄ 面板指标可见范围（P6 Task 5；发布门在路由层，域层只有回滚）。 */
+  | 'SCOPE_MISMATCH'
 
 export type PublishError = {
   ok: false; reason: PublishErrorReason; detail?: string
   /** 结构化 lint 结果（机器可读；detail 里另给人话摘要）。 */
   issues?: LintIssue[]
+  /** 发布门违规项（仅 `SCOPE_MISMATCH`）；路由层用 `scopeMismatchBody` 拼统一 409 回包。 */
+  panels?: ReportScopeViolation[]
+  /** 门的「判不了」项（诊断，非阻断）；形状与 `issues`（lint）不同，别合并。 */
+  scopeIssues?: ReportScopeIssue[]
 }
 export type PublishResult = PublishOutcome | PublishError
 
@@ -376,6 +388,8 @@ export async function unpublishVersion(
 export async function rollbackVersion(
   pool: Pool, org: string, id: string, version: number, expectedVersion: number,
   userId: string, note: string, adoptedSources: ReadonlySet<string>,
+  /** 发布门所需上下文（P6 Task 5）：调用方加载 ACL（与发布门同一份 `loadAssetAcl` 输出）。 */
+  gate: { tenantId: number; acl: readonly AclRow[] },
 ): Promise<PublishResult> {
   return withObjectLock(rowLockKey(org, id), async () => {
     const cur = await getReport(pool, org, id)
@@ -400,6 +414,34 @@ export async function rollbackVersion(
     const validated = validatePanelMetrics(parsed.spec, catalog, adoptedSources)
     if (!validated.ok) {
       return { ok: false, reason: validated.reason, detail: 'metricId' in validated ? validated.metricId : undefined }
+    }
+
+    // ── 发布门重跑（P6 Task 5）：回滚 = 用旧内容再发布一次 ──────────────────────────
+    // 判定的是**这次上线后的状态**：内容/部门门取快照（回滚会把 `target.required_depts` 写回
+    // 行上），`visibility`/ACL 取**当前**（回滚不改它们）。旧快照发布后受众可能已漂移
+    // （ACL 加过人或部门门改过），原样上线就是「报表看着正常、点进去 403」的假成功。
+    // 位置在**任何写入之前**、同在对象锁内：违规 ⇒ 一条版本都不落；issues 不阻断（同发布门）。
+    const gateResult = await reportScopeViolations({
+      pool,
+      tenantId: gate.tenantId,
+      org,
+      report: {
+        renderer: 'platform',
+        spec: parsed.spec,
+        requiredScope: scope.requiredScope,
+        requiredDepts: target.requiredDepts ?? null,
+        visibility: cur.visibility,
+      },
+      acl: gate.acl,
+      catalog,
+    })
+    if (gateResult !== null && gateResult.panels.length > 0) {
+      return {
+        ok: false,
+        reason: 'SCOPE_MISMATCH',
+        panels: gateResult.panels,
+        ...(gateResult.issues.length === 0 ? {} : { scopeIssues: gateResult.issues }),
+      }
     }
 
     const rollbackNote = note.trim() === '' ? `rollback from v${version}` : note

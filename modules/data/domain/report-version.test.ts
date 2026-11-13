@@ -156,7 +156,8 @@ describePg('报表版本存储（需要 DATABASE_URL）', () => {
   })
 
   it('回滚 v1 ⇒ 新版本 v3（内容 = v1），历史三行全在且旧行不被改写', async () => {
-    const out = await rollbackVersion(pool, ORG, id, 1, 2, 'u-test', '', new Set())
+    // 回滚门（P6 Task 5）上下文：本夹具的指标无部门归属、行无部门门/ACL ⇒ 门恒通过。
+    const out = await rollbackVersion(pool, ORG, id, 1, 2, 'u-test', '', new Set(), { tenantId: 1, acl: [] })
     expect(out).toMatchObject({ ok: true, publishedVersion: 3 })
 
     const row = await getReport(pool, ORG, id)

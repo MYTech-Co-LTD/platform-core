@@ -73,7 +73,7 @@ import {
 import { PeriodSchema, parseReportInput, parseReportSpec } from '../domain/report-spec'
 import type { AiTextPanel, ReportSpec } from '../domain/report-spec'
 import { deriveRequiredScope, metricIdsOf, validatePanelMetrics } from '../domain/report-scope'
-import { reportScopeViolations } from '../domain/report-scope-gate'
+import { reportScopeViolations, scopeMismatchBody } from '../domain/report-scope-gate'
 import {
   getPublishedSpec,
   getVersion,
@@ -823,6 +823,19 @@ export function registerReports(r: ModuleHono, ctx: RouteCtx): void {
       subjectId: v.subjectId,
       relation: 'viewer' as const,
     }))
+    // ── 发布门重跑（P6 Task 5）：ACL 变更 = 受众变化，写入前按**变更后**的受众重判 ──────
+    // 扩宽会把兄弟部门/具名用户带进受众（最常见的不匹配来源）；收窄一般不新造违规，但存量行
+    // 可能与词表漂移（指标归属改过）——所以**一律重判**、不做「有没有变化」的短路，
+    // 宁可拒，让人显式处理。owner 主体不计入受众，故保留原行、只替换 viewer。
+    const nextAcl: AclRow[] = [...acl.filter((a) => a.relation !== 'viewer'), ...viewers]
+    const gate = await reportScopeViolations({
+      pool: ctx.pool,
+      tenantId: c.get('tenant').id,
+      org,
+      report: row,
+      acl: nextAcl,
+    })
+    if (gate !== null && gate.panels.length > 0) return c.json(scopeMismatchBody(gate), 409)
     await replaceViewers(ctx.pool, org, id, viewers, requester.userId)
     await writeAssetAudit(ctx.pool, {
       org, assetId: id, actor: requester.userId, action: 'acl.update',
@@ -883,6 +896,18 @@ export function registerReports(r: ModuleHono, ctx: RouteCtx): void {
       // 资产写权限（#1325）：owner 可改自己报表的部门门。
       const denied = await denyUnlessCanEdit(c, ctx.pool, requester, org, id)
       if (denied !== null) return denied
+      // ── 发布门重跑（P6 Task 5）：部门门变更 = 受众变化，写入前按**新门**重判 ──────────
+      // 判定输入与发布门同源：行的当前 spec/visibility + 变更后的 required_depts + 当前 ACL。
+      // 违规 ⇒ 409，门与版本都不动；issues（判不了）不阻断。
+      const acl = await loadAssetAcl(ctx.pool, org, id)
+      const gate = await reportScopeViolations({
+        pool: ctx.pool,
+        tenantId: c.get('tenant').id,
+        org,
+        report: { ...current, requiredDepts: parsed.data.requiredDepts },
+        acl,
+      })
+      if (gate !== null && gate.panels.length > 0) return c.json(scopeMismatchBody(gate), 409)
       // 页门原值回写（`updateGates` 要求两列同写）：锁内读到的值就是这一行此刻的值
       const row = await updateGates(
         ctx.pool, org, id,
@@ -1148,11 +1173,8 @@ export function registerReports(r: ModuleHono, ctx: RouteCtx): void {
     // publishVersion 复核前指标恰好出现」的目录竞态才可能带它。
     const scopeIssues = gate?.issues ?? []
     if (gate !== null && gate.panels.length > 0) {
-      return c.json({
-        error: 'REPORT_METRIC_SCOPE_MISMATCH',
-        panels: gate.panels,
-        ...(scopeIssues.length === 0 ? {} : { scopeIssues }),
-      }, 409)
+      // 统一回包构建器（发布 / 回滚 / ACL / 部门门共用）：码与形状不许在四条写路径上漂移。
+      return c.json(scopeMismatchBody(gate), 409)
     }
     const out = await publishVersion(
       ctx.pool, org, id, body.data.expectedVersion,
@@ -1209,10 +1231,20 @@ export function registerReports(r: ModuleHono, ctx: RouteCtx): void {
     if (report === null) return c.json({ error: 'NOT_FOUND' }, 404)
     const denied = await denyUnlessCanEdit(c, ctx.pool, requester, org, id)
     if (denied !== null) return denied
+    // 回滚门（P6 Task 5）在 `rollbackVersion` 的对象锁内、任何写入之前重跑；这里提供与发布门
+    // 同一份受众输入（当前 ACL）。`denyUnlessCanEdit` 内部取过 ACL 但只判不回传，故再取一次。
     const out = await rollbackVersion(
       ctx.pool, org, id, version, body.data.expectedVersion,
       requester.userId, body.data.note, new Set(c.get(TENANT_SOURCES) ?? []),
+      { tenantId: c.get('tenant').id, acl: await loadAssetAcl(ctx.pool, org, id) },
     )
+    // 门违规与发布同码同形（409 REPORT_METRIC_SCOPE_MISMATCH + panels[/scopeIssues]）。
+    if (!out.ok && out.reason === 'SCOPE_MISMATCH') {
+      return c.json(scopeMismatchBody({
+        panels: out.panels ?? [],
+        issues: out.scopeIssues ?? [],
+      }), 409)
+    }
     if (!out.ok) return c.json(out, statusOfVersionFailure(out.reason))
     return c.json(out)
   })

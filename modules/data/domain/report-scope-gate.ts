@@ -91,6 +91,30 @@ export interface ReportScopeGateResult {
   issues: ReportScopeIssue[]
 }
 
+/**
+ * 门拦截的**统一回包体**（发布 / 回滚 / ACL / 部门门四处共用，P6 Task 5）。
+ *
+ * 为什么必须单一实现：四条写路径都在**写入前**跑同一个 `reportScopeViolations`，前端/调用方
+ * 按 `error` 码与 `panels` 形状识别「受众比指标可见范围宽」。四处各拼一份字面量，迟早有一处
+ * 漂成别的码或漏掉 `scopeIssues`，而那正是调用方最需要看见的诊断面。
+ *
+ * `issues`（判不了：指标不在词表 / Metabase 无面板）**不是违规**、不参与 409 判定；这里只负责
+ * 在非空时随 409 一并带出（与发布通路同形）。status 由调用方定（恒 409）。
+ */
+export interface ReportScopeMismatchBody {
+  error: 'REPORT_METRIC_SCOPE_MISMATCH'
+  panels: ReportScopeViolation[]
+  scopeIssues?: ReportScopeIssue[]
+}
+
+export function scopeMismatchBody(gate: ReportScopeGateResult): ReportScopeMismatchBody {
+  return {
+    error: 'REPORT_METRIC_SCOPE_MISMATCH',
+    panels: gate.panels,
+    ...(gate.issues.length === 0 ? {} : { scopeIssues: gate.issues }),
+  }
+}
+
 /** 判定所需的最小报表形状（`ReportRow` 结构性满足——不绑存储类型，巡检脚本可复用）。 */
 export interface ReportScopeRow {
   renderer: 'metabase' | 'platform'
