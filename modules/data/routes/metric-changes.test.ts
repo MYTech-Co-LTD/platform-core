@@ -5,7 +5,7 @@
 import { afterAll, beforeAll, describe, expect, it } from 'vitest'
 import { Hono } from 'hono'
 import { Pool } from 'pg'
-import { REQUESTER_CHANNEL } from '@platform/sdk'
+import { REQUESTER_CHANNEL, TENANT_SOURCES, declaredScopeGate } from '@platform/sdk'
 import type { NotifyPort } from '@platform/sdk'
 import { applyMigrations, buildTestApp, makeIdentity } from '../test-util'
 import type { ModuleVars } from './context'
@@ -676,50 +676,67 @@ describePg('P1 Task 7：override 档', () => {
   })
 })
 
-// ── P6 Task 2（2026-11-14）：提交期 creator 预检经 REST 面生效 ─────────────────────
-// 域层判据见 domain/metric-change.ts 的 precheckOf；本块钉**路由接线**：路由必须把
-// requester.hasScope 传进 submitChange，否则管理员也会被误拒（= 线上回归）。
-describePg('P6 Task 2：提交期 creator 预检（REST 面）', () => {
-  const CID = 'x:p6_creator_route'
-  const seedForeignRow = async (): Promise<void> => {
-    await pool.query('delete from data.metric_change where org = $1 and metric_id = $2', [ORG, CID])
-    await pool.query('delete from data.metrics where org = $1 and id = $2', [ORG, CID])
+// ── P6 Task 2 修复轮（2026-11-14）：采纳即授权 —— 决策端点两层 ─────────────────────
+// ① 宿主门：manifest `POST /metric-changes/:id/adopt ⇒ data:manage`（declaredScopeGate 施加）；
+// ② 域层门：creator ∪ data:manage（metric-write.ts，采纳期按**采纳人**判）。
+// 两层缺一不可：只靠域层 = 非 manage 也能进域层；只靠宿主 = agent 提单后无 manage 管理员可采纳
+// 但域层仍 403（P4 以来的错位，本修复轮钉住）。
+describePg('P6 Task 2 修复轮：采纳授权（宿主门 + 域层 creator 门）', () => {
+  const AID = 'x:p6_adopt_authz'
+  /** 与 manifest 声明逐字同形的门卫壳（identity/tenant/sources 注入同 buildTestApp）。 */
+  const gatedApp = (identity: ReturnType<typeof makeIdentity>) => {
+    const shell = new Hono<ModuleVars>()
+    shell.use('*', async (c, next) => {
+      c.set('identity', identity)
+      c.set('tenant', { id: 1, casdoor_org: ORG })
+      c.set(TENANT_SOURCES, ['lemeng'])
+      await next()
+    })
+    shell.use('/metric-changes/:id/adopt', declaredScopeGate([
+      { method: 'POST', path: '/metric-changes/:id/adopt', scope: 'data:manage' },
+    ]))
+    shell.route('/', mod.createRouter({ pool } as never))
+    return shell
+  }
+  const seedOwnedL2 = async (): Promise<void> => {
+    await pool.query('delete from data.metric_change where org = $1 and metric_id = $2', [ORG, AID])
+    await pool.query('delete from data.metrics where org = $1 and id = $2', [ORG, AID])
     await pool.query(
       `insert into data.metrics
          (org, id, title, description, required_scope, subject_column, select_sql, group_by, params,
           source, updated_by, version, totalable, sla_days, freshness_relations, basis, certified, created_by)
-       values ($1, $2, 'P6 创建者预检·路由夹具', '', null, 'org',
+       values ($1, $2, '采纳授权·路由夹具', '', null, 'org',
                'select sum(mart_sales_daily.revenue) as value, bizday from mart_sales_daily',
                'bizday', '{}'::jsonb, 'l2', 'u-owner', 1, true, 1, '[]'::jsonb, 'l1_tree', 'draft', 'u-owner')`,
-      [ORG, CID])
+      [ORG, AID])
   }
-  const submitMeta = (identity: ReturnType<typeof makeIdentity>) => {
-    const app = buildTestApp(mod, identity, { pool, execute: async () => ({ rows: [] }) } as never,
-      { id: 1, casdoor_org: ORG })
-    return app.request('/metric-changes', {
-      method: 'POST', headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ metricId: CID, kind: 'meta', payload: { unit: '元' } }),
-    })
-  }
-  const ticketsOf = async (): Promise<number> => {
-    const r = await pool.query(
-      'select count(*)::int as n from data.metric_change where org = $1 and metric_id = $2', [ORG, CID])
-    return r.rows[0].n as number
+  /** agent（PAT、无 manage）提单 update → 直接推到 preview_ready（决策端点只关心快照在位）。 */
+  const submitUpdateAsAgent = async (): Promise<number> => {
+    const s = await submitChange(pool, ORG, { userId: 'u-agent', channel: 'pat' }, AID, 'update',
+      { baseMetric: L1_ID, op: { kind: 'refine' }, alias: '采纳授权·路由' })
+    if (!s.ok) throw new Error(`agent 提单被拒: ${s.error}`)
+    await pool.query(
+      `update data.metric_change set status='preview_ready', preview='{"rows":1}'::jsonb where id=$1`,
+      [s.change.id])
+    return s.change.id
   }
 
-  it('★ 非创建者且无 data:manage ⇒ 403 NOT_METRIC_CREATOR 且不落单', async () => {
-    await seedForeignRow()
-    const res = await submitMeta(makeIdentity({ orgId: ORG, scopes: ['data:query'], userId: 'u-intruder' }))
-    expect(res.status).toBe(403)
-    expect(await res.json()).toEqual({ error: 'NOT_METRIC_CREATOR' })
-    expect(await ticketsOf()).toBe(0)
-  })
-
-  it('★ 管理员（持 data:manage）⇒ 放行并落单（路由 hasScope 接线不回退）', async () => {
-    await seedForeignRow()
-    const res = await submitMeta(makeIdentity({ orgId: ORG, scopes: ['data:query', 'data:manage'], userId: 'u-admin' }))
-    expect(res.status).toBe(200)
-    expect(await ticketsOf()).toBe(1)
+  it('★ 非 manage 第三人采纳 ⇒ 宿主门 403 need data:manage；admin 采纳同一单 ⇒ 200（域层 manage 豁免）', async () => {
+    await seedOwnedL2()
+    const id = await submitUpdateAsAgent()
+    const third = await gatedApp(makeIdentity({ orgId: ORG, scopes: ['data:query'], userId: 'u-third' }))
+      .request(`/metric-changes/${id}/adopt`, { method: 'POST' })
+    expect(third.status).toBe(403)
+    expect(await third.json()).toEqual({ error: 'FORBIDDEN', need: 'data:manage' })
+    // 门卫拒在路由之前：单据未被消耗
+    const still = await pool.query('select status from data.metric_change where id = $1', [id])
+    expect(still.rows[0]?.status).toBe('preview_ready')
+    // admin（持 manage）过宿主门 → 域层 creator ∪ data:manage 放行 ⇒ 200，行按提案改写
+    const admin = await gatedApp(makeIdentity({ orgId: ORG, scopes: ['data:query', 'data:manage'], userId: 'u-admin' }))
+      .request(`/metric-changes/${id}/adopt`, { method: 'POST' })
+    expect(admin.status).toBe(200)
+    const row = await pool.query('select title from data.metrics where org = $1 and id = $2', [ORG, AID])
+    expect(row.rows[0]?.title).toBe('采纳授权·路由')
   })
 })
 

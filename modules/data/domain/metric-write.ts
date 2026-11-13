@@ -166,12 +166,16 @@ export async function writeL2Declaration(
 
   // 闸门全过（都是只读校验）⇒ 开事务：读前态 → 落库 → 写审计
   // ★ creator 闸（spec 2026-11-01 §10.2）在**这里**而不是路由：HTTP 的 PUT 与 MCP 的 customize
-  //   共用本函数——「改别人的 L2」在哪个面都一样拒。判定：
+  //   共用本函数——「改别人的 L2」在哪个面都一样拒。判定（P6 Task 2 修复轮起门 = creator ∪
+  //   data:manage，与 updateMetricMeta :348-351 同形）：
   //   · 行不存在 ⇒ 创建路径，无闸（谁建谁就是 creator）；
-  //   · 行是 L2 且 created_by = 别人 ⇒ 403（草稿流是唯一的变更通路，见 routes 的 /metrics/:id/draft）；
-  //   · created_by 为 NULL（027 前存量且 028 回填也没找到 create 审计）⇒ 403 METRIC_CREATOR_UNKNOWN
-  //     ——「不知道谁建的」按 fail-closed 处理，孤儿治理流程是 spec §10.4.3 P1（本期不做）。
+  //   · 行是 L2 且 created_by = 别人 ⇒ 403 NOT_METRIC_CREATOR，**除非**持 data:manage；
+  //   · created_by 为 NULL（027 前存量且 028 回填也没找到 create 审计）⇒ 403 METRIC_CREATOR_UNKNOWN，
+  //     持 data:manage 则放行（否则孤儿行没有任何人能修；孤儿治理见 spec §10.4.3 P1）；
   //   · 行是 L1 ⇒ 不在本闸判（撞 L1 的 id 已在前面 409；L1 行经 API 本来只读）。
+  //   为什么认 manage：提交人 ≠ 采纳人（agent 提案、人决策），决策端点本身已要求 data:manage
+  //   （manifest `POST /metric-changes/:id/adopt`）；域层不认 manage ⇒ 每条跨 creator 的提案
+  //   都会在采纳期 403（P4 以来的授权模型错位）。
   const row = {
     id,
     title: compiled.title,
@@ -205,9 +209,15 @@ export async function writeL2Declaration(
         return { ok: false, http: 409, error: 'BASIS_CONFLICT', extra: { existing_basis: basis } }
       }
       // creator 闸（判定说明见上面函数体外的注释块）：update 才判，create 不判。
+      // 门 = creator ∪ data:manage（P6 Task 2 修复轮）：采纳人是另一个人，决策端点要求 manage。
       const createdBy: string | null = cur.rows[0]?.created_by ?? null
-      if (createdBy === null) return { ok: false, http: 403, error: 'METRIC_CREATOR_UNKNOWN' }
-      if (createdBy !== actor.userId) return { ok: false, http: 403, error: 'NOT_METRIC_CREATOR' }
+      const canManage = actor.hasScope('data:manage')
+      if (createdBy === null) {
+        // 不知道谁建的 ⇒ 只有管理员能接管（普通用户仍 fail-closed）
+        if (!canManage) return { ok: false, http: 403, error: 'METRIC_CREATOR_UNKNOWN' }
+      } else if (createdBy !== actor.userId && !canManage) {
+        return { ok: false, http: 403, error: 'NOT_METRIC_CREATOR' }
+      }
     }
     await upsertMetric(c, org, row, actor.userId, opts)
     await writeMetricAudit(c, {
@@ -244,15 +254,21 @@ export async function deleteMetricDeclaration(
       return { ok: false, http: 404, error: 'NOT_FOUND' }
     }
     // creator 闸（spec §10.2，与 writeL2Declaration 同一条判定）：删别人的 L2 也是「改了
-    // 看数人的世界」——同样只能走 creator 自己的手。NULL（存量且无 create 审计）fail-closed。
+    // 看数人的世界」——同样只能走 creator 自己或 data:manage 管理员的手（P6 Task 2 修复轮，
+    // 决策端点要求 manage，域层不认 manage 会让采纳恒 403）。
+    // NULL（存量且无 create 审计）fail-closed，但 manage 可接管（孤儿行否则无人能修）。
     {
       const cur = await c.query(
         `select created_by from data.metrics where org = $1 and id = $2 and source = 'l2'`,
         [org, id],
       )
       const createdBy: string | null = cur.rows[0]?.created_by ?? null
-      if (createdBy === null) return { ok: false, http: 403, error: 'METRIC_CREATOR_UNKNOWN' }
-      if (createdBy !== actor.userId) return { ok: false, http: 403, error: 'NOT_METRIC_CREATOR' }
+      const canManage = actor.hasScope('data:manage')
+      if (createdBy === null) {
+        if (!canManage) return { ok: false, http: 403, error: 'METRIC_CREATOR_UNKNOWN' }
+      } else if (createdBy !== actor.userId && !canManage) {
+        return { ok: false, http: 403, error: 'NOT_METRIC_CREATOR' }
+      }
     }
     await deleteMetric(c, org, id)
     await writeMetricAudit(c, {

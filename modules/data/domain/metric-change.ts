@@ -33,7 +33,7 @@ export interface MetricChangeRow {
 
 export type SubmitOutcome =
   | { ok: true; change: MetricChangeRow }
-  | { ok: false; http: 400 | 403 | 404 | 409; error:
+  | { ok: false; http: 400 | 404 | 409; error:
       | 'INVALID_DECLARATION' | 'INVALID_META' | 'CHANGE_ALREADY_PENDING'
       // P1 Task 3（spec §13）：概念归属未知（400）/ 部门内同名互斥（409）/ create 撞已有 id（400）
       | 'UNKNOWN_CONCEPT' | 'TITLE_EXISTS_IN_DEPT' | 'METRIC_ID_EXISTS'
@@ -44,21 +44,7 @@ export type SubmitOutcome =
       //   · delete 不存在的 id ⇒ 404 METRIC_NOT_FOUND（不再落 preview_failed 死单）。
       // 原先只有 MCP 两把旧工具内联这套预检，REST /metric-changes 与 submit_metric_change 可绕过。
       | 'ID_RESERVED_BY_L1' | 'READONLY_L1' | 'DECLARED_NOT_EDITABLE' | 'BASIS_CONFLICT'
-      | 'METRIC_NOT_FOUND'
-      // P6 Task 2（2026-11-14）：改/删/注解**别人的** L2 且不持 data:manage ⇒ 提交期就 403
-      //（与写域同码；原先只在采纳期 403，放过一张绿单）。
-      | 'NOT_METRIC_CREATOR' }
-
-/**
- * 提交者身份（P6 Task 2 起带 `hasScope`）：与 `Requester` 结构兼容，但刻意收窄到变更单
- * 需要的三键——提交面传不传 scope 是接线的责任，域层按 **fail-closed** 处理缺省
- * （`hasScope` 缺席 = 不持 data:manage ⇒ 不能改别人的 L2）。
- */
-export interface ChangeSubmitter {
-  userId: string
-  channel: string
-  hasScope?: (code: string) => boolean
-}
+      | 'METRIC_NOT_FOUND' }
 
 const MetaPayload = z.object({
   bizDescription: z.string().max(500).optional(),
@@ -200,26 +186,6 @@ const isPlatformIdOf = async (pool: Pool, id: string): Promise<boolean> =>
   (await loadPlatformCatalog(pool)).some((m) => m.id === id)
 
 /**
- * creator 预检的判据（P6 Task 2）——与 `domain/metric-write.ts` 的 creator 闸**同一形状**：
- * `updateMetricMeta` :348-351 / `writeL2Declaration` :208-210 / `deleteMetricDeclaration` :253-255
- * 都是「`created_by` 是本人，或持 `data:manage`，否则 403」。
- *
- * 本函数只提前拒**确定会死在采纳期**的那一类：目标 L2 行存在、`created_by` 已回填、
- * 既非提交者、提交者又不持 `data:manage`。`created_by IS NULL` 的存量行**不在这里判**——
- * 它的语义是 `METRIC_CREATOR_UNKNOWN`（没有回填依据，fail-closed），由写域在采纳期给出，
- * 本预检不改写那条语义。
- *
- * fail-closed：`hasScope` 缺席按「不持 data:manage」处理（域层测试夹具可以只给 userId）。
- */
-function creatorGateOutcome(
-  createdBy: string | null | undefined, submitter: ChangeSubmitter,
-): SubmitOutcome | null {
-  if (createdBy === null || createdBy === undefined || createdBy === submitter.userId) return null
-  if (submitter.hasScope?.('data:manage') === true) return null
-  return { ok: false, http: 403, error: 'NOT_METRIC_CREATOR' }
-}
-
-/**
  * 提交期 fail-early 预检（P4 收口，2026-11-13）：**所有提交面共用这一份**。
  *
  * 为什么必须在提交期拒：试算只编译 payload，不看 id 也不看既有行档位——放过 L1 保留 id
@@ -231,10 +197,13 @@ function creatorGateOutcome(
  * 调用方改入参重提即可。delete 的「行不存在」是 404 METRIC_NOT_FOUND（fail-early 的廉价闸）。
  *
  * `override` 档的 NOT_FOUND 判据在下方自己的块里（它只收 L1 id），不在这里重复。
+ *
+ * ⚠️ **creator 判据不在这里**（P6 Task 2 修复轮）：提交人 ≠ 采纳人（agent 提案、人决策），
+ * 且真正决定写入的是**采纳人**（会话里持 data:manage 的人）。提交期按提交人预判 creator
+ * 必然错位（示例：agent 的 PAT 无 manage、人采纳有 manage）⇒ creator 判据只在**采纳期**
+ * 由域层（`metric-write.ts` 的 creator ∪ data:manage 门）判。
  */
-async function precheckOf(
-  pool: Pool, org: string, metricId: string, kind: ChangeKind, submitter: ChangeSubmitter,
-): Promise<SubmitOutcome | null> {
+async function precheckOf(pool: Pool, org: string, metricId: string, kind: ChangeKind): Promise<SubmitOutcome | null> {
   if (kind === 'declaration') {
     // P5 Task 1：声明是**新建**（无基底、无 upsert 语义）——撞平台保留 id 与 create 同判据，
     // 本 org 已有同 id 行（含 declared / column_agg）在采纳期必然 ID_EXISTS，都是立单前就能
@@ -250,53 +219,37 @@ async function precheckOf(
   if (kind === 'create' || kind === 'update') {
     if (await isPlatformIdOf(pool, metricId)) return { ok: false, http: 400, error: 'ID_RESERVED_BY_L1' }
     const cur = await pool.query(
-      "select basis, created_by from data.metrics where org = $1 and id = $2 and source = 'l2'",
-      [org, metricId])
+      "select basis from data.metrics where org = $1 and id = $2 and source = 'l2'", [org, metricId])
     const basis = cur.rows[0]?.basis as string | undefined
     // 租户全额声明（W8）不走 L2 结构化编辑：编辑 = 删除后重建（与 metric-write 同判据）。
     if (basis === 'declared') return { ok: false, http: 400, error: 'DECLARED_NOT_EDITABLE' }
     // 私有测度（column_agg）同款：树形写会翻档 ⇒ 与写域 BASIS_CONFLICT 同码。
     if (basis === 'column_agg') return { ok: false, http: 400, error: 'BASIS_CONFLICT' }
-    // creator 预检（P6 Task 2）：update 改的是**既有行**。create 不判——目标行存在时
-    // submitChange 下方的 METRIC_ID_EXISTS 才是准确错因（谁建的都不影响「这个 id 已存在」）。
-    if (kind === 'update') {
-      const gate = creatorGateOutcome(cur.rows[0]?.created_by as string | null | undefined, submitter)
-      if (gate !== null) return gate
-    }
+    // create 撞已存在行的错因是 METRIC_ID_EXISTS（下方 create 分支），**有意偏离** brief 里
+    // 「create 也判 creator」的字面：谁建的都不影响「这个 id 已存在」这个事实，而 ID_EXISTS
+    // 比 NOT_METRIC_CREATOR 更准确、也可自助修（换 id）。
     return null
   }
   if (kind === 'delete') {
     // 顺序与 deleteMetricDeclaration 同款：**先看本租户 L2 行，删不到才判 L1**——
     // 「租户先建 L2、平台事后同 id 物化」是合法时序；先判 L1 会让可删的行恒 READONLY_L1。
     const tenant = await pool.query(
-      "select created_by from data.metrics where org = $1 and id = $2 and source = 'l2'", [org, metricId])
-    if ((tenant.rowCount ?? 0) > 0) {
-      // creator 预检（P6 Task 2）：删别人的 L2 与改同理（判定说明见 creatorGateOutcome）。
-      return creatorGateOutcome(tenant.rows[0]?.created_by as string | null | undefined, submitter)
-    }
+      "select 1 from data.metrics where org = $1 and id = $2 and source = 'l2'", [org, metricId])
+    if ((tenant.rowCount ?? 0) > 0) return null
     if (await isPlatformIdOf(pool, metricId)) return { ok: false, http: 400, error: 'READONLY_L1' }
     // 不存在的 id：立单只会得到 preview_failed + METRIC_NOT_FOUND 的死单 ⇒ 提交期就直接 404。
     return { ok: false, http: 404, error: 'METRIC_NOT_FOUND' }
-  }
-  if (kind === 'meta') {
-    // creator 预检（P6 Task 2）：meta 只判**本租户 L2 行**（与 updateMetricMeta 的
-    // `source='l2'` 分支同源）；L1 行 created_by 恒 NULL ⇒ 本闸不拦（其只读语义在写域）。
-    const cur = await pool.query(
-      "select created_by from data.metrics where org = $1 and id = $2 and source = 'l2'", [org, metricId])
-    if ((cur.rowCount ?? 0) > 0) {
-      return creatorGateOutcome(cur.rows[0]?.created_by as string | null | undefined, submitter)
-    }
   }
   return null
 }
 
 export async function submitChange(
-  pool: Pool, org: string, submitter: ChangeSubmitter,
+  pool: Pool, org: string, submitter: { userId: string; channel: string },
   metricId: string, kind: ChangeKind, payload: unknown,
 ): Promise<SubmitOutcome> {
   if (metricId.trim() === '' || metricId.length > 128) return { ok: false, http: 400, error: 'INVALID_DECLARATION' }
   // id 级/档级预检先于形状校验：与 MCP 旧内联预检的「提交即拒」顺序一致（错因更准）。
-  const pre = await precheckOf(pool, org, metricId, kind, submitter)
+  const pre = await precheckOf(pool, org, metricId, kind)
   if (pre !== null) return pre
   // create/update 档（P1 Task 3）：声明形状 + 归属字段形状 + 概念归属 + 同名互斥 + create 撞 id，
   // 全部在**提交期**收口——把可读错误给在立单前，而不是让人在采纳期撞裸 23505/编译错。
