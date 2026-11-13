@@ -33,6 +33,7 @@ import { llmFromEnv, openAiCompatModel } from '../domain/llm'
 import type { StreamingChatModel } from '../domain/llm'
 import { buildFacts } from '../domain/report-facts'
 import { buildReportReceipt, exportDetailCsv, receiptCsv, type ReportReceipt } from '../domain/report-receipt'
+import { buildReportReview } from '../domain/report-review'
 import { panelArgsOf } from '../domain/report-query'
 import type { QueryDeps } from '../domain/query-service'
 import { periodRangeOf, type DateRange } from '../domain/report-period'
@@ -1110,6 +1111,39 @@ export function registerReports(r: ModuleHono, ctx: RouteCtx): void {
       hasUnpublishedChanges:
         report.publishedVersionId !== null
         && report.version > (report.publishedDraftVersion ?? 0),
+    })
+  })
+
+  // ── 审阅面（R2）：草稿 vs 已发布 + 说明书 + lint ────────────────────────────────────
+  // 只读 spec 与词表，不查数：审阅人看的不是「结果对不对」，而是「改了什么、用了哪些口径、
+  // 结构是否自洽」。授权口径同「改规格」：owner ∪ data:manage（非判权人给 404，不给探针）。
+  r.get('/reports/:id/review', async (c) => {
+    const requester = requesterOf(c)
+    if (requester === null) return c.json({ error: 'UNAUTHENTICATED' }, 403)
+    const id = reportIdOf(c.req.param('id'))
+    if (id === null) return c.json({ error: 'NOT_FOUND' }, 404)
+    const org = c.get('tenant').casdoor_org
+    const report = await getReport(ctx.pool, org, id)
+    if (report === null) return c.json({ error: 'NOT_FOUND' }, 404)
+    const denied = await denyUnlessCanEdit(c, ctx.pool, requester, org, id)
+    if (denied !== null) return denied
+    if (report.renderer !== 'platform') return c.json({ error: 'RENDERER_NOT_SELF_DRAWN' }, 409)
+    if (report.spec === null) return c.json({ error: 'NO_SPEC' }, 409)
+    const parsed = parseReportSpec(report.spec)
+    if (!parsed.ok) return c.json({ error: 'INVALID_SPEC', detail: parsed.code }, 400)
+    const published = await getPublishedSpec(ctx.pool, org, id)
+    const catalog = await loadMergedCatalog(ctx.pool, org)
+    const review = buildReportReview(
+      parsed.spec, published?.spec ?? null, catalog,
+      report.title, published?.title ?? null,
+    )
+    return c.json({
+      report: {
+        id, title: report.title, version: report.version,
+        publishedVersion: published?.version ?? null,
+        publishedAt: published?.publishedAt ?? null,
+      },
+      ...review,
     })
   })
 

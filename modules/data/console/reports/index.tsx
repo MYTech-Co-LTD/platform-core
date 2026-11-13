@@ -70,6 +70,29 @@ interface ReportRow {
   canEdit: boolean
 }
 
+/** 审阅面（R2）：草稿 vs 已发布 + 说明书 + lint（服务端只读 spec/词表）。 */
+interface ReviewPayload {
+  report: {
+    id: string; title: string; version: number
+    publishedVersion: number | null; publishedAt: string | null
+  }
+  doc: {
+    title: string; panelCount: number; period: unknown
+    panels: Array<{ index: number; chart: string; title: string; metricId: string | null; metricTitle: string | null }>
+    metrics: Array<{
+      id: string; title: string; definition: string | null; unit: string | null
+      caliber: string; panels: number[]
+    }>
+  }
+  diff: null | {
+    unchanged: boolean
+    titleChanged?: { from: string; to: string }
+    periodChanged?: unknown
+    panels: Array<{ index: number; change: string; fields?: string[] }>
+  }
+  lint: Array<{ level: string; code: string; message: string }>
+}
+
 /** 报表规格的最小投影（只读 provenance 抽屉用；完整 JSON 收在技术细节里）。 */
 interface SpecLike {
   period?: { mode?: string; month?: string; day?: string; from?: string; to?: string }
@@ -181,6 +204,10 @@ export default function ReportsPage() {
   const [publishTarget, setPublishTarget] = useState<ReportRow | null>(null)
   const [publishNote, setPublishNote] = useState('')
   const [versions, setVersions] = useState<{ row: ReportRow; rows: VersionRow[] } | null>(null)
+  // 审阅面（R2）：草稿 diff / 说明书 / lint
+  const [review, setReview] = useState<{
+    row: ReportRow; data: ReviewPayload | null; loading: boolean; error: string | null
+  } | null>(null)
   const [messageApi, ctx] = message.useMessage()
 
   /**
@@ -639,6 +666,17 @@ export default function ReportsPage() {
     })
   }
 
+  /** 打开审阅抽屉：只读 spec 与词表，不取数（服务端保证）。 */
+  const openReview = async (r: ReportRow): Promise<void> => {
+    setReview({ row: r, data: null, loading: true, error: null })
+    try {
+      const data = await apiGet(`/reports/${r.id}/review`) as ReviewPayload
+      setReview({ row: r, data, loading: false, error: null })
+    } catch (e) {
+      setReview({ row: r, data: null, loading: false, error: messageOf(e) })
+    }
+  }
+
   // 底部动作面板（移动端 ActionSheet）——下拉菜单锚在小按钮上不适合触屏。
   interface SheetAction { key: string; label: string; danger?: boolean; onClick: () => void }
   const sheetActions = (r: ReportRow): SheetAction[] => {
@@ -668,6 +706,7 @@ export default function ReportsPage() {
         })
       }
     } else {
+      actions.push({ key: 'review', label: '审阅草稿', onClick: () => void openReview(r) })
       actions.push({ key: 'publish', label: '发布', onClick: () => { setPublishTarget(r); setPublishNote('') } })
       if (r.publishedVersion !== null) {
         actions.push({
@@ -1224,6 +1263,98 @@ export default function ReportsPage() {
                    ),
                  },
                ]} />
+      </Drawer>
+      {/* 审阅草稿（R2）：只读 spec 与词表——diff / 说明书 / lint 三块，不取数。 */}
+      <Drawer
+        title={`审阅草稿：${review?.row.title ?? ''}`}
+        width={520}
+        open={review !== null}
+        onClose={() => setReview(null)}
+      >
+        {review === null ? null : review.loading ? (
+          <Typography.Text type="secondary">正在整理草稿与已发布差异…</Typography.Text>
+        ) : review.error !== null ? (
+          <Typography.Text type="danger">{review.error}</Typography.Text>
+        ) : review.data === null ? null : (
+          <Space direction="vertical" size={16} style={{ width: '100%' }}>
+            <div>
+              <Typography.Text strong>发布状态</Typography.Text>
+              <div style={{ marginTop: 4, fontSize: 13 }}>
+                草稿 v{review.data.report.version} ·{' '}
+                {review.data.report.publishedVersion === null
+                  ? '尚未发布（无对比基线）'
+                  : `已发布 v${review.data.report.publishedVersion}`}
+              </div>
+            </div>
+
+            <div>
+              <Typography.Text strong>结构校验</Typography.Text>
+              <div style={{ marginTop: 6 }}>
+                {review.data.lint.length === 0 ? <Tag color="green">通过</Tag> : (
+                  <Space direction="vertical" size={4} style={{ width: '100%' }}>
+                    {review.data.lint.map((i) => (
+                      <div key={`${i.code}:${i.message}`}>
+                        <Tag color={i.level === 'error' ? 'red' : 'orange'}>
+                          {i.level === 'error' ? '阻断' : '提示'}
+                        </Tag>
+                        <span style={{ fontSize: 13 }}>{i.message}</span>
+                      </div>
+                    ))}
+                  </Space>
+                )}
+              </div>
+            </div>
+
+            <div>
+              <Typography.Text strong>与已发布版本的差异</Typography.Text>
+              <div style={{ marginTop: 6, fontSize: 13 }}>
+                {review.data.diff === null ? '首次发布前，没有基线可对比'
+                  : review.data.diff.unchanged ? '与已发布版本一致' : (
+                    <ul style={{ margin: 0, paddingLeft: 18 }}>
+                      {review.data.diff.titleChanged === undefined ? null : (
+                        <li>标题：{review.data.diff.titleChanged.from} → {review.data.diff.titleChanged.to}</li>
+                      )}
+                      {review.data.diff.periodChanged === undefined ? null : <li>默认期间已变更</li>}
+                      {review.data.diff.panels.map((p) => (
+                        <li key={p.index}>
+                          面板 #{p.index + 1}：{p.change === 'added' ? '新增'
+                            : p.change === 'removed' ? '删除' : `修改（${(p.fields ?? []).join('、')}）`}
+                        </li>
+                      ))}
+                    </ul>
+                  )}
+              </div>
+            </div>
+
+            <div>
+              <Typography.Text strong>口径说明</Typography.Text>
+              <Table
+                size="small" rowKey="id" pagination={false} style={{ marginTop: 6 }}
+                dataSource={review.data.doc.metrics}
+                columns={[
+                  { title: '指标', dataIndex: 'title' },
+                  { title: '口径', dataIndex: 'definition', render: (v: string | null) => v ?? '未声明' },
+                  { title: '单位', dataIndex: 'unit', width: 70, render: (v: string | null) => v ?? '-' },
+                  {
+                    title: '可信度', dataIndex: 'caliber', width: 80,
+                    render: (v: string) => (v === 'certified' ? '已认证' : '草稿'),
+                  },
+                ]}
+              />
+            </div>
+
+            <div>
+              <Typography.Text strong>面板（{review.data.doc.panelCount}）</Typography.Text>
+              <ul style={{ margin: '6px 0 0', paddingLeft: 18, fontSize: 13 }}>
+                {review.data.doc.panels.map((p) => (
+                  <li key={p.index}>
+                    {p.title}（{p.chart}{p.metricTitle === null ? '' : ` · ${p.metricTitle}`}）
+                  </li>
+                ))}
+              </ul>
+            </div>
+          </Space>
+        )}
       </Drawer>
       {/* platform 行的「打开」面板（Task 4）：标题栏与关闭按钮由 SpecView 自带；
           数据面（GET /spec + 逐面板 POST /query）全在组件内——本页不替它转发任何请求。 */}

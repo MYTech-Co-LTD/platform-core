@@ -212,7 +212,7 @@ function gatedApp(identity: ReturnType<typeof makeIdentity>, pool: Pool | null) 
 }
 
 describe('报表面声明（不需要数据库）', () => {
-  it('报表端点都声明了（api.internal 全模块共 77 条），且页门分档：管理动作=data:manage，观看面=data:query', () => {
+  it('报表端点都声明了（api.internal 全模块共 78 条），且页门分档：管理动作=data:manage，观看面=data:query', () => {
     const declared = new Map(
       (mod.manifest.api?.internal ?? []).map((d) => [`${d.method} ${d.path}`, d.scope]),
     )
@@ -240,7 +240,7 @@ describe('报表面声明（不需要数据库）', () => {
     // 观看面 data:query；页门/快照门/草稿分档与 narrative 共用 loadViewableSpec）。
     // 穷举口径（同 module.test.ts 的表清单）——别处加端点而漏改这里会红，
     // 逼着声明与测试一起动。
-    expect(declared).toHaveLength(77)
+    expect(declared).toHaveLength(78)
     // 指标变更单：七条全 data:manage；采纳/驳回的会话限定是路由内的第二道闸（不在这张表上）
     for (const p of [
       'POST /metric-changes', 'GET /metric-changes', 'GET /metric-changes/:id',
@@ -300,6 +300,7 @@ describe('报表面声明（不需要数据库）', () => {
     expect(declared.get('PUT /reports/:id')).toBe('data:query')
     // ── 自绘规格读写（#391 计划 6 Task 3）：读=观看面；写=单资产写（同上 canEditAsset）。──
     expect(declared.get('GET /reports/:id/spec')).toBe('data:query')
+    expect(declared.get('GET /reports/:id/review')).toBe('data:query')
     expect(declared.get('PUT /reports/:id/spec')).toBe('data:query')
     // ── 定义版本（月报重做 Task 10）：发布/下线/回滚/历史/草稿 = 单资产读写（canEditAsset）；
     //    只有「读已发布快照」是观看面（独立链接 /r/:id 的用户只有 data:query）。──
@@ -2284,6 +2285,33 @@ describePg('报表路由（需要 DATABASE_URL）', () => {
         method: 'POST', headers: { 'content-type': 'application/json' },
         body: JSON.stringify({ expectedVersion }),
       })
+
+    it('审阅面：改草稿后 diff 点名字段；非 owner 无权（403）', async () => {
+      const { app } = manage()
+      const id = await createVersioned(app, '审阅报表', [openPanel])
+      await publish(app, id, await versionOf(app, id))
+      // 改一个面板的指标 ⇒ 草稿与快照出现差异
+      const v = await versionOf(app, id)
+      const put = await putSpec(app, id, { period: { mode: 'day', day: '2026-11-09' }, panels: [costPanel] }, v)
+      expect(put.status).toBe(200)
+
+      const res = await app.request(`/reports/${id}/review`)
+      expect(res.status).toBe(200)
+      const body = await res.json() as {
+        report: { publishedVersion: number | null }
+        diff: { panels: Array<{ index: number; change: string; fields?: string[] }> }
+        doc: { metrics: Array<{ id: string }> }
+        lint: unknown[]
+      }
+      expect(body.report.publishedVersion).toBe(1)
+      expect(body.diff.panels.some((p) => p.change === 'changed')).toBe(true)
+      expect(body.doc.metrics.length).toBeGreaterThan(0)
+      expect(Array.isArray(body.lint)).toBe(true)
+
+      // 非 owner（且无管理码）⇒ 403 FORBIDDEN（审阅面是写侧权限，不是观看面）
+      const other = shell(makeIdentity({ orgId: ORG, userId: 'u-other', scopes: ['data:query'] })).app
+      expect((await other.request(`/reports/${id}/review`)).status).toBe(403)
+    })
 
     it('语义 lint：面板硬写 bizday + 报表 period ⇒ 发布 400 SPEC_LINT_FAILED（错误可定位）', async () => {
       const { app } = manage()
