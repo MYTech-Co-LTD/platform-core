@@ -7,17 +7,24 @@
 // 纪律：**判定在服务端**（`integration-health.ts` 纯函数）。本页只渲染结论与原因，不自己算
 // 「多久算超期」——两处口径一旦分叉，最先失效的恰好是这一屏该守住的东西。
 import { useCallback, useEffect, useState } from 'react'
-import { Alert, App, Button, Card, Popover, Space, Table, Tag, Typography } from 'antd'
+import { Alert, App, Button, Card, Popover, Space, Table, Typography } from 'antd'
 import type { ColumnsType } from 'antd/es/table'
 import { ApiError, listAdminIntegrations, type AdminIntegration } from '../../lib/api'
 import { ConsolePage } from '../../components/ConsolePage'
 
 /** 结论 → 徽标。四态：STALE 红（真没动静）、PROBE_FAILED 橙（探不了，别误判）、OK 绿、DISABLED 灰。 */
 function VerdictTag({ verdict }: { verdict: AdminIntegration['health']['verdict'] }) {
-  if (verdict === 'STALE') return <Tag color="red">太久没消息</Tag>
-  if (verdict === 'PROBE_FAILED') return <Tag color="orange">探针失败</Tag>
-  if (verdict === 'DISABLED') return <Tag>已停用</Tag>
-  return <Tag color="green">正常</Tag>
+  const [color, label] =
+    verdict === 'STALE' ? ['#E5484D', '太久没消息']
+    : verdict === 'PROBE_FAILED' ? ['#E08A00', '探针失败']
+    : verdict === 'DISABLED' ? ['#C9CDD4', '已停用']
+    : ['#0FA958', '正常']
+  return (
+    <span style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}>
+      <i style={{ width: 6, height: 6, borderRadius: '50%', display: 'inline-block', background: color }} />
+      {label}
+    </span>
+  )
 }
 
 const KIND_LABEL: Record<AdminIntegration['kind'], string> = {
