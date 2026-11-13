@@ -1101,7 +1101,7 @@ describePg('指标路由（需要 DATABASE_URL：词表读写）', () => {
   describe('P4 写面收口：直写端点 410 + 开关', () => {
     const RETIRED = { error: 'USE_METRIC_CHANGES', changeEndpoint: '/metric-changes' }
 
-    it('★ on（缺省，env 未配）⇒ 六条直写端点一律 410 + 指路体（参数路由与非参数路由都覆盖）', async () => {
+    it('★ on（缺省，env 未配）⇒ 八条直写端点一律 410 + 指路体（参数路由与非参数路由都覆盖）', async () => {
       const restore = reviewMode('on')
       try {
         const cases: Array<[string, string, unknown]> = [
@@ -1114,6 +1114,10 @@ describePg('指标路由（需要 DATABASE_URL：词表读写）', () => {
           ['PUT', '/metrics/l2_p4_retired_put', l2Body({ id: 'l2_p4_retired_put' })],
           ['PUT', '/metrics/l2_p4_retired_meta/meta', { unit: '元' }],
           ['DELETE', '/metrics/l2_p4_retired_delete', undefined as unknown],
+          // 遗留 creator 自助写面（终审 Important）：draft/confirm-draft 在 on 模式同样退役。
+          // confirm-draft 曾是 on 模式唯一无闸的 writeL2Declaration 直调点。
+          ['PUT', '/metrics/l2_p4_retired_draft/draft', { draftSpec: { baseMetric: L1_SALES.id, op: { kind: 'refine' } } }],
+          ['POST', '/metrics/l2_p4_retired_confirm/confirm-draft', undefined as unknown],
         ]
         for (const [method, path, body] of cases) {
           const res = await app(ORG, ['data:manage', 'data:query']).request(path, {
@@ -1143,20 +1147,26 @@ describePg('指标路由（需要 DATABASE_URL：词表读写）', () => {
       } finally { restore() }
     })
 
-    it('★ KEEP 端点不受影响（on 模式）：草稿/确认生效与可信度升降照常工作，GET 读面照常 200', async () => {
+    it('off（应急回滚）⇒ 草稿保存原行为：200（开关不是摆设）', async () => {
+      const restore = reviewMode('off')
+      try {
+        const id = 'l2_p4_off_draft'
+        await upsertMetric(pool, ORG, def({ id, title: `销售日明细·${id}` }), 'u-test')
+        const save = await app(ORG, ['data:query']).request(`/metrics/${id}/draft`, {
+          method: 'PUT', headers: { 'content-type': 'application/json' },
+          body: JSON.stringify({ draftSpec: { baseMetric: L1_SALES.id, op: { kind: 'refine' }, alias: '回滚草稿别名' } }),
+        })
+        expect(save.status, 'off 模式草稿保存被误退役了（应保留原行为）').toBe(200)
+        expect(await save.json()).toEqual({ ok: true })
+        await pool.query('delete from data.metrics where org = $1 and id = $2', [ORG, id])
+      } finally { restore() }
+    })
+
+    it('★ 治理决策与读面不受影响（on 模式）：可信度升降照常，GET 读面照常 200，覆盖确认流路由仍活着', async () => {
       const restore = reviewMode('on')
       try {
-        const id = 'l2_p4_keep_draft'
+        const id = 'l2_p4_keep_governance'
         await upsertMetric(pool, ORG, def({ id, title: `销售日明细·${id}` }), 'u-test')
-        // PUT /metrics/:id/draft（KEEP：采纳后续流）——creator 带 data:query 即可
-        const put = await app(ORG, ['data:query']).request(`/metrics/${id}/draft`, {
-          method: 'PUT', headers: { 'content-type': 'application/json' },
-          body: JSON.stringify({ draftSpec: { baseMetric: L1_SALES.id, op: { kind: 'refine' }, alias: '保留流别名' } }),
-        })
-        expect(put.status, 'KEEP 端点 PUT /metrics/:id/draft 被误退役了').toBe(200)
-        // POST confirm-draft（KEEP）在 on 模式照常生效（不是 410）
-        const confirm = await app(ORG, ['data:query']).request(`/metrics/${id}/confirm-draft`, { method: 'POST' })
-        expect(confirm.status, 'KEEP 端点 POST /metrics/:id/confirm-draft 被误退役了').toBe(200)
         // PUT /metrics/:id/certified（KEEP：治理决策）照常 200
         const cert = await app(ORG, ['data:manage']).request(`/metrics/${id}/certified`, {
           method: 'PUT', headers: { 'content-type': 'application/json' },
@@ -1165,6 +1175,8 @@ describePg('指标路由（需要 DATABASE_URL：词表读写）', () => {
         expect(cert.status, 'KEEP 端点 PUT /metrics/:id/certified 被误退役了').toBe(200)
         // 读面不受影响
         expect((await app(ORG, ['data:query']).request('/metrics')).status).toBe(200)
+        // GET /metrics/:id/draft 读面保留（草稿本身已不能在 on 模式写，读面无害）
+        expect((await app(ORG, ['data:query']).request(`/metrics/${id}/draft`)).status).toBe(404)
         // W8 覆盖确认流（KEEP）：无草稿时的域层结局不是 410（路由本身活着）
         const w8 = await app(ORG, ['data:manage']).request(`/metrics/${L1_OVERRIDE.id}/override/confirm`, { method: 'POST' })
         expect(w8.status).not.toBe(410)

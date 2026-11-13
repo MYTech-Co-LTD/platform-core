@@ -359,7 +359,12 @@ export function registerMetrics(r: ModuleHono, ctx: RouteCtx): void {
   // 形状在**存的时候就校验**（L2DeclarationSchema + 深度预检）而不是留到确认时——
   // 「草稿已保存」必须意味着「这是一份完整的合法声明」，否则确认页才爆错等于骗了保存的人。
   // 确认时仍可能失败（ref 指向的 L1 被下线/源被摘），那类**状态**错误编译点会响亮地拒。
+  //
+  // P4 写面收口：草稿保存是**遗留 creator 自助写面**——on 模式与直写端点同款 410 退役
+  //（off = 应急回滚原行为）。读面 GET /metrics/:id/draft 保留。
   r.put('/metrics/:id/draft', async (c) => {
+    const gone = retired(c)
+    if (gone !== null) return gone
     const requester = requesterOf(c)
     if (requester === null) return c.json({ error: 'UNAUTHENTICATED' }, 403)
     const id = metricIdOf(c.req.param('id'))
@@ -391,6 +396,10 @@ export function registerMetrics(r: ModuleHono, ctx: RouteCtx): void {
   // 确认生效（spec §10.4 D6）：草稿走**唯一编译点**（writeL2Declaration = POST/PUT 同一份实现：
   // 编译 + 事务 + 审计同生共死），编译过了才清草稿、再发变更通知。
   //
+  // P4 写面收口：这是**遗留 creator 自助写面**——on 模式与直写端点同款 410 退役（off = 应急回滚）。
+  // 它**不是**变更单采纳流的下游：adoptChange 的 create/update 支直接写生效行（writeL2Declaration），
+  // 从不读写 draft_spec——「采纳后再确认草稿」并不存在，草稿/确认是独立的旧通路。
+  //
   // 为什么编译在清草稿**之前**：编译失败 ⇒ 409/400 原样返回，草稿**原地保留**（creator 改了再确认）；
   // 先清后编等于把编译失败变成「草稿白丢」。
   //
@@ -398,6 +407,8 @@ export function registerMetrics(r: ModuleHono, ctx: RouteCtx): void {
   // 标签页存了 v2，无条件 clear 会把 v2 吞掉。带上「等于刚才读到的那份」做守卫——被并发写入
   // 抢过 ⇒ rowCount=0 ⇒ 409，v2 原样保留（可重试），不静默丢数据。
   r.post('/metrics/:id/confirm-draft', async (c) => {
+    const gone = retired(c)
+    if (gone !== null) return gone
     const requester = requesterOf(c)
     if (requester === null) return c.json({ error: 'UNAUTHENTICATED' }, 403)
     const org = orgOf(c)
