@@ -324,6 +324,43 @@ describePg('报表工具面（能提、不能发）', () => {
     expect(out).toEqual({ status: 'refused', error: 'AI_TEXT_REQUIRES_PERIOD' })
   })
 
+  it('模板模式：list_reports 带模板；propose 用 templateId+values 建出报表', async () => {
+    const listed = await call('list_reports')
+    const templates = listed.templates as Array<{ id: string; slots: Array<{ key: string }> }>
+    expect(templates.some((t) => t.id === 'daily_ops')).toBe(true)
+
+    const created = await call('propose_report', {
+      title: '模板日报',
+      templateId: 'daily_ops',
+      values: { revenue: NET_ID, orders: NET_ID, trend: NET_ID },
+    })
+    expect(created.status).toBe('ok')
+    const id = created.id as string
+    const row = await getReport(pool, ORG, id)
+    expect(row?.spec?.panels.map((p) => p.chart)).toEqual(['kpi', 'kpi', 'line', 'ai_text'])
+    expect(row?.spec?.period).toEqual({ mode: 'last_7_days' })
+  })
+
+  it('模板模式：缺必填槽 ⇒ refused 且列出 keys；未知模板 ⇒ TEMPLATE_NOT_FOUND', async () => {
+    const missing = await call('propose_report', {
+      title: '模板缺槽', templateId: 'daily_ops', values: { revenue: NET_ID },
+    })
+    expect(missing).toMatchObject({ status: 'refused', error: 'MISSING_REQUIRED_SLOT' })
+    expect(missing.keys).toEqual(['orders', 'trend'])
+
+    const unknown = await call('propose_report', {
+      title: '模板未知', templateId: 'nope', values: {},
+    })
+    expect(unknown).toEqual({ status: 'refused', error: 'TEMPLATE_NOT_FOUND' })
+  })
+
+  it('模板模式：spec 与 templateId 同时给 ⇒ INVALID_BODY', async () => {
+    const out = await call('propose_report', {
+      title: '两种模式', spec: LEGAL_SPEC, templateId: 'daily_ops', values: {},
+    })
+    expect(out).toEqual({ status: 'refused', error: 'INVALID_BODY' })
+  })
+
   it('revise 与 propose 同一道结构闸：纯 ai_text ⇒ AI_TEXT_REQUIRES_DATA_PANEL，行未变', async () => {
     const id = await upsertReport(pool, ORG, {
       title: '待改纯 AI', metabaseId: 0, embedParams: {}, requiredScope: 'data:manage',

@@ -15,6 +15,7 @@ import { loadMergedCatalog } from '../domain/metric-store'
 import { parseReportSpec } from '../domain/report-spec'
 import type { ReportSpec } from '../domain/report-spec'
 import { deriveRequiredScope, validatePanelMetrics } from '../domain/report-scope'
+import { compileTemplate, REPORT_TEMPLATES, templateById } from '../domain/report-templates'
 import { getReport, getReportVersion, listReports, updateSpec, upsertReport } from '../domain/report-store'
 import { getVersion } from '../domain/report-version'
 import { manageFaceOfSlice } from './mcp-manage-face'
@@ -28,8 +29,17 @@ const FORCED_GATE = 'data:manage'
 
 const ProposeArgs = z.object({
   title: z.string().trim().min(1).max(200),
-  spec: z.unknown(),                                  // 形状由 parseReportSpec 判（不在这里复制白名单）
-}).strict()
+  spec: z.unknown().optional(),                       // 形状由 parseReportSpec 判（不在这里复制白名单）
+  // 模板模式（R2）：槽位 → metricId，替代整份 spec（spec 自由度过大时用这条）。
+  templateId: z.string().min(1).max(64).optional(),
+  values: z.record(z.string().min(1).max(64), z.string().min(1).max(128)).optional(),
+}).strict().superRefine((v, ctx) => {
+  if (v.spec === undefined && v.templateId === undefined) {
+    ctx.addIssue({ code: z.ZodIssueCode.custom, message: 'spec 或 templateId 必须给一个' })
+  } else if (v.spec !== undefined && v.templateId !== undefined) {
+    ctx.addIssue({ code: z.ZodIssueCode.custom, message: 'spec 与 templateId 只能给一个' })
+  }
+})
 
 const ReviseArgs = z.object({
   id: z.string().min(1),
@@ -96,6 +106,9 @@ export const reportTools: McpToolGroup = {
         // 发布后草稿又登记过（`data.reports.version` 前进了）⇒ 线上不是最新的。
         // 未发布的行不算「有未发布改动」——它整张都还没上线。
         hasUnpublishedChanges: r.publishedVersion !== null && r.version > (r.publishedDraftVersion ?? 0),
+      })), templates: REPORT_TEMPLATES.map((t) => ({
+        id: t.id, title: t.title,
+        slots: t.slots.map((sl) => ({ key: sl.key, label: sl.label, chart: sl.chart, required: sl.required === true })),
       })) })
     }
 
@@ -120,7 +133,17 @@ export const reportTools: McpToolGroup = {
     if (name === 'propose_report') {
       const parsed = ProposeArgs.safeParse(args)
       if (!parsed.success) return refused('INVALID_BODY')
-      const spec = parseReportSpec(parsed.data.spec)
+      let rawSpec: unknown = parsed.data.spec
+      if (parsed.data.templateId !== undefined) {
+        const template = templateById(parsed.data.templateId)
+        if (template === undefined) return refused('TEMPLATE_NOT_FOUND')
+        const composed = compileTemplate(template, parsed.data.values ?? {})
+        if (!composed.ok) {
+          return refused(composed.reason, composed.keys === undefined ? {} : { keys: composed.keys })
+        }
+        rawSpec = composed.spec
+      }
+      const spec = parseReportSpec(rawSpec)
       if (!spec.ok) return refused(spec.code)
       // 写入侧校验先于落库：词表里没有的指标 / 未接入源 / 不可加指标画线 ⇒ 拒，不建行。
       const invalid = await validateSpec(deps, spec.spec)
