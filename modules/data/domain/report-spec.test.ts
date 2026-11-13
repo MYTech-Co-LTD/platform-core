@@ -141,3 +141,24 @@ describe('text 面板 format（R3）', () => {
     expect(parse({ chart: 'text', content: '说明', format: 'html' }).ok).toBe(false)
   })
 })
+
+describe('cross_table（R3 组件①）', () => {
+  const parse = (panel: unknown) => parseReportSpec({ panels: [panel] })
+  const base = { chart: 'cross_table', title: '门店×品类', metricId: 'm:sales', rows: ['branch_name'], columns: 'category_name' }
+
+  it('最少字段可解析；format 缺省 number、span 缺省 24', () => {
+    const out = parse(base)
+    expect(out.ok).toBe(true)
+    if (out.ok) expect(out.spec.panels[0]).toMatchObject({ chart: 'cross_table', format: 'number', span: 24 })
+  })
+
+  it('行维度 1–2 个；0 或 3 个都拒', () => {
+    expect(parse({ ...base, rows: [] }).ok).toBe(false)
+    expect(parse({ ...base, rows: ['a', 'b', 'c'] }).ok).toBe(false)
+    expect(parse({ ...base, rows: ['a', 'b'] }).ok).toBe(true)
+  })
+
+  it('未知键拒（白名单不放宽）', () => {
+    expect(parse({ ...base, slice: { dimensions: ['x'] } }).ok).toBe(false)
+  })
+})

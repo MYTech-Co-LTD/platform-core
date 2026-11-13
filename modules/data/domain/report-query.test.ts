@@ -205,3 +205,17 @@ describe('comparisonCovered', () => {
     expect(comparisonCovered(PREV, null)).toBe(false)
   })
 })
+
+describe('cross_table 查询体（R3）', () => {
+  it('行维度 + 列维度一起下推，不附加 slice/total', () => {
+    const panel = {
+      chart: 'cross_table' as const, title: '门店×品类', metricId: 'm', args: {},
+      rows: ['branch_name'], columns: 'category_name', format: 'number' as const, span: 24, timeScoped: true,
+    }
+    expect(panelQueryBodyOf(panel, { branch_num: '92' })).toEqual({
+      metricId: 'm',
+      args: { branch_num: '92' },
+      dimensions: ['branch_name', 'category_name'],
+    })
+  })
+})

@@ -9,7 +9,7 @@
 //     「渲染器能力」与「平台代码」脱钩 ⇒ 库里加了图型而渲染器不认 = **静默空白**。
 import { z } from 'zod'
 
-export const CHART_TYPES = ['line', 'bar', 'table', 'kpi', 'text', 'ai_text'] as const
+export const CHART_TYPES = ['line', 'bar', 'table', 'cross_table', 'kpi', 'text', 'ai_text'] as const
 export const MAX_PANELS = 24
 export const MAX_DIMS = 4
 export const MAX_TEXT = 2000
@@ -89,6 +89,21 @@ const BarPanel = z.object({
 const TableColumnsSchema = z.array(z.string().trim().min(1).max(64)).min(1).max(32)
   .refine((cols) => new Set(cols).size === cols.length, { message: 'DUPLICATE_COLUMN' })
 
+/** 交叉表（R3 组件①）：行维度（1–2）+ 列维度（1），单元格 = 指标合计。 */
+const CrossTablePanel = z.object({
+  chart: z.literal('cross_table'),
+  title: z.string().trim().min(1).max(120),
+  metricId: z.string().min(1).max(128),
+  args: ArgsSchema,
+  /** 行维度：1–2 个（多值时按 ` / ` 连接成行标签）。 */
+  rows: z.array(z.string().min(1).max(64)).min(1).max(2),
+  /** 列维度：1 个。 */
+  columns: z.string().min(1).max(64),
+  format: z.enum(['currency', 'number', 'percent']).default('number'),
+  span: z.number().int().min(1).max(24).default(24),
+  timeScoped: z.boolean().default(true),
+}).strict()
+
 const TablePanel = z.object({
   chart: z.literal('table'), ...metricBase,
   dims: z.array(z.string().min(1).max(64)).max(MAX_DIMS).default([]),
@@ -153,7 +168,7 @@ export type StoredReportSpec = ReportSpec | ReportSpecV2
 export const ReportSpecSchema = z.object({
   period: PeriodSchema.optional(),
   filters: z.array(ReportFilterSchema).max(20).optional(),
-  panels: z.array(z.discriminatedUnion('chart', [LinePanel, BarPanel, TablePanel, KpiPanel, TextPanel, AiTextPanel])).max(MAX_PANELS),
+  panels: z.array(z.discriminatedUnion('chart', [LinePanel, BarPanel, TablePanel, CrossTablePanel, KpiPanel, TextPanel, AiTextPanel])).max(MAX_PANELS),
 }).strict()
 
 

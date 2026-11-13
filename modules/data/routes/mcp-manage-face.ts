@@ -123,7 +123,7 @@ const REPORT_FACE: readonly ManageFaceTool[] = [
     description: [
       '提议一张新的平台自绘报表。**只是提议**：建出来的一定是未发布状态（页门挂在管理档），',
       '要发布得由人在控制台改页门。**不能凭空发明指标**——metricId 必须是 list_metrics 里出现的 id；',
-      '图型支持 line / bar / table / kpi / text / ai_text。ai_text = 观看时按当前期间服务端生成的',
+      '图型支持 line / bar / table / cross_table / kpi / text / ai_text。ai_text = 观看时按当前期间服务端生成的',
       '分析文本：focus=overview（结论/异常/行动）、focus=root_cause（在事实包之外跑确定性',
       '下钻/配方探针，输出「根因」段）；不写 content；必须与至少一个数据面板同报，且报表要带',
       'period。**标题不能与已有报表重名**（重名会被拒，不会覆盖）。也可用模板模式：`templateId` + `values`（槽位→metricId）替代 `spec`。',
