@@ -2,7 +2,10 @@
 import { describe, expect, it } from 'vitest'
 import type { MetricRow } from './metric-store'
 import type { KpiPanel } from './report-spec'
-import { explainDelta, receiptCsv, seriesSupported, type ReportReceipt } from './report-receipt'
+import {
+  explainDelta, exportDetailCsv, receiptCsv, seriesSupported, type ReportReceipt,
+} from './report-receipt'
+import { runDetailQuery } from './drill'
 
 const panel = (over: Partial<KpiPanel> = {}): KpiPanel => ({
   chart: 'kpi', title: '销售额', metricId: 'm:sales', args: {},
@@ -85,5 +88,58 @@ describe('explainDelta', () => {
     const d = explainDelta(null, 1234, 999, 'number')
     expect(d.explained).toBe(false)
     expect(d.note).toContain('没有按日组成')
+  })
+})
+
+describe('exportDetailCsv', () => {
+  const okPage = (rows: unknown[][], total: number) => ({
+    status: 'ok' as const, subject: 'o', metricId: 'm', dimensions: ['bizday', 'order_no'],
+    columns: ['bizday', 'order_no', 'value'], rows, rowCountTotal: total,
+    truncated: false, drill_as_of: '2026-11-13 00:00:00 +08:00',
+    provenance: {} as never,
+  })
+
+  it('分页拼接：两页 ⇒ 一份 CSV，行数等于总数', async () => {
+    const pages = [
+      okPage([['2026-10-01', 'A1', 100], ['2026-10-01', 'A2', 200]], 3),
+      okPage([['2026-10-02', 'A3', 300]], 3),
+    ]
+    let calls = 0
+    const fake = (async () => pages[calls++]!) as unknown as typeof runDetailQuery
+    const out = await exportDetailCsv({} as never, 'o', {} as never, 'm', {}, { runDetail: fake })
+    expect(out.ok).toBe(true)
+    if (!out.ok) return
+    expect(out.out.rows).toBe(3)
+    expect(out.out.truncated).toBe(false)
+    expect(out.out.csv.split('\n')[0]).toBe('bizday,order_no,value')
+    expect(out.out.csv).toContain('2026-10-02,A3,300')
+  })
+
+  it('CSV 转义：逗号/引号/换行必须被引号包住', async () => {
+    const page = okPage([['2026-10-01', 'A,1', 'x"y']], 1)
+    const fake = (async () => page) as unknown as typeof runDetailQuery
+    const out = await exportDetailCsv({} as never, 'o', {} as never, 'm', {}, { runDetail: fake })
+    expect(out.ok).toBe(true)
+    if (!out.ok) return
+    expect(out.out.csv).toContain('"A,1"')
+    expect(out.out.csv).toContain('"x""y"')
+  })
+
+  it('超过上限 ⇒ 只导前 N 行并标 truncated', async () => {
+    const page = okPage([['d1', 'A1', 1], ['d2', 'A2', 2], ['d3', 'A3', 3]], 3)
+    const fake = (async () => page) as unknown as typeof runDetailQuery
+    const out = await exportDetailCsv({} as never, 'o', {} as never, 'm', {}, { runDetail: fake, maxRows: 2 })
+    expect(out.ok).toBe(true)
+    if (!out.ok) return
+    expect(out.out.rows).toBe(2)
+    expect(out.out.truncated).toBe(true)
+  })
+
+  it('指标未声明下钻 ⇒ not_supported（不是「空结果」）', async () => {
+    const fake = (async () => ({ status: 'denied', metricId: 'm', reason: 'no_detail_binding' })) as unknown as typeof runDetailQuery
+    const out = await exportDetailCsv({} as never, 'o', {} as never, 'm', {}, { runDetail: fake })
+    expect(out.ok).toBe(false)
+    if (out.ok) return
+    expect(out.reason).toBe('not_supported')
   })
 })

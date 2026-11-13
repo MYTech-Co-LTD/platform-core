@@ -65,14 +65,14 @@ export async function apiSend(path: string, method: 'POST' | 'PUT' | 'DELETE', b
  */
 export async function apiPostBlob(
   path: string, body?: unknown,
-): Promise<{ blob: Blob; filename: string | null }> {
+): Promise<{ blob: Blob; filename: string | null; headers: Headers }> {
   const res = await platformFetch(PREFIX + path, {
     method: 'POST',
     ...(body === undefined ? {} : { body: JSON.stringify(body), headers: { 'Content-Type': 'application/json' } }),
   })
   if (!res.ok) throw await toError(res)
   const cd = res.headers.get('content-disposition') ?? ''
-  return { blob: await res.blob(), filename: /filename="([^"]+)"/.exec(cd)?.[1] ?? null }
+  return { blob: await res.blob(), filename: /filename="([^"]+)"/.exec(cd)?.[1] ?? null, headers: res.headers }
 }
 
 /**
@@ -98,6 +98,8 @@ export async function streamPost(path: string, body: unknown, signal?: AbortSign
 const MESSAGES: Record<string, string> = {
   INVALID_BODY: '输入不合法，请检查后重试',
   NOT_FOUND: '目标不存在或已被删除',
+  DETAIL_NOT_AVAILABLE: '该指标未声明下钻明细，无法导出逐笔数据',
+  NO_SERIES: '该指标不提供按日组成（不可加或比率指标）',
   LLM_UNCONFIGURED: '本站未开启智能问数（未配置 LLM）',
   AGENT_FAILED: '问数过程中出错了，请稍后重试',
   // 报表面（#150 T7）。两码分开：没接 = 配置状态（运维该去配），调用失败 = 上游故障（该重试）

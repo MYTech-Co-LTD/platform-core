@@ -32,9 +32,10 @@ import type { UserStatus } from '@platform/sdk'
 import { llmFromEnv, openAiCompatModel } from '../domain/llm'
 import type { StreamingChatModel } from '../domain/llm'
 import { buildFacts } from '../domain/report-facts'
-import { buildReportReceipt, receiptCsv, type ReportReceipt } from '../domain/report-receipt'
+import { buildReportReceipt, exportDetailCsv, receiptCsv, type ReportReceipt } from '../domain/report-receipt'
 import { panelArgsOf } from '../domain/report-query'
-import { periodRangeOf } from '../domain/report-period'
+import type { QueryDeps } from '../domain/query-service'
+import { periodRangeOf, type DateRange } from '../domain/report-period'
 import type { FactBundle } from '../domain/report-facts'
 import { generateNarrative, streamNarrative } from '../domain/narrative'
 import type { NarrativeEvent } from '../domain/narrative'
@@ -1317,10 +1318,19 @@ export function registerReports(r: ModuleHono, ctx: RouteCtx): void {
 
   type ReceiptErr = { error: string; status: 400 | 403 | 404 | 409 | 502; detail?: string }
 
-  /** 凭证的唯一装配点：路由 / 导出共用，避免两份 ACL 与参数装配。 */
-  async function receiptOf(
+  type ReceiptTarget = {
+    requester: Requester
+    org: string
+    panel: Extract<ReportSpec['panels'][number], { chart: 'kpi' }>
+    range: DateRange
+    args: Record<string, unknown>
+    metric: NonNullable<Awaited<ReturnType<typeof loadMergedCatalog>>[number]>
+  }
+
+  /** 凭证/明细导出的共享装配：ACL → 面板 → 窗口 → 指标。只做解析，不取数。 */
+  async function receiptTarget(
     c: Context<ModuleVars>, id: string, body: z.infer<typeof ReceiptBody>,
-  ): Promise<{ ok: true; receipt: ReportReceipt } | { ok: false; error: ReceiptErr }> {
+  ): Promise<{ ok: true; target: ReceiptTarget } | { ok: false; error: ReceiptErr }> {
     const v = await loadViewableSpec(c, id, body)
     if ('error' in v) {
       const status = v.error === 'UNAUTHENTICATED' ? 403
@@ -1331,7 +1341,7 @@ export function registerReports(r: ModuleHono, ctx: RouteCtx): void {
     if (panel === undefined || panel.chart !== 'kpi') {
       return { ok: false, error: { error: 'PANEL_NOT_KPI', status: 400 } }
     }
-    let range
+    let range: DateRange
     try {
       range = periodRangeOf(body.period, new Date())
     } catch {
@@ -1340,22 +1350,37 @@ export function registerReports(r: ModuleHono, ctx: RouteCtx): void {
     const org = c.get('tenant').casdoor_org
     const metric = (await loadMergedCatalog(ctx.pool, org)).find((m) => m.id === panel.metricId)
     if (metric === undefined) return { ok: false, error: { error: 'METRIC_NOT_FOUND', status: 404 } }
-
-    const out = await buildReportReceipt(
-      {
-        pool: ctx.pool,
-        execute: ctx.execute,
-        adoptedSources: new Set(c.get(TENANT_SOURCES) ?? []),
+    return {
+      ok: true,
+      target: {
+        requester: v.requester, org, panel, range,
+        args: panelArgsOf(panel, range, body.branchNum), metric,
       },
-      org,
-      v.requester,
+    }
+  }
+
+  /** 取数依赖：凭证/导出共用一份（授权/掩码/审计与 /query 同链）。 */
+  const receiptDeps = (c: Context<ModuleVars>): QueryDeps => ({
+    pool: ctx.pool,
+    execute: ctx.execute,
+    adoptedSources: new Set(c.get(TENANT_SOURCES) ?? []),
+  })
+
+  async function receiptOf(
+    c: Context<ModuleVars>, id: string, body: z.infer<typeof ReceiptBody>,
+  ): Promise<{ ok: true; receipt: ReportReceipt } | { ok: false; error: ReceiptErr }> {
+    const t = await receiptTarget(c, id, body)
+    if (!t.ok) return t
+    const { target } = t
+    const out = await buildReportReceipt(
+      receiptDeps(c), target.org, target.requester,
       {
-        panel,
-        range,
-        args: panelArgsOf(panel, range, body.branchNum),
+        panel: target.panel,
+        range: target.range,
+        args: target.args,
         ...(body.branchNum === undefined ? {} : { branchNum: body.branchNum }),
         ...(body.userValue === undefined ? {} : { userValue: body.userValue }),
-        metric,
+        metric: target.metric,
       },
     )
     if (!out.ok) {
@@ -1398,6 +1423,35 @@ export function registerReports(r: ModuleHono, ctx: RouteCtx): void {
       'content-type': 'text/csv; charset=utf-8',
       'content-disposition': `attachment; filename="${filename}"`,
       'cache-control': 'no-store',
+    })
+  })
+
+  // 明细**行**导出（R1 收尾）：按日组成够按期对账，逐笔核对要下钻行。
+  // 只复用 runDetailQuery（授权/掩码/审计/行数闸都在它里面）；分页硬上限见 domain。
+  r.post('/reports/:id/receipt/detail', async (c) => {
+    const id = reportIdOf(c.req.param('id'))
+    if (id === null) return c.json({ error: 'NOT_FOUND' }, 404)
+    const body = ReceiptBody.safeParse(await c.req.json().catch(() => null))
+    if (!body.success) return c.json({ error: 'INVALID_BODY' }, 400)
+    const t = await receiptTarget(c, id, body.data)
+    if (!t.ok) return c.json({ error: t.error.error, ...(t.error.detail === undefined ? {} : { detail: t.error.detail }) }, t.error.status)
+    const out = await exportDetailCsv(
+      receiptDeps(c), t.target.org, t.target.requester, t.target.panel.metricId, t.target.args,
+    )
+    if (!out.ok) {
+      const status = out.reason === 'not_supported' ? 409 : out.reason === 'denied' ? 403 : 502
+      const error = out.reason === 'not_supported' ? 'DETAIL_NOT_AVAILABLE'
+        : out.reason === 'denied' ? 'FORBIDDEN' : 'QUERY_FAILED'
+      return c.json({ error, ...(out.detail === undefined ? {} : { detail: out.detail }) }, status)
+    }
+    const filename = `detail-${t.target.panel.metricId.replace(/[^a-zA-Z0-9_-]/g, '_')}-${t.target.range.from}_${t.target.range.to}.csv`
+    return c.body(out.out.csv, 200, {
+      'content-type': 'text/csv; charset=utf-8',
+      'content-disposition': `attachment; filename="${filename}"`,
+      'cache-control': 'no-store',
+      // 导出不完整时必须可辨（前端据此提示「只导出了前 N 行」）。
+      'x-row-count': String(out.out.rows),
+      'x-truncated': String(out.out.truncated),
     })
   })
 

@@ -14,6 +14,7 @@ import type { Requester } from './authz'
 import type { DateRange } from './report-period'
 import type { MetricRow } from './metric-store'
 import { runQuery, type QueryDeps } from './query-service'
+import { runDetailQuery } from './drill'
 import { formatValue } from './report-format'
 import type { KpiPanel } from './report-spec'
 
@@ -301,4 +302,84 @@ export function receiptCsv(receipt: ReportReceipt): string {
   const header = 'bizday,value'
   const lines = receipt.series === null ? [] : receipt.series.map((r) => `${r.day},${r.value}`)
   return [header, ...lines].join('\n') + '\n'
+}
+
+// ── 明细行导出（R1 收尾）───────────────────────────────────────────────────────────
+// 按日组成够「按期对账」，逐笔核对要到明细行。只复用 `runDetailQuery`（下钻的唯一执行入口：
+// 授权/掩码/审计/行数闸全在它里面），本文件只负责**分页拼接与 CSV 序列化**，不新开 SQL 通道。
+
+export interface DetailExport {
+  csv: string
+  rows: number
+  /** 命中行数上限 ⇒ true（导出不完整，调用方必须如实告知）。 */
+  truncated: boolean
+  /** 明细总行数（runDetailQuery 的 rowCountTotal）。 */
+  total: number
+}
+
+function csvCell(v: unknown): string {
+  const s = v === null || v === undefined ? '' : String(v)
+  return /[",\n\r]/.test(s) ? `"${s.replaceAll('"', '""')}"` : s
+}
+
+function csvOf(columns: readonly string[], rows: readonly unknown[][]): string {
+  return [columns.map(csvCell).join(','), ...rows.map((r) => r.map(csvCell).join(','))].join('\n') + '\n'
+}
+
+/**
+ * 导出明细行 CSV。分页调 `runDetailQuery`（每页 ≤500，硬上限默认 5000 行）。
+ * 失败语义分开：`not_supported`（指标未声明下钻）≠ `denied`（越权）≠ `error`（仓库故障）。
+ */
+export async function exportDetailCsv(
+  deps: QueryDeps,
+  org: string,
+  requester: Requester,
+  metricId: string,
+  args: Record<string, unknown>,
+  opts: {
+    maxRows?: number
+    pageSize?: number
+    /** 测试缝：注入假下钻执行器（缺省走真实 runDetailQuery）。 */
+    runDetail?: typeof runDetailQuery
+  } = {},
+): Promise<
+  | { ok: true; out: DetailExport }
+  | { ok: false; reason: 'not_supported' | 'denied' | 'error'; detail?: string }
+> {
+  const run = opts.runDetail ?? runDetailQuery
+  const pageSize = Math.max(1, Math.min(opts.pageSize ?? 500, 500))
+  const maxRows = Math.max(1, opts.maxRows ?? 5000)
+  let columns: readonly string[] | null = null
+  const rows: unknown[][] = []
+  let offset = 0
+  let total = 0
+  for (;;) {
+    const page = await run(deps, org, requester, metricId, args, { limit: pageSize, offset })
+    if (page.status !== 'ok') {
+      if (page.status === 'denied' && page.reason === 'no_detail_binding') {
+        return { ok: false, reason: 'not_supported', detail: page.reason }
+      }
+      return {
+        ok: false,
+        reason: page.status === 'denied' ? 'denied' : 'error',
+        detail: page.reason,
+      }
+    }
+    columns ??= page.columns
+    total = page.rowCountTotal
+    rows.push(...page.rows)
+    offset += page.rows.length
+    // 空页 / 到总数 / 到上限 ⇒ 停（防仓库返回异常时死循环）。
+    if (page.rows.length === 0 || offset >= total || rows.length >= maxRows) break
+  }
+  const sliced = rows.slice(0, maxRows)
+  return {
+    ok: true,
+    out: {
+      csv: csvOf(columns ?? [], sliced),
+      rows: sliced.length,
+      truncated: total > sliced.length,
+      total,
+    },
+  }
 }

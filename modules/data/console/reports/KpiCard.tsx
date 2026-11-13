@@ -129,6 +129,7 @@ export function KpiCard({
   const [receipt, setReceipt] = useState<ReportReceipt | null>(null)
   const [receiptErr, setReceiptErr] = useState<string | null>(null)
   const [exportBusy, setExportBusy] = useState(false)
+  const [detailNote, setDetailNote] = useState<string | null>(null)
   /** 用户手工算的数（R1 差异分解）：只在点「对一下」时随请求发给服务端。 */
   const [userValue, setUserValue] = useState<number | null>(null)
 
@@ -152,6 +153,32 @@ export function KpiCard({
       setReceiptErr(messageOf(e))
     } finally {
       setReceiptBusy(false)
+    }
+  }
+
+  const downloadDetail = async (): Promise<void> => {
+    if (receiptCtx === undefined) return
+    setExportBusy(true)
+    setDetailNote(null)
+    try {
+      const { blob, filename, headers } = await apiPostBlob(
+        `/reports/${receiptCtx.reportId}/receipt/detail`, receiptBody(),
+      )
+      const url = URL.createObjectURL(blob)
+      const a = document.createElement('a')
+      a.href = url
+      a.download = filename ?? 'detail.csv'
+      a.click()
+      URL.revokeObjectURL(url)
+      if (headers.get('x-truncated') === 'true') {
+        setDetailNote(
+          `明细超过导出上限，仅导出前 ${headers.get('x-row-count') ?? '?'} 行；请缩小时间窗再导`,
+        )
+      }
+    } catch (e) {
+      setReceiptErr(messageOf(e))
+    } finally {
+      setExportBusy(false)
     }
   }
 
@@ -384,14 +411,20 @@ export function KpiCard({
                     )}
                   </div>
                 )}
-                <div style={{ marginTop: 12 }}>
+                <div style={{ marginTop: 12, display: 'flex', gap: 8, flexWrap: 'wrap' }}>
                   <Button
                     disabled={receipt.series === null} loading={exportBusy}
                     onClick={() => void downloadReceipt()}
                   >
-                    下载按日明细 CSV
+                    下载按日 CSV
+                  </Button>
+                  <Button loading={exportBusy} onClick={() => void downloadDetail()}>
+                    下载明细行 CSV
                   </Button>
                 </div>
+                {detailNote === null ? null : (
+                  <Alert style={{ marginTop: 8 }} type="warning" showIcon message={detailNote} />
+                )}
                 {receipt.notes.length > 0 && (
                   <Typography.Paragraph type="secondary" style={{ fontSize: 12, marginTop: 12 }}>
                     {receipt.notes.join('；')}
