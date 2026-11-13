@@ -2295,6 +2295,27 @@ describePg('报表路由（需要 DATABASE_URL）', () => {
         body: JSON.stringify({ expectedVersion }),
       })
 
+    it('IR v2：POST /reports 接受 v2，存储为扁平化 v1；发布成功', async () => {
+      const { app } = manage()
+      const res = await post(app, {
+        title: 'IR2 报表', renderer: 'platform',
+        spec: {
+          ir: 2, period: { mode: 'last_7_days' },
+          datasets: [{ key: 's', metricId: OPEN_METRIC, dims: ['bizday'] }],
+          blocks: [{ type: 'table', dataset: 's', title: '按日' }],
+        },
+      })
+      expect(res.status).toBe(201)
+      const { id } = await res.json() as { id: string }
+      const specRes = await app.request(`/reports/${id}/spec`)
+      const body = await specRes.json() as { spec: { ir?: unknown; panels: unknown[] } }
+      expect(body.spec.ir).toBeUndefined()
+      expect(body.spec.panels[0]).toMatchObject({ chart: 'table', title: '按日', metricId: OPEN_METRIC })
+
+      const pub = await publish(app, id, await versionOf(app, id))
+      expect(pub.status).toBe(200)
+    })
+
     it('发布前可见面预览：解释页门/部门门/ACL；非 owner 无权（403）', async () => {
       const { app } = manage()
       const id = await createVersioned(app, '预览报表', [openPanel])

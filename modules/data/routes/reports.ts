@@ -70,7 +70,7 @@ import {
   updateSpecAndScope,
   upsertReport,
 } from '../domain/report-store'
-import { PeriodSchema, parseReportSpec } from '../domain/report-spec'
+import { PeriodSchema, parseReportInput, parseReportSpec } from '../domain/report-spec'
 import type { AiTextPanel, ReportSpec } from '../domain/report-spec'
 import { deriveRequiredScope, metricIdsOf, validatePanelMetrics } from '../domain/report-scope'
 import { reportScopeViolations } from '../domain/report-scope-gate'
@@ -377,7 +377,7 @@ export function registerReports(r: ModuleHono, ctx: RouteCtx): void {
     if (parsed.data.renderer === 'platform') {
       // 规格过白名单（机检落点在 parseReportSpec）：不合法 ⇒ 400 带专门码；缺 spec 同样落
       // INVALID_SPEC（safeParse(null) 不通过）——「自绘必须有规格」不靠调用方自觉。
-      const spec = parseReportSpec(parsed.data.spec)
+      const spec = parseReportInput(parsed.data.spec)
       if (!spec.ok) return c.json({ error: spec.code }, 400)
       const org = c.get('tenant').casdoor_org
       // ── 发布门（spec §4.2；issue #778）──────────────────────────────────────────────
@@ -936,7 +936,7 @@ export function registerReports(r: ModuleHono, ctx: RouteCtx): void {
     if (!parsed.success) return c.json({ error: 'INVALID_BODY' }, 400)
     // 规格先过白名单再落库：库侧跨列 check 只判「platform 行 spec 非空」，不判形状——
     // 写路径若不判，垃圾规格（含可执行字段的旧形态）会静默入库（spec §3⑥ 要消灭的正是这个）。
-    const spec = parseReportSpec(parsed.data.spec)
+    const spec = parseReportInput(parsed.data.spec)
     if (!spec.ok) return c.json({ error: spec.code }, 400)
     const org = c.get('tenant').casdoor_org
     // ── 每对象一把锁：与 PUT /reports/:id、DELETE 同键（`${org}/row:${id}`）——同一行的
