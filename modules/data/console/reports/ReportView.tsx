@@ -32,7 +32,7 @@
 //  ③ 窄屏柱状图的类目标签要**强制全显 + 倾斜**（Task 13 走查的 390px 实测：8 个 4–5 字类目
 //     默认 `interval:'auto'` 会被抽掉一半——柱还在、标签没了，读者无法把柱对齐到类目）。
 import { useEffect, useMemo, useRef, useState } from 'react'
-import { Alert, Button, Card, Col, DatePicker, Row, Segmented, Select, Space, Spin, Table, Tag, Typography } from 'antd'
+import { Alert, Button, Card, Col, DatePicker, Input, Row, Segmented, Select, Space, Spin, Table, Tag, Typography } from 'antd'
 import dayjs, { Dayjs } from 'dayjs'
 import { init, use } from 'echarts/core'
 import type { EChartsCoreOption, EChartsType } from 'echarts/core'
@@ -541,11 +541,14 @@ export default function ReportView({
   // 查询时 {...panel.args, ...override}——覆盖键 ⊆ args 键，值仍走服务端授权链（见文件头）。
   const [override, setOverride] = useState<Record<string, unknown>>({})
   const [branches, setBranches] = useState<Array<{ branchNum: string; name: string }> | null>(null)
+  // 报表级共享筛选（V4b）：键 → 运行期值；空对象 = 全用默认。
+  const [filterValues, setFilterValues] = useState<Record<string, unknown>>({})
 
   // 观看面可能带降级占位符（`{index,denied:true}`）——类型上并入，运行期用 `isDeniedPanel` 分流。
   // V2：面板清单统一从 plan 取（索引与 spec.panels 一一对应，占位符原位保留）。
   const plan = useMemo(() => toReportPlan(spec), [spec])
   const panels: ViewPanel[] = useMemo(() => plan.panels.map((p) => p.panel), [plan])
+  const specFilters = plan.filters
 
   // 期间 → 具体日期段（custom 形态写侧已校验 from<=to；坏规格兜底成「无期间」而不是崩页）。
   const range = useMemo<DateRange | null>(() => {
@@ -596,7 +599,11 @@ export default function ReportView({
    */
   const argsOf = (p: DataPanel): Record<string, unknown> => {
     const branchNum = typeof override.branch_num === 'string' ? override.branch_num : undefined
-    const args = panelArgsOf(p, range, branchNum)
+    // 共享筛选（V4b）：值并入 args，优先级由 panelArgsOf 一处决定。
+    const args = panelArgsOf(
+      p, range, branchNum,
+      specFilters.length === 0 ? undefined : { defs: specFilters, values: filterValues },
+    )
     for (const [k, v] of Object.entries(override)) {
       if (k === 'branch_num') continue
       if (k === 'bizday' && range !== null) continue // 规格级期间窗口优先
@@ -629,7 +636,7 @@ export default function ReportView({
     })
     // argsOf/range 都由 panels/override/period 派生 ⇒ 依赖里给这三者即可（避免每渲染重查）
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [panels, override, period])
+  }, [panels, override, period, filterValues])
 
   // 视口观察：只给「看得见」的图表查历史对比。
   useEffect(() => {
@@ -709,7 +716,7 @@ export default function ReportView({
     return () => { cancelled = true; clearTimeout(timer) }
     // argsOf/range 由 override/period 派生；results 变化只用于判断主查询完成。
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [panels, override, period, range, results, visibleTick])
+  }, [panels, override, period, range, results, visibleTick, filterValues])
 
   const showRangePicker = period === null && defaults.bizday !== undefined
   const showBranchPicker = defaults.branch_num !== undefined
@@ -758,7 +765,7 @@ export default function ReportView({
       {/* 筛选栏（#1047）：只为规格 args 里出现过的参数键出控件；改选即重查（override）。
           period 声明后 bizday 归期间控件管，这里不再出 RangePicker（避免两个口径同屏）。
           窄屏换行（flexWrap），控件全部 small 档。 */}
-      {(showRangePicker || showBranchPicker) && (
+      {(showRangePicker || showBranchPicker || specFilters.length > 0) && (
         <div data-testid="spec-filters" style={{ display: 'flex', gap: 8, flexWrap: 'wrap', marginBottom: 8 }}>
           {showRangePicker && (
             <DatePicker.RangePicker
@@ -772,6 +779,31 @@ export default function ReportView({
               }}
             />
           )}
+          {specFilters.map((f) => (
+            <span key={f.key} data-testid={`filter-${f.key}`}>
+              {f.type === 'date_range' ? (
+                <DatePicker.RangePicker
+                  size="small"
+                  placeholder={[`${f.label}起`, `${f.label}止`]}
+                  onChange={(_, strs) => {
+                    const from = strs[0]
+                    const to = strs[1]
+                    setFilterValues((v) => ({
+                      ...v,
+                      [f.key]: from !== '' && to !== '' ? { from, to } : undefined,
+                    }))
+                  }}
+                />
+              ) : (
+                <Input
+                  size="small" allowClear
+                  style={{ width: 160 }}
+                  placeholder={f.label}
+                  onChange={(e) => setFilterValues((v) => ({ ...v, [f.key]: e.target.value }))}
+                />
+              )}
+            </span>
+          ))}
           {showBranchPicker && (
             <span data-testid="branch-filter">
               <Select
@@ -802,12 +834,13 @@ export default function ReportView({
               // 期间/门店/版本都是**当前观看态**：切期间即重生成，切门店即换切片。
               <Card size="small" title={<Space>{p.title}<Tag color="blue">AI</Tag></Space>}>
                 <AiTextPanel
-                  key={`${i}:${JSON.stringify(period)}:${aiBranchNum ?? ''}`}
+                  key={`${i}:${JSON.stringify(period)}:${aiBranchNum ?? ''}:${JSON.stringify(filterValues)}`}
                   reportId={reportId}
                   panelIndex={i}
                   focus={p.focus}
                   period={period}
                   branchNum={aiBranchNum}
+                  filters={Object.keys(filterValues).length === 0 ? undefined : filterValues}
                   version={pinnedVersion ?? undefined}
                 />
               </Card>
