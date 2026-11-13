@@ -183,6 +183,8 @@ api:
     #    裁剪，Task 4 渲染器从这里取规格）；写 = **单资产写**（data:query + canEditAsset，#1325）。
     #    注册序保持字面量在前、param 在后（#145 口径）。──
     - { method: GET,    path: /reports/:id/spec,      scope: data:query }
+    # 审阅面（R2）：只读草稿/词表，不查数；改用 owner ∪ data:manage 在 handler 判。
+    - { method: GET,    path: /reports/:id/review,    scope: data:query }
     - { method: PUT,    path: /reports/:id/spec,      scope: data:query }
     # ── 定义版本（月报重做 Task 10；设计 2026-10-26-report-versioning-and-standalone §4/§5）──
     # 发布/下线/回滚/历史/草稿 = **单资产写/读**（data:query + canEditAsset，#1325；
