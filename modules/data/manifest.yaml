@@ -214,6 +214,7 @@ api:
     # ── AI 文本（ai_text；设计 2026-10-26 §4，计划 Task 7）：观看面 = data:query。
     #    更细的页门在 handler 里按**快照自己的** required_scope 另判（同 published-spec），
     #    草稿预览（preview:'draft'）另要 canEditAsset（owner ∪ data:manage）；跨租户 / 无门一律 404。──
+    - { method: GET,    path: /reports/narrative-stats,               scope: data:manage }
     - { method: POST,   path: /reports/:id/narrative,                 scope: data:query }
     - { method: POST,   path: /reports/:id/narrative/stream,          scope: data:query }
     # ── 计算凭证（R1）：观看面 = data:query；页门/快照门/草稿分档**与 narrative 同一份**解析
