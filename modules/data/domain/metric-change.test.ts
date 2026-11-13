@@ -3,6 +3,7 @@ import { afterAll, beforeAll, describe, expect, it } from 'vitest'
 import { Pool } from 'pg'
 import { applyMigrations } from '../test-util'
 import { submitChange, listChanges, getChange, withdrawChange, adoptChange, rejectChange } from './metric-change'
+import type { ChangeKind } from './metric-change'
 import { applyPreview } from './metric-change-preview'
 import { upsertL1Metric } from './metric-store'
 import { writeL2Declaration } from './metric-write'
@@ -64,6 +65,12 @@ const REQ: Requester = {
   hasScope: (c) => c === 'data:manage',
 }
 const writeDeps = (p: Pool): MetricWriteDeps => ({ pool: p, adoptedSources: new Set(['lemeng']), requester: REQ })
+/**
+ * 提交者 'a' 的管理员版（P6 Task 2）：本文件里既有行的 creator 是采纳者 'reviewer'，
+ * 而若干用例考的是**采纳语义**（meta 合并 / delete / update upsert），不是 creator 闸；
+ * 那些提交按新规则必须持 data:manage 才合法。creator 闸本身另有 P6 Task 2 专块覆盖。
+ */
+const ADMIN_A = { userId: 'a', channel: 'pat' as const, hasScope: (c: string) => c === 'data:manage' }
 
 /** 把单据直接推到 preview_ready（跳过试算执行：采纳链路只关心状态与快照在位）。 */
 async function markReady(id: number, preview: Record<string, unknown> = { rows: 1 }): Promise<void> {
@@ -198,7 +205,7 @@ describePg('adoptChange / rejectChange', () => {
 
   it('meta 档采纳：只动声明了的字段（缺席键不得清空既有值）', async () => {
     // 第一张：两字段都写 → 生效
-    const s1 = await submitChange(pool, ORG, { userId: 'a', channel: 'pat' }, 'x:adopt_me', 'meta',
+    const s1 = await submitChange(pool, ORG, ADMIN_A, 'x:adopt_me', 'meta',
       { bizDescription: '含税口径', unit: '元' })
     if (!s1.ok) throw new Error('unreachable')
     await markReady(s1.change.id)
@@ -208,7 +215,7 @@ describePg('adoptChange / rejectChange', () => {
     expect(row1.rows[0]?.biz_description).toBe('含税口径')
     expect(row1.rows[0]?.unit).toBe('元')
     // 第二张：只声明 unit → bizDescription 缺席键必须保持原值（updateMetricMeta 语义：缺席=不改）
-    const s2 = await submitChange(pool, ORG, { userId: 'a', channel: 'pat' }, 'x:adopt_me', 'meta', { unit: '万元' })
+    const s2 = await submitChange(pool, ORG, ADMIN_A, 'x:adopt_me', 'meta', { unit: '万元' })
     if (!s2.ok) throw new Error('unreachable')
     await markReady(s2.change.id)
     expect((await adoptChange(writeDeps(pool), ORG, s2.change.id)).ok).toBe(true)
@@ -220,7 +227,7 @@ describePg('adoptChange / rejectChange', () => {
 
   it('meta 档显式清空（{unit:\'\'}）采纳后 unit 置 null（P1 Task 3，销缓办④的显式清空契约）', async () => {
     // 前置：上一用例把 x:adopt_me 的 unit 改成 '万元'；本单只带 unit:'' ⇒ 显式清空
-    const s = await submitChange(pool, ORG, { userId: 'a', channel: 'pat' }, 'x:adopt_me', 'meta', { unit: '' })
+    const s = await submitChange(pool, ORG, ADMIN_A, 'x:adopt_me', 'meta', { unit: '' })
     if (!s.ok) throw new Error('unreachable')
     await markReady(s.change.id)
     expect((await adoptChange(writeDeps(pool), ORG, s.change.id)).ok).toBe(true)
@@ -233,7 +240,7 @@ describePg('adoptChange / rejectChange', () => {
     if (!mk.ok) throw new Error('unreachable')
     await markReady(mk.change.id)
     expect((await adoptChange(writeDeps(pool), ORG, mk.change.id)).ok).toBe(true)
-    const del = await submitChange(pool, ORG, { userId: 'a', channel: 'pat' }, 'x:del_me', 'delete', {})
+    const del = await submitChange(pool, ORG, ADMIN_A, 'x:del_me', 'delete', {})
     if (!del.ok) throw new Error('unreachable')
     await markReady(del.change.id)
     const out = await adoptChange(writeDeps(pool), ORG, del.change.id)
@@ -310,7 +317,7 @@ describePg('P1 Task 3：归属随单 + 同名互斥 + 撞 id 拒收', () => {
       { ...OWN_DECL, ownerDept: 'dept-other' })
     expect(otherDept.ok).toBe(true)
     // update 档：保留自身 title（excludeMetricId = 自身）⇒ 放行（不是 409）
-    const self = await submitChange(pool, PORG, { userId: 'a', channel: 'pat' }, 'x:p1mo_m1', 'update', OWN_DECL)
+    const self = await submitChange(pool, PORG, ADMIN_A, 'x:p1mo_m1', 'update', OWN_DECL)
     expect(self.ok).toBe(true)
   })
 
@@ -350,7 +357,7 @@ describePg('P1 Task 3：归属随单 + 同名互斥 + 撞 id 拒收', () => {
     // x:p1mo_m1 已在第一个用例生效
     const s = await submitChange(pool, PORG, { userId: 'a', channel: 'pat' }, 'x:p1mo_m1', 'create', OWN_DECL)
     expect(s).toMatchObject({ ok: false, http: 400, error: 'METRIC_ID_EXISTS' })
-    const u = await submitChange(pool, PORG, { userId: 'a', channel: 'pat' }, 'x:p1mo_m1', 'update', OWN_DECL)
+    const u = await submitChange(pool, PORG, ADMIN_A, 'x:p1mo_m1', 'update', OWN_DECL)
     expect(u.ok).toBe(true)
   })
 
@@ -359,7 +366,7 @@ describePg('P1 Task 3：归属随单 + 同名互斥 + 撞 id 拒收', () => {
       { ...OWN_DECL, synonyms: Array.from({ length: 17 }, (_, i) => `同义词${i}`) })
     expect(bad).toMatchObject({ ok: false, http: 400, error: 'INVALID_DECLARATION' })
     // update 只带 variantNote ⇒ entity/synonyms/owner_dept 保留（缺席 = 不改），variant_note 更新
-    const s = await submitChange(pool, PORG, { userId: 'a', channel: 'pat' }, 'x:p1mo_m1', 'update',
+    const s = await submitChange(pool, PORG, ADMIN_A, 'x:p1mo_m1', 'update',
       { baseMetric: L1_ID, op: { kind: 'refine' }, alias: '部门毛利·P1MO', variantNote: '改口：含加盟仓' })
     expect(s.ok).toBe(true)
     if (s.ok) {
@@ -604,5 +611,104 @@ describePg('P5 Task 1：declaration 档（能力归还）', () => {
     } finally {
       await pool.query('delete from data.metrics where org = $1 and id = $2', [DORG, 'p5mc:retail:race_probe'])
     }
+  })
+})
+
+// ── P6 Task 2（2026-11-14）：提交期 creator 预检（消「绿单死采纳」）─────────────────────
+// 判据与 domain/metric-write.ts 的 creator 闸同一形状（updateMetricMeta :348-351、
+// writeL2Declaration :208-210、deleteMetricDeclaration :253-255）：
+//   目标 L2 行存在、created_by 已回填、既非提交者、提交者又不持 data:manage ⇒ 提交期 403
+//   NOT_METRIC_CREATOR，**不落单**（而不是立一张 preview_ready 的死单，等到采纳期才 403）。
+// declaration / override 档不适用：前者新建（无目标行），后者只收 L1 id（L1 行 created_by 恒 NULL）。
+describePg('P6 Task 2：提交期 creator 预检', () => {
+  const CORG = 'org-p6-creator-precheck'
+  const OWNER = 'p6c-owner'
+  const INTRUDER = 'p6c-intruder'
+  /** 行创建者身份（adoptedSources 与 L1_FIXTURE.sourceSystem 对齐）。 */
+  const depsOf = (userId: string): MetricWriteDeps => ({
+    pool,
+    adoptedSources: new Set(['lemeng']),
+    requester: {
+      userId, orgId: CORG, channel: 'pat', keyId: 1, scopes: [], hasScope: () => false,
+    },
+  })
+  const ticketsOf = async (metricId: string): Promise<number> => {
+    const r = await pool.query(
+      'select count(*)::int as n from data.metric_change where org = $1 and metric_id = $2', [CORG, metricId])
+    return r.rows[0].n as number
+  }
+  /** 落一条 created_by=OWNER 的树形 L2 行（writeL2Declaration 的唯一写路径，title 文件内唯一）。 */
+  const seedOwnedRow = async (id: string): Promise<void> => {
+    await pool.query('delete from data.metrics where org = $1 and id = $2', [CORG, id])
+    const seeded = await writeL2Declaration(depsOf(OWNER), CORG, id, {
+      baseMetric: L1_ID, op: { kind: 'refine' }, alias: `P6 创建者夹具·${id}`,
+    })
+    expect(seeded).toEqual({ ok: true })
+  }
+  const updatePayloadOf = (id: string): Record<string, unknown> => ({
+    baseMetric: L1_ID, op: { kind: 'refine' }, alias: `P6 改动·${id}`,
+  })
+
+  beforeAll(async () => {
+    await upsertL1Metric(pool, L1_FIXTURE)
+    await pool.query('delete from data.metric_change where org = $1', [CORG])
+    await pool.query('delete from data.metrics where org = $1', [CORG])
+  })
+  afterAll(async () => {
+    await pool.query('delete from data.metric_change where org = $1', [CORG])
+    await pool.query('delete from data.metrics where org = $1', [CORG])
+  })
+
+  it('★ 他人 L2 的 update / delete / meta ⇒ 403 NOT_METRIC_CREATOR，且一张单都不落', async () => {
+    const id = 'p6c:others_l2'
+    await seedOwnedRow(id)
+    const cases: Array<[ChangeKind, unknown]> = [
+      ['update', updatePayloadOf(id)],
+      ['delete', {}],
+      ['meta', { unit: '元' }],
+    ]
+    for (const [kind, payload] of cases) {
+      const r = await submitChange(pool, CORG, { userId: INTRUDER, channel: 'pat' }, id, kind, payload)
+      expect(r, kind).toMatchObject({ ok: false, http: 403, error: 'NOT_METRIC_CREATOR' })
+    }
+    expect(await ticketsOf(id)).toBe(0)
+  })
+
+  it('本人（提交者 = created_by）⇒ update / delete / meta 都放行', async () => {
+    const id = 'p6c:own_l2'
+    await seedOwnedRow(id)
+    const up = await submitChange(pool, CORG, { userId: OWNER, channel: 'pat' }, id, 'update', updatePayloadOf(id))
+    expect(up.ok).toBe(true)
+    const meta = await submitChange(pool, CORG, { userId: OWNER, channel: 'pat' }, id, 'meta', { unit: '元' })
+    expect(meta.ok).toBe(true)
+    const del = await submitChange(pool, CORG, { userId: OWNER, channel: 'pat' }, id, 'delete', {})
+    expect(del.ok).toBe(true)
+  })
+
+  it('管理员（持 data:manage）改他人的 L2 ⇒ update / delete / meta 都放行', async () => {
+    const id = 'p6c:admin_l2'
+    await seedOwnedRow(id)
+    const admin = { userId: 'p6c-admin', channel: 'pat' as const, hasScope: (c: string) => c === 'data:manage' }
+    const up = await submitChange(pool, CORG, admin, id, 'update', updatePayloadOf(id))
+    expect(up.ok).toBe(true)
+    const meta = await submitChange(pool, CORG, admin, id, 'meta', { unit: '元' })
+    expect(meta.ok).toBe(true)
+    const del = await submitChange(pool, CORG, admin, id, 'delete', {})
+    expect(del.ok).toBe(true)
+  })
+
+  it('declaration / override 档不受 creator 预检影响（新建 / L1 路径）', async () => {
+    // declaration：不存在的 id = 新建，无目标行可判 creator
+    const DECL_ENTRY = {
+      name: 'p6c:decl_new', label: 'P6 声明·新建', definition: 'creator 预检豁免夹具',
+      expression: 'sum(fct_retail_sale.sale_amount)', grain: ['system_book', 'bizday'],
+    }
+    const decl = await submitChange(pool, CORG, { userId: INTRUDER, channel: 'pat' },
+      DECL_ENTRY.name, 'declaration', DECL_ENTRY)
+    expect(decl.ok).toBe(true)
+    // override：只收 L1 id（L1 行 created_by 恒 NULL），非管理员也可立单
+    const ovr = await submitChange(pool, CORG, { userId: INTRUDER, channel: 'pat' }, L1_ID, 'override',
+      { name: L1_ID, label: 'P6 覆盖夹具', expression: 'sum(fct_retail_sale.sale_amount)', grain: ['bizday'] })
+    expect(ovr.ok).toBe(true)
   })
 })

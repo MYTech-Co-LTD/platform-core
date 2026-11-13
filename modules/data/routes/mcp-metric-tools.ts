@@ -180,8 +180,9 @@ export const metricTools: McpToolGroup = {
       // submitted_channel 用 'mcp'（不是 'pat'）：区分「工具面提的单」与「HTTP 面提的单」，
       // 决策端点的 session-only 闸只看 requester.channel，不受此值影响。
       const out = await submitChange(deps.pool, deps.org,
-        { userId: requester.userId, channel: 'mcp' },
-        parsed.data.metricId, parsed.data.kind as ChangeKind, parsed.data.payload ?? {})
+        { userId: requester.userId, channel: 'mcp', hasScope: (code) => requester.hasScope(code) },
+        parsed.data.metricId, parsed.data.kind as ChangeKind, parsed.data.payload ?? {},
+      )
       return submitResultOf(deps, out)
     }
 
@@ -224,7 +225,9 @@ export const metricTools: McpToolGroup = {
           'select 1 from data.metrics where org = $1 and id = $2', [deps.org, id])
         const kind: ChangeKind = (cur.rowCount ?? 0) === 0 ? 'create' : 'update'
         return submitResultOf(deps, await submitChange(
-          deps.pool, deps.org, { userId: requester.userId, channel: 'mcp' }, id, kind, body))
+          deps.pool, deps.org,
+          { userId: requester.userId, channel: 'mcp', hasScope: (code) => requester.hasScope(code) },
+          id, kind, body))
       }
       // 以下为应急回滚路径（DATA_METRIC_REVIEW_MODE='off'），原样保留——一个发布周期后删。
       const r = await writeL2Declaration(writeDeps, deps.org, id, body)
@@ -241,7 +244,9 @@ export const metricTools: McpToolGroup = {
     // 删不到才判 L1，与 deleteMetricDeclaration 同款）。本文件不再内联。
     if (process.env.DATA_METRIC_REVIEW_MODE !== 'off') {
       return submitResultOf(deps, await submitChange(
-        deps.pool, deps.org, { userId: requester.userId, channel: 'mcp' }, parsed.data.id, 'delete', {}))
+        deps.pool, deps.org,
+        { userId: requester.userId, channel: 'mcp', hasScope: (code) => requester.hasScope(code) },
+        parsed.data.id, 'delete', {}))
     }
     // 以下为应急回滚路径（DATA_METRIC_REVIEW_MODE='off'），原样保留——一个发布周期后删。
     const r = await deleteMetricDeclaration(writeDeps, deps.org, parsed.data.id)

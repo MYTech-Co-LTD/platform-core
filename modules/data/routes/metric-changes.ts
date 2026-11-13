@@ -75,7 +75,8 @@ export function registerMetricChanges(r: ModuleHono, ctx: RouteCtx): void {
     if (!parsed.success) return c.json({ error: 'INVALID_BODY' }, 400)
     const org = c.get('tenant').casdoor_org
     const out = await submitChange(ctx.pool, org,
-      { userId: requester.userId, channel: requester.channel },
+      // hasScope 是 P6 Task 2 creator 预检的管理员豁免依据（漏传 = 管理员被误拒）。
+      { userId: requester.userId, channel: requester.channel, hasScope: (code) => requester.hasScope(code) },
       parsed.data.metricId, parsed.data.kind, parsed.data.payload ?? {})
     if (!out.ok) return c.json({ error: out.error }, out.http)
     const preview = await runPreview({ pool: ctx.pool, execute: previewExecOf(ctx) }, org, out.change)

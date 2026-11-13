@@ -676,6 +676,53 @@ describePg('P1 Task 7：override 档', () => {
   })
 })
 
+// ── P6 Task 2（2026-11-14）：提交期 creator 预检经 REST 面生效 ─────────────────────
+// 域层判据见 domain/metric-change.ts 的 precheckOf；本块钉**路由接线**：路由必须把
+// requester.hasScope 传进 submitChange，否则管理员也会被误拒（= 线上回归）。
+describePg('P6 Task 2：提交期 creator 预检（REST 面）', () => {
+  const CID = 'x:p6_creator_route'
+  const seedForeignRow = async (): Promise<void> => {
+    await pool.query('delete from data.metric_change where org = $1 and metric_id = $2', [ORG, CID])
+    await pool.query('delete from data.metrics where org = $1 and id = $2', [ORG, CID])
+    await pool.query(
+      `insert into data.metrics
+         (org, id, title, description, required_scope, subject_column, select_sql, group_by, params,
+          source, updated_by, version, totalable, sla_days, freshness_relations, basis, certified, created_by)
+       values ($1, $2, 'P6 创建者预检·路由夹具', '', null, 'org',
+               'select sum(mart_sales_daily.revenue) as value, bizday from mart_sales_daily',
+               'bizday', '{}'::jsonb, 'l2', 'u-owner', 1, true, 1, '[]'::jsonb, 'l1_tree', 'draft', 'u-owner')`,
+      [ORG, CID])
+  }
+  const submitMeta = (identity: ReturnType<typeof makeIdentity>) => {
+    const app = buildTestApp(mod, identity, { pool, execute: async () => ({ rows: [] }) } as never,
+      { id: 1, casdoor_org: ORG })
+    return app.request('/metric-changes', {
+      method: 'POST', headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ metricId: CID, kind: 'meta', payload: { unit: '元' } }),
+    })
+  }
+  const ticketsOf = async (): Promise<number> => {
+    const r = await pool.query(
+      'select count(*)::int as n from data.metric_change where org = $1 and metric_id = $2', [ORG, CID])
+    return r.rows[0].n as number
+  }
+
+  it('★ 非创建者且无 data:manage ⇒ 403 NOT_METRIC_CREATOR 且不落单', async () => {
+    await seedForeignRow()
+    const res = await submitMeta(makeIdentity({ orgId: ORG, scopes: ['data:query'], userId: 'u-intruder' }))
+    expect(res.status).toBe(403)
+    expect(await res.json()).toEqual({ error: 'NOT_METRIC_CREATOR' })
+    expect(await ticketsOf()).toBe(0)
+  })
+
+  it('★ 管理员（持 data:manage）⇒ 放行并落单（路由 hasScope 接线不回退）', async () => {
+    await seedForeignRow()
+    const res = await submitMeta(makeIdentity({ orgId: ORG, scopes: ['data:query', 'data:manage'], userId: 'u-admin' }))
+    expect(res.status).toBe(200)
+    expect(await ticketsOf()).toBe(1)
+  })
+})
+
 describePg('POST /metric-changes/:id/withdraw（提交者本人）', () => {
   it('本人撤回 ⇒ 200 withdrawn；别人 ⇒ 403 FORBIDDEN', async () => {
     // 壳身份 = 提交者本人（withdrawChange 按 submitted_by = requester.userId 判）
