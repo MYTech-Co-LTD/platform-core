@@ -373,11 +373,13 @@ describePg('recentPreviewFor（P6 Task 3：提交限速判据）', () => {
     expect(await recentPreviewFor(pool, ORG, 'x:p6_recent_superseded', NOW)).toBe(true)
   })
 
-  it('已决单（adopted / rejected）不作判据 ⇒ false；最新空快照不抹掉更早的近期快照', async () => {
+  it('已决/离场单（adopted / rejected / withdrawn）不作判据 ⇒ false；最新空快照不抹掉更早的近期快照', async () => {
     await insert('x:p6_recent_adopted', 'adopted', { ranAt: at(1_000) })
     expect(await recentPreviewFor(pool, ORG, 'x:p6_recent_adopted', NOW)).toBe(false)
     await insert('x:p6_recent_rejected', 'rejected', { ranAt: at(1_000) })
     expect(await recentPreviewFor(pool, ORG, 'x:p6_recent_rejected', NOW)).toBe(false)
+    await insert('x:p6_recent_withdrawn', 'withdrawn', { ranAt: at(1_000) })
+    expect(await recentPreviewFor(pool, ORG, 'x:p6_recent_withdrawn', NOW)).toBe(false)
     // 最新一条 = 被限速跳过的空快照（draft preview null）；更早一条 superseded 有近期快照 ⇒ 仍命中
     await insert('x:p6_recent_nullmask', 'superseded', { ranAt: at(1_000) })
     await insert('x:p6_recent_nullmask', 'draft', null)

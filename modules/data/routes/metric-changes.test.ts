@@ -775,8 +775,8 @@ describePg('POST /metric-changes/:id/withdraw（提交者本人）', () => {
 
 // ── P6 Task 3：提交试算限速（同 metricId 60s 内重复提交不烧第二次算力）──────────────
 // 语义：提交本身是合法动作 ⇒ 仍落单；只跳过试算（单留 draft，人面按「跑试算」补）。
-// 判据看**最近一次真跑过的试算**（任何状态）：被跳过的单没有快照，不能把判据抹回 false；
-// 看完的连续提交（第三、第四次…）仍命中，这才是「不烧算力」的本意。
+// 判据看**最近一条带快照且未被决策的单**（superseded 计入，adopted/rejected/withdrawn 排除）：
+// 被跳过的单没有快照，不能把判据抹回 false；看完成的连续提交（第三、第四次…）仍命中。
 describePg('P6 Task 3：提交即试算的限速（POST /metric-changes）', () => {
   const CREATE_PAYLOAD = { baseMetric: L1_ID, op: { kind: 'refine' } }
   const submit = (app: ReturnType<typeof appOf>, metricId: string) => app.request('/metric-changes', {
@@ -863,5 +863,25 @@ describePg('P6 Task 3：提交即试算的限速（POST /metric-changes）', () 
     const b3 = await c3.json() as { change: { status: string }; previewSkipped?: string }
     expect(b3.previewSkipped).toBeUndefined()
     expect(b3.change.status).toBe('preview_ready')
+  })
+
+  it('已撤回单不作判据：撤回后 60s 内同 metricId 重提 ⇒ 正常试算（旧快照对应旧 payload）', async () => {
+    const app = appOf(async () => ({ rows: [{ rows: 2, value: 20 }] }))
+    // 专属 alias：同文件「采纳」用例已在 data.metrics 落了基底 title 的行，复用会撞同名互斥
+    const post = (metricId: string) => app.request('/metric-changes', {
+      method: 'POST', headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ metricId, kind: 'create', payload: { ...CREATE_PAYLOAD, alias: '撤回重提夹具' } }),
+    })
+    const first = await post('x:p6_withdrawn_rework')
+    expect(first.status).toBe(200)
+    const b1 = await first.json() as { change: { id: number; status: string } }
+    expect(b1.change.status).toBe('preview_ready')
+    // 提交者本人撤回（withdraw 按 submitted_by = requester.userId 判）
+    expect((await app.request(`/metric-changes/${b1.change.id}/withdraw`, { method: 'POST' })).status).toBe(200)
+    const second = await post('x:p6_withdrawn_rework')
+    expect(second.status).toBe(200)
+    const b2 = await second.json() as { change: { status: string }; previewSkipped?: string }
+    expect(b2.previewSkipped).toBeUndefined()
+    expect(b2.change.status).toBe('preview_ready')
   })
 })

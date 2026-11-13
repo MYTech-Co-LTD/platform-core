@@ -74,10 +74,9 @@ export function registerMetricChanges(r: ModuleHono, ctx: RouteCtx): void {
     const parsed = SubmitBody.safeParse(await c.req.json().catch(() => null))
     if (!parsed.success) return c.json({ error: 'INVALID_BODY' }, 400)
     const org = c.get('tenant').casdoor_org
-    // 提交即试算的限速（P6 Task 3）：同 metricId 已有未决单刚落过试算 ⇒ 仍落单（提交是合法
-    // 业务动作，不拒绝），但跳过试算——单停在 draft，人可在待核对页按「跑试算」补。
-    // 判据在 submitChange **之前**读：提交会先 supersede 旧单再落新单，事后读到的「最新一条」
-    // 是自己刚落的单（preview 为 null），判据会指向错误的单。
+    // 提交即试算的限速（P6 Task 3）：取最近一条带快照且未被决策的单（superseded 计入，
+    // adopted/rejected/withdrawn 排除）。命中 ⇒ 仍落单（提交是合法业务动作，不拒绝），但跳过
+    // 试算——单停在 draft，人可在待核对页按「跑试算」补。
     const rateLimited = await recentPreviewFor(ctx.pool, org, parsed.data.metricId)
     const out = await submitChange(ctx.pool, org,
       { userId: requester.userId, channel: requester.channel },
