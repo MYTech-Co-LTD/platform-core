@@ -72,6 +72,20 @@ async function rpc(app: Hono, payload: unknown): Promise<Response> {
   })
 }
 
+/**
+ * P4 回滚开关（DATA_METRIC_REVIEW_MODE，spec §14）：'off' ⇒ 写工具走旧直写路径。
+ * 开关在 call 时读 process.env ⇒ 现场切换 + 返回还原函数（模式同 DATA_MCP_ALLOW_MUTATING 的
+ * try/finally，不向同 worker 的其他文件泄漏）。
+ */
+function reviewModeOff(): () => void {
+  const prev = process.env.DATA_METRIC_REVIEW_MODE
+  process.env.DATA_METRIC_REVIEW_MODE = 'off'
+  return () => {
+    if (prev === undefined) delete process.env.DATA_METRIC_REVIEW_MODE
+    else process.env.DATA_METRIC_REVIEW_MODE = prev
+  }
+}
+
 /** 工具级载荷：content[0].text 是域层结果的 JSON 串——协议外壳与业务结局的接缝。 */
 function toolText(body: { result: { content: { text: string }[] } }): Record<string, unknown> {
   return JSON.parse(body.result.content[0].text) as Record<string, unknown>
@@ -138,6 +152,12 @@ describePg('写面（需要 DATABASE_URL）', () => {
     const tools = (body as { result: { tools: { name: string; description: string }[] } }).result.tools
     expect(tools.map((t) => t.name).sort()).toEqual([...METRIC_REPORT_TOOL_NAMES, ...PIPELINE_TOOL_NAMES, ...DEMAND_TOOL_NAMES].sort())
     expect(tools.find((t) => t.name === 'customize_metric')!.description).toContain('不能凭空造新指标')
+    // 提案版语义（P4 Task 1，spec §11）：两把写工具的描述必须声明「只提案不生效」，
+    // 且把状态/驳回原因的读取口指给 list_metric_changes——schema 不承载这句话。
+    expect(tools.find((t) => t.name === 'customize_metric')!.description).toContain('不直接生效')
+    expect(tools.find((t) => t.name === 'delete_custom_metric')!.description).toContain('不直接生效')
+    expect(tools.find((t) => t.name === 'customize_metric')!.description).toContain('list_metric_changes')
+    expect(tools.find((t) => t.name === 'delete_custom_metric')!.description).toContain('list_metric_changes')
   })
 
   it('list_metrics → 基底含刚种的 L1（带可用维度）；自定义面初始为空', async () => {
@@ -155,70 +175,262 @@ describePg('写面（需要 DATABASE_URL）', () => {
     expect(out.custom).toEqual([])
   })
 
-  it('★ happy path：customize 成功 → 落库可读回（且 list 里出现在「自定义」面）', async () => {
+  it('★ customize_metric 缺省（on）落变更单（P4 Task 1）：不直接生效——data.metrics 无新行，list_metric_changes 可见 kind=create', async () => {
     await seedL1()
     const created = await (await rpc(app(), {
-      jsonrpc: '2.0', id: 3, method: 'tools/call',
+      jsonrpc: '2.0', id: 40, method: 'tools/call',
       params: {
         name: 'customize_metric',
-        arguments: { id: L2_ID, baseMetric: L1_ID, alias: '本租户口径', visibility: { dims: ['bizday'] } },
+        arguments: { id: L2_ID, baseMetric: L1_ID, alias: '提案版口径', visibility: { dims: ['bizday'] } },
       },
     })).json()
-    expect(toolText(created as never).status).toBe('ok')
-
-    const listed = await (await rpc(app(), {
-      jsonrpc: '2.0', id: 4, method: 'tools/call',
-      params: { name: 'list_metrics', arguments: {} },
-    })).json()
-    expect((toolText(listed as never).custom as { id: string }[]).map((c) => c.id)).toContain(L2_ID)
-
-    // 独立回读存储层：不采信工具自述
-    const row = await pool.query(
-      `select source, subject_column, group_by from data.metrics where org = $1 and id = $2`, [ORG, L2_ID])
-    expect(row.rowCount).toBe(1)
-    expect(row.rows[0]).toMatchObject({ source: 'l2', subject_column: 'org', group_by: 'bizday' })
-  })
-
-  it('★ happy path：customize 用 expr（受限算术组合多条口径）→ 工具返回非错误，且写入成功', async () => {
-    await seedL1()
-    const l2ExprId = 'mw_l2_half_revenue'
-    const body = await (await rpc(app(), {
-      jsonrpc: '2.0', id: 12, method: 'tools/call',
-      params: {
-        name: 'customize_metric',
-        arguments: {
-          id: l2ExprId,
-          // 工具面只暴露顶层的 `expr`（`op.kind` 由面归一）—— 取证点之一
-          expr: { kind: 'div', left: { kind: 'ref', id: L1_ID }, right: { kind: 'num', value: 2 } },
-        },
-      },
-    })).json()
-    const out = toolText(body as never)
+    const out = toolText(created as never)
     expect(out.status).toBe('ok')
-    expect((body as { result: { isError: boolean } }).result.isError).toBe(false)
+    expect(typeof out.changeId).toBe('number')
+    // 提交即试算（与 submit_metric_change 同契，P0 终审 F1）：注入执行器在位 ⇒ preview_ready
+    expect(out.state).toBe('preview_ready')
 
-    // 独立回读存储层：不采信工具自述（口径确实落库了，且带编译器注入的除零守卫）
-    const row = await pool.query(
-      'select source, subject_column, group_by, select_sql from data.metrics where org = $1 and id = $2',
-      [ORG, l2ExprId])
-    expect(row.rowCount).toBe(1)
-    expect(row.rows[0]).toMatchObject({ source: 'l2', subject_column: 'org', group_by: 'bizday' })
-    expect(row.rows[0].select_sql).toContain('NULLIF((2), 0)')
-  })
-
-  it('★ happy path：delete_custom_metric 删自己的 → 成功；再 list 已不在', async () => {
-    await seedL1()
-    const del = await (await rpc(app(), {
-      jsonrpc: '2.0', id: 5, method: 'tools/call',
-      params: { name: 'delete_custom_metric', arguments: { id: L2_ID } },
-    })).json()
-    expect(toolText(del as never).status).toBe('ok')
-
+    // 生效路径未被触碰：独立回读存储层，不采信工具自述
+    const live = await pool.query('select 1 from data.metrics where org = $1 and id = $2', [ORG, L2_ID])
+    expect(live.rowCount).toBe(0)
+    // 工具面的「自定义」面也不出现（生效行没有，读面自然没有）
     const listed = await (await rpc(app(), {
-      jsonrpc: '2.0', id: 6, method: 'tools/call',
+      jsonrpc: '2.0', id: 42, method: 'tools/call',
       params: { name: 'list_metrics', arguments: {} },
     })).json()
     expect((toolText(listed as never).custom as { id: string }[]).map((c) => c.id)).not.toContain(L2_ID)
+
+    // 单据落库事实独立回读：kind=create（本租户无同名生效行）、preview_ready
+    const row = await pool.query('select kind, status, metric_id from data.metric_change where id = $1', [out.changeId])
+    expect(row.rows[0]).toMatchObject({ kind: 'create', status: 'preview_ready', metric_id: L2_ID })
+
+    // 再用**工具面**核对（不只直读表）：list_metric_changes 看得到这张单，preview 快照可读
+    const changes = toolText(await (await rpc(app(), {
+      jsonrpc: '2.0', id: 41, method: 'tools/call',
+      params: { name: 'list_metric_changes', arguments: {} },
+    })).json() as never).changes as { id: number; metricId: string; kind: string; status: string }[]
+    expect(changes.find((c) => c.id === out.changeId)).toMatchObject({
+      metricId: L2_ID, kind: 'create', status: 'preview_ready',
+    })
+
+    // 编译坏单照落单：试算失败 ⇒ preview_failed（仍可驳），不是工具级 error——
+    // 编译错误码从「提交即拒」移到「preview 快照」里，由人在 list_metric_changes 读。
+    const bad = toolText(await (await rpc(app(), {
+      jsonrpc: '2.0', id: 43, method: 'tools/call',
+      params: { name: 'customize_metric', arguments: { id: 'x_bad_base', baseMetric: 'no_such_base' } },
+    })).json() as never)
+    expect(bad.status).toBe('ok')
+    expect(bad.state).toBe('preview_failed')
+  })
+
+  it('★ customize_metric 对已有生效行 = update 提案（P4 Task 1 kind 归一）：落单 kind=update 且行不被触碰', async () => {
+    await seedL1()
+    // 先用 off 模式直写种一行生效 L2（这正是应急回滚路径的原样行为）
+    const restore = reviewModeOff()
+    try {
+      const seeded = toolText(await (await rpc(app(), {
+        jsonrpc: '2.0', id: 44, method: 'tools/call',
+        params: {
+          name: 'customize_metric',
+          arguments: { id: L2_ID, baseMetric: L1_ID, alias: '已有行', visibility: { dims: ['bizday'] } },
+        },
+      })).json() as never)
+      expect(seeded.status).toBe('ok')
+    } finally {
+      restore()
+    }
+
+    const revised = await (await rpc(app(), {
+      jsonrpc: '2.0', id: 45, method: 'tools/call',
+      params: {
+        name: 'customize_metric',
+        arguments: { id: L2_ID, baseMetric: L1_ID, alias: '改口径提案', visibility: { dims: ['bizday'] } },
+      },
+    })).json()
+    const out = toolText(revised as never)
+    expect(out.status).toBe('ok')
+    expect(typeof out.changeId).toBe('number')
+    const row = await pool.query('select kind, status, metric_id from data.metric_change where id = $1', [out.changeId])
+    expect(row.rows[0]).toMatchObject({ kind: 'update', status: 'preview_ready', metric_id: L2_ID })
+    // 生效行仍是种子时的样子（title 未变——生效只发生在人采纳之后）
+    const live = await pool.query('select title from data.metrics where org = $1 and id = $2', [ORG, L2_ID])
+    expect(live.rows[0]).toMatchObject({ title: '已有行' })
+  })
+
+  it('★ delete_custom_metric 缺省（on）落删除提案（P4 Task 1）：行不被删，list_metric_changes 可见 kind=delete', async () => {
+    await seedL1()
+    // 种一行生效 L2（off 模式直写）
+    const restore = reviewModeOff()
+    try {
+      const seeded = toolText(await (await rpc(app(), {
+        jsonrpc: '2.0', id: 50, method: 'tools/call',
+        params: {
+          name: 'customize_metric',
+          arguments: { id: L2_ID, baseMetric: L1_ID, alias: '待删口径' },
+        },
+      })).json() as never)
+      expect(seeded.status).toBe('ok')
+    } finally {
+      restore()
+    }
+
+    const del = await (await rpc(app(), {
+      jsonrpc: '2.0', id: 51, method: 'tools/call',
+      params: { name: 'delete_custom_metric', arguments: { id: L2_ID } },
+    })).json()
+    const out = toolText(del as never)
+    expect(out.status).toBe('ok')
+    expect(typeof out.changeId).toBe('number')
+    expect(out.state).toBe('preview_ready')   // 删档试算 = 编译「当前生效口径」，行在 ⇒ ready
+
+    // 行未被删（生效只发生在人采纳之后）：独立回读存储层
+    const live = await pool.query('select 1 from data.metrics where org = $1 and id = $2', [ORG, L2_ID])
+    expect(live.rowCount).toBe(1)
+
+    const row = await pool.query('select kind, status, metric_id from data.metric_change where id = $1', [out.changeId])
+    expect(row.rows[0]).toMatchObject({ kind: 'delete', status: 'preview_ready', metric_id: L2_ID })
+
+    // 工具面核对：list_metric_changes 看得到这张删除单
+    const changes = toolText(await (await rpc(app(), {
+      jsonrpc: '2.0', id: 52, method: 'tools/call',
+      params: { name: 'list_metric_changes', arguments: {} },
+    })).json() as never).changes as { id: number; metricId: string; kind: string }[]
+    expect(changes.find((c) => c.id === out.changeId)).toMatchObject({ metricId: L2_ID, kind: 'delete' })
+  })
+
+  it('★ customize_metric 打平台口径 id（on）→ 提交即拒 ID_RESERVED_BY_L1，且不落单（修复轮 1①）', async () => {
+    await seedL1()
+    const body = await (await rpc(app(), {
+      jsonrpc: '2.0', id: 60, method: 'tools/call',
+      params: { name: 'customize_metric', arguments: { id: L1_ID, baseMetric: L1_ID } },
+    })).json()
+    const out = toolText(body as never)
+    expect(out.status).toBe('refused')
+    expect(out.error).toBe('ID_RESERVED_BY_L1')
+    expect((body as { result: { isError: boolean } }).result.isError).toBe(true)
+    // 不落「注定失败」的单：提交期就拒，变更单表零行
+    const tickets = await pool.query('select 1 from data.metric_change where org = $1 and metric_id = $2', [ORG, L1_ID])
+    expect(tickets.rowCount).toBe(0)
+  })
+
+  it('★ delete_custom_metric 打平台口径（on）→ 提交即拒 READONLY_L1，且不落单（修复轮 1①）', async () => {
+    await seedL1()
+    const body = await (await rpc(app(), {
+      jsonrpc: '2.0', id: 61, method: 'tools/call',
+      params: { name: 'delete_custom_metric', arguments: { id: L1_ID } },
+    })).json()
+    const out = toolText(body as never)
+    expect(out.status).toBe('refused')
+    expect(out.error).toBe('READONLY_L1')
+    expect((body as { result: { isError: boolean } }).result.isError).toBe(true)
+    const tickets = await pool.query('select 1 from data.metric_change where org = $1 and metric_id = $2', [ORG, L1_ID])
+    expect(tickets.rowCount).toBe(0)
+  })
+
+  it('★ customize_metric 打租户 declared 行（W8 覆盖）→ 提交即拒 DECLARED_NOT_EDITABLE，且不落单（修复轮 1②）', async () => {
+    await seedL1()
+    // 夹具：本租户桶一条 basis='declared' 的行（W8 声明形态；列清单照 insertTenantDeclaration 最小集）
+    const declaredId = 'mw_l2_declared'
+    await pool.query(
+      `insert into data.metrics
+         (org, id, title, description, required_scope, subject_column, select_sql, group_by, params,
+          source, updated_by, version, totalable, sla_days, freshness_relations, basis, certified, created_by)
+       values ($1, $2, $3, '', null, 'org',
+               'select sum(mart_sales_daily.revenue) as value, bizday from mart_sales_daily',
+               'bizday', '{}'::jsonb, 'l2', 'u', 1, true, 1, '[]'::jsonb, 'declared', 'draft', 'u')`,
+      [ORG, declaredId, '声明行夹具'])
+    const body = await (await rpc(app(), {
+      jsonrpc: '2.0', id: 62, method: 'tools/call',
+      params: { name: 'customize_metric', arguments: { id: declaredId, baseMetric: L1_ID } },
+    })).json()
+    const out = toolText(body as never)
+    expect(out.status).toBe('refused')
+    expect(out.error).toBe('DECLARED_NOT_EDITABLE')
+    expect((body as { result: { isError: boolean } }).result.isError).toBe(true)
+    const tickets = await pool.query(
+      'select 1 from data.metric_change where org = $1 and metric_id = $2', [ORG, declaredId])
+    expect(tickets.rowCount).toBe(0)
+  })
+
+  it('★ happy path（off 模式直写，应急回滚路径）：customize 成功 → 落库可读回（且 list 里出现在「自定义」面）', async () => {
+    await seedL1()
+    const restore = reviewModeOff()
+    try {
+      const created = await (await rpc(app(), {
+        jsonrpc: '2.0', id: 3, method: 'tools/call',
+        params: {
+          name: 'customize_metric',
+          arguments: { id: L2_ID, baseMetric: L1_ID, alias: '本租户口径', visibility: { dims: ['bizday'] } },
+        },
+      })).json()
+      expect(toolText(created as never).status).toBe('ok')
+
+      const listed = await (await rpc(app(), {
+        jsonrpc: '2.0', id: 4, method: 'tools/call',
+        params: { name: 'list_metrics', arguments: {} },
+      })).json()
+      expect((toolText(listed as never).custom as { id: string }[]).map((c) => c.id)).toContain(L2_ID)
+
+      // 独立回读存储层：不采信工具自述
+      const row = await pool.query(
+        `select source, subject_column, group_by from data.metrics where org = $1 and id = $2`, [ORG, L2_ID])
+      expect(row.rowCount).toBe(1)
+      expect(row.rows[0]).toMatchObject({ source: 'l2', subject_column: 'org', group_by: 'bizday' })
+    } finally {
+      restore()
+    }
+  })
+
+  it('★ happy path（off 模式直写）：customize 用 expr（受限算术组合多条口径）→ 工具返回非错误，且写入成功', async () => {
+    await seedL1()
+    const restore = reviewModeOff()
+    try {
+      const l2ExprId = 'mw_l2_half_revenue'
+      const body = await (await rpc(app(), {
+        jsonrpc: '2.0', id: 12, method: 'tools/call',
+        params: {
+          name: 'customize_metric',
+          arguments: {
+            id: l2ExprId,
+            // 工具面只暴露顶层的 `expr`（`op.kind` 由面归一）—— 取证点之一
+            expr: { kind: 'div', left: { kind: 'ref', id: L1_ID }, right: { kind: 'num', value: 2 } },
+          },
+        },
+      })).json()
+      const out = toolText(body as never)
+      expect(out.status).toBe('ok')
+      expect((body as { result: { isError: boolean } }).result.isError).toBe(false)
+
+      // 独立回读存储层：不采信工具自述（口径确实落库了，且带编译器注入的除零守卫）
+      const row = await pool.query(
+        'select source, subject_column, group_by, select_sql from data.metrics where org = $1 and id = $2',
+        [ORG, l2ExprId])
+      expect(row.rowCount).toBe(1)
+      expect(row.rows[0]).toMatchObject({ source: 'l2', subject_column: 'org', group_by: 'bizday' })
+      expect(row.rows[0].select_sql).toContain('NULLIF((2), 0)')
+    } finally {
+      restore()
+    }
+  })
+
+  it('★ happy path（off 模式直写）：delete_custom_metric 删自己的 → 成功；再 list 已不在', async () => {
+    await seedL1()
+    const restore = reviewModeOff()
+    try {
+      const del = await (await rpc(app(), {
+        jsonrpc: '2.0', id: 5, method: 'tools/call',
+        params: { name: 'delete_custom_metric', arguments: { id: L2_ID } },
+      })).json()
+      expect(toolText(del as never).status).toBe('ok')
+
+      const listed = await (await rpc(app(), {
+        jsonrpc: '2.0', id: 6, method: 'tools/call',
+        params: { name: 'list_metrics', arguments: {} },
+      })).json()
+      expect((toolText(listed as never).custom as { id: string }[]).map((c) => c.id)).not.toContain(L2_ID)
+    } finally {
+      restore()
+    }
   })
 
   it('★ list_metrics 部门可见（P2 终审修复）：兄弟部门 data:manage 持有者看不到别家归属的自建口径——custom 过同一把裁剪尺', async () => {
@@ -250,15 +462,22 @@ describePg('写面（需要 DATABASE_URL）', () => {
     await insMember(M_U_OWNER, M_CHILD)
     await insMember(M_U_SIB, M_SIB)
 
-    // owner 建出自建口径；归属列写侧暂无 API 面（P1 只建列）⇒ 夹具直改库（query 面用例同款）
-    const created = await (await rpc(appAs(M_U_OWNER), {
-      jsonrpc: '2.0', id: 30, method: 'tools/call',
-      params: {
-        name: 'customize_metric',
-        arguments: { id: L2_ID, baseMetric: L1_ID, alias: '归属部门的自建口径', visibility: { dims: ['bizday'] } },
-      },
-    })).json()
-    expect(toolText(created as never).status).toBe('ok')
+    // owner 建出自建口径（off 模式直写种夹具——本用例验的是读面裁剪尺，不是写面开关）；
+    // 归属列写侧暂无 API 面（P1 只建列）⇒ 夹具直改库（query 面用例同款）
+    const restoreFix = reviewModeOff()
+    let created: Response
+    try {
+      created = await rpc(appAs(M_U_OWNER), {
+        jsonrpc: '2.0', id: 30, method: 'tools/call',
+        params: {
+          name: 'customize_metric',
+          arguments: { id: L2_ID, baseMetric: L1_ID, alias: '归属部门的自建口径', visibility: { dims: ['bizday'] } },
+        },
+      })
+    } finally {
+      restoreFix()
+    }
+    expect(toolText(await created.json() as never).status).toBe('ok')
     await pool.query('update data.metrics set owner_dept = $1 where org = $2 and id = $3', [M_CHILD, ORG, L2_ID])
 
     // 兄弟部门的 data:manage 持有者：平台桶 L1 照常在 bases（不受裁剪影响），owned L2 不在 custom
@@ -279,42 +498,61 @@ describePg('写面（需要 DATABASE_URL）', () => {
     expect((toolText(ownBody as never).custom as { id: string }[]).map((c) => c.id)).toContain(L2_ID)
   })
 
-  it('customize_metric 撞 L1 保留 id → ID_RESERVED_BY_L1，且 isError:true', async () => {
+  // ↓ 以下三个「域层判定 → 工具级错误」用例走 **off 模式直写路径**（应急回滚路径原样保留）：
+  //   on 模式下这些编译/保留 id 判据移到提交后的试算与采纳期（提案失败在人面可读），提交本身 ok。
+  it('（off 直写）customize_metric 撞 L1 保留 id → ID_RESERVED_BY_L1，且 isError:true', async () => {
     await seedL1()
-    const body = await (await rpc(app(), {
-      jsonrpc: '2.0', id: 7, method: 'tools/call',
-      params: { name: 'customize_metric', arguments: { id: L1_ID, baseMetric: L1_ID } },
-    })).json()
+    const restore = reviewModeOff()
+    let body: unknown
+    try {
+      body = await (await rpc(app(), {
+        jsonrpc: '2.0', id: 7, method: 'tools/call',
+        params: { name: 'customize_metric', arguments: { id: L1_ID, baseMetric: L1_ID } },
+      })).json()
+    } finally {
+      restore()
+    }
     const out = toolText(body as never)
     expect(out.status).toBe('refused')
     expect(out.error).toBe('ID_RESERVED_BY_L1')
     expect((body as { result: { isError: boolean } }).result.isError).toBe(true)
   })
 
-  it('customize_metric 基底不存在 → L1_BASE_NOT_FOUND；未知维度 → UNKNOWN_DIM', async () => {
+  it('（off 直写）customize_metric 基底不存在 → L1_BASE_NOT_FOUND；未知维度 → UNKNOWN_DIM', async () => {
     await seedL1()
-    const bad = await (await rpc(app(), {
-      jsonrpc: '2.0', id: 8, method: 'tools/call',
-      params: { name: 'customize_metric', arguments: { id: 'x1', baseMetric: 'no_such_base' } },
-    })).json()
-    expect(toolText(bad as never).error).toBe('L1_BASE_NOT_FOUND')
+    const restore = reviewModeOff()
+    try {
+      const bad = await (await rpc(app(), {
+        jsonrpc: '2.0', id: 8, method: 'tools/call',
+        params: { name: 'customize_metric', arguments: { id: 'x1', baseMetric: 'no_such_base' } },
+      })).json()
+      expect(toolText(bad as never).error).toBe('L1_BASE_NOT_FOUND')
 
-    const dim = await (await rpc(app(), {
-      jsonrpc: '2.0', id: 9, method: 'tools/call',
-      params: {
-        name: 'customize_metric',
-        arguments: { id: 'x2', baseMetric: L1_ID, visibility: { dims: ['no_such_dim'] } },
-      },
-    })).json()
-    expect(toolText(dim as never).error).toBe('UNKNOWN_DIM')
+      const dim = await (await rpc(app(), {
+        jsonrpc: '2.0', id: 9, method: 'tools/call',
+        params: {
+          name: 'customize_metric',
+          arguments: { id: 'x2', baseMetric: L1_ID, visibility: { dims: ['no_such_dim'] } },
+        },
+      })).json()
+      expect(toolText(dim as never).error).toBe('UNKNOWN_DIM')
+    } finally {
+      restore()
+    }
   })
 
-  it('delete_custom_metric 打 L1 id → READONLY_L1（复用同一条判定）', async () => {
+  it('（off 直写）delete_custom_metric 打 L1 id → READONLY_L1（复用同一条判定）', async () => {
     await seedL1()
-    const body = await (await rpc(app(), {
-      jsonrpc: '2.0', id: 10, method: 'tools/call',
-      params: { name: 'delete_custom_metric', arguments: { id: L1_ID } },
-    })).json()
+    const restore = reviewModeOff()
+    let body: unknown
+    try {
+      body = await (await rpc(app(), {
+        jsonrpc: '2.0', id: 10, method: 'tools/call',
+        params: { name: 'delete_custom_metric', arguments: { id: L1_ID } },
+      })).json()
+    } finally {
+      restore()
+    }
     expect(toolText(body as never).error).toBe('READONLY_L1')
   })
 

@@ -39,6 +39,13 @@ const identityOf = () => makeIdentity({ orgId: ORG, scopes: ['data:query', 'data
 const appOf = (execute: unknown) =>
   buildTestApp(mod, identityOf(), { pool, execute } as never, { id: 1, casdoor_org: ORG })
 
+/** 把单据 preview.ranAt 拨到 N 毫秒前（模拟时间流逝，绕开 60s 重跑限速；P4 Task 4）。 */
+const agePreview = (id: number, msAgo: number): Promise<unknown> =>
+  pool.query(
+    `update data.metric_change set preview = jsonb_set(preview, '{ranAt}', to_jsonb($2::text)) where id = $1`,
+    [id, new Date(Date.now() - msAgo).toISOString()],
+  )
+
 let pool: Pool
 beforeAll(async () => {
   pool = new Pool({ connectionString: dbUrl })
@@ -73,6 +80,23 @@ describePg('POST /metric-changes（提交即试算）', () => {
     expect(body.change.preview.value).toBe(100)
   })
 
+  it('create 档无效基底 ⇒ 试算失败如实落 preview_failed（error 必有；issues 视异常档位而定）', async () => {
+    const app = appOf(async () => ({ rows: [] }))
+    const res = await app.request('/metric-changes', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ metricId: 'x:badbase', kind: 'create', payload: { baseMetric: 'b:ghost', op: { kind: 'refine' } } }),
+    })
+    expect(res.status).toBe(200)
+    const body = await res.json() as { change: { status: string; preview: { error?: string; issues?: unknown[] } } }
+    expect(body.change.status).toBe('preview_failed')
+    expect(typeof body.change.preview.error).toBe('string')
+    expect(body.change.preview.error!.length).toBeGreaterThan(0)
+    // L1_BASE_NOT_FOUND 是 SemanticCompileError 档 ⇒ 明细一并回写（P4 Task 4 修复轮补测）
+    expect(Array.isArray(body.change.preview.issues)).toBe(true)
+    expect(body.change.preview.issues!.length).toBeGreaterThan(0)
+  })
+
   it('声明带自由 SQL 字段 ⇒ 400 INVALID_DECLARATION（结构化声明纪律，提交不落库）', async () => {
     const app = appOf(async () => ({ rows: [] }))
     const res = await app.request('/metric-changes', {
@@ -82,6 +106,71 @@ describePg('POST /metric-changes（提交即试算）', () => {
     })
     expect(res.status).toBe(400)
     expect(await res.json()).toMatchObject({ error: 'INVALID_DECLARATION' })
+  })
+})
+
+// ── P4 收口（2026-11-13）：提交期预检下沉 submitChange —— **所有提交面共用一份** ──────
+// 原先只有 MCP 两把旧工具内联这套判据，REST /metric-changes 与 submit_metric_change 可绕过；
+// 放过的单会在试算里得到 preview_ready 的「绿单」，采纳期才死在同一个码上（白点一次）。
+describePg('P4 收口：提交期预检（id 级 / 档级 / 不存在）', () => {
+  const post = (body: unknown) => appOf(async () => ({ rows: [{ rows: 1, value: 1 }] })).request('/metric-changes', {
+    method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body),
+  })
+  const ticketsOf = async (metricId: string): Promise<number> => {
+    const r = await pool.query('select count(*)::int as n from data.metric_change where org = $1 and metric_id = $2', [ORG, metricId])
+    return r.rows[0].n as number
+  }
+  /** 本租户一条指定 basis 的行（列清单照 insertTenantDeclaration / mcp-manage 夹具最小集）。 */
+  const seedBasisRow = async (id: string, basis: 'declared' | 'column_agg'): Promise<void> => {
+    await pool.query(
+      `insert into data.metrics
+         (org, id, title, description, required_scope, subject_column, select_sql, group_by, params,
+          source, updated_by, version, totalable, sla_days, freshness_relations, basis, certified, created_by)
+       values ($1, $2, $3, '', null, 'org',
+               'select sum(mart_sales_daily.revenue) as value, bizday from mart_sales_daily',
+               'bizday', '{}'::jsonb, 'l2', 'u', 1, true, 1, '[]'::jsonb, $4, 'draft', 'u')`,
+      [ORG, id, `档位夹具·${basis}`, basis])
+  }
+
+  it('★ REST submit 打 L1 保留 id ⇒ 400 ID_RESERVED_BY_L1，且不落单', async () => {
+    const res = await post({ metricId: L1_ID, kind: 'create', payload: { baseMetric: L1_ID, op: { kind: 'refine' } } })
+    expect(res.status).toBe(400)
+    expect(await res.json()).toEqual({ error: 'ID_RESERVED_BY_L1' })
+    expect(await ticketsOf(L1_ID)).toBe(0)
+  })
+
+  it('★ delete 平台口径 ⇒ 400 READONLY_L1，且不落单', async () => {
+    const res = await post({ metricId: L1_ID, kind: 'delete' })
+    expect(res.status).toBe(400)
+    expect(await res.json()).toEqual({ error: 'READONLY_L1' })
+    expect(await ticketsOf(L1_ID)).toBe(0)
+  })
+
+  it('★ delete 不存在的 id ⇒ 提交期 404 METRIC_NOT_FOUND（不再落 preview_failed 死单）', async () => {
+    const res = await post({ metricId: 'x:p4_no_such_metric', kind: 'delete' })
+    expect(res.status).toBe(404)
+    expect(await res.json()).toEqual({ error: 'METRIC_NOT_FOUND' })
+    expect(await ticketsOf('x:p4_no_such_metric')).toBe(0)
+  })
+
+  it('★ update 打 declared 行 ⇒ 400 DECLARED_NOT_EDITABLE；打 column_agg 行 ⇒ 400 BASIS_CONFLICT', async () => {
+    const declaredId = 'x:p4_declared'
+    const columnAggId = 'x:p4_column_agg'
+    await seedBasisRow(declaredId, 'declared')
+    await seedBasisRow(columnAggId, 'column_agg')
+    try {
+      const declared = await post({ metricId: declaredId, kind: 'update', payload: { baseMetric: L1_ID, op: { kind: 'refine' } } })
+      expect(declared.status).toBe(400)
+      expect(await declared.json()).toEqual({ error: 'DECLARED_NOT_EDITABLE' })
+      expect(await ticketsOf(declaredId)).toBe(0)
+
+      const columnAgg = await post({ metricId: columnAggId, kind: 'update', payload: { baseMetric: L1_ID, op: { kind: 'refine' } } })
+      expect(columnAgg.status).toBe(400)
+      expect(await columnAgg.json()).toEqual({ error: 'BASIS_CONFLICT' })
+      expect(await ticketsOf(columnAggId)).toBe(0)
+    } finally {
+      await pool.query('delete from data.metrics where org = $1 and id = any($2)', [ORG, [declaredId, columnAggId]])
+    }
   })
 })
 
@@ -149,6 +238,34 @@ describePg('POST /metric-changes/:id/preview（重跑试算的租户与状态闸
     expect(malformed.status).toBe(404)
   })
 
+  it('提交后 60s 内重跑 ⇒ 409 PREVIEW_RATE_LIMITED（不改单）；preview.ranAt 拨到 2 分钟前 ⇒ 200（限速只挡连打）', async () => {
+    const app = appOf(async () => ({ rows: [{ rows: 2, value: 20 }] }))
+    const created = await app.request('/metric-changes', {
+      method: 'POST', headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ metricId: 'x:rate', kind: 'meta', payload: { unit: '元' } }),
+    })
+    expect(created.status).toBe(200)
+    const body = await created.json() as { change: { id: number; status: string } }
+    // 首跑（提交即试算）刚落地 ranAt ⇒ 立刻重跑被限速
+    const ranAtOf = async (): Promise<string | undefined> => {
+      const q = await pool.query("select preview->>'ranAt' as ran_at from data.metric_change where id = $1", [body.change.id])
+      return q.rows[0]?.ran_at as string | undefined
+    }
+    const ranAtBefore = await ranAtOf()
+    expect(typeof ranAtBefore).toBe('string')
+    const tooSoon = await app.request(`/metric-changes/${body.change.id}/preview`, { method: 'POST' })
+    expect(tooSoon.status).toBe(409)
+    expect(await tooSoon.json()).toMatchObject({ error: 'PREVIEW_RATE_LIMITED' })
+    // 单据不被限速改动（仍是首跑落地的 preview_failed：meta 档目标指标不存在；ranAt 原样）
+    const still = await pool.query('select status from data.metric_change where id = $1', [body.change.id])
+    expect(still.rows[0]?.status).toBe('preview_failed')
+    expect(await ranAtOf()).toBe(ranAtBefore)
+    // 时间流逝（拨旧 ranAt）⇒ 解除限速，正常重跑
+    await agePreview(body.change.id, 120_000)
+    const ok = await app.request(`/metric-changes/${body.change.id}/preview`, { method: 'POST' })
+    expect(ok.status).toBe(200)
+  })
+
   it('pending 单重跑试算 ⇒ 200；目标指标不存在 ⇒ preview_failed 如实落库（meta 档读 data.metrics 当前口径）', async () => {
     const app = appOf(async () => ({ rows: [{ rows: 7, value: 42 }] }))
     const s = await submitChange(pool, ORG, { userId: 'a', channel: 'pat' }, 'x:rerun', 'meta', { unit: '元' })
@@ -172,7 +289,8 @@ describePg('GET /metric-changes（读面带 previewHistory，P1 Task 5）', () =
     expect(post.status).toBe(200)
     const submitted = await post.json() as { change: { id: number; previewHistory: unknown[] } }
     expect(submitted.change.previewHistory).toEqual([]) // 首跑无历史
-    // 补跑一次 ⇒ 首枚快照进历史，history 恰 1 条
+    // 补跑一次 ⇒ 首枚快照进历史，history 恰 1 条（先把 ranAt 拨旧：60s 内重跑被限速，P4 Task 4）
+    await agePreview(submitted.change.id, 120_000)
     const rerun = await app.request(`/metric-changes/${submitted.change.id}/preview`, { method: 'POST' })
     expect(rerun.status).toBe(200)
     const list = await app.request('/metric-changes?status=preview_failed')
@@ -262,6 +380,49 @@ describePg('★ delete 档采纳也发通知（P1 Task 4，销缓办③）', () 
   })
 })
 
+describePg('★ adopt eventId 拼变更单 id（P4 Task 4，销缓办⑤：同 metricId 重建不被事件去重吞）', () => {
+  it('同 metricId 的 create / delete / 重建三张单 ⇒ 三条 eventId 彼此不同，且各自以本单 id 结尾', async () => {
+    const emitted: Array<{ eventKey?: string; eventId?: string; payload?: Record<string, unknown> }> = []
+    const notify: NotifyPort = { emit: async (_i, e) => { emitted.push(e); return { accepted: true } } }
+    const app = buildTestApp(mod, identityOf(),
+      { pool, execute: async () => ({ rows: [{ rows: 3, value: 9 }] }), notify } as never,
+      { id: 1, casdoor_org: ORG }, ['lemeng'])
+    const post = (path: string, body?: unknown) => app.request(path, {
+      method: 'POST',
+      ...(body === undefined ? {} : { body: JSON.stringify(body), headers: { 'content-type': 'application/json' } }),
+    })
+    const submit = async (body: unknown): Promise<number> => {
+      const res = await post('/metric-changes', body)
+      expect(res.status).toBe(200)
+      return ((await res.json()) as { change: { id: number } }).change.id
+    }
+    const adopt = async (id: number): Promise<void> => {
+      expect((await post(`/metric-changes/${id}/adopt`)).status).toBe(200)
+    }
+    const MID = 'x:e2e_evt'
+    // ① create 生效 → ② delete 删掉 → ③ 重建（delete→re-create 正是 P1 实证被去重吞的形状）
+    const cId = await submit({ metricId: MID, kind: 'create', payload: { baseMetric: L1_ID, op: { kind: 'refine' }, alias: '单号夹具' } })
+    await adopt(cId)
+    const dId = await submit({ metricId: MID, kind: 'delete' })
+    await adopt(dId)
+    const rId = await submit({ metricId: MID, kind: 'create', payload: { baseMetric: L1_ID, op: { kind: 'refine' }, alias: '单号夹具·重建' } })
+    await adopt(rId)
+
+    const evts = emitted.filter((e) => e.eventKey === 'data.metric.definition.changed')
+    expect(evts).toHaveLength(3)
+    const eventIds = evts.map((e) => e.eventId)
+    // 去重键 = eventId：三条必须互不相同（同一 metricId 不再复用 version 段）
+    expect(new Set(eventIds).size).toBe(3)
+    // 末段是 `ch:<变更单 id>`（`ch:` 前缀让命名空间与 confirm-draft 的 `<metricId>:<version>`
+    // 永不相交：同 org+metric 下整数撞车不会造成永久去重）
+    expect(eventIds).toEqual([
+      `data.metric.definition.changed:${ORG}:${MID}:ch:${cId}`,
+      `data.metric.definition.changed:${ORG}:${MID}:ch:${dId}`,
+      `data.metric.definition.changed:${ORG}:${MID}:ch:${rId}`,
+    ])
+  })
+})
+
 // ── P1 Task 7：override 档接入变更单 ────────────────────────────────────────────
 // 隔离键 org-p1-mo-ovr（任务约定 org-p1-mo-*）。夹具 L1 的 id 必须是**三段蛇形**
 //（entry.name = L1 id，而 compileTenantDeclaration 的名字白名单是 `<源>:<域>:<指标>` 三段），
@@ -332,6 +493,23 @@ describePg('P1 Task 7：override 档', () => {
       "select source, select_sql from data.metrics where org = 'platform' and source = 'l1' and id = $1", [L1_OVR_A])
     expect(l1.rows).toHaveLength(1)
     expect(l1.rows[0]).toMatchObject({ source: 'l1', select_sql: l1OvrFixture(L1_OVR_A).selectSql })
+  })
+
+  it('坏声明（引用未纳管关系）⇒ preview_failed 且 preview.issues 非空（P4 Task 4，销缓办⑥）', async () => {
+    const app = oappOf(async () => ({ rows: [] }))
+    const res = await post(app, {
+      metricId: L1_OVR_A, kind: 'override',
+      payload: ovrEntry({ label: '本租户销售口径·坏关系', expression: 'sum(no_such_relation.amount)' }),
+    })
+    expect(res.status).toBe(200)
+    const body = await res.json() as {
+      change: { status: string; preview: { error?: string; issues?: unknown[] } }
+    }
+    expect(body.change.status).toBe('preview_failed')
+    expect(body.change.preview.error).toBe('DECLARATION_INVALID')
+    // 编译失败带的可机检明细一并落 preview（不只是错误码）
+    expect(Array.isArray(body.change.preview.issues)).toBe(true)
+    expect(body.change.preview.issues!.length).toBeGreaterThan(0)
   })
 
   it('grain 不同形 ⇒ 提交/试算照走，采纳 400 透传写路径判据（GRAIN_MISMATCH），单据不被 CAS 翻转', async () => {

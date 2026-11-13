@@ -40,6 +40,7 @@ const BY_CODE: Record<string, string> = {
   // 指标变更单（Wave 5 P0）
   CHANGE_STATE_CHANGED: '这条已经被处理过了，刷新列表看看最新状态',
   PREVIEW_UNAVAILABLE: '还没跑成试算，不能采纳；先点「跑试算」',
+  PREVIEW_RATE_LIMITED: '刚才已经跑过试算了，稍等一分钟再跑',
   DECISION_REQUIRES_SESSION: '这个操作只能本人登录后做，不能用程序身份',
   REASON_REQUIRED: '驳回要写清哪里不对',
   COLUMN_NOT_NUMERIC: '这一列不是数值，做不了求和/平均这类计算',

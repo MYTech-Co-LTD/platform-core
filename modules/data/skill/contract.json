@@ -64,7 +64,7 @@
       "channels": {
         "mcp": {
           "name": "search_catalog",
-          "description": "按关键词搜索可见指标（或数据集）。搜指标时同义词也命中；数据集只按名称匹配。返回 id/标题/档位/归属/一句话说明，≤20 条。",
+          "description": "按关键词搜索可见指标（或数据集）。搜指标时同义词也命中；数据集只按名称匹配。返回 id/标题/档位/归属/一句话说明，行带归属部门 dept 与口径差异 variantNote；同名并列命中回 ambiguous:true（应向用户问辨，勿猜），≤20 条。",
           "inputSchema": {
             "type": "object",
             "properties": {
@@ -97,7 +97,7 @@
         },
         "openclaw": {
           "name": "search_catalog",
-          "description": "按关键词搜索当前用户可见的指标（**同义词也命中**）。问数第一步用它：用户说「营业额/销售金额/外部批发」这类业务词，先搜索拿到候选 id，再 describe_metric 看口径——**不要凭记忆猜指标 id**。0 命中时换 1~2 个同义词再搜。返回 id/标题/档位/归属/一句话说明（≤20 条）。",
+          "description": "按关键词搜索当前用户可见的指标（**同义词也命中**）。问数第一步用它：用户说「营业额/销售金额/外部批发」这类业务词，先搜索拿到候选 id，再 describe_metric 看口径——**不要凭记忆猜指标 id**。0 命中时换 1~2 个同义词再搜。返回 id/标题/档位/归属/一句话说明，行带归属部门 dept 与口径差异 variantNote；同名并列命中回 ambiguous:true（应向用户问辨，勿猜），≤20 条。",
           "inputSchema": {
             "type": "object",
             "properties": {

@@ -2,13 +2,31 @@
 // 纯度约束：execute 由调用方注入（生产=只读池；测试=假执行器）。本文件永不写 data.metrics。
 import { createHash } from 'node:crypto'
 import type { Pool } from 'pg'
-import { compileL2, resolveL1Base } from './semantic-compiler'
+import { compileL2, resolveL1Base, SemanticCompileError } from './semantic-compiler'
 import { loadMergedCatalog } from './metric-store'
 import { compileOverrideDeclaration } from './tenant-declaration-write'
 import { PENDING_STATUSES } from './metric-change'
 import type { MetricChangeRow } from './metric-change'
 
 export const PREVIEW_TIMEOUT_MS = 10_000
+/** 重跑试算的最小间隔（P4 Task 4，销缓办①）：同一单 60s 内连打 ⇒ 409 PREVIEW_RATE_LIMITED。 */
+export const PREVIEW_RERUN_MIN_INTERVAL_MS = 60_000
+
+/**
+ * 重跑限速判据（纯函数，时钟由调用方注入以便测边界）：`preview` 里的 `ranAt`（成功快照与
+ * 失败对象都有）距今 < 60s ⇒ true。
+ *
+ * 只做「是不是刚跑过」这一件事：null / 非对象 / 缺 ranAt / 坏时间串一律 false（首跑与历史
+ * 脏数据不能因为判据而永久锁单）。未来时间戳（时钟回拨）按「刚跑过」处理——收缩不放开。
+ */
+export function previewTooRecent(preview: unknown, now = Date.now()): boolean {
+  if (preview === null || typeof preview !== 'object' || Array.isArray(preview)) return false
+  const ranAt = (preview as { ranAt?: unknown }).ranAt
+  if (typeof ranAt !== 'string') return false
+  const ranAtMs = Date.parse(ranAt)
+  if (!Number.isFinite(ranAtMs)) return false
+  return now - ranAtMs < PREVIEW_RERUN_MIN_INTERVAL_MS
+}
 
 export interface PreviewSnapshot {
   window: { from: string; to: string } | null
@@ -20,7 +38,10 @@ export interface PreviewSnapshot {
   ranAt: string
   durationMs: number
 }
-export type PreviewOutcome = { ok: true; snapshot: PreviewSnapshot } | { ok: false; error: string }
+export type PreviewOutcome =
+  | { ok: true; snapshot: PreviewSnapshot }
+  /** `issues` = 编译类失败的机检明细（P4 Task 4，销缓办⑥）：能拿到就带上，拿不到省略。 */
+  | { ok: false; error: string; issues?: unknown[] }
 
 export interface PreviewDeps {
   pool: Pool
@@ -91,11 +112,17 @@ export async function runPreview(deps: PreviewDeps, org: string, change: MetricC
     } else if (change.kind === 'override') {
       // override 档试算（P1 Task 7）：与写路径**同一把编译尺**——compileOverrideDeclaration
       // 就是从 createOverrideDeclaration 抽出的编译段（不复制上下文拼装）。编译失败 ⇒
-      // preview_failed（错误码透传：DECLARATION_INVALID / SEMANTICS_YAML_*）。
+      // preview_failed（错误码透传：DECLARATION_INVALID / SEMANTICS_YAML_*；DECLARATION_INVALID
+      // 的 issues 一并回写，P4 Task 4 销缓办⑥）。
       // 刻意不复刻「对行」判据（grain 同形等）：这类单要能试算、在采纳时被透传的 400 拒——
       // 先试后断，与 create/update 档「试算能红、采纳把关」同语义。
       const pre = await compileOverrideDeclaration({ pool: deps.pool }, change.payload)
-      if (!pre.ok) return { ok: false, error: pre.outcome.error }
+      if (!pre.ok) {
+        // DECLARATION_INVALID 的败支在 extra.issues 里带全量明细（path/message）——一并回写，
+        // 让提案人不必靠猜错误码（P4 Task 4，销缓办⑥）。
+        const issues = pre.outcome.extra?.issues
+        return { ok: false, error: pre.outcome.error, ...(Array.isArray(issues) ? { issues } : {}) }
+      }
       selectSql = pre.compiled.selectSql
       groupBy = pre.compiled.groupBy
       // baseline = 被 override 的 L1 同窗值（编译段顺带带回平台目录，按 id 取行）
@@ -128,7 +155,13 @@ export async function runPreview(deps: PreviewDeps, org: string, change: MetricC
       },
     }
   } catch (e) {
-    return { ok: false, error: e instanceof Error ? e.message : String(e) }
+    const message = e instanceof Error ? e.message : String(e)
+    // create/update 档走 compileL2：它**抛** SemanticCompileError（code + 可选 extra），不是败支。
+    // 收进 issues 供回写（path 用 'declaration'：整份声明的编译结论，不是单个字段的问题）。
+    if (e instanceof SemanticCompileError) {
+      return { ok: false, error: message, issues: [{ path: 'declaration', code: e.code, message, ...(e.extra ?? {}) }] }
+    }
+    return { ok: false, error: message }
   }
 }
 
@@ -171,7 +204,10 @@ export async function applyPreview(pool: Pool, id: number, outcome: PreviewOutco
     : await pool.query(
         `update data.metric_change set status = 'preview_failed', preview = $2::jsonb, ${PREVIEW_HISTORY_SET}
           where id = $1 and status = any($3)`,
-        [id, JSON.stringify({ error: outcome.error, ranAt: new Date().toISOString() }), PENDING_STATUSES],
+        [id, JSON.stringify({
+          error: outcome.error, ranAt: new Date().toISOString(),
+          ...(outcome.issues === undefined ? {} : { issues: outcome.issues }),
+        }), PENDING_STATUSES],
       )
   if ((r.rowCount ?? 0) === 0) {
     console.warn(`[data] applyPreview skipped: change ${id} 已终态，试算结果作废（重跑落后于裁决）`)

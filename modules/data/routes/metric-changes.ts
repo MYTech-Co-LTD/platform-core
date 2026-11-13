@@ -28,7 +28,7 @@ import { parseIdParam, requesterOf } from './context'
 import { adoptChange, getChange, listChanges, rejectChange, submitChange, withdrawChange } from '../domain/metric-change'
 import type { ChangeStatus } from '../domain/metric-change'
 import { PENDING_STATUSES } from '../domain/metric-change'
-import { applyPreview, runPreview } from '../domain/metric-change-preview'
+import { applyPreview, previewTooRecent, runPreview } from '../domain/metric-change-preview'
 import { analystPool, runWarehouseSqlParams } from '../domain/warehouse'
 
 const SubmitBody = z.object({
@@ -111,6 +111,9 @@ export function registerMetricChanges(r: ModuleHono, ctx: RouteCtx): void {
     const change = await getChange(ctx.pool, org, id)
     if (change === null) return c.json({ error: 'NOT_FOUND' }, 404)
     if (!PENDING_STATUSES.includes(change.status)) return c.json({ error: 'CHANGE_STATE_CHANGED' }, 409)
+    // 重跑限速（P4 Task 4，销缓办①）：提交即试算已刚落过 ranAt，60s 内连打不再烧执行资源。
+    // 只挡本端点——POST /metric-changes（首立单）不走这里（新单 preview 恒 null，判据天然放行）。
+    if (previewTooRecent(change.preview)) return c.json({ error: 'PREVIEW_RATE_LIMITED' }, 409)
     const preview = await runPreview({ pool: ctx.pool, execute: previewExecOf(ctx) }, org, change)
     await applyPreview(ctx.pool, change.id, preview)
     return c.json({ change: await getChange(ctx.pool, org, change.id) }, 200)
@@ -124,13 +127,13 @@ export function registerMetricChanges(r: ModuleHono, ctx: RouteCtx): void {
     const id = parseIdParam(c.req.param('id'))
     if (id === null) return c.json({ error: 'NOT_FOUND' }, 404)
     const org = c.get('tenant').casdoor_org
-    // {title, version} 快照必须在**采纳动作之前**取（P1 Task 4，销缓办③）：delete 档采纳后
+    // title 快照必须在**采纳动作之前**取（P1 Task 4，销缓办③）：delete 档采纳后
     // 行已删，事后 join 落空 ⇒ 那张单永远发不出变更通知。left join：create 档采纳前行还不存在
-    // ⇒ 快照缺 —— title 回退 metricId、version 记 0（行为变化如实记：create 的通知 title 从
-    // 「新 title」变为 metricId，这是快照语义的代价，计划写明）。查询失败在采纳前 fail-fast
-    // （此时零写入，不存在半态）；emit 仍 fail-open（见下）。
+    // ⇒ 快照缺 —— title 回退 metricId（行为变化如实记：create 的通知 title 从「新 title」变为
+    // metricId，这是快照语义的代价，计划写明）。查询失败在采纳前 fail-fast（此时零写入，
+    // 不存在半态）；emit 仍 fail-open（见下）。eventId 不再用 metric 版本号（改用单号，见下）。
     const snap = await ctx.pool.query(
-      `select ch.metric_id, m.title, m.version
+      `select ch.metric_id, m.title
          from data.metric_change ch left join data.metrics m on m.org = ch.org and m.id = ch.metric_id
         where ch.org = $1 and ch.id = $2`, [org, id])
     const out = await adoptChange(
@@ -145,14 +148,19 @@ export function registerMetricChanges(r: ModuleHono, ctx: RouteCtx): void {
     // 收件人由 notify 层按绑定规则解析（scope_holders: data:query）——模块只报事实，不自己找收件人。
     if (ctx.notify) {
       try {
-        // metric_id 在单据行上（adopt 已成功 ⇒ 行必在）；title/version 用**采纳前**快照——
+        // metric_id 在单据行上（adopt 已成功 ⇒ 行必在）；title 用**采纳前**快照——
         // delete 档行已删也发（P0 时代 delete 采纳从不发通知）。
-        const hit = snap.rows[0] as { metric_id: string; title: string | null; version: number | string | null } | undefined
+        const hit = snap.rows[0] as { metric_id: string; title: string | null } | undefined
         if (hit !== undefined) {
           const metricId = String(hit.metric_id)
+          // eventId 末段拼**变更单 id**（P4 Task 4，销缓办⑤）：P1 实证「delete→re-create 同
+          // metricId」会复用 metric 版本号 ⇒ 被 notify 去重吞。单号每单唯一，重建即新事件。
+          // ★ `ch:` 前缀是命名空间隔离（修复轮）：confirm-draft（routes/metrics.ts）仍发
+          // `...:{metricId}:{version}`，两边末段都是整数——不加前缀时同 org+metric 下 changeId
+          // 撞上历史 version 会被 notify 永久去重。`ch:` 让两族 eventId 永不相交。
           await ctx.notify.emit(c.get('identity'), {
             eventKey: 'data.metric.definition.changed',
-            eventId: `data.metric.definition.changed:${org}:${metricId}:${hit.version ?? 0}`,
+            eventId: `data.metric.definition.changed:${org}:${metricId}:ch:${id}`,
             scope: metricId,
             payload: {
               metricId,

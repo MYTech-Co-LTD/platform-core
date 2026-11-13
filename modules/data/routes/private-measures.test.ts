@@ -29,6 +29,21 @@ const OTHER_ORG = 'org-w2-private-api-other'
 const L1_PREFIX = 'w2route:'
 const SCHEMA = 'pm_route'
 
+/**
+ * P4 写面收口：遗留草稿端点（PUT /metrics/:id/draft、POST /metrics/:id/confirm-draft）
+ * 在 on 模式（缺省）下退役为 410。本文件的 D6 用例测的正是这条**应急回滚路径**的
+ * 原行为，故文件级置 off（与 routes/metrics.test.ts 同款；call 时读 env，不向兄弟文件泄漏）。
+ */
+let prevReviewMode: string | undefined
+beforeAll(() => {
+  prevReviewMode = process.env.DATA_METRIC_REVIEW_MODE
+  process.env.DATA_METRIC_REVIEW_MODE = 'off'
+})
+afterAll(() => {
+  if (prevReviewMode === undefined) delete process.env.DATA_METRIC_REVIEW_MODE
+  else process.env.DATA_METRIC_REVIEW_MODE = prevReviewMode
+})
+
 let pool: Pool
 
 function l1Def(over: Partial<L1MetricDef>): L1MetricDef {

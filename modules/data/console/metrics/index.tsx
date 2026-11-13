@@ -1,20 +1,13 @@
-// console/metrics/index.tsx — 指标管理：词表（L1 平台 + L2 本租户）+ **声明式**的 L2 定义表单。
+// console/metrics/index.tsx — 指标管理：词表（L1 平台 + L2 本租户）的只读浏览面。
 //
-// ── T8 之后这里为什么可以给表单了（旧版整页只读，注释里写着「两条硬约束排除 UI 写」）──────
-// 旧版的入参是自由 SQL（`subjectColumn` + `selectSql` 必填），于是两条硬约束都无法满足：
-//   ① 简表单必然 400；② console 提供 SQL 输入框 = 在消费层第二次定义口径。
-// T8 把入参收成 `L2Declaration`（结构化、可机检）之后，这两条**同时**消失了：
-// 表单能表达完整声明（base + 别名 + 维度白名单 + 过滤），而 SQL 由服务端的唯一编译点生成——
-// UI 结构上**没有地方**能写 SQL。
-//
-// ⚠️ 表单**不**提供 `target`（目标值）：服务端在 `data.metrics` 里没有它的存储列，
-// 入参会以 400 `TARGET_NOT_SUPPORTED` 被**显式拒绝**（不静默丢弃）。所以这里也不摆一个
-// 按了会报错的输入框——见 README「L2 的已知边界」。
+// ── P4 人面收口（2026-11-13）──────────────────────────────────────────────────
+// 所有**写**入口（编辑 / 元数据 / 删除指标 / 覆盖口径 / 新建声明）已从页面删除：
+// 指标变更一律由 agent 经企微/MCP 提案，人在「待核对」页采纳（两步决策流）。
+// 本页只剩读面 + 决策确认面：只读表格与详情抽屉、变更历史、使用统计、
+// 覆盖清单的「确认启用 / 删除覆盖」——后者是采纳后的确认步，不是实现面。
 import { useEffect, useMemo, useState } from 'react'
-import { Alert, Button, Card, Drawer, Dropdown, Input, Modal, Popconfirm, Segmented, Select, Space, Switch, Table, Tag, Timeline, Typography, message } from 'antd'
+import { Alert, Button, Card, Drawer, Dropdown, Input, Popconfirm, Segmented, Select, Space, Table, Tag, Timeline, Typography, message } from 'antd'
 import { apiGet, apiSend, messageOf } from '../lib/api'
-import DeclarationModal from './DeclarationModal'
-import type { DeclarationMode, DeclarationSeed } from './DeclarationModal'
 import { useIsMobile } from '../lib/useIsMobile'
 import { TechDetails } from '../components/TechDetails'
 
@@ -37,7 +30,7 @@ interface MetricRow {
   bizDescription: string | null
   unit: string | null
   caliberNote: string | null
-  /** W8：测度档——declared = 租户全额声明（编辑走删除+重建，不走 L2 结构化编辑器）。 */
+  /** W8：测度档——declared = 租户全额声明（变更走 agent 提案，页面只读）。 */
   basis?: 'l1_tree' | 'column_agg' | 'declared'
   /** W8：非空 = 本行是对该 L1 id 的口径覆盖（草稿或已确认）。 */
   overrideOf?: string | null
@@ -91,19 +84,6 @@ interface AuditRow {
   after: { title: string; description: string } | null
 }
 
-/** 表单里的过滤行（values 是逗号分隔的输入框文本，提交时拆成数组）。 */
-interface FilterDraft { dim: string; op: '=' | 'in'; values: string }
-
-interface Draft {
-  id: string
-  baseMetric: string
-  alias: string
-  /** 是否自定义维度（关闭 = 继承平台指标的全部维度 ⇒ 提交时**不带** visibility 字段）。 */
-  restrictDims: boolean
-  dims: string[]
-  filters: FilterDraft[]
-}
-
 /** `group_by` 文本 → 维度名数组（服务端拼的就是 `a, b` 这一形态，两处口径必须一致）。 */
 const dimsOf = (row: MetricRow | undefined): string[] =>
   (row?.groupBy ?? '').split(',').map((d) => d.trim()).filter((d) => d !== '')
@@ -121,7 +101,6 @@ export default function MetricsPage() {
     { label: '平台指标', value: 'l1' as const },
     { label: '派生指标', value: 'l2' as const },
   ]
-  const [draft, setDraft] = useState<Draft | null>(null)
   // #489：变更历史抽屉。historyId=null 即关闭（不用额外一个 open 布尔量，避免两处状态打架）
   const [historyId, setHistoryId] = useState<string | null>(null)
   const [history, setHistory] = useState<AuditRow[]>([])
@@ -130,15 +109,8 @@ export default function MetricsPage() {
   const [usage, setUsage] = useState<{
     days: number; stats: UsageStat[]; retireCandidates: RetireCandidate[]; self?: { userId: string }
   } | null>(null)
-  // 元数据编辑弹窗（§10.4.3 P1）：null = 关。只对 L2 行开放（L1 平台口径，租户不得注解 → 404）。
-  const [metaDraft, setMetaDraft] = useState<{
-    id: string; title: string; biz: string; unit: string; note: string
-  } | null>(null)
-  // W8：契约声明弹窗 + 覆盖清单（草稿不可见，单独拉）
+  // W8：覆盖清单（草稿不可见，单独拉）；「确认启用 / 删除覆盖」是两步决策流的确认步，保留
   const [overrides, setOverrides] = useState<OverrideRow[]>([])
-  const [declOpen, setDeclOpen] = useState(false)
-  const [declMode, setDeclMode] = useState<DeclarationMode>('create')
-  const [declSeed, setDeclSeed] = useState<DeclarationSeed>({ id: '', title: '', description: '', expression: '', grain: [] })
   const [messageApi, ctx] = message.useMessage()
   // C 方案（2026-11-12 返工）：表格保持可扫，**详情进抽屉**——常驻右栏在「快速扫一遍」的用法下只是占地方。
   const [detailFor, setDetailFor] = useState<MetricRow | null>(null)
@@ -165,8 +137,6 @@ export default function MetricsPage() {
 
   const l1Rows = useMemo(() => rows.filter((r) => r.source === 'l1'), [rows])
   const l2Rows = useMemo(() => rows.filter((r) => r.source === 'l2'), [rows])
-  const base = useMemo(() => rows.find((r) => r.id === draft?.baseMetric), [rows, draft?.baseMetric])
-  const baseDims = useMemo(() => dimsOf(base), [base])
 
   /** 打开某条口径的变更历史（按需拉取；失败只提示，不阻塞页面）。 */
   const openHistory = (id: string) => {
@@ -188,44 +158,10 @@ export default function MetricsPage() {
       .catch((e) => messageApi.error(messageOf(e)))
   }
 
-  /** 打开元数据编辑（预填当前值；null 显示为空串——保存时全部回传 = 全量更新）。 */
-  function openMeta(r: MetricRow) {
-    setMetaDraft({ id: r.id, title: r.title, biz: r.bizDescription ?? '', unit: r.unit ?? '', note: r.caliberNote ?? '' })
-  }
-
-  /** 保存元数据（全量三字段；空串 = 显式清空——后端 clean 成 null）。 */
-  async function submitMeta() {
-    if (metaDraft === null) return
-    try {
-      await apiSend(`/metrics/${metaDraft.id}/meta`, 'PUT', {
-        bizDescription: metaDraft.biz.trim(),
-        unit: metaDraft.unit.trim(),
-        caliberNote: metaDraft.note.trim(),
-      })
-      setMetaDraft(null)
-      await load()
-    } catch (e) { messageApi.error(messageOf(e)) }
-  }
-
-  /** 从 L1 行的 select_sql 里反解表达式（仅用于表单预填；服务端仍按提交的声明重新编译）。 */
+  /** 从 L1 行的 select_sql 里反解表达式（详情抽屉展示用）。 */
   const exprOf = (sql: string): string => {
     const m = /^select\s+([\s\S]+?)\s+as\s+value/i.exec(sql.trim())
     return m?.[1]?.trim() ?? ''
-  }
-  const seedOfL1 = (r: MetricRow): DeclarationSeed => ({
-    id: r.id, title: r.title, description: r.description,
-    expression: exprOf(r.selectSql), grain: dimsOf(r),
-  })
-  function openDeclaration(mode: DeclarationMode, seed: DeclarationSeed) {
-    setDeclMode(mode); setDeclSeed(seed); setDeclOpen(true)
-  }
-  async function submitDeclaration(declaration: Record<string, unknown>) {
-    try {
-      if (declMode === 'override') await apiSend(`/metrics/${declSeed.id}/override`, 'POST', { declaration })
-      else await apiSend('/metrics/declarations', 'POST', { declaration })
-      setDeclOpen(false)
-      await load()
-    } catch (e) { messageApi.error(messageOf(e)) }
   }
   async function confirmOverride(id: string) {
     try { await apiSend(`/metrics/${id}/override/confirm`, 'POST'); await load() }
@@ -233,48 +169,6 @@ export default function MetricsPage() {
   }
   async function deleteOverride(id: string) {
     try { await apiSend(`/metrics/${id}/override`, 'DELETE'); await load() }
-    catch (e) { messageApi.error(messageOf(e)) }
-  }
-
-  function openEdit(r: MetricRow) {
-    // 从**库里那行**反推草稿：只能还原出编译产物能表达的部分（visibility 与 filters 已经
-    // 烘进 select_sql，不再是结构化字段）⇒ 编辑时按「继承全部维度、无过滤」起步，
-    // 用户重选即可。这不是信息丢失的缺陷，是「编译产物是单向的」的必然结果：
-    // 想看这条 L2 当初怎么定义的，看 description 里的派生来源 + 服务端日志。
-    setDraft({
-      id: r.id, baseMetric: '', alias: r.title, restrictDims: false, dims: [], filters: [],
-    })
-  }
-
-  async function submit() {
-    if (draft === null) return
-    const body: Record<string, unknown> = {
-      id: draft.id.trim(),
-      baseMetric: draft.baseMetric,
-      op: { kind: 'refine' },
-    }
-    if (draft.alias.trim() !== '') body.alias = draft.alias.trim()
-    if (draft.restrictDims) body.visibility = { dims: draft.dims }
-    const filters = draft.filters
-      .filter((f) => f.dim !== '')
-      .map((f) => ({
-        dim: f.dim,
-        op: f.op,
-        values: f.values.split(',').map((v) => v.trim()).filter((v) => v !== ''),
-      }))
-    if (filters.length > 0) body.filters = filters
-
-    try {
-      // 只改不改建（2026-11-12 定案：实现面收口给 agent）——表单只能打开既有 L2，
-      // id 输入框对既有行是 disabled。故这里恒 PUT；POST /metrics 仍存在，但只由 agent 走。
-      await apiSend(`/metrics/${String(body.id)}`, 'PUT', body)
-      setDraft(null)
-      await load()
-    } catch (e) { messageApi.error(messageOf(e)) }
-  }
-
-  async function remove(id: string) {
-    try { await apiSend(`/metrics/${id}`, 'DELETE'); await load() }
     catch (e) { messageApi.error(messageOf(e)) }
   }
 
@@ -292,19 +186,10 @@ export default function MetricsPage() {
     ? '还没有指标。平台指标随数据面接入自动出现；新指标在企微里对机器人说一声，或经 MCP 提交。'
     : '没有匹配的指标，试试清空搜索或切换筛选'
 
-  const confirmRemove = (r: MetricRow) => {
-    Modal.confirm({
-      title: `删除派生指标 ${r.id}？`, okText: '确认删除', cancelText: '取消',
-      okButtonProps: { danger: true }, onOk: () => remove(r.id),
-    })
-  }
-
-  interface SheetAction { key: string; label: string; danger?: boolean; onClick: () => void }
+  // 移动端「更多」面板（P4）：写入口已删，只剩只读的变更历史
+  interface SheetAction { key: string; label: string; onClick: () => void }
   const sheetActions = (r: MetricRow): SheetAction[] => [
     { key: 'history', label: '变更历史', onClick: () => openHistory(r.id) },
-    { key: 'edit', label: '编辑', onClick: () => openEdit(r) },
-    { key: 'meta', label: '元数据', onClick: () => openMeta(r) },
-    { key: 'remove', label: '删除指标', danger: true, onClick: () => confirmRemove(r) },
   ]
 
   const mobileCards = (
@@ -407,7 +292,7 @@ export default function MetricsPage() {
           style={{
             display: 'block', width: '100%', padding: '15px 24px',
             border: 'none', background: 'none', textAlign: 'left', cursor: 'pointer',
-            fontSize: 16, color: a.danger === true ? '#ff4d4f' : '#1f1f1f',
+            fontSize: 16, color: '#1f1f1f',
           }}
         >{a.label}</button>
       ))}
@@ -439,7 +324,7 @@ export default function MetricsPage() {
       <div style={{ display: 'flex', gap: 40, alignItems: 'flex-end', padding: '4px 2px 8px' }}>
         {[
           { k: '平台指标', v: l1Rows.length, d: '随数据面接入自动更新' },
-          { k: '本租户派生', v: l2Rows.length, d: '由 agent 或人工声明' },
+          { k: '本租户派生', v: l2Rows.length, d: '由 agent 提案创建' },
           { k: '待采用候选', v: pendingCandidates, d: pendingCandidates === null ? '—' : '采用后成为正式指标' },
         ].map((x) => (
           <div key={x.k} style={{ minWidth: 110 }}>
@@ -459,6 +344,9 @@ export default function MetricsPage() {
         <Button onClick={() => { if (usageDays === null) openUsage(30); else openUsage(usageDays) }}>
           使用统计
         </Button>
+        <Typography.Text type="secondary">
+          指标变更一律由 agent 提案（企微/MCP），在这里的『待核对』页采纳。
+        </Typography.Text>
       </div>
 
       {isMobile ? (
@@ -489,76 +377,6 @@ export default function MetricsPage() {
             options={SOURCE_OPTIONS}
           />
         </div>
-      )}
-
-      {draft !== null && (
-        <Card size="small" title={`编辑 ${draft.id}`}>
-          <Space direction="vertical" style={{ width: '100%' }} size="small">
-            <Input placeholder="指标 id（如 xiongmao:net_sales）" value={draft.id} maxLength={64}
-                   disabled={rows.some((r) => r.id === draft.id && r.source === 'l2')}
-                   onChange={(e) => setDraft({ ...draft, id: e.target.value })} />
-            <Select style={{ width: '100%' }} placeholder="基于哪个平台指标（L1）" value={draft.baseMetric || undefined}
-                    onChange={(v: string) => setDraft({ ...draft, baseMetric: v, dims: [] })}
-                    options={l1Rows.map((r) => ({ value: r.id, label: `${r.id}（${r.title}）` }))} />
-            <Input placeholder="别名（可选；不填则沿用平台指标的标题）" value={draft.alias} maxLength={128}
-                   onChange={(e) => setDraft({ ...draft, alias: e.target.value })} />
-            <Space>
-              <Switch checked={draft.restrictDims}
-                      onChange={(v: boolean) => setDraft({ ...draft, restrictDims: v })} />
-              <Typography.Text>裁剪可见维度</Typography.Text>
-              <Typography.Text type="secondary">
-                （关闭 = 继承平台指标的全部维度：{baseDims.join(' / ') || '—'}）
-              </Typography.Text>
-            </Space>
-            {draft.restrictDims && (
-              <Select mode="multiple" style={{ width: '100%' }} placeholder="可见维度（不选 = 只看汇总值）"
-                      value={draft.dims}
-                      onChange={(v: string[]) => setDraft({ ...draft, dims: v })}
-                      options={baseDims.map((d) => ({ value: d, label: d }))} />
-            )}
-
-            {draft.filters.map((f, i) => (
-              <Space key={i}>
-                <Select style={{ width: 180 }} placeholder="维度" value={f.dim || undefined}
-                        onChange={(v: string) => setDraft({
-                          ...draft,
-                          filters: draft.filters.map((x, j) => (j === i ? { ...x, dim: v } : x)),
-                        })}
-                        options={baseDims.map((d) => ({ value: d, label: d }))} />
-                <Select style={{ width: 80 }} value={f.op}
-                        onChange={(v: '=' | 'in') => setDraft({
-                          ...draft,
-                          filters: draft.filters.map((x, j) => (j === i ? { ...x, op: v } : x)),
-                        })}
-                        options={[{ value: '=', label: '=' }, { value: 'in', label: 'in' }]} />
-                <Input style={{ width: 240 }} placeholder="值（多个用英文逗号分隔）" value={f.values}
-                       onChange={(e) => setDraft({
-                         ...draft,
-                         filters: draft.filters.map((x, j) => (j === i ? { ...x, values: e.target.value } : x)),
-                       })} />
-                <Button danger size="small"
-                        onClick={() => setDraft({ ...draft, filters: draft.filters.filter((_, j) => j !== i) })}>
-                  删除
-                </Button>
-              </Space>
-            ))}
-            <Space>
-              <Button size="small"
-                      onClick={() => setDraft({ ...draft, filters: [...draft.filters, { dim: '', op: '=', values: '' }] })}>
-                添加过滤
-              </Button>
-              <Button size="small"
-                      onClick={() => setDraft({ ...draft, filters: [] })} disabled={draft.filters.length === 0}>
-                （清空过滤）
-              </Button>
-            </Space>
-
-            <Space>
-              <Button type="primary" onClick={submit} disabled={!draft.id.trim() || draft.baseMetric === ''}>保存</Button>
-              <Button onClick={() => setDraft(null)}>取消</Button>
-            </Space>
-          </Space>
-        </Card>
       )}
 
       {overrides.length > 0 && (
@@ -608,7 +426,7 @@ export default function MetricsPage() {
         ) },
         { title: '口径', dataIndex: 'description', ellipsis: { showTitle: true }, render: (_: unknown, r: MetricRow) =>
             r.bizDescription ?? (r.description !== '' ? r.description : '未标注') },
-        // 来源：L1 = 平台词表（只读，改它要改 dbt 声明）；L2 = 本租户派生（可改可删）
+        // 来源：L1 = 平台词表（只读，改它要改 dbt 声明）；L2 = 本租户派生（变更走 agent 提案）
         // 来源：与成员页同一套「圆点 + 文字」——色块会把整列染花，数据行只该有一个视觉锚点
         { title: '来源', dataIndex: 'source', width: 130, render: (v: string, r: MetricRow) => {
             const label = v === 'l1' ? '平台（只读）' : r.basis === 'declared' ? '租户声明（全额）' : '本租户派生'
@@ -630,33 +448,10 @@ export default function MetricsPage() {
               <Dropdown
                 trigger={['click']}
                 menu={{
-                  items: r.source === 'l1'
-                    ? [
-                      { key: 'override', label: '覆盖口径' },
-                      { key: 'history', label: '变更历史' },
-                    ]
-                    : [
-                      { key: 'history', label: '变更历史' },
-                      ...(r.basis === 'declared' ? [] : [{ key: 'edit', label: '编辑' }]),
-                      { key: 'meta', label: '元数据' },
-                      { type: 'divider' as const, key: 'd1' },
-                      { key: 'delete', label: '删除', danger: true },
-                    ],
+                  // P4：写入口已删——两层的「⋯」都只剩只读的变更历史
+                  items: [{ key: 'history', label: '变更历史' }],
                   onClick: ({ key }) => {
                     if (key === 'history') openHistory(r.id)
-                    if (key === 'edit') openEdit(r)
-                    if (key === 'meta') openMeta(r)
-                    if (key === 'override') openDeclaration('override', seedOfL1(r))
-                    if (key === 'delete') {
-                      Modal.confirm({
-                        title: `删除派生指标 ${r.id}？`,
-                        content: '该操作不可恢复；历史会留审计。',
-                        okText: '确认删除',
-                        cancelText: '取消',
-                        okButtonProps: { danger: true },
-                        onOk: () => remove(r.id),
-                      })
-                    }
                   },
                 }}
               >
@@ -701,30 +496,14 @@ export default function MetricsPage() {
             <div>
               <Typography.Text type="secondary" style={{ fontSize: 12 }}>属性</Typography.Text>
               <div style={{ marginTop: 4, lineHeight: 2 }}>
-                来源：{detailFor.source === 'l1' ? '平台口径（只读，改它要改 dbt 声明）' : detailFor.basis === 'declared' ? '租户声明（全额）' : '本租户派生（可改可删）'}<br />
+                来源：{detailFor.source === 'l1' ? '平台口径（只读，改它要改 dbt 声明）' : detailFor.basis === 'declared' ? '租户声明（全额）' : '本租户派生（变更由 agent 提案）'}<br />
                 所需权限：{detailFor.requiredScope ?? '不限'}　主体列：{detailFor.subjectColumn}<br />
                 版本：{detailFor.source === 'l1' ? '平台物化' : `v${detailFor.version}`}
               </div>
             </div>
             <Space wrap>
-              {detailFor.source === 'l1' ? (
-                <>
-                  <Button onClick={() => { openDeclaration('override', seedOfL1(detailFor)); setDetailFor(null) }}>覆盖口径</Button>
-                  <Button onClick={() => { openHistory(detailFor.id); setDetailFor(null) }}>变更历史</Button>
-                </>
-              ) : (
-                <>
-                  <Button onClick={() => { openHistory(detailFor.id); setDetailFor(null) }}>变更历史</Button>
-                  {detailFor.basis !== 'declared' && (
-                    <Button type="primary" onClick={() => { openEdit(detailFor); setDetailFor(null) }}>编辑</Button>
-                  )}
-                  <Button onClick={() => { openMeta(detailFor); setDetailFor(null) }}>元数据</Button>
-                  <Popconfirm title={`删除派生指标 ${detailFor.id}？`} okText="确认删除" cancelText="取消"
-                              onConfirm={() => { void remove(detailFor.id); setDetailFor(null) }}>
-                    <Button danger>删除</Button>
-                  </Popconfirm>
-                </>
-              )}
+              {/* P4：写入口已删——抽屉里只剩只读动作 */}
+              <Button onClick={() => { openHistory(detailFor.id); setDetailFor(null) }}>变更历史</Button>
             </Space>
           </Space>
         )}
@@ -775,19 +554,10 @@ export default function MetricsPage() {
                         <Tag color="warning">候选</Tag>
                         <Typography.Text>{c.title}</Typography.Text>
                         <Typography.Text type="secondary">　{c.metricId} · 创建者 {c.createdBy ?? '（未知，028 前存量）'}</Typography.Text>
-                        {/* 删除入口按 creator 门（#1294）：后端 DELETE 对非 creator 403，别放假按钮 */}
-                        {c.createdBy !== null && c.createdBy === usage.self?.userId ? (
-                          <Popconfirm title={`删除派生指标 ${c.metricId}？`} okText="确认删除" cancelText="取消"
-                                      onConfirm={async () => { await remove(c.metricId); openUsage(usage.days) }}>
-                            <Button danger size="small" style={{ marginLeft: 8 }}>删除</Button>
-                          </Popconfirm>
-                        ) : (
-                          <Typography.Text type="secondary" style={{ marginLeft: 8 }}>仅创建者可删</Typography.Text>
-                        )}
                       </div>
                     ))}
                     <Typography.Text type="secondary">
-                      清单只读：下线动作走创建者的草稿流（删除），出现真实诉求再自动化（spec D7 口径）。
+                      清单只读：下线由 agent 提案、在「待核对」页采纳（P4 人面收口）。
                     </Typography.Text>
                   </Space>
                 </Card>
@@ -816,39 +586,6 @@ export default function MetricsPage() {
           )}
         </Space>
       </Drawer>
-
-      {/* 元数据编辑（§10.4.3 P1）：三个标注字段独立于口径——不经编译点，审计动作词 meta。 */}
-      <DeclarationModal
-        open={declOpen}
-        mode={declMode}
-        seed={declSeed}
-        onCancel={() => setDeclOpen(false)}
-        onSubmit={submitDeclaration}
-      />
-
-      <Modal title={`元数据：${metaDraft?.title ?? ''}`} open={metaDraft !== null}
-             onCancel={() => setMetaDraft(null)} onOk={() => { void submitMeta() }} okText="保存">
-        <Space direction="vertical" style={{ width: '100%' }} size="small">
-          <div>
-            <Typography.Text type="secondary">业务描述（这数怎么算、该拿它看什么）</Typography.Text>
-            <Input.TextArea rows={2} maxLength={2000} value={metaDraft?.biz ?? ''}
-                            onChange={(e) => setMetaDraft((d) => d === null ? d : { ...d, biz: e.target.value })} />
-          </div>
-          <div>
-            <Typography.Text type="secondary">单位（元/单/件/人/%…）</Typography.Text>
-            <Input maxLength={64} value={metaDraft?.unit ?? ''}
-                   onChange={(e) => setMetaDraft((d) => d === null ? d : { ...d, unit: e.target.value })} />
-          </div>
-          <div>
-            <Typography.Text type="secondary">口径说明（边界：含不含优惠/退货、统计窗口…）</Typography.Text>
-            <Input.TextArea rows={2} maxLength={2000} value={metaDraft?.note ?? ''}
-                            onChange={(e) => setMetaDraft((d) => d === null ? d : { ...d, note: e.target.value })} />
-          </div>
-          <Typography.Text type="secondary">
-            空掉一个框 = 清空该字段；保存不走编译点，数字不变（审计记「元数据」动作）。
-          </Typography.Text>
-        </Space>
-      </Modal>
     </Space>
   )
 }
