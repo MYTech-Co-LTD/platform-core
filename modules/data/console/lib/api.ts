@@ -98,6 +98,7 @@ export async function streamPost(path: string, body: unknown, signal?: AbortSign
 const MESSAGES: Record<string, string> = {
   INVALID_BODY: '输入不合法，请检查后重试',
   NOT_FOUND: '目标不存在或已被删除',
+  SPEC_LINT_FAILED: '报表语义校验未通过',
   DETAIL_NOT_AVAILABLE: '该指标未声明下钻明细，无法导出逐笔数据',
   NO_SERIES: '该指标不提供按日组成（不可加或比率指标）',
   LLM_UNCONFIGURED: '本站未开启智能问数（未配置 LLM）',

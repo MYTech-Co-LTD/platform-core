@@ -2284,6 +2284,30 @@ describePg('报表路由（需要 DATABASE_URL）', () => {
         method: 'POST', headers: { 'content-type': 'application/json' },
         body: JSON.stringify({ expectedVersion }),
       })
+
+    it('语义 lint：面板硬写 bizday + 报表 period ⇒ 发布 400 SPEC_LINT_FAILED（错误可定位）', async () => {
+      const { app } = manage()
+      const res = await post(app, {
+        title: '冲突窗口', renderer: 'platform',
+        spec: {
+          period: { mode: 'day', day: '2026-11-09' },
+          panels: [{
+            chart: 'table', title: '明细', metricId: OPEN_METRIC,
+            args: { bizday: { from: '2026-01-01', to: '2026-01-31' } },
+          }],
+        },
+      })
+      expect(res.status).toBe(201)
+      const { id } = await res.json() as { id: string }
+      const out = await publish(app, id, await versionOf(app, id))
+      expect(out.status).toBe(400)
+      const body = await out.json() as {
+        reason: string; detail?: string; issues?: Array<{ code: string; level: string }>
+      }
+      expect(body.reason).toBe('SPEC_LINT_FAILED')
+      expect(body.detail).toContain('bizday')
+      expect(body.issues?.some((i) => i.code === 'PANEL_BIZDAY_OVERRIDDEN')).toBe(true)
+    })
     const putSpec = (app: Hono, id: string, spec: unknown, expectedVersion: number) =>
       app.request(`/reports/${id}/spec`, {
         method: 'PUT', headers: { 'content-type': 'application/json' },
