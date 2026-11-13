@@ -26,6 +26,7 @@ import { withObjectLock } from './object-lock'
 import { deriveRequiredScope, validatePanelMetrics } from './report-scope'
 import { parseReportSpec } from './report-spec'
 import type { ReportSpec } from './report-spec'
+import { lintBlocksPublish, lintReportSpec, type LintIssue } from './report-lint'
 import { getReport } from './report-store'
 
 /** 下线后的页门（设计 §4.3：挂回「草稿预览档」，只有管理员看得见）。 */
@@ -75,6 +76,8 @@ export interface PublishOutcome {
   requiredDepts: string[] | null
   /** 内容与最新快照一致且指针就在它上面 ⇒ 不新建版本（设计 §4.2 第 4 步）。 */
   unchanged?: boolean
+  /** 语义 lint 的非阻断项（发布成功也回传，供界面提示）。 */
+  warnings?: LintIssue[]
 }
 
 export type PublishErrorReason =
@@ -90,8 +93,13 @@ export type PublishErrorReason =
   | 'METRIC_SOURCE_NOT_ADOPTED'
   | 'AI_TEXT_REQUIRES_DATA_PANEL'
   | 'AI_TEXT_REQUIRES_PERIOD'
+  | 'SPEC_LINT_FAILED'
 
-export type PublishError = { ok: false; reason: PublishErrorReason; detail?: string }
+export type PublishError = {
+  ok: false; reason: PublishErrorReason; detail?: string
+  /** 结构化 lint 结果（机器可读；detail 里另给人话摘要）。 */
+  issues?: LintIssue[]
+}
 export type PublishResult = PublishOutcome | PublishError
 
 /** 已发布快照的读面（`GET /reports/:id/published-spec` 的正体）。 */
@@ -236,6 +244,20 @@ export async function publishVersion(
       return { ok: false, reason: validated.reason, detail: 'metricId' in validated ? validated.metricId : undefined }
     }
 
+    // 语义 lint（R2）：结构自洽是发布的前置。error 阻断，warn 放行并回传。
+    // 已有存量规格已核（2026-11-13 生产 0 条 error），不会把历史报表挡在门外。
+    const lintIssues = lintReportSpec(parsed.spec)
+    if (lintBlocksPublish(lintIssues)) {
+      const errors = lintIssues.filter((i) => i.level === 'error')
+      return {
+        ok: false,
+        reason: 'SPEC_LINT_FAILED',
+        detail: errors.map((i) => i.message).join('；').slice(0, 200),
+        issues: lintIssues,
+      }
+    }
+    const lintWarnings = lintIssues.filter((i) => i.level === 'warn')
+
     const attempt = async (): Promise<PublishOutcome> => withTx(pool, async (c) => {
       const latest = await c.query(
         `select id, version, title, spec, required_scope, required_depts, draft_version, published_at
@@ -270,6 +292,7 @@ export async function publishVersion(
           requiredScope: scope.requiredScope,
           requiredDepts: cur.requiredDepts ?? null,
           unchanged: true,
+          ...(lintWarnings.length === 0 ? {} : { warnings: lintWarnings }),
         }
       }
 
@@ -301,6 +324,7 @@ export async function publishVersion(
         publishedAt: toIso(inserted.rows[0].published_at),
         requiredScope: scope.requiredScope,
         requiredDepts: cur.requiredDepts ?? null,
+        ...(lintWarnings.length === 0 ? {} : { warnings: lintWarnings }),
       }
     })
 
