@@ -219,3 +219,17 @@ describe('cross_table 查询体（R3）', () => {
     })
   })
 })
+
+describe('waterfall 查询体与对比区间（R3）', () => {
+  const panel = {
+    chart: 'waterfall' as const, title: '门店贡献', metricId: 'm', args: {},
+    dims: ['branch_name'], compare: 'prev_period' as const, format: 'number' as const, span: 24, timeScoped: true,
+  }
+  it('按单维度分组，不附加 slice/total', () => {
+    expect(panelQueryBodyOf(panel, {})).toEqual({ metricId: 'm', args: {}, dimensions: ['branch_name'] })
+  })
+  it('对比区间 = 等长前移（与 KPI/图表同一函数）', () => {
+    const r = chartCompareRangesOf(panel, { from: '2026-11-01', to: '2026-11-07' }, 'last_7_days')
+    expect(r).toEqual([{ key: 'prev', label: '上期', range: { from: '2026-10-25', to: '2026-10-31' } }])
+  })
+})

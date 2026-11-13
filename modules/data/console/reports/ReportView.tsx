@@ -48,7 +48,9 @@ import type { PeriodSpec, ReportSpec } from '../../domain/report-spec'
 import { toReportPlan, type DeniedPanel } from '../../domain/report-plan'
 import { KpiCard } from './KpiCard'
 import AiTextPanel from './AiTextPanel'
+import { formatValue } from '../../domain/report-format'
 import { pivotOf } from './cross-table'
+import { waterfallBarsOf } from './waterfall'
 import { RichText } from '../lib/rich-text'
 
 type Panel = ReportSpec['panels'][number]
@@ -308,7 +310,7 @@ function EChart({ option }: { option: EChartsCoreOption }) {
 
 /** 渲染轴：有 slice 时以服务端分组维度为准，否则用面板声明的 dims（两者都是规格声明）。 */
 function dimsOf(panel: Panel): string[] {
-  if (panel.chart === 'text' || panel.chart === 'kpi' || panel.chart === 'ai_text' || panel.chart === 'cross_table') return []
+  if (panel.chart === 'text' || panel.chart === 'kpi' || panel.chart === 'ai_text' || panel.chart === 'cross_table' || panel.chart === 'waterfall') return []
   return panel.slice?.dimensions ?? panel.dims
 }
 
@@ -423,6 +425,63 @@ function PanelBody({ panel, result, compares = [] }: { panel: Panel; result: Pan
       </>
     )
   }
+  if (panel.chart === 'waterfall') {
+    const prev = compares[0]?.result ?? null
+    if (prev === null) return <Typography.Text type="secondary">对比数据加载中…</Typography.Text>
+    const bars = waterfallBarsOf(result, prev, panel.dims)
+    if (bars.length === 0) return <Typography.Text type="secondary">没有可比的变化</Typography.Text>
+    let running = 0
+    const lowers: number[] = []
+    const deltas = bars.map((b) => {
+      if (b.kind === 'total') {
+        lowers.push(0)
+        return { value: Math.abs(b.delta), itemStyle: { color: '#0f766e' } }
+      }
+      const low = Math.min(running, running + b.delta)
+      const high = Math.max(running, running + b.delta)
+      running += b.delta
+      lowers.push(low)
+      return { value: high - low, itemStyle: { color: b.delta >= 0 ? '#067647' : '#B42318' } }
+    })
+    const sign = (n: number): string => `${n >= 0 ? '+' : ''}${formatValue(n, panel.format)}`
+    const option: EChartsCoreOption = {
+      grid: { left: 8, right: 8, top: 16, bottom: 56, containLabel: true },
+      tooltip: {
+        trigger: 'axis', axisPointer: { type: 'shadow' },
+        formatter: (ps: unknown) => {
+          const i = (ps as Array<{ dataIndex: number }>)[0]?.dataIndex ?? 0
+          const b = bars[i]
+          return b === undefined ? '' : `${b.label}<br/>${sign(b.delta)}`
+        },
+      },
+      xAxis: {
+        type: 'category', data: bars.map((b) => b.label),
+        axisLabel: { interval: 0, rotate: bars.length > 6 ? 30 : 0, fontSize: 11 },
+      },
+      yAxis: { type: 'value' },
+      series: [
+        { type: 'bar', stack: 'w', silent: true, itemStyle: { color: 'transparent' }, data: lowers },
+        {
+          type: 'bar', stack: 'w', data: deltas,
+          label: {
+            show: true, position: 'top', fontSize: 10,
+            formatter: (p: unknown) => {
+              const i = (p as { dataIndex: number }).dataIndex
+              const b = bars[i]
+              return b === undefined ? '' : sign(b.delta)
+            },
+          },
+        },
+      ],
+    }
+    return (
+      <>
+        <EChart option={option} />
+        <TrustLine result={result} />
+      </>
+    )
+  }
+
   return (
     <>
       <EChart option={buildOption(panel.chart, dimsOf(panel), result, compares)} />
@@ -696,11 +755,11 @@ export default function ReportView({
     const jobs: Array<{
       i: number
       ranges: ReturnType<typeof chartCompareRangesOf>
-      panel: Extract<Panel, { chart: 'line' | 'bar' }>
+      panel: Extract<Panel, { chart: 'line' | 'bar' | 'waterfall' }>
     }> = []
     panels.forEach((p, i) => {
       if (isDeniedPanel(p)) return
-      if (p.chart !== 'line' && p.chart !== 'bar') return
+      if (p.chart !== 'line' && p.chart !== 'bar' && p.chart !== 'waterfall') return
       if (results[i]?.kind !== 'ok') return
       if (!compareVisible.current.has(i)) return
       const ranges = chartCompareRangesOf(p, range, period?.mode)

@@ -33,7 +33,7 @@ export type ValidateResult =
   | { ok: false; reason: 'AI_TEXT_REQUIRES_DATA_PANEL' | 'AI_TEXT_REQUIRES_PERIOD' }
 
 /** 真有数据面的图型（ai_text 不是数据面板：它读的是**别人**算出来的事实包）。 */
-const DATA_CHARTS = new Set<ReportSpec['panels'][number]['chart']>(['line', 'bar', 'table', 'cross_table', 'kpi'])
+const DATA_CHARTS = new Set<ReportSpec['panels'][number]['chart']>(['line', 'bar', 'table', 'cross_table', 'waterfall', 'kpi'])
 
 /**
  * `metricIdsOf` 的最小输入形状：**故意全可选**——除了真实面板，观看面还会出现降级占位符
@@ -138,7 +138,7 @@ export function validatePanelMetrics(
       if (metric.sourceSystem !== null && !adoptedSources.has(metric.sourceSystem)) {
         return { ok: false, reason: 'METRIC_SOURCE_NOT_ADOPTED', metricId: id }
       }
-      if ((panel.chart === 'line' || panel.chart === 'bar' || panel.chart === 'cross_table') && !metric.totalable) {
+      if ((panel.chart === 'line' || panel.chart === 'bar' || panel.chart === 'cross_table' || panel.chart === 'waterfall') && !metric.totalable) {
         return { ok: false, reason: 'CHART_REQUIRES_ADDITIVE', metricId: id }
       }
       if (panel.chart === 'kpi' && !metric.totalable) {
