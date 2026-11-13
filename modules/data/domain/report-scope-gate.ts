@@ -43,7 +43,7 @@ import type { Pool } from 'pg'
 import type { AclRow } from './asset-auth'
 import { deptChainOf, subtreeOf } from './metric-visibility'
 import { loadMergedCatalog } from './metric-store'
-import type { ReportSpec } from './report-spec'
+import { parseStoredSpec, type ReportSpec } from './report-spec'
 import { metricIdsOf } from './report-scope'
 
 export type ReportScopeViolationReason =
@@ -146,7 +146,10 @@ export async function reportScopeViolations(
   // 平台行（空草稿 / 纯文本）静默通过。
   const panelMetrics: Array<{ index: number; metricId: string }> = []
   if (report.spec !== null) {
-    report.spec.panels.forEach((panel, index) => {
+    // V5：库里可能是 v2 ⇒ 归一后再读面板（非法存量原样按 v1 形状尽力判）。
+    const parsedSpec = parseStoredSpec(report.spec)
+    const spec = parsedSpec.ok ? parsedSpec.spec : (report.spec as ReportSpec)
+    spec.panels.forEach((panel, index) => {
       for (const metricId of metricIdsOf(panel)) panelMetrics.push({ index, metricId })
     })
   }

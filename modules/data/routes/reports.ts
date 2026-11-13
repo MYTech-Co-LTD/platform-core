@@ -70,7 +70,7 @@ import {
   updateSpecAndScope,
   upsertReport,
 } from '../domain/report-store'
-import { PeriodSchema, parseReportInput, parseReportSpec } from '../domain/report-spec'
+import { PeriodSchema, parseReportInput, parseReportSpec, parseStoredSpec } from '../domain/report-spec'
 import type { AiTextPanel, ReportSpec } from '../domain/report-spec'
 import { deriveRequiredScope, metricIdsOf, validatePanelMetrics } from '../domain/report-scope'
 import { reportScopeViolations } from '../domain/report-scope-gate'
@@ -211,6 +211,13 @@ const CREATE_SCOPE = 'data:create'
 
 const reportIdOf = (raw: string | undefined): string | null =>
   raw === undefined || raw === '' ? null : raw
+
+/** 读面归一：库里可能是 v2（V5 起新写入保留 v2）⇒ 渲染/审查一律拿 v1 规范形态。 */
+function normalizeStoredOrRaw(raw: unknown): ReportSpec {
+  const parsed = parseStoredSpec(raw)
+  // 存量非法 spec（历史白名单）保持旧行为：原样交给编辑器，不把它变成 500。
+  return parsed.ok ? parsed.spec : (raw as ReportSpec)
+}
 
 /** 行级数据门：词表外的报表可见性也按「org + 行上 required_scope」裁（口径同 visibleMetrics）。
  *  2026-10-30 起叠加**部门门**（spec §3.4 / D-O4：叠加不替代）——
@@ -429,6 +436,7 @@ export function registerReports(r: ModuleHono, ctx: RouteCtx): void {
           metrics.reason === 'METRIC_SOURCE_NOT_ADOPTED' ? 403 : 400,
         )
       }
+      const toStore = spec.raw
       const id = await upsertReport(ctx.pool, org, {
         title: parsed.data.title,
         metabaseId: 0,                    // 哨兵：platform 行没有 Metabase dashboard（见 ReportRow）
@@ -436,7 +444,7 @@ export function registerReports(r: ModuleHono, ctx: RouteCtx): void {
         requiredScope: effectiveScope,
         requiredDepts: parsed.data.requiredDepts,
         renderer: 'platform',
-        spec: spec.spec,
+        spec: toStore,
         // 资产级（spec 2026-11-01 §4.3）：缺省 restricted（私有）；显式 tenant = 建给全租户看。
         // 同名 upsert **不覆盖**既有可见性（upsert 的冲突分支不更新该列）。
         visibility: parsed.data.visibility,
@@ -983,12 +991,13 @@ export function registerReports(r: ModuleHono, ctx: RouteCtx): void {
       if (row.publishedVersionId === null) {
         // 页门同步派生只对**未发布行**做（已发布行的线上门归快照，见上）。
         const d = deriveRequiredScope(spec.spec, catalog)
+        const toStore = spec.raw
         updated = await updateSpecAndScope(
-          ctx.pool, org, id, spec.spec, d.ok ? d.requiredScope : row.requiredScope,
+          ctx.pool, org, id, toStore, d.ok ? d.requiredScope : row.requiredScope,
           parsed.data.expectedVersion,
         )
       } else {
-        updated = await updateSpec(ctx.pool, org, id, spec.spec, parsed.data.expectedVersion)
+        updated = await updateSpec(ctx.pool, org, id, spec.raw, parsed.data.expectedVersion)
       }
       if (updated === null) {
         const cur = await getReportVersion(ctx.pool, org, id)
@@ -1027,11 +1036,12 @@ export function registerReports(r: ModuleHono, ctx: RouteCtx): void {
     // ⇒ 显式 409，与 embed-url/edit-url 的守卫同族。
     if (row.renderer !== 'platform') return c.json({ error: 'RENDERER_NOT_SELF_DRAWN' }, 409)
     // 编辑者：全量（要能继续改规格——占位符会让编辑器不可用）。
-    if (canEditAsset(specAcl, requester, MANAGE_SCOPE) || row.spec === null) {
-      return c.json({ spec: row.spec, version: row.version, deniedPanels: [] })
+    const viewSpec = row.spec === null ? null : normalizeStoredOrRaw(row.spec)
+    if (canEditAsset(specAcl, requester, MANAGE_SCOPE) || viewSpec === null) {
+      return c.json({ spec: viewSpec, version: row.version, deniedPanels: [] })
     }
     // 观看者：与 published-spec 同一把渲染闸（口径不可见 ⇒ 原位剥成占位符；reveal 整表拒）。
-    const render = await reportRenderGate(ctx.pool, requester, org, row.id, row.spec)
+    const render = await reportRenderGate(ctx.pool, requester, org, row.id, viewSpec)
     if (render.blocked) return c.json({ error: 'NOT_FOUND' }, 404)
     return c.json({ spec: render.spec, version: row.version, deniedPanels: render.deniedPanels })
   })
@@ -1084,7 +1094,7 @@ export function registerReports(r: ModuleHono, ctx: RouteCtx): void {
     if (denied !== null) return denied
     if (report.renderer !== 'platform') return c.json({ error: 'RENDERER_NOT_SELF_DRAWN' }, 409)
     if (report.spec === null) return c.json({ error: 'NO_SPEC' }, 409)
-    const parsed = parseReportSpec(report.spec)
+    const parsed = parseStoredSpec(report.spec)
     if (!parsed.ok) return c.json({ error: 'INVALID_SPEC', detail: parsed.code }, 400)
     const catalog = await loadMergedCatalog(ctx.pool, org)
     const scope = deriveRequiredScope(parsed.spec, catalog)
@@ -1263,7 +1273,9 @@ export function registerReports(r: ModuleHono, ctx: RouteCtx): void {
     // 完整快照（含 spec）：供 review / 回滚确认。spec 原样返回——回填行未过当前白名单，
     // 「原样展示给人看」比「解析失败就 500」正确（要上线的走回滚，那里会重新校验）。
     return c.json({
-      version: row.version, title: row.title, spec: row.spec, requiredScope: row.requiredScope,
+      version: row.version, title: row.title,
+      spec: row.spec === null ? null : normalizeStoredOrRaw(row.spec),
+      requiredScope: row.requiredScope,
       draftVersion: row.draftVersion, publishedAt: row.publishedAt, publishedBy: row.publishedBy,
       note: row.note,
     })
@@ -1339,7 +1351,7 @@ export function registerReports(r: ModuleHono, ctx: RouteCtx): void {
       ? null
       : await getVersion(ctx.pool, org, id, report.publishedVersion)
     return c.json({
-      spec: report.spec,
+      spec: report.spec === null ? null : normalizeStoredOrRaw(report.spec),
       version: report.version,
       publishedVersion: report.publishedVersion,
       publishedAt: published?.publishedAt ?? null,
@@ -1367,7 +1379,7 @@ export function registerReports(r: ModuleHono, ctx: RouteCtx): void {
     if (denied !== null) return denied
     if (report.renderer !== 'platform') return c.json({ error: 'RENDERER_NOT_SELF_DRAWN' }, 409)
     if (report.spec === null) return c.json({ error: 'NO_SPEC' }, 409)
-    const parsed = parseReportSpec(report.spec)
+    const parsed = parseStoredSpec(report.spec)
     if (!parsed.ok) return c.json({ error: 'INVALID_SPEC', detail: parsed.code }, 400)
     const published = await getPublishedSpec(ctx.pool, org, id)
     const catalog = await loadMergedCatalog(ctx.pool, org)
@@ -1442,8 +1454,10 @@ export function registerReports(r: ModuleHono, ctx: RouteCtx): void {
       if (!canEditAsset(acl, requester, MANAGE_SCOPE)) return { error: 'NOT_FOUND' }
       if (report.spec === null) return { error: 'NO_SPEC' }
       // 草稿预览是编辑面（owner ∪ data:manage），不过渲染闸 ⇒ 没有被拒面板。
+      const draftSpec = parseStoredSpec(report.spec)
+      if (!draftSpec.ok) return { error: 'NO_SPEC' }
       return {
-        requester, report, spec: report.spec, deniedPanels: [],
+        requester, report, spec: draftSpec.spec, deniedPanels: [],
         specKey: `draft:${report.version}`, title: report.title,
       }
     }
