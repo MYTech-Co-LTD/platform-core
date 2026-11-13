@@ -6,7 +6,7 @@
 // 祖先/后代不吃共享）。fail-closed：观看者无部门上下文 ⇒ 只能看 owner_dept 空的指标。
 //
 // 单一实现纪律：部门可见判定只在本文件的纯谓词里；`visibleMetrics`（authz.ts）只经它判，
-// 别处不得自写第二份（P2 计划 Global Constraints，Task 3 接线时以静态断言钉住）。
+// 别处不得自写第二份（P2 计划 Global Constraints，静态断言钉在 authz.test.ts）。
 //
 // 实现分工（与 dept-gate.ts 同一套 org 惯例）：
 //   loadDeptContext —— 请求时**一条查询**取部门上下文（见函数注）；
@@ -66,16 +66,21 @@ export async function loadDeptContext(
 
 /**
  * 部门可见判定（**纯谓词**，spec §8.1 真值表——列表与按 id 查询共用这一份）：
- * - `ownerDept === null`（平台通用指标）⇒ 真，无论 ctx 在不在（与今天行为逐字节相同）；
+ * - `ownerDept` 空（null / **缺席** / 空串）⇒ 真——平台通用指标，无论 ctx 在不在
+ *   （与今天行为逐字节相同）。三个入参形状都收口在第一行：
+ *     · 缺席 = 结构兼容面（`MetricDef` 行不必带这两个字段，P2 Task 3）；
+ *     · 空串 = P1 台账边界（同名互斥索引 `coalesce(owner_dept,'')` 早已把空串并进平台桶，
+ *       可见性判定同口径，Task 3 订正——不再按「归属空串部门」拒）。
  * - `deptCtx === undefined`（观看面没接部门上下文）⇒ 假（fail-closed，宁可多拒）；
  * - 否则归属部门在链上（canOwn）或 `visible_depts` 命中直属（memberOf）⇒ 真。
  */
 export function metricVisibleWithDept(
-  metric: { ownerDept: string | null; visibleDepts: string[] | null },
+  metric: { ownerDept?: string | null; visibleDepts?: string[] | null },
   deptCtx: DeptContext | undefined,
 ): boolean {
-  if (metric.ownerDept === null) return true
+  const ownerDept = metric.ownerDept === '' ? null : (metric.ownerDept ?? null)
+  if (ownerDept === null) return true
   if (deptCtx === undefined) return false
-  if (deptCtx.canOwn.has(metric.ownerDept)) return true
+  if (deptCtx.canOwn.has(ownerDept)) return true
   return (metric.visibleDepts ?? []).some((d) => deptCtx.memberOf.has(d))
 }

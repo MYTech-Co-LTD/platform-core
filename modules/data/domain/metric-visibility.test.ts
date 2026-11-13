@@ -27,6 +27,18 @@ describe('metricVisibleWithDept（真值表）', () => {
     expect(metricVisibleWithDept({ ownerDept: null, visibleDepts: ['49'] }, VIEWER())).toBe(true)
   })
 
+  it('字段缺席（Task 3 结构兼容面：行不带这两个字段）⇒ 视作平台指标', () => {
+    // visibleMetrics 的泛型行（MetricDef 形状）可以两个都没有——缺席与 null 同义。
+    expect(metricVisibleWithDept({}, undefined)).toBe(true)
+    expect(metricVisibleWithDept({ visibleDepts: ['57'] }, undefined)).toBe(true)
+  })
+
+  it("ownerDept 空串归一成 null ⇒ 平台桶（P1 台账边界，Task 3 订正）", () => {
+    // 同名互斥索引 coalesce(owner_dept,'') 早已把空串并进平台桶——可见性判定同口径。
+    expect(metricVisibleWithDept({ ownerDept: '', visibleDepts: null }, undefined)).toBe(true)
+    expect(metricVisibleWithDept({ ownerDept: '' }, VIEWER())).toBe(true)
+  })
+
   it('owned + 无 ctx ⇒ 假（fail-closed；visible_depts 就算写了自己的部门也救不了）', () => {
     expect(metricVisibleWithDept({ ownerDept: '57', visibleDepts: null }, undefined)).toBe(false)
     expect(metricVisibleWithDept({ ownerDept: '80', visibleDepts: ['57'] }, undefined)).toBe(false)
