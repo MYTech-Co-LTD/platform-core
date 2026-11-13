@@ -115,6 +115,8 @@ const TextPanel = z.object({
   chart: z.literal('text'),
   title: z.string().trim().min(1).max(120).optional(),
   content: z.string().min(1).max(MAX_TEXT),
+  /** 渲染格式（R3）：plain = 原样纯文本；markdown = 受限富文本（粗体/斜体/代码/链接/列表/小标题）。 */
+  format: z.enum(['plain', 'markdown']).default('plain'),
   span: z.number().int().min(1).max(24).default(24),
 }).strict()
 
