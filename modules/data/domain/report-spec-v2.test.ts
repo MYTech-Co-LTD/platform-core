@@ -156,6 +156,29 @@ describe('IR v2：解析与扁平化等价', () => {
     expect(parsed).toEqual({ ok: false, code: 'INVALID_SPEC' })
   })
 
+  it('多页：v2 pages/block.page 原样落到 v1 面板；越界仍按 v1 规则拒', () => {
+    const parsed = parseReportInput({
+      ir: 2,
+      pages: [{ title: '概览' }, { title: '趋势' }],
+      datasets: [{ key: 'sales', metricId: 'm:sales', args: { branch_num: '92' } }],
+      blocks: [
+        { type: 'kpi', dataset: 'sales', title: '营业额', format: 'currency', page: 1 },
+        { type: 'chart', chart: 'line', dataset: 'sales', title: '趋势', page: 2 },
+      ],
+    })
+    expect(parsed.ok).toBe(true)
+    if (!parsed.ok) return
+    expect(parsed.spec.pages).toEqual([{ title: '概览' }, { title: '趋势' }])
+    expect(parsed.spec.panels.map((p) => p.page)).toEqual([1, 2])
+    const bad = parseReportInput({
+      ir: 2,
+      pages: [{ title: '概览' }],
+      datasets: [{ key: 'sales', metricId: 'm:sales' }],
+      blocks: [{ type: 'kpi', dataset: 'sales', title: 'x', format: 'number', page: 2 }],
+    })
+    expect(bad.ok).toBe(false)
+  })
+
   it('v1/v2 键混用 ⇒ INVALID_SPEC（v2 strict 拒 panels；v1 strict 拒 ir）', () => {
     expect(parseReportInput({ ir: 2, panels: [], datasets: [{ key: 's', metricId: 'm' }], blocks: [{ type: 'text', content: 'x' }] }).ok).toBe(false)
     expect(parseReportSpec({ ir: 2, panels: [] }).ok).toBe(false)

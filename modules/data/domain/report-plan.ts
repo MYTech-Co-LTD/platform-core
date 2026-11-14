@@ -7,7 +7,7 @@
 import type { PeriodSpec, ReportFilter, ReportSpec } from './report-spec'
 
 /** 观看面降级占位符（`asset-auth` 对不可见面板的原位替换）：没有 chart/metricId。 */
-export interface DeniedPanel { index: number; denied: true }
+export interface DeniedPanel { index: number; denied: true; /** 页归属（版式信息，不含口径）。 */ page?: number }
 
 /** 数据集：一次取数所需的全部输入（v1 下每个数据面板一个匿名数据集）。 */
 export interface PlanDataset {
