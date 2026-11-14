@@ -121,6 +121,10 @@ const MESSAGES: Record<string, string> = {
   NO_SERIES: '该指标不提供按日组成（不可加或比率指标）',
   // 可折叠明细（R3 ⑤）：能力边界与「行信息不完整」分开说——前者改不了，后者是数据形态。
   PANEL_NOT_EXPANDABLE: '这个面板没有开启明细展开',
+  // 模板（R2 console 入口）：缺槽/未知槽都给人话，不显示英文裸码。
+  TEMPLATE_NOT_FOUND: '模板不存在（可能已被移除），请刷新后重试',
+  MISSING_REQUIRED_SLOT: '还有必填指标没填',
+  UNKNOWN_SLOT: '模板里有未知槽位，请刷新后重试',
   PANEL_NOT_TEXT: '这个面板不是文本块，无法解析引用',
   TOKEN_UNRESOLVED: '这段文本引用的指标暂不可用',
   ROW_FILTER_INCOMPLETE: '这一行的维度信息不完整，无法定位明细',
