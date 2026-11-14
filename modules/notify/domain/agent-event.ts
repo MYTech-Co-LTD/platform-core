@@ -10,6 +10,9 @@ import { ManifestSchema, type NotificationEventDecl } from '@platform/sdk'
 /** namespace 段：与 manifest 事件 key 的段字符集一致。 */
 export const NAMESPACE_RE = /^[a-z][a-z0-9_]{1,31}$/
 
+/** agent 模板 key：小写 snake_case，避免与平台模板 key 混用。 */
+export const AGENT_TEMPLATE_KEY_RE = /^[a-z][a-z0-9_]{2,63}$/
+
 /** 事件 key 必须是 `ext.<namespace>.<event>`（更细的校验交给 ManifestSchema）。 */
 export function isAgentEventKey(key: string): boolean {
   return key.startsWith('ext.')

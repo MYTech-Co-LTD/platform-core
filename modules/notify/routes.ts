@@ -9,8 +9,9 @@ import type {
 } from '@platform/sdk'
 import { validatePayload } from '@platform/sdk'
 import {
-  NAMESPACE_RE, isAgentEventKey, validateAgentEventDecl,
+  AGENT_TEMPLATE_KEY_RE, NAMESPACE_RE, isAgentEventKey, validateAgentEventDecl,
 } from './domain/agent-event'
+import { agentMessageKey, isAgentMessageKey } from './domain/agent-message'
 import { checkWecomHealth, checkWebhookHealth } from './domain/channel'
 import { resolveDeliverability, type DeliverabilityDeps } from './domain/deliverability'
 import { channelIsConfigured } from './domain/channel-config'
@@ -21,9 +22,10 @@ import { validateRule } from './domain/rules'
 import { samplePayload, validateContents } from './domain/template'
 import { registerNotifyMcpManage } from './mcp'
 import {
-  audit, countRecentTestDeliveries, createAgentNamespace, createTemplateRevision,
-  deleteRule, enqueueEvent, getAgentNamespace, getChannel, getEventDecl, getPublishedTemplate,
-  getTemplate, insertDelivery, listAgentNamespaces, listChannels, listDeliveries,
+  audit, countRecentTestDeliveries, createAgentNamespace, createTemplate,
+  createTemplateRevision, deleteRule, ensureAgentMessageDefaults, enqueueEvent,
+  getAgentNamespace, getChannel, getEventDecl, getPublishedTemplate, getTemplate,
+  insertDelivery, listAgentNamespaces, listChannels, listDeliveries,
   listEnabledChannelIds, listEventDecls, listInbox, listPublishedTemplateKeys, listRules,
   listTemplates, markAllInboxRead, markInboxRead, patchChannel, publishTemplateRevision,
   retryDelivery, setChannelHealth, setRuleEnabled, upsertEventDecl, upsertRule,
@@ -47,6 +49,14 @@ export function createNotifyRouter(deps: {
     key.startsWith('ext.')
       ? getEventDecl(deps.pool, o, key)
       : deps.events?.get(key) ?? null
+
+  /** agent 资源写权限：namespace 存在、active、owner = 调用者。 */
+  const ownsNamespace = async (
+    o: string, namespace: string, identity: Identity,
+  ): Promise<boolean> => {
+    const ns = await getAgentNamespace(deps.pool, o, namespace)
+    return ns !== null && ns.status === 'active' && ns.ownerUserId === identity.userId
+  }
 
   /**
    * 把模块 storage + 注入的 events/addresses 适配成 deliverability 依赖（**唯一一处**）。
@@ -212,6 +222,20 @@ export function createNotifyRouter(deps: {
       if (unknown.length > 0) return c.json({ error: 'RULE_DEPT_UNKNOWN', unknown }, 400)
     }
 
+    const identity = c.get('identity') as Identity
+    // agent 规则按 owner_namespace 隔离：非 owner 不得通过通用 /rules 覆盖；
+    // owner 通过通用路由更新时也**保留** owner_namespace，不能把 agent 规则降成租户规则。
+    let ownerNamespace: string | null = null
+    if (body.id) {
+      const existing = (await listRules(deps.pool, org(c))).find((r) => r.id === body.id)
+      if (existing?.ownerNamespace) {
+        if (!await ownsNamespace(org(c), existing.ownerNamespace, identity)) {
+          return c.json({ error: 'RULE_NOT_OWNED' }, 403)
+        }
+        ownerNamespace = existing.ownerNamespace
+      }
+    }
+
     const id = body.id ?? `rule:${randomUUID()}`
     await upsertRule(deps.pool, org(c), {
       id,
@@ -225,20 +249,33 @@ export function createNotifyRouter(deps: {
       channels: body.channels,
       cooldownMinutes: body.cooldownMinutes ?? null,
       origin: 'manual',
-    }, (c.get('identity') as Identity).userId)
+      ownerNamespace,
+    }, identity.userId)
     return c.json({ id }, 201)
   })
 
   r.put('/rules/:id/enabled', async (c) => {
     const body = (await c.req.json().catch(() => null)) as { enabled?: boolean } | null
     if (!body || typeof body.enabled !== 'boolean') return c.json({ error: 'RULE_INVALID_BODY' }, 400)
-    const n = await setRuleEnabled(deps.pool, org(c), c.req.param('id'), body.enabled)
+    const identity = c.get('identity') as Identity
+    const id = c.req.param('id')
+    const rule = (await listRules(deps.pool, org(c))).find((r) => r.id === id)
+    if (rule?.ownerNamespace && !await ownsNamespace(org(c), rule.ownerNamespace, identity)) {
+      return c.json({ error: 'RULE_NOT_OWNED' }, 403)
+    }
+    const n = await setRuleEnabled(deps.pool, org(c), id, body.enabled)
     if (n === 0) return c.json({ error: 'NOT_FOUND' }, 404)
     return c.json({ ok: true })
   })
 
   r.delete('/rules/:id', async (c) => {
-    const n = await deleteRule(deps.pool, org(c), c.req.param('id'))
+    const identity = c.get('identity') as Identity
+    const id = c.req.param('id')
+    const rule = (await listRules(deps.pool, org(c))).find((r) => r.id === id)
+    if (rule?.ownerNamespace && !await ownsNamespace(org(c), rule.ownerNamespace, identity)) {
+      return c.json({ error: 'RULE_NOT_OWNED' }, 403)
+    }
+    const n = await deleteRule(deps.pool, org(c), id)
     if (n === 0) return c.json({ error: 'NOT_FOUND' }, 404)
     return c.json({ ok: true })
   })
@@ -334,6 +371,10 @@ export function createNotifyRouter(deps: {
 
     const t = await getTemplate(deps.pool, org(c), c.req.param('key'))
     if (!t) return c.json({ error: 'NOT_FOUND' }, 404)
+    const identity = c.get('identity') as Identity
+    if (t.ownerNamespace && !await ownsNamespace(org(c), t.ownerNamespace, identity)) {
+      return c.json({ error: 'AGENT_TEMPLATE_FORBIDDEN' }, 403)
+    }
     const decl = await resolveEventDecl(org(c), t.eventKey)
     if (!decl) return c.json({ error: 'EVENT_NOT_DECLARED' }, 400)
 
@@ -380,6 +421,10 @@ export function createNotifyRouter(deps: {
 
     const t = await getTemplate(deps.pool, org(c), c.req.param('key'))
     if (!t) return c.json({ error: 'NOT_FOUND' }, 404)
+    const identity = c.get('identity') as Identity
+    if (t.ownerNamespace && !await ownsNamespace(org(c), t.ownerNamespace, identity)) {
+      return c.json({ error: 'AGENT_TEMPLATE_FORBIDDEN' }, 403)
+    }
     const rev = t.revisions.find((x) => x.revision === body.revision)
     if (!rev) return c.json({ error: 'REVISION_NOT_FOUND' }, 404)
     const decl = await resolveEventDecl(org(c), t.eventKey)
@@ -564,10 +609,15 @@ export function createNotifyRouter(deps: {
     if (!r.created && r.row.ownerUserId !== identity.userId) {
       return c.json({ error: 'AGENT_NAMESPACE_TAKEN' }, 409)
     }
+    const generic = await ensureAgentMessageDefaults(
+      deps.pool, identity.orgId, r.row.namespace, identity.userId)
     await audit(deps.pool, identity.orgId, identity.userId,
-      'agent.namespace.create', r.row.namespace, { created: r.created })
+      'agent.namespace.create', r.row.namespace, { created: r.created, generic })
     return c.json(
-      { namespace: r.row.namespace, owner: r.row.ownerUserId, created: r.created },
+      {
+        namespace: r.row.namespace, owner: r.row.ownerUserId,
+        created: r.created, genericMessage: generic,
+      },
       r.created ? 201 : 200,
     )
   })
@@ -598,6 +648,7 @@ export function createNotifyRouter(deps: {
       return c.json({ error: 'AGENT_EVENT_INVALID_BODY' }, 400)
     }
     if (!isAgentEventKey(body.key)) return c.json({ error: 'AGENT_EVENT_KEY_INVALID' }, 400)
+    if (isAgentMessageKey(body.key)) return c.json({ error: 'AGENT_EVENT_RESERVED' }, 400)
     const parts = body.key.split('.')
     if (parts.length !== 3 || !parts[1]) {
       return c.json({ error: 'AGENT_EVENT_KEY_INVALID' }, 400)
@@ -635,6 +686,203 @@ export function createNotifyRouter(deps: {
       { key: decl.key, version: res.version, created: res.created },
       res.created ? 201 : 200,
     )
+  })
+
+  // ── agent 模板 / 规则 / 通用消息（N2）──────────────────────────────────────
+  r.get('/agent/templates', async (c) => {
+    const namespace = c.req.query('namespace')
+    const templates = (await listTemplates(deps.pool, org(c)))
+      .filter((t) => namespace ? t.ownerNamespace === namespace : t.ownerNamespace != null)
+    return c.json({ templates })
+  })
+
+  r.post('/agent/templates', async (c) => {
+    const b = (await c.req.json().catch(() => null)) as {
+      namespace?: string
+      key?: string
+      name?: string
+      eventKey?: string
+      contents?: Record<string, Record<string, string>>
+      publish?: boolean
+    } | null
+    if (!b?.namespace || !b.key || !b.name || !b.eventKey || !b.contents) {
+      return c.json({ error: 'AGENT_TEMPLATE_INVALID_BODY' }, 400)
+    }
+    if (!AGENT_TEMPLATE_KEY_RE.test(b.key)) {
+      return c.json({ error: 'AGENT_TEMPLATE_KEY_INVALID' }, 400)
+    }
+    const identity = c.get('identity') as Identity
+    if (!await ownsNamespace(org(c), b.namespace, identity)) {
+      return c.json({ error: 'AGENT_NAMESPACE_FORBIDDEN' }, 403)
+    }
+    if (!b.eventKey.startsWith(`ext.${b.namespace}.`) || isAgentMessageKey(b.eventKey)) {
+      return c.json({ error: 'AGENT_EVENT_NOT_OWNED' }, 400)
+    }
+    const decl = await getEventDecl(deps.pool, org(c), b.eventKey)
+    if (!decl) return c.json({ error: 'EVENT_NOT_DECLARED' }, 400)
+    const issues = validateContents(b.contents, decl, Object.keys(b.contents))
+    if (issues.length > 0) return c.json({ error: 'TEMPLATE_INVALID', issues }, 400)
+
+    const created = await createTemplate(deps.pool, org(c), {
+      key: b.key, name: b.name, eventKey: b.eventKey,
+      ownerNamespace: b.namespace, actor: identity.userId,
+    })
+    if (!created.ok) return c.json({ error: 'TEMPLATE_KEY_TAKEN' }, 409)
+    const rev = await createTemplateRevision(
+      deps.pool, org(c), b.key, b.contents, identity.userId)
+    let published = false
+    if (b.publish === true) {
+      if (!identity.hasScope('notify:publish')) {
+        return c.json({ error: 'PUBLISH_FORBIDDEN' }, 403)
+      }
+      await publishTemplateRevision(deps.pool, org(c), b.key, rev.revision, identity.userId)
+      published = true
+    }
+    await audit(deps.pool, org(c), identity.userId, 'agent.template.upsert', b.key, {
+      revision: rev.revision, published,
+    })
+    return c.json(
+      { key: b.key, revision: rev.revision, published },
+      created.created ? 201 : 200,
+    )
+  })
+
+  r.get('/agent/rules', async (c) => {
+    const namespace = c.req.query('namespace')
+    const rules = (await listRules(deps.pool, org(c)))
+      .filter((r) => namespace ? r.ownerNamespace === namespace : r.ownerNamespace != null)
+    return c.json({ rules })
+  })
+
+  r.post('/agent/rules', async (c) => {
+    const b = (await c.req.json().catch(() => null)) as {
+      namespace?: string
+      id?: string
+      eventKey?: string
+      scope?: string
+      recipientKey?: string
+      recipientLiteral?: string[] | null
+      recipientDepts?: string[] | null
+      templateKey?: string
+      channels?: string[]
+      cooldownMinutes?: number | null
+    } | null
+    if (!b?.namespace || !b.eventKey || !b.recipientKey || !b.templateKey || !b.channels) {
+      return c.json({ error: 'AGENT_RULE_INVALID_BODY' }, 400)
+    }
+    const identity = c.get('identity') as Identity
+    if (!await ownsNamespace(org(c), b.namespace, identity)) {
+      return c.json({ error: 'AGENT_NAMESPACE_FORBIDDEN' }, 403)
+    }
+    if (!b.eventKey.startsWith(`ext.${b.namespace}.`) || isAgentMessageKey(b.eventKey)) {
+      return c.json({ error: 'AGENT_EVENT_NOT_OWNED' }, 400)
+    }
+    const decl = await getEventDecl(deps.pool, org(c), b.eventKey)
+    if (!decl) return c.json({ error: 'EVENT_NOT_DECLARED' }, 400)
+    const tpl = await getTemplate(deps.pool, org(c), b.templateKey)
+    if (!tpl || tpl.ownerNamespace !== b.namespace) {
+      return c.json({ error: 'AGENT_TEMPLATE_NOT_OWNED' }, 400)
+    }
+    if (b.id && (b.id.startsWith('derived:') || b.id.startsWith('manual:'))) {
+      return c.json({ error: 'RULE_ID_RESERVED' }, 403)
+    }
+    if (b.id) {
+      const existing = (await listRules(deps.pool, org(c))).find((r) => r.id === b.id)
+      if (existing?.ownerNamespace && existing.ownerNamespace !== b.namespace) {
+        return c.json({ error: 'RULE_NOT_OWNED' }, 403)
+      }
+    }
+
+    const [channels, templates] = await Promise.all([
+      listEnabledChannelIds(deps.pool, org(c)),
+      listPublishedTemplateKeys(deps.pool, org(c)),
+    ])
+    const bad = validateRule({
+      eventKey: b.eventKey,
+      scope: b.scope ?? '*',
+      recipientKey: b.recipientKey,
+      recipientLiteral: b.recipientLiteral ?? null,
+      recipientDepts: b.recipientDepts ?? null,
+      templateKey: b.templateKey,
+      channels: b.channels,
+      cooldownMinutes: b.cooldownMinutes ?? null,
+      origin: 'manual',
+    }, decl, channels, templates)
+    if (bad) return c.json({ error: bad }, 400)
+
+    const id = b.id ?? `rule:${randomUUID()}`
+    await upsertRule(deps.pool, org(c), {
+      id,
+      enabled: true,
+      eventKey: b.eventKey,
+      scope: b.scope ?? '*',
+      recipientKey: b.recipientKey,
+      recipientLiteral: b.recipientLiteral ?? null,
+      recipientDepts: b.recipientDepts ?? null,
+      templateKey: b.templateKey,
+      channels: b.channels,
+      cooldownMinutes: b.cooldownMinutes ?? null,
+      origin: 'manual',
+      ownerNamespace: b.namespace,
+    }, identity.userId)
+    await audit(deps.pool, org(c), identity.userId, 'agent.rule.upsert', id, {
+      eventKey: b.eventKey, templateKey: b.templateKey, channels: b.channels,
+    })
+    return c.json({ id }, 201)
+  })
+
+  r.post('/agent/messages', async (c) => {
+    const b = (await c.req.json().catch(() => null)) as {
+      namespace?: string
+      eventId?: string
+      to?: string | string[]
+      title?: string
+      body?: string
+      link?: string
+    } | null
+    if (!b?.namespace || !b.to || !b.title || !b.body) {
+      return c.json({ error: 'AGENT_MESSAGE_INVALID_BODY' }, 400)
+    }
+    const identity = c.get('identity') as Identity
+    if (!await ownsNamespace(org(c), b.namespace, identity)) {
+      return c.json({ error: 'AGENT_NAMESPACE_FORBIDDEN' }, 403)
+    }
+    const to = Array.isArray(b.to) ? b.to : [b.to]
+    if (to.length === 0 || to.some((x) => typeof x !== 'string' || x.trim() === '')) {
+      return c.json({ error: 'AGENT_MESSAGE_INVALID_RECIPIENT' }, 400)
+    }
+    if ([...b.title].length > 64) return c.json({ error: 'AGENT_MESSAGE_TITLE_TOO_LONG' }, 400)
+    if ([...b.body].length > 500) return c.json({ error: 'AGENT_MESSAGE_BODY_TOO_LONG' }, 400)
+    if (b.link !== undefined && !/^https:\/\//.test(b.link)) {
+      return c.json({ error: 'AGENT_MESSAGE_LINK_INVALID' }, 400)
+    }
+
+    await ensureAgentMessageDefaults(deps.pool, org(c), b.namespace, identity.userId)
+    const eventKey = agentMessageKey(b.namespace)
+    const decl = await getEventDecl(deps.pool, org(c), eventKey)
+    if (!decl) return c.json({ error: 'AGENT_MESSAGE_NOT_READY' }, 500)
+    const payload = {
+      to,
+      title: b.title,
+      body: b.body,
+      ...(b.link === undefined ? {} : { link: b.link }),
+    }
+    const bad = validatePayload(decl, payload)
+    if (bad) return c.json({ error: 'PAYLOAD_INVALID', detail: bad }, 400)
+
+    const eventId = b.eventId ?? `agent-msg:${randomUUID()}`
+    const result = await enqueueEvent(deps.pool, {
+      org: identity.orgId,
+      eventId,
+      eventKey,
+      scope: '*',
+      payload,
+      producer: `ext:${b.namespace}`,
+    })
+    await audit(deps.pool, identity.orgId, identity.userId, 'agent.message.send', eventKey, {
+      eventId, recipients: to.length,
+    })
+    return c.json({ accepted: result.accepted, eventId }, 202)
   })
 
   registerNotifyMcpManage(r, {

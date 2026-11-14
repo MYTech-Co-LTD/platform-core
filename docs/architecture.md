@@ -680,6 +680,10 @@ token 只决定「这个账号能调哪些面」，不改变分层。
   `address_fallback_used` warn）。三级全空 = `missing_channel_address` 落 `dead`，**不假装成功**。
 - 派生：事件声明的 `defaults` 幂等派生默认规则（零配置就通）；`scripts/notify-seed-builtin.mjs`
   在开通/升级时 seed 模板、默认通道与默认规则。
+- **租户/agent 事件（N1/N2）**：`ext.<namespace>.<event>` 存 `notify.event_decl`（平台事件仍以
+  manifest 为事实源）；模板/规则可带 `owner_namespace`，agent 只能改自己的 namespace。
+  namespace 开通时 seed `ext.<namespace>.message`（声明 + 内置模板 + 默认 in-app 规则），
+  `POST /agent/messages` 一次调用即可发；外发仍受通道权限约束。
 
 #### 模板与发布
 

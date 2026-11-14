@@ -41,6 +41,12 @@ api:
     - { method: GET,    path: /agent/events,            scope: notify:view }
     - { method: GET,    path: /agent/events/:key,       scope: notify:view }
     - { method: POST,   path: /agent/events,            scope: notify:manage }
+    # agent 模板/规则/通用消息（N2）：写走 owner 校验；消息走 notify:emit
+    - { method: GET,    path: /agent/templates,         scope: notify:view }
+    - { method: POST,   path: /agent/templates,         scope: notify:manage }
+    - { method: GET,    path: /agent/rules,             scope: notify:view }
+    - { method: POST,   path: /agent/rules,             scope: notify:manage }
+    - { method: POST,   path: /agent/messages,          scope: notify:emit }
     # 模板：草稿/预览/发布
     - { method: GET,    path: /templates,               scope: notify:view }
     - { method: GET,    path: /templates/:key,          scope: notify:view }
