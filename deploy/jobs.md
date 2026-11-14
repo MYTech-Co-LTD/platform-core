@@ -26,14 +26,15 @@
   由 `apps/server/src/app.ts:445` 启动，`deploy/docker-compose.yml:77` 的 `INTEGRATION_PROBE_INTERVAL_MS=60000` 开启）——
   它不承担业务 job，不改变本条结论。
 
-**当前状态（2026-11-14，P1 目标 / 待切）**：本调度器**尚未上线**（`apps/server/src/scheduler/` 未建、迁移未落），
-以下全部为**目标迁移项**，此刻还没有任何 job 由本调度器驱动：
+**当前状态（2026-11-15 订正）**：
 
-- `notify.reconcile` / `metric.candidates`：P1 目标，**尚未切流**，此刻仍由 openship job 驱动。
-- `report.scope_scan`：P1 目标，openship 侧本无对应 job，此刻**无任何驱动**（待调度器上线后新建）。
-- `notify-health` / `notify-retention` / `notify-seed-builtin` / `notify-preflight` / `org-sync`：待切（W6-P4），
-  此刻仍由 openship job 驱动。
-- `metric-retire`：待切（W6-P4），**此刻无任何驱动（openship job 未建）**。
+- **P1 已上线并完成切流**（迁移 018 + 调度器 + 三个 job）：`notify.reconcile`（mytech + 山海两实例）、
+  `metric.candidates`（仅山海）、`report.scope_scan`（两实例）**已由内置调度器驱动**，
+  openship 对应 job 已停。
+- **P2 已上线**：`SchedulerPort` + `notify.emit` handler + 一次性延迟 + 软删。
+- **P3 随本 PR 上线**：agent 排班工具面 + 配额（§11）。
+- **仍待切（W6-P4）**：`notify-preflight` / `notify-retention` / `metric-retire` / `org-sync`；
+  `notify-seed-builtin` 启动期化、`notify-health` 并入 worker loop。
 
 逐项状态见 §5 切流表。
 
@@ -125,15 +126,15 @@
 
 **按实例各做一次**：`notify.reconcile` / `org-sync` 在 openship 各有两条作业（mytech + 山海），两实例各有独立平台库与独立 `platform.job_schedule`。切流与回滚必须**按实例各执行一遍**；只关一个实例会留下双调度者。实例与 openship job key 的对应见下表及 `deploy/notify-reconcile-job.md` / `deploy/org-sync-job.md` 的生产实例表。
 
-**切流表（P1 目标 / 待切）**：
+**切流表（已切 / 待切）**：
 
-> 切流未执行前，`notify.reconcile` / `metric.candidates` 仍由 openship job 驱动。
+> P1 的三个 job **已切流**；「当前驱动」为实际状态。openship 原 key 保留在表中用于回滚（现已停用）。
 
 | job | 阶段 | 当前驱动 | 实例 / openship key |
 |---|---|---|---|
-| `notify.reconcile` | P1 目标 / 待切 | openship job（切流未执行前） | mytech `custom:KJ_JBrbq68jAHVlO`；山海 `custom:QSr7oZ5KBAVOqx5j`（见 `deploy/notify-reconcile-job.md`） |
-| `metric.candidates` | P1 目标 / 待切 | openship job（切流未执行前） | 仅山海 `custom:tB6ulrsKtgW852WL` |
-| `report.scope_scan` | P1 目标 / 待切 | 无（openship 侧本无对应 job） | 两实例各建一条 |
+| `notify.reconcile` | 已切（W6-P1） | worker 的 `platform.scheduler` | 原 openship key（已停）：mytech `custom:KJ_JBrbq68jAHVlO`；山海 `custom:QSr7oZ5KBAVOqx5j`（见 `deploy/notify-reconcile-job.md`） |
+| `metric.candidates` | 已切（W6-P1） | worker 的 `platform.scheduler` | 原 openship key（已停）：仅山海 `custom:tB6ulrsKtgW852WL` |
+| `report.scope_scan` | 已切（W6-P1） | worker 的 `platform.scheduler` | 两实例各一条（openship 侧本无对应 job） |
 | `notify-preflight` | 待切（W6-P4） | openship job | 见 `deploy/notify-jobs.md` |
 | `notify-retention` | 待切（W6-P4） | openship job（仅 mytech） | 见 `deploy/notify-jobs.md` |
 | `notify-seed-builtin` | 待切（W6-P4，计划启动期化） | openship job（mytech + 山海） | 见 `deploy/notify-jobs.md` |
@@ -141,8 +142,9 @@
 | `metric-retire` | 待切（W6-P4） | **无任何驱动（openship job 未建）** | 见 `deploy/metric-retire-job.md` |
 | `org-sync` | 待切（W6-P4） | openship job | mytech `custom:qvkapKmBf4jI4H6T`；山海 `custom:dbuJg85a8UjjObB7`（见 `deploy/org-sync-job.md`） |
 
-**顺序按爆炸半径**：`notify.reconcile` → `metric.candidates` → `report.scope_scan` → `notify-preflight` → `notify-retention` → `metric.retire` → `org-sync`。
-未完成切流的 job（**包括 P1 目标项**）在走完全部四步之前都仍由原驱动方负责——不要提前置 `enabled=true`。
+**顺序按爆炸半径**：已完成 `notify.reconcile` → `metric.candidates` → `report.scope_scan`；
+剩余 `notify-preflight` → `notify-retention` → `metric.retire` → `org-sync`。
+未完成切流的 job 在走完全部四步之前都仍由原驱动方负责——不要提前置 `enabled=true`。
 
 **切流期红线**：发现双调度者（DB `enabled=true` 且 openship job 仍启用）⇒ 立即停 DB 侧 `enabled`，再排查 openship，不要在两边同时「先看看」。
 
