@@ -30,13 +30,24 @@ with params as (
     select 7 as period_days
 ),
 bounds as (
+    -- 物化闭窗读（2026-11-14，issue #2158）：三个聚合子查询是**无过滤全量扫**，会打开今天
+    -- `hour=<当前小时>` 的分区；tick 采集每 10 分钟重写它 ⇒ DuckDB `ETag ... was initially X
+    -- and now returned Y` ⇒ 整轮 tables 判红（11-14 10:25 实测 bizday=2026-11-14/hour=10）。
+    -- 与 fct_order_event / fct_retail_sale 同一口径：闭窗读只取「今天已过去的小时」，
+    -- 当前小时留给下一档。`MAT_CLOSED_BEFORE` 由 materialize.sh 主流程全局 export。
+    {%- if env_var('MAT_CLOSED_BEFORE', 'false') == 'true' %}
+    {%- set closed_guard = 'and not (bizday = current_date and hour >= extract(hour from current_timestamp))' %}
+    {%- else %}
+    {%- set closed_guard = '' %}
+    {%- endif %}
     select
         greatest(
             (select min(snapshot) from {{ ref('stg_lemeng_branch') }}),
-            (select min(bizday)   from {{ ref('stg_lemeng_retail_order_line') }})
+            (select min(bizday)   from {{ ref('stg_lemeng_retail_order_line') }}
+               where 1 = 1 {{ closed_guard }})
         ) as d_min,
         (select max(bizday) from {{ ref('stg_lemeng_retail_order_line') }}
-          where bizday < cast(now() at time zone 'Asia/Shanghai' as date)) as d_max
+          where bizday < cast(now() at time zone 'Asia/Shanghai' as date) {{ closed_guard }}) as d_max
 ),
 periods as (
     select
