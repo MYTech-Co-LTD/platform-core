@@ -3942,10 +3942,18 @@ describePg('报表路由（需要 DATABASE_URL）', () => {
         if (!draft.ok) throw new Error(`夹具规格应通过白名单：${draft.code}`)
         expect(await updateSpec(pool, ORG, id, draft.spec, await versionOf(app, id))).not.toBeNull()
 
-        // 人为破坏已发布快照的 spec（模拟读不出/解析失败）；行上的发布指针仍在。
+        // 人为制造「已发布但快照读不出」：把快照换成**形状坏掉**的 spec。
+        // ⚠️ 049 起 `report_versions` 在库层拒 UPDATE（发布快照不可变）⇒ 改走「删行 + 同 id 插回」，
+        //    这样 version 指针与行都还在，坏的只是内容——正是要模拟的状态。
+        const brokenRow = (await pool.query(
+          'select id, title, draft_version, published_by, note from data.report_versions where org = $1 and report_id = $2', [ORG, id],
+        )).rows[0] as { id: string; title: string; draft_version: number; published_by: string; note: string }
+        await pool.query('delete from data.report_versions where org = $1 and report_id = $2', [ORG, id])
         await pool.query(
-          `update data.report_versions set spec = '{"panels":"broken"}'::jsonb
-            where org = $1 and report_id = $2`, [ORG, id],
+          `insert into data.report_versions
+             (id, org, report_id, version, title, spec, required_scope, draft_version, published_at, published_by, note)
+           values ($1, $2, $3, $4, $5, '{"panels":"broken"}'::jsonb, null, $6, now(), $7, $8)`,
+          [brokenRow.id, ORG, id, pubVersion, brokenRow.title, brokenRow.draft_version, brokenRow.published_by, brokenRow.note],
         )
 
         const res = await putAcl([{ subjectType: 'dept', subjectId: SIBLING_DEPT }])
@@ -4077,10 +4085,20 @@ describePg('报表路由（需要 DATABASE_URL）', () => {
         panels: [{ chart: 'table', title: '幽灵口径', metricId: 'p6t5:ghost-rollback' }],
       })
       if (!ghost.ok) throw new Error(`夹具规格应通过白名单：${ghost.code}`)
-      // 直接把 v1 快照改成幽灵指标（发布通路会拒，故走 SQL 构造「历史坏快照」）
+      // 构造「历史坏快照」：走 SQL **替换** v1 行（发布通路会拒含幽灵指标的快照）。
+      // ⚠️ 049 起快照不可 UPDATE ⇒ 先取原 id、删行、再以同 id 插回（INSERT 仍允许，
+      //    这才是「由旧版本代码写下、新代码只读」的真实形态；指针不受影响）。
+      const oldId = (await pool.query(
+        'select id from data.report_versions where org = $1 and report_id = $2 and version = 1', [ORG, id],
+      )).rows[0].id as string
       await pool.query(
-        'update data.report_versions set spec = $3 where org = $1 and report_id = $2 and version = 1',
-        [ORG, id, JSON.stringify(ghost.spec)],
+        'delete from data.report_versions where org = $1 and report_id = $2 and version = 1', [ORG, id],
+      )
+      await pool.query(
+        `insert into data.report_versions
+           (id, org, report_id, version, title, spec, required_scope, draft_version, published_at, published_by, note)
+         values ($1, $2, $3, 1, '回滚 issues-only', $4::jsonb, null, 1, now(), 'u-test', 'historical bad snapshot')`,
+        [oldId, ORG, id, JSON.stringify(ghost.spec)],
       )
       const versionCount = async (): Promise<number> =>
         (await pool.query(
