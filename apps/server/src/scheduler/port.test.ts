@@ -189,7 +189,7 @@ describePg('SchedulerPort', () => {
     expect(rows[0].next_run_at).toBeNull()
   })
 
-  it('listSchedules：必填 owner_org、可选 namespace 过滤、排除软删、id 升序', async () => {
+  it('listSchedules：ownerOrg 取 actor、可选 namespace 收窄、排除软删、id 升序', async () => {
     const a = mkPort(pool)
     const a2 = mkPort(pool, { ...actorA, namespace: 'jobtest-port:ns-a2' })
     const s1 = await a.createSchedule(baseInput())
@@ -201,6 +201,25 @@ describePg('SchedulerPort', () => {
 
     const only = await a.listSchedules({ ownerOrg: ORG_A, ownerNamespace: NS_A })
     expect(only.map((s) => s.id)).toEqual([s1.id])
+  })
+
+  it('★ listSchedules 的 filter.ownerOrg 被忽略：归属恒取 actor（跨租户列举不可能）', async () => {
+    const a = mkPort(pool)
+    const { id } = await a.createSchedule(baseInput())
+    // 传别的租户也不改变结果：仍只含 actor 自己的排班。
+    const evil = await a.listSchedules({ ownerOrg: 'jobtest-port:other-org' })
+    expect(evil.map((s) => s.id)).toEqual([id])
+    // 反过来：租户 B 传 ORG_A 也看不到 A 的排班。
+    const b = mkPort(pool, actorB)
+    expect(await b.listSchedules({ ownerOrg: ORG_A })).toEqual([])
+  })
+
+  it('★ listSchedules 的 ownerNamespace 只能收窄：传别的值 ⇒ 空数组', async () => {
+    const a = mkPort(pool)
+    const { id } = await a.createSchedule(baseInput())
+    expect(await a.listSchedules({ ownerOrg: ORG_A, ownerNamespace: 'jobtest-port:other-ns' })).toEqual([])
+    expect((await a.listSchedules({ ownerOrg: ORG_A, ownerNamespace: NS_A })).map((s) => s.id))
+      .toEqual([id])
   })
 
   it('setScheduleEnabled：归属内可启停', async () => {

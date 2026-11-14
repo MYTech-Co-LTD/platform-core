@@ -31,6 +31,7 @@ export interface SchedulerPort {
     timeoutMs?: number
     maxAttempts?: number
   }): Promise<{ id: string; nextRunAt: string }>
+  /** `filter.ownerOrg` 被忽略（恒用 actor.org）；`ownerNamespace` 只能收窄到 actor.namespace。 */
   listSchedules(filter: { ownerOrg: string; ownerNamespace?: string }): Promise<Array<{
     id: string
     key: string
@@ -178,11 +179,15 @@ export function buildSchedulerPort(deps: {
     },
 
     async listSchedules(filter) {
-      const values: unknown[] = [filter.ownerOrg]
+      // 归属恒取 actor：`filter.ownerOrg` 只为接口兼容而保留，**传入值被忽略**。
+      // 若沿用调用方传值，P3 适配层一旦透传客户端参数就是跨租户列举——端口自己必须兜住。
+      const values: unknown[] = [actor.org]
       let sql = `select id, key, cron, enabled, next_run_at, deleted_at
                    from platform.job_schedule
                   where owner_org = $1 and deleted_at is null`
+      // namespace 只能**收窄**：传了别的值 ⇒ 空数组（列举类接口返回空比抛错更合适，也不泄露存在性）。
       if (filter.ownerNamespace !== undefined) {
+        if (filter.ownerNamespace !== actor.namespace) return []
         values.push(filter.ownerNamespace)
         sql += ` and owner_namespace = $2`
       }
