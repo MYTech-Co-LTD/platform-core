@@ -7,6 +7,7 @@ import type { Pool } from 'pg'
 import type { ChannelAddressResolver, EventCatalogReader, Identity } from '@platform/sdk'
 import { validatePayload } from '@platform/sdk'
 import { NOTIFY_TOOLS } from './mcp-tools'
+import { channelIsConfigured } from './domain/channel-config'
 import { resolveDeliverability } from './domain/deliverability'
 import { resolveDeliveryAddress } from './domain/resolve-address'
 import { renderContents } from './domain/render'
@@ -174,8 +175,9 @@ export async function callTool(
     if (!decl) return err('event_not_declared')
 
     const warnings: string[] = []
-    // 「查不了」≠「没人持有」
+    // 「查不了」≠「没人持有 / 部门没人」：与 HTTP 预检同一组 warning。
     if (!deps.addresses?.resolveScopeHolders) warnings.push('scope_holders_unavailable')
+    if (!deps.addresses?.resolveDeptMembers) warnings.push('dept_resolver_unavailable')
     const given = args.payload as Record<string, unknown> | undefined
     if (!given) warnings.push('sample_mode_field_recipients_unverified')
 
@@ -189,18 +191,27 @@ export async function callTool(
         },
         getChannel: async (org, cid) => {
           const ch = await getChannel(deps.pool, org, cid)
-          return ch ? { id: cid, provider: ch.provider, enabled: ch.enabled, config: ch.config } : null
+          return ch
+            ? {
+                id: cid, provider: ch.provider, enabled: ch.enabled, config: ch.config,
+                configured: await channelIsConfigured(deps.pool, org, ch),
+              }
+            : null
         },
         resolveScopeHolders: async (org, key, d) =>
           deps.addresses?.resolveScopeHolders?.(org, key, d) ?? [],
+        // 与 HTTP/worker 同源：未注入时 resolveDeliverability 落 dept_resolver_unavailable。
+        resolveDeptMembers: deps.addresses?.resolveDeptMembers?.bind(deps.addresses),
       },
     )
+    for (const id of r.unconfiguredChannels) warnings.push(`channel_unconfigured:${id}`)
     return ok({
       ruleId: rule.id,
       eventKey: rule.eventKey,
       blocked: r.blocked,
       recipients: r.recipients,
       channels: r.channels,
+      unconfiguredChannels: r.unconfiguredChannels,
       warnings,
       next: r.blocked === null ? '可送达' : '按 blocked 修配置后重跑 check_rule',
     })

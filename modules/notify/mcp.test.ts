@@ -128,6 +128,61 @@ describePg('notify mcp handlers', () => {
     expect(out.isError).toBe(true)
   })
 
+  it('check_rule 与 HTTP 同源：未配置的通道给出 configured=false + warning', async () => {
+    await pool.query(
+      `insert into notify.channel(org,id,provider,enabled,config,secret_refs,created_by)
+       values ($1,'wecom_bad','wecom_chat',true,'{}','{"bridge_url":"MISSING_ENV_X"}','u')`, [ORG])
+    await pool.query(
+      `insert into notify.rule(org,id,enabled,event_key,scope,recipient_key,template_key,channels,origin,created_by)
+       values ($1,'r-bad',true,'m.a.b','*','approver','t1','{wecom_bad}','manual','u')`, [ORG])
+
+    const out = await callTool(deps(), 'check_rule', { id: 'r-bad' })
+    expect(out.isError).toBe(false)
+    const body = JSON.parse(out.text) as {
+      blocked: string | null
+      channels: Array<{ id: string; configured?: boolean }>
+      warnings: string[]
+    }
+    expect(body.blocked).toBe('no_channel')
+    expect(body.channels[0]).toMatchObject({ id: 'wecom_bad', configured: false })
+    expect(body.warnings).toContain('channel_unconfigured:wecom_bad')
+  })
+
+  it('check_rule 与 HTTP 同源：部门规则注入 resolver 后可解析', async () => {
+    const deptDecl: NotificationEventDecl = {
+      key: 'm.dept', title: 't', payload: {},
+      recipients: { dept: { kind: 'dept' } },
+    }
+    const deptEvents = {
+      get: (k: string) => (k === 'm.dept' ? deptDecl : undefined),
+      list: () => [deptDecl],
+    }
+    await pool.query(
+      `insert into notify.rule(org,id,enabled,event_key,scope,recipient_key,recipient_depts,template_key,channels,origin,created_by)
+       values ($1,'r-dept',true,'m.dept','*','dept','["D1"]'::jsonb,'t1','{wecom_default}','manual','u')`, [ORG])
+
+    const without = await callTool({ ...deps(), events: deptEvents }, 'check_rule', { id: 'r-dept' })
+    const w1 = JSON.parse(without.text) as { blocked: string | null; warnings: string[] }
+    expect(w1.blocked).toBe('dept_resolver_unavailable')
+    expect(w1.warnings).toContain('dept_resolver_unavailable')
+
+    const withResolver = await callTool({
+      ...deps(),
+      events: deptEvents,
+      addresses: {
+        resolve: async () => null,
+        resolveDeptMembers: async () => ({
+          names: ['u1'], depts: ['D1'], members: 1, excluded: 0, unresolved: 0,
+        }),
+      },
+    }, 'check_rule', { id: 'r-dept' })
+    const w2 = JSON.parse(withResolver.text) as {
+      blocked: string | null; recipients: Array<{ name: string; source: string }>
+    }
+    expect(w2.blocked).toBeNull()
+    expect(w2.recipients).toEqual([{ name: 'u1', source: 'dept' }])
+  })
+
   it('propose_rule 走同一套校验并审计', async () => {
     const out = await callTool(deps(), 'propose_rule', {
       eventKey: 'm.a.b', scope: '*', recipientKey: 'approver',

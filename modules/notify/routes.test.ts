@@ -290,6 +290,21 @@ describePg('routes v2', () => {
     expect(String(rows[0].health)).toMatch(/^error/)
   })
 
+  it('直连通道健康：凭据缺失 ⇒ credential_missing，不再报 bridge_url 未配置', async () => {
+    await pool.query('delete from notify.channel where org=$1', [ORG])
+    await pool.query(
+      `insert into notify.channel(org,id,provider,enabled,config,secret_refs,created_by)
+       values ($1,'wecom_direct','wecom_chat',true,'{"transport":"direct"}','{}','u')`, [ORG])
+
+    const res = await app.request('/channels/wecom_direct/health', { method: 'POST' })
+    expect(res.status).toBe(200)
+    expect(await res.json()).toMatchObject({ ok: false, detail: 'credential_missing' })
+
+    const { rows } = await pool.query(
+      "select health from notify.channel where org=$1 and id='wecom_direct'", [ORG])
+    expect(String(rows[0].health)).toMatch(/^error:credential_missing/)
+  })
+
   // ── D3 可送达性预检（只读）────────────────────────────────────────────────
   async function createRule(): Promise<string> {
     const res = await post('/rules', {
