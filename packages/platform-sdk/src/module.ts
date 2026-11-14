@@ -202,7 +202,11 @@ export interface SchedulerPortLike {
     cron: string
     timezone: string
     params: Record<string, unknown>
-    expectedIntervalSecs: number
+    /**
+     * 期望间隔（秒）：健康判据「该跑没跑」= `2×` 本值。**可省略**——宿主端口会从 cron
+     * 推导典型间隔（相邻两次触发之差，最小 60s）；显式传入仍优先并校验 >0。
+     */
+    expectedIntervalSecs?: number
     timeoutMs?: number
     maxAttempts?: number
   }): Promise<{ id: string; nextRunAt: string }>

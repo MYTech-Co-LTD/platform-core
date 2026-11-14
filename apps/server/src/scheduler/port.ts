@@ -27,7 +27,12 @@ export interface SchedulerPort {
     cron: string
     timezone: string
     params: Record<string, unknown>
-    expectedIntervalSecs: number
+    /**
+     * 期望间隔（秒）。**可省略**：省略时端口从 cron 推导「典型间隔」
+     * （固定参考点起相邻两次触发之差，向上取整、最小 60 秒）。
+     * 显式传入仍优先并校验 >0（保留覆盖能力）。
+     */
+    expectedIntervalSecs?: number
     timeoutMs?: number
     maxAttempts?: number
   }): Promise<{ id: string; nextRunAt: string }>
@@ -132,6 +137,21 @@ const QUOTA_SNAPSHOT_SQL = `
 
 /** 最小间隔扫描的固定参考时刻（2026-01-05 是周一；固定起点保证判据与创建时刻无关）。 */
 const MIN_INTERVAL_REF = new Date('2026-01-05T00:00:00.000Z')
+
+/**
+ * 「典型间隔」（秒）：固定参考点起**相邻两次**触发的差值，向上取整，最小 60。
+ *
+ * 为什么需要它：`health.ts` 的「该跑没跑」= `2 × expected_interval_secs`。
+ * 推小了（如一律 300）小时/日级排班会在两格没跑时就假红；推大了（如一律 86400）
+ * 小时级排班要 48h 才报——那是迟报。取节奏本身，两个方向都不偏。
+ * 与 `minimumGapSecs` 的分工：后者是**整周期内的最小间隔**（配额判据，burst 也要抓）；
+ * 这里要的是「正常节奏多久一次」，只看参考点后的相邻两格。
+ */
+function typicalIntervalSecs(expr: string, timeZone: string): number {
+  const first = nextRunAt(expr, timeZone, MIN_INTERVAL_REF)
+  const second = nextRunAt(expr, timeZone, first)
+  return Math.max(Math.ceil((second.getTime() - first.getTime()) / 1000), 60)
+}
 /** cron 的分钟/小时/星期以周为周期：扫 8 天足以覆盖任意一次相邻触发。 */
 const MIN_INTERVAL_SCAN_MS = 8 * 24 * 60 * 60 * 1000
 /** 迭代上限保护：合规的最密 cron（5 分钟）8 天 = 2304 次；违规 cron 会早退。 */
@@ -252,7 +272,10 @@ export function buildSchedulerPort(deps: {
         fail('UNKNOWN_JOB_KEY', input.key)
       }
       if (!isValidCron(input.cron)) fail('INVALID_CRON', input.cron)
-      const expectedIntervalSecs = positiveInt(input.expectedIntervalSecs, 'INVALID_INTERVAL')
+      // 显式值优先并校验；缺省在 nextRunAt 解析成功后从 cron 推导（见 typicalIntervalSecs）。
+      const explicitIntervalSecs = input.expectedIntervalSecs === undefined
+        ? undefined
+        : positiveInt(input.expectedIntervalSecs, 'INVALID_INTERVAL')
       const timeoutMs = input.timeoutMs === undefined
         ? def.timeoutMs
         : positiveInt(input.timeoutMs, 'INVALID_TIMEOUT')
@@ -272,6 +295,16 @@ export function buildSchedulerPort(deps: {
       } catch (e) {
         // 语法已过 isValidCron；这里失败只可能是时区非法/DST/8 年内无触发点。
         fail('INVALID_SCHEDULE', e instanceof Error ? e.message : String(e))
+      }
+
+      let expectedIntervalSecs = explicitIntervalSecs
+      if (expectedIntervalSecs === undefined) {
+        try {
+          expectedIntervalSecs = typicalIntervalSecs(input.cron, input.timezone)
+        } catch (e) {
+          // 时区非法等：与 nextAt 失败同码（语法已过 isValidCron）。
+          fail('INVALID_SCHEDULE', e instanceof Error ? e.message : String(e))
+        }
       }
 
       const client = await pool.connect()

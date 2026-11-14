@@ -88,6 +88,12 @@ describePg('schedules tool face (db)', () => {
     return String(body.id)
   }
 
+  async function intervalOf(id: string): Promise<number> {
+    const { rows } = await pool.query(
+      'select expected_interval_secs from platform.job_schedule where id=$1', [id])
+    return rows[0].expected_interval_secs as number
+  }
+
   it('create_schedule：落库 source=agent、归属来自 actor、丢弃通道类参数', async () => {
     const { isError, body } = await call('create_schedule', createArgs({
       params: {
@@ -122,6 +128,18 @@ describePg('schedules tool face (db)', () => {
       scope: 'test',
       payload: { title: 'hi' },
     })
+  })
+
+  it('expectedIntervalSecs：缺省从 cron 推导（小时级 3600 / 日级 86400），显式值仍优先', async () => {
+    const base = { timezone: 'UTC', params: { eventKey: 'notify.emit' } }
+    const hourly = await call('create_schedule', { ...base, cron: '0 * * * *' })
+    const daily = await call('create_schedule', { ...base, cron: '0 3 * * *' })
+    const explicit = await call('create_schedule', { ...base, cron: '0 * * * *', expectedIntervalSecs: 1234 })
+    expect(hourly.isError || daily.isError || explicit.isError).toBe(false)
+
+    expect(await intervalOf(String(hourly.body.id))).toBe(3600)
+    expect(await intervalOf(String(daily.body.id))).toBe(86_400)
+    expect(await intervalOf(String(explicit.body.id))).toBe(1234)
   })
 
   it('list_schedules：只列本 actor 的排班', async () => {

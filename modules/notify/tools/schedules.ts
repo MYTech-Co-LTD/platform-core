@@ -73,7 +73,7 @@ export const SCHEDULE_TOOLS: ScheduleToolMeta[] = [
         additionalProperties: false,
       },
       timezone: { type: 'string', description: 'IANA 时区，缺省 UTC' },
-      expectedIntervalSecs: { type: 'number', description: '健康判据的期望间隔（秒），缺省 86400' },
+      expectedIntervalSecs: { type: 'number', description: '期望间隔（秒）；缺省由端口从 cron 推导（相邻两次触发之差）' },
     },
     ['cron', 'params'], true, 'notify:manage'),
   t('list_schedules', '列出本租户由 agent 建的排班（含启停状态与下次触发时间）。', {}, [], false, null),
@@ -121,9 +121,6 @@ const str = (v: unknown): string => (typeof v === 'string' ? v.trim() : '')
 const isObject = (v: unknown): v is Record<string, unknown> =>
   typeof v === 'object' && v !== null && !Array.isArray(v)
 
-/** 缺省期望间隔（秒）：与 notify.emit 的系统占位值一致（日）。显式传入优先。 */
-const DEFAULT_EXPECTED_INTERVAL_SECS = 86_400
-
 function actorPort(deps: ScheduleToolDeps): SchedulerPortLike {
   // `namespace` 缺省补 org —— 即使宿主工厂也会补，这里仍显式成形，避免依赖两处口径。
   return deps.scheduler!({
@@ -161,16 +158,17 @@ export async function callScheduleTool(
       if (params.payload !== undefined) jobParams.payload = params.payload
 
       const timezone = str(args.timezone) || 'UTC'
+      // 不传就不传：端口从 cron 推导典型间隔（health 的 2× 判据才不会假红/迟报）。
       const expectedIntervalSecs = typeof args.expectedIntervalSecs === 'number'
         ? Math.trunc(args.expectedIntervalSecs)
-        : DEFAULT_EXPECTED_INTERVAL_SECS
+        : undefined
 
       const r = await port.createSchedule({
         key: eventKey,
         cron,
         timezone,
         params: jobParams,
-        expectedIntervalSecs,
+        ...(expectedIntervalSecs === undefined ? {} : { expectedIntervalSecs }),
       })
       return ok({ id: r.id, nextRunAt: r.nextRunAt })
     }
