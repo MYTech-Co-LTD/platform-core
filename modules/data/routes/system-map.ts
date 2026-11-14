@@ -141,13 +141,13 @@ export function registerSystemMap(r: ModuleHono, ctx: RouteCtx): void {
         // 物化钟在**仓库库**（pg_duckdb）；平台库常态没有 load_log ⇒ 用 warehousePool，
         // 未配置时退回平台池（仍可能缺席，catch 里给 note）。
         const pool = ctx.warehouse ?? safeWarehousePool() ?? ctx.pool
-        const res = await pool.query(
-          "select max(materialized_at) as materialized_at, min(max_bizday) as max_bizday from data.load_log where status='ok' and relation = any($1)",
-          [rels],
-        )
-        const row = res.rows[0] as { materialized_at?: unknown; max_bizday?: unknown } | undefined
+        // 水位口径必须用 #844 订正后的唯一拼装点：先按关系取「最新一行」，再跨关系取 min。
+        // 别再手写 min(max_bizday)——load_log 是追加式，全历史 min = 历史最差一次
+        // （实测净销售额报 10-16 而真实水位 11-12；上一版 #2151 只加了 import 没换查询，等于没修）。
+        const res = await pool.query(watermarkSqlFor(rels))
+        const row = res.rows[0] as { materialized_at?: unknown; watermark?: unknown } | undefined
         materializedAt = row?.materialized_at instanceof Date ? row.materialized_at.toISOString() : (typeof row?.materialized_at === 'string' ? row.materialized_at : null)
-        maxBizday = row?.max_bizday instanceof Date ? row.max_bizday.toISOString().slice(0, 10) : (typeof row?.max_bizday === 'string' ? row.max_bizday : null)
+        maxBizday = row?.watermark instanceof Date ? row.watermark.toISOString().slice(0, 10) : (typeof row?.watermark === 'string' ? row.watermark : null)
       } catch {
         trail.notes.push('物化钟不可用（data.load_log 不在当前库或未接入）')
       }
