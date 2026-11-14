@@ -47,6 +47,10 @@ api:
     - { method: GET,    path: /agent/rules,             scope: notify:view }
     - { method: POST,   path: /agent/rules,             scope: notify:manage }
     - { method: POST,   path: /agent/messages,          scope: notify:emit }
+    # 爆炸半径策略与审批（N3）：policy/审批是租户管理员动作
+    - { method: PATCH,  path: /agent/namespaces/:namespace/policy, scope: notify:publish }
+    - { method: GET,    path: /approvals,               scope: notify:publish }
+    - { method: POST,   path: /approvals/:id/decide,    scope: notify:publish }
     # 模板：草稿/预览/发布
     - { method: GET,    path: /templates,               scope: notify:view }
     - { method: GET,    path: /templates/:key,          scope: notify:view }
@@ -84,6 +88,25 @@ notifications:
       defaults:
         recipient: admins
         template: notify_integration_stale
+        channels: [inapp_default]
+
+    # N3：agent 外发规则等待审批时，通知持 notify:publish 的人
+    - key: notify.approval.pending
+      title: 通知审批待处理
+      description: agent 的外发规则等待租户管理员审批
+      scope: { key: approvalId, label: 审批 }
+      payload:
+        approvalId: { type: string, required: true, label: 审批单号 }
+        namespace:  { type: string, required: true, label: 命名空间 }
+        kind:       { type: string, required: true, label: 类型 }
+        targetId:   { type: string, required: true, label: 目标 }
+        requestedBy: { type: user,   required: true, label: 申请人 }
+        summary:    { type: string, required: true, label: 摘要 }
+      recipients:
+        admins: { kind: scope_holders, scope: notify:publish, label: 审批人 }
+      defaults:
+        recipient: admins
+        template: notify_approval_pending
         channels: [inapp_default]
 
 frontend:

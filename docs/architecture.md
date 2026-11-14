@@ -684,6 +684,10 @@ token 只决定「这个账号能调哪些面」，不改变分层。
   manifest 为事实源）；模板/规则可带 `owner_namespace`，agent 只能改自己的 namespace。
   namespace 开通时 seed `ext.<namespace>.message`（声明 + 内置模板 + 默认 in-app 规则），
   `POST /agent/messages` 一次调用即可发；外发仍受通道权限约束。
+- **爆炸半径（N3）**：agent 规则的通道必须落在 namespace `policy.allowed_channels`；外发通道
+  默认落 `pending` 审批（`notify.approval`），批准后才 `enabled`；`auto_publish_external=true`
+  可预授权。配额：收件人数 / 活跃规则数 / 每日消息数。审批待处理发 `notify.approval.pending`
+  给持 `notify:publish` 的人（in-app）。
 
 #### 模板与发布
 

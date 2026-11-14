@@ -12,6 +12,9 @@ import {
   AGENT_TEMPLATE_KEY_RE, NAMESPACE_RE, isAgentEventKey, validateAgentEventDecl,
 } from './domain/agent-event'
 import { agentMessageKey, isAgentMessageKey } from './domain/agent-message'
+import {
+  isExternalProvider, mergeAgentPolicy, parseAgentPolicy,
+} from './domain/agent-policy'
 import { checkWecomHealth, checkWebhookHealth } from './domain/channel'
 import { resolveDeliverability, type DeliverabilityDeps } from './domain/deliverability'
 import { channelIsConfigured } from './domain/channel-config'
@@ -22,13 +25,15 @@ import { validateRule } from './domain/rules'
 import { samplePayload, validateContents } from './domain/template'
 import { registerNotifyMcpManage } from './mcp'
 import {
-  audit, countRecentTestDeliveries, createAgentNamespace, createTemplate,
-  createTemplateRevision, deleteRule, ensureAgentMessageDefaults, enqueueEvent,
-  getAgentNamespace, getChannel, getEventDecl, getPublishedTemplate, getTemplate,
-  insertDelivery, listAgentNamespaces, listChannels, listDeliveries,
-  listEnabledChannelIds, listEventDecls, listInbox, listPublishedTemplateKeys, listRules,
-  listTemplates, markAllInboxRead, markInboxRead, patchChannel, publishTemplateRevision,
-  retryDelivery, setChannelHealth, setRuleEnabled, upsertEventDecl, upsertRule,
+  audit, countActiveAgentRules, countAgentMessagesToday, countRecentTestDeliveries,
+  createAgentNamespace, createApproval, createTemplate, createTemplateRevision,
+  decideApproval, deleteRule, ensureAgentMessageDefaults, enqueueEvent, getAgentNamespace,
+  getApproval, getChannel, getEventDecl, getPublishedTemplate, getTemplate,
+  hasApprovedRuleApproval, insertDelivery, listAgentNamespaces, listApprovals, listChannels,
+  listDeliveries, listEnabledChannelIds, listEventDecls, listInbox, listPublishedTemplateKeys,
+  listRules, listTemplates, markAllInboxRead, markInboxRead, patchChannel,
+  publishTemplateRevision, retryDelivery, setAgentNamespacePolicy, setChannelHealth,
+  setRuleEnabled, upsertEventDecl, upsertRule,
 } from './storage'
 
 type Vars = { Variables: { identity: Identity } }
@@ -262,6 +267,15 @@ export function createNotifyRouter(deps: {
     const rule = (await listRules(deps.pool, org(c))).find((r) => r.id === id)
     if (rule?.ownerNamespace && !await ownsNamespace(org(c), rule.ownerNamespace, identity)) {
       return c.json({ error: 'RULE_NOT_OWNED' }, 403)
+    }
+    if (body.enabled && rule?.ownerNamespace) {
+      const channelRows = await Promise.all(
+        rule.channels.map((cid) => getChannel(deps.pool, org(c), cid)))
+      const external = channelRows.some(
+        (ch) => ch !== null && isExternalProvider(ch.provider))
+      if (external && !await hasApprovedRuleApproval(deps.pool, org(c), id)) {
+        return c.json({ error: 'APPROVAL_REQUIRED' }, 403)
+      }
     }
     const n = await setRuleEnabled(deps.pool, org(c), id, body.enabled)
     if (n === 0) return c.json({ error: 'NOT_FOUND' }, 404)
@@ -771,9 +785,11 @@ export function createNotifyRouter(deps: {
       return c.json({ error: 'AGENT_RULE_INVALID_BODY' }, 400)
     }
     const identity = c.get('identity') as Identity
-    if (!await ownsNamespace(org(c), b.namespace, identity)) {
+    const ns = await getAgentNamespace(deps.pool, org(c), b.namespace)
+    if (!ns || ns.status !== 'active' || ns.ownerUserId !== identity.userId) {
       return c.json({ error: 'AGENT_NAMESPACE_FORBIDDEN' }, 403)
     }
+    const policy = parseAgentPolicy(ns.policy)
     if (!b.eventKey.startsWith(`ext.${b.namespace}.`) || isAgentMessageKey(b.eventKey)) {
       return c.json({ error: 'AGENT_EVENT_NOT_OWNED' }, 400)
     }
@@ -793,10 +809,30 @@ export function createNotifyRouter(deps: {
       }
     }
 
-    const [channels, templates] = await Promise.all([
+    const disallowed = b.channels.filter((id) => !policy.allowed_channels.includes(id))
+    if (disallowed.length > 0) {
+      return c.json({ error: 'CHANNEL_NOT_ALLOWED', channels: disallowed }, 403)
+    }
+    const channelRows = await Promise.all(
+      b.channels.map((id) => getChannel(deps.pool, org(c), id)))
+    if (channelRows.some((ch) => ch === null)) {
+      return c.json({ error: 'CHANNEL_UNKNOWN' }, 400)
+    }
+    const external = channelRows.some(
+      (ch) => ch !== null && isExternalProvider(ch.provider))
+
+    const [channels, templates, rules] = await Promise.all([
       listEnabledChannelIds(deps.pool, org(c)),
       listPublishedTemplateKeys(deps.pool, org(c)),
+      listRules(deps.pool, org(c)),
     ])
+    const existingRule = b.id ? rules.find((r) => r.id === b.id) : undefined
+    if (existingRule?.enabled !== true) {
+      const active = await countActiveAgentRules(deps.pool, org(c), b.namespace)
+      if (active >= policy.max_active_rules) {
+        return c.json({ error: 'RULE_QUOTA_EXCEEDED' }, 429)
+      }
+    }
     const bad = validateRule({
       eventKey: b.eventKey,
       scope: b.scope ?? '*',
@@ -811,9 +847,13 @@ export function createNotifyRouter(deps: {
     if (bad) return c.json({ error: bad }, 400)
 
     const id = b.id ?? `rule:${randomUUID()}`
+    const alreadyApproved = external
+      ? await hasApprovedRuleApproval(deps.pool, org(c), id)
+      : true
+    const needsApproval = external && !policy.auto_publish_external && !alreadyApproved
     await upsertRule(deps.pool, org(c), {
       id,
-      enabled: true,
+      enabled: !needsApproval,
       eventKey: b.eventKey,
       scope: b.scope ?? '*',
       recipientKey: b.recipientKey,
@@ -825,10 +865,50 @@ export function createNotifyRouter(deps: {
       origin: 'manual',
       ownerNamespace: b.namespace,
     }, identity.userId)
-    await audit(deps.pool, org(c), identity.userId, 'agent.rule.upsert', id, {
+
+    const approvalDetail = {
       eventKey: b.eventKey, templateKey: b.templateKey, channels: b.channels,
+    }
+    let approvalId: string | undefined
+    if (needsApproval) {
+      const pending = (await listApprovals(deps.pool, org(c), 'pending'))
+        .find((a) => a.kind === 'rule' && a.targetId === id)
+      if (pending) {
+        approvalId = pending.id
+      } else {
+        const ap = await createApproval(deps.pool, org(c), {
+          namespace: b.namespace, kind: 'rule', targetId: id,
+          requestedBy: identity.userId, detail: approvalDetail,
+        })
+        approvalId = ap.id
+        await enqueueEvent(deps.pool, {
+          org: identity.orgId,
+          eventId: `approval:${ap.id}:pending`,
+          eventKey: 'notify.approval.pending',
+          scope: b.namespace,
+          payload: {
+            approvalId: ap.id, namespace: b.namespace, kind: 'rule',
+            targetId: id, requestedBy: identity.userId,
+            summary: `${b.eventKey} → ${b.channels.join(', ')}`,
+          },
+          producer: 'notify',
+        })
+      }
+    } else if (external && !alreadyApproved) {
+      const ap = await createApproval(deps.pool, org(c), {
+        namespace: b.namespace, kind: 'rule', targetId: id,
+        requestedBy: identity.userId, status: 'approved',
+        decidedBy: 'system:policy', reason: 'auto_publish_external',
+        detail: approvalDetail,
+      })
+      approvalId = ap.id
+    }
+
+    const status = needsApproval ? 'pending' : 'enabled'
+    await audit(deps.pool, org(c), identity.userId, 'agent.rule.upsert', id, {
+      ...approvalDetail, status, approvalId: approvalId ?? null,
     })
-    return c.json({ id }, 201)
+    return c.json({ id, status, approvalId }, needsApproval ? 202 : 201)
   })
 
   r.post('/agent/messages', async (c) => {
@@ -844,12 +924,24 @@ export function createNotifyRouter(deps: {
       return c.json({ error: 'AGENT_MESSAGE_INVALID_BODY' }, 400)
     }
     const identity = c.get('identity') as Identity
-    if (!await ownsNamespace(org(c), b.namespace, identity)) {
+    const ns = await getAgentNamespace(deps.pool, org(c), b.namespace)
+    if (!ns || ns.status !== 'active' || ns.ownerUserId !== identity.userId) {
       return c.json({ error: 'AGENT_NAMESPACE_FORBIDDEN' }, 403)
+    }
+    const policy = parseAgentPolicy(ns.policy)
+    if (!policy.allowed_channels.includes('inapp_default')) {
+      return c.json({ error: 'CHANNEL_NOT_ALLOWED', channels: ['inapp_default'] }, 403)
     }
     const to = Array.isArray(b.to) ? b.to : [b.to]
     if (to.length === 0 || to.some((x) => typeof x !== 'string' || x.trim() === '')) {
       return c.json({ error: 'AGENT_MESSAGE_INVALID_RECIPIENT' }, 400)
+    }
+    if (to.length > policy.max_recipients_per_message) {
+      return c.json({ error: 'RECIPIENT_QUOTA_EXCEEDED' }, 429)
+    }
+    if (await countAgentMessagesToday(deps.pool, org(c), b.namespace)
+        >= policy.max_messages_per_day) {
+      return c.json({ error: 'MESSAGE_QUOTA_EXCEEDED' }, 429)
     }
     if ([...b.title].length > 64) return c.json({ error: 'AGENT_MESSAGE_TITLE_TOO_LONG' }, 400)
     if ([...b.body].length > 500) return c.json({ error: 'AGENT_MESSAGE_BODY_TOO_LONG' }, 400)
@@ -883,6 +975,74 @@ export function createNotifyRouter(deps: {
       eventId, recipients: to.length,
     })
     return c.json({ accepted: result.accepted, eventId }, 202)
+  })
+
+  // ── 爆炸半径策略与审批（N3）──────────────────────────────────────────────
+  r.patch('/agent/namespaces/:namespace/policy', async (c) => {
+    const b = (await c.req.json().catch(() => null)) as Record<string, unknown> | null
+    if (!b) return c.json({ error: 'POLICY_INVALID' }, 400)
+    for (const k of ['max_recipients_per_message', 'max_active_rules', 'max_messages_per_day']) {
+      if (k in b && (typeof b[k] !== 'number' || !Number.isInteger(b[k]) || (b[k] as number) <= 0)) {
+        return c.json({ error: 'POLICY_INVALID', field: k }, 400)
+      }
+    }
+    if ('auto_publish_external' in b && typeof b.auto_publish_external !== 'boolean') {
+      return c.json({ error: 'POLICY_INVALID', field: 'auto_publish_external' }, 400)
+    }
+    if ('allowed_channels' in b) {
+      const v = b.allowed_channels
+      if (!Array.isArray(v) || v.length === 0
+          || v.some((x) => typeof x !== 'string' || x.length === 0)) {
+        return c.json({ error: 'POLICY_INVALID', field: 'allowed_channels' }, 400)
+      }
+    }
+
+    const namespace = c.req.param('namespace')
+    const ns = await getAgentNamespace(deps.pool, org(c), namespace)
+    if (!ns) return c.json({ error: 'AGENT_NAMESPACE_NOT_FOUND' }, 404)
+    const next = mergeAgentPolicy(parseAgentPolicy(ns.policy), b)
+    for (const id of next.allowed_channels) {
+      const ch = await getChannel(deps.pool, org(c), id)
+      if (!ch || !ch.enabled) {
+        return c.json({ error: 'CHANNEL_UNKNOWN', channel: id }, 400)
+      }
+    }
+    await setAgentNamespacePolicy(deps.pool, org(c), namespace, next)
+    const identity = c.get('identity') as Identity
+    await audit(deps.pool, org(c), identity.userId, 'agent.policy.update', namespace, next)
+    return c.json({ namespace, policy: next })
+  })
+
+  r.get('/approvals', async (c) => {
+    const status = c.req.query('status')
+    return c.json({
+      approvals: await listApprovals(deps.pool, org(c), status === undefined ? undefined : status),
+    })
+  })
+
+  r.post('/approvals/:id/decide', async (c) => {
+    const b = (await c.req.json().catch(() => null)) as {
+      approve?: boolean
+      reason?: string
+    } | null
+    if (!b || typeof b.approve !== 'boolean') {
+      return c.json({ error: 'APPROVAL_INVALID_BODY' }, 400)
+    }
+    const identity = c.get('identity') as Identity
+    const id = c.req.param('id')
+    const a = await getApproval(deps.pool, org(c), id)
+    if (!a) return c.json({ error: 'APPROVAL_NOT_FOUND' }, 404)
+    if (a.status !== 'pending') return c.json({ error: 'APPROVAL_NOT_PENDING' }, 409)
+    const decided = await decideApproval(
+      deps.pool, org(c), id, b.approve, identity.userId, b.reason ?? null)
+    if (!decided) return c.json({ error: 'APPROVAL_NOT_PENDING' }, 409)
+    if (b.approve && decided.kind === 'rule') {
+      await setRuleEnabled(deps.pool, org(c), decided.targetId, true)
+    }
+    await audit(deps.pool, org(c), identity.userId, 'approval.decide', decided.targetId, {
+      approvalId: decided.id, approve: b.approve, kind: decided.kind,
+    })
+    return c.json({ approval: decided })
   })
 
   registerNotifyMcpManage(r, {

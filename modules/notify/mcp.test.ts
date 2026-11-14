@@ -61,6 +61,7 @@ describePg('notify mcp handlers', () => {
   })
 
   async function cleanup() {
+    await pool.query('delete from notify.approval where org=$1', [ORG])
     await pool.query('delete from notify.event_decl where org=$1', [ORG])
     await pool.query('delete from notify.rule where org=$1', [ORG])
     await pool.query('delete from notify.delivery where org=$1', [ORG])
