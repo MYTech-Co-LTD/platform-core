@@ -145,6 +145,8 @@ export default function ReportsPage() {
   const [sheetFor, setSheetFor] = useState<ReportRow | null>(null)
   const [filterOpen, setFilterOpen] = useState(false)
   const [tplOpen, setTplOpen] = useState(false)
+  // 30 天零访问提醒（R6）：只提醒、不自动归档；口径由服务端算（GET /reports/stale）。
+  const [stale, setStale] = useState<Array<{ id: string; title: string; daysSince: number }>>([])
   const [query, setQuery] = useState('')
   const [statusFilter, setStatusFilter] = useState<'all' | 'published' | 'draft' | 'changed'>('all')
   const STATUS_OPTIONS = [
@@ -269,6 +271,19 @@ export default function ReportsPage() {
     }
   }
   useEffect(() => { void load() }, [])
+
+  useEffect(() => {
+    if (!canManage) { setStale([]); return }
+    let alive = true
+    apiGet('/reports/stale?days=30')
+      .then((b) => {
+        if (!alive) return
+        const list = (b as { stale?: unknown }).stale
+        setStale(Array.isArray(list) ? (list as Array<{ id: string; title: string; daysSince: number }>) : [])
+      })
+      .catch(() => { if (alive) setStale([]) })
+    return () => { alive = false }
+  }, [canManage])
 
   // 深链（#1047）：`/console/data/reports?open=<id>` —— 列表就绪后自动打开该自绘报表（分享/收藏直达）。
   // 只消费一次（deepLinkDone 防 load 刷新后重复弹）；行不在观看清单（页门不过/已删）⇒ 静默留在列表，
@@ -957,6 +972,18 @@ export default function ReportsPage() {
       {ctx}
       {/* R5：叙事质量运维面板（管理面）。阈值与口径都由服务端下发，这里只画越线。 */}
       {canManage && <NarrativeQuality />}
+      {canManage && stale.length > 0 && (
+        <Alert
+          type="info" showIcon data-testid="stale-reports"
+          message={`有 ${stale.length} 份报表超过 30 天没有访问（可考虑归档）`}
+          description={
+            <Typography.Text type="secondary" style={{ fontSize: 12 }}>
+              {stale.slice(0, 5).map((x) => `${x.title}（${x.daysSince} 天）`).join('、')}
+              {stale.length > 5 ? ' 等' : ''}
+            </Typography.Text>
+          }
+        />
+      )}
       {isMobile ? (
         // 移动端一屏优先：搜索 + 一个「筛选」按钮（当前状态写在按钮上），不再常驻 4 个筛选项
         <div style={{ display: 'flex', gap: 8 }}>

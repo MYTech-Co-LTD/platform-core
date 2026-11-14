@@ -981,3 +981,23 @@ describe('「这个数怎么来的」抽屉（Wave 4.3）', () => {
     expect(detailsText).toContain('lemeng:retail:net_sales')
   })
 })
+
+describe('R6 30 天零访问提醒', () => {
+  it('管理面 ⇒ 顶部提醒列出久未访问的报表（只提醒，不自动归档）', async () => {
+    m.mockImplementation(async (url: string, init?: RequestInit) => {
+      calls.push({ url, init })
+      if (url.endsWith('/reports/stale?days=30')) {
+        return json({
+          days: 30,
+          stale: [{ id: 'r1', title: '销售日报', renderer: 'metabase', lastViewedAt: null, viewCount: 0, daysSince: 45 }],
+        })
+      }
+      if (url.endsWith('/reports/manage')) return json({ reports: editableRows() })
+      return json({})
+    })
+    renderPage(['data:manage'])
+
+    expect(await screen.findByText(/1 份报表超过 30 天没有访问/)).toBeInTheDocument()
+    expect(screen.getByText(/销售日报（45 天）/)).toBeInTheDocument()
+  })
+})

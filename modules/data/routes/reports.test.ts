@@ -248,9 +248,10 @@ describe('报表面声明（不需要数据库）', () => {
     // 观看面 data:query；页门/快照门/草稿分档与 narrative 共用 loadViewableSpec）。
     // +1：可折叠明细（R3 ⑤：POST /reports/:id/detail-rows，观看面 data:query）。
     // +1：文本语义内嵌（R3 L2：POST /reports/:id/token-text，观看面 data:query）。
+    // +1：30 天零访问报表（R6：GET /reports/stale，管理面 data:manage）。
     // 穷举口径（同 module.test.ts 的表清单）——别处加端点而漏改这里会红，
     // 逼着声明与测试一起动。
-    expect(declared).toHaveLength(87)
+    expect(declared).toHaveLength(88)
     // 指标变更单：七条全 data:manage；采纳/驳回的会话限定是路由内的第二道闸（不在这张表上）
     for (const p of [
       'POST /metric-changes', 'GET /metric-changes', 'GET /metric-changes/:id',
@@ -338,6 +339,7 @@ describe('报表面声明（不需要数据库）', () => {
     expect(declared.get('POST /reports/:id/receipt/detail')).toBe('data:query')
     expect(declared.get('POST /reports/:id/detail-rows')).toBe('data:query')
     expect(declared.get('POST /reports/:id/token-text')).toBe('data:query')
+    expect(declared.get('GET /reports/stale')).toBe('data:manage')
   })
 
   it('★ 页门负测：只有 data:query ⇒ 管理清单（跨资产视图）403', async () => {
