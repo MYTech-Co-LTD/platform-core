@@ -457,14 +457,79 @@ function DetailRows({
   )
 }
 
+/** 文本语义内嵌（R3 / L2）的解析上下文：与页面查询同源的期间/门店/共享筛选。 */
+interface TextCtx {
+  reportId: string
+  panelIndex: number
+  period: PeriodSpec | null
+  branchNum?: string
+  filters?: Record<string, unknown>
+  version?: number
+  preview?: 'draft'
+}
+
+/**
+ * 文本里的 `{{…}}` 引用：**服务端**解析成活数，前端只渲染已替换好的文本。
+ * 解析失败 ⇒ 整块显示可读原因（fail-closed；不回原文，避免把占位符当数字）。
+ */
+function TokenText({ ctx, format }: { ctx: TextCtx; format: 'plain' | 'markdown' }) {
+  type State = { kind: 'loading' } | { kind: 'ok'; text: string } | { kind: 'error'; text: string }
+  const [state, setState] = useState<State>({ kind: 'loading' })
+  const periodKey = JSON.stringify(ctx.period)
+  const filtersKey = JSON.stringify(ctx.filters ?? {})
+  useEffect(() => {
+    let alive = true
+    if (ctx.period === null) {
+      setState({ kind: 'error', text: '报表未声明期间，无法解析文本引用' })
+      return
+    }
+    setState({ kind: 'loading' })
+    apiSend(`/reports/${ctx.reportId}/token-text`, 'POST', {
+      panelIndex: ctx.panelIndex,
+      period: ctx.period,
+      ...(ctx.branchNum === undefined ? {} : { branchNum: ctx.branchNum }),
+      ...(ctx.filters === undefined ? {} : { filters: ctx.filters }),
+      ...(ctx.version === undefined ? {} : { version: ctx.version }),
+      ...(ctx.preview === undefined ? {} : { preview: ctx.preview }),
+    })
+      .then((b) => {
+        if (!alive) return
+        const text = (b as { text?: unknown }).text
+        if (typeof text !== 'string') {
+          setState({ kind: 'error', text: '文本引用的解析结果不完整，请稍后重试' })
+          return
+        }
+        setState({ kind: 'ok', text })
+      })
+      .catch((e) => {
+        if (alive) setState({ kind: 'error', text: e instanceof ApiError ? messageOf(e) : '文本引用解析失败' })
+      })
+    return () => { alive = false }
+    // period/filters 按值比较（父级每次渲染都是新对象）
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [ctx.reportId, ctx.panelIndex, periodKey, ctx.branchNum, filtersKey, ctx.version, ctx.preview])
+
+  if (state.kind === 'loading') return <Spin size="small" />
+  if (state.kind === 'error') return <Alert type="warning" showIcon message={state.text} />
+  return format === 'markdown'
+    ? <div style={{ lineHeight: 1.85 }}><RichText text={state.text} /></div>
+    : <Typography.Paragraph style={{ whiteSpace: 'pre-wrap', margin: 0 }}>{state.text}</Typography.Paragraph>
+}
+
 /** 单个面板的呈现：查询未回 ⇒ Spin；denied ⇒ 人话（不拖垮整页）；table ⇒ antd Table；图 ⇒ EChart。 */
 interface PanelCompare { label: string; result: OkResult }
 
-function PanelBody({ panel, result, compares = [], detailCtx }: { panel: Panel; result: PanelResult | undefined; compares?: PanelCompare[]; detailCtx?: DetailCtx }) {
+function PanelBody({ panel, result, compares = [], detailCtx, textCtx }: { panel: Panel; result: PanelResult | undefined; compares?: PanelCompare[]; detailCtx?: DetailCtx; textCtx?: TextCtx }) {
   // text / kpi 的呈现不经过查询结果（text 是静态文本，kpi 由 KpiCard 自取合计）——
   // ReportView 的渲染分支里已把它们分流，这里只是类型收口。
   if (panel.chart === 'text') {
-    // 纯文本 / 受限富文本（R3）。两者都**不**渲染 HTML：markdown 走 RichText 的 React 节点。
+    // 含 `{{…}}` 引用 ⇒ 服务端解析（L2）；纯文本/静态富文本原样渲染（不解析 HTML）。
+    if (panel.content.includes('{{')) {
+      if (textCtx === undefined) {
+        return <Alert type="warning" showIcon message="文本引用缺少解析上下文，无法展示" />
+      }
+      return <TokenText ctx={textCtx} format={panel.format} />
+    }
     return panel.format === 'markdown'
       ? <div style={{ lineHeight: 1.85 }}><RichText text={panel.content} /></div>
       : <Typography.Paragraph style={{ whiteSpace: 'pre-wrap', margin: 0 }}>{panel.content}</Typography.Paragraph>
@@ -1153,6 +1218,15 @@ export default function ReportView({
         <Card size="small" title={p.title}>
           <PanelBody
             panel={p} result={results[i]} compares={compareResults[i]}
+            {...(p.chart === 'text' ? {
+              textCtx: {
+                reportId, panelIndex: i, period,
+                ...(aiBranchNum === undefined ? {} : { branchNum: aiBranchNum }),
+                ...(Object.keys(filterValues).length === 0 ? {} : { filters: filterValues }),
+                ...(pinnedVersion === null || pinnedVersion === undefined ? {} : { version: pinnedVersion }),
+                ...(preview === undefined ? {} : { preview }),
+              },
+            } : {})}
             {...(p.chart === 'table' && p.expandable !== undefined ? {
               detailCtx: {
                 reportId, panelIndex: i, args: argsOf(p),

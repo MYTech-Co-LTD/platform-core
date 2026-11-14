@@ -101,6 +101,8 @@ function stub(
   extraGet: Record<string, unknown> = {},
   /** 可折叠明细的展开回包（R3 ⑤）；给了才应答 `POST /detail-rows`。 */
   detailRows?: Record<string, unknown> & { status?: number },
+  /** 文本引用的解析回包（R3 L2）；给了才应答 `POST /token-text`。 */
+  tokenText?: { status?: number; body: Record<string, unknown> },
 ) {
   m.mockImplementation(async (url: string, init?: RequestInit) => {
     calls.push({ url, init })
@@ -108,6 +110,9 @@ function stub(
     if (detailRows !== undefined && url.endsWith('/detail-rows')) {
       const { status = 200, ...body } = detailRows
       return json(body, status)
+    }
+    if (tokenText !== undefined && url.endsWith('/token-text')) {
+      return json(tokenText.body, tokenText.status ?? 200)
     }
     for (const [suffix, body] of Object.entries(extraGet)) {
       if (url.endsWith(suffix)) return json(body)
@@ -894,5 +899,45 @@ describe('R3 多页 / 打印', () => {
 
     fireEvent.click(within(screen.getByTestId('page-nav')).getByText(/第 2 页/))
     await waitFor(() => expect(calls.some((c) => c.url.endsWith('/narrative/stream'))).toBe(true))
+  })
+})
+
+describe('R3 文本语义内嵌（L2）', () => {
+  const period = { mode: 'custom' as const, from: '2026-10-01', to: '2026-10-02' }
+
+  it('★ 含 {{…}} 的文本 ⇒ 服务端解析后渲染（原文不出现、前端不拼数）', async () => {
+    stub({
+      period,
+      panels: [
+        { chart: 'table', title: '销售', metricId: 'm1', dims: [], args: {}, span: 12 },
+        { chart: 'text', content: '本期 {{metric:m1|fmt:number}}', span: 12 },
+      ],
+    }, { m1: { columns: ['value'], rows: [['1']] } }, new Set(), {}, undefined, {
+      body: { text: '本期 1,234' },
+    })
+    renderView()
+
+    expect(await screen.findByText('本期 1,234')).toBeInTheDocument()
+    expect(screen.queryByText(/{{metric/)).not.toBeInTheDocument()
+    const call = calls.find((c) => c.url.endsWith('/token-text'))!
+    expect(call.init?.method).toBe('POST')
+    expect(JSON.parse(String(call.init?.body))).toMatchObject({ panelIndex: 1, period })
+  })
+
+  it('★ 引用解析失败 ⇒ 整块给可读原因（fail-closed，不回原文、不留空）', async () => {
+    stub({
+      period,
+      panels: [
+        { chart: 'table', title: '销售', metricId: 'm1', dims: [], args: {}, span: 12 },
+        { chart: 'text', content: '本期 {{metric:m1}}', span: 12 },
+      ],
+    }, { m1: { columns: ['value'], rows: [['1']] } }, new Set(), {}, undefined, {
+      status: 409,
+      body: { error: 'TOKEN_UNRESOLVED', detail: '文本引用的指标不在本报表里：m1' },
+    })
+    renderView()
+
+    expect(await screen.findByText(/这段文本引用的指标暂不可用/)).toBeInTheDocument()
+    expect(screen.queryByText(/{{metric/)).not.toBeInTheDocument()
   })
 })

@@ -235,6 +235,9 @@ api:
     # ── 可折叠明细（R3 ⑤）：table 面板行展开；只经 runDetailQuery（授权/掩码/审计/行数闸同链），
     #    面板级页门与观看面同一份 loadViewableSpec。──
     - { method: POST,   path: /reports/:id/detail-rows,               scope: data:query }
+    # ── 文本语义内嵌（R3 L2）：`{{metric:…}}` 在服务端解析成活数；引用只能指向观看面
+    #    plan 里已存在的指标（渲染闸已裁掉的引用必然解析失败）。──
+    - { method: POST,   path: /reports/:id/token-text,                scope: data:query }
     # ── 数据范围 scope 管理面（spec 2026-11-10 §5.5；issue #1901）──
     # 全部 data:manage（授权变更是管理动作；运行期执法在 authorizeCore，这里只有配置面）。
     # 判定链在 domain/scope-admin.ts：selector 闭集 + 受控维表存在性校验（fail-closed，

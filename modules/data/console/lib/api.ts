@@ -121,6 +121,8 @@ const MESSAGES: Record<string, string> = {
   NO_SERIES: '该指标不提供按日组成（不可加或比率指标）',
   // 可折叠明细（R3 ⑤）：能力边界与「行信息不完整」分开说——前者改不了，后者是数据形态。
   PANEL_NOT_EXPANDABLE: '这个面板没有开启明细展开',
+  PANEL_NOT_TEXT: '这个面板不是文本块，无法解析引用',
+  TOKEN_UNRESOLVED: '这段文本引用的指标暂不可用',
   ROW_FILTER_INCOMPLETE: '这一行的维度信息不完整，无法定位明细',
   ROW_FILTER_UNKNOWN: '这一行的维度信息与面板分组不一致，无法定位明细',
   BAD_PARAM: '明细查询的参数不被接受',

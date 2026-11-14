@@ -8,6 +8,7 @@
 //     加图型 = 改这个常量 + 加渲染分支 + 测试，**走 PR**。做成 env/DB 可配会让
 //     「渲染器能力」与「平台代码」脱钩 ⇒ 库里加了图型而渲染器不认 = **静默空白**。
 import { z } from 'zod'
+import { tokenIssue } from './report-token-parse'
 
 export const CHART_TYPES = ['line', 'bar', 'table', 'cross_table', 'waterfall', 'bullet', 'sparkline', 'kpi', 'text', 'ai_text'] as const
 export const MAX_PANELS = 24
@@ -266,6 +267,23 @@ export const ReportSpecSchema = z.object({
       ctx.addIssue({
         code: z.ZodIssueCode.custom, path: ['panels', i, 'page'],
         message: 'PAGE_OUT_OF_RANGE',
+      })
+    }
+  })
+  // L2 语义内嵌（R3）：文本里的 token 只能引用本报表已出现过的指标（引用即授权面）。
+  const metricIds = new Set<string>()
+  for (const p of spec.panels) {
+    if (p.chart === 'text' || p.chart === 'ai_text') continue
+    metricIds.add(p.metricId)
+    if (p.chart === 'kpi' && p.denominatorMetricId !== undefined) metricIds.add(p.denominatorMetricId)
+  }
+  spec.panels.forEach((p, i) => {
+    if (p.chart !== 'text') return
+    const issue = tokenIssue(p.content, metricIds)
+    if (issue !== null) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom, path: ['panels', i, 'content'],
+        message: `TOKEN_INVALID: ${issue}`,
       })
     }
   })
