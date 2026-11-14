@@ -21,7 +21,7 @@
 - **迁移编号**：宿主迁移用 `018_platform_jobs.sql`（宿主现有最大 017）；数据模块编号与本次无关。
 - **时区**：`timezone` 列按 IANA 名解释；**迁入的系统 job 一律 `timezone='UTC'`**（与 openship 上现有 cron 的 UTC 语义逐字一致，避免整体挪 8 小时）；新建业务排班默认 `Asia/Shanghai`。
 - **安全**：`enabled` 默认 `false`——seed 只登记不启用，切流由人显式开启。
-- 测试隔离：DB 用例用独立 key 前缀 `jobtest:*`，**自建夹具、空库可绿**；本地 `DATABASE_URL='postgres://platform:platform@127.0.0.1:5432/platform'`。
+- 测试隔离：DB 用例**每个测试文件用自己的 key 前缀**（`jobtest-migrate:` / `jobtest-registry:` / `jobtest-store:` / `jobtest-loop:` / `jobtest-health:` / `jobtest-route:`），**禁止用宽前缀 `jobtest:%` 清理**（并行跑文件会互删夹具）；**自建夹具、空库可绿**；本地 `DATABASE_URL='postgres://platform:platform@127.0.0.1:5432/platform'`。
 - Conventional Commits；feat 挂 issue（本波 issue：**#2172**）。
 
 ## File Structure
@@ -202,26 +202,26 @@ describePg('018_platform_jobs', () => {
   })
 
   it('系统 job 一 key 一条：部分唯一索引生效', async () => {
-    await pool.query("delete from platform.job_schedule where key like 'jobtest:%'")
+    await pool.query("delete from platform.job_schedule where key like 'jobtest-migrate:%'")
     await pool.query(
-      "insert into platform.job_schedule(key,cron,source,enabled,expected_interval_secs) values ('jobtest:uq','* * * * *','system',false,60)")
+      "insert into platform.job_schedule(key,cron,source,enabled,expected_interval_secs) values ('jobtest-migrate:uq','* * * * *','system',false,60)")
     await expect(pool.query(
-      "insert into platform.job_schedule(key,cron,source,enabled,expected_interval_secs) values ('jobtest:uq','* * * * *','system',false,60)",
+      "insert into platform.job_schedule(key,cron,source,enabled,expected_interval_secs) values ('jobtest-migrate:uq','* * * * *','system',false,60)",
     )).rejects.toThrow(/uq_job_schedule_system_key/)
-    await pool.query("delete from platform.job_schedule where key like 'jobtest:%'")
+    await pool.query("delete from platform.job_schedule where key like 'jobtest-migrate:%'")
   })
 
   it('status/trigger 闭集：非法值被**约束**拒绝（不是被外键拒绝）', async () => {
     const { rows } = await pool.query(
-      "insert into platform.job_schedule(key,cron,source,enabled,expected_interval_secs) values ('jobtest:cl','* * * * *','system',false,60) returning id")
+      "insert into platform.job_schedule(key,cron,source,enabled,expected_interval_secs) values ('jobtest-migrate:cl','* * * * *','system',false,60) returning id")
     const id = rows[0].id
     await expect(pool.query(
-      "insert into platform.job_run(schedule_id,key,occurrence,trigger,status) values ($1,'jobtest:cl',now(),'nope','ok')", [id],
+      "insert into platform.job_run(schedule_id,key,occurrence,trigger,status) values ($1,'jobtest-migrate:cl',now(),'nope','ok')", [id],
     )).rejects.toThrow(/job_run_trigger_check/)
     await expect(pool.query(
-      "insert into platform.job_run(schedule_id,key,occurrence,trigger,status) values ($1,'jobtest:cl',now(),'schedule','nope')", [id],
+      "insert into platform.job_run(schedule_id,key,occurrence,trigger,status) values ($1,'jobtest-migrate:cl',now(),'schedule','nope')", [id],
     )).rejects.toThrow(/job_run_status_check/)
-    await pool.query("delete from platform.job_schedule where key like 'jobtest:%'")
+    await pool.query("delete from platform.job_schedule where key like 'jobtest-migrate:%'")
   })
 })
 ```
@@ -488,19 +488,19 @@ const describePg = dbUrl ? describe : describe.skip
 const dir = fileURLToPath(new URL('../migrations', import.meta.url))
 
 const defs: JobDef[] = [
-  { key: 'jobtest:alpha', script: 'scripts/x.mjs', cron: '7 * * * *', timezone: 'UTC', timeoutMs: 1000, maxAttempts: 1, expectedIntervalSecs: 3600, description: 't' },
+  { key: 'jobtest-registry:alpha', script: 'scripts/x.mjs', cron: '7 * * * *', timezone: 'UTC', timeoutMs: 1000, maxAttempts: 1, expectedIntervalSecs: 3600, description: 't' },
 ]
 
 describePg('seedSchedules', () => {
   let pool: Pool
   beforeAll(async () => { pool = new Pool({ connectionString: dbUrl }); await runMigrations(pool, 'platform', dir) })
-  afterAll(async () => { await pool.query("delete from platform.job_schedule where key like 'jobtest:%'"); await pool.end() })
+  afterAll(async () => { await pool.query("delete from platform.job_schedule where key like 'jobtest-registry:%'"); await pool.end() })
 
   it('首次插入：enabled=false 且 next_run_at 为空（登记不跑）', async () => {
-    await pool.query("delete from platform.job_schedule where key like 'jobtest:%'")
+    await pool.query("delete from platform.job_schedule where key like 'jobtest-registry:%'")
     const r = await seedSchedules(pool, defs)
-    expect(r.inserted).toContain('jobtest:alpha')
-    const { rows } = await pool.query("select enabled, next_run_at, params, source from platform.job_schedule where key='jobtest:alpha'")
+    expect(r.inserted).toContain('jobtest-registry:alpha')
+    const { rows } = await pool.query("select enabled, next_run_at, params, source from platform.job_schedule where key='jobtest-registry:alpha'")
     expect(rows[0].enabled).toBe(false)
     expect(rows[0].next_run_at).toBeNull()
     expect(rows[0].params).toEqual({})
@@ -508,23 +508,23 @@ describePg('seedSchedules', () => {
   })
 
   it('★ 二次 seed 不覆盖人改过的 cron / enabled', async () => {
-    await pool.query("update platform.job_schedule set cron='*/5 * * * *', enabled=true where key='jobtest:alpha'")
+    await pool.query("update platform.job_schedule set cron='*/5 * * * *', enabled=true where key='jobtest-registry:alpha'")
     await seedSchedules(pool, defs)
-    const { rows } = await pool.query("select cron, enabled from platform.job_schedule where key='jobtest:alpha'")
+    const { rows } = await pool.query("select cron, enabled from platform.job_schedule where key='jobtest-registry:alpha'")
     expect(rows[0].cron).toBe('*/5 * * * *')
     expect(rows[0].enabled).toBe(true)
   })
 
   it('★ 已启用但 next_run_at 为空 ⇒ 补算（不立即跑）', async () => {
-    await pool.query("update platform.job_schedule set next_run_at=null where key='jobtest:alpha'")
+    await pool.query("update platform.job_schedule set next_run_at=null where key='jobtest-registry:alpha'")
     const r = await seedSchedules(pool, defs)
-    expect(r.filled).toContain('jobtest:alpha')
-    const { rows } = await pool.query("select next_run_at from platform.job_schedule where key='jobtest:alpha'")
+    expect(r.filled).toContain('jobtest-registry:alpha')
+    const { rows } = await pool.query("select next_run_at from platform.job_schedule where key='jobtest-registry:alpha'")
     expect(new Date(rows[0].next_run_at).getTime()).toBeGreaterThan(Date.now())
   })
 
   it('★ 非法 cron 在 seed 期炸（fail-closed）', async () => {
-    await expect(seedSchedules(pool, [{ ...defs[0], key: 'jobtest:bad', cron: '0 0 * * MON' }]))
+    await expect(seedSchedules(pool, [{ ...defs[0], key: 'jobtest-registry:bad', cron: '0 0 * * MON' }]))
       .rejects.toThrow(/cron/)
   })
 })
@@ -648,7 +648,7 @@ const describePg = dbUrl ? describe : describe.skip
 const dir = fileURLToPath(new URL('../migrations', import.meta.url))
 
 async function mkSchedule(pool: Pool, key: string, over: Record<string, unknown> = {}) {
-  await pool.query("delete from platform.job_schedule where key like 'jobtest:%'")
+  await pool.query("delete from platform.job_schedule where key like 'jobtest-store:%'")
   const { rows } = await pool.query(
     `insert into platform.job_schedule(key,cron,timezone,source,enabled,next_run_at,timeout_ms,max_attempts,expected_interval_secs)
      values ($1,$2,'UTC','system',true,$3,$4,$5,$6) returning id`,
@@ -660,27 +660,27 @@ async function mkSchedule(pool: Pool, key: string, over: Record<string, unknown>
 describePg('scheduler store', () => {
   let pool: Pool
   beforeAll(async () => { pool = new Pool({ connectionString: dbUrl }); await runMigrations(pool, 'platform', dir) })
-  afterAll(async () => { await pool.query("delete from platform.job_schedule where key like 'jobtest:%'"); await pool.end() })
+  afterAll(async () => { await pool.query("delete from platform.job_schedule where key like 'jobtest-store:%'"); await pool.end() })
 
   it('到期 job 被 claim，且 next_run_at 前推', async () => {
-    const id = await mkSchedule(pool, 'jobtest:claim')
+    const id = await mkSchedule(pool, 'jobtest-store:claim')
     const jobs = await claimDue(pool, 5, new Date(), nextRunAt)
     const j = jobs.find((x) => x.scheduleId === id)!
-    expect(j.key).toBe('jobtest:claim')
+    expect(j.key).toBe('jobtest-store:claim')
     expect(j.attempt).toBe(1)
     const { rows } = await pool.query('select next_run_at from platform.job_schedule where id=$1', [id])
     expect(new Date(rows[0].next_run_at).getTime()).toBeGreaterThan(Date.now())
   })
 
   it('★ 同一 job 不会被第二次 claim（并发安全）', async () => {
-    const id = await mkSchedule(pool, 'jobtest:once')
+    const id = await mkSchedule(pool, 'jobtest-store:once')
     await claimDue(pool, 5, new Date(), nextRunAt)
     const again = await claimDue(pool, 5, new Date(), nextRunAt)
     expect(again.some((x) => x.scheduleId === id)).toBe(false)
   })
 
   it('★ retry 路径：不改 next_run_at，attempt 递增', async () => {
-    const id = await mkSchedule(pool, 'jobtest:retry')
+    const id = await mkSchedule(pool, 'jobtest-store:retry')
     const [j] = (await claimDue(pool, 5, new Date(), nextRunAt)).filter((x) => x.scheduleId === id)
     const before = await pool.query('select next_run_at from platform.job_schedule where id=$1', [id])
     await recordRun(pool, j, { status: 'failed', exitCode: 1, durationMs: 10, outputTail: '', error: 'boom' })
@@ -696,19 +696,19 @@ describePg('scheduler store', () => {
   })
 
   it('★ 僵尸 running 被回收成 timeout', async () => {
-    const id = await mkSchedule(pool, 'jobtest:zombie', { timeoutMs: 1000 })
+    const id = await mkSchedule(pool, 'jobtest-store:zombie', { timeoutMs: 1000 })
     await pool.query(
       `insert into platform.job_run(schedule_id,key,occurrence,trigger,status,started_at)
-       values ($1,'jobtest:zombie',now(),'schedule','running', now() - interval '1 hour')`, [id])
+       values ($1,'jobtest-store:zombie',now(),'schedule','running', now() - interval '1 hour')`, [id])
     expect(await reapStale(pool, new Date())).toBeGreaterThanOrEqual(1)
     const { rows } = await pool.query("select status from platform.job_run where schedule_id=$1", [id])
     expect(rows[0].status).toBe('timeout')
   })
 
   it('手动入队：只有 queued 行能被 claim，且带 trigger=manual', async () => {
-    const id = await mkSchedule(pool, 'jobtest:manual', { nextRunAt: new Date(Date.now() + 86_400_000) })
+    const id = await mkSchedule(pool, 'jobtest-store:manual', { nextRunAt: new Date(Date.now() + 86_400_000) })
     await pool.query(
-      `insert into platform.job_run(schedule_id,key,occurrence,trigger,status) values ($1,'jobtest:manual',now(),'manual','queued')`, [id])
+      `insert into platform.job_run(schedule_id,key,occurrence,trigger,status) values ($1,'jobtest-store:manual',now(),'manual','queued')`, [id])
     const jobs = await claimQueuedManual(pool, 5, new Date())
     const j = jobs.find((x) => x.scheduleId === id)!
     expect(j.occurrence).toBeInstanceOf(Date)
@@ -1121,19 +1121,19 @@ import type { JobDef } from './registry'
 const dbUrl = process.env.DATABASE_URL
 const describePg = dbUrl ? describe : describe.skip
 const dir = fileURLToPath(new URL('../migrations', import.meta.url))
-const def: JobDef = { key: 'jobtest:loop', script: 'scripts/x.mjs', cron: '7 * * * *', timezone: 'UTC', timeoutMs: 500, maxAttempts: 1, expectedIntervalSecs: 3600, description: 't' }
+const def: JobDef = { key: 'jobtest-loop:loop', script: 'scripts/x.mjs', cron: '7 * * * *', timezone: 'UTC', timeoutMs: 500, maxAttempts: 1, expectedIntervalSecs: 3600, description: 't' }
 
 describePg('scheduler loop', () => {
   let pool: Pool
   beforeAll(async () => { pool = new Pool({ connectionString: dbUrl }); await runMigrations(pool, 'platform', dir) })
-  afterAll(async () => { await pool.query("delete from platform.job_schedule where key like 'jobtest:%'"); await pool.end() })
+  afterAll(async () => { await pool.query("delete from platform.job_schedule where key like 'jobtest-loop:%'"); await pool.end() })
 
   async function seed(): Promise<number> {
-    await pool.query("delete from platform.job_run where key like 'jobtest:%'")
-    await pool.query("delete from platform.job_schedule where key like 'jobtest:%'")
+    await pool.query("delete from platform.job_run where key like 'jobtest-loop:%'")
+    await pool.query("delete from platform.job_schedule where key like 'jobtest-loop:%'")
     const { rows } = await pool.query(
       `insert into platform.job_schedule(key,cron,timezone,source,enabled,next_run_at,timeout_ms,max_attempts,expected_interval_secs)
-       values ('jobtest:loop','7 * * * *','UTC','system',true, now() - interval '1 minute', 500, 1, 3600) returning id`)
+       values ('jobtest-loop:loop','7 * * * *','UTC','system',true, now() - interval '1 minute', 500, 1, 3600) returning id`)
     return Number(rows[0].id)
   }
 
@@ -1149,7 +1149,7 @@ describePg('scheduler loop', () => {
     expect(finished).toBe(false)
     await new Promise((r) => setTimeout(r, 500))
     expect(finished).toBe(true)
-    const { rows } = await pool.query("select status from platform.job_run where key='jobtest:loop' order by id desc limit 1")
+    const { rows } = await pool.query("select status from platform.job_run where key='jobtest-loop:loop' order by id desc limit 1")
     expect(rows[0]?.status).toBe('ok')
   })
 
@@ -1319,10 +1319,10 @@ const dir = fileURLToPath(new URL('../migrations', import.meta.url))
 describePg('jobHealth', () => {
   let pool: Pool
   beforeAll(async () => { pool = new Pool({ connectionString: dbUrl }); await runMigrations(pool, 'platform', dir) })
-  afterAll(async () => { await pool.query("delete from platform.job_schedule where key like 'jobtest:%'"); await pool.end() })
+  afterAll(async () => { await pool.query("delete from platform.job_schedule where key like 'jobtest-health:%'"); await pool.end() })
 
   it('心跳新鲜 + 无作业 ⇒ ok', async () => {
-    await pool.query("delete from platform.job_schedule where key like 'jobtest:%'")
+    await pool.query("delete from platform.job_schedule where key like 'jobtest-health:%'")
     await pool.query("insert into platform.job_heartbeat(id,beat_at) values ('scheduler',now()) on conflict (id) do update set beat_at=now()")
     expect((await jobHealth(pool, new Date())).ok).toBe(true)
   })
@@ -1336,13 +1336,13 @@ describePg('jobHealth', () => {
   })
 
   it('★ 该跑没跑：enabled 且超 2×expected_interval 无 ok run ⇒ 红', async () => {
-    await pool.query("delete from platform.job_schedule where key like 'jobtest:%'")
+    await pool.query("delete from platform.job_schedule where key like 'jobtest-health:%'")
     const { rows } = await pool.query(
       `insert into platform.job_schedule(key,cron,timezone,source,enabled,next_run_at,timeout_ms,max_attempts,expected_interval_secs,updated_at)
-       values ('jobtest:overdue','0 * * * *','UTC','system',true, now() + interval '1 hour', 1000, 1, 60, now() - interval '1 hour') returning id`)
+       values ('jobtest-health:overdue','0 * * * *','UTC','system',true, now() + interval '1 hour', 1000, 1, 60, now() - interval '1 hour') returning id`)
     const h = await jobHealth(pool, new Date())
     expect(h.ok).toBe(false)
-    expect(h.reasons.join()).toContain('jobtest:overdue')
+    expect(h.reasons.join()).toContain('jobtest-health:overdue')
     await pool.query('delete from platform.job_schedule where id=$1', [rows[0].id])
   })
 })
@@ -1587,44 +1587,44 @@ function appFor(pool: Pool, scopes: string[]) {
 describePg('platform-jobs routes', () => {
   let pool: Pool
   beforeAll(async () => { pool = new Pool({ connectionString: dbUrl }); await runMigrations(pool, 'platform', dir) })
-  afterAll(async () => { await pool.query("delete from platform.job_schedule where key like 'jobtest:%'"); await pool.end() })
+  afterAll(async () => { await pool.query("delete from platform.job_schedule where key like 'jobtest-route:%'"); await pool.end() })
 
   async function seed() {
-    await pool.query("delete from platform.job_run where key like 'jobtest:%'")
-    await pool.query("delete from platform.job_schedule where key like 'jobtest:%'")
+    await pool.query("delete from platform.job_run where key like 'jobtest-route:%'")
+    await pool.query("delete from platform.job_schedule where key like 'jobtest-route:%'")
     await pool.query(
       `insert into platform.job_schedule(key,cron,timezone,source,enabled,next_run_at,timeout_ms,max_attempts,expected_interval_secs)
-       values ('jobtest:route','7 * * * *','UTC','system',true, now() + interval '1 hour', 1000, 1, 3600)`)
+       values ('jobtest-route:route','7 * * * *','UTC','system',true, now() + interval '1 hour', 1000, 1, 3600)`)
   }
 
   it('无 tenant:admin ⇒ 403', async () => {
     await seed()
-    const res = await appFor(pool, []).request('/jobs/jobtest:route/run', { method: 'POST' })
+    const res = await appFor(pool, []).request('/jobs/jobtest-route:route/run', { method: 'POST' })
     expect(res.status).toBe(403)
   })
 
   it('未知 key ⇒ 404', async () => {
-    const res = await appFor(pool, ['tenant:admin']).request('/jobs/jobtest:nope/run', { method: 'POST' })
+    const res = await appFor(pool, ['tenant:admin']).request('/jobs/jobtest-route:nope/run', { method: 'POST' })
     expect(res.status).toBe(404)
   })
 
   it('★ 正常触发 ⇒ 只建 queued 行（不 spawn、不改 next_run_at）', async () => {
     await seed()
-    const res = await appFor(pool, ['tenant:admin']).request('/jobs/jobtest:route/run', { method: 'POST' })
+    const res = await appFor(pool, ['tenant:admin']).request('/jobs/jobtest-route:route/run', { method: 'POST' })
     expect(res.status).toBe(200)
     const body = await res.json() as { runId: number }
     expect(body.runId).toBeGreaterThan(0)
     const run = await pool.query('select status, trigger from platform.job_run where id=$1', [body.runId])
     expect(run.rows[0]).toMatchObject({ status: 'queued', trigger: 'manual' })
-    const sch = await pool.query("select next_run_at from platform.job_schedule where key='jobtest:route'")
+    const sch = await pool.query("select next_run_at from platform.job_schedule where key='jobtest-route:route'")
     expect(new Date(sch.rows[0].next_run_at).getTime()).toBeGreaterThan(Date.now())
   })
 
   it('★ 已有 queued/running ⇒ 409 JOB_ALREADY_PENDING', async () => {
     await seed()
     const app = appFor(pool, ['tenant:admin'])
-    await app.request('/jobs/jobtest:route/run', { method: 'POST' })
-    const second = await app.request('/jobs/jobtest:route/run', { method: 'POST' })
+    await app.request('/jobs/jobtest-route:route/run', { method: 'POST' })
+    const second = await app.request('/jobs/jobtest-route:route/run', { method: 'POST' })
     expect(second.status).toBe(409)
     const body = await second.json() as { error: string }
     expect(body.error).toBe('JOB_ALREADY_PENDING')
