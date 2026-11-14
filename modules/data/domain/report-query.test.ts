@@ -233,3 +233,15 @@ describe('waterfall 查询体与对比区间（R3）', () => {
     expect(r).toEqual([{ key: 'prev', label: '上期', range: { from: '2026-10-25', to: '2026-10-31' } }])
   })
 })
+
+describe('bullet 查询体（R3）', () => {
+  it('显式合计（total=true），与 kpi 同形', () => {
+    const panel = {
+      chart: 'bullet' as const, title: '净毛利目标', metricId: 'm', args: {},
+      target: 100000, format: 'currency' as const, span: 12, timeScoped: true,
+    }
+    expect(panelQueryBodyOf(panel, { branch_num: '92' })).toEqual({
+      metricId: 'm', args: { branch_num: '92', total: true },
+    })
+  })
+})
