@@ -370,6 +370,8 @@ export async function runQuery(
   // 数据范围判定（spec 2026-11-10 §5.4）：在下方的 scope 计算处赋值；audit 闭包读它。
   // shadow 也落（查询没被裁），——对照期要能按人/按指标聚合「本来会裁成什么样」。
   let scopeAudit: ScopeAudit | null = null
+  // R4 p95 基线：审计行补墙钟耗时（旧行 NULL，不猜）。
+  const startedAt = Date.now()
   const audit = (
     verdict: 'ok' | 'denied' | 'error', reason: string | null, rowCount: number | null,
     // 值级脱敏审计（spec §4.4 / §4.4.1 三态）：只有真的展开过掩码才带记录；未展开传 **null**（不是 {}）。
@@ -380,6 +382,7 @@ export async function runQuery(
     // 值取 `org` 形参（= 路由传进来的 `identity.orgId`，宿主注入的权威值），
     // **不是** `requester.orgId`——那是通道解析出来的；生产上两者同值，但隔离键必须认宿主那一份。
     org,
+    durationMs: Date.now() - startedAt,
     userId: requester?.userId ?? '(anonymous)',
     channel: requester?.channel ?? 'session',
     keyId: requester?.keyId ?? null,

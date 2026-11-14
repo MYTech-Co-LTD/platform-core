@@ -55,6 +55,8 @@ export interface AuditEntry {
    * shadow 也落（只是查询没被裁）——对照期要能按人/按指标查「本来会裁成什么样」。
    */
   scopePlan?: ScopeAudit | null
+  /** 本次查询墙钟耗时（R4 p95 基线）。缺省 null——旧调用方/未测量路径不猜。 */
+  durationMs?: number | null
   /** 拒绝原因（`no_store_scope` / `range_dimension_missing:category` …）；无拒绝 = null。 */
   scopeDenial?: string | null
 }
@@ -78,8 +80,8 @@ export async function writeAudit(pool: Pool, entry: AuditEntry): Promise<{ id: n
   const r = await pool.query(
     `insert into data.query_audit
        (org, user_id, channel, key_id, metric_id, params, row_count, verdict, reason, masking, drill, tool, session_id,
-        scope_plan, scope_denial)
-     values ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11::jsonb, $12, $13, $14::jsonb, $15)
+        scope_plan, scope_denial, duration_ms)
+     values ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11::jsonb, $12, $13, $14::jsonb, $15, $16)
      returning id, created_at`,
     [
       entry.org, entry.userId, entry.channel, entry.keyId, entry.metricId,
@@ -92,6 +94,7 @@ export async function writeAudit(pool: Pool, entry: AuditEntry): Promise<{ id: n
       entry.sessionId ?? null,
       entry.scopePlan === undefined || entry.scopePlan === null ? null : JSON.stringify(entry.scopePlan),
       entry.scopeDenial ?? null,
+      entry.durationMs ?? null,
     ],
   )
   // 信封的 audit 节要用（spec 2026-10-21 §4：回包可独立核对审计行）；既有调用方不消费返回值。

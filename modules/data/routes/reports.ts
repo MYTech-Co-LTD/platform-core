@@ -40,6 +40,7 @@ import { panelArgsOf } from '../domain/report-query'
 import { runDetailQuery } from '../domain/drill'
 import { resolveTextTokens } from '../domain/report-tokens'
 import { recordReportView, staleReports } from '../domain/report-views'
+import { queryStats } from '../domain/query-stats'
 import type { QueryDeps } from '../domain/query-service'
 import { beijingTodayOf, freshnessFaceFor } from '../domain/query-service'
 import { warehouseConfigured, warehousePool } from '../domain/warehouse'
@@ -1802,6 +1803,14 @@ export function registerReports(r: ModuleHono, ctx: RouteCtx): void {
     const raw = Number(c.req.query('days') ?? '30')
     const days = Number.isFinite(raw) ? Math.min(365, Math.max(1, Math.trunc(raw))) : 30
     return c.json(await staleReports(ctx.pool, c.get('tenant').casdoor_org, days))
+  })
+
+  // ── 查询性能（R4 p95 基线）：数据源 = query_audit（每次查询一行，052 起带 duration_ms）──
+  r.get('/reports/query-stats', async (c) => {
+    if (requesterOf(c) === null) return c.json({ error: 'UNAUTHENTICATED' }, 403)
+    const raw = Number(c.req.query('days') ?? '7')
+    const days = Number.isFinite(raw) ? Math.min(90, Math.max(1, Math.trunc(raw))) : 7
+    return c.json(await queryStats(ctx.pool, c.get('tenant').casdoor_org, days))
   })
 
   r.get('/reports/narrative-stats', async (c) => {

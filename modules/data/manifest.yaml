@@ -228,6 +228,8 @@ api:
     #    草稿预览（preview:'draft'）另要 canEditAsset（owner ∪ data:manage）；跨租户 / 无门一律 404。──
     # 30 天零访问报表（R6）：只提醒归档，管理面。
     - { method: GET,    path: /reports/stale,                         scope: data:manage }
+    # 查询性能（R4 p95 基线）：管理面只读聚合。
+    - { method: GET,    path: /reports/query-stats,                   scope: data:manage }
     - { method: GET,    path: /reports/narrative-stats,               scope: data:manage }
     - { method: POST,   path: /reports/:id/narrative,                 scope: data:query }
     - { method: POST,   path: /reports/:id/narrative/stream,          scope: data:query }
