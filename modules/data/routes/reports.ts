@@ -39,6 +39,7 @@ import { compileTemplate, REPORT_TEMPLATES, templateById } from '../domain/repor
 import { panelArgsOf } from '../domain/report-query'
 import { runDetailQuery } from '../domain/drill'
 import { resolveTextTokens } from '../domain/report-tokens'
+import { recordReportView, staleReports } from '../domain/report-views'
 import type { QueryDeps } from '../domain/query-service'
 import { periodRangeOf, type DateRange } from '../domain/report-period'
 import type { FactBundle } from '../domain/report-facts'
@@ -1418,6 +1419,8 @@ export function registerReports(r: ModuleHono, ctx: RouteCtx): void {
     //    任一被拒指标 `reveal='report'` ⇒ 整表 404（与 not-found 同形，防「总数 − 其他」反推）。
     const render = await reportRenderGate(ctx.pool, requester, org, id, snapshot.spec)
     if (render.blocked) return c.json({ error: 'NOT_FOUND' }, 404)
+    // 观看面渲染成功 = 一次真实访问（R6 零访问归档提醒的事实来源）。best-effort，不拖慢回包。
+    void recordReportView(ctx.pool, org, id, requester.userId)
     return c.json({ ...snapshot, spec: render.spec, deniedPanels: render.deniedPanels })
   })
 
@@ -1733,6 +1736,15 @@ export function registerReports(r: ModuleHono, ctx: RouteCtx): void {
   })
 
   // 叙事质量面板数据（R5）：回退率 / 分布 / p95。管理面（观测口径，不是业务数据）。
+  // ── 30 天零访问报表（R6）：只提醒、不自动归档 ────────────────────────────────────
+  // 统计口径在 domain/report-views.ts（访问 = published-spec 渲染；从未访问从创建时刻起算）。
+  r.get('/reports/stale', async (c) => {
+    if (requesterOf(c) === null) return c.json({ error: 'UNAUTHENTICATED' }, 403)
+    const raw = Number(c.req.query('days') ?? '30')
+    const days = Number.isFinite(raw) ? Math.min(365, Math.max(1, Math.trunc(raw))) : 30
+    return c.json(await staleReports(ctx.pool, c.get('tenant').casdoor_org, days))
+  })
+
   r.get('/reports/narrative-stats', async (c) => {
     if (requesterOf(c) === null) return c.json({ error: 'UNAUTHENTICATED' }, 403)
     const raw = Number(c.req.query('days') ?? '7')
