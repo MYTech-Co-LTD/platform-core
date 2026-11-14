@@ -31,7 +31,7 @@
 | `apps/server/src/migrations/018_platform_jobs.sql` | 三张表 + 约束/索引（幂等） |
 | `apps/server/src/scheduler/cron.ts` | cron 解析 + `nextRunAt`（纯函数，零依赖） |
 | `apps/server/src/scheduler/registry.ts` | 系统 job 目录 + `seedSchedules`（幂等、不覆盖、`params={}`） |
-| `apps/server/src/scheduler/store.ts` | claim（含 retry 路径）/ queued manual / recordRun / beat / reapStale / hasRunning |
+| `apps/server/src/scheduler/store.ts` | claim（含 retry 路径）/ queued manual / **startRun + finishRun**（派发前即建 running 行）/ beat / reapStale / hasRunning |
 | `apps/server/src/scheduler/runner.ts` | `spawn` 子进程实现 + 超时 kill + 退出码分类 |
 | `apps/server/src/scheduler/loop.ts` | 一次 tick 的编排 + 并发上限 + 运行中集合 |
 | `apps/server/src/scheduler/health.ts` | 三判据（心跳 / 超期未成功 / 连续失败） |
@@ -619,13 +619,16 @@ git commit -m "feat(data): 调度任务目录与幂等 seed（Wave 6 P1）"
 - Create: `apps/server/src/scheduler/store.ts`
 - Test: `apps/server/src/scheduler/store.test.ts`
 
+> ⚠️ **本段代码为初稿**：实现已按 spec §8 改为「claim 即建 `running` 行」（`startRun` + `finishRun`），理由是 `hasRunning` / 僵尸回收必须对所有触发方式成立。**以仓库代码与本行说明为准**，不要照抄下文的 `recordRun` 片段。
+
 **Interfaces:**
 - Consumes: Task 3 `nextRunAt`、Task 2 表结构
 - Produces:
   - `export interface ClaimedJob { scheduleId: number; key: string; occurrence: Date; attempt: number; params: Record<string, unknown>; timeoutMs: number; maxAttempts: number; isRetry: boolean; ownerOrg: string | null; ownerNamespace: string | null }`
   - `claimDue(pool, limit, now, next: (cron, tz, from) => Date): Promise<ClaimedJob[]>`
   - `claimQueuedManual(pool, limit, now): Promise<ClaimedJob[]>`
-  - `recordRun(pool, job, outcome): Promise<number>`（返回 runId）
+  - `startRun(pool, job): Promise<number>`（派发**前**插入 `status='running'` 行并返回 runId）
+  - `finishRun(pool, runId, outcome): Promise<void>`（回填结果；调度与手动两种触发共用）
   - `scheduleRetry(pool, scheduleId, occurrence, nextAttempt, now): Promise<void>`
   - `clearRetry(pool, scheduleId): Promise<void>`
   - `hasRunning(pool, scheduleId): Promise<boolean>`
