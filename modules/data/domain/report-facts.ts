@@ -51,6 +51,13 @@ export interface FactsDeps {
   reportTitle: string
   /** 规格键（`published:3` / `draft:5`），缓存与审计的溯源维度。 */
   specKey: string
+  /**
+   * 一次事实包构建内的查询去重表（R4）。缺省由 `buildFacts` 自建；调用方传入时可在多次
+   * 构建之间共享（同一请求的兄弟 AI 面板）。键 = metricId + args + slicing 的序列化值。
+   */
+  memo?: Map<string, Promise<unknown>>
+  /** 构建级观测计数（去重前/后）：用于 `report_facts_stats` 日志与后续 p95 基线。 */
+  stats?: { queries: number; deduped: number }
 }
 
 export interface FactKpi {
@@ -188,6 +195,38 @@ function queryDepsOf(deps: FactsDeps): QueryDeps {
 }
 
 /**
+ * 事实包内的查询去重（R4）：同 `(metricId, args, slicing)` 在一次构建里只执行一次。
+ *
+ * 为什么在服务端再做一次（页面已经有跨面板合并、`runQuery` 也有结果缓存）：
+ *  · 事实包是**独立请求**，页面的去重不会传过来；
+ *  · 多张面板引用同一指标/窗口（图 + 表并排）时，facts 会把同一查询各发一遍；
+ *  · 结果缓存的键是 SQL + 数据版本，跨请求能命中，但**同请求内的并发**仍要各自走
+ *    授权/审计链路，这里省的是重复的执行与等待。
+ * 失败不缓存（与 result-cache 同口径）：下一次构建可以重试。
+ */
+function factsQuery<T>(deps: FactsDeps, key: string, run: () => Promise<T>): Promise<T> {
+  if (deps.stats !== undefined) deps.stats.queries += 1
+  const memo = deps.memo
+  if (memo === undefined) return run()
+  const hit = memo.get(key)
+  if (hit !== undefined) {
+    if (deps.stats !== undefined) deps.stats.deduped += 1
+    return hit as Promise<T>
+  }
+  const p = run()
+  memo.set(key, p)
+  p.catch(() => memo.delete(key))
+  return p
+}
+
+/** 去重键：三项都是取数语义的一部分（任何一项不同都不能共用结果）。 */
+function factsQueryKey(
+  metricId: string, args: Record<string, unknown>, slicing?: unknown,
+): string {
+  return `${metricId}\u0000${JSON.stringify(args)}\u0000${JSON.stringify(slicing ?? null)}`
+}
+
+/**
  * 面板 → `/query` 的形参。`panelQueryBodyOf` 产出的线上 body（`{metricId,args,slice…}`）
  * 在这里拆回 `runQuery(metricId, args, slicing)` 三个形参 —— 仍只有**一处**装配规则。
  */
@@ -223,7 +262,8 @@ interface ReadValue {
 async function readTotal(
   deps: FactsDeps, metricId: string, args: Record<string, unknown>,
 ): Promise<ReadValue> {
-  const out = await runQuery(queryDepsOf(deps), deps.org, deps.requester, metricId, args)
+  const out = await factsQuery(deps, factsQueryKey(metricId, args), () =>
+    runQuery(queryDepsOf(deps), deps.org, deps.requester, metricId, args))
   if (out.status !== 'ok') return { ok: false, value: null, asOf: [] }
   const raw = out.total
   const n = raw === undefined || raw === null ? null : Number(raw)
@@ -252,9 +292,9 @@ async function coverageOf(
   deps: FactsDeps, metricId: string, args: Record<string, unknown>,
 ): Promise<CoverageProbe> {
   const probeArgs = coverageArgsOf(args)
-  const out = await runQuery(
-    queryDepsOf(deps), deps.org, deps.requester, metricId, probeArgs, coverageSlicing(),
-  )
+  const slicing = coverageSlicing()
+  const out = await factsQuery(deps, factsQueryKey(metricId, probeArgs, slicing), () =>
+    runQuery(queryDepsOf(deps), deps.org, deps.requester, metricId, probeArgs, slicing))
   if (out.status !== 'ok') return { coverage: null, branchName: null }
   const branch = typeof probeArgs.branch_num === 'string' ? probeArgs.branch_num : undefined
   return { coverage: coverageOfQueryResult(out), branchName: branchNameOf(out, branch) }
@@ -354,7 +394,7 @@ async function fetchWeather(targetDay: string, yesterdayDay: string): Promise<{
 }
 
 export async function buildFacts(
-  deps: FactsDeps,
+  depsIn: FactsDeps,
   spec: ReportSpec,
   panelIndex: number,
   period: PeriodSpec,
@@ -362,6 +402,13 @@ export async function buildFacts(
   /** 报表共享筛选的运行期取值（V4）：值按 key 并入每个数据面板的 args。 */
   filterValues?: Readonly<Record<string, unknown>>,
 ): Promise<FactBundle> {
+  // R4：一次构建内查询去重 + 观测计数；调用方给了 memo/stats 就沿用（兄弟 AI 面板共享）。
+  const deps: FactsDeps = {
+    ...depsIn,
+    memo: depsIn.memo ?? new Map<string, Promise<unknown>>(),
+    stats: depsIn.stats ?? { queries: 0, deduped: 0 },
+  }
+  const startedAt = Date.now()
   // V3：面板清单统一从 plan 取。降级占位符（不可见指标）**原位跳过**，不再可能被
   // 误当成数据面板（占位符没有 chart 字段，旧写法 `p.chart !== 'text'` 会放行它）。
   const plan = toReportPlan(spec)
@@ -466,9 +513,8 @@ export async function buildFacts(
       continue
     }
 
-    const out = await runQuery(
-      queryDepsOf(deps), deps.org, deps.requester, p.metricId, q.args, q.slicing,
-    )
+    const out = await factsQuery(deps, factsQueryKey(p.metricId, q.args, q.slicing), () =>
+      runQuery(queryDepsOf(deps), deps.org, deps.requester, p.metricId, q.args, q.slicing))
     if (out.status !== 'ok') { missing.push(p.title); continue }
     captureBranch(branchNameOf(out, branchNum))
     if (typeof out.data_as_of === 'string') asOfList.push(out.data_as_of)
@@ -574,10 +620,9 @@ export async function buildFacts(
         ...(branchNum === undefined ? {} : { branchNum }),
         readWeather: fetchWeather,
         readSeries: async (metricId, args) => {
-          const out = await runQuery(
-            queryDepsOf(deps), deps.org, deps.requester, metricId, args,
-            { dimensions: ['bizday'], orderBy: [{ column: 'bizday', dir: 'asc' }], limit: 1000 },
-          )
+          const slicing = { dimensions: ['bizday'], orderBy: [{ column: 'bizday' as const, dir: 'asc' as const }], limit: 1000 }
+          const out = await factsQuery(deps, factsQueryKey(metricId, args, slicing), () =>
+            runQuery(queryDepsOf(deps), deps.org, deps.requester, metricId, args, slicing))
           if (out.status !== 'ok') return null
           return {
             columns: out.columns,
@@ -825,6 +870,14 @@ export async function buildFacts(
     dailyReview,
   }
   const factsHash = createHash('sha256').update(canonicalJson(facts)).digest('hex')
+  // 观测面（R4）：事实包一次构建查了几条、去重了几条、花了多久——p95 基线与后续优化的输入。
+  if (deps.stats !== undefined) {
+    console.log(JSON.stringify({
+      event: 'report_facts_stats', specKey: deps.specKey, focus: ai.focus,
+      panels: realPanels.length, queries: deps.stats.queries, deduped: deps.stats.deduped,
+      ms: Date.now() - startedAt,
+    }))
+  }
   return { ...facts, factsHash }
 }
 
