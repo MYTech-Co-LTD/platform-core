@@ -45,6 +45,16 @@ describePg('notify 迁移', () => {
        values ($1,'st-bad','m.a.b','*','{}','t','bogus')`, [ORG])).rejects.toThrow()
   })
 
+  it('event.available_at 存在且 NOT NULL（延迟通知）', async () => {
+    const r = await pool.query(
+      `select is_nullable, column_default from information_schema.columns
+        where table_schema='notify' and table_name='event' and column_name='available_at'`)
+    expect(r.rows[0]?.is_nullable).toBe('NO')
+    expect(String(r.rows[0]?.column_default)).toContain('now()')
+    const idx = await pool.query("select to_regclass('notify.idx_notify_event_due') as t")
+    expect(idx.rows[0].t).not.toBeNull()
+  })
+
   it('v2 表齐全且 org 列 NOT NULL', async () => {
     const r = await pool.query(
       `select table_name, is_nullable from information_schema.columns

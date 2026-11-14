@@ -1,7 +1,7 @@
 // notify-port.ts — 宿主侧的 emit 端口：事件目录校验 → 调 notify 模块的 enqueueEvent。
 // 正典：docs/superpowers/specs/2026-10-27-notification-infrastructure-design.md §3.3/§3.4
 // 校验面只有这一处：模块只拿宿主包装后的 ctx.notify，不直接拿 notify 的 port。
-import { validatePayload } from '@platform/sdk'
+import { normalizeAvailableAt, validatePayload } from '@platform/sdk'
 import type {
   EnqueueEventInput, EventCatalogReader, Identity, NotifyPort,
 } from '@platform/sdk'
@@ -33,6 +33,9 @@ export function buildNotifyPort(deps: {
 
       if (!deps.enqueue) return { accepted: false, reason: 'notify_not_loaded' }
 
+      const available = normalizeAvailableAt(input.availableAt)
+      if (!available.ok) return { accepted: false, reason: available.reason }
+
       return deps.enqueue({
         org: identity.orgId,
         eventId: input.eventId,
@@ -41,6 +44,7 @@ export function buildNotifyPort(deps: {
         payload: input.payload,
         // 事件 key 的第一段 = manifest.id（manifest schema 强约束），故可作为 producer。
         producer: decl.key.slice(0, decl.key.indexOf('.')),
+        availableAt: available.value,
       })
     },
   }

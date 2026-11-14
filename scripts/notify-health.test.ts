@@ -5,7 +5,7 @@ import { healthVerdict, type Health } from '../modules/notify/health.ts'
 const clean = (over: Partial<Health> = {}): Health => ({
   dead: 0, stale: 0, workers: 1,
   oldestPendingSeconds: 0, failedLastHour: 0, channelErrors: 0,
-  eventsNoRecipients: 0, eventsNoChannel: 0, eventsInvalid: 0,
+  eventsNoRecipients: 0, eventsNoChannel: 0, eventsInvalid: 0, eventsDueStale: 0,
   ...over,
 })
 
@@ -26,5 +26,6 @@ describe('healthVerdict', () => {
     expect(healthVerdict(clean({ eventsNoChannel: 1 }))).toBe(1)
     expect(healthVerdict(clean({ eventsInvalid: 5 }))).toBe(0)
     expect(healthVerdict(clean({ eventsInvalid: 6 }))).toBe(1)
+    expect(healthVerdict(clean({ eventsDueStale: 1 }))).toBe(1)
   })
 })

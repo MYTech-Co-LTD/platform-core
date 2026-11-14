@@ -5,7 +5,7 @@ import { randomUUID } from 'node:crypto'
 import { Hono } from 'hono'
 import type { Pool } from 'pg'
 import type { ChannelAddressResolver, EventCatalogReader, Identity } from '@platform/sdk'
-import { validatePayload } from '@platform/sdk'
+import { MAX_NOTIFY_DELAY_MS, normalizeAvailableAt, validatePayload } from '@platform/sdk'
 import { checkWecomHealth, checkWebhookHealth } from './domain/channel'
 import { resolveDeliverability, type DeliverabilityDeps } from './domain/deliverability'
 import { channelIsConfigured } from './domain/channel-config'
@@ -238,8 +238,29 @@ export function createNotifyRouter(deps: {
       eventKey?: string
       scope?: string
       payload?: Record<string, unknown>
+      /** 一次性延迟：绝对时刻（ISO 8601） */
+      availableAt?: string
+      /** 一次性延迟：相对秒数；与 availableAt 互斥 */
+      delaySeconds?: number
     } | null
     if (!body?.eventId || !body.eventKey) return c.json({ error: 'EMIT_INVALID_BODY' }, 400)
+    if (body.availableAt !== undefined && body.delaySeconds !== undefined) {
+      return c.json({ error: 'DELAY_CONFLICT' }, 400)
+    }
+    if (body.availableAt !== undefined && typeof body.availableAt !== 'string') {
+      return c.json({ error: 'DELAY_INVALID' }, 400)
+    }
+
+    let availableAt = body.availableAt
+    if (body.delaySeconds !== undefined) {
+      if (!Number.isFinite(body.delaySeconds) || body.delaySeconds < 0
+          || body.delaySeconds * 1000 > MAX_NOTIFY_DELAY_MS) {
+        return c.json({ error: 'DELAY_INVALID' }, 400)
+      }
+      availableAt = new Date(Date.now() + body.delaySeconds * 1000).toISOString()
+    }
+    const normalized = normalizeAvailableAt(availableAt)
+    if (!normalized.ok) return c.json({ error: normalized.reason.toUpperCase() }, 400)
 
     const decl = deps.events?.get(body.eventKey)
     if (!decl) return c.json({ error: 'EVENT_NOT_DECLARED' }, 400)
@@ -255,6 +276,7 @@ export function createNotifyRouter(deps: {
       scope: body.scope ?? '*',
       payload,
       producer: 'external',
+      availableAt: normalized.value,
     })
     return c.json(result, 202)
   })

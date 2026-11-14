@@ -708,6 +708,10 @@ token 只决定「这个账号能调哪些面」，不改变分层。
   聚合读面承担——**不进 SLA**（可见范围是配置问题，纳入会天天红）。
 - 投递：`notify.event` 入队 → `notify-worker`（独立进程，租约 + `SKIP LOCKED`）→ provider；
   至少一次、指数退避、企微 45009 退避；`notify.delivery` 是唯一回执事实源。
+- **定时**：一次性延迟写 `notify.event.available_at`（worker 到点领取，不是 cron）；
+  周期排班归业务调度器 `platform.scheduler`，到点通过 `scripts/notify-emit-job.mjs`
+  （job key `notify.emit`）入队。**job 成功 = 事件已入队**，投递失败仍由 notify 重试——
+  两者不是同一层语义。通知不建第二套 cron / `notify.schedule`。
 - **fail-open**：通知失败不阻塞业务；`dead`/积压由 `scripts/notify-health.mjs` job 报警。
 
 #### 与 Novu 的关系（2026-10-27 变更）

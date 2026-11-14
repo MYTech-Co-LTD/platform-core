@@ -128,6 +128,29 @@ describePg('routes v2', () => {
     expect(bad.status).toBe(400)
   })
 
+  it('外部 emit 支持一次性延迟；非法/互斥/过远 400', async () => {
+    const delayed = await post('/emit', {
+      eventId: 'd1', eventKey: 'm.a.b', payload: { u: 'u1', link: 'https://x' }, delaySeconds: 60,
+    })
+    expect(delayed.status).toBe(202)
+    const row = await pool.query(
+      'select available_at from notify.event where org=$1 and event_id=$2', [ORG, 'd1'])
+    expect(new Date(row.rows[0].available_at).getTime()).toBeGreaterThan(Date.now() + 30_000)
+
+    expect((await post('/emit', {
+      eventId: 'd2', eventKey: 'm.a.b', payload: { u: 'u1', link: 'https://x' },
+      availableAt: 'not-a-date',
+    })).status).toBe(400)
+    expect((await post('/emit', {
+      eventId: 'd3', eventKey: 'm.a.b', payload: { u: 'u1', link: 'https://x' },
+      delaySeconds: 60, availableAt: new Date().toISOString(),
+    })).status).toBe(400)
+    expect((await post('/emit', {
+      eventId: 'd4', eventKey: 'm.a.b', payload: { u: 'u1', link: 'https://x' },
+      delaySeconds: 31 * 24 * 3600,
+    })).status).toBe(400)
+  })
+
   it('收件箱：只读自己的、未读筛选、标记已读', async () => {
     await pool.query(
       `insert into notify.inbox(org,id,recipient,event_id,event_key,template_key,revision,title,body)

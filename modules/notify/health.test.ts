@@ -11,7 +11,7 @@ const ORG = 'org-health2'
 const clean = (over: Partial<Health> = {}): Health => ({
   dead: 0, stale: 0, workers: 1,
   oldestPendingSeconds: 0, failedLastHour: 0, channelErrors: 0,
-  eventsNoRecipients: 0, eventsNoChannel: 0, eventsInvalid: 0,
+  eventsNoRecipients: 0, eventsNoChannel: 0, eventsInvalid: 0, eventsDueStale: 0,
   ...over,
 })
 
@@ -40,6 +40,10 @@ describe('healthVerdict', () => {
 
   it('channelErrors / oldestPendingSeconds 单独不判红（作为诊断面）', () => {
     expect(healthVerdict(clean({ channelErrors: 3, oldestPendingSeconds: 120 }))).toBe(0)
+  })
+
+  it('到期未领取的事件积压 ⇒ 直接红（含一次性延迟事件）', () => {
+    expect(healthVerdict(clean({ eventsDueStale: 1 }))).toBe(1)
   })
 })
 
@@ -103,6 +107,15 @@ describePg('checkHealth', () => {
     const r2 = await checkHealth(pool)
     expect(r2.eventsNoRecipients).toBeGreaterThanOrEqual(1)
     expect(healthVerdict(r2)).toBe(1)
+    await pool.query('delete from notify.event where org=$1', [ORG])
+
+    // 延迟事件：到期 20 分钟仍未被领取 ⇒ eventsDueStale 可见并判红
+    await pool.query(
+      `insert into notify.event(org,event_id,event_key,scope,payload,producer,status,available_at)
+       values ($1,'h-due','m.a.b','*','{}','t','new',now()-interval '20 minutes')`, [ORG])
+    const r3 = await checkHealth(pool)
+    expect(r3.eventsDueStale).toBeGreaterThanOrEqual(1)
+    expect(healthVerdict(r3)).toBe(1)
     await pool.query('delete from notify.event where org=$1', [ORG])
   })
 })

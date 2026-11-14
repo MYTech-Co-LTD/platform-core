@@ -59,7 +59,9 @@ DATABASE_URL=<平台库> pnpm exec tsx scripts/notify-health.mjs
 | 1 | **窗口内**有 `dead`（近 7 天，`DEAD_WINDOW_DAYS`）/ 最老 `pending` > 10 分钟 / worker 心跳 > 2 分钟 / 近 1 小时失败 > 50 |
 | 2 | 查不成账（缺 `DATABASE_URL` / 查询失败） |
 
-stdout 一行：`notify-health: dead=… stale=… workers=… oldestPending=…s failedLastHour=… channelErrors=… noRecipients=… noChannel=… invalid=…`
+stdout 一行：`notify-health: dead=… stale=… workers=… oldestPending=…s failedLastHour=… channelErrors=… noRecipients=… noChannel=… invalid=… eventsDueStale=…`
+
+- `eventsDueStale`：已到期但超过 10 分钟仍未领取的事件数（含一次性延迟事件）；与 `stale` 同口径**直接判红**，防止延迟队列静默积压。
 
 - `channelErrors` 与 `oldestPendingSeconds` 是**诊断面**，单独不判红（阈值容易误报）。
 - **`noRecipients > 0` 或 `noChannel > 0` 直接判红**（2026-10-28 起）：这是**配置错误**
