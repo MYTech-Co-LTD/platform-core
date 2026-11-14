@@ -14,6 +14,11 @@ export type Health = {
   eventsNoChannel: number
   /** 最近 1 小时：事件声明或模板缺失（阈值判红，模板轮换期可能短暂出现） */
   eventsInvalid: number
+  /**
+   * 已到期但超过 10 分钟仍未被 worker 领取的事件数（含一次性延迟事件）。
+   * 事件积压 = worker 没在消费；与 delivery 的 `stale` 同口径，直接判红。
+   */
+  eventsDueStale: number
 }
 
 /** 近 1 小时失败条数超过它 ⇒ 判不健康（与 dead/积压/心跳并列） */
@@ -34,7 +39,7 @@ export const EVENTS_INVALID_LIMIT = 5
 
 /** 1 = 不健康（窗口内有 dead / pending 超 10min / 无 worker 心跳 / 近 1 小时失败过多），0 = 干净 */
 export function healthVerdict(h: Health): 0 | 1 {
-  if (h.dead > 0 || h.stale > 0 || h.workers === 0) return 1
+  if (h.dead > 0 || h.stale > 0 || h.eventsDueStale > 0 || h.workers === 0) return 1
   if (h.failedLastHour > FAILED_LAST_HOUR_LIMIT) return 1
   // 零收件人 / 零通道是**配置错误**，不是流量波动 ⇒ 一个也算红（不给阈值）
   if (h.eventsNoRecipients > 0 || h.eventsNoChannel > 0) return 1
@@ -61,6 +66,8 @@ export async function checkHealth(pool: Pool): Promise<Health> {
       (select count(*)::int from notify.event
         where status='no_channel' and created_at > now()-interval '1 hour') as "eventsNoChannel",
       (select count(*)::int from notify.event
-        where status='invalid' and created_at > now()-interval '1 hour') as "eventsInvalid"`)
+        where status='invalid' and created_at > now()-interval '1 hour') as "eventsInvalid",
+      (select count(*)::int from notify.event
+        where status='new' and available_at < now()-interval '10 minutes') as "eventsDueStale"`)
   return rows[0] as Health
 }

@@ -53,6 +53,22 @@ describePg('notify storage v2', () => {
     expect(rows[0].n).toBe(1)
   })
 
+  it('enqueueEvent 写 available_at：未来事件不在到期集合里', async () => {
+    const future = new Date(Date.now() + 60 * 60 * 1000).toISOString()
+    await enqueueEvent(pool, {
+      org: ORG, eventId: 'later', eventKey: 'm.a.b', scope: '*', payload: {}, producer: 'm',
+      availableAt: future,
+    })
+    const due = await pool.query(
+      `select 1 from notify.event
+        where org=$1 and event_id='later' and status='new' and available_at <= now()`, [ORG])
+    expect(due.rowCount).toBe(0)
+
+    const row = await pool.query(
+      "select available_at from notify.event where org=$1 and event_id='later'", [ORG])
+    expect(new Date(row.rows[0].available_at).getTime()).toBeGreaterThan(Date.now())
+  })
+
   it('规则 upsert 保留 created_at；启停/删除', async () => {
     const rule = {
       id: 'r1', enabled: true, eventKey: 'm.a.b', scope: '*', recipientKey: 'approver',

@@ -616,11 +616,15 @@ await ctx.notify?.emit(c.get('identity'), {
   eventId: `...`,          // 确定性：业务转移一次一枚
   scope: String(id),
   payload: { ... },        // 必须满足事件声明
+  // availableAt?: ISO 8601   // 可选：一次性延迟；周期排班归 platform.scheduler
 })
 ```
 
 返回 `{accepted, reason?}`；**不要拿它做业务分支**（fail-open）。`ctx.notify` 缺省 = 旧宿主/单测，
 调用点判空跳过。宿主侧校验（事件 owner / payload / scope / org）只有一处。
+
+`availableAt` 只表达**一次性延迟**（最长 30 天，超过交给 `platform.scheduler`）；它写入
+`notify.event.available_at`，worker 到点才领取。周期排班不由 notify 管，归业务调度器。
 
 ### 与模块端口的关系
 

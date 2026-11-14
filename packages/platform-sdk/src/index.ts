@@ -6,6 +6,7 @@ export type {
 export { runChecks } from './checks'
 export type { CheckResult } from './checks'
 export { validatePayload } from './events'
+export { MAX_NOTIFY_DELAY_MS, normalizeAvailableAt } from './notify-delay'
 export { DECLARED_GATE_APPROVED, defineModule, requireScope, declaredScopeGate, LinkError } from './module'
 export type {
   ChannelAddressResolver, DeclaredEndpoint, DeptExpansion, EnqueueEventInput, EventCatalogReader,

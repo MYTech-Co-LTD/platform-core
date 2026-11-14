@@ -51,10 +51,11 @@ export async function enqueueEvent(
   e: EnqueueEventInput,
 ): Promise<{ accepted: boolean; reason?: string }> {
   const r = await pool.query(
-    `insert into notify.event(org,event_id,event_key,scope,payload,producer)
-     values ($1,$2,$3,$4,$5::jsonb,$6)
+    `insert into notify.event(org,event_id,event_key,scope,payload,producer,available_at)
+     values ($1,$2,$3,$4,$5::jsonb,$6,coalesce($7::timestamptz, now()))
      on conflict (org,event_id) do nothing`,
-    [e.org, e.eventId, e.eventKey, e.scope, JSON.stringify(e.payload), e.producer],
+    [e.org, e.eventId, e.eventKey, e.scope, JSON.stringify(e.payload), e.producer,
+     e.availableAt ?? null],
   )
   return (r.rowCount ?? 0) > 0 ? { accepted: true } : { accepted: false, reason: 'duplicate' }
 }
@@ -63,7 +64,8 @@ export async function claimEvents(pool: Pool, limit = 50): Promise<PendingEvent[
   const { rows } = await pool.query(
     `with picked as (
        select org,event_id from notify.event
-        where status='new' and (locked_until is null or locked_until < now())
+        where status='new' and available_at <= now()
+          and (locked_until is null or locked_until < now())
         order by created_at limit $1 for update skip locked
      )
      update notify.event e set locked_until = now() + interval '60 seconds'

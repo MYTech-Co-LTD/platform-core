@@ -19,7 +19,8 @@ if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) 
       `notify-health: dead=${r.dead} stale=${r.stale} workers=${r.workers} `
       + `oldestPending=${r.oldestPendingSeconds}s failedLastHour=${r.failedLastHour} `
       + `channelErrors=${r.channelErrors} `
-      + `noRecipients=${r.eventsNoRecipients} noChannel=${r.eventsNoChannel} invalid=${r.eventsInvalid}`)
+      + `noRecipients=${r.eventsNoRecipients} noChannel=${r.eventsNoChannel} invalid=${r.eventsInvalid} `
+      + `eventsDueStale=${r.eventsDueStale}`)
     process.exit(healthVerdict(r))
   } catch (e) {
     console.error('notify-health 查不成账:', e instanceof Error ? e.message : e)
