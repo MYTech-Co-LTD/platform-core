@@ -16,6 +16,7 @@
 //      spawn 失败/进程崩溃后由 reapStale 兜底判 timeout；终态只能由 finishRun 从 running 回填。
 //   ④ 同一 schedule 同时只有一条 running 行：claim（两种触发）都在 SQL 里排除已有 running 的排班，
 //      该格不消费、下一拍再来。
+//   ⑤ 删排班一律软删（deleted_at）：job_run 是审计，不能被级联带走；两条 claim 路径都排除软删行。
 import type { Pool, PoolClient } from 'pg'
 
 export interface ClaimedJob {
@@ -110,7 +111,8 @@ export async function claimDue(pool: Pool, limit: number, now: Date, next: NextF
     const bad = await client.query<{ key: string }>(
       `update platform.job_schedule
           set retry_at=null, retry_occurrence=null, retry_attempt=0, updated_at=now()
-        where enabled and retry_at is not null and retry_at <= $1
+        where enabled and deleted_at is null
+          and retry_at is not null and retry_at <= $1
           and retry_occurrence is null
         returning key`,
       [now],
@@ -124,6 +126,7 @@ export async function claimDue(pool: Pool, limit: number, now: Date, next: NextF
     const { rows } = await client.query<Row>(
       `select ${SCHED_COLS} from platform.job_schedule s
         where s.enabled
+          and s.deleted_at is null
           and not exists (select 1 from platform.job_run r
                            where r.schedule_id = s.id and r.status = 'running')
           and (
@@ -187,10 +190,13 @@ export async function claimQueuedManual(pool: Pool, limit: number, now: Date): P
     //    切流程序正是「登记（disabled）→ 手动跑一次比对 → 关 openship → 再启用」。
     //    若这里筛 enabled，disabled 排班的手动 queued 行会永远不被领取（最终被 reapQueued 判 timeout），
     //    端点返回的 200「已排队」就成了谎话。
+    //    **但 deleted_at 必须筛**：软删是「这个排班不存在了」，不是「停用」——已删排班的手动
+    //    queued 行不能替它跑（删后残留的排队行留给 reapQueued 收口）。
     const sched = await client.query<Row>(
       `select ${SCHED_COLS}
          from platform.job_schedule s
-        where exists (select 1 from platform.job_run r
+        where s.deleted_at is null
+          and exists (select 1 from platform.job_run r
                        where r.schedule_id = s.id and r.status = 'queued'
                          and r.trigger = 'manual')
           and not exists (select 1 from platform.job_run x
@@ -209,6 +215,7 @@ export async function claimQueuedManual(pool: Pool, limit: number, now: Date): P
     const stillFree = await client.query<{ id: string }>(
       `select s.id from platform.job_schedule s
         where s.id = any($1::bigint[])
+          and s.deleted_at is null
           and not exists (select 1 from platform.job_run x
                            where x.schedule_id = s.id and x.status = 'running')`,
       [ids],
@@ -283,6 +290,21 @@ export async function clearRetry(pool: Pool, scheduleId: number): Promise<void> 
         set retry_at=null, retry_occurrence=null, retry_attempt=0, updated_at=now()
       where id=$1`,
     [scheduleId],
+  )
+}
+
+/** 软删排班：`job_run` 是审计历史（排班删了，跑过的记录仍要可查），不能被级联带走 ⇒ 一律软删。
+ *
+ *  同时清掉**全部触发槽**（next_run_at + 重试三件套）并置 `enabled=false`：删掉之后它再也
+ *  不该被任何 claim 路径看见。`where deleted_at is null` 让**重复调用幂等**——零行更新、
+ *  不报错，且 `deleted_at` 不会被后来的 now 覆盖（审计要的是首次删除时刻）。 */
+export async function softDeleteSchedule(pool: Pool, id: number, now: Date): Promise<void> {
+  await pool.query(
+    `update platform.job_schedule
+        set deleted_at=$2, enabled=false, next_run_at=null,
+            retry_at=null, retry_occurrence=null, retry_attempt=0, updated_at=$2
+      where id=$1 and deleted_at is null`,
+    [id, now],
   )
 }
 

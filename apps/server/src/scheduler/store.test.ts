@@ -5,6 +5,7 @@ import { runMigrations } from '../migrate'
 import { nextRunAt } from './cron'
 import {
   beat, claimDue, claimQueuedManual, clearRetry, finishRun, hasRunning, reapQueued, reapStale, scheduleRetry,
+  softDeleteSchedule,
 } from './store'
 
 const dbUrl = process.env.DATABASE_URL
@@ -254,6 +255,60 @@ describePg('scheduler store', () => {
     await finishRun(pool, sched.runId, { status: 'ok' })
     const second = await claimQueuedManual(pool, 5, new Date())
     expect(second.some((x) => x.scheduleId === id)).toBe(true)
+  })
+
+  it('★ softDeleteSchedule：清全部触发槽 + 置 enabled=false + 记 deleted_at', async () => {
+    const id = await mkSchedule(pool, 'jobtest-store:soft-del')
+    // 铺满会被清理的槽：到期时间 + 重试槽（含原格 occurrence）。
+    await pool.query(
+      `update platform.job_schedule
+          set retry_at = now() - interval '1 second', retry_occurrence = now(), retry_attempt = 2
+        where id=$1`, [id])
+    const now = new Date()
+    await softDeleteSchedule(pool, id, now)
+    const { rows } = await pool.query(
+      `select enabled, next_run_at, retry_at, retry_occurrence, retry_attempt, deleted_at, updated_at
+         from platform.job_schedule where id=$1`, [id])
+    expect(rows[0]).toMatchObject({
+      enabled: false, next_run_at: null, retry_at: null, retry_occurrence: null, retry_attempt: 0,
+    })
+    expect(new Date(rows[0].deleted_at).getTime()).toBe(now.getTime())
+    expect(new Date(rows[0].updated_at).getTime()).toBe(now.getTime())
+  })
+
+  it('★ softDeleteSchedule 幂等：再调不报错，且 deleted_at 不被后来的 now 覆盖', async () => {
+    const id = await mkSchedule(pool, 'jobtest-store:soft-del-idem')
+    const first = new Date(Date.now() - 60_000)
+    await softDeleteSchedule(pool, id, first)
+    await softDeleteSchedule(pool, id, new Date())
+    const { rows } = await pool.query('select deleted_at from platform.job_schedule where id=$1', [id])
+    expect(new Date(rows[0].deleted_at).getTime()).toBe(first.getTime())
+  })
+
+  it('★ 软删的排班不被 claimDue 领取（即使 next_run_at 仍到期）', async () => {
+    const id = await mkSchedule(pool, 'jobtest-store:soft-del-claim')
+    // 直接打 deleted_at、保留到期的 next_run_at：钉住「claim 过滤」本身，
+    // 而不是靠 softDeleteSchedule 顺带清空 next_run_at 才刚好不被领（否则删掉 SQL 过滤也会绿）。
+    await pool.query('update platform.job_schedule set deleted_at=now() where id=$1', [id])
+    const jobs = await claimDue(pool, 5, new Date(), nextRunAt)
+    expect(jobs.some((x) => x.scheduleId === id)).toBe(false)
+    const runs = await pool.query('select count(*)::int as n from platform.job_run where schedule_id=$1', [id])
+    expect(runs.rows[0].n).toBe(0)
+  })
+
+  it('★ 软删的排班不被 claimQueuedManual 领取（queued 行原样保留）', async () => {
+    const id = await mkSchedule(pool, 'jobtest-store:soft-del-manual', {
+      nextRunAt: new Date(Date.now() + 86_400_000),
+    })
+    await pool.query(
+      `insert into platform.job_run(schedule_id,key,occurrence,trigger,status)
+       values ($1,'jobtest-store:soft-del-manual',now(),'manual','queued')`, [id])
+    await softDeleteSchedule(pool, id, new Date())
+    const jobs = await claimQueuedManual(pool, 5, new Date())
+    expect(jobs.some((x) => x.scheduleId === id)).toBe(false)
+    const { rows } = await pool.query(
+      "select status from platform.job_run where schedule_id=$1 and trigger='manual'", [id])
+    expect(rows[0].status).toBe('queued')
   })
 
   it('心跳 upsert：同 id 只一行', async () => {
