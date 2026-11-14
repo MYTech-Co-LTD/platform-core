@@ -11,6 +11,11 @@
 
 ## [Unreleased]
 
+## [0.284.1](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.284.0...v0.284.1) - 2026-11-14
+- 【优化】data: R4 全链路查询 p95 面板（query_audit 补耗时） (#2237) ([#2240](https://github.com/MYTech-Co-LTD/platform-core/pull/2240), [4916f95](https://github.com/MYTech-Co-LTD/platform-core/commit/4916f956921c947269905fa33f49c7b804de3153))
+- 【修复】data: 父驱动管线的健康取父状态，避免子管线陈旧记录误报 (#2238) ([#2239](https://github.com/MYTech-Co-LTD/platform-core/pull/2239), [4965378](https://github.com/MYTech-Co-LTD/platform-core/commit/496537815594350247a8ae1a638097e5ffcec42f))
+
+
 ## [0.284.0](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.283.0...v0.284.0) - 2026-11-14
 - 【新增】data: R5 叙事质量数据面探针（接 OO probes → 企微） (#2233) ([#2234](https://github.com/MYTech-Co-LTD/platform-core/pull/2234), [80fee76](https://github.com/MYTech-Co-LTD/platform-core/commit/80fee76c000c8ef1e3eb4a4271c03d559c96146b))
 
