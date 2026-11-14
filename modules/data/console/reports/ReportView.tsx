@@ -46,7 +46,6 @@ import type { DataPanel } from '../../domain/report-query'
 import { chartCompareRangesOf, compareRangeOf, panelArgsOf, panelQueryBodyOf } from '../../domain/report-query'
 import type { PeriodSpec, ReportSpec } from '../../domain/report-spec'
 import { toReportPlan, type DeniedPanel } from '../../domain/report-plan'
-import { dayLabelOf } from '../../domain/report-facts'
 import { KpiCard } from './KpiCard'
 import AiTextPanel from './AiTextPanel'
 import { formatValue } from '../../domain/report-format'
@@ -433,7 +432,15 @@ function PanelBody({ panel, result, compares = [] }: { panel: Panel; result: Pan
     if (xIdx >= 0 && vIdx >= 0) {
       for (const row of result.rows) {
         if (!Array.isArray(row)) continue
-        const day = dayLabelOf(row[xIdx])
+        // 与 domain/report-facts.dayLabelOf 同口径（避免 server-only 导入进浏览器包）
+        const raw = row[xIdx]
+        let day: string | null = null
+        if (raw instanceof Date && !Number.isNaN(raw.getTime())) {
+          day = `${raw.getFullYear()}-${String(raw.getMonth() + 1).padStart(2, '0')}-${String(raw.getDate()).padStart(2, '0')}`
+        } else if (typeof raw === 'string') {
+          const m = /^(\d{4}-\d{2}-\d{2})/.exec(raw)
+          day = m === null ? null : m[1]!
+        }
         const v = Number(row[vIdx])
         if (day !== null && Number.isFinite(v)) points.push([day, v])
       }
