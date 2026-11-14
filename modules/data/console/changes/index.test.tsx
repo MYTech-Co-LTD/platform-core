@@ -167,4 +167,29 @@ describe('待核对页', () => {
     // 无历史的行（PENDING 第一行 previewHistory 缺席）不得出现该提示
     expect(screen.queryByText(/之前试过 0 次/)).not.toBeInTheDocument()
   })
+
+  it('delete 单的提议原因（下线提案尾波）：payload.reason 是 string ⇒ 默认层显「提议原因：…」；无 reason 不显', async () => {
+    const DEL_WITH = {
+      id: 14, metricId: 'x:retire_me', kind: 'delete', status: 'preview_ready',
+      payload: { reason: '连续 90 天 0 次使用（报表引用已排除）' },
+      preview: { window: { from: '2026-08-16', to: '2026-11-14' }, value: 0, rows: 0, baseline: null, sample: [] },
+      submittedBy: 'metric-retire-job', submittedChannel: 'job', submittedAt: '2026-11-14T03:00:00Z',
+      decidedBy: null, decidedAt: null, rejectReason: null,
+    }
+    const DEL_WITHOUT = { ...DEL_WITH, id: 15, metricId: 'x:retire_keep', payload: {} }
+    m.mockImplementation(async (url: string | URL, init?: RequestInit) => {
+      const u = String(url)
+      if (u.includes('/metric-changes') && (init?.method ?? 'GET') === 'GET') return json({ changes: [DEL_WITH, DEL_WITHOUT] })
+      return json({})
+    })
+    render(<ChangesPage />)
+    await waitFor(() => expect(screen.getByText(/x:retire_me/)).toBeInTheDocument())
+    // 有 reason 的 delete 单：默认层一行人话（完整句子精确匹配——原因原文也在展开层
+    // 原始声明 JSON dump 里出现，模糊正则会撞成多元素）
+    expect(screen.getByText('提议原因：连续 90 天 0 次使用（报表引用已排除）')).toBeInTheDocument()
+    // 两张 delete 单只有一张带 reason ⇒ 「提议原因」行恰一条；无 reason 的行不渲染占位
+    expect(screen.getAllByText(/提议原因/).length).toBe(1)
+    // 与相邻试算句同款默认层样式（antd Paragraph 渲染为 div；inline fontSize: 13 → 13px）
+    expect(screen.getByText(/提议原因/)).toHaveStyle({ fontSize: '13px' })
+  })
 })
