@@ -641,8 +641,9 @@ token 只决定「这个账号能调哪些面」，不改变分层。
 
 ### 2.6 通知基础设施：事件声明 + 绑定规则 + 平台投递（2026-10-27 重构）
 
-> 本节是通知域的**正典摘要**；完整设计、数据模型与验收在
-> `docs/superpowers/specs/2026-10-27-notification-infrastructure-design.md`，
+> 本节是通知域的**正典摘要**；本线的开发地图/进度台账在
+> `docs/superpowers/plans/2026-11-14-notification-platform-roadmap.md`（开工前先读）。
+> 完整设计、数据模型与验收在 `docs/superpowers/specs/2026-10-27-notification-infrastructure-design.md`，
 > 实施计划 `docs/superpowers/plans/2026-10-27-notification-infrastructure-p1.md`。
 > **2026-10-27 重开 2026-10-18 的「不自研投递」取舍**：目标从「只补绑定层」变成
 > 「事件目录 + 模板 + 通道 + 预览发布 + 收件箱」，原取舍前提不成立。
