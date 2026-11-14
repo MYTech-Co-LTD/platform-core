@@ -239,17 +239,18 @@ describePg('notify storage 一次性延迟', () => {
       org: ORG_P2, eventId: 'delay-1', eventKey: 'test.event', scope: '*',
       payload: {}, producer: 'test', availableAt: future,
     })
-    // claimEvents 是全表领取（无 org 过滤）⇒ 只断言本 org 的行，limit 放宽以免被别的夹具挤掉。
-    expect((await claimEvents(pool, 500)).some((e) => e.org === ORG_P2 && e.eventId === 'delay-1')).toBe(false)
+    // ⚠️ 本用例会租用全库事件（claimEvents 无 org 过滤，租约 60s）——只断言本 org 的行。
+    //    现有其它用例都自清且不领事件，50 足够。
+    expect((await claimEvents(pool, 50)).some((e) => e.org === ORG_P2 && e.eventId === 'delay-1')).toBe(false)
 
     // 缺省 availableAt = 立即
     await enqueueEvent(pool, {
       org: ORG_P2, eventId: 'delay-2', eventKey: 'test.event', scope: '*',
       payload: {}, producer: 'test',
     })
-    expect((await claimEvents(pool, 500)).some((e) => e.org === ORG_P2 && e.eventId === 'delay-2')).toBe(true)
+    expect((await claimEvents(pool, 50)).some((e) => e.org === ORG_P2 && e.eventId === 'delay-2')).toBe(true)
 
     await pool.query("update notify.event set available_at = now() - interval '1 second' where org=$1 and event_id='delay-1'", [ORG_P2])
-    expect((await claimEvents(pool, 500)).some((e) => e.org === ORG_P2 && e.eventId === 'delay-1')).toBe(true)
+    expect((await claimEvents(pool, 50)).some((e) => e.org === ORG_P2 && e.eventId === 'delay-1')).toBe(true)
   })
 })

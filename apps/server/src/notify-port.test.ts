@@ -36,6 +36,26 @@ describe('buildNotifyPort', () => {
     })
   })
 
+  it('availableAt 透传：传值原样、缺省 undefined（否则静默降级为立即投递）', async () => {
+    const calls: Record<string, unknown>[] = []
+    const port = buildNotifyPort({
+      catalog,
+      enqueue: async (x) => { calls.push(x as unknown as Record<string, unknown>); return { accepted: true } },
+    })
+    const d = new Date(Date.now() + 3600_000)
+    await port.emit(id, {
+      eventKey: 'm.a.b', eventId: 'e-delay',
+      payload: { userId: 'u1', link: 'https://x' }, availableAt: d,
+    })
+    expect(calls[0]!.availableAt).toBe(d)
+
+    await port.emit(id, {
+      eventKey: 'm.a.b', eventId: 'e-now',
+      payload: { userId: 'u1', link: 'https://x' },
+    })
+    expect(calls[1]!.availableAt).toBeUndefined()
+  })
+
   it('未声明事件 / 缺 eventId / payload 违规 ⇒ 拒绝且不入队', async () => {
     const calls: unknown[] = []
     const port = buildNotifyPort({
