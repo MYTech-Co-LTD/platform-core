@@ -3,8 +3,9 @@
 // 硬边界：没有 publish / channel 工具；没有「给别人试发」工具；排班工具不接受通道参数。
 import { SCHEDULE_TOOLS } from './tools/schedules'
 
-// 13（消息/模板/规则/投递）+ 8（agent 排班，W6-P3）。加工具必须同 PR 显式抬。
-export const NOTIFY_MAX_TOOLS = 21
+// 16（消息/模板/规则/投递 + N3b agent 工具）+ 8（agent 排班，W6-P3）。
+// 加工具必须同 PR 显式抬。
+export const NOTIFY_MAX_TOOLS = 24
 
 export type NotifyToolMeta = {
   name: string
@@ -68,6 +69,38 @@ export const NOTIFY_TOOLS: NotifyToolMeta[] = [
   t('send_test', '给自己试发一条（收件人强制为调用者本人）。',
     { templateKey: { type: 'string' }, channel: { type: 'string' }, payload: { type: 'object' } },
     ['templateKey', 'channel', 'payload'], true, 'notify:manage'),
+  t('create_agent_template',
+    '为 agent namespace 创建/更新模板 revision；publish=true 需 notify:publish。',
+    {
+      namespace: { type: 'string' },
+      key: { type: 'string' },
+      name: { type: 'string' },
+      eventKey: { type: 'string' },
+      contents: { type: 'object' },
+      publish: { type: 'boolean' },
+    },
+    ['namespace', 'key', 'name', 'eventKey', 'contents'], true, 'notify:manage'),
+  t('create_agent_rule',
+    '为 agent namespace 创建规则；外发通道未预授权时落 pending 审批。',
+    {
+      namespace: { type: 'string' },
+      id: { type: 'string' },
+      ...RULE_FIELDS,
+      recipientDepts: { type: 'array', items: { type: 'string' } },
+    },
+    ['namespace', 'eventKey', 'recipientKey', 'templateKey', 'channels'],
+    true, 'notify:manage'),
+  t('send_message',
+    '向 agent namespace 发一条通用 in-app 消息（受 policy 配额约束）。',
+    {
+      namespace: { type: 'string' },
+      eventId: { type: 'string' },
+      to: { anyOf: [{ type: 'string' }, { type: 'array', items: { type: 'string' } }] },
+      title: { type: 'string' },
+      body: { type: 'string' },
+      link: { type: 'string' },
+    },
+    ['namespace', 'to', 'title', 'body'], true, 'notify:emit'),
   // agent 排班（W6-P3）：实现与入参成形在 tools/schedules.ts；这里只把元数据并进 tools/list。
   ...SCHEDULE_TOOLS.map((m): NotifyToolMeta => ({ ...m })),
 ]
