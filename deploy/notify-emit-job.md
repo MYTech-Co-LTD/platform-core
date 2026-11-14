@@ -1,6 +1,7 @@
 # `notify.emit` job handler（平台调度器 → 通知）
 
-> 接缝文档：`.orca/drops/2026-11-14-notify-scheduler-integration.md`。
+> 正典：`docs/superpowers/specs/2026-11-14-business-scheduler-design.md` §10；
+> 计划：`docs/superpowers/plans/2026-11-14-scheduler-p1.md`。
 > 调度器板块负责“到点 spawn”；本文件只定义通知侧 handler 的输入/输出。
 
 ## 注册
