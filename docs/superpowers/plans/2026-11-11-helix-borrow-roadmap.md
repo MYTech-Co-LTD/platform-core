@@ -8,8 +8,9 @@
 > Helix 清单只是输入之一。
 >
 > ✅ **2026-11-12：Wave 0–3 主线全部收口。** §1 列的四个「以为有其实没有」都已修（连接池上限、
-> 缓存数据版本、数据范围绕过面、血缘/证据恒 unknown）。本文件转为**存量台账**：
-> 新工作按 §5 规则先改这里再动手；剩余的只有 §3 待办表里的「触发式」与「观察项」。
+> 缓存数据版本、数据范围绕过面、血缘/证据恒 unknown）。
+> **2026-11-14：Wave 6（业务定时归属）开工**——见 §4；Wave 0–3 的遗留仍只有 §3 待办表里的
+> 「触发式」与「观察项」。**开工前先读 §3 与 §4 的当前波次，别在分支里跑偏。**
 
 ---
 
@@ -134,6 +135,21 @@
 - **P6 证据与治理**：✅ 已交付「证据与治理收口 T1–T5」（计划 `2026-11-14-evidence-governance-p6.md`；PR #2141 + 部署实测）——①门结果分类（`issues` 可判红、巡检 exit 1）；②creator 判据落**采纳期**（`creator ∪ data:manage`，撤回提交期预检）；③试算限速覆盖提交路径；④`reveal` 写入面（变更单 payload）；⑤回滚 / ACL / 部门门变更重跑发布门。
   （原定「声明类对账证据接入 + 使用统计→下线候选」洞见**未丢**，移入 §6 候选池。）
 
+### Wave 6 · 业务定时归属（2026-11-14 定案，**现行主线**）
+
+> spec（唯一事实源）：`docs/superpowers/specs/2026-11-14-business-scheduler-design.md`。
+> 用户定调：**业务层面的压力不放 openship 上**。这是**架构变更**，顺序固定：
+> 本文与正典先改（本波即此动作）→ 出实施计划 → 再写码。
+
+- **问题**：openship 上压着 30 个周期 job，业务为主；而 `docs/architecture.md:497-503` 明文写「定时载体 = openship job / 零常驻」，五处文档写「应用进程不跑定时副作用」——**正典与目标相反**。
+- **结论（A′）**：不新建调度器进程，把已有 `notify-worker` 泛化成 **worker（多 loop 注册表）**；新增 `platform.scheduler` loop；任务目录在代码、排班与运行台账在库；子进程执行 + 超时 kill；**「该跑没跑」判据与调度器同时上线**。
+- **先减后建**：应用面 11 类 job → **7 类需要 cron**；`notify-seed-builtin` 启动期化、`notify-health` 并入 worker 循环（两者从系统里消失，不搬家）。
+- **不变量**：调度器**只做 cron + 台账**，不做 DAG / 依赖编排 / 回填队列。
+- **P1**：迁移 `018_platform_jobs` + registry + loop + 执行器 + 台账 + healthz 三判据 + 手动触发端点；迁入 `notify-reconcile` / `metric-candidates` / `report-scope-scan`。
+- **P2**：其余 4 类迁入 + seed/health 折叠 + 失败接 notify。
+- **P3（另出计划）**：数据面「**消**」而不是「迁」——管道类归 duckle console 排班，`scorecard`/`verify-*` 导出为观测面判据（消费 `data.load_log` 与 `metric_freshness`）。`host-metrics` / `OO 桥·看门狗` / `integration-probe 心跳` **永久留 openship**（基建定时）。
+- 切流铁律：一个 job 任一时刻只有一个调度者；先登记 `enabled=false` → 手动跑一次比对 → 关 openship 那个 → 再开。
+
 ### Wave 4 · 产品面：单页双层（2026-11-12 定案）
 
 > **两条约束（用户拍板，别再讨论）**：① **本系统不做问数**——问数只经 MCP 给 openclaw 与三方 agent；
@@ -163,6 +179,8 @@
 - **声明类对账证据接入采纳**（原 P6 交付项；2026-11-14 P6 按实际交付重划后移入）：采纳前要求对账/证据，无证据不可采纳。
 - ~~**指标使用统计 → 下线候选**~~ → **已交付（2026-11-14）**：PR #2157（见 §3「Wave 5 尾波」）。
   job `metric-retire` **未创建**——建 job 属运维动作，须人点名（命令在 `deploy/metric-retire-job.md`）。
+- ~~**业务定时归属（从 openship 迁出）**~~ → **已升格 Wave 6（2026-11-14）**：用户直接指令
+  （「业务层面的压力不想放到 openship 上」），属架构变更，spec `2026-11-14-business-scheduler-design.md`。
 
 ---
 
@@ -204,3 +222,4 @@
 | 2026-11-14 | **Wave 5 P6 完成入账 = Wave 5 全部收口**（门结果分类/授权模型纠正/提交限速/reveal 写入/四处重跑门）；原 §18 P6 两项移入候选池 | PR #2141（`67604c93`）+ 部署实测：`gateBlocks`/`PUBLISHED_SNAPSHOT_UNREADABLE`/`canManage` 三处/`previewSkipped` 双面/`revealOfPayload` 均在容器。**关键纠正**：采纳时的 creator 门原比对采纳人 ⇒ 「agent 提单、人采纳」对非本人指标必 403（P4 以来的真实缺口），已改为 `creator ∪ data:manage` 并撤回提交期预检。遗留：Metabase 整表判定不可实现、L1 reveal 无写入面、confirmPrivateMeasureDraft 仍 creator-only（on 模式不可达）、PUBLISHED_SNAPSHOT_UNREADABLE 未进 console 消息表 |
 | 2026-11-14 | **P1 缓办行对账销账**：⑤⑥ 已在 P4 交付（eventId `ch:` 前缀 / preview_failed 带 issues）；② 随 P4 直写面 410 而 moot；**① 已落地**（check-semantics ⑤ label 撞名预检，CI 拦在 sync 运行时炸之前，真库 YAML 零冲突实跑过）；**③ 裁定为设计如此**（override 是租户级口径变更，租户全可见正是其语义，非缺口）；**④ 裁定为记录不改**（报表提案是轻量创建动作，`DATA_MCP_ALLOW_MUTATING` 门为指标定义面设计，报表面维持现状） | 尾波 PR + `check-semantics: OK（entities 13）` 实跑 |
 | 2026-11-14 | **候选池项「使用统计→下线候选接评审」交付入账**（delete 档 `reason` + 四条安全过滤 + job 脚本 + job 文档）；候选池该行销账 | PR #2157（`45467681`）+ **两实例**容器实测：`scripts/metric-retire-job.mjs` / `deploy/metric-retire-job.md` 在位、`node --check` OK、`--days abc` ⇒ rc 2 不进库、只读探针 `retireOrgs()` 山海=`["shanhaiyiguo-org"]`（`retireEligibleOf(90d)=0`）/ mytech=`[]`（无 L2 行）。**job 未建**（建 job 需点名）。四条 SHOULD-FIX 入待办 |
+| 2026-11-14 | **新增 Wave 6：业务定时归属**（openship 退回部署/回滚/备份/主机基建，业务定时归 worker 的 `platform.scheduler` loop）；**先减后建**：应用面 11 类 → 7 类需 cron | 用户指令「业务层面的压力不放 openship 上」。**这是架构变更**：正典 `architecture.md:497-503` 现写「定时载体=openship job / 零常驻」，与目标相反 ⇒ 先改本文与正典再写码。行业对照：<20 个无依赖周期任务的标准解是「应用内 worker + 库内排班表」（Oban/Quartz 同形），不是 Airflow/K8s CronJob。spec `2026-11-14-business-scheduler-design.md` |
