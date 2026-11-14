@@ -62,6 +62,22 @@ describePg('narrativeStats（需要 DATABASE_URL）', () => {
     expect(s.slo).toEqual({ fallbackRate: 0.2, p95Ms: 45_000, numberCheckRate: 0.05 })
   })
 
+  it('★ facts p95 分项：有 samples 才给数；旧行（无分项）⇒ null 而不是 0', async () => {
+    await pool.query('delete from data.narrative_runs where org = $1', [ORG])
+    const withFacts = (factsMs: number) => recordNarrativeRun(pool, {
+      org: ORG, reportId: 'r1', focus: 'daily_review', mode: 'range',
+      model: 'm', promptVersion: 'v-test', outcome: 'ok', durationMs: 1000, factsMs,
+    })
+    await withFacts(300)
+    await withFacts(500)
+    const withSamples = await narrativeStats(pool, ORG, 7)
+    expect(withSamples.factsP95Ms).toBeGreaterThanOrEqual(300)
+
+    await pool.query('delete from data.narrative_runs where org = $1', [ORG])
+    await run('ok')   // 不带 factsMs 的旧形态
+    expect((await narrativeStats(pool, ORG, 7)).factsP95Ms).toBeNull()
+  })
+
   it('健康窗口 ⇒ breaches 为空（不误报）', async () => {
     await pool.query('delete from data.narrative_runs where org = $1', [ORG])
     await run('ok', 'v-test', 1000)

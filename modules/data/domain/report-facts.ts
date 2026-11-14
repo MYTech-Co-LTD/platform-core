@@ -57,7 +57,7 @@ export interface FactsDeps {
    */
   memo?: Map<string, Promise<unknown>>
   /** 构建级观测计数（去重前/后）：用于 `report_facts_stats` 日志与后续 p95 基线。 */
-  stats?: { queries: number; deduped: number }
+  stats?: { queries: number; deduped: number; factsMs?: number }
 }
 
 export interface FactKpi {
@@ -872,10 +872,11 @@ export async function buildFacts(
   const factsHash = createHash('sha256').update(canonicalJson(facts)).digest('hex')
   // 观测面（R4）：事实包一次构建查了几条、去重了几条、花了多久——p95 基线与后续优化的输入。
   if (deps.stats !== undefined) {
+    deps.stats.factsMs = Date.now() - startedAt
     console.log(JSON.stringify({
       event: 'report_facts_stats', specKey: deps.specKey, focus: ai.focus,
       panels: realPanels.length, queries: deps.stats.queries, deduped: deps.stats.deduped,
-      ms: Date.now() - startedAt,
+      ms: deps.stats.factsMs,
     }))
   }
   return { ...facts, factsHash }

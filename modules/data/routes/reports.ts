@@ -1501,6 +1501,8 @@ export function registerReports(r: ModuleHono, ctx: RouteCtx): void {
     focus: AiTextPanel['focus']
     specKey: string
     model: (StreamingChatModel & { id?: string }) | null
+    /** facts 构建耗时（R4 分项基线）；台账落 facts_ms。 */
+    factsMs: number | null
   }
 
   /** 观看面内容的**共享解析**：身份 → 报表 → 资产面/快照门 → 规格。
@@ -1589,8 +1591,10 @@ export function registerReports(r: ModuleHono, ctx: RouteCtx): void {
     const panel = v.spec.panels[body.panelIndex]
     if (panel === undefined || panel.chart !== 'ai_text') return { error: 'NOT_AI_TEXT_PANEL' }
 
+    const factsStats: { queries: number; deduped: number; factsMs?: number } = { queries: 0, deduped: 0 }
     const facts = await buildFacts(
       {
+        stats: factsStats,
         pool: ctx.pool,
         org: c.get('tenant').casdoor_org,
         requester: v.requester,
@@ -1614,7 +1618,10 @@ export function registerReports(r: ModuleHono, ctx: RouteCtx): void {
     const model = ctx.llm !== undefined
       ? ctx.llm()
       : cfg === null ? null : { ...openAiCompatModel(cfg), id: cfg.model }
-    return { requester: v.requester, facts, focus: panel.focus, specKey: v.specKey, model }
+    return {
+      requester: v.requester, facts, focus: panel.focus, specKey: v.specKey, model,
+      factsMs: factsStats.factsMs ?? null,
+    }
   }
 
   r.post('/reports/:id/narrative', async (c) => {
@@ -1647,6 +1654,7 @@ export function registerReports(r: ModuleHono, ctx: RouteCtx): void {
         outcome: out.cached ? 'cached' : out.fallback ? 'fallback' : 'ok',
         reason: out.fallback ? 'template_fallback' : null,
         durationMs: Date.now() - started,
+        factsMs: n.factsMs,
       })
       return c.json(out)
     } catch (e) {
@@ -1719,6 +1727,7 @@ export function registerReports(r: ModuleHono, ctx: RouteCtx): void {
             promptVersion: NARRATIVE_PROMPT_VERSION,
             outcome, reason: outcomeReason,
             durationMs: Date.now() - started,
+            factsMs: n.factsMs,
           })
           controller.close()
         }
