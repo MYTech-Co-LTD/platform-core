@@ -236,6 +236,37 @@ export function registerSystemMap(r: ModuleHono, ctx: RouteCtx): void {
     pipelineCache.set('global', { body, expiresAt: now + PIPELINE_CACHE_TTL_MS })
     return c.json(body)
   })
+
+  // 单条管线的运行历史（抽屉「历史」用）：引擎侧每管线保留 50 条，故上限 50。
+  // 未接运行记录 ⇒ 回 `unknown` + note（不是空数组——空数组会被读成「没跑过」）。
+  r.get('/system-map/pipelines/:id/runs', async (c) => {
+    const requester = requesterOf(c)
+    if (requester === null) return c.json({ error: 'UNAUTHENTICATED' }, 401)
+
+    const id = c.req.param('id')
+    if (!/^[A-Za-z0-9][A-Za-z0-9._-]{0,199}$/.test(id)) return c.json({ error: 'INVALID_PIPELINE_ID' }, 400)
+    const runs = runSourceFromEnv(process.env)
+    if (runs === null) {
+      return c.json({
+        pipelineId: id, status: 'unknown', reason: 'runs_source_not_wired',
+        note: '本服务未配置运行记录挂载（DATA_RUN_DIRS）——未知 ≠ 没跑过。',
+        runs: [],
+      })
+    }
+    const list = await runs.list({ pipelineId: id, limit: 50 })
+    return c.json({
+      pipelineId: id,
+      status: 'ok',
+      runs: list.runs.map((r) => ({
+        runId: r.runId, at: r.startedAt, status: r.status,
+        ...(r.durationMs === undefined ? {} : { durationMs: r.durationMs }),
+        ...(r.trigger === undefined ? {} : { trigger: r.trigger }),
+        ...(r.error === undefined ? {} : { error: r.error }),
+      })),
+      truncated: list.truncated,
+      warnings: list.warnings,
+    })
+  })
 }
 
 /** warehousePool 在未配 `DATA_WAREHOUSE_URL` 时会抛——这里吞掉，交给 catch 的 note。 */

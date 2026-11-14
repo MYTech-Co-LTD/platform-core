@@ -6,7 +6,7 @@
 // 为什么是固定三层而不是力导向：用户在问「逻辑关系」，分层 DAG 一眼能读完；
 // 119 条管线不占独立列，挂在资产节点上（点资产看清单），否则一动就是毛球。
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import { Alert, Button, Card, Drawer, Empty, Input, Segmented, Space, Tag, Typography } from 'antd'
+import { Alert, Button, Card, Drawer, Empty, Input, Modal, Segmented, Space, Table, Tag, Typography } from 'antd'
 import * as echarts from 'echarts/core'
 import { GraphChart } from 'echarts/charts'
 import { LegendComponent, TooltipComponent } from 'echarts/components'
@@ -45,6 +45,24 @@ export default function PipelinesPage() {
   const [account, setAccount] = useState<string>('全部')
   const [selected, setSelected] = useState<Selection | null>(null)
   const [failedOnly, setFailedOnly] = useState(false)
+  // 单条管线的完整 run 历史（引擎每管线保留 50 条）
+  const [history, setHistory] = useState<{
+    pipelineId: string
+    loading: boolean
+    status?: string
+    note?: string
+    runs: Array<{ runId: string; at: string; status: string; durationMs?: number; trigger?: string; error?: string }>
+  } | null>(null)
+
+  const openHistory = (pipelineId: string): void => {
+    setHistory({ pipelineId, loading: true, runs: [] })
+    apiGet(`/system-map/pipelines/${encodeURIComponent(pipelineId)}/runs`)
+      .then((b) => {
+        const r = b as { status: string; note?: string; runs: typeof history extends null ? never : Array<{ runId: string; at: string; status: string; durationMs?: number; trigger?: string; error?: string }> }
+        setHistory({ pipelineId, loading: false, status: r.status, note: r.note, runs: r.runs ?? [] })
+      })
+      .catch((e: unknown) => setHistory({ pipelineId, loading: false, status: 'error', note: humanError(e).text, runs: [] }))
+  }
   const boxRef = useRef<HTMLDivElement>(null)
   const chartRef = useRef<echarts.ECharts | null>(null)
 
@@ -293,6 +311,9 @@ export default function PipelinesPage() {
                             background: run === undefined ? '#C9CDD4' : (RUN_DOT[run.status] ?? '#C9CDD4'),
                           }} />
                           <span style={{ fontFamily: 'ui-monospace, Menlo, monospace', fontSize: 12 }}>{p.id}</span>
+                          <Button type="link" size="small" style={{ padding: '0 6px' }} onClick={() => openHistory(p.id)}>
+                            历史
+                          </Button>
                           <div style={{ paddingLeft: 12, fontSize: 11.5, color: '#9AA0A6' }}>
                             {p.account === null ? '共享' : `账套 ${p.account}`}
                             {!p.scheduled ? ' · 未调度（历史/一次性）' : p.cron === null ? ' · 无 cron' : ` · ${p.cron}`}
@@ -349,6 +370,58 @@ export default function PipelinesPage() {
           </Space>
         )}
       </Drawer>
+
+      <Modal
+        open={history !== null}
+        onCancel={() => setHistory(null)}
+        footer={null}
+        width={640}
+        title={history === null ? null : <span style={{ fontFamily: 'ui-monospace, Menlo, monospace', fontSize: 13 }}>{history.pipelineId}</span>}
+      >
+        {history !== null && history.loading && <Typography.Text type="secondary">读取中…</Typography.Text>}
+        {history !== null && !history.loading && history.status !== 'ok' && (
+          <Alert type="info" showIcon message={history.note ?? '运行记录不可用'} />
+        )}
+        {history !== null && !history.loading && history.status === 'ok' && (
+          <Table
+            size="small"
+            rowKey="runId"
+            pagination={false}
+            scroll={{ y: 420 }}
+            dataSource={history.runs}
+            locale={{ emptyText: '这条管线没有运行记录' }}
+            columns={[
+              {
+                title: '开始', dataIndex: 'at', width: 160,
+                render: (v: string) => new Date(v).toLocaleString('zh-CN'),
+              },
+              {
+                title: '状态', dataIndex: 'status', width: 90,
+                render: (v: string) => (
+                  <span>
+                    <span style={{ display: 'inline-block', width: 6, height: 6, borderRadius: 6, marginRight: 6, background: RUN_DOT[v] ?? '#C9CDD4' }} />
+                    {v}
+                  </span>
+                ),
+              },
+              {
+                title: '耗时', dataIndex: 'durationMs', width: 80, align: 'right' as const,
+                render: (v?: number) => (v === undefined ? '—' : `${Math.round(v / 1000)}s`),
+              },
+              {
+                title: '触发', dataIndex: 'trigger', width: 90,
+                render: (v?: string) => v ?? '—',
+              },
+              {
+                title: '错误', dataIndex: 'error',
+                render: (v?: string) => (v === undefined
+                  ? '—'
+                  : <span style={{ color: '#B42318', fontSize: 11.5 }}>{v.split('\n')[0]}</span>),
+              },
+            ]}
+          />
+        )}
+      </Modal>
     </Space>
   )
 }

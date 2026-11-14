@@ -26,7 +26,7 @@ function emptyPool(): { pool: Pool; calls: () => number } {
 
 function appWithGate(identityOverride?: ReturnType<typeof makeIdentity>) {
   const shell = new Hono<ModuleVars>()
-  for (const p of ['/system-map', '/system-map/graph', '/system-map/metrics/*', '/system-map/pipelines']) {
+  for (const p of ['/system-map', '/system-map/graph', '/system-map/metrics/*', '/system-map/pipelines', '/system-map/pipelines/:id/runs']) {
     if (identityOverride !== undefined) {
       shell.use(p, async (c, next) => {
         c.set('identity', identityOverride)
@@ -39,6 +39,7 @@ function appWithGate(identityOverride?: ReturnType<typeof makeIdentity>) {
       { method: 'GET', path: '/system-map/graph', scope: 'data:query' },
       { method: 'GET', path: '/system-map/metrics/:id/trail', scope: 'data:query' },
       { method: 'GET', path: '/system-map/pipelines', scope: 'data:query' },
+      { method: 'GET', path: '/system-map/pipelines/:id/runs', scope: 'data:query' },
     ]))
   }
   shell.route('/', mod.createRouter({ pool: emptyPool().pool }))
@@ -197,5 +198,26 @@ describe('GET /system-map/pipelines（管线全局图）', () => {
     }
     expect(body.runsWired).toBe(false)
     expect(Array.isArray(body.warnings)).toBe(true)
+  })
+})
+
+describe('GET /system-map/pipelines/:id/runs（运行历史）', () => {
+  it('未登录 ⇒ 401；缺 data:query ⇒ 403', async () => {
+    expect((await appWithGate().request('/system-map/pipelines/p1/runs')).status).toBe(401)
+    expect((await appWithGate(makeIdentity({ orgId: ORG, scopes: ['data:manage'] })).request('/system-map/pipelines/p1/runs')).status).toBe(403)
+  })
+
+  it('未接运行记录 ⇒ status=unknown（不是空数组冒充「没跑过」）', async () => {
+    const res = await buildTestApp(mod, identity, { pool: emptyPool().pool }).request('/system-map/pipelines/lemeng.retail_order_line.day/runs')
+    expect(res.status).toBe(200)
+    const body = await res.json() as { status: string; reason: string; runs: unknown[] }
+    expect(body.status).toBe('unknown')
+    expect(body.reason).toBe('runs_source_not_wired')
+    expect(body.runs).toEqual([])
+  })
+
+  it('非法管線 id ⇒ 400（防注入到运行记录路径）', async () => {
+    const res = await buildTestApp(mod, identity, { pool: emptyPool().pool }).request('/system-map/pipelines/..%2Fetc/runs')
+    expect([400, 404]).toContain(res.status)
   })
 })
