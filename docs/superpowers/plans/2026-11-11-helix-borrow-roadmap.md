@@ -148,6 +148,7 @@
 - **与通知板块的接缝**（v2 并入 handoff）：调度器管「什么时候跑、跑没成」，通知管「发给谁、发什么、怎么发」；周期消息 = `notify.emit` job；**一次性延迟走 outbox 的 `available_at`，不进 cron**；通知模块**不直连 `platform.job_*`**，只经宿主注入的 `SchedulerPort`。`JOB_PARAMS` **走 stdin**（不走 env）；`JOB_OCCURRENCE` = **claim 到的那一格 bucket**（不是实际开跑时刻），重试沿用同一 occurrence ⇒ 幂等键稳定。
 - **`job_schedule` 主键 = `id`**（agent 排班要同 key 多条），系统 job 用部分唯一索引保持「一 key 一条」——**P1 一次到位**，避免有数据后再手术。
 - **P1**：迁移 `018_platform_jobs` + registry + loop + 执行器 + 台账 + healthz 三判据 + 手动触发端点；迁入 `notify-reconcile` / `metric-candidates` / `report-scope-scan`。
+  实施计划：`docs/superpowers/plans/2026-11-14-scheduler-p1.md`（issue **#2172**）。
 - **P2**：通知接缝（`SchedulerPort` + `notify-emit-job.mjs` + `notify.event.available_at`）。
 - **P3**：agent 周期消息自助面（create/pause/resume/delete/list_runs/run_now）+ 配额 + 外发审批 + 租户级 kill switch。
 - **P4**：其余 4 类迁入 + `seed` 启动期化 + `health` 并入 loop + 失败接 notify。
