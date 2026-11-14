@@ -43,6 +43,11 @@ const MAP = {
   ],
   orphanStaging: ['stg_lemeng_orphan'],
   warnings: ['1 个湖资产没有对应的 staging 模型（链路断点）'],
+  status: {
+    'lemeng.retail_order_line.l0.3120': 'ok',
+    'lemeng.retail_order_line.l0.64188': 'failed',
+    'lemeng.no_staging_asset.l0.3120': 'unknown',
+  },
   recentRuns: {
     'lemeng.retail_order_line.l0.3120': [
       { status: 'ok', at: '2026-11-14T00:00:00.000Z', durationMs: 1200 },
@@ -132,7 +137,12 @@ describe('健康只看在跑的管线', () => {
     m2.mockImplementation(async () => json({
       ...MAP,
       assets: [{ ...MAP.assets[0]!, pipelines: [{ id: 'old.one.off', account: null, cron: null, enabled: false, scheduled: false }] }],
-      recentRuns: { 'old.one.off': [{ status: 'failed', at: '2026-10-21T00:00:00.000Z' }] },
+      status: {
+    'lemeng.retail_order_line.l0.3120': 'ok',
+    'lemeng.retail_order_line.l0.64188': 'failed',
+    'lemeng.no_staging_asset.l0.3120': 'unknown',
+  },
+  recentRuns: { 'old.one.off': [{ status: 'failed', at: '2026-10-21T00:00:00.000Z' }] },
     }))
     render(<PipelinesPage />)
     await waitFor(() => expect(screen.getByText('资产')).toBeInTheDocument())

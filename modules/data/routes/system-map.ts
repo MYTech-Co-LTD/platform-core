@@ -19,7 +19,7 @@ import {
 import type { SystemMapInput, SystemMapModel } from '../domain/system-map/map'
 import { buildSystemMapOntology } from '../domain/system-map/ontology'
 import { buildMetricTrail, lakeStagingFromContracts, pipelineIdsOf, stagingRelationsOf } from '../domain/system-map/trail'
-import { buildPipelineMap, lakeConsumers } from '../domain/system-map/pipeline-map'
+import { buildPipelineMap, lakeConsumers, liveStatusOf } from '../domain/system-map/pipeline-map'
 import { loadContracts, loadPipelines, loadSchedules, rootsOf } from '../domain/pipelines/defs'
 import { warehousePool } from '../domain/warehouse'
 import { watermarkSqlFor } from '../domain/query-service'
@@ -233,11 +233,16 @@ export function registerSystemMap(r: ModuleHono, ctx: RouteCtx): void {
       }
     }
 
-    // 在跑失败也由服务端数：只算 scheduled && enabled 的管线（口径与前端原逻辑一致，但只此一处）
+    // 有效状态（父驱动取父的状态）——前端只显示，不再自己推
+    const status: Record<string, string> = {}
+    for (const a of map.assets) {
+      for (const p of a.pipelines) status[p.id] = liveStatusOf(p, recentRuns)
+    }
+    // 在跑失败也由服务端数：scheduled&&enabled 或父驱动，且有效状态 = failed
     const failedLive = map.assets
       .flatMap((a) => a.pipelines)
       .filter((p) => (p.scheduled && p.enabled) || p.driver === 'parent')
-      .filter((p) => recentRuns[p.id]?.[0]?.status === 'failed')
+      .filter((p) => status[p.id] === 'failed')
       .length
 
     const body = {
@@ -247,6 +252,7 @@ export function registerSystemMap(r: ModuleHono, ctx: RouteCtx): void {
       summary: { ...map.summary, failedLive },
       warnings: [...loadedPipelines.warnings, ...loadedSchedules.warnings, ...map.warnings],
       recentRuns,
+      status,
     }
     pipelineCache.set('global', { body, expiresAt: now + PIPELINE_CACHE_TTL_MS })
     return c.json(body)
