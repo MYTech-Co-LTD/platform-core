@@ -51,6 +51,8 @@ export interface NotifyEmitInput {
   /** 实例级作用域；缺省 = '*' */
   scope?: string
   payload: Record<string, unknown>
+  /** 一次性延迟：到点才进投递循环；缺省 = 立即可领（W6-P2） */
+  availableAt?: Date
 }
 
 /** 宿主注入的 emit 端口：校验 + 异步入 outbox；**不阻塞业务**（fail-open）。 */
@@ -153,6 +155,8 @@ export interface EnqueueEventInput {
   scope: string
   payload: Record<string, unknown>
   producer: string
+  /** 一次性延迟：到点才可被 claimEvents 领取；缺省 = 立即可领（W6-P2） */
+  availableAt?: Date
 }
 
 /** 宿主递给 createRouter 的运行时上下文：绑定资源在此，模块不自己建连接。 */

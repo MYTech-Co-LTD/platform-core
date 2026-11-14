@@ -16,6 +16,12 @@ export interface JobDef {
   maxAttempts: number
   expectedIntervalSecs: number
   description: string
+  /**
+   * handler-only：只登记 handler 供 runner 按 key 查找，**不建系统排班行**。
+   * 用于「没有系统排班、只在被 agent/console 排班调用时才存在」的 job（如 `notify.emit`）。
+   * 这类条目的 cron/timezone 只是 JobDef 的 schema 占位，seed 不用于排班（占位值仅满足 schema 必填；校验仍全量跑）。
+   */
+  noSystemSchedule?: boolean
 }
 
 /** P1 首迁三个系统 job。时区一律 UTC——与 openship 上现有 cron 的 UTC 语义逐字一致。 */
@@ -23,6 +29,9 @@ export const JOB_REGISTRY: JobDef[] = [
   { key: 'notify.reconcile', script: 'scripts/notify-reconcile.mjs', cron: '7 * * * *', timezone: 'UTC', timeoutMs: 300000, maxAttempts: 2, expectedIntervalSecs: 3600, description: '通知指派与催办对账' },
   { key: 'metric.candidates', script: 'scripts/metric-candidates-job.mjs', cron: '40 6 * * *', timezone: 'UTC', timeoutMs: 300000, maxAttempts: 1, expectedIntervalSecs: 86400, description: '指标候选池生成' },
   { key: 'report.scope_scan', script: 'scripts/report-scope-scan.mjs', cron: '37 1 * * *', timezone: 'UTC', timeoutMs: 300000, maxAttempts: 2, expectedIntervalSecs: 86400, description: '报表受众 × 指标可见性巡检' },
+  // handler-only：排班由 agent/console 经 SchedulerPort 建（source≠'system'），seed 不建行。
+  // cron/timezone 是 JobDef 必填字段的占位值（不会被 seed 使用），真实时间以排班行为准。
+  { key: 'notify.emit', script: 'scripts/notify-emit-job.mjs', cron: '0 0 1 1 *', timezone: 'UTC', timeoutMs: 60000, maxAttempts: 2, expectedIntervalSecs: 86400, description: '周期消息：把一条事件入队（由 agent/console 建按其 cron 排班）', noSystemSchedule: true },
 ]
 
 export async function seedSchedules(
@@ -36,6 +45,8 @@ export async function seedSchedules(
   }
   const inserted: string[] = []
   for (const d of registry) {
+    // handler-only 条目只登记 handler（loop 按 key 查找用），不建系统排班行。
+    if (d.noSystemSchedule) continue
     const { rowCount } = await pool.query(
       `insert into platform.job_schedule
          (key, cron, timezone, params, source, enabled, next_run_at, timeout_ms, max_attempts, expected_interval_secs)
