@@ -39,9 +39,14 @@ const MAP = {
   ],
   orphanStaging: ['stg_lemeng_orphan'],
   warnings: ['1 个湖资产没有对应的 staging 模型（链路断点）'],
-  lastRun: {
-    'lemeng.retail_order_line.l0.3120': { status: 'ok', at: '2026-11-14T00:00:00.000Z' },
-    'lemeng.retail_order_line.l0.64188': { status: 'failed', at: '2026-11-14T00:00:00.000Z' },
+  recentRuns: {
+    'lemeng.retail_order_line.l0.3120': [
+      { status: 'ok', at: '2026-11-14T00:00:00.000Z', durationMs: 1200 },
+      { status: 'ok', at: '2026-11-13T00:00:00.000Z' },
+    ],
+    'lemeng.retail_order_line.l0.64188': [
+      { status: 'failed', at: '2026-11-14T00:00:00.000Z', error: '封版标记 → _DAILY/: invalid date format' },
+    ],
   },
 }
 
@@ -86,8 +91,24 @@ describe('管线地图', () => {
     await waitFor(() => expect(screen.getByText('lemeng.retail_order_line.l0.3120')).toBeInTheDocument())
     expect(screen.getByText(/账套 3120 · 0 5 \* \* \*/)).toBeInTheDocument()
     expect(screen.getByText(/最近 failed/)).toBeInTheDocument()
+    // 失败原因要看得见（排障的第一句话）
+    expect(screen.getByText(/封版标记/)).toBeInTheDocument()
+    // 多次 run 时给出「近 N 次」摘要
+    expect(screen.getByText(/近 2 次/)).toBeInTheDocument()
     const drawer = document.querySelector('.ant-drawer-body') as HTMLElement
     expect(within(drawer).getByText(/staging：stg_lemeng_retail_order_line/)).toBeInTheDocument()
+  })
+
+  it('只看异常：只留失败/运行中的节点（含被它牵连的 staging/marts）', async () => {
+    m.mockImplementation(async () => json(MAP))
+    render(<PipelinesPage />)
+    await waitFor(() => expect(screen.getByText('资产')).toBeInTheDocument())
+    fireEvent.click(screen.getByText('只看异常'))
+    await waitFor(() => {
+      const ids = lastOption()?.series[0]!.data.map((n) => n.id) ?? []
+      expect(ids).toContain('asset:lemeng/retail_order_line')
+      expect(ids).not.toContain('asset:lemeng/no_staging_asset')
+    })
   })
 
   it('接口失败 ⇒ 人话 + 重试', async () => {

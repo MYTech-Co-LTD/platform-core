@@ -184,17 +184,22 @@ export function registerSystemMap(r: ModuleHono, ctx: RouteCtx): void {
       marts,
     })
 
-    // 每条管线最近一次 run（运行记录未接 ⇒ 一律 null，前端标「未知」而不是「正常」）
+    // 每条管线最近 3 次 run（排障要看「一直红」还是「偶发一次」，一条不够）。
+    // 运行记录未接 ⇒ 空数组，前端标「未知」而不是「正常」。
     const runs = runSourceFromEnv(process.env)
-    const lastRun: Record<string, { status: string; at: string } | null> = {}
+    const recentRuns: Record<string, Array<{ status: string; at: string; durationMs?: number; error?: string }>> = {}
     if (runs !== null) {
       for (const a of map.assets) {
         for (const p of a.pipelines) {
           try {
-            const list = await runs.list({ pipelineId: p.id, limit: 1 })
-            const r0 = list.runs[0]
-            lastRun[p.id] = r0 === undefined ? null : { status: r0.status, at: r0.startedAt }
-          } catch { lastRun[p.id] = null }
+            const list = await runs.list({ pipelineId: p.id, limit: 3 })
+            recentRuns[p.id] = list.runs.map((r) => ({
+              status: r.status,
+              at: r.startedAt,
+              ...(r.durationMs === undefined ? {} : { durationMs: r.durationMs }),
+              ...(r.error === undefined ? {} : { error: r.error }),
+            }))
+          } catch { recentRuns[p.id] = [] }
         }
       }
     }
@@ -204,7 +209,7 @@ export function registerSystemMap(r: ModuleHono, ctx: RouteCtx): void {
       runsWired: runs !== null,
       ...map,
       warnings: [...loadedPipelines.warnings, ...loadedSchedules.warnings, ...map.warnings],
-      lastRun,
+      recentRuns,
     }
     pipelineCache.set('global', { body, expiresAt: now + PIPELINE_CACHE_TTL_MS })
     return c.json(body)
