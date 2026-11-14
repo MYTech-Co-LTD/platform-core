@@ -11,6 +11,11 @@
 
 ## [Unreleased]
 
+## [0.286.0](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.285.0...v0.286.0) - 2026-11-14
+- 【修复】data: 移动端体系地图补 /api/modules/data 前缀（页面白屏）(#2245) ([#2246](https://github.com/MYTech-Co-LTD/platform-core/pull/2246), [8f63107](https://github.com/MYTech-Co-LTD/platform-core/commit/8f631073fb6e67f7eed4db672d8c43705b15fa0f))
+- 【新增】data: agent 排班能力（W6-P3）——工具面 + 配额 ([#2244](https://github.com/MYTech-Co-LTD/platform-core/pull/2244), [559698b](https://github.com/MYTech-Co-LTD/platform-core/commit/559698b36af92b6e563057874627fa10904dd4da))
+
+
 ## [0.285.0](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.284.1...v0.285.0) - 2026-11-14
 - 【新增】data: 移动端体系地图直读 JSON API，为下线旧 HTML 页铺路 (#2242) ([#2243](https://github.com/MYTech-Co-LTD/platform-core/pull/2243), [3435aec](https://github.com/MYTech-Co-LTD/platform-core/commit/3435aecbc29e9b535665ada583f5aa1d12ffa522))
 
