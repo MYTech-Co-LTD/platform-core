@@ -1182,7 +1182,7 @@ import { nextRunAt } from './cron'
 import { JOB_REGISTRY, seedSchedules, type JobDef } from './registry'
 import { classify, defaultSpawn, envFor, paramsStdin, type SpawnFn } from './runner'
 import {
-  beat, claimDue, claimQueuedManual, clearRetry, hasRunning, reapStale, recordRun, scheduleRetry,
+  beat, claimDue, claimQueuedManual, clearRetry, finishRun, hasRunning, reapStale, scheduleRetry, startRun,
   type ClaimedJob,
 } from './store'
 
@@ -1221,13 +1221,17 @@ export function createSchedulerLoop(deps: SchedulerDeps) {
       return
     }
     running.add(job.scheduleId)
+    // 调度触发：**派发前**先建 running 行（spec §8 的「派发前查 running」「僵尸回收」对两种触发都成立）；
+    // 手动触发的行已由 claimQueuedManual 建好并带回 runId，不重复建。
+    let runId = job.runId
     try {
+      if (runId === undefined) runId = await startRun(deps.pool, job)
       const res = await spawn({
         command: 'pnpm', args: ['exec', 'tsx', def.script],
         env: envFor(job), stdin: paramsStdin(job), timeoutMs: job.timeoutMs, cwd,
       })
       const outcome = classify(res)
-      await recordRun(deps.pool, job, outcome)
+      await finishRun(deps.pool, runId, outcome)
       if (outcome.status !== 'ok' && outcome.retryable && job.attempt < job.maxAttempts) {
         await scheduleRetry(deps.pool, job.scheduleId, job.occurrence, job.attempt, new Date(Date.now() + 60_000))
       } else {
@@ -1236,7 +1240,12 @@ export function createSchedulerLoop(deps: SchedulerDeps) {
       log({ ts: new Date().toISOString(), job: job.key, occurrence: job.occurrence.toISOString(), status: outcome.status, exitCode: outcome.exitCode ?? null, durationMs: outcome.durationMs ?? null })
     } catch (e) {
       const msg = e instanceof Error ? e.message : String(e)
-      await recordRun(deps.pool, job, { status: 'failed', error: msg }).catch(() => {})
+      if (runId !== undefined) {
+        await finishRun(deps.pool, runId, { status: 'failed', error: msg }).catch(() => {})
+      } else {
+        // startRun 本身失败（库不可用）：没有行可回填，只能记日志。
+        log({ ts: new Date().toISOString(), job: job.key, error: `startRun failed: ${msg}` })
+      }
       await clearRetry(deps.pool, job.scheduleId).catch(() => {})
       log({ ts: new Date().toISOString(), job: job.key, error: msg })
     } finally {
@@ -1256,7 +1265,7 @@ export function createSchedulerLoop(deps: SchedulerDeps) {
       const free = Math.max(0, max - running.size)
       if (free === 0) return stats
       const manual = await claimQueuedManual(deps.pool, free, t)
-      // claimQueuedManual 已把行置 running，这里直接起进程（不重复查 hasRunning）
+      // claimQueuedManual 已把行置 running 并带回 runId，这里直接起进程（不重复查 hasRunning）
       for (const job of manual) { void runOne(job); stats.started += 1 }
       stats.claimed += manual.length
 
@@ -1266,7 +1275,10 @@ export function createSchedulerLoop(deps: SchedulerDeps) {
       stats.claimed += due.length
       for (const job of due) {
         if (running.has(job.scheduleId) || await hasRunning(deps.pool, job.scheduleId)) {
-          await recordRun(deps.pool, job, { status: 'skipped', error: 'previous run still running' })
+          // skipped 也走 startRun + finishRun：与正常路径同一套行构造（occurrence/params_snapshot 一致），
+          // 不为「一条终态行」再养第二种 INSERT 形态。running 窗口只存在于本 tick 内两条语句之间。
+          const runId = await startRun(deps.pool, job)
+          await finishRun(deps.pool, runId, { status: 'skipped', error: 'previous run still running' })
           stats.skipped += 1
           continue
         }

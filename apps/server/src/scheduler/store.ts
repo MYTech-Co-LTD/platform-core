@@ -23,6 +23,9 @@ export interface ClaimedJob {
   isRetry: boolean
   ownerOrg: string | null
   ownerNamespace: string | null
+  /** 手动入队时由 claimQueuedManual 填入（该行已建好且已置 running）；
+   *  调度触发没有预建行，由 startRun 返回 runId。 */
+  runId?: number
 }
 
 export interface RunOutcome {
@@ -54,7 +57,10 @@ interface Row {
 const SELECT_COLS = `id,key,cron,timezone,params,timeout_ms,max_attempts,expected_interval_secs,
   next_run_at,retry_at,retry_attempt,owner_org,owner_namespace`
 
-function toClaimed(r: Row, p: { occurrence: Date; attempt: number; isRetry: boolean }): ClaimedJob {
+function toClaimed(
+  r: Row,
+  p: { occurrence: Date; attempt: number; isRetry: boolean; runId?: number },
+): ClaimedJob {
   return {
     scheduleId: Number(r.id),
     key: r.key,
@@ -66,6 +72,7 @@ function toClaimed(r: Row, p: { occurrence: Date; attempt: number; isRetry: bool
     isRetry: p.isRetry,
     ownerOrg: r.owner_org,
     ownerNamespace: r.owner_namespace,
+    ...(p.runId === undefined ? {} : { runId: p.runId }),
   }
 }
 
@@ -147,7 +154,9 @@ export async function claimQueuedManual(pool: Pool, limit: number, now: Date): P
         `update platform.job_run set status='running', started_at=$2, attempt=1 where id=$1`,
         [r.run_id, now],
       )
-      out.push(toClaimed(r, { occurrence: new Date(r.occurrence), attempt: 1, isRetry: false }))
+      out.push(toClaimed(r, {
+        occurrence: new Date(r.occurrence), attempt: 1, isRetry: false, runId: Number(r.run_id),
+      }))
     }
     await client.query('commit')
     return out
@@ -159,21 +168,20 @@ export async function claimQueuedManual(pool: Pool, limit: number, now: Date): P
   }
 }
 
-/** 调度触发的运行：新建 run 行（收尾时写终态），返回 runId。 */
-export async function recordRun(pool: Pool, job: ClaimedJob, o: RunOutcome): Promise<number> {
+/** 调度触发的运行：**派发前**先建 `running` 行（spec §8：派发前查 running 行、僵尸回收，
+ *  对两种触发方式都必须成立），返回 runId；终态由 finishRun 回填。 */
+export async function startRun(pool: Pool, job: ClaimedJob): Promise<number> {
   const { rows } = await pool.query<{ id: string }>(
     `insert into platform.job_run
-       (schedule_id,key,occurrence,owner_org,owner_namespace,params_snapshot,trigger,status,attempt,
-        started_at,finished_at,exit_code,duration_ms,output_tail,error)
-     values ($1,$2,$3,$4,$5,$6::jsonb,'schedule',$7,$8, now(), now(), $9,$10,$11,$12) returning id`,
+       (schedule_id,key,occurrence,owner_org,owner_namespace,params_snapshot,trigger,status,attempt,started_at)
+     values ($1,$2,$3,$4,$5,$6::jsonb,'schedule','running',$7, now()) returning id`,
     [job.scheduleId, job.key, job.occurrence, job.ownerOrg, job.ownerNamespace,
-      JSON.stringify(job.params ?? {}), o.status, job.attempt,
-      o.exitCode ?? null, o.durationMs ?? null, o.outputTail ?? null, o.error ?? null],
+      JSON.stringify(job.params ?? {}), job.attempt],
   )
   return Number(rows[0].id)
 }
 
-/** 手动触发的运行行已由 claimQueuedManual 建好（running），这里只回填终态，**不新建行**。 */
+/** 回填运行终态。行由 startRun（调度触发）或 claimQueuedManual（手动触发）预先建好，**不新建行**。 */
 export async function finishRun(pool: Pool, runId: number, o: RunOutcome): Promise<void> {
   await pool.query(
     `update platform.job_run set status=$2, finished_at=now(), exit_code=$3, duration_ms=$4,
