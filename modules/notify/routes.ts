@@ -4,7 +4,7 @@
 import { randomUUID } from 'node:crypto'
 import { Hono } from 'hono'
 import type { Pool } from 'pg'
-import type { ChannelAddressResolver, EventCatalogReader, Identity } from '@platform/sdk'
+import type { ChannelAddressResolver, EventCatalogReader, Identity, SchedulerPortFactory } from '@platform/sdk'
 import { validatePayload } from '@platform/sdk'
 import { checkWecomHealth, checkWebhookHealth } from './domain/channel'
 import { resolveDeliverability, type DeliverabilityDeps } from './domain/deliverability'
@@ -29,6 +29,7 @@ export function createNotifyRouter(deps: {
   pool: Pool
   events?: EventCatalogReader
   addresses?: ChannelAddressResolver
+  scheduler?: SchedulerPortFactory
 }) {
   const r = new Hono<Vars>()
   const org = (c: { get: (k: 'identity') => unknown }) => (c.get('identity') as Identity).orgId
@@ -507,7 +508,7 @@ export function createNotifyRouter(deps: {
   })
 
   registerNotifyMcpManage(r, {
-    pool: deps.pool, events: deps.events, addresses: deps.addresses,
+    pool: deps.pool, events: deps.events, addresses: deps.addresses, scheduler: deps.scheduler,
   })
 
   return r

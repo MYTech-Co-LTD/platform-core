@@ -170,6 +170,85 @@ export interface EnqueueEventInput {
 export type UserStatus = 'active' | 'inactive' | 'unknown'
 export type UserStatusResolver = (org: string, name: string) => Promise<UserStatus>
 
+/**
+ * 调度器端口（宿主 `apps/server/src/scheduler/port.ts` 的 `SchedulerPort`）的**结构化投影**。
+ *
+ * 为什么是结构化类型而不是 `import type { SchedulerPort } from 'apps/server'`：SDK 是模块与
+ * 宿主共同的契约层，反向依赖宿主会让「模块可独立装载」不成立。宿主实现由 TypeScript 的
+ * 结构兼容性在**编译期**核对（`apps/server` 里把 SchedulerPort 赋给本类型），所以这里少写
+ * 一个方法/改错一个签名都会红，不需要运行时的二次校验。
+ *
+ * 三条语义（与宿主端口逐字一致，改任何一条都要两边同改）：
+ *  ① **归属只来自端口构造时的 actor**：`owner_org` / `owner_namespace` / `created_by` 不由
+ *     排班入参给；`params` 里的同名键是保留字（宿主会剥掉）。模块经 `SchedulerPortFactory`
+ *     用**请求身份**造端口，端口已绑定好归属。
+ *  ② **跨归属一律 `NOT_FOUND`**（不是 403）——「不存在」与「不属于你」不可区分。
+ *  ③ 错误以 `code` 属性表达（`QUOTA_EXCEEDED` / `NOT_FOUND` / `INVALID_CRON` /
+ *     `JOB_LOCK_TIMEOUT` …）。**这里刻意用 `unknown` 抛出、不把错误形状编死**：错误面还会
+ *     增长，把码表复制进 SDK 就是第二份事实源。调用方按 `(e as { code?: string }).code` 读。
+ */
+export interface SchedulerActorLike {
+  /** 调用者身份（`created_by` 留痕；**不是**授权结论）。 */
+  userId: string
+  /** 归属租户（`owner_org`）。 */
+  org: string
+  /** 归属命名空间（`owner_namespace`）；缺省由宿主工厂补成 `org`（v1 一个 org 一个 namespace）。 */
+  namespace?: string
+}
+
+export interface SchedulerPortLike {
+  createSchedule(input: {
+    key: string
+    cron: string
+    timezone: string
+    params: Record<string, unknown>
+    /**
+     * 期望间隔（秒）：健康判据「该跑没跑」= `2×` 本值。**可省略**——宿主端口会从 cron
+     * 推导一个扫描周期内的**最大**相邻间隔（最小 60s；取 max 防工作日 cron 周末假红）；
+     * 显式传入仍优先并校验 >0。
+     */
+    expectedIntervalSecs?: number
+    timeoutMs?: number
+    maxAttempts?: number
+  }): Promise<{ id: string; nextRunAt: string }>
+  /** 本 actor 的 namespace 配额使用情况（与 createSchedule 的判据同源）。 */
+  quotaOf(): Promise<{
+    schedules: { used: number; limit: number }
+    dailyFirings: { used: number; limit: number }
+    minIntervalSecs: number
+  }>
+  /** `filter.ownerOrg` 被宿主忽略（恒用 actor.org）；`ownerNamespace` 只能收窄到 actor.namespace。 */
+  listSchedules(filter: { ownerOrg: string; ownerNamespace?: string }): Promise<Array<{
+    id: string
+    key: string
+    cron: string
+    enabled: boolean
+    nextRunAt: string | null
+    deletedAt: string | null
+  }>>
+  setScheduleEnabled(id: string, enabled: boolean): Promise<void>
+  /** 软删（运行台账保留）。 */
+  deleteSchedule(id: string): Promise<void>
+  listRuns(scheduleId: string, limit: number): Promise<Array<{
+    id: string
+    status: string
+    startedAt: string
+    finishedAt: string | null
+    exitCode: number | null
+    outputTail: string | null
+  }>>
+  /** 只入队（`trigger='manual'`、`status='queued'`），不 spawn。 */
+  runNow(id: string): Promise<{ runId: string }>
+}
+
+/**
+ * 调度器端口**工厂**：`ModuleContext` 在装载期只构造一次、没有请求期会话，所以宿主注入的
+ * 不是「某个 actor 的端口」，而是「按调用者 actor 造端口」的能力。归属由调用方从**请求身份**
+ * 取（`{userId, org, namespace?}`），工具层负责传——宿主不在装载期替任何租户做绑定。
+ * 端口本身是薄对象（闭包 + pool 引用），每次调用新建的成本可忽略。
+ */
+export type SchedulerPortFactory = (actor: SchedulerActorLike) => SchedulerPortLike
+
 export interface ModuleContext {
   pool: Pool
   /**
@@ -182,6 +261,19 @@ export interface ModuleContext {
   events?: EventCatalogReader
   /** 任意模块可用：发事件（异步入 outbox，fail-open）。未注入 = notify 模块未装载。 */
   notify?: NotifyPort
+  /**
+   * 调度器端口**工厂**（宿主装载期注入；W6-P3）。模块只能经它建/查/停/删自己的排班，
+   * **不得**直连 `platform.job_*`（端口是配额与归属的唯一收口）。
+   *
+   * 为什么是工厂而不是现成端口：`ModuleContext` 装载期只构造一次，没有请求期会话；
+   * 固定 actor 会把所有租户的排班混进同一归属桶。**调用方必须用请求身份**调工厂
+   * （`{userId, org, namespace?}`）；`namespace` 缺省由宿主补成 `org`（v1 一个 org 一个
+   * namespace）。
+   *
+   * **未注入 = 旧宿主/单测环境**（与 `notify` 同款向后兼容契约）：模块必须**显式判空**并
+   * 降级（notify 工具面返回 `SCHEDULER_UNAVAILABLE`）——不要当「没有排班」，更不能静默成功。
+   */
+  scheduler?: SchedulerPortFactory
   /** 渠道地址解析（Casdoor 用户 → 通道地址）；仅 notify 模块使用。 */
   addresses?: ChannelAddressResolver
   /** 用户活跃态查询（Casdoor 状态）；仅管理/清理面使用。未注入 = 无法判定（unknown）。 */

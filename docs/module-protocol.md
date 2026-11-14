@@ -633,6 +633,51 @@ await ctx.notify?.emit(c.get('identity'), {
 **没有 publish / channel 工具**；`draft_template` 只写草稿，发布仍由持 `notify:publish` 的人在
 console 触发。写操作落 `notify.audit`；通道密钥只以 env 键名出现，任何端点不回显值。
 
+## 模块定时：`ctx.scheduler`（2026-11-14，W6-P3）
+
+宿主把**调度器端口工厂**注入模块上下文：`ctx.scheduler?: (actor) => SchedulerPort`。
+模块只能经它建 / 查 / 停 / 删**自己的**排班；**不得直连 `platform.job_*`**（端口是配额与归属的
+唯一收口）。类型契约在 `packages/platform-sdk/src/module.ts`（`SchedulerPortFactory` /
+`SchedulerPortLike`），宿主实现在 `apps/server/src/scheduler/port.ts`。
+
+### 调用方：用请求身份造端口
+
+```ts
+const id = c.get('identity')            // 宿主注入的请求身份（模块零认证代码）
+const port = ctx.scheduler?.({ userId: id.userId, org: id.orgId })
+// namespace 可省略：宿主补成 org（v1 一个 org 一个 namespace）
+```
+
+**为什么是工厂而不是现成端口**：`ModuleContext` 在装载期只构造一次、没有请求期会话；
+固定 actor 会把所有租户的排班混进同一个归属桶。归属必须由调用方从**请求身份**取。
+
+### 三条语义（与宿主端口逐字一致）
+
+1. **归属只来自身份**：`owner_org` / `owner_namespace` / `created_by` 取自工厂入参的 actor，
+   不由排班入参给；`params` 里的 `ownerOrg` / `ownerNamespace` 是保留字，宿主会剥掉。
+2. **跨归属一律 `NOT_FOUND`**（不是 403）：「不存在」与「不属于你」不可区分，不给枚举留口子。
+3. **错误以 `code` 表达**：`QUOTA_EXCEEDED`（带 `kind`/`limit`）、`NOT_FOUND`、`INVALID_CRON`、
+   `JOB_LOCK_TIMEOUT`（可重试）等；调用方按 `(e as { code?: string }).code` 读，不解析 message。
+   SDK 刻意不把错误码表编死——错误面还会增长，复制一份就是第二事实源。
+
+### v1 边界
+
+- **key 白名单**：agent 只能给 `notify.emit` 建排班；registry 里其它系统 job 不会因为「注册了」
+  就自动对 agent 开放。
+- **配额**（端口唯一收口，模块不要自己计数）：每 namespace **50** 条排班、最小 cron 间隔
+  **5 分钟**、每日 **200** 条 firing；超限 `QUOTA_EXCEEDED` `{kind, limit}`，运维口径见
+  `deploy/jobs.md` §11。
+- **`runNow` 只入队**（`trigger='manual'` / `status='queued'`，执行在 worker）；
+  **`deleteSchedule` 是软删**（运行台账保留，审计面不回删）。
+- **未注入 = 旧宿主 / 单测环境**：`ctx.scheduler` 为 `undefined`，模块必须**显式判空并降级**
+  （notify 工具面返回 `SCHEDULER_UNAVAILABLE`）——不要当「没有排班」，更不能静默成功。
+
+**消费方**：notify 模块的工具面（`modules/notify/tools/schedules.ts`）暴露 8 个 MCP 工具
+（`create_schedule` / `list_schedules` / `pause_schedule` / `resume_schedule` / `delete_schedule` /
+`list_schedule_runs` / `run_schedule_now` / `get_schedule_quota`），只做参数成形与错误透出；
+**不接受任何外发通道参数**——agent 建的排班只发站内通知，外发（企微 / webhook）由人在控制台
+改 notify 规则，没有审批状态机。
+
 ## 接入出站集成：声明即判据（2026-10-31）
 
 > 正典：`docs/superpowers/specs/2026-10-31-integration-health-design.md`（§2.2 判据模型 / §2.5 门禁）。

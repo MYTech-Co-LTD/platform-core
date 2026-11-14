@@ -21,6 +21,7 @@ import { runMigrations } from './migrate'
 import { seedDemo } from './seed'
 import {
   provisionModulePermissionsResilient, loadModules, provisionModulePermissions } from './loader'
+import { makeSchedulerFactory } from './scheduler/factory'
 import type { TenantRow } from './tenant'
 
 const dbUrl = process.env.DATABASE_URL
@@ -1625,6 +1626,184 @@ describe.skipIf(!dbUrl)('loadModules', INTEGRATION_SUITE, () => {
       "select key, module_id from platform.event_catalog where key = 'prodmod.a.b'",
     )
     expect(cat.rows[0]).toEqual({ key: 'prodmod.a.b', module_id: 'prodmod' })
+  })
+
+  // ---- 调度器端口（W6-P3：ctx.scheduler，与 ctx.notify 同款装载期注入）----
+
+  it('注入 ctx.scheduler 工厂：按调用者 actor 绑归属（org-a 建行 / org-b 列举为空）', async () => {
+    cleanupModules.push('schedmod')
+    const modulesDir = await newModulesDir()
+    cleanupSqls.push("delete from platform.job_schedule where owner_org like 'jobtest-p3:loader-%'")
+
+    // fixture 的两条路由都**从请求身份取 actor** 再调工厂——这正是 Task 3 工具的用法，
+    // 也是本用例的靶点：固定 actor 的实现在这里会让两个 org 看到同一份数据。
+    await writeModule(modulesDir, 'schedmod', {
+      'manifest.yaml': manifestYaml(
+        'schedmod', '',
+        'api:\n  internal:\n'
+        + '    - { method: GET, path: /create, scope: schedmod:view }\n'
+        + '    - { method: GET, path: /sched, scope: schedmod:view }',
+      ),
+      'index.ts': [
+        "import { Hono } from 'hono'",
+        "import { defineModule } from '@platform/sdk'",
+        'export default defineModule({',
+        "  manifest: { id: 'schedmod', name: 's', version: '1.0.0', platform: '>=0.1.0',",
+        "    permissions: [{ code: 'schedmod:view', name: 'v' }],",
+        "    api: { internal: [",
+        "      { method: 'GET', path: '/create', scope: 'schedmod:view' },",
+        "      { method: 'GET', path: '/sched', scope: 'schedmod:view' },",
+        '    ] } },',
+        '  createRouter: (ctx) => {',
+        '    const app = new Hono()',
+        "    app.get('/create', async (c) => {",
+        "      const id = c.get('identity')",
+        '      if (!ctx.scheduler) return c.json({ present: false }, 503)',
+        "      const port = ctx.scheduler({ userId: id.userId, org: id.orgId, namespace: id.orgId })",
+        '      return c.json({',
+        '        present: true,',
+        '        created: await port.createSchedule({',
+        "          key: 'notify.emit', cron: '7 * * * *', timezone: 'UTC', params: {},",
+        '          expectedIntervalSecs: 3600,',
+        '        }),',
+        '      })',
+        '    })',
+        "    app.get('/sched', async (c) => {",
+        "      const id = c.get('identity')",
+        '      if (!ctx.scheduler) return c.json({ present: false, rows: null })',
+        "      const port = ctx.scheduler({ userId: id.userId, org: id.orgId, namespace: id.orgId })",
+        '      return c.json({',
+        "        present: typeof ctx.scheduler === 'function',",
+        // ownerOrg 故意传错值：端口必须忽略它、恒用 actor.org（跨归属列举防线）
+        "        rows: await port.listSchedules({ ownerOrg: 'not-mine' }),",
+        '      })',
+        '    })',
+        '    return app',
+        '  },',
+        '})',
+        '',
+      ].join('\n'),
+    })
+
+    // 直接用**生产装配点**的工厂（app.ts 也用它）——不是测试里另抄一份同形 lambda：
+    // 否则工厂被改成固定 actor 时本用例仍然全绿（审阅 I1）。
+    const runtime = await loadModules(modulesDir, {
+      pool,
+      scheduler: makeSchedulerFactory(pool),
+    })
+
+    // 请求身份按头切换（真实链路 = session/PAT/企微中间件注入的 identity）
+    const identityFromHeader = createMiddleware<TestEnv>(async (c, next) => {
+      const org = c.req.header('x-test-org') ?? 'jobtest-p3:loader-org-a'
+      c.set('identity', {
+        userId: `u-${org}`,
+        orgId: org,
+        displayName: 'Fixture User',
+        scopes: ['schedmod:view'],
+        hasScope: (code) => code === 'schedmod:view',
+      })
+      await next()
+    })
+    const app = new Hono<TestEnv>()
+    app.use('*', identityFromHeader)
+    runtime.mount(app)
+
+    // ① 工厂存在且是函数；org-a 的调用者建一条 ⇒ 库行归属 org-a
+    const created = await app.request('/api/modules/schedmod/create', {
+      headers: { 'x-test-org': 'jobtest-p3:loader-org-a' },
+    })
+    expect(created.status).toBe(200)
+    const createdBody = await created.json() as { present: boolean; created: { id: string } }
+    expect(createdBody.present).toBe(true)
+    const row = await pool.query(
+      'select owner_org, owner_namespace, created_by from platform.job_schedule where id = $1',
+      [createdBody.created.id],
+    )
+    expect(row.rows[0]).toEqual({
+      owner_org: 'jobtest-p3:loader-org-a',
+      owner_namespace: 'jobtest-p3:loader-org-a',
+      created_by: 'u-jobtest-p3:loader-org-a',
+    })
+
+    // ② 同一 app、**org-a 自己**列得到刚建的那条（注入层必须双向：不只看别人看不到）
+    const ownRes = await app.request('/api/modules/schedmod/sched', {
+      headers: { 'x-test-org': 'jobtest-p3:loader-org-a' },
+    })
+    expect(ownRes.status).toBe(200)
+    const ownBody = await ownRes.json() as { present: boolean; rows: Array<{ id: string }> }
+    expect(ownBody.present).toBe(true)
+    expect(ownBody.rows.map((r) => r.id)).toEqual([createdBody.created.id])
+
+    // ③ 同一 app、换 org-b 的请求身份列举 ⇒ 空（归属由调用者 actor 决定，不是装载期固定值）
+    const otherOrgRes = await app.request('/api/modules/schedmod/sched', {
+      headers: { 'x-test-org': 'jobtest-p3:loader-org-b' },
+    })
+    expect(otherOrgRes.status).toBe(200)
+    const otherBody = await otherOrgRes.json() as { present: boolean; rows: unknown[] }
+    expect(otherBody.present).toBe(true)
+    expect(otherBody.rows).toEqual([])
+  })
+
+  it('生产装配点 makeSchedulerFactory：缺 namespace 补 org；跨 actor 隔离（变异靶点）', async () => {
+    cleanupSqls.push("delete from platform.job_schedule where owner_org like 'jobtest-p3:factory-%'")
+    const factory = makeSchedulerFactory(pool)
+    const orgA = 'jobtest-p3:factory-org-a'
+    const orgB = 'jobtest-p3:factory-org-b'
+
+    // **不传 namespace**：工厂必须补成 org（v1 一个 org 一个 namespace，M3）
+    const createdA = await factory({ userId: 'u-a', org: orgA }).createSchedule({
+      key: 'notify.emit',
+      cron: '7 * * * *',
+      timezone: 'UTC',
+      params: {},
+      expectedIntervalSecs: 3600,
+    })
+    const row = await pool.query(
+      'select owner_org, owner_namespace, created_by from platform.job_schedule where id = $1',
+      [createdA.id],
+    )
+    expect(row.rows[0]).toEqual({
+      owner_org: orgA,
+      owner_namespace: orgA, // 补丁生效：没传 namespace 时 = org
+      created_by: 'u-a',
+    })
+
+    // A 看得到自己的一条；B 看不到（变异：工厂若忽略入参恒用固定 actor，B 的断言必红）
+    const aRows = await factory({ userId: 'u-a', org: orgA }).listSchedules({ ownerOrg: orgA })
+    expect(aRows.map((r) => r.id)).toEqual([createdA.id])
+    const bRows = await factory({ userId: 'u-b', org: orgB }).listSchedules({ ownerOrg: orgB })
+    expect(bRows).toEqual([])
+  })
+
+  it('未注入 scheduler ⇒ ctx.scheduler 为 undefined（旧宿主/单测的降级态）', async () => {
+    cleanupModules.push('noschedmod')
+    const modulesDir = await newModulesDir()
+    await writeModule(modulesDir, 'noschedmod', {
+      'manifest.yaml': manifestYaml('noschedmod'),
+      'index.ts': [
+        "import { Hono } from 'hono'",
+        "import { defineModule } from '@platform/sdk'",
+        'export default defineModule({',
+        "  manifest: { id: 'noschedmod', name: 'n', version: '1.0.0', platform: '>=0.1.0',",
+        "    permissions: [{ code: 'noschedmod:view', name: 'v' }],",
+        "    api: { internal: [{ method: 'GET', path: '/ping', scope: 'noschedmod:view' }] } },",
+        '  createRouter: (ctx) => {',
+        '    const app = new Hono()',
+        "    app.get('/ping', (c) => c.json({ present: typeof ctx.scheduler === 'function' }))",
+        '    return app',
+        '  },',
+        '})',
+        '',
+      ].join('\n'),
+    })
+
+    const runtime = await loadModules(modulesDir, { pool })
+    const app = new Hono<TestEnv>()
+    app.use('*', injectIdentity(['noschedmod:view']))
+    runtime.mount(app)
+    const res = await app.request('/api/modules/noschedmod/ping')
+    expect(res.status).toBe(200)
+    expect(await res.json()).toEqual({ present: false })
   })
 })
 

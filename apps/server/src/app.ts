@@ -20,6 +20,7 @@ import { CasdoorClient } from '@platform/auth-core'
 import { loadConfig, type AppConfig } from './config'
 import { getPool } from './db'
 import { loadModules, type ModulesRuntime } from './loader'
+import { makeSchedulerFactory } from './scheduler/factory'
 import { runMigrations } from './migrate'
 import { REGISTRY_PATH, startIntegrationProbeLoop } from './integration-probe'
 import { resolveKeyWithTouch } from './api-key-store'
@@ -166,11 +167,17 @@ export async function buildApp(overrides: BuildAppOverrides = {}): Promise<{
     } else if (rawSubscriptionSource !== 'casdoor') {
       console.warn(`[modules] PLATFORM_SUBSCRIPTION_SOURCE=${JSON.stringify(rawSubscriptionSource)} 未知，按 casdoor 处理`)
     }
+    // 调度器端口工厂（W6-P3）：注入模块 `ctx.scheduler`，notify 工具面只经它操作排班。
+    // 装配逻辑在 `scheduler/factory.ts`（可导出纯函数）——测试直接调它，避免「app.ts 内联
+    // lambda 在测试中不可达 ⇒ 改回固定 actor 仍全绿」的结构性盲区（审阅 I1）。
+    // 只要有 pool 就有工厂，不存在 PLATFORM_ORG/multi 的注入分支。
+    const scheduler = makeSchedulerFactory(pool)
     runtime = await loadModules(overrides.modulesDir ?? modulesDir, {
       pool,
       casdoorFor: casdoorFactory,
       subscriptionSource,
       subscriptionCacheTtlMs: Number(process.env.PLATFORM_SUBSCRIPTION_CACHE_TTL_MS) || 60_000,
+      scheduler,
     })
   }
 

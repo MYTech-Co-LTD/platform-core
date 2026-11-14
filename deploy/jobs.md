@@ -26,14 +26,15 @@
   由 `apps/server/src/app.ts:445` 启动，`deploy/docker-compose.yml:77` 的 `INTEGRATION_PROBE_INTERVAL_MS=60000` 开启）——
   它不承担业务 job，不改变本条结论。
 
-**当前状态（2026-11-14，P1 目标 / 待切）**：本调度器**尚未上线**（`apps/server/src/scheduler/` 未建、迁移未落），
-以下全部为**目标迁移项**，此刻还没有任何 job 由本调度器驱动：
+**当前状态（2026-11-15 订正）**：
 
-- `notify.reconcile` / `metric.candidates`：P1 目标，**尚未切流**，此刻仍由 openship job 驱动。
-- `report.scope_scan`：P1 目标，openship 侧本无对应 job，此刻**无任何驱动**（待调度器上线后新建）。
-- `notify-health` / `notify-retention` / `notify-seed-builtin` / `notify-preflight` / `org-sync`：待切（W6-P4），
-  此刻仍由 openship job 驱动。
-- `metric-retire`：待切（W6-P4），**此刻无任何驱动（openship job 未建）**。
+- **P1 已上线并完成切流**（迁移 018 + 调度器 + 三个 job）：`notify.reconcile`（mytech + 山海两实例）、
+  `metric.candidates`（仅山海）、`report.scope_scan`（两实例）**已由内置调度器驱动**，
+  openship 对应 job 已停。
+- **P2 已上线**：`SchedulerPort` + `notify.emit` handler + 一次性延迟 + 软删。
+- **P3 随本 PR 上线**：agent 排班工具面 + 配额（§11）。
+- **仍待切（W6-P4）**：`notify-preflight` / `notify-retention` / `metric-retire` / `org-sync`；
+  `notify-seed-builtin` 启动期化、`notify-health` 并入 worker loop。
 
 逐项状态见 §5 切流表。
 
@@ -125,15 +126,15 @@
 
 **按实例各做一次**：`notify.reconcile` / `org-sync` 在 openship 各有两条作业（mytech + 山海），两实例各有独立平台库与独立 `platform.job_schedule`。切流与回滚必须**按实例各执行一遍**；只关一个实例会留下双调度者。实例与 openship job key 的对应见下表及 `deploy/notify-reconcile-job.md` / `deploy/org-sync-job.md` 的生产实例表。
 
-**切流表（P1 目标 / 待切）**：
+**切流表（已切 / 待切）**：
 
-> 切流未执行前，`notify.reconcile` / `metric.candidates` 仍由 openship job 驱动。
+> P1 的三个 job **已切流**；「当前驱动」为实际状态。openship 原 key 保留在表中用于回滚（现已停用）。
 
 | job | 阶段 | 当前驱动 | 实例 / openship key |
 |---|---|---|---|
-| `notify.reconcile` | P1 目标 / 待切 | openship job（切流未执行前） | mytech `custom:KJ_JBrbq68jAHVlO`；山海 `custom:QSr7oZ5KBAVOqx5j`（见 `deploy/notify-reconcile-job.md`） |
-| `metric.candidates` | P1 目标 / 待切 | openship job（切流未执行前） | 仅山海 `custom:tB6ulrsKtgW852WL` |
-| `report.scope_scan` | P1 目标 / 待切 | 无（openship 侧本无对应 job） | 两实例各建一条 |
+| `notify.reconcile` | 已切（W6-P1） | worker 的 `platform.scheduler` | 原 openship key（已停）：mytech `custom:KJ_JBrbq68jAHVlO`；山海 `custom:QSr7oZ5KBAVOqx5j`（见 `deploy/notify-reconcile-job.md`） |
+| `metric.candidates` | 已切（W6-P1） | worker 的 `platform.scheduler` | 原 openship key（已停）：仅山海 `custom:tB6ulrsKtgW852WL` |
+| `report.scope_scan` | 已切（W6-P1） | worker 的 `platform.scheduler` | 两实例各一条（openship 侧本无对应 job） |
 | `notify-preflight` | 待切（W6-P4） | openship job | 见 `deploy/notify-jobs.md` |
 | `notify-retention` | 待切（W6-P4） | openship job（仅 mytech） | 见 `deploy/notify-jobs.md` |
 | `notify-seed-builtin` | 待切（W6-P4，计划启动期化） | openship job（mytech + 山海） | 见 `deploy/notify-jobs.md` |
@@ -141,8 +142,9 @@
 | `metric-retire` | 待切（W6-P4） | **无任何驱动（openship job 未建）** | 见 `deploy/metric-retire-job.md` |
 | `org-sync` | 待切（W6-P4） | openship job | mytech `custom:qvkapKmBf4jI4H6T`；山海 `custom:dbuJg85a8UjjObB7`（见 `deploy/org-sync-job.md`） |
 
-**顺序按爆炸半径**：`notify.reconcile` → `metric.candidates` → `report.scope_scan` → `notify-preflight` → `notify-retention` → `metric.retire` → `org-sync`。
-未完成切流的 job（**包括 P1 目标项**）在走完全部四步之前都仍由原驱动方负责——不要提前置 `enabled=true`。
+**顺序按爆炸半径**：已完成 `notify.reconcile` → `metric.candidates` → `report.scope_scan`；
+剩余 `notify-preflight` → `notify-retention` → `metric.retire` → `org-sync`。
+未完成切流的 job 在走完全部四步之前都仍由原驱动方负责——不要提前置 `enabled=true`。
 
 **切流期红线**：发现双调度者（DB `enabled=true` 且 openship job 仍启用）⇒ 立即停 DB 侧 `enabled`，再排查 openship，不要在两边同时「先看看」。
 
@@ -229,3 +231,64 @@
 - [ ] DB 置 `enabled=true` + `next_run_at` 为下一个未来时点。
 - [ ] 首条 `job_run` 为 `ok`；openship 侧保持安静。
 - [ ] 回滚路径已知：`SCHEDULER_ENABLED=0` + 反向切流（§6）。
+
+## 11. agent 排班（P3，2026-11-14 拍板）
+
+agent 经 notify 工具面管理**周期消息排班**（触发 `notify.emit`）。工具只调
+`ctx.scheduler(actor)` → `SchedulerPort`，**不直连 `platform.job_*`**；归属
+（`owner_org` / `owner_namespace` / `created_by`）只来自请求身份，参数里的同名键是保留字、
+会被端口剥掉。v1 一个 org 一个 namespace（`namespace` 缺省 = `org`），下文的「每 namespace」
+即「每租户」。配额在**端口层唯一收口**，工具层只做参数成形、不自己计数。
+
+### 11.1 配额（50 / 5 分钟 / 200）
+
+| 配额 | 值 | 闸门时机 | 超限错误 |
+|---|---|---|---|
+| 排班条数 | 每 namespace 最多 **50** 条（`source='agent'` 且未软删） | `create_schedule` | `QUOTA_EXCEEDED` `{kind:'schedules', limit:50}` |
+| 最小 cron 间隔 | **5 分钟**（300s；按**完整周期内**的最小相邻间隔，不是只看创建时刻的下两格） | `create_schedule` | `QUOTA_EXCEEDED` `{kind:'min_interval', limit:300}` |
+| 每日 firing | 每 namespace 最多 **200** 条（**滚动 24 小时**，跨该 namespace 的全部排班） | `create_schedule` | `QUOTA_EXCEEDED` `{kind:'daily_firings', limit:200}` |
+
+- 超限统一为 `code='QUOTA_EXCEEDED'` + 结构化的 `{kind, limit}`，`kind ∈ schedules|min_interval|daily_firings`；**不要按文本匹配**。
+- **每日 firing 是「建排班时」的闸门，不是运行期 kill switch**：已建好的排班不会被逐条拦截——它防的是「新排班把当日额度继续抬高」。
+- 运维自查：`get_schedule_quota` 返回 `{schedules:{used,limit}, dailyFirings:{used,limit}, minIntervalSecs}`，与创建闸门共用同一组 SQL（口径不会漂移）。**排班建不出来先看它**，不要先猜 cron。
+
+### 11.2 外发通道：不对 agent 开放
+
+- agent 建的排班**只发站内通知**；通道参数（channel / webhook / wecom…）在工具层被丢弃，
+  `params` 只白名单成形 `{eventKey, scope?, payload?}`。
+- 企微 / webhook 等外发渠道**由人在控制台改 notify 规则**（工具面不提供发布/通道工具）。
+- **没有审批状态机**：不做「agent 提交 → 人审批 → 放开外发」；要放开外发就人去改规则。
+
+### 11.3 工具面（8 个）
+
+| 工具 | 语义 |
+|---|---|
+| `create_schedule` | 建排班；`params.eventKey` v1 只支持 `notify.emit`（key 白名单） |
+| `list_schedules` | 列出本 namespace 由 agent 建的排班（`source='agent'`，不含已软删） |
+| `pause_schedule` / `resume_schedule` | 启停；`enabled=false` 只停**自动排班**，手动触发不受影响 |
+| `delete_schedule` | **软删**：置 `deleted_at` / `enabled=false`、清触发槽；**运行台账保留**（审计面不回删） |
+| `list_schedule_runs` | 运行台账（最近 N 条，默认 50、上限 100） |
+| `run_schedule_now` | **只入队**：插一行 `trigger='manual'` / `status='queued'`，执行在 worker；不改 cron、不占 cron bucket |
+| `get_schedule_quota` | 只读配额使用（§11.1） |
+
+### 11.4 `expected_interval_secs` 与健康判据
+
+- 创建时可省略。省略 ⇒ 端口从 cron 推导**一个完整扫描周期内的最大相邻间隔**（最小 60s），
+  作为健康判据的分母；显式传入仍优先，必须 > 0。
+- 为什么取最大：§8 的「该跑没跑」= `2 × expected_interval_secs`。工作日 cron（`0 0 * * 1-5`）
+  的相邻两格是 86400，但周五→周一是 259200——只看向邻两格会在每周日假红。取周期内最大值 ⇒
+  **不假红**；代价是稀疏 cron 发现得晚（宁可晚报，不可假报）。
+- 改这个值等于改健康判红的窗口，别随手调。
+
+### 11.5 错误码（与配额区分）
+
+| code | 含义 | 处置 |
+|---|---|---|
+| `QUOTA_EXCEEDED` | 撞 §11.1 任一配额（带 `kind`/`limit`） | 看 `get_schedule_quota`；删/停旧排班或放慢 cron |
+| `JOB_LOCK_TIMEOUT` | 配额锁 / 排班行锁 2s 内有界等待失败（并发创建或触发） | **可重试**（工具返回 `retryable:true`）；持续出现查持锁长事务 |
+| `JOB_ALREADY_PENDING` | 该排班已有 `queued|running` 行 | 等当前运行结束，不要重复触发 |
+| `NOT_FOUND` | 不存在 / 不属于本 namespace / 已软删（三者不可区分） | 用 `list_schedules` 核对 id |
+| `SCHEDULER_UNAVAILABLE` | 宿主未注入 `ctx.scheduler`（旧宿主/单测环境） | 部署问题，不是排班问题 |
+| `INVALID_PARAMS` / `INVALID_CRON` / `INVALID_SCHEDULE` / `INVALID_INTERVAL` / `PARAMS_TOO_LARGE` / `UNKNOWN_JOB_KEY` | 入参不合法（缺必填、cron 语法或时区、间隔、`params` >16KB、key 不在白名单） | 按错误码修入参 |
+
+> `QUOTA_EXCEEDED` 与 `JOB_LOCK_TIMEOUT` **不是一回事**：前者要人清额度，后者重试即可。

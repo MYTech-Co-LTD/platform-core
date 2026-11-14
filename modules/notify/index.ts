@@ -17,5 +17,6 @@ const manifest = ManifestSchema.parse(
 export default defineModule({
   manifest,
   createPorts: ({ pool }) => createPorts({ pool }),
-  createRouter: ({ pool, events, addresses }) => createNotifyRouter({ pool, events, addresses }),
+  createRouter: ({ pool, events, addresses, scheduler }) =>
+    createNotifyRouter({ pool, events, addresses, scheduler }),
 })
