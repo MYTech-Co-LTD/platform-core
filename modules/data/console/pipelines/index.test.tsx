@@ -114,6 +114,19 @@ describe('管线地图', () => {
     })
   })
 
+  it('断点口径与 domain 一致：只被视图读的资产不算断点', async () => {
+    m.mockImplementation(async () => json({
+      ...MAP,
+      assets: [{ ...MAP.assets[1]!, views: ['vw_x'] }],
+    }))
+    render(<PipelinesPage />)
+    await waitFor(() => expect(screen.getByText('资产')).toBeInTheDocument())
+    await waitFor(() => expect(screen.getByText('断点')).toBeInTheDocument())
+    // 断点 KPI 的数值应为 0（该资产有视图消费）
+    const kpi = screen.getByText('断点').parentElement!
+    expect(within(kpi).getByText('0')).toBeInTheDocument()
+  })
+
   it('接口失败 ⇒ 人话 + 重试', async () => {
     m.mockImplementation(async () => new Response(JSON.stringify({ error: 'FORBIDDEN' }), { status: 403 }))
     render(<PipelinesPage />)

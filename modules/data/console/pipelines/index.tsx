@@ -208,7 +208,8 @@ export default function PipelinesPage() {
     )
   }
 
-  const broken = data === null ? 0 : data.assets.filter((a) => a.staging === null).length
+  // 断点与 domain 同一定义：既没有 staging、也没有视图消费（只有视图在读的资产不算断点）
+  const broken = data === null ? 0 : data.assets.filter((a) => a.staging === null && a.views.length === 0).length
   const livePipelineIds = data === null ? [] : data.assets
     .flatMap((a) => a.pipelines)
     .filter((p) => p.scheduled && p.enabled)
