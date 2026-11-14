@@ -19,7 +19,7 @@ export interface JobDef {
   /**
    * handler-only：只登记 handler 供 runner 按 key 查找，**不建系统排班行**。
    * 用于「没有系统排班、只在被 agent/console 排班调用时才存在」的 job（如 `notify.emit`）。
-   * 这类条目的 cron/timezone 只是 JobDef 的 schema 占位，seed 不读、也不会落库。
+   * 这类条目的 cron/timezone 只是 JobDef 的 schema 占位，seed 不用于排班（占位值仅满足 schema 必填；校验仍全量跑）。
    */
   noSystemSchedule?: boolean
 }

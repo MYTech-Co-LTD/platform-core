@@ -85,6 +85,11 @@ describePg('seedSchedules', () => {
   })
 })
 
+/** registry 的 script 是相对仓根的路径；用测试文件位置锚定仓根（apps/server/src/scheduler → ../../../..），不依赖 cwd。 */
+function repoPath(relative: string): string {
+  return fileURLToPath(new URL(`../../../../${relative}`, import.meta.url))
+}
+
 describe('JOB_REGISTRY', () => {
   // 不依赖 DB：纯目录断言（无 DATABASE_URL 的裸跑也保这层覆盖）。
   it('★ 含 handler-only 的 notify.emit，且 script 指向仓内真实文件', () => {
@@ -92,8 +97,11 @@ describe('JOB_REGISTRY', () => {
     expect(def).toBeDefined()
     expect(def!.noSystemSchedule).toBe(true)
     expect(def!.script).toBe('scripts/notify-emit-job.mjs')
-    // 用测试文件位置锚定仓根（apps/server/src/scheduler → ../../../..），防手滑写错路径。
-    const scriptPath = fileURLToPath(new URL(`../../../../${def!.script}`, import.meta.url))
-    expect(existsSync(scriptPath)).toBe(true)
+    expect(existsSync(repoPath(def!.script))).toBe(true)
+  })
+
+  it('★ 每个条目的 script 都指向仓内真实文件（新增条目忘建文件 ⇒ 红）', () => {
+    const missing = JOB_REGISTRY.filter((d) => !existsSync(repoPath(d.script))).map((d) => `${d.key} → ${d.script}`)
+    expect(missing).toEqual([])
   })
 })
