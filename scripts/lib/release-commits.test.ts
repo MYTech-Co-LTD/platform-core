@@ -69,7 +69,11 @@ describe('真实仓库：发布门必须能过（黑盒）', () => {
       maxBuffer: 32 * 1024 * 1024,
     })
     expect(out).not.toContain('拒绝发版')
-    expect(out).toMatch(/^- 【/m)
+    // 两种环境都要成立：
+    //   本机/全量历史 ⇒ 解析出条目（`- 【…】`）；
+    //   PR 的 CI 是浅克隆 + merge commit，`--no-merges` 后为空 ⇒ 脚本打印「无可见变更」并 exit 0。
+    // 这条只钉「门不误判」，不钉「一定有东西可发」。
+    expect(/^- 【/m.test(out) || out.includes('无可见变更')).toBe(true)
     // ★ 零写入：dry-run 在本地与 test:guard 里都会被跑。早先的写入在 DRY 退出之前，
     //   每跑一次就改一次 CHANGELOG，还会被 `git add -A` 顺手提交——这条钉住它不再发生。
     const dirty = execFileSync('git', ['status', '--porcelain', 'CHANGELOG.md'], {
