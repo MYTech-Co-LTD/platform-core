@@ -204,7 +204,8 @@ export interface SchedulerPortLike {
     params: Record<string, unknown>
     /**
      * 期望间隔（秒）：健康判据「该跑没跑」= `2×` 本值。**可省略**——宿主端口会从 cron
-     * 推导典型间隔（相邻两次触发之差，最小 60s）；显式传入仍优先并校验 >0。
+     * 推导一个扫描周期内的**最大**相邻间隔（最小 60s；取 max 防工作日 cron 周末假红）；
+     * 显式传入仍优先并校验 >0。
      */
     expectedIntervalSecs?: number
     timeoutMs?: number

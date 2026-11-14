@@ -139,18 +139,28 @@ const QUOTA_SNAPSHOT_SQL = `
 const MIN_INTERVAL_REF = new Date('2026-01-05T00:00:00.000Z')
 
 /**
- * 「典型间隔」（秒）：固定参考点起**相邻两次**触发的差值，向上取整，最小 60。
+ * 「期望间隔」的缺省值（秒）：**一个完整扫描周期内的最大相邻间隔**，向上取整，最小 60。
  *
- * 为什么需要它：`health.ts` 的「该跑没跑」= `2 × expected_interval_secs`。
- * 推小了（如一律 300）小时/日级排班会在两格没跑时就假红；推大了（如一律 86400）
- * 小时级排班要 48h 才报——那是迟报。取节奏本身，两个方向都不偏。
- * 与 `minimumGapSecs` 的分工：后者是**整周期内的最小间隔**（配额判据，burst 也要抓）；
- * 这里要的是「正常节奏多久一次」，只看参考点后的相邻两格。
+ * 为什么是最大间隔：`health.ts` 的「该跑没跑」= `2 × expected_interval_secs`。
+ * 只看向邻两格会漏掉「工作日」cron 的周末：`0 0 * * 1-5` 的相邻两格是 86400，
+ * 但周五→周一是 259200，`2×86400` 会在每周日假红约一天。取扫描窗口内的最大值 ⇒
+ * **不会假红**；代价是对稀疏 cron 发现得晚（宁可晚报，不可假报）。
+ *
+ * 窗口/迭代上限复用 `minimumGapSecs` 的 8 天基础设施（分钟/小时/星期以周为周期，
+ * 8 天足以覆盖任意一次相邻触发）；这里**不 early-exit**，必须扫完取 max。
+ * 与 `minimumGapSecs` 的分工：后者取**最小间隔**（配额判据，burst 也要抓）。
  */
-function typicalIntervalSecs(expr: string, timeZone: string): number {
-  const first = nextRunAt(expr, timeZone, MIN_INTERVAL_REF)
-  const second = nextRunAt(expr, timeZone, first)
-  return Math.max(Math.ceil((second.getTime() - first.getTime()) / 1000), 60)
+function maxIntervalSecs(expr: string, timeZone: string): number {
+  let prev = nextRunAt(expr, timeZone, MIN_INTERVAL_REF)
+  const end = prev.getTime() + MIN_INTERVAL_SCAN_MS
+  let max = 0
+  for (let i = 0; i < MIN_INTERVAL_SCAN_MAX_ITER && prev.getTime() <= end; i++) {
+    const next = nextRunAt(expr, timeZone, prev)
+    const gap = (next.getTime() - prev.getTime()) / 1000
+    if (gap > max) max = gap
+    prev = next
+  }
+  return Math.max(Math.ceil(max), 60)
 }
 /** cron 的分钟/小时/星期以周为周期：扫 8 天足以覆盖任意一次相邻触发。 */
 const MIN_INTERVAL_SCAN_MS = 8 * 24 * 60 * 60 * 1000
@@ -272,7 +282,7 @@ export function buildSchedulerPort(deps: {
         fail('UNKNOWN_JOB_KEY', input.key)
       }
       if (!isValidCron(input.cron)) fail('INVALID_CRON', input.cron)
-      // 显式值优先并校验；缺省在 nextRunAt 解析成功后从 cron 推导（见 typicalIntervalSecs）。
+      // 显式值优先并校验；缺省在 nextRunAt 解析成功后从 cron 推导（见 maxIntervalSecs）。
       const explicitIntervalSecs = input.expectedIntervalSecs === undefined
         ? undefined
         : positiveInt(input.expectedIntervalSecs, 'INVALID_INTERVAL')
@@ -300,7 +310,7 @@ export function buildSchedulerPort(deps: {
       let expectedIntervalSecs = explicitIntervalSecs
       if (expectedIntervalSecs === undefined) {
         try {
-          expectedIntervalSecs = typicalIntervalSecs(input.cron, input.timezone)
+          expectedIntervalSecs = maxIntervalSecs(input.cron, input.timezone)
         } catch (e) {
           // 时区非法等：与 nextAt 失败同码（语法已过 isValidCron）。
           fail('INVALID_SCHEDULE', e instanceof Error ? e.message : String(e))
@@ -383,9 +393,11 @@ export function buildSchedulerPort(deps: {
       // 归属恒取 actor：`filter.ownerOrg` 只为接口兼容而保留，**传入值被忽略**。
       // 若沿用调用方传值，P3 适配层一旦透传客户端参数就是跨租户列举——端口自己必须兜住。
       const values: unknown[] = [actor.org]
+      // 列举面是给 agent 用的（工具描述：「由 agent 建的排班」）⇒ 按 source 收口。
+      // 不能只靠 owner_org 非空：system 行目前 owner 为空，但这是数据现状而非契约。
       let sql = `select id, key, cron, enabled, next_run_at, deleted_at
                    from platform.job_schedule
-                  where owner_org = $1 and deleted_at is null`
+                  where owner_org = $1 and source = 'agent' and deleted_at is null`
       // namespace 只能**收窄**：传了别的值 ⇒ 空数组（列举类接口返回空比抛错更合适，也不泄露存在性）。
       if (filter.ownerNamespace !== undefined) {
         if (filter.ownerNamespace !== actor.namespace) return []

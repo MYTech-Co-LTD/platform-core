@@ -130,15 +130,18 @@ describePg('schedules tool face (db)', () => {
     })
   })
 
-  it('expectedIntervalSecs：缺省从 cron 推导（小时级 3600 / 日级 86400），显式值仍优先', async () => {
+  it('expectedIntervalSecs：缺省取扫描周期内最大间隔（工作日常规 259200），显式值仍优先', async () => {
     const base = { timezone: 'UTC', params: { eventKey: 'notify.emit' } }
     const hourly = await call('create_schedule', { ...base, cron: '0 * * * *' })
     const daily = await call('create_schedule', { ...base, cron: '0 3 * * *' })
+    // 工作日 cron：相邻两格是 86400，但周五→周一是 259200；只看向邻两格 ⇒ 周日假红。
+    const weekdays = await call('create_schedule', { ...base, cron: '0 0 * * 1-5' })
     const explicit = await call('create_schedule', { ...base, cron: '0 * * * *', expectedIntervalSecs: 1234 })
-    expect(hourly.isError || daily.isError || explicit.isError).toBe(false)
+    expect(hourly.isError || daily.isError || weekdays.isError || explicit.isError).toBe(false)
 
     expect(await intervalOf(String(hourly.body.id))).toBe(3600)
     expect(await intervalOf(String(daily.body.id))).toBe(86_400)
+    expect(await intervalOf(String(weekdays.body.id))).toBeGreaterThanOrEqual(259_200)
     expect(await intervalOf(String(explicit.body.id))).toBe(1234)
   })
 
@@ -150,6 +153,14 @@ describePg('schedules tool face (db)', () => {
 
     const b = await call('list_schedules', {}, actorB)
     expect(b.body.schedules).toEqual([])
+
+    // 列举按 source 收口：system 行即使带了本 org 的 owner_org 也不该出现（M2）。
+    const sys = await pool.query(
+      `insert into platform.job_schedule(key,cron,timezone,source,owner_org,enabled,expected_interval_secs)
+       values ('jobtest-p3tool:system','7 * * * *','UTC','system',$1,false,3600) returning id`,
+      [ORG_A])
+    const aAgain = await call('list_schedules')
+    expect((aAgain.body.schedules as Array<{ id: string }>).some((x) => x.id === String(sys.rows[0].id))).toBe(false)
   })
 
   it('pause_schedule / resume_schedule：enabled 翻转', async () => {

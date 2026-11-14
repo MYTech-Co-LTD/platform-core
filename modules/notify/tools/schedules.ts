@@ -73,7 +73,7 @@ export const SCHEDULE_TOOLS: ScheduleToolMeta[] = [
         additionalProperties: false,
       },
       timezone: { type: 'string', description: 'IANA 时区，缺省 UTC' },
-      expectedIntervalSecs: { type: 'number', description: '期望间隔（秒）；缺省由端口从 cron 推导（相邻两次触发之差）' },
+      expectedIntervalSecs: { type: 'number', description: '期望间隔（秒）；缺省由端口从 cron 推导扫描周期内的最大相邻间隔' },
     },
     ['cron', 'params'], true, 'notify:manage'),
   t('list_schedules', '列出本租户由 agent 建的排班（含启停状态与下次触发时间）。', {}, [], false, null),
@@ -158,7 +158,7 @@ export async function callScheduleTool(
       if (params.payload !== undefined) jobParams.payload = params.payload
 
       const timezone = str(args.timezone) || 'UTC'
-      // 不传就不传：端口从 cron 推导典型间隔（health 的 2× 判据才不会假红/迟报）。
+      // 不传就不传：端口从 cron 推导扫描周期内的最大相邻间隔（health 的 2× 判据才不会假红）。
       const expectedIntervalSecs = typeof args.expectedIntervalSecs === 'number'
         ? Math.trunc(args.expectedIntervalSecs)
         : undefined
