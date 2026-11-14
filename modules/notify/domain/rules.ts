@@ -5,6 +5,17 @@ import type { NotificationEventDecl } from '@platform/sdk'
 
 export type RuleOrigin = 'derived' | 'manual'
 
+/**
+ * 系统预留的规则 id 前缀：`derived:` 是 seed 派生、`manual:` 是 env 兜底。
+ * 客户端（HTTP/MCP）**不得**用这些 id 做 upsert，否则会覆盖系统规则
+ * （origin 被改成 manual、默认行为被静默替换）。
+ */
+export const RESERVED_RULE_ID_PREFIXES = ['derived:', 'manual:'] as const
+
+export function isWritableRuleId(id: string): boolean {
+  return !RESERVED_RULE_ID_PREFIXES.some((p) => id.startsWith(p))
+}
+
 export interface NotificationRule {
   org: string
   id: string

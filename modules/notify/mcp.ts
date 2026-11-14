@@ -14,7 +14,7 @@ import { callScheduleTool } from './tools/schedules'
 import { resolveDeliverability } from './domain/deliverability'
 import { resolveDeliveryAddress } from './domain/resolve-address'
 import { renderContents } from './domain/render'
-import { validateRule } from './domain/rules'
+import { isWritableRuleId, validateRule } from './domain/rules'
 import { samplePayload, validateContents } from './domain/template'
 import {
   audit, createTemplateRevision, getAgentNamespace, getChannel, getEventDecl,
@@ -112,6 +112,8 @@ export async function callTool(
   if (name === 'propose_rule' || name === 'update_rule') {
     const id = name === 'update_rule' ? str(args.id) : `rule:${randomUUID()}`
     if (name === 'update_rule' && !id) return err('id_required')
+    // 系统规则（derived:/manual:）只能由 seed/env 管理；agent 不得覆盖。
+    if (name === 'update_rule' && !isWritableRuleId(id)) return err('rule_id_reserved')
 
     const eventKey = str(args.eventKey)
     const recipientKey = str(args.recipientKey)
