@@ -615,6 +615,11 @@ git commit -m "feat(data): 调度任务目录与幂等 seed（Wave 6 P1）"
 
 ### Task 5: store（claim / retry / 台账 / 心跳 / 僵尸回收）
 
+> ⚠️ **本段代码块已废弃，以仓库代码为准（claim 即建 running 行）**。
+> 下方接口清单、测试片段与实现块是初版草案（`recordRun` / `startRun` / 收尾才建行），
+> 已被「claim 事务内建 running + finishRun 回填 + retry_occurrence + 手动/排班互斥」取代；
+> 差异与理由见 `.superpowers/sdd/2026-11-14-scheduler-p1/task-5-report.md`。
+
 **Files:**
 - Create: `apps/server/src/scheduler/store.ts`
 - Test: `apps/server/src/scheduler/store.test.ts`
@@ -1189,9 +1194,6 @@ import {
   type ClaimedJob, type RunOutcome,
 } from './store'
 
-/** 排队超过 5 分钟仍未执行 ⇒ 视为卡死（queued 也占路由 busy 判定，不能被永久占住）。 */
-const QUEUED_STALE_MS = 5 * 60_000
-
 export interface SchedulerDeps {
   pool: Pool
   registry?: JobDef[]
@@ -1267,7 +1269,7 @@ export function createSchedulerLoop(deps: SchedulerDeps) {
       if (!seeded) { await seedSchedules(deps.pool, registry, t); seeded = true }
       await beat(deps.pool, t)
       stats.reaped = await reapStale(deps.pool, t)
-      stats.reaped += await reapQueued(deps.pool, t, QUEUED_STALE_MS)
+      stats.reaped += await reapQueued(deps.pool, t)
 
       const free = Math.max(0, max - running.size)
       if (free === 0) return stats
@@ -1568,6 +1570,11 @@ git commit -m "feat(data): worker 接入调度 loop 与合并 healthz（Wave 6 P
 - Consumes: `platform.job_schedule` / `job_run`
 - Produces: `POST /api/platform/jobs/:key/run` → `{ runId }`；同 schedule 已有 `queued|running` ⇒ 409 `JOB_ALREADY_PENDING`；未知 key ⇒ 404；无 `tenant:admin` ⇒ 403。
 
+> **硬要求（TOCTOU）**：`queued` 行的插入必须与 busy 判定**原子化**——同一事务里先
+> `select … for update` 锁排班行、再判 `queued|running`、再 insert（或
+> `insert … select … where not exists (queued|running)`）。
+> **禁止「先查再插」两条独立语句**：并发触发时两边都看到「不忙」，会各插一条重复 `queued`。
+
 - [ ] **Step 1: 写失败测试（权限 + 去重 + 只入队）**
 
 ```ts
@@ -1666,23 +1673,35 @@ export function platformJobRoutes(deps: PlatformJobDeps): Hono<{ Variables: Vars
     const who = c.get('identity')
     if (!who?.hasScope('tenant:admin')) return c.json({ error: 'FORBIDDEN', need: 'tenant:admin' }, 403)
     const key = c.req.param('key')
-    const { rows } = await deps.pool.query(
-      "select id, enabled from platform.job_schedule where key=$1 and source='system'", [key])
-    const sch = rows[0]
-    if (!sch) return c.json({ error: 'JOB_NOT_FOUND', key }, 404)
-    if (!sch.enabled) return c.json({ error: 'JOB_DISABLED', key }, 409)
+    // 硬要求：busy 判定与入队原子（同一事务 + 排班行锁）。先查再插是 TOCTOU ⇒ 并发重复 queued。
+    const client = await deps.pool.connect()
+    let runId: number
+    try {
+      await client.query('begin')
+      const locked = await client.query(
+        "select id, enabled from platform.job_schedule where key=$1 and source='system' for update", [key])
+      const sch = locked.rows[0]
+      if (!sch) { await client.query('rollback'); return c.json({ error: 'JOB_NOT_FOUND', key }, 404) }
+      if (!sch.enabled) { await client.query('rollback'); return c.json({ error: 'JOB_DISABLED', key }, 409) }
 
-    const busy = await deps.pool.query(
-      "select 1 from platform.job_run where schedule_id=$1 and status in ('queued','running') limit 1", [sch.id])
-    if (busy.rows.length > 0) return c.json({ error: 'JOB_ALREADY_PENDING', key }, 409)
+      const busy = await client.query(
+        "select 1 from platform.job_run where schedule_id=$1 and status in ('queued','running') limit 1", [sch.id])
+      if (busy.rows.length > 0) { await client.query('rollback'); return c.json({ error: 'JOB_ALREADY_PENDING', key }, 409) }
 
-    const ins = await deps.pool.query(
-      `insert into platform.job_run(schedule_id,key,occurrence,trigger,status)
-       values ($1,$2, now(), 'manual', 'queued') returning id`, [sch.id, key])
-    const runId = Number(ins.rows[0].id)
-    await deps.pool.query(
-      'insert into platform.audit(tenant_id, actor, action, detail) values ($1,$2,$3,$4)',
-      [c.get('tenant')?.casdoor_org ?? null, who.userId, 'admin.job.run', { key, runId }])
+      const ins = await client.query(
+        `insert into platform.job_run(schedule_id,key,occurrence,trigger,status)
+         values ($1,$2, now(), 'manual', 'queued') returning id`, [sch.id, key])
+      runId = Number(ins.rows[0].id)
+      await client.query(
+        'insert into platform.audit(tenant_id, actor, action, detail) values ($1,$2,$3,$4)',
+        [c.get('tenant')?.casdoor_org ?? null, who.userId, 'admin.job.run', { key, runId }])
+      await client.query('commit')
+    } catch (e) {
+      await client.query('rollback').catch(() => {})
+      throw e
+    } finally {
+      client.release()
+    }
     return c.json({ runId, key, status: 'queued' })
   })
 

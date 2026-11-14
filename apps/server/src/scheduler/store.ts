@@ -172,40 +172,68 @@ export async function claimDue(pool: Pool, limit: number, now: Date, next: NextF
   }
 }
 
-/** 手动触发只入队（trigger='manual'）；执行仍在 worker 进程。 */
+/** 手动触发只入队（trigger='manual'）；执行仍在 worker 进程。
+ *
+ *  **按 schedule 去重**：先锁排班行（`for update of s skip locked`，与 claimDue 的排班锁串行），
+ *  一个排班最多返回一条 ⇒ 同 schedule 的多条 queued 每拍只跑一条，其余保持 queued 留给下一拍。
+ *  （`DISTINCT ON` 与 `FOR UPDATE` 在 PostgreSQL 不能共存，所以用「锁排班行」天然去重。） */
 export async function claimQueuedManual(pool: Pool, limit: number, now: Date): Promise<ClaimedJob[]> {
   const client = await pool.connect()
   const out: ClaimedJob[] = []
   try {
     await client.query('begin')
-    // `for update of r, s`：锁排班行 ⇒ 与 claimDue 串行；`not exists running` ⇒ 同 schedule 已有
-    // 在跑的（无论谁触发）就跳过该行（保持 queued，下一拍再来），不抢。
-    const { rows } = await client.query<Row & { run_id: string; occurrence: Date; run_params: unknown }>(
-      `select r.id as run_id, ${SCHED_COLS}, r.occurrence,
-              coalesce(r.params_snapshot, s.params) as run_params
-         from platform.job_run r
-         join platform.job_schedule s on s.id = r.schedule_id
-        where r.status = 'queued' and s.enabled
+    // ① 锁排班行：`not exists running` ⇒ 同 schedule 已有在跑的（无论谁触发）本拍跳过。
+    const sched = await client.query<Row>(
+      `select ${SCHED_COLS}
+         from platform.job_schedule s
+        where s.enabled
+          and exists (select 1 from platform.job_run r
+                       where r.schedule_id = s.id and r.status = 'queued')
           and not exists (select 1 from platform.job_run x
-                           where x.schedule_id = r.schedule_id and x.status = 'running')
-        order by r.id
+                           where x.schedule_id = s.id and x.status = 'running')
+        order by s.id
         limit $1
-        for update of r, s skip locked`,
+        for update of s skip locked`,
       [limit],
     )
-    for (const r of rows) {
-      await client.query(
-        `update platform.job_run r
-            set status='running', started_at=$2, attempt=1,
-                params_snapshot = coalesce(r.params_snapshot, s.params)
-           from platform.job_schedule s
-          where r.id = $1 and s.id = r.schedule_id`,
-        [r.run_id, now],
+    if (sched.rows.length === 0) {
+      await client.query('commit')
+      return out
+    }
+    // ② 拿到锁后按新快照复查 running：若期间有运行启动，本拍跳过该排班（queued 原样保留）。
+    const ids = sched.rows.map((r) => r.id)
+    const stillFree = await client.query<{ id: string }>(
+      `select s.id from platform.job_schedule s
+        where s.id = any($1::bigint[])
+          and not exists (select 1 from platform.job_run x
+                           where x.schedule_id = s.id and x.status = 'running')`,
+      [ids],
+    )
+    const free = new Set(stillFree.rows.map((r) => String(r.id)))
+    for (const s of sched.rows) {
+      if (!free.has(String(s.id))) continue
+      // ③ 每个排班只取最老的一条 queued；剩余保持 queued，下一拍再来。
+      const { rows } = await client.query<{ id: string; occurrence: Date; params_snapshot: unknown }>(
+        `select id, occurrence, coalesce(params_snapshot, $2::jsonb) as params_snapshot
+           from platform.job_run
+          where schedule_id = $1 and status = 'queued'
+          order by id
+          limit 1
+          for update skip locked`,
+        [s.id, JSON.stringify(s.params ?? {})],
       )
-      const job = toClaimed(r, {
-        occurrence: new Date(r.occurrence), attempt: 1, isRetry: false, runId: Number(r.run_id),
+      const run = rows[0]
+      if (!run) continue
+      await client.query(
+        `update platform.job_run
+            set status='running', started_at=$2, attempt=1, params_snapshot=$3::jsonb
+          where id=$1`,
+        [run.id, now, JSON.stringify(run.params_snapshot ?? {})],
+      )
+      const job = toClaimed(s, {
+        occurrence: new Date(run.occurrence), attempt: 1, isRetry: false, runId: Number(run.id),
       })
-      job.params = (r.run_params ?? {}) as Record<string, unknown>
+      job.params = (run.params_snapshot ?? {}) as Record<string, unknown>
       out.push(job)
     }
     await client.query('commit')
@@ -274,15 +302,21 @@ export async function reapStale(pool: Pool, now: Date): Promise<number> {
   return rowCount ?? 0
 }
 
-/** 回收卡住的 `queued` 行：排队超过 olderThanMs 仍未被执行 ⇒ timeout。
- *  否则它会永久占住路由的 busy 判定（queued 也算「未完成」）。 */
-export async function reapQueued(pool: Pool, now: Date, olderThanMs: number): Promise<number> {
+/** 回收卡住的 `queued` 行。两条**同时**满足才判死（否则会误杀合法排队）：
+ *   ① 年龄 > 2 × 该排班的 timeout_ms；
+ *   ② 该 schedule 当前**没有** running 行（有在跑 ⇒ 调度器活着，排队是正常的）。
+ *  不回收的话它会永久占住路由的 busy 判定（queued 也算「未完成」）。 */
+export async function reapQueued(pool: Pool, now: Date): Promise<number> {
   const { rowCount } = await pool.query(
-    `update platform.job_run
+    `update platform.job_run r
         set status='timeout', finished_at=$1, error='stale queued reaped'
-      where status='queued'
-        and started_at < $1::timestamptz - make_interval(secs => $2 / 1000.0)`,
-    [now, olderThanMs],
+       from platform.job_schedule s
+      where r.schedule_id = s.id
+        and r.status = 'queued'
+        and r.started_at < $1::timestamptz - make_interval(secs => 2 * s.timeout_ms / 1000.0)
+        and not exists (select 1 from platform.job_run x
+                         where x.schedule_id = r.schedule_id and x.status = 'running')`,
+    [now],
   )
   return rowCount ?? 0
 }

@@ -135,15 +135,49 @@ describePg('scheduler store', () => {
     expect(rows[0].status).toBe('timeout')
   })
 
-  it('★ 卡住的 queued 行被 reapQueued 改判 timeout', async () => {
-    const id = await mkSchedule(pool, 'jobtest-store:stale-queued', { nextRunAt: new Date(Date.now() + 86_400_000) })
+  it('★ reapQueued：无 running 且超龄的 queued 判 timeout', async () => {
+    const id = await mkSchedule(pool, 'jobtest-store:stale-queued', { nextRunAt: new Date(Date.now() + 86_400_000), timeoutMs: 1000 })
     await pool.query(
       `insert into platform.job_run(schedule_id,key,occurrence,trigger,status,started_at)
        values ($1,'jobtest-store:stale-queued',now(),'manual','queued', now() - interval '1 hour')`, [id])
-    expect(await reapQueued(pool, new Date(), 60_000)).toBeGreaterThanOrEqual(1)
+    expect(await reapQueued(pool, new Date())).toBeGreaterThanOrEqual(1)
     const { rows } = await pool.query('select status, error from platform.job_run where schedule_id=$1', [id])
     expect(rows[0].status).toBe('timeout')
     expect(rows[0].error).toBe('stale queued reaped')
+  })
+
+  it('★ reapQueued：有 running（调度器活着）时超龄 queued 不被误杀', async () => {
+    const id = await mkSchedule(pool, 'jobtest-store:live-queued', { nextRunAt: new Date(Date.now() + 86_400_000), timeoutMs: 1000 })
+    await pool.query(
+      `insert into platform.job_run(schedule_id,key,occurrence,trigger,status,started_at)
+       values ($1,'jobtest-store:live-queued',now(),'schedule','running', now())`, [id])
+    await pool.query(
+      `insert into platform.job_run(schedule_id,key,occurrence,trigger,status,started_at)
+       values ($1,'jobtest-store:live-queued',now(),'manual','queued', now() - interval '1 hour')`, [id])
+    // 年龄已超 2×timeout，但同 schedule 有 running ⇒ 合法排队，不回收。
+    expect(await reapQueued(pool, new Date())).toBe(0)
+    const { rows } = await pool.query(
+      "select status from platform.job_run where schedule_id=$1 and trigger='manual'", [id])
+    expect(rows[0].status).toBe('queued')
+  })
+
+  it('★ 同 schedule 多条 queued：每拍只 claim 一条，其余保持 queued', async () => {
+    const id = await mkSchedule(pool, 'jobtest-store:dedupe', { nextRunAt: new Date(Date.now() + 86_400_000) })
+    await pool.query(
+      `insert into platform.job_run(schedule_id,key,occurrence,trigger,status)
+       values ($1,'jobtest-store:dedupe',now(),'manual','queued'),
+              ($1,'jobtest-store:dedupe',now(),'manual','queued')`, [id])
+    const first = await claimQueuedManual(pool, 5, new Date())
+    expect(first.filter((x) => x.scheduleId === id)).toHaveLength(1)
+    const counts = await pool.query(
+      `select status, count(*)::int as n from platform.job_run
+        where schedule_id=$1 and trigger='manual' group by status order by status`, [id])
+    expect(counts.rows).toEqual([{ status: 'queued', n: 1 }, { status: 'running', n: 1 }])
+    // 第一条结束后，下一拍再拿第二条。
+    await finishRun(pool, first.find((x) => x.scheduleId === id)!.runId, { status: 'ok' })
+    const second = await claimQueuedManual(pool, 5, new Date())
+    expect(second.filter((x) => x.scheduleId === id)).toHaveLength(1)
+    expect(second.find((x) => x.scheduleId === id)!.runId).not.toBe(first.find((x) => x.scheduleId === id)!.runId)
   })
 
   it('手动入队：只有 queued 行能被 claim，且带 trigger=manual / 回填 params_snapshot', async () => {
