@@ -46,7 +46,14 @@ describePg('schedules tool face (db)', () => {
     // 排班/台账在 platform schema（端口层的表）——模块测试也要把它迁到位。
     await runMigrations(pool, 'platform', join(here, '../../../apps/server/src/migrations'))
     factory = makeSchedulerFactory(pool)
-  })
+    // **冷扫描预热**：`*/5` 的 min 扫描首次约 1–3s（CI 慢机更久），叠加默认 5s 用例超时
+    // 会超时。先走一次公开路径建/删一条，让后续用例命中 gapCache（max 同理）。
+    const warmOrg = 'jobtest-p3tool:warm'
+    const warm = await factory({ userId: 'jobtest-p3tool:warm-user', org: warmOrg }).createSchedule({
+      key: 'notify.emit', cron: '*/5 * * * *', timezone: 'UTC', params: {}, expectedIntervalSecs: 300,
+    })
+    await pool.query('delete from platform.job_schedule where id=$1', [warm.id])
+  }, 30_000)
   afterAll(async () => {
     await cleanup()
     await pool.end()
@@ -94,7 +101,8 @@ describePg('schedules tool face (db)', () => {
     return rows[0].expected_interval_secs as number
   }
 
-  it('create_schedule：落库 source=agent、归属来自 actor、丢弃通道类参数', async () => {
+  // 冷缓存首跳：扫描耗时由 cron 与机器决定（CI 慢机可穿 5s 默认超时），显式放宽。
+  it('create_schedule：落库 source=agent、归属来自 actor、丢弃通道类参数', { timeout: 30_000 }, async () => {
     const { isError, body } = await call('create_schedule', createArgs({
       params: {
         eventKey: 'notify.emit',
@@ -130,7 +138,8 @@ describePg('schedules tool face (db)', () => {
     })
   })
 
-  it('expectedIntervalSecs：缺省取扫描周期内最大间隔（工作日常规 259200），显式值仍优先', async () => {
+  // 三个新 cron 的 max 扫描都是冷缓存首跳（虽然迭代少，CI 慢机仍放宽）。
+  it('expectedIntervalSecs：缺省取扫描周期内最大间隔（工作日常规 259200），显式值仍优先', { timeout: 30_000 }, async () => {
     const base = { timezone: 'UTC', params: { eventKey: 'notify.emit' } }
     const hourly = await call('create_schedule', { ...base, cron: '0 * * * *' })
     const daily = await call('create_schedule', { ...base, cron: '0 3 * * *' })
