@@ -11,3 +11,24 @@
 export const NOTIFY_PROVIDERS = ['wecom_chat', 'in_app', 'webhook'] as const
 
 export type NotifyProvider = (typeof NOTIFY_PROVIDERS)[number]
+
+/**
+ * 该 provider 是否**必须**先解析出「收件人地址」才能发。
+ *
+ * - `wecom_chat`：要企微 userid，解析不到 = `missing_channel_address`（dead）；
+ * - `in_app`：收件箱按用户名查，地址就是用户名，不需要外部地址；
+ * - `webhook`：目标是通道 URL，payload 里带 recipient 即可，**不需要**每收件人地址。
+ *
+ * 这张表是 worker / HTTP test-send / MCP send_test 三处的唯一判据——此前三处各写
+ * `provider !== 'in_app'`，导致 webhook 投递在 worker 里恒判 `missing_channel_address`。
+ */
+export const PROVIDER_REQUIRES_ADDRESS: Record<NotifyProvider, boolean> = {
+  wecom_chat: true,
+  in_app: false,
+  webhook: false,
+}
+
+/** 未知 provider 保守按“需要地址”处理；发送侧会先报 `provider_unsupported`。 */
+export function providerRequiresAddress(provider: string): boolean {
+  return PROVIDER_REQUIRES_ADDRESS[provider as NotifyProvider] ?? true
+}

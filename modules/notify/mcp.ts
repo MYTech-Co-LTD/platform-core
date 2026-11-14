@@ -15,6 +15,7 @@ import { callScheduleTool } from './tools/schedules'
 import { resolveDeliverability } from './domain/deliverability'
 import { resolveDeliveryAddress } from './domain/resolve-address'
 import { renderContents } from './domain/render'
+import { providerRequiresAddress } from './domain/providers'
 import { isWritableRuleId, validateRule } from './domain/rules'
 import { samplePayload, validateContents } from './domain/template'
 import {
@@ -294,7 +295,7 @@ export async function callTool(
     const address = await resolveDeliveryAddress(deps.addresses?.resolve, ch, {
       org: deps.org, casdoorName: deps.userId,
     })
-    if (!address && ch.provider !== 'in_app') return err('missing_address')
+    if (!address && providerRequiresAddress(ch.provider)) return err('missing_address')
 
     // 收件人强制 = 调用者本人；args 里即使带 recipient 也不读
     await insertDelivery(deps.pool, {

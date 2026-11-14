@@ -5,11 +5,11 @@ import type { NotificationEventDecl } from '@platform/sdk'
 import { applyMigrations } from './test-util'
 import {
   audit, channelConfigured, claimDueDeliveries, claimEvents, countChannelSends,
-  createAgentNamespace, createTemplateRevision, deleteRule, ensureAgentMessageDefaults,
-  enqueueEvent, getAgentNamespace, getEventDecl, getPublishedTemplate, getTemplate,
-  isCoolingDown, listAgentNamespaces, listChannels, listEventDecls, listRules,
-  markDeliverySent, patchChannel, publishTemplateRevision, purgeOldNotifications,
-  setChannelHealth, setRuleEnabled, upsertEventDecl, upsertRule,
+  createAgentNamespace, createTemplateRevision, deferDelivery, deleteRule,
+  ensureAgentMessageDefaults, enqueueEvent, getAgentNamespace, getEventDecl,
+  getPublishedTemplate, getTemplate, isCoolingDown, listAgentNamespaces, listChannels,
+  listEventDecls, listRules, markDeliverySent, patchChannel, publishTemplateRevision,
+  purgeOldNotifications, setChannelHealth, setRuleEnabled, upsertEventDecl, upsertRule,
 } from './storage'
 
 const url = process.env.DATABASE_URL
@@ -223,11 +223,12 @@ describePg('notify storage v2', () => {
     expect(events.rows.map((x) => x.event_id)).toEqual(['pg-e-new', 'pg-e-now'])
   })
 
-  it('countChannelSends 只数窗口内 sent', async () => {
+  it('countChannelSends 只数窗口内 sent（按 sent_at，不按 created_at）', async () => {
     const ins = (eventId: string, status: string, at: string) => pool.query(
       `insert into notify.delivery
-         (org,event_id,event_key,rule_id,recipient,channel,address,template_key,revision,rendered,status,created_at)
-       values ($1,$2,'m.a.b','r1','u1','wecom_default','wecom-u1','t1',1,'{}',$3,$4)`,
+         (org,event_id,event_key,rule_id,recipient,channel,address,template_key,revision,rendered,status,created_at,sent_at)
+       values ($1,$2,'m.a.b','r1','u1','wecom_default','wecom-u1','t1',1,'{}',$3,$4,
+               case when $3='sent' then $4::timestamptz else null end)`,
       [ORG, eventId, status, at])
 
     await ins('rl-1', 'sent', '2026-01-01T00:00:00Z')
@@ -242,8 +243,8 @@ describePg('notify storage v2', () => {
   it('冷却：窗口内有 sent 才抑制；无 cooldown 恒 false', async () => {
     await pool.query(
       `insert into notify.delivery
-         (org,event_id,event_key,rule_id,recipient,channel,address,template_key,revision,rendered,status)
-       values ($1,'e-cool','m.a.b','r1','u1','wecom_default','wecom-u1','t1',1,'{}','sent')`, [ORG])
+         (org,event_id,event_key,rule_id,recipient,channel,address,template_key,revision,rendered,status,sent_at)
+       values ($1,'e-cool','m.a.b','r1','u1','wecom_default','wecom-u1','t1',1,'{}','sent',now())`, [ORG])
     expect(await isCoolingDown(pool, ORG, { id: 'r1', cooldownMinutes: 10 }, 'u1', new Date())).toBe(true)
     expect(await isCoolingDown(pool, ORG, { id: 'r1', cooldownMinutes: null }, 'u1', new Date())).toBe(false)
     expect(await isCoolingDown(pool, ORG, { id: 'r1', cooldownMinutes: 10 }, 'u2', new Date())).toBe(false)
@@ -364,5 +365,42 @@ describePg('notify storage 一次性延迟', () => {
 
     await pool.query("update notify.event set available_at = now() - interval '1 second' where org=$1 and event_id='delay-1'", [ORG_P2])
     expect((await claimEvents(pool, 50)).some((e) => e.org === ORG_P2 && e.eventId === 'delay-1')).toBe(true)
+  })
+})
+
+describePg('notify storage N0 可靠性（deferDelivery）', () => {
+  const ORG_D = 'org-n0-defer'
+  let pool: Pool
+
+  beforeAll(async () => {
+    pool = new Pool({ connectionString: url })
+    await applyMigrations(pool)
+  })
+  afterAll(async () => {
+    await cleanup()
+    await pool.end()
+  })
+  beforeEach(cleanup)
+
+  async function cleanup() {
+    await pool.query('delete from notify.delivery where org=$1', [ORG_D])
+  }
+
+  it('deferDelivery 顺延但不消耗 attempts', async () => {
+    await pool.query(
+      `insert into notify.delivery
+         (org,event_id,event_key,rule_id,recipient,channel,address,template_key,revision,rendered,status,attempts)
+       values ($1,'e-defer','m.a.b','r1','u1','wecom_default','wecom-u1','t1',1,'{}','pending',2)`, [ORG_D])
+    const at = new Date(Date.now() + 60_000)
+    await deferDelivery(pool, {
+      org: ORG_D, eventId: 'e-defer', ruleId: 'r1', recipient: 'u1', channel: 'wecom_default',
+    }, 'channel_rate_limited', at)
+    const row = await pool.query(
+      `select status, attempts, last_error, next_attempt_at
+         from notify.delivery where org=$1 and event_id='e-defer'`, [ORG_D])
+    expect(row.rows[0]).toMatchObject({
+      status: 'failed', attempts: 2, last_error: 'channel_rate_limited',
+    })
+    expect(new Date(row.rows[0].next_attempt_at).getTime()).toBe(at.getTime())
   })
 })

@@ -69,6 +69,7 @@ export function buildWorkerDeps(
     insertAttempt: (d, r) => storage.insertAttempt(pool, d, r),
     markDeliverySent: (d) => storage.markDeliverySent(pool, d),
     markDeliveryFailed: (d, msg, at) => storage.markDeliveryFailed(pool, d, msg, at),
+    deferDelivery: (d, msg, at) => storage.deferDelivery(pool, d, msg, at),
     markDeliveryDead: (d, msg) => storage.markDeliveryDead(pool, d, msg),
     resolveScopeHolders: async (org, key, decl) => {
       const r = decl.recipients[key]
