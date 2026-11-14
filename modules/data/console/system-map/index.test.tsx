@@ -1,7 +1,7 @@
 // index.test.tsx — 体系地图（本体图）页：KPI、搜索聚焦、点节点开抽屉、错误态。
 // ECharts 在 happy-dom 里没有 canvas ⇒ mock 成假图：只记录 setOption / on，不真渲染。
 import '@testing-library/jest-dom/vitest'
-import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
+import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 vi.mock('@platform/sdk/web', () => ({ platformFetch: vi.fn() }))
@@ -108,9 +108,12 @@ describe('体系地图·本体图', () => {
     const clickCalls = chart.on.mock.calls.filter((c) => c[0] === 'click')
     const handler = clickCalls[clickCalls.length - 1]?.[1] as (p: unknown) => void
     expect(handler).toBeTypeOf('function')
-    handler({ dataType: 'node', data: { id: 'metric:lemeng:retail:net_sales' } })
+    // 点击回调会触发 fetch('/trail') → setState → 抽屉渲染。包 act() 让 React 更新确定性冲刷；
+    // 首次断言显式放宽到 5s：CI 负载下「点击 → 取链路 → 渲染」常超过 waitFor 默认的 1s
+    // （#2177：main 上偶发 Unable to find an element，本地与重跑均通过）。
+    act(() => handler({ dataType: 'node', data: { id: 'metric:lemeng:retail:net_sales' } }))
 
-    await waitFor(() => expect(screen.getByText('口径：按门店日结净额汇总')).toBeInTheDocument())
+    await waitFor(() => expect(screen.getByText('口径：按门店日结净额汇总')).toBeInTheDocument(), { timeout: 5000 })
     expect(screen.getByText('近 30 天使用 12 次')).toBeInTheDocument()
     expect(screen.getByText('关联 2 条关系')).toBeInTheDocument()
     // 链路：marts → staging → 湖 → 管线，以及运行态
