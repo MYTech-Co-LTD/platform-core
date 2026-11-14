@@ -22,7 +22,7 @@ export interface JobDef {
 export const JOB_REGISTRY: JobDef[] = [
   { key: 'notify.reconcile', script: 'scripts/notify-reconcile.mjs', cron: '7 * * * *', timezone: 'UTC', timeoutMs: 300000, maxAttempts: 2, expectedIntervalSecs: 3600, description: '通知指派与催办对账' },
   { key: 'metric.candidates', script: 'scripts/metric-candidates-job.mjs', cron: '40 6 * * *', timezone: 'UTC', timeoutMs: 300000, maxAttempts: 1, expectedIntervalSecs: 86400, description: '指标候选池生成' },
-  { key: 'report.scope_scan', script: 'scripts/report-scope-scan.mjs', cron: '37 1 * * *', timezone: 'UTC', timeoutMs: 300000, maxAttempts: 1, expectedIntervalSecs: 86400, description: '报表受众 × 指标可见性巡检' },
+  { key: 'report.scope_scan', script: 'scripts/report-scope-scan.mjs', cron: '37 1 * * *', timezone: 'UTC', timeoutMs: 300000, maxAttempts: 2, expectedIntervalSecs: 86400, description: '报表受众 × 指标可见性巡检' },
 ]
 
 export async function seedSchedules(
@@ -51,9 +51,10 @@ export async function seedSchedules(
       where source='system' and enabled and next_run_at is null`,
   )
   for (const r of rows) {
-    await pool.query('update platform.job_schedule set next_run_at=$2, updated_at=now() where id=$1 and next_run_at is null',
+    const { rowCount } = await pool.query('update platform.job_schedule set next_run_at=$2, updated_at=now() where id=$1 and next_run_at is null',
       [r.id, nextRunAt(String(r.cron), String(r.timezone), now)])
-    filled.push(String(r.key))
+    // 并发下另一个 seed 可能已先补算 ⇒ rowCount=0，此时不算本进程“补过”。
+    if ((rowCount ?? 0) > 0) filled.push(String(r.key))
   }
   return { inserted, filled }
 }
