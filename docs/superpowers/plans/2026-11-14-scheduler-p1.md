@@ -39,7 +39,7 @@
 | `scripts/notify-worker.mjs` | 接线：每 `SCHEDULER_TICK_MS` 跑一次 tick；healthz 合并调度健康 |
 | `deploy/docker-compose.yml` / `.env.example` | `SCHEDULER_*` 四个键 |
 | `deploy/jobs.md` | 调度器运维口径 + 切流程序 |
-| `docs/architecture.md` | §2.11 正典改写 + 新不变量 |
+| `docs/architecture.md` | §2.4「定时载体」小节正典改写 + 新不变量 |
 
 ---
 
@@ -53,7 +53,7 @@
 **Interfaces:**
 - Produces: 后续任务引用 `deploy/jobs.md` 作为运维口径唯一入口。
 
-- [ ] **Step 1: 改写 `docs/architecture.md` §2.11 的定时载体条文**
+- [ ] **Step 1: 改写 `docs/architecture.md` §2.4「定时载体」小节的条文**
 
 把「定时载体 = openship job（零常驻）」拆成两条线，并在同节追加三条不变量。改完该节应能回答：基建定时在哪、业务定时在哪、为什么应用 HTTP 进程仍然不跑副作用。
 

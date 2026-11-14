@@ -23,6 +23,10 @@
 - **system job 的 `params` 不生效**：`source='system'` 时行为只由代码 registry 决定，改库改不了副作用。
 - **HTTP 进程不跑定时副作用**：宿主 `server` 不装 interval；手动触发只**入队**，执行在 worker 的子进程。
 
+**当前状态（2026-11-14，P1）**：只有 `notify.reconcile` / `metric.candidates` / `report.scope_scan` 三个 job 已切到本调度器；
+其余业务 job（`notify-health` / `notify-retention` / `notify-seed-builtin` / `notify-preflight` / `metric-retire` / `org-sync`）
+**此刻仍由 openship job 驱动**。逐项状态见 §5 切流表。
+
 ## 2. 台账：三张表
 
 ### 2.1 `platform.job_schedule`（排班）
@@ -100,7 +104,22 @@
 3. **关 openship**：`patch_jobs_by_key` 把对应 job 置 `enabled=false`，确认 openship 侧不再产生新 run。
 4. **DB 启用**：置 `enabled=true`，并把 `next_run_at` 补算到**下一个未来时点**（不要落在过去，否则会立即补跑）。观察首条 `job_run` 为 `ok`，且 openship 侧保持安静。
 
+**切流表（P1 已切 / 待切）**：
+
+| job | 阶段 | 当前驱动 |
+|---|---|---|
+| `notify.reconcile` | **P1 已切** | worker 的 `platform.scheduler` |
+| `metric.candidates` | **P1 已切** | worker 的 `platform.scheduler` |
+| `report.scope_scan` | **P1 已切** | worker 的 `platform.scheduler`（openship 侧本无对应 job） |
+| `notify-preflight` | 待切（W6-P4） | openship job |
+| `notify-retention` | 待切（W6-P4） | openship job |
+| `notify-seed-builtin` | 待切（W6-P4，计划启动期化） | openship job |
+| `notify-health` | 待切（W6-P4，计划并入 worker loop） | openship job |
+| `metric-retire` | 待切（W6-P4） | openship job |
+| `org-sync` | 待切（W6-P4） | openship job |
+
 **顺序按爆炸半径**：`notify.reconcile` → `metric.candidates` → `report.scope_scan` → `notify-preflight` → `notify-retention` → `metric.retire` → `org-sync`。
+未列入「P1 已切」的 job，在完成全部四步切流之前**都仍由 openship 驱动**——不要提前置 `enabled=true`。
 
 **切流期红线**：发现双调度者（DB `enabled=true` 且 openship job 仍启用）⇒ 立即停 DB 侧 `enabled`，再排查 openship，不要在两边同时「先看看」。
 

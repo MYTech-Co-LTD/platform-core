@@ -2,8 +2,9 @@
 
 > 正典：`docs/superpowers/specs/2026-10-30-org-as-platform-primitive-design.md` §3.2.1。
 > 形态：**仓内脚本 + worker 的 `platform.scheduler` loop**（常驻，执行在子进程），与 `deploy/notify-jobs.md` 同一范式。
-> 调度归属（2026-11-14 起）：本脚本由 worker 的 `platform.scheduler` loop 按库内排班执行，
-> 不再由 openship job 驱动。**仍然不要**把这段逻辑塞进 HTTP 请求路径——执行在 worker 的子进程里。
+> 调度归属（2026-11-14 起）：本脚本的目标载体是 worker 的 `platform.scheduler` loop；
+> **迁移按 `deploy/jobs.md` 的切流表逐项进行——未切流的 job 此刻仍由 openship job 驱动**。
+> 仍然不要把这逻辑塞进 HTTP 请求路径：执行在 worker 的子进程里。
 > 运维入口一律走 openship MCP / dashboard，不裸 SSH。
 
 ## 0. 生产实例（2026-11-10 建成）

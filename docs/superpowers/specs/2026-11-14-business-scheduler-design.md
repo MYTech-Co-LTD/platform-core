@@ -1,7 +1,7 @@
 # 业务定时归属：从 openship job 迁到平台内置调度器——设计（v2）
 
 > 状态：2026-11-14 与用户逐条确认（方案 A′）；v2 并入通知板块的 handoff（接缝与分工）。
-> 关联：`docs/architecture.md` §2.11、开发地图 `2026-11-11-helix-borrow-roadmap.md` Wave 6，
+> 关联：`docs/architecture.md` §2.4「定时载体」小节、开发地图 `2026-11-11-helix-borrow-roadmap.md` Wave 6，
 > 下游能力 `2026-11-14-business-monitor-design.md`（Wave 7）。
 > 起因：用户定调「业务层面的压力不放到 openship 上」。这是**架构变更**，顺序是
 > 「人同意 → 改本文与正典 → 再写码」。
@@ -249,7 +249,7 @@ agent / console / MCP → SchedulerPort.createSchedule(key='notify.emit', cron, 
 |---|---|---|
 | `docs/architecture.md:497-503` | 定时载体 = openship job / 零常驻 | 拆两条线：基建定时留 openship job；业务定时归 worker 的 `platform.scheduler` loop（目录在代码、排班与台账在库） |
 | `deploy/notify-jobs.md:7`、`deploy/org-sync-job.md:4-5`、`deploy/metric-candidates-job.md:5-6`、`deploy/metric-retire-job.md:7-8`、`deploy/report-scope-scan-job.md:7-8` | 「不要塞进 server 进程（应用进程不跑定时副作用）」 | 理由保留（反对把副作用藏进 **HTTP 进程**），结论改为「归 worker 的调度 loop」 |
-| `docs/architecture.md` §2.11 | — | 新增不变量：只做 cron + 台账；调度器排引擎不排规则；system job 的 params 不生效 |
+| `docs/architecture.md` §2.4「定时载体」小节 | — | 新增不变量：只做 cron + 台账；调度器排引擎不排规则；system job 的 params 不生效 |
 
 ## 13. 测试策略
 
