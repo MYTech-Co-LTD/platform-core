@@ -151,7 +151,8 @@ describe('报表页签双视图', () => {
   it('data:manage ⇒ 拉管理清单，行全量可见（含未放行），有管理动作', async () => {
     renderPage(['data:query', 'data:manage'])
     await waitFor(() => expect(screen.getByText('未放行报表')).toBeInTheDocument())
-    expect(calls[0]?.url.endsWith('/reports/manage')).toBe(true)
+    // R5 叙事质量面板会先发一条 /reports/narrative-stats（子组件 effect 先于父级）⇒ 不假设顺序
+    expect(calls.some((c) => c.url.endsWith('/reports/manage'))).toBe(true)
     // 徽章在管理视图出现**两次**（标题内联 + 渲染器列）⇒ 复数断言（见实现块里的订正记录）
     expect(screen.getAllByText('平台自绘').length).toBeGreaterThanOrEqual(2)
     // 两个「发布」= 两条不同通路（Task 12）：Metabase 行清页门、platform 行发版本。按行取。
