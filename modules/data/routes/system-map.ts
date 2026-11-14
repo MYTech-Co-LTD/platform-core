@@ -218,10 +218,18 @@ export function registerSystemMap(r: ModuleHono, ctx: RouteCtx): void {
       }
     }
 
+    // 在跑失败也由服务端数：只算 scheduled && enabled 的管线（口径与前端原逻辑一致，但只此一处）
+    const failedLive = map.assets
+      .flatMap((a) => a.pipelines)
+      .filter((p) => p.scheduled && p.enabled)
+      .filter((p) => recentRuns[p.id]?.[0]?.status === 'failed')
+      .length
+
     const body = {
       generatedAt: new Date().toISOString(),
       runsWired: runs !== null,
       ...map,
+      summary: { ...map.summary, failedLive },
       warnings: [...loadedPipelines.warnings, ...loadedSchedules.warnings, ...map.warnings],
       recentRuns,
     }

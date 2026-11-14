@@ -19,6 +19,8 @@ const json = (b: unknown) => new Response(JSON.stringify(b), { status: 200, head
 
 const MAP = {
   generatedAt: '2026-11-14T00:00:00.000Z',
+  // KPI 由服务端下发；这里刻意给与 assets 推算不同的值，用来证明页面**没有**自己重算
+  summary: { assets: 29, withStaging: 28, broken: 0, unscheduled: 46, failedLive: 2 },
   runsWired: true,
   assets: [
     {
@@ -66,10 +68,12 @@ describe('管线地图', () => {
     render(<PipelinesPage />)
     await waitFor(() => expect(screen.getByText('资产')).toBeInTheDocument())
     expect(screen.getByText('断点')).toBeInTheDocument()
-    // staging 1 / 断点 1 / 最近失败 1 ⇒ 三个「1」（资产是 2）
+    // KPI 一律来自 summary（与 assets 的 2 条不同，证明没有前端重算）
+    expect(screen.getByText('29')).toBeInTheDocument()
+    expect(screen.getByText('28')).toBeInTheDocument()
+    expect(screen.getByText('0')).toBeInTheDocument()
     expect(screen.getByText('2')).toBeInTheDocument()
-    // staging 1 / 在跑失败 1 / 断点 1 ⇒ 三个「1」
-    expect(screen.getAllByText('1')).toHaveLength(3)
+    expect(screen.getByText(/另有 46 条未调度/)).toBeInTheDocument()
     await waitFor(() => expect(lastOption()?.series[0]!.data).toHaveLength(4)) // 2 资产 + 1 staging + 1 mart
   })
 
@@ -112,19 +116,6 @@ describe('管线地图', () => {
       expect(ids).toContain('asset:lemeng/retail_order_line')
       expect(ids).not.toContain('asset:lemeng/no_staging_asset')
     })
-  })
-
-  it('断点口径与 domain 一致：只被视图读的资产不算断点', async () => {
-    m.mockImplementation(async () => json({
-      ...MAP,
-      assets: [{ ...MAP.assets[1]!, views: ['vw_x'] }],
-    }))
-    render(<PipelinesPage />)
-    await waitFor(() => expect(screen.getByText('资产')).toBeInTheDocument())
-    await waitFor(() => expect(screen.getByText('断点')).toBeInTheDocument())
-    // 断点 KPI 的数值应为 0（该资产有视图消费）
-    const kpi = screen.getByText('断点').parentElement!
-    expect(within(kpi).getByText('0')).toBeInTheDocument()
   })
 
   it('接口失败 ⇒ 人话 + 重试', async () => {

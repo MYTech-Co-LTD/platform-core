@@ -18,8 +18,10 @@ echarts.use([GraphChart, LegendComponent, TooltipComponent, CanvasRenderer])
 
 interface MapPipeline { id: string; account: string | null; cron: string | null; enabled: boolean; scheduled: boolean }
 interface MapAsset { lake: string; staging: string | null; views: string[]; marts: string[]; pipelines: MapPipeline[] }
+interface MapSummary { assets: number; withStaging: number; broken: number; unscheduled: number; failedLive: number }
 interface PipelinesResponse {
   generatedAt: string
+  summary: MapSummary
   runsWired: boolean
   assets: MapAsset[]
   orphanStaging: string[]
@@ -208,24 +210,21 @@ export default function PipelinesPage() {
     )
   }
 
-  // 断点与 domain 同一定义：既没有 staging、也没有视图消费（只有视图在读的资产不算断点）
-  const broken = data === null ? 0 : data.assets.filter((a) => a.staging === null && a.views.length === 0).length
-  const livePipelineIds = data === null ? [] : data.assets
-    .flatMap((a) => a.pipelines)
-    .filter((p) => p.scheduled && p.enabled)
-    .map((p) => p.id)
-  const failed = livePipelineIds.filter((id) => data!.recentRuns[id]?.[0]?.status === 'failed').length
-  const unscheduled = data === null ? 0 : data.assets
-    .flatMap((a) => a.pipelines).filter((p) => !p.scheduled).length
+
+
 
   return (
     <Space direction="vertical" style={{ width: '100%' }} size="middle">
       <div style={{ display: 'flex', gap: 40, alignItems: 'flex-end', padding: '4px 2px 8px' }}>
         {data === null ? null : [
-          { k: '资产', v: data.assets.length, d: '有管线写入的湖前缀' },
-          { k: 'staging', v: new Set(data.assets.map((a) => a.staging).filter(Boolean)).size, d: '已接上 staging 的资产' },
-          { k: '断点', v: broken, d: '有管线但没有 staging' },
-          { k: '在跑失败', v: failed, d: data.runsWired ? `调度中管线最近一次 = failed（另有 ${unscheduled} 条未调度）` : '运行记录未接入' },
+          // KPI 全部由服务端 summary 下发：前端不再用 assets 重算（一天内两次口径分叉的教训）
+          { k: '资产', v: data.summary.assets, d: '有管线写入的湖前缀' },
+          { k: 'staging', v: data.summary.withStaging, d: '已接上 staging 的资产' },
+          { k: '断点', v: data.summary.broken, d: '既没 staging 也没视图消费' },
+          {
+            k: '在跑失败', v: data.summary.failedLive,
+            d: data.runsWired ? `调度中管线最近一次 = failed（另有 ${data.summary.unscheduled} 条未调度）` : '运行记录未接入',
+          },
         ].map((x) => (
           <div key={x.k} style={{ minWidth: 110 }}>
             <div style={{ fontSize: 12, color: '#9AA0A6' }}>{x.k}</div>

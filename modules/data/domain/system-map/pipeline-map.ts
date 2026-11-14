@@ -36,7 +36,24 @@ export interface PipelineMapAsset {
   pipelines: PipelineMapPipeline[]
 }
 
+/**
+ * KPI 一律由服务端给数：前端**不许**用 assets 自己再算一遍。
+ * 2026-11-14 一天内踩了两次同类问题（「最近失败」「断点」），都是 domain 改了口径、
+ * 页面还在按旧规则数——同一个指标两套实现，迟早分叉。
+ */
+export interface PipelineMapSummary {
+  /** 有管线写入的湖资产数 */
+  assets: number
+  /** 其中有 staging 对接的资产数 */
+  withStaging: number
+  /** 断点：无 staging 且无视图消费 */
+  broken: number
+  /** 未登记调度的管线条数（历史 / 一次性） */
+  unscheduled: number
+}
+
 export interface PipelineMapModel {
+  summary: PipelineMapSummary
   assets: PipelineMapAsset[]
   /** 有 staging 但没有任何管线写对应资产的资产名（断点用） */
   orphanStaging: string[]
@@ -139,7 +156,15 @@ export function buildPipelineMap(input: PipelineMapInput): PipelineMapModel {
     warnings.push(`${orphanStaging.length} 个 staging 模型没有仓内管线写它的湖前缀`)
   }
 
-  return { assets, orphanStaging, warnings }
+  const allPipelines = assets.flatMap((a) => a.pipelines)
+  const summary: PipelineMapSummary = {
+    assets: assets.length,
+    withStaging: assets.filter((a) => a.staging !== null).length,
+    broken: assets.filter((a) => a.staging === null && a.views.length === 0).length,
+    unscheduled: allPipelines.filter((p) => !p.scheduled).length,
+  }
+
+  return { summary, assets, orphanStaging, warnings }
 }
 
 /** 与 trail.ts 同一条命名规则的反向（staging ⇒ 湖前缀）。这里避免循环依赖就地写一行。 */
