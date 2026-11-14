@@ -11,6 +11,10 @@
 
 ## [Unreleased]
 
+## [0.281.0](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.280.0...v0.281.0) - 2026-11-14
+- 【新增】data: R2 锚点自证（审阅面数据水位/SLA） (#2224) ([#2225](https://github.com/MYTech-Co-LTD/platform-core/pull/2225), [fb18fc1](https://github.com/MYTech-Co-LTD/platform-core/commit/fb18fc148fcc084be5bfb9a697f9ab61faed5fb5))
+
+
 ## [0.280.0](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.279.0...v0.280.0) - 2026-11-14
 - 【新增】data: 管线地图——单条管线的完整运行历史 (#2222) ([#2223](https://github.com/MYTech-Co-LTD/platform-core/pull/2223), [342c697](https://github.com/MYTech-Co-LTD/platform-core/commit/342c6975ad9ba3edf90be927831a17bd2ef7c930))
 
