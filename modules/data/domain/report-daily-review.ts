@@ -449,7 +449,7 @@ export async function buildDailyReview(deps: DailyReviewDeps): Promise<DailyRevi
   const monthStart = monthStartOf(ceiling)
   const lyCeilingWindow = lastYearMonthToDate(ceiling)
   const lastYearFrom = lyCeilingWindow.from
-  const lastYearCeiling = lyCeilingWindow.to
+  // wideFrom 只需要 lastYearFrom（下界）；lastYearCeiling 由下方 lyWindow 提供
   // 区间模式要对比「上一等长区间」，读窗口必须覆盖它（本月从 1 号开始时它在上个月）。
   // 用**请求窗口**算下界（比实际有数的末日更早，是安全下界）；窗口语义只经 report-period。
   const prevFromApprox = isRange
