@@ -17,6 +17,7 @@ import { Hono } from 'hono'
 import { bodyLimit } from 'hono/body-limit'
 import type { Pool } from 'pg'
 import { CasdoorClient } from '@platform/auth-core'
+import type { SchedulerPortFactory } from '@platform/sdk'
 import { loadConfig, type AppConfig } from './config'
 import { getPool } from './db'
 import { loadModules, type ModulesRuntime } from './loader'
@@ -167,26 +168,18 @@ export async function buildApp(overrides: BuildAppOverrides = {}): Promise<{
     } else if (rawSubscriptionSource !== 'casdoor') {
       console.warn(`[modules] PLATFORM_SUBSCRIPTION_SOURCE=${JSON.stringify(rawSubscriptionSource)} 未知，按 casdoor 处理`)
     }
-    // 调度器端口（W6-P3）：注入模块 `ctx.scheduler`，notify 工具面只经它操作排班。
-    // 模块上下文在**装载期**构造一次（没有请求期会话），所以 actor 只能在此固定下来：
-    //   · userId = 'host:scheduler'（`created_by` 留痕；一个进程一个宿主 actor）
-    //   · org / namespace = PLATFORM_ORG——**v1 约定「一个 org 一个 namespace」**
-    //     （notify 模块没有既有的 `owner_namespace` 口径，channel-address 里也只有 org）。
-    // multi 租户（PLATFORM_ORG 为空）在装载期**不存在单一 actor**：故意不注入（ctx.scheduler
-    // = undefined ⇒ 工具面返回 SCHEDULER_UNAVAILABLE），绝不用空串或跨租户 actor 兜底——
-    // 那会把不同租户的排班混进同一个归属桶，比「能力不可用」危险得多。
-    // 按会话 actor 逐请求绑定是后续事项（本任务只交付注入与降级两态）。
-    const scheduler = config.platformOrg === ''
-      ? undefined
-      : buildSchedulerPort({
-        pool,
-        actor: { userId: 'host:scheduler', org: config.platformOrg, namespace: config.platformOrg },
-      })
-    if (!scheduler) {
-      console.warn(
-        '[modules] PLATFORM_ORG 为空（multi 租户）：未注入 ctx.scheduler，agent 排班工具将不可用',
-      )
-    }
+    // 调度器端口工厂（W6-P3）：注入模块 `ctx.scheduler`，notify 工具面只经它操作排班。
+    // 模块上下文在**装载期**只构造一次、没有请求期会话 ⇒ 宿主交出去的是**工厂**，不是
+    // 绑定好 actor 的端口：调用方（Task 3 的工具）用**请求身份**造端口，归属才不被抹平成
+    // 某个全局 actor（固定 actor 会让所有租户的排班落进同一 owner_org/namespace）。
+    // · namespace 缺省补 `org`——**v1 约定「一个 org 一个 namespace」**（notify 模块与
+    //   channel-address 都没有既有 owner_namespace 口径）。
+    // · 端口是薄对象（闭包 + pool 引用），每次调用新建的成本可忽略；只要有 pool 就有工厂，
+    //   不存在 PLATFORM_ORG/multi 的注入分支。
+    const scheduler: SchedulerPortFactory = (actor) => buildSchedulerPort({
+      pool,
+      actor: { userId: actor.userId, org: actor.org, namespace: actor.namespace || actor.org },
+    })
     runtime = await loadModules(overrides.modulesDir ?? modulesDir, {
       pool,
       casdoorFor: casdoorFactory,

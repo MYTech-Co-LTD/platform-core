@@ -11,7 +11,8 @@ export type {
   ChannelAddressResolver, DeclaredEndpoint, DeptExpansion, EnqueueEventInput, EventCatalogReader,
   Identity, IdentityLinkView, IdentityLinks, LinkProvider,
   ModuleContext, ModuleDefinition, ModulePorts, NotifyEmitInput, NotifyPort, OrgNodeOption,
-  ResolvedPatKey, SchedulerPortLike, UserStatus, UserStatusResolver,
+  ResolvedPatKey, SchedulerActorLike, SchedulerPortFactory, SchedulerPortLike,
+  UserStatus, UserStatusResolver,
 } from './module'
 export { METRIC_SOURCE_RE, TENANT_SOURCES, TENANT_STORAGE } from './module'
 export type { TenantStorageConfig } from './module'

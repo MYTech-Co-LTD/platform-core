@@ -32,7 +32,7 @@ import {
   type ModuleDefinition,
   type ModuleManifest,
   type ModulePorts,
-  type SchedulerPortLike,
+  type SchedulerPortFactory,
   type TenantStorageConfig,
 } from '@platform/sdk'
 import { Hono } from 'hono'
@@ -148,14 +148,14 @@ export interface LoadModulesDeps {
    */
   provisionRetryWait?: (ms: number) => Promise<void>
   /**
-   * 调度器端口（宿主 `app.ts` 构造，W6-P3）：装载期注入每个模块的 `ctx.scheduler`。
+   * 调度器端口**工厂**（宿主 `app.ts` 构造，W6-P3）：装载期原样注入每个模块的
+   * `ctx.scheduler`。**loader 不做任何 actor 绑定**——归属由调用方从请求身份取。
    *
    * 可选**只服务测试与注入式用法**：未提供（loader 测试 / 旧宿主）⇒ 不注入，模块侧按契约
-   * 显式判空降级（notify 工具面返回 `SCHEDULER_UNAVAILABLE`）。生产 `app.ts` 在单租户
-   * （`PLATFORM_ORG` 非空）形态下无条件传；multi 租户下没有「装载期就知道的 actor」，
-   * 故意不注入而不是伪造一个跨租户 actor（见 app.ts 的构造点注释）。
+   * 显式判空降级（notify 工具面返回 `SCHEDULER_UNAVAILABLE`）。生产 `app.ts` 无条件传
+   * （只要有 pool 就有工厂）。
    */
-  scheduler?: SchedulerPortLike
+  scheduler?: SchedulerPortFactory
 }
 
 /** 待供给的权限码（manifest.permissions 的元素形状） */
@@ -506,8 +506,9 @@ export async function loadModules(
 
   // ── 阶段 3：createRouter（带完整 ctx）────────────────────────────────────────
   // scheduler 与 notify 同一处注入（都依赖阶段 1–2 的产物/宿主构造，且都不是 createPorts
-  // 的输入）。未传 ⇒ `scheduler: undefined` 原样落进 ctx——「未注入」是模块必须能看见的
-  // 一个真实状态（旧宿主/单测），不是可以省略的细节。
+  // 的输入）。注入的是**工厂**，loader 原样转发、不做 actor 绑定（装载期没有请求会话；
+  // 任何固定 actor 都会抹平租户归属）。未传 ⇒ `scheduler: undefined` 原样落进 ctx——
+  // 「未注入」是模块必须能看见的一个真实状态（旧宿主/单测），不是可以省略的细节。
   const ctx: ModuleContext = { ...baseCtx, notify, scheduler: deps.scheduler }
   for (const p of pending) {
     loaded.push({

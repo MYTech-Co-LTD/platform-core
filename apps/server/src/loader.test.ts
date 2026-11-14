@@ -1630,31 +1630,19 @@ describe.skipIf(!dbUrl)('loadModules', INTEGRATION_SUITE, () => {
 
   // ---- 调度器端口（W6-P3：ctx.scheduler，与 ctx.notify 同款装载期注入）----
 
-  it('注入 ctx.scheduler：端口绑定装载时 actor，listSchedules 只看得到该 actor 的排班', async () => {
+  it('注入 ctx.scheduler 工厂：按调用者 actor 绑归属（org-a 建行 / org-b 列举为空）', async () => {
     cleanupModules.push('schedmod')
     const modulesDir = await newModulesDir()
-
-    // 两个 org 各一条排班：用 actor A 构造的端口只能看见 A 所在 org 的行。
-    // 同一用例同时钉住「`filter.ownerOrg` 被端口忽略」（模块故意传 'not-mine'）——
-    // 若端口沿用调用方传值，断言会变成空数组（那是租户传值生效的形态）。
-    // 注：`listSchedules` 不给 ownerNamespace 时按 **org** 列举（端口契约），故隔离边界是 org。
-    const org = 'jobtest-p3:loader-org'
-    const nsA = 'jobtest-p3:loader-ns-a'
-    const otherOrg = 'jobtest-p3:loader-org-2'
-    const nsB = 'jobtest-p3:loader-ns-b'
     cleanupSqls.push("delete from platform.job_schedule where owner_org like 'jobtest-p3:loader-%'")
-    const insert = `insert into platform.job_schedule
-        (key, cron, timezone, params, owner_org, owner_namespace, source, created_by,
-         enabled, expected_interval_secs)
-      values ('notify.emit', '*/5 * * * *', 'UTC', '{}'::jsonb, $1, $2, 'agent', $3, true, 300)
-      returning id`
-    const rowA = (await pool.query<{ id: string }>(insert, [org, nsA, 'u-a'])).rows[0]!
-    await pool.query(insert, [otherOrg, nsB, 'u-b'])
 
+    // fixture 的两条路由都**从请求身份取 actor** 再调工厂——这正是 Task 3 工具的用法，
+    // 也是本用例的靶点：固定 actor 的实现在这里会让两个 org 看到同一份数据。
     await writeModule(modulesDir, 'schedmod', {
       'manifest.yaml': manifestYaml(
         'schedmod', '',
-        'api:\n  internal:\n    - { method: GET, path: /sched, scope: schedmod:view }',
+        'api:\n  internal:\n'
+        + '    - { method: GET, path: /create, scope: schedmod:view }\n'
+        + '    - { method: GET, path: /sched, scope: schedmod:view }',
       ),
       'index.ts': [
         "import { Hono } from 'hono'",
@@ -1662,13 +1650,34 @@ describe.skipIf(!dbUrl)('loadModules', INTEGRATION_SUITE, () => {
         'export default defineModule({',
         "  manifest: { id: 'schedmod', name: 's', version: '1.0.0', platform: '>=0.1.0',",
         "    permissions: [{ code: 'schedmod:view', name: 'v' }],",
-        "    api: { internal: [{ method: 'GET', path: '/sched', scope: 'schedmod:view' }] } },",
+        "    api: { internal: [",
+        "      { method: 'GET', path: '/create', scope: 'schedmod:view' },",
+        "      { method: 'GET', path: '/sched', scope: 'schedmod:view' },",
+        '    ] } },',
         '  createRouter: (ctx) => {',
         '    const app = new Hono()',
-        "    app.get('/sched', async (c) => c.json({",
-        '      present: ctx.scheduler !== undefined,',
-        "      rows: ctx.scheduler ? await ctx.scheduler.listSchedules({ ownerOrg: 'not-mine' }) : null,",
-        '    }))',
+        "    app.get('/create', async (c) => {",
+        "      const id = c.get('identity')",
+        '      if (!ctx.scheduler) return c.json({ present: false }, 503)',
+        "      const port = ctx.scheduler({ userId: id.userId, org: id.orgId, namespace: id.orgId })",
+        '      return c.json({',
+        '        present: true,',
+        '        created: await port.createSchedule({',
+        "          key: 'notify.emit', cron: '7 * * * *', timezone: 'UTC', params: {},",
+        '          expectedIntervalSecs: 3600,',
+        '        }),',
+        '      })',
+        '    })',
+        "    app.get('/sched', async (c) => {",
+        "      const id = c.get('identity')",
+        '      if (!ctx.scheduler) return c.json({ present: false, rows: null })',
+        "      const port = ctx.scheduler({ userId: id.userId, org: id.orgId, namespace: id.orgId })",
+        '      return c.json({',
+        "        present: typeof ctx.scheduler === 'function',",
+        // ownerOrg 故意传错值：端口必须忽略它、恒用 actor.org（跨归属列举防线）
+        "        rows: await port.listSchedules({ ownerOrg: 'not-mine' }),",
+        '      })',
+        '    })',
         '    return app',
         '  },',
         '})',
@@ -1676,20 +1685,56 @@ describe.skipIf(!dbUrl)('loadModules', INTEGRATION_SUITE, () => {
       ].join('\n'),
     })
 
-    const scheduler = buildSchedulerPort({
+    const runtime = await loadModules(modulesDir, {
       pool,
-      actor: { userId: 'u-a', org, namespace: nsA },
+      // 与 app.ts 工厂同形：namespace 缺省补 org（这里 fixture 已显式传，补丁不被触发）
+      scheduler: (actor) => buildSchedulerPort({
+        pool,
+        actor: { ...actor, namespace: actor.namespace || actor.org },
+      }),
     })
-    const runtime = await loadModules(modulesDir, { pool, scheduler })
 
+    // 请求身份按头切换（真实链路 = session/PAT/企微中间件注入的 identity）
+    const identityFromHeader = createMiddleware<TestEnv>(async (c, next) => {
+      const org = c.req.header('x-test-org') ?? 'jobtest-p3:loader-org-a'
+      c.set('identity', {
+        userId: `u-${org}`,
+        orgId: org,
+        displayName: 'Fixture User',
+        scopes: ['schedmod:view'],
+        hasScope: (code) => code === 'schedmod:view',
+      })
+      await next()
+    })
     const app = new Hono<TestEnv>()
-    app.use('*', injectIdentity(['schedmod:view']))
+    app.use('*', identityFromHeader)
     runtime.mount(app)
-    const res = await app.request('/api/modules/schedmod/sched')
-    expect(res.status).toBe(200)
-    const body = await res.json() as { present: boolean; rows: Array<{ id: string }> }
-    expect(body.present).toBe(true)
-    expect(body.rows.map((r) => r.id)).toEqual([rowA.id])
+
+    // ① 工厂存在且是函数；org-a 的调用者建一条 ⇒ 库行归属 org-a
+    const created = await app.request('/api/modules/schedmod/create', {
+      headers: { 'x-test-org': 'jobtest-p3:loader-org-a' },
+    })
+    expect(created.status).toBe(200)
+    const createdBody = await created.json() as { present: boolean; created: { id: string } }
+    expect(createdBody.present).toBe(true)
+    const row = await pool.query(
+      'select owner_org, owner_namespace, created_by from platform.job_schedule where id = $1',
+      [createdBody.created.id],
+    )
+    expect(row.rows[0]).toEqual({
+      owner_org: 'jobtest-p3:loader-org-a',
+      owner_namespace: 'jobtest-p3:loader-org-a',
+      created_by: 'u-jobtest-p3:loader-org-a',
+    })
+
+    // ② 同一 app、换 org-b 的请求身份列举 ⇒ 空（归属由调用者 actor 决定，不是装载期固定值）
+    const otherOrgRes = await app.request('/api/modules/schedmod/sched', {
+      headers: { 'x-test-org': 'jobtest-p3:loader-org-b' },
+    })
+    expect(otherOrgRes.status).toBe(200)
+    const otherBody = await otherOrgRes.json() as { present: boolean; rows: unknown[] }
+    expect(otherBody.present).toBe(true)
+    expect(otherBody.rows).toEqual([])
   })
 
   it('未注入 scheduler ⇒ ctx.scheduler 为 undefined（旧宿主/单测的降级态）', async () => {
@@ -1706,7 +1751,7 @@ describe.skipIf(!dbUrl)('loadModules', INTEGRATION_SUITE, () => {
         "    api: { internal: [{ method: 'GET', path: '/ping', scope: 'noschedmod:view' }] } },",
         '  createRouter: (ctx) => {',
         '    const app = new Hono()',
-        "    app.get('/ping', (c) => c.json({ present: ctx.scheduler !== undefined }))",
+        "    app.get('/ping', (c) => c.json({ present: typeof ctx.scheduler === 'function' }))",
         '    return app',
         '  },',
         '})',
