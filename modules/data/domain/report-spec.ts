@@ -147,11 +147,25 @@ const WaterfallPanel = z.object({
   timeScoped: z.boolean().default(true),
 }).strict()
 
+/**
+ * 可折叠明细（R3 组件⑤）：table 面板的行展开。只声明「展开时看什么」——
+ * 具体取数走明细下钻唯一入口 `runDetailQuery`（授权/掩码/审计/行数闸同一份），
+ * 版式参数不在这里。**必须**配分组（`slice.dimensions` 或 `dims` 非空），
+ * 未分组的 surface 是原子行，没有「展开这一组」的语义（顶层 superRefine 拒绝）。
+ */
+const TableExpand = z.object({
+  /** 展开区展示的维度（缺省 = 指标的下钻原子粒度全集）。服务端再校验 ⊆ drill 闭集。 */
+  dimensions: z.array(z.string().min(1).max(64)).min(1).max(MAX_DIMS).optional(),
+  /** 单次展开最多返回的行数（1..500；缺省 50，与下钻面默认值一致）。 */
+  limit: z.number().int().min(1).max(500).optional(),
+}).strict()
+
 const TablePanel = z.object({
   chart: z.literal('table'), ...metricBase,
   dims: z.array(z.string().min(1).max(64)).max(MAX_DIMS).default([]),
   slice: SliceSchema.optional(),
   columns: TableColumnsSchema.optional(),
+  expandable: TableExpand.optional(),
 }).strict()
 
 const KpiPanel = z.object({
@@ -212,7 +226,17 @@ export const ReportSpecSchema = z.object({
   period: PeriodSchema.optional(),
   filters: z.array(ReportFilterSchema).max(20).optional(),
   panels: z.array(z.discriminatedUnion('chart', [LinePanel, BarPanel, TablePanel, CrossTablePanel, WaterfallPanel, BulletPanel, SparklinePanel, KpiPanel, TextPanel, AiTextPanel])).max(MAX_PANELS),
-}).strict()
+}).strict().superRefine((spec, ctx) => {
+  // 可折叠明细的分组前提：未分组 = 原子行，展开语义不存在（写侧拒绝，不留到观看时才发现）。
+  spec.panels.forEach((p, i) => {
+    if (p.chart !== 'table' || p.expandable === undefined) return
+    if ((p.slice?.dimensions ?? p.dims).length > 0) return
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom, path: ['panels', i, 'expandable'],
+      message: 'EXPANDABLE_REQUIRES_GROUPING',
+    })
+  })
+})
 
 
 
@@ -252,6 +276,7 @@ const V2TableBlock = z.object({
   title: z.string().trim().min(1).max(120),
   dims: z.array(z.string().min(1).max(64)).max(MAX_DIMS).optional(),
   columns: TableColumnsSchema.optional(),
+  expandable: TableExpand.optional(),
   span: z.number().int().min(1).max(24).default(12),
 }).strict()
 
@@ -316,9 +341,13 @@ export function flattenReportSpecV2(v2: ReportSpecV2): { ok: true; spec: ReportS
         ...(b.compareYoY === undefined ? {} : { compareYoY: b.compareYoY }),
       })
     } else {
+      const dims = b.dims ?? dataset.dims
       panels.push({
-        ...base, chart: 'table', dims: b.dims ?? dataset.dims,
+        ...base, chart: 'table', dims,
         ...(b.columns === undefined ? {} : { columns: b.columns }),
+        // 可折叠明细（R3 ⑤）：v2 的 table 块没有独立 slice，分组维度就是块的 dims；
+        // 展开语义要求分组 ⇒ 只有声明 expandable 时才把它落成 v1 的 slice（其余形态不变）。
+        ...(b.expandable === undefined ? {} : { expandable: b.expandable, slice: { dimensions: dims } }),
       })
     }
   }

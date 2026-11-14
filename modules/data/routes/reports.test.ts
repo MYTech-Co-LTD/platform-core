@@ -50,6 +50,8 @@ const OPEN_METRIC = 't4rg:open'
 /** 写入侧校验（`validatePanelMetrics`）的 L1 夹具：只有 L1 能带可加/源维度。 */
 const ADDITIVE_METRIC = 't4http:additive'
 const SOURCED_METRIC = 't4http:sourced'
+/** 声明了下钻绑定的 L1 指标（R3 ⑤ 可折叠明细夹具）。 */
+const DETAIL_METRIC = 't4http:drillable'
 
 const json = (b: unknown, status = 200) =>
   new Response(JSON.stringify(b), { status, headers: { 'content-type': 'application/json' } })
@@ -244,9 +246,10 @@ describe('报表面声明（不需要数据库）', () => {
     // 全部 data:manage——采纳/驳回的**会话通道闸在路由内**，manifest 页门管不了通道）。
     // +3：计算凭证（R1：POST /reports/:id/receipt + /receipt/export + /receipt/detail，
     // 观看面 data:query；页门/快照门/草稿分档与 narrative 共用 loadViewableSpec）。
+    // +1：可折叠明细（R3 ⑤：POST /reports/:id/detail-rows，观看面 data:query）。
     // 穷举口径（同 module.test.ts 的表清单）——别处加端点而漏改这里会红，
     // 逼着声明与测试一起动。
-    expect(declared).toHaveLength(85)
+    expect(declared).toHaveLength(86)
     // 指标变更单：七条全 data:manage；采纳/驳回的会话限定是路由内的第二道闸（不在这张表上）
     for (const p of [
       'POST /metric-changes', 'GET /metric-changes', 'GET /metric-changes/:id',
@@ -332,6 +335,7 @@ describe('报表面声明（不需要数据库）', () => {
     expect(declared.get('POST /reports/:id/receipt')).toBe('data:query')
     expect(declared.get('POST /reports/:id/receipt/export')).toBe('data:query')
     expect(declared.get('POST /reports/:id/receipt/detail')).toBe('data:query')
+    expect(declared.get('POST /reports/:id/detail-rows')).toBe('data:query')
   })
 
   it('★ 页门负测：只有 data:query ⇒ 管理清单（跨资产视图）403', async () => {
@@ -398,6 +402,19 @@ describePg('报表路由（需要 DATABASE_URL）', () => {
     })
     await upsertL1Metric(pool, l1(ADDITIVE_METRIC, true, null))
     await upsertL1Metric(pool, l1(SOURCED_METRIC, true, 'lemeng'))
+    // 可折叠明细（R3 ⑤）夹具：声明下钻绑定（原子粒度 branch_num/bizday/order_no），
+    // 指标粒度按 branch_num 分组——「展开这一组」有更细的行可看。
+    await upsertL1Metric(pool, {
+      ...l1(DETAIL_METRIC, true, null),
+      groupBy: 'branch_num, bizday',
+      params: { bizday: { column: 'bizday', type: 'date_range' as const } },
+      drill: {
+        expr: 'revenue',
+        dims: ['branch_num', 'bizday', 'order_no'],
+        relation: 'vw_t4_sales_detail',
+        filter: "state = 'FINISHED'",
+      },
+    })
   })
 
   beforeEach(async () => {
@@ -428,7 +445,7 @@ describePg('报表路由（需要 DATABASE_URL）', () => {
     // 发布门夹具（L2，本 org 独占）——按 org 删，不碰共享的 platform 桶。
     await pool.query('delete from data.metrics where org = $1', [ORG]).catch(() => {})
     // L1 桶是全局的：只删本文件种的两条（带 t4http: 前缀，别误删别人的夹具）。
-    await pool.query('delete from data.metrics where org = $1 and id = any($2)', ['platform', [ADDITIVE_METRIC, SOURCED_METRIC]]).catch(() => {})
+    await pool.query('delete from data.metrics where org = $1 and id = any($2)', ['platform', [ADDITIVE_METRIC, SOURCED_METRIC, DETAIL_METRIC]]).catch(() => {})
     await pool.end().catch(() => {})
   })
 
@@ -3143,6 +3160,161 @@ describePg('报表路由（需要 DATABASE_URL）', () => {
 
       const draft = await receiptOf(adminApp, id, { preview: 'draft' })
       expect(draft.status).toBe(200)
+    })
+  })
+
+  // ── 可折叠明细（R3 ⑤）──────────────────────────────────────────────────────────────
+  // 判据落在路由层：面板级观看门、分组维度 ↔ 行过滤的对应、能力边界（未声明下钻）与
+  // 权限/存在性（被渲染闸拒绝 ⇒ 404）的分档；下钻本身由 domain/drill.test.ts 钉。
+  describe('可折叠明细（detail-rows）', () => {
+    const DETAIL_PERIOD = { mode: 'custom' as const, from: '2026-10-01', to: '2026-10-02' }
+    const ARGS = { bizday: { from: '2026-10-01', to: '2026-10-02' } }
+
+    /** 假湖：明细腿与 count 腿分叉，SQL 全量留痕（断言维度过滤真的进了 where）。 */
+    const detailSqls: string[] = []
+    const detailExec: SqlExecutor = async (sql) => {
+      detailSqls.push(sql)
+      if (/count\(\*\)/.test(sql)) return { columns: ['n'], rows: [[3]] }
+      return {
+        columns: ['branch_num', 'bizday', 'order_no', 'value'],
+        rows: [['92', '2026-10-01', 'SO001', 123.4], ['92', '2026-10-02', 'SO002', 76.6]],
+      }
+    }
+
+    const detailShell = (identity: ReturnType<typeof makeIdentity>): Hono => {
+      const app = new Hono<ModuleVars>()
+      app.use('*', async (c, next) => {
+        c.set('identity', identity)
+        c.set('tenant', { id: TENANT, casdoor_org: identity.orgId })
+        c.set(TENANT_SOURCES, [])
+        await next()
+      })
+      registerReports(app, { pool, execute: detailExec })
+      return app as unknown as Hono
+    }
+
+    const specOf = () => ({
+      period: DETAIL_PERIOD,
+      panels: [
+        {
+          chart: 'table', title: '门店销售', metricId: DETAIL_METRIC, args: {},
+          dims: ['branch_num'], slice: { dimensions: ['branch_num'] },
+          expandable: { limit: 10 }, span: 24,
+        },
+        { chart: 'text', title: '说明', content: '静态说明', span: 24 },
+        {
+          chart: 'table', title: '无下钻', metricId: ADDITIVE_METRIC, args: {},
+          dims: ['bizday'], slice: { dimensions: ['bizday'] },
+          expandable: {}, span: 24,
+        },
+      ],
+    })
+
+    async function createPublishedDetail(app: Hono): Promise<string> {
+      const res = await post(app, { title: '可折叠明细', renderer: 'platform', spec: specOf() })
+      expect(res.status).toBe(201)
+      const { id } = await res.json() as { id: string }
+      const pub = await app.request(`/reports/${id}/publish`, {
+        method: 'POST', headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ expectedVersion: await versionOf(app, id) }),
+      })
+      expect(pub.status).toBe(200)
+      return id
+    }
+
+    const rowsOf = (app: Hono, id: string, body: Record<string, unknown>) =>
+      app.request(`/reports/${id}/detail-rows`, {
+        method: 'POST', headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ panelIndex: 0, args: ARGS, row: { branch_num: '92' }, ...body }),
+      })
+
+    const adminIdentity = () => makeIdentity({ orgId: ORG, scopes: ['data:query', 'data:manage'] })
+    const viewerIdentity = () => makeIdentity({ orgId: ORG, scopes: ['data:query'] })
+
+    beforeEach(() => { detailSqls.length = 0 })
+
+    it('★ 展开一行 ⇒ 以该行的维度值过滤下钻，回明细行 + 总行数', async () => {
+      const id = await createPublishedDetail(detailShell(adminIdentity()))
+      const res = await rowsOf(detailShell(viewerIdentity()), id, {})
+      expect(res.status).toBe(200)
+      const body = await res.json() as {
+        columns: string[]; rows: unknown[][]; rowCountTotal: number; truncated: boolean
+      }
+      expect(body.columns).toEqual(['branch_num', 'bizday', 'order_no', 'value'])
+      expect(body.rows).toHaveLength(2)
+      // rowCountTotal 来自 count 腿，不是 rows.length
+      expect(body.rowCountTotal).toBe(3)
+      expect(body.truncated).toBe(false)
+      // 行过滤进了 where（明细与 count 同一 where）；缺省维度 = 下钻原子粒度全集
+      const detailSql = detailSqls.find((s) => !/count\(\*\)/.test(s))!
+      expect(detailSql).toContain(" AND branch_num = '92'")
+      expect(detailSql).toContain('group by branch_num, bizday, order_no')
+      expect(detailSqls.find((s) => /count\(\*\)/.test(s))).toContain(" AND branch_num = '92'")
+      // 面板声明的 limit 透传（10）
+      expect(detailSql).toContain('limit 10 offset 0')
+    })
+
+    it('★ 行过滤必须恰好覆盖分组维度：缺键 400，多键 400', async () => {
+      const id = await createPublishedDetail(detailShell(adminIdentity()))
+      const app = detailShell(viewerIdentity())
+      const missing = await rowsOf(app, id, { row: {} })
+      expect(missing.status).toBe(400)
+      expect(await missing.json()).toMatchObject({ error: 'ROW_FILTER_INCOMPLETE', detail: 'branch_num' })
+      const extra = await rowsOf(app, id, { row: { branch_num: '92', bizday: '2026-10-01' } })
+      expect(extra.status).toBe(400)
+      expect(await extra.json()).toMatchObject({ error: 'ROW_FILTER_UNKNOWN' })
+      expect(detailSqls).toEqual([])   // 参数面被拒 ⇒ 从未触达湖
+    })
+
+    it('非可展开面板 ⇒ 400 PANEL_NOT_EXPANDABLE（text）', async () => {
+      const id = await createPublishedDetail(detailShell(adminIdentity()))
+      const res = await rowsOf(detailShell(viewerIdentity()), id, { panelIndex: 1 })
+      expect(res.status).toBe(400)
+      expect(await res.json()).toMatchObject({ error: 'PANEL_NOT_EXPANDABLE' })
+    })
+
+    it('指标未声明下钻 ⇒ 409 DETAIL_NOT_AVAILABLE（能力边界，不是权限）', async () => {
+      const id = await createPublishedDetail(detailShell(adminIdentity()))
+      const res = await rowsOf(detailShell(viewerIdentity()), id, {
+        panelIndex: 2, row: { bizday: '2026-10-01' },
+      })
+      expect(res.status).toBe(409)
+      expect(await res.json()).toMatchObject({ error: 'DETAIL_NOT_AVAILABLE' })
+    })
+
+    it('★ 被渲染闸拒绝的面板 ⇒ 404（与「不是可展开面板」不同：不把权限判成能力错误）', async () => {
+      const id = await createPublishedDetail(detailShell(adminIdentity()))
+      try {
+        await pool.query(
+          'update data.metrics set owner_dept = $3 where org = $1 and id = $2',
+          ['platform', DETAIL_METRIC, 'T7D3'],
+        )
+        const res = await rowsOf(detailShell(viewerIdentity()), id, {})
+        expect(res.status).toBe(404)
+        expect(await res.json()).toMatchObject({ error: 'NOT_FOUND' })
+      } finally {
+        await pool.query(
+          'update data.metrics set owner_dept = null where org = $1 and id = $2',
+          ['platform', DETAIL_METRIC],
+        )
+      }
+    })
+
+    it('未登录 ⇒ 403 UNAUTHENTICATED', async () => {
+      const id = await createPublishedDetail(detailShell(adminIdentity()))
+      const app = new Hono<ModuleVars>()
+      app.use('*', async (c, next) => {
+        c.set('tenant', { id: TENANT, casdoor_org: ORG })
+        c.set(TENANT_SOURCES, [])
+        await next()
+      })
+      registerReports(app, { pool, execute: detailExec })
+      const res = await app.request(`/reports/${id}/detail-rows`, {
+        method: 'POST', headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ panelIndex: 0, args: ARGS, row: { branch_num: '92' } }),
+      })
+      expect(res.status).toBe(403)
+      expect(await res.json()).toMatchObject({ error: 'UNAUTHENTICATED' })
     })
   })
 

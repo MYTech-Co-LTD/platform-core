@@ -37,6 +37,7 @@ import { buildReportReview } from '../domain/report-review'
 import { summarizeExposure } from '../domain/publish-preview'
 import { compileTemplate, REPORT_TEMPLATES, templateById } from '../domain/report-templates'
 import { panelArgsOf } from '../domain/report-query'
+import { runDetailQuery } from '../domain/drill'
 import type { QueryDeps } from '../domain/query-service'
 import { periodRangeOf, type DateRange } from '../domain/report-period'
 import type { FactBundle } from '../domain/report-facts'
@@ -1892,6 +1893,95 @@ export function registerReports(r: ModuleHono, ctx: RouteCtx): void {
       'x-row-count': String(out.out.rows),
       'x-truncated': String(out.out.truncated),
     })
+  })
+
+  // ── 可折叠明细（R3 ⑤）──────────────────────────────────────────────────────────────
+  // table 面板的一行就地展开：看该分组下的原子粒度明细。取数只经 `runDetailQuery`
+  // （授权/数据范围/掩码/审计/行数闸全在它里面），本路由只做三件事：
+  //   ① 观看面门（与 narrative/receipt 同一份 loadViewableSpec）；
+  //   ② 把「面板声明的分组」翻译成维度过滤（键集合收严到面板分组，值原样交给下钻面校验）；
+  //   ③ 状态码映射（能力边界 ≠ 权限拒绝 ≠ 仓库故障）。
+  const DetailRowsBody = z.object({
+    panelIndex: z.number().int().min(0),
+    /** 与页面 /query **同源**的 args（期间/门店/共享筛选都在这里）——不在这里重算，避免与
+     *  ReportView 的 override 语义分叉；合法性由 runDetailQuery 的 authorize 再判一遍。 */
+    args: z.record(z.unknown()).default({}),
+    /** 展开行的维度值（键 = 面板分组维度，值 = 该行**原始值**）。 */
+    row: z.record(z.union([z.string(), z.number()])),
+    dimensions: z.array(z.string().min(1).max(64)).min(1).max(12).optional(),
+    limit: z.number().int().min(1).max(500).optional(),
+    version: z.number().int().positive().optional(),
+    preview: z.literal('draft').optional(),
+  }).strict()
+
+  r.post('/reports/:id/detail-rows', async (c) => {
+    const id = reportIdOf(c.req.param('id'))
+    if (id === null) return c.json({ error: 'NOT_FOUND' }, 404)
+    const body = DetailRowsBody.safeParse(await c.req.json().catch(() => null))
+    if (!body.success) return c.json({ error: 'INVALID_BODY' }, 400)
+    const v = await loadViewableSpec(c, id, body.data)
+    if ('error' in v) {
+      const status = v.error === 'UNAUTHENTICATED' ? 403
+        : (v.error === 'NOT_FOUND' || v.error === 'NOT_PUBLISHED') ? 404 : 400
+      return c.json({ error: v.error }, status)
+    }
+    const idx = body.data.panelIndex
+    // 被拒面板与「不是可展开 table」同形（404）：权限/存在性探针面不因能力错误而变大。
+    if (v.deniedPanels.includes(idx)) return c.json({ error: 'NOT_FOUND' }, 404)
+    const panel = v.spec.panels[idx]
+    if (panel === undefined || panel.chart !== 'table' || panel.expandable === undefined) {
+      return c.json({ error: 'PANEL_NOT_EXPANDABLE' }, 400)
+    }
+    const org = c.get('tenant').casdoor_org
+    const metric = (await loadMergedCatalog(ctx.pool, org)).find((m) => m.id === panel.metricId)
+    if (metric === undefined) return c.json({ error: 'METRIC_NOT_FOUND' }, 404)
+    // 能力边界（不是权限拒绝）：未声明下钻 = 明细面不存在。
+    const drill = metric.drill
+    if (drill === undefined) return c.json({ error: 'DETAIL_NOT_AVAILABLE' }, 409)
+    // 分组维度 = 页面查询真正下推的那一组（与 panelQueryBodyOf 同一回退顺序）。
+    const groupDims = (panel.slice?.dimensions ?? panel.dims).filter((d) => d !== '')
+    // 键必须**恰好**覆盖分组维度：缺键会展开成整表（静默放大），多键越出「这一行」的语义。
+    for (const d of groupDims) {
+      if (!(d in body.data.row)) {
+        return c.json({ error: 'ROW_FILTER_INCOMPLETE', detail: d }, 400)
+      }
+    }
+    const extra = Object.keys(body.data.row).filter((k) => !groupDims.includes(k))
+    if (extra.length > 0) return c.json({ error: 'ROW_FILTER_UNKNOWN', detail: extra.join(',') }, 400)
+    // spec 与词表漂移：分组维度不在下钻原子粒度里 ⇒ 无从展开（能力边界，别报成 bad_param）。
+    const notDrillable = groupDims.filter((d) => !drill.dims.includes(d))
+    if (notDrillable.length > 0) {
+      return c.json({ error: 'DETAIL_NOT_AVAILABLE', detail: `unknown_grouping:${notDrillable.join(',')}` }, 409)
+    }
+    // 行值统一字符串化：下钻面的维度过滤只接受字符串（数字维度按字面量比较，SQL 里等价）。
+    const filters = Object.fromEntries(
+      Object.entries(body.data.row).map(([k, val]) => [k, String(val)]),
+    )
+    const dimensions = body.data.dimensions ?? panel.expandable.dimensions ?? drill.dims
+    const limit = body.data.limit ?? panel.expandable.limit
+    const out = await runDetailQuery(
+      receiptDeps(c), org, v.requester, panel.metricId, body.data.args,
+      { dimensions, filters, ...(limit === undefined ? {} : { limit }) },
+    )
+    if (out.status === 'ok') {
+      return c.json({
+        columns: out.columns, rows: out.rows,
+        rowCountTotal: out.rowCountTotal, truncated: out.truncated,
+        drill_as_of: out.drill_as_of,
+        ...(out.data_as_of === undefined ? {} : { data_as_of: out.data_as_of }),
+        ...(out.clock_note === undefined ? {} : { clock_note: out.clock_note }),
+        ...(out.scope_line === undefined ? {} : { scope_line: out.scope_line }),
+        ...(out.masking === undefined ? {} : { masking: out.masking }),
+      })
+    }
+    if (out.status === 'denied') {
+      if (out.reason === 'no_detail_binding') return c.json({ error: 'DETAIL_NOT_AVAILABLE' }, 409)
+      if (out.reason === 'bad_param') {
+        return c.json({ error: 'BAD_PARAM', ...(out.detail === undefined ? {} : { detail: out.detail }) }, 400)
+      }
+      return c.json({ error: 'FORBIDDEN', ...(out.detail === undefined ? {} : { detail: out.detail }) }, 403)
+    }
+    return c.json({ error: 'QUERY_FAILED' }, 502)
   })
 
   // ── 编辑页入口（spec §3⑦：把 Metabase 编辑页经反代搬进后台）─────────────────────────

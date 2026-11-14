@@ -336,10 +336,130 @@ function TrustLine({ result }: { result: OkResult }) {
   )
 }
 
+/** 可折叠明细（R3 ⑤）的展开上下文：报告/面板身份 + **与页面查询同源**的 args。 */
+interface DetailCtx {
+  reportId: string
+  panelIndex: number
+  args: Record<string, unknown>
+  version?: number
+  preview?: 'draft'
+}
+
+/** 展开行的回包（只列渲染要用的字段；服务端缺省 = 不展示，不编）。 */
+interface DetailRowsResp {
+  columns: string[]
+  rows: unknown[][]
+  rowCountTotal: number
+  truncated: boolean
+  drill_as_of?: string
+  data_as_of?: unknown
+  clock_note?: string
+  scope_line?: string
+  masking?: Record<string, string>
+}
+
+/**
+ * 一行展开后的原子粒度明细。
+ *
+ * 纪律：
+ *  · 过滤值取**原始行值**（`row[dim]`），不是展示格式化后的字符串——表格把日期渲染成
+ *    `YYYY-MM-DD HH:mm`，拿它做过滤值会查不到任何行。
+ *  · 键缺失/为空 ⇒ 不请求，直接说「无法定位」（拿空过滤去查 = 把整表当成这一行展示）。
+ *  · 三态分开：加载 / 空 / 错；错里再分「能力边界」（未声明下钻）与「权限/故障」。
+ */
+function DetailRows({
+  ctx, row, rowDims, dimensions, limit,
+}: {
+  ctx: DetailCtx
+  /** 该行的原始值（与 `rowDims` 一一对应；调用方已按结果列索引取好）。 */
+  row: unknown[]
+  /** 分组维度名（与 `row` 同序）。 */
+  rowDims: string[]
+  dimensions?: string[]
+  limit?: number
+}) {
+  type State =
+    | { kind: 'loading' }
+    | { kind: 'unavailable'; text: string }
+    | { kind: 'error'; text: string }
+    | { kind: 'ok'; data: DetailRowsResp }
+  const [state, setState] = useState<State>({ kind: 'loading' })
+  // args 是父级每次渲染新建的对象——依赖用**值**而不是引用，否则展开期间父级一重渲染就重查。
+  const argsKey = JSON.stringify(ctx.args)
+  const rowKey = JSON.stringify(row)
+  useEffect(() => {
+    let alive = true
+    const filters: Record<string, string> = {}
+    const missing: string[] = []
+    rowDims.forEach((d, i) => {
+      const v = row[i]
+      if (v === null || v === undefined) missing.push(d)
+      else filters[d] = String(v)
+    })
+    if (missing.length > 0) {
+      setState({ kind: 'unavailable', text: `该行的 ${missing.join('、')} 为空，无法定位明细` })
+      return
+    }
+    setState({ kind: 'loading' })
+    apiSend(`/reports/${ctx.reportId}/detail-rows`, 'POST', {
+      panelIndex: ctx.panelIndex,
+      args: ctx.args,
+      row: filters,
+      ...(dimensions === undefined ? {} : { dimensions }),
+      ...(limit === undefined ? {} : { limit }),
+      ...(ctx.version === undefined ? {} : { version: ctx.version }),
+      ...(ctx.preview === undefined ? {} : { preview: ctx.preview }),
+    })
+      .then((b) => { if (alive) setState({ kind: 'ok', data: b as DetailRowsResp }) })
+      .catch((e) => {
+        if (!alive) return
+        setState({ kind: 'error', text: e instanceof ApiError ? messageOf(e) : '明细加载失败，请稍后重试' })
+      })
+    return () => { alive = false }
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- row/args 按值比较（见上）
+  }, [ctx.reportId, ctx.panelIndex, argsKey, rowKey])
+
+  if (state.kind === 'loading') return <div style={{ padding: 8 }}><Spin size="small" /></div>
+  if (state.kind === 'unavailable') {
+    return <Typography.Text type="secondary" style={{ fontSize: 12 }}>{state.text}</Typography.Text>
+  }
+  if (state.kind === 'error') {
+    return <Alert type="warning" showIcon message={state.text} />
+  }
+  const d = state.data
+  const notes: string[] = [`共 ${d.rowCountTotal} 行`]
+  if (d.truncated) notes.push('已截断')
+  if (d.masking !== undefined && Object.keys(d.masking).length > 0) {
+    notes.push(`含脱敏列：${Object.keys(d.masking).join('、')}`)
+  }
+  if (d.data_as_of !== undefined && d.data_as_of !== null) notes.push(`数据截止 ${String(d.data_as_of)}`)
+  if (d.clock_note !== undefined) notes.push(d.clock_note)
+  if (d.rows.length === 0) {
+    return <Typography.Text type="secondary" style={{ fontSize: 12 }}>这一组没有更细的明细</Typography.Text>
+  }
+  return (
+    <div data-testid="detail-rows">
+      <div style={{ overflowX: 'auto' }}>
+        <Table
+          size="small" pagination={false} scroll={{ x: 'max-content' }}
+          rowKey={(_, i) => String(i)}
+          columns={d.columns.map((c) => ({ title: c, dataIndex: c }))}
+          dataSource={d.rows.map((r) => Object.fromEntries(
+            d.columns.map((c, i) => [c, displayValue(c, r[i])]),
+          ))}
+        />
+      </div>
+      <Typography.Text type="secondary" style={{ fontSize: 12, marginTop: 4, display: 'block' }}>
+        {notes.join(' · ')}
+      </Typography.Text>
+    </div>
+  )
+}
+
 /** 单个面板的呈现：查询未回 ⇒ Spin；denied ⇒ 人话（不拖垮整页）；table ⇒ antd Table；图 ⇒ EChart。 */
 interface PanelCompare { label: string; result: OkResult }
 
-function PanelBody({ panel, result, compares = [] }: { panel: Panel; result: PanelResult | undefined; compares?: PanelCompare[] }) {
+function PanelBody({ panel, result, compares = [], detailCtx }: { panel: Panel; result: PanelResult | undefined; compares?: PanelCompare[]; detailCtx?: DetailCtx }) {
   // text / kpi 的呈现不经过查询结果（text 是静态文本，kpi 由 KpiCard 自取合计）——
   // ReportView 的渲染分支里已把它们分流，这里只是类型收口。
   if (panel.chart === 'text') {
@@ -399,6 +519,11 @@ function PanelBody({ panel, result, compares = [] }: { panel: Panel; result: Pan
       ? result.columns
       : declared.filter((c) => result.columns.includes(c))
     const missing = declared?.filter((c) => !result.columns.includes(c)) ?? []
+    // 可折叠明细（R3 ⑤）：只在规格声明 expandable、且确有分组维度、且观看面拿到上下文的
+    // 时候出现。分组维度按「页面真正下推的那一组」取（与 panelQueryBodyOf 同一回退）。
+    const groupDims = panel.expandable === undefined ? [] : dimsOf(panel).filter((d) => result.columns.includes(d))
+    const canExpand = panel.expandable !== undefined && detailCtx !== undefined && groupDims.length > 0
+    const expandCfg = panel.expandable
     return (
       <>
         {missing.length > 0 && (
@@ -416,9 +541,47 @@ function PanelBody({ panel, result, compares = [] }: { panel: Panel; result: Pan
             pagination={false}
             scroll={{ x: 'max-content' }}
             columns={cols.map((c) => ({ title: c, dataIndex: c }))}
-            dataSource={result.rows.map((row) =>
-              Object.fromEntries(cols.map((c) =>
-                [c, displayValue(c, row[result.columns.indexOf(c)])])))}
+            dataSource={result.rows.map((row, idx) => ({
+              __idx: idx,
+              ...Object.fromEntries(cols.map((c) =>
+                [c, displayValue(c, row[result.columns.indexOf(c)])])),
+            }))}
+            {...(canExpand ? {
+              expandable: {
+                // 展开内容只在**首次展开时**挂载 ⇒ 请求天然按需发（展开才查，收起不保活）。
+                expandedRowRender: (record: Record<string, unknown>) => {
+                  const idx = Number(record.__idx)
+                  const raw = result.rows[idx] ?? []
+                  return (
+                    <DetailRows
+                      ctx={detailCtx}
+                      row={groupDims.map((d) => raw[result.columns.indexOf(d)])}
+                      rowDims={groupDims}
+                      {...(expandCfg?.dimensions === undefined ? {} : { dimensions: expandCfg.dimensions })}
+                      {...(expandCfg?.limit === undefined ? {} : { limit: expandCfg.limit })}
+                    />
+                  )
+                },
+                // 维度值为空的行无法定位明细（拿空过滤查 = 把整表当这一行）。
+                rowExpandable: (record: Record<string, unknown>) => {
+                  const raw = result.rows[Number(record.__idx)] ?? []
+                  return groupDims.every((d) => {
+                    const v = raw[result.columns.indexOf(d)]
+                    return v !== null && v !== undefined
+                  })
+                },
+                expandIcon: ({ expanded, onExpand, record }) => (
+                  <Button
+                    type="text" size="small"
+                    aria-label={expanded ? '收起明细' : '展开明细'}
+                    aria-expanded={expanded}
+                    onClick={(e) => onExpand(record, e)}
+                  >
+                    {expanded ? '收起' : '明细'}
+                  </Button>
+                ),
+              },
+            } : {})}
           />
         </div>
         <TrustLine result={result} />
@@ -1050,7 +1213,16 @@ export default function ReportView({
               />
             ) : (
               <Card size="small" title={p.title}>
-                <PanelBody panel={p} result={results[i]} compares={compareResults[i]} />
+                <PanelBody
+                  panel={p} result={results[i]} compares={compareResults[i]}
+                  {...(p.chart === 'table' && p.expandable !== undefined ? {
+                    detailCtx: {
+                      reportId, panelIndex: i, args: argsOf(p),
+                      ...(pinnedVersion === null || pinnedVersion === undefined ? {} : { version: pinnedVersion }),
+                      ...(preview === undefined ? {} : { preview }),
+                    },
+                  } : {})}
+                />
               </Card>
             )}
           </Col>

@@ -396,20 +396,24 @@ function grainDimsOf(metric: MetricDef): string[] {
 const IDENT_RE = /^[A-Za-z_][A-Za-z0-9_]*$/
 
 /**
- * 切片 filters 的**前置校验 + 字面量渲染**（authorize 里调，产物交 authorizeCore 拼进 WHERE）。
- * 维度过滤与声明参数过滤落在**同一段** whereAndGroup 里（spec：filters = 已声明参数 + 维度等值/IN），
- * 故必须经 `extraFilters` 在 authorizeCore 组装 filters 数组时追加，而不是事后拼字符串——
- * GROUP BY 在 inner 尾部，事后追加会拼到 GROUP BY 之后（SQL 语法错）。
- * 声明参数键不在这里处理（authorizeCore 的既有循环按类型走 literal/rangeLiteral）。
+ * 维度等值/IN 过滤的**唯一渲染器**：切片 filters（`authorize`）与明细行展开
+ * （`runDetailQuery` 的 `detail.filters`）共用——两处各写一份校验，就是第二个事实源。
+ *
+ * `allowedDims` = 该面允许过滤的维度闭集（切片 = 指标粒度；明细 = 下钻原子粒度）。
+ * `paramKeys` = 由声明参数处理、不在这里渲染的键（切片面用；明细面传空——明细没有「并入 args」
+ * 这一步，静默跳过等于静默放宽）。
+ *
+ * 值只接受 string / string[]（`sqlQuote` 转义后拼入 WHERE；键先过 IDENT_RE 再拼，注入面为零）。
  */
-function sliceFilterFragments(
-  metric: MetricDef, slicing: SlicingSpec,
+export function dimensionFilterFragments(
+  allowedDims: readonly string[],
+  filters: Record<string, unknown>,
+  paramKeys: readonly string[] = [],
 ): { ok: true; fragments: string[] } | { ok: false; detail: string } {
-  const grain = grainDimsOf(metric)
   const fragments: string[] = []
-  for (const [key, value] of Object.entries(slicing.filters ?? {})) {
-    if (metric.params[key] !== undefined) continue
-    if (!grain.includes(key) || !IDENT_RE.test(key)) return { ok: false, detail: `unknown_dimension:${key}` }
+  for (const [key, value] of Object.entries(filters)) {
+    if (paramKeys.includes(key)) continue
+    if (!allowedDims.includes(key) || !IDENT_RE.test(key)) return { ok: false, detail: `unknown_dimension:${key}` }
     if (Array.isArray(value)) {
       if (value.length === 0) return { ok: false, detail: `empty_in_filter:${key}` }
       const lits = value.map((v) => (typeof v === 'string' ? sqlQuote(v) : null))
@@ -422,6 +426,19 @@ function sliceFilterFragments(
     }
   }
   return { ok: true, fragments }
+}
+
+/**
+ * 切片 filters 的**前置校验 + 字面量渲染**（authorize 里调，产物交 authorizeCore 拼进 WHERE）。
+ * 维度过滤与声明参数过滤落在**同一段** whereAndGroup 里（spec：filters = 已声明参数 + 维度等值/IN），
+ * 故必须经 `extraFilters` 在 authorizeCore 组装 filters 数组时追加，而不是事后拼字符串——
+ * GROUP BY 在 inner 尾部，事后追加会拼到 GROUP BY 之后（SQL 语法错）。
+ * 声明参数键不在这里处理（authorizeCore 的既有循环按类型走 literal/rangeLiteral）。
+ */
+function sliceFilterFragments(
+  metric: MetricDef, slicing: SlicingSpec,
+): { ok: true; fragments: string[] } | { ok: false; detail: string } {
+  return dimensionFilterFragments(grainDimsOf(metric), slicing.filters ?? {}, Object.keys(metric.params))
 }
 
 /**
