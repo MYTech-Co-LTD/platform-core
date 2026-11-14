@@ -53,6 +53,14 @@ const MetaPayload = z.object({
 }).strict()
 
 /**
+ * delete 档 payload（下线提案尾波，2026-11-14）：空对象，或只含可选 `reason`（1–500 字）。
+ * reason 是**人面展示文案**——job 提单时写「连续 N 天 0 次使用（报表引用已排除）」，给待核对页
+ * 的人看出处；执行器 `deleteMetricDeclaration` **不读** payload，reason 永不进执行路径。
+ * strict 闭集：旧判据「任何键都拒」收窄成「只认 reason」——给提案留出处，不给自由载荷开口子。
+ */
+const DeletePayload = z.object({ reason: z.string().min(1).max(500).optional() }).strict()
+
+/**
  * override 档 payload 的**宽预检**（P1 Task 7）：payload = W8 声明 entry（与
  * POST /metrics/:id/override 的 `declaration` 同形同源，故 passthrough 放行其余字段）。
  * 这里只拦形状级错误（name/label/expression/grain 在位且 name==metricId）；深校验
@@ -361,8 +369,11 @@ export async function submitChange(
   if (kind === 'meta' && (meta === null || !meta.success || metaAllKeysAbsent(meta.data))) {
     return { ok: false, http: 400, error: 'INVALID_META' }
   }
-  if (kind === 'delete' && payload !== null && typeof payload === 'object' && Object.keys(payload as object).length > 0) {
-    return { ok: false, http: 400, error: 'INVALID_DECLARATION' }
+  // delete 档 payload：空对象或 {reason?}（DeletePayload 头注）；null/缺席归一为空对象，
+  // 其余形状（标量/数组/未知键）一律 400——下线提案的 payload 必须可解释。
+  if (kind === 'delete') {
+    const parsed = DeletePayload.safeParse(payload ?? {})
+    if (!parsed.success) return { ok: false, http: 400, error: 'INVALID_DECLARATION' }
   }
 
   const client = await pool.connect()

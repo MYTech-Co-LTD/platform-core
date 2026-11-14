@@ -136,6 +136,14 @@ export default function ChangesPage() {
                           + `差 ${r.preview.baseline.deltaPct > 0 ? '+' : ''}${r.preview.baseline.deltaPct}%`
                         : `试算 ${r.preview?.value?.toLocaleString?.() ?? r.preview?.value ?? '—'}（${r.preview?.rows ?? 0} 行）`}
                 </Typography.Paragraph>
+                {/* 提议原因（下线提案尾波）：delete 单的 payload.reason 是提案方给人看的出处文案
+                    （「连续 N 天 0 次使用…」），执行器不读它。只认 string——payload 是 passthrough 形状，
+                    非 string 进 React 子位 = render 抛错（同上 s() 的防炸纪律）；无 reason 不渲染。 */}
+                {r.kind === 'delete' && typeof r.payload.reason === 'string' && (
+                  <Typography.Paragraph type="secondary" style={{ margin: '6px 0 0', fontSize: 13 }}>
+                    提议原因：{r.payload.reason}
+                  </Typography.Paragraph>
+                )}
                 <TechDetails>
                   <div>窗口：{r.preview?.window ? `${r.preview.window.from} ~ ${r.preview.window.to}` : '—'}</div>
                   {/* 归属随单可见（P1 Task 8a，spec §5.1 payload 顶层 ownerDept/entity）——

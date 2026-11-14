@@ -42,7 +42,13 @@ import { METRIC_SOURCE_RE } from '@platform/sdk'
 // ⇒ 对它 TS7016（找不到声明）。不另写 .d.mts 壳：声明文件会在根工程里**遮蔽 .mjs 本体**，
 // 把 test.ts 看到的导出砍到只剩壳里声明的几个（实测 TS2305 五连）。故就地压制这一条、值保持 any
 // （RESERVED_METRIC_ID_PREFIXES.find 的回调参数等处因此要显式标注类型）。
-// @ts-expect-error TS7016: Could not find a declaration file for module '../../../../scripts/check-data-models.mjs'
+// ⚠️ 用 @ts-ignore 不用 @ts-expect-error：本文件的导入图会被 scripts 侧 job（如
+// scripts/metric-retire-job.mjs → metric-retire.ts → metric-change.ts → metric-ownership.ts）
+// 拉进**根 tsconfig 工程**，那里 allowJs 已把 .mjs 推断出类型、TS7016 不发火——@ts-expect-error
+// 会 TS2578「未使用」当红（2026-11-14 实测）。两个工程各编译一遍，指令只在 modules 侧有错可压，
+// expect-error 无法表达「按工程而定」；@ts-ignore 有错压错、无错跳过，两边都绿。
+// 代价：若模块路径本身断了（TS2307），这里不再当红——路径改动会经测试与运行时暴露，可接受。
+// @ts-ignore TS7016: Could not find a declaration file for module '../../../../scripts/check-data-models.mjs'（仅 modules 工程发火）
 import { METRIC_NAME_RE, RESERVED_METRIC_ID_PREFIXES, freshnessSlaError, metricToAuditFileName, ratioShapeError } from '../../../../scripts/check-data-models.mjs'
 import { SemanticCompileError, parseL1Select } from '../semantic-compiler'
 import type { Issue } from './validate-types'
