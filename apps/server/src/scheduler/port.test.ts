@@ -114,6 +114,93 @@ describePg('SchedulerPort', () => {
     )
   })
 
+  it('★ 配额：每 namespace 最多 50 条 agent 排班，第 51 条 QUOTA_EXCEEDED', async () => {
+    const port = mkPort(pool)
+    // 上限 = 50：建满 50 条都合法（第 50 条仍在额度内）。
+    for (let i = 0; i < 50; i++) await port.createSchedule(baseInput())
+    const used = await pool.query(
+      `select count(*)::int as n from platform.job_schedule
+        where owner_org=$1 and owner_namespace=$2 and deleted_at is null and source='agent'`,
+      [ORG_A, NS_A])
+    expect(used.rows[0].n).toBe(50)
+
+    await expect(port.createSchedule(baseInput())).rejects.toMatchObject({
+      code: 'QUOTA_EXCEEDED', kind: 'schedules', limit: 50,
+    })
+    // 拒绝必须发生在插入前：库里仍是 50 条。
+    const after = await pool.query(
+      `select count(*)::int as n from platform.job_schedule
+        where owner_org=$1 and owner_namespace=$2 and deleted_at is null and source='agent'`,
+      [ORG_A, NS_A])
+    expect(after.rows[0].n).toBe(50)
+  })
+
+  it('★ 配额并发：49 条时两次同时建，只成功一条（事务内计数 + 配额锁）', async () => {
+    const port = mkPort(pool)
+    for (let i = 0; i < 49; i++) await port.createSchedule(baseInput())
+
+    const results = await Promise.allSettled([port.createSchedule(baseInput()), port.createSchedule(baseInput())])
+    expect(results.filter((r) => r.status === 'fulfilled')).toHaveLength(1)
+    const rejected = results.filter((r): r is PromiseRejectedResult => r.status === 'rejected')
+    expect(rejected).toHaveLength(1)
+    expect(rejected[0].reason).toMatchObject({ code: 'QUOTA_EXCEEDED', kind: 'schedules', limit: 50 })
+
+    // 没有串行化时两条事务都会读到 49 并各自插入 ⇒ 51。
+    const { rows } = await pool.query(
+      `select count(*)::int as n from platform.job_schedule
+        where owner_org=$1 and owner_namespace=$2 and deleted_at is null and source='agent'`,
+      [ORG_A, NS_A])
+    expect(rows[0].n).toBe(50)
+  })
+
+  it('★ 配额：最小 cron 间隔 5 分钟（*/5 可建、*/4 拒）', async () => {
+    const port = mkPort(pool)
+    await expect(port.createSchedule({ ...baseInput(), cron: '*/4 * * * *' })).rejects.toMatchObject({
+      code: 'QUOTA_EXCEEDED', kind: 'min_interval', limit: 300,
+    })
+    const ok = await port.createSchedule({ ...baseInput(), cron: '*/5 * * * *' })
+    expect(ok.nextRunAt).toBe('2026-11-14T00:05:00.000Z')
+  })
+
+  it('★ 配额：每 namespace 每日最多 200 条 firing，到 200 拒建', async () => {
+    const port = mkPort(pool)
+    const { id } = await port.createSchedule(baseInput())
+    await pool.query(
+      `insert into platform.job_run(schedule_id,key,occurrence,trigger,status,started_at)
+       select $1,'notify.emit',now(),'schedule','ok', now() - (g * interval '1 second')
+         from generate_series(1,200) g`, [id])
+
+    await expect(port.createSchedule(baseInput())).rejects.toMatchObject({
+      code: 'QUOTA_EXCEEDED', kind: 'daily_firings', limit: 200,
+    })
+
+    // 边界：199 条时仍可建（额度是「最多 200」，不是「到 200 前一条」）。
+    await pool.query(
+      `delete from platform.job_run
+        where id = (select max(id) from platform.job_run where schedule_id=$1)`, [id])
+    await expect(port.createSchedule(baseInput())).resolves.toMatchObject({ id: expect.any(String) })
+  })
+
+  it('quotaOf：返回 used/limit（schedules 50 / dailyFirings 200 / minIntervalSecs 300）', async () => {
+    const port = mkPort(pool)
+    expect(await port.quotaOf()).toEqual({
+      schedules: { used: 0, limit: 50 },
+      dailyFirings: { used: 0, limit: 200 },
+      minIntervalSecs: 300,
+    })
+
+    const { id } = await port.createSchedule(baseInput())
+    await pool.query(
+      `insert into platform.job_run(schedule_id,key,occurrence,trigger,status,started_at)
+       select $1,'notify.emit',now(),'schedule','ok', now() - (g * interval '1 minute')
+         from generate_series(1,3) g`, [id])
+    expect(await port.quotaOf()).toEqual({
+      schedules: { used: 1, limit: 50 },
+      dailyFirings: { used: 3, limit: 200 },
+      minIntervalSecs: 300,
+    })
+  })
+
   it('★ 跨归属：四个 id 方法一律 NOT_FOUND（不用 403，避免枚举）', async () => {
     const a = mkPort(pool)
     const { id } = await a.createSchedule(baseInput())

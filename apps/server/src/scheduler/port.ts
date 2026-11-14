@@ -31,6 +31,8 @@ export interface SchedulerPort {
     timeoutMs?: number
     maxAttempts?: number
   }): Promise<{ id: string; nextRunAt: string }>
+  /** 只读：当前 actor 的 namespace 配额使用情况（与 createSchedule 的判据同源）。 */
+  quotaOf(): Promise<SchedulerQuota>
   /** `filter.ownerOrg` 被忽略（恒用 actor.org）；`ownerNamespace` 只能收窄到 actor.namespace。 */
   listSchedules(filter: { ownerOrg: string; ownerNamespace?: string }): Promise<Array<{
     id: string
@@ -58,7 +60,24 @@ export interface SchedulerPort {
 export interface SchedulerPortError extends Error {
   code: string
   detail?: string
+  /** 仅 `QUOTA_EXCEEDED`：触发的是哪一条配额。 */
+  kind?: QuotaKind
+  /** 仅 `QUOTA_EXCEEDED`：该配额的额度（= 用户拍板值）。 */
+  limit?: number
 }
+
+export type QuotaKind = 'schedules' | 'min_interval' | 'daily_firings'
+
+export interface SchedulerQuota {
+  schedules: { used: number; limit: number }
+  dailyFirings: { used: number; limit: number }
+  minIntervalSecs: number
+}
+
+/** 配额（用户拍板 2026-11-14，W6-P3）。改数值必须走评审，不许在实现里调。 */
+const QUOTA_SCHEDULES = 50
+const QUOTA_MIN_INTERVAL_SECS = 300
+const QUOTA_DAILY_FIRINGS = 200
 
 /** agent 可建排班的 key 白名单（v1 只有周期消息）。新增 key 必须走评审改这里。 */
 const AGENT_JOB_KEYS = new Set(['notify.emit'])
@@ -82,6 +101,29 @@ function fail(code: string, detail?: string): never {
   if (detail !== undefined) err.detail = detail
   throw err
 }
+
+/** 超配额统一形态：`code='QUOTA_EXCEEDED'` + 结构化的 `kind`/`limit`（工具层直接透出）。 */
+function quotaExceeded(kind: QuotaKind, limit: number, detail?: string): never {
+  const err = new Error('QUOTA_EXCEEDED') as SchedulerPortError
+  err.code = 'QUOTA_EXCEEDED'
+  err.kind = kind
+  err.limit = limit
+  if (detail !== undefined) err.detail = detail
+  throw err
+}
+
+/** 配额判据（与 quotaOf 共用，避免两处口径漂移）：本 namespace 的 agent 排班数。 */
+const SCHEDULE_COUNT_SQL = `
+  select count(*)::int as n from platform.job_schedule
+   where owner_org = $1 and owner_namespace = $2 and deleted_at is null and source = 'agent'`
+
+/** 配额判据：本 namespace 最近 24h 的 firing 数（跨该 namespace 的全部排班）。 */
+const DAILY_FIRINGS_SQL = `
+  select count(*)::int as n
+    from platform.job_run r
+    join platform.job_schedule s on s.id = r.schedule_id
+   where s.owner_org = $1 and s.owner_namespace = $2
+     and r.started_at > now() - interval '1 day'`
 
 /** 归属谓词：所有按 id 的操作都带上它；软删行视为「不存在」。 */
 const OWNED_WHERE =
@@ -164,26 +206,89 @@ export function buildSchedulerPort(deps: {
 
       const at = now()
       let nextAt: Date
+      let minIntervalSecs: number
       try {
         nextAt = nextRunAt(input.cron, input.timezone, at)
+        // 最小间隔 = 连续两次触发点的差（不信任调用方传的 expectedIntervalSecs）。
+        const after = nextRunAt(input.cron, input.timezone, nextAt)
+        minIntervalSecs = (after.getTime() - nextAt.getTime()) / 1000
       } catch (e) {
         // 语法已过 isValidCron；这里失败只可能是时区非法/DST/8 年内无触发点。
         fail('INVALID_SCHEDULE', e instanceof Error ? e.message : String(e))
       }
 
-      const { rows } = await pool.query<{ id: string }>(
-        `insert into platform.job_schedule
-           (key, cron, timezone, params, owner_org, owner_namespace, source, created_by,
-            enabled, next_run_at, timeout_ms, max_attempts, expected_interval_secs)
-         values ($1,$2,$3,$4::jsonb,$5,$6,'agent',$7,true,$8,$9,$10,$11)
-         returning id`,
-        [
-          input.key, input.cron, input.timezone, paramsJson,
-          actor.org, actor.namespace, actor.userId,
-          nextAt, timeoutMs, maxAttempts, expectedIntervalSecs,
-        ],
+      const client = await pool.connect()
+      try {
+        await client.query('begin')
+        // 锁等待上限（照抄 runNow）：配额锁被占时不许把连接无限期占住。
+        await client.query("set local lock_timeout = '2s'")
+        // 配额「计数 + 插入」必须对同一 (org, namespace) 串行：READ COMMITTED 下两条并发
+        // 事务都读到 49 条，各自插入后就是 51 条。事务级 advisory lock 随提交/回滚自动释放。
+        await client.query(
+          'select pg_advisory_xact_lock(hashtext($1), hashtext($2))',
+          [actor.org, actor.namespace],
+        )
+
+        const schedules = await client.query<{ n: number }>(
+          SCHEDULE_COUNT_SQL, [actor.org, actor.namespace])
+        if (schedules.rows[0].n >= QUOTA_SCHEDULES) {
+          quotaExceeded('schedules', QUOTA_SCHEDULES, `${schedules.rows[0].n} >= ${QUOTA_SCHEDULES}`)
+        }
+        if (minIntervalSecs < QUOTA_MIN_INTERVAL_SECS) {
+          quotaExceeded(
+            'min_interval', QUOTA_MIN_INTERVAL_SECS,
+            `${minIntervalSecs}s < ${QUOTA_MIN_INTERVAL_SECS}s`,
+          )
+        }
+        const firings = await client.query<{ n: number }>(
+          DAILY_FIRINGS_SQL, [actor.org, actor.namespace])
+        if (firings.rows[0].n >= QUOTA_DAILY_FIRINGS) {
+          quotaExceeded('daily_firings', QUOTA_DAILY_FIRINGS, `${firings.rows[0].n} >= ${QUOTA_DAILY_FIRINGS}`)
+        }
+
+        const { rows } = await client.query<{ id: string }>(
+          `insert into platform.job_schedule
+             (key, cron, timezone, params, owner_org, owner_namespace, source, created_by,
+              enabled, next_run_at, timeout_ms, max_attempts, expected_interval_secs)
+           values ($1,$2,$3,$4::jsonb,$5,$6,'agent',$7,true,$8,$9,$10,$11)
+           returning id`,
+          [
+            input.key, input.cron, input.timezone, paramsJson,
+            actor.org, actor.namespace, actor.userId,
+            nextAt, timeoutMs, maxAttempts, expectedIntervalSecs,
+          ],
+        )
+        await client.query('commit')
+        return { id: String(rows[0].id), nextRunAt: nextAt.toISOString() }
+      } catch (e) {
+        await client.query('rollback').catch(() => {})
+        // 55P03 = lock_not_available：配额锁有界等待失败，转端口错误码（未插行）。
+        if ((e as { code?: string }).code === '55P03') fail('JOB_LOCK_TIMEOUT', 'quota lock')
+        throw e
+      } finally {
+        client.release()
+      }
+    },
+
+    async quotaOf() {
+      // 一条查询取两个计数：同一快照，避免两次往返之间 at 漂移。
+      const { rows } = await pool.query<{ schedules_used: number; firings_used: number }>(
+        `select
+           (select count(*)::int from platform.job_schedule
+             where owner_org = $1 and owner_namespace = $2
+               and deleted_at is null and source = 'agent') as schedules_used,
+           (select count(*)::int
+              from platform.job_run r
+              join platform.job_schedule s on s.id = r.schedule_id
+             where s.owner_org = $1 and s.owner_namespace = $2
+               and r.started_at > now() - interval '1 day') as firings_used`,
+        [actor.org, actor.namespace],
       )
-      return { id: String(rows[0].id), nextRunAt: nextAt.toISOString() }
+      return {
+        schedules: { used: rows[0].schedules_used, limit: QUOTA_SCHEDULES },
+        dailyFirings: { used: rows[0].firings_used, limit: QUOTA_DAILY_FIRINGS },
+        minIntervalSecs: QUOTA_MIN_INTERVAL_SECS,
+      }
     },
 
     async listSchedules(filter) {
