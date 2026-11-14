@@ -21,6 +21,7 @@ import { buildMetricTrail, lakeStagingFromContracts, pipelineIdsOf, stagingRelat
 import { buildPipelineMap } from '../domain/system-map/pipeline-map'
 import { loadContracts, loadPipelines, loadSchedules, rootsOf } from '../domain/pipelines/defs'
 import { warehousePool } from '../domain/warehouse'
+import { watermarkSqlFor } from '../domain/query-service'
 import { runSourceFromEnv } from '../domain/pipelines/run-source'
 
 const CACHE_TTL_MS = 10 * 60 * 1000
