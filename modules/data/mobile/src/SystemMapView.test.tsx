@@ -35,7 +35,10 @@ afterEach(cleanup)
 
 describe('移动端体系地图', () => {
   it('KPI 与「业务对象 → 指标」分组；搜索可过滤', async () => {
-    m.mockImplementation(async (url: string) => (url.includes('/trail') ? { trail: TRAIL } : GRAPH))
+    m.mockImplementation(async (url: string) => {
+      expect(url.startsWith('/api/modules/data/system-map')).toBe(true)
+      return url.includes('/trail') ? { trail: TRAIL } : GRAPH
+    })
     render(<SystemMapView />)
     await waitFor(() => expect(screen.getByText('体系地图')).toBeTruthy())
     expect(screen.getByText('57')).toBeTruthy()
