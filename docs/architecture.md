@@ -509,8 +509,10 @@ token 只决定「这个账号能调哪些面」，不改变分层。
 **不变量**：① 调度器只排「引擎」不排「规则」（agent 只能排已注册 key）；② 只做 cron + 台账，
 不做 DAG / 依赖编排 / 回填队列；③ `source='system'` 时 `params` 不生效——行为只由代码 registry 决定。
 
-**HTTP 进程仍然不跑定时副作用**：宿主 `apps/server` 不装任何 interval；手动触发端点只**入队**，
-执行发生在 worker 进程。
+**业务 job 的定时副作用不进 HTTP 进程**：手动触发端点只**入队**，执行发生在 worker 进程。
+既有例外是**监控面**的集成健康探针（`apps/server/src/integration-probe.ts:385` 的 `setInterval`，
+由 `apps/server/src/app.ts:445` 启动，生产经 `deploy/docker-compose.yml:77` 的
+`INTEGRATION_PROBE_INTERVAL_MS=60000` 开启）——它不承担业务 job，不改变本条结论。
 
 > 方案对比与设计：`docs/superpowers/specs/2026-11-14-business-scheduler-design.md`（v2）。
 > 运维口径与切流程序：`deploy/jobs.md`。

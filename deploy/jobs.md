@@ -21,11 +21,21 @@
 - **排引擎不排规则**：可排的是代码里已注册的 key；agent 不能注册 handler，也不能凭空排一个未注册 key。
 - **只做 cron + 台账**：不做 DAG / 依赖编排 / 回填队列 / 分布式执行。
 - **system job 的 `params` 不生效**：`source='system'` 时行为只由代码 registry 决定，改库改不了副作用。
-- **HTTP 进程不跑定时副作用**：宿主 `server` 不装 interval；手动触发只**入队**，执行在 worker 的子进程。
+- **业务 job 的定时副作用不进 HTTP 进程**：手动触发只**入队**，执行在 worker 的子进程。
+  既有例外是**监控面**的集成健康探针（`apps/server/src/integration-probe.ts:385` 的 `setInterval`，
+  由 `apps/server/src/app.ts:445` 启动，`deploy/docker-compose.yml:77` 的 `INTEGRATION_PROBE_INTERVAL_MS=60000` 开启）——
+  它不承担业务 job，不改变本条结论。
 
-**当前状态（2026-11-14，P1）**：只有 `notify.reconcile` / `metric.candidates` / `report.scope_scan` 三个 job 已切到本调度器；
-其余业务 job（`notify-health` / `notify-retention` / `notify-seed-builtin` / `notify-preflight` / `metric-retire` / `org-sync`）
-**此刻仍由 openship job 驱动**。逐项状态见 §5 切流表。
+**当前状态（2026-11-14，P1 目标 / 待切）**：本调度器**尚未上线**（`apps/server/src/scheduler/` 未建、迁移未落），
+以下全部为**目标迁移项**，此刻还没有任何 job 由本调度器驱动：
+
+- `notify.reconcile` / `metric.candidates`：P1 目标，**尚未切流**，此刻仍由 openship job 驱动。
+- `report.scope_scan`：P1 目标，openship 侧本无对应 job，此刻**无任何驱动**（待调度器上线后新建）。
+- `notify-health` / `notify-retention` / `notify-seed-builtin` / `notify-preflight` / `org-sync`：待切（W6-P4），
+  此刻仍由 openship job 驱动。
+- `metric-retire`：待切（W6-P4），**此刻无任何驱动（openship job 未建）**。
+
+逐项状态见 §5 切流表。
 
 ## 2. 台账：三张表
 
@@ -35,7 +45,7 @@
 |---|---|---|
 | `id` | 排班主键 | agent 排班允许同一 `key` 多条；system job 由部分唯一索引保持「一 key 一条」 |
 | `key` | registry key（如 `notify.reconcile`） | 只有代码里注册过的 key 才会被执行；未注册 key 永远不跑 |
-| `cron` | 5 段 cron | 只支持 `* , - /` 与数字；**不支持的语法在登记期直接拒绝**（不会静默按错时间跑） |
+| `cron` | 5 段 cron | 只支持 `* , - /` 与数字；**不支持的语法在 seed 期拒绝**（P1 唯一登记路径；不会静默按错时间跑） |
 | `timezone` | IANA 时区名 | 迁入的系统 job 一律 `UTC`（与 openship 现有 cron 的 UTC 语义一致）；新建业务排班默认 `Asia/Shanghai` |
 | `params` | 运行参数 JSON | **仅 `source='agent'` 生效**；system job 恒为 `{}` |
 | `owner_org` / `owner_namespace` | 归属 | system job 为 null；由宿主按身份填，不读请求体 |
@@ -46,7 +56,7 @@
 | `max_attempts` | 最大尝试次数 | 非 0 失败在额度内隔 60s 重排；`exit 2` 永不重试 |
 | `expected_interval_secs` | 期望间隔 | 健康判据的分母：「超过 2× 无成功 run」判红（见 §8） |
 | `retry_at` / `retry_attempt` | 重试游标 | 重试与下一格是两件事：重试**不改** `next_run_at`，沿用原 occurrence |
-| `updated_at` | 最后变更时间 | 从未成功过的排班，健康判据以它为宽限起点 |
+| `updated_at` | 最后变更时间 | 健康宽限起点：取**最后一次运行的 `started_at`**；从未运行过才用 `updated_at` |
 
 ### 2.2 `platform.job_run`（运行台账）
 
@@ -77,7 +87,7 @@
 - `JOB_PARAMS` **只走 stdin**，不进 env、不进 argv：argv 和环境对同机进程可见，且有长度上限；stdin 只有父子进程知道。
 - `JOB_OCCURRENCE` 走 env（小标量），`params` 走 stdin（可能大）。两者不要互换。
 - 子进程一律 **argv 数组 spawn，禁 shell 拼接**。
-- 超过 16KB 的 `params` ⇒ 脚本 `exit 2`（判不了，不跑）。
+- 超过 16KB 的 `params` ⇒ **spawn 前抛错**（不会产生脚本 `exit 2`；该 run 记 `failed`）。
 
 **退出码分类**：
 
@@ -101,25 +111,29 @@
 
 1. **登记（enabled=false）**：确认 `platform.job_schedule` 有该 key，且 `enabled=false`、`next_run_at=null`、`params={}`。seed 只补新增 key，**不覆盖**人改过的 `cron` / `enabled`。
 2. **手动跑一次并比对**：由平台管理员手动触发（P1 端点 `POST /api/platform/jobs/:key/run`，**只入队**），等 worker 领取并记录 `job_run`。比对产物与 openship 上最近一次结果：数量、口径、落表/落事件都要对得上；**比对不过不启用**。
-3. **关 openship**：`patch_jobs_by_key` 把对应 job 置 `enabled=false`，确认 openship 侧不再产生新 run。
+3. **关 openship**：`patch_jobs_by_key` 把对应 job 置 `enabled=false`，确认 openship 侧不再产生新 run。**若该 job 没有对应的 openship 作业**（如 `metric-retire`、`report.scope_scan`），跳过本步。
 4. **DB 启用**：置 `enabled=true`，并把 `next_run_at` 补算到**下一个未来时点**（不要落在过去，否则会立即补跑）。观察首条 `job_run` 为 `ok`，且 openship 侧保持安静。
 
-**切流表（P1 已切 / 待切）**：
+**按实例各做一次**：`notify.reconcile` / `org-sync` 在 openship 各有两条作业（mytech + 山海），两实例各有独立平台库与独立 `platform.job_schedule`。切流与回滚必须**按实例各执行一遍**；只关一个实例会留下双调度者。实例与 openship job key 的对应见下表及 `deploy/notify-reconcile-job.md` / `deploy/org-sync-job.md` 的生产实例表。
 
-| job | 阶段 | 当前驱动 |
-|---|---|---|
-| `notify.reconcile` | **P1 已切** | worker 的 `platform.scheduler` |
-| `metric.candidates` | **P1 已切** | worker 的 `platform.scheduler` |
-| `report.scope_scan` | **P1 已切** | worker 的 `platform.scheduler`（openship 侧本无对应 job） |
-| `notify-preflight` | 待切（W6-P4） | openship job |
-| `notify-retention` | 待切（W6-P4） | openship job |
-| `notify-seed-builtin` | 待切（W6-P4，计划启动期化） | openship job |
-| `notify-health` | 待切（W6-P4，计划并入 worker loop） | openship job |
-| `metric-retire` | 待切（W6-P4） | openship job |
-| `org-sync` | 待切（W6-P4） | openship job |
+**切流表（P1 目标 / 待切）**：
+
+> 切流未执行前，`notify.reconcile` / `metric.candidates` 仍由 openship job 驱动。
+
+| job | 阶段 | 当前驱动 | 实例 / openship key |
+|---|---|---|---|
+| `notify.reconcile` | P1 目标 / 待切 | openship job（切流未执行前） | mytech `custom:KJ_JBrbq68jAHVlO`；山海 `custom:QSr7oZ5KBAVOqx5j`（见 `deploy/notify-reconcile-job.md`） |
+| `metric.candidates` | P1 目标 / 待切 | openship job（切流未执行前） | 仅山海 `custom:tB6ulrsKtgW852WL` |
+| `report.scope_scan` | P1 目标 / 待切 | 无（openship 侧本无对应 job） | 两实例各建一条 |
+| `notify-preflight` | 待切（W6-P4） | openship job | 见 `deploy/notify-jobs.md` |
+| `notify-retention` | 待切（W6-P4） | openship job（仅 mytech） | 见 `deploy/notify-jobs.md` |
+| `notify-seed-builtin` | 待切（W6-P4，计划启动期化） | openship job（mytech + 山海） | 见 `deploy/notify-jobs.md` |
+| `notify-health` | 待切（W6-P4，计划并入 worker loop） | openship job（mytech + 山海） | 见 `deploy/notify-jobs.md` |
+| `metric-retire` | 待切（W6-P4） | **无任何驱动（openship job 未建）** | 见 `deploy/metric-retire-job.md` |
+| `org-sync` | 待切（W6-P4） | openship job | mytech `custom:qvkapKmBf4jI4H6T`；山海 `custom:dbuJg85a8UjjObB7`（见 `deploy/org-sync-job.md`） |
 
 **顺序按爆炸半径**：`notify.reconcile` → `metric.candidates` → `report.scope_scan` → `notify-preflight` → `notify-retention` → `metric.retire` → `org-sync`。
-未列入「P1 已切」的 job，在完成全部四步切流之前**都仍由 openship 驱动**——不要提前置 `enabled=true`。
+未完成切流的 job（**包括 P1 目标项**）在走完全部四步之前都仍由原驱动方负责——不要提前置 `enabled=true`。
 
 **切流期红线**：发现双调度者（DB `enabled=true` 且 openship job 仍启用）⇒ 立即停 DB 侧 `enabled`，再排查 openship，不要在两边同时「先看看」。
 
@@ -141,13 +155,19 @@
 
 - `metric-candidates`：`added=0` 是成功（没有可推的列）。
 - `metric-retire`：`proposed=0` 是成功（候选全被安全闸挡下，或本来就没有候选）。
-- `notify-reconcile`：`targets=0 / emitted=0` 表示本轮没有到期催办，正常。
 
 **异常零**：输入源空了，不是「没事做」。判据是**上游计数**而不是结果计数：
 
 - `orgs=0`（画像表 / 指标表 / 报表表里没有 org）⇒ profiler / 同步链路没投递，按告警查；
 - `reports=0` / `tenants=0` 且该实例明确不是空库 ⇒ 同上；
+- `notify-reconcile` 的 `targets=0`：`targets` 是**所有含 `assignees` 的活跃已发布表单数**
+  （`modules/forms/storage.ts` 的 `listAssignmentTargets`，与「到期」无关）⇒ 0 表示指派表单全部消失，
+  是**上游异常信号**，不是「没事做」。
 - 脚本明确标注「`orgs=0` 是告警信号」的，按告警处理，不要当通过。
+
+**去重造成的零**：`notify-reconcile` 的 `emitted=0` 不一定是异常——`emitted` 统计 `form.assigned` 与
+`form.due_reminder` 两类事件的接纳数（`scripts/notify-reconcile.mjs`），重复的计入 `duplicates`；
+**`emitted=0` 且 `duplicates>0` ⇒ 正常去重**。
 
 一句话：**看脚本声明的「0 是否成功」+ 看上游分母是否 > 0**；两者不一致就是异常零。
 
@@ -163,8 +183,9 @@
 以下任一成立 ⇒ `/healthz` 非 200：
 
 1. **调度心跳陈旧**：`platform.job_heartbeat('scheduler').beat_at` 超过 2 分钟未更新，或从未写入。
-2. **该跑没跑**：任一 `enabled` 的 system schedule，超过 `2 × expected_interval_secs` 没有 `ok` run（从未成功过时从 `updated_at` 起算，给新启用一个宽限窗）。
-3. **连续失败**：最近 3 次运行（按 `started_at desc`）全部是 `failed` / `timeout`。
+2. **该跑没跑**：任一 `enabled` 的 system schedule，超过 `2 × expected_interval_secs` 没有 `ok` run。
+   宽限起点 = **最后一次运行的 `started_at`**（任何状态）；从未运行过才用 `updated_at`（给新启用一个宽限窗）。
+3. **连续失败**：任一 **`enabled`** 排班，最近 3 次运行（按 `started_at desc`）全部是 `failed` / `timeout`。
 
 **边界**：健康面回答「引擎活着吗、该跑的在跑吗」，**不回答产物语义是否正确**。切流比对与业务验收仍要做。
 
@@ -187,7 +208,7 @@
 - [ ] registry 已含目标 key；`platform.job_schedule` 中该 key `enabled=false`、`next_run_at=null`、`params={}`。
 - [ ] worker 已部署，`/healthz` 绿，`platform.job_heartbeat('scheduler')` 在 2 分钟内。
 - [ ] 每个待切 job 已手动跑一次，产物与 openship 最近一次比对通过。
-- [ ] 对应 openship job 已关，且确认不再产生新 run。
+- [ ] 对应 openship job 已关（无对应作业的 job 跳过），且确认不再产生新 run。
 - [ ] DB 置 `enabled=true` + `next_run_at` 为下一个未来时点。
 - [ ] 首条 `job_run` 为 `ok`；openship 侧保持安静。
 - [ ] 回滚路径已知：`SCHEDULER_ENABLED=0` + 反向切流（§6）。

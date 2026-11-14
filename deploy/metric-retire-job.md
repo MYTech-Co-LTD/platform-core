@@ -4,7 +4,7 @@
 > `modules/data/domain/metric-retire.ts`（候选安全过滤 + 提单，判定全在域层）。
 > 计划：`docs/superpowers/plans/2026-11-14-metric-retire-wave.md`（候选池项「使用统计→下线候选接评审」，
 > spec §10.4.3）；读面 `modules/data/domain/metric-usage.ts`（`retireCandidatesOf`）。
-> 范式与 `deploy/notify-jobs.md` / `deploy/report-scope-scan-job.md` 一致：**仓内脚本 + worker 的
+> 目标范式与 `deploy/notify-jobs.md` / `deploy/report-scope-scan-job.md` 一致：**仓内脚本 + worker 的
 > `platform.scheduler` loop**（常驻，执行在子进程），手动命令走 `docker exec <server 容器> sh -lc '…'`。
 > 调度归属（2026-11-14 起）：本脚本的目标载体是 worker 的 `platform.scheduler` loop；
 > **迁移按 `deploy/jobs.md` 的切流表逐项进行——未切流的 job 此刻仍由 openship job 驱动**。

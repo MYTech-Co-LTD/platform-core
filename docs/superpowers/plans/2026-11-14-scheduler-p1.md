@@ -69,8 +69,8 @@
 **不变量**：① 调度器只排「引擎」不排「规则」（agent 只能排已注册 key）；② 只做 cron + 台账，
 不做 DAG / 依赖编排 / 回填队列；③ `source='system'` 时 `params` 不生效——行为只由代码 registry 决定。
 
-**HTTP 进程仍然不跑定时副作用**：宿主 `apps/server` 不装任何 interval；手动触发端点只**入队**，
-执行发生在 worker 进程。
+**业务 job 的定时副作用不进 HTTP 进程**：手动触发端点只**入队**，执行发生在 worker 进程。
+既有例外是监控面的集成健康探针（`apps/server/src/integration-probe.ts` 的 `setInterval`，由 `apps/server/src/app.ts` 启动）。
 ```
 
 - [ ] **Step 2: 改写五处「应用进程不跑定时副作用」的结论句**

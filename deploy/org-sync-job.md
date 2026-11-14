@@ -1,7 +1,7 @@
 # 组织同步 job（org-sync-all）：定时执行与新鲜度判据
 
 > 正典：`docs/superpowers/specs/2026-10-30-org-as-platform-primitive-design.md` §3.2.1。
-> 形态：**仓内脚本 + worker 的 `platform.scheduler` loop**（常驻，执行在子进程），与 `deploy/notify-jobs.md` 同一范式。
+> 目标形态：**仓内脚本 + worker 的 `platform.scheduler` loop**（常驻，执行在子进程），与 `deploy/notify-jobs.md` 同一范式。
 > 调度归属（2026-11-14 起）：本脚本的目标载体是 worker 的 `platform.scheduler` loop；
 > **迁移按 `deploy/jobs.md` 的切流表逐项进行——未切流的 job 此刻仍由 openship job 驱动**。
 > 仍然不要把这逻辑塞进 HTTP 请求路径：执行在 worker 的子进程里。

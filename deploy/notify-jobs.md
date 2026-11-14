@@ -1,7 +1,7 @@
 # 通知基础设施的四个运维 job（健康检查 / 保留期清理 / 内置 seed / 可送达性体检）
 
 > 正典：`docs/architecture.md` §2.6；设计 `docs/superpowers/specs/2026-10-27-notification-infrastructure-design.md` §12。
-> 二者都是**仓内脚本 + worker 的 `platform.scheduler` loop**（常驻，执行在子进程），手动命令形如 `docker exec <server 容器> sh -lc '…'`
+> 二者的**目标形态**是**仓内脚本 + worker 的 `platform.scheduler` loop**（常驻，执行在子进程），手动命令形如 `docker exec <server 容器> sh -lc '…'`
 > —— 与既有 `notify-reconcile` job 同一范式（本仓实际形态；`deploy/notify-reconcile-job.md` 早期写的
 > 「一次性容器跑 docker run」是**示意**，生产未采用）。
 > 调度归属（2026-11-14 起）：本脚本的目标载体是 worker 的 `platform.scheduler` loop；
