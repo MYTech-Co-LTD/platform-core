@@ -247,6 +247,17 @@ describePg('schedules tool face (db)', () => {
     expect(n.rows[0].n).toBe(0) // 被拒即不落库
   })
 
+  it('宽 cron 在最小间隔闸门早退：* * * * * 被拒时不做 max 完整扫描（<1s）', async () => {
+    const t0 = Date.now()
+    const out = await call('create_schedule', createArgs({ cron: '* * * * *' }))
+    const elapsed = Date.now() - t0
+    expect(out.body).toMatchObject({
+      ok: false, code: 'QUOTA_EXCEEDED', kind: 'min_interval', limit: 300,
+    })
+    // 完整 max 扫描在 * * * * * 上会撞 5000 迭代上限（实测 ~16s）；闸门先拒 ⇒ 毫秒级。
+    expect(elapsed).toBeLessThan(1000)
+  })
+
   it('非法 cron：INVALID_CRON 透出', async () => {
     const out = await call('create_schedule', createArgs({ cron: 'not a cron' }))
     expect(out.isError).toBe(true)

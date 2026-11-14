@@ -138,46 +138,22 @@ const QUOTA_SNAPSHOT_SQL = `
 /** 最小间隔扫描的固定参考时刻（2026-01-05 是周一；固定起点保证判据与创建时刻无关）。 */
 const MIN_INTERVAL_REF = new Date('2026-01-05T00:00:00.000Z')
 
-/**
- * 「期望间隔」的缺省值（秒）：**一个完整扫描周期内的最大相邻间隔**，向上取整，最小 60。
- *
- * 为什么是最大间隔：`health.ts` 的「该跑没跑」= `2 × expected_interval_secs`。
- * 只看向邻两格会漏掉「工作日」cron 的周末：`0 0 * * 1-5` 的相邻两格是 86400，
- * 但周五→周一是 259200，`2×86400` 会在每周日假红约一天。取扫描窗口内的最大值 ⇒
- * **不会假红**；代价是对稀疏 cron 发现得晚（宁可晚报，不可假报）。
- *
- * 窗口/迭代上限复用 `minimumGapSecs` 的 8 天基础设施（分钟/小时/星期以周为周期，
- * 8 天足以覆盖任意一次相邻触发）；这里**不 early-exit**，必须扫完取 max。
- * 与 `minimumGapSecs` 的分工：后者取**最小间隔**（配额判据，burst 也要抓）。
- */
-function maxIntervalSecs(expr: string, timeZone: string): number {
-  let prev = nextRunAt(expr, timeZone, MIN_INTERVAL_REF)
-  const end = prev.getTime() + MIN_INTERVAL_SCAN_MS
-  let max = 0
-  for (let i = 0; i < MIN_INTERVAL_SCAN_MAX_ITER && prev.getTime() <= end; i++) {
-    const next = nextRunAt(expr, timeZone, prev)
-    const gap = (next.getTime() - prev.getTime()) / 1000
-    if (gap > max) max = gap
-    prev = next
-  }
-  return Math.max(Math.ceil(max), 60)
-}
 /** cron 的分钟/小时/星期以周为周期：扫 8 天足以覆盖任意一次相邻触发。 */
 const MIN_INTERVAL_SCAN_MS = 8 * 24 * 60 * 60 * 1000
 /** 迭代上限保护：合规的最密 cron（5 分钟）8 天 = 2304 次；违规 cron 会早退。 */
 const MIN_INTERVAL_SCAN_MAX_ITER = 5000
 
 /**
- * cron 在完整周期内的**真实最小间隔**（秒）：从固定参考时刻起连续迭代 8 天。
- * 不能只看「创建时刻的下一格到再下一格」——`0,4 * * * *` 在整点附近会算出 56 分钟，
- * 换个时刻又是 4 分钟（非确定性且可绕过）。
+ * 间隔缓存：`min`（配额闸门）与 `max`（期望间隔）**共享同一个键**（归一化 spec + tz）
+ * 与同一条 FIFO 生命周期。两者都是「8 天扫描」的产物，分开缓存只会让同一 cron 白扫两次。
  *
- * 结果只取决于 (cron 解析后的 spec, timezone)，与当前时刻无关 ⇒ 进程内缓存；
+ * 结果只取决于 (cron 解析后的 spec, timezone)，与当前时刻无关 ⇒ 进程内缓存可跨请求复用；
  * 键用解析后的 spec 归一（「每 5 分钟」的各种写法命中同一项）；上限 1024 条，
  * 超出按 FIFO 淘汰最旧一条（不清空，避免持续未命中把合法缓存冲掉）。
  */
-const MIN_GAP_CACHE_MAX = 1024
-const minGapCache = new Map<string, number>()
+const GAP_CACHE_MAX = 1024
+type GapInfo = { min?: number; max?: number }
+const gapCache = new Map<string, GapInfo>()
 
 /** 「每 5 分钟」的区间步长、带前导零等写法解析后同形 ⇒ 必须落到同一缓存键。 */
 function cronSpecKey(spec: CronSpec): string {
@@ -188,9 +164,29 @@ function cronSpecKey(spec: CronSpec): string {
   ].join('|')
 }
 
+/** 解析后的归一化缓存键：时区 + spec（两种间隔共用）。 */
+function gapCacheKey(expr: string, timeZone: string): string {
+  return `${timeZone}\u0000${cronSpecKey(parseCron(expr))}`
+}
+
+/** 写入/合并缓存项；新键且已满时 FIFO 淘汰最旧一条。 */
+function rememberGap(cacheKey: string, patch: GapInfo): void {
+  const prev = gapCache.get(cacheKey)
+  if (!prev && gapCache.size >= GAP_CACHE_MAX) {
+    const oldest = gapCache.keys().next()
+    if (!oldest.done) gapCache.delete(oldest.value)
+  }
+  gapCache.set(cacheKey, { ...(prev ?? {}), ...patch })
+}
+
+/**
+ * cron 在完整周期内的**真实最小间隔**（秒）：从固定参考时刻起连续迭代 8 天。
+ * 不能只看「创建时刻的下一格到再下一格」——`0,4 * * * *` 在整点附近会算出 56 分钟，
+ * 换个时刻又是 4 分钟（非确定性且可绕过）。**违规 cron 前几步即早退**。
+ */
 function minimumGapSecs(expr: string, timeZone: string): number {
-  const cacheKey = `${timeZone}\u0000${cronSpecKey(parseCron(expr))}`
-  const cached = minGapCache.get(cacheKey)
+  const cacheKey = gapCacheKey(expr, timeZone)
+  const cached = gapCache.get(cacheKey)?.min
   if (cached !== undefined) return cached
 
   // 窗口锚到**首个触发**：稀疏 cron（如 `0,4 0 1 * *`）的首个触发可能远在参考时刻之后，
@@ -208,12 +204,41 @@ function minimumGapSecs(expr: string, timeZone: string): number {
     prev = next
   }
 
-  if (minGapCache.size >= MIN_GAP_CACHE_MAX) {
-    const oldest = minGapCache.keys().next()
-    if (!oldest.done) minGapCache.delete(oldest.value)
-  }
-  minGapCache.set(cacheKey, min)
+  rememberGap(cacheKey, { min })
   return min
+}
+
+/**
+ * 「期望间隔」的缺省值（秒）：**一个完整扫描周期内的最大相邻间隔**，向上取整，最小 60。
+ *
+ * 为什么是最大间隔：`health.ts` 的「该跑没跑」= `2 × expected_interval_secs`。
+ * 只看向邻两格会漏掉「工作日」cron 的周末：`0 0 * * 1-5` 的相邻两格是 86400，
+ * 但周五→周一是 259200，`2×86400` 会在每周日假红约一天。取扫描窗口内的最大值 ⇒
+ * **不会假红**；代价是对稀疏 cron 发现得晚（宁可晚报，不可假报）。每周 cron 的
+ * 判红窗口因此是 `2×7 天 = 336 小时`（不是 288）。
+ *
+ * 窗口/迭代上限复用 `minimumGapSecs` 的 8 天基础设施；这里**不 early-exit**，必须扫完取 max。
+ * **只在通过 `min_interval` 闸门后调用**：宽 cron（`* * * * *`）会在闸门处瞬拒，
+ * 不会先付一次完整扫描（实测 ~16s/次）再被拒。缓存与 min 共享同一个键。
+ */
+function maxIntervalSecs(expr: string, timeZone: string): number {
+  const cacheKey = gapCacheKey(expr, timeZone)
+  const cached = gapCache.get(cacheKey)?.max
+  if (cached !== undefined) return cached
+
+  let prev = nextRunAt(expr, timeZone, MIN_INTERVAL_REF)
+  const end = prev.getTime() + MIN_INTERVAL_SCAN_MS
+  let max = 0
+  for (let i = 0; i < MIN_INTERVAL_SCAN_MAX_ITER && prev.getTime() <= end; i++) {
+    const next = nextRunAt(expr, timeZone, prev)
+    const gap = (next.getTime() - prev.getTime()) / 1000
+    if (gap > max) max = gap
+    prev = next
+  }
+
+  const result = Math.max(Math.ceil(max), 60)
+  rememberGap(cacheKey, { max: result })
+  return result
 }
 
 /** 归属谓词：所有按 id 的操作都带上它；软删行视为「不存在」。 */
@@ -307,16 +332,6 @@ export function buildSchedulerPort(deps: {
         fail('INVALID_SCHEDULE', e instanceof Error ? e.message : String(e))
       }
 
-      let expectedIntervalSecs = explicitIntervalSecs
-      if (expectedIntervalSecs === undefined) {
-        try {
-          expectedIntervalSecs = maxIntervalSecs(input.cron, input.timezone)
-        } catch (e) {
-          // 时区非法等：与 nextAt 失败同码（语法已过 isValidCron）。
-          fail('INVALID_SCHEDULE', e instanceof Error ? e.message : String(e))
-        }
-      }
-
       const client = await pool.connect()
       try {
         await client.query('begin')
@@ -348,6 +363,20 @@ export function buildSchedulerPort(deps: {
             `${minIntervalSecs}s < ${QUOTA_MIN_INTERVAL_SECS}s`,
           )
         }
+
+        // **顺序**：先过 min_interval 闸门再推导 max —— 宽 cron（`* * * * *`）在上一步
+        // 就早退，不会先付一次完整 max 扫描（实测 ~16s/次）再被拒。合规 cron 的结果走
+        // gapCache（与 min 同一个键），此后重复创建/列举不再扫描。
+        let expectedIntervalSecs = explicitIntervalSecs
+        if (expectedIntervalSecs === undefined) {
+          try {
+            expectedIntervalSecs = maxIntervalSecs(input.cron, input.timezone)
+          } catch (e) {
+            // 时区非法等：与 nextAt 失败同码（语法已过 isValidCron）。
+            fail('INVALID_SCHEDULE', e instanceof Error ? e.message : String(e))
+          }
+        }
+
         const firings = await client.query<{ n: number }>(
           DAILY_FIRINGS_SQL, [actor.org, actor.namespace])
         if (firings.rows[0].n >= QUOTA_DAILY_FIRINGS) {
