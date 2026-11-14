@@ -632,8 +632,8 @@ git commit -m "feat(data): 调度任务目录与幂等 seed（Wave 6 P1）"
   - `export interface ClaimedJob { scheduleId: number; key: string; occurrence: Date; attempt: number; params: Record<string, unknown>; timeoutMs: number; maxAttempts: number; isRetry: boolean; ownerOrg: string | null; ownerNamespace: string | null }`
   - `claimDue(pool, limit, now, next: (cron, tz, from) => Date): Promise<ClaimedJob[]>`
   - `claimQueuedManual(pool, limit, now): Promise<ClaimedJob[]>`
-  - `startRun(pool, job): Promise<number>`（派发**前**插入 `status='running'` 行并返回 runId）
-  - `finishRun(pool, runId, outcome): Promise<void>`（回填结果；调度与手动两种触发共用）
+  - `claimDue` / `claimQueuedManual` 在同一事务里建 `status='running'` 行并返回 `runId`（不再有独立的 startRun）
+  - `finishRun(pool, runId, outcome): Promise<void>`（回填结果；`where status='running'` 守卫，调度与手动共用）
   - `scheduleRetry(pool, scheduleId, occurrence, nextAttempt, now): Promise<void>`
   - `clearRetry(pool, scheduleId): Promise<void>`
   - `hasRunning(pool, scheduleId): Promise<boolean>`
