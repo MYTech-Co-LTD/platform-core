@@ -509,6 +509,10 @@ token 只决定「这个账号能调哪些面」，不改变分层。
 **不变量**：① 调度器只排「引擎」不排「规则」（agent 只能排已注册 key）；② 只做 cron + 台账，
 不做 DAG / 依赖编排 / 回填队列；③ `source='system'` 时 `params` 不生效——行为只由代码 registry 决定。
 
+**agent 排班（W6-P3）**：agent 经 notify 工具 → `ctx.scheduler(actor)`（宿主注入的**工厂**，
+未注入时模块降级不抛）→ `SchedulerPort`；归属只来自身份，配额（每 namespace 50 条 / 最小间隔
+5 分钟 / 每日 200 firing）与「只发站内通知、外发由人在控制台改规则」的口径见 `deploy/jobs.md` §11。
+
 **业务 job 的定时副作用不进 HTTP 进程**：手动触发端点只**入队**，执行发生在 worker 进程。
 既有例外是**监控面**的集成健康探针（`apps/server/src/integration-probe.ts:385` 的 `setInterval`，
 由 `apps/server/src/app.ts:445` 启动，生产经 `deploy/docker-compose.yml:77` 的
