@@ -219,7 +219,7 @@ function minimumGapSecs(expr: string, timeZone: string): number {
  *
  * 窗口/迭代上限复用 `minimumGapSecs` 的 8 天基础设施；这里**不 early-exit**，必须扫完取 max。
  * **只在通过 `min_interval` 闸门后调用**：宽 cron（`* * * * *`）会在闸门处瞬拒，
- * 不会先付一次完整扫描（实测 ~16s/次）再被拒。缓存与 min 共享同一个键。
+ * 不会先付一次完整扫描再被拒。缓存与 min 共享同一个键。
  */
 function maxIntervalSecs(expr: string, timeZone: string): number {
   const cacheKey = gapCacheKey(expr, timeZone)
@@ -332,6 +332,37 @@ export function buildSchedulerPort(deps: {
         fail('INVALID_SCHEDULE', e instanceof Error ? e.message : String(e))
       }
 
+      // 两个**纯函数扫描**移到事务外（不碰库）：冷启动可能耗时数秒到十几秒，若放在
+      // `pg_advisory_xact_lock` 之后会直接吃掉 `lock_timeout`(2s)，同 namespace 的并发
+      // create 会更容易撞 JOB_LOCK_TIMEOUT。代价：超配额请求也可能付一次冷扫描，但缓存
+      // （gapCache，min/max 同键）只在 (spec, tz) 首次出现时发生，此后微秒级命中。
+      let minIntervalSecs: number
+      try {
+        // 完整周期内的真实最小值；不信任调用方传的 expectedIntervalSecs。
+        minIntervalSecs = minimumGapSecs(input.cron, input.timezone)
+      } catch (e) {
+        fail('INVALID_SCHEDULE', e instanceof Error ? e.message : String(e))
+      }
+      if (minIntervalSecs < QUOTA_MIN_INTERVAL_SECS) {
+        quotaExceeded(
+          'min_interval', QUOTA_MIN_INTERVAL_SECS,
+          `${minIntervalSecs}s < ${QUOTA_MIN_INTERVAL_SECS}s`,
+        )
+      }
+
+      // **顺序**：先过 min_interval 闸门再推导 max —— 宽 cron（`* * * * *`）在上一步
+      // 就早退，不会先付一次完整 max 扫描（约 3–4s/次）再被拒。合规 cron 的结果走
+      // gapCache（与 min 同一个键），此后重复创建/列举不再扫描。
+      let expectedIntervalSecs = explicitIntervalSecs
+      if (expectedIntervalSecs === undefined) {
+        try {
+          expectedIntervalSecs = maxIntervalSecs(input.cron, input.timezone)
+        } catch (e) {
+          // 时区非法等：与 nextAt 失败同码（语法已过 isValidCron）。
+          fail('INVALID_SCHEDULE', e instanceof Error ? e.message : String(e))
+        }
+      }
+
       const client = await pool.connect()
       try {
         await client.query('begin')
@@ -349,34 +380,6 @@ export function buildSchedulerPort(deps: {
         if (schedules.rows[0].n >= QUOTA_SCHEDULES) {
           quotaExceeded('schedules', QUOTA_SCHEDULES, `${schedules.rows[0].n} >= ${QUOTA_SCHEDULES}`)
         }
-        // 扫描放在便宜的条数检查之后：已超额的请求不再付全周期扫描的代价。
-        let minIntervalSecs: number
-        try {
-          // 完整周期内的真实最小值；不信任调用方传的 expectedIntervalSecs。
-          minIntervalSecs = minimumGapSecs(input.cron, input.timezone)
-        } catch (e) {
-          fail('INVALID_SCHEDULE', e instanceof Error ? e.message : String(e))
-        }
-        if (minIntervalSecs < QUOTA_MIN_INTERVAL_SECS) {
-          quotaExceeded(
-            'min_interval', QUOTA_MIN_INTERVAL_SECS,
-            `${minIntervalSecs}s < ${QUOTA_MIN_INTERVAL_SECS}s`,
-          )
-        }
-
-        // **顺序**：先过 min_interval 闸门再推导 max —— 宽 cron（`* * * * *`）在上一步
-        // 就早退，不会先付一次完整 max 扫描（实测 ~16s/次）再被拒。合规 cron 的结果走
-        // gapCache（与 min 同一个键），此后重复创建/列举不再扫描。
-        let expectedIntervalSecs = explicitIntervalSecs
-        if (expectedIntervalSecs === undefined) {
-          try {
-            expectedIntervalSecs = maxIntervalSecs(input.cron, input.timezone)
-          } catch (e) {
-            // 时区非法等：与 nextAt 失败同码（语法已过 isValidCron）。
-            fail('INVALID_SCHEDULE', e instanceof Error ? e.message : String(e))
-          }
-        }
-
         const firings = await client.query<{ n: number }>(
           DAILY_FIRINGS_SQL, [actor.org, actor.namespace])
         if (firings.rows[0].n >= QUOTA_DAILY_FIRINGS) {

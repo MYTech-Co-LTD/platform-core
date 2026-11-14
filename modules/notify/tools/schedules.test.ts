@@ -248,13 +248,15 @@ describePg('schedules tool face (db)', () => {
   })
 
   it('宽 cron 在最小间隔闸门早退：* * * * * 被拒时不做 max 完整扫描（<1s）', async () => {
+    // **不能带 expectedIntervalSecs**：带了端口就根本不推导 max，用例会空转。
+    const args = { cron: '* * * * *', timezone: 'UTC', params: { eventKey: 'notify.emit' } }
     const t0 = Date.now()
-    const out = await call('create_schedule', createArgs({ cron: '* * * * *' }))
+    const out = await call('create_schedule', args)
     const elapsed = Date.now() - t0
     expect(out.body).toMatchObject({
       ok: false, code: 'QUOTA_EXCEEDED', kind: 'min_interval', limit: 300,
     })
-    // 完整 max 扫描在 * * * * * 上会撞 5000 迭代上限（实测 ~16s）；闸门先拒 ⇒ 毫秒级。
+    // 完整 max 扫描在 * * * * * 上会撞 5000 迭代上限（冷启动可到十几秒）；闸门先拒 ⇒ 毫秒级。
     expect(elapsed).toBeLessThan(1000)
   })
 
