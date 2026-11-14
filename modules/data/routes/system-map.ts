@@ -12,13 +12,14 @@ import { requesterOf } from './context'
 import {
   buildSystemMapModel,
   loadDbtModels,
+  loadDbtVars,
   loadSystemMapFacts,
   renderSystemMapHtml,
 } from '../domain/system-map/map'
 import type { SystemMapInput, SystemMapModel } from '../domain/system-map/map'
 import { buildSystemMapOntology } from '../domain/system-map/ontology'
 import { buildMetricTrail, lakeStagingFromContracts, pipelineIdsOf, stagingRelationsOf } from '../domain/system-map/trail'
-import { buildPipelineMap } from '../domain/system-map/pipeline-map'
+import { buildPipelineMap, lakeConsumers } from '../domain/system-map/pipeline-map'
 import { loadContracts, loadPipelines, loadSchedules, rootsOf } from '../domain/pipelines/defs'
 import { warehousePool } from '../domain/warehouse'
 import { watermarkSqlFor } from '../domain/query-service'
@@ -176,10 +177,23 @@ export function registerSystemMap(r: ModuleHono, ctx: RouteCtx): void {
     const marts = models.filter((m) => m.name.startsWith('fct_') || m.name.startsWith('dim_') || m.name.startsWith('recon_'))
       .map((m) => ({ name: m.name, refs: m.refs ?? [] }))
 
+    // 湖前缀字典 = 契约 layout.prefix ∪ 管线 sink key 前缀（两边都是声明锚）
+    const lakePrefixes = new Set<string>()
+    for (const c of loadedContracts.contracts) {
+      const prefix = lakeStagingFromContracts([c]).values().next().value
+      if (typeof prefix === 'string') lakePrefixes.add(prefix)
+    }
+    for (const d of loadedPipelines.defs.values()) {
+      for (const key of d.lakeKeys) {
+        const seg = key.split('/')
+        if (seg.length >= 2 && !seg[0].includes('${') && !seg[1].includes('${')) lakePrefixes.add(`${seg[0]}/${seg[1]}`)
+      }
+    }
     const map = buildPipelineMap({
       pipelines: [...loadedPipelines.defs.values()].map((d) => ({ id: d.id, lakeKeys: d.lakeKeys })),
       schedules: loadedSchedules.byPipeline,
       contractLakes: lakeStagingFromContracts(loadedContracts.contracts),
+      consumers: lakeConsumers(models, lakePrefixes, loadDbtVars(ctx.repoRoot)),
       staging,
       marts,
     })

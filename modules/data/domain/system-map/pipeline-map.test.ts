@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { accountOf, buildPipelineMap } from './pipeline-map'
+import { accountOf, buildPipelineMap, lakeConsumers } from './pipeline-map'
 
 const base = {
   staging: ['stg_lemeng_retail_order_line', 'stg_lemeng_branch_expense'],
@@ -39,7 +39,7 @@ describe('buildPipelineMap', () => {
       schedules: new Map(),
     })
     expect(m.assets[0]).toMatchObject({ lake: 'lemeng/no_staging', staging: null, marts: [] })
-    expect(m.warnings.join('\n')).toContain('没有对应的 staging 模型')
+    expect(m.warnings.join('\n')).toContain('没有 staging 也没有视图消费')
   })
 
   it('孤儿 staging：有模型但没有任何管线写它', () => {
@@ -76,6 +76,29 @@ describe('buildPipelineMap', () => {
     expect(m.assets[0]).toMatchObject({ lake: 'lemeng/dim_branch', staging: 'stg_lemeng_branch' })
     expect(m.orphanStaging).toEqual([])
     expect(m.warnings).toEqual([])
+  })
+
+  it('有视图消费 ⇒ 不算断点（retail_order_line_month 这类只给 drill 用的资产）', () => {
+    const m = buildPipelineMap({
+      pipelines: [{ id: 'lemeng.retail_order_line.month.compact', lakeKeys: ['lemeng/retail_order_line_month/_MONTH/a.parquet'] }],
+      schedules: new Map(),
+      contractLakes: new Map(),
+      consumers: new Map([['lemeng/retail_order_line_month', ['vw_lemeng_retail_order_line']]]),
+      staging: [],
+      marts: [],
+    })
+    expect(m.assets[0]).toMatchObject({ staging: null, views: ['vw_lemeng_retail_order_line'] })
+    expect(m.warnings).toEqual([])
+  })
+
+  it('lakeConsumers：先展开 var，且前缀必须整段命中（item 不命中 item_price）', () => {
+    const models = [
+      { name: 'vw_a', sql: "from read_parquet('s3://{{ var(\"zos_bucket\") }}/{{ var(\"lemeng_item_prefix\") }}/*/a.parquet')" },
+      { name: 'vw_b', sql: "from read_parquet('s3://b/lemeng/item_price/*/a.parquet')" },
+    ]
+    const out = lakeConsumers(models, ['lemeng/item', 'lemeng/item_price'], { lemeng_item_prefix: 'lemeng/dim_item' })
+    expect(out.get('lemeng/item_price')).toEqual(['vw_b'])
+    expect(out.get('lemeng/item')).toBeUndefined() // dim_item 与 item 是两条前缀，别互相串
   })
 
   it('accountOf：尾段是数字才算账套', () => {
