@@ -35,7 +35,8 @@ export default function SystemMapView({ focus }: { focus?: string | null }) {
 
   useEffect(() => {
     let alive = true
-    apiGet('/system-map/graph')
+    // ⚠️ 移动端直连模块 API：必须带 `/api/modules/data` 前缀（console 那个 `apiGet` 才自动拼）
+    apiGet('/api/modules/data/system-map/graph')
       .then((b) => { if (alive) setData(b as GraphResponse) })
       .catch(() => { if (alive) setError('体系地图暂时读不到，稍后再试') })
     return () => { alive = false }
@@ -53,7 +54,7 @@ export default function SystemMapView({ focus }: { focus?: string | null }) {
     if (open === null || open.type !== 'metric') return
     let alive = true
     const id = open.id.replace(/^metric:/, '')
-    apiGet(`/system-map/metrics/${encodeURIComponent(id)}/trail`)
+    apiGet(`/api/modules/data/system-map/metrics/${encodeURIComponent(id)}/trail`)
       .then((b) => { if (alive) setTrail((b as { trail: MetricTrail }).trail) })
       .catch(() => { if (alive) setTrail(null) })
     return () => { alive = false }
