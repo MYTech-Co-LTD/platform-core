@@ -1,4 +1,7 @@
 import { describe, expect, it } from 'vitest'
+import { mkdtempSync, readFileSync, rmSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
 import { classify, defaultSpawn, envFor, paramsStdin } from './runner'
 import type { ClaimedJob } from './store'
 
@@ -137,6 +140,39 @@ describe('defaultSpawn（真子进程）', () => {
     expect(r.durationMs).toBeGreaterThanOrEqual(200)
     expect(r.durationMs).toBeLessThan(5000)
   }, 10_000)
+
+  it('★ 超时按进程组 kill：孙进程也死，且落定不依赖 close', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'runner-kill-'))
+    const pidFile = join(dir, 'grandchild.pid')
+    // 父脚本与孙进程都忽略 SIGTERM；孙进程继承 stdout（模拟「孙进程握着管道」）。
+    const script = `
+      const { spawn } = require('node:child_process')
+      const fs = require('node:fs')
+      process.on('SIGTERM', () => {})
+      const g = spawn(process.execPath, ['-e', "process.on('SIGTERM',()=>{});setTimeout(()=>{},60000)"], { stdio: 'inherit' })
+      fs.writeFileSync(${JSON.stringify(pidFile)}, String(g.pid))
+      setTimeout(() => {}, 60000)
+    `
+    try {
+      const t0 = Date.now()
+      const r = await defaultSpawn(opts(script, 500, 200))
+      const elapsed = Date.now() - t0
+      expect(r.timedOut).toBe(true)
+      expect(r.signal).toBe('SIGKILL')
+      // timeout 500 + grace 200 + exit 后 100ms 兜底 + ε：远小于脚本自己的 60s。
+      expect(elapsed).toBeLessThan(3000)
+      const pid = Number(readFileSync(pidFile, 'utf8'))
+      const deadline = Date.now() + 2000
+      let alive = true
+      while (Date.now() < deadline) {
+        try { process.kill(pid, 0) } catch { alive = false; break }
+        await new Promise((res) => setTimeout(res, 50))
+      }
+      expect(alive).toBe(false)
+    } finally {
+      rmSync(dir, { recursive: true, force: true })
+    }
+  }, 15_000)
 
   it('★ 到点 SIGTERM 杀掉 ⇒ timedOut=true 且耗时落在 [200,5000)ms', async () => {
     const r = await defaultSpawn(opts('setTimeout(() => {}, 10000)', 200))

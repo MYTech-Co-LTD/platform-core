@@ -39,29 +39,56 @@ function capTail(b: Buffer): Buffer {
 
 export const defaultSpawn: SpawnFn = (o) => new Promise((resolve) => {
   const started = Date.now()
-  const child = nodeSpawn(o.command, o.args, { cwd: o.cwd, env: o.env, stdio: ['pipe', 'pipe', 'pipe'] })
+  // detached：子进程自成**进程组**，超时可以整组 kill。
+  // 生产里是 pnpm → tsx → node 三层；只 kill pnpm 的话孙进程还活着并持有继承的 stdout/stderr，
+  // `close` 永不触发 ⇒ promise 永不 resolve ⇒ loop 的 running 槽永久泄漏（心跳却还是绿的）。
+  const child = nodeSpawn(o.command, o.args, { cwd: o.cwd, env: o.env, stdio: ['pipe', 'pipe', 'pipe'], detached: true })
   let tail = Buffer.alloc(0)
   let timedOut = false
+  let settled = false
   // 按 Buffer 累积、结束时才解码：跨 chunk 的 UTF-8 字符不会被切成 U+FFFD。
   const append = (chunk: Buffer): void => { tail = capTail(tail.length === 0 ? chunk : Buffer.concat([tail, chunk])) }
   child.stdout?.on('data', append)
   child.stderr?.on('data', append)
+
+  /** 整组发信号；进程组不存在（非 POSIX / 已退出）时回退单进程。 */
+  const killGroup = (sig: NodeJS.Signals): void => {
+    if (child.pid === undefined) return
+    try {
+      process.kill(-child.pid, sig)
+    } catch {
+      try { child.kill(sig) } catch { /* 已经退出：无事可做 */ }
+    }
+  }
+
   const killer = setTimeout(() => {
     timedOut = true
-    child.kill('SIGTERM')
-    setTimeout(() => child.kill('SIGKILL'), o.killGraceMs ?? DEFAULT_KILL_GRACE_MS).unref()
+    killGroup('SIGTERM')
+    setTimeout(() => killGroup('SIGKILL'), o.killGraceMs ?? DEFAULT_KILL_GRACE_MS).unref()
   }, o.timeoutMs)
   killer.unref()
+
+  const settle = (code: number | null, signal: string | null, out: Buffer = tail): void => {
+    if (settled) return
+    settled = true
+    clearTimeout(killer)
+    // 孙进程可能仍握着写端：主动 destroy，避免句柄挂住事件循环 / 测试进程。
+    child.stdout?.destroy()
+    child.stderr?.destroy()
+    resolve({ code, signal, timedOut, outputTail: out.toString('utf8'), durationMs: Date.now() - started })
+  }
+
   child.on('error', (e) => {
-    clearTimeout(killer)
     // spawn 级错误信息也进同一个尾部上限（否则 ENOENT 长消息能绕过 4KB）。
-    const withErr = capTail(Buffer.concat([tail, Buffer.from(`\n${e.message}`, 'utf8')]))
-    resolve({ code: null, signal: null, timedOut, outputTail: withErr.toString('utf8'), durationMs: Date.now() - started })
+    settle(null, null, capTail(Buffer.concat([tail, Buffer.from(`\n${e.message}`, 'utf8')])))
   })
-  child.on('close', (code, signal) => {
-    clearTimeout(killer)
-    resolve({ code, signal: signal ?? null, timedOut, outputTail: tail.toString('utf8'), durationMs: Date.now() - started })
+  // 落定以 `exit` 为准，不依赖 `close`：孙进程握着管道时 close 永远不来。
+  // 正常退出时给管道最多 100ms 把已写出的数据读完（close 会更快）。
+  child.once('exit', (code, signal) => {
+    const t = setTimeout(() => settle(code, signal ?? null), 100)
+    child.once('close', () => { clearTimeout(t); settle(code, signal ?? null) })
   })
+
   if (child.stdin) {
     child.stdin.on('error', () => {}) // 子进程不读 stdin 时 EPIPE 不算失败
     child.stdin.end(o.stdin)
