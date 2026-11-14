@@ -45,6 +45,8 @@ export default function PipelinesPage() {
   const [account, setAccount] = useState<string>('全部')
   const [selected, setSelected] = useState<Selection | null>(null)
   const [failedOnly, setFailedOnly] = useState(false)
+  // 未调度管线清单（历史 / 一次性）：定期清理用，不混进图上
+  const [unscheduledOpen, setUnscheduledOpen] = useState(false)
   // 单条管线的完整 run 历史（引擎每管线保留 50 条）
   const [history, setHistory] = useState<{
     pipelineId: string
@@ -266,6 +268,11 @@ export default function PipelinesPage() {
             onChange={(v) => setFailedOnly(v === 'failed')}
             options={[{ label: '全部', value: 'all' }, { label: '只看异常', value: 'failed' }]}
           />
+          {data !== null && data.summary.unscheduled > 0 && (
+            <Button type="link" size="small" onClick={() => setUnscheduledOpen(true)}>
+              未调度 {data.summary.unscheduled}
+            </Button>
+          )}
           <span style={{ flex: 1 }} />
           {data !== null && (
             <Typography.Text type="secondary" style={{ fontSize: 12 }}>
@@ -370,6 +377,50 @@ export default function PipelinesPage() {
           </Space>
         )}
       </Drawer>
+
+      <Modal
+        open={unscheduledOpen}
+        onCancel={() => setUnscheduledOpen(false)}
+        footer={null}
+        width={720}
+        title="未调度的管线（历史 / 一次性）"
+      >
+        <Typography.Paragraph type="secondary" style={{ fontSize: 12 }}>
+          这些管线没有登记调度：backfill、一次性对账，或被新管线取代的旧版本。它们不参与图上健康判定；
+          长期不用的建议在管线定义里清理。
+        </Typography.Paragraph>
+        <Table
+          size="small"
+          rowKey="id"
+          pagination={false}
+          scroll={{ y: 420 }}
+          dataSource={(data === null ? [] : data.assets.flatMap((a) => a.pipelines
+            .filter((p) => !p.scheduled)
+            .map((p) => ({
+              id: p.id,
+              lake: a.lake,
+              account: p.account,
+              latest: data.recentRuns[p.id]?.[0],
+            }))))}
+          locale={{ emptyText: '没有未调度的管线' }}
+          columns={[
+            { title: '管线', dataIndex: 'id', render: (v: string) => <span style={{ fontFamily: 'ui-monospace, Menlo, monospace', fontSize: 12 }}>{v}</span> },
+            { title: '资产', dataIndex: 'lake', width: 200 },
+            { title: '账套', dataIndex: 'account', width: 70, render: (v: string | null) => v ?? '共享' },
+            {
+              title: '最近一次', dataIndex: 'latest', width: 200,
+              render: (v?: { status: string; at: string }) => (v === undefined
+                ? <span style={{ color: '#9AA0A6' }}>无记录</span>
+                : (
+                  <span>
+                    <span style={{ display: 'inline-block', width: 6, height: 6, borderRadius: 6, marginRight: 6, background: RUN_DOT[v.status] ?? '#C9CDD4' }} />
+                    {v.status} · {new Date(v.at).toLocaleDateString('zh-CN')}
+                  </span>
+                )),
+            },
+          ]}
+        />
+      </Modal>
 
       <Modal
         open={history !== null}
