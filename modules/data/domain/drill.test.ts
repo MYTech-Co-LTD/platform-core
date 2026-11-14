@@ -171,6 +171,46 @@ describe('runDetailQuery（假执行器 + 假词表池，不需要湖）', () =>
     expect(sqls).toEqual([])
   })
 
+  it('★ detail.filters（R3 可折叠明细）：维度等值进 WHERE（明细与 count 同一 where）', async () => {
+    const { pool } = fakePool([METRIC_ROW])
+    const sqls: string[] = []
+    const out = await runDetailQuery(depsOf(pool, sqls), ORG, req(), 'drill:net_sales', ARGS, {
+      dimensions: ['branch_num'], filters: { branch_num: '92' },
+    })
+    expect(out.status).toBe('ok')
+    const detailSql = sqls.find((s) => !/count\(\*\)/.test(s))!
+    const countSql = sqls.find((s) => /count\(\*\)/.test(s))!
+    // 字面量经 sqlQuote，拼进 drilled filter 之后（与切片 filters 同一渲染器）
+    expect(detailSql).toContain(" AND branch_num = '92'")
+    expect(countSql).toContain(" AND branch_num = '92'")
+    // 展开行只该看这一组：`in` 形态同样支持（多值切片）
+    const multi: string[] = []
+    await runDetailQuery(depsOf(pool, multi), ORG, req(), 'drill:net_sales', ARGS, {
+      filters: { branch_num: ['91', '92'] },
+    })
+    expect(multi.find((s) => !/count\(\*\)/.test(s))).toContain(" AND branch_num in ('91', '92')")
+  })
+
+  it('★ detail.filters 越界/坏类型 ⇒ bad_param（fail-closed，不静默丢弃）', async () => {
+    const { pool } = fakePool([METRIC_ROW])
+    const sqls: string[] = []
+    // item_num 不在 drill_dims 闭集里（即使指标粒度有它也不许走这条通道）
+    const unknown = await runDetailQuery(depsOf(pool, sqls), ORG, req(), 'drill:net_sales', ARGS, {
+      filters: { item_num: 'X1' },
+    })
+    expect(unknown).toEqual({
+      status: 'denied', metricId: 'drill:net_sales', reason: 'bad_param', detail: 'unknown_dimension:item_num',
+    })
+    // 非字符串值（数字维度由调用方字符串化；这里不替调用方猜）
+    const badType = await runDetailQuery(depsOf(pool, sqls), ORG, req(), 'drill:net_sales', ARGS, {
+      filters: { branch_num: 92 },
+    })
+    expect(badType).toEqual({
+      status: 'denied', metricId: 'drill:net_sales', reason: 'bad_param', detail: 'invalid_value:branch_num',
+    })
+    expect(sqls).toEqual([])
+  })
+
   it('limit 5000 静默夹到 500（不报错）；limit=0 ⇒ bad_param invalid_value:limit（两个断言）', async () => {
     const { pool } = fakePool([{ ...METRIC_ROW, scope_note: '仅含乐檬直营 47 家门店' }])
     const sqls: string[] = []

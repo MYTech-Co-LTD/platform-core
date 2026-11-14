@@ -71,6 +71,8 @@ interface Panel {
   }
   /** table 的渲染期列投影（设计 §7.3.1）。 */
   columns?: string[]
+  /** 可折叠明细（R3 ⑤）。 */
+  expandable?: { dimensions?: string[]; limit?: number }
   content?: string
 }
 interface SpecFixture {
@@ -93,10 +95,16 @@ function stub(
   okQueries: Record<string, Record<string, unknown> & { columns: string[]; rows: unknown[][] }>,
   denied: Set<string>,
   extraGet: Record<string, unknown> = {},
+  /** 可折叠明细的展开回包（R3 ⑤）；给了才应答 `POST /detail-rows`。 */
+  detailRows?: Record<string, unknown> & { status?: number },
 ) {
   m.mockImplementation(async (url: string, init?: RequestInit) => {
     calls.push({ url, init })
     if (/\/reports\/[^/]+\/spec$/.test(url)) return json({ spec, version: 7 })
+    if (detailRows !== undefined && url.endsWith('/detail-rows')) {
+      const { status = 200, ...body } = detailRows
+      return json(body, status)
+    }
     for (const [suffix, body] of Object.entries(extraGet)) {
       if (url.endsWith(suffix)) return json(body)
     }
@@ -786,5 +794,56 @@ describe('Task 6：期间 / slice / KPI / 文本 / 信任信号', () => {
     expect(all).toContain('含脱敏列：shop_name')
     expect(all).toContain('数据截止 2026-10-25（T+1）')
     expect(all).toContain('数据截止 2026-10-24 03:00:00 +08:00')
+  })
+})
+
+describe('R3 ⑤ 可折叠明细', () => {
+  const expandablePanel = {
+    chart: 'table' as const, title: '门店日销', metricId: 'm-detail',
+    dims: ['bizday'], slice: { dimensions: ['bizday'] },
+    args: { system_book: '3120' }, expandable: { limit: 20 }, span: 24,
+  }
+
+  it('★ 展开行 ⇒ 用**原始行值**（不是展示格式化值）POST detail-rows 并渲染明细', async () => {
+    stub({
+      panels: [expandablePanel],
+    }, {
+      // 表里显示的是上海业务日 2026-10-01；原始值是 UTC 时间戳——过滤必须拿后者。
+      'm-detail': { columns: ['bizday', 'value'], rows: [['2026-09-30T16:00:00.000Z', 1000]] },
+    }, new Set(), {}, {
+      columns: ['bizday', 'order_no', 'value'],
+      rows: [['2026-09-30T16:00:00.000Z', 'SO001', 123]],
+      rowCountTotal: 1, truncated: false,
+    })
+    renderView()
+
+    // 展示层：业务日（证明 raw ≠ display，用例才有区分力）
+    expect(await screen.findByText('2026-10-01')).toBeInTheDocument()
+    fireEvent.click(screen.getByRole('button', { name: '展开明细' }))
+
+    expect(await screen.findByTestId('detail-rows')).toBeInTheDocument()
+    // 请求体：原始值 + 与页面同源的 args + 面板声明的 limit
+    const call = calls.find((c) => c.url.endsWith('/detail-rows'))!
+    expect(call.init?.method).toBe('POST')
+    expect(JSON.parse(String(call.init?.body))).toMatchObject({
+      panelIndex: 0,
+      row: { bizday: '2026-09-30T16:00:00.000Z' },
+      args: { system_book: '3120' },
+      limit: 20,
+    })
+    expect(await screen.findByText('SO001')).toBeInTheDocument()
+    expect(screen.getByText(/共 1 行/)).toBeInTheDocument()
+  })
+
+  it('能力边界：409 DETAIL_NOT_AVAILABLE ⇒ 人话提示（不是英文裸码）', async () => {
+    stub({ panels: [expandablePanel] }, {
+      'm-detail': { columns: ['bizday', 'value'], rows: [['2026-10-01', 1000]] },
+    }, new Set(), {}, { status: 409, error: 'DETAIL_NOT_AVAILABLE' })
+    renderView()
+
+    await screen.findByText('2026-10-01')
+    fireEvent.click(screen.getByRole('button', { name: '展开明细' }))
+    expect(await screen.findByText(/该指标未声明下钻明细/)).toBeInTheDocument()
+    expect(screen.queryByText('DETAIL_NOT_AVAILABLE')).not.toBeInTheDocument()
   })
 })

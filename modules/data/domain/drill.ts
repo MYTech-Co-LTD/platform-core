@@ -4,7 +4,7 @@
 // 掩码在场判定按**下钻 SQL**做（spec §2.5 细节 1）——用「换 selectSql 的合成行」复用
 // effectiveMasks，不改 mask.ts 一个字。
 import type { DrillBinding, DrillColumn, Requester } from './authz'
-import { authorize, paramFilters, sqlQuote, visibleMetrics } from './authz'
+import { authorize, dimensionFilterFragments, paramFilters, sqlQuote, visibleMetrics } from './authz'
 import { maskingAuditOf, writeAudit, type ScopeAudit } from './audit-store'
 import { deptContextIfOwned } from './metric-visibility'
 import { loadMergedCatalog } from './metric-store'
@@ -31,6 +31,12 @@ export interface DetailArgs {
   desc?: boolean
   limit?: number
   offset?: number
+  /**
+   * 维度等值/IN 过滤（R3 可折叠明细：展开行时定位该行所属分组）。
+   * 键必须 ⊆ 本指标的下钻原子粒度（`drill.dims`）；校验与渲染与切片 filters **同一实现**
+   * （`dimensionFilterFragments`），本面不另写一份判据。
+   */
+  filters?: Record<string, unknown>
 }
 
 export interface DetailOk {
@@ -175,7 +181,13 @@ export async function runDetailQuery(
     drillFacet: { dimensions: string[]; rowCountTotal: number; grantedColumns: string[] } | null,
   ) => writeAudit(deps.pool, {
     org, userId: requester?.userId ?? '(anonymous)', channel: requester?.channel ?? 'session',
-    keyId: requester?.keyId ?? null, metricId, params: { ...args, ...(detail.dimensions !== undefined ? { dimensions: detail.dimensions } : {}) },
+    keyId: requester?.keyId ?? null, metricId,
+    params: {
+      ...args,
+      ...(detail.dimensions !== undefined ? { dimensions: detail.dimensions } : {}),
+      // 展开行过滤也留痕：事后追溯「这条明细是看哪个分组拉出来的」不能靠猜。
+      ...(detail.filters !== undefined ? { filters: detail.filters } : {}),
+    },
     rowCount, verdict, reason, masking,
     ...(drillFacet !== null ? { drill: drillFacet } : {}),
     scopePlan: scopeAudit,
@@ -322,7 +334,15 @@ export async function runDetailQuery(
     await audit('denied', pf.reason, null, null, null)
     return { status: 'denied', metricId, reason: pf.reason, detail: pf.detail }
   }
-  const where = `${metricRow.subjectColumn} = ${sqlQuote(authz.plan.subject)} AND ${drill.filter}${pf.filters.join('')}`
+  // 维度等值过滤（R3 可折叠明细）：与切片 filters 同一渲染器、同一注入面收口。
+  // 允许集 = **下钻原子粒度**（不是指标粒度）：明细面的 where 作用在 drill.relation 上，
+  // 只有 drill.dims 里的列在这里有意义；未知键 fail-closed，不静默丢弃。
+  const df = dimensionFilterFragments(drill.dims, detail.filters ?? {})
+  if (!df.ok) {
+    await audit('denied', 'bad_param', null, null, null)
+    return { status: 'denied', metricId, reason: 'bad_param', detail: df.detail }
+  }
+  const where = `${metricRow.subjectColumn} = ${sqlQuote(authz.plan.subject)} AND ${drill.filter}${pf.filters.join('')}${df.fragments.join('')}`
 
   // 月感知服务视图：范围可换算 ⇒ 换关系 + 附 month 谓词（分区裁剪）；否则原样。
   const serving = servingRelationFor(drill.relation, args.bizday)

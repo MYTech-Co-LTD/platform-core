@@ -101,6 +101,22 @@ describe('B+C schema', () => {
     }).ok).toBe(false)
   })
 
+  it('expandable（R3 ⑤）：table + 分组通过；无分组/非 table/越界 limit 拒', () => {
+    const grouped = {
+      chart: 'table', title: '门店销售', metricId: 'm', dims: ['branch_num'], args: {}, span: 24,
+      slice: { dimensions: ['branch_num'] }, expandable: { limit: 20 },
+    }
+    expect(parseReportSpec({ panels: [grouped] }).ok).toBe(true)
+    // 只有 dims（slice 没有 dimensions）也算分组——与 panelQueryBodyOf 同一回退顺序
+    expect(parseReportSpec({ panels: [{ ...grouped, slice: {} }] }).ok).toBe(true)
+    expect(parseReportSpec({ panels: [{ ...grouped, dims: [], slice: {} }] }).ok).toBe(false)
+    expect(parseReportSpec({
+      panels: [{ chart: 'line', title: 't', metricId: 'm', dims: ['bizday'], args: {}, span: 24, expandable: {} }],
+    }).ok).toBe(false)
+    expect(parseReportSpec({ panels: [{ ...grouped, expandable: { limit: 501 } }] }).ok).toBe(false)
+    expect(parseReportSpec({ panels: [{ ...grouped, expandable: { dimensions: ['order_no'] } }] }).ok).toBe(true)
+  })
+
   it('旧规格仍通过（默认值补齐）', () => {
     const old = { panels: [{ chart: 'line', title: 't', metricId: 'm', dims: ['bizday'], args: {}, span: 12 }] }
     expect(parseReportSpec(old).ok).toBe(true)
