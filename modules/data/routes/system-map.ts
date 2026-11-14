@@ -177,6 +177,20 @@ export function registerSystemMap(r: ModuleHono, ctx: RouteCtx): void {
     const marts = models.filter((m) => m.name.startsWith('fct_') || m.name.startsWith('dim_') || m.name.startsWith('recon_'))
       .map((m) => ({ name: m.name, refs: m.refs ?? [] }))
 
+    // 父 → 子引用（ctl.foreach / pipelineRef）：子管线没有自己的调度条目，但由父管线每天调用，
+    // 不能被当成「未接入」——retail_order_line.day 就是被 retail.windows.l1 驱动的活管线。
+    const parents = new Map<string, string[]>()
+    for (const def of loadedPipelines.defs.values()) {
+      const blob = JSON.stringify(def.doc)
+      for (const m of blob.matchAll(/pipelines\/([A-Za-z0-9_.-]+)\.json/g)) {
+        const child = m[1]
+        if (child === def.id) continue
+        const list = parents.get(child)
+        if (list === undefined) parents.set(child, [def.id])
+        else if (!list.includes(def.id)) list.push(def.id)
+      }
+    }
+
     // 湖前缀字典 = 契约 layout.prefix ∪ 管线 sink key 前缀（两边都是声明锚）
     const lakePrefixes = new Set<string>()
     for (const c of loadedContracts.contracts) {
@@ -194,6 +208,7 @@ export function registerSystemMap(r: ModuleHono, ctx: RouteCtx): void {
       schedules: loadedSchedules.byPipeline,
       contractLakes: lakeStagingFromContracts(loadedContracts.contracts),
       consumers: lakeConsumers(models, lakePrefixes, loadDbtVars(ctx.repoRoot)),
+      parents,
       staging,
       marts,
     })
@@ -221,7 +236,7 @@ export function registerSystemMap(r: ModuleHono, ctx: RouteCtx): void {
     // 在跑失败也由服务端数：只算 scheduled && enabled 的管线（口径与前端原逻辑一致，但只此一处）
     const failedLive = map.assets
       .flatMap((a) => a.pipelines)
-      .filter((p) => p.scheduled && p.enabled)
+      .filter((p) => (p.scheduled && p.enabled) || p.driver === 'parent')
       .filter((p) => recentRuns[p.id]?.[0]?.status === 'failed')
       .length
 

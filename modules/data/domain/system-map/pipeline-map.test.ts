@@ -114,7 +114,20 @@ describe('buildPipelineMap', () => {
       consumers: new Map([['lemeng/no_staging', ['vw_x']]]),
       staging: ['stg_lemeng_retail_order_line', 'stg_lemeng_branch'],
     })
-    expect(m.summary).toEqual({ assets: 3, withStaging: 2, broken: 0, unscheduled: 2 })
+    expect(m.summary).toEqual({ assets: 3, withStaging: 2, broken: 0, orphans: 2, parentDriven: 0 })
+  })
+
+  it('父驱动的管线不算「未接入」（retail_order_line.day 由 windows.l1 每日调用）', () => {
+    const m = buildPipelineMap({
+      ...base,
+      pipelines: [{ id: 'lemeng.retail_order_line.day', lakeKeys: ['lemeng/retail_order_line/a.parquet'] }],
+      schedules: new Map(),
+      contractLakes: new Map(),
+      parents: new Map([['lemeng.retail_order_line.day', ['lemeng.retail.windows.l1']]]),
+      staging: ['stg_lemeng_retail_order_line'],
+    })
+    expect(m.assets[0]!.pipelines[0]).toMatchObject({ driver: 'parent', parentIds: ['lemeng.retail.windows.l1'] })
+    expect(m.summary).toMatchObject({ orphans: 0, parentDriven: 1 })
   })
 
   it('accountOf：尾段是数字才算账套', () => {
