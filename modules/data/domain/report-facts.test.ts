@@ -268,6 +268,25 @@ describePg('buildFacts（需要 DATABASE_URL）', () => {
     expect(audit.rows[0].n).toBeGreaterThan(0)
   })
 
+  it('★ 事实包内查询去重（R4）：同指标/窗口/分组的第二张面板不再执行，计入 deduped', async () => {
+    const parsed = parseReportSpec({
+      period: PERIOD,
+      panels: [
+        { chart: 'line', title: '趋势 A', metricId: 'rf:net_sales', dims: ['bizday'], args: {}, span: 12, slice: { dimensions: ['bizday'] } },
+        { chart: 'line', title: '趋势 B', metricId: 'rf:net_sales', dims: ['bizday'], args: {}, span: 12, slice: { dimensions: ['bizday'] } },
+        { chart: 'ai_text', title: 'AI', focus: 'overview', span: 24 },
+      ],
+    })
+    if (!parsed.ok) throw new Error(parsed.code)
+    const stats = { queries: 0, deduped: 0 }
+    const base = execWith(VALUES)
+    const facts = await buildFacts(
+      { ...depsOf(async (sql) => base(sql)), stats }, parsed.spec, 2, PERIOD, '92',
+    )
+    expect(facts.daily.min).not.toBeNull()
+    expect(stats.deduped).toBeGreaterThan(0)
+  })
+
   it('factsHash：同一事实稳定；数值变一位即变', async () => {
     const spec = specOf()
     const aiIndex = spec.panels.findIndex((p) => p.chart === 'ai_text')
