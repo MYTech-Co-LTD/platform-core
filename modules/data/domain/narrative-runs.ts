@@ -17,6 +17,8 @@ export interface NarrativeRunRow {
   outcome: NarrativeOutcome
   reason?: string | null
   durationMs?: number | null
+  /** 事实包构建耗时（R4 分项基线）；旧行/未测量 ⇒ null。 */
+  factsMs?: number | null
 }
 
 /** best-effort：观测失败不反噬生成（只告警）。 */
@@ -24,10 +26,10 @@ export async function recordNarrativeRun(pool: Pool, row: NarrativeRunRow): Prom
   try {
     await pool.query(
       `insert into data.narrative_runs
-         (org, report_id, focus, mode, model, prompt_version, outcome, reason, duration_ms)
-       values ($1,$2,$3,$4,$5,$6,$7,$8,$9)`,
+         (org, report_id, focus, mode, model, prompt_version, outcome, reason, duration_ms, facts_ms)
+       values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)`,
       [row.org, row.reportId, row.focus, row.mode, row.model, row.promptVersion,
-        row.outcome, row.reason ?? null, row.durationMs ?? null],
+        row.outcome, row.reason ?? null, row.durationMs ?? null, row.factsMs ?? null],
     )
   } catch (e) {
     console.warn(`[data/narrative] run record failed: ${e instanceof Error ? e.message : String(e)}`)
@@ -60,6 +62,8 @@ export interface NarrativeStats {
   /** 缓存命中率 = cached / total（含 cached 在内的全部尝试）。 */
   cacheHitRate: number | null
   p95Ms: number | null
+  /** 事实包构建耗时 p95（R4 分项基线；无样本 ⇒ null，不画 0）。 */
+  factsP95Ms: number | null
   /** 当前窗口越过阈值的项（空数组 = 健康）；阈值见 `NARRATIVE_SLO`。 */
   breaches: NarrativeSloBreach[]
   slo: typeof NARRATIVE_SLO
@@ -72,7 +76,7 @@ export async function narrativeStats(pool: Pool, org: string, days: number): Pro
   const since = `now() - ($2::int * interval '1 day')`
   const main = await pool.query<{
     total: string; ok: string; fallback: string; cached: string; error: string
-    number_check: string; p95: string | null
+    number_check: string; p95: string | null; facts_p95: string | null
   }>(
     `select count(*)::text as total,
             count(*) filter (where outcome = 'ok')::text as ok,
@@ -81,7 +85,9 @@ export async function narrativeStats(pool: Pool, org: string, days: number): Pro
             count(*) filter (where outcome = 'error')::text as error,
             count(*) filter (where reason = 'number_check')::text as number_check,
             percentile_cont(0.95) within group (order by duration_ms)
-              filter (where duration_ms is not null)::text as p95
+              filter (where duration_ms is not null)::text as p95,
+            percentile_cont(0.95) within group (order by facts_ms)
+              filter (where facts_ms is not null)::text as facts_p95
        from data.narrative_runs
       where org = $1 and created_at >= ${since}`,
     [org, days],
@@ -120,6 +126,7 @@ export async function narrativeStats(pool: Pool, org: string, days: number): Pro
   const numberCheckRate = generated === 0 ? null : numberCheckCount / generated
   const cacheHitRate = total === 0 ? null : byOutcome.cached / total
   const p95Ms = r?.p95 === null || r?.p95 === undefined ? null : Number(r.p95)
+  const factsP95Ms = r?.facts_p95 === null || r?.facts_p95 === undefined ? null : Number(r.facts_p95)
   const breaches: NarrativeSloBreach[] = []
   if (fallbackRate !== null && fallbackRate > NARRATIVE_SLO.fallbackRate) breaches.push('fallback_rate')
   if (p95Ms !== null && p95Ms > NARRATIVE_SLO.p95Ms) breaches.push('p95')
@@ -133,6 +140,7 @@ export async function narrativeStats(pool: Pool, org: string, days: number): Pro
     numberCheckRate,
     cacheHitRate,
     p95Ms,
+    factsP95Ms,
     breaches,
     slo: NARRATIVE_SLO,
     byPromptVersion: versions.rows.map((x) => ({

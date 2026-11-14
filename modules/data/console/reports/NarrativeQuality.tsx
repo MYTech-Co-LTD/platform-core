@@ -17,6 +17,8 @@ interface Stats {
   numberCheckRate: number | null
   cacheHitRate: number | null
   p95Ms: number | null
+  /** facts 构建 p95（R4 分项基线）；旧版本回包可能没有。 */
+  factsP95Ms?: number | null
   breaches: string[]
   slo: { fallbackRate: number; p95Ms: number; numberCheckRate: number }
 }
@@ -109,6 +111,9 @@ export function NarrativeQuality() {
           <Space size={12} wrap style={{ marginTop: 8 }}>
             <Typography.Text type="secondary" style={{ fontSize: 12 }}>
               缓存命中 {pct(stats.cacheHitRate)}
+            </Typography.Text>
+            <Typography.Text type="secondary" style={{ fontSize: 12 }} data-testid="facts-p95">
+              facts 构建 p95 {ms(stats.factsP95Ms ?? null)}
             </Typography.Text>
             <Typography.Text type="secondary" style={{ fontSize: 12 }}>
               总尝试 {stats.total}（含缓存/失败）

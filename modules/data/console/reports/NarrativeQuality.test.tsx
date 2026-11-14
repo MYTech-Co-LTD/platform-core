@@ -20,6 +20,7 @@ const stats = (over: Record<string, unknown> = {}) => ({
   numberCheckRate: 1 / 3,
   cacheHitRate: 0.25,
   p95Ms: 12_000,
+  factsP95Ms: 1_200,
   breaches: ['fallback_rate', 'number_check'],
   slo: { fallbackRate: 0.2, p95Ms: 45_000, numberCheckRate: 0.05 },
   byPromptVersion: [],
@@ -43,6 +44,7 @@ describe('NarrativeQuality', () => {
     expect(screen.getByText(/回退率超过阈值/)).toBeInTheDocument()
     expect(screen.getByText(/数字校验越界率超过阈值/)).toBeInTheDocument()
     expect(screen.getByText(/缓存命中 25.0%/)).toBeInTheDocument()
+    expect(screen.getByTestId('facts-p95').textContent).toContain('1.2s')
   })
 
   it('健康窗口 ⇒ 「健康」且不出告警', async () => {
