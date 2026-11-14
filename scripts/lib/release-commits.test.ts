@@ -4,6 +4,9 @@
 // 而发布门只认半角 `(#1508)` ⇒ 它们被当成「直推」⇒ main 上的 release 从 v0.278.1 起恒红。
 // 门只挡发版、不挡部署，所以这条红持续了很久才被发现——正是「判据口径」值得单独测的理由。
 import { execFileSync } from 'node:child_process'
+import { mkdtempSync, rmSync, writeFileSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { describe, expect, it } from 'vitest'
 import { needsPrLookup, prRefOf, stripPrRef } from './release-commits.mjs'
@@ -60,26 +63,56 @@ describe('needsPrLookup', () => {
   })
 })
 
-describe('真实仓库：发布门必须能过（黑盒）', () => {
-  it('★ `release.mjs --dry-run` 在主干上 exit 0，且不回退成「拒绝发版」', () => {
-    // 这条钉的是**机制在真仓库上成立**：事故形态是「门恒红而没人知道」，纯函数测试测不到它。
-    const out = execFileSync(process.execPath, ['scripts/release.mjs', '--dry-run'], {
-      cwd: repoRoot,
-      encoding: 'utf8',
-      maxBuffer: 32 * 1024 * 1024,
-    })
-    expect(out).not.toContain('拒绝发版')
-    // 两种环境都要成立：
-    //   本机/全量历史 ⇒ 解析出条目（`- 【…】`）；
-    //   PR 的 CI 是浅克隆 + merge commit，`--no-merges` 后为空 ⇒ 脚本打印「无可见变更」并 exit 0。
-    // 这条只钉「门不误判」，不钉「一定有东西可发」。
-    expect(/^- 【/m.test(out) || out.includes('无可见变更')).toBe(true)
-    // ★ 零写入：dry-run 在本地与 test:guard 里都会被跑。早先的写入在 DRY 退出之前，
-    //   每跑一次就改一次 CHANGELOG，还会被 `git add -A` 顺手提交——这条钉住它不再发生。
-    const dirty = execFileSync('git', ['status', '--porcelain', 'CHANGELOG.md'], {
-      cwd: repoRoot,
-      encoding: 'utf8',
-    })
-    expect(dirty.trim()).toBe('')
+describe('黑盒：夹具仓库（与分支状态无关）', () => {
+  // 为什么用夹具仓库而不是真仓库：真仓库上跑 release.mjs 会把**当前分支未合并的提交**也算进来
+  // （它们没有 PR 引用）⇒ 任何 feature 分支的 test:guard 都会红。事故形态要钉的是「判据对不对」，
+  // 不是「这条分支合没合」。夹具仓库里我们精确控制历史与 tag。
+  it('★ 全角 PR 引用能过门（事故形态）；真直推仍被拒', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'release-fixture-'))
+    try {
+      const git = (args: string[]) => execFileSync('git', args, { cwd: dir, encoding: 'utf8' })
+      git(['init', '-q'])
+      git(['config', 'user.email', 't@example.com'])
+      git(['config', 'user.name', 't'])
+      // 基线：打 tag 之后才是发布门要审的范围。
+      writeFileSync(join(dir, 'a.txt'), 'a')
+      // release.mjs 读 CHANGELOG.md（dry-run 只读不写）⇒ 夹具必须有一个最小合法文件。
+      writeFileSync(join(dir, 'CHANGELOG.md'), '# Changelog\n\n## [Unreleased]\n')
+      git(['add', '.'])
+      git(['commit', '-q', '-m', 'chore: init'])
+      git(['tag', 'v0.1.0'])
+      // ① 全角引用（历史事故形态）——必须被认作 PR 提交。
+      writeFileSync(join(dir, 'b.txt'), 'b')
+      git(['add', '.'])
+      git(['commit', '-q', '-m', 'feat(data): 全角引用的一条（#12）'])
+      // ② 真直推（没有任何引用）——必须被拒。
+      writeFileSync(join(dir, 'c.txt'), 'c')
+      git(['add', '.'])
+      git(['commit', '-q', '-m', 'feat(data): 真正直推的一条'])
+
+      const run = () => {
+        try {
+          return { code: 0, out: execFileSync(process.execPath, [join(repoRoot, 'scripts/release.mjs'), '--dry-run'], {
+            cwd: dir, encoding: 'utf8', env: { ...process.env, REPO: 'test/repo', GH_TOKEN: '' },
+          }) }
+        } catch (e) {
+          const err = e as { status?: number; stderr?: string; stdout?: string }
+          return { code: err.status ?? 1, out: `${err.stdout ?? ''}${err.stderr ?? ''}` }
+        }
+      }
+
+      const first = run()
+      expect(first.code).toBe(1)
+      expect(first.out).toContain('真正直推的一条')
+
+      // 把直推那条从历史里去掉（reset 到全角提交），应当 exit 0 且生成带链接的条目。
+      git(['reset', '-q', '--hard', 'HEAD~1'])
+      const second = run()
+      expect(second.code).toBe(0)
+      expect(second.out).toContain('全角引用的一条')
+      expect(second.out).toContain('pull/12')
+    } finally {
+      rmSync(dir, { recursive: true, force: true })
+    }
   })
 })
