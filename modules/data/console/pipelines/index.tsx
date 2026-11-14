@@ -24,7 +24,7 @@ interface PipelinesResponse {
   assets: MapAsset[]
   orphanStaging: string[]
   warnings: string[]
-  lastRun: Record<string, { status: string; at: string } | null>
+  recentRuns: Record<string, Array<{ status: string; at: string; durationMs?: number; error?: string }>>
 }
 
 type NodeKind = 'asset' | 'staging' | 'mart'
@@ -42,6 +42,7 @@ export default function PipelinesPage() {
   const [query, setQuery] = useState('')
   const [account, setAccount] = useState<string>('全部')
   const [selected, setSelected] = useState<Selection | null>(null)
+  const [failedOnly, setFailedOnly] = useState(false)
   const boxRef = useRef<HTMLDivElement>(null)
   const chartRef = useRef<echarts.ECharts | null>(null)
 
@@ -70,10 +71,37 @@ export default function PipelinesPage() {
     for (const a of assetsShown) for (const m of a.marts) martSet.add(m)
     const marts = [...martSet].sort((a, b) => a.localeCompare(b))
 
+    // 健康色：取该资产下所有管线**最近一次** run 里最差的（failed > running > unknown > ok）
+    const worst = (a: MapAsset): string => {
+      const latest = a.pipelines.map((p) => data.recentRuns[p.id]?.[0]?.status ?? 'unknown')
+      if (latest.includes('failed')) return 'failed'
+      if (latest.includes('running')) return 'running'
+      if (latest.length === 0 || latest.every((x) => x === 'unknown')) return 'unknown'
+      if (latest.includes('interrupted')) return 'interrupted'
+      return 'ok'
+    }
+    const assetStatus = new Map(assetsShown.map((a) => [a.lake, worst(a)]))
+    const statusOfAsset = (lake: string): string => assetStatus.get(lake) ?? 'unknown'
+    const stagingStatus = new Map<string, string>()
+    for (const a of assetsShown) {
+      if (a.staging === null) continue
+      const cur = stagingStatus.get(a.staging)
+      const next = statusOfAsset(a.lake)
+      // failed 优先
+      stagingStatus.set(a.staging, cur === 'failed' || next === 'failed' ? 'failed' : (cur ?? next))
+    }
+    const martStatus = new Map<string, string>()
+    for (const a of assetsShown) {
+      for (const m of a.marts) {
+        const cur = martStatus.get(m)
+        const next = statusOfAsset(a.lake)
+        martStatus.set(m, cur === 'failed' || next === 'failed' ? 'failed' : (cur ?? next))
+      }
+    }
     const nodes = [
-      ...assetsShown.map((a, i) => ({ id: `asset:${a.lake}`, kind: 'asset' as const, label: a.lake, x: COL_X.asset, y: i * ROW_H })),
-      ...stagings.map((s, i) => ({ id: `staging:${s}`, kind: 'staging' as const, label: s, x: COL_X.staging, y: i * ROW_H })),
-      ...marts.map((m, i) => ({ id: `mart:${m}`, kind: 'mart' as const, label: m, x: COL_X.mart, y: i * ROW_H })),
+      ...assetsShown.map((a, i) => ({ id: `asset:${a.lake}`, kind: 'asset' as const, label: a.lake, x: COL_X.asset, y: i * ROW_H, status: statusOfAsset(a.lake) })),
+      ...stagings.map((s, i) => ({ id: `staging:${s}`, kind: 'staging' as const, label: s, x: COL_X.staging, y: i * ROW_H, status: stagingStatus.get(s) ?? 'unknown' })),
+      ...marts.map((m, i) => ({ id: `mart:${m}`, kind: 'mart' as const, label: m, x: COL_X.mart, y: i * ROW_H, status: martStatus.get(m) ?? 'unknown' })),
     ]
     const edges: Array<{ source: string; target: string }> = []
     for (const a of assetsShown) {
@@ -85,18 +113,21 @@ export default function PipelinesPage() {
 
   // 搜索：命中节点 + 一跳邻居
   const focused = useMemo(() => {
+    const base = failedOnly && data !== null
+      ? { nodes: view.nodes.filter((n) => n.status === 'failed' || n.status === 'running'), edges: view.edges }
+      : view
     const q = query.trim().toLowerCase()
-    if (q === '') return view
-    const keep = new Set(view.nodes.filter((n) => n.label.toLowerCase().includes(q)).map((n) => n.id))
-    for (const e of view.edges) {
+    if (q === '') return base
+    const keep = new Set(base.nodes.filter((n) => n.label.toLowerCase().includes(q)).map((n) => n.id))
+    for (const e of base.edges) {
       if (keep.has(e.source)) keep.add(e.target)
       if (keep.has(e.target)) keep.add(e.source)
     }
     return {
-      nodes: view.nodes.filter((n) => keep.has(n.id)),
-      edges: view.edges.filter((e) => keep.has(e.source) && keep.has(e.target)),
+      nodes: base.nodes.filter((n) => keep.has(n.id)),
+      edges: base.edges.filter((e) => keep.has(e.source) && keep.has(e.target)),
     }
-  }, [view, query])
+  }, [view, query, failedOnly, data])
 
   useEffect(() => {
     if (boxRef.current === null) return
@@ -150,7 +181,15 @@ export default function PipelinesPage() {
           symbolSize: 7,
           // marts 在最后一列：标签放左边，否则会被右缘切掉
           label: { show: true, position: n.kind === 'mart' ? 'left' : 'right', distance: 4 },
-          itemStyle: { color: KIND_COLOR[n.kind], borderColor: '#FFFFFF', borderWidth: 1 },
+          // 类型 → 填充色；健康 → 描边色（失败红、运行中蓝、未知灰、正常白边不留噪）
+          itemStyle: {
+            color: KIND_COLOR[n.kind],
+            borderColor: n.status === 'failed' ? '#E5484D'
+              : n.status === 'running' ? '#4D6BFE'
+                : n.status === 'interrupted' ? '#E08A00'
+                  : n.status === 'unknown' ? '#C9CDD4' : '#FFFFFF',
+            borderWidth: n.status === 'ok' ? 1 : 2,
+          },
         })),
         edges: focused.edges,
       }],
@@ -165,7 +204,8 @@ export default function PipelinesPage() {
   }
 
   const broken = data === null ? 0 : data.assets.filter((a) => a.staging === null).length
-  const failed = data === null ? 0 : Object.values(data.lastRun).filter((r) => r?.status === 'failed').length
+  const failed = data === null ? 0 : Object.values(data.recentRuns)
+    .filter((list) => list[0]?.status === 'failed').length
 
   return (
     <Space direction="vertical" style={{ width: '100%' }} size="middle">
@@ -192,6 +232,11 @@ export default function PipelinesPage() {
             value={account}
             onChange={(v) => setAccount(String(v))}
             options={['全部', '3120', '64188', '共享']}
+          />
+          <Segmented
+            value={failedOnly ? 'failed' : 'all'}
+            onChange={(v) => setFailedOnly(v === 'failed')}
+            options={[{ label: '全部', value: 'all' }, { label: '只看异常', value: 'failed' }]}
           />
           <span style={{ flex: 1 }} />
           {data !== null && (
@@ -229,20 +274,35 @@ export default function PipelinesPage() {
                   <div>
                     <div style={{ fontSize: 12, color: '#9AA0A6', marginBottom: 6 }}>管线（{a.pipelines.length}）</div>
                     {a.pipelines.map((p) => {
-                      const run = data.lastRun[p.id]
+                      const list = data.recentRuns[p.id] ?? []
+                      const run = list[0]
                       return (
                         <div key={p.id} style={{ padding: '4px 0', fontSize: 13 }}>
                           <span style={{
                             display: 'inline-block', width: 6, height: 6, borderRadius: 6, marginRight: 6,
-                            background: run === null || run === undefined ? '#C9CDD4' : (RUN_DOT[run.status] ?? '#C9CDD4'),
+                            background: run === undefined ? '#C9CDD4' : (RUN_DOT[run.status] ?? '#C9CDD4'),
                           }} />
                           <span style={{ fontFamily: 'ui-monospace, Menlo, monospace', fontSize: 12 }}>{p.id}</span>
                           <div style={{ paddingLeft: 12, fontSize: 11.5, color: '#9AA0A6' }}>
                             {p.account === null ? '共享' : `账套 ${p.account}`}
                             {p.cron === null ? ' · 无调度' : ` · ${p.cron}`}
                             {p.cron !== null && !p.enabled ? ' · 已停用' : ''}
-                            {run == null ? ' · 运行记录未知' : ` · 最近 ${run.status} ${new Date(run.at).toLocaleString('zh-CN')}`}
+                            {run === undefined ? ' · 运行记录未知' : ` · 最近 ${run.status} ${new Date(run.at).toLocaleString('zh-CN')}`}
                           </div>
+                          {/* 最近 3 次：区分「一直红」与「偶发一次」——排障时这一列决定要不要动手 */}
+                          {list.length > 1 && (
+                            <div style={{ paddingLeft: 12, fontSize: 11, color: '#9AA0A6' }}>
+                              近 {list.length} 次：{list.map((r) => `${r.status}@${new Date(r.at).toLocaleDateString('zh-CN')}`).join(' · ')}
+                            </div>
+                          )}
+                          {run?.error !== undefined && (
+                            <div style={{
+                              paddingLeft: 12, fontSize: 11, color: '#B42318', marginTop: 2,
+                              whiteSpace: 'pre-wrap', wordBreak: 'break-word', maxHeight: 72, overflow: 'hidden',
+                            }}>
+                              {run.error.split('\n')[0]}
+                            </div>
+                          )}
                         </div>
                       )
                     })}
