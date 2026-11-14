@@ -41,6 +41,8 @@ export function buildNotifyPort(deps: {
         payload: input.payload,
         // 事件 key 的第一段 = manifest.id（manifest schema 强约束），故可作为 producer。
         producer: decl.key.slice(0, decl.key.indexOf('.')),
+        // 一次性延迟：缺省不传 ⇒ 存储层 coalesce 到 now()（立即可领）。
+        availableAt: input.availableAt,
       })
     },
   }

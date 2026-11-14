@@ -3,7 +3,7 @@ import { describe, it, expect, beforeAll, afterAll, beforeEach } from 'vitest'
 import { Pool } from 'pg'
 import { applyMigrations } from './test-util'
 import {
-  audit, channelConfigured, claimDueDeliveries, countChannelSends, createTemplateRevision, deleteRule,
+  audit, channelConfigured, claimDueDeliveries, claimEvents, countChannelSends, createTemplateRevision, deleteRule,
   enqueueEvent, getPublishedTemplate, getTemplate, isCoolingDown, listChannels,
   listRules, markDeliverySent, patchChannel, publishTemplateRevision, purgeOldNotifications,
   setChannelHealth, setRuleEnabled, upsertRule,
@@ -211,5 +211,45 @@ describePg('notify storage v2', () => {
     expect(await isCoolingDown(pool, ORG, { id: 'r1', cooldownMinutes: 10 }, 'u2', new Date())).toBe(false)
     // 清理 sent 行，避免影响其它用例
     await markDeliverySent(pool, { org: ORG, eventId: 'e-cool', ruleId: 'r1', recipient: 'u1', channel: 'wecom_default' })
+  })
+})
+
+// W6-P2：一次性延迟队列（notify.event.available_at）。夹具前缀 org-p2-。
+describePg('notify storage 一次性延迟', () => {
+  const ORG_P2 = 'org-p2-delay'
+  let pool: Pool
+
+  beforeAll(async () => {
+    pool = new Pool({ connectionString: url })
+    await applyMigrations(pool)
+  })
+  afterAll(async () => {
+    await cleanup()
+    await pool.end()
+  })
+  beforeEach(cleanup)
+
+  async function cleanup() {
+    await pool.query('delete from notify.event where org=$1', [ORG_P2])
+  }
+
+  it('★ 未来事件不被领取；到点后可领', async () => {
+    const future = new Date(Date.now() + 3600_000)
+    await enqueueEvent(pool, {
+      org: ORG_P2, eventId: 'delay-1', eventKey: 'test.event', scope: '*',
+      payload: {}, producer: 'test', availableAt: future,
+    })
+    // claimEvents 是全表领取（无 org 过滤）⇒ 只断言本 org 的行，limit 放宽以免被别的夹具挤掉。
+    expect((await claimEvents(pool, 500)).some((e) => e.org === ORG_P2 && e.eventId === 'delay-1')).toBe(false)
+
+    // 缺省 availableAt = 立即
+    await enqueueEvent(pool, {
+      org: ORG_P2, eventId: 'delay-2', eventKey: 'test.event', scope: '*',
+      payload: {}, producer: 'test',
+    })
+    expect((await claimEvents(pool, 500)).some((e) => e.org === ORG_P2 && e.eventId === 'delay-2')).toBe(true)
+
+    await pool.query("update notify.event set available_at = now() - interval '1 second' where org=$1 and event_id='delay-1'", [ORG_P2])
+    expect((await claimEvents(pool, 500)).some((e) => e.org === ORG_P2 && e.eventId === 'delay-1')).toBe(true)
   })
 })
