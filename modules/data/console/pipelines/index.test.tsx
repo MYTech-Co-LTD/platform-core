@@ -24,6 +24,7 @@ const MAP = {
     {
       lake: 'lemeng/retail_order_line',
       staging: 'stg_lemeng_retail_order_line',
+      views: [],
       marts: ['fct_retail_sale'],
       pipelines: [
         { id: 'lemeng.retail_order_line.l0.3120', account: '3120', cron: '0 5 * * *', enabled: true, scheduled: true },
@@ -33,6 +34,7 @@ const MAP = {
     {
       lake: 'lemeng/no_staging_asset',
       staging: null,
+      views: [],
       marts: [],
       pipelines: [{ id: 'lemeng.no_staging_asset.l0.3120', account: '3120', cron: null, enabled: false, scheduled: false }],
     },

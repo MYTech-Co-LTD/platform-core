@@ -23,8 +23,15 @@ export interface PipelineMapPipeline {
 
 export interface PipelineMapAsset {
   lake: string
-  /** `stg_<domain>_<table>`；不存在 = 这条资产没有 staging 接（链路断点）。 */
+  /** `stg_<domain>_<table>`；不存在 ≠ 断点（见 views）。 */
   staging: string | null
+  /**
+   * 直接读这个湖前缀的**视图/模型**（`vw_*` 等，drill 路径）。
+   * 有些资产本来就只给视图用、不该有 staging（例：`lemeng/retail_order_line_month`）；
+   * 有视图消费就不算断点——否则地图会长期挂着一条假断点。
+   */
+  views: string[]
+  /** 有 staging 时才有的 marts；没有 staging ⇒ 空（marts 通过 staging 间接消费）。 */
   marts: string[]
   pipelines: PipelineMapPipeline[]
 }
@@ -49,6 +56,8 @@ export interface PipelineMapInput {
   staging: readonly string[]
   /** dbt marts 模型名 + 它 ref 的上游名。 */
   marts: ReadonlyArray<{ name: string; refs: readonly string[] }>
+  /** 湖前缀 → 直接引用它的 dbt 模型名（由 `lakeConsumers` 从 SQL 里扫出来）。 */
+  consumers?: ReadonlyMap<string, readonly string[]>
 }
 
 /** pipeline id 的尾段是账套（数字）时用它，否则 null（仓内共享管线）。 */
@@ -101,9 +110,13 @@ export function buildPipelineMap(input: PipelineMapInput): PipelineMapModel {
     const conventional = `stg_${domain}_${table}`
     const stagingName = stagingOfLake.get(lake) ?? conventional
     const staging = stagingSet.has(stagingName) ? stagingName : null
+    // 视图消费：排除 staging 自己（staging 也读这条湖，但它不是「没有 staging」的替代品）
+    const consumers = input.consumers?.get(lake) ?? []
+    const views = consumers.filter((m) => m !== staging).sort((a, b) => a.localeCompare(b))
     assets.push({
       lake,
       staging,
+      views,
       marts: staging === null ? [] : (martsByStaging.get(staging) ?? []).slice().sort((a, b) => a.localeCompare(b)),
       pipelines: (byLake.get(lake) ?? []).sort((a, b) => a.id.localeCompare(b.id)),
     })
@@ -117,9 +130,10 @@ export function buildPipelineMap(input: PipelineMapInput): PipelineMapModel {
     .sort((a, b) => a.localeCompare(b))
 
   const warnings: string[] = []
-  const noStaging = assets.filter((a) => a.staging === null)
+  // 断点 = 既没有 staging、也没有视图在消费（只是视图在用的资产不算断点）
+  const noStaging = assets.filter((a) => a.staging === null && a.views.length === 0)
   if (noStaging.length > 0) {
-    warnings.push(`${noStaging.length} 个湖资产没有对应的 staging 模型（链路断点）`)
+    warnings.push(`${noStaging.length} 个湖资产没有 staging 也没有视图消费（链路断点）`)
   }
   if (orphanStaging.length > 0) {
     warnings.push(`${orphanStaging.length} 个 staging 模型没有仓内管线写它的湖前缀`)
@@ -132,4 +146,33 @@ export function buildPipelineMap(input: PipelineMapInput): PipelineMapModel {
 function lakeOf(staging: string): string {
   const m = /^stg_([a-z0-9]+)_(.+)$/.exec(staging)
   return m === null ? '' : `${m[1]}/${m[2]}`
+}
+
+/**
+ * 从 dbt 模型 SQL 里扫出「哪个模型直接引用了哪条湖前缀」。
+ *
+ * 为什么用前缀字典而不是正则自由匹配：前缀是有限集合（契约 layout.prefix ∪ 管线 lakeKeys），
+ * 匹配不到集合内的就一定是噪音（例如测试夹具、注释里的示例路径）。
+ * `{{ var("..._prefix") }}` 先按 dbt_project.yml 的 vars 展开——视图里两种写法都有。
+ */
+export function lakeConsumers(
+  models: ReadonlyArray<{ name: string; sql?: string }>,
+  prefixes: Iterable<string>,
+  vars: Readonly<Record<string, string>> = {},
+): Map<string, string[]> {
+  const dict = [...new Set(prefixes)].filter((p) => p.includes('/'))
+  const out = new Map<string, string[]>()
+  const varRe = /\{\{\s*var\(\s*['"]([^'"]+)['"]\s*\)\s*\}\}/g
+  for (const m of models) {
+    if (m.sql === undefined || m.sql === '') continue
+    const sql = m.sql.replace(varRe, (_all, key: string) => vars[key] ?? '')
+    for (const prefix of dict) {
+      // 前缀后必须跟 `/`，避免 `lemeng/item` 命中 `lemeng/item_price/...`
+      if (!sql.includes(`${prefix}/`)) continue
+      const list = out.get(prefix)
+      if (list === undefined) out.set(prefix, [m.name])
+      else if (!list.includes(m.name)) list.push(m.name)
+    }
+  }
+  return out
 }

@@ -83,6 +83,8 @@ export interface SystemMapDbtModel {
   path?: string
   refs?: string[]
   sources?: Array<{ source: string; table: string }>
+  /** SQL 原文（供「湖前缀被哪些模型引用」的静态扫描；管线地图用，别拿它去执行）。 */
+  sql?: string
 }
 
 export interface SystemMapReportFact {
@@ -484,6 +486,7 @@ export function loadDbtModels(baseDir: string = REPO_ROOT): SystemMapDbtModel[] 
       name: basename(file, '.sql'),
       path: file.slice(baseDir.length).replace(/^[/\\]/, '').replace(/\\/g, '/'),
       refs: [...new Set(refs)],
+      sql,
       sources,
     })
   }
@@ -495,6 +498,20 @@ export function loadAuditFiles(baseDir: string = REPO_ROOT): string[] {
   const testsDir = join(baseDir, 'dbt', 'tests')
   if (!existsSync(testsDir)) return []
   return walkFiles(testsDir, (name) => name.endsWith('.sql')).map((p) => basename(p)).sort()
+}
+
+/** `dbt/dbt_project.yml` 的 `vars`（只收字符串）：视图里 `{{ var("x_prefix") }}` 的展开值。 */
+export function loadDbtVars(baseDir: string = REPO_ROOT): Record<string, string> {
+  const raw = readRepoText('dbt/dbt_project.yml', baseDir)
+  if (raw === null) return {}
+  try {
+    const doc = parseYaml(raw) as { vars?: Record<string, unknown> } | null
+    const out: Record<string, string> = {}
+    for (const [k, v] of Object.entries(doc?.vars ?? {})) {
+      if (typeof v === 'string') out[k] = v
+    }
+    return out
+  } catch { return {} }
 }
 
 /** 读仓内声明文件；不可读 ⇒ null（未知 ≠ 空文件，由调用方给 warning）。 */

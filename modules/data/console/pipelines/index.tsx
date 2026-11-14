@@ -17,7 +17,7 @@ import { humanError, type HumanError } from '../lib/explain'
 echarts.use([GraphChart, LegendComponent, TooltipComponent, CanvasRenderer])
 
 interface MapPipeline { id: string; account: string | null; cron: string | null; enabled: boolean; scheduled: boolean }
-interface MapAsset { lake: string; staging: string | null; marts: string[]; pipelines: MapPipeline[] }
+interface MapAsset { lake: string; staging: string | null; views: string[]; marts: string[]; pipelines: MapPipeline[] }
 interface PipelinesResponse {
   generatedAt: string
   runsWired: boolean
@@ -319,7 +319,10 @@ export default function PipelinesPage() {
                   </div>
                   <div>
                     <div style={{ fontSize: 12, color: '#9AA0A6', marginBottom: 4 }}>下游</div>
-                    <div style={{ fontSize: 13 }}>staging：{a.staging ?? '—（断点）'}</div>
+                    <div style={{ fontSize: 13 }}>staging：{a.staging ?? (a.views.length > 0 ? '—（无 staging，由视图直读）' : '—（断点）')}</div>
+                    {a.views.length > 0 && (
+                      <div style={{ fontSize: 13 }}>视图：{a.views.join('、')}</div>
+                    )}
                     <div style={{ fontSize: 13 }}>marts：{a.marts.length === 0 ? '—' : a.marts.join('、')}</div>
                   </div>
                 </>
