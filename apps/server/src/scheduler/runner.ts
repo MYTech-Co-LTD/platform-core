@@ -94,8 +94,9 @@ export function classify(r: SpawnResult): RunOutcome & { retryable: boolean } {
   if (r.code === 0) {
     return { status: 'ok', exitCode: 0, durationMs: r.durationMs, outputTail: r.outputTail, retryable: false }
   }
-  // 到这里 code=null 即 spawn 级错误（ENOENT/EACCES…）：配置错，重试也不会好（与 exit 2 同档）。
-  const configError = r.code === null
+  // code=null 要分两种：signal 也为 null = spawn 级错误（ENOENT/EACCES…，配置错，重试也不会好）；
+  // signal 非 null = 被外部信号杀死（OOM SIGKILL / 运维 kill），这类**应该重试**。
+  const configError = r.code === null && r.signal === null
   return {
     status: 'failed', exitCode: r.code, durationMs: r.durationMs, outputTail: r.outputTail,
     error: configError ? 'spawn error' : r.signal ? `signal ${r.signal}` : `exit ${String(r.code)}`,

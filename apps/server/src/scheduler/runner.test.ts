@@ -111,6 +111,16 @@ describe('defaultSpawn（真子进程）', () => {
     expect(r.outputTail).toContain('ENOENT')
   }, 10_000)
 
+  it('★ 被外部信号杀死（自杀 SIGKILL）⇒ failed 但 retryable=true', async () => {
+    const r = await defaultSpawn(opts("process.kill(process.pid, 'SIGKILL')", 5000))
+    expect(r.code).toBeNull()
+    expect(r.signal).toBe('SIGKILL')
+    expect(r.timedOut).toBe(false)
+    const c = classify(r)
+    expect(c.status).toBe('failed')
+    expect(c.retryable).toBe(true)
+  }, 10_000)
+
   it('outputTail 按字节截到 4KB，且不把汉字切成 U+FFFD', async () => {
     // 12000 字节 CJK；从尾部切 4096 字节必然落在某个三字节字符中间。
     const r = await defaultSpawn(opts("process.stdout.write('中'.repeat(4000) + 'END')", 5000))
