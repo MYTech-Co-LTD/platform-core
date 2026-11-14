@@ -11,7 +11,7 @@
 //  · `goodDirection` 只影响**颜色**，不影响数值与文案。
 //  · 值与差值的格式化 / 颜色语义在 domain/report-format.ts（AI 文本事实包与模板共用同一套，
 //    两处数字文案才逐字一致）；本组件只管取数与呈现。
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { Alert, Button, Card, Descriptions, Drawer, InputNumber, Table, Typography } from 'antd'
 import { apiPostBlob, apiSend, messageOf } from '../lib/api'
 import type { DateRange } from '../../domain/report-period'
@@ -106,7 +106,7 @@ export interface ReceiptCtx {
 }
 
 export function KpiCard({
-  panel, args, compareRange, yoyRange = null, receiptCtx,
+  panel, args, compareRange, yoyRange = null, receiptCtx, onSettled,
 }: {
   panel: KpiPanel
   args: Record<string, unknown>
@@ -115,6 +115,11 @@ export function KpiCard({
   yoyRange?: DateRange | null
   /** 计算凭证（口径/窗口/范围/按日组成 + 明细导出）；缺省不显示入口。 */
   receiptCtx?: ReceiptCtx
+  /**
+   * 本次取数**收敛**（成功/失败）时回调一次。只给「准备打印」用：打印全部页面时必须等
+   * KPI 落定，否则纸上印的是 `…`。
+   */
+  onSettled?: () => void
 }) {
   // undefined = 还没回来（渲染 …）；null = 已知没有数（渲染 -）。两者不可混：缺点面要可辨。
   const [current, setCurrent] = useState<number | null | undefined>(undefined)
@@ -200,6 +205,10 @@ export function KpiCard({
     }
   }
 
+  // 回调身份每次渲染都可能变：放 ref 里，effect 依赖不受它影响。
+  const settledRef = useRef(onSettled)
+  settledRef.current = onSettled
+
   useEffect(() => {
     let alive = true
     setCurrent(undefined)
@@ -257,6 +266,9 @@ export function KpiCard({
           if (compareRange !== null) setPrevious(null)
           if (yoyRange !== null) setYoy(null)
         }
+      } finally {
+        // 收敛信号（打印准备用）：成功/失败都算；卸载导致的替换不算（新 effect 会重报）。
+        if (alive) settledRef.current?.()
       }
     }
     void load()
