@@ -11,7 +11,7 @@
 // 本层只碰数据：`runNow` 只插一行 `queued`（与手动触发端点同语义），**绝不 spawn**——
 // 执行发生在 worker 进程的 `claimQueuedManual`。软删一律走 store.softDeleteSchedule（job_run 是审计）。
 import type { Pool } from 'pg'
-import { isValidCron, nextRunAt } from './cron'
+import { type CronSpec, isValidCron, nextRunAt, parseCron } from './cron'
 import { JOB_REGISTRY } from './registry'
 import { softDeleteSchedule } from './store'
 
@@ -142,19 +142,32 @@ const MIN_INTERVAL_SCAN_MAX_ITER = 5000
  * 不能只看「创建时刻的下一格到再下一格」——`0,4 * * * *` 在整点附近会算出 56 分钟，
  * 换个时刻又是 4 分钟（非确定性且可绕过）。
  *
- * 结果只取决于 (cron, timezone)，与当前时刻无关 ⇒ 进程内缓存；上限 1024 条防任意
- * cron 输入把内存撑大（agent 可反复提交不同的非法 cron）。
+ * 结果只取决于 (cron 解析后的 spec, timezone)，与当前时刻无关 ⇒ 进程内缓存；
+ * 键用解析后的 spec 归一（「每 5 分钟」的各种写法命中同一项）；上限 1024 条，
+ * 超出按 FIFO 淘汰最旧一条（不清空，避免持续未命中把合法缓存冲掉）。
  */
 const MIN_GAP_CACHE_MAX = 1024
 const minGapCache = new Map<string, number>()
 
+/** 「每 5 分钟」的区间步长、带前导零等写法解析后同形 ⇒ 必须落到同一缓存键。 */
+function cronSpecKey(spec: CronSpec): string {
+  return [
+    spec.minutes.join(','), spec.hours.join(','), spec.daysOfMonth.join(','),
+    spec.months.join(','), spec.daysOfWeek.join(','),
+    spec.domRestricted ? 'd' : '*', spec.dowRestricted ? 'd' : '*',
+  ].join('|')
+}
+
 function minimumGapSecs(expr: string, timeZone: string): number {
-  const cacheKey = `${timeZone}\u0000${expr}`
+  const cacheKey = `${timeZone}\u0000${cronSpecKey(parseCron(expr))}`
   const cached = minGapCache.get(cacheKey)
   if (cached !== undefined) return cached
 
+  // 窗口锚到**首个触发**：稀疏 cron（如 `0,4 0 1 * *`）的首个触发可能远在参考时刻之后，
+  // 锚在参考时刻会让循环一次都不跑（min=Infinity）⇒ 直接放行（复审回归）。
+  // 从首个触发起扫 8 天，任何日内 burst 都包含该日首个触发。
   let prev = nextRunAt(expr, timeZone, MIN_INTERVAL_REF)
-  const end = MIN_INTERVAL_REF.getTime() + MIN_INTERVAL_SCAN_MS
+  const end = prev.getTime() + MIN_INTERVAL_SCAN_MS
   let min = Number.POSITIVE_INFINITY
   for (let i = 0; i < MIN_INTERVAL_SCAN_MAX_ITER && prev.getTime() <= end; i++) {
     const next = nextRunAt(expr, timeZone, prev)
@@ -165,7 +178,10 @@ function minimumGapSecs(expr: string, timeZone: string): number {
     prev = next
   }
 
-  if (minGapCache.size >= MIN_GAP_CACHE_MAX) minGapCache.clear()
+  if (minGapCache.size >= MIN_GAP_CACHE_MAX) {
+    const oldest = minGapCache.keys().next()
+    if (!oldest.done) minGapCache.delete(oldest.value)
+  }
   minGapCache.set(cacheKey, min)
   return min
 }
@@ -251,12 +267,8 @@ export function buildSchedulerPort(deps: {
 
       const at = now()
       let nextAt: Date
-      let minIntervalSecs: number
       try {
         nextAt = nextRunAt(input.cron, input.timezone, at)
-        // 最小间隔 = 完整周期内的真实最小值（固定参考时刻，与创建时刻无关）；
-        // 不信任调用方传的 expectedIntervalSecs。
-        minIntervalSecs = minimumGapSecs(input.cron, input.timezone)
       } catch (e) {
         // 语法已过 isValidCron；这里失败只可能是时区非法/DST/8 年内无触发点。
         fail('INVALID_SCHEDULE', e instanceof Error ? e.message : String(e))
@@ -278,6 +290,14 @@ export function buildSchedulerPort(deps: {
           SCHEDULE_COUNT_SQL, [actor.org, actor.namespace])
         if (schedules.rows[0].n >= QUOTA_SCHEDULES) {
           quotaExceeded('schedules', QUOTA_SCHEDULES, `${schedules.rows[0].n} >= ${QUOTA_SCHEDULES}`)
+        }
+        // 扫描放在便宜的条数检查之后：已超额的请求不再付全周期扫描的代价。
+        let minIntervalSecs: number
+        try {
+          // 完整周期内的真实最小值；不信任调用方传的 expectedIntervalSecs。
+          minIntervalSecs = minimumGapSecs(input.cron, input.timezone)
+        } catch (e) {
+          fail('INVALID_SCHEDULE', e instanceof Error ? e.message : String(e))
         }
         if (minIntervalSecs < QUOTA_MIN_INTERVAL_SECS) {
           quotaExceeded(

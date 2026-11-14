@@ -175,8 +175,15 @@ describePg('SchedulerPort', () => {
     await expect(mkPort(pool).createSchedule({ ...baseInput(), cron: '0,10,11 * * * *' }))
       .rejects.toMatchObject({ code: 'QUOTA_EXCEEDED', kind: 'min_interval', limit: 300 })
 
-    // 合规 cron 一律放行：5 分钟档 / 每小时 / 每日。
-    for (const cron of ['*/5 * * * *', '7 * * * *', '0 0 * * *']) {
+    // ★ R1 回归：首个触发远在参考时刻之后。窗口若仍锚在参考时刻，循环一次都不跑
+    // （min=Infinity）⇒ 这三种稀疏 burst cron 会被误放行。
+    for (const cron of ['0,4 0 1 * *', '* 0 1 * *', '0,4 0 1 1 *']) {
+      await expect(mkPort(pool).createSchedule({ ...baseInput(), cron }))
+        .rejects.toMatchObject({ code: 'QUOTA_EXCEEDED', kind: 'min_interval', limit: 300 })
+    }
+
+    // 合规 cron 一律放行：5 分钟档 / 每小时 / 每日 / 闰日（相邻触发相隔数年）。
+    for (const cron of ['*/5 * * * *', '7 * * * *', '0 0 * * *', '0 0 29 2 *']) {
       await expect(mkPort(pool).createSchedule({ ...baseInput(), cron }))
         .resolves.toMatchObject({ id: expect.any(String) })
     }
