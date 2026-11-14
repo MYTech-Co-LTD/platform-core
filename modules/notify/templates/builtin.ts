@@ -39,6 +39,20 @@ export const BUILTIN_TEMPLATES: BuiltinTemplate[] = [
     },
   },
   {
+    key: 'notify_approval_pending',
+    name: '通知审批待处理',
+    eventKey: 'notify.approval.pending',
+    contents: {
+      wecom_chat: {
+        text: '【审批】{{namespace}} 的{{kind}}\n申请人：{{requestedBy}}\n{{summary}}',
+      },
+      in_app: {
+        title: '通知审批待处理：{{namespace}}',
+        body: '{{requestedBy}} 申请 {{summary}}',
+      },
+    },
+  },
+  {
     key: 'data_metric_definition_changed',
     name: '指标定义变更',
     eventKey: 'data.metric.definition.changed',

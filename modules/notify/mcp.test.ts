@@ -24,16 +24,20 @@ const addresses: ChannelAddressResolver = {
 }
 
 describe('notify mcp tool face', () => {
-  it('恰 13 个工具，无 publish/channel', () => {
-    expect(NOTIFY_TOOLS).toHaveLength(13)
-    expect(toolDefs()).toHaveLength(13)
+  it('恰 16 个工具，无 publish/channel', () => {
+    expect(NOTIFY_TOOLS).toHaveLength(16)
+    expect(toolDefs()).toHaveLength(16)
     expect(NOTIFY_TOOLS.some((t) => /publish|channel/.test(t.name))).toBe(false)
   })
 })
 
 describePg('notify mcp handlers', () => {
   let pool: Pool
-  const deps = () => ({ pool, org: ORG, userId: 'u1', events, addresses })
+  const deps = () => ({
+    pool, org: ORG, userId: 'u1',
+    scopes: ['notify:manage', 'notify:publish', 'notify:emit'],
+    events, addresses,
+  })
 
   beforeAll(async () => {
     pool = new Pool({ connectionString: url })
@@ -61,6 +65,7 @@ describePg('notify mcp handlers', () => {
   })
 
   async function cleanup() {
+    await pool.query('delete from notify.approval where org=$1', [ORG])
     await pool.query('delete from notify.event_decl where org=$1', [ORG])
     await pool.query('delete from notify.rule where org=$1', [ORG])
     await pool.query('delete from notify.delivery where org=$1', [ORG])
@@ -158,6 +163,48 @@ describePg('notify mcp handlers', () => {
     })).isError).toBe(false)
   })
 
+  it('N3b：MCP create_agent_template / create_agent_rule / send_message 走同一套 service', async () => {
+    const ns = 'agent_a'
+    await createAgentNamespace(pool, ORG, {
+      namespace: ns, displayName: 'A', ownerUserId: 'u1',
+    })
+    await pool.query(
+      `insert into notify.channel(org,id,provider,enabled,config,secret_refs,created_by)
+       values ($1,'inapp_default','in_app',true,'{}','{}','u')
+       on conflict (org,id) do nothing`, [ORG])
+    const decl: NotificationEventDecl = {
+      key: 'ext.agent_a.daily', title: 'D',
+      payload: { user: { type: 'user', required: true } },
+      recipients: { assignee: { kind: 'field', field: 'user' } },
+    }
+    expect(await upsertEventDecl(pool, ORG, ns, decl, 'u1'))
+      .toMatchObject({ ok: true })
+
+    const tpl = await callTool(deps(), 'create_agent_template', {
+      namespace: ns, key: 'agent_a_daily', name: 'D',
+      eventKey: decl.key,
+      contents: { in_app: { title: 'Hi', body: 'B' } },
+      publish: true,
+    })
+    expect(tpl.isError).toBe(false)
+    expect(JSON.parse(tpl.text)).toMatchObject({ key: 'agent_a_daily', published: true })
+
+    const rule = await callTool(deps(), 'create_agent_rule', {
+      namespace: ns, eventKey: decl.key, recipientKey: 'assignee',
+      templateKey: 'agent_a_daily', channels: ['inapp_default'],
+    })
+    expect(rule.isError).toBe(false)
+    expect(JSON.parse(rule.text)).toMatchObject({ status: 'enabled' })
+
+    const msg = await callTool(deps(), 'send_message', {
+      namespace: ns, to: 'u1', title: 'T', body: 'B',
+    })
+    expect(msg.isError).toBe(false)
+    const ev = await pool.query(
+      "select 1 from notify.event where org=$1 and event_key='ext.agent_a.message'", [ORG])
+    expect(ev.rowCount).toBe(1)
+  })
+
   it('propose_rule 走同一套校验并审计', async () => {
     const out = await callTool(deps(), 'propose_rule', {
       eventKey: 'm.a.b', scope: '*', recipientKey: 'approver',
@@ -187,6 +234,6 @@ describePg('notify mcp handlers', () => {
       body: JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'tools/list' }),
     })
     const body = await res.json() as { result: { tools: unknown[] } }
-    expect(body.result.tools).toHaveLength(13)
+    expect(body.result.tools).toHaveLength(16)
   })
 })

@@ -846,6 +846,147 @@ export async function createAgentNamespace(
   return { created: false, row: existing }
 }
 
+export async function setAgentNamespacePolicy(
+  pool: Pool,
+  org: string,
+  namespace: string,
+  policy: Record<string, unknown>,
+): Promise<number> {
+  const r = await pool.query(
+    `update notify.agent_namespace set policy=$3::jsonb, updated_at=now()
+      where org=$1 and namespace=$2`,
+    [org, namespace, JSON.stringify(policy)],
+  )
+  return r.rowCount ?? 0
+}
+
+export type ApprovalRow = {
+  id: string
+  org: string
+  namespace: string
+  kind: 'template' | 'rule' | 'schedule'
+  targetId: string
+  status: 'pending' | 'approved' | 'rejected'
+  requestedBy: string
+  decidedBy: string | null
+  reason: string | null
+  detail: Record<string, unknown>
+  createdAt: string
+  decidedAt: string | null
+}
+
+function toApprovalRow(r: Record<string, unknown>): ApprovalRow {
+  return {
+    id: String(r.id),
+    org: r.org as string,
+    namespace: r.namespace as string,
+    kind: r.kind as ApprovalRow['kind'],
+    targetId: r.target_id as string,
+    status: r.status as ApprovalRow['status'],
+    requestedBy: r.requested_by as string,
+    decidedBy: (r.decided_by as string | null) ?? null,
+    reason: (r.reason as string | null) ?? null,
+    detail: (r.detail as Record<string, unknown>) ?? {},
+    createdAt: (r.created_at as Date).toISOString(),
+    decidedAt: r.decided_at ? (r.decided_at as Date).toISOString() : null,
+  }
+}
+
+export async function createApproval(
+  pool: Pool,
+  org: string,
+  input: {
+    namespace: string
+    kind: ApprovalRow['kind']
+    targetId: string
+    requestedBy: string
+    status?: 'pending' | 'approved'
+    decidedBy?: string | null
+    reason?: string | null
+    detail?: Record<string, unknown>
+  },
+): Promise<ApprovalRow> {
+  const { rows } = await pool.query(
+    `insert into notify.approval
+       (org,namespace,kind,target_id,status,requested_by,decided_by,reason,detail,decided_at)
+     values ($1,$2,$3,$4,$5,$6,$7,$8,$9::jsonb,
+             case when $5='approved' then now() else null end)
+     returning *`,
+    [org, input.namespace, input.kind, input.targetId, input.status ?? 'pending',
+     input.requestedBy, input.decidedBy ?? null, input.reason ?? null,
+     JSON.stringify(input.detail ?? {})],
+  )
+  return toApprovalRow(rows[0])
+}
+
+export async function getApproval(
+  pool: Pool, org: string, id: string,
+): Promise<ApprovalRow | null> {
+  const { rows } = await pool.query(
+    'select * from notify.approval where org=$1 and id=$2', [org, id])
+  return rows[0] ? toApprovalRow(rows[0]) : null
+}
+
+export async function listApprovals(
+  pool: Pool, org: string, status?: string,
+): Promise<ApprovalRow[]> {
+  const { rows } = await pool.query(
+    `select * from notify.approval
+      where org=$1 and ($2::text is null or status=$2)
+      order by created_at desc`,
+    [org, status ?? null])
+  return rows.map(toApprovalRow)
+}
+
+export async function decideApproval(
+  pool: Pool,
+  org: string,
+  id: string,
+  approve: boolean,
+  decidedBy: string,
+  reason?: string | null,
+): Promise<ApprovalRow | null> {
+  const { rows } = await pool.query(
+    `update notify.approval set
+       status=$3, decided_by=$4, reason=$5, decided_at=now()
+     where org=$1 and id=$2 and status='pending'
+     returning *`,
+    [org, id, approve ? 'approved' : 'rejected', decidedBy, reason ?? null],
+  )
+  return rows[0] ? toApprovalRow(rows[0]) : null
+}
+
+/** 规则是否已有 approved 审批（外发规则启用闸门）。 */
+export async function hasApprovedRuleApproval(
+  pool: Pool, org: string, ruleId: string,
+): Promise<boolean> {
+  const { rows } = await pool.query(
+    `select 1 from notify.approval
+      where org=$1 and kind='rule' and target_id=$2 and status='approved' limit 1`,
+    [org, ruleId])
+  return rows.length > 0
+}
+
+export async function countActiveAgentRules(
+  pool: Pool, org: string, namespace: string,
+): Promise<number> {
+  const { rows } = await pool.query(
+    `select count(*)::int n from notify.rule
+      where org=$1 and owner_namespace=$2 and enabled`, [org, namespace])
+  return rows[0].n as number
+}
+
+export async function countAgentMessagesToday(
+  pool: Pool, org: string, namespace: string,
+): Promise<number> {
+  const { rows } = await pool.query(
+    `select count(*)::int n from notify.event
+      where org=$1 and producer=$2 and event_key=$3
+        and created_at > now()-interval '24 hours'`,
+    [org, `ext:${namespace}`, agentMessageKey(namespace)])
+  return rows[0].n as number
+}
+
 export type EventDeclRow = {
   org: string
   namespace: string

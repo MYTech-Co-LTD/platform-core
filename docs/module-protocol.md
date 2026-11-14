@@ -629,9 +629,11 @@ await ctx.notify?.emit(c.get('identity'), {
 
 ### AI 工具面的硬边界（2026-10-27，P2）
 
-`POST /mcp-manage` 只提供：事件发现、规则增改启停、模板**草稿**、预览、回执、给自己试发。
-**没有 publish / channel 工具**；`draft_template` 只写草稿，发布仍由持 `notify:publish` 的人在
-console 触发。写操作落 `notify.audit`；通道密钥只以 env 键名出现，任何端点不回显值。
+`POST /mcp-manage` 提供：事件发现、规则增改启停、模板**草稿**、预览、回执、给自己试发；
+N3b 起增加 agent 自助工具 `create_agent_template` / `create_agent_rule` / `send_message`
+（复用 HTTP 的 owner/policy/审批 service）。**没有 publish / channel 工具**；`draft_template`
+只写草稿，发布仍由持 `notify:publish` 的人触发（`create_agent_template` 的 `publish=true`
+同样要求该 scope）。写操作落 `notify.audit`；通道密钥只以 env 键名出现，任何端点不回显值。
 
 ## 接入出站集成：声明即判据（2026-10-31）
 

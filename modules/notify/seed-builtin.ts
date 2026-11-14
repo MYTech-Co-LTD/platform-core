@@ -112,6 +112,17 @@ export async function seedBuiltin(
     )
     rules += staleRule.rowCount ?? 0
 
+    // N3：agent 外发规则待审批 ⇒ 通知持 notify:publish 的人；只走 in_app。
+    const approvalRule = await pool.query(
+      `insert into notify.rule
+         (org,id,enabled,event_key,scope,recipient_key,template_key,channels,origin,created_by)
+       values ($1,'derived:notify:notify.approval.pending:*',true,'notify.approval.pending','*','admins','notify_approval_pending','{inapp_default}'::text[],'derived','system')
+       on conflict (org,id) do update set enabled=true, template_key=excluded.template_key,
+         channels=excluded.channels`,
+      [org],
+    )
+    rules += approvalRule.rowCount ?? 0
+
     // 指标定义变更（spec 2026-11-01 §10.4 D6）：L2 草稿确认生效 ⇒ 看数人（持 data:query）
     // 得知道口径变了。收件人 kind=scope_holders(scope=data:query)，与事件声明（modules/data
     // 的 manifest notifications.events）的 recipients/defaults 三者必须同描——

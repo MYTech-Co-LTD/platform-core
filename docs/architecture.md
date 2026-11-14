@@ -684,6 +684,10 @@ token 只决定「这个账号能调哪些面」，不改变分层。
   manifest 为事实源）；模板/规则可带 `owner_namespace`，agent 只能改自己的 namespace。
   namespace 开通时 seed `ext.<namespace>.message`（声明 + 内置模板 + 默认 in-app 规则），
   `POST /agent/messages` 一次调用即可发；外发仍受通道权限约束。
+- **爆炸半径（N3）**：agent 规则的通道必须落在 namespace `policy.allowed_channels`；外发通道
+  默认落 `pending` 审批（`notify.approval`），批准后才 `enabled`；`auto_publish_external=true`
+  可预授权。配额：收件人数 / 活跃规则数 / 每日消息数。审批待处理发 `notify.approval.pending`
+  给持 `notify:publish` 的人（in-app）。
 
 #### 模板与发布
 
@@ -732,7 +736,9 @@ token 只决定「这个账号能调哪些面」，不改变分层。
 - 模板：草稿 → 预览（**与投递同一渲染函数**）→ 发布/回滚；发布需 `notify:publish`。
 - 通道：启停 / 非敏感配置 / 健康检查；密钥只显示 env 键名，**不回显值**。
 - 测试发送：收件人强制 = 当前登录人；不提供「发给别人」的 UI/工具。
-- MCP：12 个工具（发现 / 规则 / 草稿 / 预览 / 回执 / 自测），**无 publish/channel 工具**；
+- MCP：16 个工具（发现 / 规则 / 草稿 / 预览 / 回执 / 自测 + N3b 的
+  `create_agent_template` / `create_agent_rule` / `send_message`），**无 publish/channel 工具**；
+  agent 模板发布仍要求 `notify:publish`，外发规则仍走 policy/审批；
   写操作落 `notify.audit`。
 
 #### 收口（P3，2026-10-28 交付）
