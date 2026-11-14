@@ -91,9 +91,22 @@ describePg('notify-emit-job.mjs（黑盒）', () => {
     const stdin = JSON.stringify({ eventKey: 'report.due', payload: { n: 1 } })
 
     expect(runJob(org, stdin).status).toBe(0)
-    expect(runJob(org, stdin).status).toBe(0)
+    const second = runJob(org, stdin)
+    expect(second.status).toBe(0)
+    // 只断言「0 + 一行」会被「第二次静默空转」蒙混过关：必须能看见它走的是 duplicate 分支。
+    expect(second.stdout).toContain('duplicate')
 
     expect(await rowsOf(org)).toHaveLength(1)
+  })
+
+  it('eventKey 两端空白 ⇒ 入库是去空白形态（否则规则永远匹配不到）', async () => {
+    const org = `${PREFIX}trim`
+    const r = runJob(org, JSON.stringify({ eventKey: '  report.due  ' }))
+    expect(r.status).toBe(0)
+
+    const rows = await rowsOf(org)
+    expect(rows).toHaveLength(1)
+    expect(rows[0].event_key).toBe('report.due')
   })
 
   it('缺 eventKey ⇒ exit 2（不重试）且不入队', async () => {

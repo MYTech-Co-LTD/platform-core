@@ -47,6 +47,9 @@ function parseParams(raw) {
   if (typeof eventKey !== 'string' || eventKey.trim() === '') {
     return { error: `eventKey 必填且非空，得到 ${JSON.stringify(eventKey)}` }
   }
+  // 归一化而不是拒绝：`" report.due "` 若原样入库，规则匹配（按 event_key 精确比）永远落空，
+  // 事件静默无人接收。接收方宽容——存去空白形态。
+  const normalizedKey = eventKey.trim()
   if (scope !== undefined && (typeof scope !== 'string' || scope === '')) {
     return { error: `scope 必须是非空字符串，得到 ${JSON.stringify(scope)}` }
   }
@@ -66,7 +69,7 @@ function parseParams(raw) {
     return { error: `eventId 必须是非空字符串，得到 ${JSON.stringify(eventId)}` }
   }
   if (eventId !== undefined) {
-    return { value: { eventKey, scope: scope ?? '*', payload: payloadObj, eventId } }
+    return { value: { eventKey: normalizedKey, scope: scope ?? '*', payload: payloadObj, eventId } }
   }
 
   // 缺省 eventId 必须由 occurrence 决定：重试沿用同一 occurrence ⇒ 幂等键稳定。
@@ -76,7 +79,7 @@ function parseParams(raw) {
   if (!scheduleId || !occurrence) {
     return { error: '缺 eventId 且缺 JOB_SCHEDULE_ID / JOB_OCCURRENCE，无法生成幂等 event_id' }
   }
-  return { value: { eventKey, scope: scope ?? '*', payload: payloadObj, eventId: `schedule:${scheduleId}:${occurrence}` } }
+  return { value: { eventKey: normalizedKey, scope: scope ?? '*', payload: payloadObj, eventId: `schedule:${scheduleId}:${occurrence}` } }
 }
 
 /** @returns {Promise<number>} 退出码 */
