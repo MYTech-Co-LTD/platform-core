@@ -31,7 +31,7 @@
 | `apps/server/src/migrations/018_platform_jobs.sql` | 三张表 + 约束/索引（幂等） |
 | `apps/server/src/scheduler/cron.ts` | cron 解析 + `nextRunAt`（纯函数，零依赖） |
 | `apps/server/src/scheduler/registry.ts` | 系统 job 目录 + `seedSchedules`（幂等、不覆盖、`params={}`） |
-| `apps/server/src/scheduler/store.ts` | claim（含 retry 路径）/ queued manual / **startRun + finishRun**（派发前即建 running 行）/ beat / reapStale / hasRunning |
+| `apps/server/src/scheduler/store.ts` | claim（含 retry 路径；**事务内即建 running 行**并返回 runId）/ queued manual / finishRun（终态守卫）/ beat / reapStale / reapQueued / hasRunning |
 | `apps/server/src/scheduler/runner.ts` | `spawn` 子进程实现 + 超时 kill + 退出码分类 |
 | `apps/server/src/scheduler/loop.ts` | 一次 tick 的编排 + 并发上限 + 运行中集合 |
 | `apps/server/src/scheduler/health.ts` | 三判据（心跳 / 超期未成功 / 连续失败） |
@@ -1108,9 +1108,9 @@ git commit -m "feat(data): 调度的子进程执行器与退出码分类（Wave 
 - Produces:
   - `export interface SchedulerDeps { pool: Pool; registry?: JobDef[]; spawn?: SpawnFn; now?: () => Date; maxConcurrency?: number; log?: (o: unknown) => void; cwd?: string }`
   - `export function createSchedulerLoop(deps: SchedulerDeps): { tick(): Promise<TickStats>; inFlight(): number }`
-  - `export interface TickStats { claimed: number; started: number; skipped: number; reaped: number }`
+  - `export interface TickStats { claimed: number; started: number; reaped: number }`
 
-- [ ] **Step 1: 写失败测试（不阻塞、并发上限、跳过同 job 重叠）**
+- [ ] **Step 1: 写失败测试（不阻塞、并发上限）**
 
 ```ts
 // apps/server/src/scheduler/loop.test.ts
@@ -1185,9 +1185,12 @@ import { nextRunAt } from './cron'
 import { JOB_REGISTRY, seedSchedules, type JobDef } from './registry'
 import { classify, defaultSpawn, envFor, paramsStdin, type SpawnFn } from './runner'
 import {
-  beat, claimDue, claimQueuedManual, clearRetry, finishRun, hasRunning, reapStale, scheduleRetry, startRun,
-  type ClaimedJob,
+  beat, claimDue, claimQueuedManual, clearRetry, finishRun, reapQueued, reapStale, scheduleRetry,
+  type ClaimedJob, type RunOutcome,
 } from './store'
+
+/** 排队超过 5 分钟仍未执行 ⇒ 视为卡死（queued 也占路由 busy 判定，不能被永久占住）。 */
+const QUEUED_STALE_MS = 5 * 60_000
 
 export interface SchedulerDeps {
   pool: Pool
@@ -1203,7 +1206,6 @@ export interface SchedulerDeps {
 export interface TickStats {
   claimed: number
   started: number
-  skipped: number
   reaped: number
 }
 
@@ -1217,40 +1219,41 @@ export function createSchedulerLoop(deps: SchedulerDeps) {
   const running = new Set<number>()
   let seeded = false
 
-  const runOne = async (job: ClaimedJob): Promise<void> => {
+  /** manual=true：手动触发的运行**不参与重试**（重试槽属于排班侧，手动成功不许清掉排班待跑的重试）。 */
+  const runOne = async (job: ClaimedJob, manual: boolean): Promise<void> => {
     const def = registry.find((d) => d.key === job.key)
     if (!def) {
       log({ ts: new Date().toISOString(), job: job.key, error: 'unknown registry key' })
+      // claim 已建 running 行，必须收尾，否则会一直挡住该 schedule 的下一格。
+      await finishRun(deps.pool, job.runId, { status: 'skipped', error: 'unknown registry key' }).catch(() => {})
       return
     }
     running.add(job.scheduleId)
-    // 调度触发：**派发前**先建 running 行（spec §8 的「派发前查 running」「僵尸回收」对两种触发都成立）；
-    // 手动触发的行已由 claimQueuedManual 建好并带回 runId，不重复建。
-    let runId = job.runId
     try {
-      if (runId === undefined) runId = await startRun(deps.pool, job)
-      const res = await spawn({
-        command: 'pnpm', args: ['exec', 'tsx', def.script],
-        env: envFor(job), stdin: paramsStdin(job), timeoutMs: job.timeoutMs, cwd,
-      })
-      const outcome = classify(res)
-      await finishRun(deps.pool, runId, outcome)
-      if (outcome.status !== 'ok' && outcome.retryable && job.attempt < job.maxAttempts) {
-        await scheduleRetry(deps.pool, job.scheduleId, job.occurrence, job.attempt, new Date(Date.now() + 60_000))
-      } else {
-        await clearRetry(deps.pool, job.scheduleId)
+      // spawn 抛错也要落到一个终态；**终态只由下面这一次 finishRun 写**。
+      let outcome: RunOutcome & { retryable?: boolean }
+      try {
+        const res = await spawn({
+          command: 'pnpm', args: ['exec', 'tsx', def.script],
+          env: envFor(job), stdin: paramsStdin(job), timeoutMs: job.timeoutMs, cwd,
+        })
+        outcome = classify(res)
+      } catch (e) {
+        outcome = { status: 'failed', error: e instanceof Error ? e.message : String(e) }
+      }
+      await finishRun(deps.pool, job.runId, outcome) // 自带 where status='running'，不会覆盖 reap 的终态
+      if (!manual) {
+        if (outcome.status !== 'ok' && outcome.retryable && job.attempt < job.maxAttempts) {
+          await scheduleRetry(deps.pool, job.scheduleId, job.occurrence, job.attempt, new Date(Date.now() + 60_000))
+        } else {
+          await clearRetry(deps.pool, job.scheduleId)
+        }
       }
       log({ ts: new Date().toISOString(), job: job.key, occurrence: job.occurrence.toISOString(), status: outcome.status, exitCode: outcome.exitCode ?? null, durationMs: outcome.durationMs ?? null })
     } catch (e) {
+      // finishRun / 重试记账 / 日志自身异常：只记日志，**绝不再调 finishRun**（否则可能覆盖终态）。
       const msg = e instanceof Error ? e.message : String(e)
-      if (runId !== undefined) {
-        await finishRun(deps.pool, runId, { status: 'failed', error: msg }).catch(() => {})
-      } else {
-        // startRun 本身失败（库不可用）：没有行可回填，只能记日志。
-        log({ ts: new Date().toISOString(), job: job.key, error: `startRun failed: ${msg}` })
-      }
-      await clearRetry(deps.pool, job.scheduleId).catch(() => {})
-      log({ ts: new Date().toISOString(), job: job.key, error: msg })
+      log({ ts: new Date().toISOString(), job: job.key, error: `post-run bookkeeping failed: ${msg}` })
     } finally {
       running.delete(job.scheduleId)
     }
@@ -1260,34 +1263,27 @@ export function createSchedulerLoop(deps: SchedulerDeps) {
     inFlight: () => running.size,
     async tick(): Promise<TickStats> {
       const t = now()
-      const stats: TickStats = { claimed: 0, started: 0, skipped: 0, reaped: 0 }
+      const stats: TickStats = { claimed: 0, started: 0, reaped: 0 }
       if (!seeded) { await seedSchedules(deps.pool, registry, t); seeded = true }
       await beat(deps.pool, t)
       stats.reaped = await reapStale(deps.pool, t)
+      stats.reaped += await reapQueued(deps.pool, t, QUEUED_STALE_MS)
 
       const free = Math.max(0, max - running.size)
       if (free === 0) return stats
       const manual = await claimQueuedManual(deps.pool, free, t)
-      // claimQueuedManual 已把行置 running 并带回 runId，这里直接起进程（不重复查 hasRunning）
-      for (const job of manual) { void runOne(job); stats.started += 1 }
+      // claimQueuedManual 已把行置 running 并带回 runId，这里直接起进程。
+      for (const job of manual) { void runOne(job, true); stats.started += 1 }
       stats.claimed += manual.length
 
-      const room = Math.max(0, max - running.size - manual.length)
+      // runOne 在首个 await 前已 running.add ⇒ 这里直接按 running.size 算，别再扣 manual.length（那是双重扣减）。
+      const room = Math.max(0, max - running.size)
       if (room === 0) return stats
       const due = await claimDue(deps.pool, room, t, nextRunAt)
       stats.claimed += due.length
-      for (const job of due) {
-        if (running.has(job.scheduleId) || await hasRunning(deps.pool, job.scheduleId)) {
-          // skipped 也走 startRun + finishRun：与正常路径同一套行构造（occurrence/params_snapshot 一致），
-          // 不为「一条终态行」再养第二种 INSERT 形态。running 窗口只存在于本 tick 内两条语句之间。
-          const runId = await startRun(deps.pool, job)
-          await finishRun(deps.pool, runId, { status: 'skipped', error: 'previous run still running' })
-          stats.skipped += 1
-          continue
-        }
-        void runOne(job)
-        stats.started += 1
-      }
+      // claim 的 SELECT 已排除「同 schedule 有 running」的排班（该格不消费、下一拍再来），
+      // 这里无需再查 hasRunning、也不写 skipped 台账（否则每拍刷一行）。
+      for (const job of due) { void runOne(job, false); stats.started += 1 }
       return stats
     },
   }
@@ -1844,4 +1840,4 @@ git commit -m "docs(data): 台账——Wave 6 P1 完成入账"
 
 **2. 占位符扫描**：无 TBD/TODO；每个代码步骤都有可复制代码。
 
-**3. 类型一致性**：`ClaimedJob` / `RunOutcome` / `JobDef` 在 Task 4–7 之间逐字一致；`recordRun`（调度触发的运行新建行）与 `finishRun`（手动触发的运行回填）分工在 Task 5 注释里写明；`TickStats` 只有 `claimed/started/skipped/reaped` 四个字段，测试一律按 `key` 查 run 行，**不要为了断言给 `TickStats` 加字段**。
+**3. 类型一致性**：`ClaimedJob` / `RunOutcome` / `JobDef` 在 Task 4–7 之间逐字一致；claim（两种触发）**事务内即建 running 行**并返回 `runId`，终态一律由 `finishRun` 回填（不是「调度触发 recordRun 新建 / 手动 finishRun 回填」两套语义）；`TickStats` 只有 `claimed/started/reaped` 三个字段，测试一律按 `key` 查 run 行，**不要为了断言给 `TickStats` 加字段**。

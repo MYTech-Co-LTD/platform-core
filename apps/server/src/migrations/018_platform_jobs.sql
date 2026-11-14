@@ -1,7 +1,9 @@
 -- 018_platform_jobs.sql — 平台内置调度器的排班、运行台账与心跳（Wave 6 P1）
 -- spec: docs/superpowers/specs/2026-11-14-business-scheduler-design.md §7
--- 两处实现细节（spec 未写、实现需要）：
+-- 三处实现细节（spec 未写、实现需要）：
 --   · retry_at / retry_attempt：重试不改动 cadence（重试与下一格是两件事）
+--   · retry_occurrence：重试槽属于**排班侧**，原格 occurrence 必须随槽一起存
+--     （反查 job_run 会被并发/手动行劫持；claim 时与 retry_at 一起清空）
 --   · job_run.status 增加 'queued'：手动触发只入队，执行发生在 worker 进程
 -- 幂等：全部 if not exists。
 create table if not exists platform.job_schedule (
@@ -20,9 +22,13 @@ create table if not exists platform.job_schedule (
   max_attempts           integer not null default 1,
   expected_interval_secs integer not null,
   retry_at               timestamptz,
+  retry_occurrence       timestamptz,
   retry_attempt          integer not null default 0,
   updated_at             timestamptz not null default now()
 );
+-- 已建过表的库（本迁移曾以旧 DDL 应用过）走 add column 幂等补齐。
+alter table platform.job_schedule add column if not exists retry_occurrence timestamptz;
+
 create unique index if not exists uq_job_schedule_system_key
   on platform.job_schedule(key) where source = 'system';
 create index if not exists idx_job_schedule_owner

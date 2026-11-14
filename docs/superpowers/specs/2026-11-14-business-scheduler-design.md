@@ -160,9 +160,12 @@ create table if not exists platform.job_heartbeat (
 
 ## 8. 执行契约
 
-**派发前**：查 `platform.job_run` 是否已有同 `schedule_id` 的 `running` 行，有则本轮记 `skipped`
-（库为准，多副本同样成立）；**僵尸 running 回收**：`running` 且 `started_at < now() - 2 × timeout_ms`
-⇒ 下一跳改判 `timeout`（`error='stale running reaped'`），否则调度器崩一次就把该 key 永久堵死。
+**互斥**：claim 语句在 SQL 里排除「同 `schedule_id` 已有 `running` 行」的排班 —— 该格**不消费**
+（不前推 `next_run_at`）、下一拍再来；`claim` 与建 `running` 行在同一事务内（库为准，多副本同样成立）。
+长期堵住（job 永远起不来）由健康判据兜住：2× 期望间隔无成功即告警。
+**僵尸回收**：`running` 且 `started_at < now() - 2 × timeout_ms` ⇒ 下一跳改判 `timeout`
+（`error='stale running reaped'`）；卡住的 `queued` 行按排队超时改判 `timeout`
+（`error='stale queued reaped'`），否则调度器崩一次就把该 key（或路由的 busy 判定）永久堵死。
 
 **注入**（argv 数组 spawn，禁 shell 拼接）：
 

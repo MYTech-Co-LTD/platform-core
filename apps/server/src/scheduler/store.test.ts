@@ -3,7 +3,9 @@ import { fileURLToPath } from 'node:url'
 import { Pool } from 'pg'
 import { runMigrations } from '../migrate'
 import { nextRunAt } from './cron'
-import { beat, claimDue, claimQueuedManual, clearRetry, finishRun, hasRunning, reapStale, scheduleRetry, startRun } from './store'
+import {
+  beat, claimDue, claimQueuedManual, clearRetry, finishRun, hasRunning, reapQueued, reapStale, scheduleRetry,
+} from './store'
 
 const dbUrl = process.env.DATABASE_URL
 const describePg = dbUrl ? describe : describe.skip
@@ -61,48 +63,66 @@ describePg('scheduler store', () => {
       const hits = results.flat().filter((x) => x.scheduleId === id)
       expect(hits).toHaveLength(1)
       const { rows } = await pool.query(
-        "select count(*)::int as n from platform.job_run where schedule_id=$1 and trigger='schedule'", [id])
-      // claim 只改排班行、不建 run 行（running 行由跑之前的 startRun 建）⇒ 这里自然为 0。
-      expect(rows[0].n).toBe(0)
+        "select count(*)::int as n from platform.job_run where schedule_id=$1 and trigger='schedule' and status='running'", [id])
+      // claim 与台账同生共死：赢家恰好建 1 条 running 行，输家一行都不建。
+      expect(rows[0].n).toBe(1)
     } finally {
       await Promise.all(pools.map((p) => p.end()))
     }
   })
 
-  it('★ retry 路径：不改 next_run_at，attempt 递增，claim 后 retry_at 清空', async () => {
+  it('★ retry 路径：不改 next_run_at，attempt 递增，claim 后重试槽清空', async () => {
     const id = await mkSchedule(pool, 'jobtest-store:retry')
     const [j] = (await claimDue(pool, 5, new Date(), nextRunAt)).filter((x) => x.scheduleId === id)
     const before = await pool.query('select next_run_at from platform.job_schedule where id=$1', [id])
-    const runId = await startRun(pool, j)
-    await finishRun(pool, runId, { status: 'failed', exitCode: 1, durationMs: 10, outputTail: '', error: 'boom' })
+    await finishRun(pool, j.runId, { status: 'failed', exitCode: 1, durationMs: 10, outputTail: '', error: 'boom' })
     await scheduleRetry(pool, id, j.occurrence, 1, new Date(Date.now() - 1000))
     const retries = await claimDue(pool, 5, new Date(), nextRunAt)
     const r = retries.find((x) => x.scheduleId === id)!
     expect(r.isRetry).toBe(true)
     expect(r.attempt).toBe(2)
     expect(r.occurrence.toISOString()).toBe(j.occurrence.toISOString())
-    const after = await pool.query('select next_run_at, retry_at from platform.job_schedule where id=$1', [id])
+    const after = await pool.query('select next_run_at, retry_at, retry_occurrence from platform.job_schedule where id=$1', [id])
     expect(after.rows[0].next_run_at.toISOString()).toBe(before.rows[0].next_run_at.toISOString())
-    // ★ 重试被 claim 即「消耗」：retry_at 必须清空，否则下一次 claimDue 会再抢到同一次重试。
+    // ★ 重试被 claim 即「消耗」：retry_at 与 retry_occurrence 必须一起清空。
     expect(after.rows[0].retry_at).toBeNull()
+    expect(after.rows[0].retry_occurrence).toBeNull()
     await clearRetry(pool, id)
   })
 
-  it('★ 调度触发执行期间有 running 行，超时后被 reapStale 改判 timeout', async () => {
+  it('★ 重试 occurrence 不被手动 queued 行劫持（重试槽归属排班侧）', async () => {
+    const id = await mkSchedule(pool, 'jobtest-store:retry-occ')
+    const [j] = (await claimDue(pool, 5, new Date(), nextRunAt)).filter((x) => x.scheduleId === id)
+    await finishRun(pool, j.runId, { status: 'failed', error: 'boom' })
+    await scheduleRetry(pool, id, j.occurrence, 1, new Date(Date.now() - 1000))
+    // 重试挂起期间入队一条手动行：它的 started_at 比失败的排班运行更新。
+    await pool.query(
+      `insert into platform.job_run(schedule_id,key,occurrence,trigger,status,started_at)
+       values ($1,'jobtest-store:retry-occ',now(),'manual','queued', now() + interval '1 second')`, [id])
+    const r = (await claimDue(pool, 5, new Date(), nextRunAt)).find((x) => x.scheduleId === id)!
+    expect(r.isRetry).toBe(true)
+    // 旧实现「select occurrence ... order by started_at desc」会取到手动行的 now() ⇒ 断言会红。
+    expect(r.occurrence.toISOString()).toBe(j.occurrence.toISOString())
+  })
+
+  it('★ 调度触发执行期间有 running 行，超时后被 reapStale 改判 timeout（终态守卫）', async () => {
     const id = await mkSchedule(pool, 'jobtest-store:sched-running', { timeoutMs: 1000 })
     const [j] = (await claimDue(pool, 5, new Date(), nextRunAt)).filter((x) => x.scheduleId === id)
-    const runId = await startRun(pool, j)
     // spawn 还没返回：库里就应有 running 行 ⇒ hasRunning 对调度触发同样成立。
     expect(await hasRunning(pool, id)).toBe(true)
     const { rows } = await pool.query(
-      'select status, trigger, attempt from platform.job_run where id=$1', [runId])
+      'select status, trigger, attempt from platform.job_run where id=$1', [j.runId])
     expect(rows[0]).toEqual({ status: 'running', trigger: 'schedule', attempt: 1 })
     // 模拟子进程卡死超过 2×timeout_ms。
-    await pool.query("update platform.job_run set started_at = now() - interval '1 hour' where id=$1", [runId])
+    await pool.query("update platform.job_run set started_at = now() - interval '1 hour' where id=$1", [j.runId])
     expect(await reapStale(pool, new Date())).toBeGreaterThanOrEqual(1)
-    const after = await pool.query('select status from platform.job_run where id=$1', [runId])
+    const after = await pool.query('select status from platform.job_run where id=$1', [j.runId])
     expect(after.rows[0].status).toBe('timeout')
     expect(await hasRunning(pool, id)).toBe(false)
+    // 迟到的回调不许覆盖已被 reap 判定的终态。
+    await finishRun(pool, j.runId, { status: 'ok' })
+    const guarded = await pool.query('select status from platform.job_run where id=$1', [j.runId])
+    expect(guarded.rows[0].status).toBe('timeout')
   })
 
   it('★ 僵尸 running 被回收成 timeout', async () => {
@@ -115,7 +135,18 @@ describePg('scheduler store', () => {
     expect(rows[0].status).toBe('timeout')
   })
 
-  it('手动入队：只有 queued 行能被 claim，且带 trigger=manual', async () => {
+  it('★ 卡住的 queued 行被 reapQueued 改判 timeout', async () => {
+    const id = await mkSchedule(pool, 'jobtest-store:stale-queued', { nextRunAt: new Date(Date.now() + 86_400_000) })
+    await pool.query(
+      `insert into platform.job_run(schedule_id,key,occurrence,trigger,status,started_at)
+       values ($1,'jobtest-store:stale-queued',now(),'manual','queued', now() - interval '1 hour')`, [id])
+    expect(await reapQueued(pool, new Date(), 60_000)).toBeGreaterThanOrEqual(1)
+    const { rows } = await pool.query('select status, error from platform.job_run where schedule_id=$1', [id])
+    expect(rows[0].status).toBe('timeout')
+    expect(rows[0].error).toBe('stale queued reaped')
+  })
+
+  it('手动入队：只有 queued 行能被 claim，且带 trigger=manual / 回填 params_snapshot', async () => {
     const id = await mkSchedule(pool, 'jobtest-store:manual', { nextRunAt: new Date(Date.now() + 86_400_000) })
     await pool.query(
       `insert into platform.job_run(schedule_id,key,occurrence,trigger,status) values ($1,'jobtest-store:manual',now(),'manual','queued')`, [id])
@@ -124,10 +155,11 @@ describePg('scheduler store', () => {
     expect(j.occurrence).toBeInstanceOf(Date)
     expect(typeof j.runId).toBe('number')
     expect(await hasRunning(pool, id)).toBe(true)
-    const { rows } = await pool.query('select trigger,status,attempt from platform.job_run where schedule_id=$1', [id])
+    const { rows } = await pool.query('select trigger,status,attempt,params_snapshot from platform.job_run where schedule_id=$1', [id])
     expect(rows[0].trigger).toBe('manual')
     expect(rows[0].status).toBe('running')
     expect(rows[0].attempt).toBe(1)
+    expect(rows[0].params_snapshot).toEqual({})
     // 已 claim 过的 queued 行不会再被抢第二次。
     expect((await claimQueuedManual(pool, 5, new Date())).some((x) => x.scheduleId === id)).toBe(false)
   })
@@ -136,7 +168,7 @@ describePg('scheduler store', () => {
     const id = await mkSchedule(pool, 'jobtest-store:manual-vs-retry', { nextRunAt: new Date(Date.now() + 86_400_000) })
     // retry_at 已到期：旧实现用 `s.retry_at is null` 过滤会把这条排班的手动入队永远挡住。
     await pool.query(
-      "update platform.job_schedule set retry_at = now() - interval '1 second', retry_attempt = 1 where id=$1", [id])
+      "update platform.job_schedule set retry_at = now() - interval '1 second', retry_occurrence = now(), retry_attempt = 1 where id=$1", [id])
     await pool.query(
       `insert into platform.job_run(schedule_id,key,occurrence,trigger,status)
        values ($1,'jobtest-store:manual-vs-retry',now(),'manual','queued')`, [id])
@@ -145,6 +177,24 @@ describePg('scheduler store', () => {
     expect(j).toBeDefined()
     expect(typeof j!.runId).toBe('number')
     expect(await hasRunning(pool, id)).toBe(true)
+  })
+
+  it('★ 手动与排班互斥：同 schedule 已有 running 时 queued 行不被抢，结束后再来', async () => {
+    const id = await mkSchedule(pool, 'jobtest-store:mutex')
+    // 排班侧 claim：事务内已建 running 行。
+    const [sched] = (await claimDue(pool, 5, new Date(), nextRunAt)).filter((x) => x.scheduleId === id)
+    await pool.query(
+      `insert into platform.job_run(schedule_id,key,occurrence,trigger,status)
+       values ($1,'jobtest-store:mutex',now(),'manual','queued')`, [id])
+    const first = await claimQueuedManual(pool, 5, new Date())
+    expect(first.some((x) => x.scheduleId === id)).toBe(false)
+    const held = await pool.query(
+      "select status from platform.job_run where schedule_id=$1 and trigger='manual'", [id])
+    expect(held.rows[0].status).toBe('queued')
+    // 排班运行结束（running 行消失）后，手动行才能被 claim。
+    await finishRun(pool, sched.runId, { status: 'ok' })
+    const second = await claimQueuedManual(pool, 5, new Date())
+    expect(second.some((x) => x.scheduleId === id)).toBe(true)
   })
 
   it('心跳 upsert：同 id 只一行', async () => {
