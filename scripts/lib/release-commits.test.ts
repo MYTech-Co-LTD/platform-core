@@ -4,7 +4,7 @@
 // 而发布门只认半角 `(#1508)` ⇒ 它们被当成「直推」⇒ main 上的 release 从 v0.278.1 起恒红。
 // 门只挡发版、不挡部署，所以这条红持续了很久才被发现——正是「判据口径」值得单独测的理由。
 import { execFileSync } from 'node:child_process'
-import { mkdtempSync, rmSync, writeFileSync } from 'node:fs'
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -101,6 +101,10 @@ describe('黑盒：夹具仓库（与分支状态无关）', () => {
         }
       }
 
+      // 零写入：dry-run 绝不改 CHANGELOG（真实事故形态：写入在 DRY 退出之前，
+      // 每跑一次 test:guard 就改一次，还能被 `git add -A` 顺手提交）。
+      const changelogBefore = readFileSync(join(dir, 'CHANGELOG.md'), 'utf8')
+
       const first = run()
       expect(first.code).toBe(1)
       expect(first.out).toContain('真正直推的一条')
@@ -111,6 +115,8 @@ describe('黑盒：夹具仓库（与分支状态无关）', () => {
       expect(second.code).toBe(0)
       expect(second.out).toContain('全角引用的一条')
       expect(second.out).toContain('pull/12')
+      expect(second.out).toContain('【新增】')
+      expect(readFileSync(join(dir, 'CHANGELOG.md'), 'utf8')).toBe(changelogBefore)
     } finally {
       rmSync(dir, { recursive: true, force: true })
     }
