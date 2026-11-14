@@ -171,3 +171,15 @@ describe('运行历史', () => {
     expect(screen.getAllByText('cron').length).toBe(2)
   })
 })
+
+describe('未调度管线清单', () => {
+  it('点「未调度 N」⇒ 列出未登记调度的管线与其最近一次运行', async () => {
+    m.mockImplementation(async () => json(MAP))
+    render(<PipelinesPage />)
+    await waitFor(() => expect(screen.getByText('资产')).toBeInTheDocument())
+    fireEvent.click(screen.getByRole('button', { name: /未调度 46/ }))
+    await waitFor(() => expect(screen.getByText('未调度的管线（历史 / 一次性）')).toBeInTheDocument())
+    // MAP 里 only 的未调度管线是 no_staging_asset.l0.3120
+    expect(screen.getByText('lemeng.no_staging_asset.l0.3120')).toBeInTheDocument()
+  })
+})
