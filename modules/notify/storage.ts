@@ -471,9 +471,26 @@ export type DeliveryKey = Pick<DeliveryRow, 'org' | 'eventId' | 'ruleId' | 'reci
 export async function markDeliverySent(pool: Pool, d: DeliveryKey): Promise<void> {
   await pool.query(
     `update notify.delivery set status='sent', attempts=attempts+1, locked_until=null,
-       updated_at=now()
+       sent_at=now(), updated_at=now()
       where org=$1 and event_id=$2 and rule_id=$3 and recipient=$4 and channel=$5`,
     [d.org, d.eventId, d.ruleId, d.recipient, d.channel],
+  )
+}
+
+/**
+ * 限流/主动顺延：**不消耗 attempts**。
+ *
+ * 与 `markDeliveryFailed` 的区别：provider 失败要计入重试预算；限流只是“现在别发”，
+ * 若也 attempts+1，连续 5 个限流窗口就会把一条本来能发的消息判死。
+ */
+export async function deferDelivery(
+  pool: Pool, d: DeliveryKey, msg: string, at: Date,
+): Promise<void> {
+  await pool.query(
+    `update notify.delivery set status='failed', locked_until=null,
+       next_attempt_at=$6, last_error=$7, updated_at=now()
+      where org=$1 and event_id=$2 and rule_id=$3 and recipient=$4 and channel=$5`,
+    [d.org, d.eventId, d.ruleId, d.recipient, d.channel, at.toISOString(), msg],
   )
 }
 
@@ -508,7 +525,8 @@ export async function isCoolingDown(
   const { rows } = await pool.query(
     `select 1 from notify.delivery
       where org=$1 and rule_id=$2 and recipient=$3 and status='sent'
-        and created_at > $4::timestamptz - ($5 || ' minutes')::interval
+        and sent_at is not null
+        and sent_at > $4::timestamptz - ($5 || ' minutes')::interval
       limit 1`,
     [org, rule.id, recipient, now.toISOString(), String(rule.cooldownMinutes)],
   )
@@ -548,7 +566,8 @@ export async function countChannelSends(
   const { rows } = await pool.query(
     `select count(*)::int n from notify.delivery
       where org=$1 and channel=$2 and status='sent'
-        and created_at > now() - ($3 || ' seconds')::interval`,
+        and sent_at is not null
+        and sent_at > now() - ($3 || ' seconds')::interval`,
     [org, channel, String(windowSeconds)])
   return rows[0].n as number
 }

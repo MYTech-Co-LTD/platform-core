@@ -106,6 +106,30 @@ describePg('notify mcp handlers', () => {
     expect(rows).toEqual([{ recipient: 'u1', is_test: true }])
   })
 
+  it('send_test webhook：地址解析 null 也可入队（不需要收件人地址）', async () => {
+    await pool.query(
+      `insert into notify.channel(org,id,provider,enabled,config,secret_refs,created_by)
+       values ($1,'webhook_ops','webhook',true,'{}','{}','u')`, [ORG])
+    await pool.query(
+      `insert into notify.template(org,key,name,event_key,status,origin,published_revision,created_by)
+       values ($1,'t-webhook','T','m.a.b','published','tenant',1,'u')`, [ORG])
+    await pool.query(
+      `insert into notify.template_revision(org,key,revision,contents,body_hash,review_status,created_by)
+       values ($1,'t-webhook',1,'{"webhook":{"text":"hi"}}','h-webhook','approved','u')`, [ORG])
+
+    const out = await callTool({
+      ...deps(),
+      addresses: { resolve: async () => null },
+    }, 'send_test', {
+      templateKey: 't-webhook', channel: 'webhook_ops',
+      payload: { u: 'u1', link: 'https://x' },
+    })
+    expect(out.isError).toBe(false)
+    const row = await pool.query(
+      "select status, address from notify.delivery where org=$1 and channel='webhook_ops'", [ORG])
+    expect(row.rows[0]).toMatchObject({ status: 'pending', address: 'u1' })
+  })
+
   it('check_rule 只读：返回 blocked/recipients/warnings，不写任何表', async () => {
     const before = (await pool.query(
       'select count(*)::int n from notify.delivery where org=$1', [ORG])).rows[0].n

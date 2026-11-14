@@ -5,11 +5,15 @@ export type SendResult =
   | { ok: true }
   | { ok: false; kind: 'retryable' | 'permanent'; code: string; summary: string }
 
+/** 单次桥请求默认超时：挂起的桥不能卡住整个 worker。 */
+export const DEFAULT_WECOM_BRIDGE_TIMEOUT_MS = 10_000
+
 export async function sendWecom(a: {
   bridgeUrl: string
   to: string
   content: string
   fetchImpl?: typeof fetch
+  timeoutMs?: number
 }): Promise<SendResult> {
   const f = a.fetchImpl ?? fetch
   const sep = a.bridgeUrl.includes('?') ? '&' : '?'
@@ -19,6 +23,7 @@ export async function sendWecom(a: {
     const res = await f(url, {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
+      signal: AbortSignal.timeout(a.timeoutMs ?? DEFAULT_WECOM_BRIDGE_TIMEOUT_MS),
       body: JSON.stringify({ content: a.content }),
     })
     if (res.status === 204) return { ok: true }

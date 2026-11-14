@@ -138,3 +138,20 @@ describe('probeDirect', () => {
     expect(r.detail).toContain('40013')
   })
 })
+
+describe('出站超时', () => {
+  it('sendDirect 的 gettoken 与 message/send 都带 AbortSignal', async () => {
+    const signals: Array<AbortSignal | null | undefined> = []
+    let n = 0
+    const f = (async (_url: string, init?: RequestInit) => {
+      signals.push(init?.signal)
+      n += 1
+      return n === 1 ? tokenOk() : sendOk()
+    }) as unknown as typeof fetch
+    expect(await sendDirect({
+      cred, to: 'u1', content: 'hi', fetchImpl: f, apiBase: API,
+    })).toEqual({ ok: true })
+    expect(signals).toHaveLength(2)
+    expect(signals.every((s) => s instanceof AbortSignal)).toBe(true)
+  })
+})

@@ -10,6 +10,7 @@ import { checkWecomHealth, checkWebhookHealth } from './domain/channel'
 import { resolveDeliverability, type DeliverabilityDeps } from './domain/deliverability'
 import { channelIsConfigured } from './domain/channel-config'
 import { listAddressIssues } from './domain/delivery-stats'
+import { providerRequiresAddress } from './domain/providers'
 import { resolveDeliveryAddress } from './domain/resolve-address'
 import { renderContents } from './domain/render'
 import { validateRule } from './domain/rules'
@@ -465,7 +466,9 @@ export function createNotifyRouter(deps: {
     const address = await resolveDeliveryAddress(deps.addresses?.resolve, ch, {
       org: identity.orgId, casdoorName: identity.userId,
     })
-    if (!address && ch.provider !== 'in_app') return c.json({ error: 'MISSING_ADDRESS' }, 400)
+    if (!address && providerRequiresAddress(ch.provider)) {
+      return c.json({ error: 'MISSING_ADDRESS' }, 400)
+    }
 
     await insertDelivery(deps.pool, {
       org: identity.orgId,
