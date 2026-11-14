@@ -131,3 +131,30 @@ describe('newSourceIssues（W4 Task 5）', () => {
     expect(newSourceIssues(doc({ x: { source_systems: ['wms'] } }), 'wms').join('\n')).toContain('system_of_record')
   })
 })
+
+describe('★ L1 label 撞名预检（P1 缓办①，Wave 5 尾波）', () => {
+  it('两个指标 label 归一后相同 ⇒ issue 点名双方（否则 sync 物化撞唯一索引是运行时炸）', () => {
+    const out = entityIssues(doc({ branch }, [
+      { name: 'a:x', label: '营业额', entity: 'branch' },
+      { name: 'a:y', label: ' 营业额 ', entity: 'branch' },   // 大小写/空白归一后同
+    ])).join('\n')
+    expect(out).toContain('label')
+    expect(out).toContain('a:x')
+    expect(out).toContain('a:y')
+  })
+
+  it('label 各不相同 ⇒ 无 issue', () => {
+    expect(entityIssues(doc({ branch }, [
+      { name: 'a:x', label: '营业额', entity: 'branch' },
+      { name: 'a:y', label: '净销售额', entity: 'branch' },
+    ]))).toEqual([])
+  })
+
+  it('缺 label 的指标不参与撞名判定（缺字段已有别的门禁管）', () => {
+    const out = entityIssues(doc({ branch }, [
+      { name: 'a:x', entity: 'branch' },
+      { name: 'a:y', label: '营业额', entity: 'branch' },
+    ]))
+    expect(out.join('\n')).not.toContain('撞名')
+  })
+})

@@ -58,6 +58,20 @@ export function entityIssues(doc) {
     const ent = typeof m?.entity === 'string' ? m.entity.trim() : ''
     if (ent !== '' && !declared.has(ent)) out.push(`[metrics] 指标 ${String(m?.name)} 引用了未声明的 entity：${ent}`)
   }
+  // ⑤ label 撞名预检（P1 缓办①，2026-11-14）：L1 行物化进 org='platform' 桶时会撞
+  //    `metrics_title_per_dept_uq (org, coalesce(owner_dept,''), lower(title))`——
+  //    归一后同 label 的两条指标 = sync 在**运行时**炸（部署后才发现）。
+  //    在 CI 就拦：归一 = trim + 小写（与唯一索引的 lower() 同口径）。
+  const byLabel = new Map()
+  for (const m of items) {
+    const label = typeof m?.label === 'string' ? m.label.trim().toLowerCase() : ''
+    if (label === '') continue                       // 缺 label 由必填门禁管（见 ②）
+    if (!byLabel.has(label)) byLabel.set(label, [])
+    byLabel.get(label).push(String(m?.name))
+  }
+  for (const [label, names] of byLabel) {
+    if (names.length > 1) out.push(`[metrics] label 撞名（物化会撞平台桶唯一索引）：${label} ← ${names.join(', ')}`)
+  }
   return out
 }
 

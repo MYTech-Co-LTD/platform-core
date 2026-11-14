@@ -85,7 +85,6 @@
 
 | 项 | 现状证据 | 波次 |
 |---|---|---|
-| **P1 终审缓办（转 P2+）** | ① L1 label 撞名预检进 check-semantics（今天零冲突；sync catch 已带 pg detail）② 旧直写面（PUT/POST /metrics、override 直写、customize_metric——P4 退役）撞 title 索引=裸 500 无映射 ③ override 行 owner_dept 恒 null：接进 insertTenantDeclaration 归 P2 可见性波 ④ report 工具 mutating:false 不对称（若总闸应管报表提案需裁决）⑤ notify eventId 去重吞重建事件（修法：eventId 拼变更单 id）⑥ preview_failed 回包不带 issues 明细 | Wave 5 P2（接手逐条销） |
 | 列级血缘 | dbt core manifest 无列级边（dbt core 不产出列级 edge） | 2.4（**触发式**：等真的有「按列追影响」的需求再做） |
 
 
@@ -200,3 +199,4 @@
 | 2026-11-14 | **Wave 5 P5 完成入账**（发布门/渲染闸/巡检 + declaration 档恢复，销 P4「能力退役」条目） | PR #2109 + 部署实测；**如实记为能力缺口**：Metabase 无 `metricIds` 字段 ⇒ 整表级判定当前不可实现；`reveal` 无写入面（整表 404 分支休眠）；rollback 与 ACL/部门门变更后不复跑发布门；归档指标只 warn 不判红（需 P6 门结果分类）；reason 契约改 `audience_unbounded`、owner 豁免新语义；迁移与 main 撞号（048 两份，ledger 按全名记账，可跑但需下波规避） |
 | 2026-11-14 | P6 计划出台（门结果分类+creator 预检+提交限速+reveal 写入+门重跑） | 取证：门返回 string[] warnings；rollbackVersion 直调 publish；metricIdsOf 全可选形状 | 支 PR 见下 |
 | 2026-11-14 | **Wave 5 P6 完成入账 = Wave 5 全部收口**（门结果分类/授权模型纠正/提交限速/reveal 写入/四处重跑门）；原 §18 P6 两项移入候选池 | PR #2141（`67604c93`）+ 部署实测：`gateBlocks`/`PUBLISHED_SNAPSHOT_UNREADABLE`/`canManage` 三处/`previewSkipped` 双面/`revealOfPayload` 均在容器。**关键纠正**：采纳时的 creator 门原比对采纳人 ⇒ 「agent 提单、人采纳」对非本人指标必 403（P4 以来的真实缺口），已改为 `creator ∪ data:manage` 并撤回提交期预检。遗留：Metabase 整表判定不可实现、L1 reveal 无写入面、confirmPrivateMeasureDraft 仍 creator-only（on 模式不可达）、PUBLISHED_SNAPSHOT_UNREADABLE 未进 console 消息表 |
+| 2026-11-14 | **P1 缓办行对账销账**：⑤⑥ 已在 P4 交付（eventId `ch:` 前缀 / preview_failed 带 issues）；② 随 P4 直写面 410 而 moot；**① 已落地**（check-semantics ⑤ label 撞名预检，CI 拦在 sync 运行时炸之前，真库 YAML 零冲突实跑过）；**③ 裁定为设计如此**（override 是租户级口径变更，租户全可见正是其语义，非缺口）；**④ 裁定为记录不改**（报表提案是轻量创建动作，`DATA_MCP_ALLOW_MUTATING` 门为指标定义面设计，报表面维持现状） | 尾波 PR + `check-semantics: OK（entities 13）` 实跑 |
