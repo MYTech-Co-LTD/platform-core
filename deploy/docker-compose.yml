@@ -125,9 +125,12 @@ services:
       WORKER_HEALTH_PORT: '13000'
       # 业务调度 loop（Wave 6 P1）：与投递 loop 同进程、独立节拍。
       # ENABLED=0 = 只停调度（投递照跑）——切流回滚开关；生产默认开。
-      SCHEDULER_ENABLED: '1'
-      SCHEDULER_TICK_MS: '30000'
-      SCHEDULER_MAX_CONCURRENCY: '2'
+      # ⚠️ 用 `${...:-缺省}` 而非硬编码：硬编码会压过 env_file 与运维覆盖，回滚开关失效。
+      # 插值只读「本 compose 文件所在目录的 .env」与 shell 环境（同 HOST_PORT 的说明），
+      # 不读 `../.env`；因此回滚写法是 `SCHEDULER_ENABLED=0 docker compose ...` 或写 deploy/.env。
+      SCHEDULER_ENABLED: '${SCHEDULER_ENABLED:-1}'
+      SCHEDULER_TICK_MS: '${SCHEDULER_TICK_MS:-30000}'
+      SCHEDULER_MAX_CONCURRENCY: '${SCHEDULER_MAX_CONCURRENCY:-2}'
     # 运行镜像已含 tsx（node_modules 全量 COPY，未 prune）；不要用裸 node 跑 .ts import
     command: ['pnpm', 'exec', 'tsx', 'scripts/notify-worker.mjs']
     depends_on:
