@@ -26,15 +26,15 @@ const MAP = {
       staging: 'stg_lemeng_retail_order_line',
       marts: ['fct_retail_sale'],
       pipelines: [
-        { id: 'lemeng.retail_order_line.l0.3120', account: '3120', cron: '0 5 * * *', enabled: true },
-        { id: 'lemeng.retail_order_line.l0.64188', account: '64188', cron: '0 5 * * *', enabled: false },
+        { id: 'lemeng.retail_order_line.l0.3120', account: '3120', cron: '0 5 * * *', enabled: true, scheduled: true },
+        { id: 'lemeng.retail_order_line.l0.64188', account: '64188', cron: '0 5 * * *', enabled: true, scheduled: true },
       ],
     },
     {
       lake: 'lemeng/no_staging_asset',
       staging: null,
       marts: [],
-      pipelines: [{ id: 'lemeng.no_staging_asset.l0.3120', account: '3120', cron: null, enabled: false }],
+      pipelines: [{ id: 'lemeng.no_staging_asset.l0.3120', account: '3120', cron: null, enabled: false, scheduled: false }],
     },
   ],
   orphanStaging: ['stg_lemeng_orphan'],
@@ -66,6 +66,7 @@ describe('管线地图', () => {
     expect(screen.getByText('断点')).toBeInTheDocument()
     // staging 1 / 断点 1 / 最近失败 1 ⇒ 三个「1」（资产是 2）
     expect(screen.getByText('2')).toBeInTheDocument()
+    // staging 1 / 在跑失败 1 / 断点 1 ⇒ 三个「1」
     expect(screen.getAllByText('1')).toHaveLength(3)
     await waitFor(() => expect(lastOption()?.series[0]!.data).toHaveLength(4)) // 2 资产 + 1 staging + 1 mart
   })
@@ -116,5 +117,23 @@ describe('管线地图', () => {
     render(<PipelinesPage />)
     await waitFor(() => expect(screen.getByText('你没有这个操作的权限，需要找管理员开通')).toBeInTheDocument())
     expect(screen.getByRole('button', { name: /重/ })).toBeInTheDocument()
+  })
+})
+
+describe('健康只看在跑的管线', () => {
+  it('未调度的历史失败不染红（否则图会长期挂着几年前的失败）', async () => {
+    const m2 = m
+    m2.mockImplementation(async () => json({
+      ...MAP,
+      assets: [{ ...MAP.assets[0]!, pipelines: [{ id: 'old.one.off', account: null, cron: null, enabled: false, scheduled: false }] }],
+      recentRuns: { 'old.one.off': [{ status: 'failed', at: '2026-10-21T00:00:00.000Z' }] },
+    }))
+    render(<PipelinesPage />)
+    await waitFor(() => expect(screen.getByText('资产')).toBeInTheDocument())
+    await waitFor(() => {
+      const node = lastOption()?.series[0]!.data.find((n) => n.id === 'asset:lemeng/retail_order_line') as
+        { itemStyle?: { borderColor?: string } } | undefined
+      expect(node?.itemStyle?.borderColor).toBe('#EBEDF0') // idle，不是失败红
+    })
   })
 })

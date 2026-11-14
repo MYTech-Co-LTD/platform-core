@@ -28,8 +28,8 @@ describe('buildPipelineMap', () => {
       'lemeng.retail_order_line.l0.3120', 'lemeng.retail_order_line.l0.64188',
     ])
     // 有调度的那条带 cron；没有调度记录的那条 enabled=false（不是「已停用」，是「没登记」）
-    expect(asset.pipelines[0]).toMatchObject({ cron: '0 5 * * *', enabled: true, account: '3120' })
-    expect(asset.pipelines[1]).toMatchObject({ cron: null, enabled: false, account: '64188' })
+    expect(asset.pipelines[0]).toMatchObject({ cron: '0 5 * * *', enabled: true, account: '3120', scheduled: true })
+    expect(asset.pipelines[1]).toMatchObject({ cron: null, enabled: false, account: '64188', scheduled: false })
   })
 
   it('没有 staging 的资产标 null（断点）并给告警', () => {
