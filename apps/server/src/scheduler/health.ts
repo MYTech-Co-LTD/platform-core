@@ -3,14 +3,16 @@
 // 判据：
 //   ① 心跳：`job_heartbeat.id='scheduler'` 从未写入，或 beat_at 陈旧 > 2 分钟
 //      （loop 每拍都 beat；心跳停 = 调度进程死了 / 被卡住）。
-//   ② 该跑没跑：enabled 且 source='system' 的排班，超过 2×expected_interval_secs 没有 ok run。
+//   ② 该跑没跑：**任一** enabled 排班（system 与 agent 皆然），
+//      超过 2×expected_interval_secs 没有 ok run。
 //      起点按「最近一次成功」算；**从未成功过**时退到「最后一次运行的 started_at（任何状态）」，
 //      再没有运行就用 updated_at —— 这是给刚启用 / 首轮还没跑出结果的排班的宽限窗：
 //      直接按 updated_at 判会让「刚启用」立刻变红，按最后一次任何状态的运行判则等到重试机会耗尽才红。
 //      注意 `coalesce` 的**顺序即语义**：曾成功过的排班即使最近刚失败过一次，只要最后一次 ok 已超窗
 //      仍然要红（那不是「从未成功过」，不给宽限）。
-//   ③ 连续失败：任意 enabled 排班最近 3 次 run 全是 failed/timeout。
-//      （不足 3 次不判红——样本不够，先让 ② 的时窗判。）
+//   ③ 连续失败：任意 enabled 排班**最近 3 次运行（不论状态）**全是 failed/timeout 才红。
+//      `running`/`queued` 行会稀释连败——这是有意的（有在跑说明调度器活着），不要改成只看终态。
+//      （不足 3 次也不判红——样本不够，先让 ② 的时窗判。）
 //
 // 本模块不写库、不依赖 loop.ts（健康检查在进程外跑也应当成立）。
 import type { Pool } from 'pg'
@@ -42,7 +44,7 @@ export async function jobHealth(pool: Pool, now: Date): Promise<JobHealth> {
   const overdue = await pool.query<{ key: string; expected_interval_secs: number }>(
     `select s.key, s.expected_interval_secs
        from platform.job_schedule s
-      where s.enabled and s.source = 'system'
+      where s.enabled
         and not exists (
           select 1 from platform.job_run r
            where r.schedule_id = s.id and r.status = 'ok'

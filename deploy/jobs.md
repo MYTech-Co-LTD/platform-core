@@ -112,7 +112,7 @@
 1. **登记（enabled=false）**：确认 `platform.job_schedule` 有该 key，且 `enabled=false`、`next_run_at=null`、`params={}`。seed 只补新增 key，**不覆盖**人改过的 `cron` / `enabled`。
 2. **手动跑一次并比对**：由平台管理员手动触发（P1 端点 `POST /api/platform/jobs/:key/run`，**只入队**），等 worker 领取并记录 `job_run`。比对产物与 openship 上最近一次结果：数量、口径、落表/落事件都要对得上；**比对不过不启用**。
 3. **关 openship**：`patch_jobs_by_key` 把对应 job 置 `enabled=false`，确认 openship 侧不再产生新 run。**若该 job 没有对应的 openship 作业**（如 `metric-retire`、`report.scope_scan`），跳过本步。
-4. **DB 启用**：置 `enabled=true`，并把 `next_run_at` 补算到**下一个未来时点**（不要落在过去，否则会立即补跑）。观察首条 `job_run` 为 `ok`，且 openship 侧保持安静。
+4. **DB 启用**：置 `enabled=true`，把 `next_run_at` 补算到**下一个未来时点**（不要落在过去，否则会立即补跑），并**同时刷新 `updated_at=now()`**——否则健康判据②的宽限窗口从 seed 时刻起算，可能在该 job 首跑之前就判红。观察首条 `job_run` 为 `ok`，且 openship 侧保持安静。
 
 **按实例各做一次**：`notify.reconcile` / `org-sync` 在 openship 各有两条作业（mytech + 山海），两实例各有独立平台库与独立 `platform.job_schedule`。切流与回滚必须**按实例各执行一遍**；只关一个实例会留下双调度者。实例与 openship job key 的对应见下表及 `deploy/notify-reconcile-job.md` / `deploy/org-sync-job.md` 的生产实例表。
 
@@ -183,9 +183,11 @@
 以下任一成立 ⇒ `/healthz` 非 200：
 
 1. **调度心跳陈旧**：`platform.job_heartbeat('scheduler').beat_at` 超过 2 分钟未更新，或从未写入。
-2. **该跑没跑**：任一 `enabled` 的 system schedule，超过 `2 × expected_interval_secs` 没有 `ok` run。
-   宽限起点 = **最后一次运行的 `started_at`**（任何状态）；从未运行过才用 `updated_at`（给新启用一个宽限窗）。
-3. **连续失败**：任一 **`enabled`** 排班，最近 3 次运行（按 `started_at desc`）全部是 `failed` / `timeout`。
+2. **该跑没跑**：**任一** `enabled` 排班（`system` 与 `agent` 皆然），超过 `2 × expected_interval_secs` 没有 `ok` run。
+   宽限起点 = **最后一次成功运行的 `started_at`**；从未成功过才依次退到「最后一次运行（任何状态）的 `started_at`」、
+   再没有运行则 `updated_at`（给新启用一个宽限窗，**启用时必须刷新 `updated_at`**）。
+3. **连续失败**：任一 **`enabled`** 排班，**最近 3 次运行（不论状态）**全是 `failed` / `timeout`。
+   `running` / `queued` 行会稀释连败——这是有意的（有在跑说明调度器活着），不要改成只看终态。
 
 **边界**：健康面回答「引擎活着吗、该跑的在跑吗」，**不回答产物语义是否正确**。切流比对与业务验收仍要做。
 

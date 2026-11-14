@@ -188,7 +188,11 @@ misfire 迟到 3 小时也用它；重试沿用同一 occurrence ⇒ 下游幂�
 
 1. **台账**：每次执行一行 `job_run`。
 2. **心跳 + healthz**：loop 每跳 upsert `platform.job_heartbeat('scheduler')`；`/healthz` 判三件事——
-   心跳陈旧 > 2 分钟 / **任一 enabled schedule 超过 `2 × expected_interval_secs` 无 `ok` run** / 连续失败 ≥ 3 次，
+   心跳陈旧 > 2 分钟 / **任一 enabled schedule 超过 `2 × expected_interval_secs` 无 `ok` run**
+   （起点 = 最后一次成功运行；从未成功过才依次退到「最后一次运行（任何状态）的 `started_at`」、
+   再没有运行则 `updated_at`——故**启用时必须刷新 `updated_at`**，否则宽限从 seed 时刻起算） /
+   **连续失败**：最近 3 次运行（**不论状态**）全为 `failed` / `timeout`
+   （`running` / `queued` 行会稀释连败，这是有意的——有在跑说明调度器活着），
    任一成立 ⇒ 非 200。
 3. **第二看护路径**：`scripts/check-probe-heartbeat.mjs`（已是 openship 基建 job）**同时检查 scheduler 心跳**——
    不把「引擎还活着」这一判断单独押在 OO 上（OO 有流静默导致状态机冻结的实测形态）。

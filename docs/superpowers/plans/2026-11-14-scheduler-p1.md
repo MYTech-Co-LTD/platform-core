@@ -1810,7 +1810,7 @@ Expected: 三行，`enabled=false`，`next_run_at=null`。**若 enabled=true 立
 
 对 `notify.reconcile`：
 1. 手动跑一次（MCP 端点或 SQL 入队），比对产物与 openship 上最近一次；
-2. `update platform.job_schedule set enabled=true, next_run_at=now()+interval '1 hour' where key='notify.reconcile'`（让首跳落在下一个整点前后，别立刻跑）；
+2. `update platform.job_schedule set enabled=true, next_run_at=now()+interval '1 hour', updated_at=now() where key='notify.reconcile'`（让首跳落在下一个整点前后，别立刻跑；**`updated_at=now()` 必带**——健康判据②在「从未成功」时以它作宽限起点，漏刷会让宽限从 seed 时刻起算，首跑前就判红）；
 3. 关 openship：`patch_jobs_by_key` 把 `custom:KJ_JBrbq68jAHVlO`（mytech）/`custom:QSr7oZ5KBAVOqx5j`（山海）`enabled=false`；
 4. 观察两条 run 行 + openship 侧不再有新 run。
 
