@@ -10,13 +10,18 @@
  *
  * 分类: feat→【新增】 fix→【修复】 perf|refactor→【优化】(其余 docs/test/chore/ci/build/style 不上榜)
  * 版本: BREAKING CHANGE 或 "!"→major; 有 feat→minor; 其余可见→patch; 无可见→跳过
- * 铁律: 可见类型提交必须带 (#N) PR 引用(直推拒发版)
+ * 铁律: 可见类型提交必须带 PR 引用(直推拒发版)。判据(2026-11-14 订正):
+ *   ① 主题末尾 `(#N)` 或 `（#N）`(**全角括号同样算**——历史上有一批全角写法被误判成直推,
+ *      导致 release 自 v0.278.1 起恒红);
+ *   ② 文本里没有引用时, 带 token 的环境会问 GitHub API `commits/{sha}/pulls`(权威判据,
+ *      与 ci.yml 的 main-guard 同一口径); 无 token 则退回纯文本判据(不静默放宽)。
  *
  * 用法: node scripts/release.mjs [--dry-run]
  * 环境变量: GH_TOKEN(release create 用; dry-run 不需要), REPO(可选, 缺省从 git remote 解析)
  */
 import { execSync } from 'node:child_process';
 import { readFileSync, writeFileSync } from 'node:fs';
+import { needsPrLookup, prRefOf, stripPrRef } from './lib/release-commits.mjs';
 
 const DRY = process.argv.includes('--dry-run');
 /** @param {string} cmd shell 命令 @returns {string} stdout（已 trim） */
@@ -31,6 +36,35 @@ function resolveRepo() {
 const REPO = resolveRepo();
 /** @param {string} kind 'pull' | 'commit' @param {string} id 编号或 sha @returns {string} 完整 URL */
 const URL = (kind, id) => `https://github.com/${REPO}/${kind}/${id}`;
+
+/**
+ * 文本里没有 PR 引用时，向 GitHub API 求证该提交的 PR 关联（与 ci.yml 的 main-guard 同一判据）。
+ *
+ * 为什么需要：主题文本可伪造，`commits/{sha}/pulls` 不能。没有 token 时**退回纯文本判据**
+ * （与旧行为一致，宁可严格也不静默放宽）；dry-run 本地通常无 token，走的就是这条。
+ * @param {string} sha 提交完整 sha
+ * @returns {string|null} 关联 PR 编号，无则 null
+ */
+const PR_LOOKUP_CACHE = new Map();
+/**
+ * @param {string} sha 提交完整 sha
+ * @returns {string|null}
+ */
+function prFromApi(sha) {
+  if (PR_LOOKUP_CACHE.has(sha)) return PR_LOOKUP_CACHE.get(sha);
+  const token = process.env.GH_TOKEN || process.env.GITHUB_TOKEN || '';
+  let num = null;
+  if (token) {
+    try {
+      const out = sh(`gh api "repos/${REPO}/commits/${sha}/pulls" --jq '.[0].number // empty'`);
+      num = out ? String(out).trim() : null;
+    } catch {
+      num = null; // API 不可用（离线/权限）⇒ 不回退成「放行」，保持严格
+    }
+  }
+  PR_LOOKUP_CACHE.set(sha, num);
+  return num;
+}
 
 /** conventional type → CHANGELOG 行内前缀。未列出的 type 不上榜。 @type {Record<string, string>} */
 const VISIBLE = { feat: '新增', fix: '修复', perf: '优化', refactor: '优化' };
@@ -54,10 +88,11 @@ for (const c of commits) {
   if (bang === '!' || /BREAKING CHANGE/i.test(c.body)) hasBreaking = true;
   const label = VISIBLE[type];
   if (!label) continue;
-  const pr = c.subject.match(/\(#(\d+)\)\s*$/)?.[1];
+  // 先看主题文本（半角/全角都认）；没有就问 API（权威判据，见 prFromApi）。
+  const pr = prRefOf(c.subject) ?? (needsPrLookup({ subject: c.subject, visible: true }) ? prFromApi(c.hash) : null);
   if (!pr) noPrCommits.push(c.subject);
   const short = c.hash.slice(0, 7);
-  const desc = `${scopeRaw ? scopeRaw.slice(1, -1) + ': ' : ''}${rest.replace(/\s*\(#\d+\)\s*$/, '')}`;
+  const desc = `${scopeRaw ? scopeRaw.slice(1, -1) + ': ' : ''}${stripPrRef(rest)}`;
   const refs = pr ? ` ([#${pr}](${URL('pull', pr)}), [${short}](${URL('commit', c.hash)}))` : '';
   entries.push(`- 【${label}】${desc}${refs}`);
 }
@@ -87,11 +122,12 @@ const marker = '## [Unreleased]';
 const next = cl.includes(marker)
   ? cl.replace(marker, `${marker}\n\n${section}`)
   : `# Changelog\n\n${marker}\n\n${section}\n`;
-writeFileSync('CHANGELOG.md', next);
-
 console.log(`release v${version} (${REPO}):`);
 console.log(section);
-if (DRY) { console.log('(dry-run, 不提交不打 tag)'); process.exit(0); }
+// dry-run 必须**零写入**：它在本地与 test:guard 里都会被跑（黑盒回归「门在真仓库上能过」），
+// 早先写入在 DRY 退出之前 ⇒ 每跑一次就改一次 CHANGELOG，还能被 `git add -A` 顺手提交。
+if (DRY) { console.log('(dry-run, 不写 CHANGELOG、不提交不打 tag)'); process.exit(0); }
+writeFileSync('CHANGELOG.md', next);
 
 // ---------- 5) 提交 + tag + Release ----------
 sh('git config user.name "github-actions[bot]"');
