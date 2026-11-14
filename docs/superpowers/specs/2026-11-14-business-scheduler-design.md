@@ -1,7 +1,7 @@
 # 业务定时归属：从 openship job 迁到平台内置调度器——设计（v2）
 
 > 状态：2026-11-14 与用户逐条确认（方案 A′）；v2 并入通知板块的 handoff（接缝与分工）。
-> 关联：`docs/architecture.md` §2.11、开发地图 `2026-11-11-helix-borrow-roadmap.md` Wave 6，
+> 关联：`docs/architecture.md` §2.4「定时载体」小节、开发地图 `2026-11-11-helix-borrow-roadmap.md` Wave 6，
 > 下游能力 `2026-11-14-business-monitor-design.md`（Wave 7）。
 > 起因：用户定调「业务层面的压力不放到 openship 上」。这是**架构变更**，顺序是
 > 「人同意 → 改本文与正典 → 再写码」。
@@ -85,7 +85,7 @@ deploy/docker-compose.yml
 
 - **P1 不改 compose 服务名**（仍叫 `notify-worker`）：避免 openship 服务身份变更带来的额外风险；
   代码与文档里称其为「worker（通知投递 + 业务调度两 loop）」。
-- 任务目录在代码（`apps/server/src/jobs/registry.ts`），排班状态在库；启动幂等 seed，
+- 任务目录在代码（`apps/server/src/scheduler/registry.ts`），排班状态在库；启动幂等 seed，
   **不覆盖人改过的 cron**（只补新增 key、只补缺失行）。
 
 **配置（env，缺省即可用）**
@@ -119,6 +119,9 @@ create table if not exists platform.job_schedule (
   timeout_ms             integer not null default 300000,
   max_attempts           integer not null default 1,
   expected_interval_secs integer not null,
+  retry_at               timestamptz,                  -- 重试游标：重试不改 next_run_at
+  retry_occurrence       timestamptz,                  -- 重试槽绑定的原格 occurrence（排班侧，不从 job_run 反查）
+  retry_attempt          integer not null default 0,   -- 已排重试的尝试序号
   updated_at             timestamptz not null default now()
 );
 create unique index if not exists uq_job_schedule_system_key
@@ -132,11 +135,12 @@ create table if not exists platform.job_run (
   id              bigserial primary key,
   schedule_id     bigint not null references platform.job_schedule(id),
   key             text not null,
+  occurrence      timestamptz not null,               -- 本次 claim 的 bucket（不是实际开跑时刻）
   owner_org       text,
   owner_namespace text,
   params_snapshot jsonb,
   trigger         text not null check (trigger in ('schedule','manual')),
-  status          text not null check (status in ('running','ok','failed','timeout','skipped')),
+  status          text not null check (status in ('queued','running','ok','failed','timeout','skipped')),
   attempt         integer not null default 1,
   started_at      timestamptz not null default now(),
   finished_at     timestamptz,
@@ -160,9 +164,12 @@ create table if not exists platform.job_heartbeat (
 
 ## 8. 执行契约
 
-**派发前**：查 `platform.job_run` 是否已有同 `schedule_id` 的 `running` 行，有则本轮记 `skipped`
-（库为准，多副本同样成立）；**僵尸 running 回收**：`running` 且 `started_at < now() - 2 × timeout_ms`
-⇒ 下一跳改判 `timeout`（`error='stale running reaped'`），否则调度器崩一次就把该 key 永久堵死。
+**互斥**：claim 语句在 SQL 里排除「同 `schedule_id` 已有 `running` 行」的排班 —— 该格**不消费**
+（不前推 `next_run_at`）、下一拍再来；`claim` 与建 `running` 行在同一事务内（库为准，多副本同样成立）。
+长期堵住（job 永远起不来）由健康判据兜住：2× 期望间隔无成功即告警。
+**僵尸回收**：`running` 且 `started_at < now() - 2 × timeout_ms` ⇒ 下一跳改判 `timeout`
+（`error='stale running reaped'`）；卡住的 `queued` 行按排队超时改判 `timeout`
+（`error='stale queued reaped'`），否则调度器崩一次就把该 key（或路由的 busy 判定）永久堵死。
 
 **注入**（argv 数组 spawn，禁 shell 拼接）：
 
@@ -185,11 +192,22 @@ misfire 迟到 3 小时也用它；重试沿用同一 occurrence ⇒ 下游幂�
 
 1. **台账**：每次执行一行 `job_run`。
 2. **心跳 + healthz**：loop 每跳 upsert `platform.job_heartbeat('scheduler')`；`/healthz` 判三件事——
-   心跳陈旧 > 2 分钟 / **任一 enabled schedule 超过 `2 × expected_interval_secs` 无 `ok` run** / 连续失败 ≥ 3 次，
+   心跳陈旧 > 2 分钟 / **任一 enabled schedule 超过 `2 × expected_interval_secs` 无 `ok` run**
+   （起点 = 最后一次成功运行；从未成功过才依次退到「最后一次运行（任何状态）的 `started_at`」、
+   再没有运行则 `updated_at`——故**启用时必须刷新 `updated_at`**，否则宽限从 seed 时刻起算） /
+   **连续失败**：最近 3 次运行（**不论状态**）全为 `failed` / `timeout`
+   （`running` / `queued` 行会稀释连败，这是有意的——有在跑说明调度器活着），
    任一成立 ⇒ 非 200。
 3. **第二看护路径**：`scripts/check-probe-heartbeat.mjs`（已是 openship 基建 job）**同时检查 scheduler 心跳**——
+   判据：`platform.job_schedule` 存在任一 `enabled` 排班时，`platform.job_heartbeat('scheduler')`
+   缺失 ⇒ **NEVER**、超过 **2 分钟** ⇒ **STALE**（两者均 exit 1，输出点名 `scheduler`）；
+   **所有排班都是 `enabled=false`** ⇒ DISABLED（**不算故障**，exit 0）。
+   判定为纯函数 `judgeScheduler(beatAt, enabledCount, now)`，用例在 `scripts/check-probe-heartbeat.test.ts`。
+   ⚠️ `SCHEDULER_ENABLED=0` 只停 loop、**不改** `job_schedule.enabled` ⇒ 只设该开关时看护仍判 STALE。
+   **这是有意的**：调度器停了而排班还标着启用，本来就该报。**回滚须同时把 DB 排班置 `enabled=false`**
+   （或走 §11 的反向切流）。
    不把「引擎还活着」这一判断单独押在 OO 上（OO 有流静默导致状态机冻结的实测形态）。
-4. **手动触发**：`POST /api/platform/jobs/:key/run`（会话 + 平台管理员），写 `trigger='manual'` 的 run 行，落 `platform.audit`。
+4. **手动触发**：`POST /api/platform/jobs/:key/run`（会话 + `tenant:admin`；本仓无独立「平台管理员」码，单实例单租户下等价），写 `trigger='manual'` 的 run 行，落 `platform.audit`。**已知边界**：多租户实例下这等于任意租户管理员可触发全局 job——届时须引入平台级码或按 `owner_org` 限定。
 
 ## 10. 与通知板块的接缝（handoff 答复）
 
@@ -239,7 +257,9 @@ agent / console / MCP → SchedulerPort.createSchedule(key='notify.emit', cron, 
   → 关掉 openship 那个 job → DB 置 enabled=true（next_run_at 补算到下一个未来时点）
 ```
 
-回滚：反向操作；`SCHEDULER_ENABLED=0` 可一次性停掉调度 loop（投递 loop 不受影响）。
+回滚：反向操作；`SCHEDULER_ENABLED=0` 可一次性停掉调度 loop（投递 loop 不受影响），
+但它**不清 `job_schedule.enabled`** ⇒ 只设该开关时第二看护仍判 STALE（有意）。
+完整回滚 = `SCHEDULER_ENABLED=0` **同时**把 DB 排班置 `enabled=false`（或走反向切流）。
 顺序按爆炸半径：`notify-reconcile` → `metric-candidates` → `report-scope-scan`
 → `notify-preflight` → `notify-retention` → `metric-retire` → `org-sync`。
 
@@ -249,7 +269,7 @@ agent / console / MCP → SchedulerPort.createSchedule(key='notify.emit', cron, 
 |---|---|---|
 | `docs/architecture.md:497-503` | 定时载体 = openship job / 零常驻 | 拆两条线：基建定时留 openship job；业务定时归 worker 的 `platform.scheduler` loop（目录在代码、排班与台账在库） |
 | `deploy/notify-jobs.md:7`、`deploy/org-sync-job.md:4-5`、`deploy/metric-candidates-job.md:5-6`、`deploy/metric-retire-job.md:7-8`、`deploy/report-scope-scan-job.md:7-8` | 「不要塞进 server 进程（应用进程不跑定时副作用）」 | 理由保留（反对把副作用藏进 **HTTP 进程**），结论改为「归 worker 的调度 loop」 |
-| `docs/architecture.md` §2.11 | — | 新增不变量：只做 cron + 台账；调度器排引擎不排规则；system job 的 params 不生效 |
+| `docs/architecture.md` §2.4「定时载体」小节 | — | 新增不变量：只做 cron + 台账；调度器排引擎不排规则；system job 的 params 不生效 |
 
 ## 13. 测试策略
 

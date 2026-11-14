@@ -21,7 +21,7 @@
 - **迁移编号**：宿主迁移用 `018_platform_jobs.sql`（宿主现有最大 017）；数据模块编号与本次无关。
 - **时区**：`timezone` 列按 IANA 名解释；**迁入的系统 job 一律 `timezone='UTC'`**（与 openship 上现有 cron 的 UTC 语义逐字一致，避免整体挪 8 小时）；新建业务排班默认 `Asia/Shanghai`。
 - **安全**：`enabled` 默认 `false`——seed 只登记不启用，切流由人显式开启。
-- 测试隔离：DB 用例用独立 key 前缀 `jobtest:*`，**自建夹具、空库可绿**；本地 `DATABASE_URL='postgres://platform:platform@127.0.0.1:5432/platform'`。
+- 测试隔离：DB 用例**每个测试文件用自己的 key 前缀**（`jobtest-migrate:` / `jobtest-registry:` / `jobtest-store:` / `jobtest-loop:` / `jobtest-health:` / `jobtest-route:`），**禁止用宽前缀 `jobtest:%` 清理**（并行跑文件会互删夹具）；**自建夹具、空库可绿**；本地 `DATABASE_URL='postgres://platform:platform@127.0.0.1:5432/platform'`。
 - Conventional Commits；feat 挂 issue（本波 issue：**#2172**）。
 
 ## File Structure
@@ -31,7 +31,7 @@
 | `apps/server/src/migrations/018_platform_jobs.sql` | 三张表 + 约束/索引（幂等） |
 | `apps/server/src/scheduler/cron.ts` | cron 解析 + `nextRunAt`（纯函数，零依赖） |
 | `apps/server/src/scheduler/registry.ts` | 系统 job 目录 + `seedSchedules`（幂等、不覆盖、`params={}`） |
-| `apps/server/src/scheduler/store.ts` | claim（含 retry 路径）/ queued manual / recordRun / beat / reapStale / hasRunning |
+| `apps/server/src/scheduler/store.ts` | claim（含 retry 路径；**事务内即建 running 行**并返回 runId）/ queued manual / finishRun（终态守卫）/ beat / reapStale / reapQueued / hasRunning |
 | `apps/server/src/scheduler/runner.ts` | `spawn` 子进程实现 + 超时 kill + 退出码分类 |
 | `apps/server/src/scheduler/loop.ts` | 一次 tick 的编排 + 并发上限 + 运行中集合 |
 | `apps/server/src/scheduler/health.ts` | 三判据（心跳 / 超期未成功 / 连续失败） |
@@ -39,7 +39,7 @@
 | `scripts/notify-worker.mjs` | 接线：每 `SCHEDULER_TICK_MS` 跑一次 tick；healthz 合并调度健康 |
 | `deploy/docker-compose.yml` / `.env.example` | `SCHEDULER_*` 四个键 |
 | `deploy/jobs.md` | 调度器运维口径 + 切流程序 |
-| `docs/architecture.md` | §2.11 正典改写 + 新不变量 |
+| `docs/architecture.md` | §2.4「定时载体」小节正典改写 + 新不变量 |
 
 ---
 
@@ -53,7 +53,7 @@
 **Interfaces:**
 - Produces: 后续任务引用 `deploy/jobs.md` 作为运维口径唯一入口。
 
-- [ ] **Step 1: 改写 `docs/architecture.md` §2.11 的定时载体条文**
+- [ ] **Step 1: 改写 `docs/architecture.md` §2.4「定时载体」小节的条文**
 
 把「定时载体 = openship job（零常驻）」拆成两条线，并在同节追加三条不变量。改完该节应能回答：基建定时在哪、业务定时在哪、为什么应用 HTTP 进程仍然不跑副作用。
 
@@ -69,8 +69,8 @@
 **不变量**：① 调度器只排「引擎」不排「规则」（agent 只能排已注册 key）；② 只做 cron + 台账，
 不做 DAG / 依赖编排 / 回填队列；③ `source='system'` 时 `params` 不生效——行为只由代码 registry 决定。
 
-**HTTP 进程仍然不跑定时副作用**：宿主 `apps/server` 不装任何 interval；手动触发端点只**入队**，
-执行发生在 worker 进程。
+**业务 job 的定时副作用不进 HTTP 进程**：手动触发端点只**入队**，执行发生在 worker 进程。
+既有例外是监控面的集成健康探针（`apps/server/src/integration-probe.ts` 的 `setInterval`，由 `apps/server/src/app.ts` 启动）。
 ```
 
 - [ ] **Step 2: 改写五处「应用进程不跑定时副作用」的结论句**
@@ -202,19 +202,26 @@ describePg('018_platform_jobs', () => {
   })
 
   it('系统 job 一 key 一条：部分唯一索引生效', async () => {
-    await pool.query("delete from platform.job_schedule where key like 'jobtest:%'")
+    await pool.query("delete from platform.job_schedule where key like 'jobtest-migrate:%'")
     await pool.query(
-      "insert into platform.job_schedule(key,cron,source,enabled,expected_interval_secs) values ('jobtest:uq','* * * * *','system',false,60)")
+      "insert into platform.job_schedule(key,cron,source,enabled,expected_interval_secs) values ('jobtest-migrate:uq','* * * * *','system',false,60)")
     await expect(pool.query(
-      "insert into platform.job_schedule(key,cron,source,enabled,expected_interval_secs) values ('jobtest:uq','* * * * *','system',false,60)",
+      "insert into platform.job_schedule(key,cron,source,enabled,expected_interval_secs) values ('jobtest-migrate:uq','* * * * *','system',false,60)",
     )).rejects.toThrow(/uq_job_schedule_system_key/)
-    await pool.query("delete from platform.job_schedule where key like 'jobtest:%'")
+    await pool.query("delete from platform.job_schedule where key like 'jobtest-migrate:%'")
   })
 
-  it('status/trigger 闭集：非法值被拒', async () => {
+  it('status/trigger 闭集：非法值被**约束**拒绝（不是被外键拒绝）', async () => {
+    const { rows } = await pool.query(
+      "insert into platform.job_schedule(key,cron,source,enabled,expected_interval_secs) values ('jobtest-migrate:cl','* * * * *','system',false,60) returning id")
+    const id = rows[0].id
     await expect(pool.query(
-      "insert into platform.job_run(schedule_id,key,occurrence,trigger,status) values (1,'jobtest:x',now(),'nope','ok')",
-    )).rejects.toThrow()
+      "insert into platform.job_run(schedule_id,key,occurrence,trigger,status) values ($1,'jobtest-migrate:cl',now(),'nope','ok')", [id],
+    )).rejects.toThrow(/job_run_trigger_check/)
+    await expect(pool.query(
+      "insert into platform.job_run(schedule_id,key,occurrence,trigger,status) values ($1,'jobtest-migrate:cl',now(),'schedule','nope')", [id],
+    )).rejects.toThrow(/job_run_status_check/)
+    await pool.query("delete from platform.job_schedule where key like 'jobtest-migrate:%'")
   })
 })
 ```
@@ -481,19 +488,19 @@ const describePg = dbUrl ? describe : describe.skip
 const dir = fileURLToPath(new URL('../migrations', import.meta.url))
 
 const defs: JobDef[] = [
-  { key: 'jobtest:alpha', script: 'scripts/x.mjs', cron: '7 * * * *', timezone: 'UTC', timeoutMs: 1000, maxAttempts: 1, expectedIntervalSecs: 3600, description: 't' },
+  { key: 'jobtest-registry:alpha', script: 'scripts/x.mjs', cron: '7 * * * *', timezone: 'UTC', timeoutMs: 1000, maxAttempts: 1, expectedIntervalSecs: 3600, description: 't' },
 ]
 
 describePg('seedSchedules', () => {
   let pool: Pool
   beforeAll(async () => { pool = new Pool({ connectionString: dbUrl }); await runMigrations(pool, 'platform', dir) })
-  afterAll(async () => { await pool.query("delete from platform.job_schedule where key like 'jobtest:%'"); await pool.end() })
+  afterAll(async () => { await pool.query("delete from platform.job_schedule where key like 'jobtest-registry:%'"); await pool.end() })
 
   it('首次插入：enabled=false 且 next_run_at 为空（登记不跑）', async () => {
-    await pool.query("delete from platform.job_schedule where key like 'jobtest:%'")
+    await pool.query("delete from platform.job_schedule where key like 'jobtest-registry:%'")
     const r = await seedSchedules(pool, defs)
-    expect(r.inserted).toContain('jobtest:alpha')
-    const { rows } = await pool.query("select enabled, next_run_at, params, source from platform.job_schedule where key='jobtest:alpha'")
+    expect(r.inserted).toContain('jobtest-registry:alpha')
+    const { rows } = await pool.query("select enabled, next_run_at, params, source from platform.job_schedule where key='jobtest-registry:alpha'")
     expect(rows[0].enabled).toBe(false)
     expect(rows[0].next_run_at).toBeNull()
     expect(rows[0].params).toEqual({})
@@ -501,23 +508,23 @@ describePg('seedSchedules', () => {
   })
 
   it('★ 二次 seed 不覆盖人改过的 cron / enabled', async () => {
-    await pool.query("update platform.job_schedule set cron='*/5 * * * *', enabled=true where key='jobtest:alpha'")
+    await pool.query("update platform.job_schedule set cron='*/5 * * * *', enabled=true where key='jobtest-registry:alpha'")
     await seedSchedules(pool, defs)
-    const { rows } = await pool.query("select cron, enabled from platform.job_schedule where key='jobtest:alpha'")
+    const { rows } = await pool.query("select cron, enabled from platform.job_schedule where key='jobtest-registry:alpha'")
     expect(rows[0].cron).toBe('*/5 * * * *')
     expect(rows[0].enabled).toBe(true)
   })
 
   it('★ 已启用但 next_run_at 为空 ⇒ 补算（不立即跑）', async () => {
-    await pool.query("update platform.job_schedule set next_run_at=null where key='jobtest:alpha'")
+    await pool.query("update platform.job_schedule set next_run_at=null where key='jobtest-registry:alpha'")
     const r = await seedSchedules(pool, defs)
-    expect(r.filled).toContain('jobtest:alpha')
-    const { rows } = await pool.query("select next_run_at from platform.job_schedule where key='jobtest:alpha'")
+    expect(r.filled).toContain('jobtest-registry:alpha')
+    const { rows } = await pool.query("select next_run_at from platform.job_schedule where key='jobtest-registry:alpha'")
     expect(new Date(rows[0].next_run_at).getTime()).toBeGreaterThan(Date.now())
   })
 
   it('★ 非法 cron 在 seed 期炸（fail-closed）', async () => {
-    await expect(seedSchedules(pool, [{ ...defs[0], key: 'jobtest:bad', cron: '0 0 * * MON' }]))
+    await expect(seedSchedules(pool, [{ ...defs[0], key: 'jobtest-registry:bad', cron: '0 0 * * MON' }]))
       .rejects.toThrow(/cron/)
   })
 })
@@ -555,7 +562,7 @@ export interface JobDef {
 export const JOB_REGISTRY: JobDef[] = [
   { key: 'notify.reconcile', script: 'scripts/notify-reconcile.mjs', cron: '7 * * * *', timezone: 'UTC', timeoutMs: 300000, maxAttempts: 2, expectedIntervalSecs: 3600, description: '通知指派与催办对账' },
   { key: 'metric.candidates', script: 'scripts/metric-candidates-job.mjs', cron: '40 6 * * *', timezone: 'UTC', timeoutMs: 300000, maxAttempts: 1, expectedIntervalSecs: 86400, description: '指标候选池生成' },
-  { key: 'report.scope_scan', script: 'scripts/report-scope-scan.mjs', cron: '37 1 * * *', timezone: 'UTC', timeoutMs: 300000, maxAttempts: 1, expectedIntervalSecs: 86400, description: '报表受众 × 指标可见性巡检' },
+  { key: 'report.scope_scan', script: 'scripts/report-scope-scan.mjs', cron: '37 1 * * *', timezone: 'UTC', timeoutMs: 300000, maxAttempts: 2, expectedIntervalSecs: 86400, description: '报表受众 × 指标可见性巡检' },
 ]
 
 export async function seedSchedules(
@@ -608,9 +615,16 @@ git commit -m "feat(data): 调度任务目录与幂等 seed（Wave 6 P1）"
 
 ### Task 5: store（claim / retry / 台账 / 心跳 / 僵尸回收）
 
+> ⚠️ **本段代码块已废弃，以仓库代码为准（claim 即建 running 行）**。
+> 下方接口清单、测试片段与实现块是初版草案（`recordRun` / `startRun` / 收尾才建行），
+> 已被「claim 事务内建 running + finishRun 回填 + retry_occurrence + 手动/排班互斥」取代；
+> 差异与理由见 `.superpowers/sdd/2026-11-14-scheduler-p1/task-5-report.md`。
+
 **Files:**
 - Create: `apps/server/src/scheduler/store.ts`
 - Test: `apps/server/src/scheduler/store.test.ts`
+
+> ⚠️ **本段代码为初稿**：实现已按 spec §8 改为「claim 即建 `running` 行」（`startRun` + `finishRun`），理由是 `hasRunning` / 僵尸回收必须对所有触发方式成立。**以仓库代码与本行说明为准**，不要照抄下文的 `recordRun` 片段。
 
 **Interfaces:**
 - Consumes: Task 3 `nextRunAt`、Task 2 表结构
@@ -618,7 +632,8 @@ git commit -m "feat(data): 调度任务目录与幂等 seed（Wave 6 P1）"
   - `export interface ClaimedJob { scheduleId: number; key: string; occurrence: Date; attempt: number; params: Record<string, unknown>; timeoutMs: number; maxAttempts: number; isRetry: boolean; ownerOrg: string | null; ownerNamespace: string | null }`
   - `claimDue(pool, limit, now, next: (cron, tz, from) => Date): Promise<ClaimedJob[]>`
   - `claimQueuedManual(pool, limit, now): Promise<ClaimedJob[]>`
-  - `recordRun(pool, job, outcome): Promise<number>`（返回 runId）
+  - `claimDue` / `claimQueuedManual` 在同一事务里建 `status='running'` 行并返回 `runId`（不再有独立的 startRun）
+  - `finishRun(pool, runId, outcome): Promise<void>`（回填结果；`where status='running'` 守卫，调度与手动共用）
   - `scheduleRetry(pool, scheduleId, occurrence, nextAttempt, now): Promise<void>`
   - `clearRetry(pool, scheduleId): Promise<void>`
   - `hasRunning(pool, scheduleId): Promise<boolean>`
@@ -641,7 +656,7 @@ const describePg = dbUrl ? describe : describe.skip
 const dir = fileURLToPath(new URL('../migrations', import.meta.url))
 
 async function mkSchedule(pool: Pool, key: string, over: Record<string, unknown> = {}) {
-  await pool.query("delete from platform.job_schedule where key like 'jobtest:%'")
+  await pool.query("delete from platform.job_schedule where key like 'jobtest-store:%'")
   const { rows } = await pool.query(
     `insert into platform.job_schedule(key,cron,timezone,source,enabled,next_run_at,timeout_ms,max_attempts,expected_interval_secs)
      values ($1,$2,'UTC','system',true,$3,$4,$5,$6) returning id`,
@@ -653,27 +668,27 @@ async function mkSchedule(pool: Pool, key: string, over: Record<string, unknown>
 describePg('scheduler store', () => {
   let pool: Pool
   beforeAll(async () => { pool = new Pool({ connectionString: dbUrl }); await runMigrations(pool, 'platform', dir) })
-  afterAll(async () => { await pool.query("delete from platform.job_schedule where key like 'jobtest:%'"); await pool.end() })
+  afterAll(async () => { await pool.query("delete from platform.job_schedule where key like 'jobtest-store:%'"); await pool.end() })
 
   it('到期 job 被 claim，且 next_run_at 前推', async () => {
-    const id = await mkSchedule(pool, 'jobtest:claim')
+    const id = await mkSchedule(pool, 'jobtest-store:claim')
     const jobs = await claimDue(pool, 5, new Date(), nextRunAt)
     const j = jobs.find((x) => x.scheduleId === id)!
-    expect(j.key).toBe('jobtest:claim')
+    expect(j.key).toBe('jobtest-store:claim')
     expect(j.attempt).toBe(1)
     const { rows } = await pool.query('select next_run_at from platform.job_schedule where id=$1', [id])
     expect(new Date(rows[0].next_run_at).getTime()).toBeGreaterThan(Date.now())
   })
 
   it('★ 同一 job 不会被第二次 claim（并发安全）', async () => {
-    const id = await mkSchedule(pool, 'jobtest:once')
+    const id = await mkSchedule(pool, 'jobtest-store:once')
     await claimDue(pool, 5, new Date(), nextRunAt)
     const again = await claimDue(pool, 5, new Date(), nextRunAt)
     expect(again.some((x) => x.scheduleId === id)).toBe(false)
   })
 
   it('★ retry 路径：不改 next_run_at，attempt 递增', async () => {
-    const id = await mkSchedule(pool, 'jobtest:retry')
+    const id = await mkSchedule(pool, 'jobtest-store:retry')
     const [j] = (await claimDue(pool, 5, new Date(), nextRunAt)).filter((x) => x.scheduleId === id)
     const before = await pool.query('select next_run_at from platform.job_schedule where id=$1', [id])
     await recordRun(pool, j, { status: 'failed', exitCode: 1, durationMs: 10, outputTail: '', error: 'boom' })
@@ -689,19 +704,19 @@ describePg('scheduler store', () => {
   })
 
   it('★ 僵尸 running 被回收成 timeout', async () => {
-    const id = await mkSchedule(pool, 'jobtest:zombie', { timeoutMs: 1000 })
+    const id = await mkSchedule(pool, 'jobtest-store:zombie', { timeoutMs: 1000 })
     await pool.query(
       `insert into platform.job_run(schedule_id,key,occurrence,trigger,status,started_at)
-       values ($1,'jobtest:zombie',now(),'schedule','running', now() - interval '1 hour')`, [id])
+       values ($1,'jobtest-store:zombie',now(),'schedule','running', now() - interval '1 hour')`, [id])
     expect(await reapStale(pool, new Date())).toBeGreaterThanOrEqual(1)
     const { rows } = await pool.query("select status from platform.job_run where schedule_id=$1", [id])
     expect(rows[0].status).toBe('timeout')
   })
 
   it('手动入队：只有 queued 行能被 claim，且带 trigger=manual', async () => {
-    const id = await mkSchedule(pool, 'jobtest:manual', { nextRunAt: new Date(Date.now() + 86_400_000) })
+    const id = await mkSchedule(pool, 'jobtest-store:manual', { nextRunAt: new Date(Date.now() + 86_400_000) })
     await pool.query(
-      `insert into platform.job_run(schedule_id,key,occurrence,trigger,status) values ($1,'jobtest:manual',now(),'manual','queued')`, [id])
+      `insert into platform.job_run(schedule_id,key,occurrence,trigger,status) values ($1,'jobtest-store:manual',now(),'manual','queued')`, [id])
     const jobs = await claimQueuedManual(pool, 5, new Date())
     const j = jobs.find((x) => x.scheduleId === id)!
     expect(j.occurrence).toBeInstanceOf(Date)
@@ -827,7 +842,7 @@ export async function claimQueuedManual(pool: Pool, limit: number, now: Date): P
     const { rows } = await client.query<Row & { occurrence: Date }>(
       `select r.id as run_id, ${SELECT_COLS.split(',').map((c) => 's.' + c.trim()).join(',')}, r.occurrence
          from platform.job_run r join platform.job_schedule s on s.id = r.schedule_id
-        where r.status='queued' and s.enabled and s.retry_at is null
+        where r.status='queued' and s.retry_at is null   -- 不看 s.enabled：手动触发与启停解耦
         order by r.id limit $1 for update of r skip locked`, [limit])
     for (const r of rows as Array<Row & { occurrence: Date; run_id: string }>) {
       await client.query(
@@ -1098,9 +1113,9 @@ git commit -m "feat(data): 调度的子进程执行器与退出码分类（Wave 
 - Produces:
   - `export interface SchedulerDeps { pool: Pool; registry?: JobDef[]; spawn?: SpawnFn; now?: () => Date; maxConcurrency?: number; log?: (o: unknown) => void; cwd?: string }`
   - `export function createSchedulerLoop(deps: SchedulerDeps): { tick(): Promise<TickStats>; inFlight(): number }`
-  - `export interface TickStats { claimed: number; started: number; skipped: number; reaped: number }`
+  - `export interface TickStats { claimed: number; started: number; reaped: number }`
 
-- [ ] **Step 1: 写失败测试（不阻塞、并发上限、跳过同 job 重叠）**
+- [ ] **Step 1: 写失败测试（不阻塞、并发上限）**
 
 ```ts
 // apps/server/src/scheduler/loop.test.ts
@@ -1114,19 +1129,19 @@ import type { JobDef } from './registry'
 const dbUrl = process.env.DATABASE_URL
 const describePg = dbUrl ? describe : describe.skip
 const dir = fileURLToPath(new URL('../migrations', import.meta.url))
-const def: JobDef = { key: 'jobtest:loop', script: 'scripts/x.mjs', cron: '7 * * * *', timezone: 'UTC', timeoutMs: 500, maxAttempts: 1, expectedIntervalSecs: 3600, description: 't' }
+const def: JobDef = { key: 'jobtest-loop:loop', script: 'scripts/x.mjs', cron: '7 * * * *', timezone: 'UTC', timeoutMs: 500, maxAttempts: 1, expectedIntervalSecs: 3600, description: 't' }
 
 describePg('scheduler loop', () => {
   let pool: Pool
   beforeAll(async () => { pool = new Pool({ connectionString: dbUrl }); await runMigrations(pool, 'platform', dir) })
-  afterAll(async () => { await pool.query("delete from platform.job_schedule where key like 'jobtest:%'"); await pool.end() })
+  afterAll(async () => { await pool.query("delete from platform.job_schedule where key like 'jobtest-loop:%'"); await pool.end() })
 
   async function seed(): Promise<number> {
-    await pool.query("delete from platform.job_run where key like 'jobtest:%'")
-    await pool.query("delete from platform.job_schedule where key like 'jobtest:%'")
+    await pool.query("delete from platform.job_run where key like 'jobtest-loop:%'")
+    await pool.query("delete from platform.job_schedule where key like 'jobtest-loop:%'")
     const { rows } = await pool.query(
       `insert into platform.job_schedule(key,cron,timezone,source,enabled,next_run_at,timeout_ms,max_attempts,expected_interval_secs)
-       values ('jobtest:loop','7 * * * *','UTC','system',true, now() - interval '1 minute', 500, 1, 3600) returning id`)
+       values ('jobtest-loop:loop','7 * * * *','UTC','system',true, now() - interval '1 minute', 500, 1, 3600) returning id`)
     return Number(rows[0].id)
   }
 
@@ -1142,7 +1157,7 @@ describePg('scheduler loop', () => {
     expect(finished).toBe(false)
     await new Promise((r) => setTimeout(r, 500))
     expect(finished).toBe(true)
-    const { rows } = await pool.query("select status from platform.job_run where key='jobtest:loop' order by id desc limit 1")
+    const { rows } = await pool.query("select status from platform.job_run where key='jobtest-loop:loop' order by id desc limit 1")
     expect(rows[0]?.status).toBe('ok')
   })
 
@@ -1175,8 +1190,8 @@ import { nextRunAt } from './cron'
 import { JOB_REGISTRY, seedSchedules, type JobDef } from './registry'
 import { classify, defaultSpawn, envFor, paramsStdin, type SpawnFn } from './runner'
 import {
-  beat, claimDue, claimQueuedManual, clearRetry, hasRunning, reapStale, recordRun, scheduleRetry,
-  type ClaimedJob,
+  beat, claimDue, claimQueuedManual, clearRetry, finishRun, reapQueued, reapStale, scheduleRetry,
+  type ClaimedJob, type RunOutcome,
 } from './store'
 
 export interface SchedulerDeps {
@@ -1193,7 +1208,6 @@ export interface SchedulerDeps {
 export interface TickStats {
   claimed: number
   started: number
-  skipped: number
   reaped: number
 }
 
@@ -1207,31 +1221,41 @@ export function createSchedulerLoop(deps: SchedulerDeps) {
   const running = new Set<number>()
   let seeded = false
 
-  const runOne = async (job: ClaimedJob): Promise<void> => {
+  /** manual=true：手动触发的运行**不参与重试**（重试槽属于排班侧，手动成功不许清掉排班待跑的重试）。 */
+  const runOne = async (job: ClaimedJob, manual: boolean): Promise<void> => {
     const def = registry.find((d) => d.key === job.key)
     if (!def) {
       log({ ts: new Date().toISOString(), job: job.key, error: 'unknown registry key' })
+      // claim 已建 running 行，必须收尾，否则会一直挡住该 schedule 的下一格。
+      await finishRun(deps.pool, job.runId, { status: 'skipped', error: 'unknown registry key' }).catch(() => {})
       return
     }
     running.add(job.scheduleId)
     try {
-      const res = await spawn({
-        command: 'pnpm', args: ['exec', 'tsx', def.script],
-        env: envFor(job), stdin: paramsStdin(job), timeoutMs: job.timeoutMs, cwd,
-      })
-      const outcome = classify(res)
-      await recordRun(deps.pool, job, outcome)
-      if (outcome.status !== 'ok' && outcome.retryable && job.attempt < job.maxAttempts) {
-        await scheduleRetry(deps.pool, job.scheduleId, job.occurrence, job.attempt, new Date(Date.now() + 60_000))
-      } else {
-        await clearRetry(deps.pool, job.scheduleId)
+      // spawn 抛错也要落到一个终态；**终态只由下面这一次 finishRun 写**。
+      let outcome: RunOutcome & { retryable?: boolean }
+      try {
+        const res = await spawn({
+          command: 'pnpm', args: ['exec', 'tsx', def.script],
+          env: envFor(job), stdin: paramsStdin(job), timeoutMs: job.timeoutMs, cwd,
+        })
+        outcome = classify(res)
+      } catch (e) {
+        outcome = { status: 'failed', error: e instanceof Error ? e.message : String(e) }
+      }
+      await finishRun(deps.pool, job.runId, outcome) // 自带 where status='running'，不会覆盖 reap 的终态
+      if (!manual) {
+        if (outcome.status !== 'ok' && outcome.retryable && job.attempt < job.maxAttempts) {
+          await scheduleRetry(deps.pool, job.scheduleId, job.occurrence, job.attempt, new Date(Date.now() + 60_000))
+        } else {
+          await clearRetry(deps.pool, job.scheduleId)
+        }
       }
       log({ ts: new Date().toISOString(), job: job.key, occurrence: job.occurrence.toISOString(), status: outcome.status, exitCode: outcome.exitCode ?? null, durationMs: outcome.durationMs ?? null })
     } catch (e) {
+      // finishRun / 重试记账 / 日志自身异常：只记日志，**绝不再调 finishRun**（否则可能覆盖终态）。
       const msg = e instanceof Error ? e.message : String(e)
-      await recordRun(deps.pool, job, { status: 'failed', error: msg }).catch(() => {})
-      await clearRetry(deps.pool, job.scheduleId).catch(() => {})
-      log({ ts: new Date().toISOString(), job: job.key, error: msg })
+      log({ ts: new Date().toISOString(), job: job.key, error: `post-run bookkeeping failed: ${msg}` })
     } finally {
       running.delete(job.scheduleId)
     }
@@ -1241,31 +1265,27 @@ export function createSchedulerLoop(deps: SchedulerDeps) {
     inFlight: () => running.size,
     async tick(): Promise<TickStats> {
       const t = now()
-      const stats: TickStats = { claimed: 0, started: 0, skipped: 0, reaped: 0 }
+      const stats: TickStats = { claimed: 0, started: 0, reaped: 0 }
       if (!seeded) { await seedSchedules(deps.pool, registry, t); seeded = true }
       await beat(deps.pool, t)
       stats.reaped = await reapStale(deps.pool, t)
+      stats.reaped += await reapQueued(deps.pool, t)
 
       const free = Math.max(0, max - running.size)
       if (free === 0) return stats
       const manual = await claimQueuedManual(deps.pool, free, t)
-      // claimQueuedManual 已把行置 running，这里直接起进程（不重复查 hasRunning）
-      for (const job of manual) { void runOne(job); stats.started += 1 }
+      // claimQueuedManual 已把行置 running 并带回 runId，这里直接起进程。
+      for (const job of manual) { void runOne(job, true); stats.started += 1 }
       stats.claimed += manual.length
 
-      const room = Math.max(0, max - running.size - manual.length)
+      // runOne 在首个 await 前已 running.add ⇒ 这里直接按 running.size 算，别再扣 manual.length（那是双重扣减）。
+      const room = Math.max(0, max - running.size)
       if (room === 0) return stats
       const due = await claimDue(deps.pool, room, t, nextRunAt)
       stats.claimed += due.length
-      for (const job of due) {
-        if (running.has(job.scheduleId) || await hasRunning(deps.pool, job.scheduleId)) {
-          await recordRun(deps.pool, job, { status: 'skipped', error: 'previous run still running' })
-          stats.skipped += 1
-          continue
-        }
-        void runOne(job)
-        stats.started += 1
-      }
+      // claim 的 SELECT 已排除「同 schedule 有 running」的排班（该格不消费、下一拍再来），
+      // 这里无需再查 hasRunning、也不写 skipped 台账（否则每拍刷一行）。
+      for (const job of due) { void runOne(job, false); stats.started += 1 }
       return stats
     },
   }
@@ -1312,10 +1332,10 @@ const dir = fileURLToPath(new URL('../migrations', import.meta.url))
 describePg('jobHealth', () => {
   let pool: Pool
   beforeAll(async () => { pool = new Pool({ connectionString: dbUrl }); await runMigrations(pool, 'platform', dir) })
-  afterAll(async () => { await pool.query("delete from platform.job_schedule where key like 'jobtest:%'"); await pool.end() })
+  afterAll(async () => { await pool.query("delete from platform.job_schedule where key like 'jobtest-health:%'"); await pool.end() })
 
   it('心跳新鲜 + 无作业 ⇒ ok', async () => {
-    await pool.query("delete from platform.job_schedule where key like 'jobtest:%'")
+    await pool.query("delete from platform.job_schedule where key like 'jobtest-health:%'")
     await pool.query("insert into platform.job_heartbeat(id,beat_at) values ('scheduler',now()) on conflict (id) do update set beat_at=now()")
     expect((await jobHealth(pool, new Date())).ok).toBe(true)
   })
@@ -1329,13 +1349,13 @@ describePg('jobHealth', () => {
   })
 
   it('★ 该跑没跑：enabled 且超 2×expected_interval 无 ok run ⇒ 红', async () => {
-    await pool.query("delete from platform.job_schedule where key like 'jobtest:%'")
+    await pool.query("delete from platform.job_schedule where key like 'jobtest-health:%'")
     const { rows } = await pool.query(
       `insert into platform.job_schedule(key,cron,timezone,source,enabled,next_run_at,timeout_ms,max_attempts,expected_interval_secs,updated_at)
-       values ('jobtest:overdue','0 * * * *','UTC','system',true, now() + interval '1 hour', 1000, 1, 60, now() - interval '1 hour') returning id`)
+       values ('jobtest-health:overdue','0 * * * *','UTC','system',true, now() + interval '1 hour', 1000, 1, 60, now() - interval '1 hour') returning id`)
     const h = await jobHealth(pool, new Date())
     expect(h.ok).toBe(false)
-    expect(h.reasons.join()).toContain('jobtest:overdue')
+    expect(h.reasons.join()).toContain('jobtest-health:overdue')
     await pool.query('delete from platform.job_schedule where id=$1', [rows[0].id])
   })
 })
@@ -1511,11 +1531,11 @@ describe('scheduler 接线契约', () => {
     expect(calls.some((c) => c.startsWith('insert into platform.j'))).toBe(false)
   })
 
-  it('jobHealth 在空库上不抛（返回 ok 或 reasons 均可，但必须是合法形状）', async () => {
+  it('★ 心跳缺失 ⇒ ok=false 且原因点名心跳（不是「看起来没作业就算健康」）', async () => {
     const pool = { query: async () => ({ rows: [] }) }
     const h = await jobHealth(pool as never, new Date())
-    expect(typeof h.ok).toBe('boolean')
-    expect(Array.isArray(h.reasons)).toBe(true)
+    expect(h.ok).toBe(false)
+    expect(h.reasons.join()).toContain('心跳')
   })
 })
 ```
@@ -1550,6 +1570,11 @@ git commit -m "feat(data): worker 接入调度 loop 与合并 healthz（Wave 6 P
 - Consumes: `platform.job_schedule` / `job_run`
 - Produces: `POST /api/platform/jobs/:key/run` → `{ runId }`；同 schedule 已有 `queued|running` ⇒ 409 `JOB_ALREADY_PENDING`；未知 key ⇒ 404；无 `tenant:admin` ⇒ 403。
 
+> **硬要求（TOCTOU）**：`queued` 行的插入必须与 busy 判定**原子化**——同一事务里先
+> `select … for update` 锁排班行、再判 `queued|running`、再 insert（或
+> `insert … select … where not exists (queued|running)`）。
+> **禁止「先查再插」两条独立语句**：并发触发时两边都看到「不忙」，会各插一条重复 `queued`。
+
 - [ ] **Step 1: 写失败测试（权限 + 去重 + 只入队）**
 
 ```ts
@@ -1580,44 +1605,44 @@ function appFor(pool: Pool, scopes: string[]) {
 describePg('platform-jobs routes', () => {
   let pool: Pool
   beforeAll(async () => { pool = new Pool({ connectionString: dbUrl }); await runMigrations(pool, 'platform', dir) })
-  afterAll(async () => { await pool.query("delete from platform.job_schedule where key like 'jobtest:%'"); await pool.end() })
+  afterAll(async () => { await pool.query("delete from platform.job_schedule where key like 'jobtest-route:%'"); await pool.end() })
 
   async function seed() {
-    await pool.query("delete from platform.job_run where key like 'jobtest:%'")
-    await pool.query("delete from platform.job_schedule where key like 'jobtest:%'")
+    await pool.query("delete from platform.job_run where key like 'jobtest-route:%'")
+    await pool.query("delete from platform.job_schedule where key like 'jobtest-route:%'")
     await pool.query(
       `insert into platform.job_schedule(key,cron,timezone,source,enabled,next_run_at,timeout_ms,max_attempts,expected_interval_secs)
-       values ('jobtest:route','7 * * * *','UTC','system',true, now() + interval '1 hour', 1000, 1, 3600)`)
+       values ('jobtest-route:route','7 * * * *','UTC','system',true, now() + interval '1 hour', 1000, 1, 3600)`)
   }
 
   it('无 tenant:admin ⇒ 403', async () => {
     await seed()
-    const res = await appFor(pool, []).request('/jobs/jobtest:route/run', { method: 'POST' })
+    const res = await appFor(pool, []).request('/jobs/jobtest-route:route/run', { method: 'POST' })
     expect(res.status).toBe(403)
   })
 
   it('未知 key ⇒ 404', async () => {
-    const res = await appFor(pool, ['tenant:admin']).request('/jobs/jobtest:nope/run', { method: 'POST' })
+    const res = await appFor(pool, ['tenant:admin']).request('/jobs/jobtest-route:nope/run', { method: 'POST' })
     expect(res.status).toBe(404)
   })
 
   it('★ 正常触发 ⇒ 只建 queued 行（不 spawn、不改 next_run_at）', async () => {
     await seed()
-    const res = await appFor(pool, ['tenant:admin']).request('/jobs/jobtest:route/run', { method: 'POST' })
+    const res = await appFor(pool, ['tenant:admin']).request('/jobs/jobtest-route:route/run', { method: 'POST' })
     expect(res.status).toBe(200)
     const body = await res.json() as { runId: number }
     expect(body.runId).toBeGreaterThan(0)
     const run = await pool.query('select status, trigger from platform.job_run where id=$1', [body.runId])
     expect(run.rows[0]).toMatchObject({ status: 'queued', trigger: 'manual' })
-    const sch = await pool.query("select next_run_at from platform.job_schedule where key='jobtest:route'")
+    const sch = await pool.query("select next_run_at from platform.job_schedule where key='jobtest-route:route'")
     expect(new Date(sch.rows[0].next_run_at).getTime()).toBeGreaterThan(Date.now())
   })
 
   it('★ 已有 queued/running ⇒ 409 JOB_ALREADY_PENDING', async () => {
     await seed()
     const app = appFor(pool, ['tenant:admin'])
-    await app.request('/jobs/jobtest:route/run', { method: 'POST' })
-    const second = await app.request('/jobs/jobtest:route/run', { method: 'POST' })
+    await app.request('/jobs/jobtest-route:route/run', { method: 'POST' })
+    const second = await app.request('/jobs/jobtest-route:route/run', { method: 'POST' })
     expect(second.status).toBe(409)
     const body = await second.json() as { error: string }
     expect(body.error).toBe('JOB_ALREADY_PENDING')
@@ -1634,37 +1659,71 @@ Expected: FAIL（模块不存在）
 
 ```ts
 // routes/platform-jobs.ts — 手动触发：**只入队**，执行在 worker 进程（不变量：HTTP 进程不跑副作用）。
+// 三条结构锁照 admin.ts：整路由 requireScope('tenant:admin') + 写操作 CSRF（同一 csrfToken helper）。
 import { Hono } from 'hono'
 import type { Pool } from 'pg'
+import { csrfToken } from '@platform/auth-core'
+import { requireScope } from '@platform/sdk'
+import type { SessionEnv } from '../session-middleware'
+import type { TenantEnv } from '../tenant'
 
-export interface PlatformJobDeps { pool: Pool }
+export interface PlatformJobRoutesDeps { pool: Pool; sessionSecret: string }
 
-interface Vars { identity: { userId: string; hasScope(code: string): boolean }; tenant: { casdoor_org: string } }
+const LOCK_SCHEDULE_SQL =
+  `select id from platform.job_schedule where key=$1 and source='system' for update`
+const BUSY_SQL =
+  `select 1 from platform.job_run where schedule_id=$1 and status in ('queued','running') limit 1`
 
-export function platformJobRoutes(deps: PlatformJobDeps): Hono<{ Variables: Vars }> {
-  const app = new Hono<{ Variables: Vars }>()
+export function platformJobRoutes(deps: PlatformJobRoutesDeps): Hono<TenantEnv & SessionEnv> {
+  const app = new Hono<TenantEnv & SessionEnv>()
+
+  app.use('*', requireScope('tenant:admin'))
+  app.use('*', async (c, next) => {
+    if (!['GET', 'HEAD'].includes(c.req.method)) {
+      const s = c.get('session')
+      if (!s || c.req.header('x-csrf-token') !== csrfToken(s, deps.sessionSecret)) {
+        return c.json({ error: 'CSRF' }, 403)
+      }
+    }
+    await next()
+  })
 
   app.post('/:key/run', async (c) => {
-    const who = c.get('identity')
-    if (!who?.hasScope('tenant:admin')) return c.json({ error: 'FORBIDDEN', need: 'tenant:admin' }, 403)
     const key = c.req.param('key')
-    const { rows } = await deps.pool.query(
-      "select id, enabled from platform.job_schedule where key=$1 and source='system'", [key])
-    const sch = rows[0]
-    if (!sch) return c.json({ error: 'JOB_NOT_FOUND', key }, 404)
-    if (!sch.enabled) return c.json({ error: 'JOB_DISABLED', key }, 409)
+    const who = c.get('identity')
+    const tenant = c.get('tenant')
+    // 硬要求：busy 判定与入队原子（同一事务 + 排班行锁）。先查再插是 TOCTOU ⇒ 并发重复 queued。
+    const client = await deps.pool.connect()
+    let runId: number
+    try {
+      await client.query('begin')
+      // 排班行被持锁时不许无限占用连接：2s 超时 ⇒ 55P03 ⇒ 503 JOB_LOCK_TIMEOUT
+      await client.query("set local lock_timeout = '2s'")
+      const locked = await client.query<{ id: string }>(LOCK_SCHEDULE_SQL, [key])
+      const sch = locked.rows[0]
+      if (!sch) { await client.query('rollback'); return c.json({ error: 'JOB_NOT_FOUND', key }, 404) }
+      // enabled 不参与判定：启停只影响自动排班（切流程序要在登记态先手动跑一次）
 
-    const busy = await deps.pool.query(
-      "select 1 from platform.job_run where schedule_id=$1 and status in ('queued','running') limit 1", [sch.id])
-    if (busy.rows.length > 0) return c.json({ error: 'JOB_ALREADY_PENDING', key }, 409)
+      const busy = await client.query(BUSY_SQL, [sch.id])
+      if (busy.rows.length > 0) { await client.query('rollback'); return c.json({ error: 'JOB_ALREADY_PENDING', key }, 409) }
 
-    const ins = await deps.pool.query(
-      `insert into platform.job_run(schedule_id,key,occurrence,trigger,status)
-       values ($1,$2, now(), 'manual', 'queued') returning id`, [sch.id, key])
-    const runId = Number(ins.rows[0].id)
-    await deps.pool.query(
-      'insert into platform.audit(tenant_id, actor, action, detail) values ($1,$2,$3,$4)',
-      [c.get('tenant')?.casdoor_org ?? null, who.userId, 'admin.job.run', { key, runId }])
+      const ins = await client.query<{ id: string }>(
+        `insert into platform.job_run(schedule_id,key,occurrence,trigger,status)
+         values ($1,$2, now(), 'manual', 'queued') returning id`, [sch.id, key])
+      runId = Number(ins.rows[0].id)
+      await client.query(
+        'insert into platform.audit(tenant_id, actor, action, detail) values ($1,$2,$3,$4)',
+        [tenant.id, who.userId, 'admin.job.run', { key, runId }])
+      await client.query('commit')
+    } catch (e) {
+      await client.query('rollback').catch(() => {})
+      if ((e as { code?: string }).code === '55P03') {
+        return c.json({ error: 'JOB_LOCK_TIMEOUT', key }, 503)
+      }
+      throw e
+    } finally {
+      client.release()
+    }
     return c.json({ runId, key, status: 'queued' })
   })
 
@@ -1672,13 +1731,15 @@ export function platformJobRoutes(deps: PlatformJobDeps): Hono<{ Variables: Vars
 }
 ```
 
+> Step 1 的测试骨架早于 CSRF 增补；**以 `apps/server/src/routes/platform-jobs.test.ts` 为准**（含 session/identity/tenant 三注入与 `csrfToken` 生成的 header）。
+
 - [ ] **Step 4: 挂载到 app.ts**
 
 在 `app.route('/api/platform/keys', ...)` 之后加一行（同一段注释块内，保持既有顺序）：
 
 ```ts
   // ⑧d 业务调度手动触发（Wave 6 P1）：只入队，执行在 worker 进程
-  app.route('/api/platform/jobs', platformJobRoutes({ pool }))
+  app.route('/api/platform/jobs', platformJobRoutes({ pool, sessionSecret: config.sessionSecret }))
 ```
 
 并在文件顶部的 import 区加 `import { platformJobRoutes } from './routes/platform-jobs'`。
@@ -1686,7 +1747,7 @@ export function platformJobRoutes(deps: PlatformJobDeps): Hono<{ Variables: Vars
 - [ ] **Step 5: 运行测试 + 类型检查**
 
 Run: `cd apps/server && pnpm exec vitest run src/routes/platform-jobs.test.ts && pnpm run typecheck`
-Expected: PASS（4 个用例）
+Expected: PASS（10 个用例）
 
 - [ ] **Step 6: Commit**
 
@@ -1772,8 +1833,8 @@ Expected: 三行，`enabled=false`，`next_run_at=null`。**若 enabled=true 立
 - [ ] **Step 3: 逐 job 切流（一次一个）**
 
 对 `notify.reconcile`：
-1. 手动跑一次（MCP 端点或 SQL 入队），比对产物与 openship 上最近一次；
-2. `update platform.job_schedule set enabled=true, next_run_at=now()+interval '1 hour' where key='notify.reconcile'`（让首跳落在下一个整点前后，别立刻跑）；
+1. 手动跑一次（**优先用端点** `POST /api/platform/jobs/:key/run`），比对产物与 openship 上最近一次。**手动触发不要求 `enabled=true`**——启停只影响自动排班，本步就在 `enabled=false` 的登记态执行。若必须 SQL 入队，**先确认该排班无 `queued|running` 行**（SQL 旁路绕过了端点的原子判定，会插出重复 `queued`）；
+2. `update platform.job_schedule set enabled=true, next_run_at=now()+interval '1 hour', updated_at=now() where key='notify.reconcile'`（让首跳落在下一个整点前后，别立刻跑；**`updated_at=now()` 必带**——健康判据②在「从未成功」时以它作宽限起点，漏刷会让宽限从 seed 时刻起算，首跑前就判红）；
 3. 关 openship：`patch_jobs_by_key` 把 `custom:KJ_JBrbq68jAHVlO`（mytech）/`custom:QSr7oZ5KBAVOqx5j`（山海）`enabled=false`；
 4. 观察两条 run 行 + openship 侧不再有新 run。
 
@@ -1813,13 +1874,13 @@ git commit -m "docs(data): 台账——Wave 6 P1 完成入账"
 | §6 架构与配置 | Task 9（worker 接线 + env） |
 | §7 数据模型 | Task 2（含 retry/queued 两处扩展） |
 | §8 执行语义（claim/misfire/重试/超时/并发/时区/cron 子集） | Task 3、5、6、7 |
-| §9 故障可见性（台账/心跳/healthz 三判据/手动触发/第二看护路径） | Task 8、9、10；**第二看护路径（`check-probe-heartbeat.mjs` 扩检）未在本计划**——列入 Wave 6 P1 收尾待办，不阻塞 |
+| §9 故障可见性（台账/心跳/healthz 三判据/手动触发/第二看护路径） | Task 8、9、10；**第二看护路径已随终审落地**——`scripts/check-probe-heartbeat.mjs` 扩检 scheduler 心跳（纯函数 `judgeScheduler` + `scripts/check-probe-heartbeat.test.ts`；判据见 spec §9.3 与 `deploy/jobs.md` §2.3） |
 | §11 迁移与回滚 | Task 12（切流）+ `deploy/jobs.md`（Task 1） |
 | §12 正典改写 | Task 1 |
 | §13 测试策略 | 各任务的测试步骤 |
 
-**已知缺口（有意不做，写入 PR 描述）**：第二看护路径（扩 `check-probe-heartbeat.mjs`）与 `jobs.job.*` 事件声明（待裁决）不在 P1。
+**已知缺口（有意不做，写入 PR 描述）**：`jobs.job.*` 事件声明（待裁决）不在 P1。
 
 **2. 占位符扫描**：无 TBD/TODO；每个代码步骤都有可复制代码。
 
-**3. 类型一致性**：`ClaimedJob` / `RunOutcome` / `JobDef` 在 Task 4–7 之间逐字一致；`recordRun`（调度触发的运行新建行）与 `finishRun`（手动触发的运行回填）分工在 Task 5 注释里写明；`TickStats` 只有 `claimed/started/skipped/reaped` 四个字段，测试一律按 `key` 查 run 行，**不要为了断言给 `TickStats` 加字段**。
+**3. 类型一致性**：`ClaimedJob` / `RunOutcome` / `JobDef` 在 Task 4–7 之间逐字一致；claim（两种触发）**事务内即建 running 行**并返回 `runId`，终态一律由 `finishRun` 回填（不是「调度触发 recordRun 新建 / 手动 finishRun 回填」两套语义）；`TickStats` 只有 `claimed/started/reaped` 三个字段，测试一律按 `key` 查 run 行，**不要为了断言给 `TickStats` 加字段**。

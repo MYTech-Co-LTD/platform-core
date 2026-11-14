@@ -494,14 +494,28 @@ token 只决定「这个账号能调哪些面」，不改变分层。
 **执行流（双入口，与 §2.6 的规则管道同源）**：
 
 - **发布路径**（T9）：契约含 `assignees` ⇒ 发布时解析 `dictRef`（**只取 enabled 条目**）→ 逐人 emit `form.assigned`（`event_id` **确定性**：`form:<assetId>:<version>:assigned:<user>`）→ 声明派生催办规则（幂等）。
-- **定时路径**（T11，**openship job** 跑仓内脚本）：对每个「含 `assignees` + `due`」的已发布表单：`due = published_at + afterDays`；**未提交** = 名单 − { 该版本 `submission.submitted_by` } → 逐人 emit `form.due_reminder`（`event_id` 含日期：`form:<assetId>:<version>:remind:<user>:<YYYY-MM-DD>`）。
+- **定时路径**（T11，**worker 的 `platform.scheduler` loop** 跑仓内脚本）：对每个「含 `assignees` + `due`」的已发布表单：`due = published_at + afterDays`；**未提交** = 名单 − { 该版本 `submission.submitted_by` } → 逐人 emit `form.due_reminder`（`event_id` 含日期：`form:<assetId>:<version>:remind:<user>:<YYYY-MM-DD>`）。
 
 **幂等**：两处 `event_id` 都**确定性派生** ⇒ 重复发布 / 重复调度天然去重（回执表 `unique(event_id, rule_id)` 兜底）。
 
-> ⚠️ **定时载体 = openship job**（2026-10-19 拍板，方案对比见 `docs/superpowers/specs/2026-10-18-notify-emit-seam-and-scheduler.md`）：
-> job 跑**仓内脚本**（照 `deploy/data-compose.yml` 的 dbt runner 范式：openship 打 `docker run` 一次性容器，**零常驻**），
-> 脚本**直接 import `modules/notify/**`** 对 DB 操作——`scripts/` **不在** `lint-architecture.mjs` 扫描根（`apps/ packages/ modules/`）内 ⇒ **不触 B1**。
-> ⇒ **in-platform 这一半既不需要 HTTP、不需要令牌、更不需要跨模块通路。**
+**定时载体（2026-11-14 修订）分为两条线：**
+
+- **基建定时 = openship job**：主机指标、探活看门狗、备份、证书类。判据：失败意味着「机器/进程/证书状态异常」。
+- **业务定时 = worker 的 `platform.scheduler` loop**：在 `notify-worker` 容器内（同镜像、多 loop 注册表），
+  任务目录在代码（`apps/server/src/scheduler/registry.ts`），排班与运行台账在库
+  （`platform.job_schedule` / `platform.job_run`），执行一律子进程 + 超时。
+  判据：失败意味着「业务数据/业务动作没发生」。
+
+**不变量**：① 调度器只排「引擎」不排「规则」（agent 只能排已注册 key）；② 只做 cron + 台账，
+不做 DAG / 依赖编排 / 回填队列；③ `source='system'` 时 `params` 不生效——行为只由代码 registry 决定。
+
+**业务 job 的定时副作用不进 HTTP 进程**：手动触发端点只**入队**，执行发生在 worker 进程。
+既有例外是**监控面**的集成健康探针（`apps/server/src/integration-probe.ts:385` 的 `setInterval`，
+由 `apps/server/src/app.ts:445` 启动，生产经 `deploy/docker-compose.yml:77` 的
+`INTEGRATION_PROBE_INTERVAL_MS=60000` 开启）——它不承担业务 job，不改变本条结论。
+
+> 方案对比与设计：`docs/superpowers/specs/2026-11-14-business-scheduler-design.md`（v2）。
+> 运维口径与切流程序：`deploy/jobs.md`。
 
 **不做清单（v1 写死）**：
 

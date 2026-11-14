@@ -4,8 +4,11 @@
 > （判据 `reportScopeViolations`，与发布门同一份实现）。
 > 设计：`docs/superpowers/specs/2026-11-12-metric-semantic-governance-design.md` §9.1；计划
 > `docs/superpowers/plans/2026-11-13-report-metric-gate-p5.md` Task 4；issue #2091。
-> 范式与 `deploy/notify-jobs.md` 一致：**仓内脚本 + openship job**（零常驻），命令走
-> `docker exec <server 容器> sh -lc '…'`——**不要**把定时副作用塞进 server 进程。
+> 目标范式与 `deploy/notify-jobs.md` 一致：**仓内脚本 + worker 的 `platform.scheduler` loop**（常驻，执行在子进程），
+> 手动命令走 `docker exec <server 容器> sh -lc '…'`。
+> 调度归属（2026-11-14 起）：本脚本的目标载体是 worker 的 `platform.scheduler` loop；
+> **迁移按 `deploy/jobs.md` 的切流表逐项进行——未切流的 job 此刻仍由 openship job 驱动**。
+> 仍然不要把这逻辑塞进 HTTP 请求路径：执行在 worker 的子进程里。
 
 ## 它补的是哪条断链
 
