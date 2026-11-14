@@ -101,6 +101,22 @@ describe('buildPipelineMap', () => {
     expect(out.get('lemeng/item')).toBeUndefined() // dim_item 与 item 是两条前缀，别互相串
   })
 
+  it('summary 由 domain 出数：assets / withStaging / broken / unscheduled 与规则一致', () => {
+    const m = buildPipelineMap({
+      ...base,
+      pipelines: [
+        { id: 'lemeng/retail_order_line.l0', lakeKeys: ['lemeng/retail_order_line/a.parquet'] },
+        { id: 'lemeng/no_staging.l0', lakeKeys: ['lemeng/no_staging/a.parquet'] },
+        { id: 'lemeng/dim.branch.l0', lakeKeys: ['lemeng/dim_branch/a.parquet'] },
+      ],
+      schedules: new Map([['lemeng/retail_order_line.l0', [{ source: '3120', cron: '0 5 * * *', enabled: true }]]]),
+      contractLakes: new Map([['stg_lemeng_branch', 'lemeng/dim_branch']]),
+      consumers: new Map([['lemeng/no_staging', ['vw_x']]]),
+      staging: ['stg_lemeng_retail_order_line', 'stg_lemeng_branch'],
+    })
+    expect(m.summary).toEqual({ assets: 3, withStaging: 2, broken: 0, unscheduled: 2 })
+  })
+
   it('accountOf：尾段是数字才算账套', () => {
     expect(accountOf('lemeng.x.l0.3120')).toBe('3120')
     expect(accountOf('lemeng.retail.tick.l1')).toBeNull()
