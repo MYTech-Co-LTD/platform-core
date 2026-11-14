@@ -106,6 +106,8 @@ describePg('SchedulerPort', () => {
     const port = mkPort(pool)
     await expectCode(port.createSchedule({ ...baseInput(), cron: '0 0 * * MON' }), 'INVALID_CRON')
     await expectCode(port.createSchedule({ ...baseInput(), expectedIntervalSecs: 0 }), 'INVALID_INTERVAL')
+    // int4 上界（2147483647）之外：不能让 PG 抛 22003。
+    await expectCode(port.createSchedule({ ...baseInput(), expectedIntervalSecs: 1e12 }), 'INVALID_INTERVAL')
     await expectCode(
       port.createSchedule({ ...baseInput(), params: { blob: 'x'.repeat(17 * 1024) } }),
       'PARAMS_TOO_LARGE',
@@ -125,6 +127,9 @@ describePg('SchedulerPort', () => {
     const sameOrgOtherNs = mkPort(pool, { ...actorA, namespace: 'jobtest-port:ns-other' })
     await expectCode(sameOrgOtherNs.runNow(id), 'NOT_FOUND')
 
+    // int8 域外 id（30 位）：必须在端口判 NOT_FOUND，不能下发 PG 抛 22003。
+    await expectCode(a.runNow('1' + '0'.repeat(29)), 'NOT_FOUND')
+
     // 越权尝试不得改动原行。
     const { rows } = await pool.query(
       'select enabled, deleted_at from platform.job_schedule where id=$1', [id])
@@ -139,8 +144,13 @@ describePg('SchedulerPort', () => {
     expect(typeof runId).toBe('string')
 
     const { rows } = await pool.query(
-      'select schedule_id, key, trigger, status from platform.job_run where id=$1', [runId])
-    expect(rows[0]).toEqual({ schedule_id: id, key: 'notify.emit', trigger: 'manual', status: 'queued' })
+      'select schedule_id, key, trigger, status, owner_org, owner_namespace from platform.job_run where id=$1',
+      [runId])
+    // 运行行带归属（与 createSchedule 同源）：agent 触发的运行在台账里可区分。
+    expect(rows[0]).toEqual({
+      schedule_id: id, key: 'notify.emit', trigger: 'manual', status: 'queued',
+      owner_org: ORG_A, owner_namespace: NS_A,
+    })
     const running = await pool.query(
       "select count(*)::int as n from platform.job_run where schedule_id=$1 and status='running'", [id])
     expect(running.rows[0].n).toBe(0)
@@ -163,24 +173,52 @@ describePg('SchedulerPort', () => {
     expect(rows[0].n).toBe(1)
   })
 
+  it('★ runNow 行锁等待有界：另一会话持锁 ⇒ ~2s 内 JOB_LOCK_TIMEOUT，且不插行', async () => {
+    const port = mkPort(pool)
+    const { id } = await port.createSchedule(baseInput())
+    const holder = await pool.connect()
+    try {
+      await holder.query('begin')
+      await holder.query('select id from platform.job_schedule where id=$1 for update', [id])
+      const t0 = Date.now()
+      await expectCode(port.runNow(id), 'JOB_LOCK_TIMEOUT')
+      const elapsed = Date.now() - t0
+      // lock_timeout='2s'：不能立刻失败（说明确实在等锁），也不能无限期占连接。
+      expect(elapsed).toBeGreaterThanOrEqual(1500)
+      expect(elapsed).toBeLessThan(5000)
+    } finally {
+      await holder.query('rollback').catch(() => {})
+      holder.release()
+    }
+    const { rows } = await pool.query(
+      "select count(*)::int as n from platform.job_run where schedule_id=$1 and status in ('queued','running')",
+      [id])
+    expect(rows[0].n).toBe(0)
+  })
+
   it('★ deleteSchedule 软删后：listSchedules 不含、两条 claim 路径都领不到', async () => {
     const port = mkPort(pool)
     const { id } = await port.createSchedule(baseInput())
-    // 造出「已到期 + 有手动排队行」的时刻：删之前两条 claim 路径都看得见。
+    // 造出「极度逾期（1980）+ 一条 manual queued」：若软删失效，limit=1 时它必是第一个候选
+    // （beforeEach 已清掉本前缀的全部 due/queued 行，避免被自己上一轮的残留占位）。
     await pool.query(
-      "update platform.job_schedule set next_run_at = now() - interval '1 minute' where id=$1", [id])
-    await pool.query(
+      "update platform.job_schedule set next_run_at = '1980-01-01T00:00:00Z' where id=$1", [id])
+    const queued = await pool.query<{ id: string }>(
       `insert into platform.job_run(schedule_id,key,occurrence,trigger,status)
-       values ($1,'notify.emit',now(),'manual','queued')`, [id])
+       values ($1,'notify.emit',now(),'manual','queued') returning id`, [id])
+    const queuedRunId = String(queued.rows[0].id)
 
     await port.deleteSchedule(id)
 
     const list = await port.listSchedules({ ownerOrg: ORG_A })
     expect(list.map((s) => s.id)).not.toContain(id)
-    const claimed = await claimDue(pool, 10, new Date(), nextRunAt)
+    const claimed = await claimDue(pool, 1, new Date(), nextRunAt)
     expect(claimed.some((j) => String(j.scheduleId) === id)).toBe(false)
-    const manual = await claimQueuedManual(pool, 10, new Date())
+    const manual = await claimQueuedManual(pool, 1, new Date())
     expect(manual.some((j) => String(j.scheduleId) === id)).toBe(false)
+    // 直接断言那条 queued 行未被消费：共享库上只断言「结果不含」在 limit=1 时可能空转。
+    const consumed = await pool.query('select status from platform.job_run where id=$1', [queuedRunId])
+    expect(consumed.rows[0].status).toBe('queued')
 
     const { rows } = await pool.query(
       'select deleted_at, enabled, next_run_at from platform.job_schedule where id=$1', [id])

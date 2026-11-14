@@ -71,6 +71,11 @@ const RESERVED_PARAM_KEYS = new Set(['ownerOrg', 'ownerNamespace'])
 
 const RUN_LIMIT_MAX = 100
 
+/** `job_schedule.timeout_ms` / `max_attempts` / `expected_interval_secs` 都是 int4。 */
+const INT4_MAX = 2_147_483_647
+/** `job_schedule.id` 是 bigserial（int8）。超出域的十进制 id 直接判 NOT_FOUND，绝不下发 PG。 */
+const INT8_MAX = 9_223_372_036_854_775_807n
+
 function fail(code: string, detail?: string): never {
   const err = new Error(code) as SchedulerPortError
   err.code = code
@@ -82,10 +87,12 @@ function fail(code: string, detail?: string): never {
 const OWNED_WHERE =
   'id = $1 and owner_org = $2 and owner_namespace = $3 and deleted_at is null'
 
-/** 非数字 id 直接判 NOT_FOUND：否则 PostgreSQL 会抛 bigint 解析错（500），且暴露 id 形状。 */
+/** 非「≤ int8 上界的十进制」id 一律 NOT_FOUND：否则 PostgreSQL 会抛 22P02/22003（不可控 500），
+ *  且错误形状本身会暴露 id 是否在域内。 */
 function parseId(id: string): string {
   const s = String(id)
-  return /^\d+$/.test(s) ? s : fail('NOT_FOUND')
+  if (!/^\d+$/.test(s) || BigInt(s) > INT8_MAX) fail('NOT_FOUND')
+  return s
 }
 
 type QueryFn = (sql: string, values?: unknown[]) => Promise<{ rows: Array<Record<string, unknown>> }>
@@ -107,9 +114,10 @@ async function assertOwned(
   return { id: String(row.id), key: String(row.key) }
 }
 
+/** 正整数且落在 int4 域内：`Number.isSafeInteger` 放过的 1e12 会让 PG 抛 22003（不可控 500）。 */
 function positiveInt(v: unknown, code: string): number {
   const n = typeof v === 'number' ? v : Number(v)
-  if (!Number.isSafeInteger(n) || n <= 0) fail(code)
+  if (!Number.isSafeInteger(n) || n <= 0 || n > INT4_MAX) fail(code)
   return n
 }
 
@@ -147,7 +155,7 @@ export function buildSchedulerPort(deps: {
         : positiveInt(input.timeoutMs, 'INVALID_TIMEOUT')
       const maxAttempts = input.maxAttempts === undefined
         ? def.maxAttempts
-        : positiveInt(input.maxAttempts, 'INVALID_MAX_ATTEMPTS')
+        : positiveInt(input.maxAttempts, 'INVALID_ATTEMPTS')
 
       const params = sanitizeParams(input.params)
       const paramsJson = JSON.stringify(params)
@@ -248,6 +256,9 @@ export function buildSchedulerPort(deps: {
       const client = await pool.connect()
       try {
         await client.query('begin')
+        // 锁等待上限（照抄 P1 手动触发路由）：排班行被 claim/别的触发持锁时，
+        // **不许把连接无限期占住**。2s 到点由 PostgreSQL 抛 55P03，下面转 JOB_LOCK_TIMEOUT。
+        await client.query("set local lock_timeout = '2s'")
         // 归属校验 + 行锁同一句：并发触发的第二个事务在此等待，提交后按最新快照重判 busy。
         const sch = await assertOwned(
           (sql, values) => client.query(sql, values), id, actor, true)
@@ -258,15 +269,19 @@ export function buildSchedulerPort(deps: {
         )
         if (busy.rows.length > 0) fail('JOB_ALREADY_PENDING', sch.id)
         // params_snapshot 留 null：claimQueuedManual 会回填排班 params（与端点同语义）。
+        // 归属一并落到运行行（与 createSchedule 同源）：agent 触发的运行在台账里可区分。
         const ins = await client.query<{ id: string }>(
-          `insert into platform.job_run(schedule_id, key, occurrence, trigger, status)
-           values ($1,$2,now(),'manual','queued') returning id`,
-          [sch.id, sch.key],
+          `insert into platform.job_run
+             (schedule_id, key, occurrence, trigger, status, owner_org, owner_namespace)
+           values ($1,$2,now(),'manual','queued',$3,$4) returning id`,
+          [sch.id, sch.key, actor.org, actor.namespace],
         )
         await client.query('commit')
         return { runId: String(ins.rows[0].id) }
       } catch (e) {
         await client.query('rollback').catch(() => {})
+        // 55P03 = lock_not_available：排队等锁有界失败，转端口错误码（不插行，事务已回滚）。
+        if ((e as { code?: string }).code === '55P03') fail('JOB_LOCK_TIMEOUT')
         throw e
       } finally {
         client.release()
