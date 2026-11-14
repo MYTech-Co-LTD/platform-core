@@ -8,6 +8,7 @@ import type {
   ChannelAddressResolver, EventCatalogReader, Identity, NotificationEventDecl,
 } from '@platform/sdk'
 import { validatePayload } from '@platform/sdk'
+import { createAgentRule, createAgentTemplate, sendAgentMessage } from './agent-actions'
 import { NOTIFY_TOOLS } from './mcp-tools'
 import { resolveDeliverability } from './domain/deliverability'
 import { resolveDeliveryAddress } from './domain/resolve-address'
@@ -27,6 +28,8 @@ type McpDeps = {
   pool: Pool
   org: string
   userId: string
+  /** 调用者 scopes（用于 publish 等工具级闸门）。 */
+  scopes?: string[]
   events?: EventCatalogReader
   addresses?: ChannelAddressResolver
 }
@@ -269,6 +272,72 @@ export async function callTool(
     return ok({ accepted: true, recipient: deps.userId })
   }
 
+  if (name === 'send_message') {
+    const namespace = str(args.namespace)
+    const toRaw = args.to
+    const to = Array.isArray(toRaw) ? arr(toRaw) : str(toRaw)
+    const title = str(args.title)
+    const body = str(args.body)
+    if (!namespace || !title || !body
+        || (Array.isArray(to) ? to.length === 0 : to === '')) {
+      return err('missing_required')
+    }
+    const r = await sendAgentMessage(deps.pool, {
+      org: deps.org, userId: deps.userId, namespace,
+      eventId: typeof args.eventId === 'string' ? args.eventId : undefined,
+      to, title, body,
+      link: typeof args.link === 'string' ? args.link : undefined,
+    })
+    return r.ok
+      ? ok({ accepted: r.accepted, eventId: r.eventId })
+      : err(r.code, r.detail ?? {})
+  }
+
+  if (name === 'create_agent_template') {
+    const namespace = str(args.namespace)
+    const key = str(args.key)
+    const tplName = str(args.name)
+    const eventKey = str(args.eventKey)
+    const contents = args.contents
+    if (!namespace || !key || !tplName || !eventKey
+        || contents === null || typeof contents !== 'object' || Array.isArray(contents)) {
+      return err('missing_required')
+    }
+    const r = await createAgentTemplate(deps.pool, {
+      org: deps.org, userId: deps.userId, namespace, key, name: tplName, eventKey,
+      contents: contents as Record<string, Record<string, string>>,
+      publish: args.publish === true,
+      canPublish: (deps.scopes ?? []).includes('notify:publish'),
+    })
+    return r.ok
+      ? ok({ key: r.key, revision: r.revision, published: r.published })
+      : err(r.code, r.detail ?? {})
+  }
+
+  if (name === 'create_agent_rule') {
+    const namespace = str(args.namespace)
+    const eventKey = str(args.eventKey)
+    const recipientKey = str(args.recipientKey)
+    const templateKey = str(args.templateKey)
+    const channels = arr(args.channels)
+    if (!namespace || !eventKey || !recipientKey || !templateKey || channels.length === 0) {
+      return err('missing_required')
+    }
+    const r = await createAgentRule(deps.pool, {
+      org: deps.org, userId: deps.userId, namespace,
+      id: str(args.id) || undefined, eventKey,
+      scope: str(args.scope) || undefined,
+      recipientKey,
+      recipientLiteral: Array.isArray(args.recipientLiteral) ? arr(args.recipientLiteral) : null,
+      recipientDepts: Array.isArray(args.recipientDepts) ? arr(args.recipientDepts) : null,
+      templateKey, channels,
+      cooldownMinutes: typeof args.cooldownMinutes === 'number' ? args.cooldownMinutes : null,
+    })
+    return r.ok
+      ? ok({ id: r.id, status: r.status, approvalId: r.approvalId })
+      : err(r.code, r.detail ?? {})
+  }
+
   return err('unknown_tool', { name })
 }
 
@@ -320,6 +389,7 @@ export function registerNotifyMcpManage(
       pool: deps.pool,
       org: identity.orgId,
       userId: identity.userId,
+      scopes: identity.scopes,
       events: deps.events,
       addresses: deps.addresses,
     }
