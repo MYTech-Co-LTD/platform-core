@@ -1511,11 +1511,11 @@ describe('scheduler 接线契约', () => {
     expect(calls.some((c) => c.startsWith('insert into platform.j'))).toBe(false)
   })
 
-  it('jobHealth 在空库上不抛（返回 ok 或 reasons 均可，但必须是合法形状）', async () => {
+  it('★ 心跳缺失 ⇒ ok=false 且原因点名心跳（不是「看起来没作业就算健康」）', async () => {
     const pool = { query: async () => ({ rows: [] }) }
     const h = await jobHealth(pool as never, new Date())
-    expect(typeof h.ok).toBe('boolean')
-    expect(Array.isArray(h.reasons)).toBe(true)
+    expect(h.ok).toBe(false)
+    expect(h.reasons.join()).toContain('心跳')
   })
 })
 ```
