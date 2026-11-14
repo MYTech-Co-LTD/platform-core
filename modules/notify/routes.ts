@@ -6,7 +6,7 @@ import { Hono } from 'hono'
 import type { Pool } from 'pg'
 import type { ChannelAddressResolver, EventCatalogReader, Identity } from '@platform/sdk'
 import { validatePayload } from '@platform/sdk'
-import { checkWecomHealth, checkWebhookHealth } from './domain/channel'
+import { checkWecomDirectHealth, checkWecomHealth, checkWebhookHealth } from './domain/channel'
 import { resolveDeliverability, type DeliverabilityDeps } from './domain/deliverability'
 import { channelIsConfigured } from './domain/channel-config'
 import { listAddressIssues } from './domain/delivery-stats'
@@ -413,11 +413,16 @@ export function createNotifyRouter(deps: {
 
     let result: { ok: boolean; detail?: string } = { ok: true }
     if (ch.provider === 'wecom_chat') {
-      const envKey = ch.secret_refs.bridge_url
-      const bridgeUrl = envKey ? process.env[envKey] : undefined
-      result = bridgeUrl
-        ? await checkWecomHealth(bridgeUrl)
-        : { ok: false, detail: 'bridge_url env 未配置' }
+      if (ch.config.transport === 'direct') {
+        // 直连的判据 = 凭据能换到 token；不能再读桥的 env（直连按设计不保留它）。
+        result = await checkWecomDirectHealth({ pool: deps.pool, org: org(c) })
+      } else {
+        const envKey = ch.secret_refs.bridge_url
+        const bridgeUrl = envKey ? process.env[envKey] : undefined
+        result = bridgeUrl
+          ? await checkWecomHealth(bridgeUrl)
+          : { ok: false, detail: 'bridge_url env 未配置' }
+      }
     } else if (ch.provider === 'webhook') {
       const urlKey = ch.secret_refs.url
       const keyKey = ch.secret_refs.key
