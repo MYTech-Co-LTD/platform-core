@@ -902,6 +902,33 @@ describe('R3 多页 / 打印', () => {
   })
 })
 
+describe('R4 跨面板查询合并', () => {
+  it('★ 请求体逐字相同的两格只发一次 /query，回包扇出到两格', async () => {
+    stub({
+      panels: [
+        { chart: 'table', title: 'A', metricId: 'm1', dims: ['bizday'], args: { system_book: '3120' }, span: 12 },
+        { chart: 'table', title: 'B', metricId: 'm1', dims: ['bizday'], args: { system_book: '3120' }, span: 12 },
+      ],
+    }, { m1: { columns: ['value'], rows: [['7']] } }, new Set())
+    renderView()
+
+    await waitFor(() => expect(screen.getAllByText('7').length).toBe(2))
+    expect(queryBodies()).toHaveLength(1)
+  })
+
+  it('请求体不同（args 不同）⇒ 不合并', async () => {
+    stub({
+      panels: [
+        { chart: 'table', title: 'A', metricId: 'm1', dims: [], args: { branch_num: '92' }, span: 12 },
+        { chart: 'table', title: 'B', metricId: 'm1', dims: [], args: { branch_num: '91' }, span: 12 },
+      ],
+    }, { m1: { columns: ['value'], rows: [['1']] } }, new Set())
+    renderView()
+
+    await waitFor(() => expect(queryBodies()).toHaveLength(2))
+  })
+})
+
 describe('R3 文本语义内嵌（L2）', () => {
   const period = { mode: 'custom' as const, from: '2026-10-01', to: '2026-10-02' }
 
