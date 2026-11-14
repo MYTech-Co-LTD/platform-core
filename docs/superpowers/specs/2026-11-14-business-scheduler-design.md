@@ -95,6 +95,15 @@ deploy/docker-compose.yml
 - 任务目录在代码（`apps/server/src/jobs/registry.ts`），排班状态在库；启动幂等 seed，
   **不覆盖人改过的 cron**（只补新增 key、只补缺失行）。
 
+**配置（全部走 env，缺省即可用）**
+
+| env | 缺省 | 语义 |
+|---|---|---|
+| `SCHEDULER_ENABLED` | `1` | `0` = 只停调度 loop（投递 loop 照跑），切流回滚用 |
+| `SCHEDULER_TICK_MS` | `30000` | 一拍间隔 |
+| `SCHEDULER_MAX_CONCURRENCY` | `2` | 同时执行上限 |
+| `SCHEDULER_HEALTH_PORT` | 同 `WORKER_HEALTH_PORT` | 复用现有 worker 健康端口 |
+
 ## 7. 数据模型（迁移 `apps/server/src/migrations/018_platform_jobs.sql`）
 
 ```sql
@@ -154,7 +163,10 @@ create table if not exists platform.job_heartbeat (
 - **执行**：`spawn('pnpm', ['exec','tsx', script], {cwd:'/app', env: process.env})`；
   `timeout_ms` 到点 `SIGTERM`，5s 后 `SIGKILL`，run 记 `timeout`。
 - **重试**：`exit 2`（缺 env / 判不了）**不重试**；其余非 0 在 `max_attempts` 内隔 60s 重排（写新 run 行，`attempt+1`）。
-- **并发**：全局上限 `SCHEDULER_MAX_CONCURRENCY`（默认 2）；同一 key 不重叠（内存中活跃集合足够——单 loop 进程）。
+- **并发**：全局上限 `SCHEDULER_MAX_CONCURRENCY`（默认 2）；**同一 key 不重叠以库为准**，不用进程内集合——
+  派发前查 `platform.job_run` 是否已有 `status='running'` 的同行，有则本轮记 `skipped`（多副本下同样成立）。
+- **僵尸 running 回收**：`running` 且 `started_at < now() - 2 × timeout_ms` 的行，下一跳直接改判
+  `timeout`（附 `error='stale running reaped'`）——否则调度器崩溃一次就会把该 key 永久堵死。
 - **时区**：`cron` 按 `timezone` 解释（默认 `Asia/Shanghai`，无 DST）；`job_run` 时间戳一律 UTC。
 - **cron 解析**：**零依赖自写纯函数**（仓内既有风格：元 schema 校验器就是零依赖自写），
   只支持 `* , - /` 与 0–7 周几；**不支持的语法在 seed 期直接报错拒绝**（fail-closed，绝不静默按错时间跑）。
