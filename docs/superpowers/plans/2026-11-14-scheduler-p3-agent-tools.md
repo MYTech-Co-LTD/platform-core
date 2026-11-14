@@ -23,7 +23,7 @@
 
 | 文件 | 职责 |
 |---|---|
-| `packages/platform-sdk/src/module.ts` | `ModuleContext` 增可选 `scheduler?: SchedulerPortLike`（仅类型，端口实体在宿主） |
+| `packages/platform-sdk/src/module.ts` | `ModuleContext` 增可选 `scheduler?: SchedulerPortFactory`（`(actor) => SchedulerPort`；仅类型，端口实体在宿主） |
 | `apps/server/src/scheduler/port.ts` | 配额强制（50 / 5min / 200 per day）+ `quotaOf` 只读查询 |
 | `apps/server/src/loader.ts` | 把端口注入模块上下文（与 `notify` 注入同一处） |
 | `modules/notify/tools/schedules.ts` | 七个 MCP 工具（create/list/pause/resume/delete/list_runs/run_now），只调端口 |
@@ -53,7 +53,7 @@
 
 **Files:** Modify `packages/platform-sdk/src/module.ts`、`apps/server/src/loader.ts`、`apps/server/src/app.ts`（构造端口并传入 loader）；Test `apps/server/src/loader.test.ts` 追加。
 
-- [ ] 失败测试：装载后 `ctx.scheduler` 存在，且 `listSchedules` 用**装载时的 actor**（测试给一个 actor，断言只看到它的排班）；未注入时 `ctx.scheduler` 为 `undefined`（旧宿主/单测），模块必须显式降级（工具返回 `SCHEDULER_UNAVAILABLE`）。
+- [ ] 失败测试：装载后 `ctx.scheduler` 是**工厂函数**，`ctx.scheduler(actor)` 按**请求身份**绑定 actor（actor A 建一条 ⇒ 库行归属 A；A 列得到自己那条，B 列举为空）；未注入时 `ctx.scheduler` 为 `undefined`（旧宿主/单测），模块必须显式降级（工具返回 `SCHEDULER_UNAVAILABLE`）。
 - [ ] RED → GREEN → 提交 `feat(data): SchedulerPort 注入模块上下文`。
 
 ---
@@ -62,7 +62,7 @@
 
 **Files:** Create `modules/notify/tools/schedules.ts` + 测试；Modify `modules/notify/manifest.yaml`。
 
-**工具**（每个都只调 `ctx.scheduler`；`actor` 由宿主注入，**不接受参数传 org/namespace**）：
+**工具**（每个都只调 `ctx.scheduler`；`actor` 由**工具层从请求身份取**——`{userId, org, namespace?}` 再 `ctx.scheduler(actor)` 造端口，**不接受用户参数传 org/namespace**）：
 
 | 工具 | 入参 | 出参 |
 |---|---|---|

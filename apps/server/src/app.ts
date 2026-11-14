@@ -17,11 +17,10 @@ import { Hono } from 'hono'
 import { bodyLimit } from 'hono/body-limit'
 import type { Pool } from 'pg'
 import { CasdoorClient } from '@platform/auth-core'
-import type { SchedulerPortFactory } from '@platform/sdk'
 import { loadConfig, type AppConfig } from './config'
 import { getPool } from './db'
 import { loadModules, type ModulesRuntime } from './loader'
-import { buildSchedulerPort } from './scheduler/port'
+import { makeSchedulerFactory } from './scheduler/factory'
 import { runMigrations } from './migrate'
 import { REGISTRY_PATH, startIntegrationProbeLoop } from './integration-probe'
 import { resolveKeyWithTouch } from './api-key-store'
@@ -169,17 +168,10 @@ export async function buildApp(overrides: BuildAppOverrides = {}): Promise<{
       console.warn(`[modules] PLATFORM_SUBSCRIPTION_SOURCE=${JSON.stringify(rawSubscriptionSource)} 未知，按 casdoor 处理`)
     }
     // 调度器端口工厂（W6-P3）：注入模块 `ctx.scheduler`，notify 工具面只经它操作排班。
-    // 模块上下文在**装载期**只构造一次、没有请求期会话 ⇒ 宿主交出去的是**工厂**，不是
-    // 绑定好 actor 的端口：调用方（Task 3 的工具）用**请求身份**造端口，归属才不被抹平成
-    // 某个全局 actor（固定 actor 会让所有租户的排班落进同一 owner_org/namespace）。
-    // · namespace 缺省补 `org`——**v1 约定「一个 org 一个 namespace」**（notify 模块与
-    //   channel-address 都没有既有 owner_namespace 口径）。
-    // · 端口是薄对象（闭包 + pool 引用），每次调用新建的成本可忽略；只要有 pool 就有工厂，
-    //   不存在 PLATFORM_ORG/multi 的注入分支。
-    const scheduler: SchedulerPortFactory = (actor) => buildSchedulerPort({
-      pool,
-      actor: { userId: actor.userId, org: actor.org, namespace: actor.namespace || actor.org },
-    })
+    // 装配逻辑在 `scheduler/factory.ts`（可导出纯函数）——测试直接调它，避免「app.ts 内联
+    // lambda 在测试中不可达 ⇒ 改回固定 actor 仍全绿」的结构性盲区（审阅 I1）。
+    // 只要有 pool 就有工厂，不存在 PLATFORM_ORG/multi 的注入分支。
+    const scheduler = makeSchedulerFactory(pool)
     runtime = await loadModules(overrides.modulesDir ?? modulesDir, {
       pool,
       casdoorFor: casdoorFactory,

@@ -21,7 +21,7 @@ import { runMigrations } from './migrate'
 import { seedDemo } from './seed'
 import {
   provisionModulePermissionsResilient, loadModules, provisionModulePermissions } from './loader'
-import { buildSchedulerPort } from './scheduler/port'
+import { makeSchedulerFactory } from './scheduler/factory'
 import type { TenantRow } from './tenant'
 
 const dbUrl = process.env.DATABASE_URL
@@ -1685,13 +1685,11 @@ describe.skipIf(!dbUrl)('loadModules', INTEGRATION_SUITE, () => {
       ].join('\n'),
     })
 
+    // 直接用**生产装配点**的工厂（app.ts 也用它）——不是测试里另抄一份同形 lambda：
+    // 否则工厂被改成固定 actor 时本用例仍然全绿（审阅 I1）。
     const runtime = await loadModules(modulesDir, {
       pool,
-      // 与 app.ts 工厂同形：namespace 缺省补 org（这里 fixture 已显式传，补丁不被触发）
-      scheduler: (actor) => buildSchedulerPort({
-        pool,
-        actor: { ...actor, namespace: actor.namespace || actor.org },
-      }),
+      scheduler: makeSchedulerFactory(pool),
     })
 
     // 请求身份按头切换（真实链路 = session/PAT/企微中间件注入的 identity）
@@ -1727,7 +1725,16 @@ describe.skipIf(!dbUrl)('loadModules', INTEGRATION_SUITE, () => {
       created_by: 'u-jobtest-p3:loader-org-a',
     })
 
-    // ② 同一 app、换 org-b 的请求身份列举 ⇒ 空（归属由调用者 actor 决定，不是装载期固定值）
+    // ② 同一 app、**org-a 自己**列得到刚建的那条（注入层必须双向：不只看别人看不到）
+    const ownRes = await app.request('/api/modules/schedmod/sched', {
+      headers: { 'x-test-org': 'jobtest-p3:loader-org-a' },
+    })
+    expect(ownRes.status).toBe(200)
+    const ownBody = await ownRes.json() as { present: boolean; rows: Array<{ id: string }> }
+    expect(ownBody.present).toBe(true)
+    expect(ownBody.rows.map((r) => r.id)).toEqual([createdBody.created.id])
+
+    // ③ 同一 app、换 org-b 的请求身份列举 ⇒ 空（归属由调用者 actor 决定，不是装载期固定值）
     const otherOrgRes = await app.request('/api/modules/schedmod/sched', {
       headers: { 'x-test-org': 'jobtest-p3:loader-org-b' },
     })
@@ -1735,6 +1742,37 @@ describe.skipIf(!dbUrl)('loadModules', INTEGRATION_SUITE, () => {
     const otherBody = await otherOrgRes.json() as { present: boolean; rows: unknown[] }
     expect(otherBody.present).toBe(true)
     expect(otherBody.rows).toEqual([])
+  })
+
+  it('生产装配点 makeSchedulerFactory：缺 namespace 补 org；跨 actor 隔离（变异靶点）', async () => {
+    cleanupSqls.push("delete from platform.job_schedule where owner_org like 'jobtest-p3:factory-%'")
+    const factory = makeSchedulerFactory(pool)
+    const orgA = 'jobtest-p3:factory-org-a'
+    const orgB = 'jobtest-p3:factory-org-b'
+
+    // **不传 namespace**：工厂必须补成 org（v1 一个 org 一个 namespace，M3）
+    const createdA = await factory({ userId: 'u-a', org: orgA }).createSchedule({
+      key: 'notify.emit',
+      cron: '7 * * * *',
+      timezone: 'UTC',
+      params: {},
+      expectedIntervalSecs: 3600,
+    })
+    const row = await pool.query(
+      'select owner_org, owner_namespace, created_by from platform.job_schedule where id = $1',
+      [createdA.id],
+    )
+    expect(row.rows[0]).toEqual({
+      owner_org: orgA,
+      owner_namespace: orgA, // 补丁生效：没传 namespace 时 = org
+      created_by: 'u-a',
+    })
+
+    // A 看得到自己的一条；B 看不到（变异：工厂若忽略入参恒用固定 actor，B 的断言必红）
+    const aRows = await factory({ userId: 'u-a', org: orgA }).listSchedules({ ownerOrg: orgA })
+    expect(aRows.map((r) => r.id)).toEqual([createdA.id])
+    const bRows = await factory({ userId: 'u-b', org: orgB }).listSchedules({ ownerOrg: orgB })
+    expect(bRows).toEqual([])
   })
 
   it('未注入 scheduler ⇒ ctx.scheduler 为 undefined（旧宿主/单测的降级态）', async () => {
