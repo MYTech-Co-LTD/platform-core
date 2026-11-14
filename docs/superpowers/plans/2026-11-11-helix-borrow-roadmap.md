@@ -81,16 +81,18 @@
 | **Wave 5 P4（写面收口）** | PR #2086（squash `1c30d83a`，issue #2068）：`customize_metric`/`delete_custom_metric` 改提交变更单（含提交即试算），`DATA_METRIC_REVIEW_MODE=off` 保留旧直写一个发布周期；**提交期预检下沉 `submitChange` 一份**（L1 保留 id / declared / column_agg / 删平台口径 / 删不存在 ⇒ fail-early，不再落「绿单死在采纳期」）；console 指标页删 5 类写入口（−571 行）+ **移动端改纯只读**；**REST 8 端点 410 指路**（含 `/metrics/declarations`、`draft`、`confirm-draft`；off 保留原行为、manifest 声明保留）；销三缓办（试算重跑 60s 限速、notify eventId 加 `ch:` 命名空间、失败带 issues）；openclaw 检索描述补投影词。终审（opus）fix-first：实测证伪「唯一通路」——`draft/confirm-draft` 仍是 agent 可达直写面、移动端仍是完整写面且元数据按钮被 410 打坏 ⇒ 修复波 4/4 复核 clean。验证：modules/data 全量 1872（rebase 后含 main 新用例）+ mobile 14 + guard 915 + 全仓 typecheck + 全门禁；部署 `dep_R2TjEOEQRFuCFeYy`（v296）容器实测：retired helper 在且 8 处调用、工具侧 8 处 submitChange、`DATA_METRIC_REVIEW_MODE` 未设即 on、未鉴权 401（宿主门卫先于 410）、console 产物无写动作文案、mobile 产物无编辑/确认生效、healthz 200 |
 | **Wave 5 P5（报表×指标 + declaration 档）** | PR #2109（squash `38426c50`，issue #2091）+ 部署 `2d85f8e6`（含本提交的后续 main）容器实测：**declaration 档回归**（迁移 048 扩 CHECK 实测含 declaration、kind 三处枚举同步、提交期预检含同名/L1 撞名）、发布门 `report-scope-gate.ts`（`audience_unbounded` 判据在位）、巡检脚本 `/app/scripts/report-scope-scan.mjs` 在位、`/metric-changes` 401/healthz 200。终审（opus）fix-first：抓出**计划层面的模型缺口**（受众仅按部门集合判，`visibility=tenant` 与 ACL scope/user 类受众被忽略）⇒ 修复波 7/7（unbindable 判定独立于部门集合、owner 豁免显式化、console 错误码+panels、receipt 拒绝形状、审计去重、metricIdsOf 守卫、门前置注释）。CI 三连红均为环境事实而非逻辑错：①本地残留数据假绿（declaration 用例依赖平台桶旧 L1）⇒ 自建夹具并以**空库**验绿；②**CI 测 PR head × 最新 main 合并**（main 期间进 R1–R6，`TextPanel` 新增必填 `format`）⇒ rebase 后按新形状补字段；③main 上 system-map 用例 flake，重跑即绿 |
 
+| **Wave 5 尾波（指标下线提案）** | PR #2157（squash `45467681`，issue #2148；候选池项「使用统计→下线候选接评审」全链）：delete 档 payload 允许 `{reason}`（**执行器忽略、待核对页展示**）+ `domain/metric-retire.ts` 四条安全过滤（仅 L2 / 窗口 0 次 / **行龄 ≥ 窗口** / **不被任何报表引用**——草稿 `data.reports.spec` ∪ 已发布 `report_versions.spec`，经 `parseStoredSpec` 归一后取面板 `metricId` 与 KPI 分母 / 未决**或已驳回**排除）+ `scripts/metric-retire-job.mjs`（`--days` > `METRIC_RETIRE_DAYS` > 90，rc 0/1/2）+ `deploy/metric-retire-job.md`（**job 不代建**）。终审（opus）merge-ready 零 MUST-FIX，五个接缝走查：采纳后指标从目录消失 ⇒ `/query` 回 `metric_not_declared`（有审计）、报表面板 `applyPanelRenderGate` 降级、回执 404、重发布 `UNKNOWN_PANEL_METRIC`——可见可审计且**同 id 可重建**；引用面全枚举（移动端同存储、L2 只引 L1 故删 L2 不断编译）。实测：**两实例**部署后容器内 `scripts/metric-retire-job.mjs` + `deploy/metric-retire-job.md` 在位、`node --check` OK、`--days abc` ⇒ **rc 2 且不进库**；只读探针 `retireOrgs()` 山海=`["shanhaiyiguo-org"]` 且 `retireEligibleOf(90d)=0`、mytech=`[]`（无 L2 行 ⇒ 该实例暂不产生提案）。四条 SHOULD-FIX 转待办 |
+
 ### 待办（Wave 见 §4）
 
 | 项 | 现状证据 | 波次 |
 |---|---|---|
 | 列级血缘 | dbt core manifest 无列级边（dbt core 不产出列级 edge） | 2.4（**触发式**：等真的有「按列追影响」的需求再做） |
-
-
 | retention（可选） | 当前各表极小、health 已按 7 天窗口判；破 10 万行或积压变红时再议（删行需点名） | 观察项（无动作） |
+| **下线提案 SHOULD-FIX（终审四条）** | ① **提案→采纳的陈旧凭据窗口**：job 判「无报表引用」之后若有报表引用该指标，采纳侧仍会执行删除（修法二选一，需裁决：人点「跑试算」时重算引用并盖进快照 / `deleteMetricDeclaration` 加引用硬闸）② 每 org 每轮提单**无上限**（建议 20，防一轮刷屏；周更 cron 下影响有限）③ `verified_questions` 孤儿回归红（删指标后回归基线残留，需单条清理）④ v2 `ai_text` dataset 键在引用面上是**惰性缺口**（当前 `ai_text` 不承载 metricId，靠 `parseStoredSpec` 归一兜住） | 观察/触发式（①② 需裁决） |
 
-> **Wave 0–3 主线已全部收口（2026-11-12）**：待办表只剩一个「触发式」与一个「观察项」。
+> **Wave 0–3 主线已全部收口（2026-11-12）**：Wave 0–3 的待办只剩一个「触发式」与一个「观察项」；
+> 表末「下线提案 SHOULD-FIX」是 2026-11-14 尾波终审的新增（①② 需裁决，③④ 触发式）。
 
 ---
 
@@ -159,7 +161,8 @@
 ## §6 候选池
 
 - **声明类对账证据接入采纳**（原 P6 交付项；2026-11-14 P6 按实际交付重划后移入）：采纳前要求对账/证据，无证据不可采纳。
-- **指标使用统计 → 下线候选**（原 P6 交付项；同上）：零使用口径进下线候选。
+- ~~**指标使用统计 → 下线候选**~~ → **已交付（2026-11-14）**：PR #2157（见 §3「Wave 5 尾波」）。
+  job `metric-retire` **未创建**——建 job 属运维动作，须人点名（命令在 `deploy/metric-retire-job.md`）。
 
 ---
 
@@ -200,3 +203,4 @@
 | 2026-11-14 | P6 计划出台（门结果分类+creator 预检+提交限速+reveal 写入+门重跑） | 取证：门返回 string[] warnings；rollbackVersion 直调 publish；metricIdsOf 全可选形状 | 支 PR 见下 |
 | 2026-11-14 | **Wave 5 P6 完成入账 = Wave 5 全部收口**（门结果分类/授权模型纠正/提交限速/reveal 写入/四处重跑门）；原 §18 P6 两项移入候选池 | PR #2141（`67604c93`）+ 部署实测：`gateBlocks`/`PUBLISHED_SNAPSHOT_UNREADABLE`/`canManage` 三处/`previewSkipped` 双面/`revealOfPayload` 均在容器。**关键纠正**：采纳时的 creator 门原比对采纳人 ⇒ 「agent 提单、人采纳」对非本人指标必 403（P4 以来的真实缺口），已改为 `creator ∪ data:manage` 并撤回提交期预检。遗留：Metabase 整表判定不可实现、L1 reveal 无写入面、confirmPrivateMeasureDraft 仍 creator-only（on 模式不可达）、PUBLISHED_SNAPSHOT_UNREADABLE 未进 console 消息表 |
 | 2026-11-14 | **P1 缓办行对账销账**：⑤⑥ 已在 P4 交付（eventId `ch:` 前缀 / preview_failed 带 issues）；② 随 P4 直写面 410 而 moot；**① 已落地**（check-semantics ⑤ label 撞名预检，CI 拦在 sync 运行时炸之前，真库 YAML 零冲突实跑过）；**③ 裁定为设计如此**（override 是租户级口径变更，租户全可见正是其语义，非缺口）；**④ 裁定为记录不改**（报表提案是轻量创建动作，`DATA_MCP_ALLOW_MUTATING` 门为指标定义面设计，报表面维持现状） | 尾波 PR + `check-semantics: OK（entities 13）` 实跑 |
+| 2026-11-14 | **候选池项「使用统计→下线候选接评审」交付入账**（delete 档 `reason` + 四条安全过滤 + job 脚本 + job 文档）；候选池该行销账 | PR #2157（`45467681`）+ **两实例**容器实测：`scripts/metric-retire-job.mjs` / `deploy/metric-retire-job.md` 在位、`node --check` OK、`--days abc` ⇒ rc 2 不进库、只读探针 `retireOrgs()` 山海=`["shanhaiyiguo-org"]`（`retireEligibleOf(90d)=0`）/ mytech=`[]`（无 L2 行）。**job 未建**（建 job 需点名）。四条 SHOULD-FIX 入待办 |
