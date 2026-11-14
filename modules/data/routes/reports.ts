@@ -38,6 +38,7 @@ import { summarizeExposure } from '../domain/publish-preview'
 import { compileTemplate, REPORT_TEMPLATES, templateById } from '../domain/report-templates'
 import { panelArgsOf } from '../domain/report-query'
 import { runDetailQuery } from '../domain/drill'
+import { resolveTextTokens } from '../domain/report-tokens'
 import type { QueryDeps } from '../domain/query-service'
 import { periodRangeOf, type DateRange } from '../domain/report-period'
 import type { FactBundle } from '../domain/report-facts'
@@ -1982,6 +1983,56 @@ export function registerReports(r: ModuleHono, ctx: RouteCtx): void {
       return c.json({ error: 'FORBIDDEN', ...(out.detail === undefined ? {} : { detail: out.detail }) }, 403)
     }
     return c.json({ error: 'QUERY_FAILED' }, 502)
+  })
+
+  // ── 文本语义内嵌（R3 / L2）──────────────────────────────────────────────────────────
+  // 文本面板里的 `{{metric:…}}` 引用在**服务端**解析成当前期间/门店/筛选下的活数。
+  // 前端只渲染已替换好的文本；token 只能引用观看面 plan 里已存在的指标（渲染闸已裁掉不可见的），
+  // 任何一个引用解析不了 ⇒ 整块 409 + 可读原因（fail-closed，不回原文、不回空）。
+  const TokenTextBody = z.object({
+    panelIndex: z.number().int().min(0),
+    period: PeriodSchema,
+    branchNum: z.string().min(1).max(64).optional(),
+    version: z.number().int().positive().optional(),
+    preview: z.literal('draft').optional(),
+    /** 报表共享筛选的运行期取值（与页面 /query 同源）。 */
+    filters: z.record(z.unknown()).optional(),
+  }).strict()
+
+  r.post('/reports/:id/token-text', async (c) => {
+    const id = reportIdOf(c.req.param('id'))
+    if (id === null) return c.json({ error: 'NOT_FOUND' }, 404)
+    const body = TokenTextBody.safeParse(await c.req.json().catch(() => null))
+    if (!body.success) return c.json({ error: 'INVALID_BODY' }, 400)
+    const v = await loadViewableSpec(c, id, body.data)
+    if ('error' in v) {
+      const status = v.error === 'UNAUTHENTICATED' ? 403
+        : (v.error === 'NOT_FOUND' || v.error === 'NOT_PUBLISHED') ? 404 : 400
+      return c.json({ error: v.error }, status)
+    }
+    const idx = body.data.panelIndex
+    if (v.deniedPanels.includes(idx)) return c.json({ error: 'NOT_FOUND' }, 404)
+    const panel = v.spec.panels[idx]
+    if (panel === undefined || panel.chart !== 'text') return c.json({ error: 'PANEL_NOT_TEXT' }, 400)
+    let range: DateRange
+    try {
+      range = periodRangeOf(body.data.period, new Date())
+    } catch {
+      return c.json({ error: 'INVALID_PERIOD' }, 400)
+    }
+    const out = await resolveTextTokens(
+      receiptDeps(c), c.get('tenant').casdoor_org, v.requester,
+      {
+        content: panel.content,
+        panels: v.spec.panels,
+        ...(v.spec.filters === undefined ? {} : { filters: v.spec.filters }),
+        range,
+        ...(body.data.branchNum === undefined ? {} : { branchNum: body.data.branchNum }),
+        filterValues: body.data.filters ?? {},
+      },
+    )
+    if (!out.ok) return c.json({ error: 'TOKEN_UNRESOLVED', detail: out.detail }, 409)
+    return c.json({ text: out.text })
   })
 
   // ── 编辑页入口（spec §3⑦：把 Metabase 编辑页经反代搬进后台）─────────────────────────

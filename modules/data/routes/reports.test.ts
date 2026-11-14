@@ -247,9 +247,10 @@ describe('报表面声明（不需要数据库）', () => {
     // +3：计算凭证（R1：POST /reports/:id/receipt + /receipt/export + /receipt/detail，
     // 观看面 data:query；页门/快照门/草稿分档与 narrative 共用 loadViewableSpec）。
     // +1：可折叠明细（R3 ⑤：POST /reports/:id/detail-rows，观看面 data:query）。
+    // +1：文本语义内嵌（R3 L2：POST /reports/:id/token-text，观看面 data:query）。
     // 穷举口径（同 module.test.ts 的表清单）——别处加端点而漏改这里会红，
     // 逼着声明与测试一起动。
-    expect(declared).toHaveLength(86)
+    expect(declared).toHaveLength(87)
     // 指标变更单：七条全 data:manage；采纳/驳回的会话限定是路由内的第二道闸（不在这张表上）
     for (const p of [
       'POST /metric-changes', 'GET /metric-changes', 'GET /metric-changes/:id',
@@ -336,6 +337,7 @@ describe('报表面声明（不需要数据库）', () => {
     expect(declared.get('POST /reports/:id/receipt/export')).toBe('data:query')
     expect(declared.get('POST /reports/:id/receipt/detail')).toBe('data:query')
     expect(declared.get('POST /reports/:id/detail-rows')).toBe('data:query')
+    expect(declared.get('POST /reports/:id/token-text')).toBe('data:query')
   })
 
   it('★ 页门负测：只有 data:query ⇒ 管理清单（跨资产视图）403', async () => {
@@ -3312,6 +3314,111 @@ describePg('报表路由（需要 DATABASE_URL）', () => {
       const res = await app.request(`/reports/${id}/detail-rows`, {
         method: 'POST', headers: { 'content-type': 'application/json' },
         body: JSON.stringify({ panelIndex: 0, args: ARGS, row: { branch_num: '92' } }),
+      })
+      expect(res.status).toBe(403)
+      expect(await res.json()).toMatchObject({ error: 'UNAUTHENTICATED' })
+    })
+  })
+
+  // ── 文本语义内嵌（R3 / L2）──────────────────────────────────────────────────────────
+  // 路由只做三件事：观看面门（loadViewableSpec）、面板类型、期间；取值/窗口/格式化全在
+  // domain/report-tokens（域单测已钉）。这里验「接线 + 失败分档 + token 不越过渲染闸」。
+  describe('文本语义内嵌（token-text）', () => {
+    const TOKEN_PERIOD = { mode: 'custom' as const, from: '2026-10-01', to: '2026-10-02' }
+
+    const tokenExec: SqlExecutor = async (sql) => {
+      if (sql.includes('data.load_log')) return { columns: ['data_as_of'], rows: [[new Date('2026-10-24T22:00:00Z')]] }
+      if (sql.includes('AS total')) return { columns: ['total'], rows: [[1234]] }
+      return { columns: [], rows: [] }
+    }
+
+    const tokenShell = (identity: ReturnType<typeof makeIdentity>): Hono => {
+      const app = new Hono<ModuleVars>()
+      app.use('*', async (c, next) => {
+        c.set('identity', identity)
+        c.set('tenant', { id: TENANT, casdoor_org: identity.orgId })
+        c.set(TENANT_SOURCES, [])
+        await next()
+      })
+      registerReports(app, { pool, execute: tokenExec })
+      return app as unknown as Hono
+    }
+
+    const specOf = () => ({
+      period: TOKEN_PERIOD,
+      panels: [
+        { chart: 'kpi', title: '销售额', metricId: ADDITIVE_METRIC, format: 'number', compare: 'none', span: 12 },
+        { chart: 'text', content: '本期 {{metric:' + ADDITIVE_METRIC + '|fmt:number}}', span: 24 },
+      ],
+    })
+
+    async function createPublishedToken(app: Hono): Promise<string> {
+      const res = await post(app, { title: '文本引用', renderer: 'platform', spec: specOf() })
+      expect(res.status).toBe(201)
+      const { id } = await res.json() as { id: string }
+      const pub = await app.request(`/reports/${id}/publish`, {
+        method: 'POST', headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ expectedVersion: await versionOf(app, id) }),
+      })
+      expect(pub.status).toBe(200)
+      return id
+    }
+
+    const tokenOf = (app: Hono, id: string, body: Record<string, unknown> = {}) =>
+      app.request(`/reports/${id}/token-text`, {
+        method: 'POST', headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ panelIndex: 1, period: TOKEN_PERIOD, ...body }),
+      })
+
+    const adminIdentity = () => makeIdentity({ orgId: ORG, scopes: ['data:query', 'data:manage'] })
+    const viewerIdentity = () => makeIdentity({ orgId: ORG, scopes: ['data:query'] })
+
+    it('★ 文本引用 ⇒ 服务端解析成活数（前端只拿替换好的文本）', async () => {
+      const id = await createPublishedToken(tokenShell(adminIdentity()))
+      const res = await tokenOf(tokenShell(viewerIdentity()), id)
+      expect(res.status).toBe(200)
+      expect(await res.json()).toEqual({ text: '本期 1,234' })
+    })
+
+    it('非文本面板 ⇒ 400 PANEL_NOT_TEXT', async () => {
+      const id = await createPublishedToken(tokenShell(adminIdentity()))
+      const res = await tokenOf(tokenShell(viewerIdentity()), id, { panelIndex: 0 })
+      expect(res.status).toBe(400)
+      expect(await res.json()).toMatchObject({ error: 'PANEL_NOT_TEXT' })
+    })
+
+    it('★ 被渲染闸拒绝的指标 ⇒ 引用解析失败 409（token 不能绕过面板可见性）', async () => {
+      const id = await createPublishedToken(tokenShell(adminIdentity()))
+      try {
+        await pool.query(
+          'update data.metrics set owner_dept = $3 where org = $1 and id = $2',
+          ['platform', ADDITIVE_METRIC, 'T7D3'],
+        )
+        const res = await tokenOf(tokenShell(viewerIdentity()), id)
+        expect(res.status).toBe(409)
+        const body = await res.json() as { error: string; detail: string }
+        expect(body.error).toBe('TOKEN_UNRESOLVED')
+        expect(body.detail).toContain('不在本报表里')
+      } finally {
+        await pool.query(
+          'update data.metrics set owner_dept = null where org = $1 and id = $2',
+          ['platform', ADDITIVE_METRIC],
+        )
+      }
+    })
+
+    it('未登录 ⇒ 403 UNAUTHENTICATED', async () => {
+      const id = await createPublishedToken(tokenShell(adminIdentity()))
+      const app = new Hono<ModuleVars>()
+      app.use('*', async (c, next) => {
+        c.set('tenant', { id: TENANT, casdoor_org: ORG })
+        c.set(TENANT_SOURCES, [])
+        await next()
+      })
+      registerReports(app, { pool, execute: tokenExec })
+      const res = await app.request(`/reports/${id}/token-text`, {
+        method: 'POST', headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ panelIndex: 1, period: TOKEN_PERIOD }),
       })
       expect(res.status).toBe(403)
       expect(await res.json()).toMatchObject({ error: 'UNAUTHENTICATED' })

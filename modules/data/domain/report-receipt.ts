@@ -100,7 +100,7 @@ function numeric(v: unknown): number | null {
 }
 
 /** 合计查询的回包取值：显式合计恒单行 `columns:['total']`；回退到 `total` 字段。 */
-function totalOf(out: { columns: string[]; rows: unknown[][]; total?: string | number | null }): number | null {
+export function totalOf(out: { columns: string[]; rows: unknown[][]; total?: string | number | null }): number | null {
   const idx = out.columns.indexOf('total')
   if (idx >= 0 && out.rows.length > 0) {
     const row = out.rows[0]

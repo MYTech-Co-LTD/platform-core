@@ -134,6 +134,18 @@ describe('B+C schema', () => {
     }).ok).toBe(false)
   })
 
+  it('文本 L2 引用（R3）：只能引用本报表已有的指标；语法必须合法', () => {
+    const line = { chart: 'line', title: 't', metricId: 'm:sales', dims: ['bizday'], args: {}, span: 12 }
+    const text = (content: string) => ({ chart: 'text', content, span: 24 })
+    expect(parseReportSpec({ panels: [line, text('本期 {{metric:m:sales|fmt:currency}}')] }).ok).toBe(true)
+    expect(parseReportSpec({ panels: [line, text('{{delta:m:sales|vs:prev_month}}')] }).ok).toBe(true)
+    // 报表外的指标 ⇒ 拒（引用即授权面）
+    expect(parseReportSpec({ panels: [line, text('{{metric:m:secret}}')] }).ok).toBe(false)
+    // 语法/参数不合法 ⇒ 拒，不静默当文本
+    expect(parseReportSpec({ panels: [line, text('{{metric:m:sales')] }).ok).toBe(false)
+    expect(parseReportSpec({ panels: [line, text('{{metric:m:sales|nope:1}}')] }).ok).toBe(false)
+  })
+
   it('旧规格仍通过（默认值补齐）', () => {
     const old = { panels: [{ chart: 'line', title: 't', metricId: 'm', dims: ['bizday'], args: {}, span: 12 }] }
     expect(parseReportSpec(old).ok).toBe(true)
