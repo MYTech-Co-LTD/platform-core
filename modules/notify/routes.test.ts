@@ -35,7 +35,10 @@ describePg('routes v2', () => {
     await applyMigrations(pool)
     app = buildTestApp(
       notifyV2,
-      makeIdentity({ orgId: ORG, userId: 'u1', scopes: ['notify:view', 'notify:manage', 'notify:emit'] }),
+      makeIdentity({
+        orgId: ORG, userId: 'u1',
+        scopes: ['notify:view', 'notify:manage', 'notify:publish', 'notify:emit'],
+      }),
       { pool, events, addresses },
     )
   })
@@ -62,12 +65,12 @@ describePg('routes v2', () => {
 
   async function cleanup() {
     await pool.query('delete from notify.event_decl where org=$1', [ORG])
-    await pool.query('delete from notify.agent_namespace where org=$1', [ORG])
     await pool.query('delete from notify.rule where org=$1', [ORG])
     await pool.query('delete from notify.event where org=$1', [ORG])
     await pool.query('delete from notify.inbox where org=$1', [ORG])
     await pool.query('delete from notify.template_revision where org=$1', [ORG])
     await pool.query('delete from notify.template where org=$1', [ORG])
+    await pool.query('delete from notify.agent_namespace where org=$1', [ORG])
     await pool.query('delete from notify.channel where org=$1', [ORG])
     await pool.query('delete from notify.delivery where org=$1', [ORG])
     await pool.query('delete from notify.audit where org=$1', [ORG])
@@ -220,6 +223,74 @@ describePg('routes v2', () => {
     }
     expect((await request('u1', 'own-e1')).status).toBe(202)
     expect((await request('u2', 'own-e2')).status).toBe(403)
+  })
+
+  it('N2：namespace 自动获得通用消息；template → rule → message 全链路', async () => {
+    const ns = await post('/agent/namespaces', { namespace: 'agent_a', displayName: 'A' })
+    expect(ns.status).toBe(201)
+    expect(await ns.json()).toMatchObject({
+      genericMessage: { decl: true, template: true, rule: true },
+    })
+
+    await post('/agent/events', {
+      key: 'ext.agent_a.daily', title: 'D',
+      payload: {
+        user: { type: 'user', required: true },
+        day: { type: 'string', required: true },
+      },
+      recipients: { assignee: { kind: 'field', field: 'user' } },
+    })
+
+    const tpl = await post('/agent/templates', {
+      namespace: 'agent_a', key: 'agent_a_daily', name: 'Daily',
+      eventKey: 'ext.agent_a.daily',
+      contents: { in_app: { title: 'Hi {{day}}', body: 'B', link: 'https://x' } },
+      publish: true,
+    })
+    expect(tpl.status).toBe(201)
+    expect(await tpl.json()).toMatchObject({ revision: 1, published: true })
+
+    const rule = await post('/agent/rules', {
+      namespace: 'agent_a', eventKey: 'ext.agent_a.daily',
+      recipientKey: 'assignee', templateKey: 'agent_a_daily',
+      channels: ['wecom_default'],
+    })
+    expect(rule.status).toBe(201)
+    const ruleId = (await rule.json() as { id: string }).id
+    const ruleRow = await pool.query(
+      'select owner_namespace from notify.rule where org=$1 and id=$2', [ORG, ruleId])
+    expect(ruleRow.rows[0].owner_namespace).toBe('agent_a')
+
+    const msg = await post('/agent/messages', {
+      namespace: 'agent_a', to: 'u1', title: 'T', body: 'B',
+    })
+    expect(msg.status).toBe(202)
+    const ev = await pool.query(
+      "select event_key, producer from notify.event where org=$1 and event_key='ext.agent_a.message'", [ORG])
+    expect(ev.rows[0]).toMatchObject({
+      event_key: 'ext.agent_a.message', producer: 'ext:agent_a',
+    })
+    const tplRow = await pool.query(
+      "select owner_namespace, status from notify.template where org=$1 and key='agent_generic_message__agent_a'",
+      [ORG])
+    expect(tplRow.rows[0]).toMatchObject({ owner_namespace: 'agent_a', status: 'published' })
+  })
+
+  it('N2：跨 namespace 写模板/规则/发消息 ⇒ 403', async () => {
+    await pool.query(
+      `insert into notify.agent_namespace(org,namespace,display_name,owner_user_id)
+       values ($1,'agent_x','X','other')`, [ORG])
+    expect((await post('/agent/templates', {
+      namespace: 'agent_x', key: 'agent_x_t', name: 'T',
+      eventKey: 'ext.agent_x.e', contents: { in_app: { title: 'T', body: 'B' } },
+    })).status).toBe(403)
+    expect((await post('/agent/rules', {
+      namespace: 'agent_x', eventKey: 'ext.agent_x.e',
+      recipientKey: 'r', templateKey: 't', channels: ['inapp_default'],
+    })).status).toBe(403)
+    expect((await post('/agent/messages', {
+      namespace: 'agent_x', to: 'u1', title: 'T', body: 'B',
+    })).status).toBe(403)
   })
 
   it('N1：跨 namespace / 非 ext key / 非法声明都被拒', async () => {

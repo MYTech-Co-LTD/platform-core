@@ -45,6 +45,20 @@ describePg('notify 迁移', () => {
        values ($1,'st-bad','m.a.b','*','{}','t','bogus')`, [ORG])).rejects.toThrow()
   })
 
+  it('N2：template/rule 的 owner_namespace 列存在，且 FK 拒绝未知 namespace', async () => {
+    const cols = await pool.query(
+      `select table_name from information_schema.columns
+        where table_schema='notify' and column_name='owner_namespace'
+          and table_name in ('template','rule') order by table_name`)
+    expect(cols.rows.map((r) => r.table_name)).toEqual(['rule', 'template'])
+
+    await expect(pool.query(
+      `insert into notify.template
+         (org,key,name,event_key,status,origin,published_revision,created_by,owner_namespace)
+       values ($1,'fk-t','T','m.a.b','draft','tenant',null,'u','nope')`, [ORG],
+    )).rejects.toThrow(/owner_namespace/)
+  })
+
   it('v2 表齐全且 org 列 NOT NULL', async () => {
     const r = await pool.query(
       `select table_name, is_nullable from information_schema.columns
