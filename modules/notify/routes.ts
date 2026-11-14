@@ -4,8 +4,13 @@
 import { randomUUID } from 'node:crypto'
 import { Hono } from 'hono'
 import type { Pool } from 'pg'
-import type { ChannelAddressResolver, EventCatalogReader, Identity } from '@platform/sdk'
+import type {
+  ChannelAddressResolver, EventCatalogReader, Identity, NotificationEventDecl,
+} from '@platform/sdk'
 import { validatePayload } from '@platform/sdk'
+import {
+  NAMESPACE_RE, isAgentEventKey, validateAgentEventDecl,
+} from './domain/agent-event'
 import { checkWecomHealth, checkWebhookHealth } from './domain/channel'
 import { resolveDeliverability, type DeliverabilityDeps } from './domain/deliverability'
 import { channelIsConfigured } from './domain/channel-config'
@@ -16,11 +21,12 @@ import { validateRule } from './domain/rules'
 import { samplePayload, validateContents } from './domain/template'
 import { registerNotifyMcpManage } from './mcp'
 import {
-  audit, countRecentTestDeliveries, createTemplateRevision,
-  deleteRule, enqueueEvent, getChannel, getPublishedTemplate, getTemplate, insertDelivery, listChannels,
-  listDeliveries, listEnabledChannelIds, listInbox, listPublishedTemplateKeys, listRules,
-  listTemplates, markAllInboxRead, markInboxRead, patchChannel, publishTemplateRevision, retryDelivery,
-  setChannelHealth, setRuleEnabled, upsertRule,
+  audit, countRecentTestDeliveries, createAgentNamespace, createTemplateRevision,
+  deleteRule, enqueueEvent, getAgentNamespace, getChannel, getEventDecl, getPublishedTemplate,
+  getTemplate, insertDelivery, listAgentNamespaces, listChannels, listDeliveries,
+  listEnabledChannelIds, listEventDecls, listInbox, listPublishedTemplateKeys, listRules,
+  listTemplates, markAllInboxRead, markInboxRead, patchChannel, publishTemplateRevision,
+  retryDelivery, setChannelHealth, setRuleEnabled, upsertEventDecl, upsertRule,
 } from './storage'
 
 type Vars = { Variables: { identity: Identity } }
@@ -34,11 +40,20 @@ export function createNotifyRouter(deps: {
   const org = (c: { get: (k: 'identity') => unknown }) => (c.get('identity') as Identity).orgId
 
   /**
+   * 统一事件解析：`ext.*` 走租户/agent 声明（N1 双平面），其余走 manifest 内存目录。
+   * HTTP / preflight / MCP / worker 必须共用同一套顺序。
+   */
+  const resolveEventDecl = async (o: string, key: string): Promise<NotificationEventDecl | null> =>
+    key.startsWith('ext.')
+      ? getEventDecl(deps.pool, o, key)
+      : deps.events?.get(key) ?? null
+
+  /**
    * 把模块 storage + 注入的 events/addresses 适配成 deliverability 依赖（**唯一一处**）。
    * worker 有自己的适配（它直连 storage），但解析逻辑是同一个 `resolveDeliverability`。
    */
   const ddeps: DeliverabilityDeps = {
-    getEventDecl: async (key) => deps.events?.get(key) ?? null,
+    getEventDecl: resolveEventDecl,
     getPublishedTemplate: async (o, key) => {
       const t = await getPublishedTemplate(deps.pool, o, key)
       return t ? { revision: t.revision, contents: t.contents } : null
@@ -80,7 +95,7 @@ export function createNotifyRouter(deps: {
   ) => {
     const rule = (await listRules(deps.pool, o)).find((x) => x.id === id)
     if (!rule) return { notFound: true as const }
-    const decl = deps.events?.get(rule.eventKey)
+    const decl = await resolveEventDecl(o, rule.eventKey)
     if (!decl) return { eventMissing: true as const }
 
     const warnings: string[] = []
@@ -114,7 +129,7 @@ export function createNotifyRouter(deps: {
       unconfiguredChannels: string[]
     }> = []
     for (const rule of await listRules(deps.pool, o)) {
-      const decl = deps.events?.get(rule.eventKey)
+      const decl = await resolveEventDecl(o, rule.eventKey)
       const r2 = await resolveDeliverability(
         { org: o, rule, payload: decl ? samplePayload(decl) : {} },
         ddeps,
@@ -162,7 +177,7 @@ export function createNotifyRouter(deps: {
       return c.json({ error: 'RULE_INVALID_BODY' }, 400)
     }
 
-    const decl = deps.events?.get(body.eventKey)
+    const decl = await resolveEventDecl(org(c), body.eventKey)
     if (!decl) return c.json({ error: 'RULE_EVENT_UNKNOWN' }, 400)
 
     const [channels, templates] = await Promise.all([
@@ -241,20 +256,33 @@ export function createNotifyRouter(deps: {
     } | null
     if (!body?.eventId || !body.eventKey) return c.json({ error: 'EMIT_INVALID_BODY' }, 400)
 
-    const decl = deps.events?.get(body.eventKey)
+    const decl = await resolveEventDecl(org(c), body.eventKey)
     if (!decl) return c.json({ error: 'EVENT_NOT_DECLARED' }, 400)
+
+    const identity = c.get('identity') as Identity
+    // ext 事件必须由 namespace owner 发；持 notify:manage 的租户管理员可代发。
+    if (body.eventKey.startsWith('ext.')) {
+      const ns = body.eventKey.split('.')[1]
+      const nsRow = ns ? await getAgentNamespace(deps.pool, identity.orgId, ns) : null
+      if (!nsRow || nsRow.status !== 'active'
+          || (nsRow.ownerUserId !== identity.userId && !identity.hasScope('notify:manage'))) {
+        return c.json({ error: 'AGENT_NAMESPACE_FORBIDDEN' }, 403)
+      }
+    }
 
     const payload = body.payload ?? {}
     const bad = validatePayload(decl, payload)
     if (bad) return c.json({ error: 'PAYLOAD_INVALID', detail: bad }, 400)
 
     const result = await enqueueEvent(deps.pool, {
-      org: org(c),
+      org: identity.orgId,
       eventId: body.eventId,
       eventKey: body.eventKey,
       scope: body.scope ?? '*',
       payload,
-      producer: 'external',
+      producer: body.eventKey.startsWith('ext.')
+        ? `ext:${body.eventKey.split('.')[1]}`
+        : 'external',
     })
     return c.json(result, 202)
   })
@@ -277,11 +305,16 @@ export function createNotifyRouter(deps: {
     return c.json({ ok: true })
   })
 
-  // ── 事件目录（只读；来自宿主注入的 reader）──────────────────────────────────
-  r.get('/events', async (c) => c.json({ events: deps.events?.list() ?? [] }))
+  // ── 事件目录（只读；平台 manifest + 租户/agent 声明 N1 双平面）────────────────
+  r.get('/events', async (c) => {
+    const platform = (deps.events?.list() ?? []).map((e) => ({ ...e, source: 'platform' as const }))
+    const tenant = (await listEventDecls(deps.pool, org(c)))
+      .map((e) => ({ ...e, source: 'agent' as const }))
+    return c.json({ events: [...platform, ...tenant] })
+  })
 
   r.get('/events/:key', async (c) => {
-    const ev = deps.events?.get(c.req.param('key'))
+    const ev = await resolveEventDecl(org(c), c.req.param('key'))
     return ev ? c.json(ev) : c.json({ error: 'NOT_FOUND' }, 404)
   })
 
@@ -301,7 +334,7 @@ export function createNotifyRouter(deps: {
 
     const t = await getTemplate(deps.pool, org(c), c.req.param('key'))
     if (!t) return c.json({ error: 'NOT_FOUND' }, 404)
-    const decl = deps.events?.get(t.eventKey)
+    const decl = await resolveEventDecl(org(c), t.eventKey)
     if (!decl) return c.json({ error: 'EVENT_NOT_DECLARED' }, 400)
 
     const channels = await listChannels(deps.pool, org(c))
@@ -326,7 +359,7 @@ export function createNotifyRouter(deps: {
 
     const t = await getTemplate(deps.pool, org(c), c.req.param('key'))
     if (!t) return c.json({ error: 'NOT_FOUND' }, 404)
-    const decl = deps.events?.get(t.eventKey)
+    const decl = await resolveEventDecl(org(c), t.eventKey)
     if (!decl) return c.json({ error: 'EVENT_NOT_DECLARED' }, 400)
 
     const contents = body.contents
@@ -349,7 +382,7 @@ export function createNotifyRouter(deps: {
     if (!t) return c.json({ error: 'NOT_FOUND' }, 404)
     const rev = t.revisions.find((x) => x.revision === body.revision)
     if (!rev) return c.json({ error: 'REVISION_NOT_FOUND' }, 404)
-    const decl = deps.events?.get(t.eventKey)
+    const decl = await resolveEventDecl(org(c), t.eventKey)
     if (!decl) return c.json({ error: 'EVENT_NOT_DECLARED' }, 400)
 
     const channels = await listChannels(deps.pool, org(c))
@@ -450,7 +483,7 @@ export function createNotifyRouter(deps: {
     const t = await getTemplate(deps.pool, identity.orgId, body.templateKey)
     const rev = t?.revisions.find((x) => x.revision === t.publishedRevision)
     if (!t || !rev) return c.json({ error: 'NOT_FOUND' }, 404)
-    const decl = deps.events?.get(t.eventKey)
+    const decl = await resolveEventDecl(org(c), t.eventKey)
     if (!decl) return c.json({ error: 'EVENT_NOT_DECLARED' }, 400)
 
     const bad = validatePayload(decl, body.payload)
@@ -504,6 +537,104 @@ export function createNotifyRouter(deps: {
     await audit(deps.pool, org(c), (c.get('identity') as Identity).userId,
       'delivery.retry', `${body.eventId}|${body.ruleId}`, body)
     return c.json({ ok: true })
+  })
+
+  // ── 租户/agent 命名空间与事件声明（N1 双平面）──────────────────────────────
+  r.get('/agent/namespaces', async (c) =>
+    c.json({ namespaces: await listAgentNamespaces(deps.pool, org(c)) }))
+
+  r.post('/agent/namespaces', async (c) => {
+    const body = (await c.req.json().catch(() => null)) as {
+      namespace?: string
+      displayName?: string
+      policy?: Record<string, unknown>
+    } | null
+    if (!body?.namespace || !NAMESPACE_RE.test(body.namespace)) {
+      return c.json({ error: 'AGENT_NAMESPACE_INVALID' }, 400)
+    }
+    const identity = c.get('identity') as Identity
+    const r = await createAgentNamespace(deps.pool, identity.orgId, {
+      namespace: body.namespace,
+      displayName: body.displayName?.trim() || body.namespace,
+      ownerUserId: identity.userId,
+      policy: body.policy && typeof body.policy === 'object' && !Array.isArray(body.policy)
+        ? body.policy
+        : undefined,
+    })
+    if (!r.created && r.row.ownerUserId !== identity.userId) {
+      return c.json({ error: 'AGENT_NAMESPACE_TAKEN' }, 409)
+    }
+    await audit(deps.pool, identity.orgId, identity.userId,
+      'agent.namespace.create', r.row.namespace, { created: r.created })
+    return c.json(
+      { namespace: r.row.namespace, owner: r.row.ownerUserId, created: r.created },
+      r.created ? 201 : 200,
+    )
+  })
+
+  r.get('/agent/events', async (c) => {
+    const namespace = c.req.query('namespace')
+    return c.json({
+      events: await listEventDecls(deps.pool, org(c), namespace || undefined),
+    })
+  })
+
+  r.get('/agent/events/:key', async (c) => {
+    const ev = await getEventDecl(deps.pool, org(c), c.req.param('key'))
+    return ev ? c.json(ev) : c.json({ error: 'NOT_FOUND' }, 404)
+  })
+
+  r.post('/agent/events', async (c) => {
+    const body = (await c.req.json().catch(() => null)) as {
+      key?: string
+      title?: string
+      description?: string
+      scope?: { key: string; label?: string }
+      payload?: Record<string, unknown>
+      recipients?: Record<string, unknown>
+      defaults?: { recipient: string; template: string; channels: string[] }
+    } | null
+    if (!body?.key || !body.title || !body.payload || !body.recipients) {
+      return c.json({ error: 'AGENT_EVENT_INVALID_BODY' }, 400)
+    }
+    if (!isAgentEventKey(body.key)) return c.json({ error: 'AGENT_EVENT_KEY_INVALID' }, 400)
+    const parts = body.key.split('.')
+    if (parts.length !== 3 || !parts[1]) {
+      return c.json({ error: 'AGENT_EVENT_KEY_INVALID' }, 400)
+    }
+    const namespace = parts[1]
+    const identity = c.get('identity') as Identity
+    const ns = await getAgentNamespace(deps.pool, identity.orgId, namespace)
+    if (!ns) return c.json({ error: 'AGENT_NAMESPACE_NOT_FOUND' }, 404)
+    if (ns.status !== 'active') return c.json({ error: 'AGENT_NAMESPACE_DISABLED' }, 409)
+    if (ns.ownerUserId !== identity.userId) {
+      return c.json({ error: 'AGENT_NAMESPACE_FORBIDDEN' }, 403)
+    }
+
+    const decl: NotificationEventDecl = {
+      key: body.key,
+      title: body.title,
+      description: body.description,
+      scope: body.scope,
+      payload: body.payload as NotificationEventDecl['payload'],
+      recipients: body.recipients as NotificationEventDecl['recipients'],
+      defaults: body.defaults,
+    }
+    const issues = validateAgentEventDecl(decl)
+    if (issues.length > 0) {
+      return c.json({ error: 'AGENT_EVENT_INVALID', issues }, 400)
+    }
+
+    const res = await upsertEventDecl(deps.pool, identity.orgId, namespace, decl, identity.userId)
+    if (!res.ok) {
+      return c.json({ error: 'AGENT_EVENT_SCHEMA_BREAKING', issues: res.issues }, 409)
+    }
+    await audit(deps.pool, identity.orgId, identity.userId,
+      'agent.event.upsert', decl.key, { version: res.version, created: res.created })
+    return c.json(
+      { key: decl.key, version: res.version, created: res.created },
+      res.created ? 201 : 200,
+    )
   })
 
   registerNotifyMcpManage(r, {

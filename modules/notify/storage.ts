@@ -2,7 +2,8 @@
 // 纪律：org 一律由调用方传入；SQL 一律 where org=$1；本层不读请求/身份。
 import { createHash } from 'node:crypto'
 import type { Pool } from 'pg'
-import type { EnqueueEventInput } from '@platform/sdk'
+import type { EnqueueEventInput, NotificationEventDecl } from '@platform/sdk'
+import { diffAgentEventDecl } from './domain/agent-event'
 import type { NotificationRule } from './domain/rules'
 
 export type RuleInput = {
@@ -642,4 +643,183 @@ export async function markInboxRead(
     'update notify.inbox set read_at=now() where org=$1 and recipient=$2 and id=$3',
     [org, recipient, id],
   )
+}
+
+// ── 租户/agent 命名空间与事件声明（N1 双平面）────────────────────────────────
+
+export type AgentNamespaceRow = {
+  org: string
+  namespace: string
+  displayName: string
+  ownerUserId: string
+  status: string
+  policy: Record<string, unknown>
+  createdAt: string
+  updatedAt: string
+}
+
+function toNamespaceRow(r: Record<string, unknown>): AgentNamespaceRow {
+  return {
+    org: r.org as string,
+    namespace: r.namespace as string,
+    displayName: r.display_name as string,
+    ownerUserId: r.owner_user_id as string,
+    status: r.status as string,
+    policy: (r.policy as Record<string, unknown>) ?? {},
+    createdAt: (r.created_at as Date).toISOString(),
+    updatedAt: (r.updated_at as Date).toISOString(),
+  }
+}
+
+export async function getAgentNamespace(
+  pool: Pool, org: string, namespace: string,
+): Promise<AgentNamespaceRow | null> {
+  const { rows } = await pool.query(
+    `select org,namespace,display_name,owner_user_id,status,policy,created_at,updated_at
+       from notify.agent_namespace where org=$1 and namespace=$2`, [org, namespace])
+  return rows[0] ? toNamespaceRow(rows[0]) : null
+}
+
+export async function listAgentNamespaces(
+  pool: Pool, org: string,
+): Promise<AgentNamespaceRow[]> {
+  const { rows } = await pool.query(
+    `select org,namespace,display_name,owner_user_id,status,policy,created_at,updated_at
+       from notify.agent_namespace where org=$1 order by namespace`, [org])
+  return rows.map(toNamespaceRow)
+}
+
+export async function createAgentNamespace(
+  pool: Pool,
+  org: string,
+  input: { namespace: string; displayName: string; ownerUserId: string; policy?: Record<string, unknown> },
+): Promise<{ created: boolean; row: AgentNamespaceRow }> {
+  const ins = await pool.query(
+    `insert into notify.agent_namespace(org,namespace,display_name,owner_user_id,policy)
+     values ($1,$2,$3,$4,$5::jsonb)
+     on conflict (org,namespace) do nothing
+     returning org,namespace,display_name,owner_user_id,status,policy,created_at,updated_at`,
+    [org, input.namespace, input.displayName, input.ownerUserId, JSON.stringify(input.policy ?? {})],
+  )
+  if (ins.rows[0]) return { created: true, row: toNamespaceRow(ins.rows[0]) }
+  const existing = await getAgentNamespace(pool, org, input.namespace)
+  if (!existing) throw new Error('agent namespace disappeared during insert')
+  return { created: false, row: existing }
+}
+
+export type EventDeclRow = {
+  org: string
+  namespace: string
+  key: string
+  version: number
+  title: string
+  description: string | null
+  scopeKey: string | null
+  payload: Record<string, unknown>
+  recipients: Record<string, unknown>
+  defaults: Record<string, unknown> | null
+  status: string
+  createdBy: string
+  createdAt: string
+  updatedAt: string
+}
+
+function toDecl(row: EventDeclRow): NotificationEventDecl {
+  return {
+    key: row.key,
+    title: row.title,
+    description: row.description ?? undefined,
+    scope: row.scopeKey ? { key: row.scopeKey } : undefined,
+    payload: row.payload as NotificationEventDecl['payload'],
+    recipients: row.recipients as NotificationEventDecl['recipients'],
+    defaults: (row.defaults ?? undefined) as NotificationEventDecl['defaults'],
+  }
+}
+
+export async function getEventDecl(
+  pool: Pool, org: string, key: string,
+): Promise<NotificationEventDecl | null> {
+  const { rows } = await pool.query<EventDeclRow>(
+    `select org,namespace,key,version,title,description,scope_key as "scopeKey",
+            payload_schema as payload, recipients, defaults, status,
+            created_by as "createdBy", created_at as "createdAt", updated_at as "updatedAt"
+       from notify.event_decl where org=$1 and key=$2 and status='active'`, [org, key])
+  return rows[0] ? toDecl(rows[0]) : null
+}
+
+export async function listEventDecls(
+  pool: Pool, org: string, namespace?: string,
+): Promise<NotificationEventDecl[]> {
+  const { rows } = await pool.query<EventDeclRow>(
+    `select org,namespace,key,version,title,description,scope_key as "scopeKey",
+            payload_schema as payload, recipients, defaults, status,
+            created_by as "createdBy", created_at as "createdAt", updated_at as "updatedAt"
+       from notify.event_decl
+      where org=$1 and status='active'
+        and ($2::text is null or namespace=$2)
+      order by key`, [org, namespace ?? null])
+  return rows.map(toDecl)
+}
+
+export type UpsertEventDeclResult =
+  | { ok: true; created: boolean; version: number }
+  | { ok: false; reason: 'schema_breaking'; issues: string[] }
+
+/**
+ * 幂等 upsert 事件声明。
+ * 已存在 ⇒ 做**只增不改** diff；破坏性变更返回 `schema_breaking`，要求换新 key。
+ */
+export async function upsertEventDecl(
+  pool: Pool,
+  org: string,
+  namespace: string,
+  decl: NotificationEventDecl,
+  actor: string,
+): Promise<UpsertEventDeclResult> {
+  const client = await pool.connect()
+  try {
+    await client.query('begin')
+    const { rows } = await client.query<EventDeclRow>(
+      `select org,namespace,key,version,title,description,scope_key as "scopeKey",
+              payload_schema as payload, recipients, defaults, status,
+              created_by as "createdBy", created_at as "createdAt", updated_at as "updatedAt"
+         from notify.event_decl where org=$1 and key=$2 for update`, [org, decl.key])
+    const old = rows[0]
+    if (old) {
+      const issues = diffAgentEventDecl(toDecl(old), decl)
+      if (issues.length > 0) {
+        await client.query('rollback')
+        return { ok: false, reason: 'schema_breaking', issues }
+      }
+      const version = old.version + 1
+      await client.query(
+        `update notify.event_decl set
+           version=$4, title=$5, description=$6, scope_key=$7,
+           payload_schema=$8::jsonb, recipients=$9::jsonb, defaults=$10::jsonb,
+           status='active', updated_at=now()
+         where org=$1 and key=$2 and namespace=$3`,
+        [org, decl.key, namespace, version, decl.title, decl.description ?? null,
+         decl.scope?.key ?? null, JSON.stringify(decl.payload), JSON.stringify(decl.recipients),
+         decl.defaults === undefined ? null : JSON.stringify(decl.defaults)],
+      )
+      await client.query('commit')
+      return { ok: true, created: false, version }
+    }
+
+    await client.query(
+      `insert into notify.event_decl
+         (org,namespace,key,version,title,description,scope_key,payload_schema,recipients,defaults,created_by)
+       values ($1,$2,$3,1,$4,$5,$6,$7::jsonb,$8::jsonb,$9::jsonb,$10)`,
+      [org, namespace, decl.key, decl.title, decl.description ?? null, decl.scope?.key ?? null,
+       JSON.stringify(decl.payload), JSON.stringify(decl.recipients),
+       decl.defaults === undefined ? null : JSON.stringify(decl.defaults), actor],
+    )
+    await client.query('commit')
+    return { ok: true, created: true, version: 1 }
+  } catch (e) {
+    await client.query('rollback').catch(() => {})
+    throw e
+  } finally {
+    client.release()
+  }
 }

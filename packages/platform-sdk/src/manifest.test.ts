@@ -460,3 +460,20 @@ describe('notifications.events', () => {
     expect(parse([ev({ payload })]).success).toBe(false)
   })
 })
+
+describe('N1：ext 是租户/agent 事件保留前缀', () => {
+  it('模块 id = "ext" ⇒ 拒绝（即使事件 key 前缀能对上）', () => {
+    const r = ManifestSchema.safeParse({
+      ...validManifest,
+      id: 'ext',
+      permissions: [],
+      notifications: {
+        events: [{ ...validManifest.notifications.events[0], key: 'ext.note.created' }],
+      },
+    })
+    expect(r.success).toBe(false)
+    if (!r.success) {
+      expect(r.error.issues.some((i) => i.path.join('.') === 'id')).toBe(true)
+    }
+  })
+})
