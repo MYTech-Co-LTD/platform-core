@@ -900,6 +900,13 @@ capabilities / policy 门禁 / run 回执」一句打包，**实测与其中两�
   `recovery mode` / `terminating any other active server processes` ⇒ ERR 进 `data_plane_probes`
   ⇒ 桥送企微；**不新建 OO 规则**，同 ⑩⑪⑫⑬⑭ 范式）。反向测试 `WIRE_PGCRASH_SELFTEST=1`。
   **反向测试见 #898**（`WIRE_REGION_SELFTEST` 造一次真红 ⇒ 企微收到）。
+  ✅ **叙事质量接线（R5，2026-11-14；#2233）**：`scripts/narrative-health-probe.py`（经 sync 落成
+  `/opt/lemeng-narrative-health.py`）读平台 PG 的 `data.narrative_runs`，按 `NARRATIVE_SLO`
+  （回退率≤20%、p95≤45s、数字越界率≤5%；阈值与 TS 正典由 CI 机械比对）逐 org 判红，经
+  `lemeng-emit-probe.py` 进 `data_plane_probes` ⇒ 桥送企微；openship job `narrative-health-probe`
+  （每小时 :23）驱动。无生成样本 = **跳过**（没有样本不能判，也不冒充健康）。反向测试：
+  `--selftest --emit`（合成一条 ERR，收到即链路通）。⚠️ 群侧开环确认待做（与既有桥同一条腿）。
+
   ✅ **⑯⑰ 封版 manifest 效果接线（2026-11-10，Phase 1 续刀；#1886，#1872 的收尾监控）**：
   #1872 把明细视图的封版判定从 `_DAILY/*.parquet` glob（1,541 个小文件，>110s 且会打崩 pg_duckdb）
   改成读仓内表 `data.lemeng_daily_sealed`。"效果"有三条腿会静默坏 ⇒ 两条 advisory 断言覆盖：
