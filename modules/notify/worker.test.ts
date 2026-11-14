@@ -39,6 +39,7 @@ const dueRow = (over: Partial<DeliveryRow> = {}): DeliveryRow => ({
 function makeDeps(over: Partial<WorkerDeps> = {}) {
   const inserted: InsertDeliveryInput[] = []
   const failed: { d: DeliveryRow; msg: string; at: Date }[] = []
+  const deferred: { d: DeliveryRow; msg: string; at: Date }[] = []
   const dead: { d: DeliveryRow; msg: string }[] = []
   const sent: DeliveryRow[] = []
   const marks: { status: string }[] = []
@@ -58,6 +59,7 @@ function makeDeps(over: Partial<WorkerDeps> = {}) {
     insertAttempt: async () => {},
     markDeliverySent: async (d) => { sent.push(d) },
     markDeliveryFailed: async (d, msg, at) => { failed.push({ d, msg, at }) },
+    deferDelivery: async (d, msg, at) => { deferred.push({ d, msg, at }) },
     markDeliveryDead: async (d, msg) => { dead.push({ d, msg }) },
     resolveScopeHolders: async () => [],
     resolveAddress: async () => 'wecom-u1',
@@ -65,7 +67,7 @@ function makeDeps(over: Partial<WorkerDeps> = {}) {
     send: async () => ({ ok: true }),
     ...over,
   }
-  return { deps, inserted, failed, dead, sent, marks }
+  return { deps, inserted, failed, deferred, dead, sent, marks }
 }
 
 describe('runOnce', () => {
@@ -138,7 +140,7 @@ describe('runOnce', () => {
     expect((await runOnce(last.deps)).dead).toBe(1)
   })
 
-  it('通道达上限 ⇒ 不发送，delivery 顺延（failed + retryAfter）', async () => {
+  it('通道达上限 ⇒ 不发送，delivery 顺延（defer，不消耗 attempts）', async () => {
     const f = makeDeps({
       claimDueDeliveries: async () => [dueRow()],
       channelRateLimited: async () => 12_000,
@@ -146,9 +148,39 @@ describe('runOnce', () => {
     const s = await runOnce(f.deps)
     expect(s.sent).toBe(0)
     expect(f.sent).toHaveLength(0)
-    expect(f.failed[0]!.msg).toBe('channel_rate_limited')
-    expect(f.failed[0]!.at.getTime())
+    expect(f.failed).toHaveLength(0)
+    expect(f.deferred[0]!.msg).toBe('channel_rate_limited')
+    expect(f.deferred[0]!.at.getTime())
       .toBe(new Date('2026-01-01T00:00:00Z').getTime() + 12_000)
+  })
+
+  it('webhook 不需要收件人地址：解析为 null 也排 pending，不判 dead', async () => {
+    const f = makeDeps({
+      getChannel: async () => ({ provider: 'webhook', enabled: true, config: {} }),
+      getPublishedTemplate: async () => ({ revision: 1, contents: { webhook: { text: 'hi' } } }),
+      resolveAddress: async () => null,
+    })
+    const s = await runOnce(f.deps)
+    expect(s.deliveries).toBe(1)
+    expect(f.inserted).toHaveLength(1)
+    expect(f.inserted[0]).toMatchObject({
+      status: 'pending', channel: 'wecom_default', address: 'u1',
+    })
+  })
+
+  it('单条投递异常隔离：第一条 throw，第二条仍继续发送', async () => {
+    const f = makeDeps({
+      claimDueDeliveries: async () => [dueRow({ recipient: 'u1' }), dueRow({ recipient: 'u2' })],
+      send: async (d) => {
+        if (d.recipient === 'u1') throw new Error('boom')
+        return { ok: true }
+      },
+    })
+    const s = await runOnce(f.deps)
+    expect(s.sent).toBe(1)
+    expect(s.failed).toBe(1)
+    expect(f.failed[0]!.msg).toContain('provider_exception:boom')
+    expect(f.sent[0]!.recipient).toBe('u2')
   })
 
   // ── D1 等价性守门（正常路径仍须一致；零结果语义已由 D2 改变）──────────────

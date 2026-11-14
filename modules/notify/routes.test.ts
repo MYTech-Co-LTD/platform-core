@@ -235,6 +235,36 @@ describePg('routes v2', () => {
     expect(rows).toEqual([{ recipient: 'u1', is_test: true }])
   })
 
+  it('测试发送 webhook：不需要收件人地址，202 + pending', async () => {
+    await pool.query(
+      `insert into notify.channel(org,id,provider,enabled,config,secret_refs,created_by)
+       values ($1,'webhook_ops','webhook',true,'{}','{}','u')`, [ORG])
+    await pool.query(
+      `insert into notify.template(org,key,name,event_key,status,origin,published_revision,created_by)
+       values ($1,'t-webhook','T','m.a.b','published','tenant',1,'u')`, [ORG])
+    await pool.query(
+      `insert into notify.template_revision(org,key,revision,contents,body_hash,review_status,created_by)
+       values ($1,'t-webhook',1,'{"webhook":{"text":"hi"}}','h-webhook','approved','u')`, [ORG])
+
+    // 地址解析对 webhook 返回 null（真实宿主行为）：webhook 目标是通道 URL，不需要收件人地址。
+    const webhookApp = buildTestApp(
+      notifyV2,
+      makeIdentity({ orgId: ORG, userId: 'u1', scopes: ['notify:manage'] }),
+      { pool, events, addresses: { resolve: async () => null } },
+    )
+    const res = await webhookApp.request('/test-send', {
+      method: 'POST', headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({
+        templateKey: 't-webhook', channel: 'webhook_ops',
+        payload: { u: 'u1', link: 'https://x' },
+      }),
+    })
+    expect(res.status).toBe(202)
+    const row = await pool.query(
+      "select status, address from notify.delivery where org=$1 and channel='webhook_ops'", [ORG])
+    expect(row.rows[0]).toMatchObject({ status: 'pending', address: 'u1' })
+  })
+
   it('publish 缺 notify:publish ⇒ 403（宿主门卫）', async () => {
     const declared = [{ method: 'POST', path: '/templates/:key/publish', scope: 'notify:publish' }]
     const guarded = new Hono<{ Variables: { identity: Identity } }>()

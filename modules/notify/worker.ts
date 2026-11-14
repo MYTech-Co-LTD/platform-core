@@ -8,6 +8,7 @@ import {
   aggregateEventStatus, isChannelUsable, resolveDeliverability, type Blocked,
 } from './domain/deliverability'
 import { renderContents, type Contents } from './domain/render'
+import { providerRequiresAddress } from './domain/providers'
 import type { DeliveryRow, InsertDeliveryInput, PendingEvent } from './storage'
 
 export type ProviderResult =
@@ -41,6 +42,8 @@ export type WorkerDeps = {
   insertAttempt(d: DeliveryRow, r: ProviderResult): Promise<void>
   markDeliverySent(d: DeliveryRow): Promise<void>
   markDeliveryFailed(d: DeliveryRow, msg: string, at: Date): Promise<void>
+  /** 限流/主动顺延：不消耗 attempts。 */
+  deferDelivery(d: DeliveryRow, msg: string, at: Date): Promise<void>
   markDeliveryDead(d: DeliveryRow, msg: string): Promise<void>
   resolveScopeHolders(
     org: string,
@@ -87,20 +90,20 @@ export async function runOnce(deps: WorkerDeps): Promise<WorkerStats> {
   const events = await deps.claimEvents(50)
   let deliveries = 0
 
-  for (const ev of events) {
+  const processEvent = async (ev: PendingEvent): Promise<void> => {
     const rules = matchRules(await deps.listRules(ev.org), {
       eventKey: ev.eventKey,
       scope: ev.scope,
     })
     if (rules.length === 0) {
       await deps.markEvent(ev, 'no_rules')
-      continue
+      return
     }
 
     const decl = await deps.getEventDecl(ev.eventKey)
     if (!decl) {
       await deps.markEvent(ev, 'invalid')
-      continue
+      return
     }
 
     // D2：逐规则记录阻塞原因，最后聚合成一个事件状态（不再逐条静默 continue）
@@ -197,7 +200,7 @@ export async function runOnce(deps: WorkerDeps): Promise<WorkerStats> {
           const address = await resolveDeliveryAddress(deps.resolveAddress, ch, {
             org: ev.org, casdoorName: recipient,
           })
-          if (!address && ch.provider !== 'in_app') {
+          if (!address && providerRequiresAddress(ch.provider)) {
             await deps.insertDelivery({
               ...base, address: '', rendered: out, status: 'dead',
               lastError: 'missing_channel_address',
@@ -218,32 +221,64 @@ export async function runOnce(deps: WorkerDeps): Promise<WorkerStats> {
     await deps.markEvent(ev, aggregateEventStatus(perRule, produced))
   }
 
+  for (const ev of events) {
+    try {
+      await processEvent(ev)
+    } catch (e) {
+      // 单条事件异常隔离：不把瞬时 DB/代码异常记成 invalid，也不拖垮同批其它事件；
+      // 事件保持 locked_until，租约到期后由下一轮重试。
+      console.error(
+        `[notify] event processing failed org=${ev.org} eventId=${ev.eventId}: `
+        + `${e instanceof Error ? e.message : String(e)}`,
+      )
+    }
+  }
+
   const due = await deps.claimDueDeliveries(50)
   let sent = 0
   let failed = 0
   let dead = 0
 
   for (const d of due) {
-    const wait = deps.channelRateLimited
-      ? await deps.channelRateLimited(d.org, d.channel, deps.now())
-      : null
-    if (wait !== null) {
-      await deps.markDeliveryFailed(
-        d, 'channel_rate_limited', new Date(deps.now().getTime() + wait))
-      failed++
-      continue
-    }
+    try {
+      const wait = deps.channelRateLimited
+        ? await deps.channelRateLimited(d.org, d.channel, deps.now())
+        : null
+      if (wait !== null) {
+        // 限流不是失败：顺延一个窗口，但**不消耗 attempts**。
+        await deps.deferDelivery(
+          d, 'channel_rate_limited', new Date(deps.now().getTime() + wait))
+        failed++
+        continue
+      }
 
-    const res = await deps.send(d)
-    await deps.insertAttempt(d, res)
-    if (res.ok) {
-      await deps.markDeliverySent(d)
-      sent++
-    } else if (res.kind === 'permanent' || d.attempts + 1 >= 5) {
-      await deps.markDeliveryDead(d, res.summary)
-      dead++
-    } else {
-      await deps.markDeliveryFailed(d, res.summary, nextAt(d.attempts + 1, deps.now()))
+      const res = await deps.send(d)
+      await deps.insertAttempt(d, res)
+      if (res.ok) {
+        await deps.markDeliverySent(d)
+        sent++
+      } else if (res.kind === 'permanent' || d.attempts + 1 >= 5) {
+        await deps.markDeliveryDead(d, res.summary)
+        dead++
+      } else {
+        await deps.markDeliveryFailed(d, res.summary, nextAt(d.attempts + 1, deps.now()))
+        failed++
+      }
+    } catch (e) {
+      // 单条投递异常隔离：一条 provider/DB 异常不拖垮整批；尽量记 failed 让下一轮重试。
+      const msg = `provider_exception:${e instanceof Error ? e.message : String(e)}`
+      console.error(
+        `[notify] delivery failed unexpectedly ${d.eventId}/${d.recipient}/${d.channel}: ${msg}`,
+      )
+      try {
+        await deps.markDeliveryFailed(d, msg, nextAt(d.attempts + 1, deps.now()))
+      } catch (markErr) {
+        // 连记账都失败（DB 不可用）：保持租约，到期后由下一轮重试。
+        console.error(
+          `[notify] 记录投递异常失败 eventId=${d.eventId}: `
+          + `${markErr instanceof Error ? markErr.message : String(markErr)}`,
+        )
+      }
       failed++
     }
   }

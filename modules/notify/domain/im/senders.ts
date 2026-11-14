@@ -73,20 +73,24 @@ const SENDERS: Record<NotifyProvider, ImSender> = {
     }),
   // 企微：**有直连凭据就直连，否则走共享桥**（transport 由通道 config 决定，默认 bridge）。
   // 直连的意义：凭据只在客户自己的实例里、判据=能取到 token（桥的 /healthz 只能证明桥活着）。
-  wecom_chat: (ctx, d) =>
-    ctx.credential !== undefined
+  wecom_chat: (ctx, d) => {
+    const timeoutMs = typeof ctx.config.timeout_ms === 'number' ? ctx.config.timeout_ms : undefined
+    return ctx.credential !== undefined
       ? sendDirect({
         cred: ctx.credential,
         to: d.address,
         content: (d.rendered.text as string | undefined) ?? '',
         fetchImpl: ctx.fetchImpl,
+        timeoutMs,
       })
       : sendWecom({
         bridgeUrl: ctx.secrets.bridge_url,
         to: d.address,
         content: (d.rendered.text as string | undefined) ?? '',
         fetchImpl: ctx.fetchImpl,
-      }),
+        timeoutMs,
+      })
+  },
   webhook: (ctx, d) =>
     sendWebhook({
       url: ctx.secrets.url,
