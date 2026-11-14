@@ -13,6 +13,12 @@ export interface PipelineMapPipeline {
   account: string | null
   cron: string | null
   enabled: boolean
+  /**
+   * 是否登记了调度（enabled=false 有两种：登记了但停用 / 根本没登记）。
+   * 没登记的（backfill、一次性、已被替代的旧管线）**不该算进「当前健康」**——
+   * 否则一张图会长期挂着几年前的失败记录（2026-11-14 实测：7 条「最近失败」全是未调度管线）。
+   */
+  scheduled: boolean
 }
 
 export interface PipelineMapAsset {
@@ -75,6 +81,7 @@ export function buildPipelineMap(input: PipelineMapInput): PipelineMapModel {
         account: accountOf(p.id),
         cron: sched[0]?.cron ?? null,
         enabled: sched.length === 0 ? false : sched.some((s) => s.enabled),
+        scheduled: sched.length > 0,
       }
       if (list === undefined) byLake.set(lake, [entry])
       else list.push(entry)

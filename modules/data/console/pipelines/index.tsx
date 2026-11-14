@@ -16,7 +16,7 @@ import { humanError, type HumanError } from '../lib/explain'
 
 echarts.use([GraphChart, LegendComponent, TooltipComponent, CanvasRenderer])
 
-interface MapPipeline { id: string; account: string | null; cron: string | null; enabled: boolean }
+interface MapPipeline { id: string; account: string | null; cron: string | null; enabled: boolean; scheduled: boolean }
 interface MapAsset { lake: string; staging: string | null; marts: string[]; pipelines: MapPipeline[] }
 interface PipelinesResponse {
   generatedAt: string
@@ -71,13 +71,17 @@ export default function PipelinesPage() {
     for (const a of assetsShown) for (const m of a.marts) martSet.add(m)
     const marts = [...martSet].sort((a, b) => a.localeCompare(b))
 
-    // 健康色：取该资产下所有管线**最近一次** run 里最差的（failed > running > unknown > ok）
+    // 健康色只看**在跑**的管线（登记了调度且启用）：没登记的 backfill/一次性管线不参与，
+    // 否则历史失败会永久留在图上（2026-11-14 实测：7 条「失败」全是未调度管线）。
+    // 优先级 failed > running > interrupted > unknown > ok；一个在跑的都没有 ⇒ idle（灰）。
     const worst = (a: MapAsset): string => {
-      const latest = a.pipelines.map((p) => data.recentRuns[p.id]?.[0]?.status ?? 'unknown')
+      const live = a.pipelines.filter((p) => p.scheduled && p.enabled)
+      if (live.length === 0) return 'idle'
+      const latest = live.map((p) => data.recentRuns[p.id]?.[0]?.status ?? 'unknown')
       if (latest.includes('failed')) return 'failed'
       if (latest.includes('running')) return 'running'
-      if (latest.length === 0 || latest.every((x) => x === 'unknown')) return 'unknown'
       if (latest.includes('interrupted')) return 'interrupted'
+      if (latest.every((x) => x === 'unknown')) return 'unknown'
       return 'ok'
     }
     const assetStatus = new Map(assetsShown.map((a) => [a.lake, worst(a)]))
@@ -187,7 +191,8 @@ export default function PipelinesPage() {
             borderColor: n.status === 'failed' ? '#E5484D'
               : n.status === 'running' ? '#4D6BFE'
                 : n.status === 'interrupted' ? '#E08A00'
-                  : n.status === 'unknown' ? '#C9CDD4' : '#FFFFFF',
+                  : n.status === 'unknown' ? '#C9CDD4'
+                    : n.status === 'idle' ? '#EBEDF0' : '#FFFFFF',
             borderWidth: n.status === 'ok' ? 1 : 2,
           },
         })),
@@ -204,8 +209,13 @@ export default function PipelinesPage() {
   }
 
   const broken = data === null ? 0 : data.assets.filter((a) => a.staging === null).length
-  const failed = data === null ? 0 : Object.values(data.recentRuns)
-    .filter((list) => list[0]?.status === 'failed').length
+  const livePipelineIds = data === null ? [] : data.assets
+    .flatMap((a) => a.pipelines)
+    .filter((p) => p.scheduled && p.enabled)
+    .map((p) => p.id)
+  const failed = livePipelineIds.filter((id) => data!.recentRuns[id]?.[0]?.status === 'failed').length
+  const unscheduled = data === null ? 0 : data.assets
+    .flatMap((a) => a.pipelines).filter((p) => !p.scheduled).length
 
   return (
     <Space direction="vertical" style={{ width: '100%' }} size="middle">
@@ -214,7 +224,7 @@ export default function PipelinesPage() {
           { k: '资产', v: data.assets.length, d: '有管线写入的湖前缀' },
           { k: 'staging', v: new Set(data.assets.map((a) => a.staging).filter(Boolean)).size, d: '已接上 staging 的资产' },
           { k: '断点', v: broken, d: '有管线但没有 staging' },
-          { k: '最近失败', v: failed, d: data.runsWired ? '最近一次 run = failed' : '运行记录未接入' },
+          { k: '在跑失败', v: failed, d: data.runsWired ? `调度中管线最近一次 = failed（另有 ${unscheduled} 条未调度）` : '运行记录未接入' },
         ].map((x) => (
           <div key={x.k} style={{ minWidth: 110 }}>
             <div style={{ fontSize: 12, color: '#9AA0A6' }}>{x.k}</div>
@@ -285,8 +295,8 @@ export default function PipelinesPage() {
                           <span style={{ fontFamily: 'ui-monospace, Menlo, monospace', fontSize: 12 }}>{p.id}</span>
                           <div style={{ paddingLeft: 12, fontSize: 11.5, color: '#9AA0A6' }}>
                             {p.account === null ? '共享' : `账套 ${p.account}`}
-                            {p.cron === null ? ' · 无调度' : ` · ${p.cron}`}
-                            {p.cron !== null && !p.enabled ? ' · 已停用' : ''}
+                            {!p.scheduled ? ' · 未调度（历史/一次性）' : p.cron === null ? ' · 无 cron' : ` · ${p.cron}`}
+                            {p.scheduled && !p.enabled ? ' · 已停用' : ''}
                             {run === undefined ? ' · 运行记录未知' : ` · 最近 ${run.status} ${new Date(run.at).toLocaleString('zh-CN')}`}
                           </div>
                           {/* 最近 3 次：区分「一直红」与「偶发一次」——排障时这一列决定要不要动手 */}
