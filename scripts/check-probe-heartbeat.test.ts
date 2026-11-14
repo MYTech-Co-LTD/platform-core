@@ -6,7 +6,7 @@ import { judgeScheduler } from './check-probe-heartbeat.mjs'
 const NOW = new Date('2026-11-14T12:00:00Z')
 
 describe('judgeScheduler', () => {
-  it('没有 enabled 排班（含 SCHEDULER_ENABLED=0 回滚态）⇒ DISABLED，不算故障', () => {
+  it('所有排班都是 enabled=false（含 SCHEDULER_ENABLED=0 只停 loop 的情形）⇒ DISABLED，不算故障', () => {
     // 心跳缺失或陈旧都无关紧要：没有 enabled 排班就不该要求引擎在跑。
     expect(judgeScheduler(null, 0, NOW).verdict).toBe('DISABLED')
     expect(judgeScheduler(new Date('2026-11-01T00:00:00Z'), 0, NOW).verdict).toBe('DISABLED')

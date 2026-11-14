@@ -200,9 +200,12 @@ misfire 迟到 3 小时也用它；重试沿用同一 occurrence ⇒ 下游幂�
    任一成立 ⇒ 非 200。
 3. **第二看护路径**：`scripts/check-probe-heartbeat.mjs`（已是 openship 基建 job）**同时检查 scheduler 心跳**——
    判据：`platform.job_schedule` 存在任一 `enabled` 排班时，`platform.job_heartbeat('scheduler')`
-   缺失或超过 **2 分钟** ⇒ STALE（exit 1，输出点名 `scheduler`）；**没有任何 `enabled` 排班**
-   （含 `SCHEDULER_ENABLED=0` 回滚态）⇒ DISABLED（**不算故障**，exit 0）。
+   缺失 ⇒ **NEVER**、超过 **2 分钟** ⇒ **STALE**（两者均 exit 1，输出点名 `scheduler`）；
+   **所有排班都是 `enabled=false`** ⇒ DISABLED（**不算故障**，exit 0）。
    判定为纯函数 `judgeScheduler(beatAt, enabledCount, now)`，用例在 `scripts/check-probe-heartbeat.test.ts`。
+   ⚠️ `SCHEDULER_ENABLED=0` 只停 loop、**不改** `job_schedule.enabled` ⇒ 只设该开关时看护仍判 STALE。
+   **这是有意的**：调度器停了而排班还标着启用，本来就该报。**回滚须同时把 DB 排班置 `enabled=false`**
+   （或走 §11 的反向切流）。
    不把「引擎还活着」这一判断单独押在 OO 上（OO 有流静默导致状态机冻结的实测形态）。
 4. **手动触发**：`POST /api/platform/jobs/:key/run`（会话 + `tenant:admin`；本仓无独立「平台管理员」码，单实例单租户下等价），写 `trigger='manual'` 的 run 行，落 `platform.audit`。**已知边界**：多租户实例下这等于任意租户管理员可触发全局 job——届时须引入平台级码或按 `owner_org` 限定。
 
@@ -254,7 +257,9 @@ agent / console / MCP → SchedulerPort.createSchedule(key='notify.emit', cron, 
   → 关掉 openship 那个 job → DB 置 enabled=true（next_run_at 补算到下一个未来时点）
 ```
 
-回滚：反向操作；`SCHEDULER_ENABLED=0` 可一次性停掉调度 loop（投递 loop 不受影响）。
+回滚：反向操作；`SCHEDULER_ENABLED=0` 可一次性停掉调度 loop（投递 loop 不受影响），
+但它**不清 `job_schedule.enabled`** ⇒ 只设该开关时第二看护仍判 STALE（有意）。
+完整回滚 = `SCHEDULER_ENABLED=0` **同时**把 DB 排班置 `enabled=false`（或走反向切流）。
 顺序按爆炸半径：`notify-reconcile` → `metric-candidates` → `report-scope-scan`
 → `notify-preflight` → `notify-retention` → `metric-retire` → `org-sync`。
 

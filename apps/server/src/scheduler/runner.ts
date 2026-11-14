@@ -61,10 +61,14 @@ export const defaultSpawn: SpawnFn = (o) => new Promise((resolve) => {
     }
   }
 
+  // 宽限期的 SIGKILL 定时器必须留 handle：子进程若在宽限期内自行退出，settle 后它若仍到期，
+  // 就会对一个**进程组**发信号（PGID 可能已被无关进程复用）⇒ 误杀。settle 里清掉。
+  let sigkillTimer: NodeJS.Timeout | undefined
   const killer = setTimeout(() => {
     timedOut = true
     killGroup('SIGTERM')
-    setTimeout(() => killGroup('SIGKILL'), o.killGraceMs ?? DEFAULT_KILL_GRACE_MS).unref()
+    sigkillTimer = setTimeout(() => killGroup('SIGKILL'), o.killGraceMs ?? DEFAULT_KILL_GRACE_MS)
+    sigkillTimer.unref()
   }, o.timeoutMs)
   killer.unref()
 
@@ -72,6 +76,7 @@ export const defaultSpawn: SpawnFn = (o) => new Promise((resolve) => {
     if (settled) return
     settled = true
     clearTimeout(killer)
+    if (sigkillTimer !== undefined) clearTimeout(sigkillTimer)
     // 孙进程可能仍握着写端：主动 destroy，避免句柄挂住事件循环 / 测试进程。
     child.stdout?.destroy()
     child.stderr?.destroy()

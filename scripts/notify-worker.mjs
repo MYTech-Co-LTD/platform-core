@@ -59,7 +59,7 @@ if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) 
   // 不 await 子进程完成（tick 只起进程）；长任务因此不会饿死投递。
   // SCHEDULER_ENABLED=0 只停调度 loop（不 tick），投递照跑；healthz 也不因调度而红。
   // `--once` 是「跑一轮投递就退出」的运维入口：**不构造调度 loop**、healthz 也不看调度。
-  // 否则首拍会 claim 任务、起非 detached 子进程 ref 住事件循环 ⇒ 进程不退出，
+  // 否则首拍会 claim 任务、起子进程 ref 住事件循环 ⇒ 进程不退出，
   // 且 finally 的 pool.end() 早于 finishRun ⇒ job_run 永远停在 running（挡 claim 到 reapStale）。
   const once = process.argv.includes('--once')
   const { parseSchedulerConfig, shouldRunTick } = await import('../apps/server/src/scheduler/worker-config.ts')

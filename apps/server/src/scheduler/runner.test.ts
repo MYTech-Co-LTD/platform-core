@@ -174,6 +174,37 @@ describe('defaultSpawn（真子进程）', () => {
     }
   }, 15_000)
 
+  it('★ 宽限期内自行退出 ⇒ settle 后不再补发进程组 SIGKILL（哨兵存活）', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'runner-grace-'))
+    const sentinelFile = join(dir, 'sentinel.pid')
+    // 时间线：timeout 800 发 SIGTERM（父与哨兵都忽略）；父进程约 1.25s 自行 exit(0)；
+    // grace 1000 ⇒ 宽限期 SIGKILL 本该在 ~1.8s 对整组触发。settle（~1.35s）必须清掉它。
+    // timeout 给到 800ms 是为了让**嵌套启动的哨兵**有时间装好 SIGTERM handler（200ms 会太紧）。
+    const script = `
+      const { spawn } = require('node:child_process')
+      const fs = require('node:fs')
+      process.on('SIGTERM', () => {})
+      const s = spawn(process.execPath, ['-e', "process.on('SIGTERM',()=>{});setTimeout(()=>{},10000)"], { stdio: 'ignore' })
+      fs.writeFileSync(${JSON.stringify(sentinelFile)}, String(s.pid))
+      setTimeout(() => process.exit(0), 1200)
+    `
+    const alive = (pid: number): boolean => { try { process.kill(pid, 0); return true } catch { return false } }
+    let sentinel: number | null = null
+    try {
+      const r = await defaultSpawn(opts(script, 800, 1000))
+      expect(r.timedOut).toBe(true)
+      sentinel = Number(readFileSync(sentinelFile, 'utf8'))
+      // ① settle 后（已越过 800ms 的 SIGTERM）哨兵应仍活着——排除「死于 SIGTERM」。
+      expect(alive(sentinel)).toBe(true)
+      // ② 越过宽限期 SIGKILL 本该触发的时刻（800 + 1000 = 1800ms）。
+      await new Promise((res) => setTimeout(res, 900))
+      expect(alive(sentinel)).toBe(true)
+    } finally {
+      if (sentinel !== null) { try { process.kill(sentinel, 'SIGKILL') } catch { /* 已退出 */ } }
+      rmSync(dir, { recursive: true, force: true })
+    }
+  }, 15_000)
+
   it('★ 到点 SIGTERM 杀掉 ⇒ timedOut=true 且耗时落在 [200,5000)ms', async () => {
     const r = await defaultSpawn(opts('setTimeout(() => {}, 10000)', 200))
     expect(r.timedOut).toBe(true)

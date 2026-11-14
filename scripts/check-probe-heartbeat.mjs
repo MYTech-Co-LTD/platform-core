@@ -7,7 +7,9 @@
 //
 // 第二看护路径（调度器，spec 2026-11-14 §9.3）：同时读 `platform.job_heartbeat('scheduler')`。
 //   · `platform.job_schedule` 有任一 `enabled` 排班，但心跳缺失或 >2 分钟 ⇒ STALE（exit 1，点名 scheduler）；
-//   · 没有任何 enabled 排班（含 `SCHEDULER_ENABLED=0` 回滚态）⇒ DISABLED，**不算故障**（exit 0）。
+//   · 心跳缺失 ⇒ NEVER、>2 分钟 ⇒ STALE（两者都 exit 1）；
+//   · 所有排班都是 enabled=false ⇒ DISABLED，**不算故障**（exit 0）；
+//   · `SCHEDULER_ENABLED=0` 只停 loop、不改 enabled ⇒ 看护仍判 STALE（有意）。
 // 为什么放这里：不把「引擎还活着」单独押在 OO 上（OO 有流静默导致状态机冻结的实测形态）。
 //
 // 为什么需要它（spec 写成「必须项」）：整套集成告警的前提是**探针在跑**。探针自己停了时，
@@ -29,7 +31,7 @@ export const SCHEDULER_STALE_SECONDS = 120
 /**
  * 调度器第二看护（纯函数，spec §9.3）。
  *
- * 顺序不可调换：没有 enabled 排班 ⇒ DISABLED（回滚态/登记态，不监控也**不算故障**）；
+ * 顺序不可调换：没有 enabled 排班 ⇒ DISABLED（登记态，不监控也**不算故障**）；
  * 有 enabled 排班却没心跳 ⇒ NEVER；心跳超过 2 分钟 ⇒ STALE；其余 OK。
  * @param {Date | null} beatAt
  * @param {number} enabledCount
@@ -94,7 +96,7 @@ if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) 
       console.error(`scheduler-heartbeat: ${sched.verdict} — ${sched.reason}`)
       failed = true
     } else {
-      // DISABLED = 本实例没有 enabled 排班（回滚态/登记态）：不监控，但不算故障。
+      // DISABLED = 本实例没有 enabled 排班（排班全 disabled）：不监控，但不算故障。
       console.log(`scheduler-heartbeat: ${sched.verdict}（${sched.reason}）`)
     }
   } finally {

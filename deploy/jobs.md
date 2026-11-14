@@ -77,8 +77,10 @@
 - 每跳 upsert 一行（`id='scheduler'`），`beat_at` 为 UTC。
 - `beat_at` 陈旧 > 2 分钟 ⇒ 调度 loop 本身不健康（`/healthz` 非 200）。这是「引擎还活着」的判据，**不要**用「最近没有作业」代替。
 - **第二看护路径**（`scripts/check-probe-heartbeat.mjs`，openship 基建 job）：存在任一 `enabled` 排班时，
-  `scheduler` 心跳**缺失或 > 2 分钟** ⇒ job 失败（STALE，输出点名 `scheduler`）；
-  **没有任何 `enabled` 排班**（含 `SCHEDULER_ENABLED=0` 回滚态）⇒ 输出 DISABLED，**不算故障**。
+  `scheduler` 心跳**缺失 ⇒ NEVER、> 2 分钟 ⇒ STALE**（两者都判 job 失败，输出点名 `scheduler`）；
+  **所有排班都是 `enabled=false`** ⇒ 输出 DISABLED，**不算故障**。
+  ⚠️ `SCHEDULER_ENABLED=0` 只停 loop、**不改** `job_schedule.enabled` ⇒ 只设该开关时看护仍判 STALE
+  （有意：调度器停了而排班还标着启用）。**回滚须同时把 DB 排班置 `enabled=false`**（或反向切流）。
   该 job 只读心跳与排班计数，不写任何表。
 
 ## 3. 执行契约（脚本侧）
@@ -147,6 +149,8 @@
 ## 6. 回滚
 
 - **一键停调度 loop**：`SCHEDULER_ENABLED=0`。只停 `platform.scheduler`，**不影响通知投递 loop**；改 env 后需重启/重部署 worker 才生效。
+  ⚠️ 它**不清** `job_schedule.enabled` ⇒ 只设该开关时第二看护仍判 STALE（有意）。
+  **完整回滚 = 该开关 + DB 排班置 `enabled=false`**（或走下面的反向切流）。
 - **env 注入面**：生产 env 由 openship **服务行 / 项目 env** 注入；compose 里的 `${...}` 只在本地
   compose 语义下生效。改完 `SCHEDULER_ENABLED`（及 `SCHEDULER_TICK_MS` 等）必须按**容器内实际 env**
   （服务行 / `printenv`）核对，不要拿 `deploy/docker-compose.yml` 文本当证据。
