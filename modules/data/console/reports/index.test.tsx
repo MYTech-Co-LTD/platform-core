@@ -1001,3 +1001,33 @@ describe('R6 30 天零访问提醒', () => {
     expect(screen.getByText(/销售日报（45 天）/)).toBeInTheDocument()
   })
 })
+
+describe('R2 锚点自证（审阅抽屉）', () => {
+  it('★ 审阅草稿展示每个指标的数据水位与 SLA 判定（未知不染色）', async () => {
+    m.mockImplementation(async (url: string, init?: RequestInit) => {
+      calls.push({ url, init })
+      if (/\/reports\/[^/]+\/review$/.test(url)) {
+        return json({
+          report: { id: 'r3', title: '自绘大盘', version: 3, publishedVersion: 2, publishedAt: null },
+          doc: { title: '自绘大盘', panelCount: 1, period: null, panels: [], metrics: [] },
+          diff: null,
+          lint: [],
+          anchors: [
+            { metricId: 'm:sales', title: '销售额', slaDays: 1, status: 'normal', watermark: '2026-11-13', relations: [] },
+            { metricId: 'm:none', title: '无链路指标', slaDays: null, status: 'unknown', watermark: null, relations: [] },
+          ],
+        })
+      }
+      if (url.endsWith('/reports/manage')) return json({ reports: editableRows() })
+      return json({})
+    })
+    renderPage(['data:manage'])
+    await screen.findByText('自绘大盘')
+
+    fireEvent.click(rowButton('自绘大盘', '审阅草稿'))
+    const box = await screen.findByTestId('review-anchors')
+    expect(box).toHaveTextContent('正常')
+    expect(box).toHaveTextContent('数据到 2026-11-13')
+    expect(box).toHaveTextContent('未知')
+  })
+})

@@ -41,6 +41,8 @@ import { runDetailQuery } from '../domain/drill'
 import { resolveTextTokens } from '../domain/report-tokens'
 import { recordReportView, staleReports } from '../domain/report-views'
 import type { QueryDeps } from '../domain/query-service'
+import { beijingTodayOf, freshnessFaceFor } from '../domain/query-service'
+import { warehouseConfigured, warehousePool } from '../domain/warehouse'
 import { periodRangeOf, type DateRange } from '../domain/report-period'
 import type { FactBundle } from '../domain/report-facts'
 import { generateNarrative, NARRATIVE_PROMPT_VERSION, streamNarrative } from '../domain/narrative'
@@ -1478,6 +1480,53 @@ export function registerReports(r: ModuleHono, ctx: RouteCtx): void {
       parsed.spec, published?.spec ?? null, catalog,
       report.title, published?.title ?? null,
     )
+    // 锚点自证（R2 运行期）：草稿用到的每个指标**当前数据水位 vs 各自 SLA**。数据来自
+    // `data.load_log`（与 /query 的新鲜度链同一份 `freshnessFaceFor`，不另写判据）；
+    // 查不到/无声明一律 unknown——「未知」不染色成「迟到」，更不反噬审阅面。
+    const anchorIds = [...new Set(parsed.spec.panels.flatMap((p) => {
+      if (p.chart === 'text' || p.chart === 'ai_text') return []
+      const ids = [p.metricId]
+      if (p.chart === 'kpi' && p.denominatorMetricId !== undefined) ids.push(p.denominatorMetricId)
+      return ids
+    }))]
+    const anchorRows = anchorIds.map((mid) => {
+      const m = catalog.find((x) => x.id === mid)
+      return {
+        id: mid,
+        slaDays: m === undefined ? null : m.slaDays,
+        freshnessRelations: m === undefined ? null : m.freshnessRelations,
+      }
+    })
+    const exec = ctx.execute
+    let faces = new Map<string, { status: string; watermark: string | null }>()
+    try {
+      const facePool = exec !== undefined
+        ? {
+            query: async (sql: string) => {
+              const r = await exec(sql)
+              return { rows: r.rows.map((row) => Object.fromEntries(r.columns.map((c, i) => [c, row[i]]))) }
+            },
+          }
+        : (warehouseConfigured() ? warehousePool() : null)
+      if (facePool !== null) {
+        faces = await freshnessFaceFor(facePool, anchorRows, beijingTodayOf())
+      }
+    } catch {
+      // 未配仓库 / load_log 查询失败 ⇒ 全部 unknown（锚点是附加面，不反噬审阅）。
+      faces = new Map()
+    }
+    const anchors = anchorIds.map((mid) => {
+      const m = catalog.find((x) => x.id === mid)
+      const face = faces.get(mid)
+      return {
+        metricId: mid,
+        title: m?.title ?? null,
+        slaDays: m?.slaDays ?? null,
+        relations: m?.freshnessRelations ?? [],
+        status: face?.status ?? 'unknown',
+        watermark: face?.watermark ?? null,
+      }
+    })
     return c.json({
       report: {
         id, title: report.title, version: report.version,
@@ -1485,6 +1534,7 @@ export function registerReports(r: ModuleHono, ctx: RouteCtx): void {
         publishedAt: published?.publishedAt ?? null,
       },
       ...review,
+      anchors,
     })
   })
 
