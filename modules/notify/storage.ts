@@ -272,8 +272,12 @@ export async function publishTemplateRevision(
     `update notify.template_revision
         set review_status='approved', approved_by=$4, approved_at=now()
       where org=$1 and key=$2 and revision=$3`, [org, key, revision, actor])
+  // 租户发布即 fork：builtin → tenant。之后 seed-builtin 不再覆盖这个 key
+  //（否则下一次内置文案更新会把租户改好的版本静默顶掉）。
   await pool.query(
-    `update notify.template set status='published', published_revision=$3, updated_at=now()
+    `update notify.template set status='published', published_revision=$3,
+       origin = case when origin='builtin' then 'tenant' else origin end,
+       updated_at=now()
       where org=$1 and key=$2`, [org, key, revision])
 }
 
@@ -615,8 +619,20 @@ export async function markAllInboxRead(
 /** 保留期清理：只删终态/过期行；返回各表删除条数。 */
 export async function purgeOldNotifications(
   pool: Pool,
-  opts: { inboxDays: number; attemptDays: number; deliveryDays: number },
-): Promise<{ inbox: number; attempts: number; deliveries: number }> {
+  opts: {
+    inboxDays: number
+    attemptDays: number
+    deliveryDays: number
+    eventDays: number
+    auditDays: number
+  },
+): Promise<{
+  inbox: number
+  attempts: number
+  deliveries: number
+  events: number
+  audit: number
+}> {
   const inbox = await pool.query(
     `delete from notify.inbox where created_at < now() - ($1 || ' days')::interval`,
     [String(opts.inboxDays)])
@@ -628,10 +644,21 @@ export async function purgeOldNotifications(
       where created_at < now() - ($1 || ' days')::interval
         and status in ('sent','suppressed','dead')`,
     [String(opts.deliveryDays)])
+  // 只删终态事件：`new` 是未处理（含延迟未到期）的事件，保留期不能替 worker 做丢弃决定。
+  const events = await pool.query(
+    `delete from notify.event
+      where created_at < now() - ($1 || ' days')::interval
+        and status <> 'new'`,
+    [String(opts.eventDays)])
+  const auditRows = await pool.query(
+    `delete from notify.audit where created_at < now() - ($1 || ' days')::interval`,
+    [String(opts.auditDays)])
   return {
     inbox: inbox.rowCount ?? 0,
     attempts: attempts.rowCount ?? 0,
     deliveries: deliveries.rowCount ?? 0,
+    events: events.rowCount ?? 0,
+    audit: auditRows.rowCount ?? 0,
   }
 }
 

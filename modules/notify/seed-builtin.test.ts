@@ -60,6 +60,28 @@ describePg('seedBuiltin', () => {
     expect(await counts()).toEqual(first)
   })
 
+  it('租户已 fork（origin=tenant）的模板不被 seed 覆盖', async () => {
+    const key = 'aftersales_employee_approval_pending'
+    await seedBuiltin(pool, {}, [ORG])
+    await pool.query(
+      "update notify.template set origin='tenant', published_revision=2 where org=$1 and key=$2",
+      [ORG, key])
+    await pool.query(
+      `insert into notify.template_revision(org,key,revision,contents,body_hash,review_status,created_by)
+       values ($1,$2,2,'{"wecom_chat":{"text":"tenant"}}','tenant-hash','approved','u')`, [ORG, key])
+    const revsBefore = (await pool.query(
+      'select count(*)::int n from notify.template_revision where org=$1 and key=$2', [ORG, key])).rows[0].n
+
+    await seedBuiltin(pool, {}, [ORG])
+
+    const tpl = await pool.query(
+      'select origin, published_revision from notify.template where org=$1 and key=$2', [ORG, key])
+    expect(tpl.rows[0]).toEqual({ origin: 'tenant', published_revision: 2 })
+    const revsAfter = (await pool.query(
+      'select count(*)::int n from notify.template_revision where org=$1 and key=$2', [ORG, key])).rows[0].n
+    expect(revsAfter).toBe(revsBefore)
+  })
+
   it('无 NOTIFY_APPROVERS ⇒ 只剩五条 derived 规则（aftersales/集成健康/指标变更/表单两条）', async () => {
     await seedBuiltin(pool, {}, [ORG])
     expect((await counts()).rules).toBe(5)

@@ -683,7 +683,8 @@ token 只决定「这个账号能调哪些面」，不改变分层。
 
 #### 模板与发布
 
-- 模板正典在 DB（`origin=builtin` 由 repo seed；租户可 fork 成 `origin=tenant` 草稿）。
+- 模板正典在 DB（`origin=builtin` 由 repo seed；租户**发布** builtin 模板的 revision 即 fork 成
+  `origin=tenant`，之后 `seed-builtin` 不再覆盖该 key 的正文/revision/published_revision）。
 - **预览与投递共用同一渲染函数**；发布 = 租户管理员（`notify:publish`）动作；AI 只能提草稿。
 - 版本不可变；回滚 = 发布旧 revision。
 
@@ -742,7 +743,8 @@ token 只决定「这个账号能调哪些面」，不改变分层。
 - **健康面**：`notify-health` 除 dead/积压/心跳外，还报 `oldestPendingSeconds` / `failedLastHour` /
   `channelErrors`（近 1 小时失败 > 50 判红）。
 - **保留期**：`notify-retention` job（每日）清 `inbox` 90 天 / `delivery_attempt` 180 天 /
-  `delivery` 365 天，**只删终态**。两个 job 的口径见 `deploy/notify-jobs.md`。
+  `delivery` 365 天 / `event` 90 天 / `audit` 365 天，**只删终态**（`event` 只删 `status<>'new'`）。
+  口径见 `deploy/notify-jobs.md`。
 - **收件箱**：`POST /inbox/read-all` 批量已读（只作用于调用者本人）。
 
 #### 可送达性（D2，2026-10-28 交付）

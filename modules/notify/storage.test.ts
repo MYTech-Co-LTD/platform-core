@@ -126,6 +126,20 @@ describePg('notify storage v2', () => {
     expect((await getTemplate(pool, ORG, 't1'))!.publishedRevision).toBe(1)
   })
 
+  it('租户发布 builtin 模板 ⇒ 模板 fork 成 origin=tenant', async () => {
+    await pool.query(
+      `insert into notify.template(org,key,name,event_key,status,origin,published_revision,created_by)
+       values ($1,'t-fork','T','m.a.b','published','builtin',1,'system')`, [ORG])
+    await pool.query(
+      `insert into notify.template_revision(org,key,revision,contents,body_hash,review_status,created_by)
+       values ($1,'t-fork',1,'{"wecom_chat":{"text":"builtin"}}','h1','approved','system')`, [ORG])
+
+    const d = await createTemplateRevision(pool, ORG, 't-fork', { wecom_chat: { text: 'tenant' } }, 'u')
+    expect((await getTemplate(pool, ORG, 't-fork'))!.origin).toBe('builtin') // 草稿不 fork
+    await publishTemplateRevision(pool, ORG, 't-fork', d.revision, 'publisher')
+    expect((await getTemplate(pool, ORG, 't-fork'))!.origin).toBe('tenant') // 发布即 fork
+  })
+
   it('通道：list 只回 env 键名；patch 合并 config 并审计；health 写入', async () => {
     await pool.query(
       `insert into notify.channel(org,id,provider,enabled,config,secret_refs,created_by)
@@ -176,13 +190,31 @@ describePg('notify storage v2', () => {
        values ($1,'pg-i-old','u1','e1','m.a.b','t1',1,'T','B','2020-01-01T00:00:00Z'),
               ($1,'pg-i-new','u1','e2','m.a.b','t1',1,'T','B',now())`, [ORG])
 
-    const r = await purgeOldNotifications(pool, { inboxDays: 90, attemptDays: 180, deliveryDays: 365 })
+    // 终态 event 按 eventDays 删；`new` 永不因保留期被删（含延迟未到期）。
+    await pool.query(
+      `insert into notify.event(org,event_id,event_key,scope,payload,producer,status,created_at)
+       values ($1,'pg-e-old','m.a.b','*','{}','t','matched','2020-01-01T00:00:00Z'),
+              ($1,'pg-e-new','m.a.b','*','{}','t','new','2020-01-01T00:00:00Z'),
+              ($1,'pg-e-now','m.a.b','*','{}','t','matched',now())`, [ORG])
+    // audit 按 auditDays 删。
+    await pool.query(
+      `insert into notify.audit(org,actor,action,target,created_at)
+       values ($1,'u','old','t','2020-01-01T00:00:00Z'), ($1,'u','new','t',now())`, [ORG])
+
+    const r = await purgeOldNotifications(pool, {
+      inboxDays: 90, attemptDays: 180, deliveryDays: 365, eventDays: 90, auditDays: 365,
+    })
     expect(r.inbox).toBe(1)
     expect(r.deliveries).toBe(1)
+    expect(r.events).toBe(1)
+    expect(r.audit).toBe(1)
 
     const left = await pool.query(
       "select event_id from notify.delivery where org=$1 and event_id like 'pg-%' order by event_id", [ORG])
     expect(left.rows.map((x) => x.event_id)).toEqual(['pg-new-sent', 'pg-old-pending'])
+    const events = await pool.query(
+      "select event_id from notify.event where org=$1 and event_id like 'pg-e-%' order by event_id", [ORG])
+    expect(events.rows.map((x) => x.event_id)).toEqual(['pg-e-new', 'pg-e-now'])
   })
 
   it('countChannelSends 只数窗口内 sent', async () => {

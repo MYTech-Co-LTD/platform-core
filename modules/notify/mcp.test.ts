@@ -145,6 +145,16 @@ describePg('notify mcp handlers', () => {
     expect(bad.isError).toBe(true)
   })
 
+  it('update_rule 不可覆盖系统预留 id（derived:/manual:）', async () => {
+    const out = await callTool(deps(), 'update_rule', {
+      id: 'derived:aftersales:m.a.b:*',
+      eventKey: 'm.a.b', recipientKey: 'approver',
+      templateKey: 't1', channels: ['wecom_default'],
+    })
+    expect(out.isError).toBe(true)
+    expect((JSON.parse(out.text) as { reason: string }).reason).toBe('rule_id_reserved')
+  })
+
   it('JSON-RPC /mcp-manage tools/list 返回 12 工具', async () => {
     const app = buildTestApp(
       notifyV2,

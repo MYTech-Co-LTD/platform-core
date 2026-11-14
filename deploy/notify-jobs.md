@@ -80,10 +80,13 @@ DATABASE_URL=<平台库> pnpm exec tsx scripts/notify-retention.mjs
 | 2 | 缺 `DATABASE_URL` |
 
 保留期（env，缺省见括号）：`NOTIFY_INBOX_RETENTION_DAYS`（90）、
-`NOTIFY_ATTEMPT_RETENTION_DAYS`（180）、`NOTIFY_DELIVERY_RETENTION_DAYS`（365）。
+`NOTIFY_ATTEMPT_RETENTION_DAYS`（180）、`NOTIFY_DELIVERY_RETENTION_DAYS`（365）、
+`NOTIFY_EVENT_RETENTION_DAYS`（90）、`NOTIFY_AUDIT_RETENTION_DAYS`（365）。
 
 - **只删终态**：`delivery` 只删 `sent / suppressed / dead`；`pending / failed` 永不因保留期被删。
-- `delivery_attempt` 与 `inbox` 按时间删（审计面保留期比投递长一档）。
+- `event` 只删 `status <> 'new'`：`new` 是未处理（含延迟未到期）的事件，保留期不能替 worker 做丢弃决定。
+- `delivery_attempt` / `inbox` / `audit` 按时间删（审计面保留期比投递长一档）。
+- 输出增加 `events=` / `audit=` 两个删除计数。
 - **cron 按 UTC 解释**（`deploy/data-plane-deploy-sop.md` §E.7 实测）。
 
 ## 配置从哪取（不写明文）
