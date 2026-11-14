@@ -119,12 +119,26 @@ describePg('platform-jobs routes（需要 DATABASE_URL）', () => {
     expect(await res.json()).toMatchObject({ error: 'JOB_NOT_FOUND', key: 'jobtest-route:nope' })
   })
 
-  it('enabled=false ⇒ 409 JOB_DISABLED', async () => {
+  it('★ enabled=false 的排班也能手动触发（200 + queued + 审计）：启停只影响自动排班', async () => {
     await seed({ enabled: false })
+    const before = await pool.query('select next_run_at from platform.job_schedule where key=$1', [KEY])
     const { app, csrf } = appFor(['tenant:admin'])
     const res = await app.request(`/jobs/${KEY}/run`, post(csrf))
-    expect(res.status).toBe(409)
-    expect(await res.json()).toMatchObject({ error: 'JOB_DISABLED', key: KEY })
+    expect(res.status).toBe(200)
+    const body = (await res.json()) as { runId: number; key: string; status: string }
+    expect(body).toMatchObject({ key: KEY, status: 'queued' })
+    const run = await pool.query('select status, trigger from platform.job_run where id=$1', [body.runId])
+    expect(run.rows[0]).toMatchObject({ status: 'queued', trigger: 'manual' })
+    // 切流程序第 2 步就发生在 enabled=false 的登记态 ⇒ 必须有审计
+    const audit = await pool.query(
+      `select detail from platform.audit where action='admin.job.run' and detail->>'runId' = $1`,
+      [String(body.runId)])
+    expect(audit.rows).toHaveLength(1)
+    // 手动触发不改排班态：enabled 仍 false、next_run_at 原样（只入队）
+    const sch = await pool.query('select enabled, next_run_at from platform.job_schedule where key=$1', [KEY])
+    expect(sch.rows[0].enabled).toBe(false)
+    expect(new Date(sch.rows[0].next_run_at).toISOString())
+      .toBe(new Date(before.rows[0].next_run_at).toISOString())
   })
 
   it('★ 正常触发 ⇒ 只建 queued 行（不 spawn、不改 next_run_at）+ 审计', async () => {

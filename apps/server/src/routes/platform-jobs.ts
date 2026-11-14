@@ -24,9 +24,11 @@ export interface PlatformJobRoutesDeps {
   sessionSecret: string
 }
 
-/** 手动触发只认 system 排班（agent 排班的 key 在另一命名空间，唯一索引也按 source 分桶）。 */
+/** 手动触发只认 system 排班（agent 排班的 key 在另一命名空间，唯一索引也按 source 分桶）。
+ *  `enabled` **不参与判定**：它管的是「排班要不要自动跑」，手动触发是运维显式动作；
+ *  spec §11 的切流程序正是「登记（disabled）→ 手动跑一次比对 → 关 openship → 再启用」。 */
 const LOCK_SCHEDULE_SQL =
-  `select id, enabled from platform.job_schedule where key=$1 and source='system' for update`
+  `select id from platform.job_schedule where key=$1 and source='system' for update`
 
 const BUSY_SQL =
   `select 1 from platform.job_run where schedule_id=$1 and status in ('queued','running') limit 1`
@@ -57,15 +59,12 @@ export function platformJobRoutes(deps: PlatformJobRoutesDeps): Hono<TenantEnv &
     try {
       await client.query('begin')
       // ① 锁排班行：并发触发在这里串行化（第二个事务等锁，commit 后按最新快照重判 busy）。
-      const locked = await client.query<{ id: string; enabled: boolean }>(LOCK_SCHEDULE_SQL, [key])
+      //    排班 disabled 也照常入队——启停只影响自动排班，不影响运维的显式手动触发。
+      const locked = await client.query<{ id: string }>(LOCK_SCHEDULE_SQL, [key])
       const sch = locked.rows[0]
       if (!sch) {
         await client.query('rollback')
         return c.json({ error: 'JOB_NOT_FOUND', key }, 404)
-      }
-      if (!sch.enabled) {
-        await client.query('rollback')
-        return c.json({ error: 'JOB_DISABLED', key }, 409)
       }
 
       // ② 同锁内判 busy：queued=待执行、running=正在跑，两者都不允许再入队。

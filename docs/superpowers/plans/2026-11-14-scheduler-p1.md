@@ -842,7 +842,7 @@ export async function claimQueuedManual(pool: Pool, limit: number, now: Date): P
     const { rows } = await client.query<Row & { occurrence: Date }>(
       `select r.id as run_id, ${SELECT_COLS.split(',').map((c) => 's.' + c.trim()).join(',')}, r.occurrence
          from platform.job_run r join platform.job_schedule s on s.id = r.schedule_id
-        where r.status='queued' and s.enabled and s.retry_at is null
+        where r.status='queued' and s.retry_at is null   -- 不看 s.enabled：手动触发与启停解耦
         order by r.id limit $1 for update of r skip locked`, [limit])
     for (const r of rows as Array<Row & { occurrence: Date; run_id: string }>) {
       await client.query(
@@ -1679,10 +1679,10 @@ export function platformJobRoutes(deps: PlatformJobDeps): Hono<{ Variables: Vars
     try {
       await client.query('begin')
       const locked = await client.query(
-        "select id, enabled from platform.job_schedule where key=$1 and source='system' for update", [key])
+        "select id from platform.job_schedule where key=$1 and source='system' for update", [key])
       const sch = locked.rows[0]
       if (!sch) { await client.query('rollback'); return c.json({ error: 'JOB_NOT_FOUND', key }, 404) }
-      if (!sch.enabled) { await client.query('rollback'); return c.json({ error: 'JOB_DISABLED', key }, 409) }
+      // enabled 不参与判定：启停只影响自动排班（切流程序要在登记态先手动跑一次）
 
       const busy = await client.query(
         "select 1 from platform.job_run where schedule_id=$1 and status in ('queued','running') limit 1", [sch.id])
@@ -1694,7 +1694,7 @@ export function platformJobRoutes(deps: PlatformJobDeps): Hono<{ Variables: Vars
       runId = Number(ins.rows[0].id)
       await client.query(
         'insert into platform.audit(tenant_id, actor, action, detail) values ($1,$2,$3,$4)',
-        [c.get('tenant')?.casdoor_org ?? null, who.userId, 'admin.job.run', { key, runId }])
+        [c.get('tenant').id, who.userId, 'admin.job.run', { key, runId }])
       await client.query('commit')
     } catch (e) {
       await client.query('rollback').catch(() => {})
@@ -1809,7 +1809,7 @@ Expected: 三行，`enabled=false`，`next_run_at=null`。**若 enabled=true 立
 - [ ] **Step 3: 逐 job 切流（一次一个）**
 
 对 `notify.reconcile`：
-1. 手动跑一次（MCP 端点或 SQL 入队），比对产物与 openship 上最近一次；
+1. 手动跑一次（`POST /api/platform/jobs/:key/run` 或 SQL 入队），比对产物与 openship 上最近一次。**手动触发不要求 `enabled=true`**——启停只影响自动排班，本步就在 `enabled=false` 的登记态执行；
 2. `update platform.job_schedule set enabled=true, next_run_at=now()+interval '1 hour', updated_at=now() where key='notify.reconcile'`（让首跳落在下一个整点前后，别立刻跑；**`updated_at=now()` 必带**——健康判据②在「从未成功」时以它作宽限起点，漏刷会让宽限从 seed 时刻起算，首跑前就判红）；
 3. 关 openship：`patch_jobs_by_key` 把 `custom:KJ_JBrbq68jAHVlO`（mytech）/`custom:QSr7oZ5KBAVOqx5j`（山海）`enabled=false`；
 4. 观察两条 run 行 + openship 侧不再有新 run。

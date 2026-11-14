@@ -104,13 +104,14 @@
 - misfire 迟到 3 小时也用它；重试沿用**同一 occurrence**。
 - 下游幂等键应基于 `occurrence`（而不是 `now()`）构造，否则迟到/重试会双发。
 - 手动触发不占 cron bucket：`trigger='manual'`，台账另记一行。
+- **手动触发不要求 `enabled=true`**：启停只影响**自动排班**，不影响运维的显式手动触发（切流程序要在登记态先跑一次比对）。
 
 ## 5. 切流程序（一次一个 job）
 
 前提：代码已发版（registry 已含该 key）、迁移已跑、seed 已执行。
 
 1. **登记（enabled=false）**：确认 `platform.job_schedule` 有该 key，且 `enabled=false`、`next_run_at=null`、`params={}`。seed 只补新增 key，**不覆盖**人改过的 `cron` / `enabled`。
-2. **手动跑一次并比对**：由平台管理员手动触发（P1 端点 `POST /api/platform/jobs/:key/run`，**只入队**），等 worker 领取并记录 `job_run`。比对产物与 openship 上最近一次结果：数量、口径、落表/落事件都要对得上；**比对不过不启用**。
+2. **手动跑一次并比对**：由平台管理员手动触发（P1 端点 `POST /api/platform/jobs/:key/run`，**只入队**），等 worker 领取并记录 `job_run`。**本步在 `enabled=false` 的登记态即可执行**——手动触发不要求 `enabled=true`，启停只影响自动排班。比对产物与 openship 上最近一次结果：数量、口径、落表/落事件都要对得上；**比对不过不启用**。
 3. **关 openship**：`patch_jobs_by_key` 把对应 job 置 `enabled=false`，确认 openship 侧不再产生新 run。**若该 job 没有对应的 openship 作业**（如 `metric-retire`、`report.scope_scan`），跳过本步。
 4. **DB 启用**：置 `enabled=true`，把 `next_run_at` 补算到**下一个未来时点**（不要落在过去，否则会立即补跑），并**同时刷新 `updated_at=now()`**——否则健康判据②的宽限窗口从 seed 时刻起算，可能在该 job 首跑之前就判红。观察首条 `job_run` 为 `ok`，且 openship 侧保持安静。
 

@@ -183,11 +183,14 @@ export async function claimQueuedManual(pool: Pool, limit: number, now: Date): P
   try {
     await client.query('begin')
     // ① 锁排班行：`not exists running` ⇒ 同 schedule 已有在跑的（无论谁触发）本拍跳过。
+    //    **不看 `s.enabled`**：手动排队行是运维显式动作，启停只约束自动排班（claimDue）；
+    //    切流程序正是「登记（disabled）→ 手动跑一次比对 → 关 openship → 再启用」。
+    //    若这里筛 enabled，disabled 排班的手动 queued 行会永远不被领取（最终被 reapQueued 判 timeout），
+    //    端点返回的 200「已排队」就成了谎话。
     const sched = await client.query<Row>(
       `select ${SCHED_COLS}
          from platform.job_schedule s
-        where s.enabled
-          and exists (select 1 from platform.job_run r
+        where exists (select 1 from platform.job_run r
                        where r.schedule_id = s.id and r.status = 'queued')
           and not exists (select 1 from platform.job_run x
                            where x.schedule_id = s.id and x.status = 'running')

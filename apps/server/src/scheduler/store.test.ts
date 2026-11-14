@@ -24,8 +24,8 @@ async function mkSchedule(pool: Pool, key: string, over: Record<string, unknown>
   await clearFixtures(pool)
   const { rows } = await pool.query(
     `insert into platform.job_schedule(key,cron,timezone,source,enabled,next_run_at,timeout_ms,max_attempts,expected_interval_secs)
-     values ($1,$2,'UTC','system',true,$3,$4,$5,$6) returning id`,
-    [key, over.cron ?? '7 * * * *', over.nextRunAt ?? new Date(Date.now() - 60_000), over.timeoutMs ?? 5000, over.maxAttempts ?? 2, over.expectedIntervalSecs ?? 3600],
+     values ($1,$2,'UTC','system',$3,$4,$5,$6,$7) returning id`,
+    [key, over.cron ?? '7 * * * *', over.enabled ?? true, over.nextRunAt ?? new Date(Date.now() - 60_000), over.timeoutMs ?? 5000, over.maxAttempts ?? 2, over.expectedIntervalSecs ?? 3600],
   )
   return Number(rows[0].id)
 }
@@ -196,6 +196,20 @@ describePg('scheduler store', () => {
     expect(rows[0].params_snapshot).toEqual({})
     // 已 claim 过的 queued 行不会再被抢第二次。
     expect((await claimQueuedManual(pool, 5, new Date())).some((x) => x.scheduleId === id)).toBe(false)
+  })
+
+  it('★ enabled=false 的排班：手动 queued 行照样被 claim（启停只约束自动排班）', async () => {
+    // 切流程序第 2 步 = 登记态（enabled=false）手动跑一次比对；
+    // 若 claim 侧筛 enabled，该行永远不被领取，最后被 reapQueued 判 timeout——端点 200 成了谎话。
+    const id = await mkSchedule(pool, 'jobtest-store:manual-disabled', {
+      enabled: false, nextRunAt: new Date(Date.now() + 86_400_000),
+    })
+    await pool.query(
+      `insert into platform.job_run(schedule_id,key,occurrence,trigger,status)
+       values ($1,'jobtest-store:manual-disabled',now(),'manual','queued')`, [id])
+    const jobs = await claimQueuedManual(pool, 5, new Date())
+    expect(jobs.filter((x) => x.scheduleId === id)).toHaveLength(1)
+    expect(await hasRunning(pool, id)).toBe(true)
   })
 
   it('★ 有 retry 挂起时，手动入队仍能被 claim（手动与重试是两条时间线）', async () => {
