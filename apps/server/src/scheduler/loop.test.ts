@@ -35,10 +35,9 @@ describePg('scheduler loop', () => {
     await pool.query('delete from platform.job_schedule where key like $1', [PREFIX])
   }
 
-  async function seed(over: {
+  async function insertSchedule(over: {
     key?: string; nextRunAt?: Date; timeoutMs?: number; maxAttempts?: number
   } = {}): Promise<number> {
-    await clearFixtures()
     const { rows } = await pool.query(
       `insert into platform.job_schedule(key,cron,timezone,source,enabled,next_run_at,timeout_ms,max_attempts,expected_interval_secs)
        values ($1,'7 * * * *','UTC','system',true,$2,$3,$4,3600) returning id`,
@@ -46,6 +45,11 @@ describePg('scheduler loop', () => {
         over.timeoutMs ?? 500, over.maxAttempts ?? 1],
     )
     return Number(rows[0].id)
+  }
+
+  async function seed(over: Parameters<typeof insertSchedule>[0] = {}): Promise<number> {
+    await clearFixtures()
+    return insertSchedule(over)
   }
 
   interface RunRow { status: string; error: string | null; occurrence: Date }
@@ -68,6 +72,13 @@ describePg('scheduler loop', () => {
     }
   }
 
+  async function waitTerminal(scheduleId: number): Promise<RunRow> {
+    return waitUntil(async () => {
+      const r = await latestRun(scheduleId)
+      return r && r.status !== 'running' ? r : null
+    }, `schedule ${scheduleId} 的 run 终态`)
+  }
+
   it('★ tick 不等子进程结束就返回（长任务不阻塞投递 loop）', async () => {
     const id = await seed()
     let finished = false
@@ -88,10 +99,7 @@ describePg('scheduler loop', () => {
       "select count(*)::int as n from platform.job_run where schedule_id=$1 and status='running'", [id])
     expect(running.rows[0].n).toBe(1)
 
-    const row = await waitUntil(async () => {
-      const r = await latestRun(id)
-      return r && r.status !== 'running' ? r : null
-    }, 'run 终态')
+    const row = await waitTerminal(id)
     expect(finished).toBe(true)
     expect(row.status).toBe('ok')
   })
@@ -119,40 +127,101 @@ describePg('scheduler loop', () => {
       spawn: async () => okResult(),
     })
     await loop.tick()
-    const row = await waitUntil(async () => {
-      const r = await latestRun(id)
-      return r && r.status !== 'running' ? r : null
-    }, 'unknown key 的终态')
+    const row = await waitTerminal(id)
     expect(row.status).toBe('failed')
     expect(row.error).toBe('unknown registry key')
     const { rows } = await pool.query('select retry_at from platform.job_schedule where id=$1', [id])
     expect(rows[0].retry_at).toBeNull()
   })
 
-  it('★ spawn 同步抛错（ENAMETOOLONG）：转成 failed 终态，不冒泡打断整拍', async () => {
-    const id = await seed()
+  it('★ spawn 同步抛错（ENAMETOOLONG）：failed 且**不可重试**（maxAttempts 留有余额也不排重试）', async () => {
+    // maxAttempts=3：若实现误把配置错标成 retryable，attempt(1) < 3 会立刻写下 retry_at。
+    const id = await seed({ maxAttempts: 3 })
+    const logs: unknown[] = []
     const loop = createSchedulerLoop({
-      pool, registry: [def()], cwd: process.cwd(), maxConcurrency: 2,
+      pool, registry: [def({ maxAttempts: 3 })], cwd: process.cwd(), maxConcurrency: 2,
       // 非 async 且直接 throw：模拟 nodeSpawn 在参数过长时同步抛（Task 6 遗留项）。
       spawn: () => { throw new Error('ENAMETOOLONG: bad args') },
+      log: (o) => { logs.push(o) },
     })
     // tick 本身不得 reject —— 同步抛错只影响这一个 run。
     const stats = await loop.tick()
     expect(stats.started).toBe(1)
-    const row = await waitUntil(async () => {
-      const r = await latestRun(id)
-      return r && r.status !== 'running' ? r : null
-    }, 'throw 的终态')
+    const row = await waitTerminal(id)
     expect(row.status).toBe('failed')
     expect(row.error).toContain('ENAMETOOLONG')
+    // runOne 的结束日志在 finishRun 与重试记账**之后**才写 ⇒ 等到它，避免「重试还没写」的假绿。
+    await waitUntil(async () => logs.some((o) => JSON.stringify(o).includes('"status":"failed"')), '完成回调日志')
+    const { rows } = await pool.query('select retry_at, retry_attempt from platform.job_schedule where id=$1', [id])
+    expect(rows[0].retry_at).toBeNull()
+    expect(rows[0].retry_attempt).toBe(0)
   })
 
-  it('★ 重试差异：排班侧可重试失败落 retry 槽；手动失败不碰 retry 槽', async () => {
-    // 排班侧：exit 1 可重试 + attempt(1) < maxAttempts(2) ⇒ 写 retry 槽（occurrence 原样保留）。
-    const sid = await seed({ maxAttempts: 2 })
+  it('★ 同拍隔离：一个 job 同步抛错不影响同拍兄弟 job（A failed / B ok）', async () => {
+    await clearFixtures()
+    const aId = await insertSchedule({ key: 'jobtest-loop:throws' })
+    const bId = await insertSchedule({ key: 'jobtest-loop:ok' })
+    const loop = createSchedulerLoop({
+      pool,
+      registry: [def({ key: 'jobtest-loop:throws' }), def({ key: 'jobtest-loop:ok' })],
+      cwd: process.cwd(), maxConcurrency: 2,
+      spawn: (o) => {
+        if (o.env.JOB_KEY === 'jobtest-loop:throws') throw new Error('ENAMETOOLONG: bad args')
+        return Promise.resolve(okResult())
+      },
+    })
+    const stats = await loop.tick()
+    expect(stats.started).toBe(2)
+    const [a, b] = await Promise.all([waitTerminal(aId), waitTerminal(bId)])
+    expect(a.status).toBe('failed')
+    expect(a.error).toContain('ENAMETOOLONG')
+    expect(b.status).toBe('ok')
+    await waitUntil(async () => loop.inFlight() === 0, 'inFlight 归零')
+  })
+
+  it('★ finishRun 抛错：只尝试一次、不二次写终态、inFlight 归零', async () => {
+    const id = await seed({ maxAttempts: 3 })
+    let finishAttempts = 0
+    // 代理 pool：只让 finishRun 的那条 UPDATE 失败（claim / reap / 查询照常走真库）。
+    const proxy = new Proxy(pool, {
+      get(target, prop) {
+        if (prop === 'query') {
+          return (text: string, values?: unknown[]) => {
+            if (/update\s+platform\.job_run\s+set\s+status=/i.test(text)) {
+              finishAttempts += 1
+              return Promise.reject(new Error('finishRun boom'))
+            }
+            return (target.query as unknown as (t: string, v?: unknown[]) => Promise<unknown>)(text, values)
+          }
+        }
+        const v = Reflect.get(target, prop) as unknown
+        return typeof v === 'function' ? (v as (...a: unknown[]) => unknown).bind(target) : v
+      },
+    }) as unknown as Pool
+
+    const logs: unknown[] = []
+    const loop = createSchedulerLoop({
+      pool: proxy, registry: [def({ maxAttempts: 3 })], cwd: process.cwd(), maxConcurrency: 2,
+      spawn: async () => rejResult(), log: (o) => { logs.push(o) },
+    })
+    const stats = await loop.tick()
+    expect(stats.started).toBe(1)
+    await waitUntil(async () => loop.inFlight() === 0, 'inFlight 归零')
+    // 外层 catch 绝不能再调一次 finishRun（否则可能覆盖 reap 已判的终态）。
+    expect(finishAttempts).toBe(1)
+    const { rows } = await pool.query(
+      'select status from platform.job_run where schedule_id=$1 order by id desc limit 1', [id])
+    expect(rows[0].status).toBe('running')
+    expect(logs.some((o) => JSON.stringify(o).includes('post-run bookkeeping failed'))).toBe(true)
+  })
+
+  it('★ 重试差异：排班侧可重试失败落 retry 槽（now+60s）；手动失败不碰 retry 槽', async () => {
+    // 注入固定 now：重试时间必须由它推导，测试才能钉死 retry_at。
+    const fixed = new Date()
+    const sid = await seed({ maxAttempts: 2, nextRunAt: new Date(fixed.getTime() - 60_000) })
     const loop = createSchedulerLoop({
       pool, registry: [def({ maxAttempts: 2 })], cwd: process.cwd(), maxConcurrency: 2,
-      spawn: async () => rejResult(),
+      now: () => fixed, spawn: async () => rejResult(),
     })
     await loop.tick()
     const sched = await waitUntil(async () => {
@@ -166,12 +235,19 @@ describePg('scheduler loop', () => {
       const s = rows[0]
       return s.retry_at ? s : null
     }, '排班 retry 槽')
+    expect(new Date(slot.retry_at).getTime()).toBe(fixed.getTime() + 60_000)
     expect(slot.retry_attempt).toBe(1)
     expect(new Date(slot.retry_occurrence).toISOString()).toBe(sched.occurrence.toISOString())
 
-    // 手动侧：同样的失败结果，但 manual 不参与重试 ⇒ retry 槽保持空。
-    await clearFixtures()
-    const mid = await seed({ nextRunAt: new Date(Date.now() + 86_400_000), maxAttempts: 2 })
+    // 手动侧：manual 既不新增重试、也**不许清掉排班侧待跑的重试槽**。
+    // 先在排班上挂一个尚未到期的重试槽，再跑手动——误加 clearRetry 会让它消失。
+    const mid = await seed({ nextRunAt: new Date(fixed.getTime() + 86_400_000), maxAttempts: 2 })
+    const pendingRetryAt = new Date(fixed.getTime() + 10 * 60_000)
+    const pendingOccurrence = new Date(fixed.getTime() - 3_600_000)
+    await pool.query(
+      `update platform.job_schedule
+          set retry_at=$2, retry_occurrence=$3, retry_attempt=1 where id=$1`,
+      [mid, pendingRetryAt, pendingOccurrence])
     await pool.query(
       `insert into platform.job_run(schedule_id,key,occurrence,trigger,status)
        values ($1,'jobtest-loop:loop',now(),'manual','queued')`, [mid])
@@ -181,8 +257,26 @@ describePg('scheduler loop', () => {
       return r && r.status === 'failed' ? r : null
     }, '手动失败终态')
     expect(man.status).toBe('failed')
-    const after = await pool.query('select retry_at, retry_attempt from platform.job_schedule where id=$1', [mid])
-    expect(after.rows[0].retry_at).toBeNull()
-    expect(after.rows[0].retry_attempt).toBe(0)
+    const after = await pool.query(
+      'select retry_at, retry_occurrence, retry_attempt from platform.job_schedule where id=$1', [mid])
+    expect(new Date(after.rows[0].retry_at).toISOString()).toBe(pendingRetryAt.toISOString())
+    expect(new Date(after.rows[0].retry_occurrence).toISOString()).toBe(pendingOccurrence.toISOString())
+    expect(after.rows[0].retry_attempt).toBe(1)
+  })
+
+  it('M2: SCHEDULER_MAX_CONCURRENCY 非正整数时装配即抛错（空串/0/NaN 不得静默停调度）', () => {
+    const saved = process.env.SCHEDULER_MAX_CONCURRENCY
+    try {
+      for (const bad of ['', '0', '-1', 'abc', '1.5', 'NaN']) {
+        process.env.SCHEDULER_MAX_CONCURRENCY = bad
+        expect(() => createSchedulerLoop({ pool })).toThrow(/SCHEDULER_MAX_CONCURRENCY/)
+      }
+      delete process.env.SCHEDULER_MAX_CONCURRENCY
+      expect(() => createSchedulerLoop({ pool })).not.toThrow()
+      expect(() => createSchedulerLoop({ pool, maxConcurrency: 0 })).toThrow(/maxConcurrency/)
+    } finally {
+      if (saved === undefined) delete process.env.SCHEDULER_MAX_CONCURRENCY
+      else process.env.SCHEDULER_MAX_CONCURRENCY = saved
+    }
   })
 })

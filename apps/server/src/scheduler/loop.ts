@@ -30,11 +30,22 @@ export interface TickStats {
   reaped: number
 }
 
+/** 并发上限必须是**正整数**：`Number('') === 0` 会把调度静默停掉，`NaN` 会让 claimDue 的 limit 报库错。 */
+function positiveInt(v: unknown, label: string): number {
+  const n = typeof v === 'number' ? v : Number(v)
+  if (!Number.isSafeInteger(n) || n <= 0) {
+    throw new Error(`${label} 必须是正整数（当前 ${JSON.stringify(v)}）`)
+  }
+  return n
+}
+
 export function createSchedulerLoop(deps: SchedulerDeps) {
   const registry = deps.registry ?? JOB_REGISTRY
   const spawn = deps.spawn ?? defaultSpawn
   const now = deps.now ?? (() => new Date())
-  const max = deps.maxConcurrency ?? Number(process.env.SCHEDULER_MAX_CONCURRENCY ?? 2)
+  const max = deps.maxConcurrency === undefined
+    ? positiveInt(process.env.SCHEDULER_MAX_CONCURRENCY ?? '2', 'SCHEDULER_MAX_CONCURRENCY')
+    : positiveInt(deps.maxConcurrency, 'maxConcurrency')
   const log = deps.log ?? ((o: unknown) => console.log(JSON.stringify(o)))
   const cwd = deps.cwd ?? process.cwd()
   const running = new Set<number>()
@@ -44,7 +55,7 @@ export function createSchedulerLoop(deps: SchedulerDeps) {
   const runOne = async (job: ClaimedJob, manual: boolean): Promise<void> => {
     const def = registry.find((d) => d.key === job.key)
     if (!def) {
-      log({ ts: new Date().toISOString(), job: job.key, error: 'unknown registry key' })
+      log({ ts: now().toISOString(), job: job.key, error: 'unknown registry key' })
       // claim 已建 running 行，必须收尾，否则会一直挡住该排班的下一次 claim。
       // 代码里已删的 key 无法执行，重试也不会好 ⇒ 判 failed、不排重试。
       await finishRun(deps.pool, job.runId, { status: 'failed', error: 'unknown registry key' }).catch(() => {})
@@ -68,19 +79,20 @@ export function createSchedulerLoop(deps: SchedulerDeps) {
       await finishRun(deps.pool, job.runId, outcome) // 自带 where status='running'，不会覆盖 reap 的终态
       if (!manual) {
         if (outcome.status !== 'ok' && outcome.retryable && job.attempt < job.maxAttempts) {
-          await scheduleRetry(deps.pool, job.scheduleId, job.occurrence, job.attempt, new Date(Date.now() + 60_000))
+          // 用注入的 now 算重试时间：确定性测试才能固定这个值。
+          await scheduleRetry(deps.pool, job.scheduleId, job.occurrence, job.attempt, new Date(now().getTime() + 60_000))
         } else {
           await clearRetry(deps.pool, job.scheduleId)
         }
       }
       log({
-        ts: new Date().toISOString(), job: job.key, occurrence: job.occurrence.toISOString(),
+        ts: now().toISOString(), job: job.key, occurrence: job.occurrence.toISOString(),
         status: outcome.status, exitCode: outcome.exitCode ?? null, durationMs: outcome.durationMs ?? null,
       })
     } catch (e) {
       // finishRun / 重试记账 / 日志自身异常：只记日志，**绝不再调 finishRun**（否则可能覆盖终态）。
       const msg = e instanceof Error ? e.message : String(e)
-      log({ ts: new Date().toISOString(), job: job.key, error: `post-run bookkeeping failed: ${msg}` })
+      log({ ts: now().toISOString(), job: job.key, error: `post-run bookkeeping failed: ${msg}` })
     } finally {
       running.delete(job.scheduleId)
     }
