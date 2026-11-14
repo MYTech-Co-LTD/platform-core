@@ -173,6 +173,9 @@ export function allowedNumbers(facts: FactBundle): Set<string> {
     }
   }
   for (const n of [...facts.numbers, ...facts.dates]) add(n)
+  // 门店编号也是事实（回退模板的结论行就写「门店 92（店名）」）：不允许的话，模板自己
+  // 都会被判「越界数字」。只放行 facts 里的那一个值，不放开任意小整数。
+  if (facts.branchNum !== null && facts.branchNum !== '') add(facts.branchNum)
   return out
 }
 
