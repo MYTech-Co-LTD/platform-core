@@ -29,7 +29,7 @@ dbt 物化（--vars '{tenant: <键>}' ⇒ 落进 tenant_<归一后> 这个 schem
 
 ## 2 怎么跑
 
-逐租户跑一次（**循环在 openship job 里**，不在本文件里 —— 拍板 #4：调度 = openship jobs）：
+逐租户跑一次（**循环在 openship job 里**，不在本文件里 —— 拍板 #4：**数据面**调度 = duckle 排班 / openship job）：
 
 ```bash
 TENANT_ROLE_PASSWORD='…' TENANT_ZOS_ACCESS_KEY='…' TENANT_ZOS_SECRET='…' \

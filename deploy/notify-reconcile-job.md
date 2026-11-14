@@ -4,6 +4,9 @@
 > `docs/superpowers/specs/2026-10-27-notification-infrastructure-design.md`；决策 D-A（2026-10-19）：
 > `form.assigned` 全交本 job，发布路径不接线。
 > ⚠️ 2026-10-27 起本 job **只入队、不投递、不派生规则**（规则由 `notify-seed-builtin` seed；投递由 `notify-worker`）。
+> 调度归属（2026-11-14 起）：本 job 的目标载体是 worker 的 `platform.scheduler` loop；迁移按
+> `deploy/jobs.md` 的切流表逐项进行（P1 目标 / 待切）——**未切流前此刻仍由 openship job 驱动**。
+> 仍然**不得**把这逻辑塞进 HTTP 进程：执行在 worker 的子进程里。
 
 ## 这个 job 干什么
 
@@ -16,7 +19,7 @@
 > ⚠️ **D-A 的语义后果**：入队时刻 = **下一次调度**；真正送达还要等 `notify-worker` 的下一次轮询
 > （≤2s）与 provider 投递。要「发布后尽快通知」就把本 job 频率设成小时级（延迟 ≤ 1 个周期）。
 
-## 建在哪 / 怎么建
+## 当前驱动（切流前 = openship job）
 
 - **openship 面板 → Jobs** 新建（口径见 `deploy/openship-adopt.md`：「清理由 openship job 定时执行，
   应用进程不自己跑」）。

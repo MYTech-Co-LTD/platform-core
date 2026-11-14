@@ -352,7 +352,7 @@ VARCHAR 手写 cast 成 numeric 时悄悄丢精度/截断」的形态（dbt 的�
 **一句话**：多租户不是「跑一份多租户模型」，是**同一份模型跑 N 次、每次换一个租户 schema**。
 
 ```bash
-# openship job 逐租户循环（零新常驻组件 —— 拍板 #4：调度 = openship jobs）
+# 逐租户循环（零新常驻组件 —— 拍板 #4：**数据面**调度 = duckle 排班 / openship job）
 for KEY in <租户键 1> <租户键 2>; do
   dbt run --select <…> --vars "{tenant: $KEY}"
 done

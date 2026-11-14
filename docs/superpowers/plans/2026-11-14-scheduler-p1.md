@@ -1874,12 +1874,12 @@ git commit -m "docs(data): 台账——Wave 6 P1 完成入账"
 | §6 架构与配置 | Task 9（worker 接线 + env） |
 | §7 数据模型 | Task 2（含 retry/queued 两处扩展） |
 | §8 执行语义（claim/misfire/重试/超时/并发/时区/cron 子集） | Task 3、5、6、7 |
-| §9 故障可见性（台账/心跳/healthz 三判据/手动触发/第二看护路径） | Task 8、9、10；**第二看护路径（`check-probe-heartbeat.mjs` 扩检）未在本计划**——列入 Wave 6 P1 收尾待办，不阻塞 |
+| §9 故障可见性（台账/心跳/healthz 三判据/手动触发/第二看护路径） | Task 8、9、10；**第二看护路径已随终审落地**——`scripts/check-probe-heartbeat.mjs` 扩检 scheduler 心跳（纯函数 `judgeScheduler` + `scripts/check-probe-heartbeat.test.ts`；判据见 spec §9.3 与 `deploy/jobs.md` §2.3） |
 | §11 迁移与回滚 | Task 12（切流）+ `deploy/jobs.md`（Task 1） |
 | §12 正典改写 | Task 1 |
 | §13 测试策略 | 各任务的测试步骤 |
 
-**已知缺口（有意不做，写入 PR 描述）**：第二看护路径（扩 `check-probe-heartbeat.mjs`）与 `jobs.job.*` 事件声明（待裁决）不在 P1。
+**已知缺口（有意不做，写入 PR 描述）**：`jobs.job.*` 事件声明（待裁决）不在 P1。
 
 **2. 占位符扫描**：无 TBD/TODO；每个代码步骤都有可复制代码。
 

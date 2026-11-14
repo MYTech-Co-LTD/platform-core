@@ -357,7 +357,10 @@ curl -fsS -X POST "$OPENSHIP_URL/api/deployments/$DEPLOYMENT_ID/rollback" -H "Au
 "会一直长"这件事——所以保留策略必须单独做。
 
 清理由 **openship job** 定时执行，**应用进程不自己跑**（有副作用的运维动作不该藏在一个 HTTP
-服务里）。函数与索引来自 `apps/server/src/migrations/002_audit_retention.sql`：
+服务里）。
+
+> **调度归属（2026-11-14）**：业务定时迁 worker 的 `platform.scheduler`；本条（审计清理）属基建/运维
+> job，**留在 openship**。去留与切流以 `deploy/jobs.md` 为准。函数与索引来自 `apps/server/src/migrations/002_audit_retention.sql`：
 
 ```bash
 # 每日一次；默认保留 90 天。返回值 = 删除行数（便于在 job 日志里核对）

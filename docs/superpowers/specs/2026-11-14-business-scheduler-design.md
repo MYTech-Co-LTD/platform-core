@@ -85,7 +85,7 @@ deploy/docker-compose.yml
 
 - **P1 不改 compose 服务名**（仍叫 `notify-worker`）：避免 openship 服务身份变更带来的额外风险；
   代码与文档里称其为「worker（通知投递 + 业务调度两 loop）」。
-- 任务目录在代码（`apps/server/src/jobs/registry.ts`），排班状态在库；启动幂等 seed，
+- 任务目录在代码（`apps/server/src/scheduler/registry.ts`），排班状态在库；启动幂等 seed，
   **不覆盖人改过的 cron**（只补新增 key、只补缺失行）。
 
 **配置（env，缺省即可用）**
@@ -119,6 +119,9 @@ create table if not exists platform.job_schedule (
   timeout_ms             integer not null default 300000,
   max_attempts           integer not null default 1,
   expected_interval_secs integer not null,
+  retry_at               timestamptz,                  -- 重试游标：重试不改 next_run_at
+  retry_occurrence       timestamptz,                  -- 重试槽绑定的原格 occurrence（排班侧，不从 job_run 反查）
+  retry_attempt          integer not null default 0,   -- 已排重试的尝试序号
   updated_at             timestamptz not null default now()
 );
 create unique index if not exists uq_job_schedule_system_key
@@ -132,11 +135,12 @@ create table if not exists platform.job_run (
   id              bigserial primary key,
   schedule_id     bigint not null references platform.job_schedule(id),
   key             text not null,
+  occurrence      timestamptz not null,               -- 本次 claim 的 bucket（不是实际开跑时刻）
   owner_org       text,
   owner_namespace text,
   params_snapshot jsonb,
   trigger         text not null check (trigger in ('schedule','manual')),
-  status          text not null check (status in ('running','ok','failed','timeout','skipped')),
+  status          text not null check (status in ('queued','running','ok','failed','timeout','skipped')),
   attempt         integer not null default 1,
   started_at      timestamptz not null default now(),
   finished_at     timestamptz,
@@ -195,6 +199,10 @@ misfire 迟到 3 小时也用它；重试沿用同一 occurrence ⇒ 下游幂�
    （`running` / `queued` 行会稀释连败，这是有意的——有在跑说明调度器活着），
    任一成立 ⇒ 非 200。
 3. **第二看护路径**：`scripts/check-probe-heartbeat.mjs`（已是 openship 基建 job）**同时检查 scheduler 心跳**——
+   判据：`platform.job_schedule` 存在任一 `enabled` 排班时，`platform.job_heartbeat('scheduler')`
+   缺失或超过 **2 分钟** ⇒ STALE（exit 1，输出点名 `scheduler`）；**没有任何 `enabled` 排班**
+   （含 `SCHEDULER_ENABLED=0` 回滚态）⇒ DISABLED（**不算故障**，exit 0）。
+   判定为纯函数 `judgeScheduler(beatAt, enabledCount, now)`，用例在 `scripts/check-probe-heartbeat.test.ts`。
    不把「引擎还活着」这一判断单独押在 OO 上（OO 有流静默导致状态机冻结的实测形态）。
 4. **手动触发**：`POST /api/platform/jobs/:key/run`（会话 + `tenant:admin`；本仓无独立「平台管理员」码，单实例单租户下等价），写 `trigger='manual'` 的 run 行，落 `platform.audit`。**已知边界**：多租户实例下这等于任意租户管理员可触发全局 job——届时须引入平台级码或按 `owner_org` 限定。
 

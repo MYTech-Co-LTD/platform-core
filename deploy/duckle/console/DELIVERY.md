@@ -509,3 +509,8 @@ pnpm exec tsx scripts/lemeng/data-plane-lock.mjs
 ```
 
 否则 CI 的 `check-data-plane-lock` 会红（守卫会在失败信息里复述这条命令）。
+
+---
+
+> **调度归属（2026-11-14）**：duckle 排班 / openship job 仍是**数据面**调度；业务定时已迁 worker 的
+> `platform.scheduler`。谁迁、谁留、何时切以 `deploy/jobs.md` 的切流表为准。
