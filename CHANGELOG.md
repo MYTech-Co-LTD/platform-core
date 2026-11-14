@@ -11,6 +11,10 @@
 
 ## [Unreleased]
 
+## [0.283.0](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.282.0...v0.283.0) - 2026-11-14
+- 【新增】data: 调度器通知接缝（W6-P2）——SchedulerPort + notify.emit + 一次性延迟 ([#2230](https://github.com/MYTech-Co-LTD/platform-core/pull/2230), [f13de86](https://github.com/MYTech-Co-LTD/platform-core/commit/f13de86d63ae70aa87f0f6fdf456c2a0b5f2f8a2))
+
+
 ## [0.282.0](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.281.0...v0.282.0) - 2026-11-14
 - 【修复】data: 管线地图区分「父管线驱动」与「未接入」 (#2228) ([#2229](https://github.com/MYTech-Co-LTD/platform-core/pull/2229), [162da62](https://github.com/MYTech-Co-LTD/platform-core/commit/162da6213cccaba4fe452d5e206aed0974717fc0))
 - 【新增】data: 管线地图——未调度管线清单入口 (#2226) ([#2227](https://github.com/MYTech-Co-LTD/platform-core/pull/2227), [ffbf558](https://github.com/MYTech-Co-LTD/platform-core/commit/ffbf5587d20baa982ea1a58ebe47112fe87c19d4))
