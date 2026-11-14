@@ -16,9 +16,17 @@ import { humanError, type HumanError } from '../lib/explain'
 
 echarts.use([GraphChart, LegendComponent, TooltipComponent, CanvasRenderer])
 
-interface MapPipeline { id: string; account: string | null; cron: string | null; enabled: boolean; scheduled: boolean }
+interface MapPipeline {
+  id: string
+  account: string | null
+  cron: string | null
+  enabled: boolean
+  scheduled: boolean
+  driver: 'schedule' | 'parent' | 'none'
+  parentIds: string[]
+}
 interface MapAsset { lake: string; staging: string | null; views: string[]; marts: string[]; pipelines: MapPipeline[] }
-interface MapSummary { assets: number; withStaging: number; broken: number; unscheduled: number; failedLive: number }
+interface MapSummary { assets: number; withStaging: number; broken: number; orphans: number; parentDriven: number; failedLive: number }
 interface PipelinesResponse {
   generatedAt: string
   summary: MapSummary
@@ -97,7 +105,7 @@ export default function PipelinesPage() {
     // 否则历史失败会永久留在图上（2026-11-14 实测：7 条「失败」全是未调度管线）。
     // 优先级 failed > running > interrupted > unknown > ok；一个在跑的都没有 ⇒ idle（灰）。
     const worst = (a: MapAsset): string => {
-      const live = a.pipelines.filter((p) => p.scheduled && p.enabled)
+      const live = a.pipelines.filter((p) => (p.scheduled && p.enabled) || p.driver === 'parent')
       if (live.length === 0) return 'idle'
       const latest = live.map((p) => data.recentRuns[p.id]?.[0]?.status ?? 'unknown')
       if (latest.includes('failed')) return 'failed'
@@ -243,7 +251,9 @@ export default function PipelinesPage() {
           { k: '断点', v: data.summary.broken, d: '既没 staging 也没视图消费' },
           {
             k: '在跑失败', v: data.summary.failedLive,
-            d: data.runsWired ? `调度中管线最近一次 = failed（另有 ${data.summary.unscheduled} 条未调度）` : '运行记录未接入',
+            d: data.runsWired
+              ? `调度中或父驱动的管线最近一次 = failed（另有 ${data.summary.orphans} 条无调度无父管线）`
+              : '运行记录未接入',
           },
         ].map((x) => (
           <div key={x.k} style={{ minWidth: 110 }}>
@@ -268,9 +278,9 @@ export default function PipelinesPage() {
             onChange={(v) => setFailedOnly(v === 'failed')}
             options={[{ label: '全部', value: 'all' }, { label: '只看异常', value: 'failed' }]}
           />
-          {data !== null && data.summary.unscheduled > 0 && (
+          {data !== null && data.summary.orphans > 0 && (
             <Button type="link" size="small" onClick={() => setUnscheduledOpen(true)}>
-              未调度 {data.summary.unscheduled}
+              无调度无父管线 {data.summary.orphans}
             </Button>
           )}
           <span style={{ flex: 1 }} />
@@ -323,7 +333,11 @@ export default function PipelinesPage() {
                           </Button>
                           <div style={{ paddingLeft: 12, fontSize: 11.5, color: '#9AA0A6' }}>
                             {p.account === null ? '共享' : `账套 ${p.account}`}
-                            {!p.scheduled ? ' · 未调度（历史/一次性）' : p.cron === null ? ' · 无 cron' : ` · ${p.cron}`}
+                            {p.driver === 'parent'
+                              ? ` · 由 ${p.parentIds.join('、')} 驱动`
+                              : p.driver === 'none'
+                                ? ' · 无调度也无父管线'
+                                : p.cron === null ? ' · 无 cron' : ` · ${p.cron}`}
                             {p.scheduled && !p.enabled ? ' · 已停用' : ''}
                             {run === undefined ? ' · 运行记录未知' : ` · 最近 ${run.status} ${new Date(run.at).toLocaleString('zh-CN')}`}
                           </div>
@@ -383,11 +397,12 @@ export default function PipelinesPage() {
         onCancel={() => setUnscheduledOpen(false)}
         footer={null}
         width={720}
-        title="未调度的管线（历史 / 一次性）"
+        title="无调度也无父管线的管线（清理候选）"
       >
         <Typography.Paragraph type="secondary" style={{ fontSize: 12 }}>
-          这些管线没有登记调度：backfill、一次性对账，或被新管线取代的旧版本。它们不参与图上健康判定；
-          长期不用的建议在管线定义里清理。
+          这些管线既没有自己的调度条目，也没被任何父管线引用：backfill、一次性对账，或被新管线取代的旧版本。
+          它们不参与图上健康判定；长期不用的建议在管线定义里清理。
+          （另有 {data?.summary.parentDriven ?? 0} 条由父管线每日驱动，如 `retail_order_line.day`，不算在内。）
         </Typography.Paragraph>
         <Table
           size="small"
@@ -395,14 +410,14 @@ export default function PipelinesPage() {
           pagination={false}
           scroll={{ y: 420 }}
           dataSource={(data === null ? [] : data.assets.flatMap((a) => a.pipelines
-            .filter((p) => !p.scheduled)
+            .filter((p) => p.driver === 'none')
             .map((p) => ({
               id: p.id,
               lake: a.lake,
               account: p.account,
               latest: data.recentRuns[p.id]?.[0],
             }))))}
-          locale={{ emptyText: '没有未调度的管线' }}
+          locale={{ emptyText: '没有既无调度又无父管线的管线' }}
           columns={[
             { title: '管线', dataIndex: 'id', render: (v: string) => <span style={{ fontFamily: 'ui-monospace, Menlo, monospace', fontSize: 12 }}>{v}</span> },
             { title: '资产', dataIndex: 'lake', width: 200 },

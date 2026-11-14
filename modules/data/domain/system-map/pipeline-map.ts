@@ -19,6 +19,16 @@ export interface PipelineMapPipeline {
    * 否则一张图会长期挂着几年前的失败记录（2026-11-14 实测：7 条「最近失败」全是未调度管线）。
    */
   scheduled: boolean
+  /**
+   * 谁在驱使它：
+   * - `schedule`：自己的调度条目
+   * - `parent`：被子管线引用（`ctl.foreach` 的 pipelineRef），由父管线按窗口调用——
+   *   **它没自己的调度条目，但每天都在跑**（例：`retail_order_line.day` 由 `retail.windows.l1` 驱动）
+   * - `none`：既没调度也没父管线（一次性 backfill / 已退役）⇒ 才叫「未接入」
+   */
+  driver: 'schedule' | 'parent' | 'none'
+  /** driver=parent 时的父管线 id（可能多个）。 */
+  parentIds: string[]
 }
 
 export interface PipelineMapAsset {
@@ -48,8 +58,10 @@ export interface PipelineMapSummary {
   withStaging: number
   /** 断点：无 staging 且无视图消费 */
   broken: number
-  /** 未登记调度的管线条数（历史 / 一次性） */
-  unscheduled: number
+  /** 既没自己的调度、也没父管线驱动的条数（真正「未接入」的，清理候选） */
+  orphans: number
+  /** 由父管线驱动的条数（没有自己的调度条目，但每天都在跑） */
+  parentDriven: number
 }
 
 export interface PipelineMapModel {
@@ -75,6 +87,8 @@ export interface PipelineMapInput {
   marts: ReadonlyArray<{ name: string; refs: readonly string[] }>
   /** 湖前缀 → 直接引用它的 dbt 模型名（由 `lakeConsumers` 从 SQL 里扫出来）。 */
   consumers?: ReadonlyMap<string, readonly string[]>
+  /** 子管线 id → 引用它的父管线 id（`ctl.foreach` / `pipelineRef`）。 */
+  parents?: ReadonlyMap<string, readonly string[]>
 }
 
 /** pipeline id 的尾段是账套（数字）时用它，否则 null（仓内共享管线）。 */
@@ -102,12 +116,15 @@ export function buildPipelineMap(input: PipelineMapInput): PipelineMapModel {
     for (const lake of lakes) {
       const sched = input.schedules.get(p.id) ?? []
       const list = byLake.get(lake)
+      const parentIds = [...(input.parents?.get(p.id) ?? [])]
       const entry: PipelineMapPipeline = {
         id: p.id,
         account: accountOf(p.id),
         cron: sched[0]?.cron ?? null,
         enabled: sched.length === 0 ? false : sched.some((s) => s.enabled),
         scheduled: sched.length > 0,
+        driver: sched.length > 0 ? 'schedule' : parentIds.length > 0 ? 'parent' : 'none',
+        parentIds,
       }
       if (list === undefined) byLake.set(lake, [entry])
       else list.push(entry)
@@ -161,7 +178,8 @@ export function buildPipelineMap(input: PipelineMapInput): PipelineMapModel {
     assets: assets.length,
     withStaging: assets.filter((a) => a.staging !== null).length,
     broken: assets.filter((a) => a.staging === null && a.views.length === 0).length,
-    unscheduled: allPipelines.filter((p) => !p.scheduled).length,
+    orphans: allPipelines.filter((p) => p.driver === 'none').length,
+    parentDriven: allPipelines.filter((p) => p.driver === 'parent').length,
   }
 
   return { summary, assets, orphanStaging, warnings }

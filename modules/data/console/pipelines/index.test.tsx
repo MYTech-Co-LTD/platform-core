@@ -20,7 +20,7 @@ const json = (b: unknown) => new Response(JSON.stringify(b), { status: 200, head
 const MAP = {
   generatedAt: '2026-11-14T00:00:00.000Z',
   // KPI 由服务端下发；这里刻意给与 assets 推算不同的值，用来证明页面**没有**自己重算
-  summary: { assets: 29, withStaging: 28, broken: 0, unscheduled: 46, failedLive: 2 },
+  summary: { assets: 29, withStaging: 28, broken: 0, orphans: 12, parentDriven: 3, failedLive: 2 },
   runsWired: true,
   assets: [
     {
@@ -29,8 +29,8 @@ const MAP = {
       views: [],
       marts: ['fct_retail_sale'],
       pipelines: [
-        { id: 'lemeng.retail_order_line.l0.3120', account: '3120', cron: '0 5 * * *', enabled: true, scheduled: true },
-        { id: 'lemeng.retail_order_line.l0.64188', account: '64188', cron: '0 5 * * *', enabled: true, scheduled: true },
+        { id: 'lemeng.retail_order_line.l0.3120', account: '3120', cron: '0 5 * * *', enabled: true, scheduled: true, driver: 'schedule', parentIds: [] },
+        { id: 'lemeng.retail_order_line.l0.64188', account: '64188', cron: '0 5 * * *', enabled: true, scheduled: true, driver: 'schedule', parentIds: [] },
       ],
     },
     {
@@ -38,7 +38,7 @@ const MAP = {
       staging: null,
       views: [],
       marts: [],
-      pipelines: [{ id: 'lemeng.no_staging_asset.l0.3120', account: '3120', cron: null, enabled: false, scheduled: false }],
+      pipelines: [{ id: 'lemeng.no_staging_asset.l0.3120', account: '3120', cron: null, enabled: false, scheduled: false, driver: 'none', parentIds: [] }],
     },
   ],
   orphanStaging: ['stg_lemeng_orphan'],
@@ -73,7 +73,7 @@ describe('管线地图', () => {
     expect(screen.getByText('28')).toBeInTheDocument()
     expect(screen.getByText('0')).toBeInTheDocument()
     expect(screen.getByText('2')).toBeInTheDocument()
-    expect(screen.getByText(/另有 46 条未调度/)).toBeInTheDocument()
+    expect(screen.getByText(/另有 12 条无调度无父管线/)).toBeInTheDocument()
     await waitFor(() => expect(lastOption()?.series[0]!.data).toHaveLength(4)) // 2 资产 + 1 staging + 1 mart
   })
 
@@ -177,8 +177,8 @@ describe('未调度管线清单', () => {
     m.mockImplementation(async () => json(MAP))
     render(<PipelinesPage />)
     await waitFor(() => expect(screen.getByText('资产')).toBeInTheDocument())
-    fireEvent.click(screen.getByRole('button', { name: /未调度 46/ }))
-    await waitFor(() => expect(screen.getByText('未调度的管线（历史 / 一次性）')).toBeInTheDocument())
+    fireEvent.click(screen.getByRole('button', { name: /无调度无父管线 12/ }))
+    await waitFor(() => expect(screen.getByText('无调度也无父管线的管线（清理候选）')).toBeInTheDocument())
     // MAP 里 only 的未调度管线是 no_staging_asset.l0.3120
     expect(screen.getByText('lemeng.no_staging_asset.l0.3120')).toBeInTheDocument()
   })
