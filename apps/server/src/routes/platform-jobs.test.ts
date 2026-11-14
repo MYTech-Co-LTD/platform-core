@@ -166,16 +166,45 @@ describePg('platform-jobs routes（需要 DATABASE_URL）', () => {
     expect(audit.rows[0]).toMatchObject({ actor: 'u1', tenant_id: TENANT_ID, detail: { key: KEY } })
   })
 
-  it('★ 已有 queued ⇒ 409 JOB_ALREADY_PENDING（不再插第二条）', async () => {
+  const auditCount = async (key: string): Promise<number> => {
+    const { rows } = await pool.query(
+      `select count(*)::int as n from platform.audit
+        where action='admin.job.run' and detail->>'key' = $1`, [key])
+    return rows[0].n
+  }
+
+  it('★ 已有 queued ⇒ 409 JOB_ALREADY_PENDING（不再插第二条、也不加审计）', async () => {
     await seed()
     const { app, csrf } = appFor(['tenant:admin'])
     expect((await app.request(`/jobs/${KEY}/run`, post(csrf))).status).toBe(200)
+    expect(await auditCount(KEY)).toBe(1)
     const second = await app.request(`/jobs/${KEY}/run`, post(csrf))
     expect(second.status).toBe(409)
     expect(await second.json()).toMatchObject({ error: 'JOB_ALREADY_PENDING' })
     const { rows } = await pool.query(
       `select count(*)::int as n from platform.job_run where key=$1 and status='queued'`, [KEY])
     expect(rows[0].n).toBe(1)
+    // 被拒路径不写审计（三条拒绝原因都 rollback）
+    expect(await auditCount(KEY)).toBe(1)
+  })
+
+  it('★ 排班行被别的会话持锁 ⇒ 2s 后 503 JOB_LOCK_TIMEOUT（不无限挂起、不 500）', async () => {
+    const scheduleId = await seed()
+    const holder = await pool.connect()
+    try {
+      await holder.query('begin')
+      await holder.query('select id from platform.job_schedule where id=$1 for update', [scheduleId])
+      const { app, csrf } = appFor(['tenant:admin'])
+      const started = Date.now()
+      const res = await app.request(`/jobs/${KEY}/run`, post(csrf))
+      expect(res.status).toBe(503)
+      expect(await res.json()).toMatchObject({ error: 'JOB_LOCK_TIMEOUT', key: KEY })
+      expect(Date.now() - started).toBeLessThan(5_000)
+      expect(await auditCount(KEY)).toBe(0)
+    } finally {
+      await holder.query('rollback').catch(() => {})
+      holder.release()
+    }
   })
 
   it('★ 已有 running ⇒ 同样 409 JOB_ALREADY_PENDING', async () => {
@@ -204,6 +233,8 @@ describePg('platform-jobs routes（需要 DATABASE_URL）', () => {
       const { rows } = await pool.query(
         `select count(*)::int as n from platform.job_run where key=$1 and status='queued'`, [KEY])
       expect(rows[0].n).toBe(1)
+      // 并发下审计同样只落一行（失败的那次 rollback，不写）
+      expect(await auditCount(KEY)).toBe(1)
     } finally {
       await Promise.all(pools.map((p) => p.end().catch(() => {})))
     }

@@ -105,6 +105,8 @@
 - 下游幂等键应基于 `occurrence`（而不是 `now()`）构造，否则迟到/重试会双发。
 - 手动触发不占 cron bucket：`trigger='manual'`，台账另记一行。
 - **手动触发不要求 `enabled=true`**：启停只影响**自动排班**，不影响运维的显式手动触发（切流程序要在登记态先跑一次比对）。
+- **优先用端点入队**：`POST /api/platform/jobs/:key/run` 在单事务里完成「锁排班行 → 判 `queued|running` → insert → 审计」。若必须 SQL 入队（如端点不可用），**先确认该排班无 `queued|running` 行**——SQL 旁路绕过了端点的原子判定，并发下会插出重复 `queued`。
+- ⚠️ **授权粒度已知边界**：手动触发挂 `tenant:admin`（本仓无独立「平台管理员」码；每实例单租户下等价）。**多租户实例**下这等于任意租户管理员可触发全局 job——届时须引入平台级码或按 `owner_org` 限定。
 
 ## 5. 切流程序（一次一个 job）
 
@@ -203,6 +205,7 @@
 | seed 没覆盖我改的 cron | seed 语义 | 预期行为：seed 只补新增 key、不覆盖人改过的 `cron`/`enabled` |
 | cron 到点没跑 / 时区差 8 小时 | `timezone` 列 | 迁入系统 job 应为 `UTC`；新建业务排班默认 `Asia/Shanghai`；run 时间戳一律 UTC |
 | 手动触发返回 409 `JOB_ALREADY_PENDING` | 是否已有 `queued`/`running` | 不重复触发；等当前运行结束 |
+| 手动触发返回 503 `JOB_LOCK_TIMEOUT` | 排班行是否被长事务/并发触发持锁 | 端点锁等待上限 2s；稍后重试，持续出现则查持锁长事务（`pg_stat_activity`） |
 | `/healthz` 红但 job 其实跑过 | 是否只有 `failed`/`timeout` | 看 `job_run.error` / `output_tail`；连续失败 3 次会判红 |
 
 ## 10. 上线/切流检查单

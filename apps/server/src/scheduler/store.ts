@@ -191,7 +191,8 @@ export async function claimQueuedManual(pool: Pool, limit: number, now: Date): P
       `select ${SCHED_COLS}
          from platform.job_schedule s
         where exists (select 1 from platform.job_run r
-                       where r.schedule_id = s.id and r.status = 'queued')
+                       where r.schedule_id = s.id and r.status = 'queued'
+                         and r.trigger = 'manual')
           and not exists (select 1 from platform.job_run x
                            where x.schedule_id = s.id and x.status = 'running')
         order by s.id
@@ -215,11 +216,12 @@ export async function claimQueuedManual(pool: Pool, limit: number, now: Date): P
     const free = new Set(stillFree.rows.map((r) => String(r.id)))
     for (const s of sched.rows) {
       if (!free.has(String(s.id))) continue
-      // ③ 每个排班只取最老的一条 queued；剩余保持 queued，下一拍再来。
+      // ③ 每个排班只取最老的一条 **trigger='manual'** 的 queued 行；剩余保持 queued，下一拍再来。
+      //    显式限定 trigger：queued 是「未来其它 writer」也可能写的状态，本函数只认手动行。
       const { rows } = await client.query<{ id: string; occurrence: Date; params_snapshot: unknown }>(
         `select id, occurrence, coalesce(params_snapshot, $2::jsonb) as params_snapshot
            from platform.job_run
-          where schedule_id = $1 and status = 'queued'
+          where schedule_id = $1 and status = 'queued' and trigger = 'manual'
           order by id
           limit 1
           for update skip locked`,

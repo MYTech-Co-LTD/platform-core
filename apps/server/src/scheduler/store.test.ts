@@ -212,6 +212,17 @@ describePg('scheduler store', () => {
     expect(await hasRunning(pool, id)).toBe(true)
   })
 
+  it('★ claimQueuedManual 只领 trigger=manual 的 queued 行（不误领未来其它 writer 的排队）', async () => {
+    const id = await mkSchedule(pool, 'jobtest-store:not-manual', { nextRunAt: new Date(Date.now() + 86_400_000) })
+    await pool.query(
+      `insert into platform.job_run(schedule_id,key,occurrence,trigger,status)
+       values ($1,'jobtest-store:not-manual',now(),'schedule','queued')`, [id])
+    const jobs = await claimQueuedManual(pool, 5, new Date())
+    expect(jobs.some((x) => x.scheduleId === id)).toBe(false)
+    const { rows } = await pool.query('select status from platform.job_run where schedule_id=$1', [id])
+    expect(rows[0].status).toBe('queued')
+  })
+
   it('★ 有 retry 挂起时，手动入队仍能被 claim（手动与重试是两条时间线）', async () => {
     const id = await mkSchedule(pool, 'jobtest-store:manual-vs-retry', { nextRunAt: new Date(Date.now() + 86_400_000) })
     // retry_at 已到期：旧实现用 `s.retry_at is null` 过滤会把这条排班的手动入队永远挡住。

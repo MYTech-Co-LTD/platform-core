@@ -1659,45 +1659,67 @@ Expected: FAIL（模块不存在）
 
 ```ts
 // routes/platform-jobs.ts — 手动触发：**只入队**，执行在 worker 进程（不变量：HTTP 进程不跑副作用）。
+// 三条结构锁照 admin.ts：整路由 requireScope('tenant:admin') + 写操作 CSRF（同一 csrfToken helper）。
 import { Hono } from 'hono'
 import type { Pool } from 'pg'
+import { csrfToken } from '@platform/auth-core'
+import { requireScope } from '@platform/sdk'
+import type { SessionEnv } from '../session-middleware'
+import type { TenantEnv } from '../tenant'
 
-export interface PlatformJobDeps { pool: Pool }
+export interface PlatformJobRoutesDeps { pool: Pool; sessionSecret: string }
 
-interface Vars { identity: { userId: string; hasScope(code: string): boolean }; tenant: { casdoor_org: string } }
+const LOCK_SCHEDULE_SQL =
+  `select id from platform.job_schedule where key=$1 and source='system' for update`
+const BUSY_SQL =
+  `select 1 from platform.job_run where schedule_id=$1 and status in ('queued','running') limit 1`
 
-export function platformJobRoutes(deps: PlatformJobDeps): Hono<{ Variables: Vars }> {
-  const app = new Hono<{ Variables: Vars }>()
+export function platformJobRoutes(deps: PlatformJobRoutesDeps): Hono<TenantEnv & SessionEnv> {
+  const app = new Hono<TenantEnv & SessionEnv>()
+
+  app.use('*', requireScope('tenant:admin'))
+  app.use('*', async (c, next) => {
+    if (!['GET', 'HEAD'].includes(c.req.method)) {
+      const s = c.get('session')
+      if (!s || c.req.header('x-csrf-token') !== csrfToken(s, deps.sessionSecret)) {
+        return c.json({ error: 'CSRF' }, 403)
+      }
+    }
+    await next()
+  })
 
   app.post('/:key/run', async (c) => {
-    const who = c.get('identity')
-    if (!who?.hasScope('tenant:admin')) return c.json({ error: 'FORBIDDEN', need: 'tenant:admin' }, 403)
     const key = c.req.param('key')
+    const who = c.get('identity')
+    const tenant = c.get('tenant')
     // 硬要求：busy 判定与入队原子（同一事务 + 排班行锁）。先查再插是 TOCTOU ⇒ 并发重复 queued。
     const client = await deps.pool.connect()
     let runId: number
     try {
       await client.query('begin')
-      const locked = await client.query(
-        "select id from platform.job_schedule where key=$1 and source='system' for update", [key])
+      // 排班行被持锁时不许无限占用连接：2s 超时 ⇒ 55P03 ⇒ 503 JOB_LOCK_TIMEOUT
+      await client.query("set local lock_timeout = '2s'")
+      const locked = await client.query<{ id: string }>(LOCK_SCHEDULE_SQL, [key])
       const sch = locked.rows[0]
       if (!sch) { await client.query('rollback'); return c.json({ error: 'JOB_NOT_FOUND', key }, 404) }
       // enabled 不参与判定：启停只影响自动排班（切流程序要在登记态先手动跑一次）
 
-      const busy = await client.query(
-        "select 1 from platform.job_run where schedule_id=$1 and status in ('queued','running') limit 1", [sch.id])
+      const busy = await client.query(BUSY_SQL, [sch.id])
       if (busy.rows.length > 0) { await client.query('rollback'); return c.json({ error: 'JOB_ALREADY_PENDING', key }, 409) }
 
-      const ins = await client.query(
+      const ins = await client.query<{ id: string }>(
         `insert into platform.job_run(schedule_id,key,occurrence,trigger,status)
          values ($1,$2, now(), 'manual', 'queued') returning id`, [sch.id, key])
       runId = Number(ins.rows[0].id)
       await client.query(
         'insert into platform.audit(tenant_id, actor, action, detail) values ($1,$2,$3,$4)',
-        [c.get('tenant').id, who.userId, 'admin.job.run', { key, runId }])
+        [tenant.id, who.userId, 'admin.job.run', { key, runId }])
       await client.query('commit')
     } catch (e) {
       await client.query('rollback').catch(() => {})
+      if ((e as { code?: string }).code === '55P03') {
+        return c.json({ error: 'JOB_LOCK_TIMEOUT', key }, 503)
+      }
       throw e
     } finally {
       client.release()
@@ -1709,13 +1731,15 @@ export function platformJobRoutes(deps: PlatformJobDeps): Hono<{ Variables: Vars
 }
 ```
 
+> Step 1 的测试骨架早于 CSRF 增补；**以 `apps/server/src/routes/platform-jobs.test.ts` 为准**（含 session/identity/tenant 三注入与 `csrfToken` 生成的 header）。
+
 - [ ] **Step 4: 挂载到 app.ts**
 
 在 `app.route('/api/platform/keys', ...)` 之后加一行（同一段注释块内，保持既有顺序）：
 
 ```ts
   // ⑧d 业务调度手动触发（Wave 6 P1）：只入队，执行在 worker 进程
-  app.route('/api/platform/jobs', platformJobRoutes({ pool }))
+  app.route('/api/platform/jobs', platformJobRoutes({ pool, sessionSecret: config.sessionSecret }))
 ```
 
 并在文件顶部的 import 区加 `import { platformJobRoutes } from './routes/platform-jobs'`。
@@ -1723,7 +1747,7 @@ export function platformJobRoutes(deps: PlatformJobDeps): Hono<{ Variables: Vars
 - [ ] **Step 5: 运行测试 + 类型检查**
 
 Run: `cd apps/server && pnpm exec vitest run src/routes/platform-jobs.test.ts && pnpm run typecheck`
-Expected: PASS（4 个用例）
+Expected: PASS（10 个用例）
 
 - [ ] **Step 6: Commit**
 
@@ -1809,7 +1833,7 @@ Expected: 三行，`enabled=false`，`next_run_at=null`。**若 enabled=true 立
 - [ ] **Step 3: 逐 job 切流（一次一个）**
 
 对 `notify.reconcile`：
-1. 手动跑一次（`POST /api/platform/jobs/:key/run` 或 SQL 入队），比对产物与 openship 上最近一次。**手动触发不要求 `enabled=true`**——启停只影响自动排班，本步就在 `enabled=false` 的登记态执行；
+1. 手动跑一次（**优先用端点** `POST /api/platform/jobs/:key/run`），比对产物与 openship 上最近一次。**手动触发不要求 `enabled=true`**——启停只影响自动排班，本步就在 `enabled=false` 的登记态执行。若必须 SQL 入队，**先确认该排班无 `queued|running` 行**（SQL 旁路绕过了端点的原子判定，会插出重复 `queued`）；
 2. `update platform.job_schedule set enabled=true, next_run_at=now()+interval '1 hour', updated_at=now() where key='notify.reconcile'`（让首跳落在下一个整点前后，别立刻跑；**`updated_at=now()` 必带**——健康判据②在「从未成功」时以它作宽限起点，漏刷会让宽限从 seed 时刻起算，首跑前就判红）；
 3. 关 openship：`patch_jobs_by_key` 把 `custom:KJ_JBrbq68jAHVlO`（mytech）/`custom:QSr7oZ5KBAVOqx5j`（山海）`enabled=false`；
 4. 观察两条 run 行 + openship 侧不再有新 run。

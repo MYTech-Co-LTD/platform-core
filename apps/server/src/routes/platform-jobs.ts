@@ -58,6 +58,9 @@ export function platformJobRoutes(deps: PlatformJobRoutesDeps): Hono<TenantEnv &
     let runId: number
     try {
       await client.query('begin')
+      // 锁等待上限：排班行被别的触发/claim 事务持锁时，**不许把连接无限期占住**。
+      // 超时由 PostgreSQL 抛 55P03（lock_not_available），下面 catch 转 503 JOB_LOCK_TIMEOUT。
+      await client.query("set local lock_timeout = '2s'")
       // ① 锁排班行：并发触发在这里串行化（第二个事务等锁，commit 后按最新快照重判 busy）。
       //    排班 disabled 也照常入队——启停只影响自动排班，不影响运维的显式手动触发。
       const locked = await client.query<{ id: string }>(LOCK_SCHEDULE_SQL, [key])
@@ -90,6 +93,10 @@ export function platformJobRoutes(deps: PlatformJobRoutesDeps): Hono<TenantEnv &
       await client.query('commit')
     } catch (e) {
       await client.query('rollback').catch(() => {})
+      // 55P03 = lock_not_available（lock_timeout 到点）：排队等锁有界失败，不转 500。
+      if ((e as { code?: string }).code === '55P03') {
+        return c.json({ error: 'JOB_LOCK_TIMEOUT', key }, 503)
+      }
       throw e
     } finally {
       client.release()

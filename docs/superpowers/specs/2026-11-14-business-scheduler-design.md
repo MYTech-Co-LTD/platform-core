@@ -196,7 +196,7 @@ misfire 迟到 3 小时也用它；重试沿用同一 occurrence ⇒ 下游幂�
    任一成立 ⇒ 非 200。
 3. **第二看护路径**：`scripts/check-probe-heartbeat.mjs`（已是 openship 基建 job）**同时检查 scheduler 心跳**——
    不把「引擎还活着」这一判断单独押在 OO 上（OO 有流静默导致状态机冻结的实测形态）。
-4. **手动触发**：`POST /api/platform/jobs/:key/run`（会话 + 平台管理员），写 `trigger='manual'` 的 run 行，落 `platform.audit`。
+4. **手动触发**：`POST /api/platform/jobs/:key/run`（会话 + `tenant:admin`；本仓无独立「平台管理员」码，单实例单租户下等价），写 `trigger='manual'` 的 run 行，落 `platform.audit`。**已知边界**：多租户实例下这等于任意租户管理员可触发全局 job——届时须引入平台级码或按 `owner_org` 限定。
 
 ## 10. 与通知板块的接缝（handoff 答复）
 
