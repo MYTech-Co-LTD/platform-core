@@ -11,6 +11,11 @@
 
 ## [Unreleased]
 
+## [0.282.0](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.281.0...v0.282.0) - 2026-11-14
+- 【修复】data: 管线地图区分「父管线驱动」与「未接入」 (#2228) ([#2229](https://github.com/MYTech-Co-LTD/platform-core/pull/2229), [162da62](https://github.com/MYTech-Co-LTD/platform-core/commit/162da6213cccaba4fe452d5e206aed0974717fc0))
+- 【新增】data: 管线地图——未调度管线清单入口 (#2226) ([#2227](https://github.com/MYTech-Co-LTD/platform-core/pull/2227), [ffbf558](https://github.com/MYTech-Co-LTD/platform-core/commit/ffbf5587d20baa982ea1a58ebe47112fe87c19d4))
+
+
 ## [0.281.0](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.280.0...v0.281.0) - 2026-11-14
 - 【新增】data: R2 锚点自证（审阅面数据水位/SLA） (#2224) ([#2225](https://github.com/MYTech-Co-LTD/platform-core/pull/2225), [fb18fc1](https://github.com/MYTech-Co-LTD/platform-core/commit/fb18fc148fcc084be5bfb9a697f9ab61faed5fb5))
 
