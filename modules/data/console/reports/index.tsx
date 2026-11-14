@@ -30,6 +30,7 @@ import { ApiError, apiGet, apiSend, messageOf } from '../lib/api'
 import { useIsMobile } from '../lib/useIsMobile'
 import SpecView from './SpecView'
 import { NarrativeQuality } from './NarrativeQuality'
+import { QueryQuality } from './QueryQuality'
 import { TemplateCreateModal } from './TemplateCreateModal'
 import { TechDetails } from '../components/TechDetails'
 import { Explain } from '../components/Explain'
@@ -977,6 +978,7 @@ export default function ReportsPage() {
       {ctx}
       {/* R5：叙事质量运维面板（管理面）。阈值与口径都由服务端下发，这里只画越线。 */}
       {canManage && <NarrativeQuality />}
+      {canManage && <QueryQuality />}
       {canManage && stale.length > 0 && (
         <Alert
           type="info" showIcon data-testid="stale-reports"

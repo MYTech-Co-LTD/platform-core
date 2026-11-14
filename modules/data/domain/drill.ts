@@ -175,12 +175,14 @@ export async function runDetailQuery(
 ): Promise<DetailOutcome> {
   // 数据范围判定结果（#1957）：null = 未发生（off/管理员/未认证）。
   let scopeAudit: ScopeAudit | null = null
+  const startedAt = Date.now()
   const audit = (
     verdict: 'ok' | 'denied' | 'error', reason: string | null, rowCount: number | null,
     masking: ReturnType<typeof maskingAuditOf>,
     drillFacet: { dimensions: string[]; rowCountTotal: number; grantedColumns: string[] } | null,
   ) => writeAudit(deps.pool, {
-    org, userId: requester?.userId ?? '(anonymous)', channel: requester?.channel ?? 'session',
+    org, durationMs: Date.now() - startedAt,
+    userId: requester?.userId ?? '(anonymous)', channel: requester?.channel ?? 'session',
     keyId: requester?.keyId ?? null, metricId,
     params: {
       ...args,
