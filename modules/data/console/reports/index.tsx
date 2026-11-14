@@ -93,6 +93,11 @@ interface ReviewPayload {
     panels: Array<{ index: number; change: string; fields?: string[] }>
   }
   lint: Array<{ level: string; code: string; message: string }>
+  /** 锚点自证（R2 运行期）：指标当前数据水位 vs 各自 SLA。 */
+  anchors: Array<{
+    metricId: string; title: string | null; slaDays: number | null
+    status: string; watermark: string | null; relations: string[]
+  }>
 }
 
 /** 报表规格的最小投影（只读 provenance 抽屉用；完整 JSON 收在技术细节里）。 */
@@ -1104,6 +1109,8 @@ export default function ReportsPage() {
               items.push({ key: 'recycle', label: '回收', danger: true })
             }
             if (r.canEdit && r.renderer === 'platform') {
+              // 审阅面此前只在移动端动作单里——桌面端也要能进（R2 的出口是给人审的）。
+              items.push({ key: 'review', label: '审阅草稿' })
               items.push({ key: 'publish', label: '发布' })
               if (r.publishedVersion !== null) {
                 items.push({ key: 'unpublish', label: '下线' })
@@ -1124,6 +1131,7 @@ export default function ReportsPage() {
                       if (key === 'dept') void openDeptGate(r)
                       if (key === 'provenance') void openProvenance(r)
                       if (key === 'share') void openShare(r)
+                      if (key === 'review') void openReview(r)
                       if (key === 'gate') { setGateEdit(r); setGateDraft(r.requiredScope ?? '') }
                       if (key === 'publish-gate') {
                         Modal.confirm({
@@ -1406,6 +1414,30 @@ export default function ReportsPage() {
                         </li>
                       ))}
                     </ul>
+                  )}
+              </div>
+            </div>
+
+            <div>
+              <Typography.Text strong>数据锚点（自证）</Typography.Text>
+              <div style={{ marginTop: 6, fontSize: 13 }} data-testid="review-anchors">
+                {(review.data.anchors ?? []).length === 0 ? '草稿里没有数据面板'
+                  : (
+                    <Space direction="vertical" size={4} style={{ width: '100%' }}>
+                      {(review.data.anchors ?? []).map((a) => (
+                        <div key={a.metricId}>
+                          <Tag color={a.status === 'normal' ? 'green' : a.status === 'late' ? 'orange'
+                            : a.status === 'alert' ? 'red' : undefined}>
+                            {a.status === 'normal' ? '正常' : a.status === 'late' ? '偏慢'
+                              : a.status === 'alert' ? '超 SLA' : '未知'}
+                          </Tag>
+                          {a.title ?? a.metricId}
+                          <Typography.Text type="secondary" style={{ marginLeft: 8, fontSize: 12 }}>
+                            数据到 {a.watermark ?? '—'}{a.slaDays === null ? '' : `（SLA ${a.slaDays} 天）`}
+                          </Typography.Text>
+                        </div>
+                      ))}
+                    </Space>
                   )}
               </div>
             </div>

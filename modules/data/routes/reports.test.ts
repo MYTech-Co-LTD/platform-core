@@ -2397,11 +2397,15 @@ describePg('报表路由（需要 DATABASE_URL）', () => {
         diff: { panels: Array<{ index: number; change: string; fields?: string[] }> }
         doc: { metrics: Array<{ id: string }> }
         lint: unknown[]
+        anchors: Array<{ metricId: string; status: string; watermark: string | null }>
       }
       expect(body.report.publishedVersion).toBe(1)
       expect(body.diff.panels.some((p) => p.change === 'changed')).toBe(true)
       expect(body.doc.metrics.length).toBeGreaterThan(0)
       expect(Array.isArray(body.lint)).toBe(true)
+      // 锚点自证（R2 运行期）：每个指标一条水位/SLA 判定；未配仓库 ⇒ unknown（不捏造）
+      expect(body.anchors.length).toBe(body.doc.metrics.length)
+      expect(body.anchors.every((a) => ['normal', 'late', 'alert', 'unknown'].includes(a.status))).toBe(true)
 
       // 非 owner（且无管理码）⇒ 403 FORBIDDEN（审阅面是写侧权限，不是观看面）
       const other = shell(makeIdentity({ orgId: ORG, userId: 'u-other', scopes: ['data:query'] })).app
