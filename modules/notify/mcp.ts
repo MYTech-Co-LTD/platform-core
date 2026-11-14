@@ -4,9 +4,10 @@
 import { randomUUID } from 'node:crypto'
 import type { Hono } from 'hono'
 import type { Pool } from 'pg'
-import type { ChannelAddressResolver, EventCatalogReader, Identity } from '@platform/sdk'
+import type { ChannelAddressResolver, EventCatalogReader, Identity, SchedulerPortFactory } from '@platform/sdk'
 import { validatePayload } from '@platform/sdk'
 import { NOTIFY_TOOLS } from './mcp-tools'
+import { callScheduleTool } from './tools/schedules'
 import { resolveDeliverability } from './domain/deliverability'
 import { resolveDeliveryAddress } from './domain/resolve-address'
 import { renderContents } from './domain/render'
@@ -27,6 +28,8 @@ type McpDeps = {
   userId: string
   events?: EventCatalogReader
   addresses?: ChannelAddressResolver
+  /** 排班端口工厂（未注入 ⇒ 排班工具返回 SCHEDULER_UNAVAILABLE）。 */
+  scheduler?: SchedulerPortFactory
 }
 type McpToolResult = { text: string; isError: boolean }
 type ToolDef = { name: string; description: string; inputSchema: Record<string, unknown> }
@@ -53,6 +56,14 @@ export async function callTool(
   name: string,
   args: Record<string, unknown>,
 ): Promise<McpToolResult> {
+  // 排班工具（W6-P3）：actor 只从调用者身份成形（namespace 缺省补 org），绝不读 args 里的归属。
+  const schedule = await callScheduleTool(
+    { scheduler: deps.scheduler, actor: { userId: deps.userId, org: deps.org } },
+    name,
+    args,
+  )
+  if (schedule) return schedule
+
   if (name === 'list_events') return ok({ events: deps.events?.list() ?? [] })
 
   if (name === 'get_event') {
@@ -283,7 +294,12 @@ async function countTest(deps: McpDeps): Promise<number> {
 /** 把 MCP 管理面挂成 `POST /mcp-manage`（挂到模块既有 router 上）。 */
 export function registerNotifyMcpManage(
   r: Hono<{ Variables: { identity: Identity } }>,
-  deps: { pool: Pool; events?: EventCatalogReader; addresses?: ChannelAddressResolver },
+  deps: {
+    pool: Pool
+    events?: EventCatalogReader
+    addresses?: ChannelAddressResolver
+    scheduler?: SchedulerPortFactory
+  },
 ): void {
   r.post('/mcp-manage', async (c) => {
     const msg = (await c.req.json().catch(() => null)) as RpcRequest | null
@@ -306,6 +322,7 @@ export function registerNotifyMcpManage(
       userId: identity.userId,
       events: deps.events,
       addresses: deps.addresses,
+      scheduler: deps.scheduler,
     }
 
     if (msg.method === 'initialize') {

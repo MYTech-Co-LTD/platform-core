@@ -1,4 +1,5 @@
-// mcp.test.ts — agent 工具面：12 工具、无 publish/channel、草稿不发布、试发只给自己
+// mcp.test.ts — agent 工具面：21 工具（13 消息 + 8 排班）、无 publish/channel、
+// 排班不接受通道参数、草稿不发布、试发只给自己
 import { describe, it, expect, beforeAll, afterAll, beforeEach } from 'vitest'
 import { Pool } from 'pg'
 import type { ChannelAddressResolver, NotificationEventDecl } from '@platform/sdk'
@@ -24,9 +25,9 @@ const addresses: ChannelAddressResolver = {
 }
 
 describe('notify mcp tool face', () => {
-  it('恰 13 个工具，无 publish/channel', () => {
-    expect(NOTIFY_TOOLS).toHaveLength(13)
-    expect(toolDefs()).toHaveLength(13)
+  it('恰 21 个工具，无 publish/channel', () => {
+    expect(NOTIFY_TOOLS).toHaveLength(21)
+    expect(toolDefs()).toHaveLength(21)
     expect(NOTIFY_TOOLS.some((t) => /publish|channel/.test(t.name))).toBe(false)
   })
 })
@@ -145,7 +146,7 @@ describePg('notify mcp handlers', () => {
     expect(bad.isError).toBe(true)
   })
 
-  it('JSON-RPC /mcp-manage tools/list 返回 12 工具', async () => {
+  it('JSON-RPC /mcp-manage tools/list 返回 21 工具', async () => {
     const app = buildTestApp(
       notifyV2,
       makeIdentity({ orgId: ORG, userId: 'u1', scopes: ['notify:manage'] }),
@@ -157,6 +158,6 @@ describePg('notify mcp handlers', () => {
       body: JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'tools/list' }),
     })
     const body = await res.json() as { result: { tools: unknown[] } }
-    expect(body.result.tools).toHaveLength(13)
+    expect(body.result.tools).toHaveLength(21)
   })
 })

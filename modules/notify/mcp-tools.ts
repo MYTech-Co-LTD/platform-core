@@ -1,8 +1,10 @@
 // mcp-tools.ts — notify MCP 工具元数据（**纯**：无 Hono/pg 运行时依赖）。
 // 供 scripts/check-mcp-toolface.mjs 静态检查；实现见 mcp.ts。
-// 硬边界：没有 publish / channel 工具；没有「给别人试发」工具。
+// 硬边界：没有 publish / channel 工具；没有「给别人试发」工具；排班工具不接受通道参数。
+import { SCHEDULE_TOOLS } from './tools/schedules'
 
-export const NOTIFY_MAX_TOOLS = 13
+// 13（消息/模板/规则/投递）+ 8（agent 排班，W6-P3）。加工具必须同 PR 显式抬。
+export const NOTIFY_MAX_TOOLS = 21
 
 export type NotifyToolMeta = {
   name: string
@@ -66,4 +68,6 @@ export const NOTIFY_TOOLS: NotifyToolMeta[] = [
   t('send_test', '给自己试发一条（收件人强制为调用者本人）。',
     { templateKey: { type: 'string' }, channel: { type: 'string' }, payload: { type: 'object' } },
     ['templateKey', 'channel', 'payload'], true, 'notify:manage'),
+  // agent 排班（W6-P3）：实现与入参成形在 tools/schedules.ts；这里只把元数据并进 tools/list。
+  ...SCHEDULE_TOOLS.map((m): NotifyToolMeta => ({ ...m })),
 ]
