@@ -211,10 +211,17 @@ describePg('018_platform_jobs', () => {
     await pool.query("delete from platform.job_schedule where key like 'jobtest:%'")
   })
 
-  it('status/trigger 闭集：非法值被拒', async () => {
+  it('status/trigger 闭集：非法值被**约束**拒绝（不是被外键拒绝）', async () => {
+    const { rows } = await pool.query(
+      "insert into platform.job_schedule(key,cron,source,enabled,expected_interval_secs) values ('jobtest:cl','* * * * *','system',false,60) returning id")
+    const id = rows[0].id
     await expect(pool.query(
-      "insert into platform.job_run(schedule_id,key,occurrence,trigger,status) values (1,'jobtest:x',now(),'nope','ok')",
-    )).rejects.toThrow()
+      "insert into platform.job_run(schedule_id,key,occurrence,trigger,status) values ($1,'jobtest:cl',now(),'nope','ok')", [id],
+    )).rejects.toThrow(/job_run_trigger_check/)
+    await expect(pool.query(
+      "insert into platform.job_run(schedule_id,key,occurrence,trigger,status) values ($1,'jobtest:cl',now(),'schedule','nope')", [id],
+    )).rejects.toThrow(/job_run_status_check/)
+    await pool.query("delete from platform.job_schedule where key like 'jobtest:%'")
   })
 })
 ```
