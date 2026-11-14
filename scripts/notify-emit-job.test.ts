@@ -7,13 +7,11 @@
 // 需要 DATABASE_URL（与 apps/server 同约定：没有就整体跳过）。
 import { spawnSync } from 'node:child_process'
 import { createRequire } from 'node:module'
-import { join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { afterAll, beforeAll, describe, expect, it } from 'vitest'
 import { applyMigrations } from '../modules/notify/test-util.ts'
 
 const repoRoot = fileURLToPath(new URL('..', import.meta.url))
-const scriptPath = join(repoRoot, 'scripts', 'notify-emit-job.mjs')
 
 const dbUrl = process.env.DATABASE_URL
 const describePg = dbUrl ? describe : describe.skip
@@ -42,9 +40,14 @@ describePg('notify-emit-job.mjs（黑盒）', () => {
     await pool.end()
   })
 
-  /** 按生产形状跑一次 handler：params 走 stdin，JOB_* 走 env。 */
+  /**
+   * 按生产形状跑一次 handler：params 走 stdin，JOB_* 走 env。
+   * 用 `pnpm exec tsx`（与调度器 `runner.ts` 同形）而不是裸 node：handler import 了 `.ts`
+   * （notify/storage），裸 node 要靠 Node 22.18+ 默认的类型剥离，而 CI 只钉 `node-version: 22`
+   * ——小版本不确定就意味着「本机能过、CI 红」。tsx 是线上真实执行形态，无此耦合。
+   */
   const runJob = (org: string, stdin: string, env: Record<string, string> = {}) =>
-    spawnSync(process.execPath, [scriptPath], {
+    spawnSync('pnpm', ['exec', 'tsx', 'scripts/notify-emit-job.mjs'], {
       cwd: repoRoot,
       input: stdin,
       encoding: 'utf8',
