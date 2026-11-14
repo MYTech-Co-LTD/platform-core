@@ -125,6 +125,51 @@ const DAILY_FIRINGS_SQL = `
    where s.owner_org = $1 and s.owner_namespace = $2
      and r.started_at > now() - interval '1 day'`
 
+/** quotaOf 与 createSchedule 同源：一条 SQL 取两个计数（同一快照）。 */
+const QUOTA_SNAPSHOT_SQL = `
+  select (${SCHEDULE_COUNT_SQL}) as schedules_used,
+         (${DAILY_FIRINGS_SQL}) as firings_used`
+
+/** 最小间隔扫描的固定参考时刻（2026-01-05 是周一；固定起点保证判据与创建时刻无关）。 */
+const MIN_INTERVAL_REF = new Date('2026-01-05T00:00:00.000Z')
+/** cron 的分钟/小时/星期以周为周期：扫 8 天足以覆盖任意一次相邻触发。 */
+const MIN_INTERVAL_SCAN_MS = 8 * 24 * 60 * 60 * 1000
+/** 迭代上限保护：合规的最密 cron（5 分钟）8 天 = 2304 次；违规 cron 会早退。 */
+const MIN_INTERVAL_SCAN_MAX_ITER = 5000
+
+/**
+ * cron 在完整周期内的**真实最小间隔**（秒）：从固定参考时刻起连续迭代 8 天。
+ * 不能只看「创建时刻的下一格到再下一格」——`0,4 * * * *` 在整点附近会算出 56 分钟，
+ * 换个时刻又是 4 分钟（非确定性且可绕过）。
+ *
+ * 结果只取决于 (cron, timezone)，与当前时刻无关 ⇒ 进程内缓存；上限 1024 条防任意
+ * cron 输入把内存撑大（agent 可反复提交不同的非法 cron）。
+ */
+const MIN_GAP_CACHE_MAX = 1024
+const minGapCache = new Map<string, number>()
+
+function minimumGapSecs(expr: string, timeZone: string): number {
+  const cacheKey = `${timeZone}\u0000${expr}`
+  const cached = minGapCache.get(cacheKey)
+  if (cached !== undefined) return cached
+
+  let prev = nextRunAt(expr, timeZone, MIN_INTERVAL_REF)
+  const end = MIN_INTERVAL_REF.getTime() + MIN_INTERVAL_SCAN_MS
+  let min = Number.POSITIVE_INFINITY
+  for (let i = 0; i < MIN_INTERVAL_SCAN_MAX_ITER && prev.getTime() <= end; i++) {
+    const next = nextRunAt(expr, timeZone, prev)
+    const gap = (next.getTime() - prev.getTime()) / 1000
+    // 早退：违规 cron 通常前几步就命中。
+    if (gap < QUOTA_MIN_INTERVAL_SECS) { min = gap; break }
+    if (gap < min) min = gap
+    prev = next
+  }
+
+  if (minGapCache.size >= MIN_GAP_CACHE_MAX) minGapCache.clear()
+  minGapCache.set(cacheKey, min)
+  return min
+}
+
 /** 归属谓词：所有按 id 的操作都带上它；软删行视为「不存在」。 */
 const OWNED_WHERE =
   'id = $1 and owner_org = $2 and owner_namespace = $3 and deleted_at is null'
@@ -209,9 +254,9 @@ export function buildSchedulerPort(deps: {
       let minIntervalSecs: number
       try {
         nextAt = nextRunAt(input.cron, input.timezone, at)
-        // 最小间隔 = 连续两次触发点的差（不信任调用方传的 expectedIntervalSecs）。
-        const after = nextRunAt(input.cron, input.timezone, nextAt)
-        minIntervalSecs = (after.getTime() - nextAt.getTime()) / 1000
+        // 最小间隔 = 完整周期内的真实最小值（固定参考时刻，与创建时刻无关）；
+        // 不信任调用方传的 expectedIntervalSecs。
+        minIntervalSecs = minimumGapSecs(input.cron, input.timezone)
       } catch (e) {
         // 语法已过 isValidCron；这里失败只可能是时区非法/DST/8 年内无触发点。
         fail('INVALID_SCHEDULE', e instanceof Error ? e.message : String(e))
@@ -271,19 +316,9 @@ export function buildSchedulerPort(deps: {
     },
 
     async quotaOf() {
-      // 一条查询取两个计数：同一快照，避免两次往返之间 at 漂移。
+      // 判据与本文件 createSchedule 共用同一组 SQL 常量（不内联复制，避免口径漂移）。
       const { rows } = await pool.query<{ schedules_used: number; firings_used: number }>(
-        `select
-           (select count(*)::int from platform.job_schedule
-             where owner_org = $1 and owner_namespace = $2
-               and deleted_at is null and source = 'agent') as schedules_used,
-           (select count(*)::int
-              from platform.job_run r
-              join platform.job_schedule s on s.id = r.schedule_id
-             where s.owner_org = $1 and s.owner_namespace = $2
-               and r.started_at > now() - interval '1 day') as firings_used`,
-        [actor.org, actor.namespace],
-      )
+        QUOTA_SNAPSHOT_SQL, [actor.org, actor.namespace])
       return {
         schedules: { used: rows[0].schedules_used, limit: QUOTA_SCHEDULES },
         dailyFirings: { used: rows[0].firings_used, limit: QUOTA_DAILY_FIRINGS },
