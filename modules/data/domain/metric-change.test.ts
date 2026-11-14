@@ -243,6 +243,35 @@ describePg('adoptChange / rejectChange', () => {
     expect((await getChange(pool, ORG, del.change.id))?.status).toBe('adopted')
   })
 
+  it('delete 档 payload 收宽（下线提案尾波）：{reason?} 可立单，strict 闭集拒其余键', async () => {
+    // 夹具：一行可删的 L2（payload 校验在 id 预检**之后**，行不存在会先 404 掩盖 payload 判定）
+    const mk = await submitChange(pool, ORG, { userId: 'a', channel: 'pat' }, 'x:del_payload', 'create',
+      { baseMetric: L1_ID, op: { kind: 'refine' }, alias: '我的销售·payload' })
+    if (!mk.ok) throw new Error('unreachable')
+    await markReady(mk.change.id)
+    expect((await adoptChange(writeDeps(pool), ORG, mk.change.id)).ok).toBe(true)
+
+    // 合法：可选 reason（1–500 字）落 payload —— job 提单的人面展示文案
+    const withReason = await submitChange(pool, ORG, { userId: 'j', channel: 'job' }, 'x:del_payload', 'delete',
+      { reason: '连续 90 天 0 次使用（报表引用已排除）' })
+    expect(withReason.ok).toBe(true)
+    if (withReason.ok) {
+      expect(withReason.change.status).toBe('draft')
+      expect(withReason.change.payload).toEqual({ reason: '连续 90 天 0 次使用（报表引用已排除）' })
+    }
+    // 合法：空对象（旧判据原样保留）
+    expect((await submitChange(pool, ORG, { userId: 'j', channel: 'job' }, 'x:del_payload', 'delete', {})).ok).toBe(true)
+
+    // 非法：未知键（strict 闭集——给提案留出处，不给自由载荷开口子）
+    expect(await submitChange(pool, ORG, { userId: 'j', channel: 'job' }, 'x:del_payload', 'delete',
+      { reason: 'r', foo: 1 })).toMatchObject({ ok: false, error: 'INVALID_DECLARATION' })
+    // 非法：空串 reason（min(1)）与超长 reason（max(500)）
+    expect(await submitChange(pool, ORG, { userId: 'j', channel: 'job' }, 'x:del_payload', 'delete',
+      { reason: '' })).toMatchObject({ ok: false, error: 'INVALID_DECLARATION' })
+    expect(await submitChange(pool, ORG, { userId: 'j', channel: 'job' }, 'x:del_payload', 'delete',
+      { reason: 'x'.repeat(501) })).toMatchObject({ ok: false, error: 'INVALID_DECLARATION' })
+  })
+
   it('驳回必填原因；驳回后单据 rejected 且原因可读', async () => {
     // P1 起提交面有部门内同名互斥：x:adopt_me 已带「我的销售」生效行，这里 alias 必须错开
     const s = await submitChange(pool, ORG, { userId: 'a', channel: 'pat' }, 'x:rej', 'create', { ...DECL, alias: '我的销售·驳回' })
