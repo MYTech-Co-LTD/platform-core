@@ -27,7 +27,7 @@ export type WorkerDeps = {
   claimEvents(n: number): Promise<PendingEvent[]>
   markEvent(ev: { org: string; eventId: string }, status: string): Promise<void>
   listRules(org: string): Promise<NotificationRule[]>
-  getEventDecl(key: string): Promise<NotificationEventDecl | null>
+  getEventDecl(org: string, key: string): Promise<NotificationEventDecl | null>
   getPublishedTemplate(
     org: string,
     key: string,
@@ -97,7 +97,7 @@ export async function runOnce(deps: WorkerDeps): Promise<WorkerStats> {
       continue
     }
 
-    const decl = await deps.getEventDecl(ev.eventKey)
+    const decl = await deps.getEventDecl(ev.org, ev.eventKey)
     if (!decl) {
       await deps.markEvent(ev, 'invalid')
       continue

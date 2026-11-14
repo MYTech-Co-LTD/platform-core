@@ -48,23 +48,41 @@ if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) 
   try {
     /** @type {Map<string, any>} */
     const declCache = new Map()
-    /** @param {string} key */
-    const getEventDecl = async (key) => {
-      if (declCache.has(key)) return declCache.get(key)
-      const { rows } = await pool.query(
+    /** @param {string} org @param {string} key */
+    const getEventDecl = async (org, key) => {
+      const cacheKey = `${org}\u0000${key}`
+      if (declCache.has(cacheKey)) return declCache.get(cacheKey)
+      const platform = await pool.query(
         'select payload_schema, recipients, scope_key from platform.event_catalog where key=$1 and active',
         [key],
       )
-      const r = rows[0]
+      let r = platform.rows[0]
+      let title = ''
+      let description
+      let defaults
+      if (r === undefined) {
+        const tenant = await pool.query(
+          `select title, description, payload_schema, recipients, scope_key, defaults
+             from notify.event_decl where org=$1 and key=$2 and status='active'`,
+          [org, key],
+        )
+        r = tenant.rows[0]
+        if (r !== undefined) {
+          title = r.title
+          description = r.description ?? undefined
+          defaults = r.defaults ?? undefined
+        }
+      }
       const d = r
         ? {
-            key, title: '',
+            key, title, description,
             payload: r.payload_schema,
             recipients: r.recipients,
             scope: r.scope_key ? { key: r.scope_key } : undefined,
+            defaults,
           }
         : null
-      declCache.set(key, d)
+      declCache.set(cacheKey, d)
       return d
     }
 
@@ -93,14 +111,14 @@ if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) 
     for (const { casdoor_org: org } of tenants) {
       const rules = (await listRules(pool, org)).filter((r) => r.enabled)
       // 先预热 decl 缓存：pickCheckable 用的是**同步**读（纯函数，便于单测）
-      for (const r of rules) await getEventDecl(r.eventKey)
+      for (const r of rules) await getEventDecl(org, r.eventKey)
 
       const { checkable: ready, skipped } = pickCheckable(
-        rules, (k) => declCache.get(k) ?? null)
+        rules, (k) => declCache.get(`${org}\u0000${k}`) ?? null)
       skippedCount += skipped.length
 
       for (const { rule } of ready) {
-        const decl = declCache.get(rule.eventKey)
+        const decl = declCache.get(`${org}\u0000${rule.eventKey}`)
         if (!decl) {
           blocked.push({ org, ruleId: rule.id, eventKey: rule.eventKey, blocked: 'event_missing' })
           continue
@@ -108,7 +126,7 @@ if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) 
         const r = await resolveDeliverability(
           { org, rule, payload: samplePayload(decl) },
           {
-            getEventDecl: async (k) => declCache.get(k) ?? null,
+            getEventDecl: async (o, k) => declCache.get(`${o}\u0000${k}`) ?? null,
             getPublishedTemplate: async (o, k) => {
               const { rows } = await pool.query(
                 `select rv.revision, rv.contents from notify.template t

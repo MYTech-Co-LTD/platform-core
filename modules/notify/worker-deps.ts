@@ -14,7 +14,7 @@ import { audit } from './storage'
 import { runOnce, type WorkerDeps, type WorkerStats } from './worker'
 
 /** 事件目录读取器（由 scripts/ 注入；模块不读 platform schema —— B1） */
-export type EventDeclLoader = (key: string) => Promise<NotificationEventDecl | null>
+export type EventDeclLoader = (org: string, key: string) => Promise<NotificationEventDecl | null>
 
 export type ScopeHolderLoader = (
   org: string,

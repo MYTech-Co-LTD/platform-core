@@ -61,6 +61,8 @@ describePg('routes v2', () => {
   })
 
   async function cleanup() {
+    await pool.query('delete from notify.event_decl where org=$1', [ORG])
+    await pool.query('delete from notify.agent_namespace where org=$1', [ORG])
     await pool.query('delete from notify.rule where org=$1', [ORG])
     await pool.query('delete from notify.event where org=$1', [ORG])
     await pool.query('delete from notify.inbox where org=$1', [ORG])
@@ -152,6 +154,94 @@ describePg('routes v2', () => {
     expect(((await list.json()) as { events: unknown[] }).events).toHaveLength(1)
     expect((await app.request('/events/m.a.b')).status).toBe(200)
     expect((await app.request('/events/nope')).status).toBe(404)
+  })
+
+  it('N1：namespace → 声明 ext 事件 → 列表/单项 → /emit 入队', async () => {
+    const ns = await post('/agent/namespaces', { namespace: 'agent_a', displayName: 'A' })
+    expect(ns.status).toBe(201)
+    expect(await ns.json()).toMatchObject({ namespace: 'agent_a', owner: 'u1', created: true })
+    expect((await post('/agent/namespaces', { namespace: 'agent_a' })).status).toBe(200)
+
+    const decl = {
+      key: 'ext.agent_a.daily',
+      title: 'Daily',
+      scope: { key: 'day' },
+      payload: {
+        user: { type: 'user', required: true },
+        day: { type: 'string', required: true },
+      },
+      recipients: { assignee: { kind: 'field', field: 'user' } },
+    }
+    const created = await post('/agent/events', decl)
+    expect(created.status).toBe(201)
+    expect(await created.json()).toMatchObject({ key: decl.key, version: 1, created: true })
+
+    const list = await app.request('/events')
+    const events = ((await list.json()) as { events: Array<{ key: string; source?: string }> }).events
+    expect(events.find((e) => e.key === decl.key)?.source).toBe('agent')
+    expect((await app.request(`/events/${encodeURIComponent(decl.key)}`)).status).toBe(200)
+
+    const emitted = await post('/emit', {
+      eventId: 'agent-e1', eventKey: decl.key,
+      scope: '2026-11-14', payload: { user: 'u1', day: '2026-11-14' },
+    })
+    expect(emitted.status).toBe(202)
+    expect(await emitted.json()).toEqual({ accepted: true })
+
+    // 破坏性变更：新增 required 字段 ⇒ 409，要求新 key（形状本身合法，走到 diff）
+    const breaking = await post('/agent/events', {
+      ...decl,
+      payload: { ...decl.payload, must: { type: 'string', required: true } },
+    })
+    expect(breaking.status).toBe(409)
+    expect(await breaking.json()).toMatchObject({ error: 'AGENT_EVENT_SCHEMA_BREAKING' })
+  })
+
+  it('N1：ext emit 只允许 namespace owner（notify:manage 可代发）', async () => {
+    await post('/agent/namespaces', { namespace: 'agent_a' })
+    await post('/agent/events', {
+      key: 'ext.agent_a.daily', title: 'D',
+      payload: { user: { type: 'user', required: true } },
+      recipients: { r: { kind: 'field', field: 'user' } },
+    })
+
+    const request = (userId: string, eventId: string) => {
+      const emitApp = buildTestApp(
+        notifyV2,
+        makeIdentity({ orgId: ORG, userId, scopes: ['notify:emit'] }),
+        { pool, events, addresses },
+      )
+      return emitApp.request('/emit', {
+        method: 'POST', headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({
+          eventId, eventKey: 'ext.agent_a.daily', payload: { user: 'u1' },
+        }),
+      })
+    }
+    expect((await request('u1', 'own-e1')).status).toBe(202)
+    expect((await request('u2', 'own-e2')).status).toBe(403)
+  })
+
+  it('N1：跨 namespace / 非 ext key / 非法声明都被拒', async () => {
+    await post('/agent/namespaces', { namespace: 'agent_b' })
+    await pool.query(
+      `insert into notify.agent_namespace(org,namespace,display_name,owner_user_id)
+       values ($1,'agent_x','X','other')`, [ORG])
+
+    const cross = await post('/agent/events', {
+      key: 'ext.agent_x.e', title: 'E', payload: { u: { type: 'user' } },
+      recipients: { r: { kind: 'field', field: 'u' } },
+    })
+    expect(cross.status).toBe(403)
+    expect(await cross.json()).toEqual({ error: 'AGENT_NAMESPACE_FORBIDDEN' })
+
+    expect((await post('/agent/events', {
+      key: 'm.a.b', title: 'E', payload: {}, recipients: {},
+    })).status).toBe(400)
+    expect((await post('/agent/events', {
+      key: 'ext.agent_b.e', title: 'E', payload: {},
+      recipients: { r: { kind: 'field', field: 'missing' } },
+    })).status).toBe(400)
   })
 
   it('模板：草稿 → 预览 → 发布；未知变量 400', async () => {
