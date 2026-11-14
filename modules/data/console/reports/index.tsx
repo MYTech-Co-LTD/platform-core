@@ -29,6 +29,7 @@ import { Alert, Button, Drawer, Dropdown, Input, Modal, Popconfirm, Segmented, S
 import { ApiError, apiGet, apiSend, messageOf } from '../lib/api'
 import { useIsMobile } from '../lib/useIsMobile'
 import SpecView from './SpecView'
+import { NarrativeQuality } from './NarrativeQuality'
 import { TechDetails } from '../components/TechDetails'
 import { Explain } from '../components/Explain'
 import { humanError, type HumanError } from '../lib/explain'
@@ -950,6 +951,8 @@ export default function ReportsPage() {
     <Space direction="vertical" style={{ width: '100%' }} size="middle">
       {provenanceDrawer}
       {ctx}
+      {/* R5：叙事质量运维面板（管理面）。阈值与口径都由服务端下发，这里只画越线。 */}
+      {canManage && <NarrativeQuality />}
       {isMobile ? (
         // 移动端一屏优先：搜索 + 一个「筛选」按钮（当前状态写在按钮上），不再常驻 4 个筛选项
         <div style={{ display: 'flex', gap: 8 }}>

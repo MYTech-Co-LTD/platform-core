@@ -34,13 +34,35 @@ export async function recordNarrativeRun(pool: Pool, row: NarrativeRunRow): Prom
   }
 }
 
+/**
+ * 叙事质量的运维阈值（R5）。单一事实源在服务端：console 面板与将来的告警 job 读同一份，
+ * 不在前端各写一套「多少算红」。
+ *
+ * 口径：fallback 率与越界率只对**真实生成样本**（ok+fallback）计；p95 是墙钟时长。
+ */
+export const NARRATIVE_SLO = {
+  fallbackRate: 0.2,
+  p95Ms: 45_000,
+  numberCheckRate: 0.05,
+} as const
+
+export type NarrativeSloBreach = 'fallback_rate' | 'p95' | 'number_check'
+
 export interface NarrativeStats {
   days: number
   total: number
   byOutcome: Record<NarrativeOutcome, number>
   /** 回退率 = fallback / (ok + fallback)；cached/error 不计入分母（它们不是「生成质量」样本）。 */
   fallbackRate: number | null
+  /** 数字校验越界次数与比率（reason='number_check'）：模型引用了不存在/超范围的数。 */
+  numberCheckCount: number
+  numberCheckRate: number | null
+  /** 缓存命中率 = cached / total（含 cached 在内的全部尝试）。 */
+  cacheHitRate: number | null
   p95Ms: number | null
+  /** 当前窗口越过阈值的项（空数组 = 健康）；阈值见 `NARRATIVE_SLO`。 */
+  breaches: NarrativeSloBreach[]
+  slo: typeof NARRATIVE_SLO
   byPromptVersion: Array<{ promptVersion: string; total: number; fallback: number }>
   byDay: Array<{ day: string; total: number; fallback: number }>
 }
@@ -49,13 +71,15 @@ export interface NarrativeStats {
 export async function narrativeStats(pool: Pool, org: string, days: number): Promise<NarrativeStats> {
   const since = `now() - ($2::int * interval '1 day')`
   const main = await pool.query<{
-    total: string; ok: string; fallback: string; cached: string; error: string; p95: string | null
+    total: string; ok: string; fallback: string; cached: string; error: string
+    number_check: string; p95: string | null
   }>(
     `select count(*)::text as total,
             count(*) filter (where outcome = 'ok')::text as ok,
             count(*) filter (where outcome = 'fallback')::text as fallback,
             count(*) filter (where outcome = 'cached')::text as cached,
             count(*) filter (where outcome = 'error')::text as error,
+            count(*) filter (where reason = 'number_check')::text as number_check,
             percentile_cont(0.95) within group (order by duration_ms)
               filter (where duration_ms is not null)::text as p95
        from data.narrative_runs
@@ -90,12 +114,27 @@ export async function narrativeStats(pool: Pool, org: string, days: number): Pro
     [org, days],
   )
 
+  const total = num(r?.total)
+  const numberCheckCount = num(r?.number_check)
+  const fallbackRate = generated === 0 ? null : byOutcome.fallback / generated
+  const numberCheckRate = generated === 0 ? null : numberCheckCount / generated
+  const cacheHitRate = total === 0 ? null : byOutcome.cached / total
+  const p95Ms = r?.p95 === null || r?.p95 === undefined ? null : Number(r.p95)
+  const breaches: NarrativeSloBreach[] = []
+  if (fallbackRate !== null && fallbackRate > NARRATIVE_SLO.fallbackRate) breaches.push('fallback_rate')
+  if (p95Ms !== null && p95Ms > NARRATIVE_SLO.p95Ms) breaches.push('p95')
+  if (numberCheckRate !== null && numberCheckRate > NARRATIVE_SLO.numberCheckRate) breaches.push('number_check')
   return {
     days,
-    total: num(r?.total),
+    total,
     byOutcome,
-    fallbackRate: generated === 0 ? null : byOutcome.fallback / generated,
-    p95Ms: r?.p95 === null || r?.p95 === undefined ? null : Number(r.p95),
+    fallbackRate,
+    numberCheckCount,
+    numberCheckRate,
+    cacheHitRate,
+    p95Ms,
+    breaches,
+    slo: NARRATIVE_SLO,
     byPromptVersion: versions.rows.map((x) => ({
       promptVersion: x.prompt_version, total: num(x.total), fallback: num(x.fallback),
     })),

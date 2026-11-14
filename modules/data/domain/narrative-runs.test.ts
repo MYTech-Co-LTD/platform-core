@@ -43,6 +43,35 @@ describePg('narrativeStats（需要 DATABASE_URL）', () => {
     expect(s.fallbackRate).toBeNull()
   })
 
+  it('★ 越界率/缓存命中率/阈值越线（R5 观测面）', async () => {
+    await pool.query('delete from data.narrative_runs where org = $1', [ORG])
+    await run('ok')
+    await run('fallback')
+    await run('cached')
+    await recordNarrativeRun(pool, {
+      org: ORG, reportId: 'r1', focus: 'daily_review', mode: 'range',
+      model: 'm', promptVersion: 'v-test', outcome: 'fallback', reason: 'number_check', durationMs: 100,
+    })
+    const s = await narrativeStats(pool, ORG, 7)
+    expect(s.numberCheckCount).toBe(1)
+    // 生成样本 = ok + fallback（3 条：ok/fallback/number_check）
+    expect(s.numberCheckRate).toBeCloseTo(1 / 3, 5)
+    expect(s.cacheHitRate).toBeCloseTo(1 / 4, 5)
+    expect(s.breaches).toContain('number_check')
+    expect(s.breaches).toContain('fallback_rate')   // 2/3 > 0.2
+    expect(s.slo).toEqual({ fallbackRate: 0.2, p95Ms: 45_000, numberCheckRate: 0.05 })
+  })
+
+  it('健康窗口 ⇒ breaches 为空（不误报）', async () => {
+    await pool.query('delete from data.narrative_runs where org = $1', [ORG])
+    await run('ok', 'v-test', 1000)
+    await run('ok', 'v-test', 1000)
+    const s = await narrativeStats(pool, ORG, 7)
+    expect(s.breaches).toEqual([])
+    expect(s.numberCheckRate).toBe(0)
+    expect(s.cacheHitRate).toBe(0)
+  })
+
   it('按租户隔离：别的 org 的行不计入', async () => {
     await pool.query('delete from data.narrative_runs where org = $1', [ORG])
     await run('ok')
