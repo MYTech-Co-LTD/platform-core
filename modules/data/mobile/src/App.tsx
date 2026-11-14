@@ -9,6 +9,7 @@
 import { useCallback, useEffect, useState } from 'react'
 import { Input, PullToRefresh, Skeleton } from 'antd-mobile'
 import ReportsView from './ReportsView'
+import SystemMapView from './SystemMapView'
 import type { ReportRow } from './ReportsView'
 import { C, Chip, EmptyState, Icon, cardStyle, radius } from './ui'
 import { apiGet, ApiError } from './api'
@@ -207,12 +208,16 @@ export default function App({ initialTab = 'center' }: { initialTab?: 'center' |
   const metricManage = isAdmin
     || (metricsData?.metrics ?? []).some((m) => m.source === 'l2' && m.createdBy !== undefined && m.createdBy !== null && m.createdBy === self)
 
-  const [tab, setTab] = useState<'center' | 'reportsManage' | 'metricsManage'>(initialTab)
+  const [tab, setTab] = useState<'center' | 'reportsManage' | 'metricsManage' | 'map'>(initialTab)
+  // 从报表卡「口径与来源」进来时带指标 id，地图页自动打开该指标详情
+  const [mapFocus, setMapFocus] = useState<string | null>(null)
   // 线性图标 + 文字：emoji 在业务后台里像演示稿（2026-11-10 反馈）。
   const tabs = [
     { key: 'center' as const, label: '报表', icon: 'reports' as const },
     ...(reportManage ? [{ key: 'reportsManage' as const, label: '管理', icon: 'file' as const }] : []),
     ...(metricManage ? [{ key: 'metricsManage' as const, label: '指标', icon: 'metrics' as const }] : []),
+    // 体系地图对所有有 data:query 的人可见（与桌面同一份数据；旧 HTML 页因此下线）
+    { key: 'map' as const, label: '地图', icon: 'source' as const },
   ]
   // 当前 tab 失去权限（数据刷新后）⇒ 回落报表中心
   const active = tabs.some((t) => t.key === tab) ? tab : 'center'
@@ -233,9 +238,11 @@ export default function App({ initialTab = 'center' }: { initialTab?: 'center' |
   return (
     <div style={{ minHeight: '100dvh', background: C.bg, paddingBottom: 'calc(62px + env(safe-area-inset-bottom, 0px))' }}>
       {active === 'center' ? (
-        <ReportsView rows={reportRows} reload={reload} tab="center" self={self ?? ''} />
+        <ReportsView rows={reportRows} reload={reload} tab="center" self={self ?? ''} onOpenMap={(id) => { setMapFocus(id ?? null); setTab('map') }} />
       ) : active === 'reportsManage' ? (
-        <ReportsView rows={reportRows} reload={reload} tab="manage" self={self ?? ''} />
+        <ReportsView rows={reportRows} reload={reload} tab="manage" self={self ?? ''} onOpenMap={(id) => { setMapFocus(id ?? null); setTab('map') }} />
+      ) : active === 'map' ? (
+        <SystemMapView focus={mapFocus} />
       ) : (
         <MetricsView data={metricsData} reload={reload} />
       )}

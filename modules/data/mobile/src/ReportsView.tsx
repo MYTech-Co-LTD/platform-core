@@ -34,16 +34,14 @@ export interface ReportRow {
 }
 
 /**
- * 体系地图深链（定案 A）：独立追溯页，移动壳只放**链接**，不复制渲染逻辑。
- * 页面自身按 hash 路由（#/metrics/<id> / #/overview），服务端只认 `/api/modules/data/system-map`。
+ * 体系地图：2026-11-15 起是**应用内页面**（`SystemMapView`，直读 `/system-map/graph`），
+ * 不再链到服务端单文件 HTML。入口通过 `onOpenMap` 交给壳切 tab——
+ * 旧链接是 `<a href>`，会整页跳走；改成按钮后返回时不用靠 history.back()。
  */
-export function systemMapHref(fragment: string): string {
-  const path = fragment.startsWith('#/') ? fragment : `#/${fragment.replace(/^#?\/?/, '')}`
-  return `/api/modules/data/system-map${path}`
-}
+export type OpenMap = (metricId?: string) => void
 
-/** 报表卡上的「口径与来源」链接组（无指标 id ⇒ 不渲染）。 */
-function SourceLinks({ metricIds }: { metricIds?: string[] }) {
+/** 报表卡上的「口径与来源」入口组（无指标 id ⇒ 不渲染）。 */
+function SourceLinks({ metricIds, onOpenMap }: { metricIds?: string[]; onOpenMap?: OpenMap }) {
   const ids = [...new Set(metricIds ?? [])]
   if (ids.length === 0) return null
   const shown = ids.slice(0, 3)
@@ -54,15 +52,17 @@ function SourceLinks({ metricIds }: { metricIds?: string[] }) {
   return (
     <div style={{ borderTop: `1px solid ${C.lineSoft}`, paddingTop: 2, display: 'flex', flexWrap: 'wrap', gap: 14 }}>
       {shown.map((id) => (
-        <a key={id} href={systemMapHref(`#/metrics/${encodeURIComponent(id)}`)} style={linkStyle}>
+        <button key={id} type="button" onClick={() => onOpenMap?.(id)}
+                style={{ ...linkStyle, border: 'none', background: 'none', cursor: 'pointer', padding: 0 }}>
           <Icon name="source" size={13} />
           口径与来源{shown.length > 1 ? ` · ${id}` : ''}
-        </a>
+        </button>
       ))}
       {ids.length > shown.length ? (
-        <a href={systemMapHref('#/metrics')} style={linkStyle}>
+        <button type="button" onClick={() => onOpenMap?.()}
+                style={{ ...linkStyle, border: 'none', background: 'none', cursor: 'pointer', padding: 0 }}>
           全部 {ids.length} 个指标
-        </a>
+        </button>
       ) : null}
     </div>
   )
@@ -75,12 +75,14 @@ interface SheetAction {
   onClick: () => void
 }
 
-export default function ReportsView({ rows, reload, tab, self }: {
+export default function ReportsView({ rows, reload, tab, self, onOpenMap }: {
   rows: ReportRow[]
   reload: () => Promise<void>
   tab: 'center' | 'manage'
   /** 当前用户 id（= 报表 ACL 的 owner subjectId；管理 tab 按它过滤「我创建的」） */
   self: string
+  /** 打开应用内体系地图（可带指标 id 直达详情） */
+  onOpenMap?: OpenMap
 }) {
   const [search, setSearch] = useState('')
   const [opening, setOpening] = useState<string | null>(null)
@@ -227,16 +229,17 @@ export default function ReportsView({ rows, reload, tab, self }: {
           </div>
           {/* 体系地图只给「报表管理」口径的人看，且只在管理 tab 出现（报表中心纯浏览页不挂管理入口）。 */}
           {tab === 'manage' && (
-            <a href={systemMapHref('#/overview')}
+            <button type="button" onClick={() => onOpenMap?.()}
                style={{
                  display: 'inline-flex', alignItems: 'center', gap: 5, minHeight: 34,
                  padding: '0 11px', marginTop: 2, borderRadius: radius.chip,
                  background: C.accentSoft, color: C.accentDeep,
                  fontSize: 12, fontWeight: 500, textDecoration: 'none', flex: '0 0 auto',
+                 border: 'none', cursor: 'pointer',
                }}>
               <Icon name="source" size={14} />
               体系地图
-            </a>
+            </button>
           )}
         </div>
         {/* 与指标页一致：不用 antd-mobile SearchBar（本仓 React 18 + hoisted 19 下渲染异常） */}
@@ -309,7 +312,7 @@ export default function ReportsView({ rows, reload, tab, self }: {
                   ? <span aria-hidden style={{ color: C.mute, fontSize: 20, flex: '0 0 auto', lineHeight: 1 }}>⋯</span>
                   : <Icon name="chevron" size={18} color={C.mute} />}
               </button>
-              <div style={{ padding: '0 16px' }}><SourceLinks metricIds={r.metricIds} /></div>
+              <div style={{ padding: '0 16px' }}><SourceLinks metricIds={r.metricIds} onOpenMap={onOpenMap} /></div>
             </div>
           )
         })}
