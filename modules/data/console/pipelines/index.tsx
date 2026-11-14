@@ -35,6 +35,8 @@ interface PipelinesResponse {
   orphanStaging: string[]
   warnings: string[]
   recentRuns: Record<string, Array<{ status: string; at: string; durationMs?: number; error?: string }>>
+  /** 有效状态（服务端算：父驱动取父的状态，避免子管线陈旧记录染红） */
+  status: Record<string, string>
 }
 
 type NodeKind = 'asset' | 'staging' | 'mart'
@@ -107,7 +109,7 @@ export default function PipelinesPage() {
     const worst = (a: MapAsset): string => {
       const live = a.pipelines.filter((p) => (p.scheduled && p.enabled) || p.driver === 'parent')
       if (live.length === 0) return 'idle'
-      const latest = live.map((p) => data.recentRuns[p.id]?.[0]?.status ?? 'unknown')
+      const latest = live.map((p) => data.status[p.id] ?? 'unknown')
       if (latest.includes('failed')) return 'failed'
       if (latest.includes('running')) return 'running'
       if (latest.includes('interrupted')) return 'interrupted'
@@ -345,6 +347,11 @@ export default function PipelinesPage() {
                           {list.length > 1 && (
                             <div style={{ paddingLeft: 12, fontSize: 11, color: '#9AA0A6' }}>
                               近 {list.length} 次：{list.map((r) => `${r.status}@${new Date(r.at).toLocaleDateString('zh-CN')}`).join(' · ')}
+                            </div>
+                          )}
+                          {p.driver === 'parent' && (
+                            <div style={{ paddingLeft: 12, fontSize: 11, color: '#9AA0A6' }}>
+                              运行状态跟随父管线；自身记录可能较旧（引擎只在部分形态给子管线写记录）
                             </div>
                           )}
                           {run?.error !== undefined && (

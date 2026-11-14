@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { accountOf, buildPipelineMap, lakeConsumers } from './pipeline-map'
+import { accountOf, buildPipelineMap, lakeConsumers, liveStatusOf } from './pipeline-map'
 
 const base = {
   staging: ['stg_lemeng_retail_order_line', 'stg_lemeng_branch_expense'],
@@ -128,6 +128,14 @@ describe('buildPipelineMap', () => {
     })
     expect(m.assets[0]!.pipelines[0]).toMatchObject({ driver: 'parent', parentIds: ['lemeng.retail.windows.l1'] })
     expect(m.summary).toMatchObject({ orphans: 0, parentDriven: 1 })
+  })
+
+  it('liveStatusOf：父驱动取父的状态（子管线自身记录陈旧不算数）', () => {
+    const child = { id: 'c', driver: 'parent' as const, parentIds: ['p'] }
+    const runs = { c: [{ status: 'failed' }], p: [{ status: 'ok' }] }
+    expect(liveStatusOf(child, runs)).toBe('ok')
+    expect(liveStatusOf({ id: 'c', driver: 'schedule' as const, parentIds: [] }, runs)).toBe('failed')
+    expect(liveStatusOf({ id: 'x', driver: 'parent' as const, parentIds: ['gone'] }, {})).toBe('unknown')
   })
 
   it('accountOf：尾段是数字才算账套', () => {

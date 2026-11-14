@@ -219,3 +219,24 @@ export function lakeConsumers(
   }
   return out
 }
+
+/**
+ * 管线的**有效运行状态**：父驱动的管线不能看自己的 run 记录——
+ * 子管线由父管线调用，引擎只给部分形态写记录（实测 `retail_order_line.day` 自己只有 2 条、
+ * 最新一条还是 10-21 的失败，而它的父 `retail.windows.l1` 今天 10:35 刚跑成功）。
+ * 父驱动 ⇒ 取父管线里最差的那条；没有父记录 ⇒ unknown。
+ */
+export function liveStatusOf(
+  pipeline: Pick<PipelineMapPipeline, 'id' | 'driver' | 'parentIds'>,
+  recentRuns: Readonly<Record<string, ReadonlyArray<{ status: string }> | undefined>>,
+): string {
+  if (pipeline.driver === 'parent' && pipeline.parentIds.length > 0) {
+    const parentStatuses = pipeline.parentIds.map((pid) => recentRuns[pid]?.[0]?.status ?? 'unknown')
+    if (parentStatuses.includes('failed')) return 'failed'
+    if (parentStatuses.includes('running')) return 'running'
+    if (parentStatuses.includes('interrupted')) return 'interrupted'
+    if (parentStatuses.every((x) => x === 'unknown')) return 'unknown'
+    return 'ok'
+  }
+  return recentRuns[pipeline.id]?.[0]?.status ?? 'unknown'
+}
