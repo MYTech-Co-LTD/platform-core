@@ -5,10 +5,11 @@ import type { NotificationEventDecl } from '@platform/sdk'
 import { applyMigrations } from './test-util'
 import {
   audit, channelConfigured, claimDueDeliveries, countChannelSends, createAgentNamespace,
-  createTemplateRevision, deleteRule, enqueueEvent, getAgentNamespace, getEventDecl,
-  getPublishedTemplate, getTemplate, isCoolingDown, listAgentNamespaces, listChannels,
-  listEventDecls, listRules, markDeliverySent, patchChannel, publishTemplateRevision,
-  purgeOldNotifications, setChannelHealth, setRuleEnabled, upsertEventDecl, upsertRule,
+  createTemplateRevision, deleteRule, ensureAgentMessageDefaults, enqueueEvent,
+  getAgentNamespace, getEventDecl, getPublishedTemplate, getTemplate, isCoolingDown,
+  listAgentNamespaces, listChannels, listEventDecls, listRules, markDeliverySent,
+  patchChannel, publishTemplateRevision, purgeOldNotifications, setChannelHealth,
+  setRuleEnabled, upsertEventDecl, upsertRule,
 } from './storage'
 
 const url = process.env.DATABASE_URL
@@ -30,12 +31,12 @@ describePg('notify storage v2', () => {
 
   async function cleanup() {
     await pool.query('delete from notify.event_decl where org=$1', [ORG])
-    await pool.query('delete from notify.agent_namespace where org=$1', [ORG])
     await pool.query('delete from notify.rule where org=$1', [ORG])
     await pool.query('delete from notify.event where org=$1', [ORG])
     await pool.query('delete from notify.delivery where org=$1', [ORG])
     await pool.query('delete from notify.template_revision where org=$1', [ORG])
     await pool.query('delete from notify.template where org=$1', [ORG])
+    await pool.query('delete from notify.agent_namespace where org=$1', [ORG])
     await pool.query('delete from notify.audit where org=$1', [ORG])
     await pool.query('delete from notify.channel where org=$1', [ORG])
   }
@@ -267,5 +268,27 @@ describePg('notify storage v2', () => {
       key: decl.key, title: 'Daily',
     })
     expect((await listEventDecls(pool, ORG, 'agent_a')).map((e) => e.key)).toEqual([decl.key])
+  })
+
+  it('ensureAgentMessageDefaults：幂等 seed 声明/模板/规则', async () => {
+    await createAgentNamespace(pool, ORG, {
+      namespace: 'agent_a', displayName: 'A', ownerUserId: 'u1',
+    })
+    expect(await ensureAgentMessageDefaults(pool, ORG, 'agent_a', 'u1'))
+      .toEqual({ decl: true, template: true, rule: true })
+    expect(await ensureAgentMessageDefaults(pool, ORG, 'agent_a', 'u1'))
+      .toEqual({ decl: false, template: false, rule: false })
+
+    expect(await getEventDecl(pool, ORG, 'ext.agent_a.message')).toMatchObject({
+      key: 'ext.agent_a.message',
+    })
+    expect(await getTemplate(pool, ORG, 'agent_generic_message__agent_a')).toMatchObject({
+      ownerNamespace: 'agent_a', status: 'published',
+    })
+    const rule = (await listRules(pool, ORG)).find(
+      (r) => r.id === 'derived:ext:agent_a.message:*')
+    expect(rule).toMatchObject({
+      ownerNamespace: 'agent_a', recipientKey: 'to', templateKey: 'agent_generic_message__agent_a',
+    })
   })
 })

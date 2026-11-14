@@ -4,6 +4,10 @@ import { createHash } from 'node:crypto'
 import type { Pool } from 'pg'
 import type { EnqueueEventInput, NotificationEventDecl } from '@platform/sdk'
 import { diffAgentEventDecl } from './domain/agent-event'
+import {
+  AGENT_MESSAGE_CONTENTS, agentMessageDecl, agentMessageKey,
+  agentMessageRuleId, agentMessageTemplateKey,
+} from './domain/agent-message'
 import type { NotificationRule } from './domain/rules'
 
 export type RuleInput = {
@@ -19,6 +23,8 @@ export type RuleInput = {
   channels: string[]
   cooldownMinutes: number | null
   origin: 'derived' | 'manual'
+  /** 非空 = 该 agent namespace 所有；null/缺省 = 平台/租户人管。 */
+  ownerNamespace?: string | null
 }
 
 export type DeliveryRow = {
@@ -92,7 +98,7 @@ export async function markEvent(
 export async function listRules(pool: Pool, org: string): Promise<NotificationRule[]> {
   const { rows } = await pool.query(
     `select org,id,enabled,event_key,scope,recipient_key,recipient_literal,recipient_depts,
-            template_key,channels,cooldown_minutes,origin,created_at
+            template_key,channels,cooldown_minutes,origin,owner_namespace,created_at
        from notify.rule where org=$1 order by created_at,id`,
     [org],
   )
@@ -109,6 +115,7 @@ export async function listRules(pool: Pool, org: string): Promise<NotificationRu
     channels: r.channels,
     cooldownMinutes: r.cooldown_minutes,
     origin: r.origin,
+    ownerNamespace: r.owner_namespace ?? null,
     createdAt: (r.created_at as Date).toISOString(),
   }))
 }
@@ -122,8 +129,8 @@ export async function upsertRule(
   await pool.query(
     `insert into notify.rule
        (org,id,enabled,event_key,scope,recipient_key,recipient_literal,recipient_depts,
-        template_key,channels,cooldown_minutes,origin,created_by)
-     values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13)
+        template_key,channels,cooldown_minutes,origin,created_by,owner_namespace)
+     values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14)
      on conflict (org,id) do update set
        enabled=excluded.enabled,
        event_key=excluded.event_key,
@@ -134,12 +141,13 @@ export async function upsertRule(
        template_key=excluded.template_key,
        channels=excluded.channels,
        cooldown_minutes=excluded.cooldown_minutes,
-       origin=excluded.origin`,
+       origin=excluded.origin,
+       owner_namespace=excluded.owner_namespace`,
     [org, rule.id, rule.enabled, rule.eventKey, rule.scope, rule.recipientKey,
      rule.recipientLiteral,
      rule.recipientDepts == null ? null : JSON.stringify([...new Set(rule.recipientDepts)]),
      rule.templateKey, rule.channels, rule.cooldownMinutes,
-     rule.origin, actor],
+     rule.origin, actor, rule.ownerNamespace ?? null],
   )
 }
 
@@ -181,6 +189,8 @@ export type TemplateSummary = {
   eventKey: string
   status: string
   origin: string
+  /** 非空 = 该 agent namespace 所有；null/缺省 = 平台/租户人管。 */
+  ownerNamespace?: string | null
   publishedRevision: number | null
   updatedAt: string
 }
@@ -198,7 +208,7 @@ export type TemplateDetail = TemplateSummary & { revisions: TemplateRevision[] }
 
 export async function listTemplates(pool: Pool, org: string): Promise<TemplateSummary[]> {
   const { rows } = await pool.query(
-    `select key,name,event_key,status,origin,published_revision,updated_at
+    `select key,name,event_key,status,origin,published_revision,owner_namespace,updated_at
        from notify.template where org=$1 order by key`, [org])
   return rows.map((r) => ({
     key: r.key,
@@ -206,6 +216,7 @@ export async function listTemplates(pool: Pool, org: string): Promise<TemplateSu
     eventKey: r.event_key,
     status: r.status,
     origin: r.origin,
+    ownerNamespace: r.owner_namespace ?? null,
     publishedRevision: r.published_revision,
     updatedAt: (r.updated_at as Date).toISOString(),
   }))
@@ -215,7 +226,7 @@ export async function getTemplate(
   pool: Pool, org: string, key: string,
 ): Promise<TemplateDetail | null> {
   const t = await pool.query(
-    `select key,name,event_key,status,origin,published_revision,updated_at
+    `select key,name,event_key,status,origin,published_revision,owner_namespace,updated_at
        from notify.template where org=$1 and key=$2`, [org, key])
   if (!t.rows[0]) return null
 
@@ -229,6 +240,7 @@ export async function getTemplate(
     eventKey: r.event_key,
     status: r.status,
     origin: r.origin,
+    ownerNamespace: r.owner_namespace ?? null,
     publishedRevision: r.published_revision,
     updatedAt: (r.updated_at as Date).toISOString(),
     revisions: revs.rows.map((x) => ({
@@ -276,6 +288,133 @@ export async function publishTemplateRevision(
   await pool.query(
     `update notify.template set status='published', published_revision=$3, updated_at=now()
       where org=$1 and key=$2`, [org, key, revision])
+}
+
+export type CreateTemplateResult =
+  | { ok: true; created: boolean }
+  | { ok: false; reason: 'owner_mismatch' }
+
+/** 创建 agent 模板行（草稿）；同 key 已存在时校验 owner_namespace 一致。 */
+export async function createTemplate(
+  pool: Pool,
+  org: string,
+  input: {
+    key: string
+    name: string
+    eventKey: string
+    ownerNamespace: string
+    actor: string
+  },
+): Promise<CreateTemplateResult> {
+  const ins = await pool.query(
+    `insert into notify.template
+       (org,key,name,event_key,status,origin,published_revision,created_by,owner_namespace)
+     values ($1,$2,$3,$4,'draft','tenant',null,$5,$6)
+     on conflict (org,key) do nothing
+     returning key`,
+    [org, input.key, input.name, input.eventKey, input.actor, input.ownerNamespace],
+  )
+  if (ins.rows[0]) return { ok: true, created: true }
+  const existing = await pool.query(
+    'select owner_namespace from notify.template where org=$1 and key=$2', [org, input.key])
+  const owner = (existing.rows[0]?.owner_namespace ?? null) as string | null
+  if (owner !== input.ownerNamespace) return { ok: false, reason: 'owner_mismatch' }
+  return { ok: true, created: false }
+}
+
+export type EnsureAgentMessageResult = {
+  decl: boolean
+  template: boolean
+  rule: boolean
+}
+
+/**
+ * 幂等 seed 通用消息管线：`ext.<ns>.message` 声明 + 内置模板 + 默认 in-app 规则。
+ * 已存在的一律不动（租户/agent 改过的文案与规则不被覆盖）。
+ */
+export async function ensureAgentMessageDefaults(
+  pool: Pool,
+  org: string,
+  namespace: string,
+  actor = 'system',
+): Promise<EnsureAgentMessageResult> {
+  const decl = agentMessageDecl(namespace)
+  const templateKey = agentMessageTemplateKey(namespace)
+  const ruleId = agentMessageRuleId(namespace)
+  const hash = createHash('sha256')
+    .update(JSON.stringify(AGENT_MESSAGE_CONTENTS))
+    .digest('hex')
+    .slice(0, 16)
+  const client = await pool.connect()
+  try {
+    await client.query('begin')
+    const declIns = await client.query(
+      `insert into notify.event_decl
+         (org,namespace,key,version,title,description,scope_key,payload_schema,recipients,defaults,created_by)
+       values ($1,$2,$3,1,$4,$5,null,$6::jsonb,$7::jsonb,$8::jsonb,$9)
+       on conflict (org,key) do nothing`,
+      [org, namespace, decl.key, decl.title, decl.description ?? null,
+       JSON.stringify(decl.payload), JSON.stringify(decl.recipients),
+       JSON.stringify(decl.defaults), actor],
+    )
+
+    const tplIns = await client.query(
+      `insert into notify.template
+         (org,key,name,event_key,status,origin,published_revision,created_by,owner_namespace)
+       values ($1,$2,'通用消息',$3,'published','tenant',1,$4,$5)
+       on conflict (org,key) do nothing`,
+      [org, templateKey, decl.key, actor, namespace],
+    )
+    const tplRow = await client.query<{ published_revision: number | null }>(
+      'select published_revision from notify.template where org=$1 and key=$2',
+      [org, templateKey],
+    )
+    const existingRev = await client.query(
+      'select 1 from notify.template_revision where org=$1 and key=$2 and body_hash=$3',
+      [org, templateKey, hash],
+    )
+    // 只在新模板、或模板还没有发布指针时补 revision；已有发布版本（agent 改过）一律不动。
+    const needsPublish = (tplIns.rowCount ?? 0) > 0
+      || tplRow.rows[0]?.published_revision == null
+    if (needsPublish && existingRev.rows.length === 0) {
+      const max = await client.query<{ max: number }>(
+        'select coalesce(max(revision),0)::int as max from notify.template_revision where org=$1 and key=$2',
+        [org, templateKey],
+      )
+      const next = Number(max.rows[0]!.max) + 1
+      await client.query(
+        `insert into notify.template_revision
+           (org,key,revision,contents,body_hash,review_status,created_by,approved_by,approved_at)
+         values ($1,$2,$3,$4::jsonb,$5,'approved','system','system',now())`,
+        [org, templateKey, next, JSON.stringify(AGENT_MESSAGE_CONTENTS), hash],
+      )
+      await client.query(
+        `update notify.template
+            set status='published', published_revision=$3, updated_at=now()
+          where org=$1 and key=$2`,
+        [org, templateKey, next],
+      )
+    }
+
+    const ruleIns = await client.query(
+      `insert into notify.rule
+         (org,id,enabled,event_key,scope,recipient_key,template_key,channels,origin,created_by,owner_namespace)
+       values ($1,$2,true,$3,'*','to',$4,'{inapp_default}'::text[],'derived','system',$5)
+       on conflict (org,id) do nothing`,
+      [org, ruleId, decl.key, templateKey, namespace],
+    )
+    await client.query('commit')
+    return {
+      decl: (declIns.rowCount ?? 0) > 0,
+      template: (tplIns.rowCount ?? 0) > 0,
+      rule: (ruleIns.rowCount ?? 0) > 0,
+    }
+  } catch (e) {
+    await client.query('rollback').catch(() => {})
+    throw e
+  } finally {
+    client.release()
+  }
 }
 
 export async function audit(
