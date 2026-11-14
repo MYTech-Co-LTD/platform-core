@@ -4,8 +4,10 @@
 > `modules/data/domain/metric-retire.ts`（候选安全过滤 + 提单，判定全在域层）。
 > 计划：`docs/superpowers/plans/2026-11-14-metric-retire-wave.md`（候选池项「使用统计→下线候选接评审」，
 > spec §10.4.3）；读面 `modules/data/domain/metric-usage.ts`（`retireCandidatesOf`）。
-> 范式与 `deploy/notify-jobs.md` / `deploy/report-scope-scan-job.md` 一致：**仓内脚本 + openship job**
-> （零常驻），命令走 `docker exec <server 容器> sh -lc '…'`——不把定时副作用塞进 server 进程。
+> 范式与 `deploy/notify-jobs.md` / `deploy/report-scope-scan-job.md` 一致：**仓内脚本 + worker 的
+> `platform.scheduler` loop**（常驻，执行在子进程），手动命令走 `docker exec <server 容器> sh -lc '…'`。
+> 调度归属（2026-11-14 起）：本脚本由 worker 的 `platform.scheduler` loop 按库内排班执行，
+> 不再由 openship job 驱动。**仍然不要**把这段逻辑塞进 HTTP 请求路径——执行在 worker 的子进程里。
 > ⚠️ **本文件只给参数与命令，job 不代建**——建 job 是运维动作，须由人点名后执行。
 
 ## 它补的是哪条断链

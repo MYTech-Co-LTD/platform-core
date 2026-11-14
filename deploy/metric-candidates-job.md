@@ -2,8 +2,10 @@
 
 > 代码：`scripts/metric-candidates-job.mjs`（薄 CLI）+ `modules/data/domain/candidate-generator.ts`（规则与退役/复活）。
 > 设计出处：`docs/superpowers/specs/2026-11-04-auto-metric-derivation-design.md`；台账 issue #1969。
-> 范式与 `deploy/notify-jobs.md` 一致：**仓内脚本 + openship job**（零常驻），命令走
-> `docker exec <server 容器> sh -lc '…'`——不把定时副作用塞进 server 进程。
+> 范式与 `deploy/notify-jobs.md` 一致：**仓内脚本 + worker 的 `platform.scheduler` loop**（常驻，执行在子进程），
+> 手动命令走 `docker exec <server 容器> sh -lc '…'`。
+> 调度归属（2026-11-14 起）：本脚本由 worker 的 `platform.scheduler` loop 按库内排班执行，
+> 不再由 openship job 驱动。**仍然不要**把这段逻辑塞进 HTTP 请求路径——执行在 worker 的子进程里。
 
 ## 它补的是哪条断链
 
