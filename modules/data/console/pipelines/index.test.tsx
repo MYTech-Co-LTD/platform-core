@@ -143,3 +143,31 @@ describe('健康只看在跑的管线', () => {
     })
   })
 })
+
+describe('运行历史', () => {
+  it('点「历史」⇒ 拉该管线记录并列出状态/耗时/错误；未接运行记录时给出说明', async () => {
+    m.mockImplementation(async (url: string) => {
+      if (url.includes('/runs')) {
+        return json({
+          pipelineId: 'lemeng.retail_order_line.l0.3120', status: 'ok',
+          runs: [
+            { runId: 'r2', at: '2026-11-14T01:00:00.000Z', status: 'failed', durationMs: 36000, trigger: 'cron', error: '封版标记 → _DAILY/: invalid date' },
+            { runId: 'r1', at: '2026-11-13T01:00:00.000Z', status: 'ok', durationMs: 12000, trigger: 'cron' },
+          ],
+        })
+      }
+      return json(MAP)
+    })
+    render(<PipelinesPage />)
+    await waitFor(() => expect(screen.getByText('资产')).toBeInTheDocument())
+
+    const handler = chart.on.mock.calls.filter((c) => c[0] === 'click').at(-1)?.[1] as (p: unknown) => void
+    handler({ dataType: 'node', data: { kind: 'asset', name: 'lemeng/retail_order_line' } })
+    await waitFor(() => expect(screen.getAllByRole('button', { name: /历史/ }).length).toBeGreaterThan(0))
+
+    fireEvent.click(screen.getAllByRole('button', { name: /历史/ })[0]!)
+    await waitFor(() => expect(screen.getByText(/封版标记/)).toBeInTheDocument())
+    expect(screen.getByText('36s')).toBeInTheDocument()
+    expect(screen.getAllByText('cron').length).toBe(2)
+  })
+})
