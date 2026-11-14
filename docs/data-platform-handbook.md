@@ -950,6 +950,39 @@ capabilities / policy 门禁 / run 回执」一句打包，**实测与其中两�
   **兜底（与本组互补，不重叠）**：「对账**没跑**」在数据层另有 §1.6 案例 35 的父管线收尾汇总 freshness 锚；
   「**跑了但失败**」由引擎 alerts 的 failure 事件兜。
 
+#### 1.5.4 管线地图（`/console/data/pipelines`）的口径 —— 2026-11-14 上线并实测
+
+> 页面：控制台 → 数据分析 → 管线地图。数据来自 `GET /system-map/pipelines`（60 秒缓存）；
+> 实现：`modules/data/domain/system-map/pipeline-map.ts` + `console/pipelines/`。**本节只记口径**，
+> 判据数值与台账仍以各源数据为准。
+
+**三层结构**：资产（湖前缀，取管线 `snk.minio` key 的前两段）→ staging → marts。
+- 资产→staging：契约 `layout.prefix` 优先，无契约才用命名约定（`stg_<domain>_<table>` ⇔ `<domain>/<table>`）；
+- staging→marts：`ref('stg_…')` 反查；
+- **视图消费**：模型 SQL 里直接读湖前缀的（`vw_*` 等）也算下游——有些资产**本来就没有 staging**
+  （例：`lemeng/retail_order_line_month` 只给 3 个 drill 视图用），有视图消费**不算断点**。
+
+**断点** = 无 staging **且** 无视图消费。2026-11-14 实测：29 个资产全部接通（断点 0）。
+
+**管线的三种驱动（`driver`）**：
+
+| driver | 含义 | 判据 |
+|---|---|---|
+| `schedule` | 有自己的调度条目 | `schedules/<账套>.json` 里有 `pipeline_id` |
+| `parent` | 被父管线引用（`ctl.foreach` 的 `pipelineRef`），**没有自己的调度但每天都在跑** | 别的管线 JSON 里出现 `pipelines/<id>.json` |
+| `none` | 既无调度也无父管线（backfill / 一次性 / 已退役） | 两者皆无 ⇒ 清理候选 |
+
+⚠️ **父驱动的管线不能拿自身 run 记录判健康**（2026-11-14 实测）：`retail_order_line.day` 由
+`retail.windows.l1` 每日调用，父今天 10:35 跑成功，但子管线自己的记录停在 10-21 的失败——
+引擎只在部分形态给子管线写 run 记录。故健康取**父管线里最差的状态**（`liveStatusOf`）。
+抽屉里也注明「运行状态跟随父管线」。
+
+**KPI 全部由服务端下发**（`summary`：assets / withStaging / broken / orphans / parentDriven / failedLive）——
+前端不许用 assets 重算同一指标。2026-11-14 一天内因此踩过两次（失败数、断点数各一次）。
+
+**实测量级（2026-11-14，仓内 119 条管线）**：60 条有调度 / 17 条父驱动 / 42 条真正未接入；
+页面上只显示有湖写入的那部分（orphans 38 / parentDriven 8）。
+
 ### 1.6 案例库（只增不改；**勘正错指针/错出处不算改**）
 
 > **只增不改**（指**已发布**的条目）；**勘正错指针 / 错出处不算改**——本节的规则格正是靠它才敢与案例对齐。
