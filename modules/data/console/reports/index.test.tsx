@@ -980,3 +980,62 @@ describe('「这个数怎么来的」抽屉（Wave 4.3）', () => {
     expect(detailsText).toContain('lemeng:retail:net_sales')
   })
 })
+
+// ── 叙事运行面板（R5 第一档）────────────────────────────────────────────────────────
+// 入口只在 data:manage 下出现；打开时才取数（不拖慢首屏）；阈值越线给告警。
+describe('叙事运行面板', () => {
+  const STATS = {
+    days: 7, total: 20,
+    byOutcome: { ok: 12, fallback: 8, cached: 4, error: 1 },
+    fallbackRate: 0.4, p95Ms: 9500,
+    byPromptVersion: [{ promptVersion: 'v3', total: 20, fallback: 8 }],
+    byDay: [{ day: '2026-11-13', total: 20, fallback: 8 }],
+  }
+  const withStats = (stats: unknown) => m.mockImplementation(async (url: string) => {
+    calls.push({ url })
+    if (url.includes('/narrative-stats')) return json(stats)
+    return json({ reports: [] })
+  })
+
+  it('data:manage 才有入口；打开后按 7 天取数并渲染 KPI 与两条阈值告警', async () => {
+    withStats(STATS)
+    renderPage(['data:query', 'data:manage'])
+    await waitFor(() => expect(screen.getByRole('button', { name: /叙事运行/ })).toBeInTheDocument())
+
+    fireEvent.click(screen.getByRole('button', { name: /叙事运行/ }))
+    await waitFor(() => expect(calls.some((c) => c.url.includes('/reports/narrative-stats?days=7'))).toBe(true))
+    await waitFor(() => expect(screen.getByText('40%')).toBeInTheDocument())
+    expect(screen.getByText(/回退率 40%，高于 30%/)).toBeInTheDocument()
+    expect(screen.getByText(/p95 生成耗时 9.5s，高于 8s/)).toBeInTheDocument()
+    // 生成次数 = ok + fallback（缓存与错误不进分母）——同日表里也有 20，用复数断言
+    expect(screen.getAllByText('20').length).toBeGreaterThan(0)
+    expect(screen.getByText('v3')).toBeInTheDocument()
+  })
+
+  it('没越线就不告警（避免「天天红条」）', async () => {
+    withStats({ ...STATS, fallbackRate: 0.1, p95Ms: 3000 })
+    renderPage(['data:query', 'data:manage'])
+    await waitFor(() => expect(screen.getByRole('button', { name: /叙事运行/ })).toBeInTheDocument())
+    fireEvent.click(screen.getByRole('button', { name: /叙事运行/ }))
+    await waitFor(() => expect(screen.getByText('10%')).toBeInTheDocument())
+    expect(screen.queryByText(/高于 30%/)).toBeNull()
+    expect(screen.queryByText(/高于 8s/)).toBeNull()
+  })
+
+  it('切换 30 天 ⇒ 重新取数', async () => {
+    withStats(STATS)
+    renderPage(['data:query', 'data:manage'])
+    await waitFor(() => expect(screen.getByRole('button', { name: /叙事运行/ })).toBeInTheDocument())
+    fireEvent.click(screen.getByRole('button', { name: /叙事运行/ }))
+    await waitFor(() => expect(calls.some((c) => c.url.includes('days=7'))).toBe(true))
+    fireEvent.click(screen.getByText('近 30 天'))
+    await waitFor(() => expect(calls.some((c) => c.url.includes('days=30'))).toBe(true))
+  })
+
+  it('无 data:manage ⇒ 不出现入口', async () => {
+    m.mockImplementation(async () => json({ reports: [] }))
+    renderPage(['data:query'])
+    await waitFor(() => expect(screen.getByPlaceholderText(/搜索报表标题或所有者/)).toBeInTheDocument())
+    expect(screen.queryByRole('button', { name: /叙事运行/ })).toBeNull()
+  })
+})

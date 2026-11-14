@@ -130,6 +130,25 @@ interface VersionRow {
   isCurrent: boolean
 }
 
+/** 叙事运行统计（R5）：/reports/narrative-stats 的形状（后端 domain/narrative-runs.ts）。 */
+interface NarrativeStats {
+  days: number
+  total: number
+  byOutcome: { ok: number; fallback: number; cached: number; error: number }
+  fallbackRate: number | null
+  p95Ms: number | null
+  byPromptVersion: Array<{ promptVersion: string; total: number; fallback: number }>
+  byDay: Array<{ day: string; total: number; fallback: number }>
+}
+
+/**
+ * 告警阈值（R5 第一档：先做「看得见」，配置化留给后续）。
+ * 回退率 30%：叙事生成有模板兜底，健康状态应当以模型生成为主；
+ * p95 8s：AI 叙事是异步补的内容，超过 8 秒用户已经在读别的了。
+ */
+const NARRATIVE_FALLBACK_WARN = 0.3
+const NARRATIVE_P95_WARN_MS = 8000
+
 export default function ReportsPage() {
   const { session } = useOutletContext<ConsoleContext>()
   const canManage = session.scopes.includes('data:manage')
@@ -140,6 +159,11 @@ export default function ReportsPage() {
   const isMobile = useIsMobile()
   const [sheetFor, setSheetFor] = useState<ReportRow | null>(null)
   const [filterOpen, setFilterOpen] = useState(false)
+  // 叙事运行面板（R5）：操作面数据，仅 data:manage 可见；打开时才取，不拖慢首屏
+  const [statsOpen, setStatsOpen] = useState(false)
+  const [statsDays, setStatsDays] = useState(7)
+  const [stats, setStats] = useState<NarrativeStats | null>(null)
+  const [statsErr, setStatsErr] = useState<string | null>(null)
   const [query, setQuery] = useState('')
   const [statusFilter, setStatusFilter] = useState<'all' | 'published' | 'draft' | 'changed'>('all')
   const STATUS_OPTIONS = [
@@ -266,6 +290,14 @@ export default function ReportsPage() {
   useEffect(() => { void load() }, [])
 
   // 深链（#1047）：`/console/data/reports?open=<id>` —— 列表就绪后自动打开该自绘报表（分享/收藏直达）。
+  const loadStats = (days: number): void => {
+    setStatsErr(null)
+    setStats(null)
+    apiGet(`/reports/narrative-stats?days=${days}`)
+      .then((b) => setStats(b as NarrativeStats))
+      .catch((e: unknown) => setStatsErr(messageOf(e)))
+  }
+
   // 只消费一次（deepLinkDone 防 load 刷新后重复弹）；行不在观看清单（页门不过/已删）⇒ 静默留在列表，
   // 列表自身的页门列就是解释。Metabase 行不走此路（它的独立地址是 embed-url 那条线）。
   const [searchParams] = useSearchParams()
@@ -946,9 +978,110 @@ export default function ReportsPage() {
     </Drawer>
   )
 
+  // 叙事运行（R5）：回退率 / p95 / 错误，先让「回归由面板发现」成立，告警投递另案。
+  const pct = (v: number | null): string => (v === null ? '—' : `${Math.round(v * 1000) / 10}%`)
+  const secs = (v: number | null): string => (v === null ? '—' : `${Math.round(v / 100) / 10}s`)
+  const statsDrawer = (
+    <Drawer
+      open={statsOpen}
+      onClose={() => setStatsOpen(false)}
+      width={520}
+      title="叙事运行"
+    >
+      <Space direction="vertical" size="middle" style={{ width: '100%' }}>
+        <Segmented
+          value={statsDays}
+          onChange={(v) => { const d = Number(v); setStatsDays(d); loadStats(d) }}
+          options={[{ label: '近 7 天', value: 7 }, { label: '近 30 天', value: 30 }]}
+        />
+        {statsErr !== null && <Alert type="error" showIcon message={statsErr} />}
+        {stats === null && statsErr === null && (
+          <Typography.Text type="secondary">读取中…</Typography.Text>
+        )}
+        {stats !== null && (
+          <>
+            {(stats.fallbackRate !== null && stats.fallbackRate > NARRATIVE_FALLBACK_WARN) && (
+              <Alert
+                type="warning"
+                showIcon
+                message={`回退率 ${pct(stats.fallbackRate)}，高于 ${Math.round(NARRATIVE_FALLBACK_WARN * 100)}%`}
+                description="回退 = 模型没生成出可用叙事、用了模板兜底。连续偏高说明提示词或事实供给在退化。"
+              />
+            )}
+            {(stats.p95Ms !== null && stats.p95Ms > NARRATIVE_P95_WARN_MS) && (
+              <Alert
+                type="warning"
+                showIcon
+                message={`p95 生成耗时 ${secs(stats.p95Ms)}，高于 ${NARRATIVE_P95_WARN_MS / 1000}s`}
+                description="生成太慢时用户已经在读报表了，叙事到得再准也晚了。"
+              />
+            )}
+            <div style={{ display: 'flex', gap: 32, alignItems: 'flex-end' }}>
+              {[
+                { k: '生成次数', v: String(stats.byOutcome.ok + stats.byOutcome.fallback), d: `缓存命中 ${stats.byOutcome.cached}` },
+                { k: '回退率', v: pct(stats.fallbackRate), d: '模板兜底占比' },
+                { k: 'p95 耗时', v: secs(stats.p95Ms), d: '模型生成' },
+                { k: '错误', v: String(stats.byOutcome.error), d: '生成失败' },
+              ].map((x) => (
+                <div key={x.k} style={{ minWidth: 90 }}>
+                  <div style={{ fontSize: 12, color: '#9AA0A6' }}>{x.k}</div>
+                  <div style={{
+                    fontSize: 28, fontWeight: 600, lineHeight: 1.2, letterSpacing: '-0.02em',
+                    fontVariantNumeric: 'tabular-nums', color: '#1B1C1E',
+                  }}>{x.v}</div>
+                  <div style={{ fontSize: 12, color: '#6B7280', marginTop: 2 }}>{x.d}</div>
+                </div>
+              ))}
+            </div>
+
+            <div>
+              <div style={{ fontSize: 12, color: '#9AA0A6', marginBottom: 6 }}>按提示词版本</div>
+              <Table
+                size="small"
+                rowKey="promptVersion"
+                pagination={false}
+                dataSource={stats.byPromptVersion}
+                locale={{ emptyText: '这个窗口里还没有生成记录' }}
+                columns={[
+                  { title: '版本', dataIndex: 'promptVersion' },
+                  { title: '次数', dataIndex: 'total', align: 'right' as const, width: 80 },
+                  {
+                    title: '回退', dataIndex: 'fallback', align: 'right' as const, width: 80,
+                    render: (v: number, r) => `${v}${r.total === 0 ? '' : `（${Math.round((v / r.total) * 100)}%）`}`,
+                  },
+                ]}
+              />
+            </div>
+
+            <div>
+              <div style={{ fontSize: 12, color: '#9AA0A6', marginBottom: 6 }}>按天</div>
+              <Table
+                size="small"
+                rowKey="day"
+                pagination={false}
+                scroll={{ y: 240 }}
+                dataSource={stats.byDay}
+                locale={{ emptyText: '这个窗口里还没有生成记录' }}
+                columns={[
+                  { title: '日期', dataIndex: 'day', width: 140 },
+                  { title: '次数', dataIndex: 'total', align: 'right' as const, width: 80 },
+                  {
+                    title: '回退', dataIndex: 'fallback', align: 'right' as const, width: 90,
+                    render: (v: number, r) => `${v}${r.total === 0 ? '' : `（${Math.round((v / r.total) * 100)}%）`}`,
+                  },
+                ]}
+              />
+            </div>
+          </>
+        )}
+      </Space>
+    </Drawer>
+  )
+
   return (
     <Space direction="vertical" style={{ width: '100%' }} size="middle">
       {provenanceDrawer}
+      {statsDrawer}
       {ctx}
       {isMobile ? (
         // 移动端一屏优先：搜索 + 一个「筛选」按钮（当前状态写在按钮上），不再常驻 4 个筛选项
@@ -963,6 +1096,11 @@ export default function ReportsPage() {
           <Button onClick={() => setFilterOpen(true)} style={{ height: 44, paddingInline: 16 }}>
             {statusFilter === 'all' ? '筛选' : STATUS_OPTIONS.find((o) => o.value === statusFilter)?.label}
           </Button>
+          {canManage && (
+            <Button style={{ height: 44 }} onClick={() => { setStatsOpen(true); loadStats(statsDays) }}>
+              叙事运行
+            </Button>
+          )}
         </div>
       ) : (
         <div style={{
@@ -975,11 +1113,16 @@ export default function ReportsPage() {
             placeholder="搜索报表标题或所有者"
             style={{ width: 280 }}
           />
-          <Segmented
-            value={statusFilter}
-            onChange={(v) => setStatusFilter(v as typeof statusFilter)}
-            options={STATUS_OPTIONS}
-          />
+          <Space size={8}>
+            {canManage && (
+              <Button onClick={() => { setStatsOpen(true); loadStats(statsDays) }}>叙事运行</Button>
+            )}
+            <Segmented
+              value={statusFilter}
+              onChange={(v) => setStatusFilter(v as typeof statusFilter)}
+              options={STATUS_OPTIONS}
+            />
+          </Space>
         </div>
       )}
       {isMobile ? mobileCards : (
