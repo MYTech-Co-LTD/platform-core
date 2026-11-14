@@ -18,7 +18,7 @@
 //     delta 会继续追进新请求的正文（串字）。
 //  ② **模块级 `streamPost`**（`../lib/api`）：前缀与失败体翻译与其余端点同一套；失败时抛
 //     `ApiError`，这里只上屏一句人话（状态码细节不暴露给观看面）。
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { RichText } from '../lib/rich-text'
 import { Alert, Space, Spin, Tag, Typography } from 'antd'
 import { streamPost } from '../lib/api'
@@ -47,6 +47,11 @@ type Props = {
   version?: number
   /** 报表共享筛选的运行期取值（V4b）：与屏幕上的筛选同源，facts 不得多看/少看。 */
   filters?: Record<string, unknown>
+  /**
+   * 一次生成**收敛**（done/error/未声明期间）时回调一次。只给「准备打印」用：
+   * 打印全部页面时必须等 AI 文本落定，否则纸上会出现半截分析或转圈。
+   */
+  onSettled?: () => void
 }
 
 /** 把 SSE 原始块拆成事件（`data: <json>` 行；注释/心跳行忽略）。 */
@@ -91,7 +96,10 @@ function periodLabelOf(period: PeriodSpec | null): string {
   return `${period.from ?? ''} ~ ${period.to ?? ''}`
 }
 
-export default function AiTextPanel({ reportId, panelIndex, focus, period, branchNum, version, filters }: Props) {
+export default function AiTextPanel({ reportId, panelIndex, focus, period, branchNum, version, filters, onSettled }: Props) {
+  // 回调身份每次渲染都可能变（父级内联函数）：放 ref 里，effect 依赖不受它影响。
+  const settledRef = useRef(onSettled)
+  settledRef.current = onSettled
   const [phase, setPhase] = useState<Phase>('facts')
   const [label, setLabel] = useState('正在核对指标…')
   const [text, setText] = useState('')
@@ -107,6 +115,7 @@ export default function AiTextPanel({ reportId, panelIndex, focus, period, branc
   useEffect(() => {
     if (period === null) {
       setError('报表未声明期间')
+      settledRef.current?.()
       return
     }
     const ac = new AbortController()
@@ -168,6 +177,9 @@ export default function AiTextPanel({ reportId, panelIndex, focus, period, branc
       } catch {
         // 主动 abort（切期间/卸载）不是错误；其余一律人话，不把上游细节上屏。
         if (!ac.signal.aborted) setError('AI 分析暂不可用')
+      } finally {
+        // 收敛信号（打印准备用）：done/error/流自然结束都算；abort 不算（下一次生成会重报）。
+        if (!ac.signal.aborted) settledRef.current?.()
       }
     }, 500)
     return () => {

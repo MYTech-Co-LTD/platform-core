@@ -29,4 +29,14 @@
     -webkit-print-color-adjust: exact;
     print-color-adjust: exact;
   }
+
+  /* 「打印全部」时每页各起一页；最后一页不留下多余空白页。 */
+  .data-report-page {
+    break-after: page;
+    page-break-after: always;
+  }
+  .data-report-page:last-child {
+    break-after: auto;
+    page-break-after: auto;
+  }
 }

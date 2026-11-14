@@ -900,6 +900,60 @@ describe('R3 多页 / 打印', () => {
     fireEvent.click(within(screen.getByTestId('page-nav')).getByText(/第 2 页/))
     await waitFor(() => expect(calls.some((c) => c.url.endsWith('/narrative/stream'))).toBe(true))
   })
+
+  it('★ 打印全部：挂载未访问页，数据就绪后一次调用 window.print()', async () => {
+    const print = vi.fn()
+    const original = window.print
+    window.print = print
+    try {
+      stub({
+        pages: [{ title: '概览' }, { title: '趋势' }],
+        panels: [
+          { chart: 'table', title: '概览表', metricId: 'm1', dims: [], args: {}, span: 24, page: 1 },
+          { chart: 'table', title: '趋势表', metricId: 'm2', dims: [], args: {}, span: 24, page: 2 },
+        ],
+      }, {
+        m1: { columns: ['value'], rows: [['1']] },
+        m2: { columns: ['value'], rows: [['2']] },
+      }, new Set())
+      renderView()
+
+      expect(await screen.findByText('概览表')).toBeInTheDocument()
+      expect(screen.queryByText('趋势表')).not.toBeInTheDocument()
+
+      fireEvent.click(screen.getByRole('button', { name: /打\s*印\s*全\s*部/ }))
+      // 未访问的第 2 页在打印准备阶段被挂载
+      expect(await screen.findByText('趋势表')).toBeInTheDocument()
+      await waitFor(() => expect(print).toHaveBeenCalledTimes(1))
+    } finally {
+      window.print = original
+    }
+  })
+
+  it('★ 打印全部要等 AI 落定：narrative 流收敛后才开印', async () => {
+    const print = vi.fn()
+    const original = window.print
+    window.print = print
+    try {
+      stub({
+        period: { mode: 'day', day: '2026-10-10' },
+        pages: [{ title: '概览' }, { title: '分析' }],
+        panels: [
+          { chart: 'text', content: '第一页', span: 24, page: 1 },
+          { chart: 'ai_text', title: 'AI 分析', focus: 'overview', span: 24, page: 2 },
+        ],
+      }, {}, new Set())
+      renderView()
+
+      expect(await screen.findByText('第一页')).toBeInTheDocument()
+      fireEvent.click(screen.getByRole('button', { name: /打\s*印\s*全\s*部/ }))
+      // AI 面板在打印准备时挂载 → 发起生成；流自然结束（无事件）即算落定
+      await waitFor(() => expect(calls.some((c) => c.url.endsWith('/narrative/stream'))).toBe(true))
+      await waitFor(() => expect(print).toHaveBeenCalledTimes(1), { timeout: 4000 })
+    } finally {
+      window.print = original
+    }
+  })
 })
 
 describe('R4 跨面板查询合并', () => {

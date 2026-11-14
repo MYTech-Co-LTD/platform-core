@@ -32,7 +32,7 @@
 //  ③ 窄屏柱状图的类目标签要**强制全显 + 倾斜**（Task 13 走查的 390px 实测：8 个 4–5 字类目
 //     默认 `interval:'auto'` 会被抽掉一半——柱还在、标签没了，读者无法把柱对齐到类目）。
 import { useEffect, useMemo, useRef, useState } from 'react'
-import { Alert, Button, Card, Col, DatePicker, Input, Row, Segmented, Select, Space, Spin, Table, Tag, Typography } from 'antd'
+import { Alert, Button, Card, Col, DatePicker, Input, Modal, Row, Segmented, Select, Space, Spin, Table, Tag, Typography } from 'antd'
 import './report-print.css'
 import dayjs, { Dayjs } from 'dayjs'
 import { init, use } from 'echarts/core'
@@ -974,6 +974,27 @@ export default function ReportView({
   useEffect(() => {
     if (activePage > (specPages?.length ?? 1)) setActivePage(1)
   }, [specPages?.length, activePage])
+  // 打印全部（R3 收尾）：挂载所有页 → 等 KPI/AI 落定 → 一次打印。等待上限见 PRINT_WAIT_MS。
+  const [printAll, setPrintAll] = useState(false)
+  const settledPanels = useRef(new Set<number>())
+  /** 本轮「打印全部」是否已经开过印（依赖抖动时不重复弹打印框）。 */
+  const printedRef = useRef(false)
+  const [settleTick, setSettleTick] = useState(0)
+  const markSettled = (i: number): void => {
+    if (settledPanels.current.has(i)) return
+    settledPanels.current.add(i)
+    setSettleTick((t) => t + 1)
+  }
+  // 期间/门店/筛选一换就是新一轮生成：清空落定标记，否则会拿上一轮的结果提前开印。
+  useEffect(() => {
+    settledPanels.current.clear()
+    setSettleTick((t) => t + 1)
+  }, [override, period, filterValues])
+  useEffect(() => {
+    const done = (): void => setPrintAll(false)
+    window.addEventListener('afterprint', done)
+    return () => window.removeEventListener('afterprint', done)
+  }, [])
 
   // 观看面可能带降级占位符（`{index,denied:true}`）——类型上并入，运行期用 `isDeniedPanel` 分流。
   // V2：面板清单统一从 plan 取（索引与 spec.panels 一一对应，占位符原位保留）。
@@ -1089,6 +1110,53 @@ export default function ReportView({
     // argsOf/range 都由 panels/override/period 派生 ⇒ 依赖里给这三者即可（避免每渲染重查）
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [panels, override, period, filterValues])
+
+  /**
+   * 打印全部的**就绪判据**：数据面板都有结果、KPI/AI 都已落定 ⇒ 才开印。
+   * 不等就印 = 纸上出现转圈或半截分析；「宁可多等，不印半成品」。
+   */
+  useEffect(() => {
+    if (!printAll) {
+      printedRef.current = false
+      return
+    }
+    if (printedRef.current) return
+    const dataIdx: number[] = []
+    const selfFetchIdx: number[] = []
+    panels.forEach((p, i) => {
+      if (isDeniedPanel(p) || p.chart === 'text') return
+      if (p.chart === 'kpi' || p.chart === 'ai_text') selfFetchIdx.push(i)
+      else dataIdx.push(i)
+    })
+    const dataReady = dataIdx.every((i) => results[i] !== undefined)
+    const settledReady = selfFetchIdx.every((i) => settledPanels.current.has(i))
+    if (!dataReady || !settledReady) return
+    // 让 React 把「全部页」画进 DOM 再开印（同一帧内 print 会丢掉刚挂载的节点）。
+    let cancelled = false
+    const raf = requestAnimationFrame(() => {
+      if (cancelled) return
+      printedRef.current = true
+      // 打印期间保持「全部页已挂载」：立刻收起会让部分浏览器捕不到刚画的节点。
+      // 收尾走 `afterprint`（用户关掉打印对话框后触发）。
+      window.print()
+    })
+    return () => { cancelled = true; cancelAnimationFrame(raf) }
+  }, [printAll, panels, results, settleTick])
+
+  // 等待上限：AI 生成通常 20–40s；超过上限给人一次显式选择，不无声拖死按钮。
+  useEffect(() => {
+    if (!printAll || printedRef.current) return
+    const timer = setTimeout(() => {
+      Modal.confirm({
+        title: '部分分析仍在生成',
+        content: '现在打印会缺少未完成的分析文本。可以再等一会儿，或打印当前已有内容。',
+        okText: '仍然打印', cancelText: '再等等',
+        onOk: () => { window.print(); setPrintAll(false) },
+        onCancel: () => setPrintAll(false),
+      })
+    }, 60_000)
+    return () => clearTimeout(timer)
+  }, [printAll])
 
   // 视口观察：只给「看得见」的图表查历史对比。
   useEffect(() => {
@@ -1226,6 +1294,7 @@ export default function ReportView({
             branchNum={aiBranchNum}
             filters={Object.keys(filterValues).length === 0 ? undefined : filterValues}
             version={pinnedVersion ?? undefined}
+            onSettled={() => markSettled(i)}
           />
         </Card>
       ) : p.chart === 'kpi' ? (
@@ -1236,6 +1305,7 @@ export default function ReportView({
           args={argsOf(p)}
           compareRange={compareRangeOf(p, period?.mode, range)}
           yoyRange={p.compareYoY && range !== null ? yearAgoRangeOf(range) : null}
+          onSettled={() => markSettled(i)}
           receiptCtx={{
             reportId,
             panelIndex: i,
@@ -1281,11 +1351,23 @@ export default function ReportView({
           )}
         </Space>
         <Space size={8} className="data-report-chrome">
-          {/* 打印 = **当前页**（多页报告按页打印，标签明说，避免「只印了第 1 页」的误判）。 */}
+          {/* 打印 = **当前页**；多页另给「打印全部」（挂载所有页并等 KPI/AI 落定后一次开印）。 */}
           <Button size="small" onClick={() => window.print()}>{isMultiPage ? '打印本页' : '打印'}</Button>
+          {isMultiPage && (
+            <Button size="small" loading={printAll} onClick={() => setPrintAll(true)}>
+              {printAll ? '准备打印中…' : '打印全部'}
+            </Button>
+          )}
           {chrome === 'console' && onClose !== undefined && <Button size="small" onClick={onClose}>关闭</Button>}
         </Space>
       </div>
+      {printAll && (
+        <Alert
+          type="info" showIcon className="data-report-chrome"
+          style={{ marginBottom: 8 }}
+          message="正在准备打印：等待所有页面与 AI 分析完成（通常 20–40 秒）…"
+        />
+      )}
       {(branchScope !== null || periodScope !== null) && (
         <Typography.Text
           type="secondary"
@@ -1376,7 +1458,7 @@ export default function ReportView({
       )}
       {(specPages ?? [{}]).map((pg, pageIdx) => {
         const n = pageIdx + 1
-        const hidden = isMultiPage && n !== activePage
+        const hidden = isMultiPage && n !== activePage && !printAll
         return (
           <section
             key={n}
@@ -1389,7 +1471,7 @@ export default function ReportView({
                 第 {n} 页{pg.title === undefined ? '' : ` · ${pg.title}`}
               </Typography.Text>
             )}
-            {!isMultiPage || visitedPages.has(n) ? (
+            {!isMultiPage || printAll || visitedPages.has(n) ? (
               <Row gutter={[12, 12]}>
                 {panels.map((p, i) => (pageOf(p) === n ? renderPanel(p, i) : null))}
               </Row>
