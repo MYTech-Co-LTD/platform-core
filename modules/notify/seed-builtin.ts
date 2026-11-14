@@ -33,6 +33,12 @@ export async function seedBuiltin(
 
   for (const org of targets) {
     for (const tpl of BUILTIN_TEMPLATES) {
+      // 租户发布过 = 已 fork（origin='tenant'）。seed 不再碰：正文/revision/published_revision
+      // 都不动，避免「租户改好的文案被下一次内置模板更新静默顶掉」。
+      const owned = await pool.query<{ origin: string }>(
+        'select origin from notify.template where org=$1 and key=$2', [org, tpl.key])
+      if (owned.rows[0]?.origin === 'tenant') continue
+
       const hash = createHash('sha256')
         .update(JSON.stringify(tpl.contents))
         .digest('hex')

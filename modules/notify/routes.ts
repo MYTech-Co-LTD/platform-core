@@ -12,7 +12,7 @@ import { channelIsConfigured } from './domain/channel-config'
 import { listAddressIssues } from './domain/delivery-stats'
 import { resolveDeliveryAddress } from './domain/resolve-address'
 import { renderContents } from './domain/render'
-import { validateRule } from './domain/rules'
+import { isWritableRuleId, validateRule } from './domain/rules'
 import { samplePayload, validateContents } from './domain/template'
 import { registerNotifyMcpManage } from './mcp'
 import {
@@ -161,6 +161,10 @@ export function createNotifyRouter(deps: {
     if (!body?.eventKey || !body.recipientKey || !body.templateKey || !body.channels) {
       return c.json({ error: 'RULE_INVALID_BODY' }, 400)
     }
+    // 系统规则（derived:/manual:）只能由 seed/env 管理；客户端 id 不得覆盖它们。
+    if (body.id !== undefined && !isWritableRuleId(body.id)) {
+      return c.json({ error: 'RULE_ID_RESERVED' }, 400)
+    }
 
     const decl = deps.events?.get(body.eventKey)
     if (!decl) return c.json({ error: 'RULE_EVENT_UNKNOWN' }, 400)
@@ -198,6 +202,7 @@ export function createNotifyRouter(deps: {
     }
 
     const id = body.id ?? `rule:${randomUUID()}`
+    const actor = (c.get('identity') as Identity).userId
     await upsertRule(deps.pool, org(c), {
       id,
       enabled: true,
@@ -210,21 +215,34 @@ export function createNotifyRouter(deps: {
       channels: body.channels,
       cooldownMinutes: body.cooldownMinutes ?? null,
       origin: 'manual',
-    }, (c.get('identity') as Identity).userId)
+    }, actor)
+    await audit(deps.pool, org(c), actor, 'rule.upsert', id, {
+      eventKey: body.eventKey,
+      scope: body.scope ?? '*',
+      recipientKey: body.recipientKey,
+      templateKey: body.templateKey,
+      channels: body.channels,
+    })
     return c.json({ id }, 201)
   })
 
   r.put('/rules/:id/enabled', async (c) => {
     const body = (await c.req.json().catch(() => null)) as { enabled?: boolean } | null
     if (!body || typeof body.enabled !== 'boolean') return c.json({ error: 'RULE_INVALID_BODY' }, 400)
-    const n = await setRuleEnabled(deps.pool, org(c), c.req.param('id'), body.enabled)
+    const id = c.req.param('id')
+    const n = await setRuleEnabled(deps.pool, org(c), id, body.enabled)
     if (n === 0) return c.json({ error: 'NOT_FOUND' }, 404)
+    await audit(deps.pool, org(c), (c.get('identity') as Identity).userId,
+      'rule.enabled', id, { enabled: body.enabled })
     return c.json({ ok: true })
   })
 
   r.delete('/rules/:id', async (c) => {
-    const n = await deleteRule(deps.pool, org(c), c.req.param('id'))
+    const id = c.req.param('id')
+    const n = await deleteRule(deps.pool, org(c), id)
     if (n === 0) return c.json({ error: 'NOT_FOUND' }, 404)
+    await audit(deps.pool, org(c), (c.get('identity') as Identity).userId,
+      'rule.delete', id, {})
     return c.json({ ok: true })
   })
 
@@ -428,6 +446,8 @@ export function createNotifyRouter(deps: {
         : { ok: false, detail: 'webhook url/key env 未配置' }
     }
     await setChannelHealth(deps.pool, org(c), ch.id, result.ok ? 'ok' : 'error', result.detail)
+    await audit(deps.pool, org(c), (c.get('identity') as Identity).userId,
+      'channel.health', ch.id, { ok: result.ok, detail: result.detail ?? null })
     return c.json(result)
   })
 

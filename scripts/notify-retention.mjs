@@ -1,7 +1,8 @@
 #!/usr/bin/env node
 // scripts/notify-retention.mjs — 通知保留期清理（openship job，每日）。
 // 退出码：0 干净；1 清理失败；2 缺 DATABASE_URL / 参数非法。
-// 默认：in-app 90 天 / attempt 180 天 / delivery 365 天（只删终态）。
+// 默认：in-app 90 天 / attempt 180 天 / delivery 365 天 / event 90 天 / audit 365 天
+//（只删终态：delivery 只删 sent/suppressed/dead；event 只删 status<>'new'）。
 import { createRequire } from 'node:module'
 import { pathToFileURL } from 'node:url'
 import { purgeOldNotifications } from '../modules/notify/storage.ts'
@@ -19,6 +20,8 @@ export function retentionDays(env = process.env) {
     inboxDays: pick('NOTIFY_INBOX_RETENTION_DAYS', 90),
     attemptDays: pick('NOTIFY_ATTEMPT_RETENTION_DAYS', 180),
     deliveryDays: pick('NOTIFY_DELIVERY_RETENTION_DAYS', 365),
+    eventDays: pick('NOTIFY_EVENT_RETENTION_DAYS', 90),
+    auditDays: pick('NOTIFY_AUDIT_RETENTION_DAYS', 365),
   }
 }
 
@@ -35,7 +38,9 @@ if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) 
     const r = await purgeOldNotifications(pool, opts)
     console.log(
       `notify-retention: inbox=${r.inbox} attempts=${r.attempts} deliveries=${r.deliveries} `
-      + `(inbox>${opts.inboxDays}d attempt>${opts.attemptDays}d delivery>${opts.deliveryDays}d)`)
+      + `events=${r.events} audit=${r.audit} `
+      + `(inbox>${opts.inboxDays}d attempt>${opts.attemptDays}d delivery>${opts.deliveryDays}d `
+      + `event>${opts.eventDays}d audit>${opts.auditDays}d)`)
     process.exit(0)
   } catch (e) {
     console.error('notify-retention 失败:', e instanceof Error ? e.message : e)

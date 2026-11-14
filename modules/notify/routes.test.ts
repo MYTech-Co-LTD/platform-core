@@ -96,6 +96,24 @@ describePg('routes v2', () => {
 
     const del = await app.request(`/rules/${encodeURIComponent(id)}`, { method: 'DELETE' })
     expect(del.status).toBe(200)
+
+    // N0.4：三条写操作都必须落审计
+    const auditRows = await pool.query(
+      `select action from notify.audit
+        where org=$1 and target=$2 and action like 'rule.%' order by id`, [ORG, id])
+    expect(auditRows.rows.map((r) => r.action)).toEqual([
+      'rule.upsert', 'rule.enabled', 'rule.delete',
+    ])
+  })
+
+  it('规则：系统预留 id（derived:/manual:）不可被客户端覆盖', async () => {
+    const res = await post('/rules', {
+      id: 'derived:aftersales:m.a.b:*',
+      eventKey: 'm.a.b', recipientKey: 'approver', templateKey: 't1',
+      channels: ['wecom_default'],
+    })
+    expect(res.status).toBe(400)
+    expect(await res.json()).toEqual({ error: 'RULE_ID_RESERVED' })
   })
 
   it('规则：未知事件 / 未知收件人 / 未发布模板 ⇒ 400', async () => {
@@ -288,6 +306,11 @@ describePg('routes v2', () => {
     const { rows } = await pool.query(
       "select health from notify.channel where org=$1 and id='webhook_ops'", [ORG])
     expect(String(rows[0].health)).toMatch(/^error/)
+
+    const auditRows = await pool.query(
+      "select action from notify.audit where org=$1 and target='webhook_ops' and action='channel.health'",
+      [ORG])
+    expect(auditRows.rowCount).toBe(1)
   })
 
   // ── D3 可送达性预检（只读）────────────────────────────────────────────────
