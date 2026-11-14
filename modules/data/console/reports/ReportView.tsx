@@ -1049,22 +1049,43 @@ export default function ReportView({
     setResults({})
     setCompareResults({})
     compareLoaded.current.clear()
+    // 跨面板合并（R4）：请求体**逐字相同**的面板只发一次，回包扇出到各自的格子。
+    // 键 = 序列化后的 /query body（metric/args/dimensions/orderBy/limit/total 全在里面）——
+    // 任何一项不同都不会合并：不同窗口/维度/截断的结果共用就是错数。
+    const jobs = new Map<string, { body: Record<string, unknown>; indexes: number[] }>()
     panels.forEach((p, i) => {
       // 降级占位符 / text / ai_text 无数据面；kpi 的取数在 KpiCard 内部（显式合计），都不进这条循环
       if (isDeniedPanel(p)) return
       if (p.chart === 'text' || p.chart === 'kpi' || p.chart === 'ai_text') return
-      void apiSend('/query', 'POST', panelQueryBodyOf(p, argsOf(p)))
-        .then((b) => setResults((prev) => ({ ...prev, [i]: okResultOf(b) })))
+      const body = panelQueryBodyOf(p, argsOf(p))
+      const key = JSON.stringify(body)
+      const hit = jobs.get(key)
+      if (hit === undefined) jobs.set(key, { body, indexes: [i] })
+      else hit.indexes.push(i)
+    })
+    for (const { body, indexes } of jobs.values()) {
+      void apiSend('/query', 'POST', body)
+        .then((b) => {
+          const result = okResultOf(b)
+          setResults((prev) => {
+            const next = { ...prev }
+            for (const i of indexes) next[i] = result
+            return next
+          })
+        })
         .catch((e) => {
           // /query 的结局映射（routes/query.ts）：ok→200 / **denied→403** / error→502。
           // denied 的正文 `{status:'denied',reason}` 没有 `error` 字段 ⇒ apiSend 落成
           // `ApiError(403,'HTTP_403')`，reason 不上屏（词表外的口径连存在性都不暴露）。
-          setResults((prev) => ({
-            ...prev,
-            [i]: e instanceof ApiError && e.status === 403 ? { kind: 'denied' } : { kind: 'error', text: messageOf(e) },
-          }))
+          const result: PanelResult = e instanceof ApiError && e.status === 403
+            ? { kind: 'denied' } : { kind: 'error', text: messageOf(e) }
+          setResults((prev) => {
+            const next = { ...prev }
+            for (const i of indexes) next[i] = result
+            return next
+          })
         })
-    })
+    }
     // argsOf/range 都由 panels/override/period 派生 ⇒ 依赖里给这三者即可（避免每渲染重查）
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [panels, override, period, filterValues])
@@ -1120,6 +1141,19 @@ export default function ReportView({
     })
     if (jobs.length === 0) return
     let cancelled = false
+    // 同一对比窗口的请求体在多张图之间也可能逐字相同（同指标同维度的 KPI 趋势/柱线并排）——
+    // 与主查询同一条合并纪律：只发一次，按 body 序列化值去重。
+    const compareCache = new Map<string, Promise<OkResult | null>>()
+    const compareOf = (body: Record<string, unknown>): Promise<OkResult | null> => {
+      const key = JSON.stringify(body)
+      const hit = compareCache.get(key)
+      if (hit !== undefined) return hit
+      const p = apiSend('/query', 'POST', body)
+        .then((b) => okResultOf(b))
+        .catch(() => null)   // 对比期失败不塌主图：少一条曲线
+      compareCache.set(key, p)
+      return p
+    }
     const run = async (): Promise<void> => {
       const queue = [...jobs]
       const worker = async (): Promise<void> => {
@@ -1127,13 +1161,10 @@ export default function ReportView({
           const job = queue.shift()
           if (job === undefined || cancelled) return
           const list = await Promise.all(job.ranges.map(async (c) => {
-            try {
-              const b = await apiSend('/query', 'POST', panelQueryBodyOf(job.panel, { ...argsOf(job.panel), bizday: c.range }))
-              return { label: c.label, result: okResultOf(b) }
-            } catch {
-              // 对比期失败不塌主图：少一条曲线。
-              return null
-            }
+            const result = await compareOf(
+              panelQueryBodyOf(job.panel, { ...argsOf(job.panel), bizday: c.range }),
+            )
+            return result === null ? null : { label: c.label, result }
           }))
           if (cancelled) return
           const ok = list.filter((x): x is PanelCompare => x !== null)
