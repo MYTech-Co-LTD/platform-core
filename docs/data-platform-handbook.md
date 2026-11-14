@@ -904,8 +904,10 @@ capabilities / policy 门禁 / run 回执」一句打包，**实测与其中两�
   `/opt/lemeng-narrative-health.py`）读平台 PG 的 `data.narrative_runs`，按 `NARRATIVE_SLO`
   （回退率≤20%、p95≤45s、数字越界率≤5%；阈值与 TS 正典由 CI 机械比对）逐 org 判红，经
   `lemeng-emit-probe.py` 进 `data_plane_probes` ⇒ 桥送企微；openship job `narrative-health-probe`
-  （每小时 :23）驱动。无生成样本 = **跳过**（没有样本不能判，也不冒充健康）。反向测试：
-  `--selftest --emit`（合成一条 ERR，收到即链路通）。⚠️ 群侧开环确认待做（与既有桥同一条腿）。
+  （`custom:JqgXcImPng0HY7pw`，每小时 :23）驱动。无生成样本 = **跳过**（没有样本不能判，也不冒充健康）。反向测试：
+  `--selftest --emit`（合成一条 ERR，收到即链路通）。**2026-11-14 实测**：合成 ERR 落 OO
+  `data_plane_probes`（`narrative_quality_selftest` 1 hit）→ 桥 15:15:02 投递 1 条（`errcode:0`）；
+  job 手动跑一次 OK（三 check 均 OK，exit 0）。
 
   ✅ **⑯⑰ 封版 manifest 效果接线（2026-11-10，Phase 1 续刀；#1886，#1872 的收尾监控）**：
   #1872 把明细视图的封版判定从 `_DAILY/*.parquet` glob（1,541 个小文件，>110s 且会打崩 pg_duckdb）
