@@ -30,6 +30,7 @@ import { ApiError, apiGet, apiSend, messageOf } from '../lib/api'
 import { useIsMobile } from '../lib/useIsMobile'
 import SpecView from './SpecView'
 import { NarrativeQuality } from './NarrativeQuality'
+import { TemplateCreateModal } from './TemplateCreateModal'
 import { TechDetails } from '../components/TechDetails'
 import { Explain } from '../components/Explain'
 import { humanError, type HumanError } from '../lib/explain'
@@ -134,6 +135,8 @@ interface VersionRow {
 export default function ReportsPage() {
   const { session } = useOutletContext<ConsoleContext>()
   const canManage = session.scopes.includes('data:manage')
+  // 建自己的报表（#1330）：`data:create` ∪ `data:manage`（与 POST /reports 同一判据）。
+  const canCreate = canManage || session.scopes.includes('data:create')
 
   const [rows, setRows] = useState<ReportRow[]>([])
   // 列表工具条（2026-11-03 UX）：租户报表多起来后，靠肉眼扫表找一张是主要摩擦点。
@@ -141,6 +144,7 @@ export default function ReportsPage() {
   const isMobile = useIsMobile()
   const [sheetFor, setSheetFor] = useState<ReportRow | null>(null)
   const [filterOpen, setFilterOpen] = useState(false)
+  const [tplOpen, setTplOpen] = useState(false)
   const [query, setQuery] = useState('')
   const [statusFilter, setStatusFilter] = useState<'all' | 'published' | 'draft' | 'changed'>('all')
   const STATUS_OPTIONS = [
@@ -966,6 +970,9 @@ export default function ReportsPage() {
           <Button onClick={() => setFilterOpen(true)} style={{ height: 44, paddingInline: 16 }}>
             {statusFilter === 'all' ? '筛选' : STATUS_OPTIONS.find((o) => o.value === statusFilter)?.label}
           </Button>
+          {canCreate && (
+            <Button type="primary" style={{ height: 44 }} onClick={() => setTplOpen(true)}>新建</Button>
+          )}
         </div>
       ) : (
         <div style={{
@@ -978,11 +985,16 @@ export default function ReportsPage() {
             placeholder="搜索报表标题或所有者"
             style={{ width: 280 }}
           />
-          <Segmented
-            value={statusFilter}
-            onChange={(v) => setStatusFilter(v as typeof statusFilter)}
-            options={STATUS_OPTIONS}
-          />
+          <Space size={8}>
+            {canCreate && (
+              <Button size="small" type="primary" onClick={() => setTplOpen(true)}>从模板新建</Button>
+            )}
+            <Segmented
+              value={statusFilter}
+              onChange={(v) => setStatusFilter(v as typeof statusFilter)}
+              options={STATUS_OPTIONS}
+            />
+          </Space>
         </div>
       )}
       {isMobile ? mobileCards : (
@@ -1126,6 +1138,18 @@ export default function ReportsPage() {
       )}
       {isMobile ? mobileSheet : null}
       {isMobile ? mobileFilterSheet : null}
+      <TemplateCreateModal
+        open={tplOpen}
+        onClose={() => setTplOpen(false)}
+        onCreated={(id) => {
+          messageApi.success('已创建草稿，可在清单里继续编辑/发布')
+          void load().then((list) => {
+            // 建完直接打开这份新报表（list 刷新后行才在；深链逻辑不重复消费）
+            const hit = list?.find((r) => r.id === id)
+            if (hit !== undefined) setSelfDrawn(hit)
+          })
+        }}
+      />
       <Modal title={`改页门：${gateEdit?.title ?? ''}`}
              open={gateEdit !== null}
              okText="确定" cancelText="取消"
