@@ -21,6 +21,7 @@ import { runMigrations } from './migrate'
 import { seedDemo } from './seed'
 import {
   provisionModulePermissionsResilient, loadModules, provisionModulePermissions } from './loader'
+import { buildSchedulerPort } from './scheduler/port'
 import type { TenantRow } from './tenant'
 
 const dbUrl = process.env.DATABASE_URL
@@ -1625,6 +1626,101 @@ describe.skipIf(!dbUrl)('loadModules', INTEGRATION_SUITE, () => {
       "select key, module_id from platform.event_catalog where key = 'prodmod.a.b'",
     )
     expect(cat.rows[0]).toEqual({ key: 'prodmod.a.b', module_id: 'prodmod' })
+  })
+
+  // ---- 调度器端口（W6-P3：ctx.scheduler，与 ctx.notify 同款装载期注入）----
+
+  it('注入 ctx.scheduler：端口绑定装载时 actor，listSchedules 只看得到该 actor 的排班', async () => {
+    cleanupModules.push('schedmod')
+    const modulesDir = await newModulesDir()
+
+    // 两个 org 各一条排班：用 actor A 构造的端口只能看见 A 所在 org 的行。
+    // 同一用例同时钉住「`filter.ownerOrg` 被端口忽略」（模块故意传 'not-mine'）——
+    // 若端口沿用调用方传值，断言会变成空数组（那是租户传值生效的形态）。
+    // 注：`listSchedules` 不给 ownerNamespace 时按 **org** 列举（端口契约），故隔离边界是 org。
+    const org = 'jobtest-p3:loader-org'
+    const nsA = 'jobtest-p3:loader-ns-a'
+    const otherOrg = 'jobtest-p3:loader-org-2'
+    const nsB = 'jobtest-p3:loader-ns-b'
+    cleanupSqls.push("delete from platform.job_schedule where owner_org like 'jobtest-p3:loader-%'")
+    const insert = `insert into platform.job_schedule
+        (key, cron, timezone, params, owner_org, owner_namespace, source, created_by,
+         enabled, expected_interval_secs)
+      values ('notify.emit', '*/5 * * * *', 'UTC', '{}'::jsonb, $1, $2, 'agent', $3, true, 300)
+      returning id`
+    const rowA = (await pool.query<{ id: string }>(insert, [org, nsA, 'u-a'])).rows[0]!
+    await pool.query(insert, [otherOrg, nsB, 'u-b'])
+
+    await writeModule(modulesDir, 'schedmod', {
+      'manifest.yaml': manifestYaml(
+        'schedmod', '',
+        'api:\n  internal:\n    - { method: GET, path: /sched, scope: schedmod:view }',
+      ),
+      'index.ts': [
+        "import { Hono } from 'hono'",
+        "import { defineModule } from '@platform/sdk'",
+        'export default defineModule({',
+        "  manifest: { id: 'schedmod', name: 's', version: '1.0.0', platform: '>=0.1.0',",
+        "    permissions: [{ code: 'schedmod:view', name: 'v' }],",
+        "    api: { internal: [{ method: 'GET', path: '/sched', scope: 'schedmod:view' }] } },",
+        '  createRouter: (ctx) => {',
+        '    const app = new Hono()',
+        "    app.get('/sched', async (c) => c.json({",
+        '      present: ctx.scheduler !== undefined,',
+        "      rows: ctx.scheduler ? await ctx.scheduler.listSchedules({ ownerOrg: 'not-mine' }) : null,",
+        '    }))',
+        '    return app',
+        '  },',
+        '})',
+        '',
+      ].join('\n'),
+    })
+
+    const scheduler = buildSchedulerPort({
+      pool,
+      actor: { userId: 'u-a', org, namespace: nsA },
+    })
+    const runtime = await loadModules(modulesDir, { pool, scheduler })
+
+    const app = new Hono<TestEnv>()
+    app.use('*', injectIdentity(['schedmod:view']))
+    runtime.mount(app)
+    const res = await app.request('/api/modules/schedmod/sched')
+    expect(res.status).toBe(200)
+    const body = await res.json() as { present: boolean; rows: Array<{ id: string }> }
+    expect(body.present).toBe(true)
+    expect(body.rows.map((r) => r.id)).toEqual([rowA.id])
+  })
+
+  it('未注入 scheduler ⇒ ctx.scheduler 为 undefined（旧宿主/单测的降级态）', async () => {
+    cleanupModules.push('noschedmod')
+    const modulesDir = await newModulesDir()
+    await writeModule(modulesDir, 'noschedmod', {
+      'manifest.yaml': manifestYaml('noschedmod'),
+      'index.ts': [
+        "import { Hono } from 'hono'",
+        "import { defineModule } from '@platform/sdk'",
+        'export default defineModule({',
+        "  manifest: { id: 'noschedmod', name: 'n', version: '1.0.0', platform: '>=0.1.0',",
+        "    permissions: [{ code: 'noschedmod:view', name: 'v' }],",
+        "    api: { internal: [{ method: 'GET', path: '/ping', scope: 'noschedmod:view' }] } },",
+        '  createRouter: (ctx) => {',
+        '    const app = new Hono()',
+        "    app.get('/ping', (c) => c.json({ present: ctx.scheduler !== undefined }))",
+        '    return app',
+        '  },',
+        '})',
+        '',
+      ].join('\n'),
+    })
+
+    const runtime = await loadModules(modulesDir, { pool })
+    const app = new Hono<TestEnv>()
+    app.use('*', injectIdentity(['noschedmod:view']))
+    runtime.mount(app)
+    const res = await app.request('/api/modules/noschedmod/ping')
+    expect(res.status).toBe(200)
+    expect(await res.json()).toEqual({ present: false })
   })
 })
 

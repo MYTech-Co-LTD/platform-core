@@ -20,6 +20,7 @@ import { CasdoorClient } from '@platform/auth-core'
 import { loadConfig, type AppConfig } from './config'
 import { getPool } from './db'
 import { loadModules, type ModulesRuntime } from './loader'
+import { buildSchedulerPort } from './scheduler/port'
 import { runMigrations } from './migrate'
 import { REGISTRY_PATH, startIntegrationProbeLoop } from './integration-probe'
 import { resolveKeyWithTouch } from './api-key-store'
@@ -166,11 +167,32 @@ export async function buildApp(overrides: BuildAppOverrides = {}): Promise<{
     } else if (rawSubscriptionSource !== 'casdoor') {
       console.warn(`[modules] PLATFORM_SUBSCRIPTION_SOURCE=${JSON.stringify(rawSubscriptionSource)} 未知，按 casdoor 处理`)
     }
+    // 调度器端口（W6-P3）：注入模块 `ctx.scheduler`，notify 工具面只经它操作排班。
+    // 模块上下文在**装载期**构造一次（没有请求期会话），所以 actor 只能在此固定下来：
+    //   · userId = 'host:scheduler'（`created_by` 留痕；一个进程一个宿主 actor）
+    //   · org / namespace = PLATFORM_ORG——**v1 约定「一个 org 一个 namespace」**
+    //     （notify 模块没有既有的 `owner_namespace` 口径，channel-address 里也只有 org）。
+    // multi 租户（PLATFORM_ORG 为空）在装载期**不存在单一 actor**：故意不注入（ctx.scheduler
+    // = undefined ⇒ 工具面返回 SCHEDULER_UNAVAILABLE），绝不用空串或跨租户 actor 兜底——
+    // 那会把不同租户的排班混进同一个归属桶，比「能力不可用」危险得多。
+    // 按会话 actor 逐请求绑定是后续事项（本任务只交付注入与降级两态）。
+    const scheduler = config.platformOrg === ''
+      ? undefined
+      : buildSchedulerPort({
+        pool,
+        actor: { userId: 'host:scheduler', org: config.platformOrg, namespace: config.platformOrg },
+      })
+    if (!scheduler) {
+      console.warn(
+        '[modules] PLATFORM_ORG 为空（multi 租户）：未注入 ctx.scheduler，agent 排班工具将不可用',
+      )
+    }
     runtime = await loadModules(overrides.modulesDir ?? modulesDir, {
       pool,
       casdoorFor: casdoorFactory,
       subscriptionSource,
       subscriptionCacheTtlMs: Number(process.env.PLATFORM_SUBSCRIPTION_CACHE_TTL_MS) || 60_000,
+      scheduler,
     })
   }
 
