@@ -9,7 +9,7 @@
 //     「渲染器能力」与「平台代码」脱钩 ⇒ 库里加了图型而渲染器不认 = **静默空白**。
 import { z } from 'zod'
 
-export const CHART_TYPES = ['line', 'bar', 'table', 'cross_table', 'waterfall', 'bullet', 'kpi', 'text', 'ai_text'] as const
+export const CHART_TYPES = ['line', 'bar', 'table', 'cross_table', 'waterfall', 'bullet', 'sparkline', 'kpi', 'text', 'ai_text'] as const
 export const MAX_PANELS = 24
 export const MAX_DIMS = 4
 export const MAX_TEXT = 2000
@@ -108,6 +108,17 @@ const CrossTablePanel = z.object({
  * 瀑布图（R3 组件②）：**环比的差异分解**。每根 = 某维度值对「本期 − 上期」的贡献，
  * 最后一根 = 合计变化（校验位）。维度固定 1 个（多维度会让贡献不可读）。
  */
+const SparklinePanel = z.object({
+  chart: z.literal('sparkline'),
+  title: z.string().trim().min(1).max(120),
+  metricId: z.string().min(1).max(128),
+  args: ArgsSchema,
+  format: z.enum(['currency', 'number', 'percent']).default('number'),
+  compare: z.enum(['auto', 'prev_period', 'prev_month', 'none']).default('auto'),
+  span: z.number().int().min(1).max(24).default(6),
+  timeScoped: z.boolean().default(true),
+}).strict()
+
 /**
  * 目标对比卡（R3 组件③）：当前合计 vs 声明的目标值。目标先内联声明（\`target\`），
  * P2 的租户/门店参数化目标上线后可作为**覆盖源**接入（读取顺序：请求参数 > 租户配置 > 内联声明）。
@@ -200,7 +211,7 @@ export type StoredReportSpec = ReportSpec | ReportSpecV2
 export const ReportSpecSchema = z.object({
   period: PeriodSchema.optional(),
   filters: z.array(ReportFilterSchema).max(20).optional(),
-  panels: z.array(z.discriminatedUnion('chart', [LinePanel, BarPanel, TablePanel, CrossTablePanel, WaterfallPanel, BulletPanel, KpiPanel, TextPanel, AiTextPanel])).max(MAX_PANELS),
+  panels: z.array(z.discriminatedUnion('chart', [LinePanel, BarPanel, TablePanel, CrossTablePanel, WaterfallPanel, BulletPanel, SparklinePanel, KpiPanel, TextPanel, AiTextPanel])).max(MAX_PANELS),
 }).strict()
 
 

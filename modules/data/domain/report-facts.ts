@@ -425,7 +425,7 @@ export async function buildFacts(
         : { defs: spec.filters ?? [], values: filterValues ?? {} },
     )
     // 交叉表只用于呈现，不进事实包（它与 bar/table 的拆解口径不同，混入会污染驱动项）。
-    if (p.chart === 'cross_table' || p.chart === 'waterfall' || p.chart === 'bullet') continue
+    if (p.chart === 'cross_table' || p.chart === 'waterfall' || p.chart === 'bullet' || p.chart === 'sparkline') continue
     const q = queryOfPanel(p, args)
 
     if (p.chart === 'kpi') {

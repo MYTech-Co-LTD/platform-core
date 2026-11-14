@@ -63,6 +63,10 @@ export function panelQueryBodyOf(
   args: Record<string, unknown>,
 ): Record<string, unknown> {
   if (p.chart === 'kpi' || p.chart === 'bullet') return { metricId: p.metricId, args: { ...args, total: true } }
+  // 迷你趋势：单维度（bizday）日粒度切片 + 显式合计（大字当前值）一次拿全。
+  if (p.chart === 'sparkline') {
+    return { metricId: p.metricId, args, dimensions: ['bizday'] }
+  }
   // 交叉表：行维度 + 列维度一起下推，由服务端分组（≤4 维闭集由授权层再校验）。
   if (p.chart === 'cross_table') {
     return { metricId: p.metricId, args, dimensions: [...p.rows, p.columns] }

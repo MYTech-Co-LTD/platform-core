@@ -310,7 +310,7 @@ function EChart({ option }: { option: EChartsCoreOption }) {
 
 /** 渲染轴：有 slice 时以服务端分组维度为准，否则用面板声明的 dims（两者都是规格声明）。 */
 function dimsOf(panel: Panel): string[] {
-  if (panel.chart === 'text' || panel.chart === 'kpi' || panel.chart === 'ai_text' || panel.chart === 'cross_table' || panel.chart === 'waterfall' || panel.chart === 'bullet') return []
+  if (panel.chart === 'text' || panel.chart === 'kpi' || panel.chart === 'ai_text' || panel.chart === 'cross_table' || panel.chart === 'waterfall' || panel.chart === 'bullet' || panel.chart === 'sparkline') return []
   return panel.slice?.dimensions ?? panel.dims
 }
 
@@ -425,6 +425,63 @@ function PanelBody({ panel, result, compares = [] }: { panel: Panel; result: Pan
       </>
     )
   }
+  if (panel.chart === 'sparkline') {
+    const xIdx = result.columns.indexOf('bizday')
+    const vIdx = result.columns.indexOf('value')
+    const points: Array<[string, number]> = []
+    if (xIdx >= 0 && vIdx >= 0) {
+      for (const row of result.rows) {
+        if (!Array.isArray(row)) continue
+        // 与 domain/report-facts.dayLabelOf 同口径（避免 server-only 导入进浏览器包）
+        const raw = row[xIdx]
+        let day: string | null = null
+        if (raw instanceof Date && !Number.isNaN(raw.getTime())) {
+          day = `${raw.getFullYear()}-${String(raw.getMonth() + 1).padStart(2, '0')}-${String(raw.getDate()).padStart(2, '0')}`
+        } else if (typeof raw === 'string') {
+          const m = /^(\d{4}-\d{2}-\d{2})/.exec(raw)
+          day = m === null ? null : m[1]!
+        }
+        const v = Number(row[vIdx])
+        if (day !== null && Number.isFinite(v)) points.push([day, v])
+      }
+    }
+    if (points.length === 0) {
+      return <Typography.Text type="secondary">没有可展示的趋势数据</Typography.Text>
+    }
+    const fmt = (n: number): string => formatValue(n, panel.format)
+    return (
+      <>
+        <div data-testid="sparkline">
+          <Typography.Text strong style={{ fontSize: 20, fontVariantNumeric: 'tabular-nums' }}>
+            {fmt(points.reduce((s, [, v]) => s + v, 0))}
+          </Typography.Text>
+          <Typography.Text type="secondary" style={{ fontSize: 11, display: 'block' }}>
+            近 {points.length} 天趋势
+          </Typography.Text>
+          <EChart option={{
+            grid: { left: 0, right: 0, top: 4, bottom: 0 },
+            xAxis: { type: 'category', data: points.map(([d]) => d), show: false },
+            yAxis: { type: 'value', show: false },
+            tooltip: {
+              trigger: 'axis',
+              formatter: (ps: unknown) => {
+                const i = (ps as Array<{ dataIndex: number }>)[0]?.dataIndex ?? 0
+                const pt = points[i]
+                return pt === undefined ? '' : `${pt[0]}<br/>${fmt(pt[1])}`
+              },
+            },
+            series: [{
+              type: 'line', data: points.map(([, v]) => v),
+              smooth: true, showSymbol: false, lineWidth: 1.5,
+              areaStyle: { opacity: 0.15 }, color: '#0f766e',
+            }],
+          }} />
+        </div>
+        <TrustLine result={result} />
+      </>
+    )
+  }
+
   if (panel.chart === 'bullet') {
     // 当前值 = 回包 total（显式合计）；目标是声明值（P2 参数化目标接入后可被覆盖）。
     const tIdx = result.columns.indexOf('total')

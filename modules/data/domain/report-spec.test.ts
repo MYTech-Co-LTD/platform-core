@@ -194,3 +194,18 @@ describe('bullet（R3 组件③）', () => {
     expect(parse({ ...base, target: Infinity }).ok).toBe(false)
   })
 })
+
+describe('sparkline（R3 组件④）', () => {
+  const parse = (panel: unknown) => parseReportSpec({ panels: [panel] })
+  const base = { chart: 'sparkline', title: '营业额趋势', metricId: 'm:sales' }
+
+  it('缺省 compare=auto、format=number、span=6', () => {
+    const out = parse(base)
+    expect(out.ok).toBe(true)
+    if (out.ok) expect(out.spec.panels[0]).toMatchObject({ chart: 'sparkline', compare: 'auto', format: 'number', span: 6 })
+  })
+
+  it('timeScoped=false 可关期间注入（字典/排行快照场景）', () => {
+    expect(parse({ ...base, timeScoped: false }).ok).toBe(true)
+  })
+})

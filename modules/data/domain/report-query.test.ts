@@ -245,3 +245,15 @@ describe('bullet 查询体（R3）', () => {
     })
   })
 })
+
+describe('sparkline 查询体（R3 组件④）', () => {
+  it('按 bizday 日粒度分组，不附加 slice/total', () => {
+    const panel = {
+      chart: 'sparkline' as const, title: '趋势', metricId: 'm', args: {},
+      format: 'number' as const, compare: 'none' as const, span: 6, timeScoped: true,
+    }
+    expect(panelQueryBodyOf(panel, { branch_num: '92' })).toEqual({
+      metricId: 'm', args: { branch_num: '92' }, dimensions: ['bizday'],
+    })
+  })
+})
