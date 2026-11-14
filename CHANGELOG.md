@@ -11,6 +11,10 @@
 
 ## [Unreleased]
 
+## [0.280.0](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.279.0...v0.280.0) - 2026-11-14
+- 【新增】data: 管线地图——单条管线的完整运行历史 (#2222) ([#2223](https://github.com/MYTech-Co-LTD/platform-core/pull/2223), [342c697](https://github.com/MYTech-Co-LTD/platform-core/commit/342c6975ad9ba3edf90be927831a17bd2ef7c930))
+
+
 ## [0.279.0](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.278.1...v0.279.0) - 2026-11-14
 - 【修复】ci: 发布门接受全角 PR 引用 + 无文本引用时问 API ([#2220](https://github.com/MYTech-Co-LTD/platform-core/pull/2220), [f00254b](https://github.com/MYTech-Co-LTD/platform-core/commit/f00254b8f54a773179debe21f31600c40106ea45))
 - 【新增】data: 管线地图 KPI 改服务端出数，消除前端重算 (#2215) ([#2218](https://github.com/MYTech-Co-LTD/platform-core/pull/2218), [a668599](https://github.com/MYTech-Co-LTD/platform-core/commit/a668599a2fc01f7f73e8de785dbdc1157e28797f))
