@@ -123,6 +123,11 @@ services:
       DATABASE_URL: postgres://platform:platform@postgres:5432/platform
       # worker 的只读健康端点端口：与镜像 HEALTHCHECK 的 ${PORT:-13000} 对齐
       WORKER_HEALTH_PORT: '13000'
+      # 业务调度 loop（Wave 6 P1）：与投递 loop 同进程、独立节拍。
+      # ENABLED=0 = 只停调度（投递照跑）——切流回滚开关；生产默认开。
+      SCHEDULER_ENABLED: '1'
+      SCHEDULER_TICK_MS: '30000'
+      SCHEDULER_MAX_CONCURRENCY: '2'
     # 运行镜像已含 tsx（node_modules 全量 COPY，未 prune）；不要用裸 node 跑 .ts import
     command: ['pnpm', 'exec', 'tsx', 'scripts/notify-worker.mjs']
     depends_on:

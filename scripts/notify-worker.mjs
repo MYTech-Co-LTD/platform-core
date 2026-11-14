@@ -55,21 +55,64 @@ if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) 
     console.warn('notify-worker: 缺 CASDOOR_* 凭据 ⇒ scope_holders / 部门收件人不解析（仅 manual literal 规则可用）')
   }
 
+  // ── 业务调度 loop（Wave 6 P1）：与投递 loop 同进程、独立节拍、独立 try/catch ──
+  // 不 await 子进程完成（tick 只起进程）；长任务因此不会饿死投递。
+  // SCHEDULER_ENABLED=0 只停调度 loop（不 tick），投递照跑；healthz 也不因调度而红。
+  const schedulerEnabled = process.env.SCHEDULER_ENABLED !== '0'
+  const schedulerTickMs = Number(process.env.SCHEDULER_TICK_MS ?? 30000)
+  if (schedulerEnabled && (!Number.isSafeInteger(schedulerTickMs) || schedulerTickMs <= 0)) {
+    // 非正整数会让 `Date.now() - last >= NaN` 恒 false ⇒ 调度被**静默**停掉。
+    // 与 loop.ts 的 maxConcurrency 校验同口径：装配即抛（响亮失败，不假装健康）。
+    throw new Error(`notify-worker: SCHEDULER_TICK_MS 必须是正整数（当前 ${JSON.stringify(process.env.SCHEDULER_TICK_MS)}）`)
+  }
+  const { workerHealthz } = await import('../apps/server/src/scheduler/worker-healthz.ts')
+  /** @type {null | { tick: () => Promise<import('../apps/server/src/scheduler/loop.ts').TickStats>, inFlight: () => number }} */
+  let scheduler = null
+  /** @type {null | typeof import('../apps/server/src/scheduler/health.ts').jobHealth} */
+  let jobHealthFn = null
+  let lastSchedulerTick = 0
+  if (schedulerEnabled) {
+    const { createSchedulerLoop } = await import('../apps/server/src/scheduler/loop.ts')
+    const { jobHealth } = await import('../apps/server/src/scheduler/health.ts')
+    jobHealthFn = jobHealth
+    scheduler = createSchedulerLoop({ pool, cwd: process.cwd() })
+    console.log(JSON.stringify({ ts: new Date().toISOString(), scheduler: 'enabled', tickMs: schedulerTickMs }))
+  } else {
+    console.log(JSON.stringify({ ts: new Date().toISOString(), scheduler: 'disabled' }))
+  }
+
   // 健康端点：镜像的 HEALTHCHECK 打 `127.0.0.1:${PORT:-13000}/healthz`（与 server 同镜像继承），
   // worker 本无 HTTP 面 ⇒ 恒 unhealthy（2026-10-27 生产实测 Up 26m (unhealthy)）。
   // 这里起一个**只读**的极简端点，回答「worker 进程还活着 + 心跳新鲜」。
   // 端口用 WORKER_HEALTH_PORT（缺省 13000，与镜像 HEALTHCHECK 的 ${PORT:-13000} 对齐）；
   // 只绑回环，不对外暴露。
-  const healthPort = Number(process.env.WORKER_HEALTH_PORT ?? process.env.PORT ?? 13000)
+  // SCHEDULER_HEALTH_PORT 是 spec 给调度面的预留别名（缺省/空 = 跟随 WORKER_HEALTH_PORT）。
+  // ⚠️ 用 `||` 不用 `??`：.env 里 `SCHEDULER_HEALTH_PORT=` 会给出**空串**，`??` 视其为已设，
+  // 而 `Number('') === 0` ⇒ 监听随机端口、与镜像 HEALTHCHECK 脱钩（同 loop.ts 记录过的坑）。
+  const healthPort = Number(
+    process.env.SCHEDULER_HEALTH_PORT || process.env.WORKER_HEALTH_PORT || process.env.PORT || 13000,
+  )
+  if (!Number.isSafeInteger(healthPort) || healthPort <= 0) {
+    throw new Error(`notify-worker: 健康端点端口非法（当前 ${JSON.stringify(healthPort)}）`)
+  }
   const { createServer } = await import('node:http')
   const healthServer = createServer(async (req, res) => {
     if (req.url !== '/healthz') { res.writeHead(404); res.end('not found'); return }
     try {
       const { rows } = await pool.query(
         "select 1 from notify.worker_heartbeat where beat_at > now()-interval '2 minutes'")
-      const ok = rows.length > 0
-      res.writeHead(ok ? 200 : 503, { 'content-type': 'text/plain' })
-      res.end(ok ? 'ok' : 'stale heartbeat')
+      // 判定是纯函数（worker-healthz.ts）：调度关闭时不看 jobHealth；
+      // 开着就必须求值（求值抛错走 catch ⇒ 503，不假绿）。
+      const schedulerHealth = schedulerEnabled && jobHealthFn
+        ? await jobHealthFn(pool, new Date())
+        : null
+      const h = workerHealthz({
+        notifyFresh: rows.length > 0,
+        schedulerEnabled,
+        jobHealth: schedulerHealth,
+      })
+      res.writeHead(h.status, { 'content-type': 'text/plain' })
+      res.end(h.body)
     } catch (e) {
       res.writeHead(503, { 'content-type': 'text/plain' })
       res.end(e instanceof Error ? e.message : String(e))
@@ -136,6 +179,20 @@ if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) 
 
   try {
     do {
+      // 调度 loop 与本拍投递**顺序串行**：tick 只起子进程即返回（不 await 子进程），
+      // 但这里仍 await tick 本身 ⇒ 不会叠加并发 tick（本进程单节拍）。
+      if (scheduler && Date.now() - lastSchedulerTick >= schedulerTickMs) {
+        lastSchedulerTick = Date.now()
+        try {
+          const stats = await scheduler.tick()
+          if (stats.claimed > 0 || stats.reaped > 0) {
+            console.log(JSON.stringify({ ts: new Date().toISOString(), schedulerTick: stats }))
+          }
+        } catch (e) {
+          // 调度一拍失败不能拖垮投递（各自 try/catch），但必须留痕。
+          console.error('scheduler tick 失败:', e instanceof Error ? e.message : e)
+        }
+      }
       try {
         const s = await runOnceCli(pool, getEventDecl, process.env, resolveScopeHolderNames, deptMembers)
         const staleQueued = await drainStaleAlerts()
