@@ -11,6 +11,10 @@
 
 ## [Unreleased]
 
+## [0.284.0](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.283.0...v0.284.0) - 2026-11-14
+- 【新增】data: R5 叙事质量数据面探针（接 OO probes → 企微） (#2233) ([#2234](https://github.com/MYTech-Co-LTD/platform-core/pull/2234), [80fee76](https://github.com/MYTech-Co-LTD/platform-core/commit/80fee76c000c8ef1e3eb4a4271c03d559c96146b))
+
+
 ## [0.283.0](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.282.0...v0.283.0) - 2026-11-14
 - 【新增】data: 调度器通知接缝（W6-P2）——SchedulerPort + notify.emit + 一次性延迟 ([#2230](https://github.com/MYTech-Co-LTD/platform-core/pull/2230), [f13de86](https://github.com/MYTech-Co-LTD/platform-core/commit/f13de86d63ae70aa87f0f6fdf456c2a0b5f2f8a2))
 
