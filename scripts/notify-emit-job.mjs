@@ -7,18 +7,26 @@
 //   2 = 参数、声明、namespace 不可用 ⇒ 不重试
 //   1 = 其它错误（DB 等）⇒ 可重试
 //
-// 调度器注入：JOB_SCHEDULE_ID / JOB_OCCURRENCE / JOB_PARAMS / JOB_OWNER_ORG /
-//             JOB_OWNER_NAMESPACE / JOB_TIMEZONE（可选）。
+// 调度器注入：JOB_KEY / JOB_SCHEDULE_ID / JOB_OCCURRENCE / JOB_OWNER_ORG /
+//             JOB_OWNER_NAMESPACE / JOB_TIMEZONE（可选）；JOB_PARAMS 走 **stdin**。
 import { createRequire } from 'node:module'
 import { pathToFileURL } from 'node:url'
 import { runScheduledEmitJob } from '../modules/notify/domain/scheduled-emit.ts'
 import { enqueueEvent } from '../modules/notify/storage.ts'
 
+/** 读 stdin 的一行 JSON；TTY（手动运行却忘了 pipe）返回空串，由调用方 exit 2。 */
+async function readStdin() {
+  if (process.stdin.isTTY) return ''
+  const chunks = []
+  for await (const chunk of process.stdin) chunks.push(chunk)
+  return Buffer.concat(chunks).toString('utf8').trim()
+}
+
 if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
   const url = process.env.DATABASE_URL
+  const jobKey = process.env.JOB_KEY
   const scheduleId = process.env.JOB_SCHEDULE_ID
   const occurrence = process.env.JOB_OCCURRENCE
-  const rawParams = process.env.JOB_PARAMS
   const org = process.env.JOB_OWNER_ORG
   const namespace = process.env.JOB_OWNER_NAMESPACE || undefined
   const timezone = process.env.JOB_TIMEZONE || 'Asia/Shanghai'
@@ -30,12 +38,16 @@ if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) 
   }
 
   if (!url) configError('缺 DATABASE_URL')
+  if (jobKey !== undefined && jobKey !== 'notify.emit') {
+    configError(`JOB_KEY 不是 notify.emit（${jobKey}）`)
+  }
   if (!scheduleId) configError('缺 JOB_SCHEDULE_ID')
   if (!occurrence || Number.isNaN(new Date(occurrence).getTime())) {
     configError('JOB_OCCURRENCE 缺失或非法')
   }
-  if (!rawParams) configError('缺 JOB_PARAMS')
   if (!org) configError('缺 JOB_OWNER_ORG')
+  const rawParams = await readStdin()
+  if (!rawParams) configError('缺 JOB_PARAMS（stdin）')
 
   const { Pool } = createRequire(import.meta.url)('pg')
   const pool = new Pool({ connectionString: url })

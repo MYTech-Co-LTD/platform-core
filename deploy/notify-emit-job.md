@@ -11,15 +11,25 @@
 
 ## 调度器注入的 env
 
-| env | 必填 | 语义 |
-|---|---|---|
-| `DATABASE_URL` | 是 | 平台库 |
-| `JOB_SCHEDULE_ID` | 是 | `platform.job_schedule.id` |
-| `JOB_OCCURRENCE` | 是 | 本次 occurrence（UTC ISO） |
-| `JOB_PARAMS` | 是 | 事件参数 JSON，≤16KB |
-| `JOB_OWNER_ORG` | 是 | 事件归属租户；**系统排班的 `notify.emit` 也必须带**（通知是租户级的） |
-| `JOB_OWNER_NAMESPACE` | agent 排班必填 | `ext.<namespace>.<event>` 的命名空间 |
-| `JOB_TIMEZONE` | 否 | 默认 `Asia/Shanghai`，用于 `{{date}}` |
+| 通道 | 键 | 必填 | 语义 |
+|---|---|---|---|
+| env | `DATABASE_URL` | 是 | 平台库 |
+| env | `JOB_KEY` | 否 | 若提供必须是 `notify.emit` |
+| env | `JOB_SCHEDULE_ID` | 是 | `platform.job_schedule.id` |
+| env | `JOB_OCCURRENCE` | 是 | claim 到的那一格 bucket（UTC ISO） |
+| env | `JOB_OWNER_ORG` | 是 | 事件归属租户；**系统排班的 `notify.emit` 也必须带**（通知是租户级的） |
+| env | `JOB_OWNER_NAMESPACE` | agent 排班必填 | `ext.<namespace>.<event>` 的命名空间 |
+| env | `JOB_TIMEZONE` | 否 | 默认 `Asia/Shanghai`，用于 `{{date}}` |
+| **stdin** | `JOB_PARAMS` | 是 | 一行 JSON，≤16KB；**不走 env**（`/proc/<pid>/environ` 对同机进程可见） |
+
+手动跑：
+
+```bash
+printf '%s' '{"eventKey":"ext.demo.daily","payload":{}}' \
+  | JOB_KEY=notify.emit JOB_SCHEDULE_ID=1 JOB_OCCURRENCE=2026-11-14T01:00:00Z \
+    JOB_OWNER_ORG=mytech JOB_OWNER_NAMESPACE=demo \
+    pnpm exec tsx scripts/notify-emit-job.mjs
+```
 
 ## `JOB_PARAMS`
 
