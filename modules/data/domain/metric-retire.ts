@@ -13,7 +13,7 @@ import { PENDING_STATUSES, submitChange } from './metric-change'
 import { retireCandidatesOf } from './metric-usage'
 import type { RetireCandidate } from './metric-usage'
 import { metricIdsOf } from './report-scope'
-import type { MetricIdPanel } from './report-scope'
+import { parseStoredSpec } from './report-spec'
 
 /** 合格候选：候选池再过三道安全闸。referenced 恒 false——被引用的在过滤期已剔除（结构自证）。 */
 export interface RetireEligible {
@@ -37,7 +37,14 @@ export interface RetireProposalResult {
   proposed: number
   /** 安全过滤挡下的候选数（候选池 − 合格清单）：job 汇总行据此可见「挡了多少」。 */
   skipped: number
-  /** 提交期被拒数（如并发窗口撞出未决单 409）：不是异常，job 计数后继续下一候选。 */
+  /**
+   * 提单动作本身被拒的候选数（submitChange 返回 !ok）：不是异常，计完继续下一候选。
+   * ⚠️ 并发双跑**主要不走这条路**：submitChange 提交期会自动 supersede 同 (org, metric_id)
+   * 的旧未决单，两个 job 都返回 ok——后到顶掉先到，`failed` 只剩唯一索引
+   * `metric_change_one_pending_uq` 在真并发窗口命中的 23505（映射 409）会进来。
+   * 不变式不因计数漂移：同 (org, metric_id) 未决单至多一张由唯一索引保证（static）；
+   * 双跑的现实症状是 proposed 少一张（先到的单被顶成 superseded），job 侧幂等重跑可自愈。
+   */
   failed: number
   tickets: Array<{ metricId: string; changeId: number }>
 }
@@ -55,24 +62,31 @@ export async function retireOrgs(pool: Pool): Promise<string[]> {
 
 /**
  * 报表引用面：**草稿**（data.reports.spec）与**已发布快照**（data.report_versions.spec）的并集，
- * 同 org 作用域。JS 侧走 `spec.panels[]` 的 `metricId` + kpi `denominatorMetricId`——
- * 复用 metricIdsOf（发布门/观看面同一把尺，text/ai_text 面板与降级占位符天然返回空）。
- * spec 为 null（metabase 渲染）或 panels 不是数组（手改行）⇒ 跳过，不猜形状。
+ * 同 org 作用域。存储原文可能是 **IR v2 形态**（`{ir:2, datasets, blocks}`，指标在
+ * `datasets[].metricId`，report-spec.ts「V5 起新写入保留 v2、读面必须 parseStoredSpec 归一」
+ * ——v2 没有 panels 键，按「panels 不是数组就跳过」是 fail-open：在用指标被提删、reason 谎报
+ * 「报表引用已排除」）⇒ 遍历前**一律过 parseStoredSpec**（v2 扁平化会把 datasets 的指标内联进
+ * panels），归一后走 `metricIdsOf`（发布门/观看面同一把尺：kpi 分母计入，text/ai_text 与
+ * 降级占位符天然空）。
+ * 只有 spec 为 null（metabase 渲染，合法缺席，静默）或**非空但解析失败**（跳过该行并
+ * console.warn 留痕——不猜形状，也不让一行坏 spec 拖垮整租户的引用面）才跳过。
  */
 async function referencedMetricIdsOf(pool: Pool, org: string): Promise<Set<string>> {
   const { rows } = await pool.query(
-    `select spec from data.reports where org = $1
+    `select id, spec from data.reports where org = $1
       union all
-     select spec from data.report_versions where org = $1`, [org])
+     select id, spec from data.report_versions where org = $1`, [org])
   const referenced = new Set<string>()
   for (const row of rows) {
-    const spec = row.spec as unknown
-    if (spec === null || typeof spec !== 'object') continue
-    const panels = (spec as { panels?: unknown }).panels
-    if (!Array.isArray(panels)) continue
-    for (const panel of panels) {
-      if (panel === null || typeof panel !== 'object') continue
-      for (const id of metricIdsOf(panel as MetricIdPanel)) referenced.add(id)
+    const parsed = parseStoredSpec(row.spec)
+    if (!parsed.ok) {
+      if (row.spec !== null && row.spec !== undefined) {
+        console.warn(`[metric-retire] org=${org} 报表 spec 非空但解析失败（${parsed.code}），引用排除跳过该行 id=${row.id}`)
+      }
+      continue
+    }
+    for (const panel of parsed.spec.panels) {
+      for (const id of metricIdsOf(panel)) referenced.add(id)
     }
   }
   return referenced
@@ -85,8 +99,11 @@ async function referencedMetricIdsOf(pool: Pool, org: string): Promise<Set<strin
  *    观察窗口，别把刚上线的指标判死；
  * ③ 不被任何报表引用——草稿与已发布快照都查，面板 metricId 与 kpi 分母都算（见
  *    referencedMetricIdsOf）；在用指标提删是最贵的误报；
- * ④ 已有未决单 ⇒ 跳过——人还没裁决完的 id 不叠第二张单（`metric_change_one_pending_uq`
- *    兜底并发，这里先查避免无谓 409）。
+ * ④ 已有未决单**或人已驳回** ⇒ 跳过——未决的 id 不叠第二张单；驳回是人的明确决定，
+ *    job 不跟人拉锯（否则「驳回 → 下一轮 job 原样重提」死循环）。`metric_change_one_pending_uq`
+ *    只兜未决并发，rejected 要自己排。回头路是真实变化：指标后来又有使用再归零时 updated_at
+ *    会刷新、重新给满一个窗口，届时重提是「新证据」不是复读（superseded/withdrawn 不排——
+ *    withdrawn 是提案方自己撤的，不构成人的否决）。
  */
 async function safetyFilterOf(
   pool: Pool, org: string, days: number, candidates: RetireCandidate[],
@@ -98,17 +115,17 @@ async function safetyFilterOf(
       where org = $1 and source = 'l2' and updated_at < now() - make_interval(days => $2::int)`,
     [org, days])
   const agedIds = new Set(aged.rows.map((r) => String(r.id)))
-  // ④ 未决单：同 org 已有三态单的 id 一律跳过。
-  const pending = await pool.query(
+  // ④ 未决 ∪ 已驳回：同 org 这些 id 一律跳过（adopted 行已被删，本就不在候选池）。
+  const blocked = await pool.query(
     'select distinct metric_id from data.metric_change where org = $1 and status = any($2)',
-    [org, PENDING_STATUSES])
-  const pendingIds = new Set(pending.rows.map((r) => String(r.metric_id)))
+    [org, [...PENDING_STATUSES, 'rejected']])
+  const blockedIds = new Set(blocked.rows.map((r) => String(r.metric_id)))
   // ③ 报表引用（草稿 ∪ 已发布快照，org 作用域）。
   const referenced = await referencedMetricIdsOf(pool, org)
   return candidates
     .filter((c) => agedIds.has(c.metricId))
     .filter((c) => !referenced.has(c.metricId))
-    .filter((c) => !pendingIds.has(c.metricId))
+    .filter((c) => !blockedIds.has(c.metricId))
     .map((c) => ({ ...c, referenced: false as const }))
 }
 
@@ -119,9 +136,10 @@ export async function retireEligibleOf(pool: Pool, org: string, days: number): P
 
 /**
  * 对本租户的合格候选逐个提 delete 档变更单（`{reason}` = retireReasonOf(days)）。
- * 返回 {proposed, skipped, failed, tickets}：skipped = 安全过滤挡下的候选池数，
- * failed = submitChange 拒绝数（提交期并发撞未决单等 4xx；不是异常，不中断批次）。
- * 域层不跑试算（delete 档试算 = 删前口径快照，由提交面自动跑/人在待核对页补跑）。
+ * 返回 {proposed, skipped, failed, tickets}：skipped = 安全过滤挡下的候选池数
+ * （含未决/已驳回），failed = submitChange 拒绝数（计数语义见 RetireProposalResult.failed
+ * 头注——并发双跑主要走 supersede，不走拒绝）。域层不跑试算（delete 档试算 = 删前口径
+ * 快照，由提交面自动跑/人在待核对页补跑）。
  */
 export async function submitRetireProposals(
   pool: Pool, org: string, days: number, submitter: RetireSubmitter,

@@ -1,11 +1,12 @@
 // metric-retire.test.ts — 下线提案域层（尾波 2026-11-14）：安全过滤四条 + 自动提单。
 // 只钉域层判定与提单行为（job 脚本 / console 展示是后续面）。隔离键 org-retire-*；
 // 真库用例自建夹具（同 metric-usage.test.ts 约定），空库可绿。
-import { afterAll, beforeAll, describe, expect, it } from 'vitest'
+import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest'
 import { Pool } from 'pg'
 import { applyMigrations } from '../test-util'
 import { upsertL1Metric, upsertMetric } from './metric-store'
-import { adoptChange, submitChange } from './metric-change'
+import { adoptChange, rejectChange, submitChange } from './metric-change'
+import { parseStoredSpec } from './report-spec'
 import type { MetricWriteDeps } from './metric-write'
 import type { MetricDef, Requester } from './authz'
 import { retireEligibleOf, retireOrgs, submitRetireProposals } from './metric-retire'
@@ -17,6 +18,8 @@ const ORG = 'org-retire-w1'
 const OTHER = 'org-retire-w1-other'
 /** 窗口口径（天）：夹具行龄 31 天 > 30，太新行 updated_at = now。 */
 const DAYS = 30
+/** 驳回不重提用第二把隔离键：自建提单→驳回→重跑闭环，不与 ORG 的提单时序互相踩。 */
+const ORG2 = 'org-retire-w1-b'
 
 // ── 夹具 id（retire:w1: 前缀，文件专属）─────────────────────────────────────
 // E 是四条过滤的**公共正例**：L2 + 窗口 0 次 + 够龄 + 无引用 + 无未决单 ⇒ 唯一合格候选。
@@ -26,7 +29,9 @@ const R_NEW = 'retire:w1:too_new'        // 反例②：行太新（updated_at =
 const R_DRAFT = 'retire:w1:ref_draft'    // 反例③a：被草稿 spec（data.reports）引用
 const R_PUB = 'retire:w1:ref_pub'        // 反例③b：只被已发布快照（report_versions）引用
 const R_DENOM = 'retire:w1:ref_denom'    // 反例③c：只被 kpi 分母（denominatorMetricId）引用
+const R_V2 = 'retire:w1:ref_v2'          // 反例③d：只被 IR v2 形态 spec（datasets[].metricId）引用
 const R_PEND = 'retire:w1:pending'       // 反例④：已有未决单
+const M_REPR = 'retire:w1:repr'          // ORG2：驳回不重提闭环夹具
 
 const L1_ID = 'retire:w1:l1_fixture'
 const L1_FIXTURE = {
@@ -63,19 +68,23 @@ beforeAll(async () => {
   pool = new Pool({ connectionString: dbUrl })
   await applyMigrations(pool)
   // 隔离键自清扫（重跑幂等）：org 专属行 + 平台桶 L1 夹具行（精确 id）。
-  await pool.query('delete from data.metric_change where org = any($1)', [[ORG, OTHER]])
+  await pool.query('delete from data.metric_change where org = any($1)', [[ORG, OTHER, ORG2]])
   await pool.query('delete from data.reports where org = any($1)', [[ORG, OTHER]])
-  await pool.query('delete from data.query_audit where org = $1', [ORG])
-  await pool.query('delete from data.metrics where org = $1', [ORG])
+  await pool.query('delete from data.query_audit where org = any($1)', [[ORG, ORG2]])
+  await pool.query('delete from data.metrics where org = any($1)', [[ORG, ORG2]])
   await pool.query("delete from data.metrics where org = 'platform' and source = 'l1' and id = $1", [L1_ID])
 
-  // ── L2 夹具：七个 id 一把落（creator 必在——下线候选要能找到人）──────────
+  // ── L2 夹具：八个 id 一把落（creator 必在——下线候选要能找到人）──────────
   for (const [id, title] of [
     [E, '合格候选'], [R_USED, '窗口内用过'], [R_NEW, '太新的行'],
-    [R_DRAFT, '草稿引用'], [R_PUB, '已发布引用'], [R_DENOM, '分母引用'], [R_PEND, '已有未决单'],
+    [R_DRAFT, '草稿引用'], [R_PUB, '已发布引用'], [R_DENOM, '分母引用'], [R_V2, 'v2引用'],
+    [R_PEND, '已有未决单'],
   ] as const) {
     await upsertMetric(pool, ORG, def(id, title), 'u-retire-creator')
   }
+  // ORG2：驳回不重提闭环夹具（同样要够龄—— aged 走同一把刷）。
+  await upsertMetric(pool, ORG2, def(M_REPR, '驳回重提夹具'), 'u-retire-creator')
+  await pool.query('update data.metrics set updated_at = now() - interval \'31 days\' where org = $1', [ORG2])
   // 行龄：除「太新」外全部回拨到 31 天前（> 30 天窗口）。
   await pool.query('update data.metrics set updated_at = now() - interval \'31 days\' where org = $1 and id <> $2', [ORG, R_NEW])
 
@@ -94,11 +103,19 @@ beforeAll(async () => {
        ($1, 'retire-w1-pub',      '下线引用·已发布', 910002, 'platform', $3::jsonb),
        ($1, 'retire-w1-kpi',      '下线引用·分母',   910003, 'platform', $4::jsonb),
        ($1, 'retire-w1-metabase', '下线引用·无spec', 910004, 'metabase', null),
-       ($5, 'retire-w1-other',    '跨租户引用',      910005, 'platform', $2::jsonb)`,
+       ($1, 'retire-w1-v2',       '下线引用·IRv2',   910006, 'platform', $5::jsonb),
+       ($1, 'retire-w1-bad',      '下线引用·坏spec', 910007, 'platform', $6::jsonb),
+       ($7, 'retire-w1-other',    '跨租户引用',      910005, 'platform', $2::jsonb)`,
     [ORG,
-      JSON.stringify({ panels: [{ chart: 'table', metricId: R_DRAFT }] }),
-      JSON.stringify({ panels: [{ chart: 'table', metricId: 'retire:w1:moved_on' }] }),
-      JSON.stringify({ panels: [{ chart: 'kpi', metricId: 'retire:w1:kpi_main', denominatorMetricId: R_DENOM }] }),
+      // ⚠️ v1 夹具面板必须过 parseStoredSpec 的严格形状（title 必填、kpi format 必填）——
+      // 存储里的 spec 都出自 parseReportSpec，这就是生产形状；缺 title 会被当「解析失败」跳过。
+      JSON.stringify({ panels: [{ chart: 'table', title: '草稿引用', metricId: R_DRAFT }] }),
+      JSON.stringify({ panels: [{ chart: 'table', title: 'moved on', metricId: 'retire:w1:moved_on' }] }),
+      JSON.stringify({ panels: [{ chart: 'kpi', title: '分母引用', metricId: 'retire:w1:kpi_main', format: 'number', denominatorMetricId: R_DENOM }] }),
+      // IR v2 存储形态（V5 起写入保留 v2）：指标在 datasets[].metricId，panels 键不存在
+      JSON.stringify({ ir: 2, datasets: [{ key: 'd1', metricId: R_V2 }], blocks: [{ type: 'table', dataset: 'd1', title: 'v2 引用' }] }),
+      // 非空但解析失败的 spec（ir 既非 2 也非 v1 合法形状）⇒ 跳过 + warn 留痕
+      JSON.stringify({ ir: 9, junk: true }),
       OTHER,
     ],
   )
@@ -106,22 +123,35 @@ beforeAll(async () => {
   await pool.query(
     `insert into data.report_versions (id, org, report_id, version, title, spec, draft_version, published_by)
      values ('retire-w1-ver-1', $1, 'retire-w1-pub', 1, '下线引用·已发布', $2::jsonb, 1, 'test')`,
-    [ORG, JSON.stringify({ panels: [{ chart: 'table', metricId: R_PUB }] })],
+    [ORG, JSON.stringify({ panels: [{ chart: 'table', title: '快照引用', metricId: R_PUB }] })],
   )
 
   // 反例④夹具：给 R_PEND 手工立一张未决单（delete 档空对象；行在 ⇒ 预检过）。
   const pend = await submitChange(pool, ORG, { userId: 'u-human', channel: 'session' }, R_PEND, 'delete', {})
   expect(pend.ok).toBe(true)
 
+  // v2 夹具自检：存储原文必须真的走 v2 解析（ir:2）——否则排除断言会因「解析失败被跳过」
+  // 而假绿（跳过路径同样不含 R_V2，两种原因要分得开）。
+  const v2Raw = { ir: 2, datasets: [{ key: 'd1', metricId: R_V2 }], blocks: [{ type: 'table', dataset: 'd1', title: 'v2 引用' }] }
+  expect(parseStoredSpec(v2Raw)).toMatchObject({ ok: true, ir: 2 })
+  // v1 夹具同款自检：三个引用 spec 必须都解析成功（ir:1），否则同样假绿。
+  for (const raw of [
+    { panels: [{ chart: 'table', title: '草稿引用', metricId: R_DRAFT }] },
+    { panels: [{ chart: 'table', title: 'moved on', metricId: 'retire:w1:moved_on' }] },
+    { panels: [{ chart: 'kpi', title: '分母引用', metricId: 'retire:w1:kpi_main', format: 'number', denominatorMetricId: R_DENOM }] },
+  ]) {
+    expect(parseStoredSpec(raw)).toMatchObject({ ok: true, ir: 1 })
+  }
+
   // L1 夹具：平台桶（L1 永不进候选的断言对象）。
   await upsertL1Metric(pool, L1_FIXTURE)
 })
 
 afterAll(async () => {
-  await pool.query('delete from data.metric_change where org = any($1)', [[ORG, OTHER]]).catch(() => {})
+  await pool.query('delete from data.metric_change where org = any($1)', [[ORG, OTHER, ORG2]]).catch(() => {})
   await pool.query('delete from data.reports where org = any($1)', [[ORG, OTHER]]).catch(() => {})
-  await pool.query('delete from data.query_audit where org = $1', [ORG]).catch(() => {})
-  await pool.query('delete from data.metrics where org = $1', [ORG]).catch(() => {})
+  await pool.query('delete from data.query_audit where org = any($1)', [[ORG, ORG2]]).catch(() => {})
+  await pool.query('delete from data.metrics where org = any($1)', [[ORG, ORG2]]).catch(() => {})
   await pool.query("delete from data.metrics where org = 'platform' and source = 'l1' and id = $1", [L1_ID]).catch(() => {})
   await pool.end().catch(() => {})
 })
@@ -136,10 +166,11 @@ describePg('retireEligibleOf（需要 DATABASE_URL）', () => {
     expect(ids).not.toContain(R_USED)
     // 反例②：行太新（updated_at 不早于 now−days）
     expect(ids).not.toContain(R_NEW)
-    // 反例③：报表引用（草稿 / 已发布快照 / kpi 分母，三形态各自独立挡下）
+    // 反例③：报表引用（草稿 / 已发布快照 / kpi 分母 / IR v2 存储，四形态各自独立挡下）
     expect(ids).not.toContain(R_DRAFT)
     expect(ids).not.toContain(R_PUB)
     expect(ids).not.toContain(R_DENOM)
+    expect(ids).not.toContain(R_V2)
     // 反例④：已有未决单
     expect(ids).not.toContain(R_PEND)
     // 合格候选带全展示字段：referenced 恒 false（被引用的在过滤期已剔除）
@@ -153,6 +184,46 @@ describePg('retireEligibleOf（需要 DATABASE_URL）', () => {
     // OTHER 的报表面板引用了 E —— org 作用域的引用查询必须看不见它。
     const eligible = await retireEligibleOf(pool, ORG, DAYS)
     expect(eligible.map((c) => c.metricId)).toContain(E)
+  })
+
+  it('IR v2 存储形态也算引用（datasets[].metricId；读面必须 parseStoredSpec 归一）', async () => {
+    // v2 报表没有 panels 键——旧「panels 不是数组就跳过」的 fail-open 会漏判它，
+    // 且单据 reason 会谎报「报表引用已排除」。R_V2 只出现在 v2 spec 的 datasets 里。
+    const eligible = await retireEligibleOf(pool, ORG, DAYS)
+    expect(eligible.map((c) => c.metricId)).not.toContain(R_V2)
+  })
+
+  it('解析失败的 spec：跳过该行但 console.warn 留痕（非 null 才 warn；null 的 metabase 行静默）', async () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {})
+    try {
+      // badspec 行（{ir:9,...} 非空垃圾）⇒ warn 一次；metabase 行（spec null）⇒ 不 warn。
+      const eligible = await retireEligibleOf(pool, ORG, DAYS)
+      expect(eligible.map((c) => c.metricId)).toEqual([E]) // 坏行不拖垮也不误伤
+      const messages = warn.mock.calls.map((a) => String(a[0]))
+      expect(messages.some((m) => m.includes('[metric-retire]'))).toBe(true)
+      expect(messages.filter((m) => m.includes('retire-w1-bad')).length).toBe(1)
+    } finally {
+      warn.mockRestore()
+    }
+  })
+
+  it('驳回不重提：rejected 单在案 ⇒ 重跑不再对同一指标提单（org2 独立闭环）', async () => {
+    const submitter = { userId: 'metric-retire-job', channel: 'job' }
+    // 第一轮：M_REPR 是 ORG2 唯一合格候选 ⇒ 提单
+    const first = await submitRetireProposals(pool, ORG2, DAYS, submitter)
+    expect(first.proposed).toBe(1)
+    expect(first.tickets.map((t) => t.metricId)).toEqual([M_REPR])
+    // 人驳回（明确决定）
+    const rejected = await rejectChange(pool, ORG2, first.tickets[0]!.changeId, 'reviewer', '先留着，Q4 复核')
+    expect(rejected).toBe(true)
+    // 第二轮：rejected 不在排除集 ⇒ 旧代码会重提一张同款单（回归点）；修后 proposed=0
+    const second = await submitRetireProposals(pool, ORG2, DAYS, submitter)
+    expect(second.proposed).toBe(0)
+    expect(second.tickets).toEqual([])
+    const rows = await pool.query(
+      `select status, count(*)::int as n from data.metric_change where org = $1 and metric_id = $2 group by status`,
+      [ORG2, M_REPR])
+    expect(rows.rows).toEqual([{ status: 'rejected', n: 1 }]) // 恰一张，且是驳回那张
   })
 
   it('L1 永不进候选（平台口径行，下线走代码评审不走提单）', async () => {
