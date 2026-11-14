@@ -32,9 +32,15 @@ api:
     - { method: GET,    path: /inbox,             scope: notify:view }
     - { method: POST,   path: /inbox/:id/read,    scope: notify:view }
     - { method: POST,   path: /inbox/read-all,    scope: notify:view }
-    # 事件目录（只读；来自宿主注入的 reader）
+    # 事件目录（只读；宿主注入的平台目录 + 租户/agent 声明 N1 双平面）
     - { method: GET,    path: /events,                  scope: notify:view }
     - { method: GET,    path: /events/:key,             scope: notify:view }
+    # 租户/agent 命名空间与事件声明（N1）：GET 读；POST 写（owner 校验在路由内）
+    - { method: GET,    path: /agent/namespaces,        scope: notify:view }
+    - { method: POST,   path: /agent/namespaces,        scope: notify:manage }
+    - { method: GET,    path: /agent/events,            scope: notify:view }
+    - { method: GET,    path: /agent/events/:key,       scope: notify:view }
+    - { method: POST,   path: /agent/events,            scope: notify:manage }
     # 模板：草稿/预览/发布
     - { method: GET,    path: /templates,               scope: notify:view }
     - { method: GET,    path: /templates/:key,          scope: notify:view }

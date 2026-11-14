@@ -275,6 +275,11 @@ export interface ModulePorts {
    * 幂等：同 `(org, event_id)` 重复调用返回 `{accepted:false, reason:'duplicate'}`。
    */
   enqueueEvent?(input: EnqueueEventInput): Promise<{ accepted: boolean; reason?: string }>
+  /**
+   * 租户/agent 事件声明解析（notify 模块供给；N1 双平面）。
+   * 宿主 `ctx.notify.emit` 在 manifest 目录未命中时用它兜底 `ext.*`；平台事件仍走内存目录。
+   */
+  resolveEventDecl?(org: string, key: string): Promise<NotificationEventDecl | null>
 }
 
 /**

@@ -3,18 +3,23 @@
 // 校验面只有这一处：模块只拿宿主包装后的 ctx.notify，不直接拿 notify 的 port。
 import { validatePayload } from '@platform/sdk'
 import type {
-  EnqueueEventInput, EventCatalogReader, Identity, NotifyPort,
+  EnqueueEventInput, EventCatalogReader, Identity, NotificationEventDecl, NotifyPort,
 } from '@platform/sdk'
 
 export function buildNotifyPort(deps: {
   catalog: EventCatalogReader
   enqueue?: (input: EnqueueEventInput) => Promise<{ accepted: boolean; reason?: string }>
+  /** N1 双平面：manifest 目录未命中时，从 notify 模块解析租户/agent 事件。 */
+  resolveEventDecl?: (org: string, key: string) => Promise<NotificationEventDecl | null>
 }): NotifyPort {
   return {
     async emit(identity: Identity, input) {
       if (!identity?.orgId) return { accepted: false, reason: 'org_required' }
 
-      const decl = deps.catalog.get(input.eventKey)
+      let decl = deps.catalog.get(input.eventKey)
+      if (!decl && deps.resolveEventDecl) {
+        decl = await deps.resolveEventDecl(identity.orgId, input.eventKey) ?? undefined
+      }
       if (!decl) return { accepted: false, reason: 'event_not_declared' }
 
       if (!input.eventId || input.eventId.trim() === '') {
@@ -39,8 +44,10 @@ export function buildNotifyPort(deps: {
         eventKey: input.eventKey,
         scope: input.scope ?? '*',
         payload: input.payload,
-        // 事件 key 的第一段 = manifest.id（manifest schema 强约束），故可作为 producer。
-        producer: decl.key.slice(0, decl.key.indexOf('.')),
+        // 平台事件：第一段 = manifest.id；租户事件：producer = ext:<namespace>（审计可归属）。
+        producer: decl.key.startsWith('ext.')
+          ? `ext:${decl.key.split('.')[1]}`
+          : decl.key.slice(0, decl.key.indexOf('.')),
       })
     },
   }

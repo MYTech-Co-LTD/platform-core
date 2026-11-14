@@ -82,6 +82,17 @@ describe('runOnce', () => {
     expect(f.marks).toEqual([{ status: 'matched' }])
   })
 
+  it('事件声明解析带 org（N1 双平面）', async () => {
+    const seen: Array<[string, string]> = []
+    const f = makeDeps({
+      getEventDecl: async (org, key) => { seen.push([org, key]); return decl },
+    })
+    await runOnce(f.deps)
+    // 一次在事件级 invalid 检查，一次在 resolveDeliverability 内——都必须带 org。
+    expect(seen.length).toBeGreaterThanOrEqual(1)
+    expect(seen.every(([o, k]) => o === 'o' && k === 'm.a.b')).toBe(true)
+  })
+
   it('无规则 ⇒ no_rules；冷却命中 ⇒ suppressed 且不发送', async () => {
     const noRules = makeDeps({ listRules: async () => [] })
     await runOnce(noRules.deps)

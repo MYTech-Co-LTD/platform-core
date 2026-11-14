@@ -4,7 +4,9 @@
 import { randomUUID } from 'node:crypto'
 import type { Hono } from 'hono'
 import type { Pool } from 'pg'
-import type { ChannelAddressResolver, EventCatalogReader, Identity } from '@platform/sdk'
+import type {
+  ChannelAddressResolver, EventCatalogReader, Identity, NotificationEventDecl,
+} from '@platform/sdk'
 import { validatePayload } from '@platform/sdk'
 import { NOTIFY_TOOLS } from './mcp-tools'
 import { resolveDeliverability } from './domain/deliverability'
@@ -13,9 +15,9 @@ import { renderContents } from './domain/render'
 import { validateRule } from './domain/rules'
 import { samplePayload, validateContents } from './domain/template'
 import {
-  audit, createTemplateRevision, getChannel, getPublishedTemplate, getTemplate, insertDelivery, listChannels,
-  listDeliveries, listEnabledChannelIds, listPublishedTemplateKeys, listRules,
-  setRuleEnabled, upsertRule,
+  audit, createTemplateRevision, getChannel, getEventDecl, getPublishedTemplate, getTemplate,
+  insertDelivery, listChannels, listDeliveries, listEnabledChannelIds, listEventDecls,
+  listPublishedTemplateKeys, listRules, setRuleEnabled, upsertRule,
 } from './storage'
 
 export const PROTOCOL_VERSION = '2025-06-18'
@@ -44,6 +46,13 @@ const str = (v: unknown): string => (typeof v === 'string' ? v.trim() : '')
 const arr = (v: unknown): string[] =>
   Array.isArray(v) ? v.filter((x): x is string => typeof x === 'string' && x.length > 0) : []
 
+/** 统一事件解析：`ext.*` 走租户声明，其余走平台 manifest 目录。 */
+async function resolveDecl(deps: McpDeps, key: string): Promise<NotificationEventDecl | null> {
+  return key.startsWith('ext.')
+    ? getEventDecl(deps.pool, deps.org, key)
+    : deps.events?.get(key) ?? null
+}
+
 export function toolDefs(): ToolDef[] {
   return NOTIFY_TOOLS.map(({ name, description, inputSchema }) => ({ name, description, inputSchema }))
 }
@@ -53,11 +62,15 @@ export async function callTool(
   name: string,
   args: Record<string, unknown>,
 ): Promise<McpToolResult> {
-  if (name === 'list_events') return ok({ events: deps.events?.list() ?? [] })
+  if (name === 'list_events') {
+    return ok({
+      events: [...(deps.events?.list() ?? []), ...await listEventDecls(deps.pool, deps.org)],
+    })
+  }
 
   if (name === 'get_event') {
     const key = str(args.eventKey)
-    const ev = key ? deps.events?.get(key) : undefined
+    const ev = key ? await resolveDecl(deps, key) : undefined
     return ev ? ok(ev) : err('event_not_found')
   }
 
@@ -75,7 +88,7 @@ export async function callTool(
       return err('missing_required')
     }
 
-    const decl = deps.events?.get(eventKey)
+    const decl = await resolveDecl(deps, eventKey)
     if (!decl) return err('event_not_declared')
 
     const [enabledChannels, published] = await Promise.all([
@@ -128,7 +141,7 @@ export async function callTool(
     }
     const t = await getTemplate(deps.pool, deps.org, key)
     if (!t) return err('not_found')
-    const decl = deps.events?.get(t.eventKey)
+    const decl = await resolveDecl(deps, t.eventKey)
     if (!decl) return err('event_not_declared')
 
     const channels = await listChannels(deps.pool, deps.org)
@@ -170,7 +183,7 @@ export async function callTool(
     const rule = (await listRules(deps.pool, deps.org)).find((x) => x.id === id)
     if (!rule) return err('not_found')
 
-    const decl = deps.events?.get(rule.eventKey)
+    const decl = await resolveDecl(deps, rule.eventKey)
     if (!decl) return err('event_not_declared')
 
     const warnings: string[] = []
@@ -182,7 +195,10 @@ export async function callTool(
     const r = await resolveDeliverability(
       { org: deps.org, rule, payload: given ?? samplePayload(decl) },
       {
-        getEventDecl: async (key) => deps.events?.get(key) ?? null,
+        getEventDecl: async (o, key) =>
+          key.startsWith('ext.')
+            ? getEventDecl(deps.pool, o, key)
+            : deps.events?.get(key) ?? null,
         getPublishedTemplate: async (org, key) => {
           const t = await getPublishedTemplate(deps.pool, org, key)
           return t ? { revision: t.revision, contents: t.contents } : null
@@ -219,7 +235,7 @@ export async function callTool(
     const t = await getTemplate(deps.pool, deps.org, templateKey)
     const rev = t?.revisions.find((x) => x.revision === t.publishedRevision)
     if (!t || !rev) return err('not_found')
-    const decl = deps.events?.get(t.eventKey)
+    const decl = await resolveDecl(deps, t.eventKey)
     if (!decl) return err('event_not_declared')
     const bad = validatePayload(decl, payload as Record<string, unknown>)
     if (bad) return err('payload_invalid', { detail: bad })

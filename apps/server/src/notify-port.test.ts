@@ -64,4 +64,27 @@ describe('buildNotifyPort', () => {
       eventKey: 'm.a.b', eventId: 'e', payload: { userId: 'u', link: 'https://x' },
     })).reason).toBe('notify_not_loaded')
   })
+
+  it('N1：manifest 未命中时从 resolveEventDecl 兜底 ext 事件，producer=ext:<ns>', async () => {
+    const extDecl: NotificationEventDecl = {
+      key: 'ext.agent_a.daily',
+      title: 'Daily',
+      payload: { user: { type: 'user', required: true } },
+      recipients: { assignee: { kind: 'field', field: 'user' } },
+    }
+    const calls: unknown[] = []
+    const port = buildNotifyPort({
+      catalog: { get: () => undefined, list: () => [] },
+      resolveEventDecl: async (org, key) =>
+        org === 'org1' && key === extDecl.key ? extDecl : null,
+      enqueue: async (x) => { calls.push(x); return { accepted: true } },
+    })
+    const r = await port.emit(id, {
+      eventKey: extDecl.key, eventId: 'e1', payload: { user: 'u1' },
+    })
+    expect(r.accepted).toBe(true)
+    expect(calls[0]).toMatchObject({
+      org: 'org1', eventKey: extDecl.key, producer: 'ext:agent_a',
+    })
+  })
 })

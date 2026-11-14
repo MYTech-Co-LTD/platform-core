@@ -5,7 +5,7 @@ import type { ChannelAddressResolver, NotificationEventDecl } from '@platform/sd
 import notifyV2 from './index'
 import { callTool, toolDefs } from './mcp'
 import { NOTIFY_TOOLS } from './mcp-tools'
-import { getTemplate } from './storage'
+import { createAgentNamespace, getTemplate, upsertEventDecl } from './storage'
 import { applyMigrations, buildTestApp, makeIdentity } from './test-util'
 
 const url = process.env.DATABASE_URL
@@ -61,6 +61,8 @@ describePg('notify mcp handlers', () => {
   })
 
   async function cleanup() {
+    await pool.query('delete from notify.event_decl where org=$1', [ORG])
+    await pool.query('delete from notify.agent_namespace where org=$1', [ORG])
     await pool.query('delete from notify.rule where org=$1', [ORG])
     await pool.query('delete from notify.delivery where org=$1', [ORG])
     await pool.query('delete from notify.channel where org=$1', [ORG])
@@ -126,6 +128,34 @@ describePg('notify mcp handlers', () => {
   it('check_rule：未知 id ⇒ 错误', async () => {
     const out = await callTool(deps(), 'check_rule', { id: 'nope' })
     expect(out.isError).toBe(true)
+  })
+
+  it('N1：list_events/get_event/propose_rule 能看见租户 ext 事件', async () => {
+    const decl: NotificationEventDecl = {
+      key: 'ext.agent_a.daily',
+      title: 'Daily',
+      scope: { key: 'day' },
+      payload: {
+        user: { type: 'user', required: true },
+        day: { type: 'string', required: true },
+      },
+      recipients: { assignee: { kind: 'field', field: 'user' } },
+    }
+    await createAgentNamespace(pool, ORG, {
+      namespace: 'agent_a', displayName: 'A', ownerUserId: 'u1',
+    })
+    expect(await upsertEventDecl(pool, ORG, 'agent_a', decl, 'u1'))
+      .toMatchObject({ ok: true, created: true, version: 1 })
+
+    const list = JSON.parse((await callTool(deps(), 'list_events', {})).text) as {
+      events: Array<{ key: string }>
+    }
+    expect(list.events.map((e) => e.key)).toContain(decl.key)
+    expect((await callTool(deps(), 'get_event', { eventKey: decl.key })).isError).toBe(false)
+    expect((await callTool(deps(), 'propose_rule', {
+      eventKey: decl.key, recipientKey: 'assignee',
+      templateKey: 't1', channels: ['wecom_default'],
+    })).isError).toBe(false)
   })
 
   it('propose_rule 走同一套校验并审计', async () => {

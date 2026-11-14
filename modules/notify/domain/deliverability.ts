@@ -23,7 +23,7 @@ export type ResolvedRecipient = {
 }
 
 export type DeliverabilityDeps = {
-  getEventDecl(key: string): Promise<NotificationEventDecl | null>
+  getEventDecl(org: string, key: string): Promise<NotificationEventDecl | null>
   getPublishedTemplate(
     org: string,
     key: string,
@@ -107,7 +107,7 @@ export async function resolveDeliverability(
   }
   const tplOut = { revision: tpl.revision, contents: tpl.contents }
 
-  const decl = await deps.getEventDecl(rule.eventKey)
+  const decl = await deps.getEventDecl(org, rule.eventKey)
   const recipients: ResolvedRecipient[] = []
   const seen = new Set<string>()
   let deptExpansion: DeptExpansion | undefined

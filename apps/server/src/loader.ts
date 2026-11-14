@@ -492,6 +492,7 @@ export async function loadModules(
   const notify = buildNotifyPort({
     catalog: events,
     enqueue: portsByModule.get('notify')?.enqueueEvent,
+    resolveEventDecl: portsByModule.get('notify')?.resolveEventDecl,
   })
 
   // ── 阶段 3：createRouter（带完整 ctx）────────────────────────────────────────

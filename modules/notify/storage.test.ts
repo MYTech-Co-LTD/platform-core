@@ -1,12 +1,14 @@
 // storage-v2.test.ts — 新存储层（rule_v2/delivery_v2 + 模板/通道/入队/收件箱）
 import { describe, it, expect, beforeAll, afterAll, beforeEach } from 'vitest'
 import { Pool } from 'pg'
+import type { NotificationEventDecl } from '@platform/sdk'
 import { applyMigrations } from './test-util'
 import {
-  audit, channelConfigured, claimDueDeliveries, countChannelSends, createTemplateRevision, deleteRule,
-  enqueueEvent, getPublishedTemplate, getTemplate, isCoolingDown, listChannels,
-  listRules, markDeliverySent, patchChannel, publishTemplateRevision, purgeOldNotifications,
-  setChannelHealth, setRuleEnabled, upsertRule,
+  audit, channelConfigured, claimDueDeliveries, countChannelSends, createAgentNamespace,
+  createTemplateRevision, deleteRule, enqueueEvent, getAgentNamespace, getEventDecl,
+  getPublishedTemplate, getTemplate, isCoolingDown, listAgentNamespaces, listChannels,
+  listEventDecls, listRules, markDeliverySent, patchChannel, publishTemplateRevision,
+  purgeOldNotifications, setChannelHealth, setRuleEnabled, upsertEventDecl, upsertRule,
 } from './storage'
 
 const url = process.env.DATABASE_URL
@@ -27,6 +29,8 @@ describePg('notify storage v2', () => {
   beforeEach(cleanup)
 
   async function cleanup() {
+    await pool.query('delete from notify.event_decl where org=$1', [ORG])
+    await pool.query('delete from notify.agent_namespace where org=$1', [ORG])
     await pool.query('delete from notify.rule where org=$1', [ORG])
     await pool.query('delete from notify.event where org=$1', [ORG])
     await pool.query('delete from notify.delivery where org=$1', [ORG])
@@ -211,5 +215,57 @@ describePg('notify storage v2', () => {
     expect(await isCoolingDown(pool, ORG, { id: 'r1', cooldownMinutes: 10 }, 'u2', new Date())).toBe(false)
     // 清理 sent 行，避免影响其它用例
     await markDeliverySent(pool, { org: ORG, eventId: 'e-cool', ruleId: 'r1', recipient: 'u1', channel: 'wecom_default' })
+  })
+
+  it('agent namespace：创建幂等 + owner 保留', async () => {
+    const a = await createAgentNamespace(pool, ORG, {
+      namespace: 'agent_a', displayName: 'A', ownerUserId: 'u1',
+    })
+    expect(a.created).toBe(true)
+    const b = await createAgentNamespace(pool, ORG, {
+      namespace: 'agent_a', displayName: 'A2', ownerUserId: 'u2',
+    })
+    expect(b.created).toBe(false)
+    expect(b.row.ownerUserId).toBe('u1')
+    expect(await getAgentNamespace(pool, ORG, 'agent_a')).toMatchObject({
+      namespace: 'agent_a', ownerUserId: 'u1',
+    })
+    expect((await listAgentNamespaces(pool, ORG)).map((x) => x.namespace)).toEqual(['agent_a'])
+  })
+
+  it('event_decl：v1 → 增量 v2；破坏性变更拒绝；get/list 只回 active', async () => {
+    await createAgentNamespace(pool, ORG, {
+      namespace: 'agent_a', displayName: 'A', ownerUserId: 'u1',
+    })
+    const decl: NotificationEventDecl = {
+      key: 'ext.agent_a.daily',
+      title: 'Daily',
+      scope: { key: 'day' },
+      payload: {
+        user: { type: 'user', required: true },
+        day: { type: 'string', required: true },
+        n: { type: 'number' },
+      },
+      recipients: { assignee: { kind: 'field', field: 'user' } },
+    }
+    expect(await upsertEventDecl(pool, ORG, 'agent_a', decl, 'u1'))
+      .toEqual({ ok: true, created: true, version: 1 })
+
+    const v2 = await upsertEventDecl(pool, ORG, 'agent_a', {
+      ...decl, payload: { ...decl.payload, extra: { type: 'string' } },
+    }, 'u1')
+    expect(v2).toEqual({ ok: true, created: false, version: 2 })
+
+    const bad = await upsertEventDecl(pool, ORG, 'agent_a', {
+      ...decl,
+      payload: { user: decl.payload.user!, day: decl.payload.day! },
+    }, 'u1')
+    expect(bad.ok).toBe(false)
+    if (!bad.ok) expect(bad.issues).toContain('payload.n: removed')
+
+    expect(await getEventDecl(pool, ORG, decl.key)).toMatchObject({
+      key: decl.key, title: 'Daily',
+    })
+    expect((await listEventDecls(pool, ORG, 'agent_a')).map((e) => e.key)).toEqual([decl.key])
   })
 })
