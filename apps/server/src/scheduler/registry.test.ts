@@ -1,8 +1,9 @@
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest'
+import { existsSync } from 'node:fs'
 import { fileURLToPath } from 'node:url'
 import { Pool } from 'pg'
 import { runMigrations } from '../migrate'
-import { seedSchedules, type JobDef } from './registry'
+import { JOB_REGISTRY, seedSchedules, type JobDef } from './registry'
 
 const dbUrl = process.env.DATABASE_URL
 const describePg = dbUrl ? describe : describe.skip
@@ -11,6 +12,12 @@ const dir = fileURLToPath(new URL('../migrations', import.meta.url))
 const defs: JobDef[] = [
   { key: 'jobtest-registry:alpha', script: 'scripts/x.mjs', cron: '7 * * * *', timezone: 'UTC', timeoutMs: 1000, maxAttempts: 1, expectedIntervalSecs: 3600, description: 't' },
 ]
+
+/** handler-only 条目：只登记 handler，不建系统排班行（cron/timezone 是 schema 必填的占位，不进库）。 */
+const handlerOnlyDef: JobDef = {
+  key: 'jobtest-registry:handler-only', script: 'scripts/x.mjs', cron: '0 0 1 1 *', timezone: 'UTC',
+  timeoutMs: 1000, maxAttempts: 1, expectedIntervalSecs: 86400, description: 't', noSystemSchedule: true,
+}
 
 /** 用例的前置行由用例自己造（beforeEach 先清空本前缀）——单独跑任意一条都不依赖别的用例。 */
 async function insertAlpha(pool: Pool, cron: string, enabled: boolean, nextRunAt: Date | null = null): Promise<void> {
@@ -65,5 +72,28 @@ describePg('seedSchedules', () => {
       .rejects.toThrow(/script/)
     const { rows } = await pool.query("select count(*)::int as n from platform.job_schedule where key='jobtest-registry:badscript'")
     expect(rows[0].n).toBe(0)
+  })
+
+  it('★ noSystemSchedule 条目只登记 handler，不建系统排班行；普通条目照旧插入', async () => {
+    const r = await seedSchedules(pool, [...defs, handlerOnlyDef])
+    expect(r.inserted).toContain('jobtest-registry:alpha')
+    expect(r.inserted).not.toContain('jobtest-registry:handler-only')
+    const { rows } = await pool.query("select count(*)::int as n from platform.job_schedule where key='jobtest-registry:handler-only'")
+    expect(rows[0].n).toBe(0)
+    const alpha = await pool.query("select count(*)::int as n from platform.job_schedule where key='jobtest-registry:alpha'")
+    expect(alpha.rows[0].n).toBe(1)
+  })
+})
+
+describe('JOB_REGISTRY', () => {
+  // 不依赖 DB：纯目录断言（无 DATABASE_URL 的裸跑也保这层覆盖）。
+  it('★ 含 handler-only 的 notify.emit，且 script 指向仓内真实文件', () => {
+    const def = JOB_REGISTRY.find((d) => d.key === 'notify.emit')
+    expect(def).toBeDefined()
+    expect(def!.noSystemSchedule).toBe(true)
+    expect(def!.script).toBe('scripts/notify-emit-job.mjs')
+    // 用测试文件位置锚定仓根（apps/server/src/scheduler → ../../../..），防手滑写错路径。
+    const scriptPath = fileURLToPath(new URL(`../../../../${def!.script}`, import.meta.url))
+    expect(existsSync(scriptPath)).toBe(true)
   })
 })
