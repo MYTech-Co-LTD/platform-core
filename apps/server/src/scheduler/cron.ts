@@ -25,12 +25,15 @@ function parseField(raw: string, min: number, max: number): number[] {
   const out = new Set<number>()
   for (const part of raw.split(',')) {
     if (part === '') throw new Error(`cron: 空字段片段 "${raw}"`)
-    const [rangeRaw, stepRaw] = part.split('/')
+    const slashParts = part.split('/')
+    if (slashParts.length > 2) throw new Error(`cron: 不支持的语法 "${part}"（步长只能出现一次）`)
+    const [rangeRaw, stepRaw] = slashParts
     let step = 1
     if (stepRaw !== undefined) {
       if (!/^\d+$/.test(stepRaw)) throw new Error(`cron: 非法步长 "${part}"`)
       step = Number(stepRaw)
-      if (step <= 0) throw new Error(`cron: 步长必须为正 "${part}"`)
+      // 超长数字串会变 Infinity（`Number.isSafeInteger` 拦下），不能只判 `step <= 0`。
+      if (!Number.isSafeInteger(step) || step <= 0) throw new Error(`cron: 步长必须为正且可安全表示 "${part}"`)
     }
     let lo: number
     let hi: number
@@ -105,7 +108,10 @@ function offsetMs(instantMs: number, timeZone: string): number {
   return Date.UTC(p.y, p.mo - 1, p.d, p.h, p.mi) - instantMs
 }
 
-/** 把「时区里的墙钟时间」换成 UTC instant（无 DST 时区一次收敛；有 DST 时二次校正）。 */
+/**
+ * 把「时区里的墙钟时间」换成 UTC instant。
+ * 二次校正只吸收整点偏移的取整误差；**它不解决 DST 缺口** —— `nextRunAt` 入口已拒绝有夏令时的时区。
+ */
 function zonedToInstant(y: number, mo: number, d: number, h: number, mi: number, timeZone: string): number {
   const guess = Date.UTC(y, mo - 1, d, h, mi)
   const off1 = offsetMs(guess, timeZone)
@@ -118,14 +124,25 @@ function dowOf(y: number, mo: number, d: number): number {
   return new Date(Date.UTC(y, mo - 1, d)).getUTCDay()
 }
 
+/** 有 DST 的时区在一年内的两个整点偏移不相等；入口即拒绝，避免静默算出错误墙钟。 */
+function assertNoDst(timeZone: string, year: number): void {
+  const jan = zonedToInstant(year, 1, 1, 0, 0, timeZone)
+  const jul = zonedToInstant(year, 7, 1, 0, 0, timeZone)
+  if (offsetMs(jan, timeZone) !== offsetMs(jul, timeZone)) {
+    throw new Error(`cron: 不支持有夏令时的时区（${timeZone}）`)
+  }
+}
+
 export function nextRunAt(expr: string, timeZone: string, from: Date): Date {
   const spec = parseCron(expr)
   const base = partsIn(from, timeZone)
-  // 从「当前分钟的下一个分钟」开始逐日扫描；最多看 5 年（覆盖 2 月 30 日这类永不到来的组合）。
+  assertNoDst(timeZone, base.y)
+  // 从「当前分钟的下一个分钟」开始逐日扫描；最多看 8 年：`0 0 29 2 *` 从 2096 起下一次是
+  // 2104-02-29（2100 非闰），5 年上界会假抛。
   let y = base.y
   let mo = base.mo
   let d = base.d
-  for (let day = 0; day < 366 * 5; day++) {
+  for (let day = 0; day < 366 * 8; day++) {
     const dim = new Date(Date.UTC(y, mo, 0)).getUTCDate()
     const dow = dowOf(y, mo, d)
     const domOk = spec.daysOfMonth.includes(d)
@@ -149,5 +166,5 @@ export function nextRunAt(expr: string, timeZone: string, from: Date): Date {
       }
     }
   }
-  throw new Error(`cron: 5 年内没有下一次触发（${expr} @ ${timeZone}）`)
+  throw new Error(`cron: 8 年内没有下一次触发（${expr} @ ${timeZone}）`)
 }

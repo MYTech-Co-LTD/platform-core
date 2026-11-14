@@ -18,6 +18,16 @@ describe('parseCron', () => {
       expect(isValidCron(bad)).toBe(false)
     }
   })
+
+  it('步长只允许出现一次（1/2/3 不许被静默降级为 1/2）', () => {
+    expect(() => parseCron('1/2/3 * * * *')).toThrow()
+    expect(isValidCron('1/2/3 * * * *')).toBe(false)
+  })
+
+  it('超大步长不许溢出成 Infinity 后放行', () => {
+    expect(() => parseCron('*/999999999999999999999999 * * * *')).toThrow()
+    expect(isValidCron('*/999999999999999999999999 * * * *')).toBe(false)
+  })
 })
 
 describe('nextRunAt（Asia/Shanghai，无 DST）', () => {
@@ -44,5 +54,22 @@ describe('nextRunAt（Asia/Shanghai，无 DST）', () => {
   it('★ 严格晚于 from：恰好命中当前分钟时跳到下一次', () => {
     expect(nextRunAt('7 * * * *', 'UTC', at('2026-11-14T02:07:00Z')).toISOString())
       .toBe('2026-11-14T03:07:00.000Z')
+  })
+
+  it('★ 有夏令时的时区 fail-closed（不许静默算出错误墙钟）', () => {
+    expect(() => nextRunAt('30 2 * * *', 'America/New_York', at('2026-03-07T12:00:00Z')))
+      .toThrow(/夏令时/)
+  })
+
+  it('无 DST 时区不受影响：UTC 与 Asia/Shanghai 仍正常', () => {
+    expect(nextRunAt('30 2 * * *', 'UTC', at('2026-03-07T12:00:00Z')).toISOString())
+      .toBe('2026-03-08T02:30:00.000Z')
+    expect(nextRunAt('30 2 * * *', 'Asia/Shanghai', at('2026-03-07T12:00:00Z')).toISOString())
+      .toBe('2026-03-07T18:30:00.000Z') // 次日 02:30 +08:00
+  })
+
+  it('闰日跨 2100 非闰：8 年上界内仍能找到 2104-02-29', () => {
+    expect(nextRunAt('0 0 29 2 *', 'UTC', at('2096-03-01T00:00:00Z')).toISOString())
+      .toBe('2104-02-29T00:00:00.000Z')
   })
 })
