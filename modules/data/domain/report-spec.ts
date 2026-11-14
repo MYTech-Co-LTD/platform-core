@@ -13,6 +13,8 @@ export const CHART_TYPES = ['line', 'bar', 'table', 'cross_table', 'waterfall', 
 export const MAX_PANELS = 24
 export const MAX_DIMS = 4
 export const MAX_TEXT = 2000
+/** 多页上限（R3 多页/打印）：页数过多等于把「一篇报告」变成「一个站点」，导航与打印都失真。 */
+export const MAX_PAGES = 12
 
 const RangeValueSchema = z.object({
   from: z.string().min(1).max(32),
@@ -61,6 +63,8 @@ const metricBase = {
   args: ArgsSchema,
   span: z.number().int().min(1).max(24).default(12),
   timeScoped: z.boolean().default(true),
+  /** 多页归属（1-based；缺省第 1 页）。只在报表声明 `pages` 时有意义（顶层 superRefine 校验）。 */
+  page: z.number().int().min(1).max(MAX_PAGES).optional(),
 }
 
 /** 图表的对比基线：`prev_*` 一条曲线，另可用 `compareYoY` 再叠去年同期。 */
@@ -100,6 +104,7 @@ const CrossTablePanel = z.object({
   /** 列维度：1 个。 */
   columns: z.string().min(1).max(64),
   format: z.enum(['currency', 'number', 'percent']).default('number'),
+  page: z.number().int().min(1).max(MAX_PAGES).optional(),
   span: z.number().int().min(1).max(24).default(24),
   timeScoped: z.boolean().default(true),
 }).strict()
@@ -115,6 +120,7 @@ const SparklinePanel = z.object({
   args: ArgsSchema,
   format: z.enum(['currency', 'number', 'percent']).default('number'),
   compare: z.enum(['auto', 'prev_period', 'prev_month', 'none']).default('auto'),
+  page: z.number().int().min(1).max(MAX_PAGES).optional(),
   span: z.number().int().min(1).max(24).default(6),
   timeScoped: z.boolean().default(true),
 }).strict()
@@ -131,6 +137,7 @@ const BulletPanel = z.object({
   /** 目标值（与指标同量纲：format=percent 时是比率，如 0.2 = 20%）。 */
   target: z.number().finite(),
   format: z.enum(['currency', 'number', 'percent']).default('number'),
+  page: z.number().int().min(1).max(MAX_PAGES).optional(),
   span: z.number().int().min(1).max(24).default(12),
   timeScoped: z.boolean().default(true),
 }).strict()
@@ -143,6 +150,7 @@ const WaterfallPanel = z.object({
   dims: z.array(z.string().min(1).max(64)).length(1),
   compare: z.enum(['prev_period', 'prev_month']).default('prev_period'),
   format: z.enum(['currency', 'number', 'percent']).default('number'),
+  page: z.number().int().min(1).max(MAX_PAGES).optional(),
   span: z.number().int().min(1).max(24).default(24),
   timeScoped: z.boolean().default(true),
 }).strict()
@@ -179,6 +187,7 @@ const KpiPanel = z.object({
   /** 额外展示「去年同期」对比（同比）；默认关闭，避免所有 KPI 多一倍查询。 */
   compareYoY: z.boolean().optional(),
   goodDirection: z.enum(['up', 'down', 'none']).default('none'),
+  page: z.number().int().min(1).max(MAX_PAGES).optional(),
   span: z.number().int().min(1).max(24).default(12),
   timeScoped: z.boolean().default(true),
 }).strict()
@@ -190,6 +199,7 @@ const TextPanel = z.object({
   /** 渲染格式（R3）：plain = 原样纯文本；markdown = 受限富文本（粗体/斜体/代码/链接/列表/小标题）。 */
   format: z.enum(['plain', 'markdown']).default('plain'),
   span: z.number().int().min(1).max(24).default(24),
+  page: z.number().int().min(1).max(MAX_PAGES).optional(),
 }).strict()
 
 /**
@@ -207,6 +217,7 @@ const AiTextPanel = z.object({
   title: z.string().trim().min(1).max(120).default('AI 分析'),
   focus: z.enum(['overview', 'root_cause', 'daily_review']),
   span: z.number().int().min(1).max(24).default(24),
+  page: z.number().int().min(1).max(MAX_PAGES).optional(),
 }).strict()
 
 /** 报表级共享筛选（R3 V4）：声明一次，运行时把值并入每个面板的 args（面板 args 会被覆盖）。 */
@@ -222,9 +233,15 @@ export type ReportFilter = z.infer<typeof ReportFilterSchema>
 /** 库里可能存的两种形态（V5 起新写入保留 v2）。读面必须用 `parseStoredSpec` 归一。 */
 export type StoredReportSpec = ReportSpec | ReportSpecV2
 
+/** 多页（R3 多页/打印）：页清单只声明「有哪些页、每页叫什么」；面板用 `page` 归属。 */
+const ReportPageSchema = z.object({
+  title: z.string().trim().min(1).max(60).optional(),
+}).strict()
+
 export const ReportSpecSchema = z.object({
   period: PeriodSchema.optional(),
   filters: z.array(ReportFilterSchema).max(20).optional(),
+  pages: z.array(ReportPageSchema).min(1).max(MAX_PAGES).optional(),
   panels: z.array(z.discriminatedUnion('chart', [LinePanel, BarPanel, TablePanel, CrossTablePanel, WaterfallPanel, BulletPanel, SparklinePanel, KpiPanel, TextPanel, AiTextPanel])).max(MAX_PANELS),
 }).strict().superRefine((spec, ctx) => {
   // 可折叠明细的分组前提：未分组 = 原子行，展开语义不存在（写侧拒绝，不留到观看时才发现）。
@@ -235,6 +252,22 @@ export const ReportSpecSchema = z.object({
       code: z.ZodIssueCode.custom, path: ['panels', i, 'expandable'],
       message: 'EXPANDABLE_REQUIRES_GROUPING',
     })
+  })
+  // 多页归属：`page` 只在声明了 `pages` 时有意义，且不得越界（否则面板永远不显示 = 静默丢失）。
+  const pageCount = spec.pages?.length
+  spec.panels.forEach((p, i) => {
+    if (p.page === undefined) return
+    if (pageCount === undefined) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom, path: ['panels', i, 'page'],
+        message: 'PAGE_REQUIRES_PAGES',
+      })
+    } else if (p.page > pageCount) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom, path: ['panels', i, 'page'],
+        message: 'PAGE_OUT_OF_RANGE',
+      })
+    }
   })
 })
 
@@ -259,6 +292,7 @@ const V2KpiBlock = z.object({
   compare: z.enum(['auto', 'prev_period', 'prev_month', 'none']).default('auto'),
   compareYoY: z.boolean().optional(),
   goodDirection: z.enum(['up', 'down', 'none']).default('none'),
+  page: z.number().int().min(1).max(MAX_PAGES).optional(),
   span: z.number().int().min(1).max(24).default(12),
 }).strict()
 
@@ -268,6 +302,7 @@ const V2ChartBlock = z.object({
   slice: SliceSchema.optional(),
   compare: z.enum(['none', 'prev_period', 'prev_month', 'prev_year']).optional(),
   compareYoY: z.boolean().optional(),
+  page: z.number().int().min(1).max(MAX_PAGES).optional(),
   span: z.number().int().min(1).max(24).default(12),
 }).strict()
 
@@ -277,6 +312,7 @@ const V2TableBlock = z.object({
   dims: z.array(z.string().min(1).max(64)).max(MAX_DIMS).optional(),
   columns: TableColumnsSchema.optional(),
   expandable: TableExpand.optional(),
+  page: z.number().int().min(1).max(MAX_PAGES).optional(),
   span: z.number().int().min(1).max(24).default(12),
 }).strict()
 
@@ -285,6 +321,7 @@ const V2TextBlock = z.object({
   title: z.string().trim().min(1).max(120).optional(),
   content: z.string().min(1).max(MAX_TEXT),
   format: z.enum(['plain', 'markdown']).default('plain'),
+  page: z.number().int().min(1).max(MAX_PAGES).optional(),
   span: z.number().int().min(1).max(24).default(24),
 }).strict()
 
@@ -293,6 +330,7 @@ const V2AiTextBlock = z.object({
   title: z.string().trim().min(1).max(120).default('AI 分析'),
   focus: z.enum(['overview', 'root_cause', 'daily_review']),
   dataset: z.string().min(1).max(64).optional(),
+  page: z.number().int().min(1).max(MAX_PAGES).optional(),
   span: z.number().int().min(1).max(24).default(24),
 }).strict()
 
@@ -300,6 +338,7 @@ export const ReportSpecV2Schema = z.object({
   ir: z.literal(2),
   period: PeriodSchema.optional(),
   filters: z.array(ReportFilterSchema).max(20).optional(),
+  pages: z.array(ReportPageSchema).min(1).max(MAX_PAGES).optional(),
   datasets: z.array(V2Dataset).min(1).max(MAX_PANELS),
   blocks: z.array(z.discriminatedUnion('type', [
     V2KpiBlock, V2ChartBlock, V2TableBlock, V2TextBlock, V2AiTextBlock,
@@ -314,11 +353,17 @@ export function flattenReportSpecV2(v2: ReportSpecV2): { ok: true; spec: ReportS
   const panels: unknown[] = []
   for (const b of v2.blocks) {
     if (b.type === 'text') {
-      panels.push({ chart: 'text', title: b.title, content: b.content, format: b.format, span: b.span })
+      panels.push({
+        chart: 'text', title: b.title, content: b.content, format: b.format, span: b.span,
+        ...(b.page === undefined ? {} : { page: b.page }),
+      })
       continue
     }
     if (b.type === 'ai_text') {
-      panels.push({ chart: 'ai_text', title: b.title, focus: b.focus, span: b.span })
+      panels.push({
+        chart: 'ai_text', title: b.title, focus: b.focus, span: b.span,
+        ...(b.page === undefined ? {} : { page: b.page }),
+      })
       continue
     }
     const dataset = datasets.get(b.dataset)
@@ -326,6 +371,7 @@ export function flattenReportSpecV2(v2: ReportSpecV2): { ok: true; spec: ReportS
     const base = {
       title: b.title, metricId: dataset.metricId, args: dataset.args,
       span: b.span, timeScoped: dataset.timeScoped,
+      ...(b.page === undefined ? {} : { page: b.page }),
     }
     if (b.type === 'kpi') {
       panels.push({
@@ -354,6 +400,7 @@ export function flattenReportSpecV2(v2: ReportSpecV2): { ok: true; spec: ReportS
   return parseReportSpec({
     ...(v2.period === undefined ? {} : { period: v2.period }),
     ...(v2.filters === undefined ? {} : { filters: v2.filters }),
+    ...(v2.pages === undefined ? {} : { pages: v2.pages }),
     panels,
   })
 }

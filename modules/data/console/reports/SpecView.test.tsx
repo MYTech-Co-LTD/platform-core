@@ -20,7 +20,7 @@
 // use/init + setOption/resize/dispose）。图表**装配**正确性经 `setOption` 入参断言；
 // 真实渲染由 `pnpm --filter web build`（echarts 打进 console 分包）与真机验收兜。
 import '@testing-library/jest-dom/vitest'
-import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
+import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import { Outlet, RouterProvider, createMemoryRouter } from 'react-router-dom'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
@@ -73,10 +73,14 @@ interface Panel {
   columns?: string[]
   /** 可折叠明细（R3 ⑤）。 */
   expandable?: { dimensions?: string[]; limit?: number }
+  /** 多页归属（R3）；缺省第 1 页。 */
+  page?: number
   content?: string
 }
 interface SpecFixture {
   period?: { mode: 'month' | 'last_7_days' | 'day' | 'custom'; month?: string; day?: string; from?: string; to?: string }
+  /** 多页（R3）：页清单；面板用 `page` 归属（缺省第 1 页）。 */
+  pages?: Array<{ title?: string }>
   panels: Panel[]
 }
 type QueryBody = { metricId: string; args: Record<string, unknown> } & Record<string, unknown>
@@ -845,5 +849,50 @@ describe('R3 ⑤ 可折叠明细', () => {
     fireEvent.click(screen.getByRole('button', { name: '展开明细' }))
     expect(await screen.findByText(/该指标未声明下钻明细/)).toBeInTheDocument()
     expect(screen.queryByText('DETAIL_NOT_AVAILABLE')).not.toBeInTheDocument()
+  })
+})
+
+describe('R3 多页 / 打印', () => {
+  it('★ 多页导航：只显示当前页；切页显示另一页（面板按 page 归属）', async () => {
+    stub({
+      pages: [{ title: '概览' }, { title: '趋势' }],
+      panels: [
+        { chart: 'table', title: '概览表', metricId: 'm1', dims: [], args: {}, span: 24, page: 1 },
+        { chart: 'table', title: '趋势表', metricId: 'm2', dims: [], args: {}, span: 24, page: 2 },
+      ],
+    }, {
+      m1: { columns: ['value'], rows: [['1']] },
+      m2: { columns: ['value'], rows: [['2']] },
+    }, new Set())
+    renderView()
+
+    expect(await screen.findByText('概览表')).toBeInTheDocument()
+    expect(screen.queryByText('趋势表')).not.toBeInTheDocument()
+    expect(screen.getByTestId('page-nav')).toBeInTheDocument()
+    // 打印按钮在多页里明说「本页」
+    expect(screen.getByRole('button', { name: /打\s*印\s*本\s*页/ })).toBeInTheDocument()
+
+    fireEvent.click(within(screen.getByTestId('page-nav')).getByText(/第 2 页/))
+    expect(await screen.findByText('趋势表')).toBeInTheDocument()
+    expect(screen.getByText('概览表')).not.toBeVisible()
+  })
+
+  it('★ 未访问的页不挂载内容：第 2 页的 ai_text 在切过去之前不发起生成', async () => {
+    stub({
+      period: { mode: 'day', day: '2026-10-10' },
+      pages: [{ title: '概览' }, { title: '分析' }],
+      panels: [
+        { chart: 'text', content: '第一页说明', span: 24, page: 1 },
+        { chart: 'ai_text', title: 'AI 分析', focus: 'overview', span: 24, page: 2 },
+      ],
+    }, {}, new Set())
+    renderView()
+
+    expect(await screen.findByText('第一页说明')).toBeInTheDocument()
+    // 挂载即生成：第 2 页未访问 ⇒ 一条 narrative/stream 都不该发
+    expect(calls.some((c) => c.url.endsWith('/narrative/stream'))).toBe(false)
+
+    fireEvent.click(within(screen.getByTestId('page-nav')).getByText(/第 2 页/))
+    await waitFor(() => expect(calls.some((c) => c.url.endsWith('/narrative/stream'))).toBe(true))
   })
 })

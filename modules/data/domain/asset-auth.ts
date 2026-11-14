@@ -125,10 +125,14 @@ export interface RenderGateMetric {
   reveal?: 'panel' | 'report'
 }
 
-/** 被降级的面板占位符：**只有** index/denied，没有任何数据字段（不泄露 metricId/图型/标题）。 */
+/**
+ * 被降级的面板占位符：**只有** index/denied（+ 页归属），没有任何数据字段
+ * （不泄露 metricId/图型/标题/参数）。`page` 只影响版式，不含口径信息。
+ */
 export interface DeniedPanelRef {
   index: number
   denied: true
+  page?: number
 }
 
 /** 观看面规格：面板位可能是降级占位符。 */
@@ -203,8 +207,8 @@ export function applyPanelRenderGate(
     if (reason === null) return panel
     deniedPanels.push(index)
     denials.push({ index, reason })
-    // 占位符只带位置：回包不能出现任何可反推口径的数据字段。
-    return { index, denied: true }
+    // 占位符只带位置（+ 页归属）：回包不能出现任何可反推口径的数据字段。
+    return { index, denied: true, ...('page' in panel && panel.page !== undefined ? { page: panel.page } : {}) }
   })
   return {
     blocked,
@@ -236,7 +240,10 @@ export function factsSpecOf(spec: ViewableSpec): ReportSpec {
   return {
     ...spec,
     panels: spec.panels.map((p): ReportSpec['panels'][number] =>
-      ('denied' in p ? BLANK_TEXT_PANEL : p)),
+      ('denied' in p
+        // 页归属不是口径信息（原样保留）：多页报表里占位符必须留在原页，不能跳到第 1 页。
+        ? { ...BLANK_TEXT_PANEL, ...(p.page === undefined ? {} : { page: p.page }) }
+        : p)),
   }
 }
 

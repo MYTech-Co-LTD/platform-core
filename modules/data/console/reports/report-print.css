@@ -1,0 +1,32 @@
+/* report-print.css — 报表观看面的打印版式（R3 多页/打印）。
+ *
+ * 只作用于本渲染器的容器（`.data-report`），不污染 console 其他页面：
+ *  · 屏幕上：多页导航外的页面由内联 display:none 隐藏（React 控制）；
+ *  · 打印时：导航/筛选项/按钮隐藏，卡片不跨页断开，背景色与图表颜色保留。
+ *
+ * ⚠️ 浏览器打印的「页面尺寸」由用户在打印对话框里选；这里不写 @page 尺寸，
+ *    避免影响同一 console 里其他页面的打印。
+ */
+
+@media print {
+  /* 观看界面具：换页控件、筛选条、关闭/打印按钮都不该出现在纸上。 */
+  .data-report-chrome {
+    display: none !important;
+  }
+
+  .data-report {
+    padding: 0 !important;
+  }
+
+  /* 卡片尽量整块落在同一页；图表画布在分页处被切开等于废掉一张图。 */
+  .data-report .ant-card {
+    break-inside: avoid;
+    page-break-inside: avoid;
+  }
+
+  /* 图表/KPI 的底色与线条：默认打印会丢背景色，柱状图与涨跌色会失真。 */
+  .data-report {
+    -webkit-print-color-adjust: exact;
+    print-color-adjust: exact;
+  }
+}

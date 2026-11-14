@@ -117,6 +117,23 @@ describe('B+C schema', () => {
     expect(parseReportSpec({ panels: [{ ...grouped, expandable: { dimensions: ['order_no'] } }] }).ok).toBe(true)
   })
 
+  it('多页（R3）：pages + 面板 page 通过；page 无 pages / 越界拒', () => {
+    const p2 = { ...ok.panels[0], page: 2 }
+    expect(parseReportSpec({
+      pages: [{ title: '概览' }, { title: '明细' }], panels: [{ ...ok.panels[0], page: 1 }, p2],
+    }).ok).toBe(true)
+    // 只有 1 页也合法（= 单页报表，渲染不出现导航）
+    expect(parseReportSpec({ pages: [{ title: '概览' }], panels: [ok.panels[0]] }).ok).toBe(true)
+    // page 声明但没有 pages ⇒ 无处安放（写侧拒绝，不留到观看时静默丢失）
+    expect(parseReportSpec({ panels: [{ ...ok.panels[0], page: 2 }] }).ok).toBe(false)
+    // 越界页码 ⇒ 该面板永远不会显示
+    expect(parseReportSpec({ pages: [{ title: 'a' }], panels: [{ ...ok.panels[0], page: 2 }] }).ok).toBe(false)
+    // 页数上限
+    expect(parseReportSpec({
+      pages: Array.from({ length: 13 }, () => ({})), panels: [ok.panels[0]],
+    }).ok).toBe(false)
+  })
+
   it('旧规格仍通过（默认值补齐）', () => {
     const old = { panels: [{ chart: 'line', title: 't', metricId: 'm', dims: ['bizday'], args: {}, span: 12 }] }
     expect(parseReportSpec(old).ok).toBe(true)

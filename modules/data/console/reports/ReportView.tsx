@@ -33,6 +33,7 @@
 //     默认 `interval:'auto'` 会被抽掉一半——柱还在、标签没了，读者无法把柱对齐到类目）。
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { Alert, Button, Card, Col, DatePicker, Input, Row, Segmented, Select, Space, Spin, Table, Tag, Typography } from 'antd'
+import './report-print.css'
 import dayjs, { Dayjs } from 'dayjs'
 import { init, use } from 'echarts/core'
 import type { EChartsCoreOption, EChartsType } from 'echarts/core'
@@ -893,6 +894,21 @@ export default function ReportView({
   const [branches, setBranches] = useState<Array<{ branchNum: string; name: string }> | null>(null)
   // 报表级共享筛选（V4b）：键 → 运行期值；空对象 = 全用默认。
   const [filterValues, setFilterValues] = useState<Record<string, unknown>>({})
+  // 多页（R3）：`pages` 是页清单，面板用 `page` 归属；单页/旧规格完全不受影响。
+  const specPages = spec.pages ?? null
+  const isMultiPage = specPages !== null && specPages.length > 1
+  const [activePage, setActivePage] = useState(1)
+  // 已访问过的页：只有访问过才挂载页面内容（AI 面板挂载即生成，不能让第 2 页偷偷烧 token）。
+  const [visitedPages, setVisitedPages] = useState<ReadonlySet<number>>(() => new Set([1]))
+  const pageOf = (p: ViewPanel): number => p.page ?? 1
+  const goPage = (n: number): void => {
+    setActivePage(n)
+    setVisitedPages((v) => (v.has(n) ? v : new Set([...v, n])))
+  }
+  // 规格换了（换报/版本）⇒ 页码回到第 1 页；页数变少时越界页码也要收回来。
+  useEffect(() => {
+    if (activePage > (specPages?.length ?? 1)) setActivePage(1)
+  }, [specPages?.length, activePage])
 
   // 观看面可能带降级占位符（`{index,denied:true}`）——类型上并入，运行期用 `isDeniedPanel` 分流。
   // V2：面板清单统一从 plan 取（索引与 spec.panels 一一对应，占位符原位保留）。
@@ -1089,8 +1105,69 @@ export default function ReportView({
     ? override.branch_num
     : typeof defaults.branch_num === 'string' ? defaults.branch_num : undefined
 
+  /**
+   * 单个面板格。多页过滤在调用处（页归属只决定放在哪一页），这里的分支与单页形态逐字一致；
+   * `i` 始终是**规格下标**（被拒面板/凭证/叙事都按它定位）。
+   */
+  const renderPanel = (p: ViewPanel, i: number) => (
+    <Col key={i} span={isDeniedPanel(p) ? 12 : p.span} data-panel-index={i}>
+      {isDeniedPanel(p) ? (
+        // 渲染闸（P5 Task 3）：该格的口径对这个观看者不可见。**不显示**任何口径信息
+        // （标题/图型/metricId 服务端已剥掉），只留一句中性说明。
+        <Card size="small">
+          <Alert type="warning" showIcon title="无此口径权限" />
+        </Card>
+      ) : p.chart === 'ai_text' ? (
+        // ai_text 的正文在观看时由服务端流式生成（不进 /query、不读 spec 文案）。
+        // 期间/门店/版本都是**当前观看态**：切期间即重生成，切门店即换切片。
+        <Card size="small" title={<Space>{p.title}<Tag color="blue">AI</Tag></Space>}>
+          <AiTextPanel
+            key={`${i}:${JSON.stringify(period)}:${aiBranchNum ?? ''}:${JSON.stringify(filterValues)}`}
+            reportId={reportId}
+            panelIndex={i}
+            focus={p.focus}
+            period={period}
+            branchNum={aiBranchNum}
+            filters={Object.keys(filterValues).length === 0 ? undefined : filterValues}
+            version={pinnedVersion ?? undefined}
+          />
+        </Card>
+      ) : p.chart === 'kpi' ? (
+        // KpiCard 自带卡片与标题（与面板同款 size="small"），这里不再套第二层 Card
+        // 对比段：auto 依当前期间模式（月 → 上月同日段；其余 → 等长前移）
+        <KpiCard
+          panel={p}
+          args={argsOf(p)}
+          compareRange={compareRangeOf(p, period?.mode, range)}
+          yoyRange={p.compareYoY && range !== null ? yearAgoRangeOf(range) : null}
+          receiptCtx={{
+            reportId,
+            panelIndex: i,
+            period,
+            ...(aiBranchNum === undefined ? {} : { branchNum: aiBranchNum }),
+            ...(pinnedVersion === null || pinnedVersion === undefined ? {} : { version: pinnedVersion }),
+            ...(preview === undefined ? {} : { preview }),
+          }}
+        />
+      ) : (
+        <Card size="small" title={p.title}>
+          <PanelBody
+            panel={p} result={results[i]} compares={compareResults[i]}
+            {...(p.chart === 'table' && p.expandable !== undefined ? {
+              detailCtx: {
+                reportId, panelIndex: i, args: argsOf(p),
+                ...(pinnedVersion === null || pinnedVersion === undefined ? {} : { version: pinnedVersion }),
+                ...(preview === undefined ? {} : { preview }),
+              },
+            } : {})}
+          />
+        </Card>
+      )}
+    </Col>
+  )
+
   return (
-    <div style={chrome === 'standalone' ? { padding: 12 } : undefined}>
+    <div className="data-report" style={chrome === 'standalone' ? { padding: 12 } : undefined}>
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 8 }}>
         <Space align="center" size={8}>
           <Typography.Title level={5} style={{ margin: 0 }}>{title}</Typography.Title>
@@ -1098,7 +1175,11 @@ export default function ReportView({
             <Tag color="blue">历史版本 v{pinnedVersion}</Tag>
           )}
         </Space>
-        {chrome === 'console' && onClose !== undefined && <Button size="small" onClick={onClose}>关闭</Button>}
+        <Space size={8} className="data-report-chrome">
+          {/* 打印 = **当前页**（多页报告按页打印，标签明说，避免「只印了第 1 页」的误判）。 */}
+          <Button size="small" onClick={() => window.print()}>{isMultiPage ? '打印本页' : '打印'}</Button>
+          {chrome === 'console' && onClose !== undefined && <Button size="small" onClick={onClose}>关闭</Button>}
+        </Space>
       </div>
       {(branchScope !== null || periodScope !== null) && (
         <Typography.Text
@@ -1111,12 +1192,30 @@ export default function ReportView({
             .filter((s): s is string => s !== null).join(' · ')}
         </Typography.Text>
       )}
-      {period !== null && <PeriodBar period={period} range={range} onChange={setPeriod} />}
+      {/* 多页导航（R3）：页清单 = 规格声明；只挂载访问过的页（AI 面板挂载即生成）。 */}
+      {isMultiPage && (
+        <div className="data-report-chrome" data-testid="page-nav" style={{ overflowX: 'auto', marginBottom: 8 }}>
+          <Segmented
+            size="small"
+            value={activePage}
+            onChange={(v) => goPage(Number(v))}
+            options={specPages.map((pg, idx) => ({
+              value: idx + 1,
+              label: `第 ${idx + 1} 页${pg.title === undefined ? '' : ` · ${pg.title}`}`,
+            }))}
+          />
+        </div>
+      )}
+      {period !== null && (
+        <div className="data-report-chrome">
+          <PeriodBar period={period} range={range} onChange={setPeriod} />
+        </div>
+      )}
       {/* 筛选栏（#1047）：只为规格 args 里出现过的参数键出控件；改选即重查（override）。
           period 声明后 bizday 归期间控件管，这里不再出 RangePicker（避免两个口径同屏）。
           窄屏换行（flexWrap），控件全部 small 档。 */}
       {(showRangePicker || showBranchPicker || specFilters.length > 0) && (
-        <div data-testid="spec-filters" style={{ display: 'flex', gap: 8, flexWrap: 'wrap', marginBottom: 8 }}>
+        <div className="data-report-chrome" data-testid="spec-filters" style={{ display: 'flex', gap: 8, flexWrap: 'wrap', marginBottom: 8 }}>
           {showRangePicker && (
             <DatePicker.RangePicker
               size="small"
@@ -1170,64 +1269,29 @@ export default function ReportView({
           )}
         </div>
       )}
-      <Row gutter={[12, 12]}>
-        {panels.map((p, i) => (
-          <Col key={i} span={isDeniedPanel(p) ? 12 : p.span} data-panel-index={i}>
-            {isDeniedPanel(p) ? (
-              // 渲染闸（P5 Task 3）：该格的口径对这个观看者不可见。**不显示**任何口径信息
-              // （标题/图型/metricId 服务端已剥掉），只留一句中性说明。
-              <Card size="small">
-                <Alert type="warning" showIcon title="无此口径权限" />
-              </Card>
-            ) : p.chart === 'ai_text' ? (
-              // ai_text 的正文在观看时由服务端流式生成（不进 /query、不读 spec 文案）。
-              // 期间/门店/版本都是**当前观看态**：切期间即重生成，切门店即换切片。
-              <Card size="small" title={<Space>{p.title}<Tag color="blue">AI</Tag></Space>}>
-                <AiTextPanel
-                  key={`${i}:${JSON.stringify(period)}:${aiBranchNum ?? ''}:${JSON.stringify(filterValues)}`}
-                  reportId={reportId}
-                  panelIndex={i}
-                  focus={p.focus}
-                  period={period}
-                  branchNum={aiBranchNum}
-                  filters={Object.keys(filterValues).length === 0 ? undefined : filterValues}
-                  version={pinnedVersion ?? undefined}
-                />
-              </Card>
-            ) : p.chart === 'kpi' ? (
-              // KpiCard 自带卡片与标题（与面板同款 size="small"），这里不再套第二层 Card
-              // 对比段：auto 依当前期间模式（月 → 上月同日段；其余 → 等长前移）
-              <KpiCard
-                panel={p}
-                args={argsOf(p)}
-                compareRange={compareRangeOf(p, period?.mode, range)}
-                yoyRange={p.compareYoY && range !== null ? yearAgoRangeOf(range) : null}
-                receiptCtx={{
-                  reportId,
-                  panelIndex: i,
-                  period,
-                  ...(aiBranchNum === undefined ? {} : { branchNum: aiBranchNum }),
-                  ...(pinnedVersion === null || pinnedVersion === undefined ? {} : { version: pinnedVersion }),
-                  ...(preview === undefined ? {} : { preview }),
-                }}
-              />
-            ) : (
-              <Card size="small" title={p.title}>
-                <PanelBody
-                  panel={p} result={results[i]} compares={compareResults[i]}
-                  {...(p.chart === 'table' && p.expandable !== undefined ? {
-                    detailCtx: {
-                      reportId, panelIndex: i, args: argsOf(p),
-                      ...(pinnedVersion === null || pinnedVersion === undefined ? {} : { version: pinnedVersion }),
-                      ...(preview === undefined ? {} : { preview }),
-                    },
-                  } : {})}
-                />
-              </Card>
+      {(specPages ?? [{}]).map((pg, pageIdx) => {
+        const n = pageIdx + 1
+        const hidden = isMultiPage && n !== activePage
+        return (
+          <section
+            key={n}
+            className="data-report-page"
+            data-page={n}
+            style={hidden ? { display: 'none' } : undefined}
+          >
+            {isMultiPage && (
+              <Typography.Text strong style={{ display: 'block', marginBottom: 8 }}>
+                第 {n} 页{pg.title === undefined ? '' : ` · ${pg.title}`}
+              </Typography.Text>
             )}
-          </Col>
-        ))}
-      </Row>
+            {!isMultiPage || visitedPages.has(n) ? (
+              <Row gutter={[12, 12]}>
+                {panels.map((p, i) => (pageOf(p) === n ? renderPanel(p, i) : null))}
+              </Row>
+            ) : null}
+          </section>
+        )
+      })}
     </div>
   )
 }
