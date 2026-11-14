@@ -310,7 +310,7 @@ function EChart({ option }: { option: EChartsCoreOption }) {
 
 /** 渲染轴：有 slice 时以服务端分组维度为准，否则用面板声明的 dims（两者都是规格声明）。 */
 function dimsOf(panel: Panel): string[] {
-  if (panel.chart === 'text' || panel.chart === 'kpi' || panel.chart === 'ai_text' || panel.chart === 'cross_table' || panel.chart === 'waterfall') return []
+  if (panel.chart === 'text' || panel.chart === 'kpi' || panel.chart === 'ai_text' || panel.chart === 'cross_table' || panel.chart === 'waterfall' || panel.chart === 'bullet') return []
   return panel.slice?.dimensions ?? panel.dims
 }
 
@@ -425,6 +425,54 @@ function PanelBody({ panel, result, compares = [] }: { panel: Panel; result: Pan
       </>
     )
   }
+  if (panel.chart === 'bullet') {
+    // 当前值 = 回包 total（显式合计）；目标是声明值（P2 参数化目标接入后可被覆盖）。
+    const tIdx = result.columns.indexOf('total')
+    const raw = tIdx >= 0 && result.rows.length > 0 ? Number(result.rows[0]?.[tIdx]) : NaN
+    const value = Number.isFinite(raw) ? raw : null
+    const target = panel.target
+    if (value === null || target === 0) {
+      return <Typography.Text type="secondary">没有可对比的数据</Typography.Text>
+    }
+    const pct = value / target
+    const gap = value - target
+    const fmt = (n: number): string => formatValue(n, panel.format)
+    const sign = (n: number): string => `${n >= 0 ? '+' : ''}${fmt(n)}`
+    return (
+      <div data-testid="bullet">
+        <div style={{ display: 'flex', alignItems: 'baseline', gap: 8 }}>
+          <Typography.Text strong style={{ fontSize: 22, fontVariantNumeric: 'tabular-nums' }}>{fmt(value)}</Typography.Text>
+          <Typography.Text type="secondary" style={{ fontSize: 12 }}>目标 {fmt(target)}</Typography.Text>
+          <Typography.Text
+            style={{ fontSize: 13, fontWeight: 600, color: gap >= 0 ? '#067647' : '#B42318' }}
+          >
+            {sign(gap)}（{(pct * 100).toFixed(1)}%）
+          </Typography.Text>
+        </div>
+        {/* 目标条：底 = 目标，填充 = 当前；>100% 截到 120% 可视（数值行已如实给） */}
+        <div style={{
+          marginTop: 8, height: 8, borderRadius: 4, background: '#E5E7EB',
+          position: 'relative', overflow: 'hidden',
+        }}>
+          <div style={{
+            height: '100%', borderRadius: 4,
+            width: `${Math.min(Math.max(pct, 0), 1.2) / 1.2 * 100}%`,
+            background: gap >= 0 ? '#067647' : '#B42318',
+            transition: 'width 300ms ease',
+          }} />
+          {/* 目标刻度线（始终在 100/1.2 ≈ 83.3% 位置） */}
+          <div style={{
+            position: 'absolute', left: `${100 / 1.2}%`, top: 0, bottom: 0,
+            width: 2, background: '#111827', opacity: 0.5,
+          }} />
+        </div>
+        <Typography.Text type="secondary" style={{ fontSize: 11, display: 'block', marginTop: 4 }}>
+          达成率 {(pct * 100).toFixed(1)}%；目标线为黑色刻度
+        </Typography.Text>
+      </div>
+    )
+  }
+
   if (panel.chart === 'waterfall') {
     const prev = compares[0]?.result ?? null
     if (prev === null) return <Typography.Text type="secondary">对比数据加载中…</Typography.Text>

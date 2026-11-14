@@ -62,7 +62,7 @@ export function panelQueryBodyOf(
   p: DataPanel,
   args: Record<string, unknown>,
 ): Record<string, unknown> {
-  if (p.chart === 'kpi') return { metricId: p.metricId, args: { ...args, total: true } }
+  if (p.chart === 'kpi' || p.chart === 'bullet') return { metricId: p.metricId, args: { ...args, total: true } }
   // 交叉表：行维度 + 列维度一起下推，由服务端分组（≤4 维闭集由授权层再校验）。
   if (p.chart === 'cross_table') {
     return { metricId: p.metricId, args, dimensions: [...p.rows, p.columns] }

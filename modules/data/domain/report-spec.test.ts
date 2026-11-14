@@ -178,3 +178,19 @@ describe('waterfall（R3 组件②）', () => {
     expect(parse({ ...base, dims: ['a', 'b'] }).ok).toBe(false)
   })
 })
+
+describe('bullet（R3 组件③）', () => {
+  const parse = (panel: unknown) => parseReportSpec({ panels: [panel] })
+  const base = { chart: 'bullet', title: '净毛利目标', metricId: 'm:net', target: 100000 }
+
+  it('缺省 format=number、span=12', () => {
+    const out = parse(base)
+    expect(out.ok).toBe(true)
+    if (out.ok) expect(out.spec.panels[0]).toMatchObject({ chart: 'bullet', format: 'number', span: 12 })
+  })
+
+  it('target 必填且有限', () => {
+    expect(parse({ ...base, target: undefined }).ok).toBe(false)
+    expect(parse({ ...base, target: Infinity }).ok).toBe(false)
+  })
+})
