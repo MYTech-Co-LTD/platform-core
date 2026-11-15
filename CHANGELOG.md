@@ -11,6 +11,10 @@
 
 ## [Unreleased]
 
+## [0.295.0](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.294.0...v0.295.0) - 2026-11-15
+- 【新增】data: 数据生产线加连线（SVG 流程图）+ 修「被丢掉」误判 ([#2294](https://github.com/MYTech-Co-LTD/platform-core/pull/2294), [3a0abdc](https://github.com/MYTech-Co-LTD/platform-core/commit/3a0abdc3d7b1cd3affb8ed11253bb226b12ced8a))
+
+
 ## [0.294.0](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.293.0...v0.294.0) - 2026-11-15
 - 【新增】data: 业务监控 W7-V2a——threshold 判据（#2291） ([#2292](https://github.com/MYTech-Co-LTD/platform-core/pull/2292), [f39a970](https://github.com/MYTech-Co-LTD/platform-core/commit/f39a970ffd1ca4050e097f9ec251b9b513672603))
 
