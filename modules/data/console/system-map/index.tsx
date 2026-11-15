@@ -18,8 +18,8 @@ import { humanError, type HumanError } from '../lib/explain'
 
 echarts.use([GraphChart, LegendComponent, TooltipComponent, CanvasRenderer])
 
-type NodeType = 'entity' | 'metric' | 'source' | 'dimension'
-type EdgeType = 'belongs_to' | 'derives_from' | 'upstream_of' | 'has_dimension'
+type NodeType = 'entity' | 'metric' | 'source' | 'dimension' | 'report'
+type EdgeType = 'belongs_to' | 'derives_from' | 'upstream_of' | 'has_dimension' | 'used_by'
 
 interface OntologyNode { id: string; type: NodeType; label: string; observations: string[] }
 interface OntologyEdge { from: string; to: string; type: EdgeType }
@@ -55,13 +55,13 @@ const STEP_LABEL: Record<TrailStepKind, string> = {
 }
 const RUN_DOT: Record<string, string> = { ok: '#0FA958', failed: '#E5484D', running: '#4D6BFE', cancelled: '#C9CDD4', interrupted: '#E08A00', unknown: '#C9CDD4' }
 
-const TYPE_LABEL: Record<NodeType, string> = { entity: '业务对象', metric: '指标', source: '源表', dimension: '维度' }
+const TYPE_LABEL: Record<NodeType, string> = { entity: '业务对象', metric: '指标', source: '源表', dimension: '维度', report: '报表' }
 const TYPE_COLOR: Record<NodeType, string> = {
-  entity: '#4D6BFE', metric: '#0FA958', source: '#E08A00', dimension: '#8B5CF6',
+  entity: '#4D6BFE', metric: '#0FA958', source: '#E08A00', dimension: '#8B5CF6', report: '#E5484D',
 }
-const TYPE_SIZE: Record<NodeType, number> = { entity: 34, metric: 15, source: 22, dimension: 18 }
-const EDGE_LABEL: Record<EdgeType, string> = {
-  belongs_to: '属于', derives_from: '算自', upstream_of: '上游', has_dimension: '维度',
+const TYPE_SIZE: Record<NodeType, number> = { entity: 34, metric: 15, source: 22, dimension: 18, report: 12 }
+const EDGE_LABEL: Record<string, string> = {
+  belongs_to: '属于', derives_from: '算自', upstream_of: '上游', has_dimension: '维度', used_by: '被报表引用',
 }
 
 /** 搜索命中：标签 / id / observations 里的任意一段（大小写不敏感）。 */
@@ -191,6 +191,13 @@ export default function SystemMapPage() {
       }],
     }, true)
   }, [view, query])
+
+  const reportsUsing = useMemo(() => {
+    if (selected === null || data === null || selected.type !== 'metric') return []
+    return data.ontology.edges
+      .filter((e) => e.type === 'used_by' && e.to === selected.id)
+      .map((e) => data.ontology.nodes.find((n) => n.id === e.from)?.label ?? e.from)
+  }, [selected, data])
 
   const relationCount = useMemo(() => {
     if (selected === null || data === null) return 0
@@ -324,6 +331,14 @@ export default function SystemMapPage() {
             )}
             {selected.type === 'metric' && (
               <Button size="small" href={`/console/data/metrics`}>去指标页看变更历史</Button>
+            )}
+            {selected.type === 'metric' && reportsUsing.length > 0 && (
+              <div>
+                <div style={{ fontSize: 12, color: '#9AA0A6', marginBottom: 4 }}>被这些报表引用</div>
+                {reportsUsing.map((t) => (
+                  <div key={t} style={{ fontSize: 13, color: '#1B1C1E', lineHeight: 2 }}>{t}</div>
+                ))}
+              </div>
             )}
             <Typography.Text type="secondary" style={{ fontSize: 12 }}>
               关联 {relationCount} 条关系

@@ -106,6 +106,25 @@ describe('buildSystemMapOntology', () => {
     expect(g.edges).toEqual([{ from: 'source:fct_retail_sale', to: 'source:stg_order', type: 'upstream_of' }])
   })
 
+  it('报表节点与 used_by 边：已发布且引用指标 ⇒ 进图；无引用 / 指标不在图 ⇒ 不进', () => {
+    const model = modelOf({
+      metrics: [metric({})],
+      reports: [
+        { id: 'rep1', title: '门店日报', publishedVersion: 3, latestVersion: null, latestVersionTitle: null, metricIds: ['lemeng:retail:net_sales'] },
+        { id: 'rep2', title: '空报表', publishedVersion: 1, latestVersion: null, latestVersionTitle: null, metricIds: [] },
+        { id: 'rep3', title: '幽灵指标', publishedVersion: 1, latestVersion: null, latestVersionTitle: null, metricIds: ['no:such'] },
+      ],
+    })
+    const g = buildSystemMapOntology(model)
+    const ids = g.nodes.map((n) => n.id)
+    expect(ids).toContain('report:rep1')
+    // 没有指标引用、或引用的指标都不在图里 ⇒ 报表不进图（否则成孤岛节点）
+    expect(ids).not.toContain('report:rep2')
+    expect(ids).not.toContain('report:rep3')
+    expect(g.edges).toContainEqual({ from: 'report:rep1', to: 'metric:lemeng:retail:net_sales', type: 'used_by' })
+    expect(g.edges.filter((e) => e.type === 'used_by')).toHaveLength(1)
+  })
+
   it('observations 是人话短句：口径 / 使用量 / 对账状态都在指标节点上', () => {
     const model = modelOf({ metrics: [metric({})] })
     const node = buildSystemMapOntology(model).nodes.find((n) => n.id === 'metric:lemeng:retail:net_sales')!

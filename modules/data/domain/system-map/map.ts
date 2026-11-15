@@ -26,6 +26,8 @@ import type { Pool } from 'pg'
 // @ts-expect-error TS7016: scripts/ 不是 workspace 包、没有 .d.ts；映射函数只有这一处事实源
 // （与 domain/system-map/health.ts、domain/pipelines/propose-metric.ts 同一处理）。
 import { metricToAuditFileName } from '../../../../scripts/check-data-models.mjs'
+import { metricIdsOf } from '../report-scope'
+import type { MetricIdPanel } from '../report-scope'
 import { healthOf } from './health'
 import { valueMetricsOf, type ValueMetrics } from '../analysis/value-metrics'
 import type { HealthSummary } from './health'
@@ -94,6 +96,11 @@ export interface SystemMapReportFact {
   publishedVersion?: number | null
   latestVersion?: number | null
   latestVersionTitle?: string | null
+  /**
+   * **已发布版本**的面板引用的指标 id（含 KPI 分母），按 `metricIdsOf` 投影。
+   * 未发布 / 读不到 spec ⇒ 空数组。本体图据此建「报表 → 指标」的边。
+   */
+  metricIds?: readonly string[]
 }
 
 export interface SystemMapDemandFact {
@@ -264,6 +271,9 @@ export interface SystemMapModel {
   invariants: SystemMapInvariant[]
   warnings: string[]
 }
+
+/** 事实源里 spec.panels 的宽松形状（jsonb 直读，结构与 `MetricIdPanel` 对齐）。 */
+type MetricIdPanelish = MetricIdPanel
 
 // ── YAML / dbt / contracts 的读取与解析（全部不抛）──────────────────────────────
 
@@ -930,6 +940,26 @@ export async function loadSystemMapFacts(deps: SystemMapLoadDeps): Promise<Syste
     latestVersion.set(String(row.report_id), { version: Number(row.version), title: String(row.title) })
   }
 
+  // 已发布快照的面板指标（报表→指标 边）：只看 published_version_id 指向的那版——
+  // 草稿/历史版本的引用不算（它们还没对读者生效）。spec 读不到 ⇒ 该报表无边，不猜。
+  const publishedSpecRes = await deps.pool.query<{ id: string; spec?: unknown }>(
+    `select r.id, v.spec
+       from data.reports r
+       left join data.report_versions v on v.org = r.org and v.id = r.published_version_id
+      where r.org = $1`,
+    [deps.org],
+  ).catch(() => {
+    warn('报表发布快照（data.report_versions.spec）')
+    return { rows: [] as Array<{ id: string; spec?: unknown }> }
+  })
+  const publishedMetricIds = new Map<string, string[]>()
+  for (const row of publishedSpecRes.rows) {
+    const spec = row.spec as { panels?: unknown[] } | null | undefined
+    const panels = Array.isArray(spec?.panels) ? (spec?.panels as MetricIdPanelish[]) : []
+    const ids = [...new Set(panels.flatMap((p) => metricIdsOf(p)))]
+    if (ids.length > 0) publishedMetricIds.set(String(row.id), ids)
+  }
+
   if (candidatesRes === null) warn('候选池（data.metric_candidates）')
 
   const incidentsTracked = incidentsRes !== null
@@ -963,6 +993,8 @@ export async function loadSystemMapFacts(deps: SystemMapLoadDeps): Promise<Syste
         publishedVersion: r.publishedVersion,
         latestVersion: latest?.version ?? null,
         latestVersionTitle: latest?.title ?? null,
+        // 已发布快照的面板指标（报表→指标 边的事实源；草稿不算——线上没生效的不进图）
+        metricIds: publishedMetricIds.get(r.id) ?? [],
       }
     }),
     usage,

@@ -38,6 +38,7 @@ const GRAPH = {
   ontology: {
     nodes: [
       { id: 'entity:门店', type: 'entity', label: '门店', observations: ['3 个指标挂在这个对象上'] },
+      { id: 'report:rep1', type: 'report', label: '门店日报', observations: ['引用 1 个指标', '已发布 v3'] },
       { id: 'metric:lemeng:retail:net_sales', type: 'metric', label: '净销售额', observations: ['口径：按门店日结净额汇总', '近 30 天使用 12 次'] },
       { id: 'metric:lemeng:retail:order_count', type: 'metric', label: '订单数', observations: ['口径：有效订单笔数'] },
       { id: 'source:fct_retail_sale', type: 'source', label: 'fct_retail_sale', observations: ['2 个指标由它算出'] },
@@ -45,6 +46,7 @@ const GRAPH = {
     edges: [
       { from: 'metric:lemeng:retail:net_sales', to: 'entity:门店', type: 'belongs_to' },
       { from: 'metric:lemeng:retail:net_sales', to: 'source:fct_retail_sale', type: 'derives_from' },
+      { from: 'report:rep1', to: 'metric:lemeng:retail:net_sales', type: 'used_by' },
     ],
   },
   warnings: [],
@@ -77,9 +79,9 @@ describe('体系地图·本体图', () => {
     // 实体绑定率与对账覆盖率恰好都是 98.2% ⇒ 复数断言
     expect(screen.getAllByText('98.2%')).toHaveLength(2)
     expect(screen.getByText('17')).toBeInTheDocument()
-    expect(screen.getByText(/4 个节点 · 2 条关系/)).toBeInTheDocument()
+    expect(screen.getByText(/5 个节点 · 3 条关系/)).toBeInTheDocument()
     // 图拿到的是全量节点（setOption 在数据到达后的 effect 里 ⇒ 用 waitFor 等它）
-    await waitFor(() => expect(lastOption()?.series[0]!.data).toHaveLength(4))
+    await waitFor(() => expect(lastOption()?.series[0]!.data).toHaveLength(5))
   })
 
   it('搜索：只保留命中节点 + 一跳邻居', async () => {
@@ -88,14 +90,14 @@ describe('体系地图·本体图', () => {
     await waitFor(() => expect(screen.getByText('57')).toBeInTheDocument())
 
     fireEvent.change(screen.getByPlaceholderText('搜指标、业务对象或源表'), { target: { value: '净销售额' } })
-    // 净销售额 + 它的两个邻居（门店、源表）；「订单数」被筛掉
-    await waitFor(() => expect(screen.getByText(/3 个节点/)).toBeInTheDocument())
+    // 净销售额 + 它的邻居（门店、源表、门店日报）；「订单数」被筛掉
+    await waitFor(() => expect(screen.getByText(/4 个节点/)).toBeInTheDocument())
     await waitFor(() => expect(lastOption()?.series[0]!.data.map((n) => n.id))
       .not.toContain('metric:lemeng:retail:order_count'))
 
     // 清空恢复全图
     fireEvent.change(screen.getByPlaceholderText('搜指标、业务对象或源表'), { target: { value: '' } })
-    await waitFor(() => expect(screen.getByText(/4 个节点/)).toBeInTheDocument())
+    await waitFor(() => expect(screen.getByText(/5 个节点/)).toBeInTheDocument())
   })
 
   it('点节点 ⇒ 右侧抽屉给出 observations 与链路；关掉后不残留', async () => {
@@ -115,12 +117,15 @@ describe('体系地图·本体图', () => {
 
     await waitFor(() => expect(screen.getByText('口径：按门店日结净额汇总')).toBeInTheDocument(), { timeout: 5000 })
     expect(screen.getByText('近 30 天使用 12 次')).toBeInTheDocument()
-    expect(screen.getByText('关联 2 条关系')).toBeInTheDocument()
+    expect(screen.getByText('关联 3 条关系')).toBeInTheDocument()
     // 链路：marts → staging → 湖 → 管线，以及运行态
     await waitFor(() => expect(screen.getByText('fct_retail_sale')).toBeInTheDocument())
     expect(screen.getByText('stg_lemeng_retail_order_line')).toBeInTheDocument()
     expect(screen.getByText(/最近一次运行/)).toBeInTheDocument()
     expect(screen.getByText('数据水位：2026-11-13')).toBeInTheDocument()
+    // 指标抽屉给出「被哪些报表引用」（改口径会砸到谁）
+    expect(screen.getByText('被这些报表引用')).toBeInTheDocument()
+    expect(screen.getByText('门店日报')).toBeInTheDocument()
 
     fireEvent.click(screen.getByRole('button', { name: /close/i }))
     await waitFor(() => expect(screen.queryByText('口径：按门店日结净额汇总')).toBeNull())

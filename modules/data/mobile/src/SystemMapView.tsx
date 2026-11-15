@@ -11,7 +11,7 @@ import { Input, Skeleton } from 'antd-mobile'
 import { C, EmptyState, cardStyle, radius } from './ui'
 import { apiGet } from './api'
 
-interface OntologyNode { id: string; type: 'entity' | 'metric' | 'source' | 'dimension'; label: string; observations: string[] }
+interface OntologyNode { id: string; type: 'entity' | 'metric' | 'source' | 'dimension' | 'report'; label: string; observations: string[] }
 interface OntologyEdge { from: string; to: string; type: string }
 interface GraphResponse {
   health: { metricTotal: number; entityBoundPct: number; auditCoveredPct: number; zeroUse: number }
@@ -82,6 +82,13 @@ export default function SystemMapView({ focus }: { focus?: string | null }) {
     return [...out.entries()].map(([id, g]) => ({ id, ...g })).sort((a, b) => a.label.localeCompare(b.label))
   }, [data, q])
 
+  const reportsUsing = useMemo(() => {
+    if (data === null || open === null || open.type !== 'metric') return []
+    return data.ontology.edges
+      .filter((e) => e.type === 'used_by' && e.to === open.id)
+      .map((e) => data.ontology.nodes.find((n) => n.id === e.from)?.label ?? e.from)
+  }, [data, open])
+
   if (error !== null) {
     return <div style={{ padding: 32, textAlign: 'center', color: C.mute, fontSize: 13 }}>{error}</div>
   }
@@ -120,6 +127,15 @@ export default function SystemMapView({ focus }: { focus?: string | null }) {
             <div key={o} style={{ fontSize: 13, color: C.ink, lineHeight: 1.9 }}>{o}</div>
           ))}
         </div>
+
+        {reportsUsing.length > 0 && (
+          <>
+            <div style={{ fontSize: 12, color: C.mute, margin: '12px 2px 6px' }}>被这些报表引用</div>
+            <div style={{ ...cardStyle, padding: 14 }}>
+              {reportsUsing.map((t) => <div key={t} style={{ fontSize: 13, color: C.ink, lineHeight: 2 }}>{t}</div>)}
+            </div>
+          </>
+        )}
 
         <div style={{ fontSize: 12, color: C.mute, margin: '0 2px 6px' }}>链路</div>
         <div style={{ ...cardStyle, padding: 14 }}>

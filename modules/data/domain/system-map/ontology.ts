@@ -12,9 +12,9 @@
 //   2. **纯函数**——不读盘、不查库，输入 `SystemMapModel`，输出可 JSON 化的对象（单测直接喂构造数据）。
 import type { SystemMapModel } from './map'
 
-export type OntologyNodeType = 'entity' | 'metric' | 'source' | 'dimension'
+export type OntologyNodeType = 'entity' | 'metric' | 'source' | 'dimension' | 'report'
 
-export type OntologyEdgeType = 'belongs_to' | 'derives_from' | 'upstream_of' | 'has_dimension'
+export type OntologyEdgeType = 'belongs_to' | 'derives_from' | 'upstream_of' | 'has_dimension' | 'used_by'
 
 export interface OntologyNode {
   id: string
@@ -37,6 +37,8 @@ export interface SystemMapOntology {
 
 /** 节点 id 前缀：同名不同类（如实体「门店」与源表「门店」）不会撞车。 */
 const nodeId = (type: OntologyNodeType, key: string): string => `${type}:${key}`
+
+/** 报表 id → 节点 key（报表 id 是租户内句柄，直接用）。 */
 
 export function buildSystemMapOntology(model: SystemMapModel): SystemMapOntology {
   const nodes: OntologyNode[] = []
@@ -112,6 +114,23 @@ export function buildSystemMapOntology(model: SystemMapModel): SystemMapOntology
     })
   }
 
+  // 报表节点（只挂已发布且有指标引用的）：回答「改这个口径会砸到哪些报表」。
+  // 未发布 / 无指标面板 / 引用的指标一个都不在图里 ⇒ 不进图（否则是孤岛节点）。
+  const metricIds = new Set(model.metrics.map((m) => m.id))
+  for (const r of model.reports) {
+    const ids = r.metricIds ?? []
+    if (!ids.some((id) => metricIds.has(id))) continue
+    addNode({
+      id: nodeId('report', r.id),
+      type: 'report',
+      label: r.title,
+      observations: [
+        `引用 ${ids.length} 个指标`,
+        r.publishedVersion !== null && r.publishedVersion !== undefined ? `已发布 v${r.publishedVersion}` : '未发布',
+      ],
+    })
+  }
+
   // ── 边：全部有向、全部两端已存在 ────────────────────────────────────────────
   for (const m of model.metrics) {
     const metricNode = nodeId('metric', m.id)
@@ -133,6 +152,13 @@ export function buildSystemMapOntology(model: SystemMapModel): SystemMapOntology
   for (const e of model.entities) {
     for (const d of model.dimensions) {
       if (e.relations.includes(d.relation)) addEdge(nodeId('entity', e.name), nodeId('dimension', d.name), 'has_dimension')
+    }
+  }
+
+  // 报表 → 指标（used_by）：只有两端都在图里才连（指标可能不在词表 ⇒ 不留悬空边）
+  for (const r of model.reports) {
+    for (const id of r.metricIds ?? []) {
+      addEdge(nodeId('report', r.id), nodeId('metric', id), 'used_by')
     }
   }
 
