@@ -18,7 +18,7 @@ import { pathToFileURL } from 'node:url'
 import { serveStatic } from '@hono/node-server/serve-static'
 import { enabledFromSubscriptions, SubscriptionCache } from './subscription-source'
 import { parse as parseYaml } from 'yaml'
-import type { CasdoorClient } from '@platform/auth-core'
+import { csrfToken, type CasdoorClient, type SessionPayload } from '@platform/auth-core'
 import {
   DECLARED_GATE_APPROVED,
   ManifestSchema,
@@ -28,6 +28,7 @@ import {
   type ChannelAddressResolver,
   type DeclaredEndpoint,
   type Identity,
+  type JobsPort,
   type ModuleContext,
   type ModuleDefinition,
   type ModuleManifest,
@@ -156,6 +157,21 @@ export interface LoadModulesDeps {
    * （只要有 pool 就有工厂）。
    */
   scheduler?: SchedulerPortFactory
+  /**
+   * 系统任务端口（宿主 `app.ts` 用 `buildJobsPort({ pool })` 构造，W6-P4a）：装载期原样
+   * 注入每个模块的 `ctx.jobs`。与 `scheduler` 同款——loader 不做任何绑定/包装。
+   *
+   * 可选**只服务测试与注入式用法**：未提供（loader 测试 / 旧宿主）⇒ 不注入，模块侧按契约
+   * 显式判空降级（jobs 路由返回 `JOBS_UNAVAILABLE`）。生产 `app.ts` 无条件传。
+   */
+  jobs?: JobsPort
+  /**
+   * 会话签名密钥（宿主 `config.sessionSecret`，W6-P4a）：装载期用它构造
+   * `ModuleContext.csrfVerify`，把「会话 + x-csrf-token 头」的校验能力**以函数形式**注入模块
+   * （模块子树默认没有 CSRF，且拿不到 secret）。未提供（loader 测试 / 旧宿主）⇒ 不注入
+   * ⇒ 模块写操作 fail-closed（403 `CSRF`）。生产 `app.ts` 无条件传。
+   */
+  sessionSecret?: string
 }
 
 /** 待供给的权限码（manifest.permissions 的元素形状） */
@@ -491,7 +507,24 @@ export async function loadModules(
       }
     }
 
-  const baseCtx: ModuleContext = { pool: deps.pool, identityLinks, events, addresses, userStatus }
+  // CSRF 校验（W6-P4a）：模块子树默认没有 CSRF（宿主中间件只挂宿主路由），把宿主拥有的
+  // `csrfToken(session, sessionSecret)` 收成一个**纯判定函数**注入——模块拿到能力，拿不到
+  // secret。未传 secret ⇒ 不注入（模块写操作 fail-closed 403 CSRF，不是「放行」）。
+  const csrfVerify: ModuleContext['csrfVerify'] = deps.sessionSecret === undefined
+    ? undefined
+    : (session, header) => {
+      if (session === undefined || session === null || header === undefined) return false
+      try {
+        return header === csrfToken(session as SessionPayload, deps.sessionSecret!)
+      } catch {
+        // 会话载荷形状不对（旧版本/伪造）⇒ 不通过，不抛给调用方
+        return false
+      }
+    }
+
+  const baseCtx: ModuleContext = {
+    pool: deps.pool, identityLinks, events, addresses, userStatus, csrfVerify,
+  }
   for (const p of pending) {
     if (typeof p.def.createPorts === 'function') {
       portsByModule.set(p.manifest.id, p.def.createPorts(baseCtx))
@@ -510,7 +543,10 @@ export async function loadModules(
   // 的输入）。注入的是**工厂**，loader 原样转发、不做 actor 绑定（装载期没有请求会话；
   // 任何固定 actor 都会抹平租户归属）。未传 ⇒ `scheduler: undefined` 原样落进 ctx——
   // 「未注入」是模块必须能看见的一个真实状态（旧宿主/单测），不是可以省略的细节。
-  const ctx: ModuleContext = { ...baseCtx, notify, scheduler: deps.scheduler }
+  // `jobs`（W6-P4a）同款：宿主构造好的 `JobsPort` 原样转发，未传 ⇒ undefined。
+  const ctx: ModuleContext = {
+    ...baseCtx, notify, scheduler: deps.scheduler, jobs: deps.jobs,
+  }
   for (const p of pending) {
     loaded.push({
       manifest: p.manifest,

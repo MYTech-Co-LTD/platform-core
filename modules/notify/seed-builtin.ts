@@ -137,6 +137,24 @@ export async function seedBuiltin(
     )
     rules += metricRule.rowCount ?? 0
 
+    // 定时任务生命周期（W6-P4a）：收件人 = 持 tenant:admin 的租户管理员；只走 in_app
+    // （通道本身可能就是坏掉的那一个）。三处同描：模块声明 ⇔ 模板 ⇔ 本派生规则。
+    for (const [event, template] of [
+      ['jobs.job.failed', 'jobs_job_failed'],
+      ['jobs.job.timeout', 'jobs_job_timeout'],
+      ['jobs.job.dead', 'jobs_job_dead'],
+    ] as const) {
+      const jobRule = await pool.query(
+        `insert into notify.rule
+           (org,id,enabled,event_key,scope,recipient_key,template_key,channels,origin,created_by)
+         values ($1,$2,true,$3,'*','admins',$4,'{inapp_default}'::text[],'derived','system')
+         on conflict (org,id) do update set enabled=true, template_key=excluded.template_key,
+           channels=excluded.channels`,
+        [org, `derived:jobs:${event}:*`, event, template],
+      )
+      rules += jobRule.rowCount ?? 0
+    }
+
     // 表单指派/催办（Wave 2.3）：收件人 = 事件 payload 里的 `assignee`（recipients.assignee
     // kind=field）⇒ 规则只写 recipient_key='assignee'，具体人由派发时按 payload 解析。
     // 这一条此前**完全缺失**：forms 声明了两个事件、却没有模板也没有规则，dispatch 结果是

@@ -97,7 +97,23 @@ if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) 
     const { createSchedulerLoop } = await import('../apps/server/src/scheduler/loop.ts')
     const { jobHealth } = await import('../apps/server/src/scheduler/health.ts')
     jobHealthFn = jobHealth
-    scheduler = createSchedulerLoop({ pool, cwd: process.cwd(), maxConcurrency: schedCfg.maxConcurrency })
+    // 任务生命周期事件（W6-P4a）：与 integration.stale 同路径——直接入 outbox，不新起子进程。
+    // org 取排班 owner（系统排班 owner 为空 ⇒ 本实例租户），由 loop 传入。
+    const { enqueueEvent } = await import('../modules/notify/storage.ts')
+    /** @type {{ rows: Array<{ casdoor_org: string }> }} */
+    const { rows: tenantRows } = await pool.query('select casdoor_org from platform.tenant order by id')
+    const instanceOrg = tenantRows[0]?.casdoor_org ?? ''
+    scheduler = createSchedulerLoop({
+      pool, cwd: process.cwd(), maxConcurrency: schedCfg.maxConcurrency,
+      emit: async (input) => enqueueEvent(pool, {
+        org: input.org || instanceOrg,
+        eventId: input.eventId,
+        eventKey: input.eventKey,
+        scope: '*',
+        payload: input.payload,
+        producer: 'platform.scheduler',
+      }),
+    })
     console.log(JSON.stringify({ ts: new Date().toISOString(), scheduler: 'enabled', tickMs: schedCfg.tickMs }))
   } else {
     console.log(JSON.stringify({ ts: new Date().toISOString(), scheduler: once ? 'skipped(--once)' : 'disabled' }))

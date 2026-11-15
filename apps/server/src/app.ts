@@ -21,6 +21,7 @@ import { loadConfig, type AppConfig } from './config'
 import { getPool } from './db'
 import { loadModules, type ModulesRuntime } from './loader'
 import { makeSchedulerFactory } from './scheduler/factory'
+import { buildJobsPort } from './scheduler/jobs-port'
 import { runMigrations } from './migrate'
 import { REGISTRY_PATH, startIntegrationProbeLoop } from './integration-probe'
 import { resolveKeyWithTouch } from './api-key-store'
@@ -31,7 +32,6 @@ import { patIdentityMiddleware } from './pat-auth'
 import { wecomChannelIdentityMiddleware } from './wecom-channel-auth'
 import { platformRoutes, type ModuleInfo } from './routes/platform'
 import { apiKeyRoutes } from './routes/api-keys'
-import { platformJobRoutes } from './routes/platform-jobs'
 import { authRoutes } from './routes/auth'
 import { adminRoutes } from './routes/admin'
 import { PLATFORM_BUILTIN_PERMISSIONS } from './loader'
@@ -172,12 +172,18 @@ export async function buildApp(overrides: BuildAppOverrides = {}): Promise<{
     // lambda 在测试中不可达 ⇒ 改回固定 actor 仍全绿」的结构性盲区（审阅 I1）。
     // 只要有 pool 就有工厂，不存在 PLATFORM_ORG/multi 的注入分支。
     const scheduler = makeSchedulerFactory(pool)
+    // 系统任务端口（W6-P4a）：注入模块 `ctx.jobs`——jobs 模块的排班清单/台账/手动触发只经它，
+    // 不读 `platform.job_*`（B1）。只要有 pool 就有端口，不存在租户分支。
+    const jobs = buildJobsPort({ pool })
     runtime = await loadModules(overrides.modulesDir ?? modulesDir, {
       pool,
       casdoorFor: casdoorFactory,
       subscriptionSource,
       subscriptionCacheTtlMs: Number(process.env.PLATFORM_SUBSCRIPTION_CACHE_TTL_MS) || 60_000,
       scheduler,
+      jobs,
+      // 模块子树默认没有 CSRF：把宿主的会话校验能力注入 ctx.csrfVerify（模块拿不到 secret）
+      sessionSecret: config.sessionSecret,
     })
   }
 
@@ -287,8 +293,10 @@ export async function buildApp(overrides: BuildAppOverrides = {}): Promise<{
   // ⑦.5 个人 Key（PAT）管理面（issue #894）：个人档免 scope、管理档 tenant:admin；
   // 与 platformRoutes 同前缀不同路径（/keys*），注册序不影响。
   app.route('/api/platform/keys', apiKeyRoutes({ pool, sessionSecret: config.sessionSecret }))
-  // ⑧d 业务调度手动触发（Wave 6 P1）：只入队，执行在 worker 进程——HTTP 进程不起子进程
-  app.route('/api/platform/jobs', platformJobRoutes({ pool, sessionSecret: config.sessionSecret }))
+  // （⑧d 已退役，W6-P4a）：业务调度手动触发原挂宿主 /api/platform/jobs/:key/run（Wave 6 P1），
+  // 已迁入 jobs 模块端点 POST /api/modules/jobs/:key/run（jobs:manage + CSRF；只入队语义与
+  // 审计由 ctx.jobs 端口承载，见 scheduler/jobs-port.ts）。旧路径不再存在——app.test.ts 有
+  // 「旧路径 404」用例锁住，别把挂载加回来。
   // ⑧ 登录三路：账密 + 企微 qr/silent（platformRoutes 同前缀，注册序不影响——路径不重叠）
   // 登录限速器（M1 闭债 R2）：**一个实例传两处**（账密 + 企微）——分实例会与分桶一样把额度
   // 按份数放大，却额外放大第 1 层（user 桶），无任何收益（预算口径见 rate-limit.ts 的 Door）

@@ -1,0 +1,8 @@
+{
+  "extends": "../../tsconfig.base.json",
+  "compilerOptions": {
+    "noEmit": true,
+    "lib": ["ES2022", "DOM", "DOM.Iterable"]
+  }
+  // 测试文件纳入 typecheck（issue #68 收口口径；本包无 jest-dom，不需要 paths 覆盖 vitest）
+}

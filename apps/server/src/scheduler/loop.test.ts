@@ -280,3 +280,71 @@ describePg('scheduler loop', () => {
     }
   })
 })
+
+describePg('scheduler loop · 任务生命周期事件（W6-P4a）', () => {
+  let pool: Pool
+  beforeAll(async () => { pool = new Pool({ connectionString: dbUrl }); await runMigrations(pool, 'platform', dir) })
+  afterAll(async () => {
+    await pool.query(`delete from platform.job_run where schedule_id in
+      (select id from platform.job_schedule where key like 'jobtest-loop-ev:%')`)
+    await pool.query("delete from platform.job_schedule where key like 'jobtest-loop-ev:%'")
+    await pool.end()
+  })
+
+  async function seed(key: string, maxAttempts = 1): Promise<number> {
+    await pool.query("delete from platform.job_run where key like 'jobtest-loop-ev:%'")
+    await pool.query("delete from platform.job_schedule where key like 'jobtest-loop-ev:%'")
+    const { rows } = await pool.query(
+      `insert into platform.job_schedule(key,cron,timezone,source,enabled,next_run_at,timeout_ms,max_attempts,expected_interval_secs)
+       values ($1,'7 * * * *','UTC','system',true, now() - interval '1 minute', 500, $2, 3600) returning id`,
+      [key, maxAttempts])
+    return Number(rows[0].id)
+  }
+
+  async function waitIdle(loop: { inFlight(): number }): Promise<void> {
+    for (let i = 0; i < 100 && loop.inFlight() > 0; i++) await new Promise((r) => setTimeout(r, 20))
+  }
+
+  it('失败 ⇒ jobs.job.failed（eventId 按 runId）；尝试耗尽 ⇒ 追加 dead（按格）', async () => {
+    await seed('jobtest-loop-ev:fail', 1)
+    const emitted: Array<{ eventKey: string; eventId: string }> = []
+    const loop = createSchedulerLoop({
+      pool, registry: [def({ key: 'jobtest-loop-ev:fail' })], cwd: process.cwd(), maxConcurrency: 1,
+      spawn: async () => rejResult(),
+      emit: async (i) => { emitted.push({ eventKey: i.eventKey, eventId: i.eventId }); return { accepted: true } },
+    })
+    await loop.tick()
+    await waitIdle(loop)
+    expect(emitted.map((e) => e.eventKey)).toEqual(['jobs.job.failed', 'jobs.job.dead'])
+    expect(emitted[0].eventId).toMatch(/^jobs\.job\.failed:\d+$/)
+    expect(emitted[1].eventId).toMatch(/^jobs\.job\.dead:\d+:/)
+  })
+
+  it('超时 ⇒ jobs.job.timeout；未耗尽尝试 ⇒ 不追加 dead', async () => {
+    await seed('jobtest-loop-ev:timeout', 3)
+    const emitted: string[] = []
+    const loop = createSchedulerLoop({
+      pool, registry: [def({ key: 'jobtest-loop-ev:timeout' })], cwd: process.cwd(), maxConcurrency: 1,
+      spawn: async () => ({ code: null, signal: 'SIGKILL', timedOut: true, outputTail: '', durationMs: 1 }),
+      emit: async (i) => { emitted.push(i.eventKey); return { accepted: true } },
+    })
+    await loop.tick()
+    await waitIdle(loop)
+    expect(emitted).toEqual(['jobs.job.timeout'])
+  })
+
+  it('★ fail-open：emit 抛错不影响终态与重试决策', async () => {
+    const id = await seed('jobtest-loop-ev:emitdown', 3)
+    const loop = createSchedulerLoop({
+      pool, registry: [def({ key: 'jobtest-loop-ev:emitdown' })], cwd: process.cwd(), maxConcurrency: 1,
+      spawn: async () => rejResult(),
+      emit: async () => { throw new Error('notify down') },
+    })
+    await loop.tick()
+    await waitIdle(loop)
+    const run = await pool.query('select status from platform.job_run where schedule_id=$1', [id])
+    expect(run.rows[0].status).toBe('failed')          // 终态照写
+    const sch = await pool.query('select retry_at from platform.job_schedule where id=$1', [id])
+    expect(sch.rows[0].retry_at).not.toBeNull()        // 重试照排
+  })
+})
