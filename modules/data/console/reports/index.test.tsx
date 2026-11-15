@@ -163,7 +163,12 @@ describe('报表页签双视图', () => {
     fireEvent.keyDown(document.body, { key: 'Escape' })
     openRowMenu('自绘大盘')
     const labels2 = menuLabels()
-    expect(labels2).toEqual(expect.arrayContaining(['发布', '回收', '共享']))
+    // 「编辑版式」（#2295）：桌面下拉与移动动作单是两套构建器，两边都要有（曾只加了移动端）。
+    expect(labels2).toEqual(expect.arrayContaining(['编辑版式', '发布', '回收', '共享']))
+    // Metabase 行没有版式概念 ⇒ 不出现
+    fireEvent.keyDown(document.body, { key: 'Escape' })
+    openRowMenu('未放行报表')
+    expect(menuLabels()).not.toContain('编辑版式')
   })
 
   it('只有 data:query ⇒ 拉观看清单（不发 /reports/manage），无管理动作，platform 行打开可点（Task 4 起打开自绘视图）', async () => {
@@ -213,6 +218,35 @@ describe('报表页签双视图', () => {
     expect(rowButton('销售日报', '改页门')).toBeInTheDocument()
     // 部门门与「共享」一样逐行给
     expect(rowButton('自绘大盘', '配部门门')).toBeInTheDocument()
+  })
+
+  it('★ 编辑版式（#2295）：桌面菜单进入 → GET /spec 拉面板 → 保存 PUT /layout 带行版本', async () => {
+    const panels = [
+      { chart: 'table', title: '甲', metricId: 'm1', dims: [], args: {}, span: 12 },
+      { chart: 'table', title: '乙', metricId: 'm1', dims: [], args: {}, span: 12 },
+    ]
+    m.mockImplementation(async (url: string, init?: RequestInit) => {
+      calls.push({ url, init })
+      if (url.endsWith('/reports')) return json({ reports: editableRows().filter((r) => r.requiredScope === null) })
+      if (/\/reports\/[^/]+\/spec$/.test(url)) return json({ spec: { panels }, version: ROWS[2].version })
+      if (init?.method === 'PUT' && url.endsWith('/layout')) return json({ version: ROWS[2].version + 1 })
+      return json({})
+    })
+    renderPage(['data:query'])
+    await waitFor(() => expect(screen.getByText('自绘大盘')).toBeInTheDocument())
+
+    fireEvent.click(rowButton('自绘大盘', '编辑版式'))
+    expect(await screen.findByTestId('layout-card-1|table|甲')).toBeInTheDocument()
+    // 调一次宽度再保存（证明回传的是当前编辑态，而不是打开时的原样）
+    fireEvent.click(screen.getAllByRole('button', { name: '变宽' })[0])
+    fireEvent.click(screen.getByRole('button', { name: /保\s*存/ }))
+
+    await waitFor(() => expect(calls.some((c) => c.init?.method === 'PUT' && c.url.endsWith('/layout'))).toBe(true))
+    const put = calls.find((c) => c.init?.method === 'PUT' && c.url.endsWith('/layout'))!
+    expect(JSON.parse(String(put.init?.body))).toMatchObject({
+      expectedVersion: ROWS[2].version,
+      items: [{ key: '1|table|甲', span: 13 }, { key: '1|table|乙', span: 12 }],
+    })
   })
 
   it('★ 工具条（UX）：搜索过滤 → 无匹配空态 → 状态筛选；清空恢复', async () => {
