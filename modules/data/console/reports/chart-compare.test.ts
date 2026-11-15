@@ -28,6 +28,30 @@ describe('buildOption 历史对比', () => {
     expect(opt.grid.bottom).toBe(34)
   })
 
+  it('堆叠（L4）：本期多系列共用 stack 名；不传时仍是分组柱', () => {
+    const cur = ok(['bizday', 'branch_num', 'value'], [
+      ['2026-11-01', '1', 10], ['2026-11-01', '2', 5],
+      ['2026-11-02', '1', 7], ['2026-11-02', '2', 3],
+    ])
+    const stacked = buildOption('bar', ['bizday', 'branch_num'], cur, [], { stack: true }) as any
+    expect(stacked.baseOption.series).toHaveLength(2)
+    expect(stacked.baseOption.series.map((s: { stack?: string }) => s.stack)).toEqual(['total', 'total'])
+    // 组合（分组）是默认形态：不传 opts 时不得出现 stack 键
+    const grouped = buildOption('bar', ['bizday', 'branch_num'], cur) as any
+    expect(grouped.baseOption.series.every((s: { stack?: string }) => s.stack === undefined)).toBe(true)
+  })
+
+  it('堆叠与对比基线并存时：stack 只加给本期系列（写侧已拒，这里防御性不误叠）', () => {
+    const cur = ok(['bizday', 'branch_num', 'value'], [['2026-11-01', '1', 10], ['2026-11-01', '2', 5]])
+    const prev = ok(['bizday', 'branch_num', 'value'], [['2026-10-31', '1', 8], ['2026-10-31', '2', 4]])
+    const opt = buildOption('bar', ['bizday', 'branch_num'], cur, [{ label: '上期', result: prev }], {
+      stack: true,
+    }) as any
+    // 4 条系列：前两条本期（有 stack），后两条上期（无）
+    expect(opt.baseOption.series.map((s: { stack?: string }) => s.stack))
+      .toEqual(['total', 'total', undefined, undefined])
+  })
+
   it('类目轴按值对齐：柱状图按原因/项目并列', () => {
     const cur = ok(['cause', 'value'], [['来货损', 10], ['自然损', 20]])
     const yoy = ok(['cause', 'value'], [['来货损', 8], ['自然损', 9]])
