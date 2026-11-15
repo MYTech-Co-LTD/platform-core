@@ -60,3 +60,11 @@
 
 - dbt 落平台后与 duckle console 抢占同一湖/同一 staging：必须保持「一个 job 一个调度者」，且时间段不重叠（沿用现有 CST 窗口）。
 - `dbt-materialize` 当前停用（OOM 遗留），迁移时不要顺手开；等存量重型 table 改增量后再定。
+
+## 落点决定（2026-11-15，用户拍板）
+
+dbt 类任务落**平台 scheduler + 镜像内 dbt 工具链**（选项 1）：
+- `deploy/Dockerfile.server` 增 dbt（python venv / dbt-core + 所需 adapter），把现役 `/opt/lemeng-materialize.sh` 的逻辑收进仓内脚本（例如 `scripts/lemeng/materialize-job.mjs`，参数走 env），容器内以 `/app/dbt-target` 与 `DATA_WAREHOUSE_URL` 运行。
+- registry 新增 `data.dbt_tick` 等 key，cron/timeout/retry 与 openship 现役逐字一致。
+- 验证：同一 scope 在容器内手动跑一次，产物/输出与宿主 `/opt` 版本比对一致后，才进四步切流。
+- 否决：宿主执行通道（扩大攻击面）、dbt 留守 openship（Wave 8 目标落空）。
