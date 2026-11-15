@@ -11,6 +11,10 @@
 
 ## [Unreleased]
 
+## [0.300.0](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.299.0...v0.300.0) - 2026-11-15
+- 【新增】jobs: 定时任务 console 页——排班与运行台账（只读） ([#2321](https://github.com/MYTech-Co-LTD/platform-core/pull/2321), [98019b9](https://github.com/MYTech-Co-LTD/platform-core/commit/98019b945028fff0a8441a2a2ee5f030563301a9))
+
+
 ## [0.299.0](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.298.0...v0.299.0) - 2026-11-15
 - 【新增】data: 业务监控组织级限流与摘要事件（W7-V2c） ([#2317](https://github.com/MYTech-Co-LTD/platform-core/pull/2317), [6943107](https://github.com/MYTech-Co-LTD/platform-core/commit/69431072b14c1df0f86276ebc7553efdd39efae9))
 - 【修复】data: 数据生产线适应画布改按宽度，卡片固定宽 (#2315) ([#2316](https://github.com/MYTech-Co-LTD/platform-core/pull/2316), [e038313](https://github.com/MYTech-Co-LTD/platform-core/commit/e038313cc22fb7d038bdc9fa4852189caac217c0))
