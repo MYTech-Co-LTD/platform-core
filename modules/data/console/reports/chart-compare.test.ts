@@ -66,6 +66,21 @@ describe('buildOption 历史对比', () => {
     expect(plain.series[0].markLine).toBeUndefined()
   })
 
+  it('颜色语义（L4）：按目标线给每根柱着色；缺值不染色', () => {
+    const cur = ok(['branch_num', 'value'], [['1', 1200], ['2', 800], ['3', null]])
+    const opt = buildOption('bar', ['branch_num'], cur, [], {
+      target: 1000, colorSemantics: 'target',
+    }) as any
+    const data = opt.baseOption.series[0].data
+    expect(data[0]).toEqual({ value: 1200, itemStyle: { color: '#0FA958' } })
+    expect(data[1]).toEqual({ value: 800, itemStyle: { color: '#E5484D' } })
+    // 没数据 ≠ 未达标：不染色（保持 null）
+    expect(data[2]).toBeNull()
+    // 不传 colorSemantics ⇒ 仍是裸数值（颜色由主题决定）
+    const plain = buildOption('bar', ['branch_num'], cur, [], { target: 1000 }) as any
+    expect(plain.baseOption.series[0].data).toEqual([1200, 800, null])
+  })
+
   it('类目轴按值对齐：柱状图按原因/项目并列', () => {
     const cur = ok(['cause', 'value'], [['来货损', 10], ['自然损', 20]])
     const yoy = ok(['cause', 'value'], [['来货损', 8], ['自然损', 9]])
