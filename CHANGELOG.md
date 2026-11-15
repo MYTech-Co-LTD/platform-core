@@ -11,6 +11,10 @@
 
 ## [Unreleased]
 
+## [0.300.1](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.300.0...v0.300.1) - 2026-11-15
+- 【修复】data: tables 档加节点级重试，ETag 竞态不再整轮失败 ([#2272](https://github.com/MYTech-Co-LTD/platform-core/pull/2272), [ab1e900](https://github.com/MYTech-Co-LTD/platform-core/commit/ab1e9000f4f1e2ee7e701f1a5ef89b0dedd420cc))
+
+
 ## [0.300.0](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.299.0...v0.300.0) - 2026-11-15
 - 【新增】jobs: 定时任务 console 页——排班与运行台账（只读） ([#2321](https://github.com/MYTech-Co-LTD/platform-core/pull/2321), [98019b9](https://github.com/MYTech-Co-LTD/platform-core/commit/98019b945028fff0a8441a2a2ee5f030563301a9))
 
