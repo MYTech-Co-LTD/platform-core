@@ -77,6 +77,8 @@ async function main() {
           notifiedAt: m.notifiedAt,
           cooldownSecs: m.cooldownSecs,
           consecutiveFail: m.consecutiveFail,
+          breakStreak: m.consecutiveBreach,
+          minBreachEvals: m.minBreachEvals,
           now,
         })
 
@@ -106,6 +108,7 @@ async function main() {
           lastEvalAt: now,
           notified,
           consecutiveFail: tr.consecutiveFail,
+          consecutiveBreach: tr.consecutiveBreach,
           ...(tr.disable ? { enabled: false } : {}),
         })
         await recordRun(pool, {

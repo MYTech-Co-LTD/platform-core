@@ -97,7 +97,16 @@ describePg('monitor 存储层（需要 DATABASE_URL）', () => {
     const mine = await listMonitors(pool, ORG_R)
     expect(mine.map((m) => m.id)).toEqual([idA])
     expect(mine[0].dryRun).toBe(true)
+    // V2b 默认值：防抖关闭（1 次即触发）与 streak 归零。
+    expect(mine[0]).toMatchObject({ minBreachEvals: 1, consecutiveBreach: 0 })
     expect((await listMonitors(pool, OTHER_R)).map((m) => m.id)).toEqual([idB])
+  })
+
+  it('no_flap 参数落库（V2b）', async () => {
+    const { id } = await createMonitor(pool, baseInput({ name: '防抖夹具', minBreachEvals: 3 }))
+    const { rows } = await pool.query('select min_breach_evals from data.monitor where id = $1', [id])
+    expect(rows[0].min_breach_evals).toBe(3)
+    await pool.query('delete from data.monitor where id = $1', [id])
   })
 
   it('dueMonitors 只返回到期且启用的行', async () => {
@@ -105,21 +114,21 @@ describePg('monitor 存储层（需要 DATABASE_URL）', () => {
     // A：已到期（last_eval_at 早于 cadence）
     await applyOutcome(pool, { id: idA, org: ORG_R }, {
       state: 'ok', stateSince: now, lastEvalAt: new Date(now.getTime() - 301_000),
-      notified: false, consecutiveFail: 0,
+      notified: false, consecutiveFail: 0, consecutiveBreach: 0,
     })
     const due = await dueMonitors(pool, ORG_R, now, 50)
     expect(due.map((m) => m.id)).toEqual([idA])
 
     // 刚求值过 ⇒ 不到期
     await applyOutcome(pool, { id: idA, org: ORG_R }, {
-      state: 'ok', stateSince: now, lastEvalAt: now, notified: false, consecutiveFail: 0,
+      state: 'ok', stateSince: now, lastEvalAt: now, notified: false, consecutiveFail: 0, consecutiveBreach: 0,
     })
     expect((await dueMonitors(pool, ORG_R, now, 50)).length).toBe(0)
   })
 
   it('applyOutcome 跨 org 恒 0 行（SQL 层禁止跨租户写）', async () => {
     await applyOutcome(pool, { id: idB, org: ORG_R }, {
-      state: 'firing', stateSince: new Date(), lastEvalAt: new Date(), notified: false, consecutiveFail: 0,
+      state: 'firing', stateSince: new Date(), lastEvalAt: new Date(), notified: false, consecutiveFail: 0, consecutiveBreach: 1,
     })
     const { rows } = await pool.query('select state from data.monitor where id = $1', [idB])
     expect(rows[0].state).toBe('ok')

@@ -28,6 +28,7 @@ export function MonitorButton({ reportId, panelIndex, panelTitle }: MonitorButto
   const [thresholdValue, setThresholdValue] = useState<number>(0)
   const [windowDays, setWindowDays] = useState(1)
   const [cadenceSecs, setCadenceSecs] = useState(3600)
+  const [minBreach, setMinBreach] = useState(1)
   const [recipients, setRecipients] = useState('')
   const [saving, setSaving] = useState(false)
   // antd 6：静态 message 不是持有者，走 useMessage + 就地 holder。
@@ -40,6 +41,7 @@ export function MonitorButton({ reportId, panelIndex, panelTitle }: MonitorButto
     setThresholdValue(0)
     setWindowDays(1)
     setCadenceSecs(3600)
+    setMinBreach(1)
     setRecipients('')
   }
 
@@ -63,6 +65,7 @@ export function MonitorButton({ reportId, panelIndex, panelTitle }: MonitorButto
           ...(verdict === 'threshold' ? { operator: op, threshold: thresholdValue } : {}),
           windowDays,
           cadenceSecs,
+          minBreachEvals: minBreach,
           recipients: refs.map((ref) => ({ kind: 'user', ref })),
         }),
       })
@@ -134,6 +137,11 @@ export function MonitorButton({ reportId, panelIndex, panelTitle }: MonitorButto
             <div>
               <Typography.Text>窗口（天）</Typography.Text>
               <InputNumber min={1} max={30} value={windowDays} onChange={(v) => setWindowDays(v ?? 1)} />
+            </div>
+            <div>
+              <Typography.Text>连续</Typography.Text>
+              <InputNumber min={1} max={10} value={minBreach} onChange={(v) => setMinBreach(v ?? 1)} />
+              <Typography.Text type="secondary"> 次越界才触发</Typography.Text>
             </div>
             <div>
               <Typography.Text>检查周期</Typography.Text>

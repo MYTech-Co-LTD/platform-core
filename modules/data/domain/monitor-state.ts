@@ -14,6 +14,10 @@ export interface TransitionInput {
   notifiedAt: Date | null
   cooldownSecs: number
   consecutiveFail: number
+  /** 已连续越界次数（落库值；每次求值前读取）。 */
+  breakStreak: number
+  /** 连续多少次越界才跃迁（1 = 第一次就触发）。 */
+  minBreachEvals: number
   now: Date
 }
 
@@ -23,6 +27,7 @@ export interface TransitionResult {
   state: MonitorState
   stateSince: Date
   consecutiveFail: number
+  consecutiveBreach: number
   notify: NotifyKind | null
   disable: boolean
 }
@@ -38,17 +43,35 @@ export function transitionOf(i: TransitionInput): TransitionResult {
       state: prev,
       stateSince: i.prevStateSince ?? now,
       consecutiveFail,
+      // 判不了不是「没越界」：streak 原样保留，恢复后再越界不必从头数。
+      consecutiveBreach: i.breakStreak,
       notify: disable ? 'disabled' : null,
       disable,
     }
   }
 
-  const next: MonitorState = outcome.verdict === 'ok' ? 'ok' : 'firing'
+  const breached = outcome.verdict !== 'ok'
+  const streak = breached ? i.breakStreak + 1 : 0
+
+  // 防抖（spec §7，V2b）：越界要连续 minBreachEvals 次才 ok→firing。
+  // 已在 firing 就不再「跃迁」，也不重复通知。
+  if (breached && prev !== 'firing' && streak < Math.max(1, i.minBreachEvals)) {
+    return {
+      state: prev,
+      stateSince: i.prevStateSince ?? now,
+      consecutiveFail: 0,
+      consecutiveBreach: streak,
+      notify: null,
+      disable: false,
+    }
+  }
+
+  const next: MonitorState = breached ? 'firing' : 'ok'
   const changed = next !== prev
   const stateSince = changed ? now : (i.prevStateSince ?? now)
 
   if (!changed) {
-    return { state: next, stateSince, consecutiveFail: 0, notify: null, disable: false }
+    return { state: next, stateSince, consecutiveFail: 0, consecutiveBreach: streak, notify: null, disable: false }
   }
 
   // 跃迁：冷却窗内的重复跃迁只改状态、不投递（spec §7）。
@@ -58,5 +81,5 @@ export function transitionOf(i: TransitionInput): TransitionResult {
     ? (next === 'firing' ? 'fired' : 'resolved')
     : null
 
-  return { state: next, stateSince, consecutiveFail: 0, notify, disable: false }
+  return { state: next, stateSince, consecutiveFail: 0, consecutiveBreach: streak, notify, disable: false }
 }
