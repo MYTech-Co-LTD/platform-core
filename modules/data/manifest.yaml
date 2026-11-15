@@ -364,6 +364,21 @@ notifications:
         recipient: watchers
         template: data_monitor_disabled
         channels: [inapp_default]
+    - key: data.monitor.suppressed
+      title: 业务监控已限流
+      description: 单租户每小时投递超上限，合并为一条摘要（W7-V2c，spec §11）
+      scope: { key: orgKey, label: 组织 }
+      payload:
+        orgKey: { type: string, required: true, label: 组织 }
+        to:    { type: user_list, required: true, label: 收件人 }
+        count: { type: number, required: true, label: 被抑制条数 }
+        link:  { type: url, required: true, label: 详情链接 }
+      recipients:
+        watchers: { kind: field, field: 'to', label: 监控收件人 }
+      defaults:
+        recipient: watchers
+        template: data_monitor_suppressed
+        channels: [inapp_default]
 
 # 业务面承载端（#1266 机检）：console ⇒ pc；移动指标页（spec 2026-11-01 §10.2，userApp）⇒ mobile。
 surfaces: [pc, mobile]

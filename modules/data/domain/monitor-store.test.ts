@@ -8,6 +8,7 @@ import {
 } from './monitor-spec'
 import {
   applyOutcome, createMonitor, dueMonitors, listMonitors, quotaOf, recordRun, updateMonitorFlags,
+  recentNotifiedCount,
 } from './monitor-store'
 import { validateNewMonitor } from './monitor-spec'
 
@@ -154,6 +155,19 @@ describePg('monitor 存储层（需要 DATABASE_URL）', () => {
       .rejects.toMatchObject({ code: 'MONITOR_QUOTA_EXCEEDED' })
     expect(await quotaOf(pool, org)).toEqual({ used: MONITOR_QUOTA_PER_ORG, limit: MONITOR_QUOTA_PER_ORG })
     await pool.query('delete from data.monitor where org = $1', [org])
+  })
+
+  it('recentNotifiedCount 只数已投递且在一小时内（V2c）', async () => {
+    const org = `${ORG_R}-cap`
+    await pool.query('delete from data.monitor_run where org = $1', [org])
+    await recordRun(pool, { monitorId: idA, org, verdict: 'missing', value: 0, watermarkRef: null,
+      stateAfter: 'firing', notified: true, dryRun: false, durationMs: 1, error: null })
+    await recordRun(pool, { monitorId: idA, org, verdict: 'ok', value: null, watermarkRef: null,
+      stateAfter: 'ok', notified: false, dryRun: false, durationMs: 1, error: null })
+    expect(await recentNotifiedCount(pool, org, new Date(Date.now() - 3600_000))).toBe(1)
+    await pool.query("update data.monitor_run set evaluated_at = now() - interval '2 hours' where org = $1", [org])
+    expect(await recentNotifiedCount(pool, org, new Date(Date.now() - 3600_000))).toBe(0)
+    await pool.query('delete from data.monitor_run where org = $1', [org])
   })
 
   it('updateMonitorFlags 只改传了的项（影子期开闸）', async () => {

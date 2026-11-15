@@ -19,12 +19,12 @@ async function main() {
     process.exit(2)
   }
 
-  const { monitorOrgs, dueMonitors, recordRun, applyOutcome } =
+  const { monitorOrgs, dueMonitors, recordRun, applyOutcome, recentNotifiedCount } =
     await import('../modules/data/domain/monitor-store.ts')
   const { evaluateMonitor } = await import('../modules/data/domain/monitor-eval.ts')
   const { transitionOf } = await import('../modules/data/domain/monitor-state.ts')
   const { resolveMonitorRecipients } = await import('../modules/data/domain/monitor-recipients.ts')
-  const { monitorEventOf } = await import('../modules/data/domain/monitor-deliver.ts')
+  const { monitorEventOf, monitorSuppressedEventOf } = await import('../modules/data/domain/monitor-deliver.ts')
   const { enqueueEvent } = await import('../modules/notify/storage.ts')
   const { loadMergedCatalog } = await import('../modules/data/domain/metric-store.ts')
   const { analystPool } = await import('../modules/data/domain/warehouse.ts')
@@ -43,7 +43,9 @@ async function main() {
 
   const now = new Date()
   const LIMIT_PER_ORG = 200
-  const counts = { due: 0, ok: 0, firing: 0, unknown: 0, notified: 0, disabled: 0, failed: 0 }
+  const counts = { due: 0, ok: 0, firing: 0, unknown: 0, notified: 0, disabled: 0, failed: 0, suppressed: 0 }
+  // 组织级限流（V2c，spec §11）：每小时最多投递这么多条，超出合并为一条摘要。
+  const ORG_HOURLY_CAP = Math.max(0, Number(process.env.MONITOR_ORG_FIRING_CAP ?? '50') || 0)
 
   try {
     const orgs = await monitorOrgs(pool)
@@ -58,6 +60,10 @@ async function main() {
 
       const monitors = await dueMonitors(pool, org, now, LIMIT_PER_ORG)
       counts.due += monitors.length
+      let orgNotified = await recentNotifiedCount(pool, org, new Date(now.getTime() - 3600_000))
+      /** 本轮被限流抑制的规则（只为摘要汇总）。
+       *  @type {any[]} */
+      const suppressed = []
 
       for (const m of monitors) {
         const startedAt = Date.now()
@@ -85,7 +91,12 @@ async function main() {
         let notified = false
         let error = outcome.verdict === 'unknown' ? outcome.error : null
         if (tr.notify !== null && !m.dryRun) {
-          try {
+          if (orgNotified >= ORG_HOURLY_CAP) {
+            // 超限：状态照常跃迁，通知不发；摘要里点名。
+            suppressed.push(m)
+            counts.suppressed += 1
+            error = error ?? 'suppressed_org_cap'
+          } else try {
             const recipients = tr.notify === 'disabled'
               ? { to: [m.createdBy], excluded: [] }
               : await resolveMonitorRecipients(pool, org, m.recipients)
@@ -95,6 +106,7 @@ async function main() {
               await enqueueEvent(pool, { org, ...monitorEventOf(m, tr, outcome, recipients.to) })
               notified = true
               counts.notified += 1
+              orgNotified += 1
             }
           } catch (e) {
             // fail-open：投递失败不改 run 终态（AGENTS.md #12）。
@@ -129,6 +141,20 @@ async function main() {
         else counts.firing += 1
         if (tr.disable) counts.disabled += 1
       }
+
+      if (suppressed.length > 0) {
+        const to = [...new Set(suppressed.map((m) => m.createdBy).filter((x) => typeof x === 'string' && x !== ''))]
+        try {
+          await enqueueEvent(pool, { org, ...monitorSuppressedEventOf({
+            org,
+            to,
+            count: suppressed.length,
+            hourBucket: now.toISOString().slice(0, 13),
+          }) })
+        } catch (e) {
+          console.error(`monitor-tick: 摘要投递失败 org=${org}: ${e instanceof Error ? e.message : e}`)
+        }
+      }
     }
 
     await pool.query(
@@ -138,7 +164,8 @@ async function main() {
 
     console.log(
       `monitor-tick: due=${counts.due} ok=${counts.ok} firing=${counts.firing} `
-      + `unknown=${counts.unknown} notified=${counts.notified} disabled=${counts.disabled}`,
+      + `unknown=${counts.unknown} notified=${counts.notified} disabled=${counts.disabled} `
+      + `suppressed=${counts.suppressed}`,
     )
     process.exit(counts.unknown === 0 ? 0 : 1)
   } catch (e) {

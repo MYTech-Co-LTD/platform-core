@@ -162,6 +162,18 @@ export const BUILTIN_TEMPLATES: BuiltinTemplate[] = [
     },
   },
   {
+    key: 'data_monitor_suppressed',
+    name: '业务监控已限流',
+    eventKey: 'data.monitor.suppressed',
+    contents: {
+      in_app: {
+        title: '监控通知已限流',
+        body: '本小时有 {{count}} 条监控通知被抑制（达到租户每小时上限）。请登录查看报表。',
+        link: '{{link}}',
+      },
+    },
+  },
+  {
     key: 'data_monitor_disabled',
     name: '业务监控已自动停用',
     eventKey: 'data.monitor.disabled',

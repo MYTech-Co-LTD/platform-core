@@ -171,6 +171,7 @@ export async function seedBuiltin(
       ['data.monitor.fired', 'data_monitor_fired'],
       ['data.monitor.resolved', 'data_monitor_resolved'],
       ['data.monitor.disabled', 'data_monitor_disabled'],
+      ['data.monitor.suppressed', 'data_monitor_suppressed'],
     ] as const) {
       const monitorRule = await pool.query(
         `insert into notify.rule
