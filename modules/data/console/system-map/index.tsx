@@ -16,6 +16,7 @@ import { LegendComponent, TooltipComponent } from 'echarts/components'
 import { CanvasRenderer } from 'echarts/renderers'
 import { apiGet } from '../lib/api'
 import { humanError, type HumanError } from '../lib/explain'
+import LineageView from '../lineage/LineageView'
 
 echarts.use([GraphChart, LegendComponent, TooltipComponent, CanvasRenderer])
 
@@ -293,7 +294,8 @@ export default function SystemMapPage() {
       <Drawer
         open={selected !== null}
         onClose={() => setSelected(null)}
-        width={420}
+        // 指标节点要装字段画板：左信息 + 右画板两栏（#2338）；其他节点保持窄抽屉
+        width={selected?.type === 'metric' ? 'min(1600px, 92vw)' : 420}
         title={selected === null ? null : (
           <Space size={8}>
             <span>{selected.label}</span>
@@ -302,6 +304,10 @@ export default function SystemMapPage() {
         )}
       >
         {selected !== null && (
+          <div style={selected.type === 'metric'
+            ? { display: 'flex', gap: 16, alignItems: 'flex-start' }
+            : undefined}>
+          <div style={selected.type === 'metric' ? { width: 320, flex: '0 0 320px' } : { width: '100%' }}>
           <Space direction="vertical" size="middle" style={{ width: '100%' }}>
             <div>
               <Typography.Text type="secondary" style={{ fontSize: 11.5, fontFamily: 'ui-monospace, Menlo, monospace' }}>
@@ -360,10 +366,11 @@ export default function SystemMapPage() {
             )}
             {selected.type === 'metric' && (
               <Space size={8} wrap>
-                <Button size="small" type="primary" href={`/console/data/lineage?metric=${encodeURIComponent(selected.id.replace(/^metric:/, ''))}`}>
-                  看数据生产线
-                </Button>
                 <Button size="small" href={`/console/data/metrics`}>去指标页看变更历史</Button>
+                <Button size="small" type="link" style={{ paddingInline: 0 }}
+                        href={`/console/data/lineage?metric=${encodeURIComponent(selected.id.replace(/^metric:/, ''))}`}>
+                  单独打开
+                </Button>
               </Space>
             )}
             {selected.type === 'metric' && reportsUsing.length > 0 && (
@@ -378,6 +385,17 @@ export default function SystemMapPage() {
               关联 {relationCount} 条关系
             </Typography.Text>
           </Space>
+          </div>
+          {selected.type === 'metric' && (
+            // 字段链路：同一个视图本体，独立页与这里共用（#2338）
+            <div style={{ flex: 1, minWidth: 0 }}>
+              <LineageView
+                metricId={selected.id.replace(/^metric:/, '')}
+                height="calc(100vh - 210px)"
+              />
+            </div>
+          )}
+          </div>
         )}
       </Drawer>
     </Space>
