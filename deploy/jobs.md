@@ -301,3 +301,25 @@ agent 经 notify 工具面管理**周期消息排班**（触发 `notify.emit`）
 | `INVALID_PARAMS` / `INVALID_CRON` / `INVALID_SCHEDULE` / `INVALID_INTERVAL` / `PARAMS_TOO_LARGE` / `UNKNOWN_JOB_KEY` | 入参不合法（缺必填、cron 语法或时区、间隔、`params` >16KB、key 不在白名单） | 按错误码修入参 |
 
 > `QUOTA_EXCEEDED` 与 `JOB_LOCK_TIMEOUT` **不是一回事**：前者要人清额度，后者重试即可。
+
+## 12. 业务监控 tick（W7-V1，2026-11-15）
+
+`data.monitor_tick` 是调度器 registry 的一个系统 key（`* * * * *`，每实例一条排班），
+脚本 `scripts/data-monitor-tick.mjs` 遍历到期规则求值（`missing` / `stale`），写
+`data.monitor_run`，**只在状态跃迁且非影子期**时入队 `data.monitor.*` 事件。
+
+- **影子期是硬门**：`data.monitor.dry_run` 默认 `true`，只记录不发送；开闸走
+  `PATCH /api/modules/data/monitors/:id {dryRun:false}`（创建者或 `data:manage`）。
+- **判不了 ≠ 没问题**：水位表缺席、查询失败、目标不存在 ⇒ `monitor_run.verdict='unknown'`，
+  状态不变、`consecutive_fail+1`；连续 5 次自动停用并发 `data.monitor.disabled`。
+- **开闸四步（每实例）**：
+  1. 部署后确认 `platform.job_schedule` 有 `data.monitor_tick` 且 `enabled=false`；
+  2. `update platform.job_schedule set enabled=true, next_run_at=now() where key='data.monitor_tick'`；
+  3. 手动入队一次，看日志汇总行 `monitor-tick: due=<n> ok=<n> firing=<n> unknown=<n> ...`；
+  4. 建一条真实影子监控（一个已知新鲜指标 + 一个已知迟到源），确认 `data.monitor_run` 有行、
+     `notified=false`、`notify.event` 无新增。
+- **心跳**：脚本写 `platform.job_heartbeat('data.monitor_tick')`；`check-probe-heartbeat`
+  的检查清单要同时盯它（第二条独立路径，spec §10）。
+- **回滚**：`update platform.job_schedule set enabled=false where key='data.monitor_tick'`。
+  已建的监控规则留在库里（不删数据），重新开闸即可继续。
+- **判据下界**：`cadence_secs ≥ 300`；`stale` 的窗口必须晚于上游物化节奏一档，否则每轮误报。
