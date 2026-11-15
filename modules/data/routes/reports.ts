@@ -40,6 +40,8 @@ import { panelArgsOf } from '../domain/report-query'
 import { runDetailQuery } from '../domain/drill'
 import { resolveTextTokens } from '../domain/report-tokens'
 import { recordReportView, staleReports } from '../domain/report-views'
+import { applyLayoutToRaw } from '../domain/report-layout'
+import { deleteMyLayout, getMyLayout, saveMyLayout } from '../domain/report-layout-store'
 import { queryStats } from '../domain/query-stats'
 import type { QueryDeps } from '../domain/query-service'
 import { beijingTodayOf, freshnessFaceFor } from '../domain/query-service'
@@ -1089,6 +1091,127 @@ export function registerReports(r: ModuleHono, ctx: RouteCtx): void {
         return c.json({ error: 'STALE_WRITE', currentVersion: cur }, 409)
       }
       // 回带推进后的版本（调用方据此续写下一次，无需再读一次——与 PUT /reports/:id 同契约）
+      return c.json({ version: updated.version })
+    })
+  })
+
+  // ── 版式编辑（issue #2295；设计 docs/superpowers/specs/2026-11-15-report-layout-editing-design.md）
+  // 默认版式 = 改报表草稿 spec（只动顺序与 span）；个人版式 = 独立表（仅本人）。
+  // 两者共用 `domain/report-layout.ts` 的面板身份键，键集合不一致即判「版式已过期」。
+  const LayoutItemsBody = z.array(z.object({
+    key: z.string().min(1).max(200),
+    span: z.number().int().min(1).max(24),
+  }).strict()).min(1).max(24)
+
+  const DefaultLayoutBody = z.object({
+    items: LayoutItemsBody,
+    expectedVersion: z.number().int().positive().max(2147483647),
+  }).strict()
+
+  const MyLayoutBody = z.object({ items: LayoutItemsBody }).strict()
+
+  /** 个人版式读：观看者本人一行；不存在 ⇒ items: null（前端回默认版式）。 */
+  r.get('/reports/:id/my-layout', async (c) => {
+    const requester = requesterOf(c)
+    if (requester === null) return c.json({ error: 'UNAUTHENTICATED' }, 403)
+    const id = reportIdOf(c.req.param('id'))
+    if (id === null) return c.json({ error: 'NOT_FOUND' }, 404)
+    const org = c.get('tenant').casdoor_org
+    const row = await getReport(ctx.pool, org, id)
+    if (row === null) return c.json({ error: 'NOT_FOUND' }, 404)
+    if (row.renderer !== 'platform') return c.json({ error: 'RENDERER_NOT_SELF_DRAWN' }, 409)
+    const acl = await loadAssetAcl(ctx.pool, org, row.id)
+    const depts = (row.requiredDepts ?? []).length > 0 || acl.some((a) => a.subjectType === 'dept')
+      ? await userDeptClosure(ctx.pool, c.get('tenant').id, deptNamesOf(requester))
+      : undefined
+    if (!canViewAsset(row, requester, acl, depts)) return c.json({ error: 'NOT_FOUND' }, 404)
+    const items = await getMyLayout(ctx.pool, org, id, requester.userId)
+    return c.json({ items })
+  })
+
+  r.put('/reports/:id/my-layout', async (c) => {
+    const requester = requesterOf(c)
+    if (requester === null) return c.json({ error: 'UNAUTHENTICATED' }, 403)
+    const id = reportIdOf(c.req.param('id'))
+    if (id === null) return c.json({ error: 'NOT_FOUND' }, 404)
+    const parsed = MyLayoutBody.safeParse(await c.req.json().catch(() => null))
+    if (!parsed.success) return c.json({ error: 'INVALID_BODY' }, 400)
+    const org = c.get('tenant').casdoor_org
+    const row = await getReport(ctx.pool, org, id)
+    if (row === null) return c.json({ error: 'NOT_FOUND' }, 404)
+    if (row.renderer !== 'platform') return c.json({ error: 'RENDERER_NOT_SELF_DRAWN' }, 409)
+    const acl = await loadAssetAcl(ctx.pool, org, row.id)
+    const depts = (row.requiredDepts ?? []).length > 0 || acl.some((a) => a.subjectType === 'dept')
+      ? await userDeptClosure(ctx.pool, c.get('tenant').id, deptNamesOf(requester))
+      : undefined
+    if (!canViewAsset(row, requester, acl, depts)) return c.json({ error: 'NOT_FOUND' }, 404)
+    await saveMyLayout(ctx.pool, org, id, requester.userId, parsed.data.items)
+    return c.json({ ok: true })
+  })
+
+  r.delete('/reports/:id/my-layout', async (c) => {
+    const requester = requesterOf(c)
+    if (requester === null) return c.json({ error: 'UNAUTHENTICATED' }, 403)
+    const id = reportIdOf(c.req.param('id'))
+    if (id === null) return c.json({ error: 'NOT_FOUND' }, 404)
+    const org = c.get('tenant').casdoor_org
+    const row = await getReport(ctx.pool, org, id)
+    if (row === null) return c.json({ error: 'NOT_FOUND' }, 404)
+    if (row.renderer !== 'platform') return c.json({ error: 'RENDERER_NOT_SELF_DRAWN' }, 409)
+    const acl = await loadAssetAcl(ctx.pool, org, row.id)
+    const depts = (row.requiredDepts ?? []).length > 0 || acl.some((a) => a.subjectType === 'dept')
+      ? await userDeptClosure(ctx.pool, c.get('tenant').id, deptNamesOf(requester))
+      : undefined
+    if (!canViewAsset(row, requester, acl, depts)) return c.json({ error: 'NOT_FOUND' }, 404)
+    await deleteMyLayout(ctx.pool, org, id, requester.userId)
+    return c.json({ ok: true })
+  })
+
+  /**
+   * 默认版式写：在**存储的原始 spec** 上只改顺序与 span。
+   * 复用 PUT /spec 的全部写纪律：对象锁、owner ∪ data:manage、渲染器守卫、页门派生、版本计数。
+   * 键集合与当前面板不一致 ⇒ 409 LAYOUT_STALE（编辑器停留在旧版式时不给它写坏的机会）。
+   */
+  r.put('/reports/:id/layout', async (c) => {
+    const requester = requesterOf(c)
+    if (requester === null) return c.json({ error: 'UNAUTHENTICATED' }, 403)
+    const id = reportIdOf(c.req.param('id'))
+    if (id === null) return c.json({ error: 'NOT_FOUND' }, 404)
+    const parsed = DefaultLayoutBody.safeParse(await c.req.json().catch(() => null))
+    if (!parsed.success) return c.json({ error: 'INVALID_BODY' }, 400)
+    const org = c.get('tenant').casdoor_org
+    return await withObjectLock(`${org}/row:${id}`, async () => {
+      const row = await getReport(ctx.pool, org, id)
+      if (row === null) return c.json({ error: 'NOT_FOUND' }, 404)
+      const denied = await denyUnlessCanEdit(c, ctx.pool, requester, org, id)
+      if (denied !== null) return denied
+      if (row.renderer !== 'platform') return c.json({ error: 'RENDERER_NOT_SELF_DRAWN' }, 409)
+      if (row.spec === null) return c.json({ error: 'INVALID_SPEC' }, 400)
+      const applied = applyLayoutToRaw(row.spec, parsed.data.items)
+      if (!applied.ok) {
+        // 过期 = 客户端拿的是旧面板集合；非法 = 请求体形状/存储规格问题。两者码分开。
+        if (applied.code === 'LAYOUT_STALE') return c.json({ error: 'LAYOUT_STALE' }, 409)
+        if (applied.code === 'LAYOUT_INVALID') return c.json({ error: 'INVALID_BODY' }, 400)
+        return c.json({ error: applied.code }, 400)
+      }
+      const reparsed = parseStoredSpec(applied.raw)
+      if (!reparsed.ok) return c.json({ error: 'INVALID_SPEC' }, 400)
+      let updated: { version: number } | null
+      if (row.publishedVersionId === null) {
+        // 未发布行：页门仍需跟面板同步（版式不改面板集合/指标，派生结果通常不变；按同一纪律写）。
+        const d = deriveRequiredScope(reparsed.spec, await loadMergedCatalog(ctx.pool, org))
+        updated = await updateSpecAndScope(
+          ctx.pool, org, id, reparsed.raw, d.ok ? d.requiredScope : row.requiredScope,
+          parsed.data.expectedVersion,
+        )
+      } else {
+        updated = await updateSpec(ctx.pool, org, id, reparsed.raw, parsed.data.expectedVersion)
+      }
+      if (updated === null) {
+        const cur = await getReportVersion(ctx.pool, org, id)
+        if (cur === null) return c.json({ error: 'NOT_FOUND' }, 404)
+        return c.json({ error: 'STALE_WRITE', currentVersion: cur }, 409)
+      }
       return c.json({ version: updated.version })
     })
   })

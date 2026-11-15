@@ -53,6 +53,8 @@ import { formatValue } from '../../domain/report-format'
 import { pivotOf } from './cross-table'
 import { waterfallBarsOf } from './waterfall'
 import { RichText } from '../lib/rich-text'
+import { layoutItemsOf, layoutKeysOf, layoutOrderOf, validateLayoutItems, type LayoutItem } from '../../domain/report-layout'
+import { LayoutEditorModal, type LayoutEditorPanel } from './LayoutEditorModal'
 import { MonitorButton } from './MonitorModal'
 
 type Panel = ReportSpec['panels'][number]
@@ -1003,6 +1005,73 @@ export default function ReportView({
   const panels: ViewPanel[] = useMemo(() => plan.panels.map((p) => p.panel), [plan])
   const specFilters = plan.filters
 
+  // ── 个人版式（issue #2295）───────────────────────────────────────────────────────
+  // 只改本人的**渲染次序与宽度**；取数/凭证/AI 仍按原下标（服务端契约不随版式漂移）。
+  // 有降级占位符时禁用版式（占位符没有标题/图型，无法稳定对齐，宁可不给入口）。
+  const [myLayout, setMyLayout] = useState<LayoutItem[] | null>(null)
+  const [layoutOpen, setLayoutOpen] = useState(false)
+  const [layoutSaving, setLayoutSaving] = useState(false)
+  const [layoutError, setLayoutError] = useState<string | null>(null)
+  const hasDenied = useMemo(() => panels.some(isDeniedPanel), [panels])
+  useEffect(() => {
+    // 独立链接（standalone）是公开观看面，没有「本人版式」语义，也不保证有会话 ⇒ 不取。
+    if (chrome !== 'console') { setMyLayout(null); return }
+    let alive = true
+    void apiGet(`/reports/${reportId}/my-layout`)
+      .then((b) => {
+        const items = validateLayoutItems((b as { items?: unknown }).items)
+        if (alive) setMyLayout(items)
+      })
+      // 个人版式是增补面：读不到就用默认版式，不打扰观看。
+      .catch(() => { if (alive) setMyLayout(null) })
+    return () => { alive = false }
+  }, [reportId, chrome])
+  const layoutOrder = useMemo(() => layoutOrderOf(panels, myLayout), [panels, myLayout])
+  /** 个人版式与当前面板集合对不上（所有者改过面板）⇒ 提示一次，回默认版式。 */
+  const layoutStale = myLayout !== null && layoutOrder === null
+  const orderedPanels = useMemo(() => {
+    if (layoutOrder === null) return panels.map((panel, index) => ({ panel, index }))
+    return layoutOrder.order.map((index) => {
+      const span = layoutOrder.spans.get(index)
+      return { panel: span === undefined ? panels[index] : { ...panels[index], span }, index }
+    })
+  }, [panels, layoutOrder])
+  const layoutKeys = useMemo(() => layoutKeysOf(panels), [panels])
+  const editorPanels: LayoutEditorPanel[] = useMemo(
+    () => panels.flatMap((p, i) => (isDeniedPanel(p) ? [] : [{
+      key: layoutKeys[i], title: p.title ?? '（未命名）', chart: p.chart,
+      span: p.span, page: p.page ?? 1,
+    }])),
+    [panels, layoutKeys],
+  )
+  const defaultLayoutItems = useMemo(() => layoutItemsOf(editorPanels), [editorPanels])
+  const saveMyLayout = async (items: LayoutItem[]): Promise<void> => {
+    setLayoutSaving(true)
+    setLayoutError(null)
+    try {
+      await apiSend(`/reports/${reportId}/my-layout`, 'PUT', { items })
+      setMyLayout(items)
+      setLayoutOpen(false)
+    } catch (e) {
+      setLayoutError(messageOf(e))
+    } finally {
+      setLayoutSaving(false)
+    }
+  }
+  const resetMyLayout = async (): Promise<void> => {
+    setLayoutSaving(true)
+    setLayoutError(null)
+    try {
+      await apiSend(`/reports/${reportId}/my-layout`, 'DELETE')
+      setMyLayout(null)
+      setLayoutOpen(false)
+    } catch (e) {
+      setLayoutError(messageOf(e))
+    } finally {
+      setLayoutSaving(false)
+    }
+  }
+
   // 期间 → 具体日期段（custom 形态写侧已校验 from<=to；坏规格兜底成「无期间」而不是崩页）。
   const range = useMemo<DateRange | null>(() => {
     if (period === null) return null
@@ -1395,6 +1464,10 @@ export default function ReportView({
           )}
         </Space>
         <Space size={8} className="data-report-chrome">
+          {/* 版式（issue #2295）：个人微调，仅本人生效。降级占位符场景不给入口。 */}
+          {chrome === 'console' && !hasDenied && (
+            <Button size="small" onClick={() => { setLayoutError(null); setLayoutOpen(true) }}>布局</Button>
+          )}
           {/* 打印 = **当前页**；多页另给「打印全部」（挂载所有页并等 KPI/AI 落定后一次开印）。 */}
           <Button size="small" onClick={() => window.print()}>{isMultiPage ? '打印本页' : '打印'}</Button>
           {isMultiPage && (
@@ -1409,7 +1482,15 @@ export default function ReportView({
         <Alert
           type="info" showIcon className="data-report-chrome"
           style={{ marginBottom: 8 }}
-          message="正在准备打印：等待所有页面与 AI 分析完成（通常 20–40 秒）…"
+          title="正在准备打印：等待所有页面与 AI 分析完成（通常 20–40 秒）…"
+        />
+      )}
+      {layoutStale && (
+        <Alert
+          type="info" showIcon closable className="data-report-chrome"
+          style={{ marginBottom: 8 }}
+          title="报表已更新，个人版式已失效，当前按默认版式显示。"
+          onClose={() => setMyLayout(null)}
         />
       )}
       {(branchScope !== null || periodScope !== null) && (
@@ -1517,12 +1598,23 @@ export default function ReportView({
             )}
             {!isMultiPage || printAll || visitedPages.has(n) ? (
               <Row gutter={[12, 12]}>
-                {panels.map((p, i) => (pageOf(p) === n ? renderPanel(p, i) : null))}
+                {orderedPanels.map(({ panel: p, index: i }) => (pageOf(p) === n ? renderPanel(p, i) : null))}
               </Row>
             ) : null}
           </section>
         )
       })}
+      <LayoutEditorModal
+        open={layoutOpen}
+        panels={editorPanels}
+        pageTitles={specPages?.map((p) => p.title) ?? undefined}
+        initialItems={layoutStale ? defaultLayoutItems : (myLayout ?? defaultLayoutItems)}
+        applying={layoutSaving}
+        error={layoutError}
+        onCancel={() => setLayoutOpen(false)}
+        onSave={(items) => { void saveMyLayout(items) }}
+        onReset={myLayout === null ? undefined : () => { void resetMyLayout() }}
+      />
     </div>
   )
 }
