@@ -145,6 +145,41 @@ describePg('routes v2', () => {
     expect(await res.json()).toEqual({ error: 'RULE_ID_RESERVED' })
   })
 
+  it('POST /rules 的 audit detail 含完整 snapshot；PUT enabled 也带快照', async () => {
+    const created = await app.request('/rules', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({
+        eventKey: 'm.a.b', scope: '*', recipientKey: 'approver',
+        templateKey: 't1', channels: ['wecom_default'], cooldownMinutes: 5,
+      }),
+    })
+    expect(created.status).toBe(201)
+    const { id } = await created.json() as { id: string }
+    const up = await pool.query(
+      "select detail from notify.audit where org=$1 and target=$2 and action='rule.upsert' order by id desc limit 1",
+      [ORG, id])
+    expect(up.rows).toHaveLength(1)
+    const full = {
+      id, enabled: true, eventKey: 'm.a.b', scope: '*', recipientKey: 'approver',
+      recipientLiteral: null, recipientDepts: null, templateKey: 't1',
+      channels: ['wecom_default'], cooldownMinutes: 5, origin: 'manual', ownerNamespace: null,
+    }
+    expect(up.rows[0].detail.snapshot).toEqual(full)
+
+    const toggled = await app.request(`/rules/${encodeURIComponent(id)}/enabled`, {
+      method: 'PUT',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ enabled: false }),
+    })
+    expect(toggled.status).toBe(200)
+    const en = await pool.query(
+      "select detail from notify.audit where org=$1 and target=$2 and action='rule.enabled' order by id desc limit 1",
+      [ORG, id])
+    expect(en.rows).toHaveLength(1)
+    expect(en.rows[0].detail.snapshot).toEqual({ ...full, enabled: false })
+  })
+
   it('规则：未知事件 / 未知收件人 / 未发布模板 ⇒ 400', async () => {
     expect((await post('/rules', {
       eventKey: 'm.x.y', recipientKey: 'approver', templateKey: 't1', channels: ['wecom_default'],

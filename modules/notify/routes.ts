@@ -23,7 +23,7 @@ import { listAddressIssues } from './domain/delivery-stats'
 import { providerRequiresAddress } from './domain/providers'
 import { resolveDeliveryAddress } from './domain/resolve-address'
 import { renderContents } from './domain/render'
-import { isWritableRuleId, validateRule } from './domain/rules'
+import { isWritableRuleId, ruleSnapshot, validateRule } from './domain/rules'
 import { samplePayload, validateContents } from './domain/template'
 import { registerNotifyMcpManage } from './mcp'
 import {
@@ -250,26 +250,29 @@ export function createNotifyRouter(deps: {
 
     const id = body.id ?? `rule:${randomUUID()}`
     const actor = (c.get('identity') as Identity).userId
-    await upsertRule(deps.pool, org(c), {
+    const input = {
       id,
       enabled: true,
       eventKey: body.eventKey,
       scope: body.scope ?? '*',
       recipientKey: body.recipientKey,
       recipientLiteral: body.recipientLiteral ?? null,
-      recipientDepts: body.recipientDepts ?? null,
+      recipientDepts: body.recipientDepts ? [...new Set(body.recipientDepts)] : null,
       templateKey: body.templateKey,
       channels: body.channels,
       cooldownMinutes: body.cooldownMinutes ?? null,
-      origin: 'manual',
+      origin: 'manual' as const,
       ownerNamespace,
-    }, actor)
+    }
+    await upsertRule(deps.pool, org(c), input, actor)
+    // 扁平字段是历史 detail 形状；snapshot 是完整回滚快照，两者都保留。
     await audit(deps.pool, org(c), actor, 'rule.upsert', id, {
-      eventKey: body.eventKey,
-      scope: body.scope ?? '*',
-      recipientKey: body.recipientKey,
-      templateKey: body.templateKey,
-      channels: body.channels,
+      eventKey: input.eventKey,
+      scope: input.scope,
+      recipientKey: input.recipientKey,
+      templateKey: input.templateKey,
+      channels: input.channels,
+      snapshot: input,
     })
     return c.json({ id }, 201)
   })
@@ -283,7 +286,8 @@ export function createNotifyRouter(deps: {
     if (rule?.ownerNamespace && !await ownsNamespace(org(c), rule.ownerNamespace, identity)) {
       return c.json({ error: 'RULE_NOT_OWNED' }, 403)
     }
-    if (body.enabled && rule?.ownerNamespace) {
+    if (!rule) return c.json({ error: 'NOT_FOUND' }, 404)
+    if (body.enabled && rule.ownerNamespace) {
       const channelRows = await Promise.all(
         rule.channels.map((cid) => getChannel(deps.pool, org(c), cid)))
       const external = channelRows.some(
@@ -294,8 +298,11 @@ export function createNotifyRouter(deps: {
     }
     const n = await setRuleEnabled(deps.pool, org(c), id, body.enabled)
     if (n === 0) return c.json({ error: 'NOT_FOUND' }, 404)
-    await audit(deps.pool, org(c), (c.get('identity') as Identity).userId,
-      'rule.enabled', id, { enabled: body.enabled })
+    const snapshot = ruleSnapshot(rule, { enabled: body.enabled })
+    await audit(deps.pool, org(c), identity.userId, 'rule.enabled', id, {
+      enabled: body.enabled,
+      snapshot,
+    })
     return c.json({ ok: true })
   })
 
