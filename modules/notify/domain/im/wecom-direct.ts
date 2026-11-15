@@ -16,6 +16,9 @@ import type { SendResult } from '../../providers/wecom'
 
 const DEFAULT_API = 'https://qyapi.weixin.qq.com'
 
+/** 单次出站请求的默认超时：挂起的企微 API 不能卡住整个 worker。 */
+export const DEFAULT_WECOM_TIMEOUT_MS = 10_000
+
 export interface WecomDirectCred {
   corpId: string
   agentId: string
@@ -39,7 +42,13 @@ const SKEW_MS = 300_000
 
 export async function accessToken(
   cred: WecomDirectCred,
-  opts: { fetchImpl?: typeof fetch; apiBase?: string; now?: () => number; noCache?: boolean } = {},
+  opts: {
+    fetchImpl?: typeof fetch
+    apiBase?: string
+    now?: () => number
+    noCache?: boolean
+    timeoutMs?: number
+  } = {},
 ): Promise<TokenLease> {
   const key = `${cred.corpId}|${cred.agentId}`
   const now = (opts.now ?? Date.now)()
@@ -58,7 +67,9 @@ export async function accessToken(
     const f = opts.fetchImpl ?? fetch
     const base = opts.apiBase ?? DEFAULT_API
     const url = `${base}/cgi-bin/gettoken?corpid=${encodeURIComponent(cred.corpId)}&corpsecret=${encodeURIComponent(cred.secret)}`
-    const res = await f(url)
+    const res = await f(url, {
+      signal: AbortSignal.timeout(opts.timeoutMs ?? DEFAULT_WECOM_TIMEOUT_MS),
+    })
     const body = (await res.json().catch(() => ({}))) as {
       errcode?: number; errmsg?: string; access_token?: string; expires_in?: number
     }
@@ -95,6 +106,7 @@ export async function sendDirect(a: {
   fetchImpl?: typeof fetch
   apiBase?: string
   now?: () => number
+  timeoutMs?: number
 }): Promise<SendResult> {
   const call = async (token: string): Promise<{ status: number; body: { errcode?: number; errmsg?: string } }> => {
     const f = a.fetchImpl ?? fetch
@@ -102,6 +114,7 @@ export async function sendDirect(a: {
     const res = await f(`${base}/cgi-bin/message/send?access_token=${encodeURIComponent(token)}`, {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
+      signal: AbortSignal.timeout(a.timeoutMs ?? DEFAULT_WECOM_TIMEOUT_MS),
       body: JSON.stringify({
         touser: a.to,
         msgtype: 'markdown',
@@ -114,12 +127,16 @@ export async function sendDirect(a: {
   }
 
   try {
-    let lease = await accessToken(a.cred, { fetchImpl: a.fetchImpl, apiBase: a.apiBase, now: a.now })
+    let lease = await accessToken(a.cred, {
+      fetchImpl: a.fetchImpl, apiBase: a.apiBase, now: a.now, timeoutMs: a.timeoutMs,
+    })
     let r = await call(lease.token)
     // token 无效/过期：**重启缓存立刻换一次再试**（只重试一次，不无限循环）
     if (r.body.errcode === 40001 || r.body.errcode === 42001 || r.body.errcode === 40014) {
       tokenCache.delete(`${a.cred.corpId}|${a.cred.agentId}`)
-      lease = await accessToken(a.cred, { fetchImpl: a.fetchImpl, apiBase: a.apiBase, now: a.now })
+      lease = await accessToken(a.cred, {
+        fetchImpl: a.fetchImpl, apiBase: a.apiBase, now: a.now, timeoutMs: a.timeoutMs,
+      })
       r = await call(lease.token)
     }
     if (r.body.errcode === 0) return { ok: true }
@@ -148,7 +165,12 @@ export async function sendDirect(a: {
  */
 export async function probeDirect(
   cred: WecomDirectCred,
-  opts: { fetchImpl?: typeof fetch; apiBase?: string; now?: () => number } = {},
+  opts: {
+    fetchImpl?: typeof fetch
+    apiBase?: string
+    now?: () => number
+    timeoutMs?: number
+  } = {},
 ): Promise<{ ok: boolean; detail?: string }> {
   try {
     await accessToken(cred, { ...opts, noCache: true })
@@ -167,7 +189,12 @@ export async function probeDirect(
 export async function probeUser(
   cred: WecomDirectCred,
   userId: string,
-  opts: { fetchImpl?: typeof fetch; apiBase?: string; now?: () => number } = {},
+  opts: {
+    fetchImpl?: typeof fetch
+    apiBase?: string
+    now?: () => number
+    timeoutMs?: number
+  } = {},
 ): Promise<{ ok: boolean; detail?: string }> {
   try {
     const lease = await accessToken(cred, opts)
@@ -175,6 +202,7 @@ export async function probeUser(
     const base = opts.apiBase ?? DEFAULT_API
     const res = await f(
       `${base}/cgi-bin/user/get?access_token=${encodeURIComponent(lease.token)}&userid=${encodeURIComponent(userId)}`,
+      { signal: AbortSignal.timeout(opts.timeoutMs ?? DEFAULT_WECOM_TIMEOUT_MS) },
     )
     const body = (await res.json().catch(() => ({}))) as { errcode?: number; errmsg?: string }
     if (body.errcode === 0) return { ok: true }

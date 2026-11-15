@@ -38,4 +38,14 @@ describe('sendWecom', () => {
     const f = (async () => { throw new Error('ECONNREFUSED') }) as unknown as typeof fetch
     expect(await sendWecom(args(f))).toMatchObject({ ok: false, kind: 'retryable', code: 'network' })
   })
+
+  it('fetch 带超时 signal（挂起的桥不能卡住 worker）', async () => {
+    let signal: AbortSignal | null | undefined
+    const f = (async (_url: string, init?: RequestInit) => {
+      signal = init?.signal
+      return new Response(null, { status: 204 })
+    }) as unknown as typeof fetch
+    expect(await sendWecom(args(f))).toEqual({ ok: true })
+    expect(signal).toBeInstanceOf(AbortSignal)
+  })
 })
