@@ -23,7 +23,9 @@ const CADENCE_OPTIONS = [
 export function MonitorButton({ reportId, panelIndex, panelTitle }: MonitorButtonProps) {
   const [open, setOpen] = useState(false)
   const [name, setName] = useState(`${panelTitle}监控`)
-  const [verdict, setVerdict] = useState<'missing' | 'stale'>('missing')
+  const [verdict, setVerdict] = useState<'missing' | 'stale' | 'threshold'>('missing')
+  const [op, setOp] = useState<'gt' | 'gte' | 'lt' | 'lte' | 'eq'>('gt')
+  const [thresholdValue, setThresholdValue] = useState<number>(0)
   const [windowDays, setWindowDays] = useState(1)
   const [cadenceSecs, setCadenceSecs] = useState(3600)
   const [recipients, setRecipients] = useState('')
@@ -34,6 +36,8 @@ export function MonitorButton({ reportId, panelIndex, panelTitle }: MonitorButto
   const reset = () => {
     setName(`${panelTitle}监控`)
     setVerdict('missing')
+    setOp('gt')
+    setThresholdValue(0)
     setWindowDays(1)
     setCadenceSecs(3600)
     setRecipients('')
@@ -56,6 +60,7 @@ export function MonitorButton({ reportId, panelIndex, panelTitle }: MonitorButto
           reportId,
           panelIndex,
           verdict,
+          ...(verdict === 'threshold' ? { operator: op, threshold: thresholdValue } : {}),
           windowDays,
           cadenceSecs,
           recipients: refs.map((ref) => ({ kind: 'user', ref })),
@@ -63,7 +68,7 @@ export function MonitorButton({ reportId, panelIndex, panelTitle }: MonitorButto
       })
       const body = (await res.json().catch(() => ({}))) as { error?: string; detail?: string }
       if (!res.ok) {
-        messageApi.error(`创建失败：${body.error ?? res.status}${body.detail ? `（${body.detail}）` : ''}`)
+        messageApi.error(`创建失败：${body.error === 'MONITOR_METRIC_NOT_ADDITIVE' ? '该指标不可加，暂不支持阈值' : (body.error ?? res.status)}${body.detail ? `（${body.detail}）` : ''}`)
         return
       }
       messageApi.success('已创建（影子期：先只记录、不发送）')
@@ -107,9 +112,25 @@ export function MonitorButton({ reportId, panelIndex, panelTitle }: MonitorButto
                 options={[
                   { value: 'missing', label: '窗口内没有数据' },
                   { value: 'stale', label: '数据水位过期' },
+                  { value: 'threshold', label: '阈值越界（仅可加指标）' },
                 ]}
               />
             </div>
+            {verdict === 'threshold' ? (
+              <Space size={8}>
+                <Select
+                  value={op}
+                  onChange={setOp}
+                  style={{ width: 90 }}
+                  options={[
+                    { value: 'gt', label: '>' }, { value: 'gte', label: '>=' },
+                    { value: 'lt', label: '<' }, { value: 'lte', label: '<=' },
+                    { value: 'eq', label: '=' },
+                  ]}
+                />
+                <InputNumber value={thresholdValue} onChange={(v) => setThresholdValue(v ?? 0)} />
+              </Space>
+            ) : null}
             <div>
               <Typography.Text>窗口（天）</Typography.Text>
               <InputNumber min={1} max={30} value={windowDays} onChange={(v) => setWindowDays(v ?? 1)} />

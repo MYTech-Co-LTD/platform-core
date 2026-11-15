@@ -35,10 +35,20 @@ function baseInput(over: Partial<Parameters<typeof createMonitor>[1]> = {}) {
 }
 
 describe('monitor 纯函数', () => {
-  it('threshold 在 V1 直接拒绝（不建了却永不求值）', () => {
-    const r = validateNewMonitor(baseInput({ verdict: 'threshold' }))
-    expect(r.ok).toBe(false)
-    if (!r.ok) expect(r.code).toBe('MONITOR_VERDICT_UNSUPPORTED')
+  it('threshold 必须给闭集算子与有限阈值（缺一即拒，防「恒假永不触发」）', () => {
+    expect(validateNewMonitor(baseInput({ verdict: 'threshold' })).ok).toBe(false)
+    expect(validateNewMonitor(baseInput({ verdict: 'threshold', operator: 'gt' })).ok).toBe(false)
+    expect(validateNewMonitor(baseInput({ verdict: 'threshold', operator: 'gt', threshold: Number.NaN })).ok).toBe(false)
+    expect(validateNewMonitor(baseInput({ verdict: 'threshold', operator: 'nope' as never, threshold: 1 })).ok).toBe(false)
+    const ok = validateNewMonitor(baseInput({ verdict: 'threshold', operator: 'gte', threshold: 100 }))
+    expect(ok.ok).toBe(true)
+    if (ok.ok) expect(ok.value).toMatchObject({ operator: 'gte', threshold: 100 })
+  })
+
+  it('missing/stale 的算子与阈值归 null', () => {
+    const r = validateNewMonitor(baseInput({ operator: 'gt', threshold: 5 }))
+    expect(r.ok).toBe(true)
+    if (r.ok) expect(r.value).toMatchObject({ operator: null, threshold: null })
   })
 
   it('周期低于 300s 拒绝；收件人为空拒绝', () => {

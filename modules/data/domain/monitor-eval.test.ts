@@ -4,7 +4,7 @@ import { describe, expect, it } from 'vitest'
 import type { Pool } from 'pg'
 import type { MetricRow } from './metric-store'
 import type { MonitorRow } from './monitor-store'
-import { evaluateMonitor, type MonitorEvalDeps } from './monitor-eval'
+import { evaluateMonitor, thresholdHit, type MonitorEvalDeps } from './monitor-eval'
 import type { MonitorOutcome } from './monitor-spec'
 
 const NOW = new Date('2026-11-15T02:00:00Z') // 北京时间 2026-11-15 10:00
@@ -42,7 +42,8 @@ function monitorRow(over: Partial<MonitorRow> = {}): MonitorRow {
   return {
     id: '1', org: 'org-mon-eval', name: '夹具', targetKind: 'metric',
     metricId: 'mon.metric', reportId: null, panelIndex: null, filters: {},
-    verdict: 'missing', windowDays: 1, cadenceSecs: 300, cooldownSecs: 3600,
+    verdict: 'missing', operator: null, threshold: null,
+    windowDays: 1, cadenceSecs: 300, cooldownSecs: 3600,
     dryRun: true, recipients: [{ kind: 'user', ref: 'alice' }], channelPolicy: 'in_app',
     state: 'ok', stateSince: null, lastEvalAt: null, notifiedAt: null,
     consecutiveFail: 0, enabled: true, createdBy: 'alice',
@@ -137,6 +138,46 @@ describe('evaluateMonitor · missing', () => {
       deps(sink([[0]]), { resolvePanel: async () => null }),
       monitorRow({ targetKind: 'report_panel', metricId: null, reportId: 'r1', panelIndex: 2 }),
     )
+    expect(out.verdict).toBe('unknown')
+  })
+})
+
+describe('evaluateMonitor · threshold（W7-V2a）', () => {
+  const M_T = monitorRow({
+    verdict: 'threshold', operator: 'gt', threshold: '100',
+  })
+
+  it('★ 五算子真值表（含边界相等）', () => {
+    expect(thresholdHit(101, 'gt', 100)).toBe(true)
+    expect(thresholdHit(100, 'gt', 100)).toBe(false)
+    expect(thresholdHit(100, 'gte', 100)).toBe(true)
+    expect(thresholdHit(99, 'lt', 100)).toBe(true)
+    expect(thresholdHit(100, 'lte', 100)).toBe(true)
+    expect(thresholdHit(100, 'eq', 100)).toBe(true)
+    expect(thresholdHit(100.5, 'eq', 100)).toBe(false)
+    expect(thresholdHit(1, 'nope', 0)).toBe(false)
+  })
+
+  it('★ 合计越界 ⇒ threshold；未越界 ⇒ ok', async () => {
+    const over = await evaluateMonitor(
+      deps(sink([[150]]), { loadCatalog: async () => [metricRow({ totalable: true })] }), M_T)
+    expect(over).toMatchObject({ verdict: 'threshold', value: 150 })
+
+    const under = await evaluateMonitor(
+      deps(sink([[100]]), { loadCatalog: async () => [metricRow({ totalable: true })] }), M_T)
+    expect(under.verdict).toBe('ok')
+  })
+
+  it('★ 非可加指标（无 totalSql）⇒ unknown:not_additive（不拿明细求和）', async () => {
+    const out = await evaluateMonitor(
+      deps(sink([[150]]), { loadCatalog: async () => [metricRow({ totalable: false })] }), M_T)
+    expect(out.verdict).toBe('unknown')
+    expect((out as Extract<MonitorOutcome, { verdict: 'unknown' }>).error).toBe('not_additive')
+  })
+
+  it('合计为 NULL ⇒ unknown（不是 firing）', async () => {
+    const out = await evaluateMonitor(
+      deps(sink([[null]]), { loadCatalog: async () => [metricRow({ totalable: true })] }), M_T)
     expect(out.verdict).toBe('unknown')
   })
 })

@@ -9,6 +9,8 @@ export type MonitorTargetKind = 'metric' | 'report_panel'
 export type MonitorVerdict = 'missing' | 'stale' | 'threshold'
 export type MonitorState = 'ok' | 'firing' | 'unknown'
 export type MonitorChannelPolicy = 'in_app' | 'wecom' | 'webhook'
+export type MonitorOperator = 'gt' | 'gte' | 'lt' | 'lte' | 'eq'
+export const MONITOR_OPERATORS: readonly MonitorOperator[] = ['gt', 'gte', 'lt', 'lte', 'eq']
 
 /** 收件人闭集（spec §9）：部门或人，ref 由创建期校验、投递期复判。 */
 export interface MonitorRecipient {
@@ -25,6 +27,10 @@ export interface NewMonitorInput {
   panelIndex?: number | null
   filters?: Record<string, unknown>
   verdict: MonitorVerdict
+  /** 仅 threshold：比较算子（闭集）。 */
+  operator?: MonitorOperator | null
+  /** 仅 threshold：阈值（有限数）。 */
+  threshold?: number | null
   windowDays?: number
   cadenceSecs: number
   cooldownSecs?: number
@@ -72,11 +78,18 @@ export function validateNewMonitor(input: NewMonitorInput): ValidationResult {
     return { ok: false, code: 'MONITOR_TARGET_INVALID', message: 'target_kind 只允许 metric | report_panel' }
   }
 
-  if (input.verdict === 'threshold') {
-    return { ok: false, code: 'MONITOR_VERDICT_UNSUPPORTED', message: 'threshold 判据属于 W7-V2，V1 只支持 missing / stale' }
+  if (input.verdict !== 'missing' && input.verdict !== 'stale' && input.verdict !== 'threshold') {
+    return { ok: false, code: 'MONITOR_VERDICT_UNSUPPORTED', message: 'verdict 只允许 missing | stale | threshold' }
   }
-  if (input.verdict !== 'missing' && input.verdict !== 'stale') {
-    return { ok: false, code: 'MONITOR_VERDICT_UNSUPPORTED', message: 'verdict 只允许 missing | stale（V1）' }
+  // threshold 的两列是闭集与有限数：不猜默认算子、不允许 NaN/Infinity（否则比较恒假 = 静默永不触发）。
+  if (input.verdict === 'threshold') {
+    if (input.operator === undefined || input.operator === null
+      || !MONITOR_OPERATORS.includes(input.operator)) {
+      return { ok: false, code: 'MONITOR_VERDICT_UNSUPPORTED', message: 'threshold 必须给 operator（gt|gte|lt|lte|eq）' }
+    }
+    if (typeof input.threshold !== 'number' || !Number.isFinite(input.threshold)) {
+      return { ok: false, code: 'MONITOR_VERDICT_UNSUPPORTED', message: 'threshold 必须给有限数值阈值' }
+    }
   }
 
   const windowDays = input.windowDays ?? 1
@@ -103,6 +116,9 @@ export function validateNewMonitor(input: NewMonitorInput): ValidationResult {
     value: {
       ...input,
       name,
+      // 非 threshold 的两列一律归 null（missing/stale 带上比较算子没有意义）。
+      operator: input.verdict === 'threshold' ? (input.operator ?? null) : null,
+      threshold: input.verdict === 'threshold' ? (input.threshold ?? null) : null,
       windowDays,
       cooldownSecs: input.cooldownSecs ?? 3600,
       channelPolicy: input.channelPolicy ?? 'in_app',
@@ -147,5 +163,5 @@ export function staleThresholdOf(today: string, windowDays: number): string {
 /** 一次求值的结论（状态机与台账共用的闭集）。 */
 export type MonitorOutcome =
   | { verdict: 'ok'; watermarkRef: string | null }
-  | { verdict: 'missing' | 'stale'; value: number | null; watermarkRef: string | null }
+  | { verdict: 'missing' | 'stale' | 'threshold'; value: number | null; watermarkRef: string | null }
   | { verdict: 'unknown'; error: string; watermarkRef: string | null }
