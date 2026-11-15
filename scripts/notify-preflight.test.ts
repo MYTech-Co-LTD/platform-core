@@ -1,6 +1,6 @@
-// notify-preflight.test.ts — 纯核：哪些规则可体检（field 类必须跳过）
+// notify-preflight.test.ts — 纯核：哪些规则可体检（field 类必须跳过）+ 收件人档取权限码
 import { describe, it, expect } from 'vitest'
-import { pickCheckable } from './notify-preflight.mjs'
+import { pickCheckable, scopeCodeOf } from './notify-preflight.mjs'
 
 type Rule = { id: string; eventKey: string; recipientKey: string }
 
@@ -38,5 +38,32 @@ describe('pickCheckable', () => {
 
   it('空规则集 ⇒ 两侧都空', () => {
     expect(pickCheckable([], () => null)).toEqual({ checkable: [], skipped: [] })
+  })
+})
+
+describe('scopeCodeOf', () => {
+  const decl = {
+    recipients: {
+      approvers: { kind: 'scope_holders', scope: 'aftersales:manage' },
+      admins: { kind: 'scope_holders', scope: 'tenant:admin' },
+      broken: { kind: 'scope_holders' },
+      literal: { kind: 'literal' },
+      dept: { kind: 'dept' },
+      field: { kind: 'field' },
+    },
+  }
+
+  it('scope_holders ⇒ 返回声明里的权限码，不是 recipientKey（issue #2263）', () => {
+    expect(scopeCodeOf(decl, 'approvers')).toBe('aftersales:manage')
+    expect(scopeCodeOf(decl, 'admins')).toBe('tenant:admin')
+  })
+
+  it('非 scope_holders / 缺 scope / 缺档 ⇒ null', () => {
+    expect(scopeCodeOf(decl, 'literal')).toBeNull()
+    expect(scopeCodeOf(decl, 'dept')).toBeNull()
+    expect(scopeCodeOf(decl, 'field')).toBeNull()
+    expect(scopeCodeOf(decl, 'broken')).toBeNull()
+    expect(scopeCodeOf(decl, 'nope')).toBeNull()
+    expect(scopeCodeOf(null, 'approvers')).toBeNull()
   })
 })

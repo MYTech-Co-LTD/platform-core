@@ -35,6 +35,23 @@ export function pickCheckable(rules, declOf) {
   return { checkable, skipped }
 }
 
+/**
+ * 收件人档 → 权限码。`resolveDeliverability` 的契约是
+ * `resolveScopeHolders(org, recipientKey, decl)`，**第二个参数不是权限码**——权限码在
+ * `decl.recipients[key].scope`（见 `apps/server/src/channel-address.ts` 同款注释）。
+ * 这里单独成纯函数，免得再把 `approvers` 当 `aftersales:manage` 查（issue #2263：
+ * 曾导致三条 scope_holders 规则恒判 no_recipient）。
+ *
+ * @param {{ recipients?: Record<string, { kind?: string, scope?: string }> } | null} decl
+ * @param {string} recipientKey
+ * @returns {string | null}
+ */
+export function scopeCodeOf(decl, recipientKey) {
+  const r = decl?.recipients?.[recipientKey]
+  if (r?.kind !== 'scope_holders' || typeof r.scope !== 'string' || r.scope === '') return null
+  return r.scope
+}
+
 if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
   const url = process.env.DATABASE_URL
   if (!url) {
@@ -141,9 +158,13 @@ if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) 
               const ch = rows[0]
               return ch ? { id: ch.id, provider: ch.provider, enabled: ch.enabled, config: ch.config } : null
             },
-            // createScopeHolderResolver 的签名是 (org, permissionCode)（decl 不参与）
-            resolveScopeHolders: async (o, key) =>
-              resolveScopeHolderNames ? resolveScopeHolderNames(o, key) : [],
+            // createScopeHolderResolver 的签名是 (org, permissionCode)；
+            // 这里必须先按 decl 把 recipientKey 换成 scope（issue #2263）。
+            resolveScopeHolders: async (o, key, d) => {
+              const code = scopeCodeOf(d, key)
+              if (code === null || !resolveScopeHolderNames) return []
+              return resolveScopeHolderNames(o, code)
+            },
           },
         )
         checked++
