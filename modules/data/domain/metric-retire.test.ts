@@ -69,6 +69,8 @@ beforeAll(async () => {
   await applyMigrations(pool)
   // 隔离键自清扫（重跑幂等）：org 专属行 + 平台桶 L1 夹具行（精确 id）。
   await pool.query('delete from data.metric_change where org = any($1)', [[ORG, OTHER, ORG2]])
+  await pool.query('delete from data.monitor_run where org = any($1)', [[ORG, OTHER, ORG2]])
+  await pool.query('delete from data.monitor where org = any($1)', [[ORG, OTHER, ORG2]])
   await pool.query('delete from data.reports where org = any($1)', [[ORG, OTHER]])
   await pool.query('delete from data.query_audit where org = any($1)', [[ORG, ORG2]])
   await pool.query('delete from data.metrics where org = any($1)', [[ORG, ORG2]])
@@ -149,6 +151,8 @@ beforeAll(async () => {
 
 afterAll(async () => {
   await pool.query('delete from data.metric_change where org = any($1)', [[ORG, OTHER, ORG2]]).catch(() => {})
+  await pool.query('delete from data.monitor_run where org = any($1)', [[ORG, OTHER, ORG2]]).catch(() => {})
+  await pool.query('delete from data.monitor where org = any($1)', [[ORG, OTHER, ORG2]]).catch(() => {})
   await pool.query('delete from data.reports where org = any($1)', [[ORG, OTHER]]).catch(() => {})
   await pool.query('delete from data.query_audit where org = any($1)', [[ORG, ORG2]]).catch(() => {})
   await pool.query('delete from data.metrics where org = any($1)', [[ORG, ORG2]]).catch(() => {})
@@ -178,6 +182,22 @@ describePg('retireEligibleOf（需要 DATABASE_URL）', () => {
     expect(e).toMatchObject({ metricId: E, title: '合格候选', source: 'l2', referenced: false })
     expect(e.createdBy).toBe('u-retire-creator')
     expect(e.lastUsedAt).toBeNull()
+  })
+
+  it('★ 安全过滤⑤：被业务监控引用的指标不进候选（W7-V1）', async () => {
+    const ins = await pool.query(
+      `insert into data.monitor (org, name, target_kind, metric_id, verdict, cadence_secs, recipients, created_by)
+       values ($1, '夹具监控', 'metric', $2, 'missing', 300, '[{"kind":"user","ref":"u"}]'::jsonb, 'u')
+       returning id`,
+      [ORG, E])
+    const monitorId = String(ins.rows[0].id)
+    try {
+      expect((await retireEligibleOf(pool, ORG, DAYS)).map((c) => c.metricId)).not.toContain(E)
+    } finally {
+      await pool.query('delete from data.monitor where id = $1', [monitorId])
+    }
+    // 停用/删除监控后恢复候选（不是永久拉黑）。
+    expect((await retireEligibleOf(pool, ORG, DAYS)).map((c) => c.metricId)).toContain(E)
   })
 
   it('安全过滤③租户隔离：别的 org 的报表引用不阻断本租户候选', async () => {

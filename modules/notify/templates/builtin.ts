@@ -135,4 +135,42 @@ export const BUILTIN_TEMPLATES: BuiltinTemplate[] = [
       },
     },
   },
+  // ── 业务监控（Wave 7 V1）──────────────────────────────────────────────────────
+  // 文案**不带数值、不带阈值**：reveal='report' 的指标数值一旦进通知就是数据泄露（spec §3.4/§9）。
+  {
+    key: 'data_monitor_fired',
+    name: '业务监控触发',
+    eventKey: 'data.monitor.fired',
+    contents: {
+      in_app: {
+        title: '监控触发：{{name}}',
+        body: '判据 {{verdict}}，窗口 {{windowDays}} 天。有异常，请登录查看。',
+        link: '{{link}}',
+      },
+    },
+  },
+  {
+    key: 'data_monitor_resolved',
+    name: '业务监控恢复',
+    eventKey: 'data.monitor.resolved',
+    contents: {
+      in_app: {
+        title: '监控恢复：{{name}}',
+        body: '判据已恢复正常（窗口 {{windowDays}} 天）。',
+        link: '{{link}}',
+      },
+    },
+  },
+  {
+    key: 'data_monitor_disabled',
+    name: '业务监控已自动停用',
+    eventKey: 'data.monitor.disabled',
+    contents: {
+      in_app: {
+        title: '监控已自动停用：{{name}}',
+        body: '连续求值失败达到上限，已自动停用。请检查目标指标或数据源。',
+        link: '{{link}}',
+      },
+    },
+  },
 ]

@@ -252,7 +252,7 @@ describe('报表面声明（不需要数据库）', () => {
     // +1：查询性能统计（R4：GET /reports/query-stats，管理面 data:manage）。
     // 穷举口径（同 module.test.ts 的表清单）——别处加端点而漏改这里会红，
     // 逼着声明与测试一起动。
-    expect(declared).toHaveLength(91)
+    expect(declared).toHaveLength(95)
     // 指标变更单：七条全 data:manage；采纳/驳回的会话限定是路由内的第二道闸（不在这张表上）
     for (const p of [
       'POST /metric-changes', 'GET /metric-changes', 'GET /metric-changes/:id',
