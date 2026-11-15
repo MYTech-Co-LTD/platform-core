@@ -9,6 +9,7 @@ import { AGENT_TEMPLATE_KEY_RE } from './domain/agent-event'
 import { agentMessageKey, isAgentMessageKey } from './domain/agent-message'
 import { isExternalProvider, parseAgentPolicy } from './domain/agent-policy'
 import { validateRule } from './domain/rules'
+import type { RuleSnapshot } from './domain/rules'
 import { validateContents } from './domain/template'
 import {
   audit, countActiveAgentRules, countAgentMessagesToday, createApproval, createTemplate,
@@ -237,20 +238,23 @@ export async function createAgentRule(
     ? await hasApprovedRuleApproval(pool, input.org, id)
     : true
   const needsApproval = external && !policy.auto_publish_external && !alreadyApproved
-  await upsertRule(pool, input.org, {
+  // 规则历史快照（#2322）：写入与 audit 共用同一份完整快照
+  // recipientDepts 与 HTTP 面同源去重
+  const snapshot: RuleSnapshot = {
     id,
     enabled: !needsApproval,
     eventKey: input.eventKey,
     scope: input.scope ?? '*',
     recipientKey: input.recipientKey,
     recipientLiteral: input.recipientLiteral ?? null,
-    recipientDepts: input.recipientDepts ?? null,
+    recipientDepts: input.recipientDepts ? [...new Set(input.recipientDepts)] : null,
     templateKey: input.templateKey,
     channels: input.channels,
     cooldownMinutes: input.cooldownMinutes ?? null,
-    origin: 'manual',
+    origin: 'manual' as const,
     ownerNamespace: input.namespace,
-  }, input.userId)
+  }
+  await upsertRule(pool, input.org, snapshot, input.userId)
 
   const approvalDetail = {
     eventKey: input.eventKey, templateKey: input.templateKey, channels: input.channels,
@@ -292,7 +296,7 @@ export async function createAgentRule(
 
   const status = needsApproval ? 'pending' : 'enabled'
   await audit(pool, input.org, input.userId, 'agent.rule.upsert', id, {
-    ...approvalDetail, status, approvalId: approvalId ?? null,
+    ...approvalDetail, status, approvalId: approvalId ?? null, snapshot,
   })
   return { ok: true, id, status, approvalId }
 }

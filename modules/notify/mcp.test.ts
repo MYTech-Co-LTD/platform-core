@@ -222,6 +222,16 @@ describePg('notify mcp handlers', () => {
     expect(rule.isError).toBe(false)
     expect(JSON.parse(rule.text)).toMatchObject({ status: 'enabled' })
 
+    const a = await pool.query(
+      "select detail from notify.audit where org=$1 and action='agent.rule.upsert' order by id desc limit 1", [ORG])
+    expect(a.rows[0].detail.snapshot).toEqual({
+      id: (JSON.parse(rule.text) as { id: string }).id, enabled: true,
+      eventKey: 'ext.agent_a.daily', scope: '*', recipientKey: 'assignee',
+      recipientLiteral: null, recipientDepts: null,
+      templateKey: 'agent_a_daily', channels: ['inapp_default'],
+      cooldownMinutes: null, origin: 'manual', ownerNamespace: 'agent_a',
+    })
+
     const msg = await callTool(deps(), 'send_message', {
       namespace: ns, to: 'u1', title: 'T', body: 'B',
     })
@@ -301,6 +311,36 @@ describePg('notify mcp handlers', () => {
       eventKey: 'm.a.b', recipientKey: 'nope', templateKey: 't1', channels: ['wecom_default'],
     })
     expect(bad.isError).toBe(true)
+  })
+
+  it('propose_rule 的 audit 含完整 snapshot', async () => {
+    const out = await callTool(deps(), 'propose_rule', {
+      eventKey: 'm.a.b', scope: '*', recipientKey: 'approver',
+      templateKey: 't1', channels: ['wecom_default'],
+    })
+    expect(out.isError).toBe(false)
+    const { id } = JSON.parse(out.text) as { id: string }
+    const { rows } = await pool.query(
+      "select detail from notify.audit where org=$1 and action='mcp.propose_rule' order by id desc limit 1", [ORG])
+    expect(rows[0].detail.snapshot).toEqual({
+      id, enabled: true, eventKey: 'm.a.b', scope: '*', recipientKey: 'approver',
+      recipientLiteral: null, recipientDepts: null, templateKey: 't1',
+      channels: ['wecom_default'], cooldownMinutes: null, origin: 'manual',
+      ownerNamespace: null,
+    })
+  })
+
+  it('set_rule_enabled 的 audit 快照 = 原规则 + 新 enabled', async () => {
+    const out = await callTool(deps(), 'set_rule_enabled', { id: 'r1', enabled: false })
+    expect(out.isError).toBe(false)
+    const { rows } = await pool.query(
+      "select detail from notify.audit where org=$1 and action='mcp.set_rule_enabled' order by id desc limit 1", [ORG])
+    expect(rows[0].detail.snapshot).toEqual({
+      id: 'r1', enabled: false, eventKey: 'm.a.b', scope: '*', recipientKey: 'approver',
+      recipientLiteral: null, recipientDepts: null, templateKey: 't1',
+      channels: ['wecom_default'], cooldownMinutes: null, origin: 'manual',
+      ownerNamespace: null,
+    })
   })
 
   it('update_rule 不可覆盖系统预留 id（derived:/manual:）', async () => {

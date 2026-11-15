@@ -8,24 +8,9 @@ import {
   AGENT_MESSAGE_CONTENTS, agentMessageDecl, agentMessageKey,
   agentMessageRuleId, agentMessageTemplateKey,
 } from './domain/agent-message'
-import type { NotificationRule } from './domain/rules'
+import type { NotificationRule, RuleSnapshot } from './domain/rules'
 
-export type RuleInput = {
-  id: string
-  enabled: boolean
-  eventKey: string
-  scope: string
-  recipientKey: string
-  recipientLiteral: string[] | null
-  /** kind=dept 才用：所选部门 ext_id（发送时展开含子树；迁移 006） */
-  recipientDepts: string[] | null
-  templateKey: string
-  channels: string[]
-  cooldownMinutes: number | null
-  origin: 'derived' | 'manual'
-  /** 非空 = 该 agent namespace 所有；null/缺省 = 平台/租户人管。 */
-  ownerNamespace?: string | null
-}
+export type RuleInput = RuleSnapshot
 
 export type DeliveryRow = {
   org: string
@@ -162,6 +147,25 @@ export async function upsertRule(
      rule.templateKey, rule.channels, rule.cooldownMinutes,
      rule.origin, actor, rule.ownerNamespace ?? null],
   )
+}
+
+/** 仅更新已存在的规则（restore 用）；返回 0 = 规则已不存在，绝不插入。 */
+export async function updateRule(
+  pool: Pool, org: string, rule: RuleInput,
+): Promise<number> {
+  const r = await pool.query(
+    `update notify.rule set
+       enabled=$3, event_key=$4, scope=$5, recipient_key=$6,
+       recipient_literal=$7, recipient_depts=$8, template_key=$9,
+       channels=$10, cooldown_minutes=$11, origin=$12, owner_namespace=$13
+     where org=$1 and id=$2`,
+    [org, rule.id, rule.enabled, rule.eventKey, rule.scope, rule.recipientKey,
+     rule.recipientLiteral,
+     rule.recipientDepts == null ? null : JSON.stringify([...new Set(rule.recipientDepts)]),
+     rule.templateKey, rule.channels, rule.cooldownMinutes,
+     rule.origin, rule.ownerNamespace ?? null],
+  )
+  return r.rowCount ?? 0
 }
 
 export async function setRuleEnabled(
@@ -1250,4 +1254,72 @@ export async function upsertEventDecl(
   } finally {
     client.release()
   }
+}
+
+export type RuleHistoryEntry = {
+  auditId: number
+  at: string
+  actor: string
+  action: string
+  complete: boolean
+  snapshot: RuleSnapshot | null
+}
+
+export const RULE_WRITE_ACTIONS = [
+  'rule.upsert', 'rule.enabled', 'rule.restore',
+  'mcp.propose_rule', 'mcp.update_rule', 'mcp.set_rule_enabled',
+  'agent.rule.upsert',
+] as const
+
+function isRuleSnapshot(v: unknown): v is RuleSnapshot {
+  if (typeof v !== 'object' || v === null) return false
+  const x = v as Record<string, unknown>
+  return typeof x.id === 'string' && typeof x.eventKey === 'string'
+    && typeof x.scope === 'string'
+    && Array.isArray(x.channels) && typeof x.enabled === 'boolean'
+    && typeof x.templateKey === 'string' && typeof x.recipientKey === 'string'
+    && (x.recipientLiteral === null || Array.isArray(x.recipientLiteral))
+    && (x.recipientDepts === null || Array.isArray(x.recipientDepts))
+    && (x.cooldownMinutes === null || typeof x.cooldownMinutes === 'number')
+    && (x.origin === 'manual' || x.origin === 'derived')
+}
+
+function toHistoryEntry(r: {
+  id: string | number; actor: string; action: string
+  detail: Record<string, unknown> | null; created_at: Date
+}): RuleHistoryEntry {
+  const snap = r.detail?.snapshot
+  const ok = isRuleSnapshot(snap)
+  return {
+    auditId: Number(r.id),
+    at: r.created_at.toISOString(),
+    actor: r.actor,
+    action: r.action,
+    complete: ok,
+    snapshot: ok ? snap : null,
+  }
+}
+
+export async function listRuleHistory(
+  pool: Pool, org: string, ruleId: string, limit = 50,
+): Promise<RuleHistoryEntry[]> {
+  const raw = Math.trunc(limit)
+  const n = Math.min(Math.max(Number.isFinite(raw) ? raw : 50, 1), 100)
+  const { rows } = await pool.query(
+    `select id,actor,action,detail,created_at from notify.audit
+      where org=$1 and target=$2 and action = any($3::text[])
+      order by created_at desc, id desc limit $4`,
+    [org, ruleId, [...RULE_WRITE_ACTIONS], n])
+  return rows.map(toHistoryEntry)
+}
+
+export async function getRuleAuditSnapshot(
+  pool: Pool, org: string, ruleId: string, auditId: number,
+): Promise<RuleHistoryEntry | null> {
+  const { rows } = await pool.query(
+    `select id,actor,action,detail,created_at from notify.audit
+      where org=$1 and target=$2 and id=$3
+        and action = any($4::text[]) limit 1`,
+    [org, ruleId, auditId, [...RULE_WRITE_ACTIONS]])
+  return rows[0] ? toHistoryEntry(rows[0]) : null
 }

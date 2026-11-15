@@ -239,7 +239,7 @@ MCP emit/send ─────────┘ │  ext.<namespace>.<event> 归属
 - ~~job 生命周期事件归属~~：已定最小 `jobs` 模块声明 + 宿主 `platform.scheduler` 发射（#2261/#2266）。
 - 通道自助：`POST /channels` + 凭据录入 UI 是否进 v1？
 - 事件/audit 保留窗口：30/90/180/365 的最终口径。
-- 规则版本化/回滚：是否做 rule revision，还是只靠 audit？
+- ~~规则版本化/回滚~~：已定轻量方案——audit 完整快照 + `GET /rules/:id/history` + `POST /rules/:id/restore`（spec `2026-11-15-notify-remaining-candidates-design.md` §4）。
 - 事件 replay：`no_rules` 的事件在配置规则后是否可补发？
 - 多 worker 公平性：按 org 轮询的阈值与实现。
 

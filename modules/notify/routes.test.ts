@@ -5,6 +5,7 @@ import { declaredScopeGate } from '@platform/sdk'
 import { Pool } from 'pg'
 import type { ChannelAddressResolver, Identity, NotificationEventDecl } from '@platform/sdk'
 import notifyV2 from './index'
+import { audit } from './storage'
 import { applyMigrations, buildTestApp, makeIdentity } from './test-util'
 
 const url = process.env.DATABASE_URL
@@ -143,6 +144,146 @@ describePg('routes v2', () => {
     })
     expect(res.status).toBe(400)
     expect(await res.json()).toEqual({ error: 'RULE_ID_RESERVED' })
+  })
+
+  it('POST /rules 的 audit detail 含完整 snapshot；PUT enabled 也带快照', async () => {
+    const created = await app.request('/rules', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({
+        eventKey: 'm.a.b', scope: '*', recipientKey: 'approver',
+        templateKey: 't1', channels: ['wecom_default'], cooldownMinutes: 5,
+      }),
+    })
+    expect(created.status).toBe(201)
+    const { id } = await created.json() as { id: string }
+    const up = await pool.query(
+      "select detail from notify.audit where org=$1 and target=$2 and action='rule.upsert' order by id desc limit 1",
+      [ORG, id])
+    expect(up.rows).toHaveLength(1)
+    const full = {
+      id, enabled: true, eventKey: 'm.a.b', scope: '*', recipientKey: 'approver',
+      recipientLiteral: null, recipientDepts: null, templateKey: 't1',
+      channels: ['wecom_default'], cooldownMinutes: 5, origin: 'manual', ownerNamespace: null,
+    }
+    expect(up.rows[0].detail.snapshot).toEqual(full)
+
+    const toggled = await app.request(`/rules/${encodeURIComponent(id)}/enabled`, {
+      method: 'PUT',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ enabled: false }),
+    })
+    expect(toggled.status).toBe(200)
+    const en = await pool.query(
+      "select detail from notify.audit where org=$1 and target=$2 and action='rule.enabled' order by id desc limit 1",
+      [ORG, id])
+    expect(en.rows).toHaveLength(1)
+    expect(en.rows[0].detail.snapshot).toEqual({ ...full, enabled: false })
+  })
+
+  it('history 列出快照；restore 按快照恢复并写 rule.restore', async () => {
+    const created = await app.request('/rules', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({
+        eventKey: 'm.a.b', recipientKey: 'approver', templateKey: 't1',
+        channels: ['wecom_default'], cooldownMinutes: 5,
+      }),
+    })
+    expect(created.status).toBe(201)
+    const { id } = await created.json() as { id: string }
+    const updated = await app.request('/rules', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({
+        id, eventKey: 'm.a.b', recipientKey: 'approver', templateKey: 't1',
+        channels: ['wecom_default'],
+      }),
+    })
+    expect(updated.status).toBe(201)
+
+    const hist = await app.request(`/rules/${encodeURIComponent(id)}/history`)
+    expect(hist.status).toBe(200)
+    const { history } = await hist.json() as { history: Array<Record<string, unknown>> }
+    expect(history.length).toBeGreaterThanOrEqual(2)
+    const first = history.find(
+      (h) => (h.snapshot as { cooldownMinutes?: unknown } | null)?.cooldownMinutes === 5)!
+    expect(first.complete).toBe(true)
+
+    const restored = await app.request(`/rules/${encodeURIComponent(id)}/restore`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ auditId: first.auditId }),
+    })
+    expect(restored.status).toBe(200)
+    const row = await pool.query(
+      'select cooldown_minutes from notify.rule where org=$1 and id=$2', [ORG, id])
+    expect(row.rows[0].cooldown_minutes).toBe(5)
+    const a = await pool.query(
+      "select detail from notify.audit where org=$1 and target=$2 and action='rule.restore'", [ORG, id])
+    expect(a.rows).toHaveLength(1)
+    expect(a.rows[0].detail).toMatchObject({ restoredFrom: first.auditId })
+  })
+
+  it('restore 负例：不存在 404、reserved id 409、无快照 409', async () => {
+    const missing = await app.request('/rules/rule:nope/restore', {
+      method: 'POST', headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ auditId: 1 }),
+    })
+    expect(missing.status).toBe(404)
+
+    const reserved = await app.request('/rules/derived:notify:x/restore', {
+      method: 'POST', headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ auditId: 1 }),
+    })
+    expect(reserved.status).toBe(409)
+
+    await audit(pool, ORG, 'u1', 'rule.enabled', 'rule:legacy', { enabled: true })
+    const legacyId = Number((await pool.query(
+      "select id from notify.audit where org=$1 and target='rule:legacy' order by id desc limit 1", [ORG])).rows[0].id)
+    await pool.query(
+      `insert into notify.rule(org,id,enabled,event_key,scope,recipient_key,template_key,channels,origin,created_by)
+       values ($1,'rule:legacy',true,'m.a.b','*','approver','t1','{wecom_default}','manual','u')`, [ORG])
+    const legacy = await app.request('/rules/rule:legacy/restore', {
+      method: 'POST', headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ auditId: legacyId }),
+    })
+    expect(legacy.status).toBe(409)
+  })
+
+  it('restore 按当下环境重新校验：快照里的模板已不存在 ⇒ 409 RULE_RESTORE_INVALID', async () => {
+    const created = await post('/rules', {
+      eventKey: 'm.a.b', recipientKey: 'approver', templateKey: 't1',
+      channels: ['wecom_default'],
+    })
+    expect(created.status).toBe(201)
+    const { id } = await created.json() as { id: string }
+    await audit(pool, ORG, 'u1', 'rule.upsert', id, {
+      snapshot: {
+        id, enabled: true, eventKey: 'm.a.b', scope: '*', recipientKey: 'approver',
+        recipientLiteral: null, recipientDepts: null, templateKey: 'ghost',
+        channels: ['wecom_default'], cooldownMinutes: null, origin: 'manual',
+        ownerNamespace: null,
+      },
+    })
+    const ghostId = Number((await pool.query(
+      "select id from notify.audit where org=$1 and target=$2 and action='rule.upsert' order by id desc limit 1",
+      [ORG, id])).rows[0].id)
+    const res = await app.request(`/rules/${encodeURIComponent(id)}/restore`, {
+      method: 'POST', headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ auditId: ghostId }),
+    })
+    expect(res.status).toBe(409)
+    expect(await res.json()).toEqual({ error: 'RULE_RESTORE_INVALID', issues: ['RULE_TEMPLATE_UNKNOWN'] })
+  })
+
+  it('restore：auditId 非安全正整数 ⇒ 400', async () => {
+    const res = await app.request('/rules/rule:nope/restore', {
+      method: 'POST', headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ auditId: 1.5 }),
+    })
+    expect(res.status).toBe(400)
+    expect(await res.json()).toEqual({ error: 'RULE_INVALID_BODY' })
   })
 
   it('规则：未知事件 / 未知收件人 / 未发布模板 ⇒ 400', async () => {
