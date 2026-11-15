@@ -11,6 +11,10 @@
 
 ## [Unreleased]
 
+## [0.301.0](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.300.1...v0.301.0) - 2026-11-15
+- 【新增】data: 数据生产线改字段聚焦视图，默认折叠只露骨架 (#2318) ([#2323](https://github.com/MYTech-Co-LTD/platform-core/pull/2323), [852f199](https://github.com/MYTech-Co-LTD/platform-core/commit/852f19933ec5d1fd355dc1e15cb22a719620c8d5))
+
+
 ## [0.300.1](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.300.0...v0.300.1) - 2026-11-15
 - 【修复】data: tables 档加节点级重试，ETag 竞态不再整轮失败 ([#2272](https://github.com/MYTech-Co-LTD/platform-core/pull/2272), [ab1e900](https://github.com/MYTech-Co-LTD/platform-core/commit/ab1e9000f4f1e2ee7e701f1a5ef89b0dedd420cc))
 
