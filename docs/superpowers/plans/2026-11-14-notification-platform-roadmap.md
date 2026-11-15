@@ -65,7 +65,9 @@
 | 模板/规则 namespace 归属 + 通用消息 | ✅ | #2256 | N2；`owner_namespace` + `ext.<ns>.message` |
 | 爆炸半径策略 + 审批 + 配额 | ✅ | #2200 | N3；默认 in-app、外发审批、配额与审计 |
 | `SchedulerPort` 消费 + 排班工具 | ✅ | #2253 | N4；job key 恒 `notify.emit`，事件 key 在 `params.eventKey` |
-| job 生命周期事件接通知 | ⬜ | — | N5；W6-P4a（#2261）已落 jobs 模块，接线待做 |
+| job 生命周期事件接通知 | ✅ | #2261/#2266 | W6-P4a 声明 + 宿主发射 + 派生规则；两套生产 event_catalog/rule 已验 |
+| N5 per-namespace 指标 + 单 worker 公平性 | ✅ | #2281 | delivery 冻结 `owner_namespace`、`/stats`、console 过滤；claim 按 org 交错 + 批内规则缓存 |
+| N5 收件箱权限模型 | ⬜ | — | `/inbox` 仍要求 `notify:view`；默认授予成员 vs 保持管理角色，待决策 |
 | N0 基线加固（N0.1–N0.8） | ✅ | #2180/#2182/#2184 | 治理 / 可靠性 / 一致性三件套 |
 | N0.9 生产 preflight 3 条 `no_recipient` | ✅ | #2264 / #2268 | 2026-11-15：预检取码修复后，shanhai 授 `notify:publish` 给两位租户管理员、mytech 授给 ZhangDuo 并停用两条未使用派生规则；两套生产 preflight 均 `blockedCount:0` |
 
