@@ -1,0 +1,218 @@
+/* lineage.css — 数据生产线（字段级血缘）专用样式。颜色/圆角/字号跟 DESIGN.md 走。 */
+
+.lineage-card {
+  width: 308px;
+  flex: 0 0 auto;
+  background: #fff;
+  border: 1px solid #ebedf0;
+  border-radius: 12px;
+  padding: 12px;
+  position: relative;
+  z-index: 1;
+  box-shadow: 0 1px 2px rgba(19, 23, 33, 0.04), 0 8px 24px -12px rgba(19, 23, 33, 0.12);
+  transition: border-color 0.18s ease;
+}
+.lineage-card[data-active='1'] {
+  border-color: #c9d5ff;
+}
+
+.lineage-head {
+  display: flex;
+  gap: 9px;
+  align-items: center;
+  border-bottom: 1px dashed #ebedf0;
+  padding-bottom: 9px;
+  margin-bottom: 9px;
+  transition: opacity 0.18s ease;
+}
+.lineage-viewport[data-focus='1'] .lineage-head:not([data-on='1']) {
+  opacity: 0.3;
+}
+.lineage-num {
+  font: 600 10.5px/1 ui-monospace, SFMono-Regular, Menlo, monospace;
+  color: #4d6bfe;
+  background: #eef2ff;
+  border-radius: 6px;
+  padding: 4px 6px;
+  transition: background 0.18s ease, color 0.18s ease;
+}
+.lineage-head[data-on='1'] .lineage-num {
+  background: #4d6bfe;
+  color: #fff;
+}
+.lineage-title {
+  font-weight: 600;
+  font-size: 13px;
+  letter-spacing: -0.01em;
+}
+.lineage-sub {
+  font-size: 10.5px;
+  color: #9aa0a6;
+  margin-top: 2px;
+}
+
+.lineage-pill {
+  display: flex;
+  gap: 6px;
+  align-items: baseline;
+  padding: 4px 7px;
+  border-radius: 7px;
+  border: 1px solid transparent;
+  cursor: pointer;
+  user-select: none;
+  transition: opacity 0.18s ease, background 0.15s ease, border-color 0.15s ease, box-shadow 0.15s ease;
+}
+.lineage-pill:hover {
+  background: #eef2ff;
+  border-color: #c9d5ff;
+}
+.lineage-pill .mono {
+  font: 11.5px/1.55 ui-monospace, SFMono-Regular, Menlo, monospace;
+  white-space: nowrap;
+}
+.lineage-pill .type {
+  font-size: 9.5px;
+  color: #9aa0a6;
+}
+.lineage-pill[data-kind='measure'] {
+  background: #f0fbf5;
+  border-color: #c9efdb;
+}
+.lineage-pill[data-kind='added'] {
+  background: #f7f3ff;
+  border-color: #e2d8ff;
+}
+.lineage-pill[data-kind='dropped'] .mono {
+  text-decoration: line-through;
+  color: #9aa0a6;
+}
+.lineage-pill.is-key .mono {
+  font-weight: 600;
+}
+
+/* 聚焦：压暗无关列，卡片本体保持清晰 */
+.lineage-viewport[data-focus='1'] .lineage-pill:not(.is-hi) {
+  opacity: 0.15;
+}
+.lineage-pill.is-hi {
+  background: #eef2ff;
+  border-color: #4d6bfe;
+  box-shadow: 0 0 0 3px rgba(77, 107, 254, 0.13);
+}
+.lineage-pill.is-hi[data-kind='measure'] {
+  background: #f0fbf5;
+  border-color: #0fa958;
+  box-shadow: 0 0 0 3px rgba(15, 169, 88, 0.14);
+}
+.lineage-pill.is-hi[data-kind='added'] {
+  background: #f7f3ff;
+  border-color: #8b5cf6;
+}
+
+.lineage-gap {
+  font-size: 10.5px;
+  color: #9aa0a6;
+  padding: 3px 7px;
+  margin: 1px 0 1px 5px;
+  border-left: 2px dashed #ebedf0;
+  letter-spacing: 0.02em;
+}
+
+.lineage-more {
+  margin-top: 9px;
+  margin-left: -6px;
+  font-size: 11px;
+  color: #4d6bfe;
+  cursor: pointer;
+  display: inline-block;
+  border-radius: 6px;
+  padding: 2px 6px;
+}
+.lineage-more:hover {
+  background: #eef2ff;
+}
+.lineage-viewport[data-focus='1'] .lineage-card:not([data-active='1']) .lineage-more {
+  opacity: 0.35;
+}
+
+.lineage-store {
+  font-size: 11.5px;
+  color: #6b7280;
+  line-height: 1.95;
+}
+.lineage-store .row {
+  display: flex;
+  gap: 8px;
+  align-items: baseline;
+  border-radius: 7px;
+  padding: 2px 6px;
+  margin-left: -6px;
+  transition: background 0.18s ease, opacity 0.18s ease;
+}
+.lineage-store .row b {
+  color: #9aa0a6;
+  font-weight: 400;
+  width: 34px;
+  flex: 0 0 auto;
+}
+.lineage-store .mono {
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 10.5px;
+  color: #1b1c1e;
+  word-break: break-all;
+}
+.lineage-store .row.is-hi {
+  background: #eef2ff;
+}
+.lineage-viewport[data-focus='1'] .lineage-store .row:not(.is-hi) {
+  opacity: 0.2;
+}
+.lineage-store .note {
+  color: #9aa0a6;
+  margin-top: 8px;
+  line-height: 1.6;
+}
+
+.lineage-narr {
+  position: absolute;
+  left: 16px;
+  right: 16px;
+  bottom: 14px;
+  display: flex;
+  align-items: center;
+  gap: 11px;
+  z-index: 4;
+  background: rgba(255, 255, 255, 0.94);
+  border: 1px solid #ebedf0;
+  border-radius: 12px;
+  padding: 9px 14px;
+  backdrop-filter: blur(8px);
+  box-shadow: 0 1px 2px rgba(19, 23, 33, 0.04), 0 8px 24px -12px rgba(19, 23, 33, 0.12);
+  min-height: 42px;
+}
+.lineage-narr .dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: #4d6bfe;
+  flex: 0 0 auto;
+}
+.lineage-narr .txt {
+  font-size: 12.5px;
+  color: #6b7280;
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.lineage-narr .txt b {
+  color: #1b1c1e;
+  font-weight: 600;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 12px;
+}
+
+.lineage-edge {
+  opacity: 1;
+}

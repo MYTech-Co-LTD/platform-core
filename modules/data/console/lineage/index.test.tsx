@@ -1,4 +1,4 @@
-// index.test.tsx — 数据生产线页：四段字段、状态标注、播放逐段出现、缺声明说明。
+// index.test.tsx — 数据生产线页：默认折叠骨架、点字段聚焦、反向追来源、播放、空态。
 import '@testing-library/jest-dom/vitest'
 import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { MemoryRouter } from 'react-router-dom'
@@ -17,24 +17,46 @@ const LINEAGE = {
   source: {
     contractId: 'lemeng.retail_order_line',
     columns: [
+      { name: 'system_book', type: 'varchar', description: '账套', status: 'passthrough' },
       { name: 'bizday', type: 'date', description: '业务日', status: 'passthrough' },
+      { name: 'hour', type: 'integer', description: '小时', status: 'passthrough' },
+      { name: 'sale_money', type: 'numeric', description: '行金额', status: 'passthrough' },
+      { name: 'state', type: 'varchar', description: '单据状态', status: 'passthrough' },
       { name: 'order_total_money', type: 'numeric', description: '整单金额', status: 'dropped' },
     ],
   },
   lake: { prefix: 'lemeng/retail_order_line', partitions: ['system_book', 'bizday', 'hour'], fileName: 'all.parquet', partitionStyle: 'hive' },
-  staging: { model: 'stg_lemeng_retail_order_line', columns: [
-    { name: 'bizday', description: '业务日', status: 'passthrough' },
-    { name: 'org', description: '主体列', status: 'added' },
-  ] },
-  marts: { model: 'fct_retail_sale', columns: [
-    { name: 'bizday', description: '业务日', status: 'passthrough' },
-    { name: 'net_amount', description: '净销售额', status: 'aggregate' },
-  ] },
+  staging: {
+    model: 'stg_lemeng_retail_order_line',
+    columns: [
+      { name: 'system_book', description: '账套', status: 'passthrough' },
+      { name: 'org', description: '主体列', status: 'added' },
+      { name: 'bizday', description: '业务日', status: 'passthrough' },
+      { name: 'hour', description: '小时', status: 'passthrough' },
+      { name: 'sale_money', description: '行金额', status: 'passthrough' },
+      { name: 'state', description: '单据状态', status: 'passthrough' },
+    ],
+  },
+  marts: {
+    model: 'fct_retail_sale',
+    columns: [
+      { name: 'system_book', description: '账套', status: 'passthrough' },
+      { name: 'org', description: '主体列', status: 'passthrough' },
+      { name: 'bizday', description: '业务日', status: 'passthrough' },
+      { name: 'sale_amount', description: '销售侧金额', status: 'aggregate', inputs: ['sale_money', 'state'] },
+      { name: 'net_amount', description: '净销售额', status: 'aggregate', inputs: ['sale_money', 'state'], dependsOn: ['sale_amount'] },
+      { name: 'order_count', description: '订单数', status: 'aggregate', inputs: ['state'] },
+    ],
+  },
   notes: [],
 }
 
 const renderPage = (entry = '/console/data/lineage?metric=lemeng:retail:net_sales') =>
   render(<MemoryRouter initialEntries={[entry]}><LineagePage /></MemoryRouter>)
+
+const pills = (): HTMLElement[] => [...document.querySelectorAll<HTMLElement>('.lineage-pill')]
+const hiPills = (): HTMLElement[] => pills().filter((p) => p.classList.contains('is-hi'))
+const hasField = (t: string): boolean => pills().some((p) => p.dataset.field === t)
 
 beforeEach(() => {
   m.mockReset()
@@ -46,43 +68,83 @@ beforeEach(() => {
 afterEach(cleanup)
 
 describe('数据生产线', () => {
-  it('四段标题与字段都渲染；被丢的列有删除线标记、注入与聚合有标签', async () => {
+  it('四段在位；默认只露骨架（分区键 / 粒度键 / 注入列 / 度量）', async () => {
     renderPage()
     await waitFor(() => expect(screen.getByText(/源接口 \+ 契约/)).toBeInTheDocument())
     expect(screen.getByText(/湖（raw parquet）/)).toBeInTheDocument()
     expect(screen.getByText(/staging（洗净对齐）/)).toBeInTheDocument()
     expect(screen.getByText(/marts（业务成品）/)).toBeInTheDocument()
-    expect(screen.getByText('order_total_money')).toBeInTheDocument()
-    expect(screen.getByText('本层丢掉')).toBeInTheDocument()
-    expect(screen.getByText('dbt 注入')).toBeInTheDocument()
-    expect(screen.getByText('聚合度量')).toBeInTheDocument()
-    // 湖的落盘形态
-    expect(screen.getByText(/lemeng\/retail_order_line\//)).toBeInTheDocument()
-    expect(screen.getByText(/all\.parquet/)).toBeInTheDocument()
+    // 骨架：分区键 + marts 粒度键
+    expect(hasField('system_book')).toBe(true)
+    expect(hasField('bizday')).toBe(true)
+    // 非骨架列默认收起
+    expect(hasField('sale_money')).toBe(false)
+    expect(hasField('order_total_money')).toBe(false)
+    // 注入列 / 度量在折叠态也露出来
+    expect(hasField('org')).toBe(true)
+    expect(hasField('net_amount')).toBe(true)
+    expect(screen.getAllByText(/展开全部 \d+ 列/).length).toBeGreaterThan(0)
   })
 
-  it('播放：逐段出现（初始只有第 1 段）', async () => {
+  it('展开全部：非骨架列出现，再点收起回骨架', async () => {
     renderPage()
     await waitFor(() => expect(screen.getByText(/源接口 \+ 契约/)).toBeInTheDocument())
-    const cards = () => [...document.querySelectorAll('.ant-card')]
-    // 首段可见、末段透明
-    await waitFor(() => expect((cards()[0] as HTMLElement).style.opacity).toBe('1'))
+    const sourceCard = document.querySelector<HTMLElement>('[data-stage-card="source"]')!
+    fireEvent.click(sourceCard.querySelector('.lineage-more')!)
+    await waitFor(() => expect(hasField('sale_money')).toBe(true))
+    fireEvent.click(sourceCard.querySelector('.lineage-more')!)
+    await waitFor(() => expect(hasField('sale_money')).toBe(false))
+  })
+
+  it('点源字段：该列与它汇入的度量高亮，并画出连线', async () => {
+    renderPage()
+    await waitFor(() => expect(screen.getByText(/源接口 \+ 契约/)).toBeInTheDocument())
+    const sourceCard = document.querySelector<HTMLElement>('[data-stage-card="source"]')!
+    fireEvent.click(sourceCard.querySelector('.lineage-more')!)
+    await waitFor(() => expect(hasField('sale_money')).toBe(true))
+    fireEvent.click(pills().find((p) => p.dataset.field === 'sale_money')!)
+
+    await waitFor(() => expect(hiPills().length).toBeGreaterThan(0))
+    const names = hiPills().map((p) => p.dataset.field)
+    expect(names).toEqual(expect.arrayContaining(['sale_money', 'sale_amount', 'net_amount']))
+    // order_count 不吃 sale_money ⇒ 不高亮
+    expect(names).not.toContain('order_count')
+    await waitFor(() => expect(document.querySelectorAll('.lineage-edge').length).toBeGreaterThan(0))
+  })
+
+  it('点度量（反向）：输入列从 staging 高亮，依赖的度量也点亮', async () => {
+    renderPage()
+    await waitFor(() => expect(screen.getByText(/marts（业务成品）/)).toBeInTheDocument())
+    const martCard = document.querySelector<HTMLElement>('[data-stage-card="marts"]')!
+    fireEvent.click([...martCard.querySelectorAll<HTMLElement>('.lineage-pill')].find((p) => p.dataset.field === 'net_amount')!)
+
+    await waitFor(() => expect(hiPills().length).toBeGreaterThan(0))
+    const names = hiPills().map((p) => p.dataset.field)
+    expect(names).toEqual(expect.arrayContaining(['net_amount', 'sale_money', 'state', 'sale_amount']))
+    // 反向时源层的输入列也一起点亮
+    expect(names).toEqual(expect.arrayContaining(['sale_money']))
+  })
+
+  it('Esc 退出聚焦，回到折叠骨架', async () => {
+    renderPage()
+    await waitFor(() => expect(screen.getByText(/marts（业务成品）/)).toBeInTheDocument())
+    fireEvent.click(pills().find((p) => p.dataset.field === 'net_amount')!)
+    await waitFor(() => expect(hiPills().length).toBeGreaterThan(0))
+    fireEvent.keyDown(window, { key: 'Escape' })
+    await waitFor(() => expect(hiPills().length).toBe(0))
+  })
+
+  it('播放：逐段展开，最后回到折叠总览', async () => {
+    renderPage()
+    await waitFor(() => expect(screen.getByText(/源接口 \+ 契约/)).toBeInTheDocument())
     fireEvent.click(screen.getByText(/播放生产流程/))
-    await waitFor(() => expect((cards()[3] as HTMLElement).style.opacity).toBe('1'), { timeout: 6000 })
+    const moreOf = (stage: string): string =>
+      document.querySelector<HTMLElement>(`[data-stage-card="${stage}"] .lineage-more`)?.textContent ?? ''
+    await waitFor(() => expect(moreOf('marts')).toMatch(/收起/), { timeout: 8000 })
   })
 
   it('没带 metric ⇒ 空态提示选指标', async () => {
     renderPage('/console/data/lineage')
-    // Select 的 placeholder 与空态标题都含这句话 ⇒ 复数断言
     await waitFor(() => expect(screen.getAllByText(/选一个指标/).length).toBeGreaterThan(0))
-  })
-})
-
-describe('连线', () => {
-  it('数据到达后画出 SVG 连线（同名直通 + 被丢的短线 + 聚合输入）', async () => {
-    renderPage()
-    await waitFor(() => expect(screen.getByText(/源接口 \+ 契约/)).toBeInTheDocument())
-    // happy-dom 里 getBoundingClientRect 全 0，只验证「连线被创建」这一层
-    await waitFor(() => expect(document.querySelectorAll('svg path').length).toBeGreaterThan(0))
   })
 })

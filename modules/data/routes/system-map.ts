@@ -20,6 +20,7 @@ import type { SystemMapInput, SystemMapModel } from '../domain/system-map/map'
 import { buildSystemMapOntology } from '../domain/system-map/ontology'
 import { buildMetricTrail, lakeOfStaging, lakeStagingFromContracts, pipelineIdsOf, stagingRelationsOf } from '../domain/system-map/trail'
 import { buildMetricLineage } from '../domain/system-map/lineage'
+import { resolveMeasureInputs } from '../domain/system-map/measure-inputs'
 import { buildPipelineMap, lakeConsumers, liveStatusOf } from '../domain/system-map/pipeline-map'
 import { loadContracts, loadPipelines, loadSchedules, rootsOf } from '../domain/pipelines/defs'
 import { warehousePool } from '../domain/warehouse'
@@ -197,22 +198,24 @@ export function registerSystemMap(r: ModuleHono, ctx: RouteCtx): void {
           }
         })()
 
-    // 聚合度量的输入列：从 marts SQL 的 `<度量>__gen as ( … )` 块里扫 staging 列名——
-    // 只做「这一段表达式提到了哪些列」，不解析 SQL 结构（够画连线，别当血缘证明）。
-    const martsInputs: Record<string, string[]> = {}
+    // 聚合度量的输入列：见 domain/system-map/measure-inputs.ts（__gen 块 / 最终 select / CTE 链三种形态）。
+    // 只做「这一段表达式提到了哪些列」，够画连线，不当血缘证明。
     const martModel = mart === null ? undefined : models.find((m) => m.name === mart)
+    const stagingModel = staging === null ? undefined : models.find((m) => m.name === staging)
     const martSql = martModel?.sql ?? ''
-    const stagingNames = new Set((staging === null ? [] : (docs.get(staging) ?? [])).map((c) => c.name))
-    for (const col of (mart === null ? [] : (docs.get(mart) ?? []))) {
-      if (stagingNames.has(col.name)) continue
-      const start = martSql.indexOf(`${col.name}__gen as (`)
-      if (start < 0) continue
-      const rest = martSql.slice(start)
-      const end = rest.indexOf('\n),')
-      const block = end < 0 ? rest : rest.slice(0, end)
-      const inputs = [...stagingNames].filter((n) => new RegExp(`\\b${n}\\b`).test(block))
-      if (inputs.length > 0) martsInputs[col.name] = inputs
-    }
+    const stagingDocs = staging === null ? [] : (docs.get(staging) ?? [])
+    // staging 的列集以 SQL 为准（schema.yml 可能漏写）：缺文档的列由 builder 补出来。
+    const stagingColumns = [...new Set([
+      ...stagingDocs.map((c) => c.name),
+      ...sqlColumnsOf(stagingModel?.sql ?? ''),
+    ])]
+    const martDocs = mart === null ? [] : (docs.get(mart) ?? [])
+    const stagingSet = new Set(stagingColumns)
+    const resolved = resolveMeasureInputs(martSql, {
+      measures: martDocs.filter((c) => !stagingSet.has(c.name)).map((c) => c.name),
+      stagingColumns,
+      exclude: martDocs.filter((c) => stagingSet.has(c.name)).map((c) => c.name),
+    })
 
     return c.json(buildMetricLineage({
       metricId: metric.id,
@@ -220,11 +223,12 @@ export function registerSystemMap(r: ModuleHono, ctx: RouteCtx): void {
       contract,
       staging: {
         model: staging,
-        columns: staging === null ? [] : (docs.get(staging) ?? []),
-        sqlColumns: staging === null ? [] : sqlColumnsOf(models.find((m) => m.name === staging)?.sql ?? ''),
+        columns: stagingDocs,
+        sqlColumns: sqlColumnsOf(stagingModel?.sql ?? ''),
       },
-      marts: { model: mart, columns: mart === null ? [] : (docs.get(mart) ?? []) },
-      martsInputs,
+      marts: { model: mart, columns: martDocs },
+      martsInputs: resolved.inputs,
+      martsDeps: resolved.deps,
     }))
   })
 
