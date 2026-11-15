@@ -165,7 +165,7 @@ describe('evaluateMonitor · threshold（W7-V2a）', () => {
 
     const under = await evaluateMonitor(
       deps(sink([[100]]), { loadCatalog: async () => [metricRow({ totalable: true })] }), M_T)
-    expect(under.verdict).toBe('ok')
+    expect(under).toMatchObject({ verdict: 'ok', value: 100 })
   })
 
   it('★ 非可加指标（无 totalSql）⇒ unknown:not_additive（不拿明细求和）', async () => {
