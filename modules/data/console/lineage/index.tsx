@@ -76,7 +76,7 @@ function LayerCard(props: {
         <div style={{ fontSize: 13.5, fontWeight: 600 }}>{props.step} {props.title}</div>
         <div style={{ fontSize: 11.5, color: '#9AA0A6', marginTop: 2 }}>{props.sub}</div>
       </div>
-      <div style={{ maxHeight: 520, overflow: 'auto' }}>{props.children}</div>
+      <div>{props.children}</div>
     </Card>
   )
 }
@@ -89,9 +89,12 @@ export default function LineagePage() {
   const [error, setError] = useState<HumanError | null>(null)
   const [step, setStep] = useState(0)
   // 连线（SVG 覆盖层）：源→staging 同名、staging→marts 同名、staging→度量（聚合输入）
-  const boxRef = useRef<HTMLDivElement>(null)
+  const viewportRef = useRef<HTMLDivElement>(null)
+  const worldRef = useRef<HTMLDivElement>(null)
   const fieldRefs = useRef(new Map<string, HTMLDivElement>())
   const [links, setLinks] = useState<Array<{ d: string; kind: 'pass' | 'drop' | 'agg'; stage: number }>>([])
+  // 无限画板：平移 + 缩放（滚轮缩放、拖拽平移、一键适应）
+  const [view, setView] = useState({ x: 0, y: 0, k: 1 })
 
   // 指标下拉：列表接口的字段是 id/title（与 /metrics 的既有契约一致）
   useEffect(() => {
@@ -126,14 +129,24 @@ export default function LineagePage() {
   useEffect(() => {
     if (data === null) { setLinks([]); return }
     const build = (): void => {
-      const box = boxRef.current
-      if (box === null) return
-      const base = box.getBoundingClientRect()
-      const at = (layer: string, name: string): { x: number; y: number } | null => {
+      const world = worldRef.current
+      if (world === null) return
+      // 画板里画线：坐标必须是 **world 局部坐标**（缩放后 getBoundingClientRect 会随 scale 变）
+      const local = (el: HTMLElement): { x: number; y: number; right: number } => {
+        let x = 0
+        let y = 0
+        let cur: HTMLElement | null | undefined = el
+        while (cur !== null && cur !== undefined && cur !== world) {
+          // happy-dom 没有 offsetLeft/offsetParent（单测里恒 0/undefined）⇒ 用零兜底
+          x += cur.offsetLeft ?? 0
+          y += cur.offsetTop ?? 0
+          cur = cur.offsetParent as HTMLElement | null | undefined
+        }
+        return { x, y: y + el.offsetHeight / 2, right: x + el.offsetWidth }
+      }
+      const at = (layer: string, name: string): { x: number; y: number; right: number } | null => {
         const el = fieldRefs.current.get(`${layer}:${name}`)
-        if (el === undefined) return null
-        const r = el.getBoundingClientRect()
-        return { x: r.left - base.left, y: r.top - base.top + r.height / 2, right: r.right - base.left } as never
+        return el === undefined ? null : local(el)
       }
       const out: Array<{ d: string; kind: 'pass' | 'drop' | 'agg'; stage: number }> = []
       const curve = (from: { x: number; y: number }, to: { x: number; y: number }): string => {
@@ -144,17 +157,17 @@ export default function LineagePage() {
         const from = at('source', c.name)
         if (from === null) continue
         if (c.status === 'dropped') {
-          out.push({ d: `M ${(from as never as { right: number }).right} ${from.y} l 26 0`, kind: 'drop', stage: 2 })
+          out.push({ d: `M ${from.right} ${from.y} l 26 0`, kind: 'drop', stage: 2 })
           continue
         }
         const to = at('staging', c.name)
-        if (to !== null) out.push({ d: curve({ x: (from as never as { right: number }).right, y: from.y }, to), kind: 'pass', stage: 2 })
+        if (to !== null) out.push({ d: curve({ x: from.right, y: from.y }, to), kind: 'pass', stage: 2 })
       }
       for (const c of data.staging.columns) {
         const from = at('staging', c.name)
         const to = at('marts', c.name)
         if (from === null || to === null) continue
-        out.push({ d: curve({ x: (from as never as { right: number }).right, y: from.y }, to), kind: 'pass', stage: 3 })
+        out.push({ d: curve({ x: from.right, y: from.y }, to), kind: 'pass', stage: 3 })
       }
       for (const c of data.marts.columns) {
         if (c.inputs === undefined) continue
@@ -163,7 +176,7 @@ export default function LineagePage() {
         for (const input of c.inputs) {
           const from = at('staging', input)
           if (from === null) continue
-          out.push({ d: curve({ x: (from as never as { right: number }).right, y: from.y }, to), kind: 'agg', stage: 4 })
+          out.push({ d: curve({ x: from.right, y: from.y }, to), kind: 'agg', stage: 4 })
         }
       }
       setLinks(out)
@@ -173,6 +186,23 @@ export default function LineagePage() {
     window.addEventListener('resize', onResize)
     return () => window.removeEventListener('resize', onResize)
   }, [data])
+
+  /** 适应画布：把整张图缩放到视口里（左右各留 16px 余量）。 */
+  const fitToView = useCallback(() => {
+    const vp = viewportRef.current
+    const world = worldRef.current
+    if (vp === null || world === null) return
+    const w = world.scrollWidth
+    const h = world.scrollHeight
+    if (w === 0 || h === 0) return
+    const k = Math.min((vp.clientWidth - 32) / w, (vp.clientHeight - 32) / h, 1)
+    setView({ x: 16, y: 16, k: Math.max(0.15, k) })
+  }, [])
+
+  // 数据切换后自动「适应画布」（否则新图可能在视口外）
+  useEffect(() => {
+    if (data !== null) setTimeout(fitToView, 50)
+  }, [data, fitToView])
 
   const dropped = useMemo(() => data?.source.columns.filter((c) => c.status === 'dropped').map((c) => c.name) ?? [], [data])
   const measures = useMemo(() => data?.marts.columns.filter((c) => c.status === 'aggregate').map((c) => c.name) ?? [], [data])
@@ -209,10 +239,66 @@ export default function LineagePage() {
       )}
 
       {data !== null && (
-        <div ref={boxRef} style={{ display: 'flex', gap: 14, alignItems: 'flex-start', position: 'relative' }}>
+        <div
+          ref={viewportRef}
+          onWheel={(e) => {
+            e.preventDefault()
+            const rect = viewportRef.current?.getBoundingClientRect()
+            if (rect === undefined) return
+            const px = e.clientX - rect.left
+            const py = e.clientY - rect.top
+            const next = Math.min(2.5, Math.max(0.15, view.k * Math.exp(-e.deltaY * 0.0015)))
+            // 让光标下的点保持不动：newX = px - (px - x) * next/k
+            setView({
+              x: px - (px - view.x) * (next / view.k),
+              y: py - (py - view.y) * (next / view.k),
+              k: next,
+            })
+          }}
+          onPointerDown={(e) => {
+            if (e.button !== 0) return
+            const start = { x: e.clientX, y: e.clientY, vx: view.x, vy: view.y }
+            const el = e.currentTarget as HTMLElement
+            el.setPointerCapture(e.pointerId)
+            el.style.cursor = 'grabbing'
+            const move = (ev: PointerEvent): void => {
+              setView((v) => ({ ...v, x: start.vx + (ev.clientX - start.x), y: start.vy + (ev.clientY - start.y) }))
+            }
+            const up = (): void => {
+              el.style.cursor = 'grab'
+              el.removeEventListener('pointermove', move)
+              el.removeEventListener('pointerup', up)
+            }
+            el.addEventListener('pointermove', move)
+            el.addEventListener('pointerup', up)
+          }}
+          style={{
+            position: 'relative', overflow: 'hidden', cursor: 'grab',
+            height: 'calc(100vh - 260px)', minHeight: 520,
+            border: '1px solid #EBEDF0', borderRadius: 12, background: '#FAFBFC',
+            backgroundImage: 'radial-gradient(#E6E8EC 1px, transparent 1px)',
+            backgroundSize: '20px 20px',
+          }}
+        >
+          <div style={{ position: 'absolute', right: 12, top: 12, display: 'flex', gap: 6, zIndex: 2 }}>
+            <Button size="small" onClick={() => fitToView()}>适应画布</Button>
+            <Button size="small" onClick={() => setView({ x: 0, y: 0, k: 1 })}>100%</Button>
+            <Button size="small" onClick={() => setView((v) => ({ ...v, k: Math.min(2.5, v.k * 1.2) }))}>＋</Button>
+            <Button size="small" onClick={() => setView((v) => ({ ...v, k: Math.max(0.15, v.k / 1.2) }))}>－</Button>
+            <span style={{ fontSize: 11.5, color: '#9AA0A6', alignSelf: 'center', minWidth: 38 }}>{Math.round(view.k * 100)}%</span>
+          </div>
+          <div
+            ref={worldRef}
+            style={{
+              position: 'absolute', left: 0, top: 0, padding: 16,
+              display: 'flex', gap: 14, alignItems: 'flex-start', width: 'max-content',
+              transform: `translate(${view.x}px, ${view.y}px) scale(${view.k})`,
+              transformOrigin: '0 0',
+            }}
+          >
           <svg
             aria-hidden
-            style={{ position: 'absolute', inset: 0, width: '100%', height: '100%', pointerEvents: 'none', overflow: 'visible' }}
+            style={{ position: 'absolute', left: 0, top: 0, width: '100%', height: '100%', pointerEvents: 'none', overflow: 'visible' }}
           >
             {links.filter((l) => step >= l.stage).map((l, i) => (
               <path
@@ -266,6 +352,7 @@ export default function LineagePage() {
                 <Field key={c.name} c={c} innerRef={(el) => { if (el !== null) fieldRefs.current.set(`marts:${c.name}`, el) }} />
               ))}
           </LayerCard>
+          </div>
         </div>
       )}
 
