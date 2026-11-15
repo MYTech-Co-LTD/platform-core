@@ -513,6 +513,35 @@ describe.skipIf(!dbUrl)('buildApp：模块 userApp 静态面的 Cache-Control（
   })
 })
 
+describe.skipIf(!dbUrl)('buildApp：宿主手动触发路由已退役（W6-P4a 迁入 jobs 模块）', () => {
+  // P1 的宿主路由 /api/platform/jobs/* 已被 jobs 模块端点（/api/modules/jobs/*，权限码
+  // jobs:manage + CSRF）取代后**删除**（W6-P4a Task 3）。锁这条的用例必须走真装配：
+  // 手搭 app 测不到「挂载已摘除」——哪怕有人把挂载加回来，这里立刻红并指名旧路径。
+  // 404 形状同 app.notFound 的兜底（{error:'NOT_FOUND'}），不是模块端的 JOB_NOT_FOUND。
+  const mock = new MockCasdoor()
+  let app: Awaited<ReturnType<typeof buildApp>>['app']
+
+  beforeAll(async () => {
+    await mock.start()
+    const built = await buildApp({ config: configWith(mock.origin, 'pw') })
+    app = built.app
+  })
+  // 不在这里关池（R4 评审 S3）：池是本文件共用的模块级单例，关它属文件级职责。
+  afterAll(async () => {
+    await mock.stop()
+  })
+
+  it('★ 旧路径 POST /api/platform/jobs/:key/run ⇒ 404 NOT_FOUND（不再有宿主侧手动触发面）', async () => {
+    const res = await app.request('/api/platform/jobs/notify.reconcile/run', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', host: 'acme.test' },
+      body: '{}',
+    })
+    expect(res.status).toBe(404)
+    expect(await res.json()).toEqual({ error: 'NOT_FOUND' })
+  })
+})
+
 describe.skipIf(!dbUrl)('buildApp：启动期 fail-fast 传播', () => {
   const mock = new MockCasdoor()
 

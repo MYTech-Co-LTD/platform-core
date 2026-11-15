@@ -302,4 +302,40 @@ describePg('jobs-port（需要 DATABASE_URL）', () => {
         where action='admin.job.run' and detail->>'key'='jobtest-p4a:locked'`)
     expect(audit.rows).toHaveLength(0)
   }, 15_000)
+
+  it('runNow：真并发两次触发 ⇒ 恰一个成功一个 JOB_ALREADY_PENDING，台账/审计各一行（TOCTOU 原子）', async () => {
+    // 自 P1 手动触发路由（routes/platform-jobs.test.ts，W6-P4a 退役）迁入：busy 判定与入队
+    // 的原子性现在由端口负责，用例跟着语义走。独立 Pool = 独立会话，才真正走到排班行锁
+    // （同 pool 复用连接会让「并发」退化成串行）——两个单连接池各起一个端口。
+    await seedSchedule(pool, { key: 'jobtest-p4a:race' })
+    const pools = [
+      new Pool({ connectionString: dbUrl, max: 1 }),
+      new Pool({ connectionString: dbUrl, max: 1 }),
+    ]
+    try {
+      const ports = pools.map((p) => mkPort(p))
+      const results = await Promise.allSettled(
+        ports.map((port) => port.runNow('jobtest-p4a:race', { tenantId: 990_015, userId: 'u-race' })),
+      )
+      const fulfilled = results.filter((r) => r.status === 'fulfilled')
+      const rejected = results.filter(
+        (r) => r.status === 'rejected' && (r.reason as { code?: string }).code === 'JOB_ALREADY_PENDING',
+      )
+      expect(fulfilled).toHaveLength(1)
+      expect(rejected).toHaveLength(1)
+
+      // 台账只多一条 queued（没有重复入队）。
+      const runs = await pool.query(
+        `select count(*)::int as n from platform.job_run
+          where key='jobtest-p4a:race' and status='queued'`)
+      expect(runs.rows[0].n).toBe(1)
+      // 并发下审计同样只落一行（失败的那次 rollback，不写）。
+      const audit = await pool.query(
+        `select count(*)::int as n from platform.audit
+          where action='admin.job.run' and detail->>'key'='jobtest-p4a:race'`)
+      expect(audit.rows[0].n).toBe(1)
+    } finally {
+      await Promise.all(pools.map((p) => p.end().catch(() => {})))
+    }
+  }, 15_000)
 })

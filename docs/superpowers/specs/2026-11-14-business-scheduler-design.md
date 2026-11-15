@@ -208,6 +208,10 @@ misfire 迟到 3 小时也用它；重试沿用同一 occurrence ⇒ 下游幂�
    （或走 §11 的反向切流）。
    不把「引擎还活着」这一判断单独押在 OO 上（OO 有流静默导致状态机冻结的实测形态）。
 4. **手动触发**：`POST /api/platform/jobs/:key/run`（会话 + `tenant:admin`；本仓无独立「平台管理员」码，单实例单租户下等价），写 `trigger='manual'` 的 run 行，落 `platform.audit`。**已知边界**：多租户实例下这等于任意租户管理员可触发全局 job——届时须引入平台级码或按 `owner_org` 限定。
+   > **2026-11-15 订正（W6-P4a）**：该宿主端点已退役删除，手动触发入口改为 jobs 模块的
+   > `POST /api/modules/jobs/:key/run`（需 `jobs:manage` + CSRF）；上文的 `tenant:admin`
+   > 授权边界随独立权限码消除。行为语义（只入队 / 409 / 锁超时 503 / 审计 `admin.job.run`）不变，
+   > 现行口径见 `deploy/jobs.md` §4。
 
 ## 10. 与通知板块的接缝（handoff 答复）
 

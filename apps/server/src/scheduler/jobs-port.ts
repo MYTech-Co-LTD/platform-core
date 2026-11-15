@@ -6,7 +6,8 @@
 // `platform.*`**（B1，见 docs/architecture.md §4.3）。数据与审计都收在宿主侧：
 //   · 读：`listSchedules` / `listRuns` 各自一条 SQL，返回**窄视图**（不把 params /
 //     owner_* 之类的宿主内部列漏给模块）。
-//   · 写：`runNow` 照 P1 手动触发路由（routes/platform-jobs.ts）的语义逐条搬运——
+//   · 写：`runNow` 照 P1 手动触发路由（routes/platform-jobs.ts，**W6-P4a 已随路由退役**，
+//     手动触发入口 = jobs 模块 POST /api/modules/jobs/:key/run）的语义逐条搬运——
 //     事务内锁排班行 → 判 `queued|running` → insert queued 行 + 同事务审计 →
 //     2s `lock_timeout`（55P03 ⇒ JOB_LOCK_TIMEOUT）。**审计在端口里写**，模块不碰
 //     `platform.audit`（计划 Task 3：迁入模块后审计保留，但 B1 不允许模块直写）。
