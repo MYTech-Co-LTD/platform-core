@@ -11,6 +11,11 @@
 
 ## [Unreleased]
 
+## [0.289.0](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.288.1...v0.289.0) - 2026-11-15
+- 【新增】data: registry 增补 P4b 六类系统 job（W6-P4b） ([#2266](https://github.com/MYTech-Co-LTD/platform-core/pull/2266), [c69bd0b](https://github.com/MYTech-Co-LTD/platform-core/commit/c69bd0b910ffc8a0f643cd95535f0608df0a4cd1))
+- 【修复】notify: preflight 按 decl 取权限码，修复 scope_holders 恒判 no_recipient (#2263) ([#2264](https://github.com/MYTech-Co-LTD/platform-core/pull/2264), [a9bf2fb](https://github.com/MYTech-Co-LTD/platform-core/commit/a9bf2fb7168a3e43878775b28a7330c963828f2a))
+
+
 ## [0.288.1](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.288.0...v0.288.1) - 2026-11-15
 - 【修复】notify: N0 可靠性——webhook 地址、限流/重试、provider 超时与批处理隔离 (#2181) ([#2182](https://github.com/MYTech-Co-LTD/platform-core/pull/2182), [0497d05](https://github.com/MYTech-Co-LTD/platform-core/commit/0497d05e520c5a8d5326746a50731f474b526c44))
 - 【修复】notify: N0 一致性——MCP check_rule 同源 + 直连通道健康 (#2183) ([#2184](https://github.com/MYTech-Co-LTD/platform-core/pull/2184), [7d95955](https://github.com/MYTech-Co-LTD/platform-core/commit/7d95955916e94cd301d11539d48df7d6ceeae8c3))
