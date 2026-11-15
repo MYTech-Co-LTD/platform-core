@@ -49,6 +49,20 @@
   （2026-11-12，`DEAD_WINDOW_DAYS`）：终态失败不会自愈，全表计数会让一条历史失败永久按红。
   健康面回答的是「现在投得出去吗」；更早的历史属于审计，由 retention 负责清理（未部署也不会误导健康面）。
 
+## 0. `notify-inbox-role-sync`（每 15 分钟）
+
+```bash
+pnpm exec tsx scripts/notify-inbox-role-sync.mjs
+```
+
+- 把 Casdoor 角色 `notify-inbox-readers` 的成员**对齐到该 org 全部未禁用用户**，并把
+  `notify:inbox` 挂到该角色（幂等）。
+- 角色是**派生角色**：不要手工改成员；控制台建号 / 企微同步 / Casdoor 直建 / 登录 JIT
+  都会被下一轮收敛，覆盖所有建号路径。
+- 权限码不存在（模块未装载）⇒ 该 org 记失败并非零退出，不静默建空壳。
+- 输出：`{"tenants":N,"failed":0,"out":[{"org":"…","members":N,"changed":true}]}`。
+- 部署形态与既有 job 相同：openship custom job，`docker exec <server 容器> …`；mytech / shanhai 各一条。
+
 ## 1. `notify-health`（每 5 分钟）
 
 ```bash
