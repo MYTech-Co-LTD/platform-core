@@ -249,18 +249,20 @@ export default function LineagePage() {
   }
 
   // 旁白是「聚焦结果」的一句话读数，不是教程（DESIGN.md「界面不写教程」）
-  const narr: { lead: string; name?: string; tail: string } | null = play !== null
-    ? { lead: '', tail: play.msg }
+  const narr: { name?: string; mid: string; tail: string } | null = play !== null
+    ? { mid: '', tail: play.msg }
     : focus === null
       ? null
       : focus.reverse
         ? {
-            lead: '', name: focus.name,
-            tail: ` 由 staging 的 ${focus.staging.size} 列${focus.deps.length > 0 ? `（含 ${focus.deps.length} 个度量组合）` : ''}聚合而成`,
+            name: focus.name,
+            mid: ' · 由 staging 的 ',
+            tail: `${focus.staging.size} 列${focus.deps.length > 0 ? `（含 ${focus.deps.length} 个度量组合）` : ''}聚合而成`,
           }
         : {
-            lead: '', name: focus.name,
-            tail: ` ${focus.staging.has(focus.name) ? 'staging 同名透传' : 'staging 不再保留'} → ${
+            name: focus.name,
+            mid: ' · 源字段 → ',
+            tail: `${focus.staging.has(focus.name) ? 'staging 同名透传' : 'staging 不再保留'} → ${
               focus.marts.has(focus.name) ? 'marts 同名列'
                 : focus.links.length > 0 ? `汇入 ${focus.links.length} 个聚合度量` : '未进入 marts'}`,
           }
@@ -391,6 +393,7 @@ export default function LineagePage() {
               <span className="dot" />
               <span className="txt">
                 {narr.name !== undefined && <b>{narr.name}</b>}
+                {narr.mid}
                 {narr.tail}
               </span>
               {focus !== null && <Button size="small" onClick={clearFocus}>退出聚焦</Button>}
