@@ -11,6 +11,10 @@
 
 ## [Unreleased]
 
+## [0.292.2](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.292.1...v0.292.2) - 2026-11-15
+- 【修复】data: 乐檬零售明细契约补第三级分区 hour ([#2287](https://github.com/MYTech-Co-LTD/platform-core/pull/2287), [7dce149](https://github.com/MYTech-Co-LTD/platform-core/commit/7dce149792afbeef3a9dcb0ac357a4a7423b5c22))
+
+
 ## [0.292.1](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.292.0...v0.292.1) - 2026-11-15
 - 【修复】notify: seed 不再重新启用被人工停用的派生规则 (#2285) ([#2286](https://github.com/MYTech-Co-LTD/platform-core/pull/2286), [e11f084](https://github.com/MYTech-Co-LTD/platform-core/commit/e11f084e9820502b979016d3a41dbd839346f01d))
 
