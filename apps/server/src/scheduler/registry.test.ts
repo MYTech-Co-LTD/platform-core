@@ -106,6 +106,18 @@ describe('JOB_REGISTRY', () => {
   })
 })
 
+describe('registry · dbt tick（Wave 8 P1）', () => {
+  it('★ data.dbt_tick 与 openship 现役逐字一致，且 env 指向 tick 档', () => {
+    const def = JOB_REGISTRY.find((d) => d.key === 'data.dbt_tick')!
+    expect(def).toBeDefined()
+    expect(def.cron).toBe('2-59/10 1-15 * * *')
+    expect(def.timeoutMs).toBe(600000)
+    expect(def.maxAttempts).toBe(1)
+    expect(def.env).toEqual({ MATERIALIZE_SCOPE: 'tick', DATA_PLANE_DOMAINS: 'lemeng' })
+    expect(existsSync(repoPath(def.script))).toBe(true)
+  })
+})
+
 describe('registry · 业务监控 tick（W7-V1）', () => {
   it('★ data.monitor_tick 每分钟一条、脚本在位、不传参数', () => {
     const def = JOB_REGISTRY.find((d) => d.key === 'data.monitor_tick')!
