@@ -66,8 +66,9 @@ describePg('notify 迁移', () => {
     )
     const names = r.rows.map((x) => x.table_name as string).sort()
     expect(names).toEqual([
-      'agent_namespace', 'audit', 'channel', 'channel_credential', 'channel_probe', 'delivery',
-      'delivery_attempt', 'event', 'event_decl', 'inbox', 'rule', 'template', 'template_revision',
+      'agent_namespace', 'approval', 'audit', 'channel', 'channel_credential', 'channel_probe',
+      'delivery', 'delivery_attempt', 'event', 'event_decl', 'inbox', 'rule', 'template',
+      'template_revision',
     ])
     expect(r.rows.every((x) => x.is_nullable === 'NO')).toBe(true)
 

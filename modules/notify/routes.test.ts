@@ -64,6 +64,7 @@ describePg('routes v2', () => {
   })
 
   async function cleanup() {
+    await pool.query('delete from notify.approval where org=$1', [ORG])
     await pool.query('delete from notify.event_decl where org=$1', [ORG])
     await pool.query('delete from notify.rule where org=$1', [ORG])
     await pool.query('delete from notify.event where org=$1', [ORG])
@@ -81,6 +82,29 @@ describePg('routes v2', () => {
     headers: { 'content-type': 'application/json' },
     body: JSON.stringify(body),
   })
+  const patch = (path: string, body: unknown) => app.request(path, {
+    method: 'PATCH',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify(body),
+  })
+
+  async function setupAgent(ns = 'agent_a') {
+    await pool.query(
+      `insert into notify.channel(org,id,provider,enabled,config,secret_refs,created_by)
+       values ($1,'inapp_default','in_app',true,'{}','{}','u')
+       on conflict (org,id) do nothing`, [ORG])
+    await post('/agent/namespaces', { namespace: ns })
+    await post('/agent/events', {
+      key: `ext.${ns}.daily`, title: 'D',
+      payload: { user: { type: 'user', required: true } },
+      recipients: { assignee: { kind: 'field', field: 'user' } },
+    })
+    await post('/agent/templates', {
+      namespace: ns, key: `${ns}_daily`, name: 'D',
+      eventKey: `ext.${ns}.daily`,
+      contents: { in_app: { title: 'Hi', body: 'B' } }, publish: true,
+    })
+  }
 
   it('规则：合法创建、列表、启停、删除', async () => {
     const created = await post('/rules', {
@@ -250,10 +274,14 @@ describePg('routes v2', () => {
     expect(tpl.status).toBe(201)
     expect(await tpl.json()).toMatchObject({ revision: 1, published: true })
 
+    await pool.query(
+      `insert into notify.channel(org,id,provider,enabled,config,secret_refs,created_by)
+       values ($1,'inapp_default','in_app',true,'{}','{}','u')
+       on conflict (org,id) do nothing`, [ORG])
     const rule = await post('/agent/rules', {
       namespace: 'agent_a', eventKey: 'ext.agent_a.daily',
       recipientKey: 'assignee', templateKey: 'agent_a_daily',
-      channels: ['wecom_default'],
+      channels: ['inapp_default'],
     })
     expect(rule.status).toBe(201)
     const ruleId = (await rule.json() as { id: string }).id
@@ -291,6 +319,74 @@ describePg('routes v2', () => {
     expect((await post('/agent/messages', {
       namespace: 'agent_x', to: 'u1', title: 'T', body: 'B',
     })).status).toBe(403)
+  })
+
+  it('N3：外发规则默认 pending，审批后 enabled', async () => {
+    await setupAgent('agent_a')
+    expect((await patch('/agent/namespaces/agent_a/policy', {
+      allowed_channels: ['inapp_default', 'wecom_default'],
+    })).status).toBe(200)
+
+    const pending = await post('/agent/rules', {
+      namespace: 'agent_a', eventKey: 'ext.agent_a.daily',
+      recipientKey: 'assignee', templateKey: 'agent_a_daily',
+      channels: ['wecom_default'],
+    })
+    expect(pending.status).toBe(202)
+    const p = await pending.json() as { id: string; approvalId: string; status: string }
+    expect(p.status).toBe('pending')
+    expect(p.approvalId).toBeTruthy()
+    const rule = await pool.query(
+      'select enabled, owner_namespace from notify.rule where org=$1 and id=$2', [ORG, p.id])
+    expect(rule.rows[0]).toMatchObject({ enabled: false, owner_namespace: 'agent_a' })
+    const ev = await pool.query(
+      "select 1 from notify.event where org=$1 and event_key='notify.approval.pending'", [ORG])
+    expect(ev.rowCount).toBe(1)
+
+    const enable = await app.request(`/rules/${encodeURIComponent(p.id)}/enabled`, {
+      method: 'PUT', headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ enabled: true }),
+    })
+    expect(enable.status).toBe(403)
+
+    const dec = await post(`/approvals/${p.approvalId}/decide`, { approve: true })
+    expect(dec.status).toBe(200)
+    const after = await pool.query(
+      'select enabled from notify.rule where org=$1 and id=$2', [ORG, p.id])
+    expect(after.rows[0].enabled).toBe(true)
+  })
+
+  it('N3：policy 预授权外发 + 收件人/每日消息配额', async () => {
+    await setupAgent('agent_q')
+    expect((await patch('/agent/namespaces/agent_q/policy', {
+      allowed_channels: ['inapp_default', 'wecom_default'],
+      auto_publish_external: true,
+      max_recipients_per_message: 2,
+      max_messages_per_day: 1,
+    })).status).toBe(200)
+
+    const auto = await post('/agent/rules', {
+      namespace: 'agent_q', eventKey: 'ext.agent_q.daily',
+      recipientKey: 'assignee', templateKey: 'agent_q_daily',
+      channels: ['wecom_default'],
+    })
+    expect(auto.status).toBe(201)
+    const a = await auto.json() as { id: string; status: string }
+    expect(a.status).toBe('enabled')
+    const ap = await pool.query(
+      'select status, decided_by from notify.approval where org=$1 and target_id=$2',
+      [ORG, a.id])
+    expect(ap.rows[0]).toMatchObject({ status: 'approved', decided_by: 'system:policy' })
+
+    expect((await post('/agent/messages', {
+      namespace: 'agent_q', to: ['u1', 'u2', 'u3'], title: 'T', body: 'B',
+    })).status).toBe(429)
+    expect((await post('/agent/messages', {
+      namespace: 'agent_q', to: 'u1', title: 'T', body: 'B',
+    })).status).toBe(202)
+    expect((await post('/agent/messages', {
+      namespace: 'agent_q', to: 'u1', title: 'T', body: 'B',
+    })).status).toBe(429)
   })
 
   it('N1：跨 namespace / 非 ext key / 非法声明都被拒', async () => {
