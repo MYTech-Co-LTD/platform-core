@@ -24,6 +24,8 @@ export interface NotificationRule {
   channels: string[]
   cooldownMinutes: number | null
   origin: RuleOrigin
+  /** 非空 = 该 agent namespace 所有；null/缺省 = 平台/租户人管。 */
+  ownerNamespace?: string | null
   createdAt: string
 }
 
