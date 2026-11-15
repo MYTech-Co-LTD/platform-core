@@ -29,6 +29,13 @@ export const JOB_REGISTRY: JobDef[] = [
   { key: 'notify.reconcile', script: 'scripts/notify-reconcile.mjs', cron: '7 * * * *', timezone: 'UTC', timeoutMs: 300000, maxAttempts: 2, expectedIntervalSecs: 3600, description: '通知指派与催办对账' },
   { key: 'metric.candidates', script: 'scripts/metric-candidates-job.mjs', cron: '40 6 * * *', timezone: 'UTC', timeoutMs: 300000, maxAttempts: 1, expectedIntervalSecs: 86400, description: '指标候选池生成' },
   { key: 'report.scope_scan', script: 'scripts/report-scope-scan.mjs', cron: '37 1 * * *', timezone: 'UTC', timeoutMs: 300000, maxAttempts: 2, expectedIntervalSecs: 86400, description: '报表受众 × 指标可见性巡检' },
+  // P4b：其余系统 job（cron 与 openship 现役排班逐字一致，时区一律 UTC）
+  { key: 'notify.preflight', script: 'scripts/notify-preflight.mjs', cron: '43 3 * * *', timezone: 'UTC', timeoutMs: 300000, maxAttempts: 1, expectedIntervalSecs: 86400, description: '通知规则全量可送达性体检' },
+  { key: 'notify.retention', script: 'scripts/notify-retention.mjs', cron: '23 3 * * *', timezone: 'UTC', timeoutMs: 300000, maxAttempts: 1, expectedIntervalSecs: 86400, description: '通知保留期清理' },
+  { key: 'metric.retire', script: 'scripts/metric-retire-job.mjs', cron: '23 3 * * 1', timezone: 'UTC', timeoutMs: 300000, maxAttempts: 2, expectedIntervalSecs: 604800, description: '零使用指标下线提案' },
+  { key: 'org.sync', script: 'scripts/org-sync-all.mjs', cron: '13 */6 * * *', timezone: 'UTC', timeoutMs: 600000, maxAttempts: 2, expectedIntervalSecs: 21600, description: '企微组织架构同步' },
+  { key: 'notify.seed_builtin', script: 'scripts/notify-seed-builtin.mjs', cron: '13 * * * *', timezone: 'UTC', timeoutMs: 300000, maxAttempts: 1, expectedIntervalSecs: 3600, description: '内置模板/规则幂等 seed' },
+  { key: 'notify.health', script: 'scripts/notify-health.mjs', cron: '*/5 * * * *', timezone: 'UTC', timeoutMs: 300000, maxAttempts: 1, expectedIntervalSecs: 300, description: '通知投递健康检查' },
   // handler-only：排班由 agent/console 经 SchedulerPort 建（source≠'system'），seed 不建行。
   // cron/timezone 是 JobDef 必填字段的占位值（不会被 seed 使用），真实时间以排班行为准。
   { key: 'notify.emit', script: 'scripts/notify-emit-job.mjs', cron: '0 0 1 1 *', timezone: 'UTC', timeoutMs: 60000, maxAttempts: 2, expectedIntervalSecs: 86400, description: '周期消息：把一条事件入队（由 agent/console 建按其 cron 排班）', noSystemSchedule: true },
