@@ -59,14 +59,15 @@
 | 企微直连（凭据密文 + token 判据） | ✅ | #1219 | 山海生产形态 |
 | 集成健康（registry + STALE） | ✅ | #1209/#1212 | 判据读 `channel_probe` |
 | forms 指派/催办接通 | ✅ | #1980 | **硬编码**，非 `defaults` 派生 |
-| 一次性延迟 + `notify.emit` handler | 🟡 | PR #2169 | 已 rebase 到合并版 spec/plan；`JOB_PARAMS` 走 stdin |
+| 一次性延迟 + `notify.emit` handler | ✅ | #2230 | `JOB_PARAMS` 走 stdin；`available_at` 一次性延迟 |
 | 调度器 spec v2 + P1 plan | ✅ | #2164/#2173 | 调度器板块；P1 不开 agent 面 |
-| 双平面事件目录（agent 事件声明） | ⬜ | — | N1 |
-| 模板/规则 namespace 归属 + 通用消息 | ⬜ | — | N2 |
-| 爆炸半径策略 + 审批 + 配额 | ⬜ | — | N3 |
-| `SchedulerPort` 消费 + 排班工具 | ⬜ | — | N4；等 W6-P3 |
-| job 生命周期事件接通知 | ⬜ | — | N5；等 W6-P4 |
-| N0 基线加固（9 项） | ⬜ | — | 见 §5.1 |
+| 双平面事件目录（agent 事件声明） | ✅ | #2190 | N1；`ext.<ns>.<event>` + `resolveEventDecl(org,key)` |
+| 模板/规则 namespace 归属 + 通用消息 | ✅ | #2256 | N2；`owner_namespace` + `ext.<ns>.message` |
+| 爆炸半径策略 + 审批 + 配额 | ✅ | #2200 | N3；默认 in-app、外发审批、配额与审计 |
+| `SchedulerPort` 消费 + 排班工具 | ✅ | #2253 | N4；job key 恒 `notify.emit`，事件 key 在 `params.eventKey` |
+| job 生命周期事件接通知 | ⬜ | — | N5；W6-P4a（#2261）已落 jobs 模块，接线待做 |
+| N0 基线加固（N0.1–N0.8） | ✅ | #2180/#2182/#2184 | 治理 / 可靠性 / 一致性三件套 |
+| N0.9 生产 preflight 3 条 `no_recipient` | ⬜ | — | **生产配置决策**（补持有者 / literal / 停用），非代码缺陷 |
 
 ---
 
