@@ -99,6 +99,7 @@ notifications:
 ```
 
 - 路由：`GET /schedules`、`GET /runs/:key?limit=`、`POST /:key/run`；`ctx.jobs` 缺失 ⇒ 503 `JOBS_UNAVAILABLE`。
+- **`runNow` 必须传身份**（`{tenantId, userId}` 来自会话）；集成断言「审计行的 tenant_id/actor 非空」——端口层 actor 可选，靠这一条兜住。
 - `POST /:key/run` 必须校验 **CSRF**（`csrfToken(session, sessionSecret)`，secret 由模块 deps 注入——照 `routes/api-keys.ts`）。
 - 测试：三个端点的 scope 门禁（无码 403）；**声明集合 == 注册集合**（可由装载期核对覆盖，再加一条单元断言）；CSRF 缺失 403、正确 200；`ctx.jobs` 缺失 503。
 
