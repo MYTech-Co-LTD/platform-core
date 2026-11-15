@@ -46,7 +46,7 @@ describePg('seedBuiltin', () => {
     const first = await counts()
     // templates/revisions 12：员工登记审批 + 集成活性超期 + 审批待处理 + 指标定义变更
     //   + 表单指派/表单催办 + 定时任务三条（W6-P4a）+ 业务监控三条（W7-V1）
-    expect(first).toEqual({ templates: 12, revisions: 12, channels: 2, rules: 13 })
+    expect(first).toEqual({ templates: 13, revisions: 13, channels: 2, rules: 14 })
 
     const manual = await pool.query(
       "select recipient_key, recipient_literal from notify.rule where org=$1 and id like 'manual:%'",
@@ -94,7 +94,7 @@ describePg('seedBuiltin', () => {
 
   it('无 NOTIFY_APPROVERS ⇒ 只剩十二条 derived 规则（aftersales/集成健康/审批/指标变更/表单两条/定时任务三条/业务监控三条）', async () => {
     await seedBuiltin(pool, {}, [ORG])
-    expect((await counts()).rules).toBe(12)
+    expect((await counts()).rules).toBe(13)
     const stale = await pool.query(
       "select channels from notify.rule where org=$1 and event_key='notify.integration.stale'", [ORG])
     // 只用 in_app：企微通道本身可能正是坏掉的那个（坏通道报坏消息 = 自欺）

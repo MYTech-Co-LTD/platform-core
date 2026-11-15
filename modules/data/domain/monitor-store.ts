@@ -246,6 +246,16 @@ export async function listRuns(
   }))
 }
 
+/** 组织级限流（V2c）：过去一小时**已投递**的监控通知条数。 */
+export async function recentNotifiedCount(pool: Pool, org: string, since: Date): Promise<number> {
+  const { rows } = await pool.query<{ n: string }>(
+    `select count(*)::text as n from data.monitor_run
+      where org = $1 and notified and evaluated_at >= $2`,
+    [org, since],
+  )
+  return Number(rows[0]?.n ?? 0)
+}
+
 export async function quotaOf(pool: Pool, org: string): Promise<{ used: number; limit: number }> {
   const { rows } = await pool.query<{ n: string }>(
     'select count(*)::text as n from data.monitor where org = $1 and enabled', [org],

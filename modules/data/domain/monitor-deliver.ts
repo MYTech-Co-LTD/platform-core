@@ -9,7 +9,7 @@ import type { MonitorRow } from './monitor-store'
 import type { MonitorOutcome } from './monitor-spec'
 import type { NotifyKind, TransitionResult } from './monitor-state'
 
-export type MonitorEventKey = 'data.monitor.fired' | 'data.monitor.resolved' | 'data.monitor.disabled'
+export type MonitorEventKey = 'data.monitor.fired' | 'data.monitor.resolved' | 'data.monitor.disabled' | 'data.monitor.suppressed'
 
 export interface MonitorEvent {
   eventKey: MonitorEventKey
@@ -23,6 +23,30 @@ const EVENT_KEY_OF: Record<Exclude<NotifyKind, null>, MonitorEventKey> = {
   fired: 'data.monitor.fired',
   resolved: 'data.monitor.resolved',
   disabled: 'data.monitor.disabled',
+}
+
+/**
+ * 组织级限流摘要（V2c，spec §11）：同一 org 同一小时最多一条。
+ * `hourBucket` 取 UTC 的 `YYYY-MM-DDTHH`——与 eventId 去重一致即可，不追求本地时区。
+ */
+export function monitorSuppressedEventOf(input: {
+  org: string
+  to: readonly string[]
+  count: number
+  hourBucket: string
+}): MonitorEvent {
+  return {
+    eventKey: 'data.monitor.suppressed',
+    eventId: `monitor-suppress:${input.org}:${input.hourBucket}`,
+    scope: `org:${input.org}`,
+    payload: {
+      orgKey: input.org,
+      to: [...input.to],
+      count: input.count,
+      link: '/console/data/reports',
+    },
+    producer: 'data',
+  }
 }
 
 /**

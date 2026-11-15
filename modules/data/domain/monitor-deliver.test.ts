@@ -1,7 +1,7 @@
 // monitor-deliver.test.ts — 监控事件构造（W7-V1 Task 6）。
 // 硬约束：payload 不带数值/阈值；eventId 以「跃迁身份」去重。
 import { describe, expect, it } from 'vitest'
-import { monitorEventOf } from './monitor-deliver'
+import { monitorEventOf, monitorSuppressedEventOf } from './monitor-deliver'
 
 const M = { id: '7', name: '华东断供盯防', windowDays: 3 }
 const SINCE = new Date('2026-11-15T02:00:00Z')
@@ -40,6 +40,17 @@ describe('monitorEventOf', () => {
     const b = monitorEventOf(M, { ...fired, stateSince: new Date('2026-11-16T02:00:00Z') },
       { verdict: 'missing', value: 0, watermarkRef: null }, ['alice'])
     expect(a.eventId).not.toBe(b.eventId)
+  })
+
+  it('★ 限流摘要：每小时一条、eventId 按小时桶去重、payload 带条数（V2c）', () => {
+    const a = monitorSuppressedEventOf({ org: 'org-x', to: ['alice', 'bob'], count: 3, hourBucket: '2026-11-15T08' })
+    const b = monitorSuppressedEventOf({ org: 'org-x', to: ['alice'], count: 1, hourBucket: '2026-11-15T08' })
+    const c = monitorSuppressedEventOf({ org: 'org-x', to: ['alice'], count: 1, hourBucket: '2026-11-15T09' })
+    expect(a.eventKey).toBe('data.monitor.suppressed')
+    expect(a.eventId).toBe(b.eventId)
+    expect(a.eventId).not.toBe(c.eventId)
+    expect(a.payload).toMatchObject({ to: ['alice', 'bob'], count: 3 })
+    expect(Object.hasOwn(a.payload, 'value')).toBe(false)
   })
 
   it('notify=null 是编程错误（调用方必须先判跃迁）', () => {
