@@ -63,6 +63,16 @@ pnpm exec tsx scripts/notify-inbox-role-sync.mjs
 - 输出：`{"tenants":N,"failed":0,"out":[{"org":"…","members":N,"changed":true}]}`。
 - 部署形态与既有 job 相同：openship custom job，`docker exec <server 容器> …`；mytech / shanhai 各一条。
 
+| 实例 | job key | cron（UTC） | 命令 |
+|---|---|---|---|
+| mytech | `custom:kQUndUy8_3qj0g-i` | `*/15 * * * *` | `docker exec openship-platform-core-server sh -lc 'pnpm exec tsx scripts/notify-inbox-role-sync.mjs'` |
+| shanhai | `custom:5kz5UnKQrDS8P6yO` | `*/15 * * * *` | `docker exec openship-platform-core-shanhai-server sh -lc 'pnpm exec tsx scripts/notify-inbox-role-sync.mjs'` |
+
+- 首次真机（2026-11-15 07:30Z）：mytech `{"members":5,"changed":false}`、shanhai
+  `{"members":262,"changed":false}`，均 exit 0。
+- ⚠️ shanhai 的命令必须带 `docker exec openship-platform-core-shanhai-server`：宿主上没有
+  `pnpm`，裸跑首轮直接 `pnpm: command not found`（已在 07:32Z 订正并手动复跑成功）。
+
 ## 1. `notify-health`（每 5 分钟）
 
 ```bash
