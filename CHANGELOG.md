@@ -11,6 +11,11 @@
 
 ## [Unreleased]
 
+## [0.305.0](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.304.0...v0.305.0) - 2026-11-15
+- 【新增】data: L4 颜色语义——柱状按目标线着色（达标/未达标） (#2340) ([#2341](https://github.com/MYTech-Co-LTD/platform-core/pull/2341), [156e392](https://github.com/MYTech-Co-LTD/platform-core/commit/156e392c8db6bb9549c7f30ad169323797927497))
+- 【新增】data: 字段链路收进体系地图的指标抽屉，数据生产线退出菜单 (#2338) ([#2339](https://github.com/MYTech-Co-LTD/platform-core/pull/2339), [eb8c7f8](https://github.com/MYTech-Co-LTD/platform-core/commit/eb8c7f8ebdd171ba68fc3dcfb7b0557c6071cc52))
+
+
 ## [0.304.0](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.303.1...v0.304.0) - 2026-11-15
 - 【新增】data: L4 目标线——line/bar 面板 target 参考线（堆叠互斥） (#2336) ([#2337](https://github.com/MYTech-Co-LTD/platform-core/pull/2337), [762702b](https://github.com/MYTech-Co-LTD/platform-core/commit/762702be30d7d22d319ea187f4a0773bd831a52c))
 
