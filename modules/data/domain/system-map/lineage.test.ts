@@ -60,6 +60,40 @@ describe('buildMetricLineage', () => {
     expect(col.status).toBe('passthrough')
   })
 
+  it('SQL 有、文档缺的 staging 列要补出来（标 undocumented，描述退回契约）', () => {
+    const l = buildMetricLineage({
+      metricId: 'm', title: 't',
+      contract: JSON.parse(JSON.stringify(BASE.contract)) as never,
+      staging: {
+        model: 'stg_lemeng_retail_order_line',
+        columns: [{ name: 'bizday', description: '业务日' }],
+        sqlColumns: ['bizday', 'order_total_money'],
+      },
+      marts: { model: 'fct_x', columns: [] },
+    } as never)
+    const names = l.staging.columns.map((c) => c.name)
+    expect(names).toEqual(['bizday', 'order_total_money'])
+    const extra = l.staging.columns.find((c) => c.name === 'order_total_money')!
+    expect(extra.undocumented).toBe(true)
+    expect(extra.description).toBe('整单金额（staging 不用）')
+    expect(extra.type).toBe('numeric')
+    // 文档里有的列不标 undocumented
+    expect(l.staging.columns.find((c) => c.name === 'bizday')?.undocumented).toBeUndefined()
+  })
+
+  it('度量依赖原样带出（net_amount 由 sale_amount / return_amount 组合）', () => {
+    const l = buildMetricLineage({
+      ...(BASE as unknown as Record<string, unknown>),
+      martsInputs: { sale_amount: ['sale_money'], net_amount: ['sale_money'] },
+      martsDeps: { net_amount: ['sale_amount', 'return_amount'] },
+    } as never)
+    const net = l.marts.columns.find((c) => c.name === 'net_amount')!
+    expect(net.inputs).toEqual(['sale_money'])
+    expect(net.dependsOn).toEqual(['sale_amount', 'return_amount'])
+    // 没有依赖声明的度量不产出键
+    expect(l.marts.columns.find((c) => c.name === 'sale_amount')?.dependsOn).toBeUndefined()
+  })
+
   it('湖形态取自契约 layout（前缀/分区/文件名/分区风格）', () => {
     const l = buildMetricLineage(BASE as never)
     expect(l.lake).toEqual({

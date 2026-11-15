@@ -1,18 +1,32 @@
-// console/lineage/index.tsx — 数据生产线（2026-11-15）。
+// console/lineage/index.tsx — 数据生产线（2026-11-15 改「字段聚焦」视图）。
 //
-// 问题：体系地图/管线地图都只到「表」，看不出**字段**怎么一步步变成指标。
-// 本页把四段摊开：源接口 → 湖（落盘形态）→ staging → marts，每列标出
-// 直通 / 被丢掉 / dbt 注入 / 聚合度量；▶ 播放按生产顺序逐段出现。
+// 问题：体系地图 / 管线地图都只到「表」，看不出**字段**怎么一步步变成指标；
+// 而四段字段全摊开是 25 + 25 + 8 列，读者找不到路。
+// 交互：默认只露骨架（分区键 / 粒度键 / 聚合度量）；点任意字段 → 只展开它经过的层、
+// 开一扇 ±3 行的窗口、压暗其余，并画出它的完整路径（前向看去向 / 点度量反向看来源）。
 //
-// 数据：GET /system-map/lineage/:metricId（仓内声明：契约 columns/layout + dbt schema.yml）。
+// 数据：GET /system-map/lineage/:metricId（契约 columns/layout + dbt schema.yml + marts SQL 解析）。
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import { Alert, Button, Card, Empty, Select, Space, Tag, Typography } from 'antd'
+import { Alert, Button, Card, Empty, Select, Tag, Typography } from 'antd'
 import { useSearchParams } from 'react-router-dom'
 import { apiGet } from '../lib/api'
 import { humanError, type HumanError } from '../lib/explain'
+import LineageCanvas, { type CanvasApi } from './canvas'
+import { buildFocus, windowOf, type FocusModel } from './focus'
+import './lineage.css'
 
 type Status = 'passthrough' | 'dropped' | 'added' | 'aggregate'
-interface Column { name: string; type?: string; description: string; status: Status; inputs?: string[] }
+type StageKey = 'source' | 'lake' | 'staging' | 'marts'
+
+interface Column {
+  name: string
+  type?: string
+  description: string
+  status: Status
+  inputs?: string[]
+  dependsOn?: string[]
+  undocumented?: boolean
+}
 interface Lineage {
   metricId: string
   title: string
@@ -24,61 +38,78 @@ interface Lineage {
 }
 interface MetricOption { id: string; title: string }
 
-const STATUS_TAG: Record<Status, { text: string; color: string } | null> = {
-  passthrough: null,
-  dropped: { text: '本层丢掉', color: 'default' },
-  added: { text: 'dbt 注入', color: 'purple' },
-  aggregate: { text: '聚合度量', color: 'green' },
+const STAGE_ORDER: StageKey[] = ['source', 'lake', 'staging', 'marts']
+const PLAY_STEPS: Array<{ key: StageKey; msg: string }> = [
+  { key: 'source', msg: '① 从源接口取数，按契约原样落进湖' },
+  { key: 'lake', msg: '② 湖里是 parquet 原件，按 system_book / bizday / hour 分区' },
+  { key: 'staging', msg: '③ staging 逐列 cast、补主体列，不改口径' },
+  { key: 'marts', msg: '④ marts 按 (账套, 业务日, 门店) 聚合出度量' },
+]
+
+/** 折叠时露出来的骨架：分区键 + marts 的粒度键 + staging 注入列。 */
+function skeletonOf(data: Lineage): Set<string> {
+  const keys = new Set<string>(data.lake?.partitions ?? [])
+  for (const c of data.marts.columns) if (c.status === 'passthrough') keys.add(c.name)
+  for (const c of data.staging.columns) if (c.status === 'added') keys.add(c.name)
+  return keys
 }
 
-function Field({ c, innerRef }: { c: Column; innerRef?: (el: HTMLDivElement | null) => void }) {
-  const tag = STATUS_TAG[c.status]
-  return (
-    <div ref={innerRef} data-field={c.name} style={{
-      padding: '6px 8px', borderRadius: 8,
-      background: c.status === 'added' ? '#F7F3FF' : c.status === 'aggregate' ? '#F0FFF7' : 'transparent',
-      opacity: c.status === 'dropped' ? 0.55 : 1,
-    }}>
-      <div style={{
-        fontFamily: 'ui-monospace, Menlo, monospace', fontSize: 11.5,
-        textDecoration: c.status === 'dropped' ? 'line-through' : 'none',
-      }}>
-        {c.name}
-        {c.type !== undefined && <span style={{ color: '#9AA0A6', marginLeft: 6 }}>{c.type}</span>}
-        {tag !== null && <Tag color={tag.color} style={{ borderRadius: 999, marginLeft: 6, fontSize: 10 }}>{tag.text}</Tag>}
-      </div>
-      {c.description !== '' && (
-        <div style={{ fontSize: 10.5, color: '#9AA0A6', lineHeight: 1.45, marginTop: 1 }} title={c.description}>
-          {c.description}
-        </div>
-      )}
-    </div>
-  )
-}
-
-function LayerCard(props: {
-  step: number
-  title: string
-  sub: string
-  on: boolean
-  children: React.ReactNode
+function Pills(props: {
+  stage: StageKey
+  columns: Column[]
+  hi: ReadonlySet<string>
+  /** 可见下标；undefined = 全部 */
+  visible?: ReadonlySet<number>
+  gaps?: ReadonlyArray<{ before: number; count: number }>
+  keys: ReadonlySet<string>
+  onPick: (name: string) => void
+  /** 折叠模式：只留骨架 */
+  skeletonOnly: boolean
 }) {
-  return (
-    <Card
-      style={{
-        flex: '0 0 auto', width: 320,
-        opacity: props.on ? 1 : 0, transform: props.on ? 'none' : 'translateY(8px)',
-        transition: 'opacity .35s ease, transform .35s ease',
-      }}
-      styles={{ body: { padding: 12 } }}
-    >
-      <div style={{ borderBottom: '1px solid #EBEDF0', paddingBottom: 8, marginBottom: 8 }}>
-        <div style={{ fontSize: 13.5, fontWeight: 600 }}>{props.step} {props.title}</div>
-        <div style={{ fontSize: 11.5, color: '#9AA0A6', marginTop: 2 }}>{props.sub}</div>
-      </div>
-      <div>{props.children}</div>
-    </Card>
-  )
+  const { columns, hi, visible, gaps = [], keys, onPick, skeletonOnly } = props
+  const gapAt = new Map(gaps.map((g) => [g.before, g.count]))
+  const rows: React.ReactNode[] = []
+  columns.forEach((c, i) => {
+    const gap = gapAt.get(i)
+    if (gap !== undefined) {
+      rows.push(<div key={`gap-${i}`} className="lineage-gap">⋯ 还有 {gap} 列</div>)
+    }
+    const shown = visible !== undefined
+      ? visible.has(i)
+      : skeletonOnly
+        // 折叠态留骨架：分区/粒度键 + dbt 注入列 + 聚合度量
+        ? keys.has(c.name) || c.status === 'added' || c.status === 'aggregate'
+        : true
+    if (!shown) return
+    const kind = c.status === 'added' ? 'added' : c.status === 'aggregate' ? 'measure' : c.status === 'dropped' ? 'dropped' : 'plain'
+    rows.push(
+      <div
+        key={c.name}
+        data-field={c.name}
+        data-stage={props.stage}
+        data-kind={kind}
+        role="button"
+        tabIndex={0}
+        className={[
+          'lineage-pill',
+          keys.has(c.name) ? 'is-key' : '',
+          hi.has(c.name) ? 'is-hi' : '',
+        ].filter(Boolean).join(' ')}
+        title={c.description !== '' ? c.description : undefined}
+        onClick={(e) => { e.stopPropagation(); onPick(c.name) }}
+        onKeyDown={(e) => {
+          if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); onPick(c.name) }
+        }}
+      >
+        <span className="mono">{c.name}</span>
+        {c.type !== undefined && <span className="type">{c.type}</span>}
+        {c.undocumented === true && <span className="type" title="schema.yml 未写文档，描述取自契约">·</span>}
+      </div>,
+    )
+  })
+  const tail = gapAt.get(columns.length)
+  if (tail !== undefined) rows.push(<div key="gap-tail" className="lineage-gap">⋯ 还有 {tail} 列</div>)
+  return <>{rows}</>
 }
 
 export default function LineagePage() {
@@ -87,16 +118,12 @@ export default function LineagePage() {
   const [options, setOptions] = useState<MetricOption[]>([])
   const [data, setData] = useState<Lineage | null>(null)
   const [error, setError] = useState<HumanError | null>(null)
-  const [step, setStep] = useState(0)
-  // 连线（SVG 覆盖层）：源→staging 同名、staging→marts 同名、staging→度量（聚合输入）
-  const viewportRef = useRef<HTMLDivElement>(null)
-  const worldRef = useRef<HTMLDivElement>(null)
-  const fieldRefs = useRef(new Map<string, HTMLDivElement>())
-  const [links, setLinks] = useState<Array<{ d: string; kind: 'pass' | 'drop' | 'agg'; stage: number }>>([])
-  // 无限画板：平移 + 缩放（滚轮缩放、拖拽平移、一键适应）
-  const [view, setView] = useState({ x: 0, y: 0, k: 1 })
+  const [expanded, setExpanded] = useState<ReadonlySet<StageKey>>(new Set())
+  const [focus, setFocus] = useState<FocusModel | null>(null)
+  const [play, setPlay] = useState<{ stage: StageKey; msg: string } | null>(null)
+  const canvasApi = useRef<CanvasApi | null>(null)
+  const timers = useRef<number[]>([])
 
-  // 指标下拉：列表接口的字段是 id/title（与 /metrics 的既有契约一致）
   useEffect(() => {
     apiGet('/metrics')
       .then((r) => {
@@ -110,122 +137,236 @@ export default function LineagePage() {
     if (metricId === null || metricId === '') return
     setError(null)
     apiGet(`/system-map/lineage/${encodeURIComponent(metricId)}`)
-      .then((r) => { setData(r as Lineage); setStep(1) })
+      .then((r) => {
+        setData(r as Lineage)
+        setFocus(null)
+        setExpanded(new Set())
+        setPlay(null)
+      })
       .catch((e: unknown) => { setError(humanError(e)); setData(null) })
   }, [metricId])
   useEffect(load, [load])
 
-  const play = (): void => {
-    setStep(1)
-    let i = 1
-    const timer = setInterval(() => {
-      i += 1
-      setStep(i)
-      if (i >= 4) clearInterval(timer)
-    }, 650)
-  }
+  const stopPlay = useCallback(() => {
+    timers.current.forEach((t) => window.clearTimeout(t))
+    timers.current = []
+  }, [])
+  useEffect(() => stopPlay, [stopPlay])
 
-  // 连线：用元素实际位置算贝塞尔曲线（布局变了就重算；resize 也重算）
+  const keys = useMemo(() => (data === null ? new Set<string>() : skeletonOf(data)), [data])
+
+  const pick = useCallback((name: string) => {
+    if (data === null) return
+    const next = buildFocus(name, {
+      source: { columns: data.source.columns },
+      staging: { columns: data.staging.columns, partitions: data.lake?.partitions ?? [] },
+      marts: { columns: data.marts.columns },
+    })
+    if (next === null) return
+    stopPlay()
+    setPlay(null)
+    setFocus((cur) => (cur !== null && cur.name === name ? null : next))
+  }, [data, stopPlay])
+
+  const clearFocus = useCallback(() => { setFocus(null); setPlay(null); stopPlay() }, [stopPlay])
+
+  // 聚焦后把这条路径推进画面（等 DOM 落定再量）
   useEffect(() => {
-    if (data === null) { setLinks([]); return }
-    const build = (): void => {
-      const world = worldRef.current
-      if (world === null) return
-      // 画板里画线：坐标必须是 **world 局部坐标**（缩放后 getBoundingClientRect 会随 scale 变）
-      const local = (el: HTMLElement): { x: number; y: number; right: number } => {
-        let x = 0
-        let y = 0
-        let cur: HTMLElement | null | undefined = el
-        while (cur !== null && cur !== undefined && cur !== world) {
-          // happy-dom 没有 offsetLeft/offsetParent（单测里恒 0/undefined）⇒ 用零兜底
-          x += cur.offsetLeft ?? 0
-          y += cur.offsetTop ?? 0
-          cur = cur.offsetParent as HTMLElement | null | undefined
-        }
-        return { x, y: y + el.offsetHeight / 2, right: x + el.offsetWidth }
-      }
-      const at = (layer: string, name: string): { x: number; y: number; right: number } | null => {
-        const el = fieldRefs.current.get(`${layer}:${name}`)
-        return el === undefined ? null : local(el)
-      }
-      const out: Array<{ d: string; kind: 'pass' | 'drop' | 'agg'; stage: number }> = []
-      const curve = (from: { x: number; y: number }, to: { x: number; y: number }): string => {
-        const dx = Math.max(24, (to.x - from.x) * 0.45)
-        return `M ${from.x} ${from.y} C ${from.x + dx} ${from.y}, ${to.x - dx} ${to.y}, ${to.x} ${to.y}`
-      }
-      for (const c of data.source.columns) {
-        const from = at('source', c.name)
-        if (from === null) continue
-        if (c.status === 'dropped') {
-          out.push({ d: `M ${from.right} ${from.y} l 26 0`, kind: 'drop', stage: 2 })
-          continue
-        }
-        const to = at('staging', c.name)
-        if (to !== null) out.push({ d: curve({ x: from.right, y: from.y }, to), kind: 'pass', stage: 2 })
-      }
-      for (const c of data.staging.columns) {
-        const from = at('staging', c.name)
-        const to = at('marts', c.name)
-        if (from === null || to === null) continue
-        out.push({ d: curve({ x: from.right, y: from.y }, to), kind: 'pass', stage: 3 })
-      }
-      for (const c of data.marts.columns) {
-        if (c.inputs === undefined) continue
-        const to = at('marts', c.name)
-        if (to === null) continue
-        for (const input of c.inputs) {
-          const from = at('staging', input)
-          if (from === null) continue
-          out.push({ d: curve({ x: from.right, y: from.y }, to), kind: 'agg', stage: 4 })
-        }
-      }
-      setLinks(out)
-    }
-    build()
-    const onResize = (): void => build()
-    window.addEventListener('resize', onResize)
-    return () => window.removeEventListener('resize', onResize)
+    if (focus === null) return
+    const t = window.requestAnimationFrame(() => {
+      const els = [...document.querySelectorAll<HTMLElement>('.lineage-pill.is-hi, .lineage-head[data-on="1"]')]
+      canvasApi.current?.frame(els)
+    })
+    return () => window.cancelAnimationFrame(t)
+  }, [focus])
+
+  // Esc 退出聚焦
+  useEffect(() => {
+    if (focus === null && play === null) return
+    const onKey = (e: KeyboardEvent): void => { if (e.key === 'Escape') clearFocus() }
+    window.addEventListener('keydown', onKey)
+    return () => window.removeEventListener('keydown', onKey)
+  }, [focus, play, clearFocus])
+
+  const playAll = useCallback(() => {
+    if (data === null) return
+    stopPlay()
+    setFocus(null)
+    setExpanded(new Set())
+    PLAY_STEPS.forEach((s, i) => {
+      timers.current.push(window.setTimeout(() => {
+        setExpanded(new Set([s.key]))
+        setPlay({ stage: s.key, msg: s.msg })
+        canvasApi.current?.frameStage(s.key)
+      }, i * 1100))
+    })
+    timers.current.push(window.setTimeout(() => {
+      setPlay({ stage: 'marts', msg: '生产完成 · 指标取 marts 的度量列' })
+      timers.current.push(window.setTimeout(() => {
+        setExpanded(new Set())
+        setPlay(null)
+        canvasApi.current?.fitOverview()
+      }, 1600))
+    }, PLAY_STEPS.length * 1100))
+  }, [data, stopPlay])
+
+  // 换指标后把新图放回视口（画板只在挂载时自适应一次）
+  useEffect(() => {
+    if (data === null) return
+    const t = window.setTimeout(() => canvasApi.current?.fitOverview(), 120)
+    return () => window.clearTimeout(t)
   }, [data])
 
-  /** 适应画布：把整张图缩放到视口里（左右各留 16px 余量）。 */
-  const fitToView = useCallback(() => {
-    const vp = viewportRef.current
-    const world = worldRef.current
-    if (vp === null || world === null) return
-    const w = world.scrollWidth
-    const h = world.scrollHeight
-    if (w === 0 || h === 0) return
-    // 只按**宽度**适应：25 行字段的高度远超视口，按高度缩会把字缩到看不清；纵向靠拖拽。
-    const k = Math.min((vp.clientWidth - 32) / w, 1)
-    setView({ x: 16, y: 16, k: Math.max(0.35, k) })
-  }, [])
+  // 布局变化后重算连线（开窗 / 展开 / 换指标）
+  const layoutKey = useMemo(() => {
+    const parts = [
+      data?.metricId ?? '',
+      [...expanded].sort().join(','),
+      focus?.name ?? '',
+      play?.stage ?? '',
+    ]
+    return parts.join('|')
+  }, [data, expanded, focus, play])
 
-  // 数据切换后自动「适应画布」（否则新图可能在视口外）
-  useEffect(() => {
-    if (data !== null) setTimeout(fitToView, 50)
-  }, [data, fitToView])
+  const hitsOf = useCallback((stage: StageKey): ReadonlySet<string> => {
+    if (focus === null) return new Set()
+    return stage === 'source' ? focus.source : stage === 'staging' ? focus.staging : stage === 'marts' ? focus.marts : focus.partitions
+  }, [focus])
 
-  const dropped = useMemo(() => data?.source.columns.filter((c) => c.status === 'dropped').map((c) => c.name) ?? [], [data])
-  const measures = useMemo(() => data?.marts.columns.filter((c) => c.status === 'aggregate').map((c) => c.name) ?? [], [data])
+  const modeOf = useCallback((stage: StageKey): 'collapsed' | 'window' | 'full' => {
+    if (play !== null) return play.stage === stage ? 'full' : 'collapsed'
+    if (focus !== null && hitsOf(stage).size > 0) return expanded.has(stage) ? 'full' : 'window'
+    return expanded.has(stage) ? 'full' : 'collapsed'
+  }, [play, focus, hitsOf, expanded])
+
+  const toggleStage = (stage: StageKey): void => {
+    setExpanded((cur) => {
+      const next = new Set(cur)
+      if (next.has(stage)) next.delete(stage)
+      else next.add(stage)
+      return next
+    })
+  }
+
+  // 旁白是「聚焦结果」的一句话读数，不是教程（DESIGN.md「界面不写教程」）
+  const narr: { lead: string; name?: string; tail: string } | null = play !== null
+    ? { lead: '', tail: play.msg }
+    : focus === null
+      ? null
+      : focus.reverse
+        ? {
+            lead: '', name: focus.name,
+            tail: ` 由 staging 的 ${focus.staging.size} 列${focus.deps.length > 0 ? `（含 ${focus.deps.length} 个度量组合）` : ''}聚合而成`,
+          }
+        : {
+            lead: '', name: focus.name,
+            tail: ` ${focus.staging.has(focus.name) ? 'staging 同名透传' : 'staging 不再保留'} → ${
+              focus.marts.has(focus.name) ? 'marts 同名列'
+                : focus.links.length > 0 ? `汇入 ${focus.links.length} 个聚合度量` : '未进入 marts'}`,
+          }
+
+  const card = (stage: StageKey): React.ReactNode => {
+    if (data === null) return null
+    const mode = modeOf(stage)
+    const hits = hitsOf(stage)
+    const active = hits.size > 0 && (focus !== null || play?.stage === stage)
+    const meta = {
+      source: { step: 1, title: '源接口 + 契约', sub: `${data.source.columns.length} 列 · ${data.source.contractId ?? '无契约'}` },
+      lake: { step: 2, title: '湖（raw parquet）', sub: '按契约落盘，字段与源一致' },
+      staging: { step: 3, title: 'staging（洗净对齐）', sub: `${data.staging.columns.length} 列${data.staging.model === null ? '' : ` · ${data.staging.model}`}` },
+      marts: { step: 4, title: 'marts（业务成品）', sub: `${data.marts.columns.length} 列${data.marts.model === null ? '' : ` · ${data.marts.model}`}` },
+    }[stage]
+
+    // 开窗：只保留命中列上下各 3 行
+    let visible: ReadonlySet<number> | undefined
+    let gaps: ReadonlyArray<{ before: number; count: number }> = []
+    if (mode === 'window') {
+      const cols = stage === 'source' ? data.source.columns : stage === 'staging' ? data.staging.columns : data.marts.columns
+      const idx = new Set<number>()
+      cols.forEach((c, i) => { if (hits.has(c.name)) idx.add(i) })
+      const w = windowOf(cols.length, idx, 3)
+      visible = w.visible
+      gaps = w.gaps
+    }
+
+    const total = stage === 'source' ? data.source.columns.length
+      : stage === 'staging' ? data.staging.columns.length : data.marts.columns.length
+
+    return (
+      <div
+        key={stage}
+        className="lineage-card"
+        data-stage-card={stage}
+        data-active={active ? '1' : '0'}
+      >
+        <div className="lineage-head" data-on={active ? '1' : '0'}>
+          <div className="lineage-num">0{meta.step}</div>
+          <div>
+            <div className="lineage-title">{meta.title}</div>
+            <div className="lineage-sub">{meta.sub}</div>
+          </div>
+        </div>
+
+        {stage === 'lake' ? (
+          <div className="lineage-store">
+            {data.lake === null ? (
+              <div className="note">契约没声明 layout —— 落盘形态未知</div>
+            ) : (
+              <>
+                <div className="row"><b>目录</b><span className="mono">{data.lake.prefix}/</span></div>
+                {data.lake.partitions.map((p) => (
+                  <div key={p} className={`row${hits.has(p) ? ' is-hi' : ''}`}>
+                    <b>{p === data.lake?.partitions[0] ? '分区' : ''}</b>
+                    <span className="mono">{p}=…</span>
+                  </div>
+                ))}
+                <div className="row"><b>文件</b><span className="mono">{data.lake.fileName}</span></div>
+                <div className="note">落盘即定型：分区键由路径推断，staging 再显式 cast 回契约类型。</div>
+              </>
+            )}
+          </div>
+        ) : (
+          <Pills
+            stage={stage}
+            columns={stage === 'source' ? data.source.columns : stage === 'staging' ? data.staging.columns : data.marts.columns}
+            hi={hits}
+            visible={visible}
+            gaps={gaps}
+            keys={keys}
+            skeletonOnly={mode === 'collapsed'}
+            onPick={pick}
+          />
+        )}
+
+        {stage !== 'lake' && (
+          <span className="lineage-more" role="button" tabIndex={0}
+                onClick={() => toggleStage(stage)}
+                onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); toggleStage(stage) } }}>
+            {mode === 'full' ? `收起，只看骨架 ${total} 列` : `展开全部 ${total} 列`}
+          </span>
+        )}
+      </div>
+    )
+  }
 
   return (
-    <Space direction="vertical" size="middle" style={{ width: '100%' }}>
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
       <div style={{ display: 'flex', gap: 12, alignItems: 'center', flexWrap: 'wrap' }}>
         <Select
           showSearch
           placeholder="选一个指标"
-          style={{ minWidth: 280 }}
+          style={{ minWidth: 300 }}
           value={metricId ?? undefined}
           onChange={(v) => setParams({ metric: String(v) }, { replace: true })}
           options={options.map((o) => ({ value: o.id, label: `${o.title} · ${o.id}` }))}
-          filterOption={(input, option) =>
-            String(option?.label ?? '').toLowerCase().includes(input.toLowerCase())}
+          filterOption={(input, option) => String(option?.label ?? '').toLowerCase().includes(input.toLowerCase())}
         />
-        <Button type="primary" onClick={play} disabled={data === null}>▶ 播放生产流程</Button>
-        <Button onClick={() => setStep(4)} disabled={data === null}>显示全部</Button>
+        <Button type="primary" onClick={playAll} disabled={data === null}>▶ 播放生产流程</Button>
+        {focus !== null && <Button onClick={clearFocus}>退出聚焦</Button>}
         {data !== null && (
           <Typography.Text type="secondary" style={{ fontSize: 12 }}>
-            指标「{data.title}」= marts 的 {measures.join(' / ') || '未声明度量'}
+            {data.title}
+            {data.notes.length > 0 && <Tag style={{ marginLeft: 8, borderRadius: 999 }}>缺声明 {data.notes.length} 处</Tag>}
           </Typography.Text>
         )}
       </div>
@@ -236,130 +377,33 @@ export default function LineagePage() {
       )}
 
       {data === null && error === null && (
-        <Card><Empty description="选一个指标，看它从源字段到成品的完整加工过程" /></Card>
+        <Card><Empty description="选一个指标，看它的字段从源接口一路变成业务度量" /></Card>
       )}
 
       {data !== null && (
-        <div
-          ref={viewportRef}
-          onWheel={(e) => {
-            e.preventDefault()
-            const rect = viewportRef.current?.getBoundingClientRect()
-            if (rect === undefined) return
-            const px = e.clientX - rect.left
-            const py = e.clientY - rect.top
-            const next = Math.min(2.5, Math.max(0.15, view.k * Math.exp(-e.deltaY * 0.0015)))
-            // 让光标下的点保持不动：newX = px - (px - x) * next/k
-            setView({
-              x: px - (px - view.x) * (next / view.k),
-              y: py - (py - view.y) * (next / view.k),
-              k: next,
-            })
-          }}
-          onPointerDown={(e) => {
-            if (e.button !== 0) return
-            const start = { x: e.clientX, y: e.clientY, vx: view.x, vy: view.y }
-            const el = e.currentTarget as HTMLElement
-            el.setPointerCapture(e.pointerId)
-            el.style.cursor = 'grabbing'
-            const move = (ev: PointerEvent): void => {
-              setView((v) => ({ ...v, x: start.vx + (ev.clientX - start.x), y: start.vy + (ev.clientY - start.y) }))
-            }
-            const up = (): void => {
-              el.style.cursor = 'grab'
-              el.removeEventListener('pointermove', move)
-              el.removeEventListener('pointerup', up)
-            }
-            el.addEventListener('pointermove', move)
-            el.addEventListener('pointerup', up)
-          }}
-          style={{
-            position: 'relative', overflow: 'hidden', cursor: 'grab',
-            height: 'calc(100vh - 260px)', minHeight: 520,
-            border: '1px solid #EBEDF0', borderRadius: 12, background: '#FAFBFC',
-            backgroundImage: 'radial-gradient(#E6E8EC 1px, transparent 1px)',
-            backgroundSize: '20px 20px',
-          }}
+        <LineageCanvas
+          focus={focus}
+          layoutKey={layoutKey}
+          onCanvasApi={(api) => { canvasApi.current = api }}
+          onBlankClick={clearFocus}
         >
-          <div style={{ position: 'absolute', right: 12, top: 12, display: 'flex', gap: 6, zIndex: 2 }}>
-            <Button size="small" onClick={() => fitToView()}>适应画布</Button>
-            <Button size="small" onClick={() => setView({ x: 0, y: 0, k: 1 })}>100%</Button>
-            <Button size="small" onClick={() => setView((v) => ({ ...v, k: Math.min(2.5, v.k * 1.2) }))}>＋</Button>
-            <Button size="small" onClick={() => setView((v) => ({ ...v, k: Math.max(0.15, v.k / 1.2) }))}>－</Button>
-            <span style={{ fontSize: 11.5, color: '#9AA0A6', alignSelf: 'center', minWidth: 38 }}>{Math.round(view.k * 100)}%</span>
-          </div>
-          <div
-            ref={worldRef}
-            style={{
-              position: 'absolute', left: 0, top: 0, padding: 16,
-              display: 'flex', gap: 14, alignItems: 'flex-start', width: 'max-content',
-              transform: `translate(${view.x}px, ${view.y}px) scale(${view.k})`,
-              transformOrigin: '0 0',
-            }}
-          >
-          <svg
-            aria-hidden
-            style={{ position: 'absolute', left: 0, top: 0, width: '100%', height: '100%', pointerEvents: 'none', overflow: 'visible' }}
-          >
-            {links.filter((l) => step >= l.stage).map((l, i) => (
-              <path
-                key={i}
-                d={l.d}
-                fill="none"
-                stroke={l.kind === 'agg' ? '#0FA958' : l.kind === 'drop' ? '#E5484D' : '#C9CDD4'}
-                strokeWidth={l.kind === 'pass' ? 1 : 1.2}
-                strokeDasharray={l.kind === 'pass' ? undefined : '4 4'}
-                opacity={l.kind === 'pass' ? 0.75 : 0.9}
-              />
-            ))}
-          </svg>
-          <LayerCard step={1} title="源接口 + 契约" on={step >= 1}
-                     sub={`${data.source.columns.length} 列 · ${data.source.contractId ?? '无契约'}`}>
-            {data.source.columns.map((c) => (
-              <Field key={c.name} c={c} innerRef={(el) => { if (el !== null) fieldRefs.current.set(`source:${c.name}`, el) }} />
-            ))}
-          </LayerCard>
-
-          <LayerCard step={2} title="湖（raw parquet）" on={step >= 2}
-                     sub={data.lake === null ? '落盘形态未声明' : `前缀 ${data.lake.prefix}`}>
-            {data.lake === null ? (
-              <Typography.Text type="secondary" style={{ fontSize: 12 }}>契约没声明 layout</Typography.Text>
-            ) : (
-              <div style={{ fontSize: 12, lineHeight: 2 }}>
-                <div><b style={{ color: '#9AA0A6', fontWeight: 400 }}>目录</b> <span style={{ fontFamily: 'ui-monospace, Menlo, monospace', fontSize: 11 }}>{data.lake.prefix}/</span></div>
-                <div><b style={{ color: '#9AA0A6', fontWeight: 400 }}>分区</b> <span style={{ fontFamily: 'ui-monospace, Menlo, monospace', fontSize: 11 }}>{data.lake.partitions.map((p) => `${p}=…`).join('/')}/</span></div>
-                <div><b style={{ color: '#9AA0A6', fontWeight: 400 }}>文件</b> <span style={{ fontFamily: 'ui-monospace, Menlo, monospace', fontSize: 11 }}>{data.lake.fileName}</span></div>
-                <div style={{ color: '#9AA0A6', marginTop: 8, fontSize: 11.5 }}>
-                  字段与契约一致（{data.source.columns.length} 列）；分区键由路径推断，staging 再显式 cast 回契约类型。
-                </div>
-              </div>
-            )}
-          </LayerCard>
-
-          <LayerCard step={3} title="staging（洗净对齐）" on={step >= 3}
-                     sub={`${data.staging.columns.length} 列${data.staging.model === null ? '' : ` · ${data.staging.model}`}${dropped.length > 0 ? ` · 丢掉 ${dropped.length} 列` : ''}`}>
-            {data.staging.columns.length === 0
-              ? <Typography.Text type="secondary" style={{ fontSize: 12 }}>这一层没有列声明</Typography.Text>
-              : data.staging.columns.map((c) => (
-                <Field key={c.name} c={c} innerRef={(el) => { if (el !== null) fieldRefs.current.set(`staging:${c.name}`, el) }} />
-              ))}
-          </LayerCard>
-
-          <LayerCard step={4} title="marts（业务成品）" on={step >= 4}
-                     sub={`${data.marts.columns.length} 列${data.marts.model === null ? '' : ` · ${data.marts.model}`} · ${measures.length} 个聚合度量`}>
-            {data.marts.columns.length === 0
-              ? <Typography.Text type="secondary" style={{ fontSize: 12 }}>这一层没有列声明</Typography.Text>
-              : data.marts.columns.map((c) => (
-                <Field key={c.name} c={c} innerRef={(el) => { if (el !== null) fieldRefs.current.set(`marts:${c.name}`, el) }} />
-              ))}
-          </LayerCard>
-          </div>
-        </div>
+          {STAGE_ORDER.map((s) => card(s))}
+          {narr !== null && (
+            <div className="lineage-narr">
+              <span className="dot" />
+              <span className="txt">
+                {narr.name !== undefined && <b>{narr.name}</b>}
+                {narr.tail}
+              </span>
+              {focus !== null && <Button size="small" onClick={clearFocus}>退出聚焦</Button>}
+            </div>
+          )}
+        </LineageCanvas>
       )}
 
       {data !== null && data.notes.length > 0 && (
         <Alert type="info" showIcon message="生成说明" description={data.notes.join('；')} />
       )}
-    </Space>
+    </div>
   )
 }

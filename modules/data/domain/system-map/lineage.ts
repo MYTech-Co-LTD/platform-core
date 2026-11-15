@@ -15,6 +15,10 @@ export interface LineageColumn {
   status: LineageColumnStatus
   /** 仅 marts 的聚合度量：聚合表达式中引用到的 staging 列名（用来画连线）。 */
   inputs?: string[]
+  /** 仅 marts 的聚合度量：它由哪些度量组合而来（net_amount = sale_amount − return_amount）。 */
+  dependsOn?: string[]
+  /** staging SQL 里有、schema.yml 没写文档的列（描述退回契约）。 */
+  undocumented?: boolean
 }
 
 export interface LineageLake {
@@ -56,8 +60,10 @@ export interface LineageInput {
   } | null
   staging: { model: string | null; columns: LineageColumnDoc[]; sqlColumns?: readonly string[] }
   marts: { model: string | null; columns: LineageColumnDoc[] }
-  /** 聚合度量 → 它用到的 staging 列（由 marts SQL 的 `<度量>__gen` 块扫出；缺省 = 不知道）。 */
+  /** 聚合度量 → 它用到的 staging 列（由 marts SQL 解出；缺省 = 不知道）。 */
   martsInputs?: Readonly<Record<string, readonly string[]>>
+  /** 聚合度量 → 它组合的其它度量（度量之间的依赖，缺省 = 不知道）。 */
+  martsDeps?: Readonly<Record<string, readonly string[]>>
 }
 
 /** 描述里常有 markdown 粗体与换行——默认层要的是「一句人话」，清掉记号并收敛空白。 */
@@ -74,13 +80,26 @@ export function buildMetricLineage(input: LineageInput): MetricLineage {
   const notes: string[] = []
   const srcCols = input.contract?.columns ?? []
   const srcNames = new Set(srcCols.map((c) => c.name))
+  const sqlCols = input.staging.sqlColumns ?? []
   // 「本层有没有这一列」以 **staging SQL 为准**（schema.yml 的列文档可能漏写：
   // 2026-11-15 实测 `order_total_money` 在 SQL 与契约里都有、却不在 schema.yml ⇒ 页面曾误判成「被丢掉」）。
-  const stgNames = new Set([
-    ...input.staging.columns.map((c) => c.name),
-    ...(input.staging.sqlColumns ?? []),
-  ])
-  const hasStaging = input.staging.columns.length > 0
+  const stgNames = new Set([...input.staging.columns.map((c) => c.name), ...sqlCols])
+  // 显示也要跟上：SQL 有、文档缺的列补出来（类型/描述退回源契约），否则页面上会「凭空少一列」，
+  // 而 marts 的度量恰好用它 ⇒ 聚焦时这条链就断了。
+  const documented = new Set(input.staging.columns.map((c) => c.name))
+  const extras: LineageColumn[] = sqlCols
+    .filter((name) => !documented.has(name))
+    .map((name) => {
+      const fromContract = srcCols.find((c) => c.name === name)
+      return {
+        name,
+        ...(fromContract?.type === undefined ? {} : { type: fromContract.type }),
+        description: plainDescription(fromContract?.description),
+        status: 'passthrough' as const,
+        undocumented: true,
+      }
+    })
+  const hasStaging = input.staging.columns.length > 0 || extras.length > 0
   const hasMarts = input.marts.columns.length > 0
 
   const source: LineageColumn[] = srcCols.map((c) => ({
@@ -91,12 +110,15 @@ export function buildMetricLineage(input: LineageInput): MetricLineage {
     status: hasStaging && !stgNames.has(c.name) ? 'dropped' : 'passthrough',
   }))
 
-  const staging: LineageColumn[] = input.staging.columns.map((c) => ({
-    name: c.name,
-    ...(c.type === undefined ? {} : { type: c.type }),
-    description: plainDescription(c.description),
-    status: srcNames.size > 0 && !srcNames.has(c.name) ? 'added' : 'passthrough',
-  }))
+  const staging: LineageColumn[] = [
+    ...input.staging.columns.map((c) => ({
+      name: c.name,
+      ...(c.type === undefined ? {} : { type: c.type }),
+      description: plainDescription(c.description),
+      status: (srcNames.size > 0 && !srcNames.has(c.name) ? 'added' : 'passthrough') as LineageColumnStatus,
+    })),
+    ...extras,
+  ]
 
   const marts: LineageColumn[] = input.marts.columns.map((c) => ({
     name: c.name,
@@ -105,6 +127,7 @@ export function buildMetricLineage(input: LineageInput): MetricLineage {
     // 与 staging 同名的列 = 键/直通；其余 = 聚合出来的度量
     status: stgNames.has(c.name) ? 'passthrough' : 'aggregate',
     ...(input.martsInputs?.[c.name] === undefined ? {} : { inputs: [...input.martsInputs[c.name]!] }),
+    ...(input.martsDeps?.[c.name] === undefined ? {} : { dependsOn: [...input.martsDeps[c.name]!] }),
   }))
 
   const layout = input.contract?.layout
