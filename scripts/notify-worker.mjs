@@ -13,19 +13,41 @@ if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) 
   const { Pool } = createRequire(import.meta.url)('pg')
   const pool = new Pool({ connectionString: url })
   // scripts/ 可以读 platform schema（B1 只约束 modules/**）；module 侧只收注入
-  /** @param {string} key */
-  const getEventDecl = async (key) => {
-    const { rows } = await pool.query(
+  /**
+   * 平台事件在 platform.event_catalog；agent 事件在 notify.event_decl（N1 双平面）。
+   * @param {string} org
+   * @param {string} key
+   */
+  const getEventDecl = async (org, key) => {
+    const platform = await pool.query(
       'select payload_schema, recipients, scope_key from platform.event_catalog where key=$1 and active',
       [key],
     )
-    const r = rows[0]
+    let r = platform.rows[0]
+    let title = ''
+    let description
+    let defaults
+    if (r === undefined) {
+      const tenant = await pool.query(
+        `select title, description, payload_schema, recipients, scope_key, defaults
+           from notify.event_decl where org=$1 and key=$2 and status='active'`,
+        [org, key],
+      )
+      r = tenant.rows[0]
+      if (r !== undefined) {
+        title = r.title
+        description = r.description ?? undefined
+        defaults = r.defaults ?? undefined
+      }
+    }
     return r
       ? {
-          key, title: '',
+          key, title,
+          description,
           payload: r.payload_schema,
           recipients: r.recipients,
           scope: r.scope_key ? { key: r.scope_key } : undefined,
+          defaults,
         }
       : null
   }

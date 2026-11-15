@@ -227,6 +227,15 @@ export const ManifestSchema = ManifestObject.superRefine((m, ctx) => {
     }
   }
 
+  // N1 双平面：`ext` 是租户/agent 事件的保留前缀（notify.event_decl），模块不得占用。
+  if (m.id === 'ext') {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: ['id'],
+      message: 'id "ext" 是租户/agent 通知事件的保留前缀，模块不得使用',
+    })
+  }
+
   // M1.1：dataDependencies 条目形状校验（两段式 <schema>.<view>）。形状松了，B1 门禁的声明集
   // 就会吞进无法对账的条目（如裸表名 / 三段式），所以形状必须在 schema 层就锁死——由 schema
   // 承载 ⇒ 运行时装载与 check-manifests 同时覆盖。
