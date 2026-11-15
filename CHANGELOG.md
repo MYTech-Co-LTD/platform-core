@@ -11,6 +11,10 @@
 
 ## [Unreleased]
 
+## [0.293.0](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.292.2...v0.293.0) - 2026-11-15
+- 【新增】notify: 新增 notify:inbox 自助收件箱权限，与 notify:view 解耦 (#2289) ([#2290](https://github.com/MYTech-Co-LTD/platform-core/pull/2290), [6750716](https://github.com/MYTech-Co-LTD/platform-core/commit/675071657615f5949e48da483d00a1b5599e16b5))
+
+
 ## [0.292.2](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.292.1...v0.292.2) - 2026-11-15
 - 【修复】data: 乐檬零售明细契约补第三级分区 hour ([#2287](https://github.com/MYTech-Co-LTD/platform-core/pull/2287), [7dce149](https://github.com/MYTech-Co-LTD/platform-core/commit/7dce149792afbeef3a9dcb0ac357a4a7423b5c22))
 
