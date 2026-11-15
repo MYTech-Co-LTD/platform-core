@@ -11,6 +11,11 @@
 
 ## [Unreleased]
 
+## [0.306.0](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.305.0...v0.306.0) - 2026-11-15
+- 【新增】data: Wave 8 P1——镜像内置 dbt + data.dbt_tick（#2343） ([#2344](https://github.com/MYTech-Co-LTD/platform-core/pull/2344), [5256972](https://github.com/MYTech-Co-LTD/platform-core/commit/5256972d9f1e8eb5c1f4df7351ea13fc42de617b))
+- 【修复】data: 体系地图抽屉口径折叠 + 清 markdown 记号 (#2342) ([#2345](https://github.com/MYTech-Co-LTD/platform-core/pull/2345), [928dbe2](https://github.com/MYTech-Co-LTD/platform-core/commit/928dbe2a5a06567fc9bbee2f6a3fe396974867d7))
+
+
 ## [0.305.0](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.304.0...v0.305.0) - 2026-11-15
 - 【新增】data: L4 颜色语义——柱状按目标线着色（达标/未达标） (#2340) ([#2341](https://github.com/MYTech-Co-LTD/platform-core/pull/2341), [156e392](https://github.com/MYTech-Co-LTD/platform-core/commit/156e392c8db6bb9549c7f30ad169323797927497))
 - 【新增】data: 字段链路收进体系地图的指标抽屉，数据生产线退出菜单 (#2338) ([#2339](https://github.com/MYTech-Co-LTD/platform-core/pull/2339), [eb8c7f8](https://github.com/MYTech-Co-LTD/platform-core/commit/eb8c7f8ebdd171ba68fc3dcfb7b0557c6071cc52))
