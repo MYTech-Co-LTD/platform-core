@@ -17,9 +17,10 @@ import { renderContents } from './domain/render'
 import { validateRule } from './domain/rules'
 import { samplePayload, validateContents } from './domain/template'
 import {
-  audit, createTemplateRevision, getChannel, getEventDecl, getPublishedTemplate, getTemplate,
-  insertDelivery, listChannels, listDeliveries, listEnabledChannelIds, listEventDecls,
-  listPublishedTemplateKeys, listRules, setRuleEnabled, upsertRule,
+  audit, createTemplateRevision, getAgentNamespace, getChannel, getEventDecl,
+  getPublishedTemplate, getTemplate, insertDelivery, listAgentNamespaces, listChannels,
+  listDeliveries, listEnabledChannelIds, listEventDecls, listPublishedTemplateKeys, listRules,
+  setRuleEnabled, upsertRule,
 } from './storage'
 
 export const PROTOCOL_VERSION = '2025-06-18'
@@ -68,9 +69,27 @@ export async function callTool(
   name: string,
   args: Record<string, unknown>,
 ): Promise<McpToolResult> {
-  // 排班工具（W6-P3）：actor 只从调用者身份成形（namespace 缺省补 org），绝不读 args 里的归属。
+  // 排班工具（W6-P3 + N4）：actor 从调用者身份成形；namespace 归属/事件声明/payload
+  // 校验经注入的回调做（工具文件保持纯）。显式 namespace 只能选**自己拥有**的 namespace。
   const schedule = await callScheduleTool(
-    { scheduler: deps.scheduler, actor: { userId: deps.userId, org: deps.org } },
+    {
+      scheduler: deps.scheduler,
+      actor: { userId: deps.userId, org: deps.org },
+      namespaces: {
+        owned: async () => (await listAgentNamespaces(deps.pool, deps.org))
+          .filter((n) => n.status === 'active' && n.ownerUserId === deps.userId)
+          .map((n) => n.namespace),
+        owns: async (namespace) => {
+          const n = await getAgentNamespace(deps.pool, deps.org, namespace)
+          return n !== null && n.status === 'active' && n.ownerUserId === deps.userId
+        },
+      },
+      resolveEventDecl: (org, key) =>
+        key.startsWith('ext.')
+          ? getEventDecl(deps.pool, org, key)
+          : Promise.resolve(deps.events?.get(key) ?? null),
+      validatePayload: (decl, payload) => validatePayload(decl, payload),
+    },
     name,
     args,
   )
