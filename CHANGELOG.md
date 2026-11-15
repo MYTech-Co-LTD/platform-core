@@ -11,6 +11,12 @@
 
 ## [Unreleased]
 
+## [0.296.0](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.295.0...v0.296.0) - 2026-11-15
+- 【修复】data: 阈值未触发时也把窗口合计写入台账（W7-V2a） ([#2297](https://github.com/MYTech-Co-LTD/platform-core/pull/2297), [4e0afbd](https://github.com/MYTech-Co-LTD/platform-core/commit/4e0afbdfaff0920b9d7dc534dfaf3ed60f31f7fb))
+- 【新增】notify: 收件箱角色自动收敛 job——notify-inbox-readers (#2300) ([#2301](https://github.com/MYTech-Co-LTD/platform-core/pull/2301), [9955243](https://github.com/MYTech-Co-LTD/platform-core/commit/9955243a4a39682c1653da4a9821e3fee280fe41))
+- 【新增】data: 报表版式编辑——24 栅格拖动换位 + 拖边调宽 (#2295) ([#2298](https://github.com/MYTech-Co-LTD/platform-core/pull/2298), [6cfd87a](https://github.com/MYTech-Co-LTD/platform-core/commit/6cfd87a52e0f159631bb3e44222e967f6240558f))
+
+
 ## [0.295.0](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.294.0...v0.295.0) - 2026-11-15
 - 【新增】data: 数据生产线加连线（SVG 流程图）+ 修「被丢掉」误判 ([#2294](https://github.com/MYTech-Co-LTD/platform-core/pull/2294), [3a0abdc](https://github.com/MYTech-Co-LTD/platform-core/commit/3a0abdc3d7b1cd3affb8ed11253bb226b12ced8a))
 
