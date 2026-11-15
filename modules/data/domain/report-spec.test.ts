@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { parseReportSpec, MAX_PANELS, MAX_TEXT } from './report-spec'
+import { parseReportInput, parseReportSpec, MAX_PANELS, MAX_TEXT } from './report-spec'
 
 const ok = {
   panels: [{
@@ -252,5 +252,39 @@ describe('sparkline（R3 组件④）', () => {
 
   it('timeScoped=false 可关期间注入（字典/排行快照场景）', () => {
     expect(parse({ ...base, timeScoped: false }).ok).toBe(true)
+  })
+})
+
+describe('堆叠（L4，R3 收尾）', () => {
+  const parse = (panel: unknown) => parseReportSpec({ panels: [panel] })
+  const bar = { chart: 'bar', title: '门店销售', metricId: 'm:sales', dims: ['bizday', 'branch_num'] }
+
+  it('bar 接受 stack=true / false', () => {
+    expect(parse({ ...bar, stack: true }).ok).toBe(true)
+    expect(parse({ ...bar, stack: false }).ok).toBe(true)
+  })
+
+  it('★ 堆叠与对比基线互斥（本期+上期叠同一根会误读成合计）', () => {
+    for (const extra of [{ compare: 'prev_period' }, { compare: 'prev_year' }, { compareYoY: true }]) {
+      expect(parse({ ...bar, stack: true, ...extra })).toEqual({ ok: false, code: 'INVALID_SPEC' })
+    }
+    // 不堆叠时对比照常可用
+    expect(parse({ ...bar, compare: 'prev_period' }).ok).toBe(true)
+  })
+
+  it('stack 只属柱状：折线写 stack 是白名单外键（拒）', () => {
+    expect(parse({ ...bar, chart: 'line', stack: true })).toEqual({ ok: false, code: 'INVALID_SPEC' })
+  })
+
+  it('v2 chart 块：bar 可带 stack；line 带 stack ⇒ INVALID_SPEC', () => {
+    const v2 = (stack: boolean, chart: 'bar' | 'line') => parseReportInput({
+      ir: 2,
+      datasets: [{ key: 'd', metricId: 'm:sales', dims: ['bizday', 'branch_num'] }],
+      blocks: [{ type: 'chart', chart, dataset: 'd', title: 't', ...(stack ? { stack: true } : {}) }],
+    })
+    const okBar = v2(true, 'bar')
+    expect(okBar.ok).toBe(true)
+    if (okBar.ok) expect(okBar.spec.panels[0]).toMatchObject({ chart: 'bar', stack: true })
+    expect(v2(true, 'line')).toEqual({ ok: false, code: 'INVALID_SPEC' })
   })
 })

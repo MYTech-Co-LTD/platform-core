@@ -224,20 +224,27 @@ export function buildOption(
   dimensions: string[],
   result: OkResult,
   compares: Array<{ label: string; result: OkResult }> = [],
+  /** 堆叠（L4）：只对柱状 + 多系列生效；与对比基线互斥（写侧已拒，这里防御性不加给对比系列）。 */
+  opts: { stack?: boolean } = {},
 ): EChartsCoreOption {
   const base = chartCellsOf(dimensions, result)
   const xLabels = base.xLabels
   const bizdayX = dimensions[0] === 'bizday'
   const currentKeys = base.seriesKeys.length > 0 ? base.seriesKeys : ['']
-  const series: Array<{ name: string; type: 'line' | 'bar'; data: Array<number | null> }> = []
+  const series: Array<{
+    name: string; type: 'line' | 'bar'; data: Array<number | null>; stack?: string
+  }> = []
   const hasCompare = compares.length > 0
   const nameOf = (key: string, suffix: string): string => key === '' ? suffix : `${key}·${suffix}`
+  // 堆叠只加给**本期**系列：对比系列与本期同 stack 名会被叠成一根，误读成「合计」。
+  const stackOf = opts.stack === true && chart === 'bar' ? { stack: 'total' } : {}
 
   for (const key of currentKeys) {
     series.push({
       name: hasCompare ? nameOf(key, '本期') : key,
       type: chart,
       data: xLabels.map((x) => base.cells.get(`${x}\u0000${key}`) ?? null),
+      ...stackOf,
     })
   }
   for (const cmp of compares) {
@@ -821,7 +828,9 @@ function PanelBody({ panel, result, compares = [], detailCtx, textCtx }: { panel
 
   return (
     <>
-      <EChart option={buildOption(panel.chart, dimsOf(panel), result, compares)} />
+      <EChart option={buildOption(panel.chart, dimsOf(panel), result, compares, {
+        stack: panel.chart === 'bar' && panel.stack === true,
+      })} />
       <TrustLine result={result} />
     </>
   )

@@ -84,6 +84,12 @@ const BarPanel = z.object({
   slice: SliceSchema.optional(),
   compare: ChartCompare,
   compareYoY: z.boolean().optional(),
+  /**
+   * 堆叠（L4，R3 收尾）：多系列柱叠加成一柱。**与对比基线互斥**（顶层 superRefine）——
+   * 「本期堆叠 + 上期堆叠」画在同一 x 上无法区分两组，语义会骗人。
+   * 组合（分组柱）是本图型多系列的**默认形态**，不需要开关。
+   */
+  stack: z.boolean().optional(),
 }).strict()
 
 /**
@@ -254,6 +260,17 @@ export const ReportSpecSchema = z.object({
       message: 'EXPANDABLE_REQUIRES_GROUPING',
     })
   })
+  // 堆叠与对比基线互斥（R3/L4）：本期堆叠 + 上期堆叠在同一 x 上无法区分两组，图会骗人。
+  spec.panels.forEach((p, i) => {
+    if (p.chart !== 'bar' || p.stack !== true) return
+    if (p.compare === undefined || p.compare === 'none') {
+      if (p.compareYoY !== true) return
+    }
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom, path: ['panels', i, 'stack'],
+      message: 'STACK_CONFLICTS_WITH_COMPARE',
+    })
+  })
   // 多页归属：`page` 只在声明了 `pages` 时有意义，且不得越界（否则面板永远不显示 = 静默丢失）。
   const pageCount = spec.pages?.length
   spec.panels.forEach((p, i) => {
@@ -320,6 +337,8 @@ const V2ChartBlock = z.object({
   slice: SliceSchema.optional(),
   compare: z.enum(['none', 'prev_period', 'prev_month', 'prev_year']).optional(),
   compareYoY: z.boolean().optional(),
+  /** 堆叠（L4）：仅 bar 有意义；与 compare/compareYoY 互斥（归一后由 v1 顶层规则判）。 */
+  stack: z.boolean().optional(),
   page: z.number().int().min(1).max(MAX_PAGES).optional(),
   span: z.number().int().min(1).max(24).default(12),
 }).strict()
@@ -398,11 +417,14 @@ export function flattenReportSpecV2(v2: ReportSpecV2): { ok: true; spec: ReportS
         goodDirection: b.goodDirection,
       })
     } else if (b.type === 'chart') {
+      // 堆叠只属柱状（L4）：折线声明 stack 是写错的规格，fail-closed 而不是静默忽略。
+      if (b.chart === 'line' && b.stack !== undefined) return { ok: false, code: 'INVALID_SPEC' }
       panels.push({
         ...base, chart: b.chart, dims: dataset.dims,
         ...(b.slice === undefined ? {} : { slice: b.slice }),
         ...(b.compare === undefined ? {} : { compare: b.compare }),
         ...(b.compareYoY === undefined ? {} : { compareYoY: b.compareYoY }),
+        ...(b.stack === undefined ? {} : { stack: b.stack }),
       })
     } else {
       const dims = b.dims ?? dataset.dims
