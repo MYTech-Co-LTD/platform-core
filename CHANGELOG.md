@@ -11,6 +11,10 @@
 
 ## [Unreleased]
 
+## [0.303.1](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.303.0...v0.303.1) - 2026-11-15
+- 【修复】data: 数据生产线聚焦读数条补上来源与分隔 (#2334) ([#2335](https://github.com/MYTech-Co-LTD/platform-core/pull/2335), [40aaa2a](https://github.com/MYTech-Co-LTD/platform-core/commit/40aaa2a1e8bbd2828f1c2e9d8695fdd7069ed07a))
+
+
 ## [0.303.0](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.302.1...v0.303.0) - 2026-11-15
 - 【新增】data: L4 组合/堆叠——bar.stack 堆叠（与对比基线互斥） (#2331) ([#2332](https://github.com/MYTech-Co-LTD/platform-core/pull/2332), [c60dc22](https://github.com/MYTech-Co-LTD/platform-core/commit/c60dc22d5bd73f421138770edb78708ba096a7c0))
 
