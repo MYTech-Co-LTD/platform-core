@@ -8,10 +8,14 @@ import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { Pool } from 'pg'
-import type { SchedulerPortFactory } from '@platform/sdk'
+import type { NotificationEventDecl, SchedulerPortFactory } from '@platform/sdk'
+import { validatePayload } from '@platform/sdk'
 import { runMigrations } from '../../../apps/server/src/migrate'
 import { makeSchedulerFactory } from '../../../apps/server/src/scheduler/factory'
-import { SCHEDULE_TOOLS, callScheduleTool, type ScheduleActor } from './schedules'
+import {
+  createAgentNamespace, getAgentNamespace, getEventDecl, listAgentNamespaces, upsertEventDecl,
+} from '../storage'
+import { SCHEDULE_TOOLS, callScheduleTool, type ScheduleActor, type ScheduleToolDeps } from './schedules'
 
 const dbUrl = process.env.DATABASE_URL
 const describePg = dbUrl ? describe : describe.skip
@@ -31,7 +35,8 @@ describe('schedules tool face (static)', () => {
     ])
     const create = SCHEDULE_TOOLS.find((t) => t.name === 'create_schedule')!
     const props = (create.inputSchema.properties ?? {}) as Record<string, unknown>
-    expect(Object.keys(props).sort()).toEqual(['cron', 'expectedIntervalSecs', 'params', 'timezone'])
+    expect(Object.keys(props).sort())
+      .toEqual(['cron', 'expectedIntervalSecs', 'namespace', 'params', 'timezone'])
     // 排班只发站内通知：create 的一级入参里没有任何通道/地址字段。
     expect(Object.keys(props).some((k) => /channel|webhook|wecom|mail|url/i.test(k))).toBe(false)
   })
@@ -298,7 +303,172 @@ describePg('schedules tool face (db)', () => {
     }
   })
 
-  it('非排班工具返回 null（调用方可继续走自己的分支）', async () => {
+  it('非排班工具返回 null（调用方继续走自己的分支）', async () => {
     expect(await callScheduleTool({ scheduler: factory, actor: actorA }, 'list_events', {})).toBeNull()
+  })
+})
+
+describePg('schedules tool face — N4 namespace（真库）', () => {
+  let pool: Pool
+  let factory: SchedulerPortFactory
+
+  const ORG = 'jobtest-p3tool:ns'
+  const USER = 'jobtest-p3tool:ns-user'
+  const actor: ScheduleActor = { userId: USER, org: ORG }
+
+  beforeAll(async () => {
+    pool = new Pool({ connectionString: dbUrl })
+    await runMigrations(pool, 'platform', join(here, '../../../apps/server/src/migrations'))
+    await runMigrations(pool, 'notify', join(here, '../migrations'))
+    factory = makeSchedulerFactory(pool)
+  }, 30_000)
+  afterAll(async () => {
+    await cleanup()
+    await pool.end()
+  })
+  beforeEach(async () => { await cleanup() })
+
+  async function cleanup() {
+    await pool.query(
+      `delete from platform.job_run where schedule_id in
+         (select id from platform.job_schedule where owner_org=$1)`, [ORG])
+    await pool.query('delete from platform.job_schedule where owner_org=$1', [ORG])
+    await pool.query('delete from notify.event_decl where org=$1', [ORG])
+    await pool.query('delete from notify.agent_namespace where org=$1', [ORG])
+  }
+
+  /** 与生产 mcp.ts 同款的依赖注入（namespace 归属 + 事件声明 + payload 校验）。 */
+  function n4Deps(): Pick<ScheduleToolDeps, 'namespaces' | 'resolveEventDecl' | 'validatePayload'> {
+    return {
+      namespaces: {
+        owned: async () => (await listAgentNamespaces(pool, ORG))
+          .filter((n) => n.status === 'active' && n.ownerUserId === USER)
+          .map((n) => n.namespace),
+        owns: async (namespace) => {
+          const n = await getAgentNamespace(pool, ORG, namespace)
+          return n !== null && n.status === 'active' && n.ownerUserId === USER
+        },
+      },
+      resolveEventDecl: (org, key) => getEventDecl(pool, org, key),
+      validatePayload: (decl, payload) => validatePayload(decl, payload),
+    }
+  }
+
+  async function call(
+    name: string,
+    args: Record<string, unknown>,
+  ): Promise<{ isError: boolean; body: Record<string, unknown> }> {
+    const r = await callScheduleTool(
+      { scheduler: factory, actor, ...n4Deps() }, name, args)
+    if (!r) throw new Error(`${name} 不是排班工具`)
+    return { isError: r.isError, body: JSON.parse(r.text) as Record<string, unknown> }
+  }
+
+  const decl: NotificationEventDecl = {
+    key: 'ext.agent_a.daily',
+    title: 'D',
+    payload: { user: { type: 'user', required: true } },
+    recipients: { assignee: { kind: 'field', field: 'user' } },
+  }
+
+  async function seedNamespace(ns = 'agent_a') {
+    await createAgentNamespace(pool, ORG, {
+      namespace: ns, displayName: ns, ownerUserId: USER,
+    })
+    if (ns === 'agent_a') {
+      expect(await upsertEventDecl(pool, ORG, ns, decl, USER))
+        .toMatchObject({ ok: true, created: true })
+    }
+  }
+
+  it('create_schedule：eventKey 的 ext.<ns> 段推导 namespace，落库 owner_namespace', { timeout: 30_000 }, async () => {
+    await seedNamespace()
+    const out = await call('create_schedule', {
+      cron: '*/5 * * * *',
+      timezone: 'UTC',
+      expectedIntervalSecs: 300,
+      params: { eventKey: decl.key, payload: { user: 'u1' } },
+    })
+    expect(out.isError).toBe(false)
+    expect(out.body).toMatchObject({ namespace: 'agent_a' })
+
+    const { rows } = await pool.query(
+      `select key, owner_namespace, params from platform.job_schedule where id=$1`,
+      [out.body.id])
+    expect(rows[0]).toMatchObject({
+      key: 'notify.emit',           // job key ≠ 事件 key
+      owner_namespace: 'agent_a',  // N4：不再默认 org
+    })
+    expect(rows[0].params).toMatchObject({ eventKey: decl.key })
+  })
+
+  it('跨 namespace 的事件 ⇒ NAMESPACE_FORBIDDEN；平台事件 ⇒ EVENT_NOT_OWNED', async () => {
+    await seedNamespace()
+    // agent_a 的 owner 去排 agent_b 的事件（agent_b 属于别人）
+    await pool.query(
+      `insert into notify.agent_namespace(org,namespace,display_name,owner_user_id)
+       values ($1,'agent_b','B','other')`, [ORG])
+    const cross = await call('create_schedule', {
+      cron: '*/5 * * * *',
+      params: { eventKey: 'ext.agent_b.daily', payload: {} },
+      expectedIntervalSecs: 300,
+    })
+    expect(cross.body).toMatchObject({ ok: false, code: 'NAMESPACE_FORBIDDEN' })
+
+    const platform = await call('create_schedule', {
+      cron: '*/5 * * * *',
+      params: { eventKey: 'notify.integration.stale', payload: {} },
+      expectedIntervalSecs: 300,
+    })
+    expect(platform.body).toMatchObject({ ok: false, code: 'EVENT_NOT_OWNED' })
+  })
+
+  it('未声明事件 / payload 违规 ⇒ 建排班时即拒（不等第一次触发 exit 2）', async () => {
+    await seedNamespace()
+    const undeclared = await call('create_schedule', {
+      cron: '*/5 * * * *',
+      params: { eventKey: 'ext.agent_a.nope', payload: { user: 'u1' } },
+      expectedIntervalSecs: 300,
+    })
+    expect(undeclared.body).toMatchObject({ ok: false, code: 'EVENT_NOT_DECLARED' })
+
+    const badPayload = await call('create_schedule', {
+      cron: '*/5 * * * *',
+      params: { eventKey: decl.key, payload: {} }, // 缺 required user
+      expectedIntervalSecs: 300,
+    })
+    expect(badPayload.body).toMatchObject({ ok: false, code: 'PAYLOAD_INVALID' })
+  })
+
+  it('多 namespace 且未显式指定 ⇒ NAMESPACE_REQUIRED；显式后可建可列', { timeout: 30_000 }, async () => {
+    await seedNamespace('agent_a')
+    await seedNamespace('agent_c')
+    const noNs = await call('list_schedules', {})
+    expect(noNs.body).toMatchObject({ ok: false, code: 'NAMESPACE_REQUIRED', owned: 2 })
+
+    const withNs = await call('create_schedule', {
+      cron: '*/5 * * * *',
+      namespace: 'agent_a',
+      expectedIntervalSecs: 300,
+      params: { eventKey: decl.key, payload: { user: 'u1' } },
+    })
+    expect(withNs.isError).toBe(false)
+    expect(withNs.body).toMatchObject({ namespace: 'agent_a' })
+
+    const listed = await call('list_schedules', { namespace: 'agent_a' })
+    expect(listed.isError).toBe(false)
+    expect(listed.body).toMatchObject({ namespace: 'agent_a' })
+    expect((listed.body.schedules as unknown[]).length).toBe(1)
+  })
+
+  it('归属隔离沿用端口：别人的 schedule 在自己 namespace 下 NOT_FOUND', { timeout: 30_000 }, async () => {
+    await seedNamespace()
+    // 另一个人在 org 兜底 namespace 建一条（绕过工具，直接走端口）
+    const other = await factory({ userId: 'other', org: ORG }).createSchedule({
+      key: 'notify.emit', cron: '*/5 * * * *', timezone: 'UTC',
+      params: {}, expectedIntervalSecs: 300,
+    })
+    const pause = await call('pause_schedule', { id: other.id, namespace: 'agent_a' })
+    expect(pause.body).toMatchObject({ ok: false, code: 'NOT_FOUND' })
   })
 })

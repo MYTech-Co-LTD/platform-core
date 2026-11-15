@@ -707,6 +707,10 @@ token 只决定「这个账号能调哪些面」，不改变分层。
   默认落 `pending` 审批（`notify.approval`），批准后才 `enabled`；`auto_publish_external=true`
   可预授权。配额：收件人数 / 活跃规则数 / 每日消息数。审批待处理发 `notify.approval.pending`
   给持 `notify:publish` 的人（in-app）。
+- **agent 排班（N4）**：排班工具 namespace-aware——`create_schedule` 只接受自己 namespace 的
+  `ext.<namespace>.<event>`（建时校验声明与 payload，平台事件不给 agent 定时触发）；
+  `job_schedule.owner_namespace` 落 agent namespace，多 namespace 未显式指定 ⇒ `NAMESPACE_REQUIRED`；
+  job key 恒为 `notify.emit`（≠ 事件 key，事件在 `params.eventKey`）。
 
 #### 模板与发布
 
