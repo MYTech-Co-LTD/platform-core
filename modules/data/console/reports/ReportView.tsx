@@ -224,8 +224,8 @@ export function buildOption(
   dimensions: string[],
   result: OkResult,
   compares: Array<{ label: string; result: OkResult }> = [],
-  /** 堆叠（L4）：只对柱状 + 多系列生效；与对比基线互斥（写侧已拒，这里防御性不加给对比系列）。 */
-  opts: { stack?: boolean } = {},
+  /** L4：堆叠只对柱状 + 多系列生效；目标线与指标同量纲，画成水平参考线。 */
+  opts: { stack?: boolean; target?: number } = {},
 ): EChartsCoreOption {
   const base = chartCellsOf(dimensions, result)
   const xLabels = base.xLabels
@@ -233,6 +233,7 @@ export function buildOption(
   const currentKeys = base.seriesKeys.length > 0 ? base.seriesKeys : ['']
   const series: Array<{
     name: string; type: 'line' | 'bar'; data: Array<number | null>; stack?: string
+    markLine?: Record<string, unknown>
   }> = []
   const hasCompare = compares.length > 0
   const nameOf = (key: string, suffix: string): string => key === '' ? suffix : `${key}·${suffix}`
@@ -259,6 +260,19 @@ export function buildOption(
         return other.cells.get(`${srcX}\u0000${key}`) ?? null
       })
       series.push({ name: nameOf(key, cmp.label), type: chart, data })
+    }
+  }
+
+  // 目标线（L4）：挂在第一条本期系列上（echarts markLine 是系列级配置）。
+  // 颜色用设计正典的「警告」色 #E08A00——目标线是参考不是数据，不能抢数据的注意力。
+  const target = opts.target
+  if (target !== undefined && Number.isFinite(target) && series.length > 0) {
+    series[0].markLine = {
+      silent: true,
+      symbol: 'none',
+      lineStyle: { type: 'dashed', color: '#E08A00' },
+      label: { formatter: '目标', position: 'insideEndTop', color: '#E08A00' },
+      data: [{ yAxis: target }],
     }
   }
 
@@ -830,6 +844,9 @@ function PanelBody({ panel, result, compares = [], detailCtx, textCtx }: { panel
     <>
       <EChart option={buildOption(panel.chart, dimsOf(panel), result, compares, {
         stack: panel.chart === 'bar' && panel.stack === true,
+        ...(panel.chart === 'bar' || panel.chart === 'line'
+          ? { ...(panel.target === undefined ? {} : { target: panel.target }) }
+          : {}),
       })} />
       <TrustLine result={result} />
     </>

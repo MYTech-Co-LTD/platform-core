@@ -71,12 +71,17 @@ const metricBase = {
 /** 图表的对比基线：`prev_*` 一条曲线，另可用 `compareYoY` 再叠去年同期。 */
 const ChartCompare = z.enum(['none', 'prev_period', 'prev_month', 'prev_year']).optional()
 
+/** 目标线（L4）：与指标同量纲的静态参考值（与 bullet 的 `target` 同一口径，不造第二套语义）。 */
+const TargetLine = z.number().finite()
+
 const LinePanel = z.object({
   chart: z.literal('line'), ...metricBase,
   dims: z.array(z.string().min(1).max(64)).max(MAX_DIMS).default([]),
   slice: SliceSchema.optional(),
   compare: ChartCompare,
   compareYoY: z.boolean().optional(),
+  /** 目标线（L4）：画一条水平参考线；与指标同量纲（percent 时是比率，如 0.2 = 20%）。 */
+  target: TargetLine.optional(),
 }).strict()
 const BarPanel = z.object({
   chart: z.literal('bar'), ...metricBase,
@@ -90,6 +95,8 @@ const BarPanel = z.object({
    * 组合（分组柱）是本图型多系列的**默认形态**，不需要开关。
    */
   stack: z.boolean().optional(),
+  /** 目标线（L4）：同 line。 */
+  target: TargetLine.optional(),
 }).strict()
 
 /**
@@ -264,7 +271,17 @@ export const ReportSpecSchema = z.object({
   spec.panels.forEach((p, i) => {
     if (p.chart !== 'bar' || p.stack !== true) return
     if (p.compare === undefined || p.compare === 'none') {
-      if (p.compareYoY !== true) return
+      if (p.compareYoY !== true) {
+        // 堆叠 + 目标线同样禁止：y 轴是各系列之和，目标线画上去答非所问（合计目标 / 单系列目标
+        // 无法在规格里区分）。需要合计目标时用 bullet 组件，它只有单一合计值。
+        if (p.target !== undefined) {
+          ctx.addIssue({
+            code: z.ZodIssueCode.custom, path: ['panels', i, 'target'],
+            message: 'STACK_CONFLICTS_WITH_TARGET',
+          })
+        }
+        return
+      }
     }
     ctx.addIssue({
       code: z.ZodIssueCode.custom, path: ['panels', i, 'stack'],
@@ -339,6 +356,8 @@ const V2ChartBlock = z.object({
   compareYoY: z.boolean().optional(),
   /** 堆叠（L4）：仅 bar 有意义；与 compare/compareYoY 互斥（归一后由 v1 顶层规则判）。 */
   stack: z.boolean().optional(),
+  /** 目标线（L4）：与指标同量纲的静态参考值。 */
+  target: z.number().finite().optional(),
   page: z.number().int().min(1).max(MAX_PAGES).optional(),
   span: z.number().int().min(1).max(24).default(12),
 }).strict()
@@ -425,6 +444,7 @@ export function flattenReportSpecV2(v2: ReportSpecV2): { ok: true; spec: ReportS
         ...(b.compare === undefined ? {} : { compare: b.compare }),
         ...(b.compareYoY === undefined ? {} : { compareYoY: b.compareYoY }),
         ...(b.stack === undefined ? {} : { stack: b.stack }),
+        ...(b.target === undefined ? {} : { target: b.target }),
       })
     } else {
       const dims = b.dims ?? dataset.dims

@@ -288,3 +288,39 @@ describe('堆叠（L4，R3 收尾）', () => {
     expect(v2(true, 'line')).toEqual({ ok: false, code: 'INVALID_SPEC' })
   })
 })
+
+describe('目标线（L4）', () => {
+  const parse = (panel: unknown) => parseReportSpec({ panels: [panel] })
+  const line = { chart: 'line', title: '日销售', metricId: 'm:sales', dims: ['bizday'] }
+  const bar = { chart: 'bar', title: '门店', metricId: 'm:sales', dims: ['branch_num'] }
+
+  it('line / bar 接受有限目标值（与指标同量纲）', () => {
+    for (const base of [line, bar]) {
+      const out = parse({ ...base, target: 12000 })
+      expect(out.ok).toBe(true)
+      if (out.ok) expect(out.spec.panels[0]).toMatchObject({ target: 12000 })
+    }
+  })
+
+  it('NaN / Infinity / 字符串 ⇒ 非法规格', () => {
+    for (const bad of [Number.NaN, Infinity, -Infinity, '12000']) {
+      expect(parse({ ...line, target: bad })).toEqual({ ok: false, code: 'INVALID_SPEC' })
+    }
+  })
+
+  it('★ 堆叠 + 目标线互斥（y 轴是各系列之和，目标答非所问）', () => {
+    expect(parse({ ...bar, stack: true, target: 100 })).toEqual({ ok: false, code: 'INVALID_SPEC' })
+    // 不堆叠时目标线照常
+    expect(parse({ ...bar, target: 100 }).ok).toBe(true)
+  })
+
+  it('v2 chart 块：target 归一进面板', () => {
+    const out = parseReportInput({
+      ir: 2,
+      datasets: [{ key: 'd', metricId: 'm:sales', dims: ['bizday'] }],
+      blocks: [{ type: 'chart', chart: 'line', dataset: 'd', title: 't', target: 500 }],
+    })
+    expect(out.ok).toBe(true)
+    if (out.ok) expect(out.spec.panels[0]).toMatchObject({ chart: 'line', target: 500 })
+  })
+})

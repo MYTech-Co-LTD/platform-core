@@ -52,6 +52,20 @@ describe('buildOption 历史对比', () => {
       .toEqual(['total', 'total', undefined, undefined])
   })
 
+  it('目标线（L4）：挂在第一条本期系列，虚线 + 目标标签；不传时无 markLine', () => {
+    const cur = ok(['bizday', 'value'], [['2026-11-01', 10], ['2026-11-02', 20]])
+    const withTarget = buildOption('line', ['bizday'], cur, [], { target: 15 }) as any
+    const ml = withTarget.series[0].markLine
+    expect(ml).toMatchObject({
+      silent: true, symbol: 'none',
+      lineStyle: { type: 'dashed', color: '#E08A00' },
+      data: [{ yAxis: 15 }],
+    })
+    expect(ml.label.formatter).toBe('目标')
+    const plain = buildOption('line', ['bizday'], cur) as any
+    expect(plain.series[0].markLine).toBeUndefined()
+  })
+
   it('类目轴按值对齐：柱状图按原因/项目并列', () => {
     const cur = ok(['cause', 'value'], [['来货损', 10], ['自然损', 20]])
     const yoy = ok(['cause', 'value'], [['来货损', 8], ['自然损', 9]])
