@@ -16,7 +16,8 @@ import { resolveDeliverability } from './domain/deliverability'
 import { resolveDeliveryAddress } from './domain/resolve-address'
 import { renderContents } from './domain/render'
 import { providerRequiresAddress } from './domain/providers'
-import { isWritableRuleId, validateRule } from './domain/rules'
+import { isWritableRuleId, ruleSnapshot, validateRule } from './domain/rules'
+import type { RuleSnapshot } from './domain/rules'
 import { samplePayload, validateContents } from './domain/template'
 import {
   audit, createTemplateRevision, getAgentNamespace, getChannel, getEventDecl,
@@ -147,17 +148,28 @@ export async function callTool(
     const bad = validateRule(rule, decl, enabledChannels, published)
     if (bad) return err(bad)
 
-    await upsertRule(deps.pool, deps.org, { id, enabled: true, ...rule }, deps.userId)
-    await audit(deps.pool, deps.org, deps.userId, `mcp.${name}`, id, { ...rule, id })
+    // 规则历史快照（#2322）：audit 里落一份完整可回滚快照
+    // recipientDepts 与 HTTP 面同源去重（覆盖 rule 里的原值）
+    const snapshot: RuleSnapshot = {
+      id, enabled: true, ...rule, ownerNamespace: null,
+      recipientDepts: rule.recipientDepts ? [...new Set(rule.recipientDepts)] : null,
+    }
+    await upsertRule(deps.pool, deps.org, snapshot, deps.userId)
+    await audit(deps.pool, deps.org, deps.userId, `mcp.${name}`, id, { ...rule, id, snapshot })
     return ok({ id, next: '规则即时生效；可在控制台启停/删除' })
   }
 
   if (name === 'set_rule_enabled') {
     const id = str(args.id)
     if (!id || typeof args.enabled !== 'boolean') return err('missing_required')
+    // 快照取自写入前的行（enabled 覆盖为目标值）
+    const existing = (await listRules(deps.pool, deps.org)).find((x) => x.id === id)
     const n = await setRuleEnabled(deps.pool, deps.org, id, args.enabled)
     if (n === 0) return err('not_found')
-    await audit(deps.pool, deps.org, deps.userId, 'mcp.set_rule_enabled', id, { enabled: args.enabled })
+    await audit(deps.pool, deps.org, deps.userId, 'mcp.set_rule_enabled', id, {
+      enabled: args.enabled,
+      snapshot: existing ? ruleSnapshot(existing, { enabled: args.enabled }) : undefined,
+    })
     return ok({ id, enabled: args.enabled })
   }
 
