@@ -11,6 +11,10 @@
 
 ## [Unreleased]
 
+## [0.291.0](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.290.0...v0.291.0) - 2026-11-15
+- 【新增】notify: N5 per-namespace 指标 + claim 按 org 交错 + 批内规则缓存 (#2280) ([#2281](https://github.com/MYTech-Co-LTD/platform-core/pull/2281), [4490001](https://github.com/MYTech-Co-LTD/platform-core/commit/44900014e2d3157d7fe82844740b3d370f5959c2))
+
+
 ## [0.290.0](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.289.0...v0.290.0) - 2026-11-15
 - 【新增】data: 数据生产线页——字段级血缘 (#2273) ([#2275](https://github.com/MYTech-Co-LTD/platform-core/pull/2275), [a062b85](https://github.com/MYTech-Co-LTD/platform-core/commit/a062b85e7b985ed76ac983cbcfb4b4e4dc80719b))
 - 【修复】data: 调度器支持子进程参数，org.sync 带 --apply（否则默认 dry-run 空跑） ([#2274](https://github.com/MYTech-Co-LTD/platform-core/pull/2274), [1a7d821](https://github.com/MYTech-Co-LTD/platform-core/commit/1a7d821d3de1166187d269d88244d501fcd0e96d))
