@@ -1,12 +1,12 @@
 // system-map.ts — 「数据体系地图」的路由装配层（只做装配 + 鉴权，领域逻辑全在 domain/system-map/）。
 //
 // 门禁由宿主按 manifest 的 api.internal 施加（本文件不写 requireScope）：
-//   GET /api/modules/data/system-map        → scope `data:query`（服务端渲染单文件 HTML，移动端/旧链接）
-//   GET /api/modules/data/system-map/graph  → scope `data:query`（本体图 JSON，控制台内嵌页用）
+//   GET /api/modules/data/system-map/graph  → scope `data:query`（本体图 JSON，桌面 + 移动端共用）
+//   （2026-11-15：旧的单文件 HTML 页 `/system-map` 已下线——移动端切到同一份 JSON 后无人消费）
 //
 // 缓存：地图是**观测面**不是实时交易面——单次生成要扫 YAML / contracts / dbt 全图 + 查运行库，
 // 故进程内缓存 10 分钟（按 org + repoRoot 分键；多租户共用一个进程时不会串租户）。
-// HTML 与 JSON 共用同一份 `SystemMapModel`：两个端点命中同一个缓存，不各扫一遍盘。
+// 各端点共用同一份 `SystemMapModel`：命中同一个缓存，不各扫一遍盘。
 import type { ModuleHono, RouteCtx } from './context'
 import { requesterOf } from './context'
 import {
@@ -14,7 +14,6 @@ import {
   loadDbtModels,
   loadDbtVars,
   loadSystemMapFacts,
-  renderSystemMapHtml,
 } from '../domain/system-map/map'
 import type { SystemMapInput, SystemMapModel } from '../domain/system-map/map'
 import { buildSystemMapOntology } from '../domain/system-map/ontology'
@@ -28,7 +27,6 @@ import { runSourceFromEnv } from '../domain/pipelines/run-source'
 const CACHE_TTL_MS = 10 * 60 * 1000
 interface CachedMap {
   model: SystemMapModel
-  html: string
   expiresAt: number
 }
 const cache = new Map<string, CachedMap>()
@@ -56,22 +54,11 @@ async function modelFor(ctx: RouteCtx, org: string): Promise<SystemMapModel | { 
   }
 
   const model = buildSystemMapModel(input)
-  cache.set(key, { model, html: renderSystemMapHtml(model), expiresAt: now + CACHE_TTL_MS })
+  cache.set(key, { model, expiresAt: now + CACHE_TTL_MS })
   return model
 }
 
 export function registerSystemMap(r: ModuleHono, ctx: RouteCtx): void {
-  r.get('/system-map', async (c) => {
-    const requester = requesterOf(c)
-    // 宿主门卫先挡匿名；这里再兜一层（门卫放行但 org 为空 ⇒ 不生成全租户视图）。
-    if (requester === null) return c.json({ error: 'UNAUTHENTICATED' }, 401)
-
-    const result = await modelFor(ctx, requester.orgId)
-    if (!('metrics' in result)) return c.json(result, 500)
-    const key = `${requester.orgId}|${ctx.repoRoot ?? ''}`
-    return c.html(cache.get(key)?.html ?? renderSystemMapHtml(result))
-  })
-
   // 本体图（控制台内嵌页）：返回 entities + relations 形状，前端只管画。
   r.get('/system-map/graph', async (c) => {
     const requester = requesterOf(c)

@@ -46,8 +46,7 @@ const DEFAULT_TAB: TabKey = 'metrics'
 
 /**
  * 体系地图（2026-11-13 起）是本 console 的路由页（`system-map`），用 `/system-map/graph`
- * 的 JSON 画本体图。旧的单文件 HTML 页（`/api/modules/data/system-map`）保留给移动端与旧书签，
- * 不再是菜单入口。
+ * 的 JSON 画本体图。旧的单文件 HTML 页已于 2026-11-15 下线（移动端切到同一份 JSON）。
  */
 
 /** 末段是不是页签段（决定当前 URL 是「页签」还是「裸条目路径」）；manageOnly 页签对无码者不可达 */
