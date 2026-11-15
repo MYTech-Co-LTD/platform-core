@@ -11,6 +11,10 @@
 
 ## [Unreleased]
 
+## [0.297.0](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.296.0...v0.297.0) - 2026-11-15
+- 【新增】data: 业务监控 no_flap 防抖与只读池会话参数（W7-V2b） ([#2307](https://github.com/MYTech-Co-LTD/platform-core/pull/2307), [ea0b5d6](https://github.com/MYTech-Co-LTD/platform-core/commit/ea0b5d6853badcbeab933278782d39d7a7faaa79))
+
+
 ## [0.296.0](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.295.0...v0.296.0) - 2026-11-15
 - 【修复】data: 阈值未触发时也把窗口合计写入台账（W7-V2a） ([#2297](https://github.com/MYTech-Co-LTD/platform-core/pull/2297), [4e0afbd](https://github.com/MYTech-Co-LTD/platform-core/commit/4e0afbdfaff0920b9d7dc534dfaf3ed60f31f7fb))
 - 【新增】notify: 收件箱角色自动收敛 job——notify-inbox-readers (#2300) ([#2301](https://github.com/MYTech-Co-LTD/platform-core/pull/2301), [9955243](https://github.com/MYTech-Co-LTD/platform-core/commit/9955243a4a39682c1653da4a9821e3fee280fe41))
