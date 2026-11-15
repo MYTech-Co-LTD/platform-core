@@ -71,7 +71,7 @@
 2. **渲染是纯函数**：spec 存源文本，渲染只产出 React 节点，不用 `innerHTML`（沿用体系地图测试「全文无 innerHTML」的先例）。
 3. **扩展走提案**：客户要新玩法 ⇒ 新增块类型或 token（带完整契约），与指标 L1 提案同一套治理。
 
-**现状去重**：`AiTextPanel.tsx:110-119` 的 `renderRich` 与 `system-map/map.ts:1024` 的 `richText` 是两份实现，R3 收敛为一个共享 `RichText` 组件。
+**现状去重**：`AiTextPanel.tsx` 与体系地图曾各有一份 `renderRich` / `richText` 实现，R3 已收敛为一个共享 `RichText` 组件（`modules/data/console/lib/rich-text.tsx`）——旧行号已随实现移除，不再引用。
 
 **L2 与 claims 的关系**：叙事里的断言引用 plan/凭证项，本质是 L2 token 的另一种用法；R5 的 claims 绑定复用同一条解析通道，避免再造一套。
 
