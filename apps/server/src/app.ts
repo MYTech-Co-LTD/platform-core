@@ -183,6 +183,8 @@ export async function buildApp(overrides: BuildAppOverrides = {}): Promise<{
       subscriptionCacheTtlMs: Number(process.env.PLATFORM_SUBSCRIPTION_CACHE_TTL_MS) || 60_000,
       scheduler,
       jobs,
+      // 模块子树默认没有 CSRF：把宿主的会话校验能力注入 ctx.csrfVerify（模块拿不到 secret）
+      sessionSecret: config.sessionSecret,
     })
   }
 

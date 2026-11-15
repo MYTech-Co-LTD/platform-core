@@ -350,6 +350,16 @@ export interface ModuleContext {
    * 显式判空并降级（jobs 路由返回 `JOBS_UNAVAILABLE`），不要当「没有任务」。
    */
   jobs?: JobsPort
+  /**
+   * 宿主注入的 **CSRF 校验**（写操作用；模块子树默认**没有** CSRF——宿主的 CSRF 中间件只挂在
+   * 宿主自己的路由上）。签名是「会话 + `x-csrf-token` 头 → 是否通过」：
+   *   · 实现由宿主提供（`apps/server/src/loader.ts` 用 `csrfToken(session, sessionSecret)`），
+   *     模块拿不到 `sessionSecret`，也不该知道算法；
+   *   · `session` 是宿主 session 中间件注入的会话载荷（模块原样透传，不解释形状）；
+   *   · **未注入 = 旧宿主/单测环境 ⇒ 写操作必须 fail-closed（403 `CSRF`）**，不得当成「无需校验」。
+   * 只给**模块自己注册的写路由**用；宿主路由仍用各自的 CSRF 中间件。
+   */
+  csrfVerify?: (session: unknown, header: string | undefined) => boolean
   /** 渠道地址解析（Casdoor 用户 → 通道地址）；仅 notify 模块使用。 */
   addresses?: ChannelAddressResolver
   /** 用户活跃态查询（Casdoor 状态）；仅管理/清理面使用。未注入 = 无法判定（unknown）。 */

@@ -18,7 +18,7 @@ import { pathToFileURL } from 'node:url'
 import { serveStatic } from '@hono/node-server/serve-static'
 import { enabledFromSubscriptions, SubscriptionCache } from './subscription-source'
 import { parse as parseYaml } from 'yaml'
-import type { CasdoorClient } from '@platform/auth-core'
+import { csrfToken, type CasdoorClient, type SessionPayload } from '@platform/auth-core'
 import {
   DECLARED_GATE_APPROVED,
   ManifestSchema,
@@ -165,6 +165,13 @@ export interface LoadModulesDeps {
    * 显式判空降级（jobs 路由返回 `JOBS_UNAVAILABLE`）。生产 `app.ts` 无条件传。
    */
   jobs?: JobsPort
+  /**
+   * 会话签名密钥（宿主 `config.sessionSecret`，W6-P4a）：装载期用它构造
+   * `ModuleContext.csrfVerify`，把「会话 + x-csrf-token 头」的校验能力**以函数形式**注入模块
+   * （模块子树默认没有 CSRF，且拿不到 secret）。未提供（loader 测试 / 旧宿主）⇒ 不注入
+   * ⇒ 模块写操作 fail-closed（403 `CSRF`）。生产 `app.ts` 无条件传。
+   */
+  sessionSecret?: string
 }
 
 /** 待供给的权限码（manifest.permissions 的元素形状） */
@@ -500,7 +507,24 @@ export async function loadModules(
       }
     }
 
-  const baseCtx: ModuleContext = { pool: deps.pool, identityLinks, events, addresses, userStatus }
+  // CSRF 校验（W6-P4a）：模块子树默认没有 CSRF（宿主中间件只挂宿主路由），把宿主拥有的
+  // `csrfToken(session, sessionSecret)` 收成一个**纯判定函数**注入——模块拿到能力，拿不到
+  // secret。未传 secret ⇒ 不注入（模块写操作 fail-closed 403 CSRF，不是「放行」）。
+  const csrfVerify: ModuleContext['csrfVerify'] = deps.sessionSecret === undefined
+    ? undefined
+    : (session, header) => {
+      if (session === undefined || session === null || header === undefined) return false
+      try {
+        return header === csrfToken(session as SessionPayload, deps.sessionSecret!)
+      } catch {
+        // 会话载荷形状不对（旧版本/伪造）⇒ 不通过，不抛给调用方
+        return false
+      }
+    }
+
+  const baseCtx: ModuleContext = {
+    pool: deps.pool, identityLinks, events, addresses, userStatus, csrfVerify,
+  }
   for (const p of pending) {
     if (typeof p.def.createPorts === 'function') {
       portsByModule.set(p.manifest.id, p.def.createPorts(baseCtx))

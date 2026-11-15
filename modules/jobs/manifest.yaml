@@ -1,0 +1,76 @@
+# jobs 模块（Wave 6 P4a：业务调度域面 + 事件声明）
+# 三同纪律：id = API 前缀（/api/modules/jobs）；本模块不建自己的 schema——job 数据由宿主
+# 注入的 `ctx.jobs` 端口提供（B1：模块不读 `platform.job_*`）。
+#
+# 本模块只拥有「域面」：事件声明 / 对外 API / 权限码。调度器的执行、重试、死信仍在宿主，
+# 事件也由宿主 platform.scheduler 发出（模块只声明契约，保证声明 ≠ 开通的门禁可见）。
+id: jobs
+name: 定时任务
+version: 0.1.0
+platform: '>=0.1'
+permissions:
+  - { code: jobs:read,   name: 定时任务查看 }
+  - { code: jobs:manage, name: 定时任务手动触发 }
+# ⚠️ api.internal 声明集合必须与 createRouter 注册集合逐条一致（装载期双向核对，任一方向
+# 差集 ⇒ 装载失败）。改路由或改本清单必须同一提交对齐。
+api:
+  internal:
+    - { method: GET,  path: /schedules,  scope: jobs:read }
+    - { method: GET,  path: /runs/:key,  scope: jobs:read }
+    # 手动触发：只入队（执行在 worker 进程）；写操作必须自带 CSRF（模块子树默认没有）
+    - { method: POST, path: /:key/run,   scope: jobs:manage }
+# 任务生命周期事件声明（spec 2026-11-14-business-scheduler-design.md §10.1 第 3 条）。
+# 生产者是**宿主** platform.scheduler（模块只声明契约，不自行 emit）；收件人档照既有声明：
+# 租户管理员（tenant:admin 的持有者）。
+#
+# 说明为什么 exitCode / error / durationMs 等不是 required：timeout 的运行可能没有退出码，
+# 宿主的 emitter 按实际可得字段填；`required` 只钉「任何一条事件都必须有」的三项。
+notifications:
+  events:
+    - key: jobs.job.failed
+      title: 定时任务失败
+      description: 由宿主 platform.scheduler 发出（模块只声明契约）；一次运行以非零退出码结束
+      scope: { key: scheduleId, label: 任务 }
+      payload:
+        scheduleId:     { type: string, required: true, label: 排班 id }
+        key:            { type: string, required: true, label: 任务 key }
+        runId:          { type: string, required: true, label: 运行 id }
+        exitCode:       { type: number, label: 退出码 }
+        error:          { type: string, label: 错误摘要 }
+        durationMs:     { type: number, label: 耗时(毫秒) }
+        ownerOrg:       { type: string, label: 归属租户 }
+        ownerNamespace: { type: string, label: 归属命名空间 }
+      recipients:
+        admins: { kind: scope_holders, scope: tenant:admin, label: 租户管理员 }
+    - key: jobs.job.timeout
+      title: 定时任务超时
+      description: 由宿主 platform.scheduler 发出（模块只声明契约）；运行超过声明的超时被终止
+      scope: { key: scheduleId, label: 任务 }
+      payload:
+        scheduleId:     { type: string, required: true, label: 排班 id }
+        key:            { type: string, required: true, label: 任务 key }
+        runId:          { type: string, required: true, label: 运行 id }
+        exitCode:       { type: number, label: 退出码 }
+        error:          { type: string, label: 错误摘要 }
+        durationMs:     { type: number, label: 耗时(毫秒) }
+        ownerOrg:       { type: string, label: 归属租户 }
+        ownerNamespace: { type: string, label: 归属命名空间 }
+      recipients:
+        admins: { kind: scope_holders, scope: tenant:admin, label: 租户管理员 }
+    # 死信：尝试次数耗尽（与 health 的「连续失败 ≥3」不是同一判据，两者可同时存在）。
+    - key: jobs.job.dead
+      title: 定时任务进入死信
+      description: 由宿主 platform.scheduler 发出（模块只声明契约）；失败/超时已达最大尝试次数
+      scope: { key: scheduleId, label: 任务 }
+      payload:
+        scheduleId:     { type: string, required: true, label: 排班 id }
+        key:            { type: string, required: true, label: 任务 key }
+        runId:          { type: string, required: true, label: 运行 id }
+        attempts:       { type: number, required: true, label: 已尝试次数 }
+        exitCode:       { type: number, label: 退出码 }
+        error:          { type: string, label: 错误摘要 }
+        durationMs:     { type: number, label: 耗时(毫秒) }
+        ownerOrg:       { type: string, label: 归属租户 }
+        ownerNamespace: { type: string, label: 归属命名空间 }
+      recipients:
+        admins: { kind: scope_holders, scope: tenant:admin, label: 租户管理员 }
