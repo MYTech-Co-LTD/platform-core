@@ -296,6 +296,62 @@ notifications:
         recipient: viewers
         template: data_metric_definition_changed
         channels: [inapp_default]
+    # ── 业务监控（Wave 7 V1）────────────────────────────────────────────────
+    # 收件人由监控自己的 `recipients` 在**投递期**解析成名字数组，装进 payload.to
+    # （recipients kind=field ⇒ 不新造收件人体系、不需要每条监控一个规则）。
+    # ⚠️ 文案**不带数值/阈值**：reveal='report' 的指标数值进通知即数据泄露（spec §3.4/§9）。
+    - key: data.monitor.fired
+      title: 业务监控触发
+      description: 指标或报表面板缺失/过期（W7-V1；只报告状态，不携带数值）
+      scope: { key: monitorId, label: 监控 }
+      payload:
+        to:           { type: string, required: true, label: 收件人 }
+        monitorId:    { type: string, required: true, label: 监控 }
+        name:         { type: string, required: true, label: 监控名 }
+        verdict:      { type: string, required: true, label: 判据 }
+        windowDays:   { type: number, required: true, label: 窗口天数 }
+        watermarkRef: { type: string, required: false, label: 水位来源 }
+        link:         { type: url, required: true, label: 详情链接 }
+      recipients:
+        watchers: { kind: field, field: 'to', label: 监控收件人 }
+      defaults:
+        recipient: watchers
+        template: data_monitor_fired
+        channels: [inapp_default]
+    - key: data.monitor.resolved
+      title: 业务监控恢复
+      description: 指标或报表面板恢复正常（W7-V1）
+      scope: { key: monitorId, label: 监控 }
+      payload:
+        to:           { type: string, required: true, label: 收件人 }
+        monitorId:    { type: string, required: true, label: 监控 }
+        name:         { type: string, required: true, label: 监控名 }
+        verdict:      { type: string, required: true, label: 判据 }
+        windowDays:   { type: number, required: true, label: 窗口天数 }
+        watermarkRef: { type: string, required: false, label: 水位来源 }
+        link:         { type: url, required: true, label: 详情链接 }
+      recipients:
+        watchers: { kind: field, field: 'to', label: 监控收件人 }
+      defaults:
+        recipient: watchers
+        template: data_monitor_resolved
+        channels: [inapp_default]
+    - key: data.monitor.disabled
+      title: 业务监控已自动停用
+      description: 连续求值失败达到上限自动停用（W7-V1，spec §11 熔断）
+      scope: { key: monitorId, label: 监控 }
+      payload:
+        to:           { type: string, required: true, label: 收件人 }
+        monitorId:    { type: string, required: true, label: 监控 }
+        name:         { type: string, required: true, label: 监控名 }
+        verdict:      { type: string, required: true, label: 判据 }
+        link:         { type: url, required: true, label: 详情链接 }
+      recipients:
+        watchers: { kind: field, field: 'to', label: 监控收件人 }
+      defaults:
+        recipient: watchers
+        template: data_monitor_disabled
+        channels: [inapp_default]
 
 # 业务面承载端（#1266 机检）：console ⇒ pc；移动指标页（spec 2026-11-01 §10.2，userApp）⇒ mobile。
 surfaces: [pc, mobile]
