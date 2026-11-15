@@ -11,6 +11,10 @@
 
 ## [Unreleased]
 
+## [0.302.0](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.301.0...v0.302.0) - 2026-11-15
+- 【新增】notify: 规则历史与单步回滚（审计快照） (#2322) ([#2326](https://github.com/MYTech-Co-LTD/platform-core/pull/2326), [939f1f8](https://github.com/MYTech-Co-LTD/platform-core/commit/939f1f86f9070f7bb0c27119ff3b5d922efb2528))
+
+
 ## [0.301.0](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.300.1...v0.301.0) - 2026-11-15
 - 【新增】data: 数据生产线改字段聚焦视图，默认折叠只露骨架 (#2318) ([#2323](https://github.com/MYTech-Co-LTD/platform-core/pull/2323), [852f199](https://github.com/MYTech-Co-LTD/platform-core/commit/852f19933ec5d1fd355dc1e15cb22a719620c8d5))
 
