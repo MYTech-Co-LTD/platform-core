@@ -170,7 +170,8 @@ export async function evaluateMonitor(deps: MonitorEvalDeps, m: MonitorRow): Pro
       }
       return thresholdHit(value, operator, threshold)
         ? { verdict: 'threshold', value, watermarkRef: null }
-        : { verdict: 'ok', watermarkRef: null }
+        // ok 也带值：影子期要能量化「离阈值有多远」，否则只能看到没触发。
+        : { verdict: 'ok', value, watermarkRef: null }
     } catch (err) {
       return { verdict: 'unknown', error: errText(err), watermarkRef: null }
     }

@@ -162,6 +162,6 @@ export function staleThresholdOf(today: string, windowDays: number): string {
 
 /** 一次求值的结论（状态机与台账共用的闭集）。 */
 export type MonitorOutcome =
-  | { verdict: 'ok'; watermarkRef: string | null }
+  | { verdict: 'ok'; value?: number | null; watermarkRef: string | null }
   | { verdict: 'missing' | 'stale' | 'threshold'; value: number | null; watermarkRef: string | null }
   | { verdict: 'unknown'; error: string; watermarkRef: string | null }
