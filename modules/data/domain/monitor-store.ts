@@ -19,6 +19,8 @@ export interface MonitorRow {
   panelIndex: number | null
   filters: Record<string, unknown>
   verdict: MonitorVerdict
+  operator: string | null
+  threshold: string | null
   windowDays: number
   cadenceSecs: number
   cooldownSecs: number
@@ -37,7 +39,7 @@ export interface MonitorRow {
 /** 唯一列清单：读写共用（新增列只改这里，避免 toMonitorRow 拿到 undefined）。 */
 const MONITOR_COLUMNS = [
   'id', 'org', 'name', 'target_kind', 'metric_id', 'report_id', 'panel_index', 'filters',
-  'verdict', 'window_days', 'cadence_secs', 'cooldown_secs', 'dry_run', 'recipients',
+  'verdict', 'operator', 'threshold', 'window_days', 'cadence_secs', 'cooldown_secs', 'dry_run', 'recipients',
   'channel_policy', 'state', 'state_since', 'last_eval_at', 'notified_at',
   'consecutive_fail', 'enabled', 'created_by',
 ].join(', ')
@@ -46,6 +48,7 @@ interface MonitorDbRow {
   id: string; org: string; name: string; target_kind: MonitorTargetKind
   metric_id: string | null; report_id: string | null; panel_index: number | null
   filters: Record<string, unknown>; verdict: MonitorVerdict
+  operator: string | null; threshold: string | null
   window_days: number; cadence_secs: number; cooldown_secs: number; dry_run: boolean
   recipients: MonitorRecipient[]; channel_policy: MonitorChannelPolicy
   state: MonitorState; state_since: Date | null; last_eval_at: Date | null
@@ -57,7 +60,8 @@ export function toMonitorRow(r: MonitorDbRow): MonitorRow {
     id: String(r.id), org: r.org, name: r.name,
     targetKind: r.target_kind, metricId: r.metric_id, reportId: r.report_id,
     panelIndex: r.panel_index, filters: r.filters ?? {},
-    verdict: r.verdict, windowDays: r.window_days, cadenceSecs: r.cadence_secs,
+    verdict: r.verdict, operator: r.operator, threshold: r.threshold,
+    windowDays: r.window_days, cadenceSecs: r.cadence_secs,
     cooldownSecs: r.cooldown_secs, dryRun: r.dry_run,
     recipients: (r.recipients ?? []) as MonitorRecipient[],
     channelPolicy: r.channel_policy,
@@ -167,11 +171,12 @@ export async function createMonitor(pool: Pool, input: NewMonitorInput): Promise
     const ins = await client.query<{ id: string }>(
       `insert into data.monitor
          (org, name, target_kind, metric_id, report_id, panel_index, filters, verdict,
-          window_days, cadence_secs, cooldown_secs, dry_run, recipients, channel_policy, created_by)
-       values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,true,$12,$13,$14)
+          operator, threshold, window_days, cadence_secs, cooldown_secs, dry_run, recipients, channel_policy, created_by)
+       values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,true,$14,$15,$16)
        returning id`,
       [n.org, n.name, n.targetKind, n.metricId ?? null, n.reportId ?? null, n.panelIndex ?? null,
-        JSON.stringify(n.filters), n.verdict, n.windowDays, n.cadenceSecs, n.cooldownSecs,
+        JSON.stringify(n.filters), n.verdict, n.operator ?? null, n.threshold ?? null,
+        n.windowDays, n.cadenceSecs, n.cooldownSecs,
         JSON.stringify(n.recipients), n.channelPolicy, n.createdBy],
     )
     await client.query('commit')

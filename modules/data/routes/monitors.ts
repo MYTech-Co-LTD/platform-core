@@ -29,7 +29,7 @@ function hasManage(c: Context<ModuleVars>): boolean {
 
 const BODY_KEYS = new Set([
   'name', 'targetKind', 'metricId', 'reportId', 'panelIndex', 'filters', 'verdict',
-  'windowDays', 'cadenceSecs', 'cooldownSecs', 'recipients', 'channelPolicy',
+  'operator', 'threshold', 'windowDays', 'cadenceSecs', 'cooldownSecs', 'recipients', 'channelPolicy',
 ])
 
 export function registerMonitors(r: ModuleHono, ctx: RouteCtx): void {
@@ -67,6 +67,8 @@ export function registerMonitors(r: ModuleHono, ctx: RouteCtx): void {
       panelIndex: body.panelIndex,
       filters: body.filters,
       verdict: body.verdict,
+      operator: body.operator,
+      threshold: body.threshold,
       windowDays: body.windowDays,
       cadenceSecs: body.cadenceSecs,
       cooldownSecs: body.cooldownSecs,
@@ -79,16 +81,25 @@ export function registerMonitors(r: ModuleHono, ctx: RouteCtx): void {
     if (!v.ok) return c.json({ error: v.code, detail: v.message }, 400)
 
     // 目标存在性：metric 在词表里；report_panel 的面板能解析出指标（文本/AI 面板不行）。
+    let targetMetricTotalable: boolean | null = null
     if (v.value.targetKind === 'metric') {
       const catalog = await loadMergedCatalog(ctx.pool, org)
-      if (!catalog.some((m) => m.id === v.value.metricId)) {
+      const row = catalog.find((m) => m.id === v.value.metricId)
+      if (row === undefined) {
         return c.json({ error: 'MONITOR_TARGET_INVALID', detail: 'metric_not_declared' }, 400)
       }
+      targetMetricTotalable = row.totalable === true
     } else {
       const panel = await panelTargetOf(ctx.pool, org, v.value.reportId!, v.value.panelIndex!)
       if (panel === null) {
         return c.json({ error: 'MONITOR_TARGET_INVALID', detail: 'panel_has_no_metric' }, 400)
       }
+      const catalog = await loadMergedCatalog(ctx.pool, org)
+      targetMetricTotalable = catalog.find((m) => m.id === panel.metricId)?.totalable === true
+    }
+    // 阈值只对可加指标有意义（比率/去重没有「合计」可比较）；求值期还会再兜一次 unknown。
+    if (v.value.verdict === 'threshold' && targetMetricTotalable !== true) {
+      return c.json({ error: 'MONITOR_METRIC_NOT_ADDITIVE', detail: 'threshold 仅支持可加指标' }, 400)
     }
 
     // 收件人第一道门：创建时就解析一次；全被剔除 ⇒ 拒（别造一条发不出去的规则）。

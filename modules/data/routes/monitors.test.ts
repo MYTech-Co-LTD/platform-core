@@ -110,6 +110,19 @@ describePg('monitors 路由（需要 DATABASE_URL）', () => {
     expect(audit.rows[0].action).toBe('monitor.create')
   })
 
+  it('threshold 对非可加指标 ⇒ 400 MONITOR_METRIC_NOT_ADDITIVE（不猜比率）', async () => {
+    const res = await appFor(CREATOR).request('/monitors', {
+      method: 'POST', headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({
+        name: '阈值夹具', targetKind: 'metric', metricId: METRIC.id, verdict: 'threshold',
+        operator: 'gt', threshold: 100, cadenceSecs: 300,
+        recipients: [{ kind: 'user', ref: CREATOR }],
+      }),
+    })
+    expect(res.status).toBe(400)
+    expect((await res.json()).error).toBe('MONITOR_METRIC_NOT_ADDITIVE')
+  })
+
   it('目标不存在 ⇒ 400；收件人全部无效 ⇒ 400', async () => {
     const bad = await appFor(CREATOR).request('/monitors', {
       method: 'POST', headers: { 'content-type': 'application/json' },

@@ -61,6 +61,18 @@ export async function panelTargetOf(
   return { metricId, args }
 }
 
+/** 阈值比较（导出供真值表测试）。未知算子恒 false（创建期已拦，这里是防御）。 */
+export function thresholdHit(value: number, operator: string, threshold: number): boolean {
+  switch (operator) {
+    case 'gt': return value > threshold
+    case 'gte': return value >= threshold
+    case 'lt': return value < threshold
+    case 'lte': return value <= threshold
+    case 'eq': return value === threshold
+    default: return false
+  }
+}
+
 function errText(err: unknown): string {
   const msg = err instanceof Error ? err.message : String(err)
   return msg.slice(0, 500)
@@ -124,6 +136,41 @@ export async function evaluateMonitor(deps: MonitorEvalDeps, m: MonitorRow): Pro
       return watermark < staleThresholdOf(todayOf(now), m.windowDays)
         ? { verdict: 'stale', value: null, watermarkRef: ref }
         : { verdict: 'ok', watermarkRef: ref }
+    } catch (err) {
+      return { verdict: 'unknown', error: errText(err), watermarkRef: null }
+    }
+  }
+
+  // ③′ threshold：可加指标的窗口合计 vs 阈值（不猜口径：只认 authorize 给的 totalSql）
+  if (m.verdict === 'threshold') {
+    const bizdayT: DateRange = { from: window.start, to: window.end }
+    const argsT: Record<string, unknown> = { ...extraArgs, ...m.filters, bizday: bizdayT }
+    let totalSql: string | undefined
+    try {
+      const defsT = catalog as MetricDef[]
+      const auth = authorize(defsT, monitorRequester(m.org, m.createdBy), metricId, argsT, defsT)
+      if (!auth.ok) return { verdict: 'unknown', error: `authz:${auth.reason}`, watermarkRef: null }
+      totalSql = auth.plan.totalSql
+    } catch (err) {
+      return { verdict: 'unknown', error: errText(err), watermarkRef: null }
+    }
+    // 比率/去重类指标没有可加合计 ⇒ 判不了，绝不拿明细行求和冒充。
+    if (totalSql === undefined) return { verdict: 'unknown', error: 'not_additive', watermarkRef: null }
+    try {
+      const out = await deps.wh(totalSql)
+      const raw = out.rows[0]?.[0]
+      const value = raw === null || raw === undefined ? Number.NaN : Number(raw)
+      if (!Number.isFinite(value)) {
+        return { verdict: 'unknown', error: 'threshold_value_unavailable', watermarkRef: null }
+      }
+      const threshold = m.threshold === null ? Number.NaN : Number(m.threshold)
+      const operator = m.operator ?? ''
+      if (!Number.isFinite(threshold)) {
+        return { verdict: 'unknown', error: 'threshold_not_configured', watermarkRef: null }
+      }
+      return thresholdHit(value, operator, threshold)
+        ? { verdict: 'threshold', value, watermarkRef: null }
+        : { verdict: 'ok', watermarkRef: null }
     } catch (err) {
       return { verdict: 'unknown', error: errText(err), watermarkRef: null }
     }
