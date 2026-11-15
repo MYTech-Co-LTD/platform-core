@@ -22,6 +22,67 @@ export interface SchedulerDeps {
   log?: (o: unknown) => void
   /** 子进程工作目录；生产 = `/app`。 */
   cwd?: string
+  /**
+   * 任务生命周期事件发射器（宿主注入；生产由 `scripts/notify-worker.mjs` 用 notify 的 enqueueEvent 构造）。
+   * **fail-open**：它抛错不得影响 run 终态、重试决策或日志——见 `emitJobEvents`。
+   */
+  emit?: (input: {
+    eventKey: string; eventId: string; org: string; payload: Record<string, unknown>
+  }) => Promise<unknown>
+}
+
+/**
+ * 失败/超时/死信发事件（W6-P4a）。
+ *
+ * 三条判据（与 health 的「连续失败 ≥3」**不是同一回事**，两者可并存）：
+ *   failed  ⇒ jobs.job.failed（每次失败都发）
+ *   timeout ⇒ jobs.job.timeout
+ *   尝试耗尽（attempt >= maxAttempts）⇒ 追加 jobs.job.dead
+ *
+ * 幂等：failed/timeout 按 **runId** 去重（同一 run 重发只一行）；dead 按 **格**（scheduleId+occurrence）
+ * 去重——同一格的重试链只发一条死信。
+ *
+ * fail-open：整段 try/catch，异常只 log；**绝不**改变 outcome、不改重试槽。
+ */
+async function emitJobEvents(
+  deps: SchedulerDeps,
+  job: ClaimedJob,
+  outcome: RunOutcome,
+  log: (o: unknown) => void,
+): Promise<void> {
+  if (!deps.emit) return
+  if (outcome.status !== 'failed' && outcome.status !== 'timeout') return
+  const org = job.ownerOrg ?? ''
+  const payload = {
+    scheduleId: String(job.scheduleId),
+    key: job.key,
+    runId: String(job.runId),
+    exitCode: outcome.exitCode ?? null,
+    error: outcome.error ?? null,
+    durationMs: outcome.durationMs ?? null,
+    ownerOrg: job.ownerOrg ?? null,
+    ownerNamespace: job.ownerNamespace ?? null,
+  }
+  try {
+    const kind = outcome.status === 'timeout' ? 'timeout' : 'failed'
+    await deps.emit({
+      eventKey: `jobs.job.${kind}`,
+      eventId: `jobs.job.${kind}:${job.runId}`,
+      org,
+      payload,
+    })
+    if (job.attempt >= job.maxAttempts) {
+      await deps.emit({
+        eventKey: 'jobs.job.dead',
+        eventId: `jobs.job.dead:${job.scheduleId}:${job.occurrence.toISOString()}`,
+        org,
+        payload: { ...payload, attempts: job.attempt },
+      })
+    }
+  } catch (e) {
+    // fail-open：通知入队失败不影响任何业务判定（AGENTS.md「通知不参与业务分支」）。
+    log({ ts: new Date().toISOString(), job: job.key, error: `emit job events failed: ${e instanceof Error ? e.message : String(e)}` })
+  }
 }
 
 export interface TickStats {
@@ -77,6 +138,8 @@ export function createSchedulerLoop(deps: SchedulerDeps) {
         outcome = { status: 'failed', error: e instanceof Error ? e.message : String(e), retryable: false }
       }
       await finishRun(deps.pool, job.runId, outcome) // 自带 where status='running'，不会覆盖 reap 的终态
+      // 事件发射在终态之后、重试记账之前：两者互不依赖，但**发射必须 fail-open**。
+      await emitJobEvents(deps, job, outcome, log)
       if (!manual) {
         if (outcome.status !== 'ok' && outcome.retryable && job.attempt < job.maxAttempts) {
           // 用注入的 now 算重试时间：确定性测试才能固定这个值。
