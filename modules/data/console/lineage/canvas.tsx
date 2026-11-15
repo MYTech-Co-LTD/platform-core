@@ -30,6 +30,8 @@ interface Props {
   children: React.ReactNode
   /** 固定在视口底部的读数条（不随画布缩放——它是要读的字） */
   overlay?: React.ReactNode
+  /** 视口高度：独立页撑满视口，抽屉里用较小的值 */
+  height?: number | string
 }
 
 const MIN_K = 0.35
@@ -243,7 +245,7 @@ export default function LineageCanvas(props: Props) {
       }}
       style={{
         position: 'relative', overflow: 'hidden', cursor: 'grab', userSelect: 'none',
-        height: 'calc(100vh - 268px)', minHeight: 520,
+        height: props.height ?? 'calc(100vh - 268px)', minHeight: props.height === undefined ? 520 : 360,
         border: '1px solid #EBEDF0', borderRadius: 12, background: '#FAFBFC',
         backgroundImage: 'radial-gradient(#E6E8EC 1px, transparent 1px)',
         backgroundSize: '22px 22px',
