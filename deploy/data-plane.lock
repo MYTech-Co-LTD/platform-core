@@ -1,4 +1,4 @@
-sha256-of-rest 4d3f3b13c57b0fbcfdc91630be8923999cbf8c05744d5cc9a12141ee1259d6f2
+sha256-of-rest 40ad152573ccbcac70fd0dcedeaa7aa30737eef0bd10ae387e010ca24d4694ac
 57c67f58b38c8450ddcedf477607e722b51998873b12f84c15ffadc7fe5e81d3 contracts/README.md ${REPO}/contracts/README.md 0644
 fcc8189e1012d5fbb8e2505025bed637dd01c7b4465ab86125d3eaa7f330eff3 contracts/common/_schema.schema.json ${REPO}/contracts/common/_schema.schema.json 0644
 1730119518c3371f3c2ff3492f4c15cd731688047c6d40805ec4d2c65892f3ff contracts/common/_template.contract.json ${REPO}/contracts/common/_template.contract.json 0644
@@ -24,7 +24,7 @@ c3a2498c88fa2793ce8e473ae5f67716b10282a35ee542e3e1db561ae87945df contracts/commo
 e7aaf26bb186e2629e4b19c2fb3fdaf41f3cd63971141a9c59abf64eade6ed3c contracts/common/lemeng.member_summary.json ${REPO}/contracts/common/lemeng.member_summary.json 0644
 5c4cc697e1e879b919c2fa6eff170a5554d48a41767a3b95a83c212bc1ba86ab contracts/common/lemeng.recon_source.json ${REPO}/contracts/common/lemeng.recon_source.json 0644
 4ef582e75b8b26c915357873e013f1faea508171cdbacd7392c954a4eda6b521 contracts/common/lemeng.request_order.json ${REPO}/contracts/common/lemeng.request_order.json 0644
-606dc2f2490d0a410c4bfbd015142008c1de390630dcb685066a4cbec3ea8ec0 contracts/common/lemeng.retail_order_line.json ${REPO}/contracts/common/lemeng.retail_order_line.json 0644
+f6dee2b918468bf68593262363b7a51ea9987f1fd4a67866fd8681f1fd9ed626 contracts/common/lemeng.retail_order_line.json ${REPO}/contracts/common/lemeng.retail_order_line.json 0644
 269bf22e7ec03ec3928338f20560c6250b3e4b409ae55745350439edeb9edbee contracts/common/lemeng.saler_commission.json ${REPO}/contracts/common/lemeng.saler_commission.json 0644
 75e4395215fc21cdcc1e658ef3457db6316615b2051e5fb6d5e071d288e0c70f contracts/common/lemeng.transfer_in.json ${REPO}/contracts/common/lemeng.transfer_in.json 0644
 cf360aca3445384606591f28c8d08bd7ccbfd87d37692f12dfd26e9e87913bbe contracts/common/lemeng.transfer_out.json ${REPO}/contracts/common/lemeng.transfer_out.json 0644
