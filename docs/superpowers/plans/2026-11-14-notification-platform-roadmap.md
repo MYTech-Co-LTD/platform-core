@@ -234,7 +234,7 @@ MCP emit/send ─────────┘ │  ext.<namespace>.<event> 归属
 
 ## 9. 候选池 / 开放问题
 
-- 收件箱新成员同步：`notify-inbox-readers` 角色目前靠手工/一次性脚本填充，新员工入租户要有自动入角色路径。
+- ~~收件箱新成员同步~~：已由 `notify-inbox-role-sync` job 每 15 分钟收敛（#2301；mytech / shanhai 首轮 `changed:false`）。
 - job 生命周期事件归属：最小 `jobs` 模块 vs 宿主层事件声明面。
 - 通道自助：`POST /channels` + 凭据录入 UI 是否进 v1？
 - 事件/audit 保留窗口：30/90/180/365 的最终口径。
