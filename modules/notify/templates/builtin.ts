@@ -101,4 +101,38 @@ export const BUILTIN_TEMPLATES: BuiltinTemplate[] = [
       },
     },
   },
+  {
+    key: 'jobs_job_failed',
+    name: '定时任务失败',
+    eventKey: 'jobs.job.failed',
+    // 收件人是租户管理员：给「谁该修」看的，不是给业务用户。只走 in_app（通道本身可能就是坏的）。
+    contents: {
+      in_app: {
+        title: '定时任务失败：{{key}}',
+        body: '运行 {{runId}} 以退出码 {{exitCode}} 结束。错误：{{error}}',
+      },
+    },
+  },
+  {
+    key: 'jobs_job_timeout',
+    name: '定时任务超时',
+    eventKey: 'jobs.job.timeout',
+    contents: {
+      in_app: {
+        title: '定时任务超时：{{key}}',
+        body: '运行 {{runId}} 超过声明超时被终止（耗时 {{durationMs}}ms）。',
+      },
+    },
+  },
+  {
+    key: 'jobs_job_dead',
+    name: '定时任务进入死信',
+    eventKey: 'jobs.job.dead',
+    contents: {
+      in_app: {
+        title: '定时任务进入死信：{{key}}',
+        body: '已尝试 {{attempts}} 次仍未成功（最近错误：{{error}}）。需要人工介入。',
+      },
+    },
+  },
 ]
