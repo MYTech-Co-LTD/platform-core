@@ -249,6 +249,74 @@ export interface SchedulerPortLike {
  */
 export type SchedulerPortFactory = (actor: SchedulerActorLike) => SchedulerPortLike
 
+/**
+ * 系统任务（`source='system'`）排班的只读视图。
+ *
+ * `lastStatus` / `lastRunAt` 取自**最近一次运行**（`started_at desc`，同刻按 id 降序）；
+ * 从未跑过 ⇒ 两者都 `null`（不是空串、不是 0 值——调用方据此区分「没跑过」）。
+ */
+export interface SystemJobScheduleView {
+  id: string
+  key: string
+  enabled: boolean
+  cron: string
+  timezone: string
+  nextRunAt: string | null
+  lastStatus: string | null
+  lastRunAt: string | null
+}
+
+/** 系统任务的一次运行（台账行）。时间一律 RFC3339 UTC 字符串，`null` = 尚未发生。 */
+export interface JobRunView {
+  id: string
+  key: string
+  status: string
+  trigger: string
+  attempt: number
+  startedAt: string
+  finishedAt: string | null
+  exitCode: number | null
+  durationMs: number | null
+  outputTail: string | null
+}
+
+/**
+ * 手动触发的**审计归属**（可选）。`runNow` 只入队，审计行由宿主端口写（模块不得碰
+ * `platform.audit`，B1）；不传时审计的 `tenant_id` / `actor` 落 `null`——**不是**伪造
+ * 一个系统身份。模块路由有请求身份时应传入。
+ */
+export interface JobRunActor {
+  tenantId?: number
+  userId?: string
+}
+
+/**
+ * 定时任务端口（宿主 `apps/server/src/scheduler/jobs-port.ts` 的 `JobsPort`）
+ * 的**结构化投影**——与 `SchedulerPortLike` 同一套理由：SDK 不反向依赖宿主，宿主实现
+ * 由 TypeScript 结构兼容性在编译期核对。
+ *
+ * 语义（与宿主实现逐字一致）：
+ *  - **只暴露系统任务**（`source='system'` 且未软删）。agent 排班的读写在 `ctx.scheduler`，
+ *    两者不混面。
+ *  - `runNow` **只入队**（`status='queued'`、`trigger='manual'`），执行发生在 worker 进程；
+ *    返回值只代表「已排队」，不代表已执行。
+ *  - 错误以 `code` 属性表达（`JOB_NOT_FOUND` / `JOB_ALREADY_PENDING` / `JOB_LOCK_TIMEOUT`）。
+ *    与 `SchedulerPortLike` 同款：这里刻意用 `unknown` 抛出，不把错误形状编死
+ *    （调用方按 `(e as { code?: string }).code` 读）。
+ */
+export interface JobsPort {
+  /** 系统排班清单（`source='system' and deleted_at is null`），按 key 升序。 */
+  listSchedules(): Promise<SystemJobScheduleView[]>
+  /** 某系统任务的运行台账，`started_at desc`；`limit` 上限 100（超出按 100 截断）。 */
+  listRuns(key: string, limit: number): Promise<JobRunView[]>
+  /**
+   * 手动触发：只入队，不 spawn。未知/已软删的 key ⇒ `JOB_NOT_FOUND`；
+   * 已有 `queued|running` ⇒ `JOB_ALREADY_PENDING`；排班行锁等待超过 2s ⇒ `JOB_LOCK_TIMEOUT`。
+   * **`enabled=false` 不参与判定**：启停只约束自动排班，手动触发是运维显式动作。
+   */
+  runNow(key: string, actor?: JobRunActor): Promise<{ runId: string }>
+}
+
 export interface ModuleContext {
   pool: Pool
   /**
@@ -274,6 +342,14 @@ export interface ModuleContext {
    * 降级（notify 工具面返回 `SCHEDULER_UNAVAILABLE`）——不要当「没有排班」，更不能静默成功。
    */
   scheduler?: SchedulerPortFactory
+  /**
+   * 定时任务端口（宿主装载期注入；W6-P4a）。系统 job 的**只读面 + 手动入队**：
+   * 排班清单 / 运行台账 / `runNow`。模块**不得**直连 `platform.job_*`（B1），一切数据经此。
+   *
+   * **未注入 = 旧宿主/单测环境**（与 `notify` / `scheduler` 同款向后兼容契约）：模块必须
+   * 显式判空并降级（jobs 路由返回 `JOBS_UNAVAILABLE`），不要当「没有任务」。
+   */
+  jobs?: JobsPort
   /** 渠道地址解析（Casdoor 用户 → 通道地址）；仅 notify 模块使用。 */
   addresses?: ChannelAddressResolver
   /** 用户活跃态查询（Casdoor 状态）；仅管理/清理面使用。未注入 = 无法判定（unknown）。 */

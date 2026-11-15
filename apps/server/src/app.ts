@@ -21,6 +21,7 @@ import { loadConfig, type AppConfig } from './config'
 import { getPool } from './db'
 import { loadModules, type ModulesRuntime } from './loader'
 import { makeSchedulerFactory } from './scheduler/factory'
+import { buildJobsPort } from './scheduler/jobs-port'
 import { runMigrations } from './migrate'
 import { REGISTRY_PATH, startIntegrationProbeLoop } from './integration-probe'
 import { resolveKeyWithTouch } from './api-key-store'
@@ -172,12 +173,16 @@ export async function buildApp(overrides: BuildAppOverrides = {}): Promise<{
     // lambda 在测试中不可达 ⇒ 改回固定 actor 仍全绿」的结构性盲区（审阅 I1）。
     // 只要有 pool 就有工厂，不存在 PLATFORM_ORG/multi 的注入分支。
     const scheduler = makeSchedulerFactory(pool)
+    // 系统任务端口（W6-P4a）：注入模块 `ctx.jobs`——jobs 模块的排班清单/台账/手动触发只经它，
+    // 不读 `platform.job_*`（B1）。只要有 pool 就有端口，不存在租户分支。
+    const jobs = buildJobsPort({ pool })
     runtime = await loadModules(overrides.modulesDir ?? modulesDir, {
       pool,
       casdoorFor: casdoorFactory,
       subscriptionSource,
       subscriptionCacheTtlMs: Number(process.env.PLATFORM_SUBSCRIPTION_CACHE_TTL_MS) || 60_000,
       scheduler,
+      jobs,
     })
   }
 

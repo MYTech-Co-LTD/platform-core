@@ -28,6 +28,7 @@ import {
   type ChannelAddressResolver,
   type DeclaredEndpoint,
   type Identity,
+  type JobsPort,
   type ModuleContext,
   type ModuleDefinition,
   type ModuleManifest,
@@ -156,6 +157,14 @@ export interface LoadModulesDeps {
    * （只要有 pool 就有工厂）。
    */
   scheduler?: SchedulerPortFactory
+  /**
+   * 系统任务端口（宿主 `app.ts` 用 `buildJobsPort({ pool })` 构造，W6-P4a）：装载期原样
+   * 注入每个模块的 `ctx.jobs`。与 `scheduler` 同款——loader 不做任何绑定/包装。
+   *
+   * 可选**只服务测试与注入式用法**：未提供（loader 测试 / 旧宿主）⇒ 不注入，模块侧按契约
+   * 显式判空降级（jobs 路由返回 `JOBS_UNAVAILABLE`）。生产 `app.ts` 无条件传。
+   */
+  jobs?: JobsPort
 }
 
 /** 待供给的权限码（manifest.permissions 的元素形状） */
@@ -510,7 +519,10 @@ export async function loadModules(
   // 的输入）。注入的是**工厂**，loader 原样转发、不做 actor 绑定（装载期没有请求会话；
   // 任何固定 actor 都会抹平租户归属）。未传 ⇒ `scheduler: undefined` 原样落进 ctx——
   // 「未注入」是模块必须能看见的一个真实状态（旧宿主/单测），不是可以省略的细节。
-  const ctx: ModuleContext = { ...baseCtx, notify, scheduler: deps.scheduler }
+  // `jobs`（W6-P4a）同款：宿主构造好的 `JobsPort` 原样转发，未传 ⇒ undefined。
+  const ctx: ModuleContext = {
+    ...baseCtx, notify, scheduler: deps.scheduler, jobs: deps.jobs,
+  }
   for (const p of pending) {
     loaded.push({
       manifest: p.manifest,

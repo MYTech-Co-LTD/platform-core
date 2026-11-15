@@ -22,6 +22,7 @@ import { seedDemo } from './seed'
 import {
   provisionModulePermissionsResilient, loadModules, provisionModulePermissions } from './loader'
 import { makeSchedulerFactory } from './scheduler/factory'
+import { buildJobsPort } from './scheduler/jobs-port'
 import type { TenantRow } from './tenant'
 
 const dbUrl = process.env.DATABASE_URL
@@ -1773,6 +1774,60 @@ describe.skipIf(!dbUrl)('loadModules', INTEGRATION_SUITE, () => {
     expect(aRows.map((r) => r.id)).toEqual([createdA.id])
     const bRows = await factory({ userId: 'u-b', org: orgB }).listSchedules({ ownerOrg: orgB })
     expect(bRows).toEqual([])
+  })
+
+  // ---- 系统任务端口（W6-P4a：ctx.jobs，与 ctx.scheduler 同款装载期原样转发）----
+
+  it('ctx.jobs：注入 ⇒ 模块可经端口取系统排班；未注入 ⇒ undefined', async () => {
+    cleanupModules.push('jobsmod')
+    cleanupSqls.push("delete from platform.job_schedule where key like 'jobtest-p4a:loader%'")
+    const modulesDir = await newModulesDir()
+
+    await writeModule(modulesDir, 'jobsmod', {
+      'manifest.yaml': manifestYaml('jobsmod'),
+      'index.ts': [
+        "import { Hono } from 'hono'",
+        "import { defineModule } from '@platform/sdk'",
+        'export default defineModule({',
+        "  manifest: { id: 'jobsmod', name: 'j', version: '1.0.0', platform: '>=0.1.0',",
+        "    permissions: [{ code: 'jobsmod:view', name: 'v' }],",
+        "    api: { internal: [{ method: 'GET', path: '/ping', scope: 'jobsmod:view' }] } },",
+        '  createRouter: (ctx) => {',
+        '    const app = new Hono()',
+        "    app.get('/ping', async (c) => {",
+        '      if (!ctx.jobs) return c.json({ present: false, keys: [] })',
+        '      const keys = (await ctx.jobs.listSchedules())',
+        "        .map((r) => r.key).filter((k) => k.startsWith('jobtest-p4a:loader'))",
+        '      return c.json({ present: true, keys })',
+        '    })',
+        '    return app',
+        '  },',
+        '})',
+        '',
+      ].join('\n'),
+    })
+
+    // 宿主侧的一条系统排班：证明模块拿到的是**真数据**，不只是 typeof 判定。
+    await pool.query(
+      `insert into platform.job_schedule
+         (key,cron,timezone,source,enabled,timeout_ms,max_attempts,expected_interval_secs)
+       values ('jobtest-p4a:loader','*/5 * * * *','UTC','system',true,300000,1,300)`,
+    )
+
+    const call = async (deps: { jobs?: ReturnType<typeof buildJobsPort> }) => {
+      const runtime = await loadModules(modulesDir, { pool, ...deps })
+      const app = new Hono<TestEnv>()
+      app.use('*', injectIdentity(['jobsmod:view']))
+      runtime.mount(app)
+      const res = await app.request('/api/modules/jobsmod/ping')
+      return res.json() as Promise<{ present: boolean; keys: string[] }>
+    }
+
+    // ① 注入（生产装配点同款 buildJobsPort）⇒ 可取到系统排班。
+    expect(await call({ jobs: buildJobsPort({ pool }) }))
+      .toEqual({ present: true, keys: ['jobtest-p4a:loader'] })
+    // ② 未注入（旧宿主/单测）⇒ undefined，模块侧显式降级。
+    expect(await call({})).toEqual({ present: false, keys: [] })
   })
 
   it('未注入 scheduler ⇒ ctx.scheduler 为 undefined（旧宿主/单测的降级态）', async () => {
