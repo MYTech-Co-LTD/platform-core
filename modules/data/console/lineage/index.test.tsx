@@ -110,6 +110,11 @@ describe('数据生产线', () => {
     // order_count 不吃 sale_money ⇒ 不高亮
     expect(names).not.toContain('order_count')
     await waitFor(() => expect(document.querySelectorAll('.lineage-edge').length).toBeGreaterThan(0))
+    // 读数条固定在视口里（不能跟着画布缩放）
+    const narr = document.querySelector('.lineage-narr')!
+    expect(narr).not.toBeNull()
+    expect(narr.textContent).toContain('sale_money')
+    expect(narr.closest('.lineage-world')).toBeNull()
   })
 
   it('点度量（反向）：输入列从 staging 高亮，依赖的度量也点亮', async () => {

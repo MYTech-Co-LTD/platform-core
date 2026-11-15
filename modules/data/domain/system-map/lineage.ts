@@ -88,7 +88,9 @@ export function buildMetricLineage(input: LineageInput): MetricLineage {
   // 而 marts 的度量恰好用它 ⇒ 聚焦时这条链就断了。
   const documented = new Set(input.staging.columns.map((c) => c.name))
   const extras: LineageColumn[] = sqlCols
-    .filter((name) => !documented.has(name))
+    // 只补「契约里确有此列」的：staging 的列就是契约列，SQL 扫出来的别的一律不认
+    // （2026-11-15 实测 `cast(x as colname)` / `cast(y as varchar)` 会混进来）。
+    .filter((name) => !documented.has(name) && srcNames.has(name))
     .map((name) => {
       const fromContract = srcCols.find((c) => c.name === name)
       return {

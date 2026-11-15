@@ -26,7 +26,10 @@ interface Props {
   onCanvasApi: (api: CanvasApi) => void
   /** 点空白处 */
   onBlankClick: () => void
+  /** 画板四段（会跟着画布缩放/拖拽） */
   children: React.ReactNode
+  /** 固定在视口底部的读数条（不随画布缩放——它是要读的字） */
+  overlay?: React.ReactNode
 }
 
 const MIN_K = 0.35
@@ -303,6 +306,7 @@ export default function LineageCanvas(props: Props) {
         </svg>
         {props.children}
       </div>
+      {props.overlay}
     </div>
   )
 }
