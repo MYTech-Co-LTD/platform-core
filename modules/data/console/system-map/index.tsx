@@ -80,6 +80,9 @@ export default function SystemMapPage() {
   const [error, setError] = useState<HumanError | null>(null)
   const [query, setQuery] = useState('')
   const [selected, setSelected] = useState<OntologyNode | null>(null)
+  const [obsOpen, setObsOpen] = useState(false)
+  // 换节点 ⇒ 口径回到折叠态（否则上一个指标的「展开」会带过来）
+  useEffect(() => { setObsOpen(false) }, [selected?.id])
   const [trail, setTrail] = useState<MetricTrail | null>(null)
   const [trailError, setTrailError] = useState<string | null>(null)
   // 深链：?focus=<节点 id>（如 metric:lemeng:retail:net_sales）。选中节点也写回 URL，
@@ -307,7 +310,9 @@ export default function SystemMapPage() {
           <div style={selected.type === 'metric'
             ? { display: 'flex', gap: 16, alignItems: 'flex-start' }
             : undefined}>
-          <div style={selected.type === 'metric' ? { width: 320, flex: '0 0 320px' } : { width: '100%' }}>
+          <div style={selected.type === 'metric'
+            ? { width: 320, flex: '0 0 320px', maxHeight: 'calc(100vh - 140px)', overflowY: 'auto', paddingRight: 4 }
+            : { width: '100%' }}>
           <Space direction="vertical" size="middle" style={{ width: '100%' }}>
             <div>
               <Typography.Text type="secondary" style={{ fontSize: 11.5, fontFamily: 'ui-monospace, Menlo, monospace' }}>
@@ -315,9 +320,20 @@ export default function SystemMapPage() {
               </Typography.Text>
             </div>
             <div>
-              {selected.observations.map((o) => (
-                <div key={o} style={{ fontSize: 13, color: '#1B1C1E', lineHeight: 2 }}>{o}</div>
-              ))}
+              {/* 口径原文很长：默认折到 4 行，别把链路/运行态挤出可视区（#2342） */}
+              <div style={{
+                maxHeight: obsOpen ? undefined : 96, overflow: 'hidden',
+                WebkitMaskImage: obsOpen ? undefined : 'linear-gradient(#000 70%, transparent)',
+              }}>
+                {selected.observations.map((o) => (
+                  <div key={o} style={{ fontSize: 13, color: '#1B1C1E', lineHeight: 2 }}>{o}</div>
+                ))}
+              </div>
+              {!obsOpen && (
+                <Button type="link" size="small" style={{ paddingInline: 0 }} onClick={() => setObsOpen(true)}>
+                  展开全文
+                </Button>
+              )}
             </div>
             {selected.type === 'metric' && (
               <div>
