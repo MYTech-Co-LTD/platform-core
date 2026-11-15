@@ -172,6 +172,7 @@
 - **治理**：每 namespace 配额 + 每 org 每小时 firing 上限 + 连续失败自动熔断 + 新租户开通必须 seed tick + 月度评审「从不触发/每次都触发」的监控。
 - **build vs buy 退出条件**：出现 on-call 升级 / >500 规则 / 3+ 通道策略路由 / 跨服务关联之一 ⇒ 改用 Grafana·Alertmanager 或 OO 承载，不再加功能。
 - **必须同批改的既有面**：`metric-retire` 的引用面要加 monitor（否则会提议删掉正在被监控的指标）；`data.monitor.*` 事件必须 seed 模板与规则（否则 `no_rules` 静默丢弃）。
+- **V1 实施计划**：`docs/superpowers/plans/2026-11-15-business-monitor-v1.md`（issue **#2278**）。八个任务：迁移 053 + 存储层 → 判据求值 → 状态机/收件人 → tick 作业 → 事件模板 → 投递/退役引用面 → API 与「挂监控」入口 → 切流开闸。迁移号用 **053**（spec 写的 049 已被 `report_versions_immutable` 占用）。
 
 ### Wave 4 · 产品面：单页双层（2026-11-12 定案）
 
@@ -254,3 +255,5 @@
 | 2026-11-15 | **Wave 6 P3（agent 排班能力）完成入账**：八个排班工具 + 端口层配额 + 外发通道不对 agent 开放 | PR #2244（`559698b3`）+ 两实例容器实测（`modules/notify/tools/schedules.ts` 在镜像内、healthz 200）。用户拍板配额 50/5min/200、外发只在控制台改（**无审批状态机**）。审阅在本波抓到六条，其中两条是**修复本身引入的回归**：① 最小间隔用「未来两格之差」⇒ 随创建时刻变、burst cron 可绕过；② 修①时把扫描窗口锚在固定参考时刻 ⇒ 稀疏 cron（每月 1 日）循环零次、`min=Infinity` 直接放行。另三条：工作日 cron 典型间隔致每周日假红、宽 cron 先付 16s 扫描再被拒、生产工厂零覆盖（测试自造同形 lambda）。全部修复并变异验证；CI 另抓到冷缓存 + 慢机导致首条用例 5s 超时（本地因热缓存掩盖） |
 | 2026-11-15 | **Wave 6 P4a（`jobs` 模块）完成入账**：事件声明归位到独立模块 + 手动触发迁入模块 + 调度器发任务生命周期事件 | PR #2261（`8d88855c`）+ 两实例容器实测：`modules/jobs/` 在镜像内、`/api/modules/jobs/schedules` 未鉴权 **401**、事件目录三条 `jobs.job.*` 在位、`derived:jobs:*` 三条派生规则（inapp + 模板）已落库、P1 三个排班运行记录正常。过程：Task 4/5 因上游模型额度耗尽由 controller 直接实现并自审（关键处保留变异验证）；真装配 e2e 钉住 `jobs`/`sessionSecret` 两条注入缝（删任一注入即红）。遗留 P4b：其余 4 类迁移 + `seed`/`health` 折叠 + 租户级 kill switch + console 页 |
 | 2026-11-15 | **Wave 6 P4b 完成入账 = openship 应用面业务作业清零**：六类系统 job 迁入内置调度器并完成两实例切流 | PR #2266（registry）+ #2274（`--apply` 修复）；两实例实测：山海 7 条 / mytech 8 条由内置调度器驱动，openship 侧 3 + 5 条已停；`org.sync` 首跑 `dryRun=false`（修复前实测 `dryRun=true` 静默空跑）。**一并发现**：mytech 的 `notify-preflight` 在 openship 时代连续两周每天失败（3 条派生规则 `no_recipient`），迁移后由 `jobs.job.failed` 首次推到人眼前——待定「补收件人还是停规则」 |
+| 2026-11-15 | **订正上一条的「待定」**：mytech `notify-preflight` 的 `no_recipient` 已由 PR #2264（preflight 按事件声明取权限码，修复 `scope_holders` 恒判空）修掉——实测最近一次运行 `blockedCount=0 scopeHoldersUnavailable=false`，不需要「补收件人」也不需要「停规则」 | 从 `jobs.job.failed` 事件追到根因：preflight 此前按错误来源取 scope 名单，属于误报；修复后两实例 `notify.preflight` 均 exit 0 |
+| 2026-11-15 | **Wave 7 V1 实施计划已出**（issue #2278）：迁移 053 + 存储层 → 判据求值（missing/stale/unknown）→ 状态机与收件人 → `data.monitor_tick` → 事件模板 → 投递 + 退役引用面 → API 与「挂监控」入口 → 切流开闸 | 计划 `docs/superpowers/plans/2026-11-15-business-monitor-v1.md`。**迁移号订正**：spec §5 写的 049 已被 `report_versions_immutable` 占用，本波用 **053**。求值直接复用 `watermarkSqlFor`/`freshnessFaceFor` 与 `authorize(...).plan.sql`，不新写查询语义；收件人走 notify 既有 `kind=field` 机制（payload 带 `to`），不新增审批/路由 |
