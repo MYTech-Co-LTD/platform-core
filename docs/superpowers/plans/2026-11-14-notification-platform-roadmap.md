@@ -67,7 +67,7 @@
 | `SchedulerPort` 消费 + 排班工具 | ✅ | #2253 | N4；job key 恒 `notify.emit`，事件 key 在 `params.eventKey` |
 | job 生命周期事件接通知 | ⬜ | — | N5；W6-P4a（#2261）已落 jobs 模块，接线待做 |
 | N0 基线加固（N0.1–N0.8） | ✅ | #2180/#2182/#2184 | 治理 / 可靠性 / 一致性三件套 |
-| N0.9 生产 preflight 3 条 `no_recipient` | 🟡 | #2264 / #2268 | 原案 3 条已随 #2264（预检取码修复）在 shanhai 归零；剩余为真实 scope 供给缺口：shanhai `notify:publish` 0 人、mytech `aftersales:manage`/`data:query` 0 人，见 #2268 |
+| N0.9 生产 preflight 3 条 `no_recipient` | ✅ | #2264 / #2268 | 2026-11-15：预检取码修复后，shanhai 授 `notify:publish` 给两位租户管理员、mytech 授给 ZhangDuo 并停用两条未使用派生规则；两套生产 preflight 均 `blockedCount:0` |
 
 ---
 
