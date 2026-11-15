@@ -11,6 +11,10 @@
 
 ## [Unreleased]
 
+## [0.304.0](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.303.1...v0.304.0) - 2026-11-15
+- 【新增】data: L4 目标线——line/bar 面板 target 参考线（堆叠互斥） (#2336) ([#2337](https://github.com/MYTech-Co-LTD/platform-core/pull/2337), [762702b](https://github.com/MYTech-Co-LTD/platform-core/commit/762702be30d7d22d319ea187f4a0773bd831a52c))
+
+
 ## [0.303.1](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.303.0...v0.303.1) - 2026-11-15
 - 【修复】data: 数据生产线聚焦读数条补上来源与分隔 (#2334) ([#2335](https://github.com/MYTech-Co-LTD/platform-core/pull/2335), [40aaa2a](https://github.com/MYTech-Co-LTD/platform-core/commit/40aaa2a1e8bbd2828f1c2e9d8695fdd7069ed07a))
 
