@@ -8,6 +8,7 @@
 //   悬停 → 只亮邻域（ECharts focus:'adjacency'）；图例 → 按类型显隐。
 // 数据来自 GET /system-map/graph（与 HTML 页共用服务端模型与缓存，见 routes/system-map.ts）。
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { useSearchParams } from 'react-router-dom'
 import { Alert, Button, Card, Drawer, Empty, Input, Space, Tag, Typography } from 'antd'
 import * as echarts from 'echarts/core'
 import { GraphChart } from 'echarts/charts'
@@ -80,8 +81,36 @@ export default function SystemMapPage() {
   const [selected, setSelected] = useState<OntologyNode | null>(null)
   const [trail, setTrail] = useState<MetricTrail | null>(null)
   const [trailError, setTrailError] = useState<string | null>(null)
+  // 深链：?focus=<节点 id>（如 metric:lemeng:retail:net_sales）。选中节点也写回 URL，
+  // 这样「改这个口径会砸到谁」的现场可以直接复制链接发给别人。
+  const [searchParams, setSearchParams] = useSearchParams()
+  const focusId = searchParams.get('focus')
+  // 深链消费完之前不许写回 URL——否则首帧 selected=null 会把 ?focus= 清掉，深链自己失效。
+  const [focusHydrated, setFocusHydrated] = useState(false)
   const boxRef = useRef<HTMLDivElement>(null)
   const chartRef = useRef<echarts.ECharts | null>(null)
+
+  // 深链进入：数据到达后按 ?focus= 打开对应节点（节点不在图里就静默留在全图）
+  useEffect(() => {
+    if (data === null) return
+    if (focusId !== null) {
+      const node = data.ontology.nodes.find((n) => n.id === focusId)
+      if (node !== undefined) setSelected(node)
+    }
+    setFocusHydrated(true)
+  }, [data, focusId])
+
+  // 选中变化写回 URL（replace：不制造历史栈，返回键仍是「离开本页」）
+  useEffect(() => {
+    if (!focusHydrated) return
+    const current = searchParams.get('focus')
+    const next = selected?.id ?? null
+    if (current === next) return
+    const params = new URLSearchParams(searchParams)
+    if (next === null) params.delete('focus')
+    else params.set('focus', next)
+    setSearchParams(params, { replace: true })
+  }, [selected, searchParams, setSearchParams, focusHydrated])
 
   // 指标节点：打开抽屉时现查链路（结构 + 运行态；运行态不进图缓存的 10 分钟）
   useEffect(() => {

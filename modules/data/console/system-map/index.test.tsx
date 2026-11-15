@@ -10,8 +10,13 @@ vi.mock('echarts/charts', () => ({ GraphChart: {} }))
 vi.mock('echarts/components', () => ({ LegendComponent: {}, TooltipComponent: {} }))
 vi.mock('echarts/renderers', () => ({ CanvasRenderer: {} }))
 
+import { MemoryRouter } from 'react-router-dom'
 import { platformFetch } from '@platform/sdk/web'
 import SystemMapPage from './index'
+
+/** 页面读/写 `?focus=`（深链用）⇒ 必须包在 Router 里。`entry` 可带查询串。 */
+const renderPage = (entry = '/console/data/system-map') =>
+  render(<MemoryRouter initialEntries={[entry]}><SystemMapPage /></MemoryRouter>)
 
 const m = vi.mocked(platformFetch)
 const chart = { setOption: vi.fn(), on: vi.fn(), off: vi.fn(), resize: vi.fn() }
@@ -74,7 +79,7 @@ describe('体系地图·本体图', () => {
       expect(url).toContain('/system-map/graph')
       return json(GRAPH)
     })
-    render(<SystemMapPage />)
+    renderPage()
     await waitFor(() => expect(screen.getByText('57')).toBeInTheDocument())
     // 实体绑定率与对账覆盖率恰好都是 98.2% ⇒ 复数断言
     expect(screen.getAllByText('98.2%')).toHaveLength(2)
@@ -86,7 +91,7 @@ describe('体系地图·本体图', () => {
 
   it('搜索：只保留命中节点 + 一跳邻居', async () => {
     m.mockImplementation(async () => json(GRAPH))
-    render(<SystemMapPage />)
+    renderPage()
     await waitFor(() => expect(screen.getByText('57')).toBeInTheDocument())
 
     fireEvent.change(screen.getByPlaceholderText('搜指标、业务对象或源表'), { target: { value: '净销售额' } })
@@ -102,7 +107,7 @@ describe('体系地图·本体图', () => {
 
   it('点节点 ⇒ 右侧抽屉给出 observations 与链路；关掉后不残留', async () => {
     m.mockImplementation(async (url: string) => url.includes('/trail') ? json({ trail: TRAIL }) : json(GRAPH))
-    render(<SystemMapPage />)
+    renderPage()
     await waitFor(() => expect(screen.getByText('57')).toBeInTheDocument())
 
     // 从图表点击回调里拿到注册的 handler，直接喂一个指标节点
@@ -131,9 +136,27 @@ describe('体系地图·本体图', () => {
     await waitFor(() => expect(screen.queryByText('口径：按门店日结净额汇总')).toBeNull())
   })
 
+  it('深链 ?focus=metric:… ⇒ 数据到达后自动打开该指标抽屉', async () => {
+    m.mockImplementation(async (url: string) => (url.includes('/trail') ? json({ trail: TRAIL }) : json(GRAPH)))
+    renderPage('/console/data/system-map?focus=metric:lemeng:retail:net_sales')
+    await waitFor(() => expect(screen.getByText('口径：按门店日结净额汇总')).toBeInTheDocument())
+  })
+
+  it('点节点 ⇒ 打开抽屉；关闭后抽屉不残留（URL 写回由 Router 承载）', async () => {
+    m.mockImplementation(async (url: string) => (url.includes('/trail') ? json({ trail: TRAIL }) : json(GRAPH)))
+    renderPage()
+    await waitFor(() => expect(screen.getByText('57')).toBeInTheDocument())
+    const clickCalls = chart.on.mock.calls.filter((c) => c[0] === 'click')
+    const handler = clickCalls[clickCalls.length - 1]?.[1] as (p: unknown) => void
+    handler({ dataType: 'node', data: { id: 'metric:lemeng:retail:net_sales' } })
+    await waitFor(() => expect(screen.getByText('口径：按门店日结净额汇总')).toBeInTheDocument())
+    fireEvent.click(screen.getByRole('button', { name: /close/i }))
+    await waitFor(() => expect(screen.queryByText('口径：按门店日结净额汇总')).toBeNull())
+  })
+
   it('接口失败 ⇒ 人话 + 重试，不静默空图', async () => {
     m.mockImplementation(async () => new Response(JSON.stringify({ error: 'FORBIDDEN' }), { status: 403 }))
-    render(<SystemMapPage />)
+    renderPage()
     await waitFor(() => expect(screen.getByText('你没有这个操作的权限，需要找管理员开通')).toBeInTheDocument())
     expect(screen.getByRole('button', { name: /重/ })).toBeInTheDocument()
   })
