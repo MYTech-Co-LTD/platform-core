@@ -25,6 +25,10 @@ export async function seedBuiltin(
   orgs: string[],
 ): Promise<SeedStats> {
   // B1：模块不读 platform schema；租户清单由 scripts/notify-seed-builtin.mjs 查好注入
+  //
+  // ⚠️ 派生规则 upsert 的冲突分支**不改 enabled**（#2285）：启停是操作者的显式决定，
+  // 与模板 fork（N0.5）同一原则——seed 只维护契约内容（template_key/channels），
+  // 不覆盖人工状态；否则每次部署都会把「停用未使用模块」重新打开。
   const targets = orgs
 
   let templates = 0
@@ -99,7 +103,7 @@ export async function seedBuiltin(
       `insert into notify.rule
          (org,id,enabled,event_key,scope,recipient_key,template_key,channels,origin,created_by)
        values ($1,$2,true,$3,'*','approvers',$4,$5::text[],'derived','system')
-       on conflict (org,id) do update set enabled=true, template_key=excluded.template_key,
+       on conflict (org,id) do update set template_key=excluded.template_key,
          channels=excluded.channels`,
       [org, `derived:aftersales:${EVENT}:*`, EVENT, TEMPLATE, CHANNELS],
     )
@@ -112,7 +116,7 @@ export async function seedBuiltin(
       `insert into notify.rule
          (org,id,enabled,event_key,scope,recipient_key,template_key,channels,origin,created_by)
        values ($1,$2,true,$3,'*','admins',$4,'{inapp_default}'::text[],'derived','system')
-       on conflict (org,id) do update set enabled=true, template_key=excluded.template_key,
+       on conflict (org,id) do update set template_key=excluded.template_key,
          channels=excluded.channels`,
       [org, 'derived:notify:notify.integration.stale:*', 'notify.integration.stale', 'notify_integration_stale'],
     )
@@ -123,7 +127,7 @@ export async function seedBuiltin(
       `insert into notify.rule
          (org,id,enabled,event_key,scope,recipient_key,template_key,channels,origin,created_by)
        values ($1,'derived:notify:notify.approval.pending:*',true,'notify.approval.pending','*','admins','notify_approval_pending','{inapp_default}'::text[],'derived','system')
-       on conflict (org,id) do update set enabled=true, template_key=excluded.template_key,
+       on conflict (org,id) do update set template_key=excluded.template_key,
          channels=excluded.channels`,
       [org],
     )
@@ -137,7 +141,7 @@ export async function seedBuiltin(
       `insert into notify.rule
          (org,id,enabled,event_key,scope,recipient_key,template_key,channels,origin,created_by)
        values ($1,$2,true,$3,'*','viewers',$4,'{inapp_default}'::text[],'derived','system')
-       on conflict (org,id) do update set enabled=true, template_key=excluded.template_key,
+       on conflict (org,id) do update set template_key=excluded.template_key,
          channels=excluded.channels`,
       [org, 'derived:data:data.metric.definition.changed:*', 'data.metric.definition.changed', 'data_metric_definition_changed'],
     )
@@ -154,7 +158,7 @@ export async function seedBuiltin(
         `insert into notify.rule
            (org,id,enabled,event_key,scope,recipient_key,template_key,channels,origin,created_by)
          values ($1,$2,true,$3,'*','admins',$4,'{inapp_default}'::text[],'derived','system')
-         on conflict (org,id) do update set enabled=true, template_key=excluded.template_key,
+         on conflict (org,id) do update set template_key=excluded.template_key,
            channels=excluded.channels`,
         [org, `derived:jobs:${event}:*`, event, template],
       )
@@ -172,7 +176,7 @@ export async function seedBuiltin(
         `insert into notify.rule
            (org,id,enabled,event_key,scope,recipient_key,template_key,channels,origin,created_by)
          values ($1,$2,true,$3,'*','watchers',$4,'{inapp_default}'::text[],'derived','system')
-         on conflict (org,id) do update set enabled=true, template_key=excluded.template_key,
+         on conflict (org,id) do update set template_key=excluded.template_key,
            channels=excluded.channels`,
         [org, `derived:data:${event}:*`, event, template],
       )
@@ -191,7 +195,7 @@ export async function seedBuiltin(
         `insert into notify.rule
            (org,id,enabled,event_key,scope,recipient_key,template_key,channels,origin,created_by)
          values ($1,$2,true,$3,'*','assignee',$4,$5::text[],'derived','system')
-         on conflict (org,id) do update set enabled=true, template_key=excluded.template_key,
+         on conflict (org,id) do update set template_key=excluded.template_key,
            channels=excluded.channels`,
         [org, `derived:forms:${event}:*`, event, template, CHANNELS],
       )

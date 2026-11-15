@@ -58,6 +58,18 @@ describePg('seedBuiltin', () => {
     expect(await counts()).toEqual(first)
   })
 
+  it('被人工停用的派生规则不被 seed 重新启用（#2285）', async () => {
+    const id = 'derived:notify:notify.integration.stale:*'
+    await seedBuiltin(pool, {}, [ORG])
+    await pool.query('update notify.rule set enabled=false where org=$1 and id=$2', [ORG, id])
+
+    await seedBuiltin(pool, {}, [ORG])
+
+    const r = await pool.query(
+      'select enabled from notify.rule where org=$1 and id=$2', [ORG, id])
+    expect(r.rows[0].enabled).toBe(false)
+  })
+
   it('租户已 fork（origin=tenant）的模板不被 seed 覆盖', async () => {
     const key = 'aftersales_employee_approval_pending'
     await seedBuiltin(pool, {}, [ORG])
