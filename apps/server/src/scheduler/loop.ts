@@ -130,7 +130,7 @@ export function createSchedulerLoop(deps: SchedulerDeps) {
       try {
         const res = await spawn({
           command: 'pnpm', args: ['exec', 'tsx', def.script, ...(def.args ?? [])],
-          env: envFor(job), stdin: paramsStdin(job), timeoutMs: job.timeoutMs, cwd,
+          env: { ...envFor(job), ...(def.env ?? {}) }, stdin: paramsStdin(job), timeoutMs: job.timeoutMs, cwd,
         })
         outcome = classify(res)
       } catch (e) {

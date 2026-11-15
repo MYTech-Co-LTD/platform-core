@@ -120,6 +120,20 @@ describePg('scheduler loop', () => {
     expect(loop.inFlight()).toBe(1)
   })
 
+  it('★ JobDef.env 注入子进程（Wave 8 P1）：系统 job 的 env 是 registry 真相', async () => {
+    const id = await seed({ key: 'jobtest-loop:env' })
+    let seen: NodeJS.ProcessEnv | undefined
+    const loop = createSchedulerLoop({
+      pool, cwd: process.cwd(), maxConcurrency: 2,
+      registry: [def({ key: 'jobtest-loop:env', env: { MATERIALIZE_SCOPE: 'tick' } })],
+      spawn: async (o) => { seen = o.env; return okResult() },
+    })
+    await loop.tick()
+    await waitTerminal(id)
+    expect(seen?.MATERIALIZE_SCOPE).toBe('tick')
+    expect(seen?.JOB_KEY).toBe('jobtest-loop:env')
+  })
+
   it('★ 未知 registry key：已 claim 的 running 行收成 failed，不重试', async () => {
     const id = await seed({ key: 'jobtest-loop:gone' })
     const loop = createSchedulerLoop({
