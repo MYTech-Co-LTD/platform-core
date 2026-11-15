@@ -41,6 +41,8 @@ export type DeliveryRow = {
   status: string
   attempts: number
   lockedUntil: string | null
+  /** 非空 = 该 agent namespace 所有；null = 平台/租户人管（N5 指标归属） */
+  ownerNamespace: string | null
 }
 
 export type PendingEvent = {
@@ -67,12 +69,22 @@ export async function enqueueEvent(
 }
 
 export async function claimEvents(pool: Pool, limit = 50): Promise<PendingEvent[]> {
+  // N5：按 org 交错领取（同一 org 的第 1 条、第 2 条… 依次插入队列），
+  // 避免单租户历史积压把其它租户的积压饿死。`for update` 必须落在基表上，
+  // 不能直接锁窗口函数结果（PG 报 "FOR UPDATE is not allowed with window functions"）。
   const { rows } = await pool.query(
-    `with picked as (
-       select org,event_id from notify.event
+    `with ranked as (
+       select org,event_id,
+              row_number() over (partition by org order by created_at, event_id) as rn
+         from notify.event
         where status='new' and available_at <= now()
           and (locked_until is null or locked_until < now())
-        order by created_at limit $1 for update skip locked
+     ), picked as (
+       select e.org,e.event_id from notify.event e
+         join ranked r on r.org=e.org and r.event_id=e.event_id
+        order by r.rn, e.org
+        limit $1
+        for update of e skip locked
      )
      update notify.event e set locked_until = now() + interval '60 seconds'
        from picked p where e.org=p.org and e.event_id=p.event_id
@@ -544,33 +556,46 @@ export type InsertDeliveryInput = {
   status: 'pending' | 'suppressed' | 'dead'
   isTest?: boolean
   lastError?: string
+  /** 非空 = 该 agent namespace 所有；null/缺省 = 平台/租户人管 */
+  ownerNamespace?: string | null
 }
 
 export async function insertDelivery(pool: Pool, d: InsertDeliveryInput): Promise<void> {
   await pool.query(
     `insert into notify.delivery
-       (org,event_id,event_key,rule_id,recipient,channel,address,template_key,revision,rendered,status,is_test,last_error)
-     values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10::jsonb,$11,$12,$13)
+       (org,event_id,event_key,rule_id,recipient,channel,address,template_key,revision,rendered,status,is_test,last_error,owner_namespace)
+     values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10::jsonb,$11,$12,$13,$14)
      on conflict (org,event_id,rule_id,recipient,channel) do nothing`,
     [d.org, d.eventId, d.eventKey, d.ruleId, d.recipient, d.channel, d.address, d.templateKey,
-     d.revision, JSON.stringify(d.rendered), d.status, d.isTest ?? false, d.lastError ?? null],
+     d.revision, JSON.stringify(d.rendered), d.status, d.isTest ?? false, d.lastError ?? null,
+     d.ownerNamespace ?? null],
   )
 }
 
 export async function claimDueDeliveries(pool: Pool, limit = 50): Promise<DeliveryRow[]> {
+  // N5：与 claimEvents 同口径——按 org 交错，避免单租户积压占满一批。
   const { rows } = await pool.query(
-    `with picked as (
-       select org,event_id,rule_id,recipient,channel from notify.delivery
+    `with ranked as (
+       select org,event_id,rule_id,recipient,channel,
+              row_number() over (partition by org order by next_attempt_at) as rn
+         from notify.delivery
         where status in ('pending','failed') and next_attempt_at <= now()
           and (locked_until is null or locked_until < now())
-        order by next_attempt_at limit $1 for update skip locked
+     ), picked as (
+       select d.org,d.event_id,d.rule_id,d.recipient,d.channel from notify.delivery d
+         join ranked r on r.org=d.org and r.event_id=d.event_id and r.rule_id=d.rule_id
+                      and r.recipient=d.recipient and r.channel=d.channel
+        order by r.rn, d.org
+        limit $1
+        for update of d skip locked
      )
      update notify.delivery d set locked_until = now() + interval '60 seconds', updated_at = now()
        from picked p
       where d.org=p.org and d.event_id=p.event_id and d.rule_id=p.rule_id
         and d.recipient=p.recipient and d.channel=p.channel
      returning d.org, d.event_id, d.event_key, d.rule_id, d.recipient, d.channel, d.address,
-               d.template_key, d.revision, d.rendered, d.status, d.attempts, d.locked_until`,
+               d.template_key, d.revision, d.rendered, d.status, d.attempts, d.locked_until,
+               d.owner_namespace`,
     [limit],
   )
   return rows.map((r) => ({
@@ -587,6 +612,7 @@ export async function claimDueDeliveries(pool: Pool, limit = 50): Promise<Delive
     status: r.status,
     attempts: r.attempts,
     lockedUntil: r.locked_until ? (r.locked_until as Date).toISOString() : null,
+    ownerNamespace: (r.owner_namespace as string | null) ?? null,
   }))
 }
 
@@ -680,12 +706,19 @@ export async function isCoolingDown(
 
 // ── 回执列表（console） ───────────────────────────────────────────────────────
 
-export async function listDeliveries(pool: Pool, org: string, limit = 100) {
+export async function listDeliveries(
+  pool: Pool,
+  org: string,
+  limit = 100,
+  opts: { namespace?: string } = {},
+) {
   const { rows } = await pool.query(
     `select event_id,event_key,rule_id,recipient,channel,address,template_key,revision,
-            status,attempts,is_test,last_error,created_at
-       from notify.delivery where org=$1 order by created_at desc limit $2`,
-    [org, limit],
+            status,attempts,is_test,last_error,created_at,owner_namespace
+       from notify.delivery
+      where org=$1 and ($3::text is null or owner_namespace=$3)
+      order by created_at desc limit $2`,
+    [org, limit, opts.namespace ?? null],
   )
   return rows.map((r) => ({
     eventId: r.event_id,
@@ -701,7 +734,75 @@ export async function listDeliveries(pool: Pool, org: string, limit = 100) {
     isTest: r.is_test,
     lastError: r.last_error,
     createdAt: (r.created_at as Date).toISOString(),
+    ownerNamespace: (r.owner_namespace as string | null) ?? null,
   }))
+}
+
+export type NamespaceStat = {
+  /** null = 平台/租户人管（非 agent namespace） */
+  namespace: string | null
+  events: number
+  deliveries: number
+  sent: number
+  failed: number
+  dead: number
+  /** pending 超过 10 分钟（与 health 的 stale 同口径） */
+  stalePending: number
+}
+
+/**
+ * per-namespace 运营指标（N5）。
+ *
+ * 事件侧 namespace 从 `ext.<ns>.<event>` 推导（平台事件归 null 桶）；投递侧读
+ * `delivery.owner_namespace`（入队时从规则冻结）。两侧都按 `created_at` 窗口过滤。
+ */
+export async function namespaceStats(
+  pool: Pool,
+  org: string,
+  opts: { namespace?: string; sinceHours?: number } = {},
+): Promise<NamespaceStat[]> {
+  const sinceHours = Math.min(Math.max(Math.trunc(opts.sinceHours ?? 24), 1), 24 * 30)
+  const { rows } = await pool.query(
+    `with ev as (
+       select coalesce(case when event_key like 'ext.%' then split_part(event_key,'.',2) end,'') as namespace,
+              count(*)::int as events
+         from notify.event
+        where org=$1 and created_at >= now() - ($3 || ' hours')::interval
+          and ($2::text is null
+               or (case when event_key like 'ext.%' then split_part(event_key,'.',2) end)=$2)
+        group by 1
+     ), dv as (
+       select coalesce(owner_namespace,'') as namespace,
+              count(*)::int as deliveries,
+              count(*) filter (where status='sent')::int as sent,
+              count(*) filter (where status='failed')::int as failed,
+              count(*) filter (where status='dead')::int as dead,
+              count(*) filter (where status='pending' and created_at < now()-interval '10 minutes')::int
+                as stale_pending
+         from notify.delivery
+        where org=$1 and created_at >= now() - ($3 || ' hours')::interval
+          and ($2::text is null or owner_namespace=$2)
+        group by 1
+     ),
+     ns_keys as (
+       select namespace from ev
+       union
+       select namespace from dv
+     )
+     select nullif(namespace,'') as namespace,
+            coalesce(ev.events,0)::int as events,
+            coalesce(dv.deliveries,0)::int as deliveries,
+            coalesce(dv.sent,0)::int as sent,
+            coalesce(dv.failed,0)::int as failed,
+            coalesce(dv.dead,0)::int as dead,
+            coalesce(dv.stale_pending,0)::int as "stalePending"
+       from ns_keys
+       left join ev using (namespace)
+       left join dv using (namespace)
+      order by 1 nulls last`,
+    [org, opts.namespace ?? null, String(sinceHours)],
+  )
+  return rows as NamespaceStat[]
 }
 
 /** 每通道限流：窗口内已 sent 的条数 */

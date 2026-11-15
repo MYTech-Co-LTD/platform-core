@@ -1,22 +1,28 @@
 // deliveries.tsx — 投递回执（审计面）+ 单条重试
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import { Button, Input, Select, Space, Table, Tag, Typography, message } from 'antd'
-import { get, post, type DeliveryView } from './api'
+import { get, post, type DeliveryView, type NamespaceStatView } from './api'
 
 const STATUSES = ['pending', 'sent', 'failed', 'dead', 'suppressed']
 
 export default function DeliveriesTab() {
   const [rows, setRows] = useState<DeliveryView[]>([])
+  const [stats, setStats] = useState<NamespaceStatView[]>([])
   const [loading, setLoading] = useState(false)
   const [status, setStatus] = useState<string | undefined>()
   const [channel, setChannel] = useState<string | undefined>()
+  const [namespace, setNamespace] = useState<string | undefined>()
   const [recipient, setRecipient] = useState('')
 
   const load = useCallback(async () => {
     setLoading(true)
     try {
-      const r = await get<{ deliveries: DeliveryView[] }>('/deliveries')
+      const [r, s] = await Promise.all([
+        get<{ deliveries: DeliveryView[] }>('/deliveries'),
+        get<{ stats: NamespaceStatView[] }>('/stats?sinceHours=24'),
+      ])
       setRows(r.deliveries)
+      setStats(s.stats)
     } catch (e) {
       message.error(`加载投递失败：${String(e)}`)
     } finally {
@@ -29,9 +35,14 @@ export default function DeliveriesTab() {
   const filtered = useMemo(() => rows.filter((r) =>
     (!status || r.status === status)
     && (!channel || r.channel === channel)
-    && (!recipient || r.recipient.includes(recipient))), [rows, status, channel, recipient])
+    && (!namespace || (r.ownerNamespace ?? '') === namespace)
+    && (!recipient || r.recipient.includes(recipient))), [rows, status, channel, namespace, recipient])
 
   const channelOptions = [...new Set(rows.map((r) => r.channel))]
+  const namespaceOptions = [...new Set([
+    ...rows.map((r) => r.ownerNamespace ?? ''),
+    ...stats.map((s) => s.namespace ?? ''),
+  ])].sort()
 
   const onRetry = async (r: DeliveryView) => {
     try {
@@ -70,6 +81,15 @@ export default function DeliveriesTab() {
           onChange={setChannel}
           options={channelOptions.map((c) => ({ value: c, label: c }))}
         />
+        <Select
+          aria-label="namespace"
+          allowClear
+          placeholder="namespace"
+          style={{ width: 180 }}
+          value={namespace}
+          onChange={setNamespace}
+          options={namespaceOptions.map((n) => ({ value: n, label: n || '平台/租户' }))}
+        />
         <Input
           aria-label="收件人"
           placeholder="收件人包含…"
@@ -80,6 +100,26 @@ export default function DeliveriesTab() {
         <Button onClick={() => void load()}>刷新</Button>
       </Space>
 
+      {stats.length > 0 && (
+        <Table<NamespaceStatView>
+          rowKey={(r) => r.namespace ?? '__platform'}
+          dataSource={stats}
+          size="small"
+          pagination={false}
+          style={{ marginBottom: 16 }}
+          title={() => '近 24h 按 namespace'}
+          columns={[
+            { title: 'namespace', render: (_, r) => r.namespace ?? <Tag>平台/租户</Tag> },
+            { title: '事件', dataIndex: 'events', width: 80 },
+            { title: '投递', dataIndex: 'deliveries', width: 80 },
+            { title: 'sent', dataIndex: 'sent', width: 80 },
+            { title: 'failed', dataIndex: 'failed', width: 80 },
+            { title: 'dead', dataIndex: 'dead', width: 80 },
+            { title: '积压>10m', dataIndex: 'stalePending', width: 100 },
+          ]}
+        />
+      )}
+
       <Table<DeliveryView>
         rowKey={(r) => `${r.eventId}|${r.ruleId}|${r.recipient}|${r.channel}`}
         loading={loading}
@@ -89,6 +129,10 @@ export default function DeliveriesTab() {
         columns={[
           { title: '时间', dataIndex: 'createdAt', width: 190 },
           { title: '事件', dataIndex: 'eventKey' },
+          {
+            title: 'namespace',
+            render: (_, r) => r.ownerNamespace ?? <Tag>平台/租户</Tag>,
+          },
           { title: '收件人', dataIndex: 'recipient' },
           { title: '通道', dataIndex: 'channel' },
           {
