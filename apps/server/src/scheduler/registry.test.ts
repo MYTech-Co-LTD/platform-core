@@ -106,6 +106,17 @@ describe('JOB_REGISTRY', () => {
   })
 })
 
+describe('registry · 业务监控 tick（W7-V1）', () => {
+  it('★ data.monitor_tick 每分钟一条、脚本在位、不传参数', () => {
+    const def = JOB_REGISTRY.find((d) => d.key === 'data.monitor_tick')!
+    expect(def).toBeDefined()
+    expect(def.cron).toBe('* * * * *')
+    expect(def.expectedIntervalSecs).toBe(60)
+    expect(def.args ?? []).toEqual([])
+    expect(existsSync(repoPath(def.script))).toBe(true)
+  })
+})
+
 describe('registry · 子进程参数（W6-P4b）', () => {
   it('★ org.sync 必须带 --apply（脚本默认 dry-run，不带参数=空跑不写库）', () => {
     const def = JOB_REGISTRY.find((d) => d.key === 'org.sync')!
