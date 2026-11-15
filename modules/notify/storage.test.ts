@@ -7,8 +7,9 @@ import {
   audit, channelConfigured, claimDueDeliveries, claimEvents, countChannelSends,
   createAgentNamespace, createTemplateRevision, deferDelivery, deleteRule,
   ensureAgentMessageDefaults, enqueueEvent, getAgentNamespace, getEventDecl,
-  getPublishedTemplate, getTemplate, insertDelivery, isCoolingDown, listAgentNamespaces,
-  listChannels, listDeliveries, listEventDecls, listRules, markDeliverySent, namespaceStats,
+  getPublishedTemplate, getRuleAuditSnapshot, getTemplate, insertDelivery, isCoolingDown,
+  listAgentNamespaces, listChannels, listDeliveries, listEventDecls, listRuleHistory, listRules,
+  markDeliverySent, namespaceStats,
   patchChannel, publishTemplateRevision, purgeOldNotifications, setChannelHealth,
   setRuleEnabled, upsertEventDecl, upsertRule,
 } from './storage'
@@ -507,5 +508,61 @@ describePg('notify N5 运营收口', () => {
       .map((d) => `${d.org}:${d.eventId}`)
       .sort()
     expect(rows).toEqual([`${ORG_A}:due-0`, `${ORG_B}:due-0`].sort())
+  })
+})
+
+describePg('notify 规则历史（N5 后续）', () => {
+  const ORG_H = 'org-rule-history'
+  let pool: Pool
+  beforeAll(async () => {
+    pool = new Pool({ connectionString: url })
+    await applyMigrations(pool)
+  })
+  afterAll(async () => {
+    await pool.query('delete from notify.audit where org=$1', [ORG_H])
+    await pool.end()
+  })
+  beforeEach(async () => {
+    await pool.query('delete from notify.audit where org=$1', [ORG_H])
+  })
+
+  const snap = {
+    id: 'rule:h1', enabled: true, eventKey: 'm.a.b', scope: '*',
+    recipientKey: 'approver', recipientLiteral: null, recipientDepts: null,
+    templateKey: 't1', channels: ['inapp_default'], cooldownMinutes: null,
+    origin: 'manual' as const, ownerNamespace: null,
+  }
+
+  it('有 snapshot 的条目 complete=true；旧条目 complete=false', async () => {
+    await audit(pool, ORG_H, 'u1', 'rule.upsert', 'rule:h1', { snapshot: snap })
+    await audit(pool, ORG_H, 'u1', 'rule.enabled', 'rule:h1', { enabled: false })
+    const h = await listRuleHistory(pool, ORG_H, 'rule:h1', 10)
+    expect(h).toHaveLength(2)
+    const withSnap = h.find((x) => x.action === 'rule.upsert')!
+    expect(withSnap).toMatchObject({ complete: true, actor: 'u1', snapshot: snap })
+    const legacy = h.find((x) => x.action === 'rule.enabled')!
+    expect(legacy).toMatchObject({ complete: false, snapshot: null })
+  })
+
+  it('getRuleAuditSnapshot 只回本 org + 本 rule；旧条目返回 complete=false', async () => {
+    await audit(pool, ORG_H, 'u1', 'rule.upsert', 'rule:h1', { snapshot: snap })
+    const id = Number((await pool.query(
+      "select id from notify.audit where org=$1 order by id desc limit 1", [ORG_H])).rows[0].id)
+    expect(await getRuleAuditSnapshot(pool, ORG_H, 'rule:h1', id)).toMatchObject({
+      complete: true, snapshot: snap,
+    })
+    expect(await getRuleAuditSnapshot(pool, 'org-other', 'rule:h1', id)).toBeNull()
+    expect(await getRuleAuditSnapshot(pool, ORG_H, 'rule:other', id)).toBeNull()
+    await audit(pool, ORG_H, 'u1', 'rule.enabled', 'rule:h1', { enabled: false })
+    const legacyId = Number((await pool.query(
+      "select id from notify.audit where org=$1 order by id desc limit 1", [ORG_H])).rows[0].id)
+    expect(await getRuleAuditSnapshot(pool, ORG_H, 'rule:h1', legacyId)).toMatchObject({
+      complete: false, snapshot: null,
+    })
+  })
+
+  it('limit NaN 回退默认 50（clamp 不吞成 0）', async () => {
+    await audit(pool, ORG_H, 'u1', 'rule.upsert', 'rule:h1', { snapshot: snap })
+    await expect(listRuleHistory(pool, ORG_H, 'rule:h1', NaN)).resolves.toHaveLength(1)
   })
 })

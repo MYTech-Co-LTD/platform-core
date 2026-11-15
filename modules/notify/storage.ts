@@ -8,24 +8,9 @@ import {
   AGENT_MESSAGE_CONTENTS, agentMessageDecl, agentMessageKey,
   agentMessageRuleId, agentMessageTemplateKey,
 } from './domain/agent-message'
-import type { NotificationRule } from './domain/rules'
+import type { NotificationRule, RuleSnapshot } from './domain/rules'
 
-export type RuleInput = {
-  id: string
-  enabled: boolean
-  eventKey: string
-  scope: string
-  recipientKey: string
-  recipientLiteral: string[] | null
-  /** kind=dept 才用：所选部门 ext_id（发送时展开含子树；迁移 006） */
-  recipientDepts: string[] | null
-  templateKey: string
-  channels: string[]
-  cooldownMinutes: number | null
-  origin: 'derived' | 'manual'
-  /** 非空 = 该 agent namespace 所有；null/缺省 = 平台/租户人管。 */
-  ownerNamespace?: string | null
-}
+export type RuleInput = RuleSnapshot
 
 export type DeliveryRow = {
   org: string
@@ -1250,4 +1235,68 @@ export async function upsertEventDecl(
   } finally {
     client.release()
   }
+}
+
+export type RuleHistoryEntry = {
+  auditId: number
+  at: string
+  actor: string
+  action: string
+  complete: boolean
+  snapshot: RuleSnapshot | null
+}
+
+export const RULE_WRITE_ACTIONS = [
+  'rule.upsert', 'rule.enabled', 'rule.restore',
+  'mcp.propose_rule', 'mcp.update_rule', 'mcp.set_rule_enabled',
+  'agent.rule.upsert',
+] as const
+
+function isRuleSnapshot(v: unknown): v is RuleSnapshot {
+  if (typeof v !== 'object' || v === null) return false
+  const x = v as Record<string, unknown>
+  return typeof x.id === 'string' && typeof x.eventKey === 'string'
+    && Array.isArray(x.channels) && typeof x.enabled === 'boolean'
+    && typeof x.templateKey === 'string' && typeof x.recipientKey === 'string'
+    && (x.origin === 'manual' || x.origin === 'derived')
+}
+
+function toHistoryEntry(r: {
+  id: string | number; actor: string; action: string
+  detail: Record<string, unknown> | null; created_at: Date
+}): RuleHistoryEntry {
+  const snap = r.detail?.snapshot
+  const ok = isRuleSnapshot(snap)
+  return {
+    auditId: Number(r.id),
+    at: r.created_at.toISOString(),
+    actor: r.actor,
+    action: r.action,
+    complete: ok,
+    snapshot: ok ? snap : null,
+  }
+}
+
+export async function listRuleHistory(
+  pool: Pool, org: string, ruleId: string, limit = 50,
+): Promise<RuleHistoryEntry[]> {
+  const raw = Math.trunc(limit)
+  const n = Math.min(Math.max(Number.isFinite(raw) ? raw : 50, 1), 100)
+  const { rows } = await pool.query(
+    `select id,actor,action,detail,created_at from notify.audit
+      where org=$1 and target=$2 and action = any($3::text[])
+      order by created_at desc, id desc limit $4`,
+    [org, ruleId, [...RULE_WRITE_ACTIONS], n])
+  return rows.map(toHistoryEntry)
+}
+
+export async function getRuleAuditSnapshot(
+  pool: Pool, org: string, ruleId: string, auditId: number,
+): Promise<RuleHistoryEntry | null> {
+  const { rows } = await pool.query(
+    `select id,actor,action,detail,created_at from notify.audit
+      where org=$1 and target=$2 and id=$3
+        and action = any($4::text[]) limit 1`,
+    [org, ruleId, auditId, [...RULE_WRITE_ACTIONS]])
+  return rows[0] ? toHistoryEntry(rows[0]) : null
 }

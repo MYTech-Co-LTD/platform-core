@@ -105,3 +105,41 @@ export function validateRule(
 
   return null
 }
+
+/** 规则的可回滚快照（= storage.RuleInput 的字段集；放 domain 避免 storage ↔ domain 环）。 */
+export type RuleSnapshot = {
+  id: string
+  enabled: boolean
+  eventKey: string
+  scope: string
+  recipientKey: string
+  recipientLiteral: string[] | null
+  recipientDepts: string[] | null
+  templateKey: string
+  channels: string[]
+  cooldownMinutes: number | null
+  origin: RuleOrigin
+  ownerNamespace?: string | null
+}
+
+/** 从当前规则行构造快照；`overrides` 用于写入后的 enabled 等目标状态。 */
+export function ruleSnapshot(
+  rule: NotificationRule,
+  overrides: Partial<RuleSnapshot> = {},
+): RuleSnapshot {
+  return {
+    id: rule.id,
+    enabled: rule.enabled,
+    eventKey: rule.eventKey,
+    scope: rule.scope,
+    recipientKey: rule.recipientKey,
+    recipientLiteral: rule.recipientLiteral,
+    recipientDepts: rule.recipientDepts,
+    templateKey: rule.templateKey,
+    channels: rule.channels,
+    cooldownMinutes: rule.cooldownMinutes,
+    origin: rule.origin,
+    ownerNamespace: rule.ownerNamespace ?? null,
+    ...overrides,
+  }
+}
