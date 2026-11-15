@@ -187,10 +187,11 @@ describe('体系地图·本体图', () => {
     await waitFor(() => expect(screen.getByText('57')).toBeInTheDocument())
     const clickCalls = chart.on.mock.calls.filter((c) => c[0] === 'click')
     const handler = clickCalls[clickCalls.length - 1]?.[1] as (p: unknown) => void
-    handler({ dataType: 'node', data: { id: 'metric:lemeng:retail:net_sales' } })
-    await waitFor(() => expect(screen.getByText('口径：按门店日结净额汇总')).toBeInTheDocument())
+    // 指标抽屉现在还挂字段画板（#2338）⇒ 首屏更重，1s 默认等待在 CI 上不够（#2346）
+    act(() => handler({ dataType: 'node', data: { id: 'metric:lemeng:retail:net_sales' } }))
+    await waitFor(() => expect(screen.getByText('口径：按门店日结净额汇总')).toBeInTheDocument(), { timeout: 5000 })
     fireEvent.click(screen.getByRole('button', { name: /close/i }))
-    await waitFor(() => expect(screen.queryByText('口径：按门店日结净额汇总')).toBeNull())
+    await waitFor(() => expect(screen.queryByText('口径：按门店日结净额汇总')).toBeNull(), { timeout: 5000 })
   })
 
   it('非指标节点不开字段链路（不白拉一次 lineage）', async () => {
