@@ -1038,3 +1038,54 @@ describe('R3 文本语义内嵌（L2）', () => {
     expect(screen.queryByText(/{{metric/)).not.toBeInTheDocument()
   })
 })
+
+describe('版式：个人版式（issue #2295）', () => {
+  const panels = [
+    { chart: 'table' as const, title: '甲', metricId: 'm1', dims: [], args: {}, span: 12 },
+    { chart: 'table' as const, title: '乙', metricId: 'm1', dims: [], args: {}, span: 12 },
+  ]
+  /** 渲染顺序（值 = 规格下标）——版式只改次序，服务端下标不变。 */
+  const renderOrder = (): number[] =>
+    Array.from(document.querySelectorAll('[data-panel-index]'))
+      .map((el) => Number(el.getAttribute('data-panel-index')))
+
+  it('★ 个人版式 ⇒ 换序 + 改宽；面板下标仍是规格下标', async () => {
+    stub({ panels }, {}, new Set(), {
+      '/my-layout': { items: [{ key: '1|table|乙', span: 24 }, { key: '1|table|甲', span: 8 }] },
+    })
+    renderView()
+    await screen.findByText('乙')
+
+    expect(renderOrder()).toEqual([1, 0])
+    const cols = document.querySelectorAll('[data-panel-index]')
+    expect(cols[0].className).toContain('ant-col-24')
+    expect(cols[1].className).toContain('ant-col-8')
+  })
+
+  it('★ 键集合对不上（所有者改过面板）⇒ 默认次序 + 失效提示', async () => {
+    stub({ panels }, {}, new Set(), {
+      '/my-layout': { items: [{ key: '1|table|旧甲', span: 12 }, { key: '1|table|旧乙', span: 12 }] },
+    })
+    renderView()
+    await screen.findByText(/个人版式已失效/)
+
+    expect(renderOrder()).toEqual([0, 1])
+  })
+
+  it('个人版式读取失败 ⇒ 静默回默认（增补面不拖垮观看）', async () => {
+    m.mockImplementation(async (url: string) => {
+      calls.push({ url })
+      if (/\/reports\/[^/]+\/spec$/.test(url)) return json({ spec: { panels }, version: 7 })
+      if (url.endsWith('/my-layout')) return json({ error: 'FORBIDDEN' }, 403)
+      if (url.endsWith('/query/batch')) {
+        return json({ results: [{ id: 'q0', status: 'ok', truncated: false, columns: ['value'], rows: [['1']] }, { id: 'q1', status: 'ok', truncated: false, columns: ['value'], rows: [['2']] }] })
+      }
+      return json({})
+    })
+    renderView()
+    await screen.findByText('甲')
+
+    expect(renderOrder()).toEqual([0, 1])
+    expect(screen.queryByText(/个人版式已失效/)).not.toBeInTheDocument()
+  })
+})

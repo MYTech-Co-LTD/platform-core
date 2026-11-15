@@ -226,6 +226,12 @@ api:
     - { method: GET,    path: /reports/:id/versions/:version,         scope: data:query }
     - { method: GET,    path: /reports/:id/published-spec,            scope: data:query }
     - { method: GET,    path: /reports/:id/draft,                     scope: data:query }
+    # ── 版式编辑（issue #2295）：默认版式写与 PUT /spec 同档（data:query + canEditAsset，
+    #    真实判据在 handler 的 denyUnlessCanEdit）；个人版式只读写本人一行，过观看门即可。──
+    - { method: PUT,    path: /reports/:id/layout,                    scope: data:query }
+    - { method: GET,    path: /reports/:id/my-layout,                 scope: data:query }
+    - { method: PUT,    path: /reports/:id/my-layout,                 scope: data:query }
+    - { method: DELETE, path: /reports/:id/my-layout,                 scope: data:query }
     # ── AI 文本（ai_text；设计 2026-10-26 §4，计划 Task 7）：观看面 = data:query。
     #    更细的页门在 handler 里按**快照自己的** required_scope 另判（同 published-spec），
     #    草稿预览（preview:'draft'）另要 canEditAsset（owner ∪ data:manage）；跨租户 / 无门一律 404。──

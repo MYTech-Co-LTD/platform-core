@@ -32,6 +32,9 @@ import SpecView from './SpecView'
 import { NarrativeQuality } from './NarrativeQuality'
 import { QueryQuality } from './QueryQuality'
 import { TemplateCreateModal } from './TemplateCreateModal'
+import { LayoutEditorModal, type LayoutEditorPanel } from './LayoutEditorModal'
+import { layoutItemsOf, layoutKeysOf, type LayoutItem } from '../../domain/report-layout'
+import type { ReportSpec } from '../../domain/report-spec'
 import { TechDetails } from '../components/TechDetails'
 import { Explain } from '../components/Explain'
 import { humanError, type HumanError } from '../lib/explain'
@@ -230,6 +233,57 @@ export default function ReportsPage() {
     row: ReportRow; data: ReviewPayload | null; loading: boolean; error: string | null
   } | null>(null)
   const [messageApi, ctx] = message.useMessage()
+  // 版式编辑（issue #2295）：默认版式写进报表草稿，走发布语义；个人版式在观看页调整。
+  const [layoutTarget, setLayoutTarget] = useState<{
+    row: ReportRow; version: number; panels: LayoutEditorPanel[]; items: LayoutItem[]
+  } | null>(null)
+  const [layoutSaving, setLayoutSaving] = useState(false)
+  const [layoutError, setLayoutError] = useState<string | null>(null)
+
+  /** 打开版式编辑：先读草稿规格（`GET /spec` 回归一化 v1 + 当前版本号）。 */
+  const openLayout = async (r: ReportRow): Promise<void> => {
+    try {
+      const b = await apiGet(`/reports/${r.id}/spec`) as { spec?: ReportSpec; version?: number }
+      if (b.spec === undefined || !Array.isArray(b.spec.panels) || typeof b.version !== 'number') {
+        messageApi.error('读取报表规格失败')
+        return
+      }
+      const panelList = b.spec.panels
+      const keys = layoutKeysOf(panelList)
+      setLayoutError(null)
+      setLayoutTarget({
+        row: r, version: b.version,
+        panels: panelList.map((p, i) => ({
+          key: keys[i], title: p.title ?? '（未命名）', chart: p.chart,
+          span: p.span, page: p.page ?? 1,
+        })),
+        items: layoutItemsOf(panelList),
+      })
+    } catch (e) {
+      messageApi.error(messageOf(e))
+    }
+  }
+
+  const saveLayout = async (items: LayoutItem[]): Promise<void> => {
+    if (layoutTarget === null) return
+    setLayoutSaving(true)
+    setLayoutError(null)
+    try {
+      await apiSend(`/reports/${layoutTarget.row.id}/layout`, 'PUT', {
+        items, expectedVersion: layoutTarget.version,
+      })
+      messageApi.success('版式已保存到草稿，发布后对观看者生效')
+      setLayoutTarget(null)
+      await load()
+    } catch (e) {
+      // 409 = 打开编辑器后报表被改过（面板集合/版本变了）；提示重开，不自动覆盖。
+      setLayoutError(e instanceof ApiError && e.status === 409
+        ? '报表已更新，请重新打开「编辑版式」'
+        : messageOf(e))
+    } finally {
+      setLayoutSaving(false)
+    }
+  }
 
   useEffect(() => {
     if (publishTarget === null) { setPublishPreview(null); return }
@@ -754,6 +808,7 @@ export default function ReportsPage() {
         })
       }
     } else {
+      actions.push({ key: 'layout', label: '编辑版式', onClick: () => void openLayout(r) })
       actions.push({ key: 'review', label: '审阅草稿', onClick: () => void openReview(r) })
       actions.push({ key: 'publish', label: '发布', onClick: () => { setPublishTarget(r); setPublishNote('') } })
       if (r.publishedVersion !== null) {
@@ -1515,6 +1570,16 @@ export default function ReportsPage() {
           <Button size="small" onClick={() => void edit(editRow, { newTab: true })}>在新标签打开</Button>
         </div>
       )}
+      {/* 版式编辑（issue #2295）：保存 = 草稿版式，发布后对观看者生效。 */}
+      <LayoutEditorModal
+        open={layoutTarget !== null}
+        panels={layoutTarget?.panels ?? []}
+        initialItems={layoutTarget?.items ?? []}
+        applying={layoutSaving}
+        error={layoutError}
+        onCancel={() => { setLayoutTarget(null); setLayoutError(null) }}
+        onSave={(items) => { void saveLayout(items) }}
+      />
     </Space>
   )
 }

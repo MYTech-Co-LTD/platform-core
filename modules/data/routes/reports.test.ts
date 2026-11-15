@@ -215,7 +215,7 @@ function gatedApp(identity: ReturnType<typeof makeIdentity>, pool: Pool | null) 
 }
 
 describe('报表面声明（不需要数据库）', () => {
-  it('报表端点都声明了（api.internal 全模块共 91 条），且页门分档：管理动作=data:manage，观看面=data:query', () => {
+  it('报表端点都声明了（api.internal 全模块共 99 条），且页门分档：管理动作=data:manage，观看面=data:query', () => {
     const declared = new Map(
       (mod.manifest.api?.internal ?? []).map((d) => [`${d.method} ${d.path}`, d.scope]),
     )
@@ -250,9 +250,11 @@ describe('报表面声明（不需要数据库）', () => {
     // +1：文本语义内嵌（R3 L2：POST /reports/:id/token-text，观看面 data:query）。
     // +1：30 天零访问报表（R6：GET /reports/stale，管理面 data:manage）。
     // +1：查询性能统计（R4：GET /reports/query-stats，管理面 data:manage）。
+    // +4：版式编辑（issue #2295：PUT /reports/:id/layout + my-layout 的 GET/PUT/DELETE，
+    //     观看面 data:query；默认版式的真判据在 handler 的 canEditAsset）。
     // 穷举口径（同 module.test.ts 的表清单）——别处加端点而漏改这里会红，
     // 逼着声明与测试一起动。
-    expect(declared).toHaveLength(95)
+    expect(declared).toHaveLength(99)
     // 指标变更单：七条全 data:manage；采纳/驳回的会话限定是路由内的第二道闸（不在这张表上）
     for (const p of [
       'POST /metric-changes', 'GET /metric-changes', 'GET /metric-changes/:id',
@@ -342,6 +344,11 @@ describe('报表面声明（不需要数据库）', () => {
     expect(declared.get('POST /reports/:id/token-text')).toBe('data:query')
     expect(declared.get('GET /reports/stale')).toBe('data:manage')
     expect(declared.get('GET /reports/query-stats')).toBe('data:manage')
+    // 版式编辑（issue #2295）
+    expect(declared.get('PUT /reports/:id/layout')).toBe('data:query')
+    expect(declared.get('GET /reports/:id/my-layout')).toBe('data:query')
+    expect(declared.get('PUT /reports/:id/my-layout')).toBe('data:query')
+    expect(declared.get('DELETE /reports/:id/my-layout')).toBe('data:query')
   })
 
   it('★ 页门负测：只有 data:query ⇒ 管理清单（跨资产视图）403', async () => {
@@ -4530,6 +4537,138 @@ describePg('报表路由（需要 DATABASE_URL）', () => {
           await pool.query("delete from data.metrics where org = 'platform' and id = $1", [DENOM])
         }
       })
+    })
+  })
+
+  // ── 版式编辑（issue #2295；设计 2026-11-15-report-layout-editing-design.md）──────────────
+  // 默认版式 = 在原始 spec 上只改顺序/span（v2 不得降级）；个人版式 = 独立一行，仅本人可见。
+  describe('版式编辑：默认版式 + 个人版式', () => {
+    const openPanel = (title: string, span = 12) => ({
+      chart: 'table' as const, title, metricId: OPEN_METRIC, span,
+    })
+    const createLayoutReport = async (app: Hono, panels: unknown[], title = '版式报表'): Promise<string> => {
+      const res = await post(app, { title, renderer: 'platform', spec: { panels } })
+      expect(res.status).toBe(201)
+      return (await res.json() as { id: string }).id
+    }
+    const specBody = async (app: Hono, id: string) =>
+      (await app.request(`/reports/${id}/spec`)).json() as Promise<{
+        version: number
+        spec: { panels: Array<{ title?: string; span: number }> }
+      }>
+    const putLayout = (
+      app: Hono, id: string, items: Array<{ key: string; span: number }>, expectedVersion: number,
+    ) => app.request(`/reports/${id}/layout`, {
+      method: 'PUT', headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ items, expectedVersion }),
+    })
+
+    it('★ 默认版式：换序 + 改宽写进草稿，版本推进一次；GET /spec 回新次序', async () => {
+      const { app } = manage()
+      const id = await createLayoutReport(app, [openPanel('A'), openPanel('B'), openPanel('C')])
+      const before = await specBody(app, id)
+      expect(before.spec.panels.map((p) => p.title)).toEqual(['A', 'B', 'C'])
+
+      const res = await putLayout(app, id, [
+        { key: '1|table|C', span: 24 }, { key: '1|table|A', span: 8 }, { key: '1|table|B', span: 16 },
+      ], before.version)
+      expect(res.status).toBe(200)
+      expect(await res.json()).toEqual({ version: before.version + 1 })
+
+      const after = await specBody(app, id)
+      expect(after.spec.panels.map((p) => p.title)).toEqual(['C', 'A', 'B'])
+      expect(after.spec.panels.map((p) => p.span)).toEqual([24, 8, 16])
+    })
+
+    it('★ v2 原始 spec 不得被降级：版式只动 blocks 顺序与 span，ir/datasets 原样保留', async () => {
+      const { app } = manage()
+      const res = await post(app, {
+        title: 'v2 版式', renderer: 'platform',
+        spec: {
+          ir: 2,
+          datasets: [{ key: 'd1', metricId: OPEN_METRIC, dims: [] }],
+          blocks: [
+            { type: 'table', dataset: 'd1', title: 'A', span: 12 },
+            { type: 'table', dataset: 'd1', title: 'B', span: 12 },
+          ],
+        },
+      })
+      expect(res.status).toBe(201)
+      const { id } = await res.json() as { id: string }
+      const version = (await specBody(app, id)).version
+
+      const out = await putLayout(app, id, [
+        { key: '1|table|B', span: 18 }, { key: '1|table|A', span: 6 },
+      ], version)
+      expect(out.status).toBe(200)
+      const row = await pool.query('select spec from data.reports where org = $1 and id = $2', [ORG, id])
+      const raw = row.rows[0].spec as {
+        ir: number; datasets: unknown[]; blocks: Array<{ title: string; span: number }>
+      }
+      expect(raw.ir).toBe(2)
+      expect(raw.datasets).toHaveLength(1)
+      expect(raw.blocks.map((b) => b.title)).toEqual(['B', 'A'])
+      expect(raw.blocks.map((b) => b.span)).toEqual([18, 6])
+    })
+
+    it('键集合不一致 ⇒ 409 LAYOUT_STALE；旧版本 ⇒ 409 STALE_WRITE；非 owner ⇒ 403', async () => {
+      const { app } = manage()
+      const id = await createLayoutReport(app, [openPanel('A'), openPanel('B')])
+      const version = (await specBody(app, id)).version
+
+      const stale = await putLayout(app, id, [{ key: '1|table|X', span: 12 }, { key: '1|table|Y', span: 12 }], version)
+      expect(stale.status).toBe(409)
+      expect(await stale.json()).toEqual({ error: 'LAYOUT_STALE' })
+
+      expect((await putLayout(app, id, [
+        { key: '1|table|B', span: 12 }, { key: '1|table|A', span: 12 },
+      ], version + 99)).status).toBe(409)
+
+      const viewerApp = viewer().app
+      const denied = await putLayout(viewerApp, id, [
+        { key: '1|table|B', span: 12 }, { key: '1|table|A', span: 12 },
+      ], version)
+      expect(denied.status).toBe(403)
+    })
+
+    it('★ 个人版式：本人读写、他人读不到、重置即删；坏形状 400', async () => {
+      const { app } = manage()
+      const id = await createLayoutReport(app, [openPanel('A'), openPanel('B')])
+      const viewerApp = viewer().app
+      const items = [{ key: '1|table|B', span: 24 }, { key: '1|table|A', span: 12 }]
+      const url = `/reports/${id}/my-layout`
+
+      expect(await (await viewerApp.request(url)).json()).toEqual({ items: null })
+      const put = await viewerApp.request(url, {
+        method: 'PUT', headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ items }),
+      })
+      expect(put.status).toBe(200)
+      expect(await (await viewerApp.request(url)).json()).toEqual({ items })
+
+      // 管理员的 userId 不同 ⇒ 读不到 viewer 的个人版式
+      expect(await (await app.request(url)).json()).toEqual({ items: null })
+
+      const bad = await viewerApp.request(url, {
+        method: 'PUT', headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ items: [{ key: 'k', span: 0 }] }),
+      })
+      expect(bad.status).toBe(400)
+
+      expect((await viewerApp.request(url, { method: 'DELETE' })).status).toBe(200)
+      expect(await (await viewerApp.request(url)).json()).toEqual({ items: null })
+    })
+
+    it('个人版式：跨租户 404；metabase 行 409；未登录 403', async () => {
+      const { app } = manage()
+      const id = await createLayoutReport(app, [openPanel('A')])
+      const other = shell(makeIdentity({ orgId: OTHER_ORG, userId: 'u-x', scopes: ['data:query'] })).app
+      expect((await other.request(`/reports/${id}/my-layout`)).status).toBe(404)
+
+      const mbRes = await post(app, { title: 'mb 版式' })
+      expect(mbRes.status).toBe(201)
+      const mbId = (await mbRes.json() as { id: string }).id
+      expect((await app.request(`/reports/${mbId}/my-layout`)).status).toBe(409)
     })
   })
 })
