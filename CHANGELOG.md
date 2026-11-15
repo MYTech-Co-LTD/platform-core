@@ -11,6 +11,10 @@
 
 ## [Unreleased]
 
+## [0.302.1](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.302.0...v0.302.1) - 2026-11-15
+- 【修复】data: 数据生产线 staging 列混入 SQL 类型名；读数条跟着画布缩放 (#2327) ([#2328](https://github.com/MYTech-Co-LTD/platform-core/pull/2328), [b8f12f7](https://github.com/MYTech-Co-LTD/platform-core/commit/b8f12f7af627c8612a111cc7c6123739a32ce673))
+
+
 ## [0.302.0](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.301.0...v0.302.0) - 2026-11-15
 - 【新增】notify: 规则历史与单步回滚（审计快照） (#2322) ([#2326](https://github.com/MYTech-Co-LTD/platform-core/pull/2326), [939f1f8](https://github.com/MYTech-Co-LTD/platform-core/commit/939f1f86f9070f7bb0c27119ff3b5d922efb2528))
 
