@@ -11,6 +11,10 @@
 
 ## [Unreleased]
 
+## [0.292.1](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.292.0...v0.292.1) - 2026-11-15
+- 【修复】notify: seed 不再重新启用被人工停用的派生规则 (#2285) ([#2286](https://github.com/MYTech-Co-LTD/platform-core/pull/2286), [e11f084](https://github.com/MYTech-Co-LTD/platform-core/commit/e11f084e9820502b979016d3a41dbd839346f01d))
+
+
 ## [0.292.0](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.291.0...v0.292.0) - 2026-11-15
 - 【新增】data: 业务监控 W7-V1——指标/报表面板 missing·stale + 状态机 + 影子期（#2278） ([#2283](https://github.com/MYTech-Co-LTD/platform-core/pull/2283), [66d281d](https://github.com/MYTech-Co-LTD/platform-core/commit/66d281d6101223bfb6c08e9e9418e42234858572))
 
