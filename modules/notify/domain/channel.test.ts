@@ -1,6 +1,11 @@
 // channel.test.ts — bridge healthz 映射（fetch 注入）
-import { describe, it, expect } from 'vitest'
-import { checkWecomHealth, checkWebhookHealth } from './channel'
+import { describe, it, expect, beforeEach } from 'vitest'
+import type { Pool } from 'pg'
+import { checkWecomDirectHealth, checkWecomHealth, checkWebhookHealth } from './channel'
+import { __resetTokenCache } from './im/wecom-direct'
+
+/** 没有 DB 凭据行的最小 pool：走 env 兜底。 */
+const emptyPool = { query: async () => ({ rowCount: 0, rows: [] }) } as unknown as Pool
 
 const BRIDGE = 'https://push.example/wecom/woke?t=tok'
 
@@ -53,5 +58,39 @@ describe('checkWebhookHealth', () => {
     })
     expect(r.ok).toBe(false)
     expect(called).toBe(false)
+  })
+})
+
+describe('checkWecomDirectHealth（直连判据 = 能取到 token）', () => {
+  beforeEach(() => __resetTokenCache())
+
+  it('无 DB 行且 env 缺凭据 ⇒ credential_missing（不再报 bridge_url 未配置）', async () => {
+    expect(await checkWecomDirectHealth({
+      pool: emptyPool, org: 'acme', env: {},
+    })).toEqual({ ok: false, detail: 'credential_missing' })
+  })
+
+  it('env 凭据能换 token ⇒ ok', async () => {
+    const f = (async () => new Response(JSON.stringify({
+      errcode: 0, access_token: 'tok', expires_in: 7200,
+    }))) as unknown as typeof fetch
+    expect(await checkWecomDirectHealth({
+      pool: emptyPool, org: 'acme',
+      env: { WECOM_DIRECT__ACME: 'corp|1|secret' },
+      fetchImpl: f,
+    })).toEqual({ ok: true })
+  })
+
+  it('env 凭据换不到 token ⇒ 带 detail 的失败', async () => {
+    const f = (async () => new Response(JSON.stringify({
+      errcode: 40013, errmsg: 'invalid corpid',
+    }))) as unknown as typeof fetch
+    const r = await checkWecomDirectHealth({
+      pool: emptyPool, org: 'acme',
+      env: { WECOM_DIRECT__ACME: 'corp|1|secret' },
+      fetchImpl: f,
+    })
+    expect(r.ok).toBe(false)
+    expect(r.detail).toContain('40013')
   })
 })

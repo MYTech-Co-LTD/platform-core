@@ -1,5 +1,8 @@
 // channel.ts — 通道健康检查（纯网络适配；DB 写入在 storage）。
+import type { Pool } from 'pg'
 import { sendWebhook } from '../providers/webhook'
+import { resolveWecomCredential } from './credential-store'
+import { probeDirect } from './im/wecom-direct'
 export async function checkWecomHealth(
   bridgeUrl: string,
   fetchImpl: typeof fetch = fetch,
@@ -33,4 +36,26 @@ export async function checkWebhookHealth(a: {
     timeoutMs: 5000,
   })
   return r.ok ? { ok: true } : { ok: false, detail: `${r.code}: ${r.summary}` }
+}
+
+/**
+ * 直连企微的活性检查：**凭据能换到 token 才算活**。
+ *
+ * 不能再读 `secret_refs.bridge_url`——直连通道按设计不保留桥 env（#1219），
+ * 用桥的判据测直连会恒报 `bridge_url env 未配置`，是假红。
+ */
+export async function checkWecomDirectHealth(a: {
+  pool: Pool
+  org: string
+  env?: NodeJS.ProcessEnv
+  fetchImpl?: typeof fetch
+}): Promise<{ ok: boolean; detail?: string }> {
+  const cred = await resolveWecomCredential(a.pool, a.org, a.env ?? process.env)
+  if (!cred.ok) {
+    return {
+      ok: false,
+      detail: `credential_${cred.reason}${cred.detail ? `: ${cred.detail}` : ''}`,
+    }
+  }
+  return probeDirect(cred.cred, { fetchImpl: a.fetchImpl })
 }
