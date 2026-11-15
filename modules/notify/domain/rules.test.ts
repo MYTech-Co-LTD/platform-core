@@ -1,7 +1,7 @@
 // rules-v2.test.ts — 规则匹配与校验（纯函数；2026-10-27 通知基础设施 §4）
 import { describe, it, expect } from 'vitest'
 import type { NotificationEventDecl } from '@platform/sdk'
-import { matchRules, validateRule, type NotificationRule } from './rules'
+import { isWritableRuleId, matchRules, validateRule, type NotificationRule } from './rules'
 
 const decl: NotificationEventDecl = {
   key: 'm.a.b',
@@ -121,5 +121,14 @@ describe('validateRule: 部门收件人', () => {
     const noDept = { ...decl, recipients: { approver: decl.recipients.approver! } }
     expect(validateRule(rule({ recipientKey: 'dept', recipientDepts: ['D1'] }), noDept, ok, tpl))
       .toBe('RULE_RECIPIENT_UNKNOWN')
+  })
+})
+
+describe('isWritableRuleId', () => {
+  it('系统预留前缀不给客户端写；普通 rule: id 可写', () => {
+    expect(isWritableRuleId('derived:aftersales:m.a.b:*')).toBe(false)
+    expect(isWritableRuleId('manual:aftersales:m.a.b:*')).toBe(false)
+    expect(isWritableRuleId('rule:123e4567-e89b-12d3-a456-426614174000')).toBe(true)
+    expect(isWritableRuleId('custom-id')).toBe(true)
   })
 })
