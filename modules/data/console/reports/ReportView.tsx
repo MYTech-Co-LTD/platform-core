@@ -53,6 +53,7 @@ import { formatValue } from '../../domain/report-format'
 import { pivotOf } from './cross-table'
 import { waterfallBarsOf } from './waterfall'
 import { RichText } from '../lib/rich-text'
+import { MonitorButton } from './MonitorModal'
 
 type Panel = ReportSpec['panels'][number]
 
@@ -1353,7 +1354,13 @@ export default function ReportView({
           }}
         />
       ) : (
-        <Card size="small" title={p.title}>
+        <Card
+          size="small"
+          title={p.title}
+          extra={p.chart === 'text' ? undefined : (
+            <MonitorButton reportId={reportId} panelIndex={i} panelTitle={p.title} />
+          )}
+        >
           <PanelBody
             panel={p} result={results[i]} compares={compareResults[i]}
             {...(p.chart === 'text' ? {

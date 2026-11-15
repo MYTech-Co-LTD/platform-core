@@ -14,7 +14,7 @@ describe('monitorEventOf', () => {
     expect(e.eventId).toBe('monitor:7:firing:2026-11-15T02:00:00.000Z')
     expect(e.scope).toBe('monitor:7')
     expect(e.producer).toBe('data')
-    expect(e.payload).toMatchObject({ to: 'alice,bob', windowDays: 3, verdict: 'stale', watermarkRef: 'load_log:stg_x' })
+    expect(e.payload).toMatchObject({ to: ['alice','bob'], windowDays: 3, verdict: 'stale', watermarkRef: 'load_log:stg_x' })
     expect(Object.hasOwn(e.payload, 'value')).toBe(false)
     expect(Object.hasOwn(e.payload, 'threshold')).toBe(false)
   })

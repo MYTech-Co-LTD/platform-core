@@ -264,6 +264,12 @@ api:
     - { method: PUT,    path: /scopes/:id,                scope: data:manage }
     - { method: DELETE, path: /scopes/:id,                scope: data:manage }
     - { method: PUT,    path: /scopes/:id/assignments,    scope: data:manage }
+    # 业务监控（Wave 7 V1，spec 2026-11-14 §2/§9）。改/停的「创建者或 data:manage」在路由内判，
+    # 声明层只表达「进这个模块子树要 data:query」；dry_run 开闸只能走 PATCH（创建恒影子期）。
+    - { method: GET,    path: /monitors,                  scope: data:query }
+    - { method: GET,    path: /monitors/:id/runs,         scope: data:query }
+    - { method: POST,   path: /monitors,                  scope: data:query }
+    - { method: PATCH,  path: /monitors/:id,              scope: data:query }
     # ── 指标变更单（Wave 5 P0，spec 2026-11-12 §6/§7）：agent 只提案，人只采纳 ──
     # 提交/重跑试算/撤回 = data:manage（agent 写面）；**采纳/驳回虽也声明 data:manage，
     # 但路由内另判会话通道**（PAT/企微 ⇒ 403 DECISION_REQUIRES_SESSION）——页门管不了通道，
@@ -305,7 +311,7 @@ notifications:
       description: 指标或报表面板缺失/过期（W7-V1；只报告状态，不携带数值）
       scope: { key: monitorId, label: 监控 }
       payload:
-        to:           { type: string, required: true, label: 收件人 }
+        to:           { type: user_list, required: true, label: 收件人 }
         monitorId:    { type: string, required: true, label: 监控 }
         name:         { type: string, required: true, label: 监控名 }
         verdict:      { type: string, required: true, label: 判据 }
@@ -323,7 +329,7 @@ notifications:
       description: 指标或报表面板恢复正常（W7-V1）
       scope: { key: monitorId, label: 监控 }
       payload:
-        to:           { type: string, required: true, label: 收件人 }
+        to:           { type: user_list, required: true, label: 收件人 }
         monitorId:    { type: string, required: true, label: 监控 }
         name:         { type: string, required: true, label: 监控名 }
         verdict:      { type: string, required: true, label: 判据 }
@@ -341,7 +347,7 @@ notifications:
       description: 连续求值失败达到上限自动停用（W7-V1，spec §11 熔断）
       scope: { key: monitorId, label: 监控 }
       payload:
-        to:           { type: string, required: true, label: 收件人 }
+        to:           { type: user_list, required: true, label: 收件人 }
         monitorId:    { type: string, required: true, label: 监控 }
         name:         { type: string, required: true, label: 监控名 }
         verdict:      { type: string, required: true, label: 判据 }

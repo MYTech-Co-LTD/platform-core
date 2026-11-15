@@ -18,6 +18,7 @@ import { registerToolbox } from './routes/toolbox'
 import { registerReports } from './routes/reports'
 import { registerSystemMap } from './routes/system-map'
 import { registerScopes } from './routes/scopes'
+import { registerMonitors } from './routes/monitors'
 import { warnIfScopeModeUnrecognized } from './domain/scope'
 
 // 装配形状照 modules/demo/index.ts 与 modules/aftersales/index.ts（本仓模块的唯一范式）。
@@ -66,6 +67,7 @@ export default defineModule({
     registerReports(r, _ctx) // #150 T7：Metabase 报表 facade
     registerSystemMap(r, _ctx) // W5 Task 4：数据体系地图（只读单文件 HTML，#1455）
     registerScopes(r, _ctx) // 数据范围 scope 管理面（spec 2026-11-10 §5.5；#1901）
+    registerMonitors(r, _ctx) // Wave 7 V1：业务监控（missing/stale + 影子期；#2278）
     // 启动期一次性告警：DATA_SCOPE_MODE 拼错会静默回落 off（= 一条都不裁）
     warnIfScopeModeUnrecognized(process.env)
     return r

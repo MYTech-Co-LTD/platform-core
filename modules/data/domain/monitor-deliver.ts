@@ -37,7 +37,8 @@ export function monitorEventOf(
 ): MonitorEvent {
   if (tr.notify === null) throw new Error('monitorEventOf: notify is null')
   const payload: Record<string, unknown> = {
-    to: to.join(','),
+    // 声明是 user_list（notify 的 field 收件人只接受 user/user_list），值是名字数组。
+    to: [...to],
     monitorId: m.id,
     name: m.name,
     verdict: outcome.verdict,
