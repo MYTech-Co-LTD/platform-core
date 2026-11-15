@@ -143,11 +143,13 @@ describe.skipIf(!dbUrl)('buildApp：/api/* 全局请求体上限（MAX_API_BODY_
   const mock2 = new MockCasdoor()
   let app: Awaited<ReturnType<typeof buildApp>>['app']
 
+  // 真装配（buildApp + PG + MockCasdoor）在 CI 高负载下会超过 vitest 默认 10s hookTimeout；
+  // 给 30s（issue #2310，同日多条 PR 被这条 flake 挡过，重跑即绿）。
   beforeAll(async () => {
     await mock2.start()
     const built = await buildApp({ config: configWith(mock2.origin, 'pw') })
     app = built.app
-  })
+  }, 30_000)
   afterAll(async () => {
     await mock2.stop()
   })
