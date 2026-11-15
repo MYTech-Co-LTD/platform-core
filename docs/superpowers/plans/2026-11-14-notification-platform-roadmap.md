@@ -67,7 +67,7 @@
 | `SchedulerPort` 消费 + 排班工具 | ✅ | #2253 | N4；job key 恒 `notify.emit`，事件 key 在 `params.eventKey` |
 | job 生命周期事件接通知 | ✅ | #2261/#2266 | W6-P4a 声明 + 宿主发射 + 派生规则；两套生产 event_catalog/rule 已验 |
 | N5 per-namespace 指标 + 单 worker 公平性 | ✅ | #2281 | delivery 冻结 `owner_namespace`、`/stats`、console 过滤；claim 按 org 交错 + 批内规则缓存 |
-| N5 收件箱权限模型 | ⬜ | — | `/inbox` 仍要求 `notify:view`；默认授予成员 vs 保持管理角色，待决策 |
+| N5 收件箱权限模型 | ✅ | #2290 | 新增 `notify:inbox`（只看自己的行），与 `notify:view` 解耦；生产由 `notify-inbox-readers` 角色广授（mytech 5 人 / shanhai 262 人）。**新成员需同步入角色** |
 | N0 基线加固（N0.1–N0.8） | ✅ | #2180/#2182/#2184 | 治理 / 可靠性 / 一致性三件套 |
 | N0.9 生产 preflight 3 条 `no_recipient` | ✅ | #2264 / #2268 | 2026-11-15：预检取码修复后，shanhai 授 `notify:publish` 给两位租户管理员、mytech 授给 ZhangDuo 并停用两条未使用派生规则；两套生产 preflight 均 `blockedCount:0` |
 
@@ -85,6 +85,7 @@
 | D6 | **单调度者**：周期排班归 `platform.scheduler`；一次性延迟归 notify outbox `available_at` | 不造第二个 cron；两者语义不同 |
 | D7 | `notify.emit` handler：job 成功 = 事件已入队；投递失败仍归 notify 重试 | 两层重试语义不打架 |
 | D8 | P1 不开放 agent 面；agent 排班在 **W6-P3** | 调度器先稳定，再开能力 |
+| D9 | 收件箱用独立 `notify:inbox` 广授全员，**不**把 `notify:view` 开给全员 | 员工要能读自己的通知，但投递明细/通道/规则拓扑不能顺带暴露 |
 
 ---
 
@@ -233,7 +234,7 @@ MCP emit/send ─────────┘ │  ext.<namespace>.<event> 归属
 
 ## 9. 候选池 / 开放问题
 
-- 收件箱权限模型：`notify:view` 是否默认授予所有成员？
+- 收件箱新成员同步：`notify-inbox-readers` 角色目前靠手工/一次性脚本填充，新员工入租户要有自动入角色路径。
 - job 生命周期事件归属：最小 `jobs` 模块 vs 宿主层事件声明面。
 - 通道自助：`POST /channels` + 凭据录入 UI 是否进 v1？
 - 事件/audit 保留窗口：30/90/180/365 的最终口径。
