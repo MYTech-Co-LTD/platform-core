@@ -352,18 +352,49 @@ if [ "$SCOPE" = tables ]; then
   echo "── tables: config.materialized:table + seeds（domain=${TABLES_DOMAIN}；夜间窗口）──"
   _log="$_WORK/dbt.tables.log"
   _rc="$_WORK/dbt.tables.rc"
-  ( if DATA_PLANE_DOMAINS="$TABLES_DOMAIN" docker run --rm --network "$NETWORK" -v "$R/dbt:/usr/app" \
-      $(mat_env_args) "$IMAGE" $(mat_dbt_args) \
-      --select "config.materialized:table,path:models/$TABLES_DOMAIN config.materialized:seed" \
-      --exclude "path:tests/$TABLES_DOMAIN" --exclude tag:audit 2>&1; then
-    echo 0 >"$_rc"
-  else
-    echo $? >"$_rc"
-  fi ) | tee "$_log"
-  if [ "$(cat "$_rc")" != 0 ]; then
-    echo "MATERIALIZE_FAILED:dbt_build（tables ${TABLES_DOMAIN}）；retry 由 openship job 配置承担" >&2
-    exit 1
-  fi
+  # ── 节点级重试（2026-11-15，同 hourly #1621 的口径）─────────────────────────────────
+  # 为什么必须节点级：tables 档白天跑（CST 10:25），命中的是 tick 每 10 分钟重写一次的
+  # **今天 hour= 活分区**；DuckDB 的 ETag 校验在读取途中发现文件换版 ⇒ 单个节点
+  # `Database Error: ETag ... was initially X and now returned Y`。
+  # 2026-11-15 实测：158 节点里 135 通过、2 个失败；job 级整轮重试跑了 79 分钟，
+  # 第 2 轮又只死在同一个竞态上（`fct_retail_comparable_growth`），整轮白跑。
+  # ⇒ 失败节点**原地重跑**（几秒收敛），最多 3 轮；收敛判据是「没有失败节点」而不是退出码。
+  # ⚠️ 视图里 `bizday` 是 `r['bizday']::date`（CAST 之后），hive 分区裁剪失效 ⇒
+  #   模型侧的「闭窗读」只能少读行、拦不住文件被打开，故无法从根上消除竞态，只能重试。
+  _select="config.materialized:table,path:models/$TABLES_DOMAIN config.materialized:seed"
+  _excl="--exclude path:tests/$TABLES_DOMAIN --exclude tag:audit"
+  _attempt=1
+  _sum_pass=''
+  _sum_err=''
+  while :; do
+    ( if DATA_PLANE_DOMAINS="$TABLES_DOMAIN" docker run --rm --network "$NETWORK" -v "$R/dbt:/usr/app" \
+        $(mat_env_args) "$IMAGE" $(mat_dbt_args) \
+        --select "$_select" $_excl 2>&1; then
+      echo 0 >"$_rc"
+    else
+      echo $? >"$_rc"
+    fi ) | tee -a "$_log"
+    if [ -z "$_sum_pass" ]; then
+      # 落账用**首轮全量**的汇总行（重试轮的汇总只含失败节点，会少报）
+      _sum_pass="$(sed -n 's/.*PASS=\([0-9]*\).*/\1/p' "$_log" | tail -n 1)"
+      _sum_err="$(sed -n 's/.*ERROR=\([0-9]*\).*/\1/p' "$_log" | tail -n 1)"
+    fi
+    _failed="$(python3 "$R/scripts/lemeng/dbt-failed-nodes.py" "$R/dbt/target/run_results.json" 2>/dev/null || true)"
+    if [ -z "$_failed" ]; then
+      [ "$(cat "$_rc")" = 0 ] && break
+      # 退出码非 0 但解析不出失败节点（run_results 缺失/形状变了）⇒ 不猜，直接判失败
+      echo "MATERIALIZE_FAILED:dbt_build（tables ${TABLES_DOMAIN}：退出码非 0 且解析不出失败节点）" >&2
+      exit 1
+    fi
+    if [ "$_attempt" -ge 3 ]; then
+      echo "MATERIALIZE_FAILED:dbt_build（tables ${TABLES_DOMAIN}：失败节点重试 ${_attempt} 轮仍有：${_failed}）" >&2
+      exit 1
+    fi
+    _attempt=$((_attempt + 1))
+    echo "── tables 重试第 ${_attempt} 轮（仅失败节点）：${_failed} ──"
+    _select="$_failed"
+    _excl=''
+  done
   if ! mat_log_has_build "$_log"; then
     echo "MATERIALIZE_FAILED:noop（tables 选择器没有匹配到可建节点，或输出缺 PASS= 汇总行）" >&2
     exit 1
@@ -379,10 +410,9 @@ if [ "$SCOPE" = tables ]; then
   if [ -z "$_tables" ]; then
     echo "materialize warn: tables 档没有可落账的表（dbt 输出里没有建成的 table 模型？）" >&2
   else
-    mat_write_load_log \
-      "$(sed -n 's/.*PASS=\([0-9]*\).*/\1/p' "$_log" | tail -n 1)" \
-      "$(sed -n 's/.*ERROR=\([0-9]*\).*/\1/p' "$_log" | tail -n 1)" \
-      $_tables
+    # PASS 取首轮全量、ERROR 固定 0：走到这里说明重试后已无失败节点（仍有则上面已 exit 1），
+    # 首轮汇总里的 ERROR 会误导「本轮还有红」。
+    mat_write_load_log "${_sum_pass:-0}" 0 $_tables
   fi
   echo "MATERIALIZE_OK scope=tables"
   exit 0
