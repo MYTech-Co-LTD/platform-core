@@ -10,7 +10,7 @@
   "layout": {
     "prefix": "lemeng/retail_order_line",
     "partitionStyle": "hive",
-    "partitionBy": ["system_book", "bizday"],
+    "partitionBy": ["system_book", "bizday", "hour"],
     "fileName": "all.parquet"
   },
   "batch": {
