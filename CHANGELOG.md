@@ -11,6 +11,11 @@
 
 ## [Unreleased]
 
+## [0.299.0](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.298.0...v0.299.0) - 2026-11-15
+- 【新增】data: 业务监控组织级限流与摘要事件（W7-V2c） ([#2317](https://github.com/MYTech-Co-LTD/platform-core/pull/2317), [6943107](https://github.com/MYTech-Co-LTD/platform-core/commit/69431072b14c1df0f86276ebc7553efdd39efae9))
+- 【修复】data: 数据生产线适应画布改按宽度，卡片固定宽 (#2315) ([#2316](https://github.com/MYTech-Co-LTD/platform-core/pull/2316), [e038313](https://github.com/MYTech-Co-LTD/platform-core/commit/e038313cc22fb7d038bdc9fa4852189caac217c0))
+
+
 ## [0.298.0](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.297.0...v0.298.0) - 2026-11-15
 - 【新增】data: 数据生产线改无限画板（缩放/拖拽/适应画布）(#2304) ([#2305](https://github.com/MYTech-Co-LTD/platform-core/pull/2305), [ab04a3d](https://github.com/MYTech-Co-LTD/platform-core/commit/ab04a3dfdee1cc6275596f3d6b5fe68a1cb34a82))
 - 【修复】server: app.test 真装配 beforeAll 放宽到 30s，消除 hook timeout flake (#2310) ([#2311](https://github.com/MYTech-Co-LTD/platform-core/pull/2311), [1c3b3cd](https://github.com/MYTech-Co-LTD/platform-core/commit/1c3b3cdbe4e3f18e0519b7476692cb00012fce28))
