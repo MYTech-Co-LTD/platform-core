@@ -51,7 +51,7 @@ interface OntologyEdge { from: string; to: string; type: OntologyEdgeType }
 ```
 
 - 与 `/system-map`（HTML）**共用**同一份 `loadSystemMapFacts` 结果与 10 分钟缓存键，不重复扫盘。
-- 旧 HTML 页保留（移动端 `#/metrics` 深链与既有书签还在用）；本次只新增 JSON 面。
+- 旧 HTML 页曾保留给移动端；**2026-11-15 已下线**（移动端切到同一份 JSON 后无消费方）。
 - `manifest.yaml` 的 `api.internal` 必须同一提交加声明（装载期双向核对）。
 
 ### 3.3 页面
