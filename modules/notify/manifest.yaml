@@ -27,6 +27,8 @@ api:
     - { method: PUT,    path: /rules/:id/enabled, scope: notify:manage }
     - { method: DELETE, path: /rules/:id,         scope: notify:manage }
     - { method: GET,    path: /deliveries,        scope: notify:view }
+    # per-namespace 运营指标（N5）：事件量 / 投递成功率 / dead / 延迟积压
+    - { method: GET,    path: /stats,             scope: notify:view }
     # 外部生产者（case-engine 等）：PAT + notify:emit；org 只来自 identity
     - { method: POST,   path: /emit,              scope: notify:emit }
     - { method: GET,    path: /inbox,             scope: notify:view }

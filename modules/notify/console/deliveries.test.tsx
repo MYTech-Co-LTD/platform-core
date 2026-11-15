@@ -20,6 +20,7 @@ const base = {
   eventId: 'e1', eventKey: 'm.a.b', ruleId: 'r1', recipient: 'u1',
   channel: 'wecom_default', address: 'wecom-u1', templateKey: 't1', revision: 1,
   attempts: 2, isTest: false, lastError: '502', createdAt: '2026-10-27T00:00:00Z',
+  ownerNamespace: null,
 }
 
 describe('DeliveriesTab', () => {
@@ -31,6 +32,9 @@ describe('DeliveriesTab', () => {
           { ...base, status: 'failed' },
           { ...base, eventId: 'e2', status: 'sent', lastError: null },
         ],
+      }),
+      'GET /api/modules/notify/stats?sinceHours=24': () => json({
+        stats: [{ namespace: null, events: 2, deliveries: 2, sent: 1, failed: 1, dead: 0, stalePending: 0 }],
       }),
       'POST /api/modules/notify/deliveries/retry': (init) => {
         retried = JSON.parse(String(init!.body))

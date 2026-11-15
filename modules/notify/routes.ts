@@ -33,7 +33,7 @@ import {
   getApproval, getChannel, getEventDecl, getPublishedTemplate, getTemplate,
   hasApprovedRuleApproval, insertDelivery, listAgentNamespaces, listApprovals, listChannels,
   listDeliveries, listEnabledChannelIds, listEventDecls, listInbox, listPublishedTemplateKeys,
-  listRules, listTemplates, markAllInboxRead, markInboxRead, patchChannel,
+  listRules, listTemplates, markAllInboxRead, markInboxRead, namespaceStats, patchChannel,
   publishTemplateRevision, retryDelivery, setAgentNamespacePolicy, setChannelHealth,
   setRuleEnabled, upsertEventDecl, upsertRule,
 } from './storage'
@@ -313,8 +313,18 @@ export function createNotifyRouter(deps: {
     return c.json({ ok: true })
   })
 
-  r.get('/deliveries', async (c) =>
-    c.json({ deliveries: await listDeliveries(deps.pool, org(c)) }))
+  r.get('/deliveries', async (c) => {
+    const namespace = c.req.query('namespace') || undefined
+    return c.json({ deliveries: await listDeliveries(deps.pool, org(c), 100, { namespace }) })
+  })
+
+  // per-namespace 运营指标（N5）：事件量 / 投递成功率 / dead / 延迟积压。
+  r.get('/stats', async (c) => {
+    const namespace = c.req.query('namespace') || undefined
+    const raw = Number(c.req.query('sinceHours') ?? 24)
+    const sinceHours = Number.isFinite(raw) ? raw : 24
+    return c.json({ stats: await namespaceStats(deps.pool, org(c), { namespace, sinceHours }) })
+  })
 
   // 外部生产者（case-engine 等）：PAT + notify:emit；org 只来自 identity
   r.post('/emit', async (c) => {

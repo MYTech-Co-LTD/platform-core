@@ -32,7 +32,7 @@ const event = (over: Partial<PendingEvent> = {}): PendingEvent => ({
 const dueRow = (over: Partial<DeliveryRow> = {}): DeliveryRow => ({
   org: 'o', eventId: 'e1', eventKey: 'm.a.b', ruleId: 'r1', recipient: 'u1', channel: 'wecom_default',
   address: 'wecom-u1', templateKey: 't1', revision: 1, rendered: { text: 'hi' },
-  status: 'pending', attempts: 0, lockedUntil: null,
+  status: 'pending', attempts: 0, lockedUntil: null, ownerNamespace: null,
   ...over,
 })
 
@@ -312,5 +312,22 @@ describe('runOnce: 部门收件人', () => {
     expect(f.inserted).toHaveLength(0)
     expect(f.marks).toEqual([{ status: 'no_recipients' }])
     expect(audits[0]).toMatchObject({ expanded: 0, excluded: 4 })
+  })
+
+  it('N5：投递行冻结规则的 owner_namespace', async () => {
+    const f = makeDeps({ listRules: async () => [rule({ ownerNamespace: 'agent_a' })] })
+    await runOnce(f.deps)
+    expect(f.inserted[0]).toMatchObject({ ownerNamespace: 'agent_a' })
+  })
+
+  it('N5：同一批内同 org 只查一次规则（批内缓存）', async () => {
+    let calls = 0
+    const f = makeDeps({
+      claimEvents: async () => [event({ eventId: 'e1' }), event({ eventId: 'e2' })],
+      listRules: async () => { calls++; return [rule()] },
+    })
+    await runOnce(f.deps)
+    expect(calls).toBe(1)
+    expect(f.marks).toEqual([{ status: 'matched' }, { status: 'matched' }])
   })
 })
