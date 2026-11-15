@@ -11,6 +11,11 @@
 
 ## [Unreleased]
 
+## [0.290.0](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.289.0...v0.290.0) - 2026-11-15
+- 【新增】data: 数据生产线页——字段级血缘 (#2273) ([#2275](https://github.com/MYTech-Co-LTD/platform-core/pull/2275), [a062b85](https://github.com/MYTech-Co-LTD/platform-core/commit/a062b85e7b985ed76ac983cbcfb4b4e4dc80719b))
+- 【修复】data: 调度器支持子进程参数，org.sync 带 --apply（否则默认 dry-run 空跑） ([#2274](https://github.com/MYTech-Co-LTD/platform-core/pull/2274), [1a7d821](https://github.com/MYTech-Co-LTD/platform-core/commit/1a7d821d3de1166187d269d88244d501fcd0e96d))
+
+
 ## [0.289.0](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.288.1...v0.289.0) - 2026-11-15
 - 【新增】data: registry 增补 P4b 六类系统 job（W6-P4b） ([#2266](https://github.com/MYTech-Co-LTD/platform-core/pull/2266), [c69bd0b](https://github.com/MYTech-Co-LTD/platform-core/commit/c69bd0b910ffc8a0f643cd95535f0608df0a4cd1))
 - 【修复】notify: preflight 按 decl 取权限码，修复 scope_holders 恒判 no_recipient (#2263) ([#2264](https://github.com/MYTech-Co-LTD/platform-core/pull/2264), [a9bf2fb](https://github.com/MYTech-Co-LTD/platform-core/commit/a9bf2fb7168a3e43878775b28a7330c963828f2a))
