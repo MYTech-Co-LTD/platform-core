@@ -359,7 +359,12 @@ export default function SystemMapPage() {
               </div>
             )}
             {selected.type === 'metric' && (
-              <Button size="small" href={`/console/data/metrics`}>去指标页看变更历史</Button>
+              <Space size={8} wrap>
+                <Button size="small" type="primary" href={`/console/data/lineage?metric=${encodeURIComponent(selected.id.replace(/^metric:/, ''))}`}>
+                  看数据生产线
+                </Button>
+                <Button size="small" href={`/console/data/metrics`}>去指标页看变更历史</Button>
+              </Space>
             )}
             {selected.type === 'metric' && reportsUsing.length > 0 && (
               <div>

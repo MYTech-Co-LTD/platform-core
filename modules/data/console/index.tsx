@@ -19,6 +19,7 @@ import CandidatesPage from './candidates'
 import ChangesPage from './changes'
 import SystemMapPage from './system-map'
 import PipelinesPage from './pipelines'
+import LineagePage from './lineage'
 import { useIsMobile } from './lib/useIsMobile'
 
 /** 本模块在宿主壳的挂载基路径（manifest frontend.console 首条 path）。 */
@@ -39,6 +40,8 @@ const TABS = [
   { key: 'system-map', label: '体系地图' },
   // 管线地图（2026-11-14）：与体系地图相反的视角——从管线看资产/staging/marts 三层通没通。
   { key: 'pipelines', label: '管线地图' },
+  // 数据生产线（2026-11-15）：字段级血缘——源接口 → 湖 → staging → marts
+  { key: 'lineage', label: '数据生产线' },
 ] as const
 
 type TabKey = (typeof TABS)[number]['key']
@@ -79,6 +82,7 @@ export default function DataConsolePage() {
     changes: ChangesPage,
     'system-map': SystemMapPage,
     pipelines: PipelinesPage,
+    lineage: LineagePage,
   }
   const Active = PAGES[active]
 

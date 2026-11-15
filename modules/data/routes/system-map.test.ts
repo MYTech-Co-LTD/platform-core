@@ -26,7 +26,7 @@ function emptyPool(): { pool: Pool; calls: () => number } {
 
 function appWithGate(identityOverride?: ReturnType<typeof makeIdentity>) {
   const shell = new Hono<ModuleVars>()
-  for (const p of ['/system-map/graph', '/system-map/metrics/*', '/system-map/pipelines', '/system-map/pipelines/:id/runs']) {
+  for (const p of ['/system-map/graph', '/system-map/metrics/*', '/system-map/pipelines', '/system-map/pipelines/:id/runs', '/system-map/lineage/*']) {
     if (identityOverride !== undefined) {
       shell.use(p, async (c, next) => {
         c.set('identity', identityOverride)
@@ -39,6 +39,7 @@ function appWithGate(identityOverride?: ReturnType<typeof makeIdentity>) {
       { method: 'GET', path: '/system-map/metrics/:id/trail', scope: 'data:query' },
       { method: 'GET', path: '/system-map/pipelines', scope: 'data:query' },
       { method: 'GET', path: '/system-map/pipelines/:id/runs', scope: 'data:query' },
+      { method: 'GET', path: '/system-map/lineage/:id', scope: 'data:query' },
     ]))
   }
   shell.route('/', mod.createRouter({ pool: emptyPool().pool }))
@@ -143,5 +144,18 @@ describe('GET /system-map/pipelines/:id/runs（运行历史）', () => {
   it('非法管線 id ⇒ 400（防注入到运行记录路径）', async () => {
     const res = await buildTestApp(mod, identity, { pool: emptyPool().pool }).request('/system-map/pipelines/..%2Fetc/runs')
     expect([400, 404]).toContain(res.status)
+  })
+})
+
+describe('GET /system-map/lineage/:id（数据生产线）', () => {
+  it('未登录 ⇒ 401；缺 data:query ⇒ 403', async () => {
+    expect((await appWithGate().request('/system-map/lineage/x')).status).toBe(401)
+    expect((await appWithGate(makeIdentity({ orgId: ORG, scopes: ['data:manage'] })).request('/system-map/lineage/x')).status).toBe(403)
+  })
+
+  it('未知指标 ⇒ 404（不编一条生产线）', async () => {
+    const res = await buildTestApp(mod, identity, { pool: emptyPool().pool }).request('/system-map/lineage/no:such')
+    expect(res.status).toBe(404)
+    expect(await res.json()).toEqual({ error: 'NO_SUCH_METRIC' })
   })
 })
