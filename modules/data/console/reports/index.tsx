@@ -1166,6 +1166,9 @@ export default function ReportsPage() {
               items.push({ key: 'recycle', label: '回收', danger: true })
             }
             if (r.canEdit && r.renderer === 'platform') {
+              // 版式编辑（issue #2295）：桌面下拉与移动端动作单**两处都要有**——
+              // 只加一处会让另一端「功能在、入口不在」。
+              items.push({ key: 'layout', label: '编辑版式' })
               // 审阅面此前只在移动端动作单里——桌面端也要能进（R2 的出口是给人审的）。
               items.push({ key: 'review', label: '审阅草稿' })
               items.push({ key: 'publish', label: '发布' })
@@ -1188,6 +1191,7 @@ export default function ReportsPage() {
                       if (key === 'dept') void openDeptGate(r)
                       if (key === 'provenance') void openProvenance(r)
                       if (key === 'share') void openShare(r)
+                      if (key === 'layout') void openLayout(r)
                       if (key === 'review') void openReview(r)
                       if (key === 'gate') { setGateEdit(r); setGateDraft(r.requiredScope ?? '') }
                       if (key === 'publish-gate') {
