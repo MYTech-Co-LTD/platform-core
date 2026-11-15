@@ -11,6 +11,12 @@
 
 ## [Unreleased]
 
+## [0.298.0](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.297.0...v0.298.0) - 2026-11-15
+- 【新增】data: 数据生产线改无限画板（缩放/拖拽/适应画布）(#2304) ([#2305](https://github.com/MYTech-Co-LTD/platform-core/pull/2305), [ab04a3d](https://github.com/MYTech-Co-LTD/platform-core/commit/ab04a3dfdee1cc6275596f3d6b5fe68a1cb34a82))
+- 【修复】server: app.test 真装配 beforeAll 放宽到 30s，消除 hook timeout flake (#2310) ([#2311](https://github.com/MYTech-Co-LTD/platform-core/pull/2311), [1c3b3cd](https://github.com/MYTech-Co-LTD/platform-core/commit/1c3b3cdbe4e3f18e0519b7476692cb00012fce28))
+- 【修复】data: 桌面端报表清单补「编辑版式」入口 (#2295) ([#2309](https://github.com/MYTech-Co-LTD/platform-core/pull/2309), [3e2c0b1](https://github.com/MYTech-Co-LTD/platform-core/commit/3e2c0b1db77198b8d94900c1b01f64a7bceec5db))
+
+
 ## [0.297.0](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.296.0...v0.297.0) - 2026-11-15
 - 【新增】data: 业务监控 no_flap 防抖与只读池会话参数（W7-V2b） ([#2307](https://github.com/MYTech-Co-LTD/platform-core/pull/2307), [ea0b5d6](https://github.com/MYTech-Co-LTD/platform-core/commit/ea0b5d6853badcbeab933278782d39d7a7faaa79))
 
