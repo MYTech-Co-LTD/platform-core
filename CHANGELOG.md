@@ -11,6 +11,16 @@
 
 ## [Unreleased]
 
+## [0.288.0](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.287.0...v0.288.0) - 2026-11-15
+- 【新增】jobs: jobs 模块（W6-P4a）——域面 + 事件声明 + 权限码 ([#2261](https://github.com/MYTech-Co-LTD/platform-core/pull/2261), [8d88855](https://github.com/MYTech-Co-LTD/platform-core/commit/8d88855ceb7b18e924b8f9d07c07aaf8db695f37))
+- 【新增】data: 体系地图深链 ?focus=直达节点并写回 URL (#2259) ([#2260](https://github.com/MYTech-Co-LTD/platform-core/pull/2260), [6ed718e](https://github.com/MYTech-Co-LTD/platform-core/commit/6ed718e97707523742a3ce81bb9d6911832235a5))
+- 【新增】notify: N4 agent 排班接 namespace——create_schedule 归属/事件校验 (#2251) ([#2253](https://github.com/MYTech-Co-LTD/platform-core/pull/2253), [6d51198](https://github.com/MYTech-Co-LTD/platform-core/commit/6d5119832d1df3ab77cfc07d5d36875d824fce71))
+- 【优化】data: R4 批量查询端点 /query/batch（一页报表 1 个请求） ([#2258](https://github.com/MYTech-Co-LTD/platform-core/pull/2258), [926f163](https://github.com/MYTech-Co-LTD/platform-core/commit/926f16340b446830a5deca6204d2af6341290d31))
+- 【新增】notify: N3 爆炸半径策略 + 审批 + 配额 + MCP agent 工具 (#2196) ([#2200](https://github.com/MYTech-Co-LTD/platform-core/pull/2200), [2a03aac](https://github.com/MYTech-Co-LTD/platform-core/commit/2a03aac3488c18175bf0efa56dab6c3168326ac5))
+- 【新增】data: 体系地图补报表→指标边（used_by）与指标抽屉报表引用 (#2254) ([#2255](https://github.com/MYTech-Co-LTD/platform-core/pull/2255), [4d8dfe3](https://github.com/MYTech-Co-LTD/platform-core/commit/4d8dfe33df2597d5058905bf26ba6927d6ab469c))
+- 【新增】notify: N2 agent 自助模板/规则 + 通用消息 (#2191) ([#2256](https://github.com/MYTech-Co-LTD/platform-core/pull/2256), [2780562](https://github.com/MYTech-Co-LTD/platform-core/commit/27805629bc2fa5a3b46ddbdcf9dd692df931a392))
+
+
 ## [0.287.0](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.286.0...v0.287.0) - 2026-11-15
 - 【新增】notify: N1 双平面事件目录——agent namespace + event_decl + 统一解析 (#2186) ([#2190](https://github.com/MYTech-Co-LTD/platform-core/pull/2190), [946bce5](https://github.com/MYTech-Co-LTD/platform-core/commit/946bce5b854036c3ca126173298b9acbd44082fc))
 
