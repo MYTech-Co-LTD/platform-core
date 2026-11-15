@@ -7,9 +7,10 @@ import {
   audit, channelConfigured, claimDueDeliveries, claimEvents, countChannelSends,
   createAgentNamespace, createTemplateRevision, deferDelivery, deleteRule,
   ensureAgentMessageDefaults, enqueueEvent, getAgentNamespace, getEventDecl,
-  getPublishedTemplate, getTemplate, isCoolingDown, listAgentNamespaces, listChannels,
-  listEventDecls, listRules, markDeliverySent, patchChannel, publishTemplateRevision,
-  purgeOldNotifications, setChannelHealth, setRuleEnabled, upsertEventDecl, upsertRule,
+  getPublishedTemplate, getTemplate, insertDelivery, isCoolingDown, listAgentNamespaces,
+  listChannels, listDeliveries, listEventDecls, listRules, markDeliverySent, namespaceStats,
+  patchChannel, publishTemplateRevision, purgeOldNotifications, setChannelHealth,
+  setRuleEnabled, upsertEventDecl, upsertRule,
 } from './storage'
 
 const url = process.env.DATABASE_URL
@@ -402,5 +403,109 @@ describePg('notify storage N0 可靠性（deferDelivery）', () => {
       status: 'failed', attempts: 2, last_error: 'channel_rate_limited',
     })
     expect(new Date(row.rows[0].next_attempt_at).getTime()).toBe(at.getTime())
+  })
+})
+
+// N5：per-namespace 归属冻结 + 指标 + claim 公平性（真库）。夹具前缀 org-n5。
+describePg('notify N5 运营收口', () => {
+  const ORG_A = 'org-n5-a'
+  const ORG_B = 'org-n5-b'
+  let pool: Pool
+
+  beforeAll(async () => {
+    pool = new Pool({ connectionString: url })
+    await applyMigrations(pool)
+  })
+  afterAll(async () => {
+    await cleanup()
+    await pool.end()
+  })
+  beforeEach(cleanup)
+
+  async function cleanup() {
+    await pool.query("delete from notify.delivery where org in ($1,$2)", [ORG_A, ORG_B])
+    await pool.query("delete from notify.event where org in ($1,$2)", [ORG_A, ORG_B])
+  }
+
+  const delivery = (org: string, eventId: string, ownerNamespace: string | null) => ({
+    org, eventId, eventKey: ownerNamespace ? `ext.${ownerNamespace}.daily` : 'm.a.b',
+    ruleId: 'r1', recipient: 'u1', channel: 'inapp_default', address: 'u1',
+    templateKey: 't1', revision: 1, rendered: {}, status: 'pending' as const, ownerNamespace,
+  })
+
+  it('投递冻结 owner_namespace；listDeliveries 可按 namespace 过滤', async () => {
+    await insertDelivery(pool, delivery(ORG_A, 'e-agent', 'agent_a'))
+    await insertDelivery(pool, delivery(ORG_A, 'e-platform', null))
+
+    const all = await listDeliveries(pool, ORG_A)
+    expect(all.map((d) => [d.eventId, d.ownerNamespace]).sort()).toEqual([
+      ['e-agent', 'agent_a'], ['e-platform', null],
+    ])
+    const only = await listDeliveries(pool, ORG_A, 100, { namespace: 'agent_a' })
+    expect(only.map((d) => d.eventId)).toEqual(['e-agent'])
+  })
+
+  it('namespaceStats：事件按 ext.<ns> 推导，投递按冻结列聚合', async () => {
+    await enqueueEvent(pool, {
+      org: ORG_A, eventId: 'ev-a', eventKey: 'ext.agent_a.daily', scope: '*',
+      payload: {}, producer: 'ext:agent_a',
+    })
+    await enqueueEvent(pool, {
+      org: ORG_A, eventId: 'ev-p', eventKey: 'm.a.b', scope: '*', payload: {}, producer: 't',
+    })
+    await insertDelivery(pool, delivery(ORG_A, 'd1', 'agent_a'))
+    await insertDelivery(pool, { ...delivery(ORG_A, 'd2', 'agent_a'), status: 'dead' })
+    await insertDelivery(pool, delivery(ORG_A, 'd3', null))
+    await pool.query(
+      "update notify.delivery set status='sent' where org=$1 and event_id in ('d1','d3')", [ORG_A])
+
+    const stats = await namespaceStats(pool, ORG_A, { sinceHours: 24 })
+    const byNs = new Map(stats.map((s) => [s.namespace, s]))
+    expect(byNs.get('agent_a')).toMatchObject({
+      events: 1, deliveries: 2, sent: 1, dead: 1, stalePending: 0,
+    })
+    expect(byNs.get(null)).toMatchObject({ events: 1, deliveries: 1, sent: 1 })
+  })
+
+  it('claimEvents：按 org 交错，单租户积压不占满整批', async () => {
+    for (const [org, n] of [[ORG_A, 2], [ORG_B, 2]] as const) {
+      for (let i = 0; i < n; i++) {
+        await enqueueEvent(pool, {
+          org, eventId: `fair-${i}`, eventKey: 'm.a.b', scope: '*', payload: {}, producer: 't',
+        })
+      }
+    }
+    // A 的两条都比 B 老：朴素 order by created_at 会连拿 A0,A1；公平领取应先各拿一条。
+    await pool.query(
+      "update notify.event set created_at=case org when $1 then now()-interval '4 minutes' else now()-interval '2 minutes' end where org in ($1,$2) and event_id='fair-0'",
+      [ORG_A, ORG_B])
+    await pool.query(
+      "update notify.event set created_at=case org when $1 then now()-interval '3 minutes' else now()-interval '1 minute' end where org in ($1,$2) and event_id='fair-1'",
+      [ORG_A, ORG_B])
+    const claimed = (await claimEvents(pool, 2))
+      .filter((e) => e.org === ORG_A || e.org === ORG_B)
+      .map((e) => `${e.org}:${e.eventId}`)
+      .sort()
+    expect(claimed).toEqual([`${ORG_A}:fair-0`, `${ORG_B}:fair-0`].sort())
+  })
+
+  it('claimDueDeliveries：同样按 org 交错', async () => {
+    for (const [org, n] of [[ORG_A, 2], [ORG_B, 2]] as const) {
+      for (let i = 0; i < n; i++) {
+        await insertDelivery(pool, { ...delivery(org, `due-${i}`, null), status: 'pending' })
+      }
+    }
+    // A 的两条都更早到期：朴素 order by next_attempt_at 会连拿 A0,A1；公平领取应各拿一条。
+    await pool.query(
+      "update notify.delivery set next_attempt_at=case org when $1 then now()-interval '4 minutes' else now()-interval '2 minutes' end where org in ($1,$2) and event_id='due-0'",
+      [ORG_A, ORG_B])
+    await pool.query(
+      "update notify.delivery set next_attempt_at=case org when $1 then now()-interval '3 minutes' else now()-interval '1 minute' end where org in ($1,$2) and event_id='due-1'",
+      [ORG_A, ORG_B])
+    const rows = (await claimDueDeliveries(pool, 2))
+      .filter((d) => d.org === ORG_A || d.org === ORG_B)
+      .map((d) => `${d.org}:${d.eventId}`)
+      .sort()
+    expect(rows).toEqual([`${ORG_A}:due-0`, `${ORG_B}:due-0`].sort())
   })
 })

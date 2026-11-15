@@ -114,6 +114,17 @@ export type AddressIssueView = {
   lastAt: string
 }
 
+/** per-namespace 运营指标（/stats，N5）。 */
+export type NamespaceStatView = {
+  namespace: string | null
+  events: number
+  deliveries: number
+  sent: number
+  failed: number
+  dead: number
+  stalePending: number
+}
+
 export type DeliveryView = {
   eventId: string
   eventKey: string
@@ -128,6 +139,8 @@ export type DeliveryView = {
   isTest: boolean
   lastError: string | null
   createdAt: string
+  /** 非空 = 该 agent namespace 所有；null = 平台/租户人管 */
+  ownerNamespace: string | null
 }
 
 export type InboxItem = {

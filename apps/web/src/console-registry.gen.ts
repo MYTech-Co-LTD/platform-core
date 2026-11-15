@@ -170,6 +170,15 @@ export const consoleRegistry: ConsoleRegistryEntry[] = [
     load: () => import("../../../modules/data/console/index.tsx"),
   },
   {
+    path: "/console/data/lineage",
+    title: "数据生产线",
+    group: "main",
+    moduleId: "data",
+    description: "一个指标从源字段到成品的完整加工：哪列直通、哪列被丢、哪列被聚合。",
+    scope: "data:query",
+    load: () => import("../../../modules/data/console/index.tsx"),
+  },
+  {
     path: "/console/demo",
     title: "演示",
     group: "main",
@@ -186,6 +195,16 @@ export const consoleRegistry: ConsoleRegistryEntry[] = [
     icon: "FileTextOutlined",
     scope: "forms:view",
     load: () => import("../../../modules/forms/console/index.tsx"),
+  },
+  {
+    path: "/console/jobs",
+    title: "定时任务",
+    group: "main",
+    moduleId: "jobs",
+    icon: "ClockCircleOutlined",
+    description: "平台内置调度器的周期任务与运行台账；启停与参数在代码目录（registry）。",
+    scope: "jobs:read",
+    load: () => import("../../../modules/jobs/console/index.tsx"),
   },
   {
     path: "/console/notify",
@@ -247,7 +266,7 @@ export const consoleRegistry: ConsoleRegistryEntry[] = [
     group: "main",
     moduleId: "notify",
     description: "发给我的通知副本；已读不代表已办。",
-    scope: "notify:view",
+    scope: "notify:inbox",
     load: () => import("../../../modules/notify/console/index.tsx"),
   },
 ]

@@ -129,7 +129,7 @@ export function createSchedulerLoop(deps: SchedulerDeps) {
       let outcome: RunOutcome & { retryable?: boolean }
       try {
         const res = await spawn({
-          command: 'pnpm', args: ['exec', 'tsx', def.script],
+          command: 'pnpm', args: ['exec', 'tsx', def.script, ...(def.args ?? [])],
           env: envFor(job), stdin: paramsStdin(job), timeoutMs: job.timeoutMs, cwd,
         })
         outcome = classify(res)

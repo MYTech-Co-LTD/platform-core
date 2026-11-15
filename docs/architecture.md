@@ -751,6 +751,8 @@ token 只决定「这个账号能调哪些面」，不改变分层。
 #### 权限与边界
 
 - `notify:view` / `manage` / `publish` / `channel` / `emit`；`emit` 只给服务/PAT。
+- `notify:inbox` 是**收件箱自助面**（只看自己的行），与 `notify:view` 分开，可广授全员；
+  不要为了收件箱把规则/投递/通道的读权限一起开出去。
 - 所有业务表 `org text not null` 首列；org 只来自 identity。
 - 明确不做：邮件 / 短信 / digest / 条件规则 / 多级路由 / 偏好中心 / 消息队列。
 

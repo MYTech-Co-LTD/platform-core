@@ -89,9 +89,19 @@ export async function runOnce(deps: WorkerDeps): Promise<WorkerStats> {
   const now = deps.now()
   const events = await deps.claimEvents(50)
   let deliveries = 0
+  // N5：同一批事件里同 org 只查一次规则（此前是每条事件一次 listRules，租户内突发即 N+1）。
+  // 缓存只活一轮；跨轮次规则变更在下一轮生效，与「规则即时生效」的服务端语义不冲突。
+  const ruleCache = new Map<string, NotificationRule[]>()
+  const rulesOf = async (org: string): Promise<NotificationRule[]> => {
+    const hit = ruleCache.get(org)
+    if (hit) return hit
+    const rules = await deps.listRules(org)
+    ruleCache.set(org, rules)
+    return rules
+  }
 
   const processEvent = async (ev: PendingEvent): Promise<void> => {
-    const rules = matchRules(await deps.listRules(ev.org), {
+    const rules = matchRules(await rulesOf(ev.org), {
       eventKey: ev.eventKey,
       scope: ev.scope,
     })
@@ -175,6 +185,7 @@ export async function runOnce(deps: WorkerDeps): Promise<WorkerStats> {
             recipient: '<render>', channel: c.id, address: '', templateKey: rule.templateKey,
             revision: deliv.tpl!.revision, rendered: {}, status: 'dead',
             lastError: rendered.issues.join('; '),
+            ownerNamespace: rule.ownerNamespace ?? null,
           })
         }
         continue
@@ -189,6 +200,8 @@ export async function runOnce(deps: WorkerDeps): Promise<WorkerStats> {
             org: ev.org, eventId: ev.eventId, eventKey: ev.eventKey, ruleId: rule.id,
             recipient, channel: channelId,
             templateKey: rule.templateKey, revision: deliv.tpl!.revision,
+            // N5：把归属冻结在投递行上（规则删了指标仍可归因）
+            ownerNamespace: rule.ownerNamespace ?? null,
           }
 
           if (await deps.isCoolingDown(ev.org, rule, recipient, now)) {

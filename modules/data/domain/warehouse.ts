@@ -99,8 +99,13 @@ export function analystPool(env: Record<string, string | undefined> = process.en
   if (analystSingleton) return analystSingleton
   const url = env.DATA_WAREHOUSE_URL?.trim()
   if (!url) throw new Error(DATA_WAREHOUSE_UNCONFIGURED)
-  const pool = new Pool({ connectionString: url, ...warehousePoolConfig(env) })
-  pool.on('connect', (client) => { void client.query('set default_transaction_read_only = on') })
+  // 只读会话用连接参数声明（`options`），不用未 await 的 `SET`——后者与紧随其后的查询
+  // 共用同一 client 时会触发 pg 的「client 已在执行查询」弃用警告，且语义上存在顺序歧义。
+  const pool = new Pool({
+    connectionString: url,
+    ...warehousePoolConfig(env),
+    options: '-c default_transaction_read_only=on',
+  })
   analystSingleton = pool
   return analystSingleton
 }

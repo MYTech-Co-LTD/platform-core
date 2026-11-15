@@ -37,7 +37,7 @@ describePg('routes v2', () => {
       notifyV2,
       makeIdentity({
         orgId: ORG, userId: 'u1',
-        scopes: ['notify:view', 'notify:manage', 'notify:publish', 'notify:emit'],
+        scopes: ['notify:view', 'notify:inbox', 'notify:manage', 'notify:publish', 'notify:emit'],
       }),
       { pool, events, addresses },
     )

@@ -13,11 +13,13 @@ import {
   buildSystemMapModel,
   loadDbtModels,
   loadDbtVars,
+  loadModelColumnDocs,
   loadSystemMapFacts,
 } from '../domain/system-map/map'
 import type { SystemMapInput, SystemMapModel } from '../domain/system-map/map'
 import { buildSystemMapOntology } from '../domain/system-map/ontology'
-import { buildMetricTrail, lakeStagingFromContracts, pipelineIdsOf, stagingRelationsOf } from '../domain/system-map/trail'
+import { buildMetricTrail, lakeOfStaging, lakeStagingFromContracts, pipelineIdsOf, stagingRelationsOf } from '../domain/system-map/trail'
+import { buildMetricLineage } from '../domain/system-map/lineage'
 import { buildPipelineMap, lakeConsumers, liveStatusOf } from '../domain/system-map/pipeline-map'
 import { loadContracts, loadPipelines, loadSchedules, rootsOf } from '../domain/pipelines/defs'
 import { warehousePool } from '../domain/warehouse'
@@ -143,6 +145,87 @@ export function registerSystemMap(r: ModuleHono, ctx: RouteCtx): void {
 
     trail.runtime = { pipelineId: lastRunPipeline ?? pipeIds[0] ?? null, lastRun, materializedAt, maxBizday }
     return c.json({ trail })
+  })
+
+  // 指标级「数据生产线」：源接口 → 湖（落盘形态）→ staging → marts，字段级。
+  // 事实源全部在仓内声明（契约 columns/layout + dbt schema.yml），不查库、不碰运行态。
+  r.get('/system-map/lineage/:id', async (c) => {
+    const requester = requesterOf(c)
+    if (requester === null) return c.json({ error: 'UNAUTHENTICATED' }, 401)
+
+    const result = await modelFor(ctx, requester.orgId)
+    if (!('metrics' in result)) return c.json(result, 500)
+    const metric = result.metrics.find((m) => m.id === c.req.param('id'))
+    if (metric === undefined) return c.json({ error: 'NO_SUCH_METRIC' }, 404)
+
+    const roots = rootsOf(process.env, ctx.repoRoot)
+    const loadedContracts = loadContracts(roots)
+    const docs = loadModelColumnDocs(ctx.repoRoot)
+    const models = loadDbtModels(ctx.repoRoot)
+
+    // marts = 指标声明的第一个源关系；staging = 该关系在 dbt 模型图里的一层上游
+    const mart = metric.relations[0] ?? null
+    const staging = mart === null
+      ? null
+      : (result.sources.find((s) => s.name === mart)?.upstream.find((u) => u.depth === 1 && u.name.startsWith('stg_'))?.name ?? null)
+
+    // 契约：staging 名反推 `<domain>_<table>`，再按 id 匹配（契约 id = `<domain>.<table>`）
+    const contract = staging === null
+      ? null
+      : (() => {
+          const lake = lakeOfStaging(staging)
+          if (lake === null) return null
+          const id = lake.replace('/', '.')
+          const hit = loadedContracts.contracts.find((x) => x.id === id)
+          if (hit === undefined) return null
+          const doc = hit.doc as { columns?: unknown; layout?: unknown }
+          const columns = Array.isArray(doc.columns) ? doc.columns as Array<{ name?: unknown; type?: unknown; description?: unknown }> : []
+          const layout = (typeof doc.layout === 'object' && doc.layout !== null ? doc.layout : {}) as Record<string, unknown>
+          return {
+            id: hit.id,
+            columns: columns.map((x) => ({
+              name: String(x.name ?? ''),
+              ...(typeof x.type === 'string' ? { type: x.type } : {}),
+              ...(typeof x.description === 'string' ? { description: x.description } : {}),
+            })).filter((x) => x.name !== ''),
+            layout: {
+              ...(typeof layout.prefix === 'string' ? { prefix: layout.prefix } : {}),
+              ...(Array.isArray(layout.partitionBy) ? { partitionBy: layout.partitionBy.map(String) } : {}),
+              ...(typeof layout.fileName === 'string' ? { fileName: layout.fileName } : {}),
+              ...(typeof layout.partitionStyle === 'string' ? { partitionStyle: layout.partitionStyle } : {}),
+            },
+          }
+        })()
+
+    // 聚合度量的输入列：从 marts SQL 的 `<度量>__gen as ( … )` 块里扫 staging 列名——
+    // 只做「这一段表达式提到了哪些列」，不解析 SQL 结构（够画连线，别当血缘证明）。
+    const martsInputs: Record<string, string[]> = {}
+    const martModel = mart === null ? undefined : models.find((m) => m.name === mart)
+    const martSql = martModel?.sql ?? ''
+    const stagingNames = new Set((staging === null ? [] : (docs.get(staging) ?? [])).map((c) => c.name))
+    for (const col of (mart === null ? [] : (docs.get(mart) ?? []))) {
+      if (stagingNames.has(col.name)) continue
+      const start = martSql.indexOf(`${col.name}__gen as (`)
+      if (start < 0) continue
+      const rest = martSql.slice(start)
+      const end = rest.indexOf('\n),')
+      const block = end < 0 ? rest : rest.slice(0, end)
+      const inputs = [...stagingNames].filter((n) => new RegExp(`\\b${n}\\b`).test(block))
+      if (inputs.length > 0) martsInputs[col.name] = inputs
+    }
+
+    return c.json(buildMetricLineage({
+      metricId: metric.id,
+      title: metric.title,
+      contract,
+      staging: {
+        model: staging,
+        columns: staging === null ? [] : (docs.get(staging) ?? []),
+        sqlColumns: staging === null ? [] : sqlColumnsOf(models.find((m) => m.name === staging)?.sql ?? ''),
+      },
+      marts: { model: mart, columns: mart === null ? [] : (docs.get(mart) ?? []) },
+      martsInputs,
+    }))
   })
 
   // 管线视角的全局图：资产（湖前缀）→ staging → marts。运行态（最近一次 run 状态）60 秒缓存——
@@ -275,6 +358,14 @@ export function registerSystemMap(r: ModuleHono, ctx: RouteCtx): void {
       warnings: list.warnings,
     })
   })
+}
+
+/** 从 staging SQL 里扫出列名（`r['col']` 与 `as col` 两种写法）——schema.yml 可能漏文档。 */
+export function sqlColumnsOf(sql: string): string[] {
+  const out = new Set<string>()
+  for (const m of sql.matchAll(/r\[\s*'([a-z0-9_]+)'\s*\]/g)) out.add(m[1])
+  for (const m of sql.matchAll(/\bas\s+([a-z][a-z0-9_]*)\b/g)) out.add(m[1])
+  return [...out]
 }
 
 /** warehousePool 在未配 `DATA_WAREHOUSE_URL` 时会抛——这里吞掉，交给 catch 的 note。 */

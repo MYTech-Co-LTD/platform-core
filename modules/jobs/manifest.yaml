@@ -87,3 +87,8 @@ notifications:
         recipient: admins
         template: jobs_job_dead
         channels: [inapp_default]
+
+# 业务面承载端：console 页（Wave 6 P4 遗留，只读）。
+frontend:
+  console:
+    - { path: /console/jobs, title: 定时任务, description: 平台内置调度器的周期任务与运行台账；启停与参数在代码目录（registry）。, icon: ClockCircleOutlined, scope: jobs:read, entry: ./console/index.tsx }

@@ -35,8 +35,10 @@
 - **P3 随本 PR 上线**：agent 排班工具面 + 配额（§11）。
 - **P4a 随本 PR 上线**：手动触发迁入 jobs 模块——`POST /api/modules/jobs/:key/run`（需
   `jobs:manage` + CSRF）；宿主旧路由 `/api/platform/jobs/*` **已退役删除**（旧路径一律 404）。
-- **仍待切（W6-P4）**：`notify-preflight` / `notify-retention` / `metric-retire` / `org-sync`；
-  `notify-seed-builtin` 启动期化、`notify-health` 并入 worker loop。
+- **P4b 已切（2026-11-15）**：`notify-preflight`（仅 mytech）/ `notify-retention`（仅 mytech）/
+  `metric-retire` / `org-sync` / `notify-seed-builtin` / `notify-health` 均已由内置调度器驱动，
+  openship 对应作业已停。**未做的优化**：`notify-seed-builtin` 启动期化、`notify-health` 并入
+  worker loop（当前以调度器子进程运行，行为一致；去子进程是优化不是必要）。
 
 逐项状态见 §5 切流表。
 
@@ -142,15 +144,15 @@
 | `notify.reconcile` | 已切（W6-P1） | worker 的 `platform.scheduler` | 原 openship key（已停）：mytech `custom:KJ_JBrbq68jAHVlO`；山海 `custom:QSr7oZ5KBAVOqx5j`（见 `deploy/notify-reconcile-job.md`） |
 | `metric.candidates` | 已切（W6-P1） | worker 的 `platform.scheduler` | 原 openship key（已停）：仅山海 `custom:tB6ulrsKtgW852WL` |
 | `report.scope_scan` | 已切（W6-P1） | worker 的 `platform.scheduler` | 两实例各一条（openship 侧本无对应 job） |
-| `notify-preflight` | 待切（W6-P4） | openship job | 见 `deploy/notify-jobs.md` |
-| `notify-retention` | 待切（W6-P4） | openship job（仅 mytech） | 见 `deploy/notify-jobs.md` |
-| `notify-seed-builtin` | 待切（W6-P4，计划启动期化） | openship job（mytech + 山海） | 见 `deploy/notify-jobs.md` |
-| `notify-health` | 待切（W6-P4，计划并入 worker loop） | openship job（mytech + 山海） | 见 `deploy/notify-jobs.md` |
-| `metric-retire` | 待切（W6-P4） | **无任何驱动（openship job 未建）** | 见 `deploy/metric-retire-job.md` |
-| `org-sync` | 待切（W6-P4） | openship job | mytech `custom:qvkapKmBf4jI4H6T`；山海 `custom:dbuJg85a8UjjObB7`（见 `deploy/org-sync-job.md`） |
+| `notify-preflight` | **已切（W6-P4b）** | 内置调度器（仅 mytech；山海保持 disabled——该实例本无此作业） | openship job 已停 |
+| `notify-retention` | **已切（W6-P4b）** | 内置调度器（仅 mytech） | openship job 已停 |
+| `notify.seed_builtin` | **已切（W6-P4b）** | 内置调度器（两实例） | openship job 已停 |
+| `notify.health` | **已切（W6-P4b）** | 内置调度器（两实例） | openship job 已停 |
+| `metric.retire` | **已切（W6-P4b）** | 内置调度器（两实例，周一夜） | 本无 openship 作业 |
+| `org.sync` | **已切（W6-P4b）** | 内置调度器（两实例，**必须带 `--apply`**——脚本默认 dry-run） | openship job 已停（mytech `qvkapKmBf4jI4H6T` / 山海 `dbuJg85a8UjjObB7`） |
 
 **顺序按爆炸半径**：已完成 `notify.reconcile` → `metric.candidates` → `report.scope_scan`；
-剩余 `notify-preflight` → `notify-retention` → `metric.retire` → `org-sync`。
+P1+P4b 的切流**已全部完成**（2026-11-15）；新增 job 仍按上表四步执行。
 未完成切流的 job 在走完全部四步之前都仍由原驱动方负责——不要提前置 `enabled=true`。
 
 **切流期红线**：发现双调度者（DB `enabled=true` 且 openship job 仍启用）⇒ 立即停 DB 侧 `enabled`，再排查 openship，不要在两边同时「先看看」。
@@ -299,3 +301,25 @@ agent 经 notify 工具面管理**周期消息排班**（触发 `notify.emit`）
 | `INVALID_PARAMS` / `INVALID_CRON` / `INVALID_SCHEDULE` / `INVALID_INTERVAL` / `PARAMS_TOO_LARGE` / `UNKNOWN_JOB_KEY` | 入参不合法（缺必填、cron 语法或时区、间隔、`params` >16KB、key 不在白名单） | 按错误码修入参 |
 
 > `QUOTA_EXCEEDED` 与 `JOB_LOCK_TIMEOUT` **不是一回事**：前者要人清额度，后者重试即可。
+
+## 12. 业务监控 tick（W7-V1，2026-11-15）
+
+`data.monitor_tick` 是调度器 registry 的一个系统 key（`* * * * *`，每实例一条排班），
+脚本 `scripts/data-monitor-tick.mjs` 遍历到期规则求值（`missing` / `stale`），写
+`data.monitor_run`，**只在状态跃迁且非影子期**时入队 `data.monitor.*` 事件。
+
+- **影子期是硬门**：`data.monitor.dry_run` 默认 `true`，只记录不发送；开闸走
+  `PATCH /api/modules/data/monitors/:id {dryRun:false}`（创建者或 `data:manage`）。
+- **判不了 ≠ 没问题**：水位表缺席、查询失败、目标不存在 ⇒ `monitor_run.verdict='unknown'`，
+  状态不变、`consecutive_fail+1`；连续 5 次自动停用并发 `data.monitor.disabled`。
+- **开闸四步（每实例）**：
+  1. 部署后确认 `platform.job_schedule` 有 `data.monitor_tick` 且 `enabled=false`；
+  2. `update platform.job_schedule set enabled=true, next_run_at=now() where key='data.monitor_tick'`；
+  3. 手动入队一次，看日志汇总行 `monitor-tick: due=<n> ok=<n> firing=<n> unknown=<n> ...`；
+  4. 建一条真实影子监控（一个已知新鲜指标 + 一个已知迟到源），确认 `data.monitor_run` 有行、
+     `notified=false`、`notify.event` 无新增。
+- **心跳**：脚本写 `platform.job_heartbeat('data.monitor_tick')`；`check-probe-heartbeat`
+  的检查清单要同时盯它（第二条独立路径，spec §10）。
+- **回滚**：`update platform.job_schedule set enabled=false where key='data.monitor_tick'`。
+  已建的监控规则留在库里（不删数据），重新开闸即可继续。
+- **判据下界**：`cadence_secs ≥ 300`；`stale` 的窗口必须晚于上游物化节奏一档，否则每轮误报。

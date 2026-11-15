@@ -11,6 +11,64 @@
 
 ## [Unreleased]
 
+## [0.300.0](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.299.0...v0.300.0) - 2026-11-15
+- 【新增】jobs: 定时任务 console 页——排班与运行台账（只读） ([#2321](https://github.com/MYTech-Co-LTD/platform-core/pull/2321), [98019b9](https://github.com/MYTech-Co-LTD/platform-core/commit/98019b945028fff0a8441a2a2ee5f030563301a9))
+
+
+## [0.299.0](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.298.0...v0.299.0) - 2026-11-15
+- 【新增】data: 业务监控组织级限流与摘要事件（W7-V2c） ([#2317](https://github.com/MYTech-Co-LTD/platform-core/pull/2317), [6943107](https://github.com/MYTech-Co-LTD/platform-core/commit/69431072b14c1df0f86276ebc7553efdd39efae9))
+- 【修复】data: 数据生产线适应画布改按宽度，卡片固定宽 (#2315) ([#2316](https://github.com/MYTech-Co-LTD/platform-core/pull/2316), [e038313](https://github.com/MYTech-Co-LTD/platform-core/commit/e038313cc22fb7d038bdc9fa4852189caac217c0))
+
+
+## [0.298.0](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.297.0...v0.298.0) - 2026-11-15
+- 【新增】data: 数据生产线改无限画板（缩放/拖拽/适应画布）(#2304) ([#2305](https://github.com/MYTech-Co-LTD/platform-core/pull/2305), [ab04a3d](https://github.com/MYTech-Co-LTD/platform-core/commit/ab04a3dfdee1cc6275596f3d6b5fe68a1cb34a82))
+- 【修复】server: app.test 真装配 beforeAll 放宽到 30s，消除 hook timeout flake (#2310) ([#2311](https://github.com/MYTech-Co-LTD/platform-core/pull/2311), [1c3b3cd](https://github.com/MYTech-Co-LTD/platform-core/commit/1c3b3cdbe4e3f18e0519b7476692cb00012fce28))
+- 【修复】data: 桌面端报表清单补「编辑版式」入口 (#2295) ([#2309](https://github.com/MYTech-Co-LTD/platform-core/pull/2309), [3e2c0b1](https://github.com/MYTech-Co-LTD/platform-core/commit/3e2c0b1db77198b8d94900c1b01f64a7bceec5db))
+
+
+## [0.297.0](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.296.0...v0.297.0) - 2026-11-15
+- 【新增】data: 业务监控 no_flap 防抖与只读池会话参数（W7-V2b） ([#2307](https://github.com/MYTech-Co-LTD/platform-core/pull/2307), [ea0b5d6](https://github.com/MYTech-Co-LTD/platform-core/commit/ea0b5d6853badcbeab933278782d39d7a7faaa79))
+
+
+## [0.296.0](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.295.0...v0.296.0) - 2026-11-15
+- 【修复】data: 阈值未触发时也把窗口合计写入台账（W7-V2a） ([#2297](https://github.com/MYTech-Co-LTD/platform-core/pull/2297), [4e0afbd](https://github.com/MYTech-Co-LTD/platform-core/commit/4e0afbdfaff0920b9d7dc534dfaf3ed60f31f7fb))
+- 【新增】notify: 收件箱角色自动收敛 job——notify-inbox-readers (#2300) ([#2301](https://github.com/MYTech-Co-LTD/platform-core/pull/2301), [9955243](https://github.com/MYTech-Co-LTD/platform-core/commit/9955243a4a39682c1653da4a9821e3fee280fe41))
+- 【新增】data: 报表版式编辑——24 栅格拖动换位 + 拖边调宽 (#2295) ([#2298](https://github.com/MYTech-Co-LTD/platform-core/pull/2298), [6cfd87a](https://github.com/MYTech-Co-LTD/platform-core/commit/6cfd87a52e0f159631bb3e44222e967f6240558f))
+
+
+## [0.295.0](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.294.0...v0.295.0) - 2026-11-15
+- 【新增】data: 数据生产线加连线（SVG 流程图）+ 修「被丢掉」误判 ([#2294](https://github.com/MYTech-Co-LTD/platform-core/pull/2294), [3a0abdc](https://github.com/MYTech-Co-LTD/platform-core/commit/3a0abdc3d7b1cd3affb8ed11253bb226b12ced8a))
+
+
+## [0.294.0](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.293.0...v0.294.0) - 2026-11-15
+- 【新增】data: 业务监控 W7-V2a——threshold 判据（#2291） ([#2292](https://github.com/MYTech-Co-LTD/platform-core/pull/2292), [f39a970](https://github.com/MYTech-Co-LTD/platform-core/commit/f39a970ffd1ca4050e097f9ec251b9b513672603))
+
+
+## [0.293.0](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.292.2...v0.293.0) - 2026-11-15
+- 【新增】notify: 新增 notify:inbox 自助收件箱权限，与 notify:view 解耦 (#2289) ([#2290](https://github.com/MYTech-Co-LTD/platform-core/pull/2290), [6750716](https://github.com/MYTech-Co-LTD/platform-core/commit/675071657615f5949e48da483d00a1b5599e16b5))
+
+
+## [0.292.2](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.292.1...v0.292.2) - 2026-11-15
+- 【修复】data: 乐檬零售明细契约补第三级分区 hour ([#2287](https://github.com/MYTech-Co-LTD/platform-core/pull/2287), [7dce149](https://github.com/MYTech-Co-LTD/platform-core/commit/7dce149792afbeef3a9dcb0ac357a4a7423b5c22))
+
+
+## [0.292.1](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.292.0...v0.292.1) - 2026-11-15
+- 【修复】notify: seed 不再重新启用被人工停用的派生规则 (#2285) ([#2286](https://github.com/MYTech-Co-LTD/platform-core/pull/2286), [e11f084](https://github.com/MYTech-Co-LTD/platform-core/commit/e11f084e9820502b979016d3a41dbd839346f01d))
+
+
+## [0.292.0](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.291.0...v0.292.0) - 2026-11-15
+- 【新增】data: 业务监控 W7-V1——指标/报表面板 missing·stale + 状态机 + 影子期（#2278） ([#2283](https://github.com/MYTech-Co-LTD/platform-core/pull/2283), [66d281d](https://github.com/MYTech-Co-LTD/platform-core/commit/66d281d6101223bfb6c08e9e9418e42234858572))
+
+
+## [0.291.0](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.290.0...v0.291.0) - 2026-11-15
+- 【新增】notify: N5 per-namespace 指标 + claim 按 org 交错 + 批内规则缓存 (#2280) ([#2281](https://github.com/MYTech-Co-LTD/platform-core/pull/2281), [4490001](https://github.com/MYTech-Co-LTD/platform-core/commit/44900014e2d3157d7fe82844740b3d370f5959c2))
+
+
+## [0.290.0](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.289.0...v0.290.0) - 2026-11-15
+- 【新增】data: 数据生产线页——字段级血缘 (#2273) ([#2275](https://github.com/MYTech-Co-LTD/platform-core/pull/2275), [a062b85](https://github.com/MYTech-Co-LTD/platform-core/commit/a062b85e7b985ed76ac983cbcfb4b4e4dc80719b))
+- 【修复】data: 调度器支持子进程参数，org.sync 带 --apply（否则默认 dry-run 空跑） ([#2274](https://github.com/MYTech-Co-LTD/platform-core/pull/2274), [1a7d821](https://github.com/MYTech-Co-LTD/platform-core/commit/1a7d821d3de1166187d269d88244d501fcd0e96d))
+
+
 ## [0.289.0](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.288.1...v0.289.0) - 2026-11-15
 - 【新增】data: registry 增补 P4b 六类系统 job（W6-P4b） ([#2266](https://github.com/MYTech-Co-LTD/platform-core/pull/2266), [c69bd0b](https://github.com/MYTech-Co-LTD/platform-core/commit/c69bd0b910ffc8a0f643cd95535f0608df0a4cd1))
 - 【修复】notify: preflight 按 decl 取权限码，修复 scope_holders 恒判 no_recipient (#2263) ([#2264](https://github.com/MYTech-Co-LTD/platform-core/pull/2264), [a9bf2fb](https://github.com/MYTech-Co-LTD/platform-core/commit/a9bf2fb7168a3e43878775b28a7330c963828f2a))

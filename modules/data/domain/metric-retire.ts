@@ -93,12 +93,14 @@ async function referencedMetricIdsOf(pool: Pool, org: string): Promise<Set<strin
 }
 
 /**
- * 安全过滤（四条，缺一不提单；过滤①由候选池承担）：
+ * 安全过滤（五条，缺一不提单；过滤①由候选池承担）：
  * ① 仅 L2 且窗口 0 次使用（retireCandidatesOf：审计聚合，回归重放身份已豁免，L1 永不）；
  * ② 行龄 ≥ 窗口（`updated_at < now() - make_interval(days)`）——新采纳/新改的口径给满一个
  *    观察窗口，别把刚上线的指标判死；
  * ③ 不被任何报表引用——草稿与已发布快照都查，面板 metricId 与 kpi 分母都算（见
  *    referencedMetricIdsOf）；在用指标提删是最贵的误报；
+ * ⑤ 被业务监控引用（`data.monitor`，启用中）⇒ 跳过——删掉正在被盯着的指标 = 监控静默失明
+ *    （Wave 7 spec §14.1，与④同集合语义）。
  * ④ 已有未决单**或人已驳回** ⇒ 跳过——未决的 id 不叠第二张单；驳回是人的明确决定，
  *    job 不跟人拉锯（否则「驳回 → 下一轮 job 原样重提」死循环）。`metric_change_one_pending_uq`
  *    只兜未决并发，rejected 要自己排。回头路是真实变化：指标后来又有使用再归零时 updated_at
@@ -120,6 +122,12 @@ async function safetyFilterOf(
     'select distinct metric_id from data.metric_change where org = $1 and status = any($2)',
     [org, [...PENDING_STATUSES, 'rejected']])
   const blockedIds = new Set(blocked.rows.map((r) => String(r.metric_id)))
+  // ⑤ 业务监控引用（Wave 7 V1）：被监控的指标不得进下线候选——删掉正在被盯着的指标
+  //  = 监控静默失明（spec §14.1）。与④同集合语义：不算候选、不进一步报。
+  const monitored = await pool.query(
+    'select distinct metric_id from data.monitor where org = $1 and enabled and metric_id is not null',
+    [org])
+  for (const r of monitored.rows) blockedIds.add(String(r.metric_id))
   // ③ 报表引用（草稿 ∪ 已发布快照，org 作用域）。
   const referenced = await referencedMetricIdsOf(pool, org)
   return candidates

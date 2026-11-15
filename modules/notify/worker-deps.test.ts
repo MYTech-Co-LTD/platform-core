@@ -32,6 +32,7 @@ describePg('buildWorkerDeps', () => {
     org: ORG, eventId: 'e1', eventKey: 'm.a.b', ruleId: 'r1', recipient: 'u1',
     channel: 'wecom_default', address: 'wecom-u1', templateKey: 't1', revision: 1,
     rendered: { text: 'hi' }, status: 'pending', attempts: 0, lockedUntil: null,
+    ownerNamespace: null,
     ...over,
   })
 

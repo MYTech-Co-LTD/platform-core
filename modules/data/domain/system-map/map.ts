@@ -510,6 +510,45 @@ export function loadAuditFiles(baseDir: string = REPO_ROOT): string[] {
   return walkFiles(testsDir, (name) => name.endsWith('.sql')).map((p) => basename(p)).sort()
 }
 
+/** 模型列文档（dbt `schema.yml` 的 models[].columns）：字段名 + 描述 + 类型（有就带）。 */
+export interface ModelColumnDoc {
+  name: string
+  description?: string
+  type?: string
+}
+
+/**
+ * 读 `dbt/models/**\/schema.yml` 的列文档，按模型名聚合。
+ * 读不到/解析失败 ⇒ 该文件跳过（未知 ≠ 没有；调用方用空清单表示「未声明」）。
+ */
+export function loadModelColumnDocs(baseDir: string = REPO_ROOT): Map<string, ModelColumnDoc[]> {
+  const out = new Map<string, ModelColumnDoc[]>()
+  const dir = join(baseDir, 'dbt', 'models')
+  if (!existsSync(dir)) return out
+  for (const file of walkFiles(dir, (name) => name === 'schema.yml')) {
+    let raw = ''
+    try { raw = readFileSync(file, 'utf8') } catch { continue }
+    let doc: unknown
+    try { doc = parseYaml(raw) } catch { continue }
+    const models = (doc as { models?: unknown[] } | null)?.models
+    if (!Array.isArray(models)) continue
+    for (const m of models) {
+      const name = asText(asRecord(m).name)
+      if (name === '') continue
+      const cols = Array.isArray(asRecord(m).columns) ? asRecord(m).columns as unknown[] : []
+      out.set(name, cols.map((c) => {
+        const rec = asRecord(c)
+        return {
+          name: asText(rec.name),
+          ...(asText(rec.description) === '' ? {} : { description: asText(rec.description) }),
+          ...(asText(rec.type) === '' ? {} : { type: asText(rec.type) }),
+        }
+      }).filter((c) => c.name !== ''))
+    }
+  }
+  return out
+}
+
 /** `dbt/dbt_project.yml` 的 `vars`（只收字符串）：视图里 `{{ var("x_prefix") }}` 的展开值。 */
 export function loadDbtVars(baseDir: string = REPO_ROOT): Record<string, string> {
   const raw = readRepoText('dbt/dbt_project.yml', baseDir)

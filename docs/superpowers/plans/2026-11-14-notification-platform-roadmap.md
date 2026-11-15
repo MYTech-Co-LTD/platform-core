@@ -65,7 +65,10 @@
 | 模板/规则 namespace 归属 + 通用消息 | ✅ | #2256 | N2；`owner_namespace` + `ext.<ns>.message` |
 | 爆炸半径策略 + 审批 + 配额 | ✅ | #2200 | N3；默认 in-app、外发审批、配额与审计 |
 | `SchedulerPort` 消费 + 排班工具 | ✅ | #2253 | N4；job key 恒 `notify.emit`，事件 key 在 `params.eventKey` |
-| job 生命周期事件接通知 | ⬜ | — | N5；W6-P4a（#2261）已落 jobs 模块，接线待做 |
+| job 生命周期事件接通知 | ✅ | #2261/#2266 | W6-P4a 声明 + 宿主发射 + 派生规则；两套生产 event_catalog/rule 已验 |
+| N5 per-namespace 指标 + 单 worker 公平性 | ✅ | #2281 | delivery 冻结 `owner_namespace`、`/stats`、console 过滤；claim 按 org 交错 + 批内规则缓存 |
+| N5 收件箱权限模型 | ✅ | #2290/#2301 | 新增 `notify:inbox`（只看自己的行），与 `notify:view` 解耦；`notify-inbox-readers` 角色广授（mytech 5 / shanhai 262），并由 15 分钟收敛 job 覆盖新成员 |
+| N5 验收（两套生产） | ✅ | 2026-11-15 | mytech / shanhai `notify-health` 全绿，`notify-preflight blockedCount:0`；shanhai `channelErrors` 的直连陈旧假红已按 direct 判据重探清零 |
 | N0 基线加固（N0.1–N0.8） | ✅ | #2180/#2182/#2184 | 治理 / 可靠性 / 一致性三件套 |
 | N0.9 生产 preflight 3 条 `no_recipient` | ✅ | #2264 / #2268 | 2026-11-15：预检取码修复后，shanhai 授 `notify:publish` 给两位租户管理员、mytech 授给 ZhangDuo 并停用两条未使用派生规则；两套生产 preflight 均 `blockedCount:0` |
 
@@ -83,6 +86,7 @@
 | D6 | **单调度者**：周期排班归 `platform.scheduler`；一次性延迟归 notify outbox `available_at` | 不造第二个 cron；两者语义不同 |
 | D7 | `notify.emit` handler：job 成功 = 事件已入队；投递失败仍归 notify 重试 | 两层重试语义不打架 |
 | D8 | P1 不开放 agent 面；agent 排班在 **W6-P3** | 调度器先稳定，再开能力 |
+| D9 | 收件箱用独立 `notify:inbox` 广授全员，**不**把 `notify:view` 开给全员 | 员工要能读自己的通知，但投递明细/通道/规则拓扑不能顺带暴露 |
 
 ---
 
@@ -231,8 +235,8 @@ MCP emit/send ─────────┘ │  ext.<namespace>.<event> 归属
 
 ## 9. 候选池 / 开放问题
 
-- 收件箱权限模型：`notify:view` 是否默认授予所有成员？
-- job 生命周期事件归属：最小 `jobs` 模块 vs 宿主层事件声明面。
+- ~~收件箱新成员同步~~：已由 `notify-inbox-role-sync` job 每 15 分钟收敛（#2301；mytech / shanhai 首轮 `changed:false`）。
+- ~~job 生命周期事件归属~~：已定最小 `jobs` 模块声明 + 宿主 `platform.scheduler` 发射（#2261/#2266）。
 - 通道自助：`POST /channels` + 凭据录入 UI 是否进 v1？
 - 事件/audit 保留窗口：30/90/180/365 的最终口径。
 - 规则版本化/回滚：是否做 rule revision，还是只靠 audit？
