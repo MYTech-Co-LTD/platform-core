@@ -173,6 +173,7 @@
 - **build vs buy 退出条件**：出现 on-call 升级 / >500 规则 / 3+ 通道策略路由 / 跨服务关联之一 ⇒ 改用 Grafana·Alertmanager 或 OO 承载，不再加功能。
 - **必须同批改的既有面**：`metric-retire` 的引用面要加 monitor（否则会提议删掉正在被监控的指标）；`data.monitor.*` 事件必须 seed 模板与规则（否则 `no_rules` 静默丢弃）。
 - **V1 实施计划**：`docs/superpowers/plans/2026-11-15-business-monitor-v1.md`（issue **#2278**）。八个任务：迁移 053 + 存储层 → 判据求值 → 状态机/收件人 → tick 作业 → 事件模板 → 投递/退役引用面 → API 与「挂监控」入口 → 切流开闸。迁移号用 **053**（spec 写的 049 已被 `report_versions_immutable` 占用）。
+- **V1 已上线（2026-11-15）**：PR #2283（`66d281d6`）合并、两实例部署实测（mytech `dep_mGqCVLvG…` 自动 / 山海 `dep_OXHBuOLk…` 手动）；`data.monitor`/`data.monitor_run` 在位、`data.monitor_tick` 排班已开闸（`runs=3 last=ok`、`next_run_at` 推进、心跳 10s）、三条事件在 catalog、模块路由未鉴权 401。**影子期**进行中（默认 `dry_run=true`，暂不投递）。
 
 ### Wave 4 · 产品面：单页双层（2026-11-12 定案）
 
@@ -257,3 +258,4 @@
 | 2026-11-15 | **Wave 6 P4b 完成入账 = openship 应用面业务作业清零**：六类系统 job 迁入内置调度器并完成两实例切流 | PR #2266（registry）+ #2274（`--apply` 修复）；两实例实测：山海 7 条 / mytech 8 条由内置调度器驱动，openship 侧 3 + 5 条已停；`org.sync` 首跑 `dryRun=false`（修复前实测 `dryRun=true` 静默空跑）。**一并发现**：mytech 的 `notify-preflight` 在 openship 时代连续两周每天失败（3 条派生规则 `no_recipient`），迁移后由 `jobs.job.failed` 首次推到人眼前——待定「补收件人还是停规则」 |
 | 2026-11-15 | **订正上一条的「待定」**：mytech `notify-preflight` 的 `no_recipient` 已由 PR #2264（preflight 按事件声明取权限码，修复 `scope_holders` 恒判空）修掉——实测最近一次运行 `blockedCount=0 scopeHoldersUnavailable=false`，不需要「补收件人」也不需要「停规则」 | 从 `jobs.job.failed` 事件追到根因：preflight 此前按错误来源取 scope 名单，属于误报；修复后两实例 `notify.preflight` 均 exit 0 |
 | 2026-11-15 | **Wave 7 V1 实施计划已出**（issue #2278）：迁移 053 + 存储层 → 判据求值（missing/stale/unknown）→ 状态机与收件人 → `data.monitor_tick` → 事件模板 → 投递 + 退役引用面 → API 与「挂监控」入口 → 切流开闸 | 计划 `docs/superpowers/plans/2026-11-15-business-monitor-v1.md`。**迁移号订正**：spec §5 写的 049 已被 `report_versions_immutable` 占用，本波用 **053**。求值直接复用 `watermarkSqlFor`/`freshnessFaceFor` 与 `authorize(...).plan.sql`，不新写查询语义；收件人走 notify 既有 `kind=field` 机制（payload 带 `to`），不新增审批/路由 |
+| 2026-11-15 | **Wave 7 V1（业务监控）上线并开闸**：`missing`/`stale` 判据 + 状态机 + 影子期 + 报表页「挂监控」入口 | PR #2283（squash `66d281d6`，issue #2278）。实现要点：求值复用 `watermarkSqlFor`（读水位）与 `authorize(...).plan.sql` 外层 `count(*)`（不新写查询语义）；`unknown` 三分支（水位缺席/查询失败/目标不存在）一律不当 `missing`；状态机跃迁才发、冷却只压投递、连续 5 次熔断；收件人走 notify `kind=field` + `user_list`；迁移 **053**。两实例实测：表在位、排班 `enabled=false` 首跑 `monitor-tick: due=0 …` exit 0、心跳写入；随后开闸（`enabled=true`），10 分钟内 `runs=3 last=ok`、`next_run_at` 推进、`hb_age=10s`；`/api/modules/data/monitors` 未鉴权 401。**未做**：threshold、no_flap、部门收件人、外发通道、真实影子监控实例（待用户选指标与收件人） |
