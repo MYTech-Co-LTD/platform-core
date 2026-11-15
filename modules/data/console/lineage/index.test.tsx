@@ -125,6 +125,15 @@ describe('数据生产线', () => {
     expect(names).toEqual(expect.arrayContaining(['sale_money']))
   })
 
+  it('键列直通：staging → marts 同名也连线（不只是聚合度量有线）', async () => {
+    renderPage()
+    await waitFor(() => expect(screen.getByText(/源接口 \+ 契约/)).toBeInTheDocument())
+    fireEvent.click(pills().find((p) => p.dataset.field === 'bizday')!)
+    await waitFor(() => expect(document.querySelectorAll('.lineage-edge[data-kind="pass"]').length).toBeGreaterThan(0))
+    // bizday 是三层同名列 ⇒ 源→staging + staging→marts 各一条
+    expect(document.querySelectorAll('.lineage-edge[data-kind="pass"]').length).toBe(2)
+  })
+
   it('Esc 退出聚焦，回到折叠骨架', async () => {
     renderPage()
     await waitFor(() => expect(screen.getByText(/marts（业务成品）/)).toBeInTheDocument())

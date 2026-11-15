@@ -160,6 +160,13 @@ export default function LineageCanvas(props: Props) {
         const to = at('staging', name)
         if (to !== null) out.push({ d: curve(from, to), kind: 'pass' })
       }
+      // staging → marts 同名直通（键列在两层之间也要有线）
+      for (const name of f.staging) {
+        if (!f.marts.has(name)) continue
+        const a = at('staging', name)
+        const b = at('marts', name)
+        if (a !== null && b !== null) out.push({ d: curve(a, b), kind: 'pass' })
+      }
       for (const [from, to] of f.links) {
         const a = at('staging', from)
         const b = at('marts', to)
