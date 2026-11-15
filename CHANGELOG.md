@@ -11,6 +11,10 @@
 
 ## [Unreleased]
 
+## [0.292.0](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.291.0...v0.292.0) - 2026-11-15
+- 【新增】data: 业务监控 W7-V1——指标/报表面板 missing·stale + 状态机 + 影子期（#2278） ([#2283](https://github.com/MYTech-Co-LTD/platform-core/pull/2283), [66d281d](https://github.com/MYTech-Co-LTD/platform-core/commit/66d281d6101223bfb6c08e9e9418e42234858572))
+
+
 ## [0.291.0](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.290.0...v0.291.0) - 2026-11-15
 - 【新增】notify: N5 per-namespace 指标 + claim 按 org 交错 + 批内规则缓存 (#2280) ([#2281](https://github.com/MYTech-Co-LTD/platform-core/pull/2281), [4490001](https://github.com/MYTech-Co-LTD/platform-core/commit/44900014e2d3157d7fe82844740b3d370f5959c2))
 
