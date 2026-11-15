@@ -30,13 +30,15 @@ import {
   audit, countActiveAgentRules, countAgentMessagesToday, countRecentTestDeliveries,
   createAgentNamespace, createApproval, createTemplateRevision,
   decideApproval, deleteRule, ensureAgentMessageDefaults, enqueueEvent, getAgentNamespace,
-  getApproval, getChannel, getEventDecl, getPublishedTemplate, getTemplate,
-  hasApprovedRuleApproval, insertDelivery, listAgentNamespaces, listApprovals, listChannels,
-  listDeliveries, listEnabledChannelIds, listEventDecls, listInbox, listPublishedTemplateKeys,
-  listRules, listTemplates, markAllInboxRead, markInboxRead, namespaceStats, patchChannel,
-  publishTemplateRevision, retryDelivery, setAgentNamespacePolicy, setChannelHealth,
-  setRuleEnabled, upsertEventDecl, upsertRule,
+  getApproval, getChannel, getEventDecl, getPublishedTemplate, getRuleAuditSnapshot,
+  getTemplate, hasApprovedRuleApproval, insertDelivery, listAgentNamespaces, listApprovals,
+  listChannels, listDeliveries, listEnabledChannelIds, listEventDecls, listInbox,
+  listPublishedTemplateKeys, listRuleHistory, listRules, listTemplates, markAllInboxRead,
+  markInboxRead, namespaceStats, patchChannel, publishTemplateRevision, retryDelivery,
+  setAgentNamespacePolicy, setChannelHealth, setRuleEnabled, updateRule, upsertEventDecl,
+  upsertRule,
 } from './storage'
+import type { RuleInput } from './storage'
 
 type Vars = { Variables: { identity: Identity } }
 
@@ -64,6 +66,28 @@ export function createNotifyRouter(deps: {
   ): Promise<boolean> => {
     const ns = await getAgentNamespace(deps.pool, o, namespace)
     return ns !== null && ns.status === 'active' && ns.ownerUserId === identity.userId
+  }
+
+  /**
+   * ── 部门 id 的配置期校验（组织架构 Phase C；与报表部门门同一套 fail-closed）──────
+   * 未知 ext_id ⇒ 400；组织架构未同步（或宿主没注入选择器）⇒ 409：这两种状态下「配了也恒
+   * 发不出去」，当场拒掉比让它上线后静默 0 收件人好。位置在**任何写之前**。
+   */
+  const deptCheck = async (
+    o: string, depts: string[] | null,
+  ): Promise<{ status: 400 | 409; body: Record<string, unknown> } | null> => {
+    const list = depts ?? []
+    if (list.length === 0) return null
+    const nodes = deps.addresses?.listOrgNodes === undefined
+      ? null
+      : await deps.addresses.listOrgNodes(o)
+    if (nodes === null) return { status: 409, body: { error: 'ORG_RESOLVER_UNAVAILABLE' } }
+    if (nodes.length === 0) return { status: 409, body: { error: 'ORG_NOT_SYNCED' } }
+    const known = new Set(nodes.map((n) => n.extId))
+    const unknown = [...new Set(list)].filter((d) => !known.has(d))
+    return unknown.length > 0
+      ? { status: 400, body: { error: 'RULE_DEPT_UNKNOWN', unknown } }
+      : null
   }
 
   /**
@@ -219,20 +243,9 @@ export function createNotifyRouter(deps: {
     }, decl, channels, templates)
     if (bad) return c.json({ error: bad }, 400)
 
-    // ── 部门 id 的配置期校验（组织架构 Phase C；与报表部门门同一套 fail-closed）──────
-    // 未知 ext_id ⇒ 400；组织架构未同步（或宿主没注入选择器）⇒ 409：这两种状态下「配了也恒
-    // 发不出去」，当场拒掉比让它上线后静默 0 收件人好。位置在**任何写之前**。
-    const depts = body.recipientDepts ?? []
-    if (depts.length > 0) {
-      const nodes = deps.addresses?.listOrgNodes === undefined
-        ? null
-        : await deps.addresses.listOrgNodes(org(c))
-      if (nodes === null) return c.json({ error: 'ORG_RESOLVER_UNAVAILABLE' }, 409)
-      if (nodes.length === 0) return c.json({ error: 'ORG_NOT_SYNCED' }, 409)
-      const known = new Set(nodes.map((n) => n.extId))
-      const unknown = [...new Set(depts)].filter((d) => !known.has(d))
-      if (unknown.length > 0) return c.json({ error: 'RULE_DEPT_UNKNOWN', unknown }, 400)
-    }
+    // ── 部门 id 的配置期校验（组织架构 Phase C）：任何写之前，见 deptCheck 注释 ──
+    const deptBad = await deptCheck(org(c), body.recipientDepts ?? null)
+    if (deptBad) return c.json(deptBad.body, deptBad.status)
 
     const identity = c.get('identity') as Identity
     // agent 规则按 owner_namespace 隔离：非 owner 不得通过通用 /rules 覆盖；
@@ -318,6 +331,80 @@ export function createNotifyRouter(deps: {
     await audit(deps.pool, org(c), (c.get('identity') as Identity).userId,
       'rule.delete', id, {})
     return c.json({ ok: true })
+  })
+
+  // ── 规则历史与单步回滚（#2322）：审计里的 snapshot 既是历史面，也是恢复的数据源 ──
+  r.get('/rules/:id/history', async (c) => {
+    const raw = Number(c.req.query('limit') ?? 50)
+    const limit = Number.isFinite(raw) ? raw : 50
+    return c.json({
+      history: await listRuleHistory(deps.pool, org(c), c.req.param('id'), limit),
+    })
+  })
+
+  r.post('/rules/:id/restore', async (c) => {
+    const id = c.req.param('id')
+    const body = (await c.req.json().catch(() => null)) as { auditId?: number } | null
+    const auditId = body?.auditId
+    if (typeof auditId !== 'number' || !Number.isSafeInteger(auditId) || auditId <= 0) {
+      return c.json({ error: 'RULE_INVALID_BODY' }, 400)
+    }
+    // 系统规则（derived:/manual:）由 seed/env 管理，不走人工恢复。
+    if (!isWritableRuleId(id)) return c.json({ error: 'RULE_ID_RESERVED' }, 409)
+
+    const identity = c.get('identity') as Identity
+    const rule = (await listRules(deps.pool, org(c))).find((x) => x.id === id)
+    if (!rule) return c.json({ error: 'RULE_NOT_FOUND' }, 404)
+    if (rule.ownerNamespace && !await ownsNamespace(org(c), rule.ownerNamespace, identity)) {
+      return c.json({ error: 'RULE_NOT_OWNED' }, 403)
+    }
+
+    const entry = await getRuleAuditSnapshot(deps.pool, org(c), id, auditId)
+    if (!entry) return c.json({ error: 'HISTORY_NOT_FOUND' }, 404)
+    if (!entry.snapshot) return c.json({ error: 'HISTORY_INCOMPLETE' }, 409)
+
+    // 恢复前按**当下**的环境重新校验：事件可能已下线、模板可能已撤、通道可能已停。
+    const snap = entry.snapshot
+    const decl = await resolveEventDecl(org(c), snap.eventKey)
+    if (!decl) return c.json({ error: 'EVENT_NOT_DECLARED' }, 409)
+    const [channels, published] = await Promise.all([
+      listEnabledChannelIds(deps.pool, org(c)),
+      listPublishedTemplateKeys(deps.pool, org(c)),
+    ])
+    const bad = validateRule({
+      eventKey: snap.eventKey, scope: snap.scope, recipientKey: snap.recipientKey,
+      recipientLiteral: snap.recipientLiteral, recipientDepts: snap.recipientDepts,
+      templateKey: snap.templateKey, channels: snap.channels,
+      cooldownMinutes: snap.cooldownMinutes, origin: rule.origin,
+    }, decl, channels, published)
+    if (bad) return c.json({ error: 'RULE_RESTORE_INVALID', issues: [bad] }, 409)
+    const deptBad = await deptCheck(org(c), snap.recipientDepts)
+    if (deptBad) return c.json(deptBad.body, deptBad.status)
+
+    // owner 归属跟随**现行**规则行，不从快照回放（namespace 可能已被退役）。
+    const input: RuleInput = {
+      ...snap,
+      id,
+      origin: rule.origin,
+      ownerNamespace: rule.ownerNamespace ?? null,
+    }
+    // 外发规则的启用需要已通过的审批（与 PUT /rules/:id/enabled 同一道门，防 restore 绕过）。
+    if (input.enabled && rule.ownerNamespace) {
+      const channelRows = await Promise.all(
+        input.channels.map((cid) => getChannel(deps.pool, org(c), cid)))
+      const external = channelRows.some((ch) => ch !== null && isExternalProvider(ch.provider))
+      if (external && !await hasApprovedRuleApproval(deps.pool, org(c), id)) {
+        return c.json({ error: 'APPROVAL_REQUIRED' }, 403)
+      }
+    }
+    // update-only：写前规则可能已被并发删除，restore 绝不复活行。
+    const n = await updateRule(deps.pool, org(c), input)
+    if (n === 0) return c.json({ error: 'RULE_NOT_FOUND' }, 404)
+    await audit(deps.pool, org(c), identity.userId, 'rule.restore', id, {
+      snapshot: input,
+      restoredFrom: auditId,
+    })
+    return c.json({ id, restoredFrom: auditId, enabled: input.enabled })
   })
 
   r.get('/deliveries', async (c) => {

@@ -11,7 +11,7 @@ import {
   listAgentNamespaces, listChannels, listDeliveries, listEventDecls, listRuleHistory, listRules,
   markDeliverySent, namespaceStats,
   patchChannel, publishTemplateRevision, purgeOldNotifications, setChannelHealth,
-  setRuleEnabled, upsertEventDecl, upsertRule,
+  setRuleEnabled, updateRule, upsertEventDecl, upsertRule,
 } from './storage'
 
 const url = process.env.DATABASE_URL
@@ -564,5 +564,20 @@ describePg('notify 规则历史（N5 后续）', () => {
   it('limit NaN 回退默认 50（clamp 不吞成 0）', async () => {
     await audit(pool, ORG_H, 'u1', 'rule.upsert', 'rule:h1', { snapshot: snap })
     await expect(listRuleHistory(pool, ORG_H, 'rule:h1', NaN)).resolves.toHaveLength(1)
+  })
+
+  it('updateRule：只更新已存在的行；规则不存在返回 0（绝不插入）', async () => {
+    await pool.query(
+      `insert into notify.rule(org,id,enabled,event_key,scope,recipient_key,template_key,channels,origin,created_by)
+       values ($1,'rule:h1',true,'m.a.b','*','approver','t1','{inapp_default}','manual','u')`, [ORG_H])
+    try {
+      await updateRule(pool, ORG_H, { ...snap, enabled: false, cooldownMinutes: 3 })
+      const row = await pool.query(
+        'select enabled,cooldown_minutes from notify.rule where org=$1 and id=$2', [ORG_H, 'rule:h1'])
+      expect(row.rows[0]).toMatchObject({ enabled: false, cooldown_minutes: 3 })
+    } finally {
+      await pool.query('delete from notify.rule where org=$1 and id=$2', [ORG_H, 'rule:h1'])
+    }
+    expect(await updateRule(pool, ORG_H, snap)).toBe(0)
   })
 })

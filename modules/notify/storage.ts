@@ -149,6 +149,25 @@ export async function upsertRule(
   )
 }
 
+/** 仅更新已存在的规则（restore 用）；返回 0 = 规则已不存在，绝不插入。 */
+export async function updateRule(
+  pool: Pool, org: string, rule: RuleInput,
+): Promise<number> {
+  const r = await pool.query(
+    `update notify.rule set
+       enabled=$3, event_key=$4, scope=$5, recipient_key=$6,
+       recipient_literal=$7, recipient_depts=$8, template_key=$9,
+       channels=$10, cooldown_minutes=$11, origin=$12, owner_namespace=$13
+     where org=$1 and id=$2`,
+    [org, rule.id, rule.enabled, rule.eventKey, rule.scope, rule.recipientKey,
+     rule.recipientLiteral,
+     rule.recipientDepts == null ? null : JSON.stringify([...new Set(rule.recipientDepts)]),
+     rule.templateKey, rule.channels, rule.cooldownMinutes,
+     rule.origin, rule.ownerNamespace ?? null],
+  )
+  return r.rowCount ?? 0
+}
+
 export async function setRuleEnabled(
   pool: Pool, org: string, id: string, enabled: boolean,
 ): Promise<number> {
@@ -1256,8 +1275,12 @@ function isRuleSnapshot(v: unknown): v is RuleSnapshot {
   if (typeof v !== 'object' || v === null) return false
   const x = v as Record<string, unknown>
   return typeof x.id === 'string' && typeof x.eventKey === 'string'
+    && typeof x.scope === 'string'
     && Array.isArray(x.channels) && typeof x.enabled === 'boolean'
     && typeof x.templateKey === 'string' && typeof x.recipientKey === 'string'
+    && (x.recipientLiteral === null || Array.isArray(x.recipientLiteral))
+    && (x.recipientDepts === null || Array.isArray(x.recipientDepts))
+    && (x.cooldownMinutes === null || typeof x.cooldownMinutes === 'number')
     && (x.origin === 'manual' || x.origin === 'derived')
 }
 
