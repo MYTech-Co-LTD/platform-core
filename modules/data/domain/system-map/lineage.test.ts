@@ -44,6 +44,20 @@ describe('buildMetricLineage', () => {
     expect(l.marts.columns.find((c) => c.name === 'bizday')?.status).toBe('passthrough')
   })
 
+  it('staging SQL 里有、schema.yml 漏文档的列不算「被丢掉」', () => {
+    const l = buildMetricLineage({
+      ...(BASE as never),
+      staging: {
+        model: 'stg_lemeng_retail_order_line',
+        columns: [{ name: 'bizday', description: '业务日' }],
+        // 文档漏了 order_total_money，但 SQL 里确实取了它
+        sqlColumns: ['bizday', 'order_total_money'],
+      },
+    } as never)
+    const col = l.source.columns.find((c) => c.name === 'order_total_money')!
+    expect(col.status).toBe('passthrough')
+  })
+
   it('湖形态取自契约 layout（前缀/分区/文件名/分区风格）', () => {
     const l = buildMetricLineage(BASE as never)
     expect(l.lake).toEqual({
