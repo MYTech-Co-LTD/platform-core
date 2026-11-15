@@ -74,6 +74,16 @@ const ChartCompare = z.enum(['none', 'prev_period', 'prev_month', 'prev_year']).
 /** 目标线（L4）：与指标同量纲的静态参考值（与 bullet 的 `target` 同一口径，不造第二套语义）。 */
 const TargetLine = z.number().finite()
 
+/**
+ * 颜色语义（L4，数据驱动）：`target` = 按目标线着色（达标绿 / 未达标红）。
+ * 只允许**柱状 + 单系列 + 无对比**：
+ *  · 没有 target ⇒ 没有着色依据；
+ *  · 有对比基线 ⇒ 对比系列也会被同一规则染色（上期不达标被染红，读者会误以为本期）；
+ *  · 多系列（dims/slice 含系列维）⇒ 颜色被「达标/未达标」占用，系列辨识丢失；
+ *  · 折线整条走势不能用一个颜色表达逐点达标 ⇒ 本期只开柱状（有案例再扩）。
+ */
+const ColorSemantics = z.enum(['target']).optional()
+
 const LinePanel = z.object({
   chart: z.literal('line'), ...metricBase,
   dims: z.array(z.string().min(1).max(64)).max(MAX_DIMS).default([]),
@@ -97,6 +107,8 @@ const BarPanel = z.object({
   stack: z.boolean().optional(),
   /** 目标线（L4）：同 line。 */
   target: TargetLine.optional(),
+  /** 颜色语义（L4）：同 line。 */
+  colorSemantics: ColorSemantics,
 }).strict()
 
 /**
@@ -288,6 +300,30 @@ export const ReportSpecSchema = z.object({
       message: 'STACK_CONFLICTS_WITH_COMPARE',
     })
   })
+  // 颜色语义（L4，数据驱动）：只在「柱状 + 有目标 + 单系列 + 无对比」时成立（理由见 ColorSemantics）。
+  spec.panels.forEach((p, i) => {
+    if (p.chart !== 'bar') return
+    if (p.colorSemantics !== 'target') return
+    if (p.target === undefined) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom, path: ['panels', i, 'colorSemantics'],
+        message: 'COLOR_SEMANTICS_REQUIRES_TARGET',
+      })
+    }
+    if ((p.compare !== undefined && p.compare !== 'none') || p.compareYoY === true) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom, path: ['panels', i, 'colorSemantics'],
+        message: 'COLOR_SEMANTICS_CONFLICTS_WITH_COMPARE',
+      })
+    }
+    const effectiveDims = p.slice?.dimensions ?? p.dims
+    if (effectiveDims.length > 1) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom, path: ['panels', i, 'colorSemantics'],
+        message: 'COLOR_SEMANTICS_REQUIRES_SINGLE_SERIES',
+      })
+    }
+  })
   // 多页归属：`page` 只在声明了 `pages` 时有意义，且不得越界（否则面板永远不显示 = 静默丢失）。
   const pageCount = spec.pages?.length
   spec.panels.forEach((p, i) => {
@@ -358,6 +394,8 @@ const V2ChartBlock = z.object({
   stack: z.boolean().optional(),
   /** 目标线（L4）：与指标同量纲的静态参考值。 */
   target: z.number().finite().optional(),
+  /** 颜色语义（L4）：同 v1。 */
+  colorSemantics: z.enum(['target']).optional(),
   page: z.number().int().min(1).max(MAX_PAGES).optional(),
   span: z.number().int().min(1).max(24).default(12),
 }).strict()
@@ -436,8 +474,10 @@ export function flattenReportSpecV2(v2: ReportSpecV2): { ok: true; spec: ReportS
         goodDirection: b.goodDirection,
       })
     } else if (b.type === 'chart') {
-      // 堆叠只属柱状（L4）：折线声明 stack 是写错的规格，fail-closed 而不是静默忽略。
-      if (b.chart === 'line' && b.stack !== undefined) return { ok: false, code: 'INVALID_SPEC' }
+      // 堆叠/颜色语义只属柱状（L4）：折线声明它们是写错的规格，fail-closed 而不是静默忽略。
+      if (b.chart === 'line' && (b.stack !== undefined || b.colorSemantics !== undefined)) {
+        return { ok: false, code: 'INVALID_SPEC' }
+      }
       panels.push({
         ...base, chart: b.chart, dims: dataset.dims,
         ...(b.slice === undefined ? {} : { slice: b.slice }),
@@ -445,6 +485,7 @@ export function flattenReportSpecV2(v2: ReportSpecV2): { ok: true; spec: ReportS
         ...(b.compareYoY === undefined ? {} : { compareYoY: b.compareYoY }),
         ...(b.stack === undefined ? {} : { stack: b.stack }),
         ...(b.target === undefined ? {} : { target: b.target }),
+        ...(b.colorSemantics === undefined ? {} : { colorSemantics: b.colorSemantics }),
       })
     } else {
       const dims = b.dims ?? dataset.dims

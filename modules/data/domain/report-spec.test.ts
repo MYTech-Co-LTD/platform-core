@@ -324,3 +324,52 @@ describe('目标线（L4）', () => {
     if (out.ok) expect(out.spec.panels[0]).toMatchObject({ chart: 'line', target: 500 })
   })
 })
+
+describe('颜色语义（L4，数据驱动）', () => {
+  const parse = (panel: unknown) => parseReportSpec({ panels: [panel] })
+  const bar = {
+    chart: 'bar', title: '门店达标', metricId: 'm:sales',
+    dims: ['branch_num'], target: 1000, colorSemantics: 'target',
+  }
+
+  it('柱状 + 目标 + 单系列 ⇒ 合法', () => {
+    const out = parse(bar)
+    expect(out.ok).toBe(true)
+    if (out.ok) expect(out.spec.panels[0]).toMatchObject({ colorSemantics: 'target', target: 1000 })
+  })
+
+  it('缺 target ⇒ 拒（没有着色依据）', () => {
+    const { target: _t, ...noTarget } = bar
+    expect(parse(noTarget)).toEqual({ ok: false, code: 'INVALID_SPEC' })
+  })
+
+  it('★ 对比基线 ⇒ 拒（上期也会被染红，读者会误以为本期）', () => {
+    expect(parse({ ...bar, compare: 'prev_period' })).toEqual({ ok: false, code: 'INVALID_SPEC' })
+    expect(parse({ ...bar, compareYoY: true })).toEqual({ ok: false, code: 'INVALID_SPEC' })
+  })
+
+  it('★ 多系列 ⇒ 拒（颜色被达标/未达标占用，系列辨识丢失）', () => {
+    expect(parse({ ...bar, dims: ['bizday', 'branch_num'] })).toEqual({ ok: false, code: 'INVALID_SPEC' })
+    expect(parse({ ...bar, slice: { dimensions: ['bizday', 'branch_num'] } })).toEqual({ ok: false, code: 'INVALID_SPEC' })
+  })
+
+  it('折线不支持颜色语义（未知键拒；v2 line 也拒）', () => {
+    expect(parse({ ...bar, chart: 'line' })).toEqual({ ok: false, code: 'INVALID_SPEC' })
+    const out = parseReportInput({
+      ir: 2,
+      datasets: [{ key: 'd', metricId: 'm:sales', dims: ['branch_num'] }],
+      blocks: [{ type: 'chart', chart: 'line', dataset: 'd', title: 't', target: 1, colorSemantics: 'target' }],
+    })
+    expect(out).toEqual({ ok: false, code: 'INVALID_SPEC' })
+  })
+
+  it('v2 柱状块归一', () => {
+    const out = parseReportInput({
+      ir: 2,
+      datasets: [{ key: 'd', metricId: 'm:sales', dims: ['branch_num'] }],
+      blocks: [{ type: 'chart', chart: 'bar', dataset: 'd', title: 't', target: 1000, colorSemantics: 'target' }],
+    })
+    expect(out.ok).toBe(true)
+    if (out.ok) expect(out.spec.panels[0]).toMatchObject({ chart: 'bar', target: 1000, colorSemantics: 'target' })
+  })
+})

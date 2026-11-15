@@ -224,27 +224,37 @@ export function buildOption(
   dimensions: string[],
   result: OkResult,
   compares: Array<{ label: string; result: OkResult }> = [],
-  /** L4：堆叠只对柱状 + 多系列生效；目标线与指标同量纲，画成水平参考线。 */
-  opts: { stack?: boolean; target?: number } = {},
+  /** L4：堆叠只对柱状 + 多系列生效；目标线与指标同量纲；颜色语义按目标着色（仅柱状）。 */
+  opts: { stack?: boolean; target?: number; colorSemantics?: 'target' } = {},
 ): EChartsCoreOption {
   const base = chartCellsOf(dimensions, result)
   const xLabels = base.xLabels
   const bizdayX = dimensions[0] === 'bizday'
   const currentKeys = base.seriesKeys.length > 0 ? base.seriesKeys : ['']
+  type Datum = number | null | { value: number; itemStyle: { color: string } }
   const series: Array<{
-    name: string; type: 'line' | 'bar'; data: Array<number | null>; stack?: string
+    name: string; type: 'line' | 'bar'; data: Datum[]; stack?: string
     markLine?: Record<string, unknown>
   }> = []
   const hasCompare = compares.length > 0
   const nameOf = (key: string, suffix: string): string => key === '' ? suffix : `${key}·${suffix}`
   // 堆叠只加给**本期**系列：对比系列与本期同 stack 名会被叠成一根，误读成「合计」。
   const stackOf = opts.stack === true && chart === 'bar' ? { stack: 'total' } : {}
+  // 颜色语义（L4）：按目标线给每根柱着色。缺值不染色（没数据 ≠ 未达标）。
+  const colorTarget = chart === 'bar' && opts.colorSemantics === 'target' && opts.target !== undefined
+    ? opts.target
+    : null
 
   for (const key of currentKeys) {
     series.push({
       name: hasCompare ? nameOf(key, '本期') : key,
       type: chart,
-      data: xLabels.map((x) => base.cells.get(`${x}\u0000${key}`) ?? null),
+      data: xLabels.map((x): Datum => {
+        const v = base.cells.get(`${x}\u0000${key}`)
+        if (v === undefined) return null
+        if (colorTarget === null) return v
+        return { value: v, itemStyle: { color: v >= colorTarget ? '#0FA958' : '#E5484D' } }
+      }),
       ...stackOf,
     })
   }
@@ -846,6 +856,9 @@ function PanelBody({ panel, result, compares = [], detailCtx, textCtx }: { panel
         stack: panel.chart === 'bar' && panel.stack === true,
         ...(panel.chart === 'bar' || panel.chart === 'line'
           ? { ...(panel.target === undefined ? {} : { target: panel.target }) }
+          : {}),
+        ...(panel.chart === 'bar' && panel.colorSemantics === 'target'
+          ? { colorSemantics: 'target' as const }
           : {}),
       })} />
       <TrustLine result={result} />
