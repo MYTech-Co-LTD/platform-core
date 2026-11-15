@@ -139,7 +139,8 @@ event 90d / audit 365d；只删终态（`delivery` 仅 sent/suppressed/dead，`e
   4. owner_namespace 归属：与现有写路由同一 `ownsNamespace` 判定，非 owner 403 `RULE_NOT_OWNED`；
   5. 快照按当前事件声明/启用通道/已发布模板重新跑 `validateRule`；
      失败返回 409 `RULE_RESTORE_INVALID` + issues（不信任历史快照当时的配置）。
-- 写入：`upsertRule`（含 enabled）+ audit `rule.restore`，detail 含 `{ snapshot, restoredFrom: auditId }`；
+- 写入：**只更新不插入**的 `updateRule`（含 enabled；rowCount=0 ⇒ 规则已在检查后被删，返回 404，
+  不复活）+ audit `rule.restore`，detail 含 `{ snapshot, restoredFrom: auditId }`；
 - 响应：`{ id, restoredFrom, enabled }`。
 - 并发：不做乐观锁；恢复是普通写，最后写者胜，历史保持 append-only。
 
