@@ -68,3 +68,10 @@ dbt 类任务落**平台 scheduler + 镜像内 dbt 工具链**（选项 1）：
 - registry 新增 `data.dbt_tick` 等 key，cron/timeout/retry 与 openship 现役逐字一致。
 - 验证：同一 scope 在容器内手动跑一次，产物/输出与宿主 `/opt` 版本比对一致后，才进四步切流。
 - 否决：宿主执行通道（扩大攻击面）、dbt 留守 openship（Wave 8 目标落空）。
+
+### 运行时基镜像决定（2026-11-15，用户拍板方案 1）
+
+`deploy/Dockerfile.server` 的 runtime 由 `node:22-alpine` 换 **`node:22-bookworm-slim`**（glibc），
+在其中装 `dbt-core==1.9.1` + `dbt-postgres==1.9.1`（与 `deploy/dbt/Dockerfile` 同版本、同阿里云源）。
+**验证门槛**：全仓测试 + 镜像体积对比 + 容器内 `dbt --version` + `data.dbt_tick` 手动跑与宿主 `/opt` 输出比对。
+未过门槛不回退到 Alpine 多阶段，也不切流。
