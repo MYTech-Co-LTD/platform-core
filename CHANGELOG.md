@@ -11,6 +11,10 @@
 
 ## [Unreleased]
 
+## [0.287.0](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.286.0...v0.287.0) - 2026-11-15
+- 【新增】notify: N1 双平面事件目录——agent namespace + event_decl + 统一解析 (#2186) ([#2190](https://github.com/MYTech-Co-LTD/platform-core/pull/2190), [946bce5](https://github.com/MYTech-Co-LTD/platform-core/commit/946bce5b854036c3ca126173298b9acbd44082fc))
+
+
 ## [0.286.0](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.285.0...v0.286.0) - 2026-11-14
 - 【修复】data: 移动端体系地图补 /api/modules/data 前缀（页面白屏）(#2245) ([#2246](https://github.com/MYTech-Co-LTD/platform-core/pull/2246), [8f63107](https://github.com/MYTech-Co-LTD/platform-core/commit/8f631073fb6e67f7eed4db672d8c43705b15fa0f))
 - 【新增】data: agent 排班能力（W6-P3）——工具面 + 配额 ([#2244](https://github.com/MYTech-Co-LTD/platform-core/pull/2244), [559698b](https://github.com/MYTech-Co-LTD/platform-core/commit/559698b36af92b6e563057874627fa10904dd4da))
