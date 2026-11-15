@@ -105,3 +105,17 @@ describe('JOB_REGISTRY', () => {
     expect(missing).toEqual([])
   })
 })
+
+describe('registry · 子进程参数（W6-P4b）', () => {
+  it('★ org.sync 必须带 --apply（脚本默认 dry-run，不带参数=空跑不写库）', () => {
+    const def = JOB_REGISTRY.find((d) => d.key === 'org.sync')!
+    expect(def.args).toEqual(['--apply'])
+  })
+
+  it('其余条目不传多余参数（避免命令被意外改变）', () => {
+    for (const d of JOB_REGISTRY) {
+      if (d.key === 'org.sync') continue
+      expect(d.args ?? []).toEqual([])
+    }
+  })
+})
