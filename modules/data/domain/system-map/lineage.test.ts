@@ -46,13 +46,15 @@ describe('buildMetricLineage', () => {
 
   it('staging SQL 里有、schema.yml 漏文档的列不算「被丢掉」', () => {
     const l = buildMetricLineage({
-      ...(BASE as never),
+      metricId: 'm', title: 't',
+      contract: JSON.parse(JSON.stringify(BASE.contract)) as never,
       staging: {
         model: 'stg_lemeng_retail_order_line',
         columns: [{ name: 'bizday', description: '业务日' }],
         // 文档漏了 order_total_money，但 SQL 里确实取了它
         sqlColumns: ['bizday', 'order_total_money'],
       },
+      marts: { model: 'fct_x', columns: [] },
     } as never)
     const col = l.source.columns.find((c) => c.name === 'order_total_money')!
     expect(col.status).toBe('passthrough')
