@@ -24,6 +24,7 @@ async function main() {
   const { evaluateMonitor } = await import('../modules/data/domain/monitor-eval.ts')
   const { transitionOf } = await import('../modules/data/domain/monitor-state.ts')
   const { resolveMonitorRecipients } = await import('../modules/data/domain/monitor-recipients.ts')
+  const { monitorEventOf } = await import('../modules/data/domain/monitor-deliver.ts')
   const { enqueueEvent } = await import('../modules/notify/storage.ts')
   const { loadMergedCatalog } = await import('../modules/data/domain/metric-store.ts')
   const { analystPool } = await import('../modules/data/domain/warehouse.ts')
@@ -89,25 +90,7 @@ async function main() {
             if (recipients.to.length === 0) {
               error = error ?? 'no_recipients'
             } else {
-              const eventKey = tr.notify === 'fired' ? 'data.monitor.fired'
-                : tr.notify === 'resolved' ? 'data.monitor.resolved' : 'data.monitor.disabled'
-              await enqueueEvent(pool, {
-                org,
-                // 「跃迁后的 state + state_since」= 一次跃迁的身份；重跑同一轮撞主键即幂等。
-                eventId: `monitor:${m.id}:${tr.state}:${tr.stateSince.toISOString()}`,
-                eventKey,
-                scope: `monitor:${m.id}`,
-                payload: {
-                  to: recipients.to.join(','),
-                  monitorId: m.id,
-                  name: m.name,
-                  verdict: outcome.verdict,
-                  windowDays: m.windowDays,
-                  watermarkRef: outcome.watermarkRef ?? null,
-                  link: '/console/data/reports',
-                },
-                producer: 'data',
-              })
+              await enqueueEvent(pool, { org, ...monitorEventOf(m, tr, outcome, recipients.to) })
               notified = true
               counts.notified += 1
             }
