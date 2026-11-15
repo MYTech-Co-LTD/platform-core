@@ -285,6 +285,10 @@ describePg('jobs-port（需要 DATABASE_URL）', () => {
       await expectCode(port.runNow('jobtest-p4a:locked'), 'JOB_LOCK_TIMEOUT')
       // 2s lock_timeout 的现场证据：不是瞬时拒绝，也不是无限等待。
       expect(Date.now() - started).toBeGreaterThanOrEqual(1_800)
+      // 连接归还（审阅 Important 1）：错误路径走 `return fail(...)`，`finally` 的
+      // `client.release()` 必须照常执行——否则池连接泄漏，且本用例仍会全绿。
+      // 此刻只有 holder 一条连接被事务占用，端口连接必须已回到池里。
+      expect(pool.idleCount).toBeGreaterThanOrEqual(1)
     } finally {
       await holder.query('rollback').catch(() => {})
       holder.release()
