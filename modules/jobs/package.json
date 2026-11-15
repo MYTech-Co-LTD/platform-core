@@ -10,9 +10,16 @@
   "dependencies": {
     "@platform/sdk": "workspace:*",
     "hono": "^4.13.0",
-    "yaml": "^2.9.0"
+    "yaml": "^2.9.0",
+    "antd": "^6.6.3",
+    "react": "^19.3.0",
+    "react-dom": "^19.3.0",
+    "react-router-dom": "^6.30.6"
   },
   "devDependencies": {
-    "vitest": "^3.2.7"
+    "vitest": "^3.2.7",
+    "@testing-library/react": "^16.3.3",
+    "@types/react": "^19.2.18",
+    "happy-dom": "^20.14.0"
   }
 }
