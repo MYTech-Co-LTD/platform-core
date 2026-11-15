@@ -404,3 +404,6 @@ tenantSources: true
 dataDependencies:
   - platform.v_org_node
   - platform.v_org_membership
+  # W7-V1：收件人解析要「org → tenant_id」再查成员/部门（只读；只 from，不写）。
+  - platform.tenant
+  - platform.org_membership
