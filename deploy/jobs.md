@@ -35,8 +35,10 @@
 - **P3 随本 PR 上线**：agent 排班工具面 + 配额（§11）。
 - **P4a 随本 PR 上线**：手动触发迁入 jobs 模块——`POST /api/modules/jobs/:key/run`（需
   `jobs:manage` + CSRF）；宿主旧路由 `/api/platform/jobs/*` **已退役删除**（旧路径一律 404）。
-- **仍待切（W6-P4）**：`notify-preflight` / `notify-retention` / `metric-retire` / `org-sync`；
-  `notify-seed-builtin` 启动期化、`notify-health` 并入 worker loop。
+- **P4b 已切（2026-11-15）**：`notify-preflight`（仅 mytech）/ `notify-retention`（仅 mytech）/
+  `metric-retire` / `org-sync` / `notify-seed-builtin` / `notify-health` 均已由内置调度器驱动，
+  openship 对应作业已停。**未做的优化**：`notify-seed-builtin` 启动期化、`notify-health` 并入
+  worker loop（当前以调度器子进程运行，行为一致；去子进程是优化不是必要）。
 
 逐项状态见 §5 切流表。
 
@@ -142,15 +144,15 @@
 | `notify.reconcile` | 已切（W6-P1） | worker 的 `platform.scheduler` | 原 openship key（已停）：mytech `custom:KJ_JBrbq68jAHVlO`；山海 `custom:QSr7oZ5KBAVOqx5j`（见 `deploy/notify-reconcile-job.md`） |
 | `metric.candidates` | 已切（W6-P1） | worker 的 `platform.scheduler` | 原 openship key（已停）：仅山海 `custom:tB6ulrsKtgW852WL` |
 | `report.scope_scan` | 已切（W6-P1） | worker 的 `platform.scheduler` | 两实例各一条（openship 侧本无对应 job） |
-| `notify-preflight` | 待切（W6-P4） | openship job | 见 `deploy/notify-jobs.md` |
-| `notify-retention` | 待切（W6-P4） | openship job（仅 mytech） | 见 `deploy/notify-jobs.md` |
-| `notify-seed-builtin` | 待切（W6-P4，计划启动期化） | openship job（mytech + 山海） | 见 `deploy/notify-jobs.md` |
-| `notify-health` | 待切（W6-P4，计划并入 worker loop） | openship job（mytech + 山海） | 见 `deploy/notify-jobs.md` |
-| `metric-retire` | 待切（W6-P4） | **无任何驱动（openship job 未建）** | 见 `deploy/metric-retire-job.md` |
-| `org-sync` | 待切（W6-P4） | openship job | mytech `custom:qvkapKmBf4jI4H6T`；山海 `custom:dbuJg85a8UjjObB7`（见 `deploy/org-sync-job.md`） |
+| `notify-preflight` | **已切（W6-P4b）** | 内置调度器（仅 mytech；山海保持 disabled——该实例本无此作业） | openship job 已停 |
+| `notify-retention` | **已切（W6-P4b）** | 内置调度器（仅 mytech） | openship job 已停 |
+| `notify.seed_builtin` | **已切（W6-P4b）** | 内置调度器（两实例） | openship job 已停 |
+| `notify.health` | **已切（W6-P4b）** | 内置调度器（两实例） | openship job 已停 |
+| `metric.retire` | **已切（W6-P4b）** | 内置调度器（两实例，周一夜） | 本无 openship 作业 |
+| `org.sync` | **已切（W6-P4b）** | 内置调度器（两实例，**必须带 `--apply`**——脚本默认 dry-run） | openship job 已停（mytech `qvkapKmBf4jI4H6T` / 山海 `dbuJg85a8UjjObB7`） |
 
 **顺序按爆炸半径**：已完成 `notify.reconcile` → `metric.candidates` → `report.scope_scan`；
-剩余 `notify-preflight` → `notify-retention` → `metric.retire` → `org-sync`。
+P1+P4b 的切流**已全部完成**（2026-11-15）；新增 job 仍按上表四步执行。
 未完成切流的 job 在走完全部四步之前都仍由原驱动方负责——不要提前置 `enabled=true`。
 
 **切流期红线**：发现双调度者（DB `enabled=true` 且 openship job 仍启用）⇒ 立即停 DB 侧 `enabled`，再排查 openship，不要在两边同时「先看看」。
