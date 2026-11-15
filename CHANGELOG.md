@@ -11,6 +11,12 @@
 
 ## [Unreleased]
 
+## [0.288.1](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.288.0...v0.288.1) - 2026-11-15
+- 【修复】notify: N0 可靠性——webhook 地址、限流/重试、provider 超时与批处理隔离 (#2181) ([#2182](https://github.com/MYTech-Co-LTD/platform-core/pull/2182), [0497d05](https://github.com/MYTech-Co-LTD/platform-core/commit/0497d05e520c5a8d5326746a50731f474b526c44))
+- 【修复】notify: N0 一致性——MCP check_rule 同源 + 直连通道健康 (#2183) ([#2184](https://github.com/MYTech-Co-LTD/platform-core/pull/2184), [7d95955](https://github.com/MYTech-Co-LTD/platform-core/commit/7d95955916e94cd301d11539d48df7d6ceeae8c3))
+- 【修复】notify: N0 治理收口——写审计/规则 id、模板 fork、event/audit 保留期 (#2178) ([#2180](https://github.com/MYTech-Co-LTD/platform-core/pull/2180), [090cb61](https://github.com/MYTech-Co-LTD/platform-core/commit/090cb61270656bf9cce3aa7a372f1c0eb6706ac7))
+
+
 ## [0.288.0](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.287.0...v0.288.0) - 2026-11-15
 - 【新增】jobs: jobs 模块（W6-P4a）——域面 + 事件声明 + 权限码 ([#2261](https://github.com/MYTech-Co-LTD/platform-core/pull/2261), [8d88855](https://github.com/MYTech-Co-LTD/platform-core/commit/8d88855ceb7b18e924b8f9d07c07aaf8db695f37))
 - 【新增】data: 体系地图深链 ?focus=直达节点并写回 URL (#2259) ([#2260](https://github.com/MYTech-Co-LTD/platform-core/pull/2260), [6ed718e](https://github.com/MYTech-Co-LTD/platform-core/commit/6ed718e97707523742a3ce81bb9d6911832235a5))
