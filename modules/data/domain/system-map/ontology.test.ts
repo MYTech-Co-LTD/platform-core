@@ -125,6 +125,17 @@ describe('buildSystemMapOntology', () => {
     expect(g.edges.filter((e) => e.type === 'used_by')).toHaveLength(1)
   })
 
+  it('口径里的 markdown 记号不进观测（抽屉里不露 ** 与反引号）', () => {
+    const model = modelOf({
+      metrics: [metric({ definition: '**净销售额** = `sale_amount` − `return_amount`\n（口径见 l1_metrics.yml）' })],
+    })
+    const node = buildSystemMapOntology(model).nodes.find((n) => n.id === 'metric:lemeng:retail:net_sales')!
+    const obs = node.observations.join('\n')
+    expect(obs).toContain('口径：净销售额 = sale_amount − return_amount （口径见 l1_metrics.yml）')
+    expect(obs).not.toContain('**')
+    expect(obs).not.toContain('`')
+  })
+
   it('observations 是人话短句：口径 / 使用量 / 对账状态都在指标节点上', () => {
     const model = modelOf({ metrics: [metric({})] })
     const node = buildSystemMapOntology(model).nodes.find((n) => n.id === 'metric:lemeng:retail:net_sales')!

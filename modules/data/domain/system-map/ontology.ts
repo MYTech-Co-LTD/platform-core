@@ -38,6 +38,12 @@ export interface SystemMapOntology {
 /** 节点 id 前缀：同名不同类（如实体「门店」与源表「门店」）不会撞车。 */
 const nodeId = (type: OntologyNodeType, key: string): string => `${type}:${key}`
 
+/**
+ * 观测是给人读的一句话：口径原文常带 markdown 记号（`**`、反引号）与换行，
+ * 直接渲染会在抽屉里露出 `**` 与断行（2026-11-15 生产实测）。
+ */
+const plain = (s: string): string => s.replace(/\*\*/g, '').replace(/`/g, '').replace(/\s+/g, ' ').trim()
+
 /** 报表 id → 节点 key（报表 id 是租户内句柄，直接用）。 */
 
 export function buildSystemMapOntology(model: SystemMapModel): SystemMapOntology {
@@ -79,7 +85,7 @@ export function buildSystemMapOntology(model: SystemMapModel): SystemMapOntology
       type: 'metric',
       label: m.title,
       observations: [
-        `口径：${m.definition || m.expression || '未声明'}`,
+        `口径：${plain(m.definition || m.expression || '未声明')}`,
         `来源：${m.source === 'l1' ? '平台口径' : '本租户派生'}${m.certified === 'draft' ? '（草稿）' : ''}`,
         ...(m.unit !== null && m.unit !== '' ? [`单位：${m.unit}`] : []),
         `近 30 天使用 ${m.usage30d} 次`,
