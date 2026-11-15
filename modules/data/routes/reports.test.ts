@@ -215,7 +215,7 @@ function gatedApp(identity: ReturnType<typeof makeIdentity>, pool: Pool | null) 
 }
 
 describe('报表面声明（不需要数据库）', () => {
-  it('报表端点都声明了（api.internal 全模块共 90 条），且页门分档：管理动作=data:manage，观看面=data:query', () => {
+  it('报表端点都声明了（api.internal 全模块共 91 条），且页门分档：管理动作=data:manage，观看面=data:query', () => {
     const declared = new Map(
       (mod.manifest.api?.internal ?? []).map((d) => [`${d.method} ${d.path}`, d.scope]),
     )
@@ -252,7 +252,7 @@ describe('报表面声明（不需要数据库）', () => {
     // +1：查询性能统计（R4：GET /reports/query-stats，管理面 data:manage）。
     // 穷举口径（同 module.test.ts 的表清单）——别处加端点而漏改这里会红，
     // 逼着声明与测试一起动。
-    expect(declared).toHaveLength(90)
+    expect(declared).toHaveLength(91)
     // 指标变更单：七条全 data:manage；采纳/驳回的会话限定是路由内的第二道闸（不在这张表上）
     for (const p of [
       'POST /metric-changes', 'GET /metric-changes', 'GET /metric-changes/:id',

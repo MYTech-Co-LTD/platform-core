@@ -170,6 +170,15 @@ export const consoleRegistry: ConsoleRegistryEntry[] = [
     load: () => import("../../../modules/data/console/index.tsx"),
   },
   {
+    path: "/console/data/lineage",
+    title: "数据生产线",
+    group: "main",
+    moduleId: "data",
+    description: "一个指标从源字段到成品的完整加工：哪列直通、哪列被丢、哪列被聚合。",
+    scope: "data:query",
+    load: () => import("../../../modules/data/console/index.tsx"),
+  },
+  {
     path: "/console/demo",
     title: "演示",
     group: "main",
