@@ -66,7 +66,7 @@ function LayerCard(props: {
   return (
     <Card
       style={{
-        flex: '1 1 0', minWidth: 0,
+        flex: '0 0 auto', width: 320,
         opacity: props.on ? 1 : 0, transform: props.on ? 'none' : 'translateY(8px)',
         transition: 'opacity .35s ease, transform .35s ease',
       }}
@@ -195,8 +195,9 @@ export default function LineagePage() {
     const w = world.scrollWidth
     const h = world.scrollHeight
     if (w === 0 || h === 0) return
-    const k = Math.min((vp.clientWidth - 32) / w, (vp.clientHeight - 32) / h, 1)
-    setView({ x: 16, y: 16, k: Math.max(0.15, k) })
+    // 只按**宽度**适应：25 行字段的高度远超视口，按高度缩会把字缩到看不清；纵向靠拖拽。
+    const k = Math.min((vp.clientWidth - 32) / w, 1)
+    setView({ x: 16, y: 16, k: Math.max(0.35, k) })
   }, [])
 
   // 数据切换后自动「适应画布」（否则新图可能在视口外）
