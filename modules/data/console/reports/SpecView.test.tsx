@@ -85,9 +85,22 @@ interface SpecFixture {
 }
 type QueryBody = { metricId: string; args: Record<string, unknown> } & Record<string, unknown>
 
-/** 所有已发出的 /query body（按发出顺序）。 */
+/** 所有已发出的 /query body（按发出顺序；R4 起多面板走 batch，这里摊平还原逐条 body）。 */
 const queryBodies = (): QueryBody[] =>
-  calls.filter((c) => c.url.endsWith('/query')).map((c) => JSON.parse(String(c.init?.body)) as QueryBody)
+  calls.flatMap((c) => {
+    if (c.url.endsWith('/query/batch')) {
+      // batch 条目比单条多一个客户端对位键 `id`（服务端不解释）——断言 body 时剥掉，
+      // 这样「有 slice / 无 slice」的逐字断言与单条路径同一把尺。
+      const b = JSON.parse(String(c.init?.body)) as { queries: Array<QueryBody & { id?: string }> }
+      return b.queries.map(({ id: _id, ...rest }) => rest as QueryBody)
+    }
+    if (c.url.endsWith('/query')) return [JSON.parse(String(c.init?.body)) as QueryBody]
+    return []
+  })
+
+/** 已发出的 /query（单面板路径）+ /query/batch（多面板路径）请求数。 */
+const queryRequestCount = (): number =>
+  calls.filter((c) => c.url.endsWith('/query') || c.url.endsWith('/query/batch')).length
 
 /**
  * 桩集合：`GET /reports/:id/spec` 回一份规格；`POST /query` 按 metricId 分流——
@@ -116,6 +129,19 @@ function stub(
     }
     for (const [suffix, body] of Object.entries(extraGet)) {
       if (url.endsWith(suffix)) return json(body)
+    }
+    if (url.endsWith('/query/batch')) {
+      // R4 批量取数：逐条对位 okQueries / denied（与单条 /query 同一映射）
+      const body = JSON.parse(String(init?.body)) as { queries: Array<{ id: string; metricId: string }> }
+      return json({
+        results: body.queries.map((q) => {
+          if (denied.has(q.metricId)) {
+            return { id: q.id, status: 'denied', metricId: q.metricId, reason: 'metric_not_declared' }
+          }
+          const item = okQueries[q.metricId] ?? { columns: ['value'], rows: [[1]] }
+          return { id: q.id, status: 'ok', truncated: false, ...item }
+        }),
+      })
     }
     if (url.endsWith('/query')) {
       const body = JSON.parse(String(init?.body)) as { metricId: string; orderBy?: unknown }
@@ -389,42 +415,27 @@ describe('自绘渲染器 SpecView', () => {
     expect(onClose).toHaveBeenCalledOnce()
   })
 
-  it('★ 图表 init 收口：每图恰一次（兄弟面板结果先后到达不重建已挂画布）——评审 Minor ①', async () => {
-    // 两块 line 面板，慢面板的 /query 被卡住不回：快面板先挂 ⇒ init=1；慢面板到达触发**父级
-    // 重渲染** ⇒ 旧实现（effect 依赖每次渲染都是新对象的 option）会把快面板 dispose+init 重来
-    // （init 变 3）——修法后每图只在挂载时 init 一次，总数恒等于面板数。
-    let releaseSlow: (() => void) | null = null
-    m.mockImplementation(async (url: string, init?: RequestInit) => {
-      calls.push({ url, init })
-      if (/\/reports\/[^/]+\/spec$/.test(url)) {
-        return json({
-          spec: {
-            panels: [
-              { chart: 'line', title: '快面板', metricId: 'm1', dims: ['bizday'], args: {}, span: 12 },
-              { chart: 'line', title: '慢面板', metricId: 'm2', dims: ['bizday'], args: {}, span: 12 },
-            ],
-          },
-          version: 7,
-        })
-      }
-      if (url.endsWith('/query')) {
-        const body = JSON.parse(String(init?.body)) as { metricId: string }
-        const rows = body.metricId === 'm1' ? [['2026-09-01', 1]] : [['2026-09-01', 2]]
-        if (body.metricId === 'm2') await new Promise<void>((r) => { releaseSlow = r })
-        return json({ status: 'ok', truncated: false, columns: ['bizday', 'value'], rows })
-      }
-      return json({})
-    })
+  it('★ 图表 init 收口：每图恰一次（批量结果一次到达、后续父级重渲染不重建已挂画布）——评审 Minor ①', async () => {
+    // 两块 line 面板走 /query/batch：两块的结果在**同一次**父级状态更新里到达（R4 起）。
+    // 旧实现的病灶（effect 依赖每次渲染都是新对象的 option ⇒ 兄弟结果到达触发重建、init 变 3）
+    // 修法后每图只在挂载时 init 一次，总数恒等于面板数；本用例钉住「到达后稳态仍 = 2」。
+    stub({
+      panels: [
+        { chart: 'line', title: '快面板', metricId: 'm1', dims: ['bizday'], args: {}, span: 12 },
+        { chart: 'line', title: '慢面板', metricId: 'm2', dims: ['bizday'], args: {}, span: 12 },
+      ],
+    }, {
+      m1: { columns: ['bizday', 'value'], rows: [['2026-09-01', 1]] },
+      m2: { columns: ['bizday', 'value'], rows: [['2026-09-01', 2]] },
+    }, new Set())
     renderView()
-    // 快面板数据到达并挂图 ⇒ 恰 1 次 init（慢面板还卡着，不可能更多）
-    await waitFor(() => expect(mInit).toHaveBeenCalledTimes(1))
-    await waitFor(() => expect(releaseSlow).not.toBeNull())
-    releaseSlow!()
-    // 慢面板到达 ⇒ 第二块首挂 ⇒ 总数恰 2（不是「快面板重建 + 慢面板首挂」的 3）
+
     await waitFor(() => expect(mInit).toHaveBeenCalledTimes(2))
     // 稳态复核：再等一拍仍是 2（防「断言时第 3 次还没轮到」的早断言假绿）
     await new Promise((r) => setTimeout(r, 50))
     expect(mInit).toHaveBeenCalledTimes(2)
+    // 整页多面板 = 恰 1 个批量请求
+    expect(queryRequestCount()).toBe(1)
   })
 
   it('★ 空度量值保留 null（断线，不画成 0）——评审 Minor ②', async () => {
@@ -970,7 +981,7 @@ describe('R4 跨面板查询合并', () => {
     expect(queryBodies()).toHaveLength(1)
   })
 
-  it('请求体不同（args 不同）⇒ 不合并', async () => {
+  it('请求体不同（args 不同）⇒ 不合并，批量里两条各自保留', async () => {
     stub({
       panels: [
         { chart: 'table', title: 'A', metricId: 'm1', dims: [], args: { branch_num: '92' }, span: 12 },
@@ -980,6 +991,11 @@ describe('R4 跨面板查询合并', () => {
     renderView()
 
     await waitFor(() => expect(queryBodies()).toHaveLength(2))
+    // 一页报表 = 1 个请求（R4 批量），两条 body 各自保留
+    expect(queryRequestCount()).toBe(1)
+    const batch = calls.find((c) => c.url.endsWith('/query/batch'))!
+    const queries = (JSON.parse(String(batch.init?.body)) as { queries: Array<{ args: { branch_num: string } }> }).queries
+    expect(queries.map((q) => q.args.branch_num).sort()).toEqual(['91', '92'])
   })
 })
 

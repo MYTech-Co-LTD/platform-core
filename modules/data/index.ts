@@ -10,6 +10,7 @@ import { registerMetricChanges } from './routes/metric-changes'
 import { registerPrivateMeasures } from './routes/private-measures'
 import { registerVerifiedQuestions } from './routes/verified-questions'
 import { registerQuery } from './routes/query'
+import { registerQueryBatch } from './routes/query-batch'
 import { registerQueryDetail } from './routes/query-detail'
 import { registerBranches } from './routes/branches'
 import { registerChat } from './routes/chat'
@@ -55,6 +56,7 @@ export default defineModule({
     registerPrivateMeasures(r, _ctx) // W2：私有测度创建 + 归档读面
     registerVerifiedQuestions(r, _ctx) // W1：已验证问答（列/确认/拒绝）
     registerQuery(r, _ctx) // T6
+    registerQueryBatch(r, _ctx) // R4 批量取数
     registerQueryDetail(r, _ctx) // spec 2026-10-21 下钻
     registerBranches(r, _ctx) // #1047 报表页筛选器：门店维读面
     registerMcp(r, _ctx) // T8：MCP 读面（问数）

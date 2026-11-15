@@ -1084,7 +1084,11 @@ export default function ReportView({
       if (hit === undefined) jobs.set(key, { body, indexes: [i] })
       else hit.indexes.push(i)
     })
-    for (const { body, indexes } of jobs.values()) {
+    const entries = [...jobs.entries()]
+    if (entries.length === 0) return   // 全是 text/kpi/ai_text（无 /query 面板）⇒ 不发任何请求
+    if (entries.length === 1) {
+      // 单面板：保持单条 /query（少一层封装，body 与旧规格逐字节一致）
+      const [, { body, indexes }] = entries[0]!
       void apiSend('/query', 'POST', body)
         .then((b) => {
           const result = okResultOf(b)
@@ -1106,7 +1110,40 @@ export default function ReportView({
             return next
           })
         })
+      return
     }
+    // 多面板：走 /query/batch（R4），一页报表 1 个请求；逐条 status 由服务端给
+    // （被拒的面板回 denied，不拖垮整页——能力与逐条 /query 等价，同一 data:query 页门）。
+    const idOf = new Map(entries.map(([key], i) => [key, `q${i}`]))
+    void apiSend('/query/batch', 'POST', {
+      queries: entries.map(([key, { body }]) => ({ id: idOf.get(key), ...body })),
+    })
+      .then((b) => {
+        const results = (b as { results?: Array<Record<string, unknown>> }).results ?? []
+        setResults((prev) => {
+          const next = { ...prev }
+          for (const res of results) {
+            const entry = entries.find(([key]) => idOf.get(key) === res.id)
+            if (entry === undefined) continue
+            let result: PanelResult
+            if (res.status === 'ok') result = okResultOf(res)
+            else if (res.status === 'denied') result = { kind: 'denied' }
+            else result = { kind: 'error', text: `查询失败（${String(res.reason ?? 'unknown')}）` }
+            for (const i of entry[1].indexes) next[i] = result
+          }
+          return next
+        })
+      })
+      .catch((e) => {
+        const result: PanelResult = { kind: 'error', text: messageOf(e) }
+        setResults((prev) => {
+          const next = { ...prev }
+          for (const [, { indexes }] of entries) {
+            for (const i of indexes) next[i] = result
+          }
+          return next
+        })
+      })
     // argsOf/range 都由 panels/override/period 派生 ⇒ 依赖里给这三者即可（避免每渲染重查）
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [panels, override, period, filterValues])

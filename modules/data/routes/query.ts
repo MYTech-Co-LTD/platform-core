@@ -23,6 +23,24 @@ const QueryBody = z.object({
   total: z.boolean().optional(),
 })
 
+/** 单条查询的切片装配（/query 与 /query/batch 共用——两处各写一份就会漂移）。 */
+export function slicingOf(b: {
+  dimensions?: string[]
+  orderBy?: Array<{ column: string; dir?: 'asc' | 'desc' }>
+  limit?: number
+  total?: boolean
+}): SlicingSpec | undefined {
+  return (b.dimensions !== undefined || b.orderBy !== undefined
+    || b.limit !== undefined || b.total !== undefined)
+    ? {
+        ...(b.dimensions !== undefined ? { dimensions: b.dimensions } : {}),
+        ...(b.orderBy !== undefined ? { orderBy: b.orderBy } : {}),
+        ...(b.limit !== undefined ? { limit: b.limit } : {}),
+        ...(b.total !== undefined ? { total: b.total } : {}),
+      }
+    : undefined
+}
+
 export function registerQuery(r: ModuleHono, ctx: RouteCtx): void {
   r.post('/query', async (c) => {
     const parsed = QueryBody.safeParse(await c.req.json().catch(() => null))
@@ -42,17 +60,7 @@ export function registerQuery(r: ModuleHono, ctx: RouteCtx): void {
     // 切片只在**真有字段**时构造：全缺省 ⇒ 传 undefined ⇒ 授权核心走与重构前逐字节一致的
     // 旧路径（authz.test.ts 的回归锁钉着这一点）。用 `!== undefined` 而非真值判断：
     // `dimensions: []`（显式合计形态）与 `limit` 都是「给了就生效」的请求。
-    const slicing: SlicingSpec | undefined = (
-      body.dimensions !== undefined || body.orderBy !== undefined
-      || body.limit !== undefined || body.total !== undefined
-    )
-      ? {
-          ...(body.dimensions !== undefined ? { dimensions: body.dimensions } : {}),
-          ...(body.orderBy !== undefined ? { orderBy: body.orderBy } : {}),
-          ...(body.limit !== undefined ? { limit: body.limit } : {}),
-          ...(body.total !== undefined ? { total: body.total } : {}),
-        }
-      : undefined
+    const slicing = slicingOf(body)
     const startedAt = Date.now()
     const outcome = await runQuery(
       { pool: ctx.pool, execute: ctx.execute, adoptedSources },
