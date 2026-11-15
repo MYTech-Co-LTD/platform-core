@@ -32,6 +32,8 @@ export interface NewMonitorInput {
   /** 仅 threshold：阈值（有限数）。 */
   threshold?: number | null
   windowDays?: number
+  /** 连续 N 次越界才跃迁（1 = 第一次就触发，V1 行为）。 */
+  minBreachEvals?: number
   cadenceSecs: number
   cooldownSecs?: number
   recipients: MonitorRecipient[]
@@ -101,6 +103,11 @@ export function validateNewMonitor(input: NewMonitorInput): ValidationResult {
     return { ok: false, code: 'MONITOR_CADENCE_TOO_SHORT', message: `求值周期不得小于 ${MONITOR_MIN_CADENCE_SECS} 秒` }
   }
 
+  const minBreach = input.minBreachEvals ?? 1
+  if (!Number.isInteger(minBreach) || minBreach < 1 || minBreach > 10) {
+    return { ok: false, code: 'MONITOR_WINDOW_INVALID', message: 'min_breach_evals 必须在 1–10' }
+  }
+
   const recipients = Array.isArray(input.recipients) ? input.recipients : []
   if (recipients.length === 0) {
     return { ok: false, code: 'MONITOR_RECIPIENTS_INVALID', message: '至少一个收件人' }
@@ -120,6 +127,7 @@ export function validateNewMonitor(input: NewMonitorInput): ValidationResult {
       operator: input.verdict === 'threshold' ? (input.operator ?? null) : null,
       threshold: input.verdict === 'threshold' ? (input.threshold ?? null) : null,
       windowDays,
+      minBreachEvals: minBreach,
       cooldownSecs: input.cooldownSecs ?? 3600,
       channelPolicy: input.channelPolicy ?? 'in_app',
       filters: input.filters ?? {},

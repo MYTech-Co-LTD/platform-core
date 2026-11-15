@@ -29,7 +29,7 @@ function hasManage(c: Context<ModuleVars>): boolean {
 
 const BODY_KEYS = new Set([
   'name', 'targetKind', 'metricId', 'reportId', 'panelIndex', 'filters', 'verdict',
-  'operator', 'threshold', 'windowDays', 'cadenceSecs', 'cooldownSecs', 'recipients', 'channelPolicy',
+  'operator', 'threshold', 'windowDays', 'minBreachEvals', 'cadenceSecs', 'cooldownSecs', 'recipients', 'channelPolicy',
 ])
 
 export function registerMonitors(r: ModuleHono, ctx: RouteCtx): void {
@@ -70,6 +70,7 @@ export function registerMonitors(r: ModuleHono, ctx: RouteCtx): void {
       operator: body.operator,
       threshold: body.threshold,
       windowDays: body.windowDays,
+      minBreachEvals: body.minBreachEvals,
       cadenceSecs: body.cadenceSecs,
       cooldownSecs: body.cooldownSecs,
       recipients: body.recipients,

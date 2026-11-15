@@ -22,6 +22,8 @@ export interface MonitorRow {
   operator: string | null
   threshold: string | null
   windowDays: number
+  minBreachEvals: number
+  consecutiveBreach: number
   cadenceSecs: number
   cooldownSecs: number
   dryRun: boolean
@@ -39,7 +41,7 @@ export interface MonitorRow {
 /** 唯一列清单：读写共用（新增列只改这里，避免 toMonitorRow 拿到 undefined）。 */
 const MONITOR_COLUMNS = [
   'id', 'org', 'name', 'target_kind', 'metric_id', 'report_id', 'panel_index', 'filters',
-  'verdict', 'operator', 'threshold', 'window_days', 'cadence_secs', 'cooldown_secs', 'dry_run', 'recipients',
+  'verdict', 'operator', 'threshold', 'window_days', 'min_breach_evals', 'consecutive_breach', 'cadence_secs', 'cooldown_secs', 'dry_run', 'recipients',
   'channel_policy', 'state', 'state_since', 'last_eval_at', 'notified_at',
   'consecutive_fail', 'enabled', 'created_by',
 ].join(', ')
@@ -49,7 +51,7 @@ interface MonitorDbRow {
   metric_id: string | null; report_id: string | null; panel_index: number | null
   filters: Record<string, unknown>; verdict: MonitorVerdict
   operator: string | null; threshold: string | null
-  window_days: number; cadence_secs: number; cooldown_secs: number; dry_run: boolean
+  window_days: number; min_breach_evals: number; consecutive_breach: number; cadence_secs: number; cooldown_secs: number; dry_run: boolean
   recipients: MonitorRecipient[]; channel_policy: MonitorChannelPolicy
   state: MonitorState; state_since: Date | null; last_eval_at: Date | null
   notified_at: Date | null; consecutive_fail: number; enabled: boolean; created_by: string
@@ -61,7 +63,8 @@ export function toMonitorRow(r: MonitorDbRow): MonitorRow {
     targetKind: r.target_kind, metricId: r.metric_id, reportId: r.report_id,
     panelIndex: r.panel_index, filters: r.filters ?? {},
     verdict: r.verdict, operator: r.operator, threshold: r.threshold,
-    windowDays: r.window_days, cadenceSecs: r.cadence_secs,
+    windowDays: r.window_days, minBreachEvals: r.min_breach_evals,
+    consecutiveBreach: r.consecutive_breach, cadenceSecs: r.cadence_secs,
     cooldownSecs: r.cooldown_secs, dryRun: r.dry_run,
     recipients: (r.recipients ?? []) as MonitorRecipient[],
     channelPolicy: r.channel_policy,
@@ -122,6 +125,7 @@ export interface ApplyOutcomeInput {
   lastEvalAt: Date
   notified: boolean
   consecutiveFail: number
+  consecutiveBreach: number
   /** 熔断：置 false（spec §11）。 */
   enabled?: boolean
 }
@@ -137,11 +141,12 @@ export async function applyOutcome(
             last_eval_at = $5,
             notified_at = case when $6 then $5 else notified_at end,
             consecutive_fail = $7,
-            enabled = coalesce($8, enabled),
+            consecutive_breach = $8,
+            enabled = coalesce($9, enabled),
             updated_at = now()
       where id = $1 and org = $2`,
     [m.id, m.org, next.state, next.stateSince, next.lastEvalAt, next.notified,
-      next.consecutiveFail, next.enabled ?? null],
+      next.consecutiveFail, next.consecutiveBreach, next.enabled ?? null],
   )
 }
 
@@ -171,12 +176,12 @@ export async function createMonitor(pool: Pool, input: NewMonitorInput): Promise
     const ins = await client.query<{ id: string }>(
       `insert into data.monitor
          (org, name, target_kind, metric_id, report_id, panel_index, filters, verdict,
-          operator, threshold, window_days, cadence_secs, cooldown_secs, dry_run, recipients, channel_policy, created_by)
-       values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,true,$14,$15,$16)
+          operator, threshold, window_days, min_breach_evals, cadence_secs, cooldown_secs, dry_run, recipients, channel_policy, created_by)
+       values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,true,$15,$16,$17)
        returning id`,
       [n.org, n.name, n.targetKind, n.metricId ?? null, n.reportId ?? null, n.panelIndex ?? null,
         JSON.stringify(n.filters), n.verdict, n.operator ?? null, n.threshold ?? null,
-        n.windowDays, n.cadenceSecs, n.cooldownSecs,
+        n.windowDays, n.minBreachEvals, n.cadenceSecs, n.cooldownSecs,
         JSON.stringify(n.recipients), n.channelPolicy, n.createdBy],
     )
     await client.query('commit')

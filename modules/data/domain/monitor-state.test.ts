@@ -10,6 +10,8 @@ const base = {
   notifiedAt: null,
   cooldownSecs: 3600,
   consecutiveFail: 0,
+  breakStreak: 0,
+  minBreachEvals: 1,
   now: NOW,
 }
 
@@ -57,6 +59,25 @@ describe('transitionOf', () => {
     })
     expect(r2).toMatchObject({ state: 'firing', notify: 'disabled', disable: true })
     expect(r2.consecutiveFail).toBe(MONITOR_FAIL_LIMIT)
+  })
+
+  it('★ no_flap：连续 N 次越界才跃迁；恢复清零', () => {
+    const n3 = { ...base, minBreachEvals: 3 }
+    const first = transitionOf({ ...n3, outcome: { verdict: 'missing', value: 0, watermarkRef: null } })
+    expect(first).toMatchObject({ state: 'ok', notify: null, consecutiveBreach: 1 })
+    const second = transitionOf({ ...n3, breakStreak: 1, outcome: { verdict: 'missing', value: 0, watermarkRef: null } })
+    expect(second).toMatchObject({ state: 'ok', notify: null, consecutiveBreach: 2 })
+    const third = transitionOf({ ...n3, breakStreak: 2, outcome: { verdict: 'missing', value: 0, watermarkRef: null } })
+    expect(third).toMatchObject({ state: 'firing', notify: 'fired', consecutiveBreach: 3 })
+
+    const recovered = transitionOf({ ...n3, prev: 'ok', breakStreak: 2, outcome: { verdict: 'ok', watermarkRef: null } })
+    expect(recovered.consecutiveBreach).toBe(0)
+  })
+
+  it('no_flap：unknown 不重置 streak', () => {
+    const r = transitionOf({ ...base, breakStreak: 2, minBreachEvals: 3,
+      outcome: { verdict: 'unknown', error: 'x', watermarkRef: null } })
+    expect(r.consecutiveBreach).toBe(2)
   })
 
   it('unknown 之后恢复正常 ⇒ 计数清零', () => {
