@@ -112,7 +112,8 @@ async function main() {
           monitorId: m.id,
           org,
           verdict: outcome.verdict,
-          value: outcome.verdict === 'missing' || outcome.verdict === 'stale' ? outcome.value ?? null : null,
+          value: outcome.verdict === 'missing' || outcome.verdict === 'stale' || outcome.verdict === 'threshold'
+            ? outcome.value ?? null : null,
           watermarkRef: outcome.watermarkRef ?? null,
           stateAfter: tr.state,
           notified,

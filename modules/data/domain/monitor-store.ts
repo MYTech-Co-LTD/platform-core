@@ -96,7 +96,7 @@ export async function monitorOrgs(pool: Pool): Promise<string[]> {
 export interface MonitorRunInput {
   monitorId: string
   org: string
-  verdict: 'ok' | 'missing' | 'stale' | 'unknown'
+  verdict: 'ok' | 'missing' | 'stale' | 'threshold' | 'unknown'
   value: number | null
   watermarkRef: string | null
   stateAfter: MonitorState
