@@ -15,10 +15,12 @@ const GRAPH = {
       { id: 'entity:门店', type: 'entity', label: '门店', observations: ['3 个指标'] },
       { id: 'metric:lemeng:retail:net_sales', type: 'metric', label: '净销售额', observations: ['口径：按门店日结净额汇总'] },
       { id: 'metric:lemeng:retail:order_count', type: 'metric', label: '订单数', observations: ['口径：有效订单笔数'] },
+      { id: 'report:rep1', type: 'report', label: '门店经营日报', observations: ['引用 1 个指标'] },
     ],
     edges: [
       { from: 'metric:lemeng:retail:net_sales', to: 'entity:门店', type: 'belongs_to' },
       { from: 'metric:lemeng:retail:order_count', to: 'entity:门店', type: 'belongs_to' },
+      { from: 'report:rep1', to: 'metric:lemeng:retail:net_sales', type: 'used_by' },
     ],
   },
 }

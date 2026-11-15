@@ -72,9 +72,12 @@ interface OntologyEdge { from: string; to: string; type: OntologyEdgeType }
 - `apps/web/src/pages/console-menu.ts` 删掉 `MODULE_EXTERNAL_LINKS.data` 里的「体系地图 ↗」。
 - 移动端不变（仍用 HTML 页）。
 
-## 4. 不做（本轮）
+## 4. 不做（本轮）→ 报表边已于 2026-11-15 交付
 
-- 报表 → 指标 的边：`SystemMapReportFact` 目前没带面板引用的指标，需要另取 report_versions.spec，留下轮。
+- ~~报表 → 指标 的边~~ **已做（2026-11-15）**：`loadSystemMapFacts` 取已发布快照 `report_versions.spec`，
+  按 `metricIdsOf` 投影面板指标（含 KPI 分母）进 `SystemMapReportFact.metricIds`；
+  本体图新增 `report` 节点与 `used_by` 边（无引用 / 引用的指标都不在图里 ⇒ 不进图，不留孤岛）。
+  指标抽屉（桌面 + 移动端）显示「被这些报表引用」——回答「改口径会砸到谁」。
 - 真·图数据库 / 后端查询语言：本页是观测面，数据量 ~100 节点，前端布局足够。
 - 旧 HTML 页下线：等移动端切到图谱 API 后再议。
 
