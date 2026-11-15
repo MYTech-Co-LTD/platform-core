@@ -1,5 +1,10 @@
 # Wave 6 P1 · 平台内置调度器 Implementation Plan
 
+> ⚠️ **2026-11-15（W6-P4a）注**：本文所述的手动触发端点 `POST /api/platform/jobs/:key/run`
+> （及 `routes/platform-jobs.ts`）**已退役**，入口改为 jobs 模块的
+> `POST /api/modules/jobs/:key/run`（`jobs:manage` + CSRF）；现行口径见 `deploy/jobs.md` §4。
+> 以下正文按当时历史保留，不改写。
+
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** 让平台自己拥有业务定时——库内排班表 + 运行台账 + 子进程执行器 + 「该跑没跑」健康判据，首批迁入 `notify-reconcile` / `metric-candidates` / `report-scope-scan` 三个系统 job。
