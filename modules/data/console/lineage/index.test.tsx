@@ -77,3 +77,12 @@ describe('数据生产线', () => {
     await waitFor(() => expect(screen.getAllByText(/选一个指标/).length).toBeGreaterThan(0))
   })
 })
+
+describe('连线', () => {
+  it('数据到达后画出 SVG 连线（同名直通 + 被丢的短线 + 聚合输入）', async () => {
+    renderPage()
+    await waitFor(() => expect(screen.getByText(/源接口 \+ 契约/)).toBeInTheDocument())
+    // happy-dom 里 getBoundingClientRect 全 0，只验证「连线被创建」这一层
+    await waitFor(() => expect(document.querySelectorAll('svg path').length).toBeGreaterThan(0))
+  })
+})

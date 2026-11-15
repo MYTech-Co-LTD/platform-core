@@ -13,6 +13,8 @@ export interface LineageColumn {
   type?: string
   description: string
   status: LineageColumnStatus
+  /** 仅 marts 的聚合度量：聚合表达式中引用到的 staging 列名（用来画连线）。 */
+  inputs?: string[]
 }
 
 export interface LineageLake {
@@ -52,8 +54,10 @@ export interface LineageInput {
     columns: LineageColumnDoc[]
     layout?: { prefix?: string; partitionBy?: string[]; fileName?: string; partitionStyle?: string }
   } | null
-  staging: { model: string | null; columns: LineageColumnDoc[] }
+  staging: { model: string | null; columns: LineageColumnDoc[]; sqlColumns?: readonly string[] }
   marts: { model: string | null; columns: LineageColumnDoc[] }
+  /** 聚合度量 → 它用到的 staging 列（由 marts SQL 的 `<度量>__gen` 块扫出；缺省 = 不知道）。 */
+  martsInputs?: Readonly<Record<string, readonly string[]>>
 }
 
 /** 描述里常有 markdown 粗体与换行——默认层要的是「一句人话」，清掉记号并收敛空白。 */
@@ -70,7 +74,12 @@ export function buildMetricLineage(input: LineageInput): MetricLineage {
   const notes: string[] = []
   const srcCols = input.contract?.columns ?? []
   const srcNames = new Set(srcCols.map((c) => c.name))
-  const stgNames = new Set(input.staging.columns.map((c) => c.name))
+  // 「本层有没有这一列」以 **staging SQL 为准**（schema.yml 的列文档可能漏写：
+  // 2026-11-15 实测 `order_total_money` 在 SQL 与契约里都有、却不在 schema.yml ⇒ 页面曾误判成「被丢掉」）。
+  const stgNames = new Set([
+    ...input.staging.columns.map((c) => c.name),
+    ...(input.staging.sqlColumns ?? []),
+  ])
   const hasStaging = input.staging.columns.length > 0
   const hasMarts = input.marts.columns.length > 0
 
@@ -95,6 +104,7 @@ export function buildMetricLineage(input: LineageInput): MetricLineage {
     description: plainDescription(c.description),
     // 与 staging 同名的列 = 键/直通；其余 = 聚合出来的度量
     status: stgNames.has(c.name) ? 'passthrough' : 'aggregate',
+    ...(input.martsInputs?.[c.name] === undefined ? {} : { inputs: [...input.martsInputs[c.name]!] }),
   }))
 
   const layout = input.contract?.layout

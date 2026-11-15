@@ -5,14 +5,14 @@
 // 直通 / 被丢掉 / dbt 注入 / 聚合度量；▶ 播放按生产顺序逐段出现。
 //
 // 数据：GET /system-map/lineage/:metricId（仓内声明：契约 columns/layout + dbt schema.yml）。
-import { useCallback, useEffect, useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { Alert, Button, Card, Empty, Select, Space, Tag, Typography } from 'antd'
 import { useSearchParams } from 'react-router-dom'
 import { apiGet } from '../lib/api'
 import { humanError, type HumanError } from '../lib/explain'
 
 type Status = 'passthrough' | 'dropped' | 'added' | 'aggregate'
-interface Column { name: string; type?: string; description: string; status: Status }
+interface Column { name: string; type?: string; description: string; status: Status; inputs?: string[] }
 interface Lineage {
   metricId: string
   title: string
@@ -31,10 +31,10 @@ const STATUS_TAG: Record<Status, { text: string; color: string } | null> = {
   aggregate: { text: '聚合度量', color: 'green' },
 }
 
-function Field({ c }: { c: Column }) {
+function Field({ c, innerRef }: { c: Column; innerRef?: (el: HTMLDivElement | null) => void }) {
   const tag = STATUS_TAG[c.status]
   return (
-    <div style={{
+    <div ref={innerRef} data-field={c.name} style={{
       padding: '6px 8px', borderRadius: 8,
       background: c.status === 'added' ? '#F7F3FF' : c.status === 'aggregate' ? '#F0FFF7' : 'transparent',
       opacity: c.status === 'dropped' ? 0.55 : 1,
@@ -88,6 +88,10 @@ export default function LineagePage() {
   const [data, setData] = useState<Lineage | null>(null)
   const [error, setError] = useState<HumanError | null>(null)
   const [step, setStep] = useState(0)
+  // 连线（SVG 覆盖层）：源→staging 同名、staging→marts 同名、staging→度量（聚合输入）
+  const boxRef = useRef<HTMLDivElement>(null)
+  const fieldRefs = useRef(new Map<string, HTMLDivElement>())
+  const [links, setLinks] = useState<Array<{ d: string; kind: 'pass' | 'drop' | 'agg'; stage: number }>>([])
 
   // 指标下拉：列表接口的字段是 id/title（与 /metrics 的既有契约一致）
   useEffect(() => {
@@ -117,6 +121,58 @@ export default function LineagePage() {
       if (i >= 4) clearInterval(timer)
     }, 650)
   }
+
+  // 连线：用元素实际位置算贝塞尔曲线（布局变了就重算；resize 也重算）
+  useEffect(() => {
+    if (data === null) { setLinks([]); return }
+    const build = (): void => {
+      const box = boxRef.current
+      if (box === null) return
+      const base = box.getBoundingClientRect()
+      const at = (layer: string, name: string): { x: number; y: number } | null => {
+        const el = fieldRefs.current.get(`${layer}:${name}`)
+        if (el === undefined) return null
+        const r = el.getBoundingClientRect()
+        return { x: r.left - base.left, y: r.top - base.top + r.height / 2, right: r.right - base.left } as never
+      }
+      const out: Array<{ d: string; kind: 'pass' | 'drop' | 'agg'; stage: number }> = []
+      const curve = (from: { x: number; y: number }, to: { x: number; y: number }): string => {
+        const dx = Math.max(24, (to.x - from.x) * 0.45)
+        return `M ${from.x} ${from.y} C ${from.x + dx} ${from.y}, ${to.x - dx} ${to.y}, ${to.x} ${to.y}`
+      }
+      for (const c of data.source.columns) {
+        const from = at('source', c.name)
+        if (from === null) continue
+        if (c.status === 'dropped') {
+          out.push({ d: `M ${(from as never as { right: number }).right} ${from.y} l 26 0`, kind: 'drop', stage: 2 })
+          continue
+        }
+        const to = at('staging', c.name)
+        if (to !== null) out.push({ d: curve({ x: (from as never as { right: number }).right, y: from.y }, to), kind: 'pass', stage: 2 })
+      }
+      for (const c of data.staging.columns) {
+        const from = at('staging', c.name)
+        const to = at('marts', c.name)
+        if (from === null || to === null) continue
+        out.push({ d: curve({ x: (from as never as { right: number }).right, y: from.y }, to), kind: 'pass', stage: 3 })
+      }
+      for (const c of data.marts.columns) {
+        if (c.inputs === undefined) continue
+        const to = at('marts', c.name)
+        if (to === null) continue
+        for (const input of c.inputs) {
+          const from = at('staging', input)
+          if (from === null) continue
+          out.push({ d: curve({ x: (from as never as { right: number }).right, y: from.y }, to), kind: 'agg', stage: 4 })
+        }
+      }
+      setLinks(out)
+    }
+    build()
+    const onResize = (): void => build()
+    window.addEventListener('resize', onResize)
+    return () => window.removeEventListener('resize', onResize)
+  }, [data])
 
   const dropped = useMemo(() => data?.source.columns.filter((c) => c.status === 'dropped').map((c) => c.name) ?? [], [data])
   const measures = useMemo(() => data?.marts.columns.filter((c) => c.status === 'aggregate').map((c) => c.name) ?? [], [data])
@@ -153,10 +209,28 @@ export default function LineagePage() {
       )}
 
       {data !== null && (
-        <div style={{ display: 'flex', gap: 14, alignItems: 'flex-start' }}>
+        <div ref={boxRef} style={{ display: 'flex', gap: 14, alignItems: 'flex-start', position: 'relative' }}>
+          <svg
+            aria-hidden
+            style={{ position: 'absolute', inset: 0, width: '100%', height: '100%', pointerEvents: 'none', overflow: 'visible' }}
+          >
+            {links.filter((l) => step >= l.stage).map((l, i) => (
+              <path
+                key={i}
+                d={l.d}
+                fill="none"
+                stroke={l.kind === 'agg' ? '#0FA958' : l.kind === 'drop' ? '#E5484D' : '#C9CDD4'}
+                strokeWidth={l.kind === 'pass' ? 1 : 1.2}
+                strokeDasharray={l.kind === 'pass' ? undefined : '4 4'}
+                opacity={l.kind === 'pass' ? 0.75 : 0.9}
+              />
+            ))}
+          </svg>
           <LayerCard step={1} title="源接口 + 契约" on={step >= 1}
                      sub={`${data.source.columns.length} 列 · ${data.source.contractId ?? '无契约'}`}>
-            {data.source.columns.map((c) => <Field key={c.name} c={c} />)}
+            {data.source.columns.map((c) => (
+              <Field key={c.name} c={c} innerRef={(el) => { if (el !== null) fieldRefs.current.set(`source:${c.name}`, el) }} />
+            ))}
           </LayerCard>
 
           <LayerCard step={2} title="湖（raw parquet）" on={step >= 2}
@@ -179,14 +253,18 @@ export default function LineagePage() {
                      sub={`${data.staging.columns.length} 列${data.staging.model === null ? '' : ` · ${data.staging.model}`}${dropped.length > 0 ? ` · 丢掉 ${dropped.length} 列` : ''}`}>
             {data.staging.columns.length === 0
               ? <Typography.Text type="secondary" style={{ fontSize: 12 }}>这一层没有列声明</Typography.Text>
-              : data.staging.columns.map((c) => <Field key={c.name} c={c} />)}
+              : data.staging.columns.map((c) => (
+                <Field key={c.name} c={c} innerRef={(el) => { if (el !== null) fieldRefs.current.set(`staging:${c.name}`, el) }} />
+              ))}
           </LayerCard>
 
           <LayerCard step={4} title="marts（业务成品）" on={step >= 4}
                      sub={`${data.marts.columns.length} 列${data.marts.model === null ? '' : ` · ${data.marts.model}`} · ${measures.length} 个聚合度量`}>
             {data.marts.columns.length === 0
               ? <Typography.Text type="secondary" style={{ fontSize: 12 }}>这一层没有列声明</Typography.Text>
-              : data.marts.columns.map((c) => <Field key={c.name} c={c} />)}
+              : data.marts.columns.map((c) => (
+                <Field key={c.name} c={c} innerRef={(el) => { if (el !== null) fieldRefs.current.set(`marts:${c.name}`, el) }} />
+              ))}
           </LayerCard>
         </div>
       )}

@@ -161,6 +161,7 @@ export function registerSystemMap(r: ModuleHono, ctx: RouteCtx): void {
     const roots = rootsOf(process.env, ctx.repoRoot)
     const loadedContracts = loadContracts(roots)
     const docs = loadModelColumnDocs(ctx.repoRoot)
+    const models = loadDbtModels(ctx.repoRoot)
 
     // marts = 指标声明的第一个源关系；staging = 该关系在 dbt 模型图里的一层上游
     const mart = metric.relations[0] ?? null
@@ -196,12 +197,34 @@ export function registerSystemMap(r: ModuleHono, ctx: RouteCtx): void {
           }
         })()
 
+    // 聚合度量的输入列：从 marts SQL 的 `<度量>__gen as ( … )` 块里扫 staging 列名——
+    // 只做「这一段表达式提到了哪些列」，不解析 SQL 结构（够画连线，别当血缘证明）。
+    const martsInputs: Record<string, string[]> = {}
+    const martModel = mart === null ? undefined : models.find((m) => m.name === mart)
+    const martSql = martModel?.sql ?? ''
+    const stagingNames = new Set((staging === null ? [] : (docs.get(staging) ?? [])).map((c) => c.name))
+    for (const col of (mart === null ? [] : (docs.get(mart) ?? []))) {
+      if (stagingNames.has(col.name)) continue
+      const start = martSql.indexOf(`${col.name}__gen as (`)
+      if (start < 0) continue
+      const rest = martSql.slice(start)
+      const end = rest.indexOf('\n),')
+      const block = end < 0 ? rest : rest.slice(0, end)
+      const inputs = [...stagingNames].filter((n) => new RegExp(`\\b${n}\\b`).test(block))
+      if (inputs.length > 0) martsInputs[col.name] = inputs
+    }
+
     return c.json(buildMetricLineage({
       metricId: metric.id,
       title: metric.title,
       contract,
-      staging: { model: staging, columns: staging === null ? [] : (docs.get(staging) ?? []) },
+      staging: {
+        model: staging,
+        columns: staging === null ? [] : (docs.get(staging) ?? []),
+        sqlColumns: staging === null ? [] : sqlColumnsOf(models.find((m) => m.name === staging)?.sql ?? ''),
+      },
       marts: { model: mart, columns: mart === null ? [] : (docs.get(mart) ?? []) },
+      martsInputs,
     }))
   })
 
@@ -335,6 +358,14 @@ export function registerSystemMap(r: ModuleHono, ctx: RouteCtx): void {
       warnings: list.warnings,
     })
   })
+}
+
+/** 从 staging SQL 里扫出列名（`r['col']` 与 `as col` 两种写法）——schema.yml 可能漏文档。 */
+export function sqlColumnsOf(sql: string): string[] {
+  const out = new Set<string>()
+  for (const m of sql.matchAll(/r\[\s*'([a-z0-9_]+)'\s*\]/g)) out.add(m[1])
+  for (const m of sql.matchAll(/\bas\s+([a-z][a-z0-9_]*)\b/g)) out.add(m[1])
+  return [...out]
 }
 
 /** warehousePool 在未配 `DATA_WAREHOUSE_URL` 时会抛——这里吞掉，交给 catch 的 note。 */
