@@ -57,6 +57,30 @@ const GRAPH = {
   warnings: [],
 }
 
+// 指标抽屉里内嵌的字段链路（#2338）：只给最小形状，够断言「画板挂上了」。
+const LINEAGE = {
+  metricId: 'lemeng:retail:net_sales',
+  title: '净销售额',
+  source: {
+    contractId: 'lemeng.retail_order_line',
+    columns: [
+      { name: 'system_book', type: 'varchar', description: '账套', status: 'passthrough' },
+      { name: 'sale_money', type: 'numeric', description: '行金额', status: 'passthrough' },
+    ],
+  },
+  lake: { prefix: 'lemeng/retail_order_line', partitions: ['system_book'], fileName: 'all.parquet', partitionStyle: 'hive' },
+  staging: { model: 'stg_lemeng_retail_order_line', columns: [
+    { name: 'system_book', description: '账套', status: 'passthrough' },
+    { name: 'org', description: '主体列', status: 'added' },
+    { name: 'sale_money', description: '行金额', status: 'passthrough' },
+  ] },
+  marts: { model: 'fct_retail_sale', columns: [
+    { name: 'system_book', description: '账套', status: 'passthrough' },
+    { name: 'net_amount', description: '净销售额', status: 'aggregate', inputs: ['sale_money'] },
+  ] },
+  notes: [],
+}
+
 /** 取最近一次 setOption 传进去的数据（节点/边）。 */
 const lastOption = () => {
   const calls = chart.setOption.mock.calls
@@ -106,7 +130,11 @@ describe('体系地图·本体图', () => {
   })
 
   it('点节点 ⇒ 右侧抽屉给出 observations 与链路；关掉后不残留', async () => {
-    m.mockImplementation(async (url: string) => url.includes('/trail') ? json({ trail: TRAIL }) : json(GRAPH))
+    m.mockImplementation(async (url: string) => {
+      if (url.includes('/trail')) return json({ trail: TRAIL })
+      if (url.includes('/lineage/')) return json(LINEAGE)
+      return json(GRAPH)
+    })
     renderPage()
     await waitFor(() => expect(screen.getByText('57')).toBeInTheDocument())
 
@@ -131,19 +159,30 @@ describe('体系地图·本体图', () => {
     // 指标抽屉给出「被哪些报表引用」（改口径会砸到谁）
     expect(screen.getByText('被这些报表引用')).toBeInTheDocument()
     expect(screen.getByText('门店日报')).toBeInTheDocument()
+    // 抽屉右侧内嵌字段链路（#2338）：画板与字段都在
+    await waitFor(() => expect(document.querySelector('[data-testid="lineage-canvas"]')).not.toBeNull())
+    expect(document.querySelectorAll('.lineage-pill').length).toBeGreaterThan(0)
 
     fireEvent.click(screen.getByRole('button', { name: /close/i }))
     await waitFor(() => expect(screen.queryByText('口径：按门店日结净额汇总')).toBeNull())
   })
 
   it('深链 ?focus=metric:… ⇒ 数据到达后自动打开该指标抽屉', async () => {
-    m.mockImplementation(async (url: string) => (url.includes('/trail') ? json({ trail: TRAIL }) : json(GRAPH)))
+    m.mockImplementation(async (url: string) => {
+      if (url.includes('/trail')) return json({ trail: TRAIL })
+      if (url.includes('/lineage/')) return json(LINEAGE)
+      return json(GRAPH)
+    })
     renderPage('/console/data/system-map?focus=metric:lemeng:retail:net_sales')
     await waitFor(() => expect(screen.getByText('口径：按门店日结净额汇总')).toBeInTheDocument())
   })
 
   it('点节点 ⇒ 打开抽屉；关闭后抽屉不残留（URL 写回由 Router 承载）', async () => {
-    m.mockImplementation(async (url: string) => (url.includes('/trail') ? json({ trail: TRAIL }) : json(GRAPH)))
+    m.mockImplementation(async (url: string) => {
+      if (url.includes('/trail')) return json({ trail: TRAIL })
+      if (url.includes('/lineage/')) return json(LINEAGE)
+      return json(GRAPH)
+    })
     renderPage()
     await waitFor(() => expect(screen.getByText('57')).toBeInTheDocument())
     const clickCalls = chart.on.mock.calls.filter((c) => c[0] === 'click')
@@ -152,6 +191,22 @@ describe('体系地图·本体图', () => {
     await waitFor(() => expect(screen.getByText('口径：按门店日结净额汇总')).toBeInTheDocument())
     fireEvent.click(screen.getByRole('button', { name: /close/i }))
     await waitFor(() => expect(screen.queryByText('口径：按门店日结净额汇总')).toBeNull())
+  })
+
+  it('非指标节点不开字段链路（不白拉一次 lineage）', async () => {
+    m.mockImplementation(async (url: string) => {
+      if (url.includes('/lineage/')) return json(LINEAGE)
+      return json(GRAPH)
+    })
+    renderPage()
+    await waitFor(() => expect(screen.getByText('57')).toBeInTheDocument())
+    const clickCalls = chart.on.mock.calls.filter((c) => c[0] === 'click')
+    const handler = clickCalls[clickCalls.length - 1]?.[1] as (p: unknown) => void
+    handler({ dataType: 'node', data: { id: 'entity:门店' } })
+    await waitFor(() => expect(screen.getByText('3 个指标挂在这个对象上')).toBeInTheDocument())
+    expect(document.querySelector('[data-testid="lineage-canvas"]')).toBeNull()
+    const lineageCalls = m.mock.calls.filter((c) => String(c[0]).includes('/lineage/'))
+    expect(lineageCalls).toHaveLength(0)
   })
 
   it('接口失败 ⇒ 人话 + 重试，不静默空图', async () => {
