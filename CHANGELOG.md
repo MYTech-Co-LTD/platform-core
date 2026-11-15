@@ -11,6 +11,10 @@
 
 ## [Unreleased]
 
+## [0.294.0](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.293.0...v0.294.0) - 2026-11-15
+- 【新增】data: 业务监控 W7-V2a——threshold 判据（#2291） ([#2292](https://github.com/MYTech-Co-LTD/platform-core/pull/2292), [f39a970](https://github.com/MYTech-Co-LTD/platform-core/commit/f39a970ffd1ca4050e097f9ec251b9b513672603))
+
+
 ## [0.293.0](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.292.2...v0.293.0) - 2026-11-15
 - 【新增】notify: 新增 notify:inbox 自助收件箱权限，与 notify:view 解耦 (#2289) ([#2290](https://github.com/MYTech-Co-LTD/platform-core/pull/2290), [6750716](https://github.com/MYTech-Co-LTD/platform-core/commit/675071657615f5949e48da483d00a1b5599e16b5))
 
