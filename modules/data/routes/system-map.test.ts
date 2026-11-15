@@ -9,7 +9,7 @@ import { declaredScopeGate } from '@platform/sdk'
 import type { Pool } from 'pg'
 import mod from '../index'
 import { buildTestApp, makeIdentity } from '../test-util'
-import { clearSystemMapCache } from './system-map'
+import { clearSystemMapCache, sqlColumnsOf } from './system-map'
 import type { ModuleVars } from './context'
 
 const ORG = 'org-system-map'
@@ -144,6 +144,16 @@ describe('GET /system-map/pipelines/:id/runs（运行历史）', () => {
   it('非法管線 id ⇒ 400（防注入到运行记录路径）', async () => {
     const res = await buildTestApp(mod, identity, { pool: emptyPool().pool }).request('/system-map/pipelines/..%2Fetc/runs')
     expect([400, 404]).toContain(res.status)
+  })
+})
+
+describe('sqlColumnsOf（staging SQL 的列扫描）', () => {
+  it('cast(x as varchar) 里的类型名不算列（2026-11-15 生产实测混进 varchar/date）', () => {
+    const sql = "select r['system_book'] as system_book, cast(m.bizday as date) from t where cast(m.system_book as varchar) = 1"
+    const cols = sqlColumnsOf(sql)
+    expect(cols).toContain('system_book')
+    expect(cols).not.toContain('varchar')
+    expect(cols).not.toContain('date')
   })
 })
 

@@ -81,6 +81,23 @@ describe('buildMetricLineage', () => {
     expect(l.staging.columns.find((c) => c.name === 'bizday')?.undocumented).toBeUndefined()
   })
 
+  it('SQL 扫出来的「非契约列」不进页面（cast 别名 / 类型名一律不认）', () => {
+    const l = buildMetricLineage({
+      metricId: 'm', title: 't',
+      contract: JSON.parse(JSON.stringify(BASE.contract)) as never,
+      staging: {
+        model: 'stg_lemeng_retail_order_line',
+        columns: [{ name: 'bizday', description: '业务日' }],
+        sqlColumns: ['bizday', 'order_total_money', 'colname', 'varchar', 'date'],
+      },
+      marts: { model: 'fct_x', columns: [] },
+    } as never)
+    const names = l.staging.columns.map((c) => c.name)
+    expect(names).toEqual(['bizday', 'order_total_money'])
+    expect(names).not.toContain('colname')
+    expect(names).not.toContain('varchar')
+  })
+
   it('度量依赖原样带出（net_amount 由 sale_amount / return_amount 组合）', () => {
     const l = buildMetricLineage({
       ...(BASE as unknown as Record<string, unknown>),

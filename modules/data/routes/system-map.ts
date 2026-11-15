@@ -365,10 +365,19 @@ export function registerSystemMap(r: ModuleHono, ctx: RouteCtx): void {
 }
 
 /** 从 staging SQL 里扫出列名（`r['col']` 与 `as col` 两种写法）——schema.yml 可能漏文档。 */
+/** SQL 类型名不是列：`cast(x as varchar)` / `cast(y as date)` 会被 `as <name>` 误捕。 */
+const SQL_TYPES = new Set([
+  'varchar', 'char', 'text', 'date', 'timestamp', 'timestamptz', 'time',
+  'int', 'integer', 'bigint', 'smallint', 'numeric', 'decimal', 'double',
+  'real', 'float', 'boolean', 'bool', 'json', 'jsonb', 'uuid',
+])
+
 export function sqlColumnsOf(sql: string): string[] {
   const out = new Set<string>()
   for (const m of sql.matchAll(/r\[\s*'([a-z0-9_]+)'\s*\]/g)) out.add(m[1])
-  for (const m of sql.matchAll(/\bas\s+([a-z][a-z0-9_]*)\b/g)) out.add(m[1])
+  for (const m of sql.matchAll(/\bas\s+([a-z][a-z0-9_]*)\b/g)) {
+    if (!SQL_TYPES.has(m[1]!)) out.add(m[1]!)
+  }
   return [...out]
 }
 

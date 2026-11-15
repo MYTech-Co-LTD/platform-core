@@ -386,9 +386,7 @@ export default function LineagePage() {
           layoutKey={layoutKey}
           onCanvasApi={(api) => { canvasApi.current = api }}
           onBlankClick={clearFocus}
-        >
-          {STAGE_ORDER.map((s) => card(s))}
-          {narr !== null && (
+          overlay={narr === null ? null : (
             <div className="lineage-narr">
               <span className="dot" />
               <span className="txt">
@@ -398,6 +396,8 @@ export default function LineagePage() {
               {focus !== null && <Button size="small" onClick={clearFocus}>退出聚焦</Button>}
             </div>
           )}
+        >
+          {STAGE_ORDER.map((s) => card(s))}
         </LineageCanvas>
       )}
 
