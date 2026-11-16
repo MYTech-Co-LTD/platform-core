@@ -76,7 +76,7 @@ export default function PipelinesPage() {
       unmatched: number
       runNote: string | null
       lastRun: { runId: string; at: string; status: string; rows?: number; durationMs?: number } | null
-      steps: Array<{ id: string; step: number; component: string; kind: string; label: string; detail?: string; stat?: { rows?: number; durationMs?: number } }>
+      steps: Array<{ id: string; step: number; component: string; kind: string; label: string; detail?: string; count?: number; stat?: { rows?: number; durationMs?: number } }>
     }
   } | null>(null)
 
@@ -473,9 +473,12 @@ export default function PipelinesPage() {
                         </div>
                         <div style={{ flex: 1, minWidth: 0, paddingBottom: 12 }}>
                           <div style={{ display: 'flex', alignItems: 'baseline', gap: 8 }}>
-                            <span style={{ fontSize: 13, fontWeight: 500 }} title={s.component}>{s.kind}</span>
+                            <span style={{ fontSize: 13, fontWeight: 500 }} title={s.component}>
+                              {s.kind}
+                              {(s.count ?? 1) > 1 && <span style={{ color: '#9AA0A6', fontWeight: 400 }}> × {s.count}</span>}
+                            </span>
                             <span style={{ fontSize: 12, color: '#6B7280', flex: 1, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                              {s.label}
+                              {(s.count ?? 1) > 1 ? `${s.label} 等 ${s.count} 个节点` : s.label}
                             </span>
                             {s.stat !== undefined && (
                               <span style={{ fontSize: 11.5, color: '#9AA0A6', flex: 'none', fontVariantNumeric: 'tabular-nums' }}>
