@@ -31,6 +31,8 @@ export interface FlowStep {
   detail?: string
   /** 该次运行里这个节点的数字 */
   stat?: FlowNodeStat
+  /** 相同类型的连续节点被合并时，这里是节点数（1 或缺省 = 单个节点）。 */
+  count?: number
 }
 
 export interface PipelineFlow {
@@ -180,10 +182,34 @@ export function buildPipelineFlow(
     }
   })
 
+  // 合并连续的同型节点：按「页」扇出的管线有 96 个 `src.rest`（page 1…96），
+  // 业务人员要的是「取数 × 96 页」而不是 96 行。判据是 component + detail 都相同
+  // （不同接口/不同落点的节点不会被并掉）。
+  const merged: FlowStep[] = []
+  for (const s of steps) {
+    const prev = merged[merged.length - 1]
+    if (prev !== undefined && prev.component === s.component && prev.detail === s.detail) {
+      prev.count = (prev.count ?? 1) + 1
+      if (prev.stat !== undefined || s.stat !== undefined) {
+        prev.stat = {
+          ...(prev.stat?.rows === undefined && s.stat?.rows === undefined
+            ? {}
+            : { rows: (prev.stat?.rows ?? 0) + (s.stat?.rows ?? 0) }),
+          ...(prev.stat?.durationMs === undefined && s.stat?.durationMs === undefined
+            ? {}
+            : { durationMs: (prev.stat?.durationMs ?? 0) + (s.stat?.durationMs ?? 0) }),
+        }
+      }
+      continue
+    }
+    merged.push({ ...s })
+  }
+  merged.forEach((s, i) => { s.step = i + 1 })
+
   return {
     pipelineId,
     name: str(doc.name) || pipelineId,
-    steps,
+    steps: merged,
     unmatched,
   }
 }
