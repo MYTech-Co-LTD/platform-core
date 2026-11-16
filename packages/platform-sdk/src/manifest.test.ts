@@ -461,6 +461,48 @@ describe('notifications.events', () => {
   })
 })
 
+// agent MCP face 声明（2026-11-16 能力网关 spec §5.3）：path 必须 ∈ api.internal 且 method/scope
+// 一致；face 唯一；(group,audience) 内 precedence 不重复；同 (path,method,scope) 的多个 face
+// 仅当 audiences 不相交且 profile 不同。
+describe('mcpFaces', () => {
+  const base = {
+    id: 'data', name: '数据', version: '0.1.0', platform: '>=0.1',
+    permissions: [{ code: 'data:read', name: '读' }, { code: 'data:query', name: '查' }],
+    api: { internal: [
+      { method: 'POST', path: '/mcp-read', scope: 'data:read' },
+      { method: 'POST', path: '/mcp', scope: 'data:query' },
+    ] },
+  }
+
+  it('合法声明通过', () => {
+    const m = { ...base, mcpFaces: [
+      { face: 'read', group: 'agent', precedence: 1, path: '/mcp-read', method: 'POST', scope: 'data:read', audiences: ['mcp'] },
+      { face: 'query', group: 'agent', precedence: 2, path: '/mcp', method: 'POST', scope: 'data:query', audiences: ['mcp'] },
+    ] }
+    expect(ManifestSchema.safeParse(m).success).toBe(true)
+  })
+
+  it('path 不在 api.internal / scope 不一致 ⇒ 拒', () => {
+    const m = { ...base, mcpFaces: [
+      { face: 'read', group: 'agent', precedence: 1, path: '/nope', method: 'POST', scope: 'data:read', audiences: ['mcp'] },
+    ] }
+    expect(ManifestSchema.safeParse(m).success).toBe(false)
+  })
+
+  it('同一 (group,audience) precedence 重复 ⇒ 拒；不同 audience 可重复', () => {
+    const dup = { ...base, mcpFaces: [
+      { face: 'a', group: 'g', precedence: 1, path: '/mcp-read', method: 'POST', scope: 'data:read', audiences: ['mcp'] },
+      { face: 'b', group: 'g', precedence: 1, path: '/mcp', method: 'POST', scope: 'data:query', audiences: ['mcp'] },
+    ] }
+    expect(ManifestSchema.safeParse(dup).success).toBe(false)
+    const ok = { ...base, mcpFaces: [
+      { face: 'a', group: 'g', precedence: 1, path: '/mcp-read', method: 'POST', scope: 'data:read', audiences: ['mcp'], profile: 'full' },
+      { face: 'b', group: 'g', precedence: 1, path: '/mcp-read', method: 'POST', scope: 'data:read', audiences: ['wecom'], profile: 'c-manage' },
+    ] }
+    expect(ManifestSchema.safeParse(ok).success).toBe(true)
+  })
+})
+
 describe('N1：ext 是租户/agent 事件保留前缀', () => {
   it('模块 id = "ext" ⇒ 拒绝（即使事件 key 前缀能对上）', () => {
     const r = ManifestSchema.safeParse({
