@@ -142,7 +142,7 @@ describe('agent mcp', () => {
     const { app } = makeApp(['data:query'])
     const out = textOf(await callCapabilities(app))
     expect(out.lockedFaces).toContainEqual(
-      expect.objectContaining({ module: 'data', face: 'manage', scope: 'data:manage' }),
+      expect.objectContaining({ module: 'data', face: 'manage', scope: 'data:manage', reason: 'scope_missing' }),
     )
     expect(out.faces).toContainEqual(
       expect.objectContaining({ module: 'data', face: 'agent', scope: 'data:query' }),
@@ -335,7 +335,7 @@ describe('agent mcp', () => {
     })
     const out = textOf(await callCapabilities(app))
     expect(out.faces).toContainEqual(
-      expect.objectContaining({ module: 'data', face: 'agent', available: false }),
+      expect.objectContaining({ module: 'data', face: 'agent', available: false, reason: 'module_unavailable' }),
     )
     expect((out.tools as Array<{ name: string }>).map((t) => t.name)).not.toContain('data__search_catalog')
   })
@@ -469,7 +469,15 @@ describe('agent mcp', () => {
     const { app } = makeApp(['data:query'], { respond: () => new Response(null, { status: 403 }) })
     const out = textOf(await callCapabilities(app))
     expect(out.faces).toContainEqual(
-      expect.objectContaining({ module: 'data', face: 'agent', available: false }),
+      expect.objectContaining({ module: 'data', face: 'agent', available: false, reason: 'module_unavailable' }),
+    )
+  })
+
+  it('模块 tools/list 404 ⇒ reason=module_disabled（模块停用/不存在）', async () => {
+    const { app } = makeApp(['data:query'], { respond: () => new Response(null, { status: 404 }) })
+    const out = textOf(await callCapabilities(app))
+    expect(out.faces).toContainEqual(
+      expect.objectContaining({ module: 'data', face: 'agent', available: false, reason: 'module_disabled' }),
     )
   })
 
