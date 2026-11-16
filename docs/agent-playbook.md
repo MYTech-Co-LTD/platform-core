@@ -151,7 +151,8 @@
 5. **表单**（门 `forms:manage`）：
    `forms__list_forms`（查重）→ `forms__generate_form_draft` → **人在 console 发布**
    （`forms:publish`）。
-6. **监控**：见 `docs/superpowers/specs/2026-11-14-business-monitor-design.md`；A 不提供工具。
+6. **业务监控**：`data__list_monitors` → `data__create_monitor`（**恒 dry_run=true**，只求值不投递）→ 人在控制台显式开启投递。目标只能是 `metric` 或 `report_panel`；`threshold` 仅支持可加指标。设计：`docs/superpowers/specs/2026-11-14-business-monitor-design.md`。
+7. **agent 自有通知事件**：`notify__declare_agent_event`（key 必须 `ext.<namespace>.<event>`）→ `notify__create_agent_template` → `notify__create_agent_rule`（`draft:true`，C 无条件草稿）→ 人 `notify:publish` 审批/启用。平台事件（`data.*`）不能给 agent 建规则。
 
 ## 5. 人 gate 表（行为边界；正典 = spec §9）
 
