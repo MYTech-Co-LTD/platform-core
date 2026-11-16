@@ -11,6 +11,11 @@
 
 ## [Unreleased]
 
+## [0.313.4](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.313.3...v0.313.4) - 2026-11-16
+- 【修复】scheduler: 健康判据②改 cron-aware，窗口外不再误判漏跑 (#2417) ([#2418](https://github.com/MYTech-Co-LTD/platform-core/pull/2418), [fb38c4a](https://github.com/MYTech-Co-LTD/platform-core/commit/fb38c4a9e21158ebd840b2a872f61377a8a8f208))
+- 【修复】notify: approval.decide 启用入历史 + MCP agent 规则归属守卫 (#2324 #2325) ([#2419](https://github.com/MYTech-Co-LTD/platform-core/pull/2419), [99477f5](https://github.com/MYTech-Co-LTD/platform-core/commit/99477f5d0251e781f672ed022ec1295eba05471b))
+
+
 ## [0.313.3](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.313.2...v0.313.3) - 2026-11-16
 - 【修复】data: 热腿 glob 不套审计窗口，保住 1970 哨兵（空 glob 规划期报错）(#2415) ([#2416](https://github.com/MYTech-Co-LTD/platform-core/pull/2416), [856b03d](https://github.com/MYTech-Co-LTD/platform-core/commit/856b03dd45f68d55ecf6ed8006b541d7986835b3))
 
