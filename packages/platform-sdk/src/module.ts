@@ -503,6 +503,41 @@ export interface ResolvedPatKey {
 }
 
 /**
+ * 标准审批镜像写入（OA P2 / issue #2385；forms 模块供给）。
+ *
+ * 为什么宿主必须经端口写：企微回调路由在宿主（`apps/server`），而镜像表在 `forms` schema——
+ * 宿主直接查/写就是 B1 违规（`scripts/lint-architecture.mjs`）。**绑定解析也在模块侧**：
+ * 回调只带 `TemplateId`，模板 → `processCode` 的换算要读 `forms.asset_version`，宿主读不到。
+ * 故端口吃 `processCode`（= 企微 TemplateId，与绑定 body 同值）并返回「有没有绑定」的结论，
+ * 未知模板由宿主落 attention（**不静默丢弃**）。
+ */
+export interface ExternalApprovalUpsertInput {
+  /** 租户隔离键（Casdoor org，与 forms 各表同基准） */
+  org: string
+  /** 审批源模板编号（企微 TemplateId；与 `approval_def` 绑定 body 的 processCode 同值） */
+  processCode: string
+  /** 审批源侧单号（企微 SpNo）——`(org, provider, provider_ref)` 是幂等键 */
+  providerRef: string
+  title?: string | null
+  requester?: string | null
+  /** 镜像状态（pending/approved/rejected/canceled）；模块侧白名单是第二道守卫 */
+  status: string
+  startedAt?: Date | null
+  finishedAt?: Date | null
+  /** 审批源可得的摘要；回调只带状态时留空（不假装有） */
+  detail?: unknown
+}
+
+/** 写入结论：宿主据 `reason` 决定是否落 attention（`ok:false` 时**不写库**）。 */
+export type ExternalApprovalUpsertResult =
+  | { ok: true }
+  | {
+    ok: false
+    /** unknown_template = 本租户没有该 processCode 的已发布 wecom_native 绑定；status_invalid = 状态不在白名单 */
+    reason: 'unknown_template' | 'status_invalid'
+  }
+
+/**
  * 端口集合。**只暴露宿主确实需要的能力**——端口不是「把模块业务开个后门给宿主」的地方。
  * 加新成员前先回答：宿主为什么**必须**在 `mount` 之前拿到它？
  *
@@ -526,6 +561,12 @@ export interface ModulePorts {
    * 宿主 `ctx.notify.emit` 在 manifest 目录未命中时用它兜底 `ext.*`；平台事件仍走内存目录。
    */
   resolveEventDecl?(org: string, key: string): Promise<NotificationEventDecl | null>
+  /**
+   * 标准审批镜像幂等写入（forms 模块供给；OA P2 企微回调/对账用）。
+   * 未装配 forms（或该部署没开 OA）⇒ 宿主拿到 `undefined`，回调按 fail-closed 503 处理
+   * （**不是**静默成功）。详见 `ExternalApprovalUpsertInput`。
+   */
+  upsertExternalApproval?(input: ExternalApprovalUpsertInput): Promise<ExternalApprovalUpsertResult>
 }
 
 /**

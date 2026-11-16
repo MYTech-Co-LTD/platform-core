@@ -65,6 +65,30 @@ function toInt(value: string | undefined): number | undefined {
   return Number.isSafeInteger(n) ? n : undefined
 }
 
+/** 企微回调**外层**信封（明文：AgentID / Encrypt 在密文之外，见官方 WXBizMsgCrypt）。 */
+export interface ApprovalEnvelope {
+  /** 外层 AgentID（明文）——宿主据此反查租户（`platform.tenant.wecom_approval_agent_id`） */
+  agentId?: number
+  /** 外层 Encrypt（密文，参与 msg_signature 验签） */
+  encrypt?: string
+  /** 外层 ToUserName（corpId；留给跨租户核对，本轮不据此选租户） */
+  toUserName?: string
+}
+
+/**
+ * 解析回调**外层** XML（POST body）。这不是解密后的 inner XML——两步分开：
+ * 外层给「用哪个租户的 token/aesKey」，inner 才是审批事件内容。
+ * 形状不对 / 非 XML ⇒ 空对象（调用方 fail-closed，不猜）。
+ */
+export function parseApprovalEnvelope(xml: string): ApprovalEnvelope {
+  if (typeof xml !== 'string' || xml.trim() === '') return {}
+  return {
+    agentId: toInt(pickTag(xml, ['AgentID', 'AgentId', 'agent_id'])),
+    encrypt: pickTag(xml, ['Encrypt', 'encrypt']),
+    toUserName: pickTag(xml, ['ToUserName', 'to_user_name']),
+  }
+}
+
 /**
  * 解析解密后的回调 inner XML。
  * 未知事件 / 缺 Event / 非 XML ⇒ null（调用方决定落 attention，不静默丢弃）。

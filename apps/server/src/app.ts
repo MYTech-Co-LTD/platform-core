@@ -32,6 +32,7 @@ import { patIdentityMiddleware } from './pat-auth'
 import { internalIdentityMiddleware } from './internal-identity'
 import { wecomChannelIdentityMiddleware } from './wecom-channel-auth'
 import { platformRoutes, type ModuleInfo } from './routes/platform'
+import { wecomApprovalRoutes } from './routes/wecom-approval'
 import { apiKeyRoutes } from './routes/api-keys'
 import { authRoutes } from './routes/auth'
 import { adminRoutes } from './routes/admin'
@@ -321,6 +322,15 @@ export async function buildApp(overrides: BuildAppOverrides = {}): Promise<{
   // ⑦.5 个人 Key（PAT）管理面（issue #894）：个人档免 scope、管理档 tenant:admin；
   // 与 platformRoutes 同前缀不同路径（/keys*），注册序不影响。
   app.route('/api/platform/keys', apiKeyRoutes({ pool, sessionSecret: config.sessionSecret }))
+  // ⑦.6 企微标准审批回调（OA P2，issue #2385）：**免 session/PAT**——验签即身份。
+  // 与登录用的企微应用完全分开（凭据在 platform.tenant.wecom_approval_*）。写镜像只经
+  // runtime.port('forms','upsertExternalApproval')（B1：宿主不碰 forms schema）；端口缺席 ⇒ 503。
+  // 中间件顺序：本路由注册在 §⑥ 全局租户/会话中间件之后，但两者对本路由都不加门——
+  // 租户由外层 AgentID 反查，身份由 msg_signature 证明（企微回调没有会话可言）。
+  app.route('/api/platform/wecom', wecomApprovalRoutes({
+    pool,
+    getUpsertPort: () => runtime.port('forms', 'upsertExternalApproval'),
+  }))
   // （⑧d 已退役，W6-P4a）：业务调度手动触发原挂宿主 /api/platform/jobs/:key/run（Wave 6 P1），
   // 已迁入 jobs 模块端点 POST /api/modules/jobs/:key/run（jobs:manage + CSRF；只入队语义与
   // 审计由 ctx.jobs 端口承载，见 scheduler/jobs-port.ts）。旧路径不再存在——app.test.ts 有
