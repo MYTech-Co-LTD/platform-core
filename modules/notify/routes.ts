@@ -1097,7 +1097,18 @@ export function createNotifyRouter(deps: {
       deps.pool, org(c), id, b.approve, identity.userId, b.reason ?? null)
     if (!decided) return c.json({ error: 'APPROVAL_NOT_PENDING' }, 409)
     if (b.approve && decided.kind === 'rule') {
-      await setRuleEnabled(deps.pool, org(c), decided.targetId, true)
+      const n = await setRuleEnabled(deps.pool, org(c), decided.targetId, true)
+      // 批准即启用也是一次规则状态迁移，必须进历史（#2324）：否则无法恢复到“刚批准”的状态。
+      const rule = n > 0
+        ? (await listRules(deps.pool, org(c))).find((x) => x.id === decided.targetId)
+        : undefined
+      if (rule) {
+        await audit(deps.pool, org(c), identity.userId, 'rule.enabled', decided.targetId, {
+          enabled: true,
+          approvalId: decided.id,
+          snapshot: ruleSnapshot(rule, { enabled: true }),
+        })
+      }
     }
     await audit(deps.pool, org(c), identity.userId, 'approval.decide', decided.targetId, {
       approvalId: decided.id, approve: b.approve, kind: decided.kind,
