@@ -61,9 +61,38 @@ describe('buildPipelineFlow', () => {
     expect(f.steps[0]!.kind).toBe('acme.custom')
   })
 
+  it('连续的同型节点合并成一步（96 个 page 不逐行刷屏），行数与耗时相加', () => {
+    const nodes = ['p1', 'p2', 'p3'].map((id, i) => ({
+      id, data: { componentId: 'src.rest', label: `page ${i + 1}`, properties: { method: 'POST', url: '/x' } },
+    }))
+    const doc = {
+      nodes: [...nodes, { id: 'sink', data: { componentId: 'snk.minio', label: '落湖', properties: { key: 'k' } } }],
+      edges: [{ source: 'p1', target: 'p2' }, { source: 'p2', target: 'p3' }, { source: 'p3', target: 'sink' }],
+    }
+    const stats = new Map([['p1', { rows: 10 }], ['p2', { rows: 20 }], ['p3', { rows: 30 }]])
+    const f = buildPipelineFlow('p', doc, stats)
+    expect(f.steps).toHaveLength(2)
+    expect(f.steps[0]!.count).toBe(3)
+    expect(f.steps[0]!.stat?.rows).toBe(60)
+    expect(f.steps.map((s) => s.step)).toEqual([1, 2])
+  })
+
+  it('不同落点/不同接口的节点不会被合并', () => {
+    const doc = {
+      nodes: [
+        { id: 'a', data: { componentId: 'src.rest', label: 'A', properties: { url: '/a' } } },
+        { id: 'b', data: { componentId: 'src.rest', label: 'B', properties: { url: '/b' } } },
+      ],
+      edges: [{ source: 'a', target: 'b' }],
+    }
+    const f = buildPipelineFlow('p', doc)
+    expect(f.steps).toHaveLength(2)
+    expect(f.steps[0]!.count).toBeUndefined()
+  })
+
   it('拓扑序容忍环：剩下的按定义顺序补在后面', () => {
     const f = buildPipelineFlow('p', {
-      nodes: [{ id: 'a', data: { componentId: 'code.sql' } }, { id: 'b', data: { componentId: 'code.sql' } }],
+      nodes: [{ id: 'a', data: { componentId: 'code.sql' } }, { id: 'b', data: { componentId: 'qa.contract' } }],
       edges: [{ source: 'a', target: 'b' }, { source: 'b', target: 'a' }],
     })
     expect(f.steps.map((s) => s.id).sort()).toEqual(['a', 'b'])
