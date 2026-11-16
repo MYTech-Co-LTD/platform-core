@@ -127,6 +127,21 @@ test("调用方取消：signal abort ⇒ GATEWAY_CANCELLED（不误报不可达/
   assert.match(out.content[0].text, /调用已取消/);
 });
 
+test("拿到响应头后取消：body 读取失败 ⇒ GATEWAY_CANCELLED（不误报 GATEWAY_BAD_RESPONSE）", async () => {
+  const controller = new AbortController();
+  // fetchImpl：返回 200 + ok，但先触发调用方取消、再让 body 读取 reject（模拟半途断流）。
+  const headersThenCancel = async () => {
+    controller.abort();
+    return {
+      status: 200,
+      ok: true,
+      json: async () => { throw new Error("body stream interrupted"); },
+    };
+  };
+  const r = await callGateway({ ...GW, method: "tools/list", fetchImpl: headersThenCancel, signal: controller.signal });
+  assert.deepEqual(r, { error: "GATEWAY_CANCELLED", detail: "调用已取消" });
+});
+
 test("超时按工具选（spec §7.4）：forms 起草 120s，其余 60s（与网关侧默认一致）", () => {
   assert.equal(GATEWAY_TIMEOUT_MS, 60_000, "普通工具与网关 tools/call 默认 60s 对齐");
   assert.equal(FORMS_DRAFT_TIMEOUT_MS, 120_000, "forms 起草与网关侧 LLM 上限对齐");

@@ -386,6 +386,11 @@ function gatewayErrorCode(e) {
   return "GATEWAY_ERROR";
 }
 
+/** 取消判定：调用方 signal 已中止 ⇒ GATEWAY_CANCELLED（优先于超时/网络错误/坏回包——用户不等了，不是故障）。 */
+function cancellationIfAborted(signal) {
+  return signal?.aborted ? { error: "GATEWAY_CANCELLED", detail: "调用已取消" } : undefined;
+}
+
 /** 错误码 → 文案；带上下文的传输类错误把 detail/status 拼进文案（排障要看的就这两样）。 */
 function gatewayErrorText(e, detail, status) {
   const code = gatewayErrorCode(e);
@@ -450,7 +455,8 @@ export async function callGateway(opts) {
   } catch (e) {
     // 调用方主动取消（openclaw 工具 ctx 的 signal）优先于超时判断——别把「用户不等了」
     // 报成网络不可达；文案「调用已取消」让模型不再重试。
-    if (signal?.aborted) return { error: "GATEWAY_CANCELLED", detail: "调用已取消" };
+    const cancelled = cancellationIfAborted(signal);
+    if (cancelled) return cancelled;
     if (timeout.aborted) return { error: "GATEWAY_TIMEOUT", detail: `超过 ${timeoutMs}ms` };
     return { error: "GATEWAY_UNREACHABLE", detail: (e && e.message) || String(e) };
   }
@@ -458,6 +464,9 @@ export async function callGateway(opts) {
   try {
     body = await res.json();
   } catch {
+    // 响应体读取阶段被取消同样归为取消（拿到头之后断开 ≠ 网关回了坏包）。
+    const cancelled = cancellationIfAborted(signal);
+    if (cancelled) return cancelled;
     return { error: "GATEWAY_BAD_RESPONSE", status: res.status };
   }
   if (!res.ok) {

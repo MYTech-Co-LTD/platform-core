@@ -625,6 +625,40 @@ describe('agent mcp', () => {
     })
   })
 
+  it('入站 signal 进入 rpc 前已 aborted ⇒ 立即返回工具级 timeout（不等默认 60s）', async () => {
+    const controller = new AbortController()
+    controller.abort() // 请求发出前就已断开
+    const { app } = makeApp(['data:query'], {
+      respond: (call) =>
+        call.body.method === 'tools/list'
+          ? defaultRespond(call)
+          : new Promise<Response>(() => {}),
+    })
+    // 第一轮正常请求把 tools/list 结果填进缓存（TTL 30s）：第二轮发现命中缓存、
+    // 不再走会立即判负的转发，从而直达 tools/call 的 rpc 验证「已中止 ⇒ 立即 null」。
+    await listTools(app)
+    const started = Date.now()
+    const res = await app.request('/agent/mcp', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({
+        jsonrpc: '2.0',
+        id: 16,
+        method: 'tools/call',
+        params: { name: 'data__search_catalog', arguments: {} },
+      }),
+      signal: controller.signal,
+    })
+    expect(Date.now() - started).toBeLessThan(100)
+    expect(res.status).toBe(200)
+    const body = (await res.json()) as { result: { content: Array<{ text: string }>; isError: boolean } }
+    expect(body.result.isError).toBe(true)
+    expect(JSON.parse(body.result.content[0].text)).toMatchObject({
+      status: 'error',
+      reason: 'timeout',
+    })
+  })
+
   // ---- 刷新放大 / 负缓存窗口 ----
 
   it('tools/call miss 只刷新名字前缀 module 的 face，且窗口内最多刷一次', async () => {
