@@ -11,6 +11,10 @@
 
 ## [Unreleased]
 
+## [0.306.1](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.306.0...v0.306.1) - 2026-11-16
+- 【修复】data: 度量输入列剔掉 WHERE 里的过滤列 (#2348) ([#2349](https://github.com/MYTech-Co-LTD/platform-core/pull/2349), [cab40cd](https://github.com/MYTech-Co-LTD/platform-core/commit/cab40cd6fd3156b28e29af042b0b3ea8444cfdd1))
+
+
 ## [0.306.0](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.305.0...v0.306.0) - 2026-11-15
 - 【新增】data: Wave 8 P1——镜像内置 dbt + data.dbt_tick（#2343） ([#2344](https://github.com/MYTech-Co-LTD/platform-core/pull/2344), [5256972](https://github.com/MYTech-Co-LTD/platform-core/commit/5256972d9f1e8eb5c1f4df7351ea13fc42de617b))
 - 【修复】data: 体系地图抽屉口径折叠 + 清 markdown 记号 (#2342) ([#2345](https://github.com/MYTech-Co-LTD/platform-core/pull/2345), [928dbe2](https://github.com/MYTech-Co-LTD/platform-core/commit/928dbe2a5a06567fc9bbee2f6a3fe396974867d7))
