@@ -11,6 +11,10 @@
 
 ## [Unreleased]
 
+## [0.306.7](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.306.6...v0.306.7) - 2026-11-16
+- 【修复】data: dbt target/log 走 env 且容器内可写（W8-P1） ([#2367](https://github.com/MYTech-Co-LTD/platform-core/pull/2367), [8cdc255](https://github.com/MYTech-Co-LTD/platform-core/commit/8cdc25598b2c89c968dcb07aa96dbe226926bd70))
+
+
 ## [0.306.6](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.306.5...v0.306.6) - 2026-11-16
 - 【修复】data: 容器模式 profiles/target 放可写目录（#2361） ([#2362](https://github.com/MYTech-Co-LTD/platform-core/pull/2362), [6bb74b7](https://github.com/MYTech-Co-LTD/platform-core/commit/6bb74b711b291214a5706859073efaea6f37aba8))
 
