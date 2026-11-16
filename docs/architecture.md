@@ -118,6 +118,12 @@ token 只决定「这个账号能调哪些面」，不改变分层。
 每次请求实时判定 ⇒ **即时 401**；平台会话在下一次 scopes 刷新（≤5 分钟）清 cookie；企微 /
 公众号登录路直接拒绝。禁用不是「绑定悬空」：公众号正式态被禁用时**不降级为访客**。
 
+### 1.5.1 agent 能力网关（2026-11-16）
+
+B/C 的统一能力入口是 `POST /api/agent/mcp`；manifest `mcpFaces` 声明模块 face；网关只做投影/路由，
+授权仍在模块（face 门 + 工具级 scope）。设计与人 gate 清单：
+`docs/superpowers/specs/2026-11-16-agent-capability-gateway-design.md`；使用手册：`docs/agent-playbook.md`。
+
 ## 2. 组件与职责边界
 
 依赖边**读自各 `package.json`**，不是推测。

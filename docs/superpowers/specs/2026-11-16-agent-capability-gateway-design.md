@@ -59,13 +59,13 @@
 | D5 | **网关双身份适配 + 内部签名身份** | B= PAT/session；C= channel key+userid；网关解析一次，下游免二次 Casdoor |
 | D6 | **C 只走 manage audience，数据查询仍走静态工具** | 查询面成熟、有 eval；管理面用元工具；边界是结构，不靠提示词 |
 | D7 | **可写外发全部草稿 + 人 gate**：表单 `forms:publish`、报表发布、监控按业务监控 spec 的 `dry_run` 显式开启、notify 按 N3 审批 + `notify:publish` | 与团队“外发/不可撤回人审”原则一致 |
-| D8 | **notify 复用 N3，不另造政策**：C 的 manage profile 只暴露 agent-safe 工具（`create_agent_rule`/`create_agent_template`/`send_message`/排班/只读）；`propose_rule`/`update_rule`/`set_rule_enabled`/`draft_template` 不暴露给 C；C 规则落 pending/disabled，人用 `notify:publish` 审批/启用 | 与通知底座 N1–N5 正典一致；不重复造 `draft_rule`/新权限 |
+| D8 | **notify 复用 N3，不另造政策**：C 的 manage profile 只暴露 agent-safe 工具（`create_agent_rule`/`create_agent_template`/排班/只读；**不含 `send_message`**——C 不授 `notify:emit`）；`propose_rule`/`update_rule`/`set_rule_enabled`/`draft_template` 不暴露给 C；C 规则落 pending/disabled，人用 `notify:publish` 审批/启用。C 的 namespace 是**部署钉死的 service-owned namespace**（env `NOTIFY_WECOM_NAMESPACE`，owner `system:openclaw`） | 与通知底座 N1–N5 正典一致；不重复造 `draft_rule`/新权限 |
 | D9 | **能力目录机械**：`agent__capabilities` 只回 faces/tools/scopes/audience；recipes 放 playbook | 避免第二事实源 |
 | D10 | **工具名 `<module>__<tool>`** | 稳定、兼容 MCP 命名、避免点分隔歧义 |
 | D11 | **网关不是授权边界**：模块 host gate + `callTool` 才是；网关过滤是 UX | 防止“隐藏即安全”的误判 |
 | D12 | **legacy 每指标工具不进网关** | 工具面预算/模型可靠性；直连 `/mcp` 仍保留 |
 | D13 | **audience/profile = 发现/产品面；module scope + `identity.channel` = 执法** | C 的 notify 更严策略必须在 notify 模块按通道强制；网关头/`x-agent-profile` 可被直连绕过，不能当安全边界 |
-| D14 | **C 的 agent namespace 由部署钉死**，不由模型选 | 防跨 namespace；notify 的 owner 校验只作兜底 |
+| D14 | **C 的 agent namespace 由部署钉死**，不由模型选：部署 env `NOTIFY_WECOM_NAMESPACE` 指向 service-owned namespace（owner `system:openclaw`）；服务端按 `identity.channel==='wecom'` **忽略**模型传值；插件也剥 `notify__*` 的 `namespace` | 防跨 namespace；notify 的 owner 校验只作兜底 |
 
 ## 4. 架构
 
@@ -135,11 +135,11 @@ mcpFaces:
 - `/mcp`：只读工具（`list_events`、`get_event`、`list_rules`、`list_templates`、`get_template`、`list_deliveries`）。
 - `profile=full`（B）：保持 N3 现有工具面，外发未预授权仍落 pending 审批。
 - `profile=c-manage`（C）：只暴露 agent-safe 工具——
-  `create_agent_rule`、`create_agent_template`、`send_message`、`check_rule`、`preview_template`、`send_test`、`list_deliveries` + 排班工具；
-  **不暴露** `propose_rule`、`update_rule`、`set_rule_enabled`、`draft_template`。
+  `create_agent_rule`、`create_agent_template`、`check_rule`、`preview_template`、`send_test`、`list_deliveries` + 排班工具；
+  **不暴露** `propose_rule`、`update_rule`、`set_rule_enabled`、`draft_template`、`send_message`（C 不授 `notify:emit`）。
 - C 的 `create_agent_rule` 在该 profile 下**一律落 pending/disabled**（含 in-app），人用 `notify:publish` 审批/启用；这是 N3 `auto_publish_external` 之上的**更严档**，只作用于 C，不改 B/其他 agent。
 - **执法点在 notify 模块，不在网关头**：`identity.channel === 'wecom'` ⇒ 强制 agent-safe 子集 + pending；即使直连 `/api/modules/notify/mcp-manage`、不带 profile、或伪造 `x-agent-profile: full`，`propose_rule`/`set_rule_enabled` 也必须被拒。`x-agent-profile` 只决定**发现视图**，不能覆盖 channel 策略。
-- **C 的 namespace 钉死**：`create_agent_rule`/`create_agent_template`/`send_message` 的 `namespace` 由插件/网关注入为 openclaw 部署对应的 agent namespace；模型参数里不暴露 `namespace`。notify 的 owner 校验作兜底。
+- **C 的 namespace 钉死为 service-owned namespace**：`create_agent_rule`/`create_agent_template`（及排班工具）的 namespace 由部署 env `NOTIFY_WECOM_NAMESPACE` 指向的 service-owned namespace（owner `system:openclaw`）钉死，**模型传值被忽略**（插件剥掉 `notify__*` 的 `namespace`，服务端按 channel 忽略）。notify 的 owner 校验作兜底。B（pat/session）仍按 N3 传 namespace。
 - `notify:publish` **已存在**（通知底座 N3/N5）；A 不新增权限码。
 
 **forms**
@@ -196,7 +196,7 @@ loader 与 `scripts/check-manifests.mjs` 校验：
 ### 6.4 notify 的具体变化（对齐 N1–N5）
 
 - 新增 `/mcp` 只读 face；`/mcp-manage` 保持现有端点，增加 **channel 感知**（不是网关头感知）：
-  - `identity.channel === 'wecom'` ⇒ agent-safe 子集（见 §5.2），`tools/list` 过滤、`tools/call` 拒绝子集外工具；`create_agent_rule` 强制 pending/disabled；`namespace` 钉死为 C 的 agent namespace；
+  - `identity.channel === 'wecom'` ⇒ agent-safe 子集（见 §5.2），`tools/list` 过滤、`tools/call` 拒绝子集外工具；`create_agent_rule` 强制 pending/disabled；`namespace` 钉死为 service-owned namespace（env `NOTIFY_WECOM_NAMESPACE`）；**直连 HTTP 路由同样执法**——`/agent/rules`、`/agent/templates`、`/agent/events` 与 `/rules` 的启停（PUT `/rules/:id/enabled`）/恢复（`/rules/:id/restore`）都在 notify 路由层按 channel/scope 拦（wecom 无 `notify:publish` 一律 403 `NOTIFY_PUBLISH_REQUIRED`，namespace 由 `NOTIFY_WECOM_NAMESPACE` 钉死）；
   - `identity.channel === 'pat'|'session'` ⇒ N3 现有 full 面，行为不变。
 - `x-agent-profile` 只作为发现视图提示（网关设 `full`/`c-manage`）；**模块以 channel 为准**，`wecom + full` 仍按 C 更严档，直连不带 profile 也一样。
 - `NOTIFY_TOOLS` 增加 `mutating`/`requiredScope`/annotations；`tools/list` 按 channel + scope 投影。
@@ -284,11 +284,11 @@ loader 与 `scripts/check-manifests.mjs` 校验：
     - `q`：按关键词过滤；`tool`：返回单个工具的完整 inputSchema（供 `platform_call` 组装参数）；
     - schema 取自网关 `tools/list`；内部按 `nextCursor` 翻页合并。
   - `platform_call({tool,args})`：调网关 `tools/call`；**不接受 userId 参数**。
-  - **namespace 钉死**：对 notify 的 `create_agent_rule`/`create_agent_template`/`send_message`，插件注入 openclaw 部署对应的 agent namespace，模型参数里没有 `namespace`。
+  - **namespace 钉死**：对 notify 的 `create_agent_rule`/`create_agent_template`（及排班工具），插件剥掉模型传的 `namespace`；C 的 namespace 由部署 env `NOTIFY_WECOM_NAMESPACE` 指向的 service-owned namespace 钉死，模型参数里没有 `namespace`。
 - 现有静态查询工具保留，SKILL 明确：
   - **数据查询只用静态工具**；
   - **建指标/报表/监控/通知/表单草稿用 `platform_capabilities` → `platform_call`**。
-- 结果映射：MCP `content/isError/structuredContent` → openclaw tool result。
+- 结果映射：MCP 结果 → openclaw `{content, details}`；`details.status` 承载错误（工具级错误、JSON-RPC 错误、传输错误都落 `details.status='error'`；openclaw 的错误判定读 `details.status`，顶层 `isError` 被忽略）。
 - env：`AGENT_API_BASE=http://server:13000/api/agent`。
 - `openclaw.plugin.json` `contracts.tools` + `package.json`/部署 `tools.allow` 加两个工具。
 - SKILL 增加「平台能力管理」节：
@@ -368,21 +368,22 @@ loader 与 `scripts/check-manifests.mjs` 校验：
 - 缓存 key 含 face/profile：notify B/C 同 path/scope 不串缓存。
 - `tools/list` 分页/字节上限/缓存；`tools/call` 超时/限流/错误映射/透传 structuredContent。
 - `agent__capabilities` 只读、无租户数据、locked 带 scope/face；data 的 locked 工具由 `data_harness_catalog` 补。
-- 无 token/args 审计；`AGENT_MCP_ENABLED=false` ⇒ 404。
+- 无 token/args 审计；`AGENT_MCP_ENABLED=0` ⇒ 404（实现判 `=== '0'`，缺省开启）。
 
 ### 13.3 openclaw
 
 - `platform_capabilities` 只返回 manage 工具；`platform_call` 不能调查询工具（audience）。
 - `platform_capabilities` 无参返回紧凑索引 + `lockedFaces`（调 `agent__capabilities`）；`tool=<name>` 返回完整 schema；`q` 过滤；`nextCursor` 翻页合并。
 - `platform_call` 不接受 userId；身份只来自 `requesterSenderId`。
-- **namespace 钉死**：`create_agent_rule`/`create_agent_template`/`send_message` 的 namespace 由插件注入；模型传别的 namespace 被忽略/拒绝。
+- **namespace 钉死**：`create_agent_rule`/`create_agent_template`（及排班工具）的 namespace 由部署 env `NOTIFY_WECOM_NAMESPACE` 指向的 service-owned namespace 钉死；模型传别的 namespace 被忽略（插件剥掉、服务端按 channel 忽略）。
+- gateway 鉴权错误给**可操作文案**（`CHANNEL_KEY_INVALID`/`WECOM_USER_NOT_LINKED` 等裸码由插件映射成中文下一步动作，不透出裸 JSON）。
 - 静态查询工具回归全绿；`contracts.test.js` 含两个新工具。
 - SKILL 文案：草稿/人 gate/step-up/不重试；C 的 notify 规则一律 pending。
 
 ### 13.4 端到端
 
 - PAT `data:read`：只读面；`data:query`：读+查；`data:manage`：manage。
-- PAT `notify:view`：读；`notify:manage`（B profile=full）：按 N3 建规则（in-app 自动 / 外发 pending）；C profile=c-manage：规则一律 pending；无 `notify:publish` 不能审批/启用。
+- PAT `notify:view`：读；`notify:manage`（B profile=full）：按 N3 建规则（in-app 自动 / 外发 pending）；C profile=c-manage：规则一律 pending、**无 `send_message`**（不授 `notify:emit`）；无 `notify:publish` 不能审批/启用。
 - 企微用户 `forms:manage`：`platform_capabilities` 含 forms；`platform_call` 建 draft；不能发布。
 - 跨模块 recipe：建 L2 → 提报表 → 建 notify draft → 建 form draft，全部按权限与 gate。
 
