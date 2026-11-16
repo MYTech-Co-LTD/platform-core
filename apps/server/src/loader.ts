@@ -35,6 +35,7 @@ import {
   type ModulePorts,
   type SchedulerPortFactory,
   type TenantStorageConfig,
+  type McpFaceDecl,
 } from '@platform/sdk'
 import { Hono } from 'hono'
 import type { Env, MiddlewareHandler } from 'hono'
@@ -120,6 +121,15 @@ export interface ModulesRuntime {
   port<K extends keyof ModulePorts>(moduleId: string, name: K): NonNullable<ModulePorts[K]> | undefined
   /** 该租户已启用模块声明的访客码（manifest guest.scope，售后 spec §1.3：wechat-oa 签访客 session 用） */
   enabledGuestScopes(tenantId: number): Promise<string[]>
+  /**
+   * agent MCP face 声明（manifest.mcpFaces，2026-11-16 能力网关 spec §5）：agent 能力网关
+   * （routes/agent-mcp.ts）据此发现各模块暴露的 MCP 面，并按 `mountPath` 拼出真实端点。
+   *
+   * `mountPath` 与 mount()/门卫共用 `moduleApiBasePath`（防漂移）。未声明 `mcpFaces` 的模块
+   * **不出现**（缺省 = 不暴露面，不是空面）；声明合法性（path ∈ api.internal 且 method/scope
+   * 一致）由 ManifestSchema 在装载期保证，这里只做投影不做二次校验。
+   */
+  mcpFaces(): Array<{ moduleId: string; face: McpFaceDecl; mountPath: string }>
 }
 
 export interface LoadModulesDeps {
@@ -776,5 +786,12 @@ export async function loadModules(
         .filter((m) => enabled.has(m.manifest.id) && m.manifest.guest)
         .map((m) => m.manifest.guest!.scope)
     },
+
+    /** agent MCP face 投影（manifest.mcpFaces）：装载顺序稳定，未声明的模块不出现 */
+    mcpFaces: () => loaded.flatMap((m) =>
+      (m.manifest.mcpFaces ?? []).map((face) => ({
+        moduleId: m.manifest.id, face, mountPath: moduleApiBasePath(m.manifest.id),
+      })),
+    ),
   }
 }

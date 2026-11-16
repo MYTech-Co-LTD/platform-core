@@ -129,6 +129,34 @@ describe.skipIf(!dbUrl)('loadModules', INTEGRATION_SUITE, () => {
     ].join('\n')
   }
 
+  /** agent MCP face 的 fixture 入口：GET /ping（与默认 manifestYaml 对齐）+ POST /mcp-read
+   *  （mcpFaces 指向的端点）。**两个都要注册**——applyDeclaredApiGate 做声明/注册双向核对，
+   *  只声明不注册（或反之）装载即失败。 */
+  function mcpFaceIndexTs(id: string): string {
+    return [
+      "import { Hono } from 'hono'",
+      "import { defineModule } from '@platform/sdk'",
+      '',
+      'export default defineModule({',
+      '  manifest: {',
+      `    id: '${id}', name: '${id} 模块', version: '1.0.0', platform: '>=0.1.0',`,
+      `    permissions: [{ code: '${id}:view', name: '${id} 查看' }],`,
+      `    api: { internal: [`,
+      `      { method: 'GET', path: '/ping', scope: '${id}:view' },`,
+      `      { method: 'POST', path: '/mcp-read', scope: '${id}:view' },`,
+      `    ] },`,
+      '  },',
+      '  createRouter: () => {',
+      '    const app = new Hono()',
+      "    app.get('/ping', (c) => c.json({ ok: true }))",
+      "    app.post('/mcp-read', (c) => c.json({ tools: [] }))",
+      '    return app',
+      '  },',
+      '})',
+      '',
+    ].join('\n')
+  }
+
   /** fixture manifest.yaml 的 api 段默认值：与 indexTs 注册的 GET /ping 逐条对齐（新协议：
    *  未声明 = 不可达 ⇒ 默认声明必须跟着 fixture 的代码走，否则既有用例集体装载失败）。
    *  第三参：null = 不写 api 段（"未声明但已注册"负例）；字符串 = 自定义声明（幽灵声明负例）。 */
@@ -1548,6 +1576,51 @@ describe.skipIf(!dbUrl)('loadModules', INTEGRATION_SUITE, () => {
     expect(runtime.port('noportmod', 'resolvePatKey')).toBeUndefined()
     // 根本没装载的 id：同样 undefined
     expect(runtime.port('nosuchmod', 'resolvePatKey')).toBeUndefined()
+  })
+
+  it('mcpFaces()：返回 moduleId/face/mountPath；未声明的模块不出现', async () => {
+    cleanupModules.push('facemod', 'plainmod')
+    const modulesDir = await newModulesDir()
+    await writeModule(modulesDir, 'facemod', {
+      'manifest.yaml': manifestYaml(
+        'facemod',
+        [
+          'mcpFaces:',
+          '  - face: read',
+          '    group: data',
+          '    precedence: 100',
+          '    path: /mcp-read',
+          '    method: POST',
+          '    scope: facemod:view',
+          '    audiences: [mcp]',
+        ].join('\n'),
+        [
+          'api:',
+          '  internal:',
+          '    - { method: GET, path: /ping, scope: facemod:view }',
+          '    - { method: POST, path: /mcp-read, scope: facemod:view }',
+        ].join('\n'),
+      ),
+      'index.ts': mcpFaceIndexTs('facemod'),
+    })
+    // 对照：没声明 mcpFaces 的模块（同一套 fixture，只差 manifest 里那一行）
+    await writeModule(modulesDir, 'plainmod', {
+      'manifest.yaml': manifestYaml('plainmod'),
+      'index.ts': indexTs('plainmod', 'plainmod:view'),
+    })
+
+    const runtime = await loadModules(modulesDir, { pool })
+
+    expect(runtime.mcpFaces()).toContainEqual({
+      moduleId: 'facemod',
+      mountPath: '/api/modules/facemod',
+      face: {
+        face: 'read', group: 'data', precedence: 100,
+        path: '/mcp-read', method: 'POST', scope: 'facemod:view', audiences: ['mcp'],
+      },
+    })
+    // 未声明 mcpFaces 的模块不出现（缺省 = 不暴露面，不是"空面"）
+    expect(runtime.mcpFaces().some((f) => f.moduleId === 'plainmod')).toBe(false)
   })
 
   it('createPorts 抛错 ⇒ 装载失败（fail-fast，与 createRouter 同级，不留到首个请求）', async () => {
