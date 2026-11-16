@@ -45,7 +45,15 @@ type McpDeps = {
   hasScope: (code: string) => boolean
 }
 type McpToolResult = { text: string; isError: boolean }
-type ToolDef = { name: string; description: string; inputSchema: Record<string, unknown> }
+// annotations.readOnlyHint 是 tools/list 的协议字段（MCP 工具注解），也是能力网关
+// 紧凑索引判定 mutating 的**唯一来源**（2026-11-16 能力网关 spec §7.5/§8）：
+// forms 的 tools/list 若不投影它，网关只能猜，草稿工具的提示就会失真。
+type ToolDef = {
+  name: string
+  description: string
+  inputSchema: Record<string, unknown>
+  annotations: { readOnlyHint: boolean }
+}
 
 const err = (reason: string, extra: Record<string, unknown> = {}): McpToolResult => ({
   text: JSON.stringify({ status: 'error', reason, ...extra }),
@@ -62,10 +70,11 @@ const faceVisible: Record<McpFace, (t: FormsToolMeta) => boolean> = {
 
 /** 本 face 暴露的工具集（加工具只改 mcp-tools.ts 的清单 + runTool 的分支）。 */
 export function toolDefs(face: McpFace): ToolDef[] {
-  return FORMS_TOOLS.filter(faceVisible[face]).map(({ name, description, inputSchema }) => ({
+  return FORMS_TOOLS.filter(faceVisible[face]).map(({ name, description, inputSchema, mutating }) => ({
     name,
     description,
     inputSchema,
+    annotations: { readOnlyHint: !mutating },
   }))
 }
 

@@ -64,6 +64,21 @@ describe('notify mcp tool face', () => {
     expect(defs).toHaveLength(NOTIFY_TOOLS.filter((t) => !t.mutating).length)
   })
 
+  it('tools/list 带 annotations.readOnlyHint（能力网关紧凑索引据此判定 mutating）', () => {
+    const defs = toolDefs({ channel: 'pat', scopes: ALL_SCOPES })
+    for (const d of defs) {
+      expect(d.annotations.readOnlyHint, d.name)
+        .toBe(!NOTIFY_TOOLS.find((t) => t.name === d.name)?.mutating)
+    }
+    // 读面全只读；C 档写工具 readOnlyHint=false（两个消费方看到同一份注解）。
+    for (const d of toolDefs({ channel: 'pat', mode: 'read', scopes: ALL_SCOPES })) {
+      expect(d.annotations.readOnlyHint, d.name).toBe(true)
+    }
+    const cWrite = toolDefs({ channel: 'wecom', scopes: ALL_SCOPES })
+      .find((d) => d.name === 'create_agent_rule')
+    expect(cWrite?.annotations.readOnlyHint).toBe(false)
+  })
+
   it('读面按 requiredScope 裁剪：notify:view 看不到 preview_template', () => {
     const names = toolDefs({
       channel: 'pat', mode: 'read', scopes: ['notify:view'],

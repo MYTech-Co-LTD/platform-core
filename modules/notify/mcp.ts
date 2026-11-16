@@ -51,7 +51,15 @@ type McpDeps = {
   scheduler?: SchedulerPortFactory
 }
 type McpToolResult = { text: string; isError: boolean }
-type ToolDef = { name: string; description: string; inputSchema: Record<string, unknown> }
+// annotations.readOnlyHint 是 tools/list 的协议字段（MCP 工具注解），也是能力网关
+// 紧凑索引判定 mutating 的**唯一来源**（2026-11-16 能力网关 spec §7.5/§8）：
+// notify 的 tools/list 若不投影它，网关只能猜，草稿/写工具的提示就会失真。
+type ToolDef = {
+  name: string
+  description: string
+  inputSchema: Record<string, unknown>
+  annotations: { readOnlyHint: boolean }
+}
 
 const err = (reason: string, extra: Record<string, unknown> = {}): McpToolResult => ({
   text: JSON.stringify({ status: 'error', reason, ...extra }),
@@ -93,7 +101,12 @@ export function toolDefs(deps: Pick<McpDeps, 'channel' | 'mode' | 'scopes'>): To
   // 例：preview_template 只读但要求 notify:manage，notify:view 的读面不应看到它。
   const visible = nonMutating
     .filter((t) => t.requiredScope === null || scopes.includes(t.requiredScope))
-  return visible.map(({ name, description, inputSchema }) => ({ name, description, inputSchema }))
+  return visible.map(({ name, description, inputSchema, mutating }) => ({
+    name,
+    description,
+    inputSchema,
+    annotations: { readOnlyHint: !mutating },
+  }))
 }
 
 export async function callTool(

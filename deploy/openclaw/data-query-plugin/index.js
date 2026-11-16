@@ -180,7 +180,7 @@ export default definePluginEntry({
       const { userId, sessionKey } = resolveToolUserId(ctx, lastUserIdBySession);
       return {
         ...CAPS_DEF,
-        execute: async (_toolCallId, params) => {
+        execute: async (_toolCallId, params, signal) => {
           const p = normalizeParams(params);
           const rpc = await callGateway({
             apiBase: AGENT_API_BASE,
@@ -189,6 +189,7 @@ export default definePluginEntry({
             sessionId: sessionKey,
             method: "tools/call",
             params: { name: "agent__capabilities", arguments: {} },
+            signal,
           });
           if (!rpc || rpc.result === undefined) return toGatewayToolResult(rpc);
           const payload = parseCapabilities(rpc);
@@ -208,7 +209,7 @@ export default definePluginEntry({
       const { userId, sessionKey } = resolveToolUserId(ctx, lastUserIdBySession);
       return {
         ...CALL_DEF,
-        execute: async (_toolCallId, params) => {
+        execute: async (_toolCallId, params, signal) => {
           // buildPlatformCall 会剥掉 args 里的身份键——模型无法通过参数指定「以谁的身份调」。
           const built = buildPlatformCall(params);
           if (built.error) return toToolResult(built);
@@ -219,6 +220,7 @@ export default definePluginEntry({
             sessionId: sessionKey,
             method: "tools/call",
             params: { name: built.tool, arguments: built.args },
+            signal,
           });
           return toGatewayToolResult(rpc);
         },

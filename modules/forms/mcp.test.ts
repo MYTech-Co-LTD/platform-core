@@ -55,6 +55,16 @@ describe('MCP 工具面投影（read / manage）', () => {
     }
   })
 
+  it('tools/list 带 annotations.readOnlyHint（与 mutating 互补；能力网关索引依赖它）', () => {
+    for (const d of toolDefs('manage')) {
+      expect(d.annotations.readOnlyHint, d.name)
+        .toBe(!FORMS_TOOLS.find((t) => t.name === d.name)?.mutating)
+    }
+    expect(toolDefs('read').map((d) => d.annotations.readOnlyHint)).toEqual([true])
+    expect(toolDefs('manage').find((d) => d.name === 'generate_form_draft')?.annotations.readOnlyHint)
+      .toBe(false)
+  })
+
   it('★ read face 只读不变量：所有 forms:view 工具都 readOnly，读面永不出现 mutating', () => {
     const viewTools = FORMS_TOOLS.filter((t) => t.faceScope === 'forms:view')
     expect(viewTools.length).toBeGreaterThan(0)
