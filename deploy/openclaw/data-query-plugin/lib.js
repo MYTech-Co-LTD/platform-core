@@ -366,6 +366,7 @@ const GATEWAY_ERROR_TEXT = {
   USERID_MISSING: "无法识别请求者身份（requesterSenderId 缺失）。出于权限安全不予调用，请重新发一条消息；仍失败请联系管理员。",
   WECOM_USERID_REQUIRED: "无法识别请求者身份（x-wecom-userid 缺失）。请重新发一条消息；仍失败请联系管理员。",
   GATEWAY_TIMEOUT: "平台能力网关响应超时，请稍后再试；持续失败请联系管理员。",
+  GATEWAY_CANCELLED: "调用已取消。",
   WECOM_USER_NOT_LINKED: WECOM_NOT_LINKED_TEXT,
   CHANNEL_KEY_INVALID: channelAuthFailedText("CHANNEL_KEY_INVALID"),
   USER_DISABLED: "平台账号已停用，请联系管理员。",
@@ -447,6 +448,9 @@ export async function callGateway(opts) {
       signal: combined,
     });
   } catch (e) {
+    // 调用方主动取消（openclaw 工具 ctx 的 signal）优先于超时判断——别把「用户不等了」
+    // 报成网络不可达；文案「调用已取消」让模型不再重试。
+    if (signal?.aborted) return { error: "GATEWAY_CANCELLED", detail: "调用已取消" };
     if (timeout.aborted) return { error: "GATEWAY_TIMEOUT", detail: `超过 ${timeoutMs}ms` };
     return { error: "GATEWAY_UNREACHABLE", detail: (e && e.message) || String(e) };
   }

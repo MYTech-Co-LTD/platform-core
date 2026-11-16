@@ -590,6 +590,41 @@ describe('agent mcp', () => {
     )
   })
 
+  it('客户端断开（入站 abort）⇒ 网关尽快放弃等待，不等满默认 60s（spec §7.4）', async () => {
+    const controller = new AbortController()
+    const { app } = makeApp(['data:query'], {
+      // 不注入 timeouts ⇒ 默认 60s：回包快就证明是入站 abort 生效，不是超时。
+      respond: (call) =>
+        call.body.method === 'tools/list'
+          ? defaultRespond(call)
+          : new Promise<Response>(() => {}),
+    })
+    const started = Date.now()
+    const pending = app.request('/agent/mcp', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({
+        jsonrpc: '2.0',
+        id: 15,
+        method: 'tools/call',
+        params: { name: 'data__search_catalog', arguments: {} },
+      }),
+      signal: controller.signal,
+    })
+    // 模块 tools/call 挂起，5ms 后客户端断开。
+    setTimeout(() => controller.abort(), 5)
+    const res = await pending
+    expect(Date.now() - started).toBeLessThan(100)
+    // 调用方已走，回包内容不重要：按 timeout 口径降级（in-process 测试仍拿得到响应体）。
+    expect(res.status).toBe(200)
+    const body = (await res.json()) as { result: { content: Array<{ text: string }>; isError: boolean } }
+    expect(body.result.isError).toBe(true)
+    expect(JSON.parse(body.result.content[0].text)).toMatchObject({
+      status: 'error',
+      reason: 'timeout',
+    })
+  })
+
   // ---- 刷新放大 / 负缓存窗口 ----
 
   it('tools/call miss 只刷新名字前缀 module 的 face，且窗口内最多刷一次', async () => {

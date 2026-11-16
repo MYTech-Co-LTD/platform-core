@@ -112,6 +112,21 @@ test("超时：AbortSignal 触发 ⇒ GATEWAY_TIMEOUT（不让工具长拖）", 
   assert.equal(r.error, "GATEWAY_TIMEOUT");
 });
 
+test("调用方取消：signal abort ⇒ GATEWAY_CANCELLED（不误报不可达/超时）", async () => {
+  const hang = (_url, init) => new Promise((_resolve, reject) => {
+    init.signal.addEventListener("abort", () => reject(new Error("The operation was aborted")));
+  });
+  const controller = new AbortController();
+  setTimeout(() => controller.abort(), 5);
+  const r = await callGateway({ ...GW, method: "tools/list", fetchImpl: hang, signal: controller.signal });
+  assert.deepEqual(r, { error: "GATEWAY_CANCELLED", detail: "调用已取消" });
+  // 映射到 openclaw 结果：details.status='error'，文案「调用已取消」（模型不再重试）。
+  const out = toGatewayToolResult(r);
+  assert.equal(out.details.status, "error");
+  assert.equal(out.details.reason, "GATEWAY_CANCELLED");
+  assert.match(out.content[0].text, /调用已取消/);
+});
+
 test("超时按工具选（spec §7.4）：forms 起草 120s，其余 60s（与网关侧默认一致）", () => {
   assert.equal(GATEWAY_TIMEOUT_MS, 60_000, "普通工具与网关 tools/call 默认 60s 对齐");
   assert.equal(FORMS_DRAFT_TIMEOUT_MS, 120_000, "forms 起草与网关侧 LLM 上限对齐");

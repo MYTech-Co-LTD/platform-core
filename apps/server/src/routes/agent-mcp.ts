@@ -148,10 +148,13 @@ export function agentMcpRoutes(deps: {
   })
 
   /**
-   * 带超时的模块转发。超时 ⇒ `null`（判别值，不 throw）；模块侧仍经 `signal` 被 abort
-   * （fetchModule 是 `app.request`，Hono 会取走 init.signal）。竞速用 `Promise.race`：
-   * 它对两个输入都挂了 handler，超时后模块 promise 再 reject（abort 引发）也不会变成
-   * unhandled rejection；fetchModule 本身 reject 则照常抛给调用方（沿用 module_unavailable 路径）。
+   * 带超时 + 入站取消的模块转发。超时或客户端断开 ⇒ `null`（判别值，不 throw）；fetch 侧经
+   * `controller.signal` 同步 abort（超时与入站断开两条路都直接 `controller.abort()`，无需再叠
+   * `AbortSignal.any`）。⚠️ 如实说：fetchModule 是进程内 `app.request`，signal 随 Request 传入，
+   * 但 in-process 调用**不会被真正取消**——abort 后模块 handler 可能继续执行并提交副作用
+   * （forms 起草可能落草稿 + 审计）。timeout ≠ 未执行。竞速无 unhandled rejection：
+   * `Promise.race` 对两个输入都挂了 handler，fetchModule 之后 reject（abort 引发）也被吞掉；
+   * fetchModule 本身 reject 则照常抛给调用方（沿用 module_unavailable 路径）。
    */
   const rpc = async (
     face: AgentFace,
@@ -161,15 +164,29 @@ export function agentMcpRoutes(deps: {
     host: string,
     body: Rpc,
     timeoutMs: number = defaultTimeoutMs,
+    inbound?: AbortSignal,
   ): Promise<Response | null> => {
     const controller = new AbortController()
     let timer: ReturnType<typeof setTimeout> | undefined
-    const timeout = new Promise<null>((resolve) => {
-      timer = setTimeout(() => {
-        controller.abort()
-        resolve(null)
-      }, timeoutMs)
+    // 超时 / 入站断开共用同一「判负」通道：任一触发都 abort controller 并让 race 立即 resolve
+    // null。成功路径在 finally 里也结算它——不留永久 pending 的 promise（Minor #3）。
+    let bail: (v: null) => void = () => {}
+    const bailout = new Promise<null>((resolve) => {
+      bail = resolve
     })
+    timer = setTimeout(() => {
+      controller.abort()
+      bail(null)
+    }, timeoutMs)
+    const onInboundAbort = () => {
+      controller.abort()
+      bail(null)
+    }
+    const listenInbound = inbound !== undefined && !inbound.aborted
+    if (inbound !== undefined) {
+      if (inbound.aborted) onInboundAbort()
+      else inbound.addEventListener('abort', onInboundAbort)
+    }
     try {
       return await Promise.race([
         deps.fetchModule(`${face.mountPath}${face.face.path}`, {
@@ -181,10 +198,12 @@ export function agentMcpRoutes(deps: {
           body: JSON.stringify(body),
           signal: controller.signal,
         }),
-        timeout,
+        bailout,
       ])
     } finally {
       if (timer !== undefined) clearTimeout(timer)
+      if (listenInbound && inbound) inbound.removeEventListener('abort', onInboundAbort)
+      bail(null)
     }
   }
 
@@ -200,6 +219,7 @@ export function agentMcpRoutes(deps: {
     keyId: number | null,
     host: string,
     refresh = false,
+    inbound?: AbortSignal,
   ): Promise<{ tools: Tool[]; ok: boolean }> => {
     const key = [
       identity.orgId,
@@ -215,11 +235,20 @@ export function agentMcpRoutes(deps: {
     }
     let res: Response | null
     try {
-      res = await rpc(face, identity, channel, keyId, host, {
-        jsonrpc: '2.0',
-        id: 1,
-        method: 'tools/list',
-      })
+      res = await rpc(
+        face,
+        identity,
+        channel,
+        keyId,
+        host,
+        {
+          jsonrpc: '2.0',
+          id: 1,
+          method: 'tools/list',
+        },
+        undefined,
+        inbound,
+      )
     } catch {
       return { tools: [], ok: false }
     }
@@ -254,12 +283,12 @@ export function agentMcpRoutes(deps: {
     channel: Channel,
     keyId: number | null,
     host: string,
-    opts: { refresh?: boolean } = {},
+    opts: { refresh?: boolean; signal?: AbortSignal } = {},
   ) => {
     const pairs = await Promise.all(
       selected.map(async (face) => ({
         face,
-        ...(await listFaceTools(face, identity, channel, keyId, host, opts.refresh)),
+        ...(await listFaceTools(face, identity, channel, keyId, host, opts.refresh, opts.signal)),
       })),
     )
     const byName = new Map<string, { tool: Tool; face: AgentFace }>()
@@ -284,7 +313,7 @@ export function agentMcpRoutes(deps: {
     channel: Channel,
     keyId: number | null,
     host: string,
-    opts: { refresh?: boolean } = {},
+    opts: { refresh?: boolean; signal?: AbortSignal } = {},
   ) => gather(selectFaces(deps.faces(), identity, channel), identity, channel, keyId, host, opts)
 
   /**
@@ -298,6 +327,7 @@ export function agentMcpRoutes(deps: {
     channel: Channel,
     keyId: number | null,
     host: string,
+    inbound?: AbortSignal,
   ): Promise<{ tool: Tool; face: AgentFace } | undefined> => {
     const sep = name.indexOf('__')
     if (sep <= 0) return undefined
@@ -311,7 +341,10 @@ export function agentMcpRoutes(deps: {
     if (last !== undefined && Date.now() - last < REFRESH_WINDOW_MS) return undefined
     refreshWindows.set(key, Date.now())
 
-    const refreshed = await gather(candidates, identity, channel, keyId, host, { refresh: true })
+    const refreshed = await gather(candidates, identity, channel, keyId, host, {
+      refresh: true,
+      signal: inbound,
+    })
     return refreshed.tools.find((x) => x.tool.name === name)
   }
 
@@ -338,6 +371,8 @@ export function agentMcpRoutes(deps: {
     // PAT 的 keyId 只作审计归属透传；其他通道为 null（不写进内部头）。
     const keyId = c.get(REQUESTER_KEY_ID) ?? null
     const host = c.req.header('host') ?? ''
+    // 客户端断开信号（spec §7.4）：透传给所有转发，断开后网关尽快放弃等待（reason 仍 timeout）。
+    const inbound = c.req.raw.signal
 
     const msg = (await c.req.json().catch(() => null)) as Rpc | null
     if (!msg || msg.jsonrpc !== '2.0' || typeof msg.method !== 'string') {
@@ -380,7 +415,7 @@ export function agentMcpRoutes(deps: {
 
       let collected: Awaited<ReturnType<typeof allTools>>
       try {
-        collected = await allTools(identity, channel, keyId, host)
+        collected = await allTools(identity, channel, keyId, host, { signal: inbound })
       } catch (e) {
         // 发现期重名 ⇒ JSON-RPC internal error，别把宿主打成 500。
         if (e instanceof ToolNameConflictError) return rpcErr(-32603, e.message)
@@ -414,7 +449,7 @@ export function agentMcpRoutes(deps: {
       if (name === 'agent__capabilities') {
         let collected: Awaited<ReturnType<typeof allTools>>
         try {
-          collected = await allTools(identity, channel, keyId, host)
+          collected = await allTools(identity, channel, keyId, host, { signal: inbound })
         } catch (e) {
           if (e instanceof ToolNameConflictError) return rpcErr(-32603, e.message)
           throw e
@@ -473,7 +508,7 @@ export function agentMcpRoutes(deps: {
 
       let collected: Awaited<ReturnType<typeof allTools>>
       try {
-        collected = await allTools(identity, channel, keyId, host)
+        collected = await allTools(identity, channel, keyId, host, { signal: inbound })
       } catch (e) {
         if (e instanceof ToolNameConflictError) return rpcErr(-32603, e.message)
         throw e
@@ -483,7 +518,7 @@ export function agentMcpRoutes(deps: {
         // spec §7.4：缓存未命中（scope 变更 / 模块新增工具）⇒ **只刷新名字前缀所属 module**
         // 的 face，且同一 (org, userId, name) 30s 内最多刷一次；仍不中才 -32601。
         try {
-          hit = await refreshToolByName(name, identity, channel, keyId, host)
+          hit = await refreshToolByName(name, identity, channel, keyId, host, inbound)
         } catch (e) {
           if (e instanceof ToolNameConflictError) return rpcErr(-32603, e.message)
           throw e
@@ -514,6 +549,7 @@ export function agentMcpRoutes(deps: {
             params: { name: original, arguments: args },
           },
           timeoutMs,
+          inbound,
         )
       } catch {
         return toolError({ status: 'error', reason: 'module_unavailable' })
