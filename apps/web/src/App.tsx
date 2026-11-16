@@ -1,5 +1,5 @@
 import { lazy, Suspense, useMemo } from 'react'
-import { Navigate, RouterProvider, createBrowserRouter } from 'react-router-dom'
+import { Navigate, RouterProvider, createBrowserRouter, useParams } from 'react-router-dom'
 import ConsoleShell, { AdminGate, ConsoleModulePage, ConsoleOverview, StorageGate } from './pages/Console'
 import LoginPage from './pages/Login'
 import AdminUsersPage from './pages/admin/Users'
@@ -21,6 +21,20 @@ import MobileHome from './pages/MobileHome'
 const StandaloneReport = lazy(() => import('../../../modules/data/console/standalone'))
 
 /**
+ * 移动端 OA 审批（issue #2363）：`/m/oa/approvals` 在 `/m` 移动壳下，**无 console 壳**——
+ * 390px 上 console 会被 `MobileConfigNotice` 拦成「配置请在电脑端完成」，审批人默认打不开。
+ * 懒加载：审批详情带 RJSF，只给走这条路由的人付这个分包成本。
+ */
+const MobileOaApprovals = lazy(() => import('../../../modules/forms/mobile/Approvals'))
+const MobileOaApprovalDetail = lazy(() => import('../../../modules/forms/mobile/ApprovalDetail'))
+
+/** 路由参数 → 组件 props（组件保持可单测的纯 props 形状，不自己读 router 上下文）。 */
+function MobileOaApprovalDetailRoute() {
+  const { caseId } = useParams()
+  return caseId === undefined ? null : <MobileOaApprovalDetail caseId={caseId} />
+}
+
+/**
  * 路由表（Task 17 骨架 / Task 18 console 壳 / #36 SaaS 化 / #38 根路径修订 / #46 M3 管理组）：
  * 唯一前端应用。`/` 与顶层未知路径一律重定向 /console（工作台本体；未登录由 platformFetch
  * 401 带 next 跳登录）。唯一例外是 `/r/:id`（报表独立页，Task 13）：裸路由、无 console 壳。/console 为管理台壳（ProLayout），模块页由 console-registry 聚合
@@ -37,6 +51,10 @@ export function createAppRouter() {
     // 移动端业务入口页（spec 2026-11-01 §5.1）：IM 工作台应用的主页就填
     // `/api/platform/auth/wecom/silent?next=/m`。裸路由、无 console 壳（手机上不需要侧边栏）。
     { path: '/m', element: <MobileHome /> },
+    // 移动端 OA 审批（issue #2363）：深链目标 = `/m/oa/approvals/:caseId`（企微模板消息）。
+    // 必须在 `/console` 与 `*` 兜底之前注册。
+    { path: '/m/oa/approvals', element: <Suspense fallback={null}><MobileOaApprovals /></Suspense> },
+    { path: '/m/oa/approvals/:caseId', element: <Suspense fallback={null}><MobileOaApprovalDetailRoute /></Suspense> },
     {
       path: '/console',
       element: <ConsoleShell />,

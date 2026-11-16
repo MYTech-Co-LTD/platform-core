@@ -608,6 +608,34 @@ notifications:
 **发送时**展开成「部门 + 全部子部门」的成员并排除禁用用户。与 `scope_holders` 同理，
 **声明即授权**——按部门群发的爆炸半径远大于点名，能不能这么发必须由生产模块显式表态。
 
+### external 生产者声明（2026-11-16，issue #2363）
+
+`notifications.events[]` 支持可选 `producer: "external:<name>"`：事件的**实际生产方不在本仓**
+（例：case-engine 逐节点发 OA 审批事件，key 为 `forms.approval.awaiting`）时，用它把目录归属
+从「声明模块」改为外部方。
+
+```yaml
+notifications:
+  events:
+    - key: forms.approval.awaiting      # key 前缀仍是声明模块 id（ManifestSchema 强制）
+      producer: external:case-engine    # 归属改记到外部方；shape 同普通事件声明
+      # title / scope / payload / recipients / defaults ...
+```
+
+声明后：
+
+- 事件目录的 `module_id` 记为 `external:<name>`（不是声明它的模块 id），`source = external`；
+- `/emit` 接受该事件；未声明仍 400 `EVENT_NOT_DECLARED`；
+- 外部生产者必须自带确定性 `eventId`（幂等）。
+
+**key 前缀不变**：仍是 `<声明模块 id>.*`——**不是**把 key 改成外部方的名字（`ManifestSchema` 会拒），
+归属只由 `producer` 元数据表达，管理面的事件归属显示读它。**先声明后接线**在这里同样成立：
+未声明 ⇒ `/emit` 400，而外部生产者的调用是 fail-open ⇒ 表现为**静默无投递**，别把「没报错」当已接线。
+
+**落地状态（2026-11-16）**：本节是**协议先行**——`producer` 的 schema 校验、事件目录的
+`module_id` / `source` 改写随 P0 实现任务（计划 T3）落仓。在那之前 `EventDeclSchema` 是 `.strict()`，
+**按本节形状写进 manifest 会装载失败**，别提前接线。
+
 ### 运行时：怎么发
 
 ```ts

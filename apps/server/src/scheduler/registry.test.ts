@@ -118,6 +118,24 @@ describe('registry · dbt tick（Wave 8 P1）', () => {
   })
 })
 
+describe('registry · dbt hourly/tables（Wave 8 P1）', () => {
+  it('★ cron/timeout/scope 与 openship 现役逐字一致', () => {
+    const hourly = JOB_REGISTRY.find((d) => d.key === 'data.dbt_hourly')!
+    expect(hourly.cron).toBe('5 1-15 * * *')
+    expect(hourly.timeoutMs).toBe(1800000)
+    expect(hourly.env?.MATERIALIZE_SCOPE).toBe('hourly')
+    const tables = JOB_REGISTRY.find((d) => d.key === 'data.dbt_tables')!
+    expect(tables.cron).toBe('25 2 * * *')
+    expect(tables.timeoutMs).toBe(5400000)
+    expect(tables.env?.MATERIALIZE_SCOPE).toBe('tables')
+    for (const d of [hourly, tables]) {
+      expect(d.env?.DATA_PLANE_DOMAINS).toBe('lemeng')
+      expect(d.env?.MATERIALIZE_MODE).toBe('container')
+      expect(existsSync(repoPath(d.script))).toBe(true)
+    }
+  })
+})
+
 describe('registry · 业务监控 tick（W7-V1）', () => {
   it('★ data.monitor_tick 每分钟一条、脚本在位、不传参数', () => {
     const def = JOB_REGISTRY.find((d) => d.key === 'data.monitor_tick')!

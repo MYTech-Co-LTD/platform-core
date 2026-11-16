@@ -353,3 +353,390 @@ describePg('forms API（routes）', () => {
     expect(((await res.json()) as { options: Array<{ key: string }> }).options.map((o) => o.key)).toEqual(['gk'])
   })
 })
+
+// ════════════════════════════════════════════════════════════════════════════
+// 审批（OA P1 / issue #2363）：模板 dry-run/发布门、提交建 case、代理授权、回调幂等、撤回
+// ════════════════════════════════════════════════════════════════════════════
+describePg('forms 审批（OA P1）', () => {
+  let pool: Pool
+  let engine: ReturnType<typeof makeEngine>
+  let emitted: Array<{ eventKey: string; eventId: string; payload: Record<string, unknown> }>
+  let notify: { emit: (identity: unknown, input: never) => Promise<{ accepted: boolean }> }
+
+  const OA_ORG = `org-forms-oa-${SUF}`
+  const TEMPLATE = `leave-${SUF}`
+  const ITEM = `leave-item-${SUF}`
+
+  const orgPort = {
+    async listSubtreeMembers() { return ['u1', 'u-lead'] },
+    async listDeptLeaders() { return ['u-lead'] },
+    async listDeptAdmins() { return ['u-admin'] },
+    async listRoleMembers(_org: string, role: string) { return role === 'hr' ? ['u-hr'] : [] },
+    async primaryDeptOf(_org: string, user: string) { return user === 'u-nodept' ? null : 'dept-10' },
+  }
+
+  function makeEngine() {
+    const calls: Array<{ url: string; body: Record<string, unknown> }> = []
+    const cases = new Map<string, Record<string, unknown>>()
+    let n = 0
+    const client = {
+      async createCase(body: Record<string, unknown>) {
+        calls.push({ url: '/cases', body })
+        const caseId = `case-${++n}`
+        cases.set(caseId, { caseId, currentNode: 'leader', body })
+        return { caseId, runId: 'run-1' }
+      },
+      async getCase(id: string, org: string) {
+        // 查询面：org 走 query（case-engine #122 / T9 要求每次调用都携 org）
+        calls.push({ url: `/cases/${id}`, body: { org } })
+        return cases.get(id) ?? { currentNode: 'leader' }
+      },
+      async listCases(_org: string) { return [] },
+      async decide(id: string, org: string, body: Record<string, unknown>) {
+        calls.push({ url: `/cases/${id}/decision`, body: { ...body, org } })
+        return { ok: true }
+      },
+      async withdraw(id: string, org: string, body: Record<string, unknown>) {
+        calls.push({ url: `/cases/${id}/withdraw`, body: { ...body, org } })
+        return { ok: true }
+      },
+    }
+    return { calls, client }
+  }
+
+  const identity = (userId: string, scopes: string[]) => makeIdentity({ orgId: OA_ORG, userId, scopes })
+  const mgr = () => identity('u-mgr', ['forms:view', 'forms:manage', 'forms:publish', 'forms:approval:view', 'forms:approval:manage', 'forms:approval:publish'])
+  const publisher = () => identity('u-pub', ['forms:approval:view', 'forms:approval:publish'])
+  const filler = () => identity('u1', ['forms:fill', 'forms:view'])
+  const approver = () => identity('u-lead', ['forms:fill', 'forms:view'])
+  const stranger = () => identity('u-stranger', ['forms:fill', 'forms:view'])
+  const service = () => identity('case-engine', ['forms:case:callback'])
+
+  const appFor = (who: ReturnType<typeof makeIdentity>, opts: { engineFor?: () => Promise<unknown> } = {}) =>
+    buildTestApp({
+      manifest: mod.manifest,
+      createRouter: () => createFormsRouter({
+        pool,
+        orgPort,
+        notify: notify as never,
+        engineFor: (opts.engineFor ?? (async () => engine.client)) as never,
+      }),
+    } as never, who, { pool })
+
+  const req = (app: Hono, method: string, path: string, body?: unknown) =>
+    app.request(path, {
+      method,
+      ...(body !== undefined
+        ? { body: JSON.stringify(body), headers: { 'content-type': 'application/json' } }
+        : {}),
+    })
+
+  const subCount = async (): Promise<number> => {
+    const { rows } = await pool.query(
+      "select count(*)::int n from forms.submission where org=$1 and kind='form_def'", [OA_ORG])
+    return rows[0].n
+  }
+
+  const validBody = {
+    provider: 'inapp',
+    nodes: [
+      { key: 'leader', title: '直属主管', approvers: [{ source: 'dept_leader' }], quorum: 'all' },
+      {
+        key: 'hr', title: 'HR', approvers: [{ source: 'role', role: 'hr' }], quorum: 'any',
+      },
+    ],
+    conditions: [{
+      when: { field: 'amount', op: 'gt', value: 5000 },
+      addNode: { key: 'cfo', title: '财务负责人', approvers: [{ source: 'role', role: 'hr' }], quorum: 'all' },
+    }],
+    rejectionPolicy: 'first_reject_ends',
+    selfApproval: 'skip',
+    dedupe: 'first_occurrence',
+  }
+
+  const itemBody = (templateVersion = 1) => ({
+    mode: 'approval',
+    schema: {
+      type: 'object',
+      properties: { reason: { type: 'string' }, amount: { type: 'number' } },
+      required: ['reason'],
+    },
+    approvalRef: { id: TEMPLATE, version: templateVersion },
+    provider: 'inapp',
+  })
+
+  beforeAll(async () => {
+    pool = new Pool({ connectionString: dbUrl })
+    await applyMigrations(pool)
+    engine = makeEngine()
+    emitted = []
+    notify = {
+      async emit(_identity: unknown, input: never) {
+        emitted.push(input)
+        return { accepted: true }
+      },
+    }
+  })
+
+  afterAll(async () => {
+    for (const t of ['submission', 'audit', 'asset_head', 'asset_version', 'dict_item']) {
+      await pool.query(`delete from forms.${t} where org = $1`, [OA_ORG]).catch(() => {})
+    }
+    await pool.end()
+  })
+
+  it('审批模板：起草(manage) → dry-run → publish(publish)，head 指到发布版本；条件节点参与编译', async () => {
+    let res = await req(appFor(mgr()), 'POST', '/approval-defs', { assetId: TEMPLATE, body: validBody })
+    expect(res.status).toBe(201)
+
+    res = await req(appFor(mgr()), 'POST', `/approval-defs/${TEMPLATE}/dry-run`, {
+      payload: { amount: 6000 }, requester: 'u1',
+    })
+    expect(res.status).toBe(200)
+    const dry = (await res.json()) as { plan: { nodes: Array<{ key: string; approvers: string[] }>; appliedConditions: string[] } }
+    expect(dry.plan.nodes.map((n) => n.key)).toEqual(['leader', 'hr', 'cfo'])
+    expect(dry.plan.nodes[0].approvers).toEqual(['u-lead'])
+    expect(dry.plan.appliedConditions).toEqual(['cfo'])
+
+    // 未命中的条件不追加
+    res = await req(appFor(mgr()), 'POST', `/approval-defs/${TEMPLATE}/dry-run`, {
+      payload: { amount: 100 }, requester: 'u1',
+    })
+    expect(((await res.json()) as { plan: { nodes: Array<{ key: string }> } }).plan.nodes.map((n) => n.key))
+      .toEqual(['leader', 'hr'])
+
+    res = await req(appFor(publisher()), 'POST', `/approval-defs/${TEMPLATE}/versions/1/publish`, { payload: { amount: 100 } })
+    expect(res.status).toBe(200)
+
+    res = await req(appFor(mgr()), 'GET', `/approval-defs/${TEMPLATE}`)
+    expect(((await res.json()) as { head: number | null }).head).toBe(1)
+
+    // 发布审计带了计划快照（spec §8.3）
+    const { rows } = await pool.query(
+      "select detail from forms.audit where org=$1 and action='approval.publish' and target=$2 order by id desc limit 1",
+      [OA_ORG, TEMPLATE])
+    expect(rows[0].detail.version).toBe(1)
+    expect(rows[0].detail.plan.nodes.length).toBeGreaterThan(0)
+  })
+
+  it('dry-run 失败（发起人无主部门）⇒ publish 409 且 head 不变（版本仍是 draft）', async () => {
+    const asset = `nodept-${SUF}`
+    await req(appFor(mgr()), 'POST', '/approval-defs', {
+      assetId: asset,
+      body: { provider: 'inapp', nodes: [{ key: 'leader', title: '直属主管', approvers: [{ source: 'dept_leader' }] }] },
+    })
+    const res = await req(appFor(publisher()), 'POST', `/approval-defs/${asset}/versions/1/publish`, {
+      requester: 'u-nodept',
+    })
+    expect(res.status).toBe(409)
+    expect(((await res.json()) as { error: string }).error).toBe('APPROVERS_UNRESOLVED')
+
+    const detail = await (await req(appFor(mgr()), 'GET', `/approval-defs/${asset}`)).json() as
+      { head: number | null; versions: Array<{ status: string }> }
+    expect(detail.head).toBeNull()
+    expect(detail.versions.map((v) => v.status)).toEqual(['draft'])
+  })
+
+  it('发布门：坏 DSL → 400（NODES_EMPTY）；空节点（全解析为空）→ 409 EMPTY_NODE', async () => {
+    const bad = `bad-${SUF}`
+    await req(appFor(mgr()), 'POST', '/approval-defs', { assetId: bad, body: { provider: 'inapp', nodes: [] } })
+    let res = await req(appFor(publisher()), 'POST', `/approval-defs/${bad}/versions/1/publish`, {})
+    expect(res.status).toBe(400)
+    expect(((await res.json()) as { error: string }).error).toBe('NODES_EMPTY')
+
+    const empty = `emptynode-${SUF}`
+    await req(appFor(mgr()), 'POST', '/approval-defs', {
+      assetId: empty,
+      body: { provider: 'inapp', nodes: [{ key: 'self', title: '自己', approvers: [{ source: 'user', users: ['u-pub'] }] }] },
+    })
+    res = await req(appFor(publisher()), 'POST', `/approval-defs/${empty}/versions/1/publish`, {})
+    expect(res.status).toBe(409)
+    expect(((await res.json()) as { error: string }).error).toBe('EMPTY_NODE')
+  })
+
+  it('审批提交：写 pending_approval + 计划快照 → 建引擎 case（externalRef）→ 回填 case_ref', async () => {
+    let res = await req(appFor(mgr()), 'POST', '/defs', { assetId: ITEM, body: itemBody() })
+    expect(res.status).toBe(201)
+    res = await req(appFor(mgr()), 'POST', `/defs/${ITEM}/versions/1/publish`)
+    expect(res.status).toBe(200)
+
+    const before = engine.calls.length
+    res = await req(appFor(filler()), 'POST', `/defs/${ITEM}/submissions`, {
+      payload: { reason: '家事', amount: 6000 },
+    })
+    expect(res.status).toBe(201)
+    const out = (await res.json()) as { id: string; caseId: string; status: string }
+    expect(out.status).toBe('pending_approval')
+
+    const { rows } = await pool.query('select * from forms.submission where org=$1 and id=$2', [OA_ORG, out.id])
+    expect(rows[0].status).toBe('pending_approval')
+    expect(rows[0].provider).toBe('inapp')
+    expect(rows[0].case_ref).toBe(out.caseId)
+    expect(rows[0].approval_plan.nodes.map((n: { key: string }) => n.key)).toEqual(['leader', 'hr', 'cfo'])
+
+    expect(engine.calls.length).toBe(before + 1)
+    const created = engine.calls.at(-1)!
+    expect(created.url).toBe('/cases')
+    expect(created.body).toMatchObject({
+      org: OA_ORG,
+      externalRef: `forms:submission:${out.id}`,
+      planVersion: 1,
+      provider: 'inapp',
+      type: 'approval',
+      requesterId: 'u1',
+      title: `${ITEM} - 测试用户`,
+    })
+    // 计划快照与库里一致（在途单按提交时的计划执行，不受模板改版影响）
+    expect((created.body.plan as { nodes: Array<{ key: string }> }).nodes.map((n) => n.key)).toEqual(['leader', 'hr', 'cfo'])
+  })
+
+  it('审批代理：mine 只列我的；detail 授权（审批人/陌生人）；decision 校验当前节点与意见', async () => {
+    const mine = await (await req(appFor(approver()), 'GET', '/approvals/mine')).json() as
+      { approvals: Array<{ title: string; caseId: string | null; nodeTitle: string }> }
+    expect(mine.approvals.length).toBe(1)
+    expect(mine.approvals[0].title).toBe(`${ITEM} - u1`)
+    expect(mine.approvals[0].nodeTitle).toBe('直属主管')
+
+    const strangers = await (await req(appFor(stranger()), 'GET', '/approvals/mine')).json() as { approvals: unknown[] }
+    expect(strangers.approvals).toEqual([])
+
+    const caseId = mine.approvals[0].caseId!
+    let res = await req(appFor(approver()), 'GET', `/approvals/${caseId}`)
+    expect(res.status).toBe(200)
+    const detail = (await res.json()) as { submission: { status: string }; case: { currentNode: string }; contract: unknown }
+    expect(detail.submission.status).toBe('pending_approval')
+    expect(detail.case.currentNode).toBe('leader')
+    expect(detail.contract).toMatchObject({ schema: itemBody().schema })
+    // 引擎查询面必须携 org（T9 org 校验；缺省即 403）
+    expect(engine.calls.filter((c) => c.url === `/cases/${caseId}`).at(-1)!.body).toMatchObject({ org: OA_ORG })
+
+    res = await req(appFor(stranger()), 'GET', `/approvals/${caseId}`)
+    expect(res.status).toBe(403)
+
+    res = await req(appFor(stranger()), 'POST', `/approvals/${caseId}/decision`, { action: 'approve' })
+    expect(res.status).toBe(403)
+
+    // 驳回必须填意见（服务端强制；前端只是把按钮禁用）
+    res = await req(appFor(approver()), 'POST', `/approvals/${caseId}/decision`, { action: 'reject' })
+    expect(res.status).toBe(400)
+    expect(((await res.json()) as { error: string }).error).toBe('COMMENT_REQUIRED')
+
+    // 非当前节点 key → 409（防前端拿旧页面乱点）
+    res = await req(appFor(approver()), 'POST', `/approvals/${caseId}/decision`, { action: 'approve', nodeKey: 'hr' })
+    expect(res.status).toBe(409)
+    expect(((await res.json()) as { error: string }).error).toBe('NOT_CURRENT_NODE')
+
+    res = await req(appFor(approver()), 'POST', `/approvals/${caseId}/decision`, { action: 'approve' })
+    expect(res.status).toBe(200)
+    const decideCall = engine.calls.filter((c) => c.url === `/cases/${caseId}/decision`).at(-1)!
+    expect(decideCall.body).toMatchObject({ nodeKey: 'leader', action: 'approve', decidedBy: 'u-lead', org: OA_ORG })
+  })
+
+  it('回调：终态幂等（第二次 deduped，decided_at 不变）+ 通知事件一次；org 不一致 403', async () => {
+    const { rows } = await pool.query(
+      "select id, case_ref from forms.submission where org=$1 and status='pending_approval' limit 1", [OA_ORG])
+    const { id, case_ref: caseId } = rows[0]
+    const body = {
+      org: OA_ORG, caseId, externalRef: `forms:submission:${id}`, final: true,
+      action: 'approved', decidedBy: 'u-hr', decidedAt: '2026-11-16T00:00:00Z', comment: '准',
+      submitter: 'u1',
+    }
+
+    let res = await req(appFor(service()), 'POST', '/approval-callback', body)
+    expect(res.status).toBe(200)
+    expect(((await res.json()) as { submissionId: string }).submissionId).toBe(String(id))
+    const first = await pool.query('select status, decided_at from forms.submission where id=$1', [id])
+    expect(first.rows[0].status).toBe('approved')
+
+    res = await req(appFor(service()), 'POST', '/approval-callback', body)
+    expect(res.status).toBe(200)
+    expect(((await res.json()) as { deduped?: boolean }).deduped).toBe(true)
+    const second = await pool.query('select status, decided_at from forms.submission where id=$1', [id])
+    expect(second.rows[0].decided_at).toEqual(first.rows[0].decided_at)
+
+    // 通知只发一次（幂等写成功的那次），eventId 确定性
+    const decisions = emitted.filter((e) => e.eventKey === 'forms.approval.decided')
+    expect(decisions.length).toBe(1)
+    expect(decisions[0].eventId).toBe(`forms:submission:${id}:decided`)
+    expect(decisions[0].payload).toMatchObject({ submissionId: String(id), action: 'approved', submitter: 'u1' })
+
+    // org 不一致：服务账号也只能回自己的租户
+    res = await req(appFor(service()), 'POST', '/approval-callback', { ...body, org: 'other-org' })
+    expect(res.status).toBe(403)
+
+    // 非终态回调不改状态
+    res = await req(appFor(service()), 'POST', '/approval-callback', { ...body, caseId, final: false })
+    expect(res.status).toBe(200)
+    expect(((await res.json()) as { skipped?: string }).skipped).toBe('non_final')
+
+    // withdrawn 终态：withdrawn_at 同步落（状态词表与时间列不能只写一半）
+    res = await req(appFor(filler()), 'POST', `/defs/${ITEM}/submissions`, { payload: { reason: '撤回回调' } })
+    const pending2 = (await res.json()) as { id: string; caseId: string }
+    res = await req(appFor(service()), 'POST', '/approval-callback', {
+      org: OA_ORG, caseId: pending2.caseId, externalRef: `forms:submission:${pending2.id}`,
+      final: true, action: 'withdrawn', decidedBy: 'u1', decidedAt: '2026-11-16T01:00:00Z',
+    })
+    expect(res.status).toBe(200)
+    const withdrawn = await pool.query('select status, withdrawn_at from forms.submission where id=$1', [pending2.id])
+    expect(withdrawn.rows[0].status).toBe('withdrawn')
+    expect(withdrawn.rows[0].withdrawn_at).not.toBeNull()
+  })
+
+  it('撤回：提交人 + 仅 pending；引擎收到 withdraw；他人/重复撤回 404', async () => {
+    // 新造一笔在途单（用同一事项模板）
+    let res = await req(appFor(filler()), 'POST', `/defs/${ITEM}/submissions`, { payload: { reason: '再请一次' } })
+    expect(res.status).toBe(201)
+    const id = ((await res.json()) as { id: string }).id
+
+    res = await req(appFor(stranger()), 'POST', `/submissions/${id}/withdraw`, {})
+    expect(res.status).toBe(404)
+
+    const before = engine.calls.length
+    res = await req(appFor(filler()), 'POST', `/submissions/${id}/withdraw`, { reason: '计划取消' })
+    expect(res.status).toBe(200)
+    expect(engine.calls.length).toBe(before + 1)
+    expect(engine.calls.at(-1)!.url).toMatch(/\/withdraw$/)
+    // 撤回也必须携 org（引擎按它做租户校验）
+    expect(engine.calls.at(-1)!.body).toMatchObject({ org: OA_ORG, actor: 'u1', reason: '计划取消' })
+
+    const { rows } = await pool.query('select status, withdrawn_at from forms.submission where id=$1', [id])
+    expect(rows[0].status).toBe('withdrawn')
+    expect(rows[0].withdrawn_at).not.toBeNull()
+
+    // 已终态再撤 → 404（不是 409：对提交人来说「这笔可撤回的单不存在了」）
+    res = await req(appFor(filler()), 'POST', `/submissions/${id}/withdraw`, {})
+    expect(res.status).toBe(404)
+  })
+
+  it('无引擎映射 ⇒ 提交 409 OA_NOT_ENABLED 且不落行（fail-closed）', async () => {
+    const before = await subCount()
+    const res = await req(appFor(filler(), { engineFor: async () => null }), 'POST', `/defs/${ITEM}/submissions`, {
+      payload: { reason: '没开 OA' },
+    })
+    expect(res.status).toBe(409)
+    expect(((await res.json()) as { error: string }).error).toBe('OA_NOT_ENABLED')
+    expect(await subCount()).toBe(before)
+  })
+
+  it('建 case 失败补偿：submission 标 withdrawn（不留 pending 孤儿）+ 审计', async () => {
+    const broken = {
+      async createCase(): Promise<{ caseId: string }> { throw new Error('engine down') },
+      async getCase(_id: string, _org: string): Promise<never> { throw new Error('engine down') },
+      async listCases(_org: string): Promise<never[]> { return [] },
+      async decide(): Promise<never> { throw new Error('engine down') },
+      async withdraw(): Promise<never> { throw new Error('engine down') },
+    }
+    const before = await subCount()
+    const res = await req(appFor(filler(), { engineFor: async () => broken }), 'POST', `/defs/${ITEM}/submissions`, {
+      payload: { reason: '引擎挂了' },
+    })
+    expect(res.status).toBe(502)
+    expect(await subCount()).toBe(before + 1)
+    const { rows } = await pool.query(
+      "select status from forms.submission where org=$1 and submitted_by='u1' order by id desc limit 1", [OA_ORG])
+    expect(rows[0].status).toBe('withdrawn')
+    const audit = await pool.query(
+      "select 1 from forms.audit where org=$1 and action='approval.submit.failed' order by id desc limit 1", [OA_ORG])
+    expect(audit.rows.length).toBe(1)
+  })
+})

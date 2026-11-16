@@ -46,6 +46,8 @@ import { listEnabledSources } from './tenant-source'
 import { buildCatalog, createCatalogReader, upsertCatalog } from './event-catalog'
 import { buildNotifyPort } from './notify-port'
 import { createChannelAddressResolver } from './channel-address'
+import { createOaEnginePort } from './oa-engine'
+import { createOrganizationPort } from './org-directory'
 import { resolveTenantStorage } from './tenant-storage'
 import type { TenantRow } from './tenant'
 
@@ -536,8 +538,15 @@ export async function loadModules(
       }
     }
 
+  // 组织查询面（计划 T2）：与 identityLinks / addresses 同款——宿主构造一次、原样注入。
+  // 放在 baseCtx 是因为 `createPorts` 也拿这份 ctx（模块端口可能同样需要组织结构）。
+  const org = createOrganizationPort({ pool: deps.pool, casdoorFor: deps.casdoorFor })
+  // OA 引擎查询面（OA P1）：`platform.oa_engine` 是唯一登记点，模块读不到（B1）⇒ 宿主解析后注入。
+  // 与 org 同款：装载期构造一次、原样注入；判据（无行/disabled/secret 缺失 ⇒ null）在实现里。
+  const oaEngine = createOaEnginePort({ pool: deps.pool })
   const baseCtx: ModuleContext = {
-    pool: deps.pool, identityLinks, events, addresses, userStatus, csrfVerify,
+    pool: deps.pool, identityLinks, events, addresses, userStatus, csrfVerify, org,
+    oaEngine,
   }
   for (const p of pending) {
     if (typeof p.def.createPorts === 'function') {

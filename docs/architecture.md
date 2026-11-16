@@ -544,6 +544,51 @@ B/C 的统一能力入口是 `POST /api/agent/mcp`；manifest `mcpFaces` 声明�
 - **待实测**：名单 N=500 时的调度耗时与 Novu 限速（T11 验收项）。
 - **`due` 重算口径**：以**当前 published 版本**的发布时间为准（表单回滚/重发是否重算，待实测确认）。
 
+**事项平台与 provider 路由（2026-11-16 拍板，issue #2363）**
+
+> 设计稿 `docs/superpowers/specs/2026-11-16-ai-native-oa-design.md` 与实施计划
+> `docs/superpowers/plans/2026-11-16-ai-native-oa-p0-p1.md` 随 #2363 的同批文档 PR 落仓；
+> 两路径缺席不影响任何门禁（本仓无文档门禁）。职责切分保留在 explore 仓
+> `docs/adr/0005-collection-form-layer.md` §15，本次只新增 §15.5 provider 路由。
+
+forms 的域从「受管数据集（表单 + 字典）」扩展为**事项平台**：**同一个资产内核**
+（`kind` / `asset_version` / `asset_head` + 发布 gate + 不可变触发器）承载三类事项与两类审批模板，
+**不新增资产内核**。
+
+**写死的枚举**：
+
+| 维度 | 取值 | 语义 | 执行方 |
+|---|---|---|---|
+| 事项 `mode` | `approval` | 审批：提交带状态 + **计划快照** | 平台编译，`provider` 决定执行方 |
+| | `collection` | 收集：append-only + 轮次 × 目标名单 | 平台（无审批） |
+| | `collaboration` | 协作：**实例优先**，可另存为模板 | case-engine |
+| 审批 `provider` | `wecom_native` | 标准审批：公司级固定链 + 已绑定企微审批模板 | 企微审批应用 |
+| | `inapp` | 非标准审批：链 DSL，平台编译计划 → 引擎逐节点执行 | case-engine |
+
+- 存量兼容：现存量 `form_def` 读取时缺省 `mode = collection`（负对照：不写就等于今天的收集行为）。
+- 模板两形态共用生命周期 `draft → published → retired`（published 不可变，DB 触发器）；
+  事项模板只引用审批模板的 `id + 版本`（同一标准链可被多个表单复用）。
+
+**四条边界（写死，回退任一条前先回 spec）**：
+
+1. **模板与治理在平台，`inapp` 的执行在 case-engine**：模板库、发布 gate（AI 永不发布）、
+   计划编译（解析人/条件/quorum → 确定性快照）都在平台；引擎只按快照执行，**不带租户模板库**。
+   审批人是组织/业务语义，平台有 org/Casdoor ⇒ 编译必须在平台侧。
+2. **标准审批（`wecom_native`）不进引擎**：平台只做「选模板 + 深链 + 镜像」，**不复制表单、
+   不存附件、不建引擎 case**。企微是执行方与事实源；镜像（`forms.external_approval`）只供
+   待办提示与分析，**不是第二事实源**。
+3. **不做静默降级**：`wecom_native` 绑定缺失/失效 ⇒ **发布失败**；运行期企微不可用 ⇒ 镜像同步
+   进 attention，**不自动切 `inapp`**。反过来也一样：非标准审批不允许悄悄落到企微原生。
+4. **提交即快照**：在途单不受模板改版影响；重提（新 submission，`root_submission_id` 指向首轮）
+   按**当时**最新 published 版本**重新编译**，不复用首轮快照。
+
+**跨仓契约的纪律**：platform-core ↔ case-engine 只走**公开 HTTP JSON**（B12：公开仓不依赖私有包），
+每次调用携 org 与 `externalRef` 幂等键；per-customer 版本差异经能力协商（`GET /capabilities`）
+**显式化**，不假设同版本。契约文档随 P0 的引擎任务（计划 T6/T10）落仓。
+
+**不做清单（v1 写死）**：标准审批的建单/预填/附件（P2 再议）；应用内附件（附件原语独立排期，
+上线前不放开入口）；匿名收集；条件/多级模板的可视化编辑器（AI 只起草、人发布）。
+
 ### 2.5 数据面归属与「域」维度（2026-10-17 拍板）
 
 > **本节由真实缺陷倒逼，不是推演**：M1.4 forms 出湖（#729）实施时把 console 落在**山海**数据面，
@@ -830,6 +875,31 @@ B/C 的统一能力入口是 `POST /api/agent/mcp`；manifest `mcpFaces` 声明�
 ⚠️ **`mode=sample` 的射程**：`field` 类收件人的 sample 值是占位符 ⇒ 只能验「字段存在」，
 解析不到真实用户；响应必带 `warnings: sample_mode_field_recipients_unverified`。
 `scope_holders` / `literal` 才是真值。**`scopeHoldersUnavailable: true` ≠ 「没人持有」**。
+
+#### OA 事件与 external 生产者（2026-11-16，issue #2363）
+
+事项平台（§2.4 末「事项平台与 provider 路由」）的事件**全部声明在 `modules/forms/manifest.yaml`**
+的 `notifications.events`：`ManifestSchema` 强制 key 前缀 = 声明模块 id，故 **external 事件也用
+`forms.*`**，归属由可选 `producer` 元数据表达（协议见 `docs/module-protocol.md`
+「external 生产者声明」；**不是**把 key 改成 `case-engine.*`）。收件箱即统一待办（事件投影）。
+
+| 事件 | 生产者 | 收件人 | 触发 |
+|---|---|---|---|
+| `forms.approval.awaiting` | `external:case-engine` | 当前节点审批人 | 引擎节点进入（逐审批人） |
+| `forms.approval.decided` | 平台 | 发起人 | 最终结论（幂等键 `caseId + final`） |
+| `forms.task.assigned` | `external:case-engine` | 协作参与人 | 任务创建 / 改派 |
+| `forms.collection.assigned` | 平台 | 目标人 | 收集轮次开启（名单快照生效） |
+| `forms.collection.due` | 平台（`platform.scheduler` job） | 未提交目标人 | 到期（事件 id 含日期，幂等） |
+| `forms.case.sla.breach` | `external:case-engine` | 升级对象 | 节点 / 案例超时 |
+
+- **先声明后接线**：未声明 ⇒ `/emit` 400 `EVENT_NOT_DECLARED`，而生产者 fail-open ⇒ **静默无投递**；
+  联调/发布必须先查事件目录（`platform.event_catalog`），别以「调用没报错」当已接线。
+- **external 生产者自带确定性 `eventId`**：平台不为外部方生成 id，引擎重试/重放靠它天然去重。
+- **待办一致性**：收件箱是投影，点击以引擎/case 真实状态为准；已终结的待办由
+  `forms.approval.decided` / 任务完成事件关闭，小时级对账 job（扫 `pending_approval` ×
+  `externalRef`）兜底关陈旧项——**不靠同步轮询引擎**。
+- 到期/催办类定时走 **worker 的 `platform.scheduler`**（业务定时口径见 §2.4「定时载体」），
+  **不新开常驻进程**。
 
 #### 实施注记
 

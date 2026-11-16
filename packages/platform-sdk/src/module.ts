@@ -124,6 +124,53 @@ export interface ChannelAddressResolver {
   sampleMemberAddresses?(org: string, limit: number): Promise<string[]>
 }
 
+/**
+ * 组织**查询面**（宿主注入；模块不直读 `platform.org_*`，B1）。
+ *
+ * 为什么单开一个 port 而不是复用 `ChannelAddressResolver`：那个端口是**通知投递**取向的
+ * （把人解析成渠道地址、把部门展开成收件人），而审批链要问的是**结构性问题**——
+ * 「这个部门的负责人是谁」「这个人的主部门是哪个」——两者读者与判据都不同，
+ * 混在一起会让 notify 的形状漂移直接打穿审批链。
+ *
+ * 四条语义（宿主实现 `apps/server/src/org-directory.ts` 为准，改任何一条都要两边同改）：
+ *  ① **全部按 org（Casdoor org 名）解析租户**：未知 org ⇒ 空结果，不抛错（不是 403）；
+ *  ② `listSubtreeMembers` 展开子树（`v_org_node.path` 前缀），只算 `status=1` 的部门；
+ *  ③ `listDeptLeaders` / `listDeptAdmins` **不展开子树**——「所列部门」就是所列部门；
+ *  ④ `listRoleMembers` 需要宿主有 Casdoor 客户端；未注入 => 空数组（**不是**「没人」的断言，
+ *     调用方要区分「查不了」请自行判空档位，见 `ChannelAddressResolver` 的同款注释）。
+ */
+export interface OrganizationPort {
+  /** 部门子树（含自身）去重成员，过滤 status=1；成员来自 v_org_membership */
+  listSubtreeMembers(org: string, deptExtIds: readonly string[]): Promise<string[]>
+  /** 部门负责人（按 sort）；只查所列部门，不展开子树 */
+  listDeptLeaders(org: string, deptExtIds: readonly string[]): Promise<string[]>
+  /** 部门管理员（role=dept_admin） */
+  listDeptAdmins(org: string, deptExtIds: readonly string[]): Promise<string[]>
+  /** Casdoor 角色成员（短名归一） */
+  listRoleMembers(org: string, role: string): Promise<string[]>
+  /** 用户主部门 ext_id；无记录 → null */
+  primaryDeptOf(org: string, userName: string): Promise<string | null>
+}
+
+/**
+ * OA 引擎查询面（宿主注入；OA P1 / issue #2363）。
+ *
+ * 为什么必须由宿主供给：`platform.oa_engine` 是**唯一登记点**（spec §12.1 P11：一租户一引擎），
+ * 而模块读不到 platform schema（B1）。env 只能表达单实例，表达不了多租户映射；PAT 的
+ * secret 引用也在登记行里（`pat_secret_ref`），只有宿主知道怎么解析成值。
+ *
+ * 语义（宿主实现 `apps/server/src/oa-engine.ts` 为准，改任何一条都要两边同改）：
+ *  ① `get` 只回答**可用**的配置：无行 / `enabled=false` / `base_url` 空 / secret 取不到
+ *     ⇒ `null`——**fail-closed，不猜**（调用方据此回 `OA_NOT_ENABLED`，不要从 env 兜底；
+ *     那会让「被停用的租户」被环境变量偷偷放行）；
+ *  ② `pat` 是**解析后的值**（从 `pat_secret_ref` 指向的 env 取名），不是引用名；
+ *     port 边界就是敏感值的边界——模块拿到值只用来发请求，不落库不落日志；
+ *  ③ 未知 org ⇒ `null`，**不抛错**（与 OrganizationPort 同口径：未知租户不是异常）。
+ */
+export interface OaEnginePort {
+  get(org: string): Promise<{ baseUrl: string; pat: string; engineVersion: string | null } | null>
+}
+
 /** 部门选择器的一行。 */
 export interface OrgNodeOption {
   extId: string
@@ -362,6 +409,23 @@ export interface ModuleContext {
   csrfVerify?: (session: unknown, header: string | undefined) => boolean
   /** 渠道地址解析（Casdoor 用户 → 通道地址）；仅 notify 模块使用。 */
   addresses?: ChannelAddressResolver
+  /**
+   * 组织查询面（B1：模块不直读 `platform.org_*`）。
+   *
+   * **未注入 = 旧宿主/单测**（与 `notify` / `scheduler` / `jobs` 同款向后兼容契约）：
+   * 调用点必须**显式判空**并降级（如审批计划编译返回「组织面不可用」），
+   * 不得当成「没人/没部门」——那会把「查不了」静默成「解析为空」。
+   */
+  org?: OrganizationPort
+  /**
+   * OA 引擎查询面（OA P1）：`platform.oa_engine` 是唯一登记点（spec §12.1 P11），模块
+   * 读不到 platform schema（B1）⇒ 由宿主解析成 `{baseUrl, pat, engineVersion}` 注入。
+   *
+   * **未注入 = 旧宿主/单测**（与 `org` / `notify` 同款向后兼容契约）：调用点必须显式判空，
+   * 并降级为「OA 未开通（409）」或**显式的**本地 env 兜底——不得把「查不了」当成
+   * 「没人用 OA」以外的第三种解释，也不得用 env 兜底覆盖 port 明确返回的 null。
+   */
+  oaEngine?: OaEnginePort
   /** 用户活跃态查询（Casdoor 状态）；仅管理/清理面使用。未注入 = 无法判定（unknown）。 */
   userStatus?: UserStatusResolver
 }

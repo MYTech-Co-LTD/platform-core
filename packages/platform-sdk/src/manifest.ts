@@ -54,6 +54,8 @@ export interface NotificationEventDecl {
   scope?: { key: string; label?: string }
   payload: Record<string, EventFieldDecl>
   recipients: Record<string, EventRecipientDecl>
+  /** 外部生产者（如 case-engine）：存在时事件归属 `external:<name>`，不是声明它的模块。 */
+  producer?: string
   /** 零配置默认规则；template 必须是内置模板 */
   defaults?: { recipient: string; template: string; channels: string[] }
 }
@@ -155,6 +157,8 @@ const EventDeclSchema = z.object({
     scope: z.string().optional(),
     label: z.string().optional(),
   }).strict()),
+  // 外部生产者（OA P0）：声明「这条事件由谁产生」，不影响 key 前缀（key 仍以声明模块 id 开头）。
+  producer: z.string().min(1).optional(),
   defaults: z.object({
     recipient: z.string(),
     template: z.string(),

@@ -11,6 +11,38 @@
 
 ## [Unreleased]
 
+## [0.309.1](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.309.0...v0.309.1) - 2026-11-16
+- 【修复】data: fct_request_fulfillment 增量窗口重建，清理源撤回行（#2378） ([#2382](https://github.com/MYTech-Co-LTD/platform-core/pull/2382), [77ec617](https://github.com/MYTech-Co-LTD/platform-core/commit/77ec6170d0f7347f06b690fff7560916ebf7c86f))
+
+
+## [0.309.0](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.308.0...v0.309.0) - 2026-11-16
+- 【新增】forms: 移动端 OA 审批入口 + 引擎调用携 org（#2380） ([#2381](https://github.com/MYTech-Co-LTD/platform-core/pull/2381), [ab7bfeb](https://github.com/MYTech-Co-LTD/platform-core/commit/ab7bfebb154168dccc5ac599a2b7e26bd3f9f365))
+
+
+## [0.308.0](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.307.0...v0.308.0) - 2026-11-16
+- 【新增】data: dbt hourly/tables 迁入平台 scheduler（W8-P1） ([#2376](https://github.com/MYTech-Co-LTD/platform-core/pull/2376), [ac65aca](https://github.com/MYTech-Co-LTD/platform-core/commit/ac65acaf1d63a738561ddb1bf9a96136446ba000))
+- 【新增】forms: 应用内审批 P1——DSL/编译器/发布门、提交建 case、回调对账与审批页（#2363） ([#2373](https://github.com/MYTech-Co-LTD/platform-core/pull/2373), [98d8eee](https://github.com/MYTech-Co-LTD/platform-core/commit/98d8eee85394a1b7c231953d8268e4b20b38c012))
+
+
+## [0.307.0](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.306.7...v0.307.0) - 2026-11-16
+- 【修复】data: DBT_HOST 剥离端口（W8-P1） ([#2371](https://github.com/MYTech-Co-LTD/platform-core/pull/2371), [d7ec33c](https://github.com/MYTech-Co-LTD/platform-core/commit/d7ec33ca9d6fe9161fc9c0c5e6c31bdf4aceabb0))
+- 【新增】oa: forms 内核 approval_def + org→引擎映射（OA P0 T4/T5） ([#2369](https://github.com/MYTech-Co-LTD/platform-core/pull/2369), [5888804](https://github.com/MYTech-Co-LTD/platform-core/commit/588880432dc78660435d3357426c2211d7fc2b20))
+- 【新增】org: 部门负责人原语与模块组织查询 port（#2363） ([#2368](https://github.com/MYTech-Co-LTD/platform-core/pull/2368), [7da91e3](https://github.com/MYTech-Co-LTD/platform-core/commit/7da91e384fa1b0e8b58aaa02771efb8540af5831))
+- 【新增】notify: 事件声明支持 external 生产者（#2363） ([#2365](https://github.com/MYTech-Co-LTD/platform-core/pull/2365), [599d979](https://github.com/MYTech-Co-LTD/platform-core/commit/599d9791bd89799369fd664e99e8162a36213a54))
+
+
+## [0.306.7](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.306.6...v0.306.7) - 2026-11-16
+- 【修复】data: dbt target/log 走 env 且容器内可写（W8-P1） ([#2367](https://github.com/MYTech-Co-LTD/platform-core/pull/2367), [8cdc255](https://github.com/MYTech-Co-LTD/platform-core/commit/8cdc25598b2c89c968dcb07aa96dbe226926bd70))
+
+
+## [0.306.6](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.306.5...v0.306.6) - 2026-11-16
+- 【修复】data: 容器模式 profiles/target 放可写目录（#2361） ([#2362](https://github.com/MYTech-Co-LTD/platform-core/pull/2362), [6bb74b7](https://github.com/MYTech-Co-LTD/platform-core/commit/6bb74b711b291214a5706859073efaea6f37aba8))
+
+
+## [0.306.5](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.306.4...v0.306.5) - 2026-11-16
+- 【修复】deploy: apt 阿里云源改用 http（#2358） ([#2359](https://github.com/MYTech-Co-LTD/platform-core/pull/2359), [05212a4](https://github.com/MYTech-Co-LTD/platform-core/commit/05212a4fbd6441f9878f16d5e7a26dc90835442b))
+
+
 ## [0.306.4](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.306.3...v0.306.4) - 2026-11-16
 - 【修复】data: MATERIALIZE_MODE 先于仓根推导定义（W8-P1） ([#2357](https://github.com/MYTech-Co-LTD/platform-core/pull/2357), [c35d14e](https://github.com/MYTech-Co-LTD/platform-core/commit/c35d14e4f0305bcc303b9d3e548801b037d10770))
 

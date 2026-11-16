@@ -11,6 +11,8 @@ import { useLocation, useNavigate } from 'react-router-dom'
 import FormsList from './FormsList'
 import FillForm from './FillForm'
 import Submissions from './Submissions'
+import Approvals from './Approvals'
+import ApprovalDetail from './ApprovalDetail'
 
 const BASE = '/console/forms'
 
@@ -18,6 +20,8 @@ const TABS = [
   { key: 'forms', label: '表单' },
   { key: 'fill', label: '填报' },
   { key: 'submissions', label: '提交记录' },
+  // OA P1：应用内待审批（响应用户端；scope forms:view——审批动作按计划快照授权）
+  { key: 'approvals', label: '待审批' },
 ] as const
 
 type TabKey = (typeof TABS)[number]['key']
@@ -27,18 +31,23 @@ export default function FormsConsolePage() {
   const navigate = useNavigate()
   const { pathname } = useLocation()
 
-  // 解析 rest（BASE 之后的部分）：'' | '/fill/:assetId' | '/submissions/:assetId' | '/:tab'
+  // 解析 rest（BASE 之后的部分）：'' | '/fill/:assetId' | '/submissions/:assetId'
+  // | '/approvals/:caseId' | '/:tab'
   const rest = pathname.startsWith(BASE) ? pathname.slice(BASE.length) : pathname
   const segs = rest.split('/').filter(Boolean)
   let active: TabKey = 'forms'
   let fillAsset: string | undefined
   let subAsset: string | undefined
+  let approvalCase: string | undefined
   if (segs[0] === 'fill' && segs[1] !== undefined) {
     active = 'fill'
     fillAsset = segs[1]
   } else if (segs[0] === 'submissions') {
     active = 'submissions'
     subAsset = segs[1] // 可选：深链直达某资产的提交列表
+  } else if (segs[0] === 'approvals' && segs[1] !== undefined) {
+    active = 'approvals'
+    approvalCase = segs[1] // 深链直达审批详情
   } else if (segs.length === 1 && (TAB_KEYS as readonly string[]).includes(segs[0])) {
     active = segs[0] as TabKey
   }
@@ -60,6 +69,9 @@ export default function FormsConsolePage() {
       {active === 'forms' && <FormsList />}
       {active === 'fill' && <FillForm assetId={fillAsset} />}
       {active === 'submissions' && <Submissions assetId={subAsset} onAssetChange={(v) => navigate(v ? `${BASE}/submissions/${v}` : `${BASE}/submissions`)} />}
+      {active === 'approvals' && (approvalCase !== undefined
+        ? <ApprovalDetail caseId={approvalCase} />
+        : <Approvals />)}
     </Layout>
   )
 }

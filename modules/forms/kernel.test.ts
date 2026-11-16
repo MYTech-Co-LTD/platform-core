@@ -2,6 +2,7 @@ import { afterAll, beforeAll, describe, expect, it } from 'vitest'
 import { Pool } from 'pg'
 import { applyMigrations } from './test-util'
 import { schemaOf, validateSubmission } from './domain/contract'
+import { audit, headVersion, listVersions, newDraft, publish } from './storage'
 
 // 内核断言套件（issue #710）：explore/poc/lifecycle-unified 28 断言的多租户工程化对账。
 // 口径（RESULTS.md §1/§2）：不经应用层，**直接 pool.query 调 SQL 函数与裸 SQL**——
@@ -44,7 +45,7 @@ describePg('forms 生命周期内核（PoC 28 断言对账）', () => {
 
   afterAll(async () => {
     // 尽力而为：published/retired 行删不掉是**被测契约**（触发器拦），吞掉即可
-    for (const t of ['submission', 'asset_head', 'asset_version', 'mcp_audit']) {
+    for (const t of ['audit', 'submission', 'asset_head', 'asset_version', 'mcp_audit']) {
       await pool.query(`delete from forms.${t} where org = $1`, [ORG]).catch(() => {})
     }
     await pool.end()
@@ -84,7 +85,8 @@ describePg('forms 生命周期内核（PoC 28 断言对账）', () => {
       "select table_name from information_schema.tables where table_schema='forms'",
     )
     expect(new Set(rows.map((r) => r.table_name))).toEqual(
-      new Set(['kind', 'asset_version', 'asset_head', 'submission', 'dict_item', 'dict_global_item', 'mcp_audit']),
+      // 002 起多 forms.audit（事项审计）+ forms.mcp_audit（能力网关审计）
+      new Set(['kind', 'asset_version', 'asset_head', 'submission', 'dict_item', 'dict_global_item', 'audit', 'mcp_audit']),
     )
   })
 
@@ -303,5 +305,61 @@ describePg('forms 生命周期内核（PoC 28 断言对账）', () => {
     await expect(
       pool.query('select forms.submit($1,$2,$3,$4,$5)', [ORG, KIND, A_NOHEAD, '{}', 'x']),
     ).rejects.toThrow(/no published head/)
+  })
+
+  // ── 事项平台（002_item_platform.sql）：审批模板走同一内核 + 提交状态列 + 审计 ──
+
+  it('approval_def 走同一内核：draft → publish → head', async () => {
+    const approvalBody = { provider: 'inapp', nodes: [] }
+    const v = await newDraft(pool, ORG, 'leave', approvalBody, 'u1', 'approval_def')
+    await publish(pool, ORG, 'leave', v, 'admin', 'approval_def')
+    expect(await headVersion(pool, ORG, 'leave', 'approval_def')).toBe(v)
+    // 独立回读：head 指针改动之外，版本行也真的落在 approval_def 名下
+    const { rows } = await pool.query(
+      "select kind, status from forms.asset_version where org=$1 and asset_id='leave' and version=$2",
+      [ORG, v],
+    )
+    expect(rows[0]).toEqual({ kind: 'approval_def', status: 'published' })
+  })
+
+  it('form_def 与 approval_def 同 id 互不干扰', async () => {
+    await newDraft(pool, ORG, 'x', { schema: {} }, 'u1') // form_def
+    await newDraft(pool, ORG, 'x', { provider: 'inapp', nodes: [] }, 'u1', 'approval_def')
+    expect(await listVersions(pool, ORG, 'x')).toHaveLength(1) // 默认 kind 只看 form_def
+    expect(await listVersions(pool, ORG, 'x', 'approval_def')).toHaveLength(1)
+    expect(await headVersion(pool, ORG, 'x')).toBeNull() // 两者都是 draft，head 未动
+  })
+
+  it('提交状态列缺省：既有收集类提交 status=submitted、provider 空', async () => {
+    const r = await pool.query('select forms.submit($1,$2,$3,$4,$5) id', [
+      ORG, KIND, A_FLOW, JSON.stringify({ name: '李四', region: '华东' }), 'submitter-2',
+    ])
+    const { rows } = await pool.query(
+      'select status, provider, case_ref, decided_at from forms.submission where id=$1::bigint',
+      [r.rows[0].id],
+    )
+    expect(rows[0]).toEqual({ status: 'submitted', provider: null, case_ref: null, decided_at: null })
+  })
+
+  it('状态词表由 DB 兜底：越界状态直写被拒', async () => {
+    await expect(
+      pool.query(
+        `insert into forms.submission (org, kind, asset_id, version, payload, submitted_by, status)
+         values ($1,$2,$3,(select active_version from forms.asset_head
+                            where org=$1 and kind=$2 and asset_id=$3),'{}','x','bogus')`,
+        [ORG, KIND, A_FLOW],
+      ),
+    ).rejects.toThrow(/forms_submission_status_check/)
+  })
+
+  it('audit：写一条并独立回读（detail 原样落 jsonb）', async () => {
+    await audit(pool, ORG, 'admin', 'approval_def.publish', 'leave', { version: 1 })
+    const { rows } = await pool.query(
+      'select actor, action, target, detail from forms.audit where org=$1 order by id desc limit 1',
+      [ORG],
+    )
+    expect(rows[0]).toEqual({
+      actor: 'admin', action: 'approval_def.publish', target: 'leave', detail: { version: 1 },
+    })
   })
 })
