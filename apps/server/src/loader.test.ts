@@ -1611,6 +1611,12 @@ describe.skipIf(!dbUrl)('loadModules', INTEGRATION_SUITE, () => {
 
     const runtime = await loadModules(modulesDir, { pool })
 
+    // 两个 fixture 都真的装载了 ⇒ 下面的 negative 断言不是「模块根本没进去」的假绿
+    expect(runtime.modules.map((m) => m.manifest.id)).toEqual(
+      expect.arrayContaining(['facemod', 'plainmod']),
+    )
+    // 基数：facemod 只声明 1 个 face ⇒ 不允许 flatMap 重复/放大
+    expect(runtime.mcpFaces()).toHaveLength(1)
     expect(runtime.mcpFaces()).toContainEqual({
       moduleId: 'facemod',
       mountPath: '/api/modules/facemod',
