@@ -38,6 +38,42 @@ function stripNoise(sql: string): string {
     .replace(/--[^\n]*/g, ' ')
 }
 
+/**
+ * 只保留「取值」部分：把 `where` / `having` / `on` 的谓词整段去掉。
+ *
+ * 为什么：谓词里的列是**过滤条件**，不是度量值的来源。实测 `net_amount` 的链路里
+ * `hour` 会被点亮——它来自 `base_return` 的窗口守卫
+ * `{% if MAT_CLOSED_BEFORE %} and not (bizday = current_date and hour >= extract(hour …)) {% endif %}`，
+ * 用户看到「小时汇入净销售额」是误读。口径里的 CASE 条件（`state = 'FINISHED'`）在
+ * select 表达式里，不受影响，仍算来源。
+ *
+ * 逐字扫描（不用正则一口气替换）：字面量里出现 `where` 之类不会误伤整段。
+ */
+function valueOnly(text: string): string {
+  const CLAUSE_STOP = /^(?:group\s+by|order\s+by|having|limit|window|union|join|left|right|inner|full|cross|select|from)\b/i
+  let out = ''
+  let i = 0
+  while (i < text.length) {
+    const re = /\b(where|having|on)\b/gi
+    re.lastIndex = i
+    const hit = re.exec(text)
+    if (hit === null) { out += text.slice(i); break }
+    out += text.slice(i, hit.index)
+    // 谓词到下一个子句关键字（或当前括号的收尾）为止
+    let j = hit.index + hit[0].length
+    let depth = 0
+    while (j < text.length) {
+      const ch = text[j]!
+      if (ch === '(') depth += 1
+      else if (ch === ')') { if (depth === 0) break; depth -= 1 }
+      else if (depth === 0 && CLAUSE_STOP.test(text.slice(j))) break
+      j += 1
+    }
+    i = j
+  }
+  return out
+}
+
 /** `group by` 里出现的列是这一段的粒度，不是度量值的来源。 */
 function grainOf(text: string): Set<string> {
   const out = new Set<string>()
@@ -124,7 +160,8 @@ export function resolveMeasureInputs(sql: string, opts: ResolveOptions): Measure
     const cols = new Set<string>()
     const deps = new Set<string>()
     if (depth > MAX_DEPTH) return { cols, deps }
-    const tokens = ids(text)
+    // 谓词里的列是过滤条件，不是值来源（2026-11-16 订正：hour 曾被当成度量输入）
+    const tokens = ids(valueOnly(text))
     const grain = grainOf(text)
     // 1) 度量引用优先：`sale_amount__gen` / `sale_amount__rollup`
     let sawMeasure = false
