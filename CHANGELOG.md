@@ -11,6 +11,10 @@
 
 ## [Unreleased]
 
+## [0.312.1](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.312.0...v0.312.1) - 2026-11-16
+- 【修复】data: pre_hook 改无条件运行时窗口（is_incremental 解析期恒 false） ([#2406](https://github.com/MYTech-Co-LTD/platform-core/pull/2406), [ba359c4](https://github.com/MYTech-Co-LTD/platform-core/commit/ba359c47932443cf982934bc9aa11f55a168324a))
+
+
 ## [0.312.0](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.311.0...v0.312.0) - 2026-11-16
 - 【新增】data: 管线地图看采集流程——节点级步骤给人读 (#2397) ([#2398](https://github.com/MYTech-Co-LTD/platform-core/pull/2398), [d6057f1](https://github.com/MYTech-Co-LTD/platform-core/commit/d6057f15ed4d8f545c3697c8b0bbafbb47de9102))
 
