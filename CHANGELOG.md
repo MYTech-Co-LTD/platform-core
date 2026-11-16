@@ -11,6 +11,11 @@
 
 ## [Unreleased]
 
+## [0.306.3](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.306.2...v0.306.3) - 2026-11-16
+- 【修复】data: materialize.sh 容器内 dbt 执行适配 + apt 镜像 ([#2355](https://github.com/MYTech-Co-LTD/platform-core/pull/2355), [dd05655](https://github.com/MYTech-Co-LTD/platform-core/commit/dd05655b3d9742cc167c950513331bee9d2d1d4b))
+- 【修复】data: dbt tick 的模式与 ZOS 配置走 registry env（W8-P1） ([#2352](https://github.com/MYTech-Co-LTD/platform-core/pull/2352), [228dd43](https://github.com/MYTech-Co-LTD/platform-core/commit/228dd438e4212353c8e565f6c1022681cd59f51f))
+
+
 ## [0.306.2](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.306.1...v0.306.2) - 2026-11-16
 - 【修复】data: materialize.sh 容器模式与 psql 客户端（W8-P1 跟进）（#2350） ([#2351](https://github.com/MYTech-Co-LTD/platform-core/pull/2351), [fbafe55](https://github.com/MYTech-Co-LTD/platform-core/commit/fbafe555450df46d4d7be558efc70b1fb816633b))
 
