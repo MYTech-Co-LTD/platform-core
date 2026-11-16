@@ -4,9 +4,52 @@ import { Pool } from 'pg'
 import { fileURLToPath } from 'node:url'
 import { buildCatalog, createCatalogReader, upsertCatalog } from './event-catalog'
 import { runMigrations } from './migrate'
+import { ManifestSchema } from '@platform/sdk'
 
 const url = process.env.DATABASE_URL
 const describePg = url ? describe : describe.skip
+
+// 无 DB 依赖：external 生产者协议（OA P0 Task 3）+ 事件 key 前缀回归。
+// 刻意放在 describePg 之外——buildCatalog 与 ManifestSchema 都不碰 PG，放进 DB 门里会在
+// 无 DATABASE_URL 的环境被整体跳过，协议缺陷就静默不可见。
+describe('event-catalog external 生产者', () => {
+  it('producer 存在时 moduleId 记为 external:<name>，source=external', () => {
+    const entries = buildCatalog([{
+      id: 'forms',
+      notifications: { events: [{
+        key: 'forms.approval.awaiting', title: '待审批',
+        producer: 'external:case-engine',
+        payload: { submissionId: { type: 'string', required: true } },
+        recipients: { approver: { kind: 'field', field: 'assignee' } },
+      }] },
+    }] as never)
+    expect(entries[0]).toMatchObject({ moduleId: 'external:case-engine', source: 'external' })
+  })
+
+  it('无 producer 时行为逐字不变：moduleId=模块 id，source=module', () => {
+    const entries = buildCatalog([{
+      id: 'forms',
+      notifications: { events: [{
+        key: 'forms.approval.awaiting', title: '待审批',
+        payload: { submissionId: { type: 'string', required: true } },
+        recipients: { approver: { kind: 'field', field: 'assignee' } },
+      }] },
+    }] as never)
+    expect(entries[0].moduleId).toBe('forms')
+    expect(entries[0].source).toBe('module')
+  })
+
+  it('ManifestSchema：external 事件的 key 仍必须以声明模块 id 开头', () => {
+    const base = { id: 'forms', name: 'x', version: '0.2.0', platform: '>=0.1', permissions: [], notifications: { events: [] } }
+    // payload 必须带 recipients.approver 指向的 user 字段——否则「合法 key」那条会因收件人
+    // 形状不合法而误判为 false（与 producer 无关的既有校验）。
+    const ev = { key: 'forms.approval.awaiting', title: 't', producer: 'external:case-engine',
+      payload: { submissionId: { type: 'string', required: true }, assignee: { type: 'user', required: true } },
+      recipients: { approver: { kind: 'field', field: 'assignee' } } }
+    expect(ManifestSchema.safeParse({ ...base, notifications: { events: [ev] } }).success).toBe(true)
+    expect(ManifestSchema.safeParse({ ...base, notifications: { events: [{ ...ev, key: 'approval.awaiting' }] } }).success).toBe(false)
+  })
+})
 
 describePg('event-catalog', () => {
   let pool: Pool
