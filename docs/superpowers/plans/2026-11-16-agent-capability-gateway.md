@@ -2,6 +2,8 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
+> 追踪：issue #2360；分支：`agent-capability-gateway`（基于 `origin/main`；按计划 Task 13 只开 PR，不合并）。
+
 **Goal:** 把 data/notify/forms 的 agent 面收敛到一个统一 MCP 网关（`/api/agent/mcp`），按调用方 scope/channel 投影能力；openclaw 通过两个 native 元工具接入同一能力核心。
 
 **Architecture:** 模块侧持有工具元数据、face 门与 `tools/list`/`callTool` 执法；宿主网关只做 face 选择、命名空间、转发、分页/缓存/超时/限流/审计。B（PAT）与 C（企微渠道身份）共用网关，网关解析一次身份后用进程内 HMAC 内部身份向下游转发；C 的 notify 更严策略由 notify 模块按 `identity.channel` 强制。

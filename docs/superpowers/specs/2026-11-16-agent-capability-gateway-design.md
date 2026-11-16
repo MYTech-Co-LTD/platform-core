@@ -1,6 +1,7 @@
 # Agent 能力网关：统一 MCP 入口 + 按权限加载能力
 
 > 状态：**设计已确认（2026-11-16，用户逐项拍板）**。
+> 实施计划：`docs/superpowers/plans/2026-11-16-agent-capability-gateway.md`（issue #2360，分支 `agent-capability-gateway`）。
 > 范围：A 子项目——统一 MCP 网关、能力目录、openclaw C 侧元工具、forms 纳入、notify 草稿策略。
 > 上游：`docs/architecture.md` §1.5（三通道身份模型）、`docs/superpowers/specs/2026-11-09-unified-skill-management-design.md`（能力正文单源）。
 > **必须同时对读的既有正典**：
