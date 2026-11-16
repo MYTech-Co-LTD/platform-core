@@ -3,7 +3,13 @@
 > 状态：**设计已确认（2026-11-16，用户逐项拍板）**。
 > 范围：A 子项目——统一 MCP 网关、能力目录、openclaw C 侧元工具、forms 纳入、notify 草稿策略。
 > 上游：`docs/architecture.md` §1.5（三通道身份模型）、`docs/superpowers/specs/2026-11-09-unified-skill-management-design.md`（能力正文单源）。
-> 后续：B（报表监控对象）、C（监控执行器/按人裁剪）、D（人启用 console）、E（playbook 收口）；本 spec 已包含 playbook 的最小落点。
+> **必须同时对读的既有正典**：
+> - 通知底座/agent 自助：`docs/superpowers/plans/2026-11-14-notification-platform-roadmap.md`（N1–N5；`notify:publish`、`create_agent_rule` 外发审批已存在）
+> - 业务调度器：`docs/superpowers/specs/2026-11-14-business-scheduler-design.md` + `2026-11-14-scheduler-p1.md`（`platform.scheduler` 是唯一周期调度者）
+> - 业务监控：`docs/superpowers/specs/2026-11-14-business-monitor-design.md`（`data.monitor`、`dry_run`、`data.monitor_tick`）
+>
+> **A 只做统一入口/能力投影，不重造 notify/monitor 的对象与政策**；notify 的 agent 自助沿用 N3，监控沿用业务监控 spec。B/C/D/E 是其后的独立子项目。
+> 后续：B（业务监控工具接入网关）、C（监控执行器/按人裁剪）、D（人启用 console）、E（playbook 收口）；本 spec 已包含 playbook 的最小落点。
 
 ## 1. 问题
 
@@ -15,6 +21,12 @@
 - **外发**：notify 规则即时生效，与表单/报表/监控的“草稿 + 人启用”不一致。
 
 **结论**：需要一套**能力核心 + 多个协议/身份适配器**：B 走 MCP 网关，C 走 native 元工具；`tools/list` 按身份投影，`tools/call` 同一授权核心执法。
+
+**与既有正典的关系**：
+
+- notify 的 agent 自助（事件/模板/规则/namespace/外发审批/配额/排班）已由通知底座 N1–N5 定义；A **不新增** `draft_rule`/`notify:publish`，只把 N3 的 agent-safe 工具面接进网关，并给 C 加一个更严的 profile。
+- 报表监控已由业务监控 spec 定义（`data.monitor`、`dry_run`、`data.monitor_tick`）；A **不定义**监控对象，只在 B 把工具接入后由网关自动发现。
+- 周期执行统一走 `platform.scheduler`；A 不新增 job/调度器。
 
 ## 2. 目标与非目标
 
@@ -46,8 +58,8 @@
 | D4 | **模块自建 agent face**（data `/mcp-read`、`/mcp-curated`；notify `/mcp`；forms `/mcp`） | 策展归模块；网关零特例；现有端点保留给直连客户端 |
 | D5 | **网关双身份适配 + 内部签名身份** | B= PAT/session；C= channel key+userid；网关解析一次，下游免二次 Casdoor |
 | D6 | **C 只走 manage audience，数据查询仍走静态工具** | 查询面成熟、有 eval；管理面用元工具；边界是结构，不靠提示词 |
-| D7 | **可写外发全部草稿 + 人 gate**：表单 `forms:publish`、报表发布、监控 `data:monitor:enable`、notify `notify:publish` | 与团队“外发/不可撤回人审”原则一致 |
-| D8 | **notify 规则拆 draft / publish**：agent 只能建/改 disabled 规则；启用需 `notify:publish` | 与表单/报表/监控同档；agent 面不暴露 enable |
+| D7 | **可写外发全部草稿 + 人 gate**：表单 `forms:publish`、报表发布、监控按业务监控 spec 的 `dry_run` 显式开启、notify 按 N3 审批 + `notify:publish` | 与团队“外发/不可撤回人审”原则一致 |
+| D8 | **notify 复用 N3，不另造政策**：C 的 manage profile 只暴露 agent-safe 工具（`create_agent_rule`/`create_agent_template`/`send_message`/排班/只读）；`propose_rule`/`update_rule`/`set_rule_enabled`/`draft_template` 不暴露给 C；C 规则落 pending/disabled，人用 `notify:publish` 审批/启用 | 与通知底座 N1–N5 正典一致；不重复造 `draft_rule`/新权限 |
 | D9 | **能力目录机械**：`agent__capabilities` 只回 faces/tools/scopes/audience；recipes 放 playbook | 避免第二事实源 |
 | D10 | **工具名 `<module>__<tool>`** | 稳定、兼容 MCP 命名、避免点分隔歧义 |
 | D11 | **网关不是授权边界**：模块 host gate + `callTool` 才是；网关过滤是 UX | 防止“隐藏即安全”的误判 |
@@ -88,6 +100,7 @@ mcpFaces:
     method: POST
     scope: data:read      # face 最低权限
     audiences: [mcp]      # mcp = PAT/session；wecom = 渠道身份
+    profile: full         # 可选；缺省 full。网关下发给模块的内部头 x-agent-profile
 ```
 
 ### 5.2 各模块 face
@@ -110,14 +123,20 @@ mcpFaces:
 
 ```yaml
 mcpFaces:
-  - { face: read,   group: notify, precedence: 1, path: /mcp,        method: POST, scope: notify:view,   audiences: [mcp] }
-  - { face: manage, group: notify, precedence: 2, path: /mcp-manage, method: POST, scope: notify:manage, audiences: [mcp, wecom] }
+  - { face: read,        group: notify, precedence: 1, path: /mcp,        method: POST, scope: notify:view,   audiences: [mcp] }
+  # B（PAT/平台管理 agent）：N3 的完整 agent 面（含 propose_rule/set_rule_enabled/draft_template）
+  - { face: manage,      group: notify, precedence: 2, path: /mcp-manage, method: POST, scope: notify:manage, audiences: [mcp],  profile: full }
+  # C（openclaw）：agent-safe 子集；外发/启用一律 pending + 人审批
+  - { face: agent-manage, group: notify, precedence: 2, path: /mcp-manage, method: POST, scope: notify:manage, audiences: [wecom], profile: c-manage }
 ```
 
 - `/mcp`：只读工具（`list_events`、`get_event`、`list_rules`、`list_templates`、`get_template`、`list_deliveries`）。
-- `/mcp-manage`：agent 安全写面 + 只读超集；**不含 `set_rule_enabled`**。
-- 新工具 `draft_rule`：建一条 **disabled** 规则；`update_rule` 只允许改 **disabled** 规则（已启用规则拒绝，提示走 console）。
-- 新增权限码 `notify:publish`（人）：`PUT /rules/:id/enabled`、模板发布走它；agent 的 `notify:manage` 不含它。
+- `profile=full`（B）：保持 N3 现有工具面，外发未预授权仍落 pending 审批。
+- `profile=c-manage`（C）：只暴露 agent-safe 工具——
+  `create_agent_rule`、`create_agent_template`、`send_message`、`check_rule`、`preview_template`、`send_test`、`list_deliveries` + 排班工具；
+  **不暴露** `propose_rule`、`update_rule`、`set_rule_enabled`、`draft_template`。
+- C 的 `create_agent_rule` 在该 profile 下**一律落 pending/disabled**（含 in-app），人用 `notify:publish` 审批/启用；这是 N3 `auto_publish_external` 之上的**更严档**，只作用于 `c-manage` profile，不改 B/其他 agent。
+- `notify:publish` **已存在**（通知底座 N3/N5）；A 不新增权限码。
 
 **forms**
 
@@ -138,7 +157,9 @@ loader 与 `scripts/check-manifests.mjs` 校验：
 - `path` 必须在 `api.internal` 中以 `POST` + **同一 scope** 声明；
 - `face` 唯一；`group` 非空；`precedence` 为正整数；
 - `audiences` ⊆ `{mcp, wecom}`；
+- `profile` ∈ `{full, c-manage}`（可扩展；缺省 `full`）；
 - 同一 `(module, group)` 内 `precedence` 不重复；
+- 同一 `(path, method, scope)` 允许多个 face **仅当 audiences 不相交且 profile 不同**（如 notify 的 B full / C c-manage）；
 - 装载期双向核对不变（路由集合 = 声明集合）。
 
 ## 6. 模块侧：face 与 scope 模型
@@ -168,13 +189,15 @@ loader 与 `scripts/check-manifests.mjs` 校验：
 - `/mcp-read` 的 `data_agent_guide` 使用只读变体（或在共享正文后追加一句「查询/预览类工具需 `data:query`」），
   避免模型按七步工作流直接调 `preview_query`/`query_metric` 被拒；`data_harness_catalog` 标出 locked 的查询工具。
 
-### 6.4 notify 的具体变化
+### 6.4 notify 的具体变化（对齐 N1–N5）
 
-- 新增 `/mcp` 只读 face；`/mcp-manage` 改为 agent 安全写面。
-- `NOTIFY_TOOLS` 增加 `mutating`/`requiredScope`/annotations；拆 read/manage 工具清单。
-- 新增 `draft_rule`（disabled）；`update_rule` 只改 disabled 规则；`set_rule_enabled` 移出 agent face。
-- 新增 `notify:publish` 权限码；`PUT /rules/:id/enabled` 从 `notify:manage` 改为 `notify:publish`；模板发布同理。
-- 现有直连 `/mcp-manage` 客户端行为变化：`propose_rule` 改为 `draft_rule`、`set_rule_enabled` 不可用；迁移见 §12。
+- 新增 `/mcp` 只读 face；`/mcp-manage` 保持现有端点，增加 **profile 感知**：
+  - 无 `x-agent-profile` 或 `full` ⇒ 现有 13 + 排班工具，行为不变；
+  - `c-manage` ⇒ agent-safe 子集（见 §5.2），`tools/list` 过滤、`tools/call` 拒绝子集外工具。
+- `NOTIFY_TOOLS` 增加 `mutating`/`requiredScope`/annotations；`tools/list` 按 profile + scope 投影。
+- **不新增** `draft_rule` / `notify:publish`：C 的 `create_agent_rule` 在 `c-manage` profile 下强制 pending/disabled，复用 N3 `notify.approval` + `notify:publish`。
+- 直连 `/mcp-manage`（不带 profile 头）保持 N3 现有行为；网关对 C 设 `x-agent-profile: c-manage`，对 B 设 `full`。
+- N3 的 in-app 自动/外发审批不变；C 的“连 in-app 也 pending”是 profile 级更严档，不影响 B/其他 agent。
 
 ### 6.5 forms 的具体变化
 
@@ -202,21 +225,22 @@ loader 与 `scripts/check-manifests.mjs` 校验：
 
 ### 7.2 face 选择与工具命名
 
-- 对每个 `(module, group)` 选调用方 `hasScope(face.scope)` 为真的**最高 precedence face**；不探测、不试错。
+- 对每个 `(module, group)` 选调用方 `hasScope(face.scope)` 为真、且 `audiences` 含当前通道的**最高 precedence face**；不探测、不试错。
+- 同一 `(path, method, scope)` 的多个 face（如 notify B/C）按 audience 区分；转发时带该 face 的 `x-agent-profile`。
 - 只暴露该 face 的工具；工具名 `<module>__<tool>`，不带 face。
 - 不同 `(module, group)` 的工具名必须全局唯一；发现期冲突 ⇒ 报错，不静默去重。
 - `tools/call` 只接受 `tools/list` 投影过的名字；未知名 ⇒ JSON-RPC `-32601`。
 
 ### 7.3 `tools/list`
 
-- 逐可见 face 调模块 `tools/list`（内部身份头），合并、命名空间化。
+- 逐可见 face 调模块 `tools/list`（内部身份头 + `x-agent-profile`），合并、命名空间化。
 - 支持 `cursor`/`nextCursor`；每页字节上限（建议 10KB）；工具数上限（建议 100）。
 - 缓存 `(org, userId, scope-hash, audience, module)` 30s；scope 变化即失效。
 - 模块 face 403/5xx ⇒ 该 face 标记 unavailable，不影响其他 face。
 
 ### 7.4 `tools/call`
 
-- 解析 `<module>__<tool>` → 查 face 映射（缓存）；校验 audience + face scope；转发模块 face 的 `tools/call`。
+- 解析 `<module>__<tool>` → 查 face 映射（缓存）；校验 audience + face scope；转发模块 face 的 `tools/call`（带 `x-agent-profile`）。
 - 缓存未命中（scope 变更/工具新增）⇒ 刷新一次 `tools/list` 再查；仍不中 ⇒ `-32601`，不盲目转发。
 - 透传 `content` / `isError` / `structuredContent` / `annotations` / `outputSchema`。
 - 超时：默认 60s；`forms__generate_form_draft` 120s（LLM）；客户端断开时取消。
@@ -234,7 +258,7 @@ loader 与 `scripts/check-manifests.mjs` 校验：
   - `faces`: `{module, face, group, audience, scope, available}`；
   - `tools`: 当前可用的 `{name, module, face, mutating, annotations, requiredScope}`；
   - `lockedFaces`: `{module, face, scope}`（不可用 face 只报 face + 所需 scope，**不报工具名**——网关没有权限替调用方枚举该 face 的工具）；
-  - `notes`: 人 gate 清单（forms:publish / report publish / monitor enable / notify:publish）。
+  - `notes`: 人 gate 清单（forms:publish / report publish / monitor dry_run 开启（B spec） / notify:publish）。
 - data 的 locked **工具**可由 `data_harness_catalog` 提供（它返回 `available`/`locked` + `faceScope`）；notify/forms 暂无 catalog 时只报 `lockedFaces`。
 - **不放 recipes**；`initialize.instructions` 指向 playbook。
 - 输出大小受 `tools/list` 分页约束；只读、无租户数据。
@@ -273,9 +297,9 @@ loader 与 `scripts/check-manifests.mjs` 校验：
 | L2 指标 | 建/删（即时生效） | — | `data:manage` |
 | L1 指标 | 提案 draft PR | 人 merge PR | `data:manage` |
 | 报表 | 提/改未发布 | 发布/回收 | `data:manage` / console |
-| 报表监控 | 提/改/停用（B 子项目） | 启用 | `data:monitor:enable`（人） |
-| 通知规则 | 建/改 **disabled** | 启用 | `notify:publish`（人） |
-| 通知模板 | 写草稿 | 发布 | `notify:publish`（人） |
+| 报表监控 | 提/改/停用；默认 `dry_run=true`（B 子项目，按业务监控 spec） | 显式开启投递（人） | 业务监控 spec 的开启动作 |
+| 通知规则 | C：`create_agent_rule` 落 pending/disabled；B：N3 的 in-app 自动 / 外发审批 | 审批/启用 | `notify:publish`（人） |
+| 通知模板 | 写草稿（C 用 `create_agent_template`，publish=false） | 发布 | `notify:publish`（人） |
 | 表单 | 起草 | 发布/回滚/退役 | `forms:publish`（人） |
 
 - agent 面不暴露 publish/enable 类工具。
@@ -291,9 +315,9 @@ loader 与 `scripts/check-manifests.mjs` 校验：
   1. L2 指标：`data__list_metrics` → `data__customize_metric` → `data__describe_metric`。
   2. L1 指标：`data__propose_metric_declaration` → `data__apply_pipeline_proposal`（人 merge）。
   3. 报表：`data__list_reports` → `data__propose_report`（人发布）。
-  4. 通知：`notify__list_events` → `notify__draft_rule` → `notify__check_rule`（人启用）。
+  4. 通知：`notify__list_events` → `notify__create_agent_rule` → `notify__check_rule`（C 落 pending；人 `notify:publish` 审批/启用）。
   5. 表单：`forms__list_forms` → `forms__generate_form_draft`（人发布）。
-  6. 监控（B）：`data__propose_report_monitor` → 人启用。
+  6. 监控（B）：按 `2026-11-14-business-monitor-design.md` 新增工具后由 `mcpFaces` 自动发现；默认 `dry_run=true`，人显式开启投递。A 不定义监控工具名。
 
 ## 11. 错误处理
 
@@ -312,7 +336,7 @@ loader 与 `scripts/check-manifests.mjs` 校验：
 
 1. **新增 face 是加法**：`/mcp-read`、`/mcp-curated`、notify `/mcp`、forms `/mcp`；现有 `/mcp`、`/mcp-manage` 继续存在。
 2. **data**：`contract.json`/`ToolMeta` 增加 `faceScope`；read/query 工具 `requiredScope` 置 null；`data_harness_catalog` 输出两者；`callTool` 加检查。现有 `data:query` 用户不回归（读工具 null）。
-3. **notify**：`propose_rule` → `draft_rule`（disabled）；`set_rule_enabled` 移出 MCP；`notify:publish` 新人权限码。直连客户端迁移到 console/HTTP 启用；发布前通知相关方。
+3. **notify**：直连 `/mcp-manage` 不带 profile 头 ⇒ 行为不变（N3 现有面）；网关对 C 设 `c-manage` profile（agent-safe 子集 + 规则落 pending），对 B 设 `full`。**无新权限码、无 `draft_rule`**；`notify:publish` 已存在，沿用 N3 审批。
 4. **forms**：新增读 face、`FORMS_TOOLS`、审计表；`generate_form_draft` 行为不变（draft-only）。
 5. **openclaw**：加两个元工具；静态工具不动；部署更新 `AGENT_API_BASE` 与 `tools.allow`。
 6. **网关**：新路由；`AGENT_MCP_ENABLED` 可关闭；直接模块端点不受影响。
@@ -322,7 +346,7 @@ loader 与 `scripts/check-manifests.mjs` 校验：
 ### 13.1 模块
 
 - data：`/mcp-read` 只回读工具；`/mcp-curated` 13+query_detail、无 legacy；`data:query` 用户读/查都可用；`data:read` 用户查询工具不可见/`missing_scope`；`callTool` 工具级 scope。
-- notify：`/mcp` read face（notify:view）；`/mcp-manage` 无 `set_rule_enabled`；`draft_rule` 建 disabled；`update_rule` 拒已启用；`notify:publish` 才能 enable。
+- notify：`/mcp` read face（notify:view）；`/mcp-manage` 无 profile 头时行为不变（N3 full）；`c-manage` profile 只回 agent-safe 子集；`create_agent_rule` 在 `c-manage` 下落 pending；`propose_rule`/`set_rule_enabled` 不出现；`notify:publish` 审批/启用。
 - forms：`/mcp` 只 `list_forms`；`/mcp-manage` 两工具；`generate_form_draft` 落 draft；无 publish；`forms.mcp_audit` 每次调用一行。
 - `check-mcp-toolface` 覆盖 data/notify/forms；`check-manifests` 覆盖 `mcpFaces`。
 
@@ -346,7 +370,7 @@ loader 与 `scripts/check-manifests.mjs` 校验：
 ### 13.4 端到端
 
 - PAT `data:read`：只读面；`data:query`：读+查；`data:manage`：manage。
-- PAT `notify:view`：读；`notify:manage`：draft 规则；无 `notify:publish` 不能启用。
+- PAT `notify:view`：读；`notify:manage`（B profile=full）：按 N3 建规则（in-app 自动 / 外发 pending）；C profile=c-manage：规则一律 pending；无 `notify:publish` 不能审批/启用。
 - 企微用户 `forms:manage`：`platform_capabilities` 含 forms；`platform_call` 建 draft；不能发布。
 - 跨模块 recipe：建 L2 → 提报表 → 建 notify draft → 建 form draft，全部按权限与 gate。
 
@@ -355,11 +379,11 @@ loader 与 `scripts/check-manifests.mjs` 校验：
 | # | 风险/问题 | 处置 |
 |---|---|---|
 | R1 | 内部签名身份需要所有模块中间件改造 | 先做 host 共享中间件；模块无需逐个改；loader 注入 |
-| R2 | notify 直连客户端迁移（draft_rule/set_rule_enabled） | 版本说明 + 迁移窗口；旧工具保留别名一个周期 |
+| R2 | notify 直连客户端行为变化 | 无 profile 头 ⇒ full/N3 原行为；只有网关对 C 设 `c-manage`，不影响直连客户端 |
 | R3 | C 的 manage audience 只覆盖 manage；C 用户想用网关查数 | 明确不支持；查数走静态工具 |
 | R4 | `data:read`/`data:query` 的权限发放 | 现有用户不改；read 面新增；查询面读工具 null 不回归 |
 | R5 | forms `generate_form_draft` LLM 慢/失败 | 网关 120s；错误透传；SKILL 不重试 |
-| R6 | notify `notify:publish` 新码的授权 | 装载器按 org 扇出；租户管理员在 console 授予人 |
+| R6 | notify `notify:publish` 的授权 | **已存在**（N3/N5；N0.9 已给两套生产的租户管理员授过）；A 不新增码，只确认 C 用户不持有它 |
 | R7 | 网关缓存与 scope 变更 | 缓存 key 含 scope-hash；TTL 30s |
 | R8 | 工具面过大 | 分页 + 字节上限 + curated 面；不做 tool search |
 
