@@ -96,6 +96,32 @@ export async function assetExists(pool: Pool, org: string, assetId: string): Pro
   return rows.length > 0
 }
 
+// ── MCP 审计（2026-11-16 能力网关 spec §6.5） ──
+
+export type McpAuditOutcome = 'ok' | 'denied' | 'error'
+
+/**
+ * 每次 MCP tools/call 落一行（org/userId 由调用方从 identity 传入）。
+ * ⚠️ 调用方负责「审计失败不改变业务结果」：本函数**原样上抛**，由 callTool 的
+ * try/catch 吞掉并告警（与 storage 的「错误原样上抛」纪律一致，不在本层静默）。
+ */
+export async function writeMcpAudit(
+  pool: Pool,
+  org: string,
+  userId: string,
+  tool: string,
+  outcome: McpAuditOutcome,
+  reason: string | null,
+  assetId?: string | null,
+  version?: number | null,
+): Promise<void> {
+  await pool.query(
+    `insert into forms.mcp_audit (org, user_id, tool, outcome, reason, asset_id, version)
+     values ($1, $2, $3, $4, $5, $6, $7)`,
+    [org, userId, tool, outcome, reason, assetId ?? null, version ?? null],
+  )
+}
+
 export interface VersionRow {
   version: number
   status: string

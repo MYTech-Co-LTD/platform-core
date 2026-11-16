@@ -23,6 +23,8 @@ api:
     - { method: POST,   path: /defs,                                scope: forms:manage }
     # AI 起草（#724）：自然语言 → 契约草案 → 落 draft（永不自动发布）。scope 与起草同档
     - { method: POST,   path: /generate,                            scope: forms:manage }
+    # 读面 MCP 端点（2026-11-16 能力网关）：只暴露 list_forms（摘要，**不回 draft body**）
+    - { method: POST,   path: /mcp,                                 scope: forms:view }
     # 管理面 MCP 端点（#724）：工具 list_forms / generate_form_draft；**不含任何发布类工具**
     - { method: POST,   path: /mcp-manage,                          scope: forms:manage }
     - { method: PUT,    path: /defs/:assetId/versions/:v,           scope: forms:manage }
@@ -48,6 +50,12 @@ api:
     - { method: GET,    path: /global-dicts/:dictId/resolve,        scope: forms:view }
     - { method: POST,   path: /global-dicts,                        scope: forms:global-manage }
     - { method: PUT,    path: /global-dicts/:dictId/keys/:key,      scope: forms:global-manage }
+# agent MCP face 声明（2026-11-16 能力网关 spec §5.2）：
+# path/method/scope 必须与上方 api.internal 逐条一致（loader 与 check-manifests 双向核对）。
+# 发布/回滚/退役（forms:publish）**不在任何 MCP face**——那是人在控制台的唯一 gate。
+mcpFaces:
+  - { face: read,   group: forms, precedence: 1, path: /mcp,        method: POST, scope: forms:view,   audiences: [mcp] }
+  - { face: manage, group: forms, precedence: 2, path: /mcp-manage, method: POST, scope: forms:manage, audiences: [mcp, wecom] }
 frontend:
   console:
     # 一个条目 + 页内三页签（表单/填报/提交记录，照 aftersales 姿势）；scope=forms:view
