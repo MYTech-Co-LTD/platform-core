@@ -90,6 +90,28 @@ describe('buildPipelineFlow', () => {
     expect(f.steps[0]!.count).toBeUndefined()
   })
 
+  it('参数摘要不外露占位符（${ENV:…} / ${VAR} 都落成 …）', () => {
+    const f = buildPipelineFlow('p', {
+      nodes: [{ id: 'sink', data: { componentId: 'snk.minio', label: '落湖', properties: {
+        key: 'lemeng/wholesale_out/system_book=${ENV:SYSTEM_BOOK}/bizday=${BIZDAY}/',
+      } } }],
+      edges: [],
+    })
+    const detail = f.steps[0]!.detail ?? ''
+    expect(detail).toContain('…')
+    expect(detail).not.toContain('${')
+    expect(detail).not.toContain('SYSTEM_BOOK')
+  })
+
+  it('裸节点 id（w0 / g3）不当 label 展示', () => {
+    const f = buildPipelineFlow('p', {
+      nodes: [{ id: 'w0', data: { componentId: 'code.sql' } }, { id: 'x', data: { componentId: 'qa.contract', label: '列集校验' } }],
+      edges: [],
+    })
+    expect(f.steps[0]!.label).toBe('')
+    expect(f.steps[1]!.label).toBe('列集校验')
+  })
+
   it('拓扑序容忍环：剩下的按定义顺序补在后面', () => {
     const f = buildPipelineFlow('p', {
       nodes: [{ id: 'a', data: { componentId: 'code.sql' } }, { id: 'b', data: { componentId: 'qa.contract' } }],

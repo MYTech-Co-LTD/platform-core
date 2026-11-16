@@ -77,6 +77,11 @@ const str = (v: unknown): string => (typeof v === 'string' ? v : '')
 const obj = (v: unknown): Record<string, unknown> =>
   (typeof v === 'object' && v !== null && !Array.isArray(v) ? v as Record<string, unknown> : {})
 
+/** 占位符不外露：`${ENV:FORMS_API_BASE}` / `${BIZDAY}` 一律落成 `…`（环境值/运行期变量都不是读者要看的）。 */
+function plainPlaceholders(text: string): string {
+  return text.replace(/\$\{ENV:[^}]+\}/g, '…').replace(/\$\{[^}]+\}/g, '…')
+}
+
 /** `${ENV:FORMS_API_BASE}/api/x` → `…/api/x`：只留路径，不暴露环境变量值。 */
 function readableUrl(raw: string): string {
   if (raw === '') return ''
@@ -119,7 +124,7 @@ function detailOf(component: string, props: Record<string, unknown>): string | u
     const sql = str(props.sql)
     if (sql !== '') parts.push(`${sql.split('\n').length} 行 SQL`)
   }
-  return parts.length === 0 ? undefined : parts.join(' · ')
+  return parts.length === 0 ? undefined : plainPlaceholders(parts.join(' · '))
 }
 
 /** 拓扑排序（Kahn）；有环就按定义顺序把剩下的补在后面（不在展示层报错）。 */
@@ -176,7 +181,11 @@ export function buildPipelineFlow(
       step: i + 1,
       component,
       kind: KIND[component] ?? component,
-      label: str(data.label) || component,
+      // 有的定义没写 label，只有裸节点 id（w0 / g3 / p1）——那不是给人读的，宁可不显示
+      label: (() => {
+        const raw = str(data.label)
+        return /^[a-z]\d+$/i.test(raw) ? '' : raw
+      })(),
       ...(detail === undefined ? {} : { detail }),
       ...(stat === undefined ? {} : { stat }),
     }
