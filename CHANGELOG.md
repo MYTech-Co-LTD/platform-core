@@ -11,6 +11,10 @@
 
 ## [Unreleased]
 
+## [0.310.2](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.310.1...v0.310.2) - 2026-11-16
+- 【修复】data: pre_hook 用列表形状，避免 dbt 解析崩（#2395） ([#2396](https://github.com/MYTech-Co-LTD/platform-core/pull/2396), [d30e7df](https://github.com/MYTech-Co-LTD/platform-core/commit/d30e7df90b20fe61820cdcdd90175caa2ac2adae))
+
+
 ## [0.310.1](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.310.0...v0.310.1) - 2026-11-16
 - 【修复】data: config() 内改用 Jinja 注释，修复 dbt 编译失败（#2387） ([#2388](https://github.com/MYTech-Co-LTD/platform-core/pull/2388), [7e52e2e](https://github.com/MYTech-Co-LTD/platform-core/commit/7e52e2eb81cb1537b17a193722648233681049f7))
 
