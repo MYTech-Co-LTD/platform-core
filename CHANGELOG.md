@@ -11,6 +11,10 @@
 
 ## [Unreleased]
 
+## [0.313.3](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.313.2...v0.313.3) - 2026-11-16
+- 【修复】data: 热腿 glob 不套审计窗口，保住 1970 哨兵（空 glob 规划期报错）(#2415) ([#2416](https://github.com/MYTech-Co-LTD/platform-core/pull/2416), [856b03d](https://github.com/MYTech-Co-LTD/platform-core/commit/856b03dd45f68d55ecf6ed8006b541d7986835b3))
+
+
 ## [0.313.2](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.313.1...v0.313.2) - 2026-11-16
 - 【修复】data: 采集流程不展示裸节点 id、参数摘要不外露占位符 (#2413) ([#2414](https://github.com/MYTech-Co-LTD/platform-core/pull/2414), [ca132f1](https://github.com/MYTech-Co-LTD/platform-core/commit/ca132f1d17a27f6f17080e51082055adc99cba90))
 
