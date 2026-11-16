@@ -345,3 +345,183 @@ export function resolveToolUserId(ctx, lastBySession, cap = 500) {
   }
   return { userId, sessionKey };
 }
+
+// ── 平台能力网关（agent MCP，2026-11-16 能力网关 spec §8；#2360）────────────────
+// native 元工具 platform_capabilities / platform_call 的纯逻辑：JSON-RPC 传输、
+// MCP 结果 → openclaw 工具结果映射、能力目录紧凑化。身份**只**由 ctx（requesterSenderId）
+// + 容器 env（DATA_WECOM_CHANNEL_KEY）决定——模型参数里没有也不接受 userId。
+
+/** 平台能力网关基址：openclaw 服务 env `AGENT_API_BASE`（独立容器，不在根 .env.example）。 */
+export const DEFAULT_AGENT_API_BASE = "http://server:13000/api/agent";
+
+/** 本地 fail-closed 错误码 → 可操作中文文案（裸码模型读不懂，也不知道下一步做什么）。 */
+const GATEWAY_ERROR_TEXT = {
+  CHANNEL_KEY_MISSING: "渠道凭证未配置（openclaw 容器缺 DATA_WECOM_CHANNEL_KEY env），请联系管理员。",
+  USERID_MISSING: "无法识别请求者身份（requesterSenderId 缺失）。出于权限安全不予调用，请重新发一条消息；仍失败请联系管理员。",
+  GATEWAY_UNREACHABLE: "平台能力网关不可达，请稍后再试；持续失败请联系管理员。",
+  GATEWAY_BAD_RESPONSE: "平台能力网关回包无法解析，请联系管理员。",
+};
+
+/**
+ * 向网关发一条 JSON-RPC（POST {apiBase}/mcp）。
+ * 返回**解析后的 JSON-RPC 回包**（`{result}` 或 `{error}`），交给 toGatewayToolResult 映射；
+ * 本地前置失败返回 `{error: "<CODE>"}`（字符串码），网络/解析失败也不抛（工具主路径不许炸）。
+ * 缺 key/userid 时**不发请求**（fail-closed，与此前 callPlatform 同口径）。
+ */
+export async function callGateway(opts) {
+  const {
+    apiBase = DEFAULT_AGENT_API_BASE, channelKey, userId, sessionId,
+    method, params, fetchImpl = fetch,
+  } = opts;
+  if (!channelKey) return { error: "CHANNEL_KEY_MISSING" };
+  if (!userId) return { error: "USERID_MISSING" };
+  let res;
+  try {
+    res = await fetchImpl(`${apiBase}/mcp`, {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        "x-channel-key": channelKey,
+        "x-wecom-userid": userId,
+        ...(sessionId ? { "x-session-id": String(sessionId) } : {}),
+      },
+      body: JSON.stringify({ jsonrpc: "2.0", id: `oc-${Date.now()}`, method, params }),
+    });
+  } catch (e) {
+    return { error: "GATEWAY_UNREACHABLE", detail: (e && e.message) || String(e) };
+  }
+  try {
+    return await res.json();
+  } catch {
+    return { error: "GATEWAY_BAD_RESPONSE", status: res.status };
+  }
+}
+
+/** MCP 工具结果 → openclaw 工具结果契约（content[] 必带；details 不可靠，用 content 兜底）。 */
+export function toGatewayToolResult(rpc) {
+  const r = rpc?.result;
+  if (!r) {
+    const err = rpc?.error;
+    const text = typeof err === "string"
+      ? (GATEWAY_ERROR_TEXT[err] ?? JSON.stringify({ status: "error", reason: err }))
+      : JSON.stringify(err ?? { status: "error" });
+    return { content: [{ type: "text", text }], isError: true };
+  }
+  const content = Array.isArray(r.content) && r.content.length > 0
+    ? r.content
+    : [{ type: "text", text: JSON.stringify(r) }];
+  return {
+    content,
+    isError: r.isError === true,
+    ...(r.structuredContent ? { structuredContent: r.structuredContent } : {}),
+  };
+}
+
+/**
+ * 解出 `agent__capabilities` 的业务载荷（网关把目录 JSON 放在 content[0].text 里）。
+ * 形状不合法（非 JSON / 无 tools 数组）⇒ null——调用方如实报「回包无法解析」，不猜。
+ */
+export function parseCapabilities(rpc) {
+  const content = rpc?.result?.content;
+  if (!Array.isArray(content)) return null;
+  const item = content.find((c) => c && c.type === "text" && typeof c.text === "string");
+  if (!item) return null;
+  let v;
+  try {
+    v = JSON.parse(item.text);
+  } catch {
+    return null;
+  }
+  if (!v || typeof v !== "object" || !Array.isArray(v.tools)) return null;
+  return v;
+}
+
+/** 一句话描述：取首行、压掉首尾空白；过长截断（索引是给模型看的，不是文档）。 */
+const INDEX_DESC_MAX = 160;
+function oneLineDescription(desc) {
+  const s = typeof desc === "string" ? desc.split("\n")[0].trim() : "";
+  return s.length > INDEX_DESC_MAX ? s.slice(0, INDEX_DESC_MAX - 1) + "…" : s;
+}
+
+/** mutating：优先工具自报字段；模块 tools/list 未暴露时由 annotations.readOnlyHint 反推；都没有则省略。 */
+function mutatingOf(t) {
+  if (typeof t.mutating === "boolean") return t.mutating;
+  const readOnly = t.annotations && t.annotations.readOnlyHint;
+  return typeof readOnly === "boolean" ? !readOnly : undefined;
+}
+
+const META_TOOL = "agent__capabilities";
+
+/**
+ * 能力目录 → 紧凑索引（spec §8）：
+ *   · 默认：tools[{name, description, mutating?}] + faces（module/face/scope/available）+
+ *     lockedFaces + notes（人 gate 清单）——**不带** inputSchema，避免一轮塞进全部参数面；
+ *   · `q`：按名/描述关键词过滤（大小写不敏感）；
+ *   · `tool`：返回该工具完整 entry（含 inputSchema），供 platform_call 组装参数。
+ * 元工具自身（agent__capabilities）不进列表——它不是 platform_call 的业务对象。
+ * `gate` 语义由网关 notes 承载（人 gate 清单），插件不另造第二事实源。
+ */
+export function compactCapabilities(payload, { q, tool } = {}) {
+  if (!payload || !Array.isArray(payload.tools)) return { error: "CAPABILITIES_UNAVAILABLE" };
+  const tools = payload.tools.filter((t) => t && typeof t.name === "string" && t.name !== META_TOOL);
+  const lockedFaces = Array.isArray(payload.lockedFaces) ? payload.lockedFaces : [];
+  const notes = Array.isArray(payload.notes) ? payload.notes : [];
+
+  if (typeof tool === "string" && tool.trim()) {
+    const want = tool.trim();
+    const hit = tools.find((t) => t.name === want);
+    if (!hit) {
+      return { error: "TOOL_NOT_FOUND", tool: want, available: tools.map((t) => t.name) };
+    }
+    return { tool: hit, lockedFaces, notes };
+  }
+
+  const keyword = typeof q === "string" ? q.trim().toLowerCase() : "";
+  const visible = keyword
+    ? tools.filter((t) => {
+      const name = t.name.toLowerCase();
+      const desc = typeof t.description === "string" ? t.description.toLowerCase() : "";
+      return name.includes(keyword) || desc.includes(keyword);
+    })
+    : tools;
+
+  const index = visible.map((t) => {
+    const entry = { name: t.name, description: oneLineDescription(t.description) };
+    const mutating = mutatingOf(t);
+    if (mutating !== undefined) entry.mutating = mutating;
+    return entry;
+  });
+  const faces = (Array.isArray(payload.faces) ? payload.faces : [])
+    .filter((f) => f && typeof f.module === "string" && typeof f.face === "string")
+    .map((f) => ({
+      module: f.module, face: f.face, scope: f.scope, available: f.available === true,
+    }));
+
+  return {
+    tools: index,
+    faces,
+    lockedFaces,
+    notes,
+    hint: "tool=<name> 可查看该工具的完整参数 schema；写操作只产草稿，发布/启用必须人做。",
+  };
+}
+
+/** 身份键：模型参数里一律剥掉（身份只来自 ctx + env，防止伪造/误传）。 */
+const IDENTITY_ARGS = new Set(["userId", "requesterSenderId"]);
+
+/**
+ * `platform_call` 参数归一：`{tool, args}`。
+ * **不接受 userId**（spec §8）：args 里出现的身份键直接剥掉——工具若真需要「目标用户」，
+ * 应显式命名为业务参数（如 recipient），而不是复用身份键。
+ */
+export function buildPlatformCall(raw) {
+  const p = normalizeParams(raw);
+  const tool = typeof p.tool === "string" ? p.tool.trim() : "";
+  if (!tool) return { error: "TOOL_REQUIRED" };
+  const source = p.args && typeof p.args === "object" && !Array.isArray(p.args) ? p.args : {};
+  const args = {};
+  for (const [k, v] of Object.entries(source)) {
+    if (!IDENTITY_ARGS.has(k)) args[k] = v;
+  }
+  return { tool, args };
+}
