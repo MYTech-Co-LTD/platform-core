@@ -373,3 +373,40 @@ describe('颜色语义（L4，数据驱动）', () => {
     if (out.ok) expect(out.spec.panels[0]).toMatchObject({ chart: 'bar', target: 1000, colorSemantics: 'target' })
   })
 })
+
+describe('AI 叙事通用小节（general）', () => {
+  const parse = (panel: unknown) => parseReportSpec({ panels: [panel] })
+  const base = {
+    chart: 'ai_text', title: '分析', focus: 'general',
+    sections: ['summary', 'actions'],
+  }
+
+  it('general + 白名单小节 ⇒ 合法并原样保留', () => {
+    const out = parse(base)
+    expect(out.ok).toBe(true)
+    if (out.ok) expect(out.spec.panels[0]).toMatchObject({ focus: 'general', sections: ['summary', 'actions'] })
+  })
+
+  it('小节只属于 general：其它 focus 带 sections ⇒ 拒', () => {
+    expect(parse({ ...base, focus: 'overview' })).toEqual({ ok: false, code: 'INVALID_SPEC' })
+  })
+
+  it('未知小节 / 重复小节 ⇒ 拒', () => {
+    expect(parse({ ...base, sections: ['summary', 'nope'] })).toEqual({ ok: false, code: 'INVALID_SPEC' })
+    expect(parse({ ...base, sections: ['summary', 'summary'] })).toEqual({ ok: false, code: 'INVALID_SPEC' })
+  })
+
+  it('general 可以不带 sections（服务端补默认三节）', () => {
+    expect(parse({ chart: 'ai_text', focus: 'general', title: '分析' }).ok).toBe(true)
+  })
+
+  it('v2 ai_text 块：sections 归一', () => {
+    const out = parseReportInput({
+      ir: 2,
+      datasets: [{ key: 'd', metricId: 'm:sales', dims: ['bizday'] }],
+      blocks: [{ type: 'ai_text', focus: 'general', sections: ['summary', 'drivers'], title: '分析' }],
+    })
+    expect(out.ok).toBe(true)
+    if (out.ok) expect(out.spec.panels[0]).toMatchObject({ focus: 'general', sections: ['summary', 'drivers'] })
+  })
+})
