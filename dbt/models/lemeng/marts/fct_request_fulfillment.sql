@@ -1,16 +1,22 @@
 {# 源撤回行（#2378）：delete+insert 只清「本批出现的键」，源里消失的键会被永远留下。
-   增量时先清空整个回看窗口，再整窗重建（与模型 WHERE 的 incremental_cutoff(7) 同源）；
-   dbt-postgres 的 pre_hook 与模型 DML 同一事务 ⇒ 失败整体回滚。#}
-{% set cutoff = incremental_cutoff(7) %}
-{% set rebuild_hook = 'delete from ' ~ this ~ ' where bizday >= ' ~ cutoff %}
-{% set hook = [rebuild_hook] if is_incremental() else [] %}
+   ⚠️ 不能用 `is_incremental()` 在 config 里做条件：解析期它恒为 false，钩子会被整段丢弃
+   （2026-11-16 实测）。故用**无条件钩子**：DO 块判表存在（首建安全），窗口由运行期 SQL
+   从表自身 max(bizday)−7 天算出，与模型 WHERE 的 incremental_cutoff(7) 同口径。 #}
+{% set rebuild_hook %}
+do $$ begin
+  if to_regclass('{{ this }}') is not null then
+    delete from {{ this }}
+     where bizday >= (select coalesce(max(bizday), date '1900-01-01') - interval '7 days' from {{ this }});
+  end if;
+end $$;
+{% endset %}
 {{
     config(
         materialized='incremental',
         unique_key=['system_book', 'bizday', 'branch_num', 'item_num'],
         incremental_strategy='delete+insert',
         on_schema_change='sync_all_columns',
-        pre_hook=hook
+        pre_hook=[rebuild_hook]
     )
 }}
 -- fct_request_fulfillment.sql — 要货满足率构件（W3 余项 2026-10-15，#677）。
