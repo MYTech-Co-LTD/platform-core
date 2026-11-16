@@ -264,10 +264,11 @@ export async function buildApp(overrides: BuildAppOverrides = {}): Promise<{
     boundExternalIds: (org, casdoorName) => listActiveExternalIds(pool, org, casdoorName),
   }))
 
-  // ⑥.5 数据问数两通道的鉴权（**必须在 sessionMiddleware 之后、runtime.mount 之前**）：
+  // ⑥.5 PAT / 企微 / 内部身份三通道的鉴权（**必须在 sessionMiddleware 之后、runtime.mount 之前**）：
+  //   · 内部身份：/api/agent/mcp 网关解析一次后签发的 x-internal-identity（HMAC）
   //   · PAT（通道 B）：Bearer dkq_… → 用户 → 实时 scopes
   //   · 企微（通道 C）：渠道凭证 + X-Wecom-Userid → Casdoor 反查
-  // 两条都只作用于 /api/modules/*（模块路由），且都遵守 first-setter-wins：
+  // 三条都只作用于 /api/modules/*（模块路由），且都遵守 first-setter-wins：
   // session 已注入 identity 时它们直接放行——**系统内通道不经这里**。
   // Hono 的中间件只影响**其后注册**的路由，故位置不能挪到 runtime.mount 之后。
   //
@@ -275,8 +276,7 @@ export async function buildApp(overrides: BuildAppOverrides = {}): Promise<{
   // 上移到 `platform.api_key`。上移前这里经 `runtime.port('data','resolvePatKey')` 取（宿主绕 B1
   // 去模块 schema 取凭据）——**那条间接层已退役**，宿主直接查自己的表，通道 B 不再有
   // 「模块缺席 / 未声明端口 ⇒ 503」这条分支（表是宿主自己的，不存在装配缺失）。
-  // 内部签名身份：/api/agent/mcp 网关解析一次后转发，下游模块免二次 Casdoor。
-  // 必须在 PAT / 企微之前——first-setter-wins，验签通过后两条通道中间件直接放行。
+  // 内部身份必须排在最前——验签通过后 PAT / 企微两条中间件因 first-setter-wins 直接放行。
   app.use('/api/modules/*', internalIdentityMiddleware())
   app.use('/api/modules/*', patIdentityMiddleware({
     resolveKey: resolveKeyWithTouch(pool),

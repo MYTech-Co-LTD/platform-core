@@ -1271,6 +1271,7 @@ git commit -m "docs(openclaw): 平台能力元工具 SKILL 与部署说明 (#$IS
 - 人 gate 表（与 spec §9 同表）。
 - `missing_scope`/step-up、不重试、查重。
 - 示例 JSON-RPC 调用（initialize/tools/list/tools/call）。
+- 内部身份信任边界：`x-internal-identity` 是**进程内** HMAC（密钥 `randomBytes`，不落 env）；网关与模块必须**同进程/同副本**，拆进程或跨副本会验签失败（fail-closed，但功能中断）。进程内任何代码均可签发任意身份，勿把该密钥/签发能力暴露给不可信代码。
 
 - [ ] **Step 2: architecture/module-protocol 指针**
 

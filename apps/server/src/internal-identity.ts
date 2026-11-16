@@ -6,8 +6,13 @@
 //
 // 安全边界：
 //   · 密钥**进程内**生成（randomBytes，不落 env、不跨进程）——网关与模块同进程部署时才有意义。
+//   · ⚠️ 信任边界：**进程内任何代码都能签发任意身份**（密钥是本模块私有变量，但对同进程代码
+//     不设防）。网关与模块必须**同进程/同副本**；一旦拆进程或跨副本，签发/验签各持一份密钥，
+//     验签必然失败（fail-closed 是安全的，但功能中断）。
 //   · 外部请求伪造同名头验不过 ⇒ 本中间件**不设 identity**，放行下游门卫（fail-closed 在那）。
 //   · first-setter-wins：会话/其他通道已注入 identity 时不覆盖。
+//   · 验签后仍要与当前租户绑定（`p.org === tenant.casdoor_org`），与 PAT/企微通道同口径。
+//   · 网关签发时必须透传 `boundExternalIds` 等可选字段，否则未来依赖它的 face 会静默 undefined。
 import { createHmac, randomBytes, timingSafeEqual } from 'node:crypto'
 import { REQUESTER_CHANNEL, REQUESTER_KEY_ID } from '@platform/sdk'
 import type { Identity } from '@platform/sdk'
@@ -28,6 +33,7 @@ export interface InternalIdentityPayload {
   scopes: string[]
   roles?: string[]
   sessionId?: string
+  boundExternalIds?: string[]
   exp: number
 }
 
@@ -54,7 +60,12 @@ export function verifyInternalIdentity(header: string | undefined, now = Date.no
   if (macBuf.length !== expectedBuf.length || !timingSafeEqual(macBuf, expectedBuf)) return null
   try {
     const p = JSON.parse(Buffer.from(payload, 'base64url').toString('utf8')) as InternalIdentityPayload
-    return Number.isFinite(p.exp) && p.exp > now ? p : null
+    if (!p || typeof p !== 'object') return null
+    if (!Number.isFinite(p.exp) || p.exp <= now) return null
+    // 签名只能证明「不是外部伪造」，不能证明形状合法：signed-but-malformed 的 scopes 会让
+    // `hasScope` 在模块侧抛 500。主体三元组与 scopes 数组必须齐备。
+    if (!Array.isArray(p.scopes) || !p.userId || !p.org) return null
+    return p
   } catch {
     return null
   }
@@ -68,6 +79,7 @@ export function identityFromInternal(p: InternalIdentityPayload): Identity {
     ...(p.roles ? { roles: p.roles } : {}),
     ...(p.accountName ? { accountName: p.accountName } : {}),
     ...(p.sessionId ? { sessionId: p.sessionId } : {}),
+    ...(p.boundExternalIds ? { boundExternalIds: p.boundExternalIds } : {}),
   }
 }
 
@@ -77,11 +89,17 @@ export function internalIdentityMiddleware() {
     if (c.get('identity')) return next()
     const p = verifyInternalIdentity(c.req.header(INTERNAL_IDENTITY_HEADER))
     if (p) {
+      // 与 PAT/企微同口径的租户封印：签名有效 ≠ 可跨租户使用。不匹配 ⇒ 不设 identity，
+      // 交给下游门卫 fail-closed（不在这里回错误码，保持与另外两条通道一致的降级形状）。
+      const tenant = c.get('tenant')
+      if (!tenant || p.org !== tenant.casdoor_org) return next()
+
       c.set('identity', identityFromInternal(p))
       // 'session' 是 REQUESTER_* 的缺省语义（requester-vars.ts：未设置 = 系统内会话通道），
       // 且 RequesterVars 的通道联合只含 'pat' | 'wecom'——故会话通道不显式写变量。
       if (p.channel !== 'session') c.set(REQUESTER_CHANNEL, p.channel)
-      if (p.keyId != null) c.set(REQUESTER_KEY_ID, p.keyId)
+      // keyId 是 PAT 密钥的桶键；其他通道即使带了也不写（避免审计把 WeCom 记成 keyed 主体）。
+      if (p.channel === 'pat' && p.keyId != null) c.set(REQUESTER_KEY_ID, p.keyId)
     }
     await next()
   })

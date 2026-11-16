@@ -1,5 +1,5 @@
 // internal-identity.test.ts — 网关→模块内部签名身份的契约（签发/验签/中间件）。
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it, vi } from 'vitest'
 import { Hono } from 'hono'
 import { REQUESTER_CHANNEL, REQUESTER_KEY_ID } from '@platform/sdk'
 import type { Identity } from '@platform/sdk'
@@ -11,6 +11,19 @@ import {
   verifyInternalIdentity,
 } from './internal-identity'
 import type { RequesterEnv } from './pat-auth'
+import type { TenantRow } from './tenant'
+
+/** 中间件租户封印测试用的最小 tenant 行。 */
+const baseTenant: TenantRow = {
+  id: 9003, slug: 'acme', casdoor_org: 'acme', product_name: 'P', logo: null,
+  primary_color: '#1677ff', background: '', login_methods: ['password'],
+  wecom_corp_id: null, wecom_agent_id: null, wecom_secret: null, wecom_provider: null,
+  wecom_auto_signup: false,
+  wechat_oa_app_id: null, wechat_oa_secret: null,
+  storage_endpoint: null, storage_region: null, storage_bucket: null,
+  storage_access_key: null, storage_secret: null,
+  created_at: new Date(),
+}
 
 const PAYLOAD = {
   org: 'acme',
@@ -70,6 +83,25 @@ describe('internal identity', () => {
     expect(verifyInternalIdentity(h)).toMatchObject({ userId: 'u1' })
   })
 
+  it('signed-but-malformed payload（缺 scopes / 空 userId / 空 org）⇒ null', () => {
+    const noScopes = issueInternalIdentity(
+      { ...PAYLOAD, scopes: undefined } as unknown as Parameters<typeof issueInternalIdentity>[0],
+    )
+    expect(verifyInternalIdentity(noScopes)).toBeNull()
+    expect(verifyInternalIdentity(issueInternalIdentity({ ...PAYLOAD, userId: '' }))).toBeNull()
+    expect(verifyInternalIdentity(issueInternalIdentity({ ...PAYLOAD, org: '' }))).toBeNull()
+  })
+
+  it('两个模块实例密钥不共享：A 签发 ⇒ B 验证为 null', async () => {
+    vi.resetModules()
+    const a = await import('./internal-identity')
+    vi.resetModules()
+    const b = await import('./internal-identity')
+    const h = a.issueInternalIdentity(PAYLOAD)
+    expect(a.verifyInternalIdentity(h)).not.toBeNull()
+    expect(b.verifyInternalIdentity(h)).toBeNull()
+  })
+
   it('头名固定为 x-internal-identity', () => {
     expect(INTERNAL_IDENTITY_HEADER).toBe('x-internal-identity')
   })
@@ -79,11 +111,12 @@ describe('identityFromInternal', () => {
   it('透出 scopes / hasScope 与可选 accountName / sessionId', () => {
     const id = identityFromInternal({
       org: 'acme', userId: 'u1', channel: 'pat', scopes: ['data:query', 'data:admin'],
-      accountName: 'alice', sessionId: 'sess-1', roles: ['analyst'], exp: Date.now() + 30_000,
+      accountName: 'alice', sessionId: 'sess-1', roles: ['analyst'],
+      boundExternalIds: ['wx-openid-1'], exp: Date.now() + 30_000,
     })
     expect(id).toMatchObject({
       userId: 'u1', orgId: 'acme', displayName: 'u1', accountName: 'alice',
-      sessionId: 'sess-1', roles: ['analyst'],
+      sessionId: 'sess-1', roles: ['analyst'], boundExternalIds: ['wx-openid-1'],
     })
     expect(id.hasScope('data:query')).toBe(true)
     expect(id.hasScope('nope')).toBe(false)
@@ -97,15 +130,21 @@ describe('identityFromInternal', () => {
     expect('accountName' in id).toBe(false)
     expect('sessionId' in id).toBe(false)
     expect('roles' in id).toBe(false)
+    expect('boundExternalIds' in id).toBe(false)
   })
 })
 
 describe('internalIdentityMiddleware', () => {
-  const probeApp = (preset?: Identity) => {
+  const probeApp = (opts: { preset?: Identity; tenantOrg?: string } = {}) => {
     const app = new Hono<RequesterEnv>()
-    if (preset) {
+    // 租户中间件（与 wecom-channel-auth.test.ts 同形）：internal identity 需要当前 tenant 做 org 封印。
+    app.use('/api/modules/*', async (c, next) => {
+      c.set('tenant', { ...baseTenant, casdoor_org: opts.tenantOrg ?? 'acme' })
+      await next()
+    })
+    if (opts.preset) {
       app.use('/api/modules/*', async (c, next) => {
-        c.set('identity', preset)
+        c.set('identity', opts.preset as Identity)
         c.set(REQUESTER_CHANNEL, 'pat')
         c.set(REQUESTER_KEY_ID, 7)
         await next()
@@ -125,23 +164,42 @@ describe('internalIdentityMiddleware', () => {
     return app
   }
 
-  it('合法内部头 ⇒ 注入 identity + 通道变量', async () => {
+  const call = (app: Hono<RequesterEnv>, h: string) =>
+    app.request('/api/modules/probe', { headers: { [INTERNAL_IDENTITY_HEADER]: h } })
+
+  const EMPTY = { userId: null, orgId: null, scopes: null, channel: null, keyId: null }
+
+  it('合法内部头 ⇒ 注入 identity + 通道变量（wecom 不写 keyId）', async () => {
     const h = issueInternalIdentity({ ...PAYLOAD, keyId: 42 })
-    const res = await probeApp().request('/api/modules/probe', {
-      headers: { [INTERNAL_IDENTITY_HEADER]: h },
-    })
+    const res = await call(probeApp(), h)
     expect(res.status).toBe(200)
     expect(await res.json()).toEqual({
-      userId: 'u1', orgId: 'acme', scopes: ['data:query'], channel: 'wecom', keyId: 42,
+      userId: 'u1', orgId: 'acme', scopes: ['data:query'], channel: 'wecom', keyId: null,
     })
+  })
+
+  it('keyId 仅在 channel=pat 时写 REQUESTER_KEY_ID', async () => {
+    const pat = issueInternalIdentity({ ...PAYLOAD, channel: 'pat', keyId: 42 })
+    expect(await (await call(probeApp(), pat)).json()).toMatchObject({ channel: 'pat', keyId: 42 })
+
+    const patNull = issueInternalIdentity({ ...PAYLOAD, channel: 'pat', keyId: null })
+    expect(await (await call(probeApp(), patNull)).json()).toMatchObject({ channel: 'pat', keyId: null })
   })
 
   it('session 通道不显式写 REQUESTER_CHANNEL（缺省即会话）', async () => {
     const h = issueInternalIdentity({ ...PAYLOAD, channel: 'session' })
-    const res = await probeApp().request('/api/modules/probe', {
-      headers: { [INTERNAL_IDENTITY_HEADER]: h },
-    })
-    expect(await res.json()).toMatchObject({ userId: 'u1', channel: null })
+    expect(await (await call(probeApp(), h)).json()).toMatchObject({ userId: 'u1', channel: null })
+  })
+
+  it('org 与当前 tenant 不匹配 ⇒ 不设 identity（租户封印）', async () => {
+    const h = issueInternalIdentity(PAYLOAD) // org=acme
+    expect(await (await call(probeApp({ tenantOrg: 'other' }), h)).json()).toEqual(EMPTY)
+  })
+
+  it('org 与当前 tenant 匹配 ⇒ 设 identity', async () => {
+    const h = issueInternalIdentity(PAYLOAD) // org=acme
+    expect(await (await call(probeApp({ tenantOrg: 'acme' }), h)).json())
+      .toMatchObject({ userId: 'u1', orgId: 'acme' })
   })
 
   it('first-setter-wins：已有 identity 时内部头不覆盖', async () => {
@@ -150,22 +208,30 @@ describe('internalIdentityMiddleware', () => {
       scopes: ['preset:scope'], hasScope: (code) => code === 'preset:scope',
     }
     const h = issueInternalIdentity({ ...PAYLOAD, keyId: 42 })
-    const res = await probeApp(preset).request('/api/modules/probe', {
-      headers: { [INTERNAL_IDENTITY_HEADER]: h },
-    })
+    const res = await call(probeApp({ preset }), h)
     expect(await res.json()).toEqual({
       userId: 'preset-user', orgId: 'preset-org', scopes: ['preset:scope'], channel: 'pat', keyId: 7,
     })
   })
 
+  it('过期 token 走中间件 ⇒ 不设 identity', async () => {
+    vi.useFakeTimers()
+    try {
+      vi.setSystemTime(new Date('2026-01-01T00:00:00Z'))
+      const h = issueInternalIdentity(PAYLOAD)
+      vi.setSystemTime(Date.now() + 31_000)
+      const res = await call(probeApp(), h)
+      expect(res.status).toBe(200)
+      expect(await res.json()).toEqual(EMPTY)
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
   it('伪造内部头（MAC 被篡改）不设 identity，放行给下游门卫', async () => {
     const h = tamperMac(issueInternalIdentity(PAYLOAD))
-    const res = await probeApp().request('/api/modules/probe', {
-      headers: { [INTERNAL_IDENTITY_HEADER]: h },
-    })
+    const res = await call(probeApp(), h)
     expect(res.status).toBe(200)
-    expect(await res.json()).toEqual({
-      userId: null, orgId: null, scopes: null, channel: null, keyId: null,
-    })
+    expect(await res.json()).toEqual(EMPTY)
   })
 })
