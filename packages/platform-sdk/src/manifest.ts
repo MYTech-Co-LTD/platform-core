@@ -68,9 +68,10 @@ export type McpProfile = 'full' | 'c-manage'
 export interface McpFaceDecl {
   face: string
   group: string
+  /** 同一 group 内按 precedence 选面：**数字大的优先**（更高权限面） */
   precedence: number
   path: string
-  /** 只收 POST（face 是工具调用面）——与 schema 的 z.enum(['POST']) 成对；写 ApiMethod 会让
+  /** 只收 POST（face 是工具调用面）——与 schema 的 z.literal('POST') 成对；写 ApiMethod 会让
    *  编译期双向断言失败（声明面比 schema 宽 = 类型在撒谎）。 */
   method: 'POST'
   scope: string
@@ -236,7 +237,7 @@ const ManifestObject = z.object({
     group: z.string().regex(/^[a-z][a-z0-9_-]*$/),
     precedence: z.number().int().positive(),
     path: z.string().regex(/^\/(?!$)/),
-    method: z.enum(['POST']),
+    method: z.literal('POST'),
     scope: z.string(),
     audiences: z.array(z.enum(['mcp', 'wecom'])).min(1),
     profile: z.enum(['full', 'c-manage']).optional(),
@@ -457,7 +458,7 @@ export const ManifestSchema = ManifestObject.superRefine((m, ctx) => {
   const faces = m.mcpFaces ?? []
   const faceSeen = new Set<string>()
   const byGroupAudience = new Map<string, Set<number>>()
-  const byPath = new Map<string, Array<{ audiences: readonly string[]; profile?: string }>>()
+  const byPath = new Map<string, Array<{ audiences: readonly McpAudience[]; profile?: McpProfile }>>()
   for (const [i, f] of faces.entries()) {
     const p = ['mcpFaces', i]
     if (faceSeen.has(f.face)) {
@@ -477,12 +478,12 @@ export const ManifestSchema = ManifestObject.superRefine((m, ctx) => {
     }
     // audiences 自身不得重复：重复值会让下面的 precedence 检查对同一 (group,audience) 看两次，
     // 报出误导性的「precedence 重复」。先按去重集判重，再用去重集做 precedence 检查。
-    const audienceSeen = new Set<string>()
-    for (const a of f.audiences) {
+    const audienceSeen = new Set<McpAudience>()
+    for (const [j, a] of f.audiences.entries()) {
       if (audienceSeen.has(a)) {
         ctx.addIssue({
           code: z.ZodIssueCode.custom,
-          path: [...p, 'audiences'],
+          path: [...p, 'audiences', j],
           message: `mcpFaces ${f.face}: audiences 不得重复（${a}）`,
         })
       }
@@ -504,7 +505,7 @@ export const ManifestSchema = ManifestObject.superRefine((m, ctx) => {
     const pk = `${f.path}\0${f.method}\0${f.scope}`
     const list = byPath.get(pk) ?? []
     for (const other of list) {
-      if (other.audiences.some((a) => f.audiences.includes(a as McpAudience))) {
+      if (other.audiences.some((a) => f.audiences.includes(a))) {
         ctx.addIssue({
           code: z.ZodIssueCode.custom,
           path: [...p, 'audiences'],

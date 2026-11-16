@@ -517,8 +517,61 @@ describe('mcpFaces', () => {
     const r = ManifestSchema.safeParse(m)
     expect(r.success).toBe(false)
     if (r.success) return
-    expect(r.error.issues.some((i) => i.message.includes('audiences 不得重复'))).toBe(true)
+    const dupIssue = r.error.issues.find((i) => i.message.includes('audiences 不得重复'))
+    expect(dupIssue).toBeDefined()
+    // issue 指到重复的那个下标（mcpFaces.0.audiences.1），而不是整条数组
+    expect(dupIssue?.path.join('.')).toBe('mcpFaces.0.audiences.1')
     expect(r.error.issues.some((i) => i.message.includes('precedence 重复'))).toBe(false)
+  })
+
+  it('api.internal 同 path/scope 但 method 是 GET，face 写 POST ⇒ 拒（method 必须一致）', () => {
+    // 只改 api.internal 的 method：path 与 scope 都对得上，删掉 superRefine 里的
+    // `e.method === f.method` 这条就会变绿——本负例就是钉它的。
+    const m = { ...base,
+      api: { internal: [{ method: 'GET', path: '/mcp-read', scope: 'data:read' }] },
+      mcpFaces: [
+        { face: 'read', group: 'agent', precedence: 1, path: '/mcp-read', method: 'POST', scope: 'data:read', audiences: ['mcp'] },
+      ] }
+    const r = ManifestSchema.safeParse(m)
+    expect(r.success).toBe(false)
+    if (r.success) return
+    expect(r.error.issues.some((i) => i.message.includes('未在 api.internal 声明'))).toBe(true)
+  })
+
+  it('face 重复 ⇒ 拒（同一模块内 face 必须唯一）', () => {
+    const m = { ...base, mcpFaces: [
+      { face: 'read', group: 'g1', precedence: 1, path: '/mcp-read', method: 'POST', scope: 'data:read', audiences: ['mcp'] },
+      { face: 'read', group: 'g2', precedence: 1, path: '/mcp', method: 'POST', scope: 'data:query', audiences: ['mcp'] },
+    ] }
+    const r = ManifestSchema.safeParse(m)
+    expect(r.success).toBe(false)
+    if (r.success) return
+    expect(r.error.issues.some((i) => i.message.includes('mcpFaces.face 重复'))).toBe(true)
+  })
+
+  it('face 条目拼错字段名（profil）⇒ 拒（inner .strict()）', () => {
+    const m = { ...base, mcpFaces: [
+      { face: 'read', group: 'agent', precedence: 1, path: '/mcp-read', method: 'POST', scope: 'data:read',
+        audiences: ['mcp'], profil: 'full' },
+    ] }
+    const r = ManifestSchema.safeParse(m)
+    expect(r.success).toBe(false)
+    if (r.success) return
+    expect(r.error.issues.some((i) => i.code === 'unrecognized_keys')).toBe(true)
+  })
+
+  it('method 只收 POST：写 GET ⇒ 拒', () => {
+    const m = { ...base, mcpFaces: [
+      { face: 'read', group: 'agent', precedence: 1, path: '/mcp-read', method: 'GET', scope: 'data:read', audiences: ['mcp'] },
+    ] }
+    expect(ManifestSchema.safeParse(m).success).toBe(false)
+  })
+
+  it('audiences 不能为空数组 ⇒ 拒', () => {
+    const m = { ...base, mcpFaces: [
+      { face: 'read', group: 'agent', precedence: 1, path: '/mcp-read', method: 'POST', scope: 'data:read', audiences: [] },
+    ] }
+    expect(ManifestSchema.safeParse(m).success).toBe(false)
   })
 
   it('同一 (group,audience) precedence 重复 ⇒ 拒；不同 audience 可重复', () => {
