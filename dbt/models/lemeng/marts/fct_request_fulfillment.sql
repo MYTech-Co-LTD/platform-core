@@ -3,7 +3,7 @@
    dbt-postgres 的 pre_hook 与模型 DML 同一事务 ⇒ 失败整体回滚。#}
 {% set cutoff = incremental_cutoff(7) %}
 {% set rebuild_hook = 'delete from ' ~ this ~ ' where bizday >= ' ~ cutoff %}
-{% set hook = rebuild_hook if is_incremental() else none %}
+{% set hook = [rebuild_hook] if is_incremental() else [] %}
 {{
     config(
         materialized='incremental',
