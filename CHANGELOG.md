@@ -11,6 +11,13 @@
 
 ## [Unreleased]
 
+## [0.307.0](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.306.7...v0.307.0) - 2026-11-16
+- 【修复】data: DBT_HOST 剥离端口（W8-P1） ([#2371](https://github.com/MYTech-Co-LTD/platform-core/pull/2371), [d7ec33c](https://github.com/MYTech-Co-LTD/platform-core/commit/d7ec33ca9d6fe9161fc9c0c5e6c31bdf4aceabb0))
+- 【新增】oa: forms 内核 approval_def + org→引擎映射（OA P0 T4/T5） ([#2369](https://github.com/MYTech-Co-LTD/platform-core/pull/2369), [5888804](https://github.com/MYTech-Co-LTD/platform-core/commit/588880432dc78660435d3357426c2211d7fc2b20))
+- 【新增】org: 部门负责人原语与模块组织查询 port（#2363） ([#2368](https://github.com/MYTech-Co-LTD/platform-core/pull/2368), [7da91e3](https://github.com/MYTech-Co-LTD/platform-core/commit/7da91e384fa1b0e8b58aaa02771efb8540af5831))
+- 【新增】notify: 事件声明支持 external 生产者（#2363） ([#2365](https://github.com/MYTech-Co-LTD/platform-core/pull/2365), [599d979](https://github.com/MYTech-Co-LTD/platform-core/commit/599d9791bd89799369fd664e99e8162a36213a54))
+
+
 ## [0.306.7](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.306.6...v0.306.7) - 2026-11-16
 - 【修复】data: dbt target/log 走 env 且容器内可写（W8-P1） ([#2367](https://github.com/MYTech-Co-LTD/platform-core/pull/2367), [8cdc255](https://github.com/MYTech-Co-LTD/platform-core/commit/8cdc25598b2c89c968dcb07aa96dbe226926bd70))
 
