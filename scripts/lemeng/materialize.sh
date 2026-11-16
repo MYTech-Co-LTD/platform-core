@@ -62,7 +62,9 @@ case "$SCOPE" in
     ;;
 esac
 
-if [ "${MATERIALIZE_MODE:-host}" = container ]; then
+# 模式必须先于仓根推导定义（R 在文件前段就要用）。
+MATERIALIZE_MODE=${MATERIALIZE_MODE:-host}
+if [ "$MATERIALIZE_MODE" = container ]; then
   # 容器模式：仓根由脚本自身位置推导（scripts/lemeng → ../..），镜像内即 /app。
   _SELF_DIR=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
   R=${MATERIALIZE_REPO_DIR:-$(CDPATH= cd -- "$_SELF_DIR/../.." && pwd)}
