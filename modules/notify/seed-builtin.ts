@@ -203,6 +203,24 @@ export async function seedBuiltin(
       rules += formsRule.rowCount ?? 0
     }
 
+    // OA 审批（P1 / #2363）：收件人档由 forms manifest 声明（approver=payload.assignee、
+    // submitter=payload.submitter）⇒ 规则只写 recipient_key，具体人由派发时按 payload 解析。
+    // awaiting 由 case-engine（external 生产者）发，decided 由平台回调发——两者都经本租户目录。
+    for (const [event, template, recipient] of [
+      ['forms.approval.awaiting', 'oa_approval_awaiting', 'approver'],
+      ['forms.approval.decided', 'oa_approval_decided', 'submitter'],
+    ] as const) {
+      const oaRule = await pool.query(
+        `insert into notify.rule
+           (org,id,enabled,event_key,scope,recipient_key,template_key,channels,origin,created_by)
+         values ($1,$2,true,$3,'*',$4,$5,$6::text[],'derived','system')
+         on conflict (org,id) do update set template_key=excluded.template_key,
+           channels=excluded.channels`,
+        [org, `derived:forms:${event}:*`, event, recipient, template, CHANNELS],
+      )
+      rules += oaRule.rowCount ?? 0
+    }
+
     const names = (env[orgEnvKeyFor('NOTIFY_APPROVERS', org)] ?? '')
       .split(',')
       .map((s) => s.trim())

@@ -101,6 +101,38 @@ export const BUILTIN_TEMPLATES: BuiltinTemplate[] = [
       },
     },
   },
+  // OA 审批（P1 / #2363）。三处同描：forms manifest 的 events[].defaults ⇔ 本文件 ⇔ seed-builtin.ts。
+  // awaiting 由 **case-engine（external 生产者）** 发；decided 由平台回调发。链接必须闭合（#44）。
+  {
+    key: 'oa_approval_awaiting',
+    name: '待审批',
+    eventKey: 'forms.approval.awaiting',
+    contents: {
+      wecom_chat: {
+        text: '【待审批】{{title}}\n节点：{{nodeKey}}\n👉 [去审批]({{link}})',
+      },
+      in_app: {
+        title: '待审批：{{title}}',
+        body: '审批节点 {{nodeKey}} 等你处理',
+        link: '{{link}}',
+      },
+    },
+  },
+  {
+    key: 'oa_approval_decided',
+    name: '审批有结果',
+    eventKey: 'forms.approval.decided',
+    contents: {
+      wecom_chat: {
+        text: '【审批结果】{{action}}\n审批人：{{decidedBy}}\n👉 [查看详情]({{link}})',
+      },
+      in_app: {
+        title: '审批有结果',
+        body: '你的申请{{action}}（审批人：{{decidedBy}}）',
+        link: '{{link}}',
+      },
+    },
+  },
   {
     key: 'jobs_job_failed',
     name: '定时任务失败',

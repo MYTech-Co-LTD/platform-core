@@ -8,11 +8,16 @@ name: 表单模块
 version: 0.2.0
 platform: '>=0.1'
 permissions:
-  - { code: forms:view,           name: 表单查看与解析 }
-  - { code: forms:fill,           name: 表单填报 }
-  - { code: forms:manage,         name: 表单与租户字典管理 }
-  - { code: forms:publish,        name: 表单发布（人 gate） }
-  - { code: forms:global-manage,  name: 平台全局字典管理, platformOnly: true }
+  - { code: forms:view,             name: 表单查看与解析 }
+  - { code: forms:fill,             name: 表单填报 }
+  - { code: forms:manage,           name: 表单与租户字典管理 }
+  - { code: forms:publish,          name: 表单发布（人 gate） }
+  - { code: forms:global-manage,    name: 平台全局字典管理, platformOnly: true }
+  # ── 审批（OA P1 / issue #2363）：三档人 gate + 服务账号回调 ──
+  - { code: forms:approval:view,    name: 审批模板查看与解析 }
+  - { code: forms:approval:manage,  name: 审批模板起草与编辑（AI 工具面到此为止） }
+  - { code: forms:approval:publish, name: 审批模板发布（人 gate） }
+  - { code: forms:case:callback,    name: 引擎回调（服务账号专用） }
 # ⚠️ api.internal 的 path 是模块相对路径；声明集合必须与 createRouter 注册集合逐条一致
 #（装载期双向核对，任一方向差集 ⇒ 装载失败）。改路由或改本清单必须同一提交对齐。
 api:
@@ -30,10 +35,26 @@ api:
     - { method: POST,   path: /defs/:assetId/versions/:v/publish,   scope: forms:publish }
     - { method: POST,   path: /defs/:assetId/rollback,              scope: forms:publish }
     - { method: POST,   path: /defs/:assetId/versions/:v/retire,    scope: forms:publish }
+    # ── 审批模板（OA P1）：同一生命周期，kind='approval_def'；发布 = 人 gate ──
+    - { method: GET,    path: /approval-defs,                              scope: forms:approval:view }
+    - { method: GET,    path: /approval-defs/:assetId,                     scope: forms:approval:view }
+    - { method: POST,   path: /approval-defs,                              scope: forms:approval:manage }
+    - { method: PUT,    path: /approval-defs/:assetId/versions/:v,         scope: forms:approval:manage }
+    - { method: DELETE, path: /approval-defs/:assetId/versions/:v,         scope: forms:approval:manage }
+    - { method: POST,   path: /approval-defs/:assetId/dry-run,             scope: forms:approval:manage }
+    - { method: POST,   path: /approval-defs/:assetId/versions/:v/publish, scope: forms:approval:publish }
     # ── 提交（org 钉死 + 按提交钉住版本契约校验）──
     - { method: POST,   path: /defs/:assetId/submissions,           scope: forms:fill }
     - { method: GET,    path: /defs/:assetId/submissions,           scope: forms:view }
     - { method: GET,    path: /submissions/:id,                     scope: forms:view }
+    # 撤回：scope 宽档（forms:fill），数据授权收窄在 handler（仅提交人 + 仅 pending）
+    - { method: POST,   path: /submissions/:id/withdraw,            scope: forms:fill }
+    # ── 应用内审批（OA P1）：scope 宽档 + **按计划快照授权**（handler 内判定当前节点审批人）──
+    - { method: GET,    path: /approvals/mine,                      scope: forms:view }
+    - { method: GET,    path: /approvals/:caseId,                   scope: forms:view }
+    - { method: POST,   path: /approvals/:caseId/decision,          scope: forms:fill }
+    # ── 引擎回调（spec §10.6）：服务账号专用 ──
+    - { method: POST,   path: /approval-callback,                   scope: forms:case:callback }
     # ── 导出面（出湖管线的「源」，M1.4 / #729）──
     - { method: GET,    path: /export/submissions,                  scope: forms:view }
     # ── 字典（租户私有：forms:manage；读与解析 forms:view）──
@@ -86,3 +107,39 @@ notifications:
         recipient: assignee
         template: forms_form_due_reminder
         channels: [wecom_default, inapp_default]
+    # ── OA 审批（P1 只声明这两个；forms.task.assigned / forms.case.sla.breach 随 P4/P1.5 再加）──
+    # `forms.approval.awaiting` 由 **case-engine（外部生产者）** 产生：key 仍以声明模块 id 开头，
+    # 归属由 producer 元数据表达（event catalog 记 module_id=external:case-engine）。
+    # 三处同描（声明 ⇔ 模板 ⇔ 派生规则），缺一处 = dispatch `no_rules` 静默丢弃：
+    #   ① 本文件 events[].defaults；② modules/notify/templates/builtin.ts；
+    #   ③ modules/notify/seed-builtin.ts。
+    # 护栏：modules/notify/templates/builtin.test.ts（①每条声明必须有 defaults；②模板存在且 eventKey 同名）。
+    - key: forms.approval.awaiting
+      title: 待审批
+      producer: external:case-engine
+      scope: { key: caseId, label: 审批 }
+      payload:
+        submissionId: { type: string, required: true }
+        caseId:       { type: string, required: true }
+        nodeKey:      { type: string, required: true }
+        title:        { type: string, required: true }
+        assignee:     { type: user, required: true }
+        link:         { type: url, required: true }
+      recipients:
+        approver: { kind: field, field: assignee }
+      # 三处同描：本文件 ⇔ notify/templates/builtin.ts（oa_approval_awaiting）⇔ notify/seed-builtin.ts
+      defaults: { recipient: approver, template: oa_approval_awaiting, channels: [wecom_default, inapp_default] }
+    - key: forms.approval.decided
+      title: 审批有结果
+      scope: { key: caseId, label: 审批 }
+      payload:
+        submissionId: { type: string, required: true }
+        caseId:       { type: string, required: true }
+        action:       { type: string, required: true }
+        decidedBy:    { type: string, required: true }
+        decidedAt:    { type: string, required: true }
+        submitter:    { type: user, required: true }
+        link:         { type: url, required: true }
+      recipients:
+        submitter: { kind: field, field: submitter }
+      defaults: { recipient: submitter, template: oa_approval_decided, channels: [wecom_default, inapp_default] }

@@ -340,3 +340,62 @@ describe('表单列表页：AI 起草与发布门', () => {
     expect(screen.queryByRole('button', { name: '发布' })).not.toBeInTheDocument()
   })
 })
+
+// 应用内审批（OA P1 / issue #2363）：待办列表与详情动作门（拒绝必须填意见）。
+describe('待审批页（OA P1）', () => {
+  it('列表渲染标题、发起人与当前节点', async () => {
+    mockApi({
+      '/api/modules/forms/approvals/mine': () => jsonResponse({
+        approvals: [
+          { submissionId: '1', caseId: 'c1', title: '请假 - 张三', requester: '张三', nodeTitle: '直属主管', submittedAt: '2026-11-16T01:00:00Z' },
+          { submissionId: '2', caseId: 'c2', title: '报销 - 李四', requester: '李四', nodeTitle: '财务', submittedAt: '2026-11-16T02:00:00Z' },
+        ],
+      }),
+    })
+    renderAt('/console/forms/approvals', ['forms:view'])
+    expect(await screen.findByText('请假 - 张三')).toBeInTheDocument()
+    expect(screen.getByText('报销 - 李四')).toBeInTheDocument()
+    expect(screen.getAllByText('直属主管').length).toBeGreaterThanOrEqual(1)
+    expect(screen.getAllByRole('button', { name: '查看' }).length).toBe(2)
+  })
+
+  it('空态：没有待办时明确显示「暂无待审批」', async () => {
+    mockApi({ '/api/modules/forms/approvals/mine': () => jsonResponse({ approvals: [] }) })
+    renderAt('/console/forms/approvals', ['forms:view'])
+    expect(await screen.findByText('暂无待审批')).toBeInTheDocument()
+  })
+
+  it('详情页：拒绝在意见为空时禁用，通过不依赖意见；意见填写后拒绝可用', async () => {
+    mockApi({
+      '/api/modules/forms/approvals/c1': () => jsonResponse({
+        submission: {
+          id: '1', assetId: 'leave', version: 1,
+          payload: { reason: '家事', days: 2 },
+          submittedBy: 'u1', submittedAt: '2026-11-16T01:00:00Z',
+          status: 'pending_approval', caseId: 'c1',
+          plan: { nodes: [{ key: 'leader', title: '直属主管', approvers: ['u-lead'] }] },
+          decidedAt: null, decisionAction: null, decisionComment: null,
+        },
+        contract: {
+          schema: {
+            type: 'object',
+            properties: { reason: { type: 'string', title: '事由' }, days: { type: 'number', title: '天数' } },
+          },
+        },
+        case: { currentNode: 'leader' },
+        engineError: null,
+      }),
+    })
+    renderAt('/console/forms/approvals/c1', ['forms:fill'])
+    expect(await screen.findByText('审批：leave - u1')).toBeInTheDocument()
+    expect(screen.getByText('直属主管')).toBeInTheDocument()
+
+    const reject = screen.getByRole('button', { name: '拒绝' }) as HTMLButtonElement
+    const approve = screen.getByRole('button', { name: '通过' }) as HTMLButtonElement
+    expect(reject.disabled).toBe(true)
+    expect(approve.disabled).toBe(false)
+
+    fireEvent.change(screen.getByLabelText('审批意见'), { target: { value: '不同意' } })
+    await waitFor(() => expect(reject.disabled).toBe(false))
+  })
+})

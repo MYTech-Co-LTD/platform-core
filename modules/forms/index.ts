@@ -10,6 +10,7 @@ import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { parse as parseYaml } from 'yaml'
 import { ManifestSchema, defineModule } from '@platform/sdk'
+import { makeOaEngineResolver } from './domain/engine-client'
 import { llmFromEnv, openAiCompatModel } from './domain/llm'
 import { createFormsRouter } from './routes'
 
@@ -28,5 +29,16 @@ const chatModel = (() => {
 
 export default defineModule({
   manifest,
-  createRouter: ({ pool }) => createFormsRouter({ pool, chatModel }),
+  // 组织查询面 / 通知端口 / OA 引擎查询面由宿主注入（OA P1）：
+  //   · org：审批编译必须有组织事实（查不了 ⇒ 503，不是「没人」）；
+  //   · oaEngine：`platform.oa_engine` 是引擎映射唯一登记点（模块读不到 platform，B1）；
+  //   · notify：回调事件投递（未注入 ⇒ 事件静默，宿主装配面另有报告）。
+  // `makeOaEngineResolver`：port 优先；旧宿主/单测未注入时回落单租户 env（本地兜底）。
+  createRouter: ({ pool, org, notify, oaEngine }) => createFormsRouter({
+    pool,
+    chatModel,
+    orgPort: org ?? null,
+    notify: notify ?? null,
+    engineFor: makeOaEngineResolver({ oaEngine: oaEngine ?? null }),
+  }),
 })
