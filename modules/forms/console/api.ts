@@ -62,6 +62,90 @@ export async function apiSend<T>(method: 'POST' | 'PUT' | 'DELETE', path: string
   return (await res.json()) as T
 }
 
+// ── 应用内审批（OA P1 / issue #2363） ──
+// 授权在服务端按「计划快照的当前节点」判定；前端只做展示与动作入口，不缓存授权结论。
+
+export interface MyApproval {
+  submissionId: string
+  caseId: string | null
+  title: string
+  requester: string
+  nodeTitle: string
+  submittedAt: string
+}
+
+export interface ApprovalSubmissionView {
+  id: string
+  assetId: string
+  version: number
+  payload: unknown
+  submittedBy: string
+  submittedAt: string
+  status: string
+  caseId: string | null
+  plan: unknown
+  decidedAt: string | null
+  decisionAction: string | null
+  decisionComment: string | null
+}
+
+export interface ApprovalDetailView {
+  submission: ApprovalSubmissionView
+  /** 提交钉住版本的事项模板契约（`{schema, uiSchema?}`；null = 契约缺失，按 JSON 降级渲染） */
+  contract: unknown
+  /** 引擎 case 详情（含 currentNode / nodeDecisions）；引擎不可用时为 null */
+  case: {
+    currentNode?: unknown
+    nodeDecisions?: Array<{ nodeKey?: string; approver?: string; action?: string; comment?: string | null; at?: string }>
+    [k: string]: unknown
+  } | null
+  engineError: string | null
+}
+
+export async function listMyApprovals(): Promise<MyApproval[]> {
+  const body = await apiGet<{ approvals: MyApproval[] }>('/api/modules/forms/approvals/mine')
+  return body.approvals
+}
+
+export async function getApprovalDetail(caseId: string): Promise<ApprovalDetailView> {
+  return apiGet<ApprovalDetailView>(`/api/modules/forms/approvals/${encodeURIComponent(caseId)}`)
+}
+
+export type DecisionAction = 'approve' | 'reject'
+
+export async function submitDecision(
+  caseId: string,
+  input: { nodeKey?: string; action: DecisionAction; comment?: string },
+): Promise<{ ok: boolean; nodeKey: string }> {
+  return apiSend<{ ok: boolean; nodeKey: string }>(
+    'POST', `/api/modules/forms/approvals/${encodeURIComponent(caseId)}/decision`, input,
+  )
+}
+
+/** 当前节点标题（引擎 `currentNode` 可能是 key 字符串或 {key,title}；缺失时按计划快照找「含我」的节点）。 */
+export function currentNodeTitleOf(detail: ApprovalDetailView, me: string): string | null {
+  const raw = detail.case?.currentNode
+  if (raw && typeof raw === 'object') {
+    const t = (raw as { title?: unknown; key?: unknown }).title
+    const k = (raw as { key?: unknown }).key
+    if (typeof t === 'string' && t.length > 0) return t
+    if (typeof k === 'string') return planNodeTitle(detail.submission.plan, k)
+  }
+  if (typeof raw === 'string') return planNodeTitle(detail.submission.plan, raw)
+  const nodes = (detail.submission.plan as { nodes?: Array<{ approvers?: unknown; title?: unknown }> } | null)?.nodes
+  const hit = Array.isArray(nodes)
+    ? nodes.find((n) => Array.isArray(n?.approvers) && n.approvers.includes(me))
+    : undefined
+  return typeof hit?.title === 'string' ? hit.title : null
+}
+
+function planNodeTitle(plan: unknown, key: string): string | null {
+  const nodes = (plan as { nodes?: Array<{ key?: unknown; title?: unknown }> } | null)?.nodes
+  if (!Array.isArray(nodes)) return null
+  const hit = nodes.find((n) => n?.key === key)
+  return typeof hit?.title === 'string' ? hit.title : null
+}
+
 export function parseDictRef(ref: string): { scope: 'tenant' | 'global'; dictId: string } | null {
   const m = DICT_REF_RE.exec(ref)
   if (!m) return null

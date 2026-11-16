@@ -23,9 +23,13 @@ describe('forms 模块声明（#708/#710）', () => {
     expect(m.migrations?.dir).toBe('./migrations')
   })
 
-  it('权限码矩阵：五码全 forms: 前缀；global-manage 在列（P4：platformOnly，租户管理员授不了）', () => {
+  it('权限码矩阵：全 forms: 前缀；global-manage 在列（P4：platformOnly）；OA P1 审批三档 + 回调码', () => {
     const codes = mod.manifest.permissions.map((p) => p.code).sort()
     expect(codes).toEqual([
+      'forms:approval:manage',
+      'forms:approval:publish',
+      'forms:approval:view',
+      'forms:case:callback',
       'forms:fill',
       'forms:global-manage',
       'forms:manage',
@@ -54,7 +58,7 @@ describe('forms 模块声明（#708/#710）', () => {
   })
 
   it('声明面断言：发布/回滚/退役端点必须是 forms:publish（人 gate 的 scope 落点）；写面不出现 guest', () => {
-    expect(mod.manifest.api?.internal?.length).toBe(24)  // 21 + /generate + /mcp-manage（#724）+ /export/submissions（M1.4 #729）
+    expect(mod.manifest.api?.internal?.length).toBe(36)  // 24 + OA P1 审批 12 条
     expect(mod.manifest.guest).toBeUndefined() // M1.2 无 guest 面（§14.4 防滥用随 M1.3 填报通道）
     for (const e of mod.manifest.api?.internal ?? []) {
       const key = `${e.method} ${e.path}`
@@ -62,7 +66,24 @@ describe('forms 模块声明（#708/#710）', () => {
       if (e.path.startsWith('/global-dicts') && e.method !== 'GET') {
         expect(e.scope, key).toBe('forms:global-manage') // P4：全局字典编辑权收平台超管
       }
+      // OA P1：审批模板发布是人 gate；审批动作/回调各自有专属 scope（不混用 forms:publish）
+      if (key === 'POST /approval-defs/:assetId/versions/:v/publish') {
+        expect(e.scope).toBe('forms:approval:publish')
+      }
+      if (key === 'POST /approval-callback') expect(e.scope).toBe('forms:case:callback')
     }
+  })
+
+  it('OA 事件声明（P1 两个）：awaiting 由外部生产者产生，decided 由本模块产生', () => {
+    const events = mod.manifest.notifications?.events ?? []
+    const awaiting = events.find((e) => e.key === 'forms.approval.awaiting')
+    const decided = events.find((e) => e.key === 'forms.approval.decided')
+    expect(awaiting?.producer).toBe('external:case-engine')
+    expect(awaiting?.payload.assignee?.required).toBe(true)
+    expect(decided?.producer).toBeUndefined()
+    expect(decided?.recipients.submitter).toEqual({ kind: 'field', field: 'submitter' })
+    // P1 不提前占坑
+    expect(events.map((e) => e.key)).not.toContain('forms.task.assigned')
   })
 
   it('migrations 目录在位（内核迁移 001_kernel.sql 已落）', () => {
