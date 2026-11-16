@@ -64,6 +64,8 @@
 | D10 | **工具名 `<module>__<tool>`** | 稳定、兼容 MCP 命名、避免点分隔歧义 |
 | D11 | **网关不是授权边界**：模块 host gate + `callTool` 才是；网关过滤是 UX | 防止“隐藏即安全”的误判 |
 | D12 | **legacy 每指标工具不进网关** | 工具面预算/模型可靠性；直连 `/mcp` 仍保留 |
+| D13 | **audience/profile = 发现/产品面；module scope + `identity.channel` = 执法** | C 的 notify 更严策略必须在 notify 模块按通道强制；网关头/`x-agent-profile` 可被直连绕过，不能当安全边界 |
+| D14 | **C 的 agent namespace 由部署钉死**，不由模型选 | 防跨 namespace；notify 的 owner 校验只作兜底 |
 
 ## 4. 架构
 
@@ -135,7 +137,9 @@ mcpFaces:
 - `profile=c-manage`（C）：只暴露 agent-safe 工具——
   `create_agent_rule`、`create_agent_template`、`send_message`、`check_rule`、`preview_template`、`send_test`、`list_deliveries` + 排班工具；
   **不暴露** `propose_rule`、`update_rule`、`set_rule_enabled`、`draft_template`。
-- C 的 `create_agent_rule` 在该 profile 下**一律落 pending/disabled**（含 in-app），人用 `notify:publish` 审批/启用；这是 N3 `auto_publish_external` 之上的**更严档**，只作用于 `c-manage` profile，不改 B/其他 agent。
+- C 的 `create_agent_rule` 在该 profile 下**一律落 pending/disabled**（含 in-app），人用 `notify:publish` 审批/启用；这是 N3 `auto_publish_external` 之上的**更严档**，只作用于 C，不改 B/其他 agent。
+- **执法点在 notify 模块，不在网关头**：`identity.channel === 'wecom'` ⇒ 强制 agent-safe 子集 + pending；即使直连 `/api/modules/notify/mcp-manage`、不带 profile、或伪造 `x-agent-profile: full`，`propose_rule`/`set_rule_enabled` 也必须被拒。`x-agent-profile` 只决定**发现视图**，不能覆盖 channel 策略。
+- **C 的 namespace 钉死**：`create_agent_rule`/`create_agent_template`/`send_message` 的 `namespace` 由插件/网关注入为 openclaw 部署对应的 agent namespace；模型参数里不暴露 `namespace`。notify 的 owner 校验作兜底。
 - `notify:publish` **已存在**（通知底座 N3/N5）；A 不新增权限码。
 
 **forms**
@@ -158,7 +162,7 @@ loader 与 `scripts/check-manifests.mjs` 校验：
 - `face` 唯一；`group` 非空；`precedence` 为正整数；
 - `audiences` ⊆ `{mcp, wecom}`；
 - `profile` ∈ `{full, c-manage}`（可扩展；缺省 `full`）；
-- 同一 `(module, group)` 内 `precedence` 不重复；
+- 同一 `(module, group, audience)` 内 `precedence` 不重复；不同 audience 可重复（notify 的 B/C 同 group/precedence 但 audience 不相交）；
 - 同一 `(path, method, scope)` 允许多个 face **仅当 audiences 不相交且 profile 不同**（如 notify 的 B full / C c-manage）；
 - 装载期双向核对不变（路由集合 = 声明集合）。
 
@@ -191,13 +195,13 @@ loader 与 `scripts/check-manifests.mjs` 校验：
 
 ### 6.4 notify 的具体变化（对齐 N1–N5）
 
-- 新增 `/mcp` 只读 face；`/mcp-manage` 保持现有端点，增加 **profile 感知**：
-  - 无 `x-agent-profile` 或 `full` ⇒ 现有 13 + 排班工具，行为不变；
-  - `c-manage` ⇒ agent-safe 子集（见 §5.2），`tools/list` 过滤、`tools/call` 拒绝子集外工具。
-- `NOTIFY_TOOLS` 增加 `mutating`/`requiredScope`/annotations；`tools/list` 按 profile + scope 投影。
-- **不新增** `draft_rule` / `notify:publish`：C 的 `create_agent_rule` 在 `c-manage` profile 下强制 pending/disabled，复用 N3 `notify.approval` + `notify:publish`。
-- 直连 `/mcp-manage`（不带 profile 头）保持 N3 现有行为；网关对 C 设 `x-agent-profile: c-manage`，对 B 设 `full`。
-- N3 的 in-app 自动/外发审批不变；C 的“连 in-app 也 pending”是 profile 级更严档，不影响 B/其他 agent。
+- 新增 `/mcp` 只读 face；`/mcp-manage` 保持现有端点，增加 **channel 感知**（不是网关头感知）：
+  - `identity.channel === 'wecom'` ⇒ agent-safe 子集（见 §5.2），`tools/list` 过滤、`tools/call` 拒绝子集外工具；`create_agent_rule` 强制 pending/disabled；`namespace` 钉死为 C 的 agent namespace；
+  - `identity.channel === 'pat'|'session'` ⇒ N3 现有 full 面，行为不变。
+- `x-agent-profile` 只作为发现视图提示（网关设 `full`/`c-manage`）；**模块以 channel 为准**，`wecom + full` 仍按 C 更严档，直连不带 profile 也一样。
+- `NOTIFY_TOOLS` 增加 `mutating`/`requiredScope`/annotations；`tools/list` 按 channel + scope 投影。
+- **不新增** `draft_rule` / `notify:publish`：C 的 `create_agent_rule` 强制 pending/disabled，复用 N3 `notify.approval` + `notify:publish`。
+- N3 的 in-app 自动/外发审批不变；C 的“连 in-app 也 pending”是 **channel 级更严档**，不影响 B/其他 agent。
 
 ### 6.5 forms 的具体变化
 
@@ -222,11 +226,14 @@ loader 与 `scripts/check-manifests.mjs` 校验：
   - 模块的 PAT/企微中间件先验内部头；有效则直接构造 identity，**不再查 Casdoor**；
   - 外部请求伪造内部头 ⇒ 401；网关剥掉客户端传入的 `x-internal-identity`。
 - 网关的模块转发只带内部头 + `content-type`；不带 `authorization`/`cookie`/`x-channel-key`/`x-wecom-userid`。
+- **客户端传入的 `x-internal-identity` 与 `x-agent-profile` 一律剥掉**；网关自己生成内部身份，profile 只作发现视图。
+- **profile 不是安全边界**：notify 的 C 更严策略由模块按 `identity.channel` 执法；`wecom + profile=full` 也走 C 档。
 
 ### 7.2 face 选择与工具命名
 
 - 对每个 `(module, group)` 选调用方 `hasScope(face.scope)` 为真、且 `audiences` 含当前通道的**最高 precedence face**；不探测、不试错。
 - 同一 `(path, method, scope)` 的多个 face（如 notify B/C）按 audience 区分；转发时带该 face 的 `x-agent-profile`。
+- **audience/profile 只做发现/产品面**；安全相关的差异（notify 的 C 档）由模块按 `identity.channel` 强制，直连模块也不能绕过。
 - 只暴露该 face 的工具；工具名 `<module>__<tool>`，不带 face。
 - 不同 `(module, group)` 的工具名必须全局唯一；发现期冲突 ⇒ 报错，不静默去重。
 - `tools/call` 只接受 `tools/list` 投影过的名字；未知名 ⇒ JSON-RPC `-32601`。
@@ -235,7 +242,7 @@ loader 与 `scripts/check-manifests.mjs` 校验：
 
 - 逐可见 face 调模块 `tools/list`（内部身份头 + `x-agent-profile`），合并、命名空间化。
 - 支持 `cursor`/`nextCursor`；每页字节上限（建议 10KB）；工具数上限（建议 100）。
-- 缓存 `(org, userId, scope-hash, audience, module)` 30s；scope 变化即失效。
+- 缓存 `(org, scope-hash, audience, module, face, profile)` 30s；scope 变化即失效；同一个 `(path, scope)` 的 B/C face 不会串缓存。
 - 模块 face 403/5xx ⇒ 该 face 标记 unavailable，不影响其他 face。
 
 ### 7.4 `tools/call`
@@ -272,11 +279,12 @@ loader 与 `scripts/check-manifests.mjs` 校验：
 ## 8. openclaw C 侧
 
 - 新增两个 native 工具（`deploy/openclaw/data-query-plugin/index.js`）：
-  - `platform_capabilities({ q?, tool? })`：用 `requesterSenderId` + `x-channel-key` + `x-session-id` 调网关 `tools/list`；只返回 `wecom` audience（manage 面）。
-    - 无参：返回**紧凑索引**（name + 一句话描述 + mutating/gate），不返回全部 schema；
+  - `platform_capabilities({ q?, tool? })`：用 `requesterSenderId` + `x-channel-key` + `x-session-id` 调网关的 **`agent__capabilities`**（available + lockedFaces + scope）；只返回 `wecom` audience（manage 面）。
+    - 无参：返回**紧凑索引**（name + 一句话描述 + mutating/gate）+ `lockedFaces`（如缺 `data:manage`），不返回全部 schema；
     - `q`：按关键词过滤；`tool`：返回单个工具的完整 inputSchema（供 `platform_call` 组装参数）；
-    - 内部按 `nextCursor` 翻页合并。
+    - schema 取自网关 `tools/list`；内部按 `nextCursor` 翻页合并。
   - `platform_call({tool,args})`：调网关 `tools/call`；**不接受 userId 参数**。
+  - **namespace 钉死**：对 notify 的 `create_agent_rule`/`create_agent_template`/`send_message`，插件注入 openclaw 部署对应的 agent namespace，模型参数里没有 `namespace`。
 - 现有静态查询工具保留，SKILL 明确：
   - **数据查询只用静态工具**；
   - **建指标/报表/监控/通知/表单草稿用 `platform_capabilities` → `platform_call`**。
@@ -336,7 +344,7 @@ loader 与 `scripts/check-manifests.mjs` 校验：
 
 1. **新增 face 是加法**：`/mcp-read`、`/mcp-curated`、notify `/mcp`、forms `/mcp`；现有 `/mcp`、`/mcp-manage` 继续存在。
 2. **data**：`contract.json`/`ToolMeta` 增加 `faceScope`；read/query 工具 `requiredScope` 置 null；`data_harness_catalog` 输出两者；`callTool` 加检查。现有 `data:query` 用户不回归（读工具 null）。
-3. **notify**：直连 `/mcp-manage` 不带 profile 头 ⇒ 行为不变（N3 现有面）；网关对 C 设 `c-manage` profile（agent-safe 子集 + 规则落 pending），对 B 设 `full`。**无新权限码、无 `draft_rule`**；`notify:publish` 已存在，沿用 N3 审批。
+3. **notify**：`pat/session` 直连 `/mcp-manage` ⇒ N3 full 不变；**`wecom` 直连 ⇒ C 档（agent-safe 子集 + 规则 pending，刻意更严）**；网关对 C 设 `c-manage` 只是发现视图。**无新权限码、无 `draft_rule`**；`notify:publish` 已存在，沿用 N3 审批。
 4. **forms**：新增读 face、`FORMS_TOOLS`、审计表；`generate_form_draft` 行为不变（draft-only）。
 5. **openclaw**：加两个元工具；静态工具不动；部署更新 `AGENT_API_BASE` 与 `tools.allow`。
 6. **网关**：新路由；`AGENT_MCP_ENABLED` 可关闭；直接模块端点不受影响。
@@ -346,7 +354,8 @@ loader 与 `scripts/check-manifests.mjs` 校验：
 ### 13.1 模块
 
 - data：`/mcp-read` 只回读工具；`/mcp-curated` 13+query_detail、无 legacy；`data:query` 用户读/查都可用；`data:read` 用户查询工具不可见/`missing_scope`；`callTool` 工具级 scope。
-- notify：`/mcp` read face（notify:view）；`/mcp-manage` 无 profile 头时行为不变（N3 full）；`c-manage` profile 只回 agent-safe 子集；`create_agent_rule` 在 `c-manage` 下落 pending；`propose_rule`/`set_rule_enabled` 不出现；`notify:publish` 审批/启用。
+- notify：`/mcp` read face（notify:view）；`pat/session` 的 `/mcp-manage` 保持 N3 full；**`channel=wecom` 无论带不带 profile、带 `full` 还是 `c-manage`，都只回 agent-safe 子集且 `create_agent_rule` 落 pending**；`propose_rule`/`set_rule_enabled` 不可见/调用必拒；`notify:publish` 审批/启用。
+- notify 直连测试：用 `x-channel-key`+`x-wecom-userid` 直接打 `/api/modules/notify/mcp-manage`（不带 profile、以及伪造 `x-agent-profile: full`）⇒ 仍看不到/调不了 `propose_rule`/`set_rule_enabled`。
 - forms：`/mcp` 只 `list_forms`；`/mcp-manage` 两工具；`generate_form_draft` 落 draft；无 publish；`forms.mcp_audit` 每次调用一行。
 - `check-mcp-toolface` 覆盖 data/notify/forms；`check-manifests` 覆盖 `mcpFaces`。
 
@@ -354,18 +363,21 @@ loader 与 `scripts/check-manifests.mjs` 校验：
 
 - 双身份：PAT、channel key+userid；channel key 错/缺 userid ⇒ 401。
 - 内部签名身份：模块只解析一次；伪造/过期头 ⇒ 401；客户端传入同名头被剥掉。
+- **客户端传入 `x-agent-profile` 被剥掉**；`wecom + profile=full` 仍走 C 档（模块 channel 执法）；B 不受影响。
 - face 选择 + audience：C 只 manage；B 按 scope 见 read/query/manage；同名工具不同 group ⇒ 发现期报错。
+- 缓存 key 含 face/profile：notify B/C 同 path/scope 不串缓存。
 - `tools/list` 分页/字节上限/缓存；`tools/call` 超时/限流/错误映射/透传 structuredContent。
-- `agent__capabilities` 只读、无租户数据、locked 带 scope。
+- `agent__capabilities` 只读、无租户数据、locked 带 scope/face；data 的 locked 工具由 `data_harness_catalog` 补。
 - 无 token/args 审计；`AGENT_MCP_ENABLED=false` ⇒ 404。
 
 ### 13.3 openclaw
 
 - `platform_capabilities` 只返回 manage 工具；`platform_call` 不能调查询工具（audience）。
-- `platform_capabilities` 无参返回紧凑索引；`tool=<name>` 返回完整 schema；`q` 过滤；`nextCursor` 翻页合并。
+- `platform_capabilities` 无参返回紧凑索引 + `lockedFaces`（调 `agent__capabilities`）；`tool=<name>` 返回完整 schema；`q` 过滤；`nextCursor` 翻页合并。
 - `platform_call` 不接受 userId；身份只来自 `requesterSenderId`。
+- **namespace 钉死**：`create_agent_rule`/`create_agent_template`/`send_message` 的 namespace 由插件注入；模型传别的 namespace 被忽略/拒绝。
 - 静态查询工具回归全绿；`contracts.test.js` 含两个新工具。
-- SKILL 文案：草稿/人 gate/step-up/不重试。
+- SKILL 文案：草稿/人 gate/step-up/不重试；C 的 notify 规则一律 pending。
 
 ### 13.4 端到端
 
@@ -379,13 +391,16 @@ loader 与 `scripts/check-manifests.mjs` 校验：
 | # | 风险/问题 | 处置 |
 |---|---|---|
 | R1 | 内部签名身份需要所有模块中间件改造 | 先做 host 共享中间件；模块无需逐个改；loader 注入 |
-| R2 | notify 直连客户端行为变化 | 无 profile 头 ⇒ full/N3 原行为；只有网关对 C 设 `c-manage`，不影响直连客户端 |
+| R2 | notify 直连客户端行为变化 | pat/session 直连保持 N3 full；**wecom 直连也走 C 档**（这是刻意的更严策略，需在迁移说明中写明） |
 | R3 | C 的 manage audience 只覆盖 manage；C 用户想用网关查数 | 明确不支持；查数走静态工具 |
 | R4 | `data:read`/`data:query` 的权限发放 | 现有用户不改；read 面新增；查询面读工具 null 不回归 |
 | R5 | forms `generate_form_draft` LLM 慢/失败 | 网关 120s；错误透传；SKILL 不重试 |
 | R6 | notify `notify:publish` 的授权 | **已存在**（N3/N5；N0.9 已给两套生产的租户管理员授过）；A 不新增码，只确认 C 用户不持有它 |
-| R7 | 网关缓存与 scope 变更 | 缓存 key 含 scope-hash；TTL 30s |
+| R7 | 网关缓存与 scope 变更 | 缓存 key 含 scope-hash + face + profile；TTL 30s |
 | R8 | 工具面过大 | 分页 + 字节上限 + curated 面；不做 tool search |
+| R9 | **C 直连模块绕过网关头** | 模块按 `identity.channel` 执法；`wecom` 无论 profile/直连都走 C 档；加直连变异测试 |
+| R10 | **C 的 namespace 由模型选** | 插件/网关注入固定 namespace；模型参数不暴露；owner 校验兜底 |
+| R11 | **`x-agent-profile` 伪造** | 网关剥客户端同名头；模块以 channel 为准，profile 只作展示 |
 
 ## 15. 参考
 
