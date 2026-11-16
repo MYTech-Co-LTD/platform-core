@@ -396,7 +396,10 @@ export function registerSystemMap(r: ModuleHono, ctx: RouteCtx): void {
           ...(r0.durationMs === undefined ? {} : { durationMs: r0.durationMs }),
         }
         const got = await runs.get(r0.runId)
-        const nodes = Array.isArray(got.receipt?.nodes) ? got.receipt.nodes : []
+        // 优先收据（rer 明细缓存），没有就退回 run 记录自带的 nodes——
+        // 2026-11-16 实测：调度跑的记录本身带 nodes，收据只覆盖部分 run。
+        const receiptNodes = Array.isArray(got.receipt?.nodes) ? got.receipt.nodes : []
+        const nodes = receiptNodes.length > 0 ? receiptNodes : (r0.nodes ?? [])
         for (const n of nodes) {
           if (typeof n !== 'object' || n === null) continue
           const rec = n as Record<string, unknown>
