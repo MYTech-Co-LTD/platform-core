@@ -54,6 +54,21 @@ const READY_TIMEOUT_MS = 30_000
 const ENGINE_GET_DELAY_MS = 50
 const SUF = Math.random().toString(36).slice(2, 8)
 
+// ---- 运行模式（CLI flag） ----
+const ARGV = new Set(process.argv.slice(2))
+/**
+ * `--real-engine`：不造假引擎，改打外部真实 case-engine。
+ * 必填 env（缺一个就 fail-fast，不静默退回假引擎——那正是「用替身冒充 PASS」）：
+ *   · `OA_SMOKE_ENGINE_URL`   真引擎基址（如 http://127.0.0.1:13200）
+ *   · `OA_SMOKE_ENGINE_PAT`   平台 → 引擎的 Bearer（引擎当前不校验，仍按契约带）
+ *   · `OA_SMOKE_SERVICE_PAT`  预铸造的服务 PAT（引擎的 `NOTIFY_PAT`；与引擎启动时注入的**同一个**）
+ *   · `OA_SMOKE_PLATFORM_PORT` 固定平台端口（引擎启动时已把 NOTIFY_PLATFORM_BASE 钉到它，
+ *     端口不能由本脚本随机取——否则回调打到一个空端口，表现成「引擎不回调」）
+ */
+const REAL_ENGINE = ARGV.has('--real-engine')
+/** `--mint-service-pat`：只做迁移+建租户+铸 PAT 并打印 token，供「先铸 PAT → 再起引擎」的顺序使用。 */
+const MINT_ONLY = ARGV.has('--mint-service-pat')
+
 /** 用户（owner 全部归 ORG；admin 由 MockCasdoor 内置）。 */
 const U = {
   mgr: 'u-mgr', // forms:manage + forms:publish + approval:manage + approval:publish
@@ -590,6 +605,98 @@ class FakeEngine {
   }
 }
 
+// ---- 统一引擎观测面（假/真引擎同一套断言走同一条 HTTP） ----
+
+/** @type {string} 由 main 在启动后赋值（结尾无斜杠） */
+let engineBase = ''
+/** @type {string} 平台 → 引擎的 Bearer */
+let engineInboundPat = ENGINE_PAT
+
+/**
+ * 对引擎发一个请求。**假引擎也走 HTTP**：同一组断言在真假两种形态下走同一条路径，
+ * 避免「假引擎读内存、真引擎走网络」两套量具各自漂移。
+ * @param {string} method
+ * @param {string} p
+ * @param {unknown} [body]
+ */
+async function engineHttp(method, p, body) {
+  const u = new URL(`${engineBase}${p}`)
+  return httpRequest({
+    port: Number(u.port || '80'),
+    method,
+    path: `${u.pathname}${u.search}`,
+    headers: { Authorization: `Bearer ${engineInboundPat}` },
+    ...(body !== undefined ? { body: JSON.stringify(body) } : {}),
+  })
+}
+
+/**
+ * `GET /cases/:id` 的统一视图（真引擎原样返回；假引擎响应形状已与真引擎对齐）。
+ * @param {string} caseId
+ */
+async function engineDetail(caseId) {
+  const res = await engineHttp('GET', `/cases/${encodeURIComponent(caseId)}`)
+  if (res.status !== 200) throw new SmokeFailure(`引擎 GET /cases/${caseId} → ${res.status} ${res.text}`)
+  const raw = json(res)
+  // 真引擎：{ case, currentNode, plan, nodeDecisions, events }（原样）
+  // 假引擎：本脚本内存形状 { caseId, status, outcome, currentNode, plan, decisions, events }——归一成同一形状
+  if (raw !== null && raw.case !== undefined) return raw
+  return {
+    case: {
+      id: raw?.caseId,
+      status: raw?.status,
+      externalRef: raw?.externalRef,
+      finalAction: raw?.outcome ?? null,
+    },
+    currentNode: raw?.currentNode ?? null,
+    plan: raw?.plan ?? null,
+    nodeDecisions: (raw?.decisions ?? []).map((/** @type {any} */ d) => ({
+      nodeKey: d.nodeKey,
+      approver: d.decidedBy,
+      action: d.action,
+      comment: d.comment ?? null,
+      at: d.decidedAt,
+    })),
+    events: raw?.events ?? [],
+  }
+}
+
+/**
+ * 按 externalRef 反查（真引擎走 `GET /cases?externalRef=`；假引擎实现了同一查询面）。
+ * @param {string} ref
+ */
+async function engineByRef(ref) {
+  const res = await engineHttp('GET', `/cases?externalRef=${encodeURIComponent(ref)}`)
+  const rows = json(res)?.cases ?? []
+  if (rows.length === 0) return null
+  return engineDetail(rows[0].id)
+}
+
+/**
+ * 等引擎把 case 推到 gate（真引擎 `POST /cases` 是 fire-and-forget：建行即 201，节点步由 worker
+ * 异步执行，`status` 先 `pending` 后 `gate`；立即 GET 会读到 pending——那是**引擎的异步语义**，
+ * 不是状态错。验收断言 gate 时必须等它到，而不是把 pending 判成 FAIL 或把断言放宽成「非 closed」）。
+ * @param {string} caseId
+ * @param {number} [timeoutMs]
+ */
+async function waitForEngineGate(caseId, timeoutMs = 10_000) {
+  const started = Date.now()
+  /** @type {any} */
+  let detail = null
+  while (Date.now() - started < timeoutMs) {
+    detail = await engineDetail(caseId)
+    if (detail?.case?.status === 'gate') return { detail, waitedMs: Date.now() - started }
+    await sleep(200)
+  }
+  return { detail, waitedMs: Date.now() - started }
+}
+
+/** 引擎能力面（§10.1）——真模式用它证明「打的是真引擎」而不是自己的替身。 */
+async function engineCapabilities() {
+  const res = await engineHttp('GET', '/capabilities')
+  return { status: res.status, body: json(res) }
+}
+
 // ---- 宿主子进程 ----
 
 function tsxRunner() {
@@ -781,6 +888,8 @@ async function main() {
   }
 
   const startedAt = new Date()
+  /** @type {Set<string>} 本次运行建过的引擎 case（证据汇总时逐个回读） */
+  const trackedCaseIds = new Set()
   // pg 锚到 apps/server 解析（scripts/ 不属于任何 workspace 包；照 backfill-identity-links.mjs 先例）
   const requireFromServer = createRequire(new URL('../apps/server/package.json', import.meta.url))
   const { Pool } = requireFromServer('pg')
@@ -809,6 +918,21 @@ async function main() {
     const tenantId = Number(t.rows[0].id)
     note(`tenant.id=${tenantId} org=${ORG}`)
 
+    // --mint-service-pat：只铸 PAT 就退出（顺序要求：引擎启动前必须已有它要用的 NOTIFY_PAT）。
+    // **不跑清场**：这个模式是幂等准备步骤，不该顺手删掉上一次运行的数据。
+    if (MINT_ONLY) {
+      // 默认 oa-smoke/case-engine；`OA_SMOKE_MINT_ORG` / `OA_SMOKE_MINT_USER` 可改成别的租户/账号
+      // （UI 验收要用 dev-stack 的 acme/admin1 铸一枚给引擎当 NOTIFY_PAT）。
+      const mintOrg = process.env.OA_SMOKE_MINT_ORG?.trim() || ORG
+      const mintUser = process.env.OA_SMOKE_MINT_USER?.trim() || U.svc
+      const { createPatKey } = await import('../apps/server/src/api-key-store.ts')
+      const { id, token } = await createPatKey(pool, mintOrg, mintUser, `oa-p1-engine-${SUF}`)
+      // stdout 只留 token（供 `PAT=$(...)` 直接取用）；id 走 stderr 方便排障
+      console.error(`oa-p1-smoke: minted PAT id=${id} org=${mintOrg} user=${mintUser}`)
+      console.log(token)
+      return
+    }
+
     // 清场：只动本 org 的行（published asset 物理不可删是 DB 契约，asset_id 用随机后缀规避）
     await pool.query('delete from forms.submission where org=$1', [ORG]).catch(() => {})
     await pool.query('delete from forms.audit where org=$1', [ORG]).catch(() => {})
@@ -816,7 +940,9 @@ async function main() {
     await pool.query('delete from notify.delivery where org=$1', [ORG]).catch(() => {})
     await pool.query('delete from notify.event where org=$1', [ORG]).catch(() => {})
     await pool.query('delete from notify.rule where org=$1 and origin=\'derived\' and created_by=\'system\'', [ORG]).catch(() => {})
-    await pool.query('delete from platform.api_key where org=$1', [ORG]).catch(() => {})
+    // 真引擎模式下保留 api_key：`--mint-service-pat` 铸的那枚是**引擎启动时**注入的 NOTIFY_PAT，
+    // 这里删掉就等于把正在跑的引擎的回调通道掐了（表现成「引擎不回调」）。
+    if (!REAL_ENGINE) await pool.query('delete from platform.api_key where org=$1', [ORG]).catch(() => {})
     await pool.query('delete from platform.oa_engine where org=$1', [ORG]).catch(() => {})
     for (const table of ['org_node', 'org_membership', 'org_node_leader', 'org_role_binding']) {
       await pool.query(`delete from platform.${table} where tenant_id=$1`, [tenantId])
@@ -867,14 +993,52 @@ async function main() {
     })
     await mock.start()
     // 先起 mock 再要端口：mock 的 :0 随机端口要先占住（smoke-load issue #112 同款顺序约束）
-    const [hostPort, enginePort, workerPort] = await freePorts(3)
+    /** @type {number} */
+    let hostPort
+    /** @type {number} */
+    let workerPort
+    /** @type {number | undefined} 假引擎端口（真模式下不用） */
+    let enginePort
+    if (REAL_ENGINE) {
+      const rawPort = process.env.OA_SMOKE_PLATFORM_PORT
+      hostPort = Number(rawPort)
+      check(Number.isInteger(hostPort) && hostPort > 0, `OA_SMOKE_PLATFORM_PORT 必填（收到 ${String(rawPort)}）`)
+      ;[workerPort] = await freePorts(1)
+      enginePort = Number(new URL(String(process.env.OA_SMOKE_ENGINE_URL)).port)
+    } else {
+      ;[hostPort, enginePort, workerPort] = await freePorts(3)
+    }
     check(
-      new Set([hostPort, enginePort, workerPort, mock.port]).size === 4,
+      new Set([hostPort, enginePort, workerPort, mock.port].filter((x) => x !== undefined)).size
+        === [hostPort, enginePort, workerPort, mock.port].filter((x) => x !== undefined).length,
       `端口互不相同（mock=${mock.port} host=${hostPort} engine=${enginePort} worker=${workerPort}）`,
     )
 
-    engine = await new FakeEngine({ org: ORG, pat: ENGINE_PAT }).start(enginePort)
-    note(`假引擎 ${engine.origin}（org=${ORG}，PAT 校验开）`)
+    if (REAL_ENGINE) {
+      const engineUrl = String(process.env.OA_SMOKE_ENGINE_URL ?? '').trim()
+      engineInboundPat = String(process.env.OA_SMOKE_ENGINE_PAT ?? '').trim()
+      check(engineUrl.length > 0, 'OA_SMOKE_ENGINE_URL 必填（--real-engine 不静默退回假引擎）')
+      check(engineInboundPat.length > 0, 'OA_SMOKE_ENGINE_PAT 必填')
+      engineBase = engineUrl.replace(/\/+$/, '')
+      const caps = await engineCapabilities()
+      note(`真引擎 ${engineBase} → /capabilities ${caps.status} ${JSON.stringify(caps.body)}`)
+      check(caps.status === 200, '真引擎 /capabilities 200（不是替身）', caps)
+      check(
+        Array.isArray(caps.body?.providers) && caps.body.providers.includes('inapp') && caps.body?.planVersion === 1,
+        '真引擎能力面含 inapp / planVersion=1',
+        caps,
+      )
+      check(
+        caps.body?.engineVersion !== 'fake-engine-0.1.0',
+        `引擎版本不是假引擎（实际 ${String(caps.body?.engineVersion)}）`,
+        caps,
+      )
+    } else {
+      engine = await new FakeEngine({ org: ORG, pat: ENGINE_PAT }).start(Number(enginePort))
+      engineBase = engine.origin
+      engineInboundPat = ENGINE_PAT
+      note(`假引擎 ${engine.origin}（org=${ORG}，PAT 校验开）`)
+    }
 
     serverChild = startServer(
       {
@@ -891,7 +1055,7 @@ async function main() {
         TENANT_MODE: 'single',
         PLATFORM_ORG: ORG,
         // 引擎 PAT 走 secret 引用（引用名见 platform.oa_engine.pat_secret_ref）
-        [PAT_SECRET_REF]: ENGINE_PAT,
+        [PAT_SECRET_REF]: engineInboundPat,
       },
       'oa',
     )
@@ -901,10 +1065,10 @@ async function main() {
     // 引擎映射登记行：宿主 OaEnginePort 每次请求读它（无行 = OA 关闭）
     await pool.query(
       `insert into platform.oa_engine(org, base_url, pat_secret_ref, engine_version, enabled)
-       values ($1,$2,$3,'fake-engine-0.1.0',true)
+       values ($1,$2,$3,$4,true)
        on conflict (org) do update set base_url=excluded.base_url, pat_secret_ref=excluded.pat_secret_ref,
          engine_version=excluded.engine_version, enabled=true, updated_at=now()`,
-      [ORG, engine.origin, PAT_SECRET_REF],
+      [ORG, engineBase, PAT_SECRET_REF, REAL_ENGINE ? 'case-engine-real' : 'fake-engine-0.1.0'],
     )
 
     // ── 3. 授权（装载器已在启动期把码供给到 ORG；这里只把码授给人） ──
@@ -937,17 +1101,40 @@ async function main() {
     const sess = await api(hostPort, jars.svc, 'GET', '/api/platform/auth/session')
     const csrf = json(sess)?.csrfToken
     check(typeof csrf === 'string' && csrf.length > 0, '服务账号会话带 csrfToken', describe(sess))
-    const patRes = await httpRequest({
-      port: hostPort,
-      method: 'POST',
-      path: '/api/platform/keys',
-      headers: { Cookie: jars.svc.header(), 'x-csrf-token': csrf },
-      body: JSON.stringify({ name: `oa-p1-smoke-${SUF}` }),
-    })
-    const pat = json(patRes)?.token
-    check(patRes.status === 201 && typeof pat === 'string' && pat.startsWith('dkq_'), '服务账号 PAT 签发 201', describe(patRes))
-    engine.cfg.platformBase = `http://127.0.0.1:${hostPort}`
-    engine.cfg.platformPat = pat
+    /** @type {string} */
+    let pat
+    if (REAL_ENGINE) {
+      // 真引擎模式：PAT 必须在引擎启动前铸好（它是引擎的 NOTIFY_PAT），这里只校验形状/可用性。
+      pat = String(process.env.OA_SMOKE_SERVICE_PAT ?? '').trim()
+      check(pat.startsWith('dkq_'), 'OA_SMOKE_SERVICE_PAT 必填（引擎启动时注入的同一枚 PAT）')
+      // 用真实调用验它有效：未声明事件必须回 400 EVENT_NOT_DECLARED（若 PAT 无效会是 401/403）
+      const probe = await httpRequest({
+        port: hostPort,
+        method: 'POST',
+        path: '/api/modules/notify/emit',
+        headers: { Authorization: `Bearer ${pat}` },
+        body: JSON.stringify({ eventKey: 'forms.pat.probe', eventId: `pat-probe-${SUF}`, payload: {} }),
+      })
+      check(
+        probe.status === 400 && json(probe)?.error === 'EVENT_NOT_DECLARED',
+        '预铸服务 PAT 可用（notify:emit 门内，事件未声明 ⇒ 400）',
+        describe(probe),
+      )
+    } else {
+      const patRes = await httpRequest({
+        port: hostPort,
+        method: 'POST',
+        path: '/api/platform/keys',
+        headers: { Cookie: jars.svc.header(), 'x-csrf-token': csrf },
+        body: JSON.stringify({ name: `oa-p1-smoke-${SUF}` }),
+      })
+      pat = json(patRes)?.token
+      check(patRes.status === 201 && typeof pat === 'string' && pat.startsWith('dkq_'), '服务账号 PAT 签发 201', describe(patRes))
+      // 假引擎的回调器由本进程持有（真引擎的回调器在它自己的进程里，靠启动 env）
+      if (engine === undefined) throw new SmokeFailure('假引擎未启动（装配错误）')
+      engine.cfg.platformBase = `http://127.0.0.1:${hostPort}`
+      engine.cfg.platformPat = pat
+    }
 
     // 通知链：内置模板 + 派生规则（三处同描的那条链），之后凭它产 inbox 行
     const seedOut = await runOnceCli(
@@ -1027,40 +1214,47 @@ async function main() {
       res.status === 201 && sub1?.status === 'pending_approval' && typeof sub1.caseId === 'string',
     )
     const sub1Id = String(sub1.id)
-    const case1 = engine.caseOf(sub1.caseId)
+    trackedCaseIds.add(sub1.caseId)
+    const case1 = await engineDetail(sub1.caseId)
     record(
       'main.plan-snapshot',
       'plan nodes = leader[u-lead] → hr[u-hr]',
-      JSON.stringify(case1.plan.nodes.map((n) => [n.key, n.approvers])),
-      JSON.stringify(case1.plan.nodes.map((n) => [n.key, n.approvers]))
+      JSON.stringify(case1?.plan?.nodes?.map((/** @type {any} */ n) => [n.key, n.approvers])),
+      JSON.stringify(case1?.plan?.nodes?.map((/** @type {any} */ n) => [n.key, n.approvers]))
         === JSON.stringify([['leader', [U.lead]], ['hr', [U.hr]]]),
     )
-    const createdReq = engine.requests.filter((r) => r.method === 'POST' && r.path === '/cases').at(-1)
+    const createdReq = engine === undefined
+      ? null
+      : engine.requests.filter((r) => r.method === 'POST' && r.path === '/cases').at(-1)
+    // 真引擎：**不采信请求体回显**（本进程看不到），按 externalRef 反查真实引擎里的 case 行；
+    // provider 在引擎侧不落列，改判 externalRef 命中 + plan 驱动（case.plan 非空）。
+    const byRef1 = REAL_ENGINE ? await engineByRef(`forms:submission:${sub1Id}`) : null
     record(
       'main.engine-create',
-      `org=${ORG} / externalRef=forms:submission:${sub1Id} / provider=inapp`,
-      JSON.stringify({
-        org: /** @type {any} */ (createdReq?.body)?.org,
-        externalRef: /** @type {any} */ (createdReq?.body)?.externalRef,
-        provider: /** @type {any} */ (createdReq?.body)?.provider,
-      }),
-      /** @type {any} */ (createdReq?.body)?.org === ORG
-        && /** @type {any} */ (createdReq?.body)?.externalRef === `forms:submission:${sub1Id}`
-        && /** @type {any} */ (createdReq?.body)?.provider === 'inapp',
+      `externalRef=forms:submission:${sub1Id} 命中引擎 case（provider=inapp / plan 驱动）`,
+      REAL_ENGINE
+        ? JSON.stringify({ hit: byRef1?.case?.id ?? null, externalRef: byRef1?.case?.externalRef ?? null, planNodes: byRef1?.plan?.nodes?.length ?? null })
+        : JSON.stringify({
+          org: /** @type {any} */ (createdReq?.body)?.org,
+          externalRef: /** @type {any} */ (createdReq?.body)?.externalRef,
+          provider: /** @type {any} */ (createdReq?.body)?.provider,
+        }),
+      REAL_ENGINE
+        ? byRef1?.case?.id === sub1.caseId && byRef1?.case?.externalRef === `forms:submission:${sub1Id}`
+          && Array.isArray(byRef1?.plan?.nodes) && byRef1.plan.nodes.length === 2
+        : /** @type {any} */ (createdReq?.body)?.org === ORG
+          && /** @type {any} */ (createdReq?.body)?.externalRef === `forms:submission:${sub1Id}`
+          && /** @type {any} */ (createdReq?.body)?.provider === 'inapp',
     )
 
-    // 引擎直接观测（spec §10.5）
-    let eng = await httpRequest({
-      port: enginePort,
-      path: `/cases/${sub1.caseId}`,
-      headers: { Authorization: `Bearer ${ENGINE_PAT}` },
-    })
-    const engDetail = json(eng)
+    // 引擎直接观测（spec §10.5）。真引擎是异步推进 ⇒ 等它到 gate（有界 10s，超过即如实红）。
+    const gate1 = await waitForEngineGate(sub1.caseId)
+    const engDetail = gate1.detail
     record(
       'main.engine-gate',
-      '引擎 case: status=gate / currentNode=leader',
-      `${engDetail?.status} / ${engDetail?.currentNode}`,
-      engDetail?.status === 'gate' && engDetail?.currentNode === 'leader',
+      '引擎 case: status=gate / currentNode=leader（真引擎异步推进，等待有界 10s）',
+      `${engDetail?.case?.status} / ${engDetail?.currentNode}（等待 ${gate1.waitedMs}ms）`,
+      engDetail?.case?.status === 'gate' && engDetail?.currentNode === 'leader',
     )
 
     res = await api(hostPort, jars.lead, 'GET', `/api/modules/forms/approvals/${sub1.caseId}`)
@@ -1084,12 +1278,12 @@ async function main() {
       action: 'approve', comment: '同意',
     })
     check(res.status === 200 && json(res)?.nodeKey === 'leader', 'u-lead 审批 leader 200', describe(res))
-    eng = await httpRequest({ port: enginePort, path: `/cases/${sub1.caseId}`, headers: { Authorization: `Bearer ${ENGINE_PAT}` } })
+    const afterNode1 = await engineDetail(sub1.caseId)
     record(
       'main.node2',
       '第一节点通过后引擎进 hr（status 仍 gate）',
-      `${json(eng)?.status} / ${json(eng)?.currentNode}`,
-      json(eng)?.status === 'gate' && json(eng)?.currentNode === 'hr',
+      `${afterNode1?.case?.status} / ${afterNode1?.currentNode}`,
+      afterNode1?.case?.status === 'gate' && afterNode1?.currentNode === 'hr',
     )
 
     res = await api(hostPort, jars.hr, 'POST', `/api/modules/forms/approvals/${sub1.caseId}/decision`, {
@@ -1108,26 +1302,33 @@ async function main() {
       JSON.stringify(sub1Row),
       sub1Row.status === 'approved' && sub1Row.decided_at !== null && sub1Row.provider === 'inapp',
     )
-    const case1After = engine.caseOf(sub1.caseId)
+    const case1After = await engineDetail(sub1.caseId)
     record(
       'main.case-closed',
-      '引擎 case closed / outcome=approved / 2 个 gate.node.decided',
-      `${case1After.status} / ${case1After.outcome} / decisions=${case1After.decisions.length}`,
-      case1After.status === 'closed' && case1After.outcome === 'approved'
-        && case1After.events.filter((e) => e.type === 'gate.node.decided').length === 2,
+      '引擎 case closed / finalAction=approve(d) / 2 条节点决策',
+      `${case1After?.case?.status} / ${case1After?.case?.finalAction} / nodeDecisions=${case1After?.nodeDecisions?.length}`,
+      // 词汇偏差（如实记）：真引擎 `finalAction` 用动词 `approve` / `reject`，平台 submission 用
+      // `approved` / `rejected`（回调里由引擎写平台词汇）。两套都接受，别把命名差异当功能失败。
+      case1After?.case?.status === 'closed'
+        && ['approved', 'approve'].includes(case1After?.case?.finalAction)
+        && case1After?.nodeDecisions?.length === 2,
     )
     record(
       'main.no-duplicate-node-event',
-      '无重复 gate.node.decided（每节点恰好 1 条）',
-      JSON.stringify(case1After.events.filter((e) => e.type === 'gate.node.decided')),
-      new Set(case1After.events.filter((e) => e.type === 'gate.node.decided').map((e) => e.nodeKey)).size === 2,
+      '每节点恰好 1 条决策（nodeDecisions 无 (nodeKey,approver) 重复）',
+      JSON.stringify(case1After?.nodeDecisions?.map((/** @type {any} */ d) => `${d.nodeKey}:${d.approver}`)),
+      new Set((case1After?.nodeDecisions ?? []).map((/** @type {any} */ d) => `${d.nodeKey}:${d.approver}`)).size === 2,
     )
-    const cb1 = engine.callbacks.filter((c) => c.caseId === sub1.caseId)
+    // 回调次数以**平台侧审计**为准（两种形态都写同一本账）：`approval.callback` 恰好 1 条。
+    const cbAudit = (await pool.query(
+      `select count(*)::int n from forms.audit
+        where org=$1 and action='approval.callback' and target=$2`, [ORG, sub1Id],
+    )).rows[0].n
     record(
       'main.callback',
-      '引擎 final 回调平台 200（一次）',
-      JSON.stringify(cb1),
-      cb1.length === 1 && cb1[0].status === 200,
+      '引擎 final 回调平台落账恰好一次（forms.audit approval.callback = 1）',
+      `auditCount=${cbAudit}${engine === undefined ? '' : ` fakeCallbacks=${JSON.stringify(engine.callbacks.filter((c) => c.caseId === sub1.caseId))}`}`,
+      cbAudit === 1 && (engine === undefined || engine.callbacks.filter((c) => c.caseId === sub1.caseId)[0]?.status === 200),
     )
 
     // 通知：真链（seed-builtin + worker --once）→ notify.inbox
@@ -1175,20 +1376,24 @@ async function main() {
     check(res.status === 201, '新建在途单 #2 201', describe(res))
     res = await api(hostPort, jars.u1, 'POST', `/api/modules/forms/submissions/${sub2.id}/withdraw`, { reason: '计划取消' })
     check(res.status === 200, '提交人撤回 200', describe(res))
+    trackedCaseIds.add(sub2.caseId)
     const sub2Row = (await pool.query('select status, withdrawn_at from forms.submission where org=$1 and id=$2', [ORG, sub2.id])).rows[0]
+    const case2 = await engineDetail(sub2.caseId)
     record(
       'withdraw.pending',
       'submission.status=withdrawn + withdrawn_at 落值 + 引擎 closed/withdrawn',
-      `${JSON.stringify(sub2Row)} / ${engine.caseOf(sub2.caseId).outcome}`,
+      `${JSON.stringify(sub2Row)} / ${case2?.case?.status}/${case2?.case?.finalAction}`,
       sub2Row.status === 'withdrawn' && sub2Row.withdrawn_at !== null
-        && engine.caseOf(sub2.caseId).status === 'closed' && engine.caseOf(sub2.caseId).outcome === 'withdrawn',
+        && case2?.case?.status === 'closed' && case2?.case?.finalAction === 'withdrawn',
     )
-    const withdrawReq = engine.requests.filter((r) => r.path.endsWith('/withdraw')).at(-1)
+    const withdrawReq = engine === undefined ? null : engine.requests.filter((r) => r.path.endsWith('/withdraw')).at(-1)
     record(
       'withdraw.engine',
-      '引擎收到 withdraw（200，actor=提交人）',
-      JSON.stringify(withdrawReq),
-      withdrawReq?.status === 200 && /** @type {any} */ (withdrawReq?.body)?.actor === U.u1,
+      '引擎收到 withdraw（假引擎可观测 actor=提交人；真引擎以 case=withdrawn 为准）',
+      engine === undefined ? JSON.stringify({ status: case2?.case?.status, finalAction: case2?.case?.finalAction }) : JSON.stringify(withdrawReq),
+      engine === undefined
+        ? case2?.case?.status === 'closed' && case2?.case?.finalAction === 'withdrawn'
+        : withdrawReq?.status === 200 && /** @type {any} */ (withdrawReq?.body)?.actor === U.u1,
     )
 
     // 已有一节点决策后再撤回 → 409，状态不变
@@ -1197,6 +1402,7 @@ async function main() {
     })
     const sub3 = json(res)
     check(res.status === 201, '新建在途单 #3 201', describe(res))
+    trackedCaseIds.add(sub3.caseId)
     res = await api(hostPort, jars.lead, 'POST', `/api/modules/forms/approvals/${sub3.caseId}/decision`, { action: 'approve' })
     check(res.status === 200, 'u-lead 先批掉第一节点 200', describe(res))
     res = await api(hostPort, jars.u1, 'POST', `/api/modules/forms/submissions/${sub3.id}/withdraw`, {})
@@ -1210,18 +1416,30 @@ async function main() {
 
     // ── 8. 负对照（Task 15 Step 4 全表） ──
     step('8. 负对照 1/7：org 不一致（引擎侧契约 + 平台回调侧）')
-    // 8a. 引擎侧：spec §10.2「引擎单租户实例校验 org == ENGINE_ORG，不一致 403」
-    res = await httpRequest({
-      port: enginePort,
-      method: 'POST',
-      path: '/cases',
-      headers: { Authorization: `Bearer ${ENGINE_PAT}` },
-      body: JSON.stringify({
-        org: 'beta', externalRef: 'forms:submission:999999', planVersion: 1, provider: 'inapp',
-        type: 'approval', title: 'org mismatch', requesterId: U.u1, plan: { nodes: [{ key: 'a', approvers: [U.u1] }] },
-      }),
+    // 8a. 引擎侧：spec §10.2「引擎单租户实例校验 org == ENGINE_ORG，不一致 403」。
+    // 计划必须是**形状合法**的（否则真引擎会先回 400 invalid plan，把 org 判据遮住——第一版就这么
+    // 误判过：400 不是「org 被拦」，是 payload 不合法）。
+    res = await engineHttp('POST', '/cases', {
+      org: 'beta',
+      externalRef: `forms:submission:org-mismatch-${SUF}`,
+      planVersion: 1,
+      provider: 'inapp',
+      type: 'approval',
+      title: 'org mismatch',
+      requesterId: U.u1,
+      plan: {
+        nodes: [{ key: 'a', title: 'A', approvers: [U.u1], quorum: 'all' }],
+        rejectionPolicy: 'first_reject_ends',
+        selfApproval: 'allow',
+        dedupe: 'first_occurrence',
+      },
     })
-    record('neg.org-engine', '403（引擎拒绝跨 org 建单）', String(res.status), res.status === 403)
+    record(
+      'neg.org-engine',
+      '403（引擎拒绝跨 org 建单，spec §10.2）',
+      `${res.status} ${JSON.stringify(json(res))}`,
+      res.status === 403,
+    )
     // 8b. 平台回调侧（真平台代码）：raw.org ≠ 会话 org → 403 ORG_MISMATCH
     res = await httpRequest({
       port: hostPort,
@@ -1288,6 +1506,7 @@ async function main() {
     })
     const sub4 = json(res)
     check(res.status === 201, '新建在途单 #4 201（v1 计划）', describe(res))
+    trackedCaseIds.add(sub4.caseId)
     const v2 = {
       provider: 'inapp',
       nodes: [
@@ -1331,21 +1550,25 @@ async function main() {
     })
     const sub5 = json(res)
     check(res.status === 201, '新建在途单 #5 201', describe(res))
+    trackedCaseIds.add(sub5.caseId)
+    // 并发点选在**最后一个节点（hr）**：两次并发 approve 一个推进结案、另一个撞「已结案」⇒ 409。
+    // 为什么不选中间节点：真引擎在 currentNode 前进后，对非当前节点审批人回 **400**（不是 409），
+    // 平台把它映射成 502——那是「授权/节点已变」的语义，不是「重复决策」。选末节点才能不掺两种病因。
+    res = await api(hostPort, jars.lead, 'POST', `/api/modules/forms/approvals/${sub5.caseId}/decision`, { action: 'approve' })
+    check(res.status === 200, '并发用例：u-lead 先过 leader 200', describe(res))
     const [r1, r2] = await Promise.all([
-      api(hostPort, jars.lead, 'POST', `/api/modules/forms/approvals/${sub5.caseId}/decision`, { action: 'approve' }),
-      api(hostPort, jars.lead, 'POST', `/api/modules/forms/approvals/${sub5.caseId}/decision`, { action: 'approve' }),
+      api(hostPort, jars.hr, 'POST', `/api/modules/forms/approvals/${sub5.caseId}/decision`, { action: 'approve' }),
+      api(hostPort, jars.hr, 'POST', `/api/modules/forms/approvals/${sub5.caseId}/decision`, { action: 'approve' }),
     ])
     const statuses = [r1.status, r2.status].sort()
-    const case5 = engine.caseOf(sub5.caseId)
+    const case5 = await engineDetail(sub5.caseId)
+    const hrDecisions = (case5?.nodeDecisions ?? []).filter((/** @type {any} */ d) => d.nodeKey === 'hr').length
     record(
       'neg.concurrent-decision',
       '一个 200 / 一个 409；节点决策只落一次（不双落）',
-      `statuses=${JSON.stringify(statuses)} leaderDecisions=${case5.decisions.filter((d) => d.nodeKey === 'leader').length}`,
-      statuses[0] === 200 && statuses[1] === 409
-        && case5.decisions.filter((d) => d.nodeKey === 'leader').length === 1,
+      `statuses=${JSON.stringify(statuses)} hrDecisions=${hrDecisions}`,
+      statuses[0] === 200 && statuses[1] === 409 && hrDecisions === 1,
     )
-    // 收尾：让这张单走完（不影响上述断言）
-    await api(hostPort, jars.hr, 'POST', `/api/modules/forms/approvals/${sub5.caseId}/decision`, { action: 'approve' })
 
     step('8. 负对照 7/7：未声明事件 emit')
     res = await httpRequest({
@@ -1375,21 +1598,34 @@ async function main() {
          from forms.audit where org=$1 order by id`,
       [ORG],
     )).rows
-    const cases = [...engine.cases.values()].map((c) => ({
-      caseId: c.caseId,
-      externalRef: c.externalRef,
-      status: c.status,
-      outcome: c.outcome,
-      currentNode: c.currentNode,
-      decisions: c.decisions,
-      events: c.events,
+    // 引擎证据：逐 case 回读（真/假同一套 HTTP），不依赖进程内引用
+    const cases = await Promise.all([...trackedCaseIds].map(async (caseId) => {
+      const d = await engineDetail(caseId)
+      return {
+        caseId,
+        externalRef: d?.case?.externalRef ?? null,
+        status: d?.case?.status ?? null,
+        finalAction: d?.case?.finalAction ?? null,
+        currentNode: d?.currentNode ?? null,
+        nodeDecisions: d?.nodeDecisions ?? [],
+        events: d?.events ?? [],
+      }
     }))
     const finishedAt = new Date()
     const summary = {
-      run: { org: ORG, suffix: SUF, startedAtBj: bj(startedAt), finishedAtBj: bj(finishedAt), hostPort, enginePort },
+      run: {
+        org: ORG,
+        suffix: SUF,
+        mode: REAL_ENGINE ? 'real-engine' : 'fake-engine',
+        engineBase,
+        startedAtBj: bj(startedAt),
+        finishedAtBj: bj(finishedAt),
+        hostPort,
+        enginePort,
+      },
       results,
       failures: results.filter((r) => !r.pass).length,
-      evidence: { submissions, cases, callbacks: engine.callbacks, inbox, audit },
+      evidence: { submissions, cases, callbacks: engine === undefined ? 'real-engine (see forms.audit)' : engine.callbacks, inbox, audit },
     }
     console.log('\n===== SMOKE_RESULT_JSON_BEGIN =====')
     console.log(JSON.stringify(summary, null, 2))

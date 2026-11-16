@@ -15,22 +15,25 @@
 | 执行时间 | 2026-11-16 15:27:22 – 15:27:25 BJT |
 | 机器 | 本机（macOS / Node 22 / 本机 PostgreSQL 16，`postgres://platform:***@127.0.0.1:5432/platform`） |
 | 平台 | 本仓校验分支 `ylwzzs/oa-p1-acceptance`（= `main` `98d8eee8`）真进程 `apps/server/src/index.ts` |
-| 引擎 | **假引擎**（`scripts/oa-p1-smoke.mjs` 内起的 HTTP 服务，逐条实现 spec §10.1–10.6） |
+| 引擎 | 两次运行：**假引擎**（15:27，`oa-p1-smoke.mjs` 内置）与 **真实 case-engine**（16:05，本地 node 起 `origin/main` `e027a03`）——后者见 §10 |
+| 追加验收 | 2026-11-16 16:08–16:14 BJT：dev-stack + 构建后的 web dist + Orca 内置浏览器走查（§11） |
 | 租户 | 自建 `oa-smoke`（single 模式 `PLATFORM_ORG=oa-smoke`），不碰 acme/beta 与本机其它夹具 |
 | 身份 | MockCasdoor（真 HTTP，真登录 + 租户管理员 `/api/update-permission` 授权；不是签假会话） |
 | 通知 | 真链：`modules/notify/seed-builtin.ts`（模板+派生规则）→ `scripts/notify-worker.mjs --once` → `notify.inbox` |
 
-**为什么用假引擎，以及它证不了什么**：P1 的引擎实现在私有仓 case-engine（Mastra durable workflow），
-本机没有可用的引擎运行栈（`core/engine` 需 `npm ci` + Mastra build + 独立 pg）。计划 Task 15 明确
-允许「fake engine 或真 engine」。因此本次验收**证明的是平台侧接缝与授权**：
+**假引擎与真引擎各证什么**：计划 Task 15 允许「fake engine 或真 engine」。第一轮（15:27）用假引擎
+把平台侧接缝与授权钉死；第二轮（16:05，§10）把同一脚本切到 `--real-engine`，用 case-engine
+`origin/main`（#120 / `e027a03`，Mastra durable workflow + `@mastra/pg`）真跑了主路径/撤回/负对照。
 
-- 真：宿主装载、manifest `declaredScopeGate`、`OrganizationPort`（platform 组织表）、
-  `OaEnginePort`（`platform.oa_engine` 登记行 + secret 引用）、提交建单的补偿、计划快照、
-  审批代理的授权、回调幂等、通知事件/模板/规则/worker/inbox。
-- 假：引擎的节点循环、quorum、撤回 CAS、`gate.node.decided` 事件数、final 回调的**触发时机**。
-  这些的正确性由 case-engine 自己的测试负责（`core/engine/__tests__/case-approval.test.ts`、
-  `notify-emit.test.ts`），**本次没有重跑它们**——这是本记录最大的边界，不接受「端到端全绿」的
-  过度解读。
+- 假引擎轮证明：宿主装载、manifest `declaredScopeGate`、`OrganizationPort`、`OaEnginePort`
+  （`platform.oa_engine` 登记行 + secret 引用）、提交建单补偿、计划快照、审批代理授权、回调幂等、
+  通知事件/模板/规则/worker/inbox——以及引擎**契约的形状**（org 校验、节点循环、quorum、撤回 CAS）。
+- 真引擎轮证明：同一批断言在真 HTTP + 真 workflow + 真回调下成立（含并发 409、在途单不吃 v2、
+  回调重放 deduped），并暴露出**一处真实契约缺口**：spec §10.2 的「org 不一致 403」在真引擎里
+  未实现（实测 201 建单）——如实记 FAIL（§10.3）。
+
+> 第一轮文字保留原样（§0–§9 是 15:27 那一次的记录，含假引擎细节）；追加轮次在 §10/§11，
+> 两轮的时间戳、DB 行、断言结果分别标注，别把两轮数字混在一起读。
 
 还有一个刻意的量具选择：假引擎的 `GET /cases/:id` **固定延迟 50ms**。并发决策用例要两个平台请求
 都在第一次决策落库前读到 `currentNode=leader`，否则竞态退化成「第二个请求看到节点已前进 ⇒ 403」，
@@ -192,10 +195,11 @@ worker 一轮统计：`{"events":3,"deliveries":3,"sent":3,"failed":0,"dead":0}`
 
 ## 5. 发现与边界（不粉饰）
 
-1. **真引擎未在本次运行**：上面的引擎行为（节点循环、quorum、撤回 CAS、事件数、回调时机）是假引擎按
-   §10 契约实现的，不是 case-engine 的实测。要升级为「真端到端」，需在能起 Mastra 栈的环境把
-   `platform.oa_engine.base_url` 指向真引擎；届时本脚本的假引擎部分可整段替换，其余断言（平台侧）
-   不变。**在此之前，「P1 请假端到端」的结论只到平台接缝。**
+1. **真引擎首轮未跑，16:05 已补跑并发现一处 FAIL**：15:27 轮（§0–§9）的引擎行为是假引擎按 §10
+   契约实现的；16:05 追加轮（§10）用真 case-engine `e027a03` 复跑，25 条中 24 条 PASS，
+   **`neg.org-engine` FAIL——真引擎对 `org=beta` 的建单请求返回 201（真的建了 case），
+   spec §10.2 要求的 403 没有实现**（`core/engine/src/mastra.ts` 的 `POST /cases` 无 org 校验）。
+   这条必须修引擎或改契约，不能按 PASS 记。
 2. **企微通道未送达**：`wecom_default` 三条 delivery 为 `dead / missing_channel_address`——验收环境
    的 MockCasdoor 用户没有手机号/企微地址（`platform` 组织与 identity-link 无数据）。这是**环境缺料**，
    不是通道代码失败；`inapp_default` 三条全部 `sent`，收件箱断言已过。企微直连的上线实测另有记录
@@ -203,10 +207,14 @@ worker 一轮统计：`{"events":3,"deliveries":3,"sent":3,"failed":0,"dead":0}`
 3. **并发决策的 409 来源**：一个 200 / 一个 409 且不双落，已钉住；但 409 具体出自引擎 CAS
    （`NOT_CURRENT_NODE`）还是平台的 `NOT_PENDING`/`NOT_CURRENT_NODE`，取决于两个请求的时序。
    本次假引擎的 50ms GET 延迟把时序钉在「两边都先读到 leader → 引擎 CAS 判后到者 409」，所以本次
-   观测到的是引擎 CAS 路径（`statuses=[200,409]`）。真引擎的 resume CAS 需另行验证。
-4. **UI 未覆盖**：本次宿主无 web dist，静态托管被跳过；控制台审批页的行为在
-   `modules/forms/console/console.test.tsx` 覆盖，浏览器手工走查未做（不是本 Task 的交付物，
-   但**别把它读成「UI 已验收」**）。
+   观测到的是引擎 CAS 路径（`statuses=[200,409]`）。真引擎轮（§10）把并发点放在**末节点**：一个
+   200 结案、另一个 409（`isClosed`），同样只落一次决策——中间节点不选它，是因为真引擎对非当前
+   节点审批人回 400（平台映射 502），会把「重复决策」与「已不是你的节点」两种病因混在一起。
+4. **UI 已在 16:08–16:14 补走查**（§11），但发现一个**产品口径冲突**：390px 宽打开 console
+   默认被 `MobileConfigNotice` 拦成「配置请在电脑端完成」——审批列表/详情在手机默认路径**不可达**；
+   加 `?desktop=1` 后页面本身响应式正常（390px 无横向溢出、列表走卡片、详情可读、拒绝按钮
+   空意见禁用）。这与计划 Self-Review「移动端用响应式 console 页承接」的取舍**不一致**，
+   要么给 OA 审批开一个 console 白名单，要么补 `/m` 入口（P1 未做）。
 5. **残留数据是设计的一部分**：submission `786` 停在 `pending_approval` 是「决策后撤回 409 且状态
    不变」的断言本体；重跑会在开跑时清掉本 org 的提交/审计/通知/映射行（published asset 物理不可删，
    故 asset_id 每次带随机后缀）。
@@ -230,3 +238,161 @@ DATABASE_URL=postgres://platform:platform@127.0.0.1:5432/platform \
 判定标准：退出码 0、末行 `oa-p1-smoke: OK（N 条断言全过）`、JSON `failures=0`。
 任何一条 `record` 为 false 时脚本**不早退**（负对照之间独立），全部收集后以非 0 退出并列出失败 id——
 报告里要引用的是 `results[]`，不是「跑到第几条停了」。
+
+---
+
+## 10. 追加验收 A：真实引擎 E2E（2026-11-16 16:05 BJT）
+
+> 这一节回答 T7 边界之一：「假引擎证明了平台接缝，但真引擎没跑」。运行结果 **24 PASS / 1 FAIL**，
+> FAIL 是真的契约缺口，不是量具错——原样记在 §10.3。
+> 收尾回归：加完 `--real-engine` / `--mint-service-pat` 后，假引擎模式在 16:16:54 BJT 复跑仍
+> **25/25 PASS**（`oa-p1-smoke: OK（25 条断言全过）`），两种模式共用同一批断言。
+
+### 10.1 起栈方式（本地 node，不用 Docker）
+
+case-engine 是私有仓，用它的 `origin/main`（`e027a03` = v0.16.0，#120 已合）在 `/tmp/oa-engine/case-engine`
+建 worktree，**不碰本机既有 checkout**：
+
+```bash
+git -C /Users/duo/mytechcode/case-engine worktree add /tmp/oa-engine/case-engine origin/main
+cd /tmp/oa-engine/case-engine
+npm ci
+npx mastra build --dir src/mastra          # 产物 .mastra/output/index.mjs
+
+# 引擎库：本机 pg 新建独立库（不动 platform 库）
+psql postgres://platform:***@127.0.0.1:5432/postgres -c "create database case_oa"
+psql postgres://platform:***@127.0.0.1:5432/case_oa -c "create extension if not exists vector"
+
+# 服务 PAT 必须先铸（引擎启动时要用它当 NOTIFY_PAT；铸造走 scripts 的 --mint-service-pat）
+PAT=$(DATABASE_URL=postgres://platform:***@127.0.0.1:5432/platform \
+  pnpm exec tsx scripts/oa-p1-smoke.mjs --mint-service-pat 2>/dev/null)
+
+# 起引擎（in-process：orchestration+scheduler 同进程；不拆 worker 就不需要 Redis）
+DATABASE_URL=postgres://platform:***@127.0.0.1:5432/case_oa \
+PORT=13200 ENGINE_STORAGE_ID=oa-engine-e027a03 ENGINE_VERSION=case-engine-e027a03 \
+MASTRA_WORKERS=orchestration,scheduler \
+NOTIFY_PLATFORM_BASE=http://127.0.0.1:13300 NOTIFY_PAT="$PAT" \
+node .mastra/output/index.mjs
+```
+
+实测启动输出：
+
+```
+{"planVersion":1,"engineVersion":"case-engine-e027a03","providers":["inapp"],
+ "features":["nodeLoop","quorum","nodeSla","collab"]}          ← GET /capabilities
+{"mode":"in-process","llm":{"configured":false},"redisUrl":null} ← GET /engine/config
+Mastra API running { url: 'http://localhost:13200/api' }
+```
+
+两点口径说明（避免照抄错）：
+
+- **引擎代码里没有 `ENGINE_ORG` 这个 env**（`git grep ENGINE_ORG origin/main` = 0 命中）。
+  租户归属由平台 `platform.oa_engine` 登记行 + `POST /cases` 的 `body.org` 表达；本轮的 org 是
+  `oa-smoke`，`provider` 只有 `inapp`（能力面自报）。
+- `NOTIFY_PLATFORM_BASE` 必须钉到一个**固定端口**（本轮 13300）——平台脚本的 `--real-engine`
+  因此要求 `OA_SMOKE_PLATFORM_PORT`，端口随机会让真回调打到空端口，看起来像「引擎不回调」。
+
+平台侧同一脚本切真引擎（PAT 只走 env，不进仓库/提交）：
+
+```bash
+DATABASE_URL=postgres://platform:***@127.0.0.1:5432/platform \
+OA_SMOKE_ENGINE_URL=http://127.0.0.1:13200 \
+OA_SMOKE_ENGINE_PAT=<engine-inbound-bearer> \
+OA_SMOKE_SERVICE_PAT="$PAT" \
+OA_SMOKE_PLATFORM_PORT=13300 \
+pnpm exec tsx scripts/oa-p1-smoke.mjs --real-engine
+```
+
+脚本先打 `GET /capabilities` 并断言 `engineVersion !== fake-engine-0.1.0`——**防止把假引擎的
+PASS 当成真引擎的 PASS**（`--real-engine` 缺任何一个 env 直接 fail-fast，不静默退回替身）。
+
+### 10.2 结果（2026-11-16 16:05:15 – 16:05:18 BJT）
+
+| 组 | 结果 | 证据 |
+|---|---|---|
+| 主路径（提交 → 两级审批 → 回调 → approved） | **PASS** | submission `799`：`approved / inapp / case ce54185c-…`；真引擎 `GET /cases/:id` 先 `pending`→`gate`（异步推进，实测等待 **210ms**）→ `gate/leader` → `gate/hr` → `closed / approve`，`nodeDecisions=[leader:u-lead, hr:u-hr]` |
+| 引擎建单（真 HTTP） | **PASS** | 平台发的 case 用 `GET /cases?externalRef=forms:submission:799` 能反查到，`plan.nodes=2` |
+| 回调（真引擎 → 平台） | **PASS** | `forms.audit` 里 `approval.callback` **恰好 1 条**；`notify.inbox` 产出 `forms.approval.decided` |
+| 撤回（决策前 / 决策后） | **PASS** | submission `800` → `withdrawn`，引擎 `closed / withdrawn`；submission `801` 先批 leader 再撤回 → **409**、仍 `pending_approval` |
+| 回调重放两次 | **PASS** | 两次重放 `200 {deduped:true}`，`decided_at` 逐值不变 |
+| 在途单 + 发布 v2 | **PASS** | `802` 的 `approval_plan` 仍是 v1；v2 的 HR `u-hr2` 批它 **403**；v1 的 `u-hr` 批完 **200 → approved** |
+| 并发两次 decision（末节点 hr） | **PASS** | `statuses=[200,409]`，`hr` 节点决策恰好 1 条（`803`） |
+| 无 publish scope / dept_leader 缺失 / 未声明事件 | **PASS** | 403 / 409+head 不变 / 400 EVENT_NOT_DECLARED |
+| **org 不一致调引擎** | **FAIL** | 发 `POST /cases {org:"beta", 合法 plan}` → **201 + caseId**（真建了 `3cfe80a1-…`）。spec §10.2 要求 **403**；`core/engine/src/mastra.ts` 的 `POST /cases` 没有任何 org/ENGINE_ORG 校验 |
+
+引擎库直查（`case_oa`）：
+
+```
+ce54185c-… closed approve   oa-smoke forms:submission:799   ← 主路径
+7f43e994-… closed withdrawn oa-smoke forms:submission:800   ← 撤回
+98bfcb52-… gate             oa-smoke forms:submission:801   ← 决策后撤回被拒（留在 hr）
+9921fd6c-… closed approve   oa-smoke forms:submission:802   ← 在途 v1
+63a300f1-… closed approve   oa-smoke forms:submission:803   ← 并发
+3cfe80a1-… gate   (org=beta) forms:submission:org-mismatch-lanr9u  ← 负对照 FAIL 的物证
+```
+
+`case_node_decisions`：每个已结案 case 恰好 `leader` + `hr` 各 1 条；并发 case `803` 的 `hr`
+只有 1 条（没有双落）。
+
+### 10.3 与契约的三处偏差（不影响主流程，但要登记）
+
+1. **org 校验缺失（FAIL，需引擎修）**：见上表。平台侧不受影响（平台不会发别人的 org——`main.engine-create`
+   断言 `externalRef` 命中、平台回调侧 `org:"beta"` 仍 403 ORG_MISMATCH），但**单租户引擎的安全边界
+   现在只靠「调用方自觉」**。
+2. **`finalAction` 词汇不同**：真引擎落 `approve` / `reject`（动词），平台 submission 用
+   `approved` / `rejected`。回调里由引擎转写，所以平台侧无感；断言按两套词汇都接受。
+3. **没有 `gate.node.decided` case event**：真引擎把节点决策写 `case_node_decisions` 表，
+   `case_events` 只有 `intake` / `writeback`。计划 Task 15 写的「无重复 `gate.node.decided`」
+   在真引擎上按**等价判据**执行：`nodeDecisions` 每节点恰好 1 条、无 `(nodeKey,approver)` 重复。
+
+## 11. 追加验收 B：UI 走查（2026-11-16 16:08–16:14 BJT）
+
+### 11.1 起栈与夹具
+
+```bash
+# web 产物（tsc 门在 React bigint 上另案红，照既有配方跳过 tsc 直接 vite build）
+node scripts/gen-console-registry.mjs && pnpm --filter @platform/web exec vite build
+
+# dev-stack：acme 单租户；forms 不在 dev-stack 的订阅种子里 ⇒ 订阅源钉旧表（无行=启用）
+PLATFORM_SUBSCRIPTION_SOURCE=platform DEV_STACK_PORT=13100 \
+OA_ENGINE_PAT_ACME="$(cat <acme PAT>)" \
+pnpm exec tsx scripts/dev-stack.mjs
+# MockCasdoor :51734 / 宿主 http://127.0.0.1:13100
+```
+
+真引擎按 §10.1 重启，`NOTIFY_PLATFORM_BASE=http://127.0.0.1:13100`、`NOTIFY_PAT=<acme admin1 PAT>`；
+平台 `platform.oa_engine` 加 `acme → http://127.0.0.1:13200`。权限经 MockCasdoor
+`/api/update-permission` 授予（`forms*` 全套给 admin1，`forms:view/fill` 给 viewer1）。
+
+夹具：审批模板 `ui-leave`（单节点，审批人=user:`admin1`）+ 事项模板 `ui-leave-item`
+（schema: reason/startDate/endDate）；viewer1 提交两笔 → submission `804` / `805`（case
+`4f3cd2d9-…` / `cea716bd-…`），admin1 的「待我审批」两行。
+
+### 11.2 桌面 1440×900（Orca 内置浏览器，真登录）
+
+| 步骤 | 结果 | 证据 |
+|---|---|---|
+| 登录 admin1 / pw → `/console/forms/approvals` | **PASS** | 列表两行（标题 `ui-leave-item - viewer1`、发起人 viewer1、节点「直属主管」、时间 16:08:38） |
+| 点「查看」进详情 | **PASS** | `审批中` 标签、当前节点「直属主管」、契约版本 v1、RJSF 只读字段（reason/endDate/startDate）、审批意见框 |
+| 空意见时「拒绝」禁用 | **PASS** | DOM：`{rejectDisabled:true, approveDisabled:false}` |
+| 填意见后「拒绝」解禁并提交 | **PASS** | 填「UI 走查：材料不全，请补充」→ `{rejectDisabled:false}`；点击后 toast「已驳回」、回列表剩 1 行；DB submission `805` → `rejected`（16:12:50 BJT），引擎 case `closed / reject` |
+| 第二笔点「通过」 | **PASS** | toast「已通过」、列表「暂无待审批」；DB submission `804` → `approved`（16:13:11 BJT），引擎 case `closed / approve` |
+
+> 两次动作的终态来自**真引擎回调**（引擎 13200 → dev-stack 13100），不是前端本地改状态：
+> `forms.audit` 有 `approval.callback`，引擎库 `cases.status=closed`。
+
+截图：`docs/img/oa-p1-approvals-list.png`（列表）、`docs/img/oa-p1-approval-detail.png`（详情，
+拒绝禁用）。
+
+### 11.3 窄屏 390px（`~390px` 要求）
+
+| 场景 | 结果 | 证据 |
+|---|---|---|
+| 默认打开 `/console/forms/approvals`（390px） | **FAIL（不可达）** | console 壳命中 `MobileConfigNotice`：「配置请在电脑端完成」+「打开手机工作台」+「仍要打开桌面版」；审批列表/详情在手机默认路径打不开。截图 `docs/img/oa-p1-mobile-gate.png` |
+| `?desktop=1` 强制桌面版：列表 | **PASS** | 响应式卡片列表（`.ant-list-item` = 1，非 Table），`scrollWidth=innerWidth=390`、`overflow=false`；截图 `docs/img/oa-p1-approvals-390.png` |
+| `?desktop=1` 强制桌面版：详情 | **PASS** | 只读字段 + 审批动作可读，`overflow=false`，空意见「拒绝」仍 `disabled:true`；截图 `docs/img/oa-p1-approval-detail-390.png` |
+
+**判定**：页面组件本身在 390px 是响应式可用、无横向溢出的（三种视图 `overflow=false`）；
+但**产品壳层把移动端 console 整体拦掉**，OA 审批没有 `/m` 入口（P1 未接）⇒ 审批人用手机
+默认打不开待审批。这与计划 Self-Review 的「移动端用响应式 console 页承接」冲突，需产品决断：
+要么把 OA 审批页加入移动白名单，要么补 `/m` 深链（P1.5）。在决断前，本条按 **FAIL** 记。
