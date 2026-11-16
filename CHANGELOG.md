@@ -11,6 +11,10 @@
 
 ## [Unreleased]
 
+## [0.306.2](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.306.1...v0.306.2) - 2026-11-16
+- 【修复】data: materialize.sh 容器模式与 psql 客户端（W8-P1 跟进）（#2350） ([#2351](https://github.com/MYTech-Co-LTD/platform-core/pull/2351), [fbafe55](https://github.com/MYTech-Co-LTD/platform-core/commit/fbafe555450df46d4d7be558efc70b1fb816633b))
+
+
 ## [0.306.1](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.306.0...v0.306.1) - 2026-11-16
 - 【修复】data: 度量输入列剔掉 WHERE 里的过滤列 (#2348) ([#2349](https://github.com/MYTech-Co-LTD/platform-core/pull/2349), [cab40cd](https://github.com/MYTech-Co-LTD/platform-core/commit/cab40cd6fd3156b28e29af042b0b3ea8444cfdd1))
 
