@@ -390,6 +390,12 @@ export function createNotifyRouter(deps: {
     if (!isWritableRuleId(id)) return c.json({ error: 'RULE_ID_RESERVED' }, 409)
 
     const identity = c.get('identity') as Identity
+    // restore 会从审计快照回放 `enabled=true`——必须与 PUT /rules/:id/enabled 同一道门，
+    // 否则 C（wecom）可绕过 NOTIFY_PUBLISH_REQUIRED 直接恢复成 active 规则。
+    // 为简单/安全：wecom 的 restore 一律要求 notify:publish（不看快照 enabled）。
+    if (requesterChannel(c) === 'wecom' && !identity.hasScope('notify:publish')) {
+      return c.json({ error: 'NOTIFY_PUBLISH_REQUIRED' }, 403)
+    }
     const rule = (await listRules(deps.pool, org(c))).find((x) => x.id === id)
     if (!rule) return c.json({ error: 'RULE_NOT_FOUND' }, 404)
     if (rule.ownerNamespace && !await ownsNamespace(org(c), rule.ownerNamespace, identity)) {

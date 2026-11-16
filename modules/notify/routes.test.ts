@@ -936,6 +936,44 @@ describePg('routes v2', () => {
     })
     expect(enabled.status).toBe(200)
   })
+
+  it('wecom：restore 回放 enabled=true 也需 notify:publish（不绕过 enable 门）', async () => {
+    const created = await post('/rules', {
+      eventKey: 'm.a.b', recipientKey: 'approver', templateKey: 't1',
+      channels: ['wecom_default'],
+    })
+    expect(created.status).toBe(201)
+    const { id } = await created.json() as { id: string }
+    // 再写一次带 snapshot 的审计（restore 的数据源）。
+    expect((await post('/rules', {
+      id, eventKey: 'm.a.b', recipientKey: 'approver', templateKey: 't1',
+      channels: ['wecom_default'], cooldownMinutes: 3,
+    })).status).toBe(201)
+    const hist = await (await app.request(`/rules/${encodeURIComponent(id)}/history`)).json() as {
+      history: Array<{ auditId: number; snapshot: unknown | null }>
+    }
+    const target = hist.history.find((h) => h.snapshot !== null)!
+    const body = JSON.stringify({ auditId: target.auditId })
+    const init = {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body,
+    }
+    const path = `/rules/${encodeURIComponent(id)}/restore`
+
+    const denied = await buildChannelApp('wecom', ['notify:view', 'notify:manage'])
+      .request(path, init)
+    expect(denied.status).toBe(403)
+    expect(await denied.json()).toMatchObject({ error: 'NOTIFY_PUBLISH_REQUIRED' })
+
+    // 有 notify:publish 的 wecom 人可以 restore。
+    expect((await buildChannelApp(
+      'wecom', ['notify:view', 'notify:manage', 'notify:publish'],
+    ).request(path, init)).status).toBe(200)
+
+    // pat/session 行为不变：默认 app 仍可 restore。
+    expect((await app.request(path, init)).status).toBe(200)
+  })
 })
 
 // ── 部门收件人（组织架构 Phase C；spec 2026-10-30 §3.5；#1174）──────────────────────
