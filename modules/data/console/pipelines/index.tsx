@@ -478,7 +478,7 @@ export default function PipelinesPage() {
                               {(s.count ?? 1) > 1 && <span style={{ color: '#9AA0A6', fontWeight: 400 }}> × {s.count}</span>}
                             </span>
                             <span style={{ fontSize: 12, color: '#6B7280', flex: 1, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                              {(s.count ?? 1) > 1 ? `${s.label} 等 ${s.count} 个节点` : s.label}
+                              {s.label === '' ? '' : (s.count ?? 1) > 1 ? `${s.label} 等 ${s.count} 个节点` : s.label}
                             </span>
                             {s.stat !== undefined && (
                               <span style={{ fontSize: 11.5, color: '#9AA0A6', flex: 'none', fontVariantNumeric: 'tabular-nums' }}>
