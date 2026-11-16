@@ -211,8 +211,10 @@ export default definePluginEntry({
         ...CALL_DEF,
         execute: async (_toolCallId, params, signal) => {
           // buildPlatformCall 会剥掉 args 里的身份键——模型无法通过参数指定「以谁的身份调」。
+          // 参数防御错误也走 toGatewayToolResult：details.status='error' + 可操作文案，
+          // 不把裸 JSON `{"error":"TOOL_NOT_CALLABLE"}` 丢给模型。
           const built = buildPlatformCall(params);
-          if (built.error) return toToolResult(built);
+          if (built.error) return toGatewayToolResult(built);
           const rpc = await callGateway({
             apiBase: AGENT_API_BASE,
             channelKey: CHANNEL_KEY,

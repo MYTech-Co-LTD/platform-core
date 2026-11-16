@@ -171,6 +171,15 @@ test("JSON-RPC error ⇒ details.status='error'，-32601 给下一步动作文�
   assert.match(r.content[0].text, /platform_capabilities/);
 });
 
+test("JSON-RPC -32602（invalid params）⇒ 参数校正指引，不与「工具不存在」混文案", () => {
+  const r = toGatewayToolResult({ error: { code: -32602, message: "invalid params" } });
+  assert.equal(r.details.status, "error");
+  assert.equal(r.details.reason, "RPC_-32602");
+  assert.match(r.content[0].text, /参数不合法/);
+  assert.match(r.content[0].text, /inputSchema/);
+  assert.ok(!/不存在/.test(r.content[0].text));
+});
+
 test("本地 fail-closed 错误码给可操作中文文案（不是裸码）", () => {
   const missing = toGatewayToolResult({ error: "USERID_MISSING" });
   assert.equal(missing.details.status, "error");
@@ -178,6 +187,21 @@ test("本地 fail-closed 错误码给可操作中文文案（不是裸码）", (
   assert.match(missing.content[0].text, /身份/);
   const noKey = toGatewayToolResult({ error: "CHANNEL_KEY_MISSING" });
   assert.match(noKey.content[0].text, /渠道凭证/);
+});
+
+test("本地参数防御码：TOOL_REQUIRED / TOOL_NOT_CALLABLE 也走 details.status='error' + 指引", () => {
+  const required = toGatewayToolResult({ error: "TOOL_REQUIRED" });
+  assert.equal(required.details.status, "error");
+  assert.equal(required.details.reason, "TOOL_REQUIRED");
+  assert.match(required.content[0].text, /缺少 tool 参数/);
+  assert.match(required.content[0].text, /platform_capabilities/);
+  assert.ok(!required.content[0].text.includes('{"error"'));
+
+  const meta = toGatewayToolResult({ error: "TOOL_NOT_CALLABLE" });
+  assert.equal(meta.details.status, "error");
+  assert.equal(meta.details.reason, "TOOL_NOT_CALLABLE");
+  assert.match(meta.content[0].text, /不通过 platform_call 调用/);
+  assert.match(meta.content[0].text, /直接调 platform_capabilities/);
 });
 
 test("网关鉴权/身份错误：可操作文案（扫码 / 凭证 / 停用 / 身份服务）", () => {
@@ -210,8 +234,12 @@ test("未知错误码：保留裸码但包成 {status:'error', reason}，不丢�
 
 // ── 能力紧凑索引 ──────────────────────────────────────────────────────────────
 
-// 真实形状：notify / forms 的 tools/list 都带 mutating + annotations（mcp.ts 投影自
-// mcp-tools.ts 的元数据），网关再把 module/face/catalogNote 补在工具上。
+// 真实形状（网关 apps/server/src/routes/agent-mcp.ts §7.5）：
+//   · notify/forms 的 tools/list 条目只有 {name, description, inputSchema, annotations}——
+//     **没有**顶层 mutating/requiredScope（那两个在模块 catalog 里）；
+//   · 网关发现缺这两个字段时补 `catalogNote`，再补 module/face；
+//   · `agent__capabilities` 是内置发现入口，**不在** capabilities 的 tools 数组里。
+const CATALOG_NOTE = "mutating/requiredScope 见模块 catalog";
 const CAPS_PAYLOAD = {
   faces: [
     { module: "forms", face: "manage", group: "forms", audience: "wecom", scope: "forms:manage", available: true },
@@ -219,25 +247,20 @@ const CAPS_PAYLOAD = {
   ],
   tools: [
     {
-      name: "agent__capabilities", description: "元工具", inputSchema: { type: "object" },
-      module: "agent", face: "capabilities",
-    },
-    {
       name: "forms__list_forms", description: "列出本租户可查看的表单（摘要）。",
-      inputSchema: { type: "object", properties: {} }, mutating: false,
-      annotations: { readOnlyHint: true }, requiredScope: null, module: "forms", face: "manage",
+      inputSchema: { type: "object", properties: {} },
+      annotations: { readOnlyHint: true }, module: "forms", face: "manage", catalogNote: CATALOG_NOTE,
     },
     {
       name: "forms__generate_form_draft",
       description: "用自然语言描述业务场景，生成表单契约并落为草稿。\n第二行不该进索引。",
       inputSchema: { type: "object", properties: { description: { type: "string" } } },
-      mutating: true, annotations: { readOnlyHint: false }, requiredScope: "forms:manage",
-      module: "forms", face: "manage",
+      annotations: { readOnlyHint: false }, module: "forms", face: "manage", catalogNote: CATALOG_NOTE,
     },
     {
       name: "notify__send_message", description: "发一条通知。",
-      inputSchema: { type: "object", properties: {} }, mutating: true,
-      annotations: { readOnlyHint: false }, requiredScope: "notify:emit", module: "notify", face: "manage",
+      inputSchema: { type: "object", properties: {} },
+      annotations: { readOnlyHint: false }, module: "notify", face: "manage", catalogNote: CATALOG_NOTE,
     },
   ],
   lockedFaces: [{ module: "data", face: "manage", scope: "data:manage" }],
@@ -249,7 +272,13 @@ const CAPS_RPC = {
 
 test("parseCapabilities：从 content[0].text 解出目录；垃圾回包返回 null", () => {
   const payload = parseCapabilities(CAPS_RPC);
-  assert.equal(payload.tools.length, 4);
+  assert.equal(payload.tools.length, 3);
+  // fixture 与真实网关负载一致：没有顶层 mutating/requiredScope，只有 annotations + catalogNote。
+  for (const t of payload.tools) {
+    assert.equal("mutating" in t, false, `${t.name} 不应带顶层 mutating（真实 tools/list 没有）`);
+    assert.equal("requiredScope" in t, false, `${t.name} 不应带顶层 requiredScope`);
+    assert.equal(t.catalogNote, CATALOG_NOTE);
+  }
   assert.deepEqual(payload.lockedFaces, [{ module: "data", face: "manage", scope: "data:manage" }]);
   assert.equal(parseCapabilities({ result: { content: [{ type: "text", text: "not json" }] } }), null);
   assert.equal(parseCapabilities({ error: { code: -32603, message: "x" } }), null);
@@ -272,6 +301,16 @@ test("compactCapabilities：默认紧凑索引（name+一句话+mutating），�
     { module: "forms", face: "manage", scope: "forms:manage", available: true },
     { module: "data", face: "manage", scope: "data:manage", available: false },
   ]);
+});
+
+test("compactCapabilities：元工具 agent__capabilities 即使混进 tools 也不进索引", () => {
+  const out = compactCapabilities({
+    tools: [
+      { name: "agent__capabilities", description: "元工具" },
+      { name: "forms__list_forms", description: "列表单" },
+    ],
+  });
+  assert.deepEqual(out.tools.map((t) => t.name), ["forms__list_forms"]);
 });
 
 test("compactCapabilities：工具缺 mutating 时仍从 annotations.readOnlyHint 推导（前向兼容）", () => {

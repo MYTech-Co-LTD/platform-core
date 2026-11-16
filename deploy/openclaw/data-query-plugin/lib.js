@@ -370,9 +370,12 @@ const GATEWAY_ERROR_TEXT = {
   CHANNEL_KEY_INVALID: channelAuthFailedText("CHANNEL_KEY_INVALID"),
   USER_DISABLED: "平台账号已停用，请联系管理员。",
   CASDOOR_UNAVAILABLE: "平台身份服务暂不可用，请稍后再试。",
-  // JSON-RPC 协议错误：工具名/参数拼错时给下一步动作，别让模型原样重试。
+  // JSON-RPC 协议错误：工具名拼错 / 参数形状错，分两种给下一步动作，别让模型原样重试。
   "RPC_-32601": "工具或方法不存在：先调 platform_capabilities 查看可用工具与参数，再用 platform_call 调用。",
-  "RPC_-32602": "工具或方法不存在：先调 platform_capabilities 查看可用工具与参数，再用 platform_call 调用。",
+  "RPC_-32602": "参数不合法（-32602）：按 platform_capabilities({ tool }) 返回的 inputSchema 校正后重试。",
+  // 本地参数防御码（还没发请求）：给下一步动作，而不是裸 JSON。
+  TOOL_REQUIRED: "缺少 tool 参数：先用 platform_capabilities 查看可用工具，再传 tool=<name>。",
+  TOOL_NOT_CALLABLE: "agent__capabilities 是发现入口，不通过 platform_call 调用；直接调 platform_capabilities。",
 };
 
 /** 网关错误码归一：本地字符串码 / 网关 HTTP body `{error}` / JSON-RPC `{code,message}`。 */
