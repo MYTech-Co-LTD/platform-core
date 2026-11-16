@@ -84,6 +84,8 @@ describe('forms:view 读面（摘要，不含 draft body）', () => {
     expect(audits).toHaveLength(1)
     expect(audits[0][2]).toBe('list_forms')
     expect(audits[0][3]).toBe('ok')
+    // args 摘要（spec §6.5）：无参工具落空对象
+    expect(JSON.parse(audits[0][5] as string)).toEqual({})
   })
 })
 
@@ -130,14 +132,16 @@ describe('generate_form_draft', () => {
     expect(out).not.toHaveProperty('published')
 
     expect(audits).toHaveLength(1)
-    // 参数序：org, userId, tool, outcome, reason, assetId, version
+    // 参数序：org, userId, tool, outcome, reason, params(jsonb), assetId, version
     expect(audits[0][0]).toBe('org-a')
     expect(audits[0][1]).toBe('u1')
     expect(audits[0][2]).toBe('generate_form_draft')
     expect(audits[0][3]).toBe('ok')
     expect(audits[0][4]).toBeNull()
-    expect(audits[0][5]).toBe('inspection')
-    expect(audits[0][6]).toBe(1)
+    // args 摘要进审计（spec §6.5）：description 原样落库
+    expect(JSON.parse(audits[0][5] as string)).toEqual({ description: '门店巡检登记' })
+    expect(audits[0][6]).toBe('inspection')
+    expect(audits[0][7]).toBe(1)
   })
 
   it('审计写失败不改变业务结果（吞掉 + console.warn）', async () => {

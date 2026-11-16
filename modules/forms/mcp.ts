@@ -90,16 +90,21 @@ function reasonOf(r: McpToolResult): string | null {
   }
 }
 
-/** 审计失败绝不影响业务结果：吞掉 + 告警（spec §6.5）。 */
+/** 审计失败绝不影响业务结果：吞掉 + 告警（spec §6.5）。args 摘要随行落库（同 data.query_audit 口径）。 */
 async function auditSafe(
-  deps: McpDeps, tool: string, result: McpToolResult, assetId?: string, version?: number,
+  deps: McpDeps,
+  tool: string,
+  args: Record<string, unknown>,
+  result: McpToolResult,
+  assetId?: string,
+  version?: number,
 ): Promise<void> {
   const reason = reasonOf(result)
   const outcome: store.McpAuditOutcome = !result.isError
     ? 'ok'
     : reason !== null && DENIED_REASONS.has(reason) ? 'denied' : 'error'
   try {
-    await store.writeMcpAudit(deps.pool, deps.org, deps.userId, tool, outcome, reason, assetId, version)
+    await store.writeMcpAudit(deps.pool, deps.org, deps.userId, tool, outcome, reason, args, assetId, version)
   } catch (e) {
     console.warn('[forms] mcp audit write failed (business result unaffected):', (e as Error).message)
   }
@@ -168,7 +173,7 @@ export async function callTool(
   } else {
     run = await runTool(deps, name, args)
   }
-  await auditSafe(deps, name, run.result, run.assetId, run.version)
+  await auditSafe(deps, name, args, run.result, run.assetId, run.version)
   return run.result
 }
 

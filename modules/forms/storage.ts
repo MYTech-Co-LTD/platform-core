@@ -102,6 +102,8 @@ export type McpAuditOutcome = 'ok' | 'denied' | 'error'
 
 /**
  * 每次 MCP tools/call 落一行（org/userId 由调用方从 identity 传入）。
+ * `params` = 本次调用的完整入参（spec §6.5「args 摘要」，与 data.query_audit 同口径——
+ * 含 generate_form_draft 的 description，供事后复核 agent 到底让平台生成了什么）。
  * ⚠️ 调用方负责「审计失败不改变业务结果」：本函数**原样上抛**，由 callTool 的
  * try/catch 吞掉并告警（与 storage 的「错误原样上抛」纪律一致，不在本层静默）。
  */
@@ -112,13 +114,14 @@ export async function writeMcpAudit(
   tool: string,
   outcome: McpAuditOutcome,
   reason: string | null,
+  params: Record<string, unknown>,
   assetId?: string | null,
   version?: number | null,
 ): Promise<void> {
   await pool.query(
-    `insert into forms.mcp_audit (org, user_id, tool, outcome, reason, asset_id, version)
-     values ($1, $2, $3, $4, $5, $6, $7)`,
-    [org, userId, tool, outcome, reason, assetId ?? null, version ?? null],
+    `insert into forms.mcp_audit (org, user_id, tool, outcome, reason, params, asset_id, version)
+     values ($1, $2, $3, $4, $5, $6::jsonb, $7, $8)`,
+    [org, userId, tool, outcome, reason, JSON.stringify(params), assetId ?? null, version ?? null],
   )
 }
 
