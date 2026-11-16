@@ -113,7 +113,7 @@ describe('registry · dbt tick（Wave 8 P1）', () => {
     expect(def.cron).toBe('2-59/10 1-15 * * *')
     expect(def.timeoutMs).toBe(600000)
     expect(def.maxAttempts).toBe(1)
-    expect(def.env).toEqual({ MATERIALIZE_SCOPE: 'tick', DATA_PLANE_DOMAINS: 'lemeng' })
+    expect(def.env).toEqual({ MATERIALIZE_SCOPE: 'tick', DATA_PLANE_DOMAINS: 'lemeng', MATERIALIZE_MODE: 'container' })
     expect(existsSync(repoPath(def.script))).toBe(true)
   })
 })
