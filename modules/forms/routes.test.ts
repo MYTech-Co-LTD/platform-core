@@ -196,7 +196,8 @@ describePg('forms API（routes）', () => {
 
     res = await call({ jsonrpc: '2.0', id: 2, method: 'tools/list' })
     const list = (await res.json()) as { result: { tools: { name: string }[] } }
-    expect(list.result.tools.map((t) => t.name)).toEqual(['list_forms', 'generate_form_draft'])
+    expect(list.result.tools.map((t) => t.name))
+      .toEqual(['list_forms', 'search_standard_approvals', 'generate_form_draft'])
 
     res = await call({ jsonrpc: '2.0', id: 3, method: 'tools/call', params: { name: 'generate_form_draft', arguments: { description: '门店巡检登记' } } })
     const out = (await res.json()) as { result: { isError: boolean; content: { text: string }[] } }
@@ -484,6 +485,9 @@ describePg('forms 审批（OA P1）', () => {
     for (const t of ['submission', 'audit', 'asset_head', 'asset_version', 'dict_item']) {
       await pool.query(`delete from forms.${t} where org = $1`, [OA_ORG]).catch(() => {})
     }
+    await pool.query('delete from forms.external_approval where org = any($1)', [
+      [OA_ORG, `org-forms-oa-other-${SUF}`],
+    ]).catch(() => {})
     await pool.end()
   })
 
@@ -630,6 +634,76 @@ describePg('forms 审批（OA P1）', () => {
     res = await req(appFor(mgr()), 'POST', `/defs/${item3}/versions/1/publish`)
     expect(res.status).toBe(409)
     expect(((await res.json()) as { error: string }).error).toBe('APPROVAL_BINDING_NOT_PUBLISHED')
+  })
+
+  it('标准审批镜像（P2 Task 7）：列表只回本 org；导出 id 键集游标不重不漏；参数越界 400', async () => {
+    const otherOrg = `org-forms-oa-other-${SUF}`
+    const insertMirror = (
+      org: string, ref: string, status: string, startedAt: string | null, detail: unknown,
+    ) => pool.query(
+      `insert into forms.external_approval
+         (org, provider, process_code, provider_ref, title, requester, status, started_at, detail)
+       values ($1, 'wecom', 'PC-EXPENSE-001', $2, $3, 'u1', $4, $5, $6::jsonb)`,
+      [org, ref, `报销 ${ref}`, status, startedAt, detail === null ? null : JSON.stringify(detail)],
+    )
+    await insertMirror(OA_ORG, `SP-A-${SUF}`, 'approved', '2026-11-16T01:00:00Z', { amount: 100 })
+    await insertMirror(OA_ORG, `SP-B-${SUF}`, 'pending', '2026-11-16T02:00:00Z', null)
+    await insertMirror(OA_ORG, `SP-C-${SUF}`, 'rejected', null, null)
+    await insertMirror(otherOrg, `SP-OTHER-${SUF}`, 'approved', '2026-11-16T03:00:00Z', null)
+
+    const viewer = () => makeIdentity({ orgId: OA_ORG, userId: 'u-mirror', scopes: ['forms:view'] })
+
+    // 列表：只本 org；开始时间倒序、无时间的排最后（缺 ApplyTime 的新单不压历史单）
+    let res = await req(appFor(viewer()), 'GET', '/standard-approvals?limit=50')
+    expect(res.status).toBe(200)
+    const list = (await res.json()) as {
+      approvals: Array<{ providerRef: string; status: string; detail: unknown }>
+    }
+    const refs = list.approvals.map((a) => a.providerRef)
+    expect(refs).toEqual([`SP-B-${SUF}`, `SP-A-${SUF}`, `SP-C-${SUF}`])
+    expect(refs).not.toContain(`SP-OTHER-${SUF}`) // org 隔离
+    // detail 可得才带：拿不到就是 null（不假装有标准表单字段）
+    expect(list.approvals.find((a) => a.providerRef === `SP-B-${SUF}`)?.detail).toBeNull()
+    expect(list.approvals.find((a) => a.providerRef === `SP-A-${SUF}`)?.detail).toEqual({ amount: 100 })
+
+    // 导出：全量（after_id=0）只含本租户 3 行
+    const full = await (await req(appFor(viewer()), 'GET', '/standard-approvals/export?after_id=0&limit=100')).json() as
+      { rows: Array<{ approval_id: string; org: string }>; next_after_id: string; has_more: boolean }
+    expect(full.rows).toHaveLength(3)
+    expect(full.rows.every((r) => r.org === OA_ORG)).toBe(true)
+    const ids = full.rows.map((r) => Number(r.approval_id))
+    expect(ids).toEqual([...ids].sort((a, b) => a - b)) // 键集序 = id 升序
+
+    // 逐条翻页 ⇒ 并集与全量逐条相同、无重复（不重不漏）
+    const seen: string[] = []
+    let cursor = '0'
+    for (let i = 0; i < 10; i++) {
+      const page = await (await req(appFor(viewer()), 'GET', `/standard-approvals/export?after_id=${cursor}&limit=1`)).json() as
+        { rows: Array<{ approval_id: string }>; next_after_id: string; has_more: boolean }
+      if (page.rows.length === 0) break
+      seen.push(page.rows[0].approval_id)
+      cursor = page.next_after_id
+      if (!page.has_more) break
+    }
+    expect(seen).toEqual(full.rows.map((r) => r.approval_id))
+    expect(new Set(seen).size).toBe(seen.length)
+
+    // 追平后：无行、游标不动
+    const drained = await (await req(appFor(viewer()), 'GET', `/standard-approvals/export?after_id=${cursor}&limit=10`)).json() as
+      { rows: unknown[]; next_after_id: string; has_more: boolean }
+    expect(drained.rows).toEqual([])
+    expect(drained.next_after_id).toBe(cursor)
+    expect(drained.has_more).toBe(false)
+
+    // 参数越界
+    for (const q of ['limit=0', 'limit=501', 'limit=abc']) {
+      const r = await req(appFor(viewer()), 'GET', `/standard-approvals?${q}`)
+      expect(r.status, q).toBe(400)
+    }
+    for (const q of ['after_id=x', 'after_id=-1', 'limit=0', 'limit=2001']) {
+      const r = await req(appFor(viewer()), 'GET', `/standard-approvals/export?${q}`)
+      expect(r.status, q).toBe(400)
+    }
   })
 
   it('审批提交：写 pending_approval + 计划快照 → 建引擎 case（externalRef）→ 回填 case_ref', async () => {

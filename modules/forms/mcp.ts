@@ -1,8 +1,10 @@
 // mcp.ts — forms 的 MCP 面（#724 → 2026-11-16 能力网关 Task 8）。
 //
 // 两个 face（spec §5.2/§6.5），共用同一协议壳：
-// - `POST /mcp`（read，`forms:view`）：只暴露 `list_forms`（摘要，不回 draft body）；
-// - `POST /mcp-manage`（manage，`forms:manage`）：`list_forms` + `generate_form_draft`。
+// - `POST /mcp`（read，`forms:view`）：`list_forms`（摘要，不回 draft body）+
+//   `search_standard_approvals`（OA P2 Task 7：只回已发布企微绑定的 name/deepLink/description，
+//   不渲染/不预填标准表单字段）；
+// - `POST /mcp-manage`（manage，`forms:manage`）：以上两个 + `generate_form_draft`。
 //
 // 为什么分成两个端点而不是把工具塞进一个面：**让声明面仍然反映「写所需的能力」**——
 // 读面只要 forms:view，写/起草面额外要 forms:manage（照 modules/data 的 /mcp-manage 先例，
@@ -79,6 +81,10 @@ export function toolDefs(face: McpFace): ToolDef[] {
 }
 
 const MAX_DESCRIPTION_LEN = 2000
+/** 选模板的搜索词上限（有界写入纪律的读侧对应：不让一次调用带进来一条巨型模式串）。 */
+const MAX_SEARCH_QUERY_LEN = 100
+/** 工具面一次最多回多少条绑定（agent 选模板只需候选，不需要全量目录）。 */
+const SEARCH_BINDINGS_LIMIT = 20
 
 /** 工具执行结果 + 审计要记的资产定位（成功或「重名」等已知资产时带）。 */
 interface ToolRun {
@@ -126,6 +132,23 @@ function auditOutcomeOf(result: McpToolResult, reason: string | null): store.Mcp
 async function runTool(deps: McpDeps, name: string, args: Record<string, unknown>): Promise<ToolRun> {
   if (name === 'list_forms') {
     return { result: ok({ forms: await store.listDefs(deps.pool, deps.org) }) }
+  }
+  if (name === 'search_standard_approvals') {
+    const query = typeof args['query'] === 'string' ? args['query'].trim() : ''
+    if (query.length > MAX_SEARCH_QUERY_LEN) {
+      return { result: err('query_too_long', { limit: MAX_SEARCH_QUERY_LEN }) }
+    }
+    const rows = await store.searchPublishedWecomBindings(deps.pool, deps.org, query, SEARCH_BINDINGS_LIMIT)
+    // 三个字段是**全部**输出：标准表单字段不在这里（平台不持有），也就无从渲染或预填。
+    return {
+      result: ok({
+        approvals: rows.map((r) => ({
+          name: r.name,
+          deepLink: r.deepLink,
+          description: `企微原生审批模板 ${r.processCode}：在企业微信「审批」中提交；平台只镜像状态与审批人，不代填表单字段。`,
+        })),
+      }),
+    }
   }
   if (name === 'generate_form_draft') {
     if (deps.chatModel === null) {

@@ -72,7 +72,8 @@ describe('forms 模块声明（#708/#710）', () => {
 
   it('声明面断言：发布/回滚/退役端点必须是 forms:publish（人 gate 的 scope 落点）；写面不出现 guest', () => {
     // 24 + OA P1 审批 12 条 + /mcp（2026-11-16 能力网关）+ OA P2 标准审批绑定 6 条
-    expect(mod.manifest.api?.internal?.length).toBe(43)
+    // + OA P2 Task 7 标准审批镜像列表/导出 2 条
+    expect(mod.manifest.api?.internal?.length).toBe(45)
     expect(mod.manifest.guest).toBeUndefined() // M1.2 无 guest 面（§14.4 防滥用随 M1.3 填报通道）
     for (const e of mod.manifest.api?.internal ?? []) {
       const key = `${e.method} ${e.path}`
@@ -88,6 +89,11 @@ describe('forms 模块声明（#708/#710）', () => {
       // OA P2：绑定资产全端点 = 平台管理员；发布门绝不能落到普通 forms:publish / approval:publish
       if (e.path.startsWith('/approval-bindings')) {
         expect(e.scope, key).toBe('forms:global-manage')
+      }
+      // OA P2 Task 7：镜像列表/导出是只读面（org 由身份钉死），与 /export/submissions 同档
+      if (e.path.startsWith('/standard-approvals')) {
+        expect(e.method, key).toBe('GET')
+        expect(e.scope, key).toBe('forms:view')
       }
     }
   })

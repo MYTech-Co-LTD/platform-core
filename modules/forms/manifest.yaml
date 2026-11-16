@@ -54,6 +54,11 @@ api:
     - { method: PUT,    path: /approval-bindings/:assetId/versions/:v,     scope: forms:global-manage }
     - { method: DELETE, path: /approval-bindings/:assetId/versions/:v,     scope: forms:global-manage }
     - { method: POST,   path: /approval-bindings/:assetId/versions/:v/publish, scope: forms:global-manage }
+    # ── 标准审批镜像（OA P2 Task 7 / issue #2385）：只读列表 + 数据面导出 ──
+    # 镜像由企微回调/小时级对账写入；端点只读。scope 宽档 forms:view（org 由身份钉死，
+    # 与 /export/submissions 同款）；agent 选模板走 /mcp 的 search_standard_approvals。
+    - { method: GET,    path: /standard-approvals,                         scope: forms:view }
+    - { method: GET,    path: /standard-approvals/export,                  scope: forms:view }
     # ── 提交（org 钉死 + 按提交钉住版本契约校验）──
     - { method: POST,   path: /defs/:assetId/submissions,           scope: forms:fill }
     - { method: GET,    path: /defs/:assetId/submissions,           scope: forms:view }

@@ -38,13 +38,14 @@ function auditPool() {
 describe('MCP 工具面投影（read / manage）', () => {
   it('★ 不暴露任何发布/回滚/退役类工具（AI 永不发布）', () => {
     const names = toolDefs('manage').map((t) => t.name)
-    expect(names).toEqual(['list_forms', 'generate_form_draft'])
+    expect(names).toEqual(['list_forms', 'search_standard_approvals', 'generate_form_draft'])
     for (const n of names) expect(n).not.toMatch(/publish|rollback|retire|delete|remove/)
   })
 
-  it('/mcp 只回 list_forms；/mcp-manage 两工具', () => {
-    expect(toolDefs('read').map((t) => t.name)).toEqual(['list_forms'])
-    expect(toolDefs('manage').map((t) => t.name)).toEqual(['list_forms', 'generate_form_draft'])
+  it('/mcp 回读面两工具；/mcp-manage 三工具', () => {
+    expect(toolDefs('read').map((t) => t.name)).toEqual(['list_forms', 'search_standard_approvals'])
+    expect(toolDefs('manage').map((t) => t.name))
+      .toEqual(['list_forms', 'search_standard_approvals', 'generate_form_draft'])
   })
 
   it('每个工具都有 name/description/inputSchema（协议必需）', () => {
@@ -60,7 +61,7 @@ describe('MCP 工具面投影（read / manage）', () => {
       expect(d.annotations.readOnlyHint, d.name)
         .toBe(!FORMS_TOOLS.find((t) => t.name === d.name)?.mutating)
     }
-    expect(toolDefs('read').map((d) => d.annotations.readOnlyHint)).toEqual([true])
+    expect(toolDefs('read').map((d) => d.annotations.readOnlyHint)).toEqual([true, true])
     expect(toolDefs('manage').find((d) => d.name === 'generate_form_draft')?.annotations.readOnlyHint)
       .toBe(false)
   })
@@ -148,6 +149,78 @@ describe('forms:view 读面（摘要，不含 draft body）', () => {
     expect(audits[0][3]).toBe('error')
     expect(audits[0][4]).toBe('tool_exception')
     expect(JSON.parse(audits[0][5] as string)).toEqual({})
+  })
+})
+
+describe('search_standard_approvals（OA P2 Task 7：agent 选模板）', () => {
+  it('★ 只回已发布绑定的 name/deepLink/description——不含标准表单字段，不预填', async () => {
+    const audits: unknown[][] = []
+    const sqls: Array<{ text: string; params: unknown[] }> = []
+    const pool = fakePool((text, params) => {
+      sqls.push({ text, params })
+      if (/v\.body->>'provider' = 'wecom_native'/.test(text)) {
+        return {
+          rows: [
+            // 正常绑定
+            {
+              asset_id: 'expense-bind', version: 2, name: '差旅报销',
+              process_code: 'PC-EXPENSE-001', deep_link: 'https://open.work.weixin.qq.com/oa/approval?x=1',
+            },
+            // 脏行（深链不是 https）：不许把脏深链递给 agent
+            { asset_id: 'dirty-bind', version: 1, name: '坏绑定', process_code: 'PC-BAD', deep_link: 'http://plain' },
+          ],
+        }
+      }
+      if (/insert into forms\.mcp_audit/.test(text)) { audits.push(params); return { rows: [] } }
+      throw new Error(`unexpected query: ${text}`)
+    })
+
+    const r = await callTool(deps({ pool }), 'read', 'search_standard_approvals', { query: ' 报销 ' })
+    expect(r.isError).toBe(false)
+    const out = JSON.parse(r.text) as { approvals: Record<string, unknown>[] }
+    expect(out.approvals).toHaveLength(1)
+    // 三个字段是全部输出：没有 schema / fields / payload 等标准表单字段（平台不持有）
+    expect(Object.keys(out.approvals[0]).sort()).toEqual(['deepLink', 'description', 'name'])
+    expect(out.approvals[0]).toMatchObject({
+      name: '差旅报销',
+      deepLink: 'https://open.work.weixin.qq.com/oa/approval?x=1',
+    })
+    expect(String(out.approvals[0].description)).toContain('PC-EXPENSE-001')
+
+    // 只查已发布且当前 head 的绑定（草稿/退役绑定的深链不能流给 agent）
+    const q = sqls.find((s) => /wecom_native/.test(s.text))!
+    expect(q.text).toContain("v.status = 'published'")
+    expect(q.text).toContain('h.active_version = v.version')
+    // 搜索词只在参数里（空白已 trim），pattern 不外插
+    expect(q.params[0]).toBe('org-a')
+    expect(q.params[1]).toBe('approval_def')
+    expect(q.params[2]).toBe('报销')
+
+    // 审计照落（ok），args 原样留痕
+    expect(audits).toHaveLength(1)
+    expect(audits[0][2]).toBe('search_standard_approvals')
+    expect(audits[0][3]).toBe('ok')
+    expect(JSON.parse(audits[0][5] as string)).toEqual({ query: ' 报销 ' })
+  })
+
+  it('搜索词超长 → query_too_long（有界读，不把巨型模式串打到 DB）', async () => {
+    const r = await callTool(deps(), 'read', 'search_standard_approvals', { query: 'x'.repeat(101) })
+    expect(r.isError).toBe(true)
+    expect(JSON.parse(r.text)).toMatchObject({ reason: 'query_too_long', limit: 100 })
+  })
+
+  it('空 query = 列前 N 个（不传模式）；未命中也回空数组而不是错误', async () => {
+    const pool = fakePool((text, params) => {
+      if (/v\.body->>'provider' = 'wecom_native'/.test(text)) {
+        expect(params[2]).toBe('')
+        return { rows: [] }
+      }
+      if (/insert into forms\.mcp_audit/.test(text)) return { rows: [] }
+      throw new Error(`unexpected query: ${text}`)
+    })
+    const r = await callTool(deps({ pool }), 'read', 'search_standard_approvals', {})
+    expect(r.isError).toBe(false)
+    expect(JSON.parse(r.text)).toEqual({ approvals: [] })
   })
 })
 

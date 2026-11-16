@@ -146,6 +146,31 @@ function planNodeTitle(plan: unknown, key: string): string | null {
   return typeof hit?.title === 'string' ? hit.title : null
 }
 
+// ── 标准审批镜像（OA P2 Task 7 / issue #2385）──
+// 只读：镜像由企微回调/小时级对账写入。`detail` 可得才有（拿不到 = null，不假装有）。
+
+export interface StandardApprovalRow {
+  id: string
+  org: string
+  provider: string
+  processCode: string
+  providerRef: string
+  title: string | null
+  requester: string | null
+  status: 'pending' | 'approved' | 'rejected' | 'canceled'
+  startedAt: string | null
+  finishedAt: string | null
+  detail: unknown
+  syncedAt: string
+}
+
+export async function listStandardApprovals(limit = 100): Promise<StandardApprovalRow[]> {
+  const body = await apiGet<{ approvals: StandardApprovalRow[] }>(
+    `/api/modules/forms/standard-approvals?limit=${limit}`,
+  )
+  return body.approvals
+}
+
 export function parseDictRef(ref: string): { scope: 'tenant' | 'global'; dictId: string } | null {
   const m = DICT_REF_RE.exec(ref)
   if (!m) return null
