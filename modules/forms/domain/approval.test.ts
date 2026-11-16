@@ -12,7 +12,7 @@ describe('validateApprovalBody', () => {
   it('合法 DSL 通过，默认值补齐', () => {
     const r = validateApprovalBody(base())
     expect(r.ok).toBe(true)
-    if (r.ok) {
+    if (r.ok && r.body.provider === 'inapp') {
       expect(r.body.rejectionPolicy).toBe('first_reject_ends')
       expect(r.body.selfApproval).toBe('skip')
       expect(r.body.dedupe).toBe('first_occurrence')
@@ -23,11 +23,32 @@ describe('validateApprovalBody', () => {
     }
   })
 
-  it('非对象 / provider 不是 inapp → 明确拒绝（不静默改写）', () => {
+  it('非对象 / 未知 provider → 明确拒绝（不静默改写）', () => {
     expect(validateApprovalBody(null)).toMatchObject({ ok: false, code: 'BODY_NOT_OBJECT' })
     expect(validateApprovalBody([])).toMatchObject({ ok: false, code: 'BODY_NOT_OBJECT' })
-    expect(validateApprovalBody({ provider: 'wecom_native', nodes: [] }))
+    expect(validateApprovalBody({ provider: 'other', nodes: [] }))
       .toMatchObject({ ok: false, code: 'PROVIDER_INVALID' })
+  })
+
+  it('P2：provider=wecom_native 走绑定校验，**不跑 inapp 节点校验**', () => {
+    // 绑定形状（没有 nodes）——若误走节点校验会被 NODES_EMPTY 拒掉
+    const r = validateApprovalBody({
+      provider: 'wecom_native',
+      processCode: 'PC1',
+      deepLink: 'https://open.work.weixin.qq.com/x',
+      name: '差旅报销',
+      verifiedChain: ['2026-11-16 真机验证'],
+      verifiedAt: '2026-11-16T10:00:00Z',
+    })
+    expect(r.ok).toBe(true)
+    if (r.ok) {
+      expect(r.body.provider).toBe('wecom_native')
+      // 绑定 body 不补齐 inapp 默认值（nodes/conditions/etc 不存在）
+      expect('nodes' in r.body).toBe(false)
+    }
+    // 绑定不完整：报绑定码，而不是节点错误
+    expect(validateApprovalBody({ provider: 'wecom_native' }))
+      .toMatchObject({ ok: false, code: 'BINDING_INCOMPLETE' })
   })
 
   it('空 nodes 拒绝', () => {
@@ -118,7 +139,7 @@ describe('validateApprovalBody', () => {
       conditions: [{ when: { field: 'amount', op: 'gt', value: 5000 }, addNode: { key: 'cfo', title: 'CFO', approvers: [{ source: 'role', role: 'cfo' }] } }],
     }))
     expect(ok.ok).toBe(true)
-    if (ok.ok) expect(ok.body.conditions?.[0].addNode.key).toBe('cfo')
+    if (ok.ok && ok.body.provider === 'inapp') expect(ok.body.conditions?.[0].addNode.key).toBe('cfo')
 
     expect(validateApprovalBody(base({
       conditions: [{ when: { field: 'amount', op: 'gt', value: 5000 }, addNode: { key: 'leader', title: '重复', approvers: [{ source: 'user', users: ['u'] }] } }],

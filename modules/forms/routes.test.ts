@@ -411,6 +411,8 @@ describePg('forms 审批（OA P1）', () => {
   const approver = () => identity('u-lead', ['forms:fill', 'forms:view'])
   const stranger = () => identity('u-stranger', ['forms:fill', 'forms:view'])
   const service = () => identity('case-engine', ['forms:case:callback'])
+  /** 平台管理员（forms:global-manage 是 platformOnly；租户管理员授权宇宙里没有它）。 */
+  const platformAdmin = () => identity('u-platform', ['forms:global-manage', 'forms:approval:view'])
 
   const appFor = (who: ReturnType<typeof makeIdentity>, opts: { engineFor?: () => Promise<unknown> } = {}) =>
     buildTestApp({
@@ -552,6 +554,82 @@ describePg('forms 审批（OA P1）', () => {
     res = await req(appFor(publisher()), 'POST', `/approval-defs/${empty}/versions/1/publish`, {})
     expect(res.status).toBe(409)
     expect(((await res.json()) as { error: string }).error).toBe('EMPTY_NODE')
+  })
+
+  it('标准审批绑定（P2）：平台管理员建/发绑定；事项模板 schema=null 可发布；非平台管理员发绑定 403', async () => {
+    const binding = `expense-bind-${SUF}`
+    const bindingBody = {
+      provider: 'wecom_native',
+      processCode: 'PC-EXPENSE-001',
+      deepLink: 'https://open.work.weixin.qq.com/oa/approval?template=PC-EXPENSE-001',
+      name: '差旅报销（企微标准审批）',
+      verifiedChain: ['2026-11-16 真机提交 SP-01 → 回调到达'],
+      verifiedAt: '2026-11-16T10:00:00Z',
+    }
+
+    let res = await req(appFor(platformAdmin()), 'POST', '/approval-bindings', {
+      assetId: binding, body: bindingBody,
+    })
+    expect(res.status).toBe(201)
+    expect(((await res.json()) as { version: number }).version).toBe(1)
+
+    // 绑定不完整 ⇒ 400（缺 deepLink/verifiedAt 等）
+    res = await req(appFor(platformAdmin()), 'POST', '/approval-bindings', {
+      assetId: `bad-bind-${SUF}`,
+      body: { provider: 'wecom_native', processCode: 'PC-BAD' },
+    })
+    expect(res.status).toBe(400)
+    expect(((await res.json()) as { error: string }).error).toBe('BINDING_INCOMPLETE')
+
+    // 普通审批发布 scope（forms:approval:publish）不能发布绑定 ⇒ 403（发布门只属平台管理员）
+    res = await req(appFor(publisher()), 'POST', `/approval-bindings/${binding}/versions/1/publish`)
+    expect(res.status).toBe(403)
+    expect(((await res.json()) as { error: string }).error).toBe('FORBIDDEN')
+
+    res = await req(appFor(platformAdmin()), 'POST', `/approval-bindings/${binding}/versions/1/publish`)
+    expect(res.status).toBe(200)
+
+    // 列表只出绑定资产（应用内审批模板不在内）
+    res = await req(appFor(platformAdmin()), 'GET', '/approval-bindings')
+    const list = (await res.json()) as { bindings: Array<{ assetId: string }> }
+    expect(list.bindings.map((b) => b.assetId)).toContain(binding)
+    expect(list.bindings.map((b) => b.assetId)).not.toContain(TEMPLATE)
+
+    // 事项模板 provider=wecom_native 且 schema=null，引用**已发布**绑定 ⇒ 可发布
+    const item = `expense-item-${SUF}`
+    res = await req(appFor(mgr()), 'POST', '/defs', {
+      assetId: item,
+      body: { mode: 'approval', provider: 'wecom_native', schema: null, approvalRef: { id: binding, version: 1 } },
+    })
+    expect(res.status).toBe(201)
+    res = await req(appFor(mgr()), 'POST', `/defs/${item}/versions/1/publish`)
+    expect(res.status).toBe(200)
+
+    // 引用不存在的绑定版本 ⇒ 409，不落发布
+    const item2 = `expense-item2-${SUF}`
+    await req(appFor(mgr()), 'POST', '/defs', {
+      assetId: item2,
+      body: { mode: 'approval', provider: 'wecom_native', schema: null, approvalRef: { id: binding, version: 2 } },
+    })
+    res = await req(appFor(mgr()), 'POST', `/defs/${item2}/versions/1/publish`)
+    expect(res.status).toBe(409)
+    expect(((await res.json()) as { error: string }).error).toBe('APPROVAL_BINDING_NOT_FOUND')
+
+    // 绑定退役 ⇒ 引用它的模板不能**新**发布。
+    // （DB 触发器不许 retire head：先出 v2 并发布，再把 v1 退役）
+    res = await req(appFor(platformAdmin()), 'POST', '/approval-bindings', { assetId: binding, body: bindingBody })
+    expect(res.status).toBe(201)
+    res = await req(appFor(platformAdmin()), 'POST', `/approval-bindings/${binding}/versions/2/publish`)
+    expect(res.status).toBe(200)
+    await pool.query('select forms.retire($1,$2,$3,$4)', [OA_ORG, 'approval_def', binding, 1])
+    const item3 = `expense-item3-${SUF}`
+    await req(appFor(mgr()), 'POST', '/defs', {
+      assetId: item3,
+      body: { mode: 'approval', provider: 'wecom_native', schema: null, approvalRef: { id: binding, version: 1 } },
+    })
+    res = await req(appFor(mgr()), 'POST', `/defs/${item3}/versions/1/publish`)
+    expect(res.status).toBe(409)
+    expect(((await res.json()) as { error: string }).error).toBe('APPROVAL_BINDING_NOT_PUBLISHED')
   })
 
   it('审批提交：写 pending_approval + 计划快照 → 建引擎 case（externalRef）→ 回填 case_ref', async () => {

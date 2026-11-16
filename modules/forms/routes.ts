@@ -7,6 +7,7 @@ import { Hono } from 'hono'
 import type { Pool } from 'pg'
 import type { Identity, NotifyPort, OrganizationPort } from '@platform/sdk'
 import { validateApprovalBody } from './domain/approval'
+import { isWecomBindingBody, itemWecomRefOf, validateWecomBinding } from './domain/wecom-binding'
 import { compilePlan } from './domain/approval-compile'
 import { compileGate } from './domain/contract'
 import {
@@ -110,6 +111,10 @@ export function createFormsRouter({
   ) => {
     const parsed = validateApprovalBody(body)
     if (!parsed.ok) throw new FormsError(parsed.code, parsed.detail)
+    if (parsed.body.provider !== 'inapp') {
+      // wecom_native 绑定不是节点链：没有可编译的「应用内计划」
+      throw new FormsError('PROVIDER_MISMATCH', 'wecom_native 绑定不是应用内审批节点链，不能编译计划')
+    }
     if (orgPort === null) {
       throw new FormsError('ORG_UNAVAILABLE', '组织查询面未注入，无法解析审批人')
     }
@@ -229,6 +234,28 @@ export function createFormsRouter({
       if (draftBody === null) return fail(c, 404, 'ASSET_NOT_FOUND', `版本 v${version} 不存在`)
       const gate = compileGate(draftBody)
       if (!gate.ok) return fail(c, 400, gate.code, gate.detail)
+      // 标准审批（P2）：`provider=wecom_native` 的事项模板必须引用**已发布**的绑定资产。
+      // 绑定退役/仍在草稿 ⇒ 引用它的模板不能新发布（否则深链指向一条平台不认识的模板）。
+      if ((draftBody as { provider?: unknown }).provider === 'wecom_native') {
+        const ref = itemWecomRefOf(draftBody)
+        if (!ref.ok) return fail(c, 400, ref.code, ref.detail)
+        const status = await store.assetVersionStatus(
+          pool, identity.orgId, 'approval_def', ref.ref.id, ref.ref.version,
+        )
+        if (status === null) {
+          return fail(c, 409, 'APPROVAL_BINDING_NOT_FOUND', `标准审批绑定 ${ref.ref.id} v${ref.ref.version} 不存在`)
+        }
+        if (status !== 'published') {
+          return fail(
+            c, 409, 'APPROVAL_BINDING_NOT_PUBLISHED',
+            `标准审批绑定 ${ref.ref.id} v${ref.ref.version} 不是已发布（${status}）——绑定草稿/退役期不能新发布引用它的模板`,
+          )
+        }
+        const bindingBody = await store.bodyAt(pool, identity.orgId, ref.ref.id, ref.ref.version, 'approval_def')
+        if (!isWecomBindingBody(bindingBody)) {
+          return fail(c, 409, 'PROVIDER_MISMATCH', `引用的审批资产 ${ref.ref.id} v${ref.ref.version} 不是 wecom_native 绑定`)
+        }
+      }
       await store.publish(pool, identity.orgId, assetId, version, identity.userId)
       return c.json({ ok: true })
     }),
@@ -283,6 +310,11 @@ export function createFormsRouter({
       const body = (await c.req.json().catch(() => null)) as { assetId?: unknown; body?: unknown } | null
       const assetId = typeof body?.assetId === 'string' ? body.assetId : ''
       if (!ASSET_ID_RE.test(assetId)) return fail(c, 400, 'ASSET_ID_INVALID', 'assetId 必须匹配 ^[a-z][a-z0-9-]{0,63}$')
+      // 两条 provider 走两条资产面：绑定只经 /approval-bindings（发布门是 forms:global-manage，
+      // 不是 forms:approval:publish），这里显式拒绝，避免同一 assetId 被两种语义混用。
+      if (isWecomBindingBody(body?.body)) {
+        return fail(c, 400, 'PROVIDER_MISMATCH', 'wecom_native 绑定请走 /approval-bindings（平台管理员面）')
+      }
       const version = await store.newDraft(pool, identity.orgId, assetId, body?.body, identity.userId, 'approval_def')
       await store.audit(pool, identity.orgId, identity.userId, 'approval.draft', assetId, { version })
       return c.json({ assetId, version }, 201)
@@ -295,6 +327,9 @@ export function createFormsRouter({
       const version = Number(c.req.param('v'))
       if (!Number.isInteger(version)) return fail(c, 400, 'BAD_VERSION', 'version 必须是整数')
       const body = (await c.req.json().catch(() => null)) as { body?: unknown } | null
+      if (isWecomBindingBody(body?.body)) {
+        return fail(c, 400, 'PROVIDER_MISMATCH', 'wecom_native 绑定请走 /approval-bindings（平台管理员面）')
+      }
       await store.updateDraft(pool, identity.orgId, c.req.param('assetId'), version, body?.body, 'approval_def')
       return c.json({ ok: true })
     }),
@@ -367,6 +402,119 @@ export function createFormsRouter({
       await store.publish(pool, identity.orgId, assetId, version, identity.userId, 'approval_def')
       await store.audit(pool, identity.orgId, identity.userId, 'approval.publish', assetId, {
         version, requester, plan,
+      })
+      return c.json({ ok: true })
+    }),
+  )
+
+  // ── 标准审批绑定（OA P2 / issue #2385）：`provider=wecom_native` 的绑定资产 ──
+  // 资产 kind 仍是 `approval_def`（绑定就是「审批的另一种 provider」，T5 对账按
+  // kind=approval_def + body->>'provider'='wecom_native' 读）；body = WecomBindingBody。
+  // **全端点限平台管理员**（forms:global-manage，platformOnly）：这是发布门的 scope 落点——
+  // 普通 forms:approval:publish 不能发布绑定。绑定不建 submission、不进 case-engine。
+
+  /** 绑定资产视图：任一版本是 wecom_native 即算（创建后的草稿期也要在管理面可见）。 */
+  const bindingsOf = async (org: string) => {
+    const defs = await store.listDefs(pool, org, 'approval_def')
+    const out: Array<store.DefSummaryRow & { versions: store.VersionRow[] }> = []
+    for (const d of defs) {
+      const versions = await store.listVersions(pool, org, d.assetId, 'approval_def')
+      if (!versions.some((v) => isWecomBindingBody(v.body))) continue
+      out.push({ ...d, versions })
+    }
+    return out
+  }
+
+  r.get('/approval-bindings', (c) =>
+    handle(c, async () => {
+      const { identity } = ctx(c)
+      return c.json({ bindings: await bindingsOf(identity.orgId) })
+    }),
+  )
+
+  r.get('/approval-bindings/:assetId', (c) =>
+    handle(c, async () => {
+      const { identity } = ctx(c)
+      const assetId = c.req.param('assetId')
+      const versions = await store.listVersions(pool, identity.orgId, assetId, 'approval_def')
+      if (!versions.some((v) => isWecomBindingBody(v.body))) {
+        return fail(c, 404, 'ASSET_NOT_FOUND', `绑定 ${assetId} 不存在`)
+      }
+      const head = await store.headVersion(pool, identity.orgId, assetId, 'approval_def')
+      return c.json({ assetId, head, versions })
+    }),
+  )
+
+  r.post('/approval-bindings', (c) =>
+    handle(c, async () => {
+      const { identity } = ctx(c)
+      const body = (await c.req.json().catch(() => null)) as { assetId?: unknown; body?: unknown } | null
+      const assetId = typeof body?.assetId === 'string' ? body.assetId : ''
+      if (!ASSET_ID_RE.test(assetId)) return fail(c, 400, 'ASSET_ID_INVALID', 'assetId 必须匹配 ^[a-z][a-z0-9-]{0,63}$')
+      const parsed = validateWecomBinding(body?.body)
+      if (!parsed.ok) return fail(c, 400, parsed.code, parsed.detail)
+      // 同一 assetId 只能是一种语义：已有非绑定版本（应用内审批模板）⇒ 不许改作绑定
+      const existing = await store.listVersions(pool, identity.orgId, assetId, 'approval_def')
+      if (existing.some((v) => !isWecomBindingBody(v.body))) {
+        return fail(c, 409, 'ASSET_KIND_MISMATCH', `资产 ${assetId} 已是应用内审批模板，不能改作 wecom_native 绑定`)
+      }
+      const version = await store.newDraft(pool, identity.orgId, assetId, parsed.body, identity.userId, 'approval_def')
+      await store.audit(pool, identity.orgId, identity.userId, 'binding.draft', assetId, {
+        version, processCode: parsed.body.processCode,
+      })
+      return c.json({ assetId, version }, 201)
+    }),
+  )
+
+  r.put('/approval-bindings/:assetId/versions/:v', (c) =>
+    handle(c, async () => {
+      const { identity } = ctx(c)
+      const version = Number(c.req.param('v'))
+      if (!Number.isInteger(version)) return fail(c, 400, 'BAD_VERSION', 'version 必须是整数')
+      const assetId = c.req.param('assetId')
+      const versions = await store.listVersions(pool, identity.orgId, assetId, 'approval_def')
+      if (!versions.some((v) => isWecomBindingBody(v.body))) {
+        return fail(c, 404, 'ASSET_NOT_FOUND', `绑定 ${assetId} 不存在`)
+      }
+      const body = (await c.req.json().catch(() => null)) as { body?: unknown } | null
+      const parsed = validateWecomBinding(body?.body)
+      if (!parsed.ok) return fail(c, 400, parsed.code, parsed.detail)
+      await store.updateDraft(pool, identity.orgId, assetId, version, parsed.body, 'approval_def')
+      await store.audit(pool, identity.orgId, identity.userId, 'binding.draft.update', assetId, { version })
+      return c.json({ ok: true })
+    }),
+  )
+
+  r.delete('/approval-bindings/:assetId/versions/:v', (c) =>
+    handle(c, async () => {
+      const { identity } = ctx(c)
+      const version = Number(c.req.param('v'))
+      if (!Number.isInteger(version)) return fail(c, 400, 'BAD_VERSION', 'version 必须是整数')
+      await store.dropDraft(pool, identity.orgId, c.req.param('assetId'), version, 'approval_def')
+      return c.json({ ok: true })
+    }),
+  )
+
+  // 发布门：manifest 已把本端点声明为 `forms:global-manage`（宿主门卫施加），这里再按身份
+  // 判一次——门卫未装配的测试壳/未来的直接调用都不能绕过「绑定发布只属平台管理员」。
+  r.post('/approval-bindings/:assetId/versions/:v/publish', (c) =>
+    handle(c, async () => {
+      const { identity } = ctx(c)
+      if (!identity.hasScope('forms:global-manage')) {
+        return fail(c, 403, 'FORBIDDEN', '发布 wecom_native 绑定需要 forms:global-manage（平台管理员）')
+      }
+      const version = Number(c.req.param('v'))
+      if (!Number.isInteger(version)) return fail(c, 400, 'BAD_VERSION', 'version 必须是整数')
+      const assetId = c.req.param('assetId')
+      const raw = await store.bodyAt(pool, identity.orgId, assetId, version, 'approval_def')
+      if (raw === null) return fail(c, 404, 'ASSET_NOT_FOUND', `版本 v${version} 不存在`)
+      const parsed = validateWecomBinding(raw)
+      if (!parsed.ok) {
+        return fail(c, 400, parsed.code, `绑定不完整，不能发布：${parsed.detail}`)
+      }
+      await store.publish(pool, identity.orgId, assetId, version, identity.userId, 'approval_def')
+      await store.audit(pool, identity.orgId, identity.userId, 'binding.publish', assetId, {
+        version, processCode: parsed.body.processCode,
       })
       return c.json({ ok: true })
     }),

@@ -11,6 +11,7 @@
 // 铁律（§2.4）：契约里永不含值，只含引用——`x-dict: "dict:<id>"`（租户私有）| `"gdict:<id>"`
 // （平台全局，P4 分档）；`x-binding: "required" | "open"`（P7：v1 两档，extensible 拒）。
 import Ajv from 'ajv'
+import { itemWecomRefOf } from './wecom-binding'
 
 /** 字典引用格式（P4 分档前缀）。第二消费者出现时迁 `@platform/sdk`（可搬迁纪律）。 */
 export const DICT_REF_RE = /^(dict|gdict):([a-z][a-z0-9-]*)$/
@@ -46,6 +47,7 @@ export type GateErrorCode =
   | 'UNSUPPORTED_WIDGET'
   | 'BAD_ASSIGNEE_REF'
   | 'BAD_DUE'
+  | 'APPROVAL_REF_INVALID'
 
 /** 收集契约中全部字典引用（去重）——storage 据此预载各 ref 的生效 key 集。 */
 export function dictRefs(schema: unknown): string[] {
@@ -224,6 +226,22 @@ function declaredFieldDefs(schema: Record<string, unknown>): Map<string, Record<
 export function compileGate(body: unknown): GateResult {
   if (body === null || typeof body !== 'object' || Array.isArray(body)) {
     return { ok: false, code: 'SCHEMA_COMPILE', detail: '契约 body 必须是 JSON 对象' }
+  }
+  // ⑩ 标准审批（P2 / issue #2385）：字段与附件都在企微 ⇒ 事项模板契约 `schema` 可为 null/缺省。
+  // 发布门仍咬住两件事：只能用于 `mode=approval`；`approvalRef` 形状必须合法。
+  // 「引用是否**已发布**（绑定退役即不可新发布）」要看库，由 routes 的发布门查——纯函数不碰 DB。
+  const provider = (body as Record<string, unknown>)['provider']
+  if (provider === 'wecom_native') {
+    if ((body as Record<string, unknown>)['mode'] !== 'approval') {
+      return {
+        ok: false,
+        code: 'SCHEMA_COMPILE',
+        detail: 'provider=wecom_native 只允许用于 mode=approval 的事项模板（标准审批在企微执行）',
+      }
+    }
+    const ref = itemWecomRefOf(body)
+    if (!ref.ok) return { ok: false, code: 'APPROVAL_REF_INVALID', detail: ref.detail }
+    return { ok: true }
   }
   const schema = schemaOf(body)
   if (schema === null) {

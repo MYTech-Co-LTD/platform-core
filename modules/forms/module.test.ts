@@ -71,7 +71,8 @@ describe('forms 模块声明（#708/#710）', () => {
   })
 
   it('声明面断言：发布/回滚/退役端点必须是 forms:publish（人 gate 的 scope 落点）；写面不出现 guest', () => {
-    expect(mod.manifest.api?.internal?.length).toBe(37)  // 24 + OA P1 审批 12 条 + /mcp（2026-11-16 能力网关）
+    // 24 + OA P1 审批 12 条 + /mcp（2026-11-16 能力网关）+ OA P2 标准审批绑定 6 条
+    expect(mod.manifest.api?.internal?.length).toBe(43)
     expect(mod.manifest.guest).toBeUndefined() // M1.2 无 guest 面（§14.4 防滥用随 M1.3 填报通道）
     for (const e of mod.manifest.api?.internal ?? []) {
       const key = `${e.method} ${e.path}`
@@ -84,7 +85,20 @@ describe('forms 模块声明（#708/#710）', () => {
         expect(e.scope).toBe('forms:approval:publish')
       }
       if (key === 'POST /approval-callback') expect(e.scope).toBe('forms:case:callback')
+      // OA P2：绑定资产全端点 = 平台管理员；发布门绝不能落到普通 forms:publish / approval:publish
+      if (e.path.startsWith('/approval-bindings')) {
+        expect(e.scope, key).toBe('forms:global-manage')
+      }
     }
+  })
+
+  it('OA P2：标准审批绑定页是独立 console 条目，scope=forms:global-manage（platformOnly）', () => {
+    const entry = (mod.manifest.frontend?.console ?? []).find((e) => e.path === '/console/forms-bindings')
+    expect(entry).toBeDefined()
+    expect(entry?.scope).toBe('forms:global-manage')
+    expect(entry?.title).toBe('标准审批绑定')
+    const permission = mod.manifest.permissions.find((p) => p.code === 'forms:global-manage')
+    expect(permission?.platformOnly).toBe(true)
   })
 
   it('OA 事件声明（P1 两个）：awaiting 由外部生产者产生，decided 由本模块产生', () => {
