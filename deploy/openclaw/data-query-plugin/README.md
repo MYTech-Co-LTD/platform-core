@@ -16,6 +16,8 @@ OpenClaw native tool-plugin：把可信企微 userid（`toolContext.requesterSen
 | `describe_metric` | `POST {DATA_API_BASE}/toolbox` `{tool,args}`——指标详情（Wave 2，#985） |
 | `sample_dimension_values` | `POST {DATA_API_BASE}/toolbox`——维度值抽样 ≤50 行（Wave 2） |
 | `get_freshness` | `POST {DATA_API_BASE}/toolbox`——新鲜度/水位（Wave 2；📅 行进捕获链） |
+| `platform_capabilities` | `POST {AGENT_API_BASE}/mcp` `tools/call agent__capabilities`——按当前企微身份返回可用能力目录（紧凑索引；`tool` 看完整 schema） |
+| `platform_call` | `POST {AGENT_API_BASE}/mcp` `tools/call <module>__<tool>`——经统一网关调用能力目录里的工具；身份只来自 ctx + env，不接受 userId |
 
 ## 新鲜度行：捕获 + 确定性附加 + 入站清账（2026-10-16）
 
@@ -72,6 +74,7 @@ OpenClaw native tool-plugin：把可信企微 userid（`toolContext.requesterSen
 |---|---|
 | `DATA_API_BASE` | 平台问数 API 基址；缺省 `http://server:13000/api/modules/data`（同 compose 网络服务名） |
 | `DATA_WECOM_CHANNEL_KEY` | 渠道服务凭证；与 platform `server` 服务的同名 env **同值**（openship env isSecret） |
+| `AGENT_API_BASE` | 平台 agent 能力网关基址；缺省 `http://server:13000/api/agent`（同 compose 网络服务名）。**只在 openclaw 服务容器配置，不属于根 `.env.example`**（B9 门禁口径） |
 
 ## 本地测试
 
@@ -101,3 +104,10 @@ skill 变更的行为回归：按 `scripts/askdata/dual-arm-eval.test.ts` 的既
 `openclaw plugins install -l /opt/plugins/data-query-plugin` 一次性注册（写进 state 卷的
 openclaw.json，跨部署持久）；部署更新代码后重启容器即生效。
 初始化步骤见 `deploy/data-plane-deploy-sop.md` / openship exec 操作。
+
+openclaw 服务 env 增加 `AGENT_API_BASE=http://server:13000/api/agent`；
+`agents.entries.main.tools.allow` 增加 `platform_capabilities`、`platform_call`
+（allow 是白名单，漏加则工具对模型不可见）。
+
+能力网关由 platform server 的 `AGENT_MCP_ENABLED=1` 开启；鉴权复用
+`DATA_WECOM_CHANNEL_KEY` 与企微 userid。
