@@ -11,7 +11,8 @@ export type {
   ChannelAddressResolver, DeclaredEndpoint, DeptExpansion, EnqueueEventInput, EventCatalogReader,
   Identity, IdentityLinkView, IdentityLinks, LinkProvider,
   JobRunActor, JobRunView, JobsPort, SystemJobScheduleView,
-  ModuleContext, ModuleDefinition, ModulePorts, NotifyEmitInput, NotifyPort, OrgNodeOption,
+  ModuleContext, ModuleDefinition, ModulePorts, NotifyEmitInput, NotifyPort, OrganizationPort,
+  OrgNodeOption,
   ResolvedPatKey, SchedulerActorLike, SchedulerPortFactory, SchedulerPortLike,
   UserStatus, UserStatusResolver,
 } from './module'

@@ -59,16 +59,17 @@ d('org-sync（企微组织 → 平台 org 表）', () => {
 
   async function clean() {
     await pool.query('delete from platform.org_membership where tenant_id = $1', [tenantId])
+    await pool.query('delete from platform.org_node_leader where tenant_id = $1', [tenantId])
     await pool.query('delete from platform.org_node where tenant_id = $1', [tenantId])
   }
 
   it('fetchWecomSnapshot：拉取 + parentid 0/1 归一为根 + isPrimary 跟随 main_department', async () => {
     const snap = await fetchWecomSnapshot({ corpId: 'ww1', secret: 's' }, fakeWecom(DEPTS, USERS))
     expect(snap.depts).toEqual([
-      { extId: '1', name: '山海一果', parentExtId: null },
-      { extId: '49', name: '共享中心', parentExtId: null },   // parentid=1 → 根（与 10-29 基线一致）
-      { extId: '57', name: '数字技术部', parentExtId: '49' },
-      { extId: '2', name: '总经办', parentExtId: null },
+      { extId: '1', name: '山海一果', parentExtId: null, leaders: [] },
+      { extId: '49', name: '共享中心', parentExtId: null, leaders: [] },   // parentid=1 → 根（与 10-29 基线一致）
+      { extId: '57', name: '数字技术部', parentExtId: '49', leaders: [] },
+      { extId: '2', name: '总经办', parentExtId: null, leaders: [] },
     ])
     expect(snap.memberships).toContainEqual({ userName: 'duo', extId: '2', isPrimary: true, externalId: 'duo' })
     expect(snap.memberships).toContainEqual({ userName: 'duo', extId: '57', isPrimary: false, externalId: 'duo' })
@@ -85,7 +86,7 @@ d('org-sync（企微组织 → 平台 org 表）', () => {
 
   it('fail-closed 门二：部门数断崖（<现存 50%）⇒ DEPT_COUNT_DROP', () => {
     const existing = Array.from({ length: 100 }, (_, i) => ({ ext_id: String(i), name: 'n', parent_ext_id: null, status: 1 }))
-    expect(() => assertSnapshotViable({ depts: new Array(40).fill(0).map((_, i) => ({ extId: String(i), name: 'n', parentExtId: null })), memberships: [], users: [] }, existing.length))
+    expect(() => assertSnapshotViable({ depts: new Array(40).fill(0).map((_, i) => ({ extId: String(i), name: 'n', parentExtId: null, leaders: [] })), memberships: [], users: [] }, existing.length))
       .toThrowError(/DEPT_COUNT_DROP/)
   })
 
@@ -159,7 +160,7 @@ d('org-sync（企微组织 → 平台 org 表）', () => {
     await clean()
     calls.length = 0
     const casSnap: OrgSnapshot = {
-      depts: [{ extId: '2', name: '总经办', parentExtId: null }],
+      depts: [{ extId: '2', name: '总经办', parentExtId: null, leaders: [] }],
       memberships: [{ userName: 'legacy', extId: '2', isPrimary: false, externalId: null }],
       users: [{ userName: 'legacy', displayName: null, status: null }],
     }
@@ -216,9 +217,9 @@ d('org-sync（企微组织 → 平台 org 表）', () => {
     }
     const snap = await snapshotFromCasdoor('acme', cas)
     expect(snap.depts).toEqual(expect.arrayContaining([
-      { extId: '49', name: '共享中心', parentExtId: null },
-      { extId: '57', name: '数字技术部', parentExtId: '49' },
-      { extId: '2', name: '总经办', parentExtId: null },
+      { extId: '49', name: '共享中心', parentExtId: null, leaders: [] },
+      { extId: '57', name: '数字技术部', parentExtId: '49', leaders: [] },
+      { extId: '2', name: '总经办', parentExtId: null, leaders: [] },
     ]))
     expect(snap.memberships).toContainEqual({ userName: 'legacy', extId: '2', isPrimary: false, externalId: null })
     // 种子可 apply（基线路径与企微路径共用同一 apply）
@@ -231,8 +232,8 @@ d('org-sync（企微组织 → 平台 org 表）', () => {
     await clean()
     const snap: OrgSnapshot = {
       depts: [
-        { extId: '10', name: '正常', parentExtId: null },
-        { extId: '99', name: '孤儿', parentExtId: '不存在' },
+        { extId: '10', name: '正常', parentExtId: null, leaders: [] },
+        { extId: '99', name: '孤儿', parentExtId: '不存在', leaders: [] },
       ],
       memberships: [],
       users: [],
@@ -241,5 +242,80 @@ d('org-sync（企微组织 → 平台 org 表）', () => {
     const nodes = await listNodes(pool, tenantId)
     const orphan = nodes.find((n) => n.extId === '99')
     expect(orphan?.path).toBe('99') // 环/孤儿守卫：path=extId，不递归炸栈
+  })
+
+  // ── OA 前置（计划 T1）：部门负责人 ────────────────────────────────────────
+
+  it('fetchWecomSnapshot 取 department_leader 并归一为 leaders', async () => {
+    const fetchFn = (async (url: string) => {
+      if (url.includes('/gettoken')) return Response.json({ access_token: 't' })
+      if (url.includes('/department/list')) return Response.json({
+        department: [
+          { id: 1, name: '总部', parentid: 0, department_leader: ['u-lead', 'u-lead2'] },
+        ],
+      })
+      return Response.json({ userlist: [] })
+    }) as unknown as typeof fetch
+    const snap = await fetchWecomSnapshot({ corpId: 'c', secret: 's' }, fetchFn)
+    expect(snap.depts[0].leaders).toEqual([
+      { userName: 'u-lead', sort: 0 },
+      { userName: 'u-lead2', sort: 1 },
+    ])
+  })
+
+  it('applySnapshot 整组重写负责人（幂等）', async () => {
+    await clean()
+    const snap: OrgSnapshot = {
+      depts: [{
+        extId: '10', name: '总部', parentExtId: null,
+        leaders: [{ userName: 'u-lead', sort: 0 }, { userName: 'u-lead2', sort: 1 }],
+      }],
+      memberships: [],
+      users: [],
+    }
+    await applySnapshot(pool, tenantId, snap, 'wecom')
+    await applySnapshot(pool, tenantId, snap, 'wecom')
+    const { rows } = await pool.query(
+      'select user_name, sort from platform.org_node_leader where tenant_id=$1 order by sort',
+      [tenantId],
+    )
+    expect(rows).toEqual([{ user_name: 'u-lead', sort: 0 }, { user_name: 'u-lead2', sort: 1 }])
+  })
+
+  it('applySnapshot 负责人整组重写：企微侧撤掉负责人 ⇒ 平台行消失（不是残留）', async () => {
+    await clean()
+    const withLeaders: OrgSnapshot = {
+      depts: [{ extId: '10', name: '总部', parentExtId: null, leaders: [{ userName: 'u-lead', sort: 0 }] }],
+      memberships: [],
+      users: [],
+    }
+    await applySnapshot(pool, tenantId, withLeaders, 'wecom')
+    // 企微侧把负责人撤掉（快照里 leaders 为空）⇒ 平台不得残留旧负责人
+    const noLeaders: OrgSnapshot = {
+      depts: [{ extId: '10', name: '总部', parentExtId: null, leaders: [] }],
+      memberships: [],
+      users: [],
+    }
+    await applySnapshot(pool, tenantId, noLeaders, 'wecom')
+    const { rows } = await pool.query(
+      'select user_name from platform.org_node_leader where tenant_id=$1', [tenantId])
+    expect(rows).toEqual([])
+  })
+
+  it('applySnapshot 不动 org_role_binding（平台授予 ≠ 企微同步的投影）', async () => {
+    await clean()
+    await pool.query('delete from platform.org_role_binding where tenant_id = $1', [tenantId])
+    await pool.query(
+      `insert into platform.org_role_binding (tenant_id, node_ext_id, user_name, role, granted_by)
+       values ($1, '10', 'dept-admin', 'dept_admin', 'seed-test')`, [tenantId])
+    const snap: OrgSnapshot = {
+      depts: [{ extId: '10', name: '总部', parentExtId: null, leaders: [] }],
+      memberships: [], users: [],
+    }
+    await applySnapshot(pool, tenantId, snap, 'wecom')
+    const { rows } = await pool.query(
+      'select user_name, role from platform.org_role_binding where tenant_id=$1', [tenantId])
+    expect(rows).toEqual([{ user_name: 'dept-admin', role: 'dept_admin' }])
+    await pool.query('delete from platform.org_role_binding where tenant_id = $1', [tenantId])
   })
 })
