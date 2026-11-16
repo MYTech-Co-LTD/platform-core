@@ -10,7 +10,7 @@ import { upsertL1Metric, upsertMetric } from './metric-store'
 import type { L1MetricDef } from './metric-store'
 import type { MetricDef, Requester } from './authz'
 import type { ChatMessage, ChatModel, ChatTurn, ToolSpec } from './llm'
-import { MAX_AGENT_TURNS, runAgentLoop, TOOLS } from './agent-loop'
+import { MAX_AGENT_TURNS, runAgentLoop, TOOLS, toolsFor } from './agent-loop'
 import { ANALYST_TOOLS } from './toolbox/registry'
 import { GUIDE_INVARIANTS } from './toolbox/guide'
 import type { SqlExecutor } from './query-service'
@@ -438,6 +438,25 @@ describe('TOOLS —— query_metric 参数契约（spec 2026-10-15 §2.5 + §8.4
     expect(d).toContain('最新')
     // 当日数据为部分天，须标注
     expect(d).toContain('部分天')
+  })
+})
+
+// 纯断言（无 DATABASE_URL）：通道 A 的工具面按 requester 可见性过滤（与 /mcp 同一实现）。
+describe('toolsFor —— registry 子集按 visibleAnalystTools 过滤', () => {
+  it('缺 scope 的 requester 不丢现有工具（绑定三把 requiredScope 均 null ⇒ 过滤是 no-op）', () => {
+    const noScopes: Requester = {
+      userId: 'u-none', orgId: ORG, channel: 'session', keyId: null,
+      scopes: [], hasScope: () => false,
+    }
+    expect(toolsFor(noScopes).map((t) => t.name)).toEqual(TOOLS.map((t) => t.name))
+  })
+  it('legacy 三把恒在（本地工具不受 registry 可见性影响）', () => {
+    const noScopes: Requester = {
+      userId: 'u-none', orgId: ORG, channel: 'session', keyId: null,
+      scopes: [], hasScope: () => false,
+    }
+    const names = toolsFor(noScopes).map((t) => t.name)
+    expect(names).toEqual(expect.arrayContaining(['list_metrics', 'query_metric', 'query_detail']))
   })
 })
 

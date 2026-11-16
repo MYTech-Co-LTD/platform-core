@@ -10,9 +10,9 @@
 // 不变量：
 //   · 工具面预算：分析师面 ≤14 工具、静态序列化 ≤10KB（常量在此，门禁断言同一来源）。
 //   · 命名：MCP 2025-11-25 `[A-Za-z0-9_.-]`；指标 id 的 `:` → `__`（双向映射在 legacyMetricTools）。
-//   · 权限：工具级 requiredScope 是**声明面**（data_harness_catalog 的输出 + 门禁断言④）；
-//     Wave 1 的执法点是 /mcp 端点门卫（data:query）——本文件**不做第二份 scope 判定**
-//     （决策 D1：授权核心单实现）。
+//   · 权限：工具级 requiredScope 既是**声明面**（data_harness_catalog 的输出 + 门禁断言④），
+//     也由 callTool 在**分发前**校验（missingToolScope：face 门之外的附加 scope）。
+//     face 最低权限（faceScope）由端点门卫按 manifest 施加，本文件不重复判定。
 //   · 审计：callTool 是 tools/call 的唯一分发点，**所有结局**（ok/denied/error）都写
 //     data.query_audit（spec §8「拒绝/出错也写」）。
 import type { Pool } from 'pg'
@@ -21,11 +21,13 @@ import { visibleMetrics } from '../authz'
 import type { DeptContext } from '../metric-visibility'
 import type { SqlExecutor } from '../query-service'
 import { writeAudit } from '../audit-store'
-import { CONTRACT, faceOf } from '../../skill/contract'
+import { CONTRACT, faceOf, type ToolFaceScope } from '../../skill/contract'
 
 export const TOOL_NAME_RE = /^[A-Za-z0-9_.-]+$/
 export const ANALYST_FACE_MAX_TOOLS = 14
 export const ANALYST_FACE_MAX_LIST_BYTES = 10240
+/** 能力面（端点为 `/mcp` / `/mcp-curated` / `/mcp-read`；缺省 full）。 */
+export type ToolSurface = 'full' | 'curated' | 'read'
 /** 抽样行上限（spec §5：sample_dimension_values 行数 ≤50；global constraints「抽样 ≤50 行」）。 */
 export const SAMPLE_MAX_ROWS = 50
 export const READ_SCOPE = 'data:read'
@@ -40,7 +42,9 @@ export interface ToolMeta {
   description: string
   inputSchema: Record<string, unknown>
   outputSchema: Record<string, unknown>
-  /** 声明面（D1）：Wave 1 由端点门统一执法，此处不判定。 */
+  /** face 最低权限（data:read / data:query）；端点门按 face 施加，见 skill/contract.ts。 */
+  faceScope: ToolFaceScope
+  /** 声明面（D1）：face 之上的**附加** scope；read/query 均为 null（face 门负责）。 */
   requiredScope: string | null
   mutating: boolean
   annotations: ToolAnnotations
@@ -60,6 +64,7 @@ export const ANALYST_TOOLS: readonly ToolMeta[] = CONTRACT.tools
       description: face.description,
       inputSchema: face.inputSchema,
       outputSchema: face.outputSchema ?? { type: 'object' },
+      faceScope: t.faceScope,
       requiredScope: t.requiredScope,
       mutating: t.mutating,
       annotations: t.annotations,
@@ -72,6 +77,20 @@ export function listAnalystTools(): readonly ToolMeta[] {
 
 export function analystToolNames(): string[] {
   return ANALYST_TOOLS.map((t) => t.name)
+}
+
+/**
+ * 工具级**附加** scope 的缺失判定（face 门之上的那一层）。
+ * null = face 门已足够；非 null = 调用方还缺这个码（`callTool` 回 denied/missing_scope）。
+ * 纯函数：不绑 ANALYST_TOOLS，便于直接测「非 null scope」分支（当前契约里还没有这种工具）。
+ */
+export function missingToolScope(meta: Pick<ToolMeta, 'requiredScope'>, requester: Requester): string | null {
+  return meta.requiredScope !== null && !requester.hasScope(meta.requiredScope) ? meta.requiredScope : null
+}
+
+/** tools/list 的可见工具：该面内、调用方满足附加 requiredScope 的分析师工具。 */
+export function visibleAnalystTools(requester: Requester): readonly ToolMeta[] {
+  return ANALYST_TOOLS.filter((t) => t.requiredScope === null || requester.hasScope(t.requiredScope))
 }
 
 /** 工具名清洗（spec §8：冒号 → __，其余非法字符 → _）。空串抛（没有「无名工具」）。 */
@@ -121,6 +140,11 @@ export interface ToolboxDeps {
   exploreExec?: (sql: string, params: readonly unknown[]) => Promise<{ columns: string[]; rows: unknown[][] }>
   /** 写开关（缺省 false=关）。 */
   allowMutating?: boolean
+  /**
+   * 能力面（**展示**提示，缺省 'full'）：`data_harness_catalog` 用它标注 `available`
+   * （read 面上 query 类工具 locked）。执法不在这里——端点 face 门 + `callTool` 才是。
+   */
+  surface?: ToolSurface
   /** 血缘/质量 seam（缺省 = health.ts 的 defaultDbtManifest 读 env 路径；测试注入）。 */
   dbtManifest?: () => Promise<unknown>
   /** 时钟（测试注入）。 */
@@ -168,6 +192,14 @@ export async function callTool(deps: ToolboxDeps, name: string, args: Record<str
   }
   if (deps.requester === null) {
     return finish({ payload: { status: 'denied', reason: 'unauthenticated' }, isError: true }, 'denied', 'unauthenticated')
+  }
+  // face 门是最低权限（端点门卫施加）；这里只判 face 之上的附加 scope。
+  const missing = missingToolScope(meta, deps.requester)
+  if (missing !== null) {
+    return finish(
+      { payload: { status: 'denied', reason: 'missing_scope', scope: missing, name }, isError: true },
+      'denied', 'missing_scope',
+    )
   }
   if (meta.mutating && deps.allowMutating !== true) {
     return finish(

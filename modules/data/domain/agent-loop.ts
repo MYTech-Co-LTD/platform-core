@@ -9,7 +9,7 @@ import { loadMergedCatalog } from './metric-store'
 import { runQuery } from './query-service'
 import type { SqlExecutor } from './query-service'
 import type { ChatMessage, ChatModel, ToolCall, ToolSpec } from './llm'
-import { ANALYST_TOOLS, callTool, type ToolboxDeps } from './toolbox/registry'
+import { ANALYST_TOOLS, callTool, visibleAnalystTools, type ToolboxDeps } from './toolbox/registry'
 import { buildToolboxDeps } from './toolbox/all'
 import { GUIDE_INVARIANTS } from './toolbox/guide'
 
@@ -127,6 +127,20 @@ const REGISTRY_TOOLS: ToolSpec[] = ANALYST_TOOLS
 
 export const TOOLS: ToolSpec[] = [...LEGACY_TOOLS, ...REGISTRY_TOOLS]
 
+/** registry 子集的名字（过滤只作用于它们；legacy 三把是通道 A 本地工具，恒在）。 */
+const REGISTRY_TOOL_NAMES = new Set(BOUND_TOOL_NAMES)
+
+/**
+ * 本轮对话的工具面：legacy 三把恒在，registry 子集按 `visibleAnalystTools(requester)` 裁
+ * （与 /mcp 的 tools/list 同一实现——通道 A 不得自建第二份权限判定）。
+ * 当前绑定的三把 requiredScope 均为 null ⇒ 过滤是 no-op；未来附加 scope 时自动生效。
+ * 只影响**看得见**，执行仍由 callTool 单点判（缺失回 denied/missing_scope）。
+ */
+export const toolsFor = (requester: Requester): ToolSpec[] => {
+  const visible = new Set(visibleAnalystTools(requester).map((t) => t.name))
+  return TOOLS.filter((t) => !REGISTRY_TOOL_NAMES.has(t.name) || visible.has(t.name))
+}
+
 export async function* runAgentLoop(
   deps: AgentDeps, requester: Requester, model: ChatModel, question: string,
 ): AsyncGenerator<AgentEvent> {
@@ -150,11 +164,14 @@ export async function* runAgentLoop(
   // wh 缺省 = deps.execute（测试注入）；生产无注入时落到只读池（analystPool）。
   const toolbox = buildToolboxDeps(
     { pool: deps.pool, org: deps.org, requester, adoptedSources: deps.adoptedSources },
+    // surface 不传 = 缺省 full（通道 A 是 full 面；它没绑 data_harness_catalog，留着缺省即可）。
     { wh: deps.execute },
   )
+  // 工具面同样在循环外算一次（同一次对话内权限漂移不刷新——与词表裁剪同一口径）。
+  const tools = toolsFor(requester)
 
   for (let turn = 0; turn < MAX_AGENT_TURNS; turn++) {
-    const reply = await model.complete(messages, TOOLS)
+    const reply = await model.complete(messages, tools)
     // 原样回放 assistant 轮（含 tool_calls）——不回放则下一轮模型对不上工具结果
     messages.push({ role: 'assistant', content: reply.content, toolCalls: reply.toolCalls })
 

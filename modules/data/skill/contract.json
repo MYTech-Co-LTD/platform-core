@@ -1,12 +1,12 @@
 {
-  "version": 1,
+  "version": 2,
   "tools": [
     {
       "id": "guide",
       "group": "guide",
       "title": "数据工作流指南",
       "analyst": true,
-      "requiredScope": "data:read",
+      "requiredScope": null,
       "mutating": false,
       "annotations": {
         "readOnlyHint": true
@@ -24,14 +24,15 @@
             "type": "object"
           }
         }
-      }
+      },
+      "faceScope": "data:read"
     },
     {
       "id": "harness_catalog",
       "group": "guide",
       "title": "工具清单",
       "analyst": true,
-      "requiredScope": "data:read",
+      "requiredScope": null,
       "mutating": false,
       "annotations": {
         "readOnlyHint": true
@@ -39,7 +40,7 @@
       "channels": {
         "mcp": {
           "name": "data_harness_catalog",
-          "description": "列出本面全部工具（分组/scope/是否写）。与注册表逐条一致。",
+          "description": "列出本面全部工具（分组/scope/是否写/本面是否可用）。available=false 表示该工具不在本 face、需更高 face scope。与注册表逐条一致。",
           "inputSchema": {
             "type": "object",
             "properties": {},
@@ -49,14 +50,15 @@
             "type": "object"
           }
         }
-      }
+      },
+      "faceScope": "data:read"
     },
     {
       "id": "search",
       "group": "discovery",
       "title": "搜索目录",
       "analyst": true,
-      "requiredScope": "data:read",
+      "requiredScope": null,
       "mutating": false,
       "annotations": {
         "readOnlyHint": true
@@ -128,14 +130,15 @@
             "additionalProperties": false
           }
         }
-      }
+      },
+      "faceScope": "data:read"
     },
     {
       "id": "describe_metric",
       "group": "discovery",
       "title": "指标详情",
       "analyst": true,
-      "requiredScope": "data:read",
+      "requiredScope": null,
       "mutating": false,
       "annotations": {
         "readOnlyHint": true
@@ -185,14 +188,15 @@
             "additionalProperties": false
           }
         }
-      }
+      },
+      "faceScope": "data:read"
     },
     {
       "id": "describe_dataset",
       "group": "discovery",
       "title": "数据集详情",
       "analyst": true,
-      "requiredScope": "data:read",
+      "requiredScope": null,
       "mutating": false,
       "annotations": {
         "readOnlyHint": true
@@ -217,14 +221,15 @@
             "type": "object"
           }
         }
-      }
+      },
+      "faceScope": "data:read"
     },
     {
       "id": "sample_dimension_values",
       "group": "discovery",
       "title": "维度值抽样",
       "analyst": true,
-      "requiredScope": "data:query",
+      "requiredScope": null,
       "mutating": false,
       "annotations": {
         "readOnlyHint": true
@@ -293,14 +298,15 @@
             "additionalProperties": false
           }
         }
-      }
+      },
+      "faceScope": "data:query"
     },
     {
       "id": "preview_query",
       "group": "query",
       "title": "预览查询计划",
       "analyst": true,
-      "requiredScope": "data:query",
+      "requiredScope": null,
       "mutating": false,
       "annotations": {
         "readOnlyHint": true
@@ -332,14 +338,15 @@
             "type": "object"
           }
         }
-      }
+      },
+      "faceScope": "data:query"
     },
     {
       "id": "query",
       "group": "query",
       "title": "受治理查询",
       "analyst": true,
-      "requiredScope": "data:query",
+      "requiredScope": null,
       "mutating": false,
       "annotations": {
         "readOnlyHint": true
@@ -463,14 +470,15 @@
             "additionalProperties": false
           }
         }
-      }
+      },
+      "faceScope": "data:query"
     },
     {
       "id": "explore_query",
       "group": "query",
       "title": "受约束探索查询",
       "analyst": true,
-      "requiredScope": "data:query",
+      "requiredScope": null,
       "mutating": false,
       "annotations": {
         "readOnlyHint": true
@@ -590,14 +598,15 @@
             "type": "object"
           }
         }
-      }
+      },
+      "faceScope": "data:query"
     },
     {
       "id": "explore_recipe",
       "group": "query",
       "title": "分析配方",
       "analyst": true,
-      "requiredScope": "data:query",
+      "requiredScope": null,
       "mutating": false,
       "annotations": {
         "readOnlyHint": true
@@ -663,14 +672,15 @@
             "type": "object"
           }
         }
-      }
+      },
+      "faceScope": "data:query"
     },
     {
       "id": "freshness",
       "group": "health",
       "title": "新鲜度",
       "analyst": true,
-      "requiredScope": "data:read",
+      "requiredScope": null,
       "mutating": false,
       "annotations": {
         "readOnlyHint": true
@@ -708,14 +718,15 @@
             "additionalProperties": false
           }
         }
-      }
+      },
+      "faceScope": "data:read"
     },
     {
       "id": "quality",
       "group": "health",
       "title": "质量结论",
       "analyst": true,
-      "requiredScope": "data:read",
+      "requiredScope": null,
       "mutating": false,
       "annotations": {
         "readOnlyHint": true
@@ -738,14 +749,15 @@
             "type": "object"
           }
         }
-      }
+      },
+      "faceScope": "data:read"
     },
     {
       "id": "lineage",
       "group": "health",
       "title": "血缘",
       "analyst": true,
-      "requiredScope": "data:read",
+      "requiredScope": null,
       "mutating": false,
       "annotations": {
         "readOnlyHint": true
@@ -776,14 +788,15 @@
             "type": "object"
           }
         }
-      }
+      },
+      "faceScope": "data:read"
     },
     {
       "id": "query_detail",
       "group": "query",
       "title": "明细下钻",
       "analyst": false,
-      "requiredScope": "data:query",
+      "requiredScope": null,
       "mutating": false,
       "annotations": {
         "readOnlyHint": true
@@ -866,14 +879,15 @@
             "additionalProperties": false
           }
         }
-      }
+      },
+      "faceScope": "data:query"
     },
     {
       "id": "list_metrics",
       "group": "discovery",
       "title": "指标清单",
       "analyst": false,
-      "requiredScope": "data:read",
+      "requiredScope": null,
       "mutating": false,
       "annotations": {
         "readOnlyHint": true
@@ -888,7 +902,8 @@
             "additionalProperties": false
           }
         }
-      }
+      },
+      "faceScope": "data:read"
     }
   ]
 }

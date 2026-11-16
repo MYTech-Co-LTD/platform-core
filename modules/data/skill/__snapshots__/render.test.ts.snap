@@ -18,6 +18,22 @@ exports[`openclaw 渲染 > openclaw 渲染逐字快照（迁移基线） 1`] = `
 **行数预算**（超预算 = 生成极慢、用户观感卡死）：net_sales ≈147 行/天（3120）/ ≈74 行/天（64188）；
 区间×双账套 ≈ 天数×220——**区间超过 4 天必用 \`args.total=true\`**，不要裸拉明细。
 
+## 平台能力管理（指标 / 报表 / 通知 / 表单草稿）
+
+数据**查询**继续用上面的 search/query 工具；**创建/管理**走平台能力网关：
+
+1. \`platform_capabilities\`：先看当前用户可用的管理工具、缺失的 scope 与锁定面（lockedFaces）。默认只回紧凑索引；\`tool=<name>\` 可看单个工具的完整参数 schema。
+2. \`platform_call({ tool, args })\`：只调上一步列表里的工具，工具名形如 \`data__propose_report\`、\`notify__create_agent_rule\`、\`forms__generate_form_draft\`。
+
+硬纪律：
+
+- 写操作先向用户确认要做什么；创建类工具只产**草稿**。
+- 报表发布、监控开启、通知规则启用、表单发布必须由**人**在控制台做；你没有这些工具，不要试。
+- \`missing_scope\` 如实转告（告诉用户缺哪个 scope），不要换工具反复试。
+- 工具名/参数不确定先 \`platform_capabilities({ tool })\`，不要凭记忆拼。
+- \`asset_id_taken\` / \`TITLE_TAKEN\` 这类重名错误：先用对应 list 工具查重，不要原样重试。
+- 身份只来自当前企微会话，\`platform_call\` 不接受 userId；不要尝试传身份参数。
+
 ## 先检索，不要猜 id（2026-11-09 真实会话教训）
 
 **第 0 步永远是 \`search_catalog({ q: 用户原词 })\`**，不是 \`list_metrics()\`，更不是猜 id：

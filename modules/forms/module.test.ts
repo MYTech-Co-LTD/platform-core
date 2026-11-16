@@ -57,8 +57,21 @@ describe('forms 模块声明（#708/#710）', () => {
     expect(unregistered, '声明了但未注册（永不可达）').toEqual([])
   })
 
+  it('mcpFaces（2026-11-16 能力网关）：read→/mcp forms:view、manage→/mcp-manage forms:manage；发布类不在任何 face', () => {
+    const faces = mod.manifest.mcpFaces ?? []
+    expect(faces.map((f) => `${f.face} ${f.method} ${f.path} ${f.scope}`)).toEqual([
+      'read POST /mcp forms:view',
+      'manage POST /mcp-manage forms:manage',
+    ])
+    const declared = new Set((mod.manifest.api?.internal ?? []).map((e) => `${e.method} ${e.path} ${e.scope}`))
+    for (const f of faces) {
+      expect(declared.has(`${f.method} ${f.path} ${f.scope}`), `${f.face} 未在 api.internal 声明`).toBe(true)
+      expect(f.scope).not.toBe('forms:publish')
+    }
+  })
+
   it('声明面断言：发布/回滚/退役端点必须是 forms:publish（人 gate 的 scope 落点）；写面不出现 guest', () => {
-    expect(mod.manifest.api?.internal?.length).toBe(36)  // 24 + OA P1 审批 12 条
+    expect(mod.manifest.api?.internal?.length).toBe(37)  // 24 + OA P1 审批 12 条 + /mcp（2026-11-16 能力网关）
     expect(mod.manifest.guest).toBeUndefined() // M1.2 无 guest 面（§14.4 防滥用随 M1.3 填报通道）
     for (const e of mod.manifest.api?.internal ?? []) {
       const key = `${e.method} ${e.path}`

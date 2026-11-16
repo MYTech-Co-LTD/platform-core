@@ -16,7 +16,7 @@ import type { EngineClient, EngineResolver } from './domain/engine-client'
 import { generateDraft } from './domain/generator'
 import { LlmError } from './domain/llm'
 import type { ChatModel } from './domain/llm'
-import { registerFormsMcpManage } from './mcp'
+import { registerFormsMcpManage, registerFormsMcpRead } from './mcp'
 import * as store from './storage'
 import { FormsError } from './storage'
 
@@ -707,7 +707,11 @@ export function createFormsRouter({
   dictRoutes('/dicts', 'tenant')
   dictRoutes('/global-dicts', 'global')
 
-  // 管理面 MCP 端点（#724）：外部 agent 可起草表单；**不暴露任何发布类工具**（AI 永不发布）
+  // MCP 面（2026-11-16 能力网关 Task 8）：
+  //   · 读面 `/mcp`（forms:view）：只 list_forms（摘要，不回 draft body）；
+  //   · 管理面 `/mcp-manage`（forms:manage）：list_forms + generate_form_draft。
+  // 两面都**不暴露任何发布类工具**（AI 永不发布，forms:publish 仅 HTTP 人 gate）。
+  registerFormsMcpRead(r, { pool, chatModel })
   registerFormsMcpManage(r, { pool, chatModel })
 
   return r

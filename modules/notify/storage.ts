@@ -3,7 +3,7 @@
 import { createHash } from 'node:crypto'
 import type { Pool } from 'pg'
 import type { EnqueueEventInput, NotificationEventDecl } from '@platform/sdk'
-import { diffAgentEventDecl } from './domain/agent-event'
+import { diffAgentEventDecl, NAMESPACE_RE } from './domain/agent-event'
 import {
   AGENT_MESSAGE_CONTENTS, agentMessageDecl, agentMessageKey,
   agentMessageRuleId, agentMessageTemplateKey,
@@ -945,6 +945,8 @@ export type AgentNamespaceRow = {
   ownerUserId: string
   status: string
   policy: Record<string, unknown>
+  /** true = 部署（system:openclaw）持有；只接受 C 通道（allowServiceNamespace）写入。 */
+  serviceOwned: boolean
   createdAt: string
   updatedAt: string
 }
@@ -957,16 +959,20 @@ function toNamespaceRow(r: Record<string, unknown>): AgentNamespaceRow {
     ownerUserId: r.owner_user_id as string,
     status: r.status as string,
     policy: (r.policy as Record<string, unknown>) ?? {},
+    serviceOwned: r.service_owned === true,
     createdAt: (r.created_at as Date).toISOString(),
     updatedAt: (r.updated_at as Date).toISOString(),
   }
 }
 
+const NAMESPACE_COLUMNS =
+  'org,namespace,display_name,owner_user_id,status,policy,service_owned,created_at,updated_at'
+
 export async function getAgentNamespace(
   pool: Pool, org: string, namespace: string,
 ): Promise<AgentNamespaceRow | null> {
   const { rows } = await pool.query(
-    `select org,namespace,display_name,owner_user_id,status,policy,created_at,updated_at
+    `select ${NAMESPACE_COLUMNS}
        from notify.agent_namespace where org=$1 and namespace=$2`, [org, namespace])
   return rows[0] ? toNamespaceRow(rows[0]) : null
 }
@@ -975,7 +981,7 @@ export async function listAgentNamespaces(
   pool: Pool, org: string,
 ): Promise<AgentNamespaceRow[]> {
   const { rows } = await pool.query(
-    `select org,namespace,display_name,owner_user_id,status,policy,created_at,updated_at
+    `select ${NAMESPACE_COLUMNS}
        from notify.agent_namespace where org=$1 order by namespace`, [org])
   return rows.map(toNamespaceRow)
 }
@@ -989,13 +995,42 @@ export async function createAgentNamespace(
     `insert into notify.agent_namespace(org,namespace,display_name,owner_user_id,policy)
      values ($1,$2,$3,$4,$5::jsonb)
      on conflict (org,namespace) do nothing
-     returning org,namespace,display_name,owner_user_id,status,policy,created_at,updated_at`,
+     returning ${NAMESPACE_COLUMNS}`,
     [org, input.namespace, input.displayName, input.ownerUserId, JSON.stringify(input.policy ?? {})],
   )
   if (ins.rows[0]) return { created: true, row: toNamespaceRow(ins.rows[0]) }
   const existing = await getAgentNamespace(pool, org, input.namespace)
   if (!existing) throw new Error('agent namespace disappeared during insert')
   return { created: false, row: existing }
+}
+
+export type EnsureServiceNamespaceResult =
+  | { ok: true; row: AgentNamespaceRow }
+  | { ok: false; code: 'namespace_invalid' | 'namespace_conflict' }
+
+/**
+ * 幂等确保一个 **service-owned** agent namespace（C 的钉死 namespace，spec D14）。
+ *
+ * - namespace 必须满足 `NAMESPACE_RE`（与表约束同源，先拒再打库）；
+ * - 已存在且 `service_owned=false` ⇒ `namespace_conflict`（**绝不**把人的 namespace
+ *   静默改成 service-owned）；
+ * - owner 记为 `system:openclaw`，规则/审计的 `created_by` 仍是人类 `userId`。
+ */
+export async function ensureServiceNamespace(
+  pool: Pool, org: string, namespace: string,
+): Promise<EnsureServiceNamespaceResult> {
+  if (!NAMESPACE_RE.test(namespace)) return { ok: false, code: 'namespace_invalid' }
+  await pool.query(
+    `insert into notify.agent_namespace
+       (org,namespace,display_name,owner_user_id,status,service_owned)
+     values ($1,$2,'openclaw','system:openclaw','active',true)
+     on conflict (org,namespace) do nothing`,
+    [org, namespace],
+  )
+  const row = await getAgentNamespace(pool, org, namespace)
+  if (!row) throw new Error('service namespace disappeared during insert')
+  if (!row.serviceOwned) return { ok: false, code: 'namespace_conflict' }
+  return { ok: true, row }
 }
 
 export async function setAgentNamespacePolicy(

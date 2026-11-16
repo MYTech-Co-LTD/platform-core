@@ -1,7 +1,8 @@
 // guide.ts —— data_agent_guide / data_harness_catalog（spec §5 前两行）。
 // guide 文案是三通道同源的正典落点（Wave 2 的 A SYSTEM_PROMPT 与 C SKILL.md 从这里取）；
 // Wave 1 只接 B 通道。今天日期由 deps.now 注入（Asia/Shanghai 日历日）——测试不必改时钟。
-import { ANALYST_TOOLS, type ToolImpl } from './registry'
+import { ANALYST_TOOLS, READ_SCOPE, type ToolImpl, type ToolMeta, type ToolSurface } from './registry'
+import type { Requester } from '../authz'
 import { guideInvariants, renderSkill } from '../../skill/render'
 
 /**
@@ -48,14 +49,37 @@ export const guideImpl: ToolImpl = async (deps) => {
   }
 }
 
-export const harnessCatalogImpl: ToolImpl = async () => ({
-  payload: {
-    status: 'ok',
-    tools: ANALYST_TOOLS.map((t) => ({
-      name: t.name, group: t.group, title: t.title, description: t.description,
-      requiredScope: t.requiredScope, mutating: t.mutating, annotations: t.annotations,
-    })),
-  },
-  isError: false,
-  auditRowCount: null,
-})
+/**
+ * 能力目录的 `available` 判据（纯函数，不触库不触仓库）：
+ *   ① 面是否含该工具——full/curated 收全部，read 只收 faceScope=data:read；
+ *   ② 调用方是否满足**附加** requiredScope（face 之上的那一层，与 `visibleAnalystTools`
+ *      同判）——否则 full/curated 会误报可用，而 list 隐藏、callTool 拒绝。
+ * requester=null（未认证）时附加 scope 无法证明 ⇒ 只认 requiredScope=null 的工具。
+ */
+export function availableInSurface(
+  t: Pick<ToolMeta, 'faceScope' | 'requiredScope'>, surface: ToolSurface, requester: Requester | null,
+): boolean {
+  const surfaceAllows = surface === 'full' || surface === 'curated' || t.faceScope === READ_SCOPE
+  return surfaceAllows && (t.requiredScope === null || requester?.hasScope(t.requiredScope) === true)
+}
+
+export const harnessCatalogImpl: ToolImpl = async (deps) => {
+  // `surface` 是**展示**提示（缺省 full）：read 面上 faceScope=data:query 的工具标成
+  // available:false（locked 展示，供调用方 step-up 申请权限）；面内含该工具且调用方满足
+  // 附加 requiredScope 时才 true（见 availableInSurface）。
+  // 执法不在这里（端点 face 门 + callTool 单点），本 impl 只映射元数据、不触库不触仓库。
+  const surface = deps.surface ?? 'full'
+  return {
+    payload: {
+      status: 'ok',
+      tools: ANALYST_TOOLS.map((t) => ({
+        name: t.name, group: t.group, title: t.title, description: t.description,
+        requiredScope: t.requiredScope, faceScope: t.faceScope,
+        available: availableInSurface(t, surface, deps.requester),
+        mutating: t.mutating, annotations: t.annotations,
+      })),
+    },
+    isError: false,
+    auditRowCount: null,
+  }
+}

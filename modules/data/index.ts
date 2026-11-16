@@ -3,7 +3,7 @@ import { Hono } from 'hono'
 import { parse as parseYaml } from 'yaml'
 import { ManifestSchema, defineModule } from '@platform/sdk'
 import type { ModuleHono, ModuleVars, RouteCtx } from './routes/context'
-import { registerMcp } from './routes/mcp'
+import { registerMcp, registerMcpCurated, registerMcpRead } from './routes/mcp'
 import { registerMcpManage } from './routes/mcp-manage'
 import { registerMetrics } from './routes/metrics'
 import { registerMetricChanges } from './routes/metric-changes'
@@ -60,7 +60,9 @@ export default defineModule({
     registerQueryBatch(r, _ctx) // R4 批量取数
     registerQueryDetail(r, _ctx) // spec 2026-10-21 下钻
     registerBranches(r, _ctx) // #1047 报表页筛选器：门店维读面
-    registerMcp(r, _ctx) // T8：MCP 读面（问数）
+    registerMcp(r, _ctx) // T8：MCP 全量读面（直连客户端；legacy + 分析师 + 静态）
+    registerMcpRead(r, _ctx) // agent 能力网关：/mcp-read（data:read，只读工具）
+    registerMcpCurated(r, _ctx) // agent 能力网关：/mcp-curated（data:query，13+query_detail，无 legacy）
     registerToolbox(r, _ctx) // Wave 2：registry 的 HTTP 薄封装（通道 A/C 共享面，#985）
     registerMcpManage(r, _ctx) // MCP 写面（本租户口径的定义；#486）
     registerChat(r, _ctx) // T9

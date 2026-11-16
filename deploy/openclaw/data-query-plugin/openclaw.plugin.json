@@ -13,7 +13,9 @@
       "query_detail",
       "describe_metric",
       "sample_dimension_values",
-      "get_freshness"
+      "get_freshness",
+      "platform_capabilities",
+      "platform_call"
     ]
   },
   "skills": ["./skills"]

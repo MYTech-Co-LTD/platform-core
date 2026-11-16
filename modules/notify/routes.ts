@@ -5,9 +5,10 @@ import { randomUUID } from 'node:crypto'
 import { Hono } from 'hono'
 import type { Pool } from 'pg'
 import type {
-  ChannelAddressResolver, EventCatalogReader, Identity, NotificationEventDecl, SchedulerPortFactory,
+  ChannelAddressResolver, EventCatalogReader, Identity, NotificationEventDecl, RequesterVars,
+  SchedulerPortFactory,
 } from '@platform/sdk'
-import { validatePayload } from '@platform/sdk'
+import { REQUESTER_CHANNEL, validatePayload } from '@platform/sdk'
 import { createAgentRule, createAgentTemplate, sendAgentMessage } from './agent-actions'
 import {
   NAMESPACE_RE, isAgentEventKey, validateAgentEventDecl,
@@ -25,11 +26,12 @@ import { resolveDeliveryAddress } from './domain/resolve-address'
 import { renderContents } from './domain/render'
 import { isWritableRuleId, ruleSnapshot, validateRule } from './domain/rules'
 import { samplePayload, validateContents } from './domain/template'
-import { registerNotifyMcpManage } from './mcp'
+import { registerNotifyMcp } from './mcp'
 import {
   audit, countActiveAgentRules, countAgentMessagesToday, countRecentTestDeliveries,
   createAgentNamespace, createApproval, createTemplateRevision,
-  decideApproval, deleteRule, ensureAgentMessageDefaults, enqueueEvent, getAgentNamespace,
+  decideApproval, deleteRule, ensureAgentMessageDefaults, ensureServiceNamespace,
+  enqueueEvent, getAgentNamespace,
   getApproval, getChannel, getEventDecl, getPublishedTemplate, getRuleAuditSnapshot,
   getTemplate, hasApprovedRuleApproval, insertDelivery, listAgentNamespaces, listApprovals,
   listChannels, listDeliveries, listEnabledChannelIds, listEventDecls, listInbox,
@@ -38,9 +40,12 @@ import {
   setAgentNamespacePolicy, setChannelHealth, setRuleEnabled, updateRule, upsertEventDecl,
   upsertRule,
 } from './storage'
-import type { RuleInput } from './storage'
+import type { AgentNamespaceRow, RuleInput } from './storage'
 
-type Vars = { Variables: { identity: Identity } }
+// 请求者通道（PAT/企微）求交在 Variables **内层**——照 data 的 ModuleVars 写法；
+// 写成 `{ identity } & RequesterVars` 会把键搁到 Env 顶层，`c.get(REQUESTER_CHANNEL)`
+// 恒 undefined（C 档会静默退化成 B 档）。
+type Vars = { Variables: { identity: Identity } & RequesterVars }
 
 export function createNotifyRouter(deps: {
   pool: Pool
@@ -60,13 +65,60 @@ export function createNotifyRouter(deps: {
       ? getEventDecl(deps.pool, o, key)
       : deps.events?.get(key) ?? null
 
-  /** agent 资源写权限：namespace 存在、active、owner = 调用者。 */
+  /**
+   * agent 资源写权限：namespace 存在、active，且（人拥有 = 调用者本人 /
+   * service-owned = 持 notify:publish 的人，C 的钉死 namespace 由部署持有）。
+   */
   const ownsNamespace = async (
     o: string, namespace: string, identity: Identity,
   ): Promise<boolean> => {
     const ns = await getAgentNamespace(deps.pool, o, namespace)
-    return ns !== null && ns.status === 'active' && ns.ownerUserId === identity.userId
+    if (ns === null || ns.status !== 'active') return false
+    if (ns.serviceOwned) return identity.hasScope('notify:publish')
+    return ns.ownerUserId === identity.userId
   }
+
+  /**
+   * 单个 namespace 的**事件声明**写权限（N1）。
+   *
+   * service-owned（C 的钉死 namespace，owner = `system:openclaw`）不对任何真实用户
+   * 匹配 owner，因此必须按通道/权限判：C（wecom + notify:manage）可声明自己钉死
+   * namespace 的事件，持 notify:publish 的人也可管理。human namespace 仍按 owner。
+   *
+   * ⚠️ 不要拿它替换 enable/restore 的 publish 门：那两道门比这里更严（见 `ownsNamespace`）。
+   */
+  const canWriteNamespace = (
+    ns: AgentNamespaceRow | null,
+    identity: Identity,
+    channel: 'pat' | 'session' | 'wecom',
+  ): boolean => {
+    if (ns === null || ns.status !== 'active') return false
+    if (ns.serviceOwned) {
+      return (channel === 'wecom' && identity.hasScope('notify:manage'))
+        || identity.hasScope('notify:publish')
+    }
+    return ns.ownerUserId === identity.userId
+  }
+
+  type PinnedNamespace =
+    | { ok: true; namespace: string }
+    | { ok: false; code: 'namespace_unconfigured' | 'namespace_invalid' | 'namespace_conflict'; status: 400 | 409 | 500 }
+
+  /**
+   * C（wecom）HTTP 路由的钉死 namespace：忽略 body，取 env 并 ensure service-owned。
+   * 与 MCP 面同源（`ensureServiceNamespace`）；缺失/冲突都 fail-closed。
+   */
+  const wecomPinnedNamespace = async (o: string): Promise<PinnedNamespace> => {
+    const namespace = (process.env.NOTIFY_WECOM_NAMESPACE ?? '').trim()
+    if (!namespace) return { ok: false, code: 'namespace_unconfigured', status: 500 }
+    const r = await ensureServiceNamespace(deps.pool, o, namespace)
+    if (r.ok) return { ok: true, namespace }
+    return { ok: false, code: r.code, status: r.code === 'namespace_conflict' ? 409 : 400 }
+  }
+
+  /** 请求者通道；未设置 = 系统内会话（requester-vars.ts 的语义）。 */
+  const requesterChannel = (c: { get: (k: typeof REQUESTER_CHANNEL) => unknown }) =>
+    (c.get(REQUESTER_CHANNEL) ?? 'session') as 'pat' | 'session' | 'wecom'
 
   /**
    * ── 部门 id 的配置期校验（组织架构 Phase C；与报表部门门同一套 fail-closed）──────
@@ -263,9 +315,12 @@ export function createNotifyRouter(deps: {
 
     const id = body.id ?? `rule:${randomUUID()}`
     const actor = (c.get('identity') as Identity).userId
+    // C（wecom）不得直接建 active 规则：一律落 disabled，启用要人持 notify:publish 走
+    // PUT /rules/:id/enabled（spec 2026-11-16 §5.2 / D7）。
+    const enabled = requesterChannel(c) === 'wecom' ? false : true
     const input = {
       id,
-      enabled: true,
+      enabled,
       eventKey: body.eventKey,
       scope: body.scope ?? '*',
       recipientKey: body.recipientKey,
@@ -294,6 +349,12 @@ export function createNotifyRouter(deps: {
     const body = (await c.req.json().catch(() => null)) as { enabled?: boolean } | null
     if (!body || typeof body.enabled !== 'boolean') return c.json({ error: 'RULE_INVALID_BODY' }, 400)
     const identity = c.get('identity') as Identity
+    // C（wecom）不能启用规则：必须由持 notify:publish 的人操作（C 角色不授该码）。
+    // **刻意的不对称**：`enabled=false` 也走这道门（C 不能用 PUT 停用），停用请走
+    // DELETE `/rules/:id`（更高权限面）；这样 PUT 对 C 恒不可用，语义只有一条。
+    if (requesterChannel(c) === 'wecom' && !identity.hasScope('notify:publish')) {
+      return c.json({ error: 'NOTIFY_PUBLISH_REQUIRED' }, 403)
+    }
     const id = c.req.param('id')
     const rule = (await listRules(deps.pool, org(c))).find((r) => r.id === id)
     if (rule?.ownerNamespace && !await ownsNamespace(org(c), rule.ownerNamespace, identity)) {
@@ -353,6 +414,12 @@ export function createNotifyRouter(deps: {
     if (!isWritableRuleId(id)) return c.json({ error: 'RULE_ID_RESERVED' }, 409)
 
     const identity = c.get('identity') as Identity
+    // restore 会从审计快照回放 `enabled=true`——必须与 PUT /rules/:id/enabled 同一道门，
+    // 否则 C（wecom）可绕过 NOTIFY_PUBLISH_REQUIRED 直接恢复成 active 规则。
+    // 为简单/安全：wecom 的 restore 一律要求 notify:publish（不看快照 enabled）。
+    if (requesterChannel(c) === 'wecom' && !identity.hasScope('notify:publish')) {
+      return c.json({ error: 'NOTIFY_PUBLISH_REQUIRED' }, 403)
+    }
     const rule = (await listRules(deps.pool, org(c))).find((x) => x.id === id)
     if (!rule) return c.json({ error: 'RULE_NOT_FOUND' }, 404)
     if (rule.ownerNamespace && !await ownsNamespace(org(c), rule.ownerNamespace, identity)) {
@@ -801,10 +868,20 @@ export function createNotifyRouter(deps: {
     }
     const namespace = parts[1]
     const identity = c.get('identity') as Identity
+    const channel = requesterChannel(c)
+    // C（wecom）：事件只能声明在部署钉死的 service namespace 上；先 ensure（幂等），
+    // 这样不需要任何真实用户「拥有」该 namespace 也能闭环声明。
+    if (channel === 'wecom') {
+      const pinned = await wecomPinnedNamespace(identity.orgId)
+      if (!pinned.ok) return c.json({ error: pinned.code }, pinned.status)
+      if (namespace !== pinned.namespace) {
+        return c.json({ error: 'AGENT_NAMESPACE_FORBIDDEN' }, 403)
+      }
+    }
     const ns = await getAgentNamespace(deps.pool, identity.orgId, namespace)
     if (!ns) return c.json({ error: 'AGENT_NAMESPACE_NOT_FOUND' }, 404)
     if (ns.status !== 'active') return c.json({ error: 'AGENT_NAMESPACE_DISABLED' }, 409)
-    if (ns.ownerUserId !== identity.userId) {
+    if (!canWriteNamespace(ns, identity, channel)) {
       return c.json({ error: 'AGENT_NAMESPACE_FORBIDDEN' }, 403)
     }
 
@@ -851,15 +928,27 @@ export function createNotifyRouter(deps: {
       contents?: Record<string, Record<string, string>>
       publish?: boolean
     } | null
-    if (!b?.namespace || !b.key || !b.name || !b.eventKey || !b.contents) {
+    const channel = requesterChannel(c)
+    // C（wecom）：namespace 由部署钉死（忽略 body），模板只能写草稿。
+    let namespace = b?.namespace
+    let allowServiceNamespace = false
+    if (channel === 'wecom') {
+      const pinned = await wecomPinnedNamespace(org(c))
+      if (!pinned.ok) return c.json({ error: pinned.code }, pinned.status)
+      namespace = pinned.namespace
+      allowServiceNamespace = true
+    }
+    if (!namespace || !b?.key || !b.name || !b.eventKey || !b.contents) {
       return c.json({ error: 'AGENT_TEMPLATE_INVALID_BODY' }, 400)
     }
     const identity = c.get('identity') as Identity
     const result = await createAgentTemplate(deps.pool, {
       org: identity.orgId, userId: identity.userId,
       canPublish: identity.hasScope('notify:publish'),
-      namespace: b.namespace, key: b.key, name: b.name, eventKey: b.eventKey,
-      contents: b.contents, publish: b.publish === true,
+      namespace, key: b.key, name: b.name, eventKey: b.eventKey,
+      contents: b.contents,
+      publish: channel === 'wecom' ? false : b.publish === true,
+      allowServiceNamespace,
     })
     if (!result.ok) {
       return c.json({ error: result.code, ...result.detail }, result.httpStatus as 400)
@@ -890,18 +979,30 @@ export function createNotifyRouter(deps: {
       channels?: string[]
       cooldownMinutes?: number | null
     } | null
-    if (!b?.namespace || !b.eventKey || !b.recipientKey || !b.templateKey || !b.channels) {
+    const channel = requesterChannel(c)
+    // C（wecom）：namespace 由部署钉死（忽略 body），规则一律 pending/disabled。
+    let namespace = b?.namespace
+    let allowServiceNamespace = false
+    if (channel === 'wecom') {
+      const pinned = await wecomPinnedNamespace(org(c))
+      if (!pinned.ok) return c.json({ error: pinned.code }, pinned.status)
+      namespace = pinned.namespace
+      allowServiceNamespace = true
+    }
+    if (!namespace || !b?.eventKey || !b.recipientKey || !b.templateKey || !b.channels) {
       return c.json({ error: 'AGENT_RULE_INVALID_BODY' }, 400)
     }
     const identity = c.get('identity') as Identity
     const result = await createAgentRule(deps.pool, {
       org: identity.orgId, userId: identity.userId,
-      namespace: b.namespace, id: b.id, eventKey: b.eventKey, scope: b.scope,
+      namespace, id: b.id, eventKey: b.eventKey, scope: b.scope,
       recipientKey: b.recipientKey,
       recipientLiteral: b.recipientLiteral ?? null,
       recipientDepts: b.recipientDepts ?? null,
       templateKey: b.templateKey, channels: b.channels,
       cooldownMinutes: b.cooldownMinutes ?? null,
+      draftOnly: channel === 'wecom',
+      allowServiceNamespace,
     })
     if (!result.ok) {
       return c.json({ error: result.code, ...result.detail }, result.httpStatus as 400)
@@ -1004,9 +1105,14 @@ export function createNotifyRouter(deps: {
     return c.json({ approval: decided })
   })
 
-  registerNotifyMcpManage(r, {
+  // 读面（notify:view）：只投影非 mutating 工具。
+  registerNotifyMcp(r, '/mcp', {
     pool: deps.pool, events: deps.events, addresses: deps.addresses, scheduler: deps.scheduler,
-  })
+  }, 'read')
+  // 管理面（notify:manage）：B（pat/session）N3 全量；C（wecom）按 channel 强制 agent-safe 子集。
+  registerNotifyMcp(r, '/mcp-manage', {
+    pool: deps.pool, events: deps.events, addresses: deps.addresses, scheduler: deps.scheduler,
+  }, 'full')
 
   return r
 }

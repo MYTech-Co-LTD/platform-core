@@ -1,11 +1,13 @@
 // routes-v2.test.ts — v2 端点（规则/投递/外部 emit/收件箱）
 import { describe, it, expect, beforeAll, afterAll, beforeEach } from 'vitest'
 import { Hono } from 'hono'
-import { declaredScopeGate } from '@platform/sdk'
+import { REQUESTER_CHANNEL, declaredScopeGate } from '@platform/sdk'
 import { Pool } from 'pg'
-import type { ChannelAddressResolver, Identity, NotificationEventDecl } from '@platform/sdk'
+import type {
+  ChannelAddressResolver, Identity, NotificationEventDecl, RequesterVars,
+} from '@platform/sdk'
 import notifyV2 from './index'
-import { audit } from './storage'
+import { audit, ensureServiceNamespace, upsertEventDecl } from './storage'
 import { applyMigrations, buildTestApp, makeIdentity } from './test-util'
 
 const url = process.env.DATABASE_URL
@@ -836,6 +838,195 @@ describePg('routes v2', () => {
     expect((await post('/deliveries/retry', {
       eventId: 'e-r', ruleId: 'r1', recipient: 'u1', channel: 'wecom_default',
     })).status).toBe(404)
+  })
+
+  // ── C（wecom）HTTP 同执法（spec 2026-11-16 §5.2 / D14）──────────────────────
+  /** 手搭通道壳：宿主在 PAT/企微通道设 REQUESTER_CHANNEL，会话通道不设。 */
+  const buildChannelApp = (channel: 'pat' | 'wecom', scopes: string[]) => {
+    const a = new Hono<{ Variables: { identity: Identity } & RequesterVars }>()
+    a.use('*', async (c, next) => {
+      c.set('identity', makeIdentity({
+        orgId: ORG, userId: scopes.includes('notify:publish') ? 'admin' : 'u1', scopes,
+      }))
+      c.set(REQUESTER_CHANNEL, channel)
+      await next()
+    })
+    a.route('/', notifyV2.createRouter({ pool, events, addresses }))
+    return a
+  }
+
+  async function setupServiceNamespace(ns = 'openclaw_acme') {
+    expect(await ensureServiceNamespace(pool, ORG, ns)).toMatchObject({ ok: true })
+    const cDecl: NotificationEventDecl = {
+      key: `ext.${ns}.daily`, title: 'D',
+      payload: { user: { type: 'user', required: true } },
+      recipients: { assignee: { kind: 'field', field: 'user' } },
+    }
+    expect(await upsertEventDecl(pool, ORG, ns, cDecl, 'u1')).toMatchObject({ ok: true })
+    await pool.query(
+      `insert into notify.channel(org,id,provider,enabled,config,secret_refs,created_by)
+       values ($1,'inapp_default','in_app',true,'{}','{}','u')
+       on conflict (org,id) do nothing`, [ORG])
+    await pool.query(
+      `insert into notify.template(org,key,name,event_key,status,origin,published_revision,created_by,owner_namespace)
+       values ($1,'c_daily','C',$2,'published','tenant',1,'u',$3)`, [ORG, cDecl.key, ns])
+    await pool.query(
+      `insert into notify.template_revision(org,key,revision,contents,body_hash,review_status,created_by)
+       values ($1,'c_daily',1,'{"in_app":{"title":"Hi","body":"B"}}','hc1','approved','u')`, [ORG])
+    return cDecl
+  }
+
+  it('wecom：POST /agent/rules 落 pending，namespace 钉死 service-owned（忽略 body）', async () => {
+    const ns = 'openclaw_acme'
+    const cDecl = await setupServiceNamespace(ns)
+    process.env.NOTIFY_WECOM_NAMESPACE = ns
+    try {
+      const wecom = buildChannelApp('wecom', ['notify:view', 'notify:manage'])
+      const res = await wecom.request('/agent/rules', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({
+          namespace: 'someone-elses', // 必须被忽略
+          eventKey: cDecl.key, recipientKey: 'assignee',
+          templateKey: 'c_daily', channels: ['inapp_default'],
+        }),
+      })
+      expect(res.status).toBe(202)
+      const body = await res.json() as { id: string; status: string }
+      expect(body.status).toBe('pending')
+      const row = await pool.query(
+        'select enabled, owner_namespace from notify.rule where org=$1 and id=$2',
+        [ORG, body.id])
+      expect(row.rows[0]).toEqual({ enabled: false, owner_namespace: ns })
+    } finally {
+      delete process.env.NOTIFY_WECOM_NAMESPACE
+    }
+  })
+
+  it('wecom：POST /rules 强制 disabled；PUT enabled 无 notify:publish ⇒ 403', async () => {
+    const wecom = buildChannelApp('wecom', ['notify:view', 'notify:manage'])
+    const created = await wecom.request('/rules', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({
+        eventKey: 'm.a.b', recipientKey: 'approver', templateKey: 't1',
+        channels: ['wecom_default'],
+      }),
+    })
+    expect(created.status).toBe(201)
+    const { id } = await created.json() as { id: string }
+    const row = await pool.query(
+      'select enabled from notify.rule where org=$1 and id=$2', [ORG, id])
+    expect(row.rows[0].enabled).toBe(false)
+
+    // C 无 notify:publish ⇒ 不能启用
+    const denied = await wecom.request(`/rules/${encodeURIComponent(id)}/enabled`, {
+      method: 'PUT',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ enabled: true }),
+    })
+    expect(denied.status).toBe(403)
+    expect(await denied.json()).toMatchObject({ error: 'NOTIFY_PUBLISH_REQUIRED' })
+
+    // B 路径不变：session/pat 的 app 仍可启停（既有测试已覆盖），这里钉住同一条规则。
+    const enabled = await app.request(`/rules/${encodeURIComponent(id)}/enabled`, {
+      method: 'PUT',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ enabled: true }),
+    })
+    expect(enabled.status).toBe(200)
+  })
+
+  it('wecom：restore 回放 enabled=true 也需 notify:publish（不绕过 enable 门）', async () => {
+    const created = await post('/rules', {
+      eventKey: 'm.a.b', recipientKey: 'approver', templateKey: 't1',
+      channels: ['wecom_default'],
+    })
+    expect(created.status).toBe(201)
+    const { id } = await created.json() as { id: string }
+    // 再写一次带 snapshot 的审计（restore 的数据源）。
+    expect((await post('/rules', {
+      id, eventKey: 'm.a.b', recipientKey: 'approver', templateKey: 't1',
+      channels: ['wecom_default'], cooldownMinutes: 3,
+    })).status).toBe(201)
+    const hist = await (await app.request(`/rules/${encodeURIComponent(id)}/history`)).json() as {
+      history: Array<{ auditId: number; snapshot: unknown | null }>
+    }
+    const target = hist.history.find((h) => h.snapshot !== null)!
+    const body = JSON.stringify({ auditId: target.auditId })
+    const init = {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body,
+    }
+    const path = `/rules/${encodeURIComponent(id)}/restore`
+
+    const denied = await buildChannelApp('wecom', ['notify:view', 'notify:manage'])
+      .request(path, init)
+    expect(denied.status).toBe(403)
+    expect(await denied.json()).toMatchObject({ error: 'NOTIFY_PUBLISH_REQUIRED' })
+
+    // 有 notify:publish 的 wecom 人可以 restore。
+    expect((await buildChannelApp(
+      'wecom', ['notify:view', 'notify:manage', 'notify:publish'],
+    ).request(path, init)).status).toBe(200)
+
+    // pat/session 行为不变：默认 app 仍可 restore。
+    expect((await app.request(path, init)).status).toBe(200)
+  })
+
+  it('事件声明：C（wecom+notify:manage）可写 service-owned namespace；pat 无 publish 被拒', async () => {
+    const ns = 'openclaw_acme'
+    expect(await ensureServiceNamespace(pool, ORG, ns)).toMatchObject({ ok: true })
+    const declBody = (key: string) => ({
+      key, title: 'W',
+      payload: { user: { type: 'user', required: true } },
+      recipients: { assignee: { kind: 'field', field: 'user' } },
+    })
+    const postDecl = (a: ReturnType<typeof buildChannelApp>, key: string) => a.request('/agent/events', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify(declBody(key)),
+    })
+
+    process.env.NOTIFY_WECOM_NAMESPACE = ns
+    try {
+      // C：wecom + notify:manage ⇒ 可声明自己钉死 namespace 的事件。
+      expect((await postDecl(
+        buildChannelApp('wecom', ['notify:view', 'notify:manage']),
+        `ext.${ns}.weekly`,
+      )).status).toBe(201)
+
+      // 非钉死 namespace（wecom）⇒ 拒绝（不能声明到别的 service namespace）。
+      const wrongNs = await postDecl(
+        buildChannelApp('wecom', ['notify:view', 'notify:manage']), 'ext.other_ns.weekly')
+      expect(wrongNs.status).toBe(403)
+    } finally {
+      delete process.env.NOTIFY_WECOM_NAMESPACE
+    }
+
+    // pat 无 notify:publish ⇒ 拒绝。
+    const denied = await postDecl(
+      buildChannelApp('pat', ['notify:view', 'notify:manage']), `ext.${ns}.weekly`)
+    expect(denied.status).toBe(403)
+    expect(await denied.json()).toMatchObject({ error: 'AGENT_NAMESPACE_FORBIDDEN' })
+
+    // 持 notify:publish 的人可管理（同 schema 更新 ⇒ 200）。
+    expect((await postDecl(
+      buildChannelApp('pat', ['notify:view', 'notify:manage', 'notify:publish']),
+      `ext.${ns}.weekly`,
+    )).status).toBe(200)
+
+    // human namespace 仍按 owner：publish 持有人但不是 owner ⇒ 拒；owner 可写。
+    expect((await post('/agent/namespaces', { namespace: 'human_ns' })).status).toBe(201)
+    expect((await postDecl(
+      buildChannelApp('pat', ['notify:view', 'notify:manage', 'notify:publish']),
+      'ext.human_ns.weekly',
+    )).status).toBe(403)
+    expect((await postDecl(
+      buildChannelApp('pat', ['notify:view', 'notify:manage']),
+      'ext.human_ns.weekly',
+    )).status).toBe(201)
   })
 })
 

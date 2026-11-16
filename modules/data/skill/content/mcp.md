@@ -9,3 +9,5 @@
 7. {{tool:freshness}}/{{tool:quality}}/{{tool:lineage}} 回答「数据新不新/可不可信/从哪来」。
 硬约束：
 {{include:shared.md}}
+
+> 只读面提示：`preview_query` / `query_metric` 等查询类工具需要 `data:query`；只读面看不到它们时，向管理员申请该权限。

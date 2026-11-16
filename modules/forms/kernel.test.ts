@@ -45,7 +45,7 @@ describePg('forms 生命周期内核（PoC 28 断言对账）', () => {
 
   afterAll(async () => {
     // 尽力而为：published/retired 行删不掉是**被测契约**（触发器拦），吞掉即可
-    for (const t of ['audit', 'submission', 'asset_head', 'asset_version']) {
+    for (const t of ['audit', 'submission', 'asset_head', 'asset_version', 'mcp_audit']) {
       await pool.query(`delete from forms.${t} where org = $1`, [ORG]).catch(() => {})
     }
     await pool.end()
@@ -85,8 +85,8 @@ describePg('forms 生命周期内核（PoC 28 断言对账）', () => {
       "select table_name from information_schema.tables where table_schema='forms'",
     )
     expect(new Set(rows.map((r) => r.table_name))).toEqual(
-      // 002 起多一张 forms.audit（事项审计，租户数据表）
-      new Set(['kind', 'asset_version', 'asset_head', 'submission', 'dict_item', 'dict_global_item', 'audit']),
+      // 002 起多 forms.audit（事项审计）+ forms.mcp_audit（能力网关审计）
+      new Set(['kind', 'asset_version', 'asset_head', 'submission', 'dict_item', 'dict_global_item', 'audit', 'mcp_audit']),
     )
   })
 

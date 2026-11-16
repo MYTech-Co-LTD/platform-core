@@ -67,6 +67,10 @@ api:
     - { method: POST, path: /chat,    scope: data:query }
     # MCP 端点（通道 B 的 JSON-RPC 单入口；协议错误自兜，授权仍走同一核心）
     - { method: POST, path: /mcp,     scope: data:query }
+    # agent 能力网关 face（spec 2026-11-16 §5.2）：read=只读工具；curated=13 分析师工具+query_detail。
+    # 路径/method/scope 必须与下方 mcpFaces 逐条一致（loader 与 check-manifests 双向核对）。
+    - { method: POST, path: /mcp-read,    scope: data:read }
+    - { method: POST, path: /mcp-curated, scope: data:query }
     # toolbox HTTP 薄封装（Wave 2，spec §6/§9：registry 的通道无关面；通道 C 插件经它调
     # 分析师面工具。与 /mcp 同档 data:query——工具级 requiredScope 仍是声明面（registry D1），
     # 执法点在本端点门；dispatch/审计单点在 registry.callTool。
@@ -287,6 +291,12 @@ api:
     - { method: POST,   path: /metric-changes/:id/adopt,    scope: data:manage }
     - { method: POST,   path: /metric-changes/:id/reject,   scope: data:manage }
     - { method: POST,   path: /metric-changes/:id/withdraw, scope: data:manage }
+# agent 能力网关（spec 2026-11-16 §5.2）：网关按 group 内 precedence（数字大的优先）选面下发。
+# `/mcp`（full）**不声明**在这里——它保留给直连客户端，不是 agent face。
+mcpFaces:
+  - { face: read,   group: agent,  precedence: 1, path: /mcp-read,    method: POST, scope: data:read,  audiences: [mcp] }
+  - { face: agent,  group: agent,  precedence: 2, path: /mcp-curated, method: POST, scope: data:query, audiences: [mcp] }
+  - { face: manage, group: manage, precedence: 1, path: /mcp-manage,  method: POST, scope: data:manage, audiences: [mcp, wecom] }
 # 通知事件（模块协议 12：先声明再发；spec 2026-11-01 §10.4 D6「生效必发通知」）。
 # 收件人 = 持 data:query 的人（scope_holders；指标查看面唯一门就是这个码，声明侧没有
 # 逐指标 viewer 清单，这是 P0 的诚实近似——资产级 ACL 到指标是后续议题）。defaults 幂等

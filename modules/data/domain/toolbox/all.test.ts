@@ -31,6 +31,11 @@ describe('buildToolboxDeps', () => {
     expect(buildToolboxDeps(base(), { wh: whStub, env: { DATA_MCP_ALLOW_MUTATING: 'true' } }).allowMutating).toBe(true)
     expect(buildToolboxDeps(base(), { wh: whStub, env: { DATA_MCP_ALLOW_MUTATING: 'TRUE' } }).allowMutating).toBe(false)
   })
+  it('surface 透传：缺省 full；端点 face（read/curated）原样进 deps（供能力目录标注 available）', () => {
+    expect(buildToolboxDeps(base(), { env: {} }).surface).toBe('full')
+    expect(buildToolboxDeps(base(), { env: {}, surface: 'read' }).surface).toBe('read')
+    expect(buildToolboxDeps(base(), { env: {}, surface: 'curated' }).surface).toBe('curated')
+  })
   it('缺省 wh 是函数（生产惰性连只读池；本用例不调用它）', () => {
     const deps: ToolboxDeps = buildToolboxDeps(base(), { env: {} })
     expect(typeof deps.wh).toBe('function')

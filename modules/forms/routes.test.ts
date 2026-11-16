@@ -62,7 +62,7 @@ describePg('forms API（routes）', () => {
   })
 
   afterAll(async () => {
-    for (const [t, org] of [['submission', [ORG_A, ORG_B]], ['asset_head', [ORG_A, ORG_B]], ['asset_version', [ORG_A, ORG_B]], ['dict_item', [ORG_A, ORG_B]]] as const) {
+    for (const [t, org] of [['submission', [ORG_A, ORG_B]], ['asset_head', [ORG_A, ORG_B]], ['asset_version', [ORG_A, ORG_B]], ['dict_item', [ORG_A, ORG_B]], ['mcp_audit', [ORG_A, ORG_B]]] as const) {
       await pool.query(`delete from forms.${t} where org = any($1)`, [org]).catch(() => {})
     }
     await pool.end()

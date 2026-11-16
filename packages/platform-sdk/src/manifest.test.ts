@@ -461,6 +461,162 @@ describe('notifications.events', () => {
   })
 })
 
+// agent MCP face 声明（2026-11-16 能力网关 spec §5.3）：path 必须 ∈ api.internal 且 method/scope
+// 一致；face 唯一；(group,audience) 内 precedence 不重复；同 (path,method,scope) 的多个 face
+// 仅当 audiences 不相交且 profile 不同。
+describe('mcpFaces', () => {
+  const base = {
+    id: 'data', name: '数据', version: '0.1.0', platform: '>=0.1',
+    permissions: [{ code: 'data:read', name: '读' }, { code: 'data:query', name: '查' }],
+    api: { internal: [
+      { method: 'POST', path: '/mcp-read', scope: 'data:read' },
+      { method: 'POST', path: '/mcp', scope: 'data:query' },
+    ] },
+  }
+
+  it('合法声明通过', () => {
+    const m = { ...base, mcpFaces: [
+      { face: 'read', group: 'agent', precedence: 1, path: '/mcp-read', method: 'POST', scope: 'data:read', audiences: ['mcp'] },
+      { face: 'query', group: 'agent', precedence: 2, path: '/mcp', method: 'POST', scope: 'data:query', audiences: ['mcp'] },
+    ] }
+    expect(ManifestSchema.safeParse(m).success).toBe(true)
+  })
+
+  it('path 不在 api.internal ⇒ 拒', () => {
+    const m = { ...base, mcpFaces: [
+      { face: 'read', group: 'agent', precedence: 1, path: '/nope', method: 'POST', scope: 'data:read', audiences: ['mcp'] },
+    ] }
+    expect(ManifestSchema.safeParse(m).success).toBe(false)
+  })
+
+  it('scope 与 api.internal 不一致（同 path 但在 api.internal 里是别的 scope）⇒ 拒', () => {
+    // /mcp-read 在 api.internal 里声明的是 data:read；face 写 data:query ⇒ 三条不一致，不能配对。
+    const m = { ...base, mcpFaces: [
+      { face: 'read', group: 'agent', precedence: 1, path: '/mcp-read', method: 'POST', scope: 'data:query', audiences: ['mcp'] },
+    ] }
+    const r = ManifestSchema.safeParse(m)
+    expect(r.success).toBe(false)
+    if (r.success) return
+    expect(r.error.issues.some((i) => i.message.includes('未在 api.internal 声明'))).toBe(true)
+  })
+
+  it('scope 不在 permissions ⇒ 拒', () => {
+    const m = { ...base, mcpFaces: [
+      { face: 'read', group: 'agent', precedence: 1, path: '/mcp-read', method: 'POST', scope: 'data:ghost', audiences: ['mcp'] },
+    ] }
+    const r = ManifestSchema.safeParse(m)
+    expect(r.success).toBe(false)
+    if (r.success) return
+    expect(r.error.issues.some((i) => i.message.includes('scope 不在 permissions'))).toBe(true)
+  })
+
+  it('audiences 内有重复值（["mcp","mcp"]）⇒ 拒，且报「不得重复」而不是误导性的 precedence 重复', () => {
+    const m = { ...base, mcpFaces: [
+      { face: 'read', group: 'agent', precedence: 1, path: '/mcp-read', method: 'POST', scope: 'data:read', audiences: ['mcp', 'mcp'] },
+    ] }
+    const r = ManifestSchema.safeParse(m)
+    expect(r.success).toBe(false)
+    if (r.success) return
+    const dupIssue = r.error.issues.find((i) => i.message.includes('audiences 不得重复'))
+    expect(dupIssue).toBeDefined()
+    // issue 指到重复的那个下标（mcpFaces.0.audiences.1），而不是整条数组
+    expect(dupIssue?.path.join('.')).toBe('mcpFaces.0.audiences.1')
+    expect(r.error.issues.some((i) => i.message.includes('precedence 重复'))).toBe(false)
+  })
+
+  it('api.internal 同 path/scope 但 method 是 GET，face 写 POST ⇒ 拒（method 必须一致）', () => {
+    // 只改 api.internal 的 method：path 与 scope 都对得上，删掉 superRefine 里的
+    // `e.method === f.method` 这条就会变绿——本负例就是钉它的。
+    const m = { ...base,
+      api: { internal: [{ method: 'GET', path: '/mcp-read', scope: 'data:read' }] },
+      mcpFaces: [
+        { face: 'read', group: 'agent', precedence: 1, path: '/mcp-read', method: 'POST', scope: 'data:read', audiences: ['mcp'] },
+      ] }
+    const r = ManifestSchema.safeParse(m)
+    expect(r.success).toBe(false)
+    if (r.success) return
+    expect(r.error.issues.some((i) => i.message.includes('未在 api.internal 声明'))).toBe(true)
+  })
+
+  it('face 重复 ⇒ 拒（同一模块内 face 必须唯一）', () => {
+    const m = { ...base, mcpFaces: [
+      { face: 'read', group: 'g1', precedence: 1, path: '/mcp-read', method: 'POST', scope: 'data:read', audiences: ['mcp'] },
+      { face: 'read', group: 'g2', precedence: 1, path: '/mcp', method: 'POST', scope: 'data:query', audiences: ['mcp'] },
+    ] }
+    const r = ManifestSchema.safeParse(m)
+    expect(r.success).toBe(false)
+    if (r.success) return
+    expect(r.error.issues.some((i) => i.message.includes('mcpFaces.face 重复'))).toBe(true)
+  })
+
+  it('face 条目拼错字段名（profil）⇒ 拒（inner .strict()）', () => {
+    const m = { ...base, mcpFaces: [
+      { face: 'read', group: 'agent', precedence: 1, path: '/mcp-read', method: 'POST', scope: 'data:read',
+        audiences: ['mcp'], profil: 'full' },
+    ] }
+    const r = ManifestSchema.safeParse(m)
+    expect(r.success).toBe(false)
+    if (r.success) return
+    expect(r.error.issues.some((i) => i.code === 'unrecognized_keys')).toBe(true)
+  })
+
+  it('method 只收 POST：写 GET ⇒ 拒', () => {
+    const m = { ...base, mcpFaces: [
+      { face: 'read', group: 'agent', precedence: 1, path: '/mcp-read', method: 'GET', scope: 'data:read', audiences: ['mcp'] },
+    ] }
+    expect(ManifestSchema.safeParse(m).success).toBe(false)
+  })
+
+  it('audiences 不能为空数组 ⇒ 拒', () => {
+    const m = { ...base, mcpFaces: [
+      { face: 'read', group: 'agent', precedence: 1, path: '/mcp-read', method: 'POST', scope: 'data:read', audiences: [] },
+    ] }
+    expect(ManifestSchema.safeParse(m).success).toBe(false)
+  })
+
+  it('同一 (group,audience) precedence 重复 ⇒ 拒；不同 audience 可重复', () => {
+    const dup = { ...base, mcpFaces: [
+      { face: 'a', group: 'g', precedence: 1, path: '/mcp-read', method: 'POST', scope: 'data:read', audiences: ['mcp'] },
+      { face: 'b', group: 'g', precedence: 1, path: '/mcp', method: 'POST', scope: 'data:query', audiences: ['mcp'] },
+    ] }
+    expect(ManifestSchema.safeParse(dup).success).toBe(false)
+    const ok = { ...base, mcpFaces: [
+      { face: 'a', group: 'g', precedence: 1, path: '/mcp-read', method: 'POST', scope: 'data:read', audiences: ['mcp'], profile: 'full' },
+      { face: 'b', group: 'g', precedence: 1, path: '/mcp-read', method: 'POST', scope: 'data:read', audiences: ['wecom'], profile: 'c-manage' },
+    ] }
+    expect(ManifestSchema.safeParse(ok).success).toBe(true)
+  })
+
+  it('同一 (path,method,scope) 的 audiences 相交 ⇒ 拒（即使 profile 不同）', () => {
+    // profile 不同（full / c-manage）⇒ profile 那条不触发；拒绝只能来自 audiences 相交。
+    const m = { ...base, mcpFaces: [
+      { face: 'a', group: 'g1', precedence: 1, path: '/mcp-read', method: 'POST', scope: 'data:read', audiences: ['mcp'], profile: 'full' },
+      { face: 'b', group: 'g1', precedence: 2, path: '/mcp-read', method: 'POST', scope: 'data:read', audiences: ['mcp', 'wecom'], profile: 'c-manage' },
+    ] }
+    const r = ManifestSchema.safeParse(m)
+    expect(r.success).toBe(false)
+    if (r.success) return
+    expect(r.error.issues.some((i) => i.message.includes('audiences 必须不相交'))).toBe(true)
+  })
+
+  it('同一 (path,method,scope) 的 profile 相同 ⇒ 拒（缺省与显式 full 视为相同）', () => {
+    // audiences 不相交（mcp / wecom）⇒ audiences 那条不触发；profile 都缺省 ⇒ 都按 full ⇒ 拒。
+    const bothDefault = { ...base, mcpFaces: [
+      { face: 'a', group: 'g1', precedence: 1, path: '/mcp-read', method: 'POST', scope: 'data:read', audiences: ['mcp'] },
+      { face: 'b', group: 'g2', precedence: 1, path: '/mcp-read', method: 'POST', scope: 'data:read', audiences: ['wecom'] },
+    ] }
+    expect(ManifestSchema.safeParse(bothDefault).success).toBe(false)
+    const explicitFull = { ...base, mcpFaces: [
+      { face: 'a', group: 'g1', precedence: 1, path: '/mcp-read', method: 'POST', scope: 'data:read', audiences: ['mcp'], profile: 'full' },
+      { face: 'b', group: 'g2', precedence: 1, path: '/mcp-read', method: 'POST', scope: 'data:read', audiences: ['wecom'] },
+    ] }
+    const r = ManifestSchema.safeParse(explicitFull)
+    expect(r.success).toBe(false)
+    if (r.success) return
+    expect(r.error.issues.some((i) => i.message.includes('profile 不得相同'))).toBe(true)
+  })
+})
+
 describe('N1：ext 是租户/agent 事件保留前缀', () => {
   it('模块 id = "ext" ⇒ 拒绝（即使事件 key 前缀能对上）', () => {
     const r = ManifestSchema.safeParse({

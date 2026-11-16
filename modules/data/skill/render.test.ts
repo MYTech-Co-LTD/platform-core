@@ -67,6 +67,13 @@ describe('renderSkill（真实 content/*.md）', () => {
     for (const line of guideInvariants()) expect(text).toContain(line)
   })
 
+  it('mcp 正文含只读面提示（read face 看不到 query 工具时申请 data:query）', () => {
+    const text = renderSkill('mcp', { today: '2026-01-02' })
+    expect(text).toContain('只读面提示')
+    expect(text).toContain('data:query')
+    expect(text).toContain('向管理员申请')
+  })
+
   it('确定性：同一输入两次逐字节一致', () => {
     expect(renderSkill('mcp', { today: '2026-01-02' })).toBe(renderSkill('mcp', { today: '2026-01-02' }))
   })

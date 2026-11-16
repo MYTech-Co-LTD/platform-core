@@ -2,6 +2,8 @@ export { ManifestSchema } from './manifest'
 export type { ModuleManifest, ModuleManifestInferred } from './manifest'
 export type {
   NotificationEventDecl, EventFieldDecl, EventRecipientDecl, EventPayloadType,
+  // agent 能力网关（2026-11-16 spec §5）：face 声明面（type-only，无值导出）
+  McpAudience, McpProfile, McpFaceDecl,
 } from './manifest'
 export { runChecks } from './checks'
 export type { CheckResult } from './checks'

@@ -7,8 +7,10 @@
 // 末尾由系统确定性附加（strip-then-append）——模型自附不稳（flash 合同弱），传输层兜底。
 // ⚠️ execute 签名 (toolCallId, params, signal, onUpdate)：第一参是 toolCallId 不是模型参数。
 //
-// 工具定义（name/description/parameters）不再手写：构建期由 modules/data/skill/contract.json
+// DATA 工具定义（name/description/parameters）不手写：构建期由 modules/data/skill/contract.json
 // 渲染到 ./generated/tools.js（scripts/gen-openclaw-skill.mjs）。本文件只留传输层映射。
+// 例外：两个 native 平台能力元工具（platform_capabilities / platform_call，走 /api/agent/mcp）
+// 不是 skill contract 工具，DEF 在本文件手写（contracts.test.js 只放行这两个名字）。
 import { definePluginEntry } from "openclaw/plugin-sdk/plugin-entry";
 import { TOOL_DEFS } from "./generated/tools.js";
 import {
@@ -20,9 +22,41 @@ import {
   resolveToolUserId,
   makeFreshnessSendingHook,
   makeFreshnessInboundHook,
+  // 平台能力网关（native 元工具，2026-11-16 能力网关 spec §8；#2360）
+  DEFAULT_AGENT_API_BASE,
+  callGateway,
+  toGatewayToolResult,
+  parseCapabilities,
+  compactCapabilities,
+  buildPlatformCall,
+  timeoutForTool,
 } from "./lib.js";
 
 const CHANNEL_KEY = process.env.DATA_WECOM_CHANNEL_KEY || "";
+// 能力网关基址：openclaw 服务 env（独立容器，不在根 .env.example）；缺省指平台 server。
+const AGENT_API_BASE = process.env.AGENT_API_BASE || DEFAULT_AGENT_API_BASE;
+// native 元工具定义：**不**进 generated/tools.js——它们不是 modules/data skill contract 的工具，
+// 而是走平台能力网关的 openclaw 侧元工具（契约见 openclaw.plugin.json contracts.tools）。
+// platform_call 参数里没有 userId：身份只来自 ctx.requesterSenderId + 容器渠道凭证。
+const CAPS_DEF = {
+  name: "platform_capabilities",
+  description: "列出当前企微用户可用的平台管理工具（指标/报表/通知/表单草稿）与缺失的 scope；先调它。",
+  parameters: {
+    type: "object",
+    properties: { q: { type: "string" }, tool: { type: "string" } },
+    additionalProperties: false,
+  },
+};
+const CALL_DEF = {
+  name: "platform_call",
+  description: "调用 platform_capabilities 返回的工具；tool 名必须来自列表；写操作只产草稿，发布/启用必须人做。",
+  parameters: {
+    type: "object",
+    properties: { tool: { type: "string" }, args: { type: "object", additionalProperties: true } },
+    required: ["tool"],
+    additionalProperties: false,
+  },
+};
 // 同一会话后续工具调用 ctx.requesterSenderId 偶发为空的兜底（#964：**按会话键隔离**）。
 // 旧实现是模块级全局（跨会话共用）⇒ 新会话 ctx 为空时会用上一会话的 userid 取数 =
 // 拿越权面换少一次报错；现在跨会话绝不继承，无会话记录则如实返回身份错误。
@@ -138,6 +172,65 @@ export default definePluginEntry({
       if (run === undefined) throw new Error(`data-query: 工具 ${id} 没有传输实现`);
       api.registerTool(factory(def, run, OBSERVERS.get(id)), { name: def.name });
     }
+
+    // ── native 平台能力元工具（#2360）─────────────────────────────────────────
+    // 与上面同一 factory 形态：ctx 每轮注入，execute 闭包捕获当轮可信 userid。
+    // 结果映射走 toGatewayToolResult（MCP content/isError/structuredContent），
+    // **不是** toToolResult（那期待平台 HTTP JSON 业务载荷）。
+    api.registerTool((ctx) => {
+      const { userId, sessionKey } = resolveToolUserId(ctx, lastUserIdBySession);
+      return {
+        ...CAPS_DEF,
+        execute: async (_toolCallId, params, signal) => {
+          const p = normalizeParams(params);
+          const rpc = await callGateway({
+            apiBase: AGENT_API_BASE,
+            channelKey: CHANNEL_KEY,
+            userId,
+            sessionId: sessionKey,
+            method: "tools/call",
+            params: { name: "agent__capabilities", arguments: {} },
+            signal,
+          });
+          if (!rpc || rpc.result === undefined) return toGatewayToolResult(rpc);
+          const payload = parseCapabilities(rpc);
+          // 解不出目录时**原样透传**网关回包（可能是 rate_limited 等工具级错误），
+          // 不伪装成空目录、也不吞掉服务端原因。
+          if (!payload) return toGatewayToolResult(rpc);
+          // 默认紧凑索引（不塞全部 schema）；q 过滤；tool=<name> 取完整 entry。
+          return toToolResult(compactCapabilities(payload, {
+            q: typeof p.q === "string" ? p.q : undefined,
+            tool: typeof p.tool === "string" ? p.tool : undefined,
+          }));
+        },
+      };
+    }, { name: CAPS_DEF.name });
+
+    api.registerTool((ctx) => {
+      const { userId, sessionKey } = resolveToolUserId(ctx, lastUserIdBySession);
+      return {
+        ...CALL_DEF,
+        execute: async (_toolCallId, params, signal) => {
+          // buildPlatformCall 会剥掉 args 里的身份键——模型无法通过参数指定「以谁的身份调」。
+          // 参数防御错误也走 toGatewayToolResult：details.status='error' + 可操作文案，
+          // 不把裸 JSON `{"error":"TOOL_NOT_CALLABLE"}` 丢给模型。
+          const built = buildPlatformCall(params);
+          if (built.error) return toGatewayToolResult(built);
+          const rpc = await callGateway({
+            apiBase: AGENT_API_BASE,
+            channelKey: CHANNEL_KEY,
+            userId,
+            sessionId: sessionKey,
+            method: "tools/call",
+            params: { name: built.tool, arguments: built.args },
+            // 超时按工具选：forms 的 LLM 起草 120s，其余 60s（网关侧同口径，spec §7.4）。
+            timeoutMs: timeoutForTool(built.tool),
+            signal,
+          });
+          return toGatewayToolResult(rpc);
+        },
+      };
+    }, { name: CALL_DEF.name });
 
     // 新鲜度行确定性附加（strip-then-append，天然去重）。钩子注册方法按 zh-thinking 插件
     // 同款口径用 api.on（2026.9.9 实测公开方法）；拿不到就跳过并留诊断日志——工具仍可用，

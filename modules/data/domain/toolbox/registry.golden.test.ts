@@ -1,5 +1,6 @@
-// registry.golden.test.ts — 迁移前后 MCP 工具面逐字一致的快照门。
-// 这个快照在重构前生成；重构后必须**不更新快照**也通过。
+// registry.golden.test.ts — ANALYST_TOOLS 内部元数据快照门（回归用，不是 wire 契约）。
+// 内部元数据字段（如 Task 5 的 faceScope / requiredScope）可随计划**有意**更新快照；
+// MCP wire 形状由 routes/mcp-faces.test.ts 的 tools/list key 集断言钉住（协议字段不外泄）。
 import { describe, expect, it } from 'vitest'
 import { ANALYST_TOOLS } from './registry'
 

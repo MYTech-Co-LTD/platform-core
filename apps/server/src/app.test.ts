@@ -27,6 +27,7 @@ import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest'
 import { MockCasdoor } from '@platform/auth-core/src/test-util/mock-casdoor'
 import { buildApp, MAX_API_BODY_BYTES } from './app'
 import { getPool } from './db'
+import { INTERNAL_IDENTITY_HEADER, issueInternalIdentity } from './internal-identity'
 import type { AppConfig } from './config'
 
 const dbUrl = process.env.DATABASE_URL
@@ -279,6 +280,43 @@ describe.skipIf(!dbUrl)('buildApp：/api/* 全局请求体上限（MAX_API_BODY_
         '{"error":"PAYLOAD_TOO_LARGE"}',
       ])
     }, 60_000)
+  })
+})
+
+// ---- /api/agent/* 的身份通道（Task 4 安全回归）：网关只服务外部通道，不接纳内部签名身份 ----
+describe.skipIf(!dbUrl)('buildApp：/api/agent/mcp 不接受内部签名身份', () => {
+  const mockAgent = new MockCasdoor()
+  let app: Awaited<ReturnType<typeof buildApp>>['app']
+
+  beforeAll(async () => {
+    await mockAgent.start()
+    app = (await buildApp({ config: configWith(mockAgent.origin, 'pw') })).app
+  }, 30_000)
+  afterAll(async () => {
+    await mockAgent.stop()
+  })
+
+  it('★ 带有效内部签名头但无 PAT/会话 ⇒ 401（/api/agent/* 未挂 internalIdentityMiddleware）', async () => {
+    // 反向证明：若 /api/agent/* 误挂了 internalIdentityMiddleware，这枚签名有效且 org 匹配
+    // 当前租户（single 模式 platformOrg=acme）的身份会被接受 ⇒ tools/list 返 200。
+    // 401 才是「网关不接受内部身份」的可执行证据。
+    const internal = issueInternalIdentity({
+      org: 'acme',
+      userId: 'attacker',
+      channel: 'session',
+      scopes: ['data:manage'],
+    })
+    const res = await app.request('/api/agent/mcp', {
+      method: 'POST',
+      headers: {
+        'content-type': 'application/json',
+        host: 'acme.test',
+        [INTERNAL_IDENTITY_HEADER]: internal,
+      },
+      body: JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'tools/list' }),
+    })
+    expect(res.status).toBe(401)
+    expect(await res.json()).toEqual({ error: 'UNAUTHENTICATED' })
   })
 })
 

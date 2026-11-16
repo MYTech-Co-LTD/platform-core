@@ -7,6 +7,12 @@ export const DEFAULT_API_BASE = "http://server:13000/api/modules/data";
 // 未关联指引指向的山海平台入口（只写文案，不含任何凭证）。
 export const PLATFORM_ORIGIN = "https://platform.shanhaiyiguo.com";
 
+// 401 文案唯一一份：问数直连（callPlatform）与能力网关（callGateway）共用，避免两处措辞漂移。
+export const WECOM_NOT_LINKED_TEXT =
+  `你的企微账号还没关联平台账号：用企微扫码登录一次 ${PLATFORM_ORIGIN}（登录即完成关联，无需任何绑定操作），然后回来重新提问。`;
+const channelAuthFailedText = (code) =>
+  `渠道认证失败（${code || "HTTP 401"}），请联系管理员检查渠道凭证。`;
+
 // 宿主 execute 第二参历史上有三种形态：直传对象 / JSON 字符串 / 单键包裹
 // （input|arguments|parameters）。生产先例实测（data-analysis data-query-plugin）：
 // 不归一会让参数恒 undefined → 每次必现 missing 参数。
@@ -82,11 +88,11 @@ export async function callPlatform(opts) {
   if (resp.status === 401 && data.error === "WECOM_USER_NOT_LINKED") {
     return {
       code: "WECOM_USER_NOT_LINKED",
-      error: `你的企微账号还没关联平台账号：用企微扫码登录一次 ${PLATFORM_ORIGIN}（登录即完成关联，无需任何绑定操作），然后回来重新提问。`,
+      error: WECOM_NOT_LINKED_TEXT,
     };
   }
   if (resp.status === 401) {
-    return { code: data.error || "CHANNEL_KEY_INVALID", error: "渠道认证失败（" + (data.error || "HTTP 401") + "），请联系管理员检查渠道凭证。" };
+    return { code: data.error || "CHANNEL_KEY_INVALID", error: channelAuthFailedText(data.error) };
   }
   // 403 对「未授权」与「词表外」同文案（平台刻意不区分，避免存在性探针——三通道设计 §5 约束 3）。
   // ⚠️ 但 `bad_param` 是「参数写错了」，不是「没权限」：/query 对一切 denied 都回 403（#30 订正），
@@ -344,4 +350,312 @@ export function resolveToolUserId(ctx, lastBySession, cap = 500) {
     lastBySession.set(sessionKey, direct);
   }
   return { userId, sessionKey };
+}
+
+// ── 平台能力网关（agent MCP，2026-11-16 能力网关 spec §8；#2360）────────────────
+// native 元工具 platform_capabilities / platform_call 的纯逻辑：JSON-RPC 传输、
+// MCP 结果 → openclaw 工具结果映射、能力目录紧凑化。身份**只**由 ctx（requesterSenderId）
+// + 容器 env（DATA_WECOM_CHANNEL_KEY）决定——模型参数里没有也不接受 userId。
+
+/** 平台能力网关基址：openclaw 服务 env `AGENT_API_BASE`（独立容器，不在根 .env.example）。 */
+export const DEFAULT_AGENT_API_BASE = "http://server:13000/api/agent";
+
+/** 本地 fail-closed 错误码 / 网关鉴权码 → 可操作中文文案（裸码模型读不懂，也不知道下一步做什么）。 */
+const GATEWAY_ERROR_TEXT = {
+  CHANNEL_KEY_MISSING: "渠道凭证未配置（openclaw 容器缺 DATA_WECOM_CHANNEL_KEY env），请联系管理员。",
+  USERID_MISSING: "无法识别请求者身份（requesterSenderId 缺失）。出于权限安全不予调用，请重新发一条消息；仍失败请联系管理员。",
+  WECOM_USERID_REQUIRED: "无法识别请求者身份（x-wecom-userid 缺失）。请重新发一条消息；仍失败请联系管理员。",
+  GATEWAY_TIMEOUT: "平台能力网关响应超时，请稍后再试；持续失败请联系管理员。",
+  GATEWAY_CANCELLED: "调用已取消。",
+  WECOM_USER_NOT_LINKED: WECOM_NOT_LINKED_TEXT,
+  CHANNEL_KEY_INVALID: channelAuthFailedText("CHANNEL_KEY_INVALID"),
+  USER_DISABLED: "平台账号已停用，请联系管理员。",
+  CASDOOR_UNAVAILABLE: "平台身份服务暂不可用，请稍后再试。",
+  // JSON-RPC 协议错误：工具名拼错 / 参数形状错，分两种给下一步动作，别让模型原样重试。
+  "RPC_-32601": "工具或方法不存在：先调 platform_capabilities 查看可用工具与参数，再用 platform_call 调用。",
+  "RPC_-32602": "参数不合法（-32602）：按 platform_capabilities({ tool }) 返回的 inputSchema 校正后重试。",
+  // 本地参数防御码（还没发请求）：给下一步动作，而不是裸 JSON。
+  TOOL_REQUIRED: "缺少 tool 参数：先用 platform_capabilities 查看可用工具，再传 tool=<name>。",
+  TOOL_NOT_CALLABLE: "agent__capabilities 是发现入口，不通过 platform_call 调用；直接调 platform_capabilities。",
+};
+
+/** 网关错误码归一：本地字符串码 / 网关 HTTP body `{error}` / JSON-RPC `{code,message}`。 */
+function gatewayErrorCode(e) {
+  if (typeof e === "string") return e;
+  if (e && typeof e.code === "number") return `RPC_${e.code}`;
+  return "GATEWAY_ERROR";
+}
+
+/** 取消判定：调用方 signal 已中止 ⇒ GATEWAY_CANCELLED（优先于超时/网络错误/坏回包——用户不等了，不是故障）。 */
+function cancellationIfAborted(signal) {
+  return signal?.aborted ? { error: "GATEWAY_CANCELLED", detail: "调用已取消" } : undefined;
+}
+
+/** 错误码 → 文案；带上下文的传输类错误把 detail/status 拼进文案（排障要看的就这两样）。 */
+function gatewayErrorText(e, detail, status) {
+  const code = gatewayErrorCode(e);
+  if (code === "GATEWAY_UNREACHABLE") {
+    return `平台能力网关不可达（${detail || "网络错误"}），请稍后再试；持续失败请联系管理员。`;
+  }
+  if (code === "GATEWAY_BAD_RESPONSE") {
+    return `平台能力网关回包无法解析${status ? `（HTTP ${status}）` : ""}，请联系管理员。`;
+  }
+  const known = GATEWAY_ERROR_TEXT[code];
+  if (known) return known;
+  // 未知 JSON-RPC error：原样给 code/message（比裸码可读，也不丢服务端原因）。
+  if (e && typeof e === "object") return JSON.stringify(e);
+  return JSON.stringify({ status: "error", reason: code });
+}
+
+/** 网关请求超时上限：普通工具 60s（与网关侧 `tools/call` 默认一致）；forms 生成草稿要调 LLM，
+ * 网关侧放行 120s（spec §7.4）——插件侧若仍卡 20s 会在 LLM 出结果前截断，必须按工具选。 */
+export const GATEWAY_TIMEOUT_MS = 60_000;
+export const FORMS_DRAFT_TIMEOUT_MS = 120_000;
+
+/** forms 的 LLM 起草工具：唯一走 120s 长超时的工具。 */
+const FORMS_DRAFT_TOOL = "forms__generate_form_draft";
+
+/** 按工具选超时：forms 起草 120s，其余 60s。 */
+export function timeoutForTool(tool) {
+  return tool === FORMS_DRAFT_TOOL ? FORMS_DRAFT_TIMEOUT_MS : GATEWAY_TIMEOUT_MS;
+}
+
+/**
+ * 向网关发一条 JSON-RPC（POST {apiBase}/mcp）。
+ * 返回**解析后的 JSON-RPC 回包**（`{result}` 或 `{error}`），交给 toGatewayToolResult 映射；
+ * 本地前置失败返回 `{error: "<CODE>"}`（字符串码），网络/超时/解析失败也不抛（工具主路径不许炸）。
+ * 缺 key/userid 时**不发请求**（fail-closed，与此前 callPlatform 同口径）。
+ * 网关鉴权失败是**非 JSON-RPC 信封**（401/503 直接 `{error:'CHANNEL_KEY_INVALID'}`），
+ * 这里归一成 `{error: <code>, status}`，文案由 gatewayErrorText 负责。
+ */
+export async function callGateway(opts) {
+  const {
+    apiBase = DEFAULT_AGENT_API_BASE, channelKey, userId, sessionId,
+    method, params, fetchImpl = fetch, timeoutMs = GATEWAY_TIMEOUT_MS, signal,
+  } = opts;
+  if (!channelKey) return { error: "CHANNEL_KEY_MISSING" };
+  if (!userId) return { error: "USERID_MISSING" };
+  // 手动超时（不用 AbortSignal.timeout）：它在 Node 22 下创建的内部定时器不被清理，
+  // 测试提前返回后仍挂在事件循环里（ERR_TEST_FAILURE 级联）。手动 controller + 定时器
+  // unref（不阻止进程退出）+ finally 里 clearTimeout（所有返回路径都清干净）。
+  let timedOut = false;
+  const controller = new AbortController();
+  const timer = setTimeout(() => {
+    timedOut = true;
+    controller.abort();
+  }, timeoutMs);
+  timer.unref?.();
+  const combined = signal && typeof AbortSignal.any === "function"
+    ? AbortSignal.any([signal, controller.signal])
+    : controller.signal;
+  try {
+    let res;
+    try {
+      res = await fetchImpl(`${apiBase}/mcp`, {
+        method: "POST",
+        headers: {
+          "content-type": "application/json",
+          "x-channel-key": channelKey,
+          "x-wecom-userid": userId,
+          ...(sessionId ? { "x-session-id": String(sessionId) } : {}),
+        },
+        body: JSON.stringify({ jsonrpc: "2.0", id: `oc-${Date.now()}`, method, params }),
+        signal: combined,
+      });
+    } catch (e) {
+      // 调用方主动取消（openclaw 工具 ctx 的 signal）优先于超时判断——别把「用户不等了」
+      // 报成网络不可达；文案「调用已取消」让模型不再重试。
+      const cancelled = cancellationIfAborted(signal);
+      if (cancelled) return cancelled;
+      // 定时器触发的 abort ⇒ 超时（timedOut 区分；controller.signal.aborted 同义兜底）。
+      if (timedOut || controller.signal.aborted) {
+        return { error: "GATEWAY_TIMEOUT", detail: `超过 ${timeoutMs}ms` };
+      }
+      return { error: "GATEWAY_UNREACHABLE", detail: (e && e.message) || String(e) };
+    }
+    let body;
+    try {
+      body = await res.json();
+    } catch {
+      // 响应体读取阶段被取消同样归为取消（拿到头之后断开 ≠ 网关回了坏包）。
+      const cancelled = cancellationIfAborted(signal);
+      if (cancelled) return cancelled;
+      return { error: "GATEWAY_BAD_RESPONSE", status: res.status };
+    }
+    if (!res.ok) {
+      // 鉴权闸回的是 HTTP 错误 + `{error}`（不是 JSON-RPC 信封）：归一成同一种错误形状。
+      const code = body && typeof body.error === "string" ? body.error : `HTTP_${res.status}`;
+      return {
+        error: code,
+        status: res.status,
+        ...(body && typeof body.detail === "string" ? { detail: body.detail } : {}),
+      };
+    }
+    return body;
+  } finally {
+    // 成功 / HTTP 错误 / 坏回包 / 取消 / 超时，每条返回路径都清定时器（unref 只是不挡退出，
+    // 显式清理才让测试进程不被短定时器挂住到点）。
+    clearTimeout(timer);
+  }
+}
+
+/** 取 MCP content 里第一个文本项并试解 JSON；解不出就把原文包成 `{text}`（details 仍可读）。 */
+function parseTextPayload(r) {
+  const content = Array.isArray(r?.content) ? r.content : [];
+  const item = content.find((c) => c && c.type === "text" && typeof c.text === "string");
+  if (!item) return null;
+  try {
+    const v = JSON.parse(item.text);
+    return v && typeof v === "object" ? v : { text: item.text };
+  } catch {
+    return { text: item.text };
+  }
+}
+
+/**
+ * MCP 工具结果 → openclaw 工具结果契约。
+ *
+ * ★ openclaw 的 `AgentToolResult` 只认 `{content, details}`；错误判定读 `details.status|ok|
+ *   success|error|timedOut|exitCode`（顶层 `isError` 被忽略）。所以工具级错误
+ *   （`missing_scope` / `rate_limited` / `module_unavailable`）、JSON-RPC 错误、传输错误
+ *   **都必须落到 `details.status='error'`**，否则真机上全部显示为“成功”。
+ * `content` 保持 MCP 原文（人/模型可读）；`details` 附业务载荷并补 status/reason。
+ */
+export function toGatewayToolResult(rpc) {
+  const r = rpc?.result;
+  if (!r) {
+    const e = rpc?.error;
+    const code = gatewayErrorCode(e);
+    return {
+      content: [{ type: "text", text: gatewayErrorText(e, rpc?.detail, rpc?.status) }],
+      details: { status: "error", reason: code, error: e ?? null },
+    };
+  }
+  const source = r.structuredContent && typeof r.structuredContent === "object"
+    ? r.structuredContent
+    : parseTextPayload(r);
+  const isErr = r.isError === true;
+  const details = {
+    ...(source && typeof source === "object" ? source : {}),
+    status: isErr ? "error" : (source && typeof source.status === "string" ? source.status : "ok"),
+  };
+  if (isErr && details.reason === undefined) details.reason = "TOOL_ERROR";
+  const content = Array.isArray(r.content) && r.content.length > 0
+    ? r.content
+    : [{ type: "text", text: JSON.stringify(details) }];
+  return { content, details };
+}
+
+/**
+ * 解出 `agent__capabilities` 的业务载荷（网关把目录 JSON 放在 content[0].text 里）。
+ * 形状不合法（非 JSON / 无 tools 数组）⇒ null——调用方如实报「回包无法解析」，不猜。
+ */
+export function parseCapabilities(rpc) {
+  const content = rpc?.result?.content;
+  if (!Array.isArray(content)) return null;
+  const item = content.find((c) => c && c.type === "text" && typeof c.text === "string");
+  if (!item) return null;
+  let v;
+  try {
+    v = JSON.parse(item.text);
+  } catch {
+    return null;
+  }
+  if (!v || typeof v !== "object" || !Array.isArray(v.tools)) return null;
+  return v;
+}
+
+/** 一句话描述：取首行、压掉首尾空白；过长截断（索引是给模型看的，不是文档）。 */
+const INDEX_DESC_MAX = 160;
+function oneLineDescription(desc) {
+  const s = typeof desc === "string" ? desc.split("\n")[0].trim() : "";
+  return s.length > INDEX_DESC_MAX ? s.slice(0, INDEX_DESC_MAX - 1) + "…" : s;
+}
+
+/** mutating：优先工具自报字段；模块 tools/list 未暴露时由 annotations.readOnlyHint 反推；都没有则省略。 */
+function mutatingOf(t) {
+  if (typeof t.mutating === "boolean") return t.mutating;
+  const readOnly = t.annotations && t.annotations.readOnlyHint;
+  return typeof readOnly === "boolean" ? !readOnly : undefined;
+}
+
+const META_TOOL = "agent__capabilities";
+
+/**
+ * 能力目录 → 紧凑索引（spec §8）：
+ *   · 默认：tools[{name, description, mutating?}] + faces（module/face/scope/available）+
+ *     lockedFaces + notes（人 gate 清单）——**不带** inputSchema，避免一轮塞进全部参数面；
+ *   · `q`：按名/描述关键词过滤（大小写不敏感）；
+ *   · `tool`：返回该工具完整 entry（含 inputSchema），供 platform_call 组装参数。
+ * 元工具自身（agent__capabilities）不进列表——它不是 platform_call 的业务对象。
+ * `gate` 语义由网关 notes 承载（人 gate 清单），插件不另造第二事实源。
+ */
+export function compactCapabilities(payload, { q, tool } = {}) {
+  if (!payload || !Array.isArray(payload.tools)) return { error: "CAPABILITIES_UNAVAILABLE" };
+  const tools = payload.tools.filter((t) => t && typeof t.name === "string" && t.name !== META_TOOL);
+  const lockedFaces = Array.isArray(payload.lockedFaces) ? payload.lockedFaces : [];
+  const notes = Array.isArray(payload.notes) ? payload.notes : [];
+
+  if (typeof tool === "string" && tool.trim()) {
+    const want = tool.trim();
+    const hit = tools.find((t) => t.name === want);
+    if (!hit) {
+      return { error: "TOOL_NOT_FOUND", tool: want, available: tools.map((t) => t.name) };
+    }
+    return { tool: hit, lockedFaces, notes };
+  }
+
+  const keyword = typeof q === "string" ? q.trim().toLowerCase() : "";
+  const visible = keyword
+    ? tools.filter((t) => {
+      const name = t.name.toLowerCase();
+      const desc = typeof t.description === "string" ? t.description.toLowerCase() : "";
+      return name.includes(keyword) || desc.includes(keyword);
+    })
+    : tools;
+
+  const index = visible.map((t) => {
+    const entry = { name: t.name, description: oneLineDescription(t.description) };
+    const mutating = mutatingOf(t);
+    if (mutating !== undefined) entry.mutating = mutating;
+    return entry;
+  });
+  const faces = (Array.isArray(payload.faces) ? payload.faces : [])
+    .filter((f) => f && typeof f.module === "string" && typeof f.face === "string")
+    .map((f) => ({
+      module: f.module, face: f.face, scope: f.scope, available: f.available === true,
+    }));
+
+  return {
+    tools: index,
+    faces,
+    lockedFaces,
+    notes,
+    hint: "tool=<name> 可查看该工具的完整参数 schema；写操作只产草稿，发布/启用必须人做。",
+  };
+}
+
+/** 身份键：模型参数里一律剥掉（身份只来自 ctx + env，防止伪造/误传）。 */
+const IDENTITY_ARGS = new Set(["userId", "requesterSenderId"]);
+
+/**
+ * `platform_call` 参数归一：`{tool, args}`。
+ * **不接受 userId**（spec §8）：args 里出现的身份键直接剥掉——工具若真需要「目标用户」，
+ * 应显式命名为业务参数（如 recipient），而不是复用身份键。
+ * notify 的 namespace 由 C 档服务端钉死（spec §6.4）：模型传了只会造成「它生效了」的误解，剥掉。
+ * 元工具 `agent__capabilities` 不经 platform_call 调（platform_capabilities 才是入口）。
+ */
+export function buildPlatformCall(raw) {
+  const p = normalizeParams(raw);
+  const tool = typeof p.tool === "string" ? p.tool.trim() : "";
+  if (!tool) return { error: "TOOL_REQUIRED" };
+  if (tool === META_TOOL) return { error: "TOOL_NOT_CALLABLE" };
+  const source = p.args && typeof p.args === "object" && !Array.isArray(p.args) ? p.args : {};
+  const args = {};
+  for (const [k, v] of Object.entries(source)) {
+    if (IDENTITY_ARGS.has(k)) continue;
+    if (k === "namespace" && tool.startsWith("notify__")) continue;
+    args[k] = v;
+  }
+  return { tool, args };
 }

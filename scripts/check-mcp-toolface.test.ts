@@ -8,6 +8,7 @@ import { checkToolface } from './check-mcp-toolface.mjs'
 import { ANALYST_TOOLS, ANALYST_FACE_MAX_LIST_BYTES, ANALYST_FACE_MAX_TOOLS } from '../modules/data/domain/toolbox/registry.ts'
 import { MANAGE_FACE_MAX_TOOLS, MANAGE_TOOLS } from '../modules/data/domain/manage-face.ts'
 import { MANAGE_FACE_COMBINED_MAX_TOOLS, MANAGE_FACE_MAX_LIST_BYTES, MANAGE_FACE_TOOLS } from '../modules/data/routes/mcp-manage-face.ts'
+import { FORMS_MAX_TOOLS, FORMS_TOOLS } from '../modules/forms/mcp-tools.ts'
 
 describe('checkToolface：四条判据', () => {
   const meta = (over: Record<string, unknown> = {}) => ({
@@ -76,6 +77,17 @@ describe('真仓合并 manage 面（三片静态事实源 mcp-manage-face.ts，P
     expect(MANAGE_FACE_TOOLS).toHaveLength(20)
     expect(checkToolface(MANAGE_FACE_TOOLS, { maxTools: MANAGE_FACE_COMBINED_MAX_TOOLS, maxBytes: MANAGE_FACE_MAX_LIST_BYTES })).toEqual([])
     expect(JSON.stringify(MANAGE_FACE_TOOLS.map((t) => t.wire)).length).toBeLessThanOrEqual(MANAGE_FACE_MAX_LIST_BYTES)
+  })
+})
+
+describe('真仓 FORMS_TOOLS 本身过门（forms 面，2026-11-16 能力网关 Task 8）', () => {
+  it('2 件 ≤2；序列化 ≤10KB；名字全合法；mutating 全有注解与 scope', () => {
+    expect(FORMS_TOOLS).toHaveLength(FORMS_MAX_TOOLS)
+    expect(checkToolface(FORMS_TOOLS, { maxTools: FORMS_MAX_TOOLS })).toEqual([])
+    expect(JSON.stringify(FORMS_TOOLS).length).toBeLessThanOrEqual(ANALYST_FACE_MAX_LIST_BYTES)
+  })
+  it('★ 无发布/回滚/退役类工具（人 gate 不在 MCP 面）', () => {
+    for (const t of FORMS_TOOLS) expect(t.name).not.toMatch(/publish|rollback|retire/)
   })
 })
 

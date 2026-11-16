@@ -1,20 +1,24 @@
-// mcp.ts — POST /mcp：通道 B（PAT）的**读面** MCP 端点（问数 + 分析师面）。协议壳见 mcp-rpc.ts。
+// mcp.ts — 数据模块的 **MCP 面**（通道 B 的 JSON-RPC 端点；协议壳见 mcp-rpc.ts）。
 //
-// Wave 1（spec 2026-10-21）起本面 = **registry 驱动**的工具集，三组：
-//   · legacy 过渡面：每指标一工具（sanitized 名；与 query_metric 并存，未决 #1 观察后下线）；
-//   · 分析师面：toolbox 的 11 个固定工具（guide/catalog/discovery/query/health）；
-//   · 下钻静态工具：query_detail（spec 2026-10-21 §2.4）——不随词表物化，恒在；工具的存在
-//     不是存在性探针，该指标支不支持下钻是能力陈述，只出现在调用回包里。
-// 写面（本租户口径的定义）在 `mcp-manage.ts`，走另一个端点与另一个
-// scope——两份工具集共用一个协议壳。
-// 授权仍不自建：词表裁剪只调 visibleMetrics、执行只调 runQuery / runDetailQuery / registry.callTool
-// （保留键拒 / 未声明拒 / 未授权拒全部出自那条链——本文件不做第二份判定）。
+// agent 能力网关（spec 2026-11-16 §5.2/§6）把工具面拆成三个 face：
+//   · `/mcp`（full）：**保留给直连客户端**——legacy 每指标工具 + 分析师面 + 静态工具（不变）；
+//   · `/mcp-read`（read，data:read）：只读工具（faceScope=data:read 的契约工具）；
+//   · `/mcp-curated`（curated，data:query）：13 个分析师工具 + query_detail，**不含 legacy**。
+// face 最低权限由宿主按 manifest `api.internal` 门卫施加；本文件只决定「该面有哪些工具」，
+// 工具级附加 scope 由 registry.callTool 单点执法（本文件不做第二份判定）。
+//
+// Wave 1（spec 2026-10-21）起的既有语义不变：
+//   · 分析师面 = registry 驱动的固定工具；legacy 过渡面 = 每指标一工具（仅 full）；
+//   · 下钻静态工具 query_detail（spec 2026-10-21 §2.4）不随词表物化，恒在；
+//   · 授权仍不自建：词表裁剪只调 visibleMetrics、执行只调 runQuery / runDetailQuery / registry.callTool。
 import { loadMergedCatalog } from '../domain/metric-store'
 import { deptContextIfOwned } from '../domain/metric-visibility'
 import { runDetailQuery } from '../domain/drill'
 import { runQuery } from '../domain/query-service'
 import { analystPool, runWarehouseSql } from '../domain/warehouse'
-import { callTool, legacyMetricTools, listAnalystTools } from '../domain/toolbox/registry'
+import {
+  callTool, legacyMetricTools, listAnalystTools, visibleAnalystTools, type ToolSurface,
+} from '../domain/toolbox/registry'
 import { buildToolboxDeps } from '../domain/toolbox/all'
 import '../domain/toolbox/all'
 import { contractView, renderInstructions } from '../skill/render'
@@ -27,6 +31,9 @@ import type { McpDeps, McpToolResult, McpToolSet } from './mcp-rpc'
 /** 分析师面的仓库执行器：只读池（default_transaction_read_only=on）。测试经 McpDeps.wh 注入替身。 */
 const readonlyWh = () => (sql: string) => runWarehouseSql(analystPool(), sql)
 
+/** 端点 face：full = 直连全量；curated = 13 分析师工具 + query_detail；read = 只读工具。 */
+export type McpFace = ToolSurface
+
 /** MCP tools/list 条目（协议字段）。outputSchema 缺省即省略（契约没声明就不合成）。 */
 interface ListEntry {
   name: string
@@ -38,9 +45,9 @@ interface ListEntry {
 }
 
 /**
- * 契约工具 → tools/list 条目（分析师面与静态工具共用一份 shape）。
- * **非 MCP 规范字段不外泄**（requiredScope/mutating/group 只经 `data_harness_catalog` 的
- * 声明面输出）——工具面与声明面分开，前者按协议、后者按治理。
+ * 契约工具 → tools/list 条目。**非 MCP 规范字段不外泄**
+ * （requiredScope / faceScope / mutating / group 只经 `data_harness_catalog` 的声明面输出）——
+ * 工具面与声明面分开，前者按协议、后者按治理。
  */
 function toListEntry(t: ContractTool): ListEntry {
   const face = faceOf(t, 'mcp')
@@ -50,14 +57,35 @@ function toListEntry(t: ContractTool): ListEntry {
   }
 }
 
-/** 分析师面工具 → tools/list 条目。 */
-function analystListEntries(): ListEntry[] {
-  return contractView('mcp').filter((t) => t.analyst).map(toListEntry)
+/**
+ * 该 face 的契约工具集合（**faceScope 过滤只在这里**，不外泄到 list 条目）：
+ *   · full：全部（含 legacy 另加）；
+ *   · curated：13 个分析师工具 + static（query_detail，faceScope=data:query）；
+ *   · read：ANALYST_TOOLS 中 faceScope=data:read 的读工具——**只含分析师面**，
+ *     因为 callRead 统一走 callAnalyst→callTool（静态工具不在这条链上；未来若有
+ *     static read 工具，须在此处与 call 路由同时加分支）。
+ */
+function contractToolsForFace(face: McpFace): ContractTool[] {
+  const all = contractView('mcp')
+  if (face === 'full') return all
+  if (face === 'read') return all.filter((t) => t.analyst && t.faceScope === 'data:read')
+  // curated：analyst 全收（读 + 查），static 只收 query 面（query_detail）。
+  return all.filter((t) => t.analyst || t.faceScope === 'data:query')
 }
 
-// 下钻工具（spec 2026-10-21 §2.4）：与 /query/detail 同一 runDetailQuery——授权核心同链。
-// **静态**（不随指标物化）：tools/list 恒在——工具的存在不是存在性探针，该指标支不支持
-// 下钻是**能力陈述**，只出现在调用回包里（denied/no_detail_binding，isError=true）。
+/**
+ * face 的 tools/list 条目。按 `visibleAnalystTools` 裁掉附加 scope 不满足的分析师工具
+ * （spec §6.2：tools/list 只返回调用方满足 requiredScope 的工具）。
+ * 空身份（M3 守卫拒掉）⇒ 空面，不是报错。
+ */
+function listEntriesForFace(face: McpFace, deps: McpDeps): ListEntry[] {
+  if (deps.requester === null) return []
+  const visible = new Set(visibleAnalystTools(deps.requester).map((t) => t.name))
+  return contractToolsForFace(face)
+    .filter((t) => !t.analyst || visible.has(faceOf(t, 'mcp').name))
+    .map(toListEntry)
+}
+
 /** 静态附加工具（analyst=false 且声明了 mcp 通道）——query_detail 在这里。 */
 const STATIC_MCP_TOOLS = contractView('mcp').filter((t) => !t.analyst).map(toListEntry)
 
@@ -72,112 +100,167 @@ for (const t of STATIC_MCP_TOOLS) {
   }
 }
 
-const readToolset: McpToolSet = {
-  serverName: 'platform-data-mcp',
+/** 静态工具名是否属于该 face（faceScope 与 read/curated 对齐）。 */
+function staticToolInFace(name: string, face: McpFace): boolean {
+  const tool = contractView('mcp').find((t) => !t.analyst && faceOf(t, 'mcp').name === name)
+  if (tool === undefined) return false
+  if (face === 'full') return true
+  return face === 'read' ? tool.faceScope === 'data:read' : tool.faceScope === 'data:query'
+}
 
-  // 惰性 + fail-soft：读契约/渲染失败时 initialize 不能 500（initialize 失败会让客户端直接连不上）；
-  // shared.md 缺失会在模块加载期 fail-fast（GUIDE_INVARIANTS 已 eager 加载）。
-  // 只放指针 + 五条硬约束，完整工作流走 data_agent_guide（按需拉取）。
-  get instructions(): string {
-    try {
-      return renderInstructions()
-    } catch (e) {
-      console.warn('[data] mcp initialize.instructions 渲染失败（回退到内置硬约束）:', e instanceof Error ? e.message : e)
-      return ['平台数据 MCP：开始数据任务前先调用 data_agent_guide。', ...GUIDE_INVARIANTS].join('\n')
-    }
-  },
+/** 未知工具的统一回包（MCP 工具级错误形态；不落到其它 face/legacy 分支）。 */
+function unknownTool(name: string): McpToolResult {
+  return { text: JSON.stringify({ status: 'denied', reason: 'unknown_tool', name }), isError: true }
+}
 
-  async list(deps) {
-    // M3 守卫拒掉的请求者：词表对其「看不见」——空 tools（两类工具都空），不是报错。
-    // 守卫必须在加载词表**之前**（实测：放在后面 = 空身份先炸在加载词表上，500 而非空词表）。
-    if (deps.requester === null) return []
-    // 合并加载器（L1 ∪ 本 org）+ 源维度裁剪——与 /query、chat、GET /metrics 同一落点（T8 评审 C1）。
+/** query_detail：与 /query/detail 同一 runDetailQuery——授权核心同链。 */
+async function callDetail(deps: McpDeps, args: Record<string, unknown>): Promise<McpToolResult> {
+  const out = await runDetailQuery(
+    { pool: deps.pool, execute: deps.execute, adoptedSources: deps.adoptedSources },
+    deps.org, deps.requester,
+    typeof args.metricId === 'string' ? args.metricId : '',
+    typeof args.args === 'object' && args.args !== null && !Array.isArray(args.args) ? args.args as Record<string, unknown> : {},
+    {
+      dimensions: Array.isArray(args.dimensions) ? args.dimensions as string[] : undefined,
+      orderBy: typeof args.orderBy === 'string' ? args.orderBy : undefined,
+      desc: typeof args.desc === 'boolean' ? args.desc : undefined,
+      limit: typeof args.limit === 'number' ? args.limit : undefined,
+      offset: typeof args.offset === 'number' ? args.offset : undefined,
+    })
+  return { text: JSON.stringify(out), isError: out.status !== 'ok' }
+}
+
+/**
+ * 分析师面固定工具：registry.callTool 单点分发（mutating 闸 + 工具级 scope + 审计）。
+ * `surface` 只透传给 `data_harness_catalog` 的 available 标注（展示面）——不参与执法。
+ */
+async function callAnalyst(
+  deps: McpDeps, name: string, args: Record<string, unknown>, surface: McpFace,
+): Promise<McpToolResult> {
+  const toolbox = buildToolboxDeps(
+    { pool: deps.pool, org: deps.org, requester: deps.requester, adoptedSources: deps.adoptedSources },
+    { wh: deps.wh, surface },
+  )
+  const out = await callTool(toolbox, name, args)
+  return {
+    text: JSON.stringify(out.payload), isError: out.isError,
+    ...(out.isError ? {} : { structured: out.payload }),
+  }
+}
+
+/** full face 的 call：现有逻辑逐字保留（静态下钻 → 分析师面 → legacy → 裸 id 回退）。 */
+async function callFull(
+  deps: McpDeps, name: string, args: Record<string, unknown>, face: McpFace,
+): Promise<McpToolResult> {
+  // ⓪ 静态下钻工具（query_detail）：排在 legacy / 裸 id 回退**之前**——词表里 sanitize 后
+  //    恰为 query_detail 的指标名不得冒名顶替静态工具。
+  if (name === 'query_detail') return callDetail(deps, args)
+  // ① 分析师面固定工具。
+  if (listAnalystTools().some((t) => t.name === name)) return callAnalyst(deps, name, args, face)
+  // ② legacy：sanitized 名反解回 metricId（与 list 同一 legacyMetricTools——无第二份映射）。
+  if (deps.requester !== null) {
     const catalog = await loadMergedCatalog(deps.pool, deps.org)
-    // 部门可见（P2 Task 4 接线）：tools/list 与 tools/call 用同一份 ctx（同一函数同一裁剪尺）。
     const deptCtx = await deptContextIfOwned(deps.pool, deps.requester.tenantId, deps.requester, catalog)
-    return [
-      ...legacyMetricTools(catalog, deps.requester, deps.adoptedSources, deptCtx).map((x) => x.tool),
-      ...analystListEntries(),
-      ...STATIC_MCP_TOOLS,
-    ]
-  },
-
-  async call(deps, name, args): Promise<McpToolResult> {
-    // ⓪ 静态下钻工具（query_detail）：与 /query/detail 同一 runDetailQuery——授权核心同链
-    //    （词表裁剪/拒绝链/主体钉死/参数校验全在 drill.ts 复用 authz，本层不自建判定）。
-    //    排在 legacy / 裸 id 回退**之前**：词表里 sanitize 后恰为 query_detail 的指标名
-    //    不得冒名顶替静态工具。拒绝/出错也走 result + isError（MCP 工具级错误形态）。
-    // 契约改了 query_detail 的名字，这里必须一起改；测试 render.test.ts 已钉住 mcp 视图。
-    if (name === 'query_detail') {
-      const out = await runDetailQuery(
-        { pool: deps.pool, execute: deps.execute, adoptedSources: deps.adoptedSources },
-        deps.org, deps.requester,
-        typeof args.metricId === 'string' ? args.metricId : '',
-        typeof args.args === 'object' && args.args !== null && !Array.isArray(args.args) ? args.args as Record<string, unknown> : {},
-        {
-          dimensions: Array.isArray(args.dimensions) ? args.dimensions as string[] : undefined,
-          orderBy: typeof args.orderBy === 'string' ? args.orderBy : undefined,
-          desc: typeof args.desc === 'boolean' ? args.desc : undefined,
-          limit: typeof args.limit === 'number' ? args.limit : undefined,
-          offset: typeof args.offset === 'number' ? args.offset : undefined,
-        })
-      return { text: JSON.stringify(out), isError: out.status !== 'ok' }
-    }
-    // ① 分析师面固定工具：registry.callTool 单点分发（mutating 闸 + 审计含拒绝/出错）。
-    //    装配走 buildToolboxDeps（all.ts 唯一装配点，Wave 2 决策 D-M1）。
-    if (listAnalystTools().some((t) => t.name === name)) {
-      const toolbox = buildToolboxDeps(
-        { pool: deps.pool, org: deps.org, requester: deps.requester, adoptedSources: deps.adoptedSources },
-        { wh: deps.wh },
-      )
-      const out = await callTool(toolbox, name, args)
-      return {
-        text: JSON.stringify(out.payload), isError: out.isError,
-        ...(out.isError ? {} : { structured: out.payload }),
-      }
-    }
-    // ② legacy：sanitized 名反解回 metricId（与 list 同一 legacyMetricTools——无第二份映射）。
-    //    `execute`/`wh` 透传：缺省会让 runQuery 去建真仓库连接；`adoptedSources` 同理必须透传
-    //    （runQuery 的解析路径也裁源，与 tools/list 同一份事实）。
-    if (deps.requester !== null) {
-      const catalog = await loadMergedCatalog(deps.pool, deps.org)
-      // 部门可见（P2 Task 4 接线）：与 list() 同一份 ctx——list 不列、call 也不解析（no-probe）。
-      const deptCtx = await deptContextIfOwned(deps.pool, deps.requester.tenantId, deps.requester, catalog)
-      const hit = legacyMetricTools(catalog, deps.requester, deps.adoptedSources, deptCtx).find((x) => x.tool.name === name)
-      if (hit !== undefined) {
-        const out = await runQuery(
-          {
-            pool: deps.pool, execute: deps.execute, warehouseExec: deps.wh ?? readonlyWh(),
-            adoptedSources: deps.adoptedSources, tool: name,
-          },
-          deps.org, deps.requester, hit.metricId, args,
-        )
-        return {
-          text: JSON.stringify(out), isError: out.status !== 'ok',
-          ...(out.status === 'ok' ? { structured: out as unknown as Record<string, unknown> } : {}),
-        }
-      }
-    }
-    // ③ 兼容回退（Wave 1 前的存量调用方用的是**裸指标 id**——含冒号、非 2025-11-25 合法工具名）：
-    //    sanitized 反解不中 ⇒ 把 name 当裸指标 id 走 runQuery（词表裁剪/主体钉死同链）。
-    //    未声明指标 ⇒ denied/metric_not_declared——与升级前逐字节同形，零回归。
-    if (deps.requester !== null) {
+    const hit = legacyMetricTools(catalog, deps.requester, deps.adoptedSources, deptCtx).find((x) => x.tool.name === name)
+    if (hit !== undefined) {
       const out = await runQuery(
         {
           pool: deps.pool, execute: deps.execute, warehouseExec: deps.wh ?? readonlyWh(),
           adoptedSources: deps.adoptedSources, tool: name,
         },
-        deps.org, deps.requester, name, args,
+        deps.org, deps.requester, hit.metricId, args,
       )
       return {
         text: JSON.stringify(out), isError: out.status !== 'ok',
         ...(out.status === 'ok' ? { structured: out as unknown as Record<string, unknown> } : {}),
       }
     }
-    return { text: JSON.stringify({ status: 'denied', reason: 'unauthenticated', name }), isError: true }
-  },
+  }
+  // ③ 兼容回退（Wave 1 前的存量调用方用的是**裸指标 id**）：sanitized 反解不中 ⇒ 当裸 id 走
+  //    runQuery（词表裁剪/主体钉死同链）。未声明指标 ⇒ denied/metric_not_declared。
+  if (deps.requester !== null) {
+    const out = await runQuery(
+      {
+        pool: deps.pool, execute: deps.execute, warehouseExec: deps.wh ?? readonlyWh(),
+        adoptedSources: deps.adoptedSources, tool: name,
+      },
+      deps.org, deps.requester, name, args,
+    )
+    return {
+      text: JSON.stringify(out), isError: out.status !== 'ok',
+      ...(out.status === 'ok' ? { structured: out as unknown as Record<string, unknown> } : {}),
+    }
+  }
+  return { text: JSON.stringify({ status: 'denied', reason: 'unauthenticated', name }), isError: true }
 }
 
+/** curated face 的 call：只允许分析师工具 + query_detail；**不回退 legacy/裸 id**。 */
+async function callCurated(
+  deps: McpDeps, name: string, args: Record<string, unknown>, face: McpFace,
+): Promise<McpToolResult> {
+  if (name === 'query_detail' && staticToolInFace(name, 'curated')) return callDetail(deps, args)
+  if (listAnalystTools().some((t) => t.name === name)) return callAnalyst(deps, name, args, face)
+  return unknownTool(name)
+}
+
+/** read face 的 call：只允许该面的只读工具；未知（含查询工具）⇒ unknown_tool。 */
+async function callRead(
+  deps: McpDeps, name: string, args: Record<string, unknown>, face: McpFace,
+): Promise<McpToolResult> {
+  const allowed = new Set(contractToolsForFace('read').map((t) => faceOf(t, 'mcp').name))
+  if (!allowed.has(name)) return unknownTool(name)
+  return callAnalyst(deps, name, args, face)
+}
+
+/** 三个 face 共用的协议壳（instructions / 分发结构只有这一份）。 */
+function makeToolset(face: McpFace): McpToolSet {
+  return {
+    serverName: face === 'full' ? 'platform-data-mcp' : `platform-data-mcp-${face}`,
+
+    // 惰性 + fail-soft：读契约/渲染失败时 initialize 不能 500（initialize 失败会让客户端直接连不上）；
+    // shared.md 缺失会在模块加载期 fail-fast（GUIDE_INVARIANTS 已 eager 加载）。
+    get instructions(): string {
+      try {
+        return renderInstructions()
+      } catch (e) {
+        console.warn('[data] mcp initialize.instructions 渲染失败（回退到内置硬约束）:', e instanceof Error ? e.message : e)
+        return ['平台数据 MCP：开始数据任务前先调用 data_agent_guide。', ...GUIDE_INVARIANTS].join('\n')
+      }
+    },
+
+    async list(deps) {
+      // full 保留 legacy（含词表裁剪 + 部门可见），read/curated 不碰 legacy。
+      if (face !== 'full') return listEntriesForFace(face, deps)
+      // M3 守卫拒掉的请求者：词表对其「看不见」——空 tools，不是报错。
+      if (deps.requester === null) return []
+      const catalog = await loadMergedCatalog(deps.pool, deps.org)
+      const deptCtx = await deptContextIfOwned(deps.pool, deps.requester.tenantId, deps.requester, catalog)
+      return [
+        ...legacyMetricTools(catalog, deps.requester, deps.adoptedSources, deptCtx).map((x) => x.tool),
+        ...listEntriesForFace('full', deps),
+      ]
+    },
+
+    async call(deps, name, args) {
+      if (face === 'full') return callFull(deps, name, args, face)
+      if (face === 'curated') return callCurated(deps, name, args, face)
+      return callRead(deps, name, args, face)
+    },
+  }
+}
+
+export const fullToolset: McpToolSet = makeToolset('full')
+export const readOnlyToolset: McpToolSet = makeToolset('read')
+export const curatedToolset: McpToolSet = makeToolset('curated')
+
 export function registerMcp(r: ModuleHono, ctx: RouteCtx): void {
-  registerMcpEndpoint(r, '/mcp', ctx, readToolset)
+  registerMcpEndpoint(r, '/mcp', ctx, fullToolset)
+}
+
+export function registerMcpRead(r: ModuleHono, ctx: RouteCtx): void {
+  registerMcpEndpoint(r, '/mcp-read', ctx, readOnlyToolset)
+}
+
+export function registerMcpCurated(r: ModuleHono, ctx: RouteCtx): void {
+  registerMcpEndpoint(r, '/mcp-curated', ctx, curatedToolset)
 }

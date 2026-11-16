@@ -60,6 +60,27 @@ export interface NotificationEventDecl {
   defaults?: { recipient: string; template: string; channels: string[] }
 }
 
+/**
+ * agent 能力网关的 MCP face 声明（2026-11-16 spec §5）。
+ * face = 模块暴露给 agent 的一「面」MCP 工具集，同一 group 内按 precedence 选面。
+ */
+export type McpAudience = 'mcp' | 'wecom'
+export type McpProfile = 'full' | 'c-manage'
+
+export interface McpFaceDecl {
+  face: string
+  group: string
+  /** 同一 group 内按 precedence 选面：**数字大的优先**（更高权限面） */
+  precedence: number
+  path: string
+  /** 只收 POST（face 是工具调用面）——与 schema 的 z.literal('POST') 成对；写 ApiMethod 会让
+   *  编译期双向断言失败（声明面比 schema 宽 = 类型在撒谎）。 */
+  method: 'POST'
+  scope: string
+  audiences: McpAudience[]
+  profile?: McpProfile
+}
+
 export interface ModuleManifest {
   id: string; name: string; version: string; platform: string
   permissions: Array<{ code: string; name: string; platformOnly?: boolean }>
@@ -101,6 +122,8 @@ export interface ModuleManifest {
      *  前端按 registry∩config∩scope 自判（与 console 三重过滤同构）。 */
     admin?: Array<{ path: string; title: string; icon?: string; scope: string; entry: string }> }
   migrations?: { dir: string }
+  /** agent MCP face 声明（2026-11-16 能力网关）：path 必须 ∈ api.internal 且 method/scope 一致 */
+  mcpFaces?: McpFaceDecl[]
   notifications?: { events: NotificationEventDecl[] }
 }
 
@@ -211,6 +234,18 @@ const ManifestObject = z.object({
     })).optional(),
   }).optional(),
   migrations: z.object({ dir: z.string() }).optional(),
+  // agent 能力网关（2026-11-16 spec §5.1）：method 只收 POST（face 是工具调用面，查询也走 POST）；
+  // 内层 .strict()：拼错字段名必须拒（与 ManifestObject.strict 同口径，不允许静默剥离）。
+  mcpFaces: z.array(z.object({
+    face: z.string().regex(/^[a-z][a-z0-9_-]*$/),
+    group: z.string().regex(/^[a-z][a-z0-9_-]*$/),
+    precedence: z.number().int().positive(),
+    path: z.string().regex(/^\/(?!$)/),
+    method: z.literal('POST'),
+    scope: z.string(),
+    audiences: z.array(z.enum(['mcp', 'wecom'])).min(1),
+    profile: z.enum(['full', 'c-manage']).optional(),
+  }).strict()).optional(),
   notifications: z.object({ events: z.array(EventDeclSchema) }).strict().optional(),
 // .strict()（issue #708，fix 分项）：未知键 ⇒ schema 拒 ⇒ 装载失败 / check-manifests 红。
 // 没 strict 时 Zod **静默剥离**未知键——「写了等于没写、且不报错」（曾让 dataDependencies
@@ -419,6 +454,78 @@ export const ManifestSchema = ManifestObject.superRefine((m, ctx) => {
         message: `defaults.recipient "${ev.defaults.recipient}" 必须已在 recipients 声明`,
       })
     }
+  }
+
+  // agent MCP face 声明（2026-11-16 能力网关 spec §5.3）：face 是网关可机械消费的声明面，
+  // 对不上 api.internal / permissions 就是「声明了一个到不了的面」，由 schema 承载 ⇒ 运行时
+  // 装载与 check-manifests 同时覆盖。
+  const faces = m.mcpFaces ?? []
+  const faceSeen = new Set<string>()
+  const byGroupAudience = new Map<string, Set<number>>()
+  const byPath = new Map<string, Array<{ audiences: readonly McpAudience[]; profile?: McpProfile }>>()
+  for (const [i, f] of faces.entries()) {
+    const p = ['mcpFaces', i]
+    if (faceSeen.has(f.face)) {
+      ctx.addIssue({ code: z.ZodIssueCode.custom, path: [...p, 'face'], message: `mcpFaces.face 重复：${f.face}` })
+    }
+    faceSeen.add(f.face)
+    const ep = m.api?.internal?.find((e) => e.path === f.path && e.method === f.method && e.scope === f.scope)
+    if (!ep) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: [...p, 'path'],
+        message: `mcpFaces ${f.face}: path/method/scope 未在 api.internal 声明`,
+      })
+    }
+    if (!m.permissions.some((pr) => pr.code === f.scope)) {
+      ctx.addIssue({ code: z.ZodIssueCode.custom, path: [...p, 'scope'], message: `mcpFaces ${f.face}: scope 不在 permissions` })
+    }
+    // audiences 自身不得重复：重复值会让下面的 precedence 检查对同一 (group,audience) 看两次，
+    // 报出误导性的「precedence 重复」。先按去重集判重，再用去重集做 precedence 检查。
+    const audienceSeen = new Set<McpAudience>()
+    for (const [j, a] of f.audiences.entries()) {
+      if (audienceSeen.has(a)) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          path: [...p, 'audiences', j],
+          message: `mcpFaces ${f.face}: audiences 不得重复（${a}）`,
+        })
+      }
+      audienceSeen.add(a)
+    }
+    for (const a of audienceSeen) {
+      const key = `${f.group}\0${a}`
+      const set = byGroupAudience.get(key) ?? new Set<number>()
+      if (set.has(f.precedence)) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          path: [...p, 'precedence'],
+          message: `mcpFaces (${f.group},${a}) precedence 重复：${f.precedence}`,
+        })
+      }
+      set.add(f.precedence)
+      byGroupAudience.set(key, set)
+    }
+    const pk = `${f.path}\0${f.method}\0${f.scope}`
+    const list = byPath.get(pk) ?? []
+    for (const other of list) {
+      if (other.audiences.some((a) => f.audiences.includes(a))) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          path: [...p, 'audiences'],
+          message: `mcpFaces ${f.face}: 同 path/method/scope 的 audiences 必须不相交`,
+        })
+      }
+      if ((other.profile ?? 'full') === (f.profile ?? 'full')) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          path: [...p, 'profile'],
+          message: `mcpFaces ${f.face}: 同 path/method/scope 的 profile 不得相同`,
+        })
+      }
+    }
+    list.push({ audiences: f.audiences, profile: f.profile })
+    byPath.set(pk, list)
   }
 })
 

@@ -851,6 +851,66 @@ dataDependencies:
 | **`enabledFor` 只能请求期门控** | **不触犯也不联动**：模块停用语义管的是「该租户看不看得到这个模块」，不管数据依赖；消费方停用提供方模块后的数据新鲜度属超周期场景——**已裁不做**（架构 §2.3 拍板④） |
 | **B4/B5 manifest** | 落地时 schema 收字段（`manifest.ts` 的编译期双向断言会强制接口与 zod 同步）；`check-manifests` 是否加文件存在性检查按需定——视图在**真库**里，不在仓里，文件存在性检查对它无意义 |
 
+## agent 能力面：mcpFaces（2026-11-16）
+
+> 设计正典：`docs/superpowers/specs/2026-11-16-agent-capability-gateway-design.md`（§5 face/校验、
+> §6 face 门与 scope 模型、§7 网关）；使用手册：`docs/agent-playbook.md`。
+> 本节写**模块接入视角**：怎么声明、校验什么、执法在哪。
+
+### 形状（manifest 顶层可选字段 `mcpFaces[]`）
+
+```yaml
+mcpFaces:
+  - face: read            # 唯一；^[a-z][a-z0-9_-]*$
+    group: agent          # 同 group 内按 precedence 选面
+    precedence: 1         # 正整数；同 (group, audience) 内数字大的优先（更高权限面）
+    path: /mcp-read       # 必须已在 api.internal 以 POST + 同 scope 声明
+    method: POST          # 只收 POST（face 是工具调用面，查询也走 POST）
+    scope: data:read      # face 最低权限，必须 ∈ permissions[].code
+    audiences: [mcp]      # mcp = PAT/会话；wecom = 渠道身份（openclaw）；至少一个，不得重复
+    profile: full         # 可选 ∈ {full, c-manage}；缺省 full
+```
+
+### 校验（schema 承载 ⇒ 装载与 `check-manifests` 同时覆盖；事实源 `packages/platform-sdk/src/manifest.ts` 的 `ManifestSchema` superRefine）
+
+- `path` 必须已在 `api.internal` 中以**同 `method`（POST）+ 同 `scope`** 声明——对不上就是
+  「声明了一个到不了的面」；
+- `scope` 必须 ∈ 本模块 `permissions[].code`（与 `api.internal[].scope` 同纪律）；
+- `face` 在模块内唯一；
+- 同 `(group, audience)` 内 `precedence` 不重复（不同 audience 可重复——notify 的 B/C 同
+  group 同 precedence 但 audience 不相交）；
+- 同 `(path, method, scope)` 允许多个 face **仅当** audiences 不相交**且** profile 不同
+  （notify 的 B full / C c-manage 就是唯一现例）；
+- `audiences` 值不得重复。
+
+### 装载与路由
+
+- face 的 `path` 经 `api.internal` 传递覆盖**装载期双向核对**：声明了 face 却没注册对应路由
+  ⇒ `api.internal` 与注册集合的差集让**装载失败**（起不来，不是告警）。
+- loader 把 `mcpFaces` 投影给网关（`apps/server/src/loader.ts` `mcpFaces()`）；网关对每个
+  `(module, group)` 取调用方有 scope、且 `audiences` 含当前通道的**最高 precedence** face。
+- 工具名 `<module>__<tool>`（发现期重名 ⇒ 报错，不静默去重）；内置发现工具
+  `agent__capabilities` 属网关，模块不得顶掉该名。
+
+### 执法分层（别把网关当授权边界）
+
+- **face 门是最低权限**：由宿主按 `api.internal` 的 scope 门卫施加（即 §门卫那套，无新增机制）。
+- face 内工具的 `requiredScope`（附加权限）由**模块** `tools/list`（按调用方投影）与
+  `callTool`（调用前再判，缺 ⇒ `missing_scope` + scope）执法——网关不做第二套授权、
+  不自行放行/拒绝任何业务工具。
+- 通道相关的更严策略（如 notify 的 C 档）由模块按 `identity.channel` 强制；网关的
+  `x-agent-profile` 只是发现视图，不是安全边界。
+
+### 现有声明（例子，以各 manifest 为准）
+
+- data：`read`（`/mcp-read`，`data:read`）/ `agent`（`/mcp-curated`，`data:query`）/
+  `manage`（`/mcp-manage`，`data:manage`，audiences `[mcp, wecom]`）；
+- notify：`read`（`/mcp`，`notify:view`）/ `manage`（`/mcp-manage`，`notify:manage`，
+  audiences `[mcp]`，profile full）/ `agent-manage`（同 path，audiences `[wecom]`，
+  profile c-manage）；
+- forms：`read`（`/mcp`，`forms:view`）/ `manage`（`/mcp-manage`，`forms:manage`，
+  audiences `[mcp, wecom]`）。
+
 ## 实现注意（踩过的坑，勿重蹈）
 
 门卫能不能生效，**取决于挂载方式**，与门卫自身的代码无关。三条已实证的 Hono 行为：
