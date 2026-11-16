@@ -39,6 +39,11 @@ export interface ToolboxWiring {
   wh?: SqlExecutor
   /** env 覆盖（测试确定性）；缺省 process.env。 */
   env?: Record<string, string | undefined>
+  /**
+   * 能力面（缺省 'full'）：/mcp 三个端点按 face 传，`data_harness_catalog` 据此标注 available。
+   * **展示**提示——执法仍是端点 face 门 + callTool，不靠它。
+   */
+  surface?: 'full' | 'curated' | 'read'
 }
 
 /**
@@ -60,5 +65,7 @@ export function buildToolboxDeps(base: ToolboxBase, wiring: ToolboxWiring = {}):
     exploreExec: (sql, params) => runWarehouseSqlParams(analystPool(), sql, params),
     dbtManifest: defaultDbtManifest(),
     allowMutating: mutatingAllowed(wiring.env ?? process.env),
+    // 缺省 full（POST /toolbox、agent-loop 等通道中性入口）：能力目录全 available。
+    surface: wiring.surface ?? 'full',
   }
 }

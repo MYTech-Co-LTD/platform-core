@@ -130,11 +130,16 @@ async function callDetail(deps: McpDeps, args: Record<string, unknown>): Promise
   return { text: JSON.stringify(out), isError: out.status !== 'ok' }
 }
 
-/** 分析师面固定工具：registry.callTool 单点分发（mutating 闸 + 工具级 scope + 审计）。 */
-async function callAnalyst(deps: McpDeps, name: string, args: Record<string, unknown>): Promise<McpToolResult> {
+/**
+ * 分析师面固定工具：registry.callTool 单点分发（mutating 闸 + 工具级 scope + 审计）。
+ * `surface` 只透传给 `data_harness_catalog` 的 available 标注（展示面）——不参与执法。
+ */
+async function callAnalyst(
+  deps: McpDeps, name: string, args: Record<string, unknown>, surface: McpFace,
+): Promise<McpToolResult> {
   const toolbox = buildToolboxDeps(
     { pool: deps.pool, org: deps.org, requester: deps.requester, adoptedSources: deps.adoptedSources },
-    { wh: deps.wh },
+    { wh: deps.wh, surface },
   )
   const out = await callTool(toolbox, name, args)
   return {
@@ -144,12 +149,14 @@ async function callAnalyst(deps: McpDeps, name: string, args: Record<string, unk
 }
 
 /** full face 的 call：现有逻辑逐字保留（静态下钻 → 分析师面 → legacy → 裸 id 回退）。 */
-async function callFull(deps: McpDeps, name: string, args: Record<string, unknown>): Promise<McpToolResult> {
+async function callFull(
+  deps: McpDeps, name: string, args: Record<string, unknown>, face: McpFace,
+): Promise<McpToolResult> {
   // ⓪ 静态下钻工具（query_detail）：排在 legacy / 裸 id 回退**之前**——词表里 sanitize 后
   //    恰为 query_detail 的指标名不得冒名顶替静态工具。
   if (name === 'query_detail') return callDetail(deps, args)
   // ① 分析师面固定工具。
-  if (listAnalystTools().some((t) => t.name === name)) return callAnalyst(deps, name, args)
+  if (listAnalystTools().some((t) => t.name === name)) return callAnalyst(deps, name, args, face)
   // ② legacy：sanitized 名反解回 metricId（与 list 同一 legacyMetricTools——无第二份映射）。
   if (deps.requester !== null) {
     const catalog = await loadMergedCatalog(deps.pool, deps.org)
@@ -188,17 +195,21 @@ async function callFull(deps: McpDeps, name: string, args: Record<string, unknow
 }
 
 /** curated face 的 call：只允许分析师工具 + query_detail；**不回退 legacy/裸 id**。 */
-async function callCurated(deps: McpDeps, name: string, args: Record<string, unknown>): Promise<McpToolResult> {
+async function callCurated(
+  deps: McpDeps, name: string, args: Record<string, unknown>, face: McpFace,
+): Promise<McpToolResult> {
   if (name === 'query_detail' && staticToolInFace(name, 'curated')) return callDetail(deps, args)
-  if (listAnalystTools().some((t) => t.name === name)) return callAnalyst(deps, name, args)
+  if (listAnalystTools().some((t) => t.name === name)) return callAnalyst(deps, name, args, face)
   return unknownTool(name)
 }
 
 /** read face 的 call：只允许该面的只读工具；未知（含查询工具）⇒ unknown_tool。 */
-async function callRead(deps: McpDeps, name: string, args: Record<string, unknown>): Promise<McpToolResult> {
+async function callRead(
+  deps: McpDeps, name: string, args: Record<string, unknown>, face: McpFace,
+): Promise<McpToolResult> {
   const allowed = new Set(contractToolsForFace('read').map((t) => faceOf(t, 'mcp').name))
   if (!allowed.has(name)) return unknownTool(name)
-  return callAnalyst(deps, name, args)
+  return callAnalyst(deps, name, args, face)
 }
 
 /** 三个 face 共用的协议壳（instructions / 分发结构只有这一份）。 */
@@ -231,9 +242,9 @@ function makeToolset(face: McpFace): McpToolSet {
     },
 
     async call(deps, name, args) {
-      if (face === 'full') return callFull(deps, name, args)
-      if (face === 'curated') return callCurated(deps, name, args)
-      return callRead(deps, name, args)
+      if (face === 'full') return callFull(deps, name, args, face)
+      if (face === 'curated') return callCurated(deps, name, args, face)
+      return callRead(deps, name, args, face)
     },
   }
 }

@@ -1,7 +1,7 @@
 // guide.ts —— data_agent_guide / data_harness_catalog（spec §5 前两行）。
 // guide 文案是三通道同源的正典落点（Wave 2 的 A SYSTEM_PROMPT 与 C SKILL.md 从这里取）；
 // Wave 1 只接 B 通道。今天日期由 deps.now 注入（Asia/Shanghai 日历日）——测试不必改时钟。
-import { ANALYST_TOOLS, type ToolImpl } from './registry'
+import { ANALYST_TOOLS, READ_SCOPE, type ToolImpl } from './registry'
 import { guideInvariants, renderSkill } from '../../skill/render'
 
 /**
@@ -48,14 +48,23 @@ export const guideImpl: ToolImpl = async (deps) => {
   }
 }
 
-export const harnessCatalogImpl: ToolImpl = async () => ({
-  payload: {
-    status: 'ok',
-    tools: ANALYST_TOOLS.map((t) => ({
-      name: t.name, group: t.group, title: t.title, description: t.description,
-      requiredScope: t.requiredScope, mutating: t.mutating, annotations: t.annotations,
-    })),
-  },
-  isError: false,
-  auditRowCount: null,
-})
+export const harnessCatalogImpl: ToolImpl = async (deps) => {
+  // `surface` 是**展示**提示（缺省 full）：read 面上 faceScope=data:query 的工具标成
+  // available:false（locked 展示，供调用方 step-up 申请权限）；full/curated 全可用。
+  // 执法不在这里（端点 face 门 + callTool 单点），本 impl 只映射元数据、不触库不触仓库。
+  const surface = deps.surface ?? 'full'
+  const surfaceAllowsAll = surface === 'full' || surface === 'curated'
+  return {
+    payload: {
+      status: 'ok',
+      tools: ANALYST_TOOLS.map((t) => ({
+        name: t.name, group: t.group, title: t.title, description: t.description,
+        requiredScope: t.requiredScope, faceScope: t.faceScope,
+        available: surfaceAllowsAll || t.faceScope === READ_SCOPE,
+        mutating: t.mutating, annotations: t.annotations,
+      })),
+    },
+    isError: false,
+    auditRowCount: null,
+  }
+}

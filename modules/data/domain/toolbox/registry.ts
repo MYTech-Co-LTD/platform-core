@@ -138,6 +138,11 @@ export interface ToolboxDeps {
   exploreExec?: (sql: string, params: readonly unknown[]) => Promise<{ columns: string[]; rows: unknown[][] }>
   /** 写开关（缺省 false=关）。 */
   allowMutating?: boolean
+  /**
+   * 能力面（**展示**提示，缺省 'full'）：`data_harness_catalog` 用它标注 `available`
+   * （read 面上 query 类工具 locked）。执法不在这里——端点 face 门 + `callTool` 才是。
+   */
+  surface?: 'full' | 'curated' | 'read'
   /** 血缘/质量 seam（缺省 = health.ts 的 defaultDbtManifest 读 env 路径；测试注入）。 */
   dbtManifest?: () => Promise<unknown>
   /** 时钟（测试注入）。 */
