@@ -410,7 +410,7 @@ export function createFormsRouter({
       const reason = typeof body?.reason === 'string' ? body.reason : ''
       if (sub.caseRef !== null) {
         const engine = await engineOrThrow(identity.orgId)
-        await engine.withdraw(sub.caseRef, { org: identity.orgId, actor: identity.userId, reason })
+        await engine.withdraw(sub.caseRef, identity.orgId, { actor: identity.userId, reason })
       }
       await store.markWithdrawn(pool, identity.orgId, id, identity.userId)
       await store.audit(pool, identity.orgId, identity.userId, 'approval.withdraw', id, {
@@ -477,7 +477,7 @@ export function createFormsRouter({
       let caseDetail: unknown = null
       let engineError: string | null = null
       try {
-        caseDetail = await (await engineOrThrow(identity.orgId)).getCase(caseId)
+        caseDetail = await (await engineOrThrow(identity.orgId)).getCase(caseId, identity.orgId)
       } catch (e) {
         engineError = (e as FormsError).code ?? 'ENGINE_UNAVAILABLE'
       }
@@ -527,7 +527,7 @@ export function createFormsRouter({
       if (sub === null) return fail(c, 404, 'SUBMISSION_NOT_FOUND')
       if (sub.status !== 'pending_approval') return fail(c, 409, 'NOT_PENDING', `该提交已是终态（${sub.status}）`)
       const engine = await engineOrThrow(identity.orgId)
-      const caseDetail = await engine.getCase(caseId)
+      const caseDetail = await engine.getCase(caseId, identity.orgId)
       const current = currentNodeOf(caseDetail)
       if (current === null) return fail(c, 409, 'ENGINE_NO_CURRENT_NODE', '引擎未返回当前节点')
       const requested = typeof body?.nodeKey === 'string' ? body.nodeKey : ''
@@ -538,7 +538,7 @@ export function createFormsRouter({
       if (!approversOfNode(sub.plan, current).includes(identity.userId)) {
         return fail(c, 403, 'FORBIDDEN', `你不是节点 ${current} 的审批人`)
       }
-      await engine.decide(caseId, {
+      await engine.decide(caseId, identity.orgId, {
         nodeKey: current,
         action,
         decidedBy: identity.userId,
@@ -594,7 +594,7 @@ export function createFormsRouter({
         try {
           const link = typeof raw.link === 'string' && raw.link.length > 0
             ? raw.link
-            : `${process.env.PLATFORM_CONSOLE_BASE_URL ?? ''}/m/oa/${caseId}`
+            : `${process.env.PLATFORM_CONSOLE_BASE_URL ?? ''}/m/oa/approvals/${encodeURIComponent(caseId)}`
           await notify.emit(identity, {
             eventKey: 'forms.approval.decided',
             eventId: `forms:submission:${updated.id}:decided`,

@@ -28,26 +28,45 @@ describe('createEngineClient', () => {
     expect(JSON.parse(String(calls[0].init.body))).toEqual({ org: 'acme', externalRef: 'forms:submission:1' })
   })
 
-  it('getCase / listCases / decide / withdraw 路径与查询编码', async () => {
+  it('getCase / listCases / decide / withdraw 路径与查询编码，且每次调用都携 org', async () => {
     const urls: string[] = []
+    const bodies: unknown[] = []
     const client = createEngineClient({
       baseUrl: 'http://e',
       pat: 'p',
-      fetchFn: (async (url: string) => {
+      fetchFn: (async (url: string, init?: RequestInit) => {
         urls.push(url)
+        bodies.push(init?.body === undefined ? undefined : JSON.parse(String(init.body)))
         return json({ ok: true })
       }) as never,
     })
-    await client.getCase('c/1')
-    await client.listCases({ externalRef: 'forms:submission:1', status: 'gate' })
-    await client.decide('c1', { nodeKey: 'leader', action: 'approve' })
-    await client.withdraw('c1', { org: 'acme', actor: 'u1', reason: '不想请了' })
-    expect(urls[0]).toBe('http://e/cases/c%2F1')
+    await client.getCase('c/1', 'acme')
+    await client.listCases('acme', { externalRef: 'forms:submission:1', status: 'gate' })
+    await client.decide('c1', 'acme', { nodeKey: 'leader', action: 'approve' })
+    await client.withdraw('c1', 'acme', { actor: 'u1', reason: '不想请了' })
+    expect(urls[0]).toBe('http://e/cases/c%2F1?org=acme')
     expect(urls[1]).toContain('http://e/cases?')
     expect(urls[1]).toContain('externalRef=forms%3Asubmission%3A1')
     expect(urls[1]).toContain('status=gate')
+    expect(urls[1]).toContain('org=acme')
     expect(urls[2]).toBe('http://e/cases/c1/decision')
     expect(urls[3]).toBe('http://e/cases/c1/withdraw')
+    // 写面：org 在 body（T9：引擎校验后才推进）
+    expect(bodies[2]).toMatchObject({ nodeKey: 'leader', action: 'approve', org: 'acme' })
+    expect(bodies[3]).toMatchObject({ actor: 'u1', reason: '不想请了', org: 'acme' })
+  })
+
+  it('org 由显式入参决定，body 里的同名字段不能覆盖（防串租户）', async () => {
+    let body: unknown
+    const client = createEngineClient({
+      baseUrl: 'http://e', pat: 'p',
+      fetchFn: (async (_url: string, init: RequestInit) => {
+        body = JSON.parse(String(init.body))
+        return json({ ok: true })
+      }) as never,
+    })
+    await client.decide('c1', 'acme', { action: 'approve', org: 'beta' })
+    expect(body).toMatchObject({ action: 'approve', org: 'acme' })
   })
 
   it('非 2xx → EngineHttpError 保留 status（409 = 已决策，不是平台故障）', async () => {
@@ -55,8 +74,8 @@ describe('createEngineClient', () => {
       baseUrl: 'http://e', pat: 'p',
       fetchFn: (async () => json({ error: 'already decided' }, 409)) as never,
     })
-    await expect(client.withdraw('c1', {})).rejects.toMatchObject({ code: 'ENGINE_HTTP_ERROR', status: 409 })
-    await expect(client.withdraw('c1', {})).rejects.toBeInstanceOf(EngineHttpError)
+    await expect(client.withdraw('c1', 'acme', {})).rejects.toMatchObject({ code: 'ENGINE_HTTP_ERROR', status: 409 })
+    await expect(client.withdraw('c1', 'acme', {})).rejects.toBeInstanceOf(EngineHttpError)
   })
 
   it('网络失败 → ENGINE_UNAVAILABLE（502 面）', async () => {
@@ -64,7 +83,7 @@ describe('createEngineClient', () => {
       baseUrl: 'http://e', pat: 'p',
       fetchFn: (async () => { throw new Error('ECONNREFUSED') }) as never,
     })
-    await expect(client.getCase('c1')).rejects.toMatchObject({ code: 'ENGINE_UNAVAILABLE' })
+    await expect(client.getCase('c1', 'acme')).rejects.toMatchObject({ code: 'ENGINE_UNAVAILABLE' })
   })
 })
 
@@ -112,8 +131,8 @@ describe('makeOaEngineResolver（宿主 OaEnginePort 优先）', () => {
     })
     const client = await resolver('acme')
     expect(client).not.toBeNull()
-    await client!.getCase('c1')
-    expect(urls[0]).toBe('http://port-engine/cases/c1')
+    await client!.getCase('c1', 'acme')
+    expect(urls[0]).toBe('http://port-engine/cases/c1?org=acme')
     expect(auths[0]).toBe('Bearer port-pat')
   })
 

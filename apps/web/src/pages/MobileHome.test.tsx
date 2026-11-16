@@ -37,8 +37,39 @@ describe('移动端业务工作台', () => {
     expect(screen.getByText(/需要管理员为你开通对应权限/)).toBeInTheDocument()
   })
 
+  it('持 forms:view 且 forms 模块启用 ⇒ 出现「待我审批」入口（本产物内 SPA 路由）', async () => {
+    m.mockImplementation(async (input: string) => {
+      if (input === '/api/platform/me/apps') return json({ apps: [] })
+      if (input === '/api/platform/auth/session') return json({ scopes: ['forms:view', 'forms:fill'] })
+      if (input === '/api/platform/config') return json({ modules: [{ id: 'forms' }] })
+      throw new Error('unexpected platformFetch: ' + input)
+    })
+    renderPage()
+    const link = await screen.findByRole('link', { name: /待我审批/ })
+    expect(link).toHaveAttribute('href', '/m/oa/approvals')
+  })
+
+  it('无 forms:view ⇒ 不出现 OA 入口；空态文案保持不变', async () => {
+    m.mockImplementation(async (input: string) => {
+      if (input === '/api/platform/me/apps') return json({ apps: [] })
+      if (input === '/api/platform/auth/session') return json({ scopes: ['demo:view'] })
+      if (input === '/api/platform/config') return json({ modules: [{ id: 'forms' }] })
+      throw new Error('unexpected platformFetch: ' + input)
+    })
+    renderPage()
+    expect(await screen.findByText(/暂无可用的业务应用/)).toBeInTheDocument()
+    expect(screen.queryByRole('link', { name: /待我审批/ })).toBeNull()
+  })
+
   it('匿名 401 ⇒ 去登录并回跳 /m', async () => {
     m.mockResolvedValue(json({ error: 'UNAUTHENTICATED' }, 401))
+    renderPage()
+    const link = await screen.findByRole('link', { name: '去登录' })
+    expect(link).toHaveAttribute('href', '/login?next=/m')
+  })
+
+  it('platformFetch 抛 UNAUTHENTICATED（真 401 的实现形态）⇒ 同样是登录引导，不卡骨架屏', async () => {
+    m.mockRejectedValue(new Error('UNAUTHENTICATED'))
     renderPage()
     const link = await screen.findByRole('link', { name: '去登录' })
     expect(link).toHaveAttribute('href', '/login?next=/m')
