@@ -4,12 +4,18 @@ import { describe, it, expect, beforeAll, afterAll, beforeEach } from 'vitest'
 import { Hono } from 'hono'
 import { Pool } from 'pg'
 import { REQUESTER_CHANNEL } from '@platform/sdk'
-import type { ChannelAddressResolver, Identity, NotificationEventDecl, RequesterVars } from '@platform/sdk'
+import type {
+  ChannelAddressResolver, Identity, NotificationEventDecl, RequesterVars,
+  SchedulerPortFactory, SchedulerPortLike,
+} from '@platform/sdk'
 import notifyV2 from './index'
 import { callTool, toolDefs } from './mcp'
 import { NOTIFY_TOOLS } from './mcp-tools'
 import { createAgentNamespace, getTemplate, upsertEventDecl } from './storage'
 import { applyMigrations, buildTestApp, makeIdentity } from './test-util'
+
+/** 通知工具的 requiredScope 全集（B 的 full 面要看到全部 24 个）。 */
+const ALL_SCOPES = ['notify:view', 'notify:manage', 'notify:publish', 'notify:emit']
 
 const url = process.env.DATABASE_URL
 const describePg = url ? describe : describe.skip
@@ -29,14 +35,14 @@ const addresses: ChannelAddressResolver = {
 describe('notify mcp tool face', () => {
   it('恰 24 个工具，无 publish/channel', () => {
     expect(NOTIFY_TOOLS).toHaveLength(24)
-    expect(toolDefs({ channel: 'pat' })).toHaveLength(24)
+    expect(toolDefs({ channel: 'pat', scopes: ALL_SCOPES })).toHaveLength(24)
     expect(NOTIFY_TOOLS.some((t) => /publish|channel/.test(t.name))).toBe(false)
   })
 
   it('B（pat/session）仍 24；C（wecom）只见 agent-safe 子集', () => {
-    expect(toolDefs({ channel: 'pat' })).toHaveLength(24)
-    expect(toolDefs({ channel: 'session' })).toHaveLength(24)
-    const names = toolDefs({ channel: 'wecom' }).map((t) => t.name)
+    expect(toolDefs({ channel: 'pat', scopes: ALL_SCOPES })).toHaveLength(24)
+    expect(toolDefs({ channel: 'session', scopes: ALL_SCOPES })).toHaveLength(24)
+    const names = toolDefs({ channel: 'wecom', scopes: ALL_SCOPES }).map((t) => t.name)
     expect(names).toContain('create_agent_rule')
     expect(names).toContain('create_agent_template')
     expect(names).toContain('send_message')
@@ -48,13 +54,22 @@ describe('notify mcp tool face', () => {
   })
 
   it('读面（mode=read）只投影非 mutating 工具', () => {
-    const defs = toolDefs({ channel: 'pat', mode: 'read' })
+    const defs = toolDefs({ channel: 'pat', mode: 'read', scopes: ALL_SCOPES })
     const names = defs.map((t) => t.name)
     expect(names).toContain('list_rules')
     expect(names).toContain('list_schedules')
     expect(names).not.toContain('propose_rule')
     expect(names).not.toContain('send_test')
     expect(defs).toHaveLength(NOTIFY_TOOLS.filter((t) => !t.mutating).length)
+  })
+
+  it('读面按 requiredScope 裁剪：notify:view 看不到 preview_template', () => {
+    const names = toolDefs({
+      channel: 'pat', mode: 'read', scopes: ['notify:view'],
+    }).map((t) => t.name)
+    expect(names).toContain('list_rules')
+    expect(names).toContain('list_events')
+    expect(names).not.toContain('preview_template')
   })
 })
 
@@ -397,6 +412,52 @@ describePg('notify mcp handlers', () => {
     expect((JSON.parse(out.text) as { reason: string }).reason).toBe('read_only_tool_not_allowed')
   })
 
+  it('notify:view 直连 preview_template ⇒ missing_scope（不只靠 tools/list 裁剪）', async () => {
+    const out = await callTool({
+      ...deps(), mode: 'read', scopes: ['notify:view'],
+    }, 'preview_template', { key: 't1', payload: { u: 'u1', link: 'https://x' } })
+    expect(out.isError).toBe(true)
+    expect(JSON.parse(out.text)).toMatchObject({
+      reason: 'missing_scope', scope: 'notify:manage',
+    })
+  })
+
+  it('C 的排班工具也钉 namespace：忽略模型传的 namespace', async () => {
+    const ns = 'openclaw_acme'
+    await createAgentNamespace(pool, ORG, {
+      namespace: ns, displayName: 'Openclaw', ownerUserId: 'u1',
+    })
+    const seen: Array<string | undefined> = []
+    const scheduler = ((actor: { namespace?: string }) => {
+      seen.push(actor.namespace)
+      return {
+        listSchedules: async () => [],
+      } as unknown as SchedulerPortLike
+    }) as SchedulerPortFactory
+
+    process.env.NOTIFY_WECOM_NAMESPACE = ns
+    try {
+      const out = await callTool({ ...depsCh('wecom'), scheduler }, 'list_schedules', {
+        namespace: 'someone-elses', // 必须被覆盖为钉死值
+      })
+      expect(out.isError).toBe(false)
+      expect(JSON.parse(out.text)).toMatchObject({ namespace: ns })
+      expect(seen).toEqual([ns])
+    } finally {
+      delete process.env.NOTIFY_WECOM_NAMESPACE
+    }
+  })
+
+  it('C 的排班工具：未配 NOTIFY_WECOM_NAMESPACE ⇒ namespace_unconfigured', async () => {
+    delete process.env.NOTIFY_WECOM_NAMESPACE
+    const out = await callTool(depsCh('wecom'), 'list_schedules', { namespace: 'someone-elses' })
+    expect(out.isError).toBe(true)
+    expect((JSON.parse(out.text) as { reason: string }).reason).toBe('namespace_unconfigured')
+
+    // 非排班工具不受影响（list_events 不读 namespace）。
+    expect((await callTool(depsCh('wecom'), 'list_events', {})).isError).toBe(false)
+  })
+
   it('wecom create_agent_rule 落 pending，namespace 被钉死（忽略参数）', async () => {
     const ns = 'openclaw_acme'
     await createAgentNamespace(pool, ORG, {
@@ -514,7 +575,7 @@ describePg('notify mcp handlers', () => {
   it('JSON-RPC /mcp-manage tools/list 返回 24 工具', async () => {
     const app = buildTestApp(
       notifyV2,
-      makeIdentity({ orgId: ORG, userId: 'u1', scopes: ['notify:manage'] }),
+      makeIdentity({ orgId: ORG, userId: 'u1', scopes: ['notify:manage', 'notify:emit'] }),
       { pool, events, addresses },
     )
     const res = await app.request('/mcp-manage', {

@@ -13,7 +13,7 @@ import { createAgentRule, createAgentTemplate, sendAgentMessage } from './agent-
 import { C_SAFE_TOOLS, NOTIFY_TOOLS, toolsForChannel } from './mcp-tools'
 import type { NotifyChannel } from './mcp-tools'
 import { channelIsConfigured } from './domain/channel-config'
-import { callScheduleTool } from './tools/schedules'
+import { callScheduleTool, isScheduleTool } from './tools/schedules'
 import { resolveDeliverability } from './domain/deliverability'
 import { resolveDeliveryAddress } from './domain/resolve-address'
 import { renderContents } from './domain/render'
@@ -83,11 +83,16 @@ async function resolveDecl(deps: McpDeps, key: string): Promise<NotificationEven
     : deps.events?.get(key) ?? null
 }
 
-export function toolDefs(deps: Pick<McpDeps, 'channel' | 'mode'>): ToolDef[] {
+export function toolDefs(deps: Pick<McpDeps, 'channel' | 'mode' | 'scopes'>): ToolDef[] {
+  const scopes = deps.scopes ?? []
   const metas = toolsForChannel(deps.channel)
   // 读面（/mcp）：只投影非 mutating（spec §5.2）。channel 过滤先做——wecom 直连读面也
   // 不能越过 C 档（虽然非 mutating 集本就是 C-safe 子集）。
-  const visible = deps.mode === 'read' ? metas.filter((t) => !t.mutating) : metas
+  const nonMutating = deps.mode === 'read' ? metas.filter((t) => !t.mutating) : metas
+  // 工具级 scope（spec §6.2）：tools/list 只回调用方满足 requiredScope 的工具。
+  // 例：preview_template 只读但要求 notify:manage，notify:view 的读面不应看到它。
+  const visible = nonMutating
+    .filter((t) => t.requiredScope === null || scopes.includes(t.requiredScope))
   return visible.map(({ name, description, inputSchema }) => ({ name, description, inputSchema }))
 }
 
@@ -96,15 +101,30 @@ export async function callTool(
   name: string,
   args: Record<string, unknown>,
 ): Promise<McpToolResult> {
+  const meta = NOTIFY_TOOLS.find((t) => t.name === name)
   // C 档执法（spec §6.4）：**按 identity.channel，不按 profile/头**。直连模块、伪造
   // `x-agent-profile: full`、或网关头缺失，都在这里被拒。
   if (deps.channel === 'wecom' && !C_SAFE_TOOLS.has(name)) {
     return err('c_tool_not_allowed', { tool: name })
   }
+  // 工具级 scope 执法（spec §6.2）：tools/list 已裁剪，直连调用也必须拦
+  // （例：只有 notify:view 的调用方不能 preview_template）。
+  if (meta && meta.requiredScope !== null
+      && !(deps.scopes ?? []).includes(meta.requiredScope)) {
+    return err('missing_scope', { scope: meta.requiredScope })
+  }
   // 读面只接受非 mutating 工具（工具级错误，与 MCP 的 isError 形态一致）。
-  if (deps.mode === 'read') {
-    const meta = NOTIFY_TOOLS.find((t) => t.name === name)
-    if (!meta || meta.mutating) return err('read_only_tool_not_allowed', { tool: name })
+  if (deps.mode === 'read' && (!meta || meta.mutating)) {
+    return err('read_only_tool_not_allowed', { tool: name })
+  }
+
+  // C 档：排班工具的 namespace 同样钉死（漏掉这里，模型仍可用 create_schedule 等
+  // 选别的自己拥有的 namespace）。缺失环境配置 ⇒ fail-closed，不回落 org。
+  let scheduleArgs = args
+  if (deps.channel === 'wecom' && isScheduleTool(name)) {
+    const pinned = (process.env.NOTIFY_WECOM_NAMESPACE ?? '').trim()
+    if (!pinned) return err('namespace_unconfigured')
+    scheduleArgs = { ...args, namespace: pinned }
   }
 
   // 排班工具（W6-P3 + N4）：actor 从调用者身份成形；namespace 归属/事件声明/payload
@@ -129,7 +149,7 @@ export async function callTool(
       validatePayload: (decl, payload) => validatePayload(decl, payload),
     },
     name,
-    args,
+    scheduleArgs,
   )
   if (schedule) return schedule
 
