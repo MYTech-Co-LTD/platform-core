@@ -11,6 +11,13 @@
 
 ## [Unreleased]
 
+## [0.313.0](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.312.1...v0.313.0) - 2026-11-16
+- 【新增】data: 采集流程合并连续同型节点（96 个 page 并成「取数 × 96」）(#2397) ([#2409](https://github.com/MYTech-Co-LTD/platform-core/pull/2409), [888ce7d](https://github.com/MYTech-Co-LTD/platform-core/commit/888ce7d72022ddd91298690b6ac60b81b3ddc914))
+- 【新增】oa: 企微标准审批回调路由与 forms 镜像端口（#2385） ([#2403](https://github.com/MYTech-Co-LTD/platform-core/pull/2403), [0f0ec8f](https://github.com/MYTech-Co-LTD/platform-core/commit/0f0ec8f18e9fdc78ab9856623a8d920b45f7ce7c))
+- 【新增】forms: 标准审批镜像列表/导出/agent 选模板（#2385） ([#2402](https://github.com/MYTech-Co-LTD/platform-core/pull/2402), [c98f28e](https://github.com/MYTech-Co-LTD/platform-core/commit/c98f28e3be4d839a2911c3a8d4a5b78ea3fd3dbc))
+- 【新增】oa: 标准审批小时级对账（#2385） ([#2399](https://github.com/MYTech-Co-LTD/platform-core/pull/2399), [f096e8d](https://github.com/MYTech-Co-LTD/platform-core/commit/f096e8d236df5a61c17b6815136f5f5f246303c7))
+
+
 ## [0.312.1](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.312.0...v0.312.1) - 2026-11-16
 - 【修复】data: pre_hook 改无条件运行时窗口（is_incremental 解析期恒 false） ([#2406](https://github.com/MYTech-Co-LTD/platform-core/pull/2406), [ba359c4](https://github.com/MYTech-Co-LTD/platform-core/commit/ba359c47932443cf982934bc9aa11f55a168324a))
 
