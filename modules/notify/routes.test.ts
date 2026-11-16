@@ -974,6 +974,60 @@ describePg('routes v2', () => {
     // pat/session 行为不变：默认 app 仍可 restore。
     expect((await app.request(path, init)).status).toBe(200)
   })
+
+  it('事件声明：C（wecom+notify:manage）可写 service-owned namespace；pat 无 publish 被拒', async () => {
+    const ns = 'openclaw_acme'
+    expect(await ensureServiceNamespace(pool, ORG, ns)).toMatchObject({ ok: true })
+    const declBody = (key: string) => ({
+      key, title: 'W',
+      payload: { user: { type: 'user', required: true } },
+      recipients: { assignee: { kind: 'field', field: 'user' } },
+    })
+    const postDecl = (a: ReturnType<typeof buildChannelApp>, key: string) => a.request('/agent/events', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify(declBody(key)),
+    })
+
+    process.env.NOTIFY_WECOM_NAMESPACE = ns
+    try {
+      // C：wecom + notify:manage ⇒ 可声明自己钉死 namespace 的事件。
+      expect((await postDecl(
+        buildChannelApp('wecom', ['notify:view', 'notify:manage']),
+        `ext.${ns}.weekly`,
+      )).status).toBe(201)
+
+      // 非钉死 namespace（wecom）⇒ 拒绝（不能声明到别的 service namespace）。
+      const wrongNs = await postDecl(
+        buildChannelApp('wecom', ['notify:view', 'notify:manage']), 'ext.other_ns.weekly')
+      expect(wrongNs.status).toBe(403)
+    } finally {
+      delete process.env.NOTIFY_WECOM_NAMESPACE
+    }
+
+    // pat 无 notify:publish ⇒ 拒绝。
+    const denied = await postDecl(
+      buildChannelApp('pat', ['notify:view', 'notify:manage']), `ext.${ns}.weekly`)
+    expect(denied.status).toBe(403)
+    expect(await denied.json()).toMatchObject({ error: 'AGENT_NAMESPACE_FORBIDDEN' })
+
+    // 持 notify:publish 的人可管理（同 schema 更新 ⇒ 200）。
+    expect((await postDecl(
+      buildChannelApp('pat', ['notify:view', 'notify:manage', 'notify:publish']),
+      `ext.${ns}.weekly`,
+    )).status).toBe(200)
+
+    // human namespace 仍按 owner：publish 持有人但不是 owner ⇒ 拒；owner 可写。
+    expect((await post('/agent/namespaces', { namespace: 'human_ns' })).status).toBe(201)
+    expect((await postDecl(
+      buildChannelApp('pat', ['notify:view', 'notify:manage', 'notify:publish']),
+      'ext.human_ns.weekly',
+    )).status).toBe(403)
+    expect((await postDecl(
+      buildChannelApp('pat', ['notify:view', 'notify:manage']),
+      'ext.human_ns.weekly',
+    )).status).toBe(201)
+  })
 })
 
 // ── 部门收件人（组织架构 Phase C；spec 2026-10-30 §3.5；#1174）──────────────────────

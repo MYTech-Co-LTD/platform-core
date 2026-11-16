@@ -40,7 +40,7 @@ import {
   setAgentNamespacePolicy, setChannelHealth, setRuleEnabled, updateRule, upsertEventDecl,
   upsertRule,
 } from './storage'
-import type { RuleInput } from './storage'
+import type { AgentNamespaceRow, RuleInput } from './storage'
 
 // 请求者通道（PAT/企微）求交在 Variables **内层**——照 data 的 ModuleVars 写法；
 // 写成 `{ identity } & RequesterVars` 会把键搁到 Env 顶层，`c.get(REQUESTER_CHANNEL)`
@@ -75,6 +75,28 @@ export function createNotifyRouter(deps: {
     const ns = await getAgentNamespace(deps.pool, o, namespace)
     if (ns === null || ns.status !== 'active') return false
     if (ns.serviceOwned) return identity.hasScope('notify:publish')
+    return ns.ownerUserId === identity.userId
+  }
+
+  /**
+   * 单个 namespace 的**事件声明**写权限（N1）。
+   *
+   * service-owned（C 的钉死 namespace，owner = `system:openclaw`）不对任何真实用户
+   * 匹配 owner，因此必须按通道/权限判：C（wecom + notify:manage）可声明自己钉死
+   * namespace 的事件，持 notify:publish 的人也可管理。human namespace 仍按 owner。
+   *
+   * ⚠️ 不要拿它替换 enable/restore 的 publish 门：那两道门比这里更严（见 `ownsNamespace`）。
+   */
+  const canWriteNamespace = (
+    ns: AgentNamespaceRow | null,
+    identity: Identity,
+    channel: 'pat' | 'session' | 'wecom',
+  ): boolean => {
+    if (ns === null || ns.status !== 'active') return false
+    if (ns.serviceOwned) {
+      return (channel === 'wecom' && identity.hasScope('notify:manage'))
+        || identity.hasScope('notify:publish')
+    }
     return ns.ownerUserId === identity.userId
   }
 
@@ -328,6 +350,8 @@ export function createNotifyRouter(deps: {
     if (!body || typeof body.enabled !== 'boolean') return c.json({ error: 'RULE_INVALID_BODY' }, 400)
     const identity = c.get('identity') as Identity
     // C（wecom）不能启用规则：必须由持 notify:publish 的人操作（C 角色不授该码）。
+    // **刻意的不对称**：`enabled=false` 也走这道门（C 不能用 PUT 停用），停用请走
+    // DELETE `/rules/:id`（更高权限面）；这样 PUT 对 C 恒不可用，语义只有一条。
     if (requesterChannel(c) === 'wecom' && !identity.hasScope('notify:publish')) {
       return c.json({ error: 'NOTIFY_PUBLISH_REQUIRED' }, 403)
     }
@@ -844,10 +868,20 @@ export function createNotifyRouter(deps: {
     }
     const namespace = parts[1]
     const identity = c.get('identity') as Identity
+    const channel = requesterChannel(c)
+    // C（wecom）：事件只能声明在部署钉死的 service namespace 上；先 ensure（幂等），
+    // 这样不需要任何真实用户「拥有」该 namespace 也能闭环声明。
+    if (channel === 'wecom') {
+      const pinned = await wecomPinnedNamespace(identity.orgId)
+      if (!pinned.ok) return c.json({ error: pinned.code }, pinned.status)
+      if (namespace !== pinned.namespace) {
+        return c.json({ error: 'AGENT_NAMESPACE_FORBIDDEN' }, 403)
+      }
+    }
     const ns = await getAgentNamespace(deps.pool, identity.orgId, namespace)
     if (!ns) return c.json({ error: 'AGENT_NAMESPACE_NOT_FOUND' }, 404)
     if (ns.status !== 'active') return c.json({ error: 'AGENT_NAMESPACE_DISABLED' }, 409)
-    if (ns.ownerUserId !== identity.userId) {
+    if (!canWriteNamespace(ns, identity, channel)) {
       return c.json({ error: 'AGENT_NAMESPACE_FORBIDDEN' }, 403)
     }
 

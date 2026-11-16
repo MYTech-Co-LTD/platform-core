@@ -1266,6 +1266,7 @@ git commit -m "docs(openclaw): 平台能力元工具 SKILL 与部署说明 (#$IS
 包含：
 - 入口：`/api/agent/mcp`，工具名 `<module>__<tool>`。
 - B（PAT）与 C（openclaw）的身份差异。
+- **C 不含 `send_message`**（C 角色不授 `notify:emit`）；C 的 notify 使用 **service-owned 钉死 namespace**（`NOTIFY_WECOM_NAMESPACE`，owner=`system:openclaw`），事件/模板/规则都在该 namespace 内闭环，规则一律 pending、启用/恢复需人持 `notify:publish`。
 - scope 申请：`data:read/query/manage/cost`、`notify:view/manage/publish/emit`、`forms:view/manage/publish`。
 - recipes：L2 指标、L1 提案、报表、通知草稿、表单草稿、（B）监控。
 - 人 gate 表（与 spec §9 同表）。
