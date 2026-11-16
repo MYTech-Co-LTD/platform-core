@@ -38,7 +38,7 @@ type Props = {
   reportId: string
   /** 面板在 spec 里的下标（服务端按它定位 `ai_text` 面板与事实包主体）。 */
   panelIndex: number
-  focus: 'overview' | 'root_cause' | 'daily_review'
+  focus: 'overview' | 'root_cause' | 'daily_review' | 'general'
   /** 当前生效期间；`null` = 规格未声明期间（写侧 `AI_TEXT_REQUIRES_PERIOD` 已拦，这里只是兜底）。 */
   period: PeriodSpec | null
   /** 当前门店（筛选栏覆盖优先，其次规格默认）；缺席 = 不按门店切片。 */
@@ -96,7 +96,7 @@ function periodLabelOf(period: PeriodSpec | null): string {
   return `${period.from ?? ''} ~ ${period.to ?? ''}`
 }
 
-export default function AiTextPanel({ reportId, panelIndex, focus, period, branchNum, version, filters, onSettled }: Props) {
+export function NarrativePanel({ reportId, panelIndex, focus, period, branchNum, version, filters, onSettled }: Props) {
   // 回调身份每次渲染都可能变（父级内联函数）：放 ref 里，effect 依赖不受它影响。
   const settledRef = useRef(onSettled)
   settledRef.current = onSettled
@@ -260,3 +260,7 @@ export default function AiTextPanel({ reportId, panelIndex, focus, period, branc
     </div>
   )
 }
+
+/** 兼容旧名：报表内仍叫 AiTextPanel；其他页面可直接嵌入 NarrativePanel（同一实现）。 */
+export { NarrativePanel as AiTextPanel }
+export default NarrativePanel

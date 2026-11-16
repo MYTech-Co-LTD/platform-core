@@ -403,3 +403,31 @@ create index if not exists report_narratives_org_report_idx
 - 上游设计：`2026-10-26-monthly-report-period-compare-design.md`、`2026-10-26-report-versioning-and-standalone-design.md`。
 - 数据锚点：销售额 51,273.89；订单 957；客单价 53.58；会员 24,284.39/455（47.36%）；报损 806.64（自然损 387.64/来货损 259.16/试吃 159.84）；净费用 2,613.42（抖音直播补贴 1,254.60 + 线下销售补贴-运营部 1,136.00）；日最低 10-13 875.59、最高 10-16 3,564.80。
 - 流式探针（2026-10-26 生产 server 容器）：首任何 token 702ms；首正文 3.23s；总 3.45s；正文 124 字/72 chunk；思考 734 字/449 chunk；`delta.reasoning_content` 先于 `delta.content`；`max_tokens=300` 正文为空、1500 正常；输出三段且数字全部来自事实。
+
+## 16 通用叙事（`focus='general'`，2026-11-17）
+
+**动机**：`ai_text` 原本只有三个业务写死的 focus（overview/root_cause/daily_review），agent 建报时无法「按这张报表选要写哪几段」。现在补一个**通用 focus + 白名单小节**，让叙事成为可组合组件。
+
+**规格契约**
+
+```jsonc
+{ "chart": "ai_text", "focus": "general",
+  "sections": ["summary", "anomaly", "drivers", "actions", "data_quality"] }
+```
+
+| 小节 | 内容 | 事实来源 |
+|---|---|---|
+| `summary` | 结论：一句话判断 + 销售额/订单/客单价等关键数 | `facts.kpis` |
+| `anomaly` | 最低销售日、报损/费用最大项与冲减项 | `facts.daily` / `facts.breakdowns` |
+| `drivers` | 驱动/根因：只引用 findings 的维度值与变化量；空则明说「数据不足」 | `facts.analysis`（该小节触发根因探针） |
+| `actions` | 2–3 条按影响排序的动作（固定模板，回退也可用） | `facts` |
+| `data_quality` | 取数失败的面板清单；无缺失写「全部面板取数正常」 | `facts.missing` / `hasData` |
+
+- `sections` 缺省 = `['summary','anomaly','actions']`；**只允许与 `general` 同用**，未知/重复小节在写侧 `INVALID_SPEC`。
+- 不接受任何自由提示词/自由正文：agent 只能选小节，提示词与事实切片在服务端固定。
+- 缓存：`sections` 进 `facts`（⇒ `factsHash`），同面板换小节视为另一份事实；提示词版本升到 `narrative-v13`。
+- 回退：模型漏节时 `ensureGeneralSections` 从确定性模板补缺节，数字仍只来自 `facts.numbers`。
+
+**前端**：`console/reports/AiTextPanel.tsx` 现导出 `NarrativePanel`（默认导出保持兼容），可嵌入任意页面（props 与报表内一致：`reportId/panelIndex/period/branchNum/filters/version/onSettled`）。
+
+**已知边界（沿用）**：仍要求报表带 `period` 且至少一个数据面板；`drivers` 小节的探针成本与 `root_cause` 同档；「共享组件注册表」仍不做（本节只完成组件抽取，不建跨模块注册表）。
