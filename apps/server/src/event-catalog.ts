@@ -24,14 +24,14 @@ export function buildCatalog(
     for (const ev of m.notifications?.events ?? []) {
       out.push({
         key: ev.key,
-        moduleId: m.id,
+        moduleId: ev.producer ?? m.id,
         title: ev.title,
         description: ev.description,
         scopeKey: ev.scope?.key,
         payloadSchema: ev.payload,
         recipients: ev.recipients,
         defaults: ev.defaults,
-        source: 'module',
+        source: ev.producer ? 'external' : 'module',
       })
     }
   }
