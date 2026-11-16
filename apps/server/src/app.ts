@@ -29,6 +29,7 @@ import { seedDemo } from './seed'
 import { getTenantByHost, resolveTenantMiddleware, type TenantEnv } from './tenant'
 import { sessionMiddleware, type CasdoorFactory, type SessionEnv } from './session-middleware'
 import { patIdentityMiddleware } from './pat-auth'
+import { internalIdentityMiddleware } from './internal-identity'
 import { wecomChannelIdentityMiddleware } from './wecom-channel-auth'
 import { platformRoutes, type ModuleInfo } from './routes/platform'
 import { apiKeyRoutes } from './routes/api-keys'
@@ -274,6 +275,9 @@ export async function buildApp(overrides: BuildAppOverrides = {}): Promise<{
   // 上移到 `platform.api_key`。上移前这里经 `runtime.port('data','resolvePatKey')` 取（宿主绕 B1
   // 去模块 schema 取凭据）——**那条间接层已退役**，宿主直接查自己的表，通道 B 不再有
   // 「模块缺席 / 未声明端口 ⇒ 503」这条分支（表是宿主自己的，不存在装配缺失）。
+  // 内部签名身份：/api/agent/mcp 网关解析一次后转发，下游模块免二次 Casdoor。
+  // 必须在 PAT / 企微之前——first-setter-wins，验签通过后两条通道中间件直接放行。
+  app.use('/api/modules/*', internalIdentityMiddleware())
   app.use('/api/modules/*', patIdentityMiddleware({
     resolveKey: resolveKeyWithTouch(pool),
     casdoor: casdoorFactory,
