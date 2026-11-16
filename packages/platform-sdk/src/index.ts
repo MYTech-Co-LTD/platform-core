@@ -11,6 +11,7 @@ export { validatePayload } from './events'
 export { DECLARED_GATE_APPROVED, defineModule, requireScope, declaredScopeGate, LinkError } from './module'
 export type {
   ChannelAddressResolver, DeclaredEndpoint, DeptExpansion, EnqueueEventInput, EventCatalogReader,
+  ExternalApprovalUpsertInput, ExternalApprovalUpsertResult,
   Identity, IdentityLinkView, IdentityLinks, LinkProvider,
   JobRunActor, JobRunView, JobsPort, SystemJobScheduleView,
   ModuleContext, ModuleDefinition, ModulePorts, NotifyEmitInput, NotifyPort, OaEnginePort, OrganizationPort,

@@ -795,6 +795,39 @@ export interface ExternalApprovalRow {
 }
 
 /**
+ * 按企微模板编号找**已发布**的 `wecom_native` 绑定（OA P2 Task 4，回调/对账的模板闸门）。
+ *
+ * 为什么在模块侧：绑定 body 的形状（provider/processCode）与 `asset_head` 活跃指针都是
+ * forms 私有 schema 语义，宿主读不到（B1）；宿主只经端口问「这个 TemplateId 有没有绑定」。
+ *
+ * 只认 `asset_head.active_version` 指向的 **published** 版本：草稿/退役绑定不接受回调写入
+ * （发布门已保证 body 完整；回调不该把数据写进未发布模板）。同一 processCode 有多条绑定属于
+ * 配置错误——按 asset_id 字典序取第一条，**确定序**而不是随机某条。
+ */
+export async function findPublishedWecomBinding(
+  pool: Pool, org: string, processCode: string,
+): Promise<{ assetId: string; version: number; name: string | null } | null> {
+  if (processCode.trim() === '') return null
+  const { rows } = await pool.query(
+    `select v.asset_id, v.version, v.body->>'name' as name
+       from forms.asset_version v
+       join forms.asset_head h
+         on h.org = v.org and h.kind = v.kind and h.asset_id = v.asset_id and h.active_version = v.version
+      where v.org = $1
+        and v.kind = 'approval_def'
+        and v.status = 'published'
+        and v.body->>'provider' = 'wecom_native'
+        and v.body->>'processCode' = $2
+      order by v.asset_id
+      limit 1`,
+    [org, processCode],
+  )
+  if (rows.length === 0) return null
+  const r = rows[0]
+  return { assetId: r.asset_id as string, version: Number(r.version), name: (r.name as string | null) ?? null }
+}
+
+/**
  * 幂等写入一行镜像（回调与对账共用**同一个** upsert —— 重复回调只更新原行）。
  *
  * 两处刻意语义：

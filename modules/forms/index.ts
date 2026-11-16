@@ -10,9 +10,11 @@ import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { parse as parseYaml } from 'yaml'
 import { ManifestSchema, defineModule } from '@platform/sdk'
+import { FormsError } from './domain/errors'
 import { makeOaEngineResolver } from './domain/engine-client'
 import { llmFromEnv, openAiCompatModel } from './domain/llm'
 import { createFormsRouter } from './routes'
+import * as store from './storage'
 
 // ⚠️ manifest 路径用 node:path 取（不 new URL(rel, import.meta.url)）：happy-dom 环境下
 // 全局 URL 被换成分辨不出 file: 方案的实现，组件测试会整文件炸（#718 实测）。
@@ -40,5 +42,34 @@ export default defineModule({
     orgPort: org ?? null,
     notify: notify ?? null,
     engineFor: makeOaEngineResolver({ oaEngine: oaEngine ?? null }),
+  }),
+  // 宿主企微回调（OA P2 / issue #2385）只经这个端口写镜像：绑定解析 + 幂等 upsert 都在模块侧，
+  // 宿主不碰 forms schema（B1）。未装配 forms 的部署没有这个端口 ⇒ 宿主回调 503（fail-closed）。
+  createPorts: ({ pool }) => ({
+    async upsertExternalApproval(input) {
+      const binding = await store.findPublishedWecomBinding(pool, input.org, input.processCode)
+      if (binding === null) return { ok: false, reason: 'unknown_template' }
+      try {
+        await store.upsertExternalApproval(pool, {
+          org: input.org,
+          processCode: input.processCode,
+          providerRef: input.providerRef,
+          title: input.title ?? null,
+          requester: input.requester ?? null,
+          status: input.status,
+          startedAt: input.startedAt ?? null,
+          finishedAt: input.finishedAt ?? null,
+          detail: input.detail ?? null,
+        })
+      } catch (e) {
+        // 状态白名单是**运行期**数据（回调不可信）⇒ 用机检码回给宿主，让它落 attention；
+        // 其余错误（DB 故障等）原样上抛——不能把基础设施故障伪装成「数据不合法」。
+        if (e instanceof FormsError && e.code === 'EXTERNAL_APPROVAL_STATUS_INVALID') {
+          return { ok: false, reason: 'status_invalid' }
+        }
+        throw e
+      }
+      return { ok: true }
+    },
   }),
 })
