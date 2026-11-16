@@ -69,10 +69,10 @@ const GRAIN = ['system_book', 'org', 'bizday', 'branch_num']
 const opts = { measures: ['sale_amount', 'return_amount', 'net_amount', 'order_count'], stagingColumns: STAGING, exclude: GRAIN }
 
 describe('resolveMeasureInputs', () => {
-  it('有 __gen 块的度量：从块里取 staging 列（基面条件也算来源）', () => {
+  it('有 __gen 块的度量：取块里 select/聚合表达式中的列（WHERE 里的过滤列不算）', () => {
     const r = resolveMeasureInputs(SQL, opts)
-    // base_sale 的 where 条件（state / order_transaction_type）是这个度量的口径，必须算进来
-    expect(r.inputs.sale_amount).toEqual(['state', 'order_transaction_type', 'sale_money', 'discount_money'])
+    // state 在 case 里（口径条件的一部分，算来源）；order_transaction_type 只在 base_sale 的 where 里 ⇒ 不算
+    expect(r.inputs.sale_amount).toEqual(['state', 'sale_money', 'discount_money'])
     // order_no / order_detail_num 只出现在 group by —— 是粒度不是来源，被剥掉
     expect(r.inputs.return_amount).toEqual(['order_transaction_type', 'sale_money', 'order_detail_share_discount'])
   })
@@ -85,10 +85,30 @@ describe('resolveMeasureInputs', () => {
     ])
   })
 
-  it('order_count（走两级 CTE）：仍然解出 count(distinct order_no) 与基面条件', () => {
+  it('order_count（走两级 CTE）：解出 count(distinct order_no)；基面 WHERE 的列不算来源', () => {
     const r = resolveMeasureInputs(SQL, opts)
-    expect(r.inputs.order_count).toEqual(['order_no', 'state', 'order_transaction_type'])
+    // base_sale 的 where（state / order_transaction_type）是过滤条件，不是被聚合的值
+    expect(r.inputs.order_count).toEqual(['order_no'])
     expect(r.deps.order_count).toBeUndefined()
+  })
+
+  it('只出现在 WHERE 里的列不算输入（hour 曾被窗口守卫带进来）', () => {
+    const sql = `
+with base as (
+    select * from stg_lemeng_retail_order_line
+    where state = 'FINISHED'
+      and not (bizday = current_date and hour >= extract(hour from current_timestamp))
+),
+amount__gen as (
+    select system_book, bizday, branch_num, sum(sale_money) as measure_value
+    from base group by system_book, bizday, branch_num
+)
+select coalesce(amount__gen.measure_value, 0) as amount from amount__gen
+`
+    const r = resolveMeasureInputs(sql, { measures: ['amount'], stagingColumns: STAGING, exclude: GRAIN })
+    expect(r.inputs.amount).toEqual(['sale_money'])
+    expect(r.inputs.amount).not.toContain('hour')
+    expect(r.inputs.amount).not.toContain('state')
   })
 
   it('粒度键不作为「值来源」：exclude 生效，且结果只含 staging 里存在的列', () => {
@@ -106,6 +126,6 @@ describe('resolveMeasureInputs', () => {
 
   it('Jinja 与注释不影响标识符扫描', () => {
     const r = resolveMeasureInputs(`-- 注释里有 fake_col\n${SQL}`, opts)
-    expect(r.inputs.order_count).toEqual(['order_no', 'state', 'order_transaction_type'])
+    expect(r.inputs.order_count).toEqual(['order_no'])
   })
 })
