@@ -20,6 +20,8 @@ export interface PipelineRunRecord {
   trigger?: string
   /** 来源账套名：同一 pipeline_id 可在多个 workspace 各有一份记录，不能混成一条。 */
   source?: string
+  /** 逐节点明细（run 文件里自带；收据里也有）。缺省 = 这份记录没带。 */
+  nodes?: Array<{ node: string; component?: string; rows?: number; durationMs?: number }>
 }
 
 /** 读不到的一个来源（workspace 名 + 原因摘要）。非空 ⇒ 结果的**缺席不可证**。 */

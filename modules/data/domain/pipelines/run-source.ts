@@ -88,6 +88,24 @@ function normalizeStatus(raw: string): { status: PipelineRunRecord['status']; ra
   return { status: 'unknown', ...(raw === '' ? {} : { rawStatus: raw }) }
 }
 
+const nodeStats = (v: unknown): PipelineRunRecord['nodes'] => {
+  if (!Array.isArray(v)) return undefined
+  const out: NonNullable<PipelineRunRecord['nodes']> = []
+  for (const item of v) {
+    if (typeof item !== 'object' || item === null) continue
+    const rec = item as Record<string, unknown>
+    const node = str(rec.node)
+    if (node === '') continue
+    out.push({
+      node,
+      ...(str(rec.component) === '' ? {} : { component: str(rec.component) }),
+      ...(num(rec.rows) === undefined ? {} : { rows: num(rec.rows) }),
+      ...(num(rec.durationMs) === undefined ? {} : { durationMs: num(rec.durationMs) }),
+    })
+  }
+  return out.length === 0 ? undefined : out
+}
+
 function recordFromListEntry(e: Record<string, unknown>, pipelineId: string, source: string): PipelineRunRecord | null {
   const runId = str(e.run_id)
   if (runId === '') return null
@@ -99,6 +117,7 @@ function recordFromListEntry(e: Record<string, unknown>, pipelineId: string, sou
     ...(str(e.error) === '' ? {} : { error: str(e.error) }),
     ...(num(e.duration_ms) === undefined ? {} : { durationMs: num(e.duration_ms) }),
     ...(str(e.trigger) === '' ? {} : { trigger: str(e.trigger) }),
+    ...(nodeStats(e.nodes) === undefined ? {} : { nodes: nodeStats(e.nodes) }),
     source,
   }
 }
@@ -119,6 +138,7 @@ function recordFromReceipt(r: Record<string, unknown>, source: string): Pipeline
     ...(str(r.error) === '' ? {} : { error: str(r.error) }),
     ...(num(r.durationMs) === undefined ? {} : { durationMs: num(r.durationMs) }),
     ...(str(r.trigger) === '' ? {} : { trigger: str(r.trigger) }),
+    ...(nodeStats(r.nodes) === undefined ? {} : { nodes: nodeStats(r.nodes) }),
     source,
   }
 }
