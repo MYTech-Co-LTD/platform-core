@@ -20,11 +20,11 @@ import type { ToolAnnotations } from '../domain/toolbox/registry'
 import { MANAGE_TOOLS } from '../domain/manage-face'
 import type { ManageToolMeta } from '../domain/manage-face'
 
-/** 合并面工具数上限 = 现状 20（口径 5 + 报表 4 + 提案 9 + 需求 2）。加第 21 件 = 门禁红，同 PR 里显式抬。 */
-export const MANAGE_FACE_COMBINED_MAX_TOOLS = 20
+/** 合并面工具数上限 = 现状 23（口径 5 + 报表 4 + 监控 3 + 提案/需求 11）。加第 24 件 = 门禁红，同 PR 里显式抬。 */
+export const MANAGE_FACE_COMBINED_MAX_TOOLS = 23
 
-/** 合并面 tools/list 静态序列化预算（spec §8 ② 的 10KB，与分析师面同源不同常数——两面各自演进）。 */
-export const MANAGE_FACE_MAX_LIST_BYTES = 10240
+/** 合并面 tools/list 静态序列化预算（11KB；23 件含业务监控片后从 10KB 显式抬升）。 */
+export const MANAGE_FACE_MAX_LIST_BYTES = 11264
 
 /** 管理面端点整体挂在 manifest 的 `scope: data:manage`（声明即授权）——逐工具复述同一值。 */
 const MANAGE_SCOPE = 'data:manage'
@@ -33,7 +33,7 @@ const readOnly: ToolAnnotations = { readOnlyHint: true }
 const writeable: ToolAnnotations = { readOnlyHint: false }
 
 /** 哪一片（新增片 = slice 联合类型扩一项 + MANAGE_FACE_TOOLS 加一组 + parity 测试 slices 数组同改）。 */
-export type ManageFaceSlice = 'metric' | 'report' | 'pipeline'
+export type ManageFaceSlice = 'metric' | 'report' | 'monitor' | 'pipeline'
 
 export interface ManageFaceTool {
   slice: ManageFaceSlice
@@ -158,6 +158,43 @@ const REPORT_FACE: readonly ManageFaceTool[] = [
   }),
 ]
 
+// ─────────────── 业务监控片（3 件，B 子项目；创建恒 dry_run） ───────────────
+
+const MONITOR_FACE: readonly ManageFaceTool[] = [
+  faceOf('monitor', 'list_monitors', false, {
+    description: '列出本租户业务监控及状态、dry_run、收件人。',
+    inputSchema: { type: 'object', properties: {}, required: [] },
+  }),
+  faceOf('monitor', 'list_monitor_runs', false, {
+    description: '查看一条监控的运行记录。',
+    inputSchema: {
+      type: 'object',
+      properties: { id: { type: 'string' }, limit: { type: 'number' } },
+      required: ['id'],
+    },
+  }),
+  faceOf('monitor', 'create_monitor', true, {
+    description: '创建业务监控草稿。恒 dry_run=true；开启投递必须人做。threshold 仅支持可加指标。',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        name: { type: 'string' },
+        targetKind: { type: 'string', enum: ['metric', 'report_panel'] },
+        metricId: { type: 'string' },
+        reportId: { type: 'string' },
+        panelIndex: { type: 'number' },
+        verdict: { type: 'string', enum: ['missing', 'stale', 'threshold'] },
+        operator: { type: 'string', enum: ['gt', 'gte', 'lt', 'lte', 'eq'] },
+        threshold: { type: 'number' },
+        windowDays: { type: 'number' },
+        cadenceSecs: { type: 'number', description: '≥300 秒' },
+        recipients: { type: 'array', items: { type: 'object' } },
+      },
+      required: ['name', 'targetKind', 'verdict', 'cadenceSecs', 'recipients'],
+    },
+  }),
+]
+
 // ─────────────── 管线提案/需求片（11 件，投影自 domain/manage-face.ts 的 MANAGE_TOOLS） ───────────────
 
 /** 管线片的 wire 形状（自 mcp-pipeline-tools.ts 的 entryOf 原样搬入）：比口径/报表片多 title/outputSchema/annotations。 */
@@ -173,7 +210,9 @@ const PIPELINE_FACE: readonly ManageFaceTool[] = MANAGE_TOOLS.map((t) => ({
 }))
 
 /** 合并面全集（顺序 = GROUPS：口径 → 报表 → 管线提案/需求）。唯一事实源：三片 list() 与门禁都从这里取。 */
-export const MANAGE_FACE_TOOLS: readonly ManageFaceTool[] = [...METRIC_FACE, ...REPORT_FACE, ...PIPELINE_FACE]
+export const MANAGE_FACE_TOOLS: readonly ManageFaceTool[] = [
+  ...METRIC_FACE, ...REPORT_FACE, ...MONITOR_FACE, ...PIPELINE_FACE,
+]
 
 /** 取一片的工具元数据（三片 list() 与 call() 的认领清单都从这里派生，别再手写第二份名单）。 */
 export function manageFaceOfSlice(slice: ManageFaceSlice): readonly ManageFaceTool[] {
