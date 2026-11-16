@@ -10,7 +10,7 @@ import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { parse as parseYaml } from 'yaml'
 import { ManifestSchema, defineModule } from '@platform/sdk'
-import { makeEnvEngineResolver } from './domain/engine-client'
+import { makeOaEngineResolver } from './domain/engine-client'
 import { llmFromEnv, openAiCompatModel } from './domain/llm'
 import { createFormsRouter } from './routes'
 
@@ -27,16 +27,18 @@ const chatModel = (() => {
   return cfg === null ? null : openAiCompatModel(cfg)
 })()
 
-// 租户 → OA 引擎解析器：装载期构造一次（读 env，不读请求）。
-// 未配置任何映射 ⇒ 每次解析返回 null ⇒ 审批提交/代理回 409 OA_NOT_ENABLED（fail-closed，
-// 既有的 forms/collection 行为逐字不变——它们根本不走这条通路）。
-const engineFor = makeEnvEngineResolver(process.env)
-
 export default defineModule({
   manifest,
-  // 组织查询面与通知端口由宿主注入（OA P1）：审批编译必须有 org（查不了 ⇒ 503，不是「没人」）；
-  // 回调事件经 notify 投递（未注入 ⇒ 事件静默，宿主装配面另有报告）。
-  createRouter: ({ pool, org, notify }) => createFormsRouter({
-    pool, chatModel, orgPort: org ?? null, notify: notify ?? null, engineFor,
+  // 组织查询面 / 通知端口 / OA 引擎查询面由宿主注入（OA P1）：
+  //   · org：审批编译必须有组织事实（查不了 ⇒ 503，不是「没人」）；
+  //   · oaEngine：`platform.oa_engine` 是引擎映射唯一登记点（模块读不到 platform，B1）；
+  //   · notify：回调事件投递（未注入 ⇒ 事件静默，宿主装配面另有报告）。
+  // `makeOaEngineResolver`：port 优先；旧宿主/单测未注入时回落单租户 env（本地兜底）。
+  createRouter: ({ pool, org, notify, oaEngine }) => createFormsRouter({
+    pool,
+    chatModel,
+    orgPort: org ?? null,
+    notify: notify ?? null,
+    engineFor: makeOaEngineResolver({ oaEngine: oaEngine ?? null }),
   }),
 })

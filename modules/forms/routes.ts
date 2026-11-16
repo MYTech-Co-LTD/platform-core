@@ -52,7 +52,6 @@ async function handle(c: any, fn: () => Promise<Response>): Promise<Response> {
         DICT_KEY_NOT_FOUND: 404, NO_PUBLISHED_HEAD: 409, HEAD_MOVED: 409,
         // 审批面（OA P1）
         OA_NOT_ENABLED: 409,
-        OA_ENGINE_MISCONFIGURED: 503,
         ORG_UNAVAILABLE: 503,
         EMPTY_NODE: 409,
         APPROVERS_UNRESOLVED: 409,

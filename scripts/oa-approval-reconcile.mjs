@@ -11,8 +11,9 @@
 //
 // 引擎配置解析（与模块 `domain/engine-client.ts` 同口径）：
 //   ① `platform.oa_engine`（enabled）→ { base_url, pat_secret_ref }，PAT 值从 env[pat_secret_ref] 取；
-//   ② 回落 `FORMS_OA_ENGINE_MAP`（JSON：{ "<org>": { "baseUrl", "patSecretRef" } }）。
-//   脚本能读 platform schema（模块不能——B1）；两处同源靠「表优先」，配置只登记一次。
+//   ② 仅本地/单人部署兜底：`FORMS_OA_ENGINE_URL` + `FORMS_OA_ENGINE_PAT`（单租户，所有 org 共用）。
+//   **没有 per-org env map**：多租户映射的唯一登记点就是 `platform.oa_engine`（spec §12.1 P11），
+//   脚本能读 platform schema（模块不能——B1），所以脚本的表优先不会与运行时口径分叉。
 //
 // 退出码：0 = 跑完（含「有 org 没配引擎」的跳过）；1 = 致命错误（连不上库等）。
 import { createRequire } from 'node:module'
@@ -55,21 +56,7 @@ export function deriveFinalAction(caseDetail) {
 }
 
 /**
- * @param {unknown} raw
- * @returns {Record<string, any>|null}
- */
-export function parseEngineMap(raw) {
-  if (typeof raw !== 'string' || raw.trim() === '') return null
-  try {
-    const parsed = JSON.parse(raw)
-    return parsed && typeof parsed === 'object' && !Array.isArray(parsed) ? parsed : null
-  } catch {
-    return null
-  }
-}
-
-/**
- * 单租户弹配置：表行 → env map（键 = org）。
+ * 单租户弹配置：**表行优先**（唯一登记点），env 只做本地/单人部署兜底。
  * @param {string} org
  * @param {Map<string, any>} rowsByOrg
  * @param {NodeJS.ProcessEnv} [env]
@@ -81,13 +68,10 @@ export function engineForOrg(org, rowsByOrg, env = process.env) {
     const pat = row.pat_secret_ref ? env[row.pat_secret_ref] : undefined
     return { baseUrl: row.base_url, pat: pat ?? undefined, source: 'platform.oa_engine' }
   }
-  const hit = parseEngineMap(env.FORMS_OA_ENGINE_MAP)?.[org]
-  if (hit) {
-    return {
-      baseUrl: hit.baseUrl,
-      pat: hit.patSecretRef ? env[hit.patSecretRef] : undefined,
-      source: 'FORMS_OA_ENGINE_MAP',
-    }
+  const baseUrl = (env.FORMS_OA_ENGINE_URL ?? '').trim()
+  const pat = env.FORMS_OA_ENGINE_PAT
+  if (baseUrl.length > 0 && typeof pat === 'string' && pat.length > 0) {
+    return { baseUrl, pat, source: 'env' }
   }
   return null
 }
@@ -140,7 +124,7 @@ async function main() {
     } catch (e) {
       // 本地/部分环境还没有 021 迁移：映射表不存在不是致命错误（回落 env map），但要可见
       if (/** @type {any} */ (e).code !== '42P01') throw e
-      console.warn('[oa-reconcile] platform.oa_engine 不存在（未跑平台迁移？）——回落 FORMS_OA_ENGINE_MAP')
+      console.warn('[oa-reconcile] platform.oa_engine 不存在（未跑平台迁移？）——回落单租户 env 兜底')
     }
 
     /** @type {{scanned:number, skippedNoCase:number, skippedNoEngine:number, stillPending:number, engineErrors:number, writeCandidates:number, written:number, byAction: Record<string, number>}} */

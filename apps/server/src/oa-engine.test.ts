@@ -2,7 +2,7 @@
 import { afterAll, beforeAll, describe, expect, it } from 'vitest'
 import { Pool } from 'pg'
 import { fileURLToPath } from 'node:url'
-import { createOaEngineStore } from './oa-engine'
+import { createOaEnginePort, createOaEngineStore } from './oa-engine'
 import { runMigrations } from './migrate'
 
 const url = process.env.DATABASE_URL
@@ -65,5 +65,75 @@ describePg('oa-engine store', () => {
     // 行仍在（开关不删登记）——否则/dev 无法再打开
     const { rows } = await pool.query('select enabled from platform.oa_engine where org = $1', [org])
     expect(rows[0]).toEqual({ enabled: false })
+  })
+})
+
+// ── OaEnginePort（OA P1 / #2363）：模块消费面的四条判据（全部 fail-closed） ──
+describePg('createOaEnginePort', () => {
+  let pool: Pool
+  const orgs: string[] = []
+  const orgOf = (suffix: string) => `oa-port-test-${Math.random().toString(36).slice(2, 8)}-${suffix}`
+
+  beforeAll(async () => {
+    pool = new Pool({ connectionString: url })
+    await runMigrations(pool, 'platform', fileURLToPath(new URL('./migrations', import.meta.url)))
+  })
+  afterAll(async () => {
+    for (const org of orgs) {
+      await pool.query('delete from platform.oa_engine where org = $1', [org]).catch(() => {})
+    }
+    await pool.end()
+  })
+
+  it('无行 ⇒ null（OA 对该租户关闭）', async () => {
+    const port = createOaEnginePort({ pool, env: { OA_ENGINE_PAT: 's3cret' } })
+    const org = orgOf('none')
+    orgs.push(org)
+    expect(await port.get(org)).toBeNull()
+  })
+
+  it('enabled=false ⇒ null（停用即不可用）', async () => {
+    const org = orgOf('off')
+    orgs.push(org)
+    await createOaEngineStore(pool).upsert({
+      org, baseUrl: 'http://engine:3100', patSecretRef: 'OA_ENGINE_PAT', engineVersion: null, enabled: false,
+    })
+    expect(await createOaEnginePort({ pool, env: { OA_ENGINE_PAT: 's3cret' } }).get(org)).toBeNull()
+  })
+
+  it('secret 取不到 ⇒ null（fail-closed，不猜、不回落别的键）', async () => {
+    const org = orgOf('nosecret')
+    orgs.push(org)
+    await createOaEngineStore(pool).upsert({
+      org, baseUrl: 'http://engine:3100', patSecretRef: 'MISSING_PAT', engineVersion: null, enabled: true,
+    })
+    expect(await createOaEnginePort({ pool, env: {} }).get(org)).toBeNull()
+    // 别的键有值不算（引用名必须精确相等）
+    expect(await createOaEnginePort({ pool, env: { OA_ENGINE_PAT: 's3cret' } }).get(org)).toBeNull()
+  })
+
+  it('base_url 为空 ⇒ null', async () => {
+    const org = orgOf('nobase')
+    orgs.push(org)
+    await createOaEngineStore(pool).upsert({
+      org, baseUrl: '', patSecretRef: 'OA_ENGINE_PAT', engineVersion: null, enabled: true,
+    })
+    expect(await createOaEnginePort({ pool, env: { OA_ENGINE_PAT: 's3cret' } }).get(org)).toBeNull()
+  })
+
+  it('有行 + secret ⇒ 正确 baseUrl / 已解析 pat / engineVersion（只出可用配置）', async () => {
+    const org = orgOf('ok')
+    orgs.push(org)
+    await createOaEngineStore(pool).upsert({
+      org, baseUrl: 'http://engine:3100', patSecretRef: 'OA_ENGINE_PAT', engineVersion: '0.3.0', enabled: true,
+    })
+    expect(await createOaEnginePort({ pool, env: { OA_ENGINE_PAT: 's3cret' } }).get(org)).toEqual({
+      baseUrl: 'http://engine:3100', pat: 's3cret', engineVersion: '0.3.0',
+    })
+  })
+
+  it('未知 org ⇒ null（不抛错——与 OrganizationPort 同口径）', async () => {
+    expect(await createOaEnginePort({ pool, env: { OA_ENGINE_PAT: 's3cret' } }).get('never-existed-org'))
+      .toBeNull()
   })
 })

@@ -1,8 +1,9 @@
 // domain/engine-client.test.ts — 引擎契约 client（OA P1 Task 10 / issue #2363）。
 import { describe, expect, it } from 'vitest'
+import type { OaEnginePort } from '@platform/sdk'
 import {
   EngineHttpError, approversOfNode, clientForConfigured, createEngineClient, currentNodeOf,
-  engineEntryOf, firstNodeTitleFor, makeEnvEngineResolver, planHasApprover,
+  envEngineEntry, firstNodeTitleFor, makeEnvEngineResolver, makeOaEngineResolver, planHasApprover,
 } from './engine-client'
 
 function json(body: unknown, status = 200): Response {
@@ -67,34 +68,64 @@ describe('createEngineClient', () => {
   })
 })
 
-describe('makeEnvEngineResolver', () => {
+describe('env 兜底（本地测试/脚本；单租户）', () => {
   const env = (over: NodeJS.ProcessEnv = {}): NodeJS.ProcessEnv => ({
-    FORMS_OA_ENGINE_MAP: JSON.stringify({ acme: { baseUrl: 'http://e', patSecretRef: 'ACME_PAT' } }),
-    ACME_PAT: 'secret-p',
+    FORMS_OA_ENGINE_URL: 'http://env-engine',
+    FORMS_OA_ENGINE_PAT: 'env-pat',
     ...over,
   })
 
-  it('按 org 从 map 取引擎；PAT 由 secret 引用从 env 取（值不进配置）', async () => {
-    const client = await makeEnvEngineResolver(env())('acme')
-    expect(client).not.toBeNull()
+  it('两键齐全才可用；缺任一 ⇒ null（不猜）', () => {
+    expect(envEngineEntry(env())).toEqual({ baseUrl: 'http://env-engine', pat: 'env-pat' })
+    expect(envEngineEntry(env({ FORMS_OA_ENGINE_PAT: '' }))).toBeNull()
+    expect(envEngineEntry(env({ FORMS_OA_ENGINE_URL: '  ' }))).toBeNull()
   })
 
-  it('无条目 ⇒ null（OA 未开通，routes 回 409）；条目缺 PAT ⇒ 503 OA_ENGINE_MISCONFIGURED', async () => {
-    const resolver = makeEnvEngineResolver(env())
-    expect(await resolver('other-org')).toBeNull()
-    const bad = makeEnvEngineResolver(env({ ACME_PAT: undefined }))
-    await expect(bad('acme')).rejects.toMatchObject({ code: 'OA_ENGINE_MISCONFIGURED' })
-  })
-
-  it('map 不是合法 JSON ⇒ 炸出声，不静默当未开通', async () => {
-    expect(() => engineEntryOf('acme', { FORMS_OA_ENGINE_MAP: '{oops' }))
-      .toThrowError(expect.objectContaining({ code: 'OA_ENGINE_MISCONFIGURED' }))
-    const dev = engineEntryOf('acme', { FORMS_OA_ENGINE_URL: 'http://e', FORMS_OA_ENGINE_PAT: 'p' })
-    expect(dev).toEqual({ baseUrl: 'http://e', pat: 'p' })
+  it('makeEnvEngineResolver：配好 ⇒ client；没配 ⇒ null', async () => {
+    expect(await makeEnvEngineResolver(env())('acme')).not.toBeNull()
+    expect(await makeEnvEngineResolver({})('acme')).toBeNull()
   })
 
   it('clientForConfigured 可直接造 client（脚本/测试用）', () => {
     expect(clientForConfigured({ baseUrl: 'http://e', pat: 'p' })).toBeTruthy()
+  })
+})
+
+describe('makeOaEngineResolver（宿主 OaEnginePort 优先）', () => {
+  const env = { FORMS_OA_ENGINE_URL: 'http://env-engine', FORMS_OA_ENGINE_PAT: 'env-pat' }
+
+  const portOf = (cfg: Awaited<ReturnType<OaEnginePort['get']>>): OaEnginePort => ({
+    async get() { return cfg },
+  })
+
+  it('注入 port ⇒ 用登记配置（baseUrl + 已解析 PAT），不读 env', async () => {
+    const urls: string[] = []
+    const auths: string[] = []
+    const resolver = makeOaEngineResolver({
+      oaEngine: portOf({ baseUrl: 'http://port-engine', pat: 'port-pat', engineVersion: '0.3.0' }),
+      env,
+      fetchFn: (async (url: string, init: RequestInit) => {
+        urls.push(url)
+        auths.push((init.headers as Record<string, string>).Authorization)
+        return json({ ok: true })
+      }) as never,
+    })
+    const client = await resolver('acme')
+    expect(client).not.toBeNull()
+    await client!.getCase('c1')
+    expect(urls[0]).toBe('http://port-engine/cases/c1')
+    expect(auths[0]).toBe('Bearer port-pat')
+  })
+
+  it('port 返回 null（无行/disabled/secret 缺失）⇒ null，**不回落 env**（fail-closed）', async () => {
+    const resolver = makeOaEngineResolver({ oaEngine: portOf(null), env })
+    expect(await resolver('acme')).toBeNull()
+  })
+
+  it('未注入 port（旧宿主/单测）⇒ env 兜底；都没有 ⇒ null', async () => {
+    expect(await makeOaEngineResolver({ oaEngine: null, env })('acme')).not.toBeNull()
+    expect(await makeOaEngineResolver({ oaEngine: undefined, env })('acme')).not.toBeNull()
+    expect(await makeOaEngineResolver({ oaEngine: null, env: {} })('acme')).toBeNull()
   })
 })
 

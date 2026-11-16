@@ -4,14 +4,16 @@
 // 引擎实现见私有仓 case-engine（T6/T13）。平台只做三件事：建 case（带计划快照）、
 // 查状态、代理决策/撤回；**授权在平台**（按计划快照的当前节点），引擎只校验形状与节点。
 //
-// 配置来源（P1 实现口径，与计划书的差异已记录在 PR）：
-//   模块读不到 `platform.oa_engine`（B1：模块只许自身 schema），宿主也尚未把该映射注入
-//   `ModuleContext`。P1 用**同形环境变量**解析：
-//     FORMS_OA_ENGINE_MAP = {"<org>": {"baseUrl": "...", "patSecretRef": "ACME_OA_PAT"}}
-//     FORMS_OA_ENGINE_URL  + FORMS_OA_ENGINE_PAT   （单租户/默认回落）
-//   `patSecretRef` 只存**键名**，PAT 值从环境取（敏感值不落库、不进代码——与 P0 的
-//   `platform.oa_engine.pat_secret_ref` 同语义）。为此 `resolveEngineFor` 做成可注入的
-//   函数：routes/测试传自己的解析器，不受环境形态约束。
+// 配置来源（OA P1）：**`ctx.oaEngine`（宿主注入的 OaEnginePort）是唯一生产通路**——
+// `platform.oa_engine` 是唯一登记点（spec §12.1 P11），模块读不到 platform schema（B1）。
+// env 只保留**单租户**兜底（`FORMS_OA_ENGINE_URL` + `FORMS_OA_ENGINE_PAT`），用于本地测试/
+// 脚本、或旧宿主未注入 port 的形态；**不提供 per-org map**（多租户映射只能来自登记表）。
+//
+// 优先级与 fail-closed（`makeOaEngineResolver`）：
+//   · 注入了 port：只看它——port 返回 null（无行/停用/secret 缺失）就**不回落 env**
+//     （否则「被停用的租户」会被环境变量偷偷放行）；
+//   · 未注入 port（旧宿主/单测/脚本）：走 env 兜底。
+import type { OaEnginePort } from '@platform/sdk'
 import { FormsError } from './errors'
 
 export interface EngineClient {
@@ -71,60 +73,54 @@ export function createEngineClient(cfg: {
   }
 }
 
-interface EngineEntry {
+export interface EngineEntry {
   baseUrl: string
-  /** secret 引用键名（PAT 值从 env 取；不写值） */
-  patSecretRef?: string
-  /** 直接值（只给本地开发/单测；生产用 patSecretRef） */
-  pat?: string
+  pat: string
 }
 
-/** 环境变量 → 引擎条目的解析（纯函数，好测）。 */
-export function engineEntryOf(org: string, env: NodeJS.ProcessEnv): EngineEntry | null {
-  const rawMap = env.FORMS_OA_ENGINE_MAP
-  let map: Record<string, EngineEntry> = {}
-  if (rawMap !== undefined && rawMap.trim().length > 0) {
-    try {
-      const parsed = JSON.parse(rawMap) as unknown
-      if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
-        throw new Error('FORMS_OA_ENGINE_MAP 必须是 { "<org>": { baseUrl, patSecretRef } } 对象')
-      }
-      map = parsed as Record<string, EngineEntry>
-    } catch (e) {
-      // 配错了要炸出声：静默当「OA 未开通」会把配置事故伪装成「这个租户没用 OA」
-      throw new FormsError('OA_ENGINE_MISCONFIGURED', (e as Error).message)
-    }
-  }
-  const hit = map[org]
-  if (hit) return hit
-  if (env.FORMS_OA_ENGINE_URL !== undefined && env.FORMS_OA_ENGINE_URL.trim().length > 0) {
-    return { baseUrl: env.FORMS_OA_ENGINE_URL.trim(), pat: env.FORMS_OA_ENGINE_PAT }
-  }
-  return null
+/** **单租户** env 兜底（本地测试/脚本）：URL 与 PAT 两键齐全才算配好，缺一 ⇒ null。 */
+export function envEngineEntry(env: NodeJS.ProcessEnv): EngineEntry | null {
+  const baseUrl = (env.FORMS_OA_ENGINE_URL ?? '').trim()
+  const pat = env.FORMS_OA_ENGINE_PAT ?? ''
+  if (baseUrl.length === 0 || pat.length === 0) return null
+  return { baseUrl, pat }
 }
 
-/** 引擎解析器：无条目 ⇒ null（= 该租户 OA 未开通，routes 回 409 OA_NOT_ENABLED）；
- *  有条目但 PAT 取不到 ⇒ 503 OA_ENGINE_MISCONFIGURED（**不是** 409——那是配置事故）。 */
+/** 引擎解析器：null = 该租户 OA 未开通/不可用（routes 回 409 OA_NOT_ENABLED）。 */
 export type EngineResolver = (org: string) => Promise<EngineClient | null>
 
 export function makeEnvEngineResolver(
   env: NodeJS.ProcessEnv = process.env,
   fetchFn?: typeof fetch,
 ): EngineResolver {
-  return async (org) => {
-    const entry = engineEntryOf(org, env)
+  return async () => {
+    const entry = envEngineEntry(env)
     if (entry === null) return null
-    if (typeof entry.baseUrl !== 'string' || entry.baseUrl.trim().length === 0) {
-      throw new FormsError('OA_ENGINE_MISCONFIGURED', `租户 ${org} 的引擎配置缺 baseUrl`)
-    }
-    const pat = entry.pat ?? (entry.patSecretRef === undefined ? undefined : env[entry.patSecretRef])
-    if (typeof pat !== 'string' || pat.length === 0) {
-      throw new FormsError(
-        'OA_ENGINE_MISCONFIGURED',
-        `租户 ${org} 的引擎 PAT 取不到（secret 引用：${entry.patSecretRef ?? '未声明'}）`,
-      )
-    }
-    return createEngineClient({ baseUrl: entry.baseUrl, pat, ...(fetchFn === undefined ? {} : { fetchFn }) })
+    return createEngineClient({ baseUrl: entry.baseUrl, pat: entry.pat, ...(fetchFn === undefined ? {} : { fetchFn }) })
+  }
+}
+
+/**
+ * 生产解析器：**注入的 port 优先**；未注入才用 env 兜底。
+ *
+ * port 返回 null 时**不回落 env**：登记表说「这个租户没开通/凭据不全」，环境变量无权推翻
+ * （否则停用一个租户等于没停）。这是 spec「不做静默降级」在配置层的落点。
+ */
+export function makeOaEngineResolver(deps: {
+  oaEngine?: OaEnginePort | null
+  env?: NodeJS.ProcessEnv
+  fetchFn?: typeof fetch
+}): EngineResolver {
+  const envResolver = makeEnvEngineResolver(deps.env ?? process.env, deps.fetchFn)
+  return async (org) => {
+    if (deps.oaEngine === undefined || deps.oaEngine === null) return envResolver(org)
+    const cfg = await deps.oaEngine.get(org)
+    if (cfg === null) return null
+    return createEngineClient({
+      baseUrl: cfg.baseUrl,
+      pat: cfg.pat,
+      ...(deps.fetchFn === undefined ? {} : { fetchFn: deps.fetchFn }),
+    })
   }
 }
 

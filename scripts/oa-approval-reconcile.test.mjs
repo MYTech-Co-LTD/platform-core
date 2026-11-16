@@ -1,6 +1,6 @@
 // oa-approval-reconcile.test.mjs — 对账脚本的纯函数（OA P1 Task 11；跑在 `pnpm test:guard`）。
 import { describe, expect, it } from 'vitest'
-import { deriveFinalAction, engineForOrg, parseEngineMap } from './oa-approval-reconcile.mjs'
+import { deriveFinalAction, engineForOrg } from './oa-approval-reconcile.mjs'
 
 describe('deriveFinalAction', () => {
   it('非终态 → null（继续等，不写）', () => {
@@ -23,30 +23,31 @@ describe('deriveFinalAction', () => {
 
 describe('engineForOrg', () => {
   const env = {
-    FORMS_OA_ENGINE_MAP: JSON.stringify({ 'org-map': { baseUrl: 'http://map', patSecretRef: 'MAP_PAT' } }),
-    MAP_PAT: 'map-secret',
+    FORMS_OA_ENGINE_URL: 'http://env',
+    FORMS_OA_ENGINE_PAT: 'env-secret',
     TABLE_PAT: 'table-secret',
   }
   const rowsByOrg = new Map([
     ['org-table', { org: 'org-table', base_url: 'http://table', pat_secret_ref: 'TABLE_PAT' }],
   ])
 
-  it('表行优先（PAT 从 env 的 secret 引用取，不落值）', () => {
+  it('表行优先（唯一登记点；PAT 从 env 的 secret 引用取，不落值）', () => {
     expect(engineForOrg('org-table', rowsByOrg, env)).toEqual({
       baseUrl: 'http://table', pat: 'table-secret', source: 'platform.oa_engine',
     })
   })
 
-  it('无表行回落 env map；两者都没有 ⇒ null（该 org 跳过，不猜引擎）', () => {
-    expect(engineForOrg('org-map', rowsByOrg, env)).toEqual({
-      baseUrl: 'http://map', pat: 'map-secret', source: 'FORMS_OA_ENGINE_MAP',
+  it('无表行 ⇒ 单租户 env 兜底；缺 PAT/URL 或都没有 ⇒ null（不猜引擎）', () => {
+    expect(engineForOrg('org-other', rowsByOrg, env)).toEqual({
+      baseUrl: 'http://env', pat: 'env-secret', source: 'env',
     })
-    expect(engineForOrg('org-unknown', rowsByOrg, env)).toBeNull()
+    expect(engineForOrg('org-other', new Map(), { FORMS_OA_ENGINE_URL: 'http://env' })).toBeNull()
+    expect(engineForOrg('org-other', new Map(), { FORMS_OA_ENGINE_PAT: 'p' })).toBeNull()
+    expect(engineForOrg('org-other', new Map(), {})).toBeNull()
   })
 
-  it('坏 JSON 不炸，按「无 map」处理', () => {
-    expect(parseEngineMap('{oops')).toBeNull()
-    expect(parseEngineMap('')).toBeNull()
-    expect(engineForOrg('org-map', new Map(), { FORMS_OA_ENGINE_MAP: '{oops' })).toBeNull()
+  it('表行存在但 secret 缺失 ⇒ 返回 pat=undefined（调用方按「跳过该 org」处理，不回落 env）', () => {
+    const out = engineForOrg('org-table', rowsByOrg, { FORMS_OA_ENGINE_URL: 'http://env', FORMS_OA_ENGINE_PAT: 'x' })
+    expect(out).toEqual({ baseUrl: 'http://table', pat: undefined, source: 'platform.oa_engine' })
   })
 })

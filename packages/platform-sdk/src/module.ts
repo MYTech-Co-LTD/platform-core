@@ -152,6 +152,25 @@ export interface OrganizationPort {
   primaryDeptOf(org: string, userName: string): Promise<string | null>
 }
 
+/**
+ * OA 引擎查询面（宿主注入；OA P1 / issue #2363）。
+ *
+ * 为什么必须由宿主供给：`platform.oa_engine` 是**唯一登记点**（spec §12.1 P11：一租户一引擎），
+ * 而模块读不到 platform schema（B1）。env 只能表达单实例，表达不了多租户映射；PAT 的
+ * secret 引用也在登记行里（`pat_secret_ref`），只有宿主知道怎么解析成值。
+ *
+ * 语义（宿主实现 `apps/server/src/oa-engine.ts` 为准，改任何一条都要两边同改）：
+ *  ① `get` 只回答**可用**的配置：无行 / `enabled=false` / `base_url` 空 / secret 取不到
+ *     ⇒ `null`——**fail-closed，不猜**（调用方据此回 `OA_NOT_ENABLED`，不要从 env 兜底；
+ *     那会让「被停用的租户」被环境变量偷偷放行）；
+ *  ② `pat` 是**解析后的值**（从 `pat_secret_ref` 指向的 env 取名），不是引用名；
+ *     port 边界就是敏感值的边界——模块拿到值只用来发请求，不落库不落日志；
+ *  ③ 未知 org ⇒ `null`，**不抛错**（与 OrganizationPort 同口径：未知租户不是异常）。
+ */
+export interface OaEnginePort {
+  get(org: string): Promise<{ baseUrl: string; pat: string; engineVersion: string | null } | null>
+}
+
 /** 部门选择器的一行。 */
 export interface OrgNodeOption {
   extId: string
@@ -398,6 +417,15 @@ export interface ModuleContext {
    * 不得当成「没人/没部门」——那会把「查不了」静默成「解析为空」。
    */
   org?: OrganizationPort
+  /**
+   * OA 引擎查询面（OA P1）：`platform.oa_engine` 是唯一登记点（spec §12.1 P11），模块
+   * 读不到 platform schema（B1）⇒ 由宿主解析成 `{baseUrl, pat, engineVersion}` 注入。
+   *
+   * **未注入 = 旧宿主/单测**（与 `org` / `notify` 同款向后兼容契约）：调用点必须显式判空，
+   * 并降级为「OA 未开通（409）」或**显式的**本地 env 兜底——不得把「查不了」当成
+   * 「没人用 OA」以外的第三种解释，也不得用 env 兜底覆盖 port 明确返回的 null。
+   */
+  oaEngine?: OaEnginePort
   /** 用户活跃态查询（Casdoor 状态）；仅管理/清理面使用。未注入 = 无法判定（unknown）。 */
   userStatus?: UserStatusResolver
 }
