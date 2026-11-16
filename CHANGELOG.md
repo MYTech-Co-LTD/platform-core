@@ -11,6 +11,10 @@
 
 ## [Unreleased]
 
+## [0.313.2](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.313.1...v0.313.2) - 2026-11-16
+- 【修复】data: 采集流程不展示裸节点 id、参数摘要不外露占位符 (#2413) ([#2414](https://github.com/MYTech-Co-LTD/platform-core/pull/2414), [ca132f1](https://github.com/MYTech-Co-LTD/platform-core/commit/ca132f1d17a27f6f17080e51082055adc99cba90))
+
+
 ## [0.313.1](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.313.0...v0.313.1) - 2026-11-16
 - 【修复】data: 采集流程优先用收据、缺失时退回 run 记录的逐节点明细 (#2410) ([#2411](https://github.com/MYTech-Co-LTD/platform-core/pull/2411), [2a9431b](https://github.com/MYTech-Co-LTD/platform-core/commit/2a9431b582477af6c67054b833d161df2c0434ef))
 
