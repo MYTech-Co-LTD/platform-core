@@ -35,6 +35,14 @@ export interface TenantRow {
   storage_bucket: string | null
   storage_access_key: string | null
   storage_secret: string | null
+  /** 租户级「标准审批应用」凭据（OA P2，022）：**独立于登录用的企微应用**。
+   *  回调验签解密用 token/aes_key，取审批详情用 corp_id/agent_id/secret。
+   *  任一为空 ⇒ 该租户的标准审批回调/对账跳过并告警 config_missing（不猜、不回落登录应用）。 */
+  wecom_approval_corp_id: string | null
+  wecom_approval_agent_id: string | null
+  wecom_approval_secret: string | null
+  wecom_approval_token: string | null
+  wecom_approval_aes_key: string | null
   created_at: Date
 }
 

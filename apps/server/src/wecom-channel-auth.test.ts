@@ -27,6 +27,9 @@ const baseTenant: TenantRow = {
   wechat_oa_app_id: null, wechat_oa_secret: null,
   storage_endpoint: null, storage_region: null, storage_bucket: null,
   storage_access_key: null, storage_secret: null,
+  // 审批应用凭据五列（OA P2，022）：本组用例不消费 ⇒ null（未配置）即可
+  wecom_approval_corp_id: null, wecom_approval_agent_id: null, wecom_approval_secret: null,
+  wecom_approval_token: null, wecom_approval_aes_key: null,
   created_at: new Date(),
 }
 
