@@ -71,6 +71,16 @@ if [ "$MATERIALIZE_MODE" = container ]; then
 else
   R=${MATERIALIZE_REPO_DIR:-/opt/platform-core-data/platform-core}
 fi
+# dbt 的工作目录：镜像内 /app 由 root 拥有、以 node 运行⇒不可写。容器模式把 profiles/target
+# 放可写目录；宿主模式沿用原路径（$R/dbt 与 $R/dbt/target），行为不变。
+if [ "$MATERIALIZE_MODE" = container ]; then
+  PROFILES_DIR=${MATERIALIZE_PROFILES_DIR:-/tmp/dbt-profiles}
+  TARGET_DIR=${MATERIALIZE_TARGET_DIR:-/tmp/dbt-target}
+else
+  PROFILES_DIR=$R/dbt
+  TARGET_DIR=$R/dbt/target
+fi
+mkdir -p "$PROFILES_DIR" "$TARGET_DIR" 2>/dev/null || true
 PG_CT=${MATERIALIZE_PG_CT:-openship-platform-core-shanhai-data-pg_duckdb}
 CONSOLE_CT=${MATERIALIZE_CONSOLE_CT:-openship-platform-core-shanhai-data-lemeng-console-3120}
 PLAT_CT=${MATERIALIZE_PLAT_CT:-openship-platform-core-shanhai-postgres}
@@ -101,10 +111,13 @@ mat_env_args() {
 #   串行化把峰值压到单连接；代价是物化时长约 ×1.5~2。**本函数体保持单行 printf**：
 #   `materialize.test.sh` 用「剥首行与闭括号行、取载荷首词」的方式抽取命令，插注释会打挂该断言。
 mat_profiles_dir() {
-  if [ "$MATERIALIZE_MODE" = container ]; then printf '%s' "$R/dbt"; else printf '%s' /usr/app; fi
+  printf '%s' "${PROFILES_DIR:-/usr/app}"
+}
+mat_target_dir() {
+  printf '%s' "${TARGET_DIR:-$R/dbt/target}"
 }
 mat_dbt_args() {
-  printf '%s ' build --profiles-dir "$(mat_profiles_dir)" --threads 1
+  printf '%s ' build --profiles-dir "$(mat_profiles_dir)" --target-path "$(mat_target_dir)" --threads 1
 }
 # dbt 执行适配：宿主模式 = 一次性 dbt 镜像（原行为）；容器模式 = 镜像内 dbt CLI（cwd=dbt 工程）。
 mat_dbt() {
@@ -351,9 +364,9 @@ mat_require 'DATA_PLANE_DOMAINS(本数据面拥有的域，逗号分隔；job en
 
 # profiles.yml 机器本地（不进仓；模板 = 仓内 dbt/profiles.example.yml，纯 env_var() 引用无真值）。
 # 缺失时自愈一份（首次部署/检出重建的兜底）；已人工调过的不会被覆盖。
-[ -f "$R/dbt/profiles.yml" ] || {
+[ -f "$PROFILES_DIR/profiles.yml" ] || {
   echo "profiles.yml 缺失，从 profiles.example.yml 派生（模板纯 env_var 引用，无真值）"
-  cp "$R/dbt/profiles.example.yml" "$R/dbt/profiles.yml"
+  cp "$R/dbt/profiles.example.yml" "$PROFILES_DIR/profiles.yml"
 }
 
 export DBT_HOST="${DBT_HOST_FROM_URL:-pg_duckdb}" DBT_USER="$UN" DBT_PASSWORD="$PW" DBT_DBNAME="$DB"
@@ -435,7 +448,7 @@ if [ "$SCOPE" = tables ]; then
       _sum_pass="$(sed -n 's/.*PASS=\([0-9]*\).*/\1/p' "$_log" | tail -n 1)"
       _sum_err="$(sed -n 's/.*ERROR=\([0-9]*\).*/\1/p' "$_log" | tail -n 1)"
     fi
-    _failed="$(python3 "$R/scripts/lemeng/dbt-failed-nodes.py" "$R/dbt/target/run_results.json" 2>/dev/null || true)"
+    _failed="$(python3 "$R/scripts/lemeng/dbt-failed-nodes.py" "$(mat_target_dir)/run_results.json" 2>/dev/null || true)"
     if [ -z "$_failed" ]; then
       [ "$(cat "$_rc")" = 0 ] && break
       # 退出码非 0 但解析不出失败节点（run_results 缺失/形状变了）⇒ 不猜，直接判失败
@@ -539,7 +552,7 @@ if [ "$SCOPE" = audit ]; then
   echo "── audit: select=${_sel}（全史对账；分段 job）──"
   _log="$_WORK/dbt.audit.log"
   _rc="$_WORK/dbt.audit.rc"
-  ( if DATA_PLANE_DOMAINS="$TICK_DOMAIN" mat_dbt test --profiles-dir "$(mat_profiles_dir)" --threads 1 --select "$_sel" 2>&1; then
+  ( if DATA_PLANE_DOMAINS="$TICK_DOMAIN" mat_dbt test --profiles-dir "$(mat_profiles_dir)" --target-path "$(mat_target_dir)" --threads 1 --select "$_sel" 2>&1; then
     echo 0 >"$_rc"
   else
     echo $? >"$_rc"
@@ -605,7 +618,7 @@ if [ "$SCOPE" = hourly ]; then
     else
       echo $? >"$_rc"
     fi ) | tee -a "$_log"
-    _failed="$(python3 "$R/scripts/lemeng/dbt-failed-nodes.py" "$R/dbt/target/run_results.json" 2>/dev/null || true)"
+    _failed="$(python3 "$R/scripts/lemeng/dbt-failed-nodes.py" "$(mat_target_dir)/run_results.json" 2>/dev/null || true)"
     if [ -z "$_failed" ]; then
       [ "$(cat "$_rc")" = 0 ] && break
       # 退出码非 0 但解析不出失败节点（run_results 缺失/形状变了）⇒ 不猜，直接判失败
