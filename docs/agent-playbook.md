@@ -1,6 +1,6 @@
 # agent playbook：外部 agent 与 openclaw 的平台能力使用手册
 
-> 面向两类调用方：**B（外部 agent，PAT）** 与 **C（openclaw，企微 userid）**。
+> 面向两类调用方：**B（外部 agent，PAT / 平台会话）** 与 **C（openclaw，企微 userid）**。
 > 本文只写「怎么用 + 指针」：scope 语义、协议正文、face 设计依据的正典是
 > `docs/superpowers/specs/2026-11-16-agent-capability-gateway-design.md` 与
 > `docs/module-protocol.md`「agent 能力面：mcpFaces」节；架构背景见 `docs/architecture.md` §1.5.1。
@@ -46,6 +46,8 @@
   | face 不可用/5xx | `{status:'error', reason:'module_unavailable'}` | 稍后再试；持续失败报障 |
   | 限流 | `{status:'error', reason:'rate_limited'}`（60 次/分钟/工具） | 等待窗口过去 |
   | 未知工具/方法 | JSON-RPC `-32601` | 回 `agent__capabilities` 查名单，不要凭记忆拼 |
+  | 面外调用 | 模块工具级 `{status:'denied', reason:'unknown_tool', name}`（如 data read face 调查询/管理工具——本面没有该工具，不回退 full/legacy） | 处置同 `-32601`：回 `agent__capabilities` 查可用名单，不换工具试探 |
+  | 网关内部错误 | JSON-RPC `-32603`（发现期工具重名 / 网关内部错误） | 不要原样重试；报告管理员 |
   | 参数坏 | `-32602`（cursor）/ 模块错误码透传 | 按错误 detail 自纠 |
 
 - scope 命名速查（**以 manifest 为准**）：`data:read/query/manage`、

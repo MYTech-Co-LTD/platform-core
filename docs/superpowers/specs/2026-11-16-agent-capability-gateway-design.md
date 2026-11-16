@@ -132,7 +132,7 @@ mcpFaces:
   - { face: agent-manage, group: notify, precedence: 2, path: /mcp-manage, method: POST, scope: notify:manage, audiences: [wecom], profile: c-manage }
 ```
 
-- `/mcp`：非 mutating 工具（6 个只读 `list_events`/`get_event`/`list_rules`/`list_templates`/`get_template`/`list_deliveries` + `check_rule` + 只读排班 `list_schedules`/`list_schedule_runs`/`get_schedule_quota`；`requiredScope` 按调用方 scope 过滤——仅持 `notify:view` 时看不到要 `notify:manage` 的工具，如 `preview_template`）。
+- `/mcp`：非 mutating 工具（6 个只读 `list_events`/`get_event`/`list_rules`/`list_templates`/`get_template`/`list_deliveries` + `check_rule` + `preview_template`（要 `notify:manage`）+ 只读排班 `list_schedules`/`list_schedule_runs`/`get_schedule_quota`；`requiredScope` 按调用方 scope 过滤——仅持 `notify:view` 时看不到 `preview_template` 这类要 `notify:manage` 的工具）。
 - `profile=full`（B）：保持 N3 现有工具面，外发未预授权仍落 pending 审批。
 - `profile=c-manage`（C）：只暴露 agent-safe 工具——
   `create_agent_rule`、`create_agent_template`、`check_rule`、`preview_template`、`send_test`、`list_deliveries` + 排班工具；
