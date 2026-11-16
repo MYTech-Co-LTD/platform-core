@@ -15,51 +15,88 @@ export class FormsError extends Error {
   }
 }
 
-const KIND = 'form_def'
+/** 受管资产 kind（forms.kind 的已注册值）。默认 form_def ⇒ 既有调用方零改动。 */
+export type FormsKind = 'form_def' | 'approval_def'
 
-// ── 生命周期（org 维度全部显式入参） ──
+const DEFAULT_KIND: FormsKind = 'form_def'
+/** 收集类（指派/催办/出湖）只看 form_def —— 审批模板不是收集表单，别把它们拖进收集链路。 */
+const COLLECTION_KIND: FormsKind = 'form_def'
 
-export async function newDraft(pool: Pool, org: string, assetId: string, body: unknown, actor: string): Promise<number> {
+// ── 审计（事项平台：谁在什么时候动了什么；表单/审批共用一张表） ──
+
+/**
+ * 写一条 `forms.audit`（只记**已发生的事实**：动作 + 目标 + 细节）。
+ * 走 pool 直发 ⇒ **不参与调用方事务**：调用方在业务写成功之后调，审计失败不掩盖业务结果。
+ * 若某条通路要求审计与业务写入同生共死，由调用方在自己的 client/事务里写，别从这里借。
+ */
+export async function audit(
+  pool: Pool, org: string, actor: string, action: string, target: string | null, detail: unknown,
+): Promise<void> {
+  await pool.query(
+    `insert into forms.audit (org, actor, action, target, detail) values ($1,$2,$3,$4,$5::jsonb)`,
+    [org, actor, action, target, JSON.stringify(detail ?? {})],
+  )
+}
+
+// ── 生命周期（org 维度全部显式入参；kind 为可选尾参，缺省 form_def） ──
+
+export async function newDraft(
+  pool: Pool, org: string, assetId: string, body: unknown, actor: string, kind: FormsKind = DEFAULT_KIND,
+): Promise<number> {
   const { rows } = await pool.query('select forms.new_draft($1,$2,$3,$4,$5) v', [
-    org, KIND, assetId, JSON.stringify(body ?? null), actor,
+    org, kind, assetId, JSON.stringify(body ?? null), actor,
   ])
   return rows[0].v
 }
 
-export async function updateDraft(pool: Pool, org: string, assetId: string, version: number, body: unknown): Promise<void> {
+export async function updateDraft(
+  pool: Pool, org: string, assetId: string, version: number, body: unknown, kind: FormsKind = DEFAULT_KIND,
+): Promise<void> {
   await pool.query('select forms.update_draft($1,$2,$3,$4,$5)', [
-    org, KIND, assetId, version, JSON.stringify(body ?? null),
+    org, kind, assetId, version, JSON.stringify(body ?? null),
   ])
 }
 
-export async function dropDraft(pool: Pool, org: string, assetId: string, version: number): Promise<void> {
-  await pool.query('select forms.drop_draft($1,$2,$3,$4)', [org, KIND, assetId, version])
+export async function dropDraft(
+  pool: Pool, org: string, assetId: string, version: number, kind: FormsKind = DEFAULT_KIND,
+): Promise<void> {
+  await pool.query('select forms.drop_draft($1,$2,$3,$4)', [org, kind, assetId, version])
 }
 
 /** 发布：API 层已按 scope 把住人 gate（forms:publish）；actorRole 固定 'human'——
  *  会话身份即人；AI 工具面将来走 manage 不走 publish，DB 策略分支保持双保险。 */
-export async function publish(pool: Pool, org: string, assetId: string, version: number, actor: string): Promise<void> {
-  await pool.query('select forms.publish($1,$2,$3,$4,$5,$6)', [org, KIND, assetId, version, actor, 'human'])
+export async function publish(
+  pool: Pool, org: string, assetId: string, version: number, actor: string, kind: FormsKind = DEFAULT_KIND,
+): Promise<void> {
+  await pool.query('select forms.publish($1,$2,$3,$4,$5,$6)', [org, kind, assetId, version, actor, 'human'])
 }
 
-export async function rollbackTo(pool: Pool, org: string, assetId: string, version: number): Promise<void> {
-  await pool.query('select forms.rollback_to($1,$2,$3,$4)', [org, KIND, assetId, version])
+export async function rollbackTo(
+  pool: Pool, org: string, assetId: string, version: number, kind: FormsKind = DEFAULT_KIND,
+): Promise<void> {
+  await pool.query('select forms.rollback_to($1,$2,$3,$4)', [org, kind, assetId, version])
 }
 
-export async function retire(pool: Pool, org: string, assetId: string, version: number): Promise<void> {
-  await pool.query('select forms.retire($1,$2,$3,$4)', [org, KIND, assetId, version])
+export async function retire(
+  pool: Pool, org: string, assetId: string, version: number, kind: FormsKind = DEFAULT_KIND,
+): Promise<void> {
+  await pool.query('select forms.retire($1,$2,$3,$4)', [org, kind, assetId, version])
 }
 
-export async function headVersion(pool: Pool, org: string, assetId: string): Promise<number | null> {
+export async function headVersion(
+  pool: Pool, org: string, assetId: string, kind: FormsKind = DEFAULT_KIND,
+): Promise<number | null> {
   const { rows } = await pool.query(
     'select active_version from forms.asset_head where org=$1 and kind=$2 and asset_id=$3',
-    [org, KIND, assetId],
+    [org, kind, assetId],
   )
   return rows[0]?.active_version ?? null
 }
 
-export async function bodyAt(pool: Pool, org: string, assetId: string, version: number): Promise<object | null> {
-  const { rows } = await pool.query('select forms.body_at($1,$2,$3,$4) body', [org, KIND, assetId, version])
+export async function bodyAt(
+  pool: Pool, org: string, assetId: string, version: number, kind: FormsKind = DEFAULT_KIND,
+): Promise<object | null> {
+  const { rows } = await pool.query('select forms.body_at($1,$2,$3,$4) body', [org, kind, assetId, version])
   return rows[0]?.body ?? null
 }
 
@@ -80,7 +117,7 @@ export async function listAssignmentTargets(pool: Pool): Promise<Array<{
        join forms.asset_head h
          on h.org = v.org and h.kind = v.kind and h.asset_id = v.asset_id and h.active_version = v.version
       where v.kind = $1 and v.status = 'published' and v.body ? 'assignees'`,
-    [KIND],
+    [COLLECTION_KIND],
   )
   return rows.map((r) => ({
     org: r.org, assetId: r.asset_id, version: r.version, publishedAt: r.published_at, body: r.body,
@@ -88,10 +125,12 @@ export async function listAssignmentTargets(pool: Pool): Promise<Array<{
 }
 
 /** 该资产在本租户下是否已有任何版本（AI 起草重名时据此拒，**不覆盖**）。 */
-export async function assetExists(pool: Pool, org: string, assetId: string): Promise<boolean> {
+export async function assetExists(
+  pool: Pool, org: string, assetId: string, kind: FormsKind = DEFAULT_KIND,
+): Promise<boolean> {
   const { rows } = await pool.query(
     'select 1 from forms.asset_version where org=$1 and kind=$2 and asset_id=$3 limit 1',
-    [org, KIND, assetId],
+    [org, kind, assetId],
   )
   return rows.length > 0
 }
@@ -107,13 +146,15 @@ export interface VersionRow {
   body: unknown
 }
 
-export async function listVersions(pool: Pool, org: string, assetId: string): Promise<VersionRow[]> {
+export async function listVersions(
+  pool: Pool, org: string, assetId: string, kind: FormsKind = DEFAULT_KIND,
+): Promise<VersionRow[]> {
   const { rows } = await pool.query(
     `select version, status, created_by, published_by, created_at, published_at, retired_at, body
        from forms.asset_version
       where org=$1 and kind=$2 and asset_id=$3
       order by version desc`,
-    [org, KIND, assetId],
+    [org, kind, assetId],
   )
   return rows.map((r) => ({
     version: r.version, status: r.status, createdBy: r.created_by, publishedBy: r.published_by,
@@ -130,7 +171,9 @@ export interface DefSummaryRow {
   updatedAt: Date
 }
 
-export async function listDefs(pool: Pool, org: string): Promise<DefSummaryRow[]> {
+export async function listDefs(
+  pool: Pool, org: string, kind: FormsKind = DEFAULT_KIND,
+): Promise<DefSummaryRow[]> {
   const { rows } = await pool.query(
     `select v.asset_id,
             h.active_version as head_version,
@@ -144,7 +187,7 @@ export async function listDefs(pool: Pool, org: string): Promise<DefSummaryRow[]
       where v.org=$1 and v.kind=$2
       group by v.asset_id, h.active_version
       order by max(v.created_at) desc`,
-    [org, KIND],
+    [org, kind],
   )
   return rows.map((r) => ({
     assetId: r.asset_id, headVersion: r.head_version, draftCount: r.draft_count,
@@ -165,26 +208,32 @@ export interface SubmissionRow {
 
 /** 提交 = 按「提交将钉住的版本」（head）预载字典生效集 → 契约五道闸 → forms.submit
  *  （触发器复核 head：校验与写入之间 head 被切走时**保守拒绝**，绝不出现
- *  「按旧契约校验、新契约入库」的窗口）。 */
+ *  「按旧契约校验、新契约入库」的窗口）。
+ *
+ *  `kind` 只影响「读哪个资产的 head/body」。**契约五道闸只对 form_def 生效**：approval_def 的
+ *  body 是审批 DSL（没有 `schema`），它的校验与入库走 `submitApproval`（编译计划 + 建 case，
+ *  自带 `validateApprovalBody`），不从这里过。 */
 export async function submit(
-  pool: Pool, org: string, assetId: string, payload: unknown, userId: string,
+  pool: Pool, org: string, assetId: string, payload: unknown, userId: string, kind: FormsKind = DEFAULT_KIND,
 ): Promise<{ id: string; version: number }> {
-  const version = await headVersion(pool, org, assetId)
+  const version = await headVersion(pool, org, assetId, kind)
   if (version === null) throw new FormsError('NO_PUBLISHED_HEAD', '表单尚无发布版本，不能提交')
-  const body = await bodyAt(pool, org, assetId, version)
+  const body = await bodyAt(pool, org, assetId, version, kind)
   if (body === null) throw new FormsError('NO_PUBLISHED_HEAD', '表单尚无发布版本，不能提交')
-  // 契约 body = {schema, uiSchema?}（#724 定案）；校验只吃 schema 那一半
-  const schema = schemaOf(body)
-  if (schema === null) throw new FormsError('CONTRACT_MALFORMED', '发布版本的契约缺 schema')
+  if (kind === COLLECTION_KIND) {
+    // 契约 body = {schema, uiSchema?}（#724 定案）；校验只吃 schema 那一半
+    const schema = schemaOf(body)
+    if (schema === null) throw new FormsError('CONTRACT_MALFORMED', '发布版本的契约缺 schema')
 
-  // 预载契约引用的生效 key 集（validateSubmission 的 dictLookup 是同步接口 ⇒ 先 await 预载）
-  const cache = await activeKeysByRef(pool, org, schema)
-  const result = validateSubmission({ schema, payload, dictLookup: (ref) => cache.get(ref) ?? new Set() })
-  if (!result.ok) throw new FormsError(result.code, result.detail)
+    // 预载契约引用的生效 key 集（validateSubmission 的 dictLookup 是同步接口 ⇒ 先 await 预载）
+    const cache = await activeKeysByRef(pool, org, schema)
+    const result = validateSubmission({ schema, payload, dictLookup: (ref) => cache.get(ref) ?? new Set() })
+    if (!result.ok) throw new FormsError(result.code, result.detail)
+  }
 
   try {
     const { rows } = await pool.query('select forms.submit($1,$2,$3,$4,$5) id', [
-      org, KIND, assetId, JSON.stringify(payload ?? null), userId,
+      org, kind, assetId, JSON.stringify(payload ?? null), userId,
     ])
     return { id: String(rows[0].id), version }
   } catch (e) {
@@ -206,13 +255,15 @@ export async function getSubmission(pool: Pool, org: string, id: string): Promis
   return { id: String(r.id), assetId: r.asset_id, version: r.version, payload: r.payload, submittedBy: r.submitted_by, submittedAt: r.submitted_at }
 }
 
-export async function listSubmissions(pool: Pool, org: string, assetId: string, limit = 100): Promise<SubmissionRow[]> {
+export async function listSubmissions(
+  pool: Pool, org: string, assetId: string, limit = 100, kind: FormsKind = DEFAULT_KIND,
+): Promise<SubmissionRow[]> {
   const { rows } = await pool.query(
     `select id, asset_id, version, payload, submitted_by, submitted_at
        from forms.submission
       where org=$1 and kind=$2 and asset_id=$3
       order by submitted_at desc limit $4`,
-    [org, KIND, assetId, limit],
+    [org, kind, assetId, limit],
   )
   return rows.map((r) => ({ id: String(r.id), assetId: r.asset_id, version: r.version, payload: r.payload, submittedBy: r.submitted_by, submittedAt: r.submitted_at }))
 }
