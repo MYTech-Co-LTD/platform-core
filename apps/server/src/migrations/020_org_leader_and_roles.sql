@@ -1,4 +1,7 @@
--- 018_org_leader_and_roles.sql — OA 前置：部门负责人（企微同步）与部门管理员（平台授予）。
+-- 020_org_leader_and_roles.sql — OA 前置：部门负责人（企微同步）与部门管理员（平台授予）。
+--
+-- 编号 020：018/019 已被 platform 内置调度器占用（`018_platform_jobs.sql` /
+-- `019_job_schedule_soft_delete.sql`，2026-11-14 落地），故取 main 上的下一个空号。
 --
 -- 为什么要有这两张表（spec 2026-11-16-ai-native-oa-design §5 / 计划 T1）：
 --   审批链的 `dept_leader` / `dept_admin` 两种审批人来源必须有**平台内的可查面**——
