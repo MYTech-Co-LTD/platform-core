@@ -46,7 +46,7 @@ export const JOB_REGISTRY: JobDef[] = [
   // Wave 7 V1：业务监控求值（每实例一条；seed 为 disabled，切流按 deploy/jobs.md 四步开闸）
   // Wave 8 P1：dbt 由平台 scheduler 在容器内执行（镜像已内置 dbt 1.9.1，issue #2343）。
   // env/cron/timeout/retry 与 openship 现役 `lemeng-dbt-tick` 逐字一致。
-  { key: 'data.dbt_tick', script: 'scripts/lemeng/materialize-job.mjs', env: { MATERIALIZE_SCOPE: 'tick', DATA_PLANE_DOMAINS: 'lemeng' }, cron: '2-59/10 1-15 * * *', timezone: 'UTC', timeoutMs: 600000, maxAttempts: 1, expectedIntervalSecs: 600, description: '乐檬 dbt tick 档（销售明细 10 分钟；容器内 dbt 1.9.1）' },
+  { key: 'data.dbt_tick', script: 'scripts/lemeng/materialize-job.mjs', env: { MATERIALIZE_SCOPE: 'tick', DATA_PLANE_DOMAINS: 'lemeng', MATERIALIZE_MODE: 'container' }, cron: '2-59/10 1-15 * * *', timezone: 'UTC', timeoutMs: 600000, maxAttempts: 1, expectedIntervalSecs: 600, description: '乐檬 dbt tick 档（销售明细 10 分钟；容器内 dbt 1.9.1）' },
   { key: 'data.monitor_tick', script: 'scripts/data-monitor-tick.mjs', cron: '* * * * *', timezone: 'UTC', timeoutMs: 300000, maxAttempts: 1, expectedIntervalSecs: 60, description: '业务监控求值（到期规则）' },
   // handler-only：排班由 agent/console 经 SchedulerPort 建（source≠'system'），seed 不建行。
   // cron/timezone 是 JobDef 必填字段的占位值（不会被 seed 使用），真实时间以排班行为准。

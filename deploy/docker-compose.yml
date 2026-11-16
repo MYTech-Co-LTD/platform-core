@@ -131,6 +131,12 @@ services:
       SCHEDULER_ENABLED: '${SCHEDULER_ENABLED:-1}'
       SCHEDULER_TICK_MS: '${SCHEDULER_TICK_MS:-30000}'
       SCHEDULER_MAX_CONCURRENCY: '${SCHEDULER_MAX_CONCURRENCY:-2}'
+      # Wave 8 P1：dbt 在容器内执行（materialize.sh 容器模式）；ZOS 三项是非密钥配置，
+      # 与山海 console 容器同值。控件容器没有 docker sock ⇒ 宿主模式的 docker inspect/exec 不可用。
+      MATERIALIZE_MODE: '${MATERIALIZE_MODE:-container}'
+      LEMENG_ZOS_BUCKET: '${LEMENG_ZOS_BUCKET:-shanhai-data}'
+      LEMENG_ZOS_REGION: '${LEMENG_ZOS_REGION:-xinan1}'
+      LEMENG_ZOS_ENDPOINT: '${LEMENG_ZOS_ENDPOINT:-xinan-1-internal.zos.ctyun.cn}'
     # 运行镜像已含 tsx（node_modules 全量 COPY，未 prune）；不要用裸 node 跑 .ts import
     command: ['pnpm', 'exec', 'tsx', 'scripts/notify-worker.mjs']
     depends_on:

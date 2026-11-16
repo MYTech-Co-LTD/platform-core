@@ -212,8 +212,7 @@ mat_max_bizdays() {
   [ $# -gt 0 ] || return 0
   _lb=$(date -u -d '30 days ago' +%F 2>/dev/null || date -u -v-30d +%F 2>/dev/null || echo '1970-01-01')
   for _t in "$@"; do
-    _v=$(docker exec -e PGPASSWORD="$PW" "$PG_CT" \
-      psql -U "$UN" -d "$DB" -tA -c \
+    _v=$(mat_psql warehouse -tA -c \
       "select coalesce(max(bizday)::text,'') from staging.${_t} where bizday >= date '${_lb}'" 2>/dev/null \
       | tr -d ' \r\n')
     case "$_v" in
@@ -239,8 +238,7 @@ mat_write_load_log() { # $1=tests_pass $2=tests_error $3..=水位表名
   fi
   _wsql="$(mat_load_log_sql)
 $(mat_watermark_sql "$_wp" "$_we" $_pairs)"
-  docker exec -e PGPASSWORD="$PW" "$PG_CT" \
-    psql -U "$UN" -d "$DB" -v ON_ERROR_STOP=1 -q -c "$_wsql" \
+  mat_psql warehouse -v ON_ERROR_STOP=1 -q -c "$_wsql" \
     || echo "materialize warn: load_log 落账失败（物化本身已成功；data_as_of 将停留旧值，新鲜度面降级）" >&2
 }
 
@@ -269,9 +267,49 @@ mat_domain_staging_models() { # $1=检出根 $2=域
 ct_env() {
   docker inspect "$1" --format '{{range .Config.Env}}{{println .}}{{end}}' 2>/dev/null | sed -n "s/^$2=//p"
 }
-PW=$(ct_env "$PG_CT" POSTGRES_PASSWORD); UN=$(ct_env "$PG_CT" POSTGRES_USER); DB=$(ct_env "$PG_CT" POSTGRES_DB)
-ZB=$(ct_env "$CONSOLE_CT" ZOS_BUCKET); ZR=$(ct_env "$CONSOLE_CT" ZOS_REGION); ZE=$(ct_env "$CONSOLE_CT" ZOS_ENDPOINT)
-PPW=$(ct_env "$PLAT_CT" POSTGRES_PASSWORD); PUN=$(ct_env "$PLAT_CT" POSTGRES_USER); PDB=$(ct_env "$PLAT_CT" POSTGRES_DB)
+
+# ── 容器模式（Wave 8：平台 scheduler 在容器内执行）────────────────────────────────
+# 宿主模式（默认）保持原行为：docker inspect 取凭据、docker exec psql 落账。
+# 容器模式：凭据从来进程 env（DATA_WAREHOUSE_URL / DATABASE_URL），落账用镜像内 psql 直连；
+# ZOS 三项（桶/区域/端点，非密钥）由 compose env 注入。两种模式**共用同一份 dbt 选择器与
+# 落账 SQL**——差异只在「取凭据 / 连库」这两个适配点。
+MATERIALIZE_MODE=${MATERIALIZE_MODE:-host}
+mat_url_field() { # $1=url $2=user|pass|host
+  _r=${1#*://}; _c=${_r%%@*}; _hd=${_r#*@}
+  case "$2" in
+    user) printf '%s' "${_c%%:*}" ;;
+    pass) printf '%s' "${_c#*:}" ;;
+    host) printf '%s' "${_hd%%/*}" ;;
+  esac
+}
+# 容器模式里 DBT_PASSWORD 可能是 URL 编码态；profiles 用 env_var 直填，这里做最小 %XX 解码。
+mat_url_decode() {
+  printf '%s' "$1" | sed -e 's/%20/ /g' -e 's/%40/@/g' -e 's/%3A/:/g' -e 's/%2F/\//g'
+}
+mat_psql() { # $1=warehouse|platform；其余透传给 psql
+  _w=$1; shift
+  if [ "$MATERIALIZE_MODE" = container ]; then
+    if [ "$_w" = warehouse ]; then _url=${DATA_WAREHOUSE_URL:-}; else _url=${DATABASE_URL:-}; fi
+    [ -n "$_url" ] || return 1
+    psql "$_url" "$@"
+  else
+    if [ "$_w" = warehouse ]; then _ct=$PG_CT; _pw=$PW; _u=$UN; _d=$DB
+    else _ct=$PLAT_CT; _pw=$PPW; _u=$PUN; _d=$PDB; fi
+    docker exec -e PGPASSWORD="$_pw" "$_ct" psql -U "$_u" -d "$_d" "$@"
+  fi
+}
+
+if [ "$MATERIALIZE_MODE" = container ]; then
+  WURL=${DATA_WAREHOUSE_URL:-}
+  UN=$(mat_url_field "$WURL" user); PW=$(mat_url_decode "$(mat_url_field "$WURL" pass)")
+  DBT_HOST_FROM_URL=$(mat_url_field "$WURL" host); DB=warehouse
+  PUN=$(mat_url_field "${DATABASE_URL:-}" user); PPW=$(mat_url_decode "$(mat_url_field "${DATABASE_URL:-}" pass)"); PDB=platform
+  ZB=${LEMENG_ZOS_BUCKET:-}; ZR=${LEMENG_ZOS_REGION:-}; ZE=${LEMENG_ZOS_ENDPOINT:-}
+else
+  PW=$(ct_env "$PG_CT" POSTGRES_PASSWORD); UN=$(ct_env "$PG_CT" POSTGRES_USER); DB=$(ct_env "$PG_CT" POSTGRES_DB)
+  ZB=$(ct_env "$CONSOLE_CT" ZOS_BUCKET); ZR=$(ct_env "$CONSOLE_CT" ZOS_REGION); ZE=$(ct_env "$CONSOLE_CT" ZOS_ENDPOINT)
+  PPW=$(ct_env "$PLAT_CT" POSTGRES_PASSWORD); PUN=$(ct_env "$PLAT_CT" POSTGRES_USER); PDB=$(ct_env "$PLAT_CT" POSTGRES_DB)
+fi
 
 # 守卫比旧 job 命令多 UN/DB/ZR/ZE 四项（有意收紧）：ZE 缺失会静默路由到 AWS 默认端点、
 # UN/DB 缺失要等 dbt 连库才炸——四项都属于「晚失败难定位」类，进容器前就该拦下。
@@ -281,7 +319,7 @@ mat_require 'POSTGRES_DB(pg_duckdb)' "$DB" || exit 1
 mat_require 'ZOS_BUCKET(console)' "$ZB" || exit 1
 mat_require 'ZOS_REGION(console)' "$ZR" || exit 1
 mat_require 'ZOS_ENDPOINT(console)' "$ZE" || exit 1
-SO=$(docker exec -e PGPASSWORD="$PPW" "$PLAT_CT" psql -U "$PUN" -d "$PDB" -tAc \
+SO=$(mat_psql platform -tAc \
   'select casdoor_org from platform.tenant order by id limit 1' 2>/dev/null | tr -d ' \r\n')
 mat_require 'LEMENG_SUBJECT_ORG(platform.tenant 首行)' "$SO" || exit 1
 # 域身份：本数据面**拥有哪些域**（逗号分隔），dbt 侧按它裁剪物化集（docs/architecture.md §2.5）。
@@ -299,7 +337,7 @@ mat_require 'DATA_PLANE_DOMAINS(本数据面拥有的域，逗号分隔；job en
   cp "$R/dbt/profiles.example.yml" "$R/dbt/profiles.yml"
 }
 
-export DBT_HOST=pg_duckdb DBT_USER="$UN" DBT_PASSWORD="$PW" DBT_DBNAME="$DB"
+export DBT_HOST="${DBT_HOST_FROM_URL:-pg_duckdb}" DBT_USER="$UN" DBT_PASSWORD="$PW" DBT_DBNAME="$DB"
 export LEMENG_ZOS_BUCKET="$ZB" LEMENG_ZOS_REGION="$ZR" LEMENG_ZOS_ENDPOINT="$ZE"
 export LEMENG_SUBJECT_ORG="$SO"
 export DATA_PLANE_DOMAINS="$DOMAINS"
@@ -329,7 +367,7 @@ trap 'rm -rf "$_WORK"' EXIT
 # ── 水位表清单（全 staging 内含 bizday 列的表）────────────────────────────────────
 # 与**域无关**，只点名一次；逐域落账时再按「本域的 staging 模型名」取子集（见下）。
 # 点名失败/为空 ⇒ 零水位行 + 告警（新鲜度缺账 ≠ 翻车，data_as_of 停留旧值暴露）。
-MAT_TABLES_ALL=$(docker exec -e PGPASSWORD="$PW" "$PG_CT" psql -U "$UN" -d "$DB" -tAc \
+MAT_TABLES_ALL=$(mat_psql warehouse -tAc \
   "SELECT table_name FROM information_schema.columns WHERE table_schema='staging' AND column_name='bizday' GROUP BY table_name ORDER BY table_name" 2>/dev/null \
   | tr -d '\r' | sed '/^[[:space:]]*$/d' | tr '\n' ' ' || true)
 if [ -z "$MAT_TABLES_ALL" ]; then
