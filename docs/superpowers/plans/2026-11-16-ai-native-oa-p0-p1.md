@@ -441,7 +441,10 @@ it('producer 存在时 moduleId 记为 external:<name>，source=external', () =>
     notifications: { events: [{
       key: 'forms.approval.awaiting', title: '待审批',
       producer: 'external:case-engine',
-      payload: { submissionId: { type: 'string', required: true } },
+      payload: {
+        submissionId: { type: 'string', required: true },
+        assignee: { type: 'string', required: true },
+      },
       recipients: { approver: { kind: 'field', field: 'assignee' } },
     }] },
   }] as never)
