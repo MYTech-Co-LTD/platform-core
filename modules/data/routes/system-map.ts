@@ -20,6 +20,7 @@ import type { SystemMapInput, SystemMapModel } from '../domain/system-map/map'
 import { buildSystemMapOntology } from '../domain/system-map/ontology'
 import { buildMetricTrail, lakeOfStaging, lakeStagingFromContracts, pipelineIdsOf, stagingRelationsOf } from '../domain/system-map/trail'
 import { buildMetricLineage } from '../domain/system-map/lineage'
+import { buildPipelineFlow } from '../domain/pipelines/flow'
 import { resolveMeasureInputs } from '../domain/system-map/measure-inputs'
 import { buildPipelineMap, lakeConsumers, liveStatusOf } from '../domain/system-map/pipeline-map'
 import { loadContracts, loadPipelines, loadSchedules, rootsOf } from '../domain/pipelines/defs'
@@ -361,6 +362,57 @@ export function registerSystemMap(r: ModuleHono, ctx: RouteCtx): void {
       truncated: list.truncated,
       warnings: list.warnings,
     })
+  })
+
+  // 一条管线「怎么跑」：定义里的节点图翻成人话步骤，并挂最近一次运行的逐节点行数/耗时。
+  // 给业务人员看采集全流程（取数 → 展开账套 → 加工 → 校验 → 落湖）。
+  r.get('/system-map/pipelines/:id/flow', async (c) => {
+    const requester = requesterOf(c)
+    if (requester === null) return c.json({ error: 'UNAUTHENTICATED' }, 401)
+
+    const id = c.req.param('id')
+    if (!/^[A-Za-z0-9][A-Za-z0-9._-]{0,199}$/.test(id)) return c.json({ error: 'INVALID_PIPELINE_ID' }, 400)
+
+    const roots = rootsOf(process.env, ctx.repoRoot)
+    const def = loadPipelines(roots).defs.get(id)
+    if (def === undefined) return c.json({ error: 'NO_SUCH_PIPELINE' }, 404)
+
+    // 最近一次运行 → 收据里的 nodes（逐节点明细）。没有运行记录就只给结构，不编数字。
+    const runs = runSourceFromEnv(process.env)
+    let lastRun: { runId: string; at: string; status: string; rows?: number; durationMs?: number } | null = null
+    const stats = new Map<string, { rows?: number; durationMs?: number }>()
+    let runNote: string | null = null
+    if (runs === null) {
+      runNote = '本服务未配置运行记录挂载（DATA_RUN_DIRS）——未知 ≠ 没跑过'
+    } else {
+      const list = await runs.list({ pipelineId: id, limit: 1 })
+      const r0 = list.runs[0]
+      if (r0 === undefined) {
+        runNote = '没有这条管线的运行记录'
+      } else {
+        lastRun = {
+          runId: r0.runId, at: r0.startedAt, status: r0.status,
+          ...(r0.rows === undefined ? {} : { rows: r0.rows }),
+          ...(r0.durationMs === undefined ? {} : { durationMs: r0.durationMs }),
+        }
+        const got = await runs.get(r0.runId)
+        const nodes = Array.isArray(got.receipt?.nodes) ? got.receipt.nodes : []
+        for (const n of nodes) {
+          if (typeof n !== 'object' || n === null) continue
+          const rec = n as Record<string, unknown>
+          const nodeId = typeof rec.node === 'string' ? rec.node : ''
+          if (nodeId === '') continue
+          stats.set(nodeId, {
+            ...(typeof rec.rows === 'number' ? { rows: rec.rows } : {}),
+            ...(typeof rec.durationMs === 'number' ? { durationMs: rec.durationMs } : {}),
+          })
+        }
+        if (nodes.length === 0) runNote = '这次运行的收据里没有逐节点明细'
+      }
+    }
+
+    const flow = buildPipelineFlow(id, def.doc, stats)
+    return c.json({ ...flow, lastRun, runNote })
   })
 }
 
