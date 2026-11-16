@@ -41,10 +41,17 @@ export function issueInternalIdentity(p: Omit<InternalIdentityPayload, 'exp'>): 
 
 export function verifyInternalIdentity(header: string | undefined, now = Date.now()): InternalIdentityPayload | null {
   if (!header) return null
-  const [payload, mac] = header.split('.')
+  // 必须恰两段：`validHeader + '.garbage'` 不能被 split 的宽松解构放过。
+  const parts = header.split('.')
+  if (parts.length !== 2) return null
+  const [payload, mac] = parts
   if (!payload || !mac) return null
   const expected = sign(payload)
-  if (mac.length !== expected.length || !timingSafeEqual(Buffer.from(mac), Buffer.from(expected))) return null
+  // 长度守卫必须比**字节**长度：字符串 length 是 UTF-16 码元数，多字节 MAC（如 43 个 `中`）
+  // 可与 43 字符的 base64url MAC 同字符数、不同字节数——那样 timingSafeEqual 会抛 RangeError。
+  const macBuf = Buffer.from(mac)
+  const expectedBuf = Buffer.from(expected)
+  if (macBuf.length !== expectedBuf.length || !timingSafeEqual(macBuf, expectedBuf)) return null
   try {
     const p = JSON.parse(Buffer.from(payload, 'base64url').toString('utf8')) as InternalIdentityPayload
     return Number.isFinite(p.exp) && p.exp > now ? p : null

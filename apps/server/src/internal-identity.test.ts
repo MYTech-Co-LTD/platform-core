@@ -57,6 +57,19 @@ describe('internal identity', () => {
     expect(verifyInternalIdentity(h, Date.now() + 60_000)).toBeNull()
   })
 
+  it('多字节 MAC（同字符数、不同字节数）⇒ null 且不抛', () => {
+    const [payload] = issueInternalIdentity(PAYLOAD).split('.')
+    // 43 个 `中` 的 UTF-16 字符数 = 43（与 base64url MAC 相同），UTF-8 字节数 = 129。
+    expect(() => verifyInternalIdentity(`${payload}.${'中'.repeat(43)}`)).not.toThrow()
+    expect(verifyInternalIdentity(`${payload}.${'中'.repeat(43)}`)).toBeNull()
+  })
+
+  it('多段 header（valid + trailing garbage）⇒ null', () => {
+    const h = issueInternalIdentity(PAYLOAD)
+    expect(verifyInternalIdentity(`${h}.garbage`)).toBeNull()
+    expect(verifyInternalIdentity(h)).toMatchObject({ userId: 'u1' })
+  })
+
   it('头名固定为 x-internal-identity', () => {
     expect(INTERNAL_IDENTITY_HEADER).toBe('x-internal-identity')
   })
