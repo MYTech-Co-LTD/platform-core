@@ -53,9 +53,10 @@ const err = (reason: string, extra: Record<string, unknown> = {}): McpToolResult
 })
 const ok = (payload: unknown): McpToolResult => ({ text: JSON.stringify(payload), isError: false })
 
-/** 该 face 能看见哪些工具：read 只看 forms:view 档的工具；manage 全见（spec §6.1：face 门是最低权限）。 */
+/** 该 face 能看见哪些工具：read 只看 forms:view 档且**非 mutating** 的工具；manage 全见
+ *  （spec §6.1：face 门是最低权限；§5.2：读面绝不暴露写工具，即使将来有读档写工具也挡住）。 */
 const faceVisible: Record<McpFace, (t: FormsToolMeta) => boolean> = {
-  read: (t) => t.faceScope === 'forms:view',
+  read: (t) => t.faceScope === 'forms:view' && !t.mutating,
   manage: () => true,
 }
 
@@ -95,19 +96,22 @@ async function auditSafe(
   deps: McpDeps,
   tool: string,
   args: Record<string, unknown>,
-  result: McpToolResult,
+  outcome: store.McpAuditOutcome,
+  reason: string | null,
   assetId?: string,
   version?: number,
 ): Promise<void> {
-  const reason = reasonOf(result)
-  const outcome: store.McpAuditOutcome = !result.isError
-    ? 'ok'
-    : reason !== null && DENIED_REASONS.has(reason) ? 'denied' : 'error'
   try {
     await store.writeMcpAudit(deps.pool, deps.org, deps.userId, tool, outcome, reason, args, assetId, version)
   } catch (e) {
     console.warn('[forms] mcp audit write failed (business result unaffected):', (e as Error).message)
   }
+}
+
+/** 工具级结果 → 审计 outcome：成功 ok；授权/投影拒绝 denied；业务/上游失败 error。 */
+function auditOutcomeOf(result: McpToolResult, reason: string | null): store.McpAuditOutcome {
+  if (!result.isError) return 'ok'
+  return reason !== null && DENIED_REASONS.has(reason) ? 'denied' : 'error'
 }
 
 async function runTool(deps: McpDeps, name: string, args: Record<string, unknown>): Promise<ToolRun> {
@@ -160,20 +164,29 @@ export async function callTool(
   name: string,
   args: Record<string, unknown>,
 ): Promise<McpToolResult> {
-  const meta = FORMS_TOOLS.find((t) => t.name === name)
   let run: ToolRun
-  if (meta === undefined) {
-    run = { result: err('unknown_tool', { name }) }
-  } else if (!faceVisible[face](meta)) {
-    // 读面不接受写工具（spec §5.2）——工具级错误，与 MCP 的 isError 形态一致。
-    run = { result: err('read_only_tool_not_allowed', { tool: name }) }
-  } else if (meta.requiredScope !== null && !deps.hasScope(meta.requiredScope)) {
-    // 工具级 scope 执法（spec §6.2）：tools/list 已投影，直连调用也必须拦。
-    run = { result: err('missing_scope', { scope: meta.requiredScope }) }
-  } else {
-    run = await runTool(deps, name, args)
+  try {
+    const meta = FORMS_TOOLS.find((t) => t.name === name)
+    if (meta === undefined) {
+      run = { result: err('unknown_tool', { name }) }
+    } else if (!faceVisible[face](meta)) {
+      // 读面不接受写工具（spec §5.2）——工具级错误，与 MCP 的 isError 形态一致。
+      run = { result: err('read_only_tool_not_allowed', { tool: name }) }
+    } else if (meta.requiredScope !== null && !deps.hasScope(meta.requiredScope)) {
+      // 工具级 scope 执法（spec §6.2）：tools/list 已投影，直连调用也必须拦。
+      run = { result: err('missing_scope', { scope: meta.requiredScope }) }
+    } else {
+      run = await runTool(deps, name, args)
+    }
+  } catch (e) {
+    // 执行期抛错（DB 断链 / LLM 非 LlmError 等）：**也要留痕**，且不让协议层变成 500。
+    // 返回工具级错误（MCP isError 形态）；审计失败仍被 auditSafe 吞掉，不影响本返回。
+    const detail = e instanceof Error ? e.message : String(e)
+    await auditSafe(deps, name, args, 'error', 'tool_exception')
+    return err('tool_exception', { detail })
   }
-  await auditSafe(deps, name, args, run.result, run.assetId, run.version)
+  const reason = reasonOf(run.result)
+  await auditSafe(deps, name, args, auditOutcomeOf(run.result, reason), reason, run.assetId, run.version)
   return run.result
 }
 

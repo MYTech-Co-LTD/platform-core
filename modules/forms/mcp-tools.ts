@@ -32,10 +32,15 @@ export const FORMS_TOOLS: FormsToolMeta[] = [
   },
   {
     name: 'generate_form_draft',
-    description: '用自然语言生成表单契约并落为草稿；不会发布，需持 forms:publish 的人在控制台发布。',
+    description:
+      '用自然语言描述业务场景，生成表单契约并落为**草稿**（draft）。' +
+      '生成结果不会自动发布——发布必须由持发布权限的人在控制台确认。' +
+      '若 assetId 与既有表单重名会报错，请先用 list_forms 查重或换个名字。',
     inputSchema: {
       type: 'object',
-      properties: { description: { type: 'string' } },
+      properties: {
+        description: { type: 'string', description: '业务场景描述（要采集什么、有哪些字段与规则）' },
+      },
       required: ['description'],
       additionalProperties: false,
     },

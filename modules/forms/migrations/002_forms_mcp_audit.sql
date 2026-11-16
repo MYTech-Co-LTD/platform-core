@@ -16,6 +16,4 @@ create table if not exists forms.mcp_audit (
   version    integer,
   created_at timestamptz not null default now()
 );
--- 002 曾先落过无 params 的版本（Task 8 初版）：已建表的环境靠这条补齐，保持幂等。
-alter table forms.mcp_audit add column if not exists params jsonb not null default '{}'::jsonb;
 create index if not exists forms_mcp_audit_org_idx on forms.mcp_audit (org, created_at desc);

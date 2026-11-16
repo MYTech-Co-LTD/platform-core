@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import type { Pool } from 'pg'
 import { callTool, toolDefs } from './mcp'
+import { FORMS_TOOLS } from './mcp-tools'
 
 // MCP 面（#724 → 2026-11-16 能力网关 Task 8）：两个**纯函数**入口（toolDefs / callTool）——
 // 协议壳的编解码另有 routes.test 的端到端用例覆盖。这里钉：
@@ -24,6 +25,16 @@ function fakePool(handler: (text: string, params: unknown[]) => { rows: unknown[
   return { query: async (text: string, params: unknown[] = []) => handler(text, params) } as unknown as Pool
 }
 
+/** 只接审计插入的假池（拒绝/抛错路径不会触达业务查询）+ 捕获到的审计参数行。 */
+function auditPool() {
+  const rows: unknown[][] = []
+  const pool = fakePool((text, params) => {
+    if (/insert into forms\.mcp_audit/.test(text)) { rows.push(params); return { rows: [] } }
+    throw new Error(`unexpected query: ${text}`)
+  })
+  return { pool, rows }
+}
+
 describe('MCP 工具面投影（read / manage）', () => {
   it('★ 不暴露任何发布/回滚/退役类工具（AI 永不发布）', () => {
     const names = toolDefs('manage').map((t) => t.name)
@@ -44,10 +55,25 @@ describe('MCP 工具面投影（read / manage）', () => {
     }
   })
 
-  it('read face 拒绝写工具（工具级错误，不是抛出）', async () => {
-    const r = await callTool(deps(), 'read', 'generate_form_draft', { description: '门店巡检' })
+  it('★ read face 只读不变量：所有 forms:view 工具都 readOnly，读面永不出现 mutating', () => {
+    const viewTools = FORMS_TOOLS.filter((t) => t.faceScope === 'forms:view')
+    expect(viewTools.length).toBeGreaterThan(0)
+    for (const t of viewTools) {
+      expect(t.mutating, t.name).toBe(false)
+      expect(t.annotations.readOnlyHint, t.name).toBe(true)
+    }
+    expect(toolDefs('read').map((t) => t.name)).toEqual(viewTools.map((t) => t.name))
+  })
+
+  it('read face 拒绝写工具（工具级错误）+ 审计 denied', async () => {
+    const { pool, rows } = auditPool()
+    const r = await callTool(deps({ pool }), 'read', 'generate_form_draft', { description: '门店巡检' })
     expect(r.isError).toBe(true)
     expect(JSON.parse(r.text).reason).toBe('read_only_tool_not_allowed')
+    expect(rows).toHaveLength(1)
+    expect(rows[0][2]).toBe('generate_form_draft')
+    expect(rows[0][3]).toBe('denied')
+    expect(rows[0][4]).toBe('read_only_tool_not_allowed')
   })
 
   it('未知工具 → 工具级错误（isError=true，不是抛出）', async () => {
@@ -56,12 +82,18 @@ describe('MCP 工具面投影（read / manage）', () => {
     expect(JSON.parse(r.text).reason).toBe('unknown_tool')
   })
 
-  it('generate_form_draft 缺 forms:manage → missing_scope（工具级 scope 执法）', async () => {
-    const r = await callTool(deps({ hasScope: () => false }), 'manage', 'generate_form_draft', { description: '门店巡检' })
+  it('generate_form_draft 缺 forms:manage → missing_scope（工具级 scope 执法）+ 审计 denied', async () => {
+    const { pool, rows } = auditPool()
+    const r = await callTool(deps({ pool, hasScope: () => false }), 'manage', 'generate_form_draft', { description: '门店巡检' })
     expect(r.isError).toBe(true)
     const out = JSON.parse(r.text) as { reason: string; scope: string }
     expect(out.reason).toBe('missing_scope')
     expect(out.scope).toBe('forms:manage')
+    expect(rows).toHaveLength(1)
+    expect(rows[0][3]).toBe('denied')
+    expect(rows[0][4]).toBe('missing_scope')
+    // args 摘要照样留痕（拒绝也要能复核调用者传了什么）
+    expect(JSON.parse(rows[0][5] as string)).toEqual({ description: '门店巡检' })
   })
 })
 
@@ -85,6 +117,26 @@ describe('forms:view 读面（摘要，不含 draft body）', () => {
     expect(audits[0][2]).toBe('list_forms')
     expect(audits[0][3]).toBe('ok')
     // args 摘要（spec §6.5）：无参工具落空对象
+    expect(JSON.parse(audits[0][5] as string)).toEqual({})
+  })
+
+  it('★ 工具执行抛错 → tool_exception（工具级错误，不 500）+ 审计 outcome=error', async () => {
+    const audits: unknown[][] = []
+    const pool = fakePool((text, params) => {
+      if (/from forms\.asset_version v/.test(text)) throw new Error('db down')
+      if (/insert into forms\.mcp_audit/.test(text)) { audits.push(params); return { rows: [] } }
+      throw new Error(`unexpected query: ${text}`)
+    })
+    const r = await callTool(deps({ pool }), 'read', 'list_forms', {})
+    expect(r.isError).toBe(true)
+    const out = JSON.parse(r.text) as { reason: string; detail: string }
+    expect(out.reason).toBe('tool_exception')
+    expect(out.detail).toContain('db down')
+
+    expect(audits).toHaveLength(1)
+    expect(audits[0][2]).toBe('list_forms')
+    expect(audits[0][3]).toBe('error')
+    expect(audits[0][4]).toBe('tool_exception')
     expect(JSON.parse(audits[0][5] as string)).toEqual({})
   })
 })

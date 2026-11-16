@@ -44,7 +44,7 @@ describePg('forms 生命周期内核（PoC 28 断言对账）', () => {
 
   afterAll(async () => {
     // 尽力而为：published/retired 行删不掉是**被测契约**（触发器拦），吞掉即可
-    for (const t of ['submission', 'asset_head', 'asset_version']) {
+    for (const t of ['submission', 'asset_head', 'asset_version', 'mcp_audit']) {
       await pool.query(`delete from forms.${t} where org = $1`, [ORG]).catch(() => {})
     }
     await pool.end()
