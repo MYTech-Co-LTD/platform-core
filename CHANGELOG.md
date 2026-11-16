@@ -11,6 +11,10 @@
 
 ## [Unreleased]
 
+## [0.306.5](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.306.4...v0.306.5) - 2026-11-16
+- 【修复】deploy: apt 阿里云源改用 http（#2358） ([#2359](https://github.com/MYTech-Co-LTD/platform-core/pull/2359), [05212a4](https://github.com/MYTech-Co-LTD/platform-core/commit/05212a4fbd6441f9878f16d5e7a26dc90835442b))
+
+
 ## [0.306.4](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.306.3...v0.306.4) - 2026-11-16
 - 【修复】data: MATERIALIZE_MODE 先于仓根推导定义（W8-P1） ([#2357](https://github.com/MYTech-Co-LTD/platform-core/pull/2357), [c35d14e](https://github.com/MYTech-Co-LTD/platform-core/commit/c35d14e4f0305bcc303b9d3e548801b037d10770))
 
