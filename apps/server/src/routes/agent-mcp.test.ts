@@ -200,6 +200,9 @@ describe('agent mcp', () => {
     expect(verifyInternalIdentity(calls[0].headers[INTERNAL_IDENTITY_HEADER])).toMatchObject({
       channel: 'wecom',
     })
+    // audience 排除的面不算 locked：data 的 read/query/manage 全是 mcp audience。
+    const caps = textOf(await callCapabilities(app))
+    expect((caps.lockedFaces as Array<{ module: string }>).some((f) => f.module === 'data')).toBe(false)
   })
 
   it('缓存键含 scope：不同 scope 集不共享工具缓存', async () => {
@@ -303,5 +306,112 @@ describe('agent mcp', () => {
     })).json()) as { id: number; error: { code: number; message: string } }
     expect(body.id).toBe(9)
     expect(body.error).toMatchObject({ code: -32000, message: 'boom' })
+  })
+
+  it('同 group 按 precedence 选最高可用面（query + read ⇒ curated，不是 read）', async () => {
+    const { app, calls } = makeApp(['data:query', 'data:read'])
+    const body = await listTools(app)
+    const names = body.result.tools.map((t) => t.name)
+    // query_metric 只在 mcp-curated 面；read 面只有 search_catalog。
+    expect(names).toContain('data__query_metric')
+    expect(calls.map((c) => c.path)).toEqual(['/api/modules/data/mcp-curated'])
+  })
+
+  it('模块 face tools/list 5xx ⇒ capabilities 报 available:false 且不贡献工具', async () => {
+    const { app } = makeApp(['data:query'], {
+      respond: (call) =>
+        call.body.method === 'tools/list'
+          ? new Response(null, { status: 500 })
+          : defaultRespond(call),
+    })
+    const out = textOf(await callCapabilities(app))
+    expect(out.faces).toContainEqual(
+      expect.objectContaining({ module: 'data', face: 'agent', available: false }),
+    )
+    expect((out.tools as Array<{ name: string }>).map((t) => t.name)).not.toContain('data__search_catalog')
+  })
+
+  it('tools/call 缓存未命中 ⇒ 强制刷新一次 tools/list 再命中（spec §7.4）', async () => {
+    let listCalls = 0
+    const { app } = makeApp(['data:query'], {
+      respond: (call) => {
+        if (call.body.method !== 'tools/list') return defaultRespond(call)
+        listCalls += 1
+        const names = listCalls === 1 ? ['query_metric'] : ['search_catalog']
+        return Response.json({
+          jsonrpc: '2.0',
+          id: call.body.id,
+          result: { tools: names.map((name) => ({ name, description: name, inputSchema: { type: 'object' } })) },
+        })
+      },
+    })
+    const body = (await (await rpc(app, {
+      jsonrpc: '2.0',
+      id: 11,
+      method: 'tools/call',
+      params: { name: 'data__search_catalog', arguments: {} },
+    })).json()) as { result: { content: Array<{ text: string }> } }
+    expect(listCalls).toBe(2)
+    expect(body.result.content[0].text).toContain('agent')
+  })
+
+  it('initialize / ping / 通知 202', async () => {
+    const { app, calls } = makeApp(['data:query'])
+    const init = (await (await rpc(app, { jsonrpc: '2.0', id: 20, method: 'initialize' })).json()) as {
+      result: { protocolVersion: string; serverInfo: { name: string } }
+    }
+    expect(init.result.protocolVersion).toBe('2025-11-25')
+    expect(init.result.serverInfo.name).toBe('platform-agent-mcp')
+
+    const ping = (await (await rpc(app, { jsonrpc: '2.0', id: 21, method: 'ping' })).json()) as { result: unknown }
+    expect(ping.result).toEqual({})
+
+    // 通知（无 id）⇒ 202 空体，且不触发任何模块转发。
+    const note = await rpc(app, { jsonrpc: '2.0', method: 'notifications/initialized' })
+    expect(note.status).toBe(202)
+    expect(await note.text()).toBe('')
+    expect(calls).toHaveLength(0)
+  })
+
+  it('同一工具超过 60 次/分钟 ⇒ 工具级 rate_limited', async () => {
+    const { app } = makeApp(['data:query'])
+    let last: { result: { content: Array<{ text: string }>; isError: boolean } } | undefined
+    for (let i = 0; i < 61; i += 1) {
+      last = (await (await rpc(app, {
+        jsonrpc: '2.0',
+        id: 100 + i,
+        method: 'tools/call',
+        params: { name: 'data__search_catalog', arguments: {} },
+      })).json()) as typeof last
+    }
+    expect(last?.result.isError).toBe(true)
+    expect(JSON.parse(last!.result.content[0].text)).toMatchObject({
+      status: 'error',
+      reason: 'rate_limited',
+    })
+  })
+
+  it('模块 result.structuredContent 原样透传', async () => {
+    const { app } = makeApp(['data:query'], {
+      respond: (call) =>
+        call.body.method === 'tools/list'
+          ? defaultRespond(call)
+          : Response.json({
+              jsonrpc: '2.0',
+              id: call.body.id,
+              result: {
+                content: [{ type: 'text', text: 'ok' }],
+                isError: false,
+                structuredContent: { rows: 1 },
+              },
+            }),
+    })
+    const body = (await (await rpc(app, {
+      jsonrpc: '2.0',
+      id: 30,
+      method: 'tools/call',
+      params: { name: 'data__search_catalog', arguments: {} },
+    })).json()) as { result: { structuredContent?: unknown } }
+    expect(body.result.structuredContent).toEqual({ rows: 1 })
   })
 })

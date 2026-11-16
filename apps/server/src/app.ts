@@ -298,6 +298,12 @@ export async function buildApp(overrides: BuildAppOverrides = {}): Promise<{
   // **刻意不挂 internalIdentityMiddleware**：/api/agent/* 只服务外部调用方（PAT/会话/企微），
   // 不接受内部签名身份；网关向下游转发时自己现签内部头。
   // 网关只做 face 选择 + 命名空间 + 转发，权限执法在模块 face（网关不自行放行）。
+  // 关闭开关时**在鉴权之前短路**：合法 PAT 也不该为已关闭的网关花 Casdoor 查询 / 限速额度。
+  // handler 内保留同判（直连测试 / 中间件顺序变动时仍 fail-closed）。
+  app.use('/api/agent/*', async (c, next) => {
+    if (process.env.AGENT_MCP_ENABLED === '0') return c.json({ error: 'NOT_FOUND' }, 404)
+    await next()
+  })
   app.use('/api/agent/*', patAuth)
   app.use('/api/agent/*', wecomChannelAuth)
   app.route('/api/agent', agentMcpRoutes({

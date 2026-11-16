@@ -84,8 +84,11 @@ export function agentMcpRoutes(deps: {
 }): Hono<AgentMcpEnv> {
   const app = new Hono<AgentMcpEnv>()
   // 工具清单缓存：键含 org / scope 集 / audience / module / face / profile（spec §7.3）。
+  // TTL 30s，**惰性过期**：只在读取时判断 `at`，没有后台清扫——过期条目留在 map 里直到
+  // 同键被再次访问/覆盖。单进程、键数 ≈ 租户×scope×face 组合，内存可控；主动清理留后续。
   const cache = new Map<string, { at: number; tools: Tool[] }>()
-  // 每 (userId, tool) 一个固定窗口令牌桶（默认 60 次/分钟）。
+  // 每 (userId, tool) 一个固定窗口令牌桶（默认 60 次/分钟）。同样惰性重置：窗口过期在
+  // 下一次同键访问时初始化，不扫全表（清理策略留后续，注释固化 TTL 语义）。
   const buckets = new Map<string, { at: number; count: number }>()
 
   const internalHeaders = (
@@ -127,13 +130,15 @@ export function agentMcpRoutes(deps: {
       body: JSON.stringify(body),
     })
 
+  /** 取某 face 的工具清单。`ok:false` = 模块 face 不可用（403/5xx/不可达），不缓存失败结果。 */
   const listFaceTools = async (
     face: AgentFace,
     identity: Identity,
     channel: Channel,
     keyId: number | null,
     host: string,
-  ): Promise<Tool[]> => {
+    refresh = false,
+  ): Promise<{ tools: Tool[]; ok: boolean }> => {
     const key = [
       identity.orgId,
       identity.scopes.join(','),
@@ -142,21 +147,23 @@ export function agentMcpRoutes(deps: {
       face.face.face,
       face.face.profile ?? 'full',
     ].join('\0')
-    const hit = cache.get(key)
-    if (hit && Date.now() - hit.at < CACHE_TTL_MS) return hit.tools
+    if (!refresh) {
+      const hit = cache.get(key)
+      if (hit && Date.now() - hit.at < CACHE_TTL_MS) return { tools: hit.tools, ok: true }
+    }
     const res = await rpc(face, identity, channel, keyId, host, {
       jsonrpc: '2.0',
       id: 1,
       method: 'tools/list',
     })
-    if (!res.ok) return []
+    if (!res.ok) return { tools: [], ok: false }
     const body = (await res.json()) as { result?: { tools?: Tool[] } }
     const tools = (body.result?.tools ?? []).map((t) => ({
       ...t,
       name: toolName(face.moduleId, t.name),
     }))
     cache.set(key, { at: Date.now(), tools })
-    return tools
+    return { tools, ok: true }
   }
 
   const allTools = async (
@@ -164,16 +171,19 @@ export function agentMcpRoutes(deps: {
     channel: Channel,
     keyId: number | null,
     host: string,
+    opts: { refresh?: boolean } = {},
   ) => {
-    const faces = selectFaces(deps.faces(), identity, channel)
+    const selected = selectFaces(deps.faces(), identity, channel)
     const pairs = await Promise.all(
-      faces.map(async (face) => ({
+      selected.map(async (face) => ({
         face,
-        tools: await listFaceTools(face, identity, channel, keyId, host),
+        ...(await listFaceTools(face, identity, channel, keyId, host, opts.refresh)),
       })),
     )
     const byName = new Map<string, { tool: Tool; face: AgentFace }>()
-    for (const { face, tools } of pairs) {
+    for (const { face, tools, ok } of pairs) {
+      // 模块 face 不可用 ⇒ 不贡献工具；`faces` 里如实上报 available:false，不影响其他 face。
+      if (!ok) continue
       for (const tool of tools) {
         const prev = byName.get(tool.name)
         // 发现期冲突 ⇒ 报错（不静默去重）；命名空间已含模块前缀，正常不会跨模块撞名。
@@ -183,7 +193,10 @@ export function agentMcpRoutes(deps: {
         if (!prev) byName.set(tool.name, { tool, face })
       }
     }
-    return { faces, tools: [...byName.values()] }
+    return {
+      faces: pairs.map(({ face, ok }) => ({ face, available: ok })),
+      tools: [...byName.values()],
+    }
   }
 
   const rateOk = (identity: Identity, tool: string): boolean => {
@@ -239,7 +252,8 @@ export function agentMcpRoutes(deps: {
       const page: Tool[] = []
       let bytes = 0
       for (const t of all.slice(cursor)) {
-        const b = JSON.stringify(t).length
+        // 上限按**字节**算（spec §7.3）：字符串 length 是 UTF-16 码元，中文描述会低估传输量。
+        const b = Buffer.byteLength(JSON.stringify(t))
         if (page.length >= MAX_PAGE_TOOLS || bytes + b > MAX_PAGE_BYTES) break
         page.push(t)
         bytes += b
@@ -272,13 +286,14 @@ export function agentMcpRoutes(deps: {
             {
               type: 'text',
               text: JSON.stringify({
-                faces: faces.map((f) => ({
+                // selected face 如实上报可用性：模块 tools/list 失败 ⇒ available:false（不贡献工具）。
+                faces: faces.map(({ face: f, available }) => ({
                   module: f.moduleId,
                   face: f.face.face,
                   group: f.face.group,
                   audience: audienceOf(channel),
                   scope: f.face.scope,
-                  available: true,
+                  available,
                 })),
                 tools: tools.map((x) => x.tool),
                 lockedFaces: locked,
@@ -290,7 +305,13 @@ export function agentMcpRoutes(deps: {
       }
 
       const { tools } = await allTools(identity, channel, keyId, host)
-      const hit = tools.find((x) => x.tool.name === name)
+      let hit = tools.find((x) => x.tool.name === name)
+      if (!hit) {
+        // spec §7.4：缓存未命中（scope 变更 / 模块新增工具）⇒ 强制刷新一次 tools/list 再判定；
+        // 仍不中才 -32601，不盲目转发未知工具名。
+        const refreshed = await allTools(identity, channel, keyId, host, { refresh: true })
+        hit = refreshed.tools.find((x) => x.tool.name === name)
+      }
       // 只接受 tools/list 投影过的名字；未知名不盲目转发。
       if (!hit) return rpcErr(-32601, 'method not found')
       if (!rateOk(identity, name)) {
