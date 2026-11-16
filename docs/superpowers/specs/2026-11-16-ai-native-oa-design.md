@@ -611,7 +611,7 @@ POST {platform}/api/modules/forms/approval-callback
 | P8 | org 扩展：`org_node_leader`、`org_role_binding`；企微同步取 leader |
 | P9 | 事件声明扩展 external 生产者；声明全部 OA 事件 |
 | P10 | per-tenant feature flag `OA_ENABLED`；未启用租户行为逐字不变 |
-| P11 | `platform.oa_engine(org, base_url, pat_secret_ref, engine_version, enabled)`：org→引擎映射，平台唯一登记点；PAT 走 secret，不落明文 |
+| P11 | `platform.oa_engine(org, base_url, pat_secret_ref, engine_version, enabled)`：org→引擎映射，平台唯一登记点；PAT 走 secret，不落明文。**模块经宿主注入的 `OaEnginePort` 读取**（B1：模块不直读 platform schema、也不读 per-org env map）；env 只做本地测试/脚本兜底 |
 
 ### 12.2 UI
 

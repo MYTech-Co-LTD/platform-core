@@ -1222,7 +1222,7 @@ export default defineModule({
   - **失败补偿**：建 case 失败 ⇒ 把 submission 标 `withdrawn` 并写审计（不留 pending 孤儿）；返回 502。
 - 撤回路由（scope `forms:fill`，数据授权 = 仅提交人 + 仅 pending）：
   `POST /submissions/:id/withdraw` → `client.withdraw(caseRef, { org, actor, reason })` → `update ... status='withdrawn', withdrawn_at=now() where id=$1 and status='pending_approval' and submitted_by=$2`；引擎 409（已有决策）原样映射 409。
-- 平台侧从 `oa_engine` 取配置；无映射 ⇒ 409 `OA_NOT_ENABLED`。
+- 平台侧**经宿主注入的 `OaEnginePort`** 取配置（`ctx.oaEngine.get(org)`，读 `platform.oa_engine` 并把 `pat_secret_ref` 解析成 secret；**不要用 per-org env map**——多租户下一个进程服务多 org，env 表达不了）。无映射/secret 缺失 ⇒ 409 `OA_NOT_ENABLED`，fail-closed。
 
 - [ ] **Step 5: 跑测试**
 
