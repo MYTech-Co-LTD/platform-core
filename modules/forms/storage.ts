@@ -869,6 +869,107 @@ export async function listExternalApprovals(
   }))
 }
 
+export interface ExternalApprovalExportRow {
+  approval_id: string
+  org: string
+  provider: string
+  process_code: string
+  provider_ref: string
+  title: string | null
+  requester: string | null
+  status: ExternalApprovalStatus
+  started_at: Date | null
+  finished_at: Date | null
+  detail: unknown
+  synced_at: Date
+}
+
+/**
+ * 镜像导出（数据面「源」，OA P2 Task 7）：`id` 键集游标、按租户、升序。
+ * 与 `exportSubmissions` 同一纪律：id 单调 ⇒ 不重不漏（offset 在持续写入下会漂）。
+ * `detail` 可得才带，拿不到就是 null——镜像字段完整性取决于审批源（计划「已知边界」），不假装有。
+ */
+export async function exportExternalApprovals(
+  pool: Pool, org: string, afterId: number, limit: number,
+): Promise<ExternalApprovalExportRow[]> {
+  const { rows } = await pool.query(
+    `select id, org, provider, process_code, provider_ref, title, requester, status,
+            started_at, finished_at, detail, synced_at
+       from forms.external_approval
+      where org = $1 and id > $2
+      order by id asc
+      limit $3`,
+    [org, afterId, limit],
+  )
+  return rows.map((r) => ({
+    approval_id: String(r.id),
+    org: r.org,
+    provider: r.provider,
+    process_code: r.process_code,
+    provider_ref: r.provider_ref,
+    title: r.title,
+    requester: r.requester,
+    status: r.status as ExternalApprovalStatus,
+    started_at: r.started_at,
+    finished_at: r.finished_at,
+    detail: r.detail,
+    synced_at: r.synced_at,
+  }))
+}
+
+export interface PublishedWecomBindingRow {
+  assetId: string
+  version: number
+  name: string
+  processCode: string
+  deepLink: string
+}
+
+/**
+ * agent 选模板（OA P2 Task 7）：本租户**已发布且当前 head** 的 `wecom_native` 绑定。
+ *
+ * 只回「选中模板」必需的字段——verifiedChain / verifiedAt 等证据链不进工具面（少给就少错）；
+ * 标准表单字段在企微、平台不持有，工具面**无从**渲染或预填（计划 §已知边界）。
+ * 搜索匹配 name / processCode：用 `position()` 而非 `ilike`——调用方传来的 `%`/`_` 在 ilike 里
+ * 是通配符，会把「搜 %」静默变成「列全部」（agent 的入参不可信）。
+ */
+export async function searchPublishedWecomBindings(
+  pool: Pool, org: string, query: string, limit = 20,
+): Promise<PublishedWecomBindingRow[]> {
+  const { rows } = await pool.query(
+    `select v.asset_id, v.version,
+            v.body->>'name'        as name,
+            v.body->>'processCode' as process_code,
+            v.body->>'deepLink'    as deep_link
+       from forms.asset_version v
+       join forms.asset_head h
+         on h.org = v.org and h.kind = v.kind and h.asset_id = v.asset_id
+        and h.active_version = v.version
+      where v.org = $1
+        and v.kind = $2
+        and v.status = 'published'
+        and v.body->>'provider' = 'wecom_native'
+        and ($3 = ''
+             or position(lower($3) in lower(
+                  coalesce(v.body->>'name', '') || ' ' || coalesce(v.body->>'processCode', '')
+                )) > 0)
+      order by v.body->>'name' asc, v.asset_id asc
+      limit $4`,
+    [org, 'approval_def', query.trim(), limit],
+  )
+  // 发布门已保证三字段齐（validateWecomBinding）；这里再筛一次是防历史脏 body 流出脏深链。
+  return rows
+    .filter((r) => typeof r.name === 'string' && r.name.length > 0
+      && typeof r.deep_link === 'string' && r.deep_link.startsWith('https://'))
+    .map((r) => ({
+      assetId: r.asset_id,
+      version: r.version,
+      name: r.name,
+      processCode: typeof r.process_code === 'string' ? r.process_code : '',
+      deepLink: r.deep_link,
+    }))
+}
+
 /** 对账脚本用：跨租户列在途超阈值的单（**不带 org**——脚本按行上的 org 逐条处理）。 */
 export async function listStalePendingSubmissions(
   pool: Pool, olderThanMinutes: number, limit = 500,

@@ -120,8 +120,9 @@ const DATA_MANAGE_TOOLS = [
 const NOTIFY_C_TOOLS = ['create_agent_rule', 'create_agent_template']
 // notify 的 B（pat/session）全量里有、C 里**没有**的（mcp-tools.ts 的 C_SAFE_TOOLS 差集）。
 const NOTIFY_B_ONLY = ['propose_rule', 'update_rule', 'set_rule_enabled', 'draft_template', 'send_message']
-// forms 两面：read=list_forms；manage=+generate_form_draft。**没有任何发布/回滚/退役工具**。
-const FORMS_MANAGE_TOOLS = ['list_forms', 'generate_form_draft']
+// forms 两面：read=list_forms + search_standard_approvals（OA P2 选模板）；
+// manage=+generate_form_draft。**没有任何发布/回滚/退役工具**。
+const FORMS_MANAGE_TOOLS = ['list_forms', 'search_standard_approvals', 'generate_form_draft']
 
 const dataOf = (names: string[]) => names.filter((n) => n.startsWith('data__')).map((n) => n.slice('data__'.length))
 const notifyOf = (names: string[]) => names.filter((n) => n.startsWith('notify__')).map((n) => n.slice('notify__'.length))
@@ -276,7 +277,7 @@ describePg('agent 能力网关 e2e：权限矩阵（真 PG + 真模块装配）'
     expect(data).toEqual(expect.arrayContaining(DATA_MANAGE_TOOLS))
     // notify B 全量：24 件里的关键三件（propose/set_rule_enabled 走 manage；send_message 要 notify:emit）。
     expect(notify).toEqual(expect.arrayContaining(['propose_rule', 'send_message', 'set_rule_enabled']))
-    // forms 恰两件：读 + 起草。发布/回滚/退役工具整个网关面都不得出现（AI 永不发布，§14.1）。
+    // forms 恰三件：读 + 选模板 + 起草。发布/回滚/退役工具整个网关面都不得出现（AI 永不发布，§14.1）。
     expect(forms.sort()).toEqual([...FORMS_MANAGE_TOOLS].sort())
     expect(names.filter((n) => /publish|rollback|retire/.test(n))).toEqual([])
 
@@ -304,10 +305,14 @@ describePg('agent 能力网关 e2e：权限矩阵（真 PG + 真模块装配）'
     ]))
   })
 
-  it('用例 4｜PAT forms:view ⇒ 只有 forms__list_forms；generate_form_draft 未投影 ⇒ -32601', async () => {
+  it('用例 4｜PAT forms:view ⇒ forms 读面两件（list_forms + search_standard_approvals）；generate_form_draft 未投影 ⇒ -32601', async () => {
     const h = await patHeaders('forms_viewer')
     const names = await listAll(h)
-    expect([...names].sort()).toEqual(['agent__capabilities', 'forms__list_forms'])
+    expect([...names].sort()).toEqual([
+      'agent__capabilities',
+      'forms__list_forms',
+      'forms__search_standard_approvals',
+    ])
 
     const denied = await rpc(h, {
       jsonrpc: '2.0', id: 'f', method: 'tools/call',

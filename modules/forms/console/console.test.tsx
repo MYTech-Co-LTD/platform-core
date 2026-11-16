@@ -456,3 +456,38 @@ describe('标准审批绑定页（OA P2）', () => {
     expect(screen.queryByRole('button', { name: '发布草稿' })).not.toBeInTheDocument()
   })
 })
+
+describe('标准审批镜像页（OA P2 Task 7）', () => {
+  const mirrorBody = {
+    approvals: [{
+      id: '1',
+      org: 'acme',
+      provider: 'wecom',
+      processCode: 'PC-EXPENSE-001',
+      providerRef: 'SP-1',
+      title: '差旅报销',
+      requester: 'u1',
+      status: 'approved',
+      startedAt: '2026-11-16T01:00:00Z',
+      finishedAt: '2026-11-16T02:00:00Z',
+      detail: null,
+      syncedAt: '2026-11-16T02:00:00Z',
+    }],
+  }
+
+  it('只读渲染镜像（状态中文标签）；没有任何写操作入口', async () => {
+    mockApi({ '/api/modules/forms/standard-approvals?limit=100': () => jsonResponse(mirrorBody) })
+    renderAt('/console/forms/standard', ['forms:view'])
+    expect(await screen.findByText('差旅报销')).toBeInTheDocument()
+    expect(screen.getByText('已通过')).toBeInTheDocument()
+    expect(screen.getByText('PC-EXPENSE-001')).toBeInTheDocument()
+    // 镜像页只读：没有发布/删除/新建一类写入口
+    expect(screen.queryByRole('button', { name: /发布|删除|新建|编辑/ })).not.toBeInTheDocument()
+  })
+
+  it('空态给下一步（不是「暂无数据」）', async () => {
+    mockApi({ '/api/modules/forms/standard-approvals?limit=100': () => jsonResponse({ approvals: [] }) })
+    renderAt('/console/forms/standard', ['forms:view'])
+    expect(await screen.findByText(/还没有标准审批镜像/)).toBeInTheDocument()
+  })
+})

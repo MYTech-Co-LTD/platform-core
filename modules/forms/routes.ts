@@ -86,6 +86,10 @@ const MAX_DESCRIPTION_LEN = 2000
 const EXPORT_DEFAULT_LIMIT = 500
 const EXPORT_MAX_LIMIT = 2000
 
+/** 标准审批镜像列表页的分页上限（console 一屏量级；导出面另有自己的 2000 上限）。 */
+const APPROVAL_LIST_DEFAULT_LIMIT = 100
+const APPROVAL_LIST_MAX_LIMIT = 500
+
 export function createFormsRouter({
   pool,
   chatModel = null,
@@ -783,6 +787,47 @@ export function createFormsRouter({
         rows,
         // 游标推进：有行就推到最后一行；无行保持原值（调用方据此判「追平了」）
         next_after_id: last === undefined ? rawAfter : last.submission_id,
+        has_more: rows.length === limit,
+      })
+    }),
+  )
+
+  // ── 标准审批镜像（OA P2 Task 7 / issue #2385）：org 内只读列表 + 数据面导出 ──
+  // 写入面只在宿主回调路由（经 forms 端口调用 upsertExternalApproval）与小时级对账脚本；
+  // 本组端点**只读**：镜像行不建 forms.submission、不进 case-engine（计划 §已知边界）。
+  // scope 用宽档 forms:view（与 /approvals/mine、/export/submissions 同款）——数据面 org 由
+  // 身份钉死，授权不靠请求参数。
+
+  r.get('/standard-approvals', (c) =>
+    handle(c, async () => {
+      const { identity } = ctx(c)
+      const rawLimit = c.req.query('limit')
+      const limit = rawLimit === undefined ? APPROVAL_LIST_DEFAULT_LIMIT : Number(rawLimit)
+      if (!Number.isInteger(limit) || limit < 1 || limit > APPROVAL_LIST_MAX_LIMIT) {
+        return fail(c, 400, 'BAD_LIMIT', `limit 必须是 1..${APPROVAL_LIST_MAX_LIMIT} 的整数`)
+      }
+      return c.json({ approvals: await store.listExternalApprovals(pool, identity.orgId, limit) })
+    }),
+  )
+
+  // 导出 = 出湖管线的「源」：id 键集游标（after_id 起步），字段 = 镜像列。
+  // `detail` 可得才带（不可得为 null——不假装有标准表单字段）。
+  r.get('/standard-approvals/export', (c) =>
+    handle(c, async () => {
+      const { identity } = ctx(c)
+      const rawAfter = c.req.query('after_id') ?? '0'
+      if (!/^\d+$/.test(rawAfter)) return fail(c, 400, 'BAD_AFTER_ID', 'after_id 必须是非负整数')
+      const rawLimit = c.req.query('limit')
+      const limit = rawLimit === undefined ? EXPORT_DEFAULT_LIMIT : Number(rawLimit)
+      if (!Number.isInteger(limit) || limit < 1 || limit > EXPORT_MAX_LIMIT) {
+        return fail(c, 400, 'BAD_LIMIT', `limit 必须是 1..${EXPORT_MAX_LIMIT} 的整数`)
+      }
+      const rows = await store.exportExternalApprovals(pool, identity.orgId, Number(rawAfter), limit)
+      const last = rows.at(-1)
+      return c.json({
+        rows,
+        // 游标推进：有行就推到最后一行；无行保持原值（调用方据此判「追平了」）
+        next_after_id: last === undefined ? rawAfter : last.approval_id,
         has_more: rows.length === limit,
       })
     }),

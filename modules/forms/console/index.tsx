@@ -13,6 +13,7 @@ import FillForm from './FillForm'
 import Submissions from './Submissions'
 import Approvals from './Approvals'
 import ApprovalDetail from './ApprovalDetail'
+import StandardApprovals from './StandardApprovals'
 
 const BASE = '/console/forms'
 
@@ -22,6 +23,8 @@ const TABS = [
   { key: 'submissions', label: '提交记录' },
   // OA P1：应用内待审批（响应用户端；scope forms:view——审批动作按计划快照授权）
   { key: 'approvals', label: '待审批' },
+  // OA P2：企微标准审批只读镜像（scope forms:view；写面在回调/对账，页面无写操作）
+  { key: 'standard', label: '标准审批' },
 ] as const
 
 type TabKey = (typeof TABS)[number]['key']
@@ -32,7 +35,7 @@ export default function FormsConsolePage() {
   const { pathname } = useLocation()
 
   // 解析 rest（BASE 之后的部分）：'' | '/fill/:assetId' | '/submissions/:assetId'
-  // | '/approvals/:caseId' | '/:tab'
+  // | '/approvals/:caseId' | '/:tab'（含 /standard）
   const rest = pathname.startsWith(BASE) ? pathname.slice(BASE.length) : pathname
   const segs = rest.split('/').filter(Boolean)
   let active: TabKey = 'forms'
@@ -72,6 +75,7 @@ export default function FormsConsolePage() {
       {active === 'approvals' && (approvalCase !== undefined
         ? <ApprovalDetail caseId={approvalCase} />
         : <Approvals />)}
+      {active === 'standard' && <StandardApprovals />}
     </Layout>
   )
 }
