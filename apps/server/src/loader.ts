@@ -45,6 +45,7 @@ import { listEnabledSources } from './tenant-source'
 import { buildCatalog, createCatalogReader, upsertCatalog } from './event-catalog'
 import { buildNotifyPort } from './notify-port'
 import { createChannelAddressResolver } from './channel-address'
+import { createOrganizationPort } from './org-directory'
 import { resolveTenantStorage } from './tenant-storage'
 import type { TenantRow } from './tenant'
 
@@ -522,8 +523,11 @@ export async function loadModules(
       }
     }
 
+  // 组织查询面（计划 T2）：与 identityLinks / addresses 同款——宿主构造一次、原样注入。
+  // 放在 baseCtx 是因为 `createPorts` 也拿这份 ctx（模块端口可能同样需要组织结构）。
+  const org = createOrganizationPort({ pool: deps.pool, casdoorFor: deps.casdoorFor })
   const baseCtx: ModuleContext = {
-    pool: deps.pool, identityLinks, events, addresses, userStatus, csrfVerify,
+    pool: deps.pool, identityLinks, events, addresses, userStatus, csrfVerify, org,
   }
   for (const p of pending) {
     if (typeof p.def.createPorts === 'function') {

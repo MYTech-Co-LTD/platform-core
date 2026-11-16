@@ -16,7 +16,17 @@ import type { Pool, PoolClient } from 'pg'
 
 /** 归一后的组织快照（两路来源——企微 API / Casdoor groups 种子——都汇到这个形状再入 apply）。 */
 export interface OrgSnapshot {
-  depts: Array<{ extId: string; name: string; parentExtId: string | null }>
+  depts: Array<{
+    extId: string
+    name: string
+    parentExtId: string | null
+    /**
+     * 部门负责人（企微 `department_leader`，顺序即企微顺序 → `sort`：0 = 主负责人）。
+     * **只来自企微源**；Casdoor 种子恒为空（那个源没有负责人概念，不知道就**不猜**）。
+     * OA 审批的 `dept_leader` 审批人来源读的正是这一列（计划 T1/T2）。
+     */
+    leaders: Array<{ userName: string; sort: number }>
+  }>
   /**
    * `externalId` = **该源渠道的原生地址**（企微源 = userid；Casdoor 源 = null，不知道就不猜）。
    * 与 `userName`（平台标识）分开存：今天企微源两者同值，但语义不同（spec 2026-10-31 §3.1）。
@@ -73,7 +83,17 @@ export async function fetchWecomSnapshot(
   if (!tj.access_token) throw new OrgSyncError('WECOM_API', 'gettoken missing access_token')
 
   const dr = await fetchFn(`${QYAPI}/cgi-bin/department/list?access_token=${tj.access_token}`)
-  const dj = (await dr.json()) as { errcode?: number; errmsg?: string; department?: Array<{ id: number; name?: string; parentid?: number }> }
+  const dj = (await dr.json()) as {
+    errcode?: number
+    errmsg?: string
+    department?: Array<{
+      id: number
+      name?: string
+      parentid?: number
+      /** 部门负责人 userid 列表（顺序即企微给的顺序；缺省 = 未设负责人） */
+      department_leader?: string[]
+    }>
+  }
   if (dj.errcode) throw new OrgSyncError('WECOM_API', `department/list ${dj.errcode} ${dj.errmsg ?? ''}`)
   const rawDepts = dj.department ?? []
 
@@ -98,6 +118,8 @@ export async function fetchWecomSnapshot(
     extId: String(d.id),
     name: d.name ?? String(d.id),
     parentExtId: d.parentid === 0 || d.parentid === 1 ? null : String(d.parentid),
+    // 负责人顺序即企微顺序（下标即 sort：0 = 主负责人）；未设负责人 ⇒ 空数组
+    leaders: (d.department_leader ?? []).map((userName, sort) => ({ userName, sort })),
   }))
   const memberships = rawUsers.flatMap((u) =>
     (u.department ?? []).map((dep) => ({
@@ -134,7 +156,12 @@ export async function snapshotFromCasdoor(
   const bare = (raw: string) => (raw.startsWith(`${org}/`) ? raw.slice(org.length + 1) : raw)
   const depts = groups.map((g) => {
     const p = bare(g.parentId)
-    return { extId: g.name, name: g.displayName || g.name, parentExtId: p === '' || p === org ? null : p }
+    return {
+      extId: g.name,
+      name: g.displayName || g.name,
+      parentExtId: p === '' || p === org ? null : p,
+      leaders: [], // Casdoor groups 没有负责人概念——不知道就不猜（与 externalId 同款口径）
+    }
   })
   const memberships = users.flatMap((u) =>
     (u.groups ?? []).map((raw) => ({
@@ -251,6 +278,19 @@ export async function applySnapshot(
                synced_at = now()`,
         [tenantId, m.userName, m.extId, m.isPrimary, source, m.externalId],
       )
+    }
+    // 部门负责人是**纯投影**（企微是事实源）：与 membership 同款整组重写。
+    // 只在 apply 路径重写，`org_role_binding`（平台授予）**不在这里碰**——一次企微同步
+    // 抹掉人工授的部门管理员是不可接受的（两份授权的来源语义不同）。
+    await client.query('delete from platform.org_node_leader where tenant_id = $1', [tenantId])
+    for (const d of snapshot.depts) {
+      for (const l of d.leaders) {
+        await client.query(
+          `insert into platform.org_node_leader (tenant_id, node_ext_id, user_name, sort, synced_at)
+           values ($1, $2, $3, $4, now())`,
+          [tenantId, d.extId, l.userName, l.sort],
+        )
+      }
     }
     await recomputePaths(client, tenantId)
     await client.query('commit')
