@@ -208,9 +208,12 @@ P1+P4b 的切流**已全部完成**（2026-11-15）；新增 job 仍按上表四
 以下任一成立 ⇒ `/healthz` 非 200：
 
 1. **调度心跳陈旧**：`platform.job_heartbeat('scheduler').beat_at` 超过 2 分钟未更新，或从未写入。
-2. **该跑没跑**：**任一** `enabled` 排班（`system` 与 `agent` 皆然），超过 `2 × expected_interval_secs` 没有 `ok` run。
-   宽限起点 = **最后一次成功运行的 `started_at`**；从未成功过才依次退到「最后一次运行（任何状态）的 `started_at`」、
+2. **该跑没跑（cron-aware）**：**任一** `enabled` 排班（`system` 与 `agent` 皆然），
+   「上次活动之后**第一个该跑的时点**」（`nextRunAt(cron, timezone, ref)`）已过 `2 × expected_interval_secs` 仍没有 `ok` run。
+   宽限起点 `ref` = **最后一次成功运行的 `started_at`**；从未成功过才依次退到「最后一次运行（任何状态）的 `started_at`」、
    再没有运行则 `updated_at`（给新启用一个宽限窗，**启用时必须刷新 `updated_at`**）。
+   ⚠️ **不要改成按墙钟 `2×interval` 判**：cron 有窗口（如 `data.dbt_tick` 是 UTC 1-15 点，避开北京时间
+   00:01–09:00 的空热 glob 窗口），墙钟判法会把窗口外误判成漏跑 ⇒ worker 夜间恒 503 ⇒ openship 部署收尾被阻塞（#2417）。
 3. **连续失败**：任一 **`enabled`** 排班，**最近 3 次运行（不论状态）**全是 `failed` / `timeout`。
    `running` / `queued` 行会稀释连败——这是有意的（有在跑说明调度器活着），不要改成只看终态。
 

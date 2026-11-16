@@ -49,14 +49,16 @@ describePg('jobHealth', () => {
     intervalSecs?: number
     updatedAt?: Date
     nextRunAt?: Date | null
+    /** cron 与 intervalSecs 必须自洽：判据②按 cron 算「第一个该跑的时点」（#2417）。 */
+    cron?: string
   }): Promise<number> {
     const { rows } = await pool.query<{ id: string }>(
       `insert into platform.job_schedule
          (key,cron,timezone,source,enabled,next_run_at,timeout_ms,max_attempts,
           expected_interval_secs,updated_at)
-       values ($1,'0 * * * *','UTC',$2,$3,$4,1000,1,$5,$6) returning id`,
+       values ($1,$7,'UTC',$2,$3,$4,1000,1,$5,$6) returning id`,
       [o.key, o.source ?? 'system', o.enabled ?? true, o.nextRunAt ?? null,
-        o.intervalSecs ?? 60, o.updatedAt ?? new Date()],
+        o.intervalSecs ?? 60, o.updatedAt ?? new Date(), o.cron ?? '* * * * *'],
     )
     return Number(rows[0].id)
   }
@@ -174,5 +176,34 @@ describePg('jobHealth', () => {
     expect(h.ok).toBe(false)
     expect(prefixReasons(h).join()).toContain(`${PREFIX}agent-overdue`)
     expect(prefixReasons(h).join()).toContain('没有成功运行')
+  })
+
+  it('★ cron 窗口外不算漏跑（夜班 503 的回归，#2417）', async () => {
+    // 年度 cron：上次活动之后的下一次触发永远在未来 ⇒ 无论当前墙钟几点都不该判红。
+    await insertSchedule({
+      key: `${PREFIX}off-window`, cron: '0 0 1 1 *', intervalSecs: 60,
+    })
+    const h = await jobHealth(pool, new Date())
+    expect(prefixReasons(h)).toEqual([])
+  })
+
+  it('★ cron 窗口内漏跑仍判红（cron-aware 不放松真漏跑）', async () => {
+    const id = await insertSchedule({
+      key: `${PREFIX}daily-missed`, cron: '0 0 * * *', intervalSecs: 3600,
+    })
+    // 30h 前有过 ok；此后第一次该跑（某个 00:00）至少已过 6h > 2×1h。
+    await insertRun(id, `${PREFIX}daily-missed`, 'ok', minutesAgo(60 * 30))
+    const h = await jobHealth(pool, new Date())
+    expect(h.ok).toBe(false)
+    expect(prefixReasons(h).join()).toContain(`${PREFIX}daily-missed`)
+    expect(prefixReasons(h).join()).toContain('没有成功运行')
+  })
+
+  it('★ cron 非法 ⇒ 判红（健康面不可观测，fail-closed）', async () => {
+    await insertSchedule({ key: `${PREFIX}bad-cron`, cron: 'nope' })
+    const h = await jobHealth(pool, new Date())
+    expect(h.ok).toBe(false)
+    expect(prefixReasons(h).join()).toContain(`${PREFIX}bad-cron`)
+    expect(prefixReasons(h).join()).toContain('cron 算不出下一次触发')
   })
 })
