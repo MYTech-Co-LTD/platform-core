@@ -515,6 +515,15 @@ describePg('routes v2', () => {
     const after = await pool.query(
       'select enabled from notify.rule where org=$1 and id=$2', [ORG, p.id])
     expect(after.rows[0].enabled).toBe(true)
+
+    // #2324：批准即启用也进历史
+    const hist = await pool.query(
+      "select detail from notify.audit where org=$1 and target=$2 and action='rule.enabled' order by id desc limit 1",
+      [ORG, p.id])
+    expect(hist.rows[0].detail).toMatchObject({ enabled: true, approvalId: p.approvalId })
+    expect(hist.rows[0].detail.snapshot).toMatchObject({
+      id: p.id, enabled: true, ownerNamespace: 'agent_a',
+    })
   })
 
   it('N3：policy 预授权外发 + 收件人/每日消息配额', async () => {

@@ -205,6 +205,18 @@ export async function callTool(
     // 系统规则（derived:/manual:）只能由 seed/env 管理；agent 不得覆盖。
     if (name === 'update_rule' && !isWritableRuleId(id)) return err('rule_id_reserved')
 
+    // agent 规则按 owner_namespace 隔离（与 HTTP POST /rules 同口径，issue #2325）：
+    // 非 owner 不得经 MCP 覆盖，owner 更新时必须保留归属，不能降级成租户规则。
+    const existing = (await listRules(deps.pool, deps.org)).find((x) => x.id === id)
+    let ownerNamespace: string | null = null
+    if (existing?.ownerNamespace) {
+      const ns = await getAgentNamespace(deps.pool, deps.org, existing.ownerNamespace)
+      if (!ns || ns.status !== 'active' || ns.ownerUserId !== deps.userId) {
+        return err('rule_not_owned')
+      }
+      ownerNamespace = existing.ownerNamespace
+    }
+
     const eventKey = str(args.eventKey)
     const recipientKey = str(args.recipientKey)
     const templateKey = str(args.templateKey)
@@ -238,7 +250,7 @@ export async function callTool(
     // 规则历史快照（#2322）：audit 里落一份完整可回滚快照
     // recipientDepts 与 HTTP 面同源去重（覆盖 rule 里的原值）
     const snapshot: RuleSnapshot = {
-      id, enabled: true, ...rule, ownerNamespace: null,
+      id, enabled: true, ...rule, ownerNamespace,
       recipientDepts: rule.recipientDepts ? [...new Set(rule.recipientDepts)] : null,
     }
     await upsertRule(deps.pool, deps.org, snapshot, deps.userId)
@@ -251,6 +263,12 @@ export async function callTool(
     if (!id || typeof args.enabled !== 'boolean') return err('missing_required')
     // 快照取自写入前的行（enabled 覆盖为目标值）
     const existing = (await listRules(deps.pool, deps.org)).find((x) => x.id === id)
+    if (existing?.ownerNamespace) {
+      const ns = await getAgentNamespace(deps.pool, deps.org, existing.ownerNamespace)
+      if (!ns || ns.status !== 'active' || ns.ownerUserId !== deps.userId) {
+        return err('rule_not_owned')
+      }
+    }
     const n = await setRuleEnabled(deps.pool, deps.org, id, args.enabled)
     if (n === 0) return err('not_found')
     await audit(deps.pool, deps.org, deps.userId, 'mcp.set_rule_enabled', id, {
