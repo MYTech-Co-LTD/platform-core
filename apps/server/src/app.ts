@@ -35,6 +35,7 @@ import { platformRoutes, type ModuleInfo } from './routes/platform'
 import { apiKeyRoutes } from './routes/api-keys'
 import { authRoutes } from './routes/auth'
 import { adminRoutes } from './routes/admin'
+import { agentMcpRoutes } from './routes/agent-mcp'
 import { PLATFORM_BUILTIN_PERMISSIONS } from './loader'
 import { platformOnlyCodes, tenantGrantable } from './admin-permissions'
 import { resolveSubscriptionSource } from './subscription-source'
@@ -268,7 +269,8 @@ export async function buildApp(overrides: BuildAppOverrides = {}): Promise<{
   //   · 内部身份：/api/agent/mcp 网关解析一次后签发的 x-internal-identity（HMAC）
   //   · PAT（通道 B）：Bearer dkq_… → 用户 → 实时 scopes
   //   · 企微（通道 C）：渠道凭证 + X-Wecom-Userid → Casdoor 反查
-  // 三条都只作用于 /api/modules/*（模块路由），且都遵守 first-setter-wins：
+  // 三条通道里：内部身份只作用于 /api/modules/*（模块路由）；PAT / 企微两条同时服务
+  // /api/modules/* 与 /api/agent/*（网关）。三条都遵守 first-setter-wins：
   // session 已注入 identity 时它们直接放行——**系统内通道不经这里**。
   // Hono 的中间件只影响**其后注册**的路由，故位置不能挪到 runtime.mount 之后。
   //
@@ -278,14 +280,30 @@ export async function buildApp(overrides: BuildAppOverrides = {}): Promise<{
   // 「模块缺席 / 未声明端口 ⇒ 503」这条分支（表是宿主自己的，不存在装配缺失）。
   // 内部身份必须排在最前——验签通过后 PAT / 企微两条中间件因 first-setter-wins 直接放行。
   app.use('/api/modules/*', internalIdentityMiddleware())
-  app.use('/api/modules/*', patIdentityMiddleware({
+  // 实例只建一份：/api/modules/* 与 /api/agent/* 共用同一份配置与同一份 PAT 限速窗口。
+  const patAuth = patIdentityMiddleware({
     resolveKey: resolveKeyWithTouch(pool),
     casdoor: casdoorFactory,
     ratePerMin: config.dataQueryRatePerMin,
-  }))
-  app.use('/api/modules/*', wecomChannelIdentityMiddleware({
+  })
+  const wecomChannelAuth = wecomChannelIdentityMiddleware({
     casdoor: casdoorFactory,
     channelKey: config.dataWecomChannelKey,
+  })
+  app.use('/api/modules/*', patAuth)
+  app.use('/api/modules/*', wecomChannelAuth)
+
+  // ⑥.6 agent MCP 网关（spec 2026-11-16 §7）：POST /api/agent/mcp。
+  // 身份适配器复用 PAT/企微两条中间件（会话已在 ⑥ 注入，first-setter-wins）。
+  // **刻意不挂 internalIdentityMiddleware**：/api/agent/* 只服务外部调用方（PAT/会话/企微），
+  // 不接受内部签名身份；网关向下游转发时自己现签内部头。
+  // 网关只做 face 选择 + 命名空间 + 转发，权限执法在模块 face（网关不自行放行）。
+  app.use('/api/agent/*', patAuth)
+  app.use('/api/agent/*', wecomChannelAuth)
+  app.route('/api/agent', agentMcpRoutes({
+    faces: () => runtime.mcpFaces(),
+    // 回环调用宿主自身：转发带原 host（租户解析）+ 内部签名身份（模块侧免二次 Casdoor）。
+    fetchModule: async (path, init) => app.request(path, init),
   }))
 
   // ⑦ 平台路由：branding/config（modules 注入 = runtime 的 console 数据 + enabledFor 闸门）
