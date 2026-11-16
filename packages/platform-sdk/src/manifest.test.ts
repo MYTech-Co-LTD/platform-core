@@ -482,11 +482,43 @@ describe('mcpFaces', () => {
     expect(ManifestSchema.safeParse(m).success).toBe(true)
   })
 
-  it('path 不在 api.internal / scope 不一致 ⇒ 拒', () => {
+  it('path 不在 api.internal ⇒ 拒', () => {
     const m = { ...base, mcpFaces: [
       { face: 'read', group: 'agent', precedence: 1, path: '/nope', method: 'POST', scope: 'data:read', audiences: ['mcp'] },
     ] }
     expect(ManifestSchema.safeParse(m).success).toBe(false)
+  })
+
+  it('scope 与 api.internal 不一致（同 path 但在 api.internal 里是别的 scope）⇒ 拒', () => {
+    // /mcp-read 在 api.internal 里声明的是 data:read；face 写 data:query ⇒ 三条不一致，不能配对。
+    const m = { ...base, mcpFaces: [
+      { face: 'read', group: 'agent', precedence: 1, path: '/mcp-read', method: 'POST', scope: 'data:query', audiences: ['mcp'] },
+    ] }
+    const r = ManifestSchema.safeParse(m)
+    expect(r.success).toBe(false)
+    if (r.success) return
+    expect(r.error.issues.some((i) => i.message.includes('未在 api.internal 声明'))).toBe(true)
+  })
+
+  it('scope 不在 permissions ⇒ 拒', () => {
+    const m = { ...base, mcpFaces: [
+      { face: 'read', group: 'agent', precedence: 1, path: '/mcp-read', method: 'POST', scope: 'data:ghost', audiences: ['mcp'] },
+    ] }
+    const r = ManifestSchema.safeParse(m)
+    expect(r.success).toBe(false)
+    if (r.success) return
+    expect(r.error.issues.some((i) => i.message.includes('scope 不在 permissions'))).toBe(true)
+  })
+
+  it('audiences 内有重复值（["mcp","mcp"]）⇒ 拒，且报「不得重复」而不是误导性的 precedence 重复', () => {
+    const m = { ...base, mcpFaces: [
+      { face: 'read', group: 'agent', precedence: 1, path: '/mcp-read', method: 'POST', scope: 'data:read', audiences: ['mcp', 'mcp'] },
+    ] }
+    const r = ManifestSchema.safeParse(m)
+    expect(r.success).toBe(false)
+    if (r.success) return
+    expect(r.error.issues.some((i) => i.message.includes('audiences 不得重复'))).toBe(true)
+    expect(r.error.issues.some((i) => i.message.includes('precedence 重复'))).toBe(false)
   })
 
   it('同一 (group,audience) precedence 重复 ⇒ 拒；不同 audience 可重复', () => {
@@ -500,6 +532,35 @@ describe('mcpFaces', () => {
       { face: 'b', group: 'g', precedence: 1, path: '/mcp-read', method: 'POST', scope: 'data:read', audiences: ['wecom'], profile: 'c-manage' },
     ] }
     expect(ManifestSchema.safeParse(ok).success).toBe(true)
+  })
+
+  it('同一 (path,method,scope) 的 audiences 相交 ⇒ 拒（即使 profile 不同）', () => {
+    // profile 不同（full / c-manage）⇒ profile 那条不触发；拒绝只能来自 audiences 相交。
+    const m = { ...base, mcpFaces: [
+      { face: 'a', group: 'g1', precedence: 1, path: '/mcp-read', method: 'POST', scope: 'data:read', audiences: ['mcp'], profile: 'full' },
+      { face: 'b', group: 'g1', precedence: 2, path: '/mcp-read', method: 'POST', scope: 'data:read', audiences: ['mcp', 'wecom'], profile: 'c-manage' },
+    ] }
+    const r = ManifestSchema.safeParse(m)
+    expect(r.success).toBe(false)
+    if (r.success) return
+    expect(r.error.issues.some((i) => i.message.includes('audiences 必须不相交'))).toBe(true)
+  })
+
+  it('同一 (path,method,scope) 的 profile 相同 ⇒ 拒（缺省与显式 full 视为相同）', () => {
+    // audiences 不相交（mcp / wecom）⇒ audiences 那条不触发；profile 都缺省 ⇒ 都按 full ⇒ 拒。
+    const bothDefault = { ...base, mcpFaces: [
+      { face: 'a', group: 'g1', precedence: 1, path: '/mcp-read', method: 'POST', scope: 'data:read', audiences: ['mcp'] },
+      { face: 'b', group: 'g2', precedence: 1, path: '/mcp-read', method: 'POST', scope: 'data:read', audiences: ['wecom'] },
+    ] }
+    expect(ManifestSchema.safeParse(bothDefault).success).toBe(false)
+    const explicitFull = { ...base, mcpFaces: [
+      { face: 'a', group: 'g1', precedence: 1, path: '/mcp-read', method: 'POST', scope: 'data:read', audiences: ['mcp'], profile: 'full' },
+      { face: 'b', group: 'g2', precedence: 1, path: '/mcp-read', method: 'POST', scope: 'data:read', audiences: ['wecom'] },
+    ] }
+    const r = ManifestSchema.safeParse(explicitFull)
+    expect(r.success).toBe(false)
+    if (r.success) return
+    expect(r.error.issues.some((i) => i.message.includes('profile 不得相同'))).toBe(true)
   })
 })
 

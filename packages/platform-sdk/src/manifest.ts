@@ -475,7 +475,20 @@ export const ManifestSchema = ManifestObject.superRefine((m, ctx) => {
     if (!m.permissions.some((pr) => pr.code === f.scope)) {
       ctx.addIssue({ code: z.ZodIssueCode.custom, path: [...p, 'scope'], message: `mcpFaces ${f.face}: scope 不在 permissions` })
     }
+    // audiences 自身不得重复：重复值会让下面的 precedence 检查对同一 (group,audience) 看两次，
+    // 报出误导性的「precedence 重复」。先按去重集判重，再用去重集做 precedence 检查。
+    const audienceSeen = new Set<string>()
     for (const a of f.audiences) {
+      if (audienceSeen.has(a)) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          path: [...p, 'audiences'],
+          message: `mcpFaces ${f.face}: audiences 不得重复（${a}）`,
+        })
+      }
+      audienceSeen.add(a)
+    }
+    for (const a of audienceSeen) {
       const key = `${f.group}\0${a}`
       const set = byGroupAudience.get(key) ?? new Set<number>()
       if (set.has(f.precedence)) {
