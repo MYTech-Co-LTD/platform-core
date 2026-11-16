@@ -11,6 +11,10 @@
 
 ## [Unreleased]
 
+## [0.310.1](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.310.0...v0.310.1) - 2026-11-16
+- 【修复】data: config() 内改用 Jinja 注释，修复 dbt 编译失败（#2387） ([#2388](https://github.com/MYTech-Co-LTD/platform-core/pull/2388), [7e52e2e](https://github.com/MYTech-Co-LTD/platform-core/commit/7e52e2eb81cb1537b17a193722648233681049f7))
+
+
 ## [0.310.0](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.309.1...v0.310.0) - 2026-11-16
 - 【修复】openclaw: 手动超时定时器 unref/清理，修复 Node 22 测试挂起 ([#2360](https://github.com/MYTech-Co-LTD/platform-core/pull/2360), [3f3e6b9](https://github.com/MYTech-Co-LTD/platform-core/commit/3f3e6b9023ee0668643e4d36602dafe7b3a2404d))
 - 【修复】agent-mcp: 取消覆盖响应体读取与已中止入站 ([#2360](https://github.com/MYTech-Co-LTD/platform-core/pull/2360), [f4eb67b](https://github.com/MYTech-Co-LTD/platform-core/commit/f4eb67b6e196a228bc9d625d62c7a575c3604fb2))
