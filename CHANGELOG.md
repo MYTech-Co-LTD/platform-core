@@ -11,6 +11,10 @@
 
 ## [Unreleased]
 
+## [0.309.1](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.309.0...v0.309.1) - 2026-11-16
+- 【修复】data: fct_request_fulfillment 增量窗口重建，清理源撤回行（#2378） ([#2382](https://github.com/MYTech-Co-LTD/platform-core/pull/2382), [77ec617](https://github.com/MYTech-Co-LTD/platform-core/commit/77ec6170d0f7347f06b690fff7560916ebf7c86f))
+
+
 ## [0.309.0](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.308.0...v0.309.0) - 2026-11-16
 - 【新增】forms: 移动端 OA 审批入口 + 引擎调用携 org（#2380） ([#2381](https://github.com/MYTech-Co-LTD/platform-core/pull/2381), [ab7bfeb](https://github.com/MYTech-Co-LTD/platform-core/commit/ab7bfebb154168dccc5ac599a2b7e26bd3f9f365))
 
