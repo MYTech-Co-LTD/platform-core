@@ -756,6 +756,119 @@ export async function markWithdrawn(
   return (rowCount ?? 0) > 0
 }
 
+// ── 标准审批只读镜像（OA P2，issue #2385）：企微是事实源，本层只读写镜像表 ──
+
+/** 镜像状态白名单（与 DB 约束 `forms_external_approval_status_check` 同源同值）。 */
+export const EXTERNAL_APPROVAL_STATUSES = ['pending', 'approved', 'rejected', 'canceled'] as const
+export type ExternalApprovalStatus = (typeof EXTERNAL_APPROVAL_STATUSES)[number]
+
+export interface ExternalApprovalInput {
+  org: string
+  /** 审批源；缺省 'wecom'（表默认值，为将来第二家留位） */
+  provider?: string
+  processCode: string
+  /** 审批源侧单号（企微 SpNo）——(org, provider, provider_ref) 是幂等键 */
+  providerRef: string
+  title?: string | null
+  requester?: string | null
+  /** 机检白名单值；类型放宽成 string 是为了让**运行时**守卫真的能拦（回调/对账的数据不可信） */
+  status: string
+  startedAt?: Date | null
+  finishedAt?: Date | null
+  /** 审批源可得的摘要；拿不到就 null（不假装有） */
+  detail?: unknown
+}
+
+export interface ExternalApprovalRow {
+  id: string
+  org: string
+  provider: string
+  processCode: string
+  providerRef: string
+  title: string | null
+  requester: string | null
+  status: ExternalApprovalStatus
+  startedAt: Date | null
+  finishedAt: Date | null
+  detail: unknown
+  syncedAt: Date
+}
+
+/**
+ * 幂等写入一行镜像（回调与对账共用**同一个** upsert —— 重复回调只更新原行）。
+ *
+ * 两处刻意语义：
+ * - `status` 永远后写胜（状态推进才是镜像存在的理由）；
+ * - 其余可空列用 `coalesce(excluded.x, 原值)`：企微的状态变更回调常常**只带状态**，
+ *   不能让一次「只带状态」的回调把先到的标题/申请人/开始时间/摘要擦成 null。
+ *   代价是「上游真的把某字段清空」无法镜像——审批字段在企微侧本就不允许清空，取这一边。
+ *
+ * 状态先过应用层白名单（`FormsError` 机检码），DB 的 check 约束是第二道兜底。
+ */
+export async function upsertExternalApproval(
+  pool: Pool, row: ExternalApprovalInput,
+): Promise<void> {
+  if (!(EXTERNAL_APPROVAL_STATUSES as readonly string[]).includes(row.status)) {
+    throw new FormsError(
+      'EXTERNAL_APPROVAL_STATUS_INVALID',
+      `非法状态 ${JSON.stringify(row.status)}：只接受 ${EXTERNAL_APPROVAL_STATUSES.join('/')}`,
+    )
+  }
+  await pool.query(
+    `insert into forms.external_approval
+       (org, provider, process_code, provider_ref, title, requester, status,
+        started_at, finished_at, detail, synced_at)
+     values ($1, coalesce($2, 'wecom'), $3, $4, $5, $6, $7, $8, $9, $10::jsonb, now())
+     on conflict (org, provider, provider_ref) do update
+       set process_code = excluded.process_code,
+           title        = coalesce(excluded.title, forms.external_approval.title),
+           requester    = coalesce(excluded.requester, forms.external_approval.requester),
+           status       = excluded.status,
+           started_at   = coalesce(excluded.started_at, forms.external_approval.started_at),
+           finished_at  = coalesce(excluded.finished_at, forms.external_approval.finished_at),
+           detail       = coalesce(excluded.detail, forms.external_approval.detail),
+           synced_at    = now()`,
+    [
+      row.org, row.provider ?? null, row.processCode, row.providerRef,
+      row.title ?? null, row.requester ?? null, row.status,
+      row.startedAt ?? null, row.finishedAt ?? null,
+      row.detail === undefined || row.detail === null ? null : JSON.stringify(row.detail),
+    ],
+  )
+}
+
+/**
+ * 本租户的镜像列表（只读）。排序 = 开始时间倒序，**没有开始时间的排最后**
+ * （缺 ApplyTime 的新单不该压在有时间的历史单之上），同时间用 id 兜底成确定序。
+ */
+export async function listExternalApprovals(
+  pool: Pool, org: string, limit = 100,
+): Promise<ExternalApprovalRow[]> {
+  const { rows } = await pool.query(
+    `select id, org, provider, process_code, provider_ref, title, requester, status,
+            started_at, finished_at, detail, synced_at
+       from forms.external_approval
+      where org = $1
+      order by started_at desc nulls last, id desc
+      limit $2`,
+    [org, limit],
+  )
+  return rows.map((r) => ({
+    id: String(r.id),
+    org: r.org,
+    provider: r.provider,
+    processCode: r.process_code,
+    providerRef: r.provider_ref,
+    title: r.title,
+    requester: r.requester,
+    status: r.status as ExternalApprovalStatus,
+    startedAt: r.started_at,
+    finishedAt: r.finished_at,
+    detail: r.detail,
+    syncedAt: r.synced_at,
+  }))
+}
+
 /** 对账脚本用：跨租户列在途超阈值的单（**不带 org**——脚本按行上的 org 逐条处理）。 */
 export async function listStalePendingSubmissions(
   pool: Pool, olderThanMinutes: number, limit = 500,

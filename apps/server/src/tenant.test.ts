@@ -61,6 +61,18 @@ describe.skipIf(!dbUrl)('租户解析 + platform 路由 + seed', () => {
     expect(row?.slug).toBe('acme')
   })
 
+  // —— 022：审批应用凭据五列（OA P2 标准审批镜像，issue #2385） ——
+  // 只断言「列在位且缺省 null」：值从哪来（企微后台）属部署配置，不进测试。
+  it('tenant 行带审批应用五列（022），未配置时全 null', async () => {
+    const t = await getTenantByHost(pool, 'acme.test', 'multi', '')
+    expect(t).not.toBeNull()
+    expect(t?.wecom_approval_corp_id).toBeNull()
+    expect(t?.wecom_approval_agent_id).toBeNull()
+    expect(t?.wecom_approval_secret).toBeNull()
+    expect(t?.wecom_approval_token).toBeNull()
+    expect(t?.wecom_approval_aes_key).toBeNull()
+  })
+
   it('single：60s 内存缓存——缓存期内改库不见新值，reset 后自愈；multi 无缓存即时可见', async () => {
     // 首查入缓存
     expect((await getTenantByHost(pool, 'a.test', 'single', 'acme'))?.product_name).toBe('Acme 工单')

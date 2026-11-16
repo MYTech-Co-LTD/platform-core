@@ -2,7 +2,10 @@ import { afterAll, beforeAll, describe, expect, it } from 'vitest'
 import { Pool } from 'pg'
 import { applyMigrations } from './test-util'
 import { schemaOf, validateSubmission } from './domain/contract'
-import { audit, headVersion, listVersions, newDraft, publish } from './storage'
+import {
+  audit, FormsError, headVersion, listExternalApprovals, listVersions, newDraft, publish,
+  upsertExternalApproval,
+} from './storage'
 
 // 内核断言套件（issue #710）：explore/poc/lifecycle-unified 28 断言的多租户工程化对账。
 // 口径（RESULTS.md §1/§2）：不经应用层，**直接 pool.query 调 SQL 函数与裸 SQL**——
@@ -45,7 +48,7 @@ describePg('forms 生命周期内核（PoC 28 断言对账）', () => {
 
   afterAll(async () => {
     // 尽力而为：published/retired 行删不掉是**被测契约**（触发器拦），吞掉即可
-    for (const t of ['audit', 'submission', 'asset_head', 'asset_version', 'mcp_audit']) {
+    for (const t of ['audit', 'submission', 'asset_head', 'asset_version', 'mcp_audit', 'external_approval']) {
       await pool.query(`delete from forms.${t} where org = $1`, [ORG]).catch(() => {})
     }
     await pool.end()
@@ -85,8 +88,12 @@ describePg('forms 生命周期内核（PoC 28 断言对账）', () => {
       "select table_name from information_schema.tables where table_schema='forms'",
     )
     expect(new Set(rows.map((r) => r.table_name))).toEqual(
-      // 002 起多 forms.audit（事项审计）+ forms.mcp_audit（能力网关审计）
-      new Set(['kind', 'asset_version', 'asset_head', 'submission', 'dict_item', 'dict_global_item', 'audit', 'mcp_audit']),
+      // 002 起多 forms.audit（事项审计）+ forms.mcp_audit（能力网关审计）；
+      // 003_external_approval 起多 forms.external_approval（企微标准审批只读镜像）
+      new Set([
+        'kind', 'asset_version', 'asset_head', 'submission', 'dict_item', 'dict_global_item',
+        'audit', 'mcp_audit', 'external_approval',
+      ]),
     )
   })
 
@@ -361,5 +368,94 @@ describePg('forms 生命周期内核（PoC 28 断言对账）', () => {
     expect(rows[0]).toEqual({
       actor: 'admin', action: 'approval_def.publish', target: 'leave', detail: { version: 1 },
     })
+  })
+
+  // ── 标准审批只读镜像（003_external_approval.sql，OA P2 issue #2385） ──
+  // 企微是执行方与事实源；本表只镜像状态/审批人/时间/可得摘要，不建 submission、不进引擎。
+
+  it('EA1：同 (org, provider, provider_ref) 幂等 upsert——两次写只有一行，状态后写胜', async () => {
+    await upsertExternalApproval(pool, {
+      org: ORG, processCode: 'PC1', providerRef: 'SP1', title: '差旅报销', requester: 'u1',
+      status: 'pending', detail: {},
+    })
+    await upsertExternalApproval(pool, {
+      org: ORG, processCode: 'PC1', providerRef: 'SP1', title: '差旅报销', requester: 'u1',
+      status: 'approved', detail: { x: 1 },
+    })
+    const rows = await listExternalApprovals(pool, ORG, 10)
+    const sp1 = rows.filter((r) => r.providerRef === 'SP1')
+    expect(sp1).toHaveLength(1)
+    expect(sp1[0]).toMatchObject({
+      org: ORG, provider: 'wecom', processCode: 'PC1', status: 'approved', detail: { x: 1 },
+    })
+  })
+
+  it('EA2：状态白名单在应用层——非法值抛 FormsError，且不落行', async () => {
+    const err = await upsertExternalApproval(pool, {
+      org: ORG, processCode: 'PC1', providerRef: 'SP-BAD', status: 'bogus',
+    }).then(() => null, (e: unknown) => e)
+    expect(err).toBeInstanceOf(FormsError)
+    expect((err as FormsError).code).toBe('EXTERNAL_APPROVAL_STATUS_INVALID')
+    const { rows } = await pool.query(
+      'select count(*)::int n from forms.external_approval where org=$1 and provider_ref=$2',
+      [ORG, 'SP-BAD'],
+    )
+    expect(rows[0].n).toBe(0)
+  })
+
+  it('EA3：状态词表由 DB 兜底——裸 SQL 直写越界状态被拒（绕过应用层也拦）', async () => {
+    await expect(
+      pool.query(
+        `insert into forms.external_approval (org, process_code, provider_ref, status)
+         values ($1,'PC1','SP-DB','bogus')`,
+        [ORG],
+      ),
+    ).rejects.toThrow(/forms_external_approval_status_check/)
+  })
+
+  it('EA4：list 只回本 org；按 started_at desc，无开始时间的排最后', async () => {
+    // 跨 org 隔离：同 provider_ref 在别 org 不得串进本租户列表
+    const OTHER = `${ORG}-other`
+    const dOld = new Date('2026-11-01T00:00:00Z')
+    const dNew = new Date('2026-11-02T00:00:00Z')
+    await upsertExternalApproval(pool, {
+      org: ORG, processCode: 'PC1', providerRef: 'EA4-OLD', status: 'approved', startedAt: dOld,
+    })
+    await upsertExternalApproval(pool, {
+      org: ORG, processCode: 'PC1', providerRef: 'EA4-NEW', status: 'pending', startedAt: dNew,
+    })
+    await upsertExternalApproval(pool, {
+      org: ORG, processCode: 'PC1', providerRef: 'EA4-NOTIME', status: 'pending',
+    })
+    await upsertExternalApproval(pool, {
+      org: OTHER, processCode: 'PC1', providerRef: 'EA4-NEW', status: 'pending', startedAt: dNew,
+    })
+    try {
+      const mine = (await listExternalApprovals(pool, ORG, 50))
+        .map((r) => r.providerRef)
+        .filter((ref) => ref.startsWith('EA4-'))
+      // 只这一个 ref 出现一次 ⇒ 别 org 的同名单没有被捞进来
+      expect(mine).toEqual(['EA4-NEW', 'EA4-OLD', 'EA4-NOTIME'])
+    } finally {
+      await pool.query('delete from forms.external_approval where org=$1', [OTHER]).catch(() => {})
+    }
+  })
+
+  it('EA5：后到的回调只带状态时不擦掉已知值（null 不覆盖，finished_at 只增）', async () => {
+    const startedAt = new Date('2026-11-03T09:00:00Z')
+    const finishedAt = new Date('2026-11-03T10:00:00Z')
+    await upsertExternalApproval(pool, {
+      org: ORG, processCode: 'PC1', providerRef: 'SP-KEEP', title: '请假', requester: 'u3',
+      status: 'pending', startedAt, detail: { form: 'leave' },
+    })
+    await upsertExternalApproval(pool, {
+      org: ORG, processCode: 'PC1', providerRef: 'SP-KEEP', status: 'approved', finishedAt,
+    })
+    const row = (await listExternalApprovals(pool, ORG, 10)).find((r) => r.providerRef === 'SP-KEEP')
+    expect(row).toMatchObject({
+      status: 'approved', title: '请假', requester: 'u3', detail: { form: 'leave' },
+    })
+    expect(row?.startedAt).toEqual(startedAt)
+    expect(row?.finishedAt).toEqual(finishedAt)
   })
 })
