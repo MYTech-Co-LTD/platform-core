@@ -11,6 +11,10 @@
 
 ## [Unreleased]
 
+## [0.313.1](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.313.0...v0.313.1) - 2026-11-16
+- 【修复】data: 采集流程优先用收据、缺失时退回 run 记录的逐节点明细 (#2410) ([#2411](https://github.com/MYTech-Co-LTD/platform-core/pull/2411), [2a9431b](https://github.com/MYTech-Co-LTD/platform-core/commit/2a9431b582477af6c67054b833d161df2c0434ef))
+
+
 ## [0.313.0](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.312.1...v0.313.0) - 2026-11-16
 - 【新增】data: 采集流程合并连续同型节点（96 个 page 并成「取数 × 96」）(#2397) ([#2409](https://github.com/MYTech-Co-LTD/platform-core/pull/2409), [888ce7d](https://github.com/MYTech-Co-LTD/platform-core/commit/888ce7d72022ddd91298690b6ac60b81b3ddc914))
 - 【新增】oa: 企微标准审批回调路由与 forms 镜像端口（#2385） ([#2403](https://github.com/MYTech-Co-LTD/platform-core/pull/2403), [0f0ec8f](https://github.com/MYTech-Co-LTD/platform-core/commit/0f0ec8f18e9fdc78ab9856623a8d920b45f7ce7c))
