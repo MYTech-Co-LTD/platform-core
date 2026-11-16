@@ -4,8 +4,10 @@
 // 返回机检错误码 + HTTP 状态；调用方只做协议适配（JSON / MCP error）。
 import { randomUUID } from 'node:crypto'
 import type { Pool } from 'pg'
-import { validatePayload } from '@platform/sdk'
-import { AGENT_TEMPLATE_KEY_RE } from './domain/agent-event'
+import { validatePayload, type NotificationEventDecl } from '@platform/sdk'
+import {
+  AGENT_TEMPLATE_KEY_RE, isAgentEventKey, validateAgentEventDecl,
+} from './domain/agent-event'
 import { agentMessageKey, isAgentMessageKey } from './domain/agent-message'
 import { isExternalProvider, parseAgentPolicy } from './domain/agent-policy'
 import { validateRule } from './domain/rules'
@@ -16,7 +18,7 @@ import {
   createTemplateRevision, ensureAgentMessageDefaults, enqueueEvent, getAgentNamespace,
   getChannel, getEventDecl, getTemplate, hasApprovedRuleApproval, listApprovals,
   listEnabledChannelIds, listPublishedTemplateKeys, listRules, publishTemplateRevision,
-  upsertRule,
+  upsertEventDecl, upsertRule,
   type AgentNamespaceRow,
 } from './storage'
 
@@ -42,7 +44,7 @@ type NamespaceAuth = { error: AgentActionError } | { ns: AgentNamespaceRow }
  * 违规码：`AGENT_NAMESPACE_FORBIDDEN`（不存在/非 active/非 owner）或
  * `AGENT_NAMESPACE_SERVICE_ONLY`（人调用了 service namespace）。
  */
-async function authorizeNamespace(
+export async function authorizeNamespace(
   pool: Pool,
   input: { org: string; userId: string; namespace: string; allowServiceNamespace?: boolean },
 ): Promise<NamespaceAuth> {
@@ -58,6 +60,44 @@ async function authorizeNamespace(
     return { error: fail('AGENT_NAMESPACE_FORBIDDEN', 403) }
   }
   return { ns }
+}
+
+export type DeclareAgentEventInput = {
+  org: string
+  userId: string
+  namespace: string
+  decl: NotificationEventDecl
+  /** C 档（service-owned namespace）授权位；B/HTTP 不传。 */
+  allowServiceNamespace?: boolean
+}
+
+export type DeclareAgentEventResult =
+  | { ok: true; key: string; version: number; created: boolean }
+  | AgentActionError
+
+/**
+ * 声明 agent 自有事件（`ext.<namespace>.<event>`）。
+ * 与 HTTP `/agent/events` 共用同一套 owner 校验 / schema 校验 / 只增不改 diff。
+ */
+export async function declareAgentEvent(
+  pool: Pool,
+  input: DeclareAgentEventInput,
+): Promise<DeclareAgentEventResult> {
+  const auth = await authorizeNamespace(pool, input)
+  if ('error' in auth) return auth.error
+  if (!isAgentEventKey(input.decl.key)
+      || !input.decl.key.startsWith(`ext.${input.namespace}.`)
+      || isAgentMessageKey(input.decl.key)) {
+    return fail('AGENT_EVENT_NOT_OWNED', 400)
+  }
+  const issues = validateAgentEventDecl(input.decl)
+  if (issues.length > 0) return fail('AGENT_EVENT_INVALID', 400, { issues })
+  const res = await upsertEventDecl(
+    pool, input.org, input.namespace, input.decl, input.userId)
+  if (!res.ok) return fail('AGENT_EVENT_SCHEMA_BREAKING', 409, { issues: res.issues })
+  await audit(pool, input.org, input.userId,
+    'agent.event.upsert', input.decl.key, { version: res.version, created: res.created })
+  return { ok: true, key: input.decl.key, version: res.version, created: res.created }
 }
 
 export type SendAgentMessageInput = {

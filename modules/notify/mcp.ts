@@ -9,7 +9,9 @@ import type {
   SchedulerPortFactory,
 } from '@platform/sdk'
 import { REQUESTER_CHANNEL, validatePayload } from '@platform/sdk'
-import { createAgentRule, createAgentTemplate, sendAgentMessage } from './agent-actions'
+import {
+  createAgentRule, createAgentTemplate, declareAgentEvent, sendAgentMessage,
+} from './agent-actions'
 import { C_SAFE_TOOLS, NOTIFY_TOOLS, toolsForChannel } from './mcp-tools'
 import type { NotifyChannel } from './mcp-tools'
 import { channelIsConfigured } from './domain/channel-config'
@@ -462,6 +464,38 @@ export async function callTool(
       : err(r.code, r.detail ?? {})
   }
 
+  if (name === 'declare_agent_event') {
+    const namespace = toolNamespace(deps, args.namespace, pinnedNamespace)
+    if (!namespace) return err('namespace_unconfigured')
+    const key = str(args.key)
+    const title = str(args.title)
+    const payload = args.payload
+    const recipients = args.recipients
+    if (!key || !title || typeof payload !== 'object' || payload === null || Array.isArray(payload)
+        || typeof recipients !== 'object' || recipients === null || Array.isArray(recipients)) {
+      return err('missing_required')
+    }
+    const r = await declareAgentEvent(deps.pool, {
+      org: deps.org, userId: deps.userId, namespace,
+      decl: {
+        key, title,
+        ...(str(args.description) ? { description: str(args.description) } : {}),
+        ...(args.scope && typeof args.scope === 'object'
+          ? { scope: args.scope as { key: string; label?: string } }
+          : {}),
+        payload: payload as Record<string, unknown>,
+        recipients: recipients as Record<string, unknown>,
+        ...(args.defaults && typeof args.defaults === 'object'
+          ? { defaults: args.defaults as { recipient: string; template: string; channels: string[] } }
+          : {}),
+      } as unknown as NotificationEventDecl,
+      allowServiceNamespace: deps.channel === 'wecom',
+    })
+    return r.ok
+      ? ok({ key: r.key, version: r.version, created: r.created, namespace })
+      : err(r.code, r.detail ?? {})
+  }
+
   if (name === 'create_agent_rule') {
     const namespace = toolNamespace(deps, args.namespace, pinnedNamespace)
     if (!namespace) return err('namespace_unconfigured')
@@ -482,7 +516,8 @@ export async function callTool(
       templateKey, channels,
       cooldownMinutes: typeof args.cooldownMinutes === 'number' ? args.cooldownMinutes : null,
       // C 档：连 in-app 也落 pending/disabled（N3 之上更严，只作用于 wecom）。
-      draftOnly: deps.channel === 'wecom',
+      // B 也可显式 draft=true 产草稿；C 无条件强制草稿。
+      draftOnly: deps.channel === 'wecom' || args.draft === true,
       allowServiceNamespace: deps.channel === 'wecom',
     })
     return r.ok

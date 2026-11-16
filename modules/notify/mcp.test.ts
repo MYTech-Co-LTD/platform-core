@@ -1,4 +1,4 @@
-// mcp.test.ts — agent 工具面：24 工具（16 消息 + 8 排班）、无 publish/channel、
+// mcp.test.ts — agent 工具面：25 工具（17 消息 + 8 排班）、无 publish/channel、
 // 排班不接受通道参数、草稿不发布、试发只给自己；C（wecom）channel 档 + 读面。
 import { describe, it, expect, beforeAll, afterAll, beforeEach } from 'vitest'
 import { Hono } from 'hono'
@@ -14,7 +14,7 @@ import { NOTIFY_TOOLS } from './mcp-tools'
 import { createAgentNamespace, ensureServiceNamespace, getTemplate, upsertEventDecl } from './storage'
 import { applyMigrations, buildTestApp, makeIdentity } from './test-util'
 
-/** 通知工具的 requiredScope 全集（B 的 full 面要看到全部 24 个）。 */
+/** 通知工具的 requiredScope 全集（B 的 full 面要看到全部 25 个）。 */
 const ALL_SCOPES = ['notify:view', 'notify:manage', 'notify:publish', 'notify:emit']
 
 const url = process.env.DATABASE_URL
@@ -33,15 +33,15 @@ const addresses: ChannelAddressResolver = {
 }
 
 describe('notify mcp tool face', () => {
-  it('恰 24 个工具，无 publish/channel', () => {
-    expect(NOTIFY_TOOLS).toHaveLength(24)
-    expect(toolDefs({ channel: 'pat', scopes: ALL_SCOPES })).toHaveLength(24)
+  it('恰 25 个工具，无 publish/channel', () => {
+    expect(NOTIFY_TOOLS).toHaveLength(25)
+    expect(toolDefs({ channel: 'pat', scopes: ALL_SCOPES })).toHaveLength(25)
     expect(NOTIFY_TOOLS.some((t) => /publish|channel/.test(t.name))).toBe(false)
   })
 
   it('B（pat/session）仍 24；C（wecom）只见 agent-safe 子集', () => {
-    expect(toolDefs({ channel: 'pat', scopes: ALL_SCOPES })).toHaveLength(24)
-    expect(toolDefs({ channel: 'session', scopes: ALL_SCOPES })).toHaveLength(24)
+    expect(toolDefs({ channel: 'pat', scopes: ALL_SCOPES })).toHaveLength(25)
+    expect(toolDefs({ channel: 'session', scopes: ALL_SCOPES })).toHaveLength(25)
     const names = toolDefs({ channel: 'wecom', scopes: ALL_SCOPES }).map((t) => t.name)
     expect(names).toContain('create_agent_rule')
     expect(names).toContain('create_agent_template')
@@ -426,7 +426,7 @@ describePg('notify mcp handlers', () => {
     })
     expect(c.isError).toBe(true)
     expect((JSON.parse(c.text) as { reason: string }).reason).toBe('c_tool_not_allowed')
-    // B（pat）的工具面仍含 send_message（24 个）。
+    // B（pat）的工具面仍含 send_message（25 个）。
     expect(toolDefs({ channel: 'pat', scopes: ALL_SCOPES }).map((t) => t.name))
       .toContain('send_message')
   })
@@ -512,6 +512,39 @@ describePg('notify mcp handlers', () => {
 
     // 非排班工具不受影响（list_events 不读 namespace）。
     expect((await callTool(depsCh('wecom'), 'list_events', {})).isError).toBe(false)
+  })
+
+  it('C 可声明自有事件（ext.<namespace>.*），平台事件仍 AGENT_EVENT_NOT_OWNED', async () => {
+    const ns = 'openclaw_declare'
+    expect(await ensureServiceNamespace(pool, ORG, ns)).toMatchObject({ ok: true })
+    process.env.NOTIFY_WECOM_NAMESPACE = ns
+    try {
+      const out = await callTool(depsCh('wecom'), 'declare_agent_event', {
+        namespace: 'someone-elses', // 必须被钉死值覆盖
+        key: `ext.${ns}.low_sales`,
+        title: '销售额未达标',
+        payload: { value: { type: 'number', required: true }, user: { type: 'user', required: true } },
+        recipients: { assignee: { kind: 'field', field: 'user' } },
+      })
+      expect(out.isError).toBe(false)
+      expect(JSON.parse(out.text)).toMatchObject({
+        key: `ext.${ns}.low_sales`, version: 1, created: true, namespace: ns,
+      })
+      const row = await pool.query(
+        'select namespace, version from notify.event_decl where org=$1 and key=$2',
+        [ORG, `ext.${ns}.low_sales`])
+      expect(row.rows).toEqual([{ namespace: ns, version: 1 }])
+
+      // 平台事件不归 agent：即使 key 合法也不能声明。
+      const bad = await callTool(depsCh('wecom'), 'declare_agent_event', {
+        key: 'ext.someone_else.low_sales', title: 'x',
+        payload: {}, recipients: { assignee: { kind: 'field', field: 'user' } },
+      })
+      expect(bad.isError).toBe(true)
+      expect((JSON.parse(bad.text) as { reason: string }).reason).toBe('AGENT_EVENT_NOT_OWNED')
+    } finally {
+      delete process.env.NOTIFY_WECOM_NAMESPACE
+    }
   })
 
   it('wecom create_agent_rule 落 pending，namespace 被钉死（忽略参数）', async () => {
@@ -659,7 +692,7 @@ describePg('notify mcp handlers', () => {
       .toBe('c_tool_not_allowed')
   })
 
-  it('JSON-RPC /mcp-manage tools/list 返回 24 工具', async () => {
+  it('JSON-RPC /mcp-manage tools/list 返回 25 工具', async () => {
     const app = buildTestApp(
       notifyV2,
       makeIdentity({ orgId: ORG, userId: 'u1', scopes: ['notify:manage', 'notify:emit'] }),
@@ -671,6 +704,6 @@ describePg('notify mcp handlers', () => {
       body: JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'tools/list' }),
     })
     const body = await res.json() as { result: { tools: unknown[] } }
-    expect(body.result.tools).toHaveLength(24)
+    expect(body.result.tools).toHaveLength(25)
   })
 })

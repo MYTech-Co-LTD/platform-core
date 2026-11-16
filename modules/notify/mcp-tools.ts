@@ -3,9 +3,9 @@
 // 硬边界：没有 publish / channel 工具；没有「给别人试发」工具；排班工具不接受通道参数。
 import { SCHEDULE_TOOLS } from './tools/schedules'
 
-// 16（消息/模板/规则/投递 + N3b agent 工具）+ 8（agent 排班，W6-P3）。
+// 17（消息/模板/规则/投递 + N3b agent 工具 + agent 事件声明）+ 8（agent 排班，W6-P3）。
 // 加工具必须同 PR 显式抬。
-export const NOTIFY_MAX_TOOLS = 24
+export const NOTIFY_MAX_TOOLS = 25
 
 export type NotifyToolMeta = {
   name: string
@@ -69,6 +69,20 @@ export const NOTIFY_TOOLS: NotifyToolMeta[] = [
   t('send_test', '给自己试发一条（收件人强制为调用者本人）。',
     { templateKey: { type: 'string' }, channel: { type: 'string' }, payload: { type: 'object' } },
     ['templateKey', 'channel', 'payload'], true, 'notify:manage'),
+  t('declare_agent_event',
+    '声明 agent namespace 自有事件（ext.<namespace>.<event>）；声明后才能建模板/规则。只增不改。',
+    {
+      namespace: { type: 'string' },
+      key: { type: 'string' },
+      title: { type: 'string' },
+      description: { type: 'string' },
+      scope: { type: 'object' },
+      payload: { type: 'object' },
+      recipients: { type: 'object' },
+      defaults: { type: 'object' },
+    },
+    ['key', 'title', 'payload', 'recipients'],
+    true, 'notify:manage'),
   t('create_agent_template',
     '为 agent namespace 创建/更新模板 revision；publish=true 需 notify:publish。',
     {
@@ -87,6 +101,7 @@ export const NOTIFY_TOOLS: NotifyToolMeta[] = [
       id: { type: 'string' },
       ...RULE_FIELDS,
       recipientDepts: { type: 'array', items: { type: 'string' } },
+      draft: { type: 'boolean', description: 'true = 强制落 pending/disabled（不启用）' },
     },
     ['namespace', 'eventKey', 'recipientKey', 'templateKey', 'channels'],
     true, 'notify:manage'),
@@ -115,7 +130,7 @@ export const NOTIFY_TOOLS: NotifyToolMeta[] = [
 export const C_SAFE_TOOLS = new Set<string>([
   'list_events', 'get_event', 'list_rules', 'list_templates', 'get_template',
   'list_deliveries', 'check_rule', 'preview_template', 'send_test',
-  'create_agent_template', 'create_agent_rule',
+  'declare_agent_event', 'create_agent_template', 'create_agent_rule',
 ])
 for (const m of SCHEDULE_TOOLS) C_SAFE_TOOLS.add(m.name)
 
