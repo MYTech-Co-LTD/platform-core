@@ -187,12 +187,12 @@ describePg('报表工具面（能提、不能发）', () => {
 
     // 刚发布、草稿没再动 ⇒ 已发布 v1 且无未发布改动
     expect((await rows()).find((r) => r.id === id))
-      .toMatchObject({ publishedVersion: 1, hasUnpublishedChanges: false })
+      .toMatchObject({ publishedVersion: 1, publishedDraftVersion: v, hasUnpublishedChanges: false })
 
     // 草稿再登记一次（人路径 updateSpec，版本 +1）⇒ 线上仍是 v1，但草稿领先
     expect(await updateSpec(pool, ORG, id, { panels: [] }, v)).not.toBeNull()
     expect((await rows()).find((r) => r.id === id))
-      .toMatchObject({ publishedVersion: 1, hasUnpublishedChanges: true })
+      .toMatchObject({ publishedVersion: 1, publishedDraftVersion: v, hasUnpublishedChanges: true })
 
     // 从未发布的行：publishedVersion null，且不算「有未发布改动」
     expect((await rows()).find((r) => r.title === '承重①报表'))

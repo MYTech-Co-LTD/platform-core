@@ -29,9 +29,12 @@
 ## 2. 发现与授权
 
 - **先调 `agent__capabilities`**：返回
-  - `faces`：当前身份选中的面（module/face/group/audience/scope/available）；
+  - `faces`：当前身份选中的面（module/face/group/audience/scope/available/reason）；
+    `available:false` 时 `reason` 为 `module_disabled`（模块 404/未启用）或
+    `module_unavailable`（5xx/超时/非法回包）；
   - `tools`：当前可用的工具（带 module/face）；
-  - `lockedFaces`：**锁定面**——只报 face + 所需 scope，不报工具名（网关无权替调用方枚举）；
+  - `lockedFaces`：**锁定面**——只报 face + 所需 scope + `reason:"scope_missing"`，不报工具名
+    （网关无权替调用方枚举）；
   - `notes`：人 gate 清单。
 - `tools/list` 只回调用方 scope 可见的工具（按 face 门 + 工具级 requiredScope 投影）；
   分页：`cursor`（非负整数字符串），每页 ≤50 个工具 / ≤10KB，续页带 `nextCursor`；坏 cursor ⇒ `-32602`。
@@ -53,6 +56,12 @@
 - scope 命名速查（**以 manifest 为准**）：`data:read/query/manage`、
   `notify:view/manage/publish/emit`、`forms:view/manage/publish`。声明出处：
   `modules/data/manifest.yaml`、`modules/notify/manifest.yaml`、`modules/forms/manifest.yaml`。
+- **“不可用”不等于“缺 scope”**：看 `reason`。`module_disabled` = 该租户没有启用模块
+  （如山海未订阅 forms），申请 scope 也不会出现工具；`module_unavailable` = 模块临时故障；
+  `scope_missing` 才是缺权限。不要把这三种混为一谈。
+- **openclaw 工具为何不在清单**：openclaw 有三层白名单——全局 `tools.allow`、
+  `agents.entries.<agent>.tools.allow`、按发送人的 `tools.toolsBySender`。三层都含该工具
+  才会出现在模型清单；只改其中一层不会生效。排查时先看交集，不要用 `openclaw --help` 猜。
 
 ## 3. 各模块工具面（agent 面）
 
@@ -129,6 +138,11 @@
    `data__list_reports`（查重 + 看模板）→ `data__propose_report`（新建，未发布；页门钉
    `data:manage`）/ `data__revise_report_spec`（**仅未发布**，带 `expectedVersion`）→
    **人在 console 发布**（改页门）。
+   - 版本语义：`version` 是草稿写入计数器；`publishedVersion` 是线上内容版本；
+     `publishedDraftVersion` 是发布那一刻的草稿版本。三者是独立计数器——`version=21`、
+     `publishedVersion=16`、`publishedDraftVersion=21`、`hasUnpublishedChanges=false`
+     是合法状态，不代表线上就是 v21；确认线上版本读 `data__get_report_spec` 的
+     `publishedVersion`/`publishedAt`。
 4. **通知规则/模板**（门 `notify:manage`；审批/启用 `notify:publish`）：
    `notify__list_events`（选事件）→ `notify__list_templates`（看模板）→
    `notify__create_agent_template`（C 恒 `publish=false`）→ `notify__create_agent_rule`
@@ -170,6 +184,9 @@ agent 面不暴露 publish/enable 类工具；缺权限回 `missing_scope` + 所
   channel/scope 拦。
 - **C 不含 `send_message`**（不授 `notify:emit`）；需要发通知就建规则草稿等审批。
 - openclaw 服务容器 env：`AGENT_API_BASE`（缺省 `http://server:13000/api/agent`）。
+- **`exec` 不是平台能力**：它是 openclaw 本地工具，白名单由 `tools.toolsBySender` 按发送人
+  维护（`*` 默认不含 `exec`，只给运维白名单用户）。`exec` 只能用于诊断；
+  **locked 能力（如 forms）不得用 `exec` 或本地文件替代**，如实报 `reason` 即可。
 
 ## 7. 错误处理与反模式
 
