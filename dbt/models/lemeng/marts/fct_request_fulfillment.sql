@@ -3,7 +3,11 @@
         materialized='incremental',
         unique_key=['system_book', 'bizday', 'branch_num', 'item_num'],
         incremental_strategy='delete+insert',
-        on_schema_change='sync_all_columns'
+        on_schema_change='sync_all_columns',
+        -- 源撤回行（#2378）：delete+insert 只清「本批出现的键」，源里消失的键会被永远留下。
+        -- 增量时先清空整个回看窗口，再整窗重建；与模型 WHERE 的 incremental_cutoff(7) 对齐。
+        -- dbt-postgres 的 pre_hook 与模型 DML 同一事务 ⇒ 失败整体回滚，不留半窗。
+        pre_hook=('delete from ' ~ this ~ ' where bizday >= ' ~ incremental_cutoff(7)) if is_incremental() else none
     )
 }}
 -- fct_request_fulfillment.sql — 要货满足率构件（W3 余项 2026-10-15，#677）。
