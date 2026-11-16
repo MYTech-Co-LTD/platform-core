@@ -61,12 +61,14 @@ function toListEntry(t: ContractTool): ListEntry {
  * 该 face 的契约工具集合（**faceScope 过滤只在这里**，不外泄到 list 条目）：
  *   · full：全部（含 legacy 另加）；
  *   · curated：13 个分析师工具 + static（query_detail，faceScope=data:query）；
- *   · read：faceScope=data:read 的工具（分析师的读工具；当前没有静态读工具）。
+ *   · read：ANALYST_TOOLS 中 faceScope=data:read 的读工具——**只含分析师面**，
+ *     因为 callRead 统一走 callAnalyst→callTool（静态工具不在这条链上；未来若有
+ *     static read 工具，须在此处与 call 路由同时加分支）。
  */
 function contractToolsForFace(face: McpFace): ContractTool[] {
   const all = contractView('mcp')
   if (face === 'full') return all
-  if (face === 'read') return all.filter((t) => t.faceScope === 'data:read')
+  if (face === 'read') return all.filter((t) => t.analyst && t.faceScope === 'data:read')
   // curated：analyst 全收（读 + 查），static 只收 query 面（query_detail）。
   return all.filter((t) => t.analyst || t.faceScope === 'data:query')
 }

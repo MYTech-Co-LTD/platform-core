@@ -10,9 +10,9 @@
 // 不变量：
 //   · 工具面预算：分析师面 ≤14 工具、静态序列化 ≤10KB（常量在此，门禁断言同一来源）。
 //   · 命名：MCP 2025-11-25 `[A-Za-z0-9_.-]`；指标 id 的 `:` → `__`（双向映射在 legacyMetricTools）。
-//   · 权限：工具级 requiredScope 是**声明面**（data_harness_catalog 的输出 + 门禁断言④）；
-//     Wave 1 的执法点是 /mcp 端点门卫（data:query）——本文件**不做第二份 scope 判定**
-//     （决策 D1：授权核心单实现）。
+//   · 权限：工具级 requiredScope 既是**声明面**（data_harness_catalog 的输出 + 门禁断言④），
+//     也由 callTool 在**分发前**校验（missingToolScope：face 门之外的附加 scope）。
+//     face 最低权限（faceScope）由端点门卫按 manifest 施加，本文件不重复判定。
 //   · 审计：callTool 是 tools/call 的唯一分发点，**所有结局**（ok/denied/error）都写
 //     data.query_audit（spec §8「拒绝/出错也写」）。
 import type { Pool } from 'pg'
