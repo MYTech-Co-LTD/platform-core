@@ -76,6 +76,7 @@ fi
 if [ "$MATERIALIZE_MODE" = container ]; then
   PROFILES_DIR=${MATERIALIZE_PROFILES_DIR:-/tmp/dbt-profiles}
   TARGET_DIR=${MATERIALIZE_TARGET_DIR:-/tmp/dbt-target}
+  LOG_DIR=${MATERIALIZE_LOG_DIR:-/tmp/dbt-logs}
 else
   PROFILES_DIR=$R/dbt
   TARGET_DIR=$R/dbt/target
@@ -117,7 +118,7 @@ mat_target_dir() {
   printf '%s' "${TARGET_DIR:-$R/dbt/target}"
 }
 mat_dbt_args() {
-  printf '%s ' build --profiles-dir "$(mat_profiles_dir)" --target-path "$(mat_target_dir)" --threads 1
+  printf '%s ' build --profiles-dir "$(mat_profiles_dir)" --threads 1
 }
 # dbt 执行适配：宿主模式 = 一次性 dbt 镜像（原行为）；容器模式 = 镜像内 dbt CLI（cwd=dbt 工程）。
 mat_dbt() {
@@ -369,6 +370,10 @@ mat_require 'DATA_PLANE_DOMAINS(本数据面拥有的域，逗号分隔；job en
   cp "$R/dbt/profiles.example.yml" "$PROFILES_DIR/profiles.yml"
 }
 
+# dbt 的 target/log 走 env（--target-path 不是所有子命令的选项）；容器模式必须可写。
+if [ "$MATERIALIZE_MODE" = container ]; then
+  export DBT_TARGET_PATH="$TARGET_DIR" DBT_LOG_PATH="$LOG_DIR"
+fi
 export DBT_HOST="${DBT_HOST_FROM_URL:-pg_duckdb}" DBT_USER="$UN" DBT_PASSWORD="$PW" DBT_DBNAME="$DB"
 export LEMENG_ZOS_BUCKET="$ZB" LEMENG_ZOS_REGION="$ZR" LEMENG_ZOS_ENDPOINT="$ZE"
 export LEMENG_SUBJECT_ORG="$SO"
@@ -552,7 +557,7 @@ if [ "$SCOPE" = audit ]; then
   echo "── audit: select=${_sel}（全史对账；分段 job）──"
   _log="$_WORK/dbt.audit.log"
   _rc="$_WORK/dbt.audit.rc"
-  ( if DATA_PLANE_DOMAINS="$TICK_DOMAIN" mat_dbt test --profiles-dir "$(mat_profiles_dir)" --target-path "$(mat_target_dir)" --threads 1 --select "$_sel" 2>&1; then
+  ( if DATA_PLANE_DOMAINS="$TICK_DOMAIN" mat_dbt test --profiles-dir "$(mat_profiles_dir)" --threads 1 --select "$_sel" 2>&1; then
     echo 0 >"$_rc"
   else
     echo $? >"$_rc"
