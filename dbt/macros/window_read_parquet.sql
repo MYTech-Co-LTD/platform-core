@@ -20,6 +20,13 @@
 
 {% macro window_read_parquet(path_pattern) %}
   {%- set raw = env_var('AUDIT_WINDOW_PATTERNS', '') -%}
-  {%- set windowed = path_pattern if raw == '' else (path_pattern | replace('bizday=**', 'bizday=' ~ raw) | replace('bizday=*', 'bizday=' ~ raw)) -%}
+  {#- 热腿（hour=*/all.parquet）**不套窗口替换**：它的非空由 0 行哨兵
+      system_book=0/bizday=1970-01-01/hour=00/all.parquet 兜底，而窗口替换会把
+      bizday=* 换成 2026-1[01]-*，等于把哨兵剔出 glob ⇒ 重新变成空 glob
+      ⇒ DuckDB 规划期报 `No files found`（不是返回 0 行）。2026-11-17 实测：
+      hourly 4 条 retail 审计全红在这个点上。热腿经 GC 后只剩最多两天的对象，
+      窗口化收益可忽略；行级窗外裁剪仍由两侧 WHERE（AUDIT_WINDOW_START）负责。 -#}
+  {%- set hot = 'hour=*/all.parquet' in path_pattern -%}
+  {%- set windowed = path_pattern if (raw == '' or hot) else (path_pattern | replace('bizday=**', 'bizday=' ~ raw) | replace('bizday=*', 'bizday=' ~ raw)) -%}
   {{- "read_parquet('" ~ windowed ~ "')" -}}
 {% endmacro %}
