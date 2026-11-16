@@ -17,7 +17,7 @@ import { runDetailQuery } from '../domain/drill'
 import { runQuery } from '../domain/query-service'
 import { analystPool, runWarehouseSql } from '../domain/warehouse'
 import {
-  callTool, legacyMetricTools, listAnalystTools, visibleAnalystTools,
+  callTool, legacyMetricTools, listAnalystTools, visibleAnalystTools, type ToolSurface,
 } from '../domain/toolbox/registry'
 import { buildToolboxDeps } from '../domain/toolbox/all'
 import '../domain/toolbox/all'
@@ -32,7 +32,7 @@ import type { McpDeps, McpToolResult, McpToolSet } from './mcp-rpc'
 const readonlyWh = () => (sql: string) => runWarehouseSql(analystPool(), sql)
 
 /** 端点 face：full = 直连全量；curated = 13 分析师工具 + query_detail；read = 只读工具。 */
-export type McpFace = 'full' | 'curated' | 'read'
+export type McpFace = ToolSurface
 
 /** MCP tools/list 条目（协议字段）。outputSchema 缺省即省略（契约没声明就不合成）。 */
 interface ListEntry {

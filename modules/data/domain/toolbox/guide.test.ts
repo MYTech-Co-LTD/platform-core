@@ -1,6 +1,6 @@
 // guide.test.ts — 纯层（不连库；impl 不触 pool/wh）。
 import { describe, expect, it } from 'vitest'
-import { GUIDE_INVARIANTS, GUIDE_TEXT_BUILDER, guideImpl, harnessCatalogImpl } from './guide'
+import { GUIDE_INVARIANTS, GUIDE_TEXT_BUILDER, availableInSurface, guideImpl, harnessCatalogImpl } from './guide'
 import { ANALYST_TOOLS, type ToolboxDeps } from './registry'
 import type { Requester } from '../authz'
 
@@ -72,6 +72,21 @@ describe('guideImpl / harnessCatalogImpl', () => {
   it('catalog：requester=null 也按 surface 规则标注（不受身份影响，不触库）', async () => {
     const tools = catalogTools(await harnessCatalogImpl(deps({ surface: 'read', requester: null }), {}))
     for (const t of tools) expect(t.available).toBe(t.faceScope === 'data:read')
+  })
+
+  it('availableInSurface：附加 requiredScope 缺失时 full/curated 也 false（与 visibleAnalystTools 同判）', () => {
+    const withoutCost = { hasScope: (code: string) => code !== 'data:cost' } as unknown as Requester
+    const withAll = { hasScope: () => true } as unknown as Requester
+    const queryCost = { faceScope: 'data:query', requiredScope: 'data:cost' } as const
+    // 面内含该工具也救不了缺 scope：调用方看不见它（list 隐藏）、callTool 也会拒。
+    expect(availableInSurface(queryCost, 'full', withoutCost)).toBe(false)
+    expect(availableInSurface(queryCost, 'curated', withoutCost)).toBe(false)
+    expect(availableInSurface(queryCost, 'read', withoutCost)).toBe(false)
+    expect(availableInSurface(queryCost, 'full', withAll)).toBe(true)
+    // requester=null：附加 scope 无法证明 ⇒ false；requiredScope=null 的读工具仍 true。
+    expect(availableInSurface(queryCost, 'full', null)).toBe(false)
+    expect(availableInSurface({ faceScope: 'data:read', requiredScope: null }, 'read', null)).toBe(true)
+    expect(availableInSurface({ faceScope: 'data:read', requiredScope: 'data:cost' }, 'read', withoutCost)).toBe(false)
   })
   it('GUIDE_TEXT_BUILDER 的今天日期由调用方注入（不隐藏依赖系统时钟）', () => {
     expect(GUIDE_TEXT_BUILDER('2026-01-02')).toContain('2026-01-02')

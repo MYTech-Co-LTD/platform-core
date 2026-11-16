@@ -30,6 +30,12 @@ async function toolNames(app: Hono, path: string): Promise<string[]> {
   return (body.result.tools as { name: string }[]).map((t) => t.name)
 }
 
+/**
+ * 审计写库的最小替身：catalog 经 `callTool` 必写一条审计（本文件不连库）。
+ * 只回 writeAudit 消费的两列（id / created_at）。
+ */
+const auditPool = { query: async () => ({ rows: [{ id: 1, created_at: new Date('2026-11-16T00:00:00Z') }] }) }
+
 /** 默认身份 scopes = ['data:query']（与 mcp.test.ts 同款）；需要别的档位时显式传。 */
 function makeApp(scopes?: string[]): Hono {
   return buildTestApp(
@@ -100,6 +106,33 @@ describe('data agent faces：工具面选择（不需要数据库）', () => {
       expect(body.result.isError).toBe(true)
       expect(JSON.parse(body.result.content[0].text)).toMatchObject({ status: 'denied', reason: 'unknown_tool', name })
     }
+  })
+
+  it('/mcp-read 的 data_harness_catalog：face 透传 ⇒ query 工具 available:false、read 工具 true（curated 全 true）', async () => {
+    const app = buildTestApp(mod, makeIdentity({ orgId: ORG }), { pool: auditPool as never })
+    const catalogAt = async (path: string) => {
+      const res = await rpc(app, path, {
+        jsonrpc: '2.0', id: 8, method: 'tools/call',
+        params: { name: 'data_harness_catalog', arguments: {} },
+      })
+      const body = await res.json()
+      expect(body.result.isError).toBe(false)
+      const payload = JSON.parse(body.result.content[0].text) as {
+        tools: { name: string; available: boolean; faceScope: string }[]
+      }
+      return new Map(payload.tools.map((t) => [t.name, t]))
+    }
+    // read face：faceScope=data:query 的工具 locked 展示（仍在目录里，但 available:false）
+    const read = await catalogAt('/mcp-read')
+    expect(read.get('query_metric')?.faceScope).toBe('data:query')
+    expect(read.get('query_metric')?.available).toBe(false)
+    expect(read.get('preview_query')?.available).toBe(false)
+    expect(read.get('search_catalog')?.available).toBe(true)
+    expect(read.get('data_agent_guide')?.available).toBe(true)
+    // curated face：查询工具可用（面内外同判——锁 mcp.ts 把 face 传进 buildToolboxDeps 的接缝）
+    const curated = await catalogAt('/mcp-curated')
+    expect(curated.get('query_metric')?.available).toBe(true)
+    expect(curated.get('search_catalog')?.available).toBe(true)
   })
 
   it('三个端点都回 initialize；/mcp full 的 serverName 保持不变（直连客户端不回归）', async () => {

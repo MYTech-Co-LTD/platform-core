@@ -26,6 +26,8 @@ import { CONTRACT, faceOf, type ToolFaceScope } from '../../skill/contract'
 export const TOOL_NAME_RE = /^[A-Za-z0-9_.-]+$/
 export const ANALYST_FACE_MAX_TOOLS = 14
 export const ANALYST_FACE_MAX_LIST_BYTES = 10240
+/** 能力面（端点为 `/mcp` / `/mcp-curated` / `/mcp-read`；缺省 full）。 */
+export type ToolSurface = 'full' | 'curated' | 'read'
 /** 抽样行上限（spec §5：sample_dimension_values 行数 ≤50；global constraints「抽样 ≤50 行」）。 */
 export const SAMPLE_MAX_ROWS = 50
 export const READ_SCOPE = 'data:read'
@@ -142,7 +144,7 @@ export interface ToolboxDeps {
    * 能力面（**展示**提示，缺省 'full'）：`data_harness_catalog` 用它标注 `available`
    * （read 面上 query 类工具 locked）。执法不在这里——端点 face 门 + `callTool` 才是。
    */
-  surface?: 'full' | 'curated' | 'read'
+  surface?: ToolSurface
   /** 血缘/质量 seam（缺省 = health.ts 的 defaultDbtManifest 读 env 路径；测试注入）。 */
   dbtManifest?: () => Promise<unknown>
   /** 时钟（测试注入）。 */

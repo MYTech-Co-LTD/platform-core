@@ -2,7 +2,7 @@
 // registry.ts 保持纯（CI 门与 e2e 直接 import 它）；impl 在这里逐个 registerImpl——
 // 重复注册即抛（registry 的契约），本模块只被 mcp.ts import 一次。
 import type { Pool } from 'pg'
-import { registerImpl, mutatingAllowed, type ToolboxDeps } from './registry'
+import { registerImpl, mutatingAllowed, type ToolboxDeps, type ToolSurface } from './registry'
 import { guideImpl, harnessCatalogImpl } from './guide'
 import { searchImpl, describeMetricImpl, describeDatasetImpl, sampleDimensionValuesImpl } from './discovery'
 import { defaultDbtManifest, freshnessImpl, qualityImpl, lineageImpl } from './health'
@@ -43,7 +43,7 @@ export interface ToolboxWiring {
    * 能力面（缺省 'full'）：/mcp 三个端点按 face 传，`data_harness_catalog` 据此标注 available。
    * **展示**提示——执法仍是端点 face 门 + callTool，不靠它。
    */
-  surface?: 'full' | 'curated' | 'read'
+  surface?: ToolSurface
 }
 
 /**

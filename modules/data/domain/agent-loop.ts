@@ -164,8 +164,8 @@ export async function* runAgentLoop(
   // wh 缺省 = deps.execute（测试注入）；生产无注入时落到只读池（analystPool）。
   const toolbox = buildToolboxDeps(
     { pool: deps.pool, org: deps.org, requester, adoptedSources: deps.adoptedSources },
-    // 通道 A 是 full 面（13 个分析师工具 + 本地三把）：能力目录按 full 标注 available。
-    { wh: deps.execute, surface: 'full' },
+    // surface 不传 = 缺省 full（通道 A 是 full 面；它没绑 data_harness_catalog，留着缺省即可）。
+    { wh: deps.execute },
   )
   // 工具面同样在循环外算一次（同一次对话内权限漂移不刷新——与词表裁剪同一口径）。
   const tools = toolsFor(requester)
