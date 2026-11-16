@@ -11,7 +11,7 @@ import type {
 import notifyV2 from './index'
 import { callTool, toolDefs } from './mcp'
 import { NOTIFY_TOOLS } from './mcp-tools'
-import { createAgentNamespace, getTemplate, upsertEventDecl } from './storage'
+import { createAgentNamespace, ensureServiceNamespace, getTemplate, upsertEventDecl } from './storage'
 import { applyMigrations, buildTestApp, makeIdentity } from './test-util'
 
 /** 通知工具的 requiredScope 全集（B 的 full 面要看到全部 24 个）。 */
@@ -45,8 +45,9 @@ describe('notify mcp tool face', () => {
     const names = toolDefs({ channel: 'wecom', scopes: ALL_SCOPES }).map((t) => t.name)
     expect(names).toContain('create_agent_rule')
     expect(names).toContain('create_agent_template')
-    expect(names).toContain('send_message')
     expect(names).toContain('create_schedule')
+    // C 不授 notify:emit ⇒ send_message 不在 C 的 capabilities 里（B 仍有它）。
+    expect(names).not.toContain('send_message')
     expect(names).not.toContain('propose_rule')
     expect(names).not.toContain('update_rule')
     expect(names).not.toContain('set_rule_enabled')
@@ -404,6 +405,17 @@ describePg('notify mcp handlers', () => {
     expect((JSON.parse(out.text) as { reason: string }).reason).toBe('c_tool_not_allowed')
   })
 
+  it('C 不授 notify:emit：send_message 对 C 拒绝（B 仍保留）', async () => {
+    const c = await callTool(depsCh('wecom'), 'send_message', {
+      namespace: 'openclaw_acme', to: 'u1', title: 'T', body: 'B',
+    })
+    expect(c.isError).toBe(true)
+    expect((JSON.parse(c.text) as { reason: string }).reason).toBe('c_tool_not_allowed')
+    // B（pat）的工具面仍含 send_message（24 个）。
+    expect(toolDefs({ channel: 'pat', scopes: ALL_SCOPES }).map((t) => t.name))
+      .toContain('send_message')
+  })
+
   it('读面 callTool 拒 mutating 工具', async () => {
     const out = await callTool({ ...deps(), mode: 'read' }, 'propose_rule', {
       eventKey: 'm.a.b', recipientKey: 'approver', templateKey: 't1', channels: ['wecom_default'],
@@ -424,9 +436,7 @@ describePg('notify mcp handlers', () => {
 
   it('C 的排班工具也钉 namespace：忽略模型传的 namespace', async () => {
     const ns = 'openclaw_acme'
-    await createAgentNamespace(pool, ORG, {
-      namespace: ns, displayName: 'Openclaw', ownerUserId: 'u1',
-    })
+    expect(await ensureServiceNamespace(pool, ORG, ns)).toMatchObject({ ok: true })
     const seen: Array<string | undefined> = []
     const scheduler = ((actor: { namespace?: string }) => {
       seen.push(actor.namespace)
@@ -448,6 +458,37 @@ describePg('notify mcp handlers', () => {
     }
   })
 
+  it('C 的 create_schedule 用钉死 namespace（别的 namespace 被覆盖）', async () => {
+    const ns = 'openclaw_acme'
+    expect(await ensureServiceNamespace(pool, ORG, ns)).toMatchObject({ ok: true })
+    const decl: NotificationEventDecl = {
+      key: 'ext.openclaw_acme.daily', title: 'D', payload: {},
+      recipients: { assignee: { kind: 'field', field: 'user' } },
+    }
+    expect(await upsertEventDecl(pool, ORG, ns, decl, 'u1')).toMatchObject({ ok: true })
+    const seen: string[] = []
+    const scheduler = ((actor: { namespace?: string }) => {
+      seen.push(actor.namespace ?? '')
+      return {
+        createSchedule: async () => ({ id: 's1', nextRunAt: '2026-01-01T00:00:00.000Z' }),
+      } as unknown as SchedulerPortLike
+    }) as SchedulerPortFactory
+
+    process.env.NOTIFY_WECOM_NAMESPACE = ns
+    try {
+      const out = await callTool({ ...depsCh('wecom'), scheduler }, 'create_schedule', {
+        namespace: 'someone-elses', // 必须被覆盖为钉死值
+        cron: '*/5 * * * *',
+        params: { eventKey: decl.key, payload: {} },
+      })
+      expect(out.isError).toBe(false)
+      expect(JSON.parse(out.text)).toMatchObject({ id: 's1', namespace: ns })
+      expect(seen).toEqual([ns])
+    } finally {
+      delete process.env.NOTIFY_WECOM_NAMESPACE
+    }
+  })
+
   it('C 的排班工具：未配 NOTIFY_WECOM_NAMESPACE ⇒ namespace_unconfigured', async () => {
     delete process.env.NOTIFY_WECOM_NAMESPACE
     const out = await callTool(depsCh('wecom'), 'list_schedules', { namespace: 'someone-elses' })
@@ -460,9 +501,7 @@ describePg('notify mcp handlers', () => {
 
   it('wecom create_agent_rule 落 pending，namespace 被钉死（忽略参数）', async () => {
     const ns = 'openclaw_acme'
-    await createAgentNamespace(pool, ORG, {
-      namespace: ns, displayName: 'Openclaw', ownerUserId: 'u1',
-    })
+    expect(await ensureServiceNamespace(pool, ORG, ns)).toMatchObject({ ok: true })
     const decl: NotificationEventDecl = {
       key: 'ext.openclaw_acme.daily', title: 'D',
       payload: { user: { type: 'user', required: true } },
@@ -482,7 +521,8 @@ describePg('notify mcp handlers', () => {
 
     process.env.NOTIFY_WECOM_NAMESPACE = ns
     try {
-      const out = await callTool(depsCh('wecom'), 'create_agent_rule', {
+      // C 用户 u2（不是 service owner）也能建规则：授权来自 service-owned + C 通道。
+      const out = await callTool({ ...depsCh('wecom'), userId: 'u2' }, 'create_agent_rule', {
         // 模型传的 namespace 必须被忽略
         namespace: 'someone-elses', eventKey: decl.key, recipientKey: 'assignee',
         templateKey: 'c_daily', channels: ['inapp_default'],
@@ -494,6 +534,12 @@ describePg('notify mcp handlers', () => {
       expect(body).toMatchObject({ status: 'pending', namespace: ns })
       expect(body.approvalId).toBeTruthy()
 
+      // namespace 行是 service-owned，owner 是部署账号（不是 u1/u2）。
+      const nsRow = await pool.query(
+        'select owner_user_id, service_owned from notify.agent_namespace where org=$1 and namespace=$2',
+        [ORG, ns])
+      expect(nsRow.rows).toEqual([{ owner_user_id: 'system:openclaw', service_owned: true }])
+
       const rs = await pool.query(
         'select id, enabled, owner_namespace from notify.rule where org=$1 and id=$2',
         [ORG, body.id])
@@ -501,6 +547,34 @@ describePg('notify mcp handlers', () => {
       const ap = await pool.query(
         "select kind, status, target_id from notify.approval where org=$1", [ORG])
       expect(ap.rows).toEqual([{ kind: 'rule', status: 'pending', target_id: body.id }])
+
+      // B（pat）用同一个 service namespace ⇒ 拒绝（service 只对 C 通道开放）。
+      const b = await callTool({ ...deps(), userId: 'u2' }, 'create_agent_rule', {
+        namespace: ns, eventKey: decl.key, recipientKey: 'assignee',
+        templateKey: 'c_daily', channels: ['inapp_default'],
+      })
+      expect(b.isError).toBe(true)
+      expect((JSON.parse(b.text) as { reason: string }).reason)
+        .toBe('AGENT_NAMESPACE_SERVICE_ONLY')
+    } finally {
+      delete process.env.NOTIFY_WECOM_NAMESPACE
+    }
+  })
+
+  it('已有同名 human namespace ⇒ namespace_conflict（不静默改写成 service）', async () => {
+    const ns = 'human_ns'
+    await createAgentNamespace(pool, ORG, {
+      namespace: ns, displayName: 'Human', ownerUserId: 'u1',
+    })
+    process.env.NOTIFY_WECOM_NAMESPACE = ns
+    try {
+      const out = await callTool(depsCh('wecom'), 'list_events', {})
+      expect(out.isError).toBe(true)
+      expect((JSON.parse(out.text) as { reason: string }).reason).toBe('namespace_conflict')
+      const row = await pool.query(
+        'select owner_user_id, service_owned from notify.agent_namespace where org=$1 and namespace=$2',
+        [ORG, ns])
+      expect(row.rows).toEqual([{ owner_user_id: 'u1', service_owned: false }])
     } finally {
       delete process.env.NOTIFY_WECOM_NAMESPACE
     }
@@ -508,9 +582,7 @@ describePg('notify mcp handlers', () => {
 
   it('wecom create_agent_template：namespace 钉死且强制 publish=false', async () => {
     const ns = 'openclaw_acme'
-    await createAgentNamespace(pool, ORG, {
-      namespace: ns, displayName: 'Openclaw', ownerUserId: 'u1',
-    })
+    expect(await ensureServiceNamespace(pool, ORG, ns)).toMatchObject({ ok: true })
     const decl: NotificationEventDecl = {
       key: 'ext.openclaw_acme.daily', title: 'D', payload: {},
       recipients: { assignee: { kind: 'field', field: 'user' } },

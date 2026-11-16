@@ -17,6 +17,7 @@ import {
   getChannel, getEventDecl, getTemplate, hasApprovedRuleApproval, listApprovals,
   listEnabledChannelIds, listPublishedTemplateKeys, listRules, publishTemplateRevision,
   upsertRule,
+  type AgentNamespaceRow,
 } from './storage'
 
 export type AgentActionError = {
@@ -30,6 +31,35 @@ const fail = (
   code: string, httpStatus: number, detail?: Record<string, unknown>,
 ): AgentActionError => ({ ok: false, code, httpStatus, detail })
 
+type NamespaceAuth = { error: AgentActionError } | { ns: AgentNamespaceRow }
+
+/**
+ * 统一的 namespace 授权（N1 + C 的 service-owned 档，spec 2026-11-16 D14）。
+ *
+ * - namespace 必须存在且 active；
+ * - service-owned（部署钉死）⇒ 只有显式 `allowServiceNamespace` 的调用方（C 通道）可用；
+ * - 人拥有的 ⇒ 仍必须是 owner 本人。
+ * 违规码：`AGENT_NAMESPACE_FORBIDDEN`（不存在/非 active/非 owner）或
+ * `AGENT_NAMESPACE_SERVICE_ONLY`（人调用了 service namespace）。
+ */
+async function authorizeNamespace(
+  pool: Pool,
+  input: { org: string; userId: string; namespace: string; allowServiceNamespace?: boolean },
+): Promise<NamespaceAuth> {
+  const ns = await getAgentNamespace(pool, input.org, input.namespace)
+  if (!ns || ns.status !== 'active') {
+    return { error: fail('AGENT_NAMESPACE_FORBIDDEN', 403) }
+  }
+  if (ns.serviceOwned) {
+    if (input.allowServiceNamespace !== true) {
+      return { error: fail('AGENT_NAMESPACE_SERVICE_ONLY', 403) }
+    }
+  } else if (ns.ownerUserId !== input.userId) {
+    return { error: fail('AGENT_NAMESPACE_FORBIDDEN', 403) }
+  }
+  return { ns }
+}
+
 export type SendAgentMessageInput = {
   org: string
   userId: string
@@ -39,6 +69,8 @@ export type SendAgentMessageInput = {
   title: string
   body: string
   link?: string
+  /** C 档（service-owned namespace）授权位；B/HTTP 不传。 */
+  allowServiceNamespace?: boolean
 }
 
 export type SendAgentMessageResult =
@@ -49,11 +81,9 @@ export async function sendAgentMessage(
   pool: Pool,
   input: SendAgentMessageInput,
 ): Promise<SendAgentMessageResult> {
-  const ns = await getAgentNamespace(pool, input.org, input.namespace)
-  if (!ns || ns.status !== 'active' || ns.ownerUserId !== input.userId) {
-    return fail('AGENT_NAMESPACE_FORBIDDEN', 403)
-  }
-  const policy = parseAgentPolicy(ns.policy)
+  const auth = await authorizeNamespace(pool, input)
+  if ('error' in auth) return auth.error
+  const policy = parseAgentPolicy(auth.ns.policy)
   if (!policy.allowed_channels.includes('inapp_default')) {
     return fail('CHANNEL_NOT_ALLOWED', 403, { channels: ['inapp_default'] })
   }
@@ -112,6 +142,8 @@ export type CreateAgentTemplateInput = {
   eventKey: string
   contents: Record<string, Record<string, string>>
   publish: boolean
+  /** C 档（service-owned namespace）授权位；B/HTTP 不传。 */
+  allowServiceNamespace?: boolean
 }
 
 export type CreateAgentTemplateResult =
@@ -123,10 +155,8 @@ export async function createAgentTemplate(
   input: CreateAgentTemplateInput,
 ): Promise<CreateAgentTemplateResult> {
   if (!AGENT_TEMPLATE_KEY_RE.test(input.key)) return fail('AGENT_TEMPLATE_KEY_INVALID', 400)
-  const ns = await getAgentNamespace(pool, input.org, input.namespace)
-  if (!ns || ns.status !== 'active' || ns.ownerUserId !== input.userId) {
-    return fail('AGENT_NAMESPACE_FORBIDDEN', 403)
-  }
+  const auth = await authorizeNamespace(pool, input)
+  if ('error' in auth) return auth.error
   if (!input.eventKey.startsWith(`ext.${input.namespace}.`) || isAgentMessageKey(input.eventKey)) {
     return fail('AGENT_EVENT_NOT_OWNED', 400)
   }
@@ -173,6 +203,8 @@ export type CreateAgentRuleInput = {
    * （spec 2026-11-16 §5.2 / §6.4）。
    */
   draftOnly?: boolean
+  /** C 档（service-owned namespace）授权位；B/HTTP 不传。 */
+  allowServiceNamespace?: boolean
 }
 
 export type CreateAgentRuleResult =
@@ -183,11 +215,9 @@ export async function createAgentRule(
   pool: Pool,
   input: CreateAgentRuleInput,
 ): Promise<CreateAgentRuleResult> {
-  const ns = await getAgentNamespace(pool, input.org, input.namespace)
-  if (!ns || ns.status !== 'active' || ns.ownerUserId !== input.userId) {
-    return fail('AGENT_NAMESPACE_FORBIDDEN', 403)
-  }
-  const policy = parseAgentPolicy(ns.policy)
+  const auth = await authorizeNamespace(pool, input)
+  if ('error' in auth) return auth.error
+  const policy = parseAgentPolicy(auth.ns.policy)
   if (!input.eventKey.startsWith(`ext.${input.namespace}.`) || isAgentMessageKey(input.eventKey)) {
     return fail('AGENT_EVENT_NOT_OWNED', 400)
   }

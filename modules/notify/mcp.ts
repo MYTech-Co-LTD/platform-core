@@ -22,7 +22,7 @@ import { isWritableRuleId, ruleSnapshot, validateRule } from './domain/rules'
 import type { RuleSnapshot } from './domain/rules'
 import { samplePayload, validateContents } from './domain/template'
 import {
-  audit, createTemplateRevision, getAgentNamespace, getChannel, getEventDecl,
+  audit, createTemplateRevision, ensureServiceNamespace, getAgentNamespace, getChannel, getEventDecl,
   getPublishedTemplate, getTemplate, insertDelivery, listAgentNamespaces, listChannels,
   listDeliveries, listEnabledChannelIds, listEventDecls, listPublishedTemplateKeys, listRules,
   setRuleEnabled, upsertRule,
@@ -71,10 +71,10 @@ const arr = (v: unknown): string[] =>
  * 参数里的 namespace；其余通道仍取参数（N3 行为不变）。空串 ⇒ 调用方回
  * `namespace_unconfigured`（fail-closed，不猜、不回落 org）。
  */
-const toolNamespace = (deps: Pick<McpDeps, 'channel'>, arg: unknown): string =>
-  deps.channel === 'wecom'
-    ? (process.env.NOTIFY_WECOM_NAMESPACE ?? '').trim()
-    : str(arg)
+const toolNamespace = (
+  deps: Pick<McpDeps, 'channel'>, arg: unknown, pinned: string | null,
+): string =>
+  deps.channel === 'wecom' ? (pinned ?? '') : str(arg)
 
 /** 统一事件解析：`ext.*` 走租户声明，其余走平台 manifest 目录。 */
 async function resolveDecl(deps: McpDeps, key: string): Promise<NotificationEventDecl | null> {
@@ -118,13 +118,25 @@ export async function callTool(
     return err('read_only_tool_not_allowed', { tool: name })
   }
 
+  // C 档：service-owned 钉死 namespace（spec 2026-11-16 D14）。配置了就幂等 ensure；
+  // 缺失/冲突都在这里 fail-closed（冲突 = 同名 human namespace，绝不静默改写）。
+  // 只读工具在**未配置**时仍可用（需要 namespace 的工具各自回 namespace_unconfigured）。
+  let pinnedNamespace: string | null = null
+  if (deps.channel === 'wecom') {
+    const configured = (process.env.NOTIFY_WECOM_NAMESPACE ?? '').trim()
+    if (configured) {
+      const ensured = await ensureServiceNamespace(deps.pool, deps.org, configured)
+      if (!ensured.ok) return err(ensured.code)
+      pinnedNamespace = configured
+    }
+  }
+
   // C 档：排班工具的 namespace 同样钉死（漏掉这里，模型仍可用 create_schedule 等
   // 选别的自己拥有的 namespace）。缺失环境配置 ⇒ fail-closed，不回落 org。
   let scheduleArgs = args
   if (deps.channel === 'wecom' && isScheduleTool(name)) {
-    const pinned = (process.env.NOTIFY_WECOM_NAMESPACE ?? '').trim()
-    if (!pinned) return err('namespace_unconfigured')
-    scheduleArgs = { ...args, namespace: pinned }
+    if (!pinnedNamespace) return err('namespace_unconfigured')
+    scheduleArgs = { ...args, namespace: pinnedNamespace }
   }
 
   // 排班工具（W6-P3 + N4）：actor 从调用者身份成形；namespace 归属/事件声明/payload
@@ -133,11 +145,18 @@ export async function callTool(
     {
       scheduler: deps.scheduler,
       actor: { userId: deps.userId, org: deps.org },
+      // C（wecom）只认钉死的 service namespace（ownership 由 service_owned 授权，
+      // 而不是 userId）；其余通道保持 owner 校验。
       namespaces: {
-        owned: async () => (await listAgentNamespaces(deps.pool, deps.org))
-          .filter((n) => n.status === 'active' && n.ownerUserId === deps.userId)
-          .map((n) => n.namespace),
+        owned: async () => deps.channel === 'wecom'
+          ? (pinnedNamespace ? [pinnedNamespace] : [])
+          : (await listAgentNamespaces(deps.pool, deps.org))
+            .filter((n) => n.status === 'active' && n.ownerUserId === deps.userId)
+            .map((n) => n.namespace),
         owns: async (namespace) => {
+          if (deps.channel === 'wecom') {
+            return pinnedNamespace !== null && namespace === pinnedNamespace
+          }
           const n = await getAgentNamespace(deps.pool, deps.org, namespace)
           return n !== null && n.status === 'active' && n.ownerUserId === deps.userId
         },
@@ -384,7 +403,7 @@ export async function callTool(
   }
 
   if (name === 'send_message') {
-    const namespace = toolNamespace(deps, args.namespace)
+    const namespace = toolNamespace(deps, args.namespace, pinnedNamespace)
     if (!namespace) return err('namespace_unconfigured')
     const toRaw = args.to
     const to = Array.isArray(toRaw) ? arr(toRaw) : str(toRaw)
@@ -399,6 +418,7 @@ export async function callTool(
       eventId: typeof args.eventId === 'string' ? args.eventId : undefined,
       to, title, body,
       link: typeof args.link === 'string' ? args.link : undefined,
+      allowServiceNamespace: deps.channel === 'wecom',
     })
     return r.ok
       ? ok({ accepted: r.accepted, eventId: r.eventId })
@@ -406,7 +426,7 @@ export async function callTool(
   }
 
   if (name === 'create_agent_template') {
-    const namespace = toolNamespace(deps, args.namespace)
+    const namespace = toolNamespace(deps, args.namespace, pinnedNamespace)
     if (!namespace) return err('namespace_unconfigured')
     const key = str(args.key)
     const tplName = str(args.name)
@@ -422,6 +442,7 @@ export async function callTool(
       // C 档只能写草稿：发布必须由持 notify:publish 的人做（spec §5.2）。
       publish: deps.channel === 'wecom' ? false : args.publish === true,
       canPublish: (deps.scopes ?? []).includes('notify:publish'),
+      allowServiceNamespace: deps.channel === 'wecom',
     })
     return r.ok
       ? ok({ key: r.key, revision: r.revision, published: r.published })
@@ -429,7 +450,7 @@ export async function callTool(
   }
 
   if (name === 'create_agent_rule') {
-    const namespace = toolNamespace(deps, args.namespace)
+    const namespace = toolNamespace(deps, args.namespace, pinnedNamespace)
     if (!namespace) return err('namespace_unconfigured')
     const eventKey = str(args.eventKey)
     const recipientKey = str(args.recipientKey)
@@ -449,6 +470,7 @@ export async function callTool(
       cooldownMinutes: typeof args.cooldownMinutes === 'number' ? args.cooldownMinutes : null,
       // C 档：连 in-app 也落 pending/disabled（N3 之上更严，只作用于 wecom）。
       draftOnly: deps.channel === 'wecom',
+      allowServiceNamespace: deps.channel === 'wecom',
     })
     return r.ok
       ? ok({ id: r.id, status: r.status, approvalId: r.approvalId, namespace })
