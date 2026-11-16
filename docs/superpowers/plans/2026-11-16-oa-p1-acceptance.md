@@ -181,7 +181,7 @@ worker 一轮统计：`{"events":3,"deliveries":3,"sent":3,"failed":0,"dead":0}`
 …（发布失败不写 publish 审计：409 在写库前返回）
 ```
 
-## 4. 25 条机检断言清单（脚本 `results[]`，全部 pass）
+## 4. 机检断言清单（15:27 轮 25 条；17:09 org 门复测 26 条——新增 `neg.org-missing`）
 
 主路径 9：`main.submit` / `main.plan-snapshot` / `main.engine-create` / `main.engine-gate` /
 `main.node2` / `main.approved` / `main.case-closed` / `main.no-duplicate-node-event` /
@@ -190,7 +190,8 @@ worker 一轮统计：`{"events":3,"deliveries":3,"sent":3,"failed":0,"dead":0}`
 撤回 2：`withdraw.pending` / `withdraw.after-decision`（另有 1 条 `withdraw.engine` 断言引擎收到 withdraw）。
 
 负对照 7 + 在途 v2 的 2 条辅助断言（v2 起草、v2 批完）：`neg.org-engine` / `neg.org-callback` /
-`neg.no-publish-scope` / `neg.dept-leader-missing` / `neg.callback-replay` /
+`neg.org-missing`（17:09 起新增：缺 org → 400 ORG_REQUIRED） / `neg.no-publish-scope` /
+`neg.dept-leader-missing` / `neg.callback-replay` /
 `neg.inflight-v2-snapshot` / `neg.inflight-v2-not-approver` / `neg.inflight-v2-finish` /
 `neg.concurrent-decision` / `neg.undeclared-event`。
 
