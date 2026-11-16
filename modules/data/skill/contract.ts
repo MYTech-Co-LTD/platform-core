@@ -9,6 +9,13 @@ import { fileURLToPath } from 'node:url'
 
 export type SkillChannel = 'mcp' | 'openclaw'
 
+/**
+ * face 最低权限（agent 能力网关 spec 2026-11-16 §6.1）：
+ * read = `/mcp-read`（及 read 工具可进的其它面）；query = `/mcp-curated`。
+ * `requiredScope` 只放 face 之上的**附加** scope——read/query 由 face 门负责，故均为 null。
+ */
+export type ToolFaceScope = 'data:read' | 'data:query'
+
 export interface ChannelToolFace {
   /** 该通道暴露的工具名（MCP 2025-11-25 合法名）。 */
   name: string
@@ -24,6 +31,8 @@ export interface ContractTool {
   title: string
   /** true = 属于 ANALYST_TOOLS（data_harness_catalog 可见）；false = 静态附加工具。 */
   analyst: boolean
+  /** face 最低权限；requiredScope 只放 face 之上的附加 scope。 */
+  faceScope: ToolFaceScope
   requiredScope: string | null
   mutating: boolean
   annotations: { readOnlyHint: boolean }
@@ -46,8 +55,11 @@ const CONTRACT_PATH = join(HERE, 'contract.json')
  * 于是「改了契约形状但没改代码假设」和「改了代码但没动契约」两种漂移都只会在运行期以
  * undefined 字段的形式出现。现在装载即比对：不一致 ⇒ 模块装载失败（部署失败，不是告警）。
  * **改契约形状必须同时改这里**——这是有意的摩擦，让版本号成为一次评审点。
+ *
+ * v2（2026-11-16 agent 能力网关）：每个工具新增必填 `faceScope`（read/query 的 face 最低权限），
+ * `requiredScope` 收成 face 之上的附加 scope（当前全 null）。
  */
-export const SUPPORTED_CONTRACT_VERSION = 1
+export const SUPPORTED_CONTRACT_VERSION = 2
 
 const GROUPS: ReadonlySet<string> = new Set(['guide', 'discovery', 'query', 'health'])
 const CHANNELS: ReadonlySet<string> = new Set(['mcp', 'openclaw'])
@@ -89,6 +101,9 @@ export function contractViolations(raw: unknown): string[] {
       out.push(`${at}.group 必须是 ${[...GROUPS].join('/')} 之一`)
     }
     if (typeof tool.analyst !== 'boolean') out.push(`${at}.analyst 必须是布尔`)
+    if (tool.faceScope !== 'data:read' && tool.faceScope !== 'data:query') {
+      out.push(`${at}.faceScope 必须是 data:read / data:query 之一`)
+    }
     if (typeof tool.mutating !== 'boolean') out.push(`${at}.mutating 必须是布尔`)
     if (tool.requiredScope !== null && typeof tool.requiredScope !== 'string') {
       out.push(`${at}.requiredScope 必须是字符串或 null`)

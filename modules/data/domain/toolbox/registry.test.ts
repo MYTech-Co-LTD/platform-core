@@ -2,8 +2,8 @@
 import { describe, expect, it } from 'vitest'
 import {
   ANALYST_FACE_MAX_LIST_BYTES, ANALYST_FACE_MAX_TOOLS, ANALYST_TOOLS,
-  callTool, legacyMetricTools, listAnalystTools, mutatingAllowed,
-  registerImpl, sanitizeToolName, TOOL_NAME_RE,
+  callTool, legacyMetricTools, listAnalystTools, missingToolScope, mutatingAllowed,
+  registerImpl, sanitizeToolName, TOOL_NAME_RE, visibleAnalystTools,
 } from './registry'
 import type { ToolboxDeps } from './registry'
 import type { MetricDef, Requester, SourceTaggedMetric } from '../authz'
@@ -35,8 +35,10 @@ describe('ANALYST_TOOLS 静态清单自身的约束（工具面预算的实体�
       expect(t.name).toMatch(TOOL_NAME_RE)
       expect(t.mutating).toBe(false)
       expect(t.annotations.readOnlyHint).toBe(true)
-      // scope ∈ 声明面两码（discover/health/guide = data:read；数值 = data:query——见 Task 1 清单）
-      expect(['data:read', 'data:query']).toContain(t.requiredScope)
+      // face 最低权限 ∈ 两码（discover/health/guide = data:read；数值 = data:query）；
+      // requiredScope 是 face 之上的**附加** scope——当前全 null（read/query 由 face 门负责）。
+      expect(['data:read', 'data:query']).toContain(t.faceScope)
+      expect(t.requiredScope).toBeNull()
     }
   })
   it('清单无重名；静态序列化 ≤10KB（预算在源头可见）', () => {
@@ -105,6 +107,20 @@ describe('callTool：未知工具 / 空身份 / 单点审计（拒绝也写）',
   })
   // mutating 闸的代码分支在 callTool 内（Wave 1 无 mutating 工具，运行时分支空转）：
   // 静态面由 T12 门禁断言④（mutating ⇒ 注解+scope 必在）执法，运行时路径 Wave 3 提案面启用。
+})
+
+describe('missingToolScope / visibleAnalystTools：face 之上的附加 scope（spec §6.2）', () => {
+  it('requiredScope 非 null 且不持有 ⇒ 回该 scope（未来 data:cost 等附加码走这里）', () => {
+    expect(missingToolScope({ requiredScope: 'data:cost' }, requester([]))).toBe('data:cost')
+  })
+  it('requiredScope=null ⇒ null（face 门已足够）；持有附加 scope ⇒ null', () => {
+    expect(missingToolScope({ requiredScope: null }, requester([]))).toBeNull()
+    expect(missingToolScope({ requiredScope: 'data:cost' }, requester(['data:cost']))).toBeNull()
+  })
+  it('visibleAnalystTools：当前 requiredScope 全 null ⇒ 全量可见（含零 scope 的请求者）', () => {
+    expect(visibleAnalystTools(requester([]))).toEqual(ANALYST_TOOLS)
+    expect(visibleAnalystTools(requester(['data:read']))).toEqual(ANALYST_TOOLS)
+  })
 })
 
 describe('mutatingAllowed（写开关，默认关）', () => {

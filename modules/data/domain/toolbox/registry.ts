@@ -21,7 +21,7 @@ import { visibleMetrics } from '../authz'
 import type { DeptContext } from '../metric-visibility'
 import type { SqlExecutor } from '../query-service'
 import { writeAudit } from '../audit-store'
-import { CONTRACT, faceOf } from '../../skill/contract'
+import { CONTRACT, faceOf, type ToolFaceScope } from '../../skill/contract'
 
 export const TOOL_NAME_RE = /^[A-Za-z0-9_.-]+$/
 export const ANALYST_FACE_MAX_TOOLS = 14
@@ -40,7 +40,9 @@ export interface ToolMeta {
   description: string
   inputSchema: Record<string, unknown>
   outputSchema: Record<string, unknown>
-  /** 声明面（D1）：Wave 1 由端点门统一执法，此处不判定。 */
+  /** face 最低权限（data:read / data:query）；端点门按 face 施加，见 skill/contract.ts。 */
+  faceScope: ToolFaceScope
+  /** 声明面（D1）：face 之上的**附加** scope；read/query 均为 null（face 门负责）。 */
   requiredScope: string | null
   mutating: boolean
   annotations: ToolAnnotations
@@ -60,6 +62,7 @@ export const ANALYST_TOOLS: readonly ToolMeta[] = CONTRACT.tools
       description: face.description,
       inputSchema: face.inputSchema,
       outputSchema: face.outputSchema ?? { type: 'object' },
+      faceScope: t.faceScope,
       requiredScope: t.requiredScope,
       mutating: t.mutating,
       annotations: t.annotations,
@@ -72,6 +75,20 @@ export function listAnalystTools(): readonly ToolMeta[] {
 
 export function analystToolNames(): string[] {
   return ANALYST_TOOLS.map((t) => t.name)
+}
+
+/**
+ * 工具级**附加** scope 的缺失判定（face 门之上的那一层）。
+ * null = face 门已足够；非 null = 调用方还缺这个码（`callTool` 回 denied/missing_scope）。
+ * 纯函数：不绑 ANALYST_TOOLS，便于直接测「非 null scope」分支（当前契约里还没有这种工具）。
+ */
+export function missingToolScope(meta: Pick<ToolMeta, 'requiredScope'>, requester: Requester): string | null {
+  return meta.requiredScope !== null && !requester.hasScope(meta.requiredScope) ? meta.requiredScope : null
+}
+
+/** tools/list 的可见工具：该面内、调用方满足附加 requiredScope 的分析师工具。 */
+export function visibleAnalystTools(requester: Requester): readonly ToolMeta[] {
+  return ANALYST_TOOLS.filter((t) => t.requiredScope === null || requester.hasScope(t.requiredScope))
 }
 
 /** 工具名清洗（spec §8：冒号 → __，其余非法字符 → _）。空串抛（没有「无名工具」）。 */
@@ -168,6 +185,14 @@ export async function callTool(deps: ToolboxDeps, name: string, args: Record<str
   }
   if (deps.requester === null) {
     return finish({ payload: { status: 'denied', reason: 'unauthenticated' }, isError: true }, 'denied', 'unauthenticated')
+  }
+  // face 门是最低权限（端点门卫施加）；这里只判 face 之上的附加 scope。
+  const missing = missingToolScope(meta, deps.requester)
+  if (missing !== null) {
+    return finish(
+      { payload: { status: 'denied', reason: 'missing_scope', scope: missing, name }, isError: true },
+      'denied', 'missing_scope',
+    )
   }
   if (meta.mutating && deps.allowMutating !== true) {
     return finish(

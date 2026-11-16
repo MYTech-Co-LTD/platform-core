@@ -37,9 +37,10 @@ describe('skill contract', () => {
     }
   })
 
-  it('group 取值合法，requiredScope 为 string 或 null', () => {
+  it('group 取值合法；faceScope 必填且合法；requiredScope 为 string 或 null', () => {
     for (const tool of CONTRACT.tools) {
       expect(GROUPS.has(tool.group)).toBe(true)
+      expect(['data:read', 'data:query']).toContain(tool.faceScope)
       expect(tool.requiredScope === null || typeof tool.requiredScope === 'string').toBe(true)
     }
   })
@@ -69,7 +70,7 @@ describe('contractViolations（装载期版本/形状门的纯判定）', () => 
   const good = (): Record<string, unknown> => ({
     version: SUPPORTED_CONTRACT_VERSION,
     tools: [{
-      id: 'sample', group: 'query', analyst: true, mutating: false, requiredScope: null,
+      id: 'sample', group: 'query', analyst: true, mutating: false, faceScope: 'data:query', requiredScope: null,
       channels: { mcp: { name: 'sample_tool' } },
     }],
   })
@@ -89,6 +90,15 @@ describe('contractViolations（装载期版本/形状门的纯判定）', () => 
     expect(contractViolations({ ...good(), version: '1' })[0]).toContain('version 必须是整数')
     expect(contractViolations({ ...good(), tools: [] })[0]).toContain('tools 必须是非空数组')
     expect(contractViolations(null)).toEqual(['契约根必须是对象'])
+  })
+
+  it('faceScope 缺失/非法 ⇒ 报（运行时 face 过滤的唯一事实源）', () => {
+    const missing = good()
+    delete (missing.tools as Record<string, unknown>[])[0]!.faceScope
+    expect(contractViolations(missing).some((v) => v.includes('.faceScope'))).toBe(true)
+    const bad = good()
+    ;(bad.tools as Record<string, unknown>[])[0]!.faceScope = 'data:manage'
+    expect(contractViolations(bad).some((v) => v.includes('.faceScope'))).toBe(true)
   })
 
   it('工具级：id 重复 / 组别非法 / 通道未知 / 通道名非法 都报', () => {
