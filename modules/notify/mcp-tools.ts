@@ -70,7 +70,7 @@ export const NOTIFY_TOOLS: NotifyToolMeta[] = [
     { templateKey: { type: 'string' }, channel: { type: 'string' }, payload: { type: 'object' } },
     ['templateKey', 'channel', 'payload'], true, 'notify:manage'),
   t('declare_agent_event',
-    '声明 agent namespace 自有事件（ext.<namespace>.<event>）；声明后才能建模板/规则。只增不改。',
+    '声明 agent 自有事件。',
     {
       namespace: { type: 'string' },
       key: { type: 'string' },
@@ -101,7 +101,7 @@ export const NOTIFY_TOOLS: NotifyToolMeta[] = [
       id: { type: 'string' },
       ...RULE_FIELDS,
       recipientDepts: { type: 'array', items: { type: 'string' } },
-      draft: { type: 'boolean', description: 'true = 强制落 pending/disabled（不启用）' },
+      draft: { type: 'boolean' },
     },
     ['namespace', 'eventKey', 'recipientKey', 'templateKey', 'channels'],
     true, 'notify:manage'),
