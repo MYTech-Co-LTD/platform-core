@@ -3,12 +3,16 @@
 // 职责边界：**只校验形状与取值域**，不解析人（那是编译期的事，见 approval-compile.ts）。
 // 因此这里没有 org / orgPort 依赖，可以在任何一层跑（发布门、dry-run、编译前）。
 //
-// 纪律（P1）：
-//   · `provider` 只接受 `inapp`：`wecom_native` 的 body 是绑定快照、不是节点链 DSL，
-//     走另一条校验路径（P2），**不在这里静默接受**。
+// 纪律（P1；P2 起为 `provider=wecom_native` 开第二条校验路径）：
+//   · `provider=inapp` ⇒ 本文件的节点链 DSL 校验；
+//   · `provider=wecom_native` ⇒ body 是**绑定快照**（不是节点链），交由
+//     domain/wecom-binding.ts 校验，**绝不跑 inapp 节点校验**（否则两者互相当对方是畸形）。
+//     两条路径的产物都是「可发布的审批 body」，路由按 provider 分流。
 //   · 明确拒绝 `onTimeout: auto_approve` 与 `emptyNode: block_runtime`：P1 没有实现它们，
 //     静默降级成「超时自动通过」「运行时阻塞」是治理事故，宁可发布失败。
 //   · 失败返回机检 code + detail（routes 直接映射 HTTP），不抛错——纯函数好测也好复用。
+import { validateWecomBinding } from './wecom-binding'
+import type { WecomBindingBody } from './wecom-binding'
 
 export type ApproverSource =
   | { source: 'user'; users: string[] }
@@ -46,7 +50,7 @@ export interface ApprovalBody {
 }
 
 export type ValidateResult =
-  | { ok: true; body: ApprovalBody }
+  | { ok: true; body: ApprovalBody | WecomBindingBody }
   | { ok: false; code: string; detail: string }
 
 const SOURCES = new Set(['user', 'role', 'dept_members', 'dept_leader', 'dept_admin', 'field'])
@@ -134,8 +138,14 @@ export function validateApprovalBody(input: unknown): ValidateResult {
     return fail('BODY_NOT_OBJECT', '审批模板 body 必须是对象')
   }
   const b = input as Record<string, unknown>
+  // P2：标准审批绑定是另一条形状（processCode/deepLink/name/verifiedChain/verifiedAt）——
+  // 走绑定校验并原样返回；**不往下跑 inapp 节点校验**，否则绑定会被 NODES_EMPTY 误拒。
+  if (b.provider === 'wecom_native') {
+    const binding = validateWecomBinding(b)
+    return binding.ok ? { ok: true, body: binding.body } : binding
+  }
   if (b.provider !== 'inapp') {
-    return fail('PROVIDER_INVALID', 'provider 必须是 inapp（wecom_native 走绑定）')
+    return fail('PROVIDER_INVALID', 'provider 只能是 inapp（应用内节点链）或 wecom_native（标准审批绑定）')
   }
   const nodes = b.nodes
   if (!Array.isArray(nodes) || nodes.length === 0) return fail('NODES_EMPTY', '至少一个节点')

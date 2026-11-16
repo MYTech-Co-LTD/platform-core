@@ -399,3 +399,60 @@ describe('待审批页（OA P1）', () => {
     await waitFor(() => expect(reject.disabled).toBe(false))
   })
 })
+
+describe('标准审批绑定页（OA P2）', () => {
+  // 该页是独立 console 条目（/console/forms-bindings），不走 FormsConsolePage 的页内路由
+  async function renderBindings(scopes: string[]): Promise<void> {
+    const { default: WecomBindingsPage } = await import('./bindings')
+    const router = createMemoryRouter(
+      [
+        {
+          path: '/console',
+          element: <Outlet context={{ session: { scopes } }} />,
+          children: [{ path: 'forms-bindings', element: <WecomBindingsPage /> }],
+        },
+      ],
+      { initialEntries: ['/console/forms-bindings'] },
+    )
+    render(<RouterProvider router={router} />)
+  }
+
+  const bindingsBody = {
+    bindings: [{
+      assetId: 'expense-binding',
+      headVersion: null,
+      draftCount: 1,
+      publishedCount: 0,
+      retiredCount: 0,
+      updatedAt: '2026-11-16T00:00:00Z',
+      versions: [{
+        version: 1,
+        status: 'draft',
+        body: {
+          provider: 'wecom_native',
+          processCode: 'PC-EXPENSE-001',
+          name: '差旅报销（企微标准审批）',
+          deepLink: 'https://open.work.weixin.qq.com/x',
+          verifiedChain: ['真机验证'],
+          verifiedAt: '2026-11-16T10:00:00Z',
+        },
+      }],
+    }],
+  }
+
+  it('列表渲染绑定资产；平台管理员才出现「发布草稿」', async () => {
+    mockApi({ '/api/modules/forms/approval-bindings': () => jsonResponse(bindingsBody) })
+    await renderBindings(['forms:global-manage', 'forms:approval:view'])
+    expect(await screen.findByText('expense-binding')).toBeInTheDocument()
+    expect(screen.getByText('差旅报销（企微标准审批）')).toBeInTheDocument()
+    expect(screen.getByText('PC-EXPENSE-001')).toBeInTheDocument()
+    expect(screen.getAllByRole('button', { name: '发布草稿' }).length).toBe(1)
+  })
+
+  it('无 forms:global-manage 不出现发布入口（服务端另有 403 双保险）', async () => {
+    mockApi({ '/api/modules/forms/approval-bindings': () => jsonResponse(bindingsBody) })
+    await renderBindings(['forms:approval:view'])
+    expect(await screen.findByText('expense-binding')).toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: '发布草稿' })).not.toBeInTheDocument()
+  })
+})

@@ -198,6 +198,16 @@ export const consoleRegistry: ConsoleRegistryEntry[] = [
     load: () => import("../../../modules/forms/console/index.tsx"),
   },
   {
+    path: "/console/forms-bindings",
+    title: "标准审批绑定",
+    group: "main",
+    moduleId: "forms",
+    icon: "FileTextOutlined",
+    description: "企微标准审批模板的绑定资产：processCode、深链与验证证据；发布是平台管理员 gate。",
+    scope: "forms:global-manage",
+    load: () => import("../../../modules/forms/console/bindings.tsx"),
+  },
+  {
     path: "/console/jobs",
     title: "定时任务",
     group: "main",

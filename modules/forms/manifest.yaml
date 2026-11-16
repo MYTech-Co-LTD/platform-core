@@ -45,6 +45,15 @@ api:
     - { method: DELETE, path: /approval-defs/:assetId/versions/:v,         scope: forms:approval:manage }
     - { method: POST,   path: /approval-defs/:assetId/dry-run,             scope: forms:approval:manage }
     - { method: POST,   path: /approval-defs/:assetId/versions/:v/publish, scope: forms:approval:publish }
+    # ── 标准审批绑定（OA P2 / issue #2385）：provider=wecom_native 的绑定资产面 ──
+    # 全端点限平台管理员（forms:global-manage 是 platformOnly ⇒ 租户管理员授权宇宙里没有它）：
+    # 绑定发布是平台运营的 gate，普通 forms:approval:publish 不能发布绑定。
+    - { method: GET,    path: /approval-bindings,                          scope: forms:global-manage }
+    - { method: GET,    path: /approval-bindings/:assetId,                 scope: forms:global-manage }
+    - { method: POST,   path: /approval-bindings,                          scope: forms:global-manage }
+    - { method: PUT,    path: /approval-bindings/:assetId/versions/:v,     scope: forms:global-manage }
+    - { method: DELETE, path: /approval-bindings/:assetId/versions/:v,     scope: forms:global-manage }
+    - { method: POST,   path: /approval-bindings/:assetId/versions/:v/publish, scope: forms:global-manage }
     # ── 提交（org 钉死 + 按提交钉住版本契约校验）──
     - { method: POST,   path: /defs/:assetId/submissions,           scope: forms:fill }
     - { method: GET,    path: /defs/:assetId/submissions,           scope: forms:view }
@@ -81,6 +90,9 @@ frontend:
   console:
     # 一个条目 + 页内三页签（表单/填报/提交记录，照 aftersales 姿势）；scope=forms:view
     - { path: /console/forms, title: 表单, icon: FileTextOutlined, scope: forms:view, entry: ./console/index.tsx }
+    # 标准审批绑定（OA P2）：平台管理员页（forms:global-manage platformOnly）。
+    # 与 /console/forms 平级（不是它的子路径）——避免把既有「表单」菜单条目变成不可点的分组标题。
+    - { path: /console/forms-bindings, title: 标准审批绑定, description: 企微标准审批模板的绑定资产：processCode、深链与验证证据；发布是平台管理员 gate。, icon: FileTextOutlined, scope: forms:global-manage, entry: ./console/bindings.tsx }
 migrations: { dir: ./migrations }
 
 # 通知事件声明（2026-10-27 通知基础设施 §3.1）：对账脚本/发布路径入队，worker 投递。
