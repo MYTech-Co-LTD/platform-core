@@ -66,6 +66,29 @@ export default function PipelinesPage() {
     runs: Array<{ runId: string; at: string; status: string; durationMs?: number; trigger?: string; error?: string }>
   } | null>(null)
 
+  // 单条管线「怎么跑」：节点图翻成人话步骤 + 最近一次运行的逐节点数字（给业务人员看全流程）
+  const [flow, setFlow] = useState<{
+    pipelineId: string
+    loading: boolean
+    error?: string
+    data?: {
+      name: string
+      unmatched: number
+      runNote: string | null
+      lastRun: { runId: string; at: string; status: string; rows?: number; durationMs?: number } | null
+      steps: Array<{ id: string; step: number; component: string; kind: string; label: string; detail?: string; stat?: { rows?: number; durationMs?: number } }>
+    }
+  } | null>(null)
+
+  const openFlow = (pipelineId: string): void => {
+    setFlow({ pipelineId, loading: true })
+    apiGet(`/system-map/pipelines/${encodeURIComponent(pipelineId)}/flow`)
+      .then((b) => {
+        setFlow({ pipelineId, loading: false, data: b as NonNullable<typeof flow>['data'] })
+      })
+      .catch((e: unknown) => setFlow({ pipelineId, loading: false, error: humanError(e).text }))
+  }
+
   const openHistory = (pipelineId: string): void => {
     setHistory({ pipelineId, loading: true, runs: [] })
     apiGet(`/system-map/pipelines/${encodeURIComponent(pipelineId)}/runs`)
@@ -330,6 +353,9 @@ export default function PipelinesPage() {
                             background: run === undefined ? '#C9CDD4' : (RUN_DOT[run.status] ?? '#C9CDD4'),
                           }} />
                           <span style={{ fontFamily: 'ui-monospace, Menlo, monospace', fontSize: 12 }}>{p.id}</span>
+                          <Button type="link" size="small" style={{ padding: '0 6px' }} onClick={() => openFlow(p.id)}>
+                            流程
+                          </Button>
                           <Button type="link" size="small" style={{ padding: '0 6px' }} onClick={() => openHistory(p.id)}>
                             历史
                           </Button>
@@ -393,6 +419,90 @@ export default function PipelinesPage() {
                 <div style={{ fontSize: 13 }}>
                   上游 staging：{[...new Set(up.map((a) => a.staging).filter(Boolean))].join('、') || '—'}
                 </div>
+              )
+            })()}
+          </Space>
+        )}
+      </Drawer>
+
+      {/* 采集流程：节点图翻成人话，业务人员能顺着读完一次采集 */}
+      <Drawer
+        open={flow !== null}
+        onClose={() => setFlow(null)}
+        width={620}
+        title={<span style={{ fontFamily: 'ui-monospace, Menlo, monospace', fontSize: 13 }}>{flow?.pipelineId}</span>}
+      >
+        {flow !== null && (
+          <Space direction="vertical" size="middle" style={{ width: '100%' }}>
+            {flow.loading && <Typography.Text type="secondary">读取中…</Typography.Text>}
+            {flow.error !== undefined && <Alert type="error" showIcon message={flow.error} />}
+            {flow.data !== undefined && (() => {
+              const d = flow.data
+              const run = d.lastRun
+              return (
+                <>
+                  <div style={{ fontSize: 12.5, color: '#6B7280' }}>
+                    <span style={{ fontSize: 13, color: '#1B1C1E', fontWeight: 600 }}>{d.name}</span>
+                    <span style={{ marginLeft: 8 }}>· {d.steps.length} 个节点</span>
+                    {run !== null && (
+                      <span style={{ marginLeft: 8 }}>
+                        · 最近一次{' '}
+                        <span style={{
+                          display: 'inline-block', width: 6, height: 6, borderRadius: 6, marginRight: 4,
+                          background: RUN_DOT[run.status] ?? '#C9CDD4',
+                        }} />
+                        {run.status}
+                        {run.rows === undefined ? '' : ` · ${run.rows.toLocaleString()} 行`}
+                        {run.durationMs === undefined ? '' : ` · ${(run.durationMs / 1000).toFixed(1)}s`}
+                        {' · '}{new Date(run.at).toLocaleString('zh-CN')}
+                      </span>
+                    )}
+                    {d.runNote !== null && <div style={{ marginTop: 4, color: '#9AA0A6' }}>{d.runNote}</div>}
+                  </div>
+
+                  <div>
+                    {d.steps.map((s, i) => (
+                      <div key={s.id} style={{ display: 'flex', gap: 10, alignItems: 'flex-start' }}>
+                        <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', flex: 'none' }}>
+                          <span style={{
+                            width: 22, height: 22, borderRadius: 999, fontSize: 11, display: 'flex',
+                            alignItems: 'center', justifyContent: 'center',
+                            background: '#EEF2FF', color: '#4D6BFE', fontWeight: 600,
+                          }}>{s.step}</span>
+                          {i < d.steps.length - 1 && <span style={{ flex: 1, width: 1, minHeight: 14, background: '#EBEDF0' }} />}
+                        </div>
+                        <div style={{ flex: 1, minWidth: 0, paddingBottom: 12 }}>
+                          <div style={{ display: 'flex', alignItems: 'baseline', gap: 8 }}>
+                            <span style={{ fontSize: 13, fontWeight: 500 }} title={s.component}>{s.kind}</span>
+                            <span style={{ fontSize: 12, color: '#6B7280', flex: 1, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                              {s.label}
+                            </span>
+                            {s.stat !== undefined && (
+                              <span style={{ fontSize: 11.5, color: '#9AA0A6', flex: 'none', fontVariantNumeric: 'tabular-nums' }}>
+                                {s.stat.rows === undefined ? '' : `${s.stat.rows.toLocaleString()} 行`}
+                                {s.stat.rows !== undefined && s.stat.durationMs !== undefined ? ' · ' : ''}
+                                {s.stat.durationMs === undefined ? '' : `${s.stat.durationMs}ms`}
+                              </span>
+                            )}
+                          </div>
+                          {s.detail !== undefined && (
+                            <div style={{
+                              marginTop: 2, fontSize: 11.5, color: '#9AA0A6',
+                              fontFamily: 'ui-monospace, Menlo, monospace',
+                              overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
+                            }} title={s.detail}>{s.detail}</div>
+                          )}
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+
+                  {d.unmatched > 0 && (
+                    <Typography.Text type="secondary" style={{ fontSize: 11.5 }}>
+                      其中 {d.unmatched} 个节点在最近一次运行的收据里没有明细（定义与收据不完全对应，数字缺失不代表没执行）。
+                    </Typography.Text>
+                  )}
+                </>
               )
             })()}
           </Space>

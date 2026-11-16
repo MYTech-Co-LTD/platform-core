@@ -147,6 +147,31 @@ describe('GET /system-map/pipelines/:id/runs（运行历史）', () => {
   })
 })
 
+describe('GET /system-map/pipelines/:id/flow（采集流程）', () => {
+  it('未登录 ⇒ 401；未知管线 ⇒ 404', async () => {
+    expect((await appWithGate().request('/system-map/pipelines/p1/flow')).status).toBe(401)
+    const res = await buildTestApp(mod, identity, { pool: emptyPool().pool }).request('/system-map/pipelines/no.such.pipeline/flow')
+    expect(res.status).toBe(404)
+  })
+
+  it('已知管线 ⇒ 步骤是人话类型；未接运行记录时明确说未知而不是编数字', async () => {
+    const res = await buildTestApp(mod, identity, { pool: emptyPool().pool })
+      .request('/system-map/pipelines/lemeng.retail_order_line.day/flow')
+    expect(res.status).toBe(200)
+    const body = await res.json() as {
+      steps: Array<{ kind: string; component: string; step: number }>
+      lastRun: unknown
+      runNote: string | null
+    }
+    expect(body.steps.length).toBeGreaterThan(0)
+    expect(body.steps[0]!.component).toMatch(/^(src\.|ctl\.|code\.|qa\.|snk\.|xf\.)/)
+    // 组件已翻译成人话（不再原样回组件名）
+    expect(body.steps.some((s) => s.kind !== s.component)).toBe(true)
+    expect(body.lastRun).toBeNull()
+    expect(body.runNote).toContain('DATA_RUN_DIRS')
+  })
+})
+
 describe('sqlColumnsOf（staging SQL 的列扫描）', () => {
   it('cast(x as varchar) 里的类型名不算列（2026-11-15 生产实测混进 varchar/date）', () => {
     const sql = "select r['system_book'] as system_book, cast(m.bizday as date) from t where cast(m.system_book as varchar) = 1"
