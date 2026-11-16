@@ -11,6 +11,10 @@
 
 ## [Unreleased]
 
+## [0.309.0](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.308.0...v0.309.0) - 2026-11-16
+- 【新增】forms: 移动端 OA 审批入口 + 引擎调用携 org（#2380） ([#2381](https://github.com/MYTech-Co-LTD/platform-core/pull/2381), [ab7bfeb](https://github.com/MYTech-Co-LTD/platform-core/commit/ab7bfebb154168dccc5ac599a2b7e26bd3f9f365))
+
+
 ## [0.308.0](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.307.0...v0.308.0) - 2026-11-16
 - 【新增】data: dbt hourly/tables 迁入平台 scheduler（W8-P1） ([#2376](https://github.com/MYTech-Co-LTD/platform-core/pull/2376), [ac65aca](https://github.com/MYTech-Co-LTD/platform-core/commit/ac65acaf1d63a738561ddb1bf9a96136446ba000))
 - 【新增】forms: 应用内审批 P1——DSL/编译器/发布门、提交建 case、回调对账与审批页（#2363） ([#2373](https://github.com/MYTech-Co-LTD/platform-core/pull/2373), [98d8eee](https://github.com/MYTech-Co-LTD/platform-core/commit/98d8eee85394a1b7c231953d8268e4b20b38c012))
