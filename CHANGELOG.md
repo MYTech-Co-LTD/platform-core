@@ -11,6 +11,11 @@
 
 ## [Unreleased]
 
+## [0.308.0](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.307.0...v0.308.0) - 2026-11-16
+- 【新增】data: dbt hourly/tables 迁入平台 scheduler（W8-P1） ([#2376](https://github.com/MYTech-Co-LTD/platform-core/pull/2376), [ac65aca](https://github.com/MYTech-Co-LTD/platform-core/commit/ac65acaf1d63a738561ddb1bf9a96136446ba000))
+- 【新增】forms: 应用内审批 P1——DSL/编译器/发布门、提交建 case、回调对账与审批页（#2363） ([#2373](https://github.com/MYTech-Co-LTD/platform-core/pull/2373), [98d8eee](https://github.com/MYTech-Co-LTD/platform-core/commit/98d8eee85394a1b7c231953d8268e4b20b38c012))
+
+
 ## [0.307.0](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.306.7...v0.307.0) - 2026-11-16
 - 【修复】data: DBT_HOST 剥离端口（W8-P1） ([#2371](https://github.com/MYTech-Co-LTD/platform-core/pull/2371), [d7ec33c](https://github.com/MYTech-Co-LTD/platform-core/commit/d7ec33ca9d6fe9161fc9c0c5e6c31bdf4aceabb0))
 - 【新增】oa: forms 内核 approval_def + org→引擎映射（OA P0 T4/T5） ([#2369](https://github.com/MYTech-Co-LTD/platform-core/pull/2369), [5888804](https://github.com/MYTech-Co-LTD/platform-core/commit/588880432dc78660435d3357426c2211d7fc2b20))
