@@ -63,6 +63,8 @@ api:
     - { method: GET,  path: /system-map/lineage/:id, scope: data:query }
     # 管线运行历史（2026-11-14）：抽屉里点「历史」看完整记录（最多 50 条，引擎侧保留量）。
     - { method: GET,  path: /system-map/pipelines/:id/runs, scope: data:query }
+    # 采集流程（2026-11-16）：管线定义节点图翻成人话步骤 + 最近一次运行的逐节点数字。
+    - { method: GET,  path: /system-map/pipelines/:id/flow, scope: data:query }
     # 通道 A：系统内问数（SSE 流式；LLM 编排在平台后端）
     - { method: POST, path: /chat,    scope: data:query }
     # MCP 端点（通道 B 的 JSON-RPC 单入口；协议错误自兜，授权仍走同一核心）
