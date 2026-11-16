@@ -109,5 +109,5 @@ openclaw 服务 env 增加 `AGENT_API_BASE=http://server:13000/api/agent`；
 `agents.entries.main.tools.allow` 增加 `platform_capabilities`、`platform_call`
 （allow 是白名单，漏加则工具对模型不可见）。
 
-能力网关由 platform server 的 `AGENT_MCP_ENABLED=1` 开启；鉴权复用
-`DATA_WECOM_CHANNEL_KEY` 与企微 userid。
+能力网关缺省开启，`AGENT_MCP_ENABLED=0` 可关闭（关闭后 `/api/agent/*` 一律 404）；
+鉴权复用 `DATA_WECOM_CHANNEL_KEY` 与企微 userid。

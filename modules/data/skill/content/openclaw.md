@@ -19,7 +19,7 @@
 数据**查询**继续用上面的 search/query 工具；**创建/管理**走平台能力网关：
 
 1. `platform_capabilities`：先看当前用户可用的管理工具、缺失的 scope 与锁定面（lockedFaces）。默认只回紧凑索引；`tool=<name>` 可看单个工具的完整参数 schema。
-2. `platform_call({ tool, args })`：只调上一步列表里的工具，工具名形如 `data__create_report`、`notify__create_agent_rule`、`forms__generate_form_draft`。
+2. `platform_call({ tool, args })`：只调上一步列表里的工具，工具名形如 `data__propose_report`、`notify__create_agent_rule`、`forms__generate_form_draft`。
 
 硬纪律：
 
