@@ -11,6 +11,12 @@
 
 ## [Unreleased]
 
+## [0.311.0](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.310.2...v0.311.0) - 2026-11-16
+- 【新增】forms: wecom_native 绑定资产与发布门 (#2392) ([#2393](https://github.com/MYTech-Co-LTD/platform-core/pull/2393), [072289a](https://github.com/MYTech-Co-LTD/platform-core/commit/072289af1d97417d177a769fb3d261a66a8a1864))
+- 【新增】oa: 审批应用凭据与标准审批镜像表（#2385） ([#2389](https://github.com/MYTech-Co-LTD/platform-core/pull/2389), [88dc884](https://github.com/MYTech-Co-LTD/platform-core/commit/88dc884bdbacb733d46eef29a781f8b0ed3aca44))
+- 【新增】oa: 企微审批回调验签/解密/解析（#2385） ([#2386](https://github.com/MYTech-Co-LTD/platform-core/pull/2386), [23cb337](https://github.com/MYTech-Co-LTD/platform-core/commit/23cb337c9e873ed22fa4d7e333c6fe5f3e610b8f))
+
+
 ## [0.310.2](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.310.1...v0.310.2) - 2026-11-16
 - 【修复】data: pre_hook 用列表形状，避免 dbt 解析崩（#2395） ([#2396](https://github.com/MYTech-Co-LTD/platform-core/pull/2396), [d30e7df](https://github.com/MYTech-Co-LTD/platform-core/commit/d30e7df90b20fe61820cdcdd90175caa2ac2adae))
 
