@@ -328,7 +328,7 @@ forms.external_approval(
 
 ### 6.4 投影层
 
-- **统一待办**：平台 notify 收件箱聚合 `approval.awaiting`（inapp）、`task.assigned`（协作）、`collection.assigned/due`（收集）。
+- **统一待办**：平台 notify 收件箱聚合 `forms.approval.awaiting`（inapp）、`forms.task.assigned`（协作）、`forms.collection.assigned/due`（收集）。
 - **标准审批**：企微原生通知；平台镜像只用于「我的标准审批」只读列表与数据面，不产生应用内待办。
 - **数据湖**：收集提交沿用现有 forms 日批；inapp 审批与协作走 case 事件导出；标准审批镜像按 detail 可得性导出。
 
@@ -373,7 +373,7 @@ draft ──▶ open ──▶ closed
 
 - `open` 时目标名单快照生效；快照后**不增删目标**——要改名单就关旧轮次、开新轮次（审计可解释）。提交按 `(round_id, user_name)` 记目标状态。
 - 更正：新提交 + `supersedes_id`；目标状态仍为 `submitted`，分析面取最新有效行。
-- 催办：按目标 `pending` 逐人 emit `collection.due`（事件 id 含日期，幂等）。
+- 催办：按目标 `pending` 逐人 emit `forms.collection.due`（事件 id 含日期，幂等）。
 
 ### 7.4 协作状态机（P4）
 
@@ -469,10 +469,10 @@ v1 平台**不调企微建单/预填**；不存标准表单与附件。
 agent/console 发起 → 取事项模板 + 审批模板
   → 平台服务端编译计划（解析人/条件/quorum）
   → 写 submission(pending_approval) + POST /cases(provider=inapp, plan)
-  → 引擎逐节点挂起；每个节点进入时 emit approval.awaiting（逐审批人）
+  → 引擎逐节点挂起；每个节点进入时 emit forms.approval.awaiting（逐审批人）
   → 企微模板消息（含深链）→ 审批人打开应用内审批页
   → 平台鉴权后调 POST /cases/:id/decision
-  → 引擎推进/终结；final 回调平台 → 写 submission.status + emit approval.decided
+  → 引擎推进/终结；final 回调平台 → 写 submission.status + emit forms.approval.decided
 ```
 
 ---
@@ -563,7 +563,7 @@ POST {platform}/api/modules/forms/approval-callback
 ```
 
 - 平台幂等：`(caseId, final)` 唯一；重复回调返回 200 不重复写。
-- 平台写 `submission.status` / `decided_at` / `decision_*`，emit `approval.decided`。
+- 平台写 `submission.status` / `decided_at` / `decision_*`，emit `forms.approval.decided`。
 - 回调失败：引擎重试（指数退避）；平台另有**小时级对账 job** 扫 `pending_approval` 超 N 分钟的单，按 `externalRef` 查询引擎补齐。
 
 ### 10.7 标准审批镜像
@@ -665,17 +665,19 @@ POST {platform}/api/modules/forms/approval-callback
 
 ### 14.1 事件清单（必须在 manifest 声明）
 
+> **key 前缀规则**：`ManifestSchema` 强制 `ev.key.startsWith(moduleId + '.')`。external 事件的 key 仍用 `forms.*`（声明在 forms manifest），归属由 `producer` 元数据表达——不是把 key 改成 `case-engine.*`。
+
 | 事件 | 生产者 | 收件人 | 触发 |
 |---|---|---|---|
-| `approval.awaiting` | 引擎（external） | 当前节点审批人 | 节点进入 |
-| `approval.decided` | 平台 | 发起人 | 最终结论 |
-| `approval.node.decided` | 引擎（external） | 发起人/部门管理员（可选） | 节点决策 |
+| `forms.approval.awaiting` | 引擎（external） | 当前节点审批人 | 节点进入 |
+| `forms.approval.decided` | 平台 | 发起人 | 最终结论 |
+| `forms.approval.node.decided` | 引擎（external） | 发起人/部门管理员（可选） | 节点决策 |
 | `approval.reassigned` | 平台 | 新旧审批人 | 改派 |
-| `task.assigned` | 引擎（external） | 协作参与人 | 任务创建/改派 |
+| `forms.task.assigned` | 引擎（external） | 协作参与人 | 任务创建/改派 |
 | `task.due` | 平台 job | 协作参与人 | 到期 |
-| `collection.assigned` | 平台 | 目标人 | 轮次开启 |
-| `collection.due` | 平台 job | 未提交目标人 | 到期 |
-| `case.sla.breach` | 引擎（external） | 升级对象 | 节点/案例超时 |
+| `forms.collection.assigned` | 平台 | 目标人 | 轮次开启 |
+| `forms.collection.due` | 平台 job | 未提交目标人 | 到期 |
+| `forms.case.sla.breach` | 引擎（external） | 升级对象 | 节点/案例超时 |
 
 - **先声明后接线**：未声明 ⇒ `/emit` 400 且 fail-open 静默；发布/联调必须有「事件在目录中」的检查。
 - **external 事件的声明位置**：在 `modules/forms/manifest.yaml` 的 `notifications.events` 里声明，并带 `producer: external:case-engine` 元数据；`buildCatalog` 据此把 `module_id` 记为 `external:case-engine`（不是 `forms`），UI 归属显示正确。协议扩展见 §20 文档更新顺序第 3 条。
@@ -684,7 +686,7 @@ POST {platform}/api/modules/forms/approval-callback
 ### 14.2 待办一致性
 
 - 引擎在每个节点进入/关闭、任务创建/完成时逐人 emit；平台收件箱是投影。
-- 点击待办 → 以引擎/case 真实状态为准；已终结的待办由 `approval.decided` / `task.completed` 关闭。
+- 点击待办 → 以引擎/case 真实状态为准；已终结的待办由 `forms.approval.decided` / 任务完成事件关闭。
 - 小时级对账 job：扫 `pending_approval` 与未关闭收件箱，按 `externalRef` 对引擎状态，关闭陈旧项。
 
 ---
@@ -811,12 +813,12 @@ POST {platform}/api/modules/forms/approval-callback
 
 | 事件 | payload |
 |---|---|
-| `approval.awaiting` | `submissionId, caseId, nodeKey, title, assignee, link, dueAt?` |
-| `approval.decided` | `submissionId, caseId, action, decidedBy, decidedAt, link` |
-| `task.assigned` | `caseId, taskId, title, assignee, link, dueAt?` |
-| `collection.assigned` | `roundId, submissionTarget, assetId, dueAt, link` |
-| `collection.due` | `roundId, userName, assetId, dueAt, link` |
-| `case.sla.breach` | `caseId, nodeKey?, slaDueAt, escalateTo, link` |
+| `forms.approval.awaiting` | `submissionId, caseId, nodeKey, title, assignee, link, dueAt?` |
+| `forms.approval.decided` | `submissionId, caseId, action, decidedBy, decidedAt, link` |
+| `forms.task.assigned` | `caseId, taskId, title, assignee, link, dueAt?` |
+| `forms.collection.assigned` | `roundId, submissionTarget, assetId, dueAt, link` |
+| `forms.collection.due` | `roundId, userName, assetId, dueAt, link` |
+| `forms.case.sla.breach` | `caseId, nodeKey?, slaDueAt, escalateTo, link` |
 
 ### D. 评审记录
 
