@@ -14,8 +14,11 @@
   通知（无 `id`）回 202 无 body，不产生结果。
 - 工具名：`<module>__<tool>`（如 `data__list_reports`）；另有内置发现工具 `agent__capabilities`。
 - 身份（二选一，**不合并**）：
-  - **B（PAT）**：`Authorization: Bearer dkq_…`（个人 Key，`apps/server/src/pat-auth.ts`）。
-    scopes **每次请求实时向 Casdoor 取**（吊销/禁用即时生效）；PAT 侧限速 60 次/分钟/密钥。
+  - **B（PAT / 平台会话）**：`Authorization: Bearer dkq_…`（个人 Key，
+    `apps/server/src/pat-auth.ts`）或平台 session（登录后的浏览器/系统内会话）。PAT 的
+    scopes **每次请求实时向 Casdoor 取**（吊销/禁用后下一次请求立即 401）；PAT 侧限速
+    60 次/分钟/密钥。
+    两者在网关同属 audience `mcp`（channel `pat` / `session`，spec D5）。
   - **C（openclaw）**：`x-channel-key`（部署级渠道凭证）+ `x-wecom-userid`（企微 userid），
     可选 `x-session-id`（`apps/server/src/wecom-channel-auth.ts`）。身份 = 渠道凭证反查 Casdoor。
 - **网关只做投影/路由**（face 选择 + 命名空间 + 转发），**授权在模块**：face 门
@@ -32,7 +35,8 @@
   - `notes`：人 gate 清单。
 - `tools/list` 只回调用方 scope 可见的工具（按 face 门 + 工具级 requiredScope 投影）；
   分页：`cursor`（非负整数字符串），每页 ≤50 个工具 / ≤10KB，续页带 `nextCursor`；坏 cursor ⇒ `-32602`。
-- data 的锁定**工具**可由 `data__data_harness_catalog` 补（返回 `available`/`locked` + 所需 scope）。
+- data 的锁定**工具**可由 `data__data_harness_catalog` 补（逐工具回 `available` 布尔 + 所需
+  `requiredScope`；`available=false` 即该工具在当前 face 不可用（锁定），供 step-up 申请权限）。
 - **错误与处置**（不要原样重试，按错误里的 scope/参数自纠一次）：
 
   | 错误 | 形态 | 下一步 |
@@ -76,8 +80,9 @@
 ### notify（`modules/notify`）
 
 - **read face（`notify:view`，audience mcp）**：只投影非 mutating 工具（事件目录、规则/模板/
-  投递的只读查询等）；`requiredScope ≠ null` 的工具（如 `preview_template` 要 `notify:manage`）
-  在本面不可见。
+  投递的只读查询、`check_rule` 与只读排班等）；`requiredScope` 按**调用方 scope 过滤**
+  ——仅持 `notify:view` 的调用方看不到 `preview_template` 这类要 `notify:manage` 的工具；
+  同时持 `notify:view + notify:manage` 的调用方在本面能看到它们。
 - **manage face（`notify:manage`）**，按通道分两档：
   - **B（pat/session，profile=full）**：N3 完整 agent 面（含 `propose_rule`/`update_rule`/
     `set_rule_enabled`/`draft_template` + 排班 8 工具；`notify:emit` 的直发工具也在 B 面，
@@ -109,10 +114,12 @@
 
 ## 4. recipes（每步：工具 → 人 gate）
 
-1. **L2 指标**（租户自定义口径，即时生效，门 `data:manage`）：
+1. **L2 指标**（租户自定义口径，**提案制**，门 `data:manage`）：
    `data__list_metrics`（找基底/查重）→ `data__customize_metric`（提案式变更；或
-   `data__submit_metric_change` 走变更单）→ `data__list_metric_changes` 看采纳/驳回状态。
-   变更单**只提案不生效**，采纳/驳回是人工动作，没有工具。
+   `data__submit_metric_change` 走变更单——**只提案不生效，等人工采纳**）→
+   `data__list_metric_changes` 看采纳/驳回状态。
+   采纳/驳回是人工决策，agent 没有工具可做（决策端点 PAT/企微一律 403
+   `DECISION_REQUIRES_SESSION`，只认会话登录）。
 2. **L1 指标声明**（平台口径，门 `data:manage`）：
    `data__propose_metric_declaration` → `data__apply_pipeline_proposal`（落盘并开 draft PR）
    → **人 merge PR**。
@@ -134,7 +141,7 @@
 
 | 对象 | agent 能做 | 人 gate | 门 |
 |---|---|---|---|
-| L2 指标 | 建/删（即时生效） | — | `data:manage` |
+| L2 指标 | 提建/删变更单（提案制，人工采纳） | 采纳/驳回 | `data:manage` |
 | L1 指标 | 提案 draft PR | 人 merge PR | `data:manage` |
 | 报表 | 提/改未发布 | 发布/回收 | `data:manage` / console |
 | 报表监控 | 提/改/停用；默认 `dry_run=true`（B 子项目，按业务监控 spec） | 显式开启投递（人） | 业务监控 spec 的开启动作 |

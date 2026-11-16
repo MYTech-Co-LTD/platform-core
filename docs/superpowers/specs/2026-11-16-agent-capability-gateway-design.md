@@ -18,7 +18,7 @@
 - **B**：data / notify / forms 各有独立 MCP 端点，agent 要配多个 server，自己知道“建指标找 data、建通知找 notify”；
 - **C**：openclaw 走 native plugin + 平台 HTTP，拿不到 B 的 MCP 工具面；管理类能力（建指标/报表/通知/表单）基本没有入口；
 - **权限**：`tools/list` 不按调用方 scopes 裁剪；data 的 `requiredScope` 只是声明面，`callTool` 不校验；`data:read` 用户进不了 `/mcp`（门是 `data:query`）；notify 的只读工具被 `notify:manage` 门挡住；
-- **外发**：notify 规则即时生效，与表单/报表/监控的“草稿 + 人启用”不一致。
+- **外发**：notify 规则创建即生效（无草稿闸），与表单/报表/监控的“草稿 + 人启用”不一致。
 
 **结论**：需要一套**能力核心 + 多个协议/身份适配器**：B 走 MCP 网关，C 走 native 元工具；`tools/list` 按身份投影，`tools/call` 同一授权核心执法。
 
@@ -132,7 +132,7 @@ mcpFaces:
   - { face: agent-manage, group: notify, precedence: 2, path: /mcp-manage, method: POST, scope: notify:manage, audiences: [wecom], profile: c-manage }
 ```
 
-- `/mcp`：只读工具（`list_events`、`get_event`、`list_rules`、`list_templates`、`get_template`、`list_deliveries`）。
+- `/mcp`：非 mutating 工具（6 个只读 `list_events`/`get_event`/`list_rules`/`list_templates`/`get_template`/`list_deliveries` + `check_rule` + 只读排班 `list_schedules`/`list_schedule_runs`/`get_schedule_quota`；`requiredScope` 按调用方 scope 过滤——仅持 `notify:view` 时看不到要 `notify:manage` 的工具，如 `preview_template`）。
 - `profile=full`（B）：保持 N3 现有工具面，外发未预授权仍落 pending 审批。
 - `profile=c-manage`（C）：只暴露 agent-safe 工具——
   `create_agent_rule`、`create_agent_template`、`check_rule`、`preview_template`、`send_test`、`list_deliveries` + 排班工具；
@@ -302,7 +302,7 @@ loader 与 `scripts/check-manifests.mjs` 校验：
 
 | 对象 | agent 能做 | 人 gate | 门 |
 |---|---|---|---|
-| L2 指标 | 建/删（即时生效） | — | `data:manage` |
+| L2 指标 | 提建/删变更单（提案制，人工采纳） | 采纳/驳回 | `data:manage` |
 | L1 指标 | 提案 draft PR | 人 merge PR | `data:manage` |
 | 报表 | 提/改未发布 | 发布/回收 | `data:manage` / console |
 | 报表监控 | 提/改/停用；默认 `dry_run=true`（B 子项目，按业务监控 spec） | 显式开启投递（人） | 业务监控 spec 的开启动作 |
@@ -400,7 +400,7 @@ loader 与 `scripts/check-manifests.mjs` 校验：
 | R7 | 网关缓存与 scope 变更 | 缓存 key 含 scope-hash + face + profile；TTL 30s |
 | R8 | 工具面过大 | 分页 + 字节上限 + curated 面；不做 tool search |
 | R9 | **C 直连模块绕过网关头** | 模块按 `identity.channel` 执法；`wecom` 无论 profile/直连都走 C 档；加直连变异测试 |
-| R10 | **C 的 namespace 由模型选** | 插件/网关注入固定 namespace；模型参数不暴露；owner 校验兜底 |
+| R10 | **C 的 namespace 由模型选** | 插件剥掉 `notify__*` 的 `namespace`；服务端按 `identity.channel==='wecom'` 忽略模型值，取部署 env `NOTIFY_WECOM_NAMESPACE` 指向的 service-owned namespace 钉死；notify 的 owner 校验兜底 |
 | R11 | **`x-agent-profile` 伪造** | 网关剥客户端同名头；模块以 channel 为准，profile 只作展示 |
 
 ## 15. 参考
