@@ -73,7 +73,7 @@ describePg('forms 生命周期内核（PoC 28 断言对账）', () => {
     return rows[0]?.status ?? null
   }
 
-  it('G0：迁移幂等（账本第二遍跳过；六表在位）', async () => {
+  it('G0：迁移幂等（账本第二遍跳过；七表在位）', async () => {
     // ⚠️ 首版量具在这里做「裸 SQL 全文件重放」验真幂等——main CI 实测 deadlock（issue #714）：
     // 并行 worker 下 DDL 重放（drop/create trigger 的 ACCESS EXCLUSIVE）与 routes/dict 等
     // 兄弟文件在 forms 表上的行锁互撞。量具错，不是内核错 ⇒ 收敛为账本路径 + 表在位断言；
