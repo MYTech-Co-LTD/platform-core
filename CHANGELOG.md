@@ -11,6 +11,37 @@
 
 ## [Unreleased]
 
+## [0.310.0](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.309.1...v0.310.0) - 2026-11-16
+- 【修复】openclaw: 手动超时定时器 unref/清理，修复 Node 22 测试挂起 ([#2360](https://github.com/MYTech-Co-LTD/platform-core/pull/2360), [3f3e6b9](https://github.com/MYTech-Co-LTD/platform-core/commit/3f3e6b9023ee0668643e4d36602dafe7b3a2404d))
+- 【修复】agent-mcp: 取消覆盖响应体读取与已中止入站 ([#2360](https://github.com/MYTech-Co-LTD/platform-core/pull/2360), [f4eb67b](https://github.com/MYTech-Co-LTD/platform-core/commit/f4eb67b6e196a228bc9d625d62c7a575c3604fb2))
+- 【修复】agent-mcp: 入站断开取消网关等待 + 取消文案 ([#2360](https://github.com/MYTech-Co-LTD/platform-core/pull/2360), [bf21da0](https://github.com/MYTech-Co-LTD/platform-core/commit/bf21da03e9d0a337f14d7992740b0ffb8b4f3920))
+- 【修复】agent-mcp: 网关超时 60s/forms 120s + 插件超时对齐 ([#2360](https://github.com/MYTech-Co-LTD/platform-core/pull/2360), [0ea22bf](https://github.com/MYTech-Co-LTD/platform-core/commit/0ea22bf046f491dd21153ee3fb0580a6689519ed))
+- 【修复】openclaw: 参数防御错误可操作文案 + 能力 fixture 对齐真实负载 ([#2360](https://github.com/MYTech-Co-LTD/platform-core/pull/2360), [d059d2a](https://github.com/MYTech-Co-LTD/platform-core/commit/d059d2a326b165fd8135bc600e0c017135d5cdb7))
+- 【修复】openclaw: 工具结果 details 契约 + 模块 annotations + 网关错误文案 ([#2360](https://github.com/MYTech-Co-LTD/platform-core/pull/2360), [f01c05a](https://github.com/MYTech-Co-LTD/platform-core/commit/f01c05acfd243736186c688ae52495a85ff6da71))
+- 【新增】openclaw: platform_capabilities/platform_call 元工具 ([#2360](https://github.com/MYTech-Co-LTD/platform-core/pull/2360), [a07078f](https://github.com/MYTech-Co-LTD/platform-core/commit/a07078f1fea3d23f54703875ff3038edeaac2f59))
+- 【修复】forms: MCP 审计覆盖抛错路径 + 003 补 params 列 ([#2360](https://github.com/MYTech-Co-LTD/platform-core/pull/2360), [675f795](https://github.com/MYTech-Co-LTD/platform-core/commit/675f79596bf5eac29c83c164d34cf315a1c1a38a))
+- 【修复】forms: MCP 审计补 args 摘要（spec §6.5） ([#2360](https://github.com/MYTech-Co-LTD/platform-core/pull/2360), [0b73019](https://github.com/MYTech-Co-LTD/platform-core/commit/0b7301963cf5e8ab513ef3a528caae8c5f00cc9f))
+- 【新增】forms: FORMS_TOOLS、读面与 MCP 审计 ([#2360](https://github.com/MYTech-Co-LTD/platform-core/pull/2360), [6ab6dd5](https://github.com/MYTech-Co-LTD/platform-core/commit/6ab6dd59e08e07740784c329bd7de05e2cd0295a))
+- 【修复】notify: service-owned namespace 事件声明写入面 + C 政策注释收口 ([#2360](https://github.com/MYTech-Co-LTD/platform-core/pull/2360), [50b7cc7](https://github.com/MYTech-Co-LTD/platform-core/commit/50b7cc7a5f1f5bbdc729843bb38e3f9164bd0b9f))
+- 【修复】notify: wecom restore 同 enable 门，禁止绕过 NOTIFY_PUBLISH_REQUIRED ([#2360](https://github.com/MYTech-Co-LTD/platform-core/pull/2360), [a8b3be5](https://github.com/MYTech-Co-LTD/platform-core/commit/a8b3be53417576adf0a55f24e10bc2c6f0c3d908))
+- 【新增】notify: C service-owned namespace 与 HTTP 同执法 ([#2360](https://github.com/MYTech-Co-LTD/platform-core/pull/2360), [7397b63](https://github.com/MYTech-Co-LTD/platform-core/commit/7397b63a752576a55ca024357be80a8d1b81b759))
+- 【修复】notify: read face 按 requiredScope 裁剪 + C 排班 namespace 钉死 ([#2360](https://github.com/MYTech-Co-LTD/platform-core/pull/2360), [a739cf8](https://github.com/MYTech-Co-LTD/platform-core/commit/a739cf876a1c24280ccaa5c864cef34d843588ec))
+- 【新增】notify: agent 读面与 C channel 档 ([#2360](https://github.com/MYTech-Co-LTD/platform-core/pull/2360), [21ec44d](https://github.com/MYTech-Co-LTD/platform-core/commit/21ec44d2ea7bc8ff050c29f59defff21d1bac1a1))
+- 【修复】data: 能力目录 available 叠加 requiredScope 与 face 接缝测试 ([#2360](https://github.com/MYTech-Co-LTD/platform-core/pull/2360), [0b0b6e0](https://github.com/MYTech-Co-LTD/platform-core/commit/0b0b6e0fbe7884d087987264b73c20b7da1416e4))
+- 【新增】data: 能力目录 available/faceScope 与 agent-loop 过滤 ([#2360](https://github.com/MYTech-Co-LTD/platform-core/pull/2360), [01cc978](https://github.com/MYTech-Co-LTD/platform-core/commit/01cc97807bf651776272da270f2c7600a9929e87))
+- 【修复】data: agent face 审查修复（声明计数/头注/read 路由同源） ([#2360](https://github.com/MYTech-Co-LTD/platform-core/pull/2360), [f28d6f0](https://github.com/MYTech-Co-LTD/platform-core/commit/f28d6f013609ee26b370b5b18754ff1e272d4e4a))
+- 【新增】data: agent read/curated face 与 faceScope ([#2360](https://github.com/MYTech-Co-LTD/platform-core/pull/2360), [0c71cd1](https://github.com/MYTech-Co-LTD/platform-core/commit/0c71cd1062070c770019a9943e163498500ece88))
+- 【修复】server: agent MCP 网关失败隔离/定向刷新/分页校验与安全回归 ([#2360](https://github.com/MYTech-Co-LTD/platform-core/pull/2360), [6bbcdd4](https://github.com/MYTech-Co-LTD/platform-core/commit/6bbcdd4c879954fb513976a7a3bce61ded7b3636))
+- 【修复】server: agent MCP 网关审查修复（env/开关/字节/可用性/缓存刷新） ([#2360](https://github.com/MYTech-Co-LTD/platform-core/pull/2360), [df5c262](https://github.com/MYTech-Co-LTD/platform-core/commit/df5c262a3b984a6c6bc27f0edfe9b8d18ec32e75))
+- 【新增】server: agent MCP 网关与能力目录 ([#2360](https://github.com/MYTech-Co-LTD/platform-core/pull/2360), [11facc3](https://github.com/MYTech-Co-LTD/platform-core/commit/11facc3d97b1fde11f0c6cbb8e1ee8d63c69f1c1))
+- 【修复】server: 内部身份补租户封印与形状守卫 ([#2360](https://github.com/MYTech-Co-LTD/platform-core/pull/2360), [a35c85a](https://github.com/MYTech-Co-LTD/platform-core/commit/a35c85ac67fce652f368290af2e2bbcaae320229))
+- 【修复】server: 内部签名头验签按字节比长度并严格两段 ([#2360](https://github.com/MYTech-Co-LTD/platform-core/pull/2360), [cd77ed4](https://github.com/MYTech-Co-LTD/platform-core/commit/cd77ed4df85dc9ddf0ae5fa17998581b2bac5945))
+- 【新增】server: 内部签名身份与中间件 ([#2360](https://github.com/MYTech-Co-LTD/platform-core/pull/2360), [e60ece1](https://github.com/MYTech-Co-LTD/platform-core/commit/e60ece1c60d496c809c71c2857898b2ea4245d85))
+- 【新增】server: loader 暴露 mcpFaces ([#2360](https://github.com/MYTech-Co-LTD/platform-core/pull/2360), [171dfb2](https://github.com/MYTech-Co-LTD/platform-core/commit/171dfb2dc18c1499bdf4e23667d029e5f20838f2))
+- 【修复】sdk: mcpFaces 补 audiences 去重校验与负例覆盖 ([#2360](https://github.com/MYTech-Co-LTD/platform-core/pull/2360), [34a04fb](https://github.com/MYTech-Co-LTD/platform-core/commit/34a04fbeafedaeea13fbd847e604fb71406e9e8f))
+- 【新增】sdk: manifest 增加 mcpFaces 声明与校验 ([#2360](https://github.com/MYTech-Co-LTD/platform-core/pull/2360), [b6b379a](https://github.com/MYTech-Co-LTD/platform-core/commit/b6b379a683115ef88c368b65ee5d1e9074b26263))
+
+
 ## [0.309.1](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.309.0...v0.309.1) - 2026-11-16
 - 【修复】data: fct_request_fulfillment 增量窗口重建，清理源撤回行（#2378） ([#2382](https://github.com/MYTech-Co-LTD/platform-core/pull/2382), [77ec617](https://github.com/MYTech-Co-LTD/platform-core/commit/77ec6170d0f7347f06b690fff7560916ebf7c86f))
 
