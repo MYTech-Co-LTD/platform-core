@@ -40,8 +40,10 @@ const repoRoot = path.resolve(scriptsDir, '..')
 const serverDir = path.join(repoRoot, 'apps', 'server')
 
 // ---- 常量：本脚本是这些值的唯一事实源 ----
-const ORG = 'oa-smoke'
-const ORG_SLUG = 'oa-smoke'
+// 租户可用 `OA_SMOKE_ORG` 覆盖（真引擎 #123 起有 org 门：实例的 ENGINE_ORG 必须与这里逐字一致，
+// 否则**所有**引擎调用都会 403 ORG_MISMATCH——验收 acme 映射时必须两边同值）。
+const ORG = process.env.OA_SMOKE_ORG?.trim() || 'oa-smoke'
+const ORG_SLUG = ORG
 const TENANT_NAME = 'OA P1 验收租户'
 const SESSION_SECRET = 'oa-p1-smoke-secret-oa-p1-smoke!!' // ≥32（config.ts 强校验）
 const CASDOOR_CLIENT_ID = 'oa-smoke-client'
@@ -328,6 +330,18 @@ class FakeEngine {
     return `http://127.0.0.1:${this.port}`
   }
 
+  /**
+   * 单租户 org 门（与 case-engine #123 `checkOrg` 同口径，fail-closed）：
+   * 未携带 / 非字符串 / 空白 ⇒ 400 ORG_REQUIRED；不匹配 ⇒ 403 ORG_MISMATCH。
+   * @param {unknown} provided
+   * @returns {{ status: 400 | 403, error: string } | null}
+   */
+  #orgDenied(provided) {
+    if (typeof provided !== 'string' || provided.trim() === '') return { status: 400, error: 'ORG_REQUIRED' }
+    if (provided.trim() !== this.cfg.org) return { status: 403, error: 'ORG_MISMATCH' }
+    return null
+  }
+
   /** @param {string} caseId */
   caseOf(caseId) {
     const c = this.cases.get(caseId)
@@ -467,7 +481,8 @@ class FakeEngine {
     }
 
     if (method === 'POST' && p === '/cases') {
-      if (body?.org !== this.cfg.org) return reply(403, { error: 'ORG_MISMATCH' })
+      const denied = this.#orgDenied(body?.org)
+      if (denied !== null) return reply(denied.status, { error: denied.error })
       if (typeof body?.externalRef !== 'string' || body.externalRef.length === 0) {
         return reply(400, { error: 'EXTERNAL_REF_REQUIRED' })
       }
@@ -505,6 +520,8 @@ class FakeEngine {
     }
 
     if (method === 'GET' && p === '/cases') {
+      const denied = this.#orgDenied(url.searchParams.get('org'))
+      if (denied !== null) return reply(denied.status, { error: denied.error })
       const ref = url.searchParams.get('externalRef')
       const rows = [...this.cases.values()].filter((c) => ref === null || c.externalRef === ref)
       return reply(200, { cases: rows.map((c) => ({ caseId: c.caseId, status: c.status, currentNode: c.currentNode })) })
@@ -512,6 +529,8 @@ class FakeEngine {
 
     const getMatch = /^\/cases\/([^/]+)$/.exec(p)
     if (method === 'GET' && getMatch) {
+      const denied = this.#orgDenied(url.searchParams.get('org'))
+      if (denied !== null) return reply(denied.status, { error: denied.error })
       const c = this.cases.get(decodeURIComponent(getMatch[1]))
       if (c === undefined) return reply(404, { error: 'CASE_NOT_FOUND' })
       // 刻意延迟（头注纪律①）：并发决策用例要两个平台请求都先读到旧 currentNode
@@ -521,6 +540,8 @@ class FakeEngine {
 
     const decideMatch = /^\/cases\/([^/]+)\/decision$/.exec(p)
     if (method === 'POST' && decideMatch) {
+      const denied = this.#orgDenied(body?.org)
+      if (denied !== null) return reply(denied.status, { error: denied.error })
       const c = this.cases.get(decodeURIComponent(decideMatch[1]))
       if (c === undefined) return reply(404, { error: 'CASE_NOT_FOUND' })
       const action = String(body?.action ?? '')
@@ -576,9 +597,10 @@ class FakeEngine {
 
     const withdrawMatch = /^\/cases\/([^/]+)\/withdraw$/.exec(p)
     if (method === 'POST' && withdrawMatch) {
+      const denied = this.#orgDenied(body?.org)
+      if (denied !== null) return reply(denied.status, { error: denied.error })
       const c = this.cases.get(decodeURIComponent(withdrawMatch[1]))
       if (c === undefined) return reply(404, { error: 'CASE_NOT_FOUND' })
-      if (body?.org !== this.cfg.org) return reply(403, { error: 'ORG_MISMATCH' })
       if (c.status !== 'gate') return reply(409, { error: 'CASE_CLOSED' })
       // spec §10.4：仅「尚无任何节点决策事件」时允许撤回
       if (c.decisions.length > 0) return reply(409, { error: 'HAS_DECISIONS' })
@@ -635,7 +657,8 @@ async function engineHttp(method, p, body) {
  * @param {string} caseId
  */
 async function engineDetail(caseId) {
-  const res = await engineHttp('GET', `/cases/${encodeURIComponent(caseId)}`)
+  // 读面 org 走 query（case-engine #123）：缺 / 错都不是「case 不存在」，而是 400/403，必须显式带。
+  const res = await engineHttp('GET', `/cases/${encodeURIComponent(caseId)}?org=${encodeURIComponent(ORG)}`)
   if (res.status !== 200) throw new SmokeFailure(`引擎 GET /cases/${caseId} → ${res.status} ${res.text}`)
   const raw = json(res)
   // 真引擎：{ case, currentNode, plan, nodeDecisions, events }（原样）
@@ -666,7 +689,7 @@ async function engineDetail(caseId) {
  * @param {string} ref
  */
 async function engineByRef(ref) {
-  const res = await engineHttp('GET', `/cases?externalRef=${encodeURIComponent(ref)}`)
+  const res = await engineHttp('GET', `/cases?externalRef=${encodeURIComponent(ref)}&org=${encodeURIComponent(ORG)}`)
   const rows = json(res)?.cases ?? []
   if (rows.length === 0) return null
   return engineDetail(rows[0].id)
@@ -911,7 +934,7 @@ async function main() {
     const t = await pool.query(
       `insert into platform.tenant(slug, casdoor_org, product_name, login_methods)
        values ($1,$2,$3,'{password}')
-       on conflict (slug) do update set product_name = excluded.product_name
+       on conflict (slug) do update set casdoor_org = excluded.casdoor_org
        returning id`,
       [ORG_SLUG, ORG, TENANT_NAME],
     )
@@ -1436,9 +1459,30 @@ async function main() {
     })
     record(
       'neg.org-engine',
-      '403（引擎拒绝跨 org 建单，spec §10.2）',
+      '403 ORG_MISMATCH（引擎拒绝跨 org 建单，spec §10.2 / case-engine #123）',
       `${res.status} ${JSON.stringify(json(res))}`,
-      res.status === 403,
+      res.status === 403 && json(res)?.error === 'ORG_MISMATCH',
+    )
+    // 8a2. 缺 org：400 ORG_REQUIRED（fail-closed 的另一半；同样是 #123 的硬判据）
+    res = await engineHttp('POST', '/cases', {
+      externalRef: `forms:submission:org-missing-${SUF}`,
+      planVersion: 1,
+      provider: 'inapp',
+      type: 'approval',
+      title: 'org missing',
+      requesterId: U.u1,
+      plan: {
+        nodes: [{ key: 'a', title: 'A', approvers: [U.u1], quorum: 'all' }],
+        rejectionPolicy: 'first_reject_ends',
+        selfApproval: 'allow',
+        dedupe: 'first_occurrence',
+      },
+    })
+    record(
+      'neg.org-missing',
+      '400 ORG_REQUIRED（缺 org 不建单，case-engine #123）',
+      `${res.status} ${JSON.stringify(json(res))}`,
+      res.status === 400 && json(res)?.error === 'ORG_REQUIRED',
     )
     // 8b. 平台回调侧（真平台代码）：raw.org ≠ 会话 org → 403 ORG_MISMATCH
     res = await httpRequest({
