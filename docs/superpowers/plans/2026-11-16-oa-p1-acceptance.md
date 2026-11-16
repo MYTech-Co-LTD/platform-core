@@ -287,8 +287,10 @@ Mastra API running { url: 'http://localhost:13200/api' }
 两点口径说明（避免照抄错）：
 
 - **引擎代码里没有 `ENGINE_ORG` 这个 env**（`git grep ENGINE_ORG origin/main` = 0 命中）。
-  租户归属由平台 `platform.oa_engine` 登记行 + `POST /cases` 的 `body.org` 表达；本轮的 org 是
-  `oa-smoke`，`provider` 只有 `inapp`（能力面自报）。
+  租户归属由平台 `platform.oa_engine` 登记行 + `POST /cases` 的 `body.org` 表达；`provider` 只有
+  `inapp`（能力面自报）。本轮 smoke 的 org 用 `oa-smoke`（脚本自建租户，避免踩 acme 的本地演示数据）；
+  **任务单要求的 acme 映射在同一真引擎上由 §11 的 UI 轮实测**：引擎库 `cases` 里 804/805 的
+  `payload->>'org'` 都是 `acme`，审批通过/驳回都由真引擎回调驱动。
 - `NOTIFY_PLATFORM_BASE` 必须钉到一个**固定端口**（本轮 13300）——平台脚本的 `--real-engine`
   因此要求 `OA_SMOKE_PLATFORM_PORT`，端口随机会让真回调打到空端口，看起来像「引擎不回调」。
 
