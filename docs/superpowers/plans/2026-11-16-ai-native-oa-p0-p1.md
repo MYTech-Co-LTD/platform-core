@@ -1657,21 +1657,21 @@ cd /Users/duo/mytechcode/platform-core && git add modules/forms/manifest.yaml mo
 
 **Steps:**
 
-- [ ] **Step 1: 起本地栈**
+- [x] **Step 1: 起本地栈**（执行形态：验收脚本自起宿主子进程 + MockCasdoor，不跑 `dev:stack`；见验收记录 §0）
 
 ```bash
 cd /Users/duo/mytechcode/platform-core && pnpm dev:stack   # 起 pg + server + web
 # case-engine 用 docker compose 起 app/worker（或本地 node）
 ```
 
-- [ ] **Step 2: 种子**
+- [x] **Step 2: 种子**（脚本用独立租户 `oa-smoke`，不写 acme；引擎 = 假引擎，`platform.oa_engine` 仍走真登记行）
 
 - 建 tenant/org、`org_node` 10（负责人 u-lead）、`org_membership`（u1 在 10，u-lead 在 10）。
 - `platform.oa_engine` upsert：org=`acme`，baseUrl=`http://127.0.0.1:3100`，PAT secret。
 - 发布审批模板 `leave`（节点：dept_leader → HR 指定人）。
 - 发布事项模板 `leave`（mode=approval，schema：开始日期/结束日期/事由）。
 
-- [ ] **Step 3: 主路径**
+- [x] **Step 3: 主路径**
 
 1. `POST /defs/leave/submissions`（u1）→ 201，DB `submission.status=pending_approval`，`case_ref` 非空。
 2. 引擎 `GET /cases/:id` → status=gate，currentNode=leader。
@@ -1679,13 +1679,13 @@ cd /Users/duo/mytechcode/platform-core && pnpm dev:stack   # 起 pg + server + w
 4. 引擎进入 HR 节点；HR approve → case closed；回调 → `submission.status=approved`；`notify` 收件箱有 `forms.approval.decided`。
 5. 断言：审批事件数 = 2 个节点；无重复 `gate.node.decided`。
 
-- [ ] **Step 3b: 撤回路径**
+- [x] **Step 3b: 撤回路径**
 
 1. 新建一笔 pending 请假（u1）。
 2. 在任何节点决策前，u1 调 `POST /submissions/:id/withdraw` → 200；`submission.status=withdrawn`；引擎 case `closed`。
 3. 已有一个节点决策后再撤回 → 409，状态不变。
 
-- [ ] **Step 4: 负对照（全部必须过）**
+- [x] **Step 4: 负对照（全部必须过）**
 
 | 用例 | 期望 |
 |---|---|
@@ -1697,16 +1697,20 @@ cd /Users/duo/mytechcode/platform-core && pnpm dev:stack   # 起 pg + server + w
 | 并发两次 decision 同一节点 | 一个 200/409，不双落 |
 | 未声明事件 emit | 400 `EVENT_NOT_DECLARED`（用未声明 key 验证） |
 
-- [ ] **Step 5: 记录验收**
+- [x] **Step 5: 记录验收**
 
 把命令、输出摘要、时间（北京时间）写入 `docs/superpowers/plans/2026-11-16-oa-p1-acceptance.md`，附 `submission`/`case_events` 的关键行。
 
-- [ ] **Step 6: 提交**
+- [x] **Step 6: 提交**
 
 ```bash
 git add docs/superpowers/plans/2026-11-16-oa-p1-acceptance.md scripts/oa-p1-smoke.mjs
 git commit -m "test(oa): P1 请假端到端验收记录（#OA）"
 ```
+
+> 执行记录：2026-11-16 完成，25 条机检断言全过（含 7 类负对照）。结论与边界见
+> `docs/superpowers/plans/2026-11-16-oa-p1-acceptance.md`（真引擎未跑、企微通道因环境缺
+> 地址数据未送达——两处都在该文 §5 显式标注）。
 
 ---
 
