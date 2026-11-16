@@ -139,7 +139,12 @@ ENV COREPACK_HOME=/opt/corepack \
 RUN corepack enable
 # dbt 运行时（venv 隔离，不进系统 python）+ wget（HEALTHCHECK 用；slim 镜像默认没有）。
 # 国内镜像源同 deploy/dbt/Dockerfile：RUN 不继承 dockerd 代理，pip 直连 pypi 会被掐。
-RUN apt-get update \
+# apt 源换阿里云：deb.debian.org 在本机只有 ~20–40KB/s（实测每次构建多花 40 分钟）；
+# RUN 不继承 dockerd 代理，镜像源是唯一同时满足「可达 + 快 + 无需 CA」的路（与 pip 同源）。
+RUN if [ -f /etc/apt/sources.list.d/debian.sources ]; then \
+      sed -i 's|http://deb.debian.org|https://mirrors.aliyun.com|g; s|http://security.debian.org|https://mirrors.aliyun.com|g' /etc/apt/sources.list.d/debian.sources; \
+    fi \
+    && apt-get update \
     && apt-get install -y --no-install-recommends python3 python3-venv postgresql-client wget ca-certificates \
     && python3 -m venv /opt/dbt-venv \
     && /opt/dbt-venv/bin/pip install --no-cache-dir -i https://mirrors.aliyun.com/pypi/simple/ \

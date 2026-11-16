@@ -62,7 +62,13 @@ case "$SCOPE" in
     ;;
 esac
 
-R=${MATERIALIZE_REPO_DIR:-/opt/platform-core-data/platform-core}
+if [ "${MATERIALIZE_MODE:-host}" = container ]; then
+  # 容器模式：仓根由脚本自身位置推导（scripts/lemeng → ../..），镜像内即 /app。
+  _SELF_DIR=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
+  R=${MATERIALIZE_REPO_DIR:-$(CDPATH= cd -- "$_SELF_DIR/../.." && pwd)}
+else
+  R=${MATERIALIZE_REPO_DIR:-/opt/platform-core-data/platform-core}
+fi
 PG_CT=${MATERIALIZE_PG_CT:-openship-platform-core-shanhai-data-pg_duckdb}
 CONSOLE_CT=${MATERIALIZE_CONSOLE_CT:-openship-platform-core-shanhai-data-lemeng-console-3120}
 PLAT_CT=${MATERIALIZE_PLAT_CT:-openship-platform-core-shanhai-postgres}
@@ -92,8 +98,19 @@ mat_env_args() {
 #   `Database Error`（07:27 那轮 PASS=12 ERROR=41），而空闲期零重启 ⇒ 与 dbt test 阶段严格同步。
 #   串行化把峰值压到单连接；代价是物化时长约 ×1.5~2。**本函数体保持单行 printf**：
 #   `materialize.test.sh` 用「剥首行与闭括号行、取载荷首词」的方式抽取命令，插注释会打挂该断言。
+mat_profiles_dir() {
+  if [ "$MATERIALIZE_MODE" = container ]; then printf '%s' "$R/dbt"; else printf '%s' /usr/app; fi
+}
 mat_dbt_args() {
-  printf '%s ' build --profiles-dir /usr/app --threads 1
+  printf '%s ' build --profiles-dir "$(mat_profiles_dir)" --threads 1
+}
+# dbt 执行适配：宿主模式 = 一次性 dbt 镜像（原行为）；容器模式 = 镜像内 dbt CLI（cwd=dbt 工程）。
+mat_dbt() {
+  if [ "$MATERIALIZE_MODE" = container ]; then
+    ( cd "$R/dbt" && dbt "$@" )
+  else
+    docker run --rm --network "$NETWORK" -v "$R/dbt:/usr/app" $(mat_env_args) "$IMAGE" "$@"
+  fi
 }
 # **按域派生**的选择器（不是手抄名单）：三段都由「域身份 + 目录树」得出 ——
 #   `path:models/<域>`           本域的模型（其 schema tests 随之间接选中）
@@ -405,8 +422,7 @@ if [ "$SCOPE" = tables ]; then
   _sum_pass=''
   _sum_err=''
   while :; do
-    ( if DATA_PLANE_DOMAINS="$TABLES_DOMAIN" docker run --rm --network "$NETWORK" -v "$R/dbt:/usr/app" \
-        $(mat_env_args) "$IMAGE" $(mat_dbt_args) \
+    ( if DATA_PLANE_DOMAINS="$TABLES_DOMAIN" mat_dbt $(mat_dbt_args) \
         --select "$_select" $_excl 2>&1; then
       echo 0 >"$_rc"
     else
@@ -468,8 +484,7 @@ if [ "$SCOPE" = tick ]; then
   # 首次切增量（模型新增非空代理键等）需要一次 --full-refresh；由 env 显式开启，
   # **不设默认**——默认开会让每次 tick 都全量重建（慢且吃内存）。
   if [ -n "$TICK_FULL_REFRESH" ]; then _TFR=--full-refresh; else _TFR=''; fi
-  ( if DATA_PLANE_DOMAINS="$TICK_DOMAIN" docker run --rm --network "$NETWORK" -v "$R/dbt:/usr/app" \
-      $(mat_env_args) "$IMAGE" $(mat_dbt_args) $_TFR --select "$TICK_SELECT" --exclude "$TICK_EXCLUDE" 2>&1; then
+  ( if DATA_PLANE_DOMAINS="$TICK_DOMAIN" mat_dbt $(mat_dbt_args) $_TFR --select "$TICK_SELECT" --exclude "$TICK_EXCLUDE" 2>&1; then
     echo 0 >"$_rc"
   else
     echo $? >"$_rc"
@@ -522,8 +537,7 @@ if [ "$SCOPE" = audit ]; then
   echo "── audit: select=${_sel}（全史对账；分段 job）──"
   _log="$_WORK/dbt.audit.log"
   _rc="$_WORK/dbt.audit.rc"
-  ( if DATA_PLANE_DOMAINS="$TICK_DOMAIN" docker run --rm --network "$NETWORK" -v "$R/dbt:/usr/app" \
-      $(mat_env_args) "$IMAGE" test --profiles-dir /usr/app --threads 1 --select "$_sel" 2>&1; then
+  ( if DATA_PLANE_DOMAINS="$TICK_DOMAIN" mat_dbt test --profiles-dir "$(mat_profiles_dir)" --threads 1 --select "$_sel" 2>&1; then
     echo 0 >"$_rc"
   else
     echo $? >"$_rc"
@@ -584,8 +598,7 @@ if [ "$SCOPE" = hourly ]; then
     else
       _excl=''
     fi
-    ( if DATA_PLANE_DOMAINS="$TICK_DOMAIN" docker run --rm --network "$NETWORK" -v "$R/dbt:/usr/app" \
-        $(mat_env_args) "$IMAGE" $(mat_dbt_args) --select "$_select" $_excl 2>&1; then
+    ( if DATA_PLANE_DOMAINS="$TICK_DOMAIN" mat_dbt $(mat_dbt_args) --select "$_select" $_excl 2>&1; then
       echo 0 >"$_rc"
     else
       echo $? >"$_rc"
@@ -652,8 +665,7 @@ for _d in $(printf '%s' "$DOMAINS" | tr ',' ' '); do
   # 逐命令 env 赋值 ⇒ docker CLI 只看到这一个域，`-e DATA_PLANE_DOMAINS` 透传的就是它。
   # `--exclude`：全量档不写 tick 拥有的模型（见 FULL_EXCLUDE 注释）。
   if [ -n "$FULL_EXCLUDE" ]; then _EXC="--exclude ${FULL_EXCLUDE}"; else _EXC=''; fi
-  ( if DATA_PLANE_DOMAINS="$_d" docker run --rm --network "$NETWORK" -v "$R/dbt:/usr/app" \
-      $(mat_env_args) "$IMAGE" $(mat_dbt_args) --select "$(mat_dbt_select "$_d")" ${_EXC} --exclude 'tag:audit tag:audit_window' 2>&1; then
+  ( if DATA_PLANE_DOMAINS="$_d" mat_dbt $(mat_dbt_args) --select "$(mat_dbt_select "$_d")" ${_EXC} --exclude 'tag:audit tag:audit_window' 2>&1; then
     echo 0 >"$_rc"
   else
     echo $? >"$_rc"

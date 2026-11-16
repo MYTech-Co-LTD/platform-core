@@ -29,7 +29,10 @@ DBT_ARGS=$(extract mat_dbt_args)
 DBT_BODY=$(echo "$DBT_ARGS" | sed '1d;/^}/d')  # 剥掉函数定义行与闭括号行
 FIRST_WORD=$(echo "$DBT_BODY" | sed "s/printf '%s ' //" | awk 'NR==1{print $1}')  # 函数体是 printf 包装，剥掉取载荷首词
 check "dbt 命令首词是 build（全量 seed+model+test）" sh -c '[ "$1" = build ]' _ "$FIRST_WORD"
-check "带 --profiles-dir /usr/app" sh -c 'echo "$1" | grep -F -- "--profiles-dir /usr/app" >/dev/null' _ "$DBT_ARGS"
+PD=$(extract mat_profiles_dir 2>/dev/null || true)
+check "mat_profiles_dir 双模式：宿主 /usr/app + 容器 \$R/dbt" sh -c 'echo "$1" | grep -F "/usr/app" >/dev/null && echo "$1" | grep -F "\$R/dbt" >/dev/null' _ "${PD:-}"
+check "带 --profiles-dir（经 mat_profiles_dir 适配）" sh -c 'echo "$1" | grep -F -- "--profiles-dir" >/dev/null' _ "$DBT_ARGS"
+# 适配点：宿主模式 /usr/app；容器模式 $R/dbt（Wave 8，dbt 由平台 scheduler 在容器内执行）
 check "不含 --select（名单回来 = #677 假绿复发）" sh -c '! echo "$1" | grep -q -- "--select"' _ "$DBT_ARGS"
 check "不含任何 stg_/fct_ 模型名（按需名单的另一种长法）" sh -c '! echo "$1" | grep -Eq "stg_|fct_"' _ "$DBT_ARGS"
 
