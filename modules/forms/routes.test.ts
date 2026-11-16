@@ -386,14 +386,18 @@ describePg('forms 审批（OA P1）', () => {
         cases.set(caseId, { caseId, currentNode: 'leader', body })
         return { caseId, runId: 'run-1' }
       },
-      async getCase(id: string) { return cases.get(id) ?? { currentNode: 'leader' } },
-      async listCases() { return [] },
-      async decide(id: string, body: Record<string, unknown>) {
-        calls.push({ url: `/cases/${id}/decision`, body })
+      async getCase(id: string, org: string) {
+        // 查询面：org 走 query（case-engine #122 / T9 要求每次调用都携 org）
+        calls.push({ url: `/cases/${id}`, body: { org } })
+        return cases.get(id) ?? { currentNode: 'leader' }
+      },
+      async listCases(_org: string) { return [] },
+      async decide(id: string, org: string, body: Record<string, unknown>) {
+        calls.push({ url: `/cases/${id}/decision`, body: { ...body, org } })
         return { ok: true }
       },
-      async withdraw(id: string, body: Record<string, unknown>) {
-        calls.push({ url: `/cases/${id}/withdraw`, body })
+      async withdraw(id: string, org: string, body: Record<string, unknown>) {
+        calls.push({ url: `/cases/${id}/withdraw`, body: { ...body, org } })
         return { ok: true }
       },
     }
@@ -603,6 +607,8 @@ describePg('forms 审批（OA P1）', () => {
     expect(detail.submission.status).toBe('pending_approval')
     expect(detail.case.currentNode).toBe('leader')
     expect(detail.contract).toMatchObject({ schema: itemBody().schema })
+    // 引擎查询面必须携 org（T9 org 校验；缺省即 403）
+    expect(engine.calls.filter((c) => c.url === `/cases/${caseId}`).at(-1)!.body).toMatchObject({ org: OA_ORG })
 
     res = await req(appFor(stranger()), 'GET', `/approvals/${caseId}`)
     expect(res.status).toBe(403)
@@ -623,7 +629,7 @@ describePg('forms 审批（OA P1）', () => {
     res = await req(appFor(approver()), 'POST', `/approvals/${caseId}/decision`, { action: 'approve' })
     expect(res.status).toBe(200)
     const decideCall = engine.calls.filter((c) => c.url === `/cases/${caseId}/decision`).at(-1)!
-    expect(decideCall.body).toMatchObject({ nodeKey: 'leader', action: 'approve', decidedBy: 'u-lead' })
+    expect(decideCall.body).toMatchObject({ nodeKey: 'leader', action: 'approve', decidedBy: 'u-lead', org: OA_ORG })
   })
 
   it('回调：终态幂等（第二次 deduped，decided_at 不变）+ 通知事件一次；org 不一致 403', async () => {
@@ -690,6 +696,8 @@ describePg('forms 审批（OA P1）', () => {
     expect(res.status).toBe(200)
     expect(engine.calls.length).toBe(before + 1)
     expect(engine.calls.at(-1)!.url).toMatch(/\/withdraw$/)
+    // 撤回也必须携 org（引擎按它做租户校验）
+    expect(engine.calls.at(-1)!.body).toMatchObject({ org: OA_ORG, actor: 'u1', reason: '计划取消' })
 
     const { rows } = await pool.query('select status, withdrawn_at from forms.submission where id=$1', [id])
     expect(rows[0].status).toBe('withdrawn')
@@ -713,8 +721,8 @@ describePg('forms 审批（OA P1）', () => {
   it('建 case 失败补偿：submission 标 withdrawn（不留 pending 孤儿）+ 审计', async () => {
     const broken = {
       async createCase(): Promise<{ caseId: string }> { throw new Error('engine down') },
-      async getCase(): Promise<never> { throw new Error('engine down') },
-      async listCases(): Promise<never[]> { return [] },
+      async getCase(_id: string, _org: string): Promise<never> { throw new Error('engine down') },
+      async listCases(_org: string): Promise<never[]> { return [] },
       async decide(): Promise<never> { throw new Error('engine down') },
       async withdraw(): Promise<never> { throw new Error('engine down') },
     }

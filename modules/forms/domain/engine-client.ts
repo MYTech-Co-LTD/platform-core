@@ -17,12 +17,15 @@ import type { OaEnginePort } from '@platform/sdk'
 import { FormsError } from './errors'
 
 export interface EngineClient {
+  /** createCase 的 org 随 body 携带（spec §10.2）。 */
   createCase(body: Record<string, unknown>): Promise<{ caseId: string; runId?: string }>
-  getCase(id: string): Promise<Record<string, unknown>>
-  listCases(q: Record<string, string>): Promise<unknown>
-  /** 决策代理（spec §10.3）：nodeKey 必须是引擎的当前节点；平台已做数据授权。 */
-  decide(id: string, body: Record<string, unknown>): Promise<unknown>
-  withdraw(id: string, body: Record<string, unknown>): Promise<unknown>
+  /** org 必填（case-engine #122 / #123）：单租户引擎校验 org==ENGINE_ORG；
+   *  缺失 400 ORG_REQUIRED、不匹配 403 ORG_MISMATCH——**每次调用都必须带**。 */
+  getCase(id: string, org: string): Promise<Record<string, unknown>>
+  listCases(org: string, q: Record<string, string>): Promise<unknown>
+  /** 决策代理（spec §10.3）：nodeKey 必须是引擎的当前节点；平台已做数据授权。org 随 body 携带。 */
+  decide(id: string, org: string, body: Record<string, unknown>): Promise<unknown>
+  withdraw(id: string, org: string, body: Record<string, unknown>): Promise<unknown>
 }
 
 /** 引擎返回非 2xx：保留 status 供 routes 原样映射（409 = 已终结/已决策，不是平台故障）。 */
@@ -62,13 +65,16 @@ export function createEngineClient(cfg: {
   }
   return {
     createCase: (body) => call('/cases', { method: 'POST', body: JSON.stringify(body) }),
-    getCase: (id) => call(`/cases/${encodeURIComponent(id)}`),
-    listCases: (q) => call(`/cases?${new URLSearchParams(q)}`),
-    decide: (id, body) => call(`/cases/${encodeURIComponent(id)}/decision`, {
-      method: 'POST', body: JSON.stringify(body),
+    // 读面：org 走 query（case-engine #122 / #123 定案：GET /cases、GET /cases/:id 校验 query org；
+    // 缺失 400 ORG_REQUIRED、不匹配 403 ORG_MISMATCH）。旧引擎未知 query 参数忽略，向后兼容。
+    getCase: (id, org) => call(`/cases/${encodeURIComponent(id)}?${new URLSearchParams({ org })}`),
+    listCases: (org, q) => call(`/cases?${new URLSearchParams({ ...q, org })}`),
+    // 写面：org 走 body（与 createCase / withdraw 同形；body 里的同名字段不覆盖显式入参）。
+    decide: (id, org, body) => call(`/cases/${encodeURIComponent(id)}/decision`, {
+      method: 'POST', body: JSON.stringify({ ...body, org }),
     }),
-    withdraw: (id, body) => call(`/cases/${encodeURIComponent(id)}/withdraw`, {
-      method: 'POST', body: JSON.stringify(body),
+    withdraw: (id, org, body) => call(`/cases/${encodeURIComponent(id)}/withdraw`, {
+      method: 'POST', body: JSON.stringify({ ...body, org }),
     }),
   }
 }
