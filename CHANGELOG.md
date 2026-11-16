@@ -11,6 +11,10 @@
 
 ## [Unreleased]
 
+## [0.312.0](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.311.0...v0.312.0) - 2026-11-16
+- 【新增】data: 管线地图看采集流程——节点级步骤给人读 (#2397) ([#2398](https://github.com/MYTech-Co-LTD/platform-core/pull/2398), [d6057f1](https://github.com/MYTech-Co-LTD/platform-core/commit/d6057f15ed4d8f545c3697c8b0bbafbb47de9102))
+
+
 ## [0.311.0](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.310.2...v0.311.0) - 2026-11-16
 - 【新增】forms: wecom_native 绑定资产与发布门 (#2392) ([#2393](https://github.com/MYTech-Co-LTD/platform-core/pull/2393), [072289a](https://github.com/MYTech-Co-LTD/platform-core/commit/072289af1d97417d177a769fb3d261a66a8a1864))
 - 【新增】oa: 审批应用凭据与标准审批镜像表（#2385） ([#2389](https://github.com/MYTech-Co-LTD/platform-core/pull/2389), [88dc884](https://github.com/MYTech-Co-LTD/platform-core/commit/88dc884bdbacb733d46eef29a781f8b0ed3aca44))
