@@ -280,6 +280,21 @@ describePg('agent 能力网关 e2e：权限矩阵（真 PG + 真模块装配）'
     expect(forms.sort()).toEqual([...FORMS_MANAGE_TOOLS].sort())
     expect(names.filter((n) => /publish|rollback|retire/.test(n))).toEqual([])
 
+    // manage 面的**调用路径**真通：经网关调只读的 data__list_metrics（走真 DB 的
+    // loadMergedCatalog）——列表里有工具 ≠ 转发链（内部身份/租户 host/门卫）无恙，
+    // 这里以一次真转发成功证明 B 的 manage face 端到端可达。
+    const called = await rpc(h, {
+      jsonrpc: '2.0', id: 'lm', method: 'tools/call',
+      params: { name: 'data__list_metrics', arguments: {} },
+    })
+    expect(called.status).toBe(200)
+    const cb = (await called.json()) as { result: { content: Array<{ text: string }>; isError: boolean }; error?: unknown }
+    expect(cb.error).toBeUndefined()
+    expect(cb.result.isError, 'data__list_metrics 应成功（manage face 转发可达）').toBe(false)
+    const payload = JSON.parse(cb.result.content[0]!.text) as { bases: unknown[]; custom: unknown[] }
+    expect(Array.isArray(payload.bases), '回包应是 list_metrics 的业务形状（bases 数组）').toBe(true)
+    expect(Array.isArray(payload.custom)).toBe(true)
+
     const caps = await capabilities(h)
     expect(caps.notes).toEqual(expect.arrayContaining([
       expect.stringContaining('forms:publish'),
@@ -334,33 +349,46 @@ describePg('agent 能力网关 e2e：权限矩阵（真 PG + 真模块装配）'
       expect(body.result.isError, `${name} 应 isError=true`).toBe(true)
       expect(JSON.parse(body.result.content[0]!.text)).toMatchObject({ reason: 'c_tool_not_allowed', tool: name })
     }
+
+    // 不带 `x-agent-profile` 的变体：整个**真实 HTTP 中间件栈**（internal-identity → pat →
+    // 企微闸 → 启用闸 → 声明门卫 → 模块）跑完仍按 channel 拒——缺 profile 头不是绕行口，
+    // 执法依据只有 identity.channel。
+    const bare = await modReq('/api/modules/notify/mcp-manage', WECOM_HEADERS,
+      { jsonrpc: '2.0', id: 3, method: 'tools/call', params: { name: 'propose_rule', arguments: {} } })
+    expect(bare.status, '不带 profile 头也应 HTTP 200（工具级错误）').toBe(200)
+    const bb = (await bare.json()) as { result: { content: Array<{ text: string }>; isError: boolean } }
+    expect(bb.result.isError).toBe(true)
+    expect(JSON.parse(bb.result.content[0]!.text)).toMatchObject({ reason: 'c_tool_not_allowed', tool: 'propose_rule' })
   })
 
-  it('用例 7｜C 的 namespace 服务端钉死：删 NOTIFY_WECOM_NAMESPACE ⇒ fail-closed；配上 ⇒ 正常', async () => {
-    const call = (id: number) => rpc(WECOM_HEADERS, {
-      jsonrpc: '2.0', id, method: 'tools/call',
-      params: { name: 'notify__list_schedules', arguments: {} },
-    })
-
+  it('用例 7｜C 的 namespace 服务端钉死：删 NOTIFY_WECOM_NAMESPACE ⇒ fail-closed；配上 ⇒ 模型参数被忽略', async () => {
     // ① 删掉部署钉子 ⇒ 排班工具 fail-closed：namespace_unconfigured（不猜、不回落 org）。
     delete process.env.NOTIFY_WECOM_NAMESPACE
-    const r1 = await call(1)
+    const r1 = await rpc(WECOM_HEADERS, {
+      jsonrpc: '2.0', id: 1, method: 'tools/call',
+      params: { name: 'notify__list_schedules', arguments: {} },
+    })
     expect(r1.status).toBe(200)
     const b1 = (await r1.json()) as { result: { content: Array<{ text: string }>; isError: boolean }; error?: unknown }
     expect(b1.error).toBeUndefined()
     expect(b1.result.isError).toBe(true)
     expect(JSON.parse(b1.result.content[0]!.text).reason).toBe('namespace_unconfigured')
 
-    // ② 配上 ⇒ 不再是 namespace_unconfigured（空列表/正常结果均可）——证明 namespace
-    //    由**服务端按 channel 取 env**，模型参数里的 namespace 改变不了它。
+    // ② 配上钉子 + **模型在参数里塞 namespace:'rogue'** ⇒ 调用仍成功，且回包里的 namespace
+    //    是服务端钉的 env 值、不是 'rogue'——namespace 由**服务端按 channel 取 env**，
+    //    模型参数改变不了它（mcp.ts 在调排班工具前把 args.namespace 覆写成钉子）。
     process.env.NOTIFY_WECOM_NAMESPACE = 'acme_openclaw'
-    const r2 = await call(2)
+    const r2 = await rpc(WECOM_HEADERS, {
+      jsonrpc: '2.0', id: 2, method: 'tools/call',
+      params: { name: 'notify__list_schedules', arguments: { namespace: 'rogue' } },
+    })
     expect(r2.status).toBe(200)
     const b2 = (await r2.json()) as typeof b1
     expect(b2.error).toBeUndefined()
-    const payload = JSON.parse(b2.result.content[0]!.text) as Record<string, unknown>
-    expect(payload.reason ?? payload.code, `不该再是 namespace_unconfigured：${b2.result.content[0]!.text}`)
-      .not.toBe('namespace_unconfigured')
+    expect(b2.result.isError, `应成功（模型参数不该引起失败）：${b2.result.content[0]!.text}`).toBe(false)
+    const payload = JSON.parse(b2.result.content[0]!.text) as { namespace?: string; schedules?: unknown[] }
+    expect(payload.namespace, '回包 namespace 应是服务端 env 钉的值，不是模型塞的 rogue').toBe('acme_openclaw')
+    expect(Array.isArray(payload.schedules), 'list_schedules 应回 schedules 数组（可为空）').toBe(true)
   })
 
   it('用例 8｜伪造头：网关剥掉客户端同名头（200 + 仍 reader 的 8 读工具）；直连模块验签失败 401 fail-closed', async () => {
