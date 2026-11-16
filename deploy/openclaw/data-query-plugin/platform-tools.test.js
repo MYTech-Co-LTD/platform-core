@@ -108,8 +108,16 @@ test("超时：AbortSignal 触发 ⇒ GATEWAY_TIMEOUT（不让工具长拖）", 
   const hang = (_url, init) => new Promise((_resolve, reject) => {
     init.signal.addEventListener("abort", () => reject(Object.assign(new Error("aborted"), { name: "TimeoutError" })));
   });
-  const r = await callGateway({ ...GW, method: "tools/list", fetchImpl: hang, timeoutMs: 5 });
-  assert.equal(r.error, "GATEWAY_TIMEOUT");
+  // 内部超时定时器已 unref（不挡进程退出，Node 22 实测：它成为唯一挂起句柄时事件循环
+  // 直接 drain、测试被判 cancelled）。测试要等它触发，须自己撑住事件循环（ref'd 短定时器，
+  // await 结束即清——正常 5ms 内返回，100ms 只是兜底上限）。
+  const keepAlive = setTimeout(() => {}, 100);
+  try {
+    const r = await callGateway({ ...GW, method: "tools/list", fetchImpl: hang, timeoutMs: 5 });
+    assert.equal(r.error, "GATEWAY_TIMEOUT");
+  } finally {
+    clearTimeout(keepAlive);
+  }
 });
 
 test("调用方取消：signal abort ⇒ GATEWAY_CANCELLED（不误报不可达/超时）", async () => {

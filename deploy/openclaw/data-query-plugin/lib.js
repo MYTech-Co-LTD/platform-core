@@ -435,50 +435,68 @@ export async function callGateway(opts) {
   } = opts;
   if (!channelKey) return { error: "CHANNEL_KEY_MISSING" };
   if (!userId) return { error: "USERID_MISSING" };
-  const timeout = AbortSignal.timeout(timeoutMs);
+  // 手动超时（不用 AbortSignal.timeout）：它在 Node 22 下创建的内部定时器不被清理，
+  // 测试提前返回后仍挂在事件循环里（ERR_TEST_FAILURE 级联）。手动 controller + 定时器
+  // unref（不阻止进程退出）+ finally 里 clearTimeout（所有返回路径都清干净）。
+  let timedOut = false;
+  const controller = new AbortController();
+  const timer = setTimeout(() => {
+    timedOut = true;
+    controller.abort();
+  }, timeoutMs);
+  timer.unref?.();
   const combined = signal && typeof AbortSignal.any === "function"
-    ? AbortSignal.any([signal, timeout])
-    : timeout;
-  let res;
+    ? AbortSignal.any([signal, controller.signal])
+    : controller.signal;
   try {
-    res = await fetchImpl(`${apiBase}/mcp`, {
-      method: "POST",
-      headers: {
-        "content-type": "application/json",
-        "x-channel-key": channelKey,
-        "x-wecom-userid": userId,
-        ...(sessionId ? { "x-session-id": String(sessionId) } : {}),
-      },
-      body: JSON.stringify({ jsonrpc: "2.0", id: `oc-${Date.now()}`, method, params }),
-      signal: combined,
-    });
-  } catch (e) {
-    // 调用方主动取消（openclaw 工具 ctx 的 signal）优先于超时判断——别把「用户不等了」
-    // 报成网络不可达；文案「调用已取消」让模型不再重试。
-    const cancelled = cancellationIfAborted(signal);
-    if (cancelled) return cancelled;
-    if (timeout.aborted) return { error: "GATEWAY_TIMEOUT", detail: `超过 ${timeoutMs}ms` };
-    return { error: "GATEWAY_UNREACHABLE", detail: (e && e.message) || String(e) };
+    let res;
+    try {
+      res = await fetchImpl(`${apiBase}/mcp`, {
+        method: "POST",
+        headers: {
+          "content-type": "application/json",
+          "x-channel-key": channelKey,
+          "x-wecom-userid": userId,
+          ...(sessionId ? { "x-session-id": String(sessionId) } : {}),
+        },
+        body: JSON.stringify({ jsonrpc: "2.0", id: `oc-${Date.now()}`, method, params }),
+        signal: combined,
+      });
+    } catch (e) {
+      // 调用方主动取消（openclaw 工具 ctx 的 signal）优先于超时判断——别把「用户不等了」
+      // 报成网络不可达；文案「调用已取消」让模型不再重试。
+      const cancelled = cancellationIfAborted(signal);
+      if (cancelled) return cancelled;
+      // 定时器触发的 abort ⇒ 超时（timedOut 区分；controller.signal.aborted 同义兜底）。
+      if (timedOut || controller.signal.aborted) {
+        return { error: "GATEWAY_TIMEOUT", detail: `超过 ${timeoutMs}ms` };
+      }
+      return { error: "GATEWAY_UNREACHABLE", detail: (e && e.message) || String(e) };
+    }
+    let body;
+    try {
+      body = await res.json();
+    } catch {
+      // 响应体读取阶段被取消同样归为取消（拿到头之后断开 ≠ 网关回了坏包）。
+      const cancelled = cancellationIfAborted(signal);
+      if (cancelled) return cancelled;
+      return { error: "GATEWAY_BAD_RESPONSE", status: res.status };
+    }
+    if (!res.ok) {
+      // 鉴权闸回的是 HTTP 错误 + `{error}`（不是 JSON-RPC 信封）：归一成同一种错误形状。
+      const code = body && typeof body.error === "string" ? body.error : `HTTP_${res.status}`;
+      return {
+        error: code,
+        status: res.status,
+        ...(body && typeof body.detail === "string" ? { detail: body.detail } : {}),
+      };
+    }
+    return body;
+  } finally {
+    // 成功 / HTTP 错误 / 坏回包 / 取消 / 超时，每条返回路径都清定时器（unref 只是不挡退出，
+    // 显式清理才让测试进程不被短定时器挂住到点）。
+    clearTimeout(timer);
   }
-  let body;
-  try {
-    body = await res.json();
-  } catch {
-    // 响应体读取阶段被取消同样归为取消（拿到头之后断开 ≠ 网关回了坏包）。
-    const cancelled = cancellationIfAborted(signal);
-    if (cancelled) return cancelled;
-    return { error: "GATEWAY_BAD_RESPONSE", status: res.status };
-  }
-  if (!res.ok) {
-    // 鉴权闸回的是 HTTP 错误 + `{error}`（不是 JSON-RPC 信封）：归一成同一种错误形状。
-    const code = body && typeof body.error === "string" ? body.error : `HTTP_${res.status}`;
-    return {
-      error: code,
-      status: res.status,
-      ...(body && typeof body.detail === "string" ? { detail: body.detail } : {}),
-    };
-  }
-  return body;
 }
 
 /** 取 MCP content 里第一个文本项并试解 JSON；解不出就把原文包成 `{text}`（details 仍可读）。 */
