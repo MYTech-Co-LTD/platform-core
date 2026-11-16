@@ -11,6 +11,10 @@
 
 ## [Unreleased]
 
+## [0.306.6](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.306.5...v0.306.6) - 2026-11-16
+- 【修复】data: 容器模式 profiles/target 放可写目录（#2361） ([#2362](https://github.com/MYTech-Co-LTD/platform-core/pull/2362), [6bb74b7](https://github.com/MYTech-Co-LTD/platform-core/commit/6bb74b711b291214a5706859073efaea6f37aba8))
+
+
 ## [0.306.5](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.306.4...v0.306.5) - 2026-11-16
 - 【修复】deploy: apt 阿里云源改用 http（#2358） ([#2359](https://github.com/MYTech-Co-LTD/platform-core/pull/2359), [05212a4](https://github.com/MYTech-Co-LTD/platform-core/commit/05212a4fbd6441f9878f16d5e7a26dc90835442b))
 
