@@ -867,13 +867,16 @@ it('未知 approver source 拒绝', () => {
     key: 'a', title: 'A', approvers: [{ source: 'boss' }] }] }))
     .toMatchObject({ ok: false, code: 'APPROVER_SOURCE_UNKNOWN' })
 })
-it('P1 明确拒绝 block_runtime 与 auto_approve（不静默降级）', () => {
+it('P1 明确拒绝 block_runtime / auto_approve / all_must_decide（不静默降级）', () => {
   expect(validateApprovalBody({ provider: 'inapp', nodes: [{
     key: 'a', title: 'A', approvers: [{ source: 'user', users: ['u'] }], onTimeout: 'auto_approve' }] }))
     .toMatchObject({ ok: false, code: 'AUTO_APPROVE_UNSUPPORTED' })
   expect(validateApprovalBody({ provider: 'inapp', nodes: [{
     key: 'a', title: 'A', approvers: [{ source: 'user', users: ['u'] }] }], emptyNode: 'block_runtime' }))
     .toMatchObject({ ok: false, code: 'EMPTY_NODE_MODE_UNSUPPORTED' })
+  expect(validateApprovalBody({ provider: 'inapp', nodes: [{
+    key: 'a', title: 'A', approvers: [{ source: 'user', users: ['u'] }] }], rejectionPolicy: 'all_must_decide' }))
+    .toMatchObject({ ok: false, code: 'REJECTION_POLICY_UNSUPPORTED' })
 })
 ```
 
@@ -947,6 +950,7 @@ export function validateApprovalBody(input: unknown):
     if (node.onTimeout === 'auto_approve') return fail('AUTO_APPROVE_UNSUPPORTED', 'P1 不支持自动通过；请用 escalate/notify')
   }
   if (b.emptyNode === 'block_runtime') return fail('EMPTY_NODE_MODE_UNSUPPORTED', 'P1 只支持 block_publish；运行时阻塞在 P2 开')
+  if (b.rejectionPolicy === 'all_must_decide') return fail('REJECTION_POLICY_UNSUPPORTED', 'P1 只支持 first_reject_ends；all_must_decide 与 deriveCurrentNode 契约冲突，P2 再开')
   return { ok: true, body: {
     provider: 'inapp', nodes: nodes as ApprovalNode[],
     conditions: (b.conditions as ApprovalBody['conditions']) ?? [],
@@ -1470,6 +1474,8 @@ intake（append intake 事件, status=routing）
 
 循环条件：`outcome === 'next' && index < nodes.length`；`outcome === 'reject'` 立即结束。节点集合输入输出同形（Mastra `dountil` 约束）。
 
+> 实现注记（2026-11-16 实测）：节点 SLA **不要**和主 run 用同一个 `sleepUntil`——Mastra 1.78 会让主 run 处于 running，之后 resume 抛 `WORKFLOW_RUN_NOT_SUSPENDED`。用独立 `case-node-sla` run 承载定时，到点发超时事件。另：P1 的 `normalizePlan` 明确拒绝 `rejectionPolicy=all_must_decide`（与 P0 `deriveCurrentNode` 契约冲突），不静默降级。
+
 - [ ] **Step 5: 注册与路由**
 
 `mastra.ts`：`POST /cases` 若 body 带 `plan`（`planVersion=1`）→ 走 `case-approval`，否则走现有 `case-intake`。`GET /cases/:id` 返回 `plan`、`currentNode`、`nodeDecisions`（从 `cases.plan` + `case_node_decisions` 推导；不要重复实现一套节点状态推导在平台侧）。
@@ -1732,7 +1738,8 @@ git commit -m "test(oa): P1 请假端到端验收记录（#OA）"
 - AI 生成工具面不在 P1；P1 先用 console 手工建模板（AI 起草复用现有 `/generate` 路径，未接审批 DSL）。
 - 移动端用响应式 console 页承接；独立 `/m` 壳接入后置。
 - 采集轮次/协作/标准审批镜像不在 P1。
-- 节点级 SLA 在 P1 只落 `slaHours` 字段与超时事件；自动升级动作在 P1.5（先保证不静默）。
+- 节点级 SLA 在 P1 只落 `slaHours` 字段与超时事件；自动升级动作在 P1.5（先保证不静默）。实现用**独立 `case-node-sla` run**（Mastra 1.78 `sleepUntil` 不能与主 run 的 `suspend` 同 run）。
+- `rejectionPolicy` P1 只支持 `first_reject_ends`；`all_must_decide` 与 P0 `deriveCurrentNode` 契约冲突，P2 再开，平台发布门显式拒绝（不静默降级）。
 
 ### Placeholder scan
 

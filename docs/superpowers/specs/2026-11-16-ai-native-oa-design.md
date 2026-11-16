@@ -401,7 +401,7 @@ open ──▶ in_progress ──▶ done
 | `nodes[].onTimeout` | `escalate` \| `notify` \| `auto_approve` | 超时动作；`auto_approve` 默认禁用，需平台管理员显式开 |
 | `nodes[].escalateTo[]` | `ApproverSource` | 超时/失效升级对象 |
 | `conditions[]` | 条件加节点 | 提交时求值；声明顺序；可多条 |
-| `rejectionPolicy` | `first_reject_ends` \| `all_must_decide` | 默认 `first_reject_ends` |
+| `rejectionPolicy` | `first_reject_ends` | 默认 `first_reject_ends`；**P1 只支持这一档**（`all_must_decide` 与 P0 `deriveCurrentNode`「驳回即当前节点」契约冲突，P2 再开） |
 | `selfApproval` | `skip` \| `allow` \| `forbid` | 默认 `skip` |
 | `dedupe` | `first_occurrence` \| `allow_repeat` | 默认 `first_occurrence` |
 | `emptyNode` | `block_publish` \| `block_runtime` | 默认 `block_publish` |
@@ -431,7 +431,7 @@ open ──▶ in_progress ──▶ done
 | quorum = any | 首个 approve 即节点通过；其余待办关闭（事件 `gate.node.closed`） |
 | quorum = n | 第 n 个 approve 通过；n > 解析人数 ⇒ 发布 dry-run 失败 |
 | 条件求值 | 提交时、按声明顺序；命中的 `addNode` 追加在 `anchor` 之后（缺省追加在末尾）；可多条 |
-| 节点 SLA | 引擎 `sleepUntil(slaDueAt)` + 超时事件；`escalate` 触发升级，`notify` 只提醒，`auto_approve` 需显式开启 |
+| 节点 SLA | 引擎用**独立 `case-node-sla` run** 承载（Mastra 1.78 实测：`sleepUntil` 与主 run 的 `suspend` 不能同 run，否则主 run 处于 running、resume 抛 `WORKFLOW_RUN_NOT_SUSPENDED`）；超时事件驱动升级/提醒。`auto_approve` P1 拒绝 |
 | 审批意见 | approve 可选；reject/veto 必填（产品约束，服务端强制） |
 
 ### 8.3 发布门
@@ -584,7 +584,7 @@ POST {platform}/api/modules/forms/approval-callback
 | E4 | `CompositeDecisionGate` + `inapp` provider | S | 平台不建外部单；挂起/恢复走现有端点 |
 | E5 | `case-intake` 节点循环（`dountil` + `suspend`） | M | 逐节点推进；与现有单 gate 兼容迁移 |
 | E6 | quorum / 驳回短路 / self-approval / dedupe | M | 纯函数 + 事件；DSL 判定表落地 |
-| E7 | 节点 SLA（`sleepUntil` + 超时事件 + 升级） | S–M | 用 Mastra 原生定时，不新增扫描 |
+| E7 | 节点 SLA（独立 `case-node-sla` run + 超时事件 + 升级） | S–M | Mastra 1.78 实测 `sleepUntil` 与主 run 的 `suspend` 不能同 run；独立 run 是已验证形态 |
 | E8 | 逐审批人事件 → 平台 notify | S | 事件必须先在 manifest 声明（D13） |
 | E9 | 协作 `case_task` / `case_participant` + 任务流 | M | P4；Mastra 原生原语 |
 | E10 | 状态词表扩展（P4） | S | CHECK + 常量两处同步，expand-contract |
