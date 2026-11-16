@@ -1,8 +1,10 @@
 // mcp.test.ts — agent 工具面：24 工具（16 消息 + 8 排班）、无 publish/channel、
-// 排班不接受通道参数、草稿不发布、试发只给自己
+// 排班不接受通道参数、草稿不发布、试发只给自己；C（wecom）channel 档 + 读面。
 import { describe, it, expect, beforeAll, afterAll, beforeEach } from 'vitest'
+import { Hono } from 'hono'
 import { Pool } from 'pg'
-import type { ChannelAddressResolver, NotificationEventDecl } from '@platform/sdk'
+import { REQUESTER_CHANNEL } from '@platform/sdk'
+import type { ChannelAddressResolver, Identity, NotificationEventDecl, RequesterVars } from '@platform/sdk'
 import notifyV2 from './index'
 import { callTool, toolDefs } from './mcp'
 import { NOTIFY_TOOLS } from './mcp-tools'
@@ -27,18 +29,43 @@ const addresses: ChannelAddressResolver = {
 describe('notify mcp tool face', () => {
   it('恰 24 个工具，无 publish/channel', () => {
     expect(NOTIFY_TOOLS).toHaveLength(24)
-    expect(toolDefs()).toHaveLength(24)
+    expect(toolDefs({ channel: 'pat' })).toHaveLength(24)
     expect(NOTIFY_TOOLS.some((t) => /publish|channel/.test(t.name))).toBe(false)
+  })
+
+  it('B（pat/session）仍 24；C（wecom）只见 agent-safe 子集', () => {
+    expect(toolDefs({ channel: 'pat' })).toHaveLength(24)
+    expect(toolDefs({ channel: 'session' })).toHaveLength(24)
+    const names = toolDefs({ channel: 'wecom' }).map((t) => t.name)
+    expect(names).toContain('create_agent_rule')
+    expect(names).toContain('create_agent_template')
+    expect(names).toContain('send_message')
+    expect(names).toContain('create_schedule')
+    expect(names).not.toContain('propose_rule')
+    expect(names).not.toContain('update_rule')
+    expect(names).not.toContain('set_rule_enabled')
+    expect(names).not.toContain('draft_template')
+  })
+
+  it('读面（mode=read）只投影非 mutating 工具', () => {
+    const defs = toolDefs({ channel: 'pat', mode: 'read' })
+    const names = defs.map((t) => t.name)
+    expect(names).toContain('list_rules')
+    expect(names).toContain('list_schedules')
+    expect(names).not.toContain('propose_rule')
+    expect(names).not.toContain('send_test')
+    expect(defs).toHaveLength(NOTIFY_TOOLS.filter((t) => !t.mutating).length)
   })
 })
 
 describePg('notify mcp handlers', () => {
   let pool: Pool
   const deps = () => ({
-    pool, org: ORG, userId: 'u1',
+    pool, org: ORG, userId: 'u1', channel: 'pat' as const,
     scopes: ['notify:manage', 'notify:publish', 'notify:emit'],
     events, addresses,
   })
+  const depsCh = (channel: 'pat' | 'session' | 'wecom') => ({ ...deps(), channel })
 
   beforeAll(async () => {
     pool = new Pool({ connectionString: url })
@@ -353,7 +380,138 @@ describePg('notify mcp handlers', () => {
     expect((JSON.parse(out.text) as { reason: string }).reason).toBe('rule_id_reserved')
   })
 
-  it('JSON-RPC /mcp-manage tools/list 返回 21 工具', async () => {
+  // ── C 档（wecom channel 执法，spec 2026-11-16 §6.4 / R9 / R11）────────────────
+  it('wecom 直连不带 profile、伪造 full ⇒ 仍拒 propose_rule', async () => {
+    const out = await callTool(depsCh('wecom'), 'propose_rule', {
+      eventKey: 'm.a.b', recipientKey: 'approver', templateKey: 't1', channels: ['wecom_default'],
+    })
+    expect(out.isError).toBe(true)
+    expect((JSON.parse(out.text) as { reason: string }).reason).toBe('c_tool_not_allowed')
+  })
+
+  it('读面 callTool 拒 mutating 工具', async () => {
+    const out = await callTool({ ...deps(), mode: 'read' }, 'propose_rule', {
+      eventKey: 'm.a.b', recipientKey: 'approver', templateKey: 't1', channels: ['wecom_default'],
+    })
+    expect(out.isError).toBe(true)
+    expect((JSON.parse(out.text) as { reason: string }).reason).toBe('read_only_tool_not_allowed')
+  })
+
+  it('wecom create_agent_rule 落 pending，namespace 被钉死（忽略参数）', async () => {
+    const ns = 'openclaw_acme'
+    await createAgentNamespace(pool, ORG, {
+      namespace: ns, displayName: 'Openclaw', ownerUserId: 'u1',
+    })
+    const decl: NotificationEventDecl = {
+      key: 'ext.openclaw_acme.daily', title: 'D',
+      payload: { user: { type: 'user', required: true } },
+      recipients: { assignee: { kind: 'field', field: 'user' } },
+    }
+    expect(await upsertEventDecl(pool, ORG, ns, decl, 'u1')).toMatchObject({ ok: true })
+    await pool.query(
+      `insert into notify.channel(org,id,provider,enabled,config,secret_refs,created_by)
+       values ($1,'inapp_default','in_app',true,'{}','{}','u')
+       on conflict (org,id) do nothing`, [ORG])
+    await pool.query(
+      `insert into notify.template(org,key,name,event_key,status,origin,published_revision,created_by,owner_namespace)
+       values ($1,'c_daily','C','ext.openclaw_acme.daily','published','tenant',1,'u','openclaw_acme')`, [ORG])
+    await pool.query(
+      `insert into notify.template_revision(org,key,revision,contents,body_hash,review_status,created_by)
+       values ($1,'c_daily',1,'{"in_app":{"title":"Hi","body":"B"}}','hc1','approved','u')`, [ORG])
+
+    process.env.NOTIFY_WECOM_NAMESPACE = ns
+    try {
+      const out = await callTool(depsCh('wecom'), 'create_agent_rule', {
+        // 模型传的 namespace 必须被忽略
+        namespace: 'someone-elses', eventKey: decl.key, recipientKey: 'assignee',
+        templateKey: 'c_daily', channels: ['inapp_default'],
+      })
+      expect(out.isError).toBe(false)
+      const body = JSON.parse(out.text) as {
+        id: string; status: string; approvalId?: string; namespace: string
+      }
+      expect(body).toMatchObject({ status: 'pending', namespace: ns })
+      expect(body.approvalId).toBeTruthy()
+
+      const rs = await pool.query(
+        'select id, enabled, owner_namespace from notify.rule where org=$1 and id=$2',
+        [ORG, body.id])
+      expect(rs.rows).toEqual([{ id: body.id, enabled: false, owner_namespace: ns }])
+      const ap = await pool.query(
+        "select kind, status, target_id from notify.approval where org=$1", [ORG])
+      expect(ap.rows).toEqual([{ kind: 'rule', status: 'pending', target_id: body.id }])
+    } finally {
+      delete process.env.NOTIFY_WECOM_NAMESPACE
+    }
+  })
+
+  it('wecom create_agent_template：namespace 钉死且强制 publish=false', async () => {
+    const ns = 'openclaw_acme'
+    await createAgentNamespace(pool, ORG, {
+      namespace: ns, displayName: 'Openclaw', ownerUserId: 'u1',
+    })
+    const decl: NotificationEventDecl = {
+      key: 'ext.openclaw_acme.daily', title: 'D', payload: {},
+      recipients: { assignee: { kind: 'field', field: 'user' } },
+    }
+    expect(await upsertEventDecl(pool, ORG, ns, decl, 'u1')).toMatchObject({ ok: true })
+
+    process.env.NOTIFY_WECOM_NAMESPACE = ns
+    try {
+      const out = await callTool(depsCh('wecom'), 'create_agent_template', {
+        namespace: 'someone-elses', key: 'c_tpl', name: 'C', eventKey: decl.key,
+        contents: { in_app: { title: 'Hi', body: 'B' } }, publish: true,
+      })
+      expect(out.isError).toBe(false)
+      expect(JSON.parse(out.text)).toMatchObject({ key: 'c_tpl', published: false })
+      const t = await getTemplate(pool, ORG, 'c_tpl')
+      expect(t?.ownerNamespace).toBe(ns)
+    } finally {
+      delete process.env.NOTIFY_WECOM_NAMESPACE
+    }
+  })
+
+  it('wecom 直连 /mcp-manage（伪造 x-agent-profile: full）仍只回 C-safe、拒 propose_rule', async () => {
+    // 手搭通道壳：宿主在 PAT/企微通道会设 REQUESTER_CHANNEL，会话通道不设。
+    const app = new Hono<{ Variables: { identity: Identity } & RequesterVars }>()
+    app.use('*', async (c, next) => {
+      c.set('identity', makeIdentity({
+        orgId: ORG, userId: 'u1',
+        scopes: ['notify:view', 'notify:manage', 'notify:publish', 'notify:emit'],
+      }))
+      c.set(REQUESTER_CHANNEL, 'wecom')
+      await next()
+    })
+    app.route('/', notifyV2.createRouter({ pool, events, addresses }))
+
+    const list = await app.request('/mcp-manage', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', 'x-agent-profile': 'full' },
+      body: JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'tools/list' }),
+    })
+    const names = ((await list.json()) as { result: { tools: Array<{ name: string }> } })
+      .result.tools.map((t) => t.name)
+    expect(names).toContain('create_agent_rule')
+    expect(names).not.toContain('propose_rule')
+    expect(names).not.toContain('set_rule_enabled')
+
+    const call = await app.request('/mcp-manage', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', 'x-agent-profile': 'full' },
+      body: JSON.stringify({
+        jsonrpc: '2.0', id: 2, method: 'tools/call',
+        params: { name: 'propose_rule', arguments: { eventKey: 'm.a.b' } },
+      }),
+    })
+    const body = (await call.json()) as {
+      result: { isError: boolean; content: Array<{ text: string }> }
+    }
+    expect(body.result.isError).toBe(true)
+    expect((JSON.parse(body.result.content[0].text) as { reason: string }).reason)
+      .toBe('c_tool_not_allowed')
+  })
+
+  it('JSON-RPC /mcp-manage tools/list 返回 24 工具', async () => {
     const app = buildTestApp(
       notifyV2,
       makeIdentity({ orgId: ORG, userId: 'u1', scopes: ['notify:manage'] }),

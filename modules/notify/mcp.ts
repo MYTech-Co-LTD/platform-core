@@ -5,11 +5,13 @@ import { randomUUID } from 'node:crypto'
 import type { Hono } from 'hono'
 import type { Pool } from 'pg'
 import type {
-  ChannelAddressResolver, EventCatalogReader, Identity, NotificationEventDecl, SchedulerPortFactory,
+  ChannelAddressResolver, EventCatalogReader, Identity, NotificationEventDecl, RequesterVars,
+  SchedulerPortFactory,
 } from '@platform/sdk'
-import { validatePayload } from '@platform/sdk'
+import { REQUESTER_CHANNEL, validatePayload } from '@platform/sdk'
 import { createAgentRule, createAgentTemplate, sendAgentMessage } from './agent-actions'
-import { NOTIFY_TOOLS } from './mcp-tools'
+import { C_SAFE_TOOLS, NOTIFY_TOOLS, toolsForChannel } from './mcp-tools'
+import type { NotifyChannel } from './mcp-tools'
 import { channelIsConfigured } from './domain/channel-config'
 import { callScheduleTool } from './tools/schedules'
 import { resolveDeliverability } from './domain/deliverability'
@@ -33,6 +35,14 @@ type McpDeps = {
   pool: Pool
   org: string
   userId: string
+  /**
+   * 调用者通道。**C 档唯一的执法依据**（spec 2026-11-16 §6.4）：`wecom` ⇒ agent-safe
+   * 子集 + 规则一律 pending + namespace 钉死；`pat`/`session` ⇒ N3 full 行为不变。
+   * 绝不读 `x-agent-profile`（那是网关的发现视图，客户端可伪造）。
+   */
+  channel: NotifyChannel
+  /** `read` = `/mcp` 只读面（tools/list 只回非 mutating；callTool 拒写）。缺省 full。 */
+  mode?: 'full' | 'read'
   /** 调用者 scopes（用于 publish 等工具级闸门）。 */
   scopes?: string[]
   events?: EventCatalogReader
@@ -56,6 +66,16 @@ const str = (v: unknown): string => (typeof v === 'string' ? v.trim() : '')
 const arr = (v: unknown): string[] =>
   Array.isArray(v) ? v.filter((x): x is string => typeof x === 'string' && x.length > 0) : []
 
+/**
+ * 工具 namespace 的唯一取法：C（wecom）由部署钉死 `NOTIFY_WECOM_NAMESPACE`，**忽略**模型
+ * 参数里的 namespace；其余通道仍取参数（N3 行为不变）。空串 ⇒ 调用方回
+ * `namespace_unconfigured`（fail-closed，不猜、不回落 org）。
+ */
+const toolNamespace = (deps: Pick<McpDeps, 'channel'>, arg: unknown): string =>
+  deps.channel === 'wecom'
+    ? (process.env.NOTIFY_WECOM_NAMESPACE ?? '').trim()
+    : str(arg)
+
 /** 统一事件解析：`ext.*` 走租户声明，其余走平台 manifest 目录。 */
 async function resolveDecl(deps: McpDeps, key: string): Promise<NotificationEventDecl | null> {
   return key.startsWith('ext.')
@@ -63,8 +83,12 @@ async function resolveDecl(deps: McpDeps, key: string): Promise<NotificationEven
     : deps.events?.get(key) ?? null
 }
 
-export function toolDefs(): ToolDef[] {
-  return NOTIFY_TOOLS.map(({ name, description, inputSchema }) => ({ name, description, inputSchema }))
+export function toolDefs(deps: Pick<McpDeps, 'channel' | 'mode'>): ToolDef[] {
+  const metas = toolsForChannel(deps.channel)
+  // 读面（/mcp）：只投影非 mutating（spec §5.2）。channel 过滤先做——wecom 直连读面也
+  // 不能越过 C 档（虽然非 mutating 集本就是 C-safe 子集）。
+  const visible = deps.mode === 'read' ? metas.filter((t) => !t.mutating) : metas
+  return visible.map(({ name, description, inputSchema }) => ({ name, description, inputSchema }))
 }
 
 export async function callTool(
@@ -72,6 +96,17 @@ export async function callTool(
   name: string,
   args: Record<string, unknown>,
 ): Promise<McpToolResult> {
+  // C 档执法（spec §6.4）：**按 identity.channel，不按 profile/头**。直连模块、伪造
+  // `x-agent-profile: full`、或网关头缺失，都在这里被拒。
+  if (deps.channel === 'wecom' && !C_SAFE_TOOLS.has(name)) {
+    return err('c_tool_not_allowed', { tool: name })
+  }
+  // 读面只接受非 mutating 工具（工具级错误，与 MCP 的 isError 形态一致）。
+  if (deps.mode === 'read') {
+    const meta = NOTIFY_TOOLS.find((t) => t.name === name)
+    if (!meta || meta.mutating) return err('read_only_tool_not_allowed', { tool: name })
+  }
+
   // 排班工具（W6-P3 + N4）：actor 从调用者身份成形；namespace 归属/事件声明/payload
   // 校验经注入的回调做（工具文件保持纯）。显式 namespace 只能选**自己拥有**的 namespace。
   const schedule = await callScheduleTool(
@@ -329,12 +364,13 @@ export async function callTool(
   }
 
   if (name === 'send_message') {
-    const namespace = str(args.namespace)
+    const namespace = toolNamespace(deps, args.namespace)
+    if (!namespace) return err('namespace_unconfigured')
     const toRaw = args.to
     const to = Array.isArray(toRaw) ? arr(toRaw) : str(toRaw)
     const title = str(args.title)
     const body = str(args.body)
-    if (!namespace || !title || !body
+    if (!title || !body
         || (Array.isArray(to) ? to.length === 0 : to === '')) {
       return err('missing_required')
     }
@@ -350,19 +386,21 @@ export async function callTool(
   }
 
   if (name === 'create_agent_template') {
-    const namespace = str(args.namespace)
+    const namespace = toolNamespace(deps, args.namespace)
+    if (!namespace) return err('namespace_unconfigured')
     const key = str(args.key)
     const tplName = str(args.name)
     const eventKey = str(args.eventKey)
     const contents = args.contents
-    if (!namespace || !key || !tplName || !eventKey
+    if (!key || !tplName || !eventKey
         || contents === null || typeof contents !== 'object' || Array.isArray(contents)) {
       return err('missing_required')
     }
     const r = await createAgentTemplate(deps.pool, {
       org: deps.org, userId: deps.userId, namespace, key, name: tplName, eventKey,
       contents: contents as Record<string, Record<string, string>>,
-      publish: args.publish === true,
+      // C 档只能写草稿：发布必须由持 notify:publish 的人做（spec §5.2）。
+      publish: deps.channel === 'wecom' ? false : args.publish === true,
       canPublish: (deps.scopes ?? []).includes('notify:publish'),
     })
     return r.ok
@@ -371,12 +409,13 @@ export async function callTool(
   }
 
   if (name === 'create_agent_rule') {
-    const namespace = str(args.namespace)
+    const namespace = toolNamespace(deps, args.namespace)
+    if (!namespace) return err('namespace_unconfigured')
     const eventKey = str(args.eventKey)
     const recipientKey = str(args.recipientKey)
     const templateKey = str(args.templateKey)
     const channels = arr(args.channels)
-    if (!namespace || !eventKey || !recipientKey || !templateKey || channels.length === 0) {
+    if (!eventKey || !recipientKey || !templateKey || channels.length === 0) {
       return err('missing_required')
     }
     const r = await createAgentRule(deps.pool, {
@@ -388,9 +427,11 @@ export async function callTool(
       recipientDepts: Array.isArray(args.recipientDepts) ? arr(args.recipientDepts) : null,
       templateKey, channels,
       cooldownMinutes: typeof args.cooldownMinutes === 'number' ? args.cooldownMinutes : null,
+      // C 档：连 in-app 也落 pending/disabled（N3 之上更严，只作用于 wecom）。
+      draftOnly: deps.channel === 'wecom',
     })
     return r.ok
-      ? ok({ id: r.id, status: r.status, approvalId: r.approvalId })
+      ? ok({ id: r.id, status: r.status, approvalId: r.approvalId, namespace })
       : err(r.code, r.detail ?? {})
   }
 
@@ -421,17 +462,30 @@ async function countTest(deps: McpDeps): Promise<number> {
   return rows[0].n as number
 }
 
-/** 把 MCP 管理面挂成 `POST /mcp-manage`（挂到模块既有 router 上）。 */
-export function registerNotifyMcpManage(
-  r: Hono<{ Variables: { identity: Identity } }>,
+/** 模块 MCP 路由的 context 变量：身份 + 请求者通道（PAT/企微）。 */
+type McpRouteVars = { Variables: { identity: Identity } & RequesterVars }
+
+/**
+ * 把 notify 的 MCP 面挂到 `path`（挂到模块既有 router 上）。
+ *
+ * - `mode='full'`（`/mcp-manage`）：B（pat/session）N3 全量；C（wecom）按 channel 投影的
+ *   agent-safe 子集 + 规则 pending（执法在 `callTool`，本壳只组装 deps）。
+ * - `mode='read'`（`/mcp`，`notify:view`）：只投影非 mutating 工具；`callTool` 拒写。
+ *
+ * `x-agent-profile`（网关的发现视图）**不读**——C 档只认 `identity.channel`（spec §6.4）。
+ */
+export function registerNotifyMcp(
+  r: Hono<McpRouteVars>,
+  path: string,
   deps: {
     pool: Pool
     events?: EventCatalogReader
     addresses?: ChannelAddressResolver
     scheduler?: SchedulerPortFactory
   },
+  mode: 'full' | 'read' = 'full',
 ): void {
-  r.post('/mcp-manage', async (c) => {
+  r.post(path, async (c) => {
     const msg = (await c.req.json().catch(() => null)) as RpcRequest | null
     if (msg === null) {
       return c.json({ jsonrpc: '2.0', id: null, error: { code: -32700, message: 'parse error' } }, 200)
@@ -446,10 +500,14 @@ export function registerNotifyMcpManage(
       c.json({ jsonrpc: '2.0', id: msg.id, error: { code, message } }, 200)
 
     const identity = c.get('identity') as Identity
+    // 未设置 = 系统内会话通道（requester-vars.ts 的语义）。
+    const channel = (c.get(REQUESTER_CHANNEL) ?? 'session') as NotifyChannel
     const mcpDeps: McpDeps = {
       pool: deps.pool,
       org: identity.orgId,
       userId: identity.userId,
+      channel,
+      mode,
       scopes: identity.scopes,
       events: deps.events,
       addresses: deps.addresses,
@@ -460,11 +518,14 @@ export function registerNotifyMcpManage(
       return reply({
         protocolVersion: PROTOCOL_VERSION,
         capabilities: { tools: {} },
-        serverInfo: { name: 'platform-notify-mcp-manage', version: '0.1.0' },
+        serverInfo: {
+          name: mode === 'read' ? 'platform-notify-mcp-read' : 'platform-notify-mcp-manage',
+          version: '0.1.0',
+        },
       })
     }
     if (msg.method === 'ping') return reply({})
-    if (msg.method === 'tools/list') return reply({ tools: toolDefs() })
+    if (msg.method === 'tools/list') return reply({ tools: toolDefs(mcpDeps) })
     if (msg.method === 'tools/call') {
       const name = String(msg.params?.name ?? '')
       const args = (msg.params?.arguments ?? {}) as Record<string, unknown>

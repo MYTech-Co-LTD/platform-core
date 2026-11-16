@@ -167,6 +167,12 @@ export type CreateAgentRuleInput = {
   templateKey: string
   channels: string[]
   cooldownMinutes?: number | null
+  /**
+   * C（企微）档：规则一律落 pending/disabled，由持 notify:publish 的人审批/启用。
+   * 这是 N3 `auto_publish_external` 之上的**更严档**，只作用于 C，不改 B 的语义
+   * （spec 2026-11-16 §5.2 / §6.4）。
+   */
+  draftOnly?: boolean
 }
 
 export type CreateAgentRuleResult =
@@ -237,7 +243,8 @@ export async function createAgentRule(
   const alreadyApproved = external
     ? await hasApprovedRuleApproval(pool, input.org, id)
     : true
-  const needsApproval = external && !policy.auto_publish_external && !alreadyApproved
+  const needsApproval =
+    (external && !policy.auto_publish_external && !alreadyApproved) || input.draftOnly === true
   // 规则历史快照（#2322）：写入与 audit 共用同一份完整快照
   // recipientDepts 与 HTTP 面同源去重
   const snapshot: RuleSnapshot = {

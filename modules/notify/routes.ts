@@ -5,7 +5,8 @@ import { randomUUID } from 'node:crypto'
 import { Hono } from 'hono'
 import type { Pool } from 'pg'
 import type {
-  ChannelAddressResolver, EventCatalogReader, Identity, NotificationEventDecl, SchedulerPortFactory,
+  ChannelAddressResolver, EventCatalogReader, Identity, NotificationEventDecl, RequesterVars,
+  SchedulerPortFactory,
 } from '@platform/sdk'
 import { validatePayload } from '@platform/sdk'
 import { createAgentRule, createAgentTemplate, sendAgentMessage } from './agent-actions'
@@ -25,7 +26,7 @@ import { resolveDeliveryAddress } from './domain/resolve-address'
 import { renderContents } from './domain/render'
 import { isWritableRuleId, ruleSnapshot, validateRule } from './domain/rules'
 import { samplePayload, validateContents } from './domain/template'
-import { registerNotifyMcpManage } from './mcp'
+import { registerNotifyMcp } from './mcp'
 import {
   audit, countActiveAgentRules, countAgentMessagesToday, countRecentTestDeliveries,
   createAgentNamespace, createApproval, createTemplateRevision,
@@ -40,7 +41,10 @@ import {
 } from './storage'
 import type { RuleInput } from './storage'
 
-type Vars = { Variables: { identity: Identity } }
+// 请求者通道（PAT/企微）求交在 Variables **内层**——照 data 的 ModuleVars 写法；
+// 写成 `{ identity } & RequesterVars` 会把键搁到 Env 顶层，`c.get(REQUESTER_CHANNEL)`
+// 恒 undefined（C 档会静默退化成 B 档）。
+type Vars = { Variables: { identity: Identity } & RequesterVars }
 
 export function createNotifyRouter(deps: {
   pool: Pool
@@ -1004,9 +1008,14 @@ export function createNotifyRouter(deps: {
     return c.json({ approval: decided })
   })
 
-  registerNotifyMcpManage(r, {
+  // 读面（notify:view）：只投影非 mutating 工具。
+  registerNotifyMcp(r, '/mcp', {
     pool: deps.pool, events: deps.events, addresses: deps.addresses, scheduler: deps.scheduler,
-  })
+  }, 'read')
+  // 管理面（notify:manage）：B（pat/session）N3 全量；C（wecom）按 channel 强制 agent-safe 子集。
+  registerNotifyMcp(r, '/mcp-manage', {
+    pool: deps.pool, events: deps.events, addresses: deps.addresses, scheduler: deps.scheduler,
+  }, 'full')
 
   return r
 }

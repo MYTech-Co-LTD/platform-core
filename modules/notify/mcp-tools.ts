@@ -104,3 +104,27 @@ export const NOTIFY_TOOLS: NotifyToolMeta[] = [
   // agent 排班（W6-P3）：实现与入参成形在 tools/schedules.ts；这里只把元数据并进 tools/list。
   ...SCHEDULE_TOOLS.map((m): NotifyToolMeta => ({ ...m })),
 ]
+
+/**
+ * C（企微 / openclaw）档可用工具：agent-safe 子集（spec 2026-11-16 §5.2 / D8）。
+ * **不暴露** propose_rule / update_rule / set_rule_enabled / draft_template——C 只能建
+ * pending 规则与草稿模板，启用/发布由持 notify:publish 的人完成。
+ * 排班工具全部纳入（它们本就不接受通道参数，且只发站内通知）。
+ */
+export const C_SAFE_TOOLS = new Set<string>([
+  'list_events', 'get_event', 'list_rules', 'list_templates', 'get_template',
+  'list_deliveries', 'check_rule', 'preview_template', 'send_test',
+  'create_agent_template', 'create_agent_rule', 'send_message',
+])
+for (const m of SCHEDULE_TOOLS) C_SAFE_TOOLS.add(m.name)
+
+export type NotifyChannel = 'pat' | 'session' | 'wecom'
+
+/**
+ * 按通道投影工具面：wecom（C 档）只回 agent-safe 子集；pat/session（B）保持 N3 全量。
+ * ⚠️ 这只是**发现视图**——执法在 `callTool` 按 `identity.channel` 再做一次，
+ * 直连模块/伪造 `x-agent-profile` 都绕不过（spec §6.4 / R9 / R11）。
+ */
+export function toolsForChannel(channel: NotifyChannel): NotifyToolMeta[] {
+  return channel === 'wecom' ? NOTIFY_TOOLS.filter((t) => C_SAFE_TOOLS.has(t.name)) : NOTIFY_TOOLS
+}
