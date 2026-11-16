@@ -176,6 +176,8 @@ agent 面不暴露 publish/enable 类工具；缺权限回 `missing_scope` + 所
   `data__list_reports`），换名或换 assetId，不要盲目重试。
 - `BAD_PARAM` / `-32602` → 按 detail/inputSchema 自纠**一次**；再失败就停下来问人。
 - `STALE_WRITE` → 带 `expectedVersion` 的写撞了版本，先重新 get 再改。
+- `timeout` → 工具级超时（表单 LLM 起草 120s，其余 60s）；**不自动重试**——让用户稍后再试，
+  或把一次起草的描述拆小/收窄范围再试。
 - 反模式：不原样重试（写工具非幂等，网关也不自动重试）；不凭记忆拼工具名（先
   `agent__capabilities`/`platform_capabilities({ tool })`）；不用网关查数（C）；
   不把「tools/list 里没出现」理解成「重试几次就会出现」——那是 scope 锁定。

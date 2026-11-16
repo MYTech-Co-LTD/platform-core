@@ -29,6 +29,7 @@ import {
   parseCapabilities,
   compactCapabilities,
   buildPlatformCall,
+  timeoutForTool,
 } from "./lib.js";
 
 const CHANNEL_KEY = process.env.DATA_WECOM_CHANNEL_KEY || "";
@@ -222,6 +223,8 @@ export default definePluginEntry({
             sessionId: sessionKey,
             method: "tools/call",
             params: { name: built.tool, arguments: built.args },
+            // 超时按工具选：forms 的 LLM 起草 120s，其余 60s（网关侧同口径，spec §7.4）。
+            timeoutMs: timeoutForTool(built.tool),
             signal,
           });
           return toGatewayToolResult(rpc);

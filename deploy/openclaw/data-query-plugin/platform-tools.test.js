@@ -13,6 +13,9 @@ import { readFileSync } from "node:fs";
 import {
   DEFAULT_AGENT_API_BASE,
   PLATFORM_ORIGIN,
+  GATEWAY_TIMEOUT_MS,
+  FORMS_DRAFT_TIMEOUT_MS,
+  timeoutForTool,
   callGateway,
   toGatewayToolResult,
   parseCapabilities,
@@ -107,6 +110,15 @@ test("超时：AbortSignal 触发 ⇒ GATEWAY_TIMEOUT（不让工具长拖）", 
   });
   const r = await callGateway({ ...GW, method: "tools/list", fetchImpl: hang, timeoutMs: 5 });
   assert.equal(r.error, "GATEWAY_TIMEOUT");
+});
+
+test("超时按工具选（spec §7.4）：forms 起草 120s，其余 60s（与网关侧默认一致）", () => {
+  assert.equal(GATEWAY_TIMEOUT_MS, 60_000, "普通工具与网关 tools/call 默认 60s 对齐");
+  assert.equal(FORMS_DRAFT_TIMEOUT_MS, 120_000, "forms 起草与网关侧 LLM 上限对齐");
+  assert.equal(timeoutForTool("forms__generate_form_draft"), 120_000);
+  assert.equal(timeoutForTool("forms__list_forms"), 60_000);
+  assert.equal(timeoutForTool("notify__create_agent_rule"), 60_000);
+  assert.equal(timeoutForTool("data__query_metric"), 60_000);
 });
 
 test("鉴权闸 HTTP 错误（非 JSON-RPC 信封）：归一成 {error, status}", async () => {
@@ -417,4 +429,12 @@ test("index.js：两个 native 工具各自 registerTool，并复用 AGENT_API_B
   assert.match(indexSrc, /DATA_WECOM_CHANNEL_KEY/);
   // 工具 ctx 的取消信号应透传给网关请求（否则断开后网关调用继续跑）。
   assert.equal((indexSrc.match(/signal,\n/g) ?? []).length >= 2, true, "两个 native 工具都应透传 signal");
+});
+
+test("index.js：platform_call 按 tool 选超时（timeoutForTool）；platform_capabilities 走默认 60s", () => {
+  assert.match(indexSrc, /timeoutForTool\(built\.tool\)/, "platform_call 必须按工具选超时（forms 起草 120s）");
+  assert.ok(
+    !/timeoutMs: 20/.test(indexSrc),
+    "不许再写死 20s——会把 forms LLM 起草在出结果前截断",
+  );
 });

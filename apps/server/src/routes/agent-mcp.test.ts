@@ -62,6 +62,8 @@ interface MakeAppOptions {
   respond?: (call: ModuleCall) => Response | Promise<Response>
   /** 覆盖 face 投影（保留名 / 自定义模块测试用）。 */
   faces?: AgentFace[]
+  /** 注入短超时（超时用例用，别让测试等 60s）。 */
+  timeouts?: { defaultMs?: number; formsDraftMs?: number }
 }
 
 function makeApp(scopes: string[], opts: MakeAppOptions = {}) {
@@ -92,6 +94,7 @@ function makeApp(scopes: string[], opts: MakeAppOptions = {}) {
       calls.push(call)
       return (opts.respond ?? defaultRespond)(call)
     },
+    timeouts: opts.timeouts,
   }))
   return { app, calls, identity }
 }
@@ -512,6 +515,79 @@ describe('agent mcp', () => {
       status: 'error',
       reason: 'module_unavailable',
     })
+  })
+
+  // ---- 转发超时（spec §7.4：60s 默认 / forms 起草 120s；测试注入短值） ----
+
+  it('模块 tools/call 永不 resolve ⇒ 工具级 timeout（HTTP 200，不是 500 / module_unavailable）', async () => {
+    const { app } = makeApp(['data:query'], {
+      timeouts: { defaultMs: 5 },
+      respond: (call) =>
+        call.body.method === 'tools/list'
+          ? defaultRespond(call)
+          : new Promise<Response>(() => {}), // 模块挂起
+    })
+    const res = await rpc(app, {
+      jsonrpc: '2.0',
+      id: 13,
+      method: 'tools/call',
+      params: { name: 'data__search_catalog', arguments: {} },
+    })
+    expect(res.status).toBe(200)
+    const body = (await res.json()) as { result: { content: Array<{ text: string }>; isError: boolean } }
+    expect(body.result.isError).toBe(true)
+    expect(JSON.parse(body.result.content[0].text)).toMatchObject({
+      status: 'error',
+      reason: 'timeout',
+    })
+  })
+
+  it('forms__generate_form_draft 慢回（30ms > defaultMs=20）⇒ 仍成功（按工具选 formsDraftMs=80）', async () => {
+    const { app } = makeApp(['data:query', 'forms:view'], {
+      timeouts: { defaultMs: 20, formsDraftMs: 80 },
+      respond: async (call) => {
+        if (call.body.method === 'tools/list') {
+          if (call.path.endsWith('/mcp')) {
+            return Response.json({
+              jsonrpc: '2.0',
+              id: call.body.id,
+              result: {
+                tools: ['list_forms', 'generate_form_draft'].map((name) => ({
+                  name,
+                  description: name,
+                  inputSchema: { type: 'object' },
+                })),
+              },
+            })
+          }
+          return defaultRespond(call)
+        }
+        // tools/call：30ms 后才回——若走 defaultMs=20 会超时，证明这里真用了长超时。
+        await new Promise((resolve) => setTimeout(resolve, 30))
+        return defaultRespond(call)
+      },
+    })
+    const res = await rpc(app, {
+      jsonrpc: '2.0',
+      id: 14,
+      method: 'tools/call',
+      params: { name: 'forms__generate_form_draft', arguments: {} },
+    })
+    expect(res.status).toBe(200)
+    const body = (await res.json()) as { result: { content: Array<{ text: string }>; isError: boolean } }
+    expect(body.result.isError).toBe(false)
+    expect(JSON.parse(body.result.content[0].text)).toMatchObject({ ok: true })
+  })
+
+  it('模块 tools/list 永不 resolve ⇒ 该 face available:false，不挂死网关', async () => {
+    const { app } = makeApp(['data:query'], {
+      timeouts: { defaultMs: 5 },
+      respond: () => new Promise<Response>(() => {}),
+    })
+    const out = textOf(await callCapabilities(app))
+    expect(out.faces).toContainEqual(
+      expect.objectContaining({ module: 'data', face: 'agent', available: false }),
+    )
   })
 
   // ---- 刷新放大 / 负缓存窗口 ----

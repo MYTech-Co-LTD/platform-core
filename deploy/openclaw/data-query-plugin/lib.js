@@ -401,8 +401,18 @@ function gatewayErrorText(e, detail, status) {
   return JSON.stringify({ status: "error", reason: code });
 }
 
-/** 网关请求超时上限（forms 生成草稿要调 LLM，网关侧上限 120s；插件侧留 20s 免长拖）。 */
-export const GATEWAY_TIMEOUT_MS = 20_000;
+/** 网关请求超时上限：普通工具 60s（与网关侧 `tools/call` 默认一致）；forms 生成草稿要调 LLM，
+ * 网关侧放行 120s（spec §7.4）——插件侧若仍卡 20s 会在 LLM 出结果前截断，必须按工具选。 */
+export const GATEWAY_TIMEOUT_MS = 60_000;
+export const FORMS_DRAFT_TIMEOUT_MS = 120_000;
+
+/** forms 的 LLM 起草工具：唯一走 120s 长超时的工具。 */
+const FORMS_DRAFT_TOOL = "forms__generate_form_draft";
+
+/** 按工具选超时：forms 起草 120s，其余 60s。 */
+export function timeoutForTool(tool) {
+  return tool === FORMS_DRAFT_TOOL ? FORMS_DRAFT_TIMEOUT_MS : GATEWAY_TIMEOUT_MS;
+}
 
 /**
  * 向网关发一条 JSON-RPC（POST {apiBase}/mcp）。

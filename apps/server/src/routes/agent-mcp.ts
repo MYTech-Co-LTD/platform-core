@@ -30,6 +30,8 @@ export interface ModuleFetchInit {
   method: string
   headers: Record<string, string>
   body: string
+  /** 网关超时用：竞速超时后 abort，模块挂起不把网关挂住（spec §7.4）。 */
+  signal?: AbortSignal
 }
 
 type Rpc = {
@@ -46,6 +48,13 @@ const CACHE_TTL_MS = 30_000
 const RATE_LIMIT_PER_MIN = 60
 /** 同一 (org, userId, tool) 的 tools/list 强制刷新窗口：窗口内最多刷一次（防 miss 放大）。 */
 const REFRESH_WINDOW_MS = 30_000
+/**
+ * 转发超时（spec §7.4）：`tools/call` / `tools/list` 默认 60s；`forms__generate_form_draft`
+ * 走 LLM，放宽到 120s。超时不 throw——rpc 返回 `null`，由调用方按 face 降级（tools/list ⇒
+ * 该 face available:false 不影响其他 face；tools/call ⇒ 工具级 `timeout`）。
+ */
+const CALL_TIMEOUT_MS = 60_000
+const FORMS_DRAFT_TIMEOUT_MS = 120_000
 
 /** 人 gate 清单（spec §7.5）：这些动作必须由人完成，agent 只产出草稿/提案。 */
 const HUMAN_GATE_NOTES = [
@@ -99,6 +108,8 @@ type Tool = { name: string; [k: string]: unknown }
 export function agentMcpRoutes(deps: {
   faces: () => AgentFace[]
   fetchModule: (path: string, init: ModuleFetchInit) => Promise<Response>
+  /** 可注入短超时（测试用）；缺省 60s / forms 起草 120s。 */
+  timeouts?: { defaultMs?: number; formsDraftMs?: number }
 }): Hono<AgentMcpEnv> {
   const app = new Hono<AgentMcpEnv>()
   // 工具清单缓存：键含 org / scope 集 / audience / module / face / profile（spec §7.3）。
@@ -111,6 +122,8 @@ export function agentMcpRoutes(deps: {
   // tools/call miss 时的强制刷新窗口：同一 (org, userId, 工具名) 在 30s 内最多刷新一次，
   // 防止未知工具名把每个请求放大成一轮 tools/list 重列。惰性过期，语义同上面两个 map。
   const refreshWindows = new Map<string, number>()
+  const defaultTimeoutMs = deps.timeouts?.defaultMs ?? CALL_TIMEOUT_MS
+  const formsDraftTimeoutMs = deps.timeouts?.formsDraftMs ?? FORMS_DRAFT_TIMEOUT_MS
 
   const internalHeaders = (
     identity: Identity,
@@ -134,6 +147,12 @@ export function agentMcpRoutes(deps: {
     }),
   })
 
+  /**
+   * 带超时的模块转发。超时 ⇒ `null`（判别值，不 throw）；模块侧仍经 `signal` 被 abort
+   * （fetchModule 是 `app.request`，Hono 会取走 init.signal）。竞速用 `Promise.race`：
+   * 它对两个输入都挂了 handler，超时后模块 promise 再 reject（abort 引发）也不会变成
+   * unhandled rejection；fetchModule 本身 reject 则照常抛给调用方（沿用 module_unavailable 路径）。
+   */
   const rpc = async (
     face: AgentFace,
     identity: Identity,
@@ -141,15 +160,33 @@ export function agentMcpRoutes(deps: {
     keyId: number | null,
     host: string,
     body: Rpc,
-  ): Promise<Response> =>
-    deps.fetchModule(`${face.mountPath}${face.face.path}`, {
-      method: 'POST',
-      headers: {
-        ...internalHeaders(identity, channel, keyId, host),
-        'x-agent-profile': face.face.profile ?? 'full',
-      },
-      body: JSON.stringify(body),
+    timeoutMs: number = defaultTimeoutMs,
+  ): Promise<Response | null> => {
+    const controller = new AbortController()
+    let timer: ReturnType<typeof setTimeout> | undefined
+    const timeout = new Promise<null>((resolve) => {
+      timer = setTimeout(() => {
+        controller.abort()
+        resolve(null)
+      }, timeoutMs)
     })
+    try {
+      return await Promise.race([
+        deps.fetchModule(`${face.mountPath}${face.face.path}`, {
+          method: 'POST',
+          headers: {
+            ...internalHeaders(identity, channel, keyId, host),
+            'x-agent-profile': face.face.profile ?? 'full',
+          },
+          body: JSON.stringify(body),
+          signal: controller.signal,
+        }),
+        timeout,
+      ])
+    } finally {
+      if (timer !== undefined) clearTimeout(timer)
+    }
+  }
 
   /**
    * 取某 face 的工具清单。`ok:false` = 模块 face 不可用（transport 抛错 / 403/5xx /
@@ -176,7 +213,7 @@ export function agentMcpRoutes(deps: {
       const hit = cache.get(key)
       if (hit && Date.now() - hit.at < CACHE_TTL_MS) return { tools: hit.tools, ok: true }
     }
-    let res: Response
+    let res: Response | null
     try {
       res = await rpc(face, identity, channel, keyId, host, {
         jsonrpc: '2.0',
@@ -186,6 +223,8 @@ export function agentMcpRoutes(deps: {
     } catch {
       return { tools: [], ok: false }
     }
+    // 超时（rpc 返回 null）与 transport 抛错同口径：该 face 不可用，不缓存失败结果。
+    if (!res) return { tools: [], ok: false }
     if (!res.ok) return { tools: [], ok: false }
     let body: { result?: { tools?: unknown }; error?: unknown }
     try {
@@ -455,17 +494,32 @@ export function agentMcpRoutes(deps: {
       if (!rateOk(identity, name)) return toolError({ status: 'error', reason: 'rate_limited' })
 
       const original = name.slice(hit.face.moduleId.length + 2)
-      let res: Response
+      // 超时按工具选（spec §7.4）：forms 的 LLM 起草放宽到 120s，其余默认 60s。
+      const timeoutMs =
+        hit.face.moduleId === 'forms' && original === 'generate_form_draft'
+          ? formsDraftTimeoutMs
+          : defaultTimeoutMs
+      let res: Response | null
       try {
-        res = await rpc(hit.face, identity, channel, keyId, host, {
-          jsonrpc: '2.0',
-          id: msg.id,
-          method: 'tools/call',
-          params: { name: original, arguments: args },
-        })
+        res = await rpc(
+          hit.face,
+          identity,
+          channel,
+          keyId,
+          host,
+          {
+            jsonrpc: '2.0',
+            id: msg.id,
+            method: 'tools/call',
+            params: { name: original, arguments: args },
+          },
+          timeoutMs,
+        )
       } catch {
         return toolError({ status: 'error', reason: 'module_unavailable' })
       }
+      // 超时是**工具级**错误（不是 500 / 不是 module_unavailable）：模块可能只是慢，稍后重试。
+      if (!res) return toolError({ status: 'error', reason: 'timeout' })
 
       // 错误映射（spec §7.4）：403 ⇒ missing_scope；5xx/不可达 ⇒ module_unavailable。
       if (res.status === 403) {
