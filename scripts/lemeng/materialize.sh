@@ -312,7 +312,7 @@ mat_url_field() { # $1=url $2=user|pass|host
   case "$2" in
     user) printf '%s' "${_c%%:*}" ;;
     pass) printf '%s' "${_c#*:}" ;;
-    host) printf '%s' "${_hd%%/*}" ;;
+    host) printf '%s' "${_hd%%/*}" | sed 's/:.*//' ;;
   esac
 }
 # 容器模式里 DBT_PASSWORD 可能是 URL 编码态；profiles 用 env_var 直填，这里做最小 %XX 解码。
