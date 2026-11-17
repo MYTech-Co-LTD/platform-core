@@ -1174,3 +1174,34 @@ describe('表格条件格式（W2）', () => {
     expect(screen.getByText('3').closest('span')).toBeNull()
   })
 })
+
+describe('交叉表多指标（W3）', () => {
+  const cross = {
+    chart: 'cross_table' as const, title: '门店×品类', rows: ['branch_num'], columns: 'category_name', span: 24,
+    measures: [{ metricId: 'm1', label: '销售额', format: 'currency' as const }, { metricId: 'm2', label: '订单数' }],
+  }
+
+  it('★ 嵌套表头：每个度量一组列；缺组合显示 -', async () => {
+    stub({ panels: [cross] }, {
+      m1: { columns: ['branch_num', 'category_name', 'value'], rows: [['87', '水果', 100], ['87', '肉品', 50]] },
+      m2: { columns: ['branch_num', 'category_name', 'value'], rows: [['87', '水果', 7]] },
+    }, new Set())
+    renderView()
+    expect((await screen.findAllByText('销售额')).length).toBeGreaterThanOrEqual(1)
+    expect(screen.getAllByText('订单数').length).toBeGreaterThanOrEqual(1)
+    expect(screen.getAllByText('水果').length).toBeGreaterThanOrEqual(1)
+    expect(screen.getAllByText('肉品').length).toBeGreaterThanOrEqual(1)
+    expect(screen.getByText('¥100.00')).toBeInTheDocument()
+    expect(screen.getByText('¥50.00')).toBeInTheDocument()
+    expect(screen.getAllByText('-').length).toBeGreaterThanOrEqual(1)
+  })
+
+  it('缺维度列 ⇒ 人话错误，不崩', async () => {
+    stub({ panels: [cross] }, {
+      m1: { columns: ['branch_num', 'value'], rows: [['87', 1]] },
+      m2: { columns: ['branch_num', 'value'], rows: [['87', 2]] },
+    }, new Set())
+    renderView()
+    expect(await screen.findByText('返回结果缺少维度或度量列')).toBeInTheDocument()
+  })
+})

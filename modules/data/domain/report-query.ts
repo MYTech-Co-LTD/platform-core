@@ -68,8 +68,10 @@ export function panelQueryBodyOf(
     return { metricId: p.metricId, args, dimensions: ['bizday'] }
   }
   // 交叉表：行维度 + 列维度一起下推，由服务端分组（≤4 维闭集由授权层再校验）。
+  // 多度量（W3）：取第一个度量作为代表体；其余度量由渲染端各自发同形查询并按维度键合并。
   if (p.chart === 'cross_table') {
-    return { metricId: p.metricId, args, dimensions: [...p.rows, p.columns] }
+    const metricId = p.measures !== undefined ? p.measures[0]!.metricId : p.metricId
+    return { metricId, args, dimensions: [...p.rows, p.columns] }
   }
   // 瀑布：单维度分组（对比期由调用方换 bizday 再查一次）。
   if (p.chart === 'waterfall') return { metricId: p.metricId, args, dimensions: p.dims }

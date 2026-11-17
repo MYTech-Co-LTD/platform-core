@@ -119,11 +119,24 @@ const BarPanel = z.object({
 const TableColumnsSchema = z.array(z.string().trim().min(1).max(64)).min(1).max(32)
   .refine((cols) => new Set(cols).size === cols.length, { message: 'DUPLICATE_COLUMN' })
 
+const TableMeasure = z.object({
+  metricId: z.string().min(1).max(128),
+  /** 列头（缺省 = 词表指标标题）。 */
+  label: z.string().trim().min(1).max(60).optional(),
+  /** 列格式（缺省 = 原样展示）。 */
+  format: z.enum(['currency', 'number', 'percent']).optional(),
+  /** 目标值（W2 条件格式与未来参考线共用；与指标同量纲）。 */
+  target: z.number().finite().optional(),
+  /** 条件格式（W2）：按 target 达标绿/未达标红；必须带 target（superRefine）。 */
+  colorSemantics: z.enum(['target']).optional(),
+}).strict()
+
 /** 交叉表（R3 组件①）：行维度（1–2）+ 列维度（1），单元格 = 指标合计。 */
 const CrossTablePanel = z.object({
   chart: z.literal('cross_table'),
   title: z.string().trim().min(1).max(120),
-  metricId: z.string().min(1).max(128),
+  /** 单度量形态（既有）。带 measures 时必须缺席。 */
+  metricId: z.string().min(1).max(128).optional(),
   args: ArgsSchema,
   /** 行维度：1–2 个（多值时按 ` / ` 连接成行标签）。 */
   rows: z.array(z.string().min(1).max(64)).min(1).max(2),
@@ -133,6 +146,8 @@ const CrossTablePanel = z.object({
   page: z.number().int().min(1).max(MAX_PAGES).optional(),
   span: z.number().int().min(1).max(24).default(24),
   timeScoped: z.boolean().default(true),
+  /** 多度量形态（W3）：1–4 个度量，单元格按指标分组并排。 */
+  measures: z.array(TableMeasure).min(1).max(4).optional(),
 }).strict()
 
 /**
@@ -199,17 +214,7 @@ const TableExpand = z.object({
  * 合并是**纯展示级外连接**（无算术）；每列各自的授权/掩码/审计由各自 `/query` 保证。
  * 「计算列」（客单价这类派生口径）**不在这里**——走 L2 变更单提案，这是地图 §1 红线。
  */
-const TableMeasure = z.object({
-  metricId: z.string().min(1).max(128),
-  /** 列头（缺省 = 词表指标标题）。 */
-  label: z.string().trim().min(1).max(60).optional(),
-  /** 列格式（缺省 = 原样展示）。 */
-  format: z.enum(['currency', 'number', 'percent']).optional(),
-  /** 目标值（W2 条件格式与未来参考线共用；与指标同量纲）。 */
-  target: z.number().finite().optional(),
-  /** 条件格式（W2）：按 target 达标绿/未达标红；必须带 target（superRefine）。 */
-  colorSemantics: z.enum(['target']).optional(),
-}).strict()
+
 
 const TablePanel = z.object({
   chart: z.literal('table'),
@@ -379,21 +384,26 @@ export const ReportSpecSchema = z.object({
   })
   // 多度量宽表（W1）的形态互斥与必填：拼错在写侧给人话，不留到观看时才发现。
   spec.panels.forEach((p, i) => {
-    if (p.chart !== 'table') return
+    if (p.chart !== 'table' && p.chart !== 'cross_table') return
     if (p.measures !== undefined) {
+      if (p.chart === 'cross_table' && p.rows.length === 0) {
+        // 交叉表必须有行维度（schema 已 min(1)，这里只是防御未来放宽）
+        ctx.addIssue({ code: z.ZodIssueCode.custom, path: ['panels', i, 'rows'], message: 'CROSS_TABLE_REQUIRES_ROWS' })
+      }
       if (p.metricId !== undefined) {
         ctx.addIssue({
           code: z.ZodIssueCode.custom, path: ['panels', i, 'measures'],
           message: 'MEASURES_CONFLICTS_WITH_METRIC_ID',
         })
       }
-      if (p.columns !== undefined) {
+      // columns/expandable 只属 table（cross_table 没有这两个字段）。
+      if (p.chart === 'table' && p.columns !== undefined) {
         ctx.addIssue({
           code: z.ZodIssueCode.custom, path: ['panels', i, 'measures'],
           message: 'MEASURES_CONFLICTS_WITH_COLUMNS',
         })
       }
-      if (p.expandable !== undefined) {
+      if (p.chart === 'table' && p.expandable !== undefined) {
         ctx.addIssue({
           code: z.ZodIssueCode.custom, path: ['panels', i, 'measures'],
           message: 'MEASURES_CONFLICTS_WITH_EXPANDABLE',

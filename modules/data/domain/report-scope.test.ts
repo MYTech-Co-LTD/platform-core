@@ -216,3 +216,12 @@ describe('多度量宽表（W1）：metricIdsOf / 页门派生 / 写侧校验', 
     expect(validatePanelMetrics(specOf(measuresPanel('m1', 'm2')), c, new Set(['lemeng']))).toEqual({ ok: true })
   })
 })
+
+describe('交叉表多指标（W3）：metricIdsOf 逐列', () => {
+  it('cross_table measures 全部纳入（去重）', () => {
+    expect(metricIdsOf({
+      chart: 'cross_table', rows: ['branch_num'], columns: 'category_name',
+      measures: [{ metricId: 'm1' }, { metricId: 'm1' }, { metricId: 'm2' }],
+    } as never)).toEqual(['m1', 'm2'])
+  })
+})
