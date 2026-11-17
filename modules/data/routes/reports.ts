@@ -1607,12 +1607,8 @@ export function registerReports(r: ModuleHono, ctx: RouteCtx): void {
     // 锚点自证（R2 运行期）：草稿用到的每个指标**当前数据水位 vs 各自 SLA**。数据来自
     // `data.load_log`（与 /query 的新鲜度链同一份 `freshnessFaceFor`，不另写判据）；
     // 查不到/无声明一律 unknown——「未知」不染色成「迟到」，更不反噬审阅面。
-    const anchorIds = [...new Set(parsed.spec.panels.flatMap((p) => {
-      if (p.chart === 'text' || p.chart === 'ai_text') return []
-      const ids = [p.metricId]
-      if (p.chart === 'kpi' && p.denominatorMetricId !== undefined) ids.push(p.denominatorMetricId)
-      return ids
-    }))]
+    // 唯一事实源 = metricIdsOf（度量宽表 W1 的逐列指标已纳入；kpi 分母同源）。
+    const anchorIds = [...new Set(parsed.spec.panels.flatMap((p) => metricIdsOf(p)))]
     const anchorRows = anchorIds.map((mid) => {
       const m = catalog.find((x) => x.id === mid)
       return {
@@ -1639,6 +1635,7 @@ export function registerReports(r: ModuleHono, ctx: RouteCtx): void {
       // 未配仓库 / load_log 查询失败 ⇒ 全部 unknown（锚点是附加面，不反噬审阅）。
       faces = new Map()
     }
+    // anchorIds 来自 metricIdsOf（度量宽表已逐列纳入）⇒ 这里只是类型上把 undefined 收掉。
     const anchors = anchorIds.map((mid) => {
       const m = catalog.find((x) => x.id === mid)
       const face = faces.get(mid)
@@ -2136,6 +2133,8 @@ export function registerReports(r: ModuleHono, ctx: RouteCtx): void {
     if (panel === undefined || panel.chart !== 'table' || panel.expandable === undefined) {
       return c.json({ error: 'PANEL_NOT_EXPANDABLE' }, 400)
     }
+    // expandable 与 measures 在写侧互斥 ⇒ 这里 metricId 必有；守卫只是把类型与陈旧形状收口。
+    if (panel.metricId === undefined) return c.json({ error: 'PANEL_NOT_EXPANDABLE' }, 400)
     const org = c.get('tenant').casdoor_org
     const metric = (await loadMergedCatalog(ctx.pool, org)).find((m) => m.id === panel.metricId)
     if (metric === undefined) return c.json({ error: 'METRIC_NOT_FOUND' }, 404)

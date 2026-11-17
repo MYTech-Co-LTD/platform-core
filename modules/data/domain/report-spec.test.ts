@@ -410,3 +410,60 @@ describe('AI 叙事通用小节（general）', () => {
     if (out.ok) expect(out.spec.panels[0]).toMatchObject({ focus: 'general', sections: ['summary', 'drivers'] })
   })
 })
+
+describe('多度量宽表（W1）', () => {
+  const parse = (panel: unknown) => parseReportSpec({ panels: [panel] })
+  const wide = {
+    chart: 'table', title: '宽表', dims: ['branch_num'],
+    measures: [{ metricId: 'm1', label: '销售额', format: 'currency' }, { metricId: 'm2' }],
+  }
+
+  it('measures 合法，逐列保留 label/format', () => {
+    const out = parse(wide)
+    expect(out.ok).toBe(true)
+    if (out.ok) expect(out.spec.panels[0]).toMatchObject({
+      chart: 'table', measures: [
+        { metricId: 'm1', label: '销售额', format: 'currency' },
+        { metricId: 'm2' },
+      ],
+    })
+  })
+
+  it('★ 互斥：measures 与 metricId/columns/expandable 同块 ⇒ 拒', () => {
+    expect(parse({ ...wide, metricId: 'm0' })).toEqual({ ok: false, code: 'INVALID_SPEC' })
+    expect(parse({ ...wide, columns: ['销售额'] })).toEqual({ ok: false, code: 'INVALID_SPEC' })
+    expect(parse({ ...wide, expandable: { dimensions: ['branch_num'] } })).toEqual({ ok: false, code: 'INVALID_SPEC' })
+  })
+
+  it('既无 metricId 也无 measures ⇒ 拒（不给残缺面板）', () => {
+    expect(parse({ chart: 'table', title: '空表' })).toEqual({ ok: false, code: 'INVALID_SPEC' })
+  })
+
+  it('重复度量列 ⇒ 拒', () => {
+    expect(parse({ ...wide, measures: [{ metricId: 'm1' }, { metricId: 'm1' }] }))
+      .toEqual({ ok: false, code: 'INVALID_SPEC' })
+  })
+
+  it('v2 measures 块：逐列解析 dataset → metricId；dataset 与 measures 同块 ⇒ 拒', () => {
+    const v2 = (extra: Record<string, unknown>) => parseReportInput({
+      ir: 2,
+      datasets: [
+        { key: 'd1', metricId: 'm1', dims: ['branch_num'] },
+        { key: 'd2', metricId: 'm2', dims: ['branch_num'] },
+      ],
+      blocks: [{
+        type: 'table', title: '宽表', dims: ['branch_num'],
+        measures: [{ dataset: 'd1', label: '销售额', format: 'currency' }, { dataset: 'd2' }],
+        ...extra,
+      }],
+    })
+    const out = v2({})
+    expect(out.ok).toBe(true)
+    if (out.ok) {
+      const p = out.spec.panels[0] as { measures?: Array<{ metricId: string }> }
+      expect(p.measures?.map((m) => m.metricId)).toEqual(['m1', 'm2'])
+    }
+    expect(v2({ dataset: 'd1' })).toEqual({ ok: false, code: 'INVALID_SPEC' })
+    expect(v2({ columns: ['销售额'] })).toEqual({ ok: false, code: 'INVALID_SPEC' })
+  })
+})

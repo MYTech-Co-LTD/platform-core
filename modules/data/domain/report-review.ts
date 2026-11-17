@@ -108,7 +108,10 @@ export function buildReportReview(
   const byId = new Map(catalog.map((m) => [m.id, m]))
   const used = new Map<string, number[]>()
   const panels: ReviewPanel[] = draft.panels.map((p, index) => {
-    const metricId = 'metricId' in p ? p.metricId : null
+    // 度量宽表（W1）没有单一 metricId ⇒ 说明书取第一个度量列（逐列清单是 W2+ 的事）。
+    const metricId = 'metricId' in p && typeof p.metricId === 'string'
+      ? p.metricId
+      : (p as { measures?: ReadonlyArray<{ metricId: string }> }).measures?.[0]?.metricId ?? null
     if (metricId !== null) {
       const list = used.get(metricId)
       if (list === undefined) used.set(metricId, [index])

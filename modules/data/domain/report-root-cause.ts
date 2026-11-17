@@ -441,7 +441,10 @@ export async function buildRootCause(
   for (const b of facts.breakdowns.slice(0, 2)) {
     const rows = b.rows.slice(0, TOP_N)
     const panel = spec.panels.find((p) => p.chart !== 'text' && p.chart !== 'ai_text' && p.title === b.panel)
-    const metricId = panel !== undefined && 'metricId' in panel ? panel.metricId : ''
+    // 度量宽表（W1）没有单一 metricId ⇒ 取第一个度量列；finding 的 metricTitle 用面板标题，不受影响。
+    const metricId = panel !== undefined && 'metricId' in panel && typeof panel.metricId === 'string'
+      ? panel.metricId
+      : (panel as { measures?: ReadonlyArray<{ metricId: string }> } | undefined)?.measures?.[0]?.metricId ?? ''
     findings.push({
       metricId, metricTitle: b.panel, kind: 'top', dimension: b.dimension, rows,
       note: '报表面板自带的维度拆解',

@@ -4698,4 +4698,53 @@ describePg('报表路由（需要 DATABASE_URL）', () => {
       expect((await app.request(`/reports/${mbId}/my-layout`)).status).toBe(409)
     })
   })
+
+  // ── 多度量宽表（W1）：measures 写侧校验 / 页门派生 / 模板编译 ─────────────────────
+  describe('多度量宽表（measures）', () => {
+    const wideSpec = (ids: string[]) => ({
+      title: '宽表', renderer: 'platform',
+      spec: {
+        panels: [{
+          chart: 'table', title: '门店分析', dims: ['branch_num'],
+          measures: ids.map((metricId) => ({ metricId, label: metricId })),
+        }],
+      },
+    })
+
+    it('★ measures 建报：页门取度量集合的派生值（单 scope）', async () => {
+      const { app } = manage()
+      const res = await post(app, wideSpec([OPEN_METRIC, COST_METRIC]))
+      expect(res.status).toBe(201)
+      const { id } = await res.json() as { id: string }
+      // OPEN(null) + COST(data:cost) ⇒ 派生 = data:cost（集合里只有非 null 的那个）
+      expect((await pool.query('select required_scope from data.reports where org = $1 and id = $2', [ORG, id]))
+        .rows[0].required_scope).toBe('data:cost')
+    })
+
+    it('★ 跨度量 scope 冲突 ⇒ 400 并点名 scopes（COST + MARGIN）', async () => {
+      const { app } = manage()
+      const res = await post(app, wideSpec([COST_METRIC, MARGIN_METRIC]))
+      expect(res.status).toBe(400)
+      const body = await res.json() as { error: string; scopes: string[] }
+      expect(body.error).toBe('CONFLICTING_PANEL_SCOPES')
+      expect([...body.scopes].sort()).toEqual(['data:cost', 'data:margin'])
+    })
+
+    it('★ 模板 store_monthly_analysis：槽位→度量列；未知列键被拒', async () => {
+      const { app } = manage()
+      const compile = (values: Record<string, string>) =>
+        app.request('/reports/templates/store_monthly_analysis/compile', {
+          method: 'POST', headers: { 'content-type': 'application/json' },
+          body: JSON.stringify({ values }),
+        })
+      const ok = await compile({ revenue: OPEN_METRIC, orders: COST_METRIC })
+      expect(ok.status).toBe(200)
+      const compiled = await ok.json() as { spec: { panels: Array<{ measures?: Array<{ metricId: string }> }> } }
+      expect(compiled.spec.panels[0]?.measures?.map((m) => m.metricId)).toEqual([OPEN_METRIC, COST_METRIC])
+
+      const unknown = await compile({ revenue: OPEN_METRIC, nope: OPEN_METRIC })
+      expect(unknown.status).toBe(400)
+      expect(await unknown.json()).toMatchObject({ error: 'UNKNOWN_SLOT', keys: ['nope'] })
+    })
+  })
 })

@@ -194,12 +194,34 @@ const TableExpand = z.object({
   limit: z.number().int().min(1).max(500).optional(),
 }).strict()
 
+/**
+ * 多度量列（类 Excel 宽表，2026-11-17 开发地图 W1）：一张表并排多个指标。
+ * 合并是**纯展示级外连接**（无算术）；每列各自的授权/掩码/审计由各自 `/query` 保证。
+ * 「计算列」（客单价这类派生口径）**不在这里**——走 L2 变更单提案，这是地图 §1 红线。
+ */
+const TableMeasure = z.object({
+  metricId: z.string().min(1).max(128),
+  /** 列头（缺省 = 词表指标标题）。 */
+  label: z.string().trim().min(1).max(60).optional(),
+  /** 列格式（缺省 = 原样展示）。 */
+  format: z.enum(['currency', 'number', 'percent']).optional(),
+}).strict()
+
 const TablePanel = z.object({
-  chart: z.literal('table'), ...metricBase,
+  chart: z.literal('table'),
+  title: z.string().trim().min(1).max(120),
+  /** 单度量形态（既有行为）。带 `measures` 时必须缺席（互斥由顶层 superRefine 判）。 */
+  metricId: z.string().min(1).max(128).optional(),
+  args: ArgsSchema,
+  span: z.number().int().min(1).max(24).default(12),
+  timeScoped: z.boolean().default(true),
+  page: z.number().int().min(1).max(MAX_PAGES).optional(),
   dims: z.array(z.string().min(1).max(64)).max(MAX_DIMS).default([]),
   slice: SliceSchema.optional(),
   columns: TableColumnsSchema.optional(),
   expandable: TableExpand.optional(),
+  /** 多度量形态（W1）：1–4 个度量列，按声明顺序并排。 */
+  measures: z.array(TableMeasure).min(1).max(4).optional(),
 }).strict()
 
 const KpiPanel = z.object({
@@ -351,6 +373,41 @@ export const ReportSpecSchema = z.object({
       })
     }
   })
+  // 多度量宽表（W1）的形态互斥与必填：拼错在写侧给人话，不留到观看时才发现。
+  spec.panels.forEach((p, i) => {
+    if (p.chart !== 'table') return
+    if (p.measures !== undefined) {
+      if (p.metricId !== undefined) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom, path: ['panels', i, 'measures'],
+          message: 'MEASURES_CONFLICTS_WITH_METRIC_ID',
+        })
+      }
+      if (p.columns !== undefined) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom, path: ['panels', i, 'measures'],
+          message: 'MEASURES_CONFLICTS_WITH_COLUMNS',
+        })
+      }
+      if (p.expandable !== undefined) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom, path: ['panels', i, 'measures'],
+          message: 'MEASURES_CONFLICTS_WITH_EXPANDABLE',
+        })
+      }
+      if (new Set(p.measures.map((m) => m.metricId)).size !== p.measures.length) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom, path: ['panels', i, 'measures'],
+          message: 'DUPLICATE_MEASURE',
+        })
+      }
+    } else if (p.metricId === undefined) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom, path: ['panels', i, 'metricId'],
+        message: 'METRIC_ID_REQUIRED',
+      })
+    }
+  })
   // 多页归属：`page` 只在声明了 `pages` 时有意义，且不得越界（否则面板永远不显示 = 静默丢失）。
   const pageCount = spec.pages?.length
   spec.panels.forEach((p, i) => {
@@ -371,7 +428,12 @@ export const ReportSpecSchema = z.object({
   const metricIds = new Set<string>()
   for (const p of spec.panels) {
     if (p.chart === 'text' || p.chart === 'ai_text') continue
-    metricIds.add(p.metricId)
+    // 度量宽表（W1）：每个度量列都是可被文本引用的指标。
+    if (p.chart === 'table' && p.measures !== undefined) {
+      for (const m of p.measures) metricIds.add(m.metricId)
+      continue
+    }
+    if (p.metricId !== undefined) metricIds.add(p.metricId)
     if (p.chart === 'kpi' && p.denominatorMetricId !== undefined) metricIds.add(p.denominatorMetricId)
   }
   spec.panels.forEach((p, i) => {
@@ -428,11 +490,19 @@ const V2ChartBlock = z.object({
 }).strict()
 
 const V2TableBlock = z.object({
-  type: z.literal('table'), dataset: z.string().min(1).max(64),
+  type: z.literal('table'),
+  /** 单度量形态（既有）。带 `measures` 时必须缺席。 */
+  dataset: z.string().min(1).max(64).optional(),
   title: z.string().trim().min(1).max(120),
   dims: z.array(z.string().min(1).max(64)).max(MAX_DIMS).optional(),
   columns: TableColumnsSchema.optional(),
   expandable: TableExpand.optional(),
+  /** 多度量形态（W1）：引用多个 dataset，列头用 label（缺省 = dataset 对应指标标题由 v1 层补）。 */
+  measures: z.array(z.object({
+    dataset: z.string().min(1).max(64),
+    label: z.string().trim().min(1).max(60).optional(),
+    format: z.enum(['currency', 'number', 'percent']).optional(),
+  }).strict()).min(1).max(4).optional(),
   page: z.number().int().min(1).max(MAX_PAGES).optional(),
   span: z.number().int().min(1).max(24).default(12),
 }).strict()
@@ -490,6 +560,27 @@ export function flattenReportSpecV2(v2: ReportSpecV2): { ok: true; spec: ReportS
       })
       continue
     }
+    // 多度量宽表（W1）：表块可以不挂单一 dataset，改用 measures 引用多个 dataset。
+    if (b.type === 'table' && b.measures !== undefined) {
+      // 互斥（与 v1 同一套语义，fail-closed）：dataset/columns/expandable 都不能与 measures 同块。
+      if (b.dataset !== undefined || b.columns !== undefined || b.expandable !== undefined) {
+        return { ok: false, code: 'INVALID_SPEC' }
+      }
+      const resolved: Array<{ metricId: string; label?: string; format?: 'currency' | 'number' | 'percent' }> = []
+      for (const m of b.measures) {
+        const ds = datasets.get(m.dataset)
+        if (ds === undefined) return { ok: false, code: 'INVALID_SPEC' }
+        resolved.push({ metricId: ds.metricId, ...(m.label === undefined ? {} : { label: m.label }), ...(m.format === undefined ? {} : { format: m.format }) })
+      }
+      panels.push({
+        chart: 'table', title: b.title, measures: resolved,
+        args: {}, span: b.span, timeScoped: true,
+        dims: b.dims ?? [],
+        ...(b.page === undefined ? {} : { page: b.page }),
+      })
+      continue
+    }
+    if (b.dataset === undefined) return { ok: false, code: 'INVALID_SPEC' }
     const dataset = datasets.get(b.dataset)
     if (dataset === undefined) return { ok: false, code: 'INVALID_SPEC' }
     const base = {

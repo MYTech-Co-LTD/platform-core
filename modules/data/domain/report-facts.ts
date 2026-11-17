@@ -236,11 +236,14 @@ function factsQueryKey(
  * 在这里拆回 `runQuery(metricId, args, slicing)` 三个形参 —— 仍只有**一处**装配规则。
  */
 function queryOfPanel(p: DataPanel, args: Record<string, unknown>): {
+  /** 度量宽表（W1）⇒ 第一个度量；单度量面板 ⇒ 面板 metricId（形状由 panelQueryBodyOf 保证）。 */
+  metricId: string
   args: Record<string, unknown>
   dims: string[]
   slicing: SlicingSpec | undefined
 } {
   const body = panelQueryBodyOf(p, args)
+  const metricId = typeof body.metricId === 'string' ? body.metricId : ''
   const dims = Array.isArray(body.dimensions) ? (body.dimensions as string[]) : []
   const slicing: SlicingSpec = {}
   // `dimensions: []` 是**显式合计**（语义与「没声明分组」不同），存在性判断而非长度判断。
@@ -249,6 +252,7 @@ function queryOfPanel(p: DataPanel, args: Record<string, unknown>): {
   if (typeof body.limit === 'number') slicing.limit = body.limit
   if (typeof body.total === 'boolean') slicing.total = body.total
   return {
+    metricId,
     args: (body.args ?? {}) as Record<string, unknown>,
     dims,
     slicing: Object.keys(slicing).length === 0 ? undefined : slicing,
@@ -522,8 +526,8 @@ export async function buildFacts(
       continue
     }
 
-    const out = await factsQuery(deps, factsQueryKey(p.metricId, q.args, q.slicing), () =>
-      runQuery(queryDepsOf(deps), deps.org, deps.requester, p.metricId, q.args, q.slicing))
+    const out = await factsQuery(deps, factsQueryKey(q.metricId, q.args, q.slicing), () =>
+      runQuery(queryDepsOf(deps), deps.org, deps.requester, q.metricId, q.args, q.slicing))
     if (out.status !== 'ok') { missing.push(p.title); continue }
     captureBranch(branchNameOf(out, branchNum))
     if (typeof out.data_as_of === 'string') asOfList.push(out.data_as_of)
@@ -571,7 +575,7 @@ export async function buildFacts(
       dimension: q.dims.join('/'),
       rows: rows.slice(0, MAX_BREAKDOWN_ROWS).map((r) => ({
         label: r.label,
-        value: r.value === null ? '-' : factValue(r.value, formatByMetric.get(p.metricId) ?? 'number'),
+        value: r.value === null ? '-' : factValue(r.value, formatByMetric.get(q.metricId) ?? 'number'),
       })),
     })
   }

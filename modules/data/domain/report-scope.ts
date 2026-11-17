@@ -44,6 +44,8 @@ export interface MetricIdPanel {
   chart?: string
   metricId?: string
   denominatorMetricId?: string
+  /** 多度量宽表（W1）：结构子集，调用方传真实 table 面板即兼容。 */
+  measures?: Array<{ metricId: string }>
 }
 
 /**
@@ -60,6 +62,11 @@ export interface MetricIdPanel {
  */
 export function metricIdsOf(panel: MetricIdPanel): string[] {
   if (panel.chart === undefined || panel.chart === 'text' || panel.chart === 'ai_text') return []
+  // 多度量宽表（W1）：每个度量列都是一个真实查询，逐列进页门派生/源裁剪/可加性校验——
+  // 跨度量 scope 不同会在 deriveRequiredScope 里合成 CONFLICTING_PANEL_SCOPES。
+  if (panel.chart === 'table' && panel.measures !== undefined) {
+    return [...new Set(panel.measures.map((m) => m.metricId))]
+  }
   const metricId = panel.metricId
   // 无 metricId（降级占位符 / 陈旧形状）⇒ 没有指标可判，跳过而不是产出 undefined。
   if (metricId === undefined || metricId === '') return []
