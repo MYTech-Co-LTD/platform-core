@@ -720,7 +720,7 @@
     "enabled": true,
     "kind": {
       "type": "cron",
-      "expr": "10 20 * * *"
+      "expr": "30 0 * * *"
     },
     "timezone": "Asia/Shanghai",
     "misfire": "skip",
