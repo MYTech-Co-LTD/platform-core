@@ -11,6 +11,10 @@
 
 ## [Unreleased]
 
+## [0.325.1](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.325.0...v0.325.1) - 2026-11-17
+- 【修复】data: window_read_parquet 实参改为 Jinja 拼接形态（字面量内嵌 var 不求值）(#2456) ([#2462](https://github.com/MYTech-Co-LTD/platform-core/pull/2462), [3ed8184](https://github.com/MYTech-Co-LTD/platform-core/commit/3ed818475385e1bbfc6a68e0a97e470d3e6b4e62))
+
+
 ## [0.325.0](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.324.0...v0.325.0) - 2026-11-17
 - 【新增】data: 20 条审计改造为 window 感知（window_read_parquet + window_start_date）(#2456) ([#2460](https://github.com/MYTech-Co-LTD/platform-core/pull/2460), [db6d957](https://github.com/MYTech-Co-LTD/platform-core/commit/db6d957501ef0a9568b0bf571e951710ab192812))
 
