@@ -20,6 +20,7 @@ import ChangesPage from './changes'
 import SystemMapPage from './system-map'
 import PipelinesPage from './pipelines'
 import LineagePage from './lineage'
+import MonitorsPage from './monitors'
 import { useIsMobile } from './lib/useIsMobile'
 
 /** 本模块在宿主壳的挂载基路径（manifest frontend.console 首条 path）。 */
@@ -35,6 +36,8 @@ const TABS = [
   { key: 'candidates', label: '可能的指标', manageOnly: true },
   // 待核对（Wave 5 P0）：agent 提案单的评审面——人只做采纳/驳回（决策端点只认会话）。
   { key: 'changes', label: '待核对', manageOnly: true },
+  // 业务监控（D 子项目，#2436）：agent 建的监控人在这里开闸（dry_run → 投递）。
+  { key: 'monitors', label: '业务监控', manageOnly: true },
   // 体系地图（2026-11-13）：原来是从菜单外链打开的服务端 HTML 页，现在内嵌成本页——
   // 同一套壳与设计 token，本体图（entities + relations）是主内容。
   { key: 'system-map', label: '体系地图' },
@@ -80,6 +83,7 @@ export default function DataConsolePage() {
     metrics: MetricsPage, reports: ReportsPage, scopes: ScopesPage,
     candidates: CandidatesPage,
     changes: ChangesPage,
+    monitors: MonitorsPage,
     'system-map': SystemMapPage,
     pipelines: PipelinesPage,
     lineage: LineagePage,
