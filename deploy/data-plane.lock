@@ -1,4 +1,4 @@
-sha256-of-rest 575d1c51f778a81023e925b844f3c231809c109edc07ea39f9f8b30168365ff2
+sha256-of-rest d4ee040c69538f15babb6657fd39076acdb0f70e39bf634a80f0af34f39c8723
 57c67f58b38c8450ddcedf477607e722b51998873b12f84c15ffadc7fe5e81d3 contracts/README.md ${REPO}/contracts/README.md 0644
 fcc8189e1012d5fbb8e2505025bed637dd01c7b4465ab86125d3eaa7f330eff3 contracts/common/_schema.schema.json ${REPO}/contracts/common/_schema.schema.json 0644
 1730119518c3371f3c2ff3492f4c15cd731688047c6d40805ec4d2c65892f3ff contracts/common/_template.contract.json ${REPO}/contracts/common/_template.contract.json 0644
@@ -406,7 +406,7 @@ b19de45a90c2ad3f9ae0d11c355b53fe2fb37fb57ac0be5966d8a580b9e82cb1 deploy/duckle/c
 ccd99ea130a42b1a70c06d20a6fc3b448d2f6eaec79eb18af7e82b5fb4458360 deploy/duckle/console/pipelines/lemeng.wholesale.out.l0.3120.json ${REPO}/deploy/duckle/console/pipelines/lemeng.wholesale.out.l0.3120.json 0644
 e692dc03df90200ea8617b35b2f9b85e5623eb64023520c50afecc48afb895ac deploy/duckle/console/pipelines/lemeng.wholesale.return.l0.3120.json ${REPO}/deploy/duckle/console/pipelines/lemeng.wholesale.return.l0.3120.json 0644
 f4011dd588d2121bbb20f717bf2231b93baf8e431b81e33c2728a39f1a49379e deploy/duckle/console/schedule-durations.json ${REPO}/deploy/duckle/console/schedule-durations.json 0644
-afa11a2083f6dc461271204de75d7ef7f62da19e4f76ed1d59de4657d2646d14 deploy/duckle/console/schedules/3120.json ${REPO}/deploy/duckle/console/schedules/3120.json 0644
+3c49c9515eda51e7bb008b0907db55a30be2a33e0f05074f009298f91da7fb1b deploy/duckle/console/schedules/3120.json ${REPO}/deploy/duckle/console/schedules/3120.json 0644
 a7061236ec2bb694a1efe5110fd5aec0cbf5a0ecc766712d68a3767f8edf9941 deploy/duckle/console/schedules/64188.json ${REPO}/deploy/duckle/console/schedules/64188.json 0644
 127dde28f2d058ec300de7777f171f1922fa8b787af810f2ce63fbfa7a52d53d deploy/duckle/console/schedules/forms.json ${REPO}/deploy/duckle/console/schedules/forms.json 0644
 c1e4977c83bbadb61efcc3a90d745754c9f15de73aedc1f6ae74d5c02d0375d8 deploy/duckle/console/scorecard-alert.py ${REPO}/deploy/duckle/console/scorecard-alert.py 0644
