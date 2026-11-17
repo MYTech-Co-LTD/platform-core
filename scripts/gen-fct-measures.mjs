@@ -258,7 +258,7 @@ export function renderFctMeasures(measures, spec, domains = {}) {
     // 物化闭窗读（2026-11-08 P0）：`MAT_CLOSED_BEFORE=true`（materialize.sh 注入）时排除
     // 「今天且 hour >= 当前小时」——tick 采集每 10 分钟重写当前小时，物化读同一分区会撞 ETag。
     const closedFilter = spec.closedWindow
-      ? `\n    {% if env_var('MAT_CLOSED_BEFORE', 'false') == 'true' %}\n    and not (bizday = current_date and hour >= extract(hour from current_timestamp))\n    {% endif %}`
+      ? `\n    {% if env_var('MAT_CLOSED_BEFORE', 'false') == 'true' %}\n    and {{ closed_before_predicate() }}\n    {% endif %}`
       : ''
     const priorWhere = emittedBases.get(base)
     if (priorWhere === undefined) {

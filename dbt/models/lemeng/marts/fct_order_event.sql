@@ -72,5 +72,5 @@ where r.bizday >= (cast(now() at time zone 'Asia/Shanghai' as date) - interval '
 -- `HTTP Error: ETag ... was initially X and now returned Y` ⇒ 整轮 hourly 判红（实测 06:30 那轮
 -- 读 `bizday=2026-11-09/hour=14`）。与 fct_retail_sale / fct_retail_quantity / fct_retail_item_sale
 -- 同一口径：闭窗读只取「今天已过去的小时」，当前小时留给下一档。
-and not (r.bizday = current_date and r.hour >= extract(hour from current_timestamp))
+and {{ closed_before_predicate('r.') }}
 {% endif %}
