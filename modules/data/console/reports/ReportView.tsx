@@ -734,10 +734,12 @@ function PanelBody({ panel, result, compares = [], detailCtx, textCtx }: { panel
                   ? panel.measures.find((m) => (m.label ?? m.metricId) === c)
                   : undefined
                 const num = typeof raw === 'number' ? raw : Number(raw)
-                const text = measure?.format !== undefined && raw !== null && raw !== undefined && raw !== ''
-                  && Number.isFinite(num)
-                  ? formatValue(num, measure.format)
-                  : displayValue(c, raw)
+                // 多度量列缺值显示 `-`（与事实包/模板口径一致；空单元格在宽表里会被读成 0）。
+                const text = measure !== undefined && (raw === null || raw === undefined || raw === '')
+                  ? '-'
+                  : measure?.format !== undefined && Number.isFinite(num)
+                    ? formatValue(num, measure.format)
+                    : displayValue(c, raw)
                 return [c, text]
               })),
             }))}

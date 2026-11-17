@@ -1109,7 +1109,7 @@ describe('多度量宽表（W1）', () => {
   const okM1 = { columns: ['branch_num', 'value'], rows: [['87', 10], ['116', 20]] }
   const okM2 = { columns: ['branch_num', 'value'], rows: [['116', 5]] }
 
-  it('★ 两度量外连接成一张表；缺度量为空单元格；列头用声明 label', async () => {
+  it('★ 两度量外连接成一张表；缺度量显示 -；列头用声明 label', async () => {
     stub({ panels: [wide] }, { m1: okM1, m2: okM2 }, new Set())
     renderView()
     // antd 表头 + 隐藏测量行会重复文本 ⇒ 用复数断言
@@ -1121,7 +1121,7 @@ describe('多度量宽表（W1）', () => {
       .find((tr) => tr.textContent?.includes('87') && tr.className.includes('ant-table-row'))
     const cells87 = row87?.querySelectorAll('td') ?? []
     expect(cells87).toHaveLength(3)
-    expect(cells87[2]?.textContent).toBe('')
+    expect(cells87[2]?.textContent).toBe('-')
     // 116 行两侧都有
     expect(screen.getByText('¥20.00')).toBeInTheDocument()
     expect(screen.getByText('5')).toBeInTheDocument()
@@ -1159,6 +1159,7 @@ describe('表格条件格式（W2）', () => {
     const row87 = [...document.querySelectorAll('tbody tr')]
       .find((tr) => tr.textContent?.includes('87') && tr.className.includes('ant-table-row'))
     const lastCell = row87?.querySelectorAll('td')[2]
+    expect(lastCell?.textContent).toBe('-')
     expect(lastCell?.querySelector('span[style]')).toBeNull()
   })
 
