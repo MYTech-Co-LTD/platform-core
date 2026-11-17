@@ -16,6 +16,8 @@
 //   ③ 连续失败：任意 enabled 排班**最近 3 次运行（不论状态）**全是 failed/timeout 才红。
 //      `running`/`queued` 行会稀释连败——这是有意的（有在跑说明调度器活着），不要改成只看终态。
 //      （不足 3 次也不判红——样本不够，先让 ② 的时窗判。）
+//      ⚠️ **`data.dbt_audit*` 除外**：审计 exit 1 = 对账发现数据问题，不是调度故障；
+//      计入会让既有数据红在 3 天后把 worker 判 503、阻断部署（2026-11-17 实测）。
 //
 // 本模块不写库、不依赖 loop.ts（健康检查在进程外跑也应当成立）。
 import type { Pool } from 'pg'
@@ -83,10 +85,14 @@ export async function jobHealth(pool: Pool, now: Date): Promise<JobHealth> {
   }
 
   // ③ 连续失败（最近 3 次）
+  // ⚠️ `data.dbt_audit*` 是**验证类**排班：exit 1 的语义是「对账发现数据问题」，不是「引擎坏了」。
+  // 把它们计入健康会让「已知既有红」在 3 天后把 worker 判 503、阻断部署（2026-11-17 实测）。
+  // 红仍通过 `jobs.job.failed` 通知 + jobs 控制台的 run 台账可见；健康只看执行面。
   const failing = await pool.query<{ key: string }>(
     `select s.key
        from platform.job_schedule s
       where s.enabled
+        and s.key not like 'data.dbt_audit%'
         and (
           select count(*) from (
             select r.status from platform.job_run r

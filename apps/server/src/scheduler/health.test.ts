@@ -206,4 +206,30 @@ describePg('jobHealth', () => {
     expect(prefixReasons(h).join()).toContain(`${PREFIX}bad-cron`)
     expect(prefixReasons(h).join()).toContain('cron 算不出下一次触发')
   })
+
+  it('★ 审计排班（data.dbt_audit*）连续失败不计入健康：exit 1 是数据问题，不是调度故障', async () => {
+    const key = 'data.dbt_audit_healthtest'
+    try {
+      const { rows } = await pool.query<{ id: string }>(
+        `insert into platform.job_schedule
+           (key,cron,timezone,source,enabled,next_run_at,timeout_ms,max_attempts,
+            expected_interval_secs,updated_at)
+         values ($1,'30 3 * * *','UTC','system',true,now() + interval '1 day',1000,1,86400,now())
+         returning id`,
+        [key],
+      )
+      const id = Number(rows[0].id)
+      for (let i = 3; i >= 1; i--) await insertRun(id, key, 'failed', minutesAgo(i))
+      const h = await jobHealth(pool, new Date())
+      expect(h.reasons.filter((r) => r.includes(key))).toEqual([])
+      await pool.query('delete from platform.job_run where schedule_id=$1', [id])
+      await pool.query('delete from platform.job_schedule where id=$1', [id])
+    } finally {
+      await pool.query(
+        'delete from platform.job_run where schedule_id in (select id from platform.job_schedule where key=$1)',
+        [key],
+      )
+      await pool.query('delete from platform.job_schedule where key=$1', [key])
+    }
+  })
 })
