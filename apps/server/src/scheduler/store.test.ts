@@ -4,7 +4,7 @@ import { Pool } from 'pg'
 import { runMigrations } from '../migrate'
 import { nextRunAt } from './cron'
 import {
-  beat, claimDue, claimQueuedManual, clearRetry, finishRun, hasRunning, reapQueued, reapStale, scheduleRetry,
+  beat, claimDue, claimQueuedManual, clearRetry, finishRun, hasRunning, reapLostRunners, reapQueued, reapStale, scheduleRetry,
   softDeleteSchedule,
 } from './store'
 
@@ -134,6 +134,18 @@ describePg('scheduler store', () => {
     expect(await reapStale(pool, new Date())).toBeGreaterThanOrEqual(1)
     const { rows } = await pool.query("select status from platform.job_run where schedule_id=$1", [id])
     expect(rows[0].status).toBe('timeout')
+  })
+
+  it('★ 启动对账：刚起的 running 行也直接收成 timeout（不等 2×timeout，#2442）', async () => {
+    const id = await mkSchedule(pool, 'jobtest-store:lost', { timeoutMs: 1000 })
+    await pool.query(
+      `insert into platform.job_run(schedule_id,key,occurrence,trigger,status,started_at)
+       values ($1,'jobtest-store:lost',now(),'schedule','running', now())`, [id])
+    expect(await reapLostRunners(pool, new Date())).toBeGreaterThanOrEqual(1)
+    const { rows } = await pool.query(
+      'select status, error from platform.job_run where schedule_id=$1', [id])
+    expect(rows[0].status).toBe('timeout')
+    expect(rows[0].error).toBe('runner lost on worker restart')
   })
 
   it('★ reapQueued：无 running 且超龄的 queued 判 timeout', async () => {

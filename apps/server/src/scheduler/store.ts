@@ -329,6 +329,19 @@ export async function reapStale(pool: Pool, now: Date): Promise<number> {
   return rowCount ?? 0
 }
 
+/** 启动对账（#2442）：上一进程起的 runner 已随容器/进程消失，但行还停在 running。
+ *  reapStale 要等 2×timeout（长任务 90 分钟 ⇒ 3 小时），期间 hasRunning 恒真、健康判据③把
+ *  非终态计数、手动触发 409。启动即收成 timeout 才是事实。
+ *  前提：本进程是该库唯一的 scheduler runner（单 worker/实例；两实例各有自己的库）。 */
+export async function reapLostRunners(pool: Pool, now: Date): Promise<number> {
+  const { rowCount } = await pool.query(
+    `update platform.job_run set status='timeout', finished_at=$1, error='runner lost on worker restart'
+      where status='running'`,
+    [now],
+  )
+  return rowCount ?? 0
+}
+
 /** 回收卡住的 `queued` 行。两条**同时**满足才判死（否则会误杀合法排队）：
  *   ① 年龄 > 2 × 该排班的 timeout_ms；
  *   ② 该 schedule 当前**没有** running 行（有在跑 ⇒ 调度器活着，排队是正常的）。

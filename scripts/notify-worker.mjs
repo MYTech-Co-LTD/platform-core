@@ -97,6 +97,13 @@ if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) 
     const { createSchedulerLoop } = await import('../apps/server/src/scheduler/loop.ts')
     const { jobHealth } = await import('../apps/server/src/scheduler/health.ts')
     jobHealthFn = jobHealth
+    // 启动对账（#2442）：容器重启会连子进程一起杀掉，上一轮的 running 行必须当场收口，
+    // 否则要等 reapStale 的 2×timeout（长任务 90 分钟 ⇒ 3 小时）。
+    const { reapLostRunners } = await import('../apps/server/src/scheduler/store.ts')
+    const reapedLost = await reapLostRunners(pool, new Date())
+    if (reapedLost > 0) {
+      console.log(JSON.stringify({ ts: new Date().toISOString(), schedulerReapedLost: reapedLost }))
+    }
     // 任务生命周期事件（W6-P4a）：与 integration.stale 同路径——直接入 outbox，不新起子进程。
     // org 取排班 owner（系统排班 owner 为空 ⇒ 本实例租户），由 loop 传入。
     const { enqueueEvent } = await import('../modules/notify/storage.ts')
