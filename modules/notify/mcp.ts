@@ -10,7 +10,7 @@ import type {
 } from '@platform/sdk'
 import { REQUESTER_CHANNEL, validatePayload } from '@platform/sdk'
 import {
-  createAgentRule, createAgentTemplate, declareAgentEvent, sendAgentMessage,
+  createAgentRule, createAgentTemplate, declareAgentEvent, deleteAgentRule, sendAgentMessage,
 } from './agent-actions'
 import { C_SAFE_TOOLS, NOTIFY_TOOLS, toolsForChannel } from './mcp-tools'
 import type { NotifyChannel } from './mcp-tools'
@@ -541,6 +541,18 @@ export async function callTool(
     return r.ok
       ? ok({ id: r.id, status: r.status, approvalId: r.approvalId, namespace })
       : err(r.code, r.detail ?? {})
+  }
+
+  if (name === 'delete_agent_rule') {
+    const namespace = toolNamespace(deps, args.namespace, pinnedNamespace)
+    if (!namespace) return err('namespace_unconfigured')
+    const id = str(args.id)
+    if (!id) return err('missing_required')
+    const r = await deleteAgentRule(deps.pool, {
+      org: deps.org, userId: deps.userId, namespace, id,
+      allowServiceNamespace: deps.channel === 'wecom',
+    })
+    return r.ok ? ok({ id: r.id, namespace }) : err(r.code, r.detail ?? {})
   }
 
   return err('unknown_tool', { name })

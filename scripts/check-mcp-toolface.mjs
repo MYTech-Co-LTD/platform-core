@@ -16,7 +16,9 @@
 // 否则门禁会连坐运行时依赖）。
 import { ANALYST_FACE_MAX_LIST_BYTES, ANALYST_FACE_MAX_TOOLS, ANALYST_TOOLS } from '../modules/data/domain/toolbox/registry.ts'
 import { MANAGE_FACE_MAX_TOOLS, MANAGE_TOOLS } from '../modules/data/domain/manage-face.ts'
-import { NOTIFY_MAX_TOOLS, NOTIFY_TOOLS } from '../modules/notify/mcp-tools.ts'
+import {
+  NOTIFY_FACE_MAX_LIST_BYTES, NOTIFY_MAX_TOOLS, NOTIFY_TOOLS,
+} from '../modules/notify/mcp-tools.ts'
 import { FORMS_MAX_TOOLS, FORMS_TOOLS } from '../modules/forms/mcp-tools.ts'
 import { MANAGE_FACE_COMBINED_MAX_TOOLS, MANAGE_FACE_MAX_LIST_BYTES, MANAGE_FACE_TOOLS } from '../modules/data/routes/mcp-manage-face.ts'
 
@@ -60,7 +62,9 @@ if (process.argv[1]?.endsWith('check-mcp-toolface.mjs')) {
   const violations = [
     ...checkToolface(ANALYST_TOOLS),
     ...checkToolface(MANAGE_TOOLS, { maxTools: MANAGE_FACE_MAX_TOOLS }),
-    ...checkToolface(NOTIFY_TOOLS, { maxTools: NOTIFY_MAX_TOOLS }),
+    ...checkToolface(NOTIFY_TOOLS, {
+      maxTools: NOTIFY_MAX_TOOLS, maxBytes: NOTIFY_FACE_MAX_LIST_BYTES,
+    }),
     // forms（2026-11-16 能力网关 Task 8）：read list_forms（read-only/null）+
     // generate_form_draft（mutating/forms:manage）——2 件，无发布类工具。
     ...checkToolface(FORMS_TOOLS, { maxTools: FORMS_MAX_TOOLS }),

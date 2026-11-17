@@ -3,9 +3,12 @@
 // 硬边界：没有 publish / channel 工具；没有「给别人试发」工具；排班工具不接受通道参数。
 import { SCHEDULE_TOOLS } from './tools/schedules'
 
-// 17（消息/模板/规则/投递 + N3b agent 工具 + agent 事件声明）+ 8（agent 排班，W6-P3）。
+// 18（消息/模板/规则/投递 + N3b agent 工具 + agent 事件声明 + 规则删除）+ 8（agent 排班，W6-P3）。
 // 加工具必须同 PR 显式抬。
-export const NOTIFY_MAX_TOOLS = 25
+export const NOTIFY_MAX_TOOLS = 26
+
+/** notify 工具面 tools/list 静态序列化预算（26 件后从复用分析师 10KB 显式抬到 11KB）。 */
+export const NOTIFY_FACE_MAX_LIST_BYTES = 11264
 
 export type NotifyToolMeta = {
   name: string
@@ -105,6 +108,10 @@ export const NOTIFY_TOOLS: NotifyToolMeta[] = [
     },
     ['namespace', 'eventKey', 'recipientKey', 'templateKey', 'channels'],
     true, 'notify:manage'),
+  t('delete_agent_rule',
+    '删除本 namespace 的一条规则（enabled 的须先由人停用）。',
+    { namespace: { type: 'string' }, id: { type: 'string' } },
+    ['id'], true, 'notify:manage'),
   t('send_message',
     '向 agent namespace 发一条通用 in-app 消息（受 policy 配额约束）。',
     {
@@ -130,7 +137,7 @@ export const NOTIFY_TOOLS: NotifyToolMeta[] = [
 export const C_SAFE_TOOLS = new Set<string>([
   'list_events', 'get_event', 'list_rules', 'list_templates', 'get_template',
   'list_deliveries', 'check_rule', 'preview_template', 'send_test',
-  'declare_agent_event', 'create_agent_template', 'create_agent_rule',
+  'declare_agent_event', 'create_agent_template', 'create_agent_rule', 'delete_agent_rule',
 ])
 for (const m of SCHEDULE_TOOLS) C_SAFE_TOOLS.add(m.name)
 
