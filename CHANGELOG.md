@@ -11,6 +11,10 @@
 
 ## [Unreleased]
 
+## [0.318.0](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.317.0...v0.318.0) - 2026-11-17
+- 【新增】data: W1 多度量宽表——table 面板 measures + 客户端外连接 + 模板 (#2434) ([#2435](https://github.com/MYTech-Co-LTD/platform-core/pull/2435), [06921e7](https://github.com/MYTech-Co-LTD/platform-core/commit/06921e72132af751b4ef418fb4e0bb51b33ecaa9))
+
+
 ## [0.317.0](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.316.0...v0.317.0) - 2026-11-17
 - 【新增】notify: delete_agent_rule——agent 自助清理草稿规则 ([#2430](https://github.com/MYTech-Co-LTD/platform-core/pull/2430), [a62dee5](https://github.com/MYTech-Co-LTD/platform-core/commit/a62dee51c5c5e449c466d69bf8b0082e824e0fad))
 
