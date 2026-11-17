@@ -44,7 +44,7 @@
 |---|---|---|---|---|
 | W1 多度量宽表 | 已完成 | 2026-11-17 | 2026-11-17 | issue #2434 / PR #2435：`measures`（v1 直填 + v2 引 dataset）、客户端外连接（纯展示拼接）、任一列 denied 整面板降级、非可加列合计自动 `-`（服务端本就不回 total）、模板 `store_monthly_analysis`、agent 描述补「计算列走 submit_metric_change」。全量 backend 2134 + console 227 绿，CI 三轮（修 noUnusedLocals / 夹具 tuple）后全绿 |
 | W2 表格条件格式 | 已完成 | 2026-11-17 | 2026-11-17 | issue #2439 / PR #2440：度量列 `target` + `colorSemantics:'target'`（v1/v2，缺 target 写侧拒）；逐格按**原始值**着色（合并结果改存原值、列格式移到单元格），达标绿/未达标红/缺值不染；顺带修正宽表缺值显示 `-`（空单元格会被读成 0）。全量 backend 2137 + console 229 绿 |
-| W3 交叉表多指标 | 未开始 | — | — | — |
-| W4 xlsx 导出 | 未开始 | — | — | — |
+| W3 交叉表多指标 | 已完成 | 2026-11-17 | 2026-11-17 | issue #2444 / PR #2445：cross_table `measures`（1–4，与 metricId 互斥）；查询逐度量同形 + 外连接；嵌套表头（行维列 + 每指标一组列），缺格 `-`；`metricIdsOf` 逐列纳入 ⇒ 页门/源/可加性全链。全量 backend 2142 + console 231 绿；真机已验证容器内路由/规格在位 |
+| W4 xlsx 导出 | 已完成 | 2026-11-17 | 2026-11-17 | issue #2446 / PR #2447：`domain/xlsx.ts`（exceljs）生成真工作簿；`receipt/export` 与 `receipt/detail` 支持 `format:'xlsx'`（缺省 csv 不变），数值写数值单元格并套 currency/percent 格式；console 凭证抽屉加两个 Excel 按钮；单测 exceljs **回读**断言 + 路由 PK 魔数。全量 backend 2146 + console 231 绿。**依赖**：exceljs@4.4.0（后端导出专用） |
 | W5 分组小计 | 缓办 | — | — | 等真实案例 |
 | 治理首跑（客单价 L2） | 未开始 | — | — | 采纳需人会话决策 |
