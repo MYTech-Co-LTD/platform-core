@@ -42,7 +42,7 @@ with src as (
     from {{ ref('stg_lemeng_item_profit') }}
     where 1 = 1
     {% if is_incremental() %}
-    and bizday >= {{ incremental_cutoff(7) }}
+    and bizday >= {{ incremental_cutoff(10) }}
     {% endif %}
     {% if env_var('MAT_CLOSED_BEFORE', 'false') == 'true' %}
     -- 物化闭窗读：当天分区可能尚未完整落地；与零售 tick 模型同一纪律。

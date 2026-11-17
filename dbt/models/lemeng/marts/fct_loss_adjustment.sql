@@ -21,7 +21,7 @@ direction,
 sum(coalesce(total_money, 0))::numeric(20,2) as loss_money
 from {{ ref('stg_lemeng_loss_adjustment') }}
 {% if is_incremental() %}
-where bizday >= {{ incremental_cutoff(7) }}
+where bizday >= {{ incremental_cutoff(10) }}
 {% endif %}
 group by 1, 2, 3, 4, 5
 ),
@@ -35,7 +35,7 @@ direction,
 count(distinct order_no)::bigint as order_count
 from {{ ref('stg_lemeng_loss_adjustment') }}
 {% if is_incremental() %}
-where bizday >= {{ incremental_cutoff(7) }}
+where bizday >= {{ incremental_cutoff(10) }}
 {% endif %}
 group by 1, 2, 3, 4, 5
 )

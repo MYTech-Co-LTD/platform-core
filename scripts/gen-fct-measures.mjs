@@ -99,9 +99,9 @@ export const MODELS = [
       'sale_amount@order': 'base_sale',
       'return_amount@line': 'base_return',
     },
-    // 该模型是 incremental（#1520）：基面 CTE 下推 7 天 lookback，让 read_parquet 走 bizday
+    // 该模型是 incremental（#1520）：基面 CTE 下推 10 天 lookback，让 read_parquet 走 bizday
     // 分区裁剪。只放最终 SELECT 会先扫全史再过滤（tick 实测 5+ 分钟，#1524）。
-    incrementalLookback: 7,
+    incrementalLookback: 10,
     // 物化只读已闭窗（2026-11-08 P0）：tick 采集每 10 分钟重写当前小时，物化读同一分区会撞
     // DuckDB ETag。`MAT_CLOSED_BEFORE=true` 时排除「今天且 hour >= 当前小时」的分区。
     closedWindow: true,
@@ -117,7 +117,7 @@ export const MODELS = [
       'ep_payable@flat': 'base_payable',
       'er_receivable@flat': 'base_receivable',
     },
-    incrementalLookback: 7,
+    incrementalLookback: 10,
   },
   // P3.3 Task 3（#1031）：客户费用构件——与门店族同构的 flat 双列。组件键带 client_ 族前缀：
   // measures 是扁平命名空间，门店族已占 `ep_payable@flat` / `er_receivable@flat`，同名键会静默
@@ -133,7 +133,7 @@ export const MODELS = [
       'client_ep_payable@flat': 'base_payable',
       'client_er_receivable@flat': 'base_receivable',
     },
-    incrementalLookback: 7,
+    incrementalLookback: 10,
   },
   // P3.3 Task 4（#1031）：配送行质量构件——影子波**唯一的两阶段族**：zero_cost_amount 是 order
   // 粒度 measure（先逐单求 measure_value、再上卷店日），与手写 per_order 链的分组键同源。
@@ -166,8 +166,8 @@ export const MODELS = [
       'sale_quantity@flat': 'base_rq_sale',
       'return_quantity@flat': 'base_rq_return',
     },
-    // #1520 W2-P1：与主路径（手写 base CTE）同窗口；生成区基面也下推 7 天。
-    incrementalLookback: 7,
+    // #1520 W2-P1：与主路径（手写 base CTE）同窗口；生成区基面也下推 10 天。
+    incrementalLookback: 10,
     // 同 fct_retail_sale：物化只读已闭窗（2026-11-08 P0）。
     closedWindow: true,
   },

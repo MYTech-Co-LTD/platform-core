@@ -32,7 +32,7 @@ with agg as (
         sum(case when direction = '应收' then coalesce(amount, 0) else 0 end)::numeric(20,2) as er_receivable
     from {{ ref('stg_lemeng_branch_expense') }}
     {% if is_incremental() %}
-    where bizday >= {{ incremental_cutoff(7) }}
+    where bizday >= {{ incremental_cutoff(10) }}
     {% endif %}
     group by 1, 2, 3, 4
 ),
@@ -44,7 +44,7 @@ base_payable as (
     select * from {{ ref('stg_lemeng_branch_expense') }}
     where direction = '应付'
     {% if is_incremental() %}
-    and bizday >= {{ incremental_cutoff(7) }}
+    and bizday >= {{ incremental_cutoff(10) }}
     {% endif %}
 ),
 ep_payable__gen as (
@@ -54,7 +54,7 @@ base_receivable as (
     select * from {{ ref('stg_lemeng_branch_expense') }}
     where direction = '应收'
     {% if is_incremental() %}
-    and bizday >= {{ incremental_cutoff(7) }}
+    and bizday >= {{ incremental_cutoff(10) }}
     {% endif %}
 ),
 er_receivable__gen as (
@@ -89,7 +89,7 @@ bill_count_cte as (
         count(distinct bill_no) as bill_count
     from {{ ref('stg_lemeng_branch_expense') }}
     {% if is_incremental() %}
-    where bizday >= {{ incremental_cutoff(7) }}
+    where bizday >= {{ incremental_cutoff(10) }}
     {% endif %}
     group by 1, 2, 3, 4
 )

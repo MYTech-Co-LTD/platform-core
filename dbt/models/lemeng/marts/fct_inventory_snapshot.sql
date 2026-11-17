@@ -23,7 +23,7 @@ select
     difference_money::numeric(20,2) as difference_money
 from {{ ref('stg_lemeng_inventory_snapshot') }}
 {% if is_incremental() %}
--- 增量窗口（#1520 W2-P1）：库存快照源端 T-2 发布，7 天 lookback 足够覆盖晚到；
+-- 增量窗口（#1520 W2-P1）：库存快照源端 T-2 发布，10 天 lookback 足够覆盖晚到；
 -- 用编译期字面量（incremental_cutoff）才能让 read_parquet 按 bizday 裁剪（#1524 教训）。
-where bizday >= {{ incremental_cutoff(7) }}
+where bizday >= {{ incremental_cutoff(10) }}
 {% endif %}

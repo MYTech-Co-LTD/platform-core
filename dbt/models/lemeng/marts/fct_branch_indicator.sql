@@ -31,7 +31,7 @@ with agg as (
         sum(case when metric = 'transfer_money' then coalesce(actual_value, 0) else 0 end)::numeric(20,2) as transfer_money
     from {{ ref('stg_lemeng_branch_indicator') }}
     {% if is_incremental() %}
-    where bizday >= {{ incremental_cutoff(7) }}
+    where bizday >= {{ incremental_cutoff(10) }}
     {% endif %}
     group by 1, 2, 3
 )

@@ -50,7 +50,7 @@
 -- `sum(quantity)`，单据类型/状态过滤上移到基面 domain，由 `scripts/gen-fct-measures.mjs`
 -- 生成——改声明后重跑生成器）。本阶段只**并行输出**、任何消费方都不许读；切换要等影子对账
 -- `dbt/tests/lemeng/assert_fct_retail_quantity_measure_shadow_parity.sql` 稳定后另开笔
--- （本表指标 experimental ⇒ 对账窗口 7 天，certified 族的 14 天惯例不适用）。
+-- （本表指标 experimental ⇒ 对账窗口 10 天，certified 族的 14 天惯例不适用）。
 -- 单侧缺行（该商品当日只有销售 / 只有退货）⇒ 该侧 `coalesce(…, 0)` 归零，与旧列同形。
 -- `net_quantity` **无影子**：净销量不属任何单一 measure（与 retail 的 net_amount、expense 的
 -- e_net 同款判例），仍由旧两列相减。
@@ -67,9 +67,9 @@ with base as (
     from {{ ref('stg_lemeng_retail_order_line') }}
     where 1 = 1
     {% if is_incremental() %}
-    -- 增量窗口（#1520 W2-P1）：主路径（手写 base）与影子路径（生成区 base_rq_*）都下推 7 天，
+    -- 增量窗口（#1520 W2-P1）：主路径（手写 base）与影子路径（生成区 base_rq_*）都下推 10 天，
     -- 且用编译期字面量才能触发 read_parquet 的 bizday 分区裁剪（#1524）。
-    and bizday >= {{ incremental_cutoff(7) }}
+    and bizday >= {{ incremental_cutoff(10) }}
     {% endif %}
     {% if env_var('MAT_CLOSED_BEFORE', 'false') == 'true' %}
     -- 物化闭窗读（2026-11-08 P0）：tick 采集每 10 分钟重写当前小时，物化读同一分区会撞 ETag。
@@ -86,7 +86,7 @@ base_rq_sale as (
     select * from {{ ref('stg_lemeng_retail_order_line') }}
     where order_transaction_type = 'SALE_ORDER' and state = 'FINISHED'
     {% if is_incremental() %}
-    and bizday >= {{ incremental_cutoff(7) }}
+    and bizday >= {{ incremental_cutoff(10) }}
     {% endif %}
     {% if env_var('MAT_CLOSED_BEFORE', 'false') == 'true' %}
     and not (bizday = current_date and hour >= extract(hour from current_timestamp))
@@ -99,7 +99,7 @@ base_rq_return as (
     select * from {{ ref('stg_lemeng_retail_order_line') }}
     where order_transaction_type like '%RETURN%' and state in ('FINISHED', 'REPAID')
     {% if is_incremental() %}
-    and bizday >= {{ incremental_cutoff(7) }}
+    and bizday >= {{ incremental_cutoff(10) }}
     {% endif %}
     {% if env_var('MAT_CLOSED_BEFORE', 'false') == 'true' %}
     and not (bizday = current_date and hour >= extract(hour from current_timestamp))

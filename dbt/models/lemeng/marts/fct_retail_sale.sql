@@ -85,7 +85,7 @@ base_sale as (
     select * from {{ ref('stg_lemeng_retail_order_line') }}
     where state = 'FINISHED' and order_transaction_type = 'SALE_ORDER'
     {% if is_incremental() %}
-    and bizday >= {{ incremental_cutoff(7) }}
+    and bizday >= {{ incremental_cutoff(10) }}
     {% endif %}
     {% if env_var('MAT_CLOSED_BEFORE', 'false') == 'true' %}
     and not (bizday = current_date and hour >= extract(hour from current_timestamp))
@@ -103,7 +103,7 @@ base_return as (
     select * from {{ ref('stg_lemeng_retail_order_line') }}
     where state = 'FINISHED' and order_transaction_type like '%RETURN%'
     {% if is_incremental() %}
-    and bizday >= {{ incremental_cutoff(7) }}
+    and bizday >= {{ incremental_cutoff(10) }}
     {% endif %}
     {% if env_var('MAT_CLOSED_BEFORE', 'false') == 'true' %}
     and not (bizday = current_date and hour >= extract(hour from current_timestamp))
@@ -165,7 +165,7 @@ left join order_count_cte
     and gen_agg.bizday      = order_count_cte.bizday
     and gen_agg.branch_num  = order_count_cte.branch_num
 {% if is_incremental() %}
--- 增量窗口（#1520）：只重算最近 7 天；首次 / --full-refresh 时 is_incremental() 为假，走全量。
+-- 增量窗口（#1520）：只重算最近 10 天；首次 / --full-refresh 时 is_incremental() 为假，走全量。
 -- 为什么用 lookback 而不是「> max(bizday)」：历史回填 / 源端晚到 / 同日重写都要被覆盖，
 -- 详见 docs/superpowers/specs/2026-11-04-incremental-marts-design.md §2.3。
 where gen_agg.bizday >= (

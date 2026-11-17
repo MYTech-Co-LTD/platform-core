@@ -23,7 +23,7 @@ sum(coalesce(customer_vip_money, 0))::numeric(20,2) as vip_money,
 sum(coalesce(customer_vip_nums, 0))::bigint as vip_nums
 from {{ ref('stg_lemeng_member_summary') }}
 {% if is_incremental() %}
-where bizday >= {{ incremental_cutoff(7) }}
+where bizday >= {{ incremental_cutoff(10) }}
 {% endif %}
 group by 1, 2, 3, 4
 )
