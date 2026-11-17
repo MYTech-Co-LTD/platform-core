@@ -73,7 +73,7 @@ with base as (
     {% endif %}
     {% if env_var('MAT_CLOSED_BEFORE', 'false') == 'true' %}
     -- 物化闭窗读（2026-11-08 P0）：tick 采集每 10 分钟重写当前小时，物化读同一分区会撞 ETag。
-    and not (bizday = current_date and hour >= extract(hour from current_timestamp))
+    and {{ closed_before_predicate() }}
     {% endif %}
 )
 -- ⚠️ 逗号只能落在标记区**外**（区内逐字节受 `--check` 管），故单独起一行。
@@ -89,7 +89,7 @@ base_rq_sale as (
     and bizday >= {{ incremental_cutoff(10) }}
     {% endif %}
     {% if env_var('MAT_CLOSED_BEFORE', 'false') == 'true' %}
-    and not (bizday = current_date and hour >= extract(hour from current_timestamp))
+    and {{ closed_before_predicate() }}
     {% endif %}
 ),
 sale_quantity__gen as (
@@ -102,7 +102,7 @@ base_rq_return as (
     and bizday >= {{ incremental_cutoff(10) }}
     {% endif %}
     {% if env_var('MAT_CLOSED_BEFORE', 'false') == 'true' %}
-    and not (bizday = current_date and hour >= extract(hour from current_timestamp))
+    and {{ closed_before_predicate() }}
     {% endif %}
 ),
 return_quantity__gen as (

@@ -34,7 +34,7 @@ with src as (
     and bizday >= {{ incremental_cutoff(10) }}
     {% endif %}
     {% if env_var('MAT_CLOSED_BEFORE', 'false') == 'true' %}
-    and bizday < current_date
+    and bizday < (now() AT TIME ZONE 'Asia/Shanghai')::date
     {% endif %}
     group by 1, 2, 3, 4
 )

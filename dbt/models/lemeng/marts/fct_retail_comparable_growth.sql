@@ -36,7 +36,7 @@ bounds as (
     -- 与 fct_order_event / fct_retail_sale 同一口径：闭窗读只取「今天已过去的小时」，
     -- 当前小时留给下一档。`MAT_CLOSED_BEFORE` 由 materialize.sh 主流程全局 export。
     {%- if env_var('MAT_CLOSED_BEFORE', 'false') == 'true' %}
-    {%- set closed_guard = 'and not (bizday = current_date and hour >= extract(hour from current_timestamp))' %}
+    {%- set closed_guard = 'and ' ~ closed_before_predicate() %}
     {%- else %}
     {%- set closed_guard = '' %}
     {%- endif %}

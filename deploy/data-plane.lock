@@ -1,4 +1,4 @@
-sha256-of-rest 8b4009c0a71bcf547650e16456cb4e1c372841ca6dcdd8922108a47b63680308
+sha256-of-rest a87c377b90f4e165bfb17e3b7d36a9b24067f9b0b157f51e7231f4bbf6db9960
 57c67f58b38c8450ddcedf477607e722b51998873b12f84c15ffadc7fe5e81d3 contracts/README.md ${REPO}/contracts/README.md 0644
 fcc8189e1012d5fbb8e2505025bed637dd01c7b4465ab86125d3eaa7f330eff3 contracts/common/_schema.schema.json ${REPO}/contracts/common/_schema.schema.json 0644
 1730119518c3371f3c2ff3492f4c15cd731688047c6d40805ec4d2c65892f3ff contracts/common/_template.contract.json ${REPO}/contracts/common/_template.contract.json 0644
@@ -33,6 +33,7 @@ df200b1b35f2b4319759c110db62ef584ef3fda533844730cf543c10fc881baa contracts/commo
 a9209aad12e3020eefc11f94f51d935c49d1bff9eabf94fb0262d182a6a37c7a contracts/customers/README.md ${REPO}/contracts/customers/README.md 0644
 aa44362a7e442399c48522c2ca27675cc2e139714991e9628506c94af11dafc3 dbt/README.md ${REPO}/dbt/README.md 0644
 0a8392a92cbd6c5612b13a40f6466416a12c01f3546e6635af1b1d7815016046 dbt/dbt_project.yml ${REPO}/dbt/dbt_project.yml 0644
+ab03e2e08d85ef1296ad4fd2993b8b5dad47d0fc80091731185360dfdf1b4420 dbt/macros/closed_before_predicate.sql ${REPO}/dbt/macros/closed_before_predicate.sql 0644
 26d553e851b08aed2e399284165f9b314bf09a3ae13047a03386270a12f4f2b6 dbt/macros/generate_schema_name.sql ${REPO}/dbt/macros/generate_schema_name.sql 0644
 71852a85e16960d4dfdc0a9587618f9f05c886412fb61002d7e0a4c2c74b3a09 dbt/macros/incremental_cutoff.sql ${REPO}/dbt/macros/incremental_cutoff.sql 0644
 d9a9697ca436b57024e8f2bf998ae08b91e42dd0698616b6198827bda6f49d41 dbt/macros/subject_org.sql ${REPO}/dbt/macros/subject_org.sql 0644
@@ -55,17 +56,17 @@ e77275ffb58163daef3a299c12cd86df87b8a9310430a9ad939d3c55ba569d6e dbt/models/leme
 bd577ef6b156e6b7e91cbe4added5edec0a0807a683ea9fdc1b73a592eab41f6 dbt/models/lemeng/marts/fct_inventory_snapshot.sql ${REPO}/dbt/models/lemeng/marts/fct_inventory_snapshot.sql 0644
 b6d2b5114e4d2c6990ae5792858301c34ec79f6eec338705175e2415840c81d7 dbt/models/lemeng/marts/fct_loss_adjustment.sql ${REPO}/dbt/models/lemeng/marts/fct_loss_adjustment.sql 0644
 bf09e065bd157b35e93d4f70a1c6305bbf6174c6da7f2af3b6ad59573acb6d97 dbt/models/lemeng/marts/fct_member_summary.sql ${REPO}/dbt/models/lemeng/marts/fct_member_summary.sql 0644
-96dc74fe1f1ae81472c337ee2726c3db1c555ea62def8b38b65014e267e9e2c0 dbt/models/lemeng/marts/fct_order_event.sql ${REPO}/dbt/models/lemeng/marts/fct_order_event.sql 0644
+adf9abdfbc5edc16246d8719052dbd7ffa612779653afc961c87ed80a68276d5 dbt/models/lemeng/marts/fct_order_event.sql ${REPO}/dbt/models/lemeng/marts/fct_order_event.sql 0644
 aa04d7a8ea8e02e560c9a5fea0dab351f55b8d743fc381ca4f7fae1d83fb0895 dbt/models/lemeng/marts/fct_outbound_region.sql ${REPO}/dbt/models/lemeng/marts/fct_outbound_region.sql 0644
 997faadea19fb0f0fa6073dd959681163ac934cf27f1c73c7a82240cf65c48e7 dbt/models/lemeng/marts/fct_purchase.sql ${REPO}/dbt/models/lemeng/marts/fct_purchase.sql 0644
 b8ed8d27a21fa6162347a3ca3b4e522c253f7f8415cc7f5f87efac74ca0018f1 dbt/models/lemeng/marts/fct_purchase_concentration.sql ${REPO}/dbt/models/lemeng/marts/fct_purchase_concentration.sql 0644
 6725df11de04ac0585a9a1b17e10707340fd2bd0d9bb69676c868c96aa22b82a dbt/models/lemeng/marts/fct_request_fulfillment.sql ${REPO}/dbt/models/lemeng/marts/fct_request_fulfillment.sql 0644
-741de6a5b6f72516c93adfc88edb174a5e8c75542285d675c1d02acde2955606 dbt/models/lemeng/marts/fct_retail_comparable_growth.sql ${REPO}/dbt/models/lemeng/marts/fct_retail_comparable_growth.sql 0644
-a83afe1d02ada4337f6704f15271f50742076691910a6733cca6283c84dadb9f dbt/models/lemeng/marts/fct_retail_item_profit.sql ${REPO}/dbt/models/lemeng/marts/fct_retail_item_profit.sql 0644
-e8e5dbf9ac63b3bc2f5d61faa7edca79e86c50fb793f06be3bad41b77e6cde2e dbt/models/lemeng/marts/fct_retail_item_sale.sql ${REPO}/dbt/models/lemeng/marts/fct_retail_item_sale.sql 0644
-496e6ef9e256c07661c4fe73d708ac8933ce6e3acdf1c7d8b31dfc91b227a8de dbt/models/lemeng/marts/fct_retail_profit.sql ${REPO}/dbt/models/lemeng/marts/fct_retail_profit.sql 0644
-8d299185507fef7a155d55f86c7a9dbe8902dcc09793d8cfdf47eaad0d6aa8eb dbt/models/lemeng/marts/fct_retail_quantity.sql ${REPO}/dbt/models/lemeng/marts/fct_retail_quantity.sql 0644
-ea9b3ac0a1821edb8aa649bf9ab9f45573f2d5e3122e95df159c109fa4c64a6a dbt/models/lemeng/marts/fct_retail_sale.sql ${REPO}/dbt/models/lemeng/marts/fct_retail_sale.sql 0644
+80ef7d69b02841a92021574f2f04acf1444dd6a719f7450926ba85923e30b1b0 dbt/models/lemeng/marts/fct_retail_comparable_growth.sql ${REPO}/dbt/models/lemeng/marts/fct_retail_comparable_growth.sql 0644
+794ed5519c9bf4cf326c20c3943a8cb0392ed60df3a1063ae9b03fcc5170c306 dbt/models/lemeng/marts/fct_retail_item_profit.sql ${REPO}/dbt/models/lemeng/marts/fct_retail_item_profit.sql 0644
+b45a1fad92929ebe0d5141a0bc38aee08a2d682caaaab34f63e5dfd9da367d79 dbt/models/lemeng/marts/fct_retail_item_sale.sql ${REPO}/dbt/models/lemeng/marts/fct_retail_item_sale.sql 0644
+2eaa30ca0546af51a91bf74ff2c9e93f466037d16be9eff90489d4cf2a72a42b dbt/models/lemeng/marts/fct_retail_profit.sql ${REPO}/dbt/models/lemeng/marts/fct_retail_profit.sql 0644
+6d8a824d42f10558d7f1973b516b66945b9bfb60f7634259ed35bc9a17bc8f11 dbt/models/lemeng/marts/fct_retail_quantity.sql ${REPO}/dbt/models/lemeng/marts/fct_retail_quantity.sql 0644
+f87236739869158a0ed065ef9b2353d3727f61ec7eb31ea20eede91b147aed57 dbt/models/lemeng/marts/fct_retail_sale.sql ${REPO}/dbt/models/lemeng/marts/fct_retail_sale.sql 0644
 872019518e1b04162a180ecc4d335dbf084d8146e69570bd7a22948ca0ee2e35 dbt/models/lemeng/marts/fct_transfer_item.sql ${REPO}/dbt/models/lemeng/marts/fct_transfer_item.sql 0644
 9013270fb8daaa8ccdf615c830567a57819813c9cc39871ce862ae809ec73891 dbt/models/lemeng/marts/fct_transfer_line_quality.sql ${REPO}/dbt/models/lemeng/marts/fct_transfer_line_quality.sql 0644
 9c416edf30af0dbbdde213bf38b322d18c2a09132c269eef786c44b7ee6e99be dbt/models/lemeng/marts/fct_transfer_zero_cost_item.sql ${REPO}/dbt/models/lemeng/marts/fct_transfer_zero_cost_item.sql 0644

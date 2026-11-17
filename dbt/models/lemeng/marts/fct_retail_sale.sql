@@ -88,7 +88,7 @@ base_sale as (
     and bizday >= {{ incremental_cutoff(10) }}
     {% endif %}
     {% if env_var('MAT_CLOSED_BEFORE', 'false') == 'true' %}
-    and not (bizday = current_date and hour >= extract(hour from current_timestamp))
+    and {{ closed_before_predicate() }}
     {% endif %}
 ),
 sale_amount__gen as (
@@ -106,7 +106,7 @@ base_return as (
     and bizday >= {{ incremental_cutoff(10) }}
     {% endif %}
     {% if env_var('MAT_CLOSED_BEFORE', 'false') == 'true' %}
-    and not (bizday = current_date and hour >= extract(hour from current_timestamp))
+    and {{ closed_before_predicate() }}
     {% endif %}
 ),
 return_amount__gen as (
