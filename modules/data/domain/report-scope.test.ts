@@ -208,7 +208,7 @@ describe('多度量宽表（W1）：metricIdsOf / 页门派生 / 写侧校验', 
   })
 
   it('validatePanelMetrics：未知度量点名 metricId；源未接入点名；非可加列在 table 里放行', () => {
-    const c = cat(['m1'], ['m2', null, false], ['m3', null, true, 'other-src'])
+    const c = cat(['m1', null], ['m2', null, false], ['m3', null, true, 'other-src'])
     expect(validatePanelMetrics(specOf(measuresPanel('m1', 'm9')), c, new Set(['lemeng'])))
       .toEqual({ ok: false, reason: 'UNKNOWN_PANEL_METRIC', metricId: 'm9' })
     expect(validatePanelMetrics(specOf(measuresPanel('m1', 'm3')), c, new Set(['lemeng'])))
