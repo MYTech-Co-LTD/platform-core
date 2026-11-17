@@ -1,4 +1,4 @@
-sha256-of-rest a87c377b90f4e165bfb17e3b7d36a9b24067f9b0b157f51e7231f4bbf6db9960
+sha256-of-rest 7c307dd295c517495ded13e3feab534333c936b6d00dd8e1f3b5e9dd8d86fdb7
 57c67f58b38c8450ddcedf477607e722b51998873b12f84c15ffadc7fe5e81d3 contracts/README.md ${REPO}/contracts/README.md 0644
 fcc8189e1012d5fbb8e2505025bed637dd01c7b4465ab86125d3eaa7f330eff3 contracts/common/_schema.schema.json ${REPO}/contracts/common/_schema.schema.json 0644
 1730119518c3371f3c2ff3492f4c15cd731688047c6d40805ec4d2c65892f3ff contracts/common/_template.contract.json ${REPO}/contracts/common/_template.contract.json 0644
@@ -33,7 +33,7 @@ df200b1b35f2b4319759c110db62ef584ef3fda533844730cf543c10fc881baa contracts/commo
 a9209aad12e3020eefc11f94f51d935c49d1bff9eabf94fb0262d182a6a37c7a contracts/customers/README.md ${REPO}/contracts/customers/README.md 0644
 aa44362a7e442399c48522c2ca27675cc2e139714991e9628506c94af11dafc3 dbt/README.md ${REPO}/dbt/README.md 0644
 0a8392a92cbd6c5612b13a40f6466416a12c01f3546e6635af1b1d7815016046 dbt/dbt_project.yml ${REPO}/dbt/dbt_project.yml 0644
-ab03e2e08d85ef1296ad4fd2993b8b5dad47d0fc80091731185360dfdf1b4420 dbt/macros/closed_before_predicate.sql ${REPO}/dbt/macros/closed_before_predicate.sql 0644
+f7ecf764c6f82ecbdb563132cad1f16c06ec93492cc89d703accdf75506372b8 dbt/macros/closed_before_predicate.sql ${REPO}/dbt/macros/closed_before_predicate.sql 0644
 26d553e851b08aed2e399284165f9b314bf09a3ae13047a03386270a12f4f2b6 dbt/macros/generate_schema_name.sql ${REPO}/dbt/macros/generate_schema_name.sql 0644
 71852a85e16960d4dfdc0a9587618f9f05c886412fb61002d7e0a4c2c74b3a09 dbt/macros/incremental_cutoff.sql ${REPO}/dbt/macros/incremental_cutoff.sql 0644
 d9a9697ca436b57024e8f2bf998ae08b91e42dd0698616b6198827bda6f49d41 dbt/macros/subject_org.sql ${REPO}/dbt/macros/subject_org.sql 0644
