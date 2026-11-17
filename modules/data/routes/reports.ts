@@ -33,6 +33,7 @@ import { llmFromEnv, openAiCompatModel } from '../domain/llm'
 import type { StreamingChatModel } from '../domain/llm'
 import { buildFacts } from '../domain/report-facts'
 import { buildReportReceipt, exportDetailCsv, receiptCsv, type ReportReceipt } from '../domain/report-receipt'
+import { detailXlsx, receiptXlsx } from '../domain/xlsx'
 import { buildReportReview } from '../domain/report-review'
 import { summarizeExposure } from '../domain/publish-preview'
 import { compileTemplate, REPORT_TEMPLATES, templateById } from '../domain/report-templates'
@@ -1951,6 +1952,8 @@ export function registerReports(r: ModuleHono, ctx: RouteCtx): void {
     preview: z.literal('draft').optional(),
     /** 用户手工算出的数；给了才做差异分解（不影响凭证本身）。 */
     userValue: z.number().finite().optional(),
+    /** 导出格式（W4）：缺省 csv（既有行为）；xlsx = 真正的 Excel 工作簿。 */
+    format: z.enum(['csv', 'xlsx']).optional(),
   }).strict()
 
   type ReceiptErr = { error: string; status: 400 | 403 | 404 | 409 | 502; detail?: string }
@@ -2059,10 +2062,18 @@ export function registerReports(r: ModuleHono, ctx: RouteCtx): void {
     if (!out.ok) return c.json({ error: out.error.error, ...(out.error.detail === undefined ? {} : { detail: out.error.detail }) }, out.error.status)
     // 没有按日组成（比率/不可加）⇒ 不导出：导出「没有组成」的凭证只会让人以为能复算。
     if (out.receipt.series === null) return c.json({ error: 'NO_SERIES' }, 409)
-    const filename = `receipt-${out.receipt.metric.id.replace(/[^a-zA-Z0-9_-]/g, '_')}-${out.receipt.window.from}_${out.receipt.window.to}.csv`
+    const base = `receipt-${out.receipt.metric.id.replace(/[^a-zA-Z0-9_-]/g, '_')}-${out.receipt.window.from}_${out.receipt.window.to}`
+    if (body.data.format === 'xlsx') {
+      const buf = await receiptXlsx(out.receipt)
+      return c.body(new Uint8Array(buf), 200, {
+        'content-type': 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+        'content-disposition': `attachment; filename="${base}.xlsx"`,
+        'cache-control': 'no-store',
+      })
+    }
     return c.body(receiptCsv(out.receipt), 200, {
       'content-type': 'text/csv; charset=utf-8',
-      'content-disposition': `attachment; filename="${filename}"`,
+      'content-disposition': `attachment; filename="${base}.csv"`,
       'cache-control': 'no-store',
     })
   })
@@ -2085,10 +2096,20 @@ export function registerReports(r: ModuleHono, ctx: RouteCtx): void {
         : out.reason === 'denied' ? 'FORBIDDEN' : 'QUERY_FAILED'
       return c.json({ error, ...(out.detail === undefined ? {} : { detail: out.detail }) }, status)
     }
-    const filename = `detail-${t.target.panel.metricId.replace(/[^a-zA-Z0-9_-]/g, '_')}-${t.target.range.from}_${t.target.range.to}.csv`
+    const base = `detail-${t.target.panel.metricId.replace(/[^a-zA-Z0-9_-]/g, '_')}-${t.target.range.from}_${t.target.range.to}`
+    if (body.data.format === 'xlsx') {
+      const buf = await detailXlsx(out.out.columns, out.out.data)
+      return c.body(new Uint8Array(buf), 200, {
+        'content-type': 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+        'content-disposition': `attachment; filename="${base}.xlsx"`,
+        'cache-control': 'no-store',
+        'x-row-count': String(out.out.rows),
+        'x-truncated': String(out.out.truncated),
+      })
+    }
     return c.body(out.out.csv, 200, {
       'content-type': 'text/csv; charset=utf-8',
-      'content-disposition': `attachment; filename="${filename}"`,
+      'content-disposition': `attachment; filename="${base}.csv"`,
       'cache-control': 'no-store',
       // 导出不完整时必须可辨（前端据此提示「只导出了前 N 行」）。
       'x-row-count': String(out.out.rows),
