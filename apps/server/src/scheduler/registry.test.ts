@@ -232,49 +232,27 @@ describe('registry · dbt 对账分族（full / window，#2428）', () => {
     }
   })
 
-  // ⚠️ 窗口模式（MATERIALIZE_AUDIT_WINDOW=1）只改 env；审计 SQL 必须自己用
-  // `window_read_parquet` + `window_start_date()`，否则仍是「全史湖 vs 10 天 mart」结构性不一致
-  // （2026-11-17 run 5325 实测：inventory 一条 206,380 行）。未改造的必须列这里，改完即从清单移除。
-  const PENDING_WINDOW_PR = '#2456'
-  const PENDING_WINDOW = new Set([
-    'audit_lemeng__branch__transfer_money',
-    'audit_lemeng__expense__branch_payable',
-    'audit_lemeng__expense__branch_receivable',
-    'audit_lemeng__expense__client_net',
-    'audit_lemeng__expense__client_payable',
-    'audit_lemeng__expense__client_receivable',
-    'audit_lemeng__member__branch_vip_money',
-    'audit_lemeng__outbound__gross_margin_rate',
-    'audit_lemeng__outbound__gross_profit',
-    'audit_lemeng__outbound__line_count',
-    'audit_lemeng__outbound__order_count',
-    'audit_lemeng__outbound__region_conservation',
-    'audit_lemeng__outbound__region_net',
-    'audit_lemeng__purchase__amount',
-    'audit_lemeng__purchase__item_count',
-    'audit_lemeng__purchase__present_amount',
-    'audit_lemeng__purchase__return_amount',
-    'audit_lemeng__purchase__return_rate',
-    'audit_lemeng__purchase__supplier_count',
-    'audit_lemeng__purchase__zero_amount_rows',
-    'audit_order_event_ref_coverage_20261020',
-    'audit_order_event_type_counts_20261020',
-    'audit_lemeng__inventory__quantity',
+  // 窗口感知 = SQL 自己读 `window_read_parquet`（湖侧）或使用 `window_start_date()`（两侧下界）；
+  // 只比 mart、日期固定且不读湖的 canary 不参与窗口，登记理由后放行。
+  const MART_ONLY_OK = new Map([
+    ['audit_order_event_ref_coverage_20261020', '固定日 2026-10-20 的 mart 快照 canary，不读湖'],
+    ['audit_order_event_type_counts_20261020', '同上'],
   ])
 
-  it('★ 窗口段只能选 window 感知的审计（未改造的必须在 #2456 清单里）', () => {
+  it('★ 窗口段每条审计都必须自己读窗口（#2456 改造后的护栏）', () => {
     for (const name of auditNames(WINDOW.key)) {
       const text = readFileSync(repoPath(`dbt/tests/lemeng/${name}.sql`), 'utf8')
-      const windowed = text.includes('window_read_parquet')
-      if (windowed) {
-        expect(PENDING_WINDOW.has(name), `${name} 已 window 化，请从 ${PENDING_WINDOW_PR} 清单移除`).toBe(false)
-      } else {
-        expect(PENDING_WINDOW.has(name), `${WINDOW.key} / ${name} 未 window 化且不在 ${PENDING_WINDOW_PR} 清单`).toBe(true)
+      const aware = text.includes('window_read_parquet') || text.includes('window_start_date')
+      if (!aware) {
+        expect(MART_ONLY_OK.has(name), `${WINDOW.key} / ${name} 未 window 化，也未登记为 mart-only canary`).toBe(true)
+        continue
+      }
+      expect(MART_ONLY_OK.has(name), `${name} 已 window 化，请从 mart-only 清单移除`).toBe(false)
+      // 读湖的审计必须同时有下界；只加宏不加 WHERE = 「全史湖 vs 窗口 mart」结构性不一致。
+      if (text.includes('window_read_parquet')) {
+        expect(text.includes('window_start_date'), `${name} 用了 window_read_parquet 但没有 window_start_date 下界`).toBe(true)
       }
     }
-    // 清单里每一条都必须仍在窗口选择器内（防止改名/移走后清单腐化）。
-    const selected = new Set(auditNames(WINDOW.key))
-    for (const name of PENDING_WINDOW) expect(selected.has(name), `${name} 不在窗口选择器内`).toBe(true)
   })
 })
 

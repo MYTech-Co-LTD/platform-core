@@ -9,8 +9,9 @@ with recheck as (
         r['supplier_num']::bigint as supplier_num,
         r['item_num']::bigint     as item_num,
         sum(r['purchase_item_money']::numeric)::numeric(20,2) as v
-    from read_parquet('s3://{{ var("zos_bucket") }}/{{ var("lemeng_item_purchase_prefix") }}/*/bizday=**/*.parquet') r
+    from {{ window_read_parquet('s3://{{ var("zos_bucket") }}/{{ var("lemeng_item_purchase_prefix") }}/*/bizday=**/*.parquet') }} r
     where r['bizday']::date < CAST(now() AT TIME ZONE 'Asia/Shanghai' AS DATE)
+      and r['bizday']::date >= date '{{ window_start_date() }}'
     group by 1, 2, 3, 4
 ),
 materialized as (
@@ -19,6 +20,7 @@ materialized as (
         purchase_item_money::numeric(20,2) as v
     from {{ ref('fct_purchase') }}
     where bizday < CAST(now() AT TIME ZONE 'Asia/Shanghai' AS DATE)
+      and bizday >= date '{{ window_start_date() }}'
 )
 select
     coalesce(a.system_book, b.system_book) as system_book,

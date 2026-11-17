@@ -10,18 +10,18 @@ with recheck as (
         r['branch_num']::int     as branch_num,
         r['expense_type']::varchar       as expense_type,
         sum(case when r['direction']::varchar = '应收' then coalesce(r['amount']::numeric, 0) else 0 end)::numeric(20,2) as v
-    from read_parquet(
-        's3://{{ var("zos_bucket") }}/{{ var("lemeng_branch_expense_prefix") }}/*/bizday=**/*.parquet'
-    ) r
+    from {{ window_read_parquet('s3://{{ var("zos_bucket") }}/{{ var("lemeng_branch_expense_prefix") }}/*/bizday=**/*.parquet') }} r
       -- 湖上只存在审核单（管线请求侧已筛审核态、契约不落状态列）——
       -- 此处无需重复筛 state；bizday 闭窗过滤照旧。
       where r['bizday']::date < CAST(now() AT TIME ZONE 'Asia/Shanghai' AS DATE)
+      and r['bizday']::date >= date '{{ window_start_date() }}'
     group by 1, 2, 3, 4
 ),
 materialized as (
     select system_book, bizday, branch_num, expense_type, er_receivable
     from {{ ref('fct_branch_expense') }}
     where bizday < CAST(now() AT TIME ZONE 'Asia/Shanghai' AS DATE)
+      and bizday >= date '{{ window_start_date() }}'
 )
 select
     coalesce(a.system_book, b.system_book) as system_book,
