@@ -11,6 +11,10 @@
 
 ## [Unreleased]
 
+## [0.325.4](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.325.3...v0.325.4) - 2026-11-17
+- 【修复】data: 闭窗谓词按北京时间取今天/当前小时，覆盖 prev 跨 00 点 (#2422) ([#2471](https://github.com/MYTech-Co-LTD/platform-core/pull/2471), [b3de6f7](https://github.com/MYTech-Co-LTD/platform-core/commit/b3de6f774793e98ff4a2ab639e0c4aca762d7c72))
+
+
 ## [0.325.3](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.325.2...v0.325.3) - 2026-11-17
 - 【修复】data: mat_psql 凭据改走 PGPASSWORD，密码不再进 argv (#2423) ([#2470](https://github.com/MYTech-Co-LTD/platform-core/pull/2470), [f6830e1](https://github.com/MYTech-Co-LTD/platform-core/commit/f6830e149d57b4ef76d84c85114125278fbf68c4))
 
