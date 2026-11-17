@@ -1,4 +1,4 @@
-// mcp.test.ts — agent 工具面：25 工具（17 消息 + 8 排班）、无 publish/channel、
+// mcp.test.ts — agent 工具面：26 工具（18 消息 + 8 排班）、无 publish/channel、
 // 排班不接受通道参数、草稿不发布、试发只给自己；C（wecom）channel 档 + 读面。
 import { describe, it, expect, beforeAll, afterAll, beforeEach } from 'vitest'
 import { Hono } from 'hono'
@@ -14,7 +14,7 @@ import { NOTIFY_TOOLS } from './mcp-tools'
 import { createAgentNamespace, ensureServiceNamespace, getTemplate, upsertEventDecl } from './storage'
 import { applyMigrations, buildTestApp, makeIdentity } from './test-util'
 
-/** 通知工具的 requiredScope 全集（B 的 full 面要看到全部 25 个）。 */
+/** 通知工具的 requiredScope 全集（B 的 full 面要看到全部 26 个）。 */
 const ALL_SCOPES = ['notify:view', 'notify:manage', 'notify:publish', 'notify:emit']
 
 const url = process.env.DATABASE_URL
@@ -33,15 +33,15 @@ const addresses: ChannelAddressResolver = {
 }
 
 describe('notify mcp tool face', () => {
-  it('恰 25 个工具，无 publish/channel', () => {
-    expect(NOTIFY_TOOLS).toHaveLength(25)
-    expect(toolDefs({ channel: 'pat', scopes: ALL_SCOPES })).toHaveLength(25)
+  it('恰 26 个工具，无 publish/channel', () => {
+    expect(NOTIFY_TOOLS).toHaveLength(26)
+    expect(toolDefs({ channel: 'pat', scopes: ALL_SCOPES })).toHaveLength(26)
     expect(NOTIFY_TOOLS.some((t) => /publish|channel/.test(t.name))).toBe(false)
   })
 
   it('B（pat/session）仍 24；C（wecom）只见 agent-safe 子集', () => {
-    expect(toolDefs({ channel: 'pat', scopes: ALL_SCOPES })).toHaveLength(25)
-    expect(toolDefs({ channel: 'session', scopes: ALL_SCOPES })).toHaveLength(25)
+    expect(toolDefs({ channel: 'pat', scopes: ALL_SCOPES })).toHaveLength(26)
+    expect(toolDefs({ channel: 'session', scopes: ALL_SCOPES })).toHaveLength(26)
     const names = toolDefs({ channel: 'wecom', scopes: ALL_SCOPES }).map((t) => t.name)
     expect(names).toContain('create_agent_rule')
     expect(names).toContain('create_agent_template')
@@ -450,7 +450,7 @@ describePg('notify mcp handlers', () => {
     })
     expect(c.isError).toBe(true)
     expect((JSON.parse(c.text) as { reason: string }).reason).toBe('c_tool_not_allowed')
-    // B（pat）的工具面仍含 send_message（25 个）。
+    // B（pat）的工具面仍含 send_message（26 个）。
     expect(toolDefs({ channel: 'pat', scopes: ALL_SCOPES }).map((t) => t.name))
       .toContain('send_message')
   })
@@ -566,6 +566,65 @@ describePg('notify mcp handlers', () => {
       })
       expect(bad.isError).toBe(true)
       expect((JSON.parse(bad.text) as { reason: string }).reason).toBe('AGENT_EVENT_NOT_OWNED')
+    } finally {
+      delete process.env.NOTIFY_WECOM_NAMESPACE
+    }
+  })
+
+  it('C 可删除本 namespace 的 disabled 规则；enabled 的被拒（人 gate 不因删除绕过）', async () => {
+    const ns = 'openclaw_delete'
+    expect(await ensureServiceNamespace(pool, ORG, ns)).toMatchObject({ ok: true })
+    const decl: NotificationEventDecl = {
+      key: `ext.${ns}.evt`, title: 'D',
+      payload: { user: { type: 'user', required: true } },
+      recipients: { assignee: { kind: 'field', field: 'user' } },
+    }
+    expect(await upsertEventDecl(pool, ORG, ns, decl, 'u1')).toMatchObject({ ok: true })
+    await pool.query(
+      `insert into notify.channel(org,id,provider,enabled,config,secret_refs,created_by)
+       values ($1,'inapp_default','in_app',true,'{}','{}','u')
+       on conflict (org,id) do nothing`, [ORG])
+    await pool.query(
+      `insert into notify.template(org,key,name,event_key,status,origin,published_revision,created_by,owner_namespace)
+       values ($1,'d_tpl','D','${`ext.${ns}.evt`}','published','tenant',1,'u','${ns}')`, [ORG])
+    await pool.query(
+      `insert into notify.template_revision(org,key,revision,contents,body_hash,review_status,created_by)
+       values ($1,'d_tpl',1,'{"in_app":{"title":"Hi","body":"B"}}','hd1','approved','u')`, [ORG])
+
+    process.env.NOTIFY_WECOM_NAMESPACE = ns
+    try {
+      // 先建一条（C 强制 pending ⇒ enabled=false）
+      const created = await callTool(depsCh('wecom'), 'create_agent_rule', {
+        eventKey: decl.key, recipientKey: 'assignee',
+        templateKey: 'd_tpl', channels: ['inapp_default'],
+      })
+      expect(created.isError).toBe(false)
+      const { id } = JSON.parse(created.text) as { id: string }
+
+      // disabled 规则可删
+      const del = await callTool(depsCh('wecom'), 'delete_agent_rule', { id })
+      expect(del.isError).toBe(false)
+      expect(JSON.parse(del.text)).toMatchObject({ id, namespace: ns })
+      const gone = await pool.query(
+        'select 1 from notify.rule where org=$1 and id=$2', [ORG, id])
+      expect(gone.rows).toEqual([])
+
+      // enabled 规则不可删（C 档人 gate）
+      await pool.query(
+        `insert into notify.rule(org,id,enabled,event_key,scope,recipient_key,template_key,channels,origin,created_by,owner_namespace)
+         values ($1,'r_enabled',true,'${decl.key}','*','assignee','d_tpl','{inapp_default}','manual','u','${ns}')`, [ORG])
+      const blocked = await callTool(depsCh('wecom'), 'delete_agent_rule', { id: 'r_enabled' })
+      expect(blocked.isError).toBe(true)
+      expect((JSON.parse(blocked.text) as { reason: string }).reason)
+        .toBe('RULE_ENABLED_NOT_DELETABLE')
+
+      // 越权删别人的规则
+      await pool.query(
+        `insert into notify.rule(org,id,enabled,event_key,scope,recipient_key,template_key,channels,origin,created_by)
+         values ($1,'r_other',false,'${decl.key}','*','assignee','d_tpl','{inapp_default}','manual','u')`, [ORG])
+      const foreign = await callTool(depsCh('wecom'), 'delete_agent_rule', { id: 'r_other' })
+      expect(foreign.isError).toBe(true)
+      expect((JSON.parse(foreign.text) as { reason: string }).reason).toBe('RULE_NOT_OWNED')
     } finally {
       delete process.env.NOTIFY_WECOM_NAMESPACE
     }
@@ -716,7 +775,7 @@ describePg('notify mcp handlers', () => {
       .toBe('c_tool_not_allowed')
   })
 
-  it('JSON-RPC /mcp-manage tools/list 返回 25 工具', async () => {
+  it('JSON-RPC /mcp-manage tools/list 返回 26 工具', async () => {
     const app = buildTestApp(
       notifyV2,
       makeIdentity({ orgId: ORG, userId: 'u1', scopes: ['notify:manage', 'notify:emit'] }),
@@ -728,6 +787,6 @@ describePg('notify mcp handlers', () => {
       body: JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'tools/list' }),
     })
     const body = await res.json() as { result: { tools: unknown[] } }
-    expect(body.result.tools).toHaveLength(25)
+    expect(body.result.tools).toHaveLength(26)
   })
 })

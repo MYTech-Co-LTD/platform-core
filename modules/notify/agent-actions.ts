@@ -15,7 +15,7 @@ import type { RuleSnapshot } from './domain/rules'
 import { validateContents } from './domain/template'
 import {
   audit, countActiveAgentRules, countAgentMessagesToday, createApproval, createTemplate,
-  createTemplateRevision, ensureAgentMessageDefaults, enqueueEvent, getAgentNamespace,
+  createTemplateRevision, deleteRule, ensureAgentMessageDefaults, enqueueEvent, getAgentNamespace,
   getChannel, getEventDecl, getTemplate, hasApprovedRuleApproval, listApprovals,
   listEnabledChannelIds, listPublishedTemplateKeys, listRules, publishTemplateRevision,
   upsertEventDecl, upsertRule,
@@ -82,8 +82,7 @@ export type DeclareAgentEventResult =
 export async function declareAgentEvent(
   pool: Pool,
   input: DeclareAgentEventInput,
-): Promise<DeclareAgentEventResult> {
-  const auth = await authorizeNamespace(pool, input)
+): Promise<DeclareAgentEventResult> {  const auth = await authorizeNamespace(pool, input)
   if ('error' in auth) return auth.error
   if (!isAgentEventKey(input.decl.key)
       || !input.decl.key.startsWith(`ext.${input.namespace}.`)
@@ -170,6 +169,46 @@ export async function sendAgentMessage(
     eventId, recipients: to.length,
   })
   return { ok: true, accepted: result.accepted, eventId }
+}
+
+export type DeleteAgentRuleInput = {
+  org: string
+  userId: string
+  namespace: string
+  id: string
+  /** C 档（service-owned namespace）授权位；B/HTTP 不传。 */
+  allowServiceNamespace?: boolean
+}
+
+export type DeleteAgentRuleResult =
+  | { ok: true; id: string }
+  | AgentActionError
+
+/**
+ * 删除本 namespace 的一条规则。
+ *
+ * - 只删 `owner_namespace` = 调用方 namespace 的规则（越权 ⇒ `RULE_NOT_OWNED`）；
+ * - C（wecom）只删 `enabled=false` 的规则——enabled 的仍须持 `notify:publish` 的人先停用
+ *   （人 gate 不因删除入口而绕过）；
+ * - 删除落审计（`rule.delete`），与 HTTP DELETE `/rules/:id` 同源。
+ */
+export async function deleteAgentRule(
+  pool: Pool,
+  input: DeleteAgentRuleInput,
+): Promise<DeleteAgentRuleResult> {
+  const auth = await authorizeNamespace(pool, input)
+  if ('error' in auth) return auth.error
+  const rule = (await listRules(pool, input.org)).find((r) => r.id === input.id)
+  if (!rule) return fail('RULE_NOT_FOUND', 404)
+  if (rule.ownerNamespace !== input.namespace) return fail('RULE_NOT_OWNED', 403)
+  // C 档（service-owned ⇒ allowServiceNamespace=true）：enabled 规则的人 gate 不因删除绕过。
+  if (input.allowServiceNamespace === true && rule.enabled) {
+    return fail('RULE_ENABLED_NOT_DELETABLE', 403, { hint: '先由持 notify:publish 的人停用' })
+  }
+  const n = await deleteRule(pool, input.org, input.id)
+  if (n === 0) return fail('RULE_NOT_FOUND', 404)
+  await audit(pool, input.org, input.userId, 'rule.delete', input.id, {})
+  return { ok: true, id: input.id }
 }
 
 export type CreateAgentTemplateInput = {
