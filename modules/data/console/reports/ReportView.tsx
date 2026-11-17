@@ -150,11 +150,8 @@ function mergeMeasureResults(
         rows.push(dimCols.map((c) => row[part.columns.indexOf(c)]))
       }
       const raw = row[vCol]
-      const fmt = measures[mi]?.format
       rows[target]![dimCols.length + mi] =
-        raw === null || raw === undefined || raw === ''
-          ? null
-          : fmt === undefined ? raw : formatValue(Number(raw), fmt)
+        raw === null || raw === undefined || raw === '' ? null : raw
     }
   }
   // 信任信号合并：truncated 任一真；masking 并集；data_as_of 取最早（ISO 形字符串可直接比）；
@@ -708,11 +705,43 @@ function PanelBody({ panel, result, compares = [], detailCtx, textCtx }: { panel
             rowKey={(_, idx) => String(idx)}
             pagination={false}
             scroll={{ x: 'max-content' }}
-            columns={cols.map((c) => ({ title: c, dataIndex: c }))}
+            columns={cols.map((c) => {
+              // 条件格式（W2）：声明了 colorSemantics:'target' 的度量列，按原始值逐格着色
+              // （显示值已是格式化串，颜色判定回原始行取数；缺值不染）。合计在页脚文本里，不着色。
+              const target = panel.chart === 'table' && panel.measures !== undefined
+                ? panel.measures.find((m) => (m.label ?? m.metricId) === c && m.colorSemantics === 'target')?.target
+                : undefined
+              if (target === undefined) return { title: c, dataIndex: c }
+              const colIdx = result.columns.indexOf(c)
+              return {
+                title: c, dataIndex: c,
+                render: (_: unknown, record: Record<string, unknown>) => {
+                  const raw = result.rows[Number(record.__idx)]?.[colIdx]
+                  const num = typeof raw === 'number' ? raw : Number(raw)
+                  const color = raw === null || raw === undefined || raw === '' || !Number.isFinite(num)
+                    ? undefined
+                    : num >= target ? '#0FA958' : '#E5484D'
+                  return <span style={color === undefined ? undefined : { color }}>{record[c] as string}</span>
+                },
+              }
+            })}
             dataSource={result.rows.map((row, idx) => ({
               __idx: idx,
-              ...Object.fromEntries(cols.map((c) =>
-                [c, displayValue(c, row[result.columns.indexOf(c)])])),
+              ...Object.fromEntries(cols.map((c) => {
+                const raw = row[result.columns.indexOf(c)]
+                // 多度量列（W1/W2）：合并结果存**原始值**，列格式在这里套（条件格式要原值比较）。
+                const measure = panel.chart === 'table' && panel.measures !== undefined
+                  ? panel.measures.find((m) => (m.label ?? m.metricId) === c)
+                  : undefined
+                const num = typeof raw === 'number' ? raw : Number(raw)
+                // 多度量列缺值显示 `-`（与事实包/模板口径一致；空单元格在宽表里会被读成 0）。
+                const text = measure !== undefined && (raw === null || raw === undefined || raw === '')
+                  ? '-'
+                  : measure?.format !== undefined && Number.isFinite(num)
+                    ? formatValue(num, measure.format)
+                    : displayValue(c, raw)
+                return [c, text]
+              })),
             }))}
             {...(canExpand ? {
               expandable: {

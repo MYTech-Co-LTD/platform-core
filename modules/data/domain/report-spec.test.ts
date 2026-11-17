@@ -467,3 +467,44 @@ describe('多度量宽表（W1）', () => {
     expect(v2({ columns: ['销售额'] })).toEqual({ ok: false, code: 'INVALID_SPEC' })
   })
 })
+
+describe('表格条件格式（W2）', () => {
+  const parse = (panel: unknown) => parseReportSpec({ panels: [panel] })
+  const wide = {
+    chart: 'table', title: '宽表', dims: ['branch_num'],
+    measures: [{ metricId: 'm1', label: '销售额', target: 1000, colorSemantics: 'target' }, { metricId: 'm2' }],
+  }
+
+  it('度量列带 target + colorSemantics ⇒ 合法', () => {
+    const out = parse(wide)
+    expect(out.ok).toBe(true)
+    if (out.ok) {
+      const p = out.spec.panels[0] as { measures?: Array<{ target?: number; colorSemantics?: string }> }
+      expect(p.measures?.[0]).toMatchObject({ target: 1000, colorSemantics: 'target' })
+    }
+  })
+
+  it('★ colorSemantics 缺 target ⇒ 拒', () => {
+    expect(parse({ ...wide, measures: [{ metricId: 'm1', colorSemantics: 'target' }, { metricId: 'm2' }] }))
+      .toEqual({ ok: false, code: 'INVALID_SPEC' })
+  })
+
+  it('v2 度量列 target/colorSemantics 归一', () => {
+    const out = parseReportInput({
+      ir: 2,
+      datasets: [
+        { key: 'd1', metricId: 'm1', dims: ['branch_num'] },
+        { key: 'd2', metricId: 'm2', dims: ['branch_num'] },
+      ],
+      blocks: [{
+        type: 'table', title: '宽表', dims: ['branch_num'],
+        measures: [{ dataset: 'd1', label: '销售额', target: 1000, colorSemantics: 'target' }, { dataset: 'd2' }],
+      }],
+    })
+    expect(out.ok).toBe(true)
+    if (out.ok) {
+      const p = out.spec.panels[0] as { measures?: Array<{ metricId?: string; target?: number; colorSemantics?: string }> }
+      expect(p.measures?.[0]).toMatchObject({ metricId: 'm1', target: 1000, colorSemantics: 'target' })
+    }
+  })
+})

@@ -76,6 +76,14 @@ interface Panel {
   /** 多页归属（R3）；缺省第 1 页。 */
   page?: number
   content?: string
+  /** 多度量宽表（W1/W2）：列定义（测试夹具只需这几个键）。 */
+  measures?: Array<{
+    metricId: string
+    label?: string
+    format?: 'currency' | 'number' | 'percent'
+    target?: number
+    colorSemantics?: 'target'
+  }>
 }
 interface SpecFixture {
   period?: { mode: 'month' | 'last_7_days' | 'day' | 'custom'; month?: string; day?: string; from?: string; to?: string }
@@ -1101,7 +1109,7 @@ describe('多度量宽表（W1）', () => {
   const okM1 = { columns: ['branch_num', 'value'], rows: [['87', 10], ['116', 20]] }
   const okM2 = { columns: ['branch_num', 'value'], rows: [['116', 5]] }
 
-  it('★ 两度量外连接成一张表；缺度量为空单元格；列头用声明 label', async () => {
+  it('★ 两度量外连接成一张表；缺度量显示 -；列头用声明 label', async () => {
     stub({ panels: [wide] }, { m1: okM1, m2: okM2 }, new Set())
     renderView()
     // antd 表头 + 隐藏测量行会重复文本 ⇒ 用复数断言
@@ -1113,7 +1121,7 @@ describe('多度量宽表（W1）', () => {
       .find((tr) => tr.textContent?.includes('87') && tr.className.includes('ant-table-row'))
     const cells87 = row87?.querySelectorAll('td') ?? []
     expect(cells87).toHaveLength(3)
-    expect(cells87[2]?.textContent).toBe('')
+    expect(cells87[2]?.textContent).toBe('-')
     // 116 行两侧都有
     expect(screen.getByText('¥20.00')).toBeInTheDocument()
     expect(screen.getByText('5')).toBeInTheDocument()
@@ -1124,5 +1132,43 @@ describe('多度量宽表（W1）', () => {
     renderView()
     expect(await screen.findByText('这条口径当前不可用')).toBeInTheDocument()
     expect(screen.queryAllByText('销售额')).toHaveLength(0)
+  })
+})
+
+describe('表格条件格式（W2）', () => {
+  const wideColored = {
+    chart: 'table' as const, title: '门店达标', dims: ['branch_num'], span: 24,
+    measures: [
+      { metricId: 'm1', label: '销售额', format: 'currency' as const, target: 15, colorSemantics: 'target' as const },
+      { metricId: 'm2', label: '订单数' },
+    ],
+  }
+
+  it('★ 达标绿 / 未达标红 / 缺值不染（按原始值判定，显示值格式化）', async () => {
+    stub({ panels: [wideColored] }, {
+      m1: { columns: ['branch_num', 'value'], rows: [['87', 20], ['116', 10]] },
+      m2: { columns: ['branch_num', 'value'], rows: [['87', null]] },
+    }, new Set())
+    renderView()
+    expect(await screen.findByText('¥20.00')).toBeInTheDocument()
+    const green = screen.getByText('¥20.00').closest('span')
+    expect(['#0FA958', 'rgb(15, 169, 88)']).toContain((green as HTMLElement | null)?.style.color)
+    const red = screen.getByText('¥10.00').closest('span')
+    expect(['#E5484D', 'rgb(229, 72, 77)']).toContain((red as HTMLElement | null)?.style.color)
+    // 缺值（null）不染色：无 style span
+    const row87 = [...document.querySelectorAll('tbody tr')]
+      .find((tr) => tr.textContent?.includes('87') && tr.className.includes('ant-table-row'))
+    const lastCell = row87?.querySelectorAll('td')[2]
+    expect(lastCell?.textContent).toBe('-')
+    expect(lastCell?.querySelector('span[style]')).toBeNull()
+  })
+
+  it('无 colorSemantics 的列不着色（即使数值低于任何目标）', async () => {
+    stub({ panels: [{ ...wideColored, measures: [{ metricId: 'm2', label: '订单数' }] }] }, {
+      m2: { columns: ['branch_num', 'value'], rows: [['87', 3]] },
+    }, new Set())
+    renderView()
+    expect(await screen.findByText('3')).toBeInTheDocument()
+    expect(screen.getByText('3').closest('span')).toBeNull()
   })
 })

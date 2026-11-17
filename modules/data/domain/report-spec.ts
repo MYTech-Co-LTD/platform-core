@@ -205,6 +205,10 @@ const TableMeasure = z.object({
   label: z.string().trim().min(1).max(60).optional(),
   /** 列格式（缺省 = 原样展示）。 */
   format: z.enum(['currency', 'number', 'percent']).optional(),
+  /** 目标值（W2 条件格式与未来参考线共用；与指标同量纲）。 */
+  target: z.number().finite().optional(),
+  /** 条件格式（W2）：按 target 达标绿/未达标红；必须带 target（superRefine）。 */
+  colorSemantics: z.enum(['target']).optional(),
 }).strict()
 
 const TablePanel = z.object({
@@ -401,6 +405,14 @@ export const ReportSpecSchema = z.object({
           message: 'DUPLICATE_MEASURE',
         })
       }
+      p.measures.forEach((m, mi) => {
+        if (m.colorSemantics === 'target' && m.target === undefined) {
+          ctx.addIssue({
+            code: z.ZodIssueCode.custom, path: ['panels', i, 'measures', mi, 'colorSemantics'],
+            message: 'COLOR_SEMANTICS_REQUIRES_TARGET',
+          })
+        }
+      })
     } else if (p.metricId === undefined) {
       ctx.addIssue({
         code: z.ZodIssueCode.custom, path: ['panels', i, 'metricId'],
@@ -502,6 +514,8 @@ const V2TableBlock = z.object({
     dataset: z.string().min(1).max(64),
     label: z.string().trim().min(1).max(60).optional(),
     format: z.enum(['currency', 'number', 'percent']).optional(),
+    target: z.number().finite().optional(),
+    colorSemantics: z.enum(['target']).optional(),
   }).strict()).min(1).max(4).optional(),
   page: z.number().int().min(1).max(MAX_PAGES).optional(),
   span: z.number().int().min(1).max(24).default(12),
@@ -566,11 +580,21 @@ export function flattenReportSpecV2(v2: ReportSpecV2): { ok: true; spec: ReportS
       if (b.dataset !== undefined || b.columns !== undefined || b.expandable !== undefined) {
         return { ok: false, code: 'INVALID_SPEC' }
       }
-      const resolved: Array<{ metricId: string; label?: string; format?: 'currency' | 'number' | 'percent' }> = []
+      const resolved: Array<{
+        metricId: string; label?: string; format?: 'currency' | 'number' | 'percent'
+        target?: number; colorSemantics?: 'target'
+      }> = []
       for (const m of b.measures) {
         const ds = datasets.get(m.dataset)
         if (ds === undefined) return { ok: false, code: 'INVALID_SPEC' }
-        resolved.push({ metricId: ds.metricId, ...(m.label === undefined ? {} : { label: m.label }), ...(m.format === undefined ? {} : { format: m.format }) })
+        if (m.colorSemantics === 'target' && m.target === undefined) return { ok: false, code: 'INVALID_SPEC' }
+        resolved.push({
+          metricId: ds.metricId,
+          ...(m.label === undefined ? {} : { label: m.label }),
+          ...(m.format === undefined ? {} : { format: m.format }),
+          ...(m.target === undefined ? {} : { target: m.target }),
+          ...(m.colorSemantics === undefined ? {} : { colorSemantics: m.colorSemantics }),
+        })
       }
       panels.push({
         chart: 'table', title: b.title, measures: resolved,
