@@ -231,6 +231,51 @@ describe('registry · dbt 对账分族（full / window，#2428）', () => {
       expect(inc.length, `${WINDOW.key} / ${name} 没有增量模型 refs（分族错位？）`).toBeGreaterThan(0)
     }
   })
+
+  // ⚠️ 窗口模式（MATERIALIZE_AUDIT_WINDOW=1）只改 env；审计 SQL 必须自己用
+  // `window_read_parquet` + `window_start_date()`，否则仍是「全史湖 vs 10 天 mart」结构性不一致
+  // （2026-11-17 run 5325 实测：inventory 一条 206,380 行）。未改造的必须列这里，改完即从清单移除。
+  const PENDING_WINDOW_PR = '#2456'
+  const PENDING_WINDOW = new Set([
+    'audit_lemeng__branch__transfer_money',
+    'audit_lemeng__expense__branch_payable',
+    'audit_lemeng__expense__branch_receivable',
+    'audit_lemeng__expense__client_net',
+    'audit_lemeng__expense__client_payable',
+    'audit_lemeng__expense__client_receivable',
+    'audit_lemeng__member__branch_vip_money',
+    'audit_lemeng__outbound__gross_margin_rate',
+    'audit_lemeng__outbound__gross_profit',
+    'audit_lemeng__outbound__line_count',
+    'audit_lemeng__outbound__order_count',
+    'audit_lemeng__outbound__region_conservation',
+    'audit_lemeng__outbound__region_net',
+    'audit_lemeng__purchase__amount',
+    'audit_lemeng__purchase__item_count',
+    'audit_lemeng__purchase__present_amount',
+    'audit_lemeng__purchase__return_amount',
+    'audit_lemeng__purchase__return_rate',
+    'audit_lemeng__purchase__supplier_count',
+    'audit_lemeng__purchase__zero_amount_rows',
+    'audit_order_event_ref_coverage_20261020',
+    'audit_order_event_type_counts_20261020',
+    'audit_lemeng__inventory__quantity',
+  ])
+
+  it('★ 窗口段只能选 window 感知的审计（未改造的必须在 #2456 清单里）', () => {
+    for (const name of auditNames(WINDOW.key)) {
+      const text = readFileSync(repoPath(`dbt/tests/lemeng/${name}.sql`), 'utf8')
+      const windowed = text.includes('window_read_parquet')
+      if (windowed) {
+        expect(PENDING_WINDOW.has(name), `${name} 已 window 化，请从 ${PENDING_WINDOW_PR} 清单移除`).toBe(false)
+      } else {
+        expect(PENDING_WINDOW.has(name), `${WINDOW.key} / ${name} 未 window 化且不在 ${PENDING_WINDOW_PR} 清单`).toBe(true)
+      }
+    }
+    // 清单里每一条都必须仍在窗口选择器内（防止改名/移走后清单腐化）。
+    const selected = new Set(auditNames(WINDOW.key))
+    for (const name of PENDING_WINDOW) expect(selected.has(name), `${name} 不在窗口选择器内`).toBe(true)
+  })
 })
 
 describe('registry · Wave 8 ③ 平台/运维类（#2450）', () => {
