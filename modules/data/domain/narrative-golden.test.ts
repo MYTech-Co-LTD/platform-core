@@ -120,3 +120,27 @@ describe('模板必含段（R5）', () => {
     }
   })
 })
+
+describe('通用叙事（general，小节白名单）', () => {
+  const factsOf = (sections: ('summary' | 'anomaly' | 'drivers' | 'actions' | 'data_quality')[]): FactBundle => ({
+    ...structuredClone(facts), focus: 'general', sections,
+  })
+
+  it('只输出所选小节，顺序与声明一致；末尾仍有数据截至', () => {
+    const text = templateOf(factsOf(['summary', 'actions']))
+    const lines = text.split('\n')
+    expect(lines[0]!.startsWith('结论：')).toBe(true)
+    expect(lines[1]!.startsWith('行动：')).toBe(true)
+    expect(lines[lines.length - 1]!.startsWith('数据截至')).toBe(true)
+    expect(text).not.toContain('异常：')
+    expect(text).not.toContain('根因：')
+  })
+
+  it('drivers 小节给出根因行（无 findings 时明说数据不足，不猜）', () => {
+    expect(templateOf(factsOf(['drivers']))).toContain('根因：')
+  })
+
+  it('data_quality 小节输出数据质量行', () => {
+    expect(templateOf(factsOf(['data_quality']))).toContain('数据质量：')
+  })
+})

@@ -3009,6 +3009,31 @@ describePg('报表路由（需要 DATABASE_URL）', () => {
       expect(ok.status).toBe(200)
       expect(await ok.json()).toMatchObject({ text: SAFE_TEXT, fallback: false })
     })
+
+    it('★ general 小节：声明 sections 后按所选小节生成（agent 建报同一通路）', async () => {
+      const spec = aiSpec()
+      // 面板 8 换成通用叙事：只写结论/行动两节。
+      ;(spec.panels[8] as Record<string, unknown>) = {
+        chart: 'ai_text', title: '通用分析', focus: 'general', sections: ['summary', 'actions'],
+      }
+      const text = '结论：本期经营平稳。\n行动：继续跟踪日趋势。'
+      const app = narrativeShell(admin(), () => fakeModel(text))
+      const id = await createPublished(app, spec)
+      const res = await narrate(app, id)
+      expect(res.status).toBe(200)
+      expect(await res.json()).toMatchObject({ text, fallback: false })
+    })
+
+    it('★ general 小节与 focus 不匹配 ⇒ 建报即拒（写侧白名单）', async () => {
+      const spec = aiSpec()
+      ;(spec.panels[8] as Record<string, unknown>) = {
+        chart: 'ai_text', title: '错误组合', focus: 'overview', sections: ['summary'],
+      }
+      const app = narrativeShell(admin(), () => fakeModel(SAFE_TEXT))
+      const res = await post(app, { title: '错误组合', renderer: 'platform', spec })
+      expect(res.status).toBe(400)
+      expect(await res.json()).toEqual({ error: 'INVALID_SPEC' })
+    })
   })
 
   // ── 计算凭证（R1）─────────────────────────────────────────────────────────────────

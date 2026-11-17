@@ -282,13 +282,37 @@ describePg('notify mcp handlers', () => {
 
     const a = await pool.query(
       "select detail from notify.audit where org=$1 and action='agent.rule.upsert' order by id desc limit 1", [ORG])
+    const ruleId = (JSON.parse(rule.text) as { id: string }).id
     expect(a.rows[0].detail.snapshot).toEqual({
-      id: (JSON.parse(rule.text) as { id: string }).id, enabled: true,
+      id: ruleId, enabled: true,
       eventKey: 'ext.agent_a.daily', scope: '*', recipientKey: 'assignee',
       recipientLiteral: null, recipientDepts: null,
       templateKey: 'agent_a_daily', channels: ['inapp_default'],
       cooldownMinutes: null, origin: 'manual', ownerNamespace: 'agent_a',
     })
+
+    // #2325：owner 更新保留归属；非 owner 不得经 MCP 覆盖/启停
+    const owned = await callTool(deps(), 'update_rule', {
+      id: ruleId, eventKey: decl.key, recipientKey: 'assignee',
+      templateKey: 'agent_a_daily', channels: ['inapp_default'],
+    })
+    expect(owned.isError).toBe(false)
+    const ownAudit = await pool.query(
+      "select detail from notify.audit where org=$1 and action='mcp.update_rule' order by id desc limit 1", [ORG])
+    expect(ownAudit.rows[0].detail.snapshot.ownerNamespace).toBe('agent_a')
+
+    const denied = await callTool({ ...deps(), userId: 'u2' }, 'update_rule', {
+      id: ruleId, eventKey: decl.key, recipientKey: 'assignee',
+      templateKey: 'agent_a_daily', channels: ['inapp_default'],
+    })
+    expect(denied.isError).toBe(true)
+    expect((JSON.parse(denied.text) as { reason: string }).reason).toBe('rule_not_owned')
+
+    const deniedToggle = await callTool({ ...deps(), userId: 'u2' }, 'set_rule_enabled', {
+      id: ruleId, enabled: false,
+    })
+    expect(deniedToggle.isError).toBe(true)
+    expect((JSON.parse(deniedToggle.text) as { reason: string }).reason).toBe('rule_not_owned')
 
     const msg = await callTool(deps(), 'send_message', {
       namespace: ns, to: 'u1', title: 'T', body: 'B',

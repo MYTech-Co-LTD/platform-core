@@ -33,7 +33,7 @@ import { periodRangeOf } from './report-period'
 import { toReportPlan } from './report-plan'
 import { analystPool, runWarehouseSqlParams } from './warehouse'
 import { formatDelta, formatValue } from './report-format'
-import type { AiTextPanel, KpiPanel, PeriodSpec, ReportSpec } from './report-spec'
+import type { AiNarrativeSection, AiTextPanel, KpiPanel, PeriodSpec, ReportSpec } from './report-spec'
 
 export interface FactsDeps {
   pool: Pool
@@ -84,6 +84,11 @@ export interface FactBundle {
   reportTitle: string
   specKey: string
   focus: AiTextPanel['focus']
+  /**
+   * 通用小节（仅 `focus='general'`；其余 focus **不出现**——保持既有 facts/缓存逐字不变）。
+   * 进 factsHash ⇒ 同一面板换了小节就是另一份事实（缓存不会串）。
+   */
+  sections?: AiNarrativeSection[]
   period: { from: string; to: string; label: string }
   branchNum: string | null
   /**
@@ -415,6 +420,10 @@ export async function buildFacts(
   const aiEntry = plan.panels[panelIndex]
   if (aiEntry === undefined || aiEntry.kind !== 'ai_text') throw new Error('NOT_AI_TEXT_PANEL')
   const ai = aiEntry.panel as AiTextPanel
+  // 通用小节（仅 general）：缺省三节；其余 focus 恒空（保持既有 facts/缓存逐字不变）。
+  const sections: AiNarrativeSection[] = ai.focus === 'general'
+    ? (ai.sections ?? ['summary', 'anomaly', 'actions'])
+    : []
   const realPanels = plan.panels
     .filter((p) => p.kind !== 'denied')
     .map((p) => p.panel as ReportSpec['panels'][number])
@@ -597,7 +606,9 @@ export async function buildFacts(
     ? kpiArgs.args['system_book'] : null
   // 根因探针只在 `focus='root_cause'` 时跑：overview 的既有行为/缓存键一字不动。
   // 探针只走 `runDetailQuery` / `executeExplore`（与 /query、下钻、分析师面同一授权链）。
-  let analysis = ai.focus === 'root_cause'
+  // 根因探针：root_cause 恒跑；通用叙事的 drivers 小节同样需要它。
+  const needsAnalysis = ai.focus === 'root_cause' || (ai.focus === 'general' && sections.includes('drivers'))
+  let analysis = needsAnalysis
     ? await buildRootCause(
         {
           pool: deps.pool, org: deps.org, requester: deps.requester,
@@ -855,6 +866,7 @@ export async function buildFacts(
     reportTitle: deps.reportTitle,
     specKey: deps.specKey,
     focus: ai.focus,
+    ...(ai.focus === 'general' ? { sections } : {}),
     period: { from: range.from, to: range.to, label: `${range.from} ~ ${range.to}` },
     branchNum: branchNum ?? null,
     branchName: branchInfo.name,

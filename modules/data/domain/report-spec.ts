@@ -238,10 +238,20 @@ const TextPanel = z.object({
  *   · `root_cause`：在事实包之外跑确定性的下钻/配方探针，输出「根因」段（不做对话）；
  *   · `daily_review`：目标日 + 昨天/MTD 日均/去年同月日均 + 毛利/净毛利/MTD 驱动与建议。
  */
+/**
+ * AI 叙事的**通用小节白名单**（2026-11-17）：agent 可在任意报表里按需选节。
+ * 每节对应固定的提示词片段与事实切片——**不接受自由提示词**（叙事只能引用事实包）。
+ */
+export const AI_NARRATIVE_SECTIONS = ['summary', 'anomaly', 'drivers', 'actions', 'data_quality'] as const
+export type AiNarrativeSection = typeof AI_NARRATIVE_SECTIONS[number]
+export const AI_NARRATIVE_FOCUS = ['overview', 'root_cause', 'daily_review', 'general'] as const
+
 const AiTextPanel = z.object({
   chart: z.literal('ai_text'),
   title: z.string().trim().min(1).max(120).default('AI 分析'),
-  focus: z.enum(['overview', 'root_cause', 'daily_review']),
+  focus: z.enum(AI_NARRATIVE_FOCUS),
+  /** 通用小节（仅 focus='general'）：缺省 = summary/anomaly/actions（服务端补默认，schema 不填默认值）。 */
+  sections: z.array(z.enum(AI_NARRATIVE_SECTIONS)).min(1).max(AI_NARRATIVE_SECTIONS.length).optional(),
   span: z.number().int().min(1).max(24).default(24),
   page: z.number().int().min(1).max(MAX_PAGES).optional(),
 }).strict()
@@ -321,6 +331,23 @@ export const ReportSpecSchema = z.object({
       ctx.addIssue({
         code: z.ZodIssueCode.custom, path: ['panels', i, 'colorSemantics'],
         message: 'COLOR_SEMANTICS_REQUIRES_SINGLE_SERIES',
+      })
+    }
+  })
+  // 通用小节（ai_text，2026-11-17）：只属于 focus='general'，且不得重复（重复会让提示词/回退模板自相矛盾）。
+  spec.panels.forEach((p, i) => {
+    if (p.chart !== 'ai_text' || p.sections === undefined) return
+    if (p.focus !== 'general') {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom, path: ['panels', i, 'sections'],
+        message: 'SECTIONS_REQUIRE_GENERAL_FOCUS',
+      })
+      return
+    }
+    if (new Set(p.sections).size !== p.sections.length) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom, path: ['panels', i, 'sections'],
+        message: 'DUPLICATE_SECTION',
       })
     }
   })
@@ -422,7 +449,9 @@ const V2TextBlock = z.object({
 const V2AiTextBlock = z.object({
   type: z.literal('ai_text'),
   title: z.string().trim().min(1).max(120).default('AI 分析'),
-  focus: z.enum(['overview', 'root_cause', 'daily_review']),
+  focus: z.enum(AI_NARRATIVE_FOCUS),
+  /** 通用小节（仅 focus='general'）：同 v1。 */
+  sections: z.array(z.enum(AI_NARRATIVE_SECTIONS)).min(1).max(AI_NARRATIVE_SECTIONS.length).optional(),
   dataset: z.string().min(1).max(64).optional(),
   page: z.number().int().min(1).max(MAX_PAGES).optional(),
   span: z.number().int().min(1).max(24).default(24),
@@ -456,6 +485,7 @@ export function flattenReportSpecV2(v2: ReportSpecV2): { ok: true; spec: ReportS
     if (b.type === 'ai_text') {
       panels.push({
         chart: 'ai_text', title: b.title, focus: b.focus, span: b.span,
+        ...(b.sections === undefined ? {} : { sections: b.sections }),
         ...(b.page === undefined ? {} : { page: b.page }),
       })
       continue

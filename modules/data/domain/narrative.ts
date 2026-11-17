@@ -16,7 +16,7 @@
 import type { Pool } from 'pg'
 import type { StreamingChatModel } from './llm'
 import type { FactBundle } from './report-facts'
-import type { AiTextPanel } from './report-spec'
+import type { AiNarrativeSection, AiTextPanel } from './report-spec'
 import {
   getCachedNarrative,
   putNarrative,
@@ -24,7 +24,7 @@ import {
 } from './report-narrative-store'
 
 /** 参与缓存键；**改提示词 = 升版本号**（旧缓存自然不再命中）。 */
-export const NARRATIVE_PROMPT_VERSION = 'narrative-v12'
+export const NARRATIVE_PROMPT_VERSION = 'narrative-v13'
 
 /** 与 spec §4.1 同形的 SSE 事件。`replace` 表示「已流出的内容作废」，客户端必须整段替换。 */
 export type NarrativeEvent =
@@ -123,7 +123,31 @@ const RANGE_REVIEW_SYSTEM = [
   '全文不超过 700 个汉字；不要写「数据截至」——卡片页脚已有新鲜度。',
 ].join('\n')
 
+/**
+ * 通用小节（focus='general'）：只允许白名单小节，每节对应固定提示词片段。
+ * 不拼接任何调用方文本——agent 能选「写哪几节」，不能写「怎么写」。
+ */
+const SECTION_LABEL: Record<AiNarrativeSection, string> = {
+  summary: '结论', anomaly: '异常', drivers: '驱动', actions: '行动', data_quality: '数据质量',
+}
+const SECTION_PROMPT: Record<AiNarrativeSection, string> = {
+  summary: '一句话判断 + 2–3 个关键数字（门店/期间/销售额/订单/客单价与对比基线）。',
+  anomaly: '写最低/最高销售日、报损与费用的最大项与冲减项；取数失败的面板单独点名。',
+  drivers: '只引用 facts.analysis.findings 的维度值/明细行与变化量；findings 为空或全是 unavailable 时写「当前数据不足以分解驱动」。',
+  actions: '2–3 条按影响排序的动作，每条以 `- ` 开头，写对象 + 动作 + 核对点；第一条回应最大负向项。',
+  data_quality: '只写 facts.missing（取数失败的面板）与 facts.hasData；没有缺面板就写「全部面板取数正常」。',
+}
+function generalSystem(facts: FactBundle): string {
+  const sections = facts.sections ?? (['summary', 'anomaly', 'actions'] as const)
+  return [
+    '当 focus=general 时，忽略上文「输出三段」的格式要求，**只输出下面列出的小节**：',
+    ...sections.map((sec) => `${SECTION_LABEL[sec]}：${SECTION_PROMPT[sec]}`),
+    `小节顺序必须与上面一致；每节一段；数字规则、长度上限与「数据截至」末行仍按上文执行。`,
+  ].join('\n')
+}
+
 function systemOf(facts: FactBundle): string {
+  if (facts.focus === 'general') return `${SYSTEM}\n${generalSystem(facts)}`
   if (facts.focus === 'root_cause') return `${SYSTEM}\n${ROOT_CAUSE_SYSTEM}`
   if (facts.focus === 'daily_review') {
     const range = facts.dailyReview?.mode === 'range'
@@ -223,7 +247,9 @@ function badContext(text: string, bad: string[]): string {
 function userPrompt(facts: FactBundle, strictNote = ''): string {
   return [
     `focus=${facts.focus}。请严格按 system 约束写${facts.focus === 'root_cause' ? '四' : facts.focus === 'daily_review' ? '五' : '三'}段。`,
-    facts.focus === 'root_cause'
+    facts.focus === 'general'
+      ? `重点：只写以下小节，顺序不变（${(facts.sections ?? ['summary', 'anomaly', 'actions']).map((sec) => SECTION_LABEL[sec]).join(' / ')}）；每节一段，不要输出未列出的小节。`
+      : facts.focus === 'root_cause'
       ? '重点：先写结论（当前门店/期间的关键值与对比），再写异常，再用 analysis.findings 写「根因」（点名维度值/明细行/变化量），最后写行动。根因只认 findings 里的数，不另做算术。'
       : facts.focus === 'daily_review'
         ? facts.dailyReview?.mode === 'range'
@@ -250,6 +276,21 @@ function dimensionLabel(dimension: string): string {
   return DIMENSION_LABELS[dimension] ?? dimension
 }
 
+/** 根因行（overview 的 root_cause 与 general 的 drivers 共用；`always=false` 时空串）。 */
+function rootCauseLineOf(f: FactBundle, always = false): string {
+  if (!always && f.focus !== 'root_cause') return ''
+  const rc = f.analysis?.findings.find((x) => x.kind !== 'unavailable' && x.rows.length > 0)
+  if (rc === undefined) return '根因：当前报表数据不足以分解根因。'
+  const top = rc.rows[0]!
+  const delta = top.delta === undefined ? '' : `，变化 ${top.delta}`
+  // 有界分析的下一层（胜出维度 → 订单/明细行）：模板也把它带出来，回退时同样能看到根因行。
+  const detail = f.analysis?.findings.find((x) => x.kind === 'detail' && x.rows.length > 0)
+  const detailText = detail === undefined
+    ? ''
+    : `；明细${dimensionLabel(detail.dimension)}「${detail.rows[0]!.label}」（${detail.rows[0]!.value}）`
+  return `根因：${rc.metricTitle} 主要受${dimensionLabel(rc.dimension)}「${top.label}」影响（${top.value}${delta}${detailText}）。`
+}
+
 /** 确定性模板：只用 facts 的格式化值，缺失项写 `-`（spec §6 逐字结构）。 */
 export function templateOf(f: FactBundle): string {
   const k = (name: string) => f.kpis.find((x) => x.panel === name)
@@ -270,6 +311,42 @@ export function templateOf(f: FactBundle): string {
   const asOfLine = `数据截至 ${f.dataAsOf ?? '新鲜度未知'}。`
   if (!f.hasData) {
     return [`结论：${branchLabel}该期间无有效数据（未接入或未物化）。`, asOfLine].join('\n')
+  }
+  if (f.focus === 'general') {
+    // 通用叙事：按白名单小节逐段生成；每行直接面向读者（不出现列名）。
+    const k = (name: string) => f.kpis.find((x) => x.panel === name)
+    const loss = f.breakdowns.find((b) => b.panel.includes('报损'))
+    const expense = f.breakdowns.find((b) => b.panel.includes('费用'))
+    const lossTop = loss?.rows[0]
+    const expRows = expense?.rows ?? []
+    const numOf = (s: string): number => Number(s.replaceAll(',', ''))
+    const expTop = expRows.slice(0, 2).map((r) => r.label).join('、')
+    const negTop = expRows
+      .filter((r) => Number.isFinite(numOf(r.value)) && numOf(r.value) < 0)
+      .sort((a, b) => numOf(a.value) - numOf(b.value))[0]
+    const minText = f.daily.min === null ? '-' : `${f.daily.min.day}（${f.daily.min.value}）`
+    const lossDetail = lossTop === undefined ? '' : `${lossTop.label} ${lossTop.value}`
+    const expDetail = [
+      expTop,
+      negTop === undefined ? '' : `冲减 ${negTop.label} ${negTop.value}`,
+    ].filter((x) => x !== '').join('；')
+    const withDetail = (base: string, detail: string): string =>
+      detail === '' ? base : `${base}（${detail}）`
+    const lines: string[] = []
+    for (const sec of (f.sections ?? ['summary', 'anomaly', 'actions'] as const)) {
+      if (sec === 'summary') {
+        lines.push(`结论：${branchLabel}本期销售额 ${k('销售额')?.current ?? '-'}，订单 ${k('订单数')?.current ?? '-'}，客单价 ${k('客单价')?.current ?? '-'}；会员销售占比 ${k('会员销售占比')?.current ?? '-'}。`)
+      } else if (sec === 'anomaly') {
+        lines.push(`异常：最低销售日 ${minText}；${withDetail(`报损 ${k('报损金额')?.current ?? '-'}`, lossDetail)}；${withDetail(`费用 ${k('费用合计（净费用）')?.current ?? k('费用合计')?.current ?? '-'}`, expDetail)}。`)
+      } else if (sec === 'drivers') {
+        lines.push(rootCauseLineOf(f, true))
+      } else if (sec === 'actions') {
+        lines.push('行动：① 核对最低销售日是否采集缺口/闭店；② 复盘报损最大原因明细；③ 复盘费用最大两项的投放产出。')
+      } else {
+        lines.push(`数据质量：${f.missing.length === 0 ? '全部面板取数正常' : `未取到：${f.missing.join('、')}`}。`)
+      }
+    }
+    return [...lines, asOfLine].join('\n')
   }
   if (f.focus === 'daily_review') {
     const dr = f.dailyReview
@@ -319,19 +396,7 @@ export function templateOf(f: FactBundle): string {
     expTop,
     negTop === undefined ? '' : `冲减 ${negTop.label} ${negTop.value}`,
   ].filter((s) => s !== '').join('；')
-  const rootCauseLine = ((): string => {
-    if (f.focus !== 'root_cause') return ''
-    const rc = f.analysis?.findings.find((x) => x.kind !== 'unavailable' && x.rows.length > 0)
-    if (rc === undefined) return '根因：当前报表数据不足以分解根因。'
-    const top = rc.rows[0]!
-    const delta = top.delta === undefined ? '' : `，变化 ${top.delta}`
-    // 有界分析的下一层（胜出维度 → 订单/明细行）：模板也把它带出来，回退时同样能看到根因行。
-    const detail = f.analysis?.findings.find((x) => x.kind === 'detail' && x.rows.length > 0)
-    const detailText = detail === undefined
-      ? ''
-      : `；明细${dimensionLabel(detail.dimension)}「${detail.rows[0]!.label}」（${detail.rows[0]!.value}）`
-    return `根因：${rc.metricTitle} 主要受${dimensionLabel(rc.dimension)}「${top.label}」影响（${top.value}${delta}${detailText}）。`
-  })()
+  const rootCauseLine = rootCauseLineOf(f)
   return [
     `结论：${branchLabel}本期销售额 ${k('销售额')?.current ?? '-'}，订单 ${k('订单数')?.current ?? '-'}，客单价 ${k('客单价')?.current ?? '-'}；会员销售占比 ${k('会员销售占比')?.current ?? '-'}。`,
     `异常：最低销售日 ${minText}；${withDetail(`报损 ${k('报损金额')?.current ?? '-'}`, lossDetail)}；${withDetail(`费用 ${k('费用合计（净费用）')?.current ?? k('费用合计')?.current ?? '-'}`, expDetail)}。`,
@@ -375,6 +440,17 @@ function ensureDailySections(text: string, facts: FactBundle): string {
   return missing.length === 0 ? text : `${text.trim()}\n${missing.join('\n')}`
 }
 
+
+/** 通用小节兜底：模型漏了哪节，就从确定性模板补哪节（数字同样来自 facts）。 */
+function ensureGeneralSections(text: string, facts: FactBundle): string {
+  if (facts.focus !== 'general') return text
+  const lines = templateOf(facts).split('\n')
+  const missing = (facts.sections ?? [])
+    .filter((sec) => !text.includes(`${SECTION_LABEL[sec]}：`) && !text.includes(`${SECTION_LABEL[sec]}:`))
+    .map((sec) => lines.find((l) => l.startsWith(`${SECTION_LABEL[sec]}：`)))
+    .filter((l): l is string => l !== undefined)
+  return missing.length === 0 ? text : `${text.trim()}\n${missing.join('\n')}`
+}
 /** 缓存键：内容寻址。`branchNum=null` ⇒ `*`；未配模型 ⇒ `none`（模板结果也缓存）。 */
 export function narrativeKeyOf(deps: NarrativeDeps): NarrativeKey {
   return {
@@ -531,7 +607,7 @@ export async function generateNarrative(deps: NarrativeDeps): Promise<NarrativeR
       // 空输出与越界同罪：空白文本不能当成功缓存（spec §6「永远不空白」）
       const bad = text.trim() === '' ? [] : badNumbers(text, allowed)
       if (text.trim() !== '' && bad.length === 0) {
-        const finalText = ensureDailySections(text, deps.facts)
+        const finalText = ensureGeneralSections(ensureDailySections(text, deps.facts), deps.facts)
         await putNarrative(deps.pool, key, finalText, false, deps.userId)
         settleOnce({ text: finalText, fallback: false })
         return {
@@ -681,7 +757,7 @@ export async function* streamNarrative(
       clearTimeout(timer)
     }
     if (failed === null) {
-      const finalFull = ensureDailySections(full, deps.facts)
+      const finalFull = ensureGeneralSections(ensureDailySections(full, deps.facts), deps.facts)
       if (finalFull.length > full.length) {
         yield { type: 'delta', text: finalFull.slice(full.length) }
       }
