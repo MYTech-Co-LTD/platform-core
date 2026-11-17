@@ -11,6 +11,10 @@
 
 ## [Unreleased]
 
+## [0.315.0](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.314.0...v0.315.0) - 2026-11-17
+- 【新增】scheduler: Wave 8 P1 余项——audit-a1/a2a/a2b 全史对账落平台调度器 (#2425) ([#2426](https://github.com/MYTech-Co-LTD/platform-core/pull/2426), [425b978](https://github.com/MYTech-Co-LTD/platform-core/commit/425b97884337dca86fc2617a38ab57dc315dc383))
+
+
 ## [0.314.0](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.313.4...v0.314.0) - 2026-11-16
 - 【新增】data: AI 叙事通用化——general focus + 白名单小节 + NarrativePanel 抽取 (#2420) ([#2421](https://github.com/MYTech-Co-LTD/platform-core/pull/2421), [d311899](https://github.com/MYTech-Co-LTD/platform-core/commit/d311899030950dc06fe05d36506a56f5b3b91fd1))
 
