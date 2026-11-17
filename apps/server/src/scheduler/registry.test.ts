@@ -1,5 +1,6 @@
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest'
-import { existsSync } from 'node:fs'
+import { existsSync, readFileSync, readdirSync, statSync } from 'node:fs'
+import { join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { Pool } from 'pg'
 import { runMigrations } from '../migrate'
@@ -136,34 +137,98 @@ describe('registry · dbt hourly/tables（Wave 8 P1）', () => {
   })
 })
 
-describe('registry · dbt 全史对账三段（Wave 8 P1 余项，#2425）', () => {
-  const cases = [
-    { key: 'data.dbt_audit_a1', cron: '30 4 * * *', n: 5 },
-    { key: 'data.dbt_audit_a2a', cron: '0 14 * * *', n: 15 },
-    { key: 'data.dbt_audit_a2b', cron: '30 15 * * *', n: 23 },
+describe('registry · dbt 对账分族（full / window，#2428）', () => {
+  const FULL = [
+    { key: 'data.dbt_audit_a1', cron: '0 6 * * *', n: 5 },
+    { key: 'data.dbt_audit_a2a', cron: '30 3 * * *', n: 8 },
+    { key: 'data.dbt_audit_a2b', cron: '45 4 * * *', n: 6 },
   ] as const
+  const WINDOW = { key: 'data.dbt_audit_window', cron: '30 7 * * *', n: 24 } as const
 
-  it('★ cron/timeout/scope 与 openship 现役逐字一致', () => {
-    for (const c of cases) {
+  /** 递归收集 dbt/models 下的 .sql（ref 解析用）。 */
+  function collectSql(dir: string, out: string[] = []): string[] {
+    for (const name of readdirSync(dir)) {
+      const p = join(dir, name)
+      if (statSync(p).isDirectory()) collectSql(p, out)
+      else if (name.endsWith('.sql')) out.push(p)
+    }
+    return out
+  }
+
+  /** ref 名 → 物化类型（incremental / table / view / default / seed）。 */
+  const materialized = (() => {
+    const map = new Map<string, string>()
+    const modelsDir = repoPath('dbt/models')
+    for (const file of collectSql(modelsDir)) {
+      const name = file.split('/').pop()!.replace(/\.sql$/, '')
+      const text = readFileSync(file, 'utf8')
+      const m = text.match(/materialized\s*=\s*'(\w+)'/)
+      map.set(name, m?.[1] ?? 'default')
+    }
+    // seed（CSV）不是增量模型，但要能被 ref 解析到，否则会被误判成「名字抄错」。
+    for (const name of readdirSync(repoPath('dbt/seeds'))) {
+      if (name.endsWith('.csv')) map.set(name.replace(/\.csv$/, ''), 'seed')
+    }
+    return map
+  })()
+
+  const auditNames = (key: string): string[] => {
+    const d = JOB_REGISTRY.find((x) => x.key === key)!
+    return (d.env?.MATERIALIZE_AUDIT_SELECT ?? '').split(/\s+/).filter(Boolean)
+  }
+
+  it('★ full/window 两族的 cron/scope/窗口开关', () => {
+    for (const c of FULL) {
       const d = JOB_REGISTRY.find((x) => x.key === c.key)!
       expect(d, c.key).toBeDefined()
       expect(d.cron, c.key).toBe(c.cron)
       expect(d.timeoutMs, c.key).toBe(5400000)
       expect(d.maxAttempts, c.key).toBe(1)
       expect(d.env?.MATERIALIZE_SCOPE, c.key).toBe('audit')
+      expect(d.env?.MATERIALIZE_AUDIT_WINDOW, c.key).toBeUndefined()
       expect(d.env?.DATA_PLANE_DOMAINS, c.key).toBe('lemeng')
       expect(d.env?.MATERIALIZE_MODE, c.key).toBe('container')
       expect(existsSync(repoPath(d.script)), c.key).toBe(true)
     }
+    const w = JOB_REGISTRY.find((x) => x.key === WINDOW.key)!
+    expect(w).toBeDefined()
+    expect(w.cron).toBe(WINDOW.cron)
+    expect(w.timeoutMs).toBe(5400000)
+    expect(w.env?.MATERIALIZE_SCOPE).toBe('audit')
+    expect(w.env?.MATERIALIZE_AUDIT_WINDOW).toBe('1')
+    expect(w.env?.DATA_PLANE_DOMAINS).toBe('lemeng')
+    expect(w.env?.MATERIALIZE_MODE).toBe('container')
+    expect(existsSync(repoPath(w.script))).toBe(true)
   })
 
   it('★ 选择器每条都对应仓内 dbt test 文件（抄错名字 ⇒ 红）', () => {
-    for (const c of cases) {
-      const d = JOB_REGISTRY.find((x) => x.key === c.key)!
-      const names = (d.env?.MATERIALIZE_AUDIT_SELECT ?? '').split(/\s+/).filter(Boolean)
+    for (const c of [...FULL, WINDOW]) {
+      const names = auditNames(c.key)
       expect(names.length, c.key).toBe(c.n)
       const missing = names.filter((n) => !existsSync(repoPath(`dbt/tests/lemeng/${n}.sql`)))
       expect(missing, c.key).toEqual([])
+    }
+  })
+
+  it('★ 分族不混：全史段不得引用增量模型；窗口段每条至少要有一个增量模型', () => {
+    const refsOf = (name: string): string[] => {
+      const text = readFileSync(repoPath(`dbt/tests/lemeng/${name}.sql`), 'utf8')
+      return [...text.matchAll(/ref\('([a-z0-9_]+)'\)/g)].map((m) => m[1])
+    }
+    for (const c of FULL) {
+      for (const name of auditNames(c.key)) {
+        const refs = refsOf(name)
+        // ref 解析不到 = 名字抄错，或新增了 seed 目录没登记（比默默放行安全）。
+        expect(refs.filter((r) => !materialized.has(r)), `${c.key} / ${name} 的 ref 解析不到`).toEqual([])
+        const bad = refs.filter((r) => materialized.get(r) === 'incremental')
+        expect(bad, `${c.key} / ${name} 引用了增量模型（结构性假红）`).toEqual([])
+      }
+    }
+    for (const name of auditNames(WINDOW.key)) {
+      const refs = refsOf(name)
+      expect(refs.filter((r) => !materialized.has(r)), `${WINDOW.key} / ${name} 的 ref 解析不到`).toEqual([])
+      const inc = refs.filter((r) => materialized.get(r) === 'incremental')
+      expect(inc.length, `${WINDOW.key} / ${name} 没有增量模型 refs（分族错位？）`).toBeGreaterThan(0)
     }
   })
 })
