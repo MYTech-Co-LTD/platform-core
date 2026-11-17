@@ -10,7 +10,7 @@ with src as (
         r['bizday']::date         as bizday,
         r['purchase_item_amount']::numeric(14, 6) as purchase_amount,
         r['purchase_item_money']::numeric(14, 2)  as purchase_money
-    from {{ window_read_parquet('s3://{{ var("zos_bucket") }}/{{ var("lemeng_item_purchase_prefix") }}/*/bizday=**/*.parquet') }} r
+    from {{ window_read_parquet('s3://' ~ var('zos_bucket') ~ '/' ~ var('lemeng_item_purchase_prefix') ~ '/*/bizday=**/*.parquet') }} r
     where r['bizday']::date >= date '{{ window_start_date() }}'
 ),
 recheck as (

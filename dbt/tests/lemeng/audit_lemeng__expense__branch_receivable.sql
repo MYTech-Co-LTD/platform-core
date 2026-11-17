@@ -10,7 +10,7 @@ with recheck as (
         r['branch_num']::int     as branch_num,
         r['expense_type']::varchar       as expense_type,
         sum(case when r['direction']::varchar = '应收' then coalesce(r['amount']::numeric, 0) else 0 end)::numeric(20,2) as v
-    from {{ window_read_parquet('s3://{{ var("zos_bucket") }}/{{ var("lemeng_branch_expense_prefix") }}/*/bizday=**/*.parquet') }} r
+    from {{ window_read_parquet('s3://' ~ var('zos_bucket') ~ '/' ~ var('lemeng_branch_expense_prefix') ~ '/*/bizday=**/*.parquet') }} r
       -- 湖上只存在审核单（管线请求侧已筛审核态、契约不落状态列）——
       -- 此处无需重复筛 state；bizday 闭窗过滤照旧。
       where r['bizday']::date < CAST(now() AT TIME ZONE 'Asia/Shanghai' AS DATE)

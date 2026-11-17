@@ -11,7 +11,7 @@ with recheck as (
             r['system_book']::varchar as system_book,
             r['bizday']::date         as bizday,
             r['supplier_num']::bigint        as supplier_num
-        from {{ window_read_parquet('s3://{{ var("zos_bucket") }}/{{ var("lemeng_item_purchase_prefix") }}/*/bizday=**/*.parquet') }} r
+        from {{ window_read_parquet('s3://' ~ var('zos_bucket') ~ '/' ~ var('lemeng_item_purchase_prefix') ~ '/*/bizday=**/*.parquet') }} r
         where r['bizday']::date < CAST(now() AT TIME ZONE 'Asia/Shanghai' AS DATE)
       and r['bizday']::date >= date '{{ window_start_date() }}'
     ) t
