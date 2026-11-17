@@ -136,6 +136,38 @@ describe('registry · dbt hourly/tables（Wave 8 P1）', () => {
   })
 })
 
+describe('registry · dbt 全史对账三段（Wave 8 P1 余项，#2425）', () => {
+  const cases = [
+    { key: 'data.dbt_audit_a1', cron: '30 4 * * *', n: 5 },
+    { key: 'data.dbt_audit_a2a', cron: '0 14 * * *', n: 15 },
+    { key: 'data.dbt_audit_a2b', cron: '30 15 * * *', n: 23 },
+  ] as const
+
+  it('★ cron/timeout/scope 与 openship 现役逐字一致', () => {
+    for (const c of cases) {
+      const d = JOB_REGISTRY.find((x) => x.key === c.key)!
+      expect(d, c.key).toBeDefined()
+      expect(d.cron, c.key).toBe(c.cron)
+      expect(d.timeoutMs, c.key).toBe(5400000)
+      expect(d.maxAttempts, c.key).toBe(1)
+      expect(d.env?.MATERIALIZE_SCOPE, c.key).toBe('audit')
+      expect(d.env?.DATA_PLANE_DOMAINS, c.key).toBe('lemeng')
+      expect(d.env?.MATERIALIZE_MODE, c.key).toBe('container')
+      expect(existsSync(repoPath(d.script)), c.key).toBe(true)
+    }
+  })
+
+  it('★ 选择器每条都对应仓内 dbt test 文件（抄错名字 ⇒ 红）', () => {
+    for (const c of cases) {
+      const d = JOB_REGISTRY.find((x) => x.key === c.key)!
+      const names = (d.env?.MATERIALIZE_AUDIT_SELECT ?? '').split(/\s+/).filter(Boolean)
+      expect(names.length, c.key).toBe(c.n)
+      const missing = names.filter((n) => !existsSync(repoPath(`dbt/tests/lemeng/${n}.sql`)))
+      expect(missing, c.key).toEqual([])
+    }
+  })
+})
+
 describe('registry · 业务监控 tick（W7-V1）', () => {
   it('★ data.monitor_tick 每分钟一条、脚本在位、不传参数', () => {
     const def = JOB_REGISTRY.find((d) => d.key === 'data.monitor_tick')!
