@@ -11,6 +11,10 @@
 
 ## [Unreleased]
 
+## [0.325.2](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.325.1...v0.325.2) - 2026-11-17
+- 【修复】scheduler: 审计排班连续失败不计入健康（exit 1 = 数据问题）(#2463) ([#2464](https://github.com/MYTech-Co-LTD/platform-core/pull/2464), [120a4ed](https://github.com/MYTech-Co-LTD/platform-core/commit/120a4ed1c3d5c03ae25a885d84a9d867d2d5dabd))
+
+
 ## [0.325.1](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.325.0...v0.325.1) - 2026-11-17
 - 【修复】data: window_read_parquet 实参改为 Jinja 拼接形态（字面量内嵌 var 不求值）(#2456) ([#2462](https://github.com/MYTech-Co-LTD/platform-core/pull/2462), [3ed8184](https://github.com/MYTech-Co-LTD/platform-core/commit/3ed818475385e1bbfc6a68e0a97e470d3e6b4e62))
 
