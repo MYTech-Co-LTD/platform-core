@@ -1056,7 +1056,9 @@ describe('版式：个人版式（issue #2295）', () => {
     renderView()
     await screen.findByText('乙')
 
-    expect(renderOrder()).toEqual([1, 0])
+    // 个人版式是 useEffect 异步取的：findByText('乙') 命中的可能是默认次序的 DOM
+    // （乙在默认序也在场）⇒ 必须等 layout 状态落地后再断言次序与列宽，否则竞态假红。
+    await waitFor(() => expect(renderOrder()).toEqual([1, 0]))
     const cols = document.querySelectorAll('[data-panel-index]')
     expect(cols[0].className).toContain('ant-col-24')
     expect(cols[1].className).toContain('ant-col-8')
