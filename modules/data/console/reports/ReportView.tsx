@@ -169,7 +169,7 @@ function mergeMeasureResults(
   const totals = oks.map((p) => p.total)
   const total = totals.every((t) => t === undefined)
     ? undefined
-    : measures.map((m, i) => `${labels[i]} ${totals[i] === undefined || totals[i] === null ? '-' : String(totals[i])}`).join('、')
+    : measures.map((_m, i) => `${labels[i]} ${totals[i] === undefined || totals[i] === null ? '-' : String(totals[i])}`).join('、')
   return {
     kind: 'ok',
     columns,
