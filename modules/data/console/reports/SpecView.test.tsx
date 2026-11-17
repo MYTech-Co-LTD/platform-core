@@ -50,7 +50,7 @@ const json = (b: unknown, status = 200) =>
 
 /** 夹具形状照 domain/report-spec.ts 的白名单字段（只写用例关心的那些）。 */
 interface Panel {
-  chart: 'line' | 'bar' | 'table' | 'kpi' | 'text' | 'ai_text'
+  chart: 'line' | 'bar' | 'table' | 'cross_table' | 'kpi' | 'text' | 'ai_text'
   title?: string
   /** ai_text 的生成口径（v1 只有 overview）。 */
   focus?: 'overview'
@@ -69,8 +69,10 @@ interface Panel {
     limit?: number
     total?: boolean
   }
-  /** table 的渲染期列投影（设计 §7.3.1）。 */
-  columns?: string[]
+  /** table 的渲染期列投影（设计 §7.3.1）；cross_table 时是列维度名（字符串）。 */
+  columns?: string[] | string
+  /** cross_table 行维度。 */
+  rows?: string[]
   /** 可折叠明细（R3 ⑤）。 */
   expandable?: { dimensions?: string[]; limit?: number }
   /** 多页归属（R3）；缺省第 1 页。 */
