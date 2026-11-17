@@ -11,6 +11,10 @@
 
 ## [Unreleased]
 
+## [0.325.5](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.325.4...v0.325.5) - 2026-11-17
+- 【修复】data: 闭窗谓词去掉跨 00 点误排除昨日 h23（tick 不在 00 点跑）(#2473) ([#2474](https://github.com/MYTech-Co-LTD/platform-core/pull/2474), [46f28b3](https://github.com/MYTech-Co-LTD/platform-core/commit/46f28b3a57c231677139b660d6afa5d23f130323))
+
+
 ## [0.325.4](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.325.3...v0.325.4) - 2026-11-17
 - 【修复】data: 闭窗谓词按北京时间取今天/当前小时，覆盖 prev 跨 00 点 (#2422) ([#2471](https://github.com/MYTech-Co-LTD/platform-core/pull/2471), [b3de6f7](https://github.com/MYTech-Co-LTD/platform-core/commit/b3de6f774793e98ff4a2ab639e0c4aca762d7c72))
 
