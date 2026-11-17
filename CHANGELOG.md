@@ -11,6 +11,10 @@
 
 ## [Unreleased]
 
+## [0.320.0](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.319.0...v0.320.0) - 2026-11-17
+- 【新增】data: 业务监控 console 管理页——agent 建的监控人来开闸 (#2436) ([#2437](https://github.com/MYTech-Co-LTD/platform-core/pull/2437), [38a19fb](https://github.com/MYTech-Co-LTD/platform-core/commit/38a19fbc12319d93009871a6460dba987849acdf))
+
+
 ## [0.319.0](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.318.0...v0.319.0) - 2026-11-17
 - 【新增】data: W2 表格条件格式——度量列按 target 达标着色 (#2439) ([#2440](https://github.com/MYTech-Co-LTD/platform-core/pull/2440), [df649cd](https://github.com/MYTech-Co-LTD/platform-core/commit/df649cdde5c49b04df7c2bfd32a5570ec81e685d))
 
