@@ -138,13 +138,14 @@ export function KpiCard({
   /** 用户手工算的数（R1 差异分解）：只在点「对一下」时随请求发给服务端。 */
   const [userValue, setUserValue] = useState<number | null>(null)
 
-  const receiptBody = (withUser?: number | null) => ({
+  const receiptBody = (withUser?: number | null, format?: 'csv' | 'xlsx') => ({
     panelIndex: receiptCtx!.panelIndex,
     period: receiptCtx!.period,
     ...(receiptCtx!.branchNum === undefined ? {} : { branchNum: receiptCtx!.branchNum }),
     ...(receiptCtx!.version === undefined ? {} : { version: receiptCtx!.version }),
     ...(receiptCtx!.preview === undefined ? {} : { preview: receiptCtx!.preview }),
     ...(withUser === undefined || withUser === null ? {} : { userValue: withUser }),
+    ...(format === undefined ? {} : { format }),
   })
 
   const openReceipt = async (withUser?: number | null): Promise<void> => {
@@ -161,18 +162,18 @@ export function KpiCard({
     }
   }
 
-  const downloadDetail = async (): Promise<void> => {
+  const downloadDetail = async (format: 'csv' | 'xlsx' = 'csv'): Promise<void> => {
     if (receiptCtx === undefined) return
     setExportBusy(true)
     setDetailNote(null)
     try {
       const { blob, filename, headers } = await apiPostBlob(
-        `/reports/${receiptCtx.reportId}/receipt/detail`, receiptBody(),
+        `/reports/${receiptCtx.reportId}/receipt/detail`, receiptBody(undefined, format),
       )
       const url = URL.createObjectURL(blob)
       const a = document.createElement('a')
       a.href = url
-      a.download = filename ?? 'detail.csv'
+      a.download = filename ?? (format === 'xlsx' ? 'detail.xlsx' : 'detail.csv')
       a.click()
       URL.revokeObjectURL(url)
       if (headers.get('x-truncated') === 'true') {
@@ -187,15 +188,17 @@ export function KpiCard({
     }
   }
 
-  const downloadReceipt = async (): Promise<void> => {
+  const downloadReceipt = async (format: 'csv' | 'xlsx' = 'csv'): Promise<void> => {
     if (receiptCtx === undefined) return
     setExportBusy(true)
     try {
-      const { blob, filename } = await apiPostBlob(`/reports/${receiptCtx.reportId}/receipt/export`, receiptBody())
+      const { blob, filename } = await apiPostBlob(
+        `/reports/${receiptCtx.reportId}/receipt/export`, receiptBody(undefined, format),
+      )
       const url = URL.createObjectURL(blob)
       const a = document.createElement('a')
       a.href = url
-      a.download = filename ?? 'receipt.csv'
+      a.download = filename ?? (format === 'xlsx' ? 'receipt.xlsx' : 'receipt.csv')
       a.click()
       URL.revokeObjectURL(url)
     } catch (e) {
@@ -426,12 +429,21 @@ export function KpiCard({
                 <div style={{ marginTop: 12, display: 'flex', gap: 8, flexWrap: 'wrap' }}>
                   <Button
                     disabled={receipt.series === null} loading={exportBusy}
-                    onClick={() => void downloadReceipt()}
+                    onClick={() => void downloadReceipt('csv')}
                   >
                     下载按日 CSV
                   </Button>
-                  <Button loading={exportBusy} onClick={() => void downloadDetail()}>
+                  <Button
+                    disabled={receipt.series === null} loading={exportBusy}
+                    onClick={() => void downloadReceipt('xlsx')}
+                  >
+                    下载按日 Excel
+                  </Button>
+                  <Button loading={exportBusy} onClick={() => void downloadDetail('csv')}>
                     下载明细行 CSV
+                  </Button>
+                  <Button loading={exportBusy} onClick={() => void downloadDetail('xlsx')}>
+                    下载明细 Excel
                   </Button>
                 </div>
                 {detailNote === null ? null : (

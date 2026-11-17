@@ -3139,6 +3139,28 @@ describePg('报表路由（需要 DATABASE_URL）', () => {
       expect(csv).toContain('2026-10-02,234')
     })
 
+    it('★ xlsx 导出（W4）：真 Excel 工作簿 + 数值单元格（不是文本）', async () => {
+      const id = await createPublishedReceipt(receiptShell(adminIdentity()))
+      const app = receiptShell(viewerIdentity())
+      const res = await app.request(`/reports/${id}/receipt/export`, {
+        method: 'POST', headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ panelIndex: 0, period: RECEIPT_PERIOD, format: 'xlsx' }),
+      })
+      expect(res.status).toBe(200)
+      expect(res.headers.get('content-type')).toContain('spreadsheetml.sheet')
+      expect(res.headers.get('content-disposition')).toContain('.xlsx')
+      const buf = Buffer.from(await res.arrayBuffer())
+      // ZIP 魔数：真 xlsx 是 zip 容器（挡「把 CSV 改后缀」这类假实现）。
+      expect(buf.subarray(0, 2).toString('latin1')).toBe('PK')
+      const ExcelJS = (await import('exceljs')).default
+      const wb = new ExcelJS.Workbook()
+      await wb.xlsx.load(buf as unknown as ArrayBuffer)
+      const ws = wb.getWorksheet('按日组成')!
+      expect(ws.getCell('A2').value).toBe('2026-10-01')
+      expect(ws.getCell('B2').value).toBe(1000)
+      expect(ws.getCell('B2').numFmt).toBe('#,##0.00')
+    })
+
     it('明细导出：指标未声明下钻 ⇒ 409 DETAIL_NOT_AVAILABLE（不是空 CSV）', async () => {
       const id = await createPublishedReceipt(receiptShell(adminIdentity()))
       const app = receiptShell(viewerIdentity())

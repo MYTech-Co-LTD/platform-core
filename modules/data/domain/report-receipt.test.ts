@@ -18,7 +18,7 @@ const metric = (over: Record<string, unknown> = {}): MetricRow => ({
 } as unknown as MetricRow)
 
 const receipt = (over: Partial<ReportReceipt> = {}): ReportReceipt => ({
-  metric: { id: 'm:sales', title: '销售额', definition: null, unit: null, scopeNote: null, caliber: 'certified' },
+  metric: { id: 'm:sales', title: '销售额', definition: null, unit: null, scopeNote: null, caliber: 'certified', format: 'currency' },
   window: { from: '2026-10-01', to: '2026-10-02', mode: 'range' },
   scope: { branchNum: null, args: {} },
   value: '1,234', rawValue: 1234, dataAsOf: null, watermark: null,

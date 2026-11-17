@@ -54,6 +54,8 @@ export interface ReportReceipt {
     /** 口径射程与排除项（L1 的 scope_note）；未声明为 null。 */
     scopeNote: string | null
     caliber: 'certified' | 'draft'
+    /** 数值格式（W4 xlsx 导出用）：currency/percent/number。 */
+    format: 'currency' | 'number' | 'percent'
   }
   window: { from: string; to: string; mode: 'day' | 'range' }
   scope: { branchNum: string | null; args: Record<string, unknown> }
@@ -188,6 +190,7 @@ export async function buildReportReceipt(
         unit: metric.unit ?? null,
         scopeNote: metric.scopeNote ?? null,
         caliber: metric.certified === 'certified' ? 'certified' : 'draft',
+        format: panel.format,
       },
       window: {
         from: range.from,
@@ -310,6 +313,9 @@ export function receiptCsv(receipt: ReportReceipt): string {
 
 export interface DetailExport {
   csv: string
+  /** 原始列名与行（W4 xlsx 导出用；与 csv 同源，不重新取数）。 */
+  columns: string[]
+  data: unknown[][]
   rows: number
   /** 命中行数上限 ⇒ true（导出不完整，调用方必须如实告知）。 */
   truncated: boolean
@@ -377,6 +383,8 @@ export async function exportDetailCsv(
     ok: true,
     out: {
       csv: csvOf(columns ?? [], sliced),
+      columns: [...(columns ?? [])],
+      data: sliced,
       rows: sliced.length,
       truncated: total > sliced.length,
       total,
