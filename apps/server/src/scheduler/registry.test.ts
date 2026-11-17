@@ -168,6 +168,27 @@ describe('registry · dbt 全史对账三段（Wave 8 P1 余项，#2425）', () 
   })
 })
 
+describe('registry · Wave 8 ③ 平台/运维类（#2450）', () => {
+  it('★ 词表物化与私有测度归档：cron/timeout/脚本在位', () => {
+    const sem = JOB_REGISTRY.find((d) => d.key === 'data.semantics_sync')!
+    expect(sem, 'data.semantics_sync').toBeDefined()
+    expect(sem.cron).toBe('33 4 * * *')
+    expect(sem.timeoutMs).toBe(300000)
+    expect(sem.maxAttempts).toBe(2)
+    expect(sem.script).toBe('scripts/sync-data-semantics.mjs')
+    expect(existsSync(repoPath(sem.script))).toBe(true)
+
+    const arc = JOB_REGISTRY.find((d) => d.key === 'data.archive_private_measures')!
+    expect(arc, 'data.archive_private_measures').toBeDefined()
+    expect(arc.cron).toBe('30 3 * * *')
+    expect(arc.timeoutMs).toBe(300000)
+    expect(arc.script).toBe('scripts/archive-private-measures.mjs')
+    // `--org` 是脚本必填项（缺了直接 usage 退出）⇒ 必须显式给。
+    expect(arc.args).toEqual(['--org', 'shanhaiyiguo-org'])
+    expect(existsSync(repoPath(arc.script))).toBe(true)
+  })
+})
+
 describe('registry · 业务监控 tick（W7-V1）', () => {
   it('★ data.monitor_tick 每分钟一条、脚本在位、不传参数', () => {
     const def = JOB_REGISTRY.find((d) => d.key === 'data.monitor_tick')!
