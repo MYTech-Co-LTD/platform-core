@@ -324,9 +324,16 @@ mat_url_decode() {
 mat_psql() { # $1=warehouse|platform；其余透传给 psql
   _w=$1; shift
   if [ "$MATERIALIZE_MODE" = container ]; then
-    if [ "$_w" = warehouse ]; then _url=${DATA_WAREHOUSE_URL:-}; else _url=${DATABASE_URL:-}; fi
+    # ⚠️ 凭据走 PGPASSWORD 环境变量，**不进 argv**（#2423）：容器内任何进程都能读
+    # `/proc/<pid>/cmdline`，把 postgres://user:pass@… 当参数传 psql 等于把密码摊开。
+    if [ "$_w" = warehouse ]; then
+      _url=${DATA_WAREHOUSE_URL:-}; _u=$UN; _p=$PW; _h=$DBT_HOST_FROM_URL; _d=$DB
+    else
+      _url=${DATABASE_URL:-}; _u=$PUN; _p=$PPW; _h=$(mat_url_field "$_url" host); _d=$PDB
+    fi
     [ -n "$_url" ] || return 1
-    psql "$_url" "$@"
+    _port=$(printf '%s' "${_url#*@}" | sed -n 's#^[^:/]*:\([0-9][0-9]*\)/.*#\1#p')
+    PGPASSWORD="$_p" psql -h "$_h" ${_port:+-p "$_port"} -U "$_u" -d "$_d" "$@"
   else
     if [ "$_w" = warehouse ]; then _ct=$PG_CT; _pw=$PW; _u=$UN; _d=$DB
     else _ct=$PLAT_CT; _pw=$PPW; _u=$PUN; _d=$PDB; fi
