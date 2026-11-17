@@ -11,6 +11,10 @@
 
 ## [Unreleased]
 
+## [0.319.0](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.318.0...v0.319.0) - 2026-11-17
+- 【新增】data: W2 表格条件格式——度量列按 target 达标着色 (#2439) ([#2440](https://github.com/MYTech-Co-LTD/platform-core/pull/2440), [df649cd](https://github.com/MYTech-Co-LTD/platform-core/commit/df649cdde5c49b04df7c2bfd32a5570ec81e685d))
+
+
 ## [0.318.0](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.317.0...v0.318.0) - 2026-11-17
 - 【新增】data: W1 多度量宽表——table 面板 measures + 客户端外连接 + 模板 (#2434) ([#2435](https://github.com/MYTech-Co-LTD/platform-core/pull/2435), [06921e7](https://github.com/MYTech-Co-LTD/platform-core/commit/06921e72132af751b4ef418fb4e0bb51b33ecaa9))
 
