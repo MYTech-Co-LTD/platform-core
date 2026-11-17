@@ -207,8 +207,13 @@ describe('registry · 子进程参数（W6-P4b）', () => {
   })
 
   it('其余条目不传多余参数（避免命令被意外改变）', () => {
+    // 带 args 的条目必须逐个登记理由——新增一条没理由的参数 = 命令被悄悄改掉。
+    const allow = new Map([
+      ['org.sync', '脚本默认 dry-run，必须 --apply'],
+      ['data.archive_private_measures', '--org 必填，缺了直接 usage 退出'],
+    ])
     for (const d of JOB_REGISTRY) {
-      if (d.key === 'org.sync') continue
+      if (allow.has(d.key)) continue
       expect(d.args ?? []).toEqual([])
     }
   })
