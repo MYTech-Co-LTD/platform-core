@@ -11,6 +11,11 @@
 
 ## [Unreleased]
 
+## [0.324.0](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.323.0...v0.324.0) - 2026-11-17
+- 【新增】scheduler: 审计按物化语义分族——全史段剔除增量 mart 审计，新增窗口对账 (#2428) ([#2455](https://github.com/MYTech-Co-LTD/platform-core/pull/2455), [bff3c2b](https://github.com/MYTech-Co-LTD/platform-core/commit/bff3c2b1724d392fd18d86486b4244bd4c4a087b))
+- 【修复】data: 增量 lookback 7→10，与重述窗口对齐 (#2453) ([#2454](https://github.com/MYTech-Co-LTD/platform-core/pull/2454), [36572ec](https://github.com/MYTech-Co-LTD/platform-core/commit/36572ec6c98d0965e049e975fc563d56a8fd704f))
+
+
 ## [0.323.0](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.322.0...v0.323.0) - 2026-11-17
 - 【新增】scheduler: Wave 8 ③——L1 词表物化与私有测度归档落平台调度器 (#2450) ([#2451](https://github.com/MYTech-Co-LTD/platform-core/pull/2451), [4fb95e9](https://github.com/MYTech-Co-LTD/platform-core/commit/4fb95e906b46acd69491ff614ea4304d25b1ffde))
 
