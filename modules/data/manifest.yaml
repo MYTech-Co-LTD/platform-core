@@ -409,6 +409,8 @@ frontend:
     - { path: /console/data/candidates, title: 可能的指标, description: 从源数据自动推导出的候选指标；采用后才会变成正式指标。, scope: data:manage, entry: ./console/index.tsx }
     # 待核对（Wave 5 P0）：agent 提案单的评审面——只有采纳/驳回两个动作
     - { path: /console/data/changes, title: 待核对, description: agent 提交的指标变更单；看清试算值与参照值的差异再决定采纳或驳回。, scope: data:manage, entry: ./console/index.tsx }
+    # 业务监控（D 子项目，#2436）：agent 建的监控人在这里开闸（dry_run → 投递）
+    - { path: /console/data/monitors, title: 业务监控, description: 管理业务监控：agent 建的影子期监控需要人在这里开闸才会发送通知。, scope: data:manage, entry: ./console/index.tsx }
     # 体系地图（2026-11-13）：从「外链新标签打开的 HTML 页」搬成本页——本体图是主内容。
     - { path: /console/data/system-map, title: 体系地图, description: 从业务对象到字段的完整关系图；点指标节点看口径、运行态与字段链路。, scope: data:query, entry: ./console/index.tsx }
     # 管线地图（2026-11-14）：反过来从管线看——资产（湖前缀）→ staging → marts 三层通没通

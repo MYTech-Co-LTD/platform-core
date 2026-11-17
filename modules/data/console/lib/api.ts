@@ -67,7 +67,7 @@ export async function apiGet(path: string): Promise<unknown> {
   return res.json()
 }
 
-export async function apiSend(path: string, method: 'POST' | 'PUT' | 'DELETE', body?: unknown): Promise<unknown> {
+export async function apiSend(path: string, method: 'POST' | 'PUT' | 'PATCH' | 'DELETE', body?: unknown): Promise<unknown> {
   const res = await platformFetch(PREFIX + path, {
     method,
     ...(body === undefined ? {} : { body: JSON.stringify(body), headers: { 'Content-Type': 'application/json' } }),
