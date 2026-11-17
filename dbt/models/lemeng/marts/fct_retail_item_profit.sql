@@ -31,7 +31,7 @@ with src as (
     from {{ ref('stg_lemeng_item_profit') }}
     where 1 = 1
     {% if is_incremental() %}
-    and bizday >= {{ incremental_cutoff(7) }}
+    and bizday >= {{ incremental_cutoff(10) }}
     {% endif %}
     {% if env_var('MAT_CLOSED_BEFORE', 'false') == 'true' %}
     and bizday < current_date

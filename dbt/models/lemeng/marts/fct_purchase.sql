@@ -35,5 +35,5 @@ select
     money_total::numeric(20,2) as money_total
 from {{ ref('stg_lemeng_item_purchase') }}
 {% if is_incremental() %}
-where bizday >= {{ incremental_cutoff(7) }}
+where bizday >= {{ incremental_cutoff(10) }}
 {% endif %}

@@ -10,7 +10,7 @@
 --     · `外部批发`：其余 wholesale（含**体系内但不在四大战区**的门店，2026-11-09 用户裁决），
 --       **战区不硬摊**（2026-10-30 用户裁决）⇒ `region_l1_bucket = '未归属'`。
 --   ⚠️ 2026-11-09 口径修订：`体系内批发` 仅收「客户本体门店在四大战区」的行；其余归外部批发。
---   该修订影响历史行 ⇒ 本模型需一次 `--full-refresh` 重写历史（增量 7 天窗滚不到旧分区）。
+--   该修订影响历史行 ⇒ 本模型需一次 `--full-refresh` 重写历史（增量 10 天窗滚不到旧分区）。
 --
 -- 【为什么不改 fct_hq_outbound】那是既有 mart：列集 / 粒度 / 已声明的 certified 指标都钉在上面，
 --   为「多一个战区口径」去改它 = 动认证面。本模型只读它、**不重算任何金额**（`r_net/order_count/
@@ -23,7 +23,7 @@
 --   ⚠️ `client_fid` 是 2026-11-09 加的第 5 键（#1766「外部批发要能按客户下钻」）：wholesale 行
 --   按客户拆开，transfer 行**落空串哨兵**（无客户；不能是 NULL——唯一键里的 NULL 会让增量
 --   delete+insert 失配并重复插入，#1770 真机实测）。
---   **扩键改历史行的落法 ⇒ 必须一次 `--full-refresh`**（增量 7 天窗滚不到旧分区）。
+--   **扩键改历史行的落法 ⇒ 必须一次 `--full-refresh`**（增量 10 天窗滚不到旧分区）。
 --
 -- 【join 语义】全部 `left join`：宁可落 `未归属` 也不丢行——丢行 = 静默少数，守恒测试会红但
 --   根因难查；`未归属` 是**可见**的缺口。
@@ -41,7 +41,7 @@ o as (
            r_net, order_count, line_count
     from {{ ref('fct_hq_outbound') }}
     {% if is_incremental() %}
-    where bizday >= {{ incremental_cutoff(7) }}
+    where bizday >= {{ incremental_cutoff(10) }}
     {% endif %}
 ),
 dc as (

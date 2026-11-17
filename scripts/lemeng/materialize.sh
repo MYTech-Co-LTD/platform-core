@@ -138,10 +138,12 @@ mat_dbt() {
 mat_dbt_select() { # $1=域 → 打印给 --select 的**单个**值（调用方自己加引号）
   printf '%s' "path:models/$1 config.materialized:seed path:tests/$1"
 }
-# 窗口对账的窗口参数（today−7 .. 昨天）：打印 `"<start> <月段字符类>"`，供 hourly 档与
-# 每日窗口对账（MATERIALIZE_AUDIT_WINDOW=1）共用。为什么是 7 天而不是更宽：增量 mart 只
-# 重建 `max(bizday)−7` 之后的分区，更老的是建表时快照 ⇒ 窗口放宽必假红（2026-11-07 实测
-# transfer 2260 条差异全落在 10-01..10-27，无一在 7 天内）。推导细节见 hourly 档注释。
+# 窗口对账的窗口参数（today−10 .. 昨天）：打印 `"<start> <月段字符类>"`，供 hourly 档与
+# 每日窗口对账（MATERIALIZE_AUDIT_WINDOW=1）共用。为什么是 10 天：① 不能宽于增量 mart 的
+# lookback（`max(bizday)−10`，更老的分区是建表快照 ⇒ 放宽必假红，2026-11-07 实测 transfer
+# 2260 条差异全落在 10-01..10-27）；② 又不能窄于 recon-restate 的窗口（T-3..T-9）——
+# 7 天窗恰好把重述最深的 T-8/T-9 漏掉（2026-11-17 发现）。10 = 重述深度 9 + 1 天余量。
+# 三个数字（模型 cutoff / 本函数 / restate 窗口）由 `scripts/check-lookback-consistency.mjs` 钉住。
 audit_window_pair() {
   python3 - <<'PY'
 from datetime import datetime, timedelta
@@ -155,7 +157,7 @@ def fuse(a, b):
         out += ca if ca == cb else f'[{ca}{cb}]'
     return out
 ym1, ym2 = first_prev.strftime('%Y-%m'), first_this.strftime('%Y-%m')
-print((today - timedelta(days=7)).isoformat(), fuse(ym1, ym2) + '-*')
+print((today - timedelta(days=10)).isoformat(), fuse(ym1, ym2) + '-*')
 PY
 }
 # 判「dbt 真的建了东西」（#1537）：日志必须既有 `PASS=<n>` 汇总行、又不含 `Nothing to do`。
@@ -393,7 +395,7 @@ TICK_EXCLUDE=${MATERIALIZE_TICK_EXCLUDE:-path:tests/lemeng}
 # 首次切增量（新增非空代理键等）用：显式 MATERIALIZE_TICK_FULL_REFRESH=1 才 --full-refresh。
 TICK_FULL_REFRESH=${MATERIALIZE_TICK_FULL_REFRESH:-}
 # 全量档必须**排除** tick 拥有的模型：tick 每 10 分钟 delete+insert 同一张表，
-# 与全量档的 7 天 delete+insert 并发写同一张表会冲突（#1520）。
+# 与全量档的 10 天 delete+insert 并发写同一张表会冲突（#1520）。
 FULL_EXCLUDE=${MATERIALIZE_FULL_EXCLUDE:-fct_retail_sale}
 echo "materialize start repo=${R} network=${NETWORK} image=${IMAGE} domains=${DOMAINS} scope=${SCOPE} mode=full_build（本面域内全量，无按需名单，#679）"
 # dbt 输出 tee 进临时日志：job 的实时流保持不变，同时留一份可解析的汇总行（Done. PASS=n … ERROR=m）。
@@ -494,7 +496,7 @@ fi
 
 # ── tick 档（#1520）：只跑销售明细增量，供 openship job 每 10 分钟调用 ─────────────────
 # 为什么单独一档：10 分钟一次全量重建物理上不可能（单轮 45–120 分钟）；增量后单表只重算
-# 最近 7 天。选择器是**一个具名模型**（fct_retail_sale），不是按域全量；上游 staging 已是 view
+# 最近 10 天。选择器是**一个具名模型**（fct_retail_sale），不是按域全量；上游 staging 已是 view
 # （2026-11-02 #1275），无需重建。水位照写 `data.load_log`（relation=fct_retail_sale），
 # 新鲜度面与全量档同源。
 if [ "$SCOPE" = tick ]; then
@@ -542,8 +544,8 @@ if [ "$SCOPE" = audit ]; then
   # 为什么不用 `--threads >1` 提速：每连接一个 DuckDB 实例（各 1536MB），2 线程实测 postmaster
   # 反复 `terminating any other active server processes`（issue #1157，PASS=12 ERROR=41）。
   _sel=${MATERIALIZE_AUDIT_SELECT:-'tag:audit tag:audit_window'}
-  # 窗口对账档（MATERIALIZE_AUDIT_WINDOW=1）：给「增量 mart 支撑的对账」传 today−7 窗口。
-  # 为什么必须分档：全史比对增量 mart 会在**更老的分区**上假红——mart 只重建 max(bizday)−7
+  # 窗口对账档（MATERIALIZE_AUDIT_WINDOW=1）：给「增量 mart 支撑的对账」传 today−10 窗口。
+  # 为什么必须分档：全史比对增量 mart 会在**更老的分区**上假红——mart 只重建 max(bizday)−10
   # 之后的分区，更老的是建表时快照，湖被重述后不跟。2026-11-09 实测（56 条全史跑完，
   # 114 分钟）：45 PASS / 11 FAIL，**11 条 FAIL 全部是增量 mart 支撑的**（net_sales 216、
   # sales 216、order_count 216、inventory 21.5 万……），table 模型支撑的 14 条全绿。
@@ -586,13 +588,13 @@ fi
 #     模型的 singular test 全部拖进来（实测 133/147 节点混进 46 条全史对账）。
 #   · 十条窗口对账因此**不带** tag:audit（带了两挡的排除法就不成立），每日档用并集收它们。
 if [ "$SCOPE" = hourly ]; then
-  # 窗口 = **增量 lookback 窗口**（today−7 .. 昨天），不是月初（2026-11-07 真机实证）：
-  #   增量 mart 只重建 `max(bizday)−7` 之后的分区，更老的列是**建表当时的快照**——源头若
+  # 窗口 = **增量 lookback 窗口**（today−10 .. 昨天），不是月初（2026-11-07 真机实证）：
+  #   增量 mart 只重建 `max(bizday)−10` 之后的分区，更老的列是**建表当时的快照**——源头若
   #   事后重述/重采，mart 不会跟着变。audit 窗口若比这更宽，那些老分区必然「湖新 mart 旧」
-  #   假红（实测 transfer 2260 条差异 **全部** 落在 10-01..10-27，无一在 7 天内）。
+  #   假红（实测 transfer 2260 条差异 **全部** 落在 10-01..10-27，无一在 10 天内）。
   #   小时对账的语义就是「验本轮刚重建的那部分」，全史由每日 09:00 的全史 audit job 负责。
-  #   9 张被审 mart 的 lookback 实测都是 7（见各模型 incremental_cutoff(7)）。
-  # 路径 glob 仍用「上月+本月」融合字符类（粗过滤，够覆盖 7 天窗口的两个月边界）。
+  #   9 张被审 mart 的 lookback 实测都是 10（见各模型 incremental_cutoff(10)）。
+  # 路径 glob 仍用「上月+本月」融合字符类（粗过滤，够覆盖 10 天窗口的两个月边界）。
   _win=$(audit_window_pair)
   AUDIT_WINDOW_START=${_win%% *}
   AUDIT_WINDOW_PATTERNS=${_win#* }

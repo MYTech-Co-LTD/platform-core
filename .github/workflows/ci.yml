@@ -153,6 +153,11 @@ jobs:
       # 纯静态：不连库、不取网络。**怎么修**：跑 `pnpm exec tsx scripts/lemeng/data-plane-lock.mjs`
       # 重新生成 deploy/data-plane.lock（失败信息里会复述这条命令）。
       - run: pnpm exec tsx scripts/check-data-plane-lock.mjs
+      # 增量 lookback / 审计窗口 / 重述窗口三者咬合（#2428）：模型 incremental_cutoff(N) 必须
+      # 与 materialize.sh 的审计窗口一致、≥ recon-restate 最深日 + 1；偏离默认档的模型要登记理由。
+      # 2026-11-17 实测过 lookback=7 而 restate 深度 9 ⇒ T-8/T-9 静默漏检 + 全史审计必红。
+      # 纯静态：不连库、秒级。怎么修：同步三处数字（见失败信息）。
+      - run: pnpm exec tsx scripts/check-lookback-consistency.mjs
       # console 排班↔能力完整性（issue #531）。盯的是**今天没有任何门禁盯的那条耦合**：
       # `schedules/<账套>.json` 的 `pipeline_id` 与管线文件集的事实源关系——① 引用了不存在的管线
       # （拼写错/漏生成）② enabled 引用**他账套**后缀管线 = SOP §F.1 的危害形态（一账套一 console

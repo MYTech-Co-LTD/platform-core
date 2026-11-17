@@ -60,7 +60,7 @@ with transfer_lines as (
       and out_branch_num = 99
       and branch_num <> out_branch_num
     {% if is_incremental() %}
-      and bizday >= {{ incremental_cutoff(7) }}
+      and bizday >= {{ incremental_cutoff(10) }}
     {% endif %}
     group by 1, 2, 3, 4
 ),
@@ -81,7 +81,7 @@ wholesale_lines as (
     select system_book, bizday, branch_num, client_fid, count(*) as line_count
     from {{ ref('stg_lemeng_wholesale_out') }}
     {% if is_incremental() %}
-    where bizday >= {{ incremental_cutoff(7) }}
+    where bizday >= {{ incremental_cutoff(10) }}
     {% endif %}
     group by 1, 2, 3, 4
 ),
@@ -103,7 +103,7 @@ wholesale_dom as (
                max(cost_money)  as cost_money
         from {{ ref('stg_lemeng_wholesale_out') }}
         {% if is_incremental() %}
-        where bizday >= {{ incremental_cutoff(7) }}
+        where bizday >= {{ incremental_cutoff(10) }}
         {% endif %}
         group by 1, 2, 3, 4, 5
     ) o
@@ -128,7 +128,7 @@ return_dom as (
                max(cost_money)  as cost_money
         from {{ ref('stg_lemeng_wholesale_return') }}
         {% if is_incremental() %}
-        where bizday >= {{ incremental_cutoff(7) }}
+        where bizday >= {{ incremental_cutoff(10) }}
         {% endif %}
         group by 1, 2, 3, 4, 5
     )

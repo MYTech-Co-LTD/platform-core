@@ -1,7 +1,7 @@
 {# 源撤回行（#2378）：delete+insert 只清「本批出现的键」，源里消失的键会被永远留下。
    ⚠️ 不能用 `is_incremental()` 在 config 里做条件：解析期它恒为 false，钩子会被整段丢弃
    （2026-11-16 实测）。故用**无条件钩子**：DO 块判表存在（首建安全），窗口由运行期 SQL
-   从表自身 max(bizday)−7 天算出，与模型 WHERE 的 incremental_cutoff(7) 同口径。 #}
+   从表自身 max(bizday)−10 天算出，与模型 WHERE 的 incremental_cutoff(10) 同口径。 #}
 {% set rebuild_hook %}
 do $$ begin
   if to_regclass('{{ this }}') is not null then
@@ -49,7 +49,7 @@ with requested as (
     from {{ ref('stg_lemeng_request_order') }}
     where quantity > 0
     {% if is_incremental() %}
-      and bizday >= {{ incremental_cutoff(7) }}
+      and bizday >= {{ incremental_cutoff(10) }}
     {% endif %}
     group by 1, 2, 3, 4
 ),
@@ -62,7 +62,7 @@ shipped as (
         sum(quantity)::numeric(20,6) as shipped_quantity
     from {{ ref('stg_lemeng_transfer_in') }}
     {% if is_incremental() %}
-    where bizday >= {{ incremental_cutoff(7) }}
+    where bizday >= {{ incremental_cutoff(10) }}
     {% endif %}
     group by 1, 2, 3, 4
 )

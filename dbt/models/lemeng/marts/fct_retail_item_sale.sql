@@ -61,7 +61,7 @@ with src as (
     --   慢的直接后果不只是耗时：285s 的长扫描与 10 分钟一班的采集**必然重叠**，
     --   读到正在被重写的当日小时文件 ⇒ ETag 变化 ⇒ 整轮 ERROR（5 次里 4 次）。
     {% if is_incremental() %}
-    and bizday >= {{ incremental_cutoff(7) }}
+    and bizday >= {{ incremental_cutoff(10) }}
     {% endif %}
     {% if env_var('MAT_CLOSED_BEFORE', 'false') == 'true' %}
     -- 物化闭窗读（2026-11-08 P0）：tick 采集每 10 分钟重写当前小时，物化读同一分区会撞 ETag。

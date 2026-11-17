@@ -225,7 +225,7 @@ B/C 的统一能力入口是 `POST /api/agent/mcp`；manifest `mcpFaces` 声明�
        设计 = specs/2026-11-04-incremental-marts-design.md；10 分钟档只含 fct_retail_sale（销售明细口径）。
        触发器：全量重建 + 回填叠加打穿内存（OOM/segfault），且单轮 45–120 分钟 ⇒「10 分钟一物化」不可能。
        staging 仍是 view（2026-11-02 订正不变）；本次只动物化策略、不碰任何口径（B11）。
-       首个落地：fct_retail_sale，unique_key=(system_book,bizday,branch_num)，lookback 7 天。 -->
+       首个落地：fct_retail_sale，unique_key=(system_book,bizday,branch_num)，lookback 10 天（= recon-restate 最深日 T-9 + 1 天余量；见 scripts/check-lookback-consistency.mjs）。 -->
   **L1 语义声明的事实源**（`dbt/semantics/l1_metrics.yml` + `dbt/models/<域>/marts/schema.yml`）；
   **对账/断言 tests**（`audit_*` 独立复算 + `assert_*` 结构断言）；**血缘与文档**（`dbt docs generate`）。
 - **输入**：湖里的 parquet（staging 读源）；语义声明是**仓内 YAML**。
