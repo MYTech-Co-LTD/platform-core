@@ -11,6 +11,10 @@
 
 ## [Unreleased]
 
+## [0.325.3](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.325.2...v0.325.3) - 2026-11-17
+- 【修复】data: mat_psql 凭据改走 PGPASSWORD，密码不再进 argv (#2423) ([#2470](https://github.com/MYTech-Co-LTD/platform-core/pull/2470), [f6830e1](https://github.com/MYTech-Co-LTD/platform-core/commit/f6830e149d57b4ef76d84c85114125278fbf68c4))
+
+
 ## [0.325.2](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.325.1...v0.325.2) - 2026-11-17
 - 【修复】scheduler: 审计排班连续失败不计入健康（exit 1 = 数据问题）(#2463) ([#2464](https://github.com/MYTech-Co-LTD/platform-core/pull/2464), [120a4ed](https://github.com/MYTech-Co-LTD/platform-core/commit/120a4ed1c3d5c03ae25a885d84a9d867d2d5dabd))
 
