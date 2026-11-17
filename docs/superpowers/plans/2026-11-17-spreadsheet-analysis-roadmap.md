@@ -42,7 +42,7 @@
 
 | 项 | 状态 | 开始 | 完成 | 证据/偏离 |
 |---|---|---|---|---|
-| W1 多度量宽表 | 未开始 | — | — | — |
+| W1 多度量宽表 | 已完成 | 2026-11-17 | 2026-11-17 | issue #2434 / PR #2435：`measures`（v1 直填 + v2 引 dataset）、客户端外连接（纯展示拼接）、任一列 denied 整面板降级、非可加列合计自动 `-`（服务端本就不回 total）、模板 `store_monthly_analysis`、agent 描述补「计算列走 submit_metric_change」。全量 backend 2134 + console 227 绿，CI 三轮（修 noUnusedLocals / 夹具 tuple）后全绿 |
 | W2 表格条件格式 | 未开始 | — | — | — |
 | W3 交叉表多指标 | 未开始 | — | — | — |
 | W4 xlsx 导出 | 未开始 | — | — | — |
