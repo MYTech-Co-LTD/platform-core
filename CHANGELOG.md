@@ -11,6 +11,13 @@
 
 ## [Unreleased]
 
+## [0.316.0](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.315.0...v0.316.0) - 2026-11-17
+- 【新增】data: 业务监控 MCP 工具（草稿恒 dry_run） ([#2360](https://github.com/MYTech-Co-LTD/platform-core/pull/2360), [8adf0a7](https://github.com/MYTech-Co-LTD/platform-core/commit/8adf0a7b5c14d04b0742410647648af800cc5327))
+- 【修复】notify: 收紧工具描述以满足 10KB 预算 ([#2360](https://github.com/MYTech-Co-LTD/platform-core/pull/2360), [69818a1](https://github.com/MYTech-Co-LTD/platform-core/commit/69818a1a1dde411c2ae39176f70c972bedb25392))
+- 【新增】notify: agent 自有事件声明 + 规则 draft 开关 ([#2360](https://github.com/MYTech-Co-LTD/platform-core/pull/2360), [209e5c2](https://github.com/MYTech-Co-LTD/platform-core/commit/209e5c2e17f01f4d7fa78a21dadf78f76dc56a76))
+- 【新增】agent-mcp: 能力目录不可用原因 + 报表 period 模式说明 ([#2360](https://github.com/MYTech-Co-LTD/platform-core/pull/2360), [6d576f8](https://github.com/MYTech-Co-LTD/platform-core/commit/6d576f8ace8f5f32e454e24704acca288faad17d))
+
+
 ## [0.315.0](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.314.0...v0.315.0) - 2026-11-17
 - 【新增】scheduler: Wave 8 P1 余项——audit-a1/a2a/a2b 全史对账落平台调度器 (#2425) ([#2426](https://github.com/MYTech-Co-LTD/platform-core/pull/2426), [425b978](https://github.com/MYTech-Co-LTD/platform-core/commit/425b97884337dca86fc2617a38ab57dc315dc383))
 
