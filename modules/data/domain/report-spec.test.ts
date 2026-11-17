@@ -508,3 +508,26 @@ describe('表格条件格式（W2）', () => {
     }
   })
 })
+
+describe('交叉表多指标（W3）', () => {
+  const parse = (panel: unknown) => parseReportSpec({ panels: [panel] })
+  const base = {
+    chart: 'cross_table', title: '门店×品类', rows: ['branch_num'], columns: 'category_name',
+    measures: [{ metricId: 'm1', label: '销售额' }, { metricId: 'm2', label: '订单数' }],
+  }
+
+  it('measures 合法（1–4 列）', () => {
+    expect(parse(base).ok).toBe(true)
+  })
+
+  it('与 metricId 互斥；两者皆无 ⇒ 拒', () => {
+    expect(parse({ ...base, metricId: 'm0' })).toEqual({ ok: false, code: 'INVALID_SPEC' })
+    expect(parse({ chart: 'cross_table', title: 't', rows: ['branch_num'], columns: 'category_name' }))
+      .toEqual({ ok: false, code: 'INVALID_SPEC' })
+  })
+
+  it('重复度量列 ⇒ 拒', () => {
+    expect(parse({ ...base, measures: [{ metricId: 'm1' }, { metricId: 'm1' }] }))
+      .toEqual({ ok: false, code: 'INVALID_SPEC' })
+  })
+})

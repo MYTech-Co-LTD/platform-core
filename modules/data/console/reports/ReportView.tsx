@@ -651,6 +651,63 @@ function PanelBody({ panel, result, compares = [], detailCtx, textCtx }: { panel
   }
   if (result.kind === 'error') return <Alert type="error" showIcon message={result.text} />
   if (panel.chart === 'cross_table') {
+    // 多度量交叉表（W3）：合并结果按 [行维…, 列维, 度量1..N] 存放，这里拆回每个度量的透视。
+    if (panel.measures !== undefined) {
+      const rIdx = panel.rows.map((d) => result.columns.indexOf(d))
+      const cIdx = result.columns.indexOf(panel.columns)
+      const vIdx = panel.measures.map((m) => result.columns.indexOf(m.label ?? m.metricId))
+      if (rIdx.some((i) => i < 0) || cIdx < 0 || vIdx.some((i) => i < 0)) {
+        return <Typography.Text type="secondary">返回结果缺少维度或度量列</Typography.Text>
+      }
+      const rowLabels: string[] = []
+      const colLabels: string[] = []
+      // row → 每度量的 col → 展示值
+      const cells = new Map<string, Map<string, string>[]>()
+      for (const row of result.rows) {
+        if (!Array.isArray(row)) continue
+        const rowLabel = rIdx.map((i) => String(row[i] ?? '')).join(' / ')
+        const colLabel = String(row[cIdx] ?? '')
+        if (rowLabel === '' || colLabel === '') continue
+        if (!rowLabels.includes(rowLabel)) rowLabels.push(rowLabel)
+        if (!colLabels.includes(colLabel)) colLabels.push(colLabel)
+        let line = cells.get(rowLabel)
+        if (line === undefined) {
+          line = panel.measures!.map(() => new Map<string, string>())
+          cells.set(rowLabel, line)
+        }
+        panel.measures!.forEach((m, mi) => {
+          const raw = row[vIdx[mi]!]
+          const num = typeof raw === 'number' ? raw : Number(raw)
+          line![mi]!.set(colLabel, raw === null || raw === undefined || raw === '' || !Number.isFinite(num)
+            ? '-' : formatValue(num, m.format ?? 'number'))
+        })
+      }
+      if (rowLabels.length === 0) {
+        return <Typography.Text type="secondary">没有可展示的数据</Typography.Text>
+      }
+      return (
+        <>
+          <Table
+            size="small" pagination={false} scroll={{ x: 'max-content' }}
+            dataSource={rowLabels.map((label) => {
+              const rec: Record<string, unknown> = { key: label, __label: label }
+              for (const c of colLabels) {
+                panel.measures!.forEach((_, mi) => { rec[`${mi}::${c}`] = cells.get(label)?.[mi]?.get(c) ?? '-' })
+              }
+              return rec
+            })}
+            columns={[
+              { title: '', dataIndex: '__label', fixed: 'left' as const },
+              ...panel.measures.map((m, mi) => ({
+                title: m.label ?? m.metricId,
+                children: colLabels.map((c) => ({ title: c, dataIndex: `${mi}::${c}`, align: 'right' as const })),
+              })),
+            ]}
+          />
+          <TrustLine result={result} />
+        </>
+      )
+    }
     const data = pivotOf(result, panel.rows, panel.columns, panel.format)
     if (data.rowLabels.length === 0) {
       return <Typography.Text type="secondary">没有可展示的数据</Typography.Text>
@@ -1290,7 +1347,7 @@ export default function ReportView({
       if (isDeniedPanel(p)) return
       if (p.chart === 'text' || p.chart === 'kpi' || p.chart === 'ai_text') return
       const bodies: Array<{ body: Record<string, unknown>; measure: number }> =
-        p.chart === 'table' && p.measures !== undefined
+        (p.chart === 'table' || p.chart === 'cross_table') && p.measures !== undefined
           ? p.measures.map((m, mi) => ({
               // 复用单度量装配（slice/dims 键完全同形 ⇒ R4 去重与缓存照常命中）
               body: panelQueryBodyOf(
@@ -1328,7 +1385,7 @@ export default function ReportView({
         }
         for (const [panel, m] of perMeasure) {
           const p = panels[panel]
-          if (p === undefined || isDeniedPanel(p) || p.chart !== 'table' || p.measures === undefined) continue
+          if (p === undefined || isDeniedPanel(p) || (p.chart !== 'table' && p.chart !== 'cross_table') || p.measures === undefined) continue
           const parts = p.measures.map((_, mi) => m.get(mi) ?? ({ kind: 'error', text: '查询缺失' } as PanelResult))
           next[panel] = mergeMeasureResults(p.measures, parts)
         }

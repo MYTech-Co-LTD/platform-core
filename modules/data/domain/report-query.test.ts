@@ -279,3 +279,18 @@ describe('多度量宽表（W1）：panelQueryBodyOf 取第一个度量，切片
     })
   })
 })
+
+describe('交叉表多指标（W3）：查询体取首度量 + 行列维度', () => {
+  it('dimensions = rows + columns，metricId = 首度量', () => {
+    const panel = {
+      chart: 'cross_table', title: 't', rows: ['branch_num'], columns: 'category_name',
+      args: { system_book: '3120' },
+      measures: [{ metricId: 'm1', label: '销售额' }, { metricId: 'm2', label: '订单数' }],
+    }
+    expect(panelQueryBodyOf(panel as never, { system_book: '3120' })).toEqual({
+      metricId: 'm1',
+      args: { system_book: '3120' },
+      dimensions: ['branch_num', 'category_name'],
+    })
+  })
+})

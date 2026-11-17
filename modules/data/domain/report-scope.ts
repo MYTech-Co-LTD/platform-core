@@ -64,7 +64,7 @@ export function metricIdsOf(panel: MetricIdPanel): string[] {
   if (panel.chart === undefined || panel.chart === 'text' || panel.chart === 'ai_text') return []
   // 多度量宽表（W1）：每个度量列都是一个真实查询，逐列进页门派生/源裁剪/可加性校验——
   // 跨度量 scope 不同会在 deriveRequiredScope 里合成 CONFLICTING_PANEL_SCOPES。
-  if (panel.chart === 'table' && panel.measures !== undefined) {
+  if ((panel.chart === 'table' || panel.chart === 'cross_table') && panel.measures !== undefined) {
     return [...new Set(panel.measures.map((m) => m.metricId))]
   }
   const metricId = panel.metricId
