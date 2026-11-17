@@ -9,7 +9,7 @@ with recheck as (
         r['supplier_num']::bigint as supplier_num,
         r['item_num']::bigint     as item_num,
         sum(r['purchase_present_money']::numeric)::numeric(20,2) as v
-    from {{ window_read_parquet('s3://{{ var("zos_bucket") }}/{{ var("lemeng_item_purchase_prefix") }}/*/bizday=**/*.parquet') }} r
+    from {{ window_read_parquet('s3://' ~ var('zos_bucket') ~ '/' ~ var('lemeng_item_purchase_prefix') ~ '/*/bizday=**/*.parquet') }} r
     where r['bizday']::date < CAST(now() AT TIME ZONE 'Asia/Shanghai' AS DATE)
       and r['bizday']::date >= date '{{ window_start_date() }}'
     group by 1, 2, 3, 4

@@ -13,7 +13,7 @@ with recheck as (
         r['bizday']::date        as bizday,
         r['branch_num']::int     as branch_num,
         sum(case when r['metric']::varchar = 'transfer_money' then coalesce(r['actual_value']::numeric, 0) else 0 end)::numeric(20,2) as v
-    from {{ window_read_parquet('s3://{{ var("zos_bucket") }}/{{ var("lemeng_branch_indicator_prefix") }}/*/bizday=**/*.parquet') }} r
+    from {{ window_read_parquet('s3://' ~ var('zos_bucket') ~ '/' ~ var('lemeng_branch_indicator_prefix') ~ '/*/bizday=**/*.parquet') }} r
     -- 当日分区可能还在被日内 5 轮刷新 ⇒ 闭窗只对「今天之前」的业务日，与物化侧同判据。
     where r['bizday']::date < CAST(now() AT TIME ZONE 'Asia/Shanghai' AS DATE)
       and r['bizday']::date >= date '{{ window_start_date() }}'

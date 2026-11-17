@@ -7,7 +7,7 @@ r['bizday']::date         as bizday,
 r['branch_num']::int      as branch_num,
 r['order_sale_type_name']::varchar as order_sale_type_name,
 sum(coalesce(r['customer_vip_money']::numeric, 0))::numeric(20,2) as v
-from {{ window_read_parquet('s3://{{ var("zos_bucket") }}/{{ var("lemeng_member_summary_prefix") }}/system_book=*/bizday=*/all.parquet') }} r
+from {{ window_read_parquet('s3://' ~ var('zos_bucket') ~ '/' ~ var('lemeng_member_summary_prefix') ~ '/system_book=*/bizday=*/all.parquet') }} r
 where r['bizday']::date < CAST(now() AT TIME ZONE 'Asia/Shanghai' AS DATE)
       and r['bizday']::date >= date '{{ window_start_date() }}'
 group by 1, 2, 3, 4
