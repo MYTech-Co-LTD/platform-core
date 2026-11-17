@@ -20,11 +20,11 @@ import type { ToolAnnotations } from '../domain/toolbox/registry'
 import { MANAGE_TOOLS } from '../domain/manage-face'
 import type { ManageToolMeta } from '../domain/manage-face'
 
-/** 合并面工具数上限 = 现状 20（口径 5 + 报表 4 + 提案 9 + 需求 2）。加第 21 件 = 门禁红，同 PR 里显式抬。 */
-export const MANAGE_FACE_COMBINED_MAX_TOOLS = 20
+/** 合并面工具数上限 = 现状 23（口径 5 + 报表 4 + 监控 3 + 提案/需求 11）。加第 24 件 = 门禁红，同 PR 里显式抬。 */
+export const MANAGE_FACE_COMBINED_MAX_TOOLS = 23
 
-/** 合并面 tools/list 静态序列化预算（spec §8 ② 的 10KB，与分析师面同源不同常数——两面各自演进）。 */
-export const MANAGE_FACE_MAX_LIST_BYTES = 10240
+/** 合并面 tools/list 静态序列化预算（11KB；23 件含业务监控片后从 10KB 显式抬升）。 */
+export const MANAGE_FACE_MAX_LIST_BYTES = 11264
 
 /** 管理面端点整体挂在 manifest 的 `scope: data:manage`（声明即授权）——逐工具复述同一值。 */
 const MANAGE_SCOPE = 'data:manage'
@@ -33,7 +33,7 @@ const readOnly: ToolAnnotations = { readOnlyHint: true }
 const writeable: ToolAnnotations = { readOnlyHint: false }
 
 /** 哪一片（新增片 = slice 联合类型扩一项 + MANAGE_FACE_TOOLS 加一组 + parity 测试 slices 数组同改）。 */
-export type ManageFaceSlice = 'metric' | 'report' | 'pipeline'
+export type ManageFaceSlice = 'metric' | 'report' | 'monitor' | 'pipeline'
 
 export interface ManageFaceTool {
   slice: ManageFaceSlice
@@ -123,6 +123,7 @@ const REPORT_FACE: readonly ManageFaceTool[] = [
     description: [
       '提议一张新的平台自绘报表。**只是提议**：建出来的一定是未发布状态（页门挂在管理档），',
       '要发布得由人在控制台改页门。**不能凭空发明指标**——metricId 必须是 list_metrics 里出现的 id；',
+      'period 仅支持 {mode:"day"|"last_7_days"|"month"|"custom"}；近7天用 last_7_days，不要用 range。',
       '图型支持 line / bar / table / cross_table / waterfall / bullet / kpi / text / ai_text。ai_text = 观看时按当前期间服务端生成的',
       '分析文本：focus=overview（结论/异常/行动）、root_cause（根因段）、general（通用：用 sections 选',
       'summary/anomaly/drivers/actions/data_quality 白名单小节，不能写自定义提示词）；不写 content；必须与至少一个数据面板同报，且报表要带',
@@ -142,6 +143,7 @@ const REPORT_FACE: readonly ManageFaceTool[] = [
   faceOf('report', 'revise_report_spec', false, {
     description: [
       '修改**尚未发布**的报表的规格（已发布的会被拒——那要人在控制台改）。带 expectedVersion（取自 list_reports）。',
+      'period 仅支持 {mode:"day"|"last_7_days"|"month"|"custom"}；近7天用 last_7_days，不要用 range。',
       '可用图型与 propose_report 相同（含 ai_text：focus=overview/root_cause/daily_review/general；general 可带 sections 白名单小节；需与数据面板同报且报表带 period）。',
     ].join(''),
     inputSchema: {
@@ -152,6 +154,43 @@ const REPORT_FACE: readonly ManageFaceTool[] = [
         expectedVersion: { type: 'number', description: '当前版本（取自 list_reports；陈旧会被拒）' },
       },
       required: ['id', 'spec', 'expectedVersion'],
+    },
+  }),
+]
+
+// ─────────────── 业务监控片（3 件，B 子项目；创建恒 dry_run） ───────────────
+
+const MONITOR_FACE: readonly ManageFaceTool[] = [
+  faceOf('monitor', 'list_monitors', false, {
+    description: '列出本租户业务监控及状态、dry_run、收件人。',
+    inputSchema: { type: 'object', properties: {}, required: [] },
+  }),
+  faceOf('monitor', 'list_monitor_runs', false, {
+    description: '查看一条监控的运行记录。',
+    inputSchema: {
+      type: 'object',
+      properties: { id: { type: 'string' }, limit: { type: 'number' } },
+      required: ['id'],
+    },
+  }),
+  faceOf('monitor', 'create_monitor', true, {
+    description: '创建业务监控草稿。恒 dry_run=true；开启投递必须人做。threshold 仅支持可加指标。',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        name: { type: 'string' },
+        targetKind: { type: 'string', enum: ['metric', 'report_panel'] },
+        metricId: { type: 'string' },
+        reportId: { type: 'string' },
+        panelIndex: { type: 'number' },
+        verdict: { type: 'string', enum: ['missing', 'stale', 'threshold'] },
+        operator: { type: 'string', enum: ['gt', 'gte', 'lt', 'lte', 'eq'] },
+        threshold: { type: 'number' },
+        windowDays: { type: 'number' },
+        cadenceSecs: { type: 'number', description: '≥300 秒' },
+        recipients: { type: 'array', items: { type: 'object' } },
+      },
+      required: ['name', 'targetKind', 'verdict', 'cadenceSecs', 'recipients'],
     },
   }),
 ]
@@ -171,7 +210,9 @@ const PIPELINE_FACE: readonly ManageFaceTool[] = MANAGE_TOOLS.map((t) => ({
 }))
 
 /** 合并面全集（顺序 = GROUPS：口径 → 报表 → 管线提案/需求）。唯一事实源：三片 list() 与门禁都从这里取。 */
-export const MANAGE_FACE_TOOLS: readonly ManageFaceTool[] = [...METRIC_FACE, ...REPORT_FACE, ...PIPELINE_FACE]
+export const MANAGE_FACE_TOOLS: readonly ManageFaceTool[] = [
+  ...METRIC_FACE, ...REPORT_FACE, ...MONITOR_FACE, ...PIPELINE_FACE,
+]
 
 /** 取一片的工具元数据（三片 list() 与 call() 的认领清单都从这里派生，别再手写第二份名单）。 */
 export function manageFaceOfSlice(slice: ManageFaceSlice): readonly ManageFaceTool[] {

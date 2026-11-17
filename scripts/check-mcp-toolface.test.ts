@@ -73,8 +73,8 @@ describe('真仓合并 manage 面（三片静态事实源 mcp-manage-face.ts，P
     expect(out.some((s) => s.includes('个 > 上限'))).toBe(true)
   })
 
-  it('真仓合并面 20 件过门：wire 序列化 ≤10KB、名字全合法、mutating 全有注解与 scope', () => {
-    expect(MANAGE_FACE_TOOLS).toHaveLength(20)
+  it('真仓合并面 23 件过门：wire 序列化 ≤11KB、名字全合法、mutating 全有注解与 scope', () => {
+    expect(MANAGE_FACE_TOOLS).toHaveLength(23)
     expect(checkToolface(MANAGE_FACE_TOOLS, { maxTools: MANAGE_FACE_COMBINED_MAX_TOOLS, maxBytes: MANAGE_FACE_MAX_LIST_BYTES })).toEqual([])
     expect(JSON.stringify(MANAGE_FACE_TOOLS.map((t) => t.wire)).length).toBeLessThanOrEqual(MANAGE_FACE_MAX_LIST_BYTES)
   })

@@ -176,6 +176,8 @@ describePg('写面（需要 DATABASE_URL）', () => {
   /** Wave 3 提案面（spec §7）+ W3 L1 声明提案（#1401）：九个，缺一或多一都算漂。 */
   const PIPELINE_TOOL_NAMES = ['apply_pipeline_proposal', 'get_pipeline', 'get_pipeline_run', 'list_pipeline_runs', 'list_pipelines',
     'propose_contract_change', 'propose_metric_declaration', 'propose_pipeline_change', 'run_pipeline_sandbox']
+  /** B 子项目业务监控：三件。 */
+  const MONITOR_TOOL_NAMES = ['list_monitors', 'list_monitor_runs', 'create_monitor']
   /** Phase 2 需求台账（#1404）：两件，缺一或多一都算漂。 */
   const DEMAND_TOOL_NAMES = ['dismiss_demand_signal', 'list_demand_signals']
 
@@ -183,7 +185,7 @@ describePg('写面（需要 DATABASE_URL）', () => {
     await seedL1()
     const body = await (await rpc(app(), { jsonrpc: '2.0', id: 1, method: 'tools/list' })).json()
     const tools = (body as { result: { tools: { name: string; description: string }[] } }).result.tools
-    expect(tools.map((t) => t.name).sort()).toEqual([...METRIC_REPORT_TOOL_NAMES, ...PIPELINE_TOOL_NAMES, ...DEMAND_TOOL_NAMES].sort())
+    expect(tools.map((t) => t.name).sort()).toEqual([...METRIC_REPORT_TOOL_NAMES, ...MONITOR_TOOL_NAMES, ...PIPELINE_TOOL_NAMES, ...DEMAND_TOOL_NAMES].sort())
     expect(tools.find((t) => t.name === 'customize_metric')!.description).toContain('不能凭空造新指标')
     // 提案版语义（P4 Task 1，spec §11）：两把写工具的描述必须声明「只提案不生效」，
     // 且把状态/驳回原因的读取口指给 list_metric_changes——schema 不承载这句话。
@@ -781,6 +783,22 @@ describePg('写面（需要 DATABASE_URL）', () => {
     }
   })
 
+  it('业务监控片：list_monitors 可达；create_monitor 缺字段 ⇒ BAD_PARAM（不落库）', async () => {
+    const list = await (await rpc(app(), {
+      jsonrpc: '2.0', id: 31, method: 'tools/call',
+      params: { name: 'list_monitors', arguments: {} },
+    })).json() as { result: { isError?: boolean; content: { text: string }[] } }
+    expect(list.result.isError ?? false).toBe(false)
+    expect(toolText(list)).toMatchObject({ status: 'ok' })
+
+    const bad = await (await rpc(app(), {
+      jsonrpc: '2.0', id: 32, method: 'tools/call',
+      params: { name: 'create_monitor', arguments: { name: 'x' } },
+    })).json() as { result: { isError?: boolean; content: { text: string }[] } }
+    expect(bad.result.isError).toBe(true)
+    expect(toolText(bad)).toMatchObject({ error: 'BAD_PARAM' })
+  })
+
   it('协议面：通知回 202；未解析 body → -32700；未知方法 → -32601', async () => {
     expect((await rpc(app(), { jsonrpc: '2.0', method: 'ping' })).status).toBe(202)
     const bad = await (await rpc(app(), 'not json')).json()
@@ -814,18 +832,18 @@ describe('合并面事实源：三片 list() 取自纯文件 face（P1 Task 6，
   it('每片 list() ≡ face 里本片 wire 投影（谁手改定义不进 face ⇒ 红）', async () => {
     const { GROUPS } = await import('./mcp-manage')
     const { manageFaceOfSlice } = await import('./mcp-manage-face')
-    const slices = ['metric', 'report', 'pipeline'] as const
+    const slices = ['metric', 'report', 'monitor', 'pipeline'] as const
     expect(GROUPS).toHaveLength(slices.length)   // 新增片必须同时扩 face（两处同改，本断言绊线）
     for (let i = 0; i < GROUPS.length; i++) {
       expect(await GROUPS[i].list(fake as never)).toEqual(manageFaceOfSlice(slices[i]).map((t) => t.wire))
     }
   })
 
-  it('合并清单 = face 全集（20 件：口径 5 + 报表 4 + 管线提案/需求 11）', async () => {
+  it('合并清单 = face 全集（23 件：口径 5 + 报表 4 + 监控 3 + 管线提案/需求 11）', async () => {
     const { GROUPS } = await import('./mcp-manage')
     const { MANAGE_FACE_TOOLS } = await import('./mcp-manage-face')
     const names = (await Promise.all(GROUPS.map((g) => g.list(fake as never)))).flat().map((t) => t.name)
     expect(names.sort()).toEqual(MANAGE_FACE_TOOLS.map((t) => t.name).sort())
-    expect(MANAGE_FACE_TOOLS).toHaveLength(20)
+    expect(MANAGE_FACE_TOOLS).toHaveLength(23)
   })
 })

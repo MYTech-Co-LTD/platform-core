@@ -110,6 +110,9 @@ export const reportTools: McpToolGroup = {
         // 「已发布」看的是**发布指针**（`publishedVersion != null`），不是页门：发布时页门
         // 会被重算成快照口径（可能仍是 null），指针才是唯一状态来源。
         publishedVersion: r.publishedVersion,
+        // 发布那一刻的草稿版本。它和 `publishedVersion`（内容版本）是两个独立计数器：
+        // publishedVersion=16、publishedDraftVersion=21、version=21 是完全合法的状态。
+        publishedDraftVersion: r.publishedDraftVersion,
         // 发布后草稿又登记过（`data.reports.version` 前进了）⇒ 线上不是最新的。
         // 未发布的行不算「有未发布改动」——它整张都还没上线。
         hasUnpublishedChanges: r.publishedVersion !== null && r.version > (r.publishedDraftVersion ?? 0),

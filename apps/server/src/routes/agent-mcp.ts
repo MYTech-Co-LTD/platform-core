@@ -74,6 +74,9 @@ class ToolNameConflictError extends Error {
 
 type Channel = 'pat' | 'session' | 'wecom'
 
+/** face 不可用的原因：让能力目录能区分「缺权限」与「模块不可用/未启用」。 */
+type FaceUnavailableReason = 'module_disabled' | 'module_unavailable'
+
 /** mcp = PAT / 会话；wecom = 渠道身份（C 侧只走 manage 面）。 */
 const audienceOf = (channel: string): 'mcp' | 'wecom' => (channel === 'wecom' ? 'wecom' : 'mcp')
 
@@ -220,7 +223,7 @@ export function agentMcpRoutes(deps: {
     host: string,
     refresh = false,
     inbound?: AbortSignal,
-  ): Promise<{ tools: Tool[]; ok: boolean }> => {
+  ): Promise<{ tools: Tool[]; ok: boolean; reason?: FaceUnavailableReason }> => {
     const key = [
       identity.orgId,
       identity.scopes.join(','),
@@ -250,22 +253,27 @@ export function agentMcpRoutes(deps: {
         inbound,
       )
     } catch {
-      return { tools: [], ok: false }
+      return { tools: [], ok: false, reason: 'module_unavailable' }
     }
     // 超时（rpc 返回 null）与 transport 抛错同口径：该 face 不可用，不缓存失败结果。
-    if (!res) return { tools: [], ok: false }
-    if (!res.ok) return { tools: [], ok: false }
+    if (!res) return { tools: [], ok: false, reason: 'module_unavailable' }
+    if (!res.ok) {
+      // 404 是宿主启用闸门的「模块停用/不存在」形态；其余非 2xx 归为不可用。
+      return { tools: [], ok: false, reason: res.status === 404 ? 'module_disabled' : 'module_unavailable' }
+    }
     let body: { result?: { tools?: unknown }; error?: unknown }
     try {
       body = (await res.json()) as typeof body
     } catch {
-      return { tools: [], ok: false }
+      return { tools: [], ok: false, reason: 'module_unavailable' }
     }
     // 200 带 JSON-RPC error 也是失败面（不能当成“空工具列表”缓存下来）；非对象形状同理。
-    if (!body || typeof body !== 'object') return { tools: [], ok: false }
-    if (body.error) return { tools: [], ok: false }
+    if (!body || typeof body !== 'object') return { tools: [], ok: false, reason: 'module_unavailable' }
+    if (body.error) return { tools: [], ok: false, reason: 'module_unavailable' }
     const raw = body?.result?.tools
-    if (raw !== undefined && !Array.isArray(raw)) return { tools: [], ok: false }
+    if (raw !== undefined && !Array.isArray(raw)) {
+      return { tools: [], ok: false, reason: 'module_unavailable' }
+    }
     const list: unknown[] = Array.isArray(raw) ? raw : []
     const tools = list
       .filter((t): t is Tool => !!t && typeof t === 'object' && typeof (t as Tool).name === 'string')
@@ -303,7 +311,11 @@ export function agentMcpRoutes(deps: {
       }
     }
     return {
-      faces: pairs.map(({ face, ok }) => ({ face, available: ok })),
+      faces: pairs.map(({ face, ok, reason }) => ({
+        face,
+        available: ok,
+        ...(ok ? {} : { reason: reason ?? 'module_unavailable' }),
+      })),
       tools: [...byName.values()],
     }
   }
@@ -464,7 +476,7 @@ export function agentMcpRoutes(deps: {
               .filter((f) => f.face.audiences.includes(audience) && !identity.hasScope(f.face.scope))
               .map((f) => [
                 `${f.moduleId}\0${f.face.face}`,
-                { module: f.moduleId, face: f.face.face, scope: f.face.scope },
+                { module: f.moduleId, face: f.face.face, scope: f.face.scope, reason: 'scope_missing' },
               ]),
           ).values(),
         ]
@@ -474,13 +486,14 @@ export function agentMcpRoutes(deps: {
               type: 'text',
               text: JSON.stringify({
                 // selected face 如实上报可用性：模块 tools/list 失败 ⇒ available:false（不贡献工具）。
-                faces: faces.map(({ face: f, available }) => ({
+                faces: faces.map(({ face: f, available, reason }) => ({
                   module: f.moduleId,
                   face: f.face.face,
                   group: f.face.group,
                   audience: audienceOf(channel),
                   scope: f.face.scope,
                   available,
+                  ...(available ? {} : { reason: reason ?? 'module_unavailable' }),
                 })),
                 // 每个工具带 module/face（tools/call 路由所需）。mutating/requiredScope 若模块
                 // tools/list 没暴露，只注明“见模块 catalog”——不伪造默认值。
