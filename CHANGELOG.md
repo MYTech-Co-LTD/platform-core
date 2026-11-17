@@ -11,6 +11,11 @@
 
 ## [Unreleased]
 
+## [0.322.0](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.321.0...v0.322.0) - 2026-11-17
+- 【修复】scheduler: worker 启动时收尸 running 行（不等 2×timeout）(#2442) ([#2443](https://github.com/MYTech-Co-LTD/platform-core/pull/2443), [1f43cf4](https://github.com/MYTech-Co-LTD/platform-core/commit/1f43cf442b47aa5952123dda60b41dfaf8dcb48d))
+- 【新增】data: W4 Excel 导出——凭证/明细真 xlsx（数值单元格+数字格式） (#2446) ([#2447](https://github.com/MYTech-Co-LTD/platform-core/pull/2447), [3ea0358](https://github.com/MYTech-Co-LTD/platform-core/commit/3ea0358ff2f3629086a496a1a9081d699aa7c43d))
+
+
 ## [0.321.0](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.320.0...v0.321.0) - 2026-11-17
 - 【新增】data: W3 交叉表多指标——cross_table measures + 嵌套表头 (#2444) ([#2445](https://github.com/MYTech-Co-LTD/platform-core/pull/2445), [45d6477](https://github.com/MYTech-Co-LTD/platform-core/commit/45d6477d4df0b43ddd630a37f5e9b8894ce754db))
 
