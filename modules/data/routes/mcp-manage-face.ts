@@ -127,7 +127,9 @@ const REPORT_FACE: readonly ManageFaceTool[] = [
       '图型支持 line / bar / table / cross_table / waterfall / bullet / kpi / text / ai_text。ai_text = 观看时按当前期间服务端生成的',
       '分析文本：focus=overview（结论/异常/行动）、root_cause（根因段）、general（通用：用 sections 选',
       'summary/anomaly/drivers/actions/data_quality 白名单小节，不能写自定义提示词）；不写 content；必须与至少一个数据面板同报，且报表要带',
-      'period。**标题不能与已有报表重名**（重名会被拒，不会覆盖）。也可用模板模式：`templateId` + `values`（槽位→metricId）替代 `spec`。',
+      'period。**标题不能与已有报表重名**（重名会被拒，不会覆盖）。table 支持 measures 多度量列',
+      '（1–4 个 {metricId,label,format}，同一维度粒度；任一列不可见则整表不可见；非可加列不显示合计）。',
+      '**计算列（如客单价）不进报表**：先用 submit_metric_change 提 L2 指标（试算→人采纳），再引用。也可用模板模式：`templateId` + `values`（槽位→metricId）替代 `spec`。',
     ].join(''),
     inputSchema: {
       type: 'object',

@@ -186,3 +186,33 @@ describe('metricIdsOf（面板 → 指标 id 列表）', () => {
     expect(metricIdsOf({ chart: 'kpi', metricId: 'm1', denominatorMetricId: '' })).toEqual(['m1'])
   })
 })
+
+describe('多度量宽表（W1）：metricIdsOf / 页门派生 / 写侧校验', () => {
+  const measuresPanel = (...ids: string[]): Record<string, unknown> => ({
+    chart: 'table', title: '宽表', dims: ['branch_num'], args: {}, span: 12,
+    measures: ids.map((metricId) => ({ metricId, label: metricId })),
+  })
+
+  it('metricIdsOf 逐列收集（去重）', () => {
+    expect(metricIdsOf(measuresPanel('m1', 'm2', 'm1'))).toEqual(['m1', 'm2'])
+    expect(metricIdsOf({ chart: 'table', measures: [] })).toEqual([])
+  })
+
+  it('deriveRequiredScope：全部同 scope ⇒ 该 scope；跨度量不同 scope ⇒ CONFLICTING_PANEL_SCOPES', () => {
+    const c = cat(['m1', 'data:cost'], ['m2', 'data:cost'], ['m3', 'data:margin'])
+    expect(deriveRequiredScope(specOf(measuresPanel('m1', 'm2')), c))
+      .toEqual({ ok: true, requiredScope: 'data:cost' })
+    expect(deriveRequiredScope(specOf(measuresPanel('m1', 'm3')), c)).toEqual({
+      ok: false, reason: 'CONFLICTING_PANEL_SCOPES', scopes: ['data:cost', 'data:margin'],
+    })
+  })
+
+  it('validatePanelMetrics：未知度量点名 metricId；源未接入点名；非可加列在 table 里放行', () => {
+    const c = cat(['m1'], ['m2', null, false], ['m3', null, true, 'other-src'])
+    expect(validatePanelMetrics(specOf(measuresPanel('m1', 'm9')), c, new Set(['lemeng'])))
+      .toEqual({ ok: false, reason: 'UNKNOWN_PANEL_METRIC', metricId: 'm9' })
+    expect(validatePanelMetrics(specOf(measuresPanel('m1', 'm3')), c, new Set(['lemeng'])))
+      .toEqual({ ok: false, reason: 'METRIC_SOURCE_NOT_ADOPTED', metricId: 'm3' })
+    expect(validatePanelMetrics(specOf(measuresPanel('m1', 'm2')), c, new Set(['lemeng']))).toEqual({ ok: true })
+  })
+})

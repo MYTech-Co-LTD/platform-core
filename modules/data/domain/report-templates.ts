@@ -9,6 +9,16 @@ import { parseReportSpec, type PeriodSpec, type ReportSpec } from './report-spec
 
 export type TemplateChart = 'kpi' | 'line' | 'bar' | 'table' | 'ai_text'
 
+export interface TemplateMeasure {
+  /** 槽位键：调用方按它传 metricId。 */
+  key: string
+  /** 列头。 */
+  label: string
+  format?: 'currency' | 'number' | 'percent'
+  /** 必填列：缺指标 ⇒ 编译失败；非必填且留空 ⇒ 该列省略。 */
+  required?: boolean
+}
+
 export interface TemplateSlot {
   /** 槽位键：调用方按它传 metricId（ai_text 槽不需要）。 */
   key: string
@@ -22,8 +32,13 @@ export interface TemplateSlot {
   compare?: 'none' | 'auto' | 'prev_period' | 'prev_month'
   compareYoY?: boolean
   dims?: string[]
-  focus?: 'overview' | 'root_cause' | 'daily_review'
+  focus?: 'overview' | 'root_cause' | 'daily_review' | 'general'
   span: number
+  /**
+   * 多度量宽表（W1，仅 chart='table'）：一个槽展开成一张多列宽表。
+   * 槽自身的 key/required 不参与（列的必填性由每个 measure 声明）。
+   */
+  measures?: TemplateMeasure[]
 }
 
 export interface ReportTemplate {
@@ -64,6 +79,24 @@ export const REPORT_TEMPLATES: readonly ReportTemplate[] = [
     ],
   },
   {
+    id: 'store_monthly_analysis',
+    title: '门店经营分析（宽表）',
+    description: '一张表看全部门店：销售额/订单数/毛利/毛利率并排（类 Excel 分析表）+ 通用经营分析。',
+    period: { mode: 'last_7_days' },
+    slots: [
+      {
+        key: 'wide', label: '门店分析表', chart: 'table', dims: ['branch_num'], span: 24,
+        measures: [
+          { key: 'revenue', label: '销售额', format: 'currency', required: true },
+          { key: 'orders', label: '订单数', format: 'number', required: true },
+          { key: 'gross', label: '毛利', format: 'currency' },
+          { key: 'margin', label: '毛利率', format: 'percent' },
+        ],
+      },
+      { key: 'analysis', label: '经营分析', chart: 'ai_text', title: '经营分析', focus: 'general', span: 24 },
+    ],
+  },
+  {
     id: 'category_analysis',
     title: '品类分析',
     description: '按品类看销售额与毛利，识别结构问题。',
@@ -92,19 +125,45 @@ export function compileTemplate(
   template: ReportTemplate,
   values: Readonly<Record<string, string>>,
 ): CompileResult {
-  const known = new Set(template.slots.filter((s) => s.chart !== 'ai_text').map((s) => s.key))
+  // 已知键 = 普通槽位键 + 宽表槽的各列键（宽表槽自身的 key 不取值）。
+  const known = new Set<string>()
+  for (const slot of template.slots) {
+    if (slot.chart === 'ai_text') continue
+    if (slot.measures !== undefined) { for (const m of slot.measures) known.add(m.key); continue }
+    known.add(slot.key)
+  }
   const unknown = Object.keys(values).filter((k) => !known.has(k))
   if (unknown.length > 0) return { ok: false, reason: 'UNKNOWN_SLOT', keys: unknown }
 
   const missing = template.slots
-    .filter((s) => s.chart !== 'ai_text' && s.required === true && (values[s.key] ?? '') === '')
+    .filter((s) => s.chart !== 'ai_text' && s.measures === undefined && s.required === true && (values[s.key] ?? '') === '')
     .map((s) => s.key)
+  for (const slot of template.slots) {
+    if (slot.measures === undefined) continue
+    missing.push(...slot.measures.filter((m) => m.required === true && (values[m.key] ?? '') === '').map((m) => m.key))
+  }
   if (missing.length > 0) return { ok: false, reason: 'MISSING_REQUIRED_SLOT', keys: missing }
 
   const panels: unknown[] = []
   for (const slot of template.slots) {
     if (slot.chart === 'ai_text') {
       panels.push({ chart: 'ai_text', title: slot.title ?? slot.label, focus: slot.focus ?? 'overview', span: slot.span })
+      continue
+    }
+    // 多度量宽表（W1）：列按声明顺序组装；非必填列留空即省略；全列留空 ⇒ 省略整个面板。
+    if (slot.chart === 'table' && slot.measures !== undefined) {
+      const measures = slot.measures
+        .filter((m) => (values[m.key] ?? '') !== '')
+        .map((m) => ({
+          metricId: values[m.key]!,
+          label: m.label,
+          ...(m.format === undefined ? {} : { format: m.format }),
+        }))
+      if (measures.length === 0) continue
+      panels.push({
+        chart: 'table', title: slot.title ?? slot.label, dims: slot.dims ?? [],
+        measures, span: slot.span,
+      })
       continue
     }
     const metricId = values[slot.key]

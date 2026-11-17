@@ -1089,3 +1089,40 @@ describe('版式：个人版式（issue #2295）', () => {
     expect(screen.queryByText(/个人版式已失效/)).not.toBeInTheDocument()
   })
 })
+
+describe('多度量宽表（W1）', () => {
+  const wide = {
+    chart: 'table' as const, title: '门店分析', dims: ['branch_num'], span: 24,
+    measures: [
+      { metricId: 'm1', label: '销售额', format: 'currency' as const },
+      { metricId: 'm2', label: '订单数' },
+    ],
+  }
+  const okM1 = { columns: ['branch_num', 'value'], rows: [['87', 10], ['116', 20]] }
+  const okM2 = { columns: ['branch_num', 'value'], rows: [['116', 5]] }
+
+  it('★ 两度量外连接成一张表；缺度量为空单元格；列头用声明 label', async () => {
+    stub({ panels: [wide] }, { m1: okM1, m2: okM2 }, new Set())
+    renderView()
+    // antd 表头 + 隐藏测量行会重复文本 ⇒ 用复数断言
+    expect((await screen.findAllByText('销售额')).length).toBeGreaterThanOrEqual(1)
+    expect(screen.getAllByText('订单数').length).toBeGreaterThanOrEqual(1)
+    // 87 行：销售额 ¥10.00（format=currency）、订单数缺 ⇒ 空单元格（与既有表格 null 形态一致）
+    expect(screen.getByText('¥10.00')).toBeInTheDocument()
+    const row87 = [...document.querySelectorAll('tbody tr')]
+      .find((tr) => tr.textContent?.includes('87') && tr.className.includes('ant-table-row'))
+    const cells87 = row87?.querySelectorAll('td') ?? []
+    expect(cells87).toHaveLength(3)
+    expect(cells87[2]?.textContent).toBe('')
+    // 116 行两侧都有
+    expect(screen.getByText('¥20.00')).toBeInTheDocument()
+    expect(screen.getByText('5')).toBeInTheDocument()
+  })
+
+  it('★ 任一度量 denied ⇒ 整面板降级（不泄露其余列）', async () => {
+    stub({ panels: [wide] }, { m1: okM1 }, new Set(['m2']))
+    renderView()
+    expect(await screen.findByText('这条口径当前不可用')).toBeInTheDocument()
+    expect(screen.queryAllByText('销售额')).toHaveLength(0)
+  })
+})

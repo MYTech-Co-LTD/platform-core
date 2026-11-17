@@ -57,7 +57,10 @@ export function toReportPlan(spec: {
     const key = `p${index}`
     datasets.push({
       key,
-      metricId: panel.metricId,
+      // 度量宽表（W1）没有单一 metricId ⇒ 取第一个度量作代表（plan 消费方只把它当标题/占位）。
+      metricId: panel.metricId
+        ?? (panel.chart === 'table' && panel.measures !== undefined ? panel.measures[0]?.metricId : undefined)
+        ?? '',
       dims: 'dims' in panel ? (panel.dims ?? []) : [],
       args: panel.args ?? {},
       timeScoped: panel.timeScoped !== false,

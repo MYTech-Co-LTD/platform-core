@@ -73,6 +73,20 @@ export function panelQueryBodyOf(
   }
   // 瀑布：单维度分组（对比期由调用方换 bizday 再查一次）。
   if (p.chart === 'waterfall') return { metricId: p.metricId, args, dimensions: p.dims }
+  // 多度量宽表（W1）：facts / 单数取数通路取**第一个**度量；全部度量列的逐列查询在渲染端
+  // 并行发起（同一切片形状），合并是纯展示级外连接。切片形状与单度量完全同键 ⇒ R4 去重生效。
+  if (p.chart === 'table' && p.measures !== undefined) {
+    const first = p.measures[0]!
+    const mBody: Record<string, unknown> = { metricId: first.metricId, args }
+    const mSlice = p.slice
+    if (mSlice === undefined) return mBody
+    const mDims = mSlice.dimensions ?? p.dims
+    if (mSlice.dimensions !== undefined || mDims.length > 0) mBody.dimensions = mDims
+    if (mSlice.orderBy !== undefined) mBody.orderBy = mSlice.orderBy
+    if (mSlice.limit !== undefined) mBody.limit = mSlice.limit
+    if (mSlice.total !== undefined) mBody.total = mSlice.total
+    return mBody
+  }
   const body: Record<string, unknown> = { metricId: p.metricId, args }
   const slice = p.slice
   if (slice === undefined) return body

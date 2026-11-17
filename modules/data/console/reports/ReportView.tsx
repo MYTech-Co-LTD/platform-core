@@ -115,6 +115,74 @@ function okResultOf(b: unknown): OkResult {
 }
 
 /**
+ * 多度量宽表（W1）：把各度量的分组结果**外连接**成一张合成表。
+ *
+ * 三条纪律：
+ *  ① 纯展示拼接，**无任何算术**——每格的数都逐字来自它自己那次 /query（授权/掩码/审计同链）；
+ *  ② 任一度量 denied ⇒ 整面板 denied（不泄露「其余列存在」之外的任何信息，与单度量同语义）；
+ *  ③ 合计随各自回包的 `total`：非可加度量服务端本就不回 total ⇒ 该列显示 `-`（实测成立），
+ *     全部列都无 total 时不显示合计（缺席 = 没有，不编）。
+ */
+function mergeMeasureResults(
+  measures: ReadonlyArray<{ metricId: string; label?: string; format?: 'currency' | 'number' | 'percent' }>,
+  parts: PanelResult[],
+): PanelResult {
+  if (parts.some((r) => r.kind === 'denied')) return { kind: 'denied' }
+  const err = parts.find((r) => r.kind === 'error')
+  if (err !== undefined) return err
+  const oks = parts as OkResult[]
+  const first = oks[0]!
+  // 维度列 = 首个结果里除 `value` 外的列（服务端分组查询的列形 = [dims..., value]）。
+  const dimCols = first.columns.filter((c) => c !== 'value')
+  const labels = measures.map((m) => m.label ?? m.metricId)
+  const columns = [...dimCols, ...labels]
+  const rows: unknown[][] = []
+  const rowIndex = new Map<string, number>()
+  for (let mi = 0; mi < oks.length; mi++) {
+    const part = oks[mi]!
+    const vCol = part.columns.indexOf('value')
+    for (const row of part.rows) {
+      const key = dimCols.map((c) => String(row[part.columns.indexOf(c)])).join('\u0000')
+      let target = rowIndex.get(key)
+      if (target === undefined) {
+        target = rows.length
+        rowIndex.set(key, target)
+        rows.push(dimCols.map((c) => row[part.columns.indexOf(c)]))
+      }
+      const raw = row[vCol]
+      const fmt = measures[mi]?.format
+      rows[target]![dimCols.length + mi] =
+        raw === null || raw === undefined || raw === ''
+          ? null
+          : fmt === undefined ? raw : formatValue(Number(raw), fmt)
+    }
+  }
+  // 信任信号合并：truncated 任一真；masking 并集；data_as_of 取最早（ISO 形字符串可直接比）；
+  // freshness_line 取首个声明；total 逐列拼接（缺该列 total ⇒ `-`）。
+  const truncated = oks.some((p) => p.truncated)
+  const masking: Record<string, string> | undefined = oks.some((p) => p.masking !== undefined)
+    ? Object.assign({}, ...oks.map((p) => p.masking ?? {}))
+    : undefined
+  const asOfList = oks.map((p) => p.data_as_of).filter((v) => v !== undefined)
+  const dataAsOf = asOfList.length === 0 ? undefined : [...asOfList].sort((a, b) => String(a).localeCompare(String(b)))[0]
+  const freshness = oks.find((p) => p.freshness_line !== undefined)?.freshness_line
+  const totals = oks.map((p) => p.total)
+  const total = totals.every((t) => t === undefined)
+    ? undefined
+    : measures.map((m, i) => `${labels[i]} ${totals[i] === undefined || totals[i] === null ? '-' : String(totals[i])}`).join('、')
+  return {
+    kind: 'ok',
+    columns,
+    rows,
+    truncated,
+    ...(masking !== undefined ? { masking } : {}),
+    ...(dataAsOf !== undefined ? { data_as_of: dataAsOf } : {}),
+    ...(freshness !== undefined ? { freshness_line: freshness } : {}),
+    ...(total !== undefined ? { total } : {}),
+  }
+}
+
+/**
  * 窄屏柱状图的类目轴策略（Task 13 走查的 390px 实测 + 真机截图校验）。
  *
  * 症状：8 个 4–5 字类目标签在 ~340px 宽的画布里，echarts 默认 `interval:'auto'` 直接**抽掉
@@ -1182,30 +1250,69 @@ export default function ReportView({
     // 跨面板合并（R4）：请求体**逐字相同**的面板只发一次，回包扇出到各自的格子。
     // 键 = 序列化后的 /query body（metric/args/dimensions/orderBy/limit/total 全在里面）——
     // 任何一项不同都不会合并：不同窗口/维度/截断的结果共用就是错数。
-    const jobs = new Map<string, { body: Record<string, unknown>; indexes: number[] }>()
+    // 每个待查体一个 job；targets 记录它喂给哪个面板的哪个度量
+    // （普通面板 measure=-1；度量宽表（W1）的每个度量列各占一个 job，同体去重照常生效）。
+    const jobs = new Map<string, {
+      body: Record<string, unknown>
+      targets: Array<{ panel: number; measure: number }>
+    }>()
     panels.forEach((p, i) => {
       // 降级占位符 / text / ai_text 无数据面；kpi 的取数在 KpiCard 内部（显式合计），都不进这条循环
       if (isDeniedPanel(p)) return
       if (p.chart === 'text' || p.chart === 'kpi' || p.chart === 'ai_text') return
-      const body = panelQueryBodyOf(p, argsOf(p))
-      const key = JSON.stringify(body)
-      const hit = jobs.get(key)
-      if (hit === undefined) jobs.set(key, { body, indexes: [i] })
-      else hit.indexes.push(i)
+      const bodies: Array<{ body: Record<string, unknown>; measure: number }> =
+        p.chart === 'table' && p.measures !== undefined
+          ? p.measures.map((m, mi) => ({
+              // 复用单度量装配（slice/dims 键完全同形 ⇒ R4 去重与缓存照常命中）
+              body: panelQueryBodyOf(
+                { ...p, measures: undefined, metricId: m.metricId } as typeof p,
+                argsOf(p),
+              ),
+              measure: mi,
+            }))
+          : [{ body: panelQueryBodyOf(p, argsOf(p)), measure: -1 }]
+      for (const { body, measure } of bodies) {
+        const key = JSON.stringify(body)
+        const hit = jobs.get(key)
+        if (hit === undefined) jobs.set(key, { body, targets: [{ panel: i, measure }] })
+        else hit.targets.push({ panel: i, measure })
+      }
     })
     const entries = [...jobs.entries()]
     if (entries.length === 0) return   // 全是 text/kpi/ai_text（无 /query 面板）⇒ 不发任何请求
+
+    // job 结果 → 面板结果：普通面板直取；度量宽表把各度量的结果**外连接**成一张合成表
+    // （纯展示拼接，无算术；列各自的掩码/授权已在各自 /query 里保证）。
+    const finalize = (jobResults: Map<string, PanelResult>): void => {
+      setResults(() => {
+        const next: Record<number, PanelResult> = {}
+        const perMeasure = new Map<number, Map<number, PanelResult>>()
+        for (const [key, { targets }] of jobs) {
+          const r = jobResults.get(key)
+          if (r === undefined) continue
+          for (const t of targets) {
+            if (t.measure === -1) { next[t.panel] = r; continue }
+            const m = perMeasure.get(t.panel) ?? new Map<number, PanelResult>()
+            m.set(t.measure, r)
+            perMeasure.set(t.panel, m)
+          }
+        }
+        for (const [panel, m] of perMeasure) {
+          const p = panels[panel]
+          if (p === undefined || isDeniedPanel(p) || p.chart !== 'table' || p.measures === undefined) continue
+          const parts = p.measures.map((_, mi) => m.get(mi) ?? ({ kind: 'error', text: '查询缺失' } as PanelResult))
+          next[panel] = mergeMeasureResults(p.measures, parts)
+        }
+        return next
+      })
+    }
+
     if (entries.length === 1) {
       // 单面板：保持单条 /query（少一层封装，body 与旧规格逐字节一致）
-      const [, { body, indexes }] = entries[0]!
+      const [key, { body }] = entries[0]!
       void apiSend('/query', 'POST', body)
         .then((b) => {
-          const result = okResultOf(b)
-          setResults((prev) => {
-            const next = { ...prev }
-            for (const i of indexes) next[i] = result
-            return next
-          })
+          finalize(new Map([[key, okResultOf(b) as PanelResult]]))
         })
         .catch((e) => {
           // /query 的结局映射（routes/query.ts）：ok→200 / **denied→403** / error→502。
@@ -1213,11 +1320,7 @@ export default function ReportView({
           // `ApiError(403,'HTTP_403')`，reason 不上屏（词表外的口径连存在性都不暴露）。
           const result: PanelResult = e instanceof ApiError && e.status === 403
             ? { kind: 'denied' } : { kind: 'error', text: messageOf(e) }
-          setResults((prev) => {
-            const next = { ...prev }
-            for (const i of indexes) next[i] = result
-            return next
-          })
+          finalize(new Map([[key, result]]))
         })
       return
     }
@@ -1229,29 +1332,21 @@ export default function ReportView({
     })
       .then((b) => {
         const results = (b as { results?: Array<Record<string, unknown>> }).results ?? []
-        setResults((prev) => {
-          const next = { ...prev }
-          for (const res of results) {
-            const entry = entries.find(([key]) => idOf.get(key) === res.id)
-            if (entry === undefined) continue
-            let result: PanelResult
-            if (res.status === 'ok') result = okResultOf(res)
-            else if (res.status === 'denied') result = { kind: 'denied' }
-            else result = { kind: 'error', text: `查询失败（${String(res.reason ?? 'unknown')}）` }
-            for (const i of entry[1].indexes) next[i] = result
-          }
-          return next
-        })
+        const jobResults = new Map<string, PanelResult>()
+        for (const res of results) {
+          const entry = entries.find(([key]) => idOf.get(key) === res.id)
+          if (entry === undefined) continue
+          let result: PanelResult
+          if (res.status === 'ok') result = okResultOf(res)
+          else if (res.status === 'denied') result = { kind: 'denied' }
+          else result = { kind: 'error', text: `查询失败（${String(res.reason ?? 'unknown')}）` }
+          jobResults.set(entry[0], result)
+        }
+        finalize(jobResults)
       })
       .catch((e) => {
         const result: PanelResult = { kind: 'error', text: messageOf(e) }
-        setResults((prev) => {
-          const next = { ...prev }
-          for (const [, { indexes }] of entries) {
-            for (const i of indexes) next[i] = result
-          }
-          return next
-        })
+        finalize(new Map(entries.map(([key]) => [key, result])))
       })
     // argsOf/range 都由 panels/override/period 派生 ⇒ 依赖里给这三者即可（避免每渲染重查）
     // eslint-disable-next-line react-hooks/exhaustive-deps

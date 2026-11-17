@@ -43,7 +43,12 @@ describe('compileTemplate', () => {
   it('内置模板本身都能用最小填法编译（防止模板与 schema 漂移）', () => {
     for (const t of REPORT_TEMPLATES) {
       const values = Object.fromEntries(
-        t.slots.filter((s) => s.chart !== 'ai_text').map((s) => [s.key, 'm:x']),
+        t.slots.flatMap((s) => {
+          if (s.chart === 'ai_text') return []
+          // 宽表槽：列键各填一条不同指标（同 id 会撞 DUPLICATE_MEASURE）
+          if (s.measures !== undefined) return s.measures.map((m) => [m.key, `m:${m.key}`])
+          return [[s.key, 'm:x']]
+        }),
       )
       const out = compileTemplate(t, values)
       expect(out.ok, `模板 ${t.id} 编译失败：${out.ok ? '' : out.reason}`).toBe(true)

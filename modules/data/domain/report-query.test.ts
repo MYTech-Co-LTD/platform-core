@@ -257,3 +257,25 @@ describe('sparkline 查询体（R3 组件④）', () => {
     })
   })
 })
+
+describe('多度量宽表（W1）：panelQueryBodyOf 取第一个度量，切片键同形', () => {
+  const panel = {
+    chart: 'table', title: '宽表', dims: ['branch_num'], args: { system_book: '3120' },
+    measures: [
+      { metricId: 'm:sales', label: '销售额', format: 'currency' },
+      { metricId: 'm:orders', label: '订单数' },
+    ],
+    slice: { dimensions: ['branch_num'], orderBy: [{ column: 'value', dir: 'desc' as const }], limit: 50, total: true },
+  }
+
+  it('body = 第一个度量的单度量查询（slice 键逐字保留）', () => {
+    expect(panelQueryBodyOf(panel as never, { system_book: '3120' })).toEqual({
+      metricId: 'm:sales',
+      args: { system_book: '3120' },
+      dimensions: ['branch_num'],
+      orderBy: [{ column: 'value', dir: 'desc' }],
+      limit: 50,
+      total: true,
+    })
+  })
+})
