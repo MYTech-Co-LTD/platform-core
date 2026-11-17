@@ -7,16 +7,16 @@ r['bizday']::date         as bizday,
 r['branch_num']::int      as branch_num,
 r['order_sale_type_name']::varchar as order_sale_type_name,
 sum(coalesce(r['customer_vip_money']::numeric, 0))::numeric(20,2) as v
-from read_parquet(
-'s3://{{ var("zos_bucket") }}/{{ var("lemeng_member_summary_prefix") }}/system_book=*/bizday=*/all.parquet'
-) r
+from {{ window_read_parquet('s3://{{ var("zos_bucket") }}/{{ var("lemeng_member_summary_prefix") }}/system_book=*/bizday=*/all.parquet') }} r
 where r['bizday']::date < CAST(now() AT TIME ZONE 'Asia/Shanghai' AS DATE)
+      and r['bizday']::date >= date '{{ window_start_date() }}'
 group by 1, 2, 3, 4
 ),
 materialized as (
 select system_book, bizday, branch_num, order_sale_type_name, vip_money
 from {{ ref('fct_member_summary') }}
 where bizday < CAST(now() AT TIME ZONE 'Asia/Shanghai' AS DATE)
+      and bizday >= date '{{ window_start_date() }}'
 )
 select
 coalesce(a.system_book, b.system_book) as system_book,

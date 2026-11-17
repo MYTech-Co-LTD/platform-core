@@ -12,13 +12,12 @@ with transfer_lines as (
         r['order_no']::varchar    as order_no,
         r['out_money']::numeric   as out_money,
         r['subtotal']::numeric    as subtotal
-    from read_parquet(
-        's3://{{ var("zos_bucket") }}/{{ var("lemeng_transfer_out_prefix") }}/*/bizday=**/*.parquet'
-    ) r
+    from {{ window_read_parquet('s3://{{ var("zos_bucket") }}/{{ var("lemeng_transfer_out_prefix") }}/*/bizday=**/*.parquet') }} r
     where r['state_code']::int = 3
       and r['out_branch_num']::int = 99
       and r['branch_num']::int <> r['out_branch_num']::int
       and r['bizday']::date < CAST(now() AT TIME ZONE 'Asia/Shanghai' AS DATE)
+      and r['bizday']::date >= date '{{ window_start_date() }}'
 ),
 transfer_dom as (
     select system_book, bizday, branch_num,
@@ -35,10 +34,9 @@ wholesale_orders as (
            r['order_no']::varchar    as order_no,
            max(r['total_money']::numeric) as total_money,
            max(r['cost_money']::numeric)  as cost_money
-    from read_parquet(
-        's3://{{ var("zos_bucket") }}/{{ var("lemeng_wholesale_out_prefix") }}/*/bizday=**/*.parquet'
-    ) r
+    from {{ window_read_parquet('s3://{{ var("zos_bucket") }}/{{ var("lemeng_wholesale_out_prefix") }}/*/bizday=**/*.parquet') }} r
     where r['bizday']::date < CAST(now() AT TIME ZONE 'Asia/Shanghai' AS DATE)
+      and r['bizday']::date >= date '{{ window_start_date() }}'
     group by 1, 2, 3, 4
 ),
 wholesale_lines as (
@@ -46,10 +44,9 @@ wholesale_lines as (
            r['bizday']::date         as bizday,
            r['branch_num']::int      as branch_num,
            count(*)                  as line_count
-    from read_parquet(
-        's3://{{ var("zos_bucket") }}/{{ var("lemeng_wholesale_out_prefix") }}/*/bizday=**/*.parquet'
-    ) r
+    from {{ window_read_parquet('s3://{{ var("zos_bucket") }}/{{ var("lemeng_wholesale_out_prefix") }}/*/bizday=**/*.parquet') }} r
     where r['bizday']::date < CAST(now() AT TIME ZONE 'Asia/Shanghai' AS DATE)
+      and r['bizday']::date >= date '{{ window_start_date() }}'
     group by 1, 2, 3
 ),
 wholesale_dom as (
@@ -72,10 +69,9 @@ return_orders as (
            r['order_no']::varchar    as order_no,
            max(r['total_money']::numeric) as total_money,
            max(r['cost_money']::numeric)  as cost_money
-    from read_parquet(
-        's3://{{ var("zos_bucket") }}/{{ var("lemeng_wholesale_return_prefix") }}/*/bizday=**/*.parquet'
-    ) r
+    from {{ window_read_parquet('s3://{{ var("zos_bucket") }}/{{ var("lemeng_wholesale_return_prefix") }}/*/bizday=**/*.parquet') }} r
     where r['bizday']::date < CAST(now() AT TIME ZONE 'Asia/Shanghai' AS DATE)
+      and r['bizday']::date >= date '{{ window_start_date() }}'
     group by 1, 2, 3, 4
 ),
 return_dom as (
@@ -91,9 +87,7 @@ branch_latest as (
                r['branch_num']::int      as branch_num,
                r['region_id']::bigint    as region_id,
                row_number() over (partition by r['system_book']::varchar, r['branch_num']::int order by r['snapshot'] desc) as rn
-        from read_parquet(
-            's3://{{ var("zos_bucket") }}/{{ var("lemeng_branch_prefix") }}/system_book=*/snapshot=**/*.parquet'
-        ) r
+        from {{ window_read_parquet('s3://{{ var("zos_bucket") }}/{{ var("lemeng_branch_prefix") }}/system_book=*/snapshot=**/*.parquet') }} r
     )
     where rn = 1
 ),
@@ -132,6 +126,7 @@ materialized as (
            sum(line_count)::bigint     as line_count
     from {{ ref('fct_hq_outbound') }}
     where bizday < CAST(now() AT TIME ZONE 'Asia/Shanghai' AS DATE)
+      and bizday >= date '{{ window_start_date() }}'
     group by 1, 2, 3, 4, 5
 )
 select
