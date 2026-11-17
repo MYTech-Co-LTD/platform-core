@@ -11,6 +11,10 @@
 
 ## [Unreleased]
 
+## [0.325.0](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.324.0...v0.325.0) - 2026-11-17
+- 【新增】data: 20 条审计改造为 window 感知（window_read_parquet + window_start_date）(#2456) ([#2460](https://github.com/MYTech-Co-LTD/platform-core/pull/2460), [db6d957](https://github.com/MYTech-Co-LTD/platform-core/commit/db6d957501ef0a9568b0bf571e951710ab192812))
+
+
 ## [0.324.0](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.323.0...v0.324.0) - 2026-11-17
 - 【新增】scheduler: 审计按物化语义分族——全史段剔除增量 mart 审计，新增窗口对账 (#2428) ([#2455](https://github.com/MYTech-Co-LTD/platform-core/pull/2455), [bff3c2b](https://github.com/MYTech-Co-LTD/platform-core/commit/bff3c2b1724d392fd18d86486b4244bd4c4a087b))
 - 【修复】data: 增量 lookback 7→10，与重述窗口对齐 (#2453) ([#2454](https://github.com/MYTech-Co-LTD/platform-core/pull/2454), [36572ec](https://github.com/MYTech-Co-LTD/platform-core/commit/36572ec6c98d0965e049e975fc563d56a8fd704f))
