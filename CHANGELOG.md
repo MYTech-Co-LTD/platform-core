@@ -11,6 +11,10 @@
 
 ## [Unreleased]
 
+## [0.317.0](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.316.0...v0.317.0) - 2026-11-17
+- 【新增】notify: delete_agent_rule——agent 自助清理草稿规则 ([#2430](https://github.com/MYTech-Co-LTD/platform-core/pull/2430), [a62dee5](https://github.com/MYTech-Co-LTD/platform-core/commit/a62dee51c5c5e449c466d69bf8b0082e824e0fad))
+
+
 ## [0.316.0](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.315.0...v0.316.0) - 2026-11-17
 - 【新增】data: 业务监控 MCP 工具（草稿恒 dry_run） ([#2360](https://github.com/MYTech-Co-LTD/platform-core/pull/2360), [8adf0a7](https://github.com/MYTech-Co-LTD/platform-core/commit/8adf0a7b5c14d04b0742410647648af800cc5327))
 - 【修复】notify: 收紧工具描述以满足 10KB 预算 ([#2360](https://github.com/MYTech-Co-LTD/platform-core/pull/2360), [69818a1](https://github.com/MYTech-Co-LTD/platform-core/commit/69818a1a1dde411c2ae39176f70c972bedb25392))
