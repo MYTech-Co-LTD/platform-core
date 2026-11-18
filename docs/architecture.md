@@ -50,6 +50,17 @@
 > 对看板/报表无感。**dbt 仍必须与 `pg_duckdb` 同机**：CTAS 是「读湖 → 逐批写回」，瓶颈是
 > 往返次数而不是字节数，跨机会放大 pg_duckdb 锁等待。
 
+**调度器的归属（2026-11-19，`#2504`）**：两机并行后，业务调度 loop 留在**数据单元**
+（`scheduler` 服务），投递 loop 留在应用单元 —— 因为应用单元每次发版都重建容器、会把运行中的
+采集/物化子进程连坐收掉（3 天 40 次部署、13 次 dbt 作业被杀）。跨机后调度器连平台库走上面
+那条私网绑定（`SCHEDULER_DATABASE_URL`），**不新增特例**：它消费的正是 B7 那一个例外。
+判据与回滚见 `deploy/jobs.md` §6，载体见 §2.4「定时载体」。
+
+> **Metabase 已退役**（2026-11-19，同波腾磁盘）：`deploy/data-compose.yml` 里的
+> `metabase` / `metabase-db` / `mbdata` 声明已删除，报表面走平台自有报表
+> （`docs/superpowers/plans/2026-11-13-report-platform-roadmap.md`）。下面三条「显式接受」
+> 保留为**历史决策记录**（若将来重新启用 BI 面，仍以它们为前提）。
+
 > 两份 compose 与单元 B 的服务**均已落仓**（`deploy/data-compose.yml` 随 P1 的 T3 落仓），B7 白名单
 > 亦已放行该路径。**「缺席不违规」仍成立**——拆缝是可选形态，白名单是「放行」而不是「必须存在」。
 >
@@ -519,10 +530,16 @@ B/C 的统一能力入口是 `POST /api/agent/mcp`；manifest `mcpFaces` 声明�
 **定时载体（2026-11-14 修订）分为两条线：**
 
 - **基建定时 = openship job**：主机指标、探活看门狗、备份、证书类。判据：失败意味着「机器/进程/证书状态异常」。
-- **业务定时 = worker 的 `platform.scheduler` loop**：在 `notify-worker` 容器内（同镜像、多 loop 注册表），
-  任务目录在代码（`apps/server/src/scheduler/registry.ts`），排班与运行台账在库
-  （`platform.job_schedule` / `platform.job_run`），执行一律子进程 + 超时。
+- **业务定时 = `platform.scheduler` loop**：任务目录在代码（`apps/server/src/scheduler/registry.ts`），
+  排班与运行台账在库（`platform.job_schedule` / `platform.job_run`），执行一律子进程 + 超时。
   判据：失败意味着「业务数据/业务动作没发生」。
+  **载体（2026-11-19 修订，`#2504`）**：与通知投递**拆成两个部署单元**的同一入口进程
+  （`scripts/notify-worker.mjs`，role env 二选一）——
+  调度在**数据单元**（`deploy/data-compose.yml` 的 `scheduler`，`SCHEDULER_ENABLED=1` +
+  `NOTIFY_DELIVERY_ENABLED=0`），投递在**应用单元**（`deploy/docker-compose.yml` 的
+  `notify-worker`，`SCHEDULER_ENABLED=0`）。理由：应用单元每次发版都重建容器，运行中的
+  采集/物化子进程被连坐收掉（3 天 40 次部署、13 次 dbt 作业被杀 ⇒ mart 陈旧 ⇒ 审计假红）。
+  **单调度者不变**：两边不得同时开调度；单机未拆缝的部署两个 loop 同进程（两个开关都开）。
 
 **不变量**：① 调度器只排「引擎」不排「规则」（agent 只能排已注册 key）；② 只做 cron + 台账，
 不做 DAG / 依赖编排 / 回填队列；③ `source='system'` 时 `params` 不生效——行为只由代码 registry 决定。

@@ -27,8 +27,15 @@
 
 ```
 platform-core-<客户>        composePath=deploy/docker-compose.yml   ← 平台 + 模块
-platform-core-<客户>-data   composePath=deploy/data-compose.yml     ← 数据栈（duckle/dbt/pg_duckdb/BI）
+platform-core-<客户>-data   composePath=deploy/data-compose.yml     ← 数据栈（pg_duckdb/duckle/dbt/账套 console）
+                                                                      + 业务调度器（scheduler，#2504）
 ```
+
+> ⚠️ **`scheduler` 是新增的常驻服务**（2026-11-19，`#2504`：调度从应用单元的 `notify-worker`
+> 搬到这里，免得应用每次发版把采集/物化子进程连坐收掉）。它要求数据项目 env 里有
+> **`SCHEDULER_DATABASE_URL`**（指向应用机私网 IP 的平台库，配 `DATA_BIND_ADDR` + 安全组白名单；
+> 见 `.env.example`）。**不需要它（或还没备好 env）的 project 必须在服务行置 `enabled: false`**——
+> openship 忽略 compose `profiles`，不给开关就会建容器，缺连接串则启动即退出、反复重启。
 
 > ✅ 数据栈工件（`deploy/data-compose.yml`、`contracts/`、`duckle/`、`dbt/`）已随 P1 落仓
 > （#166/#167/#168，2026-09-22；两站真机部署见 `deploy/data-plane-deploy-sop.md`）。

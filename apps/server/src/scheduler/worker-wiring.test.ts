@@ -12,7 +12,7 @@ import { describe, expect, it } from 'vitest'
 import { jobHealth } from './health'
 import { createSchedulerLoop } from './loop'
 import type { JobDef } from './registry'
-import { parseSchedulerConfig, shouldRunTick } from './worker-config'
+import { parseDeliveryEnabled, parseSchedulerConfig, resolveWorkerRole, shouldRunTick } from './worker-config'
 import { workerHealthz } from './worker-healthz'
 
 /** 记录**完整 SQL**（不截断——截断到 20 字符会让前缀断言恒假，等于没断言）。 */
@@ -70,6 +70,46 @@ describe('scheduler 接线契约', () => {
   })
 })
 
+describe('parseDeliveryEnabled（角色拆分，#2504）', () => {
+  it('未设 ⇒ 默认开；"0" ⇒ 关；"1" ⇒ 开', () => {
+    expect(parseDeliveryEnabled({})).toBe(true)
+    expect(parseDeliveryEnabled({ NOTIFY_DELIVERY_ENABLED: '' })).toBe(true)
+    expect(parseDeliveryEnabled({ NOTIFY_DELIVERY_ENABLED: '0' })).toBe(false)
+    expect(parseDeliveryEnabled({ NOTIFY_DELIVERY_ENABLED: '1' })).toBe(true)
+  })
+
+  it('与 SCHEDULER_ENABLED 互相独立（拆机时两边各设一边）', () => {
+    // 数据单元：只跑调度
+    const dataUnit = { SCHEDULER_ENABLED: '1', NOTIFY_DELIVERY_ENABLED: '0' }
+    expect(parseSchedulerConfig(dataUnit).enabled).toBe(true)
+    expect(parseDeliveryEnabled(dataUnit)).toBe(false)
+    // 应用单元：只跑投递
+    const appUnit = { SCHEDULER_ENABLED: '0', NOTIFY_DELIVERY_ENABLED: '1' }
+    expect(parseSchedulerConfig(appUnit).enabled).toBe(false)
+    expect(parseDeliveryEnabled(appUnit)).toBe(true)
+  })
+})
+
+describe('resolveWorkerRole（两个 loop 都关 ⇒ 响亮失败）', () => {
+  it('应用单元（只投递）与数据单元（只调度）都放行', () => {
+    expect(resolveWorkerRole({ once: false, deliveryEnabled: true, schedulerEnabled: false }).ok).toBe(true)
+    expect(resolveWorkerRole({ once: false, deliveryEnabled: false, schedulerEnabled: true }).ok).toBe(true)
+    expect(resolveWorkerRole({ once: false, deliveryEnabled: true, schedulerEnabled: true }).ok).toBe(true)
+  })
+
+  it('两关都 0 ⇒ 拒绝（空转容器不许看起来正常）', () => {
+    const r = resolveWorkerRole({ once: false, deliveryEnabled: false, schedulerEnabled: false })
+    expect(r.ok).toBe(false)
+    expect(r.ok ? '' : r.error).toContain('都被关闭')
+  })
+
+  it('--once 与关投递互斥（--once 只跑投递，静默成功会让运维脚本误判）', () => {
+    const r = resolveWorkerRole({ once: true, deliveryEnabled: false, schedulerEnabled: false })
+    expect(r.ok).toBe(false)
+    expect(r.ok ? '' : r.error).toContain('--once')
+  })
+})
+
 describe('parseSchedulerConfig（env → 行为，可变异验证）', () => {
   it('未设 SCHEDULER_ENABLED ⇒ 默认开；"0" ⇒ 关；"1" ⇒ 开', () => {
     expect(parseSchedulerConfig({}).enabled).toBe(true)
@@ -108,10 +148,11 @@ describe('shouldRunTick（节拍边界）', () => {
 })
 
 describe('workerHealthz 判定表', () => {
-  it('SCHEDULER_ENABLED=0：只取决于投递心跳，调度陈旧不参与', () => {
+  it('SCHEDULER_ENABLED=0（应用单元）：只取决于投递心跳，调度陈旧不参与', () => {
     // 投递新鲜 + 调度（即使报红）⇒ 200：回滚开关不许把 worker 判红。
     const fresh = workerHealthz({
       notifyFresh: true,
+      deliveryEnabled: true,
       schedulerEnabled: false,
       jobHealth: { ok: false, reasons: ['调度心跳陈旧：已 999s 未更新'] },
     })
@@ -119,16 +160,45 @@ describe('workerHealthz 判定表', () => {
     expect(fresh.body).toBe('ok')
 
     // 投递陈旧 ⇒ 503，且原因**只有**投递，不夹带调度。
-    const stale = workerHealthz({ notifyFresh: false, schedulerEnabled: false })
+    const stale = workerHealthz({ notifyFresh: false, deliveryEnabled: true, schedulerEnabled: false })
     expect(stale.status).toBe(503)
     expect(stale.body).toContain('通知投递心跳陈旧')
     expect(stale.body).not.toContain('调度')
   })
 
+  it('NOTIFY_DELIVERY_ENABLED=0（数据单元）：投递心跳缺席不判红，只看调度', () => {
+    // 这是拆机的关键判据：调度专用容器**没有** notify.worker_heartbeat，
+    // 若仍按投递心跳判定，业务调度容器会永久 unhealthy（且 openship 会反复重建它）。
+    const ok = workerHealthz({
+      notifyFresh: false,
+      deliveryEnabled: false,
+      schedulerEnabled: true,
+      jobHealth: { ok: true, reasons: [] },
+    })
+    expect(ok.status).toBe(200)
+    expect(ok.body).toBe('ok')
+
+    // 调度不健康时照样红——忽略投递心跳不等于不看调度。
+    const bad = workerHealthz({
+      notifyFresh: true,
+      deliveryEnabled: false,
+      schedulerEnabled: true,
+      jobHealth: { ok: false, reasons: ['调度心跳陈旧：已 999s 未更新'] },
+    })
+    expect(bad.status).toBe(503)
+    expect(bad.body).toContain('调度心跳')
+  })
+
+  it('两个 loop 都关 ⇒ 503（空转容器不算健康，方向 fail-closed）', () => {
+    const r = workerHealthz({ notifyFresh: true, deliveryEnabled: false, schedulerEnabled: false })
+    expect(r.status).toBe(503)
+    expect(r.body).toContain('都被关闭')
+  })
+
   it('调度心跳缺失 ⇒ 503 且 body 含原因', async () => {
     // 真 jobHealth + 空心跳桩：三判据的 SQL 都回空行，只有心跳一条命中。
     const h = await jobHealth({ query: async () => ({ rows: [] }) } as never, new Date())
-    const r = workerHealthz({ notifyFresh: true, schedulerEnabled: true, jobHealth: h })
+    const r = workerHealthz({ notifyFresh: true, deliveryEnabled: true, schedulerEnabled: true, jobHealth: h })
     expect(r.status).toBe(503)
     expect(r.body).toContain('调度心跳')
   })
@@ -136,6 +206,7 @@ describe('workerHealthz 判定表', () => {
   it('投递与调度都新鲜 ⇒ 200', () => {
     const r = workerHealthz({
       notifyFresh: true,
+      deliveryEnabled: true,
       schedulerEnabled: true,
       jobHealth: { ok: true, reasons: [] },
     })
@@ -144,7 +215,9 @@ describe('workerHealthz 判定表', () => {
   })
 
   it('开了调度却没给 jobHealth ⇒ fail-closed 503（健康面不可观测不假绿）', () => {
-    const r = workerHealthz({ notifyFresh: true, schedulerEnabled: true, jobHealth: null })
+    const r = workerHealthz({
+      notifyFresh: true, deliveryEnabled: true, schedulerEnabled: true, jobHealth: null,
+    })
     expect(r.status).toBe(503)
     expect(r.body).toContain('调度健康未求值')
   })

@@ -159,6 +159,22 @@ P1+P4b 的切流**已全部完成**（2026-11-15）；新增 job 仍按上表四
 
 ## 6. 回滚
 
+**先看调度跑在哪（2026-11-19 角色拆分，#2504）**：调度 loop 已从应用单元的 `notify-worker`
+搬进**数据单元的 `scheduler` 服务**（`deploy/data-compose.yml`），因为应用单元每次发版都重建
+容器、把运行中的采集/物化子进程连坐收掉（3 天 40 次部署、13 次 dbt 作业被杀）。两个开关各自
+独立，按「`'0'` 才关」解析：
+
+| 谁 | `SCHEDULER_ENABLED` | `NOTIFY_DELIVERY_ENABLED` |
+|---|---|---|
+| 应用单元 `notify-worker` | `0`（默认） | `1` |
+| 数据单元 `scheduler` | `1` | `0`（默认） |
+
+- **关调度（常态化保全）**：改**数据单元 scheduler 服务**的 `SCHEDULER_ENABLED=0`，等它重启。
+  应用单元那侧本来就是 0，不用动。
+- **回退到单进程形态**（数据单元不可用时的应急）：数据单元 scheduler 置 `SCHEDULER_ENABLED=0`
+  **且**应用单元 notify-worker 置 `SCHEDULER_ENABLED=1`；顺序先关后开，别让两边同时 claim。
+- 两个都 0 的容器**启动即退出**（空转不算健康），这是配错的信号，不是可用状态。
+
 - **一键停调度 loop**：`SCHEDULER_ENABLED=0`。只停 `platform.scheduler`，**不影响通知投递 loop**；改 env 后需重启/重部署 worker 才生效。
   ⚠️ 它**不清** `job_schedule.enabled` ⇒ 只设该开关时第二看护仍判 STALE（有意）。
   **完整回滚 = 该开关 + DB 排班置 `enabled=false`**（或走下面的反向切流）。

@@ -33,6 +33,53 @@ function positiveInt(raw: string | undefined, fallback: number, label: string): 
   return n
 }
 
+/**
+ * 投递 loop 开关（角色拆分，#2504）：`NOTIFY_DELIVERY_ENABLED='0'` 才关，其余默认开。
+ *
+ * 为什么与 `SCHEDULER_ENABLED` 分开：两者必须能**各自独立**设置——调度搬进数据单元后，
+ * 应用单元的进程要 `SCHEDULER_ENABLED=0`（投递照跑），数据单元的进程要
+ * `NOTIFY_DELIVERY_ENABLED=0`（调度照跑）。合成一个开关就表达不出这两台机器。
+ *
+ * ⚠️ 变异靶点：改成恒 true ⇒ `worker-wiring.test.ts` 的「'0' ⇒ 关」用例必须失败。
+ */
+export function parseDeliveryEnabled(env: Record<string, string | undefined>): boolean {
+  return env.NOTIFY_DELIVERY_ENABLED !== '0'
+}
+
+/**
+ * 角色装配闸门（#2504）：两个 loop 都关（或 `--once` 与「关投递」同时出现）时，
+ * 进程**响亮失败**，而不是起来空转。
+ *
+ * 为什么是纯函数：`scripts/notify-worker.mjs` 的这两条 `process.exit(2)` 埋在脚本里，
+ * 只有真起进程才测得到；抽出来之后 `worker-wiring.test.ts` 能直接钉住文案与判据。
+ * **变异靶点**：去掉任一分支 ⇒ 对应用例必须失败。
+ */
+export interface WorkerRoleInput {
+  /** 是否 `--once`（跑一轮投递即退出）。 */
+  once: boolean
+  /** `NOTIFY_DELIVERY_ENABLED !== '0'`。 */
+  deliveryEnabled: boolean
+  /** 调度 loop 是否真的会跑（已叠加 `--once` 的抑制，即 `!once && SCHEDULER_ENABLED`）。 */
+  schedulerEnabled: boolean
+}
+
+export type WorkerRoleDecision = { ok: true } | { ok: false; error: string }
+
+export function resolveWorkerRole(input: WorkerRoleInput): WorkerRoleDecision {
+  // `--once` 的语义就是「跑一轮**投递**就退出」；投递关掉时它无事可做 ⇒ 不能静默成功
+  // （运维脚本按退出码判绿）。
+  if (input.once && !input.deliveryEnabled) {
+    return { ok: false, error: '--once 与 NOTIFY_DELIVERY_ENABLED=0 互斥（--once 只跑投递）' }
+  }
+  if (!input.deliveryEnabled && !input.schedulerEnabled) {
+    return {
+      ok: false,
+      error: '投递与调度 loop 都被关闭 —— 本进程无事可做（检查 SCHEDULER_ENABLED / NOTIFY_DELIVERY_ENABLED）',
+    }
+  }
+  return { ok: true }
+}
+
 export function parseSchedulerConfig(env: Record<string, string | undefined>): SchedulerConfig {
   return {
     // ⚠️ 变异靶点：这里改成恒 true，`SCHEDULER_ENABLED=0` 的用例必须失败。

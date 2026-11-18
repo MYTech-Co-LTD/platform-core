@@ -87,14 +87,27 @@ if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) 
   // ── 业务调度 loop（Wave 6 P1）：与投递 loop 同进程、独立节拍、独立 try/catch ──
   // 不 await 子进程完成（tick 只起进程）；长任务因此不会饿死投递。
   // SCHEDULER_ENABLED=0 只停调度 loop（不 tick），投递照跑；healthz 也不因调度而红。
+  //
+  // 2026-11-19 起两处生产部署各跑一半（#2504）：调度在数据单元、投递在应用单元，
+  // 同一个入口 + 两个角色开关。上面这条「同进程」描述只在单机未拆缝时成立。
   // `--once` 是「跑一轮投递就退出」的运维入口：**不构造调度 loop**、healthz 也不看调度。
   // 否则首拍会 claim 任务、起子进程 ref 住事件循环 ⇒ 进程不退出，
   // 且 finally 的 pool.end() 早于 finishRun ⇒ job_run 永远停在 running（挡 claim 到 reapStale）。
   const once = process.argv.includes('--once')
-  const { parseSchedulerConfig, shouldRunTick } = await import('../apps/server/src/scheduler/worker-config.ts')
+  const { parseSchedulerConfig, parseDeliveryEnabled, resolveWorkerRole, shouldRunTick } = await import('../apps/server/src/scheduler/worker-config.ts')
   const { workerHealthz } = await import('../apps/server/src/scheduler/worker-healthz.ts')
   const schedCfg = parseSchedulerConfig(process.env)
+  // 角色拆分（#2504）：投递 loop 与调度 loop 分处两个部署单元。
+  //   应用单元（unit A）：`SCHEDULER_ENABLED=0`，只跑投递——随应用发版重建，不再打断采集/物化；
+  //   数据单元（unit B）：`NOTIFY_DELIVERY_ENABLED=0`，只跑调度——不随应用部署重启。
+  // 缺省两个都开，与拆分前的单进程行为逐字相同（老部署不做任何事也不会变）。
+  const deliveryEnabled = parseDeliveryEnabled(process.env)
   const schedulerEnabled = !once && schedCfg.enabled
+  const role = resolveWorkerRole({ once, deliveryEnabled, schedulerEnabled })
+  if (!role.ok) {
+    console.error(`notify-worker: ${role.error}`)
+    process.exit(2)
+  }
   /** @type {null | { tick: () => Promise<import('../apps/server/src/scheduler/loop.ts').TickStats>, inFlight: () => number }} */
   let scheduler = null
   /** @type {null | typeof import('../apps/server/src/scheduler/health.ts').jobHealth} */
@@ -130,7 +143,11 @@ if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) 
     })
     console.log(JSON.stringify({ ts: new Date().toISOString(), scheduler: 'enabled', tickMs: schedCfg.tickMs }))
   } else {
-    console.log(JSON.stringify({ ts: new Date().toISOString(), scheduler: once ? 'skipped(--once)' : 'disabled' }))
+    console.log(JSON.stringify({
+      ts: new Date().toISOString(),
+      scheduler: once ? 'skipped(--once)' : 'disabled',
+      delivery: deliveryEnabled,
+    }))
   }
 
   // 健康端点：镜像的 HEALTHCHECK 打 `127.0.0.1:${PORT:-13000}/healthz`（与 server 同镜像继承），
@@ -153,6 +170,7 @@ if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) 
         : null
       const h = workerHealthz({
         notifyFresh: rows.length > 0,
+        deliveryEnabled,
         schedulerEnabled,
         jobHealth: schedulerHealth,
       })
@@ -236,13 +254,17 @@ if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) 
           console.error('scheduler tick 失败:', e instanceof Error ? e.message : e)
         }
       }
-      try {
-        const s = await runOnceCli(pool, getEventDecl, process.env, resolveScopeHolderNames, deptMembers)
-        const staleQueued = await drainStaleAlerts()
-        console.log(JSON.stringify({ ts: new Date().toISOString(), ...s, staleQueued }))
-      } catch (e) {
-        console.error('notify-worker 本轮失败:', e instanceof Error ? e.message : e)
-        if (once) process.exitCode = 1
+      // 投递 loop（outbox 轮询 + 集成 STALE 入队）：调度专用容器整段跳过——
+      // 投递由应用单元的 worker 独占，两个进程同时轮询只会放大租约竞争。
+      if (deliveryEnabled) {
+        try {
+          const s = await runOnceCli(pool, getEventDecl, process.env, resolveScopeHolderNames, deptMembers)
+          const staleQueued = await drainStaleAlerts()
+          console.log(JSON.stringify({ ts: new Date().toISOString(), ...s, staleQueued }))
+        } catch (e) {
+          console.error('notify-worker 本轮投递失败:', e instanceof Error ? e.message : e)
+          if (once) process.exitCode = 1
+        }
       }
       if (once) break
       await new Promise((r) => setTimeout(r, 2000))

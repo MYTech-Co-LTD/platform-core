@@ -123,14 +123,21 @@ services:
       DATABASE_URL: postgres://platform:platform@postgres:5432/platform
       # worker 的只读健康端点端口：与镜像 HEALTHCHECK 的 ${PORT:-13000} 对齐
       WORKER_HEALTH_PORT: '13000'
-      # 业务调度 loop（Wave 6 P1）：与投递 loop 同进程、独立节拍。
-      # ENABLED=0 = 只停调度（投递照跑）——切流回滚开关；生产默认开。
-      # ⚠️ 用 `${...:-缺省}` 而非硬编码：硬编码会压过 env_file 与运维覆盖，回滚开关失效。
-      # 插值只读「本 compose 文件所在目录的 .env」与 shell 环境（同 HOST_PORT 的说明），
-      # 不读 `../.env`；因此回滚写法是 `SCHEDULER_ENABLED=0 docker compose ...` 或写 deploy/.env。
-      SCHEDULER_ENABLED: '${SCHEDULER_ENABLED:-1}'
+      # 业务调度 loop 的归属（#2504）：**调度已搬进数据单元**（deploy/data-compose.yml 的
+      # `scheduler` 服务），本服务只跑通知投递。理由：应用单元每次发版都重建容器，运行中的
+      # 采集/物化子进程会被连坐收掉（3 天 40 次部署、13 次 dbt 作业被杀）。
+      # 单机未拆缝（没有数据单元）的部署把它置 '1' 即回到拆分前行为（两个 loop 同进程）。
+      # ⚠️ 两边不要同时开调度（同一排班会被两个进程各 claim 一次）。
+      #
+      # 注意 `SCHEDULER_TICK_MS` / `SCHEDULER_MAX_CONCURRENCY` 仍留在这里：回滚到单进程形态时
+      # 它们才生效；生产值以数据单元的 scheduler 服务行为准（改一边不会同步另一边）。
+      # 用 `${...:-缺省}` 而非硬编码：硬编码会压过 env_file 与运维覆盖，回滚开关失效。
+      SCHEDULER_ENABLED: '${SCHEDULER_ENABLED:-0}'
       SCHEDULER_TICK_MS: '${SCHEDULER_TICK_MS:-30000}'
       SCHEDULER_MAX_CONCURRENCY: '${SCHEDULER_MAX_CONCURRENCY:-2}'
+      # 投递 loop 开关：本服务就是投递侧，默认开；'0' 只用于「投递临时停但仍留在进程里」的
+      # 排查场景（两个都 0 时进程启动即退出，见 apps/server/src/scheduler/worker-healthz.ts）。
+      NOTIFY_DELIVERY_ENABLED: '${NOTIFY_DELIVERY_ENABLED:-1}'
       # Wave 8 P1：dbt 在容器内执行（materialize.sh 容器模式）；ZOS 三项是非密钥配置，
       # 与山海 console 容器同值。控件容器没有 docker sock ⇒ 宿主模式的 docker inspect/exec 不可用。
       MATERIALIZE_MODE: '${MATERIALIZE_MODE:-container}'
