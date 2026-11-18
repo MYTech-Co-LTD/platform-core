@@ -142,6 +142,12 @@ while IFS="$(printf '\t')" read -r rel dst; do
   want=$(_host_sha "${src}")
   got=$(_vol_sha "${dst}")
   n=$((n + 1))
+  # 排班文件被引擎回写（last_run_*/next_run_at）⇒ 哈希永远对不上；--check 时跳过哈希，
+  # 改在下方按「定义面」（id/enabled/cron/timezone）语义比对（#2467）。
+  if [ "${MODE}" = "--check" ] && [ "${dst}" = "/workspace/schedules.json" ]; then
+    echo "SKIP  ${dst}  （引擎回写运行态；按语义比对）"
+    continue
+  fi
   if [ "${MODE}" = "--check" ]; then
     if [ "${want}" = "${got}" ]; then
       echo "OK    ${dst}"
@@ -161,6 +167,28 @@ while IFS="$(printf '\t')" read -r rel dst; do
 done <<EOF
 $(_pairs)
 EOF
+
+# ── 排班语义比对（#2467）：运行态文件被引擎回写，不能比哈希；只比定义面 ─────────────
+# 判据 = 仓内种子 `schedules/<账套>.json` vs 容器 `/workspace/schedules.json`：
+#   id 集合、每条 enabled / kind.expr(cron) / timezone；`last_run_*`/`next_run_at` 不参与。
+# 历史坑：生成器按实测耗时重排 cron 后没有重 seed ⇒ 运行态比种子早/晚几分钟，
+# `--check all` 看不见（旧实现只比 pipelines 哈希），只有真跑起来才暴露。
+if [ "${MODE}" = "--check" ] && [ "${ONLY}" = "all" ]; then
+  _seed_sched="${REPO}/deploy/duckle/console/schedules/${BOOK}.json"
+  _live_sched="${TMPDIR:-/tmp}/.live-schedules-$$"
+  if [ -f "${_seed_sched}" ] \
+     && docker exec "${CONSOLE_CT}" cat /workspace/schedules.json >"${_live_sched}" 2>/dev/null \
+     && [ -s "${_live_sched}" ]; then
+    if python3 "${REPO}/scripts/lemeng/compare-console-schedules.py" "${_seed_sched}" "${_live_sched}"; then
+      echo "OK    /workspace/schedules.json（语义）"
+    else
+      bad=$((bad + 1))
+    fi
+  else
+    bad=$((bad + 1)); echo "DRIFT /workspace/schedules.json 运行态缺失/不可读"
+  fi
+  rm -f "${_live_sched}"
+fi
 
 # 一件都没匹配上 = 这份 lock 里没有 console 条目（revision 不对？）⇒ **判红**，
 # 而不是静默报 `SEED_OK files=0`（"零覆盖的门禁会空转通过"是本仓点过名的坑）。
