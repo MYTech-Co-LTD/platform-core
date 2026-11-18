@@ -1,4 +1,4 @@
-sha256-of-rest 7c307dd295c517495ded13e3feab534333c936b6d00dd8e1f3b5e9dd8d86fdb7
+sha256-of-rest 020ce846d2db7e9f63854557fd046a7b304b39b2b056109770d503f4fe1457ab
 57c67f58b38c8450ddcedf477607e722b51998873b12f84c15ffadc7fe5e81d3 contracts/README.md ${REPO}/contracts/README.md 0644
 fcc8189e1012d5fbb8e2505025bed637dd01c7b4465ab86125d3eaa7f330eff3 contracts/common/_schema.schema.json ${REPO}/contracts/common/_schema.schema.json 0644
 1730119518c3371f3c2ff3492f4c15cd731688047c6d40805ec4d2c65892f3ff contracts/common/_template.contract.json ${REPO}/contracts/common/_template.contract.json 0644
@@ -427,6 +427,7 @@ a477c6828f557fc13d0860edd1240d0b6446d19380270536881ac676cf046814 scripts/duckle/
 af1d18e4da647b63451fca1ff6bdf5691650ac8525d9e14af0902aa0245c2a87 scripts/lemeng/backfill-history.py ${REPO}/scripts/lemeng/backfill-history.py 0644
 bbcc8969b337591f9431a1a06f0d603deab72d59364ce21722bb3139e7a31100 scripts/lemeng/backfill-retail-order-line.sh /opt/lemeng-backfill.sh 0755
 7f52cab56a1501c425f5537641fe53a345ebe4bdd9d458da8e58949f9b8c50c6 scripts/lemeng/check-zero-row-days.py /opt/lemeng-check-zero-row-days.py 0755
+08480101d431e8429860e10ed21200817c864dc407f9847e8f30c6f805a00d3e scripts/lemeng/compare-console-schedules.py ${REPO}/scripts/lemeng/compare-console-schedules.py 0644
 0ca6c7eed72d0dd69c5fb73cab28dccb36da2d1f6cfba26e5a48dbe450914fac scripts/lemeng/console-gc.sh /opt/lemeng-console-gc.sh 0755
 1ee2533aa08dbf23be165d3e722b6625e423bc8fe7b0697dbc74c145004d0aa9 scripts/lemeng/dbt-failed-nodes.py ${REPO}/scripts/lemeng/dbt-failed-nodes.py 0755
 ffeddbeba2f0b7df748a60e737009cd45689320dad2ea1233230c20eb541acba scripts/lemeng/delete-supplanted-hour-partitions.py ${REPO}/scripts/lemeng/delete-supplanted-hour-partitions.py 0644
@@ -443,6 +444,6 @@ b4449dcb10a616e83094cb9fc6af0765da9400b1be72500b87a89b18378a1900 scripts/lemeng/
 a3fedb93e109d82caee9783102a0081a30af4aa5b2f28147758790b3286a76aa scripts/lemeng/recon-preagg.sh /opt/lemeng-recon-preagg.sh 0755
 2a02cf6af79397b29a455f4a363d00be9453b6967df675fc8ecaaf9c9309f7ab scripts/lemeng/recon-restate.sh /opt/lemeng-recon-restate.sh 0755
 185b13c328e83a04651799684a38be905e9cc217d78ed9079fdf3aa2918299e3 scripts/lemeng/seal-lake.sh /opt/lemeng-seal.sh 0755
-e030b1ea2ce35efc8fcf60322938e0b8a8af1258ec08a7434fa255e49d7cd21e scripts/lemeng/seed-console.sh /opt/lemeng-seed-console.sh 0755
+10b7dda7bcaf59e505918f0b3e3b37bf83bb7c4bad6d546ecd40c83864834d4a scripts/lemeng/seed-console.sh /opt/lemeng-seed-console.sh 0755
 7d894063e4f53466629ff7ec0a18cd5642dcf5307fad85946272b18c04e66cc2 scripts/lemeng/wire-warehouse.sh /opt/lemeng-wire-warehouse.sh 0755
 8fbc61cf7fb454c9fb691c808fdb08e22905f4d9fda64864dc6c0a0797fc7ea9 scripts/narrative-health-probe.py /opt/lemeng-narrative-health.py 0755
