@@ -405,6 +405,22 @@ psql "$DATABASE_URL" -c "select platform.prune_audit();"
    进程都起不来（模块是同一进程内装载的，没有单模块降级形态）。
    `app.all('/x', h)` / `use(路径, 终结 handler)` 这类多方法端点同理：要么逐 method 声明，
    要么改成显式 method 路由（详见 `docs/module-protocol.md`）。
+6. **`COMPOSE_REVIEW_REQUIRED`（409）会挡住每一条「改了 compose」的部署，含 CI 自动部署**
+   （2026-11-19 实测，#2505 合并后 mytech 的 CI deploy job 直接红在这一条）：
+   compose 源相对项目里记录的基线一变，`POST /deployments` 就回 409 + `composeDiff`，要求人工
+   确认。**MCP 工具 schema 里没有这个字段**，但**服务端接受 body 里的
+   `acceptComposeChanges: true`**（MCP 会把未声明的 body 字段透传）；CLI 对应
+   `openship deploy --accept-compose-changes`。
+   ```jsonc
+   { "projectId": "proj_xxx", "branch": "main", "acceptComposeChanges": true }
+   ```
+   - 逐服务的漂移（`server` 的宿主挂载之类）先用 **`drift_keep`**（保服务行）/ **`drift_accept`**
+     （认 compose 值）收口，否则 diff 里会一直带着它们；**`drift_accept` 会用 compose 值覆盖服务行**，
+     有手工挂载/覆盖 env 的服务必须 `drift_keep`。
+   - 接受是**按本次部署的 compose 内容**记账的（`resolveComposeReviewedRevision` 用源码算
+     revision），所以每改一次 compose 又要重新接受一次；CI 里没这一步 ⇒ 每次改 compose 的合并
+     都会让自动部署红一次，需要人工触发一次带接受的部署。
+   - `pending_actions` **不报**这一条（实测返回空），别指望它给 `resolveWith`。
 
 ## 相关
 
