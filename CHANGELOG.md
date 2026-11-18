@@ -11,6 +11,10 @@
 
 ## [Unreleased]
 
+## [0.329.0](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.328.0...v0.329.0) - 2026-11-18
+- 【新增】deploy: 数据单元两个 console 自带 build（1.0 不拉本机自建镜像） ([#2510](https://github.com/MYTech-Co-LTD/platform-core/pull/2510), [9afd1cf](https://github.com/MYTech-Co-LTD/platform-core/commit/9afd1cfe612d2587ec8647d7e735d2ec8cd632ea))
+
+
 ## [0.328.0](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.327.3...v0.328.0) - 2026-11-18
 - 【新增】deploy: 业务调度 loop 拆到数据单元（scheduler 服务） ([#2505](https://github.com/MYTech-Co-LTD/platform-core/pull/2505), [66086b0](https://github.com/MYTech-Co-LTD/platform-core/commit/66086b08ec89407c7af258b62e26615c045563b0))
 - 【新增】deploy: B7 增加跨机拆分例外——数据单元/平台库可按私网 IP 绑定 ([#2502](https://github.com/MYTech-Co-LTD/platform-core/pull/2502), [2cffc09](https://github.com/MYTech-Co-LTD/platform-core/commit/2cffc0920359d41a7f28ffab8594d2d8ed875bc8))
