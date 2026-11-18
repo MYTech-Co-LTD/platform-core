@@ -13,6 +13,7 @@ with a as (
            sum(line_count)::bigint   as line_count
     from {{ ref('fct_outbound_region') }}
     where bizday >= date '{{ window_start_date() }}'
+      and bizday < {{ audit_until_date() }}
     group by 1, 2
 ),
 b as (
@@ -22,6 +23,7 @@ b as (
            sum(line_count)::bigint   as line_count
     from {{ ref('fct_hq_outbound') }}
     where bizday >= date '{{ window_start_date() }}'
+      and bizday < {{ audit_until_date() }}
     group by 1, 2
 )
 select coalesce(a.system_book, b.system_book) as system_book,

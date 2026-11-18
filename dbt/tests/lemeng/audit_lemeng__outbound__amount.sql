@@ -35,6 +35,7 @@ mart as (
     select system_book, bizday, sum(r_net)::numeric(20,2) as v
     from {{ ref('fct_outbound_region') }}
     where channel_type in ('自有门店配送','外部批发')
+      and bizday < {{ audit_until_date() }}
     group by 1, 2
 )
 select coalesce(m.system_book, r.system_book) as system_book,

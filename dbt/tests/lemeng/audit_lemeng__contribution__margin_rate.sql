@@ -54,6 +54,7 @@ expense as (
            (sum(case when r['direction']::varchar = '应付' then coalesce(r['amount']::numeric, 0) else 0 end)
           - sum(case when r['direction']::varchar = '应收' then coalesce(r['amount']::numeric, 0) else 0 end))::numeric(20, 2) as e_net
     from read_parquet('s3://{{ var("zos_bucket") }}/{{ var("lemeng_branch_expense_prefix") }}/*/bizday=**/*.parquet') r
+    where r['bizday']::date < {{ audit_until_date() }}
     group by 1, 2
 ),
 recheck as (
@@ -76,6 +77,7 @@ materialized as (
            sum(r_net)::numeric(20, 2) as r_net,
            sum(n_net)::numeric(20, 2) as n_net
     from {{ ref('fct_contribution') }}
+    where bizday < {{ audit_until_date() }}
     group by 1, 2
 )
 select

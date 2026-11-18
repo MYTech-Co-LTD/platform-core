@@ -11,6 +11,7 @@ with base as (
     select f.system_book, f.bizday, f.domain, f.client_fid, f.region_id, f.r_net
     from {{ ref('fct_hq_outbound') }} f
     where f.bizday >= date '{{ window_start_date() }}'
+      and f.bizday < {{ audit_until_date() }}
 ),
 raw as (
     select
@@ -60,6 +61,7 @@ mart as (
            sum(r_net)::numeric(20,2) as r_net
     from {{ ref('fct_outbound_region') }}
     where bizday >= date '{{ window_start_date() }}'
+      and bizday < {{ audit_until_date() }}
     group by 1, 2, 3, 4
 )
 select coalesce(m.system_book, i.system_book) as system_book,

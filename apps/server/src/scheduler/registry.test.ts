@@ -244,6 +244,41 @@ describe('registry · dbt 对账分族（full / window，#2428）', () => {
     }
   })
 
+  it('★ 上界必须落在**每一个**带 bizday 的数据源 CTE 上（只写一处 = 单边裁掉 T-1/T-2 ⇒ 结构性假红）', () => {
+    // 2026-11-18 run 7224 实测：`audit_lemeng__contribution__margin_rate` 只给湖侧 CTE 加了上界，
+    // expense CTE 与 materialized CTE 没加 ⇒ 复算侧少了 T-1/T-2、物化侧还有 ⇒ 479 行「差异」。
+    // 文件级「包含 audit_until_date」拦不住这种半截改法，所以按 **CTE 逐块**判：
+    //   · 块里读湖（read_parquet / window_read_parquet）或读 fct mart（ref('fct…））
+    //   · 且块里有 bizday（维度快照 CTE 如 branch_latest / item_latest 没 bizday，不在此列）
+    // ⇒ 块内必须出现 audit_until_date。
+    const dir = repoPath('dbt/tests/lemeng')
+    const offenders: string[] = []
+    for (const file of readdirSync(dir)) {
+      if (!file.startsWith('audit_') || !file.endsWith('.sql')) continue
+      const lines = readFileSync(`${dir}/${file}`, 'utf8').split('\n')
+      // CTE 块：`name as (` 顶格开头，`),` 顶格结尾（仓内审计文件一致采用此排版）。
+      const blocks: Array<{ name: string; body: string }> = []
+      let start = -1
+      let name = ''
+      lines.forEach((line, i) => {
+        if (/^[a-z0-9_]+ as \($/.test(line)) {
+          if (start >= 0) blocks.push({ name, body: lines.slice(start, i).join('\n') })
+          start = i
+          name = line.replace(/ as \($/, '')
+        }
+      })
+      // 收尾块 = 最后一个 CTE 到文件末（含最终 select），否则结尾段漏判。
+      if (start >= 0) blocks.push({ name, body: lines.slice(start).join('\n') })
+      for (const b of blocks) {
+        const reads = b.body.includes('read_parquet') || b.body.includes('window_read_parquet')
+          || /ref\('fct/.test(b.body)
+        if (!reads || !/\bbizday\b/.test(b.body)) continue
+        if (!b.body.includes('audit_until_date')) offenders.push(`${file} :: ${b.name}`)
+      }
+    }
+    expect(offenders).toEqual([])
+  })
+
   // 窗口感知 = SQL 自己读 `window_read_parquet`（湖侧）或使用 `window_start_date()`（两侧下界）；
   // 只比 mart、日期固定且不读湖的 canary 不参与窗口，登记理由后放行。
   const MART_ONLY_OK = new Map([
