@@ -49,7 +49,7 @@ with src_pq_cold as (
       and r['order_transaction_type'] = 'SALE_ORDER'
       -- 只比已闭窗营业日：今天的分区被 tick 重写 ⇒ 与物化建表互撞 ETag 竞态而报 ERROR
       -- （实测 2026-10-06 run `jrun_dtyVWZnnFaQ_pCCN` attempt 1）。两侧都滤，才是同量。
-      and r['bizday']::date < CAST(now() AT TIME ZONE 'Asia/Shanghai' AS DATE)
+      and r['bizday']::date < {{ audit_until_date() }}
 ),
 src_pq_hot as (
     -- 热腿：未封版日的小时文件——排除已封版日（同 stg 冷热合流，#984）
@@ -63,7 +63,7 @@ src_pq_hot as (
     ) r
     where r['state'] = 'FINISHED'
       and r['order_transaction_type'] = 'SALE_ORDER'
-      and r['bizday']::date < CAST(now() AT TIME ZONE 'Asia/Shanghai' AS DATE)
+      and r['bizday']::date < {{ audit_until_date() }}
       and not exists (select 1 from data.lemeng_daily_sealed m where cast(m.system_book as varchar) = cast(r['system_book'] as varchar) and cast(m.bizday as date) = cast(r['bizday'] as date))
 ),
 src_pq as (
@@ -80,7 +80,7 @@ src_stg as (
     from {{ ref('stg_lemeng_retail_order_line') }}
     where state = 'FINISHED'
       and order_transaction_type = 'SALE_ORDER'
-      and bizday < CAST(now() AT TIME ZONE 'Asia/Shanghai' AS DATE)
+      and bizday < {{ audit_until_date() }}
 ),
 bad_pq as (
     select
@@ -156,7 +156,7 @@ from (
     ) r
     where r['order_transaction_type'] like '%RETURN%'
       and r['state'] = 'FINISHED'
-      and r['bizday']::date < CAST(now() AT TIME ZONE 'Asia/Shanghai' AS DATE)
+      and r['bizday']::date < {{ audit_until_date() }}
 
     union all
 
@@ -171,7 +171,7 @@ from (
     ) r
     where r['order_transaction_type'] like '%RETURN%'
       and r['state'] = 'FINISHED'
-      and r['bizday']::date < CAST(now() AT TIME ZONE 'Asia/Shanghai' AS DATE)
+      and r['bizday']::date < {{ audit_until_date() }}
       and not exists (select 1 from data.lemeng_daily_sealed m where cast(m.system_book as varchar) = cast(r['system_book'] as varchar) and cast(m.bizday as date) = cast(r['bizday'] as date))
 ) ret
 where sale_money is null or share_discount is null
@@ -203,7 +203,7 @@ from (
     from {{ ref('stg_lemeng_retail_order_line') }}
     where order_transaction_type like '%RETURN%'
       and state = 'FINISHED'
-      and bizday < CAST(now() AT TIME ZONE 'Asia/Shanghai' AS DATE)
+      and bizday < {{ audit_until_date() }}
 ) ret
 where sale_money is null or share_discount is null
 group by 1, 2

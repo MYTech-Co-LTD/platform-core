@@ -13,6 +13,7 @@ with src as (
         r['money_total']::numeric(14, 2)                as money_total
     from {{ window_read_parquet('s3://' ~ var('zos_bucket') ~ '/' ~ var('lemeng_item_purchase_prefix') ~ '/*/bizday=**/*.parquet') }} r
     where r['bizday']::date >= date '{{ window_start_date() }}'
+      and r['bizday']::date < {{ audit_until_date() }}
 ),
 recheck as (
     select
@@ -29,6 +30,7 @@ materialized as (
         sum(purchase_item_return_money) / nullif(sum(money_total), 0) as return_rate
     from {{ ref('fct_purchase') }}
     where bizday >= date '{{ window_start_date() }}'
+      and bizday < {{ audit_until_date() }}
     group by 1, 2
 )
 select

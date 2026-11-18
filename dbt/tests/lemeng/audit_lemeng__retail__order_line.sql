@@ -46,7 +46,7 @@ with recheck_raw as (
     --    今天未定稿不判；两侧都滤，才是同量对比。
     -- ⚠️ 行域也收 state='FINISHED'（与指标同域，见头注 Phase 2 段）——否则 REPAID/CANCELED
     --    行会让「湖侧多出来的行」看起来像 staging 丢行（假红），也不是受测面。
-    where r['bizday']::date < CAST(now() AT TIME ZONE 'Asia/Shanghai' AS DATE)
+    where r['bizday']::date < {{ audit_until_date() }}
       and r['state']::varchar = 'FINISHED'
 
     union all
@@ -59,7 +59,7 @@ with recheck_raw as (
     from read_parquet(
         's3://{{ var("zos_bucket") }}/{{ var("lemeng_retail_order_line_prefix") }}/system_book=*/bizday=*/hour=*/all.parquet'
     ) r
-    where r['bizday']::date < CAST(now() AT TIME ZONE 'Asia/Shanghai' AS DATE)
+    where r['bizday']::date < {{ audit_until_date() }}
       and r['state']::varchar = 'FINISHED'
       and not exists (select 1 from data.lemeng_daily_sealed m where cast(m.system_book as varchar) = cast(r['system_book'] as varchar) and cast(m.bizday as date) = cast(r['bizday'] as date))
 ),
@@ -79,7 +79,7 @@ materialized as (
         count(*)::bigint              as line_count,
         sum(sale_money)::numeric(20,2) as sale_money_sum
     from {{ ref('stg_lemeng_retail_order_line') }}
-    where bizday < CAST(now() AT TIME ZONE 'Asia/Shanghai' AS DATE)
+    where bizday < {{ audit_until_date() }}
       and state = 'FINISHED'
     group by 1, 2
 )

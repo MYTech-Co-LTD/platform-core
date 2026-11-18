@@ -21,7 +21,7 @@ with transfer_lines as (
     where r['state_code']::int = 3
       and r['out_branch_num']::int = 99
       and r['branch_num']::int <> r['out_branch_num']::int
-      and r['bizday']::date < CAST(now() AT TIME ZONE 'Asia/Shanghai' AS DATE)
+      and r['bizday']::date < {{ audit_until_date() }}
       and r['bizday']::date >= date '{{ window_start_date() }}'
 ),
 transfer_dom as (
@@ -42,7 +42,7 @@ wholesale_orders as (
     from {{ window_read_parquet(
         's3://' ~ var('zos_bucket') ~ '/' ~ var('lemeng_wholesale_out_prefix') ~ '/*/bizday=**/*.parquet'
     ) }} r
-    where r['bizday']::date < CAST(now() AT TIME ZONE 'Asia/Shanghai' AS DATE)
+    where r['bizday']::date < {{ audit_until_date() }}
     and r['bizday']::date >= date '{{ window_start_date() }}'
     group by 1, 2, 3, 4
 ),
@@ -54,7 +54,7 @@ wholesale_lines as (
     from {{ window_read_parquet(
         's3://' ~ var('zos_bucket') ~ '/' ~ var('lemeng_wholesale_out_prefix') ~ '/*/bizday=**/*.parquet'
     ) }} r
-    where r['bizday']::date < CAST(now() AT TIME ZONE 'Asia/Shanghai' AS DATE)
+    where r['bizday']::date < {{ audit_until_date() }}
     and r['bizday']::date >= date '{{ window_start_date() }}'
     group by 1, 2, 3
 ),
@@ -81,7 +81,7 @@ return_orders as (
     from {{ window_read_parquet(
         's3://' ~ var('zos_bucket') ~ '/' ~ var('lemeng_wholesale_return_prefix') ~ '/*/bizday=**/*.parquet'
     ) }} r
-    where r['bizday']::date < CAST(now() AT TIME ZONE 'Asia/Shanghai' AS DATE)
+    where r['bizday']::date < {{ audit_until_date() }}
     and r['bizday']::date >= date '{{ window_start_date() }}'
     group by 1, 2, 3, 4
 ),
@@ -138,7 +138,7 @@ materialized as (
            sum(order_count)::bigint    as order_count,
            sum(line_count)::bigint     as line_count
     from {{ ref('fct_hq_outbound') }}
-    where bizday < CAST(now() AT TIME ZONE 'Asia/Shanghai' AS DATE)
+    where bizday < {{ audit_until_date() }}
       and bizday >= date '{{ window_start_date() }}'
     group by 1, 2, 3, 4, 5
 )

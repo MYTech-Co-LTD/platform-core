@@ -232,6 +232,18 @@ describe('registry · dbt 对账分族（full / window，#2428）', () => {
     }
   })
 
+  it('★ 读湖的审计必须带 audit_until_date 上界（只比 T-3+，不跟每小时重采赛跑）', () => {
+    // 根因（2026-11-18）：T-1 被 15 个 L0、T-2 被库存快照每小时重采；审计的 mart 是「建表那刻」的湖、
+    // 复算侧是「读那刻」的湖 ⇒ 比 T-1/T-2 = 拿旧 mart 比新湖（run 6609/6628 实测）。上界宏 = 上海今天−2。
+    const dir = repoPath('dbt/tests/lemeng')
+    for (const file of readdirSync(dir)) {
+      if (!file.startsWith('audit_') || !file.endsWith('.sql')) continue
+      const text = readFileSync(`${dir}/${file}`, 'utf8')
+      if (!text.includes('read_parquet')) continue // 只比 mart 的审计不在此列（两侧同一次重建）
+      expect(text.includes('audit_until_date'), `${file} 读湖但没有 audit_until_date 上界`).toBe(true)
+    }
+  })
+
   // 窗口感知 = SQL 自己读 `window_read_parquet`（湖侧）或使用 `window_start_date()`（两侧下界）；
   // 只比 mart、日期固定且不读湖的 canary 不参与窗口，登记理由后放行。
   const MART_ONLY_OK = new Map([

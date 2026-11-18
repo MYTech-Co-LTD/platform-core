@@ -83,7 +83,7 @@ with base_cold as (
       --    与「物化建表 → 本测试读湖」之间构成 ETag 竞态 ⇒ 读到中途被改的文件直接 **ERROR**
       --    （实测 2026-10-06 run `jrun_dtyVWZnnFaQ_pCCN` attempt 1 就红在这，报 ETag 变化）。
       --    今天未定稿、按定稿线本就不判；两侧**都**滤掉今天，才是同量对比。
-      and r['bizday']::date < CAST(now() AT TIME ZONE 'Asia/Shanghai' AS DATE)
+      and r['bizday']::date < {{ audit_until_date() }}
       and r['bizday']::date >= date '{{ window_start_date() }}'
 ),
 base_hot as (
@@ -109,7 +109,7 @@ base_hot as (
       --    与「物化建表 → 本测试读湖」之间构成 ETag 竞态 ⇒ 读到中途被改的文件直接 **ERROR**
       --    （实测 2026-10-06 run `jrun_dtyVWZnnFaQ_pCCN` attempt 1 就红在这，报 ETag 变化）。
       --    今天未定稿、按定稿线本就不判；两侧**都**滤掉今天，才是同量对比。
-      and r['bizday']::date < CAST(now() AT TIME ZONE 'Asia/Shanghai' AS DATE)
+      and r['bizday']::date < {{ audit_until_date() }}
       and r['bizday']::date >= date '{{ window_start_date() }}'
       and not exists (select 1 from data.lemeng_daily_sealed m where cast(m.system_book as varchar) = cast(r['system_book'] as varchar) and cast(m.bizday as date) = cast(r['bizday'] as date))
 ),
@@ -137,7 +137,7 @@ ret_base_cold as (
     from {{ window_read_parquet('s3://' ~ var('zos_bucket') ~ '/' ~ var('lemeng_retail_order_line_prefix') ~ '/_DAY_DATA/system_book=*/bizday=*/all.parquet') }} r
     where r['order_transaction_type'] like '%RETURN%'
       and r['state'] = 'FINISHED'
-      and r['bizday']::date < CAST(now() AT TIME ZONE 'Asia/Shanghai' AS DATE)
+      and r['bizday']::date < {{ audit_until_date() }}
       and r['bizday']::date >= date '{{ window_start_date() }}'
 ),
 ret_base_hot as (
@@ -159,7 +159,7 @@ ret_base_hot as (
     from {{ window_read_parquet('s3://' ~ var('zos_bucket') ~ '/' ~ var('lemeng_retail_order_line_prefix') ~ '/system_book=*/bizday=*/hour=*/all.parquet') }} r
     where r['order_transaction_type'] like '%RETURN%'
       and r['state'] = 'FINISHED'
-      and r['bizday']::date < CAST(now() AT TIME ZONE 'Asia/Shanghai' AS DATE)
+      and r['bizday']::date < {{ audit_until_date() }}
       and r['bizday']::date >= date '{{ window_start_date() }}'
       and not exists (select 1 from data.lemeng_daily_sealed m where cast(m.system_book as varchar) = cast(r['system_book'] as varchar) and cast(m.bizday as date) = cast(r['bizday'] as date))
 ),
@@ -212,7 +212,7 @@ materialized as (
         branch_num,
         net_amount as net_sales
     from {{ ref('fct_retail_sale') }}
-    where bizday < CAST(now() AT TIME ZONE 'Asia/Shanghai' AS DATE)
+    where bizday < {{ audit_until_date() }}
       and bizday >= date '{{ window_start_date() }}'
 )
 select

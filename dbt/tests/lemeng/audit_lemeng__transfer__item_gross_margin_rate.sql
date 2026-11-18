@@ -19,7 +19,7 @@ with item_lines as (
     where r['state_code']::int = 3
       and r['out_branch_num']::int = 99
       and r['branch_num']::int <> r['out_branch_num']::int
-      and r['bizday']::date < CAST(now() AT TIME ZONE 'Asia/Shanghai' AS DATE)
+      and r['bizday']::date < {{ audit_until_date() }}
       and r['bizday']::date >= date '{{ window_start_date() }}'
     group by 1, 2, 3
 ),
@@ -32,7 +32,7 @@ recheck as (
 materialized as (
     select system_book, bizday, item_num, g_gross, r_net, c_cost
     from {{ ref('fct_transfer_item') }}
-    where bizday < CAST(now() AT TIME ZONE 'Asia/Shanghai' AS DATE)
+    where bizday < {{ audit_until_date() }}
       and bizday >= date '{{ window_start_date() }}'
 )
 select

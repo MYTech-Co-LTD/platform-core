@@ -21,7 +21,7 @@ with transfer_lines as (
     where r['state_code']::int = 3
       and r['out_branch_num']::int = 99
       and r['branch_num']::int <> r['out_branch_num']::int
-      and r['bizday']::date < CAST(now() AT TIME ZONE 'Asia/Shanghai' AS DATE)
+      and r['bizday']::date < {{ audit_until_date() }}
 ),
 transfer_branch as (
     select system_book, bizday, branch_num, sum(out_money)::numeric(20, 2) as r_store
@@ -37,6 +37,7 @@ loss_branch as (
         's3://{{ var("zos_bucket") }}/{{ var("lemeng_branch_expense_prefix") }}/*/bizday=**/*.parquet'
     ) r
     where r['expense_type']::varchar = '产品售后补损'
+      and r['bizday']::date < {{ audit_until_date() }}
     group by 1, 2, 3
 ),
 recheck as (
@@ -55,6 +56,7 @@ materialized as (
            sum(q_loss)::numeric(20, 2)     as q,
            sum(r_net_store)::numeric(20, 2) as r_store
     from {{ ref('fct_contribution') }}
+    where bizday < {{ audit_until_date() }}
     group by 1, 2, 3
 )
 select

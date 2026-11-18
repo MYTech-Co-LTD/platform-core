@@ -28,7 +28,7 @@ select coalesce(a.system_book, b.system_book) as system_book,
        '批发明细与聚合面不同量（视图丢行 / CASE 语义漂移 / 分区缺失）' as note
 from v a
 full join s b using (system_book, bizday)
-where coalesce(a.bizday, b.bizday) < CAST(now() AT TIME ZONE 'Asia/Shanghai' AS DATE)
+where coalesce(a.bizday, b.bizday) < {{ audit_until_date() }}
   and (coalesce(a.line_count, 0) <> coalesce(b.line_count, 0)
        or abs(coalesce(a.amount, 0) - coalesce(b.amount, 0)) > 0.01)
 union all

@@ -12,6 +12,7 @@ with src as (
         r['purchase_item_money']::numeric(14, 2)  as purchase_money
     from {{ window_read_parquet('s3://' ~ var('zos_bucket') ~ '/' ~ var('lemeng_item_purchase_prefix') ~ '/*/bizday=**/*.parquet') }} r
     where r['bizday']::date >= date '{{ window_start_date() }}'
+      and r['bizday']::date < {{ audit_until_date() }}
 ),
 recheck as (
     select
@@ -28,6 +29,7 @@ materialized as (
         sum(case when purchase_item_amount > 0 and purchase_item_money = 0 then 1 else 0 end) as zero_rows
     from {{ ref('fct_purchase') }}
     where bizday >= date '{{ window_start_date() }}'
+      and bizday < {{ audit_until_date() }}
     group by 1, 2
 )
 select
