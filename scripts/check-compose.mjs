@@ -15,7 +15,9 @@
 //     **宿主端口绑定**必须收在回环上。为什么需要它：R5 给这些端口加了回环绑定（免绕过 edge），
 //     但**没有任何门禁守着**——把 `127.0.0.1:5432:5432` 改回 `5432:5432` 全绿通过（评审变异
 //     实证）。原守卫只按文件名判唯一性、从不读内容。三条判据：
-//       a) 文件里**所有** ports 条目都须以 `127.0.0.1:` 起头。**不再只看 postgres / server
+//       a) 文件里**所有** ports 条目都须以 `127.0.0.1:` 起头（**唯一例外**：跨机拆分场景的
+//          `${DATA_BIND_ADDR:-127.0.0.1}:` 形态，见 PRIVATE_BIND_PREFIX 的说明；默认值仍是回环，
+//          私网绑定必须配安全组白名单）。**不再只看 postgres / server
 //          两个字面服务名**：只覆盖这两个名字时，往文件里加第三个服务并暴露 `8080:8080`
 //          会全绿，而本规则的目的正是「宿主端口不许留绕过 edge 的面」。要放行别的 host_ip
 //          必须在这里**显式加白名单**，不要靠"那个服务不叫 postgres"蒙混过去。
@@ -64,6 +66,22 @@ export const SCRIPT_NAME = 'check-compose'
 const ALLOWED = ['deploy/docker-compose.yml', 'deploy/data-compose.yml']
 /** 宿主端口映射必须用的 host_ip 前缀（规则二） */
 const REQUIRED_HOST_IP = '127.0.0.1'
+/**
+ * 规则二判据 a 的**唯一例外**：`DATA_BIND_ADDR` 形态（2026-11-19 决策，跨机拆分的私有网络接线）。
+ *
+ * 为什么需要：应用面与数据面分处两台机时，应用要直连 `pg_duckdb`、调度器要直连平台库，
+ * 而库里发布的是宿主回环 ⇒ 跨机无从连接。允许把宿主侧绑到**本机私网 IP** 是这条缝的正解，
+ * 代价是安全边界从「只对回环开放」放宽为「对本 VPC 私网开放」。
+ *
+ * 为什么用变量而不是写死 IP：同一个仓要发给不同客户，写死 `10.0.0.5` 换机即废。
+ * **默认值仍是 `127.0.0.1`** —— 不设变量时行为与改造前逐字相同。
+ *
+ * ⚠️ 守卫只看文本，读不到运行期取值 ⇒ 真正兜底的是**安全组白名单**（只放行本 VPC 网段到
+ * 该端口）+ `docs/architecture.md` B7 行的说明。别把它当成「随便填都行」。
+ */
+const PRIVATE_BIND_PREFIX = '${DATA_BIND_ADDR:-127.0.0.1}:'
+/** 判据 a 接受的 host_ip 前缀（顺序即报错文案里的展示顺序） */
+const ALLOWED_HOST_IP_PREFIXES = [`${REQUIRED_HOST_IP}:`, PRIVATE_BIND_PREFIX]
 /**
  * 规则二判据 b 的受管服务**按文件**给：只对主 compose 生效——数据面 compose 的服务整份可裁剪
  *  （`deploy/customer-onboarding.md` 「服务裁剪」旋钮），不设受管名，否则裁剪即红。
@@ -218,10 +236,11 @@ async function checkHostPortBindings(rootDir, violations) {
     for (const [service, entries] of byService) {
       for (const entry of entries) {
         const value = normalizePortEntry(entry)
-        if (!value.startsWith(`${REQUIRED_HOST_IP}:`)) {
+        const ok = ALLOWED_HOST_IP_PREFIXES.some((prefix) => value.startsWith(prefix))
+        if (!ok) {
           violations.push({
             file,
-            message: `${service} 的 ports 映射 \`${entry}\` 未绑回环——必须写成 \`${REQUIRED_HOST_IP}:<宿主端口>:<容器端口>\`：无 host_ip 前缀的映射落在 0.0.0.0（IPv4 与 IPv6 双栈），任何能访问宿主该端口的人可**绕过 edge**（丢掉证书、限速与访问控制）`,
+            message: `${service} 的 ports 映射 \`${entry}\` 未绑回环——必须写成 \`${REQUIRED_HOST_IP}:<宿主端口>:<容器端口>\`；跨机拆分场景可写成 \`${PRIVATE_BIND_PREFIX}<宿主端口>:<容器端口>\`（**私网 IP 必须配安全组白名单**，见 docs/architecture.md B7）。无 host_ip 前缀的映射落在 0.0.0.0（IPv4 与 IPv6 双栈），任何能访问宿主该端口的人可**绕过 edge**（丢掉证书、限速与访问控制）`,
           })
         }
       }

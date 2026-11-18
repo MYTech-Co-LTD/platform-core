@@ -42,7 +42,7 @@ services:
       # **容器**消费方（单元 A 的 server）另说：容器里的 127.0.0.1 是自己的 netns，不是宿主回环；
       # 两份 compose 各一个 default 网络、无共享 external 网络/extra_hosts ⇒ **按现值不可达**。
       # 接线方式待 T6 裁决（计划 Task 6 Step 1 的 Gate-B）。
-      - '127.0.0.1:15432:5432'
+      - '${DATA_BIND_ADDR:-127.0.0.1}:15432:5432'   # 默认回环；跨机拆分时设为本机私网 IP（B7 唯一例外，须配安全组白名单）
     mem_limit: ${PGDUCK_MEM_LIMIT:-4g}    # 每连接一个 DuckDB 实例（max_memory 默认 4096MB/连接，
                                           # spec §9.4）——连接数 × 内存必须显式收口，见 pg-duckdb/README §3
                                           # 实测语境：Compose v5.3.0 下解析进规范模型（2g → 2147483648）；

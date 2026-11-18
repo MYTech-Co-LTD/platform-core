@@ -34,9 +34,21 @@
 编排面：`pg_duckdb`（**官方镜像** `pgduckdb/pgduckdb:18-v1.1.1`；`deploy/pg-duckdb/` 的**自建路径
 本轮未启用（备件）**）、Metabase、`metabase-db`，以及 `duckle` / `dbt` 的**一次性 runner**。
 它**全内网**：不进 openship edge、不绑公网、不签平台外证书；
-端口一律回环（B7 规则二对**两份**都生效）。部署形态上是**独立的 openship project**，与单元 A
+端口默认回环（B7 规则二对**两份**都生效）。部署形态上是**独立的 openship project**，与单元 A
 「一机不够时沿缝拆」——**拆缝是可选选项**，不拆时数据面服务并入单元 A 的 project（旋钮②服务裁剪）。
 目标形态与接线模型见 `deploy/customer-onboarding.md` §0/§1。**六组件的分工见 §2.2。**
+
+**跨机拆分（2026-11-19 定案，B7 唯一例外）**：应用面与数据面分处两台机时，应用要直连
+`pg_duckdb`、调度器要直连平台库，而库里发布的是宿主回环 ⇒ 跨机无从连接。解法是把宿主侧
+绑到**本机私网 IP**：compose 写 `${DATA_BIND_ADDR:-127.0.0.1}:<宿主>:<容器>`，运维在
+`.env` 里把 `DATA_BIND_ADDR` 设成本机私网 IP，**安全组只放行本 VPC 网段到该端口**。
+默认不设变量 ⇒ 行为与改造前逐字相同。边界由此从「只对回环开放」放宽为「只对本 VPC 私网
+开放」——**这是有意的取舍，不是疏漏**。
+
+> 实测依据（同 VPC 两机 `10.0.0.3` ↔ `10.0.0.5`）：RTT 0.166ms（TCP 建连 0.088–0.223ms）、
+> iperf3 单流 **3 Gbps**（4 并发无提升 ⇒ 打满网卡上限）。跨机查库的额外开销约 0.3–0.6ms/次，
+> 对看板/报表无感。**dbt 仍必须与 `pg_duckdb` 同机**：CTAS 是「读湖 → 逐批写回」，瓶颈是
+> 往返次数而不是字节数，跨机会放大 pg_duckdb 锁等待。
 
 > 两份 compose 与单元 B 的服务**均已落仓**（`deploy/data-compose.yml` 随 P1 的 T3 落仓），B7 白名单
 > 亦已放行该路径。**「缺席不违规」仍成立**——拆缝是可选形态，白名单是「放行」而不是「必须存在」。
@@ -1153,7 +1165,7 @@ relation 集合；敏感列必须带 `mask`、`required_scope` 缺失即拒写�
 | **B1** 跨 schema | **三同纪律**：`id` = DB schema = API 前缀。平台代码只许 `platform.*`；`modules/<id>/` 只许自身 id | `scripts/lint-architecture.mjs` | `gates` |
 | **B2** 认证唯一 | 认证代码只许 `packages/auth-core/**`；`@platform/auth-core` 只许 `apps/server` 引 | 同上 | `gates` |
 | **B4 / B5** manifest | manifest 合法性 + 双向核对 | `scripts/check-manifests.mjs` | `gates` |
-| **B7** 部署面 | 全仓**只两份** compose：`deploy/docker-compose.yml`（部署单元 A）+ `deploy/data-compose.yml`（部署单元 B，数据面，P1 起放行）；两份文件里**所有** `ports` 条目必须 `127.0.0.1:` 起头。（受管服务缺 ports 即报只对单元 A 的 `postgres`/`server` 生效——单元 B 的服务整份可裁剪） | `scripts/check-compose.mjs` | `gates` |
+| **B7** 部署面 | 全仓**只两份** compose：`deploy/docker-compose.yml`（部署单元 A）+ `deploy/data-compose.yml`（部署单元 B，数据面，P1 起放行）；两份文件里**所有** `ports` 条目必须 `127.0.0.1:` 起头。**唯一例外**：跨机拆分场景（应用面与数据面分处两台机）允许写成 `${DATA_BIND_ADDR:-127.0.0.1}:<宿主>:<容器>`——默认值仍是回环，只有运维显式把 `DATA_BIND_ADDR` 设成本机私网 IP 才会绑到私网，且**必须同步安全组白名单（只放行本 VPC 网段到该端口）**；边界因此从「只对回环开放」放宽为「只对本 VPC 私网开放」。实测依据与取舍见 §1.2「跨机拆分」。（受管服务缺 ports 即报只对单元 A 的 `postgres`/`server` 生效——单元 B 的服务整份可裁剪） | `scripts/check-compose.mjs` | `gates` |
 | **B8** 无硬编码 | 禁 `hookflow.cn`；禁公网 IP 字面量（`127.0.0.1` 白名单） | `scripts/lint-architecture.mjs` | `gates` |
 | **B9** env 契约 | `.env.example` 键齐全 | `scripts/check-env-example.mjs` | `gates` |
 | **租户隔离** | 模块迁移建表必须有 `org`。判据是**真库对账**（跑一遍模块 migrations 再查 `information_schema`），且按**累积终态**判、不按文件判——按文件判会误报 `modules/demo`（它的 org 在 `003` 才补），而 demo 正是新模块照抄的模板。契约与豁免出口见 `docs/module-protocol.md`「租户隔离 CI 门禁」 | `scripts/check-tenant-isolation.mjs` | `gates` |

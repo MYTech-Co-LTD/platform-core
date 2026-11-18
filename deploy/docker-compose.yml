@@ -34,7 +34,7 @@ services:
       # docs/m0-smoke-checklist.md、scripts/dev-stack.mjs 走的都是它，收窄零影响），
       # 同时**不给宿主公网面留暴露**——生产本也不该把库暴露出去，绑回环让这一点
       # **不依赖人工动作**（先前的口径是"adopt 时删掉这条"，那要靠人记得做）。
-      - '127.0.0.1:5432:5432'
+      - '${DATA_BIND_ADDR:-127.0.0.1}:5432:5432'   # 默认回环；跨机拆分时设为本机私网 IP（B7 唯一例外，须配安全组白名单）
     healthcheck:
       # 没有它 server 会在 PG 就绪前连库（迁移直接失败）——与 CI 里 postgres service 的
       # health-cmd 是同一条理由

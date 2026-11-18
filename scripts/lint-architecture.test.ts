@@ -455,6 +455,37 @@ describe('check-compose: B7 宿主端口必须绑回环（R5 修复轮 S1）', (
     }
   })
 
+  it('★ 正例：跨机拆分的 `${DATA_BIND_ADDR:-127.0.0.1}:` 形态放行（B7 唯一例外）', () => {
+    // 2026-11-19 定案：应用面与数据面分处两台机时，库要绑本机私网 IP 才能跨机直连。
+    // 默认值仍是回环 ⇒ 不设变量时行为与改造前逐字相同；私网绑定由安全组白名单兜底。
+    const r = run(
+      'check-compose.mjs',
+      fixture({
+        'deploy/docker-compose.yml': MINIMAL_COMPOSE.replace(
+          "'127.0.0.1:5432:5432'",
+          "'${DATA_BIND_ADDR:-127.0.0.1}:5432:5432'",
+        ),
+      }),
+    )
+    expect(out(r)).not.toContain('[B7]')
+    expect(r.status).toBe(0)
+  })
+
+  it('★ 负例：`DATA_BIND_ADDR` 形态之外的私网写死仍违规（例外只放行变量形态）', () => {
+    // 写死 `10.0.0.5:5432:5432` 换机即废，且看不出"默认回环"这层保护 ⇒ 仍判违规。
+    const r = run(
+      'check-compose.mjs',
+      fixture({
+        'deploy/docker-compose.yml': MINIMAL_COMPOSE.replace(
+          "'127.0.0.1:5432:5432'",
+          "'10.0.0.5:5432:5432'",
+        ),
+      }),
+    )
+    expect(r.status).toBe(1)
+    expect(out(r)).toContain('未绑回环')
+  })
+
   it('★ 变异（R5-2 建议改 2）：带**行内注释**的回环映射是合法写法，不得报', () => {
     // `- '127.0.0.1:5432:5432'  # 本地冒烟` 完全合法，但旧实现的「整条被引号包裹」正则锚在行尾
     // ⇒ 整条失配 ⇒ 判定值带着引号与注释 ⇒ 报「未绑回环」（方向 fail-closed，**理由与事实相反**）。
