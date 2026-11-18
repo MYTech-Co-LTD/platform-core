@@ -76,6 +76,7 @@ expense as (
     from read_parquet(
         's3://{{ var("zos_bucket") }}/{{ var("lemeng_branch_expense_prefix") }}/*/bizday=**/*.parquet'
     ) r
+    where r['bizday']::date < {{ audit_until_date() }}
     group by 1, 2
 ),
 recheck as (
@@ -102,6 +103,7 @@ materialized as (
            sum(e_net)::numeric(20, 2)  as e_net,
            sum(n_net)::numeric(20, 2)  as n_net
     from {{ ref('fct_contribution') }}
+    where bizday < {{ audit_until_date() }}
     group by 1, 2
 )
 select

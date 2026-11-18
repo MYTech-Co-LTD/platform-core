@@ -43,6 +43,7 @@ expense_branch as (
     from read_parquet(
         's3://{{ var("zos_bucket") }}/{{ var("lemeng_branch_expense_prefix") }}/*/bizday=**/*.parquet'
     ) r
+    where r['bizday']::date < {{ audit_until_date() }}
     group by 1, 2, 3
 ),
 branch_latest as (
