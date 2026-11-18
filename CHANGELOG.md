@@ -11,6 +11,10 @@
 
 ## [Unreleased]
 
+## [0.327.2](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.327.1...v0.327.2) - 2026-11-18
+- 【修复】data: publish-dims 分月查询改字面量，pg_duckdb 不吃绑定参数（#2494） ([#2495](https://github.com/MYTech-Co-LTD/platform-core/pull/2495), [a02a16d](https://github.com/MYTech-Co-LTD/platform-core/commit/a02a16da95ba57cff4effe439f0b119e06fbe798))
+
+
 ## [0.327.1](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.327.0...v0.327.1) - 2026-11-18
 - 【修复】data: publish-dims 的 monthList 改用 cast，DuckDB 没有 to_char（#2491） ([#2492](https://github.com/MYTech-Co-LTD/platform-core/pull/2492), [1ffba70](https://github.com/MYTech-Co-LTD/platform-core/commit/1ffba70663b66371581f20551572c7d65721a523))
 
