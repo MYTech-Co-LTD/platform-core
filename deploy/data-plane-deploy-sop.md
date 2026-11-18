@@ -69,6 +69,10 @@
 
 ### P5 服务面修正（services_sync）
 
+> **2026-11-19 起 Metabase 已退役**（`deploy/data-compose.yml` 删了 `metabase` / `metabase-db` /
+> `mbdata` 声明）：本节与 P6 里的 metabase 条目只适用于**存量数据项目**（服务行还在、尚未裁剪）。
+> 新接的数据面不再有 BI 面，常驻服务是 `pg_duckdb` + 两个账套 console + `scheduler`（业务调度）。
+
 只做四件事，做完服务面就**定型为 3 常驻服务**：
 
 1. **只留 `pg_duckdb` / `metabase-db` / `metabase`** 三个常驻；duckle/dbt 是 etl 执行器，
