@@ -72,10 +72,19 @@ async function monthList(client, relation) {
 
 /**
  * 按月的 `bizday` 下界/上界条件（供各块 SELECT 拼进 WHERE）。
+ *
+ * ⚠️ 用**字面量**而不是 `$1::date` 绑定参数：这条 SELECT 要过 pg_duckdb 的 DuckDB 规划器，
+ *    带参数的预编译语句会以 `Not implemented Error: Could not convert DuckDB type: UNKNOWN
+ *    to Postgres type` 在 CreatePlan 阶段失败（2026-11-18 实测，publish-dims 自 11-14 起
+ *    每天失败的另一半原因）。月份来自本脚本自己的 `monthList()`（min/max bizday 切出来的
+ *    `YYYY-MM-01`），不是外部输入，拼字面量没有注入面。
  * @param {string} alias
+ * @param {string} month `YYYY-MM-01`
  */
-function monthBoundSql(alias) {
-  return `and ${alias}.bizday >= $1::date and ${alias}.bizday < ($1::date + interval '1 month')`
+function monthBoundSql(alias, month) {
+  const [y, m] = month.split('-').map(Number)
+  const next = m === 12 ? `${y + 1}-01-01` : `${y}-${String(m + 1).padStart(2, '0')}-01`
+  return `and ${alias}.bizday >= date '${month}' and ${alias}.bizday < date '${next}'`
 }
 
 async function main() {
@@ -300,7 +309,7 @@ async function main() {
          group by t.org, t.order_no, t.item_code, coalesce(t.item_grade_num, 0)
          having sum(t.quantity) > 0`
       for (const m of months) {
-        const { rows } = /** @type {{ rows: any[] }} */ (await warehouse.query(selectSql(monthBoundSql('t')), [m]))
+        const { rows } = /** @type {{ rows: any[] }} */ (await warehouse.query(selectSql(monthBoundSql('t', m))))
         for (let i = 0; i < rows.length; i += 5000) {
           const chunk = rows.slice(i, i + 5000)
           await warehouse.query(
@@ -421,7 +430,7 @@ async function main() {
           where t.state_code = 3 and t.money is not null and t.money > 0
             and t.quantity is not null and t.quantity > 0 ${bound}`
       for (const m of months) {
-        const { rows } = /** @type {{ rows: any[] }} */ (await warehouse.query(selectSql(monthBoundSql('t')), [m]))
+        const { rows } = /** @type {{ rows: any[] }} */ (await warehouse.query(selectSql(monthBoundSql('t', m))))
         for (let i = 0; i < rows.length; i += 5000) {
           const chunk = rows.slice(i, i + 5000)
           await warehouse.query(
