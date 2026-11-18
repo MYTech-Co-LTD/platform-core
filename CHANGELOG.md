@@ -11,6 +11,10 @@
 
 ## [Unreleased]
 
+## [0.326.2](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.326.1...v0.326.2) - 2026-11-18
+- 【修复】scheduler: pg 池断连不再杀进程 + 健康判据③排除数据面 dbt 排班（#2484） ([#2485](https://github.com/MYTech-Co-LTD/platform-core/pull/2485), [5355902](https://github.com/MYTech-Co-LTD/platform-core/commit/5355902f47697276f1b7f55e603492241e310b39))
+
+
 ## [0.326.1](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.326.0...v0.326.1) - 2026-11-18
 - 【修复】data: 审计只比 T-3+，不再跟每小时 L0 重采赛跑（#2482） ([#2483](https://github.com/MYTech-Co-LTD/platform-core/pull/2483), [a99cc66](https://github.com/MYTech-Co-LTD/platform-core/commit/a99cc6639385e94dddf35df3521a59ebfd321815))
 
