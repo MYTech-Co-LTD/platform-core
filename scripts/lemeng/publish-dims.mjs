@@ -42,9 +42,36 @@ function requireEnv(varName) {
 }
 
 /**
+ * 读湖查询的重试包装：**只对 ETag 竞态**重试。
+ *
+ * 为什么必须有（2026-11-18 run 7888 实测）：本脚本按全史聚合，而 L0 白天每小时重采 T-1
+ * （`branch.expense` :32、`transfer.*` :36/:42 …）。DuckDB 读到一半发现对象被改写就报
+ * `ETag on reading file ... this likely means the remote file has changed` 并整条查询失败。
+ * **不能用** `unsafe_disable_etag_checks`——那会读到撕裂的 parquet（金额口径绝不能容忍）。
+ * 采集写完（分钟级）后重试即可；重试用尽仍失败就如实报错。
+ * @param {{ query: (sql: string, params?: unknown[]) => Promise<any> }} client
+ * @param {string} sql
+ * @param {string} label 日志用
+ */
+async function queryWithEtagRetry(client, sql, label) {
+  const delaysMs = [20000, 60000, 120000]
+  for (let attempt = 0; ; attempt += 1) {
+    try {
+      return await client.query(sql)
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err)
+      if (!/ETag on reading file/i.test(msg) || attempt >= delaysMs.length) throw err
+      console.error(`${SCRIPT_NAME}: ${label} 撞到正在改写的湖文件（ETag 变化），`
+        + `${delaysMs[attempt] / 1000}s 后重试（${attempt + 1}/${delaysMs.length}）`)
+      await new Promise((r) => setTimeout(r, delaysMs[attempt]))
+    }
+  }
+}
+
+/**
  * 月份序列（`YYYY-MM-01`，含首尾）。用于把全史聚合拆成按月块（#2468）：单条全史聚合
  * 会把 pg_duckdb 的内存打到上限、连接被服务端掐断（`Connection terminated unexpectedly`）。
- * @param {{ query: (sql: string, params?: unknown[]) => Promise<{ rows: any[] }> }} client
+ * @param {{ query: (sql: string) => Promise<{ rows: any[] }> }} client
  * @param {string} relation
  * @returns {Promise<string[]>}
  */
@@ -53,8 +80,10 @@ async function monthList(client, relation) {
   //    `Catalog Error: Scalar Function with name to_char does not exist`（2026-11-18 实测，
   //    publish-dims 自 11-14 起每天失败都卡在这一句）。用引擎无关的 `cast(... as varchar)`
   //    取 `YYYY-MM-DD`，月份在 JS 侧切。
-  const { rows } = await client.query(
+  const { rows } = await queryWithEtagRetry(
+    client,
     `select cast(min(bizday) as varchar) as lo, cast(max(bizday) as varchar) as hi from ${relation}`,
+    `monthList(${relation})`,
   )
   const lo = typeof rows[0]?.lo === 'string' ? rows[0].lo.slice(0, 7) : undefined
   const hi = typeof rows[0]?.hi === 'string' ? rows[0].hi.slice(0, 7) : undefined
@@ -309,7 +338,7 @@ async function main() {
          group by t.org, t.order_no, t.item_code, coalesce(t.item_grade_num, 0)
          having sum(t.quantity) > 0`
       for (const m of months) {
-        const { rows } = /** @type {{ rows: any[] }} */ (await warehouse.query(selectSql(monthBoundSql('t', m))))
+        const { rows } = /** @type {{ rows: any[] }} */ (await queryWithEtagRetry(warehouse, selectSql(monthBoundSql('t', m)), `month ${m}`))
         for (let i = 0; i < rows.length; i += 5000) {
           const chunk = rows.slice(i, i + 5000)
           await warehouse.query(
@@ -430,7 +459,7 @@ async function main() {
           where t.state_code = 3 and t.money is not null and t.money > 0
             and t.quantity is not null and t.quantity > 0 ${bound}`
       for (const m of months) {
-        const { rows } = /** @type {{ rows: any[] }} */ (await warehouse.query(selectSql(monthBoundSql('t', m))))
+        const { rows } = /** @type {{ rows: any[] }} */ (await queryWithEtagRetry(warehouse, selectSql(monthBoundSql('t', m)), `month ${m}`))
         for (let i = 0; i < rows.length; i += 5000) {
           const chunk = rows.slice(i, i + 5000)
           await warehouse.query(
