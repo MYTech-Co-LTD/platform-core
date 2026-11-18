@@ -49,11 +49,15 @@ function requireEnv(varName) {
  * @returns {Promise<string[]>}
  */
 async function monthList(client, relation) {
+  // ⚠️ 这个 client 连的是 **pg_duckdb**（staging 关系在 DuckDB 侧），**没有** `to_char`：
+  //    `Catalog Error: Scalar Function with name to_char does not exist`（2026-11-18 实测，
+  //    publish-dims 自 11-14 起每天失败都卡在这一句）。用引擎无关的 `cast(... as varchar)`
+  //    取 `YYYY-MM-DD`，月份在 JS 侧切。
   const { rows } = await client.query(
-    `select to_char(min(bizday), 'YYYY-MM') as lo, to_char(max(bizday), 'YYYY-MM') as hi from ${relation}`,
+    `select cast(min(bizday) as varchar) as lo, cast(max(bizday) as varchar) as hi from ${relation}`,
   )
-  const lo = rows[0]?.lo
-  const hi = rows[0]?.hi
+  const lo = typeof rows[0]?.lo === 'string' ? rows[0].lo.slice(0, 7) : undefined
+  const hi = typeof rows[0]?.hi === 'string' ? rows[0].hi.slice(0, 7) : undefined
   if (!lo || !hi) return []
   const out = []
   let [y, m] = lo.split('-').map(Number)
