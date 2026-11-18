@@ -11,6 +11,10 @@
 
 ## [Unreleased]
 
+## [0.327.1](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.327.0...v0.327.1) - 2026-11-18
+- 【修复】data: publish-dims 的 monthList 改用 cast，DuckDB 没有 to_char（#2491） ([#2492](https://github.com/MYTech-Co-LTD/platform-core/pull/2492), [1ffba70](https://github.com/MYTech-Co-LTD/platform-core/commit/1ffba70663b66371581f20551572c7d65721a523))
+
+
 ## [0.327.0](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.326.2...v0.327.0) - 2026-11-18
 - 【修复】data: 审计上界补齐其余 CTE，护栏改为逐块判（#2489） ([#2490](https://github.com/MYTech-Co-LTD/platform-core/pull/2490), [6cd98b7](https://github.com/MYTech-Co-LTD/platform-core/commit/6cd98b7001e55bebbfd55c1cb11034f948a0798a))
 - 【新增】scheduler: publish-dims 迁入平台调度器（#2487） ([#2488](https://github.com/MYTech-Co-LTD/platform-core/pull/2488), [45813f0](https://github.com/MYTech-Co-LTD/platform-core/commit/45813f02ef927dd80503111404194e699d02b74d))
