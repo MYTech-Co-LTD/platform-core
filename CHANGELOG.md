@@ -11,6 +11,11 @@
 
 ## [Unreleased]
 
+## [0.327.0](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.326.2...v0.327.0) - 2026-11-18
+- 【修复】data: 审计上界补齐其余 CTE，护栏改为逐块判（#2489） ([#2490](https://github.com/MYTech-Co-LTD/platform-core/pull/2490), [6cd98b7](https://github.com/MYTech-Co-LTD/platform-core/commit/6cd98b7001e55bebbfd55c1cb11034f948a0798a))
+- 【新增】scheduler: publish-dims 迁入平台调度器（#2487） ([#2488](https://github.com/MYTech-Co-LTD/platform-core/pull/2488), [45813f0](https://github.com/MYTech-Co-LTD/platform-core/commit/45813f02ef927dd80503111404194e699d02b74d))
+
+
 ## [0.326.2](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.326.1...v0.326.2) - 2026-11-18
 - 【修复】scheduler: pg 池断连不再杀进程 + 健康判据③排除数据面 dbt 排班（#2484） ([#2485](https://github.com/MYTech-Co-LTD/platform-core/pull/2485), [5355902](https://github.com/MYTech-Co-LTD/platform-core/commit/5355902f47697276f1b7f55e603492241e310b39))
 
