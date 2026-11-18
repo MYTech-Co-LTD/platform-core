@@ -51,13 +51,23 @@ export function warehouseConfigured(env: Record<string, string | undefined> = pr
 
 let singleton: Pool | null = null
 
+/** pg 的 Pool **没有** 'error' 监听时，会把「空闲连接被断开」升级成未捕获异常（进程退出）。
+ *  仓库面尤其危险：pg_duckdb 后端崩溃/集群 reinit 都会断连接 ⇒ 整个 API 进程跟着死。
+ *  断连留痕即可，进程不能死（2026-11-18 实测，issue #2484）。 */
+function attachPoolErrorLog(pool: Pool, label: string): Pool {
+  pool.on('error', (err) => {
+    console.error(JSON.stringify({ ts: new Date().toISOString(), pgPoolError: err.message, pool: label }))
+  })
+  return pool
+}
+
 /** 惰性单例：模块装载期**不**建连接（没配仓库的部署也要能起来）。
  *  单例不只是省连接——每条 Pool 都是独立连接池，每次问数新建一条会直接把仓库打爆。 */
 export function warehousePool(env: Record<string, string | undefined> = process.env): Pool {
   if (singleton) return singleton
   const url = env.DATA_WAREHOUSE_URL?.trim()
   if (!url) throw new Error(DATA_WAREHOUSE_UNCONFIGURED)
-  singleton = new Pool({ connectionString: url, ...warehousePoolConfig(env) })
+  singleton = attachPoolErrorLog(new Pool({ connectionString: url, ...warehousePoolConfig(env) }), 'warehouse')
   return singleton
 }
 
@@ -101,11 +111,11 @@ export function analystPool(env: Record<string, string | undefined> = process.en
   if (!url) throw new Error(DATA_WAREHOUSE_UNCONFIGURED)
   // 只读会话用连接参数声明（`options`），不用未 await 的 `SET`——后者与紧随其后的查询
   // 共用同一 client 时会触发 pg 的「client 已在执行查询」弃用警告，且语义上存在顺序歧义。
-  const pool = new Pool({
+  const pool = attachPoolErrorLog(new Pool({
     connectionString: url,
     ...warehousePoolConfig(env),
     options: '-c default_transaction_read_only=on',
-  })
+  }), 'analyst')
   analystSingleton = pool
   return analystSingleton
 }

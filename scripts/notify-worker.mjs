@@ -12,6 +12,13 @@ if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) 
   }
   const { Pool } = createRequire(import.meta.url)('pg')
   const pool = new Pool({ connectionString: url })
+  // pg 的 Pool 没有 'error' 监听时，空闲连接被断开 = 未捕获异常 = **整进程退出**。
+  // 2026-11-18 实测（#2484）：postgres 后端被 SIGTERM、集群 reinit ⇒ worker 崩 ⇒ 正跑的
+  // data.dbt_hourly 被启动对账收成 timeout（run 6725）。断连是常态，留痕即可，进程不能死。
+  // 本文件被 `typecheck:scripts`（checkJs）检查 ⇒ 回调参数需显式标类型（TS7006）。
+  pool.on('error', /** @param {Error} err */ (err) => {
+    console.error(JSON.stringify({ ts: new Date().toISOString(), pgPoolError: err.message }))
+  })
   // scripts/ 可以读 platform schema（B1 只约束 modules/**）；module 侧只收注入
   /**
    * 平台事件在 platform.event_catalog；agent 事件在 notify.event_decl（N1 双平面）。

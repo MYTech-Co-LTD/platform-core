@@ -85,14 +85,16 @@ export async function jobHealth(pool: Pool, now: Date): Promise<JobHealth> {
   }
 
   // ③ 连续失败（最近 3 次）
-  // ⚠️ `data.dbt_audit*` 是**验证类**排班：exit 1 的语义是「对账发现数据问题」，不是「引擎坏了」。
-  // 把它们计入健康会让「已知既有红」在 3 天后把 worker 判 503、阻断部署（2026-11-17 实测）。
-  // 红仍通过 `jobs.job.failed` 通知 + jobs 控制台的 run 台账可见；健康只看执行面。
+  // ⚠️ `data.dbt*` 是**数据面执行类**排班：exit 1 的语义是「dbt 跑数/对账发现数据问题」，
+  // 不是「调度器坏了」——把它计入健康会让数据问题在 3 次后把 worker 判 503、容器标 unhealthy，
+  // 进而被重启 ⇒ 长任务被 reapLostRunners 收成 timeout ⇒ 更多失败（2026-11-18 实测死循环，
+  // 见 #2484）。红仍通过 `jobs.job.failed` 通知 + jobs 控制台的 run 台账 + `data.monitor` 可见；
+  // 健康只看执行面（①心跳 / ②该跑没跑 / 其它 job 的连续失败）。
   const failing = await pool.query<{ key: string }>(
     `select s.key
        from platform.job_schedule s
       where s.enabled
-        and s.key not like 'data.dbt_audit%'
+        and s.key not like 'data.dbt%'
         and (
           select count(*) from (
             select r.status from platform.job_run r

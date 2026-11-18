@@ -207,8 +207,11 @@ describePg('jobHealth', () => {
     expect(prefixReasons(h).join()).toContain('cron 算不出下一次触发')
   })
 
-  it('★ 审计排班（data.dbt_audit*）连续失败不计入健康：exit 1 是数据问题，不是调度故障', async () => {
-    const key = 'data.dbt_audit_healthtest'
+  it('★ 数据面 dbt 排班（data.dbt*）连续失败不计入健康：exit 1 是数据问题，不是调度故障', async () => {
+    // 2026-11-18（#2484）：曾只排除 data.dbt_audit*。hourly 因 worker 崩溃被收成 timeout 后，
+    // 连续 3 次把 worker 判 503 ⇒ 容器 unhealthy ⇒ 重启 ⇒ 长任务再被杀 = 死循环。
+    // 口径改为整族排除：数据面失败走 jobs.job.failed + run 台账 + data.monitor。
+    const key = 'data.dbt_hourly_healthtest'
     try {
       const { rows } = await pool.query<{ id: string }>(
         `insert into platform.job_schedule
