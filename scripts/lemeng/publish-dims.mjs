@@ -41,6 +41,39 @@ function requireEnv(varName) {
   return v
 }
 
+/**
+ * 月份序列（`YYYY-MM-01`，含首尾）。用于把全史聚合拆成按月块（#2468）：单条全史聚合
+ * 会把 pg_duckdb 的内存打到上限、连接被服务端掐断（`Connection terminated unexpectedly`）。
+ * @param {{ query: (sql: string, params?: unknown[]) => Promise<{ rows: any[] }> }} client
+ * @param {string} relation
+ * @returns {Promise<string[]>}
+ */
+async function monthList(client, relation) {
+  const { rows } = await client.query(
+    `select to_char(min(bizday), 'YYYY-MM') as lo, to_char(max(bizday), 'YYYY-MM') as hi from ${relation}`,
+  )
+  const lo = rows[0]?.lo
+  const hi = rows[0]?.hi
+  if (!lo || !hi) return []
+  const out = []
+  let [y, m] = lo.split('-').map(Number)
+  const [hy, hm] = hi.split('-').map(Number)
+  while (y < hy || (y === hy && m <= hm)) {
+    out.push(`${y}-${String(m).padStart(2, '0')}-01`)
+    m += 1
+    if (m > 12) { m = 1; y += 1 }
+  }
+  return out
+}
+
+/**
+ * 按月的 `bizday` 下界/上界条件（供各块 SELECT 拼进 WHERE）。
+ * @param {string} alias
+ */
+function monthBoundSql(alias) {
+  return `and ${alias}.bizday >= $1::date and ${alias}.bizday < ($1::date + interval '1 month')`
+}
+
 async function main() {
   // 两个连接分属两库：pg 客户端从 modules/data 解析（scripts/ 不自带 pg 依赖，同 sync 脚本）
   const requireFromModule = createRequire(new URL('../../modules/data/package.json', import.meta.url))
@@ -215,32 +248,86 @@ async function main() {
     // price_minor = round(sum(out_money) ÷ sum(quantity) × 100)——**按单结算口径**
     //   （实测配送单实际价 27 ≠ 档案批发价 25；口径单点在此，迁移 012 只存结果）。
     // out_money=0/空（纯赠品行）不参与。
-    const toRows = await warehouse.query(
-      `select
-         t.org,
-         t.order_no,
-         max(t.order_type)      as order_type,
-         max(t.state_code)      as state_code,
-         max(t.business_date)   as business_date,
-         max(t.create_time)     as create_time,
-         max(t.audit_time)      as audit_time,
-         max(b.code)            as branch_code,
-         max(t.branch_name)     as branch_name,
-         max(t.out_branch_name) as out_branch_name,
-         t.item_code,
-         coalesce(t.item_grade_num, 0) as grade_item_num,
-         max(t.item_name)       as item_name,
-         sum(t.quantity)        as quantity,
-         sum(t.out_money)       as out_money,
-         min(t.bizday)::text    as bizday
-       from staging.stg_lemeng_transfer_out t
-       left join staging.stg_lemeng_branch b
-         on b.system_book = t.system_book and b.branch_num = t.branch_num
-        and b.snapshot = (select max(snapshot) from staging.stg_lemeng_branch)
-       where t.state_code = 3 and t.out_money is not null and t.out_money > 0
-       group by t.org, t.order_no, t.item_code, coalesce(t.item_grade_num, 0)
-       having sum(t.quantity) > 0`,
-    )
+    // 分月落地（#2468）：单条全史聚合会打爆 pg_duckdb 内存（连接 terminated）。
+    // 每月先聚合进 temp 表，最后按 (org, order_no, item_code, grade) 再聚合一次；
+    // max/sum/min 可结合 ⇒ 语义与单条全史聚合等价。
+    /** @type {{ rows: any[] }} */
+    let toRows = { rows: [] }
+    if (process.env.PUBLISH_DIMS_CHUNK === '0') {
+      toRows = await warehouse.query(
+        `select
+           t.org,
+           t.order_no,
+           max(t.order_type)      as order_type,
+           max(t.state_code)      as state_code,
+           max(t.business_date)   as business_date,
+           max(t.create_time)     as create_time,
+           max(t.audit_time)      as audit_time,
+           max(b.code)            as branch_code,
+           max(t.branch_name)     as branch_name,
+           max(t.out_branch_name) as out_branch_name,
+           t.item_code,
+           coalesce(t.item_grade_num, 0) as grade_item_num,
+           max(t.item_name)       as item_name,
+           sum(t.quantity)        as quantity,
+           sum(t.out_money)       as out_money,
+           min(t.bizday)::text    as bizday
+         from staging.stg_lemeng_transfer_out t
+         left join staging.stg_lemeng_branch b
+           on b.system_book = t.system_book and b.branch_num = t.branch_num
+          and b.snapshot = (select max(snapshot) from staging.stg_lemeng_branch)
+         where t.state_code = 3 and t.out_money is not null and t.out_money > 0
+         group by t.org, t.order_no, t.item_code, coalesce(t.item_grade_num, 0)
+         having sum(t.quantity) > 0`,
+      )
+    } else {
+      const months = await monthList(warehouse, 'staging.stg_lemeng_transfer_out')
+      const selectSql = (/** @type {string} */ bound) => `select
+           t.org,
+           t.order_no,
+           max(t.order_type)      as order_type,
+           max(t.state_code)      as state_code,
+           max(t.business_date)   as business_date,
+           max(t.create_time)     as create_time,
+           max(t.audit_time)      as audit_time,
+           max(b.code)            as branch_code,
+           max(t.branch_name)     as branch_name,
+           max(t.out_branch_name) as out_branch_name,
+           t.item_code,
+           coalesce(t.item_grade_num, 0) as grade_item_num,
+           max(t.item_name)       as item_name,
+           sum(t.quantity)        as quantity,
+           sum(t.out_money)       as out_money,
+           min(t.bizday)          as bizday
+         from staging.stg_lemeng_transfer_out t
+         left join staging.stg_lemeng_branch b
+           on b.system_book = t.system_book and b.branch_num = t.branch_num
+          and b.snapshot = (select max(snapshot) from staging.stg_lemeng_branch)
+         where t.state_code = 3 and t.out_money is not null and t.out_money > 0 ${bound}
+         group by t.org, t.order_no, t.item_code, coalesce(t.item_grade_num, 0)
+         having sum(t.quantity) > 0`
+      await warehouse.query('drop table if exists _pub_transfer_chunks')
+      if (months.length === 0) {
+        toRows = { rows: [] }
+      }
+      for (let i = 0; i < months.length; i++) {
+        const sql = selectSql(monthBoundSql('t'))
+        if (i === 0) await warehouse.query(`create temp table _pub_transfer_chunks as ${sql}`, [months[i]])
+        else await warehouse.query(`insert into _pub_transfer_chunks ${sql}`, [months[i]])
+      }
+      if (months.length > 0) toRows = await warehouse.query(
+        `select org, order_no,
+                max(order_type) as order_type, max(state_code) as state_code,
+                max(business_date) as business_date, max(create_time) as create_time,
+                max(audit_time) as audit_time, max(branch_code) as branch_code,
+                max(branch_name) as branch_name, max(out_branch_name) as out_branch_name,
+                item_code, grade_item_num, max(item_name) as item_name,
+                sum(quantity) as quantity, sum(out_money) as out_money,
+                min(bizday)::text as bizday
+           from _pub_transfer_chunks
+          group by org, order_no, item_code, grade_item_num`,
+      )
+    }
     await platform.query('begin')
     try {
       await platform.query('delete from data.dim_transfer_out')
@@ -286,23 +373,60 @@ async function main() {
     // 行粒度直通（order_detail_num 同单内唯一，无需聚合）；仅 state_code=3；
     // price_minor = round(money ÷ nullif(quantity,0) × 100)——基本单位分价（口径单点在此）。
     // money ≤ 0/空（纯赠品行）不发。
-    const woRows = await warehouse.query(
-      `select t.org,
-              t.order_no,
-              t.client_fid,
-              t.state_code,
-              t.branch_num,
-              t.item_code,
-              t.order_detail_num,
-              t.item_name,
-              t.quantity,
-              t.money,
-              round(t.money / nullif(t.quantity, 0) * 100)::bigint as price_minor,
-              t.bizday::text as bizday
-         from staging.stg_lemeng_wholesale_out t
-        where t.state_code = 3 and t.money is not null and t.money > 0
-          and t.quantity is not null and t.quantity > 0`,
-    )
+    // 分月落地（#2468）：行粒度直通，按 bizday 月块写入 temp 表，最后统一取。
+    /** @type {{ rows: any[] }} */
+    let woRows = { rows: [] }
+    if (process.env.PUBLISH_DIMS_CHUNK === '0') {
+      woRows = await warehouse.query(
+        `select t.org,
+                t.order_no,
+                t.client_fid,
+                t.state_code,
+                t.branch_num,
+                t.item_code,
+                t.order_detail_num,
+                t.item_name,
+                t.quantity,
+                t.money,
+                round(t.money / nullif(t.quantity, 0) * 100)::bigint as price_minor,
+                t.bizday::text as bizday
+           from staging.stg_lemeng_wholesale_out t
+          where t.state_code = 3 and t.money is not null and t.money > 0
+            and t.quantity is not null and t.quantity > 0`,
+      )
+    } else {
+      const months = await monthList(warehouse, 'staging.stg_lemeng_wholesale_out')
+      const selectSql = (/** @type {string} */ bound) => `select t.org,
+                t.order_no,
+                t.client_fid,
+                t.state_code,
+                t.branch_num,
+                t.item_code,
+                t.order_detail_num,
+                t.item_name,
+                t.quantity,
+                t.money,
+                t.bizday
+           from staging.stg_lemeng_wholesale_out t
+          where t.state_code = 3 and t.money is not null and t.money > 0
+            and t.quantity is not null and t.quantity > 0 ${bound}`
+      await warehouse.query('drop table if exists _pub_wholesale_chunks')
+      if (months.length === 0) {
+        woRows = { rows: [] }
+      }
+      for (let i = 0; i < months.length; i++) {
+        const sql = selectSql(monthBoundSql('t'))
+        if (i === 0) await warehouse.query(`create temp table _pub_wholesale_chunks as ${sql}`, [months[i]])
+        else await warehouse.query(`insert into _pub_wholesale_chunks ${sql}`, [months[i]])
+      }
+      if (months.length > 0) woRows = await warehouse.query(
+        `select org, order_no, client_fid, state_code, branch_num, item_code, item_name,
+                order_detail_num, quantity, money,
+                round(money / nullif(quantity, 0) * 100)::bigint as price_minor,
+                bizday::text as bizday
+           from _pub_wholesale_chunks`,
+      )
+    }
     await platform.query('begin')
     try {
       await platform.query('delete from data.dim_wholesale_out')
