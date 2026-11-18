@@ -11,6 +11,11 @@
 
 ## [Unreleased]
 
+## [0.328.0](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.327.3...v0.328.0) - 2026-11-18
+- 【新增】deploy: 业务调度 loop 拆到数据单元（scheduler 服务） ([#2505](https://github.com/MYTech-Co-LTD/platform-core/pull/2505), [66086b0](https://github.com/MYTech-Co-LTD/platform-core/commit/66086b08ec89407c7af258b62e26615c045563b0))
+- 【新增】deploy: B7 增加跨机拆分例外——数据单元/平台库可按私网 IP 绑定 ([#2502](https://github.com/MYTech-Co-LTD/platform-core/pull/2502), [2cffc09](https://github.com/MYTech-Co-LTD/platform-core/commit/2cffc0920359d41a7f28ffab8594d2d8ed875bc8))
+
+
 ## [0.327.3](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.327.2...v0.327.3) - 2026-11-18
 - 【修复】data: publish-dims 分块 SELECT 的 bizday 转 varchar，避免 JS Date 序列化（#2499） ([#2500](https://github.com/MYTech-Co-LTD/platform-core/pull/2500), [e4f7cc5](https://github.com/MYTech-Co-LTD/platform-core/commit/e4f7cc576636a95644fd85e78515508e35bd2d9a))
 - 【修复】data: publish-dims 全史聚合撞 ETag 竞态 ⇒ 按月重试（#2497） ([#2498](https://github.com/MYTech-Co-LTD/platform-core/pull/2498), [d33f232](https://github.com/MYTech-Co-LTD/platform-core/commit/d33f2320b9afa3deb772a888d2d1ab571ec48081))
