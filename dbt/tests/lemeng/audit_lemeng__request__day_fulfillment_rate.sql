@@ -15,7 +15,7 @@ with request_lines as (
         count(*)                  as requested_line_count
     from {{ window_read_parquet('s3://' ~ var("zos_bucket") ~ '/' ~ var("lemeng_request_order_prefix") ~ '/*/bizday=**/*.parquet') }} r
     where r['quantity']::numeric(20,6) > 0
-      and r['bizday']::date < CAST(now() AT TIME ZONE 'Asia/Shanghai' AS DATE)
+      and r['bizday']::date < {{ audit_until_date() }}
  and r['bizday']::date >= date '{{ window_start_date() }}'
     group by 1, 2, 3, 4
 ),
@@ -27,7 +27,7 @@ shipped as (
         r['item_num']::bigint     as item_num,
         sum(r['quantity']::numeric(20,6)) as shipped_quantity
     from {{ window_read_parquet('s3://' ~ var("zos_bucket") ~ '/' ~ var("lemeng_transfer_in_prefix") ~ '/*/bizday=**/*.parquet') }} r
-    where r['bizday']::date < CAST(now() AT TIME ZONE 'Asia/Shanghai' AS DATE)
+    where r['bizday']::date < {{ audit_until_date() }}
  and r['bizday']::date >= date '{{ window_start_date() }}'
     group by 1, 2, 3, 4
 ),
@@ -53,7 +53,7 @@ materialized as (
         system_book, bizday, branch_num, item_num,
         fulfilled_line_count::numeric(20,6) / nullif(requested_line_count, 0) as line_rate
     from {{ ref('fct_request_fulfillment') }}
-    where bizday < CAST(now() AT TIME ZONE 'Asia/Shanghai' AS DATE)
+    where bizday < {{ audit_until_date() }}
  and bizday >= date '{{ window_start_date() }}'
 )
 select

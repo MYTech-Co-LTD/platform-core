@@ -15,7 +15,7 @@ with recheck as (
     from read_parquet(
         's3://{{ var("zos_bucket") }}/{{ var("lemeng_item_profit_prefix") }}/*/bizday=**/*.parquet'
     ) r
-    where r['bizday']::date < CAST(now() AT TIME ZONE 'Asia/Shanghai' AS DATE)
+    where r['bizday']::date < {{ audit_until_date() }}
       and r['bizday']::date >= date '{{ window_start_date() }}'
     group by 1, 2, 3
 ),
@@ -26,7 +26,7 @@ materialized as (
         branch_num,
         profit_money_no_coupon as profit
     from {{ ref('fct_retail_profit') }}
-    where bizday < CAST(now() AT TIME ZONE 'Asia/Shanghai' AS DATE)
+    where bizday < {{ audit_until_date() }}
       and bizday >= date '{{ window_start_date() }}'
 )
 select

@@ -22,7 +22,7 @@ with transfer_lines as (
     where r['state_code']::int = 3
       and r['out_branch_num']::int = 99
       and r['branch_num']::int <> r['out_branch_num']::int
-      and r['bizday']::date < CAST(now() AT TIME ZONE 'Asia/Shanghai' AS DATE)
+      and r['bizday']::date < {{ audit_until_date() }}
 ),
 transfer_dom as (
     select system_book, bizday,
@@ -39,7 +39,7 @@ wholesale_orders as (
     from read_parquet(
         's3://{{ var("zos_bucket") }}/{{ var("lemeng_wholesale_out_prefix") }}/*/bizday=**/*.parquet'
     ) r
-    where r['bizday']::date < CAST(now() AT TIME ZONE 'Asia/Shanghai' AS DATE)
+    where r['bizday']::date < {{ audit_until_date() }}
     group by 1, 2, 3
 ),
 wholesale_dom as (
@@ -57,7 +57,7 @@ return_orders as (
     from read_parquet(
         's3://{{ var("zos_bucket") }}/{{ var("lemeng_wholesale_return_prefix") }}/*/bizday=**/*.parquet'
     ) r
-    where r['bizday']::date < CAST(now() AT TIME ZONE 'Asia/Shanghai' AS DATE)
+    where r['bizday']::date < {{ audit_until_date() }}
     group by 1, 2, 3
 ),
 return_dom as (

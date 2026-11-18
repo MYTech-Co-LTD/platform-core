@@ -16,14 +16,14 @@ with recheck as (
         's3://' ~ var('zos_bucket') ~ '/' ~ var('lemeng_request_order_prefix') ~ '/*/bizday=**/*.parquet'
     ) }} r
     where r['quantity']::numeric(20,6) > 0
-      and r['bizday']::date < CAST(now() AT TIME ZONE 'Asia/Shanghai' AS DATE)
+      and r['bizday']::date < {{ audit_until_date() }}
       and r['bizday']::date >= date '{{ window_start_date() }}'
     group by 1, 2, 3, 4
 ),
 materialized as (
     select system_book, bizday, branch_num, item_num, requested_quantity
     from {{ ref('fct_request_fulfillment') }}
-    where bizday < CAST(now() AT TIME ZONE 'Asia/Shanghai' AS DATE)
+    where bizday < {{ audit_until_date() }}
       and bizday >= date '{{ window_start_date() }}'
 )
 select

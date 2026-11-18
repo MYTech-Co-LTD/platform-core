@@ -17,6 +17,7 @@ with purchase as (
        - coalesce(r['purchase_item_return_money']::numeric, 0)) as net_p
     from {{ window_read_parquet('s3://' ~ var("zos_bucket") ~ '/' ~ var("lemeng_item_purchase_prefix") ~ '/*/bizday=**/*.parquet') }} r
     where r['bizday']::date >= date '{{ window_start_date() }}'
+      and r['bizday']::date < {{ audit_until_date() }}
 ),
 item_latest as (
     -- dim_item 是快照表：取最新一份，否则按 snapshot 放大（与构件同范式）。
@@ -79,6 +80,7 @@ materialized as (
            sum(total_p)::numeric(20, 2) as total_p
     from {{ ref('fct_purchase_concentration') }}
     where bizday >= date '{{ window_start_date() }}'
+      and bizday < {{ audit_until_date() }}
     group by 1, 2, 3
 )
 select

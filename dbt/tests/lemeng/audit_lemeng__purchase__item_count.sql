@@ -12,7 +12,7 @@ with recheck as (
             r['bizday']::date         as bizday,
             r['item_num']::bigint        as item_num
         from {{ window_read_parquet('s3://' ~ var('zos_bucket') ~ '/' ~ var('lemeng_item_purchase_prefix') ~ '/*/bizday=**/*.parquet') }} r
-        where r['bizday']::date < CAST(now() AT TIME ZONE 'Asia/Shanghai' AS DATE)
+        where r['bizday']::date < {{ audit_until_date() }}
       and r['bizday']::date >= date '{{ window_start_date() }}'
     ) t
     group by 1, 2
@@ -20,7 +20,7 @@ with recheck as (
 materialized as (
     select system_book, bizday, count(distinct item_num)::numeric(20,2) as v
     from {{ ref('fct_purchase') }}
-    where bizday < CAST(now() AT TIME ZONE 'Asia/Shanghai' AS DATE)
+    where bizday < {{ audit_until_date() }}
       and bizday >= date '{{ window_start_date() }}'
     group by 1, 2
 )

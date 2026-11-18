@@ -19,7 +19,7 @@ with wholesale_lines as (
     from read_parquet(
         's3://{{ var("zos_bucket") }}/{{ var("lemeng_wholesale_out_prefix") }}/*/bizday=**/*.parquet'
     ) r
-    where r['bizday']::date < CAST(now() AT TIME ZONE 'Asia/Shanghai' AS DATE)
+    where r['bizday']::date < {{ audit_until_date() }}
 ),
 wholesale_orders as (
     select system_book, bizday, client_fid, order_no,
@@ -49,7 +49,7 @@ return_dom as (
         from read_parquet(
             's3://{{ var("zos_bucket") }}/{{ var("lemeng_wholesale_return_prefix") }}/*/bizday=**/*.parquet'
         ) r
-        where r['bizday']::date < CAST(now() AT TIME ZONE 'Asia/Shanghai' AS DATE)
+        where r['bizday']::date < {{ audit_until_date() }}
         group by 1, 2, 3, 4
     )
     group by 1, 2, 3
@@ -66,7 +66,7 @@ expense_dom as (
         's3://{{ var("zos_bucket") }}/{{ var("lemeng_client_expense_prefix") }}/*/bizday=**/*.parquet'
     ) r
     where r['state_code']::int = 3
-      and r['bizday']::date < CAST(now() AT TIME ZONE 'Asia/Shanghai' AS DATE)
+      and r['bizday']::date < {{ audit_until_date() }}
     group by 1, 2, 3
 ),
 recheck as (
@@ -89,7 +89,7 @@ materialized as (
            sum(r_net)::numeric(20, 2) as r_net,
            sum(n_net)::numeric(20, 2) as n_net
     from {{ ref('fct_client_contribution') }}
-    where bizday < CAST(now() AT TIME ZONE 'Asia/Shanghai' AS DATE)
+    where bizday < {{ audit_until_date() }}
     group by 1, 2, 3
 )
 select

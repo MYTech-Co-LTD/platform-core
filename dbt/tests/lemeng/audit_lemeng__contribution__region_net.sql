@@ -20,7 +20,7 @@ with transfer_lines as (
     where r['state_code']::int = 3
       and r['out_branch_num']::int = 99
       and r['branch_num']::int <> r['out_branch_num']::int
-      and r['bizday']::date < CAST(now() AT TIME ZONE 'Asia/Shanghai' AS DATE)
+      and r['bizday']::date < {{ audit_until_date() }}
 ),
 transfer_branch as (
     select system_book, bizday, branch_num,
@@ -73,6 +73,7 @@ materialized as (
            sum(r_net_store)::numeric(20, 2) as r_store,
            sum(n_net_store)::numeric(20, 2) as n_store
     from {{ ref('fct_contribution') }}
+    where bizday < {{ audit_until_date() }}
     group by 1, 2, 3
 )
 select

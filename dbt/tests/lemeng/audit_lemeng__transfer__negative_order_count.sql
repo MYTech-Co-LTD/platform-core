@@ -18,7 +18,7 @@ with base as (
     where r['state_code']::int = 3
       and r['out_branch_num']::int = 99
       and r['branch_num']::int <> r['out_branch_num']::int
-      and r['bizday']::date < CAST(now() AT TIME ZONE 'Asia/Shanghai' AS DATE)
+      and r['bizday']::date < {{ audit_until_date() }}
 ),
 per_order as (
     select system_book, bizday, branch_num, order_no,
@@ -42,7 +42,7 @@ recheck as (
 materialized as (
     select system_book, bizday, branch_num, line_count, lot_filled_lines, zero_cost_amount, negative_order_count
     from {{ ref('fct_transfer_line_quality') }}
-    where bizday < CAST(now() AT TIME ZONE 'Asia/Shanghai' AS DATE)
+    where bizday < {{ audit_until_date() }}
 )
 select
     coalesce(a.system_book, b.system_book) as system_book,

@@ -17,14 +17,14 @@ with recheck as (
     ) }} r
       -- 湖上只存在审核单（管线请求侧已筛审核态、契约不落状态列）——
       -- 此处无需重复筛 state；bizday 闭窗过滤照旧。
-      where r['bizday']::date < CAST(now() AT TIME ZONE 'Asia/Shanghai' AS DATE)
+      where r['bizday']::date < {{ audit_until_date() }}
       and r['bizday']::date >= date '{{ window_start_date() }}'
     group by 1, 2, 3, 4
 ),
 materialized as (
     select system_book, bizday, branch_num, expense_type, e_net
     from {{ ref('fct_branch_expense') }}
-    where bizday < CAST(now() AT TIME ZONE 'Asia/Shanghai' AS DATE)
+    where bizday < {{ audit_until_date() }}
       and bizday >= date '{{ window_start_date() }}'
 )
 select

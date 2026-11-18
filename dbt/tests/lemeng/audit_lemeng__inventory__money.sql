@@ -15,14 +15,14 @@ with recheck as (
     from {{ window_read_parquet(
         's3://' ~ var('zos_bucket') ~ '/' ~ var('lemeng_inventory_snapshot_prefix') ~ '/*/bizday=**/*.parquet'
     ) }} r
-    where r['bizday']::date < CAST(now() AT TIME ZONE 'Asia/Shanghai' AS DATE)
+    where r['bizday']::date < {{ audit_until_date() }}
     and r['bizday']::date >= date '{{ window_start_date() }}'
     group by 1, 2, 3, 4, 5
 ),
 materialized as (
     select system_book, bizday, branch_num, storehouse_num, item_num, inventory_money
     from {{ ref('fct_inventory_snapshot') }}
-    where bizday < CAST(now() AT TIME ZONE 'Asia/Shanghai' AS DATE)
+    where bizday < {{ audit_until_date() }}
       and bizday >= date '{{ window_start_date() }}'
 )
 select

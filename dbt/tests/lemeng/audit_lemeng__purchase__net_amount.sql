@@ -13,7 +13,7 @@ with recheck as (
         r['item_num']::bigint     as item_num,
         (sum(r['purchase_item_money']::numeric) - sum(r['purchase_item_return_money']::numeric))::numeric(20,2) as v
     from {{ window_read_parquet('s3://' ~ var('zos_bucket') ~ '/' ~ var('lemeng_item_purchase_prefix') ~ '/*/bizday=**/*.parquet') }} r
-    where r['bizday']::date < CAST(now() AT TIME ZONE 'Asia/Shanghai' AS DATE)
+    where r['bizday']::date < {{ audit_until_date() }}
     and r['bizday']::date >= date '{{ window_start_date() }}'
     group by 1, 2, 3, 4
 ),
@@ -22,7 +22,7 @@ materialized as (
         system_book, bizday, supplier_num, item_num,
         (purchase_item_money - purchase_item_return_money)::numeric(20,2) as v
     from {{ ref('fct_purchase') }}
-    where bizday < CAST(now() AT TIME ZONE 'Asia/Shanghai' AS DATE)
+    where bizday < {{ audit_until_date() }}
       and bizday >= date '{{ window_start_date() }}'
 )
 select
