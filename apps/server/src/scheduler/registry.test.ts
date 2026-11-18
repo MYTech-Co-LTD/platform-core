@@ -323,13 +323,15 @@ describe('registry · Wave 8 ③ 平台/运维类（#2450）', () => {
     expect(existsSync(repoPath(arc.script))).toBe(true)
   })
 
-  it('★ 维表发布 publish-dims：与 openship 现役逐字一致（cron/timeout/重试）', () => {
-    // openship `custom:hjf8m1PBcP7fZpWt`：`43 3 * * *`（CST 11:43）、600s、attempts=2。
+  it('★ 维表发布 publish-dims：cron/重试与现役一致，timeout 放宽到 30 分钟', () => {
+    // openship `custom:hjf8m1PBcP7fZpWt`：`43 3 * * *`（CST 11:43）、attempts=2。
+    // timeout 由 600s 放宽到 1800s：600s 是 openship 时代的值，而按月分块的真实耗时从未跑通过
+    // （#2491 修好 to_char 前每次都崩/超时），1M 行的 dim_transfer_out 分块聚合需要更大余量。
     const pub = JOB_REGISTRY.find((d) => d.key === 'data.publish_dims')!
     expect(pub, 'data.publish_dims').toBeDefined()
     expect(pub.cron).toBe('43 3 * * *')
     expect(pub.timezone).toBe('UTC')
-    expect(pub.timeoutMs).toBe(600000)
+    expect(pub.timeoutMs).toBe(1800000)
     expect(pub.maxAttempts).toBe(2)
     expect(pub.script).toBe('scripts/lemeng/publish-dims.mjs')
     expect(pub.args ?? []).toEqual([])
