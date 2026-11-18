@@ -11,6 +11,11 @@
 
 ## [Unreleased]
 
+## [0.326.0](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.325.6...v0.326.0) - 2026-11-18
+- 【新增】duckle: seed-console --check 增加排班语义比对（#2467） ([#2477](https://github.com/MYTech-Co-LTD/platform-core/pull/2477), [235f509](https://github.com/MYTech-Co-LTD/platform-core/commit/235f509fb8cc32dd782aff84376f1845532b9901))
+- 【修复】data: publish-dims 分月块改「DuckDB 聚合→unnest 写 PG temp→PG 终聚合」，绕开 pg_duckdb 不能写 PG 表 (#2468) ([#2479](https://github.com/MYTech-Co-LTD/platform-core/pull/2479), [f6c638d](https://github.com/MYTech-Co-LTD/platform-core/commit/f6c638d38c851d36da4c355f34237d2fd4e0d5f7))
+
+
 ## [0.325.6](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.325.5...v0.325.6) - 2026-11-18
 - 【修复】data: publish-dims 大表按 bizday 月块落地 temp 表再聚合，避免 pg_duckdb 被全史聚合打崩 (#2468) ([#2476](https://github.com/MYTech-Co-LTD/platform-core/pull/2476), [953fdfa](https://github.com/MYTech-Co-LTD/platform-core/commit/953fdfa3bdeb464b17a4adf83acabba69fa5b9c6))
 
