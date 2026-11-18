@@ -329,7 +329,7 @@ async function main() {
            max(t.audit_time) as audit_time, max(b.code) as branch_code,
            max(t.branch_name) as branch_name, max(t.out_branch_name) as out_branch_name,
            t.item_code, coalesce(t.item_grade_num, 0) as grade_item_num, max(t.item_name) as item_name,
-           sum(t.quantity) as quantity, sum(t.out_money) as out_money, min(t.bizday) as bizday
+           sum(t.quantity) as quantity, sum(t.out_money) as out_money, cast(min(t.bizday) as varchar) as bizday
          from staging.stg_lemeng_transfer_out t
          left join staging.stg_lemeng_branch b
            on b.system_book = t.system_book and b.branch_num = t.branch_num
@@ -368,7 +368,7 @@ async function main() {
               chunk.map((r) => (r.item_name === null ? null : String(r.item_name))),
               chunk.map((r) => (r.quantity === null ? null : String(r.quantity))),
               chunk.map((r) => (r.out_money === null ? null : String(r.out_money))),
-              chunk.map((r) => String(r.bizday)),
+              chunk.map((r) => (r.bizday instanceof Date ? r.bizday.toISOString().slice(0, 10) : String(r.bizday))),
             ],
           )
         }
@@ -454,7 +454,7 @@ async function main() {
         quantity numeric(14,6), money numeric(14,2), bizday date)`)
       const selectSql = (/** @type {string} */ bound) => `select t.org, t.order_no, t.client_fid, t.state_code,
                 t.branch_num, t.item_code, t.order_detail_num, t.item_name,
-                t.quantity, t.money, t.bizday
+                t.quantity, t.money, cast(t.bizday as varchar) as bizday
            from staging.stg_lemeng_wholesale_out t
           where t.state_code = 3 and t.money is not null and t.money > 0
             and t.quantity is not null and t.quantity > 0 ${bound}`
@@ -481,7 +481,7 @@ async function main() {
               chunk.map((r) => Number(r.order_detail_num)),
               chunk.map((r) => (r.quantity === null ? null : String(r.quantity))),
               chunk.map((r) => (r.money === null ? null : String(r.money))),
-              chunk.map((r) => String(r.bizday)),
+              chunk.map((r) => (r.bizday instanceof Date ? r.bizday.toISOString().slice(0, 10) : String(r.bizday))),
             ],
           )
         }
