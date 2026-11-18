@@ -11,6 +11,10 @@
 
 ## [Unreleased]
 
+## [0.325.6](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.325.5...v0.325.6) - 2026-11-18
+- 【修复】data: publish-dims 大表按 bizday 月块落地 temp 表再聚合，避免 pg_duckdb 被全史聚合打崩 (#2468) ([#2476](https://github.com/MYTech-Co-LTD/platform-core/pull/2476), [953fdfa](https://github.com/MYTech-Co-LTD/platform-core/commit/953fdfa3bdeb464b17a4adf83acabba69fa5b9c6))
+
+
 ## [0.325.5](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.325.4...v0.325.5) - 2026-11-17
 - 【修复】data: 闭窗谓词去掉跨 00 点误排除昨日 h23（tick 不在 00 点跑）(#2473) ([#2474](https://github.com/MYTech-Co-LTD/platform-core/pull/2474), [46f28b3](https://github.com/MYTech-Co-LTD/platform-core/commit/46f28b3a57c231677139b660d6afa5d23f130323))
 
