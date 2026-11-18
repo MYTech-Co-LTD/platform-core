@@ -122,7 +122,7 @@ describe('registry · dbt tick（Wave 8 P1）', () => {
 describe('registry · dbt hourly/tables（Wave 8 P1）', () => {
   it('★ cron/timeout/scope 与 openship 现役逐字一致', () => {
     const hourly = JOB_REGISTRY.find((d) => d.key === 'data.dbt_hourly')!
-    expect(hourly.cron).toBe('5 1-15 * * *')
+    expect(hourly.cron).toBe('20 1-15 * * *')
     expect(hourly.timeoutMs).toBe(1800000)
     expect(hourly.env?.MATERIALIZE_SCOPE).toBe('hourly')
     const tables = JOB_REGISTRY.find((d) => d.key === 'data.dbt_tables')!
