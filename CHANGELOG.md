@@ -11,6 +11,10 @@
 
 ## [Unreleased]
 
+## [0.326.1](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.326.0...v0.326.1) - 2026-11-18
+- 【修复】data: 审计只比 T-3+，不再跟每小时 L0 重采赛跑（#2482） ([#2483](https://github.com/MYTech-Co-LTD/platform-core/pull/2483), [a99cc66](https://github.com/MYTech-Co-LTD/platform-core/commit/a99cc6639385e94dddf35df3521a59ebfd321815))
+
+
 ## [0.326.0](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.325.6...v0.326.0) - 2026-11-18
 - 【新增】duckle: seed-console --check 增加排班语义比对（#2467） ([#2477](https://github.com/MYTech-Co-LTD/platform-core/pull/2477), [235f509](https://github.com/MYTech-Co-LTD/platform-core/commit/235f509fb8cc32dd782aff84376f1845532b9901))
 - 【修复】data: publish-dims 分月块改「DuckDB 聚合→unnest 写 PG temp→PG 终聚合」，绕开 pg_duckdb 不能写 PG 表 (#2468) ([#2479](https://github.com/MYTech-Co-LTD/platform-core/pull/2479), [f6c638d](https://github.com/MYTech-Co-LTD/platform-core/commit/f6c638d38c851d36da4c355f34237d2fd4e0d5f7))
