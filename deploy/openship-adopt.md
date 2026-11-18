@@ -421,6 +421,20 @@ psql "$DATABASE_URL" -c "select platform.prune_audit();"
      revision），所以每改一次 compose 又要重新接受一次；CI 里没这一步 ⇒ 每次改 compose 的合并
      都会让自动部署红一次，需要人工触发一次带接受的部署。
    - `pending_actions` **不报**这一条（实测返回空），别指望它给 `resolveWith`。
+7. **镜像来源：BuildKit 不走 dockerd 代理，自建镜像必须写 `build:`**（2026-11-19 实测，1.0.1）：
+   1.0 的部署在切流前统一「准备镜像」。境内机器上由此踩到两个**必然复现**的坑：
+   - **基础镜像拉不下来**：受保护构建 worker 的 BuildKit **不继承 dockerd 的 `HTTPS_PROXY`**，
+     `registry-1.docker.io` 直接连被拒（`failed to resolve source metadata` / `failed to fetch
+     anonymous token`）。两个开关叠加解决：控制面 `.env` 设 `OPENSHIP_DOCKER_BUILD_DRIVER=docker`
+     （在目标机 Docker 引擎上原生构建），目标机 `daemon.json` 配 `registry-mirrors`
+     （境内镜像源，`kill -HUP $(pidof dockerd)` **热重载，不重启容器**）。
+     ⚠️ 这与 ADR-0010「不配 registry-mirrors、一律走 proxy」的口径**相反**：mirror 优先级高于
+     proxy，mirror 挂了不会回退 ⇒ 必须有人巡检这个 mirror（失效表现为「部署卡在镜像准备」）。
+     选择它是因为 BuildKit 侧**根本没有可用的代理通路**，不是偏好。
+   - **本机自建镜像被当成远端镜像去拉**：`image: <x>:local` 且没有 `build:` 时，手动部署会
+     `docker pull <x>:local` ⇒ `pull access denied`（docker.io 没这个仓库）⇒ 部署失败。
+     **解法是给同一个服务补 `build:`**（compose 里 `image:` + `build:` 并存），让 openship 本地构建。
+   - `refresh` 部署**不能给新服务用**（`Retained image ... is unavailable`），新服务只能走全量部署。
 
 ## 相关
 
