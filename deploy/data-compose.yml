@@ -148,8 +148,15 @@ services:
   #   代价：它会出现在**每个**用本 compose 的项目的下次部署 ⇒ 不需要它的项目必须 patch
   #   `enabled: false`（实测语义：**不部署 + 拆旧容器**）。**别忘这一步**。
   # （旧 wrapper `/opt/lemeng-run.sh` 的挂载与本说明已随 #382 退役删除——勿照历史文档加回。）
+  # ⚠️ 为什么 console **必须自带 `build:`**（2026-11-19 实测，openship 1.0）：
+  #   1.0 的部署在切流前会「准备镜像」，手动部署对**可变 tag**（`:local`）一律强制刷新，
+  #   即 `docker pull platform-core-duckle:local` ⇒ docker.io 上没有这个仓库 ⇒ `pull access denied`
+  #   ⇒ 整个部署失败（实测 dep_MtntpXNFZpwtdQ2b）。`image:` 跟 `build:` 一起写，openship 才会
+  #   **本地构建**这张图，而不是去拉它。构建经 dockerd 的 registry-mirrors 拉基础镜像（见
+  #   deploy/openship-adopt.md 陷阱 7）。三个服务共用同一 Dockerfile ⇒ 后两个基本命中缓存。
   lemeng-console-3120:
     image: platform-core-duckle:local
+    build: { context: .., dockerfile: deploy/duckle/Dockerfile }
     restart: unless-stopped
     environment:
       SYSTEM_BOOK: "3120"
@@ -175,6 +182,7 @@ services:
 
   lemeng-console-64188:
     image: platform-core-duckle:local
+    build: { context: .., dockerfile: deploy/duckle/Dockerfile }   # 同上：1.0 不拉本机自建镜像
     restart: unless-stopped
     environment:
       SYSTEM_BOOK: "64188"
