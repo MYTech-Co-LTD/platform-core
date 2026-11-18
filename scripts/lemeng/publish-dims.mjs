@@ -249,29 +249,21 @@ async function main() {
     //   （实测配送单实际价 27 ≠ 档案批发价 25；口径单点在此，迁移 012 只存结果）。
     // out_money=0/空（纯赠品行）不参与。
     // 分月落地（#2468）：单条全史聚合会打爆 pg_duckdb 内存（连接 terminated）。
-    // 每月先聚合进 temp 表，最后按 (org, order_no, item_code, grade) 再聚合一次；
-    // max/sum/min 可结合 ⇒ 语义与单条全史聚合等价。
+    // ⚠️ 不能「create temp table … as select 自 parquet」后再 insert：pg_duckdb 里 DuckDB 不支持
+    //    改写 Postgres 表（实测 `DuckDB does not support modifiding Postgres tables`）。
+    //    做法：按月跑 DuckDB 聚合 → 行回 JS → 用 unnest 写进 **PG temp 表**（该语句不引用 parquet，
+    //    由 PG 执行）→ 最后在 temp 表上做一次 PG 聚合。语义与单条全史等价（max/sum/min 可结合）。
     /** @type {{ rows: any[] }} */
     let toRows = { rows: [] }
     if (process.env.PUBLISH_DIMS_CHUNK === '0') {
       toRows = await warehouse.query(
         `select
-           t.org,
-           t.order_no,
-           max(t.order_type)      as order_type,
-           max(t.state_code)      as state_code,
-           max(t.business_date)   as business_date,
-           max(t.create_time)     as create_time,
-           max(t.audit_time)      as audit_time,
-           max(b.code)            as branch_code,
-           max(t.branch_name)     as branch_name,
-           max(t.out_branch_name) as out_branch_name,
-           t.item_code,
-           coalesce(t.item_grade_num, 0) as grade_item_num,
-           max(t.item_name)       as item_name,
-           sum(t.quantity)        as quantity,
-           sum(t.out_money)       as out_money,
-           min(t.bizday)::text    as bizday
+           t.org, t.order_no, max(t.order_type) as order_type, max(t.state_code) as state_code,
+           max(t.business_date) as business_date, max(t.create_time) as create_time,
+           max(t.audit_time) as audit_time, max(b.code) as branch_code,
+           max(t.branch_name) as branch_name, max(t.out_branch_name) as out_branch_name,
+           t.item_code, coalesce(t.item_grade_num, 0) as grade_item_num, max(t.item_name) as item_name,
+           sum(t.quantity) as quantity, sum(t.out_money) as out_money, min(t.bizday)::text as bizday
          from staging.stg_lemeng_transfer_out t
          left join staging.stg_lemeng_branch b
            on b.system_book = t.system_book and b.branch_num = t.branch_num
@@ -282,23 +274,20 @@ async function main() {
       )
     } else {
       const months = await monthList(warehouse, 'staging.stg_lemeng_transfer_out')
+      await warehouse.query('drop table if exists _pub_transfer_chunks')
+      await warehouse.query(`create temp table _pub_transfer_chunks (
+        org text, order_no text, order_type text, state_code int,
+        business_date text, create_time text, audit_time text,
+        branch_code text, branch_name text, out_branch_name text,
+        item_code text, grade_item_num bigint, item_name text,
+        quantity numeric(20,6), out_money numeric(20,2), bizday date)`)
       const selectSql = (/** @type {string} */ bound) => `select
-           t.org,
-           t.order_no,
-           max(t.order_type)      as order_type,
-           max(t.state_code)      as state_code,
-           max(t.business_date)   as business_date,
-           max(t.create_time)     as create_time,
-           max(t.audit_time)      as audit_time,
-           max(b.code)            as branch_code,
-           max(t.branch_name)     as branch_name,
-           max(t.out_branch_name) as out_branch_name,
-           t.item_code,
-           coalesce(t.item_grade_num, 0) as grade_item_num,
-           max(t.item_name)       as item_name,
-           sum(t.quantity)        as quantity,
-           sum(t.out_money)       as out_money,
-           min(t.bizday)          as bizday
+           t.org, t.order_no, max(t.order_type) as order_type, max(t.state_code) as state_code,
+           max(t.business_date) as business_date, max(t.create_time) as create_time,
+           max(t.audit_time) as audit_time, max(b.code) as branch_code,
+           max(t.branch_name) as branch_name, max(t.out_branch_name) as out_branch_name,
+           t.item_code, coalesce(t.item_grade_num, 0) as grade_item_num, max(t.item_name) as item_name,
+           sum(t.quantity) as quantity, sum(t.out_money) as out_money, min(t.bizday) as bizday
          from staging.stg_lemeng_transfer_out t
          left join staging.stg_lemeng_branch b
            on b.system_book = t.system_book and b.branch_num = t.branch_num
@@ -306,16 +295,43 @@ async function main() {
          where t.state_code = 3 and t.out_money is not null and t.out_money > 0 ${bound}
          group by t.org, t.order_no, t.item_code, coalesce(t.item_grade_num, 0)
          having sum(t.quantity) > 0`
-      await warehouse.query('drop table if exists _pub_transfer_chunks')
-      if (months.length === 0) {
-        toRows = { rows: [] }
+      for (const m of months) {
+        const { rows } = /** @type {{ rows: any[] }} */ (await warehouse.query(selectSql(monthBoundSql('t')), [m]))
+        for (let i = 0; i < rows.length; i += 5000) {
+          const chunk = rows.slice(i, i + 5000)
+          await warehouse.query(
+            `insert into _pub_transfer_chunks
+               (org, order_no, order_type, state_code, business_date, create_time, audit_time,
+                branch_code, branch_name, out_branch_name, item_code, grade_item_num, item_name,
+                quantity, out_money, bizday)
+             select t.* from unnest($1::text[], $2::text[], $3::text[], $4::int[], $5::text[],
+                $6::text[], $7::text[], $8::text[], $9::text[], $10::text[], $11::text[],
+                $12::bigint[], $13::text[], $14::numeric(20,6)[], $15::numeric(20,2)[], $16::date[])
+               as t(org, order_no, order_type, state_code, business_date, create_time, audit_time,
+                    branch_code, branch_name, out_branch_name, item_code, grade_item_num, item_name,
+                    quantity, out_money, bizday)`,
+            [
+              chunk.map((r) => r.org),
+              chunk.map((r) => String(r.order_no)),
+              chunk.map((r) => (r.order_type === null ? null : String(r.order_type))),
+              chunk.map((r) => (r.state_code === null ? null : Number(r.state_code))),
+              chunk.map((r) => (r.business_date === null ? null : String(r.business_date))),
+              chunk.map((r) => (r.create_time === null ? null : String(r.create_time))),
+              chunk.map((r) => (r.audit_time === null ? null : String(r.audit_time))),
+              chunk.map((r) => (r.branch_code === null ? null : String(r.branch_code))),
+              chunk.map((r) => (r.branch_name === null ? null : String(r.branch_name))),
+              chunk.map((r) => (r.out_branch_name === null ? null : String(r.out_branch_name))),
+              chunk.map((r) => String(r.item_code)),
+              chunk.map((r) => Number(r.grade_item_num)),
+              chunk.map((r) => (r.item_name === null ? null : String(r.item_name))),
+              chunk.map((r) => (r.quantity === null ? null : String(r.quantity))),
+              chunk.map((r) => (r.out_money === null ? null : String(r.out_money))),
+              chunk.map((r) => String(r.bizday)),
+            ],
+          )
+        }
       }
-      for (let i = 0; i < months.length; i++) {
-        const sql = selectSql(monthBoundSql('t'))
-        if (i === 0) await warehouse.query(`create temp table _pub_transfer_chunks as ${sql}`, [months[i]])
-        else await warehouse.query(`insert into _pub_transfer_chunks ${sql}`, [months[i]])
-      }
-      if (months.length > 0) toRows = await warehouse.query(
+      toRows = await warehouse.query(
         `select org, order_no,
                 max(order_type) as order_type, max(state_code) as state_code,
                 max(business_date) as business_date, max(create_time) as create_time,
@@ -327,6 +343,7 @@ async function main() {
            from _pub_transfer_chunks
           group by org, order_no, item_code, grade_item_num`,
       )
+      await warehouse.query('drop table if exists _pub_transfer_chunks')
     }
     await platform.query('begin')
     try {
@@ -378,16 +395,8 @@ async function main() {
     let woRows = { rows: [] }
     if (process.env.PUBLISH_DIMS_CHUNK === '0') {
       woRows = await warehouse.query(
-        `select t.org,
-                t.order_no,
-                t.client_fid,
-                t.state_code,
-                t.branch_num,
-                t.item_code,
-                t.order_detail_num,
-                t.item_name,
-                t.quantity,
-                t.money,
+        `select t.org, t.order_no, t.client_fid, t.state_code, t.branch_num, t.item_code,
+                t.order_detail_num, t.item_name, t.quantity, t.money,
                 round(t.money / nullif(t.quantity, 0) * 100)::bigint as price_minor,
                 t.bizday::text as bizday
            from staging.stg_lemeng_wholesale_out t
@@ -396,36 +405,53 @@ async function main() {
       )
     } else {
       const months = await monthList(warehouse, 'staging.stg_lemeng_wholesale_out')
-      const selectSql = (/** @type {string} */ bound) => `select t.org,
-                t.order_no,
-                t.client_fid,
-                t.state_code,
-                t.branch_num,
-                t.item_code,
-                t.order_detail_num,
-                t.item_name,
-                t.quantity,
-                t.money,
-                t.bizday
+      await warehouse.query('drop table if exists _pub_wholesale_chunks')
+      await warehouse.query(`create temp table _pub_wholesale_chunks (
+        org text, order_no text, client_fid text, state_code int, branch_num int,
+        item_code text, item_name text, order_detail_num bigint,
+        quantity numeric(14,6), money numeric(14,2), bizday date)`)
+      const selectSql = (/** @type {string} */ bound) => `select t.org, t.order_no, t.client_fid, t.state_code,
+                t.branch_num, t.item_code, t.order_detail_num, t.item_name,
+                t.quantity, t.money, t.bizday
            from staging.stg_lemeng_wholesale_out t
           where t.state_code = 3 and t.money is not null and t.money > 0
             and t.quantity is not null and t.quantity > 0 ${bound}`
-      await warehouse.query('drop table if exists _pub_wholesale_chunks')
-      if (months.length === 0) {
-        woRows = { rows: [] }
+      for (const m of months) {
+        const { rows } = /** @type {{ rows: any[] }} */ (await warehouse.query(selectSql(monthBoundSql('t')), [m]))
+        for (let i = 0; i < rows.length; i += 5000) {
+          const chunk = rows.slice(i, i + 5000)
+          await warehouse.query(
+            `insert into _pub_wholesale_chunks
+               (org, order_no, client_fid, state_code, branch_num, item_code, item_name,
+                order_detail_num, quantity, money, bizday)
+             select t.* from unnest($1::text[], $2::text[], $3::text[], $4::int[], $5::int[],
+                $6::text[], $7::text[], $8::bigint[], $9::numeric(14,6)[], $10::numeric(14,2)[], $11::date[])
+               as t(org, order_no, client_fid, state_code, branch_num, item_code, item_name,
+                    order_detail_num, quantity, money, bizday)`,
+            [
+              chunk.map((r) => r.org),
+              chunk.map((r) => String(r.order_no)),
+              chunk.map((r) => (r.client_fid === null ? null : String(r.client_fid))),
+              chunk.map((r) => (r.state_code === null ? null : Number(r.state_code))),
+              chunk.map((r) => (r.branch_num === null ? null : Number(r.branch_num))),
+              chunk.map((r) => String(r.item_code)),
+              chunk.map((r) => (r.item_name === null ? null : String(r.item_name))),
+              chunk.map((r) => Number(r.order_detail_num)),
+              chunk.map((r) => (r.quantity === null ? null : String(r.quantity))),
+              chunk.map((r) => (r.money === null ? null : String(r.money))),
+              chunk.map((r) => String(r.bizday)),
+            ],
+          )
+        }
       }
-      for (let i = 0; i < months.length; i++) {
-        const sql = selectSql(monthBoundSql('t'))
-        if (i === 0) await warehouse.query(`create temp table _pub_wholesale_chunks as ${sql}`, [months[i]])
-        else await warehouse.query(`insert into _pub_wholesale_chunks ${sql}`, [months[i]])
-      }
-      if (months.length > 0) woRows = await warehouse.query(
+      woRows = await warehouse.query(
         `select org, order_no, client_fid, state_code, branch_num, item_code, item_name,
                 order_detail_num, quantity, money,
                 round(money / nullif(quantity, 0) * 100)::bigint as price_minor,
                 bizday::text as bizday
            from _pub_wholesale_chunks`,
       )
+      await warehouse.query('drop table if exists _pub_wholesale_chunks')
     }
     await platform.query('begin')
     try {
