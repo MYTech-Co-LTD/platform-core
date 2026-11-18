@@ -11,6 +11,11 @@
 
 ## [Unreleased]
 
+## [0.327.3](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.327.2...v0.327.3) - 2026-11-18
+- 【修复】data: publish-dims 分块 SELECT 的 bizday 转 varchar，避免 JS Date 序列化（#2499） ([#2500](https://github.com/MYTech-Co-LTD/platform-core/pull/2500), [e4f7cc5](https://github.com/MYTech-Co-LTD/platform-core/commit/e4f7cc576636a95644fd85e78515508e35bd2d9a))
+- 【修复】data: publish-dims 全史聚合撞 ETag 竞态 ⇒ 按月重试（#2497） ([#2498](https://github.com/MYTech-Co-LTD/platform-core/pull/2498), [d33f232](https://github.com/MYTech-Co-LTD/platform-core/commit/d33f2320b9afa3deb772a888d2d1ab571ec48081))
+
+
 ## [0.327.2](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.327.1...v0.327.2) - 2026-11-18
 - 【修复】data: publish-dims 分月查询改字面量，pg_duckdb 不吃绑定参数（#2494） ([#2495](https://github.com/MYTech-Co-LTD/platform-core/pull/2495), [a02a16d](https://github.com/MYTech-Co-LTD/platform-core/commit/a02a16da95ba57cff4effe439f0b119e06fbe798))
 
