@@ -287,6 +287,19 @@ describe('registry · Wave 8 ③ 平台/运维类（#2450）', () => {
     expect(arc.args).toEqual(['--org', 'shanhaiyiguo-org'])
     expect(existsSync(repoPath(arc.script))).toBe(true)
   })
+
+  it('★ 维表发布 publish-dims：与 openship 现役逐字一致（cron/timeout/重试）', () => {
+    // openship `custom:hjf8m1PBcP7fZpWt`：`43 3 * * *`（CST 11:43）、600s、attempts=2。
+    const pub = JOB_REGISTRY.find((d) => d.key === 'data.publish_dims')!
+    expect(pub, 'data.publish_dims').toBeDefined()
+    expect(pub.cron).toBe('43 3 * * *')
+    expect(pub.timezone).toBe('UTC')
+    expect(pub.timeoutMs).toBe(600000)
+    expect(pub.maxAttempts).toBe(2)
+    expect(pub.script).toBe('scripts/lemeng/publish-dims.mjs')
+    expect(pub.args ?? []).toEqual([])
+    expect(existsSync(repoPath(pub.script))).toBe(true)
+  })
 })
 
 describe('registry · 业务监控 tick（W7-V1）', () => {

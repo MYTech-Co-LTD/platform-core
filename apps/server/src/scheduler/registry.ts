@@ -64,6 +64,9 @@ export const JOB_REGISTRY: JobDef[] = [
   // 直接由平台 scheduler 在 worker 容器内执行（#2450）。容器内实测 2026-11-17 均 RC=0。
   { key: 'data.semantics_sync', script: 'scripts/sync-data-semantics.mjs', cron: '33 4 * * *', timezone: 'UTC', timeoutMs: 300000, maxAttempts: 2, expectedIntervalSecs: 86400, description: 'L1 词表物化（dbt 语义 → platform.data.metrics；CST 12:33）' },
   { key: 'data.archive_private_measures', script: 'scripts/archive-private-measures.mjs', args: ['--org', 'shanhaiyiguo-org'], cron: '30 3 * * *', timezone: 'UTC', timeoutMs: 300000, maxAttempts: 1, expectedIntervalSecs: 86400, description: '私有测度归档（org=shanhaiyiguo-org、30 天；CST 11:30）' },
+  // 原 openship 用 `docker exec` 进 server 容器跑；worker 同镜像同 env（DATABASE_URL + DATA_WAREHOUSE_URL 均在手），
+  // 直接由平台 scheduler 在 worker 容器内执行——不再借道宿主 docker（#476 / Wave 8 ③）。
+  { key: 'data.publish_dims', script: 'scripts/lemeng/publish-dims.mjs', cron: '43 3 * * *', timezone: 'UTC', timeoutMs: 600000, maxAttempts: 2, expectedIntervalSecs: 86400, description: '维表发布（staging 维表 → data.dim_* 租户视图；CST 11:43）' },
   { key: 'data.monitor_tick', script: 'scripts/data-monitor-tick.mjs', cron: '* * * * *', timezone: 'UTC', timeoutMs: 300000, maxAttempts: 1, expectedIntervalSecs: 60, description: '业务监控求值（到期规则）' },
   // handler-only：排班由 agent/console 经 SchedulerPort 建（source≠'system'），seed 不建行。
   // cron/timezone 是 JobDef 必填字段的占位值（不会被 seed 使用），真实时间以排班行为准。
