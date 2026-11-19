@@ -439,22 +439,57 @@ jobs:
       # 那条只改 CHANGELOG/版本号，部署它没有意义，而且每发一版多一次完整重建 + 一次切流窗口
       # （2026-11-19 实测：一次 release 提交触发了整整一轮部署，切流期间 edge 路由短暂空窗）。
       # 用事件载荷判（本 job 不 checkout，没有 git 上下文）。
-      - name: 跳过 release 提交
+      # 同一个步骤判三件事（只取一次变更文件清单）：
+      #   skip=1    —— `chore(release)` 提交（release 工作流推回来的，只改 CHANGELOG/版本号）
+      #   runtime=0 —— 本次改动**全部**是文档/工作流/.claude/CHANGELOG ⇒ 部署它没有意义，
+      #                只会多一次重建 + 一个切流窗口（2026-11-19 实测：docs-only 合并同样触发了
+      #                整轮部署，切流期间站点短暂 502）
+      #   bot=1     —— 本次改动触及 openclaw（见下）
+      #
+      # runtime 判据是**白名单跳过、其它一律部署**（fail-safe）：只有「每个文件都命中
+      # docs/ .github/ .claude/ CHANGELOG 或以 .md 结尾」才判 0；取不到清单也判 1。
+      # 宁可多部署一次，也不能因为路径判据漏了而让线上停在旧代码。
+      - name: 判定本次是否部署（release / 仅文档 / 带 openclaw）
         id: guard
         env:
           MSG: ${{ github.event.head_commit.message }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          COMMIT_SHA: ${{ github.sha }}
         run: |
+          set -euo pipefail
           first=$(printf '%s' "${MSG}" | head -1)
           if [[ "$first" == chore\(release\)* ]]; then
             echo "release commit, skip deploy"
-            echo "skip=1" >> "$GITHUB_OUTPUT"
+            { echo "skip=1"; echo "runtime=0"; echo "bot=0"; } >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          echo "skip=0" >> "$GITHUB_OUTPUT"
+
+          files=$(curl -sS -H "Authorization: Bearer ${GH_TOKEN}" \
+            "https://api.github.com/repos/${GITHUB_REPOSITORY}/commits/${COMMIT_SHA}" \
+            | jq -r '.files[]?.filename' 2>/dev/null || true)
+
+          runtime=1
+          if [ -z "${files}" ]; then
+            echo "取不到变更清单 ⇒ 按需要部署处理"
+          elif ! printf '%s\n' "${files}" | grep -vqE '(^docs/|^\.github/|^\.claude/|^CHANGELOG|\.md$)'; then
+            runtime=0
+            echo "本次改动全部是文档/工作流/CHANGELOG ⇒ 跳过部署："
+            printf '  - %s\n' ${files}
+          fi
+          echo "runtime=${runtime}" >> "$GITHUB_OUTPUT"
+
+          # bot 的触发面：它自己的插件/镜像定义 + compose 本身
+          if printf '%s\n' "${files}" | grep -qE '^(deploy/openclaw/|deploy/Dockerfile\.openclaw$|deploy/docker-compose\.yml$)'; then
+            echo "bot=1" >> "$GITHUB_OUTPUT"
+            echo "本次变更触及 openclaw，将一并部署"
           else
-            echo "skip=0" >> "$GITHUB_OUTPUT"
+            echo "bot=0" >> "$GITHUB_OUTPUT"
           fi
       # secret 不能在 job 级 if 里判，但可以在 step 里判：变量配了而 secret 没配属于配置错误，
       # 应当**响亮失败**（而不是静默跳过——静默跳过会让人以为「已经部署了」）
       - name: 校验凭据齐备
-        if: steps.guard.outputs.skip != '1'
+        if: steps.guard.outputs.skip != '1' && steps.guard.outputs.runtime == '1'
         env:
           OPENSHIP_TOKEN: ${{ secrets.OPENSHIP_TOKEN }}
         run: |
@@ -477,34 +512,15 @@ jobs:
       #      「新增服务」拉起来（等于同机再起一套平台）。平台没有「服务子集视图」。
       #   ⇒ 物理拆分需要第三份 compose（违 B7），属架构议题；这里用**定向部署**取得同样的
       #     「平台发版不重启 bot」效果。
-      - name: 判定本次是否包含 openclaw
-        id: bot
-        if: steps.guard.outputs.skip != '1'
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          COMMIT_SHA: ${{ github.sha }}
-        run: |
-          set -euo pipefail
-          files=$(curl -sS -H "Authorization: Bearer ${GH_TOKEN}" \
-            "https://api.github.com/repos/${GITHUB_REPOSITORY}/commits/${COMMIT_SHA}" \
-            | jq -r '.files[]?.filename' 2>/dev/null || true)
-          # bot 自身源码/镜像定义 → 必须带上；compose 变了也要带（否则它的服务行会落后一整份编排）
-          if printf '%s\n' "$files" | grep -qE '^(deploy/openclaw/|deploy/Dockerfile\.openclaw$|deploy/docker-compose\.yml$)'; then
-            echo "include=1" >> "$GITHUB_OUTPUT"
-            echo "本次变更触及 openclaw，将一并部署"
-          else
-            echo "include=0" >> "$GITHUB_OUTPUT"
-            echo "本次变更与 openclaw 无关，跳过它（避免重启企微长连接）"
-          fi
       - name: 触发 openship 部署（按本 commit 锚定）
-        if: steps.guard.outputs.skip != '1'
+        if: steps.guard.outputs.skip != '1' && steps.guard.outputs.runtime == '1'
         env:
           OPENSHIP_TOKEN: ${{ secrets.OPENSHIP_TOKEN }}
           PROJECT_ID: ${{ vars.OPENSHIP_PROJECT_ID }}
           # 控制面地址做成变量是为了换环境不改工作流；缺省即公司控制面
           OPENSHIP_URL: ${{ vars.OPENSHIP_URL || 'https://deploy.hookflow.cn' }}
           COMMIT_SHA: ${{ github.sha }}
-          INCLUDE_BOT: ${{ steps.bot.outputs.include }}
+          INCLUDE_BOT: ${{ steps.guard.outputs.bot }}
         run: |
           set -euo pipefail
           echo "openship: project=$PROJECT_ID commit=$COMMIT_SHA"
