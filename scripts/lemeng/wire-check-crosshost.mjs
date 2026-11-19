@@ -1,3 +1,6 @@
+// @ts-nocheck —— CLI 薄壳（同 scope-preflight.mjs / org-sync-all.mjs）：pg 经 createRequire
+//   动态取，且整段是 IO 顺序执行、没有可单测的纯核；`typecheck:scripts` 的 checkJs 对
+//   `createRequire(...)('pg')` 推不出类型，逐个加 JSDoc 只会把三行断言埋进注解里。
 // wire-check-crosshost.mjs — 跨机拆分后的「平台 → 仓库」接线复查（在**应用容器内**跑）
 //
 // 为什么单独一个：`scripts/lemeng/wire-warehouse.sh` 假设平台容器与 pg_duckdb 容器**同机**
