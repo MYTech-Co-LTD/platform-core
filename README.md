@@ -18,7 +18,9 @@
 
 ```bash
 pnpm install      # 安装全部 workspace 依赖
-pnpm test         # 递归跑各包 test（--if-present）+ scripts/ 的守卫单测（test:guard）
+pnpm test         # 跑各包 test（**每包一个独立库**）+ scripts/ 的守卫单测（test:guard）
+                  # 有 DATABASE_URL 时按包名派生 `<库名>_<slug>` 并自动建库（见 scripts/test-all.mjs）；
+                  # 没配则逐字退回旧行为（包自己跳过 DB 用例）
 pnpm typecheck    # 递归 tsc --noEmit + scripts/（根 tsconfig.json）
 pnpm smoke        # 装载冒烟：需 DATABASE_URL 且先 pnpm --filter @platform/web build
 pnpm build        # 递归构建（--if-present）
