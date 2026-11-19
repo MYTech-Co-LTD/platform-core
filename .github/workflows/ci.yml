@@ -431,7 +431,9 @@ jobs:
       && github.ref == 'refs/heads/main'
       && vars.OPENSHIP_PROJECT_ID != ''
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    # 60 分钟：这个 job 现在会**等到部署终态**（构建 9–25 分钟 + 等待 30 分钟窗口 + 余量）。
+    # 原来的 30 分钟是「只触发不等待」时代的预算，别照着它缩。
+    timeout-minutes: 60
     steps:
       # secret 不能在 job 级 if 里判，但可以在 step 里判：变量配了而 secret 没配属于配置错误，
       # 应当**响亮失败**（而不是静默跳过——静默跳过会让人以为「已经部署了」）
@@ -517,6 +519,7 @@ jobs:
             '{projectId:$pid, branch:"main", commitSha:$sha, environment:"production"}
              + (if $ids != null and ($ids|length) > 0 then {serviceIds:$ids} else {} end)')
           echo "payload: ${PAYLOAD}"
+          DEP_ID=""
           for i in $(seq 1 24); do
             CODE=$(curl -sS -o /tmp/openship-deploy.json -w '%{http_code}' -X POST "${OPENSHIP_URL%/}/api/deployments" \
               -H "Authorization: Bearer ${OPENSHIP_TOKEN}" \
@@ -525,10 +528,18 @@ jobs:
             if [ "${CODE:0:1}" = "2" ]; then
               echo "openship 响应（HTTP ${CODE}）："
               cat /tmp/openship-deploy.json
-              exit 0
+              DEP_ID=$(jq -r '.data.deployment_id // empty' /tmp/openship-deploy.json)
+              break
             fi
             BODY=$(cat /tmp/openship-deploy.json 2>/dev/null || true)
             echo "第 ${i}/24 次触发：HTTP ${CODE} ${BODY:0:200}"
+            # compose 闸门：把「哪几个服务变了」打出来，并给出可执行的处置（不带它就只能人工救）
+            if grep -q 'COMPOSE_REVIEW_REQUIRED' /tmp/openship-deploy.json 2>/dev/null; then
+              echo "::error::compose 有未接受的变更（COMPOSE_REVIEW_REQUIRED）"
+              jq -r '.composeChanges | to_entries[] | "  \(.key): \(.value | join(", "))"' /tmp/openship-deploy.json 2>/dev/null || true
+              echo "::notice::处置：人工触发一次带 acceptComposeChanges:true 的部署，或对漂移服务 drift_keep（deploy/openship-adopt.md 坑 6）"
+              exit 1
+            fi
             # 仅对「部署互斥」重试；其他错误（401/403 授权、4xx 参数）立即失败
             if ! grep -q 'already in progress' /tmp/openship-deploy.json 2>/dev/null; then
               echo "::error::部署触发失败（非互斥错误，不重试）"
@@ -537,7 +548,47 @@ jobs:
             echo "既有部署在跑，30s 后重试"
             sleep 30
           done
-          echo "::error::等待既有部署完成超时（约 12 分钟）——去控制面看卡住的部署"
+          if [ -z "${DEP_ID}" ]; then
+            echo "::error::等待既有部署完成超时（约 12 分钟）——去控制面看卡住的部署"
+            exit 1
+          fi
+
+          # ── 等终态：**绿 = 线上就是这个 commit**（2026-11-19 补）─────────────────────────
+          # 此前这里拿到 2xx 就 exit 0，于是「CI 绿」只代表「控制面受理了」：PR #2522 合并后
+          # 实际部署挂在 `git clone ... exit 128`，而 CI 全绿、线上没变。发布系统的核心不变量
+          # 是「绿灯 ⇒ 线上跑的就是这个 commit」，缺了它，后面所有判断都建在沙上。
+          # 构建 9–25 分钟量级 ⇒ 90×20s = 30 分钟窗口，job timeout 同步放到 60 分钟。
+          echo "等待部署 ${DEP_ID} 走到终态…"
+          for i in $(seq 1 90); do
+            curl -sS -o /tmp/openship-status.json \
+              "${OPENSHIP_URL%/}/api/deployments/${DEP_ID}" \
+              -H "Authorization: Bearer ${OPENSHIP_TOKEN}" || true
+            ST=$(jq -r '.data.status // empty' /tmp/openship-status.json 2>/dev/null || true)
+            case "${ST}" in
+              ready)
+                DEP_SHA=$(jq -r '.data.commitSha // empty' /tmp/openship-status.json)
+                if [ "${DEP_SHA}" != "${COMMIT_SHA}" ]; then
+                  echo "::error::部署 ${DEP_ID} 的 commitSha=${DEP_SHA} 与本次 ${COMMIT_SHA} 不一致"
+                  exit 1
+                fi
+                echo "✅ 部署完成：${DEP_ID}（commit ${COMMIT_SHA}）"
+                exit 0
+                ;;
+              failed|cancelled|rolled_back)
+                msg=$(jq -r '.data.errorMessage // "(无 errorMessage)"' /tmp/openship-status.json 2>/dev/null | head -c 800)
+                echo "::error::部署 ${DEP_ID} 失败：${ST} — ${msg}"
+                exit 1
+                ;;
+              "")
+                echo "状态读取失败，重试（${i}/90）"
+                ;;
+              *)
+                if [ $((i % 15)) -eq 0 ]; then echo "部署中… ${ST}（${i}/90，约 $((i * 20 / 60)) 分钟）"; fi
+                ;;
+            esac
+            sleep 20
+          done
+          echo "::error::等待部署终态超时（30 分钟）——${DEP_ID} 仍未结束，去控制面看卡住的部署"
           exit 1
 
   # 数据单元（部署单元 B）的自动部署：**只在数据面相关路径变更时触发**。
@@ -554,7 +605,7 @@ jobs:
       && github.ref == 'refs/heads/main'
       && vars.OPENSHIP_DATA_PROJECT_ID != ''
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    timeout-minutes: 60
     steps:
       - name: 判定本次变更是否触及数据面
         id: plan
@@ -585,7 +636,8 @@ jobs:
           echo "openship(data): project=$PROJECT_ID commit=$COMMIT_SHA"
           PAYLOAD=$(jq -c -n --arg pid "${PROJECT_ID}" --arg sha "${COMMIT_SHA}" \
             '{projectId:$pid, branch:"main", commitSha:$sha, environment:"production"}')
-          # 与主单元同样的互斥重试口径（理由见上面 deploy job 的注释）
+          # 与主单元同样的互斥重试口径 + **等终态**（理由见 deploy job 的注释）
+          DEP_ID=""
           for i in $(seq 1 24); do
             CODE=$(curl -sS -o /tmp/openship-deploy-data.json -w '%{http_code}' -X POST "${OPENSHIP_URL%/}/api/deployments" \
               -H "Authorization: Bearer ${OPENSHIP_TOKEN}" \
@@ -594,10 +646,17 @@ jobs:
             if [ "${CODE:0:1}" = "2" ]; then
               echo "openship 响应（HTTP ${CODE}）："
               cat /tmp/openship-deploy-data.json
-              exit 0
+              DEP_ID=$(jq -r '.data.deployment_id // empty' /tmp/openship-deploy-data.json)
+              break
             fi
             BODY=$(cat /tmp/openship-deploy-data.json 2>/dev/null || true)
             echo "第 ${i}/24 次触发：HTTP ${CODE} ${BODY:0:200}"
+            if grep -q 'COMPOSE_REVIEW_REQUIRED' /tmp/openship-deploy-data.json 2>/dev/null; then
+              echo "::error::数据单元 compose 有未接受的变更（COMPOSE_REVIEW_REQUIRED）"
+              jq -r '.composeChanges | to_entries[] | "  \(.key): \(.value | join(", "))"' /tmp/openship-deploy-data.json 2>/dev/null || true
+              echo "::notice::处置：人工触发一次带 acceptComposeChanges:true 的部署，或对漂移服务 drift_keep（deploy/openship-adopt.md 坑 6）"
+              exit 1
+            fi
             if ! grep -q 'already in progress' /tmp/openship-deploy-data.json 2>/dev/null; then
               echo "::error::数据单元部署触发失败（非互斥错误，不重试）"
               exit 1
@@ -605,7 +664,37 @@ jobs:
             echo "既有部署在跑，30s 后重试"
             sleep 30
           done
-          echo "::error::等待既有部署完成超时（约 12 分钟）——去控制面看卡住的部署"
+          if [ -z "${DEP_ID}" ]; then
+            echo "::error::等待既有部署完成超时（约 12 分钟）——去控制面看卡住的部署"
+            exit 1
+          fi
+
+          echo "等待数据单元部署 ${DEP_ID} 走到终态…"
+          for i in $(seq 1 90); do
+            curl -sS -o /tmp/openship-status-data.json \
+              "${OPENSHIP_URL%/}/api/deployments/${DEP_ID}" \
+              -H "Authorization: Bearer ${OPENSHIP_TOKEN}" || true
+            ST=$(jq -r '.data.status // empty' /tmp/openship-status-data.json 2>/dev/null || true)
+            case "${ST}" in
+              ready)
+                echo "✅ 数据单元部署完成：${DEP_ID}"
+                exit 0
+                ;;
+              failed|cancelled|rolled_back)
+                msg=$(jq -r '.data.errorMessage // "(无 errorMessage)"' /tmp/openship-status-data.json 2>/dev/null | head -c 800)
+                echo "::error::数据单元部署 ${DEP_ID} 失败：${ST} — ${msg}"
+                exit 1
+                ;;
+              "")
+                echo "状态读取失败，重试（${i}/90）"
+                ;;
+              *)
+                if [ $((i % 15)) -eq 0 ]; then echo "部署中… ${ST}（${i}/90）"; fi
+                ;;
+            esac
+            sleep 20
+          done
+          echo "::error::等待数据单元部署终态超时（30 分钟）——${DEP_ID} 仍未结束"
           exit 1
 
   # 提交纪律的**事后绊线**（不是门禁，理由见文件头注）。触发面：push 到 main。
