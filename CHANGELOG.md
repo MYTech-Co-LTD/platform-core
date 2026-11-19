@@ -11,6 +11,10 @@
 
 ## [Unreleased]
 
+## [0.331.1](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.331.0...v0.331.1) - 2026-11-19
+- 【优化】migrate: 取锁重试 2s→250ms，告警改按时间节流 ([#2525](https://github.com/MYTech-Co-LTD/platform-core/pull/2525), [757ebe2](https://github.com/MYTech-Co-LTD/platform-core/commit/757ebe2741c5e1e12eabf75ab680d644f56facc8))
+
+
 ## [0.331.0](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.330.1...v0.331.0) - 2026-11-19
 - 【新增】data: 数据面只读产物服务 + 应用单元增量同步 ([#2519](https://github.com/MYTech-Co-LTD/platform-core/pull/2519), [b3f0350](https://github.com/MYTech-Co-LTD/platform-core/commit/b3f03508fcca4a34d329d37154639cfed1dcc539))
 - 【修复】data: 物化产物落共享宿主目录，恢复 reconcile/toolbox 读取 ([#2517](https://github.com/MYTech-Co-LTD/platform-core/pull/2517), [1340f7a](https://github.com/MYTech-Co-LTD/platform-core/commit/1340f7a46f961b448986031cc298c8fe1d19254b))
