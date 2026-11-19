@@ -540,6 +540,74 @@ jobs:
           echo "::error::等待既有部署完成超时（约 12 分钟）——去控制面看卡住的部署"
           exit 1
 
+  # 数据单元（部署单元 B）的自动部署：**只在数据面相关路径变更时触发**。
+  #
+  # 为什么不跟应用单元一起每次都发：数据单元跑的是采集/物化（scheduler、pg_duckdb、
+  # lemeng console、artifacts），发一次＝重建这几个容器并中断正在跑的作业。平台侧改个页面
+  # 不该动它。
+  # 判据取「路径」而不是「服务变了没有」：dbt 模型/管线这些是**数据面代码**，不在这份 compose
+  # 的字段里，但合并后必须落地。
+  deploy-data:
+    needs: [unit, gates, web, smoke]
+    if: >-
+      github.event_name == 'push'
+      && github.ref == 'refs/heads/main'
+      && vars.OPENSHIP_DATA_PROJECT_ID != ''
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - name: 判定本次变更是否触及数据面
+        id: plan
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          COMMIT_SHA: ${{ github.sha }}
+        run: |
+          set -euo pipefail
+          files=$(curl -sS -H "Authorization: Bearer ${GH_TOKEN}" \
+            "https://api.github.com/repos/${GITHUB_REPOSITORY}/commits/${COMMIT_SHA}" \
+            | jq -r '.files[]?.filename' 2>/dev/null || true)
+          if printf '%s\n' "$files" | grep -qE '^(deploy/data-compose\.yml$|deploy/duckle/|deploy/artifacts/|dbt/|duckle/|pipelines/)'; then
+            echo "hit=1" >> "$GITHUB_OUTPUT"
+            echo "触及数据面：$(printf '%s\n' "$files" | grep -cE '^(deploy/data-compose\.yml$|deploy/duckle/|deploy/artifacts/|dbt/|duckle/|pipelines/)') 个文件"
+          else
+            echo "hit=0" >> "$GITHUB_OUTPUT"
+            echo "本次变更与数据面无关，跳过数据单元部署"
+          fi
+      - name: 触发数据单元部署
+        if: steps.plan.outputs.hit == '1'
+        env:
+          OPENSHIP_TOKEN: ${{ secrets.OPENSHIP_TOKEN }}
+          PROJECT_ID: ${{ vars.OPENSHIP_DATA_PROJECT_ID }}
+          OPENSHIP_URL: ${{ vars.OPENSHIP_URL || 'https://deploy.hookflow.cn' }}
+          COMMIT_SHA: ${{ github.sha }}
+        run: |
+          set -euo pipefail
+          echo "openship(data): project=$PROJECT_ID commit=$COMMIT_SHA"
+          PAYLOAD=$(jq -c -n --arg pid "${PROJECT_ID}" --arg sha "${COMMIT_SHA}" \
+            '{projectId:$pid, branch:"main", commitSha:$sha, environment:"production"}')
+          # 与主单元同样的互斥重试口径（理由见上面 deploy job 的注释）
+          for i in $(seq 1 24); do
+            CODE=$(curl -sS -o /tmp/openship-deploy-data.json -w '%{http_code}' -X POST "${OPENSHIP_URL%/}/api/deployments" \
+              -H "Authorization: Bearer ${OPENSHIP_TOKEN}" \
+              -H 'Content-Type: application/json' \
+              -d "${PAYLOAD}")
+            if [ "${CODE:0:1}" = "2" ]; then
+              echo "openship 响应（HTTP ${CODE}）："
+              cat /tmp/openship-deploy-data.json
+              exit 0
+            fi
+            BODY=$(cat /tmp/openship-deploy-data.json 2>/dev/null || true)
+            echo "第 ${i}/24 次触发：HTTP ${CODE} ${BODY:0:200}"
+            if ! grep -q 'already in progress' /tmp/openship-deploy-data.json 2>/dev/null; then
+              echo "::error::数据单元部署触发失败（非互斥错误，不重试）"
+              exit 1
+            fi
+            echo "既有部署在跑，30s 后重试"
+            sleep 30
+          done
+          echo "::error::等待既有部署完成超时（约 12 分钟）——去控制面看卡住的部署"
+          exit 1
+
   # 提交纪律的**事后绊线**（不是门禁，理由见文件头注）。触发面：push 到 main。
   #
   # 判据用 `GET /repos/{owner}/{repo}/commits/{sha}/pulls`，而**不是"数父提交有几个"**：
