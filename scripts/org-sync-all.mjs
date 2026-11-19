@@ -136,8 +136,11 @@ async function main(argv) {
       } catch (e) {
         const code = e instanceof OrgSyncError ? e.code : 'SYNC_FAILED'
         failed += 1
+        // ⚠️ **始终**打印 detail（2026-11-20 实测教训）：原来 coded error 只输出 `WECOM_API`
+        // 四个字，errcode/errmsg 被吞掉 ⇒ 线上连续失败只能猜。detail 不含密钥
+        // （gettoken 只带 corpid/errcode/errmsg），打印是安全的。
         const msg = e instanceof Error ? e.message : String(e)
-        console.error(`org-sync: org=${org} FAILED ${code}${code === 'SYNC_FAILED' ? `: ${msg}` : ''}`)
+        console.error(`org-sync: org=${org} FAILED ${code}${msg ? `: ${msg}` : ''}`)
         // 失败也留审计（探针据此保持 STALE）；审计自身失败只记日志，不掩盖原错误。
         try {
           await writeAudit({ source: 'wecom', dryRun: !apply, failed: code })
