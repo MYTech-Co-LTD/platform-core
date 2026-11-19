@@ -327,6 +327,9 @@ commitSha 锚定构建部署。
 > 边界：compose 闸门（409）**仍只能在部署时发现**（控制面没有 dry-run/diff 端点），
 > 现在至少会打出「哪几个服务变了」+ 处置口径，不再是沉默红。
 >
+> **单元边界与「想把某个服务单独部署」的完整口径**见 `deploy/deployment-units.md`（含两道实测硬墙
+> 与上游需求），本文只记接入坑。
+>
 > **定向部署（2026-11-19）**：deploy job 默认传 `serviceIds`（除 openclaw 外的启用服务），只有
 > 变更触及 `deploy/openclaw/**`、`deploy/Dockerfile.openclaw`、`deploy/docker-compose.yml` 时才
 > 带上 openclaw——否则平台每次发版都会重建问数 bot，把企微长连接打断 1 分钟级。**没有拆成独立
