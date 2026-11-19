@@ -182,6 +182,14 @@ P1+P4b 的切流**已全部完成**（2026-11-15）；新增 job 仍按上表四
 - 代码里删了 key 但排班还 enabled ⇒ **没有任何单元会领取它**，启动时打
   `{schedulerError:'orphan-schedules', keys:[…]}`；见到它就去停用/删除那条排班。
 
+**滚动顺序（2026-11-19 实测踩到）**：schema 迁移的载体是**应用单元的 `server`**（它启动时跑
+`runMigrations`），数据单元没有 server 服务 ⇒ **带 migration 的调度器改动必须先滚应用单元**
+（或同时滚），否则数据单元的 scheduler 会以 `errorMissingColumn` 崩溃循环。当晚正确顺序：
+
+1. 应用单元定向部署 `server` + `notify-worker`（迁移 + 新代码 + `GROUPS=platform`）；
+2. 数据单元再部署 scheduler（`GROUPS=data`）。
+   反过来（先数据后应用）会先撞缺列。
+
 - **关调度（常态化保全）**：改**数据单元 scheduler 服务**的 `SCHEDULER_ENABLED=0`，等它重启。
   应用单元那侧本来就是 0，不用动。
 - **回退到单进程形态**（数据单元不可用时的应急）：数据单元 scheduler 置 `SCHEDULER_ENABLED=0`
