@@ -134,6 +134,20 @@ update project set server_id='<目标 serverId>' where id='<projectId>';
   后重启该容器。
 - 手工路径**绕过了 pipeline 的健康/路由验证**，所以第 4 步之后必须自己按 §5 的四条验收跑一遍。
 
+## 5.7 迁完之后还有三样东西不会跟着走（2026-11-19 实测，代价是两小时企微刷屏）
+
+**openship 的 custom job、宿主上的 /opt 脚本、以及任何「同机假设」的检查，都不会随项目迁移。**
+服务起来了 ≠ 自动化还在。切流后逐项过一遍：
+
+| # | 对象 | 症状 | 处置 |
+|---|---|---|---|
+| 1 | **custom job** | `actionConfig.serverIds` 还写旧机 ⇒ 命令里 `docker exec …<旧容器名>` 找不到容器，每 5–60 分钟一条 `job.run.failed` | 逐条 PATCH `serverIds` 到新机；`POST /jobs/<key>/run` 手动跑一次确认转绿 |
+| 2 | **/opt 运维脚本** | job 报 `can't open file '/opt/xxx.py'` 或 `docker: not found` | 仓内 `bash scripts/sync-ops-scripts.sh --check --host root@<新机>`（sha256 逐字节比对），不一致就投递 |
+| 3 | **「同机」假设的检查** | 例如 Gate-B 接线检查（脚本头写明「两个容器都在数据面机上」）——跨机后概念本身不成立 | 不是改个 serverIds 能修的：停用，另写跨机口径（本仓 `scripts/lemeng/wire-check-crosshost.mjs` 是范例） |
+
+**发现路径**：`GET /api/proxy/api/notifications/deliveries` 的 `payload.logExcerpt` 一眼能看到
+`No such container: …`；比翻 170 条 job 列表快得多。
+
 ## 6. 已知坑
 
 - **服务行的 env 表优先于 `environment` 合并补丁**：对已存在的键用
