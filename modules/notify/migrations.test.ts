@@ -9,10 +9,14 @@ const ORG = 'org-mig005'
 
 describePg('notify 迁移', () => {
   let pool: Pool
+  // 超时显式放大：本 hook 与下面「幂等」用例都会**在全局迁移锁上排队**——`pnpm -r test`
+  // 让最多 4 个 workspace 包并发打同一台 PG，锁键全库唯一（见 apps/server/src/migrate.ts
+  // 文件头 / #310），另一包正在跑真迁移时这里就是真实等待。vitest 的 5s/10s 默认值小于
+  // 一次正常的锁等待，会把「排队」误报成「超时」（2026-11-19 CI 实测 5006ms）。
   beforeAll(async () => {
     pool = new Pool({ connectionString: dbUrl })
     await applyMigrations(pool)
-  })
+  }, 30_000)
   afterAll(async () => {
     await pool.end()
   })
@@ -24,7 +28,7 @@ describePg('notify 迁移', () => {
     await applyMigrations(pool) // 第二遍：同批重跑
     const after = (await pool.query(q)).rows[0].n as number
     expect(after).toBe(before)
-  })
+  }, 20_000) // 本用例连跑两遍迁移 ⇒ 可能两次排队（理由同上）
 
   it('event.status 接受新增的可送达性终态，非法值仍被拒', async () => {
     await pool.query('delete from notify.event where org=$1', [ORG])
