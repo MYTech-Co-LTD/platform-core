@@ -94,6 +94,16 @@ services:
       DATA_WAREHOUSE_URL: postgres://${PGDUCK_USER:-platform}:${PGDUCK_PASSWORD:-platform}@pg_duckdb:5432/${PGDUCK_DB:-warehouse}
       # dbt 在**本容器内**执行（镜像自带 dbt 1.9.1）⇒ 不需要 docker sock、也不依赖 etl profile 的 dbt 服务。
       MATERIALIZE_MODE: container
+      # 产物（manifest.json / run_results.json）写到**与应用单元共享的宿主目录**，
+      # 而不是容器内的 /tmp：应用单元的 server 把同一目录只读挂到 /app/dbt-target，
+      # `reconcile` / `toolbox health` 读的就是它。写 /tmp 的后果是「跑完就丢」——
+      # 2026-11-19 实测：server 侧读到的是 11-16 的旧 manifest（容器化迁移后没人再更新那条路径）。
+      # ⚠️ 宿主目录必须对 uid 1000 可写（镜像以 node 运行）：`chown -R 1000:1000 <dir>` 一次即可。
+      MATERIALIZE_TARGET_DIR: /app/dbt-target
+    volumes:
+      # 与应用单元的 server 同源（它把同一宿主目录只读挂到 /app/dbt-target）。
+      # 用变量而不是写死路径：同一个仓发给不同客户，宿主目录随部署形态变。
+      - ${DBT_TARGET_DIR:-/opt/platform-core-data/platform-core/dbt/target}:/app/dbt-target
     # 运行镜像已含 tsx；不要用裸 node 跑 .ts import（与 deploy/docker-compose.yml 的 notify-worker 同）
     command: ['pnpm', 'exec', 'tsx', 'scripts/notify-worker.mjs']
     depends_on:
