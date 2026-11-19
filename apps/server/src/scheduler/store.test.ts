@@ -136,12 +136,38 @@ describePg('scheduler store', () => {
     expect(rows[0].status).toBe('timeout')
   })
 
+  it('★ 启动对账只收自己的：别的实例的 running 行不许动（#2511 两单元并存）', async () => {
+    // ⚠️ 只调一次 mkSchedule：它会 clearFixtures，连调两次会把兄弟夹具删掉。
+    const mine = await mkSchedule(pool, 'jobtest-store:mine', { timeoutMs: 1000 })
+    const { rows: otherRows } = await pool.query<{ id: string }>(
+      `insert into platform.job_schedule(key,cron,timezone,source,enabled,next_run_at,timeout_ms,max_attempts,expected_interval_secs)
+       values ('jobtest-store:other','7 * * * *','UTC','system',true, now() - interval '1 minute',1000,2,3600) returning id`,
+    )
+    const other = Number(otherRows[0].id)
+    await pool.query(
+      `insert into platform.job_run(schedule_id,key,occurrence,trigger,status,started_at,runner_id)
+       values ($1,'jobtest-store:mine',now(),'schedule','running', now(), 'scheduler-data')`, [mine])
+    await pool.query(
+      `insert into platform.job_run(schedule_id,key,occurrence,trigger,status,started_at,runner_id)
+       values ($1,'jobtest-store:other',now(),'schedule','running', now(), 'scheduler-platform')`, [other])
+    // 以 data 单元的身份启动：只收自己留下的行
+    expect(await reapLostRunners(pool, new Date(), 'scheduler-data')).toBeGreaterThanOrEqual(1)
+    const rows = await pool.query<{ schedule_id: string; status: string }>(
+      'select schedule_id, status from platform.job_run where schedule_id = any($1::bigint[])',
+      [[String(mine), String(other)]],
+    )
+    const bySchedule = new Map(rows.rows.map((r) => [String(r.schedule_id), r.status]))
+    expect(bySchedule.get(String(mine))).toBe('timeout')
+    expect(bySchedule.get(String(other))).toBe('running')
+  })
+
   it('★ 启动对账：刚起的 running 行也直接收成 timeout（不等 2×timeout，#2442）', async () => {
     const id = await mkSchedule(pool, 'jobtest-store:lost', { timeoutMs: 1000 })
+    // runner_id 必须与收账方一致：启动对账的语义是「我这个实例上一次化身留下的行」（#2511）。
     await pool.query(
-      `insert into platform.job_run(schedule_id,key,occurrence,trigger,status,started_at)
-       values ($1,'jobtest-store:lost',now(),'schedule','running', now())`, [id])
-    expect(await reapLostRunners(pool, new Date())).toBeGreaterThanOrEqual(1)
+      `insert into platform.job_run(schedule_id,key,occurrence,trigger,status,started_at,runner_id)
+       values ($1,'jobtest-store:lost',now(),'schedule','running', now(), 'scheduler')`, [id])
+    expect(await reapLostRunners(pool, new Date(), 'scheduler')).toBeGreaterThanOrEqual(1)
     const { rows } = await pool.query(
       'select status, error from platform.job_run where schedule_id=$1', [id])
     expect(rows[0].status).toBe('timeout')

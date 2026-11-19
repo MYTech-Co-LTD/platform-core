@@ -90,19 +90,28 @@ async function insertRunning(
   r: Row,
   occurrence: Date,
   attempt: number,
+  runnerId: string,
 ): Promise<number> {
   const { rows } = await client.query<{ id: string }>(
     `insert into platform.job_run
-       (schedule_id,key,occurrence,owner_org,owner_namespace,params_snapshot,trigger,status,attempt,started_at)
-     values ($1,$2,$3,$4,$5,$6::jsonb,'schedule','running',$7, now()) returning id`,
+       (schedule_id,key,occurrence,owner_org,owner_namespace,params_snapshot,trigger,status,attempt,started_at,runner_id)
+     values ($1,$2,$3,$4,$5,$6::jsonb,'schedule','running',$7, now(), $8) returning id`,
     [r.id, r.key, occurrence, r.owner_org, r.owner_namespace,
-      JSON.stringify(r.params ?? {}), attempt],
+      JSON.stringify(r.params ?? {}), attempt, runnerId],
   )
   return Number(rows[0].id)
 }
 
 /** 抢到期排班（含到期的重试）。返回即代表这些格已被本进程独占，且 running 行已落库。 */
-export async function claimDue(pool: Pool, limit: number, now: Date, next: NextFn): Promise<ClaimedJob[]> {
+export async function claimDue(
+  pool: Pool,
+  limit: number,
+  now: Date,
+  next: NextFn,
+  opts: { runnerId?: string; keys?: readonly string[] } = {},
+): Promise<ClaimedJob[]> {
+  const runnerId = opts.runnerId ?? 'scheduler'
+  const keys = opts.keys ?? null
   const client = await pool.connect()
   try {
     await client.query('begin')
@@ -114,8 +123,9 @@ export async function claimDue(pool: Pool, limit: number, now: Date, next: NextF
         where enabled and deleted_at is null
           and retry_at is not null and retry_at <= $1
           and retry_occurrence is null
+          and ($2::text[] is null or key = any($2::text[]))
         returning key`,
-      [now],
+      [now, keys],
     )
     if (bad.rows.length > 0) {
       const keys = bad.rows.map((r) => r.key).join(', ')
@@ -127,6 +137,7 @@ export async function claimDue(pool: Pool, limit: number, now: Date, next: NextF
       `select ${SCHED_COLS} from platform.job_schedule s
         where s.enabled
           and s.deleted_at is null
+          and ($3::text[] is null or s.key = any($3::text[]))
           and not exists (select 1 from platform.job_run r
                            where r.schedule_id = s.id and r.status = 'running')
           and (
@@ -135,7 +146,7 @@ export async function claimDue(pool: Pool, limit: number, now: Date, next: NextF
         order by coalesce(s.retry_at, s.next_run_at)
         limit $1
         for update of s skip locked`,
-      [limit, now],
+      [limit, now, keys],
     )
     const out: ClaimedJob[] = []
     for (const r of rows) {
@@ -149,7 +160,7 @@ export async function claimDue(pool: Pool, limit: number, now: Date, next: NextF
             where id=$1`,
           [r.id, attempt],
         )
-        const runId = await insertRunning(client, r, occurrence, attempt)
+        const runId = await insertRunning(client, r, occurrence, attempt, runnerId)
         out.push(toClaimed(r, { occurrence, attempt, isRetry: true, runId }))
       } else {
         const occurrence = new Date(r.next_run_at as Date)
@@ -161,7 +172,7 @@ export async function claimDue(pool: Pool, limit: number, now: Date, next: NextF
             where id=$1`,
           [r.id, nextAt],
         )
-        const runId = await insertRunning(client, r, occurrence, 1)
+        const runId = await insertRunning(client, r, occurrence, 1, runnerId)
         out.push(toClaimed(r, { occurrence, attempt: 1, isRetry: false, runId }))
       }
     }
@@ -180,7 +191,14 @@ export async function claimDue(pool: Pool, limit: number, now: Date, next: NextF
  *  **按 schedule 去重**：先锁排班行（`for update of s skip locked`，与 claimDue 的排班锁串行），
  *  一个排班最多返回一条 ⇒ 同 schedule 的多条 queued 每拍只跑一条，其余保持 queued 留给下一拍。
  *  （`DISTINCT ON` 与 `FOR UPDATE` 在 PostgreSQL 不能共存，所以用「锁排班行」天然去重。） */
-export async function claimQueuedManual(pool: Pool, limit: number, now: Date): Promise<ClaimedJob[]> {
+export async function claimQueuedManual(
+  pool: Pool,
+  limit: number,
+  now: Date,
+  opts: { runnerId?: string; keys?: readonly string[] } = {},
+): Promise<ClaimedJob[]> {
+  const runnerId = opts.runnerId ?? 'scheduler'
+  const keys = opts.keys ?? null
   const client = await pool.connect()
   const out: ClaimedJob[] = []
   try {
@@ -196,6 +214,7 @@ export async function claimQueuedManual(pool: Pool, limit: number, now: Date): P
       `select ${SCHED_COLS}
          from platform.job_schedule s
         where s.deleted_at is null
+          and ($2::text[] is null or s.key = any($2::text[]))
           and exists (select 1 from platform.job_run r
                        where r.schedule_id = s.id and r.status = 'queued'
                          and r.trigger = 'manual')
@@ -204,7 +223,7 @@ export async function claimQueuedManual(pool: Pool, limit: number, now: Date): P
         order by s.id
         limit $1
         for update of s skip locked`,
-      [limit],
+      [limit, keys],
     )
     if (sched.rows.length === 0) {
       await client.query('commit')
@@ -238,9 +257,9 @@ export async function claimQueuedManual(pool: Pool, limit: number, now: Date): P
       if (!run) continue
       await client.query(
         `update platform.job_run
-            set status='running', started_at=$2, attempt=1, params_snapshot=$3::jsonb
+            set status='running', started_at=$2, attempt=1, params_snapshot=$3::jsonb, runner_id=$4
           where id=$1`,
-        [run.id, now, JSON.stringify(run.params_snapshot ?? {})],
+        [run.id, now, JSON.stringify(run.params_snapshot ?? {}), runnerId],
       )
       const job = toClaimed(s, {
         occurrence: new Date(run.occurrence), attempt: 1, isRetry: false, runId: Number(run.id),
@@ -333,11 +352,17 @@ export async function reapStale(pool: Pool, now: Date): Promise<number> {
  *  reapStale 要等 2×timeout（长任务 90 分钟 ⇒ 3 小时），期间 hasRunning 恒真、健康判据③把
  *  非终态计数、手动触发 409。启动即收成 timeout 才是事实。
  *  前提：本进程是该库唯一的 scheduler runner（单 worker/实例；两实例各有自己的库）。 */
-export async function reapLostRunners(pool: Pool, now: Date): Promise<number> {
+export async function reapLostRunners(pool: Pool, now: Date, runnerId = 'scheduler'): Promise<number> {
+  // ⚠️ **只收自己的**（#2511）：两个单元各跑一个调度者时，全表扫会把**对方正在跑的作业**
+  // 判 timeout（2026-11-19 实测风险：数据单元启动那一刻会把应用单元的 running 行收掉，
+  // 作业本体还在跑，台账却说超时）。按 runner_id 收口后，启动对账的语义才是它字面说的
+  // 「我这个实例上一次化身留下的行」。
+  // 迁移前的历史行由 023 迁移统一回填为 'scheduler-legacy'，不会被任何实例收走，
+  // 交给 reapStale 按超时收口。
   const { rowCount } = await pool.query(
     `update platform.job_run set status='timeout', finished_at=$1, error='runner lost on worker restart'
-      where status='running'`,
-    [now],
+      where status='running' and runner_id=$2`,
+    [now, runnerId],
   )
   return rowCount ?? 0
 }

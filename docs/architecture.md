@@ -540,6 +540,10 @@ B/C 的统一能力入口是 `POST /api/agent/mcp`；manifest `mcpFaces` 声明�
   `notify-worker`，`SCHEDULER_ENABLED=0`）。理由：应用单元每次发版都重建容器，运行中的
   采集/物化子进程被连坐收掉（3 天 40 次部署、13 次 dbt 作业被杀 ⇒ mart 陈旧 ⇒ 审计假红）。
   **单调度者不变**：两边不得同时开调度；单机未拆缝的部署两个 loop 同进程（两个开关都开）。
+  **作业域（2026-11-19 补，`#2511`）**：registry 每条作业声明 `scope`（platform / data），
+  各单元用 `SCHEDULER_JOB_GROUPS` 只 claim 自己那组（claim SQL 按 key 收口，**结构上不可能双 claim**）；
+  `job_run.runner_id` 记录执行实例、启动对账只收同 id 的行、心跳与健康判定按实例收口。
+  作业声明的 `requiresEnv` 缺键 ⇒ 不进 claim 集合且在 `/healthz` 报红（配置错不许静默）。
 
 **不变量**：① 调度器只排「引擎」不排「规则」（agent 只能排已注册 key）；② 只做 cron + 台账，
 不做 DAG / 依赖编排 / 回填队列；③ `source='system'` 时 `params` 不生效——行为只由代码 registry 决定。

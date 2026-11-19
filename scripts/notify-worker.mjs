@@ -94,9 +94,14 @@ if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) 
   // 否则首拍会 claim 任务、起子进程 ref 住事件循环 ⇒ 进程不退出，
   // 且 finally 的 pool.end() 早于 finishRun ⇒ job_run 永远停在 running（挡 claim 到 reapStale）。
   const once = process.argv.includes('--once')
-  const { parseSchedulerConfig, parseDeliveryEnabled, resolveWorkerRole, shouldRunTick } = await import('../apps/server/src/scheduler/worker-config.ts')
+  const { parseSchedulerConfig, parseDeliveryEnabled, resolveWorkerRole, selectRunnableJobs, shouldRunTick } = await import('../apps/server/src/scheduler/worker-config.ts')
   const { workerHealthz } = await import('../apps/server/src/scheduler/worker-healthz.ts')
+  const { JOB_REGISTRY } = await import('../apps/server/src/scheduler/registry.ts')
   const schedCfg = parseSchedulerConfig(process.env)
+  // 本进程负责的作业域（#2511）：应用单元 = platform，数据单元 = data。
+  // 选出来的集合同时决定三件事：seed 哪些排班、claim 哪些排班、健康面判哪些排班——
+  // 三者同源，才不会出现「A 判 B 的作业该跑没跑」这类跨单元误红。
+  const { runnable, blocked } = selectRunnableJobs(JOB_REGISTRY, schedCfg.groups, process.env)
   // 角色拆分（#2504）：投递 loop 与调度 loop 分处两个部署单元。
   //   应用单元（unit A）：`SCHEDULER_ENABLED=0`，只跑投递——随应用发版重建，不再打断采集/物化；
   //   数据单元（unit B）：`NOTIFY_DELIVERY_ENABLED=0`，只跑调度——不随应用部署重启。
@@ -120,10 +125,23 @@ if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) 
     // 启动对账（#2442）：容器重启会连子进程一起杀掉，上一轮的 running 行必须当场收口，
     // 否则要等 reapStale 的 2×timeout（长任务 90 分钟 ⇒ 3 小时）。
     const { reapLostRunners } = await import('../apps/server/src/scheduler/store.ts')
-    const reapedLost = await reapLostRunners(pool, new Date())
+    const reapedLost = await reapLostRunners(pool, new Date(), schedCfg.instanceId)
     if (reapedLost > 0) {
       console.log(JSON.stringify({ ts: new Date().toISOString(), schedulerReapedLost: reapedLost }))
     }
+    // 孤儿排班（#2511）：代码里已删的 key 仍留在 job_schedule 且 enabled ⇒ 由于 claim 按 key 收口，
+    // 它**不会被任何单元领取**（改造前是每个 occurrence 刷一条必然失败的台账）。这里启动时点名，
+    // 让「删了代码忘了停排班」在部署日志里可见，而不是变成一条永远不跑的静默行。
+    /** @type {{ rows: Array<{ key: string }> }} */
+    const { rows: schedKeys } = await pool.query(
+      "select key from platform.job_schedule where source='system' and enabled and deleted_at is null",
+    )
+    const known = new Set(JOB_REGISTRY.map((d) => d.key))
+    const orphans = schedKeys.map((r) => String(r.key)).filter((k) => !known.has(k)).sort()
+    if (orphans.length > 0) {
+      console.error(JSON.stringify({ ts: new Date().toISOString(), schedulerError: 'orphan-schedules', keys: orphans }))
+    }
+
     // 任务生命周期事件（W6-P4a）：与 integration.stale 同路径——直接入 outbox，不新起子进程。
     // org 取排班 owner（系统排班 owner 为空 ⇒ 本实例租户），由 loop 传入。
     const { enqueueEvent } = await import('../modules/notify/storage.ts')
@@ -132,6 +150,7 @@ if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) 
     const instanceOrg = tenantRows[0]?.casdoor_org ?? ''
     scheduler = createSchedulerLoop({
       pool, cwd: process.cwd(), maxConcurrency: schedCfg.maxConcurrency,
+      registry: runnable, instanceId: schedCfg.instanceId,
       emit: async (input) => enqueueEvent(pool, {
         org: input.org || instanceOrg,
         eventId: input.eventId,
@@ -141,7 +160,15 @@ if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) 
         producer: 'platform.scheduler',
       }),
     })
-    console.log(JSON.stringify({ ts: new Date().toISOString(), scheduler: 'enabled', tickMs: schedCfg.tickMs }))
+    for (const b of blocked) {
+      // 缺 env ⇒ 该作业不进 claim 集合（健康面同时报红）。显式打一行，便于 `docker logs` 直接取证。
+      console.error(JSON.stringify({ ts: new Date().toISOString(), job: b.key, error: 'missing env, not scheduled', missing: b.missing }))
+    }
+    console.log(JSON.stringify({
+      ts: new Date().toISOString(), scheduler: 'enabled', tickMs: schedCfg.tickMs,
+      instance: schedCfg.instanceId, groups: schedCfg.groups,
+      jobs: runnable.length, blocked: blocked.length,
+    }))
   } else {
     console.log(JSON.stringify({
       ts: new Date().toISOString(),
@@ -166,13 +193,14 @@ if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) 
       // 判定是纯函数（worker-healthz.ts）：调度关闭时不看 jobHealth；
       // 开着就必须求值（求值抛错走 catch ⇒ 503，不假绿）。
       const schedulerHealth = schedulerEnabled && jobHealthFn
-        ? await jobHealthFn(pool, new Date())
+        ? await jobHealthFn(pool, new Date(), { instanceId: schedCfg.instanceId, keys: runnable.map((d) => d.key) })
         : null
       const h = workerHealthz({
         notifyFresh: rows.length > 0,
         deliveryEnabled,
         schedulerEnabled,
         jobHealth: schedulerHealth,
+        blockedJobs: blocked,
       })
       res.writeHead(h.status, { 'content-type': 'text/plain' })
       res.end(h.body)

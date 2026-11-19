@@ -15,7 +15,7 @@ const PREFIX = 'jobtest-loop:%'
 
 function def(over: Partial<JobDef> = {}): JobDef {
   return {
-    key: 'jobtest-loop:loop', script: 'scripts/x.mjs', cron: '7 * * * *', timezone: 'UTC',
+    scope: 'platform', key: 'jobtest-loop:loop', script: 'scripts/x.mjs', cron: '7 * * * *', timezone: 'UTC',
     timeoutMs: 500, maxAttempts: 1, expectedIntervalSecs: 3600, description: 't', ...over,
   }
 }
@@ -125,7 +125,7 @@ describePg('scheduler loop', () => {
     let seen: NodeJS.ProcessEnv | undefined
     const loop = createSchedulerLoop({
       pool, cwd: process.cwd(), maxConcurrency: 2,
-      registry: [def({ key: 'jobtest-loop:env', env: { MATERIALIZE_SCOPE: 'tick' } })],
+      registry: [def({ scope: 'platform', key: 'jobtest-loop:env', env: { MATERIALIZE_SCOPE: 'tick' } })],
       spawn: async (o) => { seen = o.env; return okResult() },
     })
     await loop.tick()
@@ -134,18 +134,26 @@ describePg('scheduler loop', () => {
     expect(seen?.JOB_KEY).toBe('jobtest-loop:env')
   })
 
-  it('★ 未知 registry key：已 claim 的 running 行收成 failed，不重试', async () => {
+  it('★ 未知 registry key：不被任何单元 claim（#2511 改成按 key 收口后不再逐格刷失败）', async () => {
     const id = await seed({ key: 'jobtest-loop:gone' })
     const loop = createSchedulerLoop({
       pool, registry: [def({ key: 'jobtest-loop:present' })], cwd: process.cwd(), maxConcurrency: 2,
       spawn: async () => okResult(),
     })
+    const before = await pool.query<{ next_run_at: Date }>(
+      'select next_run_at from platform.job_schedule where id=$1', [id],
+    )
     await loop.tick()
-    const row = await waitTerminal(id)
-    expect(row.status).toBe('failed')
-    expect(row.error).toBe('unknown registry key')
-    const { rows } = await pool.query('select retry_at from platform.job_schedule where id=$1', [id])
-    expect(rows[0].retry_at).toBeNull()
+    // 孤儿排班（代码里已删的 key）不进 claim 集合：不建 run 行、不动 next_run_at。
+    // 可见性由 worker 启动时的 orphan 日志负责（见 scripts/notify-worker.mjs），不再靠台账刷红。
+    const runs = await pool.query<{ n: number }>(
+      'select count(*)::int as n from platform.job_run where schedule_id=$1', [id],
+    )
+    expect(runs.rows[0].n).toBe(0)
+    const after = await pool.query<{ next_run_at: Date }>(
+      'select next_run_at from platform.job_schedule where id=$1', [id],
+    )
+    expect(after.rows[0].next_run_at.getTime()).toBe(before.rows[0].next_run_at.getTime())
   })
 
   it('★ spawn 同步抛错（ENAMETOOLONG）：failed 且**不可重试**（maxAttempts 留有余额也不排重试）', async () => {
