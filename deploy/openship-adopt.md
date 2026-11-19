@@ -464,6 +464,11 @@ psql "$DATABASE_URL" -c "select platform.prune_audit();"
    `x509: certificate signed by unknown authority` **panic 退出**——把节点上的
    `/usr/local/share/ca-certificates/openship-smart-proxy.crt` 拼进系统 CA bundle 再挂进去
    （`cat /etc/ssl/certs/ca-certificates.crt …smart-proxy.crt > ca-bundle.crt`）。
+   ⚠️ **大镜像首次经过缓存会 500**（2026-11-19 实测）：`pgvector/pgvector:pg17` 拉取时，
+   `registry:2` 代理上游的单个大 blob 超过 30s，docker 客户端先断开 ⇒ 日志
+   `write: broken pipe` + `http.response.status=500`，部署失败在 `Docker pull failed`。
+   镜像本身没问题，**先手动预热一次**即可（`docker pull <image>`，成功后再部署）——之后走本地缓存是秒级。
+   同理，**首次部署用到大 base image 前先预拉**，别等流水线在切流阶段踩这个。
    效果：基础镜像只在第一次出网，之后全走 LAN（实测 BuildKit 探针 368s → 3.7s；并发两个
    build 全绿，构建总耗时 116s）。另外它同时解决了「自建镜像没地方存」：可以
    `docker tag/push` 到 `127.0.0.1:5000/…`。
