@@ -503,11 +503,15 @@ describePg('notify N5 运营收口', () => {
     await pool.query(
       "update notify.delivery set next_attempt_at=case org when $1 then now()-interval '3 minutes' else now()-interval '1 minute' end where org in ($1,$2) and event_id='due-1'",
       [ORG_A, ORG_B])
-    const rows = (await claimDueDeliveries(pool, 2))
-      .filter((d) => d.org === ORG_A || d.org === ORG_B)
-      .map((d) => `${d.org}:${d.eventId}`)
-      .sort()
-    expect(rows).toEqual([`${ORG_A}:due-0`, `${ORG_B}:due-0`].sort())
+    // 断言的是**公平性本身**，不是「恰好拿到这两行」：`claimDueDeliveries` 的排名是
+    // `partition by org` **跨全表**的，同包其它测试文件遗留的到期行也会占 rn=1 的名额
+    // （2026-11-19 CI 实测：期望 A:due-0 + B:due-0，实际拿到了另一个 org 的 rn=1 行）。
+    // 公平的本质是「同一批里没有同一个 org 连拿两个」——朴素 `order by next_attempt_at`
+    // 会把 A 的两条（都更早到期）一起拿走，这条断言就红。
+    const claimed = await claimDueDeliveries(pool, 2)
+    const orgs = claimed.map((d) => d.org)
+    expect(orgs).toHaveLength(2)
+    expect(new Set(orgs).size, '同一批里出现了同一 org 连拿 —— 公平领取失效').toBe(orgs.length)
   })
 })
 
