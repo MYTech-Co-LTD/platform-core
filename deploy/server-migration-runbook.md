@@ -19,7 +19,8 @@ pipeline 会连**卷**一起搬，并带健康/路由验证与显式 cutover 确
 
 | # | 项 | 判据 |
 |---|---|---|
-| 1 | 镜像源 = **本机 pull-through 缓存 registry** | `registry-mirrors` 指向 `127.0.0.1:5000`（公共镜像源在大 blob/并发下会超时，实测 BuildKit 368s DeadlineExceeded）。做法与 CA 坑见 `openship-adopt.md` 坑 8；改 `daemon.json` 后 `kill -HUP $(pidof dockerd)` 热加载，**不重启容器** |
+| 1 | 镜像源 = **本机 pull-through 缓存 registry** | `registry-mirrors` 写成两级 `["http://127.0.0.1:5000","<公共镜像源>"]`（2026-11-19 实测：**列表会按序回落**，首项坏掉时 pull 仍成功）。做法与 CA 坑见 `openship-adopt.md` 坑 8；改 `daemon.json` 后 `kill -HUP $(pidof dockerd)` 热加载，**不重启容器** |
+| 1′ | 基础镜像预拉 | 就绪后跑 `bash scripts/prewarm-images.sh`（清单解析自 Dockerfile/compose），把「首次穿缓存拉大镜像」从部署期挪到准备期 |
 | 2 | 安全组两条 | 目标→源 `18090`（产物服务）、源→目标 `5432`（调度器连平台库）。实测用 `nc -z -w3` 双向验 |
 | 3 | 磁盘 | 目标机 ≥ 项目快照大小（`snapshotSizeBytes`）+ 构建余量 |
 | 4 | 基础镜像预拉 | `docker pull postgres:16-alpine node:22-bookworm-slim node:22-alpine`（走本地缓存 registry，快）。**openclaw 的基础镜像在 ghcr.io（`Dockerfile.openclaw` 的 FROM），`registry-mirrors` 不管它**——它走 dockerd 的 `HTTPS_PROXY` 直连，也要预拉 |

@@ -479,6 +479,21 @@ psql "$DATABASE_URL" -c "select platform.prune_audit();"
    `write: broken pipe` + `http.response.status=500`，部署失败在 `Docker pull failed`。
    镜像本身没问题，**先手动预热一次**即可（`docker pull <image>`，成功后再部署）——之后走本地缓存是秒级。
    同理，**首次部署用到大 base image 前先预拉**，别等流水线在切流阶段踩这个。
+   预拉用 `scripts/prewarm-images.sh`（清单是**解析** Dockerfile 的 FROM + compose 的 `image:`，
+   不是手抄，加服务自动进清单；`*:local` 自建镜像自动排除）。
+
+   **兜底（2026-11-19 实测）**：`registry-mirrors` 是**列表，按序回落**——首项指向死端口
+   或返回 404 的伪 registry 时，`docker pull` 仍能成功（本地实测 busybox 两例）。所以每台
+   构建机的配置统一为**两级**：
+   ```json
+   { "registry-mirrors": ["http://127.0.0.1:5000", "https://<公共镜像源>"] }
+   ```
+   ⚠️ 边界：这次验的是「连不上 / 不是 registry」；**缓存中途返回 5xx（今天 pgvector 那种）
+   是否也回落未知**，别把它当成万能兜底。
+
+   **巡检（归 openship 层，不进 OO）**：job `构建链：本机 registry 缓存探活`（`7,37 * * * *`，
+   三台构建机，命令=curl `/v2/` + 校验 `docker info` 的 mirror 是否指向本机缓存；任一条不满足
+   即 job 失败）。按 §1.5.3 三层分工，「机器/进程/任务层」的探活归 openship，不写进 OO 规则。
    效果：基础镜像只在第一次出网，之后全走 LAN（实测 BuildKit 探针 368s → 3.7s；并发两个
    build 全绿，构建总耗时 116s）。另外它同时解决了「自建镜像没地方存」：可以
    `docker tag/push` 到 `127.0.0.1:5000/…`。
