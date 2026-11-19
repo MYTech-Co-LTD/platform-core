@@ -436,6 +436,33 @@ psql "$DATABASE_URL" -c "select platform.prune_audit();"
      **解法是给同一个服务补 `build:`**（compose 里 `image:` + `build:` 并存），让 openship 本地构建。
    - `refresh` 部署**不能给新服务用**（`Retained image ... is unavailable`），新服务只能走全量部署。
 
+8. **根治镜像源：本机 pull-through 缓存 registry（2026-11-19 实测）**
+   连带坑 7 的上下文：BuildKit（docker 驱动）**不继承** dockerd 的 `HTTPS_PROXY`，所以它的 registry
+   访问只能走 `registry-mirrors`；而公共镜像源在大 blob / 并发时会超时（实测 368s DeadlineExceeded，
+   同一个镜像单独 `docker pull` 只要 7–14s）。公共镜像源的稳定性不归我们控 ⇒ **在目标机上跑一个
+   本地 pull-through 缓存**才是根治：
+   ```sh
+   docker run -d --name registry-cache --restart unless-stopped \
+     -p 127.0.0.1:5000:5000 \
+     -e REGISTRY_PROXY_REMOTEURL=https://registry-1.docker.io \
+     -e HTTP_PROXY=http://<smart-proxy 公网>:4878 -e HTTPS_PROXY=$HTTP_PROXY \
+     -e NO_PROXY=localhost,127.0.0.1 \
+     -e SSL_CERT_FILE=/certs/ca-bundle.crt \
+     -v /var/lib/registry-cache/ca-bundle.crt:/certs/ca-bundle.crt:ro \
+     -v /var/lib/registry-cache/data:/var/lib/registry \
+     registry:2
+   # daemon.json: "registry-mirrors": ["http://127.0.0.1:5000"]（127.0.0.1 自动按 insecure 处理）
+   ```
+   **必须做的一步**：smart-proxy 是 MITM 代理，`registry:2` 直连它会
+   `x509: certificate signed by unknown authority` **panic 退出**——把节点上的
+   `/usr/local/share/ca-certificates/openship-smart-proxy.crt` 拼进系统 CA bundle 再挂进去
+   （`cat /etc/ssl/certs/ca-certificates.crt …smart-proxy.crt > ca-bundle.crt`）。
+   效果：基础镜像只在第一次出网，之后全走 LAN（实测 BuildKit 探针 368s → 3.7s；并发两个
+   build 全绿，构建总耗时 116s）。另外它同时解决了「自建镜像没地方存」：可以
+   `docker tag/push` 到 `127.0.0.1:5000/…`。
+   **每台会构建的宿主都要装**：2026-11-19 应用单元（`f225d818`）与数据单元（`8281d598`）
+   都已切换，A 机原 `8axy…xuanyuan.run` 公共源已下线（它正是 368s 超时那个）。
+
 ## 相关
 
 - `deploy/docker-compose.yml` —— 部署单元 A 的编排事实源（仓内只有**两份**：本份 + `deploy/data-compose.yml` 部署单元 B/数据面；约束 B7 机检守卫：`scripts/check-compose.mjs`）
