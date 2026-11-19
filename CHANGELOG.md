@@ -11,6 +11,10 @@
 
 ## [Unreleased]
 
+## [0.332.0](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.331.1...v0.332.0) - 2026-11-19
+- 【新增】deploy: 构建链韧性——镜像源两级回落 + 预拉脚本 + 探活 job ([#2529](https://github.com/MYTech-Co-LTD/platform-core/pull/2529), [8b2a639](https://github.com/MYTech-Co-LTD/platform-core/commit/8b2a63953503440923684950df4c8e2f52a25746))
+
+
 ## [0.331.1](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.331.0...v0.331.1) - 2026-11-19
 - 【优化】migrate: 取锁重试 2s→250ms，告警改按时间节流 ([#2525](https://github.com/MYTech-Co-LTD/platform-core/pull/2525), [757ebe2](https://github.com/MYTech-Co-LTD/platform-core/commit/757ebe2741c5e1e12eabf75ab680d644f56facc8))
 
