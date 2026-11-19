@@ -190,6 +190,11 @@ P1+P4b 的切流**已全部完成**（2026-11-15）；新增 job 仍按上表四
 2. 数据单元再部署 scheduler（`GROUPS=data`）。
    反过来（先数据后应用）会先撞缺列。
 
+**切换后要清一次旧心跳行**：拆分前的心跳行 id 是 `scheduler`，拆分后没人再写它 ⇒ 元级看门狗
+（`check-probe-heartbeat`，按 `scheduler%` 逐实例判）会把它当「一个实例死了」而误报。
+部署完执行一次 `delete from platform.job_heartbeat where id='scheduler'` 即可
+（mytech 那种仍用单实例 `scheduler` 的部署不要删）。
+
 - **关调度（常态化保全）**：改**数据单元 scheduler 服务**的 `SCHEDULER_ENABLED=0`，等它重启。
   应用单元那侧本来就是 0，不用动。
 - **回退到单进程形态**（数据单元不可用时的应急）：数据单元 scheduler 置 `SCHEDULER_ENABLED=0`
