@@ -5,7 +5,8 @@
 // 契约：探针在跑 → exit 0，stdout 一行 `probe-heartbeat: OK (...)`；
 //       探针停/从未跑 → exit 1，stderr 一行说明（openship job 据此报「job 失败」，属基建层）。
 //
-// 第二看护路径（调度器，spec 2026-11-14 §9.3）：同时读 `platform.job_heartbeat('scheduler')`。
+// 第二看护路径（调度器，spec 2026-11-14 §9.3）：同时读 `platform.job_heartbeat` 的**全部** scheduler 实例
+// （#2511 起有两个：`scheduler-platform` / `scheduler-data`；任何一条陈旧都判 STALE）。
 //   · `platform.job_schedule` 有任一 `enabled` 排班，但心跳缺失或 >2 分钟 ⇒ STALE（exit 1，点名 scheduler）；
 //   · 心跳缺失 ⇒ NEVER、>2 分钟 ⇒ STALE（两者都 exit 1）；
 //   · 所有排班都是 enabled=false ⇒ DISABLED，**不算故障**（exit 0）；
@@ -79,25 +80,38 @@ if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) 
       console.log(`probe-heartbeat: ${verdict.verdict}（${verdict.reason}）`)
     }
 
-    /** @type {{ rows: Array<{ beat_at: Date }> }} */
+    // 调度器可能**不止一个实例**（#2511：应用单元 scheduler-platform 跑平台类作业、
+    // 数据单元 scheduler-data 跑数据类作业）。所以按 `scheduler` 前缀取**全部实例**，
+    // 逐条判：任何一条陈旧都是故障（一个单元死了就是死的），而不是只看其中一条。
+    /** @type {{ rows: Array<{ id: string, beat_at: Date }> }} */
     const { rows: schedRows } = await pool.query(
-      "select beat_at from platform.job_heartbeat where id = 'scheduler'",
+      "select id, beat_at from platform.job_heartbeat where id like 'scheduler%' order by id",
     )
     /** @type {{ rows: Array<{ n: number }> }} */
     const { rows: countRows } = await pool.query(
       'select count(*)::int as n from platform.job_schedule where enabled',
     )
-    const sched = judgeScheduler(
-      schedRows[0] === undefined ? null : new Date(schedRows[0].beat_at),
-      Number(countRows[0]?.n ?? 0),
-      new Date(),
-    )
-    if (sched.verdict === 'STALE' || sched.verdict === 'NEVER') {
-      console.error(`scheduler-heartbeat: ${sched.verdict} — ${sched.reason}`)
-      failed = true
+    const enabledCount = Number(countRows[0]?.n ?? 0)
+    if (schedRows.length === 0) {
+      const sched = judgeScheduler(null, enabledCount, new Date())
+      if (sched.verdict === 'STALE' || sched.verdict === 'NEVER') {
+        console.error(`scheduler-heartbeat: ${sched.verdict} — ${sched.reason}`)
+        failed = true
+      } else {
+        console.log(`scheduler-heartbeat: ${sched.verdict}（${sched.reason}）`)
+      }
     } else {
-      // DISABLED = 本实例没有 enabled 排班（排班全 disabled）：不监控，但不算故障。
-      console.log(`scheduler-heartbeat: ${sched.verdict}（${sched.reason}）`)
+      const bad = []
+      for (const r of schedRows) {
+        const v = judgeScheduler(new Date(r.beat_at), enabledCount, new Date())
+        if (v.verdict === 'STALE' || v.verdict === 'NEVER') bad.push(`${r.id}: ${v.reason}`)
+      }
+      if (bad.length > 0) {
+        console.error(`scheduler-heartbeat: STALE — ${bad.join('; ')}`)
+        failed = true
+      } else {
+        console.log(`scheduler-heartbeat: OK（${schedRows.map((r) => r.id).join(', ')}）`)
+      }
     }
   } finally {
     await pool.end()
