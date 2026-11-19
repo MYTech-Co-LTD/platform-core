@@ -32,6 +32,7 @@ Casdoor 后台运营，租户管理员在 console 自建页管理——spec D4 �
 | **报表生成 / 组合语义 / 呈现层**（报表 spec、窗口与对比、模板与验收、组件与富文本） | **先读路线图**（唯一导航面 + 台账）：`docs/superpowers/plans/2026-11-13-report-platform-roadmap.md`（R0–R6、N1–N5、L0–L5 自由度阶梯）。指标定义不在这条线，见上一行 |
 | 设计稿与实施计划 | `docs/superpowers/specs/`、`docs/superpowers/plans/`（按日期命名；SaaS 管理域 spec 是现行主线的正典）——**动手前先 `ls` 这两个目录、按文件名挑 2–3 份读完**（文件名语义可靠：盲测 8/8 命中正确文档；但**清单只用来定位，拿到候选必须打开读**，阴性对照 2/4 误配）。**别指望关键词检索**：`orca search` 整句自然语言 0 命中，须用 2–3 个空格分隔的关键词 |
 | 部署 / 接入 / 回滚 | `deploy/openship-adopt.md`（含自动部署与控制面 API 前缀坑）、`deploy/branch-protection-runbook.md` |
+| **想给某个服务单独部署 / 问「能不能拆成独立单元」** | `deploy/deployment-units.md`（单元边界 + 两道实测硬墙 + 定向部署的语义与失效模式，别再试探一遍） |
 | 冒烟验收 | `docs/m0-smoke-checklist.md` |
 | 提交纪律 / 常用命令 | `README.md`（§提交纪律 / §常用命令）——**别在别处复制** |
 
