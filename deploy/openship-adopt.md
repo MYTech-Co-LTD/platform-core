@@ -317,6 +317,16 @@ commitSha 锚定构建部署。
 > ⚠️ **换 projectId 必须同步换 token**：scoped PAT 只认自己被 grant 的那个 project，指到别家时
 > 回的是 **`404 project 'proj_xxx' not found`**——不是 403，极易被误读成「项目不存在/被删了」。
 > 端到端验证：deploy job → openship 受理 → 4 服务重建 → 两站 200。
+> **绿灯语义（2026-11-19 补）**：`deploy` job **等部署终态**才给结论——触发成功后轮询
+> `GET /deployments/:id`（90×20s = 30 分钟窗口，job `timeout-minutes` 60），`ready` **且
+> commitSha 与本次一致**才算过；`failed` / `cancelled` / `rolled_back` 带 `errorMessage` 失败。
+> 在此之前它拿到 2xx 就 `exit 0`，于是 `#2522` 合并后部署挂在 `git clone … exit 128`、线上没变，
+> **CI 却全绿**——「绿灯 ⇒ 线上就是这个 commit」这条不变量断了，后面所有判断都没依据。
+> 实证（2026-11-19，两个仓同口径）：platform-core `dep_Y1Z9--o8u658y8St` / case-engine
+> `dep_k7oBUVc-7ilj7krA` 均 `ready`、CI 均绿、站点与容器状态一致。
+> 边界：compose 闸门（409）**仍只能在部署时发现**（控制面没有 dry-run/diff 端点），
+> 现在至少会打出「哪几个服务变了」+ 处置口径，不再是沉默红。
+>
 > **定向部署（2026-11-19）**：deploy job 默认传 `serviceIds`（除 openclaw 外的启用服务），只有
 > 变更触及 `deploy/openclaw/**`、`deploy/Dockerfile.openclaw`、`deploy/docker-compose.yml` 时才
 > 带上 openclaw——否则平台每次发版都会重建问数 bot，把企微长连接打断 1 分钟级。**没有拆成独立
