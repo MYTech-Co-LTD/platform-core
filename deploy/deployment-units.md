@@ -131,7 +131,21 @@ SERVICE_IDS=$(curl -sS -H "Authorization: Bearer $TOKEN" \
   `deploy/data-compose.yml` 变更 ⇒ 退回全量（含 pg_duckdb）。
 - **查不到服务清单 / 拿到空数组 ⇒ 退回全量并在日志里显式告警**（宁可多重启一次，不可漏部署）。
 
-### 5.4 边界（照实写）
+### 5.4 首批实测（2026-11-20，应用单元）
+
+部署 `dep_z2g5kGqs4WEC3XH2`（commit `1875015b`，`targetServiceIds=[server, notify-worker]`）后，
+容器启动时刻：
+
+| 容器 | StartedAt | 结论 |
+|---|---|---|
+| `postgres` | `2026-11-19T16:13:59Z` | **未重启** ✅（状态容器） |
+| `openclaw` | `2026-11-19T10:16:20Z` | **未重启** ✅（交付面，非 bot 路径） |
+| `server` | `2026-11-19T16:56:15Z` | 重启 ✅ |
+| `notify-worker` | `2026-11-19T16:56:15Z` | 重启 ✅ |
+
+判据只看 `docker inspect .State.StartedAt`，不看 CI 绿灯、不看部署状态（两者都不证明「该重启的才重启」）。
+
+### 5.5 边界（照实写）
 
 - 服务行的 **env 变更不经部署生效**（走 openship 的 `apply-env`）；因此「排除 postgres」
   不影响 env 更新，但运维需知道改 env 后要单独 apply。
