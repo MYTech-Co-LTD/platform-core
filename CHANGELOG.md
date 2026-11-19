@@ -11,6 +11,10 @@
 
 ## [Unreleased]
 
+## [0.330.1](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.330.0...v0.330.1) - 2026-11-19
+- 【修复】ops: 调度心跳看护按全部 scheduler 实例判定 + 补滚动顺序口径 ([#2514](https://github.com/MYTech-Co-LTD/platform-core/pull/2514), [bb30318](https://github.com/MYTech-Co-LTD/platform-core/commit/bb303182d04eb72095c3af4dc323cc0e7e9d55d3))
+
+
 ## [0.330.0](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.329.0...v0.330.0) - 2026-11-19
 - 【新增】scheduler: 作业域拆分——两单元各 claim 自己那组，启动对账按实例收口 ([#2512](https://github.com/MYTech-Co-LTD/platform-core/pull/2512), [e31edfc](https://github.com/MYTech-Co-LTD/platform-core/commit/e31edfc2febf30c6a176d394eb1a5e0e5813b227))
 
