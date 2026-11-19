@@ -42,6 +42,11 @@ export interface WorkerHealthzInput {
    * 开了调度却给 null ⇒ 判红（健康面不可观测，不许假绿）。
    */
   jobHealth?: JobHealth | null
+  /**
+   * 因缺 env 而**不进入 claim 集合**的作业（#2511）。非空即红：
+   * 配置错必须在这里可见，而不是等它的 cron 时刻在台账里静默失败一次。
+   */
+  blockedJobs?: ReadonlyArray<{ key: string; missing: string[] }>
 }
 
 export interface WorkerHealthzResult {
@@ -73,6 +78,11 @@ export function workerHealthz(input: WorkerHealthzInput): WorkerHealthzResult {
   // 判定为红，否则一个空转容器会显示"健康"。
   if (!input.deliveryEnabled && !input.schedulerEnabled) {
     reasons.push('投递与调度 loop 都被关闭（本进程无事可做）')
+  }
+
+  // 缺 env 被挡在 claim 集合外的作业：同样是"配置错"，必须在健康面可见（#2511）。
+  for (const b of input.blockedJobs ?? []) {
+    reasons.push(`${b.key}：缺 env 未启用（${b.missing.join(', ')}）`)
   }
 
   const ok = reasons.length === 0

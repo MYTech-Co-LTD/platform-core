@@ -1,3 +1,5 @@
+import { JOB_SCOPES, type JobDef, type JobScope } from './registry'
+
 // worker-config.ts — worker 调度接线的**纯配置/节拍判定**（不碰 HTTP、不碰库）。
 //
 // 为什么抽出来：`scripts/notify-worker.mjs` 里的 `SCHEDULER_ENABLED` 闸门与端口回退
@@ -18,6 +20,19 @@ export interface SchedulerConfig {
    * ⇒ 绑随机端口、与镜像 HEALTHCHECK 脱钩）。
    */
   healthPort: number
+  /**
+   * 本进程负责的作业域（#2511 拆分）：`SCHEDULER_JOB_GROUPS=platform|data|platform,data`。
+   * 缺省 `platform,data` = 拆分前的单进程行为（两边都 claim）。
+   * **未知名一律抛错**：拼错的域名会让整个单元静默不 claim 任何作业。
+   */
+  groups: JobScope[]
+  /**
+   * 本进程的**实例标识**（写进 `job_run.runner_id`、`job_heartbeat.id`）。
+   * 缺省由 groups 派生：单域 ⇒ `scheduler-<域>`（应用/数据单元各自固定），双域 ⇒ `scheduler`。
+   * ⚠️ 必须**跨重启稳定**：启动对账只收「与我自己同 id 的 running 行」，
+   *    随机 id 会让上一轮的僵尸行永远收不掉（要等 2×timeout 的 reapStale）。
+   */
+  instanceId: string
 }
 
 /**
@@ -81,9 +96,11 @@ export function resolveWorkerRole(input: WorkerRoleInput): WorkerRoleDecision {
 }
 
 export function parseSchedulerConfig(env: Record<string, string | undefined>): SchedulerConfig {
+  // ⚠️ 变异靶点：这里改成恒 true，`SCHEDULER_ENABLED=0` 的用例必须失败。
+  const enabled = env.SCHEDULER_ENABLED !== '0'
+  const groups = parseJobGroups(env.SCHEDULER_JOB_GROUPS)
   return {
-    // ⚠️ 变异靶点：这里改成恒 true，`SCHEDULER_ENABLED=0` 的用例必须失败。
-    enabled: env.SCHEDULER_ENABLED !== '0',
+    enabled,
     tickMs: positiveInt(env.SCHEDULER_TICK_MS, 30000, 'SCHEDULER_TICK_MS'),
     maxConcurrency: positiveInt(env.SCHEDULER_MAX_CONCURRENCY, 2, 'SCHEDULER_MAX_CONCURRENCY'),
     healthPort: positiveInt(
@@ -91,7 +108,57 @@ export function parseSchedulerConfig(env: Record<string, string | undefined>): S
       13000,
       '健康端点端口',
     ),
+    groups,
+    instanceId: env.SCHEDULER_INSTANCE_ID || defaultInstanceId(groups),
   }
+}
+
+/**
+ * `SCHEDULER_JOB_GROUPS` → 域列表。缺省/空串 = 两个域都要（拆分前行为）。
+ * 未知名抛错而不是忽略：`dataa` 这种手滑会让单元**一条作业都不 claim**，且表面上一切正常。
+ */
+export function parseJobGroups(raw: string | undefined): JobScope[] {
+  if (raw === undefined || raw.trim() === '') return [...JOB_SCOPES]
+  const picked = raw.split(',').map((s) => s.trim()).filter((s) => s !== '')
+  if (picked.length === 0) throw new Error('SCHEDULER_JOB_GROUPS 为空——要么不设，要么给 platform/data')
+  const seen = new Set<string>()
+  for (const g of picked) {
+    if (!(JOB_SCOPES as readonly string[]).includes(g)) {
+      throw new Error(`SCHEDULER_JOB_GROUPS 含未知域 ${JSON.stringify(g)}（合法值 ${JOB_SCOPES.join('/')}）`)
+    }
+    seen.add(g)
+  }
+  // 顺序按 JOB_SCOPES 归一（'data,platform' 与 'platform,data' 等价 ⇒ instanceId 也稳定）。
+  return JOB_SCOPES.filter((g) => seen.has(g))
+}
+
+/** 单域 ⇒ `scheduler-<域>`；双域（未拆缝）⇒ 沿用旧 id `scheduler`，与历史台账连续。 */
+function defaultInstanceId(groups: readonly JobScope[]): string {
+  return groups.length === 1 ? `scheduler-${groups[0]}` : 'scheduler'
+}
+
+/**
+ * 只保留本进程负责的域；`requiresEnv` 缺键的作业被剔除并单独返回（供健康面报红）。
+ * 缺键作业**不进 claim 集合**：让它跑起来只会得到一条必然失败的台账行，
+ * 而且会消耗这一格的 occurrence（`cron` 错过不补）。
+ */
+export function selectRunnableJobs(
+  registry: readonly JobDef[],
+  groups: readonly JobScope[],
+  env: Record<string, string | undefined>,
+): { runnable: JobDef[]; blocked: Array<{ key: string; missing: string[] }> } {
+  const inGroup = registry.filter((d) => groups.includes(d.scope))
+  const runnable: JobDef[] = []
+  const blocked: Array<{ key: string; missing: string[] }> = []
+  for (const d of inGroup) {
+    const missing = (d.requiresEnv ?? []).filter((k) => {
+      const v = env[k]
+      return v === undefined || v === ''
+    })
+    if (missing.length > 0) blocked.push({ key: d.key, missing })
+    else runnable.push(d)
+  }
+  return { runnable, blocked }
 }
 
 /**

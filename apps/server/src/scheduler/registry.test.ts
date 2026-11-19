@@ -11,12 +11,12 @@ const describePg = dbUrl ? describe : describe.skip
 const dir = fileURLToPath(new URL('../migrations', import.meta.url))
 
 const defs: JobDef[] = [
-  { key: 'jobtest-registry:alpha', script: 'scripts/x.mjs', cron: '7 * * * *', timezone: 'UTC', timeoutMs: 1000, maxAttempts: 1, expectedIntervalSecs: 3600, description: 't' },
+  { scope: 'platform', key: 'jobtest-registry:alpha', script: 'scripts/x.mjs', cron: '7 * * * *', timezone: 'UTC', timeoutMs: 1000, maxAttempts: 1, expectedIntervalSecs: 3600, description: 't' },
 ]
 
 /** handler-only 条目：只登记 handler，不建系统排班行（cron/timezone 是 schema 必填的占位，不进库）。 */
 const handlerOnlyDef: JobDef = {
-  key: 'jobtest-registry:handler-only', script: 'scripts/x.mjs', cron: '0 0 1 1 *', timezone: 'UTC',
+  scope: 'platform', key: 'jobtest-registry:handler-only', script: 'scripts/x.mjs', cron: '0 0 1 1 *', timezone: 'UTC',
   timeoutMs: 1000, maxAttempts: 1, expectedIntervalSecs: 86400, description: 't', noSystemSchedule: true,
 }
 
@@ -91,6 +91,24 @@ function repoPath(relative: string): string {
   return fileURLToPath(new URL(`../../../../${relative}`, import.meta.url))
 }
 
+describe('JOB_REGISTRY · 作业域（#2511）', () => {
+  it('命名前缀与 scope 一致（防止新作业漏声明/声明错域）', () => {
+    for (const d of JOB_REGISTRY) {
+      const expectData = d.key.startsWith('data.')
+      expect(
+        { key: d.key, scope: d.scope },
+        `${d.key} 的 scope 与命名前缀不符`,
+      ).toEqual({ key: d.key, scope: expectData ? 'data' : 'platform' })
+    }
+  })
+
+  it('data 域的 dbt 类必须声明 requiresEnv（缺 env 要在启动时被挡住，而不是跑到一半炸）', () => {
+    for (const d of JOB_REGISTRY.filter((x) => x.key.startsWith('data.dbt_'))) {
+      expect(d.requiresEnv ?? [], `${d.key} 缺 requiresEnv`).toContain('DATA_WAREHOUSE_URL')
+    }
+  })
+})
+
 describe('JOB_REGISTRY', () => {
   // 不依赖 DB：纯目录断言（无 DATABASE_URL 的裸跑也保这层覆盖）。
   it('★ 含 handler-only 的 notify.emit，且 script 指向仓内真实文件', () => {
@@ -139,11 +157,11 @@ describe('registry · dbt hourly/tables（Wave 8 P1）', () => {
 
 describe('registry · dbt 对账分族（full / window，#2428）', () => {
   const FULL = [
-    { key: 'data.dbt_audit_a1', cron: '0 6 * * *', n: 5 },
-    { key: 'data.dbt_audit_a2a', cron: '30 3 * * *', n: 8 },
-    { key: 'data.dbt_audit_a2b', cron: '45 4 * * *', n: 6 },
+    { scope: 'platform', key: 'data.dbt_audit_a1', cron: '0 6 * * *', n: 5 },
+    { scope: 'platform', key: 'data.dbt_audit_a2a', cron: '30 3 * * *', n: 8 },
+    { scope: 'platform', key: 'data.dbt_audit_a2b', cron: '45 4 * * *', n: 6 },
   ] as const
-  const WINDOW = { key: 'data.dbt_audit_window', cron: '30 7 * * *', n: 24 } as const
+  const WINDOW = { scope: 'platform', key: 'data.dbt_audit_window', cron: '30 7 * * *', n: 24 } as const
 
   /** 递归收集 dbt/models 下的 .sql（ref 解析用）。 */
   function collectSql(dir: string, out: string[] = []): string[] {

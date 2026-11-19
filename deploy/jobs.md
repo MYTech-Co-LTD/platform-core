@@ -164,10 +164,23 @@ P1+P4b 的切流**已全部完成**（2026-11-15）；新增 job 仍按上表四
 容器、把运行中的采集/物化子进程连坐收掉（3 天 40 次部署、13 次 dbt 作业被杀）。两个开关各自
 独立，按「`'0'` 才关」解析：
 
-| 谁 | `SCHEDULER_ENABLED` | `NOTIFY_DELIVERY_ENABLED` |
-|---|---|---|
-| 应用单元 `notify-worker` | `0`（默认） | `1` |
-| 数据单元 `scheduler` | `1` | `0`（默认） |
+| 谁 | `SCHEDULER_ENABLED` | `NOTIFY_DELIVERY_ENABLED` | `SCHEDULER_JOB_GROUPS` | 实例 id |
+|---|---|---|---|---|
+| 应用单元 `notify-worker` | `0`（默认） | `1` | `platform` | `scheduler-platform` |
+| 数据单元 `scheduler` | `1` | `0`（默认） | `data` | `scheduler-data` |
+
+**作业域（#2511）**：registry 每条作业声明 `scope: platform | data`（平台类需要 Casdoor 等凭据；
+数据类要贴 pg_duckdb）。**claim 的 SQL 就按本域 key 收口**——不是靠两个进程「自觉」，而是
+不属于我的作业就查不出来，所以**不存在双 claim**。三个连带语义：
+
+- `job_run.runner_id` 记录执行实例；**启动对账只收同 id 的 running 行**（改造前是全表扫，
+  数据单元启动那一刻会把应用单元正在跑的作业判 timeout）。
+- `job_heartbeat` 每个单元一条（`scheduler-platform` / `scheduler-data`）；
+  `/healthz` 只判**自己这组**的作业，不把对方的作业判成「该跑没跑」。
+- 作业声明的 `requiresEnv` 缺键 ⇒ **不进 claim 集合**、启动打一行 `missing env`、`/healthz` 报红。
+  这是 2026-11-19 `org.sync` 静默失败的直译（当时数据单元没有 `CASDOOR_*`）。
+- 代码里删了 key 但排班还 enabled ⇒ **没有任何单元会领取它**，启动时打
+  `{schedulerError:'orphan-schedules', keys:[…]}`；见到它就去停用/删除那条排班。
 
 - **关调度（常态化保全）**：改**数据单元 scheduler 服务**的 `SCHEDULER_ENABLED=0`，等它重启。
   应用单元那侧本来就是 0，不用动。

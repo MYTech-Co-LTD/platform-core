@@ -31,12 +31,25 @@ export interface JobHealth {
 /** 心跳陈旧阈值：2 分钟。 */
 const HEARTBEAT_STALE_MS = 120_000
 
-export async function jobHealth(pool: Pool, now: Date): Promise<JobHealth> {
+export interface JobHealthScope {
+  /** 心跳行 id：`scheduler`（未拆缝）或 `scheduler-<域>`（拆分后每个单元一条）。 */
+  instanceId?: string
+  /**
+   * 本实例负责的作业 key。给了就**只判这些**（#2511）：
+   * 否则应用单元会把数据单元的作业判成「该跑没跑」，反之亦然。
+   */
+  keys?: readonly string[]
+}
+
+export async function jobHealth(pool: Pool, now: Date, scope: JobHealthScope = {}): Promise<JobHealth> {
+  const instanceId = scope.instanceId ?? 'scheduler'
+  const keys = scope.keys ?? null
   const reasons: string[] = []
 
   // ① 心跳
   const hb = await pool.query<{ beat_at: Date | null }>(
-    "select beat_at from platform.job_heartbeat where id='scheduler'",
+    'select beat_at from platform.job_heartbeat where id=$1',
+    [instanceId],
   )
   const beatAt = hb.rows[0]?.beat_at ?? null
   if (!beatAt) {
@@ -64,7 +77,9 @@ export async function jobHealth(pool: Pool, now: Date): Promise<JobHealth> {
             ) as ref
        from platform.job_schedule s
       where s.enabled
+        and ($1::text[] is null or s.key = any($1::text[]))
       order by s.key`,
+    [keys],
   )
   for (const r of candidates.rows) {
     let next: Date
@@ -94,6 +109,7 @@ export async function jobHealth(pool: Pool, now: Date): Promise<JobHealth> {
     `select s.key
        from platform.job_schedule s
       where s.enabled
+        and ($1::text[] is null or s.key = any($1::text[]))
         and s.key not like 'data.dbt%'
         and (
           select count(*) from (
@@ -104,6 +120,7 @@ export async function jobHealth(pool: Pool, now: Date): Promise<JobHealth> {
           ) t where t.status in ('failed', 'timeout')
         ) >= 3
       order by s.key`,
+    [keys],
   )
   for (const r of failing.rows) {
     reasons.push(`${r.key}：最近 3 次运行全部失败或超时`)

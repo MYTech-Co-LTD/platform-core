@@ -23,6 +23,11 @@ export interface SchedulerDeps {
   /** 子进程工作目录；生产 = `/app`。 */
   cwd?: string
   /**
+   * 本进程的实例标识（#2511）：写进 `job_run.runner_id` 与 `job_heartbeat.id`，
+   * 启动对账只收自己这个 id 的 running 行。缺省读 `SCHEDULER_INSTANCE_ID`，再缺省 'scheduler'。
+   */
+  instanceId?: string
+  /**
    * 任务生命周期事件发射器（宿主注入；生产由 `scripts/notify-worker.mjs` 用 notify 的 enqueueEvent 构造）。
    * **fail-open**：它抛错不得影响 run 终态、重试决策或日志——见 `emitJobEvents`。
    */
@@ -109,6 +114,10 @@ export function createSchedulerLoop(deps: SchedulerDeps) {
     : positiveInt(deps.maxConcurrency, 'maxConcurrency')
   const log = deps.log ?? ((o: unknown) => console.log(JSON.stringify(o)))
   const cwd = deps.cwd ?? process.cwd()
+  const instanceId = deps.instanceId ?? process.env.SCHEDULER_INSTANCE_ID ?? 'scheduler'
+  // claim 的作用域 = 本进程 registry 的 key 集合：**不属于我的作业，连碰都不碰**。
+  // 这是两个部署单元能并存的结构性保证（不是靠两个进程「自觉」）。
+  const keys = registry.map((d) => d.key)
   const running = new Set<number>()
   let seeded = false
 
@@ -167,13 +176,13 @@ export function createSchedulerLoop(deps: SchedulerDeps) {
       const t = now()
       const stats: TickStats = { claimed: 0, started: 0, reaped: 0 }
       if (!seeded) { await seedSchedules(deps.pool, registry, t); seeded = true }
-      await beat(deps.pool, t)
+      await beat(deps.pool, t, instanceId)
       stats.reaped = await reapStale(deps.pool, t)
       stats.reaped += await reapQueued(deps.pool, t)
 
       const free = Math.max(0, max - running.size)
       if (free === 0) return stats
-      const manual = await claimQueuedManual(deps.pool, free, t)
+      const manual = await claimQueuedManual(deps.pool, free, t, { runnerId: instanceId, keys })
       // claimQueuedManual 已把行置 running 并带回 runId，这里直接起进程。
       for (const job of manual) { void runOne(job, true); stats.started += 1 }
       stats.claimed += manual.length
@@ -181,7 +190,7 @@ export function createSchedulerLoop(deps: SchedulerDeps) {
       // runOne 在首个 await 前已 running.add ⇒ 这里直接按 running.size 算，别再扣 manual.length（那是双重扣减）。
       const room = Math.max(0, max - running.size)
       if (room === 0) return stats
-      const due = await claimDue(deps.pool, room, t, nextRunAt)
+      const due = await claimDue(deps.pool, room, t, nextRunAt, { runnerId: instanceId, keys })
       stats.claimed += due.length
       // claim 的 SELECT 已排除「同 schedule 有 running」的排班（该格不消费、下一拍再来），
       // 这里无需再查 hasRunning、也不写 skipped 台账（否则每拍刷一行）。

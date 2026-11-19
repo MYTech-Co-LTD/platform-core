@@ -12,7 +12,10 @@ import { describe, expect, it } from 'vitest'
 import { jobHealth } from './health'
 import { createSchedulerLoop } from './loop'
 import type { JobDef } from './registry'
-import { parseDeliveryEnabled, parseSchedulerConfig, resolveWorkerRole, shouldRunTick } from './worker-config'
+import {
+  parseDeliveryEnabled, parseJobGroups, parseSchedulerConfig, resolveWorkerRole, selectRunnableJobs, shouldRunTick,
+} from './worker-config'
+import { JOB_REGISTRY } from './registry'
 import { workerHealthz } from './worker-healthz'
 
 /** 记录**完整 SQL**（不截断——截断到 20 字符会让前缀断言恒假，等于没断言）。 */
@@ -34,7 +37,7 @@ function recordingPool(): SqlRecorder {
 }
 
 const def: JobDef = {
-  key: 'jobtest-wire:one', script: 'scripts/x.mjs', cron: '7 * * * *', timezone: 'UTC',
+  scope: 'platform', key: 'jobtest-wire:one', script: 'scripts/x.mjs', cron: '7 * * * *', timezone: 'UTC',
   timeoutMs: 1000, maxAttempts: 1, expectedIntervalSecs: 3600, description: 't',
 }
 
@@ -147,6 +150,48 @@ describe('shouldRunTick（节拍边界）', () => {
   })
 })
 
+describe('作业域（#2511 调度器拆分）', () => {
+  it('parseJobGroups：缺省/空串 = 两域；单域；顺序归一；未知名抛错', () => {
+    expect(parseJobGroups(undefined)).toEqual(['platform', 'data'])
+    expect(parseJobGroups('')).toEqual(['platform', 'data'])
+    expect(parseJobGroups('data')).toEqual(['data'])
+    expect(parseJobGroups(' data , platform ')).toEqual(['platform', 'data'])
+    expect(() => parseJobGroups('dataa')).toThrow(/未知域/)
+  })
+
+  it('单域 ⇒ 实例 id 按域固定；双域 ⇒ 沿用历史 id（台账连续）', () => {
+    expect(parseSchedulerConfig({ SCHEDULER_JOB_GROUPS: 'data' }).instanceId).toBe('scheduler-data')
+    expect(parseSchedulerConfig({ SCHEDULER_JOB_GROUPS: 'platform' }).instanceId).toBe('scheduler-platform')
+    expect(parseSchedulerConfig({}).instanceId).toBe('scheduler')
+    expect(parseSchedulerConfig({ SCHEDULER_INSTANCE_ID: 'x' }).instanceId).toBe('x')
+  })
+
+  it('selectRunnableJobs：只留本域，且缺 requiresEnv 的进 blocked 不进 claim 集合', () => {
+    const env = { DATABASE_URL: 'postgres://x' }
+    const data = selectRunnableJobs(JOB_REGISTRY, ['data'], env)
+    expect(data.runnable.every((d) => d.scope === 'data')).toBe(true)
+    // 数据域里 dbt 类缺 DATA_WAREHOUSE_URL/ZOS ⇒ 被挡住（而不是跑起来必然失败）
+    expect(data.blocked.some((b) => b.key === 'data.dbt_tick')).toBe(true)
+    expect(data.runnable.some((d) => d.key === 'data.dbt_tick')).toBe(false)
+
+    const platform = selectRunnableJobs(JOB_REGISTRY, ['platform'], env)
+    expect(platform.runnable.every((d) => d.scope === 'platform')).toBe(true)
+    // org.sync 需要 Casdoor 管理员凭据：缺了必须被挡住（这是 2026-11-19 那次的真实故障形态）
+    expect(platform.blocked).toContainEqual({
+      key: 'org.sync',
+      missing: ['CASDOOR_URL', 'CASDOOR_ADMIN_USER', 'CASDOOR_ADMIN_PWD'],
+    })
+    expect(platform.runnable.some((d) => d.key === 'org.sync')).toBe(false)
+  })
+
+  it('两域同时选 ⇒ 与拆分前的全量 registry 等价', () => {
+    const env = { DATABASE_URL: 'postgres://x', DATA_WAREHOUSE_URL: 'postgres://w', LEMENG_ZOS_BUCKET: 'b', LEMENG_ZOS_REGION: 'r', LEMENG_ZOS_ENDPOINT: 'e', CASDOOR_URL: 'u', CASDOOR_ADMIN_USER: 'a', CASDOOR_ADMIN_PWD: 'p' }
+    const all = selectRunnableJobs(JOB_REGISTRY, ['platform', 'data'], env)
+    expect(all.blocked).toEqual([])
+    expect(all.runnable.length).toBe(JOB_REGISTRY.length)
+  })
+})
+
 describe('workerHealthz 判定表', () => {
   it('SCHEDULER_ENABLED=0（应用单元）：只取决于投递心跳，调度陈旧不参与', () => {
     // 投递新鲜 + 调度（即使报红）⇒ 200：回滚开关不许把 worker 判红。
@@ -187,6 +232,17 @@ describe('workerHealthz 判定表', () => {
     })
     expect(bad.status).toBe(503)
     expect(bad.body).toContain('调度心跳')
+  })
+
+  it('缺 env 被挡的作业 ⇒ 503 且点名缺哪个键（配置错必须在健康面可见）', () => {
+    const r = workerHealthz({
+      notifyFresh: true, deliveryEnabled: true, schedulerEnabled: true,
+      jobHealth: { ok: true, reasons: [] },
+      blockedJobs: [{ key: 'org.sync', missing: ['CASDOOR_ADMIN_PWD'] }],
+    })
+    expect(r.status).toBe(503)
+    expect(r.body).toContain('org.sync')
+    expect(r.body).toContain('CASDOOR_ADMIN_PWD')
   })
 
   it('两个 loop 都关 ⇒ 503（空转容器不算健康，方向 fail-closed）', () => {
