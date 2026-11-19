@@ -460,7 +460,7 @@ jobs:
           first=$(printf '%s' "${MSG}" | head -1)
           if [[ "$first" == chore\(release\)* ]]; then
             echo "release commit, skip deploy"
-            { echo "skip=1"; echo "runtime=0"; echo "bot=0"; } >> "$GITHUB_OUTPUT"
+            { echo "skip=1"; echo "runtime=0"; echo "bot=0"; echo "app-compose=0"; echo "data-compose=0"; } >> "$GITHUB_OUTPUT"
             exit 0
           fi
           echo "skip=0" >> "$GITHUB_OUTPUT"
@@ -485,6 +485,18 @@ jobs:
             echo "本次变更触及 openclaw，将一并部署"
           else
             echo "bot=0" >> "$GITHUB_OUTPUT"
+          fi
+
+          # compose 变更 ⇒ 退回全量（可能有新增/删除服务，子集选择会漏）
+          if printf '%s\n' "${files}" | grep -qE '^deploy/docker-compose\.yml$'; then
+            echo "app-compose=1" >> "$GITHUB_OUTPUT"
+          else
+            echo "app-compose=0" >> "$GITHUB_OUTPUT"
+          fi
+          if printf '%s\n' "${files}" | grep -qE '^deploy/data-compose\.yml$'; then
+            echo "data-compose=1" >> "$GITHUB_OUTPUT"
+          else
+            echo "data-compose=0" >> "$GITHUB_OUTPUT"
           fi
       # secret 不能在 job 级 if 里判，但可以在 step 里判：变量配了而 secret 没配属于配置错误，
       # 应当**响亮失败**（而不是静默跳过——静默跳过会让人以为「已经部署了」）
@@ -521,21 +533,32 @@ jobs:
           OPENSHIP_URL: ${{ vars.OPENSHIP_URL || 'https://deploy.hookflow.cn' }}
           COMMIT_SHA: ${{ github.sha }}
           INCLUDE_BOT: ${{ steps.guard.outputs.bot }}
+          APP_COMPOSE: ${{ steps.guard.outputs.app-compose }}
         run: |
           set -euo pipefail
           echo "openship: project=$PROJECT_ID commit=$COMMIT_SHA"
           # 服务清单现查（不写死 id：服务行重建后 id 会变，写死等于埋定时炸弹）。
           # 查失败就**退回全量部署**——宁可多重启一次 bot，也不能因为查不到而部署不了。
+          # 定向部署的排除集（生命周期分层，见 deploy/deployment-units.md §5）：
+          #   · postgres 是**状态容器**——常规代码变更重建它会让数据单元的调度台账断连，
+          #     作业跑完却写不进库 ⇒ 被 reapStale 收成假 timeout（2026-11-19 实测）。
+          #     只有 compose 变更（可能有配置/新增服务）才重建它。
+          #   · openclaw 只在 bot 路径变更时重建（已有逻辑）。
+          EXCLUDES=''
+          if [ "${APP_COMPOSE}" != "1" ]; then EXCLUDES='postgres'; fi
+          if [ "${INCLUDE_BOT}" != "1" ]; then EXCLUDES="${EXCLUDES} openclaw"; fi
           SERVICE_IDS='null'
-          if [ "${INCLUDE_BOT}" != "1" ]; then
+          if [ -n "${EXCLUDES// /}" ]; then
             SERVICE_IDS=$(curl -sS -H "Authorization: Bearer ${OPENSHIP_TOKEN}" \
               "${OPENSHIP_URL%/}/api/projects/${PROJECT_ID}/services" \
-              | jq -c '[.services[]? | select(.enabled != false) | select(.name != "openclaw") | .id]' 2>/dev/null || echo 'null')
+              | jq -c --arg ex "${EXCLUDES}" \
+                '[.services[]? | select(.enabled != false) | . as $s
+                  | select((($ex | split(" ")) | index($s.name)) | not) | .id]' 2>/dev/null || echo 'null')
             if [ "${SERVICE_IDS}" = "[]" ] || [ "${SERVICE_IDS}" = "null" ]; then
               echo "服务清单不可用 ⇒ 退回全量部署"
               SERVICE_IDS='null'
             else
-              echo "定向部署（不含 openclaw）：${SERVICE_IDS}"
+              echo "定向部署（排除：${EXCLUDES# }）：${SERVICE_IDS}"
             fi
           fi
           # commitSha 是幂等键：同一个 sha 重复触发不会部署出两份不同的东西。
@@ -659,6 +682,10 @@ jobs:
             echo "hit=0" >> "$GITHUB_OUTPUT"
             echo "本次变更与数据面无关，跳过数据单元部署"
           fi
+          # 子集选择用的三个标志（生命周期分层，见 deploy/deployment-units.md §5）
+          if printf '%s\n' "$files" | grep -qE '^deploy/data-compose\.yml$'; then echo "data_compose=1" >> "$GITHUB_OUTPUT"; else echo "data_compose=0" >> "$GITHUB_OUTPUT"; fi
+          if printf '%s\n' "$files" | grep -qE '^(deploy/duckle/|duckle/|pipelines/)'; then echo "duckle=1" >> "$GITHUB_OUTPUT"; else echo "duckle=0" >> "$GITHUB_OUTPUT"; fi
+          if printf '%s\n' "$files" | grep -qE '^deploy/artifacts/'; then echo "artifacts=1" >> "$GITHUB_OUTPUT"; else echo "artifacts=0" >> "$GITHUB_OUTPUT"; fi
       - name: 触发数据单元部署
         if: steps.plan.outputs.hit == '1'
         env:
@@ -666,11 +693,36 @@ jobs:
           PROJECT_ID: ${{ vars.OPENSHIP_DATA_PROJECT_ID }}
           OPENSHIP_URL: ${{ vars.OPENSHIP_URL || 'https://deploy.hookflow.cn' }}
           COMMIT_SHA: ${{ github.sha }}
+          DATA_COMPOSE: ${{ steps.plan.outputs.data_compose }}
+          DUCKLE: ${{ steps.plan.outputs.duckle }}
+          ARTIFACTS: ${{ steps.plan.outputs.artifacts }}
         run: |
           set -euo pipefail
           echo "openship(data): project=$PROJECT_ID commit=$COMMIT_SHA"
-          PAYLOAD=$(jq -c -n --arg pid "${PROJECT_ID}" --arg sha "${COMMIT_SHA}" \
-            '{projectId:$pid, branch:"main", commitSha:$sha, environment:"production"}')
+          # ── 定向部署（生命周期分层，见 deploy/deployment-units.md §5）───────────────
+          # 默认只重启 scheduler（执行器）。pg_duckdb / console 是状态容器：
+          # 每次 dbt 变更都重建它们会让正在跑的作业与连接一起断（2026-11-19 实测）。
+          # compose 变更 ⇒ 退回全量（可能有新增/删除服务，子集选择会漏）。
+          SERVICE_IDS='null'
+          if [ "${DATA_COMPOSE}" != "1" ]; then
+            SERVICE_IDS=$(curl -sS -H "Authorization: Bearer ${OPENSHIP_TOKEN}" \
+              "${OPENSHIP_URL%/}/api/projects/${PROJECT_ID}/services" \
+              | jq -c --argjson du "${DUCKLE}" --argjson ar "${ARTIFACTS}" \
+                '[.services[]? | select(.enabled != false) | . as $s
+                  | select($s.name == "scheduler"
+                           or (($s.name | startswith("lemeng-console")) and $du == 1)
+                           or ($s.name == "forms-console" and $du == 1)
+                           or ($s.name == "artifacts" and $ar == 1)) | .id]' 2>/dev/null || echo 'null')
+            if [ "${SERVICE_IDS}" = "[]" ] || [ "${SERVICE_IDS}" = "null" ]; then
+              echo "服务清单不可用 ⇒ 退回全量部署"
+              SERVICE_IDS='null'
+            else
+              echo "定向部署（数据单元）：${SERVICE_IDS}"
+            fi
+          fi
+          PAYLOAD=$(jq -c -n --arg pid "${PROJECT_ID}" --arg sha "${COMMIT_SHA}" --argjson ids "${SERVICE_IDS}" \
+            '{projectId:$pid, branch:"main", commitSha:$sha, environment:"production"}
+             + (if $ids != null and ($ids|length) > 0 then {serviceIds:$ids} else {} end)')
           # 与主单元同样的互斥重试口径 + **等终态**（理由见 deploy job 的注释）
           DEP_ID=""
           for i in $(seq 1 24); do

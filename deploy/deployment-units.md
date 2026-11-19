@@ -99,7 +99,47 @@ SERVICE_IDS=$(curl -sS -H "Authorization: Bearer $TOKEN" \
 3. **compose 闸门的 dry-run 端点**：合并前就能问「这份 compose 会不会触发 409」。
    —— 今天只能在部署时发现，等于把一个可预检的问题放到发布路径上。
 
-## 5. 什么时候回来重读本文
+## 5. 生命周期分层与部署子集契约（2026-11-20，W4 后补）
+
+### 5.1 事故证据（为什么需要这一层）
+
+- **应用单元** 11-19 合了十几笔 PR，几乎每 15 分钟部署一次；每次部署都重建 `postgres`。
+  数据单元的 scheduler 12 小时内记录 7 次 `pgPoolError: terminating connection due to
+  administrator command`。后果不是「报错」而是**台账静默失真**：作业跑完了，但 `finishRun`
+  写不进库 ⇒ 行卡在 `running` ⇒ 被 `reapStale` 收成 timeout（11-19 11:30 的 a2a、11:43 的
+  publish_dims 就是这样变成假 timeout 的）。
+- **数据单元** 只要 `dbt/` 有变更就整项目部署：实测 pg_duckdb / console 在 10:18 那次重启、
+  scheduler 在 15:51 那次重启。正在跑的 hourly / audits（20–90 分钟）随执行器一起被杀。
+
+⇒ 结论：部署的**爆炸半径**必须由「服务的生命周期类别」决定，而不是由「compose 文件多大」决定。
+
+### 5.2 三类服务与重建规则
+
+| 类别 | 应用单元 | 数据单元 | 何时重建 |
+|---|---|---|---|
+| 状态容器 | `postgres` | `pg_duckdb`、`lemeng-console-*` | 仅当自身镜像 / compose / 自身 env 变更 |
+| 执行器 | `notify-worker` | `scheduler` | 仅当运行时代码（`apps/`、`scripts/`、`deploy/`）变更 |
+| 交付面 | `server`、`openclaw` | `artifacts` | `server` 每次代码变更；`openclaw` 仅 bot 路径；`artifacts` 仅 `deploy/artifacts/` |
+
+### 5.3 CI 派生规则（与本节同步维护）
+
+- **应用单元**：默认 `serviceIds = 全部启用服务 − openclaw − postgres`；
+  `deploy/openclaw/**`、`deploy/Dockerfile.openclaw` ⇒ 带上 openclaw；
+  `deploy/docker-compose.yml` 变更 ⇒ 退回全量（含 postgres）。
+- **数据单元**：默认 `serviceIds = [scheduler]`；`deploy/duckle/`、`duckle/`、`pipelines/`
+  ⇒ 带上两个 console；`deploy/artifacts/` ⇒ 带上 artifacts；
+  `deploy/data-compose.yml` 变更 ⇒ 退回全量（含 pg_duckdb）。
+- **查不到服务清单 / 拿到空数组 ⇒ 退回全量并在日志里显式告警**（宁可多重启一次，不可漏部署）。
+
+### 5.4 边界（照实写）
+
+- 服务行的 **env 变更不经部署生效**（走 openship 的 `apply-env`）；因此「排除 postgres」
+  不影响 env 更新，但运维需知道改 env 后要单独 apply。
+- **共享一把部署锁**、**回滚仍是 project 级**（见 §3 边界）。
+- **运行中作业闸门尚未实现**（W2）：目前仍可能出现「数据单元部署杀掉在跑的长任务」。
+  在那之前，数据单元部署应避开 10:25–16:00 的 dbt 排班窗口，或人为确认无长任务。
+
+## 6. 什么时候回来重读本文
 
 - 想「把某个服务单独部署」时；
 - 平台升级后（尤其 openship 1.x → 2.x），先**重试墙一**——它是最容易变的一条；
