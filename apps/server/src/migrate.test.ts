@@ -272,6 +272,35 @@ describe.skipIf(!dbUrl)('runMigrations', () => {
     }
   })
 
+  it('取锁告警按时间节流（与重试间隔解耦）', async () => {
+    // 2026-11-19：重试间隔从 2s 降到 250ms，若告警仍按「每 N 次重试」节流，日志密度会跟着
+    // 重试间隔放大（10s 一条 → 1.25s 一条）⇒ 节流改成按时间。本用例把它钉死：
+    // 同一个等待窗口下，**重试次数变多不该让告警变多**。
+    const mod = 't_lock_warn'
+    usedModules.push(mod)
+    const dir = await tmpModuleDir({ '001_never.sql': 'select 1;' })
+
+    const holder = await pool.connect()
+    const run = (opts: { lockTimeoutMs?: number; lockRetryIntervalMs?: number; lockWarnIntervalMs?: number; warn?: (m: string) => void }) =>
+      runMigrations(pool, mod, dir, opts).catch(() => {})
+    try {
+      await holder.query('select pg_advisory_lock(hashtext($1))', [MIGRATION_LOCK_KEY])
+
+      // 同一个 400ms 窗口里重试 ≈20 次（间隔 20ms）；默认 5s 节流窗口 ≫ 400ms ⇒ 只有首条。
+      const { warns: defaultWarns, warn: defaultWarn } = collectWarns()
+      await run({ lockTimeoutMs: 400, lockRetryIntervalMs: 20, warn: defaultWarn })
+      expect(defaultWarns.length, '默认 5s 窗口内应只有首次那条告警').toBe(1)
+
+      // 把窗口压到 100ms ⇒ 同一 400ms 内应补出多条（证明窗口真的生效，而不是恒只打一条）
+      const { warns: tightWarns, warn: tightWarn } = collectWarns()
+      await run({ lockTimeoutMs: 400, lockRetryIntervalMs: 20, lockWarnIntervalMs: 100, warn: tightWarn })
+      expect(tightWarns.length).toBeGreaterThan(1)
+    } finally {
+      await holder.query('select pg_advisory_unlock(hashtext($1))', [MIGRATION_LOCK_KEY]).catch(() => {})
+      holder.release()
+    }
+  })
+
   it('取锁重试：他方在等待窗口内放锁 ⇒ 迁移照常完成（有界重试不是「试一次就放弃」）', async () => {
     const mod = 't_lock_retry'
     usedModules.push(mod)

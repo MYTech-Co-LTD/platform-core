@@ -39,8 +39,18 @@ import type { Pool, PoolClient } from 'pg'
  *      要加同语义的锁，必须也用**单参**形式、且键相同。 */
 export const MIGRATION_LOCK_KEY = 'platform.schema_migrations'
 
-/** 取锁重试的间隔（毫秒）。2s 够密——部署超时按分钟计，而日志不会被刷屏。 */
-export const MIGRATION_LOCK_RETRY_INTERVAL_MS = 2_000
+/** 取锁重试的间隔（毫秒）。
+ *
+ * 250ms 的取法（2026-11-19 订正，原值 2000）：这个值决定的是**等待的尾延迟**——锁在
+ * 300ms 时被释放，2s 档要等到下一个量子才醒，白等 1.7s。原值当初是按「日志别刷屏」定的，
+ * 但节流已经改成**按时间**（见 {@link LOCK_WARN_EVERY_MS}），间隔缩小不再影响日志密度；
+ * 而它的代价在并发场景是实打实的：
+ *   - 生产：多实例滚动启动时排队更短；
+ *   - 测试：`pnpm -r test` 让最多 4 个 workspace 包并发打同一台 PG，各包 beforeAll 都要取
+ *     这把全库唯一的锁 ⇒ 2s 量子会把「毫秒级等待」放大成 2~4s，撞穿 vitest 的 5s 默认超时
+ *     （2026-11-19 CI 实测 5006ms，重跑即过）。
+ * 单参 `pg_try_advisory_lock` 每秒多打 4 次，代价可忽略。 */
+export const MIGRATION_LOCK_RETRY_INTERVAL_MS = 250
 
 /** 取锁的**等待上限**（毫秒）：等满即抛错，绝不静默继续。
  *
@@ -49,8 +59,12 @@ export const MIGRATION_LOCK_RETRY_INTERVAL_MS = 2_000
  * 日志一行没有」的面目出现在运维面前（评审 N1 要的正是这个置换）。 */
 export const MIGRATION_LOCK_TIMEOUT_MS = 60_000
 
-/** 取锁期间隔几次重试补一条告警（按默认间隔 = 每 10s 一条）：首次必打，之后按此节流。 */
-const LOCK_WARN_EVERY_N_ATTEMPTS = 5
+/** 取锁等待的**告警节流窗口**（毫秒）：首次必打，之后每满 5s 补一条。
+ *
+ * 为什么按时间而不是按重试次数（2026-11-19 改）：次数节流与重试间隔**耦合**——间隔从 2s
+ * 调到 250ms 后，「每 5 次」会从 10s 一条变成 1.25s 一条，等于逼着人把间隔留在 2s 档。
+ * 按时间节流后，重试间隔可以只按「等待尾延迟」这一个维度去选。 */
+const LOCK_WARN_EVERY_MS = 5_000
 
 /** `runMigrations` 的可注入项——**只为测试**留口子：默认值就是生产口径。 */
 export interface RunMigrationsOptions {
@@ -58,6 +72,8 @@ export interface RunMigrationsOptions {
   lockRetryIntervalMs?: number
   /** 覆盖取锁等待上限（默认 {@link MIGRATION_LOCK_TIMEOUT_MS}）。 */
   lockTimeoutMs?: number
+  /** 覆盖告警节流窗口（默认 {@link LOCK_WARN_EVERY_MS}）。 */
+  lockWarnIntervalMs?: number
   /** 取锁告警的出口（默认 `console.warn`；测试注入以捕获，避免污染输出）。 */
   warn?: (message: string) => void
   /**
@@ -89,10 +105,11 @@ async function describeLockKey(client: PoolClient): Promise<string> {
 /** 有界取锁：**拿到返回 true，等满上限仍拿不到返回 false**（调用方负责抛出）。 */
 async function acquireMigrationLockBounded(
   client: PoolClient,
-  { lockRetryIntervalMs, lockTimeoutMs, warn }: Required<Omit<RunMigrationsOptions, 'onMissingDir'>>,
+  { lockRetryIntervalMs, lockTimeoutMs, lockWarnIntervalMs, warn }: Required<Omit<RunMigrationsOptions, 'onMissingDir'>>,
 ): Promise<boolean> {
   const startedAt = Date.now()
   let attempts = 0
+  let lastWarnedAt = 0
   for (;;) {
     // pg_try_advisory_lock 不阻塞：拿不到立刻回 false ⇒ 等待节奏完全由我们掌握（这才有「上限」可言）。
     const res = await client.query<{ locked: boolean }>(
@@ -104,16 +121,19 @@ async function acquireMigrationLockBounded(
     attempts += 1
     const waitedMs = Date.now() - startedAt
     // 首次必打：排障的人要的是「卡在哪」，而不是「什么都没发生」（评审 N1 的症状就是后者）。
+    // 之后按**时间**节流（见 LOCK_WARN_EVERY_MS）：与重试间隔解耦，间隔怎么调都不会刷屏。
     if (attempts === 1) {
       warn(
         `[migrate] 等待 migration advisory lock（${MIGRATION_LOCK_KEY}）…`
         + `已被占 ${waitedMs}ms；每 ${lockRetryIntervalMs}ms 重试，上限 ${lockTimeoutMs}ms`,
       )
-    } else if (attempts % LOCK_WARN_EVERY_N_ATTEMPTS === 0) {
+      lastWarnedAt = waitedMs
+    } else if (waitedMs - lastWarnedAt >= lockWarnIntervalMs) {
       warn(
         `[migrate] 仍在等待 migration advisory lock（${MIGRATION_LOCK_KEY}）：`
         + `已等 ${waitedMs}ms / 上限 ${lockTimeoutMs}ms（第 ${attempts} 次重试）`,
       )
+      lastWarnedAt = waitedMs
     }
     if (waitedMs >= lockTimeoutMs) return false
     await sleep(Math.min(lockRetryIntervalMs, lockTimeoutMs - waitedMs))
@@ -127,9 +147,10 @@ export async function runMigrations(
   dir: string,
   options: RunMigrationsOptions = {},
 ): Promise<string[]> {
-  const { lockRetryIntervalMs, lockTimeoutMs, warn, onMissingDir } = {
+  const { lockRetryIntervalMs, lockTimeoutMs, lockWarnIntervalMs, warn, onMissingDir } = {
     lockRetryIntervalMs: options.lockRetryIntervalMs ?? MIGRATION_LOCK_RETRY_INTERVAL_MS,
     lockTimeoutMs: options.lockTimeoutMs ?? MIGRATION_LOCK_TIMEOUT_MS,
+    lockWarnIntervalMs: options.lockWarnIntervalMs ?? LOCK_WARN_EVERY_MS,
     warn: options.warn ?? ((message: string) => console.warn(message)),
     onMissingDir: options.onMissingDir ?? 'skip',
   }
@@ -144,9 +165,11 @@ export async function runMigrations(
   // 这不是纸面推论。实测（#310）：apps/server 的 loader 测试 37 个用例几乎全走这条路径，而
   // `pnpm -r --if-present test` 让最多 4 个 workspace 包**并发**打同一台 PG
   // （modules/data 与 modules/aftersales 的 test-util 直接 import 本文件，共用同一把锁）。
-  // 抢不到锁的一方按 `MIGRATION_LOCK_RETRY_INTERVAL_MS`（2000ms）**整量子**地睡 ——
+  // 抢不到锁的一方按 `MIGRATION_LOCK_RETRY_INTERVAL_MS` **整量子**地睡 —— 当初是 2000ms，
   // 单用例耗时从 ~50ms 涨到 2~4s（实测 2053/2139/4106ms，恰是 1~2 个量子），
   // 直接撞穿 vitest 的 5s 单测默认值，表现为「间歇超时、重跑即过」。
+  // （2026-11-19 该常数已降到 250ms：本例的「无事可做零成本」只挡得住无迁移模块，**确有迁移**
+  //   的模块仍要排队，量子越小尾延迟越小。见常数注释。）
   //
   // 无事可做就该**零成本**——文件头那句「对无 migrations/ 的模块零负担」原本只在「不报错」
   // 这一维成立，这次把它补成真的负担为零。
@@ -189,7 +212,7 @@ export async function runMigrations(
     //
     //    **有界**：等满上限仍拿不到就抛错，绝不静默往下走（静默继续 = 两个迁移者同时跑
     //    同一批 SQL = 退回 #84 的原始缺陷；而无限等待 = 启动期静默挂死，见文件头注释）。
-    held = await acquireMigrationLockBounded(client, { lockRetryIntervalMs, lockTimeoutMs, warn })
+    held = await acquireMigrationLockBounded(client, { lockRetryIntervalMs, lockTimeoutMs, lockWarnIntervalMs, warn })
     if (!held) {
       const key = await describeLockKey(client)
       throw new Error(

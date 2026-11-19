@@ -37,16 +37,10 @@ export function buildTestApp(mod: ModuleDefinition, identity: Identity, ctx: Mod
 /** 跑本模块迁移（读 ./migrations/*.sql）。路径用 node:path 取——本包 vitest 开 happy-dom
  *  后全局 URL 被换掉，new URL(rel, import.meta.url) 分辨不出 file: 方案（#718 实测）。
  *
- *  `lockRetryIntervalMs: 200`：`pnpm -r test` 让最多 4 个 workspace 包**并发**打同一台 PG，
- *  而迁移锁键是全库唯一的（`apps/server/src/migrate.ts` 文件头 / #310）⇒ 本包每次
- *  beforeAll 都在和别的包的真迁移抢锁。生产口径的 2s 重试间隔会**整量子放大**等待
- *  （实测 2053/2139/4106ms），把 vitest 的 5s 默认超时撞穿，表现为「间歇超时、重跑即过」
- *  ——2026-11-19 在 CI 上实测到一次（migrations.test.ts 幂等用例 5006ms 超时）。
- *  这里用**测试专用旋钮**（`RunMigrationsOptions` 本就是为测试留的口子）把粒度调细，
- *  **生产口径不变**；等待本身仍是真实的锁等待，不掩盖它。 */
+ *  取锁重试间隔**不在这里覆盖**（2026-11-19 订正）：`pnpm -r test` 让最多 4 个 workspace 包
+ *  并发打同一台 PG，而迁移锁键是全库唯一的（`apps/server/src/migrate.ts` 文件头 / #310），
+ *  所以本包 beforeAll 会真实排队。原先是给测试单独调细粒度止痛，但那是「测试跑的时序与真机
+ *  不同」的假象——生产常量已从 2s 降到 250ms，等待尾延迟同口径收窄，测试沿用默认即可。 */
 export function applyMigrations(pool: Pool): Promise<string[]> {
-  return runMigrations(pool, 'notify', join(dirname(fileURLToPath(import.meta.url)), 'migrations'), {
-    onMissingDir: 'error',
-    lockRetryIntervalMs: 200,
-  })
+  return runMigrations(pool, 'notify', join(dirname(fileURLToPath(import.meta.url)), 'migrations'), { onMissingDir: 'error' })
 }
