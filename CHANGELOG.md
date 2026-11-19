@@ -11,6 +11,10 @@
 
 ## [Unreleased]
 
+## [0.330.0](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.329.0...v0.330.0) - 2026-11-19
+- 【新增】scheduler: 作业域拆分——两单元各 claim 自己那组，启动对账按实例收口 ([#2512](https://github.com/MYTech-Co-LTD/platform-core/pull/2512), [e31edfc](https://github.com/MYTech-Co-LTD/platform-core/commit/e31edfc2febf30c6a176d394eb1a5e0e5813b227))
+
+
 ## [0.329.0](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.328.0...v0.329.0) - 2026-11-18
 - 【新增】deploy: 数据单元两个 console 自带 build（1.0 不拉本机自建镜像） ([#2510](https://github.com/MYTech-Co-LTD/platform-core/pull/2510), [9afd1cf](https://github.com/MYTech-Co-LTD/platform-core/commit/9afd1cfe612d2587ec8647d7e735d2ec8cd632ea))
 
