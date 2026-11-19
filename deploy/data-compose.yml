@@ -101,14 +101,43 @@ services:
       # ⚠️ 宿主目录必须对 uid 1000 可写（镜像以 node 运行）：`chown -R 1000:1000 <dir>` 一次即可。
       MATERIALIZE_TARGET_DIR: /app/dbt-target
     volumes:
-      # 与应用单元的 server 同源（它把同一宿主目录只读挂到 /app/dbt-target）。
-      # 用变量而不是写死路径：同一个仓发给不同客户，宿主目录随部署形态变。
-      - ${DBT_TARGET_DIR:-/opt/platform-core-data/platform-core/dbt/target}:/app/dbt-target
+      # 物化产物落**命名卷**（不是宿主目录）：跨机迁移时卷能跟着项目走，宿主路径不能。
+      # 同项目的 `artifacts` 服务把它**只读**挂成 HTTP 面，应用单元从那里增量拉取。
+      - dbt-artifacts:/app/dbt-target
     # 运行镜像已含 tsx；不要用裸 node 跑 .ts import（与 deploy/docker-compose.yml 的 notify-worker 同）
     command: ['pnpm', 'exec', 'tsx', 'scripts/notify-worker.mjs']
     depends_on:
       - pg_duckdb
     # 无 ports：只被本容器自己用（healthz 绑回环），宿主面为零。
+
+  # ── 只读产物服务（#2518）：数据单元的 runs 回执 / dbt 产物，以 HTTP 提供给应用单元 ──
+  # 为什么需要：产物产生在数据单元，消费它们的模块在应用单元、按**文件**读。同机时靠宿主 bind
+  # 偷看对方目录；**跨机那条路必断**（迁移只搬卷，不搬宿主路径）。
+  # 为什么不直连 console：duckle console 是能跑任意管线的执行器，不该为读几个 JSON 把端口放内网。
+  # 鉴权：`Authorization: Bearer $ARTIFACTS_TOKEN`（两个 project env 同值）；空值即全部 401。
+  # 只读：三个 location 各自 alias 到白名单子目录，非 GET/HEAD 拒绝，其余路径 404。
+  artifacts:
+    build: { context: .., dockerfile: deploy/artifacts/Dockerfile }
+    image: platform-core-artifacts:local
+    environment:
+      ARTIFACTS_TOKEN: ${ARTIFACTS_TOKEN:-}
+    volumes:
+      # console 工作区只挂到私有路径；nginx 用 alias 只暴露其下的 runs/ 子目录。
+      - lemeng-console-3120-ws:/data/ws3120:ro
+      - lemeng-console-64188-ws:/data/ws64188:ro
+      - dbt-artifacts:/data/dbt:ro
+    ports:
+      # 跨机拆分时设 DATA_BIND_ADDR=本机私网 IP（B7 唯一例外，须配安全组白名单）。
+      - '${DATA_BIND_ADDR:-127.0.0.1}:18090:8080'
+    healthcheck:
+      # 官方 nginx 镜像没有 wget/curl；用自带的 `nginx -t`？不——探活要打 /healthz。
+      # 镜像基于 alpine，自带 busybox wget。
+      test: ['CMD-SHELL', 'wget -qO- http://127.0.0.1:8080/healthz || exit 1']
+      interval: 30s
+      timeout: 3s
+      retries: 3
+      start_period: 5s
+    restart: unless-stopped
 
   # ── Metabase：**已退役**（2026-11-19，随调度拆分同一波腾磁盘）────────────────────
   # 服务与卷声明都已删除（metabase / metabase-db / mbdata）。删的是**编排面**：
@@ -217,6 +246,9 @@ volumes:
   pgduckdata:        # 物化表/语义 schema（可从 parquet 重算，备份=省重建时间，spec §8）
   # mbdata（Metabase 应用库）随 metabase 退役一并撤出编排——卷还在磁盘上，需人工确认后删。
   duckle-workspace:  # 管线定义的真源在仓内 duckle/；workspace 是中间产物（可重建）
+  # dbt 物化产物（manifest / run_results）。scheduler 写、artifacts 只读挂载对外供。
+  # 用卷而不是宿主目录：跨机迁移时卷随项目走。
+  dbt-artifacts:
   # 两个账套各自的 console 工作区（放 schedules.json 与引擎状态）。
   # **必须按账套分开**：调度条目带不了 env ⇒ 一个 workspace 只有一套 env（见 console/README.md）。
   # dim 管线实测**无跨运行状态组件** ⇒ 分卷不会丢状态；将来若接有状态的管线，迁移要连状态一起搬。

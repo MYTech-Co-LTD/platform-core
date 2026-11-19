@@ -1,0 +1,57 @@
+# deploy/artifacts/default.conf.template — 数据单元「只读产物」服务的 nginx 配置（#2518）
+#
+# 用途：把数据单元产生的**只读产物**（console 的 runs 回执、dbt 的 manifest/run_results）
+# 以 HTTP 提供给应用单元。为什么不用宿主 bind：跨机部署时对方目录根本不存在；
+# 为什么不让应用单元直连 duckle console：那是**能跑任意管线**的执行器，不该为读几个 JSON
+# 就把它的端口放到内网上。
+#
+# 鉴权：`Authorization: Bearer ${ARTIFACTS_TOKEN}`（两边的 project env 同值）。
+# 纵深防御：端口只在内网/私网 + 这道 token。空 token ⇒ 比的是 `Bearer `，谁也过不去
+# ⇒ 配错即拒绝，不会退化成「无鉴权」。
+#
+# ⚠️ 每个 location **只暴露白名单子目录**（`alias .../runs/`），不把整个 console workspace
+#    挂成可列举的根——workspace 里还有 schedules.json 与引擎状态，读产物不需要它们。
+server {
+    listen 8080;
+    server_name _;
+
+    # 容器探活：唯一不需要 token 的路径（不读任何文件）
+    location = /healthz {
+        access_log off;
+        add_header Content-Type text/plain;
+        return 200 'ok';
+    }
+
+    # ── 账套 3120 的管线运行回执 ──
+    location /runs/3120/ {
+        if ($http_authorization != "Bearer ${ARTIFACTS_TOKEN}") { return 401; }
+        alias /data/ws3120/runs/;
+        autoindex on;
+        autoindex_format json;
+        limit_except GET { deny all; }
+        default_type application/json;
+    }
+
+    # ── 账套 64188 的管线运行回执 ──
+    location /runs/64188/ {
+        if ($http_authorization != "Bearer ${ARTIFACTS_TOKEN}") { return 401; }
+        alias /data/ws64188/runs/;
+        autoindex on;
+        autoindex_format json;
+        limit_except GET { deny all; }
+        default_type application/json;
+    }
+
+    # ── dbt 产物（manifest.json / run_results.json） ──
+    location /dbt/ {
+        if ($http_authorization != "Bearer ${ARTIFACTS_TOKEN}") { return 401; }
+        alias /data/dbt/;
+        autoindex on;
+        autoindex_format json;
+        limit_except GET { deny all; }
+        default_type application/json;
+    }
+
+    # 其余一律 404（白名单之外没有任何东西）
+    location / { return 404; }
+}

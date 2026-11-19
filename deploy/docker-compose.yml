@@ -70,6 +70,14 @@ services:
       # 不是 env_file 指的 ../.env（同 openclaw 的 OPENCLAW_GATEWAY_TOKEN 一类的坑）⇒
       # 写了反而可能用空值覆盖掉真值。它们由根 .env / openship 服务行 env 注入。
       DATA_SANDBOX_DIR: /run/duckle-sandbox
+      # 数据面产物同步（#2518）：从数据单元的 `artifacts` 服务**只读 HTTP** 拉取
+      # console 的 runs 回执与 dbt 的 manifest/run_results，落到本地文件供 data 模块按既有判据读。
+      # **不配 ARTIFACTS_BASE_URL 就不启用**（fail-closed：本地/测试不该去打内网）。
+      # 拉不到只是「文件不更新」⇒ 模块自己的 unknown/陈旧档位生效，不会假绿。
+      # 真值（URL/TOKEN）走 project env：compose 的 ${} 只读 deploy/.env 与 shell，不读 ../.env。
+      ARTIFACTS_BASE_URL: ${ARTIFACTS_BASE_URL:-}
+      ARTIFACTS_TOKEN: ${ARTIFACTS_TOKEN:-}
+      ARTIFACTS_SYNC_INTERVAL_MS: ${ARTIFACTS_SYNC_INTERVAL_MS:-60000}
       # 集成健康探针（spec 2026-10-31 §2.3）：代码里缺省 0=关（fail-closed），生产在这里显式开。
       # 60s 一跳，每轮按各集成的 SLA 派生间隔决定谁真去探（心跳类 75s，凭据/通道类 1h）。
       # 放 server 进程、**不与 notify-worker 同容器**——worker 自己是被监控对象，

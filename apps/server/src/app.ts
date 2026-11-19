@@ -24,6 +24,7 @@ import { makeSchedulerFactory } from './scheduler/factory'
 import { buildJobsPort } from './scheduler/jobs-port'
 import { runMigrations } from './migrate'
 import { REGISTRY_PATH, startIntegrationProbeLoop } from './integration-probe'
+import { parseArtifactsSyncConfig, startArtifactsSyncLoop } from './artifacts-sync'
 import { resolveKeyWithTouch } from './api-key-store'
 import { seedDemo } from './seed'
 import { getTenantByHost, resolveTenantMiddleware, type TenantEnv } from './tenant'
@@ -508,6 +509,14 @@ export async function buildApp(overrides: BuildAppOverrides = {}): Promise<{
     casdoorGetUser: async (org, name) => casdoorFactory(org).getUser(name),
     onError: (e) => console.warn('[integration-probe] 本轮失败：', e instanceof Error ? e.message : e),
   })
+
+  // 数据面产物同步（#2518）：数据单元的 runs 回执 / dbt manifest 远端只读 HTTP → 本地文件。
+  // **未配 `ARTIFACTS_BASE_URL` ⇒ 不同步**（fail-closed：本地/测试不该去打内网）。
+  // 拉不到只是「文件不更新」⇒ data 模块自己的 unknown/陈旧判据生效，不会假绿。
+  const artifactsSync = parseArtifactsSyncConfig(process.env)
+  if (artifactsSync !== null) {
+    startArtifactsSyncLoop(artifactsSync)
+  }
 
   return { app, config, modules: runtime }
 }
