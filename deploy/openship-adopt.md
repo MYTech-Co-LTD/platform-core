@@ -309,11 +309,18 @@ commitSha 锚定构建部署。
 写法根本不成立。`vars` 在 job 级 `if` 里可用，而 `OPENSHIP_PROJECT_ID` 本来就是 adopt 之后
 必须人工回填的**必填参数**——让它兼任开关，就不存在「开关开了但参数没填」的中间态。
 
-> **✅ 已启用（2026-09-14）**：variable `OPENSHIP_PROJECT_ID=proj_v0QZ68VYDc0pkFxL`、
-> `OPENSHIP_URL=https://deploy.hookflow.cn/api/proxy`、secret `OPENSHIP_TOKEN`（scoped PAT
-> `ci-platform-core-deploy-scoped`；启用当天曾临时用 fullAccess PAT，同日已收紧）均已配置。
-> 此后 merge 到 main = 门禁全绿后自动部署（端到端验证：PR #53/#54 合并 → deploy job →
-> healthz 200）。
+> **✅ 已启用（2026-09-14；**2026-11-19 换目标**）**：variable `OPENSHIP_PROJECT_ID` 现指
+> **`proj_GLXUtN2bJ92DpPrS`（platform-core-shanhai 应用单元）**、`OPENSHIP_URL=
+> https://deploy.hookflow.cn/api/proxy`、secret `OPENSHIP_TOKEN`（scoped PAT
+> `ci-platform-core-shanhai-deploy`）。**mytech 改为手动发版**（`proj_v0QZ68VYDc0pkFxL` 不再被
+> CI 触碰）。
+> ⚠️ **换 projectId 必须同步换 token**：scoped PAT 只认自己被 grant 的那个 project，指到别家时
+> 回的是 **`404 project 'proj_xxx' not found`**——不是 403，极易被误读成「项目不存在/被删了」。
+> 端到端验证：deploy job → openship 受理 → 4 服务重建 → 两站 200。
+> **定向部署（2026-11-19）**：deploy job 默认传 `serviceIds`（除 openclaw 外的启用服务），只有
+> 变更触及 `deploy/openclaw/**`、`deploy/Dockerfile.openclaw`、`deploy/docker-compose.yml` 时才
+> 带上 openclaw——否则平台每次发版都会重建问数 bot，把企微长连接打断 1 分钟级。**没有拆成独立
+> project 的原因见 `ci.yml` 里那段注释（networkMode 与 compose 闸门两道硬墙，实测）。**
 > 三个实测坑：
 > ① **API 基址带 `/api/proxy` 前缀**——edge 把裸 `/api/*` 路由给 dashboard 壳（SPA fallback
 >    404/403），真实 API 在 `/api/proxy/api/*`。`OPENSHIP_URL` 变量必须指到代理前缀（本文

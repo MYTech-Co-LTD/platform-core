@@ -444,6 +444,38 @@ jobs:
             echo "adopt 之后需一并配置：gh secret set OPENSHIP_TOKEN --repo $GITHUB_REPOSITORY"
             exit 1
           fi
+      # 本次要不要顺带重建 openclaw（问数 bot）。
+      #
+      # 为什么单列：bot 与应用单元同宿主同 project，但**生命周期应当解耦**——平台每次发版都
+      # 重建它，企微长连接就会跟着断一次（2026-11-19 观测到两次 1 分钟级断连）；反过来它起得慢
+      # 会让整次部署带「部分服务未健康」告警，污染平台自己的部署结论。
+      #
+      # 为什么不是拆成独立 project（2026-11-19 实测结论，别再试）：
+      #   ① `advanced.networkMode` 只接受 `none` / `service:<本栈内服务>`，跨 project 复用网络
+      #      直接被 VALIDATION_ERROR 拒；
+      #   ② 新 project 必须指向整份 `deploy/docker-compose.yml`，而 compose 闸门按**整份文件**
+      #      比对 ⇒ 它要求把 postgres/server/notify-worker/mb-proxy/sandbox-console 一起作为
+      #      「新增服务」拉起来（等于同机再起一套平台）。平台没有「服务子集视图」。
+      #   ⇒ 物理拆分需要第三份 compose（违 B7），属架构议题；这里用**定向部署**取得同样的
+      #     「平台发版不重启 bot」效果。
+      - name: 判定本次是否包含 openclaw
+        id: bot
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          COMMIT_SHA: ${{ github.sha }}
+        run: |
+          set -euo pipefail
+          files=$(curl -sS -H "Authorization: Bearer ${GH_TOKEN}" \
+            "https://api.github.com/repos/${GITHUB_REPOSITORY}/commits/${COMMIT_SHA}" \
+            | jq -r '.files[]?.filename' 2>/dev/null || true)
+          # bot 自身源码/镜像定义 → 必须带上；compose 变了也要带（否则它的服务行会落后一整份编排）
+          if printf '%s\n' "$files" | grep -qE '^(deploy/openclaw/|deploy/Dockerfile\.openclaw$|deploy/docker-compose\.yml$)'; then
+            echo "include=1" >> "$GITHUB_OUTPUT"
+            echo "本次变更触及 openclaw，将一并部署"
+          else
+            echo "include=0" >> "$GITHUB_OUTPUT"
+            echo "本次变更与 openclaw 无关，跳过它（避免重启企微长连接）"
+          fi
       - name: 触发 openship 部署（按本 commit 锚定）
         env:
           OPENSHIP_TOKEN: ${{ secrets.OPENSHIP_TOKEN }}
@@ -451,9 +483,24 @@ jobs:
           # 控制面地址做成变量是为了换环境不改工作流；缺省即公司控制面
           OPENSHIP_URL: ${{ vars.OPENSHIP_URL || 'https://deploy.hookflow.cn' }}
           COMMIT_SHA: ${{ github.sha }}
+          INCLUDE_BOT: ${{ steps.bot.outputs.include }}
         run: |
           set -euo pipefail
           echo "openship: project=$PROJECT_ID commit=$COMMIT_SHA"
+          # 服务清单现查（不写死 id：服务行重建后 id 会变，写死等于埋定时炸弹）。
+          # 查失败就**退回全量部署**——宁可多重启一次 bot，也不能因为查不到而部署不了。
+          SERVICE_IDS='null'
+          if [ "${INCLUDE_BOT}" != "1" ]; then
+            SERVICE_IDS=$(curl -sS -H "Authorization: Bearer ${OPENSHIP_TOKEN}" \
+              "${OPENSHIP_URL%/}/api/projects/${PROJECT_ID}/services" \
+              | jq -c '[.services[]? | select(.enabled != false) | select(.name != "openclaw") | .id]' 2>/dev/null || echo 'null')
+            if [ "${SERVICE_IDS}" = "[]" ] || [ "${SERVICE_IDS}" = "null" ]; then
+              echo "服务清单不可用 ⇒ 退回全量部署"
+              SERVICE_IDS='null'
+            else
+              echo "定向部署（不含 openclaw）：${SERVICE_IDS}"
+            fi
+          fi
           # commitSha 是幂等键：同一个 sha 重复触发不会部署出两份不同的东西。
           # 只发触发、不在 CI 里轮询到 live——构建状态归 openship（deploy/openship-adopt.md 第 7 节）
           #
@@ -465,11 +512,16 @@ jobs:
           # `buildDurationMs` ≈ 500–580s（9–10 分钟）；原窗口 10×30s ≈ 5 分钟，**只要 main 上
           # 短时间内合两个 PR，后一个的 deploy 必然红**（#2009、#2018 两次实证）。改为 24×30s
           # ≈ 12 分钟，覆盖一次构建 + 切流余量。别凭直觉把它调回 5 分钟。
+          # serviceIds 为空时不要传这个键（null ≠ []：空数组会被当成「什么都不部署」）
+          PAYLOAD=$(jq -c -n --arg pid "${PROJECT_ID}" --arg sha "${COMMIT_SHA}" --argjson ids "${SERVICE_IDS}" \
+            '{projectId:$pid, branch:"main", commitSha:$sha, environment:"production"}
+             + (if $ids != null and ($ids|length) > 0 then {serviceIds:$ids} else {} end)')
+          echo "payload: ${PAYLOAD}"
           for i in $(seq 1 24); do
             CODE=$(curl -sS -o /tmp/openship-deploy.json -w '%{http_code}' -X POST "${OPENSHIP_URL%/}/api/deployments" \
               -H "Authorization: Bearer ${OPENSHIP_TOKEN}" \
               -H 'Content-Type: application/json' \
-              -d "{\"projectId\":\"${PROJECT_ID}\",\"branch\":\"main\",\"commitSha\":\"${COMMIT_SHA}\",\"environment\":\"production\"}")
+              -d "${PAYLOAD}")
             if [ "${CODE:0:1}" = "2" ]; then
               echo "openship 响应（HTTP ${CODE}）："
               cat /tmp/openship-deploy.json
