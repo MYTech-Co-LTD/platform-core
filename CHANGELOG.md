@@ -11,6 +11,11 @@
 
 ## [Unreleased]
 
+## [0.331.0](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.330.1...v0.331.0) - 2026-11-19
+- 【新增】data: 数据面只读产物服务 + 应用单元增量同步 ([#2519](https://github.com/MYTech-Co-LTD/platform-core/pull/2519), [b3f0350](https://github.com/MYTech-Co-LTD/platform-core/commit/b3f03508fcca4a34d329d37154639cfed1dcc539))
+- 【修复】data: 物化产物落共享宿主目录，恢复 reconcile/toolbox 读取 ([#2517](https://github.com/MYTech-Co-LTD/platform-core/pull/2517), [1340f7a](https://github.com/MYTech-Co-LTD/platform-core/commit/1340f7a46f961b448986031cc298c8fe1d19254b))
+
+
 ## [0.330.1](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.330.0...v0.330.1) - 2026-11-19
 - 【修复】ops: 调度心跳看护按全部 scheduler 实例判定 + 补滚动顺序口径 ([#2514](https://github.com/MYTech-Co-LTD/platform-core/pull/2514), [bb30318](https://github.com/MYTech-Co-LTD/platform-core/commit/bb303182d04eb72095c3af4dc323cc0e7e9d55d3))
 
