@@ -435,9 +435,26 @@ jobs:
     # 原来的 30 分钟是「只触发不等待」时代的预算，别照着它缩。
     timeout-minutes: 60
     steps:
+      # release 工作流会把 `chore(release)` 提交推回 main ⇒ 会被本工作流再触发一次。
+      # 那条只改 CHANGELOG/版本号，部署它没有意义，而且每发一版多一次完整重建 + 一次切流窗口
+      # （2026-11-19 实测：一次 release 提交触发了整整一轮部署，切流期间 edge 路由短暂空窗）。
+      # 用事件载荷判（本 job 不 checkout，没有 git 上下文）。
+      - name: 跳过 release 提交
+        id: guard
+        env:
+          MSG: ${{ github.event.head_commit.message }}
+        run: |
+          first=$(printf '%s' "${MSG}" | head -1)
+          if [[ "$first" == chore\(release\)* ]]; then
+            echo "release commit, skip deploy"
+            echo "skip=1" >> "$GITHUB_OUTPUT"
+          else
+            echo "skip=0" >> "$GITHUB_OUTPUT"
+          fi
       # secret 不能在 job 级 if 里判，但可以在 step 里判：变量配了而 secret 没配属于配置错误，
       # 应当**响亮失败**（而不是静默跳过——静默跳过会让人以为「已经部署了」）
       - name: 校验凭据齐备
+        if: steps.guard.outputs.skip != '1'
         env:
           OPENSHIP_TOKEN: ${{ secrets.OPENSHIP_TOKEN }}
         run: |
@@ -462,6 +479,7 @@ jobs:
       #     「平台发版不重启 bot」效果。
       - name: 判定本次是否包含 openclaw
         id: bot
+        if: steps.guard.outputs.skip != '1'
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           COMMIT_SHA: ${{ github.sha }}
@@ -479,6 +497,7 @@ jobs:
             echo "本次变更与 openclaw 无关，跳过它（避免重启企微长连接）"
           fi
       - name: 触发 openship 部署（按本 commit 锚定）
+        if: steps.guard.outputs.skip != '1'
         env:
           OPENSHIP_TOKEN: ${{ secrets.OPENSHIP_TOKEN }}
           PROJECT_ID: ${{ vars.OPENSHIP_PROJECT_ID }}
