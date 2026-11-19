@@ -84,7 +84,7 @@ while read -r src dst perms; do
     [ -f "$dst" ] && cp -p "$dst" "$dst.bak-$ts"
     install -m "$perms" "$root/$src" "$dst"
   fi
-  echo "↑ 已投递 ${host:+$host:}$dst（$perms，旧副本留 .bak-$ts）"
+  echo "↑ 已投递 ${host:+$host:}${dst}（${perms}，旧副本留 .bak-${ts}）"
   changed=$((changed + 1))
 done <<< "$MAPPING"
 
