@@ -11,6 +11,10 @@
 
 ## [Unreleased]
 
+## [0.344.1](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.344.0...v0.344.1) - 2026-11-20
+- 【修复】scheduler: 排空期豁免健康判据②（有意不跑 ≠ 该跑没跑） ([#2582](https://github.com/MYTech-Co-LTD/platform-core/pull/2582), [c6ad577](https://github.com/MYTech-Co-LTD/platform-core/commit/c6ad577241cb25b751c1a719aa1f687c70ee83a0))
+
+
 ## [0.344.0](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.343.0...v0.344.0) - 2026-11-20
 - 【新增】scheduler: 派发/执行拆分（方案 A，默认不改变行为） ([#2580](https://github.com/MYTech-Co-LTD/platform-core/pull/2580), [076a7f1](https://github.com/MYTech-Co-LTD/platform-core/commit/076a7f1eacfc89eb884cafba105d4ed377802c6b))
 - 【修复】openclaw: 启动期 Doctor 改 best-effort wrapper，避免 2026.11.6 竞态致重启循环 ([#2578](https://github.com/MYTech-Co-LTD/platform-core/pull/2578), [95c2250](https://github.com/MYTech-Co-LTD/platform-core/commit/95c2250673ae3a8497fba1b8e792b126c642bf48))
