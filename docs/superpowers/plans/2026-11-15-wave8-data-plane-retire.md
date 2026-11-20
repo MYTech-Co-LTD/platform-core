@@ -98,12 +98,40 @@ dbt 类任务落**平台 scheduler + 镜像内 dbt 工具链**（选项 1）：
 |---|---|---|---|
 | P1 dbt | `lemeng-recon-restate` | **C：改写为数据单元 job** | 只需 psql + console HTTP API，不依赖宿主 docker 语义；容器内可跑 |
 | P1 dbt | `lemeng 夜间回填窗口` | **A：留守 openship** | 依赖宿主机 `/opt` 脚本与多容器编排；容器化收益低、风险高 |
-| P2 平台/运维 | `lemeng-console-gc`、`lemeng-gc-hot-hours`、`删已封版日子小时对象` | **C：优先走 console 的 GC 通道**；走不通再 A | 产物与 console 工作区同源，GC 应由 console 自己回收（避免跨容器删卷） |
-| P2 平台/运维 | `askdata-loop-p1`、`demand-mining-shanhai` | **C：改数据单元 job** | 只依赖 HTTP/DB；现直接 `sh /var/lib/askdata/...` 或 docker exec，可改脚本入口 |
+| P2 平台/运维 | `lemeng-console-gc`、`lemeng-gc-hot-hours` | **A：留守 / 等 console 自己的 GC 通道** | 见下方「逐条实测判定」——两者都直接读写**宿主卷路径**，容器内看不见 |
+| P2 平台/运维 | `删已封版日子小时对象` | **C：已迁**（`data.hour_partition_gc`，#2563） | 只需 ZOS 凭据 + HEAD；调度器容器两样都有，实测 dry-run 一致 |
+| P2 平台/运维 | `askdata-loop-p1` | **A：留守** | 入口是宿主 `sh /var/lib/askdata/sync-and-run.sh`：读宿主卷路径 + `/etc/openobserve-ingest.env` + python3，容器内三样都没有 |
+| P2 平台/运维 | `demand-mining-shanhai` | **C：受阻**（#2560） | 调度器容器**没有 OO 读凭据**（`OO_AUTH` 是摄取凭据，读端点 401）⇒ 三选一待拍板 |
 | P3 判据化 | `pipeline-scorecard-3120/64188`、`pipeline-monthly-review`、`日更件零行巡检` | **④：转 OO 规则 / `data.monitor` 判据** | 先接通告警出口、跑满一个周期，再关 openship job |
 | P3 判据化 | `verify-ingest-shanhai`、`verify-regression-shanhai`、`叙事质量探针` | **④：同上** | 判据化后保留手动触发入口作为排障 |
 | P3 判据化 | `平台↔仓库接线探活（Gate-B / search_path）` | **④：已跨机改写并稳定绿**，作为首个判据化样本 | 2026-11-19 后改为跨机口径，不再依赖同机 docker 网络 |
 | P4 收口 | 其余宿主机脚本（host-metrics / OO 桥·看门狗 / 机脚本投递 / 预警对账） | **A：留守清单** | W4 后仍必须留在 openship（跨机 exec 与 OO ingest） |
+
+### 逐条实测判定（2026-11-20 晚，取代上表的「待评估」）
+
+判据：**容器里有没有它要的那几样东西**（凭据 / 宿主卷 / python）。三样缺一就归 A，不硬迁。
+
+| job | 它要什么 | 调度器容器有没有 | 判定 |
+|---|---|---|---|
+| `删已封版日子小时对象` | ZOS 五键 + python3 + HEAD | ✅ 五键在 env、python 3.11、脚本在镜像 `/app/scripts/lemeng/` | **C 已迁**（#2563）；容器内 dry-run 实测输出一致 |
+| `demand-mining-shanhai` | `DATABASE_URL` + OO **读**凭据 | ⚠️ DB 有；**读凭据没有** | **C 受阻**（#2560） |
+| `askdata-loop-p1` | 宿主卷 `…openclaw_state/_data` + `/etc/openobserve-ingest.env` + python3 | ❌ 三样都不可见 | **A 留守** |
+| `lemeng-console-gc` | console 卷的**宿主路径** + `docker exec duckle cache clear` | ❌ 跨容器删卷 | **A 留守**（等 console 自己出 GC 端点） |
+| `lemeng-gc-hot-hours` | `docker exec console printenv ZOS_*` + 遍历 console state | ❌ 同上 | **A 留守** |
+
+> **凭据实测细节（#2560）**：数据单元 `OO_AUTH`（长 52）对 `/streams`、`/data_alerts`、`/organizations`
+> 全 **401**；应用单元 `OO_READ_TOKEN`（长 88）同路径 **200**。⚠️ 但这**不是缺陷**——
+> `alerts*.json` 里那条 `data_alerts/_json` 是 **OO 的 JSON 摄取端点**（写事件进流），
+> `OO_AUTH` 就是**摄取凭据**，读端点 401 是正常表现。结论只是「调度器容器缺读凭据」。
+
+### 部署面缺口：改 registry 不进调度器镜像（#2561）
+
+调度器跑在**数据单元**，但 `deploy-data` 的触发面原先只看 compose/duckle/dbt/`scripts/lemeng/`——
+**`apps/server/src/scheduler/` 与 `scripts/*.mjs` 都不在**。改 `JOB_REGISTRY` 或 job 脚本 ⇒
+应用单元照常发版、**数据单元调度器仍是旧镜像**，且没有任何红灯。
+
+已在 #2561 / PR #2562 修：触发面加 `^apps/server/src/scheduler/`，并把 registry 里 `script: '…'`
+清单与本次改动文件求交集（逐个精确比对，不靠 `^scripts/` 前缀猜）；读不到 registry ⇒ 按命中处理。
 
 ### 一次性 job 清理（待办，不在本波实施）
 
