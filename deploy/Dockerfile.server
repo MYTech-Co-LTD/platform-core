@@ -172,6 +172,11 @@ COPY --from=build /app/dbt ./dbt
 # ⑨ contracts/ 的对应项（理由同 build 阶段 ⑨，不复述）：提案面读面在运行态读契约事实源
 COPY --from=build /app/contracts ./contracts
 
+# 派发器 ↔ 执行器共享令牌的落点（#2574）：**目录必须在镜像里以 node 身份预建**。
+# 命名卷首次挂到「镜像里已存在的目录」时，Docker 会把该目录的属主一起带进卷；
+# 否则卷根是 root:root 0755，uid 1000 的执行器写令牌直接 EACCES（2026-11-20 实测重启循环）。
+RUN mkdir -p /run/executor-auth && chown node:node /run/executor-auth
+
 # 非 root 运行（node 镜像自带 uid 1000 的 node 用户）。被 COPY 的文件是 root 拥有但
 # world-readable，宿主进程只读磁盘：tsx 在内存里转译不落盘，pnpm run 也不写 store。
 USER node

@@ -13,6 +13,10 @@
 //      ⚠️ 时点必须由 **cron 算**（`nextRunAt(cron, timezone, ref)`），不能按墙钟 2×interval 判：
 //      cron 有窗口（如 `data.dbt_tick` = UTC 1-15 点，避开北京时间 00:01–09:00 的空热 glob 窗口），
 //      墙钟判法会把窗口外误判成漏跑 ⇒ worker 每天夜间恒 503 ⇒ openship 部署收尾被阻塞（#2417）。
+//   ②b **排空期豁免（#2574）**：部署排空信号在（`platform.scheduler_control` key='drain'）时，
+//      判据 ② 整体跳过——「有意不跑」不是「该跑没跑」。否则每次部署都会把 worker 判 503、
+//      容器标 unhealthy，甚至让 openship 把部署判失败（2026-11-20 实测）。
+//      ①心跳与控制面照判：排空 ≠ 停摆。
 //   ③ 连续失败：任意 enabled 排班**最近 3 次运行（不论状态）**全是 failed/timeout 才红。
 //      `running`/`queued` 行会稀释连败——这是有意的（有在跑说明调度器活着），不要改成只看终态。
 //      （不足 3 次也不判红——样本不够，先让 ② 的时窗判。）
@@ -39,12 +43,19 @@ export interface JobHealthScope {
    * 否则应用单元会把数据单元的作业判成「该跑没跑」，反之亦然。
    */
   keys?: readonly string[]
+  /**
+   * 部署排空期（#2574）：true 时**跳过判据 ②**（该跑没跑）。
+   * 「有意不跑」与「该跑没跑」必须分开，否则每次部署都会把 worker 判红（2026-11-20 实测 503）。
+   */
+  draining?: boolean
 }
 
 export async function jobHealth(pool: Pool, now: Date, scope: JobHealthScope = {}): Promise<JobHealth> {
   const instanceId = scope.instanceId ?? 'scheduler'
   const keys = scope.keys ?? null
   const reasons: string[] = []
+  // 排空期：判据 ② 不适用（见文件头 ②b）。
+  const draining = scope.draining === true
 
   // ① 心跳
   const hb = await pool.query<{ beat_at: Date | null }>(
@@ -59,43 +70,45 @@ export async function jobHealth(pool: Pool, now: Date, scope: JobHealthScope = {
     reasons.push(`调度心跳陈旧：已 ${secs}s 未更新（阈值 ${HEARTBEAT_STALE_MS / 1000}s）`)
   }
 
-  // ② 该跑没跑（cron-aware）
-  const candidates = await pool.query<{
-    key: string
-    cron: string
-    timezone: string
-    expected_interval_secs: number
-    ref: Date
-  }>(
-    `select s.key, s.cron, s.timezone, s.expected_interval_secs,
-            coalesce(
-              (select max(r.started_at) from platform.job_run r
-                where r.schedule_id = s.id and r.status = 'ok'),
-              (select max(r.started_at) from platform.job_run r
-                where r.schedule_id = s.id),
-              s.updated_at
-            ) as ref
-       from platform.job_schedule s
-      where s.enabled
-        and ($1::text[] is null or s.key = any($1::text[]))
-      order by s.key`,
-    [keys],
-  )
-  for (const r of candidates.rows) {
-    let next: Date
-    try {
-      next = nextRunAt(r.cron, r.timezone, r.ref)
-    } catch (e) {
-      // cron 算不出下一次触发＝健康面不可观测 ⇒ fail-closed（不许静默放过）。
-      reasons.push(
-        `${r.key}：cron 算不出下一次触发（${r.cron} @ ${r.timezone}）：${(e as Error).message}`,
-      )
-      continue
-    }
-    if (now.getTime() - next.getTime() > 2 * r.expected_interval_secs * 1000) {
-      reasons.push(
-        `${r.key}：超过 2×期望间隔（${r.expected_interval_secs}s）没有成功运行`,
-      )
+  if (!draining) {
+    // ② 该跑没跑（cron-aware）
+    const candidates = await pool.query<{
+      key: string
+      cron: string
+      timezone: string
+      expected_interval_secs: number
+      ref: Date
+    }>(
+      `select s.key, s.cron, s.timezone, s.expected_interval_secs,
+              coalesce(
+                (select max(r.started_at) from platform.job_run r
+                  where r.schedule_id = s.id and r.status = 'ok'),
+                (select max(r.started_at) from platform.job_run r
+                  where r.schedule_id = s.id),
+                s.updated_at
+              ) as ref
+         from platform.job_schedule s
+        where s.enabled
+          and ($1::text[] is null or s.key = any($1::text[]))
+        order by s.key`,
+      [keys],
+    )
+    for (const r of candidates.rows) {
+      let next: Date
+      try {
+        next = nextRunAt(r.cron, r.timezone, r.ref)
+      } catch (e) {
+        // cron 算不出下一次触发＝健康面不可观测 ⇒ fail-closed（不许静默放过）。
+        reasons.push(
+          `${r.key}：cron 算不出下一次触发（${r.cron} @ ${r.timezone}）：${(e as Error).message}`,
+        )
+        continue
+      }
+      if (now.getTime() - next.getTime() > 2 * r.expected_interval_secs * 1000) {
+        reasons.push(
+          `${r.key}：超过 2×期望间隔（${r.expected_interval_secs}s）没有成功运行`,
+        )
+      }
     }
   }
 
