@@ -100,13 +100,25 @@ dbt 类任务落**平台 scheduler + 镜像内 dbt 工具链**（选项 1）：
 | P1 dbt | `lemeng 夜间回填窗口` | **A：留守 openship** | 依赖宿主机 `/opt` 脚本与多容器编排；容器化收益低、风险高 |
 | P2 平台/运维 | `lemeng-console-gc` | **A：留守 / 等 console 自己的 GC 通道** | 见下方「逐条实测判定」——直接读写**宿主卷路径**，容器内看不见 |
 | P2 平台/运维 | `lemeng-gc-hot-hours` | **C：已迁**（`data.hot_hours_gc`，#2565） | 与激进档同一份判据，只是窗口更保守（上海今天−2） |
-| P2 平台/运维 | `删已封版日子小时对象` | **C：已迁**（`data.hour_partition_gc`，#2563） | 只需 ZOS 凭据 + HEAD；调度器容器两样都有，实测 dry-run 一致 |
+| P2 平台/运维 | `删已封版日子小时对象` | **C：已迁并合并**（并入 `data.hot_hours_gc`，#2563 → #2588） | 只需 ZOS 凭据 + HEAD；两条同判据不同窗口的排班已合成一条 |
 | P2 平台/运维 | `askdata-loop-p1` | **A：留守** | 入口是宿主 `sh /var/lib/askdata/sync-and-run.sh`：读宿主卷路径 + `/etc/openobserve-ingest.env` + python3，容器内三样都没有 |
 | P2 平台/运维 | `demand-mining-shanhai` | **C：受阻**（#2560） | 调度器容器**没有 OO 读凭据**（`OO_AUTH` 是摄取凭据，读端点 401）⇒ 三选一待拍板 |
 | P3 判据化 | `pipeline-scorecard-3120/64188`、`pipeline-monthly-review`、`日更件零行巡检` | **④：转 OO 规则 / `data.monitor` 判据** | 先接通告警出口、跑满一个周期，再关 openship job |
 | P3 判据化 | `verify-ingest-shanhai`、`verify-regression-shanhai`、`叙事质量探针` | **④：同上** | 判据化后保留手动触发入口作为排障 |
 | P3 判据化 | `平台↔仓库接线探活（Gate-B / search_path）` | **④：已跨机改写并稳定绿**，作为首个判据化样本 | 2026-11-19 后改为跨机口径，不再依赖同机 docker 网络 |
 | P4 收口 | 其余宿主机脚本（host-metrics / OO 桥·看门狗 / 机脚本投递 / 预警对账） | **A：留守清单** | W4 后仍必须留在 openship（跨机 exec 与 OO ingest） |
+
+### GC 排班合并（2026-11-20，用户同意后执行）
+
+原先是两条同判据、不同窗口的排班（激进档 `before=今天(UTC)` 每 30 分钟 + 保守档 `上海−2` 每天）。
+合并成**只留保守档**：
+
+- 代价：多留 1–2 天的小时对象，最多 96 个小文件 ≈ **+0.8s** 查询（相对「671 个死文件 47s」的
+  量级可以忽略）；
+- 收益：每天少约 **2.3 万次 HEAD**（激进档每 30 分钟 × 约 480 次）+ 少一条排班的理解成本。
+
+护栏：`registry.test.ts` 断言「`scripts/lemeng/hour-partition-gc.mjs` 只对应一条排班」，
+防止以后被拆回两条。
 
 ### 逐条实测判定（2026-11-20 晚，取代上表的「待评估」）
 
