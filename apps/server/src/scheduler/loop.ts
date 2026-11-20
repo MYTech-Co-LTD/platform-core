@@ -6,7 +6,7 @@
 //   所以这里只管本进程还能再起几个子进程，不再重复查库。
 import type { Pool } from 'pg'
 import { nextRunAt } from './cron'
-import { JOB_REGISTRY, seedSchedules, type JobDef } from './registry'
+import { JOB_REGISTRY, fillNextRunAt, seedSchedules, type JobDef } from './registry'
 import { defaultSpawn, type SpawnFn } from './runner'
 import { executeJob, type JobEventInput } from './execute'
 import {
@@ -108,6 +108,11 @@ export function createSchedulerLoop(deps: SchedulerDeps) {
       const t = now()
       const stats: TickStats = { claimed: 0, started: 0, reaped: 0 }
       if (!seeded) { await seedSchedules(deps.pool, registry, t); seeded = true }
+      // 补算 `next_run_at` **每拍都做**（#2598）：切流的最后一步是人工在 DB 置 `enabled=true`，
+      // 而 seed 只发生一次；只在首拍补算 ⇒ 那条排班永远不到期，且健康面无红灯（不是「该跑没跑」，
+      // 是「从来没排上」）。正常情况 0 行。
+      const filled = await fillNextRunAt(deps.pool, t)
+      if (filled.length > 0) log({ ts: t.toISOString(), event: 'schedulerFilledNextRun', keys: filled })
       await beat(deps.pool, t, instanceId)
       stats.reaped = await reapStale(deps.pool, t)
       stats.reaped += await reapQueued(deps.pool, t)

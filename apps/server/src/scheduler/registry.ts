@@ -131,6 +131,21 @@ export async function seedSchedules(
     )
     if ((rowCount ?? 0) > 0) inserted.push(d.key)
   }
+  const filled = await fillNextRunAt(pool, now)
+  return { inserted, filled }
+}
+
+/**
+ * 给「启用着但没有下一次到期时刻」的系统排班补算 `next_run_at`（#2598）。
+ *
+ * **必须在每一拍都跑，不能只在首拍**：seed 刻意以 `enabled=false, next_run_at=null` 插入，
+ * 而切流最后一步是人工在 DB 里置 `enabled=true` —— 如果补算只发生在进程首拍，那条排班
+ * 就永远不会到期（`claimDue` 只认 `next_run_at <= now`），且**没有任何红灯**：它不是
+ * 「该跑没跑」，是「从来没排上」。唯一自愈路径会退化成「等下一次部署重启容器」。
+ *
+ * 代价：一条走 `idx_job_schedule_due` 局部索引的查询，正常 0 行。
+ */
+export async function fillNextRunAt(pool: Pool, now: Date = new Date()): Promise<string[]> {
   const filled: string[] = []
   const { rows } = await pool.query(
     `select id, key, cron, timezone from platform.job_schedule
@@ -139,8 +154,8 @@ export async function seedSchedules(
   for (const r of rows) {
     const { rowCount } = await pool.query('update platform.job_schedule set next_run_at=$2, updated_at=now() where id=$1 and next_run_at is null',
       [r.id, nextRunAt(String(r.cron), String(r.timezone), now)])
-    // 并发下另一个 seed 可能已先补算 ⇒ rowCount=0，此时不算本进程“补过”。
+    // 并发下另一个实例/那一拍可能已先补算 ⇒ rowCount=0，此时不算本进程“补过”。
     if ((rowCount ?? 0) > 0) filled.push(String(r.key))
   }
-  return { inserted, filled }
+  return filled
 }
