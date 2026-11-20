@@ -11,6 +11,10 @@
 
 ## [Unreleased]
 
+## [0.345.1](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.345.0...v0.345.1) - 2026-11-20
+- 【优化】data: GC 排班合并——小时对象回收只留保守档 ([#2589](https://github.com/MYTech-Co-LTD/platform-core/pull/2589), [33e742e](https://github.com/MYTech-Co-LTD/platform-core/commit/33e742e0c8e4864a2c75d2797a75997cf7c8b646))
+
+
 ## [0.345.0](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.344.2...v0.345.0) - 2026-11-20
 - 【新增】ops: 维护锁——长 exec 任务期间 CI 不部署（#2585） ([#2586](https://github.com/MYTech-Co-LTD/platform-core/pull/2586), [971a5d9](https://github.com/MYTech-Co-LTD/platform-core/commit/971a5d9ed7ea48ce5ecb9e415004e7729fa6f4df))
 
