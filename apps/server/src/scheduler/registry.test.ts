@@ -463,6 +463,7 @@ describe('registry · 子进程参数（W6-P4b）', () => {
     const allow = new Map([
       ['org.sync', '脚本默认 dry-run，必须 --apply'],
       ['data.archive_private_measures', '--org 必填，缺了直接 usage 退出'],
+      ['platform.verify_regression', '--org 必填（platform.tenant.casdoor_org），缺了直接 usage 退出'],
     ])
     for (const d of JOB_REGISTRY) {
       if (allow.has(d.key)) continue

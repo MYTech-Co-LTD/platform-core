@@ -154,6 +154,11 @@ services:
       LEMENG_ZOS_ENDPOINT: '${LEMENG_ZOS_ENDPOINT:-xinan-1-internal.zos.ctyun.cn}'
     # 运行镜像已含 tsx（node_modules 全量 COPY，未 prune）；不要用裸 node 跑 .ts import
     command: ['pnpm', 'exec', 'tsx', 'scripts/notify-worker.mjs']
+    volumes:
+      # 摄入验证的水位（#2606）：`verify-ingest` 缺省写 `/var/lib/askdata/verify-ingest.<stream>.watermark`。
+      # **必须是命名卷**：写在容器里的话每次平台发版都会丢，退回 7 天回看窗口白扫一遍
+      # （旧 openship job 把它指到 server 容器的 `/tmp`，就是这个后果）。
+      - askdata-state:/var/lib/askdata
     depends_on:
       postgres:
         condition: service_healthy
@@ -284,5 +289,7 @@ services:
 volumes:
   pgdata:
   openclaw_state:
+  # 摄入验证水位（#2606）：跨部署保留，见 notify-worker 的挂载说明
+  askdata-state:
   # 沙箱交换卷：草案（sandbox/<runId>.json）与引擎回执（runs/receipts/）都在这里
   sandbox-workspace:

@@ -67,6 +67,12 @@ export const JOB_REGISTRY: JobDef[] = [
   { key: 'org.sync', scope: 'platform', requiresEnv: ['DATABASE_URL','CASDOOR_URL','CASDOOR_ADMIN_USER','CASDOOR_ADMIN_PWD'], script: 'scripts/org-sync-all.mjs', args: ['--apply'], cron: '13 */6 * * *', timezone: 'UTC', timeoutMs: 600000, maxAttempts: 2, expectedIntervalSecs: 21600, description: '企微组织架构同步（--apply：默认 dry-run 不写库）' },
   { key: 'notify.seed_builtin', scope: 'platform', script: 'scripts/notify-seed-builtin.mjs', cron: '13 * * * *', timezone: 'UTC', timeoutMs: 300000, maxAttempts: 1, expectedIntervalSecs: 3600, description: '内置模板/规则幂等 seed' },
   { key: 'notify.health', scope: 'platform', script: 'scripts/notify-health.mjs', cron: '*/5 * * * *', timezone: 'UTC', timeoutMs: 300000, maxAttempts: 1, expectedIntervalSecs: 300, description: '通知投递健康检查' },
+  // 判据化（Wave 8 ④，#2606）：原 openship 靠宿主 `docker exec` 进 server 容器跑，判红只到退出码。
+  // 落在 **platform 域**：`verify-ingest` 要 OO 只读凭据（应用单元本来就有），`verify-regression`
+  // 只用 `DATABASE_URL`。水位默认路径 `/var/lib/askdata`（compose 里挂了命名卷 ⇒ 跨部署保留；
+  // 旧 job 显式指到容器 `/tmp`，每次 server 重建就丢）。
+  { key: 'platform.verify_ingest', scope: 'platform', requiresEnv: ['DATABASE_URL','OO_READ_URL','OO_READ_ORG','OO_READ_TOKEN'], script: 'scripts/verify-ingest.mjs', cron: '40 * * * *', timezone: 'UTC', timeoutMs: 300000, maxAttempts: 1, expectedIntervalSecs: 3600, description: '摄入验证（OO askdata_verified → 重放 → verified_questions）' },
+  { key: 'platform.verify_regression', scope: 'platform', requiresEnv: ['DATABASE_URL'], script: 'scripts/verify-regression.mjs', args: ['--org', 'shanhaiyiguo-org'], cron: '10 4 * * *', timezone: 'UTC', timeoutMs: 300000, maxAttempts: 1, expectedIntervalSecs: 86400, description: '问数回归（逐指标判红 → OO probes）' },
   // Wave 7 V1：业务监控求值（每实例一条；seed 为 disabled，切流按 deploy/jobs.md 四步开闸）
   // Wave 8 P1：dbt 由平台 scheduler 在容器内执行（镜像已内置 dbt 1.9.1，issue #2343）。
   // env/cron/timeout/retry 与 openship 现役 `lemeng-dbt-tick` 逐字一致。
