@@ -150,8 +150,12 @@ SERVICE_IDS=$(curl -sS -H "Authorization: Bearer $TOKEN" \
 - 服务行的 **env 变更不经部署生效**（走 openship 的 `apply-env`）；因此「排除 postgres」
   不影响 env 更新，但运维需知道改 env 后要单独 apply。
 - **共享一把部署锁**、**回滚仍是 project 级**（见 §3 边界）。
-- **运行中作业闸门尚未实现**（W2）：目前仍可能出现「数据单元部署杀掉在跑的长任务」。
-  在那之前，数据单元部署应避开 10:25–16:00 的 dbt 排班窗口，或人为确认无长任务。
+- **运行中作业闸门已实现（2026-11-20，CI `deploy-data` 步骤内）**：触发部署前经 openship
+  API 在 scheduler 容器里查 `platform.job_run` 的 `running` 行——有则每 60s 复查（上限 ~35 分钟），
+  到点仍在跑 ⇒ **红掉部署**（fail-fast：杀掉 90 分钟审计比红一次部署贵；`gh run rerun` 即可重试）；
+  闸门自身查不到状态（无 exec 权限 / API 故障）⇒ **响亮告警后放行**（闸门故障不能演变成
+  「永远部不了署」）。应用单元不设闸门：其部署不再重启 postgres，platform 域作业都是秒级。
+  **治本**仍是 dbt 挂载化（`dbt/` 变更不重启执行器），闸门只是过渡期止血。
 
 ## 6. 什么时候回来重读本文
 

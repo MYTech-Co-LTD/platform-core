@@ -699,6 +699,54 @@ jobs:
         run: |
           set -euo pipefail
           echo "openship(data): project=$PROJECT_ID commit=$COMMIT_SHA"
+
+          # ── 运行中作业闸门（#2548）──────────────────────────────────────────────────
+          # 数据单元部署会重启 scheduler ⇒ 正在跑的 hourly/audits（20–90 分钟）被连坐杀掉，
+          # 台账上变成 timeout（2026-11-19 实测：a2a 11:30、publish_dims 11:43）。
+          # 闸门语义（三层，别简化）：
+          #   · 查到 running=0     → 放行部署；
+          #   · 查到 running>0     → 每 60s 复查，最长 ~35 分钟；到点仍在跑 ⇒ **红掉**
+          #     （fail-fast：杀掉 90 分钟的审计比红一次部署贵得多；重跑 gh run rerun 即可）；
+          #   · 闸门自身查不到状态（token 无 exec 权限 / API 5xx / 输出解析失败）
+          #     → **响亮告警后放行**——闸门故障不能演变成「永远部不了署」（fail-safe 方向
+          #     与服务清单一致：宁可冒险，不可漏部署）。
+          GATE_MAX_WAIT=35   # 分钟
+          GATE_INTERVAL=60   # 秒
+          GATE_QUERY='psql "$DATABASE_URL" -Atc "select coalesce(count(*),0) from platform.job_run where status = '"'"'running'"'"'"'
+          SCHEDULER_SVC_ID=$(curl -sS -H "Authorization: Bearer ${OPENSHIP_TOKEN}" \
+            "${OPENSHIP_URL%/}/api/projects/${PROJECT_ID}/services" \
+            | jq -r '.services[]? | select(.name == "scheduler") | .id' 2>/dev/null || true)
+          GATE_BODY=$(jq -nc --arg cmd "$GATE_QUERY" '{command:$cmd, timeoutMs: 15000}')
+          gate_waited=0
+          if [ -n "${SCHEDULER_SVC_ID}" ]; then
+            while :; do
+              GATE_JSON=$(curl -sS -X POST \
+                -H "Authorization: Bearer ${OPENSHIP_TOKEN}" -H 'Content-Type: application/json' \
+                -d "${GATE_BODY}" \
+                "${OPENSHIP_URL%/}/api/projects/${PROJECT_ID}/services/${SCHEDULER_SVC_ID}/exec" 2>/dev/null || true)
+              GATE_EXIT=$(printf '%s' "${GATE_JSON}" | jq -r '.data.exitCode // .exitCode // "x"' 2>/dev/null || echo x)
+              RUNNING=$(printf '%s' "${GATE_JSON}" | jq -r '.data.output // .output // ""' 2>/dev/null | tr -dc '0-9' || true)
+              if [ "${GATE_EXIT}" != "0" ] || [ -z "${RUNNING}" ]; then
+                echo "::warning::运行中作业闸门查不到状态（exit=${GATE_EXIT}）⇒ 放行部署。"
+                echo "  闸门输出（前 300 字）：${GATE_JSON:0:300}"
+                break
+              fi
+              if [ "${RUNNING}" = "0" ]; then
+                echo "闸门：无运行中作业 ⇒ 放行部署"
+                break
+              fi
+              if [ "${gate_waited}" -ge $((GATE_MAX_WAIT * 60)) ]; then
+                echo "::error::数据单元仍有 ${RUNNING} 个作业在跑（已等 ${GATE_MAX_WAIT} 分钟）——部署会杀掉它们，宁可不部署。"
+                echo "处置：等作业结束后 gh run rerun 本 run，或下一次合并会自动重试。"
+                exit 1
+              fi
+              echo "闸门：${RUNNING} 个作业在跑，${GATE_INTERVAL}s 后复查（已等 ${gate_waited}s / 上限 ${GATE_MAX_WAIT}min）"
+              sleep "${GATE_INTERVAL}"
+              gate_waited=$((gate_waited + GATE_INTERVAL))
+            done
+          else
+            echo "::warning::查不到 scheduler 服务 id ⇒ 闸门未生效，直接部署（可接受，与旧行为一致）"
+          fi
           # ── 定向部署（生命周期分层，见 deploy/deployment-units.md §5）───────────────
           # 默认只重启 scheduler（执行器）。pg_duckdb / console 是状态容器：
           # 每次 dbt 变更都重建它们会让正在跑的作业与连接一起断（2026-11-19 实测）。
