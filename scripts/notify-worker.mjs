@@ -4,6 +4,38 @@ import { createRequire } from 'node:module'
 import { pathToFileURL } from 'node:url'
 import { runOnceCli } from '../modules/notify/worker-deps.ts'
 
+/**
+ * 停机等待：轮询 `inFlight()` 直到归零或超时，返回**仍未收尾的条数**（0 = 干净退出）。
+ *
+ * 为什么要它（#2567）：`docker stop` 发 SIGTERM 后只等 `stop_grace_period`（默认 10s）就 SIGKILL，
+ * 而采集/物化/审计子进程动辄 20–90 分钟。父进程只要活着，容器就不会停、子进程就能跑完
+ * ——所以「等」这件事必须发生在进程内。
+ *
+ * 抽出纯函数是为了能单测（注入时钟与 sleep，不真睡）。
+ *
+ * @param {{ inFlight: () => number }} sched
+ * @param {number} timeoutMs
+ * @param {(msg: Record<string, unknown>) => void} [log]
+ * @param {{ sleepMs?: number, now?: () => number }} [opts]
+ * @returns {Promise<number>}
+ */
+export async function drainInFlight(sched, timeoutMs, log = () => {}, opts = {}) {
+  const sleepMs = opts.sleepMs ?? 2000
+  const now = opts.now ?? (() => Date.now())
+  const startedAt = now()
+  const deadline = startedAt + Math.max(0, timeoutMs)
+  let left = sched.inFlight()
+  while (left > 0 && now() < deadline) {
+    await new Promise((r) => setTimeout(r, sleepMs))
+    left = sched.inFlight()
+  }
+  const waitedMs = now() - startedAt
+  log(left > 0
+    ? { drain: 'timeout', inFlight: left, waitedMs }
+    : { drain: 'done', waitedMs })
+  return left
+}
+
 if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
   const url = process.env.DATABASE_URL
   if (!url) {
@@ -115,6 +147,25 @@ if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) 
   }
   /** @type {null | { tick: () => Promise<import('../apps/server/src/scheduler/loop.ts').TickStats>, inFlight: () => number }} */
   let scheduler = null
+  // 停机闸（#2567）：docker stop 先 SIGTERM、等 `stop_grace_period` 再 SIGKILL——**默认只有 10s**。
+  // 2026-11-20 实测：01:05 / 03:05 两条 hourly 都是「发版触发 → 构建 5 分钟 → 重启调度器」这个窗口
+  // 里被砍成 0s timeout（`output_tail` 全空 = 进程没来得及收尾）。闸门（#2548）只挡得住**触发时**
+  // 有作业在跑，「构建期间新起的那条」它看不见。这里在进程侧补一刀：收到 SIGTERM 就不再 claim
+  // 新作业，等在跑的**独立子进程**自然收尾（父进程活着容器就不停），到上限才退。
+  let stopping = false
+  const drainEnvMs = Number(process.env.WORKER_DRAIN_TIMEOUT_MS ?? '')
+  const drainMs = Number.isFinite(drainEnvMs) && drainEnvMs > 0 ? drainEnvMs : 600_000
+  // 只置标志位（不在这里 await / 退出）：主循环看到 stopping 就停止 claim，走 finally 收尾。
+  const onStopSignal = /** @param {string} sig */ (sig) => {
+    if (stopping) return
+    stopping = true
+    console.log(JSON.stringify({
+      ts: new Date().toISOString(), stopping: sig,
+      inFlight: scheduler ? scheduler.inFlight() : 0, drainBudgetMs: drainMs,
+    }))
+  }
+  process.on('SIGTERM', () => onStopSignal('SIGTERM'))
+  process.on('SIGINT', () => onStopSignal('SIGINT'))
   /** @type {null | typeof import('../apps/server/src/scheduler/health.ts').jobHealth} */
   let jobHealthFn = null
   let lastSchedulerTick = 0
@@ -268,6 +319,7 @@ if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) 
 
   try {
     do {
+      if (stopping) break
       // 调度 loop 与本拍投递**顺序串行**：tick 只起子进程即返回（不 await 子进程），
       // 但这里仍 await tick 本身 ⇒ 不会叠加并发 tick（本进程单节拍）。
       if (scheduler && shouldRunTick(Date.now(), lastSchedulerTick, schedCfg.tickMs)) {
@@ -297,6 +349,12 @@ if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) 
       if (once) break
       await new Promise((r) => setTimeout(r, 2000))
     } while (true)
+    // 停机收尾（#2567）：先不 claim 新作业（上面 `if (stopping) break`），再等在跑的子进程自然收尾。
+    // 已在跑的 dbt 审计是**独立子进程**，只要父进程活着、容器就不停 ⇒ 它们能跑完。
+    // 有上限：到点没跑完就照常退出（docker 退到 stop_grace_period 再 SIGKILL，与改动前同）。
+    if (stopping && scheduler) {
+      await drainInFlight(scheduler, drainMs, (msg) => console.log(JSON.stringify({ ts: new Date().toISOString(), ...msg })))
+    }
   } finally {
     healthServer.close()
     await pool.end()

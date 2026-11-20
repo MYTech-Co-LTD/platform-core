@@ -85,6 +85,9 @@ services:
       WORKER_HEALTH_PORT: '13000'
       SCHEDULER_TICK_MS: ${SCHEDULER_TICK_MS:-30000}
       SCHEDULER_MAX_CONCURRENCY: ${SCHEDULER_MAX_CONCURRENCY:-2}
+      # 停机收尾预算（#2567）：SIGTERM 后不再 claim、等在跑的子进程收尾的最长时间。
+      # 必须**小于**本服务的 stop_grace_period（660s），否则到点会被 SIGKILL、收尾日志都写不出来。
+      WORKER_DRAIN_TIMEOUT_MS: ${WORKER_DRAIN_TIMEOUT_MS:-600000}
       # 平台库在**应用单元**。注意：宿主端口是回环发布，容器里的 127.0.0.1 是自己的 netns、
       # host.docker.internal 也够不到回环发布口 ⇒ 只能走应用机的**私网 IP**（配 DATA_BIND_ADDR
       # + 安全组白名单）。真值写进数据项目 env(isSecret)，键 SCHEDULER_DATABASE_URL；
@@ -106,6 +109,11 @@ services:
       - dbt-artifacts:/app/dbt-target
     # 运行镜像已含 tsx；不要用裸 node 跑 .ts import（与 deploy/docker-compose.yml 的 notify-worker 同）
     command: ['pnpm', 'exec', 'tsx', 'scripts/notify-worker.mjs']
+    # 优雅停机（#2567）：docker 默认只给 10s 就 SIGKILL，而本容器在跑的 dbt 采集/审计是 20–90 分钟。
+    # worker 收到 SIGTERM 后**不再 claim 新作业**、等在跑的子进程收尾（预算 WORKER_DRAIN_TIMEOUT_MS，
+    # 缺省 600s），所以这里的宽限期要比那个预算**再宽一点**，让进程自己先退、别被 SIGKILL 打断收尾。
+    # 语义提醒：发版因此可能多等最多 ~10 分钟；换来的是不再把一条 90 分钟的审计砍成 0s timeout。
+    stop_grace_period: 660s
     depends_on:
       - pg_duckdb
     # 无 ports：只被本容器自己用（healthz 绑回环），宿主面为零。
