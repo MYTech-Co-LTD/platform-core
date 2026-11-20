@@ -9,6 +9,8 @@
 #   sh /app/scripts/ops/drain.sh status     # 看信号 + 当前在跑作业数
 #   sh /app/scripts/ops/drain.sh wait 1800  # 轮询到 running=0（最长 1800 秒），成功退出 0
 #   sh /app/scripts/ops/drain.sh clear      # 撤信号（部署没做成时**必须**撤，否则白等）
+#   sh /app/scripts/ops/drain.sh lock 600 "backfill-64188"   # 维护锁：期间 CI **不部署**（#2585）
+#   sh /app/scripts/ops/drain.sh unlock     # 解除维护锁
 #
 # 典型手工部署流程：
 #   drain.sh set 45 && drain.sh wait 1800 && <触发部署> ;   # 部署落地后新容器会自己 clear
@@ -47,7 +49,34 @@ case "${1:-}" in
     until_ms=$(psql_q "select coalesce(value->>'until_ms','') from platform.scheduler_control where key='drain'" || true)
     running=$(psql_q "select coalesce(count(*),0) from platform.job_run where status='running'")
     if [ -z "${until_ms}" ]; then echo "DRAIN off"; else echo "DRAIN on until_ms=${until_ms}"; fi
+    maint=$(psql_q "select coalesce(value->>'reason','-') || ' until_ms=' || coalesce(value->>'until_ms','-') from platform.scheduler_control where key='maintenance'" || true)
+    if [ -z "${maint}" ]; then echo "MAINTENANCE off"; else echo "MAINTENANCE on ${maint}"; fi
     echo "RUNNING ${running}"
+    ;;
+  lock)
+    # 维护锁（#2585）：**不停止 claim**（≠ 排空），只告诉 CI「这段时间别部署」——
+    # 覆盖的是「长 exec 任务」（回填、迁移），它们不在 job_run 台账里，闸门看不见。
+    need_db
+    minutes="${2:-60}"
+    reason="${3:-maintenance}"
+    case "$minutes" in
+      ''|*[!0-9]*) echo "DRAIN_FAILED: 分钟数必须是非负整数，得到 '$minutes'" >&2; exit 2 ;;
+    esac
+    # 原因只允许安全字符：它要拼进 SQL 单引号串（`$$` 在 sh 里会展开成 PID，不能用美元引用）。
+    case "$reason" in
+      ''|*[!A-Za-z0-9._-]*) echo "DRAIN_FAILED: 原因只允许 [A-Za-z0-9._-]，得到 '$reason'" >&2; exit 2 ;;
+    esac
+    psql_q "insert into platform.scheduler_control(key,value)
+            values ('maintenance', jsonb_build_object(
+              'until_ms', (extract(epoch from now() + make_interval(mins => $minutes)) * 1000)::bigint,
+              'reason', '${reason}'))
+            on conflict (key) do update set value = excluded.value, updated_at = now()" >/dev/null
+    echo "MAINTENANCE_SET until=+${minutes}min reason=${reason}"
+    ;;
+  unlock)
+    need_db
+    n=$(psql_q "with d as (delete from platform.scheduler_control where key='maintenance' returning 1) select count(*) from d")
+    echo "MAINTENANCE_CLEARED rows=${n:-0}"
     ;;
   wait)
     need_db
@@ -69,7 +98,7 @@ case "${1:-}" in
     done
     ;;
   *)
-    echo "用法: drain.sh {set [分钟]|status|wait [秒]|clear}" >&2
+    echo "用法: drain.sh {set [分钟]|status|wait [秒]|clear|lock [分钟] [原因]|unlock}" >&2
     exit 2
     ;;
 esac

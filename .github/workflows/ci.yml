@@ -761,6 +761,24 @@ jobs:
           SCHEDULER_SVC_ID=$(curl -sS -H "Authorization: Bearer ${OPENSHIP_TOKEN}" \
             "${OPENSHIP_URL%/}/api/projects/${PROJECT_ID}/services" \
             | jq -r '.services[]? | select(.name == "scheduler") | .id' 2>/dev/null || true)
+          # ── 维护锁（#2585）─────────────────────────────────────────────────────────
+          # 闸门查的是 `job_run.status='running'`，而**长 exec 任务**（历史回填、数据迁移）不在台账里
+          # ⇒ 闸门看不见它们，照常部署就会把跑了几小时的回填写到一半砍掉（2026-11-20 的风险点）。
+          # 有锁就不部署（fail-fast，worker 的红灯语义一致）；窗口结束 `gh run rerun` 即可。
+          MAINT_QUERY='psql "$DATABASE_URL" -Atc "select coalesce(value->>'"'"'reason'"'"','"'"'maintenance'"'"') from platform.scheduler_control where key='"'"'maintenance'"'"' and (value->>'"'"'until_ms'"'"')::bigint > extract(epoch from now())*1000"'
+          if [ -n "${SCHEDULER_SVC_ID}" ]; then
+            MAINT_BODY=$(jq -nc --arg cmd "$MAINT_QUERY" '{command:$cmd, timeoutMs: 15000}')
+            MAINT_JSON=$(curl -sS -X POST \
+              -H "Authorization: Bearer ${OPENSHIP_TOKEN}" -H 'Content-Type: application/json' \
+              -d "${MAINT_BODY}" \
+              "${OPENSHIP_URL%/}/api/projects/${PROJECT_ID}/services/${SCHEDULER_SVC_ID}/exec" 2>/dev/null || true)
+            MAINT_REASON=$(printf '%s' "${MAINT_JSON}" | jq -r '.data.output // .output // ""' 2>/dev/null | tr -d '\r\n' || true)
+            if [ -n "${MAINT_REASON}" ]; then
+              echo "::error::维护锁在（${MAINT_REASON}）——维护窗口内不部署数据单元，避免砍掉长任务。"
+              echo "处置：窗口结束后 gh run rerun 本 run（drain.sh status 可看 until_ms）。"
+              exit 1
+            fi
+          fi
           GATE_BODY=$(jq -nc --arg cmd "$GATE_QUERY" '{command:$cmd, timeoutMs: 15000}')
           gate_waited=0
           if [ -n "${SCHEDULER_SVC_ID}" ]; then

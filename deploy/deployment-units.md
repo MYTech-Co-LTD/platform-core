@@ -213,6 +213,25 @@ sh /app/scripts/ops/drain.sh set 45 && sh /app/scripts/ops/drain.sh wait 1800 &&
 实测（2026-11-20 13:28）：置信号后 2.7 分钟 `data.monitor_tick`（每分钟一次）**零条**，
 心跳照写；删信号后 4 秒恢复 claim。**排空 ≠ 停摆**。
 
+### 5.6.1 维护锁：闸门看不见「长 exec」（#2585）
+
+闸门与排空信号都只看 `job_run`。而**历史回填、数据迁移**是直跑 exec（`sh scripts/lemeng/backfill-*.sh`），
+**不写台账** ⇒ CI 会以为「没作业在跑」，照常部署，把跑了几小时的回填写到一半砍掉，且毫无征兆。
+
+维护锁把「这段时间别部署」变成机器判据（同一个 `scheduler_control` 表，另一个 key）：
+
+```sh
+sh /app/scripts/ops/drain.sh lock 660 backfill-64188   # 落锁（分钟 + 原因，原因只允许 [A-Za-z0-9._-]）
+sh /app/scripts/ops/drain.sh status                    # DRAIN / MAINTENANCE / RUNNING 三行
+sh /app/scripts/ops/drain.sh unlock                    # 解除
+```
+
+- **CI**：`deploy-data` 在触发前查这一行，锁在 ⇒ **红掉不部署**（fail-fast，不白等 35 分钟）；
+  窗口结束后 `gh run rerun` 即可。
+- **长任务自己落锁**：`backfill-64188-history.sh` 开跑即 `lock 660`，`trap EXIT/INT/TERM` 收尾 `unlock`；
+  锁不上不阻断回填，但日志里打 `MAINTENANCE_LOCK_FAILED`（此时必须人工盯部署）。
+- 与排空信号的区别：**排空挡 claim，维护锁挡部署**。两者都带到期时间，忘了撤也不会永久生效。
+
 ## 6. 什么时候回来重读本文
 
 - 想「把某个服务单独部署」时；

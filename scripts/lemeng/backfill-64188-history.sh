@@ -31,6 +31,18 @@ fi
 : > "$LOG"
 echo "driver start $(date -u +%FT%TZ)（CST $(TZ=Asia/Shanghai date +%FT%T)）" >> "$LOG"
 
+# ── 维护锁（#2585）：回填是**长 exec**，不在 job_run 台账里 ⇒ CI 的运行中作业闸门看不见它。
+# 不落这把锁，任何人在这 9 小时里合一个 PR，CI 就会重启调度器、把回填砍在一半，而且毫无征兆。
+# 11 小时 = 窗口起点 + 9 小时 + 余量；正常结束/中断都会 unlock。
+DRAIN_SH=/app/scripts/ops/drain.sh
+[ -f "$DRAIN_SH" ] || DRAIN_SH=$(dirname "$0")/../ops/drain.sh
+if sh "$DRAIN_SH" lock 660 backfill-64188 >> "$LOG" 2>&1; then
+  trap 'sh "'"$DRAIN_SH"'" unlock >> "$LOG" 2>&1 || true' EXIT INT TERM
+else
+  # 锁不上不阻断回填（回填本身仍然有价值），但要在日志里显眼——这意味着这段时间要人工盯部署。
+  echo "MAINTENANCE_LOCK_FAILED：没能落维护锁 ⇒ 回填期间**不要合并任何 PR**（部署会砍掉回填）" >> "$LOG"
+fi
+
 wait_idle() {
   i=0
   while [ "$(psql "$DATABASE_URL" -Atc "select count(*) from platform.job_run where status='running'" 2>/dev/null)" != "0" ]; do
