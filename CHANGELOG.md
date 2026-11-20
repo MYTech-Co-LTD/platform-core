@@ -11,6 +11,10 @@
 
 ## [Unreleased]
 
+## [0.346.1](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.346.0...v0.346.1) - 2026-11-20
+- 【修复】ci: 补 EXECUTOR 的 env 透传（产出/透传/消费三段缺一等于没接） ([#2592](https://github.com/MYTech-Co-LTD/platform-core/pull/2592), [b9fd0fd](https://github.com/MYTech-Co-LTD/platform-core/commit/b9fd0fd796c1dda9365fdbf09629593d04aa4659))
+
+
 ## [0.346.0](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.345.1...v0.346.0) - 2026-11-20
 - 【新增】data: 日更件零行巡检迁平台调度器（data.zero_row_check）+ 修执行器重建 flag ([#2591](https://github.com/MYTech-Co-LTD/platform-core/pull/2591), [46ffc67](https://github.com/MYTech-Co-LTD/platform-core/commit/46ffc67bff4fcb8fd2ca60e3be66675b2a91dc4b))
 
