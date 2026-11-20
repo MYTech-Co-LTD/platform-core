@@ -11,6 +11,10 @@
 
 ## [Unreleased]
 
+## [0.336.0](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.335.0...v0.336.0) - 2026-11-20
+- 【新增】deploy: deploy-data 加运行中作业闸门（#2548） ([#2549](https://github.com/MYTech-Co-LTD/platform-core/pull/2549), [05896c4](https://github.com/MYTech-Co-LTD/platform-core/commit/05896c433b492c188311b80175fa7808bbde3d66))
+
+
 ## [0.335.0](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.334.0...v0.335.0) - 2026-11-19
 - 【新增】deploy: 部署按服务生命周期派生 serviceIds（#2544） ([#2545](https://github.com/MYTech-Co-LTD/platform-core/pull/2545), [1875015](https://github.com/MYTech-Co-LTD/platform-core/commit/1875015b4d0697473606179173903baf612b152a))
 - 【修复】scripts: org-sync 失败时始终打印 detail（换机后 WECOM_API 60020 只能靠探针才看见）（#2542） ([#2543](https://github.com/MYTech-Co-LTD/platform-core/pull/2543), [f94e8f1](https://github.com/MYTech-Co-LTD/platform-core/commit/f94e8f16ca6b42d10802c7d31ed2891a0f504687))
