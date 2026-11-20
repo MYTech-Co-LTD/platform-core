@@ -117,3 +117,48 @@ npm/pnpm 实验）。**风险**：误触发旧 sync 会回滚数据面。建议�
 - 每迁一条：平台首跑输出与 openship 最近一次一致；openship 侧 `enabled=false` 且无新 run。
 - ④ 每条：真实/模拟故障至少演练一次报警，再关 job。
 - P4：出「留守清单」，每条一句话说明为什么留。
+
+---
+
+## 2026-11-20 下午追加：recon-restate 迁移调查 + 一次性 job 清理实况 + 留守清单
+
+### recon-restate 迁移调查（C 类，非快活——先看这份再动手）
+
+现役 `/opt/lemeng-recon-restate.sh`（128 行）+ `/opt/lemeng-recon-day-heal.sh` 的**全部宿主依赖**：
+
+| 依赖 | 用在哪 | 容器内替代（候选） |
+|---|---|---|
+| `docker exec pg_duckdb psql` | 台账粗筛（staging.recon_run 候选日） | scheduler 容器直连 `DATA_WAREHOUSE_URL`（已验证 psql 在）——**零改造** |
+| `docker inspect console` 取 env | 逐账套取 `LEMENG_TOKEN`/`ZOS_*`（不落 argv） | scheduler 自身 env **已有** `LEMENG_TOKEN` / `LEMENG_TOKEN_64188` / `ZOS_*`（数据项目 env 实测在位）——改名读取即可 |
+| `docker exec console sh -c PRUNE_SNIPPET` | 旁路失效 checkpoint（state 目录剪枝） | **无直接替代**——state 是 console 容器内文件系统；console HTTP API 无此面 |
+| `docker exec console python3` 读 run_results glob | 复验判据 | artifacts 服务已暴露 runs/ 只读（#2519）——**读侧可替代** |
+
+⇒ 真正的堵点是 **checkpoint 旁路（写 console state）**。三选一，需人拍板：
+1. 给 console 加一个受 token 保护的 state-prune HTTP 端点（改 duckle 侧，最优但动引擎面）；
+2. 保留该步在 openship（recon-restate 拆两半：候选+复验进平台，prune 留宿主）；
+3. 挂 console workspace 卷进 scheduler（只读不够，要写——跨容器写 state 风险高，不推荐）。
+
+**在拍板前 recon-restate 留守 openship**，进下方清单。凭据问题的好消息：scheduler env 已有两账套 token，
+迁移后「运行时现取」的语义可以保住（从自身 env 取，一样不落 argv/日志）。
+
+### 一次性 job 清理（2026-11-20 已执行）
+
+**已停用 42 个危险一次性 job**（`enabled=false`，可逆）：全部 `数据面 sync <旧sha>`（28）+
+`mytech-data-plane-sync`×5 + `控制面数据面 sync` + `mytech-data-plane-prep` + `mytech dockerd 代理` +
+item_price 定时探针×5（`sleep N; docker exec console …`）+ `数据面验证`×2。
+动机：旧 sync 误触发 = **回滚数据面**；探针误触发 = 对 console 容器 exec。
+**保留**：42 个无害一次性（取证/实验类，manual 触发无破坏面）+ 全部周期 job + 冒烟类
+（platform-core / salary / 过款助手部署冒烟）。
+
+### P4 留守清单（openship 上为什么还有这些 job）
+
+| job | 为什么留 |
+|---|---|
+| `host-metrics` / `infra-health-check-to-openobserve` / OO 桥·看门狗·机脚本投递·预警对账 | ⑤ 类：跨机 exec + OO ingest，天然宿主面 |
+| `lemeng 夜间回填窗口`（00:05） | 宿主机 /opt 脚本 + 多容器编排；容器化收益低风险高（A 类） |
+| `lemeng-recon-restate`（23:25） | checkpoint 旁路无容器内替代，见上方调查；拍板后迁（C 类待议） |
+| `lemeng-console-gc` / `lemeng-gc-hot-hours` / `删已封版日子小时对象` | 操作 console 容器卷/宿主文件；待 console GC 通道评估（C 类候选） |
+| `askdata-loop-p1` / `demand-mining-shanhai` | 只依赖 HTTP/DB，**可迁**（C 类）——排在 restate 之后 |
+| `platform-core / salary / 过款助手 部署冒烟` | 手动触发的验收入口，保留 |
+| `pipeline-scorecard-*` / `monthly-review` / `verify-*` / `零行巡检` / `叙事质量探针` / Gate-B 探活 | ④ 判据化队列（转 OO/data.monitor 后才关）；Gate-B 已跨机绿，作首个样本 |
+| openship 内置（备份/GC/DNS/证书/reconcile 等 ~25 个） | 平台自身职能，不属于 Wave 8 范围 |
