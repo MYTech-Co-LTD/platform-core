@@ -717,6 +717,8 @@ jobs:
           else
             echo "executor=0" >> "$GITHUB_OUTPUT"
           fi
+          # 三段必须同时在场（产出 executor= / 透传 EXECUTOR: / 消费 ${EXECUTOR}），
+          # 少一段就等于没接——2026-11-20 为此连踩两次（先漏产出，再漏透传）。
           # 子集选择用的三个标志（生命周期分层，见 deploy/deployment-units.md §5）
           if printf '%s\n' "$files" | grep -qE '^deploy/data-compose\.yml$'; then echo "data_compose=1" >> "$GITHUB_OUTPUT"; else echo "data_compose=0" >> "$GITHUB_OUTPUT"; fi
           if printf '%s\n' "$files" | grep -qE '^(deploy/duckle/|duckle/|pipelines/)'; then echo "duckle=1" >> "$GITHUB_OUTPUT"; else echo "duckle=0" >> "$GITHUB_OUTPUT"; fi
@@ -731,6 +733,9 @@ jobs:
           DATA_COMPOSE: ${{ steps.plan.outputs.data_compose }}
           DUCKLE: ${{ steps.plan.outputs.duckle }}
           ARTIFACTS: ${{ steps.plan.outputs.artifacts }}
+          # ⚠️ 必须透传：plan 步骤产出的 `executor` 输出不接到这里，下面 `${EXECUTOR:-0}` 恒为 0
+          #    ⇒ 执行器永不重建（2026-11-20 实测：只补了产出、漏了透传，等于没修）。
+          EXECUTOR: ${{ steps.plan.outputs.executor }}
         run: |
           set -euo pipefail
           echo "openship(data): project=$PROJECT_ID commit=$COMMIT_SHA"
