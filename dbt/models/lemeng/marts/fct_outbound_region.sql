@@ -41,7 +41,8 @@ o as (
            r_net, order_count, line_count
     from {{ ref('fct_hq_outbound') }}
     {% if is_incremental() %}
-    where bizday >= {{ incremental_cutoff(10) }}
+    where bizday >= {{ cutoff_or_backfill(10) }}
+    {{ backfill_to() }}
     {% endif %}
 ),
 dc as (

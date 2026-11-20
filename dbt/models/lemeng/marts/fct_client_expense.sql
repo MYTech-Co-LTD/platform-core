@@ -31,7 +31,8 @@ with agg as (
         sum(case when other_inout_flag = true then coalesce(other_inout_money, 0) else 0 end)::numeric(20,2) as er_receivable
     from {{ ref('stg_lemeng_client_expense') }}
     {% if is_incremental() %}
-    where bizday >= {{ incremental_cutoff(10) }}
+    where bizday >= {{ cutoff_or_backfill(10) }}
+    {{ backfill_to() }}
     {% endif %}
     group by 1, 2, 3, 4
 ),
@@ -43,7 +44,8 @@ base_payable as (
     select * from {{ ref('stg_lemeng_client_expense') }}
     where other_inout_flag = false
     {% if is_incremental() %}
-    and bizday >= {{ incremental_cutoff(10) }}
+    and bizday >= {{ cutoff_or_backfill(10) }}
+    {{ backfill_to() }}
     {% endif %}
 ),
 client_ep_payable__gen as (
@@ -53,7 +55,8 @@ base_receivable as (
     select * from {{ ref('stg_lemeng_client_expense') }}
     where other_inout_flag = true
     {% if is_incremental() %}
-    and bizday >= {{ incremental_cutoff(10) }}
+    and bizday >= {{ cutoff_or_backfill(10) }}
+    {{ backfill_to() }}
     {% endif %}
 ),
 client_er_receivable__gen as (
@@ -88,7 +91,8 @@ bill_count_cte as (
         count(distinct other_inout_bill_no) as bill_count
     from {{ ref('stg_lemeng_client_expense') }}
     {% if is_incremental() %}
-    where bizday >= {{ incremental_cutoff(10) }}
+    where bizday >= {{ cutoff_or_backfill(10) }}
+    {{ backfill_to() }}
     {% endif %}
     group by 1, 2, 3, 4
 )

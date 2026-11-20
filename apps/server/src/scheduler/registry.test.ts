@@ -262,6 +262,25 @@ describe('registry · dbt 对账分族（full / window，#2428）', () => {
     }
   })
 
+  it('★ 回填窗口宏必须成对接线：backfill_to 与 cutoff_or_backfill 出现次数相等（#2493）', () => {
+    // 只压下界不封上界 = 从 bf_from 一路读到今天 ⇒ 等价全史重跑 = pg_duckdb 崩溃路径
+    //（publish-dims / 全史 CTAS 两次实证）。接入回填宏的模型逐个登记在下面。
+    const models = [
+      'fct_hq_outbound', 'fct_client_expense', 'fct_outbound_region', 'fct_transfer_item',
+    ]
+    for (const m of models) {
+      const text = readFileSync(repoPath(`dbt/models/lemeng/marts/${m}.sql`), 'utf8')
+      const lower = (text.match(/cutoff_or_backfill\(/g) ?? []).length
+      const upper = (text.match(/backfill_to\(\)/g) ?? []).length
+      expect(lower, `${m}：backfill_to(${upper}) 必须与 cutoff_or_backfill(${lower}) 成对`).toBe(upper)
+      expect(lower, `${m}：一个回填门都没有（接线被删？）`).toBeGreaterThan(0)
+    }
+    // 宏本体存在且不传 vars 时零行为变化（输出空/回落 incremental_cutoff）
+    const macro = readFileSync(repoPath('dbt/macros/backfill_bounds.sql'), 'utf8')
+    expect(macro).toContain("var('bf_from', '')")
+    expect(macro).toContain("var('bf_to', '')")
+  })
+
   it('★ 上界必须落在**每一个**带 bizday 的数据源 CTE 上（只写一处 = 单边裁掉 T-1/T-2 ⇒ 结构性假红）', () => {
     // 2026-11-18 run 7224 实测：`audit_lemeng__contribution__margin_rate` 只给湖侧 CTE 加了上界，
     // expense CTE 与 materialized CTE 没加 ⇒ 复算侧少了 T-1/T-2、物化侧还有 ⇒ 479 行「差异」。
