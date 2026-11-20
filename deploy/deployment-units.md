@@ -172,6 +172,17 @@ SERVICE_IDS=$(curl -sS -H "Authorization: Bearer $TOKEN" \
 服务间令牌：两容器共享卷 `executor-auth` 里的文件（执行器首次启动自动生成 0600），
 不需要人工写密钥。
 
+**上线实录（2026-11-20，两个坑都已修，别再踩）**：
+
+1. **新增服务必须与既有服务同批部署**：只给 `serviceIds=[scheduler]` 时，openship 仍会尝试拉起
+   compose 里新出现的 `executor`，而它的镜像没被构建 ⇒ `Retained image ... is unavailable`（部署判失败）。
+   现在 CI 的触发面与子集已按「执行器自己的代码」派生，正常不会再有这个错配。
+2. **命名卷的属主只在「首次」从镜像继承**：镜像里预建 `/run/executor-auth`（属主 node）只对**新建卷**有效；
+   卷已存在时不会重新继承 ⇒ `EACCES ... /run/executor-auth/token` 的重启循环。
+   存量卷要一次性 `docker run --rm -u 0 --entrypoint sh -v <卷>:/v <镜像> -c 'chown -R 1000:1000 /v'`。
+3. **HEALTHCHECK 端口**：镜像自带的探活打 `${PORT:-13000}`，执行器监听 13100 ⇒ compose 里
+   `PORT` 与 `EXECUTOR_PORT` 必须**同时**给，否则容器 running 但恒 `unhealthy`。
+
 **已知边界（写在这里免得误解）**：拆分解决的是「派发器的 churn 不碰执行器」。
 `dbt/`、`scripts/` 是执行时才读的代码 ⇒ 执行器要跑到新内容**仍需重建**，重建前后由 §5.6 的排空协议保护。
 
