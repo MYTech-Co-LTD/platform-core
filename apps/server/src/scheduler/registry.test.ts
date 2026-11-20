@@ -403,6 +403,23 @@ describe('registry · 小时对象回收（Wave 8 ③）', () => {
     expect(def.requiresEnv).toEqual(['ZOS_ACCESS_KEY', 'ZOS_SECRET_KEY', 'ZOS_ENDPOINT', 'ZOS_REGION', 'ZOS_BUCKET'])
     expect(existsSync(repoPath(def.script))).toBe(true)
   })
+
+  it('★ data.hot_hours_gc：同一入口的保守档（上海今天−2、扫 30 天），cron 与原 gc-hot-hours 一致', () => {
+    // 现役 openship job `custom:-ff8kWdZzvItKCYa`：`20 19 * * *`（CST 03:20）、timeout 600s、不重试。
+    const def = JOB_REGISTRY.find((d) => d.key === 'data.hot_hours_gc')!
+    expect(def, 'data.hot_hours_gc').toBeDefined()
+    expect(def.cron).toBe('20 19 * * *')
+    expect(def.timezone).toBe('UTC')
+    expect(def.timeoutMs).toBe(600000)
+    expect(def.maxAttempts).toBe(1)
+    expect(def.expectedIntervalSecs).toBe(86400)
+    expect(def.script).toBe('scripts/lemeng/hour-partition-gc.mjs')
+    expect(def.args ?? []).toEqual([])
+    // 窗口靠 def.env 给：调度器容器里没有 GC_* 变量，缺了会按默认（UTC 今天 / 扫 10 天）跑 ——
+    // 那等于把保守档悄悄变成激进档，删到重述窗口内的日子。
+    expect(def.env).toEqual({ GC_DAYS_BACK: '2', GC_TZ: 'Asia/Shanghai', GC_SCAN_DAYS: '30' })
+    expect(existsSync(repoPath(def.script))).toBe(true)
+  })
 })
 
 describe('registry · 子进程参数（W6-P4b）', () => {

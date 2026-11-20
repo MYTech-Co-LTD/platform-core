@@ -1,11 +1,12 @@
 // scripts/lemeng/hour-partition-gc.test.ts —— 纯函数（窗口 + 账套解析），不起进程、不连 ZOS。
 //
-// 钉两件事：
-//   ① 窗口与现役宿主 bash 逐字一致（UTC、before=今天、from=before−10 天）——差一天就等于
+// 钉三件事：
+//   ① 默认窗口与现役宿主 bash 逐字一致（UTC、before=今天、from=before−10 天）——差一天就等于
 //      把重述窗口内的日子也当候选，删了源就没回退路；
-//   ② 账套列表空/非法 ⇒ 响亮失败，不静默跑 0 个账套（空跑成功 = 假绿）。
+//   ② 保守档（`daysBack=2` + 上海时区 + 扫 30 天）与原 `gc-hot-hours.sh` 一致；
+//   ③ 账套列表空/非法 ⇒ 响亮失败，不静默跑 0 个账套（空跑成功 = 假绿）。
 import { describe, expect, it } from 'vitest'
-import { DEFAULT_BOOKS, parseBooks, utcWindow } from './hour-partition-gc.mjs'
+import { DEFAULT_BOOKS, parseBooks, utcWindow, windowFor } from './hour-partition-gc.mjs'
 
 describe('hour-partition-gc utcWindow', () => {
   it('★ 窗口按 UTC 算：before=当天、from=before−10 天（与宿主 date -d 一致）', () => {
@@ -21,13 +22,25 @@ describe('hour-partition-gc utcWindow', () => {
   })
 })
 
+describe('hour-partition-gc windowFor（保守档 = 原 gc-hot-hours.sh）', () => {
+  it('★ daysBack=2 / Asia/Shanghai / 扫 30 天：before=上海今天−2', () => {
+    // 2026-11-20T20:00:00Z = 上海 11-21 04:00 ⇒ 「上海今天」是 11-21，减 2 天 = 11-19。
+    expect(windowFor({ daysBack: 2, tz: 'Asia/Shanghai', scanDays: 30, now: new Date('2026-11-20T20:00:00Z') }))
+      .toEqual({ from: '2026-10-20', before: '2026-11-19' })
+    // 同一时刻按 UTC 算则是 11-20（差一天）——这条守住「保守档必须按上海时钟」。
+    expect(windowFor({ daysBack: 2, tz: 'UTC', scanDays: 30, now: new Date('2026-11-20T20:00:00Z') }).before)
+      .toBe('2026-11-18')
+  })
+})
+
 describe('hour-partition-gc parseBooks', () => {
   it('默认与现役 for 循环一致', () => {
     expect(DEFAULT_BOOKS).toEqual(['3120', '64188'])
   })
 
-  it('逗号分隔、去空白', () => {
+  it('逗号分隔、空格分隔、去空白（兼容现役 GC_BOOKS="3120 64188"）', () => {
     expect(parseBooks('3120, 64188')).toEqual(['3120', '64188'])
+    expect(parseBooks('3120 64188')).toEqual(['3120', '64188'])
     expect(parseBooks('3120')).toEqual(['3120'])
   })
 
