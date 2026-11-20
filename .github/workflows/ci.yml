@@ -675,9 +675,34 @@ jobs:
           files=$(curl -sS -H "Authorization: Bearer ${GH_TOKEN}" \
             "https://api.github.com/repos/${GITHUB_REPOSITORY}/commits/${COMMIT_SHA}" \
             | jq -r '.files[]?.filename' 2>/dev/null || true)
-          if printf '%s\n' "$files" | grep -qE '^(deploy/data-compose\.yml$|deploy/duckle/|deploy/artifacts/|deploy/data-plane\.lock$|scripts/lemeng/|dbt/|duckle/|pipelines/)'; then
+          # 数据单元镜像面：compose/duckle/artifacts 与数据面脚本（原列表）+ **调度器自身**。
+          # 调度器跑在数据单元（deploy/data-compose.yml 的 scheduler 服务），但它的代码在
+          # apps/server/src/scheduler/、执行的脚本在 scripts/*.mjs。只改这两处而不触发数据部署
+          # ⇒ 新 JobDef/新脚本永远进不了调度器容器（改了等于没改，2026-11-20 加 data.demand_mining 时发现）。
+          DATA_PATH_RE='^(deploy/data-compose\.yml$|deploy/duckle/|deploy/artifacts/|deploy/data-plane\.lock$|scripts/lemeng/|dbt/|duckle/|pipelines/|apps/server/src/scheduler/)'
+          hit=0
+          if printf '%s\n' "$files" | grep -qE "${DATA_PATH_RE}"; then
+            hit=1
+            echo "触及数据面：$(printf '%s\n' "$files" | grep -cE "${DATA_PATH_RE}") 个文件"
+          fi
+          # registry 里登记的系统 job 脚本：改了就必然要换调度器镜像（逐个精确比对，不靠前缀猜）。
+          # 读不到 registry（网络/解析失败）⇒ **按命中处理**（fail-safe：宁可多部署一次，不可跑旧代码）。
+          script_files=$(curl -sS -H "Authorization: Bearer ${GH_TOKEN}" \
+            "https://api.github.com/repos/${GITHUB_REPOSITORY}/contents/apps/server/src/scheduler/registry.ts?ref=${COMMIT_SHA}" \
+            | jq -r '.content // empty' 2>/dev/null | base64 -d 2>/dev/null \
+            | grep -oE "script: '[^']+'" | sed -E "s/script: '//; s/'$//" | sort -u || true)
+          if [ -z "${script_files}" ]; then
+            echo "::warning::读不到 registry 脚本清单 ⇒ 按「触及数据面」处理（fail-safe）"
+            hit=1
+          else
+            touched=$(printf '%s\n' "$files" | grep -xFf <(printf '%s\n' "${script_files}") || true)
+            if [ -n "${touched}" ]; then
+              hit=1
+              echo "触及调度器 job 脚本：$(printf '%s\n' "${touched}" | tr '\n' ' ')"
+            fi
+          fi
+          if [ "${hit}" = "1" ]; then
             echo "hit=1" >> "$GITHUB_OUTPUT"
-            echo "触及数据面：$(printf '%s\n' "$files" | grep -cE '^(deploy/data-compose\.yml$|deploy/duckle/|deploy/artifacts/|deploy/data-plane\.lock$|scripts/lemeng/|dbt/|duckle/|pipelines/)') 个文件"
           else
             echo "hit=0" >> "$GITHUB_OUTPUT"
             echo "本次变更与数据面无关，跳过数据单元部署"
