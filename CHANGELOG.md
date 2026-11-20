@@ -11,6 +11,12 @@
 
 ## [Unreleased]
 
+## [0.349.0](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.348.0...v0.349.0) - 2026-11-20
+- 【新增】scheduler: 叙事质量探针迁平台（判据容器化：DSN 直连 + 探针直投） ([#2613](https://github.com/MYTech-Co-LTD/platform-core/pull/2613), [74fbbb4](https://github.com/MYTech-Co-LTD/platform-core/commit/74fbbb4e7e51252885795f3c96a0556f99339bb4))
+- 【新增】data: scorecard 落每日快照卷 + 月度评审迁平台（data.monthly_review） ([#2611](https://github.com/MYTech-Co-LTD/platform-core/pull/2611), [697af26](https://github.com/MYTech-Co-LTD/platform-core/commit/697af26be7b88afd5f0477eabeff8b07cc5e810d))
+- 【新增】scheduler: verify-ingest / verify-regression 迁 platform 域（水位进命名卷） ([#2607](https://github.com/MYTech-Co-LTD/platform-core/pull/2607), [5461dbc](https://github.com/MYTech-Co-LTD/platform-core/commit/5461dbce75484f89ceba69649cb393cc73f339c3))
+
+
 ## [0.348.0](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.347.1...v0.348.0) - 2026-11-20
 - 【新增】data: 采集健康 scorecard 判据化——一条 job 跑两账套，非 GREEN 逐管线进 OO probes ([#2601](https://github.com/MYTech-Co-LTD/platform-core/pull/2601), [51452e5](https://github.com/MYTech-Co-LTD/platform-core/commit/51452e56fa8ea494fe7b08ba57791bdd19e19ce7))
 
