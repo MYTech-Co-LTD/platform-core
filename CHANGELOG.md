@@ -11,6 +11,10 @@
 
 ## [Unreleased]
 
+## [0.337.0](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.336.0...v0.337.0) - 2026-11-20
+- 【新增】data: 64188 历史有界回填——窗口覆写宏 + backfill 档 + 成对护栏（#2493） ([#2552](https://github.com/MYTech-Co-LTD/platform-core/pull/2552), [d76d82e](https://github.com/MYTech-Co-LTD/platform-core/commit/d76d82edb1957ea32cabae6866eff4cd7dae9984))
+
+
 ## [0.336.0](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.335.0...v0.336.0) - 2026-11-20
 - 【新增】deploy: deploy-data 加运行中作业闸门（#2548） ([#2549](https://github.com/MYTech-Co-LTD/platform-core/pull/2549), [05896c4](https://github.com/MYTech-Co-LTD/platform-core/commit/05896c433b492c188311b80175fa7808bbde3d66))
 
