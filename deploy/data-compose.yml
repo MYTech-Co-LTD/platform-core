@@ -116,6 +116,10 @@ services:
       # 同项目的 `artifacts` 服务把它**只读**挂成 HTTP 面，应用单元从那里增量拉取。
       - dbt-artifacts:/app/dbt-target
       - executor-auth:/run/executor-auth:ro
+      # 采集健康 scorecard（#2600）：判据只读 console workspace（runs/*.json / freshness /
+      # schedules / owners）。命名卷与 `artifacts` 服务同一对，跨机迁移跟着项目走；**只读**。
+      - lemeng-console-3120-ws:/data/ws3120:ro
+      - lemeng-console-64188-ws:/data/ws64188:ro
     # 运行镜像已含 tsx；不要用裸 node 跑 .ts import（与 deploy/docker-compose.yml 的 notify-worker 同）
     command: ['pnpm', 'exec', 'tsx', 'scripts/notify-worker.mjs']
     # 优雅停机（#2567）：docker 默认只给 10s 就 SIGKILL，而本容器在跑的 dbt 采集/审计是 20–90 分钟。
@@ -158,6 +162,9 @@ services:
     volumes:
       - dbt-artifacts:/app/dbt-target
       - executor-auth:/run/executor-auth
+      # 采集健康 scorecard（#2600）：作业在**执行器**里跑 ⇒ 这里也得挂（同上，只读）。
+      - lemeng-console-3120-ws:/data/ws3120:ro
+      - lemeng-console-64188-ws:/data/ws64188:ro
     command: ['pnpm', 'exec', 'tsx', 'scripts/executor-server.mjs']
     depends_on:
       - pg_duckdb

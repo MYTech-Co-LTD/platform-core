@@ -131,6 +131,7 @@ dbt 类任务落**平台 scheduler + 镜像内 dbt 工具链**（选项 1）：
 | `askdata-loop-p1` | 宿主卷 `…openclaw_state/_data` + `/etc/openobserve-ingest.env` + python3 | ❌ 三样都不可见 | **A 留守** |
 | `lemeng-console-gc` | console 卷的**宿主路径** + `docker exec duckle cache clear` | ❌ 跨容器删卷 | **A 留守**（等 console 自己出 GC 端点） |
 | `lemeng-gc-hot-hours` | 同「删已封版日子小时对象」，只是窗口更保守（上海今天−2） | ✅ 同上 | **C 已迁**（`data.hot_hours_gc`，#2565）：与激进档共用一个入口，窗口靠 `def.env` 给死 |
+| `pipeline-scorecard-3120` / `-64188` | console workspace（`runs/*.json`、freshness、schedules、owners）+ python3 | ⚠️ 原先靠宿主路径 + `docker cp`/`docker exec`；**卷是命名卷**，可直接**只读**挂进容器 | **C 已迁**（#2600）：`data.scorecard` 一条循环两账套，判据本体一行不改；非 GREEN 逐管线投 OO probes |
 
 > **凭据实测细节（#2560）**：数据单元 `OO_AUTH`（长 52）对 `/streams`、`/data_alerts`、`/organizations`
 > 全 **401**；应用单元 `OO_READ_TOKEN`（长 88）同路径 **200**。⚠️ 但这**不是缺陷**——

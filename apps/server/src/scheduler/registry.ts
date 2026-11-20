@@ -95,6 +95,11 @@ export const JOB_REGISTRY: JobDef[] = [
   // 判据本体是 python（借 pg_duckdb 的 duckdb.query 读湖），已数据面化：走 DSN、不再 docker exec。
   // 判红行投 OO `data_plane_probes`（桥→企微）——这正是「告警单出口」要求的形态。
   { key: 'data.zero_row_check', scope: 'data', requiresEnv: ['DATABASE_URL','DATA_WAREHOUSE_URL'], script: 'scripts/lemeng/zero-row-check.mjs', cron: '30 2 * * *', timezone: 'UTC', timeoutMs: 1800000, maxAttempts: 1, expectedIntervalSecs: 86400, description: '日更件静默 0 行巡检（近 3 天连续 0 行×基线有数据 ⇒ 判红；CST 10:30）' },
+  // 采集健康 scorecard（#2600，Wave 8 ④）：原为两条 openship job（按账套复制副本），
+  // 且判红只体现在退出码 + job 通知（不进 deliveries feed ⇒ 事实上静默）。
+  // 现在一条 job 循环两账套，判据本体（`pipeline-scorecard.py`）**一行不改**，只把结论逐管线投进
+  // OO `data_plane_probes`。console workspace 以命名卷**只读**挂进容器（见 deploy/data-compose.yml）。
+  { key: 'data.scorecard', scope: 'data', script: 'scripts/lemeng/pipeline-scorecard.mjs', cron: '37 2 * * *', timezone: 'UTC', timeoutMs: 600000, maxAttempts: 1, expectedIntervalSecs: 86400, description: '采集健康 scorecard（3120+64188；非 GREEN 逐管线 → OO probes；CST 10:37）' },
   { key: 'data.monitor_tick', scope: 'data', script: 'scripts/data-monitor-tick.mjs', cron: '* * * * *', timezone: 'UTC', timeoutMs: 300000, maxAttempts: 1, expectedIntervalSecs: 60, description: '业务监控求值（到期规则）' },
   // 原 openship 是宿主 bash：`for B in 3120 64188; do docker exec <console> python3 - < repo 脚本; done`
   // ——依赖 console 容器在场。删对象只需 ZOS 凭据 + HEAD，调度器容器两样都有 ⇒ 直接在此执行（Wave 8 ③）。
