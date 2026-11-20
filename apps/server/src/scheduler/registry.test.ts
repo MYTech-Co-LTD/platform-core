@@ -389,19 +389,11 @@ describe('registry · 业务监控 tick（W7-V1）', () => {
 })
 
 describe('registry · 小时对象回收（Wave 8 ③）', () => {
-  it('★ data.hour_partition_gc：节奏/重试与现役一致，ZOS 五键缺一不可（缺了要启动期被挡住）', () => {
-    // 现役 openship job `custom:9TiW8RMENTCiubTp`：`5,35 * * * *`、timeout 300s、attempts=2、不传参。
-    const def = JOB_REGISTRY.find((d) => d.key === 'data.hour_partition_gc')!
-    expect(def, 'data.hour_partition_gc').toBeDefined()
-    expect(def.cron).toBe('5,35 * * * *')
-    expect(def.expectedIntervalSecs).toBe(1800)
-    expect(def.timeoutMs).toBe(300000)
-    expect(def.maxAttempts).toBe(2)
-    expect(def.args ?? []).toEqual([])
-    expect(def.script).toBe('scripts/lemeng/hour-partition-gc.mjs')
-    // 下游 python 的 ENV_FAILED 只在**跑到**才报；缺键必须在这一层就挡住（作业不进 claim 集合）。
-    expect(def.requiresEnv).toEqual(['ZOS_ACCESS_KEY', 'ZOS_SECRET_KEY', 'ZOS_ENDPOINT', 'ZOS_REGION', 'ZOS_BUCKET'])
-    expect(existsSync(repoPath(def.script))).toBe(true)
+  it('★ 小时对象回收只留一条排班（激进档已合并，#2588）', () => {
+    // 合并理由：保守档多留 1–2 天最多 96 个小文件（≈+0.8s），换来每天少 ~2.3 万次 HEAD。
+    // 护栏目的：别再把它拆回两条——两条同判据不同窗口是本波刻意收敛掉的复杂度。
+    const keys = JOB_REGISTRY.filter((d) => d.script === 'scripts/lemeng/hour-partition-gc.mjs').map((d) => d.key)
+    expect(keys).toEqual(['data.hot_hours_gc'])
   })
 
   it('★ data.hot_hours_gc：同一入口的保守档（上海今天−2、扫 30 天），cron 与原 gc-hot-hours 一致', () => {
