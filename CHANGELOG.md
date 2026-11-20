@@ -11,6 +11,10 @@
 
 ## [Unreleased]
 
+## [0.344.2](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.344.1...v0.344.2) - 2026-11-20
+- 【修复】deploy: 执行器补 PORT（HEALTHCHECK 端口） ([#2583](https://github.com/MYTech-Co-LTD/platform-core/pull/2583), [e3c11a3](https://github.com/MYTech-Co-LTD/platform-core/commit/e3c11a34365b7ec577abb652ac4482d7b6ea2e23))
+
+
 ## [0.344.1](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.344.0...v0.344.1) - 2026-11-20
 - 【修复】scheduler: 排空期豁免健康判据②（有意不跑 ≠ 该跑没跑） ([#2582](https://github.com/MYTech-Co-LTD/platform-core/pull/2582), [c6ad577](https://github.com/MYTech-Co-LTD/platform-core/commit/c6ad577241cb25b751c1a719aa1f687c70ee83a0))
 
