@@ -327,6 +327,21 @@ export async function softDeleteSchedule(pool: Pool, id: number, now: Date): Pro
   )
 }
 
+/**
+ * 本实例负责的 key 里，当前有多少条 `running`（#2574 派发模式下的并发闸门）。
+ *
+ * 为什么不能再用进程内 Set：派发模式下「起作业」发生在执行器容器里，派发器把请求发出去就返回，
+ * 进程内计数会立刻归零 ⇒ 并发上限形同虚设。```running``` 行是两边共用的唯一事实源。
+ */
+export async function countRunning(pool: Pool, keys: string[]): Promise<number> {
+  if (keys.length === 0) return 0
+  const { rows } = await pool.query<{ n: number }>(
+    "select count(*)::int as n from platform.job_run where status='running' and key = any($1::text[])",
+    [keys],
+  )
+  return rows[0]?.n ?? 0
+}
+
 export async function hasRunning(pool: Pool, scheduleId: number): Promise<boolean> {
   const { rows } = await pool.query(
     "select 1 from platform.job_run where schedule_id=$1 and status='running' limit 1",

@@ -1,5 +1,6 @@
 #!/usr/bin/env node
 // scripts/notify-worker.mjs — 薄 CLI；组合根在 modules/notify/worker-deps.ts。
+import { readFileSync } from 'node:fs'
 import { createRequire } from 'node:module'
 import { pathToFileURL } from 'node:url'
 import { runOnceCli } from '../modules/notify/worker-deps.ts'
@@ -212,9 +213,41 @@ if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) 
     /** @type {{ rows: Array<{ casdoor_org: string }> }} */
     const { rows: tenantRows } = await pool.query('select casdoor_org from platform.tenant order by id')
     const instanceOrg = tenantRows[0]?.casdoor_org ?? ''
+    // 派发模式（#2574）：配了 EXECUTOR_URL ⇒ 作业交给独立执行器，本容器不再 spawn。
+    // 这样本容器（派发器）重建时，在跑的作业留在执行器里，完全不受影响。
+    const executorUrl = String(process.env.EXECUTOR_URL ?? '').trim().replace(/\/+$/, '')
+    // 令牌与执行器同源：env 优先，否则读**两容器共享卷**里的文件（执行器首次启动自动生成）。
+    // 每次派发都读一次：卷里的小文件，代价可忽略；换成缓存反而要处理轮换。
+    const executorTokenFile = String(process.env.EXECUTOR_TOKEN_FILE ?? '')
+    const readExecutorToken = () => {
+      if (String(process.env.EXECUTOR_TOKEN ?? '') !== '') return String(process.env.EXECUTOR_TOKEN)
+      if (executorTokenFile === '') return ''
+      try { return readFileSync(executorTokenFile, 'utf8').trim() } catch { return '' }
+    }
+    /** @type {undefined | ((job: import('../apps/server/src/scheduler/store.ts').ClaimedJob, manual: boolean) => Promise<void>)} */
+    const dispatch = executorUrl === '' ? undefined : async (job, manual) => {
+      const res = await fetch(`${executorUrl}/run`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${readExecutorToken()}` },
+        body: JSON.stringify({
+          runId: job.runId, scheduleId: job.scheduleId, key: job.key,
+          occurrence: job.occurrence.toISOString(), attempt: job.attempt,
+          maxAttempts: job.maxAttempts, timeoutMs: job.timeoutMs,
+          params: job.params, isRetry: job.isRetry,
+          ownerOrg: job.ownerOrg, ownerNamespace: job.ownerNamespace, manual,
+        }),
+      })
+      if (res.status !== 202) {
+        const text = await res.text().catch(() => '')
+        throw new Error(`executor ${res.status} ${text.slice(0, 200)}`)
+      }
+    }
+    if (dispatch) {
+      console.log(JSON.stringify({ ts: new Date().toISOString(), schedulerMode: 'dispatch', executorUrl }))
+    }
     scheduler = createSchedulerLoop({
       pool, cwd: process.cwd(), maxConcurrency: schedCfg.maxConcurrency,
-      registry: runnable, instanceId: schedCfg.instanceId,
+      registry: runnable, instanceId: schedCfg.instanceId, dispatch,
       emit: async (input) => enqueueEvent(pool, {
         org: input.org || instanceOrg,
         eventId: input.eventId,

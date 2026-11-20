@@ -91,6 +91,11 @@ services:
       # 停机收尾预算（#2567）：SIGTERM 后不再 claim、等在跑的子进程收尾的最长时间。
       # 必须**小于**本服务的 stop_grace_period（660s），否则到点会被 SIGKILL、收尾日志都写不出来。
       WORKER_DRAIN_TIMEOUT_MS: ${WORKER_DRAIN_TIMEOUT_MS:-600000}
+      # 派发模式开关（#2574）：留空 = 本地执行（今天的行为）；置 `http://executor:13100`
+      # = 作业交给独立执行器，本容器（派发器）重建时在跑的作业不受影响。
+      # **默认不开**：灰度开关要走一次真机验收再打开（见 deploy/deployment-units.md §5.7）。
+      EXECUTOR_URL: ${EXECUTOR_URL:-}
+      EXECUTOR_TOKEN_FILE: /run/executor-auth/token
       # 平台库在**应用单元**。注意：宿主端口是回环发布，容器里的 127.0.0.1 是自己的 netns、
       # host.docker.internal 也够不到回环发布口 ⇒ 只能走应用机的**私网 IP**（配 DATA_BIND_ADDR
       # + 安全组白名单）。真值写进数据项目 env(isSecret)，键 SCHEDULER_DATABASE_URL；
@@ -110,6 +115,7 @@ services:
       # 物化产物落**命名卷**（不是宿主目录）：跨机迁移时卷能跟着项目走，宿主路径不能。
       # 同项目的 `artifacts` 服务把它**只读**挂成 HTTP 面，应用单元从那里增量拉取。
       - dbt-artifacts:/app/dbt-target
+      - executor-auth:/run/executor-auth:ro
     # 运行镜像已含 tsx；不要用裸 node 跑 .ts import（与 deploy/docker-compose.yml 的 notify-worker 同）
     command: ['pnpm', 'exec', 'tsx', 'scripts/notify-worker.mjs']
     # 优雅停机（#2567）：docker 默认只给 10s 就 SIGKILL，而本容器在跑的 dbt 采集/审计是 20–90 分钟。
@@ -120,6 +126,39 @@ services:
     depends_on:
       - pg_duckdb
     # 无 ports：只被本容器自己用（healthz 绑回环），宿主面为零。
+
+  # ── 执行器（#2574 方案 A）：派发 / 执行拆分 ────────────────────────────────────
+  # 为什么拆：调度器容器同时「派发」和「跑作业」，任何发版都会重建容器、把在跑的 dbt 作业带走
+  # （2026-11-20 一天三次 `dur=0s`）。拆开后派发器随时可重启（容器里没有作业子进程），
+  # 执行器只在「执行时读的东西」（dbt/scripts/镜像）变更时才重建，且可先排空再重建。
+  # 台账语义不变：终态/重试/事件仍走 apps/server/src/scheduler/execute.ts 的同一份实现。
+  executor:
+    build:
+      context: ..
+      dockerfile: deploy/Dockerfile.server
+    image: platform-core-executor:local
+    restart: unless-stopped
+    env_file:
+      - path: ../.env
+        required: false
+    environment:
+      EXECUTOR_PORT: '13100'
+      EXECUTOR_MAX_CONCURRENCY: ${SCHEDULER_MAX_CONCURRENCY:-2}
+      # 与 scheduler 同源：平台库在应用单元，走私网 IP（见 scheduler 服务的说明）。
+      DATABASE_URL: ${SCHEDULER_DATABASE_URL:-}
+      DATA_WAREHOUSE_URL: postgres://${PGDUCK_USER:-platform}:${PGDUCK_PASSWORD:-platform}@pg_duckdb:5432/${PGDUCK_DB:-warehouse}
+      MATERIALIZE_MODE: container
+      MATERIALIZE_TARGET_DIR: /app/dbt-target
+      WORKER_DRAIN_TIMEOUT_MS: ${WORKER_DRAIN_TIMEOUT_MS:-600000}
+      # 服务间令牌：两容器共享卷里的文件，执行器首次启动自动生成（无人工密钥步骤）。
+      EXECUTOR_TOKEN_FILE: /run/executor-auth/token
+    volumes:
+      - dbt-artifacts:/app/dbt-target
+      - executor-auth:/run/executor-auth
+    command: ['pnpm', 'exec', 'tsx', 'scripts/executor-server.mjs']
+    depends_on:
+      - pg_duckdb
+    # 无 ports：只在本 compose 网络内被 scheduler 调用。
 
   # ── 只读产物服务（#2518）：数据单元的 runs 回执 / dbt 产物，以 HTTP 提供给应用单元 ──
   # 为什么需要：产物产生在数据单元，消费它们的模块在应用单元、按**文件**读。同机时靠宿主 bind
@@ -257,6 +296,8 @@ volumes:
   pgduckdata:        # 物化表/语义 schema（可从 parquet 重算，备份=省重建时间，spec §8）
   # mbdata（Metabase 应用库）随 metabase 退役一并撤出编排——卷还在磁盘上，需人工确认后删。
   duckle-workspace:  # 管线定义的真源在仓内 duckle/；workspace 是中间产物（可重建）
+  # 派发器 ↔ 执行器 的服务间令牌（#2574）：执行器首次启动写入，派发器读。
+  executor-auth:
   # dbt 物化产物（manifest / run_results）。scheduler 写、artifacts 只读挂载对外供。
   # 用卷而不是宿主目录：跨机迁移时卷随项目走。
   dbt-artifacts:
