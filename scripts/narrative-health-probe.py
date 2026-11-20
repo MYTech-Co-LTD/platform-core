@@ -10,6 +10,11 @@
     为了能在数据面机（无 node）上独立运行；`scripts/narrative-health-thresholds.test.ts` 在 CI
     机械比对两处，漂移即红。
 
+两种运行形态（同一份判据本体）：
+  · **容器内（平台调度器，`platform.narrative_health`，#2612）**：从 `DATABASE_URL` 取 DSN 直连，
+    探针按 `OO_BASE/OO_ORG/(OO_AUTH|OO_READ_TOKEN)` 直接 POST（不需要宿主文件、不需要 docker sock）；
+  · **宿主/mac（旧形态，回滚用）**：`docker exec <pg 容器> psql` + `/opt/lemeng-emit-probe.py`。
+
 用法（数据面机 / 宿主）：
     python3 narrative-health-probe.py --dry-run          # 只打印，不投递（默认）
     python3 narrative-health-probe.py --emit             # 投递到 data_plane_probes
@@ -20,8 +25,10 @@
 """
 import argparse
 import json
+import os
 import subprocess
 import sys
+import urllib.request
 
 # ⚠️ 与 TS 的 NARRATIVE_SLO 保持逐值一致（CI 有机械比对测试）。
 SLO_FALLBACK_RATE = 0.20
@@ -44,14 +51,15 @@ select org,
 """
 
 
-def query_rows(container, days):
+def query_rows(container, days, dsn=""):
+    """读判据数据。给了 `dsn` 就走直连（容器内形态），否则退回 `docker exec`（宿主形态）。"""
     sql = SQL.format(days=int(days))
+    argv = ([("psql", dsn, "-tA", "-F", "\t", "-c", sql)]
+            if dsn
+            else [("docker", "exec", container, "psql", "-U", "platform", "-d", "platform",
+                   "-tA", "-F", "\t", "-c", sql)])
     try:
-        out = subprocess.run(
-            ["docker", "exec", container, "psql", "-U", "platform", "-d", "platform",
-             "-tA", "-F", "\t", "-c", sql],
-            check=True, capture_output=True, text=True, timeout=30,
-        )
+        out = subprocess.run(argv[0], check=True, capture_output=True, text=True, timeout=30)
     except (subprocess.CalledProcessError, FileNotFoundError, subprocess.TimeoutExpired) as e:
         detail = getattr(e, "stderr", "") or str(e)
         print(f"narrative-health-probe: 查询失败（{detail.strip()[:200]}）", file=sys.stderr)
@@ -104,7 +112,43 @@ def verdicts_of(row):
     return out
 
 
+def _oo_env():
+    """摄取三元组：容器内是 OO_*（数据单元）/ OO_READ_*（应用单元），宿主无则返回空。"""
+    def pick(*names):
+        for n in names:
+            v = (os.environ.get(n) or "").strip()
+            if v:
+                return v
+        return ""
+    return (pick("OO_BASE", "OO_READ_URL").rstrip("/"),
+            pick("OO_ORG", "OO_READ_ORG"),
+            pick("OO_AUTH", "OO_READ_TOKEN"))
+
+
+def emit_http(check, verdict, detail):
+    """直接 POST `data_plane_probes`（与 `scripts/probe-emit.mjs` 同一红线：只投事实、失败只留痕）。"""
+    base, org, token = _oo_env()
+    if not (base and org and token):
+        return None  # 未配置 ⇒ 让调用方回落到宿主剧本
+    body = json.dumps({"probe": "narrative", "check": check, "verdict": verdict,
+                       "mode": "advisory", "detail": str(detail)[:500]}, ensure_ascii=False).encode("utf-8")
+    auth = token if token.lower().startswith(("basic ", "bearer ")) else "Basic " + token
+    req = urllib.request.Request(f"{base}/api/{org}/data_plane_probes/_json", data=body,
+                                 headers={"Content-Type": "application/json", "Authorization": auth},
+                                 method="POST")
+    try:
+        with urllib.request.urlopen(req, timeout=10) as resp:
+            text = resp.read().decode("utf-8", "replace")
+        return resp.status == 200 and '"successful":1' in text
+    except OSError as e:
+        print(f"narrative-health-probe: 投递失败 {check} → {e}", file=sys.stderr)
+        return False
+
+
 def emit(emit_path, check, verdict, detail):
+    direct = emit_http(check, verdict, detail)
+    if direct is not None:
+        return direct
     proc = subprocess.run(
         [sys.executable, emit_path, check, verdict, detail],
         capture_output=True, text=True, timeout=30,
@@ -122,6 +166,8 @@ def main(argv):
     ap.add_argument("--selftest", action="store_true", help="反向测试：合成一条 ERR（会进群）")
     ap.add_argument("--days", type=int, default=7, help="统计窗口天数（默认 7）")
     ap.add_argument("--pg-container", default=DEFAULT_PG_CONTAINER)
+    ap.add_argument("--dsn", default=os.environ.get("NARRATIVE_PG_DSN") or os.environ.get("DATABASE_URL") or "",
+                    help="直连 DSN（缺省取 NARRATIVE_PG_DSN / DATABASE_URL；给了就不用 docker exec）")
     ap.add_argument("--emit-probe", default=DEFAULT_EMIT)
     args = ap.parse_args(argv)
 
@@ -136,7 +182,7 @@ def main(argv):
             return 1
         return 0
 
-    rows = query_rows(args.pg_container, args.days)
+    rows = query_rows(args.pg_container, args.days, args.dsn)
     if rows is None:
         return 1
     lines = []
