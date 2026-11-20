@@ -675,9 +675,9 @@ jobs:
           files=$(curl -sS -H "Authorization: Bearer ${GH_TOKEN}" \
             "https://api.github.com/repos/${GITHUB_REPOSITORY}/commits/${COMMIT_SHA}" \
             | jq -r '.files[]?.filename' 2>/dev/null || true)
-          if printf '%s\n' "$files" | grep -qE '^(deploy/data-compose\.yml$|deploy/duckle/|deploy/artifacts/|dbt/|duckle/|pipelines/)'; then
+          if printf '%s\n' "$files" | grep -qE '^(deploy/data-compose\.yml$|deploy/duckle/|deploy/artifacts/|deploy/data-plane\.lock$|scripts/lemeng/|dbt/|duckle/|pipelines/)'; then
             echo "hit=1" >> "$GITHUB_OUTPUT"
-            echo "触及数据面：$(printf '%s\n' "$files" | grep -cE '^(deploy/data-compose\.yml$|deploy/duckle/|deploy/artifacts/|dbt/|duckle/|pipelines/)') 个文件"
+            echo "触及数据面：$(printf '%s\n' "$files" | grep -cE '^(deploy/data-compose\.yml$|deploy/duckle/|deploy/artifacts/|deploy/data-plane\.lock$|scripts/lemeng/|dbt/|duckle/|pipelines/)') 个文件"
           else
             echo "hit=0" >> "$GITHUB_OUTPUT"
             echo "本次变更与数据面无关，跳过数据单元部署"
