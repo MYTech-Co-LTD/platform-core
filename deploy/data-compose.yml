@@ -63,9 +63,12 @@ services:
   # 同一个镜像、同一个入口（scripts/notify-worker.mjs），靠 role env 决定跑哪个 loop：
   #   本服务     = SCHEDULER_ENABLED=1 + NOTIFY_DELIVERY_ENABLED=0（只调度）
   #   应用单元侧 = SCHEDULER_ENABLED=0                        （只投递，见 deploy/docker-compose.yml）
-  # ⚠️ 两边**不要同时**开调度（同一个 job_schedule 会被两个进程各 claim 一次，租约挡得住重复
-  #    执行但台账会出现 owner 丢失/超时噪声）。切流顺序：先起本服务 → 确认它真在 tick →
-  #    再把应用单元置 SCHEDULER_ENABLED=0。
+  # ⚠️ **两个单元各跑一个调度器，按域分工**（#2511 之后的口径，别按旧文「只留一个」操作）：
+  #    本服务 `SCHEDULER_JOB_GROUPS=data`     ⇒ 只 claim `data.*`（dbt/采集/监控 tick）；
+  #    应用单元 `SCHEDULER_JOB_GROUPS=platform` ⇒ 只 claim `platform` 域（notify.*/org.sync/metric.*）。
+  #    两组的排班集合**不相交**，台账里 `job_run.runner_id` 会分别写成 `scheduler-data` /
+  #    `scheduler-platform`（判「谁跑的」看这一列）。把应用单元的 `SCHEDULER_ENABLED` 置 0
+  #    = 平台域作业**没有人跑**（2026-11-20 实测两边心跳都在，是正常态，不是双跑）。
   # ⚠️ openship **忽略 profiles**（issue #369）⇒ 所有用本 compose 的数据项目下次部署都会建本服务。
   #    不需要它的项目（或还没备好 env 的项目）必须在服务行置 `enabled: false`，否则它会因缺
   #    DATABASE_URL 启动即退出（fail-closed，但会一直重启）。
@@ -85,6 +88,9 @@ services:
       WORKER_HEALTH_PORT: '13000'
       SCHEDULER_TICK_MS: ${SCHEDULER_TICK_MS:-30000}
       SCHEDULER_MAX_CONCURRENCY: ${SCHEDULER_MAX_CONCURRENCY:-2}
+      # 停机收尾预算（#2567）：SIGTERM 后不再 claim、等在跑的子进程收尾的最长时间。
+      # 必须**小于**本服务的 stop_grace_period（660s），否则到点会被 SIGKILL、收尾日志都写不出来。
+      WORKER_DRAIN_TIMEOUT_MS: ${WORKER_DRAIN_TIMEOUT_MS:-600000}
       # 平台库在**应用单元**。注意：宿主端口是回环发布，容器里的 127.0.0.1 是自己的 netns、
       # host.docker.internal 也够不到回环发布口 ⇒ 只能走应用机的**私网 IP**（配 DATA_BIND_ADDR
       # + 安全组白名单）。真值写进数据项目 env(isSecret)，键 SCHEDULER_DATABASE_URL；
@@ -106,6 +112,11 @@ services:
       - dbt-artifacts:/app/dbt-target
     # 运行镜像已含 tsx；不要用裸 node 跑 .ts import（与 deploy/docker-compose.yml 的 notify-worker 同）
     command: ['pnpm', 'exec', 'tsx', 'scripts/notify-worker.mjs']
+    # 优雅停机（#2567）：docker 默认只给 10s 就 SIGKILL，而本容器在跑的 dbt 采集/审计是 20–90 分钟。
+    # worker 收到 SIGTERM 后**不再 claim 新作业**、等在跑的子进程收尾（预算 WORKER_DRAIN_TIMEOUT_MS，
+    # 缺省 600s），所以这里的宽限期要比那个预算**再宽一点**，让进程自己先退、别被 SIGKILL 打断收尾。
+    # 语义提醒：发版因此可能多等最多 ~10 分钟；换来的是不再把一条 90 分钟的审计砍成 0s timeout。
+    stop_grace_period: 660s
     depends_on:
       - pg_duckdb
     # 无 ports：只被本容器自己用（healthz 绑回环），宿主面为零。
