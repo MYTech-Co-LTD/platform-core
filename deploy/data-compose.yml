@@ -142,6 +142,9 @@ services:
       - path: ../.env
         required: false
     environment:
+      # ⚠️ PORT 必须一起给：镜像继承的 HEALTHCHECK 探的是 `${PORT:-13000}/healthz`，
+      # 执行器监听 13100 ⇒ 不给 PORT 时容器恒 unhealthy（2026-11-20 实测，虽然作业照跑）。
+      PORT: '13100'
       EXECUTOR_PORT: '13100'
       EXECUTOR_MAX_CONCURRENCY: ${SCHEDULER_MAX_CONCURRENCY:-2}
       # 与 scheduler 同源：平台库在应用单元，走私网 IP（见 scheduler 服务的说明）。
