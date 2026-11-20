@@ -47,7 +47,7 @@ describe('pipeline-scorecard probeRows', () => {
       { pipeline: 'retail.order.daily', level: 'RED', status: 'failed', last_ok_at: '2026-11-17T00:00:00Z', error: 'timeout' },
       { pipeline: 'member.summary.daily', level: 'AMBER', status: 'interrupted', last_ok_at: '2026-11-20T00:00:00Z' },
       { pipeline: 'purchase.daily', level: 'GREEN', status: 'ok' },
-      { pipeline: 'price.batch.daily', level: 'UNKNOWN', status: null, error: 'scheduled but never ran' },
+      { pipeline: 'price.batch.daily', level: 'UNKNOWN', status: null as string | null, error: 'scheduled but never ran' },
     ]
     const out = probeRows('3120', rows)
     expect(out.map((r) => [r.check, r.verdict])).toEqual([
@@ -84,26 +84,29 @@ describe('pipeline-scorecard runBook', () => {
   it('判据输出不可解析 ⇒ rc=2（python 起了但吐了别的东西）', () => {
     const spawn = vi.fn(() => ({ status: 0, stdout: 'not json', stderr: '' }))
     // 显式给一个**存在**的工作区（ws 覆盖参数），让断言不依赖跑测机器的目录布局。
-    const r = runBook('3120', { ws: process.cwd(), spawn })
+    const r = runBook('3120', { ws: process.cwd(), spawn: spawn as never })
     expect(r.rows).toBeNull()
     expect(r.rc).toBe(2)
     expect(r.output).toContain('SCORECARD_PARSE_FAILED')
   })
 
   it('正常输出 ⇒ 解析成行数组，退出码透传', () => {
-    const spawn = vi.fn(() => ({
-      status: 1, stdout: JSON.stringify([{ pipeline: 'a', level: 'RED' }]), stderr: '',
-    }))
-    const r = runBook('3120', { ws: process.cwd(), spawn })
+    let seen: { env?: Record<string, string> } | undefined
+    /** @type {any} 桩只提供被测代码读到的三个字段 */
+    const spawn = vi.fn((_cmd: string, _argv: string[], opts: { env: Record<string, string> }) => {
+      seen = opts
+      return { status: 1, stdout: JSON.stringify([{ pipeline: 'a', level: 'RED' }]), stderr: '' }
+    })
+    const r = runBook('3120', { ws: process.cwd(), spawn: spawn as never })
     expect(r.rows).toEqual([{ pipeline: 'a', level: 'RED' }])
     expect(r.rc).toBe(1)
     // 判据必须拿到 DUCKLE_WORKSPACE（否则 python 读默认 /workspace ⇒ 恒 0 管线 = 假绿）。
-    expect(spawn.mock.calls[0][2].env.DUCKLE_WORKSPACE).toBe(process.cwd())
+    expect(seen?.env?.DUCKLE_WORKSPACE).toBe(process.cwd())
   })
 
   it('spawn 级失败（python3 不在）⇒ rc=2 且点名依赖', () => {
     const spawn = vi.fn(() => ({ status: null, stdout: '', stderr: '', error: new Error('ENOENT') }))
-    const r = runBook('3120', { ws: process.cwd(), spawn })
+    const r = runBook('3120', { ws: process.cwd(), spawn: spawn as never })
     expect(r.rows).toBeNull()
     expect(r.rc).toBe(2)
     expect(r.output).toContain('SCORECARD_DEP_FAILED')

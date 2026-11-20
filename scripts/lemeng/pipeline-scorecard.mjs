@@ -60,7 +60,7 @@ export function workspaceFor(book, env = process.env) {
  *
  * 映射：RED→ERR、AMBER→WARN、UNKNOWN→UNKNOWN（排班里启用但从未跑过 —— 也是要人看一眼的）。
  * @param {string} book
- * @param {Array<{pipeline?: string, level?: string, status?: string, last_ok_at?: string|null, error?: string}>} rows
+ * @param {Array<({pipeline?: string, level?: string, status?: string|null, last_ok_at?: string|null, error?: string|null}|null)>} rows
  * @returns {Array<{probe:string, check:string, verdict:'ERR'|'WARN'|'UNKNOWN', detail:string}>}
  */
 export function probeRows(book, rows) {
