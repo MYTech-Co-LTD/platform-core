@@ -178,7 +178,8 @@ COPY --from=build /app/contracts ./contracts
 # 摄入验证的水位目录（#2606）同理：compose 把命名卷 `askdata-state` 挂到 `/var/lib/askdata`，
 # 卷首次创建时继承镜像里这个目录的属主 ⇒ 不预建的话 worker（uid 1000）写水位 EACCES，
 # 每小时都退回 7 天回看窗口（判据不出错，但是白扫）。
-RUN mkdir -p /run/executor-auth /var/lib/askdata && chown node:node /run/executor-auth /var/lib/askdata
+RUN mkdir -p /run/executor-auth /var/lib/askdata /var/lib/scorecard \
+ && chown node:node /run/executor-auth /var/lib/askdata /var/lib/scorecard
 
 # 非 root 运行（node 镜像自带 uid 1000 的 node 用户）。被 COPY 的文件是 root 拥有但
 # world-readable，宿主进程只读磁盘：tsx 在内存里转译不落盘，pnpm run 也不写 store。

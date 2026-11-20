@@ -7,8 +7,11 @@
 //   ③ 只有非 GREEN 才投探针，且 RED→ERR / AMBER→WARN / UNKNOWN→UNKNOWN；
 //   ④ 「工作区不可达」必须返回 rc=2 且 rows=null（不能退化成「0 条管线全绿」）。
 import { describe, expect, it, vi } from 'vitest'
+import { mkdtempSync, writeFileSync, readdirSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
 import {
-  DEFAULT_BOOKS, parseBooks, probeRows, runBook, scorecardArgv, summarize, workspaceFor,
+  DEFAULT_BOOKS, parseBooks, probeRows, pruneSnapshots, runBook, scorecardArgv, summarize, toCsv, workspaceFor,
 } from './pipeline-scorecard.mjs'
 
 describe('pipeline-scorecard parseBooks', () => {
@@ -114,5 +117,31 @@ describe('pipeline-scorecard runBook', () => {
 
   it('argv 钉死判据本体路径与 --json', () => {
     expect(scorecardArgv()).toEqual(['deploy/duckle/console/pipeline-scorecard.py', '--json'])
+  })
+})
+
+describe('pipeline-scorecard 历史快照（#2610）', () => {
+  it('★ 表头/列序与 pipeline-scorecard.py 逐字一致（月度基线按列名读，错了只会静默少字段）', () => {
+    const csv = toCsv([])
+    expect(csv).toBe('pipeline,level,last_run_at,status,last_ok_at,duration_ms,stale_assets,error\n')
+  })
+
+  it('★ 含逗号/引号的字段要转义（error 文本经常带逗号）', () => {
+    const csv = toCsv([{
+      pipeline: 'a.b', level: 'RED', last_run_at: 't1', status: 'failed', last_ok_at: null,
+      duration_ms: 12, stale_assets: 3, error: 'x, y "z"',
+    }])
+    const row = csv.split('\n')[1]
+    expect(row).toBe('a.b,RED,t1,failed,,12,3,"x, y ""z"""')
+  })
+
+  it('★ prune 按文件名日期删旧快照，且不碰非快照文件', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'sc-prune-'))
+    writeFileSync(join(dir, '3120-2026-05-01.csv'), 'x')
+    writeFileSync(join(dir, '3120-2026-11-20.csv'), 'x')
+    writeFileSync(join(dir, 'notes.txt'), 'x')
+    const removed = pruneSnapshots(dir, new Date('2026-11-20T02:00:00Z'), 120)
+    expect(removed).toEqual(['3120-2026-05-01.csv'])
+    expect(readdirSync(dir).sort()).toEqual(['3120-2026-11-20.csv', 'notes.txt'])
   })
 })

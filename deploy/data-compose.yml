@@ -120,6 +120,8 @@ services:
       # schedules / owners）。命名卷与 `artifacts` 服务同一对，跨机迁移跟着项目走；**只读**。
       - lemeng-console-3120-ws:/data/ws3120:ro
       - lemeng-console-64188-ws:/data/ws64188:ro
+      # 每日 scorecard 快照（#2610）：月度基线只认这种一天一份的 CSV。按天有界、同 job 内 prune。
+      - scorecard-history:/var/lib/scorecard
     # 运行镜像已含 tsx；不要用裸 node 跑 .ts import（与 deploy/docker-compose.yml 的 notify-worker 同）
     command: ['pnpm', 'exec', 'tsx', 'scripts/notify-worker.mjs']
     # 优雅停机（#2567）：docker 默认只给 10s 就 SIGKILL，而本容器在跑的 dbt 采集/审计是 20–90 分钟。
@@ -165,6 +167,8 @@ services:
       # 采集健康 scorecard（#2600）：作业在**执行器**里跑 ⇒ 这里也得挂（同上，只读）。
       - lemeng-console-3120-ws:/data/ws3120:ro
       - lemeng-console-64188-ws:/data/ws64188:ro
+      # 每日 scorecard 快照（#2610）：月度基线只认这种一天一份的 CSV。按天有界、同 job 内 prune。
+      - scorecard-history:/var/lib/scorecard
     command: ['pnpm', 'exec', 'tsx', 'scripts/executor-server.mjs']
     depends_on:
       - pg_duckdb
@@ -314,5 +318,7 @@ volumes:
   # 两个账套各自的 console 工作区（放 schedules.json 与引擎状态）。
   # **必须按账套分开**：调度条目带不了 env ⇒ 一个 workspace 只有一套 env（见 console/README.md）。
   # dim 管线实测**无跨运行状态组件** ⇒ 分卷不会丢状态；将来若接有状态的管线，迁移要连状态一起搬。
+  # 每日 scorecard 快照（#2610），见 scheduler/executor 的挂载说明
+  scorecard-history:
   lemeng-console-3120-ws:
   lemeng-console-64188-ws:
