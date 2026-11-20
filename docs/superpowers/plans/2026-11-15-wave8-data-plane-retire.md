@@ -96,7 +96,7 @@ dbt 类任务落**平台 scheduler + 镜像内 dbt 工具链**（选项 1）：
 
 | 原档 | 剩余 job | 新落点 | 理由 |
 |---|---|---|---|
-| P1 dbt | `lemeng-recon-restate` | **C：改写为数据单元 job** | 只需 psql + console HTTP API，不依赖宿主 docker 语义；容器内可跑 |
+| P1 dbt | `lemeng-recon-restate` | **C：受阻**（checkpoint 旁路） | 其余依赖都可容器化（psql + console HTTP），但「清 console 引擎状态」那步只能 `docker exec`，见上文调查与三选一 |
 | P1 dbt | `lemeng 夜间回填窗口` | **A：留守 openship** | 依赖宿主机 `/opt` 脚本与多容器编排；容器化收益低、风险高 |
 | P2 平台/运维 | `lemeng-console-gc`、`lemeng-gc-hot-hours` | **A：留守 / 等 console 自己的 GC 通道** | 见下方「逐条实测判定」——两者都直接读写**宿主卷路径**，容器内看不见 |
 | P2 平台/运维 | `删已封版日子小时对象` | **C：已迁**（`data.hour_partition_gc`，#2563） | 只需 ZOS 凭据 + HEAD；调度器容器两样都有，实测 dry-run 一致 |
