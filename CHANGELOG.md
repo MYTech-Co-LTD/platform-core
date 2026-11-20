@@ -11,6 +11,10 @@
 
 ## [Unreleased]
 
+## [0.346.0](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.345.1...v0.346.0) - 2026-11-20
+- 【新增】data: 日更件零行巡检迁平台调度器（data.zero_row_check）+ 修执行器重建 flag ([#2591](https://github.com/MYTech-Co-LTD/platform-core/pull/2591), [46ffc67](https://github.com/MYTech-Co-LTD/platform-core/commit/46ffc67bff4fcb8fd2ca60e3be66675b2a91dc4b))
+
+
 ## [0.345.1](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.345.0...v0.345.1) - 2026-11-20
 - 【优化】data: GC 排班合并——小时对象回收只留保守档 ([#2589](https://github.com/MYTech-Co-LTD/platform-core/pull/2589), [33e742e](https://github.com/MYTech-Co-LTD/platform-core/commit/33e742e0c8e4864a2c75d2797a75997cf7c8b646))
 
