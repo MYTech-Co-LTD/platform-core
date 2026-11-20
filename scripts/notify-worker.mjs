@@ -289,8 +289,13 @@ if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) 
         "select 1 from notify.worker_heartbeat where beat_at > now()-interval '2 minutes'")
       // 判定是纯函数（worker-healthz.ts）：调度关闭时不看 jobHealth；
       // 开着就必须求值（求值抛错走 catch ⇒ 503，不假绿）。
+      // 排空期要告诉健康判据（#2574）：否则「有意不跑」会被判成「该跑没跑」⇒ 503 ⇒ 容器 unhealthy。
+      const { isDraining } = await import('../apps/server/src/scheduler/store.ts')
+      const draining = schedulerEnabled ? await isDraining(pool, new Date()).catch(() => false) : false
       const schedulerHealth = schedulerEnabled && jobHealthFn
-        ? await jobHealthFn(pool, new Date(), { instanceId: schedCfg.instanceId, keys: runnable.map((d) => d.key) })
+        ? await jobHealthFn(pool, new Date(), {
+            instanceId: schedCfg.instanceId, keys: runnable.map((d) => d.key), draining,
+          })
         : null
       const h = workerHealthz({
         notifyFresh: rows.length > 0,

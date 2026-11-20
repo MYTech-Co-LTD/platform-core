@@ -111,6 +111,17 @@ describePg('jobHealth', () => {
     expect(prefixReasons(h).join()).toContain('没有成功运行')
   })
 
+  it('★ 排空期不看判据②（有意不跑 ≠ 该跑没跑；#2574）', async () => {
+    await insertSchedule({
+      key: `${PREFIX}draining`, intervalSecs: 60, updatedAt: minutesAgo(60),
+    })
+    // 同一夹具：不排空 ⇒ 红；排空 ⇒ 不红（判据①心跳仍照判）。
+    const before = await jobHealth(pool, new Date())
+    expect(prefixReasons(before).join()).toContain(`${PREFIX}draining`)
+    const during = await jobHealth(pool, new Date(), { draining: true })
+    expect(prefixReasons(during)).toEqual([])
+  })
+
   it('★ 刚启用未超期（无运行，updated_at 是现在）⇒ 不红（宽限）', async () => {
     await insertSchedule({ key: `${PREFIX}fresh`, intervalSecs: 60 })
     const h = await jobHealth(pool, new Date())
