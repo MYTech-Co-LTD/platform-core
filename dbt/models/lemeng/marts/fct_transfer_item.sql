@@ -28,7 +28,8 @@ with item_lines as (
       and out_branch_num = 99
       and branch_num <> out_branch_num
     {% if is_incremental() %}
-      and bizday >= {{ incremental_cutoff(10) }}
+      and bizday >= {{ cutoff_or_backfill(10) }}
+      {{ backfill_to() }}
     {% endif %}
     group by 1, 2, 3
 )

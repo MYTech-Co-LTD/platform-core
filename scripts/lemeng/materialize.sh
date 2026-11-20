@@ -55,9 +55,9 @@ set -eu
 # 这样连容器不在的机器上也能立刻得到「档位拼错了」而不是 missing_env。
 SCOPE=${MATERIALIZE_SCOPE:-full}
 case "$SCOPE" in
-  full|tables|tick|audit|hourly) ;;
+  full|tables|tick|audit|hourly|backfill) ;;
   *)
-    echo "materialize: 未知档位 MATERIALIZE_SCOPE='${SCOPE}'（允许：full / tables / tick / audit / hourly）" >&2
+    echo "materialize: 未知档位 MATERIALIZE_SCOPE='${SCOPE}'（允许：full / tables / tick / audit / hourly / backfill）" >&2
     exit 2
     ;;
 esac
@@ -418,6 +418,44 @@ MAT_TABLES_ALL=$(mat_psql warehouse -tAc \
   | tr -d '\r' | sed '/^[[:space:]]*$/d' | tr '\n' ' ' || true)
 if [ -z "$MAT_TABLES_ALL" ]; then
   echo "materialize warn: 水位表清单为空（staging 无含 bizday 列的表，或点名查询失败）——各域都不写逐表水位，data_as_of 将停留旧值" >&2
+fi
+
+# ── backfill 档（2026-11-20，#2493）：一次性有界回填 ─────────────────────────────────────
+# 只跑指定的模型（MATERIALIZE_SELECT，空格分隔的 dbt 选择器），窗口由 MATERIALIZE_DBT_VARS
+# 传入（'{"bf_from":"...","bf_to":"..."}'，宏见 dbt/macros/backfill_bounds.sql）。
+# ⚠️ 不写 load_log：回填的是**旧分区**，不动 max 水位；写了反而会把「当天窗口」的台账冲掉。
+# ⚠️ 必须两个 var 都给（护栏在 dbt 侧：backfill_to 与 cutoff_or_backfill 成对）；缺 bf_to
+#    等价全史重跑 = 崩溃路径，这里再挡一道。
+if [ "$SCOPE" = backfill ]; then
+  _log="$_WORK/dbt.backfill.log"
+  _rc="$_WORK/dbt.backfill.rc"
+  if [ -z "${MATERIALIZE_SELECT:-}" ] || [ -z "${MATERIALIZE_DBT_VARS:-}" ]; then
+    echo "MATERIALIZE_FAILED:noop（backfill 档必须同时给 MATERIALIZE_SELECT 与 MATERIALIZE_DBT_VARS，见 macros/backfill_bounds.sql）" >&2
+    exit 2
+  fi
+  case "$MATERIALIZE_DBT_VARS" in
+    *bf_from*) ;;
+    *) echo "MATERIALIZE_FAILED:noop（MATERIALIZE_DBT_VARS 缺 bf_from）" >&2; exit 2 ;;
+  esac
+  case "$MATERIALIZE_DBT_VARS" in
+    *bf_to*) ;;
+    *) echo "MATERIALIZE_FAILED:noop（MATERIALIZE_DBT_VARS 缺 bf_to——只压下界=全史重跑=崩溃路径）" >&2; exit 2 ;;
+  esac
+  echo "── backfill: select=${MATERIALIZE_SELECT} vars=${MATERIALIZE_DBT_VARS} ──"
+  # 退出码用 rc 文件带出（POSIX sh 无 pipefail/PIPESTATUS；与 tables 档同一手法）。
+  ( if mat_dbt $(mat_dbt_args) --select "$MATERIALIZE_SELECT" --vars "$MATERIALIZE_DBT_VARS" 2>&1; then
+      echo 0 >"$_rc"
+    else
+      echo $? >"$_rc"
+    fi ) | tee -a "$_log"
+  _rcv=$(cat "$_rc")
+  if [ "$_rcv" = 0 ]; then
+    echo "MATERIALIZE_OK scope=backfill select=${MATERIALIZE_SELECT}"
+  else
+    echo "MATERIALIZE_FAILED:dbt_build（backfill）" >&2
+    exit 1
+  fi
+  exit 0
 fi
 
 # ── tables 档（2026-11-08，#1679 连带）：table 物化模型每日重建 ──────────────────────────

@@ -252,8 +252,10 @@ export function renderFctMeasures(measures, spec, domains = {}) {
     // ⚠️ 必须用 `incremental_cutoff()` 渲染成**编译期日期字面量**：写 `(select max(bizday) ... from this)`
     // 是关联子查询，DuckDB 计划期拿不到常量 ⇒ 不裁剪（实测 5+ 分钟）。仅对声明 incrementalLookback
     // 的模型生效（其余模型 `is_incremental()` 恒假，加了只是噪音）。
+    // 2026-11-20（#2493）：下界换 cutoff_or_backfill（不传 --vars 时恒等 incremental_cutoff），
+    // 并追加 backfill_to() 上界——两者必须成对（护栏在 registry.test.ts：只压下界=全史重跑=崩溃路径）。
     const incFilter = spec.incrementalLookback
-      ? `\n    {% if is_incremental() %}\n    and ${spec.incrementalKey ?? 'bizday'} >= {{ incremental_cutoff(${spec.incrementalLookback}) }}\n    {% endif %}`
+      ? `\n    {% if is_incremental() %}\n    and ${spec.incrementalKey ?? 'bizday'} >= {{ cutoff_or_backfill(${spec.incrementalLookback}) }}\n    {{ backfill_to() }}\n    {% endif %}`
       : ''
     // 物化闭窗读（2026-11-08 P0）：`MAT_CLOSED_BEFORE=true`（materialize.sh 注入）时排除
     // 「今天且 hour >= 当前小时」——tick 采集每 10 分钟重写当前小时，物化读同一分区会撞 ETag。
