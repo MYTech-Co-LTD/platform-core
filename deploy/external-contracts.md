@@ -13,7 +13,7 @@
 | 企业微信·机器人回调 | 入站回调 URL + token/aeskey | `bot-admin.shanhaiyiguo.com`（openship edge → openclaw:18789） | 换域名/换 edge 需在企微重配，否则群消息无回包 | 群内发一条消息，收到回复 |
 | Casdoor OIDC | redirect URI / issuer | `platform.shanhaiyiguo.com`；应用配置见 openship env `CASDOOR_APPLICATION` | 换域名需改 Casdoor 应用的 redirect | 浏览器登录回跳成功 |
 | GitHub（部署触发 / Checks） | payload URL + secret | `deploy.hookflow.cn`（控制面）；secret 在 GitHub repo/org | 控制面地址变更需改 webhook | 一次 push 能触发部署，Check 状态回写 |
-| 天翼 ZOS（对象存储） | AK/SK；**是否启用 IP 白名单待核实** | openship env（isSecret）：`ZOS_*` / `LEMENG_ZOS_*` | 若启用白名单，换机需加白；否则 `403 AccessDenied` 且不易定位 | 一次采集落湖成功、湖侧可读 |
+| 天翼 ZOS（对象存储） | AK/SK 凭据鉴权，**无 IP 白名单**（2026-11-20 实测：新应用单元出口 `113.249.104.180` 直连售后桶 `ListObjectsV2` 即通） | openship env（isSecret）：`ZOS_*` / `LEMENG_ZOS_*` | 换机**不需要**加白；若某桶单独开了白名单会表现为 `403 AccessDenied`（不易定位，注意区分） | 容器内用同份凭据 `ListObjectsV2`（探针脚本见 issue #2548 关联记录）；采集落湖成功、湖侧可读 |
 | OpenObserve ingest | token + host | 各机 `/etc/openobserve-ingest.env`；OO 机 `10.0.0.3` | 换机需同步该文件；漏了只是「没监控」不报错 | OO 里能看到该机 metrics |
 | openship 通知通道（job 失败推送） | webhook URL | 控制面通知通道配置 | 通道/域名变更需改；注意 job 通知**不进 deliveries feed**，只能开环到群验证 | 故意失败一次 job，群里收到 |
 | 支付宝结算（若启用） | 账号 / 证书 / IP（待核实） | 【待核实】 | — | — |
