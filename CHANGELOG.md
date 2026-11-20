@@ -11,6 +11,10 @@
 
 ## [Unreleased]
 
+## [0.343.0](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.342.0...v0.343.0) - 2026-11-20
+- 【新增】ops: 手工部署排空脚本 drain.sh + 排空协议入文档 ([#2571](https://github.com/MYTech-Co-LTD/platform-core/pull/2571), [e728114](https://github.com/MYTech-Co-LTD/platform-core/commit/e72811446468637ab5e669ad23aa155233337e0a))
+
+
 ## [0.342.0](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.341.0...v0.342.0) - 2026-11-20
 - 【新增】scheduler: 部署前落排空信号，构建窗口内不再 claim 新作业 ([#2570](https://github.com/MYTech-Co-LTD/platform-core/pull/2570), [958399f](https://github.com/MYTech-Co-LTD/platform-core/commit/958399feba4c7896c6c8148069e9b7641c32b3f0))
 
