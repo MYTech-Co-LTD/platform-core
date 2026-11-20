@@ -11,6 +11,11 @@
 
 ## [Unreleased]
 
+## [0.344.0](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.343.0...v0.344.0) - 2026-11-20
+- 【新增】scheduler: 派发/执行拆分（方案 A，默认不改变行为） ([#2580](https://github.com/MYTech-Co-LTD/platform-core/pull/2580), [076a7f1](https://github.com/MYTech-Co-LTD/platform-core/commit/076a7f1eacfc89eb884cafba105d4ed377802c6b))
+- 【修复】openclaw: 启动期 Doctor 改 best-effort wrapper，避免 2026.11.6 竞态致重启循环 ([#2578](https://github.com/MYTech-Co-LTD/platform-core/pull/2578), [95c2250](https://github.com/MYTech-Co-LTD/platform-core/commit/95c2250673ae3a8497fba1b8e792b126c642bf48))
+
+
 ## [0.343.0](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.342.0...v0.343.0) - 2026-11-20
 - 【新增】ops: 手工部署排空脚本 drain.sh + 排空协议入文档 ([#2571](https://github.com/MYTech-Co-LTD/platform-core/pull/2571), [e728114](https://github.com/MYTech-Co-LTD/platform-core/commit/e72811446468637ab5e669ad23aa155233337e0a))
 
