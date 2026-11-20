@@ -192,6 +192,26 @@ item_price 定时探针×5（`sleep N; docker exec console …`）+ `数据面�
 **保留**：42 个无害一次性（取证/实验类，manual 触发无破坏面）+ 全部周期 job + 冒烟类
 （platform-core / salary / 过款助手部署冒烟）。
 
+### scorecard 判据化切流实录（2026-11-20 12:38–12:41 UTC）
+
+| 步 | 结果 |
+|---|---|
+| 部署 | compose 加了两个只读卷 ⇒ 控制面 `COMPOSE_REVIEW_REQUIRED`（CI 不接受 compose 变更，**设计如此**）；按 §5.6 手工部署（先落排空信号、等 `running=0`、带 `acceptComposeChanges:true`） |
+| 挂载 | `/data/ws3120` / `/data/ws64188` 就位，`runs/` 228 个文件、`schedules.json` 可读（0644 root ⇒ uid 1000 可读） |
+| 手动 run | `ok`，1.15s：`scorecard 3120: 36 pipelines · RED=0 AMBER=1`、`64188: 31 · 0/1` — **管线数与当日 CSV 完全一致**（36/31） |
+| 两条 AMBER | `status=interrupted` + `last_ok` 在 SLA 内 ⇒ 不是假红：**本次全量部署重建 console 打断了两条在跑管线**（12:34 的 run 记 `interrupted`） |
+| 探针 | OO `data_plane_probes` 里查到两行 `verdict=WARN`（`scorecard:<book>:<pipeline>`） |
+| 开闸 | `enabled=true` 后**一拍自动补 `next_run_at=2026-11-21 02:37Z`**（#2599 修复的第二个真机用例，无需手工补） |
+| 旧 job | `pipeline-scorecard-3120` / `-64188` 均 `enabled=false`，`nextRunAt=null` |
+
+**有意丢掉的旧步骤**：`scorecard-alert.py`（判红投递）由「探针行 → 桥 → 企微」取代，口径从
+「job 退出码 + 交付通知」变成**告警单出口**；`scorecard-heal.py`（写 `/opt/pipeline-scorecard/heal-*.md`
+诊断计划，不改状态）不再产出——它的内容可由 `detail`（level/status/last_ok）+ `pipeline-repair-runbook.md` 复现。
+
+**运维常识（本次新增）**：compose 变更触发的是**全量**部署 ⇒ 会重建两个 console 容器，正在跑的 duckle
+管线 run 记 `interrupted`；scorecard 会把它报成 AMBER（`status=interrupted` 且 `last_ok` 在 SLA 内），
+**这是真话，不是误报**。要避免就在窗口上避开采集高峰（CST 白天）。
+
 ### P4 留守清单（openship 上为什么还有这些 job）
 
 | job | 为什么留 |
@@ -202,5 +222,5 @@ item_price 定时探针×5（`sleep N; docker exec console …`）+ `数据面�
 | `lemeng-console-gc` / `lemeng-gc-hot-hours` / `删已封版日子小时对象` | 操作 console 容器卷/宿主文件；待 console GC 通道评估（C 类候选） |
 | `askdata-loop-p1` / `demand-mining-shanhai` | 只依赖 HTTP/DB，**可迁**（C 类）——排在 restate 之后 |
 | `platform-core / salary / 过款助手 部署冒烟` | 手动触发的验收入口，保留 |
-| `pipeline-scorecard-*` / `monthly-review` / `verify-*` / `零行巡检` / `叙事质量探针` / Gate-B 探活 | ④ 判据化队列（转 OO/data.monitor 后才关）；Gate-B 已跨机绿，作首个样本 |
+| `monthly-review` / `verify-*` / `叙事质量探针` / Gate-B 探活 | ④ 判据化队列（转 OO/data.monitor 后才关）；**`pipeline-scorecard` 已切走**（`data.scorecard`，2026-11-20），`零行巡检` 已迁 `data.zero_row_check` |
 | openship 内置（备份/GC/DNS/证书/reconcile 等 ~25 个） | 平台自身职能，不属于 Wave 8 范围 |

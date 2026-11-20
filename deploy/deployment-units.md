@@ -130,6 +130,11 @@ SERVICE_IDS=$(curl -sS -H "Authorization: Bearer $TOKEN" \
   ⇒ 带上两个 console；`deploy/artifacts/` ⇒ 带上 artifacts；
   `deploy/data-compose.yml` 变更 ⇒ 退回全量（含 pg_duckdb）。
 - **查不到服务清单 / 拿到空数组 ⇒ 退回全量并在日志里显式告警**（宁可多重启一次，不可漏部署）。
+- ⚠️ **`deploy/data-compose.yml` 变更 = 全量 ⇒ 会重建两个 console 容器**，正在跑的 duckle 管线
+  run 会被打断并记 `interrupted`（2026-11-20 实测：12:34 两条管线被记 interrupted，随后
+  `data.scorecard` 如实报 AMBER）。这是**真话不是误报**——要避免就把窗口挑在采集低谷。
+  同理：compose 变更在控制面会被 `COMPOSE_REVIEW_REQUIRED` 挡住，CI 不接受 compose 变更，
+  必须人按 §5.6 手工部署一次（带 `acceptComposeChanges: true`）。
 
 ### 5.4 首批实测（2026-11-20，应用单元）
 
