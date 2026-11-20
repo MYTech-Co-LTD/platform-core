@@ -394,6 +394,27 @@ describe('registry · 日更件零行巡检（#2590，判据化）', () => {
   })
 })
 
+describe('registry · 需求挖掘（#2560 落点裁决）', () => {
+  it('★ demand.mining 落 platform 域（读 OO 的凭据在应用单元），cron/timeout 与现役一致', () => {
+    // 现役 openship job：`10 21 * * *`（CST 05:10）、timeout 300s、attempts=1。
+    const def = JOB_REGISTRY.find((d) => d.key === 'demand.mining')!
+    expect(def, 'demand.mining').toBeDefined()
+    // 关键断言：**不是 data 域**——数据单元只有摄取凭据，读端点 401（2026-11-20 实测）。
+    expect(def.scope).toBe('platform')
+    expect(def.cron).toBe('10 21 * * *')
+    expect(def.timezone).toBe('UTC')
+    expect(def.timeoutMs).toBe(300000)
+    expect(def.maxAttempts).toBe(1)
+    expect(def.script).toBe('scripts/demand-mining.mjs')
+    expect(def.args ?? []).toEqual([])
+    // 读 OO 的三元组缺一不可，否则作业不进 claim 集合（启动期就红，而不是等到 cron 时刻）。
+    expect(def.requiresEnv).toContain('OO_READ_URL')
+    expect(def.requiresEnv).toContain('OO_READ_ORG')
+    expect(def.requiresEnv).toContain('OO_READ_TOKEN')
+    expect(existsSync(repoPath(def.script))).toBe(true)
+  })
+})
+
 describe('registry · 业务监控 tick（W7-V1）', () => {
   it('★ data.monitor_tick 每分钟一条、脚本在位、不传参数', () => {
     const def = JOB_REGISTRY.find((d) => d.key === 'data.monitor_tick')!
