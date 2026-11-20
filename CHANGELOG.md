@@ -11,6 +11,10 @@
 
 ## [Unreleased]
 
+## [0.340.0](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.339.0...v0.340.0) - 2026-11-20
+- 【新增】data: gc-hot-hours 保守档迁平台调度器（data.hot_hours_gc） ([#2566](https://github.com/MYTech-Co-LTD/platform-core/pull/2566), [12f9cc0](https://github.com/MYTech-Co-LTD/platform-core/commit/12f9cc00259f42cb97153108e1fec8ed74f5cc35))
+
+
 ## [0.339.0](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.338.1...v0.339.0) - 2026-11-20
 - 【新增】data: 小时对象回收迁平台调度器（data.hour_partition_gc） ([#2564](https://github.com/MYTech-Co-LTD/platform-core/pull/2564), [af74849](https://github.com/MYTech-Co-LTD/platform-core/commit/af7484956e7c9530371a81dfadc47213c40f2185))
 
