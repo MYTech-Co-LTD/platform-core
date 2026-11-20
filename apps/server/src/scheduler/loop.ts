@@ -7,10 +7,11 @@
 import type { Pool } from 'pg'
 import { nextRunAt } from './cron'
 import { JOB_REGISTRY, seedSchedules, type JobDef } from './registry'
-import { classify, defaultSpawn, envFor, paramsStdin, type SpawnFn } from './runner'
+import { defaultSpawn, type SpawnFn } from './runner'
+import { executeJob, type JobEventInput } from './execute'
 import {
-  beat, claimDue, claimQueuedManual, clearRetry, finishRun, isDraining, reapQueued, reapStale,
-  scheduleRetry, type ClaimedJob, type RunOutcome,
+  beat, claimDue, claimQueuedManual, countRunning, finishRun, isDraining, reapQueued, reapStale,
+  scheduleRetry, type ClaimedJob,
 } from './store'
 
 export interface SchedulerDeps {
@@ -31,63 +32,13 @@ export interface SchedulerDeps {
    * 任务生命周期事件发射器（宿主注入；生产由 `scripts/notify-worker.mjs` 用 notify 的 enqueueEvent 构造）。
    * **fail-open**：它抛错不得影响 run 终态、重试决策或日志——见 `emitJobEvents`。
    */
-  emit?: (input: {
-    eventKey: string; eventId: string; org: string; payload: Record<string, unknown>
-  }) => Promise<unknown>
-}
-
-/**
- * 失败/超时/死信发事件（W6-P4a）。
- *
- * 三条判据（与 health 的「连续失败 ≥3」**不是同一回事**，两者可并存）：
- *   failed  ⇒ jobs.job.failed（每次失败都发）
- *   timeout ⇒ jobs.job.timeout
- *   尝试耗尽（attempt >= maxAttempts）⇒ 追加 jobs.job.dead
- *
- * 幂等：failed/timeout 按 **runId** 去重（同一 run 重发只一行）；dead 按 **格**（scheduleId+occurrence）
- * 去重——同一格的重试链只发一条死信。
- *
- * fail-open：整段 try/catch，异常只 log；**绝不**改变 outcome、不改重试槽。
- */
-async function emitJobEvents(
-  deps: SchedulerDeps,
-  job: ClaimedJob,
-  outcome: RunOutcome,
-  log: (o: unknown) => void,
-): Promise<void> {
-  if (!deps.emit) return
-  if (outcome.status !== 'failed' && outcome.status !== 'timeout') return
-  const org = job.ownerOrg ?? ''
-  const payload = {
-    scheduleId: String(job.scheduleId),
-    key: job.key,
-    runId: String(job.runId),
-    exitCode: outcome.exitCode ?? null,
-    error: outcome.error ?? null,
-    durationMs: outcome.durationMs ?? null,
-    ownerOrg: job.ownerOrg ?? null,
-    ownerNamespace: job.ownerNamespace ?? null,
-  }
-  try {
-    const kind = outcome.status === 'timeout' ? 'timeout' : 'failed'
-    await deps.emit({
-      eventKey: `jobs.job.${kind}`,
-      eventId: `jobs.job.${kind}:${job.runId}`,
-      org,
-      payload,
-    })
-    if (job.attempt >= job.maxAttempts) {
-      await deps.emit({
-        eventKey: 'jobs.job.dead',
-        eventId: `jobs.job.dead:${job.scheduleId}:${job.occurrence.toISOString()}`,
-        org,
-        payload: { ...payload, attempts: job.attempt },
-      })
-    }
-  } catch (e) {
-    // fail-open：通知入队失败不影响任何业务判定（AGENTS.md「通知不参与业务分支」）。
-    log({ ts: new Date().toISOString(), job: job.key, error: `emit job events failed: ${e instanceof Error ? e.message : String(e)}` })
-  }
+  emit?: (input: JobEventInput) => Promise<unknown>
+  /**
+   * 派发模式（#2574）：把作业交给**独立执行器**，本地不 spawn。
+   * 给了它就完全走这条路径：并发闸门改用 DB 计数（`countRunning`），进程内 Set 只服务本地模式。
+   * 解析（成功/失败）即「派发结果」；执行结果由执行器写台账。
+   */
+  dispatch?: (job: ClaimedJob, manual: boolean) => Promise<void>
 }
 
 export interface TickStats {
@@ -125,48 +76,27 @@ export function createSchedulerLoop(deps: SchedulerDeps) {
 
   /** manual=true：手动触发的运行**不参与重试**（重试槽属于排班侧，手动成功不许清掉排班待跑的重试）。 */
   const runOne = async (job: ClaimedJob, manual: boolean): Promise<void> => {
-    const def = registry.find((d) => d.key === job.key)
-    if (!def) {
-      log({ ts: now().toISOString(), job: job.key, error: 'unknown registry key' })
-      // claim 已建 running 行，必须收尾，否则会一直挡住该排班的下一次 claim。
-      // 代码里已删的 key 无法执行，重试也不会好 ⇒ 判 failed、不排重试。
-      await finishRun(deps.pool, job.runId, { status: 'failed', error: 'unknown registry key' }).catch(() => {})
+    if (deps.dispatch) {
+      // 派发模式：把作业交给执行器，**本地不 spawn**。派发失败要当场收口成 failed，
+      // 否则这行会一直卡 running（执行器从没收到，没人会写终态）。
+      try {
+        await deps.dispatch(job, manual)
+      } catch (e) {
+        const msg = e instanceof Error ? e.message : String(e)
+        await finishRun(deps.pool, job.runId, { status: 'failed', error: `dispatch failed: ${msg}` }).catch(() => {})
+        if (!manual && job.attempt < job.maxAttempts) {
+          await scheduleRetry(deps.pool, job.scheduleId, job.occurrence, job.attempt, new Date(now().getTime() + 60_000)).catch(() => {})
+        }
+        log({ ts: now().toISOString(), job: job.key, error: `dispatch failed: ${msg}` })
+      }
       return
     }
     running.add(job.scheduleId)
     try {
-      // spawn 抛错（含同步抛，如 ENAMETOOLONG）也要落到一个终态；
-      // **终态只由下面这一次 finishRun 写**（catch 分支里绝不再写，否则可能覆盖 reap 的判定）。
-      let outcome: RunOutcome & { retryable?: boolean }
-      try {
-        const res = await spawn({
-          command: 'pnpm', args: ['exec', 'tsx', def.script, ...(def.args ?? [])],
-          env: { ...envFor(job), ...(def.env ?? {}) }, stdin: paramsStdin(job), timeoutMs: job.timeoutMs, cwd,
-        })
-        outcome = classify(res)
-      } catch (e) {
-        // 同步抛 = 参数/环境配置错（重试同一输入不会好）⇒ retryable=false。
-        outcome = { status: 'failed', error: e instanceof Error ? e.message : String(e), retryable: false }
-      }
-      await finishRun(deps.pool, job.runId, outcome) // 自带 where status='running'，不会覆盖 reap 的终态
-      // 事件发射在终态之后、重试记账之前：两者互不依赖，但**发射必须 fail-open**。
-      await emitJobEvents(deps, job, outcome, log)
-      if (!manual) {
-        if (outcome.status !== 'ok' && outcome.retryable && job.attempt < job.maxAttempts) {
-          // 用注入的 now 算重试时间：确定性测试才能固定这个值。
-          await scheduleRetry(deps.pool, job.scheduleId, job.occurrence, job.attempt, new Date(now().getTime() + 60_000))
-        } else {
-          await clearRetry(deps.pool, job.scheduleId)
-        }
-      }
-      log({
-        ts: now().toISOString(), job: job.key, occurrence: job.occurrence.toISOString(),
-        status: outcome.status, exitCode: outcome.exitCode ?? null, durationMs: outcome.durationMs ?? null,
-      })
-    } catch (e) {
-      // finishRun / 重试记账 / 日志自身异常：只记日志，**绝不再调 finishRun**（否则可能覆盖终态）。
-      const msg = e instanceof Error ? e.message : String(e)
-      log({ ts: now().toISOString(), job: job.key, error: `post-run bookkeeping failed: ${msg}` })
+      // 执行与收尾的全部语义（终态/重试/事件）在 execute.ts 里，与独立执行器共用同一份实现（#2574）。
+      await executeJob({
+        pool: deps.pool, registry, spawn, now, cwd, log, emit: deps.emit,
+      }, job, manual)
     } finally {
       running.delete(job.scheduleId)
     }
@@ -191,7 +121,9 @@ export function createSchedulerLoop(deps: SchedulerDeps) {
         return stats
       }
 
-      const free = Math.max(0, max - running.size)
+      // 并发判据：本地模式看进程内在跑；派发模式看 DB 的 running 行（进程内 Set 恒空）。
+      const inFlight = deps.dispatch ? await countRunning(deps.pool, keys) : running.size
+      const free = Math.max(0, max - inFlight)
       if (free === 0) return stats
       const manual = await claimQueuedManual(deps.pool, free, t, { runnerId: instanceId, keys })
       // claimQueuedManual 已把行置 running 并带回 runId，这里直接起进程。
@@ -199,7 +131,7 @@ export function createSchedulerLoop(deps: SchedulerDeps) {
       stats.claimed += manual.length
 
       // runOne 在首个 await 前已 running.add ⇒ 这里直接按 running.size 算，别再扣 manual.length（那是双重扣减）。
-      const room = Math.max(0, max - running.size)
+      const room = Math.max(0, max - (deps.dispatch ? await countRunning(deps.pool, keys) : running.size))
       if (room === 0) return stats
       const due = await claimDue(deps.pool, room, t, nextRunAt, { runnerId: instanceId, keys })
       stats.claimed += due.length

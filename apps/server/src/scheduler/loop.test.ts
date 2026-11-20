@@ -79,6 +79,39 @@ describePg('scheduler loop', () => {
     }, `schedule ${scheduleId} 的 run 终态`)
   }
 
+  it('★ 派发模式：作业交给执行器，本地不 spawn；派发失败当场落 failed（#2574）', async () => {
+    const id = await seed()
+    let spawnCalls = 0
+    const dispatched: Array<{ runId: number; key: string }> = []
+    const loop = createSchedulerLoop({
+      pool, registry: [def()], cwd: process.cwd(), maxConcurrency: 2,
+      spawn: async () => { spawnCalls += 1; return okResult() },
+      dispatch: async (job) => { dispatched.push({ runId: job.runId, key: job.key }) },
+    })
+    const stats = await loop.tick()
+    expect(stats.started).toBe(1)
+    expect(dispatched).toHaveLength(1)
+    expect(spawnCalls).toBe(0) // 本地绝不 spawn
+    // 执行器负责写终态：这里把行收掉，免得影响后续用例。
+    await pool.query("update platform.job_run set status='ok' where schedule_id=$1 and status='running'", [id])
+  })
+
+  it('★ 派发失败 ⇒ 该 run 立刻 failed（不卡 running），排班侧排重试', async () => {
+    const id = await seed()
+    const loop = createSchedulerLoop({
+      pool, registry: [def()], cwd: process.cwd(), maxConcurrency: 2,
+      spawn: async () => okResult(),
+      dispatch: async () => { throw new Error('executor 503') },
+    })
+    await loop.tick()
+    const row = await waitUntil(async () => {
+      const r = await latestRun(id)
+      return r && r.status !== 'running' ? r : null
+    }, '派发失败后的终态')
+    expect(row.status).toBe('failed')
+    expect(String(row.error ?? '')).toMatch(/dispatch failed/)
+  })
+
   it('★ 部署排空信号在 ⇒ 本拍不 claim 任何作业（#2567：构建期间不起新作业）', async () => {
     const id = await seed()
     await pool.query(
