@@ -61,13 +61,19 @@ COPY deploy/openclaw/wecom-app-plugin /opt/plugins/wecom-app-plugin
 #    **不改变运行时加载**（仍在用 state 卷里那份手装副本）；期 2 才切到本路径并注入 bridge。
 # 补丁脚本自带「上游已实现 onReasoningStream 即跳过」判据 ⇒ **官方做了自动让路，删本步骤即可**。
 #
+# 版本 2026.10.30（2026-11-20 升级，Refs #2573）：
+#   · 官方**仍未实现** WS 思考流：dist/src/monitor.js 与 2026.9.15 逐字相同、无 onReasoningStream
+#     ⇒ 下面 apply.mjs 照打（四个锚点各唯一命中，--check 通过）；官方一旦实现会自动让路。
+#   · 该版补齐了新版插件运行时配置 API（config.current / mutateConfigFile），
+#     修 2026.11.6 下 wecomcli-* 工具链仍调旧 loadConfig 的兼容问题。
+#
 # /opt 属 root，而本镜像 `Config.User=node`（实测）⇒ 必须显式切 root 安装、装完切回 node，
 # 否则 RUN 以 node 身份写 /opt 会 EACCES，构建直接失败。（切回 node 与镜像原语义一致。）
 USER root
 COPY deploy/openclaw/wecom-plugin-patch /opt/plugins/wecom-plugin-patch
 RUN mkdir -p /opt/plugins/wecom-openclaw-plugin \
  && npm install --prefix /opt/plugins/wecom-openclaw-plugin --no-audit --no-fund \
-      @wecom/wecom-openclaw-plugin@2026.9.15 \
+      @wecom/wecom-openclaw-plugin@2026.10.30 \
  && node /opt/plugins/wecom-plugin-patch/apply.mjs \
       /opt/plugins/wecom-openclaw-plugin/node_modules/@wecom/wecom-openclaw-plugin \
  && chown -R node:node /opt/plugins/wecom-openclaw-plugin /opt/plugins/wecom-plugin-patch
