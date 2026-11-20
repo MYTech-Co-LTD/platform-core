@@ -74,6 +74,9 @@ export const JOB_REGISTRY: JobDef[] = [
   { key: 'platform.verify_ingest', scope: 'platform', requiresEnv: ['DATABASE_URL','OO_READ_URL','OO_READ_ORG','OO_READ_TOKEN'], script: 'scripts/verify-ingest.mjs', cron: '40 * * * *', timezone: 'UTC', timeoutMs: 300000, maxAttempts: 1, expectedIntervalSecs: 3600, description: '摄入验证（OO askdata_verified → 重放 → verified_questions）' },
   // 叙事质量判据（#2612，Wave 8 ④）：原 openship 每小时的宿主 python（`docker exec <postgres> psql`
   // + `/opt/lemeng-emit-probe.py`）。判据本体已容器化：DSN 直连 + 探针直投，跑在应用单元。
+  // 调度器周度体检（#2602 的复评触发判据）：按 runner 数近 30 天的 `runner lost on worker restart`。
+  // ≥1 ⇒ 判红探针 → 桥 → 企微 ⇒ 逼人回来复评「应用单元部署无栅栏 / 排空信号是否按域分键」。
+  { key: 'platform.scheduler_audit', scope: 'platform', requiresEnv: ['DATABASE_URL','OO_READ_URL','OO_READ_ORG','OO_READ_TOKEN'], script: 'scripts/scheduler-audit.mjs', cron: '0 2 * * 1', timezone: 'UTC', timeoutMs: 120000, maxAttempts: 1, expectedIntervalSecs: 604800, description: '调度器周度体检（runner lost 计数 → OO probes；#2602 复评判据）' },
   { key: 'platform.narrative_health', scope: 'platform', requiresEnv: ['DATABASE_URL','OO_READ_URL','OO_READ_ORG','OO_READ_TOKEN'], script: 'scripts/lemeng/narrative-health.mjs', cron: '23 * * * *', timezone: 'UTC', timeoutMs: 120000, maxAttempts: 1, expectedIntervalSecs: 3600, description: '叙事质量判据（回退率/越界率/p95 → OO probes）' },
   { key: 'platform.verify_regression', scope: 'platform', requiresEnv: ['DATABASE_URL'], script: 'scripts/verify-regression.mjs', args: ['--org', 'shanhaiyiguo-org'], cron: '10 4 * * *', timezone: 'UTC', timeoutMs: 300000, maxAttempts: 1, expectedIntervalSecs: 86400, description: '问数回归（逐指标判红 → OO probes）' },
   // Wave 7 V1：业务监控求值（每实例一条；seed 为 disabled，切流按 deploy/jobs.md 四步开闸）
