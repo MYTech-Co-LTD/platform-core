@@ -1,4 +1,4 @@
-sha256-of-rest a648f6cb150457bad7f90fd560e31878424d66212eb0b002170c30cb7bfad678
+sha256-of-rest a9a20b3ececa4a6926b04d96a30d75e6bdd5af785941e54f51ff545817cee690
 57c67f58b38c8450ddcedf477607e722b51998873b12f84c15ffadc7fe5e81d3 contracts/README.md ${REPO}/contracts/README.md 0644
 fcc8189e1012d5fbb8e2505025bed637dd01c7b4465ab86125d3eaa7f330eff3 contracts/common/_schema.schema.json ${REPO}/contracts/common/_schema.schema.json 0644
 1730119518c3371f3c2ff3492f4c15cd731688047c6d40805ec4d2c65892f3ff contracts/common/_template.contract.json ${REPO}/contracts/common/_template.contract.json 0644
@@ -428,7 +428,7 @@ a477c6828f557fc13d0860edd1240d0b6446d19380270536881ac676cf046814 scripts/duckle/
 7f2b72fc8e4cbfa4e49bce875d91b254d306a2d9a9e6b0d70f46f26874952482 scripts/lemeng/backfill-daily-partitions.py ${REPO}/scripts/lemeng/backfill-daily-partitions.py 0644
 af1d18e4da647b63451fca1ff6bdf5691650ac8525d9e14af0902aa0245c2a87 scripts/lemeng/backfill-history.py ${REPO}/scripts/lemeng/backfill-history.py 0644
 bbcc8969b337591f9431a1a06f0d603deab72d59364ce21722bb3139e7a31100 scripts/lemeng/backfill-retail-order-line.sh /opt/lemeng-backfill.sh 0755
-7f52cab56a1501c425f5537641fe53a345ebe4bdd9d458da8e58949f9b8c50c6 scripts/lemeng/check-zero-row-days.py /opt/lemeng-check-zero-row-days.py 0755
+474bc40f692a2f1b4cba7cf1c02005e9ed2894e3616cf0ebe54aff461694d019 scripts/lemeng/check-zero-row-days.py /opt/lemeng-check-zero-row-days.py 0755
 08480101d431e8429860e10ed21200817c864dc407f9847e8f30c6f805a00d3e scripts/lemeng/compare-console-schedules.py ${REPO}/scripts/lemeng/compare-console-schedules.py 0644
 0ca6c7eed72d0dd69c5fb73cab28dccb36da2d1f6cfba26e5a48dbe450914fac scripts/lemeng/console-gc.sh /opt/lemeng-console-gc.sh 0755
 1ee2533aa08dbf23be165d3e722b6625e423bc8fe7b0697dbc74c145004d0aa9 scripts/lemeng/dbt-failed-nodes.py ${REPO}/scripts/lemeng/dbt-failed-nodes.py 0755
