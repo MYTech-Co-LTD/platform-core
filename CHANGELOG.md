@@ -11,6 +11,11 @@
 
 ## [Unreleased]
 
+## [0.341.0](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.340.0...v0.341.0) - 2026-11-20
+- 【修复】openclaw: 基镜像升到 2026.11.6 latest（Node 24.22.1，修 Brotli CVE） ([#2508](https://github.com/MYTech-Co-LTD/platform-core/pull/2508), [13469cd](https://github.com/MYTech-Co-LTD/platform-core/commit/13469cda30214e2fec01aefdd3123d791bbd09ed))
+- 【新增】scheduler: 停机等子进程收尾（发版不再把在跑的 dbt 作业砍成 0s timeout） ([#2568](https://github.com/MYTech-Co-LTD/platform-core/pull/2568), [18bea5d](https://github.com/MYTech-Co-LTD/platform-core/commit/18bea5de314fe5b10e684865c1f16f25e6700b5f))
+
+
 ## [0.340.0](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.339.0...v0.340.0) - 2026-11-20
 - 【新增】data: gc-hot-hours 保守档迁平台调度器（data.hot_hours_gc） ([#2566](https://github.com/MYTech-Co-LTD/platform-core/pull/2566), [12f9cc0](https://github.com/MYTech-Co-LTD/platform-core/commit/12f9cc00259f42cb97153108e1fec8ed74f5cc35))
 
