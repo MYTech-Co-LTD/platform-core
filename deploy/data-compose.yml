@@ -63,9 +63,12 @@ services:
   # 同一个镜像、同一个入口（scripts/notify-worker.mjs），靠 role env 决定跑哪个 loop：
   #   本服务     = SCHEDULER_ENABLED=1 + NOTIFY_DELIVERY_ENABLED=0（只调度）
   #   应用单元侧 = SCHEDULER_ENABLED=0                        （只投递，见 deploy/docker-compose.yml）
-  # ⚠️ 两边**不要同时**开调度（同一个 job_schedule 会被两个进程各 claim 一次，租约挡得住重复
-  #    执行但台账会出现 owner 丢失/超时噪声）。切流顺序：先起本服务 → 确认它真在 tick →
-  #    再把应用单元置 SCHEDULER_ENABLED=0。
+  # ⚠️ **两个单元各跑一个调度器，按域分工**（#2511 之后的口径，别按旧文「只留一个」操作）：
+  #    本服务 `SCHEDULER_JOB_GROUPS=data`     ⇒ 只 claim `data.*`（dbt/采集/监控 tick）；
+  #    应用单元 `SCHEDULER_JOB_GROUPS=platform` ⇒ 只 claim `platform` 域（notify.*/org.sync/metric.*）。
+  #    两组的排班集合**不相交**，台账里 `job_run.runner_id` 会分别写成 `scheduler-data` /
+  #    `scheduler-platform`（判「谁跑的」看这一列）。把应用单元的 `SCHEDULER_ENABLED` 置 0
+  #    = 平台域作业**没有人跑**（2026-11-20 实测两边心跳都在，是正常态，不是双跑）。
   # ⚠️ openship **忽略 profiles**（issue #369）⇒ 所有用本 compose 的数据项目下次部署都会建本服务。
   #    不需要它的项目（或还没备好 env 的项目）必须在服务行置 `enabled: false`，否则它会因缺
   #    DATABASE_URL 启动即退出（fail-closed，但会一直重启）。

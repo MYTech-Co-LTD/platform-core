@@ -1,4 +1,4 @@
-sha256-of-rest 1391410b6f4ba5f5d1aff60ee674edd77ffaaafb7568766c67818bedeb69784a
+sha256-of-rest fed1d92a16461772a16c797477dc2eddde04885cf09c593572002d0cb075a84c
 57c67f58b38c8450ddcedf477607e722b51998873b12f84c15ffadc7fe5e81d3 contracts/README.md ${REPO}/contracts/README.md 0644
 fcc8189e1012d5fbb8e2505025bed637dd01c7b4465ab86125d3eaa7f330eff3 contracts/common/_schema.schema.json ${REPO}/contracts/common/_schema.schema.json 0644
 1730119518c3371f3c2ff3492f4c15cd731688047c6d40805ec4d2c65892f3ff contracts/common/_template.contract.json ${REPO}/contracts/common/_template.contract.json 0644
@@ -271,7 +271,7 @@ ea0ca47f48b593022185f3f55c44681dbb917b2cf56ae7f92f02bb5c99ad5956 dbt/tests/lemen
 2f4854de06999bf1c602e2aa71b66f6a7f9d6492b68ce681bee1416b1ee91dbe dbt/tests/lemeng/invariant_retail_return_le_sale.sql ${REPO}/dbt/tests/lemeng/invariant_retail_return_le_sale.sql 0644
 7077036c3a377e13c35f15c93c9b61a5b11b78a6df0f62fec7b97b3984b6ced5 dbt/tests/lemeng/warn_category_group_other.sql ${REPO}/dbt/tests/lemeng/warn_category_group_other.sql 0644
 07c69dd1c6fa9180254339e2bc3fb22823f6d3200aeadacff885bddaad5e3678 dbt/tests/lemeng/warn_region_unregistered.sql ${REPO}/dbt/tests/lemeng/warn_region_unregistered.sql 0644
-d17e98a81a9333bfce0e08c2e66a3a55ed4022e3f9bd857077cddbab0b46e205 deploy/data-compose.yml ${REPO}/deploy/data-compose.yml 0644
+432cc5703c764c8917e2bf143cf835a1327affa94bc9d8fc8452a60b0cdb4f6a deploy/data-compose.yml ${REPO}/deploy/data-compose.yml 0644
 a3fc0976e30b18c2e4d4358128e02e02388668007eeff5fa0f4dc6db48be47c0 deploy/dbt/Dockerfile ${REPO}/deploy/dbt/Dockerfile 0644
 8679ed09c1ac5c65194c59fb2044e9edb2b7e5266ce08af4e08bd90bd4c70f6d deploy/duckle/Dockerfile ${REPO}/deploy/duckle/Dockerfile 0644
 54959d3e9338f613b5bfe76779cf5fdf719ac5b3b6248005527ebbd93827c0c2 deploy/duckle/console/DELIVERY.md ${REPO}/deploy/duckle/console/DELIVERY.md 0644
