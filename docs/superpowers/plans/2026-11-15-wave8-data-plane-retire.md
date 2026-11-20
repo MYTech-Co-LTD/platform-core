@@ -192,6 +192,22 @@ item_price 定时探针×5（`sleep N; docker exec console …`）+ `数据面�
 **保留**：42 个无害一次性（取证/实验类，manual 触发无破坏面）+ 全部周期 job + 冒烟类
 （platform-core / salary / 过款助手部署冒烟）。
 
+### verify-* 迁移切流实录（2026-11-20 14:04–14:09 UTC，#2606）
+
+| 步 | 结果 |
+|---|---|
+| 部署 | 应用单元 compose 变更（`notify-worker` 增 `askdata-state` 卷）⇒ 同样被 `COMPOSE_REVIEW_REQUIRED` 挡住 ⇒ 手工带 `acceptComposeChanges:true` 部署（`dep_uJ402AP28WI-S7vn`） |
+| 卷属主 | 镜像内预建 + `chown node` 生效：`/var/lib/askdata` = `node:node`，实测可写（`touch` 成功） |
+| `platform.verify_ingest` | 手动 run `ok`，输出与旧 job **逐字一致**（`fetched=2 weak=2 written=2`）；**第二次** run 显示 `watermark 1795072981424925 -> …`（旧 job 每小时都是 `(none)` —— `/tmp` 随容器重建丢失） |
+| `platform.verify_regression` | 手动 run `failed (exit 1)`：`total=49 pass=48 fail=1 warn=2` —— 与旧 job 04:10 那次**同一形态**（`#1723 branch:order_count` sum 29688→29472），**不是迁移引入**；旧 job 当时也投过 `regression:shanhaiyiguo-org RED` |
+| 探针 | `verify_regression:lemeng:branch:order_count` = `ERR` 在 OO 可查（粒度从「一条聚合行」变「逐指标一行」） |
+| 开闸 | 两条新排班 `enabled=true` 后**一拍内自动补 `next_run_at`**（14:40Z / 次日 04:10Z），未手工补 |
+| 旧 job | `verify-ingest-shanhai`、`verify-regression-shanhai` 均 `enabled=false`、`nextRunAt=null` |
+
+**坑（查证时踩到）**：从控制面 MCP 查 OO 时把 `end_time` 按当时钟算成 13:40，14:04 的探针行自然查不到，
+差点误判「探针没投」。判据是**用容器内 `OO_READ_*` 回读**（`/api/<org>/_search?type=logs`）——那里能看到
+`verify_regression:*` 行在位。**时间窗覆盖不到 ≠ 数据不在**。
+
 ### scorecard 判据化切流实录（2026-11-20 12:38–12:41 UTC）
 
 | 步 | 结果 |
@@ -222,5 +238,5 @@ item_price 定时探针×5（`sleep N; docker exec console …`）+ `数据面�
 | `lemeng-console-gc` / `lemeng-gc-hot-hours` / `删已封版日子小时对象` | 操作 console 容器卷/宿主文件；待 console GC 通道评估（C 类候选） |
 | `askdata-loop-p1` / `demand-mining-shanhai` | 只依赖 HTTP/DB，**可迁**（C 类）——排在 restate 之后 |
 | `platform-core / salary / 过款助手 部署冒烟` | 手动触发的验收入口，保留 |
-| `monthly-review` / `verify-*` / `叙事质量探针` / Gate-B 探活 | ④ 判据化队列（转 OO/data.monitor 后才关）；**`pipeline-scorecard` 已切走**（`data.scorecard`，2026-11-20），`零行巡检` 已迁 `data.zero_row_check` |
+| `monthly-review` / `叙事质量探针` / Gate-B 探活 | ④ 判据化队列（转 OO/data.monitor 后才关）；已切走：`pipeline-scorecard`→`data.scorecard`、`verify-ingest`→`platform.verify_ingest`、`verify-regression`→`platform.verify_regression`（2026-11-20），`零行巡检`→`data.zero_row_check` |
 | openship 内置（备份/GC/DNS/证书/reconcile 等 ~25 个） | 平台自身职能，不属于 Wave 8 范围 |
