@@ -11,6 +11,10 @@
 
 ## [Unreleased]
 
+## [0.350.0](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.349.0...v0.350.0) - 2026-11-20
+- 【新增】data: 月度评审补「到期提醒」探针（WARN，桥→企微） ([#2614](https://github.com/MYTech-Co-LTD/platform-core/pull/2614), [15b9b20](https://github.com/MYTech-Co-LTD/platform-core/commit/15b9b20284eaf09adc5973a31d7cf9e382afae87))
+
+
 ## [0.349.0](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.348.0...v0.349.0) - 2026-11-20
 - 【新增】scheduler: 叙事质量探针迁平台（判据容器化：DSN 直连 + 探针直投） ([#2613](https://github.com/MYTech-Co-LTD/platform-core/pull/2613), [74fbbb4](https://github.com/MYTech-Co-LTD/platform-core/commit/74fbbb4e7e51252885795f3c96a0556f99339bb4))
 - 【新增】data: scorecard 落每日快照卷 + 月度评审迁平台（data.monthly_review） ([#2611](https://github.com/MYTech-Co-LTD/platform-core/pull/2611), [697af26](https://github.com/MYTech-Co-LTD/platform-core/commit/697af26be7b88afd5f0477eabeff8b07cc5e810d))
