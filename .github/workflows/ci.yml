@@ -679,7 +679,7 @@ jobs:
           # 调度器跑在数据单元（deploy/data-compose.yml 的 scheduler 服务），但它的代码在
           # apps/server/src/scheduler/、执行的脚本在 scripts/*.mjs。只改这两处而不触发数据部署
           # ⇒ 新 JobDef/新脚本永远进不了调度器容器（改了等于没改，2026-11-20 加 data.demand_mining 时发现）。
-          DATA_PATH_RE='^(deploy/data-compose\.yml$|deploy/duckle/|deploy/artifacts/|deploy/data-plane\.lock$|scripts/lemeng/|dbt/|duckle/|pipelines/|apps/server/src/scheduler/)'
+          DATA_PATH_RE='^(deploy/data-compose\.yml$|deploy/duckle/|deploy/artifacts/|deploy/data-plane\.lock$|scripts/lemeng/|scripts/ops/|dbt/|duckle/|pipelines/|apps/server/src/scheduler/)'
           hit=0
           if printf '%s\n' "$files" | grep -qE "${DATA_PATH_RE}"; then
             hit=1
