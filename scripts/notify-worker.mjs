@@ -5,6 +5,34 @@ import { pathToFileURL } from 'node:url'
 import { runOnceCli } from '../modules/notify/worker-deps.ts'
 
 /**
+ * 执行器代码挂载自检（#2573，方案 B）。
+ *
+ * 背景：`dbt/`、`scripts/`、`contracts/` 改成从宿主 checkout **只读挂载**后，改代码不再需要重启容器。
+ * 但挂载一旦失效（换机忘了改路径 / compose 回归），容器会**静默回落到镜像里的旧副本**——
+ * 「改了代码没生效」这类问题最难查。所以启动时判定「这些目录到底是不是挂进来的」。
+ *
+ * 判据：bind mount 的 `st_dev` 与容器自己的 `/app` **不同**（overlay vs 宿主文件系统）。
+ * 不依赖任何 CI 写入的文件，也不需要容器里跑 `mount` 命令。
+ *
+ * @param {Array<{dir: string, parent: string}>} targets
+ * @param {(p: string) => {dev: number}} stat
+ * @returns {Array<{dir: string, mounted: boolean, reason?: string}>}
+ */
+export function checkMounts(targets, stat) {
+  return targets.map(({ dir, parent }) => {
+    try {
+      const a = stat(dir)
+      const b = stat(parent)
+      return a.dev === b.dev
+        ? { dir, mounted: false, reason: `st_dev 与 ${parent} 相同（未挂载，用的是镜像内副本）` }
+        : { dir, mounted: true }
+    } catch (e) {
+      return { dir, mounted: false, reason: `stat 失败：${e instanceof Error ? e.message : String(e)}` }
+    }
+  })
+}
+
+/**
  * 停机等待：轮询 `inFlight()` 直到归零或超时，返回**仍未收尾的条数**（0 = 干净退出）。
  *
  * 为什么要它（#2567）：`docker stop` 发 SIGTERM 后只等 `stop_grace_period`（默认 10s）就 SIGKILL，
@@ -147,6 +175,31 @@ if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) 
   }
   /** @type {null | { tick: () => Promise<import('../apps/server/src/scheduler/loop.ts').TickStats>, inFlight: () => number }} */
   let scheduler = null
+  // 执行器代码挂载自检（#2573）：挂载失效会静默用镜像里的旧副本 ⇒ 启动即点名（不致命：
+  // 挂载坏了不该让调度整体停摆，但必须让人一眼看见「改的代码没生效」）。
+  {
+    const { statSync } = await import('node:fs')
+    const mounts = checkMounts(
+      [
+        { dir: '/app/scripts', parent: '/app' },
+        { dir: '/app/dbt', parent: '/app' },
+        { dir: '/app/contracts', parent: '/app' },
+      ],
+      (p) => statSync(p),
+    )
+    const missing = mounts.filter((m) => !m.mounted)
+    if (missing.length === 0) {
+      console.log(JSON.stringify({ ts: new Date().toISOString(), codeMounts: 'bind' }))
+    } else {
+      for (const m of missing) {
+        console.error(JSON.stringify({
+          ts: new Date().toISOString(),
+          codeMountWarning: m.dir, reason: m.reason,
+          impact: '这些目录来自镜像而不是宿主 checkout：改了代码/模型不会生效',
+        }))
+      }
+    }
+  }
   // 停机闸（#2567）：docker stop 先 SIGTERM、等 `stop_grace_period` 再 SIGKILL——**默认只有 10s**。
   // 2026-11-20 实测：01:05 / 03:05 两条 hourly 都是「发版触发 → 构建 5 分钟 → 重启调度器」这个窗口
   // 里被砍成 0s timeout（`output_tail` 全空 = 进程没来得及收尾）。闸门（#2548）只挡得住**触发时**

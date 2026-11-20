@@ -707,6 +707,16 @@ jobs:
             echo "hit=0" >> "$GITHUB_OUTPUT"
             echo "本次变更与数据面无关，跳过数据单元部署"
           fi
+          # 只改「执行器代码」？（#2573 方案 B）——这些目录在 scheduler 容器里是**只读挂载**，
+          # 更新宿主 checkout 即生效，**不需要重建容器**。命中则部署只重建无状态 artifacts
+          # 来完成代码同步，scheduler 保持不动（在跑的作业不受影响）。
+          if printf '%s\n' "$files" | grep -qE '^(dbt/|scripts/|contracts/)' \
+             && ! printf '%s\n' "$files" | grep -qvE '^(dbt/|scripts/|contracts/)'; then
+            echo "code_only=1" >> "$GITHUB_OUTPUT"
+            echo "本次只改执行器代码（dbt/scripts/contracts）⇒ 不重建 scheduler，走挂载生效"
+          else
+            echo "code_only=0" >> "$GITHUB_OUTPUT"
+          fi
           # 子集选择用的三个标志（生命周期分层，见 deploy/deployment-units.md §5）
           if printf '%s\n' "$files" | grep -qE '^deploy/data-compose\.yml$'; then echo "data_compose=1" >> "$GITHUB_OUTPUT"; else echo "data_compose=0" >> "$GITHUB_OUTPUT"; fi
           if printf '%s\n' "$files" | grep -qE '^(deploy/duckle/|duckle/|pipelines/)'; then echo "duckle=1" >> "$GITHUB_OUTPUT"; else echo "duckle=0" >> "$GITHUB_OUTPUT"; fi
@@ -721,6 +731,7 @@ jobs:
           DATA_COMPOSE: ${{ steps.plan.outputs.data_compose }}
           DUCKLE: ${{ steps.plan.outputs.duckle }}
           ARTIFACTS: ${{ steps.plan.outputs.artifacts }}
+          CODE_ONLY: ${{ steps.plan.outputs.code_only }}
         run: |
           set -euo pipefail
           echo "openship(data): project=$PROJECT_ID commit=$COMMIT_SHA"
@@ -809,7 +820,19 @@ jobs:
           # 每次 dbt 变更都重建它们会让正在跑的作业与连接一起断（2026-11-19 实测）。
           # compose 变更 ⇒ 退回全量（可能有新增/删除服务，子集选择会漏）。
           SERVICE_IDS='null'
-          if [ "${DATA_COMPOSE}" != "1" ]; then
+          if [ "${DATA_COMPOSE}" != "1" ] && [ "${CODE_ONLY}" = "1" ]; then
+            # 只改执行器代码：scheduler 里有只读挂载，宿主 checkout 一更新就生效 ⇒ **不重建它**。
+            # 但仍要跑一次部署把代码同步到宿主；借无状态的 artifacts 当载体（重建几秒，无副作用）。
+            SERVICE_IDS=$(curl -sS -H "Authorization: Bearer ${OPENSHIP_TOKEN}" \
+              "${OPENSHIP_URL%/}/api/projects/${PROJECT_ID}/services" \
+              | jq -c '[.services[]? | select(.enabled != false) | select(.name == "artifacts") | .id]' 2>/dev/null || echo 'null')
+            if [ "${SERVICE_IDS}" = "[]" ] || [ "${SERVICE_IDS}" = "null" ]; then
+              echo "::warning::code_only 但找不到可用的 artifacts 服务 ⇒ 退回全量（会重启 scheduler）"
+              SERVICE_IDS='null'
+            else
+              echo "code_only：不重建 scheduler（挂载生效），只重建 ${SERVICE_IDS} 完成代码同步"
+            fi
+          elif [ "${DATA_COMPOSE}" != "1" ]; then
             SERVICE_IDS=$(curl -sS -H "Authorization: Bearer ${OPENSHIP_TOKEN}" \
               "${OPENSHIP_URL%/}/api/projects/${PROJECT_ID}/services" \
               | jq -c --argjson du "${DUCKLE}" --argjson ar "${ARTIFACTS}" \

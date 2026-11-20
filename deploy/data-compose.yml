@@ -110,6 +110,17 @@ services:
       # 物化产物落**命名卷**（不是宿主目录）：跨机迁移时卷能跟着项目走，宿主路径不能。
       # 同项目的 `artifacts` 服务把它**只读**挂成 HTTP 面，应用单元从那里增量拉取。
       - dbt-artifacts:/app/dbt-target
+      # ── 执行器代码挂载（#2573，方案 B）────────────────────────────────────────────
+      # 为什么挂而不是烤进镜像：`dbt/`、`scripts/`、`contracts/` 都是**运行时才读**的文件
+      # （`pnpm exec tsx scripts/x.mjs`、`dbt build` 都在 spawn 时才读盘）。挂进来之后，
+      # 这些文件更新**不需要重建镜像、也不需要重启容器**——部署只更新宿主 checkout，容器无感。
+      # 这直接消掉「改个 dbt 模型就重启执行器、砍掉在跑作业」那条链路（2026-11-20 一天三次）。
+      # ⚠️ 宿主路径与同项目的 `dbt` 服务同源（`/opt/platform-core-data/platform-core`）：换机时必须同步改。
+      # ⚠️ 挂载缺失会**静默回落到镜像里的旧副本** ⇒ worker 启动时做设备号自检并响亮告警
+      #    （见 scripts/notify-worker.mjs 的 *Mount* 检查）。
+      - /opt/platform-core-data/platform-core/dbt:/app/dbt:ro
+      - /opt/platform-core-data/platform-core/scripts:/app/scripts:ro
+      - /opt/platform-core-data/platform-core/contracts:/app/contracts:ro
     # 运行镜像已含 tsx；不要用裸 node 跑 .ts import（与 deploy/docker-compose.yml 的 notify-worker 同）
     command: ['pnpm', 'exec', 'tsx', 'scripts/notify-worker.mjs']
     # 优雅停机（#2567）：docker 默认只给 10s 就 SIGKILL，而本容器在跑的 dbt 采集/审计是 20–90 分钟。
