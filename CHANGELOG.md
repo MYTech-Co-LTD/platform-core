@@ -11,6 +11,10 @@
 
 ## [Unreleased]
 
+## [0.345.0](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.344.2...v0.345.0) - 2026-11-20
+- 【新增】ops: 维护锁——长 exec 任务期间 CI 不部署（#2585） ([#2586](https://github.com/MYTech-Co-LTD/platform-core/pull/2586), [971a5d9](https://github.com/MYTech-Co-LTD/platform-core/commit/971a5d9ed7ea48ce5ecb9e415004e7729fa6f4df))
+
+
 ## [0.344.2](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.344.1...v0.344.2) - 2026-11-20
 - 【修复】deploy: 执行器补 PORT（HEALTHCHECK 端口） ([#2583](https://github.com/MYTech-Co-LTD/platform-core/pull/2583), [e3c11a3](https://github.com/MYTech-Co-LTD/platform-core/commit/e3c11a34365b7ec577abb652ac4482d7b6ea2e23))
 
