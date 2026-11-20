@@ -9,8 +9,8 @@ import { nextRunAt } from './cron'
 import { JOB_REGISTRY, seedSchedules, type JobDef } from './registry'
 import { classify, defaultSpawn, envFor, paramsStdin, type SpawnFn } from './runner'
 import {
-  beat, claimDue, claimQueuedManual, clearRetry, finishRun, reapQueued, reapStale, scheduleRetry,
-  type ClaimedJob, type RunOutcome,
+  beat, claimDue, claimQueuedManual, clearRetry, finishRun, isDraining, reapQueued, reapStale,
+  scheduleRetry, type ClaimedJob, type RunOutcome,
 } from './store'
 
 export interface SchedulerDeps {
@@ -94,6 +94,8 @@ export interface TickStats {
   claimed: number
   started: number
   reaped: number
+  /** 本拍因「部署排空信号」而没有 claim（#2567）。只有为 true 时才算「有意不跑」。 */
+  draining?: boolean
 }
 
 /** 并发上限必须是**正整数**：`Number('') === 0` 会把调度静默停掉，`NaN` 会让 claimDue 的 limit 报库错。 */
@@ -179,6 +181,15 @@ export function createSchedulerLoop(deps: SchedulerDeps) {
       await beat(deps.pool, t, instanceId)
       stats.reaped = await reapStale(deps.pool, t)
       stats.reaped += await reapQueued(deps.pool, t)
+
+      // 部署排空（#2567）：CI 在触发数据单元部署前写 `scheduler_control(key='drain')`，构建期间
+      // 这里**不再 claim**——否则新起的 hourly/审计会在容器重启时被砍成 0s timeout（容器侧优雅停机
+      // 指望不上：docker 的宽限期由部署方定，实测 openship 只等 10s 就 SIGKILL）。
+      // 心跳/对账照跑（上面那两行）：排空不是停摆，台账仍要新鲜。
+      if (await isDraining(deps.pool, t)) {
+        stats.draining = true
+        return stats
+      }
 
       const free = Math.max(0, max - running.size)
       if (free === 0) return stats
