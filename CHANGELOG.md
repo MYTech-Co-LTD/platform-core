@@ -11,6 +11,10 @@
 
 ## [Unreleased]
 
+## [0.348.0](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.347.1...v0.348.0) - 2026-11-20
+- 【新增】data: 采集健康 scorecard 判据化——一条 job 跑两账套，非 GREEN 逐管线进 OO probes ([#2601](https://github.com/MYTech-Co-LTD/platform-core/pull/2601), [51452e5](https://github.com/MYTech-Co-LTD/platform-core/commit/51452e56fa8ea494fe7b08ba57791bdd19e19ce7))
+
+
 ## [0.347.1](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.347.0...v0.347.1) - 2026-11-20
 - 【修复】scheduler: 启用排班后每拍都补算 next_run_at（不再等重启） ([#2599](https://github.com/MYTech-Co-LTD/platform-core/pull/2599), [658f735](https://github.com/MYTech-Co-LTD/platform-core/commit/658f735fbdb2e3132e6253ccde3d91697a4c8f35))
 
