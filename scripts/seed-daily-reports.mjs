@@ -78,30 +78,50 @@ export const DEFINITIONS = [
 ]
 
 /**
- * 播种一份：create-only + publish。
+ * 决策（**纯函数**）：给定「库里是否已有同名行」与「是否 apply」，返回这一份要做什么。
+ *
+ * 2026-11-21 实测教训（本条修复）：早先实现先 `upsertReport` 再判 `--dry-run`，结果 **dry-run 也写库**
+ * （凭空留下两条未发布草稿）。现在把决策提到最前：**dry-run 一律不写**。
+ *
+ * @param {{published_version_id: string|null}|null} existing
+ * @param {boolean} apply
+ * @returns {'skipped-exists-published'|'publish-existing'|'dry-run-publish-existing'|'create-and-publish'|'dry-run-create'}
+ */
+export function planSeed(existing, apply) {
+  if (existing?.published_version_id != null) return 'skipped-exists-published'
+  if (existing) return apply ? 'publish-existing' : 'dry-run-publish-existing'
+  return apply ? 'create-and-publish' : 'dry-run-create'
+}
+
+/**
+ * 播种一份：create-only + publish（已存在但未发布 ⇒ 就地发布，不新建）。
  * @param {any} pool
  * @param {{title: string, note: string, spec: any}} def
  * @param {{apply: boolean, sources: ReadonlySet<string>|null}} opts
  */
 export async function seedOne(pool, def, opts) {
-  const id = await upsertReport(pool, ORG, {
-    title: def.title,
-    metabaseId: 0,
-    embedParams: {},
-    requiredScope: null,
-    renderer: 'platform',
-    spec: def.spec,
-  }, 'create-only')
-  if (id === null) {
-    // 撞名 = 已存在。**不改写**（agent 工具面纪律）；只报告是否有已发布版本，便于人工判断。
-    const existing = await findReportByTitle(pool, def.title)
-    return {
-      title: def.title,
-      status: 'skipped-exists',
-      published: existing?.published_version_id != null,
-    }
+  const existing = await findReportByTitle(pool, def.title)
+  const plan = planSeed(existing, opts.apply)
+  if (plan === 'skipped-exists-published') {
+    return { title: def.title, status: plan, id: existing?.id }
   }
-  if (!opts.apply) return { title: def.title, status: 'dry-run-create', id }
+  if (plan === 'dry-run-publish-existing' || plan === 'dry-run-create') {
+    return { title: def.title, status: plan, id: existing?.id }
+  }
+  // 从这里开始才写库（apply 才到这里）。
+  let id = existing?.id ?? null
+  if (plan === 'create-and-publish') {
+    id = await upsertReport(pool, ORG, {
+      title: def.title,
+      metabaseId: 0,
+      embedParams: {},
+      requiredScope: null,
+      renderer: 'platform',
+      spec: def.spec,
+    }, 'create-only')
+    if (id === null) return { title: def.title, status: 'skipped-exists-published' }
+  }
+  if (id === null) return { title: def.title, status: 'publish-failed:NOT_FOUND' }
   const row = await getReport(pool, ORG, id)
   if (row === null) return { title: def.title, status: 'publish-failed:NOT_FOUND', id }
   const out = await publishVersion(
