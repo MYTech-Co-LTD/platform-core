@@ -50,6 +50,7 @@ import { createRequire } from 'node:module'
 import { mkdirSync, readFileSync, renameSync, writeFileSync } from 'node:fs'
 import { dirname } from 'node:path'
 import { pathToFileURL } from 'node:url'
+import { emitFailure } from './probe-emit.mjs'
 import { runQuery } from '../modules/data/domain/query-service.ts'
 import {
   recordCheck,
@@ -784,7 +785,11 @@ export async function main(argv, env = process.env, overrides = {}) {
     )
     return 0
   } catch (e) {
-    console.error(`verify-ingest 跑不成: ${e instanceof Error ? e.message : String(e)}`)
+    const msg = e instanceof Error ? e.message : String(e)
+    console.error(`verify-ingest 跑不成: ${msg}`)
+    // 告警单出口（#2594）：判红进 OO `data_plane_probes` → 桥 → 企微。
+    // 不改返回码、不抛：投递失败只留痕。测试环境（NODE_ENV=test）不投，避免单测打网络。
+    if (process.env.NODE_ENV !== 'test') await emitFailure('verify_ingest:run', msg, { env })
     return 2
   } finally {
     if (ownPool && pool !== null && typeof pool.end === 'function') await pool.end()

@@ -12,6 +12,7 @@
 //         回归集为空、查询异常）。**空回归集不判绿**——没有基线就没有可信度，假绿比红危险。
 import { createRequire } from 'node:module'
 import { pathToFileURL } from 'node:url'
+import { emitFailure } from './probe-emit.mjs'
 import { runRegression } from '../modules/data/domain/verified-regression.ts'
 // 平台侧装配（读 platform.tenant / tenant_source）：B1 不许 modules/** 读 platform 物理表，
 // 故这段 SQL 在 scripts/tenant-sources.ts，由本脚本解析后把值注入 runRegression。
@@ -90,6 +91,8 @@ if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) 
   // 退出码先落变量、finally 关池后再 exit：`process.exit()` 会立即终止进程，放进 try 里
   // 会跳过 finally ⇒ 连接池不关（job 里表现为连接泄漏/进程被强杀）。
   let code = 2
+  /** @type {Array<{ metricId: string, result: string, diffs: string[] }>} */
+  let failed = []
   try {
     // QueryDeps.adoptedSources 必填：不装配就会把本租户所有源都裁掉（全量假红），故先解析。
     const adoptedSources = await loadAdoptedSources(pool, args.org)
@@ -101,6 +104,7 @@ if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) 
     for (const r of results) {
       const tail = r.diffs.length === 0 ? '' : `  — ${r.diffs.join('; ')}`
       console.log(`${r.result.padEnd(5)} #${r.id} ${r.metricId}  ${r.question}${tail}`)
+      if (r.result !== 'pass') failed.push({ metricId: r.metricId, result: r.result, diffs: r.diffs })
       // 非致命漂移（维度/标识列的行集指纹）：逐行明示，但不改变 pass/fail 判定。
       for (const w of r.warns) console.log(`warn   #${r.id} ${r.metricId}  ${w}`)
     }
@@ -118,10 +122,19 @@ if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) 
       code = count('pass') === results.length ? 0 : 1
     }
   } catch (e) {
-    console.error('verify-regression 跑不成:', e instanceof Error ? e.message : e)
+    const msg = e instanceof Error ? e.message : String(e)
+    console.error('verify-regression 跑不成:', msg)
+    if (process.env.NODE_ENV !== 'test') await emitFailure('verify_regression:run', msg)
     code = 2
   } finally {
     await pool.end()
+  }
+  // 告警单出口（#2594）：逐条失败各投一行（同一指标的持续红由桥的 12h 冷却收敛）。
+  // 不改退出码；测试环境不投。
+  if (process.env.NODE_ENV !== 'test' && code === 1 && failed.length > 0) {
+    for (const f of failed) {
+      await emitFailure(`verify_regression:${f.metricId}`, `${f.result}: ${f.diffs.join('; ').slice(0, 300)}`)
+    }
   }
   process.exit(code)
 }
