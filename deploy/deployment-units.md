@@ -157,6 +157,33 @@ SERVICE_IDS=$(curl -sS -H "Authorization: Bearer $TOKEN" \
   「永远部不了署」）。应用单元不设闸门：其部署不再重启 postgres，platform 域作业都是秒级。
   **治本**仍是 dbt 挂载化（`dbt/` 变更不重启执行器），闸门只是过渡期止血。
 
+### 5.6 部署排空协议（手工部署也必须走，#2567/#2569）
+
+闸门只保证「**触发那一刻**没有作业」，挡不住「构建那 5–10 分钟里新起的作业」——2026-11-20
+一天内砍了三条 hourly（01:05 / 03:05 / 05:05，全是 `dur=0s` + 输出空的形态）。
+
+容器侧「优雅停机」指望不上：`docker stop` 的宽限期由部署方决定，实测 openship 解析了
+compose 的 `stop_grace_period` 却没传给 Docker（新容器 `HostConfig.StopTimeout=None`），
+SIGTERM 后 **10 秒**就 SIGKILL。所以「别起新作业」必须发生在**部署之前**。
+
+协议（CI 已内置；手工部署要自己做）：
+
+| 步骤 | CI | 手工 |
+|---|---|---|
+| ① 等到 `running=0` | 闸门轮询 | `drain.sh wait 1800` |
+| ② 落信号 `scheduler_control(key='drain')` | 闸门确认 0 后自动写 | `drain.sh set 45` |
+| ③ 触发部署 | 自动 | 手动 |
+| ④ 撤信号 | 新容器启动自动清（`schedulerDrainCleared`）；没触发则 CI `trap` 回滚 | `drain.sh clear`（部署没成时必须撤） |
+
+手工部署的标准命令（在 scheduler 容器内，DB 凭据在那里）：
+
+```sh
+sh /app/scripts/ops/drain.sh set 45 && sh /app/scripts/ops/drain.sh wait 1800 && <触发部署>
+```
+
+实测（2026-11-20 13:28）：置信号后 2.7 分钟 `data.monitor_tick`（每分钟一次）**零条**，
+心跳照写；删信号后 4 秒恢复 claim。**排空 ≠ 停摆**。
+
 ## 6. 什么时候回来重读本文
 
 - 想「把某个服务单独部署」时；
