@@ -449,8 +449,20 @@ if [ "$SCOPE" = backfill ]; then
       echo $? >"$_rc"
     fi ) | tee -a "$_log"
   _rcv=$(cat "$_rc")
+  # ⚠️ 假绿防护（2026-11-20 实测踩坑）：选择器没匹配到任何节点时 dbt **退出码是 0**，
+  # 只在日志里打 "Nothing to do"——不拦就是空转绿（同 duckle「ok ≠ 求过值」教训）。
+  # backfill 的判据：没有 "Nothing to do"，且汇总行 PASS>0（本档至少要建成模型节点）。
+  if grep -q 'Nothing to do' "$_log"; then
+    echo "MATERIALIZE_FAILED:noop（backfill 选择器未匹配到节点：${MATERIALIZE_SELECT}）" >&2
+    exit 1
+  fi
+  _bf_pass="$(sed -n 's/.*PASS=\([0-9]*\).*/\1/p' "$_log" | tail -n 1)"
+  if [ -z "${_bf_pass}" ] || [ "${_bf_pass}" = "0" ]; then
+    echo "MATERIALIZE_FAILED:noop（backfill 无 PASS 汇总行）" >&2
+    exit 1
+  fi
   if [ "$_rcv" = 0 ]; then
-    echo "MATERIALIZE_OK scope=backfill select=${MATERIALIZE_SELECT}"
+    echo "MATERIALIZE_OK scope=backfill select=${MATERIALIZE_SELECT} pass=${_bf_pass}"
   else
     echo "MATERIALIZE_FAILED:dbt_build（backfill）" >&2
     exit 1
