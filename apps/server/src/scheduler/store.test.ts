@@ -4,8 +4,8 @@ import { Pool } from 'pg'
 import { runMigrations } from '../migrate'
 import { nextRunAt } from './cron'
 import {
-  beat, claimDue, claimQueuedManual, clearRetry, finishRun, hasRunning, reapLostRunners, reapQueued, reapStale, scheduleRetry,
-  softDeleteSchedule,
+  beat, claimDue, claimQueuedManual, clearRetry, finishRun, hasRunning, isDraining, reapLostRunners,
+  reapQueued, reapStale, scheduleRetry, softDeleteSchedule,
 } from './store'
 
 const dbUrl = process.env.DATABASE_URL
@@ -355,5 +355,50 @@ describePg('scheduler store', () => {
     const { rows } = await pool.query("select count(*)::int as n from platform.job_heartbeat where id='jobtest'")
     expect(rows[0].n).toBe(1)
     await pool.query("delete from platform.job_heartbeat where id='jobtest'")
+  })
+})
+
+describePg('scheduler 排空信号（#2567）', () => {
+  let pool: Pool
+  beforeAll(async () => { pool = new Pool({ connectionString: dbUrl }); await runMigrations(pool, 'platform', dir) })
+  afterAll(async () => {
+    await pool.query("delete from platform.scheduler_control where key='drain'")
+    await pool.end()
+  })
+
+  it('没有信号 ⇒ 不排空', async () => {
+    await pool.query("delete from platform.scheduler_control where key='drain'")
+    expect(await isDraining(pool, new Date())).toBe(false)
+  })
+
+  it('★ 信号在且未过期 ⇒ 排空（构建期间不再 claim）', async () => {
+    const until = Date.now() + 60_000
+    await pool.query(
+      `insert into platform.scheduler_control(key,value) values ('drain', jsonb_build_object('until_ms', $1::bigint))
+       on conflict (key) do update set value = excluded.value`,
+      [until],
+    )
+    expect(await isDraining(pool, new Date())).toBe(true)
+  })
+
+  it('★ 已过期 ⇒ 不排空（部署没落地也不会永久停摆）', async () => {
+    const until = Date.now() - 1_000
+    await pool.query(
+      `insert into platform.scheduler_control(key,value) values ('drain', jsonb_build_object('until_ms', $1::bigint))
+       on conflict (key) do update set value = excluded.value`,
+      [until],
+    )
+    expect(await isDraining(pool, new Date())).toBe(false)
+  })
+
+  it('★ 信号在但 `until_ms` 缺失/非法 ⇒ 按排空处理（宁可少跑一轮，也不在部署窗口起作业）', async () => {
+    await pool.query(
+      "insert into platform.scheduler_control(key,value) values ('drain','{}'::jsonb) on conflict (key) do update set value = excluded.value",
+    )
+    expect(await isDraining(pool, new Date())).toBe(true)
+    await pool.query(
+      "insert into platform.scheduler_control(key,value) values ('drain', jsonb_build_object('until_ms','not-a-number')) on conflict (key) do update set value = excluded.value",
+    )
+    expect(await isDraining(pool, new Date())).toBe(true)
   })
 })

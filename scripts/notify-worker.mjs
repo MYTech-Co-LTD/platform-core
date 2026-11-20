@@ -180,6 +180,19 @@ if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) 
     if (reapedLost > 0) {
       console.log(JSON.stringify({ ts: new Date().toISOString(), schedulerReapedLost: reapedLost }))
     }
+    // 部署排空信号（#2567）：**本容器能起来 = 上一次部署已落地** ⇒ 清掉信号、恢复 claim。
+    // 只由数据单元的清（CI 只为数据单元写这个信号；应用单元清掉会把数据单元一起放行）。
+    if (schedCfg.groups.includes('data')) {
+      try {
+        const cleared = await pool.query("delete from platform.scheduler_control where key='drain'")
+        if ((cleared.rowCount ?? 0) > 0) {
+          console.log(JSON.stringify({ ts: new Date().toISOString(), schedulerDrainCleared: cleared.rowCount }))
+        }
+      } catch (e) {
+        // 42P01 = 表还没建（应用单元先起、迁移还没跑）。清不了 = 本来也没有信号，**不能因此起不来**。
+        if (/** @type {{ code?: string }} */ (e).code !== '42P01') throw e
+      }
+    }
     // 孤儿排班（#2511）：代码里已删的 key 仍留在 job_schedule 且 enabled ⇒ 由于 claim 按 key 收口，
     // 它**不会被任何单元领取**（改造前是每个 occurrence 刷一条必然失败的台账）。这里启动时点名，
     // 让「删了代码忘了停排班」在部署日志里可见，而不是变成一条永远不跑的静默行。

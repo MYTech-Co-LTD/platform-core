@@ -738,6 +738,26 @@ jobs:
           GATE_MAX_WAIT=35   # 分钟
           GATE_INTERVAL=60   # 秒
           GATE_QUERY='psql "$DATABASE_URL" -Atc "select coalesce(count(*),0) from platform.job_run where status = '"'"'running'"'"'"'
+          # 排空信号（#2567）：闸门只保证「触发那一刻没作业」，挡不住「构建那 5–10 分钟里新起的作业」。
+          # 触发部署前先落一行 `drain`，worker 每拍看到它就**不再 claim**；构建期间自然不会有新作业，
+          # 重启时也就没有可砍的。新容器启动即清除（见 scripts/notify-worker.mjs）；部署没落地则由
+          # `until_ms`（45 分钟）兜底，不会永久停摆。
+          DRAIN_SET_QUERY='psql "$DATABASE_URL" -Atc "insert into platform.scheduler_control(key,value) values ('"'"'drain'"'"', jsonb_build_object('"'"'until_ms'"'"', (extract(epoch from now() + interval '"'"'45 minutes'"'"') * 1000)::bigint)) on conflict (key) do update set value = excluded.value, updated_at = now()"'
+          DRAIN_DEL_QUERY='psql "$DATABASE_URL" -Atc "delete from platform.scheduler_control where key = '"'"'drain'"'"'"'
+          DRAIN_SET=0
+          # 只有「信号落了但部署没触发」才回滚信号——否则会让数据单元白等 45 分钟。
+          # 部署已触发时**不清**：信号要活到新容器起来（构建期间正是最容易起新作业的窗口）。
+          cleanup_drain() {
+            if [ "${DRAIN_SET}" = "1" ] && [ -z "${DEP_ID:-}" ]; then
+              CLEAR_BODY=$(jq -nc --arg cmd "$DRAIN_DEL_QUERY" '{command:$cmd, timeoutMs: 15000}')
+              curl -sS -X POST \
+                -H "Authorization: Bearer ${OPENSHIP_TOKEN}" -H 'Content-Type: application/json' \
+                -d "${CLEAR_BODY}" \
+                "${OPENSHIP_URL%/}/api/projects/${PROJECT_ID}/services/${SCHEDULER_SVC_ID}/exec" >/dev/null 2>&1 || true
+              echo "部署未触发 ⇒ 已清除排空信号（否则数据单元会白等 45 分钟）"
+            fi
+          }
+          trap cleanup_drain EXIT
           SCHEDULER_SVC_ID=$(curl -sS -H "Authorization: Bearer ${OPENSHIP_TOKEN}" \
             "${OPENSHIP_URL%/}/api/projects/${PROJECT_ID}/services" \
             | jq -r '.services[]? | select(.name == "scheduler") | .id' 2>/dev/null || true)
@@ -758,6 +778,18 @@ jobs:
               fi
               if [ "${RUNNING}" = "0" ]; then
                 echo "闸门：无运行中作业 ⇒ 放行部署"
+                # 同一通道写排空信号（与闸门同一条 exec 通路，权限一致）。
+                DRAIN_BODY=$(jq -nc --arg cmd "$DRAIN_SET_QUERY" '{command:$cmd, timeoutMs: 15000}')
+                DRAIN_JSON=$(curl -sS -X POST \
+                  -H "Authorization: Bearer ${OPENSHIP_TOKEN}" -H 'Content-Type: application/json' \
+                  -d "${DRAIN_BODY}" \
+                  "${OPENSHIP_URL%/}/api/projects/${PROJECT_ID}/services/${SCHEDULER_SVC_ID}/exec" 2>/dev/null || true)
+                if [ "$(printf '%s' "${DRAIN_JSON}" | jq -r '.data.exitCode // .exitCode // "x"' 2>/dev/null)" = "0" ]; then
+                  DRAIN_SET=1
+                  echo "排空信号已落：构建期间 worker 不再 claim 新作业"
+                else
+                  echo "::warning::排空信号写入失败（不阻断部署）：${DRAIN_JSON:0:200}"
+                fi
                 break
               fi
               if [ "${gate_waited}" -ge $((GATE_MAX_WAIT * 60)) ]; then

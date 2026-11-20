@@ -79,6 +79,33 @@ describePg('scheduler loop', () => {
     }, `schedule ${scheduleId} 的 run 终态`)
   }
 
+  it('★ 部署排空信号在 ⇒ 本拍不 claim 任何作业（#2567：构建期间不起新作业）', async () => {
+    const id = await seed()
+    await pool.query(
+      `insert into platform.scheduler_control(key,value)
+       values ('drain', jsonb_build_object('until_ms', (extract(epoch from now() + interval '10 minutes') * 1000)::bigint))
+       on conflict (key) do update set value = excluded.value`,
+    )
+    let spawnCalls = 0
+    const loop = createSchedulerLoop({
+      pool, registry: [def()], cwd: process.cwd(), maxConcurrency: 2,
+      spawn: async () => { spawnCalls += 1; return okResult() },
+    })
+    try {
+      const stats = await loop.tick()
+      expect(stats.draining).toBe(true)
+      expect(stats.claimed).toBe(0)
+      expect(spawnCalls).toBe(0)
+      // 排空 ≠ 停摆：心跳照留（否则健康面会把「有意不跑」判成陈旧）。
+      const beat = await pool.query("select 1 from platform.job_heartbeat limit 1")
+      expect(beat.rows.length).toBeGreaterThan(0)
+      const ran = await pool.query("select 1 from platform.job_run where schedule_id=$1", [id])
+      expect(ran.rows.length).toBe(0)
+    } finally {
+      await pool.query("delete from platform.scheduler_control where key='drain'")
+    }
+  })
+
   it('★ tick 不等子进程结束就返回（长任务不阻塞投递 loop）', async () => {
     const id = await seed()
     let finished = false

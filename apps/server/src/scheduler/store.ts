@@ -335,6 +335,39 @@ export async function hasRunning(pool: Pool, scheduleId: number): Promise<boolea
   return rows.length > 0
 }
 
+/**
+ * 部署排空信号（#2567）：`platform.scheduler_control(key='drain')` 存在且 `value.until_ms` 未过期 ⇒ true。
+ *
+ * 为什么不是「优雅停机」就够了：`docker stop` 的宽限期由部署方定，openship 只等默认 10s 就 SIGKILL
+ * （2026-11-20 实测 `HostConfig.StopTimeout=None`）。所以「别起新作业」必须发生在**部署之前**。
+ *
+ * 语义细节（都朝「不静默停摆」方向）：
+ *   · 行在、`until` 缺失或解析不了 ⇒ **算排空**（信号是 CI 与人写的，宁可少跑一轮也别在部署窗口起作业）；
+ *   · 行在、`until` 已过 ⇒ 不算（部署没落地也不会永久停摆）；
+ *   · 表不存在（迁移未跑，42P01）⇒ false（此时根本没有信号；抛错会被上层吞成「本拍不 claim」，更糟）。
+ */
+export async function isDraining(pool: Pool, now: Date): Promise<boolean> {
+  let rows: Array<{ until_ms: string | null }>
+  try {
+    ;({ rows } = await pool.query<{ until_ms: string | null }>(
+      "select value->>'until_ms' as until_ms from platform.scheduler_control where key='drain'",
+    ))
+  } catch (e) {
+    // 42P01 = undefined_table：迁移还没跑到（应用单元先起、数据单元后起的那一小段）。
+    // 这时**没有**排空信号可言 ⇒ false。绝不能抛：tick 抛错会被上层 catch 成「本拍不 claim」，
+    // 效果与排空一样糟，而且台账里看不出原因。
+    if ((e as { code?: string }).code === '42P01') return false
+    throw e
+  }
+  if (rows.length === 0) return false
+  const raw = rows[0].until_ms
+  // 到期时间用 **epoch 毫秒**（`until_ms`）而不是 ISO 串：CI 里写的是 SQL，跨 shell/JSON 层层转义
+  // 之后 ISO 串的引号最容易出错；数字串没有引号问题，解析也不依赖实现细节。
+  const until = Number(raw)
+  if (raw === null || raw === undefined || !Number.isFinite(until)) return true
+  return until > now.getTime()
+}
+
 /** 回收「running 超时」的僵尸行：阈值取 2× timeout_ms（给正常执行留一倍余量）。 */
 export async function reapStale(pool: Pool, now: Date): Promise<number> {
   const { rowCount } = await pool.query(
