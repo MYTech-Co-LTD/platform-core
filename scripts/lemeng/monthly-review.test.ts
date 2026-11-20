@@ -88,3 +88,13 @@ describe('monthly-review runBaseline', () => {
     expect(r.rc).toBe(0)
   })
 })
+
+describe('monthly-review 到期提醒（#2610）', () => {
+  it('★ 用 WARN 而不是 OK：桥只转发非 OK，用 OK 等于不发', async () => {
+    const mod = await import('./monthly-review.mjs')
+    const row = mod.dueRow(14)
+    expect(row.check).toBe('scorecard_baseline:monthly_review_due')
+    expect(row.verdict).toBe('WARN')
+    expect(row.detail).toContain('覆盖 14 天')
+  })
+})
