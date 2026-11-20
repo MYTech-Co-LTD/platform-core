@@ -1,4 +1,4 @@
-sha256-of-rest c0afc219a107221833e670e2b85e5abc00874f8af02f92b902d83decb22517d0
+sha256-of-rest f1391ddae7dd8ca2dd2132af4d111337fc2d2eff29640f22536f02c507b51450
 57c67f58b38c8450ddcedf477607e722b51998873b12f84c15ffadc7fe5e81d3 contracts/README.md ${REPO}/contracts/README.md 0644
 fcc8189e1012d5fbb8e2505025bed637dd01c7b4465ab86125d3eaa7f330eff3 contracts/common/_schema.schema.json ${REPO}/contracts/common/_schema.schema.json 0644
 1730119518c3371f3c2ff3492f4c15cd731688047c6d40805ec4d2c65892f3ff contracts/common/_template.contract.json ${REPO}/contracts/common/_template.contract.json 0644
@@ -55,7 +55,7 @@ e77275ffb58163daef3a299c12cd86df87b8a9310430a9ad939d3c55ba569d6e dbt/models/leme
 17311adaca856f8ec5358e83c7df8a20ab1944210aa1cf295e30ac0af45ec87b dbt/models/lemeng/marts/fct_client_expense.sql ${REPO}/dbt/models/lemeng/marts/fct_client_expense.sql 0644
 373d5720e8828a0c4628551cd2be6c1cfa178ca8da4ed09a4ebb1e9685182e96 dbt/models/lemeng/marts/fct_contribution.sql ${REPO}/dbt/models/lemeng/marts/fct_contribution.sql 0644
 da1438f70a42e822e531a46fb48ea9508badebe5b78fc1cfb486a8a8e493cd91 dbt/models/lemeng/marts/fct_hq_outbound.sql ${REPO}/dbt/models/lemeng/marts/fct_hq_outbound.sql 0644
-bd577ef6b156e6b7e91cbe4added5edec0a0807a683ea9fdc1b73a592eab41f6 dbt/models/lemeng/marts/fct_inventory_snapshot.sql ${REPO}/dbt/models/lemeng/marts/fct_inventory_snapshot.sql 0644
+70bf99b6d637e5d44742dca4e6d69720cd5ea7f4a08ac9da2a24762c48f6cbc5 dbt/models/lemeng/marts/fct_inventory_snapshot.sql ${REPO}/dbt/models/lemeng/marts/fct_inventory_snapshot.sql 0644
 b6d2b5114e4d2c6990ae5792858301c34ec79f6eec338705175e2415840c81d7 dbt/models/lemeng/marts/fct_loss_adjustment.sql ${REPO}/dbt/models/lemeng/marts/fct_loss_adjustment.sql 0644
 bf09e065bd157b35e93d4f70a1c6305bbf6174c6da7f2af3b6ad59573acb6d97 dbt/models/lemeng/marts/fct_member_summary.sql ${REPO}/dbt/models/lemeng/marts/fct_member_summary.sql 0644
 adf9abdfbc5edc16246d8719052dbd7ffa612779653afc961c87ed80a68276d5 dbt/models/lemeng/marts/fct_order_event.sql ${REPO}/dbt/models/lemeng/marts/fct_order_event.sql 0644

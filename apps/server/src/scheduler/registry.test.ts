@@ -267,6 +267,7 @@ describe('registry · dbt 对账分族（full / window，#2428）', () => {
     //（publish-dims / 全史 CTAS 两次实证）。接入回填宏的模型逐个登记在下面。
     const models = [
       'fct_hq_outbound', 'fct_client_expense', 'fct_outbound_region', 'fct_transfer_item',
+      'fct_inventory_snapshot',
     ]
     for (const m of models) {
       const text = readFileSync(repoPath(`dbt/models/lemeng/marts/${m}.sql`), 'utf8')
