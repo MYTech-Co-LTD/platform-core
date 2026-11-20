@@ -43,6 +43,8 @@ const def: JobDef = {
 
 const SCHEDULE_INSERT_RE = /^insert into platform\.job_schedule\b/i
 const HEARTBEAT_INSERT_RE = /^insert into platform\.job_heartbeat\b/i
+/** 补算「启用着但没有下一次到期时刻」的查询（#2598）。 */
+const FILL_NEXT_RUN_RE = /^select id, key, cron, timezone from platform\.job_schedule[\s\S]*next_run_at is null/i
 
 describe('scheduler 接线契约', () => {
   it('空 registry 的 tick 不 seed 排班（但仍打心跳，证明记录器真的看得到 insert）', async () => {
@@ -63,6 +65,18 @@ describe('scheduler 接线契约', () => {
     const stats = await loop.tick()
     expect(stats.started).toBe(0)
     expect(sqls.some((s) => SCHEDULE_INSERT_RE.test(s))).toBe(true)
+  })
+
+  it('★ 补算 next_run_at 每拍都做（#2598：DB 置 enabled=true 后不许等重启才排上）', async () => {
+    const { pool, sqls } = recordingPool()
+    const loop = createSchedulerLoop({ pool: pool as never, registry: [], maxConcurrency: 1, cwd: '/' })
+    await loop.tick()
+    const firstTickEnd = sqls.length
+    await loop.tick()
+    // 变异靶点：把 `fillNextRunAt` 挪回「只在首拍」⇒ 第二拍没有任何补算 SQL ⇒ 本例红。
+    expect(sqls.slice(firstTickEnd).some((s) => FILL_NEXT_RUN_RE.test(s))).toBe(true)
+    // 正向对照：首拍也必须有（否则上面那条在「两拍共用一次补算」的实现下也能绿）。
+    expect(sqls.slice(0, firstTickEnd).some((s) => FILL_NEXT_RUN_RE.test(s))).toBe(true)
   })
 
   it('★ 心跳缺失 ⇒ ok=false 且原因点名心跳（不是「看起来没作业就算健康」）', async () => {
