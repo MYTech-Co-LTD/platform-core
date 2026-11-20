@@ -127,11 +127,14 @@ dbt 类任务落**平台 scheduler + 镜像内 dbt 工具链**（选项 1）：
 | job | 它要什么 | 调度器容器有没有 | 判定 |
 |---|---|---|---|
 | `删已封版日子小时对象` | ZOS 五键 + python3 + HEAD | ✅ 五键在 env、python 3.11、脚本在镜像 `/app/scripts/lemeng/` | **C 已迁**（#2563）；容器内 dry-run 实测输出一致 |
-| `demand-mining-shanhai` | `DATABASE_URL` + OO **读**凭据 | ⚠️ DB 有；**读凭据没有** | **C 受阻**（#2560） |
+| `demand-mining-shanhai` | `DATABASE_URL` + OO **读**凭据 | ✅ 数据单元没有读凭据，但**应用单元有**（`OO_READ_*`） | **C 已迁**（`demand.mining`，platform 域，#2597）：落点从数据单元改成应用单元，**不新增密钥** |
 | `askdata-loop-p1` | 宿主卷 `…openclaw_state/_data` + `/etc/openobserve-ingest.env` + python3 | ❌ 三样都不可见 | **A 留守** |
 | `lemeng-console-gc` | console 卷的**宿主路径** + `docker exec duckle cache clear` | ❌ 跨容器删卷 | **A 留守**（等 console 自己出 GC 端点） |
 | `lemeng-gc-hot-hours` | 同「删已封版日子小时对象」，只是窗口更保守（上海今天−2） | ✅ 同上 | **C 已迁**（`data.hot_hours_gc`，#2565）：与激进档共用一个入口，窗口靠 `def.env` 给死 |
 | `pipeline-scorecard-3120` / `-64188` | console workspace（`runs/*.json`、freshness、schedules、owners）+ python3 | ⚠️ 原先靠宿主路径 + `docker cp`/`docker exec`；**卷是命名卷**，可直接**只读**挂进容器 | **C 已迁**（#2600）：`data.scorecard` 一条循环两账套，判据本体一行不改；非 GREEN 逐管线投 OO probes |
+| `verify-ingest-shanhai` / `verify-regression-shanhai` | `docker exec` 进 server 容器 + 水位写 `/tmp`（每次重建丢） | ✅ 应用单元本来就有 `DATABASE_URL` + `OO_READ_*` | **C 已迁**（`platform.verify_ingest` / `platform.verify_regression`，#2606）：水位进命名卷 `askdata-state`，首次跨轮前进 |
+| `pipeline-monthly-review` | 宿主 `/opt/pipeline-scorecard/*.csv`（每日 job 写的） | ✅ 每日 job 改把快照写命名卷 `scorecard-history` | **C 已迁**（`data.monthly_review`，#2610）：历史 28 个 CSV 迁入卷，覆盖 14 天跑通；补回「到期提醒」WARN 探针 |
+| `叙事质量探针` | 宿主 python：`docker exec <postgres> psql` + `/opt/lemeng-emit-probe.py` | ✅ 判据容器化：`--dsn` 直连 + 探针直投 | **C 已迁**（`platform.narrative_health`，#2612）：三项与旧 job 逐字一致（p95=32930ms） |
 
 > **凭据实测细节（#2560）**：数据单元 `OO_AUTH`（长 52）对 `/streams`、`/data_alerts`、`/organizations`
 > 全 **401**；应用单元 `OO_READ_TOKEN`（长 88）同路径 **200**。⚠️ 但这**不是缺陷**——
@@ -228,6 +231,23 @@ item_price 定时探针×5（`sleep N; docker exec console …`）+ `数据面�
 管线 run 记 `interrupted`；scorecard 会把它报成 AMBER（`status=interrupted` 且 `last_ok` 在 SLA 内），
 **这是真话，不是误报**。要避免就在窗口上避开采集高峰（CST 白天）。
 
+### ④ 判据化收口（2026-11-20 一天内四条，全部带真机证据）
+
+| 原 openship job | 落到 | 判据/比对结果 |
+|---|---|---|
+| `pipeline-scorecard-3120` / `-64188` | `data.scorecard`（一条循环两账套） | 36 / 31 条与当日 CSV 完全一致；非 GREEN 逐管线 → OO probes |
+| `verify-ingest-shanhai` / `verify-regression-shanhai` | `platform.verify_ingest` / `platform.verify_regression` | 输出逐字一致；**水位首次跨轮前进**（旧 job 每小时 `(none)`） |
+| `pipeline-monthly-review` | `data.monthly_review`（读快照卷） | 14 天 / 909 管线-天；历史 28 个 CSV 迁入卷；「到期提醒」补成 WARN 探针 |
+| `叙事质量探针` | `platform.narrative_health` | 三项与旧 job 逐字一致（p95=32930ms）；改 DSN 直连，宿主形态留作回滚 |
+
+**共同的三条工程经验（都已固化进代码/护栏）**：
+1. **命名卷属主只在首建时从镜像继承** ⇒ 镜像里必须预建目录并 `chown node`（`askdata` / `scorecard` /
+   `executor-auth` 同一个坑，第三次复用时已变成惯例）。
+2. **新写的落盘路径要回答「谁回收」**：scorecard 快照 = 一天一份、同日覆盖、同 job prune 120 天。
+3. **改生产者要盘消费者**：scorecard 停写宿主 CSV ⇒ 月度评审数据源断链（#2610），这次是当天就发现并接上。
+
+④ 只剩 `平台↔仓库接线探活`（Gate-B）——它要跨机比两侧状态，容器里没有对端视图，见留守清单。
+
 ### P4 留守清单（openship 上为什么还有这些 job）
 
 | job | 为什么留 |
@@ -238,5 +258,5 @@ item_price 定时探针×5（`sleep N; docker exec console …`）+ `数据面�
 | `lemeng-console-gc` / `lemeng-gc-hot-hours` / `删已封版日子小时对象` | 操作 console 容器卷/宿主文件；待 console GC 通道评估（C 类候选） |
 | `askdata-loop-p1` / `demand-mining-shanhai` | 只依赖 HTTP/DB，**可迁**（C 类）——排在 restate 之后 |
 | `platform-core / salary / 过款助手 部署冒烟` | 手动触发的验收入口，保留 |
-| `monthly-review` / `叙事质量探针` / Gate-B 探活 | ④ 判据化队列（转 OO/data.monitor 后才关）；已切走：`pipeline-scorecard`→`data.scorecard`、`verify-ingest`→`platform.verify_ingest`、`verify-regression`→`platform.verify_regression`（2026-11-20），`零行巡检`→`data.zero_row_check` |
+| `平台↔仓库接线探活`（Gate-B，每 5 分钟） | ④ 里**最后一条**：要跨机比「平台↔仓库」两侧状态，容器侧没有对端视图；待评估能否改为从 artifacts/私网 HTTP 取对端。其余 ④ 已全部切走（2026-11-20）：`pipeline-scorecard`→`data.scorecard`、`verify-*`→`platform.verify_*`、`monthly-review`→`data.monthly_review`、`叙事质量探针`→`platform.narrative_health`、`零行巡检`→`data.zero_row_check` |
 | openship 内置（备份/GC/DNS/证书/reconcile 等 ~25 个） | 平台自身职能，不属于 Wave 8 范围 |
