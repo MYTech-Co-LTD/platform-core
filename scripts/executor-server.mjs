@@ -155,6 +155,10 @@ export async function main(env = process.env) {
       }
       running.add(job.runId)
       send(202, { accepted: true, runId: job.runId })
+      // 归属改写：行是派发器 claim 时建的（runner_id=派发器），但**跑它的是本执行器**。
+      // 改写之后，执行器重启时的启动对账（reapLostRunners 按 runner_id 收口）才能收得住自己那一批。
+      pool.query('update platform.job_run set runner_id=$1 where id=$2 and status=$3', [instanceId, job.runId, 'running'])
+        .catch(/** @param {unknown} e */ (e) => console.error(JSON.stringify({ ts: new Date().toISOString(), job: job.key, error: `runner_id 改写失败: ${e instanceof Error ? e.message : String(e)}` })))
       // 起进程即返回；收尾（终态/重试/事件）在 executeJob 内完成。
       void executeJob({ pool, emit, log: (o) => console.log(JSON.stringify(o)) }, job, job.manual)
         .finally(() => running.delete(job.runId))
