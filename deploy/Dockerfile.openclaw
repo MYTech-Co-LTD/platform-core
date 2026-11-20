@@ -77,4 +77,24 @@ RUN mkdir -p /opt/plugins/wecom-openclaw-plugin \
  && node /opt/plugins/wecom-plugin-patch/apply.mjs \
       /opt/plugins/wecom-openclaw-plugin/node_modules/@wecom/wecom-openclaw-plugin \
  && chown -R node:node /opt/plugins/wecom-openclaw-plugin /opt/plugins/wecom-plugin-patch
+
+# ── 启动期 Doctor best-effort wrapper（#2573，2026-11-20）──────────────────────
+# 2026.11.6 的启动期 `doctor --fix` 在 offline maintenance 期间读 template consent provenance
+# 会失败（`Cannot verify the installed tool authority for Template-managed agent ...`），
+# 官方 entrypoint 因此**非零退出** ⇒ 容器无限重启（实测 shanhai 生产）。
+# 这里用 wrapper 替代官方 entrypoint：Doctor 失败只告警，Gateway 照常启动。
+#   · 成功路径：doctor 跑完 → exec CMD（gateway），信号由 tini 直接监管；
+#   · 失败路径：doctor 非零 → 打一行 ERROR → 仍然 exec gateway（可观测、不静默）。
+# ⚠️ 上游修复该竞态后**删除本段并恢复官方 entrypoint**
+#    （`ENTRYPOINT ["tini","-s","--","node","/app/docker-entrypoint.mjs"]`）。
+# 代价：未复用官方 activation marker ⇒ doctor 每次容器启动做一次完整 pre-repair capture。
+USER root
+RUN printf '%s\n' \
+      '#!/bin/sh' \
+      'node /app/openclaw.mjs doctor --fix --non-interactive || echo "[openclaw-entrypoint] doctor failed; continuing to gateway" >&2' \
+      'exec "$@"' \
+      > /usr/local/bin/openclaw-entrypoint \
+ && chmod 0755 /usr/local/bin/openclaw-entrypoint
 USER node
+ENTRYPOINT ["tini", "-s", "--", "/usr/local/bin/openclaw-entrypoint"]
+CMD ["node", "/app/openclaw.mjs", "gateway"]
