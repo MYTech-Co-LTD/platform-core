@@ -24,9 +24,12 @@ describe('notify-worker drainInFlight', () => {
   it('★ 没有在跑的作业 ⇒ 立即返回 0，一次都不睡', async () => {
     const sched = fakeSched([0])
     const msgs: Array<Record<string, unknown>> = []
-    const left = await drainInFlight(sched, 60_000, (m) => msgs.push(m), { sleepMs: 0 })
+    // `now` 注入常量：本用例要钉的是「一次都没睡」，不是墙钟精度 ——
+    // 用真 `Date.now()` 时两次调用跨毫秒边界会得到 waitedMs=1（2026-11-20 CI 偶发红，#2604）。
+    const left = await drainInFlight(sched, 60_000, (m) => msgs.push(m), { sleepMs: 0, now: () => 1000 })
     expect(left).toBe(0)
     expect(msgs.at(-1)).toEqual({ drain: 'done', waitedMs: 0 })
+    // 主证据：一次都没进循环（进了循环就会多查一次 inFlight，并至少 sleep 一轮）。
     expect(sched.calls()).toBe(1)
   })
 
