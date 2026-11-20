@@ -98,7 +98,8 @@ dbt 类任务落**平台 scheduler + 镜像内 dbt 工具链**（选项 1）：
 |---|---|---|---|
 | P1 dbt | `lemeng-recon-restate` | **C：受阻**（checkpoint 旁路） | 其余依赖都可容器化（psql + console HTTP），但「清 console 引擎状态」那步只能 `docker exec`，见上文调查与三选一 |
 | P1 dbt | `lemeng 夜间回填窗口` | **A：留守 openship** | 依赖宿主机 `/opt` 脚本与多容器编排；容器化收益低、风险高 |
-| P2 平台/运维 | `lemeng-console-gc`、`lemeng-gc-hot-hours` | **A：留守 / 等 console 自己的 GC 通道** | 见下方「逐条实测判定」——两者都直接读写**宿主卷路径**，容器内看不见 |
+| P2 平台/运维 | `lemeng-console-gc` | **A：留守 / 等 console 自己的 GC 通道** | 见下方「逐条实测判定」——直接读写**宿主卷路径**，容器内看不见 |
+| P2 平台/运维 | `lemeng-gc-hot-hours` | **C：已迁**（`data.hot_hours_gc`，#2565） | 与激进档同一份判据，只是窗口更保守（上海今天−2） |
 | P2 平台/运维 | `删已封版日子小时对象` | **C：已迁**（`data.hour_partition_gc`，#2563） | 只需 ZOS 凭据 + HEAD；调度器容器两样都有，实测 dry-run 一致 |
 | P2 平台/运维 | `askdata-loop-p1` | **A：留守** | 入口是宿主 `sh /var/lib/askdata/sync-and-run.sh`：读宿主卷路径 + `/etc/openobserve-ingest.env` + python3，容器内三样都没有 |
 | P2 平台/运维 | `demand-mining-shanhai` | **C：受阻**（#2560） | 调度器容器**没有 OO 读凭据**（`OO_AUTH` 是摄取凭据，读端点 401）⇒ 三选一待拍板 |
@@ -117,7 +118,7 @@ dbt 类任务落**平台 scheduler + 镜像内 dbt 工具链**（选项 1）：
 | `demand-mining-shanhai` | `DATABASE_URL` + OO **读**凭据 | ⚠️ DB 有；**读凭据没有** | **C 受阻**（#2560） |
 | `askdata-loop-p1` | 宿主卷 `…openclaw_state/_data` + `/etc/openobserve-ingest.env` + python3 | ❌ 三样都不可见 | **A 留守** |
 | `lemeng-console-gc` | console 卷的**宿主路径** + `docker exec duckle cache clear` | ❌ 跨容器删卷 | **A 留守**（等 console 自己出 GC 端点） |
-| `lemeng-gc-hot-hours` | `docker exec console printenv ZOS_*` + 遍历 console state | ❌ 同上 | **A 留守** |
+| `lemeng-gc-hot-hours` | 同「删已封版日子小时对象」，只是窗口更保守（上海今天−2） | ✅ 同上 | **C 已迁**（`data.hot_hours_gc`，#2565）：与激进档共用一个入口，窗口靠 `def.env` 给死 |
 
 > **凭据实测细节（#2560）**：数据单元 `OO_AUTH`（长 52）对 `/streams`、`/data_alerts`、`/organizations`
 > 全 **401**；应用单元 `OO_READ_TOKEN`（长 88）同路径 **200**。⚠️ 但这**不是缺陷**——
