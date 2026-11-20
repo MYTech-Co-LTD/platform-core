@@ -75,4 +75,20 @@ chunk 2025-11-01 2025-12-01
 chunk 2025-12-01 2026-01-01
 chunk 2026-01-01 2026-02-01
 chunk 2026-02-01 2026-03-01
+
+# ── 尾块：3120 库存快照 2025-08（湖有 206,380 行、mart 缺；2026-11-20 取证）────────────
+# 模型集不同，不能复用上面的 chunk 函数——单独跑一次 backfill 档。
+if [ "$(cst_hour)" -ge 9 ]; then
+  echo "WINDOW_STOP：库存尾块未跑（已到 CST 09:00），次晚续跑" >> "$LOG"
+else
+  wait_idle || { echo "STOP: 库存尾块等不到空闲窗口" >> "$LOG"; exit 1; }
+  echo "=== chunk inventory-3120 2025-08-01 -> 2025-09-01 start $(date -u +%FT%TZ)" >> "$LOG"
+  ( cd /app && MATERIALIZE_SCOPE=backfill \
+    MATERIALIZE_SELECT='path:models/lemeng/marts/fct_inventory_snapshot.sql' \
+    MATERIALIZE_DBT_VARS='{"bf_from":"2025-08-01","bf_to":"2025-09-01"}' \
+    DATA_PLANE_DOMAINS=lemeng MATERIALIZE_MODE=container \
+    sh scripts/lemeng/materialize.sh ) >> "$LOG" 2>&1
+  echo "=== chunk inventory-3120 rc=$? end $(date -u +%FT%TZ)" >> "$LOG"
+fi
+
 echo "ALL_DONE $(date -u +%FT%TZ)" >> "$LOG"
