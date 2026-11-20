@@ -67,7 +67,12 @@ function main() {
     process.stdout.write(out)
     const n = (out.match(/^DELETE_PLAN /gm) ?? []).length
     planned += n
-    if (r.status !== 0) failed.push(`${book}（rc=${r.status ?? r.signal}）`)
+    // spawn 级失败（python3 不在、ENOENT…）时 `status` 为 null、`error` 才有话——必须带上原因，
+    // 否则台账里只剩「rc=null」，运维看不出是缺解释器还是脚本自己退 2。
+    if (r.status !== 0) {
+      const why = r.error ? `: ${r.error.message}` : ''
+      failed.push(`${book}（rc=${r.status ?? r.signal}${why}）`)
+    }
     console.log(`HOUR_PARTITION_GC book=${book} plans=${n} rc=${r.status ?? r.signal}`)
   }
   console.log(`HOUR_PARTITION_GC_DONE books=${books.join(',')} window=${from}..${before} plans=${planned} failed=${failed.length}`)
