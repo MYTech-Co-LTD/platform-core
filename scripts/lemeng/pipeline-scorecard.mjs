@@ -16,7 +16,7 @@
 //   2 = 跑不成（工作区不可达 / python 起不来 / 输出不可解析）——**这类必须响亮**，
 //       因为「0 条管线跑绿」和「根本没读到工作区」在退出码 0 上长得一模一样。
 import { spawnSync } from 'node:child_process'
-import { existsSync } from 'node:fs'
+import { existsSync, mkdirSync, readdirSync, unlinkSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { pathToFileURL } from 'node:url'
 import { emitFailure, emitProbe } from '../probe-emit.mjs'
@@ -87,6 +87,63 @@ export function summarize(rows) {
   return { total: (rows ?? []).length, red: count('RED'), amber: count('AMBER'), unknown: count('UNKNOWN') }
 }
 
+/** 历史快照目录（命名卷）。月度评审（`data.monthly_review`）读的就是这里。 */
+export const DEFAULT_CSV_DIR = '/var/lib/scorecard'
+/** 快照保留天数：一账套一天一份、同日覆盖 ⇒ 体积按天有界（约 1KB/天/账套）。 */
+export const DEFAULT_CSV_KEEP_DAYS = 120
+
+/**
+ * 把判据行渲染成与历史 CSV **逐列一致**的文本（列序/表头取自 `pipeline-scorecard.py`）。
+ * 月度评审（`scorecard-baseline.py`）按列名读，列名错了它只会静默少字段——所以这里抄死。
+ * @param {Array<any>} rows
+ * @returns {string}
+ */
+export function toCsv(rows) {
+  const header = 'pipeline,level,last_run_at,status,last_ok_at,duration_ms,stale_assets,error'
+  const cell = (v) => {
+    if (v === null || v === undefined) return ''
+    const t = String(v)
+    return /[",\n]/.test(t) ? `"${t.replace(/"/g, '""')}"` : t
+  }
+  const lines = [header]
+  for (const r of rows ?? []) {
+    lines.push([
+      cell(r?.pipeline), cell(r?.level), cell(r?.last_run_at), cell(r?.status),
+      cell(r?.last_ok_at), cell(r?.duration_ms), cell(r?.stale_assets ?? 0), cell(r?.error),
+    ].join(','))
+  }
+  return `${lines.join('\n')}\n`
+}
+
+/**
+ * 只保留最近 `keepDays` 天的快照（按文件名里的 `YYYY-MM-DD` 判，不看 mtime——mtime 会被复制/恢复改写）。
+ * @param {string} dir
+ * @param {Date} now
+ * @param {number} keepDays
+ * @returns {string[]} 被删掉的文件名
+ */
+export function pruneSnapshots(dir, now, keepDays) {
+  const cutoff = new Date(now.getTime() - keepDays * 86400_000).toISOString().slice(0, 10)
+  let names
+  try {
+    names = readdirSync(dir)
+  } catch {
+    return []
+  }
+  const removed = []
+  for (const name of names) {
+    const m = /-(\d{4}-\d{2}-\d{2})\.csv$/.exec(name)
+    if (!m || m[1] >= cutoff) continue
+    try {
+      unlinkSync(join(dir, name))
+      removed.push(name)
+    } catch {
+      // 删不掉不是判定问题：留着最多多占几 KB，下一轮再试。
+    }
+  }
+  return removed
+}
+
 /** 判据 argv（纯函数，单测用）。`--json` 是机器读的唯一形态。 */
 export function scorecardArgv() {
   return [SCORECARD_SCRIPT, '--json']
@@ -148,6 +205,23 @@ async function main() {
       console.log(`  ${r.level}  ${r.pipeline}  last_ok=${r.last_ok_at ?? '-'}  ${r.error ? `err=${String(r.error).slice(0, 80)}` : ''}`)
     }
     if (bookRc === 1 && rc === 0) rc = 1
+    // 历史快照（#2610）：月度评审（`scorecard-baseline.py`）只认这种一天一份的 CSV。
+    // 写不进去就**响亮失败**——静默丢快照等于让月度基线悄悄缩水（那是这次迁移踩出来的洞）。
+    const csvDir = (process.env.SCORECARD_CSV_DIR ?? '').trim() || DEFAULT_CSV_DIR
+    const keepDays = Number(process.env.SCORECARD_CSV_KEEP_DAYS ?? DEFAULT_CSV_KEEP_DAYS)
+    try {
+      mkdirSync(csvDir, { recursive: true })
+      const day = new Date().toISOString().slice(0, 10)
+      writeFileSync(join(csvDir, `${book}-${day}.csv`), toCsv(rows), 'utf8')
+      console.log(`SCORECARD_CSV ${csvDir}/${book}-${day}.csv`)
+      const pruned = pruneSnapshots(csvDir, new Date(), Number.isFinite(keepDays) && keepDays > 0 ? keepDays : DEFAULT_CSV_KEEP_DAYS)
+      if (pruned.length > 0) console.log(`SCORECARD_CSV_PRUNED ${pruned.length}（保留 ${keepDays} 天）`)
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : String(e)
+      console.error(`SCORECARD_CSV_FAILED ${csvDir}: ${msg}`)
+      if (process.env.NODE_ENV !== 'test') await emitFailure(`scorecard:${book}:csv`, msg)
+      rc = 2
+    }
     // 判红行进预警面（桥按 12h 冷却转企微）；投递失败只打 stderr，不改判定。
     if (process.env.NODE_ENV !== 'test') {
       for (const row of probeRows(book, rows)) {

@@ -106,6 +106,9 @@ export const JOB_REGISTRY: JobDef[] = [
   // 现在一条 job 循环两账套，判据本体（`pipeline-scorecard.py`）**一行不改**，只把结论逐管线投进
   // OO `data_plane_probes`。console workspace 以命名卷**只读**挂进容器（见 deploy/data-compose.yml）。
   { key: 'data.scorecard', scope: 'data', script: 'scripts/lemeng/pipeline-scorecard.mjs', cron: '37 2 * * *', timezone: 'UTC', timeoutMs: 600000, maxAttempts: 1, expectedIntervalSecs: 86400, description: '采集健康 scorecard（3120+64188；非 GREEN 逐管线 → OO probes；CST 10:37）' },
+  // 月度采集健康基线（#2610）：每日 scorecard 的快照写进命名卷 `scorecard-history`，这里读同一卷。
+  // 旧 job 靠退出码 + notify 通道报「覆盖不足」；现在投 `scorecard_baseline:coverage` 探针（告警单出口）。
+  { key: 'data.monthly_review', scope: 'data', script: 'scripts/lemeng/monthly-review.mjs', cron: '0 1 1 * *', timezone: 'UTC', timeoutMs: 600000, maxAttempts: 1, expectedIntervalSecs: 2678400, description: '月度采集健康基线（覆盖 <7 天判红；每月 1 号 01:00 UTC）' },
   { key: 'data.monitor_tick', scope: 'data', script: 'scripts/data-monitor-tick.mjs', cron: '* * * * *', timezone: 'UTC', timeoutMs: 300000, maxAttempts: 1, expectedIntervalSecs: 60, description: '业务监控求值（到期规则）' },
   // 原 openship 是宿主 bash：`for B in 3120 64188; do docker exec <console> python3 - < repo 脚本; done`
   // ——依赖 console 容器在场。删对象只需 ZOS 凭据 + HEAD，调度器容器两样都有 ⇒ 直接在此执行（Wave 8 ③）。
