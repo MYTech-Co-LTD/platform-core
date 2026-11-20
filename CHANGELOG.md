@@ -11,6 +11,10 @@
 
 ## [Unreleased]
 
+## [0.337.1](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.337.0...v0.337.1) - 2026-11-20
+- 【修复】data: backfill 档假绿防护 + 64188 回填驱动器（窗口闸门/path 选择器）（#2493） ([#2554](https://github.com/MYTech-Co-LTD/platform-core/pull/2554), [7b2c86c](https://github.com/MYTech-Co-LTD/platform-core/commit/7b2c86c25354824865409a44bcd79394d654a5e6))
+
+
 ## [0.337.0](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.336.0...v0.337.0) - 2026-11-20
 - 【新增】data: 64188 历史有界回填——窗口覆写宏 + backfill 档 + 成对护栏（#2493） ([#2552](https://github.com/MYTech-Co-LTD/platform-core/pull/2552), [d76d82e](https://github.com/MYTech-Co-LTD/platform-core/commit/d76d82edb1957ea32cabae6866eff4cd7dae9984))
 
