@@ -86,6 +86,10 @@ export const JOB_REGISTRY: JobDef[] = [
   // 原 openship 用 `docker exec` 进 server 容器跑；worker 同镜像同 env（DATABASE_URL + DATA_WAREHOUSE_URL 均在手），
   // 直接由平台 scheduler 在 worker 容器内执行——不再借道宿主 docker（#476 / Wave 8 ③）。
   { key: 'data.publish_dims', scope: 'data', requiresEnv: ['DATABASE_URL','DATA_WAREHOUSE_URL'], script: 'scripts/lemeng/publish-dims.mjs', cron: '43 3 * * *', timezone: 'UTC', timeoutMs: 1800000, maxAttempts: 2, expectedIntervalSecs: 86400, description: '维表发布（staging 维表 → data.dim_* 租户视图；CST 11:43）' },
+  // 日更件「静默 0 行」巡检（#2590，原 openship job `custom:GvCTMst1X6gBRPNh`，CST 10:30）。
+  // 判据本体是 python（借 pg_duckdb 的 duckdb.query 读湖），已数据面化：走 DSN、不再 docker exec。
+  // 判红行投 OO `data_plane_probes`（桥→企微）——这正是「告警单出口」要求的形态。
+  { key: 'data.zero_row_check', scope: 'data', requiresEnv: ['DATABASE_URL','DATA_WAREHOUSE_URL'], script: 'scripts/lemeng/zero-row-check.mjs', cron: '30 2 * * *', timezone: 'UTC', timeoutMs: 1800000, maxAttempts: 1, expectedIntervalSecs: 86400, description: '日更件静默 0 行巡检（近 3 天连续 0 行×基线有数据 ⇒ 判红；CST 10:30）' },
   { key: 'data.monitor_tick', scope: 'data', script: 'scripts/data-monitor-tick.mjs', cron: '* * * * *', timezone: 'UTC', timeoutMs: 300000, maxAttempts: 1, expectedIntervalSecs: 60, description: '业务监控求值（到期规则）' },
   // 原 openship 是宿主 bash：`for B in 3120 64188; do docker exec <console> python3 - < repo 脚本; done`
   // ——依赖 console 容器在场。删对象只需 ZOS 凭据 + HEAD，调度器容器两样都有 ⇒ 直接在此执行（Wave 8 ③）。

@@ -377,6 +377,23 @@ describe('registry · Wave 8 ③ 平台/运维类（#2450）', () => {
   })
 })
 
+describe('registry · 日更件零行巡检（#2590，判据化）', () => {
+  it('★ data.zero_row_check：cron/超时与现役一致，且判据本体是 python（壳只透传退出码）', () => {
+    // 原 openship job：`30 2 * * *`（CST 10:30）、timeout 1800s、attempts=1。
+    const def = JOB_REGISTRY.find((d) => d.key === 'data.zero_row_check')!
+    expect(def, 'data.zero_row_check').toBeDefined()
+    expect(def.cron).toBe('30 2 * * *')
+    expect(def.timezone).toBe('UTC')
+    expect(def.timeoutMs).toBe(1800000)
+    expect(def.maxAttempts).toBe(1)
+    expect(def.script).toBe('scripts/lemeng/zero-row-check.mjs')
+    // 数据面化后不再 docker exec ⇒ 只依赖 DSN；缺 DSN 要在启动期挡住（作业不进 claim 集合）。
+    expect(def.requiresEnv).toEqual(['DATABASE_URL', 'DATA_WAREHOUSE_URL'])
+    expect(existsSync(repoPath(def.script))).toBe(true)
+    expect(existsSync(repoPath('scripts/lemeng/check-zero-row-days.py'))).toBe(true)
+  })
+})
+
 describe('registry · 业务监控 tick（W7-V1）', () => {
   it('★ data.monitor_tick 每分钟一条、脚本在位、不传参数', () => {
     const def = JOB_REGISTRY.find((d) => d.key === 'data.monitor_tick')!

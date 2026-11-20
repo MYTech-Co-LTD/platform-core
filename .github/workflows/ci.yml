@@ -707,6 +707,16 @@ jobs:
             echo "hit=0" >> "$GITHUB_OUTPUT"
             echo "本次变更与数据面无关，跳过数据单元部署"
           fi
+          # 执行器要不要重建？（#2574）——**它跑的东西变了就必须重建**，否则新脚本/新模型永远进不了执行器镜像。
+          # ⚠️ 2026-11-20 实测教训：先前只有下游的 `--argjson ex "${EXECUTOR:-0}"`，**没有任何地方产出这个 flag**
+          #    ⇒ `EXECUTOR` 恒为 0 ⇒ CI 从未重建过执行器（新脚本进不去）。这次把判据写全。
+          # 覆盖面 = 执行器真正读的东西：镜像（Dockerfile）/ compose / 全部 scripts / dbt / 契约 /
+          # 调度器模块 / notify（事件入队）。持续排空保证：重建前 running=0（§5.6）。
+          if printf '%s\n' "$files" | grep -qE '^(deploy/Dockerfile\.|deploy/data-compose\.yml$|scripts/|dbt/|contracts/|apps/server/src/scheduler/|modules/)'; then
+            echo "executor=1" >> "$GITHUB_OUTPUT"
+          else
+            echo "executor=0" >> "$GITHUB_OUTPUT"
+          fi
           # 子集选择用的三个标志（生命周期分层，见 deploy/deployment-units.md §5）
           if printf '%s\n' "$files" | grep -qE '^deploy/data-compose\.yml$'; then echo "data_compose=1" >> "$GITHUB_OUTPUT"; else echo "data_compose=0" >> "$GITHUB_OUTPUT"; fi
           if printf '%s\n' "$files" | grep -qE '^(deploy/duckle/|duckle/|pipelines/)'; then echo "duckle=1" >> "$GITHUB_OUTPUT"; else echo "duckle=0" >> "$GITHUB_OUTPUT"; fi
