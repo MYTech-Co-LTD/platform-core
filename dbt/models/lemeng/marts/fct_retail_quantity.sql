@@ -86,7 +86,8 @@ base_rq_sale as (
     select * from {{ ref('stg_lemeng_retail_order_line') }}
     where order_transaction_type = 'SALE_ORDER' and state = 'FINISHED'
     {% if is_incremental() %}
-    and bizday >= {{ incremental_cutoff(10) }}
+    and bizday >= {{ cutoff_or_backfill(10) }}
+    {{ backfill_to() }}
     {% endif %}
     {% if env_var('MAT_CLOSED_BEFORE', 'false') == 'true' %}
     and {{ closed_before_predicate() }}
@@ -99,7 +100,8 @@ base_rq_return as (
     select * from {{ ref('stg_lemeng_retail_order_line') }}
     where order_transaction_type like '%RETURN%' and state in ('FINISHED', 'REPAID')
     {% if is_incremental() %}
-    and bizday >= {{ incremental_cutoff(10) }}
+    and bizday >= {{ cutoff_or_backfill(10) }}
+    {{ backfill_to() }}
     {% endif %}
     {% if env_var('MAT_CLOSED_BEFORE', 'false') == 'true' %}
     and {{ closed_before_predicate() }}
