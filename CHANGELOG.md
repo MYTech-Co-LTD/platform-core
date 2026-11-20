@@ -11,6 +11,10 @@
 
 ## [Unreleased]
 
+## [0.338.0](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.337.2...v0.338.0) - 2026-11-20
+- 【新增】data: 3120 库存快照接回填宏 + 驱动器库存尾块（2025-08）（#2557） ([#2558](https://github.com/MYTech-Co-LTD/platform-core/pull/2558), [cf9fb68](https://github.com/MYTech-Co-LTD/platform-core/commit/cf9fb68c1dde8d0889fa66f785907906ee539f82))
+
+
 ## [0.337.2](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.337.1...v0.337.2) - 2026-11-20
 - 【修复】deploy: deploy-data 触发面补 scripts/lemeng/ 与 data-plane.lock（脚本改动要送达 scheduler 镜像）（#2555） ([#2556](https://github.com/MYTech-Co-LTD/platform-core/pull/2556), [bc7f20b](https://github.com/MYTech-Co-LTD/platform-core/commit/bc7f20bcdbd79f62da0c663eb43f81d2ca2016a5))
 
