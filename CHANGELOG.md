@@ -11,6 +11,10 @@
 
 ## [Unreleased]
 
+## [0.347.1](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.347.0...v0.347.1) - 2026-11-20
+- 【修复】scheduler: 启用排班后每拍都补算 next_run_at（不再等重启） ([#2599](https://github.com/MYTech-Co-LTD/platform-core/pull/2599), [658f735](https://github.com/MYTech-Co-LTD/platform-core/commit/658f735fbdb2e3132e6253ccde3d91697a4c8f35))
+
+
 ## [0.347.0](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.346.1...v0.347.0) - 2026-11-20
 - 【新增】scheduler: demand-mining 迁平台调度器，落 platform 域（不新增密钥） ([#2597](https://github.com/MYTech-Co-LTD/platform-core/pull/2597), [ee52acd](https://github.com/MYTech-Co-LTD/platform-core/commit/ee52acdd9bdaee1c0696dde34020c16be855fe47))
 - 【新增】data: verify-ingest / verify-regression 判红补投 OO data_plane_probes ([#2595](https://github.com/MYTech-Co-LTD/platform-core/pull/2595), [1d827c5](https://github.com/MYTech-Co-LTD/platform-core/commit/1d827c5a04bd3d4d99044a5fb6b3e5b09ab64e78))
