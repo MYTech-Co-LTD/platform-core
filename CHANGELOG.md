@@ -11,6 +11,10 @@
 
 ## [Unreleased]
 
+## [0.337.2](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.337.1...v0.337.2) - 2026-11-20
+- 【修复】deploy: deploy-data 触发面补 scripts/lemeng/ 与 data-plane.lock（脚本改动要送达 scheduler 镜像）（#2555） ([#2556](https://github.com/MYTech-Co-LTD/platform-core/pull/2556), [bc7f20b](https://github.com/MYTech-Co-LTD/platform-core/commit/bc7f20bcdbd79f62da0c663eb43f81d2ca2016a5))
+
+
 ## [0.337.1](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.337.0...v0.337.1) - 2026-11-20
 - 【修复】data: backfill 档假绿防护 + 64188 回填驱动器（窗口闸门/path 选择器）（#2493） ([#2554](https://github.com/MYTech-Co-LTD/platform-core/pull/2554), [7b2c86c](https://github.com/MYTech-Co-LTD/platform-core/commit/7b2c86c25354824865409a44bcd79394d654a5e6))
 
