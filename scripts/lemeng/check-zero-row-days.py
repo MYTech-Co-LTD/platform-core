@@ -31,12 +31,21 @@
 可 grep 字面量：`ZERO_ROW_STREAK` / `ZERO_ROW_DEP_FAILED` / `ZERO_ROW_OK`
 """
 import argparse
+import json
+import os
 import subprocess
 import sys
+import urllib.error
+import urllib.request
 from datetime import date, timedelta
 
-PG_CT = "openship-platform-core-shanhai-data-pg_duckdb"
-BUCKET = "shanhai-data"
+# 数据面化（#2590）：原来靠 `docker exec` 进 pg_duckdb 容器取 env + 跑 psql ⇒ **只能跑在宿主**。
+# 现在走 DSN（调度器容器里是 DATA_WAREHOUSE_URL），因此可以进平台调度器（data.zero_row_check）。
+DSN_ENV = ("ZERO_ROW_DSN", "DATA_WAREHOUSE_URL")
+BUCKET = os.environ.get("LEMENG_ZOS_BUCKET") or "shanhai-data"
+# 判红投递：容器内用 OO_BASE/OO_ORG/OO_AUTH（摄取凭据）；宿主机用这个 env 文件（同 scorecard-alert.py）。
+ENV_FILE = os.environ.get("PROBE_ENV_FILE", "/etc/openobserve-ingest.env")
+STREAM = "data_plane_probes"
 
 # 日更数据集 → 湖前缀（都是 `lemeng/<prefix>/system_book=<b>/bizday=<d>/`）
 DATASETS = {
@@ -60,20 +69,15 @@ DATASETS = {
 }
 
 
-def pg_env() -> dict:
-    out = subprocess.run(
-        ["docker", "inspect", PG_CT, "--format", "{{range .Config.Env}}{{println .}}{{end}}"],
-        capture_output=True, text=True, check=False,
-    ).stdout
-    env = {}
-    for line in out.splitlines():
-        k, sep, v = line.partition("=")
-        if sep:
-            env[k] = v
-    return env
+def dsn() -> str:
+    for k in DSN_ENV:
+        v = os.environ.get(k, "").strip()
+        if v:
+            return v
+    raise RuntimeError("缺 DSN（%s 任一）——数据面化后不再从 docker inspect 取凭据" % " / ".join(DSN_ENV))
 
 
-def psql(sql: str, env: dict) -> tuple[str, str]:
+def psql(sql: str) -> tuple[str, str]:
     """返回 (stdout, 错误摘要)；错误摘要非空 ⇒ 调用方必须 fail-loud。
 
     ⚠️ 2026-11-06 初版教训：查询写错（`select duckdb.query(...)` 必须放进 FROM）时
@@ -81,9 +85,7 @@ def psql(sql: str, env: dict) -> tuple[str, str]:
     ⇒ **巡检在真断供上打了 ZERO_ROW_OK**。巡检自己假绿，比没有巡检更危险。
     """
     p = subprocess.run(
-        ["docker", "exec", "-i", "-e", "PGPASSWORD=" + env.get("PGDUCK_PASSWORD", ""),
-         PG_CT, "psql", "-U", env.get("PGDUCK_USER", "platform"),
-         "-d", env.get("PGDUCK_DB", "warehouse"), "-tA", "-f", "-"],
+        ["psql", dsn(), "-tA", "-v", "ON_ERROR_STOP=1", "-f", "-"],
         input=sql, capture_output=True, text=True, check=False,
     )
     blob = (p.stderr or "") + (p.stdout or "")
@@ -112,7 +114,7 @@ def month_globs(prefix: str, book: str, days: list[str]) -> dict[str, list[str]]
     }
 
 
-def day_rows(prefix: str, book: str, days: list[str], env: dict) -> dict[str, int]:
+def day_rows(prefix: str, book: str, days: list[str]) -> dict[str, int]:
     """一天一行：该账套该数据集在这几天各自的行数（分区不存在记 -1）。"""
     got: dict[str, int] = {}
     want = set(days)
@@ -122,7 +124,7 @@ def day_rows(prefix: str, book: str, days: list[str], env: dict) -> dict[str, in
             " coalesce(sum(num_rows),0) n from parquet_file_metadata([%s])"
             " group by 1 order by 1 $$);\n" % ",".join("'%s'" % g for g in globs)
         )
-        out, err = psql(sql, env)
+        out, err = psql(sql)
         if err:
             if "No files found" in err:
                 continue  # 整月无分区：该月全记 -1
@@ -134,6 +136,60 @@ def day_rows(prefix: str, book: str, days: list[str], env: dict) -> dict[str, in
     return {d: got.get(d, -1) if d in want else -1 for d in days}
 
 
+def _oo_env() -> dict:
+    """OO 摄取凭据：容器内走进程 env（OO_BASE/OO_ORG/OO_AUTH），宿主走 env 文件。
+
+    容器里那份 OO_AUTH 是**摄取凭据**（只写）——本脚本只需要写流，正好匹配；
+    读端点会 401，那是正常表现（见 WeKnora「平台调度器容器能接哪些 job」）。
+    """
+    env = {k: os.environ.get(k, "") for k in ("OO_BASE", "OO_ORG", "OO_AUTH")}
+    if all(env.values()):
+        return env
+    try:
+        with open(ENV_FILE, encoding="utf-8") as f:
+            for line in f:
+                line = line.strip()
+                if not line or line.startswith("#") or "=" not in line:
+                    continue
+                k, v = line.split("=", 1)
+                env.setdefault(k.strip(), "")
+                if not env[k.strip()]:
+                    env[k.strip()] = v.strip().strip('"').strip("'")
+    except OSError:
+        pass
+    return env
+
+
+def emit(rows: list[dict]) -> int:
+    """把判红行投进 `data_plane_probes`（逐行 POST）。返回失败条数——投递失败不改变判定结论。"""
+    env = _oo_env()
+    if not all(env.get(k) for k in ("OO_BASE", "OO_ORG", "OO_AUTH")):
+        print("ZERO_ROW_EMIT_SKIPPED: 缺 OO_BASE/OO_ORG/OO_AUTH（判红结论仍然有效，只是没进预警面）",
+              file=sys.stderr)
+        return len(rows)
+    url = "%s/api/%s/%s/_json" % (env["OO_BASE"].rstrip("/"), env["OO_ORG"], STREAM)
+    failed = 0
+    for row in rows:
+        req = urllib.request.Request(
+            url,
+            data=json.dumps(row, ensure_ascii=False).encode("utf-8"),
+            headers={"Authorization": "Basic %s" % env["OO_AUTH"], "Content-Type": "application/json"},
+            method="POST",
+        )
+        try:
+            with urllib.request.urlopen(req, timeout=10) as resp:
+                body = resp.read().decode("utf-8", "replace")
+            ok = '"successful":1' in body
+        except (urllib.error.URLError, OSError) as e:
+            ok = False
+            print("ZERO_ROW_EMIT_FAILED %s: %s" % (row.get("check"), e), file=sys.stderr)
+        if not ok:
+            failed += 1
+        else:
+            print("ZERO_ROW_EMITTED check=%s verdict=%s" % (row.get("check"), row.get("verdict")))
+    return failed
+
+
 def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("--days", type=int, default=3, help="最近几天连续为 0 判异常")
@@ -142,9 +198,10 @@ def main() -> int:
     a = ap.parse_args()
     books = [b for b in a.books.split(",") if b]
 
-    env = pg_env()
-    if not env:
-        print("ZERO_ROW_DEP_FAILED: 读不到 pg_duckdb 的 env（容器不在？）", file=sys.stderr)
+    try:
+        dsn()  # 早失败：缺 DSN 就别跑下去（下面每条查询都会用到）
+    except RuntimeError as e:
+        print("ZERO_ROW_DEP_FAILED: %s" % e, file=sys.stderr)
         return 2
 
     # 截止日取「昨天」（今天的分区可能还没发布，不参与判定）
@@ -155,11 +212,12 @@ def main() -> int:
 
     bad = 0
     checked = 0
+    alerts: list[dict] = []
     for name, prefix in DATASETS.items():
         for book in books:
             try:
-                r = day_rows(prefix, book, recent, env)
-                b = day_rows(prefix, book, base, env)
+                r = day_rows(prefix, book, recent)
+                b = day_rows(prefix, book, base)
             except RuntimeError as e:  # 查询失败必须响亮，不许当作「没数据」
                 print("ZERO_ROW_DEP_FAILED dataset=%s book=%s reason=%s" % (name, book, e),
                       file=sys.stderr)
@@ -187,10 +245,22 @@ def main() -> int:
                     % (name, book, ",".join(zeros), ",".join(missing) or "-",
                        len(base_days), len(base))
                 )
+                alerts.append({
+                    "probe": "zero-row",
+                    "check": "zero_row:%s:%s" % (name, book),
+                    "verdict": "ERR",
+                    "mode": "advisory",
+                    "detail": ("zero_days=%s missing_days=%s baseline=%d/%d "
+                               "hint=请求字段被拒(10001) 或 响应字段改名(契约拒写)")
+                              % (",".join(zeros), ",".join(missing) or "-", len(base_days), len(base)),
+                })
 
     if bad == 0:
         print("ZERO_ROW_OK 检查 %d 个 (数据集×账套)，近 %d 天均有数据" % (checked, a.days))
         return 0
+    # 判红 ⇒ 进预警面（OO `data_plane_probes` → 桥 → 企微）。投递失败**不改判定**：
+    # 巡检的结论仍然是「断了」，只是没进 OO——所以下面照样返回 1，并把投递失败打到 stderr。
+    emit(alerts)
     return 1
 
 
