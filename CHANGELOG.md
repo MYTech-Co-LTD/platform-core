@@ -11,6 +11,10 @@
 
 ## [Unreleased]
 
+## [0.339.0](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.338.1...v0.339.0) - 2026-11-20
+- 【新增】data: 小时对象回收迁平台调度器（data.hour_partition_gc） ([#2564](https://github.com/MYTech-Co-LTD/platform-core/pull/2564), [af74849](https://github.com/MYTech-Co-LTD/platform-core/commit/af7484956e7c9530371a81dfadc47213c40f2185))
+
+
 ## [0.338.1](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.338.0...v0.338.1) - 2026-11-20
 - 【修复】ci: deploy-data 触发面补调度器代码与 job 脚本（否则新 JobDef 进不了调度器镜像） ([#2562](https://github.com/MYTech-Co-LTD/platform-core/pull/2562), [02074c7](https://github.com/MYTech-Co-LTD/platform-core/commit/02074c78a757747f8242b0a9582278c4a7d82fc8))
 
