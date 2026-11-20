@@ -70,6 +70,20 @@ export function runBaseline(opts = {}) {
   return { days, rc: r.status ?? 2, output }
 }
 
+/**
+ * 「月度评审到期」提醒行（纯函数，单测用）。用 **WARN** 而不是 OK：桥只转发非 OK，
+ * 用 OK 就等于不发——而这条的本意就是**提醒人去看**（原 job 的成功态通知）。
+ * @param {number} days
+ */
+export function dueRow(days) {
+  return {
+    probe: 'scorecard_baseline',
+    check: 'scorecard_baseline:monthly_review_due',
+    verdict: 'WARN',
+    detail: `月度采集健康基线已生成（覆盖 ${days} 天）——按 pipeline-repair-runbook 做月度评审`,
+  }
+}
+
 async function main() {
   const minDaysRaw = Number(process.env.MIN_DAYS ?? DEFAULT_MIN_DAYS)
   const minDays = Number.isFinite(minDaysRaw) && minDaysRaw > 0 ? minDaysRaw : DEFAULT_MIN_DAYS
@@ -91,6 +105,13 @@ async function main() {
       })
     }
     return 1
+  }
+  // 「月度评审到期」提醒（原 openship job 用 `scorecard-alert.py --due` 发，成功也发）。
+  // 判据化后不丢这个人工动作：投一条 WARN 探针，桥按 12h 冷却转企微（一条/月）。
+  if (process.env.NODE_ENV !== 'test') {
+    const row = dueRow(days)
+    const r = await emitProbe(row)
+    if (!r.ok) console.error(`probe-emit: 未投递（${row.check}）：${r.error ?? 'unknown'}`)
   }
   console.log(`MONTHLY_OK coverage=${days}d (min=${minDays})`)
   return rc === 0 || rc === 1 ? 0 : rc
