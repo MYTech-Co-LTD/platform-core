@@ -52,6 +52,11 @@ export interface JobDef {
 
 /** P1 首迁三个系统 job。时区一律 UTC——与 openship 上现有 cron 的 UTC 语义逐字一致。 */
 export const JOB_REGISTRY: JobDef[] = [
+  // 需求挖掘（原 openship `custom:4eM6UfhB2ANodSJ_`，靠 `docker exec` 进 server 容器跑）。
+  // 为什么落在 **platform 域**（#2560 的落点裁决）：脚本要读 OO，而**只读凭据 `OO_READ_*`
+  // 本来就在应用单元**；数据单元只有摄取凭据（读端点 401，2026-11-20 实测）。
+  // ⇒ 由 `scheduler-platform` 在应用单元容器内执行，**不新增任何密钥**，也不扩大数据单元的爆炸半径。
+  { key: 'demand.mining', scope: 'platform', requiresEnv: ['DATABASE_URL','OO_READ_URL','OO_READ_ORG','OO_READ_TOKEN'], script: 'scripts/demand-mining.mjs', cron: '10 21 * * *', timezone: 'UTC', timeoutMs: 300000, maxAttempts: 1, expectedIntervalSecs: 86400, description: '需求挖掘（审计缺度量/无明细绑定 → data.demand_*；CST 05:10）' },
   { key: 'notify.reconcile', scope: 'platform', script: 'scripts/notify-reconcile.mjs', cron: '7 * * * *', timezone: 'UTC', timeoutMs: 300000, maxAttempts: 2, expectedIntervalSecs: 3600, description: '通知指派与催办对账' },
   { key: 'metric.candidates', scope: 'platform', script: 'scripts/metric-candidates-job.mjs', cron: '40 6 * * *', timezone: 'UTC', timeoutMs: 300000, maxAttempts: 1, expectedIntervalSecs: 86400, description: '指标候选池生成' },
   { key: 'report.scope_scan', scope: 'platform', script: 'scripts/report-scope-scan.mjs', cron: '37 1 * * *', timezone: 'UTC', timeoutMs: 300000, maxAttempts: 2, expectedIntervalSecs: 86400, description: '报表受众 × 指标可见性巡检' },
