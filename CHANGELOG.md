@@ -11,6 +11,10 @@
 
 ## [Unreleased]
 
+## [0.357.1](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.357.0...v0.357.1) - 2026-11-21
+- 【修复】data: 回滚月份裁剪（#2659/#2660）——热腿无 month 列时是绑定错误，不是 NULL（#2663） ([#2664](https://github.com/MYTech-Co-LTD/platform-core/pull/2664), [4213619](https://github.com/MYTech-Co-LTD/platform-core/commit/4213619dedbf122bcda3eb9555e6029664f8a04b))
+
+
 ## [0.357.0](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.356.0...v0.357.0) - 2026-11-21
 - 【新增】data: 增量模型加月份分区裁剪（#2661 L1 第二步） ([#2660](https://github.com/MYTech-Co-LTD/platform-core/pull/2660), [5650316](https://github.com/MYTech-Co-LTD/platform-core/commit/565031694582905bc00ca54ac3ed5fbeaaa82daa))
 - 【新增】data: staging 暴露派生分区列 month（#2636 L1 底座） ([#2659](https://github.com/MYTech-Co-LTD/platform-core/pull/2659), [29574be](https://github.com/MYTech-Co-LTD/platform-core/commit/29574be6b6f8344cf3e148f5c6b5b55ff0feb075))
