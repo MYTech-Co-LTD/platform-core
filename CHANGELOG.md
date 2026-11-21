@@ -11,6 +11,10 @@
 
 ## [Unreleased]
 
+## [0.353.5](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.353.4...v0.353.5) - 2026-11-21
+- 【修复】data: ⑰ drill 计时改用「最近已合并月份」（#2645） ([#2646](https://github.com/MYTech-Co-LTD/platform-core/pull/2646), [ce087f6](https://github.com/MYTech-Co-LTD/platform-core/commit/ce087f68e0ade678415d29bf39fa1d0e750a5380))
+
+
 ## [0.353.4](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.353.3...v0.353.4) - 2026-11-21
 - 【修复】data: ⑰ 改测 drill 真实路径且热态计时（#2636 的实测换来的判据修正） ([#2644](https://github.com/MYTech-Co-LTD/platform-core/pull/2644), [72d28f4](https://github.com/MYTech-Co-LTD/platform-core/commit/72d28f4fc80600f70ec5199a9cf9247bff065691))
 
