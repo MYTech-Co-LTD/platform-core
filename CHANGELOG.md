@@ -11,6 +11,11 @@
 
 ## [Unreleased]
 
+## [0.357.0](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.356.0...v0.357.0) - 2026-11-21
+- 【新增】data: 增量模型加月份分区裁剪（#2661 L1 第二步） ([#2660](https://github.com/MYTech-Co-LTD/platform-core/pull/2660), [5650316](https://github.com/MYTech-Co-LTD/platform-core/commit/565031694582905bc00ca54ac3ed5fbeaaa82daa))
+- 【新增】data: staging 暴露派生分区列 month（#2636 L1 底座） ([#2659](https://github.com/MYTech-Co-LTD/platform-core/pull/2659), [29574be](https://github.com/MYTech-Co-LTD/platform-core/commit/29574be6b6f8344cf3e148f5c6b5b55ff0feb075))
+
+
 ## [0.356.0](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.355.1...v0.356.0) - 2026-11-21
 - 【新增】data: 差额换货抵扣额 + 台账归因（#2654） ([#2655](https://github.com/MYTech-Co-LTD/platform-core/pull/2655), [b3320a8](https://github.com/MYTech-Co-LTD/platform-core/commit/b3320a87d5da796e0247892f7f842b606ec07186))
 
