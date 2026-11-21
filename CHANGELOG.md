@@ -11,6 +11,10 @@
 
 ## [Unreleased]
 
+## [0.353.3](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.353.2...v0.353.3) - 2026-11-21
+- 【修复】data: ⑲ org_valid 区分「org 脏」与「查不动」（争用期判 WARN + 重试一次） ([#2641](https://github.com/MYTech-Co-LTD/platform-core/pull/2641), [5cf5e3a](https://github.com/MYTech-Co-LTD/platform-core/commit/5cf5e3a05a8e6cbbffa7ca733db99e5692561265))
+
+
 ## [0.353.2](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.353.1...v0.353.2) - 2026-11-21
 - 【修复】data: 主体列三重加固——org 形状校验 / 视图进物化档 / 新增断言⑲（P0 #2638） ([#2640](https://github.com/MYTech-Co-LTD/platform-core/pull/2640), [6f10b39](https://github.com/MYTech-Co-LTD/platform-core/commit/6f10b39e6b46d356e3197472b2997646430a9266))
 
