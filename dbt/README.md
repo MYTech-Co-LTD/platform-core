@@ -181,7 +181,7 @@ sync 取路径段 `lemeng/<资产>` 推导 `stg_lemeng_<资产>` 关系集物化
 
 **下钻三键与度量组件（spec 2026-10-21 §2.3/§2.3.1，#977）**：每条指标可另声明 `compose` /
 `dimensions` / `detail` —— **三者同现或同缺**（半套 = 声明了但下钻面起不来，静默）。
-`compose` = 非空、不含分号的**组件组合式**（如 `sale_amount@order - return_amount@line`）；
+`compose` = 非空、不含分号的**组件组合式**（如 `sale_amount@order - return_amount@order`）；
 `dimensions` = 非空、无重复、蛇形命名的字符串数组——**原子粒度闭集**，请求维度只能取其子集；
 `detail` = 键**闭集** `{relation, filter, columns}`：`relation` 必须合 `vw_*` 且
 `dbt/models/**/views/<relation>.sql` 在仓（Phase 1 下钻只读直读湖视图），`filter` = 非空、

@@ -43,7 +43,7 @@ const DOMAINS: Record<string, Domain> = {
 
 const FIXTURE_MEASURES = new Map<string, Measure>([
   ['sale_amount@order', measureOf({ expr: 'sum(sale_money)', grain: ['order'], additivity: 'flow', domain: 'sale_finished' })],
-  ['return_amount@line', measureOf({ expr: 'sum(return_money)', grain: ['line'], additivity: 'flow', domain: 'return_finished' })],
+  ['return_amount@order', measureOf({ expr: 'sum(return_money)', grain: ['order'], additivity: 'flow', domain: 'return_finished' })],
   ['line_amount@line', measureOf({ expr: 'sum(sale_money)', grain: ['line'], additivity: 'flow', domain: 'finished' })],
 ])
 
@@ -81,7 +81,7 @@ function fixture(opts: { region?: string; sqlPrefix?: string; sqlSuffix?: string
       '  retail_quantity_return: "order_transaction_type like \'%RETURN%\' and state in (\'FINISHED\', \'REPAID\')"',
       'measures:',
       '  sale_amount@order: { expr: \'sum(sale_money)\', grain: [order], additivity: flow, domain: sale_finished }',
-      '  return_amount@line: { expr: \'sum(return_money)\', grain: [line], additivity: flow, domain: return_finished }',
+      '  return_amount@order: { expr: \'sum(return_money)\', grain: [order], additivity: flow, domain: return_finished }',
       '  ep_payable@flat: { expr: \'sum(coalesce(amount, 0))\', grain: [flat], additivity: flow, domain: expense_payable }',
       '  er_receivable@flat: { expr: \'sum(coalesce(amount, 0))\', grain: [flat], additivity: flow, domain: expense_receivable }',
       '  client_ep_payable@flat: { expr: \'sum(coalesce(other_inout_money, 0))\', grain: [flat], additivity: flow, domain: client_expense_payable }',
@@ -133,8 +133,8 @@ describe('emittedBases 同别名复用 —— 行域谓词必须逐字一致（#
   it('同别名、不同 domain ⇒ 抛（同一 CTE 只有一份 where，后到者会被静默喂错行域）', () => {
     const spec = {
       ...MODELS[0],
-      columns: ['sale_amount@order', 'return_amount@line'],
-      baseAliases: { 'sale_amount@order': 'base_dup', 'return_amount@line': 'base_dup' },
+      columns: ['sale_amount@order', 'line_amount@line'],
+      baseAliases: { 'sale_amount@order': 'base_dup', 'line_amount@line': 'base_dup' },
     }
     expect(() => renderFctMeasures(FIXTURE_MEASURES, spec, DOMAINS)).toThrow(/base_dup/)
   })
@@ -155,16 +155,17 @@ describe('emittedBases 同别名复用 —— 行域谓词必须逐字一致（#
 })
 
 describe('renderFctMeasures —— 生成的 SQL 形状', () => {
-  it('两个度量各按自己的 grain 键分组，基面 where 由各自的 domain 派生', () => {
+  it('各度量按自己的 grain 键分组，基面 where 由各自的 domain 派生', () => {
     const { ctes } = renderFctMeasures(FIXTURE_MEASURES, MODELS[0], DOMAINS)
     // 基面：一个 base 不能服务两个行域 ⇒ 两条独立 CTE，where 逐字来自 domain 链
     expect(ctes).toContain('base_sale as (')
     expect(ctes).toContain("where state = 'FINISHED' and order_transaction_type = 'SALE_ORDER'")
     expect(ctes).toContain('base_return as (')
     expect(ctes).toContain("where state = 'FINISHED' and order_transaction_type like '%RETURN%'")
-    // 阶段 1：order 键 / line 键分别分组（键集来自 spec.grainKeys 唯一映射）
+    // 阶段 1：按各自 grain 键分组（键集来自 spec.grainKeys 唯一映射）。
+    // 2026-11-21（#2630）起 sale/return **都是 order 粒度**（换货半边要看整单行数）；
+    // line 粒度仍由 `line_amount@line` 这类组件承载，故两种键都要在渲染器里可用。
     expect(ctes).toContain(`group by ${MODELS[0].grainKeys.order.join(', ')}`)
-    expect(ctes).toContain(`group by ${MODELS[0].grainKeys.line.join(', ')}`)
     expect(ctes).toContain('sale_amount__gen as (')
     expect(ctes).toContain('return_amount__gen as (')
     // sale 走 base_sale，return 走 base_return（串了基面 = 行域静默放宽）
@@ -199,7 +200,7 @@ describe('renderFctMeasures —— 生成的 SQL 形状', () => {
   })
 
   it('物化清单只有 sale/return 两个：line_amount@line 属 order_line 视图，不物化进本 fct', () => {
-    expect(MODELS[0].columns).toEqual(['sale_amount@order', 'return_amount@line'])
+    expect(MODELS[0].columns).toEqual(['sale_amount@order', 'return_amount@order'])
     const { ctes } = renderFctMeasures(FIXTURE_MEASURES, MODELS[0], DOMAINS)
     expect(ctes).not.toContain('line_amount')
   })
