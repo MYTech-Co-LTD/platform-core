@@ -11,6 +11,10 @@
 
 ## [Unreleased]
 
+## [0.354.0](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.353.6...v0.354.0) - 2026-11-21
+- 【新增】data: console 工作区漂移对账 job（#2629 的关门） ([#2649](https://github.com/MYTech-Co-LTD/platform-core/pull/2649), [3d3077b](https://github.com/MYTech-Co-LTD/platform-core/commit/3d3077bdac0114bbf4ad3414acc9ae0bd8029abe))
+
+
 ## [0.353.6](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.353.5...v0.353.6) - 2026-11-21
 - 【修复】data: ⑮ drill 月份排除当月——月合并是增量的，当月 built_at 已有（#2645 补丁） ([#2647](https://github.com/MYTech-Co-LTD/platform-core/pull/2647), [120777f](https://github.com/MYTech-Co-LTD/platform-core/commit/120777fca5862caab2b1491060ceeb96488994c2))
 
