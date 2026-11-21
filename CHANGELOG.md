@@ -11,6 +11,11 @@
 
 ## [Unreleased]
 
+## [0.352.0](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.351.0...v0.352.0) - 2026-11-21
+- 【新增】scheduler: askdata 回路迁平台（platform.askdata_loop，容器形态入口） ([#2626](https://github.com/MYTech-Co-LTD/platform-core/pull/2626), [b24ca9c](https://github.com/MYTech-Co-LTD/platform-core/commit/b24ca9c427153b40bfe153e234719b178d3a1042))
+- 【修复】data: backfill 档排除 audit 测试（分块回填与全史对账冲突）(#2493) ([#2625](https://github.com/MYTech-Co-LTD/platform-core/pull/2625), [ddc657b](https://github.com/MYTech-Co-LTD/platform-core/commit/ddc657beef4ae2c4b3a773f03e84e8a48d7d05fe))
+
+
 ## [0.351.0](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.350.0...v0.351.0) - 2026-11-21
 - 【修复】data: 播种脚本 dry-run 也写库 + 已存在未发布的草稿不会再被永久跳过 ([#2622](https://github.com/MYTech-Co-LTD/platform-core/pull/2622), [1203dfd](https://github.com/MYTech-Co-LTD/platform-core/commit/1203dfd03cf4ab7a94ad8c2bb312aeed1ce2464a))
 - 【新增】data: R1 验收用的两份真实日报播种脚本（create-only + 发布前过 lint） ([#2621](https://github.com/MYTech-Co-LTD/platform-core/pull/2621), [17101f7](https://github.com/MYTech-Co-LTD/platform-core/commit/17101f75e51792ebbddac2400b8e0949f3c1d0be))
