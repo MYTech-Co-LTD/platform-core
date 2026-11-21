@@ -36,11 +36,17 @@ mart as (
         f.bizday                       as bizday,
         f.branch_num                   as branch_num,
         f.sale_amount                  as sale_amount,
-        f.net_amount                   as net_amount
+        f.net_amount                   as net_amount,
+        -- 差额换货抵扣额（描述性，不进口径）：给 recon_break 做「超容差但 ≤ 抵扣额」的归因用
+        coalesce(so.swap_offset, 0)    as swap_offset
     from {{ ref('fct_retail_sale') }} f
     join keys k
         on  k.system_book = cast(f.system_book as varchar)
         and k.bizday      = f.bizday
+    left join {{ ref('fct_retail_swap_offset') }} so
+        on  cast(so.system_book as varchar) = cast(f.system_book as varchar)
+        and so.bizday     = f.bizday
+        and so.branch_num = f.branch_num
 )
 select
     coalesce(s.system_book, m.system_book) as system_book,
@@ -51,6 +57,7 @@ select
     s.source_sale                          as source_sale,
     m.net_amount                           as platform_net,
     s.source_net                           as source_net,
+    coalesce(m.swap_offset, 0)             as swap_offset,
     coalesce(s.computed_at, now())         as computed_at
 from src s
 full join mart m

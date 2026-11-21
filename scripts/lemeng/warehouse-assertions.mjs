@@ -63,6 +63,8 @@ const DETAIL_MONTH_VIEW = process.env.WIRE_DETAIL_MONTH_VIEW ?? 'staging.vw_leme
 const HOT_GLOB = process.env.WIRE_HOT_GLOB
   ?? 's3://shanhai-data/lemeng/retail_order_line/system_book=*/bizday=*/hour=*/all.parquet'
 const HOT_MAX_FILES = numEnv('WIRE_HOT_MAX_FILES', 100)
+// 差额换货月度抵扣额阈值（#2630）：2026-11 半月实测 4,155.92 ⇒ 默认 5000 留 ~2 月余量
+const SWAP_OFFSET_MONTH_MAX = numEnv('WIRE_SWAP_OFFSET_MONTH_MAX', 5000)
 const PGCRASH_WINDOW_MIN = numEnv('WIRE_PGCRASH_WINDOW_MIN', 15)
 const PGCRASH_STREAM = process.env.WIRE_PGCRASH_STREAM ?? 'openship_platform_core_data_pg_duckdb'
 const MARTS_FRESH_SPEC = process.env.WIRE_MARTS_FRESH_SPEC
@@ -776,6 +778,42 @@ async function checkOrgValid(pool) {
   }
 }
 
+/**
+ * ⑳ 差额换货抵扣额（#2630 第 3 步）：本月累计 `swap_offset` 超阈值 ⇒ WARN。
+ *
+ * 为什么需要：差额换货（`0 < 订单总额 < 明细合计`）的退回行**接口无法识别**，只能出「抵扣额」
+ * 这个上界。这一类的规模若在长，说明「源端口径差」在无声累积——必须让人看得见，
+ * 否则它只会以零星 within_tol 的形式腐蚀台账（2026-11 半月实测 4,155.92）。
+ * 判 **WARN** 而非 ERR：它是描述性指标，不是采集故障。
+ */
+/** @param {Queryable} pool */
+async function checkSwapOffset(pool) {
+  if (selftest('swap_offset')) {
+    return { check: 'swap_offset', ok: false, detail: 'ERR 自测注入：差额换货抵扣额超阈（WIRE_SWAP_OFFSET_SELFTEST）' }
+  }
+  try {
+    const r = await pool.query(
+      `select coalesce(round(sum(swap_offset), 2), 0) as total, count(*) as store_days
+         from staging.fct_retail_swap_offset
+        where bizday >= date_trunc('month', (now() at time zone 'Asia/Shanghai')::date)::date`,
+    )
+    const total = Number(r.rows[0]?.total ?? 0)
+    const storeDays = Number(r.rows[0]?.store_days ?? 0)
+    if (total > SWAP_OFFSET_MONTH_MAX) {
+      return /** @type {Verdict} */ ({
+        check: 'swap_offset',
+        ok: true,
+        verdict: 'WARN',
+        detail: `WARN 本月差额换货抵扣额 ${total} > 阈值 ${SWAP_OFFSET_MONTH_MAX}（${storeDays} 个店日；`
+          + `该类的退回行接口无法识别，只在台账上以残留差的形式出现）`,
+      })
+    }
+    return { check: 'swap_offset', ok: true, detail: `OK 本月抵扣额 ${total}（${storeDays} 个店日）` }
+  } catch (e) {
+    return { check: 'swap_offset', ok: false, detail: `ERR ${msg(e)}` }
+  }
+}
+
 // ── 编排 ──────────────────────────────────────────────────────────────────────
 
 /** advisory 集：判红只投递、不翻 rc（红线③：语义判据不走 job 通知）。 */
@@ -788,6 +826,7 @@ const ADVISORY = new Set([
   'config_drift',
   'pg_crash_free',
   'sealed_manifest',
+  'swap_offset',
   'detail_path',
   'hot_partitions',
 ])
@@ -832,6 +871,8 @@ export async function runAll(group = 'all') {
     out.push(await checkHotPartitions(pool))
     // ⑲ 主体列合法：⑰ 只 count、看不出 org 脏（#2638 事故形态）
     out.push(await checkOrgValid(pool))
+    // ⑳ 差额换货抵扣额（描述性；超阈只 WARN）
+    out.push(await checkSwapOffset(pool))
   } finally {
     await pool.end().catch(() => {})
   }
@@ -929,4 +970,5 @@ export {
   checkRegionRegistered,
   checkSealedManifest,
   checkSettlementFace,
+  checkSwapOffset,
 }

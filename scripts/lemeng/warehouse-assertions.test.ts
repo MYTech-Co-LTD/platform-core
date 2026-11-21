@@ -39,7 +39,7 @@ function fakePool(handler: (sql: string, params?: unknown[]) => unknown) {
 }
 
 describe('#2628 数据面断言面（容器化）', () => {
-  it('advisory 集必须覆盖 ⑩–⑱ 九条（判红只投递、不翻 rc）', async () => {
+  it('advisory 集必须覆盖 ⑩–⑳（判红只投递、不翻 rc）', async () => {
     const { ADVISORY } = await import('./warehouse-assertions.mjs')
     expect([...ADVISORY].sort()).toEqual([
       'config_drift',
@@ -52,6 +52,7 @@ describe('#2628 数据面断言面（容器化）', () => {
       'recon_source_cover',
       'region_registered',
       'sealed_manifest',
+      'swap_offset',
     ])
     // 硬断言不得混进来——否则 advisory 语义被稀释，或反之把硬判据塞进桥。
     for (const hard of ['dns', 'tcp', 'query', 'fresh', 'marts_fresh', 'metrics', 'dims']) {
