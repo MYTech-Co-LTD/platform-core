@@ -782,6 +782,30 @@ capabilities / policy 门禁 / run 回执」一句打包，**实测与其中两�
 **与对账的关系**：覆盖率下降 → 告警（数据质量）；对外口径差 → 走 §1.4.1「重述窗口」的
 `RESTATE_EXCLUDE` 具名记账。两者**不要混用一个容差**。
 
+
+#### 1.4.3 换货单的两种形态与净额口径（2026-11-21 真相机定案，issue #2630）
+
+> **口径一句话**：报表 `return_money` = **真实退货单** + **换货单的退回半边**。我方 `sale_amount` 已含另一半
+> （`(Σ非赠品明细 + order_total_money)/2`），所以退货侧**必须补上对应的半边**，否则**净额系统性高估**。
+
+| 形态 | 判别式 | 报表怎么算 | 我方处置 | 状态 |
+|---|---|---|---|---|
+| **等价换货** | `order_total_money = 0` ∧ 明细行数 **≥ 2** ∧ `state=FINISHED` ∧ `type=SALE_ORDER` | 销售半边 + 退货半边（= 明细合计 ÷ 2） | 退货侧补 `Σ非赠品明细/2`（`return_amount@order`） | ✅ **已修**（#2652，店129 七天逐分吻合） |
+| **差额换货** | `0 < order_total_money < Σ明细`（顾客带旧货抵扣、再补差价） | 从明细里挑出「退回的那几行」 | **不反推**：出 `swap_offset = Σ(Σ明细 − 总额)` 作**上界**，台账按 `attribution='swap_split_unrecognized'` 归因 | ✅ 已实现（#2655）；规则未确认，**不猜映射** |
+| **单行零元单** | `order_total_money = 0` ∧ 行数 = 1 | **不计退货** | 也不计（`sale` 侧已按 `(Σ+0)/2` 折半） | 无需动作 |
+
+**为什么差额换货不反推**：接口**没有**标记「哪一行是退回的」——`order_detail_type` 一律「商品项目」，
+`present_flag` / `policy_*` 全空，`payment_money` 对零元单不区分（2026-11-21 逐字段验过）。
+硬猜映射 = 给同一条业务规则造第二份实现（§4.1 B11），故只出**量**、不出判定。
+
+**上界只能当上界用**（实测 64188/2026-11-14）：店12 `swap_offset=34.00` / 实测差 `17.00`；
+店21 `swap_offset=62.42` / 实测差 **0** ⇒ `|diff| ≤ swap_offset` 成立，**`diff ≈ offset` 不成立**。
+⇒ 台账归因**不改容差**：`|diff| > swap_offset` 时仍按真缺口判红（否则上界会掩埋真问题）。
+
+⚠️ **销售侧本来就是对的**：64188 店129 七天与报表 `sale_money` **逐分吻合**。错的只有退货侧的换货半边。
+⚠️ **旧结论作废**：§1.4 / §1.5 里把这类差额记成「源端口径怪、重采补不回」的说法，
+对**等价换货**是**我方缺陷**（已修）；对**差额换货**才是真·不可反解（已归因）。
+
 ### 1.5 运维与故障速查
 
 | 现象 | 先看哪 |
@@ -936,6 +960,36 @@ capabilities / policy 门禁 / run 回执」一句打包，**实测与其中两�
   2026-11-11 实测积 **671 个** ⇒ 30 天明细 **47.4s**（冷腿仅 5.9s）；清理后 **7.8s**。
   ⚠️ ⑰ 的单日延迟判据只碰 ~34 个文件，**测不出**这类线性劣化；故单列文件数判据。
   反向测试：`WIRE_HOT_SELFTEST=1`。回收本体 = openship job `lemeng-gc-hot-hours`（CST 03:20）。
+  ✅ **⑲ 主体列合法 `org_valid`（2026-11-21，#2638 P0）**：逐发布关系检查 `org` **形态合法且单值**
+  （`^[a-z0-9][a-z0-9._-]*$`）。由来：`mat_psql` 取 org 的通路把**失败文本**当值带回
+  （OCI exec failed / psql not found），非空校验放行 ⇒ `subject_org()` 把它**烧进 VIEW 定义**
+  ⇒ 三个 `vw_*` 的 1908 万行 org 全成错误文本 ⇒ `where org='<真租户>'` **恒 0 行且不报错**。
+  ⚠️ **⑰ 抓不到这一类**：它只 `count(*)` 不带 org 过滤，行数照常 > 0。**修法**：`mat_require` 后加
+  org 形状校验 + `tables` 档并上 `path:models/<域>/views`（视图是**创建时字面常量**，不进现役档 = 永不重建）。
+  ✅ **⑳ 差额换货抵扣额 `swap_offset`（2026-11-21，#2654）**：本月累计 `swap_offset` 超阈
+  （`WIRE_SWAP_OFFSET_MONTH_MAX`，默认 5000）⇒ **WARN**。判 WARN 不判 ERR：它是描述性指标，
+  不是采集故障；作用是让「不可识别的差额换货」这一类**增长可见**（2026-11 半月实测 4,155.92）。
+  ✅ **⑲⑳ 的载体是容器化断言面**（见下）——原 `wire-warehouse.sh` 跑在数据面宿主、靠 `docker exec`，
+  **2026-11-19 调度迁移后随旧 job 一起停发，观测面黑了 45h+ 且无人知晓**。现形态：
+  `data.warehouse_assertions`（`--group core`，①–⑬⑯⑰⑱⑲⑳）+ `platform.warehouse_assertions_oo`
+  （`--group oo`，⑭⑮，**OO 读凭据只在应用单元**），脚本 `scripts/lemeng/warehouse-assertions.mjs`。
+  **check 名逐字不变**（OO 规则/桥/⑯ 免冷却都按名字匹配）。两处机制替换：⑮ 读 OO 日志流
+  `openship_platform_core_data_pg_duckdb`（容器内无 docker）；①② 打**连接串里的 host**
+  （W4 后应用单元是私网 IP，写死 `pg_duckdb` 必误报）。
+  ✅ **`data.console_drift`（2026-11-21，#2629 的「关门」）**：duckle **没有回拉也没有漂移检测**
+  （源码穷举 `reconcile`/`drift`/`desync` 均无）⇒「有人在服务器改了管线」「实验残留没清」永不暴露
+  （实测两卷各有 16/11 个仓内不存在的管线、~150 条实验 run，而排班干净、湖写入正常 ⇒ **零红灯**）。
+  三个方向：缺件/内容不一致 ⇒ ERR；卷里多出 ⇒ **WARN**；孤儿 run 只计数。
+
+> 🔴 **延迟类判据的三条设计原则（2026-11-21，#2636 三连修换来的）**——给任何延迟断言定阈值前先问：
+> ① **用户走哪条路**？（drill 走 `servingRelationFor` 选出的月感知视图；通用视图只服务 >5 个月回退与 marts
+>   —— 测后者等于测用户不走的路）
+> ② **热还是冷**？（pg_duckdb 冷启动有 ~3.3s 固定开销：S3 secret 解析 + 文件元数据；用户经长驻服务是热的。
+>   探针每轮新进程 ⇒ 永远冷 ⇒ 阈值按热基线设必假红。**修法：预热一次再计时**）
+> ③ **数字稳不稳**？（当月未做月合并 ⇒ drill 走热腿、随当日数据量波动；应取上一个**完整月**）
+> ⇒ 实测：旧 ⑰ 三个全踩，恒 16s 假红两整天；真实用户路径热态 **1.8–2.5s**。
+> **判据错了比没有判据更危险**——它会指挥你把正确的架构改成错的。
+
   **openship 通知不拆**双通道并行 1-2 周；**R12 存量 L2 判据**：「契约有 `sensitivity !== 'none'` 列 **且** `data.metrics` 存在 `source='l2'` 行」⇒ 逐行吐进 `data_plane_probes`。**契约侧闸已就位**（②b，`2026-10-18`）；**判据本体（运行期那条）待本 Phase 的流就位后接线**。 | **进行中**（第一刀 ✅ #898 战区未登记；✅ #905 口径对账台账 ⑪⑫⑬；其余仍挂着） |
 | 2 | 通知切换（数据面告警归 OO，openship 收敛 job 崩溃级）；**拆桥**（OO 升级修好投递腿后，桥接退役）；看门狗升级（search 凭据 → 证据年龄检查）；悬空 duckle→openship webhook 处置；本表翻绿 + 基建速查订正 | **未开工** |
 
@@ -1062,6 +1116,11 @@ capabilities / policy 门禁 / run 回执」一句打包，**实测与其中两�
 
 | 46 | **`static_pages` 的页节点只申报部分 schema ⇒ `ctl.merge` 在逐页类型推断上炸**（2026-11-07 真机）：同一天、同一端点，`page_size=50`×3 页——申报 **2 列**（order_no/order_time）时 merge 报 `Conversion Error: Malformed JSON at byte 0 of input: number with leading zero is not allowed`（值 `003120140000015`，来自未申报的嵌套字段）；把响应**全 10 列**（含 `branch`/`pos_order_details` 申报为 `json`）写进 `data.schema` 后，同一管线 `status: ok`，50/50/50 → 150 行。 | **用 `static_pages`（多页 + `ctl.merge`）时，`data.schema` 必须覆盖响应里会参与合并的全部列**——只申报「我最后要用的几列」在单页源上没事，在多页合并时会因逐页推断不一致炸掉；嵌套结构一律申报 `json`，别让它被推断成数字。（生成器侧无法校验「是否完整」，只能在 manifest 评审时看响应 `keys()`。） |
 | 47 | **CST 05:00 的 `${date-1d}` 按 UTC 解析，日更实际落 T-2**（#1777，item_profit 2026-11-09 真机）：05:00 CST = 21:00 UTC 前一天，模板取 UTC 日期减 1 ⇒ 该轮写 T-2；11-09 05:01 CST 两账套 run 共 **8,604** 行，正好等于 `fct_retail_profit` 的 **11-07** item 行数，11-08 为 0 行 | **凡 `${date-1d}`/`${date-2d}` 日更，触发时刻的 UTC 日期必须等于业务日期（≥08:00 CST）**；用 **05:05（T-2 兜底）+ 09:05（T-1 主轮）双轮**：09:05 若源端未发布而失败，次日 05:05 自然补成 T-2；改排班后必须跑 `gen-schedules --check` + `console-schedules-tz`，并按 §F.2 seed + 重启 console。 |
+| 48 | **观测面随调度迁移静默停发 45h+**（#2628，2026-11-21 实测）：`wire-warehouse` 断言族 ⑩–⑱ 挂在 openship 探活 job 上，Wave 8 调度迁平台后**随旧 job 一起停发**——封版双算防线（⑯⑰）、对账台账覆盖（⑪⑫⑬）、pg 崩溃（⑮）全部失明，**而没有任何东西报错**。停发前 `detail_path`/`item_price`/`settlement_face` 已持续 ERR 数日 | **切观测类 job 前必须逐条点名它产出的每个 check，确认新面已在发射同名行**（`deploy/jobs.md` 切流第 3.5 步）；判据：老面末次 → 新面首次**不允许断档** |
+| 49 | **`org` 列被烧成错误文本 ⇒ 明细查询恒 0 行**（#2638 P0，2026-11-21）：`mat_psql platform` 取 org 时 `psql` 不在容器里，OCI 报错文本从 **stdout** 漏进变量（`2>/dev/null` 只吞 stderr）；`mat_require` **只验非空** ⇒ 放行；`subject_org()` 把它烧进 **VIEW 字面常量** ⇒ 三个 `vw_*` 的 1,908 万行 org 全错 ⇒ `where org='<真租户>'` **恒 0 行，不报错**。且 `tables`/`tick`/`hourly` 三档**都不建视图**、唯一建视图的 `full` 档已停用 ⇒ 视图永久冻结 | **「非空」不等于「合法」**：取值通路必须做**形状校验**（`^[a-z0-9][a-z0-9._-]*$`）；**视图是创建时字面常量，不进现役物化档 = 永不重建**——新资产必须问「哪个档会重建它」；断言侧加 ⑲（⑰ 只 count、抓不到） |
+| 50 | **判据测错对象与状态 ⇒ 恒假红两天**（#2636/#2643/#2645，2026-11-21）：⑰ 测通用视图（用户不走的那条）× 新进程冷启动（3.3s 固定开销）× 当月未合并（走热腿、随当日数据量抖动）⇒ 恒 16.7s 判红，而真实 drill 路径热态仅 1.8–2.5s。差点据错误判据推翻正确的月感知选路架构 | **延迟判据三原则**：测用户真实路径 / 预热后计时 / 取稳态月份；**判据错了比没有判据更危险**（见 §1.5.3 末） |
+| 51 | **换货半边缺失 ⇒ 净额系统性高估**（#2630，2026-11-21 真机）：报表 `return_money` 含**换货单退回半边**，我方 `return` 只认 `%RETURN%` 行 ⇒ 每笔等价换货净额多算一个半边（店129/11-14 高估 281.60 = 该店当日 7%）。根因不是源端口径怪，是**我方缺陷**——旧正典把它记成「源端怪、重采补不回」，于是被当不可抗力归档了 | 口径修复须**四件套同步**（声明/generator/复算副本/compose 引用）+ **全史重算**（增量 lookback 只 10 天，历史不会自己更新）；见 §1.4.3 |
+| 52 | **差额换货的退回行接口不可识别**（#2654，2026-11-21）：`0 < 订单总额 < 明细合计` 的混合单，报表知道哪几行是退回，而 `order_detail_type`/`present_flag`/`policy_*`/`payment_money` **全部无差别**；同一日既有「有混合单零差」的店（21 号 offset 62.42 / 差 0），也有「差 = offset/2」的店（12 号 34.00 / 17.00） | **不可反解 ⇒ 只出上界不猜映射**（同 §1.4.2 哨兵值纪律）：`swap_offset` 作归因上界，`attribution='swap_split_unrecognized'`；**上界不改容差**（超出上界仍判红），否则真缺口被掩埋 |
 
 
 ### 1.7 逐源决策登记区
@@ -1180,6 +1239,8 @@ capabilities / policy 门禁 / run 回执」一句打包，**实测与其中两�
 | 采集契约（落盘 schema 声明的**意图源**） | `contracts/<域>/<源>.<表>.json`（机器面在管线：`node.data.schema` + `qa.contract` + `drift`） |
 | 数据面编排 | `deploy/data-compose.yml`（部署单元 B；全仓只两份 compose，B7 守） |
 | **物化调度** | 🔴 **2026-11-19~21（Wave 8）起调度面已迁平台调度器**：现役 = **平台 PG `platform.job_schedule`**（`apps/server/src/scheduler/registry.ts` 为种子源），关键 key：`data.dbt_tick`（CST 9-23 每 10 分）/ `data.dbt_hourly` / `data.dbt_tables` / `data.dbt_audit_a1/a2a/a2b/window` / `data.semantics_sync`（L1 词表继任）/ `data.zero_row_check` / `data.scorecard` / `data.publish_dims` / `data.monthly_review` / `data.hot_hours_gc` / `platform.verify_ingest` / `platform.verify_regression` / `platform.narrative_health` / `platform.scheduler_audit`（周度体检，2026-11-21 开闸）/ `data.monitor_tick`（每分钟）。**执行单元**：数据单元 `scheduler`+`executor`+`artifacts` 服务（`deploy/jobs.md` §6 角色拆分）。⚠️ **openship 侧乐檬 job 舰队（下行旧文）自 11-18~20 全数 `enabled:false` 留作回滚**——旧文只作历史查证，**冲突时以 `platform.job_schedule` 为准**（`platform.askdata_loop` 为「seed disabled + 专门窗口切流」的待切流项，见 #2626 MR 切流四步）。~~openship job 分档（2026-11-12 核对，UTC）~~：`lemeng-dbt-tick`（`custom:IV9T40QO8YgIgWP0`）、`lemeng-dbt-hourly`（`custom:-pcqo9fNxWml7Lsg`）、`lemeng-dbt-tables`（`custom:JFTeo_oFbCTy9gTN`）、`lemeng-dbt-audit-a1/a2` 等；旧全量作业 `lemeng-dbt-materialize`（`custom:yNWqnvY65iWz1unf`）2026-11-07 OOM 停用 |
+| **数据面断言面（容器化）** | `data.warehouse_assertions`（`--group core`，数据单元，`*/5`）+ `platform.warehouse_assertions_oo`（`--group oo`，应用单元，`*/5`）；脚本 `scripts/lemeng/warehouse-assertions.mjs`。**取代**原宿主 `scripts/lemeng/wire-warehouse.sh --check`（后者仅保留「**重做接线**」的手工用途）。check 名与旧面逐字相同 ⇒ OO 规则/桥/⑯ 免冷却零改动。⚠️ seed 恒 `enabled=false`：按 `deploy/jobs.md` 四步开闸 |
+| **console 漂移对账** | `data.console_drift`（`30 * * * *`，数据单元；只读挂载两卷 `lemeng-console-{3120,64188}-ws`）；脚本 `scripts/lemeng/console-drift.mjs`。判据：缺件/内容不一致 ERR、卷内多出 WARN、孤儿 run 只计数。duckle **无漂移检测**，这是外挂的那只眼睛（#2629） |
 | **L1 语义词表物化** | **openship job** `L1 词表物化`（`custom:tuQ06mlxBe_2TlTo`，UTC `33 4 * * *`，重试 2×/300s）——2026-10-03 注册、当日首跑（原「无 job」状态已消，#297）。⚠️ 它物化的是**平台镜像里那份 `dbt/` 快照**（镜像更新前新声明进不了词表——分叉与比对机制见 **#300**）；对账 `--check` job **有意未注册**（#300 落地前近乎恒绿 = 假保险，裁决见 `dbt/README.md` §11.4 回填表）。「词表被清空 / PG 停更」由探活 job 的 ④⑤⑥⑦ 断言盯（SOP §P8b；⑥⑦ 判据见 §7 #4） |
 | **热小时对象回收** | **openship job** `lemeng-gc-hot-hours`（CST 每日 03:20，即 UTC `20 19 * * *`；薄壳 `sh /opt/lemeng-gc-hot-hours.sh`）——清理 `bizday < 上海今天−2` **且**已有天文件+封版标记的小时对象（工具 `scripts/lemeng/delete-supplanted-hour-partitions.py`，默认 dry-run/删前双证）。**为什么必须有**：小时对象是热/冷布局的暂存区，但读侧 glob 仍会打开它们 ⇒ 不回收 = 查询成本随天数线性增长。2026-11-11 实测积了 **671** 个死文件，30 天 `query_detail` **47.4s** 全花在热腿（冷腿 5.9s）；清理后 **7.8s**。⚠️ 工具曾只认旧天文件布局 ⇒ 恒 `SKIP` 静默失效（#1905/#1906），改布局时必须双读双删。 |
 
