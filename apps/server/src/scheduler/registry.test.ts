@@ -464,6 +464,10 @@ describe('registry · 子进程参数（W6-P4b）', () => {
       ['org.sync', '脚本默认 dry-run，必须 --apply'],
       ['data.archive_private_measures', '--org 必填，缺了直接 usage 退出'],
       ['platform.verify_regression', '--org 必填（platform.tenant.casdoor_org），缺了直接 usage 退出'],
+      // #2628：一套脚本两个域（凭据边界拆开），靠 --group 选断言子集。
+      // 缺了它 = 跑到全套 ⇒ 数据单元因无 OO 读凭据恒红 ⑭⑮、应用单元白跑仓库查询。
+      ['data.warehouse_assertions', '--group core：只跑不依赖 OO 读凭据的 16 条'],
+      ['platform.warehouse_assertions_oo', '--group oo：只跑 ⑭⑮（需 OO 读凭据，只在应用单元）'],
     ])
     for (const d of JOB_REGISTRY) {
       if (allow.has(d.key)) continue
