@@ -629,10 +629,70 @@ async function checkHotPartitions(pool) {
   }
 }
 
+/**
+ * ⑲ 主体列合法（#2638 的事故换来的）：**每个发布关系里的 `org` 必须是单值且形如合法标识符**。
+ *
+ * 为什么 ⑰ 抓不到这一类：⑰ 只 `count(*)`（不带 org 过滤）——行数照常 > 0，看不出 org 脏了。
+ * 事故形态：`mat_psql` 取 org 的通路把**失败文本**当值带回（OCI exec failed / psql not found），
+ * 非空校验放行 ⇒ `subject_org()` 把它烧进 **VIEW 定义**（视图里是常量，永不自己更新）
+ * ⇒ 三个明细视图的 org 全成那串错误文本 ⇒ `where org='<真租户>'` **恒 0 行且不报错**。
+ *
+ * 判据两条，缺一不可：
+ *   ① 形态：`^[a-z0-9][a-z0-9._-]*$`（casdoor_org 的形状；错误文本带 `:` `"` 空格 ⇒ 必被拒）
+ *   ② 单值：一个 relation 内 `count(distinct org)` 必须为 1 —— 多值说明混进了别的部署主体
+ *     （「一面一租户」被破坏，docs/architecture.md §2.5）
+ */
+const ORG_RELATIONS = (process.env.WIRE_ORG_RELATIONS ?? [
+  'staging.fct_retail_sale',
+  'staging.fct_branch_expense',
+  'staging.stg_lemeng_branch',
+  'staging.vw_lemeng_retail_order_line',
+  'staging.vw_lemeng_wholesale_out',
+].join(',')).split(',').map((s) => s.trim()).filter(Boolean)
+
+/** @param {Queryable} pool */
+async function checkOrgValid(pool) {
+  if (selftest('org_valid')) {
+    return { check: 'org_valid', ok: false, detail: 'ERR 自测注入：org 非法（WIRE_ORG_VALID_SELFTEST）' }
+  }
+  /** @type {string[]} */
+  const bad = []
+  try {
+    for (const rel of ORG_RELATIONS) {
+      let rows
+      try {
+        rows = (await pool.query(`select org, count(*)::bigint as n from ${rel} group by 1`)).rows
+      } catch (e) {
+        // 关系不存在 ⇒ 记一条（换站时清单可覆盖 WIRE_ORG_RELATIONS），不算通过也不算脏。
+        bad.push(`${rel}: 读不到（${msg(e).slice(0, 60)}）`)
+        continue
+      }
+      if (rows.length === 0) {
+        bad.push(`${rel}: 空表（无从判定主体列）`)
+        continue
+      }
+      if (rows.length > 1) {
+        bad.push(`${rel}: org 多值 ${rows.length} 个（一面一租户被破坏）`)
+        continue
+      }
+      const org = String(rows[0].org ?? '')
+      if (!/^[a-z0-9][a-z0-9._-]*$/.test(org)) {
+        bad.push(`${rel}: org 非法 \`${org.slice(0, 60)}\``)
+      }
+    }
+    return bad.length
+      ? { check: 'org_valid', ok: false, detail: `ERR ${bad.join('; ')}` }
+      : { check: 'org_valid', ok: true, detail: `OK ${ORG_RELATIONS.length} 个关系主体列合法且单值` }
+  } catch (e) {
+    return { check: 'org_valid', ok: false, detail: `ERR ${msg(e)}` }
+  }
+}
+
 // ── 编排 ──────────────────────────────────────────────────────────────────────
 
 /** advisory 集：判红只投递、不翻 rc（红线③：语义判据不走 job 通知）。 */
 const ADVISORY = new Set([
+  'org_valid',
   'region_registered',
   'recon_ledger_cover',
   'recon_not_evaluated',
@@ -678,6 +738,8 @@ export async function runAll(group = 'all') {
     out.push(await checkSealedManifest(pool))
     out.push(await checkDetailPath(pool))
     out.push(await checkHotPartitions(pool))
+    // ⑲ 主体列合法：⑰ 只 count、看不出 org 脏（#2638 事故形态）
+    out.push(await checkOrgValid(pool))
   } finally {
     await pool.end().catch(() => {})
   }
@@ -763,6 +825,7 @@ export {
   checkItemPrice,
   checkMartsFresh,
   checkMetrics,
+  checkOrgValid,
   checkPgCrashFree,
   checkQuery,
   checkReconLedgerCover,

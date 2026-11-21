@@ -45,6 +45,7 @@ describe('#2628 数据面断言面（容器化）', () => {
       'config_drift',
       'detail_path',
       'hot_partitions',
+      'org_valid',
       'pg_crash_free',
       'recon_ledger_cover',
       'recon_not_evaluated',
@@ -205,6 +206,24 @@ describe('#2628 数据面断言面（容器化）', () => {
     const coreBlock = src.slice(src.indexOf('const pool = await warehouse()'), src.indexOf('if (wantOo)'))
     expect(coreBlock).not.toContain('checkConfigDrift')
     expect(coreBlock).not.toContain('checkPgCrashFree')
+  })
+
+  it('⑲ org 非法必须判红（#2638：错误文本被当 org 烧进视图，where org=… 恒 0 行）', async () => {
+    vi.resetModules()
+    const mod = await import('./warehouse-assertions.mjs')
+    // 形态脏
+    const dirty = fakePool(() => [
+      { org: 'OCIruntimeexecfailed:execfailed:exec:"psql":executablefilenotfoundin$PATH', n: 19 },
+    ])
+    const r1 = await mod.checkOrgValid(dirty as never)
+    expect(r1.ok).toBe(false)
+    expect(r1.detail).toContain('org 非法')
+    // 多值（一面一租户被破坏）
+    const multi = fakePool(() => [{ org: 'a-org', n: 1 }, { org: 'b-org', n: 1 }])
+    expect((await mod.checkOrgValid(multi as never)).ok).toBe(false)
+    // 合法单值
+    const good = fakePool(() => [{ org: 'shanhaiyiguo-org', n: 100 }])
+    expect((await mod.checkOrgValid(good as never)).ok).toBe(true)
   })
 
   it('⑱ glob 不可解析必须判红（不把「读不到」当「没积压」）', async () => {
