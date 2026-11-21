@@ -11,6 +11,10 @@
 
 ## [Unreleased]
 
+## [0.355.0](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.354.1...v0.355.0) - 2026-11-21
+- 【新增】data: 基线过期与真回归分流——不加冗余列，用已有的 verified_at × sealed_at（#2632） ([#2651](https://github.com/MYTech-Co-LTD/platform-core/pull/2651), [398701a](https://github.com/MYTech-Co-LTD/platform-core/commit/398701a0a791d2a7bf74025bedd3befffee035ae))
+
+
 ## [0.354.1](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.354.0...v0.354.1) - 2026-11-21
 - 【修复】data: console-drift 的 forms.* 归属两处同源（#2648 真机补丁） ([#2650](https://github.com/MYTech-Co-LTD/platform-core/pull/2650), [528ba4d](https://github.com/MYTech-Co-LTD/platform-core/commit/528ba4d86e4d1c75f6ba9281a31643b5c6eb54c5))
 
