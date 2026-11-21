@@ -11,6 +11,10 @@
 
 ## [Unreleased]
 
+## [0.353.4](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.353.3...v0.353.4) - 2026-11-21
+- 【修复】data: ⑰ 改测 drill 真实路径且热态计时（#2636 的实测换来的判据修正） ([#2644](https://github.com/MYTech-Co-LTD/platform-core/pull/2644), [72d28f4](https://github.com/MYTech-Co-LTD/platform-core/commit/72d28f4fc80600f70ec5199a9cf9247bff065691))
+
+
 ## [0.353.3](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.353.2...v0.353.3) - 2026-11-21
 - 【修复】data: ⑲ org_valid 区分「org 脏」与「查不动」（争用期判 WARN + 重试一次） ([#2641](https://github.com/MYTech-Co-LTD/platform-core/pull/2641), [5cf5e3a](https://github.com/MYTech-Co-LTD/platform-core/commit/5cf5e3a05a8e6cbbffa7ca733db99e5692561265))
 
