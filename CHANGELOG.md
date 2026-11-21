@@ -11,6 +11,10 @@
 
 ## [Unreleased]
 
+## [0.353.6](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.353.5...v0.353.6) - 2026-11-21
+- 【修复】data: ⑮ drill 月份排除当月——月合并是增量的，当月 built_at 已有（#2645 补丁） ([#2647](https://github.com/MYTech-Co-LTD/platform-core/pull/2647), [120777f](https://github.com/MYTech-Co-LTD/platform-core/commit/120777fca5862caab2b1491060ceeb96488994c2))
+
+
 ## [0.353.5](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.353.4...v0.353.5) - 2026-11-21
 - 【修复】data: ⑰ drill 计时改用「最近已合并月份」（#2645） ([#2646](https://github.com/MYTech-Co-LTD/platform-core/pull/2646), [ce087f6](https://github.com/MYTech-Co-LTD/platform-core/commit/ce087f68e0ade678415d29bf39fa1d0e750a5380))
 
