@@ -11,6 +11,10 @@
 
 ## [Unreleased]
 
+## [0.355.1](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.355.0...v0.355.1) - 2026-11-21
+- 【修复】data: 退货侧补「换货单退回半边」——修正净额系统性高估 ([#2652](https://github.com/MYTech-Co-LTD/platform-core/pull/2652), [c15470f](https://github.com/MYTech-Co-LTD/platform-core/commit/c15470f009ce371ad264e1a6999f0c0f3cb31f83))
+
+
 ## [0.355.0](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.354.1...v0.355.0) - 2026-11-21
 - 【新增】data: 基线过期与真回归分流——不加冗余列，用已有的 verified_at × sealed_at（#2632） ([#2651](https://github.com/MYTech-Co-LTD/platform-core/pull/2651), [398701a](https://github.com/MYTech-Co-LTD/platform-core/commit/398701a0a791d2a7bf74025bedd3befffee035ae))
 
