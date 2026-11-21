@@ -68,7 +68,12 @@ _psql() {
 }
 
 # 台账粗筛：窗口内有差异的 (账套, 日)。台账是 dbt 每日重建的派生物（materialize 之后才有当日新行）。
-candidates=$(_psql "select distinct system_book || ',' || bizday from staging.recon_run where bizday between '${WIN_LO}' and '${WIN_HI}' and (coalesce(break_count,0) > 0 or status in ('within_tol','not_evaluated')) order by 1") \
+# 2026-11-21（#2630）：跳过「全日已具名记账」的日子——该日无 over_tol/not_evaluated 行，
+# 且所有**非零 diff** 的 break 都带未过期的 reason_code（如 late_return_restatement，重采无效的
+# 口径差类）。⚠️ diff=0 的 break 行是台账逐店记行噪音（caliber_sale 两账套恒 0.00 也各落一行、
+# 无 reason_code），不算待分类。这类日子 heal 每晚重采也只会 still_a_gap 白烧 ~2.8h；真要人看的
+# （over_tol / 源侧零返回 / 非零 diff 未具名 / 容差已过期）仍然进候选。RESTATE_EXCLUDE 保留作人工兜底。
+candidates=$(_psql "select distinct r.system_book || ',' || r.bizday from staging.recon_run r where r.bizday between '${WIN_LO}' and '${WIN_HI}' and (coalesce(r.break_count,0) > 0 or r.status in ('within_tol','not_evaluated')) and not (not exists (select 1 from staging.recon_run r2 where r2.system_book = r.system_book and r2.bizday = r.bizday and r2.status in ('over_tol','not_evaluated')) and not exists (select 1 from staging.recon_break b where b.system_book = r.system_book and b.bizday = r.bizday and coalesce(b.diff,0) <> 0 and (coalesce(b.reason_code,'') = '' or b.expires_on is null or b.expires_on < current_date))) order by 1") \
   || { echo "RESTATE_FAILED:deps 台账读不到（staging.recon_run）——materialize 跑过吗？" >&2; exit 3; }
 
 total=0; healed=0; unchanged=0; failed=0
