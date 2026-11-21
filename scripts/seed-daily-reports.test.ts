@@ -5,7 +5,7 @@
 //   ③ 只用 totalable 指标：R1 第 ④ 步「按日组成加总 = 页面值」才有意义（非可加只能记「不适用」）；
 //   ④ 撞名不覆盖（`create-only`）——这条由 `seedOne` 的分支保证，这里只钉「标题唯一」。
 import { describe, expect, it } from 'vitest'
-import { DEFINITIONS } from './seed-daily-reports.mjs'
+import { DEFINITIONS, planSeed } from './seed-daily-reports.mjs'
 import { parseReportInput } from '../modules/data/domain/report-spec'
 import { lintBlocksPublish, lintReportSpec } from '../modules/data/domain/report-lint'
 
@@ -51,5 +51,27 @@ describe('seed-daily-reports 定义', () => {
         if (p.denominatorMetricId) expect(additive.has(p.denominatorMetricId)).toBe(true)
       }
     }
+  })
+})
+
+describe('seed-daily-reports planSeed（dry-run 绝不写库）', () => {
+  it('★ 不存在 + dry-run ⇒ dry-run-create（这一步不许碰库）', () => {
+    expect(planSeed(null, false)).toBe('dry-run-create')
+  })
+
+  it('★ 不存在 + apply ⇒ create-and-publish', () => {
+    expect(planSeed(null, true)).toBe('create-and-publish')
+  })
+
+  it('★ 已存在但未发布：dry-run 只报告，apply 才就地发布（不新建）', () => {
+    const draft = { id: 'x', published_version_id: null }
+    expect(planSeed(draft, false)).toBe('dry-run-publish-existing')
+    expect(planSeed(draft, true)).toBe('publish-existing')
+  })
+
+  it('已发布 ⇒ 幂等跳过（两种模式都不写）', () => {
+    const live = { id: 'x', published_version_id: 'v1' }
+    expect(planSeed(live, false)).toBe('skipped-exists-published')
+    expect(planSeed(live, true)).toBe('skipped-exists-published')
   })
 })
