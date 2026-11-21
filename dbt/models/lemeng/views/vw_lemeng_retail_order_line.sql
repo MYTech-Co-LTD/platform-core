@@ -115,8 +115,7 @@ select
   r['order_detail_std_price']::numeric(14,2) as order_detail_std_price,
   r['order_detail_price']::numeric(14,2) as order_detail_price,
   r['order_detail_online_qty']::numeric(14,3) as order_detail_online_qty,
-  r['order_total_money']::numeric(14,2) as order_total_money,
-  r['month']::varchar as month
+  r['order_total_money']::numeric(14,2) as order_total_money
 -- ══ 冷：月度合并文件（#1916 P1/P2）════════════════════════════════════════════════════════
 -- 冷数据由 `lemeng.retail_order_line.month.compact` 把已封版日合并成
 -- `_MONTH/system_book=<B>/month=<YYYY-MM>/all.parquet`（只含已封版日，无需 anti-join）。
@@ -167,8 +166,7 @@ select
   r['order_detail_std_price']::numeric(14,2) as order_detail_std_price,
   r['order_detail_price']::numeric(14,2) as order_detail_price,
   r['order_detail_online_qty']::numeric(14,3) as order_detail_online_qty,
-  r['order_total_money']::numeric(14,2) as order_total_money,
-  r['month']::varchar as month
+  r['order_total_money']::numeric(14,2) as order_total_money
 -- ══ 热：未封版日子的小时文件 ═══════════════════════════════════════════════════════════════
 -- ⚠️ **排除条件不是「已封版」，而是「已封版且所在月文件已包含它」**（`built_at >= sealed_at`）。
 --   只按「已封版」排除会与月文件之间出现空洞（封版到月文件重建之间两份都没有）；

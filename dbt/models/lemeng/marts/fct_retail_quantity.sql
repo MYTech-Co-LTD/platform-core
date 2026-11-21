@@ -88,7 +88,6 @@ base_rq_sale as (
     {% if is_incremental() %}
     and bizday >= {{ cutoff_or_backfill(10) }}
     {{ backfill_to() }}
-    and (month is null or month >= left(cast({{ cutoff_or_backfill(10) }} as varchar), 7))
     {% endif %}
     {% if env_var('MAT_CLOSED_BEFORE', 'false') == 'true' %}
     and {{ closed_before_predicate() }}
@@ -103,7 +102,6 @@ base_rq_return as (
     {% if is_incremental() %}
     and bizday >= {{ cutoff_or_backfill(10) }}
     {{ backfill_to() }}
-    and (month is null or month >= left(cast({{ cutoff_or_backfill(10) }} as varchar), 7))
     {% endif %}
     {% if env_var('MAT_CLOSED_BEFORE', 'false') == 'true' %}
     and {{ closed_before_predicate() }}

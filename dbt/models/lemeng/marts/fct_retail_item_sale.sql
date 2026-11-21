@@ -62,9 +62,6 @@ with src as (
     --   读到正在被重写的当日小时文件 ⇒ ETag 变化 ⇒ 整轮 ERROR（5 次里 4 次）。
     {% if is_incremental() %}
     and bizday >= {{ incremental_cutoff(10) }}
-    -- 月份分区裁剪（#2636 L1）：细分区的分区键是 month、bizday 只是文件内列 ⇒ 不裁就扫全史。
-    -- 必须 null 安全：热腿路径没有 month 段 ⇒ 该列为 NULL，否则会把今天/昨天的小时行静默滤掉。
-    and (month is null or month >= left(cast({{ incremental_cutoff(10) }} as varchar), 7))
     {% endif %}
     {% if env_var('MAT_CLOSED_BEFORE', 'false') == 'true' %}
     -- 物化闭窗读（2026-11-08 P0）：tick 采集每 10 分钟重写当前小时，物化读同一分区会撞 ETag。

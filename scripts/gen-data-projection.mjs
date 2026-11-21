@@ -222,24 +222,19 @@ export function sqlType(col) {
 }
 
 /**
- * 契约列 → staging 列区文本（每列显式 cast；`org` 注入在 orgAfter 之后；
- * `derivedPartitions` 的列**再跟在 org 之后**）。
+ * 契约列 → staging 列区文本（每列显式 cast；`org` 注入在 orgAfter 之后）。
  *
  * @param {{ name: string, type: string, precision?: number, scale?: number }[]} columns
  * @param {string} orgAfter
- * @param {string[]} [derivedPartitions] 从路径分区派生、额外暴露的列（如 `month`）
  * @returns {string}
  */
-export function buildStagingSelect(columns, orgAfter, derivedPartitions = []) {
+export function buildStagingSelect(columns, orgAfter) {
   /** @type {string[]} */
   const lines = []
   for (const c of columns) {
     lines.push(`  r['${c.name}']::${sqlType(c)} as ${c.name}`)
     if (c.name === orgAfter) lines.push('  {{ subject_org() }}       as org')
   }
-  // 派生分区列（2026-11-21，#2636）：hive 分区值**只在路径里**、不在文件体里，
-  // 暴露它才能让有界窗口的读者对它下**常量谓词**做分区裁剪（bizday 不是分区键，裁不动）。
-  for (const d of derivedPartitions) lines.push(`  r['${d}']::varchar as ${d}`)
   return 'select\n' + lines.join(',\n')
 }
 
@@ -427,7 +422,7 @@ export function runGenerate(rootDir, opts = {}) {
     if (stgAbs !== '' && existsSync(stgAbs)) {
       const stgSql = readFileSync(stgAbs, 'utf8')
       // 全部位点都重写：单投影模型与旧行为逐字等价；零售明细起有两处（冷/热两种布局，见 §5.3）
-      const nextStg = rewriteAllSelectLists(stgSql, buildStagingSelect(c.columns, orgAfter, c.derivedPartitions ?? []))
+      const nextStg = rewriteAllSelectLists(stgSql, buildStagingSelect(c.columns, orgAfter))
       if (nextStg !== stgSql) {
         changed++
         if (!opts.check) writeFileSync(stgAbs, nextStg)
@@ -442,7 +437,7 @@ export function runGenerate(rootDir, opts = {}) {
     const viewPath = viewPathFor(rootDir, c)
     if (existsSync(viewPath)) {
       const viewSql = readFileSync(viewPath, 'utf8')
-      const nextView = rewriteAllSelectLists(viewSql, buildStagingSelect(c.columns, orgAfter, c.derivedPartitions ?? []))
+      const nextView = rewriteAllSelectLists(viewSql, buildStagingSelect(c.columns, orgAfter))
       if (nextView !== viewSql) {
         changed++
         if (!opts.check) writeFileSync(viewPath, nextView)
