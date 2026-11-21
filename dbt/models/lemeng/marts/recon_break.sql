@@ -40,14 +40,16 @@ unpivot as (
         system_book, org, bizday, branch_num, computed_at,
         'caliber_sale' as control,
         platform_sale  as platform_value,
-        source_sale    as source_value
+        source_sale    as source_value,
+        swap_offset
     from src
     union all
     select
         system_book, org, bizday, branch_num, computed_at,
         'caliber_net'  as control,
         platform_net   as platform_value,
-        source_net     as source_value
+        source_net     as source_value,
+        swap_offset
     from src
 ),
 calc as (
@@ -64,7 +66,12 @@ calc as (
         t.expires_on,
         t.disposition,
         t.disposition_by,
-        round(coalesce(u.source_value, 0) - coalesce(u.platform_value, 0), 2) as diff
+        round(coalesce(u.source_value, 0) - coalesce(u.platform_value, 0), 2) as diff,
+        -- 生效容差：abs_tol_eff 与 pct 两档取大（原先是 final select 里重复算两次）
+        round(greatest(
+            case when t.expires_on is not null and t.expires_on < u.bizday then 0 else t.abs_tol end,
+            abs(coalesce(u.source_value, 0)) * t.pct_tol / 100.0
+        ), 2) as tol_eff
     from unpivot u
     join tol t on t.control = u.control
 )
@@ -77,16 +84,24 @@ select
     platform_value,
     source_value,
     diff,
-    round(greatest(abs_tol_eff, abs(coalesce(source_value, 0)) * pct_tol / 100.0), 2) as tol_applied,
+    tol_eff as tol_applied,
     case
         when abs_tol_eff >= abs(coalesce(source_value, 0)) * pct_tol / 100.0 then 'abs'
         else 'pct'
     end as bound_by,
     case
-        when abs(diff) <= greatest(abs_tol_eff, abs(coalesce(source_value, 0)) * pct_tol / 100.0)
-            then 'within_tol'
+        when abs(diff) <= tol_eff then 'within_tol'
         else 'over_tol'
     end as verdict,
+    -- 差额换货抵扣额（描述性）：该店日「明细合计 > 订单总额」的抵扣合计
+    swap_offset,
+    -- **归因**（2026-11-21，#2630）：超容差但没超过抵扣额 ⇒ 疑似「差额换货拆分不可识别」。
+    -- 只做**归因**，不改 verdict（它确实超容差了）；也**不改容差**——否则会把超出抵扣额的真缺口
+    -- 一起放过（验收要求：|diff| > swap_offset 时仍按真缺口判红）。
+    case
+        when abs(diff) > tol_eff and swap_offset > 0 and abs(diff) <= swap_offset
+            then 'swap_split_unrecognized'
+    end as attribution,
     case
         when source_value is null and platform_value is not null then 'source'
         when platform_value is null and source_value is not null then 'platform'
