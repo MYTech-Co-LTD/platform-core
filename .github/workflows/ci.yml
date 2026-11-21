@@ -434,6 +434,15 @@ jobs:
     # 60 分钟：这个 job 现在会**等到部署终态**（构建 9–25 分钟 + 等待 30 分钟窗口 + 余量）。
     # 原来的 30 分钟是「只触发不等待」时代的预算，别照着它缩。
     timeout-minutes: 60
+    # 并行 agent 同时合并时，部署必须**排队**而不是互相抢：
+    #   - group 用仓库级（不是 github.ref），所有合并进同一条队列；
+    #   - cancel-in-progress: false → 不取消正在跑的部署（取消会留下半部署状态）；
+    #   - GitHub 每个 group 只保留一个 running + 一个 pending，新到的替换旧 pending
+    #     → 连续合并只跑最新那次。
+    # 本 job 会等到部署终态，排队后时间窗是叠加的，但 timeout-minutes 仍按单次预算即可。
+    concurrency:
+      group: deploy-${{ github.repository }}
+      cancel-in-progress: false
     steps:
       # release 工作流会把 `chore(release)` 提交推回 main ⇒ 会被本工作流再触发一次。
       # 那条只改 CHANGELOG/版本号，部署它没有意义，而且每发一版多一次完整重建 + 一次切流窗口
