@@ -189,6 +189,10 @@ domains:
   finished:        "state = 'FINISHED'"
   sale_finished:   { extends: finished, filter: "order_transaction_type = 'SALE_ORDER'" }
   return_finished: { extends: finished, filter: "order_transaction_type like '%RETURN%'" }
+  # 换货单（2026-11-21，issue #2630）：`order_total_money = 0` 的销售单 = 退旧换新、实付 0。
+  # 报表把它拆成「销售半边 + 退货半边」，我方 sale 已含半边（(Σ+total)/2），退货侧必须补另一半。
+  # 为什么必须进**基面**而不是在 expr 里 join：基面 where 由本域派生，不在域里的行根本进不了聚合。
+  return_or_swap:  { extends: finished, filter: "order_transaction_type like '%RETURN%' or (order_transaction_type = 'SALE_ORDER' and order_total_money = 0)" }
   # 门店费用构件（P3.3 影子波 Task 2，issue #1031）：费用行方向域——谓词逐字取自
   # fct_branch_expense.sql 的 case-when 条件（生成器基面 where 的派生源，改判别式两边一起改）。
   expense_payable:    "direction = '应付'"
@@ -231,17 +235,29 @@ measures:
     additivity: flow
     unit: CNY
     domain: sale_finished
-  return_amount@line:
+  return_amount@order:
+    # 退货侧 = 真实退货单 + **换货单的退回半边**（2026-11-21，issue #2630 实证 5/5 天逐分吻合）。
+    # 换货单判别式：`order_total_money = 0` 的 SALE_ORDER 且**明细行数 ≥ 2**（单行零元单=赠出/试吃，
+    # 报表不计退货，此处也不计）。半边金额 = 该单非赠品明细合计 ÷ 2 —— 与 sale 侧
+    # `(Σ非赠品 + order_total_money)/2` 是同一笔的两半，故换货单对净额的贡献恒为 0（实付即 0）。
+    # ⚠️ `grain: order`：半边是**订单级**概念（行数判定与折半都要看整单），行粒度算不出。
     expr: >-
       sum(case when order_transaction_type like '%RETURN%' and state = 'FINISHED' and
         (order_detail_std_price > 0 and abs(sale_money) > 0 and abs(quantity) > 0 and
          abs(abs(discount_money) - order_detail_std_price * abs(quantity)) <= 0.02) then 0
       when order_transaction_type like '%RETURN%' and state = 'FINISHED' then sale_money + order_detail_share_discount
       else 0 end)
-    grain: [line]
+      + (case when count(distinct order_detail_num) >= 2 then 1 else 0 end)
+        * sum(case when order_transaction_type = 'SALE_ORDER' and state = 'FINISHED' and order_total_money = 0 and
+            (order_detail_std_price > 0 and sale_money > 0 and quantity > 0 and
+             abs(discount_money - order_detail_std_price * quantity) <= 0.02) then 0
+          when order_transaction_type = 'SALE_ORDER' and state = 'FINISHED' and order_total_money = 0
+            then sale_money + order_detail_share_discount
+          else 0 end) / 2
+    grain: [order]
     additivity: flow
     unit: CNY
-    domain: return_finished
+    domain: return_or_swap
   # 行级原始金额度量（spec 2026-10-22 §2.2）：不承载口径——行域由指标侧钉
   # （聚合面 expression 的 CASE、下钻面 detail.filter），组件体只做行级求和。
   line_amount@line:
@@ -393,7 +409,7 @@ metrics:
     # ── 下钻绑定（spec §2.3/§2.4；Phase 1 裁决点：item_num 不进闭集——折半是订单级算术，
     # 摊到行是设计选择，spec §2.4 明示不定案；价格列走**条件列**（detail.columns +
     # grantedBy: data:cost）而非值级掩码——Phase 2 否决了值级掩码，见 spec 2026-10-22 §3.1）──
-    compose: 'sale_amount@order - return_amount@line'
+    compose: 'sale_amount@order - return_amount@order'
     dimensions: [system_book, bizday, branch_num, order_no]
     # detail.filter 不手写（P3.0 Task 3）：由 compose 两组件域（sale_finished / return_finished）
     # 的 LUB 派生 ⇒ `finished` ⇒ `state = 'FINISHED'`，与迁移前手写值逐字一致。

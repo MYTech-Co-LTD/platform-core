@@ -87,17 +87,17 @@ export const MODELS = [
     rel: 'dbt/models/lemeng/marts/fct_retail_sale.sql',
     stagingRef: "{{ ref('stg_lemeng_retail_order_line') }}",
     // grain 名 → 分组键的唯一映射（组件键的 `@` 后缀是这里的一把钥匙）：
-    // 销售侧（订单粒度）按前四键、退货侧（明细行粒度）按五键。
+    // 销售侧与退货侧**都是订单粒度**（退货侧 2026-11-21 起：换货半边要看整单行数，issue #2630）。
     grainKeys: {
       order: ['system_book', 'bizday', 'branch_num', 'order_no'],
       line: ['system_book', 'bizday', 'branch_num', 'order_no', 'order_detail_num'],
     },
     fctGrain: ['system_book', 'bizday', 'branch_num'],
     // `line_amount@line` 不在这里：它属 `vw_lemeng_retail_order_line` 的聚合面（行级原始金额）。
-    columns: ['sale_amount@order', 'return_amount@line'],
+    columns: ['sale_amount@order', 'return_amount@order'],
     baseAliases: {
       'sale_amount@order': 'base_sale',
-      'return_amount@line': 'base_return',
+      'return_amount@order': 'base_return',
     },
     // 该模型是 incremental（#1520）：基面 CTE 下推 10 天 lookback，让 read_parquet 走 bizday
     // 分区裁剪。只放最终 SELECT 会先扫全史再过滤（tick 实测 5+ 分钟，#1524）。

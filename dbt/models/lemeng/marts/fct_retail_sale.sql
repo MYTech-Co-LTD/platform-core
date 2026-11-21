@@ -102,7 +102,7 @@ end) as measure_value from base_sale group by system_book, bizday, branch_num, o
 ),
 base_return as (
     select * from {{ ref('stg_lemeng_retail_order_line') }}
-    where state = 'FINISHED' and order_transaction_type like '%RETURN%'
+    where state = 'FINISHED' and (order_transaction_type like '%RETURN%' or (order_transaction_type = 'SALE_ORDER' and order_total_money = 0))
     {% if is_incremental() %}
     and bizday >= {{ cutoff_or_backfill(10) }}
     {{ backfill_to() }}
@@ -112,10 +112,16 @@ base_return as (
     {% endif %}
 ),
 return_amount__gen as (
-    select system_book, bizday, branch_num, order_no, order_detail_num, (sum(case when order_transaction_type like '%RETURN%' and state = 'FINISHED' and
+    select system_book, bizday, branch_num, order_no, (sum(case when order_transaction_type like '%RETURN%' and state = 'FINISHED' and
   (order_detail_std_price > 0 and abs(sale_money) > 0 and abs(quantity) > 0 and
    abs(abs(discount_money) - order_detail_std_price * abs(quantity)) <= 0.02) then 0
-when order_transaction_type like '%RETURN%' and state = 'FINISHED' then sale_money + order_detail_share_discount else 0 end)) as measure_value from base_return group by system_book, bizday, branch_num, order_no, order_detail_num
+when order_transaction_type like '%RETURN%' and state = 'FINISHED' then sale_money + order_detail_share_discount else 0 end) + (case when count(distinct order_detail_num) >= 2 then 1 else 0 end)
+  * sum(case when order_transaction_type = 'SALE_ORDER' and state = 'FINISHED' and order_total_money = 0 and
+      (order_detail_std_price > 0 and sale_money > 0 and quantity > 0 and
+       abs(discount_money - order_detail_std_price * quantity) <= 0.02) then 0
+    when order_transaction_type = 'SALE_ORDER' and state = 'FINISHED' and order_total_money = 0
+      then sale_money + order_detail_share_discount
+    else 0 end) / 2) as measure_value from base_return group by system_book, bizday, branch_num, order_no
 ),
 sale_amount__rollup as (
     select system_book, bizday, branch_num, sum(sale_amount__gen.measure_value)::numeric(20,2) as sale_amount__gen

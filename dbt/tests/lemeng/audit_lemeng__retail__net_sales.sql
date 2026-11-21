@@ -168,13 +168,67 @@ ret_base as (
     union all
     select * from ret_base_hot
 ),
+-- 换货单的**退回半边**（2026-11-21，issue #2630；与 fct 生成区 return_amount__gen 的换货项同一句）：
+-- 判别式 = `order_total_money = 0` 的 SALE_ORDER 且明细行数 ≥ 2（单行零元单 = 赠出/试吃，不计）。
+-- 半边 = 该单非赠品明细合计 ÷ 2；sale 侧已含另一半，故换货单对净额贡献恒 0（实付即 0）。
+-- ⚠️ 行数判定必须**整单**看 ⇒ 先按 order_no 分组再折半。
+swap_base_cold as (
+    select r['system_book']::varchar as system_book, r['bizday']::date as bizday,
+           r['branch_num']::int as branch_num, r['order_no']::varchar as order_no,
+           r['order_detail_num']::varchar as order_detail_num,
+           case when r['order_detail_std_price']::decimal(38,10) > 0 and r['sale_money']::decimal(38,10) > 0
+                     and r['quantity']::decimal(38,10) > 0
+                     and abs(r['discount_money']::decimal(38,10)
+                             - r['order_detail_std_price']::decimal(38,10) * r['quantity']::decimal(38,10)) <= 0.02
+                then 0
+                else (r['sale_money']::decimal(38,10) + r['order_detail_share_discount']::decimal(38,10))
+           end as line_amount
+    from {{ window_read_parquet('s3://' ~ var('zos_bucket') ~ '/' ~ var('lemeng_retail_order_line_prefix') ~ '/_DAY_DATA/system_book=*/bizday=*/all.parquet') }} r
+    where r['order_transaction_type'] = 'SALE_ORDER' and r['state'] = 'FINISHED'
+      and r['order_total_money']::decimal(38,10) = 0
+      and r['bizday']::date < {{ audit_until_date() }}
+      and r['bizday']::date >= date '{{ window_start_date() }}'
+),
+swap_base_hot as (
+    select r['system_book']::varchar as system_book, r['bizday']::date as bizday,
+           r['branch_num']::int as branch_num, r['order_no']::varchar as order_no,
+           r['order_detail_num']::varchar as order_detail_num,
+           case when r['order_detail_std_price']::decimal(38,10) > 0 and r['sale_money']::decimal(38,10) > 0
+                     and r['quantity']::decimal(38,10) > 0
+                     and abs(r['discount_money']::decimal(38,10)
+                             - r['order_detail_std_price']::decimal(38,10) * r['quantity']::decimal(38,10)) <= 0.02
+                then 0
+                else (r['sale_money']::decimal(38,10) + r['order_detail_share_discount']::decimal(38,10))
+           end as line_amount
+    from {{ window_read_parquet('s3://' ~ var('zos_bucket') ~ '/' ~ var('lemeng_retail_order_line_prefix') ~ '/system_book=*/bizday=*/hour=*/all.parquet') }} r
+    where r['order_transaction_type'] = 'SALE_ORDER' and r['state'] = 'FINISHED'
+      and r['order_total_money']::decimal(38,10) = 0
+      and r['bizday']::date < {{ audit_until_date() }}
+      and r['bizday']::date >= date '{{ window_start_date() }}'
+      and not exists (select 1 from data.lemeng_daily_sealed m where cast(m.system_book as varchar) = cast(r['system_book'] as varchar) and cast(m.bizday as date) = cast(r['bizday'] as date))
+),
+swap_side as (
+    select system_book, bizday, branch_num,
+           (sum(line_amount) / 2)::numeric(20,2) as return_amount
+    from (
+        select * from swap_base_cold
+        union all
+        select * from swap_base_hot
+    ) swap_base
+    group by 1, 2, 3, order_no
+    having count(distinct order_detail_num) >= 2
+),
 ret_side as (
     select
         system_book,
         bizday,
         branch_num,
         sum(return_amount)::numeric(20,2) as return_amount
-    from ret_base
+    from (
+        select system_book, bizday, branch_num, sum(return_amount) as return_amount from ret_base group by 1, 2, 3
+        union all
+        select system_book, bizday, branch_num, sum(return_amount) as return_amount from swap_side group by 1, 2, 3
+    ) t
     group by 1, 2, 3
 ),
 per_order as (
