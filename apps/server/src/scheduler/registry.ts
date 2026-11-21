@@ -121,6 +121,15 @@ export const JOB_REGISTRY: JobDef[] = [
   // 旧 job 靠退出码 + notify 通道报「覆盖不足」；现在投 `scorecard_baseline:coverage` 探针（告警单出口）。
   { key: 'data.monthly_review', scope: 'data', script: 'scripts/lemeng/monthly-review.mjs', cron: '0 1 1 * *', timezone: 'UTC', timeoutMs: 600000, maxAttempts: 1, expectedIntervalSecs: 2678400, description: '月度采集健康基线（覆盖 <7 天判红；每月 1 号 01:00 UTC）' },
   { key: 'data.monitor_tick', scope: 'data', script: 'scripts/data-monitor-tick.mjs', cron: '* * * * *', timezone: 'UTC', timeoutMs: 300000, maxAttempts: 1, expectedIntervalSecs: 60, description: '业务监控求值（到期规则）' },
+  // 数据面断言面（#2628）：原 `scripts/lemeng/wire-warehouse.sh` 的 ①–⑱ 跑在数据面宿主上、
+  // 靠 `docker exec` 进平台容器 ⇒ 2026-11-19 调度迁平台后**随旧 openship 探活 job 一起停发**，
+  // 观测面黑了 45h+ 而无人知晓。本条把同一批判据搬进容器内执行（脚本 `warehouse-assertions.mjs`），
+  // **判据/阈值/check 名逐字不变**（OO 规则、桥、⑯ 的免冷却豁免都按名字匹配）。
+  // 两处机制替换（⑮ 崩溃读 OO 日志流、①②③ 直接打 pg_duckdb）见脚本头注。
+  // ⚠️ seed 恒插 `enabled=false`（registry 的既有语义）⇒ 天然就是「四步开闸」的第一步：
+  //    先手动跑一轮确认 18 条判据输出与旧面同形，再 `update … set enabled=true`
+  //    （观测面切流判据，见 #2628 验收第 3 条）。
+  { key: 'data.warehouse_assertions', scope: 'data', requiresEnv: ['DATA_WAREHOUSE_URL','DATABASE_URL'], script: 'scripts/lemeng/warehouse-assertions.mjs', cron: '*/5 * * * *', timezone: 'UTC', timeoutMs: 300000, maxAttempts: 1, expectedIntervalSecs: 300, description: '数据面断言 ①–⑱（封版双算/对账台账/配置漂移/pg 崩溃 → OO probes）' },
   // 原 openship 是宿主 bash：`for B in 3120 64188; do docker exec <console> python3 - < repo 脚本; done`
   // ——依赖 console 容器在场。删对象只需 ZOS 凭据 + HEAD，调度器容器两样都有 ⇒ 直接在此执行（Wave 8 ③）。
   // 安全判据全在下游 python 里（dry-run 默认 / --before 必填 / 封版标记+天文件双证才删），本 job 只加 `--apply`。
