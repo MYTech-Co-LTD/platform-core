@@ -12,7 +12,7 @@
 //         回归集为空、查询异常）。**空回归集不判绿**——没有基线就没有可信度，假绿比红危险。
 import { createRequire } from 'node:module'
 import { pathToFileURL } from 'node:url'
-import { emitFailure } from './probe-emit.mjs'
+import { emitFailure, emitProbe } from './probe-emit.mjs'
 import { runRegression } from '../modules/data/domain/verified-regression.ts'
 // 平台侧装配（读 platform.tenant / tenant_source）：B1 不许 modules/** 读 platform 物理表，
 // 故这段 SQL 在 scripts/tenant-sources.ts，由本脚本解析后把值注入 runRegression。
@@ -91,12 +91,29 @@ if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) 
   // 退出码先落变量、finally 关池后再 exit：`process.exit()` 会立即终止进程，放进 try 里
   // 会跳过 finally ⇒ 连接池不关（job 里表现为连接泄漏/进程被强杀）。
   let code = 2
-  /** @type {Array<{ metricId: string, result: string, diffs: string[] }>} */
+  /** @type {Array<{ metricId: string, result: string, diffs: string[], stale?: boolean }>} */
   let failed = []
   try {
     // QueryDeps.adoptedSources 必填：不装配就会把本租户所有源都裁掉（全量假红），故先解析。
     const adoptedSources = await loadAdoptedSources(pool, args.org)
-    const results = await runRegression({ pool, adoptedSources }, args.org, {
+    // 基线过期探测（#2632）：只在 fail 时才被调用一次。判据 = 该问题窗口内的日子
+    // **在基线验证之后被重新封过版**（`data.lemeng_daily_sealed.sealed_at > verified_at`）
+    // ⇒ 数据被重写（回填/heal/双算修复）⇒ 先重验基线，再说是不是真回归。
+    // 读**仓库库**（封版表在 pg_duckdb 里），平台池读不到。
+    const dataRewrittenSince = async (
+      /** @type {{from:string,to:string}|null} */ window,
+      /** @type {string} */ verifiedAt,
+    ) => {
+      if (!window) return false // 无窗口 ⇒ 无法判定「哪段数据变了」，保守返回 false（不冒充过期）
+      const { analystPool } = await import('../modules/data/domain/warehouse.ts')
+      const r = await analystPool().query(
+        `select count(*)::int as n from data.lemeng_daily_sealed
+          where bizday between $1::date and $2::date and sealed_at > $3::timestamptz`,
+        [window.from, window.to, verifiedAt],
+      )
+      return Number(r.rows[0]?.n ?? 0) > 0
+    }
+    const results = await runRegression({ pool, adoptedSources, dataRewrittenSince }, args.org, {
       ...(args.limit !== undefined ? { limit: args.limit } : {}),
       ...(args.ids !== undefined ? { ids: args.ids } : {}),
     })
@@ -104,7 +121,12 @@ if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) 
     for (const r of results) {
       const tail = r.diffs.length === 0 ? '' : `  — ${r.diffs.join('; ')}`
       console.log(`${r.result.padEnd(5)} #${r.id} ${r.metricId}  ${r.question}${tail}`)
-      if (r.result !== 'pass') failed.push({ metricId: r.metricId, result: r.result, diffs: r.diffs })
+      if (r.result !== 'pass') {
+        failed.push({
+          metricId: r.metricId, result: r.result, diffs: r.diffs,
+          ...(r.stale ? { stale: true } : {}),
+        })
+      }
       // 非致命漂移（维度/标识列的行集指纹）：逐行明示，但不改变 pass/fail 判定。
       for (const w of r.warns) console.log(`warn   #${r.id} ${r.metricId}  ${w}`)
     }
@@ -133,7 +155,17 @@ if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) 
   // 不改退出码；测试环境不投。
   if (process.env.NODE_ENV !== 'test' && code === 1 && failed.length > 0) {
     for (const f of failed) {
-      await emitFailure(`verify_regression:${f.metricId}`, `${f.result}: ${f.diffs.join('; ').slice(0, 300)}`)
+      if (f.stale) {
+        // 基线过期 ≠ 回归：按 **WARN** 投（仍可见，但不用「判据失败」的强度喊人）。
+        await emitProbe({
+          check: `verify_regression:${f.metricId}`,
+          verdict: 'WARN',
+          detail: `stale：基线验证后该窗口数据被重写，建议重验基线（current: ${f.diffs.join('; ').slice(0, 240)}）`,
+          probe: 'verify',
+        })
+      } else {
+        await emitFailure(`verify_regression:${f.metricId}`, `${f.result}: ${f.diffs.join('; ').slice(0, 300)}`)
+      }
     }
   }
   process.exit(code)

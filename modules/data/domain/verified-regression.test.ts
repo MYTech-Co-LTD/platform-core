@@ -333,6 +333,49 @@ describe('runRegression', () => {
     expect(updates[0]?.params).toEqual([ORG, 15, 'pass'])
   })
 
+  it('fail + 基线后数据被重写 ⇒ 打 stale 标记（但 result 仍是 fail，不冒充 pass）', async () => {
+    const { pool, updates } = fakePool([
+      questionRow({ id: 21, params: { bizday: { from: '2026-10-01', to: '2026-10-31' } } }),
+    ])
+    /** @type {Array<{window: unknown, verifiedAt: string}>} */
+    const probes = []
+    const results = await runRegression({
+      ...depsOf(pool, async () => ok(['value'], [['1002']])),
+      dataRewrittenSince: async (window, verifiedAt) => {
+        probes.push({ window, verifiedAt })
+        return true
+      },
+    }, ORG)
+    expect(results[0]?.result).toBe('fail') // ⚠️ 判定不变
+    expect(results[0]?.stale).toBe(true)
+    expect(probes[0]?.window).toEqual({ from: '2026-10-01', to: '2026-10-31' })
+    expect(probes[0]?.verifiedAt).toBe('2026-11-01T00:00:00.000Z')
+    expect(updates[0]?.params).toEqual([ORG, 21, 'fail']) // 台账口径不变
+  })
+
+  it('pass 不触发 stale 探测（探测只在 fail 时做，省一次仓库查询）', async () => {
+    const { pool } = fakePool([questionRow({ id: 22 })])
+    let called = 0
+    const results = await runRegression({
+      ...depsOf(pool, async () => ok(['value'], [['1000']])),
+      dataRewrittenSince: async () => { called += 1; return true },
+    }, ORG)
+    expect(results[0]?.result).toBe('pass')
+    expect(results[0]?.stale).toBeUndefined()
+    expect(called).toBe(0)
+  })
+
+  it('探测抛错 ⇒ 仍是 fail、不标 stale，但留一条 warn（不静默降级）', async () => {
+    const { pool } = fakePool([questionRow({ id: 23, params: { bizday: { from: '2026-10-01', to: '2026-10-31' } } })])
+    const results = await runRegression({
+      ...depsOf(pool, async () => ok(['value'], [['1002']])),
+      dataRewrittenSince: async () => { throw new Error('warehouse down') },
+    }, ORG)
+    expect(results[0]?.result).toBe('fail')
+    expect(results[0]?.stale).toBeUndefined()
+    expect(results[0]?.warns.join('\n')).toContain('基线过期探测失败')
+  })
+
   it('数值超容差 ⇒ fail，diff 带列名与两侧值', async () => {
     const { pool, updates } = fakePool([questionRow({ id: 12 })])
     const results = await runRegression(depsOf(pool, async () => ok(['value'], [['1002']])), ORG)
