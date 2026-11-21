@@ -11,6 +11,10 @@
 
 ## [Unreleased]
 
+## [0.354.1](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.354.0...v0.354.1) - 2026-11-21
+- 【修复】data: console-drift 的 forms.* 归属两处同源（#2648 真机补丁） ([#2650](https://github.com/MYTech-Co-LTD/platform-core/pull/2650), [528ba4d](https://github.com/MYTech-Co-LTD/platform-core/commit/528ba4d86e4d1c75f6ba9281a31643b5c6eb54c5))
+
+
 ## [0.354.0](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.353.6...v0.354.0) - 2026-11-21
 - 【新增】data: console 工作区漂移对账 job（#2629 的关门） ([#2649](https://github.com/MYTech-Co-LTD/platform-core/pull/2649), [3d3077b](https://github.com/MYTech-Co-LTD/platform-core/commit/3d3077bdac0114bbf4ad3414acc9ae0bd8029abe))
 
