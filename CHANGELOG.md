@@ -11,10 +11,6 @@
 
 ## [Unreleased]
 
-## [0.353.1](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.353.0...v0.353.1) - 2026-11-21
-- 【修复】data: 断言面真机首跑修正——①② 用连接串 host、⑭⑮ 按凭据边界拆到 platform 域（#2628） ([#2635](https://github.com/MYTech-Co-LTD/platform-core/pull/2635), [f1af765](https://github.com/MYTech-Co-LTD/platform-core/commit/f1af765c790db5a4b799bd8158d5b274fa542f58))
-
-
 ## [0.353.0](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.352.1...v0.353.0) - 2026-11-21
 - 【新增】data: 数据面断言面容器化（#2628，①–⑱ 迁平台调度器） ([#2634](https://github.com/MYTech-Co-LTD/platform-core/pull/2634), [b877696](https://github.com/MYTech-Co-LTD/platform-core/commit/b877696c111857465ae2d65c0729912d8ef2ed16))
 
