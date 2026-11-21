@@ -101,30 +101,46 @@ function platformPool() {
 // 命名与 shell 版一一对应（`assert_dns` → check 名 `dns`），便于两边对照排障。
 
 /**
- * ①② Gate-B：容器直连 pg_duckdb:5432。
- * 保留 shell 版「DNS 与 TCP 分开」的形状——一起红是网络没了，只 TCP 红是端口/进程没了。
+ * ①② 仓库可达性：**测连接串里的那个 host**，不是写死的 docker 别名。
+ *
+ * 🔴 这条是 2026-11-21 真机首跑修正的：shell 版写死 `pg_duckdb`（同宿主 docker 网络别名），
+ * 那是**两单元同机**时代的拓扑。W4 拆分后应用单元在 10.0.0.3、数据单元在 10.0.0.5，
+ * 应用单元的 `DATA_WAREHOUSE_URL` 已改成私网 IP `10.0.0.5:15432` ⇒ 查字面名 `pg_duckdb`
+ * 必 ENOTFOUND，**会天天误报「Gate-B 掉了」**。判据的本意是「消费方连得上仓库」，
+ * 所以 host/port 一律从连接串取（数据单元那边它恰好仍是 `pg_duckdb:5432`，两种拓扑同一条码）。
+ *
+ * 保留「DNS 与 TCP 分开」的形状——一起红是解析/网络没了，只 TCP 红是端口/进程没了。
  */
 async function checkGateB() {
   /** @type {Verdict[]} */
   const out = []
+  const raw = process.env.DATA_WAREHOUSE_URL
+  if (!raw) {
+    return [
+      { check: 'dns', ok: false, detail: 'ERR 缺 DATA_WAREHOUSE_URL（无法判定目标）' },
+      { check: 'tcp', ok: false, detail: 'ERR 缺 DATA_WAREHOUSE_URL（无法判定目标）' },
+    ]
+  }
+  const { hostname, port } = new URL(raw)
+  const target = `${hostname}:${port || '5432'}`
   const { lookup } = require('node:dns').promises
   try {
-    const { address } = await lookup('pg_duckdb')
-    out.push({ check: 'dns', ok: true, detail: `OK ${address}` })
+    const { address } = await lookup(hostname)
+    out.push({ check: 'dns', ok: true, detail: `OK ${hostname}→${address}` })
   } catch (e) {
-    out.push({ check: 'dns', ok: false, detail: `ERR ${/** @type {any} */ (e)?.code ?? msg(e)}` })
+    out.push({ check: 'dns', ok: false, detail: `ERR ${target} ${/** @type {any} */ (e)?.code ?? msg(e)}` })
   }
   try {
     await new Promise((resolve, reject) => {
-      const s = require('node:net').connect(5432, 'pg_duckdb')
+      const s = require('node:net').connect(Number(port || 5432), hostname)
       s.setTimeout(5000)
       s.on('connect', () => { s.end(); resolve(undefined) })
       s.on('error', reject)
       s.on('timeout', () => reject(new Error('timeout')))
     })
-    out.push({ check: 'tcp', ok: true, detail: 'OK' })
+    out.push({ check: 'tcp', ok: true, detail: `OK ${target}` })
   } catch (e) {
-    out.push({ check: 'tcp', ok: false, detail: `ERR ${msg(e)}` })
+    out.push({ check: 'tcp', ok: false, detail: `ERR ${target} ${msg(e)}` })
   }
   return out
 }
@@ -150,7 +166,7 @@ async function checkFresh(pool) {
   try {
     const r = await pool.query(
       `select coalesce(max(bizday)::text,'') as maxday,
-              ((now() at time zone 'Asia/Shanghai')::date - $1)::text as cutoff
+              ((now() at time zone 'Asia/Shanghai')::date - $1::int)::text as cutoff
          from ${PROBE_TABLE}`,
       [FRESH_DAYS],
     )
@@ -181,7 +197,7 @@ async function checkMartsFresh(pool) {
     for (const sp of spec) {
       const r = await pool.query(
         `select coalesce(max(bizday)::text,'') as maxday,
-                ((now() at time zone 'Asia/Shanghai')::date - $1)::text as cutoff
+                ((now() at time zone 'Asia/Shanghai')::date - $1::int)::text as cutoff
            from ${SCHEMA}.${sp.t}`,
         [sp.d],
       )
@@ -224,7 +240,7 @@ async function checkDims(injected) {
     const r = await pool.query(
       `select count(*)::int as n,
               coalesce(max(snapshot)::text,'') as maxday,
-              ((now() at time zone 'Asia/Shanghai')::date - $1)::text as cutoff
+              ((now() at time zone 'Asia/Shanghai')::date - $1::int)::text as cutoff
          from ${DIM_TABLE}`,
       [DIM_FRESH_DAYS],
     )
@@ -628,13 +644,23 @@ const ADVISORY = new Set([
   'hot_partitions',
 ])
 
-export async function runAll() {
+export async function runAll(group = 'all') {
   /** @type {Verdict[]} */
   const out = []
-  const pool = await warehouse()
+  // 按**凭据边界**分组（不是按偏好）：⑭⑮ 要 OO 读凭据，而它只在应用单元；仓库/平台 PG 的
+  // 断言在数据单元跑（贴着实例、且不占 API 容器的算力）。
+  //   · `core`     —— 只需 DATA_WAREHOUSE_URL + DATABASE_URL（数据单元）
+  //   · `oo`       —— 只需 OO 读凭据（应用单元；两条都是 OO 查询，无需仓库连接）
+  const wantCore = group === 'all' || group === 'core'
+  const wantOo = group === 'all' || group === 'oo'
 
+  if (!wantCore) {
+    return [await checkConfigDrift(), await checkPgCrashFree()]
+  }
+
+  const pool = await warehouse()
   try {
-    // ①② Gate-B 与 ③ 真查询：一条链，掉线时这里先红（后面的 SQL 断言会跟着红，是有意的）。
+    // ①② 可达性与 ③ 真查询：一条链，掉线时这里先红（后面的 SQL 断言会跟着红，是有意的）。
     out.push(...(await checkGateB()))
     out.push(await checkQuery(pool))
     out.push(await checkFresh(pool))
@@ -652,17 +678,33 @@ export async function runAll() {
     out.push(await checkSealedManifest(pool))
     out.push(await checkDetailPath(pool))
     out.push(await checkHotPartitions(pool))
-    // ⑭⑮ 走 OO 检索。
-    out.push(await checkConfigDrift())
-    out.push(await checkPgCrashFree())
   } finally {
     await pool.end().catch(() => {})
+  }
+  if (wantOo) {
+    out.push(await checkConfigDrift())
+    out.push(await checkPgCrashFree())
   }
   return out
 }
 
+/**
+ * 解析 `--group core|oo|all`（默认 all；未知值响亮拒绝——静默忽略会让人以为跑过全套）。
+ * @param {string[]} argv
+ */
+function parseGroup(argv) {
+  const raw = argv.find((a) => a.startsWith('--group'))
+  if (!raw) return 'all'
+  const val = raw.includes('=') ? raw.split('=')[1] : argv[argv.indexOf(raw) + 1]
+  if (!['core', 'oo', 'all'].includes(String(val))) {
+    throw new Error(`--group 只支持 core / oo / all，收到 '${val}'`)
+  }
+  return String(val)
+}
+
 async function main() {
-  const verdicts = await runAll()
+  const group = parseGroup(process.argv.slice(2))
+  const verdicts = await runAll(group)
   let errs = 0
   for (const v of verdicts) {
     const mode = ADVISORY.has(v.check) ? 'advisory' : 'hard'
@@ -678,7 +720,7 @@ async function main() {
     })
   }
   console.log(
-    `warehouse-assertions: ${verdicts.length} checks, ${errs} ERR `
+    `warehouse-assertions[${group}]: ${verdicts.length} checks, ${errs} ERR `
     + `(advisory 判红不翻 rc；投递失败不改判定)`,
   )
   // 心跳：与 data.monitor_tick 同表，供看门狗判「探针停了」。
