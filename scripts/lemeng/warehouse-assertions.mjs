@@ -55,7 +55,11 @@ const DIM_FRESH_DAYS = numEnv('WIRE_DIM_FRESH_DAYS', 3)
 const SEALED_TABLE = process.env.WIRE_SEALED_TABLE ?? 'data.lemeng_daily_sealed'
 const DETAIL_VIEW = process.env.WIRE_DETAIL_VIEW ?? 'staging.vw_lemeng_retail_order_line'
 const SEALED_MAX_AGE_MIN = numEnv('WIRE_SEALED_MAX_AGE_MIN', 180)
-const DETAIL_MAX_MS = numEnv('WIRE_DETAIL_MAX_MS', 15000)
+// drill 路径（月感知视图 + month 谓词）热态阈值：实测 ~2.5s，留 3× 余量（#2636）
+const DETAIL_MAX_MS = numEnv('WIRE_DETAIL_MAX_MS', 8000)
+// 通用视图（无裁剪能力）只挡灾难性退化：实测 12–14s，超 30s 才算事
+const GENERIC_MAX_MS = numEnv('WIRE_GENERIC_MAX_MS', 30000)
+const DETAIL_MONTH_VIEW = process.env.WIRE_DETAIL_MONTH_VIEW ?? 'staging.vw_lemeng_retail_order_line_month'
 const HOT_GLOB = process.env.WIRE_HOT_GLOB
   ?? 's3://shanhai-data/lemeng/retail_order_line/system_book=*/bizday=*/hour=*/all.parquet'
 const HOT_MAX_FILES = numEnv('WIRE_HOT_MAX_FILES', 100)
@@ -602,20 +606,57 @@ async function checkDetailPath(pool) {
     if (!/^\d{4}-\d{2}-\d{2}$/.test(day)) {
       return { check: 'detail_path', ok: false, detail: `ERR 取不到最近封版日（max(bizday)=${day}）` }
     }
+    // ── 延迟判据测**用户真实走的那条路**（2026-11-21 重写，#2636 的实测换来的）─────────────
+    // 旧写法测 `DETAIL_VIEW` 且 bizday 谓词、且是新进程冷启动 ⇒ 恒 16s 假红。
+    // 真机实测（同一会话，暖）：
+    //   · drill 月感知视图 + month 谓词：1 个月 2.49s / 2 个月 2.56s（裁剪生效）
+    //   · 通用视图（DETAIL_VIEW）单日：11.7–14.2s —— 它**打不开裁剪**（month 是分区列、
+    //     bizday 只是数据列）⇒ 恒扫全部月文件，且**随历史增长线性变慢**；它服务的是
+    //     drill 的「>5 个月」回退与 marts/审计，不是用户下钻的常规路径。
+    //   · 冷启动（每次新进程）= 3.3s 固定开销（S3 secret 解析 + 文件元数据）⇒ 首跑必须丢弃。
+    // ⇒ 判据：**热态 drill 路径**卡 8s（现状 ~2.5s）；通用视图只做「灾难性退化」护栏 30s
+    //   （现状 12–14s，恶化到 2 倍才算事）。数字都写进 detail，便于看趋势。
+    // ⚠️ 日期**必须先取再拼字面量**：子查询形态会让 pg_duckdb 放弃文件裁剪（>120s，2026-11-10 实测）。
+    const ym = day.slice(0, 7)
+    const drillRel = DETAIL_MONTH_VIEW
+    // 预热一次（丢弃）：把 S3 secret/元数据缓存打热，测出来的才是用户会遇到的状态。
+    await queryWithRetry(pool, `select count(*)::bigint as n from ${drillRel} where month = '${ym}'`).catch(() => {})
     const t0 = Date.now()
-    const r = await pool.query(`select count(*)::bigint as n from ${DETAIL_VIEW} where bizday = date '${day}'`)
-    const ms = Date.now() - t0
+    const r = await pool.query(`select count(*)::bigint as n from ${drillRel} where month = '${ym}'`)
+    const drillMs = Date.now() - t0
     const n = Number(r.rows[0].n)
     if (n <= 0) {
+      return { check: 'detail_path', ok: false, detail: `ERR drill 视图 ${ym} 月 count=0（读不到数据）` }
+    }
+    if (drillMs > DETAIL_MAX_MS) {
+      return {
+        check: 'detail_path',
+        ok: false,
+        detail: `ERR drill 路径（${drillRel} month=${ym}）热态 ${drillMs}ms > ${DETAIL_MAX_MS}ms（rows=${n}）`,
+      }
+    }
+    // 通用视图：只挡「灾难性退化」。它没有裁剪能力，12–14s 是当前结构成本，不是故障。
+    const g0 = Date.now()
+    const g = await queryWithRetry(
+      pool,
+      `select count(*)::bigint as n from ${DETAIL_VIEW} where bizday = date '${day}'`,
+    )
+    const genericMs = Date.now() - g0
+    const gn = Number(g.rows[0].n)
+    if (gn <= 0) {
       return { check: 'detail_path', ok: false, detail: 'ERR 最近封版日单日 count=0（视图读不到数据）' }
     }
-    if (ms > DETAIL_MAX_MS) {
-      return { check: 'detail_path', ok: false, detail: `ERR 单日 count 延迟 ${ms}ms > ${DETAIL_MAX_MS}ms（rows=${n}）` }
+    if (genericMs > GENERIC_MAX_MS) {
+      return {
+        check: 'detail_path',
+        ok: false,
+        detail: `ERR 通用视图单日 ${genericMs}ms > 灾难线 ${GENERIC_MAX_MS}ms（rows=${gn}；历史增长会让它线性变慢，见 #2636）`,
+      }
     }
     return {
       check: 'detail_path',
       ok: true,
-      detail: `OK sealed_refs=${sealedRefs} daily_refs=0 day=${day} rows=${n} ${ms}ms`,
+      detail: `OK sealed_refs=${sealedRefs} daily_refs=0 drill=${drillMs}ms(month=${ym}) generic=${genericMs}ms(day=${day},rows=${gn})`,
     }
   } catch (e) {
     return { check: 'detail_path', ok: false, detail: `ERR ${msg(e)}` }
