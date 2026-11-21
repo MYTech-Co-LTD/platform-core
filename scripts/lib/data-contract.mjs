@@ -253,6 +253,11 @@ export function readContractDoc(root, rel) {
       // 「打错的标记被当成不敏感放行」，正是 sensitivity 闭集要防的那一类。
       sensitivity: c?.sensitivity,
     })),
+    // 派生分区列（2026-11-21，#2636）：从物理路径分区派生、由 staging 额外暴露的列（如 month）。
+    // 同 partitionBy 一样**不 coerce**：非字符串元素直接丢，缺省即空数组（门禁自己判）。
+    derivedPartitions: Array.isArray(doc?.derivedPartitions)
+      ? doc.derivedPartitions.filter((x) => typeof x === 'string')
+      : [],
   }
 }
 

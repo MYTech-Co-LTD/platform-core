@@ -104,7 +104,8 @@ select
   r['order_detail_std_price']::numeric(14,2) as order_detail_std_price,
   r['order_detail_price']::numeric(14,2) as order_detail_price,
   r['order_detail_online_qty']::numeric(14,3) as order_detail_online_qty,
-  r['order_total_money']::numeric(14,2) as order_total_money
+  r['order_total_money']::numeric(14,2) as order_total_money,
+  r['month']::varchar as month
 -- ══ 冷：已封版的**天文件**（关闭日，每账套每天 1 个）════════════════════════════════════════
 -- 2026-10-20 起明细的湖布局是**热/冷混合**（正典 docs/architecture.md §5.3）：
 --   热 = 今天，仍按小时分区；冷 = 关闭日，整天重采落一个天文件。
@@ -151,7 +152,8 @@ select
   r['order_detail_std_price']::numeric(14,2) as order_detail_std_price,
   r['order_detail_price']::numeric(14,2) as order_detail_price,
   r['order_detail_online_qty']::numeric(14,3) as order_detail_online_qty,
-  r['order_total_money']::numeric(14,2) as order_total_money
+  r['order_total_money']::numeric(14,2) as order_total_money,
+  r['month']::varchar as month
 -- ══ 热：未封版日子的小时文件 ═══════════════════════════════════════════════════════════════
 -- ⚠️ **必须排除已封版的日子**（`data.lemeng_daily_sealed` 有该 (账套, 日) 的行）。不排除的后果是**双算**：
 --   「写天文件」与「删小时目录」之间必然有一个两者并存的窗口，而 glob 会把两份都读进来。
