@@ -830,6 +830,7 @@ capabilities / policy 门禁 / run 回执」一句打包，**实测与其中两�
 > **给发布面/物化面写新鲜度容差前，先照此表核「采集滞后 + 发布周期」**——容差拍天数必踩
 > 「零点起结构性红到中午发布完成」（#534 首夜 ~200 条企微误报的根因）。「停更」≠「断流」，
 > 判红先核发布节奏再定级。
+> ⚠️ **本表「物化（dbt）」列的 cron 是 2026-11-19 迁移前旧面（openship job）的排班**——判据节奏（采集滞后/容差/时段感知）仍然有效，但**执行者已是平台调度器 `data.dbt_*` 族**（见 §3「物化调度」行的订正块）。排班现值一律以 `platform.job_schedule` 为准，别照本表 cron 排障。
 
 | 发布面（平台 PG） | 数据来源 | 采集滞后 | 物化（dbt） | 发布（整批替换） | 探活项/容差 | 零点时面内最新 |
 |---|---|---|---|---|---|---|
@@ -847,6 +848,15 @@ capabilities / policy 门禁 / run 回执」一句打包，**实测与其中两�
 > 这不是故障，是节奏；判据必须容得下它。新增发布面时：先在本表加行，再定探活容差。
 
 #### 1.5.3 监控职责分工（🔴 决策定案 2026-10-10，用户裁决；执行计划 #538）
+
+> 🔴 **Wave 8 观测迁移订正（2026-11-21 实测登记，#2628）**：本节的 wire-warehouse 断言族（⑩–⑱，
+> 原挂 `*/5` openship 探活 job）**自 2026-11-19 15:10 CST 起随旧 job 停用而停发**——新面
+> `data.monitor_tick` 在跑但未接这套断言，⑯⑰（封版双算防线）暂无继任；停发前
+> `detail_path`(⑰)/`item_price`(⑧)/`settlement_face` 已持续 ERR 数日。接线/继任与
+> 「观测面切流判据」的验收清单见 **#2628**。另：引擎侧 freshness 告警存在**布局迁移后的
+> 僵尸模板资产**假警报（11-07 迁 page/chunk 布局后旧 `all.parquet` 模板资产恒 stale），判别法
+> 与处置见 **#2629** + WeKnora 条目《duckle 运行记录与新鲜度的静默失效面》§9——**判采集断供
+> 的硬判据是湖列目录，不是 freshness 告警**。
 
 > 背景：监控职责讨论过多轮，执行物散落未收口——**2026-09-27 用户已拍板「引擎原生告警经 OO 转投企微」并端到端配置在位**
 > （OO org=mytech（显示名 2026-10-22 前为 miyuan）：`data_alerts_failure`/`data_alerts_recovery` 等 10 条 enabled 规则（2026-10-22 抖音退役后；原 14 条含抖音 5 条），机制正文唯一出处 =
@@ -1163,13 +1173,13 @@ capabilities / policy 门禁 / run 回执」一句打包，**实测与其中两�
 
 | 东西 | 在哪 |
 |---|---|
-| duckle 管线 | `duckle/common/<源>.<表>.json`（客户级覆盖 `duckle/customers/`）；约定见 `duckle/README.md` §2 |
+| duckle 管线 | `deploy/duckle/console/pipelines/`（119 条，2026-11-21 实测；文件名即 id，平铺不分目录）。⚠️ 本行原写 `duckle/common/`——该目录 2026-11-21 实测**只剩骨架 README、零管线文件**（`duckle/customers/` 同），是布局约定说明不是管线落点，别照旧指针找 |
 | duckle console 定义 | `deploy/duckle/console/{pipelines,schedules}/`（seed 进各账套 workspace 卷） |
 | dbt 项目 | `dbt/`（按域分目录；staging / marts / semantics / tests） |
 | 语义声明 | `dbt/semantics/l1_metrics.yml`（L1 唯一事实源）+ `dbt/models/<域>/marts/schema.yml` |
 | 采集契约（落盘 schema 声明的**意图源**） | `contracts/<域>/<源>.<表>.json`（机器面在管线：`node.data.schema` + `qa.contract` + `drift`） |
 | 数据面编排 | `deploy/data-compose.yml`（部署单元 B；全仓只两份 compose，B7 守） |
-| **物化调度** | **openship job 分档（2026-11-12 核对，UTC）**：`lemeng-dbt-tick`（`custom:IV9T40QO8YgIgWP0`，`2-59/10 1-15 * * *`，CST 9-23 每 10 分钟跑 `fct_retail_sale`）、`lemeng-dbt-hourly`（`custom:-pcqo9fNxWml7Lsg`，`5 1-15 * * *`，增量模型 + 9 条窗口对账）、`lemeng-dbt-tables`（`custom:JFTeo_oFbCTy9gTN`，`20 16 * * *`，CST 00:20 table 重建）、`lemeng-dbt-audit-a1`（`custom:xpWQVUqJFWy1l2kq`，`10 18 * * *`，视图面全史对账）、`lemeng-dbt-audit-a2`（`custom:8ydQ7LgP3VCKNQ2q`，`10 19 * * *`，表模型面全史对账）。⚠️ **旧的全量作业 `lemeng-dbt-materialize`（`custom:yNWqnvY65iWz1unf`）自 2026-11-07 起停用**（当日 14:24 CST OOM，`updatedAt 2026-11-07T06:57Z`；label 明写「临时停用」）——📌 看到它的 `27 3,7,9,11,13,15` 不要以为是现役排班，也不要为了「补跑」直接 enable（先看 OOM 根因）。命令形态见 `deploy/data-plane-deploy-sop.md` §F.6 |
+| **物化调度** | 🔴 **2026-11-19~21（Wave 8）起调度面已迁平台调度器**：现役 = **平台 PG `platform.job_schedule`**（`apps/server/src/scheduler/registry.ts` 为种子源），关键 key：`data.dbt_tick`（CST 9-23 每 10 分）/ `data.dbt_hourly` / `data.dbt_tables` / `data.dbt_audit_a1/a2a/a2b/window` / `data.semantics_sync`（L1 词表继任）/ `data.zero_row_check` / `data.scorecard` / `data.publish_dims` / `data.monthly_review` / `data.hot_hours_gc` / `platform.verify_ingest` / `platform.verify_regression` / `platform.narrative_health` / `platform.scheduler_audit`（周度体检，2026-11-21 开闸）/ `data.monitor_tick`（每分钟）。**执行单元**：数据单元 `scheduler`+`executor`+`artifacts` 服务（`deploy/jobs.md` §6 角色拆分）。⚠️ **openship 侧乐檬 job 舰队（下行旧文）自 11-18~20 全数 `enabled:false` 留作回滚**——旧文只作历史查证，**冲突时以 `platform.job_schedule` 为准**（`platform.askdata_loop` 为「seed disabled + 专门窗口切流」的待切流项，见 #2626 MR 切流四步）。~~openship job 分档（2026-11-12 核对，UTC）~~：`lemeng-dbt-tick`（`custom:IV9T40QO8YgIgWP0`）、`lemeng-dbt-hourly`（`custom:-pcqo9fNxWml7Lsg`）、`lemeng-dbt-tables`（`custom:JFTeo_oFbCTy9gTN`）、`lemeng-dbt-audit-a1/a2` 等；旧全量作业 `lemeng-dbt-materialize`（`custom:yNWqnvY65iWz1unf`）2026-11-07 OOM 停用 |
 | **L1 语义词表物化** | **openship job** `L1 词表物化`（`custom:tuQ06mlxBe_2TlTo`，UTC `33 4 * * *`，重试 2×/300s）——2026-10-03 注册、当日首跑（原「无 job」状态已消，#297）。⚠️ 它物化的是**平台镜像里那份 `dbt/` 快照**（镜像更新前新声明进不了词表——分叉与比对机制见 **#300**）；对账 `--check` job **有意未注册**（#300 落地前近乎恒绿 = 假保险，裁决见 `dbt/README.md` §11.4 回填表）。「词表被清空 / PG 停更」由探活 job 的 ④⑤⑥⑦ 断言盯（SOP §P8b；⑥⑦ 判据见 §7 #4） |
 | **热小时对象回收** | **openship job** `lemeng-gc-hot-hours`（CST 每日 03:20，即 UTC `20 19 * * *`；薄壳 `sh /opt/lemeng-gc-hot-hours.sh`）——清理 `bizday < 上海今天−2` **且**已有天文件+封版标记的小时对象（工具 `scripts/lemeng/delete-supplanted-hour-partitions.py`，默认 dry-run/删前双证）。**为什么必须有**：小时对象是热/冷布局的暂存区，但读侧 glob 仍会打开它们 ⇒ 不回收 = 查询成本随天数线性增长。2026-11-11 实测积了 **671** 个死文件，30 天 `query_detail` **47.4s** 全花在热腿（冷腿 5.9s）；清理后 **7.8s**。⚠️ 工具曾只认旧天文件布局 ⇒ 恒 `SKIP` 静默失效（#1905/#1906），改布局时必须双读双删。 |
 
