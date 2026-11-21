@@ -11,6 +11,12 @@
 
 ## [Unreleased]
 
+## [0.351.0](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.350.0...v0.351.0) - 2026-11-21
+- 【修复】data: 播种脚本 dry-run 也写库 + 已存在未发布的草稿不会再被永久跳过 ([#2622](https://github.com/MYTech-Co-LTD/platform-core/pull/2622), [1203dfd](https://github.com/MYTech-Co-LTD/platform-core/commit/1203dfd03cf4ab7a94ad8c2bb312aeed1ce2464a))
+- 【新增】data: R1 验收用的两份真实日报播种脚本（create-only + 发布前过 lint） ([#2621](https://github.com/MYTech-Co-LTD/platform-core/pull/2621), [17101f7](https://github.com/MYTech-Co-LTD/platform-core/commit/17101f75e51792ebbddac2400b8e0949f3c1d0be))
+- 【新增】scheduler: 调度器周度体检——把 #2602 的复评条件变成机器判据 ([#2618](https://github.com/MYTech-Co-LTD/platform-core/pull/2618), [bd430bb](https://github.com/MYTech-Co-LTD/platform-core/commit/bd430bb3b056ab33e0d4fbb1254e83929f581a29))
+
+
 ## [0.350.0](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.349.0...v0.350.0) - 2026-11-20
 - 【新增】data: 月度评审补「到期提醒」探针（WARN，桥→企微） ([#2614](https://github.com/MYTech-Co-LTD/platform-core/pull/2614), [15b9b20](https://github.com/MYTech-Co-LTD/platform-core/commit/15b9b20284eaf09adc5973a31d7cf9e382afae87))
 
