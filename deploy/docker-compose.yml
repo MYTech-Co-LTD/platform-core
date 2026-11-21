@@ -158,7 +158,11 @@ services:
       # 摄入验证的水位（#2606）：`verify-ingest` 缺省写 `/var/lib/askdata/verify-ingest.<stream>.watermark`。
       # **必须是命名卷**：写在容器里的话每次平台发版都会丢，退回 7 天回看窗口白扫一遍
       # （旧 openship job 把它指到 server 容器的 `/tmp`，就是这个后果）。
+      # askdata 回路（#2624）的水位也在同一卷：`<step>.watermark.<agent>` 每 agent 一份。
       - askdata-state:/var/lib/askdata
+      # askdata 回路要读 openclaw agent 的 SQLite（#2624）：同 compose 的卷，**只读**挂进来；
+      # 作业侧先快照复制到 /tmp 再读（只读挂载上 WAL 库建不了 -shm）。
+      - openclaw_state:/openclaw-state:ro
     depends_on:
       postgres:
         condition: service_healthy

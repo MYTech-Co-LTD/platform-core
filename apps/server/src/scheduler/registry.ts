@@ -71,6 +71,11 @@ export const JOB_REGISTRY: JobDef[] = [
   // 落在 **platform 域**：`verify-ingest` 要 OO 只读凭据（应用单元本来就有），`verify-regression`
   // 只用 `DATABASE_URL`。水位默认路径 `/var/lib/askdata`（compose 里挂了命名卷 ⇒ 跨部署保留；
   // 旧 job 显式指到容器 `/tmp`，每次 server 重建就丢）。
+  // askdata 演进回路 P1（#2624，Wave 8 ③）：原 openship 宿主 `sync-and-run.sh`（docker sock 找卷 +
+  // source /etc/openobserve-ingest.env）。容器形态：openclaw 卷只读挂载 + 快照复制读 WAL 库，
+  // OO 摄取凭据走 OO_READ_* 映射（不新增密钥），水位复用 askdata-state 卷。
+  // **有意行为变更**：单 agent 失败不拖停其他 agent（旧 shell 是 set -eu fail-fast）。
+  { key: 'platform.askdata_loop', scope: 'platform', requiresEnv: ['OO_READ_URL','OO_READ_ORG','OO_READ_TOKEN','PLATFORM_ORG'], script: 'scripts/askdata/loop.mjs', cron: '23 * * * *', timezone: 'UTC', timeoutMs: 300000, maxAttempts: 1, expectedIntervalSecs: 3600, description: 'askdata 演进回路（export/attribute/verify × 每 agent；水位在 askdata-state 卷）' },
   { key: 'platform.verify_ingest', scope: 'platform', requiresEnv: ['DATABASE_URL','OO_READ_URL','OO_READ_ORG','OO_READ_TOKEN'], script: 'scripts/verify-ingest.mjs', cron: '40 * * * *', timezone: 'UTC', timeoutMs: 300000, maxAttempts: 1, expectedIntervalSecs: 3600, description: '摄入验证（OO askdata_verified → 重放 → verified_questions）' },
   // 叙事质量判据（#2612，Wave 8 ④）：原 openship 每小时的宿主 python（`docker exec <postgres> psql`
   // + `/opt/lemeng-emit-probe.py`）。判据本体已容器化：DSN 直连 + 探针直投，跑在应用单元。
