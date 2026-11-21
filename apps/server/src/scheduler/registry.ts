@@ -133,6 +133,13 @@ export const JOB_REGISTRY: JobDef[] = [
   // （`OO_AUTH`，读端点恒 401，实测），OO **读**凭据只在应用单元 ⇒ ⑭⑮ 必须在 `platform` 域，
   // 与 `demand.mining` / `verify_*` 同款处置（**不新增密钥**，见 Wave 8 计划 §凭据实测细节）。
   { key: 'data.warehouse_assertions', scope: 'data', requiresEnv: ['DATA_WAREHOUSE_URL','DATABASE_URL'], script: 'scripts/lemeng/warehouse-assertions.mjs', args: ['--group', 'core'], cron: '*/5 * * * *', timezone: 'UTC', timeoutMs: 300000, maxAttempts: 1, expectedIntervalSecs: 300, description: '数据面断言 ①②③④⑤⑥⑦⑧⑨⑩⑪⑫⑬⑯⑰⑱（可达性/新鲜度/对账台账/封版双算 → OO probes）' },
+  // duckle console 的「运行态 vs 声明真相」对账（#2629）：duckle **没有回拉也没有漂移检测**
+  // （源码穷举 reconcile/drift/desync 均无此语义）⇒「有人在服务器改了管线」「实验残留没清」
+  // 永远不会自己暴露。2026-11-21 实测两卷各有 16/11 个仓内不存在的管线、~150 条实验 run，
+  // 而排班表干净、湖写入正常 ⇒ 零红灯。
+  // 三个方向：缺件/内容不一致 ⇒ ERR；卷里多出 ⇒ WARN（实验残留，清理走 #2629 的 _archive）；
+  // 孤儿 run 只计数。**只读两卷**（data-compose 已把两卷只读挂进 data 单元）。
+  { key: 'data.console_drift', scope: 'data', script: 'scripts/lemeng/console-drift.mjs', cron: '30 * * * *', timezone: 'UTC', timeoutMs: 120000, maxAttempts: 1, expectedIntervalSecs: 3600, description: 'console 工作区漂移（缺件/内容不一致/多余管线/孤儿 run → OO probes）' },
   { key: 'platform.warehouse_assertions_oo', scope: 'platform', requiresEnv: ['OO_READ_URL','OO_READ_ORG','OO_READ_TOKEN'], script: 'scripts/lemeng/warehouse-assertions.mjs', args: ['--group', 'oo'], cron: '*/5 * * * *', timezone: 'UTC', timeoutMs: 120000, maxAttempts: 1, expectedIntervalSecs: 300, description: '数据面断言 ⑭⑮（配置漂移 / pg_duckdb 崩溃，读 OO 流 → OO probes）' },
   // 原 openship 是宿主 bash：`for B in 3120 64188; do docker exec <console> python3 - < repo 脚本; done`
   // ——依赖 console 容器在场。删对象只需 ZOS 凭据 + HEAD，调度器容器两样都有 ⇒ 直接在此执行（Wave 8 ③）。
