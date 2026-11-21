@@ -35,6 +35,16 @@ describe('#2629 console 漂移对账', () => {
     expect(out[0].detail).toContain('extra=2')
   })
 
+  it('归属规则必须两处同源：forms.* 不在仓清单里，也不该算「卷内多余」', () => {
+    // 真机 2026-11-21：两卷里都留着 forms.submission.l0.json（forms 专属 console 建立前的分发残留）
+    const out = diffWorkspaces(
+      ['shared.json'],
+      { 3120: ['shared.json', 'forms.submission.l0.json'] },
+    )
+    expect(out[0].verdict).toBeUndefined() // 不是 WARN——forms 与本卷无关
+    expect(out[0].detail).toContain('extra=0')
+  })
+
   it('③ 干净卷 ⇒ OK，且 detail 里带上孤儿 run 计数（可看趋势，不单独判红）', () => {
     const out = diffWorkspaces(['shared.json'], { 3120: ['shared.json'] }, { 3120: 7 })
     expect(out[0].ok).toBe(true)
