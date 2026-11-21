@@ -11,6 +11,10 @@
 
 ## [Unreleased]
 
+## [0.352.1](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.352.0...v0.352.1) - 2026-11-21
+- 【修复】data: restate 台账粗筛跳过「全日已具名记账」的日子（#2630） ([#2633](https://github.com/MYTech-Co-LTD/platform-core/pull/2633), [9f55d2d](https://github.com/MYTech-Co-LTD/platform-core/commit/9f55d2da07aaa5bfc4c49763e66136f88ee9a842))
+
+
 ## [0.352.0](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.351.0...v0.352.0) - 2026-11-21
 - 【新增】scheduler: askdata 回路迁平台（platform.askdata_loop，容器形态入口） ([#2626](https://github.com/MYTech-Co-LTD/platform-core/pull/2626), [b24ca9c](https://github.com/MYTech-Co-LTD/platform-core/commit/b24ca9c427153b40bfe153e234719b178d3a1042))
 - 【修复】data: backfill 档排除 audit 测试（分块回填与全史对账冲突）(#2493) ([#2625](https://github.com/MYTech-Co-LTD/platform-core/pull/2625), [ddc657b](https://github.com/MYTech-Co-LTD/platform-core/commit/ddc657beef4ae2c4b3a773f03e84e8a48d7d05fe))
