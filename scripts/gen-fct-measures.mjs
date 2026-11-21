@@ -71,6 +71,8 @@ export const REGEN_COMMAND = 'pnpm exec tsx scripts/gen-fct-measures.mjs'
  * @property {number} [incrementalLookback] 增量基面下推天数（仅 incremental 模型；#1524）
  * @property {string} [incrementalKey] 增量过滤键（默认 bizday）
  * @property {boolean} [closedWindow] 基面是否排除「今天当前小时」（物化闭窗读，2026-11-08 P0）
+ * @property {string} [monthPartition] 该基面的**月份分区列名**（如 `month`）：给了就在增量块里
+ *   追加「月份分区裁剪」谓词（`#2636` L1）。只对读 `_MONTH` 容器、且增量下界是**编译期常量**的模型有效。
  */
 
 /**
@@ -102,6 +104,8 @@ export const MODELS = [
     // 该模型是 incremental（#1520）：基面 CTE 下推 10 天 lookback，让 read_parquet 走 bizday
     // 分区裁剪。只放最终 SELECT 会先扫全史再过滤（tick 实测 5+ 分钟，#1524）。
     incrementalLookback: 10,
+    // 该模型读 `_MONTH` 容器 ⇒ 分区键是 `month`；增量窗口下界可推成月份常量做文件裁剪（#2636）
+    monthPartition: 'month',
     // 物化只读已闭窗（2026-11-08 P0）：tick 采集每 10 分钟重写当前小时，物化读同一分区会撞
     // DuckDB ETag。`MAT_CLOSED_BEFORE=true` 时排除「今天且 hour >= 当前小时」的分区。
     closedWindow: true,
@@ -168,6 +172,8 @@ export const MODELS = [
     },
     // #1520 W2-P1：与主路径（手写 base CTE）同窗口；生成区基面也下推 10 天。
     incrementalLookback: 10,
+    // 同读 _MONTH 容器 ⇒ 分区键 month 可裁（#2636 L1）
+    monthPartition: 'month',
     // 同 fct_retail_sale：物化只读已闭窗（2026-11-08 P0）。
     closedWindow: true,
   },
@@ -254,8 +260,16 @@ export function renderFctMeasures(measures, spec, domains = {}) {
     // 的模型生效（其余模型 `is_incremental()` 恒假，加了只是噪音）。
     // 2026-11-20（#2493）：下界换 cutoff_or_backfill（不传 --vars 时恒等 incremental_cutoff），
     // 并追加 backfill_to() 上界——两者必须成对（护栏在 registry.test.ts：只压下界=全史重跑=崩溃路径）。
+    // 月份分区裁剪（2026-11-22，#2636 L1 第二步）：`_MONTH` 容器的分区键是 `month`，
+    // 而 `bizday` 只是文件内列 ⇒ 只按 bizday 过滤**裁不动文件**，每次增量都扫全史。
+    // 这里按同一窗口下界推一个**编译期常量**月份谓词。
+    // 🔴 **必须 null 安全**：热腿路径 `system_book=/bizday=/hour=/` **没有 month 段** ⇒ `r['month']` 为 NULL，
+    //    直接写 `month >= …` 会把今天/昨天的小时行**静默滤掉**（不报错、不是空表，只是少一批行）。
+    const monthFilter = spec.monthPartition
+      ? `\n    and (${spec.monthPartition} is null or ${spec.monthPartition} >= left(cast({{ cutoff_or_backfill(${spec.incrementalLookback}) }} as varchar), 7))`
+      : ''
     const incFilter = spec.incrementalLookback
-      ? `\n    {% if is_incremental() %}\n    and ${spec.incrementalKey ?? 'bizday'} >= {{ cutoff_or_backfill(${spec.incrementalLookback}) }}\n    {{ backfill_to() }}\n    {% endif %}`
+      ? `\n    {% if is_incremental() %}\n    and ${spec.incrementalKey ?? 'bizday'} >= {{ cutoff_or_backfill(${spec.incrementalLookback}) }}\n    {{ backfill_to() }}${monthFilter}\n    {% endif %}`
       : ''
     // 物化闭窗读（2026-11-08 P0）：`MAT_CLOSED_BEFORE=true`（materialize.sh 注入）时排除
     // 「今天且 hour >= 当前小时」——tick 采集每 10 分钟重写当前小时，物化读同一分区会撞 ETag。
