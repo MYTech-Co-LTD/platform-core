@@ -426,6 +426,10 @@ fi
 # ⚠️ 不写 load_log：回填的是**旧分区**，不动 max 水位；写了反而会把「当天窗口」的台账冲掉。
 # ⚠️ 必须两个 var 都给（护栏在 dbt 侧：backfill_to 与 cutoff_or_backfill 成对）；缺 bf_to
 #    等价全史重跑 = 崩溃路径，这里再挡一道。
+# ⚠️ 排除 `tag:audit`：audit 测试是「湖全史复算 vs mart」的对账，分块回填时历史尚未采完，
+#    每一块都会红（实测 6 个 audit 失败、22,657/79,596 行差异），dbt build 随之跳过下游
+#    fct_outbound_region 并判 dbt_build 失败。17 块采完后统一跑全史审计（#2493）。
+#    grain/not_null 等 schema 测试不在 audit 标签下，仍随本档执行（假绿防护照旧）。
 if [ "$SCOPE" = backfill ]; then
   _log="$_WORK/dbt.backfill.log"
   _rc="$_WORK/dbt.backfill.rc"
@@ -443,7 +447,7 @@ if [ "$SCOPE" = backfill ]; then
   esac
   echo "── backfill: select=${MATERIALIZE_SELECT} vars=${MATERIALIZE_DBT_VARS} ──"
   # 退出码用 rc 文件带出（POSIX sh 无 pipefail/PIPESTATUS；与 tables 档同一手法）。
-  ( if mat_dbt $(mat_dbt_args) --select "$MATERIALIZE_SELECT" --vars "$MATERIALIZE_DBT_VARS" 2>&1; then
+  ( if mat_dbt $(mat_dbt_args) --select "$MATERIALIZE_SELECT" --exclude tag:audit --vars "$MATERIALIZE_DBT_VARS" 2>&1; then
       echo 0 >"$_rc"
     else
       echo $? >"$_rc"
