@@ -624,7 +624,8 @@ async function checkDetailPath(pool) {
     let ym = day.slice(0, 7)
     try {
       const mi = await pool.query(
-        `select max(ym)::text as ym from data.lake_month_index where built_at is not null`,
+        // ⚠️ 排除当月：月合并是**增量**的（当月 built_at 已有），不排除就还是热腿
+        `select max(ym)::text as ym from data.lake_month_index where built_at is not null and ym < to_char((now() at time zone 'Asia/Shanghai')::date, 'YYYY-MM')`,
       )
       const lastCompacted = String(mi.rows[0]?.ym ?? '')
       if (/^\d{4}-\d{2}$/.test(lastCompacted)) ym = lastCompacted

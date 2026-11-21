@@ -174,7 +174,7 @@ describe('#2628 数据面断言面（容器化）', () => {
     const mod = await import('./warehouse-assertions.mjs')
     const pool = fakePool((sql) => {
       if (sql.includes('pg_views')) return [{ sealed_refs: 10, daily_refs: 0 }]
-      if (sql.includes('lake_month_index')) return [{ ym: '2026-10' }]
+      if (sql.includes('lake_month_index')) return [{ ym: '2026-10' }] // 已排除当月后的最近完整月
       if (sql.includes('max(bizday)')) return [{ d: '2026-11-20' }]
       return [{ n: 100 }]
     })
