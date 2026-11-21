@@ -215,7 +215,7 @@ export function findStagingModelRel(root, domain, table) {
  *
  * @param {string} root
  * @param {string} rel
- * @returns {{ rel: string, raw: unknown, domain: string, table: string, prefix: string, partitionBy: string[], markerColumn: string, schemaVersion: unknown, consumerVersion: unknown, columns: { name: string, type: string, nullable: boolean, expr: string, precision?: number, scale?: number, sensitivity?: string }[] } | null}
+ * @returns {{ rel: string, raw: unknown, domain: string, table: string, prefix: string, partitionBy: string[], markerColumn: string, schemaVersion: unknown, consumerVersion: unknown, derivedPartitions: string[], columns: { name: string, type: string, nullable: boolean, expr: string, precision?: number, scale?: number, sensitivity?: string }[] } | null}
  */
 export function readContractDoc(root, rel) {
   /** @type {any} */
@@ -256,7 +256,7 @@ export function readContractDoc(root, rel) {
     // 派生分区列（2026-11-21，#2636）：从物理路径分区派生、由 staging 额外暴露的列（如 month）。
     // 同 partitionBy 一样**不 coerce**：非字符串元素直接丢，缺省即空数组（门禁自己判）。
     derivedPartitions: Array.isArray(doc?.derivedPartitions)
-      ? doc.derivedPartitions.filter((x) => typeof x === 'string')
+      ? doc.derivedPartitions.filter((/** @type {unknown} */ x) => typeof x === 'string')
       : [],
   }
 }
