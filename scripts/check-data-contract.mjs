@@ -475,7 +475,10 @@ export function checkDataContract(rootDir) {
       })
     } else {
       const aliases = extractStagingAliases(readFileSync(join(rootDir, stgRel), 'utf8')).filter(
-        (a) => !INJECTED_STAGING_COLUMNS.includes(a),
+        (a) => !INJECTED_STAGING_COLUMNS.includes(a)
+          // 该契约自己声明的派生分区列（如 retail_order_line 的 `month`）：不进湖、不是契约列，
+          // 由生成器按 `derivedPartitions` 追加，比对时按**每契约**排除（2026-11-21，#2636）。
+          && !(c.derivedPartitions ?? []).includes(a),
       )
       const isPrefixOfContract = aliases.every((a, i) => colNames[i] === a) && aliases.length <= colNames.length
       if (!isPrefixOfContract) {

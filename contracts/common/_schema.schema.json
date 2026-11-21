@@ -18,6 +18,11 @@
     "consumerVersion"
   ],
   "properties": {
+    "derivedPartitions": {
+      "type": "array",
+      "items": { "type": "string" },
+      "description": "从**物理路径分区**派生、由 staging 额外暴露的列（不进湖、不是契约列）。用途：让有界窗口的读者对分区键下常量谓词从而裁剪（bizday 不是分区键、裁不动）。当前仅 retail_order_line 的 month（2026-11-21，#2636）。"
+    },
     "$schema": {
       "description": "编辑器提示用的自引用（指向本文件）。**不是契约语义的一部分**，校验器可以不看它——但它必须被允许，否则 `additionalProperties: false` 会把每个带它的契约文件都判成违规。",
       "type": "string"
