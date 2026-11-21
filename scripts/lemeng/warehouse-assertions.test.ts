@@ -169,6 +169,20 @@ describe('#2628 数据面断言面（容器化）', () => {
     expect(generic).not.toContain('select max(')
   })
 
+  it('⑰ drill 计时优先用**已合并月份**（当月走热腿会擦阈值边）', async () => {
+    vi.resetModules()
+    const mod = await import('./warehouse-assertions.mjs')
+    const pool = fakePool((sql) => {
+      if (sql.includes('pg_views')) return [{ sealed_refs: 10, daily_refs: 0 }]
+      if (sql.includes('lake_month_index')) return [{ ym: '2026-10' }]
+      if (sql.includes('max(bizday)')) return [{ d: '2026-11-20' }]
+      return [{ n: 100 }]
+    })
+    await mod.checkDetailPath(pool as never)
+    const drill = pool.calls.filter((s) => s.includes('vw_lemeng_retail_order_line_month'))
+    expect(drill[0]).toContain("month = '2026-10'") // 已合并月，不是当月 2026-11
+  })
+
   it('⑰ 视图回退到 _DAILY 必须判红（#1872 的慢/崩路径回来了）', async () => {
     vi.resetModules()
     const mod = await import('./warehouse-assertions.mjs')

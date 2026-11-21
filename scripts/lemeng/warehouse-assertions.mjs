@@ -617,8 +617,18 @@ async function checkDetailPath(pool) {
     // ⇒ 判据：**热态 drill 路径**卡 8s（现状 ~2.5s）；通用视图只做「灾难性退化」护栏 30s
     //   （现状 12–14s，恶化到 2 倍才算事）。数字都写进 detail，便于看趋势。
     // ⚠️ 日期**必须先取再拼字面量**：子查询形态会让 pg_duckdb 放弃文件裁剪（>120s，2026-11-10 实测）。
-    const ym = day.slice(0, 7)
+    // ⚠️ **必须取「已合并的最近月份」，不能取当月**（2026-11-21 真机）：当月还没被月合并，
+    //    drill 视图会走热腿（扫全部小时文件 + anti-join）⇒ 实测 7.9s 且随当日数据量波动，
+    //    卡在 8s 阈值边缘。已合并月份走纯冷路径 ⇒ 实测 2.5s，才是这条判据要守的基线。
     const drillRel = DETAIL_MONTH_VIEW
+    let ym = day.slice(0, 7)
+    try {
+      const mi = await pool.query(
+        `select max(ym)::text as ym from data.lake_month_index where built_at is not null`,
+      )
+      const lastCompacted = String(mi.rows[0]?.ym ?? '')
+      if (/^\d{4}-\d{2}$/.test(lastCompacted)) ym = lastCompacted
+    } catch { /* 索引表不可读 ⇒ 退回当月（仍能判，只是数字含热腿） */ }
     // 预热一次（丢弃）：把 S3 secret/元数据缓存打热，测出来的才是用户会遇到的状态。
     await queryWithRetry(pool, `select count(*)::bigint as n from ${drillRel} where month = '${ym}'`).catch(() => {})
     const t0 = Date.now()
