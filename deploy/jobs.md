@@ -131,6 +131,13 @@
 1. **登记（enabled=false）**：确认 `platform.job_schedule` 有该 key，且 `enabled=false`、`next_run_at=null`、`params={}`。seed 只补新增 key，**不覆盖**人改过的 `cron` / `enabled`。
 2. **手动跑一次并比对**：由持有 `jobs:manage` 的账号手动触发（模块端点 `POST /api/modules/jobs/:key/run`，**只入队**），等 worker 领取并记录 `job_run`。**本步在 `enabled=false` 的登记态即可执行**——手动触发不要求 `enabled=true`，启停只影响自动排班。比对产物与 openship 上最近一次结果：数量、口径、落表/落事件都要对得上；**比对不过不启用**。
 3. **关 openship**：`patch_jobs_by_key` 把对应 job 置 `enabled=false`，确认 openship 侧不再产生新 run。**若该 job 没有对应的 openship 作业**（如 `metric-retire`、`report.scope_scan`），跳过本步。
+   **3.5 观测面判据（🔴 2026-11-21 新增：#2628 的事故换来的）**：如果被切的 job **本身是观测/告警面**
+   （探活断言、健康巡检、探针），关掉前必须**逐条点名**它产出的每个 check/流，并确认新驱动方
+   **已经在发射同名行**（`grep` OO 流或库内心跳，至少跑过一轮完整周期）。
+   ⚠️ **只验证「新 job 能跑」不算过**：Wave 8 迁移时数据面切流有判据（verify-* 切流实录），
+   观测面没有——结果 `wire-warehouse` ①–⑱ 随旧 job 停发 **45h+ 无人知晓**，
+   其中 ⑯⑰ 是「封版表停更 ⇒ 明细视图静默双算」的唯一防线。
+   **判据**：老面最后一次发射时间 → 新面首次发射时间，中间**不允许有断档**（重叠优于断档）。
 4. **DB 启用**：置 `enabled=true`，把 `next_run_at` 补算到**下一个未来时点**（不要落在过去，否则会立即补跑），并**同时刷新 `updated_at=now()`**——否则健康判据②的宽限窗口从 seed 时刻起算，可能在该 job 首跑之前就判红。观察首条 `job_run` 为 `ok`，且 openship 侧保持安静。
 
 **按实例各做一次**：`notify.reconcile` / `org-sync` 在 openship 各有两条作业（mytech + 山海），两实例各有独立平台库与独立 `platform.job_schedule`。切流与回滚必须**按实例各执行一遍**；只关一个实例会留下双调度者。实例与 openship job key 的对应见下表及 `deploy/notify-reconcile-job.md` / `deploy/org-sync-job.md` 的生产实例表。
@@ -150,6 +157,7 @@
 | `notify.health` | **已切（W6-P4b）** | 内置调度器（两实例） | openship job 已停 |
 | `metric.retire` | **已切（W6-P4b）** | 内置调度器（两实例，周一夜） | 本无 openship 作业 |
 | `org.sync` | **已切（W6-P4b）** | 内置调度器（两实例，**必须带 `--apply`**——脚本默认 dry-run） | openship job 已停（mytech `qvkapKmBf4jI4H6T` / 山海 `dbuJg85a8UjjObB7`） |
+| `data.warehouse_assertions` | **待切（#2628 / 2026-11-21 已登记，`enabled=false`）** | 待切：手动跑一轮 → 18 条 check 输出与旧面比对 → 按 3.5 确认 new face 发射 → enable | 无 openship 对应作业（旧形态是**宿主 cron + `docker exec`**，已随 Wave 8 停发——本 job 就是来补这个断档的） |
 
 **顺序按爆炸半径**：已完成 `notify.reconcile` → `metric.candidates` → `report.scope_scan`；
 P1+P4b 的切流**已全部完成**（2026-11-15）；新增 job 仍按上表四步执行。

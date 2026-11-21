@@ -175,6 +175,38 @@ describe('#2628 数据面断言面（容器化）', () => {
     expect(r.detail).toContain('_DAILY')
   })
 
+  it('①② 目标 host 必须取自连接串，**不许写死** docker 别名（W4 拆分后的真机教训）', async () => {
+    // 真机事实（2026-11-21）：应用单元 DATA_WAREHOUSE_URL = 10.0.0.5:15432，数据单元 = pg_duckdb:5432。
+    // 写死 `pg_duckdb` ⇒ 应用单元恒 ENOTFOUND ⇒ 天天误报「Gate-B 掉了」。
+    const { readFileSync } = await import('node:fs')
+    const src = readFileSync(new URL('./warehouse-assertions.mjs', import.meta.url), 'utf8')
+    expect(src).toContain('new URL(raw)')
+    // 不允许出现「裸查字面名」的调用
+    expect(src).not.toMatch(/lookup\('pg_duckdb'\)/)
+    expect(src).not.toMatch(/connect\(\s*5432\s*,\s*'pg_duckdb'\s*\)/)
+  })
+
+  it('⑮ 崩溃判据必须读 OO 日志流（容器内无 docker），且保留 postmaster 原句', async () => {
+    const { readFileSync } = await import('node:fs')
+    const src = readFileSync(new URL('./warehouse-assertions.mjs', import.meta.url), 'utf8')
+    expect(src).toContain('openship_platform_core_data_pg_duckdb')
+    expect(src).toContain('terminated by signal')
+    expect(src).toContain('database system is in recovery mode')
+    // 容器内不许再真的调 docker（注释里提历史是允许的，所以判据是「没有 exec/spawn docker」）
+    expect(src).not.toMatch(/(execFileSync|spawnSync|execSync)\(\s*['"]docker['"]/)
+  })
+
+  it('按凭据边界分组：core 组不含 ⑭⑮，oo 组**只**含 ⑭⑮（不连仓库）', async () => {
+    const { readFileSync } = await import('node:fs')
+    const src = readFileSync(new URL('./warehouse-assertions.mjs', import.meta.url), 'utf8')
+    // oo 组早退：只跑两条 OO 断言
+    expect(src).toMatch(/if \(!wantCore\) \{\s*return \[await checkConfigDrift\(\), await checkPgCrashFree\(\)\]/)
+    // core 组不含 OO 两条（要 OO 读凭据，只在应用单元）
+    const coreBlock = src.slice(src.indexOf('const pool = await warehouse()'), src.indexOf('if (wantOo)'))
+    expect(coreBlock).not.toContain('checkConfigDrift')
+    expect(coreBlock).not.toContain('checkPgCrashFree')
+  })
+
   it('⑱ glob 不可解析必须判红（不把「读不到」当「没积压」）', async () => {
     vi.resetModules()
     const mod = await import('./warehouse-assertions.mjs')
