@@ -226,6 +226,31 @@ describe('#2628 数据面断言面（容器化）', () => {
     expect((await mod.checkOrgValid(good as never)).ok).toBe(true)
   })
 
+  it('⑲ 查不动 ≠ org 脏：争用期判 WARN（不冒充「数据错了」）', async () => {
+    vi.resetModules()
+    const mod = await import('./warehouse-assertions.mjs')
+    process.env.WIRE_RETRY_DELAY_MS = '0'
+    // 所有关系都抛 cancel 类错误 ⇒ 应为 WARN，而不是 ERR
+    const pool = {
+      calls: [],
+      query: async () => { throw new Error('(PGDuckDB) Executor Error: Query cancelled') },
+      end: async () => {},
+    }
+    const r = await mod.checkOrgValid(pool as never)
+    expect(r.verdict).toBe('WARN')
+    expect(r.ok).toBe(true)
+    expect(r.detail).toContain('读不动')
+    delete process.env.WIRE_RETRY_DELAY_MS
+  })
+
+  it('⑲ 真脏仍然判 ERR（WARN 不能把真问题也吃进去）', async () => {
+    vi.resetModules()
+    const mod = await import('./warehouse-assertions.mjs')
+    const dirty = fakePool(() => [{ org: 'OCI runtime exec failed', n: 1 }])
+    const r = await mod.checkOrgValid(dirty as never)
+    expect(r.verdict ?? 'ERR').toBe('ERR')
+  })
+
   it('⑱ glob 不可解析必须判红（不把「读不到」当「没积压」）', async () => {
     vi.resetModules()
     const mod = await import('./warehouse-assertions.mjs')

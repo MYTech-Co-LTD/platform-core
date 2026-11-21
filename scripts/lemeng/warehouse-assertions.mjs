@@ -40,7 +40,11 @@ const require = createRequire(import.meta.url)
  * @typedef {{ query: (sql: string, params?: unknown[]) => Promise<{ rows: any[] }>, end: () => Promise<void> }} Queryable
  */
 /** 断言执行结果。`detail` 会进 OO 行的 detail 字段（截断 400 字）。 */
-/** @typedef {{ check: string, ok: boolean, detail: string }} Verdict */
+/**
+ * 断言结果。`verdict` 可选：默认由 `ok` 推出（OK/ERR）；只有「分不清真假」的情形才显式给
+ * **WARN**（如查不动 ≠ 数据错）——WARN 仍然进 OO，桥也可转发，但它不冒充「这条判据失败了」。
+ * @typedef {{ check: string, ok: boolean, detail: string, verdict?: 'OK'|'WARN'|'ERR' }} Verdict
+ */
 
 const SCHEMA = process.env.WIRE_SCHEMA ?? 'staging'
 const PROBE_TABLE = process.env.WIRE_PROBE_TABLE ?? 'fct_retail_sale'
@@ -75,6 +79,25 @@ function msg(e) {
 function numEnv(key, dflt) {
   const n = Number(process.env[key])
   return Number.isFinite(n) && n > 0 ? n : dflt
+}
+
+/**
+ * 查询一键重试：pg_duckdb 在 dbt 物化期间会因内存争用 cancel 掉并发查询
+ * （实测 2026-11-21：tables 档重建期间 count(*) 被 `Query cancelled` 打断）。
+ * 断言是低频只读，重试一次 + 短退避就够，**不是**掩盖失败——真错误第二次仍会抛。
+ * @param {Queryable} pool @param {string} sql
+ */
+async function queryWithRetry(pool, sql) {
+  try {
+    return await pool.query(sql)
+  } catch (e) {
+    if (!/cancel|terminat|timeout|memory/i.test(msg(e))) throw e
+    // 退避可配（测试里置 0，避免 5 个关系 ×1.5s 拖穿用例时限）
+    // ⚠️ 不能用 numEnv：它要求 >0 才采信，而测试要用 0 关掉退避。
+    const _d = Number(process.env.WIRE_RETRY_DELAY_MS)
+    await new Promise((r) => setTimeout(r, Number.isFinite(_d) ? _d : 1500))
+    return await pool.query(sql)
+  }
 }
 
 /** 应用单元的只读仓库连接（`analystPool` 已带 default_transaction_read_only + error 监听）。 */
@@ -657,14 +680,20 @@ async function checkOrgValid(pool) {
   }
   /** @type {string[]} */
   const bad = []
+  /** 读不动（争用 / cancel）单独记——**它不是「org 脏」**，不能混成一条判红。 */
+  /** @type {string[]} */
+  const unreadable = []
   try {
     for (const rel of ORG_RELATIONS) {
       let rows
       try {
-        rows = (await pool.query(`select org, count(*)::bigint as n from ${rel} group by 1`)).rows
+        rows = (await queryWithRetry(pool, `select org, count(*)::bigint as n from ${rel} group by 1`)).rows
       } catch (e) {
-        // 关系不存在 ⇒ 记一条（换站时清单可覆盖 WIRE_ORG_RELATIONS），不算通过也不算脏。
-        bad.push(`${rel}: 读不到（${msg(e).slice(0, 60)}）`)
+        // 🔴 2026-11-21 实测修正：这一格原本记进 `bad`（判 ERR），于是 **tables 档重建期间**
+        //    pg_duckdb 争用导致 `Query cancelled` ⇒ ⑲ 连续误报「org 非法」，而那条视图单独查是好的。
+        //    「读不动」与「org 脏」是两种东西，处置也不同（前者等下一轮，后者要修数据）
+        //    ⇒ 单独记，判 **WARN**（进 OO、桥可转发，但不冒充「数据错了」）。
+        unreadable.push(`${rel}（${msg(e).slice(0, 50)}）`)
         continue
       }
       if (rows.length === 0) {
@@ -680,9 +709,16 @@ async function checkOrgValid(pool) {
         bad.push(`${rel}: org 非法 \`${org.slice(0, 60)}\``)
       }
     }
-    return bad.length
-      ? { check: 'org_valid', ok: false, detail: `ERR ${bad.join('; ')}` }
-      : { check: 'org_valid', ok: true, detail: `OK ${ORG_RELATIONS.length} 个关系主体列合法且单值` }
+    if (bad.length) return { check: 'org_valid', ok: false, detail: `ERR ${bad.join('; ')}` }
+    if (unreadable.length) {
+      return /** @type {Verdict} */ ({
+        check: 'org_valid',
+        ok: true,
+        verdict: 'WARN',
+        detail: `WARN 读不动 ${unreadable.join('; ')}（争用/cancel，不是 org 脏——下一轮再判）`,
+      })
+    }
+    return { check: 'org_valid', ok: true, detail: `OK ${ORG_RELATIONS.length} 个关系主体列合法且单值` }
   } catch (e) {
     return { check: 'org_valid', ok: false, detail: `ERR ${msg(e)}` }
   }
@@ -704,6 +740,10 @@ const ADVISORY = new Set([
   'hot_partitions',
 ])
 
+/**
+ * @param {'all'|'core'|'oo'} [group]
+ * @returns {Promise<Verdict[]>}
+ */
 export async function runAll(group = 'all') {
   /** @type {Verdict[]} */
   const out = []
@@ -758,10 +798,12 @@ function parseGroup(argv) {
   const raw = argv.find((a) => a.startsWith('--group'))
   if (!raw) return 'all'
   const val = raw.includes('=') ? raw.split('=')[1] : argv[argv.indexOf(raw) + 1]
-  if (!['core', 'oo', 'all'].includes(String(val))) {
+  const v = String(val)
+  if (v !== 'core' && v !== 'oo' && v !== 'all') {
     throw new Error(`--group 只支持 core / oo / all，收到 '${val}'`)
   }
-  return String(val)
+  /** @type {'all'|'core'|'oo'} */
+  return v
 }
 
 async function main() {
@@ -770,11 +812,12 @@ async function main() {
   let errs = 0
   for (const v of verdicts) {
     const mode = ADVISORY.has(v.check) ? 'advisory' : 'hard'
-    if (!v.ok) errs += 1
-    console.log(`${v.ok ? 'OK ' : 'ERR'} ${v.check}: ${v.detail}`)
+    const verdict = v.verdict ?? (v.ok ? 'OK' : 'ERR')
+    if (verdict === 'ERR') errs += 1
+    console.log(`${verdict} ${v.check}: ${v.detail}`)
     await emitProbe({
       check: v.check,
-      verdict: v.ok ? 'OK' : 'ERR',
+      verdict,
       detail: v.detail.slice(0, 400),
       // ⚠️ probe 名与 shell 版**逐字相同**：历史行、按 probe 过滤的排障口径都认这个名字。
       probe: 'wire-warehouse',
