@@ -149,7 +149,7 @@ describe('#2628 数据面断言面（容器化）', () => {
     expect(pool.calls[0]).toContain('then 2 else 1')
   })
 
-  it('⑰ 明细延迟必须**先取日期再拼字面量**（子查询形态会让 pg_duckdb 放弃文件裁剪）', async () => {
+  it('⑰ 延迟测的是**drill 真实路径**（月感知视图 + month 谓词）且**热态**（先预热再计时）', async () => {
     vi.resetModules()
     const mod = await import('./warehouse-assertions.mjs')
     const pool = fakePool((sql) => {
@@ -159,10 +159,14 @@ describe('#2628 数据面断言面（容器化）', () => {
     })
     const r = await mod.checkDetailPath(pool as never)
     expect(r.ok).toBe(true)
-    // 单日 count 必须是字面量日期，不是子查询
-    const countSql = pool.calls.find((s) => s.includes('count(*)'))
-    expect(countSql).toContain("date '2026-11-20'")
-    expect(countSql).not.toContain('select max(')
+    // drill 路径：月感知视图 + month 谓词（不是 bizday）
+    const drill = pool.calls.filter((s) => s.includes('vw_lemeng_retail_order_line_month'))
+    expect(drill.length).toBeGreaterThanOrEqual(2) // 预热一次 + 计时一次
+    expect(drill[0]).toContain("month = '2026-11'")
+    // 通用视图仍然被读（灾难线护栏），且用字面量日期（子查询形态会废掉文件裁剪）
+    const generic = pool.calls.find((s) => s.includes('bitint') || (s.includes('vw_lemeng_retail_order_line') && s.includes('bizday = date')))
+    expect(generic).toContain("date '2026-11-20'")
+    expect(generic).not.toContain('select max(')
   })
 
   it('⑰ 视图回退到 _DAILY 必须判红（#1872 的慢/崩路径回来了）', async () => {
