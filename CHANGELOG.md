@@ -11,6 +11,10 @@
 
 ## [Unreleased]
 
+## [0.353.0](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.352.1...v0.353.0) - 2026-11-21
+- 【新增】data: 数据面断言面容器化（#2628，①–⑱ 迁平台调度器） ([#2634](https://github.com/MYTech-Co-LTD/platform-core/pull/2634), [b877696](https://github.com/MYTech-Co-LTD/platform-core/commit/b877696c111857465ae2d65c0729912d8ef2ed16))
+
+
 ## [0.352.1](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.352.0...v0.352.1) - 2026-11-21
 - 【修复】data: restate 台账粗筛跳过「全日已具名记账」的日子（#2630） ([#2633](https://github.com/MYTech-Co-LTD/platform-core/pull/2633), [9f55d2d](https://github.com/MYTech-Co-LTD/platform-core/commit/9f55d2da07aaa5bfc4c49763e66136f88ee9a842))
 
