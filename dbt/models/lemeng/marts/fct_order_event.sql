@@ -63,9 +63,6 @@ select
 from {{ ref('stg_lemeng_retail_order_line') }} r
 {% if is_incremental() %}
 -- 增量窗口：只重算最近 7 天（首建走 else 的 30 天，不回看全史）。
--- ⚠️ **此处不加 month 分区谓词**（#2636 L1）：下界是 `(select max(bizday) … from {{ this }})`，
---    不是编译期常量 ⇒ DuckDB 计划期拿不到 ⇒ 加 `month >= …` 也裁不动文件，只会白加一层过滤。
---    要享受分区裁剪，得先把下界改成编译期常量（同 fct_retail_sale 的 cutoff_or_backfill）。
 where r.bizday >= (select max(bizday) - interval '7 days' from {{ this }})
 {% else %}
 where r.bizday >= (cast(now() at time zone 'Asia/Shanghai' as date) - interval '30 days')

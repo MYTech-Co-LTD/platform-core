@@ -3,7 +3,6 @@
   "contractVersion": 2,
   "schemaVersion": 3,
   "consumerVersion": 3,
-  "derivedPartitions": ["month"],
   "domain": "lemeng",
   "table": "retail_order_line",
   "owner": "data-platform",
