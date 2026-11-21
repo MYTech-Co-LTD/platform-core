@@ -247,6 +247,21 @@ export interface RegressionDeps {
    * 形状与 `runQuery` 一致 ⇒ 替身与真实现走同一条编排，不在测试里另写一遍循环。
    */
   replay?: typeof runQuery
+  /**
+   * 「基线验证后，该问题的窗口内数据是否被**重写**过」——用来区分
+   *   **真回归**（口径/代码变了）与 **基线过期**（数据被修正过，基线该重验）。
+   *
+   * 为什么不塞进本层直接查：判据要读**仓库库**（`data.lemeng_daily_sealed.sealed_at`），
+   * 而本文件只持有平台池；由调用方注入（脚本里用 `analystPool`），测试里给假实现。
+   * 缺省不注入 ⇒ 行为与今天完全一致（fail 就是 fail），不会静默改变既有语义。
+   *
+   * @param window 该问题的 bizday 窗口（`params.bizday` 的 `{from,to}`；无窗口时为空）
+   * @param verifiedAt 该行 `verified_at`（RFC3339）
+   */
+  dataRewrittenSince?: (
+    window: { from: string; to: string } | null,
+    verifiedAt: string,
+  ) => Promise<boolean>
 }
 
 export interface RunRegressionOptions {
@@ -266,6 +281,12 @@ export interface RegressionResult {
   diffs: string[]
   /** 非致命漂移（维度/标识列的行集指纹）；**pass 行也可能非空**（见 `CompareResult.warns`）。 */
   warns: string[]
+  /**
+   * **基线过期**（不是回归）：判定为 fail，但失败的同时发现「基线验证后该窗口的数据被重写过」。
+   * 语义 = 「先重验基线，再说是不是真回归」——告警面按 WARN 投，不按 ERR 投（见 verify-regression.mjs）。
+   * 只在**确实得出了 fail** 时才可能为 true；pass 不受影响。
+   */
+  stale?: boolean
 }
 
 /**
@@ -326,9 +347,29 @@ export async function runRegression(
       result = 'error'
       diffs = [`重放异常: ${err instanceof Error ? err.message : String(err)}`]
     }
+    // 基线过期 vs 真回归（2026-11-21 定案，#2632）：只在**已经 fail** 时才多做一步判断——
+    // 「基线验证后，这个问题的窗口内数据被重写过吗？」（`sealed_at > verified_at`）
+    // ⇒ 是的话，fail 更可能是**基线该重验**（例如 #1872 双算修复改写了历史），不是口径回归。
+    // ⚠️ **不改变 result**（仍如实落 `fail`，台账口径不变），只加标记；告警面据此投 WARN。
+    // ⚠️ **且不改变判定阈值**：pass 不受影响，绝不因为「可能过期」就把 fail 说成 pass。
+    let stale = false
+    if (result === 'fail' && q.verifiedAt && deps.dataRewrittenSince) {
+      const from = (q.params as { bizday?: { from?: unknown } } | null)?.bizday?.from
+      const to = (q.params as { bizday?: { to?: unknown } } | null)?.bizday?.to
+      const window = typeof from === 'string' && typeof to === 'string' ? { from, to } : null
+      try {
+        stale = await deps.dataRewrittenSince(window, q.verifiedAt)
+      } catch (e) {
+        // 探测失败不改判定（fail 仍是 fail），但**留痕**：探测坏了不能静默降级成「无过期」。
+        warns = [...warns, `基线过期探测失败：${e instanceof Error ? e.message : String(e)}`]
+      }
+    }
     // 结果如实落库（Task 1 的 recordCheck 是本层唯一写入口；stale 判定不在这里发明）。
     await recordCheck(deps.pool, org, q.id, result)
-    results.push({ id: q.id, metricId: q.metricId, question: q.question, result, diffs, warns })
+    results.push({
+      id: q.id, metricId: q.metricId, question: q.question, result, diffs, warns,
+      ...(stale ? { stale: true } : {}),
+    })
   }
   return results
 }
