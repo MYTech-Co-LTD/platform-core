@@ -337,8 +337,7 @@ describe('runRegression', () => {
     const { pool, updates } = fakePool([
       questionRow({ id: 21, params: { bizday: { from: '2026-10-01', to: '2026-10-31' } } }),
     ])
-    /** @type {Array<{window: unknown, verifiedAt: string}>} */
-    const probes = []
+    const probes: Array<{ window: unknown; verifiedAt: string }> = []
     const results = await runRegression({
       ...depsOf(pool, async () => ok(['value'], [['1002']])),
       dataRewrittenSince: async (window, verifiedAt) => {
