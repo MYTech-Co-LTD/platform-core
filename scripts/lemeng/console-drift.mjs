@@ -82,7 +82,10 @@ export function diffWorkspaces(repoFiles, wsFiles, orphanRuns = {}) {
       return b !== null && b.includes(book) && !ws.has(f)
     })
     // ② 卷里有、声明没有（#2629 形态）
-    const extra = [...ws].filter((f) => !repoSet.has(f)).sort()
+    // ⚠️ 同样要过 `booksFor`：`forms.*` 是 forms console 专属件、与本两卷无关
+    //   （实测两卷里都留着一份 forms 产物，是建 forms 专属 console 之前的分发残留），
+    //   不能算进这两个账套的「多余」。归属规则必须两处一致，否则判据自相矛盾。
+    const extra = [...ws].filter((f) => booksFor(f) !== null && !repoSet.has(f)).sort()
     const orphan = orphanRuns[book] ?? 0
     const tail = `extra=${extra.length}${extra.length ? `(${extra.slice(0, 5).join(',')}${extra.length > 5 ? '…' : ''})` : ''} orphanRuns=${orphan}`
 
