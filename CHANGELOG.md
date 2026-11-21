@@ -11,6 +11,10 @@
 
 ## [Unreleased]
 
+## [0.353.2](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.353.1...v0.353.2) - 2026-11-21
+- 【修复】data: 主体列三重加固——org 形状校验 / 视图进物化档 / 新增断言⑲（P0 #2638） ([#2640](https://github.com/MYTech-Co-LTD/platform-core/pull/2640), [6f10b39](https://github.com/MYTech-Co-LTD/platform-core/commit/6f10b39e6b46d356e3197472b2997646430a9266))
+
+
 ## [0.353.1](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.353.0...v0.353.1) - 2026-11-21
 - 【修复】data: 断言面真机首跑修正——①② 用连接串 host、⑭⑮ 按凭据边界拆到 platform 域（#2628） ([#2635](https://github.com/MYTech-Co-LTD/platform-core/pull/2635), [f1af765](https://github.com/MYTech-Co-LTD/platform-core/commit/f1af765c790db5a4b799bd8158d5b274fa542f58))
 
