@@ -364,6 +364,21 @@ mat_require 'ZOS_ENDPOINT(console)' "$ZE" || exit 1
 SO=$(mat_psql platform -tAc \
   'select casdoor_org from platform.tenant order by id limit 1' 2>/dev/null | tr -d ' \r\n')
 mat_require 'LEMENG_SUBJECT_ORG(platform.tenant 首行)' "$SO" || exit 1
+# 🔴 **形状校验（2026-11-21，#2638 的事故换来的）**：`mat_require` 只问「非空」，
+#    而这里取值的通路会**把失败文本当值带回来**——某次 `psql` 在容器里不存在时，
+#    `docker`/OCI 的报错（`OCI runtime exec failed: … exec: "psql": executable file not found`）
+#    从 stdout 漏进变量，`2>/dev/null` 只吞了 stderr ⇒ 报错文本「合法」通过非空校验
+#    ⇒ 被 `subject_org()` 烧进 **VIEW 定义**（视图里的字面常量永不自己更新）
+#    ⇒ 三个明细视图的 org 全成了那串错误文本，`where org = '<真租户>'` **恒 0 行**（静默）。
+#    ⇒ **「非空」不等于「合法」**：org 必须形如 casdoor_org 的标识符。
+case "$SO" in
+  ''|*[!a-z0-9._-]*)
+    echo "MATERIALIZE_FAILED:invalid_subject_org（取到的值不是合法 org：" \
+         "\`$(printf '%s' "$SO" | cut -c1-80)\`）—— 常见原因是 platform 库那次查询**本身失败了**" \
+         "（容器里没有 psql / 连不上），失败文本被当成值带回来。先验通路：\`mat_psql platform -tAc 'select 1'\`。" >&2
+    exit 1
+    ;;
+esac
 # 域身份：本数据面**拥有哪些域**（逗号分隔），dbt 侧按它裁剪物化集（docs/architecture.md §2.5）。
 # 值是**部署属性**，不是从容器里取的 ⇒ 由 openship job 的 env 给（job 侧键名同名 DATA_PLANE_DOMAINS）。
 # ⚠️ **刻意不给默认值**：给个 `lemeng` 默认会让任何漏配的新面**静默 build 乐檬模型**
@@ -499,7 +514,11 @@ if [ "$SCOPE" = tables ]; then
   # ⇒ 失败节点**原地重跑**（几秒收敛），最多 3 轮；收敛判据是「没有失败节点」而不是退出码。
   # ⚠️ 视图里 `bizday` 是 `r['bizday']::date`（CAST 之后），hive 分区裁剪失效 ⇒
   #   模型侧的「闭窗读」只能少读行、拦不住文件被打开，故无法从根上消除竞态，只能重试。
-  _select="config.materialized:table,path:models/$TABLES_DOMAIN config.materialized:seed"
+  # 🔴 **视图必须进这一档（2026-11-21，#2638）**：视图的 `org` 是**创建时算好的字面常量**
+  #    （`subject_org()`），一旦创建就永不自己更新。而 tick/hourly 都是窄选择、全量档已停用
+  #    ⇒ 视图曾**长期无人重建**，把一次污染值（错误文本当 org）永久冻在里面，
+  #    导致 `where org='<真租户>'` 恒 0 行（静默）。CREATE VIEW 很轻，夜间顺带重建是零成本。
+  _select="config.materialized:table,path:models/$TABLES_DOMAIN config.materialized:seed path:models/$TABLES_DOMAIN/views"
   _excl="--exclude path:tests/$TABLES_DOMAIN --exclude tag:audit"
   _attempt=1
   _sum_pass=''
