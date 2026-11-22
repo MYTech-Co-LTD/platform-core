@@ -39,12 +39,13 @@ function fakePool(handler: (sql: string, params?: unknown[]) => unknown) {
 }
 
 describe('#2628 数据面断言面（容器化）', () => {
-  it('advisory 集必须覆盖 ⑩–⑳（判红只投递、不翻 rc）', async () => {
+  it('advisory 集必须覆盖 ⑩–㉑（判红只投递、不翻 rc）', async () => {
     const { ADVISORY } = await import('./warehouse-assertions.mjs')
     expect([...ADVISORY].sort()).toEqual([
       'config_drift',
       'detail_path',
       'hot_partitions',
+      'lake_hygiene',
       'org_valid',
       'pg_crash_free',
       'recon_ledger_cover',

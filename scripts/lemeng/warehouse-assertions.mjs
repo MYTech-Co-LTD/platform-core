@@ -62,7 +62,12 @@ const GENERIC_MAX_MS = numEnv('WIRE_GENERIC_MAX_MS', 30000)
 const DETAIL_MONTH_VIEW = process.env.WIRE_DETAIL_MONTH_VIEW ?? 'staging.vw_lemeng_retail_order_line_month'
 const HOT_GLOB = process.env.WIRE_HOT_GLOB
   ?? 's3://shanhai-data/lemeng/retail_order_line/system_book=*/bizday=*/hour=*/all.parquet'
-const HOT_MAX_FILES = numEnv('WIRE_HOT_MAX_FILES', 100)
+// 2026-11-22 校准（#2668/#2636 实测）：71 个微文件 = 热腿 ~24s/tick + 每查询（350ms/文件）；
+// GC 稳态 ~20-40 个。100 的旧阈值要等 ~35s 税才红，太晚。
+const HOT_MAX_FILES = numEnv('WIRE_HOT_MAX_FILES', 60)
+// ㉑ 日区 glob（湖卫生）：只从**文件名**提取日期（regexp on glob 结果），不打开任何文件。
+const DAY_GLOB = process.env.WIRE_DAY_GLOB
+  ?? 's3://shanhai-data/lemeng/retail_order_line/_DAY_DATA/system_book=*/bizday=*/all.parquet'
 // 差额换货月度抵扣额阈值（#2630）：2026-11 半月实测 4,155.92 ⇒ 默认 5000 留 ~2 月余量
 const SWAP_OFFSET_MONTH_MAX = numEnv('WIRE_SWAP_OFFSET_MONTH_MAX', 5000)
 const PGCRASH_WINDOW_MIN = numEnv('WIRE_PGCRASH_WINDOW_MIN', 15)
@@ -707,6 +712,86 @@ async function checkHotPartitions(pool) {
 }
 
 /**
+ * ㉑ 湖卫生（2026-11-22 立案）：湖生命周期状态机的**路径级不变量**，全部从 glob 的
+ * 文件名提取日期（`regexp_extract` on `glob()` 结果），**零文件打开** ⇒ 5 分钟档也跑得起。
+ *
+ * 为什么需要它（当天四案的共性）：
+ *   · #2668——激进 GC 停跑两日，hour 区堆到 today−2 起共 71 个微文件（热腿 24s 税），
+ *     ⑱ 的文件数阈值（当时 100）红不了；「最老 bizday」才是本质维度（today−2 即积压起点）。
+ *   · #2666——compact 产物缺行（内容级，由 assert_serving_view_matches_main 金额级兜）；
+ *     本检查兜它前面的结构级前提：**封版标记已写、日文件却缺失**（GC 判据脚本里「最该停下
+ *     来」的状态——此时小时对象是唯一副本，任何读面/删除方都在裸奔）。
+ *
+ * 判据（CST 时区）：
+ *   ① hour 区最老 bizday：≥ 上海今天−1 → OK；= 今天−2 → WARN（积压起点，#2668 当天形态）；
+ *      ≤ 今天−3 → ERR（封版/GC 链条断）。
+ *   ② 日区最新 bizday vs 封版表 max(bizday)：相等 → OK；日区落后 → ERR（标记写了日文件没写）。
+ */
+/** @param {Queryable} pool */
+async function checkLakeHygiene(pool) {
+  if (selftest('lake_hygiene')) {
+    return { check: 'lake_hygiene', ok: false, detail: 'ERR 自测注入：湖卫生（WIRE_LAKE_HYGIENE_SELFTEST）' }
+  }
+  /** 上海「今天」与平移 n 天，均为 YYYY-MM-DD（词法序即可比）。 */
+  /** @param {number} n */
+  const shDay = (n) => {
+    const d = new Date(Date.now() + n * 86400_000)
+    return new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Shanghai', year: 'numeric', month: '2-digit', day: '2-digit' }).format(d)
+  }
+  // ⚠️ 上海今天−1/−2 若按 UTC 毫秒先减再格式化，会在 00:00-08:00 CST 期间偏一天 ⇒ 统一
+  // 先取上海今天的字符串、再用「上海正午」锚点平移（避免 DST/时区边界）。
+  /** @param {string} day @param {number} n */
+  const shift = (day, n) => {
+    const d = new Date(`${day}T12:00:00+08:00`)
+    d.setUTCDate(d.getUTCDate() + n)
+    return d.toISOString().slice(0, 10)
+  }
+  const today = shDay(0)
+  try {
+    // ① hour 区最老 bizday（glob + 文件名正则，不打开文件）
+    // ⚠️ 必须排除 **0 行哨兵**（`bizday=1970-01-01`，hot-glob-sentinel-parquet）：实测容器里
+    //    hour 区 glob 的直接 min 就是 1970-01-01——不过滤会把每轮都判成「封版/GC 链条断」。
+    //    用 `nullif` 折成 NULL，min 自然忽略（不引入第二个字符串字面量，少一层引号）。
+    const hot = await pool.query(
+      `select * from duckdb.query('select min(nullif(regexp_extract(file, ''bizday=([0-9]{4}-[0-9]{2}-[0-9]{2})'', 1), ''1970-01-01'')) as oldest from glob(''${HOT_GLOB}'')') t`,
+    )
+    const oldest = String(hot.rows[0]?.oldest ?? '')
+    // ② 日区最新 bizday
+    const day = await pool.query(
+      `select * from duckdb.query('select max(regexp_extract(file, ''bizday=([0-9]{4}-[0-9]{2}-[0-9]{2})'', 1)) as newest from glob(''${DAY_GLOB}'')') t`,
+    )
+    const dayNewest = String(day.rows[0]?.newest ?? '')
+    const sealed = await pool.query(`select coalesce(max(bizday)::text, '') as maxday from ${SEALED_TABLE}`)
+    const sealedMax = String(sealed.rows[0]?.maxday ?? '')
+
+    const errs = []
+    const warns = []
+    if (oldest === '') {
+      // 空的 hour 区在当天首轮采集前可合法（哨兵随采集写）；持续为空会由 ⑯ 封版水位/采集
+      // freshness 另行判红，这里不重复设阈值。
+      warns.push('hour 区 glob 空（当天首轮采集前可空）')
+    } else if (oldest <= shift(today, -3)) {
+      errs.push(`hour 区最老 bizday=${oldest} ≤ 今天−3（封版/GC 链条断，#2668 形态的晚期）`)
+    } else if (oldest === shift(today, -2)) {
+      warns.push(`hour 区最老 bizday=${oldest} = 今天−2（积压起点；GC 停跑当日即此形态，热腿税 ~350ms/文件）`)
+    }
+    if (sealedMax !== '' && dayNewest !== '' && dayNewest < sealedMax) {
+      errs.push(`日区最新 bizday=${dayNewest} < 封版 max=${sealedMax}（标记已写、日文件缺失——小时对象成唯一副本）`)
+    }
+    if (dayNewest === '') errs.push('日区 glob 空（_DAY_DATA 无文件——湖不可读）')
+    if (errs.length > 0) {
+      return { check: 'lake_hygiene', ok: false, detail: `ERR ${errs.join('；')}` }
+    }
+    if (warns.length > 0) {
+      return /** @type {Verdict} */ ({ check: 'lake_hygiene', ok: true, verdict: 'WARN', detail: `WARN ${warns.join('；')}` })
+    }
+    return { check: 'lake_hygiene', ok: true, detail: `OK hour_oldest=${oldest || '(空)'} day_newest=${dayNewest} sealed_max=${sealedMax}（今天 ${today}）` }
+  } catch (e) {
+    return { check: 'lake_hygiene', ok: false, detail: `ERR ${msg(e)}` }
+  }
+}
+
+/**
  * ⑲ 主体列合法（#2638 的事故换来的）：**每个发布关系里的 `org` 必须是单值且形如合法标识符**。
  *
  * 为什么 ⑰ 抓不到这一类：⑰ 只 `count(*)`（不带 org 过滤）——行数照常 > 0，看不出 org 脏了。
@@ -829,6 +914,7 @@ const ADVISORY = new Set([
   'swap_offset',
   'detail_path',
   'hot_partitions',
+  'lake_hygiene',
 ])
 
 /**
@@ -873,6 +959,8 @@ export async function runAll(group = 'all') {
     out.push(await checkOrgValid(pool))
     // ⑳ 差额换货抵扣额（描述性；超阈只 WARN）
     out.push(await checkSwapOffset(pool))
+    // ㉑ 湖卫生（路径级不变量：hour 最老 bizday / 日区水位 vs 封版表）
+    out.push(await checkLakeHygiene(pool))
   } finally {
     await pool.end().catch(() => {})
   }
