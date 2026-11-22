@@ -1,0 +1,494 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>采集版块地图 · 乐檬数据平台</title>
+<style>
+  :root {
+    color-scheme: light;
+    --surface-0: #f6f5f2;
+    --surface-1: #fcfcfb;
+    --surface-2: #efeeea;
+    --border: #dcdad2;
+    --text-primary: #0b0b0b;
+    --text-secondary: #52514e;
+    --text-muted: #7a7973;
+    /* 5 个阶段 = 固定顺序的分类色（已跑 validate_palette，需直接文字标注） */
+    --s1: #2a78d6; /* 源 */
+    --s2: #eb6834; /* 采集 */
+    --s3: #1baf7a; /* 湖 */
+    --s4: #eda100; /* 加工 */
+    --s5: #6250d6; /* 消费 */
+    /* 状态色（保留，不参与分类；永远带图标+文字） */
+    --st-good: #0f7a4a;
+    --st-warn: #a86a00;
+    --st-bad:  #b3261e;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:where(:not([data-theme="light"])) {
+      color-scheme: dark;
+      --surface-0: #131312; --surface-1: #1a1a19; --surface-2: #232322;
+      --border: #3a3a37; --text-primary: #f0efec; --text-secondary: #c3c2b7; --text-muted: #9a998f;
+      --s1: #3987e5; --s2: #d95926; --s3: #199e70; --s4: #c98500; --s5: #9085e9;
+      --st-good: #4dbb84; --st-warn: #d8a13a; --st-bad: #e66767;
+    }
+  }
+  :root[data-theme="dark"] {
+    color-scheme: dark;
+    --surface-0: #131312; --surface-1: #1a1a19; --surface-2: #232322;
+    --border: #3a3a37; --text-primary: #f0efec; --text-secondary: #c3c2b7; --text-muted: #9a998f;
+    --s1: #3987e5; --s2: #d95926; --s3: #199e70; --s4: #c98500; --s5: #9085e9;
+    --st-good: #4dbb84; --st-warn: #d8a13a; --st-bad: #e66767;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; background: var(--surface-0); color: var(--text-primary);
+    font: 15px/1.65 system-ui, -apple-system, "PingFang SC", "Microsoft YaHei", sans-serif;
+  }
+  .wrap { max-width: 1180px; margin: 0 auto; padding: 28px 20px 64px; }
+  header h1 { font-size: 24px; margin: 0 0 6px; letter-spacing: .2px; }
+  header .sub { color: var(--text-secondary); margin: 0 0 4px; }
+  header .meta { color: var(--text-muted); font-size: 13px; }
+  .toolbar { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; margin: 18px 0 6px; }
+  nav { display: flex; gap: 6px; flex-wrap: wrap; }
+  nav button {
+    border: 1px solid var(--border); background: var(--surface-1); color: var(--text-secondary);
+    padding: 7px 13px; border-radius: 999px; font-size: 14px; cursor: pointer;
+  }
+  nav button[aria-selected="true"] { background: var(--text-primary); color: var(--surface-1); border-color: var(--text-primary); }
+  .theme-btn { margin-left: auto; border: 1px solid var(--border); background: var(--surface-1); color: var(--text-secondary); padding: 7px 12px; border-radius: 999px; cursor: pointer; font-size: 13px; }
+  section.view { display: none; }
+  section.view.active { display: block; }
+  h2 { font-size: 19px; margin: 26px 0 4px; }
+  h2 + .hint { color: var(--text-muted); font-size: 13.5px; margin: 0 0 16px; }
+
+  /* ---- 视图一：数据的一生（5 段流水线） ---- */
+  .flow { display: grid; grid-template-columns: repeat(5, 1fr); gap: 10px; align-items: start; }
+  @media (max-width: 980px) { .flow { grid-template-columns: repeat(2, 1fr); } }
+  @media (max-width: 620px) { .flow { grid-template-columns: 1fr; } }
+  .stage { background: var(--surface-1); border: 1px solid var(--border); border-radius: 12px; overflow: hidden; }
+  .stage > .bar { height: 4px; }
+  .stage > .body { padding: 14px 14px 10px; }
+  .stage .no { font-size: 12px; color: var(--text-muted); letter-spacing: .08em; }
+  .stage h3 { margin: 2px 0 6px; font-size: 16px; }
+  .stage .what { color: var(--text-secondary); font-size: 13.5px; min-height: 44px; }
+  .stats { display: grid; grid-template-columns: 1fr 1fr; gap: 6px; margin: 10px 0 8px; }
+  .stat { background: var(--surface-2); border-radius: 8px; padding: 7px 9px; }
+  .stat b { display: block; font-size: 15px; font-variant-numeric: tabular-nums; }
+  .stat span { font-size: 11.5px; color: var(--text-muted); }
+  details { border-top: 1px dashed var(--border); }
+  details summary { cursor: pointer; padding: 8px 0 2px; font-size: 13px; color: var(--text-secondary); list-style: none; }
+  details summary::-webkit-details-marker { display: none; }
+  details summary::before { content: "＋ "; color: var(--text-muted); }
+  details[open] summary::before { content: "－ "; }
+  details .det { font-size: 13px; color: var(--text-secondary); padding: 6px 0 12px; }
+  details .det ul { margin: 4px 0; padding-left: 18px; }
+  details .det li { margin: 3px 0; }
+  .fail { border-left: 3px solid var(--st-bad); padding-left: 9px; margin-top: 8px; font-size: 12.5px; color: var(--text-secondary); }
+
+  /* ---- 视图二：一天的时序 ---- */
+  .clock { background: var(--surface-1); border: 1px solid var(--border); border-radius: 12px; padding: 14px 16px 8px; overflow-x: auto; }
+  .clock-head, .lane { display: grid; grid-template-columns: 190px repeat(24, minmax(26px, 1fr)); min-width: 860px; }
+  .clock-head div { font-size: 11px; color: var(--text-muted); text-align: center; padding-bottom: 6px; border-left: 1px solid var(--border); }
+  .clock-head div:first-child { border-left: none; text-align: left; }
+  .lane-label { font-size: 13px; color: var(--text-secondary); padding: 9px 10px 9px 0; border-top: 1px solid var(--border); }
+  .lane .cell { border-top: 1px solid var(--border); border-left: 1px solid var(--border); position: relative; height: 34px; }
+  .lane .cell:nth-child(2) { border-left: none; }
+  .mark { position: absolute; top: 9px; height: 16px; border-radius: 4px; opacity: .92; }
+  .mark.repeat { background-image: repeating-linear-gradient(90deg, transparent 0 3px, rgba(255,255,255,.55) 3px 6px); }
+  .clock-legend { display: flex; gap: 16px; flex-wrap: wrap; margin: 10px 0 4px; font-size: 12.5px; color: var(--text-secondary); }
+  .clock-legend i { display: inline-block; width: 11px; height: 11px; border-radius: 3px; margin-right: 6px; vertical-align: -1px; }
+
+  /* ---- 视图三：健康 ---- */
+  .kpis { display: grid; grid-template-columns: repeat(4, 1fr); gap: 10px; margin-bottom: 16px; }
+  @media (max-width: 860px) { .kpis { grid-template-columns: repeat(2, 1fr); } }
+  .kpi { background: var(--surface-1); border: 1px solid var(--border); border-radius: 12px; padding: 13px 14px; }
+  .kpi b { display: block; font-size: 24px; font-variant-numeric: tabular-nums; line-height: 1.2; }
+  .kpi span { font-size: 12.5px; color: var(--text-muted); }
+  .kpi .delta { font-size: 12px; color: var(--st-good); }
+  .panel { background: var(--surface-1); border: 1px solid var(--border); border-radius: 12px; padding: 14px 16px; margin-bottom: 14px; }
+  .panel h3 { margin: 0 0 3px; font-size: 15px; }
+  .panel .note { color: var(--text-muted); font-size: 12.5px; margin: 0 0 10px; }
+  table.checks { width: 100%; border-collapse: collapse; font-size: 13.5px; }
+  table.checks th { text-align: left; color: var(--text-muted); font-weight: 500; font-size: 12px; padding: 4px 8px; border-bottom: 1px solid var(--border); }
+  table.checks td { padding: 7px 8px; border-bottom: 1px solid var(--border); vertical-align: top; }
+  table.checks tr:last-child td { border-bottom: none; }
+  .badge { display: inline-flex; align-items: center; gap: 5px; font-size: 12.5px; white-space: nowrap; }
+  .badge i { width: 8px; height: 8px; border-radius: 50%; display: inline-block; }
+  .b-good i { background: var(--st-good); } .b-good { color: var(--st-good); }
+  .b-warn i { background: var(--st-warn); } .b-warn { color: var(--st-warn); }
+  .b-bad  i { background: var(--st-bad); }  .b-bad  { color: var(--st-bad); }
+  .spark-wrap { display: flex; gap: 18px; align-items: flex-end; flex-wrap: wrap; }
+  svg.spark { display: block; }
+  .spark-meta { font-size: 12.5px; color: var(--text-muted); }
+
+  /* ---- 视图四：故事 ---- */
+  .story { background: var(--surface-1); border: 1px solid var(--border); border-radius: 12px; padding: 14px 16px; margin-bottom: 10px; }
+  .story h3 { margin: 0 0 4px; font-size: 15.5px; }
+  .story .k { color: var(--text-muted); font-size: 12.5px; }
+  .story p { margin: 6px 0; color: var(--text-secondary); font-size: 13.5px; }
+  .story .fix { border-left: 3px solid var(--st-good); padding-left: 9px; font-size: 13px; }
+  .glossary dl { display: grid; grid-template-columns: 170px 1fr; gap: 6px 14px; margin: 0; font-size: 13.5px; }
+  .glossary dt { color: var(--text-secondary); font-weight: 600; }
+  .glossary dd { margin: 0; color: var(--text-secondary); }
+  footer { margin-top: 34px; color: var(--text-muted); font-size: 12.5px; border-top: 1px solid var(--border); padding-top: 14px; }
+  code { background: var(--surface-2); padding: 1px 5px; border-radius: 4px; font-size: 12.5px; }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header>
+    <h1>乐檬数据平台 · 采集版块地图</h1>
+    <p class="sub">数据从「收银机里的交易」变成「你能看到的报表和问数答案」，中间经过 5 个环节。这一页把每个环节、它的节奏、维护它的机制、以及「坏了会怎样」放在一起看。</p>
+    <p class="meta">数据实测于 2026-11-22 · 全部数字来自生产探针，不是估算</p>
+    <div class="toolbar">
+      <nav role="tablist">
+        <button role="tab" aria-selected="true" data-view="flow">① 数据的一生</button>
+        <button role="tab" aria-selected="false" data-view="clock">② 一天的时序</button>
+        <button role="tab" aria-selected="false" data-view="health">③ 现在的健康</button>
+        <button role="tab" aria-selected="false" data-view="stories">④ 今天的六个故事</button>
+      </nav>
+      <button class="theme-btn" id="themeBtn" type="button">切换深色 / 浅色</button>
+    </div>
+  </header>
+
+  <!-- ================= 视图一 ================= -->
+  <section class="view active" id="view-flow">
+    <h2>数据的一生：从收银机到报表</h2>
+    <p class="hint">从左往右读。每张卡片点「展开」可以看它具体在做什么、多久跑一次、以及它坏掉时会怎样。</p>
+    <div class="flow">
+      <div class="stage">
+        <div class="bar" style="background:var(--s1)"></div>
+        <div class="body">
+          <div class="no">第 1 环</div><h3>源系统</h3>
+          <div class="what">乐檬收银 / 进销存（两个账套：3120、64188）。数据的产地。</div>
+          <div class="stats">
+            <div class="stat"><b>2</b><span>账套</span></div>
+            <div class="stat"><b>~30 天</b><span>可回溯深度</span></div>
+          </div>
+          <details><summary>展开：它给我们什么</summary><div class="det">
+            <ul>
+              <li>零售订单明细（每一行商品）、门店、商品、会员、费用、采购、调拨、批发、配送</li>
+              <li>接口是分页的：一页最多几十到几百条，超过「容量上限」会静默截断——所以我们每条管线都带「末页探测」防护</li>
+              <li>接口没有「换货标记」这类字段：这是我们已知的能力缺口，不是采集漏采</li>
+            </ul>
+            <div class="fail">坏掉时：源接口改版 → 静默返回 0 行。我们的对策是「行数 &gt; 0」硬判据，不信任接口的「成功」</div>
+          </div></details>
+        </div>
+      </div>
+
+      <div class="stage">
+        <div class="bar" style="background:var(--s2)"></div>
+        <div class="body">
+          <div class="no">第 2 环</div><h3>采集</h3>
+          <div class="what">121 条「管线」按时间表去源系统取数，先薄薄地落到湖里。</div>
+          <div class="stats">
+            <div class="stat"><b>121</b><span>条管线</span></div>
+            <div class="stat"><b>10 分钟</b><span>当天数据的采集节奏</span></div>
+          </div>
+          <details><summary>展开：四条采集路线</summary><div class="det">
+            <ul>
+              <li><b>实时档</b>（9:00–24:00，每 10 分钟）：抓当天的订单变化</li>
+              <li><b>日档</b>（次日凌晨）：把一整天重新完整抓一遍——<b>这是「定稿」数据</b></li>
+              <li><b>回填档</b>：历史缺口补采（只在凌晨窗口跑，避免和日常采集抢资源）</li>
+              <li><b>对账档</b>：不采业务数据，专门去源系统要「每个店每天应该有多少钱」，用于和数据对账</li>
+            </ul>
+            <div class="fail">坏掉时：某天某个店没采到 → 报表少一家店。对策：每窗有「收据」记录，缺口能被发现</div>
+          </div></details>
+        </div>
+      </div>
+
+      <div class="stage">
+        <div class="bar" style="background:var(--s3)"></div>
+        <div class="body">
+          <div class="no">第 3 环</div><h3>数据湖</h3>
+          <div class="what">对象存储里的 parquet 文件，按「小时 / 日 / 月」三层摆放。</div>
+          <div class="stats">
+            <div class="stat"><b>17</b><span>小时文件（当天临时）</span></div>
+            <div class="stat"><b>1,565</b><span>日文件（定稿正本）</span></div>
+          </div>
+          <details><summary>展开：三层文件各自干嘛</summary><div class="det">
+            <ul>
+              <li><b>小时文件</b>：当天数据还在变，按小时切，随时可覆盖。用完就删（今天实测只剩 17 个）</li>
+              <li><b>日文件</b>：一天结束后全量重采后的「定稿」，<b>只增不改</b>（除回填）</li>
+              <li><b>月文件</b>：把定稿的日合并成大文件（52 个），让查历史快 10 倍</li>
+            </ul>
+            <div class="fail">坏掉时：文件堆积 → 所有查询变慢（今天实测：71 个残留小时文件让每 10 分钟的批处理多花 24 秒）。对策：自动回收 + 文件数探针</div>
+          </div></details>
+        </div>
+      </div>
+
+      <div class="stage">
+        <div class="bar" style="background:var(--s4)"></div>
+        <div class="body">
+          <div class="no">第 4 环</div><h3>加工（dbt）</h3>
+          <div class="what">63 个模型把原始明细整理成「销售、毛利、对账」等可直接用的表。</div>
+          <div class="stats">
+            <div class="stat"><b>63</b><span>个模型</span></div>
+            <div class="stat"><b>506</b><span>个自动测试</span></div>
+          </div>
+          <details><summary>展开：三种跑批档位</summary><div class="det">
+            <ul>
+              <li><b>tick</b>（每 10 分钟）：只更新「销售明细」一张核心表，31 秒跑完</li>
+              <li><b>主表档</b>（每天 10:25）：重建所有大表</li>
+              <li><b>对账档</b>（每天 11:45，今天刚拆出来）：三个「要扫全部历史」的重模型，单独跑、单独超时</li>
+              <li><b>审计档</b>（多时段）：拿「表里的数」和「重新算一遍的湖」逐项比，抓数据漂移</li>
+            </ul>
+            <div class="fail">坏掉时：跑批超时 → 新表永远上不了线（今天真实发生：一整天新表都没生效）。对策：拆档 + 「跑批心跳」判据</div>
+          </div></details>
+        </div>
+      </div>
+
+      <div class="stage">
+        <div class="bar" style="background:var(--s5)"></div>
+        <div class="body">
+          <div class="no">第 5 环</div><h3>消费</h3>
+          <div class="what">报表、自由钻取、企业微信问数、对账台账——人真正看到的地方。</div>
+          <div class="stats">
+            <div class="stat"><b>4</b><span>个消费面</span></div>
+            <div class="stat"><b>22</b><span>条自动体检</span></div>
+          </div>
+          <details><summary>展开：四个消费面</summary><div class="det">
+            <ul>
+              <li><b>固定报表</b>：经营日报/月报等，读加工层的表</li>
+              <li><b>钻取</b>：从汇总点进去看明细，读「月文件」视图（今天修过：它曾每天有 20 小时显示偏少）</li>
+              <li><b>问数</b>：企业微信里直接问，走指标词表</li>
+              <li><b>对账台账</b>：平台 vs 源系统逐店比对，差异要能解释</li>
+            </ul>
+            <div class="fail">坏掉时：数字偏小但行数正常 → 最难发现。对策：金额级对账（今天新增）</div>
+          </div></details>
+        </div>
+      </div>
+    </div>
+
+    <div class="panel" style="margin-top:16px">
+      <h3>一条数据要经过几个「检查站」</h3>
+      <p class="note">每一环都有守卫。这些不是流程装饰——今天一天就抓出 4 个真实缺陷。</p>
+      <div class="glossary"><dl>
+        <dt>采集侧</dt><dd>末页探测（防静默截断）、每窗收据（防漏采）、源侧对账（防口径漂移）</dd>
+        <dt>湖侧</dt><dd>封版标记（这套文件是齐的）、月合并清单、文件数探针 ㉑/⑱</dd>
+        <dt>加工侧</dt><dd>506 个数据测试、契约投影门（列集必须一致）、审计族（对账/重算）</dd>
+        <dt>消费侧</dt><dd>22 条体检（每 5 分钟）：连通、新鲜度、金额、维度、主体合法性</dd>
+      </dl></div>
+    </div>
+  </section>
+
+  <!-- ================= 视图二 ================= -->
+  <section class="view" id="view-clock">
+    <h2>一天的时序：什么时候发生了什么</h2>
+    <p class="hint">横轴是北京时间 0–24 点。同一条泳道里的条纹表示「反复发生」。注意两件事：白天只有采集和轻量更新在跑；重的活都排在夜里或上午窗口。</p>
+    <div class="clock" id="clock"></div>
+    <div class="clock-legend">
+      <span><i style="background:var(--s2)"></i>采集</span>
+      <span><i style="background:var(--s3)"></i>湖维护</span>
+      <span><i style="background:var(--s4)"></i>加工 / 审计</span>
+      <span><i style="background:var(--s5)"></i>体检 / 监控</span>
+    </div>
+    <div class="panel">
+      <h3>为什么要排成这样</h3>
+      <ul style="font-size:13.5px;color:var(--text-secondary);margin:6px 0 0;padding-left:20px">
+        <li><b>采集每 10 分钟</b>只为了「当天能看到」，它写的是小时文件，随时会被覆盖。</li>
+        <li><b>封版在次日 00:01</b>：一整天重新全量抓一遍，此后这天就是定稿，不再改动。</li>
+        <li><b>月合并 20:13</b>：把已定稿的日子并成大文件。它比封版晚 20 小时——这个「窗口」曾经是 drill 少算数的根因（今天已用第三条腿补上）。</li>
+        <li><b>重活错峰</b>：主表 10:25、对账 11:45、审计 12:30 起——互不抢资源，也不和采集抢同一批文件。</li>
+        <li><b>体检全天每 5 分钟</b>：它便宜（只查元数据和少量聚合），所以敢高频。</li>
+      </ul>
+    </div>
+  </section>
+
+  <!-- ================= 视图三 ================= -->
+  <section class="view" id="view-health">
+    <h2>现在的健康：今天下午的实测</h2>
+    <p class="hint">22 条体检里 20 条正常、1 条在观察、1 条刚修完待复验。下面每一条都用一句人话解释它在防什么。</p>
+    <div class="kpis">
+      <div class="kpi"><b>31.3<span style="font-size:14px">s</span></b><span>核心更新（每 10 分钟那档）</span><div class="delta">↓ 今天从 55s 降到 31.3s</div></div>
+      <div class="kpi"><b>17</b><span>残留小时文件（越少越快）</span><div class="delta">↓ 清理前 71</div></div>
+      <div class="kpi"><b>20 / 22</b><span>体检通过</span><span style="display:block;margin-top:2px">另有 1 观察、1 待复验</span></div>
+      <div class="kpi"><b>0</b><span>调度超期任务</span><div class="delta">准时率 100%</div></div>
+    </div>
+
+    <div class="panel">
+      <h3>近 14 天销售额（每天一个点）</h3>
+      <p class="note">这条线的形状是「业务信号」的基线。今天之前的体检只判断「有没有数据」，还不判断「数量级对不对」——这是已知的下一个缺口。</p>
+      <div class="spark-wrap">
+        <svg class="spark" id="spark" width="720" height="150" role="img" aria-label="近14天销售额折线图"></svg>
+        <div class="spark-meta" id="sparkMeta"></div>
+      </div>
+    </div>
+
+    <div class="panel">
+      <h3>体检清单（按作用分组）</h3>
+      <p class="note">「观察」= 不是故障，但需要人看一眼；「待复验」= 今天刚修，等下一次自然跑批确认。</p>
+      <table class="checks">
+        <thead><tr><th style="width:86px">状态</th><th style="width:190px">检查项</th><th>它在防什么</th><th style="width:250px">今天的读数</th></tr></thead>
+        <tbody>
+          <tr><td><span class="badge b-good"><i></i>正常</span></td><td>源可达 / 库可查</td><td>网络断、库连不上、查询路径错</td><td>pg_duckdb 可达，查询 13.9 万行/次</td></tr>
+          <tr><td><span class="badge b-good"><i></i>正常</span></td><td>数据新鲜度</td><td>采集停摆却没人知道</td><td>最新数据 = 今天</td></tr>
+          <tr><td><span class="badge b-good"><i></i>正常</span></td><td>加工表新鲜度</td><td>表在但一周没更新</td><td>全部构件在容差内</td></tr>
+          <tr><td><span class="badge b-good"><i></i>正常</span></td><td>指标词表 / 维度表</td><td>问数问不出东西、维度缺失</td><td>57 条指标、2.65 万行维度</td></tr>
+          <tr><td><span class="badge b-good"><i></i>正常</span></td><td>封版水位</td><td>一天的数据没定稿，后面全停</td><td>最新定稿 = 昨天，3 分钟前刚核对</td></tr>
+          <tr><td><span class="badge b-good"><i></i>正常</span></td><td>钻取路径</td><td>读面被改回旧路径 / 变慢</td><td>钻取 3.2 秒；明细 10.4 秒</td></tr>
+          <tr><td><span class="badge b-good"><i></i>正常</span></td><td>湖卫生（今天新增）</td><td>小时文件堆积、定稿日缺文件</td><td>最老小时 = 今天；日区 = 昨天</td></tr>
+          <tr><td><span class="badge b-good"><i></i>正常</span></td><td>对账覆盖</td><td>有店没对上账、源侧没返回</td><td>组合齐全，无零返回</td></tr>
+          <tr><td><span class="badge b-warn"><i></i>观察</span></td><td>主体列合法性</td><td>租户标识被写坏 → 查询恒 0 行</td><td>一个视图读取时遇到并发争用，下轮重判</td></tr>
+          <tr><td><span class="badge b-warn"><i></i>待复验</span></td><td>差额换货抵扣额</td><td>某类无法识别的换货让对账差变大</td><td>本月 7,354（阈值已校准到 15,000）</td></tr>
+        </tbody>
+      </table>
+    </div>
+  </section>
+
+  <!-- ================= 视图四 ================= -->
+  <section class="view" id="view-stories">
+    <h2>今天的六个故事：为什么这些机制存在</h2>
+    <p class="hint">每个故事都是今天真实发生过的事故或隐患。看「如果没有这个机制会怎样」比看机制说明更容易理解。</p>
+    <div class="story"><h3>① 钻取每天有 20 小时显示偏少</h3><div class="k">#2665 · 数据正确性</div>
+      <p>「定稿」和「并入月文件」是两个不同时刻，中间约 20 小时。旧设计这段时间用小时文件兜底，但小时文件缺了定稿时才补上的晚到订单 ⇒ 每天上午钻取看到的昨日销售额偏少（实测少 150 单 / 1.09 万元）。</p>
+      <p class="fix">现在：加第三条腿——这段窗口直接读定稿日文件。修复后两个读面逐分一致。</p></div>
+    <div class="story"><h3>② 月文件比日文件少了 34 行</h3><div class="k">#2666 · 数据正确性</div>
+      <p>月合并基于「定稿时间」判断是否已并入，但定稿之后日文件仍可能被重写（补采/修正）。清单说「已覆盖」，实际内容旧了。</p>
+      <p class="fix">现在：对账从此前的「两个读面互相比行数」（错得一致看不见）升级为「对定稿日文件比行数+金额」——当天就抓住了这 34 行。根因仍在治（月合并改内容指纹），夜间会自愈。</p></div>
+    <div class="story"><h3>③ 每 10 分钟的更新悄悄慢了 24 秒</h3><div class="k">#2668 · 性能</div>
+      <p>回收小时文件的「激进档」在调度迁移时被落下，两天没跑 ⇒ 堆积 71 个死文件。每个文件打开要 350 毫秒，66 个文件就是 24 秒。</p>
+      <p class="fix">现在：恢复每 30 分钟档，首跑清掉 64 个；实测 55.2 秒 → 31.3 秒。同时把「文件数」阈值从 100 降到 60，堆到 60 就会报警。</p></div>
+    <div class="story"><h3>④ 恢复一个排班，结果它永远不跑</h3><div class="k">#2670 · 运维机制</div>
+      <p>排班表有「软删除」标记。重新启用时只翻了「启用」开关，没清删除标记，调度器看不见它——行在、开关开、时间到，就是不跑，且没有红灯。</p>
+      <p class="fix">现在：种子逻辑会自动复活被软删的排班（只清删除标记，不替人开闸），并且这个修复在今天的拆档中真实生效了一次。</p></div>
+    <div class="story"><h3>⑤ 建一张历史表，跑了 11 分钟白跑</h3><div class="k">#2675 · 正确性 × 成本</div>
+      <p>扫全部历史会顺带打开「今天正在写」的文件；采集每 10 分钟重写一次，读到一半发现文件变了就整段失败。工期越长，撞上的概率越接近 100%。</p>
+      <p class="fix">现在：这类表只读「已定稿的日子」，并且日期写成编译期常量（运行时函数会让引擎放弃文件裁剪，等于没防住）。实测 668 秒失败 → 409 秒成功。</p></div>
+    <div class="story"><h3>⑥ 夜档超时，新表一整天上不了线</h3><div class="k">#2674 · 容量</div>
+      <p>夜档要跑几十张表 + 506 个测试，90 分钟上限被打满。三个「扫全史」的重模型各要几分钟，把整档拖到必然超时——于是当天新增的表和列永远不会出现在生产。</p>
+      <p class="fix">现在：拆成两档（主表 10:25 / 对账族 11:45，各自超时），互不拖累；两档都已开闸，明天自动首跑。</p></div>
+    <div class="panel glossary">
+      <h3>术语小抄</h3>
+      <dl>
+        <dt>bizday（营业日）</dt><dd>业务上的一天，不是「采到的时间」。</dd>
+        <dt>封版</dt><dd>一整天重新全量抓一遍，此后视为定稿。</dd>
+        <dt>小时文件 / 日文件 / 月文件</dt><dd>当天临时 / 定稿正本 / 合并后的大文件。</dd>
+        <dt>月合并（compact）</dt><dd>把定稿的日合并成月文件，让查历史快 10 倍。</dd>
+        <dt>物化 / 跑批档</dt><dd>把湖里的原始数据算成可用的表；按频率分 tick（10 分钟）、主表（每天）、审计（多时段）。</dd>
+        <dt>断言 / 体检</dt><dd>每 5 分钟自动检查一次系统是否健康，红了会推送告警。</dd>
+        <dt>闭窗读</dt><dd>只读已经定稿、不再被改的数据，避免和采集抢同一批文件。</dd>
+        <dt>对账</dt><dd>把「我们算出来的数」和「源系统自己的数」逐店比对。</dd>
+      </dl>
+    </div>
+  </section>
+
+  <footer>
+    数据来源：生产探针（容器内实测）+ 调度台账（platform.job_schedule）+ 代码契约（dbt / duckle 管线）。<br>
+    维护：本文档与管线地图同步维护——改了管线或排班请更新本页与 <code>deploy/duckle/console/pipelines/FLOW.lemeng.md</code>。
+  </footer>
+</div>
+
+<script>
+// ---- 视图切换 ----
+const tabs = [...document.querySelectorAll('nav button')];
+const VIEWS = ['flow', 'clock', 'health', 'stories'];
+function show(id) {
+  if (!VIEWS.includes(id)) id = 'flow';
+  tabs.forEach((b) => b.setAttribute('aria-selected', String(b.dataset.view === id)));
+  document.querySelectorAll('section.view').forEach((s) => s.classList.toggle('active', s.id === 'view-' + id));
+}
+tabs.forEach((b) => b.addEventListener('click', () => {
+  show(b.dataset.view);
+  history.replaceState(null, '', '#' + b.dataset.view);
+}));
+// 支持直接分享某个视图：atlas.html#clock / #health / #stories
+window.addEventListener('hashchange', () => show(location.hash.slice(1)));
+show(location.hash.slice(1) || 'flow');
+
+// ---- 主题切换 ----
+document.getElementById('themeBtn').addEventListener('click', () => {
+  const cur = document.documentElement.getAttribute('data-theme');
+  const next = cur === 'dark' ? 'light' : 'dark';
+  document.documentElement.setAttribute('data-theme', next);
+});
+
+// ---- 一天时序（全部来自 platform.job_schedule 的真实 cron → CST） ----
+// mark: [开始小时(可小数), 持续小时, 是否重复条纹, 颜色变量, 提示]
+const LANES = [
+  { name: '采集 · 当天订单（每 10 分钟）', marks: [[9, 15, true, '--s2', '9:00–24:00 每 10 分钟']] },
+  { name: '采集 · 昨日/前日重采（每小时）', marks: [[0, 24, true, '--s2', '全天每小时重采 T-1 / T-2']] },
+  { name: '封版 · 一天定稿（次日 00:01）', marks: [[0.05, 0.3, false, '--s3', '00:01 全量重采，此后定稿']] },
+  { name: '月合并（把定稿日并成大文件）', marks: [[20.2, 0.5, false, '--s3', '20:13 每天一次']] },
+  { name: '湖回收 · 删除已定稿的小时文件', marks: [[0, 24, true, '--s3', '每 30 分钟；只删已有定稿副本的']] },
+  { name: '加工 · 核心销售表（31 秒）', marks: [[9, 15, true, '--s4', '9:00–24:00 每 10 分钟']] },
+  { name: '加工 · 主表重建（几十张表）', marks: [[10.4, 1.4, false, '--s4', '10:25 起，约 60–85 分钟']] },
+  { name: '加工 · 对账族（3 张全史表）', marks: [[11.75, 0.7, false, '--s4', '11:45 起，约 35–45 分钟']] },
+  { name: '审计 · 数据漂移检查', marks: [[12.5, 0.6, false, '--s4', '12:30'], [15.5, 0.6, false, '--s4', '15:30'], [22, 0.8, false, '--s4', '22:00'], [23.5, 0.6, false, '--s4', '23:30']] },
+  { name: '体检 · 22 条自动检查', marks: [[0, 24, true, '--s5', '每 5 分钟']] },
+  { name: '监控 · 指标水位', marks: [[0, 24, true, '--s5', '每分钟']] },
+];
+
+const clock = document.getElementById('clock');
+const head = document.createElement('div');
+head.className = 'clock-head';
+head.innerHTML = '<div>环节</div>' + Array.from({ length: 24 }, (_, h) => `<div>${h}</div>`).join('');
+clock.appendChild(head);
+
+for (const lane of LANES) {
+  const row = document.createElement('div');
+  row.className = 'lane';
+  row.innerHTML = `<div class="lane-label">${lane.name}</div>` +
+    Array.from({ length: 24 }, () => '<div class="cell"></div>').join('');
+  clock.appendChild(row);
+  const cells = row.querySelectorAll('.cell');
+  for (const [start, dur, repeat, color, tip] of lane.marks) {
+    const cell = cells[Math.max(0, Math.min(23, Math.floor(start)))];
+    const m = document.createElement('div');
+    m.className = 'mark' + (repeat ? ' repeat' : '');
+    m.style.background = `var(${color})`;
+    m.style.left = `${(start % 1) * 100}%`;
+    m.style.width = `calc(${Math.min(dur, 24 - Math.floor(start)) * 100}% - 2px)`;
+    m.title = tip;
+    cell.appendChild(m);
+  }
+}
+
+// ---- 14 天销售额 sparkline ----
+const SERIES = [
+  ['11-08', 509267], ['11-09', 290118], ['11-10', 375422], ['11-11', 385551],
+  ['11-12', 461023], ['11-13', 552394], ['11-14', 656138], ['11-15', 567512],
+  ['11-16', 472863], ['11-17', 473265], ['11-18', 462669], ['11-19', 486927],
+  ['11-20', 548891], ['11-21', 641861],
+];
+const svg = document.getElementById('spark');
+const W = 720, H = 150, PAD = { l: 46, r: 12, t: 12, b: 26 };
+const maxV = Math.max(...SERIES.map((d) => d[1]));
+const minV = Math.min(...SERIES.map((d) => d[1]));
+const x = (i) => PAD.l + (i * (W - PAD.l - PAD.r)) / (SERIES.length - 1);
+const y = (v) => PAD.t + (1 - (v - minV) / (maxV - minV || 1)) * (H - PAD.t - PAD.b);
+const NS = 'http://www.w3.org/2000/svg';
+function el(tag, attrs, text) {
+  const n = document.createElementNS(NS, tag);
+  for (const [k, v] of Object.entries(attrs || {})) n.setAttribute(k, v);
+  if (text != null) n.textContent = text;
+  svg.appendChild(n);
+  return n;
+}
+// 网格
+for (const frac of [0, 0.5, 1]) {
+  const v = minV + (maxV - minV) * frac;
+  el('line', { x1: PAD.l, x2: W - PAD.r, y1: y(v), y2: y(v), stroke: 'var(--border)', 'stroke-width': 1 });
+  el('text', { x: PAD.l - 8, y: y(v) + 4, 'text-anchor': 'end', 'font-size': 10, fill: 'var(--text-muted)' }, Math.round(v / 10000) + '万');
+}
+// 折线 + 点
+const pts = SERIES.map((d, i) => `${x(i)},${y(d[1])}`).join(' ');
+el('polyline', { points: pts, fill: 'none', stroke: 'var(--s1)', 'stroke-width': 2, 'stroke-linejoin': 'round' });
+SERIES.forEach((d, i) => {
+  const c = el('circle', { cx: x(i), cy: y(d[1]), r: 3.5, fill: 'var(--s1)' });
+  c.appendChild(el('title', {}, `${d[0]}：${d[1].toLocaleString()} 元`));
+  if (i % 2 === 0 || i === SERIES.length - 1) {
+    el('text', { x: x(i), y: H - 8, 'text-anchor': 'middle', 'font-size': 10, fill: 'var(--text-muted)' }, d[0]);
+  }
+});
+document.getElementById('sparkMeta').innerHTML =
+  `最高 <b>${maxV.toLocaleString()}</b> 元（${SERIES.find((d) => d[1] === maxV)[0]}，周六）<br>` +
+  `最低 <b>${minV.toLocaleString()}</b> 元（${SERIES.find((d) => d[1] === minV)[0]}，周日）<br>` +
+  `周末峰 ≈ 工作日的 1.4–2.2 倍`;
+
+// 深色模式下 SVG 文字用 CSS 变量已生效（fill: var(--...) 在 SVG 里同样有效）
+</script>
+</body>
+</html>
