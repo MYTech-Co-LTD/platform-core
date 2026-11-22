@@ -969,9 +969,18 @@ capabilities / policy 门禁 / run 回执」一句打包，**实测与其中两�
   ✅ **⑳ 差额换货抵扣额 `swap_offset`（2026-11-21，#2654）**：本月累计 `swap_offset` 超阈
   （`WIRE_SWAP_OFFSET_MONTH_MAX`，默认 5000）⇒ **WARN**。判 WARN 不判 ERR：它是描述性指标，
   不是采集故障；作用是让「不可识别的差额换货」这一类**增长可见**（2026-11 半月实测 4,155.92）。
-  ✅ **⑲⑳ 的载体是容器化断言面**（见下）——原 `wire-warehouse.sh` 跑在数据面宿主、靠 `docker exec`，
+  ✅ **㉑ 湖卫生 `lake_hygiene`（2026-11-22，今日四案共性）**：**路径级**不变量，判据全从 `glob()` 的
+  文件名提取日期（`regexp_extract`），**零 parquet 打开**（实测 hour glob 2.8s / day glob 0.5s）。
+  ① hour 区**最老 bizday**：今天−1 → OK；**今天−2 → WARN**（积压起点 = #2668 停跑当日形态：
+  71 个微文件 ≈ 热腿 24s/tick）；≤ 今天−3 → ERR（封版/GC 链断）。② **日区最新 bizday vs
+  封版表 max**：日区落后 → ERR（标记已写、日文件缺失——小时对象成唯一副本）。
+  ⚠️ **实测坑**：hour 区直接 `min(bizday)` 会取到 **1970-01-01 的 0 行哨兵**（`hot-glob-sentinel`）
+  ⇒ 必须 `nullif(…, '1970-01-01')`，否则每轮 ERR 误报（容器验证抓到）。
+  ✅ **⑱ 阈值校准（同日）**：`WIRE_HOT_MAX_FILES` 100 → **60**——71 文件在旧阈值下是绿的，
+  但实测已付 ~24s/tick 税；GC 稳态 ~20-40，60 给 1.5-3× 余量。
+  ✅ **⑲⑳㉑ 的载体是容器化断言面**（见下）——原 `wire-warehouse.sh` 跑在数据面宿主、靠 `docker exec`，
   **2026-11-19 调度迁移后随旧 job 一起停发，观测面黑了 45h+ 且无人知晓**。现形态：
-  `data.warehouse_assertions`（`--group core`，①–⑬⑯⑰⑱⑲⑳）+ `platform.warehouse_assertions_oo`
+  `data.warehouse_assertions`（`--group core`，①–⑬⑯⑰⑱⑲⑳㉑）+ `platform.warehouse_assertions_oo`
   （`--group oo`，⑭⑮，**OO 读凭据只在应用单元**），脚本 `scripts/lemeng/warehouse-assertions.mjs`。
   **check 名逐字不变**（OO 规则/桥/⑯ 免冷却都按名字匹配）。两处机制替换：⑮ 读 OO 日志流
   `openship_platform_core_data_pg_duckdb`（容器内无 docker）；①② 打**连接串里的 host**
