@@ -11,6 +11,10 @@
 
 ## [Unreleased]
 
+## [0.357.3](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.357.2...v0.357.3) - 2026-11-22
+- 【优化】data: 恢复 30 分钟小时对象激进 GC（#2588 前提实测失效，#2668） ([#2669](https://github.com/MYTech-Co-LTD/platform-core/pull/2669), [6cf4f87](https://github.com/MYTech-Co-LTD/platform-core/commit/6cf4f8782166046c9cca1587cc810b9f77d77aec))
+
+
 ## [0.357.2](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.357.1...v0.357.2) - 2026-11-22
 - 【修复】data: drill 视图加日腿，已封版未并入日改由 _DAY_DATA 权威供数（#2665） ([#2667](https://github.com/MYTech-Co-LTD/platform-core/pull/2667), [71ffc20](https://github.com/MYTech-Co-LTD/platform-core/commit/71ffc2029c0256bf456c24e30c65e3a40a4b1856))
 
