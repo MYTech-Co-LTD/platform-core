@@ -15,11 +15,13 @@ import {
   loadDbtVars,
   loadModelColumnDocs,
   loadSystemMapFacts,
+  readRepoText,
 } from '../domain/system-map/map'
 import type { SystemMapInput, SystemMapModel } from '../domain/system-map/map'
 import { buildSystemMapOntology } from '../domain/system-map/ontology'
 import { buildMetricTrail, lakeOfStaging, lakeStagingFromContracts, pipelineIdsOf, stagingRelationsOf } from '../domain/system-map/trail'
 import { buildMetricLineage } from '../domain/system-map/lineage'
+import { parseAliasedExprs, parseJsonPathSources, parseMeasureExprs } from '../domain/system-map/exprs'
 import { buildPipelineFlow } from '../domain/pipelines/flow'
 import { resolveMeasureInputs } from '../domain/system-map/measure-inputs'
 import { buildPipelineMap, lakeConsumers, liveStatusOf } from '../domain/system-map/pipeline-map'
@@ -218,7 +220,7 @@ export function registerSystemMap(r: ModuleHono, ctx: RouteCtx): void {
       exclude: martDocs.filter((c) => stagingSet.has(c.name)).map((c) => c.name),
     })
 
-    return c.json(buildMetricLineage({
+    const lineage = buildMetricLineage({
       metricId: metric.id,
       title: metric.title,
       contract,
@@ -230,7 +232,84 @@ export function registerSystemMap(r: ModuleHono, ctx: RouteCtx): void {
       marts: { model: mart, columns: martDocs },
       martsInputs: resolved.inputs,
       martsDeps: resolved.deps,
-    }))
+    })
+
+    // ── 全链路附加块（#2683）：指标口径 / 采集管线与调度 / 三层列级表达式 ──────────────
+    // 事实源全部是仓内声明（l1 语义 / 管线 JSON / 契约 / dbt SQL），不查库；
+    // 表达式解析是「展示原文」，拿不到就留空（前端显示「未解析」），不猜。
+    const lakePrefix = staging === null ? null : lakeOfStaging(staging)
+    const loadedPipelines = loadPipelines(roots)
+    const loadedSchedules = loadSchedules(roots)
+    const pipelines = lakePrefix === null
+      ? []
+      : [...loadedPipelines.defs.values()]
+        .filter((d) => d.lakeKeys.some((k) => k.startsWith(`${lakePrefix}/`)))
+        .map((d) => {
+          const nodes = (Array.isArray(d.doc.nodes) ? d.doc.nodes : [])
+            .filter((n): n is Record<string, unknown> => typeof n === 'object' && n !== null)
+            .map((n) => {
+              const data = (typeof n.data === 'object' && n.data !== null ? n.data : {}) as Record<string, unknown>
+              return {
+                id: String(n.id ?? ''),
+                type: String(n.type ?? ''),
+                label: typeof data.label === 'string' ? data.label : '',
+                component: typeof data.componentId === 'string' ? data.componentId : '',
+                sql: typeof data.sql === 'string' ? data.sql : null,
+              }
+            })
+          return {
+            id: d.id,
+            name: d.name,
+            nodes,
+            schedules: (loadedSchedules.byPipeline.get(d.id) ?? []).map((sc) => ({
+              cron: sc.cron ?? null,
+              enabled: sc.enabled ?? null,
+              timezone: sc.timezone ?? null,
+            })),
+          }
+        })
+
+    // 源层表达式：管线里所有带 sql 的节点（source / merge / code）——取 json 路径映射
+    const sourceExprs: Record<string, string> = {}
+    for (const p of pipelines) {
+      for (const n of p.nodes) {
+        if (n.sql === null) continue
+        Object.assign(sourceExprs, parseJsonPathSources(n.sql))
+      }
+    }
+
+    return c.json({
+      ...lineage,
+      metric: {
+        definition: metric.definition,
+        expression: metric.expression,
+        grain: metric.grain,
+        entity: metric.entity,
+        unit: metric.unit,
+        certified: metric.certified,
+        caliberNote: metric.caliberNote,
+        bizDescription: metric.bizDescription,
+      },
+      pipelines,
+      exprs: {
+        source: sourceExprs,
+        staging: parseAliasedExprs(stagingModel?.sql ?? ''),
+        // marts 表达式：**权威口径来自 l1_metrics.yml 的 measures**（marts 是 Jinja 模板，
+        // 静态解析拿不全）；同名度量以 measures 为准，其余列用 SQL 解析结果补（键列/直通列）。
+        marts: (() => {
+          const sqlExprs = parseAliasedExprs(martSql)
+          const measureExprs = parseMeasureExprs(readRepoText('dbt/semantics/l1_metrics.yml', ctx.repoRoot))
+          const merged: Record<string, string> = { ...sqlExprs }
+          for (const [name, m] of Object.entries(measureExprs)) {
+            if (m.expr === '') continue
+            const col = name.split('@')[0]
+            // 只有该列确实出现在本指标链路的 marts 里才并入（避免把全量度塞进每个指标）
+            if (martDocs.some((c) => c.name === col)) merged[col] = m.expr
+          }
+          return merged
+        })(),
+      },
+    })
   })
 
   // 管线视角的全局图：资产（湖前缀）→ staging → marts。运行态（最近一次 run 状态）60 秒缓存——

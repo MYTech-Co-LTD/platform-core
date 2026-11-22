@@ -31,6 +31,25 @@ interface Lineage {
   staging: { model: string | null; columns: Column[] }
   marts: { model: string | null; columns: Column[] }
   notes: string[]
+  /** 全链路附加块（#2683）——旧响应没有这些字段，全部可选。 */
+  metric?: {
+    definition: string
+    expression: string
+    grain: string[]
+    entity: string | null
+    unit: string | null
+    certified: 'certified' | 'draft'
+    caliberNote: string | null
+    bizDescription: string | null
+  }
+  pipelines?: Array<{
+    id: string
+    name: string
+    nodes: Array<{ id: string; type: string; label: string; component: string; sql: string | null }>
+    schedules: Array<{ cron: string | null; enabled: boolean | null; timezone: string | null }>
+  }>
+  /** 三层「别名 → 表达式」：source=湖字段←源 JSON 路径 / staging / marts。 */
+  exprs?: { source: Record<string, string>; staging: Record<string, string>; marts: Record<string, string> }
 }
 
 const STAGE_ORDER: StageKey[] = ['source', 'lake', 'staging', 'marts']
@@ -52,6 +71,8 @@ function skeletonOf(data: Lineage): Set<string> {
 function Pills(props: {
   stage: StageKey
   columns: Column[]
+  /** 本层的「别名 → 表达式」（#2683）；缺省 = 不显示 */
+  exprs?: Record<string, string>
   hi: ReadonlySet<string>
   /** 可见下标；undefined = 全部 */
   visible?: ReadonlySet<number>
@@ -61,7 +82,7 @@ function Pills(props: {
   /** 折叠模式：只留骨架 */
   skeletonOnly: boolean
 }) {
-  const { columns, hi, visible, gaps = [], keys, onPick, skeletonOnly } = props
+  const { columns, hi, visible, gaps = [], keys, onPick, skeletonOnly, exprs } = props
   const gapAt = new Map(gaps.map((g) => [g.before, g.count]))
   const rows: React.ReactNode[] = []
   columns.forEach((c, i) => {
@@ -99,6 +120,15 @@ function Pills(props: {
         <span className="mono">{c.name}</span>
         {c.type !== undefined && <span className="type">{c.type}</span>}
         {c.undocumented === true && <span className="type" title="schema.yml 未写文档，描述取自契约">·</span>}
+        {exprs?.[c.name] !== undefined && (
+          <span
+            className="type mono"
+            title={`表达式：${exprs[c.name]}`}
+            style={{ opacity: .75, maxWidth: 220, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}
+          >
+            = {exprs[c.name]}
+          </span>
+        )}
       </div>,
     )
   })
@@ -321,6 +351,7 @@ export default function LineageView({ metricId, height, showTitle = false }: Lin
           </div>
         ) : (
           <Pills
+            exprs={stage === 'source' ? data.exprs?.source : stage === 'staging' ? data.exprs?.staging : data.exprs?.marts}
             stage={stage}
             columns={stage === 'source' ? data.source.columns : stage === 'staging' ? data.staging.columns : data.marts.columns}
             hi={hits}
@@ -367,6 +398,72 @@ export default function LineageView({ metricId, height, showTitle = false }: Lin
             {data.title}
             {data.notes.length > 0 && <Tag style={{ marginLeft: 8, borderRadius: 999 }}>缺声明 {data.notes.length} 处</Tag>}
           </Typography.Text>
+        )}
+
+        {/* ── 指标口径卡（#2683）：这个数到底怎么算 = 定义 + 表达式 + 粒度 + 单位 ── */}
+        {showTitle && data.metric !== undefined && (
+          <div style={{
+            marginTop: 10, padding: '10px 14px', borderRadius: 12,
+            border: '1px solid var(--lineage-line, #e8e8e5)', background: 'var(--lineage-card, #fbfbfa)',
+            fontSize: 12.5, lineHeight: 1.7,
+          }}>
+            <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', alignItems: 'center', marginBottom: 4 }}>
+              <b style={{ fontSize: 13 }}>指标口径</b>
+              <Tag color={data.metric.certified === 'certified' ? 'green' : 'default'} style={{ borderRadius: 999, marginInlineEnd: 0 }}>
+                {data.metric.certified === 'certified' ? '已认证' : '草稿'}
+              </Tag>
+              {data.metric.unit !== null && <Tag style={{ borderRadius: 999, marginInlineEnd: 0 }}>单位 {data.metric.unit}</Tag>}
+              {data.metric.grain.length > 0 && (
+                <span style={{ color: '#8c8c8c' }}>粒度：{data.metric.grain.join(' × ')}</span>
+              )}
+            </div>
+            {data.metric.definition !== '' && <div>{data.metric.definition}</div>}
+            {data.metric.expression !== '' && (
+              <div style={{ marginTop: 4, color: '#666', fontFamily: 'ui-monospace, monospace', wordBreak: 'break-all' }}>
+                公式：{data.metric.expression}
+              </div>
+            )}
+            {data.metric.caliberNote !== null && data.metric.caliberNote !== '' && (
+              <div style={{ marginTop: 4, color: '#8c6d00' }}>口径提醒：{data.metric.caliberNote}</div>
+            )}
+          </div>
+        )}
+
+        {/* ── 采集管线卡（#2683）：哪条管线、按什么节奏、经过哪些节点 ── */}
+        {showTitle && data.pipelines !== undefined && data.pipelines.length > 0 && (
+          <div style={{
+            marginTop: 8, padding: '10px 14px', borderRadius: 12,
+            border: '1px solid var(--lineage-line, #e8e8e5)', background: 'var(--lineage-card, #fbfbfa)',
+            fontSize: 12.5,
+          }}>
+            <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', alignItems: 'center', marginBottom: 4 }}>
+              <b style={{ fontSize: 13 }}>采集管线</b>
+              <span style={{ color: '#8c8c8c' }}>{data.pipelines.length} 条（含父/子管线）</span>
+            </div>
+            {data.pipelines.map((p) => (
+              <details key={p.id} style={{ marginTop: 2 }}>
+                <summary style={{ cursor: 'pointer' }}>
+                  <span className="mono" style={{ fontSize: 12 }}>{p.id}</span>
+                  <span style={{ color: '#8c8c8c', marginLeft: 8 }}>
+                    {p.schedules.length === 0
+                      ? '无独立排班（由父管线驱动）'
+                      : p.schedules.map((s) => `${s.cron ?? '—'} ${s.enabled === false ? '(停用)' : ''}${s.timezone ?? ''}`).join('；')}
+                    {' · '}{p.nodes.length} 个节点
+                  </span>
+                </summary>
+                <div style={{ margin: '4px 0 0 14px', color: '#666' }}>
+                  {p.nodes.map((n, i) => (
+                    <div key={n.id || String(i)}>
+                      <span className="mono" style={{ fontSize: 11.5 }}>{i + 1}. [{n.type}]</span>{' '}
+                      {n.label || n.id}
+                      {n.component !== '' && <span style={{ color: '#aaa', marginLeft: 6 }}>{n.component}</span>}
+                      {n.sql !== null && <span style={{ color: '#aaa', marginLeft: 6 }}>· 含 SQL</span>}
+                    </div>
+                  ))}
+                </div>
+              </details>
+            ))}
+          </div>
         )}
       </div>
 

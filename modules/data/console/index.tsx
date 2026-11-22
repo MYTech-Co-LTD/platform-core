@@ -44,8 +44,8 @@ const TABS = [
   { key: 'system-map', label: '体系地图' },
   // 管线地图（2026-11-14）：与体系地图相反的视角——从管线看资产/staging/marts 三层通没通。
   { key: 'pipelines', label: '管线地图' },
-  // 数据生产线（2026-11-15）：字段级血缘——源接口 → 湖 → staging → marts
-  { key: 'lineage', label: '数据生产线' },
+  // 字段血缘（2026-11-15 数据生产线；2026-11-22 #2683 打开菜单并补指标口径/管线节点/列表达式）
+  { key: 'lineage', label: '字段血缘' },
   // 运行观测（2026-11-22，#2681）：调度 / 体检 / 湖卫生 / 物化 / 对账——只读。
   { key: 'observability', label: '运行观测' },
 ] as const
