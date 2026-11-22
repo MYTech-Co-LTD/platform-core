@@ -1,41 +1,36 @@
-// console/flow/index.tsx — 「全流程」页（2026-11-22，#2687/#2689/#2691）。
+// console/flow/index.tsx — 「数据生产线」动效流水线（2026-11-22，#2693）。
 //
-// 形态演进（三次）：
-//   ① 全量节点图（200+ 节点铺一屏）→ 用户反馈「不直观」
-//   ② 单域卡片（六层一条链）→ 仍不满意
-//   ③ **本次：对标 dbt Explorer / DataHub 的「列表 → 对象详情」**（渐进披露）
+// 形态第四次迭代，按用户明确要求：**完整动效的流程图，像流水线一样**展示
+//   ① 数据怎么生产（源 → 采集 → 湖 → staging → marts → 指标 → 消费）
+//   ② 怎么对账（平台值 + 源值 → 差异 → 容差 → 归因 → 台账）
+//   ③ 怎么排班（24 小时时间轴 + 当前时刻 + 正在跑的档位）
 //
-// 为什么是这个结构（行业共性，不是拍脑袋）：
-//   · dbt Explorer / DataHub / Atlan：全局用「搜索 + 列表」，局部用「以对象为中心的详情」；
-//     血缘默认只给上下游 1–2 跳，点击再展开 —— 从不把全部节点铺一屏。
-//   · 详情页分 Tab（字段 / 血缘 / 运行）——按问题组织信息，而不是按图层。
-//
-// 数据：GET /system-map/objects（列表，带上下游计数）+ GET /system-map/object（详情）。
-import { useCallback, useEffect, useMemo, useState } from 'react'
-import { Alert, Drawer, Input, Segmented, Skeleton, Space, Table, Tabs, Tag, Typography } from 'antd'
+// 动效全部用 CSS（无第三方动画库）：连线上的流动粒子、节点依次脉冲、排班红针随时间走。
+// 数据来自现役端点：/system-map/flow（结构计数）、/system-map/observability（对账汇总 + 排班）。
+// 点任意节点 → 抽屉打开对象详情（/system-map/object，字段/血缘/说明）。
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { Alert, Drawer, Skeleton, Table, Tabs, Tag, Typography } from 'antd'
 import { apiGet } from '../lib/api'
 import { humanError, type HumanError } from '../lib/explain'
+import { parseCronToCstSlots, type CronSlot } from './cron'
 
 type ObjectKind = 'lake' | 'staging' | 'mart' | 'recon' | 'metric' | 'pipeline'
-interface ObjectRow {
-  kind: ObjectKind
-  name: string
-  domain: string | null
-  upstreamCount: number
-  downstreamCount: number
-}
 interface SimpleRef { kind: ObjectKind; name: string }
 interface ObjectColumn { name: string; type: string | null; expr: string | null; description: string }
 interface ObjectDetail {
-  kind: ObjectKind
-  name: string
-  domain: string | null
-  columns: ObjectColumn[]
-  upstream: SimpleRef[]
-  downstream: SimpleRef[]
-  upstream2: SimpleRef[]
-  downstream2: SimpleRef[]
-  notes: string[]
+  kind: ObjectKind; name: string; domain: string | null; columns: ObjectColumn[]
+  upstream: SimpleRef[]; downstream: SimpleRef[]; upstream2: SimpleRef[]; downstream2: SimpleRef[]; notes: string[]
+}
+interface FlowBody { nodes: Array<{ id: string; kind: string; label: string; count?: number; members?: string[] }>; notes: string[] }
+interface ScheduleRow { key: string; cron: string; enabled: boolean; lastRun: { status: string } | null; fails24h: number }
+interface ReconSummary {
+  windowDays: number; storeDays: number; overTol: number; withinTol: number
+  overTolDiffSum: number
+  byAttribution: Array<{ attribution: string; n: number }>
+}
+interface ObservabilityBody {
+  schedules: ScheduleRow[]
+  recon: ReconSummary | { error: string }
 }
 
 const KIND_LABEL: Record<ObjectKind, string> = {
@@ -45,192 +40,353 @@ const KIND_COLOR: Record<ObjectKind, string> = {
   pipeline: 'orange', lake: 'green', staging: 'gold', mart: 'purple', recon: 'red', metric: 'magenta',
 }
 
-/** 血缘一跳列表：组标题 + 可点击的引用。 */
-function RefList(props: { title: string; refs: SimpleRef[]; onPick: (r: SimpleRef) => void; muted?: boolean }) {
-  const { title, refs, onPick, muted = false } = props
-  return (
-    <div style={{ marginBottom: 10 }}>
-      <div style={{ fontSize: 12, color: muted ? '#9aa0a6' : '#6b7280', marginBottom: 4 }}>{title}</div>
-      {refs.length === 0 ? <Typography.Text type="secondary" style={{ fontSize: 12 }}>无</Typography.Text> : (
-        <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
-          {refs.map((r) => (
-            <Tag
-              key={`${r.kind}:${r.name}`}
-              color={KIND_COLOR[r.kind]}
-              style={{ marginInlineEnd: 0, cursor: 'pointer', fontFamily: 'ui-monospace, monospace', fontSize: 11.5 }}
-              onClick={() => onPick(r)}
-            >
-              {r.name}
-            </Tag>
-          ))}
-        </div>
-      )}
-    </div>
-  )
+/** 生产泳道的六层（每层一个节点：名称 + 计数 + 可下钻的成员前缀）。 */
+interface Stage {
+  key: string
+  title: string
+  hint: string
+  count: number
+  members: string[]
+  color: string
 }
 
+const CSS = `
+@keyframes df-flow { from { left: 0; opacity: 0 } 10% { opacity: 1 } 90% { opacity: 1 } to { left: 100%; opacity: 0 } }
+@keyframes df-pulse { 0%,100% { box-shadow: 0 0 0 0 rgba(42,120,214,0) } 50% { box-shadow: 0 0 0 6px rgba(42,120,214,.18) } }
+@keyframes df-blink { 0%,100% { opacity: .35 } 50% { opacity: 1 } }
+@keyframes df-spin { to { transform: rotate(360deg) } }
+.df-pipe { position: relative; height: 22px; min-width: 56px; flex: 1; align-self: center; }
+.df-pipe::before { content: ''; position: absolute; top: 10px; left: 0; right: 0; height: 2px;
+  background: linear-gradient(90deg, #d5d8de, #b9bec7); border-radius: 2px; }
+.df-pipe .dot { position: absolute; top: 6px; width: 9px; height: 9px; border-radius: 50%;
+  animation: df-flow 2.6s linear infinite; }
+.df-pipe .dot:nth-child(2) { animation-delay: .85s }
+.df-pipe .dot:nth-child(3) { animation-delay: 1.7s }
+.df-paused .dot { animation-play-state: paused }
+.df-paused .df-live { animation-play-state: paused }
+.df-node { border: 1px solid #e3e4e8; border-radius: 12px; padding: 10px 12px; background: #fff;
+  min-width: 118px; cursor: pointer; transition: transform .12s, box-shadow .12s; }
+.df-node:hover { transform: translateY(-2px); box-shadow: 0 6px 18px rgba(15,23,42,.08) }
+.df-node .n { font-size: 12.5px; font-weight: 600 }
+.df-node .c { font-size: 20px; font-variant-numeric: tabular-nums; line-height: 1.2 }
+.df-node .h { font-size: 11px; color: #9aa0a6 }
+.df-live { animation: df-pulse 2.4s ease-in-out infinite }
+.df-sched { display: grid; grid-template-columns: 92px 1fr; gap: 6px 10px; align-items: center; }
+.df-track { position: relative; height: 16px; background: #f3f4f6; border-radius: 8px; overflow: hidden }
+.df-bar { position: absolute; top: 3px; height: 10px; border-radius: 5px; }
+.df-now { position: absolute; top: 0; bottom: 0; width: 2px; background: #e34948; }
+.df-hour { font-size: 10.5px; color: #9aa0a6; }
+`
+
 export default function FlowPage() {
-  const [rows, setRows] = useState<ObjectRow[] | null>(null)
+  const [flow, setFlow] = useState<FlowBody | null>(null)
+  const [obs, setObs] = useState<ObservabilityBody | null>(null)
   const [error, setError] = useState<HumanError | null>(null)
-  const [q, setQ] = useState('')
-  const [kind, setKind] = useState<'all' | ObjectKind>('all')
+  const [paused, setPaused] = useState(false)
+  const [now, setNow] = useState(() => new Date())
   const [pick, setPick] = useState<SimpleRef | null>(null)
   const [detail, setDetail] = useState<ObjectDetail | null>(null)
-  const [detailError, setDetailError] = useState<HumanError | null>(null)
+  const [detailErr, setDetailErr] = useState<HumanError | null>(null)
+  const tickRef = useRef<number | null>(null)
 
+  const load = useCallback(async () => {
+    try {
+      const [f, o] = await Promise.all([
+        apiGet('/system-map/flow') as Promise<FlowBody>,
+        apiGet('/system-map/observability') as Promise<ObservabilityBody>,
+      ])
+      setFlow(f)
+      setObs(o)
+      setError(null)
+    } catch (e) { setError(humanError(e)) }
+  }, [])
+  useEffect(() => { void load() }, [load])
+
+  // 排班红针每分钟走一次（页面不可见时停）
   useEffect(() => {
-    void (async () => {
-      try {
-        const res = (await apiGet('/system-map/objects')) as { rows: ObjectRow[] }
-        setRows(res.rows)
-        setError(null)
-      } catch (e) { setError(humanError(e)) }
-    })()
+    tickRef.current = window.setInterval(() => { if (!document.hidden) setNow(new Date()) }, 30_000)
+    return () => { if (tickRef.current !== null) window.clearInterval(tickRef.current) }
   }, [])
 
   const open = useCallback(async (ref: SimpleRef) => {
-    setPick(ref)
-    setDetail(null)
-    setDetailError(null)
+    setPick(ref); setDetail(null); setDetailErr(null)
     try {
       const qs = new URLSearchParams({ kind: ref.kind, name: ref.name })
       setDetail((await apiGet(`/system-map/object?${qs.toString()}`)) as ObjectDetail)
-    } catch (e) { setDetailError(humanError(e)) }
+    } catch (e) { setDetailErr(humanError(e)) }
   }, [])
 
-  const filtered = useMemo(() => {
-    const kw = q.trim().toLowerCase()
-    return (rows ?? []).filter((r) =>
-      (kind === 'all' || r.kind === kind)
-      && (kw === '' || r.name.toLowerCase().includes(kw) || (r.domain ?? '').toLowerCase().includes(kw)))
-  }, [rows, q, kind])
+  const stages: Stage[] = useMemo(() => {
+    if (flow === null) return []
+    const of = (k: string) => flow.nodes.filter((n) => n.kind === k)
+    const built: Stage[] = [
+      { key: 'source', title: '源接口', hint: '乐檬接口', count: of('source').length, members: of('source').map((n) => n.label), color: '#2a78d6' },
+      { key: 'pipeline', title: '采集管线', hint: '按周期取数落湖', count: flow.nodes.filter((n) => n.kind === 'pipeline').reduce((s, n) => s + (n.count ?? 1), 0), members: flow.nodes.filter((n) => n.kind === 'pipeline').flatMap((n) => n.members ?? [n.label]), color: '#eb6834' },
+      { key: 'lake', title: '湖资产', hint: 'parquet 分区文件', count: of('lake').length, members: of('lake').map((n) => n.label), color: '#1baf7a' },
+      { key: 'staging', title: 'staging', hint: '定型 / 规范化', count: of('staging').length, members: of('staging').map((n) => n.label), color: '#eda100' },
+      { key: 'mart', title: 'marts', hint: '按店日聚合度量', count: of('mart').length + of('recon').length, members: [...of('mart'), ...of('recon')].map((n) => n.label), color: '#6250d6' },
+      { key: 'metric', title: '指标', hint: '口径的唯一实现', count: flow.nodes.filter((n) => n.kind === 'metric').reduce((s, n) => s + (n.count ?? 1), 0), members: flow.nodes.filter((n) => n.kind === 'metric').flatMap((n) => n.members ?? [n.label]), color: '#e87ba4' },
+      { key: 'consumer', title: '消费面', hint: '报表 / 钻取 / 问数', count: of('consumer').length, members: of('consumer').map((n) => n.label), color: '#008300' },
+    ]
+    return built
+  }, [flow])
 
-  const counts = useMemo(() => {
-    const m = new Map<ObjectKind, number>()
-    for (const r of rows ?? []) m.set(r.kind, (m.get(r.kind) ?? 0) + 1)
-    return m
-  }, [rows])
+  const recon = obs !== null && !('error' in obs.recon) ? obs.recon : null
+  const schedules = useMemo(() => (obs?.schedules ?? []).filter((s) => s.enabled), [obs])
+  const nowMinute = now.getHours() * 60 + now.getMinutes()
+  const nowPct = (nowMinute / 1440) * 100
 
   if (error !== null) return <Alert type="error" showIcon message={error.text} description={`错误码：${error.code}`} />
+  if (flow === null || obs === null) {
+    return <div><Skeleton active paragraph={{ rows: 10 }} /><Typography.Text type="secondary" style={{ fontSize: 12 }}>正在装载流水线…</Typography.Text></div>
+  }
+
+  const dotColors = (c: string) => (
+    <>
+      <span className="dot" style={{ background: c }} />
+      <span className="dot" style={{ background: c }} />
+      <span className="dot" style={{ background: c }} />
+    </>
+  )
 
   return (
-    <div>
-      <Space style={{ marginBottom: 10, flexWrap: 'wrap' }} size={10}>
-        <Input.Search
-          allowClear placeholder="搜表名 / 指标 / 管线 / 域" style={{ width: 280 }}
-          onChange={(e) => setQ(e.target.value)}
-        />
-        <Segmented
-          value={kind}
-          onChange={(v) => setKind(v as typeof kind)}
-          options={[
-            { label: `全部 ${rows?.length ?? 0}`, value: 'all' },
-            ...(Object.keys(KIND_LABEL) as ObjectKind[])
-              .filter((k) => (counts.get(k) ?? 0) > 0)
-              .map((k) => ({ label: `${KIND_LABEL[k]} ${counts.get(k)}`, value: k })),
-          ]}
-        />
-      </Space>
-      <Typography.Paragraph type="secondary" style={{ fontSize: 12.5, margin: '0 0 10px' }}>
-        选一个对象看它的**字段、上下游血缘、运行信息**（对标 dbt Explorer / DataHub 的对象详情页）。
-      </Typography.Paragraph>
+    <div className={paused ? 'df-paused' : undefined}>
+      <style>{CSS}</style>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginBottom: 12, flexWrap: 'wrap' }}>
+        <b style={{ fontSize: 15 }}>数据生产线</b>
+        <Typography.Text type="secondary" style={{ fontSize: 12 }}>
+          粒子 = 数据在流动；节点上的数字 = 该环节的对象数；点任意节点看它的字段与血缘。
+        </Typography.Text>
+        <span style={{ marginLeft: 'auto', display: 'flex', gap: 8 }}>
+          <button
+            onClick={() => setPaused((v) => !v)}
+            style={{ border: '1px solid #e3e4e8', background: '#fff', borderRadius: 999, padding: '4px 12px', fontSize: 12, cursor: 'pointer' }}
+          >
+            {paused ? '▶ 播放动效' : '⏸ 暂停动效'}
+          </button>
+          <button
+            onClick={() => { void load() }}
+            style={{ border: '1px solid #e3e4e8', background: '#fff', borderRadius: 999, padding: '4px 12px', fontSize: 12, cursor: 'pointer' }}
+          >
+            ⟳ 刷新数据
+          </button>
+        </span>
+      </div>
 
-      {rows === null ? <Skeleton active paragraph={{ rows: 8 }} /> : (
-        <Table<ObjectRow>
-          size="small" rowKey={(r) => `${r.kind}:${r.name}`} dataSource={filtered}
-          pagination={{ pageSize: 20, showSizeChanger: false }}
-          onRow={(r) => ({ onClick: () => { void open({ kind: r.kind, name: r.name }) }, style: { cursor: 'pointer' } })}
-          columns={[
-            {
-              title: '对象', dataIndex: 'name', width: 340,
-              render: (v: string, r) => (
-                <Space size={6}>
-                  <Tag color={KIND_COLOR[r.kind]} style={{ marginInlineEnd: 0, fontSize: 11 }}>{KIND_LABEL[r.kind]}</Tag>
-                  <span style={{ fontFamily: 'ui-monospace, monospace', fontSize: 12.5 }}>{v}</span>
-                </Space>
-              ),
-            },
-            { title: '域', dataIndex: 'domain', width: 160, render: (v: string | null) => v ?? <Typography.Text type="secondary">—</Typography.Text> },
-            { title: '上游', dataIndex: 'upstreamCount', width: 80, render: (v: number) => (v === 0 ? '—' : `↑${v}`) },
-            { title: '下游', dataIndex: 'downstreamCount', width: 80, render: (v: number) => (v === 0 ? '—' : `↓${v}`) },
-            {
-              title: '', width: 90,
-              render: () => <span style={{ color: '#2a78d6', fontSize: 12 }}>详情 →</span>,
-            },
-          ]}
-        />
-      )}
+      {/* ── 泳道 ①：数据生产 ─────────────────────────────────────────────── */}
+      <section style={{ border: '1px solid #e8e8e5', borderRadius: 14, padding: '14px 16px', background: '#fcfcfb', marginBottom: 12 }}>
+        <div style={{ fontSize: 13, fontWeight: 600, marginBottom: 10 }}>① 数据怎么生产</div>
+        <div style={{ display: 'flex', alignItems: 'stretch', gap: 0, overflowX: 'auto', paddingBottom: 4 }}>
+          {stages.map((s, i) => (
+            <div key={s.key} style={{ display: 'flex', alignItems: 'stretch', flex: i === stages.length - 1 ? '0 0 auto' : 1, minWidth: 0 }}>
+              <div
+                className={`df-node${i === 1 ? ' df-live' : ''}`}
+                onClick={() => {
+                  const member = s.members[0]
+                  if (member === undefined) return
+                  // 各层的 kind 映射：pipeline→pipeline，metric→metric，其余按名称走详情端点
+                  const kind: ObjectKind = s.key === 'pipeline' ? 'pipeline' : s.key === 'metric' ? 'metric' : s.key === 'lake' ? 'lake' : s.key === 'staging' ? 'staging' : 'mart'
+                  void open({ kind, name: member })
+                }}
+                title={s.members.slice(0, 10).join('\n')}
+              >
+                <div className="n" style={{ color: s.color }}>{s.title}</div>
+                <div className="c">{s.count}</div>
+                <div className="h">{s.hint}</div>
+              </div>
+              {i < stages.length - 1 && <div className="df-pipe">{dotColors(s.color)}</div>}
+            </div>
+          ))}
+        </div>
+      </section>
+
+      {/* ── 泳道 ②：对账 ────────────────────────────────────────────────── */}
+      <section style={{ border: '1px solid #e8e8e5', borderRadius: 14, padding: '14px 16px', background: '#fcfcfb', marginBottom: 12 }}>
+        <div style={{ fontSize: 13, fontWeight: 600, marginBottom: 10 }}>② 怎么对账（近 {recon?.windowDays ?? 7} 天）</div>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 0, flexWrap: 'wrap', rowGap: 10 }}>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+            <div className="df-node" style={{ minWidth: 150 }} onClick={() => void open({ kind: 'mart', name: 'fct_retail_sale' })}>
+              <div className="n" style={{ color: '#6250d6' }}>平台值</div>
+              <div className="h">我们算的（fct_retail_sale）</div>
+            </div>
+            <div className="df-node" style={{ minWidth: 150 }} onClick={() => void open({ kind: 'staging', name: 'stg_lemeng_recon_source' })}>
+              <div className="n" style={{ color: '#2a78d6' }}>源值</div>
+              <div className="h">乐檬报表端点返回</div>
+            </div>
+          </div>
+          <div className="df-pipe" style={{ minWidth: 70, maxWidth: 110 }}>{dotColors('#6250d6')}</div>
+          <div className="df-node df-live" onClick={() => void open({ kind: 'recon', name: 'recon_fact' })}>
+            <div className="n" style={{ color: '#e34948' }}>差异计算</div>
+            <div className="c">{recon?.storeDays ?? '—'}</div>
+            <div className="h">店日（逐店逐日）</div>
+          </div>
+          <div className="df-pipe" style={{ minWidth: 70, maxWidth: 110 }}>{dotColors('#e34948')}</div>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+            <div className="df-node" onClick={() => void open({ kind: 'recon', name: 'recon_break' })}>
+              <div className="n" style={{ color: '#008300' }}>在容差内</div>
+              <div className="c">{recon?.withinTol ?? '—'}</div>
+              <div className="h">直接对平</div>
+            </div>
+            <div className="df-node" onClick={() => void open({ kind: 'recon', name: 'recon_break' })}>
+              <div className="n" style={{ color: '#e34948' }}>超容差</div>
+              <div className="c">{recon?.overTol ?? '—'}</div>
+              <div className="h">差异 {recon === null ? '—' : `¥${recon.overTolDiffSum.toLocaleString()}`}</div>
+            </div>
+          </div>
+          <div className="df-pipe" style={{ minWidth: 70, maxWidth: 110 }}>{dotColors('#e34948')}</div>
+          <div className="df-node" onClick={() => void open({ kind: 'mart', name: 'fct_retail_swap_offset' })}>
+            <div className="n" style={{ color: '#eda100' }}>归因</div>
+            <div className="h">
+              {recon === null || recon.byAttribution.length === 0
+                ? '无超容差'
+                : recon.byAttribution.map((a) => `${a.attribution} ${a.n}`).join('，')}
+            </div>
+          </div>
+          <div className="df-pipe" style={{ minWidth: 56, maxWidth: 90 }}>{dotColors('#008300')}</div>
+          <div className="df-node" onClick={() => void open({ kind: 'recon', name: 'recon_break' })}>
+            <div className="n" style={{ color: '#008300' }}>台账</div>
+            <div className="h">逐店差异 + 处置</div>
+          </div>
+        </div>
+      </section>
+
+      {/* ── 泳道 ③：排班 ────────────────────────────────────────────────── */}
+      <section style={{ border: '1px solid #e8e8e5', borderRadius: 14, padding: '14px 16px', background: '#fcfcfb' }}>
+        <div style={{ display: 'flex', alignItems: 'baseline', gap: 10, marginBottom: 8 }}>
+          <div style={{ fontSize: 13, fontWeight: 600 }}>③ 怎么排班（北京时间 24 小时）</div>
+          <span style={{ fontSize: 12, color: '#e34948' }}>
+            现在 {String(now.getHours()).padStart(2, '0')}:{String(now.getMinutes()).padStart(2, '0')}
+          </span>
+          <span style={{ fontSize: 11.5, color: '#9aa0a6' }}>红针 = 当前时刻；条 = 该档在这段时间内会跑</span>
+        </div>
+        <div className="df-sched">
+          {schedules.map((s) => {
+            const shape = parseCronToCstSlots(s.cron)
+            const label = s.key.replace(/^(data|platform)\./, '')
+            return (
+              <Row key={s.key} label={label} cron={s.cron} shape={shape} nowPct={nowPct} nowMinute={nowMinute}
+                failed={(s.lastRun?.status === 'failed' || s.lastRun?.status === 'timeout') || s.fails24h > 0} />
+            )
+          })}
+        </div>
+      </section>
 
       <Drawer
         open={pick !== null} onClose={() => setPick(null)} width={760}
         title={pick === null ? '' : (
-          <Space size={8}>
-            <Tag color={KIND_COLOR[pick.kind]} style={{ marginInlineEnd: 0 }}>{KIND_LABEL[pick.kind]}</Tag>
+          <span>
+            <Tag color={KIND_COLOR[pick.kind]} style={{ marginInlineEnd: 8 }}>{KIND_LABEL[pick.kind]}</Tag>
             <span style={{ fontFamily: 'ui-monospace, monospace' }}>{pick.name}</span>
-          </Space>
+          </span>
         )}
       >
-        {detailError !== null && <Alert type="error" showIcon message={detailError.text} description={`错误码：${detailError.code}`} />}
-        {detail === null && detailError === null && <Skeleton active paragraph={{ rows: 6 }} />}
+        {detailErr !== null && <Alert type="error" showIcon message={detailErr.text} description={`错误码：${detailErr.code}`} />}
+        {detail === null && detailErr === null && <Skeleton active paragraph={{ rows: 6 }} />}
         {detail !== null && (
-          <Tabs
-            items={[
-              {
-                key: 'columns',
-                label: `字段 ${detail.columns.length}`,
-                children: detail.columns.length === 0
-                  ? <Typography.Text type="secondary">没有解析到字段（事实源缺失——未知 ≠ 没有）</Typography.Text>
-                  : (
-                    <Table<ObjectColumn>
-                      size="small" rowKey="name" dataSource={detail.columns} pagination={false}
-                      columns={[
-                        { title: '字段', dataIndex: 'name', width: 190, render: (v: string) => <span style={{ fontFamily: 'ui-monospace, monospace', fontSize: 12 }}>{v}</span> },
-                        { title: '类型', dataIndex: 'type', width: 110, render: (v: string | null) => v ?? '—' },
-                        {
-                          title: '表达式 / 说明', dataIndex: 'expr',
-                          render: (v: string | null, r) => (
-                            <div style={{ fontSize: 12 }}>
-                              {v !== null && <div style={{ fontFamily: 'ui-monospace, monospace', color: '#4b5563', wordBreak: 'break-all' }}>= {v}</div>}
-                              {r.description !== '' && <div style={{ color: '#9aa0a6' }}>{r.description}</div>}
-                              {v === null && r.description === '' && '—'}
-                            </div>
-                          ),
-                        },
-                      ]}
-                    />
-                  ),
-              },
-              {
-                key: 'lineage',
-                label: '血缘',
-                children: (
-                  <div>
-                    <div style={{ fontSize: 12, color: '#9aa0a6', marginBottom: 8 }}>
-                      以本对象为中心；点任意标签可跳到那个对象的详情（同 dbt Explorer 的 1–2 跳展开）。
-                    </div>
-                    <RefList title="上游 · 1 跳" refs={detail.upstream} onPick={(r) => void open(r)} />
-                    <RefList title="上游 · 2 跳" refs={detail.upstream2} onPick={(r) => void open(r)} muted />
-                    <div style={{ height: 1, background: '#f0f0f0', margin: '10px 0' }} />
-                    <RefList title="下游 · 1 跳" refs={detail.downstream} onPick={(r) => void open(r)} />
-                    <RefList title="下游 · 2 跳" refs={detail.downstream2} onPick={(r) => void open(r)} muted />
-                  </div>
+          <Tabs items={[
+            {
+              key: 'cols', label: `字段 ${detail.columns.length}`,
+              children: detail.columns.length === 0
+                ? <Typography.Text type="secondary">没有解析到字段（未知 ≠ 没有）</Typography.Text>
+                : (
+                  <Table<ObjectColumn> size="small" rowKey="name" dataSource={detail.columns} pagination={false}
+                    columns={[
+                      { title: '字段', dataIndex: 'name', width: 180, render: (v: string) => <span style={{ fontFamily: 'ui-monospace, monospace', fontSize: 12 }}>{v}</span> },
+                      { title: '类型', dataIndex: 'type', width: 100, render: (v: string | null) => v ?? '—' },
+                      {
+                        title: '表达式 / 说明', dataIndex: 'expr',
+                        render: (v: string | null, r) => (
+                          <div style={{ fontSize: 12 }}>
+                            {v !== null && <div style={{ fontFamily: 'ui-monospace, monospace', color: '#4b5563', wordBreak: 'break-all' }}>= {v}</div>}
+                            {r.description !== '' && <div style={{ color: '#9aa0a6' }}>{r.description}</div>}
+                            {v === null && r.description === '' && '—'}
+                          </div>
+                        ),
+                      },
+                    ]}
+                  />
                 ),
-              },
-              {
-                key: 'notes',
-                label: '说明',
-                children: detail.notes.length === 0
-                  ? <Typography.Text type="secondary">没有异常说明。</Typography.Text>
-                  : (
-                    <ul style={{ paddingLeft: 18, fontSize: 12.5, color: '#6b7280' }}>
-                      {detail.notes.map((n) => <li key={n}>{n}</li>)}
-                    </ul>
-                  ),
-              },
-            ]}
-          />
+            },
+            {
+              key: 'lineage', label: '血缘',
+              children: (
+                <div>
+                  {[
+                    ['上游 · 1 跳', detail.upstream], ['上游 · 2 跳', detail.upstream2],
+                    ['下游 · 1 跳', detail.downstream], ['下游 · 2 跳', detail.downstream2],
+                  ].map(([title, refs]) => (
+                    <div key={String(title)} style={{ marginBottom: 10 }}>
+                      <div style={{ fontSize: 12, color: '#6b7280', marginBottom: 4 }}>{String(title)}</div>
+                      {(refs as SimpleRef[]).length === 0
+                        ? <Typography.Text type="secondary" style={{ fontSize: 12 }}>无</Typography.Text>
+                        : (
+                          <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
+                            {(refs as SimpleRef[]).map((r) => (
+                              <Tag key={`${r.kind}:${r.name}`} color={KIND_COLOR[r.kind]}
+                                style={{ marginInlineEnd: 0, cursor: 'pointer', fontFamily: 'ui-monospace, monospace', fontSize: 11.5 }}
+                                onClick={() => void open(r)}>
+                                {r.name}
+                              </Tag>
+                            ))}
+                          </div>
+                        )}
+                    </div>
+                  ))}
+                </div>
+              ),
+            },
+            {
+              key: 'notes', label: '说明',
+              children: detail.notes.length === 0
+                ? <Typography.Text type="secondary">没有异常说明。</Typography.Text>
+                : <ul style={{ paddingLeft: 18, fontSize: 12.5, color: '#6b7280' }}>{detail.notes.map((n) => <li key={n}>{n}</li>)}</ul>,
+            },
+          ]} />
         )}
       </Drawer>
     </div>
   )
+}
+
+/** 一行排班：标签 + 24h 轨道（条 = 该 cron 的触发窗口；红针 = 当前时刻）。 */
+function Row(props: {
+  label: string
+  cron: string
+  shape: ReturnType<typeof parseCronToCstSlots>
+  nowPct: number
+  nowMinute: number
+  failed: boolean
+}) {
+  const { label, cron, shape, nowPct, nowMinute, failed } = props
+  const bars: Array<{ left: number; width: number; live: boolean }> = []
+  if (shape.kind === 'every-minutes') {
+    if (shape.scope === 'all-day') {
+      bars.push({ left: 0, width: 100, live: true })
+    } else {
+      const from = shape.scope.fromHour * 60
+      const to = (shape.scope.toHour + 1) * 60
+      bars.push({ left: (from / 1440) * 100, width: ((to - from) / 1440) * 100, live: nowMinute >= from && nowMinute < to })
+    }
+  }
+  const color = failed ? '#e34948' : '#2a78d6'
+  return (
+    <>
+      <div style={{ fontSize: 12, color: failed ? '#e34948' : '#4b5563' }} title={cron}>{label}</div>
+      <div className="df-track" title={`${cron}（UTC）`}>
+        {shape.kind === 'unknown' && (
+          <span style={{ position: 'absolute', left: 6, top: 0, fontSize: 10, color: '#9aa0a6' }}>{cron}</span>
+        )}
+        {bars.map((b, i) => (
+          <span key={i} className={b.live ? 'df-bar df-live' : 'df-bar'}
+            style={{ left: `${b.left}%`, width: `${Math.max(b.width, 0.4)}%`, background: color, opacity: b.live ? 0.85 : 0.45 }} />
+        ))}
+        <span className="df-now" style={{ left: `${nowPct}%` }} />
+      </div>
+    </>
+  )
+}
+
+/** 供测试：把排班时点换算成轨道百分比（0–100）。 */
+export function slotPct(slot: CronSlot): number {
+  return ((slot.hour * 60 + slot.minute) / 1440) * 100
 }
