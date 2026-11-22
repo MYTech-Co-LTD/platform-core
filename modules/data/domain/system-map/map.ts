@@ -511,6 +511,36 @@ export function loadDbtModels(baseDir: string = REPO_ROOT): SystemMapDbtModel[] 
  * 图上以虚线挂到被审对象上。只认 `ref()`（仓内审计一律经 ref 读模型）；
  * 没有 ref 的审计（直接 read_parquet 的）不出现在这里，图上不画（不猜依赖）。
  */
+/**
+ * 模型级描述（dbt `schema.yml` 的 `models[].description`）：模型名 → 第一句人话。
+ *
+ * 用途：对象目录/详情页要让人看懂「这张表是什么」——表名是英文的，描述是中文的。
+ * 只取第一句（切 `。` 或换行），过长截断；读不到就是空（未知 ≠ 没有）。
+ */
+export function loadModelDescriptions(baseDir: string = REPO_ROOT): Map<string, string> {
+  const out = new Map<string, string>()
+  const dir = join(baseDir, 'dbt', 'models')
+  if (!existsSync(dir)) return out
+  for (const path of walkFiles(dir, (name) => name === 'schema.yml')) {
+    let raw = ''
+    try { raw = readFileSync(path, 'utf8') } catch { continue }
+    let doc: unknown
+    try { doc = parseYaml(raw) } catch { continue }
+    const root = (typeof doc === 'object' && doc !== null ? doc : {}) as Record<string, unknown>
+    const models = Array.isArray(root.models) ? root.models : []
+    for (const m of models) {
+      if (typeof m !== 'object' || m === null) continue
+      const rec = m as Record<string, unknown>
+      const name = typeof rec.name === 'string' ? rec.name : ''
+      const desc = typeof rec.description === 'string' ? rec.description : ''
+      if (name === '' || desc === '') continue
+      const first = desc.replace(/\s+/g, ' ').split(/[。；]/)[0]?.trim() ?? ''
+      if (first !== '') out.set(name, first.length > 90 ? `${first.slice(0, 90)}…` : first)
+    }
+  }
+  return out
+}
+
 export function loadAuditRefs(baseDir: string = REPO_ROOT): Array<{ id: string; refs: string[] }> {
   const testsDir = join(baseDir, 'dbt', 'tests')
   if (!existsSync(testsDir)) return []
