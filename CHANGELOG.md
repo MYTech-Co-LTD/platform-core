@@ -11,6 +11,10 @@
 
 ## [Unreleased]
 
+## [0.358.0](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.357.4...v0.358.0) - 2026-11-22
+- 【新增】data: 湖卫生探针㉑ + ⑱ 阈值校准（把湖生命周期不变量变成机器判据） ([#2672](https://github.com/MYTech-Co-LTD/platform-core/pull/2672), [82bd25c](https://github.com/MYTech-Co-LTD/platform-core/commit/82bd25cd73b0341b31099e9413a03d7344573695))
+
+
 ## [0.357.4](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.357.3...v0.357.4) - 2026-11-22
 - 【修复】scheduler: 种子复活被软删的排班行——registry 恢复 key 不再静默失效（#2670） ([#2671](https://github.com/MYTech-Co-LTD/platform-core/pull/2671), [9d1cc1c](https://github.com/MYTech-Co-LTD/platform-core/commit/9d1cc1c84a563fc4b77a4f7c82c18d8ceb31d4dc))
 
