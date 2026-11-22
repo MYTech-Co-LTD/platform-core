@@ -68,8 +68,10 @@ const HOT_MAX_FILES = numEnv('WIRE_HOT_MAX_FILES', 60)
 // ㉑ 日区 glob（湖卫生）：只从**文件名**提取日期（regexp on glob 结果），不打开任何文件。
 const DAY_GLOB = process.env.WIRE_DAY_GLOB
   ?? 's3://shanhai-data/lemeng/retail_order_line/_DAY_DATA/system_book=*/bizday=*/all.parquet'
-// 差额换货月度抵扣额阈值（#2630）：2026-11 半月实测 4,155.92 ⇒ 默认 5000 留 ~2 月余量
-const SWAP_OFFSET_MONTH_MAX = numEnv('WIRE_SWAP_OFFSET_MONTH_MAX', 5000)
+// 差额换货月度抵扣额阈值（#2630；2026-11-22 校准）：旧默认 5,000 是按**半月**实测 4,155.92 定的，
+// 整月必然超 ⇒ 每天恒 WARN（噪声化）。按整月实测校准：9 月 31,528.50 / 10 月 12,552.62 /
+// 11 月至 21 日 7,353.99 ⇒ 取 15,000（≈ 近三月最高的半月量），超出才是「异常增长」。
+const SWAP_OFFSET_MONTH_MAX = numEnv('WIRE_SWAP_OFFSET_MONTH_MAX', 15000)
 const PGCRASH_WINDOW_MIN = numEnv('WIRE_PGCRASH_WINDOW_MIN', 15)
 const PGCRASH_STREAM = process.env.WIRE_PGCRASH_STREAM ?? 'openship_platform_core_data_pg_duckdb'
 const MARTS_FRESH_SPEC = process.env.WIRE_MARTS_FRESH_SPEC

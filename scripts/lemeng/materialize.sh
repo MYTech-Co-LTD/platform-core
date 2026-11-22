@@ -518,8 +518,12 @@ if [ "$SCOPE" = tables ]; then
   #    （`subject_org()`），一旦创建就永不自己更新。而 tick/hourly 都是窄选择、全量档已停用
   #    ⇒ 视图曾**长期无人重建**，把一次污染值（错误文本当 org）永久冻在里面，
   #    导致 `where org='<真租户>'` 恒 0 行（静默）。CREATE VIEW 很轻，夜间顺带重建是零成本。
-  _select="config.materialized:table,path:models/$TABLES_DOMAIN config.materialized:seed path:models/$TABLES_DOMAIN/views"
+  # 选择器可被 env 覆盖（#2674 拆档）：全史 CTAS 模型（recon 家族 / swap_offset）单轮 ~11 分钟，
+  # 与大部队同档会把 90 分钟上限打满 ⇒ 拆成两个 job 各自跑。默认值与拆档前逐字一致。
+  _select="${MATERIALIZE_TABLES_SELECT:-config.materialized:table,path:models/$TABLES_DOMAIN config.materialized:seed path:models/$TABLES_DOMAIN/views}"
   _excl="--exclude path:tests/$TABLES_DOMAIN --exclude tag:audit"
+  # 额外排除（空白分隔的节点名）；空 = 不排除。只作用于**首轮**——重试轮用失败节点名单。
+  for _m in ${MATERIALIZE_TABLES_EXCLUDE:-}; do _excl="$_excl --exclude $_m"; done
   _attempt=1
   _sum_pass=''
   _sum_err=''

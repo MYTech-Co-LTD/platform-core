@@ -173,6 +173,27 @@ describe('registry · dbt hourly/tables（Wave 8 P1）', () => {
       expect(existsSync(repoPath(d.script))).toBe(true)
     }
   })
+
+  it('★ #2674 拆档：全史 CTAS 模型从主档排除，独立对账档只跑它们', () => {
+    // 拆档理由：三个全史模型单轮 ~11 分钟且必撞采集期 ETag，与几十个表同档 ⇒ 90 分钟必超时，
+    // 新增/修改的 table 模型整天进不了生产（#2655 实证）。
+    const FULL = ['recon_fact', 'recon_break', 'fct_retail_swap_offset']
+    const tables = JOB_REGISTRY.find((d) => d.key === 'data.dbt_tables')!
+    const recon = JOB_REGISTRY.find((d) => d.key === 'data.dbt_tables_recon')!
+    expect(recon, 'data.dbt_tables_recon').toBeDefined()
+    // 主档：默认选择器 + 明确的排除清单（不许两档都跑同一模型 ⇒ 并发写同一张表）
+    expect(tables.env?.MATERIALIZE_TABLES_SELECT).toBeUndefined()
+    expect(String(tables.env?.MATERIALIZE_TABLES_EXCLUDE).split(/\s+/).sort()).toEqual([...FULL].sort())
+    // 对账档：**只**跑这三个，写死选择器
+    expect(String(recon.env?.MATERIALIZE_TABLES_SELECT).split(/\s+/).sort()).toEqual([...FULL].sort())
+    expect(recon.env?.MATERIALIZE_TABLES_EXCLUDE).toBeUndefined()
+    // 错峰：对账档在主档之后（CST 11:45 vs 10:25），且上限收紧到 45 分钟
+    expect(recon.cron).toBe('45 3 * * *')
+    expect(recon.timeoutMs).toBe(2700000)
+    expect(recon.env?.MATERIALIZE_SCOPE).toBe('tables')
+    expect(recon.env?.MATERIALIZE_MODE).toBe('container')
+    expect(existsSync(repoPath(recon.script))).toBe(true)
+  })
 })
 
 describe('registry · dbt 对账分族（full / window，#2428）', () => {
