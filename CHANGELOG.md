@@ -11,6 +11,10 @@
 
 ## [Unreleased]
 
+## [0.366.0](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.365.0...v0.366.0) - 2026-11-22
+- 【新增】data: 详情第一屏改关系图 + 对象中文名/一句话说明（#2695） ([#2696](https://github.com/MYTech-Co-LTD/platform-core/pull/2696), [24c351f](https://github.com/MYTech-Co-LTD/platform-core/commit/24c351f5b17580d0cabe2731b0e391fceda1e809))
+
+
 ## [0.365.0](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.364.0...v0.365.0) - 2026-11-22
 - 【新增】data: 数据生产线动效流水线（生产/对账/排班三泳道） ([#2694](https://github.com/MYTech-Co-LTD/platform-core/pull/2694), [bcae3dd](https://github.com/MYTech-Co-LTD/platform-core/commit/bcae3dd2bc54615c5fc94a334f29a574a3a5263e))
 
