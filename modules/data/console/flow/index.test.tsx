@@ -84,7 +84,9 @@ describe('动效流水线', () => {
   it('点生产泳道的 marts 节点 → 请求对象详情并按 name 打开', async () => {
     m.mockResolvedValueOnce(json(FLOW)).mockResolvedValueOnce(json(OBS))
     m.mockResolvedValueOnce(json({
-      kind: 'mart', name: 'fct_retail_sale', domain: null, columns: [], upstream: [], downstream: [], upstream2: [], downstream2: [], notes: [],
+      kind: 'mart', name: 'fct_retail_sale', displayName: '零售销售事实', summary: '每店每天一行',
+      domain: null, columns: [], upstream: [{ kind: 'staging', name: 'stg_x', displayName: '零售明细（定型）' }],
+      downstream: [], upstream2: [], downstream2: [], notes: [],
     }))
     render(<FlowPage />)
     await waitFor(() => expect(screen.getByText('marts')).toBeInTheDocument())
@@ -94,6 +96,23 @@ describe('动效流水线', () => {
       expect(url).toContain('kind=mart')
       expect(url).toContain('name=fct_retail_sale')
     })
+  })
+
+  it('详情默认「关系」Tab：显示人话名、上游与读法说明', async () => {
+    m.mockResolvedValueOnce(json(FLOW)).mockResolvedValueOnce(json(OBS))
+    m.mockResolvedValueOnce(json({
+      kind: 'mart', name: 'fct_retail_sale', displayName: '零售销售事实', summary: '每店每天一行',
+      domain: null, columns: [], upstream: [{ kind: 'staging', name: 'stg_x', displayName: '零售明细（定型）' }],
+      downstream: [], upstream2: [], downstream2: [], notes: [],
+    }))
+    render(<FlowPage />)
+    await waitFor(() => expect(screen.getByText('marts')).toBeInTheDocument())
+    fireEvent.click(screen.getByText('marts'))
+    await waitFor(() => expect(screen.getByText('读法：左边的把数据交给它，它算完交给右边。点任意方块跳到那个对象。')).toBeInTheDocument())
+    expect(screen.getByText('零售销售事实')).toBeInTheDocument()
+    expect(screen.getByText('零售明细（定型）')).toBeInTheDocument()
+    expect(screen.getByText('上游（数据从哪来）')).toBeInTheDocument()
+    expect(screen.getByText('下游（谁在用它）')).toBeInTheDocument()
   })
 
   it('slotPct：10:25 = 43.4%', () => {

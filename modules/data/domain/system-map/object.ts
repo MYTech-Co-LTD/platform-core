@@ -7,7 +7,7 @@
 
 export type ObjectKind = 'lake' | 'staging' | 'mart' | 'recon' | 'metric' | 'pipeline'
 
-export interface SimpleRef { kind: ObjectKind; name: string }
+export interface SimpleRef { kind: ObjectKind; name: string; displayName?: string; summary?: string }
 
 export interface ObjectColumn {
   name: string
@@ -20,6 +20,10 @@ export interface ObjectColumn {
 export interface ObjectDetail {
   kind: ObjectKind
   name: string
+  /** 人话名称（有就显示：指标 title / 模型描述首句）；缺省 = 只有英文名 */
+  displayName: string | null
+  /** 一句人话说明（截断） */
+  summary: string | null
   domain: string | null
   columns: ObjectColumn[]
   /** 直接上游 / 下游（1 跳）；`hops2` 是 2 跳以内（去重，不含自己与 1 跳） */
@@ -39,6 +43,10 @@ export interface ObjectInput {
   nodes: Array<{ id: string; kind: string; label: string }>
   edges: Array<{ source: string; target: string }>
   notes?: string[]
+  /** 人话名称/说明的解析器（由路由层给：指标 title / 模型描述 / 契约描述） */
+  describe?: (kind: ObjectKind, name: string) => { displayName: string | null; summary: string | null }
+  /** 本对象自己的人话名称与说明（缺省时用 describe） */
+  about?: { displayName: string | null; summary: string | null }
 }
 
 /** 节点 id 约定：`<前缀>:<label>`（与 flow 图一致）。 */
@@ -82,7 +90,14 @@ export function buildObjectDetail(input: ObjectInput): ObjectDetail {
     const n = byId.get(id)
     if (n === undefined) return null
     const kind = detailKindOf(n.kind)
-    return kind === null ? null : { kind, name: n.label }
+    if (kind === null) return null
+    const d = input.describe?.(kind, n.label)
+    return {
+      kind,
+      name: n.label,
+      ...(d?.displayName === undefined || d.displayName === null ? {} : { displayName: d.displayName }),
+      ...(d?.summary === undefined || d.summary === null ? {} : { summary: d.summary }),
+    }
   }
 
   const up1 = input.edges.filter((e) => e.target === selfId).map((e) => e.source)
@@ -102,9 +117,12 @@ export function buildObjectDetail(input: ObjectInput): ObjectDetail {
     notes.push('没有识别到上下游（该对象可能不在流程图里，或事实源未声明）')
   }
 
+  const about = input.about ?? input.describe?.(input.kind, input.name) ?? { displayName: null, summary: null }
   return {
     kind: input.kind,
     name: input.name,
+    displayName: about.displayName,
+    summary: about.summary,
     domain: input.domain,
     columns: input.columns,
     upstream,

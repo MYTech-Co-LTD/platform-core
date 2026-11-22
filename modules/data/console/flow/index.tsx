@@ -15,10 +15,11 @@ import { humanError, type HumanError } from '../lib/explain'
 import { parseCronToCstSlots, type CronSlot } from './cron'
 
 type ObjectKind = 'lake' | 'staging' | 'mart' | 'recon' | 'metric' | 'pipeline'
-interface SimpleRef { kind: ObjectKind; name: string }
+interface SimpleRef { kind: ObjectKind; name: string; displayName?: string; summary?: string }
 interface ObjectColumn { name: string; type: string | null; expr: string | null; description: string }
 interface ObjectDetail {
-  kind: ObjectKind; name: string; domain: string | null; columns: ObjectColumn[]
+  kind: ObjectKind; name: string; displayName: string | null; summary: string | null
+  domain: string | null; columns: ObjectColumn[]
   upstream: SimpleRef[]; downstream: SimpleRef[]; upstream2: SimpleRef[]; downstream2: SimpleRef[]; notes: string[]
 }
 interface FlowBody { nodes: Array<{ id: string; kind: string; label: string; count?: number; members?: string[] }>; notes: string[] }
@@ -276,14 +277,20 @@ export default function FlowPage() {
         title={pick === null ? '' : (
           <span>
             <Tag color={KIND_COLOR[pick.kind]} style={{ marginInlineEnd: 8 }}>{KIND_LABEL[pick.kind]}</Tag>
-            <span style={{ fontFamily: 'ui-monospace, monospace' }}>{pick.name}</span>
+            <span>{detail?.displayName !== null && detail?.displayName !== undefined && detail.displayName !== pick.name
+              ? `${detail.displayName}（${pick.name}）`
+              : pick.name}</span>
           </span>
         )}
       >
         {detailErr !== null && <Alert type="error" showIcon message={detailErr.text} description={`错误码：${detailErr.code}`} />}
         {detail === null && detailErr === null && <Skeleton active paragraph={{ rows: 6 }} />}
         {detail !== null && (
-          <Tabs items={[
+          <Tabs defaultActiveKey="rel" items={[
+            {
+              key: 'rel', label: '关系',
+              children: <RelationView detail={detail} onPick={(r) => void open(r)} />,
+            },
             {
               key: 'cols', label: `字段 ${detail.columns.length}`,
               children: detail.columns.length === 0
@@ -308,34 +315,6 @@ export default function FlowPage() {
                 ),
             },
             {
-              key: 'lineage', label: '血缘',
-              children: (
-                <div>
-                  {[
-                    ['上游 · 1 跳', detail.upstream], ['上游 · 2 跳', detail.upstream2],
-                    ['下游 · 1 跳', detail.downstream], ['下游 · 2 跳', detail.downstream2],
-                  ].map(([title, refs]) => (
-                    <div key={String(title)} style={{ marginBottom: 10 }}>
-                      <div style={{ fontSize: 12, color: '#6b7280', marginBottom: 4 }}>{String(title)}</div>
-                      {(refs as SimpleRef[]).length === 0
-                        ? <Typography.Text type="secondary" style={{ fontSize: 12 }}>无</Typography.Text>
-                        : (
-                          <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
-                            {(refs as SimpleRef[]).map((r) => (
-                              <Tag key={`${r.kind}:${r.name}`} color={KIND_COLOR[r.kind]}
-                                style={{ marginInlineEnd: 0, cursor: 'pointer', fontFamily: 'ui-monospace, monospace', fontSize: 11.5 }}
-                                onClick={() => void open(r)}>
-                                {r.name}
-                              </Tag>
-                            ))}
-                          </div>
-                        )}
-                    </div>
-                  ))}
-                </div>
-              ),
-            },
-            {
               key: 'notes', label: '说明',
               children: detail.notes.length === 0
                 ? <Typography.Text type="secondary">没有异常说明。</Typography.Text>
@@ -344,6 +323,92 @@ export default function FlowPage() {
           ]} />
         )}
       </Drawer>
+    </div>
+  )
+}
+
+/**
+ * 关系图（详情第一屏）：**上游 → 本对象 → 下游**，三列 + 箭头。
+ * 为什么做成图而不是标签列表：用户反馈「点进去什么关系呀」——关系要一眼看出来。
+ */
+function RelationView(props: {
+  detail: ObjectDetail
+  onPick: (r: SimpleRef) => void
+}) {
+  const { detail, onPick } = props
+  const chip = (r: SimpleRef, dir: 'up' | 'down') => (
+    <div
+      key={`${dir}:${r.kind}:${r.name}`}
+      onClick={() => onPick(r)}
+      title={r.summary ?? undefined}
+      style={{
+        border: '1px solid #e3e4e8', borderRadius: 10, padding: '7px 10px', background: '#fff',
+        cursor: 'pointer', maxWidth: 240,
+      }}
+    >
+      <div style={{ fontSize: 12.5, fontWeight: 600 }}>
+        {r.displayName !== undefined && r.displayName !== r.name ? r.displayName : r.name}
+      </div>
+      {r.displayName !== undefined && r.displayName !== r.name && (
+        <div style={{ fontFamily: 'ui-monospace, monospace', fontSize: 10.5, color: '#9aa0a6' }}>{r.name}</div>
+      )}
+      <div style={{ fontSize: 10.5, color: '#9aa0a6' }}>{KIND_LABEL[r.kind]}</div>
+    </div>
+  )
+  const arrow = (label: string, dir: 'up' | 'down') => (
+    <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 2, color: '#b9bec7', minWidth: 56 }}>
+      <span style={{ fontSize: 10.5, color: '#9aa0a6' }}>{label}</span>
+      <span style={{ fontSize: 18, lineHeight: 1 }}>{dir === 'up' ? '→' : '→'}</span>
+    </div>
+  )
+  return (
+    <div>
+      <div style={{ fontSize: 12, color: '#6b7280', marginBottom: 10 }}>
+        读法：左边的把数据交给它，它算完交给右边。点任意方块跳到那个对象。
+      </div>
+      <div style={{ display: 'grid', gridTemplateColumns: '1fr auto 1.2fr auto 1fr', gap: 8, alignItems: 'center' }}>
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+          <div style={{ fontSize: 11, color: '#9aa0a6' }}>上游（数据从哪来）</div>
+          {detail.upstream.length === 0
+            ? <span style={{ fontSize: 12, color: '#9aa0a6' }}>没有上游（源头）</span>
+            : detail.upstream.map((r) => chip(r, 'up'))}
+          {detail.upstream2.length > 0 && (
+            <div style={{ fontSize: 10.5, color: '#b9bec7' }}>
+              更上游：{detail.upstream2.map((r) => r.displayName ?? r.name).join('、')}
+            </div>
+          )}
+        </div>
+        {arrow('交给', 'up')}
+        <div style={{
+          border: '2px solid #2a78d6', borderRadius: 12, padding: '10px 12px', background: '#f5f9ff',
+        }}>
+          <div style={{ fontSize: 14, fontWeight: 700 }}>
+            {detail.displayName !== null && detail.displayName !== detail.name ? detail.displayName : detail.name}
+          </div>
+          <div style={{ fontFamily: 'ui-monospace, monospace', fontSize: 11, color: '#6b7280' }}>{detail.name}</div>
+          <div style={{ fontSize: 11, color: '#9aa0a6' }}>{KIND_LABEL[detail.kind]}</div>
+          {detail.summary !== null && (
+            <div style={{ fontSize: 12, color: '#4b5563', marginTop: 4 }}>{detail.summary}</div>
+          )}
+        </div>
+        {arrow('交给', 'down')}
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+          <div style={{ fontSize: 11, color: '#9aa0a6' }}>下游（谁在用它）</div>
+          {detail.downstream.length === 0
+            ? <span style={{ fontSize: 12, color: '#9aa0a6' }}>没有下游（终点）</span>
+            : detail.downstream.map((r) => chip(r, 'down'))}
+          {detail.downstream2.length > 0 && (
+            <div style={{ fontSize: 10.5, color: '#b9bec7' }}>
+              更下游：{detail.downstream2.map((r) => r.displayName ?? r.name).join('、')}
+            </div>
+          )}
+        </div>
+      </div>
+      {detail.notes.length > 0 && (
+        <ul style={{ marginTop: 12, paddingLeft: 18, fontSize: 12, color: '#9a6b00' }}>
+          {detail.notes.map((n) => <li key={n}>{n}</li>)}
+        </ul>
+      )}
     </div>
   )
 }

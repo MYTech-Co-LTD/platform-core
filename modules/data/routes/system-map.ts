@@ -15,6 +15,7 @@ import {
   loadDbtVars,
   loadAuditRefs,
   loadModelColumnDocs,
+  loadModelDescriptions,
   loadSystemMapFacts,
   readRepoText,
 } from '../domain/system-map/map'
@@ -491,12 +492,47 @@ export function registerSystemMap(r: ModuleHono, ctx: RouteCtx): void {
       }
     }
 
+    // 人话名称与说明：指标 title/definition、模型 schema.yml 描述、契约 description、管线 name。
+    const modelDescs = loadModelDescriptions(ctx.repoRoot)
+    const metricsResult = await modelFor(ctx, requester.orgId)
+    const metricByName = new Map(
+      ('metrics' in metricsResult ? metricsResult.metrics : []).map((m) => [m.id, m]),
+    )
+    const lakeDescOf = (prefix: string): string | null => {
+      const hit = loadedContracts.contracts.find((x) => {
+        const layout = (typeof x.doc.layout === 'object' && x.doc.layout !== null ? x.doc.layout : {}) as Record<string, unknown>
+        return layout.prefix === prefix
+      })
+      return hit !== undefined && typeof hit.doc.description === 'string' ? hit.doc.description : null
+    }
+    const firstSentence = (text: string | null): string | null => {
+      if (text === null) return null
+      const first = text.replace(/\s+/g, ' ').split(/[。；]/)[0]?.trim() ?? ''
+      if (first === '') return null
+      return first.length > 90 ? `${first.slice(0, 90)}…` : first
+    }
+    const describe = (k: ObjectKind, n: string): { displayName: string | null; summary: string | null } => {
+      if (k === 'metric') {
+        const m = metricByName.get(n)
+        return { displayName: m?.title ?? n, summary: firstSentence(m?.definition ?? null) }
+      }
+      if (k === 'lake') {
+        // 湖前缀 → 契约描述（首个匹配）
+        return { displayName: n, summary: firstSentence(lakeDescOf(n)) }
+      }
+      if (k === 'pipeline') {
+        return { displayName: n, summary: '采集管线：按排班去源接口取数并落湖' }
+      }
+      return { displayName: n, summary: firstSentence(modelDescs.get(n) ?? null) }
+    }
+
     return c.json({
       generatedAt: new Date().toISOString(),
       ...buildObjectDetail({
         kind, name, domain: null, columns, notes,
         nodes: flow.nodes.map((n) => ({ id: n.id, kind: n.kind, label: n.label })),
         edges: flow.edges,
+        describe,
       }),
     })
   })
