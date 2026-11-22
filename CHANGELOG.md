@@ -11,6 +11,10 @@
 
 ## [Unreleased]
 
+## [0.362.0](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.361.0...v0.362.0) - 2026-11-22
+- 【新增】data: 全流程节点图（源→管线→湖→staging→marts→指标→消费） ([#2688](https://github.com/MYTech-Co-LTD/platform-core/pull/2688), [d10ebc6](https://github.com/MYTech-Co-LTD/platform-core/commit/d10ebc668310fc9370974c66b35e786b5172e287))
+
+
 ## [0.361.0](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.360.0...v0.361.0) - 2026-11-22
 - 【优化】data: 四个地图视角合并为「数据地图」单入口（#2685） ([#2686](https://github.com/MYTech-Co-LTD/platform-core/pull/2686), [ec40a8e](https://github.com/MYTech-Co-LTD/platform-core/commit/ec40a8e2f7ba095f83b6a3e9c45b5edc62d8fe71))
 - 【新增】data: 字段血缘补全链路——指标口径/采集管线节点/三层列表达式（#2683） ([#2684](https://github.com/MYTech-Co-LTD/platform-core/pull/2684), [5fbc77c](https://github.com/MYTech-Co-LTD/platform-core/commit/5fbc77c92b4e5dfd2d1cbdea61e9a543e3afd4ab))
