@@ -164,26 +164,38 @@ export async function seedSchedules(
   pool: Pool,
   registry: JobDef[] = JOB_REGISTRY,
   now: Date = new Date(),
-): Promise<{ inserted: string[]; filled: string[] }> {
+): Promise<{ inserted: string[]; revived: string[]; filled: string[] }> {
   for (const d of registry) {
     if (!isValidCron(d.cron)) throw new Error(`registry: ${d.key} 的 cron 非法（${d.cron}）`)
     if (!d.script.startsWith('scripts/')) throw new Error(`registry: ${d.key} 的 script 必须在 scripts/ 下`)
   }
   const inserted: string[] = []
+  const revived: string[] = []
   for (const d of registry) {
     // handler-only 条目只登记 handler（loop 按 key 查找用），不建系统排班行。
     if (d.noSystemSchedule) continue
-    const { rowCount } = await pool.query(
+    // on conflict 的两个动作都**刻意不碰 enabled / next_run_at / cron**（人工闸门与手改不覆盖）：
+    //   · 无冲突 → 插入（enabled=false 登记）；
+    //   · 行在且**被软删** → 复活（#2670）：「key 从 registry 移除→软删，之后又加回 registry」
+    //     是回滚/恢复决策的正常路径（实例：#2588 移除 → #2668 恢复）。旧语义 do nothing 会让
+    //     该行被 claim 的 `deleted_at is null` 门静默挡住——行在、enabled、到期，就是不跑。
+    //     复活**只清 deleted_at**，enabled 仍 false ⇒ 四步开闸的人工步骤照旧。
+    const { rows } = await pool.query<{ is_insert: boolean }>(
       `insert into platform.job_schedule
          (key, cron, timezone, params, source, enabled, next_run_at, timeout_ms, max_attempts, expected_interval_secs)
        values ($1,$2,$3,'{}'::jsonb,'system',false,null,$4,$5,$6)
-       on conflict (key) where source = 'system' do nothing`,
+       on conflict (key) where source = 'system'
+       do update set deleted_at = null, updated_at = now()
+         where platform.job_schedule.deleted_at is not null
+       returning (xmax = 0) as is_insert`,
       [d.key, d.cron, d.timezone, d.timeoutMs, d.maxAttempts, d.expectedIntervalSecs],
     )
-    if ((rowCount ?? 0) > 0) inserted.push(d.key)
+    // `xmax = 0` ⇒ 真 INSERT；否则是 DO UPDATE（复活）。DO UPDATE 带 WHERE ⇒ 只有真复活才返回行，
+    // 已活的行不重报（revived 不会每拍刷一遍）。
+    if (rows.length > 0) (rows[0].is_insert ? inserted : revived).push(d.key)
   }
   const filled = await fillNextRunAt(pool, now)
-  return { inserted, filled }
+  return { inserted, revived, filled }
 }
 
 /**
