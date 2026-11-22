@@ -5,6 +5,7 @@ import { cleanup, fireEvent, render, screen } from '@testing-library/react'
 import { MemoryRouter } from 'react-router-dom'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
+vi.mock('../flow', () => ({ default: () => <div>流程视角内容</div> }))
 vi.mock('../system-map', () => ({ default: () => <div>结构视角内容</div> }))
 vi.mock('../pipelines', () => ({ default: () => <div>链路视角内容</div> }))
 vi.mock('../lineage', () => ({ default: () => <div>血缘视角内容</div> }))
@@ -21,10 +22,15 @@ const renderAt = (search = '') => render(
 )
 
 describe('数据地图容器', () => {
-  it('默认打开「结构」视角，并给出该视角的一句话说明', () => {
+  it('默认打开「流程」视角（用户要的第一屏就是全流程图）', () => {
     renderAt()
+    expect(screen.getByText('流程视角内容')).toBeInTheDocument()
+    expect(screen.getByText(/源接口 → 采集管线 → 湖资产/)).toBeInTheDocument()
+  })
+
+  it('?view=structure 打开结构视角', () => {
+    renderAt('?view=structure')
     expect(screen.getByText('结构视角内容')).toBeInTheDocument()
-    expect(screen.getByText(/业务对象、指标与字段之间的关系/)).toBeInTheDocument()
   })
 
   it('?view=lineage 直接打开血缘视角（可分享链接）', () => {
@@ -32,9 +38,9 @@ describe('数据地图容器', () => {
     expect(screen.getByText('血缘视角内容')).toBeInTheDocument()
   })
 
-  it('未知 view 回落到结构（不白屏）', () => {
+  it('未知 view 回落到流程（不白屏）', () => {
     renderAt('?view=nonsense')
-    expect(screen.getByText('结构视角内容')).toBeInTheDocument()
+    expect(screen.getByText('流程视角内容')).toBeInTheDocument()
   })
 
   it('点切换器 → 换视角并更新 URL 参数', () => {
