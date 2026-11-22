@@ -11,6 +11,10 @@
 
 ## [Unreleased]
 
+## [0.358.1](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.358.0...v0.358.1) - 2026-11-22
+- 【修复】data: 全史 mart 加闭窗读（编译期字面量），避开采集期 ETag 竞态（#2675） ([#2676](https://github.com/MYTech-Co-LTD/platform-core/pull/2676), [91006e8](https://github.com/MYTech-Co-LTD/platform-core/commit/91006e8d7adeb059d1ea1b92a426ded62eb2386a))
+
+
 ## [0.358.0](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.357.4...v0.358.0) - 2026-11-22
 - 【新增】data: 湖卫生探针㉑ + ⑱ 阈值校准（把湖生命周期不变量变成机器判据） ([#2672](https://github.com/MYTech-Co-LTD/platform-core/pull/2672), [82bd25c](https://github.com/MYTech-Co-LTD/platform-core/commit/82bd25cd73b0341b31099e9413a03d7344573695))
 
