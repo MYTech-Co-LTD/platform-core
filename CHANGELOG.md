@@ -11,6 +11,10 @@
 
 ## [Unreleased]
 
+## [0.357.2](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.357.1...v0.357.2) - 2026-11-22
+- 【修复】data: drill 视图加日腿，已封版未并入日改由 _DAY_DATA 权威供数（#2665） ([#2667](https://github.com/MYTech-Co-LTD/platform-core/pull/2667), [71ffc20](https://github.com/MYTech-Co-LTD/platform-core/commit/71ffc2029c0256bf456c24e30c65e3a40a4b1856))
+
+
 ## [0.357.1](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.357.0...v0.357.1) - 2026-11-21
 - 【修复】data: 回滚月份裁剪（#2659/#2660）——热腿无 month 列时是绑定错误，不是 NULL（#2663） ([#2664](https://github.com/MYTech-Co-LTD/platform-core/pull/2664), [4213619](https://github.com/MYTech-Co-LTD/platform-core/commit/4213619dedbf122bcda3eb9555e6029664f8a04b))
 
