@@ -11,6 +11,10 @@
 
 ## [Unreleased]
 
+## [0.365.0](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.364.0...v0.365.0) - 2026-11-22
+- 【新增】data: 数据生产线动效流水线（生产/对账/排班三泳道） ([#2694](https://github.com/MYTech-Co-LTD/platform-core/pull/2694), [bcae3dd](https://github.com/MYTech-Co-LTD/platform-core/commit/bcae3dd2bc54615c5fc94a334f29a574a3a5263e))
+
+
 ## [0.364.0](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.363.0...v0.364.0) - 2026-11-22
 - 【新增】data: 全流程页改为对象目录（列表+详情：字段/中心化血缘/说明） ([#2692](https://github.com/MYTech-Co-LTD/platform-core/pull/2692), [9f6f461](https://github.com/MYTech-Co-LTD/platform-core/commit/9f6f46113aefbea77ffff162756f4afcb1f83657))
 
