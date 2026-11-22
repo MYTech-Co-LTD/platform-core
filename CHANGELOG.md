@@ -11,6 +11,10 @@
 
 ## [Unreleased]
 
+## [0.359.0](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.358.1...v0.359.0) - 2026-11-22
+- 【新增】data: tables 档拆出对账族 + ⑳ 阈值按整月校准（#2674） ([#2677](https://github.com/MYTech-Co-LTD/platform-core/pull/2677), [d6f7e46](https://github.com/MYTech-Co-LTD/platform-core/commit/d6f7e46cc852230dfdc8c6b22d2767214c22a33a))
+
+
 ## [0.358.1](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.358.0...v0.358.1) - 2026-11-22
 - 【修复】data: 全史 mart 加闭窗读（编译期字面量），避开采集期 ETag 竞态（#2675） ([#2676](https://github.com/MYTech-Co-LTD/platform-core/pull/2676), [91006e8](https://github.com/MYTech-Co-LTD/platform-core/commit/91006e8d7adeb059d1ea1b92a426ded62eb2386a))
 
