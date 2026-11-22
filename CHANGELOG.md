@@ -11,6 +11,10 @@
 
 ## [Unreleased]
 
+## [0.360.0](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.359.0...v0.360.0) - 2026-11-22
+- 【新增】data: 时间语义单一事实源（dbt 宏 + JS 原语 + 扩散守卫）（#2678） ([#2679](https://github.com/MYTech-Co-LTD/platform-core/pull/2679), [ef03abf](https://github.com/MYTech-Co-LTD/platform-core/commit/ef03abf431a41b74c991d9eed0a2bb25df426cf1))
+
+
 ## [0.359.0](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.358.1...v0.359.0) - 2026-11-22
 - 【新增】data: tables 档拆出对账族 + ⑳ 阈值按整月校准（#2674） ([#2677](https://github.com/MYTech-Co-LTD/platform-core/pull/2677), [d6f7e46](https://github.com/MYTech-Co-LTD/platform-core/commit/d6f7e46cc852230dfdc8c6b22d2767214c22a33a))
 
