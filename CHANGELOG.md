@@ -11,6 +11,10 @@
 
 ## [Unreleased]
 
+## [0.363.0](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.362.0...v0.363.0) - 2026-11-22
+- 【新增】data: 全流程页改单域卡片形态（六层一条链，可展开细节） ([#2690](https://github.com/MYTech-Co-LTD/platform-core/pull/2690), [757afad](https://github.com/MYTech-Co-LTD/platform-core/commit/757afad94b778012563c5d690f92d9d6f8f267d4))
+
+
 ## [0.362.0](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.361.0...v0.362.0) - 2026-11-22
 - 【新增】data: 全流程节点图（源→管线→湖→staging→marts→指标→消费） ([#2688](https://github.com/MYTech-Co-LTD/platform-core/pull/2688), [d10ebc6](https://github.com/MYTech-Co-LTD/platform-core/commit/d10ebc668310fc9370974c66b35e786b5172e287))
 
