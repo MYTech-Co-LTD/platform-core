@@ -424,7 +424,8 @@ frontend:
     - { path: /console/data/pipelines, title: 管线地图, description: 从管线看数据链路：哪些资产接上了 staging 与 marts，哪一段断了。, scope: data:query, entry: ./console/index.tsx }
     # 数据生产线（2026-11-15）：指标级字段血缘，源接口 → 湖 → staging → marts
     # 字段链路已收进体系地图的指标抽屉（#2338）；本页保留为深链 / 移动端回退，不进菜单。
-    - { path: /console/data/lineage, title: 数据生产线, description: 一个指标从源字段到成品的完整加工：哪列直通、哪列被丢、哪列被聚合。, scope: data:query, entry: ./console/index.tsx, menu: false }
+    # 字段血缘（2026-11-22 #2683）：从「指标怎么算」倒推到「管线怎么采、每个字段的表达式」——一条路走到底。
+    - { path: /console/data/lineage, title: 字段血缘, description: 任选一个指标：口径公式、采集管线与调度、湖字段来自源接口的哪个路径、staging 怎么转、marts 怎么聚合——每一列的表达式都摊开。, scope: data:query, entry: ./console/index.tsx }
   # 移动端「报表中心」（#1369；2026-11-12 起**没有问数 tab**）：报表 / 管理 / 指标；/m 入口卡片按 scope=data:query 过滤——
   # 「谁能看到这个版块」的唯一事实源还是平台 scopes（不造第二套）。dist 由 @data/mobile 构建产
   userApp:
