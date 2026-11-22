@@ -10,8 +10,9 @@
 --   代价：**25 列投影是手写的**，与契约有漂移风险 ⇒ 由 `assert_serving_view_columns_match_contract`
 --   逐列比对（漂移即红）。
 --
--- 冷腿 = `_MONTH` 月文件；热腿 = 未并入月文件的小时文件（`built_at >= sealed_at` 才排除）。
--- 正确性由 `assert_serving_view_matches_main` 对账（同一范围逐日行数必须与主视图相等）。
+-- 冷腿 = `_MONTH` 月文件；日腿 = 已封版但月文件尚未包含的日子（`_DAY_DATA` 日文件，权威）；
+-- 热腿 = 未封版日子的小时文件（旧日重封未重建月文件时也由热腿小时文件兜）。
+-- 正确性由 `assert_serving_view_matches_main` 对账（同一范围逐日**行数+金额**必须与 staging 相等）。
 {{
     config(materialized='view')
 }}
@@ -123,10 +124,10 @@ select
 -- `_MONTH/system_book=<B>/month=<YYYY-MM>/all.parquet`（只含已封版日，无需 anti-join）。
 -- 为什么不再直接 glob `_DAY_DATA`：30 天要打开 60 个 ~300KB 日文件 × 25 列逐列 range 请求
 -- （~1,500 次 × 5ms ≈ 7.8s）；月文件后同样范围只开 1–2 个文件（实测 ~0.6s）。
--- ⚠️ 新鲜度：刚封版、但所在月文件还没重建的日子，由**热腿**兜底——热腿的 anti-join 只在
---   `lake_month_index.built_at >= sealed_at`（月文件已包含这次封版）时才排除小时文件。
---   ⇒ 封版 → 月文件重建之间的窗口由小时文件供数，不会出现空洞；GC 在 2 天后才删小时文件，
---     月度合并每天跑，窗口远小于 GC 保留期（积压 >2 天由 dbt 测试判红）。
+-- ⚠️ 新鲜度（#2665 订正）：刚封版、但所在月文件还没重建的日子，由**日腿**从 `_DAY_DATA` 供数
+--   （封版=全量重采、是权威正本）。**不能**用小时文件兜这些日子——小时文件缺封版才抓到的
+--   晚到单/修正单，封版→月重建之间（~20 小时/天）会低估（11-21 实测少 150 单/¥10,921）。
+--   旧日重封（回填）且月文件未重建的，小时文件由回填重写、仍由热腿兜，compact 重建后回冷腿。
 from read_parquet(
   's3://{{ var("zos_bucket") }}/lemeng/retail_order_line_month/_MONTH/system_book=*/month=*/all.parquet'
 ) r,
@@ -170,11 +171,62 @@ select
   r['order_detail_online_qty']::numeric(14,3) as order_detail_online_qty,
   r['order_total_money']::numeric(14,2) as order_total_money,
   strftime(cast(r['bizday'] as date), '%Y-%m') as month
+-- ══ 日腿：已封版、月文件尚未包含的日子 ← _DAY_DATA 日文件（#2665）══════════════════
+-- 三腿不重不漏：月文件已包含（built_at >= sealed_at）→ 冷腿；已封版未包含且 bizday ≥ 下界
+-- → 本腿；未封版（或旧日重封未重建）→ 热腿。`_DAY_DATA` 只含封版日（封版时写），无未封版行。
+-- bizday 下推（分区裁剪）：compact 每日跑 + 积压 >2 天由 assert_lake_month_index_not_stale 判红，
+-- 下界 = 北京当前日 − 3（比判红线多 1 天余量）；没有它，glob 会枚举全史 ~1565 个日文件。
+from read_parquet(
+  's3://{{ var("zos_bucket") }}/{{ var("lemeng_retail_order_line_prefix") }}/_DAY_DATA/system_book=*/bizday=*/all.parquet'
+) r,
+  read_parquet(
+    's3://{{ var("zos_bucket") }}/{{ var("lemeng_retail_order_line_prefix") }}/_SCHEMA/v3.parquet'
+  ) sealed
+where sealed['schema_version'] = 3
+  and r['bizday']::date >= ((now() at time zone 'Asia/Shanghai')::date - 3)
+  and not exists (select 1 from data.lemeng_daily_sealed m
+    where cast(m.system_book as varchar) = cast(r['system_book'] as varchar)
+      and cast(m.bizday as date) = cast(r['bizday'] as date)
+      and exists (select 1 from data.lake_month_index i
+        where i.system_book = m.system_book and i.ym = strftime(m.bizday, '%Y-%m')
+          and i.built_at >= m.sealed_at
+      )
+  )
+union all
+select
+  r['batch_id']::varchar as batch_id,
+  r['system_book']::varchar as system_book,
+  {{ subject_org() }}       as org,
+  r['bizday']::date as bizday,
+  r['hour']::int as hour,
+  r['order_no']::varchar as order_no,
+  r['order_detail_num']::varchar as order_detail_num,
+  r['branch_num']::int as branch_num,
+  r['branch_name']::varchar as branch_name,
+  r['order_time']::timestamp as order_time,
+  r['order_operate_time']::timestamp as order_operate_time,
+  r['state']::varchar as state,
+  r['order_source']::varchar as order_source,
+  r['item_num']::varchar as item_num,
+  r['item_code']::varchar as item_code,
+  r['sale_money']::numeric(14,2) as sale_money,
+  r['discount_money']::numeric(14,2) as discount_money,
+  r['payment_money']::numeric(14,2) as payment_money,
+  r['quantity']::numeric(14,3) as quantity,
+  r['order_transaction_type']::varchar as order_transaction_type,
+  r['order_ref_billno']::varchar as order_ref_billno,
+  r['order_detail_share_discount']::numeric(14,2) as order_detail_share_discount,
+  r['order_detail_std_price']::numeric(14,2) as order_detail_std_price,
+  r['order_detail_price']::numeric(14,2) as order_detail_price,
+  r['order_detail_online_qty']::numeric(14,3) as order_detail_online_qty,
+  r['order_total_money']::numeric(14,2) as order_total_money,
+  strftime(cast(r['bizday'] as date), '%Y-%m') as month
 -- ══ 热：未封版日子的小时文件 ═══════════════════════════════════════════════════════════════
--- ⚠️ **排除条件不是「已封版」，而是「已封版且所在月文件已包含它」**（`built_at >= sealed_at`）。
---   只按「已封版」排除会与月文件之间出现空洞（封版到月文件重建之间两份都没有）；
---   按「月文件已包含」排除则：窗口内由小时文件供数，合并完成后自动切换，**正确性与合并时机解耦**。
---   不做排除的后果是双算（月文件与小时文件并存）。
+-- ⚠️ 排除条件（#2665 订正）：**已封版 且（近期 或 月文件已包含）**。
+--   · 近期（bizday ≥ 北京当前日−3）已封版 ⇒ 日腿从 `_DAY_DATA` 供数（权威），本腿排除——
+--     旧设计在此用小时文件兜，而小时文件缺封版全量重采抓到的晚到单 ⇒ 每天 ~20 小时低估。
+--   · 旧日（bizday < 下界）重封且月文件未重建 ⇒ 回填会重写该日小时文件，由本腿兜，
+--     compact 重建后回冷腿；不做排除的后果是双算。
 -- ⚠️ 读侧判定读**仓内封版表** `data.lemeng_daily_sealed`（#1872），不再 glob `_DAILY/`：
 --   1,541 个一行小文件在 pg_duckdb 上 >110s 且会打崩后端。`_DAILY/` 标记仍由日管线写，
 --   作为表的事实源/回填；表由 DDL 预建，回填必须含 `_bootstrap` 行（system_book='' / bizday=1970-01-01）。
@@ -187,11 +239,14 @@ from read_parquet(
     's3://{{ var("zos_bucket") }}/{{ var("lemeng_retail_order_line_prefix") }}/_SCHEMA/v3.parquet'
   ) sealed
 where sealed['schema_version'] = 3
-  and not exists (
-    select 1 from data.lemeng_daily_sealed m
-    join data.lake_month_index i
-      on i.system_book = m.system_book and i.ym = strftime(m.bizday, '%Y-%m')
+  and not exists (select 1 from data.lemeng_daily_sealed m
     where cast(m.system_book as varchar) = cast(r['system_book'] as varchar)
       and cast(m.bizday as date) = cast(r['bizday'] as date)
-      and i.built_at >= m.sealed_at
+      and (
+        cast(m.bizday as date) >= ((now() at time zone 'Asia/Shanghai')::date - 3)
+        or exists (select 1 from data.lake_month_index i
+          where i.system_book = m.system_book and i.ym = strftime(m.bizday, '%Y-%m')
+            and i.built_at >= m.sealed_at
+        )
+      )
   )
