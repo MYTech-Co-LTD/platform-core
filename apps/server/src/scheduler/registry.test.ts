@@ -54,6 +54,26 @@ describePg('seedSchedules', () => {
     expect(rows[0].enabled).toBe(true)
   })
 
+  it('★ 软删行在 key 回到 registry 时复活（#2670）：只清 deleted_at，不动 enabled/cron', async () => {
+    await insertAlpha(pool, '*/5 * * * *', false)
+    await pool.query("update platform.job_schedule set deleted_at=now() where key='jobtest-registry:alpha'")
+    const r = await seedSchedules(pool, defs)
+    expect(r.revived).toContain('jobtest-registry:alpha')
+    expect(r.inserted).not.toContain('jobtest-registry:alpha')
+    const { rows } = await pool.query("select deleted_at, enabled, cron from platform.job_schedule where key='jobtest-registry:alpha'")
+    expect(rows[0].deleted_at).toBeNull()
+    // 复活 ≠ 开跑：enabled 仍 false，四步开闸的人工闸门保留（#2668 实踩的语义）。
+    expect(rows[0].enabled).toBe(false)
+    expect(rows[0].cron).toBe('*/5 * * * *')
+  })
+
+  it('★ 已活行二次 seed 不重报（inserted / revived 都空）', async () => {
+    await insertAlpha(pool, '*/5 * * * *', false)
+    const r = await seedSchedules(pool, defs)
+    expect(r.inserted).toEqual([])
+    expect(r.revived).toEqual([])
+  })
+
   it('★ 已启用但 next_run_at 为空 ⇒ 补算（不立即跑）', async () => {
     await insertAlpha(pool, '7 * * * *', true)
     const r = await seedSchedules(pool, defs, new Date('2026-11-14T07:00:00Z'))
