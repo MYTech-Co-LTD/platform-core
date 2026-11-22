@@ -11,6 +11,10 @@
 
 ## [Unreleased]
 
+## [0.364.0](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.363.0...v0.364.0) - 2026-11-22
+- 【新增】data: 全流程页改为对象目录（列表+详情：字段/中心化血缘/说明） ([#2692](https://github.com/MYTech-Co-LTD/platform-core/pull/2692), [9f6f461](https://github.com/MYTech-Co-LTD/platform-core/commit/9f6f46113aefbea77ffff162756f4afcb1f83657))
+
+
 ## [0.363.0](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.362.0...v0.363.0) - 2026-11-22
 - 【新增】data: 全流程页改单域卡片形态（六层一条链，可展开细节） ([#2690](https://github.com/MYTech-Co-LTD/platform-core/pull/2690), [757afad](https://github.com/MYTech-Co-LTD/platform-core/commit/757afad94b778012563c5d690f92d9d6f8f267d4))
 
