@@ -11,6 +11,12 @@
 
 ## [Unreleased]
 
+## [0.361.0](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.360.0...v0.361.0) - 2026-11-22
+- 【优化】data: 四个地图视角合并为「数据地图」单入口（#2685） ([#2686](https://github.com/MYTech-Co-LTD/platform-core/pull/2686), [ec40a8e](https://github.com/MYTech-Co-LTD/platform-core/commit/ec40a8e2f7ba095f83b6a3e9c45b5edc62d8fe71))
+- 【新增】data: 字段血缘补全链路——指标口径/采集管线节点/三层列表达式（#2683） ([#2684](https://github.com/MYTech-Co-LTD/platform-core/pull/2684), [5fbc77c](https://github.com/MYTech-Co-LTD/platform-core/commit/5fbc77c92b4e5dfd2d1cbdea61e9a543e3afd4ab))
+- 【新增】data: console 运行观测页（调度/体检/湖/物化/对账） ([#2682](https://github.com/MYTech-Co-LTD/platform-core/pull/2682), [6a05233](https://github.com/MYTech-Co-LTD/platform-core/commit/6a05233908dd8d12cca44fe64004c6551c7dc65a))
+
+
 ## [0.360.0](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.359.0...v0.360.0) - 2026-11-22
 - 【新增】data: 时间语义单一事实源（dbt 宏 + JS 原语 + 扩散守卫）（#2678） ([#2679](https://github.com/MYTech-Co-LTD/platform-core/pull/2679), [ef03abf](https://github.com/MYTech-Co-LTD/platform-core/commit/ef03abf431a41b74c991d9eed0a2bb25df426cf1))
 
