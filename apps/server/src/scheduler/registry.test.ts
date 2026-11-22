@@ -426,12 +426,28 @@ describe('registry · 业务监控 tick（W7-V1）', () => {
   })
 })
 
-describe('registry · 小时对象回收（Wave 8 ③）', () => {
-  it('★ 小时对象回收只留一条排班（激进档已合并，#2588）', () => {
-    // 合并理由：保守档多留 1–2 天最多 96 个小文件（≈+0.8s），换来每天少 ~2.3 万次 HEAD。
-    // 护栏目的：别再把它拆回两条——两条同判据不同窗口是本波刻意收敛掉的复杂度。
+describe('registry · 小时对象回收（Wave 8 ③；#2668 拆回两条）', () => {
+  it('★ 小时对象回收两条排班：激进档（30 分钟）+ 保守档（每日）', () => {
+    // #2588 当年合并的依据「96 个小文件 ≈ +0.8s」已于 2026-11-22 实测失效（单微文件 ~350ms，
+    // 热腿 66 文件 ≈ 24s/tick，见 #2668）。护栏目的更新为：**两条都必须在**（激进档停跑两日
+    // 即堆积 71 个微文件拖垮所有热腿查询）+ 判据脚本同源（同 hour-partition-gc.mjs 入口）。
     const keys = JOB_REGISTRY.filter((d) => d.script === 'scripts/lemeng/hour-partition-gc.mjs').map((d) => d.key)
-    expect(keys).toEqual(['data.hot_hours_gc'])
+    expect(keys).toEqual(['data.hour_partition_gc', 'data.hot_hours_gc'])
+  })
+
+  it('★ data.hour_partition_gc：激进档（UTC 今天前、扫 4 天，#2668）', () => {
+    const def = JOB_REGISTRY.find((d) => d.key === 'data.hour_partition_gc')!
+    expect(def, 'data.hour_partition_gc').toBeDefined()
+    expect(def.cron).toBe('5,35 * * * *')
+    expect(def.timezone).toBe('UTC')
+    expect(def.timeoutMs).toBe(300000)
+    expect(def.maxAttempts).toBe(1)
+    expect(def.expectedIntervalSecs).toBe(1800)
+    expect(def.script).toBe('scripts/lemeng/hour-partition-gc.mjs')
+    expect(def.args ?? []).toEqual([])
+    // 窗口靠 def.env 给：缺了会按脚本默认（UTC 今天 / 扫 10 天）跑——多扫 6 天纯浪费 HEAD。
+    expect(def.env).toEqual({ GC_DAYS_BACK: '0', GC_TZ: 'UTC', GC_SCAN_DAYS: '4' })
+    expect(existsSync(repoPath(def.script))).toBe(true)
   })
 
   it('★ data.hot_hours_gc：同一入口的保守档（上海今天−2、扫 30 天），cron 与原 gc-hot-hours 一致', () => {

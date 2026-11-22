@@ -144,9 +144,15 @@ export const JOB_REGISTRY: JobDef[] = [
   // 原 openship 是宿主 bash：`for B in 3120 64188; do docker exec <console> python3 - < repo 脚本; done`
   // ——依赖 console 容器在场。删对象只需 ZOS 凭据 + HEAD，调度器容器两样都有 ⇒ 直接在此执行（Wave 8 ③）。
   // 安全判据全在下游 python 里（dry-run 默认 / --before 必填 / 封版标记+天文件双证才删），本 job 只加 `--apply`。
-  // 小时对象回收（#2588）：**只留这一条**。原来是两条（激进档每 30 分钟 + 保守档每天），
-  // 实测合并后收益更好：保守档多留的那 1–2 天最多 96 个小文件（≈ +0.8s 查询），
-  // 换来的是**每天少 2.3 万次 HEAD**（激进档每 30 分钟 × 480 次）和一条排班的理解成本。
+  // 小时对象回收（#2588 合并为一条 → #2668 依新实测拆回两条）：
+  // · 激进档（30 分钟）：删「封版标记 + 天文件双证」的已封版日 hour 对象。#2588 当年合并的
+  //   依据是「多留 1–2 天 ≈ 96 个小文件 ≈ +0.8s 查询」；2026-11-22 生产实测单微文件 ~350ms
+  //   （精确路径 56 行 = 364ms），热腿 66 文件 ≈ 24s/tick——前提失效 ~40 倍，翻转。
+  //   前置安全条件：#2665 三腿化后读侧（含 drill）不再依赖已封版日的 hour 文件，删=纯性能行为。
+  //   scanDays=4（非原 10）：steady state 只需覆盖封版滞后，HEAD 量 ~9.2k/天（比原激进档省 60%）。
+  // · 保守档（每日）：保留不动——重述窗口护栏（T-1/T-2 的 hour 留 2 天），两条判据同一套、
+  //   只是保守程度不同。
+  { key: 'data.hour_partition_gc', scope: 'data', requiresEnv: ['ZOS_ACCESS_KEY','ZOS_SECRET_KEY','ZOS_ENDPOINT','ZOS_REGION','ZOS_BUCKET'], script: 'scripts/lemeng/hour-partition-gc.mjs', env: { GC_DAYS_BACK: '0', GC_TZ: 'UTC', GC_SCAN_DAYS: '4' }, cron: '5,35 * * * *', timezone: 'UTC', timeoutMs: 300000, maxAttempts: 1, expectedIntervalSecs: 1800, description: '小时对象激进回收（UTC 今天前、扫 4 天；封版+天文件双证才删；#2668）' },
   // 窗口：before=上海今天−2、扫 30 天（重述窗口护栏），CST 03:20。
   { key: 'data.hot_hours_gc', scope: 'data', requiresEnv: ['ZOS_ACCESS_KEY','ZOS_SECRET_KEY','ZOS_ENDPOINT','ZOS_REGION','ZOS_BUCKET'], script: 'scripts/lemeng/hour-partition-gc.mjs', env: { GC_DAYS_BACK: '2', GC_TZ: 'Asia/Shanghai', GC_SCAN_DAYS: '30' }, cron: '20 19 * * *', timezone: 'UTC', timeoutMs: 600000, maxAttempts: 1, expectedIntervalSecs: 86400, description: '热小时对象保守回收（上海今天−2、扫 30 天；CST 03:20）' },
   // handler-only：排班由 agent/console 经 SchedulerPort 建（source≠'system'），seed 不建行。
