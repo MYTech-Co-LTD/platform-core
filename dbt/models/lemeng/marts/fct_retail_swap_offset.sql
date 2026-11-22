@@ -37,10 +37,10 @@ with per_order as (
     from {{ ref('stg_lemeng_retail_order_line') }}
     where state = 'FINISHED'
       and order_transaction_type = 'SALE_ORDER'
-      -- ⚠️ 日期必须是**编译期字面量**（Jinja 求值）：`now()` 形态 pg_duckdb 放弃文件裁剪，
+      -- ⚠️ 日期必须是**编译期字面量**（`compile_time_date()` 宏）：`now()` 形态 pg_duckdb 放弃文件裁剪，
       --    今天的活分区照样被打开、ETag 照样撞（⑰ 断言实测过同一坑）。run_started_at 是 UTC，
       --    +8h 得沪时钟，跨 CST 零点也正确。
-      and bizday < date '{{ (run_started_at + modules.datetime.timedelta(hours=8)).strftime('%Y-%m-%d') }}'
+      and bizday < {{ compile_time_date() }}
     group by 1, 2, 3, 4
 )
 select

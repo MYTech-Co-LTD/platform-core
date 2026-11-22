@@ -19,7 +19,7 @@
 #}
 {% macro closed_before_predicate(prefix='') %}
 not (
-  {{ prefix }}bizday = (now() AT TIME ZONE 'Asia/Shanghai')::date
-  and {{ prefix }}hour >= extract(hour from (now() AT TIME ZONE 'Asia/Shanghai')) - 1
+  {{ prefix }}bizday = {{ shanghai_today() }}
+  and {{ prefix }}hour >= {{ shanghai_hour_now() }} - 1
 )
 {% endmacro %}
