@@ -11,6 +11,10 @@
 
 ## [Unreleased]
 
+## [0.357.4](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.357.3...v0.357.4) - 2026-11-22
+- 【修复】scheduler: 种子复活被软删的排班行——registry 恢复 key 不再静默失效（#2670） ([#2671](https://github.com/MYTech-Co-LTD/platform-core/pull/2671), [9d1cc1c](https://github.com/MYTech-Co-LTD/platform-core/commit/9d1cc1c84a563fc4b77a4f7c82c18d8ceb31d4dc))
+
+
 ## [0.357.3](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.357.2...v0.357.3) - 2026-11-22
 - 【优化】data: 恢复 30 分钟小时对象激进 GC（#2588 前提实测失效，#2668） ([#2669](https://github.com/MYTech-Co-LTD/platform-core/pull/2669), [6cf4f87](https://github.com/MYTech-Co-LTD/platform-core/commit/6cf4f8782166046c9cca1587cc810b9f77d77aec))
 
