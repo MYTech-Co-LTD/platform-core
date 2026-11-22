@@ -13,25 +13,25 @@
 //     老链接与深链不受影响。
 import { Segmented, Typography } from 'antd'
 import { useSearchParams } from 'react-router-dom'
+import FlowPage from '../flow'
 import SystemMapPage from '../system-map'
-import PipelinesPage from '../pipelines'
 import LineagePage from '../lineage'
 import ObservabilityPage from '../observability'
 
-type ViewKey = 'structure' | 'pipelines' | 'lineage' | 'runtime'
+type ViewKey = 'flow' | 'structure' | 'lineage' | 'runtime'
 
 const VIEWS: Array<{ key: ViewKey; label: string; hint: string; render: () => React.JSX.Element }> = [
+  {
+    key: 'flow',
+    label: '流程',
+    hint: '一张图看完整链路：源接口 → 采集管线 → 湖资产 → staging → marts → 指标 → 消费面。点节点看成员。',
+    render: () => <FlowPage />,
+  },
   {
     key: 'structure',
     label: '结构',
     hint: '业务对象、指标与字段之间的关系——先看「有什么」。点指标节点看口径、运行态与字段链路。',
     render: () => <SystemMapPage />,
-  },
-  {
-    key: 'pipelines',
-    label: '链路',
-    hint: '从管线看：湖里的资产有没有接上 staging 与 marts，哪一段断了。',
-    render: () => <PipelinesPage />,
   },
   {
     key: 'lineage',
@@ -49,8 +49,8 @@ const VIEWS: Array<{ key: ViewKey; label: string; hint: string; render: () => Re
 
 export default function DataMapPage() {
   const [params, setParams] = useSearchParams()
-  const raw = params.get('view') ?? 'structure'
-  const active: ViewKey = (VIEWS.some((v) => v.key === raw) ? raw : 'structure') as ViewKey
+  const raw = params.get('view') ?? 'flow'
+  const active: ViewKey = (VIEWS.some((v) => v.key === raw) ? raw : 'flow') as ViewKey
   const view = VIEWS.find((v) => v.key === active) ?? VIEWS[0]
 
   return (

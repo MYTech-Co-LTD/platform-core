@@ -58,6 +58,8 @@ api:
     - { method: GET,  path: /system-map/metrics/:id/trail, scope: data:query }
     # 管线视角全局图（2026-11-14）：资产（湖前缀）→ staging → marts + 每条管线最近一次 run。
     - { method: GET,  path: /system-map/pipelines, scope: data:query }
+    # 全流程图（2026-11-22，#2687）：源→管线→湖→staging→marts→指标→消费，一张图看完整链路。
+    - { method: GET,  path: /system-map/flow, scope: data:query }
     # 数据生产线（2026-11-15）：指标级字段血缘——源接口 → 湖（落盘形态）→ staging → marts。
     # 事实源全部是仓内声明（契约 columns/layout + dbt schema.yml），不查库。
     - { method: GET,  path: /system-map/lineage/:id, scope: data:query }

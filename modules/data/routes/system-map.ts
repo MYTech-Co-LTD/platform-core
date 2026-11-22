@@ -13,6 +13,7 @@ import {
   buildSystemMapModel,
   loadDbtModels,
   loadDbtVars,
+  loadAuditRefs,
   loadModelColumnDocs,
   loadSystemMapFacts,
   readRepoText,
@@ -21,6 +22,7 @@ import type { SystemMapInput, SystemMapModel } from '../domain/system-map/map'
 import { buildSystemMapOntology } from '../domain/system-map/ontology'
 import { buildMetricTrail, lakeOfStaging, lakeStagingFromContracts, pipelineIdsOf, stagingRelationsOf } from '../domain/system-map/trail'
 import { buildMetricLineage } from '../domain/system-map/lineage'
+import { buildFlowGraph } from '../domain/system-map/flow'
 import { parseAliasedExprs, parseJsonPathSources, parseMeasureExprs } from '../domain/system-map/exprs'
 import { buildPipelineFlow } from '../domain/pipelines/flow'
 import { resolveMeasureInputs } from '../domain/system-map/measure-inputs'
@@ -309,6 +311,50 @@ export function registerSystemMap(r: ModuleHono, ctx: RouteCtx): void {
           return merged
         })(),
       },
+    })
+  })
+
+  // 全流程图（#2687）：源 → 管线 → 湖 → staging → marts → 指标 → 消费，一张图看完整链路。
+  // 管线与指标**按组聚合**（121 条 / 57 个直接铺开会糊），组节点带 count 与 members，
+  // 前端点开抽屉看成员。与 modelFor 共用 10 分钟缓存（同源事实，不各扫一遍盘）。
+  r.get('/system-map/flow', async (c) => {
+    const requester = requesterOf(c)
+    if (requester === null) return c.json({ error: 'UNAUTHENTICATED' }, 401)
+    const result = await modelFor(ctx, requester.orgId)
+    if (!('metrics' in result)) return c.json(result, 500)
+
+    const roots = rootsOf(process.env, ctx.repoRoot)
+    const loadedContracts = loadContracts(roots)
+    const loadedPipelines = loadPipelines(roots)
+    const models = loadDbtModels(ctx.repoRoot)
+
+    const contracts = loadedContracts.contracts.map((x) => {
+      const layout = (typeof x.doc.layout === 'object' && x.doc.layout !== null ? x.doc.layout : {}) as Record<string, unknown>
+      return {
+        id: x.id,
+        domain: x.domain,
+        table: x.table,
+        prefix: typeof layout.prefix === 'string' ? layout.prefix : null,
+      }
+    })
+    const pipelines = [...loadedPipelines.defs.values()].map((d) => ({ id: d.id, lakeKeys: d.lakeKeys }))
+    const staging = models.filter((m) => m.name.startsWith('stg_')).map((m) => ({
+      name: m.name,
+      lakePrefix: lakeOfStaging(m.name),
+    }))
+    const marts = models
+      .filter((m) => /^(fct_|dim_|recon_)/.test(m.name))
+      .map((m) => ({ name: m.name, refs: m.refs ?? [] }))
+    const metrics = result.metrics.map((m) => ({
+      id: m.id,
+      title: m.title,
+      entity: m.entity,
+      relations: m.relations,
+    }))
+
+    return c.json({
+      generatedAt: new Date().toISOString(),
+      ...buildFlowGraph({ contracts, pipelines, staging, marts, metrics, audits: loadAuditRefs(ctx.repoRoot) }),
     })
   })
 
