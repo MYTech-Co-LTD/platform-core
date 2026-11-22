@@ -60,6 +60,10 @@ api:
     - { method: GET,  path: /system-map/pipelines, scope: data:query }
     # 全流程图（2026-11-22，#2687）：源→管线→湖→staging→marts→指标→消费，一张图看完整链路。
     - { method: GET,  path: /system-map/flow, scope: data:query }
+    # 对象目录（2026-11-22，#2691）：列表（搜索/筛选）+ 对象详情（字段/中心化血缘/运行态）。
+    # 对标 dbt Explorer / DataHub：全局列表、局部详情，不再把全部节点铺在一屏。
+    - { method: GET,  path: /system-map/objects, scope: data:query }
+    - { method: GET,  path: /system-map/object,  scope: data:query }
     # 数据生产线（2026-11-15）：指标级字段血缘——源接口 → 湖（落盘形态）→ staging → marts。
     # 事实源全部是仓内声明（契约 columns/layout + dbt schema.yml），不查库。
     - { method: GET,  path: /system-map/lineage/:id, scope: data:query }

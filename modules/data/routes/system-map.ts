@@ -23,6 +23,7 @@ import { buildSystemMapOntology } from '../domain/system-map/ontology'
 import { buildMetricTrail, lakeOfStaging, lakeStagingFromContracts, pipelineIdsOf, stagingRelationsOf } from '../domain/system-map/trail'
 import { buildMetricLineage } from '../domain/system-map/lineage'
 import { buildFlowGraph } from '../domain/system-map/flow'
+import { buildObjectDetail, listObjects, type ObjectColumn, type ObjectKind } from '../domain/system-map/object'
 import { parseAliasedExprs, parseJsonPathSources, parseMeasureExprs } from '../domain/system-map/exprs'
 import { buildPipelineFlow } from '../domain/pipelines/flow'
 import { resolveMeasureInputs } from '../domain/system-map/measure-inputs'
@@ -64,6 +65,29 @@ async function modelFor(ctx: RouteCtx, org: string): Promise<SystemMapModel | { 
   const model = buildSystemMapModel(input)
   cache.set(key, { model, expiresAt: now + CACHE_TTL_MS })
   return model
+}
+
+/** flow 图（10 分钟缓存，与 modelFor 同源事实；objects/object 两个端点共用）。 */
+async function flowFor(
+  ctx: RouteCtx,
+  org: string,
+): Promise<{ nodes: Array<{ id: string; kind: string; label: string; count?: number; members?: string[]; x: number; y: number }>; edges: Array<{ source: string; target: string }> } | { error: string; detail: string }> {
+  const result = await modelFor(ctx, org)
+  if (!('metrics' in result)) return result
+  const roots = rootsOf(process.env, ctx.repoRoot)
+  const loadedContracts = loadContracts(roots)
+  const loadedPipelines = loadPipelines(roots)
+  const models = loadDbtModels(ctx.repoRoot)
+  const contracts = loadedContracts.contracts.map((x) => {
+    const layout = (typeof x.doc.layout === 'object' && x.doc.layout !== null ? x.doc.layout : {}) as Record<string, unknown>
+    return { id: x.id, domain: x.domain, table: x.table, prefix: typeof layout.prefix === 'string' ? layout.prefix : null }
+  })
+  const pipelines = [...loadedPipelines.defs.values()].map((d) => ({ id: d.id, lakeKeys: d.lakeKeys }))
+  const staging = models.filter((m) => m.name.startsWith('stg_')).map((m) => ({ name: m.name, lakePrefix: lakeOfStaging(m.name) }))
+  const marts = models.filter((m) => /^(fct_|dim_|recon_)/.test(m.name)).map((m) => ({ name: m.name, refs: m.refs ?? [] }))
+  const metrics = result.metrics.map((m) => ({ id: m.id, title: m.title, entity: m.entity, relations: m.relations }))
+  const g = buildFlowGraph({ contracts, pipelines, staging, marts, metrics, audits: loadAuditRefs(ctx.repoRoot) })
+  return { nodes: g.nodes.map((n) => ({ ...n })), edges: g.edges }
 }
 
 export function registerSystemMap(r: ModuleHono, ctx: RouteCtx): void {
@@ -355,6 +379,125 @@ export function registerSystemMap(r: ModuleHono, ctx: RouteCtx): void {
     return c.json({
       generatedAt: new Date().toISOString(),
       ...buildFlowGraph({ contracts, pipelines, staging, marts, metrics, audits: loadAuditRefs(ctx.repoRoot) }),
+    })
+  })
+
+  // ── 对象目录（#2691）：列表 + 对象详情（字段 / 中心化血缘 / 运行态）────────────────
+  // 对标 dbt Explorer / DataHub：全局用「列表 + 搜索」，局部用「以对象为中心的详情」，
+  // 不再把全部节点铺在一屏。两个端点共用同一份 flow 图（10 分钟缓存）。
+  r.get('/system-map/objects', async (c) => {
+    const requester = requesterOf(c)
+    if (requester === null) return c.json({ error: 'UNAUTHENTICATED' }, 401)
+    const flow = await flowFor(ctx, requester.orgId)
+    if ('error' in flow) return c.json(flow, 500)
+    const lakeDomain = new Map(flow.nodes.filter((n) => n.kind === 'lake').map((n) => [n.label, n.label.split('/')[1] ?? n.label]))
+    return c.json({
+      generatedAt: new Date().toISOString(),
+      rows: listObjects({
+        nodes: flow.nodes.map((n) => ({ id: n.id, kind: n.kind, label: n.label })),
+        edges: flow.edges,
+        domainOf: (kind: ObjectKind, name: string) => {
+          if (kind === 'lake') return lakeDomain.get(name) ?? null
+          // staging/mart/指标：按名称前缀尽量归属（stg_<domain>_…），否则 null（未知不猜）
+          const m = /^stg_([a-z0-9]+)_(.+)$/.exec(name)
+          return m?.[2] ?? null
+        },
+      }),
+    })
+  })
+
+  r.get('/system-map/object', async (c) => {
+    const requester = requesterOf(c)
+    if (requester === null) return c.json({ error: 'UNAUTHENTICATED' }, 401)
+    const kind = (c.req.query('kind') ?? '') as ObjectKind
+    const name = (c.req.query('name') ?? '').trim()
+    const allowed: ObjectKind[] = ['lake', 'staging', 'mart', 'recon', 'metric', 'pipeline']
+    if (!allowed.includes(kind)) return c.json({ error: 'BAD_KIND' }, 400)
+    if (name === '' || name.length > 200) return c.json({ error: 'BAD_NAME' }, 400)
+
+    const flow = await flowFor(ctx, requester.orgId)
+    if ('error' in flow) return c.json(flow, 500)
+
+    const roots = rootsOf(process.env, ctx.repoRoot)
+    const docs = loadModelColumnDocs(ctx.repoRoot)
+    const models = loadDbtModels(ctx.repoRoot)
+    const loadedContracts = loadContracts(roots)
+    const notes: string[] = []
+    const columns: ObjectColumn[] = []
+
+    const model = models.find((m) => m.name === name)
+    const modelDocs = docs.get(name) ?? []
+    const exprs = model === undefined ? {} : parseAliasedExprs(model.sql ?? '')
+
+    if (kind === 'staging' || kind === 'mart' || kind === 'recon') {
+      if (model === undefined) {
+        notes.push(`没有找到模型 ${name}（事实源缺失——未知 ≠ 没有）`)
+      } else {
+        // marts 的聚合公式以 l1_metrics.yml 的 measures 为准（marts 是 Jinja 模板）
+        const measures = kind === 'staging'
+          ? {}
+          : parseMeasureExprs(readRepoText('dbt/semantics/l1_metrics.yml', ctx.repoRoot))
+        const names = [...new Set([...modelDocs.map((d) => d.name), ...Object.keys(exprs)])]
+        for (const col of names) {
+          const doc = modelDocs.find((d) => d.name === col)
+          const measure = Object.entries(measures).find(([k]) => k.split('@')[0] === col)?.[1]
+          columns.push({
+            name: col,
+            type: doc?.type ?? null,
+            expr: measure?.expr ?? exprs[col] ?? null,
+            description: doc?.description ?? '',
+          })
+        }
+        if (names.length === 0) notes.push('该模型的列清单为空（schema.yml 与 SQL 都没解析到列）')
+      }
+    } else if (kind === 'lake') {
+      const hit = loadedContracts.contracts.find((x) => {
+        const layout = (typeof x.doc.layout === 'object' && x.doc.layout !== null ? x.doc.layout : {}) as Record<string, unknown>
+        return layout.prefix === name
+      })
+      if (hit === undefined) notes.push(`没有找到湖资产 ${name} 的契约（未知 ≠ 没有）`)
+      else {
+        const cols = Array.isArray(hit.doc.columns) ? hit.doc.columns as Array<Record<string, unknown>> : []
+        for (const x of cols) {
+          columns.push({
+            name: String(x.name ?? ''),
+            type: typeof x.type === 'string' ? x.type : null,
+            expr: typeof x.expr === 'string' ? x.expr : null,
+            description: typeof x.description === 'string' ? x.description : '',
+          })
+        }
+      }
+    } else if (kind === 'metric') {
+      const result = await modelFor(ctx, requester.orgId)
+      if ('metrics' in result) {
+        const met = result.metrics.find((m) => m.id === name || m.title === name)
+        if (met === undefined) notes.push(`没有找到指标 ${name}`)
+        else {
+          if (met.definition !== '') columns.push({ name: '定义', type: null, expr: met.definition, description: '' })
+          if (met.expression !== '') columns.push({ name: '公式', type: null, expr: met.expression, description: '' })
+          for (const g of met.grain) columns.push({ name: `粒度:${g}`, type: null, expr: null, description: '' })
+        }
+      }
+    } else if (kind === 'pipeline') {
+      const loadedPipelines = loadPipelines(roots)
+      const def = [...loadedPipelines.defs.values()].find((d) => d.id === name)
+      const schedules = loadSchedules(roots).byPipeline.get(name) ?? []
+      if (def === undefined) notes.push(`没有找到管线 ${name}`)
+      else {
+        for (const sc of schedules) {
+          columns.push({ name: '调度', type: null, expr: sc.cron ?? null, description: sc.timezone ?? '' })
+        }
+        for (const key of def.lakeKeys) columns.push({ name: '写入', type: null, expr: key, description: '' })
+      }
+    }
+
+    return c.json({
+      generatedAt: new Date().toISOString(),
+      ...buildObjectDetail({
+        kind, name, domain: null, columns, notes,
+        nodes: flow.nodes.map((n) => ({ id: n.id, kind: n.kind, label: n.label })),
+        edges: flow.edges,
+      }),
     })
   })
 
