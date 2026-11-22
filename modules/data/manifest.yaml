@@ -65,6 +65,11 @@ api:
     - { method: GET,  path: /system-map/pipelines/:id/runs, scope: data:query }
     # 采集流程（2026-11-16）：管线定义节点图翻成人话步骤 + 最近一次运行的逐节点数字。
     - { method: GET,  path: /system-map/pipelines/:id/flow, scope: data:query }
+    # 运行观测（2026-11-22，#2681）：调度档位 / 22 条体检 / 湖卫生 / 对账汇总。只读。
+    # 与 system-map 的分工：system-map 看「结构通没通」，这里看「现在跑得怎么样」。
+    - { method: GET,  path: /system-map/observability, scope: data:query }
+    # 对账明细（按店下钻）：筛选 + 分页；同一数据源 staging.recon_break。
+    - { method: GET,  path: /system-map/observability/recon, scope: data:query }
     # 通道 A：系统内问数（SSE 流式；LLM 编排在平台后端）
     - { method: POST, path: /chat,    scope: data:query }
     # MCP 端点（通道 B 的 JSON-RPC 单入口；协议错误自兜，授权仍走同一核心）
@@ -413,6 +418,8 @@ frontend:
     - { path: /console/data/monitors, title: 业务监控, description: 管理业务监控：agent 建的影子期监控需要人在这里开闸才会发送通知。, scope: data:manage, entry: ./console/index.tsx }
     # 体系地图（2026-11-13）：从「外链新标签打开的 HTML 页」搬成本页——本体图是主内容。
     - { path: /console/data/system-map, title: 体系地图, description: 从业务对象到字段的完整关系图；点指标节点看口径、运行态与字段链路。, scope: data:query, entry: ./console/index.tsx }
+    # 运行观测（2026-11-22，#2681）：与体系地图互补——那边看结构，这边看「现在跑得怎么样」。只读。
+    - { path: /console/data/observability, title: 运行观测, description: 调度档位、体检清单、湖卫生、物化水位与对账差异；30 秒自动刷新，点门店看差异明细。, scope: data:query, entry: ./console/index.tsx }
     # 管线地图（2026-11-14）：反过来从管线看——资产（湖前缀）→ staging → marts 三层通没通
     - { path: /console/data/pipelines, title: 管线地图, description: 从管线看数据链路：哪些资产接上了 staging 与 marts，哪一段断了。, scope: data:query, entry: ./console/index.tsx }
     # 数据生产线（2026-11-15）：指标级字段血缘，源接口 → 湖 → staging → marts
@@ -438,6 +445,11 @@ tenantSources: true
 # 协议要求声明面是视图）。`apps/server/src/migrations/013_org_views.sql` 提供这两个视图。
 # 只读：本模块不写组织架构（写侧由宿主 admin 的 org-sync 负责）。
 dataDependencies:
+  # 运行观测（#2681）：只读调度台账与对账台账——声明 = 可读授权（module-protocol M1.1）；
+  # 只 from/join，不写（B1 对 update/into 不豁免）。
+  - platform.job_schedule
+  - platform.job_run
+  - staging.recon_break
   - platform.v_org_node
   - platform.v_org_membership
   # W7-V1：收件人解析要「org → tenant_id」再查成员/部门（只读；只 from，不写）。

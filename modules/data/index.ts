@@ -17,6 +17,7 @@ import { registerChat } from './routes/chat'
 import { registerToolbox } from './routes/toolbox'
 import { registerReports } from './routes/reports'
 import { registerSystemMap } from './routes/system-map'
+import { registerObservability } from './routes/observability'
 import { registerScopes } from './routes/scopes'
 import { registerMonitors } from './routes/monitors'
 import { warnIfScopeModeUnrecognized } from './domain/scope'
@@ -68,6 +69,7 @@ export default defineModule({
     registerChat(r, _ctx) // T9
     registerReports(r, _ctx) // #150 T7：Metabase 报表 facade
     registerSystemMap(r, _ctx) // W5 Task 4：数据体系地图（只读单文件 HTML，#1455）
+    registerObservability(r, _ctx) // 运行观测（调度/体检/湖/对账；只读，#2681）
     registerScopes(r, _ctx) // 数据范围 scope 管理面（spec 2026-11-10 §5.5；#1901）
     registerMonitors(r, _ctx) // Wave 7 V1：业务监控（missing/stale + 影子期；#2278）
     // 启动期一次性告警：DATA_SCOPE_MODE 拼错会静默回落 off（= 一条都不裁）

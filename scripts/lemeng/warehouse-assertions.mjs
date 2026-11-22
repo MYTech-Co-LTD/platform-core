@@ -69,6 +69,9 @@ const HOT_MAX_FILES = numEnv('WIRE_HOT_MAX_FILES', 60)
 // ㉑ 日区 glob（湖卫生）：只从**文件名**提取日期（regexp on glob 结果），不打开任何文件。
 const DAY_GLOB = process.env.WIRE_DAY_GLOB
   ?? 's3://shanhai-data/lemeng/retail_order_line/_DAY_DATA/system_book=*/bizday=*/all.parquet'
+// 月文件在**隔壁目录**（`retail_order_line_month`）——与离线合并管线的输出同源（#2665 实测）。
+const MONTH_GLOB = process.env.WIRE_MONTH_GLOB
+  ?? 's3://shanhai-data/lemeng/retail_order_line_month/_MONTH/system_book=*/month=*/all.parquet'
 // 差额换货月度抵扣额阈值（#2630；2026-11-22 校准）：旧默认 5,000 是按**半月**实测 4,155.92 定的，
 // 整月必然超 ⇒ 每天恒 WARN（噪声化）。按整月实测校准：9 月 31,528.50 / 10 月 12,552.62 /
 // 11 月至 21 日 7,353.99 ⇒ 取 15,000（≈ 近三月最高的半月量），超出才是「异常增长」。
@@ -743,16 +746,32 @@ async function checkLakeHygiene(pool) {
     //    hour 区 glob 的直接 min 就是 1970-01-01——不过滤会把每轮都判成「封版/GC 链条断」。
     //    用 `nullif` 折成 NULL，min 自然忽略（不引入第二个字符串字面量，少一层引号）。
     const hot = await pool.query(
-      `select * from duckdb.query('select min(nullif(regexp_extract(file, ''bizday=([0-9]{4}-[0-9]{2}-[0-9]{2})'', 1), ''1970-01-01'')) as oldest from glob(''${HOT_GLOB}'')') t`,
+      `select * from duckdb.query('select count(*)::bigint as n, min(nullif(regexp_extract(file, ''bizday=([0-9]{4}-[0-9]{2}-[0-9]{2})'', 1), ''1970-01-01'')) as oldest from glob(''${HOT_GLOB}'')') t`,
     )
     const oldest = String(hot.rows[0]?.oldest ?? '')
+    const hourFiles = Number(hot.rows[0]?.n ?? 0)
     // ② 日区最新 bizday
     const day = await pool.query(
-      `select * from duckdb.query('select max(regexp_extract(file, ''bizday=([0-9]{4}-[0-9]{2}-[0-9]{2})'', 1)) as newest from glob(''${DAY_GLOB}'')') t`,
+      `select * from duckdb.query('select count(*)::bigint as n, max(regexp_extract(file, ''bizday=([0-9]{4}-[0-9]{2}-[0-9]{2})'', 1)) as newest from glob(''${DAY_GLOB}'')') t`,
     )
     const dayNewest = String(day.rows[0]?.newest ?? '')
-    const sealed = await pool.query(`select coalesce(max(bizday)::text, '') as maxday from ${SEALED_TABLE}`)
+    const dayFiles = Number(day.rows[0]?.n ?? 0)
+    // ③ 月文件数 + 封版/月索引水位（#2681：console 运行观测页直接消费本行 detail，不再自己扫湖——
+    //    `/console/data/observability` 只查 PG；湖是对象存储，不该进请求路径）
+    const month = await pool.query(
+      `select * from duckdb.query('select count(*)::bigint as n from glob(''${MONTH_GLOB}'')') t`,
+    )
+    const monthFiles = Number(month.rows[0]?.n ?? 0)
+    const sealed = await pool.query(
+      `select coalesce(max(bizday)::text, '') as maxday,
+              coalesce((select max(ym)::text from data.lake_month_index where built_at is not null), '') as month_max
+         from ${SEALED_TABLE}`,
+    )
     const sealedMax = String(sealed.rows[0]?.maxday ?? '')
+    const monthIndexMax = String(sealed.rows[0]?.month_max ?? '')
+    // 结构化 kv：**console 观测页按这个格式取值**（改格式 = 同步前端解析，两端一起动）。
+    const kv = `hour_files=${hourFiles} hour_oldest=${oldest || '(空)'} day_files=${dayFiles} day_newest=${dayNewest}`
+      + ` month_files=${monthFiles} sealed_max=${sealedMax || '(空)'} month_index=${monthIndexMax || '(空)'}`
 
     const errs = []
     const warns = []
@@ -770,12 +789,12 @@ async function checkLakeHygiene(pool) {
     }
     if (dayNewest === '') errs.push('日区 glob 空（_DAY_DATA 无文件——湖不可读）')
     if (errs.length > 0) {
-      return { check: 'lake_hygiene', ok: false, detail: `ERR ${errs.join('；')}` }
+      return { check: 'lake_hygiene', ok: false, detail: `ERR ${errs.join('；')} | ${kv}` }
     }
     if (warns.length > 0) {
-      return /** @type {Verdict} */ ({ check: 'lake_hygiene', ok: true, verdict: 'WARN', detail: `WARN ${warns.join('；')}` })
+      return /** @type {Verdict} */ ({ check: 'lake_hygiene', ok: true, verdict: 'WARN', detail: `WARN ${warns.join('；')} | ${kv}` })
     }
-    return { check: 'lake_hygiene', ok: true, detail: `OK hour_oldest=${oldest || '(空)'} day_newest=${dayNewest} sealed_max=${sealedMax}（今天 ${today}）` }
+    return { check: 'lake_hygiene', ok: true, detail: `OK ${kv} today=${today}` }
   } catch (e) {
     return { check: 'lake_hygiene', ok: false, detail: `ERR ${msg(e)}` }
   }

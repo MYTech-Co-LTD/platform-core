@@ -18,6 +18,7 @@ import ScopesPage from './scopes'
 import CandidatesPage from './candidates'
 import ChangesPage from './changes'
 import SystemMapPage from './system-map'
+import ObservabilityPage from './observability'
 import PipelinesPage from './pipelines'
 import LineagePage from './lineage'
 import MonitorsPage from './monitors'
@@ -45,6 +46,8 @@ const TABS = [
   { key: 'pipelines', label: '管线地图' },
   // 数据生产线（2026-11-15）：字段级血缘——源接口 → 湖 → staging → marts
   { key: 'lineage', label: '数据生产线' },
+  // 运行观测（2026-11-22，#2681）：调度 / 体检 / 湖卫生 / 物化 / 对账——只读。
+  { key: 'observability', label: '运行观测' },
 ] as const
 
 type TabKey = (typeof TABS)[number]['key']
@@ -85,6 +88,7 @@ export default function DataConsolePage() {
     changes: ChangesPage,
     monitors: MonitorsPage,
     'system-map': SystemMapPage,
+    observability: ObservabilityPage,
     pipelines: PipelinesPage,
     lineage: LineagePage,
   }
