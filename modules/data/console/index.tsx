@@ -19,6 +19,7 @@ import CandidatesPage from './candidates'
 import ChangesPage from './changes'
 import SystemMapPage from './system-map'
 import ObservabilityPage from './observability'
+import DataMapPage from './map'
 import PipelinesPage from './pipelines'
 import LineagePage from './lineage'
 import MonitorsPage from './monitors'
@@ -39,15 +40,14 @@ const TABS = [
   { key: 'changes', label: '待核对', manageOnly: true },
   // 业务监控（D 子项目，#2436）：agent 建的监控人在这里开闸（dry_run → 投递）。
   { key: 'monitors', label: '业务监控', manageOnly: true },
-  // 体系地图（2026-11-13）：原来是从菜单外链打开的服务端 HTML 页，现在内嵌成本页——
-  // 同一套壳与设计 token，本体图（entities + relations）是主内容。
-  { key: 'system-map', label: '体系地图' },
-  // 管线地图（2026-11-14）：与体系地图相反的视角——从管线看资产/staging/marts 三层通没通。
-  { key: 'pipelines', label: '管线地图' },
-  // 字段血缘（2026-11-15 数据生产线；2026-11-22 #2683 打开菜单并补指标口径/管线节点/列表达式）
-  { key: 'lineage', label: '字段血缘' },
-  // 运行观测（2026-11-22，#2681）：调度 / 体检 / 湖卫生 / 物化 / 对账——只读。
-  { key: 'observability', label: '运行观测' },
+  // 数据地图（2026-11-22，#2685）：四个**同族视角**收进一个入口（结构/链路/血缘/运行），
+  // 族内用页顶切换器（不是 #1953 撤掉的「职能页页签」——那条仍然有效）。
+  { key: 'map', label: '数据地图' },
+  // ↓ 以下四个是数据地图的视角，保留路径做深链兼容（menu:false，移动端段控不显示）。
+  { key: 'system-map', label: '结构', hidden: true },
+  { key: 'pipelines', label: '链路', hidden: true },
+  { key: 'lineage', label: '血缘', hidden: true },
+  { key: 'observability', label: '运行', hidden: true },
 ] as const
 
 type TabKey = (typeof TABS)[number]['key']
@@ -72,7 +72,9 @@ export default function DataConsolePage() {
   // 入口过滤用（reports 页同款；API 门卫才是真闸）
   const { session } = useOutletContext<{ session: { scopes: string[] } }>()
   const canManage = session.scopes.includes('data:manage')
-  const visibleTabs = TABS.filter((t) => !('manageOnly' in t && t.manageOnly === true) || canManage)
+  const visibleTabs = TABS
+    .filter((t) => !('hidden' in t && t.hidden === true))
+    .filter((t) => !('manageOnly' in t && t.manageOnly === true) || canManage)
   const last = pathname.split('/').filter(Boolean).pop() ?? ''
   const active: TabKey = isTabSegment(last, canManage) ? last : DEFAULT_TAB
   // 裸 /console/data 与不可达末段（如无 data:manage 却深链 /scopes）都规范回默认页：
@@ -87,6 +89,7 @@ export default function DataConsolePage() {
     candidates: CandidatesPage,
     changes: ChangesPage,
     monitors: MonitorsPage,
+    map: DataMapPage,
     'system-map': SystemMapPage,
     observability: ObservabilityPage,
     pipelines: PipelinesPage,
