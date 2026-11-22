@@ -115,6 +115,35 @@ describe('动效流水线', () => {
     expect(screen.getByText('下游（谁在用它）')).toBeInTheDocument()
   })
 
+  it('点「采集管线」→ 先开组清单（列出每条），点一条才进节点流', async () => {
+    m.mockResolvedValueOnce(json(FLOW)).mockResolvedValueOnce(json(OBS))
+    m.mockResolvedValueOnce(json({
+      kind: 'pipeline', name: 'p1', displayName: 'p1', summary: null, domain: null, columns: [],
+      upstream: [], downstream: [], upstream2: [], downstream2: [], notes: [],
+      pipelineSteps: [
+        { id: 's1', step: 1, component: 'src.rest', kind: 'fetch', label: '取数（接口）', detail: 'page 1', count: null },
+        { id: 's2', step: 2, component: 'snk.minio', kind: 'sink', label: '写湖', detail: null, count: null },
+      ],
+    }))
+    render(<FlowPage />)
+    await waitFor(() => expect(screen.getByText('采集管线')).toBeInTheDocument())
+    fireEvent.click(screen.getByText('采集管线'))
+    // 组清单出现：两条成员
+    await waitFor(() => expect(screen.getByText('p1')).toBeInTheDocument())
+    expect(screen.getByText('p2')).toBeInTheDocument()
+    expect(screen.getByText(/采集管线（2 条）/)).toBeInTheDocument()
+    // 点成员 → 请求 pipeline 详情
+    fireEvent.click(screen.getByText('p1'))
+    await waitFor(() => {
+      const url = String(m.mock.calls[2]?.[0] ?? '')
+      expect(url).toContain('kind=pipeline')
+      expect(url).toContain('name=p1')
+    })
+    // 节点流默认展示（步骤条）
+    await waitFor(() => expect(screen.getByText('取数（接口）')).toBeInTheDocument())
+    expect(screen.getByText('写湖')).toBeInTheDocument()
+  })
+
   it('slotPct：10:25 = 43.4%', () => {
     expect(slotPct({ hour: 10, minute: 25 })).toBeCloseTo(((10 * 60 + 25) / 1440) * 100, 5)
   })

@@ -21,6 +21,8 @@ interface ObjectDetail {
   kind: ObjectKind; name: string; displayName: string | null; summary: string | null
   domain: string | null; columns: ObjectColumn[]
   upstream: SimpleRef[]; downstream: SimpleRef[]; upstream2: SimpleRef[]; downstream2: SimpleRef[]; notes: string[]
+  /** 管线专用：内部节点流（取数页 → 合并 → 定型 → 契约门 → 落湖） */
+  pipelineSteps?: Array<{ id: string; step: number; component: string; kind: string; label: string; detail: string | null; count: number | null }> | null
 }
 interface FlowBody { nodes: Array<{ id: string; kind: string; label: string; count?: number; members?: string[] }>; notes: string[] }
 interface ScheduleRow { key: string; cron: string; enabled: boolean; lastRun: { status: string } | null; fails24h: number }
@@ -87,6 +89,8 @@ export default function FlowPage() {
   const [now, setNow] = useState(() => new Date())
   const [pick, setPick] = useState<SimpleRef | null>(null)
   const [detail, setDetail] = useState<ObjectDetail | null>(null)
+  /** 管线组：先列清单再进单条（避免「点进去一坨、分不清哪条」） */
+  const [pipeGroup, setPipeGroup] = useState<{ members: string[] } | null>(null)
   const [detailErr, setDetailErr] = useState<HumanError | null>(null)
   const tickRef = useRef<number | null>(null)
 
@@ -183,10 +187,11 @@ export default function FlowPage() {
               <div
                 className={`df-node${i === 1 ? ' df-live' : ''}`}
                 onClick={() => {
+                  // 采集管线是一组（121 条）：先列清单，再进单条看节点流
+                  if (s.key === 'pipeline') { setPipeGroup({ members: s.members }); return }
                   const member = s.members[0]
                   if (member === undefined) return
-                  // 各层的 kind 映射：pipeline→pipeline，metric→metric，其余按名称走详情端点
-                  const kind: ObjectKind = s.key === 'pipeline' ? 'pipeline' : s.key === 'metric' ? 'metric' : s.key === 'lake' ? 'lake' : s.key === 'staging' ? 'staging' : 'mart'
+                  const kind: ObjectKind = s.key === 'metric' ? 'metric' : s.key === 'lake' ? 'lake' : s.key === 'staging' ? 'staging' : 'mart'
                   void open({ kind, name: member })
                 }}
                 title={s.members.slice(0, 10).join('\n')}
@@ -272,6 +277,31 @@ export default function FlowPage() {
         </div>
       </section>
 
+      {/* 管线组清单：先看「有哪几条」，再点进去看节点流（避免点进去一坨、分不清哪条） */}
+      <Drawer
+        open={pipeGroup !== null} onClose={() => setPipeGroup(null)} width={520}
+        title={`采集管线（${pipeGroup?.members.length ?? 0} 条）`}
+      >
+        <Typography.Paragraph type="secondary" style={{ fontSize: 12.5 }}>
+          点一条看它的**节点流**（取数页 → 合并 → 定型 → 契约门 → 落湖）。
+        </Typography.Paragraph>
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 4, maxHeight: '70vh', overflow: 'auto' }}>
+          {(pipeGroup?.members ?? []).map((m) => (
+            <div
+              key={m}
+              onClick={() => { setPipeGroup(null); void open({ kind: 'pipeline', name: m }) }}
+              style={{
+                display: 'flex', justifyContent: 'space-between', gap: 8, cursor: 'pointer',
+                border: '1px solid #e3e4e8', borderRadius: 10, padding: '7px 10px', fontSize: 12.5,
+              }}
+            >
+              <span style={{ fontFamily: 'ui-monospace, monospace' }}>{m}</span>
+              <span style={{ color: '#2a78d6', whiteSpace: 'nowrap' }}>看节点流 →</span>
+            </div>
+          ))}
+        </div>
+      </Drawer>
+
       <Drawer
         open={pick !== null} onClose={() => setPick(null)} width={760}
         title={pick === null ? '' : (
@@ -286,7 +316,13 @@ export default function FlowPage() {
         {detailErr !== null && <Alert type="error" showIcon message={detailErr.text} description={`错误码：${detailErr.code}`} />}
         {detail === null && detailErr === null && <Skeleton active paragraph={{ rows: 6 }} />}
         {detail !== null && (
-          <Tabs defaultActiveKey="rel" items={[
+          <Tabs
+            key={detail.pipelineSteps !== null && detail.pipelineSteps !== undefined ? 'steps' : 'rel'}
+            defaultActiveKey={detail.pipelineSteps !== null && detail.pipelineSteps !== undefined ? 'steps' : 'rel'}
+            items={[
+            ...(detail.pipelineSteps !== null && detail.pipelineSteps !== undefined
+              ? [{ key: 'steps', label: `节点流 ${detail.pipelineSteps.length} 步`, children: <StepList steps={detail.pipelineSteps} /> }]
+              : []),
             {
               key: 'rel', label: '关系',
               children: <RelationView detail={detail} onPick={(r) => void open(r)} />,
@@ -409,6 +445,37 @@ function RelationView(props: {
           {detail.notes.map((n) => <li key={n}>{n}</li>)}
         </ul>
       )}
+    </div>
+  )
+}
+
+/** 管线内部节点流：竖向步骤条（序号 · 组件 · 人话 · 参数）。 */
+function StepList(props: { steps: NonNullable<ObjectDetail['pipelineSteps']> }) {
+  return (
+    <div style={{ paddingLeft: 4 }}>
+      <div style={{ fontSize: 12, color: '#6b7280', marginBottom: 10 }}>
+        这条管线按下面顺序执行（从上到下）。同类型连续节点会合并成一步并标 ×N。
+      </div>
+      {props.steps.map((st, i) => (
+        <div key={st.id} style={{ display: 'flex', gap: 10, paddingBottom: 10 }}>
+          <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', width: 22 }}>
+            <span style={{
+              width: 20, height: 20, borderRadius: '50%', background: '#2a78d6', color: '#fff',
+              fontSize: 11, display: 'flex', alignItems: 'center', justifyContent: 'center',
+            }}>{i + 1}</span>
+            {i < props.steps.length - 1 && <span style={{ flex: 1, width: 2, background: '#e3e4e8', marginTop: 2 }} />}
+          </div>
+          <div style={{ flex: 1, borderBottom: '1px dashed #f0f0f0', paddingBottom: 8 }}>
+            <div style={{ fontSize: 13 }}>
+              {st.label || st.kind}
+              {st.count !== null && st.count > 1 ? ` ×${st.count}` : ''}
+            </div>
+            <div style={{ fontSize: 11, color: '#9aa0a6', fontFamily: 'ui-monospace, monospace' }}>
+              {st.component}{st.detail !== null ? ` · ${st.detail}` : ''}
+            </div>
+          </div>
+        </div>
+      ))}
     </div>
   )
 }
