@@ -31,6 +31,7 @@
 import { createRequire } from 'node:module'
 import { pathToFileURL } from 'node:url'
 import { emitProbe, emitFailure, ooEnv } from '../probe-emit.mjs'
+import { shanghaiToday, shiftDay as shift } from '../lib/time-semantics.mjs'
 
 const require = createRequire(import.meta.url)
 
@@ -734,21 +735,8 @@ async function checkLakeHygiene(pool) {
   if (selftest('lake_hygiene')) {
     return { check: 'lake_hygiene', ok: false, detail: 'ERR 自测注入：湖卫生（WIRE_LAKE_HYGIENE_SELFTEST）' }
   }
-  /** 上海「今天」与平移 n 天，均为 YYYY-MM-DD（词法序即可比）。 */
-  /** @param {number} n */
-  const shDay = (n) => {
-    const d = new Date(Date.now() + n * 86400_000)
-    return new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Shanghai', year: 'numeric', month: '2-digit', day: '2-digit' }).format(d)
-  }
-  // ⚠️ 上海今天−1/−2 若按 UTC 毫秒先减再格式化，会在 00:00-08:00 CST 期间偏一天 ⇒ 统一
-  // 先取上海今天的字符串、再用「上海正午」锚点平移（避免 DST/时区边界）。
-  /** @param {string} day @param {number} n */
-  const shift = (day, n) => {
-    const d = new Date(`${day}T12:00:00+08:00`)
-    d.setUTCDate(d.getUTCDate() + n)
-    return d.toISOString().slice(0, 10)
-  }
-  const today = shDay(0)
+  // 时间原语统一走 lib（dbt 侧对应 dbt/macros/time_semantics.sql）——本文件不再内联时区运算。
+  const today = shanghaiToday()
   try {
     // ① hour 区最老 bizday（glob + 文件名正则，不打开文件）
     // ⚠️ 必须排除 **0 行哨兵**（`bizday=1970-01-01`，hot-glob-sentinel-parquet）：实测容器里

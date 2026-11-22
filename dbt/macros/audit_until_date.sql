@@ -11,5 +11,5 @@
   最近两天的新鲜度/缺数由 `data.monitor` 的 `missing`/`stale` 与水印负责，不用审计兜。
 #}
 {% macro audit_until_date() %}
-(now() AT TIME ZONE 'Asia/Shanghai')::date - 2
+{{ shanghai_days_ago(2) }}
 {% endmacro %}
