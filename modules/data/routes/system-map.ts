@@ -425,6 +425,7 @@ export function registerSystemMap(r: ModuleHono, ctx: RouteCtx): void {
     const loadedContracts = loadContracts(roots)
     const notes: string[] = []
     const columns: ObjectColumn[] = []
+    let pipelineSteps: Array<{ id: string; step: number; component: string; kind: string; label: string; detail: string | null; count: number | null }> | null = null
 
     const model = models.find((m) => m.name === name)
     const modelDocs = docs.get(name) ?? []
@@ -489,6 +490,12 @@ export function registerSystemMap(r: ModuleHono, ctx: RouteCtx): void {
           columns.push({ name: '调度', type: null, expr: sc.cron ?? null, description: sc.timezone ?? '' })
         }
         for (const key of def.lakeKeys) columns.push({ name: '写入', type: null, expr: key, description: '' })
+        // 管线内部节点流（#2697）：取数页 → 合并 → 定型 → 契约门 → 落湖。
+        // 用 buildPipelineFlow（与「链路」页同一实现），前端按步骤条渲染。
+        pipelineSteps = buildPipelineFlow(name, def.doc).steps.map((st) => ({
+          id: st.id, step: st.step, component: st.component, kind: st.kind,
+          label: st.label, detail: st.detail ?? null, count: st.count ?? null,
+        }))
       }
     }
 
@@ -534,6 +541,7 @@ export function registerSystemMap(r: ModuleHono, ctx: RouteCtx): void {
         edges: flow.edges,
         describe,
       }),
+      pipelineSteps,
     })
   })
 
