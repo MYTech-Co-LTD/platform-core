@@ -1,4 +1,4 @@
-sha256-of-rest 5f1adacaca546e450b5c2ecda32a7c7ceb12e02a52702862b795a4004481efbc
+sha256-of-rest 63bfd76dff2cb30fcbf9778b77bcb09ab55a28b5044a481bc88a9444886fb342
 57c67f58b38c8450ddcedf477607e722b51998873b12f84c15ffadc7fe5e81d3 contracts/README.md ${REPO}/contracts/README.md 0644
 fcc8189e1012d5fbb8e2505025bed637dd01c7b4465ab86125d3eaa7f330eff3 contracts/common/_schema.schema.json ${REPO}/contracts/common/_schema.schema.json 0644
 1730119518c3371f3c2ff3492f4c15cd731688047c6d40805ec4d2c65892f3ff contracts/common/_template.contract.json ${REPO}/contracts/common/_template.contract.json 0644
@@ -69,7 +69,7 @@ b45a1fad92929ebe0d5141a0bc38aee08a2d682caaaab34f63e5dfd9da367d79 dbt/models/leme
 2eaa30ca0546af51a91bf74ff2c9e93f466037d16be9eff90489d4cf2a72a42b dbt/models/lemeng/marts/fct_retail_profit.sql ${REPO}/dbt/models/lemeng/marts/fct_retail_profit.sql 0644
 f46f322b7e044829cec929053524c32d1bc22dc46bea7636000a55b8ad8e1e3c dbt/models/lemeng/marts/fct_retail_quantity.sql ${REPO}/dbt/models/lemeng/marts/fct_retail_quantity.sql 0644
 93122ae2c6327c5621dd15e004f974fbdad6b73580dcdd73ed2516f10b4c3fa9 dbt/models/lemeng/marts/fct_retail_sale.sql ${REPO}/dbt/models/lemeng/marts/fct_retail_sale.sql 0644
-04e0c7278acacc0eb1d66de6c5fe1660204480ef1cd4d07aa6f08d2a27b9d06d dbt/models/lemeng/marts/fct_retail_swap_offset.sql ${REPO}/dbt/models/lemeng/marts/fct_retail_swap_offset.sql 0644
+68b87450d98d31500013c3094ab158e07427247fbedce0789e9526f4e1943ef7 dbt/models/lemeng/marts/fct_retail_swap_offset.sql ${REPO}/dbt/models/lemeng/marts/fct_retail_swap_offset.sql 0644
 b7d2da361a99b4acfb877ba4aaf1fe4bc0d336edfb8b2bfe5f0336a43412cb92 dbt/models/lemeng/marts/fct_transfer_item.sql ${REPO}/dbt/models/lemeng/marts/fct_transfer_item.sql 0644
 9013270fb8daaa8ccdf615c830567a57819813c9cc39871ce862ae809ec73891 dbt/models/lemeng/marts/fct_transfer_line_quality.sql ${REPO}/dbt/models/lemeng/marts/fct_transfer_line_quality.sql 0644
 9c416edf30af0dbbdde213bf38b322d18c2a09132c269eef786c44b7ee6e99be dbt/models/lemeng/marts/fct_transfer_zero_cost_item.sql ${REPO}/dbt/models/lemeng/marts/fct_transfer_zero_cost_item.sql 0644

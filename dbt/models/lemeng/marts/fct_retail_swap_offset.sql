@@ -19,6 +19,13 @@
 --   ⇒ **`|diff| ≤ swap_offset` 成立（上界），但「diff ≈ offset」不成立**，别当等式。
 --
 -- 【粒度】账套 × 营业日 × 门店；只出有混合单的店日（无该形态的店日不出行，join 时 coalesce 0）。
+--
+-- 【闭窗读（#2674，2026-11-22）】只读**已封版日**（`bizday < 上海今天`）：本模型是无窗口的
+--   全史 CTAS，而 staging 会把**今天的活 hour 分区**一并 glob 进来 —— 建表期间采集正在重写
+--   那个分区，DuckDB 的 ETag 校验一旦发现文件换版就整段失败（实测 668s 后撞
+--   `bizday=2026-11-22/hour=14`，白跑）。排除今天 ⇒ 不读活分区 ⇒ 与采集解耦。
+--   代价：当天数据不在表里，**次日 tables 档重建时补齐**——本表是日终对账的归因上界，
+--   消费方（recon_*）只在 T-3 之后使用，当天缺失不影响判定（⑳ 为月度累计 WARN，同理）。
 with per_order as (
     select
         system_book,
@@ -30,6 +37,10 @@ with per_order as (
     from {{ ref('stg_lemeng_retail_order_line') }}
     where state = 'FINISHED'
       and order_transaction_type = 'SALE_ORDER'
+      -- ⚠️ 日期必须是**编译期字面量**（Jinja 求值）：`now()` 形态 pg_duckdb 放弃文件裁剪，
+      --    今天的活分区照样被打开、ETag 照样撞（⑰ 断言实测过同一坑）。run_started_at 是 UTC，
+      --    +8h 得沪时钟，跨 CST 零点也正确。
+      and bizday < date '{{ (run_started_at + modules.datetime.timedelta(hours=8)).strftime('%Y-%m-%d') }}'
     group by 1, 2, 3, 4
 )
 select
