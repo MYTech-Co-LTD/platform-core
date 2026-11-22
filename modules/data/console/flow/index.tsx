@@ -16,7 +16,7 @@ import { humanError, type HumanError } from '../lib/explain'
 
 echarts.use([GraphChart, LegendComponent, TooltipComponent, CanvasRenderer])
 
-type FlowKind = 'source' | 'pipeline' | 'lake' | 'staging' | 'mart' | 'metric' | 'consumer'
+type FlowKind = 'source' | 'pipeline' | 'lake' | 'staging' | 'mart' | 'recon' | 'metric' | 'consumer' | 'audit'
 
 interface FlowNode {
   id: string
@@ -27,10 +27,19 @@ interface FlowNode {
   x: number
   y: number
 }
+interface FlowStep {
+  id: string
+  step: number
+  component: string
+  kind: string
+  label: string
+  detail?: string
+  count?: number
+}
 interface FlowBody {
   generatedAt: string
   nodes: FlowNode[]
-  edges: Array<{ source: string; target: string }>
+  edges: Array<{ source: string; target: string; style?: 'dashed' }>
   layers: Array<{ kind: FlowKind; label: string; x: number; count: number }>
   notes: string[]
 }
@@ -42,8 +51,10 @@ const KIND_COLOR: Record<FlowKind, string> = {
   lake: '#1baf7a',
   staging: '#eda100',
   mart: '#6250d6',
+  recon: '#e34948',
   metric: '#e87ba4',
   consumer: '#008300',
+  audit: '#6b7280',
 }
 const KIND_LABEL: Record<FlowKind, string> = {
   source: '源接口',
@@ -51,16 +62,32 @@ const KIND_LABEL: Record<FlowKind, string> = {
   lake: '湖资产',
   staging: 'staging',
   mart: 'marts',
+  recon: '对账族',
   metric: '指标',
   consumer: '消费面',
+  audit: '审计（旁路）',
 }
 
 export default function FlowPage() {
   const [body, setBody] = useState<FlowBody | null>(null)
   const [error, setError] = useState<HumanError | null>(null)
   const [pick, setPick] = useState<FlowNode | null>(null)
+  /** 管线节点流：点成员加载（懒加载，避免一次拉 121 条） */
+  const [pipeId, setPipeId] = useState<string | null>(null)
+  const [pipeSteps, setPipeSteps] = useState<FlowStep[] | null>(null)
   const boxRef = useRef<HTMLDivElement | null>(null)
   const chartRef = useRef<echarts.ECharts | null>(null)
+
+  const openPipelineFlow = useCallback(async (id: string) => {
+    setPipeId(id)
+    setPipeSteps(null)
+    try {
+      const res = (await apiGet(`/system-map/pipelines/${encodeURIComponent(id)}/flow`)) as { steps?: FlowStep[] }
+      setPipeSteps(res.steps ?? [])
+    } catch {
+      setPipeSteps([])
+    }
+  }, [])
 
   const load = useCallback(async () => {
     try {
@@ -129,7 +156,7 @@ export default function FlowPage() {
           symbolSize: n.count !== undefined ? 10 : 7,
           itemStyle: { color: KIND_COLOR[n.kind] },
         })),
-        edges: body.edges,
+        edges: body.edges.map((e) => ({ source: e.source, target: e.target, ...(e.style === 'dashed' ? { lineStyle: { type: 'dashed', opacity: 0.55 } } : {}) })),
       }],
     }, true)
   }, [body])
@@ -172,12 +199,49 @@ export default function FlowPage() {
             )}
             <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
               {(pick.members ?? []).map((m) => (
-                <Tag key={m} style={{ marginInlineEnd: 0, fontFamily: 'ui-monospace, monospace', fontSize: 12 }}>{m}</Tag>
+                pick.kind === 'pipeline'
+                  ? (
+                    <Tag
+                      key={m}
+                      onClick={() => { void openPipelineFlow(m) }}
+                      style={{ marginInlineEnd: 0, fontFamily: 'ui-monospace, monospace', fontSize: 12, cursor: 'pointer' }}
+                    >
+                      {m} <span style={{ color: '#8c8c8c' }}>看节点流 →</span>
+                    </Tag>
+                  )
+                  : <Tag key={m} style={{ marginInlineEnd: 0, fontFamily: 'ui-monospace, monospace', fontSize: 12 }}>{m}</Tag>
               ))}
               {(pick.members ?? []).length === 0 && (
                 <Typography.Text type="secondary">该节点没有成员清单（叶子节点）</Typography.Text>
               )}
             </div>
+
+            {/* 管线内部节点流：采集的每一步（取数页 / 合并 / 定型 / 契约门 / 落湖） */}
+            {pipeId !== null && (
+              <div style={{ marginTop: 16, borderTop: '1px solid #f0f0f0', paddingTop: 12 }}>
+                <Typography.Text strong style={{ fontSize: 13 }}>
+                  节点流：<span className="mono">{pipeId}</span>
+                </Typography.Text>
+                {pipeSteps === null && <div style={{ marginTop: 6 }}><Skeleton active paragraph={{ rows: 3 }} /></div>}
+                {pipeSteps !== null && pipeSteps.length === 0 && (
+                  <Typography.Text type="secondary" style={{ fontSize: 12.5 }}>
+                    没有解析到节点流（管线定义缺失或不可读）。
+                  </Typography.Text>
+                )}
+                {pipeSteps !== null && pipeSteps.length > 0 && (
+                  <div style={{ marginTop: 8, display: 'flex', flexDirection: 'column', gap: 6 }}>
+                    {pipeSteps.map((st) => (
+                      <div key={st.id} style={{ display: 'flex', gap: 8, alignItems: 'baseline', fontSize: 12.5 }}>
+                        <span style={{ color: '#8c8c8c', minWidth: 20 }}>{st.step}</span>
+                        <span className="mono" style={{ color: '#8c8c8c', fontSize: 11.5 }}>{st.component}</span>
+                        <span>{st.label || st.kind}{st.count !== undefined && st.count > 1 ? ` ×${st.count}` : ''}</span>
+                        {st.detail !== undefined && <span style={{ color: '#aaa', fontSize: 11.5 }}>{st.detail}</span>}
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+            )}
           </>
         )}
       </Drawer>

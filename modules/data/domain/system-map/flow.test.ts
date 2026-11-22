@@ -77,3 +77,56 @@ describe('buildFlowGraph', () => {
     expect(g.notes.some((n) => n.includes('weird'))).toBe(true)
   })
 })
+
+describe('buildFlowGraph · 审计旁路与对账（#2687 追加）', () => {
+  const withAudit: FlowInput = {
+    ...base,
+    marts: [
+      { name: 'fct_retail_sale', refs: ['stg_lemeng_retail_order_line'] },
+      { name: 'recon_fact', refs: ['fct_retail_sale'] },
+    ],
+    audits: [
+      { id: 'audit_lemeng__retail__order_line', refs: ['stg_lemeng_retail_order_line'] },
+      { id: 'audit_lemeng__retail__order_line_2', refs: ['stg_lemeng_retail_order_line'] },
+      { id: 'audit_lemeng__unknown__thing', refs: ['nonexistent_model'] },
+    ],
+  }
+
+  it('recon_* 归为 recon 类（与普通 mart 区分着色）', () => {
+    const g = buildFlowGraph(withAudit)
+    expect(g.nodes.find((n) => n.id === 'mart:recon_fact')?.kind).toBe('recon')
+    expect(g.nodes.find((n) => n.id === 'mart:fct_retail_sale')?.kind).toBe('mart')
+  })
+
+  it('审计按被审对象聚合：同对象两条审计 = ×2，成员列出', () => {
+    const g = buildFlowGraph(withAudit)
+    const a = g.nodes.find((n) => n.id === 'audit:stg_lemeng_retail_order_line')
+    expect(a?.kind).toBe('audit')
+    expect(a?.count).toBe(2)
+    expect(a?.members?.length).toBe(2)
+  })
+
+  it('审计边是虚线（旁路不是数据流），且被审对象 → 审计', () => {
+    const g = buildFlowGraph(withAudit)
+    const e = g.edges.find((x) => x.source === 'stg:stg_lemeng_retail_order_line' && x.target === 'audit:stg_lemeng_retail_order_line')
+    expect(e?.style).toBe('dashed')
+  })
+
+  it('审计读了不在图上的对象 ⇒ 不画悬空节点', () => {
+    const g = buildFlowGraph(withAudit)
+    expect(g.nodes.some((n) => n.id === 'audit:nonexistent_model')).toBe(false)
+  })
+
+  it('审计节点排在主体下方（旁路泳道）', () => {
+    const g = buildFlowGraph(withAudit)
+    const mainMaxY = Math.max(...g.nodes.filter((n) => n.kind !== 'audit').map((n) => n.y))
+    const auditY = Math.min(...g.nodes.filter((n) => n.kind === 'audit').map((n) => n.y))
+    expect(auditY).toBeGreaterThan(mainMaxY)
+  })
+
+  it('recon 族虚线连到对账台账消费面', () => {
+    const g = buildFlowGraph(withAudit)
+    const e = g.edges.find((x) => x.source === 'mart:recon_fact' && x.target === 'use:recon')
+    expect(e?.style).toBe('dashed')
+  })
+})

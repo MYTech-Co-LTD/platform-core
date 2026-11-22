@@ -504,6 +504,29 @@ export function loadDbtModels(baseDir: string = REPO_ROOT): SystemMapDbtModel[] 
 }
 
 /** `dbt/tests/**` 下所有 singular test 的文件名（对账覆盖率按文件名判存在性）。 */
+/**
+ * 审计族（dbt singular tests）：`audit_*.sql` 文件名 + 它读的表（`ref('x')`）。
+ *
+ * 用途：全流程图的**旁路泳道**（#2687）——审计不是数据流的一跳，而是对某个对象的独立复算，
+ * 图上以虚线挂到被审对象上。只认 `ref()`（仓内审计一律经 ref 读模型）；
+ * 没有 ref 的审计（直接 read_parquet 的）不出现在这里，图上不画（不猜依赖）。
+ */
+export function loadAuditRefs(baseDir: string = REPO_ROOT): Array<{ id: string; refs: string[] }> {
+  const testsDir = join(baseDir, 'dbt', 'tests')
+  if (!existsSync(testsDir)) return []
+  const out: Array<{ id: string; refs: string[] }> = []
+  for (const path of walkFiles(testsDir, (name) => name.startsWith('audit_') && name.endsWith('.sql'))) {
+    let raw = ''
+    try { raw = readFileSync(path, 'utf8') } catch { continue }
+    const refs = [...new Set(
+      [...raw.matchAll(/ref\(\s*['"]([A-Za-z_][A-Za-z0-9_]*)['"]\s*\)/g)].map((m) => m[1]),
+    )]
+    if (refs.length === 0) continue
+    out.push({ id: basename(path, '.sql'), refs })
+  }
+  return out.sort((a, b) => a.id.localeCompare(b.id))
+}
+
 export function loadAuditFiles(baseDir: string = REPO_ROOT): string[] {
   const testsDir = join(baseDir, 'dbt', 'tests')
   if (!existsSync(testsDir)) return []

@@ -13,6 +13,7 @@ import {
   buildSystemMapModel,
   loadDbtModels,
   loadDbtVars,
+  loadAuditRefs,
   loadModelColumnDocs,
   loadSystemMapFacts,
   readRepoText,
@@ -353,7 +354,7 @@ export function registerSystemMap(r: ModuleHono, ctx: RouteCtx): void {
 
     return c.json({
       generatedAt: new Date().toISOString(),
-      ...buildFlowGraph({ contracts, pipelines, staging, marts, metrics }),
+      ...buildFlowGraph({ contracts, pipelines, staging, marts, metrics, audits: loadAuditRefs(ctx.repoRoot) }),
     })
   })
 
