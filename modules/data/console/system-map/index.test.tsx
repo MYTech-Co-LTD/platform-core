@@ -4,6 +4,10 @@ import '@testing-library/jest-dom/vitest'
 import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
+// 本文件每个用例都要渲染 ECharts 占位 + 指标抽屉（内含字段画板，见 #2338）；
+// CI（4 核、冷缓存）上单用例实测 >5s ⇒ 用文件级 15s，而不是把慢当红（#2346 同类）。
+vi.setConfig({ testTimeout: 15_000 })
+
 vi.mock('@platform/sdk/web', () => ({ platformFetch: vi.fn() }))
 vi.mock('echarts/core', () => ({ init: vi.fn(() => chart), use: vi.fn() }))
 vi.mock('echarts/charts', () => ({ GraphChart: {} }))
