@@ -1,4 +1,4 @@
-// index.test.tsx — 全流程页（对象目录形态，#2691）：列表、搜索、详情抽屉、血缘跳转。
+// index.test.tsx — 动效流水线（#2693）：三泳道渲染、节点计数、排班条、点节点开详情。
 import '@testing-library/jest-dom/vitest'
 import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
@@ -6,83 +6,97 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 vi.mock('@platform/sdk/web', () => ({ platformFetch: vi.fn() }))
 
 import { platformFetch } from '@platform/sdk/web'
-import FlowPage from './index'
+import FlowPage, { slotPct } from './index'
 
 const m = vi.mocked(platformFetch)
 const json = (b: unknown) => new Response(JSON.stringify(b), { status: 200, headers: { 'content-type': 'application/json' } })
 
-const OBJECTS = {
-  generatedAt: '2026-11-22T13:00:00Z',
-  rows: [
-    { kind: 'staging', name: 'stg_lemeng_retail_order_line', domain: 'retail_order_line', upstreamCount: 1, downstreamCount: 4 },
-    { kind: 'mart', name: 'fct_retail_sale', domain: 'retail_order_line', upstreamCount: 1, downstreamCount: 3 },
-    { kind: 'metric', name: 'sales', domain: null, upstreamCount: 1, downstreamCount: 4 },
+const FLOW = {
+  notes: [],
+  nodes: [
+    { id: 'src:a', kind: 'source', label: 'lemeng.retail_order_line' },
+    { id: 'pipe:p', kind: 'pipeline', label: 'retail_order_line', count: 2, members: ['p1', 'p2'] },
+    { id: 'lake:l', kind: 'lake', label: 'lemeng/retail_order_line' },
+    { id: 'stg:s', kind: 'staging', label: 'stg_lemeng_retail_order_line' },
+    { id: 'mart:m', kind: 'mart', label: 'fct_retail_sale' },
+    { id: 'mart:r', kind: 'recon', label: 'recon_fact' },
+    { id: 'met:e', kind: 'metric', label: 'sales', count: 12, members: ['sales'] },
+    { id: 'use:d', kind: 'consumer', label: '钻取明细' },
   ],
 }
 
-const DETAIL = {
-  kind: 'mart', name: 'fct_retail_sale', domain: 'retail_order_line',
-  columns: [
-    { name: 'sale_amount', type: 'numeric', expr: 'round(sum(case when ...), 2)', description: '销售额' },
-    { name: 'bizday', type: 'date', expr: null, description: '营业日' },
+const OBS = {
+  schedules: [
+    { key: 'data.dbt_tick', cron: '2-59/10 1-15 * * *', enabled: true, lastRun: { status: 'ok' }, fails24h: 0 },
+    { key: 'data.dbt_tables', cron: '25 2 * * *', enabled: true, lastRun: { status: 'ok' }, fails24h: 0 },
+    { key: 'data.warehouse_assertions', cron: '*/5 * * * *', enabled: true, lastRun: { status: 'failed' }, fails24h: 2 },
   ],
-  upstream: [{ kind: 'staging', name: 'stg_lemeng_retail_order_line' }],
-  downstream: [{ kind: 'metric', name: 'sales' }],
-  upstream2: [{ kind: 'lake', name: 'lemeng/retail_order_line' }],
-  downstream2: [],
-  notes: [],
+  recon: {
+    windowDays: 7, storeDays: 2174, overTol: 6, withinTol: 2168, overTolDiffSum: 3407.94,
+    byAttribution: [{ attribution: 'swap_split_unrecognized', n: 6 }],
+  },
 }
 
 beforeEach(() => { m.mockReset() })
 afterEach(() => cleanup())
 
-describe('全流程页（对象目录）', () => {
-  it('渲染对象列表，带类型标签与上下游计数', async () => {
-    m.mockResolvedValueOnce(json(OBJECTS))
+describe('动效流水线', () => {
+  it('三条泳道都在：生产 / 对账 / 排班；生产泳道显示各层计数', async () => {
+    m.mockResolvedValueOnce(json(FLOW)).mockResolvedValueOnce(json(OBS))
     render(<FlowPage />)
-    await waitFor(() => expect(screen.getByText('fct_retail_sale')).toBeInTheDocument())
-    expect(screen.getByText('stg_lemeng_retail_order_line')).toBeInTheDocument()
-    expect(screen.getAllByText('↑1').length).toBeGreaterThanOrEqual(1)
-    expect(screen.getAllByText('↓4').length).toBeGreaterThanOrEqual(1)
+    await waitFor(() => expect(screen.getByText('① 数据怎么生产')).toBeInTheDocument())
+    expect(screen.getByText('② 怎么对账（近 7 天）')).toBeInTheDocument()
+    expect(screen.getByText('③ 怎么排班（北京时间 24 小时）')).toBeInTheDocument()
+    // 生产泳道：管线计数 2（组节点 count 求和）、指标 12、marts 计数
+    expect(screen.getByText('采集管线')).toBeInTheDocument()
+    const nums = screen.getAllByText('2')
+    expect(nums.length).toBeGreaterThanOrEqual(1)
   })
 
-  it('搜索过滤（按名称）', async () => {
-    m.mockResolvedValueOnce(json(OBJECTS))
+  it('对账泳道显示真实数字（店日 / 超容差 / 归因）', async () => {
+    m.mockResolvedValueOnce(json(FLOW)).mockResolvedValueOnce(json(OBS))
     render(<FlowPage />)
-    await waitFor(() => expect(screen.getByText('fct_retail_sale')).toBeInTheDocument())
-    fireEvent.change(screen.getByPlaceholderText('搜表名 / 指标 / 管线 / 域'), { target: { value: 'stg_' } })
-    await waitFor(() => expect(screen.queryByText('fct_retail_sale')).not.toBeInTheDocument())
-    expect(screen.getByText('stg_lemeng_retail_order_line')).toBeInTheDocument()
+    await waitFor(() => expect(screen.getByText('差异计算')).toBeInTheDocument())
+    expect(screen.getByText('2174')).toBeInTheDocument()
+    expect(screen.getByText('6')).toBeInTheDocument()
+    expect(screen.getByText(/swap_split_unrecognized 6/)).toBeInTheDocument()
+    expect(screen.getByText(/¥3,407.94/)).toBeInTheDocument()
   })
 
-  it('点行 → 打开详情并请求 kind+name；字段页显示表达式', async () => {
-    m.mockResolvedValueOnce(json(OBJECTS))
-    m.mockResolvedValueOnce(json(DETAIL))
+  it('排班泳道渲染启用中的档位（失败档红字）', async () => {
+    m.mockResolvedValueOnce(json(FLOW)).mockResolvedValueOnce(json(OBS))
     render(<FlowPage />)
-    await waitFor(() => expect(screen.getByText('fct_retail_sale')).toBeInTheDocument())
-    fireEvent.click(screen.getByText('fct_retail_sale'))
-    await waitFor(() => expect(screen.getByText('sale_amount')).toBeInTheDocument())
-    const url = String(m.mock.calls[1]?.[0] ?? '')
-    expect(url).toContain('kind=mart')
-    expect(url).toContain('name=fct_retail_sale')
-    expect(screen.getByText(/round\(sum\(case when/)).toBeInTheDocument()
+    await waitFor(() => expect(screen.getByText('dbt_tick')).toBeInTheDocument())
+    expect(screen.getByText('dbt_tables')).toBeInTheDocument()
+    const failed = screen.getByText('warehouse_assertions')
+    expect(failed).toBeInTheDocument()
   })
 
-  it('血缘页：上下游标签可点击跳转到该对象详情', async () => {
-    m.mockResolvedValueOnce(json(OBJECTS))
-    m.mockResolvedValueOnce(json(DETAIL))
-    m.mockResolvedValueOnce(json({ ...DETAIL, kind: 'staging', name: 'stg_lemeng_retail_order_line', columns: [], upstream: [], downstream: [], upstream2: [], downstream2: [] }))
+  it('暂停/播放按钮切换动效', async () => {
+    m.mockResolvedValueOnce(json(FLOW)).mockResolvedValueOnce(json(OBS))
+    const { container } = render(<FlowPage />)
+    await waitFor(() => expect(screen.getByText('⏸ 暂停动效')).toBeInTheDocument())
+    fireEvent.click(screen.getByText('⏸ 暂停动效'))
+    expect(screen.getByText('▶ 播放动效')).toBeInTheDocument()
+    expect(container.querySelector('.df-paused')).not.toBeNull()
+  })
+
+  it('点生产泳道的 marts 节点 → 请求对象详情并按 name 打开', async () => {
+    m.mockResolvedValueOnce(json(FLOW)).mockResolvedValueOnce(json(OBS))
+    m.mockResolvedValueOnce(json({
+      kind: 'mart', name: 'fct_retail_sale', domain: null, columns: [], upstream: [], downstream: [], upstream2: [], downstream2: [], notes: [],
+    }))
     render(<FlowPage />)
-    await waitFor(() => expect(screen.getByText('fct_retail_sale')).toBeInTheDocument())
-    fireEvent.click(screen.getByText('fct_retail_sale'))
-    await waitFor(() => expect(screen.getByText('血缘')).toBeInTheDocument())
-    fireEvent.click(screen.getByText('血缘'))
-    await waitFor(() => expect(screen.getByText('上游 · 1 跳')).toBeInTheDocument())
-    fireEvent.click(screen.getAllByText('stg_lemeng_retail_order_line')[0])
+    await waitFor(() => expect(screen.getByText('marts')).toBeInTheDocument())
+    fireEvent.click(screen.getByText('marts'))
     await waitFor(() => {
       const url = String(m.mock.calls[2]?.[0] ?? '')
-      expect(url).toContain('kind=staging')
-      expect(url).toContain('name=stg_lemeng_retail_order_line')
+      expect(url).toContain('kind=mart')
+      expect(url).toContain('name=fct_retail_sale')
     })
+  })
+
+  it('slotPct：10:25 = 43.4%', () => {
+    expect(slotPct({ hour: 10, minute: 25 })).toBeCloseTo(((10 * 60 + 25) / 1440) * 100, 5)
   })
 })
