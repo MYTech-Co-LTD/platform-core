@@ -102,9 +102,9 @@ export const MODELS = [
     // 该模型是 incremental（#1520）：基面 CTE 下推 10 天 lookback，让 read_parquet 走 bizday
     // 分区裁剪。只放最终 SELECT 会先扫全史再过滤（tick 实测 5+ 分钟，#1524）。
     incrementalLookback: 10,
-    // 物化只读已闭窗（2026-11-08 P0）：tick 采集每 10 分钟重写当前小时，物化读同一分区会撞
-    // DuckDB ETag。`MAT_CLOSED_BEFORE=true` 时排除「今天且 hour >= 当前小时」的分区。
-    closedWindow: true,
+    // 闭窗谓词已于 #2761 **下移到 staging**（湖腿自己闭窗、热层腿不闭窗）。
+    // marts 不再施加 —— 否则会把热层提供的「当前小时」也滤掉，新鲜度又回到 1–2 小时。
+    closedWindow: false,
   },
   // P3.3 Task 2（#1031）：门店费用构件——两列都是 flat（单层直聚，无中间粒度键 ⇒ grainKeys 空）。
   {
@@ -168,8 +168,8 @@ export const MODELS = [
     },
     // #1520 W2-P1：与主路径（手写 base CTE）同窗口；生成区基面也下推 10 天。
     incrementalLookback: 10,
-    // 同 fct_retail_sale：物化只读已闭窗（2026-11-08 P0）。
-    closedWindow: true,
+    // 同 fct_retail_sale：闭窗已于 #2761 下移到 staging。
+    closedWindow: false,
   },
 ]
 

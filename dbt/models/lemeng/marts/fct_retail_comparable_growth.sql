@@ -35,19 +35,14 @@ bounds as (
     -- and now returned Y` ⇒ 整轮 tables 判红（11-14 10:25 实测 bizday=2026-11-14/hour=10）。
     -- 与 fct_order_event / fct_retail_sale 同一口径：闭窗读只取「今天已过去的小时」，
     -- 当前小时留给下一档。`MAT_CLOSED_BEFORE` 由 materialize.sh 主流程全局 export。
-    {%- if env_var('MAT_CLOSED_BEFORE', 'false') == 'true' %}
-    {%- set closed_guard = 'and ' ~ closed_before_predicate() %}
-    {%- else %}
-    {%- set closed_guard = '' %}
-    {%- endif %}
     select
         greatest(
             (select min(snapshot) from {{ ref('stg_lemeng_branch') }}),
             (select min(bizday)   from {{ ref('stg_lemeng_retail_order_line') }}
-               where 1 = 1 {{ closed_guard }})
+               where 1 = 1 )
         ) as d_min,
         (select max(bizday) from {{ ref('stg_lemeng_retail_order_line') }}
-          where bizday < cast(now() at time zone 'Asia/Shanghai' as date) {{ closed_guard }}) as d_max
+          where bizday < cast(now() at time zone 'Asia/Shanghai' as date) ) as d_max
 ),
 periods as (
     select

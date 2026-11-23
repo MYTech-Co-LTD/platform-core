@@ -8,7 +8,8 @@
     "②【懒扩容，逐级链式】每段末页满 200 行才启动下一段：p4→t2(5–8)→t3(9–16)→t4(17–32)→t5(33–64)→t6(65–128)，t6 的 p128 仍满 ⇒ ctl.die 保险丝（25,600 单/时）。阈值 800/1,600/3,200/6,400/12,800/25,600 单/时。触发判据是「满页」不是「有行」（末页 1~199 行 = 数据到底，零浪费）；累积窗单调（满过的页永远满）⇒ 无跨轮误判；seed 每轮重写空 part ⇒ 无跨轮残留。",
     "③【part 回流】tier 子管线写 %s/tN-<bizday>-h<hour>.parquet（带 page 列，覆盖写；**用 parquet 不用 CSV**：json 列经 CSV 往返会变成 dict repr，且 18 位 order_no 会被嗅探成整数丢前导零）；combine 用 read_parquet 读回（保类型、无需 columns 声明）；sink 成功后 cuT* 逐个精确删除（ctl.file 只支持单文件，glob/目录实测不支持）。",
     "④【checkpoint 仍 false】复用键无上游内容指纹（v1 注记沿用）。引擎原生分页不可用：页号只进 query、网关只读 body（案例 41 订正 / 53）。",
-    "⑤ 湖布局不变（hour=<H>/all.parquet 单文件覆盖写）；父管线 lemeng.retail.tick.l1 不变；失败语义不变（任一段红 ⇒ 整窗不写湖，下轮重试）。"
+    "⑤ 湖布局不变（hour=<H>/all.parquet 单文件覆盖写）；父管线 lemeng.retail.tick.l1 不变；失败语义不变（任一段红 ⇒ 整窗不写湖，下轮重试）。",
+    "⑥【热层 sink（#2761）】gate 之后**并行**再写一份 staging.retail_hot（append，带 run_token）：当前小时走它、历史仍走湖，报表新鲜度从 1–2 小时压到 10 分钟。与 minio sink 是并列分支 ⇒ 热层失败（continueOnFailure）不阻断写湖与 receipt；读侧只取最新批次（run_token = max），所以撤单靠「新批次更少行」自然表达，不用 upsert。"
   ],
   "nodes": [
     {
@@ -903,6 +904,25 @@
           "failOnError": false
         }
       }
+    },
+    {
+      "id": "hot",
+      "type": "sink",
+      "position": {
+        "x": 5450,
+        "y": 120
+      },
+      "data": {
+        "label": "hot (pg 热层)",
+        "componentId": "snk.postgres",
+        "properties": {
+          "connectionRef": "pgduck",
+          "schemaName": "staging",
+          "tableName": "retail_hot",
+          "mode": "append",
+          "continueOnFailure": true
+        }
+      }
     }
   ],
   "edges": [
@@ -1386,6 +1406,16 @@
       "id": "cu4",
       "source": "cuT5",
       "target": "cuT6",
+      "sourceHandle": "main",
+      "targetHandle": "main",
+      "data": {
+        "connectionType": "main"
+      }
+    },
+    {
+      "id": "ehot",
+      "source": "gate",
+      "target": "hot",
       "sourceHandle": "main",
       "targetHandle": "main",
       "data": {

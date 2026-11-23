@@ -88,9 +88,6 @@ base_sale as (
     and bizday >= {{ cutoff_or_backfill(10) }}
     {{ backfill_to() }}
     {% endif %}
-    {% if env_var('MAT_CLOSED_BEFORE', 'false') == 'true' %}
-    and {{ closed_before_predicate() }}
-    {% endif %}
 ),
 sale_amount__gen as (
     select system_book, bizday, branch_num, order_no, (case when sum(case when state = 'FINISHED' and order_transaction_type = 'SALE_ORDER' then 1 else 0 end) = 0 then 0 else (sum(case when state = 'FINISHED' and order_transaction_type = 'SALE_ORDER' and
@@ -106,9 +103,6 @@ base_return as (
     {% if is_incremental() %}
     and bizday >= {{ cutoff_or_backfill(10) }}
     {{ backfill_to() }}
-    {% endif %}
-    {% if env_var('MAT_CLOSED_BEFORE', 'false') == 'true' %}
-    and {{ closed_before_predicate() }}
     {% endif %}
 ),
 return_amount__gen as (

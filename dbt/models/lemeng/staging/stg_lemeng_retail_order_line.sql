@@ -168,8 +168,20 @@ from read_parquet(
     's3://{{ var("zos_bucket") }}/{{ var("lemeng_retail_order_line_prefix") }}/_SCHEMA/v3.parquet'
   ) sealed
 where sealed['schema_version'] = 3
-  and not exists (
-    select 1 from data.lemeng_daily_sealed m
+  -- 子查询必须与 `not exists (` 同行起头（既定约定）：生成器把「行首 select」认作投影位点，
+  -- 一旦它后面出现「换行 from」（本模型的第三腿就是），选列区会跨越两腿 ⇒ 报「嵌套 select」。
+  and not exists (select 1 from data.lemeng_daily_sealed m
     where cast(m.system_book as varchar) = cast(r['system_book'] as varchar)
       and cast(m.bizday as date) = cast(r['bizday'] as date)
   )
+  -- 闭窗（#2761）：湖永远只读「已关闭的小时」。闭窗谓词从 marts 层**下移到这里** ——
+  --   「谁读活数据谁闭窗」；当前小时的数据改由下面第三腿（热层）提供。
+  and {{ closed_before_predicate('r.') }}
+-- ══ 第三腿（#2761）：热层「当前小时」═══════════════════════════════════════════════════════════
+-- 为什么要这一腿：上面湖的热腿被闭窗谓词限制在「已关闭的小时」，当前小时不在任何来源里
+--   ⇒ 报表滞后 1–2 小时。热层由采集 tick 每 10 分钟 append 一批，这里只读最新批次。
+-- ⚠️ 本腿**不套闭窗**（它就是当前小时的唯一来源）⇒ 闭窗责任必须留在湖腿，不能上移到 marts。
+-- ⚠️ 整条腿封在 macro 里（`dbt/macros/retail_order_line_hot_union.sql`）：热表是 pg 原生表，
+--   而生成器会把每个位点的列区重写成 `r['列名']` 形态（parquet 专用）；封进 macro 后生成器
+--   只看到 `{{ ... }}`、看不到 select，渲染时才展开。理由与被否掉的两种形态见 macro 头注。
+{{ retail_order_line_hot_union() }}

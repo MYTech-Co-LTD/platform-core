@@ -63,10 +63,8 @@ with src as (
     {% if is_incremental() %}
     and bizday >= {{ incremental_cutoff(10) }}
     {% endif %}
-    {% if env_var('MAT_CLOSED_BEFORE', 'false') == 'true' %}
-    -- 物化闭窗读（2026-11-08 P0）：tick 采集每 10 分钟重写当前小时，物化读同一分区会撞 ETag。
-    and {{ closed_before_predicate() }}
-    {% endif %}
+    -- 闭窗谓词已于 #2761 下移到 staging（湖腿闭窗、热层腿不闭窗）；marts 不再施加，
+    -- 否则会把热层提供的「当前小时」也滤掉。
     group by 1, 2, 3, 4
 )
 
