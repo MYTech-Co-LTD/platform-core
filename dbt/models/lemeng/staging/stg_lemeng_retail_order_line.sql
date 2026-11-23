@@ -181,34 +181,7 @@ where sealed['schema_version'] = 3
 -- 为什么要这一腿：上面湖的热腿被闭窗谓词限制在「已关闭的小时」，当前小时不在任何来源里
 --   ⇒ 报表滞后 1–2 小时。热层由采集 tick 每 10 分钟 append 一批，这里只读最新批次。
 -- ⚠️ 本腿**不套闭窗**（它就是当前小时的唯一来源）⇒ 闭窗责任必须留在湖腿，不能上移到 marts。
--- ⚠️ 「取最新批次」的子查询放在独立模型里（`stg_lemeng_retail_order_line_hot`）：
---   `gen-data-projection.mjs` 的位点识别不允许选列区跨到嵌套 select（实测报
---   「第 3 处的选列区里出现嵌套 select」）⇒ 本腿必须是「纯列 + 主 FROM」形态。
-union all
-select
-  t.batch_id,
-  t.system_book,
-  t.bizday,
-  t.hour,
-  t.order_no,
-  t.order_detail_num,
-  t.branch_num,
-  t.branch_name,
-  t.order_time,
-  t.order_operate_time,
-  t.state,
-  t.order_source,
-  t.item_num,
-  t.item_code,
-  t.sale_money,
-  t.discount_money,
-  t.payment_money,
-  t.quantity,
-  t.order_transaction_type,
-  t.order_ref_billno,
-  t.order_detail_share_discount,
-  t.order_detail_std_price,
-  t.order_detail_price,
-  t.order_detail_online_qty,
-  t.order_total_money
-from {{ ref('stg_lemeng_retail_order_line_hot') }} t
+-- ⚠️ 整条腿封在 macro 里（`dbt/macros/retail_order_line_hot_union.sql`）：热表是 pg 原生表，
+--   而生成器会把每个位点的列区重写成 `r['列名']` 形态（parquet 专用）；封进 macro 后生成器
+--   只看到 `{{ ... }}`、看不到 select，渲染时才展开。理由与被否掉的两种形态见 macro 头注。
+{{ retail_order_line_hot_union() }}
