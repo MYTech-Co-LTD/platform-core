@@ -3,6 +3,7 @@ import { Pool } from 'pg'
 import type { Hono } from 'hono'
 import mod from './index'
 import { createFormsRouter } from './routes'
+import { closeRound, createRound, openRound, roundProgress } from './storage'
 
 /** 假模型：按顺序回话（AI 起草测试用；不绑真供应商）。 */
 function fakeModel(replies: string[]) {
@@ -890,5 +891,245 @@ describePg('forms 审批（OA P1）', () => {
     const audit = await pool.query(
       "select 1 from forms.audit where org=$1 and action='approval.submit.failed' order by id desc limit 1", [OA_ORG])
     expect(audit.rows.length).toBe(1)
+  })
+})
+
+// ════════════════════════════════════════════════════════════════════════════
+// 收集轮次（件③ / issue #2707）：带 roundId 的提交联动 + 轮次路由面（B2 一并覆盖）。
+// 口径：轮闸拒绝必须**不落行**（联动是单事务）；错误全部机检码 → 状态码映射。
+// ════════════════════════════════════════════════════════════════════════════
+describePg('forms 收集轮次（#2707）', () => {
+  let pool: Pool
+  let emitted: Array<{ eventKey: string; eventId: string; scope?: string; payload: Record<string, unknown> }>
+  let notify: { emit: (identity: unknown, input: never) => Promise<{ accepted: boolean }> }
+
+  const R_ORG = `org-forms-rounds-${SUF}`
+  const R_ASSET = `round-form-${SUF}`
+
+  const manage = makeIdentity({ orgId: R_ORG, userId: 'op-1', scopes: ['forms:view', 'forms:manage', 'forms:publish'] })
+  const filler = makeIdentity({ orgId: R_ORG, userId: 'u1', scopes: ['forms:fill', 'forms:view'] })
+  const viewer = makeIdentity({ orgId: R_ORG, userId: 'viewer-1', scopes: ['forms:view'] })
+
+  const appFor = (who: ReturnType<typeof makeIdentity>): Hono =>
+    buildTestApp({
+      manifest: mod.manifest,
+      createRouter: () => createFormsRouter({ pool, notify: notify as never }),
+    } as never, who, { pool })
+
+  const req = (app: Hono, method: string, path: string, body?: unknown) =>
+    app.request(path, {
+      method,
+      ...(body !== undefined
+        ? { body: JSON.stringify(body), headers: { 'content-type': 'application/json' } }
+        : {}),
+    })
+
+  beforeAll(async () => {
+    pool = new Pool({ connectionString: dbUrl })
+    await applyMigrations(pool)
+    emitted = []
+    notify = {
+      async emit(_identity: unknown, input: never) {
+        emitted.push(input)
+        return { accepted: true }
+      },
+    }
+    // 一张已发布表单（v1）供各轮挂靠
+    await req(appFor(manage), 'POST', '/defs', { assetId: R_ASSET, body: { schema } })
+    await req(appFor(manage), 'POST', `/defs/${R_ASSET}/versions/1/publish`)
+  })
+
+  afterAll(async () => {
+    // 子行先删（target/anchor 的 FK 指向 round）
+    for (const t of ['collection_target', 'collection_anchor', 'collection_round']) {
+      await pool.query(`delete from forms.${t} where org = $1`, [R_ORG]).catch(() => {})
+    }
+    for (const t of ['audit', 'submission', 'asset_head', 'asset_version']) {
+      await pool.query(`delete from forms.${t} where org = $1`, [R_ORG]).catch(() => {})
+    }
+    await pool.end()
+  })
+
+  const roundIdByKey = async (roundKey: string): Promise<string> => {
+    const { rows } = await pool.query(
+      'select id::text id from forms.collection_round where org=$1 and round_key=$2',
+      [R_ORG, roundKey],
+    )
+    expect(rows, `轮 ${roundKey} 应存在`).toHaveLength(1)
+    return rows[0].id as string
+  }
+
+  it('B1 提交联动：带 roundId 提交 → round_id 落行 + 名单翻 submitted + 进度推进；重复提交幂等', async () => {
+    const id = await createRound(pool, {
+      org: R_ORG, assetId: R_ASSET, version: 1, roundKey: '2026-11', kind: 'targets',
+      name: '十一月巡检', createdBy: 'op-1', targets: ['u1', 'u2'],
+    })
+    await openRound(pool, R_ORG, id)
+
+    // u1 按轮提交
+    let res = await req(appFor(filler), 'POST', `/defs/${R_ASSET}/submissions`, { payload: { name: '张三' }, roundId: id })
+    expect(res.status).toBe(201)
+    const { id: subId } = (await res.json()) as { id: string }
+    const { rows } = await pool.query('select round_id from forms.submission where id=$1::bigint', [subId])
+    expect(String(rows[0].round_id)).toBe(id)
+
+    // 进度推进（storage 直读，路由面是 B2）
+    expect(await roundProgress(pool, R_ORG, id)).toMatchObject({ total: 2, submitted: 1, pending: 1 })
+
+    // 重复提交（u1 再交）幂等：进度不变
+    res = await req(appFor(filler), 'POST', `/defs/${R_ASSET}/submissions`, { payload: { name: '再交' }, roundId: id })
+    expect(res.status).toBe(201)
+    expect(await roundProgress(pool, R_ORG, id)).toMatchObject({ submitted: 1, pending: 1 })
+
+    // 不带 roundId 的提交不受轮约束（逐字旧行为）
+    res = await req(appFor(filler), 'POST', `/defs/${R_ASSET}/submissions`, { payload: { name: '散交' } })
+    expect(res.status).toBe(201)
+  })
+
+  it('B1 轮闸（HTTP 面）：draft/关轮后提交 409 ROUND_NOT_OPEN；非名单 409；值集轮缺 anchor 400、未知 anchor 409 —— 且都不落行', async () => {
+    const count = async (): Promise<number> => {
+      const { rows } = await pool.query('select count(*)::int n from forms.submission where org=$1', [R_ORG])
+      return rows[0].n as number
+    }
+    const before = await count()
+
+    // draft 轮 → 拒
+    const draftId = await createRound(pool, {
+      org: R_ORG, assetId: R_ASSET, version: 1, roundKey: 'draft-1', kind: 'targets',
+      name: '还没开', createdBy: 'op-1', targets: ['u1'],
+    })
+    let res = await req(appFor(filler), 'POST', `/defs/${R_ASSET}/submissions`, { payload: { name: 'x' }, roundId: draftId })
+    expect(res.status).toBe(409)
+    expect(((await res.json()) as { error: string }).error).toBe('ROUND_NOT_OPEN')
+
+    // 非名单成员 → 拒（open 着的 2026-11 轮）
+    const openId = await roundIdByKey('2026-11')
+    res = await req(appFor(makeIdentity({ orgId: R_ORG, userId: 'u9', scopes: ['forms:fill'] })),
+      'POST', `/defs/${R_ASSET}/submissions`, { payload: { name: 'x' }, roundId: openId })
+    expect(res.status).toBe(409)
+    expect(((await res.json()) as { error: string }).error).toBe('ROUND_SUBMITTER_NOT_IN_ROUND')
+
+    // 值集轮：缺 anchorKey → 400；未知 anchorKey → 409
+    const gridId = await createRound(pool, {
+      org: R_ORG, assetId: R_ASSET, version: 1, roundKey: 'grid-1', kind: 'value_grid',
+      name: '格子轮', createdBy: 'op-1', anchors: ['S001'],
+    })
+    await openRound(pool, R_ORG, gridId)
+    res = await req(appFor(filler), 'POST', `/defs/${R_ASSET}/submissions`, { payload: { name: 'x' }, roundId: gridId })
+    expect(res.status).toBe(400)
+    expect(((await res.json()) as { error: string }).error).toBe('ROUND_ANCHOR_REQUIRED')
+    res = await req(appFor(filler), 'POST', `/defs/${R_ASSET}/submissions`, { payload: { name: 'x' }, roundId: gridId, anchorKey: 'NOPE' })
+    expect(res.status).toBe(409)
+    expect(((await res.json()) as { error: string }).error).toBe('ROUND_ANCHOR_NOT_FOUND')
+
+    // 关轮后 → 拒
+    await closeRound(pool, R_ORG, gridId)
+    res = await req(appFor(filler), 'POST', `/defs/${R_ASSET}/submissions`, { payload: { name: 'x' }, roundId: gridId, anchorKey: 'S001' })
+    expect(res.status).toBe(409)
+    expect(((await res.json()) as { error: string }).error).toBe('ROUND_NOT_OPEN')
+
+    // 全程没有一笔失败提交落行（单事务回滚的 HTTP 面证据）
+    expect(await count()).toBe(before)
+  })
+
+  it('B2 轮次路由面：建轮（默认钉 head）→ 列表/详情 → 开轮逐人 assigned → 关轮', async () => {
+    // 建轮：不传 version ⇒ 钉 head；targets/anchors 按行幂等去重
+    let res = await req(appFor(manage), 'POST', '/rounds', {
+      assetId: R_ASSET, roundKey: 'api-1', kind: 'targets', name: 'API 轮', targets: ['u1', 'u1', 'u2'],
+    })
+    expect(res.status).toBe(201)
+    const { id } = (await res.json()) as { id: string }
+    const { rows: rr } = await pool.query(
+      'select version, status from forms.collection_round where org=$1 and id=$2::bigint', [R_ORG, id])
+    expect(rr[0]).toMatchObject({ version: 1, status: 'draft' })
+
+    // 列表（view）与详情（含 progress）
+    res = await req(appFor(viewer), 'GET', '/rounds')
+    expect(((await res.json()) as { rounds: Array<{ roundKey: string }> }).rounds.map((r) => r.roundKey))
+      .toContain('api-1')
+    res = await req(appFor(viewer), 'GET', `/rounds/${id}`)
+    const detail = (await res.json()) as { round: { status: string }; progress: { total: number; pending: number } }
+    expect(detail.round.status).toBe('draft')
+    expect(detail.progress).toMatchObject({ total: 2, pending: 2 })
+
+    // 开轮 → assigned 事件逐人（幂等 eventId；payload 三字段齐）
+    emitted = []
+    res = await req(appFor(manage), 'POST', `/rounds/${id}/open`)
+    expect(res.status).toBe(200)
+    const assigned = emitted.filter((e) => e.eventKey === 'forms.collection.assigned')
+    expect(assigned.map((e) => e.eventId).sort()).toEqual([
+      `forms:round:${id}:assigned:u1`, `forms:round:${id}:assigned:u2`,
+    ])
+    expect(assigned[0].payload).toMatchObject({
+      roundId: id, assetId: R_ASSET, roundKey: 'api-1', name: 'API 轮',
+      assignee: expect.stringMatching(/^u[12]$/),
+      link: expect.stringContaining(`/console/forms/fill/${R_ASSET}`),
+    })
+    expect(assigned[0].scope).toBe(id)
+
+    // 已开的轮再开 → 409 ROUND_STATUS_INVALID
+    res = await req(appFor(manage), 'POST', `/rounds/${id}/open`)
+    expect(res.status).toBe(409)
+    expect(((await res.json()) as { error: string }).error).toBe('ROUND_STATUS_INVALID')
+
+    // 关轮 → 已交名单冻结在 submitted；再关 409
+    res = await req(appFor(manage), 'POST', `/rounds/${id}/close`)
+    expect(res.status).toBe(200)
+    res = await req(appFor(manage), 'POST', `/rounds/${id}/close`)
+    expect(res.status).toBe(409)
+    res = await req(appFor(viewer), 'GET', `/rounds/${id}`)
+    expect(((await res.json()) as { round: { status: string } }).round.status).toBe('closed')
+
+    // 不存在的轮 → 404
+    res = await req(appFor(viewer), 'GET', '/rounds/999999')
+    expect(res.status).toBe(404)
+    res = await req(appFor(viewer), 'GET', '/rounds/not-a-number')
+    expect(res.status).toBe(404)
+  })
+
+  it('B2 值集轮开轮：assigned 逐格子发给开轮人（v1 无逐格收件人）', async () => {
+    const res0 = await req(appFor(manage), 'POST', '/rounds', {
+      assetId: R_ASSET, roundKey: 'api-grid', kind: 'value_grid', name: '格子轮', anchors: ['S001', 'S002'],
+    })
+    expect(res0.status).toBe(201)
+    const { id } = (await res0.json()) as { id: string }
+    emitted = []
+    const res = await req(appFor(manage), 'POST', `/rounds/${id}/open`)
+    expect(res.status).toBe(200)
+    const assigned = emitted.filter((e) => e.eventKey === 'forms.collection.assigned')
+    expect(assigned.map((e) => e.eventId).sort()).toEqual([
+      `forms:round:${id}:assigned:S001`, `forms:round:${id}:assigned:S002`,
+    ])
+    expect(assigned.every((e) => e.payload.assignee === 'op-1')).toBe(true)
+  })
+
+  it('B2 建轮参数闸：坏 kind / 空 targets / 坏 roundKey → 400；同 key 再建 → 409 ROUND_KEY_TAKEN；坏 version → 409', async () => {
+    for (const [body, code] of [
+      [{ assetId: R_ASSET, roundKey: 'k1', kind: 'bogus', name: 'x', targets: ['u1'] }, 'ROUND_KIND_INVALID'],
+      [{ assetId: R_ASSET, roundKey: 'k1', kind: 'targets', name: 'x', targets: [] }, 'ROUND_LIST_REQUIRED'],
+      [{ assetId: R_ASSET, roundKey: 'k1', kind: 'targets', name: 'x' }, 'ROUND_LIST_REQUIRED'],
+      [{ assetId: R_ASSET, roundKey: 'bad key!', kind: 'targets', name: 'x', targets: ['u1'] }, 'ROUND_KEY_INVALID'],
+      [{ assetId: R_ASSET, roundKey: 'k1', kind: 'targets', name: '', targets: ['u1'] }, 'NAME_REQUIRED'],
+    ] as const) {
+      const res = await req(appFor(manage), 'POST', '/rounds', body)
+      expect(res.status, JSON.stringify(body)).toBe(400)
+      expect(((await res.json()) as { error: string }).error).toBe(code)
+    }
+
+    // 同 key 再建 → 409
+    const res = await req(appFor(manage), 'POST', '/rounds', {
+      assetId: R_ASSET, roundKey: 'api-1', kind: 'targets', name: '重复', targets: ['u1'],
+    })
+    expect(res.status).toBe(409)
+    expect(((await res.json()) as { error: string }).error).toBe('ROUND_KEY_TAKEN')
+
+    // 未发布版本号 → 409；org 隔离：B 租户看不到 A 的轮
+    const bad = await req(appFor(manage), 'POST', '/rounds', {
+      assetId: R_ASSET, version: 99, roundKey: 'v99', kind: 'targets', name: 'x', targets: ['u1'],
+    })
+    expect(bad.status).toBe(409)
+    expect(((await bad.json()) as { error: string }).error).toBe('NO_PUBLISHED_HEAD')
+    const other = await req(appFor(makeIdentity({ orgId: `org-forms-rounds-other-${SUF}`, scopes: ['forms:view'] })), 'GET', '/rounds')
+    expect(((await other.json()) as { rounds: unknown[] }).rounds).toEqual([])
   })
 })

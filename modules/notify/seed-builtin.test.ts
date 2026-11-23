@@ -44,9 +44,10 @@ describePg('seedBuiltin', () => {
     const env = { NOTIFY_APPROVERS__ORG_SEED2: 'alice, bob' }
     await seedBuiltin(pool, env, [ORG])
     const first = await counts()
-    // templates/revisions 15：员工登记审批 + 集成活性超期 + 审批待处理 + 指标定义变更
-    //   + 表单指派/表单催办 + 定时任务三条（W6-P4a）+ 业务监控三条（W7-V1）+ OA 审批两条（P1）
-    expect(first).toEqual({ templates: 15, revisions: 15, channels: 2, rules: 16 })
+    // templates/revisions 17：员工登记审批 + 集成活性超期 + 审批待处理 + 指标定义变更
+    //   + 表单指派/表单催办 + 收集轮次开轮/催办（件③ #2707）+ 定时任务三条（W6-P4a）
+    //   + 业务监控三条（W7-V1）+ OA 审批两条（P1）
+    expect(first).toEqual({ templates: 17, revisions: 17, channels: 2, rules: 18 })
 
     const manual = await pool.query(
       "select recipient_key, recipient_literal from notify.rule where org=$1 and id like 'manual:%'",
@@ -92,9 +93,9 @@ describePg('seedBuiltin', () => {
     expect(revsAfter).toBe(revsBefore)
   })
 
-  it('无 NOTIFY_APPROVERS ⇒ 只剩十五条 derived 规则（aftersales/集成健康/审批/指标变更/表单两条/OA 两条/定时任务三条/业务监控三条）', async () => {
+  it('无 NOTIFY_APPROVERS ⇒ 只剩十七条 derived 规则（aftersales/集成健康/审批/指标变更/表单两条/收集轮次两条/OA 两条/定时任务三条/业务监控三条）', async () => {
     await seedBuiltin(pool, {}, [ORG])
-    expect((await counts()).rules).toBe(15)
+    expect((await counts()).rules).toBe(17)
     const stale = await pool.query(
       "select channels from notify.rule where org=$1 and event_key='notify.integration.stale'", [ORG])
     // 只用 in_app：企微通道本身可能正是坏掉的那个（坏通道报坏消息 = 自欺）
@@ -110,7 +111,7 @@ describePg('seedBuiltin：声明了 defaults 的事件必须真的有派生规�
   })
   afterAll(async () => { await pool.end() })
 
-  it('forms 事件（含 OA 两条）各有一条 derived 规则，template/recipient 与 defaults 一致', async () => {
+  it('forms 事件（含 OA 两条 + 收集轮次两条）各有一条 derived 规则，template/recipient 与 defaults 一致', async () => {
     const org = `${ORG}-forms`
     await pool.query('delete from notify.rule where org=$1', [org])
     await pool.query('delete from notify.template_revision where org=$1', [org])
@@ -136,6 +137,18 @@ describePg('seedBuiltin：声明了 defaults 的事件必须真的有派生规�
           channels: ['wecom_default', 'inapp_default'],
         },
         {
+          id: 'derived:forms:forms.collection.assigned:*',
+          recipient_key: 'assignee',
+          template_key: 'oa_collection_assigned',
+          channels: ['wecom_default', 'inapp_default'],
+        },
+        {
+          id: 'derived:forms:forms.collection.due:*',
+          recipient_key: 'assignee',
+          template_key: 'oa_collection_due',
+          channels: ['wecom_default', 'inapp_default'],
+        },
+        {
           id: 'derived:forms:forms.form.assigned:*',
           recipient_key: 'assignee',
           template_key: 'forms_form_assigned',
@@ -150,7 +163,7 @@ describePg('seedBuiltin：声明了 defaults 的事件必须真的有派生规�
       ])
       // 模板也真的落库了（有模板但没规则 = 同样投不出去）
       const tpl = await pool.query(
-        "select key, event_key from notify.template where org=$1 and (key like 'forms_%' or key like 'oa_approval_%') order by key",
+        "select key, event_key from notify.template where org=$1 and (key like 'forms_%' or key like 'oa_approval_%' or key like 'oa_collection_%') order by key",
         [org],
       )
       expect(tpl.rows).toEqual([
@@ -158,6 +171,8 @@ describePg('seedBuiltin：声明了 defaults 的事件必须真的有派生规�
         { key: 'forms_form_due_reminder', event_key: 'forms.form.due_reminder' },
         { key: 'oa_approval_awaiting', event_key: 'forms.approval.awaiting' },
         { key: 'oa_approval_decided', event_key: 'forms.approval.decided' },
+        { key: 'oa_collection_assigned', event_key: 'forms.collection.assigned' },
+        { key: 'oa_collection_due', event_key: 'forms.collection.due' },
       ])
     } finally {
       await pool.query('delete from notify.rule where org=$1', [org])

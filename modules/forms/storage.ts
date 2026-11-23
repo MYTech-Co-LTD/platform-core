@@ -248,15 +248,29 @@ export interface SubmissionRow {
   submittedAt: Date
 }
 
+/** 提交挂轮的入参（收集轮次件③ / #2707）。 */
+export interface SubmitRoundRef {
+  /** 目标轮次 id（数字串；非数字 ⇒ ROUND_NOT_FOUND） */
+  roundId: string
+  /** kind=value_grid 必填：本笔提交对应的格子键；targets 轮忽略（按提交人对名单） */
+  anchorKey?: string | null
+}
+
 /** 提交 = 按「提交将钉住的版本」（head）预载字典生效集 → 契约五道闸 → forms.submit
  *  （触发器复核 head：校验与写入之间 head 被切走时**保守拒绝**，绝不出现
  *  「按旧契约校验、新契约入库」的窗口）。
  *
  *  `kind` 只影响「读哪个资产的 head/body」。**契约五道闸只对 form_def 生效**：approval_def 的
  *  body 是审批 DSL（没有 `schema`），它的校验与入库走 `submitApproval`（编译计划 + 建 case，
- *  自带 `validateApprovalBody`），不从这里过。 */
+ *  自带 `validateApprovalBody`），不从这里过。
+ *
+ *  `round` 给了（收集轮次联动）⇒ 单事务完成「提交 + round_id 回写 + 名单/格子翻 submitted」：
+ *  轮闸（存在/open/表单版本一致/名单或格子命中）任一不过 ⇒ 全体回滚，**不落半截提交**；
+ *  重复提交幂等（行重复置 submitted，进度不变；waived 不覆盖）。 */
 export async function submit(
-  pool: Pool, org: string, assetId: string, payload: unknown, userId: string, kind: FormsKind = DEFAULT_KIND,
+  pool: Pool, org: string, assetId: string, payload: unknown, userId: string,
+  kind: FormsKind = DEFAULT_KIND,
+  round?: SubmitRoundRef,
 ): Promise<{ id: string; version: number }> {
   const version = await headVersion(pool, org, assetId, kind)
   if (version === null) throw new FormsError('NO_PUBLISHED_HEAD', '表单尚无发布版本，不能提交')
@@ -267,16 +281,78 @@ export async function submit(
     await validateAgainstContract(pool, org, body, payload)
   }
 
+  if (round === undefined || round.roundId === undefined) {
+    try {
+      const { rows } = await pool.query('select forms.submit($1,$2,$3,$4,$5) id', [
+        org, kind, assetId, JSON.stringify(payload ?? null), userId,
+      ])
+      return { id: String(rows[0].id), version }
+    } catch (e) {
+      if (/submissions follow head only/.test((e as Error).message)) {
+        throw new FormsError('HEAD_MOVED', '提交期间表单版本已切换，请重试')
+      }
+      throw e
+    }
+  }
+
+  if (!/^\d+$/.test(round.roundId)) {
+    throw new FormsError('ROUND_NOT_FOUND', `轮次 ${round.roundId} 不存在`)
+  }
+  const client = await pool.connect()
   try {
-    const { rows } = await pool.query('select forms.submit($1,$2,$3,$4,$5) id', [
+    await client.query('begin')
+    // 轮闸在**同一事务**内读取：判定与写入同一截止，不存在「过了闸但轮刚被关」的窗口外写入
+    const rd = await getRoundRow(client, org, round.roundId)
+    if (rd === null) throw new FormsError('ROUND_NOT_FOUND', `轮次 ${round.roundId} 不存在`)
+    if (rd.status !== 'open') {
+      throw new FormsError('ROUND_NOT_OPEN', `轮次 ${rd.roundKey} 不是 open（${rd.status}），不能提交`)
+    }
+    if (rd.assetId !== assetId || rd.version !== version) {
+      throw new FormsError(
+        'ROUND_FORM_MISMATCH',
+        `轮次钉的是 ${rd.assetId} v${rd.version}，提交的是 ${assetId} v${version}——表单版本不属该轮`,
+      )
+    }
+    const { rows } = await client.query('select forms.submit($1,$2,$3,$4,$5) id', [
       org, kind, assetId, JSON.stringify(payload ?? null), userId,
     ])
-    return { id: String(rows[0].id), version }
+    const id = String(rows[0].id)
+    await client.query(
+      'update forms.submission set round_id=$3 where org=$1 and id=$2::bigint',
+      [org, id, round.roundId],
+    )
+    if (rd.kind === 'targets') {
+      const upd = await client.query(
+        `update forms.collection_target set status='submitted', submission_id=$3::bigint, updated_at=now()
+          where round_id=$1::bigint and user_name=$2 and status <> 'waived'`,
+        [round.roundId, userId, id],
+      )
+      if ((upd.rowCount ?? 0) === 0) {
+        throw new FormsError('ROUND_SUBMITTER_NOT_IN_ROUND', `提交人 ${userId} 不在本轮名单`)
+      }
+    } else {
+      if (round.anchorKey === undefined || round.anchorKey === null || round.anchorKey === '') {
+        throw new FormsError('ROUND_ANCHOR_REQUIRED', '值集轮提交必须带 anchorKey（本笔对应的格子键）')
+      }
+      const upd = await client.query(
+        `update forms.collection_anchor set status='submitted', submission_id=$3::bigint, updated_at=now()
+          where round_id=$1::bigint and anchor_key=$2 and status <> 'waived'`,
+        [round.roundId, round.anchorKey, id],
+      )
+      if ((upd.rowCount ?? 0) === 0) {
+        throw new FormsError('ROUND_ANCHOR_NOT_FOUND', `格子 ${round.anchorKey} 不在本轮锚快照`)
+      }
+    }
+    await client.query('commit')
+    return { id, version }
   } catch (e) {
+    await client.query('rollback').catch(() => {})
     if (/submissions follow head only/.test((e as Error).message)) {
       throw new FormsError('HEAD_MOVED', '提交期间表单版本已切换，请重试')
     }
     throw e
+  } finally {
+    client.release()
   }
 }
 
@@ -1017,4 +1093,274 @@ export async function listStalePendingSubmissions(
     [olderThanMinutes, limit],
   )
   return rows.map((r) => ({ org: r.org, id: String(r.id), caseRef: r.case_ref, submittedAt: r.submitted_at }))
+}
+
+// ════════════════════════════════════════════════════════════════════════════
+// 收集轮次（件③ / issue #2707）：名单轮（谁该交）与值集轮（期望维度格子快照）。
+// 状态机收在存储层：draft → open → closed 单向，任一越界转移 = ROUND_STATUS_INVALID。
+// ════════════════════════════════════════════════════════════════════════════
+
+export type RoundKind = 'targets' | 'value_grid'
+export type RoundStatus = 'draft' | 'open' | 'closed'
+
+export interface CollectionRoundRow {
+  id: string
+  org: string
+  assetId: string
+  version: number
+  roundKey: string
+  kind: RoundKind
+  name: string
+  startsAt: Date | null
+  endsAt: Date | null
+  status: RoundStatus
+  createdBy: string
+  createdAt: Date
+}
+
+const ROUND_COLS =
+  'id, org, asset_id, version, round_key, kind, name, starts_at, ends_at, status, created_by, created_at'
+
+function mapRoundRow(r: any): CollectionRoundRow {
+  return {
+    id: String(r.id), org: r.org, assetId: r.asset_id, version: r.version,
+    roundKey: r.round_key, kind: r.kind, name: r.name,
+    startsAt: r.starts_at, endsAt: r.ends_at, status: r.status,
+    createdBy: r.created_by, createdAt: r.created_at,
+  }
+}
+
+export interface CreateRoundInput {
+  org: string
+  assetId: string
+  version: number
+  roundKey: string
+  kind: RoundKind
+  name: string
+  createdBy: string
+  startsAt?: Date | null
+  endsAt?: Date | null
+  /** kind=targets：应交人名单（user_name） */
+  targets?: string[]
+  /** kind=value_grid：期望格子键清单（anchor_key） */
+  anchors?: string[]
+}
+
+/**
+ * 建轮（draft）+ 期望集合**建轮时**物化（名单/格子行，幂等去重）。
+ * 同 (org, asset_id, round_key) 再建 ⇒ ROUND_KEY_TAKEN（一轮一 key，不静默复用）；
+ * 对应清单为空 ⇒ ROUND_LIST_REQUIRED（没有期望集合的轮无法算进度）。
+ */
+export async function createRound(pool: Pool, input: CreateRoundInput): Promise<string> {
+  const keys = [...new Set((input.kind === 'targets' ? input.targets : input.anchors) ?? [])]
+  if (keys.length === 0) {
+    throw new FormsError(
+      'ROUND_LIST_REQUIRED',
+      input.kind === 'targets' ? '名单轮需要非空 targets 名单' : '值集轮需要非空 anchors 格子清单',
+    )
+  }
+  // 轮行与期望集合同事务落库：不留下「有轮没名单」的半截轮
+  const client = await pool.connect()
+  try {
+    await client.query('begin')
+    const ins = await client.query(
+      `insert into forms.collection_round
+         (org, asset_id, version, round_key, kind, name, starts_at, ends_at, created_by)
+       values ($1,$2,$3,$4,$5,$6,$7,$8,$9)
+       returning id`,
+      [
+        input.org, input.assetId, input.version, input.roundKey, input.kind, input.name,
+        input.startsAt ?? null, input.endsAt ?? null, input.createdBy,
+      ],
+    )
+    const id = String(ins.rows[0].id)
+    const into =
+      input.kind === 'targets'
+        ? 'forms.collection_target (round_id, org, user_name)'
+        : 'forms.collection_anchor (round_id, org, anchor_key)'
+    const conflictKey = input.kind === 'targets' ? 'user_name' : 'anchor_key'
+    await client.query(
+      `insert into ${into}
+       select $1::bigint, $2, k from unnest($3::text[]) k
+       on conflict (round_id, ${conflictKey}) do nothing`,
+      [id, input.org, keys],
+    )
+    await client.query('commit')
+    return id
+  } catch (e) {
+    await client.query('rollback').catch(() => {})
+    if ((e as { code?: string }).code === '23505') {
+      throw new FormsError('ROUND_KEY_TAKEN', `轮次 ${input.roundKey} 已存在（同表单同 round_key 只能一轮）`)
+    }
+    throw e
+  } finally {
+    client.release()
+  }
+}
+
+async function getRoundRow(q: { query: Pool['query'] }, org: string, id: string): Promise<CollectionRoundRow | null> {
+  const { rows } = await q.query(
+    `select ${ROUND_COLS} from forms.collection_round where org=$1 and id=$2::bigint`,
+    [org, id],
+  )
+  return rows.length === 0 ? null : mapRoundRow(rows[0])
+}
+
+export async function getRound(pool: Pool, org: string, id: string): Promise<CollectionRoundRow | null> {
+  return getRoundRow(pool, org, id)
+}
+
+/** 状态机转移：from 之外的现状一律 ROUND_STATUS_INVALID（存在性先查，报错可解释）。 */
+async function transitionRound(
+  pool: Pool, org: string, id: string, from: RoundStatus[], to: RoundStatus,
+): Promise<CollectionRoundRow> {
+  const { rows } = await pool.query(
+    `update forms.collection_round set status=$3
+      where org=$1 and id=$2::bigint and status = any($4::text[])
+      returning ${ROUND_COLS}`,
+    [org, id, to, from],
+  )
+  if (rows.length === 0) {
+    const cur = await getRound(pool, org, id)
+    if (cur === null) throw new FormsError('ROUND_NOT_FOUND', `轮次 ${id} 不存在`)
+    throw new FormsError('ROUND_STATUS_INVALID', `轮次 ${cur.roundKey} 当前状态是 ${cur.status}，不能转到 ${to}`)
+  }
+  return mapRoundRow(rows[0])
+}
+
+/** 开轮：draft → open（唯一入口；重复开拒）。 */
+export function openRound(pool: Pool, org: string, id: string): Promise<CollectionRoundRow> {
+  return transitionRound(pool, org, id, ['draft'], 'open')
+}
+
+/** 关轮：open → closed（draft 直关 / 重复关 / closed 复活都拒）。 */
+export function closeRound(pool: Pool, org: string, id: string): Promise<CollectionRoundRow> {
+  return transitionRound(pool, org, id, ['open'], 'closed')
+}
+
+export interface RoundSummaryRow extends CollectionRoundRow {
+  total: number
+  submitted: number
+  pending: number
+}
+
+/** 轮次列表 + 进度聚合（进度来自期望集合行状态，名单轮/值集轮同列口径）。 */
+export async function listRounds(pool: Pool, org: string, limit = 100): Promise<RoundSummaryRow[]> {
+  const { rows } = await pool.query(
+    `select r.id, r.org, r.asset_id, r.version, r.round_key, r.kind, r.name,
+            r.starts_at, r.ends_at, r.status, r.created_by, r.created_at,
+            coalesce(p.total, 0)::int     as total,
+            coalesce(p.submitted, 0)::int as submitted,
+            coalesce(p.pending, 0)::int   as pending
+       from forms.collection_round r
+       left join (
+         select round_id, count(*) total,
+                count(*) filter (where status = 'submitted') submitted,
+                count(*) filter (where status = 'pending') pending
+           from forms.collection_target group by round_id
+         union all
+         select round_id, count(*) total,
+                count(*) filter (where status = 'submitted') submitted,
+                count(*) filter (where status = 'pending') pending
+           from forms.collection_anchor group by round_id
+       ) p on p.round_id = r.id
+      where r.org = $1
+      order by r.created_at desc
+      limit $2`,
+    [org, limit],
+  )
+  return rows.map((r) => ({ ...mapRoundRow(r), total: r.total, submitted: r.submitted, pending: r.pending }))
+}
+
+export interface RoundProgress {
+  total: number
+  submitted: number
+  pending: number
+  waived: number
+  /** 逐项状态（targets=key=应交人 / value_grid=key=格子键），按 key 排序。 */
+  items: Array<{ key: string; status: string; submissionId: string | null; updatedAt: Date }>
+}
+
+/** 逐项进度（详情/催办面用）。轮不存在或不属本租户 ⇒ null（不泄露存在性）。 */
+export async function roundProgress(pool: Pool, org: string, roundId: string): Promise<RoundProgress | null> {
+  const round = await getRound(pool, org, roundId)
+  if (round === null) return null
+  const table = round.kind === 'targets' ? 'forms.collection_target' : 'forms.collection_anchor'
+  const keyCol = round.kind === 'targets' ? 'user_name' : 'anchor_key'
+  const { rows } = await pool.query(
+    `select ${keyCol} as key, status, submission_id, updated_at
+       from ${table} where round_id = $1::bigint order by ${keyCol} asc`,
+    [roundId],
+  )
+  const items = rows.map((r: any) => ({
+    key: r.key, status: r.status,
+    submissionId: r.submission_id === null ? null : String(r.submission_id),
+    updatedAt: r.updated_at,
+  }))
+  return {
+    total: items.length,
+    submitted: items.filter((i) => i.status === 'submitted').length,
+    pending: items.filter((i) => i.status === 'pending').length,
+    waived: items.filter((i) => i.status === 'waived').length,
+    items,
+  }
+}
+
+/**
+ * 置格子已交（幂等：重复提交重复置，不报错；`waived` 不覆盖——免交是显式豁免）。
+ * 行不在本轮 ⇒ false（调用方决定报不报错）。
+ */
+export async function setAnchorSubmitted(
+  pool: Pool, org: string, roundId: string, anchorKey: string, submissionId: string,
+): Promise<boolean> {
+  const { rowCount } = await pool.query(
+    `update forms.collection_anchor a set status='submitted', submission_id=$3::bigint, updated_at=now()
+       from forms.collection_round r
+      where a.round_id = r.id and r.org=$1 and a.round_id=$2::bigint and a.anchor_key=$4
+        and a.status <> 'waived'`,
+    [org, roundId, submissionId, anchorKey],
+  )
+  return (rowCount ?? 0) > 0
+}
+
+/** 名单轮版：按提交人置 submitted（语义同 setAnchorSubmitted）。 */
+export async function setTargetSubmitted(
+  pool: Pool, org: string, roundId: string, userName: string, submissionId: string,
+): Promise<boolean> {
+  const { rowCount } = await pool.query(
+    `update forms.collection_target t set status='submitted', submission_id=$3::bigint, updated_at=now()
+       from forms.collection_round r
+      where t.round_id = r.id and r.org=$1 and t.round_id=$2::bigint and t.user_name=$4
+        and t.status <> 'waived'`,
+    [org, roundId, submissionId, userName],
+  )
+  return (rowCount ?? 0) > 0
+}
+
+export interface OverdueRound {
+  round: CollectionRoundRow
+  /** 还没交的 key（targets=应交人 / value_grid=格子键） */
+  pendingKeys: string[]
+}
+
+/** 对账脚本用（**不带 org**——脚本按行上的 org 逐条处理）：open 且已过 ends_at 的轮 + 未交 key。 */
+export async function listOverdueRounds(pool: Pool, now: Date): Promise<OverdueRound[]> {
+  const { rows } = await pool.query(
+    `select ${ROUND_COLS} from forms.collection_round
+      where status = 'open' and ends_at is not null and ends_at < $1
+      order by created_at asc`,
+    [now],
+  )
+  const out: OverdueRound[] = []
+  for (const r of rows) {
+    const round = mapRoundRow(r)
+    const table = round.kind === 'targets' ? 'forms.collection_target' : 'forms.collection_anchor'
+    const keyCol = round.kind === 'targets' ? 'user_name' : 'anchor_key'
+    const pend = await pool.query(
+      `select ${keyCol} as k from ${table} where round_id=$1::bigint and status='pending' order by ${keyCol}`,
+      [round.id],
+    )
+    out.push({ round, pendingKeys: pend.rows.map((x: { k: string }) => x.k) })
+  }
+  return out
 }

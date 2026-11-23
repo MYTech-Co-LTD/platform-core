@@ -3,7 +3,8 @@ import { Pool } from 'pg'
 import { applyMigrations } from './test-util'
 import { schemaOf, validateSubmission } from './domain/contract'
 import {
-  audit, FormsError, headVersion, listExternalApprovals, listVersions, newDraft, publish,
+  audit, closeRound, createRound, FormsError, getRound, headVersion, listExternalApprovals,
+  listOverdueRounds, listRounds, listVersions, newDraft, openRound, publish, roundProgress, submit,
   upsertExternalApproval,
 } from './storage'
 
@@ -47,7 +48,11 @@ describePg('forms 生命周期内核（PoC 28 断言对账）', () => {
   })
 
   afterAll(async () => {
-    // 尽力而为：published/retired 行删不掉是**被测契约**（触发器拦），吞掉即可
+    // 尽力而为：published/retired 行删不掉是**被测契约**（触发器拦），吞掉即可。
+    // 收集轮次三表（004）：子行先删（target/anchor 的 FK 指向 round，无 cascade）
+    for (const t of ['collection_target', 'collection_anchor', 'collection_round']) {
+      await pool.query(`delete from forms.${t} where org = $1`, [ORG]).catch(() => {})
+    }
     for (const t of ['audit', 'submission', 'asset_head', 'asset_version', 'mcp_audit', 'external_approval']) {
       await pool.query(`delete from forms.${t} where org = $1`, [ORG]).catch(() => {})
     }
@@ -89,10 +94,12 @@ describePg('forms 生命周期内核（PoC 28 断言对账）', () => {
     )
     expect(new Set(rows.map((r) => r.table_name))).toEqual(
       // 002 起多 forms.audit（事项审计）+ forms.mcp_audit（能力网关审计）；
-      // 003_external_approval 起多 forms.external_approval（企微标准审批只读镜像）
+      // 003_external_approval 起多 forms.external_approval（企微标准审批只读镜像）；
+      // 004_collection_rounds 起多收集轮次三表（#2707：轮次/名单/锚快照）
       new Set([
         'kind', 'asset_version', 'asset_head', 'submission', 'dict_item', 'dict_global_item',
         'audit', 'mcp_audit', 'external_approval',
+        'collection_round', 'collection_target', 'collection_anchor',
       ]),
     )
   })
@@ -457,5 +464,209 @@ describePg('forms 生命周期内核（PoC 28 断言对账）', () => {
     })
     expect(row?.startedAt).toEqual(startedAt)
     expect(row?.finishedAt).toEqual(finishedAt)
+  })
+})
+
+// ════════════════════════════════════════════════════════════════════════════
+// 收集轮次（004_collection_rounds.sql / issue #2707）：名单轮 + 值集轮 + 提交联动。
+// 口径同上：storage 函数 + 裸 SQL 双向对账；联动提交必须整体回滚（不留半截状态）。
+// ════════════════════════════════════════════════════════════════════════════
+const ROUND_ORG = `org-forms-rounds-${Math.random().toString(36).slice(2, 8)}`
+
+describePg('forms 收集轮次（#2707）', () => {
+  let pool: Pool
+
+  beforeAll(async () => {
+    pool = new Pool({ connectionString: dbUrl })
+    await applyMigrations(pool)
+  })
+
+  afterAll(async () => {
+    // 子行先删（target/anchor 的 FK 指向 round，无 cascade）
+    for (const t of ['collection_target', 'collection_anchor', 'collection_round']) {
+      await pool.query(`delete from forms.${t} where org = $1`, [ROUND_ORG]).catch(() => {})
+    }
+    for (const t of ['submission', 'asset_head', 'asset_version']) {
+      await pool.query(`delete from forms.${t} where org = $1`, [ROUND_ORG]).catch(() => {})
+    }
+    await pool.end()
+  })
+
+  const R_FORM = 'r-form'
+
+  /** 建一张已发布表单（v1）；每个用例独立 asset（published 不可重复发布） */
+  const pubForm = async (asset: string): Promise<void> => {
+    await pool.query('select forms.new_draft($1,$2,$3,$4,$5)', [
+      ROUND_ORG, 'form_def', asset, JSON.stringify(bodyV1), 'drafter-1',
+    ])
+    await pool.query('select forms.publish($1,$2,$3,$4,$5,$6)', [ROUND_ORG, 'form_def', asset, 1, 'human-1', 'human'])
+  }
+
+  const submissionCount = async (): Promise<number> => {
+    const { rows } = await pool.query('select count(*)::int n from forms.submission where org=$1', [ROUND_ORG])
+    return rows[0].n
+  }
+
+  it('迁移在位：三新表 + submission.round_id 列；重复应用迁移幂等', async () => {
+    await applyMigrations(pool) // 第二遍：账本跳过，不抛
+    const { rows } = await pool.query(
+      `select table_name from information_schema.tables
+        where table_schema='forms'
+          and table_name in ('collection_round','collection_target','collection_anchor')`,
+    )
+    expect(rows).toHaveLength(3)
+    const col = await pool.query(
+      `select column_name from information_schema.columns
+        where table_schema='forms' and table_name='submission' and column_name='round_id'`,
+    )
+    expect(col.rows).toHaveLength(1)
+  })
+
+  it('轮次生命周期：draft → open → closed；重复 open/close、draft 直关、closed 复活均拒', async () => {
+    await pubForm(R_FORM)
+    const id = await createRound(pool, {
+      org: ROUND_ORG, assetId: R_FORM, version: 1, roundKey: '2026-11', kind: 'value_grid',
+      name: '十一月目标', createdBy: 'op-1', anchors: ['S001', 'S002'],
+    })
+    expect(id).toMatch(/^\d+$/)
+    let round = await getRound(pool, ROUND_ORG, id)
+    expect(round).toMatchObject({ status: 'draft', kind: 'value_grid', roundKey: '2026-11', name: '十一月目标' })
+
+    // 同 (org, asset, round_key) 再建 → 拒（一轮一 key）
+    await expect(createRound(pool, {
+      org: ROUND_ORG, assetId: R_FORM, version: 1, roundKey: '2026-11', kind: 'value_grid',
+      name: '重复 key', createdBy: 'op-1', anchors: ['S001'],
+    })).rejects.toBeInstanceOf(FormsError)
+
+    // draft 直关 → 拒
+    await expect(closeRound(pool, ROUND_ORG, id)).rejects.toMatchObject({ code: 'ROUND_STATUS_INVALID' })
+
+    round = await openRound(pool, ROUND_ORG, id)
+    expect(round.status).toBe('open')
+    await expect(openRound(pool, ROUND_ORG, id)).rejects.toMatchObject({ code: 'ROUND_STATUS_INVALID' })
+    // 锚快照建轮时就已写入（幂等去重：S001 只一行）
+    const anchors = await pool.query(
+      'select anchor_key, status from forms.collection_anchor where round_id=$1::bigint order by anchor_key',
+      [id],
+    )
+    expect(anchors.rows).toEqual([
+      { anchor_key: 'S001', status: 'pending' },
+      { anchor_key: 'S002', status: 'pending' },
+    ])
+
+    round = await closeRound(pool, ROUND_ORG, id)
+    expect(round.status).toBe('closed')
+    await expect(closeRound(pool, ROUND_ORG, id)).rejects.toMatchObject({ code: 'ROUND_STATUS_INVALID' })
+    await expect(openRound(pool, ROUND_ORG, id)).rejects.toMatchObject({ code: 'ROUND_STATUS_INVALID' })
+
+    // 不存在的轮
+    await expect(openRound(pool, ROUND_ORG, '999999')).rejects.toMatchObject({ code: 'ROUND_NOT_FOUND' })
+  })
+
+  it('提交联动（值集轮）：按 anchor 提交 → progress 变化；重复提交幂等；失败提交整体回滚；关轮后拒', async () => {
+    await pubForm('r-grid')
+    const id = await createRound(pool, {
+      org: ROUND_ORG, assetId: 'r-grid', version: 1, roundKey: '2026-12', kind: 'value_grid',
+      name: '十二月目标', createdBy: 'op-1', anchors: ['S001', 'S002'],
+    })
+    await openRound(pool, ROUND_ORG, id)
+
+    const s1 = await submit(pool, ROUND_ORG, 'r-grid', { name: 'x' }, 'store-1', 'form_def', { roundId: id, anchorKey: 'S001' })
+    expect(await roundProgress(pool, ROUND_ORG, id)).toMatchObject({ total: 2, submitted: 1, pending: 1, waived: 0 })
+    const { rows: subRows } = await pool.query('select round_id from forms.submission where id=$1::bigint', [s1.id])
+    expect(String(subRows[0].round_id)).toBe(id)
+
+    // 重复提交（同 anchor 再交）幂等：不报错、锚行仍一条 submitted、进度不变
+    await submit(pool, ROUND_ORG, 'r-grid', { name: 'x2' }, 'store-1', 'form_def', { roundId: id, anchorKey: 'S001' })
+    expect(await roundProgress(pool, ROUND_ORG, id)).toMatchObject({ total: 2, submitted: 1, pending: 1 })
+    const anchors = await pool.query(
+      "select anchor_key from forms.collection_anchor where round_id=$1::bigint and status='submitted'",
+      [id],
+    )
+    expect(anchors.rows.map((r: { anchor_key: string }) => r.anchor_key)).toEqual(['S001'])
+
+    // 未知 anchor / 缺 anchor → 拒，且**不落 submission**（事务整体回滚）
+    const before = await submissionCount()
+    await expect(
+      submit(pool, ROUND_ORG, 'r-grid', { name: 'x' }, 'store-9', 'form_def', { roundId: id, anchorKey: 'NOPE' }),
+    ).rejects.toMatchObject({ code: 'ROUND_ANCHOR_NOT_FOUND' })
+    await expect(
+      submit(pool, ROUND_ORG, 'r-grid', { name: 'x' }, 'store-9', 'form_def', { roundId: id }),
+    ).rejects.toMatchObject({ code: 'ROUND_ANCHOR_REQUIRED' })
+    expect(await submissionCount()).toBe(before)
+
+    // 关轮后提交被拒，且不落行
+    await closeRound(pool, ROUND_ORG, id)
+    await expect(
+      submit(pool, ROUND_ORG, 'r-grid', { name: 'x' }, 'store-2', 'form_def', { roundId: id, anchorKey: 'S002' }),
+    ).rejects.toMatchObject({ code: 'ROUND_NOT_OPEN' })
+    expect(await submissionCount()).toBe(before)
+
+    // 不存在的轮
+    await expect(
+      submit(pool, ROUND_ORG, 'r-grid', { name: 'x' }, 'store-2', 'form_def', { roundId: '999999', anchorKey: 'S001' }),
+    ).rejects.toMatchObject({ code: 'ROUND_NOT_FOUND' })
+  })
+
+  it('提交联动（名单轮）：按提交人置 submitted；不在名单拒；表单版本不属该轮拒；不带 roundId 逐字旧行为', async () => {
+    await pubForm('r-list')
+    const id = await createRound(pool, {
+      org: ROUND_ORG, assetId: 'r-list', version: 1, roundKey: '2026-11', kind: 'targets',
+      name: '月度巡检', createdBy: 'op-1', targets: ['u1', 'u2'],
+    })
+    await openRound(pool, ROUND_ORG, id)
+
+    await submit(pool, ROUND_ORG, 'r-list', { name: '张三' }, 'u1', 'form_def', { roundId: id })
+    const p = await roundProgress(pool, ROUND_ORG, id)
+    expect(p).toMatchObject({ total: 2, submitted: 1, pending: 1 })
+    expect(p?.items).toEqual([
+      { key: 'u1', status: 'submitted', submissionId: expect.any(String), updatedAt: expect.any(Date) },
+      { key: 'u2', status: 'pending', submissionId: null, updatedAt: expect.any(Date) },
+    ])
+
+    // 不在名单 → 拒（fail-closed，不静默放行）
+    await expect(
+      submit(pool, ROUND_ORG, 'r-list', { name: 'x' }, 'u9', 'form_def', { roundId: id }),
+    ).rejects.toMatchObject({ code: 'ROUND_SUBMITTER_NOT_IN_ROUND' })
+
+    // 表单版本不属该轮（轮钉 v1；表单出 v2 后 head 提交带 roundId → 拒）
+    await pool.query('select forms.new_draft($1,$2,$3,$4,$5)', [
+      ROUND_ORG, 'form_def', 'r-list', JSON.stringify(bodyV2), 'drafter-2',
+    ])
+    await pool.query('select forms.publish($1,$2,$3,$4,$5,$6)', [ROUND_ORG, 'form_def', 'r-list', 2, 'human-1', 'human'])
+    await expect(
+      submit(pool, ROUND_ORG, 'r-list', { name: 'x', region: '华东' }, 'u2', 'form_def', { roundId: id }),
+    ).rejects.toMatchObject({ code: 'ROUND_FORM_MISMATCH' })
+    // 不带 roundId 的提交不受轮约束（逐字旧行为：按 head 收）
+    const r = await submit(pool, ROUND_ORG, 'r-list', { name: 'x', region: '华东' }, 'u2')
+    expect(r.version).toBe(2)
+  })
+
+  it('listRounds 带进度聚合；listOverdueRounds 只出 open 且过了 ends_at 的轮（未交 key 逐行）', async () => {
+    await pubForm('r-due')
+    const past = new Date('2026-11-01T00:00:00Z')
+    const future = new Date('2999-01-01T00:00:00Z')
+    const overdue = await createRound(pool, {
+      org: ROUND_ORG, assetId: 'r-due', version: 1, roundKey: 'ov-1', kind: 'targets',
+      name: '已过期', createdBy: 'op-1', endsAt: past, targets: ['u1', 'u2'],
+    })
+    await openRound(pool, ROUND_ORG, overdue)
+    await submit(pool, ROUND_ORG, 'r-due', { name: 'x' }, 'u1', 'form_def', { roundId: overdue })
+
+    const running = await createRound(pool, {
+      org: ROUND_ORG, assetId: 'r-due', version: 1, roundKey: 'ov-2', kind: 'targets',
+      name: '进行中', createdBy: 'op-1', endsAt: future, targets: ['u1'],
+    })
+    await openRound(pool, ROUND_ORG, running)
+
+    const rounds = await listRounds(pool, ROUND_ORG)
+    const byKey = new Map(rounds.map((r) => [r.roundKey, r]))
+    expect(byKey.get('ov-1')).toMatchObject({ status: 'open', total: 2, submitted: 1, pending: 1 })
+    expect(byKey.get('ov-2')).toMatchObject({ status: 'open', total: 1, submitted: 0, pending: 1 })
+
+    const dues = await listOverdueRounds(pool, new Date())
+    const mine = dues.filter((d) => d.round.org === ROUND_ORG)
+    expect(mine.map((d) => d.round.roundKey)).toEqual(['ov-1']) // 未到期的 ov-2 不催
+    expect(mine[0].pendingKeys).toEqual(['u2']) // u1 已交，只剩 u2
   })
 })

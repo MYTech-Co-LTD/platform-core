@@ -51,6 +51,16 @@ async function handle(c: any, fn: () => Promise<Response>): Promise<Response> {
     if (e instanceof FormsError) {
       const map: Record<string, number> = {
         DICT_KEY_NOT_FOUND: 404, NO_PUBLISHED_HEAD: 409, HEAD_MOVED: 409,
+        // 收集轮次（件③ / #2707）
+        ROUND_NOT_FOUND: 404,
+        ROUND_KEY_TAKEN: 409,
+        ROUND_STATUS_INVALID: 409,
+        ROUND_NOT_OPEN: 409,
+        ROUND_FORM_MISMATCH: 409,
+        ROUND_SUBMITTER_NOT_IN_ROUND: 409,
+        ROUND_ANCHOR_REQUIRED: 400,
+        ROUND_ANCHOR_NOT_FOUND: 409,
+        ROUND_LIST_REQUIRED: 400,
         // 审批面（OA P1）
         OA_NOT_ENABLED: 409,
         ORG_UNAVAILABLE: 503,
@@ -528,15 +538,23 @@ export function createFormsRouter({
 
   // 分流（OA P1）：事项模板 body.mode='approval' ⇒ 编译计划 + 建引擎 case；其余保持收集路径逐字不变。
   // mode 从**提交将钉住的 head 版本**读（与表单提交同一基准；不读请求参数，防客户端自选）。
+  // 收集轮次联动（件③ / #2707）：body 带 roundId ⇒ 挂轮提交（单事务：落提交 + round_id 回写 +
+  // 名单/格子翻 submitted；轮非 open / 表单版本不属该轮 / 名单或格子不命中 ⇒ 4xx 且不落行）。
   r.post('/defs/:assetId/submissions', (c) =>
     handle(c, async () => {
       const { identity } = ctx(c)
       const assetId = c.req.param('assetId')
-      const body = (await c.req.json().catch(() => null)) as { payload?: unknown } | null
+      const body = (await c.req.json().catch(() => null)) as
+        { payload?: unknown; roundId?: unknown; anchorKey?: unknown } | null
+      const roundId = typeof body?.roundId === 'string' && body.roundId.length > 0 ? body.roundId : undefined
+      const anchorKey = typeof body?.anchorKey === 'string' && body.anchorKey.length > 0 ? body.anchorKey : undefined
       const head = await store.headVersion(pool, identity.orgId, assetId)
       if (head !== null) {
         const defBody = await store.bodyAt(pool, identity.orgId, assetId, head)
         if (store.itemModeOf(defBody) === 'approval') {
+          if (roundId !== undefined) {
+            return fail(c, 409, 'ROUND_FORM_MISMATCH', '审批事项不参与收集轮次（roundId 只用于收集类提交）')
+          }
           const result = await store.submitApproval(pool, identity.orgId, assetId, body?.payload, identity.userId, {
             orgPort,
             engineFor,
@@ -545,7 +563,10 @@ export function createFormsRouter({
           return c.json(result, 201)
         }
       }
-      const result = await store.submit(pool, identity.orgId, assetId, body?.payload, identity.userId)
+      const result = await store.submit(
+        pool, identity.orgId, assetId, body?.payload, identity.userId,
+        undefined, roundId !== undefined ? { roundId, anchorKey } : undefined,
+      )
       return c.json(result, 201)
     }),
   )
@@ -830,6 +851,154 @@ export function createFormsRouter({
         next_after_id: last === undefined ? rawAfter : last.approval_id,
         has_more: rows.length === limit,
       })
+    }),
+  )
+
+  // ── 收集轮次（件③ / issue #2707）：名单轮 + 值集轮的建轮/开轮/关轮/进度 ──
+  // scope：读 forms:view、写 forms:manage（宿主门卫按 manifest 声明施加）。
+  // 开轮的指派通知 **fail-open**（照审批回调先例）：逐 pending 入队，投递失败不得把
+  // 「已开成的轮」变成 500。值集轮没有逐格收件人（anchor 是格子键不是人）⇒ assigned
+  // 发给开轮人（created_by），由人去追格子；名单轮发给名单上的每个人。
+
+  /** roundKey：字母/数字开头 1..64（字母数字._:-），如 2026-11。 */
+  const ROUND_KEY_RE = /^[a-zA-Z0-9][a-zA-Z0-9_.:-]{0,63}$/
+  const ROUND_LIST_MAX = 500
+
+  const roundIdOf = (raw: string): string | null => (/^\d+$/.test(raw) ? raw : null)
+
+  const roundListOf = (v: unknown): string[] | null => {
+    if (v === undefined) return [] // 缺 key = 空清单 → ROUND_LIST_REQUIRED（比「形状错」更可解释）
+    if (!Array.isArray(v) || v.some((x) => typeof x !== 'string')) return null
+    return [...new Set((v as string[]).map((x) => x.trim()).filter((x) => x.length > 0 && x.length <= 128))]
+  }
+
+  r.get('/rounds', (c) =>
+    handle(c, async () => {
+      const { identity } = ctx(c)
+      return c.json({ rounds: await store.listRounds(pool, identity.orgId) })
+    }),
+  )
+
+  r.post('/rounds', (c) =>
+    handle(c, async () => {
+      const { identity } = ctx(c)
+      const b = (await c.req.json().catch(() => null)) as
+        | {
+            assetId?: unknown; version?: unknown; roundKey?: unknown; kind?: unknown; name?: unknown
+            startsAt?: unknown; endsAt?: unknown; targets?: unknown; anchors?: unknown
+          }
+        | null
+      const assetId = typeof b?.assetId === 'string' ? b.assetId : ''
+      if (!ASSET_ID_RE.test(assetId)) return fail(c, 400, 'ASSET_ID_INVALID', 'assetId 必须匹配 ^[a-z][a-z0-9-]{0,63}$')
+      const roundKey = typeof b?.roundKey === 'string' ? b.roundKey.trim() : ''
+      if (!ROUND_KEY_RE.test(roundKey)) {
+        return fail(c, 400, 'ROUND_KEY_INVALID', 'roundKey 须为字母/数字开头的 1..64 位（字母数字._:-），如 2026-11')
+      }
+      if (b?.kind !== 'targets' && b?.kind !== 'value_grid') {
+        return fail(c, 400, 'ROUND_KIND_INVALID', "kind 只能是 'targets'（名单轮）或 'value_grid'（值集轮）")
+      }
+      const name = typeof b?.name === 'string' ? b.name.trim() : ''
+      if (name.length === 0 || name.length > 128) return fail(c, 400, 'NAME_REQUIRED', 'name 必填（≤128 字）')
+      const timeOf = (v: unknown): Date | null | 'invalid' => {
+        if (v === undefined || v === null) return null
+        if (typeof v !== 'string' || v.length === 0) return 'invalid'
+        const d = new Date(v)
+        return Number.isNaN(d.getTime()) ? 'invalid' : d
+      }
+      const startsAt = timeOf(b?.startsAt)
+      const endsAt = timeOf(b?.endsAt)
+      if (startsAt === 'invalid' || endsAt === 'invalid') {
+        return fail(c, 400, 'BAD_TIME', 'startsAt/endsAt 必须是 ISO 时间串')
+      }
+      // 版本：显式给则必须已发布；缺省钉 head（轮次钉「按哪个契约收」，无发布版本 = 无从收）
+      let version: number
+      if (b?.version !== undefined) {
+        version = typeof b.version === 'number' ? b.version : Number.NaN
+        if (!Number.isInteger(version)) return fail(c, 400, 'BAD_VERSION', 'version 必须是整数')
+        const st = await store.assetVersionStatus(pool, identity.orgId, 'form_def', assetId, version)
+        if (st !== 'published') return fail(c, 409, 'NO_PUBLISHED_HEAD', `表单 v${version} 不是已发布版本`)
+      } else {
+        const head = await store.headVersion(pool, identity.orgId, assetId)
+        if (head === null) return fail(c, 409, 'NO_PUBLISHED_HEAD', '表单尚无发布版本，不能建轮')
+        version = head
+      }
+      const targets = b.kind === 'targets' ? roundListOf(b?.targets) : []
+      const anchors = b.kind === 'value_grid' ? roundListOf(b?.anchors) : []
+      if (targets === null || anchors === null) {
+        return fail(c, 400, 'ROUND_LIST_INVALID', 'targets/anchors 必须是字符串数组')
+      }
+      const list = b.kind === 'targets' ? targets : anchors
+      if (list.length === 0) {
+        return fail(c, 400, 'ROUND_LIST_REQUIRED', b.kind === 'targets' ? '名单轮需要非空 targets' : '值集轮需要非空 anchors')
+      }
+      if (list.length > ROUND_LIST_MAX) return fail(c, 400, 'ROUND_LIST_TOO_LONG', `名单/格子最多 ${ROUND_LIST_MAX} 行`)
+      const id = await store.createRound(pool, {
+        org: identity.orgId, assetId, version, roundKey,
+        kind: b.kind, name, createdBy: identity.userId,
+        // 走到这里 startsAt/endsAt 已收窄为 Date | null（'invalid' 在上面提前返回）
+        startsAt, endsAt,
+        targets, anchors,
+      })
+      await store.audit(pool, identity.orgId, identity.userId, 'round.create', id, {
+        assetId, version, roundKey, kind: b.kind, size: list.length,
+      })
+      return c.json({ id }, 201)
+    }),
+  )
+
+  r.get('/rounds/:id', (c) =>
+    handle(c, async () => {
+      const { identity } = ctx(c)
+      const id = roundIdOf(c.req.param('id'))
+      if (id === null) return fail(c, 404, 'ROUND_NOT_FOUND', `轮次 ${c.req.param('id')} 不存在`)
+      const round = await store.getRound(pool, identity.orgId, id)
+      if (round === null) return fail(c, 404, 'ROUND_NOT_FOUND', `轮次 ${id} 不存在`)
+      return c.json({ round, progress: await store.roundProgress(pool, identity.orgId, id) })
+    }),
+  )
+
+  r.post('/rounds/:id/open', (c) =>
+    handle(c, async () => {
+      const { identity } = ctx(c)
+      const id = roundIdOf(c.req.param('id'))
+      if (id === null) return fail(c, 404, 'ROUND_NOT_FOUND', `轮次 ${c.req.param('id')} 不存在`)
+      const round = await store.openRound(pool, identity.orgId, id)
+      await store.audit(pool, identity.orgId, identity.userId, 'round.open', id, { roundKey: round.roundKey })
+      // 开轮指派（fail-open）：逐 pending 通知；eventId 确定性（重复 emit 天然去重）
+      if (notify !== null) {
+        try {
+          const base = process.env.PLATFORM_CONSOLE_BASE_URL ?? ''
+          const link = `${base}/console/forms/fill/${encodeURIComponent(round.assetId)}`
+          const progress = await store.roundProgress(pool, identity.orgId, id)
+          for (const item of progress?.items ?? []) {
+            if (item.status !== 'pending') continue
+            await notify.emit(identity, {
+              eventKey: 'forms.collection.assigned',
+              eventId: `forms:round:${id}:assigned:${item.key}`,
+              scope: id,
+              payload: {
+                roundId: id, assetId: round.assetId, roundKey: round.roundKey, name: round.name,
+                assignee: round.kind === 'targets' ? item.key : round.createdBy,
+                link,
+              },
+            })
+          }
+        } catch (e) {
+          console.error('[forms] round assigned notify failed (fail-open):', e)
+        }
+      }
+      return c.json({ ok: true })
+    }),
+  )
+
+  r.post('/rounds/:id/close', (c) =>
+    handle(c, async () => {
+      const { identity } = ctx(c)
+      const id = roundIdOf(c.req.param('id'))
+      if (id === null) return fail(c, 404, 'ROUND_NOT_FOUND', `轮次 ${c.req.param('id')} 不存在`)
+      const round = await store.closeRound(pool, identity.orgId, id)
+      await store.audit(pool, identity.orgId, identity.userId, 'round.close', id, { roundKey: round.roundKey })
+      return c.json({ ok: true })
     }),
   )
 

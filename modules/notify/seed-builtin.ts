@@ -184,13 +184,15 @@ export async function seedBuiltin(
       rules += monitorRule.rowCount ?? 0
     }
 
-    // 表单指派/催办（Wave 2.3）：收件人 = 事件 payload 里的 `assignee`（recipients.assignee
-    // kind=field）⇒ 规则只写 recipient_key='assignee'，具体人由派发时按 payload 解析。
-    // 这一条此前**完全缺失**：forms 声明了两个事件、却没有模板也没有规则，dispatch 结果是
-    // `no_rules`（静默不进收件箱）——与 2026-10-27「漏 seed ⇒ 零投递」同型。
+    // 表单指派/催办（Wave 2.3）+ 收集轮次开轮/催办（件③ / #2707）：收件人 = 事件 payload 里的
+    // `assignee`（recipients.assignee kind=field）⇒ 规则只写 recipient_key='assignee'，具体人由
+    // 派发时按 payload 解析。三处同描：forms manifest events[].defaults ⇔ templates/builtin.ts ⇔
+    // 本派生规则——漏一处 = dispatch `no_rules`（静默不进收件箱）。
     for (const [event, template] of [
       ['forms.form.assigned', 'forms_form_assigned'],
       ['forms.form.due_reminder', 'forms_form_due_reminder'],
+      ['forms.collection.assigned', 'oa_collection_assigned'],
+      ['forms.collection.due', 'oa_collection_due'],
     ] as const) {
       const formsRule = await pool.query(
         `insert into notify.rule
