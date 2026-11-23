@@ -20,11 +20,10 @@
 
 ## Wave 3（投递 + 生产验收）
 
-- [ ] 7. PR（feat(data)，Closes #2713）→ CI 全绿 → 合并（避开长任务窗口）。
-- [ ] 8. 投递五步链到两个账套 console（sync → seed 6 份 → 重启 → 验 `schedules`/catalog 不变 → 删旧 state 不需要：无增量节点）。
-- [ ] 9. 生产验收：连续 ≥2 轮 tick 绿；湖回读 count 与 receipt 一致；`recon` 闭窗小时容差 0；
-      `retail-tier/` 无残留；次日 scorecard GREEN。
-- [ ] 10. 正典三处登记（§1.7 行、§1.6 案例、§5 验收）+ WeKnora 沉淀。
+- [x] 7. PR #2721（Closes #2713）→ CI 全绿 → 合并 `560800b1`。
+- [x] 8. 投递：`SYNC_OK 457/457` → seed 3120 `84 文件` / 64188 `77 文件`（**先修检出陈旧 lock**，见正典案例 54④）→ 重启两个 console → healthz ok、卷内 6 份管线就位。
+- [~] 9. 生产验收：13:50 轮 ok 且**只请求 p1–p4**、receipt 379 = 湖回读 379、`retail-tier/` 零残留；14:00 轮把 13 点补全到 445（网关 441，差 4 = 撤单/漂移，既有语义）。**待**：次日 scorecard GREEN。
+- [~] 10. 正典：§1.6 案例 54 ✅、§2 台账行 ✅；§5 验收记录与 WeKnora 沉淀待补。
 
 ## 回退
 
