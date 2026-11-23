@@ -11,6 +11,11 @@
 
 ## [Unreleased]
 
+## [0.370.0](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.369.0...v0.370.0) - 2026-11-23
+- 【新增】platform: 数据宪法 §9-3/§9-4 扩展点预留——事件 guarantee 档位 + 模块导出声明（声明即拒，实现待触发） ([#2720](https://github.com/MYTech-Co-LTD/platform-core/pull/2720), [6a7d9c9](https://github.com/MYTech-Co-LTD/platform-core/commit/6a7d9c937b7fb5d382d32fff940e9c1e6301a3d7))
+- 【新增】platform: 租户隔离第二道防线 B14——org 谓词 SQL lint + 修 metric_change 两条 update 真缺口 ([#2718](https://github.com/MYTech-Co-LTD/platform-core/pull/2718), [34c4118](https://github.com/MYTech-Co-LTD/platform-core/commit/34c41187e5e2413f191ac9c40c8b228c53939b82))
+
+
 ## [0.369.0](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.368.0...v0.369.0) - 2026-11-23
 - 【新增】platform: 数据依赖列集门禁 B13——售后首个跨域 dataDependencies 声明 + 判据 2 真库对账 + B1 dim_* 豁免退役 ([#2714](https://github.com/MYTech-Co-LTD/platform-core/pull/2714), [0fd70ea](https://github.com/MYTech-Co-LTD/platform-core/commit/0fd70ea20a1567a85ac79440256d2de45c357170))
 
