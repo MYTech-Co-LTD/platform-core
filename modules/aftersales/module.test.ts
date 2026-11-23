@@ -60,8 +60,8 @@ describePg('迁移（需要 DATABASE_URL）', () => {
     }
   })
 
-  it('7 张表全部落库，且每张都带 org 列（租户数据表纪律）', async () => {
-    const tables = ['region', 'store', 'product', 'employee', 'ticket_rule', 'ticket', 'ticket_attachment']
+  it('8 张表全部落库，且每张都带 org 列（租户数据表纪律；007 增 audit）', async () => {
+    const tables = ['region', 'store', 'product', 'employee', 'ticket_rule', 'ticket', 'ticket_attachment', 'audit']
     const res = await pool.query<{ table_name: string; column_name: string }>(
       `select table_name, column_name from information_schema.columns
         where table_schema = 'aftersales' and table_name = any($1::text[])`,

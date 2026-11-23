@@ -1,6 +1,7 @@
 import { z } from 'zod'
 import type { ApproveStatus, EmployeeItem, Paged, ProductItem, StoreItem } from '../api-types'
 import { DEFAULT_PAGE_SIZE, MAX_PAGE_SIZE, parseIdParam, parsePageParam } from './context'
+import { writeAudit } from '../domain/audit'
 import type { ModuleHono, RouteCtx } from './context'
 
 /** ILIKE 的 `%` `_` 在搜索词里是通配符——转义掉，否则用户输入 `%` 等于全表匹配。 */
@@ -172,8 +173,14 @@ export function registerMasterData(r: ModuleHono, ctx: RouteCtx): void {
          values ($1, $2, $3, $4, $5, 'pending') returning id`,
         [org, name, phone ?? '', storeCode ?? '', openId ?? ''],
       )
+      const newId = Number(res.rows[0].id)
+      // 同事务审计（评审 P0-2）：detail 不记手机号明文
+      await writeAudit(client, {
+        org, actor: c.get('identity').userId, action: 'employee.create', target: String(newId),
+        detail: { name, storeCode: storeCode ?? '' },
+      })
       await client.query('commit')
-      return c.json({ id: Number(res.rows[0].id) }, 201)
+      return c.json({ id: newId }, 201)
     } catch (err) {
       await client.query('rollback').catch(() => {})
       throw err
@@ -197,6 +204,10 @@ export function registerMasterData(r: ModuleHono, ctx: RouteCtx): void {
       [org, id, parsed.data.approveStatus],
     )
     if (res.rowCount === 0) return c.json({ error: 'NOT_FOUND' }, 404)
+    await writeAudit(ctx.pool, {
+      org, actor: c.get('identity').userId, action: 'employee.approve', target: String(id),
+      detail: { approveStatus: parsed.data.approveStatus },
+    })
     return c.json({ ok: true, id, approveStatus: parsed.data.approveStatus })
   })
 }

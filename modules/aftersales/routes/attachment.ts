@@ -12,6 +12,7 @@ import {
   GC_DEFAULT_LIMIT, GC_DEFAULT_OLDER_THAN_DAYS, GC_MAX_LIMIT, runAttachmentGc,
 } from '../domain/attachment-gc'
 import { parseIdParam } from './context'
+import { writeAudit } from '../domain/audit'
 import type { ModuleHono, RouteCtx } from './context'
 
 /**
@@ -154,6 +155,18 @@ export function registerAttachmentGc(r: ModuleHono, ctx: RouteCtx): void {
       { pool: ctx.pool, org, resolver: storageResolverFor(cands), deleter: (s, key) => s.deleteObject(key) },
       opts,
     )
+    // 破坏性批量操作必须留痕（评审 P0-2）：dry-run 也记（扫描结果本身是运维证据）。
+    // 逐条不记（一次可删 200 行）——记计数 + 前 20 个 id。
+    await writeAudit(ctx.pool, {
+      org, actor: c.get('identity').userId, action: 'attachment.gc', target: '',
+      detail: {
+        dryRun: opts.dryRun, olderThanDays: opts.olderThanDays, limit: opts.limit,
+        scanned: report.scanned, eligible: report.eligible,
+        deletedObjects: report.deletedObjects, deletedRows: report.deletedRows,
+        unresolved: report.skippedUnresolved.length, errors: report.errors.length,
+        unresolvedIdsSample: report.skippedUnresolved.slice(0, 20).map((x) => x.id),
+      },
+    })
     return c.json(report)
   })
 }

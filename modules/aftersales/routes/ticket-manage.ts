@@ -10,6 +10,7 @@ import {
   toRatioOrNull,
 } from '../domain/ticket'
 import type { TicketStatus } from '../domain/ticket'
+import { writeAudit } from '../domain/audit'
 // 分页常量与解析器在 routes/context.ts（四域共享层）——本文件不再留本地副本，
 // 避免与管理端/访客端两份实现静默漂移（见 context.ts 的 parsePageParam 注释）。
 import { DEFAULT_PAGE_SIZE, MAX_PAGE_SIZE, parseIdParam, parsePageParam } from './context'
@@ -175,6 +176,15 @@ export function registerTicketManage(r: ModuleHono, ctx: RouteCtx): void {
         return c.json({ error: 'ALREADY_PROCESSED' }, 409)
       }
 
+      // 审计与业务写同事务（评审 P0-2：写钱必须有痕）；commit 前落行，rollback 时一并消失
+      await writeAudit(client, {
+        org, actor: c.get('identity').userId, action: 'ticket.process', target: String(id),
+        detail: {
+          fromStatus: row.status, toStatus: outcome.status,
+          amountType: outcome.amountType, amountMinor: outcome.amountMinor,
+          refundRatio: outcome.refundRatio,
+        },
+      })
       await client.query('commit')
       return c.json({
         ok: true,
