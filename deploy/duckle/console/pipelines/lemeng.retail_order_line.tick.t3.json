@@ -1,0 +1,839 @@
+{
+  "name": "lemeng.retail_order_line.tick.t3",
+  "version": 1,
+  "id": "lemeng.retail_order_line.tick.t3",
+  "_note": [
+    "乐檬零售明细 tick 懒扩容 t3 段（#2713，2026-11-23）：静态页 9–16（8 页），",
+    "由父管线 lemeng.retail_order_line.tick 的 fe3 按需驱动（上段末页满 200 行才跑，零 item = 零请求）。",
+    "每页投影（只选申报 10 列、不改类型，另加 page 常量列）再 merge——修部分 schema 逐页推断炸点（手册案例 36/46/53）；投影不能 CAST json 列。",
+    "写出 /workspace/tmp/retail-tier/t3-${ITER_ITEM_BIZDAY}-h${ITER_ITEM_HOUR}.parquet（parquet，覆盖写）：json 列保类型、order_no 前导零不丢；combine/判定节点用 read_parquet 读回（无需 columns 声明）。",
+    "body 模板与父管线 p1 同源（checkpoint 仍 false）。"
+  ],
+  "nodes": [
+    {
+      "id": "p9",
+      "type": "source",
+      "position": {
+        "x": 0,
+        "y": 0
+      },
+      "data": {
+        "label": "page 9",
+        "componentId": "src.rest",
+        "properties": {
+          "connectionRef": "lemeng",
+          "url": "https://cloud.nhsoft.cn/agi/api/nhsoft.retail.ai.pos.posorder.find",
+          "method": "POST",
+          "body": "{\"branch_nums\": ${ITER_ITEM_BRANCH_NUMS}, \"date_from\": \"${ITER_ITEM_BIZDAY}\", \"date_to\": \"${ITER_ITEM_BIZDAY}\", \"time_from\": \"${ITER_ITEM_HOUR_FROM}\", \"time_to\": \"${ITER_ITEM_HOUR_TO}\", \"page_number\": 9, \"page_size\": 200}",
+          "responsePath": "/result",
+          "paginationType": "none",
+          "checkpoint": false
+        },
+        "schema": [
+          {
+            "name": "order_no",
+            "type": "string"
+          },
+          {
+            "name": "state",
+            "type": "string"
+          },
+          {
+            "name": "order_time",
+            "type": "timestamp"
+          },
+          {
+            "name": "order_operate_time",
+            "type": "timestamp"
+          },
+          {
+            "name": "order_source",
+            "type": "string"
+          },
+          {
+            "name": "order_transaction_type",
+            "type": "string"
+          },
+          {
+            "name": "order_ref_billno",
+            "type": "string"
+          },
+          {
+            "name": "order_total_money",
+            "type": "float64"
+          },
+          {
+            "name": "branch",
+            "type": "json"
+          },
+          {
+            "name": "pos_order_details",
+            "type": "json"
+          }
+        ]
+      }
+    },
+    {
+      "id": "c9",
+      "type": "transform",
+      "position": {
+        "x": 150,
+        "y": 0
+      },
+      "data": {
+        "label": "c9",
+        "componentId": "code.sql",
+        "properties": {
+          "sql": "SELECT order_no, state, order_time, order_operate_time, order_source, order_transaction_type, order_ref_billno, order_total_money, branch, pos_order_details, 9 AS page FROM input"
+        }
+      }
+    },
+    {
+      "id": "p10",
+      "type": "source",
+      "position": {
+        "x": 0,
+        "y": 0
+      },
+      "data": {
+        "label": "page 10",
+        "componentId": "src.rest",
+        "properties": {
+          "connectionRef": "lemeng",
+          "url": "https://cloud.nhsoft.cn/agi/api/nhsoft.retail.ai.pos.posorder.find",
+          "method": "POST",
+          "body": "{\"branch_nums\": ${ITER_ITEM_BRANCH_NUMS}, \"date_from\": \"${ITER_ITEM_BIZDAY}\", \"date_to\": \"${ITER_ITEM_BIZDAY}\", \"time_from\": \"${ITER_ITEM_HOUR_FROM}\", \"time_to\": \"${ITER_ITEM_HOUR_TO}\", \"page_number\": 10, \"page_size\": 200}",
+          "responsePath": "/result",
+          "paginationType": "none",
+          "checkpoint": false
+        },
+        "schema": [
+          {
+            "name": "order_no",
+            "type": "string"
+          },
+          {
+            "name": "state",
+            "type": "string"
+          },
+          {
+            "name": "order_time",
+            "type": "timestamp"
+          },
+          {
+            "name": "order_operate_time",
+            "type": "timestamp"
+          },
+          {
+            "name": "order_source",
+            "type": "string"
+          },
+          {
+            "name": "order_transaction_type",
+            "type": "string"
+          },
+          {
+            "name": "order_ref_billno",
+            "type": "string"
+          },
+          {
+            "name": "order_total_money",
+            "type": "float64"
+          },
+          {
+            "name": "branch",
+            "type": "json"
+          },
+          {
+            "name": "pos_order_details",
+            "type": "json"
+          }
+        ]
+      }
+    },
+    {
+      "id": "c10",
+      "type": "transform",
+      "position": {
+        "x": 150,
+        "y": 0
+      },
+      "data": {
+        "label": "c10",
+        "componentId": "code.sql",
+        "properties": {
+          "sql": "SELECT order_no, state, order_time, order_operate_time, order_source, order_transaction_type, order_ref_billno, order_total_money, branch, pos_order_details, 10 AS page FROM input"
+        }
+      }
+    },
+    {
+      "id": "p11",
+      "type": "source",
+      "position": {
+        "x": 0,
+        "y": 0
+      },
+      "data": {
+        "label": "page 11",
+        "componentId": "src.rest",
+        "properties": {
+          "connectionRef": "lemeng",
+          "url": "https://cloud.nhsoft.cn/agi/api/nhsoft.retail.ai.pos.posorder.find",
+          "method": "POST",
+          "body": "{\"branch_nums\": ${ITER_ITEM_BRANCH_NUMS}, \"date_from\": \"${ITER_ITEM_BIZDAY}\", \"date_to\": \"${ITER_ITEM_BIZDAY}\", \"time_from\": \"${ITER_ITEM_HOUR_FROM}\", \"time_to\": \"${ITER_ITEM_HOUR_TO}\", \"page_number\": 11, \"page_size\": 200}",
+          "responsePath": "/result",
+          "paginationType": "none",
+          "checkpoint": false
+        },
+        "schema": [
+          {
+            "name": "order_no",
+            "type": "string"
+          },
+          {
+            "name": "state",
+            "type": "string"
+          },
+          {
+            "name": "order_time",
+            "type": "timestamp"
+          },
+          {
+            "name": "order_operate_time",
+            "type": "timestamp"
+          },
+          {
+            "name": "order_source",
+            "type": "string"
+          },
+          {
+            "name": "order_transaction_type",
+            "type": "string"
+          },
+          {
+            "name": "order_ref_billno",
+            "type": "string"
+          },
+          {
+            "name": "order_total_money",
+            "type": "float64"
+          },
+          {
+            "name": "branch",
+            "type": "json"
+          },
+          {
+            "name": "pos_order_details",
+            "type": "json"
+          }
+        ]
+      }
+    },
+    {
+      "id": "c11",
+      "type": "transform",
+      "position": {
+        "x": 150,
+        "y": 0
+      },
+      "data": {
+        "label": "c11",
+        "componentId": "code.sql",
+        "properties": {
+          "sql": "SELECT order_no, state, order_time, order_operate_time, order_source, order_transaction_type, order_ref_billno, order_total_money, branch, pos_order_details, 11 AS page FROM input"
+        }
+      }
+    },
+    {
+      "id": "p12",
+      "type": "source",
+      "position": {
+        "x": 0,
+        "y": 0
+      },
+      "data": {
+        "label": "page 12",
+        "componentId": "src.rest",
+        "properties": {
+          "connectionRef": "lemeng",
+          "url": "https://cloud.nhsoft.cn/agi/api/nhsoft.retail.ai.pos.posorder.find",
+          "method": "POST",
+          "body": "{\"branch_nums\": ${ITER_ITEM_BRANCH_NUMS}, \"date_from\": \"${ITER_ITEM_BIZDAY}\", \"date_to\": \"${ITER_ITEM_BIZDAY}\", \"time_from\": \"${ITER_ITEM_HOUR_FROM}\", \"time_to\": \"${ITER_ITEM_HOUR_TO}\", \"page_number\": 12, \"page_size\": 200}",
+          "responsePath": "/result",
+          "paginationType": "none",
+          "checkpoint": false
+        },
+        "schema": [
+          {
+            "name": "order_no",
+            "type": "string"
+          },
+          {
+            "name": "state",
+            "type": "string"
+          },
+          {
+            "name": "order_time",
+            "type": "timestamp"
+          },
+          {
+            "name": "order_operate_time",
+            "type": "timestamp"
+          },
+          {
+            "name": "order_source",
+            "type": "string"
+          },
+          {
+            "name": "order_transaction_type",
+            "type": "string"
+          },
+          {
+            "name": "order_ref_billno",
+            "type": "string"
+          },
+          {
+            "name": "order_total_money",
+            "type": "float64"
+          },
+          {
+            "name": "branch",
+            "type": "json"
+          },
+          {
+            "name": "pos_order_details",
+            "type": "json"
+          }
+        ]
+      }
+    },
+    {
+      "id": "c12",
+      "type": "transform",
+      "position": {
+        "x": 150,
+        "y": 0
+      },
+      "data": {
+        "label": "c12",
+        "componentId": "code.sql",
+        "properties": {
+          "sql": "SELECT order_no, state, order_time, order_operate_time, order_source, order_transaction_type, order_ref_billno, order_total_money, branch, pos_order_details, 12 AS page FROM input"
+        }
+      }
+    },
+    {
+      "id": "p13",
+      "type": "source",
+      "position": {
+        "x": 0,
+        "y": 0
+      },
+      "data": {
+        "label": "page 13",
+        "componentId": "src.rest",
+        "properties": {
+          "connectionRef": "lemeng",
+          "url": "https://cloud.nhsoft.cn/agi/api/nhsoft.retail.ai.pos.posorder.find",
+          "method": "POST",
+          "body": "{\"branch_nums\": ${ITER_ITEM_BRANCH_NUMS}, \"date_from\": \"${ITER_ITEM_BIZDAY}\", \"date_to\": \"${ITER_ITEM_BIZDAY}\", \"time_from\": \"${ITER_ITEM_HOUR_FROM}\", \"time_to\": \"${ITER_ITEM_HOUR_TO}\", \"page_number\": 13, \"page_size\": 200}",
+          "responsePath": "/result",
+          "paginationType": "none",
+          "checkpoint": false
+        },
+        "schema": [
+          {
+            "name": "order_no",
+            "type": "string"
+          },
+          {
+            "name": "state",
+            "type": "string"
+          },
+          {
+            "name": "order_time",
+            "type": "timestamp"
+          },
+          {
+            "name": "order_operate_time",
+            "type": "timestamp"
+          },
+          {
+            "name": "order_source",
+            "type": "string"
+          },
+          {
+            "name": "order_transaction_type",
+            "type": "string"
+          },
+          {
+            "name": "order_ref_billno",
+            "type": "string"
+          },
+          {
+            "name": "order_total_money",
+            "type": "float64"
+          },
+          {
+            "name": "branch",
+            "type": "json"
+          },
+          {
+            "name": "pos_order_details",
+            "type": "json"
+          }
+        ]
+      }
+    },
+    {
+      "id": "c13",
+      "type": "transform",
+      "position": {
+        "x": 150,
+        "y": 0
+      },
+      "data": {
+        "label": "c13",
+        "componentId": "code.sql",
+        "properties": {
+          "sql": "SELECT order_no, state, order_time, order_operate_time, order_source, order_transaction_type, order_ref_billno, order_total_money, branch, pos_order_details, 13 AS page FROM input"
+        }
+      }
+    },
+    {
+      "id": "p14",
+      "type": "source",
+      "position": {
+        "x": 0,
+        "y": 0
+      },
+      "data": {
+        "label": "page 14",
+        "componentId": "src.rest",
+        "properties": {
+          "connectionRef": "lemeng",
+          "url": "https://cloud.nhsoft.cn/agi/api/nhsoft.retail.ai.pos.posorder.find",
+          "method": "POST",
+          "body": "{\"branch_nums\": ${ITER_ITEM_BRANCH_NUMS}, \"date_from\": \"${ITER_ITEM_BIZDAY}\", \"date_to\": \"${ITER_ITEM_BIZDAY}\", \"time_from\": \"${ITER_ITEM_HOUR_FROM}\", \"time_to\": \"${ITER_ITEM_HOUR_TO}\", \"page_number\": 14, \"page_size\": 200}",
+          "responsePath": "/result",
+          "paginationType": "none",
+          "checkpoint": false
+        },
+        "schema": [
+          {
+            "name": "order_no",
+            "type": "string"
+          },
+          {
+            "name": "state",
+            "type": "string"
+          },
+          {
+            "name": "order_time",
+            "type": "timestamp"
+          },
+          {
+            "name": "order_operate_time",
+            "type": "timestamp"
+          },
+          {
+            "name": "order_source",
+            "type": "string"
+          },
+          {
+            "name": "order_transaction_type",
+            "type": "string"
+          },
+          {
+            "name": "order_ref_billno",
+            "type": "string"
+          },
+          {
+            "name": "order_total_money",
+            "type": "float64"
+          },
+          {
+            "name": "branch",
+            "type": "json"
+          },
+          {
+            "name": "pos_order_details",
+            "type": "json"
+          }
+        ]
+      }
+    },
+    {
+      "id": "c14",
+      "type": "transform",
+      "position": {
+        "x": 150,
+        "y": 0
+      },
+      "data": {
+        "label": "c14",
+        "componentId": "code.sql",
+        "properties": {
+          "sql": "SELECT order_no, state, order_time, order_operate_time, order_source, order_transaction_type, order_ref_billno, order_total_money, branch, pos_order_details, 14 AS page FROM input"
+        }
+      }
+    },
+    {
+      "id": "p15",
+      "type": "source",
+      "position": {
+        "x": 0,
+        "y": 0
+      },
+      "data": {
+        "label": "page 15",
+        "componentId": "src.rest",
+        "properties": {
+          "connectionRef": "lemeng",
+          "url": "https://cloud.nhsoft.cn/agi/api/nhsoft.retail.ai.pos.posorder.find",
+          "method": "POST",
+          "body": "{\"branch_nums\": ${ITER_ITEM_BRANCH_NUMS}, \"date_from\": \"${ITER_ITEM_BIZDAY}\", \"date_to\": \"${ITER_ITEM_BIZDAY}\", \"time_from\": \"${ITER_ITEM_HOUR_FROM}\", \"time_to\": \"${ITER_ITEM_HOUR_TO}\", \"page_number\": 15, \"page_size\": 200}",
+          "responsePath": "/result",
+          "paginationType": "none",
+          "checkpoint": false
+        },
+        "schema": [
+          {
+            "name": "order_no",
+            "type": "string"
+          },
+          {
+            "name": "state",
+            "type": "string"
+          },
+          {
+            "name": "order_time",
+            "type": "timestamp"
+          },
+          {
+            "name": "order_operate_time",
+            "type": "timestamp"
+          },
+          {
+            "name": "order_source",
+            "type": "string"
+          },
+          {
+            "name": "order_transaction_type",
+            "type": "string"
+          },
+          {
+            "name": "order_ref_billno",
+            "type": "string"
+          },
+          {
+            "name": "order_total_money",
+            "type": "float64"
+          },
+          {
+            "name": "branch",
+            "type": "json"
+          },
+          {
+            "name": "pos_order_details",
+            "type": "json"
+          }
+        ]
+      }
+    },
+    {
+      "id": "c15",
+      "type": "transform",
+      "position": {
+        "x": 150,
+        "y": 0
+      },
+      "data": {
+        "label": "c15",
+        "componentId": "code.sql",
+        "properties": {
+          "sql": "SELECT order_no, state, order_time, order_operate_time, order_source, order_transaction_type, order_ref_billno, order_total_money, branch, pos_order_details, 15 AS page FROM input"
+        }
+      }
+    },
+    {
+      "id": "p16",
+      "type": "source",
+      "position": {
+        "x": 0,
+        "y": 0
+      },
+      "data": {
+        "label": "page 16",
+        "componentId": "src.rest",
+        "properties": {
+          "connectionRef": "lemeng",
+          "url": "https://cloud.nhsoft.cn/agi/api/nhsoft.retail.ai.pos.posorder.find",
+          "method": "POST",
+          "body": "{\"branch_nums\": ${ITER_ITEM_BRANCH_NUMS}, \"date_from\": \"${ITER_ITEM_BIZDAY}\", \"date_to\": \"${ITER_ITEM_BIZDAY}\", \"time_from\": \"${ITER_ITEM_HOUR_FROM}\", \"time_to\": \"${ITER_ITEM_HOUR_TO}\", \"page_number\": 16, \"page_size\": 200}",
+          "responsePath": "/result",
+          "paginationType": "none",
+          "checkpoint": false
+        },
+        "schema": [
+          {
+            "name": "order_no",
+            "type": "string"
+          },
+          {
+            "name": "state",
+            "type": "string"
+          },
+          {
+            "name": "order_time",
+            "type": "timestamp"
+          },
+          {
+            "name": "order_operate_time",
+            "type": "timestamp"
+          },
+          {
+            "name": "order_source",
+            "type": "string"
+          },
+          {
+            "name": "order_transaction_type",
+            "type": "string"
+          },
+          {
+            "name": "order_ref_billno",
+            "type": "string"
+          },
+          {
+            "name": "order_total_money",
+            "type": "float64"
+          },
+          {
+            "name": "branch",
+            "type": "json"
+          },
+          {
+            "name": "pos_order_details",
+            "type": "json"
+          }
+        ]
+      }
+    },
+    {
+      "id": "c16",
+      "type": "transform",
+      "position": {
+        "x": 150,
+        "y": 0
+      },
+      "data": {
+        "label": "c16",
+        "componentId": "code.sql",
+        "properties": {
+          "sql": "SELECT order_no, state, order_time, order_operate_time, order_source, order_transaction_type, order_ref_billno, order_total_money, branch, pos_order_details, 16 AS page FROM input"
+        }
+      }
+    },
+    {
+      "id": "m",
+      "type": "transform",
+      "position": {
+        "x": 300,
+        "y": 0
+      },
+      "data": {
+        "label": "m",
+        "componentId": "ctl.merge",
+        "properties": {}
+      }
+    },
+    {
+      "id": "o",
+      "type": "sink",
+      "position": {
+        "x": 450,
+        "y": 0
+      },
+      "data": {
+        "label": "o",
+        "componentId": "snk.parquet",
+        "properties": {
+          "path": "/workspace/tmp/retail-tier/t3-${ITER_ITEM_BIZDAY}-h${ITER_ITEM_HOUR}.parquet",
+          "mode": "overwrite"
+        }
+      }
+    }
+  ],
+  "edges": [
+    {
+      "id": "e9",
+      "source": "p9",
+      "target": "c9",
+      "sourceHandle": "main",
+      "targetHandle": "main",
+      "data": {
+        "connectionType": "main"
+      }
+    },
+    {
+      "id": "e10",
+      "source": "p10",
+      "target": "c10",
+      "sourceHandle": "main",
+      "targetHandle": "main",
+      "data": {
+        "connectionType": "main"
+      }
+    },
+    {
+      "id": "e11",
+      "source": "p11",
+      "target": "c11",
+      "sourceHandle": "main",
+      "targetHandle": "main",
+      "data": {
+        "connectionType": "main"
+      }
+    },
+    {
+      "id": "e12",
+      "source": "p12",
+      "target": "c12",
+      "sourceHandle": "main",
+      "targetHandle": "main",
+      "data": {
+        "connectionType": "main"
+      }
+    },
+    {
+      "id": "e13",
+      "source": "p13",
+      "target": "c13",
+      "sourceHandle": "main",
+      "targetHandle": "main",
+      "data": {
+        "connectionType": "main"
+      }
+    },
+    {
+      "id": "e14",
+      "source": "p14",
+      "target": "c14",
+      "sourceHandle": "main",
+      "targetHandle": "main",
+      "data": {
+        "connectionType": "main"
+      }
+    },
+    {
+      "id": "e15",
+      "source": "p15",
+      "target": "c15",
+      "sourceHandle": "main",
+      "targetHandle": "main",
+      "data": {
+        "connectionType": "main"
+      }
+    },
+    {
+      "id": "e16",
+      "source": "p16",
+      "target": "c16",
+      "sourceHandle": "main",
+      "targetHandle": "main",
+      "data": {
+        "connectionType": "main"
+      }
+    },
+    {
+      "id": "m1",
+      "source": "c9",
+      "target": "m",
+      "sourceHandle": "main",
+      "targetHandle": "main_1",
+      "data": {
+        "connectionType": "main"
+      }
+    },
+    {
+      "id": "m2",
+      "source": "c10",
+      "target": "m",
+      "sourceHandle": "main",
+      "targetHandle": "main_2",
+      "data": {
+        "connectionType": "main"
+      }
+    },
+    {
+      "id": "m3",
+      "source": "c11",
+      "target": "m",
+      "sourceHandle": "main",
+      "targetHandle": "main_3",
+      "data": {
+        "connectionType": "main"
+      }
+    },
+    {
+      "id": "m4",
+      "source": "c12",
+      "target": "m",
+      "sourceHandle": "main",
+      "targetHandle": "main_4",
+      "data": {
+        "connectionType": "main"
+      }
+    },
+    {
+      "id": "m5",
+      "source": "c13",
+      "target": "m",
+      "sourceHandle": "main",
+      "targetHandle": "main_5",
+      "data": {
+        "connectionType": "main"
+      }
+    },
+    {
+      "id": "m6",
+      "source": "c14",
+      "target": "m",
+      "sourceHandle": "main",
+      "targetHandle": "main_6",
+      "data": {
+        "connectionType": "main"
+      }
+    },
+    {
+      "id": "m7",
+      "source": "c15",
+      "target": "m",
+      "sourceHandle": "main",
+      "targetHandle": "main_7",
+      "data": {
+        "connectionType": "main"
+      }
+    },
+    {
+      "id": "m8",
+      "source": "c16",
+      "target": "m",
+      "sourceHandle": "main",
+      "targetHandle": "main_8",
+      "data": {
+        "connectionType": "main"
+      }
+    },
+    {
+      "id": "mo",
+      "source": "m",
+      "target": "o",
+      "sourceHandle": "main",
+      "targetHandle": "main",
+      "data": {
+        "connectionType": "main"
+      }
+    }
+  ]
+}
