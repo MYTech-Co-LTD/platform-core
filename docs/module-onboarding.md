@@ -308,7 +308,7 @@ if (!cfg) return c.json({ error: 'ZOS_NOT_CONFIGURED' }, 503)
 - 联动提醒：声明 `storage` 也是租户管理台**「存储配置」页可见**的条件之一（`storageDeclarers ∩ 启用模块 ≠ ∅`，见上面的对照表）。
 - 指针：`docs/module-protocol.md`「租户级配置注入：`storage`」节——那节自成一体（声明姿势 / 宿主注入的键与位置 / 安全性质 / 兜底语义四层皆有），本节只是接入视角的摘要。
 
-### `dataDependencies`：跨模块只读数据依赖（待落地）
+### `dataDependencies`：跨模块只读数据依赖（2026-11-23 已落地）
 
 **什么时候用它**：你的模块要读**别的模块拥有的数据**（如售后要读数据栈操作面产出的商品档案 /
 门店档案 / 订单数据）。先读 `docs/architecture.md` §2.3 把所有权与一源两面看清楚——
@@ -330,20 +330,36 @@ const { rows } = await pool.query(
 )
 ```
 
-- **只声明稳定视图，不声明物理表**：稳定视图（`v_*` 一类）是提供方（`modules/data`）对外承诺的
-  只读面，内部表结构演进不影响你（防腐层）。物理表不是承诺面，声明了也不合规。
-- **只读**：授权面只有 `select`；对提供方 schema 的任何写都不在授权内。
+- **声明的是 owner 发布物**：稳定视图（`v_*`）**或**带版本快照表（如 `data.dim_branch`，
+  契约与裁剪在发布侧）——2026-11-23 数据宪法 §4 裁决（此前「只许视图」与发布快照形态不一致，
+  已收敛）。**仍属违规**：声明 owner 的内部工作表 / 生产中间态（staging、湖、duckle 工作区）；
+  同域运营面自读（如 data 读自家 `staging.recon_break`）同样走声明面，列集归所属面纪律。
+- **只读**：授权面只有 `select`；对提供方 schema 的任何写都不在授权内（B1 写侧无豁免）。
+- **`ManifestSchema` 已 `.strict()`（#709）**：拼错字段名 / 未收字段 ⇒ **装载失败 / check-manifests 红**，
+  不再有「写了等于没写」的静默剥离。
+- **两步才算接入**：① manifest 声明条目；② 跑 `pnpm exec tsx scripts/check-data-dependencies.mjs --write-lock`
+  把列集登记进 `scripts/data-dependencies.lock.json` 并**同 PR 提交**——判据 2 门禁（B13）真库对账
+  声明集 ↔ 库列集 ↔ 登记，提供方改列集而不更新 lock ⇒ gates 红。真实案例：aftersales 的
+  `data.dim_branch` / `data.dim_item` / `data.dim_settlement_order_line`（首个跨 owner 域声明，#2714）。
 - **新鲜度 SLA = 采集频率**：订单类管线**小时级或 15 分钟起步（按业务定）**，档案类**日批**——
   你读到的是「最近一次采集」的数据，**不是实时的**。超周期场景的兜底**已裁不做**
   （架构 §2.3 拍板④）：不会有「订单同步中」状态，也没有手动回查源系统的口子——消费侧
   UI/文案不要假设自己能区分「没数据」与「还没同步」。
-- ⚠️⚠️ **本能力尚未落地，且落地前写了不报错（2026-10-16 订正）**：schema 未收字段、
-  B1 守卫未扩、引用表 / 稳定视图 / sync job 未建——全部随**采集首管线**落地（架构 §2.3
-  实施注记，四件套同一个 PR）。落地前在 manifest 写 `dataDependencies` **不会被拒**——
-  `ManifestSchema` 未加 `.strict()`，未知字段被 Zod **静默剥离**（写了等于没写、且无任何提示），
-  **落地前禁止使用本字段**；模块代码里写 `data.*` 跨 schema 查询才会被 B1 报红（真拦截）。
-- 指针：协议正典（声明语义 / 与 `api.internal` 的强度差异 / 门禁核什么）在
-  `docs/module-protocol.md`「跨模块只读数据依赖：`dataDependencies`」节。
+- 指针：协议正典（声明语义 / 与 `api.internal` 的强度差异 / 门禁判据 1+2）在
+  `docs/module-protocol.md`「跨模块只读数据依赖」节；所有权与契约轴在数据宪法 §3/§4。
+
+### `notifications.events[].guarantee`：事件保证档位（扩展点，2026-11-23 预留）
+
+缺省 `notification`（现行 fail-open 语义，**不要拿 emit 的返回做业务分支**）。
+`reaction`（事务性 outbox 的业务事件）**尚未实现**——声明即装载失败。开放条件：数据宪法 §5
+判据（「A 模块状态变化必须触发 B 模块业务动作且丢失不可容忍」首次真实出现）。
+详见 `docs/module-protocol.md`「事件保证档位」。
+
+### `exports`：模块导出声明（扩展点，2026-11-23 预留）
+
+声明「本模块的一张 PG 表作为分析数据集进湖」（`{dataset, source, watermark, partitions}`，
+宪法 §6 五件套）。**执行器尚未实现——声明即装载失败**。开放条件：第二个导出数据集立项
+（forms 首例继续走现有专用管线）。详见 `docs/module-protocol.md`「模块导出声明」。
 
 ## §6 接入验收清单
 
@@ -356,11 +372,14 @@ pnpm typecheck                # 递归 tsc --noEmit + scripts/
 pnpm exec tsx scripts/check-manifests.mjs        # manifest schema + entry/migrations 文件存在性
 pnpm exec tsx scripts/lint-architecture.mjs      # 架构不变量
 pnpm exec tsx scripts/check-tenant-isolation.mjs # 真库对账：本模块 schema 每张表都有 org 列（需 DATABASE_URL，且该库要有 CREATEDB 权限——它自建一次性库；缺了会响亮失败）
+pnpm exec tsx scripts/check-data-dependencies.mjs # 跨模块依赖列集三方对账（需 DATABASE_URL）。**新声明 dataDependencies 后先加 --write-lock 并提交 lock**（B13）
+pnpm exec tsx scripts/check-org-scope.mjs        # 纯静态：租户表的 select/update/delete 必须带 org 或 -- org-exempt: <理由>（B14）
 pnpm smoke                    # 装载冒烟（需 DATABASE_URL，且先 pnpm --filter @platform/web build 与 pnpm --filter @aftersales/mobile build——它硬检查移动端产物）
 ```
 
-CI 四个门禁 job（`unit` / `gates` / `web` / `smoke`）覆盖上面这些——`gates` 另外还跑
-`check-compose` / `check-env-example` 与提交纪律守卫，是**超集**；全绿才算接入完成。
+CI 四个门禁 job（`unit` / `gates` / `web` / `smoke`）覆盖上面这些——`gates` 是**超集**：除
+上面命令外，还跑 `check-compose` / `check-env-example` / `check-integrations` / 提交纪律守卫等
+（完整清单看 `.github/workflows/ci.yml` 的 gates job）；全绿才算接入完成。
 装载期检查会额外咬人：**注册路由与 `api.internal` 声明的任一方向差集 ⇒ 装载失败**（进程起不来）。
 构建期还有一条：**两个模块声明同一条 `frontend.console[].path` ⇒ `gen-console-registry` 硬失败**
 （菜单是按 path 聚合的，重复即二义）。
@@ -373,6 +392,31 @@ import { probeAnonymous } from '@platform/sdk/test-util/anonymous-probe'
 
 const results = await probeAnonymous(mountedApp) // 期望每条都是 401
 ```
+
+### 移植模块（来自其他系统）的九项检查单（2026-11-23）
+
+「把别的系统里的一个业务域搬进来」时，逐项对表——每一项都有 aftersales 这个真实案例背书
+（它是首个 L1 真业务模块，也是平台多数协议能力的首个消费者）。**判定顺序**：先对表，再写码；
+对不上就走「架构先行」（`~/.claude/rules/common/architecture-first.md`）。
+
+| # | 接入面 | 正确形态 | 售后案例 / 指针 |
+|---|---|---|---|
+| 1 | **主数据**（商品/门店） | 清单端点读 `data.dim_*` 发布快照，**自然键**引用，不建本地拷贝表 | #476/#480 切源、005 迁移 drop 空主数据表；§5 `dataDependencies` |
+| 2 | **身份**（员工/微信用户） | 账号归 Casdoor（租户 org 下建号 + 角色），微信/企微绑定归 `platform.identity_link`（本地、可多绑、留审计） | 账户统一 Phase 1（spec 2026-10-10）；两态 session 语义写在正典 |
+| 3 | **业务档案**（花名册等） | 留模块 schema，由审批流产生；**身份/账号/绑定永不落模块表**；被组织级面消费的字段要登记耦合 | `aftersales.employee`（审批 + 多门店）；手机号被企微通讯录 sync 读——耦合已登记为已知缺口 |
+| 4 | **权限** | manage/guest **分面**声明（同 `(method,path)` 只能一个 scope），声明↔路由**同提交**（差集即装载失败）；补 `surfaces` | 售后 25 条 api.internal 分两面；`surfaces` 缺失时一致性校验空转（售后即实例） |
+| 5 | **通知** | 事件先声明后发（`notifications.events`），**fail-open 不参与业务分支**；`guarantee: reaction` 尚不可用（声明即装载失败） | `employee_approval.pending` 全链；宪法 §5 |
+| 6 | **定时任务** | 走平台调度器（`platform.job_schedule` / 模块 `ctx.scheduler`），**不开 openship job** | ⚠️ 售后 GC 仍是 openship job 打 manage 端点（已知偏离，无 `deploy/jobs.md` 台账——新模块**别照抄这一处**） |
+| 7 | **存储**（附件等） | manifest 声明 `storage: {kind: s3}`（声明的是**能力**），租户行配五键；漏配 = 端点 503（不是启动错） | M3c 原子切换 + 回滚演练；`storage_ref` 三态投影 |
+| 8 | **设计语言** | PC：`DESIGN.md` + `docs/design/console-ui-conventions.md`（宿主渲染标题、主操作唯一、空态写下一步）；移动：按 mobile-first spec 定 `surface`，**移植来的移动壳冻结不再扩展** | 售后 console 七页；mobile（Vue+TDesign）「不动就不动」 |
+| 9 | **横切** | 写钱/删物操作落审计（同事务）；每条租户表查询带 `org`（B14）；测试替身收严到真机形状 | 售后审计缺口是平台级待补项；B14 曾抓出 `metric_change` 两条 update 真缺口 |
+
+**移植时的三个高频误判**（都在售后身上发生过）：
+1. 「原系统前端直调 + 前端算金额」→ 必须重构为**后端单端点 + 事务 + 服务端权威计算**
+   （spec §0.3「迁移即重构」；唯一例外是操作员输入的 fixed 金额，服务端校验不重算）。
+2. 「原系统的主数据表」→ 不要搬表，**搬消费逻辑**（读发布快照）。
+3. 「原系统的移动端整迁」→ 壳可以整迁（shim + alias 保源码一字不改），但**不再扩展**；
+   新功能按 mobile-first spec 的 `surface` 判定单端实现。
 
 **部署/交付不在本文范围**：把模块接入平台（openship 上架、域名、环境变量、回滚）只留指针——
 见 `deploy/openship-adopt.md`。
@@ -387,7 +431,7 @@ const results = await probeAnonymous(mountedApp) // 期望每条都是 401
 | 进程起不来（装载失败） | 注册路由与声明的**双向差集** | 读失败信息里的差集原文（带 `未声明但已注册 […]；已声明但未注册 […]`） |
 | 停用模块的 API 面是 404（不是 403） | 停用语义**有意如此**（404 与「不存在」同形 ⇒ 模块 API 面内不可枚举） | `module-protocol.md`「停用语义」节 |
 | `c.get(TENANT_STORAGE)` 恒 `undefined` | ① manifest 没声明 `storage` ② 租户行**部分填写**（绝不回落平台桶） ③ 投影中间件挂载顺序错 | `module-protocol.md`「租户级配置注入」节 |
-| `gates` 报 B1 跨 schema 引用（如 `data.v_order_snapshot`） | ① 跨模块读**没声明** `dataDependencies`（或声明的是物理表不是稳定视图） ② 本能力**尚未落地**——守卫未扩面前任何跨 schema 引用都报红 ③ 写了他模块 schema（写侧**永远**无豁免） | 声明进 `dataDependencies`（§5 对应节）；能力未落地时先别跨 schema 读（`architecture.md` §2.3）——⚠️ 未落地期间 manifest 里的声明会被静默剥离，写了等于没写 |
+| `gates` 报 B1 跨 schema 引用（如 `data.dim_branch`） | ① 跨模块读**没声明** `dataDependencies` ② 声明了但写的是 owner 内部工作表/生产中间态（可声明物 = owner 发布物） ③ 写了他模块 schema（写侧**永远**无豁免） | 声明进 `dataDependencies` 并 `--write-lock` 登记列集（§5 对应节）；`data.dim_*` 前缀豁免已退役——跨 schema 读**要么声明、要么红**（#2714） |
 
 > ⚠️ **裸 `/` 与 scope ∉ `permissions` 不表现为 403**——它们是 schema 拒（`ManifestSchema` 直接
 > 拒绝 ⇒ 装载失败 / `check-manifests` 红），见 §2 的「校验」列。别在这张表里找它们。
