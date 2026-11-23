@@ -31,12 +31,23 @@
 ```sh
 # 1) 拉样（只读，落盘供核对字段名）
 npx tsx scripts/migrate-aftersales-wuji.mjs --org <casdoor_org> --sample 50 --sample-out /tmp/wuji-sample
-# 2) dry-run：拉取 + 清洗 + 打印，不写库
-npx tsx scripts/migrate-aftersales-wuji.mjs --org <casdoor_org> --tables employee_info,after_sales_rule
+# 2) dry-run：拉取 + 清洗 + 打印（不写库）；--store-map 也会在这里校验并打印覆盖率
+npx tsx scripts/migrate-aftersales-wuji.mjs --org <casdoor_org> --tables employee_info,after_sales_rule \
+  --store-map /path/to/store-map.csv
 # 3) apply
-npx tsx scripts/migrate-aftersales-wuji.mjs --org <casdoor_org> --tables employee_info,after_sales_rule --apply
+npx tsx scripts/migrate-aftersales-wuji.mjs --org <casdoor_org> --tables employee_info,after_sales_rule \
+  --store-map /path/to/store-map.csv --apply
 # 4) 对账：clean 产物 vs 库内计数/金额和（reconcile）；skip reasons 必须为空或逐条解释
 ```
+
+**门店映射文件（`--store-map`，2026-11-23 落地，issue #2729）**
+
+格式 `无忌门店id,dim_branch.code`（支持 `#` 注释与表头；重复后者覆盖；非法行整体失败）。
+文件**不进仓**（含客户门店编码清单），随部署环境投递；日志只打印条数与覆盖率。
+
+生成方法：`--tables store_info --sample 500` 只读拉源门店（id + 名称）→ 与
+`select code, name from data.dim_branch` 按名称精确匹配 → 人工核对未匹配/多匹配/疑似改名 →
+产出 CSV。dry-run 的 `[store-map] 覆盖率` 行显示命中/未命中；**未命中不为 0 就不要 apply**。
 
 **门店编码硬约束（导入员工前必读）**
 
@@ -46,10 +57,10 @@ npx tsx scripts/migrate-aftersales-wuji.mjs --org <casdoor_org> --tables employe
 
 - **不要导入 `store_info`**。导了只会让员工门店链「解析成功」，落的还是无忌 id——制造「看起来有归属、
   其实对不上」的假象，比明着空更贵。
-- 不导 `store_info` 时，员工行照常导入，门店链计入 `unresolved_store_ref`（可见计数，不静默）。
-- 补正推荐：导入后按「员工姓名 ↔ `dim_branch.name`」人工核对一次，再用一次性 SQL 补
-  `employee_store.store_code`（脚本与核对表留档；**改之前先跑同一份核对的 dry-run**）。
+- **正确做法：用 `--store-map` 导入**（映射是迁移配置的一部分，幂等可重跑、可对账）；
+  **不要**用「导入后再补一次性 SQL」——那破坏幂等（重跑会覆盖回错值）且对账看不见。
 - **在门店归属正确之前，不要开访客登记页**（「我的门店」会展示错编码）。
+- 覆盖率不足时的处置：补映射后**重跑 dry-run → apply**（幂等），不要手工 UPDATE。
 
 **对账判据**
 - 每张导入表：`fetched = imported + skipped`，且 `skipped/reasons` 为空或已逐条说明；
