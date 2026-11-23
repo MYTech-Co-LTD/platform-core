@@ -6,9 +6,10 @@
 // 审批的请求体是 **`{ approveStatus }`**（英文枚举，spec §5 #9：中文是展示层的事、不入库）
 // ——以 `routes/masterdata.ts` 的 `ApproveBody` 为准。
 import { useCallback, useState } from 'react'
-import { Alert, Button, Form, Input, InputNumber, Modal, Table, Tag } from 'antd'
+import { Alert, Button, Form, Input, InputNumber, Modal, Table } from 'antd'
 import { apiGet, apiSend, messageOf } from '../lib/api'
 import { useList } from '../lib/useList'
+import { ListCard, Status } from '../lib/ui'
 import type { ApproveStatus, EmployeeItem, Paged } from '../../api-types'
 
 /** 枚举 → 展示层中文（spec §5 #9：中文不下库） */
@@ -16,6 +17,11 @@ const STATUS_LABEL: Record<ApproveStatus, string> = {
   pending: '待审批',
   approved: '已通过',
   rejected: '已驳回',
+}
+const STATUS_TONE: Record<ApproveStatus, 'warn' | 'ok' | 'danger'> = {
+  pending: 'warn',
+  approved: 'ok',
+  rejected: 'danger',
 }
 
 export default function EmployeesPage() {
@@ -50,16 +56,20 @@ export default function EmployeesPage() {
   }
 
   return (
-    <div>
-      <Button type="primary" onClick={() => setCreating(true)} style={{ marginBottom: 12 }}>
-        新建员工
-      </Button>
-      {error ? <Alert type="error" showIcon title={error} style={{ marginBottom: 12 }} /> : null}
+    <ListCard>
+      <div style={{ marginBottom: 12, display: 'flex', justifyContent: 'flex-end' }}>
+        <Button type="primary" onClick={() => setCreating(true)}>
+          新建员工
+        </Button>
+      </div>
+      {error ? <Alert type="error" showIcon message={error} style={{ marginBottom: 12 }} /> : null}
       <Table<EmployeeItem>
         rowKey="id"
+        size="small"
         dataSource={items}
         loading={loading}
         pagination={false}
+        locale={{ emptyText: '还没有员工档案。员工在公众号登记并审批通过后会出现在这里。' }}
         columns={[
           { title: '姓名', dataIndex: 'name' },
           { title: '手机号', dataIndex: 'phone', width: 140 },
@@ -69,7 +79,7 @@ export default function EmployeesPage() {
             title: '审批状态',
             dataIndex: 'approveStatus',
             width: 110,
-            render: (v: ApproveStatus) => <Tag>{STATUS_LABEL[v] ?? v}</Tag>,
+            render: (v: ApproveStatus) => <Status tone={STATUS_TONE[v] ?? 'muted'}>{STATUS_LABEL[v] ?? v}</Status>,
           },
           {
             title: '操作',
@@ -110,6 +120,6 @@ export default function EmployeesPage() {
           </Form.Item>
         </Form>
       </Modal>
-    </div>
+    </ListCard>
   )
 }

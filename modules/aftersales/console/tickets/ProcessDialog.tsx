@@ -61,7 +61,7 @@ export function ProcessDialog(props: {
       destroyOnHidden
     >
       <Space orientation="vertical" style={{ width: '100%' }}>
-        {error ? <Alert type="error" showIcon title={error} /> : null}
+        {error ? <Alert type="error" showIcon message={error} /> : null}
         {done ? (
           <Alert
             type="success"

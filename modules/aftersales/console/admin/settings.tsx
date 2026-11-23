@@ -93,7 +93,6 @@ export default function AftersalesSettingsPage() {
 
   return (
     <Card
-      title="公众号（外部访客登录）"
       extra={<Button type="primary" loading={saving} onClick={() => void save()}>保存</Button>}
     >
       {loading ? <Spin /> : (

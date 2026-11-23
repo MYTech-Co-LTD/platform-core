@@ -6,6 +6,7 @@ import { useCallback } from 'react'
 import { Alert, Table } from 'antd'
 import { apiGet } from '../lib/api'
 import { useList } from '../lib/useList'
+import { ListCard } from '../lib/ui'
 import type { Paged, StoreItem } from '../../api-types'
 
 export default function StoresPage() {
@@ -13,19 +14,21 @@ export default function StoresPage() {
   const { items, loading, error } = useList(load)
 
   return (
-    <div>
-      {error ? <Alert type="error" showIcon title={error} style={{ marginBottom: 12 }} /> : null}
+    <ListCard>
+      {error ? <Alert type="error" showIcon message={error} style={{ marginBottom: 12 }} /> : null}
       <Table<StoreItem>
         rowKey="id"
+        size="small"
         dataSource={items}
         loading={loading}
         pagination={false}
+        locale={{ emptyText: '还没有门店档案。数据面的门店维表发布后会出现在这里。' }}
         columns={[
           { title: '门店', dataIndex: 'name' },
           { title: '地址', dataIndex: 'address' },
           { title: '电话', dataIndex: 'phone', width: 160 },
         ]}
       />
-    </div>
+    </ListCard>
   )
 }
