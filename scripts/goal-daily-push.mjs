@@ -29,6 +29,7 @@
 //       + PUBLIC_ORIGIN（事件链接；缺省空串 —— 链接是 payload.url，允许空但会在模板里点不动）。
 import { createRequire } from 'node:module'
 import { fileURLToPath, pathToFileURL } from 'node:url'
+import { shanghaiToday } from './lib/time-semantics.mjs'
 import { readGoals, goalMetricName, martRelation } from './gen-goal-achievement.mjs'
 
 /** 事件 key（必须与 modules/forms/manifest.yaml 的声明逐字一致）。 */
@@ -40,13 +41,12 @@ export const LAGGERS_LIMIT = 5
 
 /**
  * 北京时钟的「今日」（YYYY-MM-DD）与「当月」（YYYY-MM）。
+ * 时区语义走单一事实源 `scripts/lib/time-semantics.mjs`（扩散守卫禁止裸时区字面量）。
  * @param {Date} [now]
  * @returns {{ today: string, month: string }}
  */
 export function cstToday(now = new Date()) {
-  // 用 Intl 拿上海日历日，不手算 +8h（夏令时/时区库差异都不在这里赌）
-  const fmt = new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Shanghai', year: 'numeric', month: '2-digit', day: '2-digit' })
-  const today = fmt.format(now) // en-CA 给 YYYY-MM-DD
+  const today = shanghaiToday(now)
   return { today, month: today.slice(0, 7) }
 }
 

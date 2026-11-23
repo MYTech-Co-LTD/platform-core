@@ -18,7 +18,7 @@ with recheck_goal as (
     ) r
     where r['form_def_id'] = 'goal-monthly-store'
       and r['bizday']::date < {{ audit_until_date() }}
-      and json_extract_string(r['payload'], '$.period') < to_char((now() at time zone 'Asia/Shanghai')::date, 'YYYY-MM')
+      and json_extract_string(r['payload'], '$.period') < to_char({{ shanghai_today() }}, 'YYYY-MM')
 ),
 goal_latest as (
     select distinct on (period, branch_num)
@@ -35,10 +35,11 @@ recheck_actual as (
         f.branch_num::text as branch_num,
         sum(f.transfer_money)::numeric(20,4) as actual_outbound
     from {{ ref('fct_branch_indicator') }} f
-    where f.bizday >= (select min((period || '-01')::date) from goal_latest)
+    where f.system_book = '3120'
+      and f.bizday >= (select min((period || '-01')::date) from goal_latest)
       and f.bizday <= (select max(((period || '-01')::date + interval '1 month - 1 day')::date) from goal_latest)
       and f.bizday < {{ audit_until_date() }}
-      and to_char(date_trunc('month', f.bizday), 'YYYY-MM') < to_char((now() at time zone 'Asia/Shanghai')::date, 'YYYY-MM')
+      and to_char(date_trunc('month', f.bizday), 'YYYY-MM') < to_char({{ shanghai_today() }}, 'YYYY-MM')
     group by 1, 2
 ),
 recheck as (
@@ -54,7 +55,7 @@ materialized as (
         sum(target_outbound)::numeric(20,4) as target_v
     from {{ ref('mart_goal_achievement__monthly_store_sale') }}
     where collected_bizday < {{ audit_until_date() }}
-      and period < to_char((now() at time zone 'Asia/Shanghai')::date, 'YYYY-MM')
+      and period < to_char({{ shanghai_today() }}, 'YYYY-MM')
 )
 select
     a.actual_v as recheck_actual,

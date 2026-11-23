@@ -13,7 +13,7 @@
 with closed as (
     select *
     from {{ ref('mart_goal_achievement__monthly_store_sale') }}
-    where period < to_char((now() at time zone 'Asia/Shanghai')::date, 'YYYY-MM')
+    where period < to_char({{ shanghai_today() }}, 'YYYY-MM')
 )
 select
     period,

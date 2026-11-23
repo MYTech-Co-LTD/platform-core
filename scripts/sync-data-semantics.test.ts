@@ -293,6 +293,11 @@ describe('deriveTotalable —— 可加判定（spec §8.4：表达式形状的�
       'lemeng:retail:comparable_growth_rate',
       // ratio（成本覆盖率，#816 2026-10-28）：比率跨行求和无意义
       'lemeng:transfer:cost_coverage_pct',
+      // 目标件（件② #2708）：达成率/时间进度都是 ratio（跨店/跨月先加分子分母再相除），不可加
+      'lemeng:goal:monthly_store_sale_sale_achievement_rate',
+      'lemeng:goal:monthly_store_sale_sale_progress_rate',
+      'lemeng:goal:monthly_store_sale_outbound_achievement_rate',
+      'lemeng:goal:monthly_store_sale_outbound_progress_rate',
     ])
     for (const row of rows) {
       expect(row.totalable, `${row.id} 的 totalable 与 expression 形状不符`).toBe(!NOT_TOTALABLE.has(row.id))
@@ -784,6 +789,12 @@ describe('真 YAML：全量 sla_days / freshnessRelations 逐条断言（spec §
     //    新增例外必须写进这张表并给理由；漏声明 sources 的新指标会以「集合不等」变红。
     const KNOWN_NO_SOURCES = new Set([
       'forms:ops:check_count_total', // source=forms：推导只支持 lemeng/ 路径段（#2706 件①）
+      // 目标件（件② #2708）：值来自生成的达成 mart（读 forms 湖 + 乐檬 marts），不是单一湖资产，
+      // 声明 sources 既推导不出正确关系、又会引入假水位 ⇒ 如实「未知」。
+      'lemeng:goal:monthly_store_sale_sale_achievement_rate',
+      'lemeng:goal:monthly_store_sale_sale_progress_rate',
+      'lemeng:goal:monthly_store_sale_outbound_achievement_rate',
+      'lemeng:goal:monthly_store_sale_outbound_progress_rate',
     ])
     expect(rows.filter((r) => (r.freshnessRelations ?? []).length > 0).length)
       .toBe(rows.length - KNOWN_NO_SOURCES.size)

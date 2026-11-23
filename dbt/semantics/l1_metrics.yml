@@ -1701,6 +1701,7 @@ metrics:
   #    sum(月度达成率) 是错误口径。零分母由 sync 自动包 nullif（率类声明纪律，spec 2026-10-12 §5.3）。
   # ⚠️ 刻意**不写 sources**（新鲜度推导只认 lemeng/ 路径段，写 forms 路径会 sync 响亮失败）⇒ 无自动水位。
   # ⚠️ grain 含 bizday（= 周期首日；问数日期区间过滤的着力点）——bizday 是**周期日**不是采集日。
+  # ⚠️ grain 含 system_book：目标定义钉死账套（两本账套门店号有重叠，跨账套汇总会多算）；
   # ⚠️ source=lemeng：实际值侧是乐檬 marts（fct_retail_sale / fct_branch_indicator），目标值来自
   #    forms 提交；源裁剪按「该租户接没接乐檬」判——目标件只有与实际值同面才有意义（山海数据面）。
   - name: 'lemeng:goal:monthly_store_sale_sale_achievement_rate'
@@ -1715,7 +1716,7 @@ metrics:
     ratio:
       numerator: 'sum(mart_goal_achievement__monthly_store_sale.actual_sale)'
       denominator: 'sum(mart_goal_achievement__monthly_store_sale.target_sale)'
-    grain: [bizday, period, branch_num]
+    grain: [system_book, bizday, period, branch_num]
     owner: data-platform
     tier: experimental
     source: lemeng
@@ -1731,7 +1732,7 @@ metrics:
     ratio:
       numerator: 'sum(mart_goal_achievement__monthly_store_sale.days_elapsed)'
       denominator: 'sum(mart_goal_achievement__monthly_store_sale.total_days)'
-    grain: [bizday, period, branch_num]
+    grain: [system_book, bizday, period, branch_num]
     owner: data-platform
     tier: experimental
     source: lemeng
@@ -1749,7 +1750,7 @@ metrics:
     ratio:
       numerator: 'sum(mart_goal_achievement__monthly_store_sale.actual_outbound)'
       denominator: 'sum(mart_goal_achievement__monthly_store_sale.target_outbound)'
-    grain: [bizday, period, branch_num]
+    grain: [system_book, bizday, period, branch_num]
     owner: data-platform
     tier: experimental
     source: lemeng
@@ -1765,7 +1766,7 @@ metrics:
     ratio:
       numerator: 'sum(mart_goal_achievement__monthly_store_sale.days_elapsed)'
       denominator: 'sum(mart_goal_achievement__monthly_store_sale.total_days)'
-    grain: [bizday, period, branch_num]
+    grain: [system_book, bizday, period, branch_num]
     owner: data-platform
     tier: experimental
     source: lemeng

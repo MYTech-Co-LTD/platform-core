@@ -52,8 +52,8 @@ A3 夹具（`ops-round-2026-11`）经裁决 **superseded**：改用目标表单�
 | `dbt parse`（`DATA_PLANE_DOMAINS=lemeng,goals`） | ✅ PASS（ref/jinja/macros 全解析） |
 | `dbt ls --select path:models/goals` | ✅ 恰好 2 个目标模型；`path:models/lemeng` 选择器 **0** 个 goal 模型（隔离成立） |
 | 段① 对真湖 `s3://shanhai-data/forms/submission/...` 运行 | ⚠️ **预期失败**：`IO Error: No files found that match the pattern`——山海 forms 湖为空（见 §4-1），正是独立域设计的依据 |
-| 段② 对真 warehouse 运行（`goal_probe` 临时夹具表：store 12/29 × 2026-10，含重复提交） | ✅ 数值逐分吻合：store 12 actual_sale **387120.6300**（独立查询 387120.63）、target 410000（取最新提交）、rate **0.9442**；actual_outbound **184032.6500**、rate **0.8763**；store 29 **1.0436 / 0.8857**；封版月 progress_rate **1.0**（31/31）；data_status `partial`/`complete` 均可解释 |
-| L1 ratio SQL（sync 编译形态）对同一关系 | ✅ `0.94419665…` / `1.043644`；进度 `1` |
+| 段② 对真 warehouse 运行（`goal_probe` 临时夹具表：3120 账套 store 153/75/29 × 2026-10，含重复提交与 target=0） | ✅ 数值逐分吻合：store 153 取**最新提交** target 300000/30000，actual_sale **252771.4000**（独立查询 252771.40）、rate **0.8426**；actual_outbound **27860.1500**、rate **0.9287**；store 29 sale **118998.1000 / 0.5950**、outbound target=0 ⇒ 达成率 **NULL**；store 75 sale target=0 ⇒ **NULL**、outbound **99283.3000 / 0.9928**；`system_book` 列 = **3120**；封版月 progress **1.0**（31/31），data_status `complete` |
+| L1 ratio SQL（sync 编译形态）对同一关系 | ✅ 达成率 `0.84257133…`（252771.4/300000）；进度 `1` |
 
 ### 2.3 未做（阻塞，见 §4）
 

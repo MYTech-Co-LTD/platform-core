@@ -32,6 +32,11 @@
 #
 #   goal        必填。`<部署标识>:<目标 slug>`（两段小写蛇形；slug 进模型名与指标名）。
 #   label       必填。人读名字。
+#   system_book 必填。目标归属账套（`3120` / `64188`…）。**必须声明**：两本账套的门店编号有重叠
+#                     （2026-11-23 实测 3120 与 64188 在 2026-10 有 **42 个** branch_num 相同），
+#                     按 branch_num 跨账套汇总会静默多算；目标值本身是门店级、不带账套，所以由
+#                     **目标定义**钉住账套：段② 的实际值只读该账套，并把 system_book 作为列输出
+#                     （grain 因此含它，问数参数面也按它过滤）。
 #   metric_source 选填（缺省 lemeng）。生成的 L1 指标名的源段（`<源>:goal:<slug>_<metric>_<kind>`）。
 #                     取 `lemeng` 的两个理由：① 指标的**实际值**来自乐檬 marts，源裁剪按它判
 #                     （目标件只有与实际值同面才有意义）；② 对账 test 的落点按指标名的源段分目录
@@ -65,16 +70,17 @@
 #     以及 `lemeng:branch:transfer_money` 里「出库金额不读本指标」的警示——本目标按店考核，
 #     门店侧可加腿只有这一条，故取它并在指标名上如实叫 `outbound_amount`（目标是门店配送口径）。
 #
-# ## 多账套假设（v1 已知边界）
+# ## 多账套（v1：一个 goal 钉一个账套）
 #
-# 段② 的 actuals 按 `branch_num` 汇总（跨 `system_book` 相加）——山海数据面两本账套的门店编号
-# 空间是否重叠未在本轮复核；第一刀的目标表按单账套门店清单录入，重叠会静默多算。第二刀要么把
-# `system_book` 升为目标维度，要么在 goals.yml 里声明账套过滤（各开一笔，不在本波夹带）。
+# 2026-11-23 实测：山海两本账套在 2026-10 有 **42 个** branch_num 重叠 ⇒ 段② 若跨账套相加会
+# 静默多算。故 `system_book` 是必填的目标定义属性：段② 的 actual 只读该账套，system_book 作为
+# 列输出（进 grain ⇒ 问数参数面也按它过滤）。需要同时考核另一账套 ⇒ 再声明一个 goal（独立关系）。
 
 goals:
   - goal: shanhai:monthly_store_sale
     label: 门店月度销售目标
     metric_source: lemeng
+    system_book: '3120'
     org: shanhaiyiguo-org
     period: month
     dimensions: [branch_num]

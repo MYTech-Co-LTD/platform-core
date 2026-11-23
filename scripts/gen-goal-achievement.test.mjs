@@ -28,6 +28,7 @@ const GOAL_YAML = `goals:
   - goal: acme:monthly_store_sale
     label: 门店月度销售目标
     org: acme-org
+    system_book: '3120'
     period: month
     dimensions: [branch_num]
     target_source:
@@ -128,7 +129,7 @@ describe('parseActualExpression（v1 只收可加单关系）', () => {
 
 describe('normalizeGoal（形状闸）', () => {
   const base = () => ({
-    goal: 'acme:monthly_store_sale', label: 'L', org: 'acme-org', period: 'month', dimensions: ['branch_num'],
+    goal: 'acme:monthly_store_sale', label: 'L', org: 'acme-org', system_book: '3120', period: 'month', dimensions: ['branch_num'],
     target_source: { form_def: 'f', period_field: 'period', dimension_fields: { branch_num: 'branch_num' }, value_fields: { sale: 'target_sale' } },
     actuals: { sale: 'lemeng:retail:sales' },
   })
@@ -150,11 +151,15 @@ describe('normalizeGoal（形状闸）', () => {
   it('scope.assessed_war_zone_only 声明即拒（v1 未实现，不许静默不生效）', () => {
     expect(() => normalizeGoal({ ...base(), scope: { assessed_war_zone_only: true } })).toThrow(/未实现/)
   })
+  it('缺 system_book ⇒ 抛（两本账套门店号重叠，必须钉住）', () => {
+    const { system_book: _omit, ...b } = base()
+    expect(() => normalizeGoal(b)).toThrow(/system_book/)
+  })
 })
 
 describe('buildStageOneSql（DuckDB 段：只碰 parquet、无 join）', () => {
   const goal = normalizeGoal(JSON.parse(JSON.stringify({
-    goal: 'acme:monthly_store_sale', label: 'L', org: 'acme-org', period: 'month', dimensions: ['branch_num'],
+    goal: 'acme:monthly_store_sale', label: 'L', org: 'acme-org', system_book: '3120', period: 'month', dimensions: ['branch_num'],
     target_source: { form_def: 'goal-monthly-store', period_field: 'period', dimension_fields: { branch_num: 'branch_num' }, value_fields: { sale: 'target_sale' } },
     actuals: { sale: 'lemeng:retail:sales' },
   })))
@@ -208,10 +213,16 @@ describe('buildAchievementSql（PG 原生段）', () => {
     expect(sql).toContain("else 'missing'")
     expect(sql).toContain('as sale_achievement_rate')
     expect(sql).toContain('as progress_rate')
-    expect(sql).toContain("(now() at time zone 'Asia/Shanghai')::date")
+    expect(sql).toContain('{{ shanghai_today() }}')
   })
   it('target=0 ⇒ 达成率 NULL（case when > 0，不留 0/0 错误）', () => {
     expect(sql).toContain('case when g.target_sale > 0 then')
+  })
+  it('账套钉死：actuals 与覆盖度三处都按 goal.system_book 过滤，并把 system_book 作为列输出', () => {
+    // 每条 actual CTE 一处 + coverage 一处（本夹具 1 个 metric ⇒ 2 处）
+    expect(sql.match(/where f\.system_book = '3120'/g) ?? []).toHaveLength(Object.keys(goal.actuals).length + 1)
+    expect(sql).toContain("'3120'::varchar as system_book")
+    expect(sql).toContain('g.system_book')
   })
   it('actuals 引用的指标不在 l1 ⇒ 抛；率类/复合 ⇒ 抛', () => {
     const g2 = { ...goal, actuals: { sale: 'lemeng:nope:none' } }

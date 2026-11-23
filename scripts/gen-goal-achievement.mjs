@@ -85,6 +85,10 @@ export function normalizeGoal(raw) {
   const period = String(g['period'] ?? '')
   if (period !== V1_PERIOD) throw new Error(`goals.yml: ${name} 的 period 只支持 '${V1_PERIOD}'（v1），收到 ${JSON.stringify(period)}`)
 
+  const systemBook = String(g['system_book'] ?? '').trim()
+  if (!/^[0-9][0-9a-z_]*$/.test(systemBook)) {
+    throw new Error(`goals.yml: ${name} 缺/错 system_book（目标归属账套，如 '3120'；两本账套门店号有重叠，必须钉住）`)
+  }
   const metricSource = String(g['metric_source'] ?? 'lemeng').trim()
   if (!/^[a-z][a-z0-9_]*$/.test(metricSource)) {
     throw new Error(`goals.yml: ${name} 的 metric_source 必须是单段小写蛇形（如 lemeng），收到 ${JSON.stringify(metricSource)}`)
@@ -138,7 +142,7 @@ export function normalizeGoal(raw) {
     throw new Error(`goals.yml: ${name} 的 value_fields 与 actuals 键集必须相等（value=[${valueKeys}] actual=[${actualKeys}]）`)
   }
 
-  return { goal: name, deployment, slug, label, org, period, metricSource, dimensions, formDef, periodField, dimensionFields, valueFields, actuals }
+  return { goal: name, deployment, slug, label, org, period, metricSource, systemBook, dimensions, formDef, periodField, dimensionFields, valueFields, actuals }
 }
 
 /**
@@ -150,6 +154,7 @@ export function normalizeGoal(raw) {
  * @property {string} org
  * @property {string} period
  * @property {string} metricSource
+ * @property {string} systemBook
  * @property {string[]} dimensions
  * @property {string} formDef
  * @property {string} periodField
@@ -345,7 +350,8 @@ export function buildAchievementSql(goal, l1) {
     ...dims.map((d) => `        f.${d}::text as ${d},`),
     `        sum(f.${a.column})::numeric(20,4) as actual_${a.metric}`,
     `    from {{ ref('${a.relation}') }} f`,
-    '    where f.bizday >= (select min(first_day) from goal)',
+    `    where f.system_book = '${goal.systemBook}'`,
+    '      and f.bizday >= (select min(first_day) from goal)',
     '      and f.bizday <= (select max(last_day) from goal)',
     '    group by 1' + dims.map((_, i) => `, ${i + 2}`).join(''),
     '),',
@@ -373,9 +379,9 @@ export function buildAchievementSql(goal, l1) {
     '--   · 同一 (period, 维度) 的多次提交取 submitted_at 最新（轮次内可改，D3 开放项 1：v1 无审批门）；',
     '--   · target = 0 或缺失 ⇒ 达成率 NULL（照 data-analysis outbound 族的「新店无目标」处置，D5）；',
     '--   · actual 缺失 ⇒ 0（该店该月无任何销售行 = 卖了 0，不是「不知道」）；',
-    '--   · progress_rate = 已过日历日 / 当月总天数（**北京时钟日界**；未来月份 0）；',
+    '--   · progress_rate = 已过日历日 / 当月总天数（**北京时钟日界**，{{ shanghai_today() }} 宏；未来月份 0）；',
     '--   · data_status = 当月 bizday 覆盖：complete（覆盖全部已过日）/ partial（>0）/ missing（0）。',
-    '-- 已知边界：actuals 按 branch_num 跨 system_book 汇总（多账套门店编号是否重叠未复核，见 goals.yml）。',
+    `-- 账套：actuals 只读 system_book='${goal.systemBook}'（目标定义钉死；两本账套门店号有重叠，见 goals.yml）。`,
     'with goal_latest as (',
     '    select distinct on (period' + dims.map((d) => `, ${d}`).join('') + ')',
     '        period,',
@@ -392,6 +398,7 @@ export function buildAchievementSql(goal, l1) {
     'goal as (',
     '    select',
     "        (g.period || '-01')::date as bizday,",
+    `        '${goal.systemBook}'::varchar as system_book,`,
     '        g.period,',
     ...dims.map((d) => `        g.${d},`),
     ...actuals.map((a) => `        g.target_${a.metric},`),
@@ -408,24 +415,27 @@ export function buildAchievementSql(goal, l1) {
     ...dims.map((d) => `        f.${d}::text as ${d},`),
     '        count(distinct f.bizday) as covered_days',
     "    from {{ ref('fct_retail_sale') }} f",
-    '    where f.bizday >= (select min(first_day) from goal)',
+    `    where f.system_book = '${goal.systemBook}'`,
+    '      and f.bizday >= (select min(first_day) from goal)',
     '      and f.bizday <= (select max(last_day) from goal)',
     `    group by ${groupBy}`,
     '),',
     'spine as (',
     '    select',
     '        g.bizday,',
+    '        g.system_book,',
     '        g.period,',
     ...dims.map((d) => `        g.${d},`),
     ...actuals.map((a) => `        g.target_${a.metric},`),
     '        g.collected_bizday,',
     '        (g.last_day - g.first_day + 1) as total_days,',
-    "        greatest(least((now() at time zone 'Asia/Shanghai')::date, g.last_day) - g.first_day + 1, 0) as days_elapsed",
+    '        greatest(least({{ shanghai_today() }}, g.last_day) - g.first_day + 1, 0) as days_elapsed',
     '    from goal g',
     ')',
     'select',
     '    {{ subject_org() }} as org,',
     '    g.bizday,',
+    '    g.system_book,',
     '    g.period,',
     ...dims.map((d) => `    g.${d},`),
     '    g.collected_bizday,',

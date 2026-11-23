@@ -7,9 +7,9 @@
 --   · 同一 (period, 维度) 的多次提交取 submitted_at 最新（轮次内可改，D3 开放项 1：v1 无审批门）；
 --   · target = 0 或缺失 ⇒ 达成率 NULL（照 data-analysis outbound 族的「新店无目标」处置，D5）；
 --   · actual 缺失 ⇒ 0（该店该月无任何销售行 = 卖了 0，不是「不知道」）；
---   · progress_rate = 已过日历日 / 当月总天数（**北京时钟日界**；未来月份 0）；
+--   · progress_rate = 已过日历日 / 当月总天数（**北京时钟日界**，{{ shanghai_today() }} 宏；未来月份 0）；
 --   · data_status = 当月 bizday 覆盖：complete（覆盖全部已过日）/ partial（>0）/ missing（0）。
--- 已知边界：actuals 按 branch_num 跨 system_book 汇总（多账套门店编号是否重叠未复核，见 goals.yml）。
+-- 账套：actuals 只读 system_book='3120'（目标定义钉死；两本账套门店号有重叠，见 goals.yml）。
 with goal_latest as (
     select distinct on (period, branch_num)
         period,
@@ -27,6 +27,7 @@ with goal_latest as (
 goal as (
     select
         (g.period || '-01')::date as bizday,
+        '3120'::varchar as system_book,
         g.period,
         g.branch_num,
         g.target_sale,
@@ -42,7 +43,8 @@ actual_sale as (
         f.branch_num::text as branch_num,
         sum(f.sale_amount)::numeric(20,4) as actual_sale
     from {{ ref('fct_retail_sale') }} f
-    where f.bizday >= (select min(first_day) from goal)
+    where f.system_book = '3120'
+      and f.bizday >= (select min(first_day) from goal)
       and f.bizday <= (select max(last_day) from goal)
     group by 1, 2
 ),
@@ -52,7 +54,8 @@ actual_outbound as (
         f.branch_num::text as branch_num,
         sum(f.transfer_money)::numeric(20,4) as actual_outbound
     from {{ ref('fct_branch_indicator') }} f
-    where f.bizday >= (select min(first_day) from goal)
+    where f.system_book = '3120'
+      and f.bizday >= (select min(first_day) from goal)
       and f.bizday <= (select max(last_day) from goal)
     group by 1, 2
 ),
@@ -63,25 +66,28 @@ coverage as (
         f.branch_num::text as branch_num,
         count(distinct f.bizday) as covered_days
     from {{ ref('fct_retail_sale') }} f
-    where f.bizday >= (select min(first_day) from goal)
+    where f.system_book = '3120'
+      and f.bizday >= (select min(first_day) from goal)
       and f.bizday <= (select max(last_day) from goal)
     group by 1, 2
 ),
 spine as (
     select
         g.bizday,
+        g.system_book,
         g.period,
         g.branch_num,
         g.target_sale,
         g.target_outbound,
         g.collected_bizday,
         (g.last_day - g.first_day + 1) as total_days,
-        greatest(least((now() at time zone 'Asia/Shanghai')::date, g.last_day) - g.first_day + 1, 0) as days_elapsed
+        greatest(least({{ shanghai_today() }}, g.last_day) - g.first_day + 1, 0) as days_elapsed
     from goal g
 )
 select
     {{ subject_org() }} as org,
     g.bizday,
+    g.system_book,
     g.period,
     g.branch_num,
     g.collected_bizday,
