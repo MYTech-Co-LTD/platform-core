@@ -134,6 +134,23 @@ export const BUILTIN_TEMPLATES: BuiltinTemplate[] = [
       },
     },
   },
+  // 目标达成日报（件② #2708 / C3）。三处同描：forms manifest 的 events[].defaults ⇔ 本文件 ⇔ seed-builtin.ts。
+  // 字段全是字符串（job 侧已格式化成「85.3%」），模板不解析数字——文案改版不需要动脚本。
+  {
+    key: 'oa_goal_daily',
+    name: '目标达成日报',
+    eventKey: 'forms.goal.daily',
+    contents: {
+      wecom_chat: {
+        text: '【目标日报】{{goal}}（{{period}}）\n达成率 {{achievementRate}}｜时间进度 {{progressRate}}\n落后门店：{{topLaggards}}\n👉 [看目标看板]({{link}})',
+      },
+      in_app: {
+        title: '目标日报：{{goal}}（{{period}}）',
+        body: '达成率 {{achievementRate}}，时间进度 {{progressRate}}；落后门店：{{topLaggards}}',
+        link: '{{link}}',
+      },
+    },
+  },
   // OA 审批（P1 / #2363）。三处同描：forms manifest 的 events[].defaults ⇔ 本文件 ⇔ seed-builtin.ts。
   // awaiting 由 **case-engine（external 生产者）** 发；decided 由平台回调发。链接必须闭合（#44）。
   {
