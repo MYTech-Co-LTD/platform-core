@@ -22,7 +22,12 @@
 ## 1. Gate 1：冷启动导入
 
 **前置（缺一不可）**
-- [ ] wuji 只读凭据在 env：`WUJI_APPID` / `WUJI_KEY_<表>`（不落仓、不落日志）
+- [ ] wuji 只读凭据在 env：`WUJI_APPID` / `WUJI_KEY_<表>`（不落仓、不落日志）；
+      山海租户的接口路径是 `/api/public/object` ⇒ 另设 `WUJI_API_PATH=/api/public/object`
+      （缺省 `/api/private/object`）
+- [ ] 字段已按真实样本钉死（2026-11-23 实测）：`employee_name` / `employee_phonenumber` /
+      `openId`（=`_id`）/ `store_info`（单值或逗号多值）；`employee_info` **无审批态字段**
+      ⇒ 导入按 `--employee-status-default`（默认 `approved`）补，计数进 `defaulted_status`
 - [ ] 拉真样本核对字段名：`migration/clean.ts` 的 KEYS 是**暂定清单**，Task 3 要求逐表对真样本钉死
 - [ ] 门店编码映射决策（见下，**最重要**）
 - 接龙金额单位：**不导入 group_buying_\***，此 gate 不适用（`--tables` 不含它即不会触发 `GROUPBUY_UNIT_UNPROVEN`）
@@ -45,9 +50,16 @@ npx tsx scripts/migrate-aftersales-wuji.mjs --org <casdoor_org> --tables employe
 格式 `无忌门店id,dim_branch.code`（支持 `#` 注释与表头；重复后者覆盖；非法行整体失败）。
 文件**不进仓**（含客户门店编码清单），随部署环境投递；日志只打印条数与覆盖率。
 
-生成方法：`--tables store_info --sample 500` 只读拉源门店（id + 名称）→ 与
-`select code, name from data.dim_branch` 按名称精确匹配 → 人工核对未匹配/多匹配/疑似改名 →
-产出 CSV。dry-run 的 `[store-map] 覆盖率` 行显示命中/未命中；**未命中不为 0 就不要 apply**。
+生成方法（工具化）：`scripts/gen-store-map.mjs`——
+
+```sh
+DATABASE_URL=… WUJI_APPID=… WUJI_KEY_STORE_INFO=… WUJI_API_PATH=/api/public/object \
+  npx tsx scripts/gen-store-map.mjs --org <casdoor_org> [--out /path/store-map.csv]
+```
+
+源门店名 ↔ `data.dim_branch.name` 精确匹配；**歧义（同名多 code）与未匹配（dim 侧无同名）会逐条打印，
+绝不猜**——人工裁决后手工补进 CSV。dry-run 的 `[store-map] 覆盖率` 行显示命中/未命中；
+**未命中不为 0 就不要 apply**。
 
 **门店编码硬约束（导入员工前必读）**
 

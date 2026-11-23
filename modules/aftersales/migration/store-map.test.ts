@@ -1,6 +1,6 @@
 // store-map 纯核单测：CSV 形状、注释/空行/表头、重复、非法行（fail-closed）。
 import { describe, expect, it } from 'vitest'
-import { parseStoreMap } from './store-map'
+import { buildStoreMapCsv, matchStores, parseStoreMap } from './store-map'
 
 describe('parseStoreMap', () => {
   it('基本两列 ⇒ 映射成立', () => {
@@ -43,5 +43,47 @@ describe('parseStoreMap', () => {
     const r = parseStoreMap(' wuji-01 , LM001 \n')
     expect(r.errors).toEqual([])
     expect(r.map.get('wuji-01')).toBe('LM001')
+  })
+})
+
+describe('matchStores（名称精确匹配，保守）', () => {
+  const dims = [
+    { code: 'LM001', name: '品品甜临沧沧源2店' },
+    { code: 'LM002', name: '熊喵临沧云县3店' },
+    { code: 'LM003', name: '同名店' },
+    { code: 'LM004', name: '同名店' },
+  ]
+
+  it('唯一同名 ⇒ matched', () => {
+    const r = matchStores([{ sourceId: 's1', name: '品品甜临沧沧源2店' }], dims)
+    expect(r.matched).toEqual([{ sourceId: 's1', name: '品品甜临沧沧源2店', code: 'LM001' }])
+  })
+
+  it('dim 侧同名多 code ⇒ ambiguous（绝不猜）', () => {
+    const r = matchStores([{ sourceId: 's2', name: '同名店' }], dims)
+    expect(r.ambiguous).toHaveLength(1)
+    expect(r.ambiguous[0].candidates).toEqual(['LM003', 'LM004'])
+    expect(r.matched).toHaveLength(0)
+  })
+
+  it('dim 侧无同名 ⇒ unmatched', () => {
+    const r = matchStores([{ sourceId: 's3', name: '不存在的店' }], dims)
+    expect(r.unmatched).toEqual([{ sourceId: 's3', name: '不存在的店' }])
+  })
+
+  it('名称前后空格归一后匹配', () => {
+    const r = matchStores([{ sourceId: 's4', name: ' 熊喵临沧云县3店 ' }], dims)
+    expect(r.matched[0]?.code).toBe('LM002')
+  })
+})
+
+describe('buildStoreMapCsv', () => {
+  it('只渲染 matched，带注释头（可被 parseStoreMap 直接吃）', () => {
+    const csv = buildStoreMapCsv({ matched: [{ sourceId: 's1', name: 'x', code: 'LM001' }], ambiguous: [], unmatched: [] })
+    expect(csv).toContain('# 由 gen-store-map 生成')
+    expect(csv).toContain('s1,LM001')
+    const r = parseStoreMap(csv)
+    expect(r.errors).toEqual([])
+    expect(r.map.get('s1')).toBe('LM001')
   })
 })

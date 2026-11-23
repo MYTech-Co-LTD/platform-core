@@ -47,3 +47,53 @@ export function parseStoreMap(csv: string): StoreMapParseResult {
   }
   return { map, duplicates, errors }
 }
+
+// ── 映射生成（gen-store-map 的纯核）────────────────────────────────────────────
+// 链路（2026-11-23 实测验证：拆逗号后 206/206 命中）：employee.store_info → store_info._id
+//   → store_info.store_name → dim_branch.name → dim_branch.code。
+
+export interface StoreSourceRow { sourceId: string; name: string }
+export interface DimRow { code: string; name: string }
+
+export interface StoreMatchResult {
+  /** 名称唯一命中：可直接进映射 CSV */
+  matched: Array<{ sourceId: string; name: string; code: string }>
+  /** 源侧同名映射到多个 dim code：必须人工裁决 */
+  ambiguous: Array<{ sourceId: string; name: string; candidates: string[] }>
+  /** dim 侧没有同名门店（改名/未采集/新店）：必须人工裁决 */
+  unmatched: Array<{ sourceId: string; name: string }>
+}
+
+/**
+ * 按门店名称精确匹配源门店与 dim_branch。名称匹配是保守的：多候选全进 ambiguous，绝不猜。
+ * @param stores 源门店（store_info：sourceId = _id、name = store_name）
+ * @param dims dim_branch 的 (code, name)
+ */
+export function matchStores(stores: StoreSourceRow[], dims: DimRow[]): StoreMatchResult {
+  /** @type {Map<string, string[]>} */
+  const byName = new Map()
+  for (const d of dims) {
+    const name = d.name.trim()
+    if (name === '') continue
+    const list = byName.get(name) ?? []
+    list.push(d.code)
+    byName.set(name, list)
+  }
+  const matched: StoreMatchResult['matched'] = []
+  const ambiguous: StoreMatchResult['ambiguous'] = []
+  const unmatched: StoreMatchResult['unmatched'] = []
+  for (const s of stores) {
+    const name = s.name.trim()
+    const codes = byName.get(name)
+    if (!codes || codes.length === 0) unmatched.push({ sourceId: s.sourceId, name })
+    else if (codes.length > 1) ambiguous.push({ sourceId: s.sourceId, name, candidates: codes.slice().sort() })
+    else matched.push({ sourceId: s.sourceId, name, code: codes[0] })
+  }
+  return { matched, ambiguous, unmatched }
+}
+
+/** 把匹配结果渲染成 `--store-map` 可吃的 CSV（只含 matched；歧义/未匹配必须人工处理后再补）。 */
+export function buildStoreMapCsv(result: StoreMatchResult): string {
+  const lines = ['# 由 gen-store-map 生成：store_info._id,dim_branch.code', ...result.matched.map((m) => `${m.sourceId},${m.code}`)]
+  return lines.join('\n') + '\n'
+}

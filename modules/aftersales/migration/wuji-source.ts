@@ -7,7 +7,11 @@
 //   count=<任意值> → {"data":{"total":N}}；返回 {"data":[行字段平铺]}。
 //   schemaid+schemakey 严格双因子，错一即 403 forbidden。
 // 键值一律不落仓/不落日志（.env.example 只写键名与取法）。
-export interface WujiTableCfg { origin: string; appid: string; schemaid: string; schemakey: string }
+export interface WujiTableCfg {
+  origin: string; appid: string; schemaid: string; schemakey: string
+  /** 接口路径：默认 `/api/private/object`（2026-09-15 实测口径）；山海租户给的是 `/api/public/object` */
+  apiPath?: string
+}
 export type FetchLike = (url: string, init?: RequestInit) => Promise<Response>
 
 export class WujiApiError extends Error {
@@ -15,7 +19,7 @@ export class WujiApiError extends Error {
 }
 
 function buildUrl(cfg: WujiTableCfg, params: Record<string, string>): string {
-  const u = new URL('/api/private/object', cfg.origin)
+  const u = new URL(cfg.apiPath ?? '/api/private/object', cfg.origin)
   u.searchParams.set('appid', cfg.appid)
   u.searchParams.set('schemaid', cfg.schemaid)
   u.searchParams.set('schemakey', cfg.schemakey)
