@@ -113,7 +113,8 @@ export function ratioOf(v: unknown): string | null {
 // ── 各表字段候选（暂定；T3 拉样逐表核对）──────────────────────────────
 export const KEYS = {
   region: { id: ['_id'], name: ['name', 'region_name'] },
-  store: { id: ['_id'], name: ['name', 'store_name'], region: ['region_id', 'region'], address: ['address'], phone: ['phone', 'contact'] },
+  store: { id: ['_id'], name: ['name', 'store_name'], code: ['store_code', 'code'], region: ['region_id', 'region'],
+           address: ['address'], phone: ['phone', 'contact'] },
   product: { id: ['_id'], name: ['name', 'product_name'], spec: ['spec', 'specification'],
              basicQuantity: ['basic_quantity'], basicUnitPrice: ['basic_unit_price', 'price'] },
   employee: { id: ['_id'], name: ['name', 'employee_name'], phone: ['phone', 'mobile', 'employee_phonenumber'],
@@ -134,7 +135,12 @@ export const KEYS = {
 
 // ── 清洗产物（import.ts 的入参形状）───────────────────────────────────
 export interface CleanRegion { sourceId: string; name: string }
-export interface CleanStore { sourceId: string; name: string; regionSourceId: string | null; address: string; phone: string }
+export interface CleanStore {
+  sourceId: string; name: string
+  /** 源侧门店编号（2026-11-23 实测：山海 store_info.store_code 与 dim_branch.code 同源，296/299 命中） */
+  storeCode: string
+  regionSourceId: string | null; address: string; phone: string
+}
 export interface CleanProduct { sourceId: string; name: string; spec: string; basicQuantity: number; basicUnitPriceMinor: bigint | null }
 // 词表产物的 null 语义：源值不在词表（未知/缺失）——导入侧跳行记因，见各 import* 的 unknown_* 检查
 export interface CleanEmployee {
@@ -166,6 +172,7 @@ export function cleanRegion(row: SrcRow): CleanRegion {
 export function cleanStore(row: SrcRow): CleanStore {
   return {
     sourceId: pickStr(row, KEYS.store.id), name: pickStr(row, KEYS.store.name),
+    storeCode: pickStr(row, KEYS.store.code),
     regionSourceId: pickStr(row, KEYS.store.region) || null,
     address: pickStr(row, KEYS.store.address), phone: pickStr(row, KEYS.store.phone),
   }

@@ -46,40 +46,62 @@ describe('parseStoreMap', () => {
   })
 })
 
-describe('matchStores（名称精确匹配，保守）', () => {
+describe('matchStores（编码优先 + 名称兜底；100% 对上 = 同一条平台门店）', () => {
   const dims = [
-    { code: 'LM001', name: '品品甜临沧沧源2店' },
-    { code: 'LM002', name: '熊喵临沧云县3店' },
-    { code: 'LM003', name: '同名店' },
-    { code: 'LM004', name: '同名店' },
+    { code: 'LM001', name: '品品甜临沧沧源2店', sourceBook: '3120' },
+    { code: 'LM002', name: '熊喵临沧云县3店', sourceBook: '3120' },
+    { code: 'LM003', name: '同名店', sourceBook: '3120' },
+    { code: 'LM004', name: '同名店', sourceBook: '64188' },
+    { code: 'LM005', name: '品品甜保山隆阳1店', sourceBook: '64188' },
+    { code: 'LM006', name: '保山隆阳1店', sourceBook: '3120' },
   ]
 
-  it('唯一同名 ⇒ matched', () => {
-    const r = matchStores([{ sourceId: 's1', name: '品品甜临沧沧源2店' }], dims)
+  it('编码与名称指向同一条 ⇒ matched', () => {
+    const r = matchStores([{ sourceId: 's1', name: '品品甜临沧沧源2店', storeCode: 'LM001' }], dims)
     expect(r.matched).toEqual([{ sourceId: 's1', name: '品品甜临沧沧源2店', code: 'LM001' }])
+    expect(r.review).toEqual([])
   })
 
-  it('dim 侧同名多 code ⇒ ambiguous（绝不猜）', () => {
-    const r = matchStores([{ sourceId: 's2', name: '同名店' }], dims)
-    expect(r.ambiguous).toHaveLength(1)
-    expect(r.ambiguous[0].candidates).toEqual(['LM003', 'LM004'])
-    expect(r.matched).toHaveLength(0)
-  })
-
-  it('dim 侧无同名 ⇒ unmatched', () => {
-    const r = matchStores([{ sourceId: 's3', name: '不存在的店' }], dims)
-    expect(r.unmatched).toEqual([{ sourceId: 's3', name: '不存在的店' }])
-  })
-
-  it('名称前后空格归一后匹配', () => {
-    const r = matchStores([{ sourceId: 's4', name: ' 熊喵临沧云县3店 ' }], dims)
+  it('名称仅差品牌前缀（归一命中同一编码）⇒ matched', () => {
+    const r = matchStores([{ sourceId: 's2', name: ' 熊喵临沧云县3店 ', storeCode: 'LM002' }], dims)
     expect(r.matched[0]?.code).toBe('LM002')
+  })
+
+  it('编码命中、名称不命中 ⇒ review name_missing（带平台该编码门店）', () => {
+    const r = matchStores([{ sourceId: 's3', name: '临沧云县新店', storeCode: 'LM002' }], dims)
+    expect(r.matched).toEqual([])
+    expect(r.review[0]).toMatchObject({ reason: 'name_missing', dimByCode: { code: 'LM002' } })
+  })
+
+  it('编码命中、名称归一后多候选 ⇒ review name_ambiguous（跨账套同名）', () => {
+    const r = matchStores([{ sourceId: 's4', name: '同名店', storeCode: 'LM003' }], dims)
+    expect(r.review[0]).toMatchObject({ reason: 'name_ambiguous' })
+    expect(r.review[0].dimByName?.map((d) => d.code)).toEqual(['LM003', 'LM004'])
+  })
+
+  it('编码与名称指向不同门店 ⇒ review code_and_name_disagree（必须裁决）', () => {
+    // 名称「品品甜临沧沧源2店」唯一指向 LM001；源编码却给 LM002 ⇒ 自相矛盾
+    const r = matchStores([{ sourceId: 's5', name: '品品甜临沧沧源2店', storeCode: 'LM002' }], dims)
+    expect(r.review[0]).toMatchObject({ reason: 'code_and_name_disagree' })
+    expect(r.review[0].dimByCode?.code).toBe('LM002')
+    expect(r.review[0].dimByName?.[0]?.code).toBe('LM001')
+  })
+
+  it('编码未命中、名称唯一命中 ⇒ review code_missing（带名称候选）', () => {
+    const r = matchStores([{ sourceId: 's6', name: '熊喵临沧云县3店', storeCode: 'WUJI-X' }], dims)
+    expect(r.review[0]).toMatchObject({ reason: 'code_missing' })
+    expect(r.review[0].dimByName?.[0]?.code).toBe('LM002')
+  })
+
+  it('编码为空、名称也没有 ⇒ review both_missing', () => {
+    const r = matchStores([{ sourceId: 's7', name: '不存在的店', storeCode: '' }], dims)
+    expect(r.review[0]).toMatchObject({ reason: 'both_missing' })
   })
 })
 
 describe('buildStoreMapCsv', () => {
   it('只渲染 matched，带注释头（可被 parseStoreMap 直接吃）', () => {
-    const csv = buildStoreMapCsv({ matched: [{ sourceId: 's1', name: 'x', code: 'LM001' }], ambiguous: [], unmatched: [] })
+    const csv = buildStoreMapCsv({ matched: [{ sourceId: 's1', name: 'x', code: 'LM001' }], review: [] })
     expect(csv).toContain('# 由 gen-store-map 生成')
     expect(csv).toContain('s1,LM001')
     const r = parseStoreMap(csv)

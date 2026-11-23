@@ -52,44 +52,91 @@ export function parseStoreMap(csv: string): StoreMapParseResult {
 // 链路（2026-11-23 实测验证：拆逗号后 206/206 命中）：employee.store_info → store_info._id
 //   → store_info.store_name → dim_branch.name → dim_branch.code。
 
-export interface StoreSourceRow { sourceId: string; name: string }
-export interface DimRow { code: string; name: string }
+export interface StoreSourceRow { sourceId: string; name: string; storeCode?: string }
+export interface DimRow { code: string; name: string; sourceBook?: string }
+
+/** 需人工核对的原因（与业务核对表的档位一一对应） */
+export type StoreReviewReason =
+  | 'name_missing'          // 编码命中、名称不命中（店名演进）——扫一眼确认
+  | 'name_ambiguous'        // 编码命中、名称归一后多候选（跨账套同名）——指定账套
+  | 'code_and_name_disagree'// 编码与名称指向不同门店——必须裁决（源侧数据自相矛盾）
+  | 'code_missing'          // 编码未命中、名称唯一命中——确认是否采用该编码
+  | 'both_missing'          // 编码与名称都未命中——必须指定
+
+export interface StoreDimHint { code: string; name: string; sourceBook?: string }
 
 export interface StoreMatchResult {
-  /** 名称唯一命中：可直接进映射 CSV */
+  /** 编码 + 名称（归一）指向**同一条**平台门店 —— 100% 对上，可直接进映射 CSV */
   matched: Array<{ sourceId: string; name: string; code: string }>
-  /** 源侧同名映射到多个 dim code：必须人工裁决 */
-  ambiguous: Array<{ sourceId: string; name: string; candidates: string[] }>
-  /** dim 侧没有同名门店（改名/未采集/新店）：必须人工裁决 */
-  unmatched: Array<{ sourceId: string; name: string }>
+  /** 其余全部进清单（带原因与平台侧线索），由业务核对后人工裁决 */
+  review: Array<{
+    sourceId: string
+    name: string
+    storeCode: string
+    reason: StoreReviewReason
+    /** 平台按编码找到的门店（若唯一） */
+    dimByCode?: StoreDimHint
+    /** 平台按名称（归一）找到的候选（最多 4 条） */
+    dimByName?: StoreDimHint[]
+  }>
+}
+
+/** 名称归一：NFKC + 去空白 + 去品牌前缀（品品甜/熊喵）——只用于**辅助匹配**，不用于裁决 */
+function normalizeName(s: string): string {
+  let x = s.normalize('NFKC').replace(/\s+/g, '')
+  for (const p of ['品品甜', '熊喵']) if (x.startsWith(p)) x = x.slice(p.length)
+  return x
 }
 
 /**
- * 按门店名称精确匹配源门店与 dim_branch。名称匹配是保守的：多候选全进 ambiguous，绝不猜。
- * @param stores 源门店（store_info：sourceId = _id、name = store_name）
- * @param dims dim_branch 的 (code, name)
+ * 匹配源门店与 dim_branch（2026-11-23 判据：**编码 + 名称必须指向同一条平台门店**才算对上）。
+ * 编码优先（实测 296/299 同源），名称归一作辅助证据；任何不一致/缺失都进 review，**绝不猜**。
+ * @param stores 源门店（store_info：sourceId=_id、name=store_name、storeCode=store_code）
+ * @param dims dim_branch 的 (code, name[, source_book])
  */
 export function matchStores(stores: StoreSourceRow[], dims: DimRow[]): StoreMatchResult {
-  /** @type {Map<string, string[]>} */
-  const byName = new Map()
+  const byCode = new Map<string, StoreDimHint[]>()
+  const byName = new Map<string, StoreDimHint[]>()
   for (const d of dims) {
-    const name = d.name.trim()
-    if (name === '') continue
-    const list = byName.get(name) ?? []
-    list.push(d.code)
-    byName.set(name, list)
+    const code = d.code.trim()
+    if (code === '') continue
+    const hint: StoreDimHint = { code, name: d.name.trim(), ...(d.sourceBook ? { sourceBook: d.sourceBook } : {}) }
+    const cl = byCode.get(code) ?? []
+    cl.push(hint)
+    byCode.set(code, cl)
+    const key = normalizeName(d.name)
+    if (key !== '') {
+      const nl = byName.get(key) ?? []
+      nl.push(hint)
+      byName.set(key, nl)
+    }
   }
   const matched: StoreMatchResult['matched'] = []
-  const ambiguous: StoreMatchResult['ambiguous'] = []
-  const unmatched: StoreMatchResult['unmatched'] = []
+  const review: StoreMatchResult['review'] = []
   for (const s of stores) {
     const name = s.name.trim()
-    const codes = byName.get(name)
-    if (!codes || codes.length === 0) unmatched.push({ sourceId: s.sourceId, name })
-    else if (codes.length > 1) ambiguous.push({ sourceId: s.sourceId, name, candidates: codes.slice().sort() })
-    else matched.push({ sourceId: s.sourceId, name, code: codes[0] })
+    const storeCode = (s.storeCode ?? '').trim()
+    const codeHits = storeCode !== '' ? (byCode.get(storeCode) ?? []) : []
+    const nameHits = byName.get(normalizeName(name)) ?? []
+    const codeHit = codeHits.length === 1 ? codeHits[0] : undefined
+    const nameHit = nameHits.length === 1 ? nameHits[0] : undefined
+    // 100% 对上：同一条 dim 行
+    if (codeHit !== undefined && nameHit !== undefined && nameHit.code === codeHit.code) {
+      matched.push({ sourceId: s.sourceId, name, code: codeHit.code })
+      continue
+    }
+    let reason: StoreReviewReason
+    if (codeHit === undefined) reason = nameHit === undefined && nameHits.length === 0 ? 'both_missing' : 'code_missing'
+    else if (nameHits.length === 0) reason = 'name_missing'
+    else if (nameHits.length > 1) reason = 'name_ambiguous'
+    else reason = 'code_and_name_disagree'
+    review.push({
+      sourceId: s.sourceId, name, storeCode, reason,
+      ...(codeHit !== undefined ? { dimByCode: codeHit } : {}),
+      ...(nameHits.length > 0 ? { dimByName: nameHits.slice(0, 4) } : {}),
+    })
   }
-  return { matched, ambiguous, unmatched }
+  return { matched, review }
 }
 
 /** 把匹配结果渲染成 `--store-map` 可吃的 CSV（只含 matched；歧义/未匹配必须人工处理后再补）。 */
