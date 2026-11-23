@@ -1,0 +1,484 @@
+{
+  "data.dim_branch": [
+    {
+      "name": "address",
+      "type": "text"
+    },
+    {
+      "name": "city",
+      "type": "text"
+    },
+    {
+      "name": "code",
+      "type": "text"
+    },
+    {
+      "name": "district",
+      "type": "text"
+    },
+    {
+      "name": "enable",
+      "type": "boolean"
+    },
+    {
+      "name": "name",
+      "type": "text"
+    },
+    {
+      "name": "org",
+      "type": "text"
+    },
+    {
+      "name": "phone",
+      "type": "text"
+    },
+    {
+      "name": "province",
+      "type": "text"
+    },
+    {
+      "name": "region_id",
+      "type": "text"
+    },
+    {
+      "name": "snapshot",
+      "type": "date"
+    },
+    {
+      "name": "source_book",
+      "type": "text"
+    }
+  ],
+  "data.dim_item": [
+    {
+      "name": "bar_code",
+      "type": "text"
+    },
+    {
+      "name": "eliminate",
+      "type": "boolean"
+    },
+    {
+      "name": "item_code",
+      "type": "text"
+    },
+    {
+      "name": "name",
+      "type": "text"
+    },
+    {
+      "name": "org",
+      "type": "text"
+    },
+    {
+      "name": "sale_cease",
+      "type": "boolean"
+    },
+    {
+      "name": "snapshot",
+      "type": "date"
+    },
+    {
+      "name": "source_book",
+      "type": "text"
+    },
+    {
+      "name": "spec",
+      "type": "text"
+    },
+    {
+      "name": "unit_name",
+      "type": "text"
+    }
+  ],
+  "data.dim_settlement_order_line": [
+    {
+      "name": "item_code",
+      "type": "text"
+    },
+    {
+      "name": "item_name",
+      "type": "text"
+    },
+    {
+      "name": "line_key",
+      "type": "text"
+    },
+    {
+      "name": "money",
+      "type": "numeric"
+    },
+    {
+      "name": "order_bizday",
+      "type": "date"
+    },
+    {
+      "name": "order_no",
+      "type": "text"
+    },
+    {
+      "name": "order_time",
+      "type": "text"
+    },
+    {
+      "name": "org",
+      "type": "text"
+    },
+    {
+      "name": "price_minor",
+      "type": "bigint"
+    },
+    {
+      "name": "quantity",
+      "type": "numeric"
+    },
+    {
+      "name": "source",
+      "type": "text"
+    },
+    {
+      "name": "store_code",
+      "type": "text"
+    },
+    {
+      "name": "store_name",
+      "type": "text"
+    }
+  ],
+  "platform.job_run": [
+    {
+      "name": "attempt",
+      "type": "integer"
+    },
+    {
+      "name": "duration_ms",
+      "type": "integer"
+    },
+    {
+      "name": "error",
+      "type": "text"
+    },
+    {
+      "name": "exit_code",
+      "type": "integer"
+    },
+    {
+      "name": "finished_at",
+      "type": "timestamp with time zone"
+    },
+    {
+      "name": "id",
+      "type": "bigint"
+    },
+    {
+      "name": "key",
+      "type": "text"
+    },
+    {
+      "name": "occurrence",
+      "type": "timestamp with time zone"
+    },
+    {
+      "name": "output_tail",
+      "type": "text"
+    },
+    {
+      "name": "owner_namespace",
+      "type": "text"
+    },
+    {
+      "name": "owner_org",
+      "type": "text"
+    },
+    {
+      "name": "params_snapshot",
+      "type": "jsonb"
+    },
+    {
+      "name": "runner_id",
+      "type": "text"
+    },
+    {
+      "name": "schedule_id",
+      "type": "bigint"
+    },
+    {
+      "name": "started_at",
+      "type": "timestamp with time zone"
+    },
+    {
+      "name": "status",
+      "type": "text"
+    },
+    {
+      "name": "trigger",
+      "type": "text"
+    }
+  ],
+  "platform.job_schedule": [
+    {
+      "name": "created_by",
+      "type": "text"
+    },
+    {
+      "name": "cron",
+      "type": "text"
+    },
+    {
+      "name": "deleted_at",
+      "type": "timestamp with time zone"
+    },
+    {
+      "name": "enabled",
+      "type": "boolean"
+    },
+    {
+      "name": "expected_interval_secs",
+      "type": "integer"
+    },
+    {
+      "name": "id",
+      "type": "bigint"
+    },
+    {
+      "name": "key",
+      "type": "text"
+    },
+    {
+      "name": "max_attempts",
+      "type": "integer"
+    },
+    {
+      "name": "next_run_at",
+      "type": "timestamp with time zone"
+    },
+    {
+      "name": "owner_namespace",
+      "type": "text"
+    },
+    {
+      "name": "owner_org",
+      "type": "text"
+    },
+    {
+      "name": "params",
+      "type": "jsonb"
+    },
+    {
+      "name": "retry_at",
+      "type": "timestamp with time zone"
+    },
+    {
+      "name": "retry_attempt",
+      "type": "integer"
+    },
+    {
+      "name": "retry_occurrence",
+      "type": "timestamp with time zone"
+    },
+    {
+      "name": "source",
+      "type": "text"
+    },
+    {
+      "name": "timeout_ms",
+      "type": "integer"
+    },
+    {
+      "name": "timezone",
+      "type": "text"
+    },
+    {
+      "name": "updated_at",
+      "type": "timestamp with time zone"
+    }
+  ],
+  "platform.org_membership": [
+    {
+      "name": "ext_id",
+      "type": "text"
+    },
+    {
+      "name": "external_id",
+      "type": "text"
+    },
+    {
+      "name": "is_primary",
+      "type": "boolean"
+    },
+    {
+      "name": "source",
+      "type": "text"
+    },
+    {
+      "name": "synced_at",
+      "type": "timestamp with time zone"
+    },
+    {
+      "name": "tenant_id",
+      "type": "integer"
+    },
+    {
+      "name": "user_name",
+      "type": "text"
+    }
+  ],
+  "platform.tenant": [
+    {
+      "name": "background",
+      "type": "text"
+    },
+    {
+      "name": "casdoor_org",
+      "type": "text"
+    },
+    {
+      "name": "created_at",
+      "type": "timestamp with time zone"
+    },
+    {
+      "name": "id",
+      "type": "integer"
+    },
+    {
+      "name": "login_methods",
+      "type": "ARRAY"
+    },
+    {
+      "name": "logo",
+      "type": "text"
+    },
+    {
+      "name": "primary_color",
+      "type": "text"
+    },
+    {
+      "name": "product_name",
+      "type": "text"
+    },
+    {
+      "name": "slug",
+      "type": "text"
+    },
+    {
+      "name": "storage_access_key",
+      "type": "text"
+    },
+    {
+      "name": "storage_bucket",
+      "type": "text"
+    },
+    {
+      "name": "storage_endpoint",
+      "type": "text"
+    },
+    {
+      "name": "storage_region",
+      "type": "text"
+    },
+    {
+      "name": "storage_secret",
+      "type": "text"
+    },
+    {
+      "name": "wechat_oa_app_id",
+      "type": "text"
+    },
+    {
+      "name": "wechat_oa_secret",
+      "type": "text"
+    },
+    {
+      "name": "wecom_agent_id",
+      "type": "text"
+    },
+    {
+      "name": "wecom_approval_aes_key",
+      "type": "text"
+    },
+    {
+      "name": "wecom_approval_agent_id",
+      "type": "text"
+    },
+    {
+      "name": "wecom_approval_corp_id",
+      "type": "text"
+    },
+    {
+      "name": "wecom_approval_secret",
+      "type": "text"
+    },
+    {
+      "name": "wecom_approval_token",
+      "type": "text"
+    },
+    {
+      "name": "wecom_auto_signup",
+      "type": "boolean"
+    },
+    {
+      "name": "wecom_corp_id",
+      "type": "text"
+    },
+    {
+      "name": "wecom_provider",
+      "type": "text"
+    },
+    {
+      "name": "wecom_secret",
+      "type": "text"
+    }
+  ],
+  "platform.v_org_membership": [
+    {
+      "name": "ext_id",
+      "type": "text"
+    },
+    {
+      "name": "is_primary",
+      "type": "boolean"
+    },
+    {
+      "name": "synced_at",
+      "type": "timestamp with time zone"
+    },
+    {
+      "name": "tenant_id",
+      "type": "integer"
+    },
+    {
+      "name": "user_name",
+      "type": "text"
+    }
+  ],
+  "platform.v_org_node": [
+    {
+      "name": "ext_id",
+      "type": "text"
+    },
+    {
+      "name": "name",
+      "type": "text"
+    },
+    {
+      "name": "parent_ext_id",
+      "type": "text"
+    },
+    {
+      "name": "path",
+      "type": "text"
+    },
+    {
+      "name": "status",
+      "type": "smallint"
+    },
+    {
+      "name": "synced_at",
+      "type": "timestamp with time zone"
+    },
+    {
+      "name": "tenant_id",
+      "type": "integer"
+    }
+  ]
+}

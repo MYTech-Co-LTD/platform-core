@@ -134,7 +134,9 @@ const VERSION_REGEX = /^[0-9]+[.][0-9]+[.][0-9]+$/
 // 平台版本约束：以 >= 或 > 开头指向数字（如 >=0.1.0 / >0.1）；裸版本号（如 0.1.2）不合法。
 const PLATFORM_REGEX = /^>=?[0-9]/
 // dataDependencies 条目（M1.1）：两段式 <schema>.<view>——schema 段沿用模块 id 的 kebab-case
-// 字母表（同 ID_REGEX），视图段小写 snake_case。声明的是**稳定视图**，不声明物理表。
+// 字母表（同 ID_REGEX），视图段小写 snake_case。声明的是 **owner 发布物**（稳定视图或带版本
+// 快照表——数据宪法 §4 裁决；不声明 owner 的内部工作表/生产中间态）。列集契约由
+// scripts/data-dependencies.lock.json 登记并由 check-data-dependencies 门禁执行。
 const DATA_DEP_REGEX = /^[a-z][a-z0-9-]*\.[a-z][a-z0-9_]*$/
 
 /** 事件 key：<module>.<entity>.<event>，小写蛇形 + 点号，至少三段（2026-10-27 通知基础设施 §3.1） */
