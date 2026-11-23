@@ -60,6 +60,20 @@ import { serializeSessionCookie, type CasdoorFactory, type SessionEnv } from '..
 import { warnRateLimitDeny, type LoginLimiter } from '../rate-limit'
 
 const CALLBACK_PATH = '/api/platform/auth/wechat-oa/callback'
+
+/**
+ * 结构化运行日志（2026-11-23）：与 audit 的分工——audit 是**业务事实**（login.ok/fail 落库），
+ * 本日志是**分支走向**（silent/callback 走了哪一支、降级原因、签发形态），进 OO 供排障与探针。
+ * 安全：openid 只打掩码；**绝不打印 code / secret / AppID**。
+ */
+function log(line: string): void {
+  console.info(`[wechat-oa] ${line}`)
+}
+
+/** openid 掩码：前 6 + …（同租户内足以区分人，不可反推） */
+function maskOpenid(openid: string): string {
+  return openid.length <= 8 ? `${openid.slice(0, 2)}…` : `${openid.slice(0, 6)}…`
+}
 const STATE_COOKIE = 'wechat_oa_state'
 const STATE_TTL_SEC = 300
 
@@ -187,17 +201,25 @@ export function wechatOaRoutes(deps: WechatOaRoutesDeps) {
       // 过期或缺 cookie 时中间件不注 identity ⇒ 照常落到下面去拿会话（静默授权可自愈）。
       // 因此下面两道门（UA、公众号配置）退化为**授权路的前置条件**：它们只挡「需要去微信」的情形，
       // 不该再挡「已经有会话、只想进页面」的人（桌面 UA 带着会话进来也应放行）。
-      if (c.get('identity')) return c.redirect(next)
+      if (c.get('identity')) {
+        log('silent branch=session-shortcut')
+        return c.redirect(next)
+      }
 
       // 消费者公众号 H5 的 UA 标记是 MicroMessenger（带 wxwork 的是企微内部浏览器，归企微路）
       const ua = c.req.header('user-agent') ?? ''
-      if (!ua.toLowerCase().includes('micromessenger')) return c.redirect('/login')
+      if (!ua.toLowerCase().includes('micromessenger')) {
+        log('silent branch=desktop')
+        return c.redirect('/login')
+      }
       const t = c.get('tenant')
       // 配置存在即启用（非 login_methods）：两列缺一即 404——secret 缺了只会在回调里才炸，
       // 不如在这里就 404，让入口页能直接感知「该租户没开公众号通道」
       if (!t.wechat_oa_app_id || !t.wechat_oa_secret) {
+        log(`silent branch=not-configured tenant=${t.id}`)
         return c.json({ error: 'WECHAT_OA_NOT_CONFIGURED' }, 404)
       }
+      log(`silent branch=authorize tenant=${t.id}`)
       const state = randomUUID()
       const url = buildWechatOaSilentUrl(t.wechat_oa_app_id, callbackUri, state)
       c.res.headers.append('Set-Cookie', stateCookie(state, next))
@@ -218,8 +240,10 @@ export function wechatOaRoutes(deps: WechatOaRoutesDeps) {
       // 发出站调用——口径详见 auth-wecom.ts 同位注释）。只判租户维度：openid 在 code 换票前
       // 拿不到（同企微路 spec §3.2 的已知口径落差）。429 与其它失败同走 fail（302 回登录页
       // 按码展示，不是 JSON 死胡同）；Retry-After 信号照带，warnRateLimitDeny 告警照旧。
+      log(`callback tenant=${t.id} hasCode=${code !== ''} hasState=${state !== ''}`)
       const decision = deps.limiter.check(t.id, 'wechat-oa', null)
       if (!decision.allowed) {
+        log(`callback branch=rate-limited tenant=${t.id} retryAfter=${decision.retryAfterSec ?? 60}`)
         warnRateLimitDeny(t.id, decision)
         const res = fail('TOO_MANY_REQUESTS')
         res.headers.set('Retry-After', String(decision.retryAfterSec ?? 60))
@@ -230,6 +254,7 @@ export function wechatOaRoutes(deps: WechatOaRoutesDeps) {
       if (!code || !state || baked.state !== state) {
         // 计数：BAD_STATE 也是一次失败的登录尝试（连 /silent 都不需要——随便带个 state 循环
         // 打即可）。不写 audit：actor 此刻不存在，且被拒请求不灌审计表是既有语义（评审 R1）
+        log(`callback branch=bad-state tenant=${t.id}`)
         deps.limiter.record(t.id, 'wechat-oa', null, false)
         return fail('BAD_STATE')
       }
@@ -237,6 +262,7 @@ export function wechatOaRoutes(deps: WechatOaRoutesDeps) {
       if (!t.wechat_oa_app_id || !t.wechat_oa_secret) {
         // 计数：/silent 种 state 后配置被撤（管理员清掉两列）的半途态。口径统一——除「被限速
         // 本身」外每个失败出口都 record（同企微路同位分支）
+        log(`callback branch=not-configured tenant=${t.id}`)
         deps.limiter.record(t.id, 'wechat-oa', null, false)
         return fail('WECHAT_OA_NOT_CONFIGURED')
       }
@@ -248,10 +274,11 @@ export function wechatOaRoutes(deps: WechatOaRoutesDeps) {
           code,
           deps.wechatFetch ?? globalThis.fetch,
         )
-      } catch {
+      } catch (err) {
         // 传输层故障（微信 5xx/网络错/非 JSON——auth-core wechat-oa.ts 的 throw 契约）≠ 坏
         // code：WECHAT_UNAVAILABLE 如实呈现，不吞成 BAD_CODE；不写 login.fail（非用户过错）。
         // record 照记：这条 catch 每次都在向微信发一次出站调用，不计数 = 上游一出问题刹车就失效
+        log(`callback branch=exchange-error tenant=${t.id} err=${err instanceof Error ? err.name : 'unknown'}`)
         deps.limiter.record(t.id, 'wechat-oa', null, false)
         return fail('WECHAT_UNAVAILABLE')
       }
@@ -259,6 +286,7 @@ export function wechatOaRoutes(deps: WechatOaRoutesDeps) {
         // code 被微信拒绝（无效/过期/已兑换——200+errcode 形状）：本路唯一的内容物失败，留
         // audit 证据（actor 占位见 OA_ANON_ACTOR 注释——此刻无 openid 可写）；record 照记
         //（本路的主打路径：有效 state + 垃圾 code 循环打，每次都出站换票）
+        log(`callback branch=no-openid tenant=${t.id}`)
         await writeAudit(deps.pool, t.id, OA_ANON_ACTOR, 'login.fail', {
           via: 'wechat-oa',
           reason: 'no-openid',
@@ -267,6 +295,7 @@ export function wechatOaRoutes(deps: WechatOaRoutesDeps) {
         return fail('BAD_CODE')
       }
 
+      log(`callback openid=${maskOpenid(openid)} tenant=${t.id}`)
       // ── 两态分流（账户统一 Task 4；四处语义即实现处）────────────────────────────
       // ① findActiveLink 抛错（DB 故障）⇒ 500 裸露、未发任何 cookie（与下方 scopes 取数
       //    同姿态 fail-loudly）——刻意不 try/catch；
@@ -300,6 +329,7 @@ export function wechatOaRoutes(deps: WechatOaRoutesDeps) {
         if (user !== null && degraded === null) {
           // 禁用是账户停用，不是绑定悬空：不给正式 scopes，也不降级成访客（2026-10-27）
           if (user.isForbidden) {
+            log(`callback branch=forbidden tenant=${t.id} openid=${maskOpenid(openid)} acct=${active.casdoorName}`)
             await writeAudit(deps.pool, t.id, openid, 'login.fail', {
               via: 'wechat-oa', reason: 'forbidden', acct: active.casdoorName,
             })
@@ -311,13 +341,15 @@ export function wechatOaRoutes(deps: WechatOaRoutesDeps) {
           const acct = active.casdoorName
           const others = await deps.listActiveExternalIds(t.casdoor_org, acct)
           const ext = [openid, ...others.filter((id) => id !== openid)]
+          const scopes = effectiveScopes(acct, user.roles ?? [], perms)
+          log(`callback branch=formal tenant=${t.id} openid=${maskOpenid(openid)} acct=${acct} scopes=${scopes.length}`)
           const now = Math.floor(Date.now() / 1000)
           const token = await signSession(
             {
               sub: openid,
               org: t.casdoor_org,
               name: acct,
-              scopes: effectiveScopes(acct, user.roles ?? [], perms),
+              scopes,
               authVia: 'wechat-oa',
               acct,
               ext,
@@ -345,6 +377,7 @@ export function wechatOaRoutes(deps: WechatOaRoutesDeps) {
           acct: active.casdoorName,
         })
         const scopes = await deps.enabledGuestScopes(t.id)
+        log(`callback branch=degraded tenant=${t.id} openid=${maskOpenid(openid)} reason=${degraded ?? 'dangling'} scopes=${scopes.length}`)
         const now = Math.floor(Date.now() / 1000)
         const token = await signSession(
           { sub: openid, org: t.casdoor_org, name: openid, scopes, authVia: 'wechat-oa' },
@@ -370,6 +403,7 @@ export function wechatOaRoutes(deps: WechatOaRoutesDeps) {
       )
       // 审计先行（M-4，与 auth.ts / auth-wecom.ts 同序）：插入抛错 → 500 且未发任何会话 cookie
       await writeAudit(deps.pool, t.id, openid, 'login.ok', { via: 'wechat-oa' })
+      log(`callback branch=middle tenant=${t.id} openid=${maskOpenid(openid)} scopes=${scopes.length}`)
       deps.limiter.record(t.id, 'wechat-oa', null, true)
       c.res.headers.append('Set-Cookie', serializeSessionCookie(token))
       // 回跳：`baked.next` 已在拆 cookie 时过了一遍 safeNextPath（非法一律被折成 '/'）
