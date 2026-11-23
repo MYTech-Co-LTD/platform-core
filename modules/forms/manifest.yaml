@@ -65,6 +65,12 @@ api:
     - { method: GET,    path: /submissions/:id,                     scope: forms:view }
     # 撤回：scope 宽档（forms:fill），数据授权收窄在 handler（仅提交人 + 仅 pending）
     - { method: POST,   path: /submissions/:id/withdraw,            scope: forms:fill }
+    # ── 收集轮次（件③ / issue #2707）：名单轮/值集轮的建轮、开轮、关轮与进度 ──
+    - { method: GET,  path: /rounds,           scope: forms:view }
+    - { method: POST, path: /rounds,           scope: forms:manage }
+    - { method: GET,  path: /rounds/:id,       scope: forms:view }
+    - { method: POST, path: /rounds/:id/open,  scope: forms:manage }
+    - { method: POST, path: /rounds/:id/close, scope: forms:manage }
     # ── 应用内审批（OA P1）：scope 宽档 + **按计划快照授权**（handler 内判定当前节点审批人）──
     - { method: GET,    path: /approvals/mine,                      scope: forms:view }
     - { method: GET,    path: /approvals/:caseId,                   scope: forms:view }
@@ -132,6 +138,37 @@ notifications:
         recipient: assignee
         template: forms_form_due_reminder
         channels: [wecom_default, inapp_default]
+    # ── 收集轮次（件③ / issue #2707）：开轮指派 + 到期催办 ──
+    # 三处同描（本文件 events[].defaults ⇔ notify/templates/builtin.ts ⇔ notify/seed-builtin.ts
+    # 派生规则 recipient_key='assignee'）——漏一处 = dispatch `no_rules` 静默丢。
+    # assigned 由开轮路由逐 pending 发（eventId forms:round:<id>:assigned:<key>，确定性）；
+    # due 由 notify-reconcile job 逐未交发（eventId 含日期 ⇒ 同日重跑不重复）。
+    - key: forms.collection.assigned
+      title: 收集轮次开轮
+      scope: { key: roundId, label: 轮次 }
+      payload:
+        roundId:  { type: string, required: true }
+        assetId:  { type: string, required: true }
+        roundKey: { type: string, required: true }
+        name:     { type: string, required: true }
+        assignee: { type: user, required: true }
+        link:     { type: url, required: true }
+      recipients:
+        assignee: { kind: field, field: assignee }
+      defaults: { recipient: assignee, template: oa_collection_assigned, channels: [wecom_default, inapp_default] }
+    - key: forms.collection.due
+      title: 收集轮次催办
+      scope: { key: roundId, label: 轮次 }
+      payload:
+        roundId:  { type: string, required: true }
+        assetId:  { type: string, required: true }
+        roundKey: { type: string, required: true }
+        name:     { type: string, required: true }
+        assignee: { type: user, required: true }
+        link:     { type: url, required: true }
+      recipients:
+        assignee: { kind: field, field: assignee }
+      defaults: { recipient: assignee, template: oa_collection_due, channels: [wecom_default, inapp_default] }
     # ── OA 审批（P1 只声明这两个；forms.task.assigned / forms.case.sla.breach 随 P4/P1.5 再加）──
     # `forms.approval.awaiting` 由 **case-engine（外部生产者）** 产生：key 仍以声明模块 id 开头，
     # 归属由 producer 元数据表达（event catalog 记 module_id=external:case-engine）。

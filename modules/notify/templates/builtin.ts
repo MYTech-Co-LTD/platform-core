@@ -101,6 +101,39 @@ export const BUILTIN_TEMPLATES: BuiltinTemplate[] = [
       },
     },
   },
+  // 收集轮次（件③ / issue #2707）。三处同描：forms manifest events[].defaults ⇔ 本文件 ⇔
+  // seed-builtin.ts 派生规则（recipient_key='assignee'）——漏一处 = dispatch `no_rules` 静默丢。
+  // assigned 由开轮路由发；due 由 notify-reconcile job 发（eventId 含日期）。链接必须闭合（#44）。
+  {
+    key: 'oa_collection_assigned',
+    name: '收集轮次开轮',
+    eventKey: 'forms.collection.assigned',
+    contents: {
+      wecom_chat: {
+        text: '【收集轮次】{{name}}（{{roundKey}}）开始收集\n👉 [去填写]({{link}})',
+      },
+      in_app: {
+        title: '收集轮次：{{name}}（{{roundKey}}）',
+        body: '本轮收集开始，等你提交',
+        link: '{{link}}',
+      },
+    },
+  },
+  {
+    key: 'oa_collection_due',
+    name: '收集轮次催办',
+    eventKey: 'forms.collection.due',
+    contents: {
+      wecom_chat: {
+        text: '【收集催办】{{name}}（{{roundKey}}）还没收到你的提交\n👉 [去填写]({{link}})',
+      },
+      in_app: {
+        title: '收集催办：{{name}}（{{roundKey}}）',
+        body: '轮次已到期仍未提交，请尽快填写',
+        link: '{{link}}',
+      },
+    },
+  },
   // OA 审批（P1 / #2363）。三处同描：forms manifest 的 events[].defaults ⇔ 本文件 ⇔ seed-builtin.ts。
   // awaiting 由 **case-engine（external 生产者）** 发；decided 由平台回调发。链接必须闭合（#44）。
   {

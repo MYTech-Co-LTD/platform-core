@@ -4,6 +4,9 @@
 // 职责（全部幂等）：
 //   ① 指派：逐人 enqueue forms.form.assigned（event_id = form:<assetId>:<version>:assigned:<user>）
 //   ② 催办：到期未提交者逐人 enqueue forms.form.due_reminder（event_id 含日期 ⇒ 同日重跑不重复）
+//   ③ 收集轮次催办（件③ / #2707）：open 且过了 ends_at 的轮 → 逐未交 key enqueue
+//      forms.collection.due（event_id 含日期；名单轮发给应交人，值集轮没有逐格收件人 ⇒
+//      发给开轮人 created_by 去追格子）
 //
 // 2026-10-27 通知基础设施改造：
 //   - 不再派生规则（规则由 scripts/notify-seed-builtin.mjs 幂等 seed；本 job 只负责入队）
@@ -19,7 +22,7 @@
 import { createRequire } from 'node:module'
 import { pathToFileURL } from 'node:url'
 import { parseAssignment, resolveAssigneeKeys } from '../modules/forms/domain/assignees.ts'
-import { listAssignmentTargets } from '../modules/forms/storage.ts'
+import { listAssignmentTargets, listOverdueRounds } from '../modules/forms/storage.ts'
 import { enqueueEvent } from '../modules/notify/storage.ts'
 
 const DAY = 86400000
@@ -34,14 +37,16 @@ export const ymd = (d) => new Date(d).toISOString().slice(0, 10)
  * @param {{ now?: Date, dryRun?: boolean,
  *           deps?: { listTargets?: typeof listAssignmentTargets,
  *                    resolveAssignees?: typeof resolveAssigneeKeys,
+ *                    listDueRounds?: typeof listOverdueRounds,
  *                    enqueue?: typeof enqueueEvent } }} [opts]
- * @returns {Promise<{ targets: number, emitted: number, duplicates: number }>}
+ * @returns {Promise<{ targets: number, emitted: number, duplicates: number, dueRounds: number }>}
  */
 export async function reconcileOnce(pool, opts = {}) {
   const { now = new Date(), dryRun = false } = opts
   const {
     listTargets = listAssignmentTargets,
     resolveAssignees = resolveAssigneeKeys,
+    listDueRounds = listOverdueRounds,
     enqueue = enqueueEvent,
   } = opts.deps ?? {}
 
@@ -49,6 +54,7 @@ export async function reconcileOnce(pool, opts = {}) {
   const targets = await listTargets(pool)
   let emitted = 0
   let duplicates = 0
+  let dueRounds = 0
 
   for (const t of targets) {
     const decl = parseAssignment(t.body)
@@ -98,7 +104,32 @@ export async function reconcileOnce(pool, opts = {}) {
     }
   }
 
-  return { targets: targets.length, emitted, duplicates }
+  // ③ 收集轮次催办（件③ / #2707）：open 且已过 ends_at 的轮 → 逐未交 key 入队。
+  //    event_id 含日期 ⇒ 同日重跑不重复；值集轮没有逐格收件人 ⇒ assignee = 开轮人（created_by）。
+  for (const { round, pendingKeys } of await listDueRounds(pool, now)) {
+    dueRounds++
+    const assigneeOf =
+      round.kind === 'targets' ? (k) => k : () => round.createdBy
+    const day = ymd(now)
+    for (const key of pendingKeys) {
+      if (dryRun) continue
+      const r = await enqueue(pool, {
+        org: round.org,
+        eventId: `forms:round:${round.id}:due:${key}:${day}`,
+        eventKey: 'forms.collection.due',
+        scope: round.id,
+        payload: {
+          roundId: round.id, assetId: round.assetId, roundKey: round.roundKey, name: round.name,
+          assignee: assigneeOf(key), link: `${base}/console/forms/fill/${round.assetId}`,
+        },
+        producer: 'forms',
+      })
+      if (r.accepted) emitted++
+      else duplicates++
+    }
+  }
+
+  return { targets: targets.length, emitted, duplicates, dueRounds }
 }
 
 // ── CLI 入口（被测试 import 时不执行）──

@@ -1032,7 +1032,104 @@ describePg('forms 收集轮次（#2707）', () => {
     expect(await count()).toBe(before)
   })
 
-  it('B2 建轮参数闸（占位：随 B2 路由提交补齐）', () => {
-    expect(true).toBe(true)
+  it('B2 轮次路由面：建轮（默认钉 head）→ 列表/详情 → 开轮逐人 assigned → 关轮', async () => {
+    // 建轮：不传 version ⇒ 钉 head；targets/anchors 按行幂等去重
+    let res = await req(appFor(manage), 'POST', '/rounds', {
+      assetId: R_ASSET, roundKey: 'api-1', kind: 'targets', name: 'API 轮', targets: ['u1', 'u1', 'u2'],
+    })
+    expect(res.status).toBe(201)
+    const { id } = (await res.json()) as { id: string }
+    const { rows: rr } = await pool.query(
+      'select version, status from forms.collection_round where org=$1 and id=$2::bigint', [R_ORG, id])
+    expect(rr[0]).toMatchObject({ version: 1, status: 'draft' })
+
+    // 列表（view）与详情（含 progress）
+    res = await req(appFor(viewer), 'GET', '/rounds')
+    expect(((await res.json()) as { rounds: Array<{ roundKey: string }> }).rounds.map((r) => r.roundKey))
+      .toContain('api-1')
+    res = await req(appFor(viewer), 'GET', `/rounds/${id}`)
+    const detail = (await res.json()) as { round: { status: string }; progress: { total: number; pending: number } }
+    expect(detail.round.status).toBe('draft')
+    expect(detail.progress).toMatchObject({ total: 2, pending: 2 })
+
+    // 开轮 → assigned 事件逐人（幂等 eventId；payload 三字段齐）
+    emitted = []
+    res = await req(appFor(manage), 'POST', `/rounds/${id}/open`)
+    expect(res.status).toBe(200)
+    const assigned = emitted.filter((e) => e.eventKey === 'forms.collection.assigned')
+    expect(assigned.map((e) => e.eventId).sort()).toEqual([
+      `forms:round:${id}:assigned:u1`, `forms:round:${id}:assigned:u2`,
+    ])
+    expect(assigned[0].payload).toMatchObject({
+      roundId: id, assetId: R_ASSET, roundKey: 'api-1', name: 'API 轮',
+      assignee: expect.stringMatching(/^u[12]$/),
+      link: expect.stringContaining(`/console/forms/fill/${R_ASSET}`),
+    })
+    expect(assigned[0].scope).toBe(id)
+
+    // 已开的轮再开 → 409 ROUND_STATUS_INVALID
+    res = await req(appFor(manage), 'POST', `/rounds/${id}/open`)
+    expect(res.status).toBe(409)
+    expect(((await res.json()) as { error: string }).error).toBe('ROUND_STATUS_INVALID')
+
+    // 关轮 → 已交名单冻结在 submitted；再关 409
+    res = await req(appFor(manage), 'POST', `/rounds/${id}/close`)
+    expect(res.status).toBe(200)
+    res = await req(appFor(manage), 'POST', `/rounds/${id}/close`)
+    expect(res.status).toBe(409)
+    res = await req(appFor(viewer), 'GET', `/rounds/${id}`)
+    expect(((await res.json()) as { round: { status: string } }).round.status).toBe('closed')
+
+    // 不存在的轮 → 404
+    res = await req(appFor(viewer), 'GET', '/rounds/999999')
+    expect(res.status).toBe(404)
+    res = await req(appFor(viewer), 'GET', '/rounds/not-a-number')
+    expect(res.status).toBe(404)
+  })
+
+  it('B2 值集轮开轮：assigned 逐格子发给开轮人（v1 无逐格收件人）', async () => {
+    const res0 = await req(appFor(manage), 'POST', '/rounds', {
+      assetId: R_ASSET, roundKey: 'api-grid', kind: 'value_grid', name: '格子轮', anchors: ['S001', 'S002'],
+    })
+    expect(res0.status).toBe(201)
+    const { id } = (await res0.json()) as { id: string }
+    emitted = []
+    const res = await req(appFor(manage), 'POST', `/rounds/${id}/open`)
+    expect(res.status).toBe(200)
+    const assigned = emitted.filter((e) => e.eventKey === 'forms.collection.assigned')
+    expect(assigned.map((e) => e.eventId).sort()).toEqual([
+      `forms:round:${id}:assigned:S001`, `forms:round:${id}:assigned:S002`,
+    ])
+    expect(assigned.every((e) => e.payload.assignee === 'op-1')).toBe(true)
+  })
+
+  it('B2 建轮参数闸：坏 kind / 空 targets / 坏 roundKey → 400；同 key 再建 → 409 ROUND_KEY_TAKEN；坏 version → 409', async () => {
+    for (const [body, code] of [
+      [{ assetId: R_ASSET, roundKey: 'k1', kind: 'bogus', name: 'x', targets: ['u1'] }, 'ROUND_KIND_INVALID'],
+      [{ assetId: R_ASSET, roundKey: 'k1', kind: 'targets', name: 'x', targets: [] }, 'ROUND_LIST_REQUIRED'],
+      [{ assetId: R_ASSET, roundKey: 'k1', kind: 'targets', name: 'x' }, 'ROUND_LIST_REQUIRED'],
+      [{ assetId: R_ASSET, roundKey: 'bad key!', kind: 'targets', name: 'x', targets: ['u1'] }, 'ROUND_KEY_INVALID'],
+      [{ assetId: R_ASSET, roundKey: 'k1', kind: 'targets', name: '', targets: ['u1'] }, 'NAME_REQUIRED'],
+    ] as const) {
+      const res = await req(appFor(manage), 'POST', '/rounds', body)
+      expect(res.status, JSON.stringify(body)).toBe(400)
+      expect(((await res.json()) as { error: string }).error).toBe(code)
+    }
+
+    // 同 key 再建 → 409
+    const res = await req(appFor(manage), 'POST', '/rounds', {
+      assetId: R_ASSET, roundKey: 'api-1', kind: 'targets', name: '重复', targets: ['u1'],
+    })
+    expect(res.status).toBe(409)
+    expect(((await res.json()) as { error: string }).error).toBe('ROUND_KEY_TAKEN')
+
+    // 未发布版本号 → 409；org 隔离：B 租户看不到 A 的轮
+    const bad = await req(appFor(manage), 'POST', '/rounds', {
+      assetId: R_ASSET, version: 99, roundKey: 'v99', kind: 'targets', name: 'x', targets: ['u1'],
+    })
+    expect(bad.status).toBe(409)
+    expect(((await bad.json()) as { error: string }).error).toBe('NO_PUBLISHED_HEAD')
+    const other = await req(appFor(makeIdentity({ orgId: `org-forms-rounds-other-${SUF}`, scopes: ['forms:view'] })), 'GET', '/rounds')
+    expect(((await other.json()) as { rounds: unknown[] }).rounds).toEqual([])
   })
 })
