@@ -48,6 +48,18 @@ export type GateErrorCode =
   | 'BAD_ASSIGNEE_REF'
   | 'BAD_DUE'
   | 'APPROVAL_REF_INVALID'
+  | 'DATA_PLANE_FIELD_NAME_INVALID'
+  | 'DATA_PLANE_TYPE_UNSUPPORTED'
+
+/**
+ * dataPlane（件① 字段级数据通路，#2706）v1 白名单：字段名的形态与可摊平类型。
+ * 字段名会成为湖上的 `f_<name>` 列，故必须是小写蛇形；类型决定生成器（
+ * scripts/gen-forms-data-projection.mjs）用哪种 SQL 提取。枚举只挂 string（int 枚举
+ * 按其基础类型提取）。⚠️ 与 storage.listDataPlaneForms 的 kind 映射同构——
+ * 闸放行的字段必须能在清单里映出 kind，两处漂开就会出现「发布得了但摊平不出」。
+ */
+export const DATA_PLANE_FIELD_NAME_RE = /^[a-z][a-z0-9_]{0,63}$/
+const DATA_PLANE_TYPES: ReadonlySet<string> = new Set(['string', 'number', 'integer', 'boolean'])
 
 /** 收集契约中全部字典引用（去重）——storage 据此预载各 ref 的生效 key 集。 */
 export function dictRefs(schema: unknown): string[] {
@@ -221,7 +233,9 @@ function declaredFieldDefs(schema: Record<string, unknown>): Map<string, Record<
  * ② schema 方言 draft-07（2020-12 显式拒）；③ ajv 编译通过；④ 条件字段两查；
  * ⑤ 每个 x-dict 引用格式合法、与 x-binding 成对且 ∈ v1 两档；
  * ⑥ **新增**：uiSchema 键 ⊆ schema.properties（防 scope 漂移）；
- * ⑦ **新增**：uiSchema 用的 ui:widget ∈ SUPPORTED_WIDGETS（渲染层不认识的一律拒）。
+ * ⑦ **新增**：uiSchema 用的 ui:widget ∈ SUPPORTED_WIDGETS（渲染层不认识的一律拒）；
+ * ⑧ dataPlane opt-in 闸（#2706 件①）：仅当 `dataPlane.enabled === true` 时，顶层字段必须
+ *    能落成湖上 `f_` 列（名字/类型白名单，见 DATA_PLANE_FIELD_NAME_RE 处注释）。
  */
 export function compileGate(body: unknown): GateResult {
   if (body === null || typeof body !== 'object' || Array.isArray(body)) {
@@ -300,6 +314,43 @@ export function compileGate(body: unknown): GateResult {
           ok: false,
           code: 'UNSUPPORTED_WIDGET',
           detail: `ui:widget "${w}" 渲染层不认识（可用：${[...SUPPORTED_WIDGETS].join('/')}）`,
+        }
+      }
+    }
+  }
+  // dataPlane opt-in 闸（件① 字段级数据通路，#2706）：**只咬 `dataPlane.enabled === true`**
+  // 的契约——未声明的表单行为逐字不变（上面的既有闸照旧，嵌套/数组照常放行）。声明了 ⇒
+  // 每个顶层字段都要能落成湖上的一列（`f_<name>`）：名字合法 + 类型在白名单内 + 无嵌套。
+  // 闸跑在 publish 门（写时校验纪律）——坏声明不静默入库拖到生成器/物化时才炸。
+  const dp = (body as Record<string, unknown>)['dataPlane']
+  if (dp !== null && typeof dp === 'object' && !Array.isArray(dp) && (dp as { enabled?: unknown }).enabled === true) {
+    const props = schema['properties']
+    if (props !== null && typeof props === 'object' && !Array.isArray(props)) {
+      for (const [name, def] of Object.entries(props as Record<string, unknown>)) {
+        if (!DATA_PLANE_FIELD_NAME_RE.test(name)) {
+          return {
+            ok: false,
+            code: 'DATA_PLANE_FIELD_NAME_INVALID',
+            detail: `dataPlane 字段名须 ^[a-z][a-z0-9_]{0,63}$：${name}`,
+          }
+        }
+        const d = (def ?? {}) as Record<string, unknown>
+        const t = typeof d.type === 'string' ? d.type : ''
+        const okType = DATA_PLANE_TYPES.has(t) || (t === 'string' && d.format === 'date')
+        const isStringEnum = t === 'string' && Array.isArray(d.enum) && d.enum.every((v) => typeof v === 'string')
+        if (!okType && !isStringEnum) {
+          return {
+            ok: false,
+            code: 'DATA_PLANE_TYPE_UNSUPPORTED',
+            detail: `dataPlane 字段类型不支持：${name}（v1 白名单 string/number/integer/boolean/string+format:date/string 枚举）`,
+          }
+        }
+        if (d.properties !== undefined || d.items !== undefined) {
+          return {
+            ok: false,
+            code: 'DATA_PLANE_TYPE_UNSUPPORTED',
+            detail: `dataPlane 字段不支持嵌套/数组：${name}`,
+          }
         }
       }
     }

@@ -36,6 +36,7 @@ import {
   findProducerPipelines,
   findProjectionNode,
   findStagingModelRel,
+  isNonLakeContract,
   maskSqlComments,
   readContractDoc,
 } from './lib/data-contract.mjs'
@@ -360,7 +361,7 @@ export function viewPathFor(rootDir, c) {
  */
 export function runGenerate(rootDir, opts = {}) {
   const contracts = collectJson(rootDir, CONTRACT_DIR).filter(
-    (p) => !NON_CONTRACT.has(p.split('/').pop() ?? ''),
+    (p) => !NON_CONTRACT.has(p.split('/').pop() ?? '') && !isNonLakeContract(p),
   )
   let changed = 0
   let missing = 0

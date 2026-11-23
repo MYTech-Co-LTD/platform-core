@@ -53,6 +53,7 @@ import {
   measuresOf,
   parseArgs,
   readDeclarations,
+  L1_DECLARATIONS_REL,
   usageError,
   usageText,
 } from './sync-data-semantics.mjs'
@@ -89,8 +90,20 @@ describe('declarationsFromYaml：语义事实源 → L1 行', () => {
       },
     ]))
     expect(rows[0].sourceSystem).toBe('lemeng')
-    // 仓内真实事实源的两条声明都带上了源（否则物化出的 L1 行没有源维度）
-    for (const row of readDeclarations(ROOT)) expect(row.sourceSystem, `${row.id} 没有源`).toBe('lemeng')
+    // 仓内真实事实源的**每一条**声明都带上了源（否则物化出的 L1 行没有源维度）。
+    // 期望值取自**声明原文的 `source`**，不写死源名：多源（lemeng / forms …）演进时这里自动跟上，
+    // 而「某条声明漏写 source」仍会红（映射出来是空串/null）。
+    const real = parseYaml(readFileSync(path.join(ROOT, L1_DECLARATIONS_REL), 'utf8')) as {
+      metrics?: Array<Record<string, unknown>>
+    }
+    const byId = new Map(readDeclarations(ROOT).map((r) => [r.id, r]))
+    expect(real.metrics?.length ?? 0).toBeGreaterThan(0)
+    for (const m of real.metrics ?? []) {
+      const id = String(m.name ?? '')
+      const declared = String(m.source ?? '').trim()
+      expect(declared, `${id} 的声明缺 source（源维度是 L1 行的必填面）`).toMatch(/^[a-z][a-z0-9_]*$/)
+      expect(byId.get(id)?.sourceSystem, `${id} 没有源`).toBe(declared)
+    }
   })
 
   it('★ 形状契约两侧同源：sync 物化的每一条都能被唯一编译点解析（写侧↔读侧）', () => {
@@ -121,7 +134,16 @@ describe('declarationsFromYaml：语义事实源 → L1 行', () => {
       // groupBy = grain.join(', ')（见 declarationsFromYaml），反推即得 grain
       const grain = row.groupBy === '' ? [] : row.groupBy.split(', ')
       expect(row.params.bizday, `${row.id} 缺 bizday 参数`).toEqual({ column: 'bizday', type: 'date_range' })
-      expect(row.params.system_book, `${row.id} 缺 system_book 参数`).toEqual({ column: 'system_book', type: 'string' })
+      // system_book（账套）参数面是 **lemeng 域**的约定维度。表单域（source=forms）没有账套：
+      // 租户主体列是 `org`（authz 注入），grain 里刻意不带 system_book ⇒ 如实无此参数。
+      // 非 lemeng 源若真在 grain 里带了 system_book，说明要么写错了列、要么该源已引入账套维度
+      // ——两种都要人看一眼，所以这里也红。
+      if (row.sourceSystem === 'lemeng') {
+        expect(row.params.system_book, `${row.id} 缺 system_book 参数`).toEqual({ column: 'system_book', type: 'string' })
+      } else {
+        expect(grain.includes('system_book'), `${row.id}（源 ${row.sourceSystem}）没有账套维度，grain 里不该有 system_book`).toBe(false)
+        expect(row.params.system_book, `${row.id} 非 lemeng 源不该出 system_book 参数`).toBeUndefined()
+      }
       if (grain.includes('domain')) {
         withDomain++
         expect(row.params.domain, `${row.id} grain 含 domain 却没出参数`).toEqual({ column: 'domain', type: 'string' })
@@ -241,10 +263,12 @@ describe('deriveTotalable —— 可加判定（spec §8.4：表达式形状的�
     expect(() => additivityOf('stocks', 'm')).toThrow(/不在 flow\|stock\|non_additive/)
   })
 
-  it('★ 真 YAML 逐条断言（spec §8.4，真实事实源）：恰 37 条可加；十八条比率/去重计数/max/存量不给合计', () => {
+  it('★ 真 YAML 逐条断言（spec §8.4，真实事实源）：可加集 = 全体 − 不可加名单；比率/去重计数/max/存量不给合计', () => {
     // 为什么钉真实 YAML：totalable 是物化产物，漏推导/推错不报错，只表现为线上多带或
     // 少带一个合计。期望集按各指标 expression 实文核对（比率用 ratio: 声明、去重计数用
-    // count(distinct …)）——加指标时改这里的集合，两条计数会替你兜住条数漂移。
+    // count(distinct …)）——**新增不可加形状时往这个集合里加**（集合才是事实源）。
+    // 条数**不写死**：可加数 = 声明总数 − 名单规模。写死数字会让每次合法新增 L1 都红一次，
+    // 而「多加了一条 sum() 指标」本身不需要人工重核。
     const rows = readDeclarations(ROOT)
     const NOT_TOTALABLE = new Set([
       'lemeng:outbound:gross_margin_rate',       // ratio（毛利率）
@@ -273,9 +297,12 @@ describe('deriveTotalable —— 可加判定（spec §8.4：表达式形状的�
     for (const row of rows) {
       expect(row.totalable, `${row.id} 的 totalable 与 expression 形状不符`).toBe(!NOT_TOTALABLE.has(row.id))
     }
-    // 「恰好」要有实证数：不是全体都可加、也不是全体都不可加
-    expect(rows.filter((r) => r.totalable === true).length, '可加条数（加/改指标时重核）').toBe(38)
-    expect(rows.filter((r) => r.totalable === false).length).toBe(18)
+    // 「恰好」要有实证数：不是全体都可加、也不是全体都不可加（条数从名单规模推出，不写死）。
+    // 先钉「名单上的每一条都还在 YAML 里」——改名/删指标后忘了同步集合，会在这里红。
+    expect(NOT_TOTALABLE.size, '不可加名单自身不能为空').toBeGreaterThan(0)
+    expect(rows.filter((r) => NOT_TOTALABLE.has(r.id)).length, '不可加名单里有条目不在 YAML（改名/删除后请同步集合）').toBe(NOT_TOTALABLE.size)
+    expect(rows.filter((r) => r.totalable === false).length).toBe(NOT_TOTALABLE.size)
+    expect(rows.filter((r) => r.totalable === true).length).toBe(rows.length - NOT_TOTALABLE.size)
     // 抽样钉两条形态极值（brief 点名）
     expect(rows.find((r) => r.id === 'lemeng:retail:net_sales')?.totalable).toBe(true)
     expect(rows.find((r) => r.id === 'lemeng:transfer:batch_fill_rate')?.totalable).toBe(false)
@@ -643,9 +670,10 @@ describe('declarationsFromYaml：required_scope（列级授权声明面，spec 2
   })
 })
 
-describe('真 YAML：55 条 sla_days / freshnessRelations 逐条断言（spec §10.7.1/10.7.3，真实事实源）', () => {
+describe('真 YAML：全量 sla_days / freshnessRelations 逐条断言（spec §10.7.1/10.7.3，真实事实源）', () => {
   // 为什么钉真实 YAML：sla_days 是人工登记值（不是推导产物），漏登记/登错不报错，只表现为
-  // 线上状态转译错。逐字断言 + 计数兜底（加指标时这两条会替你守住「新指标必须显式登记」）。
+  // 线上状态转译错。逐条断言以「显式集合」为事实源；**条数不写死**——登记完整性由
+  // check-data-models 规则⑤（每条声明必填 freshness_sla_days）在静态面守住，这里不再用数字兜底。
   const rows = readDeclarations(ROOT)
   // 2026-10-18 按实测发布时钟重新标定（issue #849）：sla_days 的语义就是「T+N 可用」，
   // 采集窗口落在上海 00:25/00:35（刚过午夜）⇒ 除零售（tick 每 5 分钟）外都够不到 T+1。
@@ -658,15 +686,18 @@ describe('真 YAML：55 条 sla_days / freshnessRelations 逐条断言（spec §
     'lemeng:retail:order_line',
   ])
 
-  it('恰 56 条；inventory 两指标 sla_days=3、retail 七条=1、其余 47 条=2（按实测发布时钟标定，#849）', () => {
-    expect(rows.length).toBe(56)
+  it('sla_days 逐条与标定集合一致（inventory=3、零售族=1、其余=2）；条数从集合推出（#849）', () => {
+    expect(rows.length).toBeGreaterThan(0)
     for (const row of rows) {
       const want = SLA3.has(row.id) ? 3 : SLA1.has(row.id) ? 1 : 2
       expect(row.slaDays, `${row.id} 的 sla_days 与标定不符`).toBe(want)
     }
-    expect(rows.filter((r) => r.slaDays === 3).length).toBe(2)
-    expect(rows.filter((r) => r.slaDays === 2).length).toBe(47)
-    expect(rows.filter((r) => r.slaDays === 1).length).toBe(7)
+    // 集合成员必须在 YAML 里真实存在（否则集合里残留的旧名字会让下面的计数失去意义）。
+    expect(rows.filter((r) => SLA3.has(r.id)).length).toBe(SLA3.size)
+    expect(rows.filter((r) => SLA1.has(r.id)).length).toBe(SLA1.size)
+    expect(rows.filter((r) => r.slaDays === 3).length).toBe(SLA3.size)
+    expect(rows.filter((r) => r.slaDays === 1).length).toBe(SLA1.size)
+    expect(rows.filter((r) => r.slaDays === 2).length).toBe(rows.length - SLA3.size - SLA1.size)
   })
 
   it('freshnessRelations 与声明 sources 推导逐字一致；没声明 sources 的 = 空（无自动水位）', () => {
@@ -746,10 +777,18 @@ describe('真 YAML：55 条 sla_days / freshnessRelations 逐条断言（spec §
       const expected = DECLARED_SOURCES[row.id as keyof typeof DECLARED_SOURCES] ?? []
       expect(row.freshnessRelations, `${row.id} 的 freshness_relations 与 sources 推导不一致`).toEqual(expected)
     }
-    // 推导一致性：**56 条全部**声明了 sources（2026-10-17 补齐前是 15 条，另 20 条水位恒未知）。
-    // 计数兜底保留：以后新增指标若忘声明 sources，下面的 56 会立刻红。
-    expect(rows.filter((r) => (r.freshnessRelations ?? []).length > 0).length).toBe(56)
-    expect(rows.filter((r) => (r.freshnessRelations ?? []).length === 0).length).toBe(0)
+    // 推导一致性：除**已知例外**外，每条声明都应能推出水位。
+    // ⚠️ 例外的根因是推导函数的射程：`deriveFreshnessRelations` 只认路径段 `lemeng/<资产>`
+    //    （spec §10.7.3 的 `stg_lemeng_<资产>` 同构）⇒ **非 lemeng 源不能声明 sources**，
+    //    写了会让 sync 响亮失败。这类指标的「无水位」是如实未知，不是漏登记。
+    //    新增例外必须写进这张表并给理由；漏声明 sources 的新指标会以「集合不等」变红。
+    const KNOWN_NO_SOURCES = new Set([
+      'forms:ops:check_count_total', // source=forms：推导只支持 lemeng/ 路径段（#2706 件①）
+    ])
+    expect(rows.filter((r) => (r.freshnessRelations ?? []).length > 0).length)
+      .toBe(rows.length - KNOWN_NO_SOURCES.size)
+    const noSourcesIds = rows.filter((r) => (r.freshnessRelations ?? []).length === 0).map((r) => r.id)
+    expect(new Set(noSourcesIds), '无水位行必须与例外表逐条相等（新增/移除例外请改这里）').toEqual(KNOWN_NO_SOURCES)
   })
 })
 

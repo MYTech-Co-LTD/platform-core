@@ -1666,3 +1666,26 @@ metrics:
     freshness_sla_days: 2
     sources:
     - 's3://<bucket>/lemeng/branch_indicator/system_book=<账套>/bizday=<日期>/all.parquet'
+
+  # ── forms 域首条指标（件① 表单字段级数据通路，#2706 / 计划 2026-11-23-goal-platform-a-b-c A3）──
+  # 验证字段级通路：dataPlane 表单 `ops-round-2026-11`（字段契约 contracts/forms/data-plane/ops-round-2026-11.json）
+  # 的 check_count 求和。模型由 scripts/gen-forms-data-projection.mjs 生成（生成物 == committed）。
+  # ⚠️ relation 名 = stg_forms_submission__ops_round_2026_11（assetId 的 - 转 _，生成器 relationSlug 规则）。
+  # ⚠️ 刻意**不写 sources**（新鲜度路径段推导 deriveFreshnessRelations 只认 lemeng/ 段，写 forms 路径会
+  #    在 sync 响亮失败）⇒ 本指标无自动水位，freshness 如实「未知」（spec §10.7.3 的缺省语义）。
+  # ⚠️ tier=experimental：通路验证指标（提交行 = 真表单 API 造的 2 条夹具），非业务口径。
+  # ⚠️ grain 必含 bizday（仓内约定：问数参数面按 bizday 出日期区间；摊平模型有 bizday 列，非杜撰）。
+  #    表单域**没有** system_book（账套）维度——租户主体列是 org（authz 注入），故刻意不声明。
+  - name: 'forms:ops:check_count_total'
+    label: 巡检完成件数（合计）
+    definition: >-
+      dataPlane 表单 ops-round-2026-11 的 check_count 字段求和（件① 字段级通路验证，#2706）。
+      数据 = 湖上 forms/submission 按 form_def_id 过滤 + payload 逐字段提取（生成模型
+      stg_forms_submission__ops_round_2026_11）。粒度 = 采集日 × 门店（bizday × f_store_name）；
+      本指标是首条 forms 域声明，通路打通后随业务口径另行声明。
+    expression: 'sum(stg_forms_submission__ops_round_2026_11.f_check_count)'
+    grain: [bizday, f_store_name]
+    owner: data-platform
+    tier: experimental
+    source: forms
+    freshness_sla_days: 2

@@ -19,6 +19,23 @@ export const CONTRACT_DIR = 'contracts'
 export const PIPELINE_DIRS = ['deploy/duckle/console/pipelines', 'duckle']
 /** 契约里不是「真契约」的文件名（元 schema 与模板）。 */
 export const NON_CONTRACT = new Set(['_schema.schema.json', '_template.contract.json'])
+
+/** 表单字段契约目录（件① #2706；生成物 = scripts/gen-forms-data-projection.mjs）。 */
+export const FORM_DATA_PLANE_DIR = 'contracts/forms/data-plane'
+
+/**
+ * 这批 JSON **不是**湖列契约：它没有 schemaVersion / layout.prefix / 生产者管线（摊平模型读的是
+ * `forms.submission` 这个**已声明**源，只是按 form_def_id 过滤 + payload 提取），按湖契约的判据
+ * 必假红（schemaVersion 缺失 / 0 生产者）。它是**生成器的声明源**，纪律由自己的 `--check`
+ * （gen-forms-data-projection.mjs）守。凡按「湖列契约」语义扫描 `contracts/` 的门禁/生成器
+ * 都必须用本判定排除（三处：check-data-contract / gen-data-projection / check-column-scope-monotonicity；
+ * check-semantics 与 check-data-models 对无 domain/table 的 json 天然跳过，不依赖本判定）。
+ * @param {string} rel 仓根相对路径
+ * @returns {boolean}
+ */
+export function isNonLakeContract(rel) {
+  return rel.startsWith(`${FORM_DATA_PLANE_DIR}/`)
+}
 /** dbt 在 staging 层注入的列（不属契约；见 dbt/macros/subject_org.sql）。 */
 export const INJECTED_STAGING_COLUMNS = ['org']
 

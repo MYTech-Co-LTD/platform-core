@@ -37,7 +37,7 @@ import { readFileSync } from 'node:fs'
 import { join, relative, sep } from 'node:path'
 import { parse as parseYaml } from 'yaml'
 
-import { collectJson, readContractDoc } from './lib/data-contract.mjs'
+import { collectJson, isNonLakeContract, readContractDoc } from './lib/data-contract.mjs'
 import { SENSITIVITY_KINDS } from './check-data-contract.mjs'
 // 默认档的豁免码：**从写侧同一个常量取**（T3 `DEFAULT_TIER_SCOPE`），别在门禁里另写一份字面量
 // —— 写侧与门禁读同一个值，才不会有「改了一处、另一处静默漂开」的口子。
@@ -92,6 +92,9 @@ export function loadSensitivity(rootDir) {
   const m = new Map()
   for (const rel of collectJson(rootDir, 'contracts')) {
     if (NON_CONTRACT.has(rel.split('/').pop() ?? '')) continue
+    // 表单字段契约（件① #2706）不是湖列契约：无 domain/table/sensitivity，登记进去只会长出
+    // `..列名` 的假键。排除判定与另两处湖契约扫描面共用同一份（lib/data-contract.mjs）。
+    if (isNonLakeContract(rel)) continue
     const doc = readContractDoc(rootDir, rel)
     if (doc === null) continue // 坏 JSON 由 check-data-contract 报，这里不重复
     for (const col of doc.columns) {

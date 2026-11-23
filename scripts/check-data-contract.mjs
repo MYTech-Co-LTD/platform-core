@@ -68,6 +68,7 @@ import {
   findProducerPipelines,
   findProjectionNode,
   findStagingModelRel,
+  isNonLakeContract,
   maskSqlComments,
   readContractDoc,
 } from './lib/data-contract.mjs'
@@ -260,7 +261,7 @@ export function checkDataContract(rootDir) {
   /** @type {Violation[]} */
   const violations = []
   const contractFiles = collectJson(rootDir, CONTRACT_DIR).filter(
-    (p) => !NON_CONTRACT.has(p.split('/').pop() ?? ''),
+    (p) => !NON_CONTRACT.has(p.split('/').pop() ?? '') && !isNonLakeContract(p),
   )
 
   const meta = loadMetaSchema(rootDir)
