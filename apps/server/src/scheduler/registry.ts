@@ -67,6 +67,14 @@ export const JOB_REGISTRY: JobDef[] = [
   { key: 'org.sync', scope: 'platform', requiresEnv: ['DATABASE_URL','CASDOOR_URL','CASDOOR_ADMIN_USER','CASDOOR_ADMIN_PWD'], script: 'scripts/org-sync-all.mjs', args: ['--apply'], cron: '13 */6 * * *', timezone: 'UTC', timeoutMs: 600000, maxAttempts: 2, expectedIntervalSecs: 21600, description: '企微组织架构同步（--apply：默认 dry-run 不写库）' },
   { key: 'notify.seed_builtin', scope: 'platform', script: 'scripts/notify-seed-builtin.mjs', cron: '13 * * * *', timezone: 'UTC', timeoutMs: 300000, maxAttempts: 1, expectedIntervalSecs: 3600, description: '内置模板/规则幂等 seed' },
   { key: 'notify.health', scope: 'platform', script: 'scripts/notify-health.mjs', cron: '*/5 * * * *', timezone: 'UTC', timeoutMs: 300000, maxAttempts: 1, expectedIntervalSecs: 300, description: '通知投递健康检查' },
+  // OA 审批对账（#2363 P1 / #2385 P2 收口）：两个脚本此前只在仓内、**零调度登记**——配置齐全也不会
+  // 运行。照 `notify.reconcile` 的既有形态登记（registry 调脚本；两个脚本把统计 JSON 打到 stdout，
+  // 由 runner 收进 `platform.job_run.output_tail`，即「输出统计写入 job 日志」；失败告警走执行器的
+  // `jobs.job.failed/timeout/dead` 事件通路，**不新增告警面**）。每小时错峰 :17/:47，避开
+  // notify.reconcile(:07) / seed_builtin(:13) / askdata_loop 与 narrative_health(:23) / verify_ingest(:40)。
+  // 时区沿用 registry 不变量 UTC：小时级 cron 在 UTC 与 Asia/Shanghai 的触发时刻逐点相同（上海无夏令时）。
+  { key: 'oa.standard_approval_reconcile', scope: 'platform', requiresEnv: ['DATABASE_URL'], script: 'scripts/oa-standard-approval-reconcile.mjs', cron: '17 * * * *', timezone: 'UTC', timeoutMs: 300000, maxAttempts: 2, expectedIntervalSecs: 3600, description: '标准审批（企微）镜像对账：逐租户拉企微 → forms.external_approval（回调兜底；token 失败 exit 1）' },
+  { key: 'oa.approval_reconcile', scope: 'platform', requiresEnv: ['DATABASE_URL'], script: 'scripts/oa-approval-reconcile.mjs', cron: '47 * * * *', timezone: 'UTC', timeoutMs: 300000, maxAttempts: 2, expectedIntervalSecs: 3600, description: '应用内审批终态对账：pending_approval 补终态（与回调同 SQL 幂等）' },
   // 判据化（Wave 8 ④，#2606）：原 openship 靠宿主 `docker exec` 进 server 容器跑，判红只到退出码。
   // 落在 **platform 域**：`verify-ingest` 要 OO 只读凭据（应用单元本来就有），`verify-regression`
   // 只用 `DATABASE_URL`。水位默认路径 `/var/lib/askdata`（compose 里挂了命名卷 ⇒ 跨部署保留；

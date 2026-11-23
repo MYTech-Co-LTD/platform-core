@@ -158,6 +158,8 @@
 | `metric.retire` | **已切（W6-P4b）** | 内置调度器（两实例，周一夜） | 本无 openship 作业 |
 | `org.sync` | **已切（W6-P4b）** | 内置调度器（两实例，**必须带 `--apply`**——脚本默认 dry-run） | openship job 已停（mytech `qvkapKmBf4jI4H6T` / 山海 `dbuJg85a8UjjObB7`） |
 | `data.warehouse_assertions` | **待切（#2628 / 2026-11-21 已登记，`enabled=false`）** | 待切：手动跑一轮 → 18 条 check 输出与旧面比对 → 按 3.5 确认 new face 发射 → enable | 无 openship 对应作业（旧形态是**宿主 cron + `docker exec`**，已随 Wave 8 停发——本 job 就是来补这个断档的） |
+| `oa.standard_approval_reconcile` | **已登记（#2385 收口，`enabled=false`）** | 待启用：手动跑一轮 → stdout 统计与 `forms.external_approval` 行数比对 → enable（§13） | 本无 openship 作业（脚本此前零调度登记，2026-11-23 起有 registry key） |
+| `oa.approval_reconcile` | **已登记（#2363/#2385 收口，`enabled=false`）** | 待启用：手动跑一轮 → stdout 统计核对 → enable（§13） | 本无 openship 作业（同上） |
 
 **顺序按爆炸半径**：已完成 `notify.reconcile` → `metric.candidates` → `report.scope_scan`；
 P1+P4b 的切流**已全部完成**（2026-11-15）；新增 job 仍按上表四步执行。
@@ -378,3 +380,37 @@ agent 经 notify 工具面管理**周期消息排班**（触发 `notify.emit`）
 - **回滚**：`update platform.job_schedule set enabled=false where key='data.monitor_tick'`。
   已建的监控规则留在库里（不删数据），重新开闸即可继续。
 - **判据下界**：`cadence_secs ≥ 300`；`stale` 的窗口必须晚于上游物化节奏一档，否则每轮误报。
+
+## 13. OA 审批对账（#2363 P1 / #2385 P2 收口，2026-11-23 登记）
+
+两条 job 把仓内既有脚本接进平台调度器——此前**零调度登记**，配置齐全也不会跑。执行形态与
+`notify.reconcile` 同款：registry 调脚本，stdout 统计 JSON 收进 `platform.job_run.output_tail`
+（即「输出统计写入 job 日志」）；失败告警走执行器既有的 `jobs.job.failed` / `jobs.job.timeout` /
+`jobs.job.dead` 事件通路，**不新增告警面**。
+
+| | `oa.standard_approval_reconcile` | `oa.approval_reconcile` |
+|---|---|---|
+| 脚本 | `scripts/oa-standard-approval-reconcile.mjs` | `scripts/oa-approval-reconcile.mjs` |
+| 干什么 | 企微标准审批镜像对账：逐租户拉列表/详情 → upsert `forms.external_approval`（**回调的兜底**，同幂等键谁先写谁生效） | 应用内审批终态对账：`pending_approval` 超 10 分钟逐单查 OA 引擎补终态（与回调**同一 SQL**，天然幂等） |
+| cron | `17 * * * *`（每小时 :17） | `47 * * * *`（每小时 :47） |
+| timezone | `UTC`（registry 不变量；小时级 cron 在 UTC 与 Asia/Shanghai 触发时刻逐点相同） | 同左 |
+| timeout / 重试 | 300s / 2 次 | 300s / 2 次 |
+| scope / 域 | `platform`（应用单元） | `platform` |
+| requiresEnv | `DATABASE_URL`（缺键不进 claim 集合，启动期打 `missing env`，§6） | 同左 |
+| 退出码 | 0=跑完（含 config_missing 跳过）；1=有租户 token 失败（其余租户照跑）；2=缺 env/连库（**不重试**） | 0=跑完；1=致命错误（连不上库等） |
+
+**产出判据（stdout JSON，零候选判读按 §7.1）**：
+
+- `oa.standard_approval_reconcile`：`{bindings, tenants, synced, skipped, errors, detailFilled, discovery, configMissingOrgs, listUnavailableOrgs}`。
+  - 正常态 `errors=0`；`discovery='callback_only'` = 列表端点不可用、已降级只补详情——**发现新单只靠回调**，不是静默成功。
+  - `bindings=0`：该实例没有任何已发布 `wecom_native` 绑定 ⇒ 正常零。有绑定却 `tenants=0` ⇒ 绑定租户的企微五件凭据全缺（`configMissingOrgs` 点名），按异常零查 `platform.tenant` 五列。
+  - 业务级事件行（`evt=config_missing` / `evt=list_unavailable` / `evt=detail_failed` / `evt=unknown_status` / `evt=token_failed`）打在 stderr，进 `output_tail`，可直接检索。
+- `oa.approval_reconcile`：`{scanned, skippedNoCase, skippedNoEngine, stillPending, engineErrors, writeCandidates, written, byAction, missingEngineOrgs}`。
+  - `scanned=0`（没有待补终态的单）⇒ 正常零。`skippedNoEngine>0` ⇒ 有 org 的单在等审批但没配引擎（`missingEngineOrgs` 点名）⇒ 去 `platform.oa_engine` 补行，这不是调度故障。
+  - `engineErrors>0` 且连续多轮 ⇒ 引擎侧不可达，按 `jobs.job.failed` 之外的运维事件查引擎可用性（本 job 不对它发红）。
+
+**告警口径**：调度失败（exit≠0 / 超时）⇒ 执行器自动发 `jobs.job.failed`（每次失败）/ `jobs.job.dead`（重试额度耗尽），走既有 notify 通路；连续失败 3 次另触发 `/healthz` 判红（§8）。`oa.standard_approval_reconcile` 的 exit 1（有租户 token 失败）同样按 failed 告警处理——不能把整租户镜像静默停在旧状态。业务级「发现不一致」不打 failed，按上面的事件行检索。
+
+**启用程序**：按 §5 四步，step 3 跳过（无 openship 对应作业）。seed 恒插 `enabled=false`；
+先手动触发一轮（`POST /api/modules/jobs/:key/run`，`enabled=false` 登记态即可）核对 stdout 统计，再置
+`enabled=true` + `next_run_at` 补算到未来时点 + 刷新 `updated_at`。
