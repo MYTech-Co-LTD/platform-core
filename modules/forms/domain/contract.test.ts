@@ -481,3 +481,103 @@ describe('compileGate：指派与催办两键（§2.4）', () => {
     }
   })
 })
+
+// ── 件① dataPlane opt-in 闸（#2706）：只咬「声明了 dataPlane.enabled」的契约 ──────────────
+// opt-in 语义：未声明的契约行为逐字不变（嵌套/数组照常放行——那是既有闸的事）。
+// 声明了 ⇒ 字段级数据通路的白名单：字段名 ^[a-z][a-z0-9_]{0,63}$（生成 f_ 列名），
+// 类型 ∈ string/number/integer/boolean 或 string+format:date 或 string 枚举。
+// 与 storage.listDataPlaneForms 的 kind 映射同构（闸放行的字段必须能在清单里映出 kind）。
+describe('compileGate：dataPlane opt-in 闸（#2706）', () => {
+  const base = { schema: { type: 'object', properties: { a: { type: 'string' } } } }
+
+  it('未声明 dataPlane ⇒ 行为逐字不变（含嵌套/数组字段放行）', () => {
+    expect(
+      compileGate({ schema: { type: 'object', properties: { items: { type: 'array', items: { type: 'string' } } } } }).ok,
+    ).toBe(true)
+  })
+
+  it('dataPlane.enabled=false ⇒ 同「未声明」（opt-in 只认显式 true）', () => {
+    expect(compileGate({ ...base, dataPlane: { enabled: false } })).toEqual({ ok: true })
+  })
+
+  it('dataPlane.enabled：合法字段（四类型/日期/字符串枚举）→ ok', () => {
+    const r = compileGate({
+      schema: {
+        type: 'object',
+        properties: {
+          store_name: { type: 'string' },
+          check_count: { type: 'number' },
+          qty: { type: 'integer' },
+          done: { type: 'boolean' },
+          biz_date: { type: 'string', format: 'date' },
+          grade: { type: 'string', enum: ['a', 'b'] },
+        },
+      },
+      dataPlane: { enabled: true },
+    })
+    expect(r).toEqual({ ok: true })
+  })
+
+  it('dataPlane.enabled：字段名非法 ⇒ DATA_PLANE_FIELD_NAME_INVALID', () => {
+    const r = compileGate({
+      schema: { type: 'object', properties: { 'Goal Sale': { type: 'number' } } },
+      dataPlane: { enabled: true },
+    })
+    expect(r.ok).toBe(false)
+    expect(r).toMatchObject({ code: 'DATA_PLANE_FIELD_NAME_INVALID' })
+  })
+
+  it('dataPlane.enabled：字段名超长/数字开头/大写 ⇒ 同样 DATA_PLANE_FIELD_NAME_INVALID', () => {
+    for (const name of ['1abc', 'StoreName', 'a'.repeat(65)]) {
+      const r = compileGate({
+        schema: { type: 'object', properties: { [name]: { type: 'string' } } },
+        dataPlane: { enabled: true },
+      })
+      expect(r.ok, name).toBe(false)
+      if (!r.ok) expect(r.code, name).toBe('DATA_PLANE_FIELD_NAME_INVALID')
+    }
+  })
+
+  it('dataPlane.enabled：数组字段 ⇒ DATA_PLANE_TYPE_UNSUPPORTED', () => {
+    const r = compileGate({
+      schema: { type: 'object', properties: { items: { type: 'array', items: { type: 'string' } } } },
+      dataPlane: { enabled: true },
+    })
+    expect(r).toMatchObject({ ok: false, code: 'DATA_PLANE_TYPE_UNSUPPORTED' })
+  })
+
+  it('dataPlane.enabled：嵌套对象字段 ⇒ DATA_PLANE_TYPE_UNSUPPORTED', () => {
+    const r = compileGate({
+      schema: {
+        type: 'object',
+        properties: { nested: { type: 'object', properties: { x: { type: 'string' } } } },
+      },
+      dataPlane: { enabled: true },
+    })
+    expect(r).toMatchObject({ ok: false, code: 'DATA_PLANE_TYPE_UNSUPPORTED' })
+  })
+
+  it('dataPlane.enabled：白名单外类型（缺 type）⇒ DATA_PLANE_TYPE_UNSUPPORTED', () => {
+    const r = compileGate({
+      schema: { type: 'object', properties: { mystery: { title: '没写 type' } } },
+      dataPlane: { enabled: true },
+    })
+    expect(r).toMatchObject({ ok: false, code: 'DATA_PLANE_TYPE_UNSUPPORTED' })
+  })
+
+  it('dataPlane.enabled：枚举必须挂在 string 上（int 枚举走 number 提取，不按 enum 处理）；非字符串枚举值 ⇒ 拒', () => {
+    // string 枚举 ⇒ ok（kind=enum，json_extract_string）
+    expect(
+      compileGate({
+        schema: { type: 'object', properties: { grade: { type: 'string', enum: ['a', 1] } } },
+        dataPlane: { enabled: true },
+      }).ok,
+    ).toBe(true)
+    // 缺 type 的裸 enum ⇒ 拒（清单映不出 kind，闸与清单必须一致）
+    const r = compileGate({
+      schema: { type: 'object', properties: { bare: { enum: ['a', 'b'] } } },
+      dataPlane: { enabled: true },
+    })
+    expect(r).toMatchObject({ ok: false, code: 'DATA_PLANE_TYPE_UNSUPPORTED' })
+  })
+})

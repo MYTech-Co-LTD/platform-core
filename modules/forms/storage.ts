@@ -136,6 +136,72 @@ export async function assetExists(
   return rows.length > 0
 }
 
+// ── dataPlane 字段级数据通路（件①，#2706）────────────────────────────────────────
+
+/** dataPlane 表单的单字段：`field` = 契约字段名，`column` = 湖上摊平列名（`f_` 前缀）。 */
+export interface DataPlaneField {
+  field: string
+  column: string
+  kind: 'string' | 'number' | 'integer' | 'boolean' | 'date' | 'enum'
+}
+
+/** 一个声明了 dataPlane 的已发布表单（生成器的输入）。slug = assetId 原样（已是 [a-z0-9-]）。 */
+export interface DataPlaneForm {
+  org: string
+  assetId: string
+  version: number
+  slug: string
+  fields: DataPlaneField[]
+}
+
+/**
+ * kind 映射：与 domain/contract.ts 的 dataPlane 闸**同构**（闸放行的字段必须映得出 kind）。
+ * date = string+format:date；enum = string 枚举；其余按四类型直映。
+ */
+const DATA_PLANE_KINDS: Record<string, DataPlaneField['kind']> = {
+  string: 'string',
+  number: 'number',
+  integer: 'integer',
+  boolean: 'boolean',
+}
+
+/**
+ * 跨租户列出**当前活跃版本**、已发布、且契约声明 `dataPlane.enabled=true` 的表单
+ * （供 `scripts/gen-forms-data-projection.mjs` 生成字段契约与摊平模型）。
+ * ⚠️ 与 listAssignmentTargets 同款边界：**唯一**不带 org 入参的读函数族——调用方是 scripts/
+ * （不在 B1 扫描根内），生成产物按行带 org。
+ * ⚠️ 消费方脚本（裸 node）不能 import TS ⇒ `scripts/gen-forms-data-projection.mjs` 内联了
+ * 同一 SQL 与同一 kind 映射（两份实现，注释互指）；改任一侧必须同步另一侧。
+ */
+export async function listDataPlaneForms(pool: Pool): Promise<DataPlaneForm[]> {
+  const { rows } = await pool.query(
+    `select v.org, v.asset_id, v.version, v.body
+       from forms.asset_version v
+       join forms.asset_head h on h.org = v.org and h.kind = v.kind
+        and h.asset_id = v.asset_id and h.active_version = v.version
+      where v.kind = $1 and v.status = 'published'
+        and v.body->'dataPlane'->>'enabled' = 'true'`,
+    [COLLECTION_KIND],
+  )
+  return rows.flatMap((r) => {
+    const props = ((r.body as Record<string, unknown>)?.['schema'] as Record<string, unknown> | undefined)?.['properties']
+    if (props === null || typeof props !== 'object' || Array.isArray(props)) return []
+    const fields = Object.entries(props as Record<string, Record<string, unknown>>).flatMap(([field, def]) => {
+      const t = typeof def?.type === 'string' ? def.type : ''
+      const kind =
+        t === 'string' && def?.format === 'date'
+          ? 'date'
+          : t === 'string' && Array.isArray(def?.enum)
+            ? 'enum'
+            : DATA_PLANE_KINDS[t]
+      return kind ? [{ field, column: `f_${field}`, kind }] : []
+    })
+    return fields.length > 0
+      ? [{ org: r.org, assetId: r.asset_id, version: r.version, slug: r.asset_id, fields }]
+      : []
+  })
+}
+
 // ── MCP 审计（2026-11-16 能力网关 spec §6.5） ──
 
 export type McpAuditOutcome = 'ok' | 'denied' | 'error'
