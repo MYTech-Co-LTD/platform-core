@@ -88,8 +88,6 @@ base_sale as (
     and bizday >= {{ cutoff_or_backfill(10) }}
     {{ backfill_to() }}
     {% endif %}
-    -- 闭窗谓词已于 #2761 下移到 staging 层（湖腿自己闭窗、热层腿不闭窗）——
-    -- marts 不再施加，否则会把热层提供的「当前小时」也滤掉。
 ),
 sale_amount__gen as (
     select system_book, bizday, branch_num, order_no, (case when sum(case when state = 'FINISHED' and order_transaction_type = 'SALE_ORDER' then 1 else 0 end) = 0 then 0 else (sum(case when state = 'FINISHED' and order_transaction_type = 'SALE_ORDER' and
@@ -106,8 +104,6 @@ base_return as (
     and bizday >= {{ cutoff_or_backfill(10) }}
     {{ backfill_to() }}
     {% endif %}
-    -- 闭窗谓词已于 #2761 下移到 staging 层（湖腿自己闭窗、热层腿不闭窗）——
-    -- marts 不再施加，否则会把热层提供的「当前小时」也滤掉。
 ),
 return_amount__gen as (
     select system_book, bizday, branch_num, order_no, (sum(case when order_transaction_type like '%RETURN%' and state = 'FINISHED' and

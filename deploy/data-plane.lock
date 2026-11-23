@@ -1,4 +1,4 @@
-sha256-of-rest 7bf2a9967568631cf5928f4aacfe3fa8498d49252a3e9421f3fc7660aef9c5b1
+sha256-of-rest 0584d14f2aa8f1f749d7541f9347a67c6abbec7aefee9e0960272a77cb023625
 57c67f58b38c8450ddcedf477607e722b51998873b12f84c15ffadc7fe5e81d3 contracts/README.md ${REPO}/contracts/README.md 0644
 fcc8189e1012d5fbb8e2505025bed637dd01c7b4465ab86125d3eaa7f330eff3 contracts/common/_schema.schema.json ${REPO}/contracts/common/_schema.schema.json 0644
 1730119518c3371f3c2ff3492f4c15cd731688047c6d40805ec4d2c65892f3ff contracts/common/_template.contract.json ${REPO}/contracts/common/_template.contract.json 0644
@@ -76,8 +76,8 @@ b8ed8d27a21fa6162347a3ca3b4e522c253f7f8415cc7f5f87efac74ca0018f1 dbt/models/leme
 794ed5519c9bf4cf326c20c3943a8cb0392ed60df3a1063ae9b03fcc5170c306 dbt/models/lemeng/marts/fct_retail_item_profit.sql ${REPO}/dbt/models/lemeng/marts/fct_retail_item_profit.sql 0644
 883dfd2d3ad6c5e8cca97d1a8b672dedbd60868a2787a08148a9bb58ef3af88a dbt/models/lemeng/marts/fct_retail_item_sale.sql ${REPO}/dbt/models/lemeng/marts/fct_retail_item_sale.sql 0644
 2eaa30ca0546af51a91bf74ff2c9e93f466037d16be9eff90489d4cf2a72a42b dbt/models/lemeng/marts/fct_retail_profit.sql ${REPO}/dbt/models/lemeng/marts/fct_retail_profit.sql 0644
-6f06a1f66d9ef11b6bd3268f4636507cbbfa21446b7bfe21e6df4fd88865df8e dbt/models/lemeng/marts/fct_retail_quantity.sql ${REPO}/dbt/models/lemeng/marts/fct_retail_quantity.sql 0644
-ff4c46240670ec4184d40642f7f60982ec2e569fa5aae10404765395805a8c31 dbt/models/lemeng/marts/fct_retail_sale.sql ${REPO}/dbt/models/lemeng/marts/fct_retail_sale.sql 0644
+c39b92b05276657020befca6ac49d19c1e6b69debb003ca7d2e35e8064f47ca1 dbt/models/lemeng/marts/fct_retail_quantity.sql ${REPO}/dbt/models/lemeng/marts/fct_retail_quantity.sql 0644
+7631ea48c04f458451a50544998bb75a32ca160ba05d5af90d791b0d728c6405 dbt/models/lemeng/marts/fct_retail_sale.sql ${REPO}/dbt/models/lemeng/marts/fct_retail_sale.sql 0644
 54803089fde7a9364b480a0ce6582c79e2d37a9a9cf88fa8fbfdee7f6bf45602 dbt/models/lemeng/marts/fct_retail_swap_offset.sql ${REPO}/dbt/models/lemeng/marts/fct_retail_swap_offset.sql 0644
 b7d2da361a99b4acfb877ba4aaf1fe4bc0d336edfb8b2bfe5f0336a43412cb92 dbt/models/lemeng/marts/fct_transfer_item.sql ${REPO}/dbt/models/lemeng/marts/fct_transfer_item.sql 0644
 9013270fb8daaa8ccdf615c830567a57819813c9cc39871ce862ae809ec73891 dbt/models/lemeng/marts/fct_transfer_line_quality.sql ${REPO}/dbt/models/lemeng/marts/fct_transfer_line_quality.sql 0644

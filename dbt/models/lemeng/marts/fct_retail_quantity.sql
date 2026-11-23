@@ -87,8 +87,6 @@ base_rq_sale as (
     and bizday >= {{ cutoff_or_backfill(10) }}
     {{ backfill_to() }}
     {% endif %}
-    -- 闭窗谓词已于 #2761 下移到 staging 层（湖腿自己闭窗、热层腿不闭窗）——
-    -- marts 不再施加，否则会把热层提供的「当前小时」也滤掉。
 ),
 sale_quantity__gen as (
     select system_book, bizday, branch_num, item_num, sum(quantity)::numeric(20,3) as sale_quantity__gen from base_rq_sale group by 1, 2, 3, 4
@@ -100,8 +98,6 @@ base_rq_return as (
     and bizday >= {{ cutoff_or_backfill(10) }}
     {{ backfill_to() }}
     {% endif %}
-    -- 闭窗谓词已于 #2761 下移到 staging 层（湖腿自己闭窗、热层腿不闭窗）——
-    -- marts 不再施加，否则会把热层提供的「当前小时」也滤掉。
 ),
 return_quantity__gen as (
     select system_book, bizday, branch_num, item_num, sum(quantity)::numeric(20,3) as return_quantity__gen from base_rq_return group by 1, 2, 3, 4
