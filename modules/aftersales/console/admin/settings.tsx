@@ -64,7 +64,14 @@ export default function AftersalesSettingsPage() {
   useEffect(() => { void load() }, [load])
 
   const save = async () => {
-    const v = await form.validateFields()
+    // 校验失败时 antd 抛 errorFields（不是 Error）——不接住就是未处理的 promise rejection
+    // （CI unit 实际抓红过）。错误已展示在表单上，直接返回、不发请求。
+    let v: { appId: string, secret: string }
+    try {
+      v = await form.validateFields()
+    } catch {
+      return
+    }
     setSaving(true)
     try {
       await csrfPut<{ ok: true }>(API, { appId: v.appId, secret: v.secret || undefined })
