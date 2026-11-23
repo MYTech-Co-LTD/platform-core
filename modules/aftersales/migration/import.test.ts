@@ -89,6 +89,24 @@ describePg('导入层（需要 DATABASE_URL）', () => {
     expect(links.rows[0].n).toBe(1)                                      // 只有 S001 落链
   })
 
+  it('--store-map：门店引用直接落 dim_branch.code；未命中的段计入 unresolved_store_ref（2026-11-23，issue #2729）', async () => {
+    const map = new Map([
+      ['S001', 'LM001'],
+      ['S002', 'LM002'],
+    ])
+    const stat = await importEmployee(pool, ORG, [
+      cleanEmployee({ ...FIXTURE_EMPLOYEE, store_info: 'S001，S002，S999' }), // S999 未映射
+    ], { storeCodeMap: map })
+    expect(stat).toMatchObject({ fetched: 1, imported: 1, skipped: 0 })
+    expect(stat.reasons['unresolved_store_ref']).toBe(1) // 未映射的段可见计数，不静默
+    const emp = await pool.query<{ store_code: string }>(
+      `select store_code from aftersales.employee where org = $1`, [ORG])
+    expect(emp.rows[0].store_code).toBe('LM001') // 主门店 = 第一个映射成功的 dim code
+    const links = await pool.query<{ store_code: string }>(
+      `select store_code from aftersales.employee_store where org = $1 order by store_code`, [ORG])
+    expect(links.rows.map((r) => r.store_code)).toEqual(['LM001', 'LM002']) // 落的是 dim code，不是本地 id/无忌 id
+  })
+
   it('未知状态/类型 ⇒ 整行跳过记因，绝不落库为 pending（T3/T5 的前提）', async () => {
     const stat = await importTicket(pool, ORG, [
       cleanTicket({ ...FIXTURE_TICKET, _id: 'wo-x1', status: '神秘态' }),
