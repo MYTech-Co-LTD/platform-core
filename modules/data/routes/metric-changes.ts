@@ -89,7 +89,7 @@ export function registerMetricChanges(r: ModuleHono, ctx: RouteCtx): void {
       }, 200)
     }
     const preview = await runPreview({ pool: ctx.pool, execute: previewExecOf(ctx) }, org, out.change)
-    await applyPreview(ctx.pool, out.change.id, preview)
+    await applyPreview(ctx.pool, out.change, preview)
     return c.json({ change: await getChange(ctx.pool, org, out.change.id) }, 200)
   })
 
@@ -126,7 +126,7 @@ export function registerMetricChanges(r: ModuleHono, ctx: RouteCtx): void {
     // 共用 previewTooRecent 这一份时钟判据，但拒绝形态不同（重跑 409 / 提交照落单）。
     if (previewTooRecent(change.preview)) return c.json({ error: 'PREVIEW_RATE_LIMITED' }, 409)
     const preview = await runPreview({ pool: ctx.pool, execute: previewExecOf(ctx) }, org, change)
-    await applyPreview(ctx.pool, change.id, preview)
+    await applyPreview(ctx.pool, change, preview)
     return c.json({ change: await getChange(ctx.pool, org, change.id) }, 200)
   })
 

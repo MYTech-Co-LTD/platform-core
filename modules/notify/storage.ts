@@ -899,24 +899,29 @@ export async function purgeOldNotifications(
   audit: number
 }> {
   const inbox = await pool.query(
-    `delete from notify.inbox where created_at < now() - ($1 || ' days')::interval`,
+    `-- org-exempt: 保留策略（运维 job）：按创建时间清全租户过期通知，跨租户是有意语义
+     delete from notify.inbox where created_at < now() - ($1 || ' days')::interval`,
     [String(opts.inboxDays)])
   const attempts = await pool.query(
-    `delete from notify.delivery_attempt where created_at < now() - ($1 || ' days')::interval`,
+    `-- org-exempt: 保留策略（运维 job）：按创建时间清全租户过期投递尝试
+     delete from notify.delivery_attempt where created_at < now() - ($1 || ' days')::interval`,
     [String(opts.attemptDays)])
   const deliveries = await pool.query(
-    `delete from notify.delivery
+    `-- org-exempt: 保留策略（运维 job）：按创建时间清全租户已终态投递
+     delete from notify.delivery
       where created_at < now() - ($1 || ' days')::interval
         and status in ('sent','suppressed','dead')`,
     [String(opts.deliveryDays)])
   // 只删终态事件：`new` 是未处理（含延迟未到期）的事件，保留期不能替 worker 做丢弃决定。
   const events = await pool.query(
-    `delete from notify.event
+    `-- org-exempt: 保留策略（运维 job）：按创建时间清全租户已终态事件
+     delete from notify.event
       where created_at < now() - ($1 || ' days')::interval
         and status <> 'new'`,
     [String(opts.eventDays)])
   const auditRows = await pool.query(
-    `delete from notify.audit where created_at < now() - ($1 || ' days')::interval`,
+    `-- org-exempt: 保留策略（运维 job）：按创建时间清全租户过期审计（保留期即策略本身）
+     delete from notify.audit where created_at < now() - ($1 || ' days')::interval`,
     [String(opts.auditDays)])
   return {
     inbox: inbox.rowCount ?? 0,

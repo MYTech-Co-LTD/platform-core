@@ -96,7 +96,7 @@ const ok = (o: Record<string, unknown>) => ({ text: JSON.stringify({ status: 'ok
 const previewStateOf = async (deps: McpDeps, change: MetricChangeRow) => {
   try {
     const preview = await runPreview({ pool: deps.pool, execute: previewExecOf(deps) }, deps.org, change)
-    await applyPreview(deps.pool, change.id, preview)
+    await applyPreview(deps.pool, change, preview)
     return preview.ok ? 'preview_ready' : 'preview_failed'
   } catch (e) {
     console.warn('[data] 指标变更单试算意外失败（单据保留提交态，仍可驳回）:',

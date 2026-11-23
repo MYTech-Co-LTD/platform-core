@@ -133,7 +133,7 @@ module-protocol 相应行随首个声明修订。B1 的 `data.dim_*` 前缀豁�
 | 2 | 售后落 `dataDependencies` 声明 + 可声明物裁决落地（module-protocol「稳定视图」行修订）+ 门禁判据 2 实施 + B1 `dim_*` 豁免退役。**订正（实施时实测）**：data 模块先于此已有声明（#2681/W7-V1 的 `platform.*`/`staging.*`），售后是首个**跨 owner 域**声明方；判据 2 守卫真库对账，跨面声明（schema 不在应用装配，列集归所属面纪律）结构性跳过 | 执法面 | 即刻起排期（声明面三件事已建成） | 判据 2 门禁红/绿可复现；B1 白名单删除后 gates 仍绿 |
 | 3 | 事件宪章进 SDK（event catalog 预留 guarantee 档扩展点） | 条文随本 ADR；实现按 §5 判据 | outbox 立项时 | 届时零协议改动可落 |
 | 4 | 导出声明 SDK 能力 | 平台能力 | 第二个导出数据集立项时 | forms 迁入声明面零行为变化 |
-| 5 | SQL lint org 谓词第二道防线 | 执法面 | 未上线窗口内 | 构造一条缺 org 谓词的查询 ⇒ 门禁红 |
+| 5 | SQL lint org 谓词第二道防线（**已实施 2026-11-23，B14**：`scripts/check-org-scope.mjs` 挂 gates——租户表 select/update/delete 必须带 org 或 `-- org-exempt: <理由>`；`where ${…}` 整体插值放行；顺带修真缺口 data.metric_change 两条 update 与 7 处运维语句显式豁免） | 执法面 | 已落地 | 构造一条缺 org 谓词的查询 ⇒ 门禁红（fixture 单测 + 变异实测） |
 
 ## 10 与既有正典的关系
 
