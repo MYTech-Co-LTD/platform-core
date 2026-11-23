@@ -55,6 +55,27 @@ A3 夹具（`ops-round-2026-11`）经裁决 **superseded**：改用目标表单�
 | 段② 对真 warehouse 运行（`goal_probe` 临时夹具表：3120 账套 store 153/75/29 × 2026-10，含重复提交与 target=0） | ✅ 数值逐分吻合：store 153 取**最新提交** target 300000/30000，actual_sale **252771.4000**（独立查询 252771.40）、rate **0.8426**；actual_outbound **27860.1500**、rate **0.9287**；store 29 sale **118998.1000 / 0.5950**、outbound target=0 ⇒ 达成率 **NULL**；store 75 sale target=0 ⇒ **NULL**、outbound **99283.3000 / 0.9928**；`system_book` 列 = **3120**；封版月 progress **1.0**（31/31），data_status `complete` |
 | L1 ratio SQL（sync 编译形态）对同一关系 | ✅ 达成率 `0.84257133…`（252771.4/300000）；进度 `1` |
 
+### 2.4 真机首跑与对账修复（#2750，2026-11-23 20:37 北京时间）
+
+协调者已在山海数据面完成首跑：forms 采集落湖 1 行（`goal-monthly-store`）、`data.dbt_goals` PASS、
+mart 1 行（target 300000/50000，actual 78415.30/25849.33，progress 0.7667，complete）、
+`data.semantics_sync` 物化 4 条、`goal.daily_push` 2 条事件 sent。随后 `data.dbt_audit_goal`
+（job 17713）报 **PASS=2 ERROR=2**，暴露三类真机缺陷（全部已修 + 真机复验）：
+
+| # | 缺陷（真机原文） | 修法 | 复验 |
+|---|---|---|---|
+| 1 | `Relation name 'audit_lemeng__goal__monthly_store_sale_outbound_achievement_rate' is longer than 63 characters` | 指标名后缀压成 `_rate` / `_pace`（四条），派生测试名 48/52 字符；同步 l1 / 生成器 / 文件名 / registry 选择器 / 两张同步登记表 | `dbt ls` 可解析、`dbt test` 正常建 relation |
+| 2 | `Catalog Error: Scalar Function with name to_char does not exist`（含 `read_parquet` 的语句整条路由进 DuckDB；**求值期炸，0 行也炸**） | 截止月改**编译期字面量**宏 `compile_time_month()`（新宏）；周期分组 `strftime(date_trunc(...),'%Y-%m')`；去 `DISTINCT ON`（改 `row_number()`）、去复合 interval 字面量 | 空集 PASS |
+| 2b | `regexp_matches(...)` → `set-returning functions are not allowed in WHERE`；`SIMILAR TO` → `similar_to_escape does not exist` | 形状判据回到 `~ '^…$'` 运算符（`duckdb.query` 探针：`t`） | PASS |
+| 3 | `sum(UnsupportedPostgresType(DuckDB requires the precision of a NUMERIC to be set))`（PG 无精度 numeric 不可被 DuckDB 聚合） | 生成的 mart 数值列全部显式 `::numeric(20,4)` / `::numeric(10,4)`（**需重建 mart 生效**） | 重建后 `information_schema` 显示 numeric(20,4)/(10,4)，`sum()` 正常 |
+
+**真机复验终态**（数据单元 scheduler 容器，`dbt test --select <4 条>`）：
+`PASS=4 WARN=0 ERROR=0 SKIP=0 TOTAL=4`；mart 重建后仍为 1 行、数值与首跑一致
+（`2.3` 之后这一行由 `dbt run --select mart_goal_achievement__monthly_store_sale` 在 7abe59e0 源上重建）。
+
+⚠️ **部署顺序**：typmod 修复要求**先重建 mart 再跑对账**（`data.dbt_goals` → `data.dbt_audit_goal`）；
+若只重跑对账而 mart 仍是旧列型，会继续报 #3。
+
 ### 2.3 未做（阻塞，见 §4）
 
 - A3「目标数据面按 lock 投递 + 采集入湖后容器内 `dbt build` 摊平模型，验字段级数值 = 提交值」；
@@ -74,7 +95,8 @@ A3 夹具（`ops-round-2026-11`）经裁决 **superseded**：改用目标表单�
 | 8 | 企微日报真送达 | ⏸ 待协调者执行 | 依赖 7 + 合并后部署（runbook §1-6/-8） |
 | 9 | 负对照：round 非 open 409 / 部门门分母收缩 / 重复提交幂等 | ⏸ 待 7 之后 | B 期能力已在（#2715）；需真环境跑 |
 | 10 | A3 真湖 dbt build 摊平 = 提交值 | 🔁 SUPERSEDED | 裁决：夹具在任何可达实库都不存在，不再追；改用**目标表单本身**验证（runbook §1-5/-6） |
-| 11 | 封版 as-of（协调者裁决 4） | ⛔ 已知边界（未实现） | 技术原因见 §7：分析面只读湖，封版状态在 PG；as-of 需先把 goal_period/supersedes_id 出湖（新采集物），成本超「最小版」 |
+| 11 | `data.dbt_audit_goal` 真机 PASS=4（#2750） | ✅ PASS | 真机容器 `dbt test` 4/4 PASS（见 §2.4）；job 仍 disabled，待协调者开闸 |
+| 12 | 封版 as-of（协调者裁决 4） | ⛔ 已知边界（未实现） | 技术原因见 §7：分析面只读湖，封版状态在 PG；as-of 需先把 goal_period/supersedes_id 出湖（新采集物），成本超「最小版」 |
 
 ## 4 阻塞与待决（需要人或部署动作）
 
