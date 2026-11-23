@@ -11,6 +11,10 @@
 
 ## [Unreleased]
 
+## [0.373.0](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.372.0...v0.373.0) - 2026-11-23
+- 【新增】aftersales: 公众号配置进管理组——frontend.admin 子页 + 宿主集成端点（secret 不回显/留空不改/审计） ([#2740](https://github.com/MYTech-Co-LTD/platform-core/pull/2740), [bed23d7](https://github.com/MYTech-Co-LTD/platform-core/commit/bed23d7f540e97569253b1b58481df9ff92dd757))
+
+
 ## [0.372.0](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.371.0...v0.372.0) - 2026-11-23
 - 【新增】data: 月度对账迁到平台调度（data.recon_monthly，零新增密钥） ([#2732](https://github.com/MYTech-Co-LTD/platform-core/pull/2732), [f8af93d](https://github.com/MYTech-Co-LTD/platform-core/commit/f8af93daac034cb827226b0bbebf32d3e9f6a916))
 - 【新增】forms: 件① 表单字段级数据通路——dataPlane opt-in 契约闸/生成器/首个摊平模型与 L1（#2706） ([#2716](https://github.com/MYTech-Co-LTD/platform-core/pull/2716), [4ee76b9](https://github.com/MYTech-Co-LTD/platform-core/commit/4ee76b9d5fe1a047e3fc6ff9d3fb3449d80ec0bb))
