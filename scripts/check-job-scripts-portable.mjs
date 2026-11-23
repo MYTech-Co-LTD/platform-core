@@ -34,11 +34,12 @@ const HOST_PATTERNS = [
 ]
 
 /** 去掉行注释与块注释，只留代码（够用：本仓脚本没有把 // 写进字符串的怪用法）。 */
+/** @param {string} src @returns {string} */
 function stripComments(src) {
   return src
-    .replace(/\/\*[\s\S]*?\*\//g, (m) => m.replace(/[^\n]/g, ' '))
+    .replace(/\/\*[\s\S]*?\*\//g, (/** @type {string} */ m) => m.replace(/[^\n]/g, ' '))
     .split('\n')
-    .map((line) => {
+    .map((/** @type {string} */ line) => {
       const i = line.indexOf('//')
       if (i < 0) return line
       // 粗略保护：// 出现在引号内则不动（脚本里的 URL 场景）

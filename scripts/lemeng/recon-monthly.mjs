@@ -39,6 +39,7 @@ function previousMonth(now = shanghaiNow()) {
   return { label: `${py}-${String(pm).padStart(2, '0')}`, days }
 }
 
+/** @param {string} url @param {unknown} body @returns {Promise<any>} */
 async function postJson(url, body) {
   const r = await fetch(url, {
     method: 'POST',
@@ -51,6 +52,7 @@ async function postJson(url, body) {
   return JSON.parse(text)
 }
 
+/** @param {string} url @returns {Promise<any>} */
 async function getJson(url) {
   const r = await fetch(url, {
     headers: { Authorization: `Bearer ${TOKEN}` },
@@ -62,8 +64,10 @@ async function getJson(url) {
 }
 
 /** 触发一天的管线并等它跑完；返回 { verdict, detail } */
+/** @param {string} consoleBase @param {string} day @returns {Promise<{verdict: string, detail: string}>} */
 async function runOneDay(consoleBase, day) {
   const started = Date.now()
+  /** @type {string|undefined} */
   let runId
   try {
     const j = await postJson(`${consoleBase}/api/run/async`, { file: PIPELINE, params: { BIZDAY: day } })
@@ -73,6 +77,7 @@ async function runOneDay(consoleBase, day) {
     return { verdict: 'unavailable', detail: `trigger 失败：${String(e).slice(0, 200)}` }
   }
 
+  /** @type {any} */
   let st = {}
   while (Date.now() - started < PER_RUN_TIMEOUT_MS) {
     await new Promise((r) => setTimeout(r, POLL_MS))
@@ -103,12 +108,15 @@ async function main() {
   }
   const { label, days } = previousMonth()
   const startedAt = Date.now()
+  /** @type {{pass: any[], skip: any[], fail: any[], unavailable: any[]}} */
   const results = { pass: [], skip: [], fail: [], unavailable: [] }
+  /** @type {Record<string, any[]>} */
+  const buckets = results
 
   for (const { book, base } of CONSOLES) {
     for (const day of days) {
       const { verdict, detail } = await runOneDay(base, day)
-      results[verdict].push({ book, day, detail })
+      buckets[verdict].push({ book, day, detail })
       const tag = { pass: 'OK  ', skip: 'SKIP', fail: 'FAIL', unavailable: 'N/A ' }[verdict]
       console.log(`${tag} ${book} ${day}${verdict === 'pass' ? '' : ' ' + detail}`)
     }
