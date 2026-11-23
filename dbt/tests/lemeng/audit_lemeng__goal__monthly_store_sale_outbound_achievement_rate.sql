@@ -1,0 +1,68 @@
+{{ config(tags=['audit'], store_failures=true) }}
+-- audit_lemeng__goal__monthly_store_sale_outbound_achievement_rate.sql — 指标
+-- `lemeng:goal:monthly_store_sale_outbound_achievement_rate` 的**独立复算**（对账，件② #2708）。
+--
+-- 口径与边界（封版月、T-3 窗口、空集合法）**逐字同** sale 侧那条：
+--   dbt/tests/lemeng/audit_lemeng__goal__monthly_store_sale_sale_achievement_rate.sql 头注。
+-- 差异只有两处：目标字段 = `target_outbound`；实际值 = `fct_branch_indicator.transfer_money`
+-- （D10 门店配送金额 = 出库金额的门店级可加腿；`lemeng:outbound:amount` 无门店维，按店 join 不成立）。
+with recheck_goal as (
+    select
+        json_extract_string(r['payload'], '$.period') as period,
+        json_extract_string(r['payload'], '$.branch_num') as branch_num,
+        cast(json_extract_string(r['payload'], '$.target_outbound') as decimal(38,10)) as target_outbound,
+        r['submitted_at']::timestamptz as submitted_at,
+        r['submission_id']::bigint as submission_id
+    from read_parquet(
+        's3://{{ var("zos_bucket") }}/{{ var("forms_submission_prefix") }}/bizday=*/batch_id=*/all.parquet'
+    ) r
+    where r['form_def_id'] = 'goal-monthly-store'
+      and r['bizday']::date < {{ audit_until_date() }}
+      and json_extract_string(r['payload'], '$.period') < to_char((now() at time zone 'Asia/Shanghai')::date, 'YYYY-MM')
+),
+goal_latest as (
+    select distinct on (period, branch_num)
+        period, branch_num, target_outbound
+    from recheck_goal
+    where period ~ '^[0-9]{4}-[0-9]{2}$'
+      and branch_num is not null
+      and branch_num <> ''
+    order by period, branch_num, submitted_at desc nulls last, submission_id desc
+),
+recheck_actual as (
+    select
+        to_char(date_trunc('month', f.bizday), 'YYYY-MM') as period,
+        f.branch_num::text as branch_num,
+        sum(f.transfer_money)::numeric(20,4) as actual_outbound
+    from {{ ref('fct_branch_indicator') }} f
+    where f.bizday >= (select min((period || '-01')::date) from goal_latest)
+      and f.bizday <= (select max(((period || '-01')::date + interval '1 month - 1 day')::date) from goal_latest)
+      and f.bizday < {{ audit_until_date() }}
+      and to_char(date_trunc('month', f.bizday), 'YYYY-MM') < to_char((now() at time zone 'Asia/Shanghai')::date, 'YYYY-MM')
+    group by 1, 2
+),
+recheck as (
+    select
+        sum(coalesce(a.actual_outbound, 0))::numeric(20,4) as actual_v,
+        sum(g.target_outbound)::numeric(20,4) as target_v
+    from goal_latest g
+    left join recheck_actual a using (period, branch_num)
+),
+materialized as (
+    select
+        sum(actual_outbound)::numeric(20,4) as actual_v,
+        sum(target_outbound)::numeric(20,4) as target_v
+    from {{ ref('mart_goal_achievement__monthly_store_sale') }}
+    where collected_bizday < {{ audit_until_date() }}
+      and period < to_char((now() at time zone 'Asia/Shanghai')::date, 'YYYY-MM')
+)
+select
+    a.actual_v as recheck_actual,
+    b.actual_v as materialized_actual,
+    a.target_v as recheck_target,
+    b.target_v as materialized_target,
+    '复算与物化不一致（lemeng:goal:monthly_store_sale_outbound_achievement_rate，#2708）' as note
+from recheck a
+cross join materialized b
+where abs(coalesce(a.actual_v, 0) - coalesce(b.actual_v, 0)) > 0.01
+   or abs(coalesce(a.target_v, 0) - coalesce(b.target_v, 0)) > 0.01

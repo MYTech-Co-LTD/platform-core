@@ -1,0 +1,88 @@
+# goals.yml — **目标定义声明（事实源）**：计划 vs 实际目标件（件②，#2708 / spec
+# docs/superpowers/specs/2026-11-23-goal-plan-vs-actual-platform-design.md §2 D2）。
+#
+# 为什么是 YAML 而不是表/界面：目标定义是**平台级口径**（数据面部署 = 单租户口径，与 L1 指标同层），
+# 走 PR 评审、git 受控；目标**值**才是数据（走件③ 收集轮次的表单提交 → 件① 摊平 → 湖）。
+#
+# ## 生成物纪律（与 scripts/gen-forms-data-projection.mjs 同款）
+#
+# 本文件是**唯一事实源**；`scripts/gen-goal-achievement.mjs` 读它 + `dbt/semantics/l1_metrics.yml`
+# + `contracts/forms/data-plane/<form_def>.json`，生成两段关系（生成物 == committed）：
+#   ① `dbt/models/lemeng/goals/stg_goal_values__<goal>.sql`   —— DuckDB 段：只碰 forms parquet
+#      （`read_parquet` + `json_extract_string(r['payload'],'$.字段')` + 显式 cast；**无任何 join**，
+#      数据面正典 B1）；
+#   ② `dbt/models/lemeng/goals/mart_goal_achievement__<goal>.sql` —— PG 原生段：join 段① 表
+#      + actuals 指的既有 marts 关系 + 日期 spine（progress_rate 北京时钟日界）+ data_status。
+#   `node scripts/gen-goal-achievement.mjs --check` 在 CI gates 里比字节；手改生成物会被回写。
+#
+# ## 为什么模型落在 `dbt/models/lemeng/goals/`（不是 `dbt/models/goals/`）
+#
+# `scripts/lemeng/materialize.sh` 的 tables 档按**单域**裁剪（`MATERIALIZE_TABLES_DOMAIN` →
+# `DATA_PLANE_DOMAINS=<该域>`，选择器 `path:models/<该域>`）。段② 必须 `ref` 乐檬 marts
+# （fct_retail_sale / fct_branch_indicator）——若另立 `goals` 域单独物化，manifest 里乐檬模型被
+# 域开关剔除 ⇒ `ref` 指向 disabled 节点 ⇒ `dbt parse` 直接失败（327 天实测的域开关语义）。
+# 目标件与它的 actuals 同面同域（山海数据面 + lemeng 域）是 spec §2「与 actuals 同面，join 才成立」
+# 的直接推论 ⇒ 目录归 lemeng 域，**不新增域、不改任何 job env**。域的所有权含义（谁建）不因此改变：
+# 目标值本身仍由 forms 提交（湖上 forms/submission），只是生成关系跟着 actuals 所在域走。
+#
+# ## 字段约定
+#
+#   goal        必填。`<部署标识>:<目标 slug>`（两段小写蛇形；slug 进模型名与指标名）。
+#   label       必填。人读名字。
+#   metric_source 选填（缺省 lemeng）。生成的 L1 指标名的源段（`<源>:goal:<slug>_<metric>_<kind>`）。
+#                     取 `lemeng` 的两个理由：① 指标的**实际值**来自乐檬 marts，源裁剪按它判
+#                     （目标件只有与实际值同面才有意义）；② 对账 test 的落点按指标名的源段分目录
+#                     （`dbt/tests/<源>/`），乐檬域的对账档才会跑到它——写成 forms 会落进从来不建
+#                     的 forms 域，门禁看得见、机器永远不跑。
+#   org         必填。目标归属租户（与 forms 提交行的 `{{ subject_org() }}` 恒等的部署域身份；
+#                     数据面部署 = 单租户 ⇒ 只作声明与验收锚，不参与 join）。
+#   period      必填。v1 只支持 `month`（周期字段取 `YYYY-MM` 文本）。
+#   dimensions  必填。v1 只支持 `[branch_num]`（目标必须落店粒度 —— D5 分母收缩的前提）。
+#   target_source:
+#     form_def        必填。件③ 收集轮次表单的资产 id；**必须**是已发布且 `dataPlane.enabled`
+#                     的表单（契约 `contracts/forms/data-plane/<form_def>.json` 是字段类型的事实源）。
+#     period_field    必填。表单里承载周期（`YYYY-MM`）的 dataPlane 字段。
+#     dimension_fields 必填。目标维度 → 表单字段的映射（v1 恰一条：branch_num）。
+#     value_fields    必填。目标指标 → 表单字段的映射（指标名须与 `actuals` 的键集**相等**）。
+#   actuals     必填。目标指标 → **既有 L1 指标名**（v1 只收可加的 `sum(<关系>.<列>)` 形态；
+#               率类/复合表达式留第二刀）。口径统一是目标件移植的净收益（D7）：不在这里复制算式。
+#   scope       选填。`{ assessed_war_zone_only: true }` —— v1 **未实现**（考核战区过滤要
+#               `dim_lemeng_branch` 的 is_assessed 面，第一刀不做，第二刀另议）；声明即生成失败，
+#               免得「写了却没生效」的静默口径。
+#
+# ## 第一刀的 actuals 为什么是这两条（grep l1_metrics.yml 实测，不是想象的 `lemeng:store:*`）
+#
+#   · `sale_amount`   → `lemeng:retail:sales`（`sum(fct_retail_sale.sale_amount)`，grain 含
+#     branch_num ✅ 店级可加）。
+#   · `outbound_amount` → `lemeng:branch:transfer_money`（`sum(fct_branch_indicator.transfer_money)`，
+#     「门店配送金额」= 出库金额的门店级可加腿，grain 含 branch_num ✅）。
+#     ⚠️ 刻意**不用** `lemeng:outbound:amount`：它是「出库金额」的集团去重口径，但 grain 只有
+#     `[system_book, bizday]`（fct_outbound_region 已把门店维聚合掉），**按店 join 不成立**。
+#     两条腿的口径边界见 l1_metrics.yml 两条指标的 definition（198 行 / 1656 行附近），
+#     以及 `lemeng:branch:transfer_money` 里「出库金额不读本指标」的警示——本目标按店考核，
+#     门店侧可加腿只有这一条，故取它并在指标名上如实叫 `outbound_amount`（目标是门店配送口径）。
+#
+# ## 多账套假设（v1 已知边界）
+#
+# 段② 的 actuals 按 `branch_num` 汇总（跨 `system_book` 相加）——山海数据面两本账套的门店编号
+# 空间是否重叠未在本轮复核；第一刀的目标表按单账套门店清单录入，重叠会静默多算。第二刀要么把
+# `system_book` 升为目标维度，要么在 goals.yml 里声明账套过滤（各开一笔，不在本波夹带）。
+
+goals:
+  - goal: shanhai:monthly_store_sale
+    label: 门店月度销售目标
+    metric_source: lemeng
+    org: shanhaiyiguo-org
+    period: month
+    dimensions: [branch_num]
+    target_source:
+      form_def: goal-monthly-store
+      period_field: period
+      dimension_fields:
+        branch_num: branch_num
+      value_fields:
+        sale: target_sale
+        outbound: target_outbound
+    actuals:
+      sale: lemeng:retail:sales
+      outbound: lemeng:branch:transfer_money

@@ -1,0 +1,38 @@
+{
+  "form_def_id": "goal-monthly-store",
+  "org": "shanhaiyiguo-org",
+  "version": 1,
+  "relationSlug": "goal_monthly_store",
+  "columns": [
+    {
+      "field": "period",
+      "column": "f_period",
+      "kind": "string",
+      "sql_type": "varchar"
+    },
+    {
+      "field": "branch_num",
+      "column": "f_branch_num",
+      "kind": "string",
+      "sql_type": "varchar"
+    },
+    {
+      "field": "store_name",
+      "column": "f_store_name",
+      "kind": "string",
+      "sql_type": "varchar"
+    },
+    {
+      "field": "target_sale",
+      "column": "f_target_sale",
+      "kind": "number",
+      "sql_type": "decimal(18,4)"
+    },
+    {
+      "field": "target_outbound",
+      "column": "f_target_outbound",
+      "kind": "number",
+      "sql_type": "decimal(18,4)"
+    }
+  ]
+}
