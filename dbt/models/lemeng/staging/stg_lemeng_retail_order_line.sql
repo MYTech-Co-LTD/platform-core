@@ -183,5 +183,5 @@ where sealed['schema_version'] = 3
 -- ⚠️ 本腿**不套闭窗**（它就是当前小时的唯一来源）⇒ 闭窗责任必须留在湖腿，不能上移到 marts。
 -- ⚠️ 整条腿封在 macro 里（`dbt/macros/retail_order_line_hot_union.sql`）：热表是 pg 原生表，
 --   而生成器会把每个位点的列区重写成 `r['列名']` 形态（parquet 专用）；封进 macro 后生成器
---   只看到 `{{ ... }}`、看不到 select，渲染时才展开。理由与被否掉的两种形态见 macro 头注。
+--   只看到 `双花括号占位符`、看不到 select，渲染时才展开。理由与被否掉的两种形态见 macro 头注。
 {{ retail_order_line_hot_union() }}
