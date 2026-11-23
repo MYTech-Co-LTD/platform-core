@@ -518,6 +518,90 @@ describe('admin 路由：租户级存储配置（M3c）', () => {
   })
 })
 
+// ---- 公众号（访客登录）配置（2026-11-23）----
+
+describe('admin 路由：公众号配置（integrations/wechat-oa）', () => {
+  const updateParams = (audits: unknown[]) =>
+    (audits as Array<{ sql: string; params: unknown[] }>)
+      .find((q) => /update\s+platform[.]tenant/i.test(q.sql) && /wechat_oa_app_id/i.test(q.sql))?.params
+  const reset = () => Object.assign(baseTenant, { wechat_oa_app_id: null, wechat_oa_secret: null })
+  const uri = (q: string) => `/api/platform/admin/integrations/wechat-oa${q}`
+
+  it('GET：未配 ⇒ configured=false、partial=false，**响应体没有 secret 字段**', async () => {
+    reset()
+    const body = await (await mount(deps(), { scopes: ['tenant:admin'] }).request(uri(''))).json()
+    expect(body).toMatchObject({ appId: '', configured: false, partial: false, secretConfigured: false })
+    expect(Object.keys(body)).not.toContain('secret')
+  })
+
+  it('GET：半套 ⇒ partial=true（读侧如实暴露）', async () => {
+    reset()
+    baseTenant.wechat_oa_app_id = 'wx123'
+    const body = await (await mount(deps(), { scopes: ['tenant:admin'] }).request(uri(''))).json()
+    expect(body).toMatchObject({ appId: 'wx123', configured: false, partial: true, secretConfigured: false })
+  })
+
+  it('GET：已配 ⇒ configured=true；secret 值不出现在任何响应里', async () => {
+    Object.assign(baseTenant, { wechat_oa_app_id: 'wx123', wechat_oa_secret: 's3cr3t-value' })
+    const body = await (await mount(deps(), { scopes: ['tenant:admin'] }).request(uri(''))).json()
+    expect(body).toMatchObject({ configured: true, secretConfigured: true })
+    expect(JSON.stringify(body)).not.toContain('s3cr3t-value')
+  })
+
+  it('PUT：首次配置（appId+secret）⇒ 两列落库 + audit 不含 secret', async () => {
+    reset()
+    const d = deps()
+    const res = await mount(d, { scopes: ['tenant:admin'] }).request(uri(''), {
+      method: 'PUT', headers: withCsrf,
+      body: JSON.stringify({ appId: ' wx123 ', secret: 's3cr3t-value' }),
+    })
+    expect(res.status).toBe(200)
+    expect(updateParams(d.audits)).toEqual(['wx123', 's3cr3t-value', 1])
+    const audit = (d.audits as Array<{ sql: string; params: unknown[] }>).find((q) => /audit/i.test(q.sql))
+    expect(JSON.stringify(audit?.params)).toContain('admin.wechat-oa.update')
+    expect(JSON.stringify(audit?.params)).not.toContain('s3cr3t-value')
+  })
+
+  it('PUT：secret 留空 ⇒ 保持原值（轮换 AppID 不必重贴密钥），audit 记 secretChanged=false', async () => {
+    Object.assign(baseTenant, { wechat_oa_app_id: 'wx-old', wechat_oa_secret: 's3cr3t-old' })
+    const d = deps()
+    const res = await mount(d, { scopes: ['tenant:admin'] }).request(uri(''), {
+      method: 'PUT', headers: withCsrf, body: JSON.stringify({ appId: 'wx-new' }),
+    })
+    expect(res.status).toBe(200)
+    expect(updateParams(d.audits)).toEqual(['wx-new', 's3cr3t-old', 1])
+    const audit = (d.audits as Array<{ sql: string; params: unknown[] }>).find((q) => /audit/i.test(q.sql))
+    expect(JSON.stringify(audit?.params)).toContain('"secretChanged":false')
+  })
+
+  it('PUT：未配过且 secret 留空 ⇒ 400 SECRET_REQUIRED（绝不静默存半套），不写库', async () => {
+    reset()
+    const d = deps()
+    const res = await mount(d, { scopes: ['tenant:admin'] }).request(uri(''), {
+      method: 'PUT', headers: withCsrf, body: JSON.stringify({ appId: 'wx123' }),
+    })
+    expect(res.status).toBe(400)
+    expect((await res.json()).error).toBe('SECRET_REQUIRED')
+    expect(updateParams(d.audits)).toBeUndefined()
+  })
+
+  it('PUT：appId 空 ⇒ 400 APP_ID_REQUIRED', async () => {
+    reset()
+    const res = await mount(deps(), { scopes: ['tenant:admin'] }).request(uri(''), {
+      method: 'PUT', headers: withCsrf, body: JSON.stringify({ appId: '  ', secret: 'x' }),
+    })
+    expect(res.status).toBe(400)
+    expect((await res.json()).error).toBe('APP_ID_REQUIRED')
+  })
+
+  it('写操作 CSRF：缺 x-csrf-token ⇒ 403（与存储端点同待遇）', async () => {
+    const res = await mount(deps(), { scopes: ['tenant:admin'] }).request(uri(''), {
+      method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ appId: 'wx123', secret: 'x' }),
+    })
+    expect(res.status).toBe(403)
+  })
+})
+
 // ---- 租户已接入源登记（计划 5，spec §3⑧ 的前提）----
 
 describe('admin 路由：租户已接入源（platform.tenant_source）', () => {

@@ -67,7 +67,7 @@ async function writeAudit(
   actor: string,
   action: 'admin.user.create' | 'admin.user.update' | 'admin.user.delete' | 'admin.grant' | 'admin.revoke'
     | 'admin.role.create' | 'admin.role.delete' | 'admin.role.members' | 'admin.role.grant' | 'admin.role.revoke'
-    | 'admin.storage.update' | 'admin.storage.clear' | 'admin.sources.update' | 'admin.org-sync',
+    | 'admin.storage.update' | 'admin.storage.clear' | 'admin.wechat-oa.update' | 'admin.sources.update' | 'admin.org-sync',
   detail: Record<string, unknown>,
 ): Promise<void> {
   await pool.query(
@@ -560,6 +560,52 @@ export function adminRoutes(deps: AdminRoutesDeps): Hono<TenantEnv & SessionEnv>
     // 清掉的值记进 detail（取证用；仍只有 endpoint/bucket，无凭据）
     await writeAudit(deps.pool, t.id, c.get('identity').userId, 'admin.storage.clear',
       { endpoint: cols[0], bucket: cols[2] })
+    return c.json({ ok: true })
+  })
+
+  // ---- 公众号（外部访客登录）配置（2026-11-23）----
+  //
+  // 租户行两列 `wechat_oa_app_id` / `wechat_oa_secret`（005 迁移）——宿主路由 auth-wechat-oa
+  // **按租户行**读它们做启用判定与静默授权。此前只能 CLI 写；本组端点把「模块自带配置」
+  // 补到管理后台（模块 frontend.admin 子页消费，模块禁用时页面自动隐藏，见 console-menu 三重过滤）。
+  //
+  // 敏感值纪律（与 storage 同族）：**secret 永不回显**（连字段都不出现，只回「是否已配置」）；
+  // 留空 = 保持原值（轮换不必重贴）；audit 只记 appId 与「secret 是否变更」。
+  // org 锁 / scope 门禁 / 写 CSRF 三道结构锁由本文件顶部中间件统一施加，这里不重复实现。
+
+  app.get('/integrations/wechat-oa', (c) => {
+    const t = c.get('tenant')
+    const appId = (t.wechat_oa_app_id ?? '').trim()
+    const secret = (t.wechat_oa_secret ?? '').trim()
+    return c.json({
+      appId,
+      configured: appId !== '' && secret !== '',
+      // 半套在**读**侧也要如实暴露：配了一半 = 访客登录一定失败，别等用户看到 404 才发现
+      partial: (appId !== '' || secret !== '') && !(appId !== '' && secret !== ''),
+      secretConfigured: secret !== '',
+    })
+  })
+
+  app.put('/integrations/wechat-oa', async (c) => {
+    const t = c.get('tenant')
+    const body = await c.req.json<unknown>().catch(() => null)
+    if (typeof body !== 'object' || body === null) return c.json({ error: 'INVALID' }, 400)
+    const b = body as Record<string, unknown>
+    if (b.secret !== undefined && b.secret !== null && typeof b.secret !== 'string') {
+      return c.json({ error: 'INVALID' }, 400)
+    }
+    const appId = typeof b.appId === 'string' ? b.appId.trim() : ''
+    if (appId === '') return c.json({ error: 'APP_ID_REQUIRED' }, 400)
+    const secretIn = typeof b.secret === 'string' ? b.secret.trim() : ''
+    const oldSecret = (t.wechat_oa_secret ?? '').trim()
+    // 从未配过且本次也留空 ⇒ 半套配置（fail-explicit：公众号一定不可用，写入时就拒）
+    if (secretIn === '' && oldSecret === '') return c.json({ error: 'SECRET_REQUIRED' }, 400)
+    await deps.pool.query(
+      'update platform.tenant set wechat_oa_app_id=$1, wechat_oa_secret=$2 where id=$3',
+      [appId, secretIn === '' ? oldSecret : secretIn, t.id],
+    )
+    await writeAudit(deps.pool, t.id, c.get('identity').userId, 'admin.wechat-oa.update',
+      { appId, secretChanged: secretIn !== '' })
     return c.json({ ok: true })
   })
 

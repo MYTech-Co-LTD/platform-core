@@ -21,7 +21,7 @@
 | ① | 机器与网络 | 步骤 1 | 公网 IP + 与控制面的网络关系（同 VPC 走内网 / 跨 VPC 走公网，决定阶段 A 白名单配法）；docker 双容器余量即可（参照现有实例） |
 | ② | Casdoor 归属 | 步骤 3/4 | 默认共用：定 org 名（建议 = 客户 slug，字母数字）。**只收一个管理员**——建号挂 `tenant:admin` 后，其余用户客户在 console M3 页自管（采集面最小化）；合规隔离则拿要求原文，独立实例单独定 |
 | ③ | 域名 | 步骤 5 | 客户自有域名 + **DNS 控制人**（A 记录切换要约时间窗）；无域名用 openship 免费子域 |
-| ④ | 品牌与登录 | 步骤 4 | `product_name`（控制台标题/登录页品牌）；要不要企微扫码——要则客户企微管理员提供三参（corp_id / agent_id / secret）。三参落**租户行** `wecom_corp_id/wecom_agent_id/wecom_secret`（不是 env；路由读租户行，见 `apps/server/src/routes/auth-wecom.ts`），**CLI 已有写入入口**（#115：`--wecom-corp-id [--wecom-agent-id] --wecom-secret`，corp+secret 必须同给、agent 可选随行，见步骤 4）；管理端写端点/配置页仍无（§3 边界），交付走 CLI 不受影响。**企微扫码除三参外，还差客户企微管理员在自建应用页配的两项后台开关**（值由我方提供，采集时一并约好）：**可信域名**（网页授权及 JS-SDK，填实例域名；其验证文件 `WW_verify_*.txt` 由我方经 openship 上线，口径见步骤 5）与**企业可信 IP**（填**实例机器的公网出口 IP**——gettoken 豁免此项、其余服务端 API 全受它拦；漏配 = 扫码回调 getuserinfo 报 60020，文案酷似 secret 错，极易误诊）。**另收公众号两参**：`--wechat-oa-app-id` / `--wechat-oa-secret`（客户公众号后台的 AppID / AppSecret）——同样落**租户行**（`wechat_oa_app_id/secret`），**已有 CLI 入口**（步骤 4）。⚠️ **两者是两件不同的东西**：企微 = console **内部登录**（员工），公众号 = **外部访客**登录（售后移动端，spec §1.3） |
+| ④ | 品牌与登录 | 步骤 4 | `product_name`（控制台标题/登录页品牌）；要不要企微扫码——要则客户企微管理员提供三参（corp_id / agent_id / secret）。三参落**租户行** `wecom_corp_id/wecom_agent_id/wecom_secret`（不是 env；路由读租户行，见 `apps/server/src/routes/auth-wecom.ts`），**CLI 已有写入入口**（#115：`--wecom-corp-id [--wecom-agent-id] --wecom-secret`，corp+secret 必须同给、agent 可选随行，见步骤 4）；管理端写端点/配置页仍无（§3 边界），交付走 CLI 不受影响。**企微扫码除三参外，还差客户企微管理员在自建应用页配的两项后台开关**（值由我方提供，采集时一并约好）：**可信域名**（网页授权及 JS-SDK，填实例域名；其验证文件 `WW_verify_*.txt` 由我方经 openship 上线，口径见步骤 5）与**企业可信 IP**（填**实例机器的公网出口 IP**——gettoken 豁免此项、其余服务端 API 全受它拦；漏配 = 扫码回调 getuserinfo 报 60020，文案酷似 secret 错，极易误诊）。**另收公众号两参**：`--wechat-oa-app-id` / `--wechat-oa-secret`（客户公众号后台的 AppID / AppSecret）——同样落**租户行**（`wechat_oa_app_id/secret`），**CLI 入口**（步骤 4）之外**已有管理页**（2026-11-23：管理组 →「售后设置」；模块不启用时该页自动隐藏）。⚠️ **两者是两件不同的东西**：企微 = console **内部登录**（员工），公众号 = **外部访客**登录（售后移动端，spec §1.3） |
 | ⑤ | 模块清单 | 全局 | `--module` 集。仓内现有 `demo`（占位）+ **`aftersales` 售后管理**（M2a 后端 → M3a console → M3b-1 登记审批 → M3b-2 移动端 userApp，**四期已全期上线**）⇒ 真业务功能 = `--module aftersales` 一步开出。**订正（2026-09-16）**：原文写「仓内现只有 `demo` 占位模块；**真业务功能 = L1 模块开发先行**（spec-1 分级 + 模块接入流程），是试点排期的最大变量」——该判断在售后四期落地后已不成立：⑤ 由**开发级（周级）降为配置级（天内）** |
 
 我方侧（可并行推进）：
@@ -285,9 +285,10 @@ curl -X POST https://deploy.hookflow.cn/api/proxy/api/webhooks/incoming/iwh_l-d5
 
 ## 3. 边界
 
-- **租户级外部接入参数的运营面写入入口仍无（已知边界）**：公众号两参（#88）与企微三参（#115）
-  的**交付路径**都已在 `scripts/provision-tenant.mjs`（步骤 4），但**管理端写端点与 console 配置页**
-  两族都还没有（改配置 = 重跑 CLI）——交付不受影响；运营面需求（租户自助改配置）出现再立项。
+- **租户级外部接入参数的运营面写入入口（部分已补，2026-11-23）**：公众号两参（#88）**已有管理页**
+  （管理组 →「售后设置」，`frontend.admin` + `tenant:admin` + 模块启用三重过滤；宿主端点
+  `GET/PUT /api/platform/admin/integrations/wechat-oa`，secret 不回显、留空不改，审计留痕）；
+  **企微三参（#115）仍只有 CLI**——它的管理页尚未做，改配置 = 重跑 `provision-tenant.mjs`。
 - 独立 Casdoor 实例的部署与运维归属：特殊情况按客户单独定，本文不展开。
 - 壳层定制（布局/导航/多语言）：**L2 车道未建前不接**（spec-1 §1），立项信号 = 第一个真实壳层需求。
 
