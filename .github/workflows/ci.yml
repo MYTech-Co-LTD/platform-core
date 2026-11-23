@@ -138,6 +138,10 @@ jobs:
       # 手改投影/漏跑生成器 ⇒ 这里红（B10 已降级为保险丝）。
       # ⚠️ 契约未回填 `expr` 时生成器**跳过**该契约（打印一行提示，不是红）——存量回填后此闸才覆盖其产出。
       - run: pnpm exec tsx scripts/gen-data-projection.mjs --check
+      # 件① 表单字段级通路（#2706）：dataPlane 表单的字段契约与摊平模型同样「生成物 == committed」。
+      # 无 DATABASE_URL / forms 迁移未跑（CI 的裸 service 库）时打一行跳过并 exit 0——本闸的牙齿
+      # 在有真 forms 库的环境（本地 / ops 机）。
+      - run: node scripts/gen-forms-data-projection.mjs --check
       # fct 度量列生成区（P3.0 聚合面组件化 / issue #1012；P3.2 起为正式列 #1020）：
       # `fct_retail_sale.sql` 里 `-- BEGIN/END GENERATED MEASURES` 之间由 `l1_metrics.yml` 的
       # measure 生成（基面 where 来自具名行域、两阶段编译）。判据 = **标记区逐字节 == 生成物**：
