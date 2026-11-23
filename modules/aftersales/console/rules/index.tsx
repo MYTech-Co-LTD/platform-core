@@ -6,6 +6,7 @@ import { useCallback, useState } from 'react'
 import { Alert, Button, Form, Input, InputNumber, Modal, Popconfirm, Table } from 'antd'
 import { apiGet, apiSend, messageOf } from '../lib/api'
 import { useList } from '../lib/useList'
+import { ListCard } from '../lib/ui'
 import type { Paged, RuleItem } from '../../api-types'
 
 export default function RulesPage() {
@@ -40,16 +41,20 @@ export default function RulesPage() {
   }
 
   return (
-    <div>
-      <Button type="primary" onClick={() => setCreating(true)} style={{ marginBottom: 12 }}>
-        新建规则
-      </Button>
-      {error ? <Alert type="error" showIcon title={error} style={{ marginBottom: 12 }} /> : null}
+    <ListCard>
+      <div style={{ marginBottom: 12, display: 'flex', justifyContent: 'flex-end' }}>
+        <Button type="primary" onClick={() => setCreating(true)}>
+          新建规则
+        </Button>
+      </div>
+      {error ? <Alert type="error" showIcon message={error} style={{ marginBottom: 12 }} /> : null}
       <Table<RuleItem>
         rowKey="id"
+        size="small"
         dataSource={items}
         loading={loading}
         pagination={false}
+        locale={{ emptyText: '还没有规则。先新建一条，员工提交的工单会按它算退款额。' }}
         columns={[
           { title: '名称', dataIndex: 'name' },
           {
@@ -98,6 +103,6 @@ export default function RulesPage() {
           </Form.Item>
         </Form>
       </Modal>
-    </div>
+    </ListCard>
   )
 }

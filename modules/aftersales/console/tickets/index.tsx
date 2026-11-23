@@ -6,10 +6,11 @@
 // **金额一律来自服务端**：未处理工单的 `amount_minor` 就是 null，显示占位符而不是 ¥0.00
 // （后者会让人以为算过、且结果是 0）。
 import { useCallback, useEffect, useState } from 'react'
-import { Alert, Button, Select, Table, Tag, Typography } from 'antd'
+import { Alert, Button, Select, Table, Typography } from 'antd'
 import { apiGet, messageOf } from '../lib/api'
 import { formatMinor } from '../lib/format'
 import { ProcessDialog } from './ProcessDialog'
+import { ListCard, Status } from '../lib/ui'
 import type { Paged, TicketListItem, TicketStatus } from '../../api-types'
 
 const SIZE = 20
@@ -19,10 +20,10 @@ const STATUS_LABEL: Record<TicketStatus, string> = {
   completed: '已处理',
   cancelled: '已驳回',
 }
-const STATUS_COLOR: Record<TicketStatus, string> = {
-  pending: 'orange',
-  completed: 'green',
-  cancelled: 'red',
+const STATUS_TONE: Record<TicketStatus, 'warn' | 'ok' | 'danger'> = {
+  pending: 'warn',
+  completed: 'ok',
+  cancelled: 'danger',
 }
 
 export default function TicketsPage() {
@@ -58,7 +59,7 @@ export default function TicketsPage() {
   }, [load])
 
   return (
-    <div>
+    <ListCard>
       <div style={{ marginBottom: 12, display: 'flex', gap: 8, alignItems: 'center' }}>
         <Select
           aria-label="状态筛选"
@@ -75,11 +76,13 @@ export default function TicketsPage() {
         />
         <Typography.Text type="secondary">共 {total} 条</Typography.Text>
       </div>
-      {error ? <Alert type="error" showIcon title={error} style={{ marginBottom: 12 }} /> : null}
+      {error ? <Alert type="error" showIcon message={error} style={{ marginBottom: 12 }} /> : null}
       <Table<TicketListItem>
         rowKey="id"
+        size="small"
         dataSource={items}
         loading={loading}
+        locale={{ emptyText: '还没有工单。员工在公众号提交后会出现在这里。' }}
         pagination={{ current: page, pageSize: SIZE, total, showSizeChanger: false, onChange: setPage }}
         columns={[
           { title: '编号', dataIndex: 'code', width: 140 },
@@ -90,7 +93,7 @@ export default function TicketsPage() {
             title: '状态',
             dataIndex: 'status',
             width: 100,
-            render: (s: TicketStatus) => <Tag color={STATUS_COLOR[s]}>{STATUS_LABEL[s]}</Tag>,
+            render: (s: TicketStatus) => <Status tone={STATUS_TONE[s]}>{STATUS_LABEL[s]}</Status>,
           },
           {
             title: '退款额',
@@ -127,6 +130,6 @@ export default function TicketsPage() {
           onDone={() => void load()}
         />
       ) : null}
-    </div>
+    </ListCard>
   )
 }

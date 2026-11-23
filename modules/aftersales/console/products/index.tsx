@@ -9,6 +9,7 @@
 import { useCallback, useEffect, useState } from 'react'
 import { Alert, Table, Typography } from 'antd'
 import { apiGet, messageOf } from '../lib/api'
+import { ListCard } from '../lib/ui'
 import type { Paged, ProductItem } from '../../api-types'
 
 const SIZE = 20
@@ -41,13 +42,15 @@ export default function ProductsPage() {
   }, [load])
 
   return (
-    <div>
+    <ListCard>
       <Typography.Text type="secondary">共 {total} 条</Typography.Text>
-      {error ? <Alert type="error" showIcon title={error} style={{ margin: '12px 0' }} /> : null}
+      {error ? <Alert type="error" showIcon message={error} style={{ margin: '12px 0' }} /> : null}
       <Table<ProductItem>
         rowKey="code"
+        size="small"
         dataSource={items}
         loading={loading}
+        locale={{ emptyText: '还没有商品档案。数据面的商品维表发布后会出现在这里。' }}
         pagination={{ current: page, pageSize: SIZE, total, showSizeChanger: false, onChange: setPage }}
         columns={[
           { title: '商品', dataIndex: 'name' },
@@ -56,6 +59,6 @@ export default function ProductsPage() {
           { title: '条码', dataIndex: 'barCode', width: 160, render: (v: string | null) => v ?? '—' },
         ]}
       />
-    </div>
+    </ListCard>
   )
 }

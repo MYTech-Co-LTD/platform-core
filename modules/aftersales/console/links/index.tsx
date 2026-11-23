@@ -9,9 +9,10 @@
 // 操作面（设计稿 §2 人工修正）：pending→确认/改绑；active→改绑/解绑；disputed→恢复（confirm
 // 缺省目标=行上账户）/改绑；revoked 终态无操作。audit 执行人由服务端取会话，前端不传。
 import { useCallback, useState } from 'react'
-import { Alert, Button, Input, Modal, Table, Tag } from 'antd'
+import { Alert, Button, Input, Modal, Table } from 'antd'
 import { apiGet, apiSend, messageOf } from '../lib/api'
 import { useList } from '../lib/useList'
+import { ListCard, Status } from '../lib/ui'
 import type { IdentityLinkView } from '@platform/sdk'
 
 const PROVIDER_LABEL: Record<IdentityLinkView['provider'], string> = { 'wechat-oa': '公众号', wecom: '企业微信' }
@@ -21,11 +22,11 @@ const STATUS_LABEL: Record<IdentityLinkView['status'], string> = {
   revoked: '已解绑',
   disputed: '争议中',
 }
-const STATUS_COLOR: Record<IdentityLinkView['status'], string> = {
-  pending: 'orange',
-  active: 'green',
-  revoked: 'default',
-  disputed: 'red',
+const STATUS_TONE: Record<IdentityLinkView['status'], 'warn' | 'ok' | 'muted' | 'danger'> = {
+  pending: 'warn',
+  active: 'ok',
+  revoked: 'muted',
+  disputed: 'danger',
 }
 const VIA_LABEL: Record<NonNullable<IdentityLinkView['boundVia']>, string> = { auto: '自动', manual: '人工' }
 
@@ -67,19 +68,21 @@ export default function LinksPage() {
   }
 
   return (
-    <div>
-      {error ? <Alert type="error" showIcon title={error} style={{ marginBottom: 12 }} /> : null}
+    <ListCard>
+      {error ? <Alert type="error" showIcon message={error} style={{ marginBottom: 12 }} /> : null}
       <Table<IdentityLinkView>
         rowKey="id"
+        size="small"
         dataSource={items}
         loading={loading}
         pagination={false}
+        locale={{ emptyText: '还没有身份绑定。员工在公众号登记、审批通过后会出现在这里。' }}
         columns={[
           {
             title: '渠道',
             dataIndex: 'provider',
             width: 100,
-            render: (v: IdentityLinkView['provider']) => <Tag>{PROVIDER_LABEL[v]}</Tag>,
+            render: (v: IdentityLinkView['provider']) => PROVIDER_LABEL[v],
           },
           { title: '外部号', dataIndex: 'externalId', width: 200 },
           { title: '账户', dataIndex: 'casdoorName', width: 140 },
@@ -89,7 +92,7 @@ export default function LinksPage() {
             title: '状态',
             dataIndex: 'status',
             width: 90,
-            render: (v: IdentityLinkView['status']) => <Tag color={STATUS_COLOR[v]}>{STATUS_LABEL[v]}</Tag>,
+            render: (v: IdentityLinkView['status']) => <Status tone={STATUS_TONE[v]}>{STATUS_LABEL[v]}</Status>,
           },
           {
             title: '绑定方式',
@@ -156,6 +159,6 @@ export default function LinksPage() {
           placeholder="Casdoor 账户名"
         />
       </Modal>
-    </div>
+    </ListCard>
   )
 }

@@ -6,9 +6,10 @@
 // 与 M3a 的「员工」页签**不是一回事**：那个直接改 employee 的 approve_status；
 // 这里决的是**申请**，通过后服务端按申请内容写回档案（单事务）。
 import { useCallback, useState } from 'react'
-import { Alert, Button, Modal, Table, Tag } from 'antd'
+import { Alert, Button, Modal, Table } from 'antd'
 import { apiGet, apiSend, messageOf } from '../lib/api'
 import { useList } from '../lib/useList'
+import { ListCard, Status } from '../lib/ui'
 import type { EmployeeApprovalItem, Unpaged } from '../../api-types'
 
 const TYPE_LABEL: Record<EmployeeApprovalItem['approveType'], string> = { register: '注册', change: '变更' }
@@ -17,10 +18,10 @@ const STATUS_LABEL: Record<EmployeeApprovalItem['status'], string> = {
   approved: '已通过',
   rejected: '已驳回',
 }
-const STATUS_COLOR: Record<EmployeeApprovalItem['status'], string> = {
-  pending: 'orange',
-  approved: 'green',
-  rejected: 'red',
+const STATUS_TONE: Record<EmployeeApprovalItem['status'], 'warn' | 'ok' | 'danger'> = {
+  pending: 'warn',
+  approved: 'ok',
+  rejected: 'danger',
 }
 
 const FIELD_LABEL: Record<string, string> = { name: '姓名', phone: '手机号', storeIds: '门店' }
@@ -59,27 +60,29 @@ export default function ApprovalsPage() {
   }
 
   return (
-    <div>
-      {error ? <Alert type="error" showIcon title={error} style={{ marginBottom: 12 }} /> : null}
+    <ListCard>
+      {error ? <Alert type="error" showIcon message={error} style={{ marginBottom: 12 }} /> : null}
       <Table<EmployeeApprovalItem>
         rowKey="id"
+        size="small"
         dataSource={items}
         loading={loading}
         pagination={false}
+        locale={{ emptyText: '没有待处理申请。员工在公众号提交登记/变更后会出现在这里。' }}
         columns={[
           { title: '申请人', dataIndex: 'openId', width: 200 },
           {
             title: '类型',
             dataIndex: 'approveType',
             width: 90,
-            render: (v: EmployeeApprovalItem['approveType']) => <Tag>{TYPE_LABEL[v]}</Tag>,
+            render: (v: EmployeeApprovalItem['approveType']) => TYPE_LABEL[v],
           },
           { title: '内容', render: (_: unknown, a: EmployeeApprovalItem) => diffText(a) },
           {
             title: '状态',
             dataIndex: 'status',
             width: 110,
-            render: (v: EmployeeApprovalItem['status']) => <Tag color={STATUS_COLOR[v]}>{STATUS_LABEL[v]}</Tag>,
+            render: (v: EmployeeApprovalItem['status']) => <Status tone={STATUS_TONE[v]}>{STATUS_LABEL[v]}</Status>,
           },
           {
             title: '操作',
@@ -105,6 +108,6 @@ export default function ApprovalsPage() {
           },
         ]}
       />
-    </div>
+    </ListCard>
   )
 }
