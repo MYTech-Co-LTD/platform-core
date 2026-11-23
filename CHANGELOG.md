@@ -11,6 +11,10 @@
 
 ## [Unreleased]
 
+## [0.376.0](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.375.1...v0.376.0) - 2026-11-23
+- 【新增】server: 公众号访客路结构化日志——silent/callback 分支走向可观测（openid 掩码，不打印 code/secret） ([#2753](https://github.com/MYTech-Co-LTD/platform-core/pull/2753), [d9d4867](https://github.com/MYTech-Co-LTD/platform-core/commit/d9d48672ccf4b7a09d0468aa35d57e5662498768))
+
+
 ## [0.375.1](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.375.0...v0.375.1) - 2026-11-23
 - 【修复】data: 目标件对账 test 三类真机缺陷（标识符 63 / DuckDB 方言 / numeric typmod） ([#2751](https://github.com/MYTech-Co-LTD/platform-core/pull/2751), [ee3ebdf](https://github.com/MYTech-Co-LTD/platform-core/commit/ee3ebdf413bb79775ff1cef3b5625443a4cb9947))
 
