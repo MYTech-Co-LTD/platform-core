@@ -11,6 +11,10 @@
 
 ## [Unreleased]
 
+## [0.369.0](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.368.0...v0.369.0) - 2026-11-23
+- 【新增】platform: 数据依赖列集门禁 B13——售后首个跨域 dataDependencies 声明 + 判据 2 真库对账 + B1 dim_* 豁免退役 ([#2714](https://github.com/MYTech-Co-LTD/platform-core/pull/2714), [0fd70ea](https://github.com/MYTech-Co-LTD/platform-core/commit/0fd70ea20a1567a85ac79440256d2de45c357170))
+
+
 ## [0.368.0](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.367.0...v0.368.0) - 2026-11-23
 - 【新增】oa: OA 对账脚本登记平台调度器（#2709） ([#2710](https://github.com/MYTech-Co-LTD/platform-core/pull/2710), [80f8242](https://github.com/MYTech-Co-LTD/platform-core/commit/80f82426addae7c34ba3f84a4984a01b56c1171d))
 
