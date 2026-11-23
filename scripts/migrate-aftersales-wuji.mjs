@@ -2,7 +2,7 @@
 // 有 vitest 兜底；scripts/ 不在 B1/B8/B9 扫描根内（apps/packages/modules 才是），故 env 键靠
 // .env.example 的文档化条目自觉维护。
 // migrate-aftersales-wuji.mjs — 售后 M2b：wuji 托管库 → aftersales.*（spec §3.3；issue #151）
-// 用法：npx tsx scripts/migrate-aftersales-wuji.mjs --org <casdoor_org> [--tables t1,t2] [--store-map <csv>] [--apply]
+// 用法：npx tsx scripts/migrate-aftersales-wuji.mjs --org <casdoor_org> [--tables t1,t2] [--store-map <csv>] [--employee-status-default approved|pending] [--apply]
 //         [--sample N] [--sample-out DIR] [--groupbuy-unit fen|yuan]
 // 默认 dry-run：拉取 + 清洗 + 打印报告，不写库（--apply 才写）。
 // env：WUJI_APPID / WUJI_DATA_ORIGIN（默认 https://data.wujisite.com）/ WUJI_KEY_<大写表名>；
@@ -35,11 +35,16 @@ const GROUPBUY_UNIT = arg('groupbuy-unit')
 // 门店映射（2026-11-23，issue #2729）：无忌门店 id → dim_branch.code。
 // 文件不进仓（含客户门店编码清单），随部署环境投递；只在日志打印条数，不打印内容。
 const STORE_MAP = arg('store-map')
+// 源表无审批态字段时的默认（2026-11-23 实测：山海 employee_info 是正式花名册，无 status 字段）。
+// 缺省 approved；计数走 defaulted_status（可见，不静默）。只影响「字段缺席」，源有字段但值未知仍跳行。
+const EMPLOYEE_STATUS_DEFAULT = arg('employee-status-default') ?? 'approved'
 
 async function main() {
   if (!ORG) throw new Error('需要 --org <casdoor_org>（迁移目标租户）')
   const appid = process.env.WUJI_APPID
   const origin = process.env.WUJI_DATA_ORIGIN ?? 'https://data.wujisite.com'
+  // 接口路径：山海租户给的是 /api/public/object（2026-11-23 实测可用）；缺省沿用私有两键口径
+  const apiPath = process.env.WUJI_API_PATH ?? '/api/private/object'
   if (!appid) throw new Error('需要 WUJI_APPID（取法见 .env.example；本地临跑用 export，不落盘）')
 
   if (SAMPLE_OUT) await mkdir(SAMPLE_OUT, { recursive: true })
@@ -47,7 +52,7 @@ async function main() {
   for (const t of TABLES) {
     const schemakey = process.env[`WUJI_KEY_${t.toUpperCase()}`]
     if (!schemakey) throw new Error(`缺 WUJI_KEY_${t.toUpperCase()}（wuji 后台「数据源管理」逐表可见）`)
-    const cfg = { origin, appid, schemaid: t, schemakey }
+    const cfg = { origin, appid, schemaid: t, schemakey, apiPath }
     const count = await wujiCount(fetch, cfg)
     const rows = await wujiFetchAll(fetch, cfg, SAMPLE ? { maxRows: SAMPLE } : {})
     raw[t] = rows
@@ -73,7 +78,7 @@ async function main() {
     region: (raw.region_info ?? []).map(clean.cleanRegion),
     store: (raw.store_info ?? []).map(clean.cleanStore),
     product: (raw.product_archive ?? []).map(clean.cleanProduct),
-    employee: (raw.employee_info ?? []).map(clean.cleanEmployee),
+    employee: (raw.employee_info ?? []).map((r) => clean.cleanEmployee(r, { defaultApproveStatus: EMPLOYEE_STATUS_DEFAULT })),
     approval: (raw.employee_info_approve ?? []).map(clean.cleanEmployeeApproval),
     rule: (raw.after_sales_rule ?? []).map(clean.cleanRule),
     ticket: (raw.after_sales_work_order ?? []).map(clean.cleanTicket),

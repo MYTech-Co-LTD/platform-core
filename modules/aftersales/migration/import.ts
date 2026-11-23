@@ -109,6 +109,8 @@ export async function importEmployee(
   for (const r of rows) {
     if (!r.sourceId) { skip(stat, 'no_source_id'); continue }
     if (r.approveStatus === null) { skip(stat, 'unknown_status'); continue }
+    // 源无审批态字段、按默认值补的：可见计数（不静默），不算跳过（行照常导入）
+    if (r.approveStatusDefaulted) stat.reasons['defaulted_status'] = (stat.reasons['defaulted_status'] ?? 0) + 1
     // 门店引用解析成两条路：
     //  · 有 storeCodeMap ⇒ 产出 dim_branch.code（正确编码），未命中计入计数
     //  · 无 ⇒ 旧行为：解析 aftersales.store 本地 id（⚠️ #476：与 dim code 不同源，仅应急）

@@ -116,7 +116,8 @@ export const KEYS = {
   store: { id: ['_id'], name: ['name', 'store_name'], region: ['region_id', 'region'], address: ['address'], phone: ['phone', 'contact'] },
   product: { id: ['_id'], name: ['name', 'product_name'], spec: ['spec', 'specification'],
              basicQuantity: ['basic_quantity'], basicUnitPrice: ['basic_unit_price', 'price'] },
-  employee: { id: ['_id'], name: ['name'], phone: ['phone', 'mobile'], approveStatus: ['approve_status', 'status'] },
+  employee: { id: ['_id'], name: ['name', 'employee_name'], phone: ['phone', 'mobile', 'employee_phonenumber'],
+              approveStatus: ['approve_status', 'status'] },
   approval: { id: ['_id'], type: ['approve_type', 'type'], status: ['status', 'approve_status'],
               info: ['approveinfo'], decidedBy: ['decided_by', 'approver'] },
   rule: { id: ['_id'], name: ['name', 'rule_name'], ratio: ['refund_ratio', 'after_sales_rate'], remark: ['remark'] },
@@ -136,7 +137,13 @@ export interface CleanRegion { sourceId: string; name: string }
 export interface CleanStore { sourceId: string; name: string; regionSourceId: string | null; address: string; phone: string }
 export interface CleanProduct { sourceId: string; name: string; spec: string; basicQuantity: number; basicUnitPriceMinor: bigint | null }
 // 词表产物的 null 语义：源值不在词表（未知/缺失）——导入侧跳行记因，见各 import* 的 unknown_* 检查
-export interface CleanEmployee { sourceId: string; name: string; phone: string; openId: string; approveStatus: string | null; storeSourceIds: string[] }
+export interface CleanEmployee {
+  sourceId: string; name: string; phone: string; openId: string
+  approveStatus: string | null
+  /** approveStatus 是不是「源无该字段 → 按默认值补的」（导入层据此记 defaulted_status，不静默） */
+  approveStatusDefaulted: boolean
+  storeSourceIds: string[]
+}
 export interface CleanEmployeeApproval {
   sourceId: string; openId: string; approveType: 'register' | 'change' | null; status: string | null
   oldInfo: Record<string, unknown>; newInfo: Record<string, unknown>
@@ -172,11 +179,25 @@ export function cleanProduct(row: SrcRow): CleanProduct {
     basicUnitPriceMinor: yuanToMinor(pick(row, KEYS.product.basicUnitPrice)),
   }
 }
-export function cleanEmployee(row: SrcRow): CleanEmployee {
+export interface CleanEmployeeOpts {
+  /**
+   * 源表**没有**审批态字段时用的默认值（2026-11-23 实测：山海 `employee_info` 是正式花名册，
+   * 无 status 字段；审批申请在 `employee_info_approve`）。源**有**字段但值未知 ⇒ 仍 null（跳行）。
+   * 不传 ⇒ 维持严格（null ⇒ 导入层 unknown_status 跳过）。
+   */
+  defaultApproveStatus?: string
+}
+
+export function cleanEmployee(row: SrcRow, opts: CleanEmployeeOpts = {}): CleanEmployee {
+  const rawStatus = pick(row, KEYS.employee.approveStatus)
+  const hasStatusField = rawStatus !== undefined && rawStatus !== null && String(rawStatus).trim() !== ''
+  const mapped = mapValue(APPROVE_STATUS_MAP, rawStatus)
+  const useDefault = mapped === null && !hasStatusField && opts.defaultApproveStatus !== undefined
   return {
     sourceId: pickStr(row, KEYS.employee.id), name: pickStr(row, KEYS.employee.name),
     phone: pickStr(row, KEYS.employee.phone), openId: openIdOf(row),
-    approveStatus: mapValue(APPROVE_STATUS_MAP, pick(row, KEYS.employee.approveStatus)),
+    approveStatus: useDefault ? opts.defaultApproveStatus! : mapped,
+    approveStatusDefaulted: useDefault,
     storeSourceIds: splitStoreRefs(row.store_info),
   }
 }
