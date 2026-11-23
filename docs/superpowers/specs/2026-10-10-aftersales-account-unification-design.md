@@ -210,3 +210,14 @@ platform.identity_link
 - Casdoor user `WeChat`/`Wecom` 列作绑定真源；
 - 换绑冷却期、自助解绑（Phase 3 按需）；
 - unionid 打通公众号与企微身份（依赖开放平台同主体认证，本设计用手机号强键替代）。
+
+## 修订（2026-11-23）：Casdoor 边界与渠道 provider
+
+边界 ADR：`docs/superpowers/specs/2026-11-23-casdoor-boundary-and-subscription-ownership.md`。
+
+- **§2 B' 否决维持**，并补两条明确表述：① **不在 Casdoor 创建公众号 provider**（渠道 OAuth 由宿主
+  自实现；理由：多租户 appid、单值列、绑定工作流）；② **不做 openid → Casdoor 的单向同步**
+  （无 provider 时该列无验证语义）。
+- 跨系统识别分层：规范 id = `casdoor_name`；外部身份列表走**平台绑定查询面**（待建，触发 = 第一个
+  外部消费者）；Casdoor broker 化另按 ADR §3 的触发条件。
+- 本 Phase 1 的既有实现（两态 session、`identity_link` 多行绑定、异议端点）**不变**。

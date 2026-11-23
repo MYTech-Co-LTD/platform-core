@@ -152,6 +152,10 @@ upsertSubscription(sub: SubInput): Promise<void>    // add/update-subscription�
 
 ## 8. 修订记录
 
+- **2026-11-23：订阅真身终裁归平台**（边界 ADR `2026-11-23-casdoor-boundary-and-subscription-ownership.md` §4）。
+  本条 D4 的「双层运营」语义保留，但订阅载体从 Casdoor 迁到平台 subscription 域；Casdoor 只收
+  角色/权限码投影。迁移路径与触发见该 ADR §4/§6。D4 不推翻。
+
 - 2026-09-13（晚）：**D4 一层化 → 双层**。用户澄清原始意图：平台超管管 Casdoor，**租户管理员在自建
   console 管**。初版一层化把两层都折叠进 Casdoor 后台，砍掉的 M3（租户管理员页）**恢复**；M2（平台
   超管页）维持不做。新增 D9（tenant:admin 权限码）。M1 的全部产出（订阅真身/客户端方法/双源/CLI）
