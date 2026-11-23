@@ -11,6 +11,11 @@
 
 ## [Unreleased]
 
+## [0.375.0](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.374.0...v0.375.0) - 2026-11-23
+- 【新增】aftersales: 写操作落审计——工单处理/规则 CRUD/员工审批/申请决定/附件 GC（同事务） ([#2748](https://github.com/MYTech-Co-LTD/platform-core/pull/2748), [0e55e21](https://github.com/MYTech-Co-LTD/platform-core/commit/0e55e21e1904c2302444d8c4aa57b445a927fcad))
+- 【新增】aftersales: gen-store-map 改编码优先 + 名称兜底——100% 对上 = 同一条平台门店 ([#2746](https://github.com/MYTech-Co-LTD/platform-core/pull/2746), [c40050b](https://github.com/MYTech-Co-LTD/platform-core/commit/c40050b6e4b1202db52e7cdcb195091b384f207c))
+
+
 ## [0.374.0](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.373.0...v0.374.0) - 2026-11-23
 - 【新增】oa: C 目标第一刀——goals.yml 两段生成关系/达成率指标/报表模板/日报 ([#2738](https://github.com/MYTech-Co-LTD/platform-core/pull/2738), [89a030a](https://github.com/MYTech-Co-LTD/platform-core/commit/89a030a538725570bf45bbb01f71139a790c1c8e))
 
