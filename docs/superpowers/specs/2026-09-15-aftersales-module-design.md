@@ -239,7 +239,7 @@ M2a 要复刻的业务内核。以下全部取自 wuji-1 源码**逐行实证**�
 
 | 值 | 中文 | 处理动作 |
 |---|---|---|
-| `pending` | 待处理 | 提交时写入（`useAfterSalesWorkOrder.ts:460`） |
+| `pending` | 待处理 | 提交时写入（`useAfterSalesWorkOrder.ts`；行号引用已失效，2026-11-23 门禁发现后改为不带行号） |
 | `completed` | 已处理 | `ratio` / `fixed` 两条路 |
 | `cancelled` | 已驳回 | `reject` 路（**金额强制归 0**） |
 
