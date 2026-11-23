@@ -161,6 +161,10 @@
 | `oa.standard_approval_reconcile` | **已登记（#2385 收口，`enabled=false`）** | 待启用：手动跑一轮 → stdout 统计与 `forms.external_approval` 行数比对 → enable（§13） | 本无 openship 作业（脚本此前零调度登记，2026-11-23 起有 registry key） |
 | `oa.approval_reconcile` | **已登记（#2363/#2385 收口，`enabled=false`）** | 待启用：手动跑一轮 → stdout 统计核对 → enable（§13） | 本无 openship 作业（同上） |
 | `data.recon_monthly` | **已切流（#2735，2026-11-23）** | worker 的 `platform.scheduler`（`enabled=true`，`next_run_at=2026-12-15T04:00Z` = CST 15 号 12:00） | 原 openship job **已停用并删除**（`custom:4UQ2ugvbFRGKtIUv`）。脚本调两个 console 的现成管线 `lemeng.recon.preagg.backfill`（不实现口径）；worker 已有 `DUCKLE_TOKEN`（三容器同一份，实测）+ 服务名可达 ⇒ **零新增密钥**。开闸实测：10 月全月 62 次 **pass=62 skip=0**，与 `/opt/lemeng-recon-preagg.sh` 同期结论逐项一致（688s） |
+| ⚠️ `lemeng-recon-restate` | **待切（#2742）** | 现役 openship（`25 15 * * *` = CST 23:25） | 业务对账仍走宿主内联命令；迁法：改走 DSN/服务名 HTTP → registry 登记 |
+| ⚠️ `OO 预警配置对账` | **待切（#2742）** | 现役 openship（`17,47 * * * *`） | 监控面只读对账；worker 已有 OO 读凭据 ⇒ 可迁 |
+| ⚠️ `lemeng 夜间回填窗口` | **待切（#2742）** | 现役 openship（`5 16 * * *` = CST 00:05） | 业务回填驱动；迁法：改调 console `/api/run` |
+| `lemeng-console-gc` | **登记为例外（#2742）** | 留在 openship（`40 0 * * *` = CST 08:40） | **真基建**：worker 对 console workspace 是只读挂载，GC 要删文件 ⇒ 需可写挂载或 console 侧回收入口；在此之前只能留宿主 |
 
 **顺序按爆炸半径**：已完成 `notify.reconcile` → `metric.candidates` → `report.scope_scan`；
 P1+P4b 的切流**已全部完成**（2026-11-15）；新增 job 仍按上表四步执行。
