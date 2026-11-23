@@ -171,6 +171,82 @@ export async function listStandardApprovals(limit = 100): Promise<StandardApprov
   return body.approvals
 }
 
+// ── 收集轮次（件③ / issue #2707）──
+// 名单轮（targets：按人收）/ 值集轮（value_grid：按格子收）；进度来自期望集合行状态。
+
+export type RoundKind = 'targets' | 'value_grid'
+export type RoundStatus = 'draft' | 'open' | 'closed'
+
+export interface RoundRow {
+  id: string
+  org: string
+  assetId: string
+  version: number
+  roundKey: string
+  kind: RoundKind
+  name: string
+  startsAt: string | null
+  endsAt: string | null
+  status: RoundStatus
+  createdBy: string
+  createdAt: string
+  total: number
+  submitted: number
+  pending: number
+}
+
+export interface RoundProgressItem {
+  key: string
+  status: string
+  submissionId: string | null
+  updatedAt: string
+}
+
+export interface RoundProgressView {
+  total: number
+  submitted: number
+  pending: number
+  waived: number
+  items: RoundProgressItem[]
+}
+
+export interface RoundDetailView {
+  round: Omit<RoundRow, 'total' | 'submitted' | 'pending'>
+  progress: RoundProgressView | null
+}
+
+export async function listRounds(): Promise<RoundRow[]> {
+  const body = await apiGet<{ rounds: RoundRow[] }>('/api/modules/forms/rounds')
+  return body.rounds
+}
+
+export async function getRound(id: string): Promise<RoundDetailView> {
+  return apiGet<RoundDetailView>(`/api/modules/forms/rounds/${encodeURIComponent(id)}`)
+}
+
+export interface CreateRoundInput {
+  assetId: string
+  roundKey: string
+  kind: RoundKind
+  name: string
+  startsAt?: string
+  endsAt?: string
+  targets?: string[]
+  anchors?: string[]
+}
+
+export async function createRound(input: CreateRoundInput): Promise<{ id: string }> {
+  return apiSend<{ id: string }>('POST', '/api/modules/forms/rounds', input)
+}
+
+export async function openRound(id: string): Promise<void> {
+  await apiSend('POST', `/api/modules/forms/rounds/${encodeURIComponent(id)}/open`)
+}
+
+export async function closeRound(id: string): Promise<void> {
+  await apiSend('POST', `/api/modules/forms/rounds/${encodeURIComponent(id)}/close`)
+}
+
 export function parseDictRef(ref: string): { scope: 'tenant' | 'global'; dictId: string } | null {
   const m = DICT_REF_RE.exec(ref)
   if (!m) return null

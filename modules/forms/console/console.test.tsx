@@ -491,3 +491,124 @@ describe('标准审批镜像页（OA P2 Task 7）', () => {
     expect(await screen.findByText(/还没有标准审批镜像/)).toBeInTheDocument()
   })
 })
+
+// 收集轮次（件③ / issue #2707）：列表（key/kind/状态/进度）+ 新建 + 开轮/关轮 + 逐项详情。
+describe('轮次页（件③ #2707）', () => {
+  const roundsBody = {
+    rounds: [
+      { id: '1', org: 'acme', assetId: 'goal-monthly-store', version: 1, roundKey: '2026-11', kind: 'targets', name: '十一月巡检', startsAt: null, endsAt: '2026-11-30T00:00:00Z', status: 'open', createdBy: 'op', createdAt: '2026-11-01T00:00:00Z', total: 4, submitted: 2, pending: 2 },
+      { id: '2', org: 'acme', assetId: 'goal-monthly-store', version: 1, roundKey: '2026-12', kind: 'value_grid', name: '十二月目标', startsAt: null, endsAt: null, status: 'draft', createdBy: 'op', createdAt: '2026-11-20T00:00:00Z', total: 0, submitted: 0, pending: 0 },
+    ],
+  }
+
+  it('列表渲染轮次（key/kind/状态/进度）；draft 行对 manage 出开轮、open 行出关轮', async () => {
+    mockApi({ '/api/modules/forms/rounds': () => jsonResponse(roundsBody) })
+    renderAt('/console/forms/rounds', ['forms:view', 'forms:manage'])
+    expect(await screen.findByText('2026-11')).toBeInTheDocument()
+    expect(screen.getByText('2026-12')).toBeInTheDocument()
+    expect(screen.getByText('名单轮')).toBeInTheDocument()
+    expect(screen.getByText('值集轮')).toBeInTheDocument()
+    expect(screen.getByText('进行中')).toBeInTheDocument()
+    expect(screen.getByText('草稿')).toBeInTheDocument()
+    // 进度 2/4 只在 open 行
+    expect(screen.getByText('2/4')).toBeInTheDocument()
+    // draft（id=2）有开轮；open（id=1）有关轮
+    expect(screen.getByRole('button', { name: '开轮' })).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: '关轮' })).toBeInTheDocument()
+  })
+
+  it('非 manage 无开轮/关轮/新建入口（UI 显隐与 API 门卫同语义）', async () => {
+    mockApi({ '/api/modules/forms/rounds': () => jsonResponse(roundsBody) })
+    renderAt('/console/forms/rounds', ['forms:view'])
+    expect(await screen.findByText('2026-11')).toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: '开轮' })).not.toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: '关轮' })).not.toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: '新建轮次' })).not.toBeInTheDocument()
+  })
+
+  it('空态给下一步', async () => {
+    mockApi({ '/api/modules/forms/rounds': () => jsonResponse({ rounds: [] }) })
+    renderAt('/console/forms/rounds', ['forms:view'])
+    expect(await screen.findByText(/还没有收集轮次/)).toBeInTheDocument()
+  })
+
+  it('新建：提交 POST /rounds 带 kind 与按行拆的名单（去空行）；成功后先刷新再提示', async () => {
+    const posts: Array<{ url: string; body: Record<string, unknown> }> = []
+    let listCalls = 0
+    platformFetchMock.mockImplementation(async (input: string, init?: RequestInit) => {
+      if (input === '/api/modules/forms/rounds' && init?.method === 'POST') {
+        posts.push({ url: input, body: JSON.parse(String(init.body)) as Record<string, unknown> })
+        return jsonResponse({ id: '9' }, 201)
+      }
+      if (input === '/api/modules/forms/rounds') {
+        listCalls += 1
+        return jsonResponse(roundsBody)
+      }
+      if (input === '/api/modules/forms/defs') return jsonResponse(defsBody)
+      throw new Error('unexpected platformFetch: ' + input)
+    })
+    renderAt('/console/forms/rounds', ['forms:view', 'forms:manage'])
+    await waitFor(() => expect(screen.getByText('2026-11')).toBeInTheDocument())
+    fireEvent.click(screen.getByRole('button', { name: '新建轮次' }))
+    await waitFor(() => expect(screen.getByText('新建收集轮次')).toBeInTheDocument())
+
+    fireEvent.change(screen.getByLabelText('轮次标识'), { target: { value: '2027-01' } })
+    fireEvent.change(screen.getByLabelText('名称'), { target: { value: '一月巡检' } })
+    fireEvent.change(screen.getByLabelText('应交人名单'), { target: { value: 'u1\nu2\n\nu2\n' } })
+    // antd v6 给两字按钮插空格（「创 建」）——正则兼容
+    fireEvent.click(screen.getByRole('button', { name: /^创\s*建$/ }))
+    await waitFor(() => expect(posts.length).toBe(1))
+    // 名单按行拆 + 去空 + 去重；表单默认选第一张已发布的
+    expect(posts[0].body).toMatchObject({
+      assetId: 'check-in', roundKey: '2027-01', kind: 'targets', name: '一月巡检', targets: ['u1', 'u2'],
+    })
+    expect(listCalls).toBeGreaterThanOrEqual(2) // 创建后刷新了列表
+    await waitFor(() => expect(screen.getByText(/已创建草稿轮/)).toBeInTheDocument())
+  })
+
+  it('开轮 → POST /open；关轮 → POST /close', async () => {
+    const calls: string[] = []
+    platformFetchMock.mockImplementation(async (input: string, init?: RequestInit) => {
+      const method = init?.method ?? 'GET'
+      if (input === '/api/modules/forms/rounds') return jsonResponse(roundsBody)
+      if ((input === '/api/modules/forms/rounds/2/open' || input === '/api/modules/forms/rounds/1/close') && method === 'POST') {
+        calls.push(`${method} ${input}`)
+        return jsonResponse({ ok: true })
+      }
+      throw new Error('unexpected platformFetch: ' + method + ' ' + input)
+    })
+    renderAt('/console/forms/rounds', ['forms:view', 'forms:manage'])
+    await waitFor(() => expect(screen.getByText('2026-11')).toBeInTheDocument())
+    fireEvent.click(screen.getByRole('button', { name: '开轮' }))
+    await waitFor(() => expect(calls).toContain('POST /api/modules/forms/rounds/2/open'))
+    fireEvent.click(screen.getByRole('button', { name: '关轮' }))
+    await waitFor(() => expect(calls).toContain('POST /api/modules/forms/rounds/1/close'))
+  })
+
+  it('详情：逐项状态（已交/待交）来自 GET /rounds/:id', async () => {
+    platformFetchMock.mockImplementation(async (input: string) => {
+      if (input === '/api/modules/forms/rounds') return jsonResponse(roundsBody)
+      if (input === '/api/modules/forms/rounds/1') {
+        return jsonResponse({
+          round: { id: '1', org: 'acme', assetId: 'goal-monthly-store', version: 1, roundKey: '2026-11', kind: 'targets', name: '十一月巡检', startsAt: null, endsAt: null, status: 'open', createdBy: 'op', createdAt: '2026-11-01T00:00:00Z' },
+          progress: {
+            total: 2, submitted: 1, pending: 1, waived: 0,
+            items: [
+              { key: 'u1', status: 'submitted', submissionId: '7', updatedAt: '2026-11-02T00:00:00Z' },
+              { key: 'u2', status: 'pending', submissionId: null, updatedAt: '2026-11-01T00:00:00Z' },
+            ],
+          },
+        })
+      }
+      throw new Error('unexpected platformFetch: ' + input)
+    })
+    renderAt('/console/forms/rounds', ['forms:view'])
+    await waitFor(() => expect(screen.getByText('2026-11')).toBeInTheDocument())
+    fireEvent.click(screen.getAllByRole('button', { name: '详情' })[0])
+    await waitFor(() => expect(screen.getByText('十一月巡检 · 2026-11')).toBeInTheDocument())
+    expect(screen.getByText('u1')).toBeInTheDocument()
+    expect(screen.getByText('u2')).toBeInTheDocument()
+    expect(screen.getByText('已交')).toBeInTheDocument()
+    expect(screen.getByText('待交')).toBeInTheDocument()
+  })
+})

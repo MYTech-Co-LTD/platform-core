@@ -108,8 +108,9 @@ export async function reconcileOnce(pool, opts = {}) {
   //    event_id 含日期 ⇒ 同日重跑不重复；值集轮没有逐格收件人 ⇒ assignee = 开轮人（created_by）。
   for (const { round, pendingKeys } of await listDueRounds(pool, now)) {
     dueRounds++
+    /** @param {string} k 未交行的 key（名单轮=应交人 / 值集轮=格子键） */
     const assigneeOf =
-      round.kind === 'targets' ? (k) => k : () => round.createdBy
+      round.kind === 'targets' ? (/** @type {string} */ k) => k : () => round.createdBy
     const day = ymd(now)
     for (const key of pendingKeys) {
       if (dryRun) continue
