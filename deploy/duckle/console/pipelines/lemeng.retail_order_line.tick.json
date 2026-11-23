@@ -1,5 +1,15 @@
 {
   "name": "lemeng.retail_order_line.tick",
+  "version": 1,
+  "id": "lemeng.retail_order_line.tick",
+  "_note": [
+    "乐檬零售明细 10 分钟累积窗 tick 子管线 —— v2 懒扩容形态（#2713，2026-11-23；设计与实测：docs/superpowers/specs/2026-11-23-retail-tick-lazy-tiers.md、手册案例 53）。",
+    "①【静态 4 页起】p1–4 常态请求数 4（v1 固定 12 页，其中多数是空页、白烧额度——2026-11-23 按实测小时分布下调）；每页后接投影 cN（只选申报 10 列、不改类型）再进 m1——修「部分 schema + 多页 merge 未申报列逐页推断翻类型」炸点（案例 36/46 同族，本源实测复现；投影**不能 CAST**：json 列 CAST 成 VARCHAR 会得到 dict repr，flatten/contract 直接炸 Malformed JSON）。",
+    "②【懒扩容，逐级链式】每段末页满 200 行才启动下一段：p4→t2(5–8)→t3(9–16)→t4(17–32)→t5(33–64)→t6(65–128)，t6 的 p128 仍满 ⇒ ctl.die 保险丝（25,600 单/时）。阈值 800/1,600/3,200/6,400/12,800/25,600 单/时。触发判据是「满页」不是「有行」（末页 1~199 行 = 数据到底，零浪费）；累积窗单调（满过的页永远满）⇒ 无跨轮误判；seed 每轮重写空 part ⇒ 无跨轮残留。",
+    "③【part 回流】tier 子管线写 %s/tN-<bizday>-h<hour>.parquet（带 page 列，覆盖写；**用 parquet 不用 CSV**：json 列经 CSV 往返会变成 dict repr，且 18 位 order_no 会被嗅探成整数丢前导零）；combine 用 read_parquet 读回（保类型、无需 columns 声明）；sink 成功后 cuT* 逐个精确删除（ctl.file 只支持单文件，glob/目录实测不支持）。",
+    "④【checkpoint 仍 false】复用键无上游内容指纹（v1 注记沿用）。引擎原生分页不可用：页号只进 query、网关只读 body（案例 41 订正 / 53）。",
+    "⑤ 湖布局不变（hour=<H>/all.parquet 单文件覆盖写）；父管线 lemeng.retail.tick.l1 不变；失败语义不变（任一段红 ⇒ 整窗不写湖，下轮重试）。"
+  ],
   "nodes": [
     {
       "id": "p1",
@@ -254,539 +264,6 @@
       }
     },
     {
-      "id": "p5",
-      "type": "source",
-      "position": {
-        "x": 0,
-        "y": 480
-      },
-      "data": {
-        "label": "page 5",
-        "componentId": "src.rest",
-        "properties": {
-          "connectionRef": "lemeng",
-          "url": "https://cloud.nhsoft.cn/agi/api/nhsoft.retail.ai.pos.posorder.find",
-          "method": "POST",
-          "body": "{\"branch_nums\": ${ITER_ITEM_BRANCH_NUMS}, \"date_from\": \"${ITER_ITEM_BIZDAY}\", \"date_to\": \"${ITER_ITEM_BIZDAY}\", \"time_from\": \"${ITER_ITEM_HOUR_FROM}\", \"time_to\": \"${ITER_ITEM_HOUR_TO}\", \"page_number\": 5, \"page_size\": 200}",
-          "responsePath": "/result",
-          "paginationType": "none",
-          "checkpoint": false
-        },
-        "schema": [
-          {
-            "name": "order_no",
-            "type": "string"
-          },
-          {
-            "name": "state",
-            "type": "string"
-          },
-          {
-            "name": "order_time",
-            "type": "timestamp"
-          },
-          {
-            "name": "order_operate_time",
-            "type": "timestamp"
-          },
-          {
-            "name": "order_source",
-            "type": "string"
-          },
-          {
-            "name": "order_transaction_type",
-            "type": "string"
-          },
-          {
-            "name": "order_ref_billno",
-            "type": "string"
-          },
-          {
-            "name": "order_total_money",
-            "type": "float64"
-          },
-          {
-            "name": "branch",
-            "type": "json"
-          },
-          {
-            "name": "pos_order_details",
-            "type": "json"
-          }
-        ]
-      }
-    },
-    {
-      "id": "p6",
-      "type": "source",
-      "position": {
-        "x": 0,
-        "y": 600
-      },
-      "data": {
-        "label": "page 6",
-        "componentId": "src.rest",
-        "properties": {
-          "connectionRef": "lemeng",
-          "url": "https://cloud.nhsoft.cn/agi/api/nhsoft.retail.ai.pos.posorder.find",
-          "method": "POST",
-          "body": "{\"branch_nums\": ${ITER_ITEM_BRANCH_NUMS}, \"date_from\": \"${ITER_ITEM_BIZDAY}\", \"date_to\": \"${ITER_ITEM_BIZDAY}\", \"time_from\": \"${ITER_ITEM_HOUR_FROM}\", \"time_to\": \"${ITER_ITEM_HOUR_TO}\", \"page_number\": 6, \"page_size\": 200}",
-          "responsePath": "/result",
-          "paginationType": "none",
-          "checkpoint": false
-        },
-        "schema": [
-          {
-            "name": "order_no",
-            "type": "string"
-          },
-          {
-            "name": "state",
-            "type": "string"
-          },
-          {
-            "name": "order_time",
-            "type": "timestamp"
-          },
-          {
-            "name": "order_operate_time",
-            "type": "timestamp"
-          },
-          {
-            "name": "order_source",
-            "type": "string"
-          },
-          {
-            "name": "order_transaction_type",
-            "type": "string"
-          },
-          {
-            "name": "order_ref_billno",
-            "type": "string"
-          },
-          {
-            "name": "order_total_money",
-            "type": "float64"
-          },
-          {
-            "name": "branch",
-            "type": "json"
-          },
-          {
-            "name": "pos_order_details",
-            "type": "json"
-          }
-        ]
-      }
-    },
-    {
-      "id": "p7",
-      "type": "source",
-      "position": {
-        "x": 0,
-        "y": 720
-      },
-      "data": {
-        "label": "page 7",
-        "componentId": "src.rest",
-        "properties": {
-          "connectionRef": "lemeng",
-          "url": "https://cloud.nhsoft.cn/agi/api/nhsoft.retail.ai.pos.posorder.find",
-          "method": "POST",
-          "body": "{\"branch_nums\": ${ITER_ITEM_BRANCH_NUMS}, \"date_from\": \"${ITER_ITEM_BIZDAY}\", \"date_to\": \"${ITER_ITEM_BIZDAY}\", \"time_from\": \"${ITER_ITEM_HOUR_FROM}\", \"time_to\": \"${ITER_ITEM_HOUR_TO}\", \"page_number\": 7, \"page_size\": 200}",
-          "responsePath": "/result",
-          "paginationType": "none",
-          "checkpoint": false
-        },
-        "schema": [
-          {
-            "name": "order_no",
-            "type": "string"
-          },
-          {
-            "name": "state",
-            "type": "string"
-          },
-          {
-            "name": "order_time",
-            "type": "timestamp"
-          },
-          {
-            "name": "order_operate_time",
-            "type": "timestamp"
-          },
-          {
-            "name": "order_source",
-            "type": "string"
-          },
-          {
-            "name": "order_transaction_type",
-            "type": "string"
-          },
-          {
-            "name": "order_ref_billno",
-            "type": "string"
-          },
-          {
-            "name": "order_total_money",
-            "type": "float64"
-          },
-          {
-            "name": "branch",
-            "type": "json"
-          },
-          {
-            "name": "pos_order_details",
-            "type": "json"
-          }
-        ]
-      }
-    },
-    {
-      "id": "p8",
-      "type": "source",
-      "position": {
-        "x": 0,
-        "y": 840
-      },
-      "data": {
-        "label": "page 8",
-        "componentId": "src.rest",
-        "properties": {
-          "connectionRef": "lemeng",
-          "url": "https://cloud.nhsoft.cn/agi/api/nhsoft.retail.ai.pos.posorder.find",
-          "method": "POST",
-          "body": "{\"branch_nums\": ${ITER_ITEM_BRANCH_NUMS}, \"date_from\": \"${ITER_ITEM_BIZDAY}\", \"date_to\": \"${ITER_ITEM_BIZDAY}\", \"time_from\": \"${ITER_ITEM_HOUR_FROM}\", \"time_to\": \"${ITER_ITEM_HOUR_TO}\", \"page_number\": 8, \"page_size\": 200}",
-          "responsePath": "/result",
-          "paginationType": "none",
-          "checkpoint": false
-        },
-        "schema": [
-          {
-            "name": "order_no",
-            "type": "string"
-          },
-          {
-            "name": "state",
-            "type": "string"
-          },
-          {
-            "name": "order_time",
-            "type": "timestamp"
-          },
-          {
-            "name": "order_operate_time",
-            "type": "timestamp"
-          },
-          {
-            "name": "order_source",
-            "type": "string"
-          },
-          {
-            "name": "order_transaction_type",
-            "type": "string"
-          },
-          {
-            "name": "order_ref_billno",
-            "type": "string"
-          },
-          {
-            "name": "order_total_money",
-            "type": "float64"
-          },
-          {
-            "name": "branch",
-            "type": "json"
-          },
-          {
-            "name": "pos_order_details",
-            "type": "json"
-          }
-        ]
-      }
-    },
-    {
-      "id": "p9",
-      "type": "source",
-      "position": {
-        "x": 0,
-        "y": 960
-      },
-      "data": {
-        "label": "page 9",
-        "componentId": "src.rest",
-        "properties": {
-          "connectionRef": "lemeng",
-          "url": "https://cloud.nhsoft.cn/agi/api/nhsoft.retail.ai.pos.posorder.find",
-          "method": "POST",
-          "body": "{\"branch_nums\": ${ITER_ITEM_BRANCH_NUMS}, \"date_from\": \"${ITER_ITEM_BIZDAY}\", \"date_to\": \"${ITER_ITEM_BIZDAY}\", \"time_from\": \"${ITER_ITEM_HOUR_FROM}\", \"time_to\": \"${ITER_ITEM_HOUR_TO}\", \"page_number\": 9, \"page_size\": 200}",
-          "responsePath": "/result",
-          "paginationType": "none",
-          "checkpoint": false
-        },
-        "schema": [
-          {
-            "name": "order_no",
-            "type": "string"
-          },
-          {
-            "name": "state",
-            "type": "string"
-          },
-          {
-            "name": "order_time",
-            "type": "timestamp"
-          },
-          {
-            "name": "order_operate_time",
-            "type": "timestamp"
-          },
-          {
-            "name": "order_source",
-            "type": "string"
-          },
-          {
-            "name": "order_transaction_type",
-            "type": "string"
-          },
-          {
-            "name": "order_ref_billno",
-            "type": "string"
-          },
-          {
-            "name": "order_total_money",
-            "type": "float64"
-          },
-          {
-            "name": "branch",
-            "type": "json"
-          },
-          {
-            "name": "pos_order_details",
-            "type": "json"
-          }
-        ]
-      }
-    },
-    {
-      "id": "p10",
-      "type": "source",
-      "position": {
-        "x": 0,
-        "y": 1080
-      },
-      "data": {
-        "label": "page 10",
-        "componentId": "src.rest",
-        "properties": {
-          "connectionRef": "lemeng",
-          "url": "https://cloud.nhsoft.cn/agi/api/nhsoft.retail.ai.pos.posorder.find",
-          "method": "POST",
-          "body": "{\"branch_nums\": ${ITER_ITEM_BRANCH_NUMS}, \"date_from\": \"${ITER_ITEM_BIZDAY}\", \"date_to\": \"${ITER_ITEM_BIZDAY}\", \"time_from\": \"${ITER_ITEM_HOUR_FROM}\", \"time_to\": \"${ITER_ITEM_HOUR_TO}\", \"page_number\": 10, \"page_size\": 200}",
-          "responsePath": "/result",
-          "paginationType": "none",
-          "checkpoint": false
-        },
-        "schema": [
-          {
-            "name": "order_no",
-            "type": "string"
-          },
-          {
-            "name": "state",
-            "type": "string"
-          },
-          {
-            "name": "order_time",
-            "type": "timestamp"
-          },
-          {
-            "name": "order_operate_time",
-            "type": "timestamp"
-          },
-          {
-            "name": "order_source",
-            "type": "string"
-          },
-          {
-            "name": "order_transaction_type",
-            "type": "string"
-          },
-          {
-            "name": "order_ref_billno",
-            "type": "string"
-          },
-          {
-            "name": "order_total_money",
-            "type": "float64"
-          },
-          {
-            "name": "branch",
-            "type": "json"
-          },
-          {
-            "name": "pos_order_details",
-            "type": "json"
-          }
-        ]
-      }
-    },
-    {
-      "id": "p11",
-      "type": "source",
-      "position": {
-        "x": 0,
-        "y": 1200
-      },
-      "data": {
-        "label": "page 11",
-        "componentId": "src.rest",
-        "properties": {
-          "connectionRef": "lemeng",
-          "url": "https://cloud.nhsoft.cn/agi/api/nhsoft.retail.ai.pos.posorder.find",
-          "method": "POST",
-          "body": "{\"branch_nums\": ${ITER_ITEM_BRANCH_NUMS}, \"date_from\": \"${ITER_ITEM_BIZDAY}\", \"date_to\": \"${ITER_ITEM_BIZDAY}\", \"time_from\": \"${ITER_ITEM_HOUR_FROM}\", \"time_to\": \"${ITER_ITEM_HOUR_TO}\", \"page_number\": 11, \"page_size\": 200}",
-          "responsePath": "/result",
-          "paginationType": "none",
-          "checkpoint": false
-        },
-        "schema": [
-          {
-            "name": "order_no",
-            "type": "string"
-          },
-          {
-            "name": "state",
-            "type": "string"
-          },
-          {
-            "name": "order_time",
-            "type": "timestamp"
-          },
-          {
-            "name": "order_operate_time",
-            "type": "timestamp"
-          },
-          {
-            "name": "order_source",
-            "type": "string"
-          },
-          {
-            "name": "order_transaction_type",
-            "type": "string"
-          },
-          {
-            "name": "order_ref_billno",
-            "type": "string"
-          },
-          {
-            "name": "order_total_money",
-            "type": "float64"
-          },
-          {
-            "name": "branch",
-            "type": "json"
-          },
-          {
-            "name": "pos_order_details",
-            "type": "json"
-          }
-        ]
-      }
-    },
-    {
-      "id": "p12",
-      "type": "source",
-      "position": {
-        "x": 0,
-        "y": 1320
-      },
-      "data": {
-        "label": "page 12",
-        "componentId": "src.rest",
-        "properties": {
-          "connectionRef": "lemeng",
-          "url": "https://cloud.nhsoft.cn/agi/api/nhsoft.retail.ai.pos.posorder.find",
-          "method": "POST",
-          "body": "{\"branch_nums\": ${ITER_ITEM_BRANCH_NUMS}, \"date_from\": \"${ITER_ITEM_BIZDAY}\", \"date_to\": \"${ITER_ITEM_BIZDAY}\", \"time_from\": \"${ITER_ITEM_HOUR_FROM}\", \"time_to\": \"${ITER_ITEM_HOUR_TO}\", \"page_number\": 12, \"page_size\": 200}",
-          "responsePath": "/result",
-          "paginationType": "none",
-          "checkpoint": false
-        },
-        "schema": [
-          {
-            "name": "order_no",
-            "type": "string"
-          },
-          {
-            "name": "state",
-            "type": "string"
-          },
-          {
-            "name": "order_time",
-            "type": "timestamp"
-          },
-          {
-            "name": "order_operate_time",
-            "type": "timestamp"
-          },
-          {
-            "name": "order_source",
-            "type": "string"
-          },
-          {
-            "name": "order_transaction_type",
-            "type": "string"
-          },
-          {
-            "name": "order_ref_billno",
-            "type": "string"
-          },
-          {
-            "name": "order_total_money",
-            "type": "float64"
-          },
-          {
-            "name": "branch",
-            "type": "json"
-          },
-          {
-            "name": "pos_order_details",
-            "type": "json"
-          }
-        ]
-      }
-    },
-    {
-      "id": "guard",
-      "type": "transform",
-      "position": {
-        "x": 260,
-        "y": 1320
-      },
-      "data": {
-        "label": "last-page guard (capacity truncation)",
-        "componentId": "ctl.die",
-        "properties": {
-          "condition": "has-rows",
-          "message": "lemeng retail_order_line 容量截断：第 12 页仍有 {rows} 行（system_book=${ITER_ITEM_SYSTEM_BOOK} bizday=${ITER_ITEM_BIZDAY} hour=${ITER_ITEM_HOUR} ${ITER_ITEM_HOUR_FROM}~${ITER_ITEM_HOUR_TO}）——缩小窗口或提高页容量后重跑"
-        }
-      }
-    },
-    {
-      "id": "merge",
-      "type": "transform",
-      "position": {
-        "x": 520,
-        "y": 420
-      },
-      "data": {
-        "label": "merge pages 1-12",
-        "componentId": "ctl.merge",
-        "properties": {}
-      }
-    },
-    {
       "id": "flatten",
       "type": "transform",
       "position": {
@@ -887,123 +364,552 @@
           "mode": "overwrite"
         }
       }
+    },
+    {
+      "id": "c1",
+      "type": "transform",
+      "position": {
+        "x": 150,
+        "y": 0
+      },
+      "data": {
+        "label": "c1",
+        "componentId": "code.sql",
+        "properties": {
+          "sql": "SELECT order_no, state, order_time, order_operate_time, order_source, order_transaction_type, order_ref_billno, order_total_money, branch, pos_order_details FROM input"
+        }
+      }
+    },
+    {
+      "id": "c2",
+      "type": "transform",
+      "position": {
+        "x": 150,
+        "y": 0
+      },
+      "data": {
+        "label": "c2",
+        "componentId": "code.sql",
+        "properties": {
+          "sql": "SELECT order_no, state, order_time, order_operate_time, order_source, order_transaction_type, order_ref_billno, order_total_money, branch, pos_order_details FROM input"
+        }
+      }
+    },
+    {
+      "id": "c3",
+      "type": "transform",
+      "position": {
+        "x": 150,
+        "y": 0
+      },
+      "data": {
+        "label": "c3",
+        "componentId": "code.sql",
+        "properties": {
+          "sql": "SELECT order_no, state, order_time, order_operate_time, order_source, order_transaction_type, order_ref_billno, order_total_money, branch, pos_order_details FROM input"
+        }
+      }
+    },
+    {
+      "id": "c4",
+      "type": "transform",
+      "position": {
+        "x": 150,
+        "y": 0
+      },
+      "data": {
+        "label": "c4",
+        "componentId": "code.sql",
+        "properties": {
+          "sql": "SELECT order_no, state, order_time, order_operate_time, order_source, order_transaction_type, order_ref_billno, order_total_money, branch, pos_order_details FROM input"
+        }
+      }
+    },
+    {
+      "id": "m1",
+      "type": "transform",
+      "position": {
+        "x": 300,
+        "y": 0
+      },
+      "data": {
+        "label": "m1",
+        "componentId": "ctl.merge",
+        "properties": {}
+      }
+    },
+    {
+      "id": "seedSql",
+      "type": "transform",
+      "position": {
+        "x": 450,
+        "y": 0
+      },
+      "data": {
+        "label": "seedSql",
+        "componentId": "code.sql",
+        "properties": {
+          "sql": "SELECT order_no, state, order_time, order_operate_time, order_source, order_transaction_type, order_ref_billno, order_total_money, branch, pos_order_details, 0 AS page FROM input WHERE false"
+        }
+      }
+    },
+    {
+      "id": "seedT2",
+      "type": "sink",
+      "position": {
+        "x": 600,
+        "y": 0
+      },
+      "data": {
+        "label": "seedT2",
+        "componentId": "snk.parquet",
+        "properties": {
+          "path": "/workspace/tmp/retail-tier/t2-${ITER_ITEM_BIZDAY}-h${ITER_ITEM_HOUR}.parquet",
+          "mode": "overwrite"
+        }
+      }
+    },
+    {
+      "id": "seedT3",
+      "type": "sink",
+      "position": {
+        "x": 600,
+        "y": 0
+      },
+      "data": {
+        "label": "seedT3",
+        "componentId": "snk.parquet",
+        "properties": {
+          "path": "/workspace/tmp/retail-tier/t3-${ITER_ITEM_BIZDAY}-h${ITER_ITEM_HOUR}.parquet",
+          "mode": "overwrite"
+        }
+      }
+    },
+    {
+      "id": "seedT4",
+      "type": "sink",
+      "position": {
+        "x": 600,
+        "y": 0
+      },
+      "data": {
+        "label": "seedT4",
+        "componentId": "snk.parquet",
+        "properties": {
+          "path": "/workspace/tmp/retail-tier/t4-${ITER_ITEM_BIZDAY}-h${ITER_ITEM_HOUR}.parquet",
+          "mode": "overwrite"
+        }
+      }
+    },
+    {
+      "id": "seedT5",
+      "type": "sink",
+      "position": {
+        "x": 600,
+        "y": 0
+      },
+      "data": {
+        "label": "seedT5",
+        "componentId": "snk.parquet",
+        "properties": {
+          "path": "/workspace/tmp/retail-tier/t5-${ITER_ITEM_BIZDAY}-h${ITER_ITEM_HOUR}.parquet",
+          "mode": "overwrite"
+        }
+      }
+    },
+    {
+      "id": "seedT6",
+      "type": "sink",
+      "position": {
+        "x": 600,
+        "y": 0
+      },
+      "data": {
+        "label": "seedT6",
+        "componentId": "snk.parquet",
+        "properties": {
+          "path": "/workspace/tmp/retail-tier/t6-${ITER_ITEM_BIZDAY}-h${ITER_ITEM_HOUR}.parquet",
+          "mode": "overwrite"
+        }
+      }
+    },
+    {
+      "id": "t2list",
+      "type": "transform",
+      "position": {
+        "x": 2600,
+        "y": 0
+      },
+      "data": {
+        "label": "t2list",
+        "componentId": "code.sql",
+        "properties": {
+          "sql": "SELECT\n  '${ITER_ITEM_BRANCH_NUMS}' AS branch_nums,\n  '${ITER_ITEM_BIZDAY}' AS bizday,\n  '${ITER_ITEM_HOUR}' AS hour,\n  '${ITER_ITEM_HOUR_FROM}' AS hour_from,\n  '${ITER_ITEM_HOUR_TO}' AS hour_to,\n  '${ITER_ITEM_SYSTEM_BOOK}' AS system_book,\n  '${ITER_ITEM_BATCH_ID}' AS batch_id,\n  't2' AS tier\nFROM (SELECT count(*) AS n FROM input)\nWHERE n >= 200"
+        }
+      }
+    },
+    {
+      "id": "fe2",
+      "type": "transform",
+      "position": {
+        "x": 2750,
+        "y": 0
+      },
+      "data": {
+        "label": "fe2",
+        "componentId": "ctl.foreach",
+        "properties": {
+          "itemKey": "tier",
+          "concurrency": 1,
+          "retryAttempts": 2,
+          "retryBackoffMs": 60000,
+          "continueOnFailure": false,
+          "pipelineRef": "${workspace}/pipelines/lemeng.retail_order_line.tick.t2.json"
+        }
+      }
+    },
+    {
+      "id": "a2",
+      "type": "transform",
+      "position": {
+        "x": 2900,
+        "y": 0
+      },
+      "data": {
+        "label": "a2",
+        "componentId": "ctl.anchor",
+        "properties": {}
+      }
+    },
+    {
+      "id": "t3list",
+      "type": "transform",
+      "position": {
+        "x": 3050,
+        "y": 0
+      },
+      "data": {
+        "label": "t3list",
+        "componentId": "code.sql",
+        "properties": {
+          "sql": "SELECT\n  '${ITER_ITEM_BRANCH_NUMS}' AS branch_nums,\n  '${ITER_ITEM_BIZDAY}' AS bizday,\n  '${ITER_ITEM_HOUR}' AS hour,\n  '${ITER_ITEM_HOUR_FROM}' AS hour_from,\n  '${ITER_ITEM_HOUR_TO}' AS hour_to,\n  '${ITER_ITEM_SYSTEM_BOOK}' AS system_book,\n  '${ITER_ITEM_BATCH_ID}' AS batch_id,\n  't3' AS tier\nFROM (SELECT count(*) AS n FROM read_parquet('/workspace/tmp/retail-tier/t2-${ITER_ITEM_BIZDAY}-h${ITER_ITEM_HOUR}.parquet') WHERE page = 8)\nWHERE n >= 200"
+        }
+      }
+    },
+    {
+      "id": "fe3",
+      "type": "transform",
+      "position": {
+        "x": 3200,
+        "y": 0
+      },
+      "data": {
+        "label": "fe3",
+        "componentId": "ctl.foreach",
+        "properties": {
+          "itemKey": "tier",
+          "concurrency": 1,
+          "retryAttempts": 2,
+          "retryBackoffMs": 60000,
+          "continueOnFailure": false,
+          "pipelineRef": "${workspace}/pipelines/lemeng.retail_order_line.tick.t3.json"
+        }
+      }
+    },
+    {
+      "id": "a3",
+      "type": "transform",
+      "position": {
+        "x": 3350,
+        "y": 0
+      },
+      "data": {
+        "label": "a3",
+        "componentId": "ctl.anchor",
+        "properties": {}
+      }
+    },
+    {
+      "id": "t4list",
+      "type": "transform",
+      "position": {
+        "x": 3500,
+        "y": 0
+      },
+      "data": {
+        "label": "t4list",
+        "componentId": "code.sql",
+        "properties": {
+          "sql": "SELECT\n  '${ITER_ITEM_BRANCH_NUMS}' AS branch_nums,\n  '${ITER_ITEM_BIZDAY}' AS bizday,\n  '${ITER_ITEM_HOUR}' AS hour,\n  '${ITER_ITEM_HOUR_FROM}' AS hour_from,\n  '${ITER_ITEM_HOUR_TO}' AS hour_to,\n  '${ITER_ITEM_SYSTEM_BOOK}' AS system_book,\n  '${ITER_ITEM_BATCH_ID}' AS batch_id,\n  't4' AS tier\nFROM (SELECT count(*) AS n FROM read_parquet('/workspace/tmp/retail-tier/t3-${ITER_ITEM_BIZDAY}-h${ITER_ITEM_HOUR}.parquet') WHERE page = 16)\nWHERE n >= 200"
+        }
+      }
+    },
+    {
+      "id": "fe4",
+      "type": "transform",
+      "position": {
+        "x": 3650,
+        "y": 0
+      },
+      "data": {
+        "label": "fe4",
+        "componentId": "ctl.foreach",
+        "properties": {
+          "itemKey": "tier",
+          "concurrency": 1,
+          "retryAttempts": 2,
+          "retryBackoffMs": 60000,
+          "continueOnFailure": false,
+          "pipelineRef": "${workspace}/pipelines/lemeng.retail_order_line.tick.t4.json"
+        }
+      }
+    },
+    {
+      "id": "a4",
+      "type": "transform",
+      "position": {
+        "x": 3800,
+        "y": 0
+      },
+      "data": {
+        "label": "a4",
+        "componentId": "ctl.anchor",
+        "properties": {}
+      }
+    },
+    {
+      "id": "t5list",
+      "type": "transform",
+      "position": {
+        "x": 3950,
+        "y": 0
+      },
+      "data": {
+        "label": "t5list",
+        "componentId": "code.sql",
+        "properties": {
+          "sql": "SELECT\n  '${ITER_ITEM_BRANCH_NUMS}' AS branch_nums,\n  '${ITER_ITEM_BIZDAY}' AS bizday,\n  '${ITER_ITEM_HOUR}' AS hour,\n  '${ITER_ITEM_HOUR_FROM}' AS hour_from,\n  '${ITER_ITEM_HOUR_TO}' AS hour_to,\n  '${ITER_ITEM_SYSTEM_BOOK}' AS system_book,\n  '${ITER_ITEM_BATCH_ID}' AS batch_id,\n  't5' AS tier\nFROM (SELECT count(*) AS n FROM read_parquet('/workspace/tmp/retail-tier/t4-${ITER_ITEM_BIZDAY}-h${ITER_ITEM_HOUR}.parquet') WHERE page = 32)\nWHERE n >= 200"
+        }
+      }
+    },
+    {
+      "id": "fe5",
+      "type": "transform",
+      "position": {
+        "x": 4100,
+        "y": 0
+      },
+      "data": {
+        "label": "fe5",
+        "componentId": "ctl.foreach",
+        "properties": {
+          "itemKey": "tier",
+          "concurrency": 1,
+          "retryAttempts": 2,
+          "retryBackoffMs": 60000,
+          "continueOnFailure": false,
+          "pipelineRef": "${workspace}/pipelines/lemeng.retail_order_line.tick.t5.json"
+        }
+      }
+    },
+    {
+      "id": "a5",
+      "type": "transform",
+      "position": {
+        "x": 4250,
+        "y": 0
+      },
+      "data": {
+        "label": "a5",
+        "componentId": "ctl.anchor",
+        "properties": {}
+      }
+    },
+    {
+      "id": "t6list",
+      "type": "transform",
+      "position": {
+        "x": 4400,
+        "y": 0
+      },
+      "data": {
+        "label": "t6list",
+        "componentId": "code.sql",
+        "properties": {
+          "sql": "SELECT\n  '${ITER_ITEM_BRANCH_NUMS}' AS branch_nums,\n  '${ITER_ITEM_BIZDAY}' AS bizday,\n  '${ITER_ITEM_HOUR}' AS hour,\n  '${ITER_ITEM_HOUR_FROM}' AS hour_from,\n  '${ITER_ITEM_HOUR_TO}' AS hour_to,\n  '${ITER_ITEM_SYSTEM_BOOK}' AS system_book,\n  '${ITER_ITEM_BATCH_ID}' AS batch_id,\n  't6' AS tier\nFROM (SELECT count(*) AS n FROM read_parquet('/workspace/tmp/retail-tier/t5-${ITER_ITEM_BIZDAY}-h${ITER_ITEM_HOUR}.parquet') WHERE page = 64)\nWHERE n >= 200"
+        }
+      }
+    },
+    {
+      "id": "fe6",
+      "type": "transform",
+      "position": {
+        "x": 4550,
+        "y": 0
+      },
+      "data": {
+        "label": "fe6",
+        "componentId": "ctl.foreach",
+        "properties": {
+          "itemKey": "tier",
+          "concurrency": 1,
+          "retryAttempts": 2,
+          "retryBackoffMs": 60000,
+          "continueOnFailure": false,
+          "pipelineRef": "${workspace}/pipelines/lemeng.retail_order_line.tick.t6.json"
+        }
+      }
+    },
+    {
+      "id": "a6",
+      "type": "transform",
+      "position": {
+        "x": 4700,
+        "y": 0
+      },
+      "data": {
+        "label": "a6",
+        "componentId": "ctl.anchor",
+        "properties": {}
+      }
+    },
+    {
+      "id": "fuseSql",
+      "type": "transform",
+      "position": {
+        "x": 4850,
+        "y": 0
+      },
+      "data": {
+        "label": "fuseSql",
+        "componentId": "code.sql",
+        "properties": {
+          "sql": "SELECT 'capacity' AS violation, n AS detail\nFROM (SELECT count(*) AS n FROM read_parquet('/workspace/tmp/retail-tier/t6-${ITER_ITEM_BIZDAY}-h${ITER_ITEM_HOUR}.parquet') WHERE page = 128)\nWHERE n >= 200"
+        }
+      }
+    },
+    {
+      "id": "fuse",
+      "type": "transform",
+      "position": {
+        "x": 5000,
+        "y": 0
+      },
+      "data": {
+        "label": "fuse",
+        "componentId": "ctl.die",
+        "properties": {
+          "condition": "has-rows",
+          "message": "lemeng retail_order_line 容量截断：第 128 页仍满（≥25,600 单/时，system_book=${ITER_ITEM_SYSTEM_BOOK} bizday=${ITER_ITEM_BIZDAY} hour=${ITER_ITEM_HOUR}）——超出懒扩容上限，需人工缩小窗口或扩段后重跑"
+        }
+      }
+    },
+    {
+      "id": "combine",
+      "type": "transform",
+      "position": {
+        "x": 5150,
+        "y": 0
+      },
+      "data": {
+        "label": "combine",
+        "componentId": "code.sql",
+        "properties": {
+          "sql": "SELECT order_no, state, order_time, order_operate_time, order_source, order_transaction_type, order_ref_billno, order_total_money, branch, pos_order_details FROM input\nUNION ALL SELECT order_no, state, order_time, order_operate_time, order_source, order_transaction_type, order_ref_billno, order_total_money, branch, pos_order_details FROM read_parquet('/workspace/tmp/retail-tier/t2-${ITER_ITEM_BIZDAY}-h${ITER_ITEM_HOUR}.parquet')\nUNION ALL SELECT order_no, state, order_time, order_operate_time, order_source, order_transaction_type, order_ref_billno, order_total_money, branch, pos_order_details FROM read_parquet('/workspace/tmp/retail-tier/t3-${ITER_ITEM_BIZDAY}-h${ITER_ITEM_HOUR}.parquet')\nUNION ALL SELECT order_no, state, order_time, order_operate_time, order_source, order_transaction_type, order_ref_billno, order_total_money, branch, pos_order_details FROM read_parquet('/workspace/tmp/retail-tier/t4-${ITER_ITEM_BIZDAY}-h${ITER_ITEM_HOUR}.parquet')\nUNION ALL SELECT order_no, state, order_time, order_operate_time, order_source, order_transaction_type, order_ref_billno, order_total_money, branch, pos_order_details FROM read_parquet('/workspace/tmp/retail-tier/t5-${ITER_ITEM_BIZDAY}-h${ITER_ITEM_HOUR}.parquet')\nUNION ALL SELECT order_no, state, order_time, order_operate_time, order_source, order_transaction_type, order_ref_billno, order_total_money, branch, pos_order_details FROM read_parquet('/workspace/tmp/retail-tier/t6-${ITER_ITEM_BIZDAY}-h${ITER_ITEM_HOUR}.parquet')"
+        }
+      }
+    },
+    {
+      "id": "cuT2",
+      "type": "transform",
+      "position": {
+        "x": 5300,
+        "y": 0
+      },
+      "data": {
+        "label": "cuT2",
+        "componentId": "ctl.file",
+        "properties": {
+          "op": "delete",
+          "source": "/workspace/tmp/retail-tier/t2-${ITER_ITEM_BIZDAY}-h${ITER_ITEM_HOUR}.parquet",
+          "failOnError": false
+        }
+      }
+    },
+    {
+      "id": "cuT3",
+      "type": "transform",
+      "position": {
+        "x": 5300,
+        "y": 0
+      },
+      "data": {
+        "label": "cuT3",
+        "componentId": "ctl.file",
+        "properties": {
+          "op": "delete",
+          "source": "/workspace/tmp/retail-tier/t3-${ITER_ITEM_BIZDAY}-h${ITER_ITEM_HOUR}.parquet",
+          "failOnError": false
+        }
+      }
+    },
+    {
+      "id": "cuT4",
+      "type": "transform",
+      "position": {
+        "x": 5300,
+        "y": 0
+      },
+      "data": {
+        "label": "cuT4",
+        "componentId": "ctl.file",
+        "properties": {
+          "op": "delete",
+          "source": "/workspace/tmp/retail-tier/t4-${ITER_ITEM_BIZDAY}-h${ITER_ITEM_HOUR}.parquet",
+          "failOnError": false
+        }
+      }
+    },
+    {
+      "id": "cuT5",
+      "type": "transform",
+      "position": {
+        "x": 5300,
+        "y": 0
+      },
+      "data": {
+        "label": "cuT5",
+        "componentId": "ctl.file",
+        "properties": {
+          "op": "delete",
+          "source": "/workspace/tmp/retail-tier/t5-${ITER_ITEM_BIZDAY}-h${ITER_ITEM_HOUR}.parquet",
+          "failOnError": false
+        }
+      }
+    },
+    {
+      "id": "cuT6",
+      "type": "transform",
+      "position": {
+        "x": 5300,
+        "y": 0
+      },
+      "data": {
+        "label": "cuT6",
+        "componentId": "ctl.file",
+        "properties": {
+          "op": "delete",
+          "source": "/workspace/tmp/retail-tier/t6-${ITER_ITEM_BIZDAY}-h${ITER_ITEM_HOUR}.parquet",
+          "failOnError": false
+        }
+      }
     }
   ],
   "edges": [
     {
-      "id": "e_p1",
+      "id": "l1",
       "source": "p1",
-      "target": "merge",
-      "sourceHandle": "main",
-      "targetHandle": "main_1",
-      "data": {
-        "connectionType": "main"
-      }
-    },
-    {
-      "id": "e_p2",
-      "source": "p2",
-      "target": "merge",
-      "sourceHandle": "main",
-      "targetHandle": "main_2",
-      "data": {
-        "connectionType": "main"
-      }
-    },
-    {
-      "id": "e_p3",
-      "source": "p3",
-      "target": "merge",
-      "sourceHandle": "main",
-      "targetHandle": "main_3",
-      "data": {
-        "connectionType": "main"
-      }
-    },
-    {
-      "id": "e_p4",
-      "source": "p4",
-      "target": "merge",
-      "sourceHandle": "main",
-      "targetHandle": "main_4",
-      "data": {
-        "connectionType": "main"
-      }
-    },
-    {
-      "id": "e_p5",
-      "source": "p5",
-      "target": "merge",
-      "sourceHandle": "main",
-      "targetHandle": "main_5",
-      "data": {
-        "connectionType": "main"
-      }
-    },
-    {
-      "id": "e_p6",
-      "source": "p6",
-      "target": "merge",
-      "sourceHandle": "main",
-      "targetHandle": "main_6",
-      "data": {
-        "connectionType": "main"
-      }
-    },
-    {
-      "id": "e_p7",
-      "source": "p7",
-      "target": "merge",
-      "sourceHandle": "main",
-      "targetHandle": "main_7",
-      "data": {
-        "connectionType": "main"
-      }
-    },
-    {
-      "id": "e_p8",
-      "source": "p8",
-      "target": "merge",
-      "sourceHandle": "main",
-      "targetHandle": "main_8",
-      "data": {
-        "connectionType": "main"
-      }
-    },
-    {
-      "id": "e_p9",
-      "source": "p9",
-      "target": "merge",
-      "sourceHandle": "main",
-      "targetHandle": "main_9",
-      "data": {
-        "connectionType": "main"
-      }
-    },
-    {
-      "id": "e_p10",
-      "source": "p10",
-      "target": "merge",
-      "sourceHandle": "main",
-      "targetHandle": "main_10",
-      "data": {
-        "connectionType": "main"
-      }
-    },
-    {
-      "id": "e_p11",
-      "source": "p11",
-      "target": "merge",
-      "sourceHandle": "main",
-      "targetHandle": "main_11",
-      "data": {
-        "connectionType": "main"
-      }
-    },
-    {
-      "id": "e_p12",
-      "source": "p12",
-      "target": "guard",
+      "target": "c1",
       "sourceHandle": "main",
       "targetHandle": "main",
       "data": {
@@ -1011,18 +917,364 @@
       }
     },
     {
-      "id": "e_guard",
-      "source": "guard",
-      "target": "merge",
+      "id": "lm1",
+      "source": "c1",
+      "target": "m1",
       "sourceHandle": "main",
-      "targetHandle": "main_12",
+      "targetHandle": "main_1",
       "data": {
         "connectionType": "main"
       }
     },
     {
-      "id": "e_merge",
-      "source": "merge",
+      "id": "l2",
+      "source": "p2",
+      "target": "c2",
+      "sourceHandle": "main",
+      "targetHandle": "main",
+      "data": {
+        "connectionType": "main"
+      }
+    },
+    {
+      "id": "lm2",
+      "source": "c2",
+      "target": "m1",
+      "sourceHandle": "main",
+      "targetHandle": "main_2",
+      "data": {
+        "connectionType": "main"
+      }
+    },
+    {
+      "id": "l3",
+      "source": "p3",
+      "target": "c3",
+      "sourceHandle": "main",
+      "targetHandle": "main",
+      "data": {
+        "connectionType": "main"
+      }
+    },
+    {
+      "id": "lm3",
+      "source": "c3",
+      "target": "m1",
+      "sourceHandle": "main",
+      "targetHandle": "main_3",
+      "data": {
+        "connectionType": "main"
+      }
+    },
+    {
+      "id": "l4",
+      "source": "p4",
+      "target": "c4",
+      "sourceHandle": "main",
+      "targetHandle": "main",
+      "data": {
+        "connectionType": "main"
+      }
+    },
+    {
+      "id": "lm4",
+      "source": "c4",
+      "target": "m1",
+      "sourceHandle": "main",
+      "targetHandle": "main_4",
+      "data": {
+        "connectionType": "main"
+      }
+    },
+    {
+      "id": "seed1",
+      "source": "m1",
+      "target": "seedSql",
+      "sourceHandle": "main",
+      "targetHandle": "main",
+      "data": {
+        "connectionType": "main"
+      }
+    },
+    {
+      "id": "seed2",
+      "source": "seedSql",
+      "target": "seedT2",
+      "sourceHandle": "main",
+      "targetHandle": "main",
+      "data": {
+        "connectionType": "main"
+      }
+    },
+    {
+      "id": "seed3",
+      "source": "seedSql",
+      "target": "seedT3",
+      "sourceHandle": "main",
+      "targetHandle": "main",
+      "data": {
+        "connectionType": "main"
+      }
+    },
+    {
+      "id": "seed4",
+      "source": "seedSql",
+      "target": "seedT4",
+      "sourceHandle": "main",
+      "targetHandle": "main",
+      "data": {
+        "connectionType": "main"
+      }
+    },
+    {
+      "id": "seed5",
+      "source": "seedSql",
+      "target": "seedT5",
+      "sourceHandle": "main",
+      "targetHandle": "main",
+      "data": {
+        "connectionType": "main"
+      }
+    },
+    {
+      "id": "seed6",
+      "source": "seedSql",
+      "target": "seedT6",
+      "sourceHandle": "main",
+      "targetHandle": "main",
+      "data": {
+        "connectionType": "main"
+      }
+    },
+    {
+      "id": "ord0",
+      "source": "seedT6",
+      "target": "t2list",
+      "data": {
+        "connectionType": "on-subjob-ok"
+      }
+    },
+    {
+      "id": "t2a",
+      "source": "p4",
+      "target": "t2list",
+      "sourceHandle": "main",
+      "targetHandle": "main",
+      "data": {
+        "connectionType": "main"
+      }
+    },
+    {
+      "id": "t2c",
+      "source": "t2list",
+      "target": "fe2",
+      "sourceHandle": "main",
+      "targetHandle": "main",
+      "data": {
+        "connectionType": "main"
+      }
+    },
+    {
+      "id": "t2d",
+      "source": "fe2",
+      "target": "a2",
+      "data": {
+        "connectionType": "on-subjob-ok"
+      }
+    },
+    {
+      "id": "t3a",
+      "source": "p4",
+      "target": "t3list",
+      "sourceHandle": "main",
+      "targetHandle": "main",
+      "data": {
+        "connectionType": "main"
+      }
+    },
+    {
+      "id": "t3b",
+      "source": "a2",
+      "target": "t3list",
+      "data": {
+        "connectionType": "on-subjob-ok"
+      }
+    },
+    {
+      "id": "t3c",
+      "source": "t3list",
+      "target": "fe3",
+      "sourceHandle": "main",
+      "targetHandle": "main",
+      "data": {
+        "connectionType": "main"
+      }
+    },
+    {
+      "id": "t3d",
+      "source": "fe3",
+      "target": "a3",
+      "data": {
+        "connectionType": "on-subjob-ok"
+      }
+    },
+    {
+      "id": "t4a",
+      "source": "p4",
+      "target": "t4list",
+      "sourceHandle": "main",
+      "targetHandle": "main",
+      "data": {
+        "connectionType": "main"
+      }
+    },
+    {
+      "id": "t4b",
+      "source": "a3",
+      "target": "t4list",
+      "data": {
+        "connectionType": "on-subjob-ok"
+      }
+    },
+    {
+      "id": "t4c",
+      "source": "t4list",
+      "target": "fe4",
+      "sourceHandle": "main",
+      "targetHandle": "main",
+      "data": {
+        "connectionType": "main"
+      }
+    },
+    {
+      "id": "t4d",
+      "source": "fe4",
+      "target": "a4",
+      "data": {
+        "connectionType": "on-subjob-ok"
+      }
+    },
+    {
+      "id": "t5a",
+      "source": "p4",
+      "target": "t5list",
+      "sourceHandle": "main",
+      "targetHandle": "main",
+      "data": {
+        "connectionType": "main"
+      }
+    },
+    {
+      "id": "t5b",
+      "source": "a4",
+      "target": "t5list",
+      "data": {
+        "connectionType": "on-subjob-ok"
+      }
+    },
+    {
+      "id": "t5c",
+      "source": "t5list",
+      "target": "fe5",
+      "sourceHandle": "main",
+      "targetHandle": "main",
+      "data": {
+        "connectionType": "main"
+      }
+    },
+    {
+      "id": "t5d",
+      "source": "fe5",
+      "target": "a5",
+      "data": {
+        "connectionType": "on-subjob-ok"
+      }
+    },
+    {
+      "id": "t6a",
+      "source": "p4",
+      "target": "t6list",
+      "sourceHandle": "main",
+      "targetHandle": "main",
+      "data": {
+        "connectionType": "main"
+      }
+    },
+    {
+      "id": "t6b",
+      "source": "a5",
+      "target": "t6list",
+      "data": {
+        "connectionType": "on-subjob-ok"
+      }
+    },
+    {
+      "id": "t6c",
+      "source": "t6list",
+      "target": "fe6",
+      "sourceHandle": "main",
+      "targetHandle": "main",
+      "data": {
+        "connectionType": "main"
+      }
+    },
+    {
+      "id": "t6d",
+      "source": "fe6",
+      "target": "a6",
+      "data": {
+        "connectionType": "on-subjob-ok"
+      }
+    },
+    {
+      "id": "fs1",
+      "source": "p4",
+      "target": "fuseSql",
+      "sourceHandle": "main",
+      "targetHandle": "main",
+      "data": {
+        "connectionType": "main"
+      }
+    },
+    {
+      "id": "fs2",
+      "source": "a6",
+      "target": "fuseSql",
+      "data": {
+        "connectionType": "on-subjob-ok"
+      }
+    },
+    {
+      "id": "fs3",
+      "source": "fuseSql",
+      "target": "fuse",
+      "sourceHandle": "main",
+      "targetHandle": "main",
+      "data": {
+        "connectionType": "main"
+      }
+    },
+    {
+      "id": "cb1",
+      "source": "m1",
+      "target": "combine",
+      "sourceHandle": "main",
+      "targetHandle": "main",
+      "data": {
+        "connectionType": "main"
+      }
+    },
+    {
+      "id": "cb2",
+      "source": "fuse",
+      "target": "combine",
+      "data": {
+        "connectionType": "on-subjob-ok"
+      }
+    },
+    {
+      "id": "fl1",
+      "source": "combine",
       "target": "flatten",
       "sourceHandle": "main",
       "targetHandle": "main",
@@ -1031,7 +1283,7 @@
       }
     },
     {
-      "id": "e_flat",
+      "id": "g1",
       "source": "flatten",
       "target": "gate",
       "sourceHandle": "main",
@@ -1041,7 +1293,7 @@
       }
     },
     {
-      "id": "e_sink",
+      "id": "s1",
       "source": "gate",
       "target": "sink",
       "sourceHandle": "main",
@@ -1051,7 +1303,7 @@
       }
     },
     {
-      "id": "e_summ",
+      "id": "s2",
       "source": "gate",
       "target": "summ",
       "sourceHandle": "main",
@@ -1061,27 +1313,27 @@
       }
     },
     {
-      "id": "t_sink_ordered",
+      "id": "o1",
       "source": "sink",
       "target": "ordered",
       "sourceHandle": "main",
-      "targetHandle": "main",
+      "targetHandle": "trigger",
       "data": {
         "connectionType": "trigger"
       }
     },
     {
-      "id": "t_ordered_summ",
+      "id": "o2",
       "source": "ordered",
       "target": "summ",
       "sourceHandle": "main",
-      "targetHandle": "main",
+      "targetHandle": "trigger",
       "data": {
         "connectionType": "trigger"
       }
     },
     {
-      "id": "e_receipt",
+      "id": "r1",
       "source": "summ",
       "target": "receipt",
       "sourceHandle": "main",
@@ -1089,41 +1341,56 @@
       "data": {
         "connectionType": "main"
       }
+    },
+    {
+      "id": "cu0",
+      "source": "summ",
+      "target": "cuT2",
+      "sourceHandle": "main",
+      "targetHandle": "main",
+      "data": {
+        "connectionType": "main"
+      }
+    },
+    {
+      "id": "cu1",
+      "source": "cuT2",
+      "target": "cuT3",
+      "sourceHandle": "main",
+      "targetHandle": "main",
+      "data": {
+        "connectionType": "main"
+      }
+    },
+    {
+      "id": "cu2",
+      "source": "cuT3",
+      "target": "cuT4",
+      "sourceHandle": "main",
+      "targetHandle": "main",
+      "data": {
+        "connectionType": "main"
+      }
+    },
+    {
+      "id": "cu3",
+      "source": "cuT4",
+      "target": "cuT5",
+      "sourceHandle": "main",
+      "targetHandle": "main",
+      "data": {
+        "connectionType": "main"
+      }
+    },
+    {
+      "id": "cu4",
+      "source": "cuT5",
+      "target": "cuT6",
+      "sourceHandle": "main",
+      "targetHandle": "main",
+      "data": {
+        "connectionType": "main"
+      }
     }
-  ],
-  "version": 1,
-  "id": "lemeng.retail_order_line.tick",
-  "_note": [
-    "lemeng.retail_order_line 的 **L1 子管线（tick 变体：checkpoint 关闭）**（一窗一跑；父管线 = lemeng.retail.tick.l1）。",
-    "",
-    "①【身份】本文件**不是**独立管线：它只由父管线的 ctl.foreach 逐窗调用（itemKey=hour），",
-    "   实测命名（**拼写照抄**）：run log 目录 = logs/<父 run 目录>/lemeng.retail_order_line.tick_<hour>；",
-    "   状态目录（本变体**不产生**，见 ③）= state/lemeng_retail_order_line_tick_<hour>/。",
-    "   直接单跑它会失败（${ITER_ITEM_*} 无值）—— 这是设计，不是缺陷。",
-    "",
-    "②【与 lemeng.retail_order_line.window.json 的差异——只有三处，逐条可核】",
-    "   D1 12 个 src.rest 的 checkpoint: true → **false**（本变体存在的唯一理由）；",
-    "   D2 receipt 的落盘目录 → /workspace/logs/retail-tick/（tick 父管线的汇总表读这个 glob）；",
-    "   D3 本 _note。**其余 20 个节点与 20 条边逐字相同**（含 body 的 ${ITER_ITEM_*}、connectionRef、page_size/responsePath/schema、",
-    "      guard / flatten / qa.contract / sink key / summ / ordered）。",
-    "",
-    "③【checkpoint 必须关：别改回去】复用键 = 节点配置指纹（url/method/body/responsePath）+ 父行，**不含上游内容指纹**。",
-    "   本变体服务的是 **tick 形**：父管线每 5 分钟采一次「当前小时(cur)」，两次 tick 的父行**逐字节相同**而网关数据在涨 ⇒",
-    "   开 checkpoint 会把 10:05 的那份**残缺快照**冻住、并在该小时闭合后被当成最终内容留在湖上。",
-    "   闭窗形（.window：windows 日批 / close）开它才正确——那里内容不再变。依据 survey §10.1 的 B7 实测。",
-    "   ⚠️ **子管线文件名是 checkpoint 身份的一部分**（状态目录 = state/<文件词干，点→下划线>_<hour>）⇒ 本文件与 .window 天然分桶；",
-    "      也正因如此，**重命名本文件 = 状态失效**（会重采，不会错采）。",
-    "   ⚠️ 但本变体是 checkpoint=false ⇒ **一个状态目录都不建**（实测：tick 跑完 ws/state 根本不存在；同会话里 .window 跑过则只有它那一个目录）。",
-    "      ⇒「tick 的 cur 窗与 close 的 prev 窗撞同一个 (bizday,hour)」在本变体上**从根上不成立**：close 对该窗是完整 12 页重采、0 复用。",
-    "        反过来说，若哪天把本文件的 checkpoint 打开，撞车就**重新成立**（那时靠文件名分桶兜着，两桶互不可见）。",
-    "",
-    "④【写法红线（D1/child-value-paths 两份 spec 的四条）】子文档里**绝不写** ${ENV:...} / ${VAULT:...}；",
-    "   密钥不进 URL/query、不进返回行；连接字段写实值（连接里的 ${ENV:} 深一层即变字面量）。",
-    "   ⚠️ connectionRef 加载失败是 **fail-open**（exit 0、凭据为空 ⇒ 静默 401）⇒ 父管线的身份门是第一道闸，",
-    "      连接自检是切流清单里的独立项（本文件不承担）。",
-    "",
-    "⑤【保留不动】12 页节点 + guard(ctl.die has-rows) + merge + flatten + qa.contract gate + sink 一对象覆盖、",
-    "   分区写进 key、**不开 partitionBy**（云 sink 静默忽略）、page 数 12（阈值 11×200=2200）。",
-    "   ⚠️ **本文件与 .window 同源但无生成器**：两份都是权威，改一份必须同步核另一份（差异清单见 ②，只许这三处）。"
   ]
 }
