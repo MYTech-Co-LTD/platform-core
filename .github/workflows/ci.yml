@@ -12,10 +12,11 @@
 #            不给 DATABASE_URL 时它们是**静默跳过**的——「全绿」会绿在一个休眠基线上：
 #            会话/登录/登出/租户解析/seed/迁移/装载器/企微登录/公众号访客/存储注入/数据问数
 #            这半边一条都不执行。
-#   gates —— 门禁：typecheck（全 workspace 包 + scripts/）+ 八个守卫脚本对真实仓跑。
+#   gates —— 门禁：typecheck（全 workspace 包 + scripts/）+ 九个守卫脚本对真实仓跑。
 #            typecheck 与守卫单测（跑在 unit 的 test:guard 里）是两件事：单测拿 fixture 验
 #            守卫逻辑，本 job 拿真仓验守卫结论，且 typecheck 只在 CI 真跑才有意义。
-#            八个守卫里只有 check-tenant-isolation 要真库（issue #77 的真库对账），故本 job 也挂了
+#            九个守卫里 check-tenant-isolation 与 check-data-dependencies 要真库（一次性库真库对账，
+#            issue #77 与数据宪法 §9-2），故本 job 也挂了
 #            postgres service——为什么不是挂在 unit / smoke，见那条 step 的注释；
 #            只有 check-duckle-catalog 要 Python（真跑 duckle 引擎），见那条 step 的注释。
 #   web   —— 前端单测 + 构建（构建内含 `tsc -b`，即 apps/web 的 strict typecheck）。
@@ -292,6 +293,15 @@ jobs:
       # 权限：CI 的 platform 角色是 POSTGRES_USER（超级用户）⇒ 有 CREATEDB；脚本权限不足时
       # **响亮失败**（不静默跳过）。
       - run: pnpm exec tsx scripts/check-tenant-isolation.mjs
+      # 数据依赖门禁（正典 docs/module-protocol.md「跨模块只读数据依赖」判据 2；数据宪法
+      # 2026-11-23 §4/§9-2）：真库对账三方——manifest `dataDependencies` 声明集 ↔ 库实际列集
+      # （宿主 + 全部模块迁移跑完后查 information_schema）↔ scripts/data-dependencies.lock.json
+      # 登记。提供方对已声明发布物（稳定视图/带版本快照表）改列集 ⇒ 红，先 --write-lock 显式
+      # 登记（同 PR 提交，登记即变更记录）；lock 陈条目、声明对象在库缺席同红。
+      # 跨面声明（schema 不在本装配，如数据面 staging.*）结构性跳过——其列集契约归所属面纪律
+      # （staging 归 B10），跳过数印在 OK 行不静默。
+      # 与 check-tenant-isolation 同族（tsx + 一次性库 + 生产迁移执行器），共用本 job 的 postgres service。
+      - run: pnpm exec tsx scripts/check-data-dependencies.mjs
       # 文档引用门禁（issue #771）。判据**只有一条**：**变更中的**文档里，能唯一解析到仓内文件的
       # `file:line` 引用，行号必须在范围内。
       #

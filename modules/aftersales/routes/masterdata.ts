@@ -33,7 +33,8 @@ export function registerMasterData(r: ModuleHono, ctx: RouteCtx): void {
       where += ` and name ilike $${params.length}`
     }
     // #476：数据源 = `data.dim_branch`（发布快照，跨账套去重租户视图）——不再自持门店副本。
-    // 只读引用已被 lint B1 白名单放行（`from data.dim_`）；**写仍然不许**（发布表只许 owner 写）。
+    // 只读引用经 manifest `dataDependencies` 声明放行（B1 按声明集判，宪法 §4）；**写仍然不许**
+    // （发布表只许 owner 写）。列集契约：scripts/data-dependencies.lock.json + 判据 2 门禁。
     const totalRes = await ctx.pool.query<{ n: number }>(
       `select count(*)::int as n from data.dim_branch where ${where}`,
       params,

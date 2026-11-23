@@ -54,8 +54,8 @@ const CODE_EXT_RE = /\.(ts|tsx)$/
 /** 测试与生成物：文件名（非路径）里出现 .test. / .gen. 即跳过 */
 const SKIP_FILE_RE = /\.(test|gen)\./
 
-// B1 捕三个组：关键字（1）/ schema（2）/ 表名首段（3）。表名首段用于「已发布维表只读豁免」
-// （只认 data.dim_ 前缀——见 B1 检查处与 ADR 2026-10-07 形状②）。
+// B1 捕三个组：关键字（1）/ schema（2）/ 表名（3）。表名用作品种两处对账键：「声明集豁免」
+// （dataDependencies——见 B1 检查处）与库对象级门禁（check-data-dependencies.mjs）。
 const B1_RE = /\b(from|join|update|into)\s+([a-z_]+)\.([a-z_][a-z_0-9]*)/g
 const B2_SPEC_RE = /\b(?:from|import|require)\s*\(?\s*['"]([^'"]+)['"]/g
 const B8_DOMAIN_RE = /hookflow\.cn/gi
@@ -342,20 +342,13 @@ export async function findViolations(rootDir) {
       // `excluded` 是 PG 的冲突行别名，**不是 schema**，与上面的目录豁免同性质（伪对象，不是
       // 跨模块数据）。只豁免这一个名字，别把 `\bfrom\s+\w+\.` 整类放宽。
       if (schema === 'excluded') continue
-      // 已发布维表只读豁免（ADR 2026-10-07 形状②）：模块可以 from/join `data.dim_*`
-      // （owner 发布进 data schema 的维表快照，契约与裁剪在发布侧）——但**只读**：
-      // update/into 不豁免 ⇒ 发布表只许 owner（data 模块）写。非 dim_ 前缀的 data. 表
-      // （如 metrics）不豁免——白名单只开「已发布维表」这一族，别家内部表借道不行。
-      if (
-        allowed !== 'data'
-        && (kw === 'from' || kw === 'join')
-        && schema === 'data'
-        && table.startsWith('dim_')
-      ) continue
+      // （2026-11-23 数据宪法 §9-2：曾有的 `data.dim_*` 前缀豁免在此退役——ADR 2026-10-07
+      // 形状②的历史通道。首个声明方 aftersales 落 manifest `dataDependencies` 后由下方声明集
+      // 豁免替代；不再有「按前缀放行」的通道：跨 schema 读要么声明、要么红。写侧（update/into）
+      // 始终无豁免，发布表只许 owner 写。）
       // M1.1 dataDependencies 声明集豁免（module-protocol「跨模块只读数据依赖」判据 1）：
       // manifest.yaml 声明了 `<schema>.<view>` ⇒ 该条目可 from/join（声明 = 可读授权）——
-      // 但**只读**：update/into 不豁免。平台代码（非 modules/）无声明面不豁免；
-      // 既有 data.dim_* 豁免保留（声明面出现前的历史通道，收敛后可由声明集替代）。
+      // 但**只读**：update/into 不豁免。平台代码（非 modules/）无声明面不豁免。
       if (declared !== undefined && (kw === 'from' || kw === 'join') && declared.has(`${schema}.${table}`)) continue
       report(rel, lineOf(code, m.index), 'B1', `跨 schema 引用 "${schema}."（本文件只许 "${allowed}."）`)
     }

@@ -11,7 +11,7 @@
   ——白名单已开、文件缺席不违规**）、宿主 Dockerfile、两份 runbook（`openship-adopt.md` 待人工执行；
   `branch-protection-runbook.md` 记录分支保护的现状与替代机制，见 `deploy/README.md`）
 - `scripts/` — 工具脚本：门禁（`check-manifests` / `lint-architecture` / `check-compose` /
-  `check-env-example` / `check-tenant-isolation`）、前端 registry 生成（`gen-console-registry`）、
+  `check-env-example` / `check-tenant-isolation` / `check-data-dependencies`）、前端 registry 生成（`gen-console-registry`）、
   装载冒烟（`smoke-load`）
 
 ## 常用命令

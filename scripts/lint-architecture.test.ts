@@ -162,7 +162,7 @@ describe('lint-architecture: B1 跨 schema 引用', () => {
     expect(r.status).toBe(0)
   })
 
-  it('已发布维表（data.dim_*）只读豁免：modules 里 from/join 绿（ADR 2026-10-07 形状②）', () => {
+  it('已发布维表（data.dim_*）**前缀豁免已退役**（2026-11-23 数据宪法 §9-2）：未声明 ⇒ 红，与普通跨 schema 同判——合法通路只剩下方 M1.1 的声明集', () => {
     const r = run(
       'lint-architecture.mjs',
       fixture({
@@ -171,7 +171,8 @@ describe('lint-architecture: B1 跨 schema 引用', () => {
           + "pool.query('select i.name from data.dim_item i join data.dim_branch b on b.code = i.branch_code')\n",
       }),
     )
-    expect(r.status).toBe(0)
+    expect(r.status).toBe(1)
+    expect(out(r)).toContain('[B1]')
   })
 
   it('已发布维表的**写**不豁免：into/update data.dim_* 仍红（发布表只许 owner 写）', () => {

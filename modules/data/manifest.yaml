@@ -449,8 +449,8 @@ migrations: { dir: ./migrations }
 tenantSources: true
 # 跨模块只读数据依赖（docs/module-protocol.md「跨模块只读数据依赖」判据 1）：
 # 报表的**部门门**（spec 2026-10-30-org-as-platform-primitive-design §3.4）要在判定侧把
-# 「用户所在部门 + 全部祖先」算出来，数据源是平台原语的只读稳定视图（不是物理表——
-# 协议要求声明面是视图）。`apps/server/src/migrations/013_org_views.sql` 提供这两个视图。
+# 「用户所在部门 + 全部祖先」算出来，数据源是平台原语的只读稳定视图（2026-11-23 起可声明物扩为
+# 「owner 发布物：稳定视图或带版本快照表」——数据宪法 §4；本模块的 org 视图属前者）。`apps/server/src/migrations/013_org_views.sql` 提供这两个视图。
 # 只读：本模块不写组织架构（写侧由宿主 admin 的 org-sync 负责）。
 dataDependencies:
   # 运行观测（#2681）：只读调度台账与对账台账——声明 = 可读授权（module-protocol M1.1）；

@@ -87,6 +87,15 @@ frontend:
   userApp: { mount: /app/aftersales, dist: ./mobile/dist }
 migrations: { dir: ./migrations }
 
+# 跨模块只读数据依赖（正典 docs/module-protocol.md「跨模块只读数据依赖」；数据宪法 §4/§9-2）：
+# 本模块是**首个真实声明方**。声明的是 owner 发布物（带版本快照表），只读（from/join）；
+# 写侧无豁免（发布表只许 owner 写）。列集契约由 scripts/data-dependencies.lock.json 登记，
+# `scripts/check-data-dependencies.mjs` 门禁真库对账——提供方改列集 ⇒ gates 红，先显式登记。
+dataDependencies:
+  - data.dim_branch
+  - data.dim_item
+  - data.dim_settlement_order_line
+
 # 通知事件声明（2026-10-27 通知基础设施 §3.1）：宿主装载期登记到 platform.event_catalog。
 # 收件人由平台解析：approvers = 本 org 持有 aftersales:manage 的用户；不可枚举时用
 # approvers_manual（manual 规则的字面名单，manual 优先于 derived）。
