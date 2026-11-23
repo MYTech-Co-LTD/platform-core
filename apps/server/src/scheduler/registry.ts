@@ -134,6 +134,12 @@ export const JOB_REGISTRY: JobDef[] = [
   // 月度采集健康基线（#2610）：每日 scorecard 的快照写进命名卷 `scorecard-history`，这里读同一卷。
   // 旧 job 靠退出码 + notify 通道报「覆盖不足」；现在投 `scorecard_baseline:coverage` 探针（告警单出口）。
   { key: 'data.monthly_review', scope: 'data', script: 'scripts/lemeng/monthly-review.mjs', cron: '0 1 1 * *', timezone: 'UTC', timeoutMs: 600000, maxAttempts: 1, expectedIntervalSecs: 2678400, description: '月度采集健康基线（覆盖 <7 天判红；每月 1 号 01:00 UTC）' },
+  // 月度口径对账（#2728）：现行只盯 T-3 一天（duckle `lemeng.recon.preagg`），T-4 及更早的源端改写
+  // （退货/撤单/改原单）没有任何自动发现机制。每月 15 号对**上一自然月**逐日跑一遍。
+  // 时点选 15 号：上月末已过去半个月，远超 T-1..T-3 重采窗口 ⇒ 差异即真实变更，不掺「还在变」。
+  // **不实现对账口径**：逐日调两个 console 的现成管线 `lemeng.recon.preagg.backfill`（口径唯一实现在 dbt）。
+  // 依赖：worker 已有 `DUCKLE_TOKEN`（三个容器同一份，实测）+ 服务名可达（lemeng-console-{3120,64188}）。
+  { key: 'data.recon_monthly', scope: 'data', requiresEnv: ['DUCKLE_TOKEN'], script: 'scripts/lemeng/recon-monthly.mjs', cron: '0 4 15 * *', timezone: 'UTC', timeoutMs: 3600000, maxAttempts: 1, expectedIntervalSecs: 2678400, description: '月度口径对账：上一自然月逐日 × 两账套（每月 15 号 CST 12:00；有差异判红）' },
   { key: 'data.monitor_tick', scope: 'data', script: 'scripts/data-monitor-tick.mjs', cron: '* * * * *', timezone: 'UTC', timeoutMs: 300000, maxAttempts: 1, expectedIntervalSecs: 60, description: '业务监控求值（到期规则）' },
   // 数据面断言面（#2628）：原 `scripts/lemeng/wire-warehouse.sh` 的 ①–⑱ 跑在数据面宿主上、
   // 靠 `docker exec` 进平台容器 ⇒ 2026-11-19 调度迁平台后**随旧 openship 探活 job 一起停发**，
