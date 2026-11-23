@@ -364,11 +364,14 @@ export function buildAchievementSql(goal, l1) {
   )).join('\n')
 
   const actualCols = actuals.flatMap((a) => ([
-    `    coalesce(a_${a.metric}.actual_${a.metric}, 0) as actual_${a.metric},`,
-    `    case when g.target_${a.metric} > 0 then round(coalesce(a_${a.metric}.actual_${a.metric}, 0) / g.target_${a.metric}, 4) end as ${a.metric}_achievement_rate,`,
+    `    coalesce(a_${a.metric}.actual_${a.metric}, 0)::numeric(20,4) as actual_${a.metric},`,
+    `    (case when g.target_${a.metric} > 0 then round(coalesce(a_${a.metric}.actual_${a.metric}, 0) / g.target_${a.metric}, 4) end)::numeric(10,4) as ${a.metric}_achievement_rate,`,
   ])).join('\n')
 
-  const targetCols = actuals.map((a) => `    g.target_${a.metric},`).join('\n')
+  // 数值列一律带 typmod：PG 的无精度 numeric 在 pg_duckdb 里是 UnsupportedPostgresType，
+  // DuckDB 路由的语句连 sum() 都绑不上（#2750 真机：Binder Error 'sum(UnsupportedPostgresType)'）。
+  // 数据面工件要能被 DuckDB 直接消费 ⇒ 目标/实际/比率全部显式 `::numeric(p,s)`。
+  const targetCols = actuals.map((a) => `    g.target_${a.metric}::numeric(20,4) as target_${a.metric},`).join('\n')
   const groupBy = ['1', ...dims.map((_, i) => String(i + 2))].join(', ')
 
   return [
@@ -383,6 +386,8 @@ export function buildAchievementSql(goal, l1) {
     '--   · actual 缺失 ⇒ 0（该店该月无任何销售行 = 卖了 0，不是「不知道」）；',
     '--   · progress_rate = 已过日历日 / 当月总天数（**北京时钟日界**，{{ shanghai_today() }} 宏；未来月份 0）；',
     '--   · data_status = 当月 bizday 覆盖：complete（覆盖全部已过日）/ partial（>0）/ missing（0）。',
+    '-- 数值列一律显式 `::numeric(p,s)`：PG 的无精度 numeric 在 pg_duckdb 里是 UnsupportedPostgresType，',
+    '--   DuckDB 路由的语句连 sum() 都绑不上（#2750 真机 Binder Error）——数据面工件要能被 DuckDB 直接消费。',
     `-- 账套：actuals 只读 system_book='${goal.systemBook}'（目标定义钉死；两本账套门店号有重叠，见 goals.yml）。`,
     'with goal_latest as (',
     '    select distinct on (period' + dims.map((d) => `, ${d}`).join('') + ')',
@@ -445,7 +450,7 @@ export function buildAchievementSql(goal, l1) {
     actualCols,
     '    g.days_elapsed,',
     '    g.total_days,',
-    '    round(g.days_elapsed::numeric / g.total_days, 4) as progress_rate,',
+    '    round(g.days_elapsed::numeric / g.total_days, 4)::numeric(10,4) as progress_rate,',
     '    case',
     '        when coalesce(c.covered_days, 0) >= g.days_elapsed then \'complete\'',
     '        when coalesce(c.covered_days, 0) > 0 then \'partial\'',
