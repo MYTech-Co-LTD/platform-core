@@ -160,7 +160,7 @@
 | `data.warehouse_assertions` | **待切（#2628 / 2026-11-21 已登记，`enabled=false`）** | 待切：手动跑一轮 → 18 条 check 输出与旧面比对 → 按 3.5 确认 new face 发射 → enable | 无 openship 对应作业（旧形态是**宿主 cron + `docker exec`**，已随 Wave 8 停发——本 job 就是来补这个断档的） |
 | `oa.standard_approval_reconcile` | **已登记（#2385 收口，`enabled=false`）** | 待启用：手动跑一轮 → stdout 统计与 `forms.external_approval` 行数比对 → enable（§13） | 本无 openship 作业（脚本此前零调度登记，2026-11-23 起有 registry key） |
 | `oa.approval_reconcile` | **已登记（#2363/#2385 收口，`enabled=false`）** | 待启用：手动跑一轮 → stdout 统计核对 → enable（§13） | 本无 openship 作业（同上） |
-| `data.recon_monthly` | **已登记（#2728，`enabled=false`）** | 待启用：手动跑一轮 → stdout 与 `/opt/lemeng-recon-preagg.sh` 同期结论比对 → enable（§13） | 本无 openship 对应作业。**平台侧直接调两个 console 的现成管线 `lemeng.recon.preagg.backfill`**（不实现口径）；worker 已有 `DUCKLE_TOKEN`（三容器同一份，实测）+ 服务名可达 ⇒ 零新增密钥 |
+| `data.recon_monthly` | **已切流（#2735，2026-11-23）** | worker 的 `platform.scheduler`（`enabled=true`，`next_run_at=2026-12-15T04:00Z` = CST 15 号 12:00） | 原 openship job **已停用并删除**（`custom:4UQ2ugvbFRGKtIUv`）。脚本调两个 console 的现成管线 `lemeng.recon.preagg.backfill`（不实现口径）；worker 已有 `DUCKLE_TOKEN`（三容器同一份，实测）+ 服务名可达 ⇒ **零新增密钥**。开闸实测：10 月全月 62 次 **pass=62 skip=0**，与 `/opt/lemeng-recon-preagg.sh` 同期结论逐项一致（688s） |
 
 **顺序按爆炸半径**：已完成 `notify.reconcile` → `metric.candidates` → `report.scope_scan`；
 P1+P4b 的切流**已全部完成**（2026-11-15）；新增 job 仍按上表四步执行。
