@@ -410,7 +410,7 @@ const results = await probeAnonymous(mountedApp) // 期望每条都是 401
 | 6 | **定时任务** | 走平台调度器（`platform.job_schedule` / 模块 `ctx.scheduler`），**不开 openship job** | ⚠️ 售后 GC 仍是 openship job 打 manage 端点（已知偏离，无 `deploy/jobs.md` 台账——新模块**别照抄这一处**） |
 | 7 | **存储**（附件等） | manifest 声明 `storage: {kind: s3}`（声明的是**能力**），租户行配五键；漏配 = 端点 503（不是启动错） | M3c 原子切换 + 回滚演练；`storage_ref` 三态投影 |
 | 8 | **设计语言** | PC：`DESIGN.md` + `docs/design/console-ui-conventions.md`（宿主渲染标题、主操作唯一、空态写下一步）；移动：按 mobile-first spec 定 `surface`，**移植来的移动壳冻结不再扩展** | 售后 console 七页；mobile（Vue+TDesign）「不动就不动」 |
-| 9 | **横切** | 写钱/删物操作落审计（同事务）；每条租户表查询带 `org`（B14）；测试替身收严到真机形状 | 售后审计缺口是平台级待补项；B14 曾抓出 `metric_change` 两条 update 真缺口 |
+| 9 | **横切** | 写钱/删物操作落审计（**同事务**；模块自建 `<mod>.audit`，不能写 platform schema——B1）；每条租户表查询带 `org`（B14）；测试替身收严到真机形状 | 售后已落地（#2748）：`aftersales.audit` 覆盖 ticket.process / 规则 CRUD（硬删留痕）/ 员工审批 / 申请决定 / GC；B14 曾抓出 `metric_change` 两条 update 真缺口 |
 
 **移植时的三个高频误判**（都在售后身上发生过）：
 1. 「原系统前端直调 + 前端算金额」→ 必须重构为**后端单端点 + 事务 + 服务端权威计算**

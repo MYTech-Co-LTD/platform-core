@@ -116,6 +116,8 @@ DATABASE_URL=… WUJI_APPID=… WUJI_KEY_STORE_INFO=… WUJI_API_PATH=/api/publi
 ## 6. Gate 6：运营（可随业务滚动补齐）
 
 - [ ] GC：openship job 补台账（`deploy/jobs.md`），或迁平台调度器（与 Wave 6/8 方向一致）。
+- [ ] 审计：`aftersales.audit` 已落（#2748）——写操作与业务同事务留痕；运维可 `select * from
+      aftersales.audit where org = '<org>' order by id desc` 查（detail 只含业务事实，无 PII 明文）。
 - [ ] 通知：每日巡检「零收件人」（notify-preflight）。
 - [ ] 附件：`STORAGE_REF_UNRESOLVED` 目前只有 60s 去重的 warn——升级为可告警信号。
 
