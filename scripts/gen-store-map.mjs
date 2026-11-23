@@ -56,27 +56,33 @@ async function main() {
   const pool = new Pool({ connectionString: process.env.DATABASE_URL })
   try {
     const { rows: dims } = await pool.query(
-      'select code, name from data.dim_branch where org = $1',
+      'select code, name, source_book from data.dim_branch where org = $1',
       [org],
     )
     console.log(`[gen-store-map] dim_branch(${org}) ${dims.length} 家`)
+    // 判据（2026-11-23）：编码 + 名称必须指向同一条平台门店才算 100% 对上；其余全部进清单
     const result = matchStores(
-      stores.map((s) => ({ sourceId: s.sourceId, name: s.name })),
-      dims.map((/** @type {{ code: unknown, name: unknown }} */ d) => ({ code: String(d.code), name: String(d.name) })),
+      stores.map((s) => ({ sourceId: s.sourceId, name: s.name, storeCode: s.storeCode })),
+      dims.map((/** @type {{ code: unknown, name: unknown, source_book: unknown }} */ d) => ({
+        code: String(d.code), name: String(d.name), sourceBook: String(d.source_book ?? ''),
+      })),
     )
-    const total = result.matched.length + result.ambiguous.length + result.unmatched.length
-    console.log(
-      `[gen-store-map] 匹配 ${result.matched.length}/${total}`
-      + `（歧义 ${result.ambiguous.length} / 未匹配 ${result.unmatched.length}）`,
-    )
-    for (const a of result.ambiguous.slice(0, 20)) {
-      console.error(`  [歧义] ${a.sourceId} "${a.name}" → 候选 ${a.candidates.join(' / ')}`)
+    const total = result.matched.length + result.review.length
+    console.log(`[gen-store-map] 100% 对上 ${result.matched.length}/${total}（需核对 ${result.review.length}）`)
+    const LABEL = {
+      name_missing: '名称未命中（编码命中）',
+      name_ambiguous: '名称多候选（编码命中，跨账套同名）',
+      code_and_name_disagree: '编码与名称指向不同门店',
+      code_missing: '编码未命中（名称命中）',
+      both_missing: '编码/名称都未命中',
     }
-    for (const u of result.unmatched.slice(0, 20)) {
-      console.error(`  [未匹配] ${u.sourceId} "${u.name}"（dim 侧无同名门店）`)
+    for (const r of result.review.slice(0, 30)) {
+      const byCode = r.dimByCode ? `编码→${r.dimByCode.code}/${r.dimByCode.name}/${r.dimByCode.sourceBook || '-'}` : '编码→(无)'
+      const byName = r.dimByName ? r.dimByName.map((d) => `${d.code}/${d.name}/${d.sourceBook || '-'}`).join(' | ') : '(无)'
+      console.error(`  [${LABEL[r.reason]}] ${r.sourceId} "${r.name}"（源编码 ${r.storeCode || '空'}）${byCode}；名称候选=${byName}`)
     }
-    if (result.matched.length !== total) {
-      console.error('[gen-store-map] ⚠️ 有未闭合条目：人工裁决后手工补进 CSV，**覆盖率为 100% 前不要导入员工**')
+    if (result.review.length > 0) {
+      console.error('[gen-store-map] ⚠️ 有需核对条目：人工裁决后补进 CSV，**覆盖率为 100% 前不要导入员工**')
     }
 
     const out = arg('out')

@@ -57,9 +57,11 @@ DATABASE_URL=… WUJI_APPID=… WUJI_KEY_STORE_INFO=… WUJI_API_PATH=/api/publi
   npx tsx scripts/gen-store-map.mjs --org <casdoor_org> [--out /path/store-map.csv]
 ```
 
-源门店名 ↔ `data.dim_branch.name` 精确匹配；**歧义（同名多 code）与未匹配（dim 侧无同名）会逐条打印，
-绝不猜**——人工裁决后手工补进 CSV。dry-run 的 `[store-map] 覆盖率` 行显示命中/未命中；
-**未命中不为 0 就不要 apply**。
+**判据（2026-11-23）：编码 + 名称必须指向同一条平台门店才算 100% 对上。** 匹配顺序：
+① 源 `store_code` ↔ `dim_branch.code`（实测同源，296/299 命中）；② 名称归一（NFKC + 去品牌前缀
+品品甜/熊喵）作辅助证据。两者不一致或缺失 ⇒ 逐条打印（名称未命中 / 名称多候选 / 编码与名称指向
+不同门店 / 编码未命中 / 都未命中），**绝不猜**——人工裁决后补进 CSV。dry-run 的
+`[store-map] 覆盖率` 行显示命中/未命中；**未命中不为 0 就不要 apply**。
 
 **门店编码硬约束（导入员工前必读）**
 
