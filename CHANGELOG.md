@@ -11,6 +11,10 @@
 
 ## [Unreleased]
 
+## [0.368.0](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.367.0...v0.368.0) - 2026-11-23
+- 【新增】oa: OA 对账脚本登记平台调度器（#2709） ([#2710](https://github.com/MYTech-Co-LTD/platform-core/pull/2710), [80f8242](https://github.com/MYTech-Co-LTD/platform-core/commit/80f82426addae7c34ba3f84a4984a01b56c1171d))
+
+
 ## [0.367.0](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.366.0...v0.367.0) - 2026-11-22
 - 【修复】data: backfill 档同时排除 audit_window 测试(#2493) ([#2700](https://github.com/MYTech-Co-LTD/platform-core/pull/2700), [ce6c3ea](https://github.com/MYTech-Co-LTD/platform-core/commit/ce6c3eaff3654158118860f41ccafe9f24842c1b))
 - 【新增】data: 采集管线先列清单 + 详情首屏节点流（分得清是哪条、怎么走） ([#2698](https://github.com/MYTech-Co-LTD/platform-core/pull/2698), [b0e3972](https://github.com/MYTech-Co-LTD/platform-core/commit/b0e3972e6ed2ca42c298dbb4d6efa7e75b67851c))
