@@ -201,7 +201,7 @@ describe('作业域（#2511 调度器拆分）', () => {
   it('两域同时选 ⇒ 与拆分前的全量 registry 等价', () => {
     // 「全部 env 都在」的样本：每个新增 job 的 requiresEnv 都要在这里补齐，
     // 否则这条会被误判成「有 job 被挡」——它守的是「两域合起来 == 全量 registry」，不是缺键场景。
-    const env = { DATABASE_URL: 'postgres://x', DATA_WAREHOUSE_URL: 'postgres://w', LEMENG_ZOS_BUCKET: 'b', LEMENG_ZOS_REGION: 'r', LEMENG_ZOS_ENDPOINT: 'e', CASDOOR_URL: 'u', CASDOOR_ADMIN_USER: 'a', CASDOOR_ADMIN_PWD: 'p', OO_READ_URL: 'https://oo', OO_READ_ORG: 'o', OO_READ_TOKEN: 't', PLATFORM_ORG: 'org-x', ZOS_ACCESS_KEY: 'k', ZOS_SECRET_KEY: 's', ZOS_ENDPOINT: 'e', ZOS_REGION: 'r', ZOS_BUCKET: 'b' }
+    const env = { DUCKLE_TOKEN: 't', DATABASE_URL: 'postgres://x', DATA_WAREHOUSE_URL: 'postgres://w', LEMENG_ZOS_BUCKET: 'b', LEMENG_ZOS_REGION: 'r', LEMENG_ZOS_ENDPOINT: 'e', CASDOOR_URL: 'u', CASDOOR_ADMIN_USER: 'a', CASDOOR_ADMIN_PWD: 'p', OO_READ_URL: 'https://oo', OO_READ_ORG: 'o', OO_READ_TOKEN: 't', PLATFORM_ORG: 'org-x', ZOS_ACCESS_KEY: 'k', ZOS_SECRET_KEY: 's', ZOS_ENDPOINT: 'e', ZOS_REGION: 'r', ZOS_BUCKET: 'b' }
     const all = selectRunnableJobs(JOB_REGISTRY, ['platform', 'data'], env)
     expect(all.blocked).toEqual([])
     expect(all.runnable.length).toBe(JOB_REGISTRY.length)

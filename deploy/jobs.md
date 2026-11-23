@@ -160,7 +160,7 @@
 | `data.warehouse_assertions` | **待切（#2628 / 2026-11-21 已登记，`enabled=false`）** | 待切：手动跑一轮 → 18 条 check 输出与旧面比对 → 按 3.5 确认 new face 发射 → enable | 无 openship 对应作业（旧形态是**宿主 cron + `docker exec`**，已随 Wave 8 停发——本 job 就是来补这个断档的） |
 | `oa.standard_approval_reconcile` | **已登记（#2385 收口，`enabled=false`）** | 待启用：手动跑一轮 → stdout 统计与 `forms.external_approval` 行数比对 → enable（§13） | 本无 openship 作业（脚本此前零调度登记，2026-11-23 起有 registry key） |
 | `oa.approval_reconcile` | **已登记（#2363/#2385 收口，`enabled=false`）** | 待启用：手动跑一轮 → stdout 统计核对 → enable（§13） | 本无 openship 作业（同上） |
-| `recon.monthly`（**未进 registry · 技术债**） | **直接由 openship job 驱动**（custom:4UQ2ugvbFRGKtIUv） | 现役：每月 15 号 CST 12:00（cron `0 4 15 * *` UTC）对**上一自然月**逐日跑 `/opt/lemeng-recon-preagg.sh`（两账套 × 30 天 ≈ 60 次，实测 ~1.5 分钟）；全过 `RECON_MONTHLY_OK`，任一有差异 `RECON_MONTHLY_FAILED` + exit 1 → 企微 | **为什么不进 platform scheduler**：worker 容器要调两个 console 的 `/api/run`，需要把两套 `DUCKLE_TOKEN` 注入 worker env（新增密钥）；而 `/opt/lemeng-recon-preagg.sh` 本就在宿主且凭据在容器里。补洞优先，先这样落地（#2728）；等 worker 拿到 token 再迁 |
+| `data.recon_monthly` | **已登记（#2728，`enabled=false`）** | 待启用：手动跑一轮 → stdout 与 `/opt/lemeng-recon-preagg.sh` 同期结论比对 → enable（§13） | 本无 openship 对应作业。**平台侧直接调两个 console 的现成管线 `lemeng.recon.preagg.backfill`**（不实现口径）；worker 已有 `DUCKLE_TOKEN`（三容器同一份，实测）+ 服务名可达 ⇒ 零新增密钥 |
 
 **顺序按爆炸半径**：已完成 `notify.reconcile` → `metric.candidates` → `report.scope_scan`；
 P1+P4b 的切流**已全部完成**（2026-11-15）；新增 job 仍按上表四步执行。
