@@ -11,6 +11,10 @@
 
 ## [Unreleased]
 
+## [0.374.0](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.373.0...v0.374.0) - 2026-11-23
+- 【新增】oa: C 目标第一刀——goals.yml 两段生成关系/达成率指标/报表模板/日报 ([#2738](https://github.com/MYTech-Co-LTD/platform-core/pull/2738), [89a030a](https://github.com/MYTech-Co-LTD/platform-core/commit/89a030a538725570bf45bbb01f71139a790c1c8e))
+
+
 ## [0.373.0](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.372.0...v0.373.0) - 2026-11-23
 - 【新增】aftersales: 公众号配置进管理组——frontend.admin 子页 + 宿主集成端点（secret 不回显/留空不改/审计） ([#2740](https://github.com/MYTech-Co-LTD/platform-core/pull/2740), [bed23d7](https://github.com/MYTech-Co-LTD/platform-core/commit/bed23d7f540e97569253b1b58481df9ff92dd757))
 
