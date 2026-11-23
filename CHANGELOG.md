@@ -11,6 +11,14 @@
 
 ## [Unreleased]
 
+## [0.372.0](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.371.0...v0.372.0) - 2026-11-23
+- 【新增】data: 月度对账迁到平台调度（data.recon_monthly，零新增密钥） ([#2732](https://github.com/MYTech-Co-LTD/platform-core/pull/2732), [f8af93d](https://github.com/MYTech-Co-LTD/platform-core/commit/f8af93daac034cb827226b0bbebf32d3e9f6a916))
+- 【新增】forms: 件① 表单字段级数据通路——dataPlane opt-in 契约闸/生成器/首个摊平模型与 L1（#2706） ([#2716](https://github.com/MYTech-Co-LTD/platform-core/pull/2716), [4ee76b9](https://github.com/MYTech-Co-LTD/platform-core/commit/4ee76b9d5fe1a047e3fc6ff9d3fb3449d80ec0bb))
+- 【新增】aftersales: 按真实接口钉花名册字段 + 审批态默认计数 + gen-store-map 映射生成工具 ([#2734](https://github.com/MYTech-Co-LTD/platform-core/pull/2734), [c731712](https://github.com/MYTech-Co-LTD/platform-core/commit/c73171228b49e3e785b4b687f69b78fed4683a15))
+- 【新增】forms: B 件③ 收集轮次（名单轮/值集轮/事件/催办/console） ([#2715](https://github.com/MYTech-Co-LTD/platform-core/pull/2715), [6cf62a7](https://github.com/MYTech-Co-LTD/platform-core/commit/6cf62a7264fb7969354caddc4dec2300fbeaa2b0))
+- 【新增】aftersales: 花名册导入 --store-map——无忌门店 id 翻译为 dim_branch.code ([#2731](https://github.com/MYTech-Co-LTD/platform-core/pull/2731), [3decc09](https://github.com/MYTech-Co-LTD/platform-core/commit/3decc09915aac9d671b0c063e260c76c88e663be))
+
+
 ## [0.371.0](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.370.0...v0.371.0) - 2026-11-23
 - 【新增】data: 零售 tick 页容量改懒扩容（4 页起逐级链式，保险丝 25,600/时）+ 修 merge 部分 schema 炸点 ([#2721](https://github.com/MYTech-Co-LTD/platform-core/pull/2721), [560800b](https://github.com/MYTech-Co-LTD/platform-core/commit/560800b1c01da0fdeaf4123d88b6b17d5fa685c8))
 
