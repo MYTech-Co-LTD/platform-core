@@ -51,6 +51,16 @@ async function handle(c: any, fn: () => Promise<Response>): Promise<Response> {
     if (e instanceof FormsError) {
       const map: Record<string, number> = {
         DICT_KEY_NOT_FOUND: 404, NO_PUBLISHED_HEAD: 409, HEAD_MOVED: 409,
+        // 收集轮次（件③ / #2707）
+        ROUND_NOT_FOUND: 404,
+        ROUND_KEY_TAKEN: 409,
+        ROUND_STATUS_INVALID: 409,
+        ROUND_NOT_OPEN: 409,
+        ROUND_FORM_MISMATCH: 409,
+        ROUND_SUBMITTER_NOT_IN_ROUND: 409,
+        ROUND_ANCHOR_REQUIRED: 400,
+        ROUND_ANCHOR_NOT_FOUND: 409,
+        ROUND_LIST_REQUIRED: 400,
         // 审批面（OA P1）
         OA_NOT_ENABLED: 409,
         ORG_UNAVAILABLE: 503,
@@ -528,15 +538,23 @@ export function createFormsRouter({
 
   // 分流（OA P1）：事项模板 body.mode='approval' ⇒ 编译计划 + 建引擎 case；其余保持收集路径逐字不变。
   // mode 从**提交将钉住的 head 版本**读（与表单提交同一基准；不读请求参数，防客户端自选）。
+  // 收集轮次联动（件③ / #2707）：body 带 roundId ⇒ 挂轮提交（单事务：落提交 + round_id 回写 +
+  // 名单/格子翻 submitted；轮非 open / 表单版本不属该轮 / 名单或格子不命中 ⇒ 4xx 且不落行）。
   r.post('/defs/:assetId/submissions', (c) =>
     handle(c, async () => {
       const { identity } = ctx(c)
       const assetId = c.req.param('assetId')
-      const body = (await c.req.json().catch(() => null)) as { payload?: unknown } | null
+      const body = (await c.req.json().catch(() => null)) as
+        { payload?: unknown; roundId?: unknown; anchorKey?: unknown } | null
+      const roundId = typeof body?.roundId === 'string' && body.roundId.length > 0 ? body.roundId : undefined
+      const anchorKey = typeof body?.anchorKey === 'string' && body.anchorKey.length > 0 ? body.anchorKey : undefined
       const head = await store.headVersion(pool, identity.orgId, assetId)
       if (head !== null) {
         const defBody = await store.bodyAt(pool, identity.orgId, assetId, head)
         if (store.itemModeOf(defBody) === 'approval') {
+          if (roundId !== undefined) {
+            return fail(c, 409, 'ROUND_FORM_MISMATCH', '审批事项不参与收集轮次（roundId 只用于收集类提交）')
+          }
           const result = await store.submitApproval(pool, identity.orgId, assetId, body?.payload, identity.userId, {
             orgPort,
             engineFor,
@@ -545,7 +563,10 @@ export function createFormsRouter({
           return c.json(result, 201)
         }
       }
-      const result = await store.submit(pool, identity.orgId, assetId, body?.payload, identity.userId)
+      const result = await store.submit(
+        pool, identity.orgId, assetId, body?.payload, identity.userId,
+        undefined, roundId !== undefined ? { roundId, anchorKey } : undefined,
+      )
       return c.json(result, 201)
     }),
   )
