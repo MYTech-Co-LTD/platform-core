@@ -55,7 +55,7 @@ goal_latest as (
                 order by submitted_at desc nulls last, submission_id desc
             ) as rn
         from recheck_goal
-        where period SIMILAR TO '[0-9]{4}-[0-9]{2}'
+        where period ~ '^[0-9]{4}-[0-9]{2}$'
           and branch_num is not null
           and branch_num <> ''
     ) t
