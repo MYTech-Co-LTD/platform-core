@@ -158,11 +158,14 @@ export function buildContract(form) {
  * @returns {string}
  */
 export function buildModelSql(form) {
+  if (form.fields.length === 0) {
+    throw new Error('buildModelSql: 0 个可摊平字段（闸放行的表单至少应有 1 个；0 字段表单不入清单）')
+  }
   const lines = []
   for (const f of form.fields) {
     const ex = EXTRACT[/** @type {keyof typeof EXTRACT} */ (f.kind)]
     if (!ex) throw new Error(`buildModelSql: 字段 ${f.field} 的 kind ${f.kind} 无提取形态（闸与生成器漂开？）`)
-    lines.push(`  ${ex(f.column, f.field)},`)
+    lines.push(`  ${ex(f.column, f.field)}`)
   }
   return [
     "{{ config(materialized='table') }}",
@@ -173,7 +176,7 @@ export function buildModelSql(form) {
     '--   payload 是整列 varchar JSON（ADR-0005 §13.1 ①），逐字段 schema-on-read 提取。',
     'select',
     ...HEAD_COLUMNS,
-    ...lines,
+    lines.join(',\n'),
     'from read_parquet(',
     '  \'s3://{{ var("zos_bucket") }}/{{ var("forms_submission_prefix") }}/bizday=*/batch_id=*/all.parquet\'',
     ') r',
@@ -218,14 +221,32 @@ export async function listFormsFromDb(pool) {
 }
 
 /**
+ * 解析 `pg`：pnpm 布局下 scripts/ 不是 workspace 包，`pg` 只链接在 `modules/forms/node_modules`
+ * ⇒ 先按本脚本位置解析，失败再按 forms 包位置（两处都没有 = 环境缺依赖，原样抛）。
+ * @param {string} rootDir
+ * @returns {{ Pool: new (opts: any) => any }}
+ */
+function requirePg(rootDir) {
+  for (const from of [import.meta.url, pathToFileURL(join(rootDir, 'modules/forms', 'package.json')).href]) {
+    try {
+      return createRequire(from)('pg')
+    } catch {
+      /* 试下一个落点 */
+    }
+  }
+  throw new Error("解析不到依赖 'pg'（仓库没装依赖？先 pnpm install）")
+}
+
+/**
  * 连库取清单。缺 DATABASE_URL / 库还没 forms schema（CI 裸 service 库）⇒ null（调用方跳过）。
  * 其余查询错误原样上抛（fail loud，不静默当空集——那会把孤儿产物判成「该删」）。
+ * @param {string} rootDir 仓根
  * @returns {Promise<{ forms: Array<{ org: string, assetId: string, version: number, slug: string, fields: Array<{ field: string, column: string, kind: string }> }> | null, skipped: string | null }>}
  */
-async function collectForms() {
+async function collectForms(rootDir) {
   const url = process.env.DATABASE_URL
   if (!url) return { forms: null, skipped: '无 DATABASE_URL —— 跳过（生成物 == committed 不变）' }
-  const { Pool } = createRequire(import.meta.url)('pg')
+  const { Pool } = requirePg(rootDir)
   const pool = new Pool({ connectionString: url })
   try {
     return { forms: await listFormsFromDb(pool), skipped: null }
@@ -241,20 +262,27 @@ async function collectForms() {
 }
 
 /**
- * 生成本生成器命名空间内**应存在**的产物清单（slug → 内容）。
+ * 生成本生成器命名空间内**应存在**的产物清单（按**文件名**为键——契约是 `<slug>.json`、
+ * 模型是 `<stem><relationSlug>.sql`，两套名字规则不同，必须各按各的键比对）。
  * @param {Array<{ org: string, assetId: string, version: number, slug: string, fields: Array<{ field: string, column: string, kind: string }> }>} forms
- * @returns {Map<string, { contract: string, model: string }>}
+ * @returns {{ contractNames: Set<string>, modelNames: Set<string>, files: Map<string, string> }}
  */
 function expectedArtifacts(forms) {
-  /** @type {Map<string, { contract: string, model: string }>} */
-  const out = new Map()
+  /** @type {Set<string>} */
+  const contractNames = new Set()
+  /** @type {Set<string>} */
+  const modelNames = new Set()
+  /** @type {Map<string, string>} 文件名（含扩展名，不含目录）→ 内容 */
+  const files = new Map()
   for (const form of forms) {
-    out.set(form.slug, {
-      contract: JSON.stringify(buildContract(form), null, 2) + '\n',
-      model: buildModelSql(form),
-    })
+    const contractName = `${form.slug}.json`
+    const modelName = `${MODEL_STEM}${relationSlug(form.slug)}.sql`
+    contractNames.add(contractName)
+    modelNames.add(modelName)
+    files.set(contractName, JSON.stringify(buildContract(form), null, 2) + '\n')
+    files.set(modelName, buildModelSql(form))
   }
-  return out
+  return { contractNames, modelNames, files }
 }
 
 /**
@@ -282,7 +310,7 @@ function existingArtifacts(rootDir) {
  * @returns {Promise<number>} 退出码（0 = 对齐或跳过；--check 下有漂移 = 1）
  */
 export async function runGenerate(rootDir, opts = {}) {
-  const { forms, skipped } = await collectForms()
+  const { forms, skipped } = await collectForms(rootDir)
   if (skipped !== null) {
     console.error(`gen-forms-data-projection: ${skipped}`)
     return 0
@@ -294,28 +322,24 @@ export async function runGenerate(rootDir, opts = {}) {
   const changes = []
   /** @type {string[]} */
   const stale = []
-  for (const [slug, art] of expected) {
-    const contractAbs = contractPathFor(rootDir, { slug })
-    const modelAbs = modelPathFor(rootDir, { slug })
-    if (!existsSync(contractAbs) || readFileSync(contractAbs, 'utf8') !== art.contract) {
-      changes.push(`${CONTRACT_REL_DIR}/${slug}.json`)
-    }
-    if (!existsSync(modelAbs) || readFileSync(modelAbs, 'utf8') !== art.model) {
-      changes.push(`${MODEL_REL_DIR}/${MODEL_STEM}${relationSlug(slug)}.sql`)
+  for (const [name, content] of expected.files) {
+    const abs = name.endsWith('.json')
+      ? join(rootDir, CONTRACT_REL_DIR, name)
+      : join(rootDir, MODEL_REL_DIR, name)
+    if (!existsSync(abs) || readFileSync(abs, 'utf8') !== content) {
+      changes.push(name.endsWith('.json') ? `${CONTRACT_REL_DIR}/${name}` : `${MODEL_REL_DIR}/${name}`)
     }
   }
-  const contractDirAbs = join(rootDir, CONTRACT_REL_DIR)
-  const modelDirAbs = join(rootDir, MODEL_REL_DIR)
   for (const name of existing.contracts) {
-    if (!expected.has(name.replace(/\.json$/, ''))) stale.push(`${CONTRACT_REL_DIR}/${name}`)
+    if (!expected.contractNames.has(name)) stale.push(`${CONTRACT_REL_DIR}/${name}`)
   }
   for (const name of existing.models) {
-    if (!expected.has(name.slice(MODEL_STEM.length, -'.sql'.length))) stale.push(`${MODEL_REL_DIR}/${name}`)
+    if (!expected.modelNames.has(name)) stale.push(`${MODEL_REL_DIR}/${name}`)
   }
 
   if (opts.check) {
     if (changes.length === 0 && stale.length === 0) {
-      console.error(`gen-forms-data-projection: --check OK（${expected.size} 个 dataPlane 表单，生成物 == committed）`)
+      console.error(`gen-forms-data-projection: --check OK（${expected.files.size} 份产物 == committed）`)
       return 0
     }
     for (const f of [...changes, ...stale]) console.error(`gen-forms-data-projection: 生成物漂移：${f}`)
@@ -324,17 +348,19 @@ export async function runGenerate(rootDir, opts = {}) {
   }
 
   if (changes.length === 0 && stale.length === 0) {
-    console.error(`gen-forms-data-projection: 已对齐（${expected.size} 个 dataPlane 表单）`)
+    console.error(`gen-forms-data-projection: 已对齐（${expected.files.size} 份产物）`)
     return 0
   }
-  mkdirSync(contractDirAbs, { recursive: true })
-  mkdirSync(modelDirAbs, { recursive: true })
-  for (const [slug, art] of expected) {
-    writeFileSync(contractPathFor(rootDir, { slug }), art.contract)
-    writeFileSync(modelPathFor(rootDir, { slug }), art.model)
+  mkdirSync(join(rootDir, CONTRACT_REL_DIR), { recursive: true })
+  mkdirSync(join(rootDir, MODEL_REL_DIR), { recursive: true })
+  for (const [name, content] of expected.files) {
+    const abs = name.endsWith('.json')
+      ? join(rootDir, CONTRACT_REL_DIR, name)
+      : join(rootDir, MODEL_REL_DIR, name)
+    writeFileSync(abs, content)
   }
   for (const rel of stale) rmSync(join(rootDir, rel))
-  console.error(`gen-forms-data-projection: 写 ${expected.size} 份契约与模型，删 ${stale.length} 个孤儿产物`)
+  console.error(`gen-forms-data-projection: 写 ${expected.files.size} 份产物，删 ${stale.length} 个孤儿产物`)
   return 0
 }
 

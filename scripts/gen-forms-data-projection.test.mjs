@@ -139,6 +139,13 @@ describe('buildModelSql（DuckDB 段只碰 parquet；r[列] 形态；无 join）
     expect(sql).not.toMatch(/\bjoin\b/)
   })
 
+  it('列区无尾逗号（末字段后直接 from；0 字段表单响亮拒绝）', () => {
+    const sql = buildModelSql(form)
+    expect(sql).not.toMatch(/,\s*\nfrom\b/)
+    expect(sql).toContain("as decimal(18,4)) as f_target_outbound\nfrom read_parquet(")
+    expect(() => buildModelSql({ ...form, fields: [] })).toThrow(/0 个可摊平字段/)
+  })
+
   it('boolean 提取 = json_extract_string in (true,1)；integer/enum 各用其形态', () => {
     const sql = buildModelSql({
       org: 'o', assetId: 'f', version: 1, slug: 'f',

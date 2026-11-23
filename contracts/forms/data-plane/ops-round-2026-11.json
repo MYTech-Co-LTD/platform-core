@@ -1,0 +1,26 @@
+{
+  "form_def_id": "ops-round-2026-11",
+  "org": "mytech",
+  "version": 1,
+  "relationSlug": "ops_round_2026_11",
+  "columns": [
+    {
+      "field": "done",
+      "column": "f_done",
+      "kind": "boolean",
+      "sql_type": "boolean"
+    },
+    {
+      "field": "store_name",
+      "column": "f_store_name",
+      "kind": "string",
+      "sql_type": "varchar"
+    },
+    {
+      "field": "check_count",
+      "column": "f_check_count",
+      "kind": "number",
+      "sql_type": "decimal(18,4)"
+    }
+  ]
+}
