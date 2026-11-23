@@ -8,10 +8,10 @@
 //   ③ `dbt/semantics/l1_metrics.yml`             actuals 引用的既有 L1 指标（口径不复制，D7）
 //
 // 生成两份产物，逐目标一份：
-//   · `dbt/models/lemeng/goals/stg_goal_values__<goal>.sql`
+//   · `dbt/models/goals/stg_goal_values__<goal>.sql`
 //       段① DuckDB：`read_parquet` forms 提交湖 + payload 逐字段提取 + 显式 cast。
 //       **无任何 join**（数据面正典 B1；探针 2026-11-23 实测 DuckDB 语句引用不了 PG 关系）。
-//   · `dbt/models/lemeng/goals/mart_goal_achievement__<goal>.sql`
+//   · `dbt/models/goals/mart_goal_achievement__<goal>.sql`
 //       段② PG 原生：段① 表 ⨝ actuals marts ⨝ 日期 spine → 达成率 / 时间进度 / data_status。
 //
 // ## 生成物纪律（与 gen-forms-data-projection / gen-data-projection 同款）
@@ -42,7 +42,7 @@ export const L1_REL_PATH = 'dbt/semantics/l1_metrics.yml'
 /** 件① 表单字段契约目录（生成物，由件① 生成器维护）。 */
 export const CONTRACT_REL_DIR = 'contracts/forms/data-plane'
 /** 生成模型目录（仓根相对）。为什么归 lemeng 域见 goals.yml 头注。 */
-export const MODEL_REL_DIR = 'dbt/models/lemeng/goals'
+export const MODEL_REL_DIR = 'dbt/models/goals'
 /** 段① 文件名前缀（本生成器命名空间的一半）。 */
 export const STAGE_ONE_STEM = 'stg_goal_values__'
 /** 段② 文件名前缀（本生成器命名空间的另一半）。 */

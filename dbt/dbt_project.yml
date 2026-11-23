@@ -182,3 +182,8 @@ models:
       +enabled: "{{ 'lemeng' in env_var('DATA_PLANE_DOMAINS').split(',') }}"
     forms:
       +enabled: "{{ 'forms' in env_var('DATA_PLANE_DOMAINS').split(',') }}"
+    # 目标件（件② #2708）：目标值来自 forms 提交湖、actuals 来自乐檬 marts ⇒ **独立域**，
+    # 不与乐檬的每日重建同档（forms 湖空时 read_parquet 会 `No files found`，#751）。
+    # 只有 `data.dbt_goals` job 用 DATA_PLANE_DOMAINS=lemeng,goals 解析并单独建本域。
+    goals:
+      +enabled: "{{ 'goals' in env_var('DATA_PLANE_DOMAINS').split(',') }}"

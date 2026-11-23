@@ -15,15 +15,18 @@
 #      + actuals 指的既有 marts 关系 + 日期 spine（progress_rate 北京时钟日界）+ data_status。
 #   `node scripts/gen-goal-achievement.mjs --check` 在 CI gates 里比字节；手改生成物会被回写。
 #
-# ## 为什么模型落在 `dbt/models/lemeng/goals/`（不是 `dbt/models/goals/`）
+# ## 为什么模型落 `dbt/models/goals/`（**独立域**），而 actuals 引用乐檬 marts
 #
-# `scripts/lemeng/materialize.sh` 的 tables 档按**单域**裁剪（`MATERIALIZE_TABLES_DOMAIN` →
-# `DATA_PLANE_DOMAINS=<该域>`，选择器 `path:models/<该域>`）。段② 必须 `ref` 乐檬 marts
-# （fct_retail_sale / fct_branch_indicator）——若另立 `goals` 域单独物化，manifest 里乐檬模型被
-# 域开关剔除 ⇒ `ref` 指向 disabled 节点 ⇒ `dbt parse` 直接失败（327 天实测的域开关语义）。
-# 目标件与它的 actuals 同面同域（山海数据面 + lemeng 域）是 spec §2「与 actuals 同面，join 才成立」
-# 的直接推论 ⇒ 目录归 lemeng 域，**不新增域、不改任何 job env**。域的所有权含义（谁建）不因此改变：
-# 目标值本身仍由 forms 提交（湖上 forms/submission），只是生成关系跟着 actuals 所在域走。
+# 目标是**另一个域**（数据来自 forms 提交 ⨝ 乐檬 marts），必须能独立于乐檬的每日重建开关：
+# 段① 读 forms 提交湖，而 forms 湖在「首个文件落下之前」会让 `read_parquet` 报
+# `IO Error: No files found`（#751 实测：曾因此把整轮 lemeng 物化打红、水位冻结）。
+# 若模型挂在 `dbt/models/lemeng/` 下，`path:models/lemeng` 的每日 tables job 会连带建它
+# ⇒ **forms 采集一停/新面未首采，整个乐檬物化档就挂**。故：
+#   · 域 = `goals`（`dbt_project.yml` 有显式 +enabled 条目，规则 ⑪）；
+#   · 专用的 `data.dbt_goals` job（seed 恒 disabled，四步开闸）以
+#     `DATA_PLANE_DOMAINS=lemeng,goals` 解析（段② 的 `ref` 才能解析到乐檬模型），
+#     选择器只取 `path:models/goals` ⇒ 乐檬的每日档**完全不碰**目标模型；
+#   · 首次开闸条件：forms 采集在本数据面**已有第一个湖文件**（否则本 job 必红，属预期）。
 #
 # ## 字段约定
 #
