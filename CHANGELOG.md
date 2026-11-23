@@ -11,6 +11,10 @@
 
 ## [Unreleased]
 
+## [0.371.0](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.370.0...v0.371.0) - 2026-11-23
+- 【新增】data: 零售 tick 页容量改懒扩容（4 页起逐级链式，保险丝 25,600/时）+ 修 merge 部分 schema 炸点 ([#2721](https://github.com/MYTech-Co-LTD/platform-core/pull/2721), [560800b](https://github.com/MYTech-Co-LTD/platform-core/commit/560800b1c01da0fdeaf4123d88b6b17d5fa685c8))
+
+
 ## [0.370.0](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.369.0...v0.370.0) - 2026-11-23
 - 【新增】platform: 数据宪法 §9-3/§9-4 扩展点预留——事件 guarantee 档位 + 模块导出声明（声明即拒，实现待触发） ([#2720](https://github.com/MYTech-Co-LTD/platform-core/pull/2720), [6a7d9c9](https://github.com/MYTech-Co-LTD/platform-core/commit/6a7d9c937b7fb5d382d32fff940e9c1e6301a3d7))
 - 【新增】platform: 租户隔离第二道防线 B14——org 谓词 SQL lint + 修 metric_change 两条 update 真缺口 ([#2718](https://github.com/MYTech-Co-LTD/platform-core/pull/2718), [34c4118](https://github.com/MYTech-Co-LTD/platform-core/commit/34c41187e5e2413f191ac9c40c8b228c53939b82))
