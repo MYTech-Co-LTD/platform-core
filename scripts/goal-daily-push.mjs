@@ -28,7 +28,7 @@
 // 环境：DATABASE_URL（平台库，notify 入队）+ DATA_WAREHOUSE_URL（数据面，读达成关系）
 //       + PUBLIC_ORIGIN（事件链接；缺省空串 —— 链接是 payload.url，允许空但会在模板里点不动）。
 import { createRequire } from 'node:module'
-import { pathToFileURL } from 'node:url'
+import { fileURLToPath, pathToFileURL } from 'node:url'
 import { readGoals, goalMetricName, martRelation } from './gen-goal-achievement.mjs'
 
 /** 事件 key（必须与 modules/forms/manifest.yaml 的声明逐字一致）。 */
@@ -112,7 +112,7 @@ export function buildPayload(p) {
 
 /** 解析 pg（pnpm 布局：scripts/ 不是 workspace 包；先按本脚本，再按 notify 包）。 */
 function requirePg() {
-  for (const from of [import.meta.url, pathToFileURL(new URL('../modules/notify/package.json', import.meta.url).pathname).href]) {
+  for (const from of [import.meta.url, new URL('../modules/notify/package.json', import.meta.url).href]) {
     try {
       return createRequire(from)('pg')
     } catch {
@@ -135,7 +135,7 @@ async function main() {
   const pool = new Pool({ connectionString: url })
   const whPool = new Pool({ connectionString: wh })
   const { enqueueEvent } = await import('../modules/notify/storage.ts')
-  const rootDir = new URL('..', import.meta.url).pathname
+  const rootDir = fileURLToPath(new URL('..', import.meta.url))
   const { today, month } = cstToday()
   const link = `${process.env.PUBLIC_ORIGIN ?? ''}/app/data`
   let enqueued = 0

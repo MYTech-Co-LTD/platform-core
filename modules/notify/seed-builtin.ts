@@ -211,10 +211,10 @@ export async function seedBuiltin(
     const goalRule = await pool.query(
       `insert into notify.rule
          (org,id,enabled,event_key,scope,recipient_key,template_key,channels,origin,created_by)
-       values ($1,$2,true,$3,'*','viewers',$4,'{inapp_default,wecom_default}'::text[],'derived','system')
+       values ($1,$2,true,$3,'*','viewers',$4,$5::text[],'derived','system')
        on conflict (org,id) do update set template_key=excluded.template_key,
          channels=excluded.channels`,
-      [org, 'derived:forms:forms.goal.daily:*', 'forms.goal.daily', 'oa_goal_daily'],
+      [org, 'derived:forms:forms.goal.daily:*', 'forms.goal.daily', 'oa_goal_daily', CHANNELS],
     )
     rules += goalRule.rowCount ?? 0
 
