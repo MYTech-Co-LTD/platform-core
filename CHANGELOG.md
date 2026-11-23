@@ -11,6 +11,10 @@
 
 ## [Unreleased]
 
+## [0.377.0](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.376.0...v0.377.0) - 2026-11-23
+- 【新增】forms: dataPlane v2 与运营实时统计——白名单/缓存/审批门 + AI 同创 (#2755) ([#2760](https://github.com/MYTech-Co-LTD/platform-core/pull/2760), [14b372d](https://github.com/MYTech-Co-LTD/platform-core/commit/14b372d66ac239a7abfb5b91237d64144fce5d6b))
+
+
 ## [0.376.0](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.375.1...v0.376.0) - 2026-11-23
 - 【新增】server: 公众号访客路结构化日志——silent/callback 分支走向可观测（openid 掩码，不打印 code/secret） ([#2753](https://github.com/MYTech-Co-LTD/platform-core/pull/2753), [d9d4867](https://github.com/MYTech-Co-LTD/platform-core/commit/d9d48672ccf4b7a09d0468aa35d57e5662498768))
 
