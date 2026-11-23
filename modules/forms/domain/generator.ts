@@ -6,9 +6,10 @@
 // - **产出必须过既有 compileGate**（不另开一套校验）→「生成器不绕过发布门」；
 // - **repair 只回喂一次**：把校验错误原文连同上一轮产出喂回去。仍不过 ⇒ 报错，**不许静默落一个坏 draft**。
 import { compileGate } from './contract'
-import type { FormContractBody } from './contract'
+import type { DataPlaneV2, FormContractBody } from './contract'
 import { MATERIALS_MARKDOWN } from './materials'
 import type { ChatMessage, ChatModel } from './llm'
+import { suggestStatsViews } from './stats'
 
 export type GenerateResult =
   | { ok: true; assetId: string; body: FormContractBody; repairUsed: boolean; raw: string }
@@ -34,7 +35,11 @@ function stripFences(raw: string): string {
   return m ? m[1].trim() : t
 }
 
-/** 解析模型产出 → {assetId, body}。形状不对就抛（由 generateDraft 转成机检错误码）。 */
+/**
+ * 解析模型产出 → {assetId, body}。形状不对就抛（由 generateDraft 转成机检错误码）。
+ * 件④ #2755：可选 `dataPlane`（表单 + 统计同创）——模型没给时用 `suggestStatsViews` 确定性兜底
+ * 填上（schema 一条可统计字段都没有 ⇒ 不加 dataPlane，不产空壳）。
+ */
 export function parseDraft(raw: string): ParsedDraft {
   const text = stripFences(raw)
   let doc: unknown
@@ -55,13 +60,27 @@ export function parseDraft(raw: string): ParsedDraft {
   if (uiSchema !== undefined && (uiSchema === null || typeof uiSchema !== 'object' || Array.isArray(uiSchema))) {
     throw new Error('uiSchema 必须是对象或省略')
   }
-  return {
-    assetId,
-    body: {
-      schema: schema as Record<string, unknown>,
-      ...(uiSchema !== undefined ? { uiSchema: uiSchema as Record<string, unknown> } : {}),
-    },
+  const rawDataPlane = rec['dataPlane']
+  if (
+    rawDataPlane !== undefined &&
+    (rawDataPlane === null || typeof rawDataPlane !== 'object' || Array.isArray(rawDataPlane))
+  ) {
+    throw new Error('dataPlane 必须是对象或省略')
   }
+  const body: FormContractBody = {
+    schema: schema as Record<string, unknown>,
+    ...(uiSchema !== undefined ? { uiSchema: uiSchema as Record<string, unknown> } : {}),
+    ...(rawDataPlane !== undefined ? { dataPlane: rawDataPlane as DataPlaneV2 } : {}),
+  }
+  // 模型没给 dataPlane ⇒ 确定性兜底（数值→sum/avg；enum/boolean/date→分组；至少一条合计视图）。
+  // 给了就原样保留，由 compileGate 校验——**不覆盖模型的显式声明**。
+  if (body.dataPlane === undefined) {
+    const suggested = suggestStatsViews(schema)
+    if (suggested !== null) {
+      body.dataPlane = { fields: suggested.fields, stats: { enabled: true, views: suggested.views } }
+    }
+  }
+  return { assetId, body }
 }
 
 /** 装配首轮消息（导出以便单测断言提示词里没有漏掉硬约束）。 */

@@ -354,6 +354,203 @@ describePg('forms API（routes）', () => {
     res = await (await appAs(makeIdentity({ orgId: ORG_B, scopes: ['forms:view'] }))).request(`/global-dicts/g-${SUF}/options`)
     expect(((await res.json()) as { options: Array<{ key: string }> }).options.map((o) => o.key)).toEqual(['gk'])
   })
+// ── 件④ #2755：dataPlane v2 + 运营实时统计（/stats）+ 发布审批门 ──────────────────
+describe('forms 实时统计（件④ #2755）', () => {
+  const S_ASSET = `stats-${SUF}`
+  const PLAIN_ASSET = `stats-plain-${SUF}`
+  const STATS_SCHEMA = {
+    type: 'object',
+    required: ['class', 'score'],
+    properties: {
+      class: { type: 'string', enum: ['A', 'B'] },
+      score: { type: 'number' },
+      name: { type: 'string' },
+      photos: { type: 'array', items: { type: 'string' } },
+    },
+  }
+  const statsBody = {
+    schema: STATS_SCHEMA,
+    dataPlane: {
+      // stats-only：允许子集（photos 数组不摊平；name 不统计）
+      fields: [
+        { field: 'class', kind: 'enum', agg: ['count'], groupable: true },
+        { field: 'score', kind: 'number', agg: ['sum', 'avg'] },
+      ],
+      stats: {
+        enabled: true,
+        views: [
+          { key: 'total', label: '合计', groupBy: [], measures: [{ field: 'score', agg: 'sum' }] },
+          { key: 'by_class', label: '按班级', groupBy: ['class'], measures: [{ field: 'score', agg: 'sum' }] },
+        ],
+      },
+    },
+  }
+
+  /** 同一 app（= 同一 router 实例 = 同一份缓存）；身份同时有 fill/view，便于测「提交后失效」。 */
+  const opsApp = () =>
+    appAs(makeIdentity({ orgId: ORG_A, userId: 'stats-ops', scopes: ['forms:view', 'forms:fill', 'forms:publish'] }))
+
+  const errOf = async (res: Response): Promise<string> =>
+    ((await res.json()) as { error: string }).error
+
+  it('agent 同创：v2 契约发布 → 提交 → /stats（viewId + ad-hoc）→ asOf/缓存/提交后失效', async () => {
+    let res = await reqA(appA, 'POST', '/defs', { assetId: S_ASSET, body: statsBody })
+    expect(res.status).toBe(201)
+    res = await reqA(await appAs(publishA), 'POST', `/defs/${S_ASSET}/versions/1/publish`)
+    expect(res.status).toBe(200)
+
+    const app = await opsApp()
+    for (const payload of [{ class: 'A', score: 80 }, { class: 'A', score: 90 }, { class: 'B', score: 70 }]) {
+      res = await reqA(app, 'POST', `/defs/${S_ASSET}/submissions`, { payload })
+      expect(res.status).toBe(201)
+    }
+
+    // 预声明视图：按班组合计（数字列返回字符串，用 Number 比较）
+    res = await reqA(app, 'POST', '/stats', { assetId: S_ASSET, viewId: 'by_class' })
+    expect(res.status).toBe(200)
+    type Row = Record<string, string | number>
+    let out = (await res.json()) as {
+      rows: Row[]; asOf: string; truncated: boolean; cached?: boolean; viewId?: string
+    }
+    expect(out.rows.map((r) => `${r.class}=${Number(r.sum_score)}`)).toEqual(['A=170', 'B=70'])
+    expect(typeof out.asOf).toBe('string')
+    expect(Number.isNaN(Date.parse(out.asOf))).toBe(false)
+    expect(out.truncated).toBe(false)
+    expect(out.viewId).toBe('by_class')
+
+    // ad-hoc（console 高级模式）
+    res = await reqA(app, 'POST', '/stats', {
+      assetId: S_ASSET, groupBy: ['class'], measures: [{ field: 'score', agg: 'avg' }],
+    })
+    out = (await res.json()) as typeof out
+    expect(out.rows.map((r) => `${r.class}=${Number(r.avg_score)}`)).toEqual(['A=85', 'B=70'])
+
+    // 15s 缓存：同实例重复调用命中
+    res = await reqA(app, 'POST', '/stats', { assetId: S_ASSET, viewId: 'by_class' })
+    expect(((await res.json()) as { cached?: boolean }).cached).toBe(true)
+
+    // 提交后立即失效（同一 router 实例）：B 变 170 且不再是缓存命中
+    res = await reqA(app, 'POST', `/defs/${S_ASSET}/submissions`, { payload: { class: 'B', score: 100 } })
+    expect(res.status).toBe(201)
+    res = await reqA(app, 'POST', '/stats', { assetId: S_ASSET, viewId: 'by_class' })
+    out = (await res.json()) as typeof out
+    expect(out.cached).toBeUndefined()
+    expect(out.rows.map((r) => `${r.class}=${Number(r.sum_score)}`)).toEqual(['A=170', 'B=170'])
+
+    // 日期窗过滤（提交都在今天 ⇒ 今天命中、更晚的窗口为空）
+    const today = new Date().toISOString().slice(0, 10)
+    res = await reqA(app, 'POST', '/stats', {
+      assetId: S_ASSET, viewId: 'total', filter: { submittedFrom: today, submittedTo: today },
+    })
+    out = (await res.json()) as typeof out
+    expect(Number(out.rows[0].sum_score)).toBe(340)
+    res = await reqA(app, 'POST', '/stats', {
+      assetId: S_ASSET, viewId: 'total', filter: { submittedFrom: '2099-01-01' },
+    })
+    out = (await res.json()) as typeof out
+    // 无分组的聚合恒返回一行（无命中 ⇒ sum 为 null）
+    expect(out.rows).toEqual([{ sum_score: null }])
+  })
+
+  it('负对照：未开 stats / 未声明字段 / string sum / limit 超限 / in 超长 / viewId 不存在', async () => {
+    // 另建一个没开 stats 的表单（publish 不需要 forms:data-plane）
+    let res = await reqA(appA, 'POST', '/defs', {
+      assetId: PLAIN_ASSET, body: { schema: { type: 'object', properties: { name: { type: 'string' } } } },
+    })
+    expect(res.status).toBe(201)
+    res = await reqA(await appAs(publishA), 'POST', `/defs/${PLAIN_ASSET}/versions/1/publish`)
+    expect(res.status).toBe(200)
+
+    const app = await opsApp()
+    const cases: Array<[Record<string, unknown>, number, string]> = [
+      [{ assetId: PLAIN_ASSET, measures: [{ field: 'name', agg: 'count' }] }, 403, 'STATS_NOT_ENABLED'],
+      [{ assetId: S_ASSET, groupBy: ['ghost'], measures: [{ field: 'score', agg: 'sum' }] }, 400, 'STATS_FIELD_NOT_ALLOWED'],
+      [{ assetId: S_ASSET, measures: [{ field: 'class', agg: 'sum' }] }, 400, 'STATS_AGG_NOT_ALLOWED'],
+      [{ assetId: S_ASSET, measures: [{ field: 'score', agg: 'sum' }], limit: 10000 }, 400, 'STATS_LIMIT_TOO_LARGE'],
+      [
+        {
+          assetId: S_ASSET,
+          measures: [{ field: 'score', agg: 'sum' }],
+          filter: { where: [{ field: 'class', op: 'in', value: Array.from({ length: 51 }, (_, i) => `v${i}`) }] },
+        },
+        400,
+        'STATS_IN_TOO_LARGE',
+      ],
+      [{ assetId: S_ASSET, viewId: 'nope' }, 404, 'STATS_VIEW_NOT_FOUND'],
+      [{ assetId: `missing-${SUF}`, measures: [{ field: 'score', agg: 'sum' }] }, 404, 'NO_PUBLISHED_HEAD'],
+    ]
+    for (const [body, status, code] of cases) {
+      const r = await reqA(app, 'POST', '/stats', body)
+      expect(r.status, code).toBe(status)
+      expect(await errOf(r), code).toBe(code)
+    }
+  })
+
+  it('org 钉死：另一租户的 token 查同 assetId → 404（看不到本 org 数据）', async () => {
+    const otherApp = await appAs(makeIdentity({ orgId: `org-forms-stats-other-${SUF}`, scopes: ['forms:view'] }))
+    const res = await reqA(otherApp, 'POST', '/stats', { assetId: S_ASSET, viewId: 'by_class' })
+    expect(res.status).toBe(404)
+    expect(await errOf(res)).toBe('NO_PUBLISHED_HEAD')
+  })
+
+  it('发布门：analytics（含 legacy dataPlane.enabled）需 forms:data-plane；stats 不额外要求', async () => {
+    const platform = () => appAs(makeIdentity({
+      orgId: ORG_A, userId: 'platform-1', scopes: ['forms:publish', 'forms:data-plane'],
+    }))
+
+    // v2 analytics：部门管理员（只有 forms:publish）发布 ⇒ 403
+    const analyticsAsset = `dp-analytics-${SUF}`
+    const analyticsBody = {
+      schema: { type: 'object', properties: { score: { type: 'number' } } },
+      dataPlane: { fields: [{ field: 'score', kind: 'number', agg: ['sum'] }], stats: { enabled: true }, analytics: { enabled: true } },
+    }
+    let res = await reqA(appA, 'POST', '/defs', { assetId: analyticsAsset, body: analyticsBody })
+    expect(res.status).toBe(201)
+    res = await reqA(await appAs(publishA), 'POST', `/defs/${analyticsAsset}/versions/1/publish`)
+    expect(res.status).toBe(403)
+    expect(await errOf(res)).toBe('DATA_PLANE_APPROVAL_REQUIRED')
+    res = await reqA(await platform(), 'POST', `/defs/${analyticsAsset}/versions/1/publish`)
+    expect(res.status).toBe(200)
+
+    // legacy dataPlane.enabled=true 按 analytics 读取（兼容）：同样需要平台审批
+    const legacyAsset = `dp-legacy-${SUF}`
+    res = await reqA(appA, 'POST', '/defs', {
+      assetId: legacyAsset,
+      body: { schema: { type: 'object', properties: { score: { type: 'number' } } }, dataPlane: { enabled: true } },
+    })
+    expect(res.status).toBe(201)
+    res = await reqA(await appAs(publishA), 'POST', `/defs/${legacyAsset}/versions/1/publish`)
+    expect(res.status).toBe(403)
+    res = await reqA(await platform(), 'POST', `/defs/${legacyAsset}/versions/1/publish`)
+    expect(res.status).toBe(200)
+  })
+
+  it('发布门拒绝非法统计视图（字段未声明 / key 重复）', async () => {
+    const badAsset = `dp-badview-${SUF}`
+    const body = {
+      schema: { type: 'object', properties: { class: { type: 'string', enum: ['A'] }, score: { type: 'number' } } },
+      dataPlane: {
+        fields: [
+          { field: 'class', kind: 'enum', agg: ['count'], groupable: true },
+          { field: 'score', kind: 'number', agg: ['sum'] },
+        ],
+        stats: {
+          enabled: true,
+          views: [
+            { key: 'v1', label: '坏视图', groupBy: ['ghost'], measures: [{ field: 'score', agg: 'sum' }] },
+            { key: 'v1', label: '重复 key', measures: [{ field: 'score', agg: 'sum' }] },
+          ],
+        },
+      },
+    }
+    let res = await reqA(appA, 'POST', '/defs', { assetId: badAsset, body })
+    expect(res.status).toBe(201)
+    res = await reqA(await appAs(publishA), 'POST', `/defs/${badAsset}/versions/1/publish`)
+    expect(res.status).toBe(400)
+    expect(await errOf(res)).toBe('STATS_FIELD_NOT_ALLOWED')
+  })
+})
+
 })
 
 // ════════════════════════════════════════════════════════════════════════════
@@ -1132,4 +1329,5 @@ describePg('forms 收集轮次（#2707）', () => {
     const other = await req(appFor(makeIdentity({ orgId: `org-forms-rounds-other-${SUF}`, scopes: ['forms:view'] })), 'GET', '/rounds')
     expect(((await other.json()) as { rounds: unknown[] }).rounds).toEqual([])
   })
+
 })

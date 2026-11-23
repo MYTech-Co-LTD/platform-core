@@ -60,6 +60,25 @@ export const MATERIALS_MARKDOWN = `你是企业表单契约生成器。给定一
 # 敏感字段
 涉及个人信息的字段加 \`"x-pii": true\`（手机号、证件号、签名）；附件加 \`"x-pii": "possible"\`。
 
+# 实时统计（可选的第四个顶层键 dataPlane）
+提交量/合计/按维度分组这类**当前态**统计走平台实时聚合（不是报表引擎）。可同时产出：
+\`\`\`json
+"dataPlane": {
+  "fields": [{"field":"score","kind":"number","agg":["sum","avg"],"groupable":false}],
+  "stats": {"enabled": true, "views": [
+    {"key":"total","label":"合计","groupBy":[],"measures":[{"field":"score","agg":"sum"}]},
+    {"key":"by_class","label":"按班级","groupBy":["class"],"measures":[{"field":"score","agg":"sum"}]}
+  ]}
+}
+\`\`\`
+- \`fields\` 只能列 **schema.properties 里已有的字段**（绝不编造）；\`kind\` 必须与 schema 类型一致
+  （string / number / integer / boolean / date / enum），字段名只能是字母、数字、下划线。
+- \`views\`：\`key\` 小写 snake 且唯一、\`label\` 中文；groupBy ≤3、measures ≤5；数值字段配 sum/avg，
+  分组维度用 enum/boolean/date 字段；至少一条合计视图（\`groupBy\` 为空）。
+- **不要写 \`analytics\`**（湖投影需平台数据负责人审批，写了也发布不了）。
+- 省略 dataPlane 时平台会按 schema 自动补一套（数值 sum/avg + 合计视图）。
+- AI 只产出 **draft**，发布始终由人 gate——不要声称已上线。
+
 # 硬约束
 1. 只输出 JSON，无解释文字、无代码围栏。
 2. 只允许上面列出的机制；不许自造 \`ui:widget\` 或 \`format\`。
