@@ -1692,6 +1692,10 @@ metrics:
 
   # ── 目标件（件②「计划 vs 实际」，#2708 / 计划 2026-11-23-goal-platform-a-b-c C1）─────────────
   # 每 goal×metric 两条：达成率（actual / target）+ 时间进度（已过日历日 / 当月总天数）。
+  # ⚠️ 指标名刻意用 `_rate` / `_pace` 而不是 `_achievement_rate` / `_progress_rate`：对账 test 名
+  #    由指标名机械派生（`audit_<名 ':'→'__'>`，规则 ⑦），而 Postgres 标识符硬限 63 字符；
+  #    `..._outbound_achievement_rate` 会得到 64 字符的测试名 ⇒ dbt 建 relation 直接报错（#2750 真机）。
+  #    改这四条名字前先算一下派生文件名（≤63）。
   # 指标名源段 = **lemeng**（不是 forms）：实际值来自乐檬 marts（源裁剪按它判），且对账 test 的
   # 落点按源段分目录（dbt/tests/lemeng/）——落 forms 域的对账机器上永远不跑（forms 域不在山海面）。
   # 关系由 scripts/gen-goal-achievement.mjs 从 dbt/semantics/goals.yml **生成**（生成物 == committed，
@@ -1704,7 +1708,7 @@ metrics:
   # ⚠️ grain 含 system_book：目标定义钉死账套（两本账套门店号有重叠，跨账套汇总会多算）；
   # ⚠️ source=lemeng：实际值侧是乐檬 marts（fct_retail_sale / fct_branch_indicator），目标值来自
   #    forms 提交；源裁剪按「该租户接没接乐檬」判——目标件只有与实际值同面才有意义（山海数据面）。
-  - name: 'lemeng:goal:monthly_store_sale_sale_achievement_rate'
+  - name: 'lemeng:goal:monthly_store_sale_sale_rate'
     label: 门店月度销售达成率
     unit: '%'
     definition: >-
@@ -1722,7 +1726,7 @@ metrics:
     source: lemeng
     freshness_sla_days: 2
 
-  - name: 'lemeng:goal:monthly_store_sale_sale_progress_rate'
+  - name: 'lemeng:goal:monthly_store_sale_sale_pace'
     label: 门店月度销售目标时间进度
     unit: '%'
     definition: >-
@@ -1738,7 +1742,7 @@ metrics:
     source: lemeng
     freshness_sla_days: 2
 
-  - name: 'lemeng:goal:monthly_store_sale_outbound_achievement_rate'
+  - name: 'lemeng:goal:monthly_store_sale_outbound_rate'
     label: 门店月度配送目标达成率
     unit: '%'
     definition: >-
@@ -1756,7 +1760,7 @@ metrics:
     source: lemeng
     freshness_sla_days: 2
 
-  - name: 'lemeng:goal:monthly_store_sale_outbound_progress_rate'
+  - name: 'lemeng:goal:monthly_store_sale_outbound_pace'
     label: 门店月度配送目标时间进度
     unit: '%'
     definition: >-

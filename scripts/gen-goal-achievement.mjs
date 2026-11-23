@@ -196,11 +196,13 @@ export function martRelation(goal) {
 
 /**
  * 每 goal×metric 的两条 L1 指标名（`<metric_source>:goal:<goalSlug>_<metric>_<kind>`）。
+ * kind 用短后缀 `rate`（达成率）/ `pace`（时间进度）：对账 test 名由指标名机械派生且有 63 字符硬限
+ * （#2750 真机：`..._outbound_achievement_rate` 派生 64 字符 ⇒ dbt 建 relation 报错）。
  * 指标名三段小写蛇形（check-data-models 规则 ⑥）；源段由 goals.yml 的 `metric_source` 给（缺省
  * `lemeng`——实际值来自乐檬 marts，且对账 test 的落点按源段分目录，见 goals.yml 字段约定）。
  * @param {GoalSpec} goal
  * @param {string} metric
- * @param {'achievement_rate' | 'progress_rate'} kind
+ * @param {'rate' | 'pace'} kind
  */
 export function goalMetricName(goal, metric, kind) {
   return `${goal.metricSource}:goal:${goal.slug}_${metric}_${kind}`
@@ -466,8 +468,8 @@ export function assertGoalMetricsDeclared(goal, l1) {
   /** @type {string[]} */
   const problems = []
   for (const metric of Object.keys(goal.actuals)) {
-    const achievement = goalMetricName(goal, metric, 'achievement_rate')
-    const progress = goalMetricName(goal, metric, 'progress_rate')
+    const achievement = goalMetricName(goal, metric, 'rate')
+    const progress = goalMetricName(goal, metric, 'pace')
     const a = l1.get(achievement)
     if (a === undefined) problems.push(`缺 ${achievement}`)
     else {

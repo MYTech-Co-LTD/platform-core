@@ -51,7 +51,7 @@ const L1_YAML = `metrics:
     source: lemeng
     freshness_sla_days: 1
     definition: d
-  - name: 'lemeng:goal:monthly_store_sale_sale_achievement_rate'
+  - name: 'lemeng:goal:monthly_store_sale_sale_rate'
     ratio:
       numerator: 'sum(mart_goal_achievement__monthly_store_sale.actual_sale)'
       denominator: 'sum(mart_goal_achievement__monthly_store_sale.target_sale)'
@@ -62,7 +62,7 @@ const L1_YAML = `metrics:
     freshness_sla_days: 2
     label: l
     definition: d
-  - name: 'lemeng:goal:monthly_store_sale_sale_progress_rate'
+  - name: 'lemeng:goal:monthly_store_sale_sale_pace'
     ratio:
       numerator: 'sum(mart_goal_achievement__monthly_store_sale.days_elapsed)'
       denominator: 'sum(mart_goal_achievement__monthly_store_sale.total_days)'
@@ -242,14 +242,14 @@ describe('assertGoalMetricsDeclared（生成的列 ↔ 手写指标的咬合）'
     const { goal, l1 } = setup()
     expect(() => assertGoalMetricsDeclared(goal, l1)).not.toThrow()
   })
-  it('缺一条 ⇒ 点名（指标名规则 <源>:<域>:<slug>_<metric>_<kind>）', () => {
+  it('缺一条 ⇒ 点名（指标名规则 <源>:<域>:<slug>_<metric>_<kind>；kind 用短后缀 rate/pace）', () => {
     const { goal, l1 } = setup()
-    l1.delete(goalMetricName(goal, 'sale', 'progress_rate'))
-    expect(() => assertGoalMetricsDeclared(goal, l1)).toThrow(/lemeng:goal:monthly_store_sale_sale_progress_rate/)
+    l1.delete(goalMetricName(goal, 'sale', 'pace'))
+    expect(() => assertGoalMetricsDeclared(goal, l1)).toThrow(/lemeng:goal:monthly_store_sale_sale_pace/)
   })
   it('ratio 引用了错的列 ⇒ 抛', () => {
     const { goal, l1 } = setup()
-    l1.set(goalMetricName(goal, 'sale', 'achievement_rate'), {
+    l1.set(goalMetricName(goal, 'sale', 'rate'), {
       ratio: { numerator: 'sum(x.actual_nope)', denominator: 'sum(x.target_nope)' },
     })
     expect(() => assertGoalMetricsDeclared(goal, l1)).toThrow(/actual_sale \/ target_sale/)

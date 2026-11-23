@@ -1,6 +1,6 @@
 {{ config(tags=['audit'], store_failures=true) }}
--- audit_lemeng__goal__monthly_store_sale_sale_progress_rate.sql — 指标
--- `lemeng:goal:monthly_store_sale_sale_progress_rate` 的对账（件② #2708）。
+-- audit_lemeng__goal__monthly_store_sale_sale_pace.sql — 指标
+-- `lemeng:goal:monthly_store_sale_sale_pace` 的对账（件② #2708）。
 --
 -- 时间进度没有「外部真值关系」可复算（它只由日历决定）⇒ 本审计断言的是**不变量**，
 -- 而不是像达成率那样重打湖与 fct 求合计：
@@ -13,7 +13,7 @@
 with closed as (
     select *
     from {{ ref('mart_goal_achievement__monthly_store_sale') }}
-    where period < to_char({{ shanghai_today() }}, 'YYYY-MM')
+    where period < {{ compile_time_month() }}
 )
 select
     period,
@@ -22,7 +22,7 @@ select
     days_elapsed,
     total_days,
     data_status,
-    '时间进度不变量不成立（lemeng:goal:monthly_store_sale_sale_progress_rate，#2708）' as note
+    '时间进度不变量不成立（lemeng:goal:monthly_store_sale_sale_pace，#2708）' as note
 from closed
 where progress_rate is distinct from 1
    or days_elapsed <> total_days

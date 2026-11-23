@@ -1,9 +1,9 @@
 {{ config(tags=['audit'], store_failures=true) }}
--- audit_lemeng__goal__monthly_store_sale_outbound_achievement_rate.sql — 指标
--- `lemeng:goal:monthly_store_sale_outbound_achievement_rate` 的**独立复算**（对账，件② #2708）。
+-- audit_lemeng__goal__monthly_store_sale_outbound_rate.sql — 指标
+-- `lemeng:goal:monthly_store_sale_outbound_rate` 的**独立复算**（对账，件② #2708）。
 --
 -- 口径与边界（封版月、T-3 窗口、空集合法）**逐字同** sale 侧那条：
---   dbt/tests/lemeng/audit_lemeng__goal__monthly_store_sale_sale_achievement_rate.sql 头注。
+--   dbt/tests/lemeng/audit_lemeng__goal__monthly_store_sale_sale_rate.sql 头注。
 -- 差异只有两处：目标字段 = `target_outbound`；实际值 = `fct_branch_indicator.transfer_money`
 -- （D10 门店配送金额 = 出库金额的门店级可加腿；`lemeng:outbound:amount` 无门店维，按店 join 不成立）。
 with recheck_goal as (
@@ -18,28 +18,37 @@ with recheck_goal as (
     ) r
     where r['form_def_id'] = 'goal-monthly-store'
       and r['bizday']::date < {{ audit_until_date() }}
-      and json_extract_string(r['payload'], '$.period') < to_char({{ shanghai_today() }}, 'YYYY-MM')
+      and json_extract_string(r['payload'], '$.period') < {{ compile_time_month() }}
 ),
 goal_latest as (
-    select distinct on (period, branch_num)
-        period, branch_num, target_outbound
-    from recheck_goal
-    where period ~ '^[0-9]{4}-[0-9]{2}$'
-      and branch_num is not null
-      and branch_num <> ''
-    order by period, branch_num, submitted_at desc nulls last, submission_id desc
+    -- 取每 (period, 门店) 最新一次提交。**不能写 DISTINCT ON**：本文件整条路由进 DuckDB
+    -- （含 read_parquet），DuckDB 没有 DISTINCT ON（#2750 真机）；row_number 两引擎都支持。
+    select period, branch_num, target_outbound
+    from (
+        select
+            period, branch_num, target_outbound,
+            row_number() over (
+                partition by period, branch_num
+                order by submitted_at desc nulls last, submission_id desc
+            ) as rn
+        from recheck_goal
+        where regexp_matches(period, '^[0-9]{4}-[0-9]{2}$')
+          and branch_num is not null
+          and branch_num <> ''
+    ) t
+    where rn = 1
 ),
 recheck_actual as (
     select
-        to_char(date_trunc('month', f.bizday), 'YYYY-MM') as period,
+        strftime(date_trunc('month', f.bizday), '%Y-%m') as period,
         f.branch_num::text as branch_num,
         sum(f.transfer_money)::numeric(20,4) as actual_outbound
     from {{ ref('fct_branch_indicator') }} f
     where f.system_book = '3120'
       and f.bizday >= (select min((period || '-01')::date) from goal_latest)
-      and f.bizday <= (select max(((period || '-01')::date + interval '1 month - 1 day')::date) from goal_latest)
+      and f.bizday <= (select max(((period || '-01')::date + interval '1 month' - interval '1 day')::date) from goal_latest)
       and f.bizday < {{ audit_until_date() }}
-      and to_char(date_trunc('month', f.bizday), 'YYYY-MM') < to_char({{ shanghai_today() }}, 'YYYY-MM')
+      and strftime(date_trunc('month', f.bizday), '%Y-%m') < {{ compile_time_month() }}
     group by 1, 2
 ),
 recheck as (
@@ -55,14 +64,14 @@ materialized as (
         sum(target_outbound)::numeric(20,4) as target_v
     from {{ ref('mart_goal_achievement__monthly_store_sale') }}
     where collected_bizday < {{ audit_until_date() }}
-      and period < to_char({{ shanghai_today() }}, 'YYYY-MM')
+      and period < {{ compile_time_month() }}
 )
 select
     a.actual_v as recheck_actual,
     b.actual_v as materialized_actual,
     a.target_v as recheck_target,
     b.target_v as materialized_target,
-    '复算与物化不一致（lemeng:goal:monthly_store_sale_outbound_achievement_rate，#2708）' as note
+    '复算与物化不一致（lemeng:goal:monthly_store_sale_outbound_rate，#2708）' as note
 from recheck a
 cross join materialized b
 where abs(coalesce(a.actual_v, 0) - coalesce(b.actual_v, 0)) > 0.01
