@@ -232,22 +232,29 @@ const PREVIEW_HISTORY_SET = `preview_history = (
  * 写落地前」的残余窗口。rowCount=0 ⇒ 单已终态（adopted/rejected/superseded/withdrawn），
  * 试算结果作废即可——warn 留痕不抛（这不是错误路径，是竞态输家的正常下场）。
  */
-export async function applyPreview(pool: Pool, id: number, outcome: PreviewOutcome): Promise<void> {
+export async function applyPreview(
+  pool: Pool,
+  change: Pick<MetricChangeRow, 'id' | 'org'>,
+  outcome: PreviewOutcome,
+): Promise<void> {
+  // org 谓词是**纵深防御**（B14，数据宪法 §8）：id 是 bigserial 全局唯一，跨租户撞 id 本不可能；
+  // 但「租户表的每条写都带 org」是一道纪律，不靠「id 唯一所以安全」的推理维持——推理会随主键
+  // 语义变更而失效，纪律不会。org 取自待写行本身（调用方传入的 change 即该行）。
   const r = outcome.ok
     ? await pool.query(
         `update data.metric_change set status = 'preview_ready', preview = $2::jsonb, ${PREVIEW_HISTORY_SET}
-          where id = $1 and status = any($3)`,
-        [id, JSON.stringify(outcome.snapshot), PENDING_STATUSES],
+          where id = $1 and status = any($3) and org = $4`,
+        [change.id, JSON.stringify(outcome.snapshot), PENDING_STATUSES, change.org],
       )
     : await pool.query(
         `update data.metric_change set status = 'preview_failed', preview = $2::jsonb, ${PREVIEW_HISTORY_SET}
-          where id = $1 and status = any($3)`,
-        [id, JSON.stringify({
+          where id = $1 and status = any($3) and org = $4`,
+        [change.id, JSON.stringify({
           error: outcome.error, ranAt: new Date().toISOString(),
           ...(outcome.issues === undefined ? {} : { issues: outcome.issues }),
-        }), PENDING_STATUSES],
+        }), PENDING_STATUSES, change.org],
       )
   if ((r.rowCount ?? 0) === 0) {
-    console.warn(`[data] applyPreview skipped: change ${id} 已终态，试算结果作废（重跑落后于裁决）`)
+    console.warn(`[data] applyPreview skipped: change ${change.id} 已终态，试算结果作废（重跑落后于裁决）`)
   }
 }

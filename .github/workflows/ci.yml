@@ -12,10 +12,10 @@
 #            不给 DATABASE_URL 时它们是**静默跳过**的——「全绿」会绿在一个休眠基线上：
 #            会话/登录/登出/租户解析/seed/迁移/装载器/企微登录/公众号访客/存储注入/数据问数
 #            这半边一条都不执行。
-#   gates —— 门禁：typecheck（全 workspace 包 + scripts/）+ 九个守卫脚本对真实仓跑。
+#   gates —— 门禁：typecheck（全 workspace 包 + scripts/）+ 十个守卫脚本对真实仓跑。
 #            typecheck 与守卫单测（跑在 unit 的 test:guard 里）是两件事：单测拿 fixture 验
 #            守卫逻辑，本 job 拿真仓验守卫结论，且 typecheck 只在 CI 真跑才有意义。
-#            九个守卫里 check-tenant-isolation 与 check-data-dependencies 要真库（一次性库真库对账，
+#            十个守卫里 check-tenant-isolation 与 check-data-dependencies 要真库（一次性库真库对账，
 #            issue #77 与数据宪法 §9-2），故本 job 也挂了
 #            postgres service——为什么不是挂在 unit / smoke，见那条 step 的注释；
 #            只有 check-duckle-catalog 要 Python（真跑 duckle 引擎），见那条 step 的注释。
@@ -302,6 +302,14 @@ jobs:
       # （staging 归 B10），跳过数印在 OK 行不静默。
       # 与 check-tenant-isolation 同族（tsx + 一次性库 + 生产迁移执行器），共用本 job 的 postgres service。
       - run: pnpm exec tsx scripts/check-data-dependencies.mjs
+      # 租户隔离第二道防线（B14；数据宪法 2026-11-23 §8「隔离纵深」）：纯静态——对**租户表**
+      # （模块 migrations 里带 org 列的 create table / alter add column；global-table 标记的表除
+      # 外）的 select/update/delete，SQL 字面量必须带 org。要么加 `org = $n`，要么写
+      # `-- org-exempt: <理由>`（跨租户运维语句：保留策略清理、健康统计——有意的跨租户要可见）。
+      # 边界：`where ${…}` 整体插值放行（静态不可判，计数印 OK 行）；插值在 SET 片段而 WHERE
+      # 静态的**不放行**（否则 `update t set x=${片段} where id=$1` 整条漏网）。
+      # 第一道（每表 org 列）由 check-tenant-isolation 管；本步补代码面那半。
+      - run: pnpm exec tsx scripts/check-org-scope.mjs
       # 文档引用门禁（issue #771）。判据**只有一条**：**变更中的**文档里，能唯一解析到仓内文件的
       # `file:line` 引用，行号必须在范围内。
       #

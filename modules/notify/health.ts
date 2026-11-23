@@ -43,7 +43,7 @@ export function healthVerdict(h: Health): 0 | 1 {
 }
 
 export async function checkHealth(pool: Pool): Promise<Health> {
-  const { rows } = await pool.query(`
+  const { rows } = await pool.query(`-- org-exempt: 健康统计（运维视角）：跨租户聚合投递/事件/通道健康，通知 worker 是平台级进程
     select
       (select count(*)::int from notify.delivery
         where status='dead' and created_at > now()-(${DEAD_WINDOW_DAYS} || ' days')::interval) as dead,

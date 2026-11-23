@@ -174,14 +174,14 @@ describePg('adoptChange / rejectChange', () => {
       window: { from: '2026-11-04', to: '2026-11-11' }, value: v, rows: v, baseline: null,
       sample: [], compiledHash: 'b'.repeat(64), ranAt: `2026-11-12T01:00:0${v}Z`, durationMs: v,
     })
-    await applyPreview(pool, s.change.id, { ok: true, snapshot: snapOf(1) })
+    await applyPreview(pool, s.change, { ok: true, snapshot: snapOf(1) })
     const out = await adoptChange(writeDeps(pool), ORG, s.change.id)
     expect(out.ok).toBe(true)
     const snap1 = await pool.query('select adopted_snapshot, status from data.metric_change where id = $1', [s.change.id])
     expect(snap1.rows[0]?.status).toBe('adopted')
     expect(snap1.rows[0]?.adopted_snapshot).toMatchObject({ value: 1 }) // 采纳时刻的 preview
     // 采纳后的迟到重跑：UPDATE 钉 PENDING ⇒ 整行不动，快照不被新值污染
-    await applyPreview(pool, s.change.id, { ok: true, snapshot: snapOf(2) })
+    await applyPreview(pool, s.change, { ok: true, snapshot: snapOf(2) })
     const snap2 = await pool.query('select adopted_snapshot, status, preview, preview_history from data.metric_change where id = $1', [s.change.id])
     expect(snap2.rows[0]?.adopted_snapshot).toMatchObject({ value: 1 })
     expect(snap2.rows[0]?.preview).toMatchObject({ value: 1 })

@@ -99,7 +99,8 @@ export async function pruneNarratives(
 ): Promise<number> {
   const days = Math.max(1, Math.floor(retentionDays))
   const r = await pool.query(
-    `delete from data.report_narratives where created_at < now() - ($1 * interval '1 day')`,
+    `-- org-exempt: 保留策略（运维 job）：按时间清全租户过期叙事缓存
+     delete from data.report_narratives where created_at < now() - ($1 * interval '1 day')`,
     [days],
   )
   return r.rowCount ?? 0
