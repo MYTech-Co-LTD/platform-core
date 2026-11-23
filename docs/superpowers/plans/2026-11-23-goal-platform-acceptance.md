@@ -92,7 +92,26 @@
    那边活跃）——但那边没有乐檬 marts，actuals join 不成立 ⇒ 需要在两个数据面之间做选择（或把
    forms 采集迁到山海）。这是 spec §2 部署地理决策的返工点，需人拍板。
 
-## 5 快速复跑命令（部署后）
+## 5 告警示例（运维配置，不改代码；C2 交付面）
+
+达成率告警挂**既有 monitor**（不新增告警面，spec §6 开放项 4）：目标件的达成率是普通 L1 指标，
+按 `metric_id = lemeng:goal:monthly_store_sale_sale_achievement_rate` 建阈值规则，示例形状
+（阈值 0.8、连续 2 天、只发企微日报收件人组）：
+
+```yaml
+# 数据面 monitor 规则（DB 配置，非仓内代码；字段以 data-monitor skill 的判据表为准）
+metric_id: lemeng:goal:monthly_store_sale_sale_achievement_rate
+op: lt
+threshold: 0.8
+consecutive: 2
+channel: wecom_default
+note: 目标落后提醒（时间进度过半仍未达 80%）
+```
+
+⚠️ **不写进 `dbt/semantics`/仓内标准**：阈值是运营参数（客户/月度可调），仓内只登记「怎么挂」，
+不把某个具体阈值升成标准（无案例不立标准）。
+
+## 6 快速复跑命令（部署后）
 
 ```sh
 # 数据单元容器内（部署产物）
