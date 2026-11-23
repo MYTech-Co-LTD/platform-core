@@ -8,6 +8,7 @@
 import { z } from 'zod'
 import { pickPrimaryStoreCode } from '../domain/registration'
 import { parseIdParam } from './context'
+import { writeAudit } from '../domain/audit'
 import type { ModuleHono, RouteCtx } from './context'
 
 const DecideBody = z.object({ decision: z.enum(['approve', 'reject']) })
@@ -137,6 +138,11 @@ export function registerRegistrationManage(r: ModuleHono, ctx: RouteCtx): void {
         }
       }
 
+      // 同事务审计：决定的是「申请单」，approve 时连带写了档案——detail 记结果
+      await writeAudit(client, {
+        org, actor: c.get('identity').userId, action: 'approval.decide', target: String(id),
+        detail: { decision, status: decision === 'approve' ? 'approved' : 'rejected' },
+      })
       await client.query('commit')
       return c.json({ ok: true, id, decision })
     } catch (err) {

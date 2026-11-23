@@ -224,6 +224,18 @@ describePg('工单域', () => {
       refund_ratio: '0.1000',
     })
     expect(row.rows[0].processed_at).not.toBeNull()
+
+    // 审计（评审 P0-2）：写钱必须留痕——action/target/金额变迁/操作人
+    const audit = await pool.query(
+      `select actor, action, target, detail from aftersales.audit
+        where org = $1 and action = 'ticket.process' and target = $2`,
+      [ORG, String(id)],
+    )
+    expect(audit.rows).toHaveLength(1)
+    expect(audit.rows[0]).toMatchObject({ actor: manage.userId, action: 'ticket.process' })
+    expect(audit.rows[0].detail).toMatchObject({
+      fromStatus: 'pending', toStatus: 'completed', amountType: 'ratio', amountMinor: 15000,
+    })
   })
 
   it('reject 处理 ⇒ cancelled、金额强制 0', async () => {

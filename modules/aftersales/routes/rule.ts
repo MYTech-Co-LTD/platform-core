@@ -2,6 +2,7 @@ import { z } from 'zod'
 import type { Paged, RuleItem } from '../api-types'
 import { AmountValidationError, normalizeRatio, toRatioOrNull } from '../domain/ticket'
 import { DEFAULT_PAGE_SIZE, MAX_PAGE_SIZE, parseIdParam, parsePageParam } from './context'
+import { writeAudit } from '../domain/audit'
 import type { ModuleHono, RouteCtx } from './context'
 
 const RuleBody = z.object({
@@ -69,7 +70,12 @@ export function registerRule(r: ModuleHono, ctx: RouteCtx): void {
        values ($1, $2, $3, $4) returning id`,
       [org, name, refundRatio, remark ?? ''],
     )
-    return c.json({ id: Number(res.rows[0].id) }, 201)
+    const id = Number(res.rows[0].id)
+    await writeAudit(ctx.pool, {
+      org, actor: c.get('identity').userId, action: 'rule.create', target: String(id),
+      detail: { name, refundRatio },
+    })
+    return c.json({ id }, 201)
   })
 
   r.put('/rules/:id', async (c) => {
@@ -98,6 +104,10 @@ export function registerRule(r: ModuleHono, ctx: RouteCtx): void {
     )
     // 跨租户改别人的规则同样是 rowCount 0 ⇒ 404：与"不存在"同形，不泄露存在性
     if (res.rowCount === 0) return c.json({ error: 'NOT_FOUND' }, 404)
+    await writeAudit(ctx.pool, {
+      org, actor: c.get('identity').userId, action: 'rule.update', target: String(id),
+      detail: { name, refundRatio },
+    })
     return c.json({ ok: true, id })
   })
 
@@ -108,8 +118,15 @@ export function registerRule(r: ModuleHono, ctx: RouteCtx): void {
 
     // 硬删是刻意的：这是配置表不是流水表，源侧也没有软删语义（spec §3.3 实证表：
     // "仅 group_buying_batch 有 is_deleted"）。历史工单不受影响——它落的是金额快照。
+    // 删前先读出内容记审计（硬删后无法回读，被删了什么必须留痕）。
+    const before = await ctx.pool.query<{ name: string; refund_ratio: string | null }>(
+      'select name, refund_ratio from aftersales.ticket_rule where org = $1 and id = $2', [org, id])
     const res = await ctx.pool.query('delete from aftersales.ticket_rule where org = $1 and id = $2', [org, id])
     if (res.rowCount === 0) return c.json({ error: 'NOT_FOUND' }, 404)
+    await writeAudit(ctx.pool, {
+      org, actor: c.get('identity').userId, action: 'rule.delete', target: String(id),
+      detail: { name: before.rows[0]?.name ?? null, refundRatio: before.rows[0]?.refund_ratio ?? null },
+    })
     return c.json({ ok: true, id })
   })
 }
