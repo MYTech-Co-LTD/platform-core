@@ -74,7 +74,7 @@
 | b. 报表 spec 加「目标数据集 join」 | ❌ 报表引擎开始懂业务 join，组件语义爆炸；且 declaration-compiler 只许单关系 |
 | **c. 目标 = 一张 dbt 生成关系 + L1 ratio 指标（推荐）** | ✅ 达成率/进度全是普通指标，报表 10 组件零改动渲染；「目标」对报表不可见 |
 
-**设计**：
+**设计**（2026-11-23 实测后定为**两段式**，见 §9 探针）：
 - **目标定义**（新的一等声明，git 受控 YAML，照 `l1_metrics.yml` 模式进 `dbt/semantics/goals.yml`）：
   ```yaml
   - goal: shanhai:monthly_store_sale
@@ -89,9 +89,10 @@
       outbound_amount: lemeng:store:outbound_amount
     scope: { assessed_war_zone_only: true }
   ```
-- **生成的达成率关系** `dbt/models/goals/mart_goal_achievement__<goal>.sql`：
-  grain = `goal_period × dimension`；列 = `target_*`（收集值汇兑）、`actual_*`（actual L1 的 select_sql 编译产物 join）、`achievement_rate`、`progress_rate`（北京时钟日界）、`data_status`（S8）。口径 SQL 来自 YAML 的 actuals 映射——**SQL 在配置，生成器只组装**（照 data-analysis achievement-config 的已被验证的模式，但落在 dbt 正统里）。
-- **L1 声明**：每 goal×metric 两条指标（达成率/时间进度），`ratio` 或 expression 形态；词表可引用 ⇒ 问数/报表/推送全链免费。
+- **生成的达成率关系 = 两段**（实测约束：**DuckDB 语句里引用不了 PG 关系**——`join data.metrics` 报 `relation does not exist`；pg_duckdb 的 read_parquet 取列必须 `r['colname']` 形态）：
+  - 段① **DuckDB 摊平模型** `stg_goal_values__<goal>`：`read_parquet` + `json_extract_string(r['payload'], '$.字段')` + 显式类型 cast（照 stg_forms_submission 同款姿势）——只产**类型化目标值行**，不 join 任何 PG 关系；
+  - 段② **PG 原生达成模型** `mart_goal_achievement__<goal>`：纯 PG SQL，join 段①的表 + actuals 引用的既有 marts 关系 + 日期 spine（`progress_rate` 北京时钟日界）+ `data_status`（biz_date 覆盖）。目标量级（百行/月 × 门店）Postgres 足够。
+- **L1 声明**：每 goal×metric 两条指标（达成率/时间进度），引用段②关系；词表可引用 ⇒ 问数/报表/推送全链免费。
 - **报表渲染零改动**：bullet `target: 1` + `colorSemantics:'target'`（达成率 vs 100%）、kpi、line、table 按 grain 下钻——每店每行各自的达成率天然由 grain 给出（B 类缺口的「per-row 目标」就此消解）。
 - **多目标并存**：一个 goal 定义一个生成模型；报表按 `goal` 筛选。v1 不做跨 goal 聚合。
 
@@ -162,10 +163,12 @@
 |---|---|---|
 | **A 件① 字段级通路** | opt-in 声明 + 契约生成器（含 `--check`）+ 生成摊平模型 + 词表首条 forms 指标（非目标场景：如巡检完成数） | 新表单 opt-in 后零改动出指标；`--check` 门禁 CI 绿；既有 pipeline/stg 不回归 |
 | **B 件③ 收集轮次** | 轮次/目标/值集轮三表 + 事件声明 + 进度/催办 | 开轮→录格子→进度可见→催办送达；`forms.collection.assigned` 真声明 |
-| **C 目标第一刀** | goals.yml 目标定义 + 生成达成关系 + L1 达成率/进度 + 报表模板 + 告警/推送 | 真实录一个月目标 → 看板呈现 → 企微日报；受限用户分母收缩负对照（不可见店不计入） |
+| **C 目标第一刀** | goals.yml 目标定义 + 两段生成关系（§2 D2）+ L1 达成率/进度 + 报表模板 + 告警/推送 | 真实录一个月目标 → 看板呈现 → 企微日报；受限用户分母收缩负对照（不可见店不计入） |
 | **D 第二刀（另立计划）** | 品类维度、总部分解录入 UI、目标审批流、goal_close、v2 外部权威 | 另评审 |
 
 依赖：A/B 可并行；C 依赖 A+B。预计 A≈1.5 周、B≈1 周、C≈1.5–2 周。
+
+> **部署地理（C 期决策，2026-11-23 实测确认）**：mytech 数据面（`platform-core-data` @23a1091e）仓库里只有 forms 管线 + 种子，**乐檬 marts 在山海数据面**（`platform-core-shanhai-data` @8281d598）。第一刀的山海业务目标：收集走山海 org 的 forms（应用单元）→ 目标湖/摊平/达成关系都落在**山海数据面**（与 actuals 同面，join 才成立）。mytech 侧的 forms 管线/摊平通路本身与面无关（件① 是通用件，两面共用同一套生成器与模型模板）。
 
 ---
 
@@ -193,3 +196,19 @@
 - 不动 `stg_forms_submission` 既有定位与 varchar 决策。
 - 不在本波实现外部权威适配器 v2（字典快照先行）。
 - 报表 spec 的 target 语义不改（保持常量 + 未来覆盖源路线，本文不依赖它）。
+
+---
+
+## 9. 可行性验证记录（2026-11-23，mytech 数据面真仓探针，均已清理）
+
+| # | 探针 | 结果 |
+|---|---|---|
+| 1 | `payload::jsonb`（PG 端解析真实湖行） | ✅ `{"device_sn":"M14-ACC-001","temperature":23.5}` |
+| 2 | **DuckDB 构建期提取**（`read_parquet` + `json_extract_string(r['payload'],'$.字段')` + 类型 cast → CTAS） | ✅ 真湖 1 行：`M14-ACC-001 / 23.50`——件① 摊平模型的准确机制 |
+| 3 | DuckDB 语句 join PG 关系（`data.metrics`） | ❌ `relation does not exist` —— **DuckDB 语句引用不了 PG 关系** ⇒ D2 改两段式 |
+| 4 | pg_duckdb `duckdb.query()` 包裹 | ⚠️ 计划缓存行为怪异（第二次调用回放第一次的文本）；**弃用**，探针统一走 CTAS |
+| 5 | PG 原生 join（stg_forms_submission × dim_brand） | ✅——段②（达成模型 join marts）无障碍 |
+
+**判定：可行性成立**，代价是把达成关系定为「段① DuckDB 摊平 + 段② PG 原生 join」两段式（比原设计更贴合 dbt stg→mart 分层，且段②是纯 PG SQL、更简单）。
+
+**坑（已记）**：pg_duckdb 取列必须 `r['列名']::type` 点名形态（stg 头注坑 #5 同源）；`json_keys(text)` 在 PG 端不存在（DuckDB 函数，别在 PG 表上用）。
