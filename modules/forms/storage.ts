@@ -390,8 +390,8 @@ export async function submit(
     if (rd.kind === 'targets') {
       const upd = await client.query(
         `update forms.collection_target set status='submitted', submission_id=$3::bigint, updated_at=now()
-          where round_id=$1::bigint and user_name=$2 and status <> 'waived'`,
-        [round.roundId, userId, id],
+          where round_id=$1::bigint and user_name=$2 and org=$4 and status <> 'waived'`,
+        [round.roundId, userId, id, org],
       )
       if ((upd.rowCount ?? 0) === 0) {
         throw new FormsError('ROUND_SUBMITTER_NOT_IN_ROUND', `提交人 ${userId} 不在本轮名单`)
@@ -402,8 +402,8 @@ export async function submit(
       }
       const upd = await client.query(
         `update forms.collection_anchor set status='submitted', submission_id=$3::bigint, updated_at=now()
-          where round_id=$1::bigint and anchor_key=$2 and status <> 'waived'`,
-        [round.roundId, round.anchorKey, id],
+          where round_id=$1::bigint and anchor_key=$2 and org=$4 and status <> 'waived'`,
+        [round.roundId, round.anchorKey, id, org],
       )
       if ((upd.rowCount ?? 0) === 0) {
         throw new FormsError('ROUND_ANCHOR_NOT_FOUND', `格子 ${round.anchorKey} 不在本轮锚快照`)
@@ -1413,6 +1413,7 @@ export interface OverdueRound {
 export async function listOverdueRounds(pool: Pool, now: Date): Promise<OverdueRound[]> {
   const { rows } = await pool.query(
     `select ${ROUND_COLS} from forms.collection_round
+      -- org-exempt: 到期对账脚本的全租户入口——逐行按行上的 org 分租户处理，后续查询都显式带该行的 org
       where status = 'open' and ends_at is not null and ends_at < $1
       order by created_at asc`,
     [now],
