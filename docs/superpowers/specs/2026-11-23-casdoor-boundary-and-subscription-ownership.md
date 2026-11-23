@@ -36,10 +36,19 @@
 
 **裁决：不在 Casdoor 创建渠道 provider（含公众号 WeChat Mobile）；渠道 OAuth 继续由宿主自实现。**
 
-理由（三条，与 §2 矩阵同源）：
-1. **多租户 appid**：每租户自己的公众号 appid ⇒ 需 per-org provider，provider 数 = 租户数，运维面膨胀；
-2. **单值列**：Casdoor `User.Wechat` 为单值列，一人多公众号 openid（工作号/生活号、换 appid）装不下；
-3. **绑定是业务工作流**：pending/active/revoked/disputed、审核单关联、异议、审计——Casdoor 无载体。
+理由（五条，与 §2 矩阵同源；1、2 是「入口在公众号」这一真实场景（售后 `/app/aftersales`）的直接结论）：
+1. **静默授权的体验不可替代**：宿主路用 `snsapi_base` 静默拿 openid（「入口即授权」，SPA 只载一次）；
+   Casdoor 的 WeChat Mobile provider 走 `snsapi_userinfo`——**弹授权页**，把无感入口变成有感；
+   要静默就得宿主自实现，那就回到了现状本身。
+2. **两态访客装不下**：售后的核心设计是「中间态访客（openid 先到）→ 绑定后正式态」；
+   Casdoor 登录要么有账号要么失败，没有「先访客后绑定」的中间态。
+3. **多租户 appid**：每租户自己的公众号 appid ⇒ 需 per-org provider，provider 数 = 租户数，运维面膨胀；
+4. **单值列**：Casdoor `User.Wechat` 为单值列，一人多公众号 openid（工作号/生活号、换 appid）装不下；
+5. **绑定是业务工作流**：pending/active/revoked/disputed、审核单关联、异议、审计——Casdoor 无载体；
+   且售后访客是 C 端顾客，不应进 Casdoor 的内部账号模型。
+
+> **案例（2026-11-23）**：售后入口在公众号内 ⇒ 曾被提议「公众号也绑到 Casdoor」。结论是不绑——
+> 「入口在哪」与「认证由谁发起」是两件事：入口在公众号，正是**宿主自实现静默授权**的理由。
 
 **「单向同步 openid 进 Casdoor」不做**：没有 provider 配置时，写进 `user.wechat` 的是一个**无法验证的字符串**
 （Casdoor 不用它登录，外部系统也无法验证租户级 openid）——无语义的同步只会制造第二份真相。
@@ -54,6 +63,8 @@
 
 **Casdoor broker 化触发条件**：第三方系统经 Casdoor SSO 接入，且要求「公众号」是 Casdoor 登录页的入口之一。
 届时前置：per-org provider（appid/secret）、回调域名、Casdoor 侧用户绑定、开放 id ↔ 本地绑定的冲突处理。
+**并存口径**：即使触发，平台的访客入口**仍保持宿主静默路**（理由 1、2 不因触发而消失）；Casdoor provider
+只服务「经 Casdoor 登录其他系统」这一条，两者各服务各的场景。
 在此之前配了也没人用，反而多一份与 `identity_link` 并存的绑定源。
 
 ## 4 订阅归属终裁
