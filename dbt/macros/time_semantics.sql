@@ -24,6 +24,7 @@
   | `shanghai_days_ago(n)` | 上海今天 − n 天 | 审计上界、窗口下界 |
   | `shanghai_hour_now()` | 上海当前小时（0–23） | 闭窗边界 |
   | `compile_time_date(offset)` | **编译期**求值的 `date 'YYYY-MM-DD'`（offset 相对上海今天） | 全史 CTAS 的闭窗谓词（**必须编译期**才能触发 parquet 分区裁剪） |
+  | `compile_time_month(offset_days)` | **编译期**求值的月份字面量 `'YYYY-MM'`（上海时钟） | 走 DuckDB 路由的 SQL 里做「period < 当前月」（DuckDB 无 `to_char`，#2750） |
 #}
 
 {% macro shanghai_today() -%}
@@ -47,6 +48,20 @@ extract(hour from (now() AT TIME ZONE 'Asia/Shanghai'))
 
   `run_started_at` 是 **UTC**；+8h 得沪时钟（跨 CST 零点也正确）。
 #}
+{#-
+  compile_time_month() —— 编译期算好的**月份字符串字面量** `'YYYY-MM'`（上海时钟）。
+
+  为什么单独一个宏（#2750）：对账 SQL 里要做「period < 当前月」的判据，而含 `read_parquet`
+  的语句整条被 pg_duckdb 路由进 **DuckDB**——DuckDB **没有 `to_char`**（求值期 Catalog Error，
+  0 行也一样炸）。故把截止月做成**编译期字面量**，SQL 里只剩字符串比较。
+
+  +8h 的约定与 compile_time_date 同源（run_started_at 是 UTC，+8h 得沪时钟）。
+-#}
+{% macro compile_time_month(offset_days=0) -%}
+{%- set base = (run_started_at + modules.datetime.timedelta(hours=8)).date() + modules.datetime.timedelta(days=offset_days) -%}
+'{{ base.strftime('%Y-%m') }}'
+{%- endmacro %}
+
 {% macro compile_time_date(offset=0) -%}
 {%- set base = (run_started_at + modules.datetime.timedelta(hours=8)).date() -%}
 {%- set d = base + modules.datetime.timedelta(days=offset) -%}
