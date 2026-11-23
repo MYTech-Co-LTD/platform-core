@@ -165,6 +165,11 @@ dataPlane:
     - { field: period, kind: string,  period: month }
   stats:
     enabled: true              # 运营通道：允许 /stats 实时聚合（本租户运营视图，发布者可用）
+    views:                     # 具名统计视图：agent 起草表单时一并产出，人发布 gate
+      - { key: by_class, label: 按班级汇总,
+          groupBy: [class],
+          measures: [{ field: score, agg: sum }, { field: score, agg: avg }] }
+      - { key: total, label: 合计, groupBy: [], measures: [{ field: score, agg: sum }] }
   analytics:
     enabled: false             # 分析通道：允许 opt-in 摊平进湖（全租户分析暴露面，需平台审批）
 ```
@@ -186,6 +191,12 @@ POST /api/modules/forms/stats
 ```
 
 约束：只允许 `dataPlane.fields` 声明的字段与 `agg` 白名单；**不开放任意 SQL/JSON 表达式**；org 只来自 identity；维度基数/行数上限；短 TTL 缓存（5–30s）+ 提交后失效；返回 `asOf`，UI 标注「实时（截至 …）」。
+
+**具名视图 + agent 同创（2026-11-23 追加）**：
+- `dataPlane.stats.views[]` 是**随表单一起发布的统计定义**（key/label/groupBy/measures/可选 filter），校验规则与 `/stats` 入参同一套白名单。
+- **agent 起草表单时一并产出 views**：`generate_form_draft` / `draft_item_template` 的契约里包含 `dataPlane.stats`；生成器在模型未给出时用确定性兜底（数值字段 → sum/avg；枚举/布尔/日期 → groupable；至少一条合计视图），保证「表单 + 统计」同批产出。
+- **发布 gate 不变**：AI 只产 draft，人发布；views 与字段一起过 `compileGate`。`analytics` 仍需 `forms:data-plane` 平台审批。
+- `/stats` 优先接受 `{ assetId, viewId }`（跑预声明视图）；自定义 ad-hoc 查询保留给 console 高级模式。
 
 
 ---

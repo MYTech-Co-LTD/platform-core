@@ -38,11 +38,12 @@
 - Test: `scripts/gen-forms-data-projection.test.mjs`
 
 **Interfaces:**
-- `DataPlaneV2 = { fields?: FieldDecl[]; stats?: { enabled: boolean }; analytics?: { enabled: boolean } }`
+- `DataPlaneV2 = { fields?: FieldDecl[]; stats?: { enabled: boolean; views?: StatsView[] }; analytics?: { enabled: boolean } }`
+- `StatsView = { key: string; label: string; groupBy: string[]; measures: Array<{ field: string; agg: Agg }>; filter?: { submittedFrom?: string; submittedTo?: string; where?: Array<{ field: string; op: string; value: unknown }> } }`
 - `FieldDecl = { field: string; kind: 'string'|'number'|'integer'|'boolean'|'date'|'enum'; agg?: Agg[]; groupable?: boolean }`
 - `analyticsEnabledOf(body): boolean`：`body.dataPlane.analytics.enabled === true || (legacy body.dataPlane.enabled === true)`
 - `statsEnabledOf(body): boolean`：`body.dataPlane.stats.enabled === true`
-- `compileGate` 增：fields 与 schema 一致、agg/groupable 合法；`stats.enabled` 需要至少一个可聚合字段；`analytics.enabled` 只做结构校验（权限在 publish 路由）。
+- `compileGate` 增：fields 与 schema 一致、agg/groupable 合法；`stats.enabled` 需要至少一个可聚合字段；`stats.views[]` 逐条按与 `/stats` 同一套白名单校验（key 唯一、label 非空、groupBy ≤3、measures ≤5、字段/agg 已声明、filter 合法）；`analytics.enabled` 只做结构校验（权限在 publish 路由）。
 - `listDataPlaneForms` 改为按 `analyticsEnabledOf` 过滤；fields 优先取 `dataPlane.fields`，缺省从 schema 派生（Phase A 行为）。
 
 - [ ] **Step 1: 写失败测试**
@@ -150,7 +151,9 @@ git commit -m "feat(forms): dataPlane v2——fields/stats/analytics 与平台�
 
 **Interfaces:**
 - `compileStats(input, decl): { sql: string; params: unknown[] }`（纯函数）
-- `POST /api/modules/forms/stats` body：
+- `POST /api/modules/forms/stats` 两种入参：
+  - **具名视图（agent 同创的主路径）**：`{ "assetId": "score-form", "viewId": "by_class" }`
+  - **自定义（console 高级模式）**：
 ```json
 { "assetId": "score-form", "groupBy": ["class"],
   "measures": [{ "field": "score", "agg": "sum" }],
@@ -251,8 +254,8 @@ git commit -m "feat(forms): 运营实时统计端点（白名单/缓存/asOf）�
 - Test: `modules/forms/console/console.test.tsx`
 
 **Interfaces:**
-- 页面：选表单（仅 `stats.enabled` 的表单）→ 选维度（groupable）/度量（agg）→ 日期范围 → 表格 + 合计行；顶部显示 `实时（截至 HH:mm:ss）`。
-- 不提供任意字段输入；选项全部来自表单契约（可加一个只读接口 `GET /defs/:id` 返回 body，前端解析 `dataPlane.fields`）。
+- 页面：选表单（仅 `stats.enabled` 的表单）→ **先列 `stats.views` 具名卡片**（agent 起草时已产出的「按班级汇总/合计」等，点开即渲染）→ 高级模式再选维度/度量/日期范围；表格 + 合计行；顶部显示 `实时（截至 HH:mm:ss）`。
+- 不提供任意字段输入；选项全部来自表单契约（可加一个只读接口 `GET /defs/:id` 返回 body，前端解析 `dataPlane.fields`/`stats.views`）。
 
 - [ ] Step 1：失败测试（列表加载、选字段、渲染行、asOf 文案、空态两种）。
 - [ ] Step 2：实现页面（antd Table；移动端卡片可选；`platformFetch`）。
@@ -264,7 +267,8 @@ git commit -m "feat(forms): 运营实时统计端点（白名单/缓存/asOf）�
 ## Task D4: 真机验收（含负对照）
 
 - [ ] 建一个含 `class(string,groupable)`、`score(number,agg sum/avg)`、`submitted_date` 的表单，`dataPlane.stats.enabled=true`，发布。
-- [ ] 提交 3 条（A 班 80/90、B 班 70），调 `POST /stats`：`groupBy:['class']`、`sum(score)` → A=170、B=70；`asOf` 在响应里；15s 内重复调用命中缓存。
+- [ ] 提交 3 条（A 班 80/90、B 班 70），调 `POST /stats`：`viewId:'by_class'` → A=170、B=70；`asOf` 在响应里；15s 内重复调用命中缓存；ad-hoc `groupBy:['class']` 同样得 A=170/B=70。
+- [ ] **agent 同创**：用 `generate_form_draft` 起草同一表单，断言返回的 `dataPlane.stats.views` 含按班级/合计视图（模型未给时确定性兜底），且发布 gate 校验通过。
 - [ ] 负对照：
   - 未声明字段 / `sum(string)` / `limit:10000` / `in` 51 项 ⇒ 400 机检码；
   - 未开 `stats` 的表单 ⇒ 403 `STATS_NOT_ENABLED`；
