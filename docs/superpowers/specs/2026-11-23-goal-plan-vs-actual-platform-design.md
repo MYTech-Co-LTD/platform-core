@@ -129,6 +129,65 @@
 - 目标定义 YAML 是平台级（数据面部署=单租户口径，与 L1 一致）；收集值带 org（forms 既有纪律）；达成率关系经 Gate-B/部门门出。
 - agent 面：`search_goal_definitions` / `get_goal_status` 两个只读工具进 forms mcp-manage（起草目标值仍走表单，AI 不产出生效值）。
 
+### D9 双通道划分：运营实时统计 vs 分析批（2026-11-23 人审同意）
+
+**判定规则（两问定通道）**：
+
+```
+① 要不要和别的源（销售/库存/门店档案）join？
+   ├─ 要  → 分析通道
+   └─ 不要 → ② 要不要历史可复现 / 跨期对比 / 封版后不变？
+              ├─ 要  → 分析通道
+              └─ 不要 → 运营通道
+```
+
+| 通道 | 数据在哪 | 延迟 | 典型问题 | 消费面 |
+|---|---|---|---|---|
+| **运营实时统计** | 平台 PG（`forms.submission`） | 秒级 | 今日收了多少、分数合计、按班次分组、填报进度 | 表单管理页卡片、填报进度、实时看板 |
+| **分析报表** | 湖 → 摊平 → mart/L1 | T+1（或小时） | 目标达成率、与销售同看、月度趋势/同比 | 报表 spec、移动端、MCP 问数、企微日报 |
+| **告警** | 分析面（L1 + monitor） | 批 | 达成率 < 阈值、缺交 | 数据面 monitor（既有） |
+| **导出/对外** | 湖（唯一交付面） | 批 | 客户取数、下游系统 | 导出管道（数据宪法：导出唯一管道） |
+
+**硬约束**：
+1. **报表引擎不接运营数据源**——报表只消费 L1/mart；否则「同一报表两个源、两个口径」的口径分叉必然发生。
+2. 实时统计与批报表的数字可能不同（晚到/更正），UI 必须标注来源与 `asOf`；**正式口径以分析通道为准**。
+3. 同一告警不要两边各做一套（选一个并用文案写明口径）。
+
+### D10 契约拆分：一份 `dataPlane`，两个能力位（2026-11-23 人审同意）
+
+`dataPlane` 从「字段白名单」升级为**一份字段契约 + 两个能力位**：
+
+```yaml
+dataPlane:
+  fields:                      # 唯一字段契约（类型化，两条通道共用）
+    - { field: score,  kind: number,  agg: [sum, avg, count] }
+    - { field: class,  kind: string,  groupable: true }
+    - { field: period, kind: string,  period: month }
+  stats:
+    enabled: true              # 运营通道：允许 /stats 实时聚合（本租户运营视图，发布者可用）
+  analytics:
+    enabled: false             # 分析通道：允许 opt-in 摊平进湖（全租户分析暴露面，需平台审批）
+```
+
+- **`stats`**：表单发布者可用（本租户、低风险）。
+- **`analytics`**：新增 `forms:data-plane`（`platformOnly`）审批闸——部门管理员只能提申请，平台数据负责人批准后才进湖。与「AI 不发布、人 gate」同一哲学。
+- 两条通道共用 `fields` 的类型与可聚合声明，避免「实时能 sum、报表不能」的口径错位。
+
+### D11 件④ 运营实时统计能力（新件，2026-11-23 人审同意立为独立工作项）
+
+形态 = forms 模块的**声明式统计端点**（不是报表引擎加数据源）：
+
+```
+POST /api/modules/forms/stats
+{ "assetId": "score-form", "groupBy": ["class"],
+  "measures": [{ "field": "score", "agg": "sum" }],
+  "filter": { "bizday": { "gte": "2026-11-01" } }, "limit": 100 }
+→ { rows: [...], asOf: "2026-11-23T10:32:11+08:00" }
+```
+
+约束：只允许 `dataPlane.fields` 声明的字段与 `agg` 白名单；**不开放任意 SQL/JSON 表达式**；org 只来自 identity；维度基数/行数上限；短 TTL 缓存（5–30s）+ 提交后失效；返回 `asOf`，UI 标注「实时（截至 …）」。
+
+
 ---
 
 ## 3. 首个消费者（第一刀，最小范围）
@@ -164,11 +223,12 @@
 | **A 件① 字段级通路** | opt-in 声明 + 契约生成器（含 `--check`）+ 生成摊平模型 + 词表首条 forms 指标（非目标场景：如巡检完成数） | 新表单 opt-in 后零改动出指标；`--check` 门禁 CI 绿；既有 pipeline/stg 不回归 |
 | **B 件③ 收集轮次** | 轮次/目标/值集轮三表 + 事件声明 + 进度/催办 | 开轮→录格子→进度可见→催办送达；`forms.collection.assigned` 真声明 |
 | **C 目标第一刀** | goals.yml 目标定义 + 两段生成关系（§2 D2）+ L1 达成率/进度 + 报表模板 + 告警/推送 | 真实录一个月目标 → 看板呈现 → 企微日报；受限用户分母收缩负对照（不可见店不计入） |
-| **D 第二刀（另立计划）** | 品类维度、总部分解录入 UI、目标审批流、goal_close、v2 外部权威 | 另评审 |
+| **D 件④ 运营实时统计** | `dataPlane` 拆 fields/stats/analytics + `POST /stats`（白名单/缓存/asOf）+ `forms:data-plane` 平台审批闸 + 表单管理页实时卡片 | 实时 sum/分组与 PG 直查一致；不在白名单的字段被拒；`analytics` 未经平台审批不可进湖 |
+| **E 第二刀（另立计划）** | 品类维度、总部分解录入 UI、目标审批流、goal_close、v2 外部权威 | 另评审 |
 
-依赖：A/B 可并行；C 依赖 A+B。预计 A≈1.5 周、B≈1 周、C≈1.5–2 周。
+依赖：A/B 可并行；C 依赖 A+B；D 与 C 文件域不重叠（D 碰 forms routes/storage/console，C 碰 dbt/goals/report），可并行但建议 C 先合以避免 CI 互扰。预计 A≈1.5 周、B≈1 周、C≈1.5–2 周、D≈1 周。
 
-> **部署地理（C 期决策，2026-11-23 实测确认）**：mytech 数据面（`platform-core-data` @23a1091e）仓库里只有 forms 管线 + 种子，**乐檬 marts 在山海数据面**（`platform-core-shanhai-data` @8281d598）。第一刀的山海业务目标：收集走山海 org 的 forms（应用单元）→ 目标湖/摊平/达成关系都落在**山海数据面**（与 actuals 同面，join 才成立）。mytech 侧的 forms 管线/摊平通路本身与面无关（件① 是通用件，两面共用同一套生成器与模型模板）。
+> **部署地理（C 期决策，2026-11-23 实测确认）**：mytech 数据面（`platform-core-data` @23a1091e）仓库里只有 forms 管线 + 种子，**乐檬 marts 在山海数据面**（`platform-core-shanhai-data` @8281d598）。第一刀的山海业务目标：**建议为山海租户在山海数据面建它自己的 forms 采集管线**（一 PAT 一租户；正典 `docs/data-platform-handbook.md` §5）——目标湖/摊平/达成关系都落**山海数据面**（与 actuals 同面，join 才成立）。**该生产变更待用户确认后执行**；mytech 租户的 forms 管线保持不动。R7 退役的是「mytech 管线跑在山海」的错误归属，不是禁止山海租户有自己的管线。件①/D 的摊平与统计能力是通用件，两面共用同一套生成器/模板。
 
 ---
 
@@ -178,6 +238,15 @@
 2. **forms:fill 之外是否要 `forms:goal-fill` 之类细分码**？v1 建议复用既有码，不新增。
 3. **达成率口径的分母保护**：`target=0` 行（新店无目标）达成率置 NULL 还是剔除？建议 NULL（照 data-analysis outbound 族）。
 4. **告警阈值挂谁**：数据面 monitor（既有）即可，无需新告警面。
+5. **期间封版/更正语义 v1 是否就做**（`goal_period` + as-of 读取）？建议做最小版：封版后目标不可静默改，更正需 reopen + 审计。见 §2 D6 的修订注记。
+
+### D6 修订注记（2026-11-23 架构审视）
+
+「湖封版分区天然等价于 close」对**外部采集**成立；对**人工填写的目标**不成立（目标可在期后修改）。v1 最小修正：
+- `goal_period(org, goal, period, state: open|closed, closed_at)`；
+- 目标摊平模型带 `effective_at = submitted_at` 与 `supersedes_id`；
+- 达成 mart 只读「该 period 封版时刻前的最新有效行」；封版后更正需显式 reopen（审计），不静默覆盖。
+- 若 C 期暂不做，必须在 PR 里登记为已知边界，且报表文案不得宣称「历史可复现」。
 
 ---
 
@@ -185,7 +254,8 @@
 
 1. `docs/architecture.md` §2.4 追加「表单字段级数据通路（opt-in 摊平）」小节；数据面正典追加「计划 vs 实际目标件」节（D2/D5/D6）。
 2. OA 设计稿 §7.3 轮次草案升正典（本文 D3）；`forms.collection.assigned` 的声明缺口随 B 期落地。
-3. `docs/data-platform-handbook.md` 目标场景登记（作为首个消费者案例）。
+3. `docs/data-platform-handbook.md` 目标场景登记（作为首个消费者案例）；追加「表单数据双通道（运营实时 vs 分析批）」与「一租户一 forms 管线」的部署地理节（D9/D10）。
+4. `docs/module-protocol.md` 或 forms 模块文档登记 `forms:data-plane` platformOnly 权限码与 `dataPlane` 契约（D10）。
 
 ---
 
@@ -196,6 +266,7 @@
 - 不动 `stg_forms_submission` 既有定位与 varchar 决策。
 - 不在本波实现外部权威适配器 v2（字典快照先行）。
 - 报表 spec 的 target 语义不改（保持常量 + 未来覆盖源路线，本文不依赖它）。
+- **报表引擎不接运营数据源**（D9 硬约束）：实时统计走 `/stats`，不进报表 spec。
 
 ---
 
