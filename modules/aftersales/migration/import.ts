@@ -87,23 +87,50 @@ export async function importProduct(pool: Pool, org: string, rows: CleanProduct[
   return stat
 }
 
-export async function importEmployee(pool: Pool, org: string, rows: CleanEmployee[]): Promise<ImportStat> {
+export interface ImportEmployeeOpts {
+  /**
+   * 无忌门店 id → `data.dim_branch.code`（2026-11-23 冷启动裁决，issue #2729）。
+   * 提供时优先用映射：employee.store_code / employee_store.store_code 直接落 dim code，
+   * 未命中的段计入 unresolved_store_ref（可见计数，不静默）。
+   * 不提供时维持 #476 的旧行为（落 aftersales.store 本地 id）——仅供无映射的应急/测试。
+   */
+  storeCodeMap?: ReadonlyMap<string, string>
+}
+
+export async function importEmployee(
+  pool: Pool,
+  org: string,
+  rows: CleanEmployee[],
+  opts: ImportEmployeeOpts = {},
+): Promise<ImportStat> {
   const stat = newStat('employee', rows.length)
-  const stores = await sourceIdMap(pool, org, 'store')
+  // 有映射时不需要再解析本地 store 行（那条路只在无映射的旧行为下使用）
+  const stores = opts.storeCodeMap ? null : await sourceIdMap(pool, org, 'store')
   for (const r of rows) {
     if (!r.sourceId) { skip(stat, 'no_source_id'); continue }
     if (r.approveStatus === null) { skip(stat, 'unknown_status'); continue }
-    // 主门店 = 串里第一个能解析到档案的（§2.5：employee.store_code 保留「主门店」语义，可空）
-    const resolved = r.storeSourceIds.map((sid) => stores.get(sid) ?? null)
-    const primaryStore = resolved.find((id): id is number => id !== null) ?? null
+    // 门店引用解析成两条路：
+    //  · 有 storeCodeMap ⇒ 产出 dim_branch.code（正确编码），未命中计入计数
+    //  · 无 ⇒ 旧行为：解析 aftersales.store 本地 id（⚠️ #476：与 dim code 不同源，仅应急）
+    /** @type {string[]} */
+    const codes: string[] = []
+    let unresolved = 0
+    if (opts.storeCodeMap) {
+      for (const sid of r.storeSourceIds) {
+        const code = opts.storeCodeMap.get(sid)
+        if (code === undefined) unresolved++
+        else codes.push(code)
+      }
+    } else {
+      const resolved = r.storeSourceIds.map((sid) => stores?.get(sid) ?? null)
+      unresolved = resolved.filter((id) => id === null).length
+      for (const id of resolved) if (id !== null) codes.push(String(id))
+    }
     // 不可解析段：计入 reasons（信息面，**不增 skipped**——行本身已导入，丢的是「链」不是「行」）。
     // 静默丢段 = 对账黑洞：链表没有源侧计数可对，唯一可见性就是这里的计数。
-    const unresolved = resolved.filter((id) => id === null).length
     if (unresolved > 0) stat.reasons['unresolved_store_ref'] = (stat.reasons['unresolved_store_ref'] ?? 0) + unresolved
-    // ⚠️ #476：员工域的门店引用已切 `data.dim_branch.code` 自然键（005）。**无忌 id ≠ dim code**
-    //    （不同系统、无映射表）⇒ 导入器只能把无忌 id 的**字符串形**落进 store_code 并标注——
-    //    存量迁移（含 id 映射）在真要跑导入器的实例上是那次部署的前置步骤；山海无存量、未受影响。
-    const primaryStoreCode = primaryStore === null ? '' : String(primaryStore)
+    // 主门店 = 第一个解析成功的（§2.5：employee.store_code 保留「主门店」语义，可空）
+    const primaryStoreCode = codes[0] ?? ''
     const ins = await pool.query<{ id: string }>(
       `insert into aftersales.employee (org, source_id, name, phone, open_id, approve_status, store_code)
        values ($1, $2, $3, $4, $5, $6, $7)
@@ -114,14 +141,13 @@ export async function importEmployee(pool: Pool, org: string, rows: CleanEmploye
       [org, r.sourceId, r.name, r.phone, r.openId, r.approveStatus, primaryStoreCode],
     )
     const employeeId = Number(ins.rows[0].id)
-    // 多门店拆行（§2.5 规范化）：先清后插——重跑收敛（快照式导入，源是全量）。同上：code 为无忌 id 字符串形。
+    // 多门店拆行（§2.5 规范化）：先清后插——重跑收敛（快照式导入，源是全量）。
     await pool.query(`delete from aftersales.employee_store where org = $1 and employee_id = $2`, [org, employeeId])
-    for (const storeId of resolved) {
-      if (storeId === null) continue
+    for (const code of codes) {
       await pool.query(
         `insert into aftersales.employee_store (org, employee_id, store_code) values ($1, $2, $3)
          on conflict (org, employee_id, store_code) do nothing`,
-        [org, employeeId, String(storeId)],
+        [org, employeeId, code],
       )
     }
     stat.imported += 1

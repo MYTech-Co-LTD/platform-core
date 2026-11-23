@@ -2,18 +2,19 @@
 // 有 vitest 兜底；scripts/ 不在 B1/B8/B9 扫描根内（apps/packages/modules 才是），故 env 键靠
 // .env.example 的文档化条目自觉维护。
 // migrate-aftersales-wuji.mjs — 售后 M2b：wuji 托管库 → aftersales.*（spec §3.3；issue #151）
-// 用法：npx tsx scripts/migrate-aftersales-wuji.mjs --org <casdoor_org> [--tables t1,t2] [--apply]
+// 用法：npx tsx scripts/migrate-aftersales-wuji.mjs --org <casdoor_org> [--tables t1,t2] [--store-map <csv>] [--apply]
 //         [--sample N] [--sample-out DIR] [--groupbuy-unit fen|yuan]
 // 默认 dry-run：拉取 + 清洗 + 打印报告，不写库（--apply 才写）。
 // env：WUJI_APPID / WUJI_DATA_ORIGIN（默认 https://data.wujisite.com）/ WUJI_KEY_<大写表名>；
 //      DATABASE_URL（--apply 必填）。键值只在 env，绝不进仓/日志/提交。
 // 必须用 tsx：纯核是 .ts；pg 经 createRequire 锚到 apps/server 解析（scripts/ 不属于 workspace
 // 包——与 migrate-tenant-module-to-subs.mjs 同一坑，D6 切换时实测踩过）。
-import { mkdir, writeFile } from 'node:fs/promises'
+import { mkdir, readFile, writeFile } from 'node:fs/promises'
 import { createRequire } from 'node:module'
 import { wujiCount, wujiFetchAll, maxMtimeOf } from '../modules/aftersales/migration/wuji-source.ts'
 import * as clean from '../modules/aftersales/migration/clean.ts'
 import * as imp from '../modules/aftersales/migration/import.ts'
+import { parseStoreMap } from '../modules/aftersales/migration/store-map.ts'
 import { expectedTicketSums, reconcileCounts, reconcileTicketSums } from '../modules/aftersales/migration/reconcile.ts'
 
 const ALL_TABLES = [
@@ -31,6 +32,9 @@ const TABLES = (arg('tables') ?? ALL_TABLES.join(',')).split(',').map((s) => s.t
 const SAMPLE = arg('sample') ? Number(arg('sample')) : undefined
 const SAMPLE_OUT = arg('sample-out')
 const GROUPBUY_UNIT = arg('groupbuy-unit')
+// 门店映射（2026-11-23，issue #2729）：无忌门店 id → dim_branch.code。
+// 文件不进仓（含客户门店编码清单），随部署环境投递；只在日志打印条数，不打印内容。
+const STORE_MAP = arg('store-map')
 
 async function main() {
   if (!ORG) throw new Error('需要 --org <casdoor_org>（迁移目标租户）')
@@ -75,6 +79,28 @@ async function main() {
     ticket: (raw.after_sales_work_order ?? []).map(clean.cleanTicket),
   }
 
+  // 门店映射（--store-map）：dry-run 也载入并校验——映射错了要在写库之前就看见。
+  /** @type {Map<string, string> | undefined} */
+  let storeCodeMap
+  if (STORE_MAP) {
+    const parsed = parseStoreMap(await readFile(STORE_MAP, 'utf8'))
+    if (parsed.errors.length > 0) {
+      throw new Error(`--store-map 有 ${parsed.errors.length} 行非法，拒绝执行：\n  ${parsed.errors.join('\n  ')}`)
+    }
+    storeCodeMap = parsed.map
+    console.log(`[store-map] 载入 ${storeCodeMap.size} 条映射` + (parsed.duplicates > 0 ? `（重复 ${parsed.duplicates} 条，后者覆盖）` : ''))
+    if (cleaned.employee.length > 0) {
+      let hit = 0
+      let miss = 0
+      for (const e of cleaned.employee) {
+        for (const sid of e.storeSourceIds) (storeCodeMap.has(sid) ? hit++ : miss++)
+      }
+      console.log(`[store-map] 覆盖率：命中 ${hit} / 未命中 ${miss}（未命中的段计入 unresolved_store_ref）`)
+    }
+  } else if (TABLES.includes('employee_info')) {
+    console.log('[store-map] 未提供 --store-map：员工门店落 aftersales.store 本地 id（与 dim_branch.code 不同源，仅应急）')
+  }
+
   if (!APPLY) {
     console.log(`[dry-run] 清洗完成（不写库）：${Object.entries(cleaned).map(([k, v]) => `${k}=${v.length}`).join(' ')}`)
     console.log('[dry-run] 工单金额和（对账期望，单位分）：', expectedTicketSums(cleaned.ticket))
@@ -90,7 +116,9 @@ async function main() {
     if (TABLES.includes('region_info')) stats.push(await imp.importRegion(pool, ORG, cleaned.region))
     if (TABLES.includes('store_info')) stats.push(await imp.importStore(pool, ORG, cleaned.store))
     if (TABLES.includes('product_archive')) stats.push(await imp.importProduct(pool, ORG, cleaned.product))
-    if (TABLES.includes('employee_info')) stats.push(await imp.importEmployee(pool, ORG, cleaned.employee))
+    if (TABLES.includes('employee_info')) {
+      stats.push(await imp.importEmployee(pool, ORG, cleaned.employee, { storeCodeMap }))
+    }
     if (TABLES.includes('after_sales_rule')) stats.push(await imp.importRule(pool, ORG, cleaned.rule))
     if (TABLES.includes('employee_info_approve')) stats.push(await imp.importEmployeeApproval(pool, ORG, cleaned.approval))
     if (TABLES.includes('after_sales_work_order')) stats.push(await imp.importTicket(pool, ORG, cleaned.ticket))
