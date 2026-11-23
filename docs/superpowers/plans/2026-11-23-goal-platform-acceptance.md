@@ -8,9 +8,11 @@
 ## 0 一句话结论
 
 代码与静态门禁全绿；**两段模型的 SQL 语义已在真 warehouse + 真湖上验证**（目标值用临时夹具表，
-见 §2.2）。**真实流程（建轮 → 录格子 → 采集入湖 → 物化 → 看板/日报）未跑**，阻塞项见 §4：
-目标值来源（forms 采集）在山海数据面**已退役**（2026-10-18 R7），重新启用属既定架构决策；
-且「合并后部署」不由 worker 执行。**A3 的真湖 dbt build 亦未完成**（mytech 实库无 A 期夹具表单/提交）。
+见 §2.2）。**真实流程（建轮 → 录格子 → 采集入湖 → 物化 → 看板/日报）未跑**：协调者已授权
+「为山海租户在山海数据面建它自己的 forms 采集管线」，但按分工（worker 不合并、不部署、不启停
+生产服务）需协调者执行；步骤与回读判据见
+**`docs/superpowers/plans/2026-11-23-goal-shanhai-forms-runbook.md`**。
+A3 夹具（`ops-round-2026-11`）经裁决 **superseded**：改用目标表单本身验证摊平与字段级数值。
 
 ## 1 交付物（C1–C3）
 
@@ -68,29 +70,27 @@
 | 4 | target=0 ⇒ 达成率 NULL | ✅ PASS（逻辑级） | 生成 SQL `case when target > 0`；待真数据复验 |
 | 5 | 报表模板编译 + target 着色透传 | ✅ PASS | 模板单测 |
 | 6 | 日报事件三处同描 | ✅ PASS | builtin 三处一致性门禁 + 单测 |
-| 7 | 真实录目标 → 摊平 → 达成 → 看板 | ⛔ BLOCKED | forms 采集在山海已退役（R7）；需人确认重新启用 |
-| 8 | 企微日报真送达 | ⛔ BLOCKED | 依赖 7 + 合并后部署 |
-| 9 | 负对照：round 非 open 409 / 部门门分母收缩 / 重复提交幂等 | ⛔ BLOCKED | 依赖 7（B 期能力已有，需真环境跑） |
-| 10 | A3 真湖 dbt build 摊平 = 提交值 | ⛔ BLOCKED | mytech 实库无 A 期夹具表单/提交（仅有 M1.4 的 form-m14-accept 一笔） |
+| 7 | 真实录目标 → 摊平 → 达成 → 看板 | ⏸ 待协调者执行 | 已授权重建山海 forms 采集；步骤见 runbook §1（PAT→FORMS_TOKEN→启服务→换连接凭据→首跑→湖回读） |
+| 8 | 企微日报真送达 | ⏸ 待协调者执行 | 依赖 7 + 合并后部署（runbook §1-6/-8） |
+| 9 | 负对照：round 非 open 409 / 部门门分母收缩 / 重复提交幂等 | ⏸ 待 7 之后 | B 期能力已在（#2715）；需真环境跑 |
+| 10 | A3 真湖 dbt build 摊平 = 提交值 | 🔁 SUPERSEDED | 裁决：夹具在任何可达实库都不存在，不再追；改用**目标表单本身**验证（runbook §1-5/-6） |
+| 11 | 封版 as-of（协调者裁决 4） | ⛔ 已知边界（未实现） | 技术原因见 §7：分析面只读湖，封版状态在 PG；as-of 需先把 goal_period/supersedes_id 出湖（新采集物），成本超「最小版」 |
 
 ## 4 阻塞与待决（需要人或部署动作）
 
-1. **山海数据面的 forms 采集已退役**（2026-10-18 R7：服务 `forms-console` `enabled:false`、排班写卷
-   置 disabled、`s3://shanhai-data/forms/submission/` 对象已删）。目标件在山海落地 = 重新启用一条
-   **被明确退役的**采集管线 ⇒ 属架构决策，**不能由 worker 单方面反转**。重新启用的最小步骤（供决策）：
-   启用 `forms-console` 服务 → seed 工作区（`forms.submission.l0` + 排班）→ 确认 `FORMS_TOKEN`/`FORMS_API_BASE`
-   指向山海平台 → 首跑落第一个湖文件 → 再开 `data.dbt_goals`（否则本 job 必红，属预期）。
+1. **山海 forms 采集重建已获授权（2026-11-23），但执行在协调者**：需山海租户 PAT（`forms:view`，
+   严禁复用 mytech token）→ 写入 `forms-console` 服务 env `FORMS_TOKEN` → 启服务 → **换掉 workspace
+   `forms` 连接里的凭据**（密文）→ 首跑落湖 → 湖回读（无 org 列、6 列、form_def_id 正确）→
+   再开 `data.dbt_goals`。逐步对象与回读判据见 runbook。**若拿不到山海 PAT：停下报 exact blocker，
+   不使用旧凭据、不伪造。**
 2. **部署**：`platform-core-shanhai-data`（数据单元）+ `platform-core-shanhai`（应用单元）的部署在
    合并 main 后手动触发（autoDeploy=false）。本 worker 被要求 **不合并**，故未部署、未在部署产物的
    容器内验（§2.2 是用 `/tmp` 副本验的语义，**不等于**部署验证）。
-3. **A3 夹具缺失**：A 期的 `ops-round-2026-11` 表单与其 2 条提交不在 mytech 实库（实库仅有
-   `form-m14-accept` 一笔）。要补做 A3，需在山海或 mytech 重新造该表单 + 提交 + 采集，再在容器内
-   `dbt build` 摊平模型；当前未做（避免再往生产库写一次性夹具）。
+3. **A3 夹具：SUPERSEDED（裁决 2026-11-23）**——`ops-round-2026-11` 在任何可达实库都不存在，
+   不再追；摊平与字段级数值改由**目标表单 `goal-monthly-store`** 在同面采集后验证（runbook §1-5/-6）。
 4. **`data.dbt_goals` / `data.dbt_audit_goal` 开闸**：seed 恒 `enabled=false`（四步开闸），需在
    生产 `platform.job_schedule` 手动 `update … set enabled=true`（前置：§4-1 首文件已落）。
-5. **决策提醒**：若最终不重新启用山海 forms 采集，则目标件应改落到 **mytech 数据面**（forms 域在
-   那边活跃）——但那边没有乐檬 marts，actuals join 不成立 ⇒ 需要在两个数据面之间做选择（或把
-   forms 采集迁到山海）。这是 spec §2 部署地理决策的返工点，需人拍板。
+5. **部署地理已定**：山海 forms 采集重建（同面 join）——不再考虑落 mytech（那边无乐檬 marts）。
 
 ## 5 告警示例（运维配置，不改代码；C2 交付面）
 
@@ -122,3 +122,24 @@ MATERIALIZE_TABLES_SELECT=path:models/goals sh /opt/lemeng-materialize.sh   # �
 # 词表物化 + 编译查询
 DATABASE_URL=<平台库> DATA_WAREHOUSE_URL=<数据面> node scripts/sync-data-semantics.mjs
 ```
+
+## 7 已知边界：封版 as-of 未实现（协调者裁决 4 的「成本超预期」出口）
+
+裁决要求的**最小封版版**：`goal_period(org, goal, period, state, closed_at)`；目标摊平行带
+`effective_at`（= submitted_at）与 `supersedes_id`；达成 mart 只读「该 period 封版时刻前的最新有效行」；
+封版后更正需显式 reopen + 审计。
+
+**评估结论：成本明显超出「最小版」，按裁决出口登记为已知边界，未实现。** 技术原因（不是工时借口）：
+
+1. **分析面只读湖**（数据宪法 I1：PG = 系统记录，永不给分析面读）。`goal_period` 与 `supersedes_id`
+   都是 PG 侧事实；今天它们**不在湖里** ⇒ mart 无法按封版时刻过滤。
+2. 要做 as-of，必须先把它们**出湖**：新契约 + 新/扩展采集管线（`forms.submission` 契约加列或新
+   `goal_period` 数据集）+ staging + 生成器/模型 + 迁移 + 测试 + 部署，且 `form.submission` 是
+   既有生产契约（A 期定稿「列集唯一事实源」），扩列要重跑 lock、改生产者投影。**这是一条新的采集线，
+   不是「最小版」。**
+3. 当前行为如实说明：mart 取**最新提交**（`submitted_at desc, submission_id desc`）；封版后对某月
+   目标的更正会改写该月达成率，**没有 as-of 快照**。目标表的 `version`/`submitted_at` 与提交历史仍
+   完整保留在 forms 侧（PG），需要追责时可回溯。
+4. 第二刀建议的最小路径（供立项）：B 期收集轮次已有 `status ∈ draft|open|closed`；把轮次的
+   `closed_at` 作为「封版时刻」**随提交导出**（`forms.submission` 增加 `round_id` + `round_closed_at`），
+   mart 侧按 `submitted_at <= round_closed_at` 取最新行即可，不需要单独的 goal_period 表。
