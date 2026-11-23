@@ -9,3 +9,45 @@
     padding-bottom: calc(1rem + env(safe-area-inset-bottom));
   }
 }
+
+/* ── DESIGN.md 对齐（2026-11-23）────────────────────────────────────────────
+   移动端此前是 TDesign 默认主题（品牌色 #0052D9、默认圆角 6）。统一到控制台设计正典：
+   蓝紫主色 #4D6BFE、系统字体栈、卡片 12 圆角、页面底 #FAFBFC。
+   变量名取 TDesign Vue Next 1.9.x 的公开 token；只覆盖视觉，不改任何组件行为。 */
+:root {
+  /* 品牌色 10 阶（#4D6BFE 体系） */
+  --td-brand-color: #4D6BFE;
+  --td-brand-color-hover: #3B55E0;
+  --td-brand-color-active: #2E44BF;
+  --td-brand-color-focus: #EEF1FF;
+  --td-brand-color-disabled: #C2CDFF;
+  --td-brand-color-light: #EEF1FF;
+  --td-brand-color-1: #EEF1FF;
+  --td-brand-color-2: #DCE3FF;
+  --td-brand-color-3: #C2CDFF;
+  --td-brand-color-4: #9FB1FF;
+  --td-brand-color-5: #7E94FF;
+  --td-brand-color-6: #4D6BFE;
+  --td-brand-color-7: #3B55E0;
+  --td-brand-color-8: #2E44BF;
+  --td-brand-color-9: #23359C;
+  --td-brand-color-10: #1A2878;
+
+  /* 字体：系统栈（中文后台不需要字体个性） */
+  --td-font-family: -apple-system, BlinkMacSystemFont, 'PingFang SC', 'Microsoft YaHei', sans-serif;
+
+  /* 圆角：卡片 12（DESIGN）；控件用 8，不用全胶囊（移动端大按钮胶囊反而拥挤） */
+  --td-radius-default: 8px;
+  --td-radius-medium: 12px;
+  --td-radius-large: 16px;
+}
+
+body {
+  background: #FAFBFC;
+  color: #1B1C1E;
+  -webkit-font-smoothing: antialiased;
+  font-family: var(--td-font-family);
+}
+
+/* 金额/数量/时间等会纵向对齐的数字：等宽数字（DESIGN Typography） */
+.tnum { font-variant-numeric: tabular-nums; }

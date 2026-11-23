@@ -1,5 +1,5 @@
 <template>
-  <div class="min-h-screen bg-gray-50">
+  <div class="min-h-screen bg-[#FAFBFC]">
     <!-- 验证中 -->
     <div v-if="!employeeVerified" class="flex flex-col items-center justify-center min-h-[60vh] px-4">
       <t-loading theme="circular" size="large" />
@@ -13,7 +13,7 @@
         <div class="space-y-4">
           <div>
             <label class="block text-sm font-medium text-gray-700 mb-2">
-              <span class="text-red-500">*</span>选择门店
+              <span class="text-[#E5484D]">*</span>选择门店
             </label>
             <t-select
               v-model="selectedStore"
@@ -39,7 +39,7 @@
           </div>
           <div>
             <label class="block text-sm font-medium text-gray-700 mb-2">
-              <span class="text-red-500">*</span>选择结算单
+              <span class="text-[#E5484D]">*</span>选择结算单
             </label>
             <t-select
               v-model="selectedOrder"
@@ -66,7 +66,7 @@
           </div>
           <div v-if="selectedOrder">
             <label class="block text-sm font-medium text-gray-700 mb-2">
-              <span class="text-red-500">*</span>选择商品行
+              <span class="text-[#E5484D]">*</span>选择商品行
             </label>
             <t-select
               v-model="selectedLine"
@@ -83,11 +83,11 @@
               >
                 <div class="flex items-center justify-between min-w-0 gap-2">
                   <span class="font-medium truncate">{{ line.itemName ?? line.itemCode }}</span>
-                  <span class="text-xs text-gray-400 shrink-0">¥{{ (line.priceMinor / 100).toFixed(2) }}</span>
+                  <span class="text-xs text-gray-400 shrink-0 tnum">¥{{ (line.priceMinor / 100).toFixed(2) }}</span>
                 </div>
               </t-option>
             </t-select>
-            <p v-if="selectedLine" class="mt-2 text-xs text-gray-500">
+            <p v-if="selectedLine" class="mt-2 text-xs text-gray-500 tnum">
               <i class="fa fa-lock mr-1"></i>结算单价 ¥{{ (selectedLine.priceMinor / 100).toFixed(2) }}（随单冻结，来源 {{ selectedLine.orderNo }}）
             </p>
           </div>
@@ -100,7 +100,7 @@
           <!-- 报损数量 -->
           <div class="flex items-center">
             <label class="text-sm font-medium text-gray-700 min-w-[80px]">
-              <span class="text-red-500">*</span>报损数量
+              <span class="text-[#E5484D]">*</span>报损数量
             </label>
             <div class="ml-4">
               <t-input
@@ -117,7 +117,7 @@
           <!-- 报损原因 -->
           <div>
             <label class="block text-sm font-medium text-gray-700 mb-3">
-              <span class="text-red-500">*</span>报损原因
+              <span class="text-[#E5484D]">*</span>报损原因
             </label>
             <t-textarea
               v-model="formData.damage_reason"
@@ -133,7 +133,7 @@
       <!-- 附件上传 -->
       <t-card class="mb-4 rounded-xl shadow-sm" title="上传图片/视频">
         <label class="block text-sm font-medium text-gray-700 mb-3">
-          <span class="text-red-500">*</span>附件上传
+          <span class="text-[#E5484D]">*</span>附件上传
         </label>
         <div class="upload-wrapper">
           <!-- 图片网格 -->
@@ -209,7 +209,7 @@
               <!-- 上传失败状态 -->
               <div
                 v-if="attachment.uploadStatus === 'failed'"
-                class="absolute inset-0 bg-red-500/80 flex items-center justify-center"
+                class="absolute inset-0 bg-[#E5484D]/80 flex items-center justify-center"
                 style="z-index: 50;"
               >
                 <div class="text-white text-center">
@@ -221,7 +221,7 @@
               <!-- 删除按钮 -->
               <button
                 @click="handleRemoveAttachment(index)"
-                class="absolute top-1 right-1 w-5 h-5 bg-black/50 text-white rounded-full flex items-center justify-center hover:bg-red-500 transition-colors"
+                class="absolute top-1 right-1 w-5 h-5 bg-black/50 text-white rounded-full flex items-center justify-center hover:bg-[#E5484D] transition-colors"
                 style="z-index: 100 !important;"
               >
                 <i class="fa fa-times text-xs"></i>
@@ -230,7 +230,7 @@
 
             <!-- 添加按钮 - 始终显示在最后 -->
             <div
-              class="aspect-square rounded-lg border-2 border-dashed border-gray-300 flex items-center justify-center bg-gray-50 hover:border-blue-400 transition-colors cursor-pointer relative"
+              class="aspect-square rounded-lg border-2 border-dashed border-gray-300 flex items-center justify-center bg-gray-50 hover:border-[#4D6BFE] transition-colors cursor-pointer relative"
             >
               <i class="fa fa-plus text-2xl text-gray-400"></i>
               <!-- 隐藏的原生文件输入 -->

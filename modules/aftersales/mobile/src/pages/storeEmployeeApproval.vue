@@ -1,5 +1,5 @@
 <template>
-  <div class="min-h-screen bg-gray-50">
+  <div class="min-h-screen bg-[#FAFBFC]">
     <!-- 加载状态 -->
     <div v-if="pageLoading" class="flex items-center justify-center py-20">
       <t-loading theme="circular" size="40px" text="加载中..." />
@@ -12,11 +12,15 @@
         <t-card class="mb-4 rounded-xl shadow-sm">
           <div class="flex items-center justify-between mb-4">
             <h2 class="text-lg font-medium text-gray-800">
-              <i class="fa fa-user mr-2 text-blue-600"></i>员工信息
+              <i class="fa fa-user mr-2 text-[#4D6BFE]"></i>员工信息
             </h2>
-            <t-tag :theme="getApprovalStatusTheme(employeeInfo.status)">
+            <span class="inline-flex items-center gap-1.5 text-sm text-[#6B7280]">
+              <i
+                class="inline-block h-1.5 w-1.5 rounded-full"
+                :style="{ background: getApprovalStatusColor(employeeInfo.status) }"
+              />
               {{ getApprovalStatusText(employeeInfo.status) }}
-            </t-tag>
+            </span>
           </div>
 
           <div class="space-y-4">
@@ -26,7 +30,7 @@
             </div>
             <div class="flex items-center py-2 border-b border-gray-100">
               <span class="text-gray-500 w-24 shrink-0">联系电话</span>
-              <span class="text-gray-800 font-medium">{{ employeeInfo.employee_phonenumber }}</span>
+              <span class="text-gray-800 font-medium tnum">{{ employeeInfo.employee_phonenumber }}</span>
             </div>
             <div class="flex flex-col py-2 border-b border-gray-100">
               <span class="text-gray-500 mb-2">所属门店</span>
@@ -43,11 +47,11 @@
             </div>
             <div class="flex items-center py-2">
               <span class="text-gray-500 w-24 shrink-0">注册时间</span>
-              <span class="text-gray-800 text-sm">{{ formatTime(employeeInfo._ctime) }}</span>
+              <span class="text-gray-800 text-sm tnum">{{ formatTime(employeeInfo._ctime) }}</span>
             </div>
             <div class="flex items-center py-2">
               <span class="text-gray-500 w-24 shrink-0">修改时间</span>
-              <span class="text-gray-800 text-sm">{{ formatTime(employeeInfo._mtime) }}</span>
+              <span class="text-gray-800 text-sm tnum">{{ formatTime(employeeInfo._mtime) }}</span>
             </div>
             <!-- 账户绑定行（账户统一 Task 9，设计稿 §2）：展示当前绑定 + 异议入口。
                  accountMasked 是服务端掩码，前端不再自行掩码；bound 只在 active 时为 true。 -->
@@ -72,9 +76,9 @@
         </t-card>
 
         <!-- 审批状态说明 -->
-        <t-card v-if="employeeInfo.status === '待审批'" class="mb-4 rounded-xl shadow-sm bg-yellow-50 border-yellow-200">
+        <t-card v-if="employeeInfo.status === '待审批'" class="mb-4 rounded-xl shadow-sm bg-[#FFF7E6] border-[#F5E1B8]">
           <div class="flex items-start gap-3">
-            <i class="fa fa-clock text-yellow-600 text-xl mt-0.5"></i>
+            <i class="fa fa-clock text-[#E08A00] text-xl mt-0.5"></i>
             <div class="text-sm text-gray-700">
               <p class="font-medium mb-1">您的信息正在审批中</p>
               <p class="text-gray-600">管理员将在1-3个工作日内完成审批，请耐心等待。</p>
@@ -83,9 +87,9 @@
         </t-card>
 
         <!-- 审批通过说明 -->
-        <t-card v-else-if="employeeInfo.status === '通过'" class="mb-4 rounded-xl shadow-sm bg-green-50 border-green-200">
+        <t-card v-else-if="employeeInfo.status === '通过'" class="mb-4 rounded-xl shadow-sm bg-[#EEF8F1] border-[#CFEFDC]">
           <div class="flex items-start gap-3">
-            <i class="fa fa-check-circle text-green-600 text-xl mt-0.5"></i>
+            <i class="fa fa-check-circle text-[#0FA958] text-xl mt-0.5"></i>
             <div class="text-sm text-gray-700">
               <p class="font-medium mb-1">您的信息已审核通过</p>
               <p class="text-gray-600">您的门店员工身份已生效，可以正常使用系统功能。</p>
@@ -94,9 +98,9 @@
         </t-card>
 
         <!-- 审批驳回说明 -->
-        <t-card v-else-if="employeeInfo.status === '驳回'" class="mb-4 rounded-xl shadow-sm bg-red-50 border-red-200">
+        <t-card v-else-if="employeeInfo.status === '驳回'" class="mb-4 rounded-xl shadow-sm bg-[#FDECEC] border-[#F5C6C6]">
           <div class="flex items-start gap-3">
-            <i class="fa fa-times-circle text-red-600 text-xl mt-0.5"></i>
+            <i class="fa fa-times-circle text-[#E5484D] text-xl mt-0.5"></i>
             <div class="text-sm text-gray-700">
               <p class="font-medium mb-1">您的信息审核未通过</p>
               <p class="text-gray-600">请检查填写的信息是否正确，重新提交申请。</p>
@@ -119,9 +123,9 @@
       <!-- 注册/编辑表单 -->
       <div v-else>
         <!-- 表单标题 -->
-        <t-card class="mb-4 rounded-xl shadow-sm bg-gradient-to-r from-blue-50 to-blue-100">
+        <t-card class="mb-4 rounded-xl shadow-sm bg-[#EEF1FF]">
           <div class="flex items-center gap-3">
-            <i class="fa fa-info-circle text-blue-600 text-xl"></i>
+            <i class="fa fa-info-circle text-[#4D6BFE] text-xl"></i>
             <div class="text-sm text-gray-700">
               <p class="font-medium">{{ isEditing ? '编辑员工信息' : '注册成为门店员工' }}</p>
               <p class="text-gray-600">{{ isEditing ? '修改后需要重新提交审批' : '提交后需要等待管理员审批' }}</p>
@@ -287,13 +291,10 @@ const getStoreNames = (storeInfo: string): string[] => {
 /**
  * 获取审批状态主题
  */
-const getApprovalStatusTheme = (status: string): 'warning' | 'success' | 'danger' | 'default' => {
-  const statusMap: Record<string, 'warning' | 'success' | 'danger' | 'default'> = {
-    待审批: 'warning',
-    通过: 'success',
-    驳回: 'danger',
-  }
-  return statusMap[status] || 'default'
+const getApprovalStatusColor = (status: string): string => {
+  // DESIGN 语义色：警告 #E08A00 / 成功 #0FA958 / 错误 #E5484D / 弱 #C9CDD4
+  const map: Record<string, string> = { 待审批: '#E08A00', 通过: '#0FA958', 驳回: '#E5484D' }
+  return map[status] || '#C9CDD4'
 }
 
 /**
