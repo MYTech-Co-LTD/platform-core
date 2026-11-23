@@ -467,6 +467,42 @@ describe('registry · 业务监控 tick（W7-V1）', () => {
   })
 })
 
+describe('registry · OA 审批对账（#2363/#2385 收口）', () => {
+  // 两个脚本此前零调度登记（配置齐全也不会跑）；本组断言登记形态与 notify.reconcile 同款：
+  // 调脚本、platform 域、小时级错峰、失败走既有 jobs.job.failed 通路（不新增告警面）。
+  const OA = [
+    { key: 'oa.standard_approval_reconcile', cron: '17 * * * *', script: 'scripts/oa-standard-approval-reconcile.mjs' },
+    { key: 'oa.approval_reconcile', cron: '47 * * * *', script: 'scripts/oa-approval-reconcile.mjs' },
+  ] as const
+
+  it('★ 两条都在：platform 域、小时级错峰、UTC、timeout/重试与 notify.reconcile 同款', () => {
+    for (const c of OA) {
+      const def = JOB_REGISTRY.find((d) => d.key === c.key)
+      expect(def, c.key).toBeDefined()
+      expect(def!.scope, c.key).toBe('platform')
+      expect(def!.cron, c.key).toBe(c.cron)
+      expect(def!.timezone, c.key).toBe('UTC')
+      expect(def!.timeoutMs, c.key).toBe(300000)
+      expect(def!.maxAttempts, c.key).toBe(2)
+      expect(def!.expectedIntervalSecs, c.key).toBe(3600)
+      expect(def!.args ?? [], c.key).toEqual([])
+      // 缺 DATABASE_URL 要在启动期挡住（不进 claim 集合），而不是每小时 exit 1/2 刷失败告警。
+      expect(def!.requiresEnv, c.key).toContain('DATABASE_URL')
+      expect(existsSync(repoPath(c.script)), c.script).toBe(true)
+    }
+    // 错峰：两条互不相同，且都不撞既有小时级 job 的分钟位（:07/:13/:23/:30/:40）。
+    const minutes = OA.map((c) => Number(c.cron.split(' ')[0]))
+    expect(new Set(minutes).size).toBe(minutes.length)
+  })
+
+  it('★ script 字段逐字指向仓内脚本（抄错名字 ⇒ 红在 existsSync 之前先红在这里）', () => {
+    const std = JOB_REGISTRY.find((d) => d.key === 'oa.standard_approval_reconcile')!
+    const app = JOB_REGISTRY.find((d) => d.key === 'oa.approval_reconcile')!
+    expect(std.script).toBe('scripts/oa-standard-approval-reconcile.mjs')
+    expect(app.script).toBe('scripts/oa-approval-reconcile.mjs')
+  })
+})
+
 describe('registry · 小时对象回收（Wave 8 ③；#2668 拆回两条）', () => {
   it('★ 小时对象回收两条排班：激进档（30 分钟）+ 保守档（每日）', () => {
     // #2588 当年合并的依据「96 个小文件 ≈ +0.8s」已于 2026-11-22 实测失效（单微文件 ~350ms，
