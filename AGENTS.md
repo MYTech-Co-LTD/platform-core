@@ -84,6 +84,20 @@ orca orchestration send --to bot:来财 --type question \
     同一渲染函数；所有写操作落 `notify.audit`。正典见 `docs/architecture.md` §2.6 与
     `docs/module-protocol.md`「通知事件声明」。
 
+## 调度归属：业务 job 一律建在平台（#2728）
+
+**判据（先问再建）**：这个 job 跑的是**业务动作**（采集/对账/汇总/巡检数据面），还是**基建动作**（服务器级运维、必须碰宿主 docker/网络）？
+
+| 答案 | 建在哪 | 怎么建 |
+|---|---|---|
+| 业务 | **平台调度器**（`platform.job_schedule`） | 写 `scripts/**/*.mjs` → 在 `apps/server/src/scheduler/registry.ts` 登记 key（`data.*` 前缀才允许 `scope: 'data'`）→ seed 后 `enabled=false`，按 §13 四步开闸 |
+| 基建 | openship job | 走 openship MCP 建，并在 `deploy/jobs.md` 登记 |
+
+**不要因为「worker 里没有凭据」就退回 openship**——2026-11-23 我正是这么判断错的：实际 worker 容器里 `DUCKLE_TOKEN`（与两个 console 同一份）、`LEMENG_TOKEN` / `LEMENG_TOKEN_64188`、湖凭据、`DATA_WAREHOUSE_URL` **全都在**，而 compose 里只声明了 10 个 env。
+**判据要以容器实测为准**（`env | cut -d= -f1`），不要读 compose 声明。
+
+**机检兜底**：`scripts/check-job-scripts-portable.mjs`（已进 CI gates）——registry 里任何脚本的**代码行**出现 `/opt/...` 或 `docker exec|ps|inspect|cp` 即红，因为那种脚本注定无法在 worker 容器里跑，「只能放 openship」的借口就此堵死。确属基建的，在脚本的 `HOST_ONLY_ALLOW` 里登记 key + 理由（一次显式决定，不是默认）。
+
 ## 命令 / 门禁 / 部署（指针）
 
 - 通知运维 job（`notify-health` / `notify-retention`）口径见 `deploy/notify-jobs.md`。

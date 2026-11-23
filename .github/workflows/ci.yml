@@ -168,6 +168,12 @@ jobs:
       # （拼写错/漏生成）② enabled 引用**他账套**后缀管线 = SOP §F.1 的危害形态（一账套一 console
       # 的本体是凭据/env 隔离，错账套排班会**静默采错数据**）。纯静态：只读仓内 JSON，秒级。
       - run: pnpm exec tsx scripts/check-console-schedules.mjs
+      # 平台调度脚本必须容器内可跑（#2728）。盯的是「业务 job 被建到 openship」的**唯一借口**：
+      # 脚本依赖宿主路径（/opt/...）或 docker CLI ⇒ 它在 worker 容器里跑不了，于是只能留在 openship，
+      # 违背「业务定时进平台」（Wave 6/8）。纯静态：解析 registry.ts 的 script 字段，只扫**代码行**
+      # （头注里的历史说明不算），命中即红。怎么修：改脚本走 DSN/服务名 HTTP，或在
+      # scripts/check-job-scripts-portable.mjs 的 HOST_ONLY_ALLOW 登记（基建 job 才允许）。
+      - run: node scripts/check-job-scripts-portable.mjs
       # 排班分配（2026-11-08，P0）：小时档按实测耗时排 1 分钟槽，同账套不重叠；
       # 长管线（dim.item 525s）放 :02，允许跨一个 tick（最多 1 采集 + 1 tick）。
       # 改耗时表/新增管线后重跑 `pnpm exec tsx scripts/gen-schedules.mjs`。
