@@ -464,6 +464,61 @@ describe('notifications.events', () => {
 // agent MCP face 声明（2026-11-16 能力网关 spec §5.3）：path 必须 ∈ api.internal 且 method/scope
 // 一致；face 唯一；(group,audience) 内 precedence 不重复；同 (path,method,scope) 的多个 face
 // 仅当 audiences 不相交且 profile 不同。
+// 数据宪法（2026-11-23）§9-3/§9-4：扩展点预留——事件 guarantee 档位 + 模块导出声明。
+// 两者都「只锁契约、不建实现」：reaction 与 exports 一旦声明即装载失败（fail-closed），
+// 免得「声明了等于生效」。开放时只需删 superRefine 的两条 addIssue（manifest 无需改）。
+describe('数据宪法扩展点：guarantee 档位与 exports 声明（§9-3/§9-4）', () => {
+  const base = {
+    id: 'demo', name: 'demo', version: '0.1.0', platform: '>=0.1',
+    permissions: [{ code: 'demo:view', name: 'v' }],
+  }
+  const ev = (over: Record<string, unknown> = {}) => ({
+    key: 'demo.note.created', title: 't',
+    payload: { noteId: { type: 'string' }, author: { type: 'user' } },
+    recipients: { author: { kind: 'field', field: 'author' } },
+    ...over,
+  })
+
+  it('guarantee 缺省 ⇒ 通过（现行通知语义不变）', () => {
+    expect(ManifestSchema.safeParse({ ...base, notifications: { events: [ev()] } }).success).toBe(true)
+  })
+
+  it('guarantee: "notification" 显式声明 ⇒ 通过', () => {
+    expect(ManifestSchema.safeParse({ ...base, notifications: { events: [ev({ guarantee: 'notification' })] } }).success).toBe(true)
+  })
+
+  it('guarantee: "reaction" ⇒ 拒绝且说明未实现（fail-closed：不许把通知腿当业务事件）', () => {
+    const r = ManifestSchema.safeParse({ ...base, notifications: { events: [ev({ guarantee: 'reaction' })] } })
+    expect(r.success).toBe(false)
+    if (r.success) return
+    const issue = r.error.issues.find((i) => i.path.join('.') === 'notifications.events.0.guarantee')
+    expect(issue?.message).toContain('尚未实现')
+  })
+
+  it('exports 形状合法 ⇒ 仍拒绝（执行器未实现），issue 指到 exports', () => {
+    const r = ManifestSchema.safeParse({
+      ...base,
+      exports: [{ dataset: 'demo_note', source: 'demo.note', watermark: 'id', partitions: ['bizday'] }],
+    })
+    expect(r.success).toBe(false)
+    if (r.success) return
+    const issue = r.error.issues.find((i) => i.path.join('.') === 'exports')
+    expect(issue?.message).toContain('尚未实现')
+  })
+
+  it('exports 形状非法（partitions 空）⇒ 拒绝（形状先由 zod 锁）', () => {
+    const r = ManifestSchema.safeParse({
+      ...base,
+      exports: [{ dataset: 'demo_note', source: 'demo.note', watermark: 'id', partitions: [] }],
+    })
+    expect(r.success).toBe(false)
+  })
+
+  it('exports: []（显式空）⇒ 通过（未声明任何导出）', () => {
+    expect(ManifestSchema.safeParse({ ...base, exports: [] }).success).toBe(true)
+  })
+})
+
 describe('mcpFaces', () => {
   const base = {
     id: 'data', name: '数据', version: '0.1.0', platform: '>=0.1',

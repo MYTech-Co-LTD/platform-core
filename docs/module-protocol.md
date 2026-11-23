@@ -650,6 +650,21 @@ await ctx.notify?.emit(c.get('identity'), {
 返回 `{accepted, reason?}`；**不要拿它做业务分支**（fail-open）。`ctx.notify` 缺省 = 旧宿主/单测，
 调用点判空跳过。宿主侧校验（事件 owner / payload / scope / org）只有一处。
 
+### 事件保证档位：`guarantee`（数据宪法 2026-11-23 §5「事件双轨」，**扩展点已预留**）
+
+`notifications.events[]` 可选 `guarantee: notification | reaction`，缺省 = `notification`。
+
+| 档位 | 语义 | 状态 |
+|---|---|---|
+| `notification`（缺省） | fail-open 投递给人；`emit` 返回**不参与业务分支** | 现行实现 |
+| `reaction` | 事务性 outbox（at-least-once + 幂等消费）的**业务事件** | **未实现** |
+
+**声明 `reaction` ⇒ 装载失败**（schema superRefine 拒，文案指向宪法 §5 判据）。理由：
+让「声明了」不等于「生效了」——notify 腿是 fail-open 的，把「审批通过自动开账号」这类
+业务反应挂在通知事件上，丢一次 = 业务静默断裂。开放条件（宪法 §5）：首个「A 模块状态变化
+必须触发 B 模块业务动作、且丢失不可容忍」的真实需求。开放时只需删 superRefine 那条，
+manifest 无需改动（字段形状已锁，前向兼容）。
+
 ### 与模块端口的关系
 
 `notify` 模块通过 `createPorts` 暴露 `enqueueEvent`；宿主包装成 `ctx.notify` 注入所有模块。
@@ -866,6 +881,29 @@ dataDependencies:
 | **装载期双向核对** | **不触犯**：它核对路由集合与 `api.internal` 的差集；本节不动路由。`dataDependencies` 的「双向核对」等价物是门禁第 1 条（声明 ↔ 代码引用一致），落在 gates 而非装载期 |
 | **`enabledFor` 只能请求期门控** | **不触犯也不联动**：模块停用语义管的是「该租户看不看得到这个模块」，不管数据依赖；消费方停用提供方模块后的数据新鲜度属超周期场景——**已裁不做**（架构 §2.3 拍板④） |
 | **B4/B5 manifest** | 落地时 schema 收字段（`manifest.ts` 的编译期双向断言会强制接口与 zod 同步）；`check-manifests` 是否加文件存在性检查按需定——视图在**真库**里，不在仓里，文件存在性检查对它无意义 |
+
+## 模块导出声明：`exports`（数据宪法 2026-11-23 §6「导出唯一管道」，**扩展点已预留**）
+
+模块在 manifest 声明「本模块的一张 PG 表要作为分析数据集进湖」：
+
+```yaml
+exports:
+  - dataset: <目标湖数据集名>       # 契约名，非路径
+    source: <本模块 schema>.<表>    # 源表（系统记录，PG 是唯一事实源）
+    watermark: <水位列>             # 增量导出游标（如 bigserial id）
+    partitions: [<分区列>, ...]     # 湖侧 layout.partitionBy（如 bizday / batch_id）
+```
+
+字段形状取宪法 §6 的五件套（水位 / 日批 / 键集游标 / 契约钉信封 / org 注入）。
+**执行器尚未实现 ⇒ 声明即装载失败**（superRefine 拒）。理由同事件档位：导出声明一旦
+「看起来生效」，人会以为湖里有数据而实际上没有——静默的空比红更贵。
+
+- 现在收字段的理由：manifest 是 `.strict()` 的（未知键拒绝，2026-09 #709），未来开放时
+  再加字段就是破坏性变更；先锁形状 ⇒ 执行器落地时已声明模块无需改 manifest。
+- 开放条件（宪法 §6）：**第二个导出数据集立项**。forms 首例走现有专用管线
+  （`plans/2026-10-16-forms-out-lake-m1.4.md`），不迁入声明面直到开放。
+- 开放时：删 superRefine 那条 + 宿主执行器按 `{dataset, source, watermark, partitions}`
+  驱动既有五件套管线（管道一条，数据集 N 个）。
 
 ## agent 能力面：mcpFaces（2026-11-16）
 
