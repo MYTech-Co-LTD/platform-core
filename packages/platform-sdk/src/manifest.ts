@@ -56,8 +56,29 @@ export interface NotificationEventDecl {
   recipients: Record<string, EventRecipientDecl>
   /** 外部生产者（如 case-engine）：存在时事件归属 `external:<name>`，不是声明它的模块。 */
   producer?: string
+  /** 事件保证档位（数据宪法 2026-11-23 §5「事件双轨」）：缺省 = notification（现行语义：
+   *  fail-open 投递给人、emit 返回不参与业务分支）。`reaction`（事务性 outbox、at-least-once、
+   *  幂等消费的业务事件）**尚未实现**——显式声明会被 superRefine 拒绝，免得有人以为声明了
+   *  就有效，把 fail-open 的通知通道当业务事件用（丢一次事件 = 业务静默断裂）。 */
+  guarantee?: 'notification' | 'reaction'
   /** 零配置默认规则；template 必须是内置模板 */
   defaults?: { recipient: string; template: string; channels: string[] }
+}
+
+/**
+ * 模块导出声明（数据宪法 2026-11-23 §6「导出唯一管道」）：声明本模块的一张 PG 表作为
+ * 分析数据集进湖。**执行器尚未实现**（触发 = 第二个导出数据集立项）；forms 首例走现有专用
+ * 管线（plans/2026-10-16-forms-out-lake-m1.4）。字段形状取宪法 §6 的五件套。
+ */
+export interface ModuleExportDecl {
+  /** 目标湖数据集名（契约名，非路径） */
+  dataset: string
+  /** 源表：本模块 schema 下的表名或 `<schema>.<table>` */
+  source: string
+  /** 水位列（增量导出游标，如 bigserial id） */
+  watermark: string
+  /** 分区列（湖侧 layout.partitionBy，如 bizday / batch_id） */
+  partitions: string[]
 }
 
 /**
@@ -125,6 +146,10 @@ export interface ModuleManifest {
   /** agent MCP face 声明（2026-11-16 能力网关）：path 必须 ∈ api.internal 且 method/scope 一致 */
   mcpFaces?: McpFaceDecl[]
   notifications?: { events: NotificationEventDecl[] }
+  /** 模块导出声明（数据宪法 2026-11-23 §6「导出唯一管道」）：**执行器尚未实现**——声明即
+   *  装载失败（见 superRefine）。现在还收字段的理由：manifest 是 .strict() 的，未来开放时
+   *  再加字段就是破坏性变更；先锁契约形状 ⇒ 执行器落地时已声明模块无需改 manifest。 */
+  exports?: ModuleExportDecl[]
 }
 
 // B4：命名空间三同之一——模块 id 即权限命名空间，小写 kebab-case。
@@ -161,6 +186,8 @@ const EventDeclSchema = z.object({
   }).strict()),
   // 外部生产者（OA P0）：声明「这条事件由谁产生」，不影响 key 前缀（key 仍以声明模块 id 开头）。
   producer: z.string().min(1).optional(),
+  // 事件保证档位（数据宪法 §5）：形状在这里锁死；reaction 的「未实现」由 superRefine 拒。
+  guarantee: z.enum(['notification', 'reaction']).optional(),
   defaults: z.object({
     recipient: z.string(),
     template: z.string(),
@@ -249,6 +276,13 @@ const ManifestObject = z.object({
     profile: z.enum(['full', 'c-manage']).optional(),
   }).strict()).optional(),
   notifications: z.object({ events: z.array(EventDeclSchema) }).strict().optional(),
+  // 模块导出声明（数据宪法 §6）：形状先锁，执行器未实现 ⇒ superRefine 拒（见下）。
+  exports: z.array(z.object({
+    dataset: z.string().min(1),
+    source: z.string().min(1),
+    watermark: z.string().min(1),
+    partitions: z.array(z.string().min(1)).min(1),
+  }).strict()).optional(),
 // .strict()（issue #708，fix 分项）：未知键 ⇒ schema 拒 ⇒ 装载失败 / check-manifests 红。
 // 没 strict 时 Zod **静默剥离**未知键——「写了等于没写、且不报错」（曾让 dataDependencies
 // 在落地前被写成静默消失的声明面，见 module-protocol.md 同名节实施状态警告）。fail-fast
@@ -325,6 +359,32 @@ export const ManifestSchema = ManifestObject.superRefine((m, ctx) => {
         message: '声明了 frontend.console（PC 产物）但 surfaces 不含 "pc"——两端声明自相矛盾',
       })
     }
+  }
+
+  // 数据宪法 2026-11-23 §5：事件双轨的 reaction 档（事务性 outbox）尚未实现。声明即拒——
+  // 理由：notify 是 fail-open 通知面，若让 reaction 声明静默通过，模块作者会以为业务事件有
+  // at-least-once 保证，实际走的仍是通知腿（丢一次 = 业务静默断裂，见 AGENTS 硬约束 12）。
+  for (const [i, ev] of (m.notifications?.events ?? []).entries()) {
+    if (ev.guarantee === 'reaction') {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ['notifications', 'events', i, 'guarantee'],
+        message: 'guarantee "reaction"（事务性 outbox / at-least-once 业务事件）尚未实现——'
+          + '数据宪法 §5 判据（「A 模块状态变化必须触发 B 模块业务动作且丢失不可容忍」首次出现）到达后开放；'
+          + '在此之前通知事件一律是 notification 档（fail-open，不得用作业务分支）',
+      })
+    }
+  }
+
+  // 数据宪法 2026-11-23 §6：模块导出执行器尚未实现（触发 = 第二个导出数据集立项）。
+  // 声明即拒，免得「声明了等于生效」——forms 首例走现有专用管线。
+  if ((m.exports?.length ?? 0) > 0) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: ['exports'],
+      message: 'exports（模块导出声明）的执行器尚未实现——数据宪法 §6 触发条件（第二个导出数据集立项）'
+        + '到达后开放；在此之前导出走各数据集既有管线（首例 forms：plans/2026-10-16-forms-out-lake-m1.4.md）',
+    })
   }
 
   // 移动端业务应用的 scope 同样只能是本模块自己的码（spec 2026-11-01 §5.2）
