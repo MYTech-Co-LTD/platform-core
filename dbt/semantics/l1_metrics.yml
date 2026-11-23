@@ -1689,3 +1689,85 @@ metrics:
     tier: experimental
     source: forms
     freshness_sla_days: 2
+
+  # ── 目标件（件②「计划 vs 实际」，#2708 / 计划 2026-11-23-goal-platform-a-b-c C1）─────────────
+  # 每 goal×metric 两条：达成率（actual / target）+ 时间进度（已过日历日 / 当月总天数）。
+  # 指标名源段 = **lemeng**（不是 forms）：实际值来自乐檬 marts（源裁剪按它判），且对账 test 的
+  # 落点按源段分目录（dbt/tests/lemeng/）——落 forms 域的对账机器上永远不跑（forms 域不在山海面）。
+  # 关系由 scripts/gen-goal-achievement.mjs 从 dbt/semantics/goals.yml **生成**（生成物 == committed，
+  # `--check` 在 CI gates）；本处指标声明**手写**（sync 只认本文件），生成器会核对每条 ratio 引用
+  # 它产出的列——两边漂开即 `gen-goal-achievement --check` 红，别只手改一侧。
+  # ⚠️ ratio 形态（不是 expression）：达成率不可加，跨店/跨月组合必须「先加分子分母再相除」，
+  #    sum(月度达成率) 是错误口径。零分母由 sync 自动包 nullif（率类声明纪律，spec 2026-10-12 §5.3）。
+  # ⚠️ 刻意**不写 sources**（新鲜度推导只认 lemeng/ 路径段，写 forms 路径会 sync 响亮失败）⇒ 无自动水位。
+  # ⚠️ grain 含 bizday（= 周期首日；问数日期区间过滤的着力点）——bizday 是**周期日**不是采集日。
+  # ⚠️ grain 含 system_book：目标定义钉死账套（两本账套门店号有重叠，跨账套汇总会多算）；
+  # ⚠️ source=lemeng：实际值侧是乐檬 marts（fct_retail_sale / fct_branch_indicator），目标值来自
+  #    forms 提交；源裁剪按「该租户接没接乐檬」判——目标件只有与实际值同面才有意义（山海数据面）。
+  - name: 'lemeng:goal:monthly_store_sale_sale_achievement_rate'
+    label: 门店月度销售达成率
+    unit: '%'
+    definition: >-
+      月度 × 门店的销售目标达成率 = 实际销售额 / 销售目标（不可加；上滚 = Σactual / Σtarget）。
+      实际值 = L1 `lemeng:retail:sales`（sum(fct_retail_sale.sale_amount)，不冲退货口径）；
+      目标值 = dataPlane 表单 goal-monthly-store 的 target_sale 字段（同 (period, 门店) 多次提交取
+      submitted_at 最新）。target = 0 或缺失 ⇒ 达成率 NULL（新店无目标，D5；不当作 0 或 100%）。
+      关系 mart_goal_achievement__monthly_store_sale 由 goals.yml 生成（件② #2708）。
+    ratio:
+      numerator: 'sum(mart_goal_achievement__monthly_store_sale.actual_sale)'
+      denominator: 'sum(mart_goal_achievement__monthly_store_sale.target_sale)'
+    grain: [system_book, bizday, period, branch_num]
+    owner: data-platform
+    tier: experimental
+    source: lemeng
+    freshness_sla_days: 2
+
+  - name: 'lemeng:goal:monthly_store_sale_sale_progress_rate'
+    label: 门店月度销售目标时间进度
+    unit: '%'
+    definition: >-
+      月度周期的时间进度 = 已过日历日 / 当月总天数（北京时钟日界；未来月份 0，月末 1）。
+      与达成率同粒度（月度 × 门店）并用，看「进度 vs 达成」是否落后（报表 bullet target=1 着色）。
+      关系由 goals.yml 生成（件② #2708）；分母为 0 不可能（任何月份 ≥28 天），零分母包装系 sync 统一行为。
+    ratio:
+      numerator: 'sum(mart_goal_achievement__monthly_store_sale.days_elapsed)'
+      denominator: 'sum(mart_goal_achievement__monthly_store_sale.total_days)'
+    grain: [system_book, bizday, period, branch_num]
+    owner: data-platform
+    tier: experimental
+    source: lemeng
+    freshness_sla_days: 2
+
+  - name: 'lemeng:goal:monthly_store_sale_outbound_achievement_rate'
+    label: 门店月度配送目标达成率
+    unit: '%'
+    definition: >-
+      月度 × 门店的配送（出库）目标达成率 = 实际门店配送金额 / 配送目标（不可加；上滚 = Σactual/Σtarget）。
+      实际值 = L1 `lemeng:branch:transfer_money`（sum(fct_branch_indicator.transfer_money)，D10 门店
+      「配送金额」= 出库金额的门店级可加腿）；目标值 = 表单 goal-monthly-store 的 target_outbound 字段。
+      ⚠️ 刻意**不用** `lemeng:outbound:amount`：集团去重口径的 grain 只有 (system_book, bizday)，
+      没有门店维，按店考核 join 不成立（goals.yml 头注详）。target = 0 或缺失 ⇒ 达成率 NULL。
+    ratio:
+      numerator: 'sum(mart_goal_achievement__monthly_store_sale.actual_outbound)'
+      denominator: 'sum(mart_goal_achievement__monthly_store_sale.target_outbound)'
+    grain: [system_book, bizday, period, branch_num]
+    owner: data-platform
+    tier: experimental
+    source: lemeng
+    freshness_sla_days: 2
+
+  - name: 'lemeng:goal:monthly_store_sale_outbound_progress_rate'
+    label: 门店月度配送目标时间进度
+    unit: '%'
+    definition: >-
+      月度周期的时间进度（与销售侧同一条时间进度；按 metric 各声明一条是「每 goal×metric 两条」
+      的声明纪律，两者数值恒等——数据面不会出现两条不同的进度）。口径 = 已过日历日 / 当月总天数
+      （北京时钟日界）。关系由 goals.yml 生成（件② #2708）。
+    ratio:
+      numerator: 'sum(mart_goal_achievement__monthly_store_sale.days_elapsed)'
+      denominator: 'sum(mart_goal_achievement__monthly_store_sale.total_days)'
+    grain: [system_book, bizday, period, branch_num]
+    owner: data-platform
+    tier: experimental
+    source: lemeng
+    freshness_sla_days: 2

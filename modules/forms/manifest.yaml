@@ -169,6 +169,24 @@ notifications:
       recipients:
         assignee: { kind: field, field: assignee }
       defaults: { recipient: assignee, template: oa_collection_due, channels: [wecom_default, inapp_default] }
+    # ── 目标达成日报（件② #2708 / 计划 C3）：每天由 `goal.daily_push` job 入队（scripts/goal-daily-push.mjs）。
+    # 收件人 = 持 `data:query` 的看数人（scope_holders）——达成率是数据面指标，谁能看数谁收日报。
+    # 三处同描（本文件 defaults ⇔ notify/templates/builtin.ts 的 oa_goal_daily ⇔ notify/seed-builtin.ts
+    # 派生规则 recipient_key='viewers'）；漏一处 = dispatch `no_rules` 静默丢。
+    - key: forms.goal.daily
+      title: 目标达成日报
+      scope: { key: goal, label: 目标 }
+      payload:
+        goal:            { type: string, required: true }
+        metric:          { type: string, required: true }
+        period:          { type: string, required: true }
+        achievementRate: { type: string, required: true }
+        progressRate:    { type: string, required: true }
+        topLaggards:     { type: string, required: true }
+        link:            { type: url, required: true }
+      recipients:
+        viewers: { kind: scope_holders, scope: data:query, label: 看数人 }
+      defaults: { recipient: viewers, template: oa_goal_daily, channels: [wecom_default, inapp_default] }
     # ── OA 审批（P1 只声明这两个；forms.task.assigned / forms.case.sla.breach 随 P4/P1.5 再加）──
     # `forms.approval.awaiting` 由 **case-engine（外部生产者）** 产生：key 仍以声明模块 id 开头，
     # 归属由 producer 元数据表达（event catalog 记 module_id=external:case-engine）。

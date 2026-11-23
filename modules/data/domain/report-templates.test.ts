@@ -55,3 +55,39 @@ describe('compileTemplate', () => {
     }
   })
 })
+
+describe('目标达成模板（件② #2708 / C2）', () => {
+  const goal = templateById('goal_achievement')!
+
+  it('槽位形状：双 KPI + 按门店达标表（target=1 着色）+ 节奏 + 分析', () => {
+    expect(goal.slots.map((s) => s.chart)).toEqual(['kpi', 'kpi', 'table', 'line', 'ai_text'])
+    const table = goal.slots.find((s) => s.key === 'by_store')!
+    expect(table.dims).toEqual(['branch_num'])
+    const sale = table.measures!.find((m) => m.key === 'sale_rate')!
+    expect(sale).toMatchObject({ target: 1, colorSemantics: 'target', format: 'percent', required: true })
+  })
+
+  it('编译 → 合法 spec，且 target/colorSemantics 透传到宽表列（不是模板层的死字段）', () => {
+    const out = compileTemplate(goal, {
+      achievement: 'lemeng:goal:monthly_store_sale_sale_achievement_rate',
+      progress: 'lemeng:goal:monthly_store_sale_sale_progress_rate',
+      sale_rate: 'lemeng:goal:monthly_store_sale_sale_achievement_rate',
+      outbound_rate: 'lemeng:goal:monthly_store_sale_outbound_achievement_rate',
+      pace: 'lemeng:goal:monthly_store_sale_sale_progress_rate',
+      rhythm: 'lemeng:goal:monthly_store_sale_sale_achievement_rate',
+    })
+    expect(out.ok).toBe(true)
+    if (!out.ok) return
+    // 无默认期间只会得到 MISSING_PERIOD（warn）；不许有 error 级问题
+    expect(lintReportSpec(out.spec).filter((i) => i.level === 'error')).toEqual([])
+    const table = out.spec.panels.find((p) => p.chart === 'table')!
+    expect(table.measures![0]).toMatchObject({ target: 1, colorSemantics: 'target' })
+  })
+
+  it('缺必填达成率槽 ⇒ 失败（不产出没有达成率的「目标」报表）', () => {
+    const out = compileTemplate(goal, { sale_rate: 'm:sale' })
+    expect(out.ok).toBe(false)
+    if (out.ok) return
+    expect(out.reason).toBe('MISSING_REQUIRED_SLOT')
+  })
+})

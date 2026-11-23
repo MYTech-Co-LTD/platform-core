@@ -17,6 +17,13 @@ export interface TemplateMeasure {
   format?: 'currency' | 'number' | 'percent'
   /** 必填列：缺指标 ⇒ 编译失败；非必填且留空 ⇒ 该列省略。 */
   required?: boolean
+  /**
+   * 目标值（L4 的 static target，与 bullet/bar 同一口径）：示意「这一列相对什么算好」。
+   * 达成率类指标填 `1`（100%）；`colorSemantics: 'target'` 才有意义（单系列达标着色）。
+   */
+  target?: number
+  /** 颜色语义（L4）：`target` = 按是否达标着色（依赖同列的 `target`）。 */
+  colorSemantics?: 'target'
 }
 
 export interface TemplateSlot {
@@ -97,6 +104,31 @@ export const REPORT_TEMPLATES: readonly ReportTemplate[] = [
     ],
   },
   {
+    // 目标件内置模板（件② #2708 / 计划 C2）：零报表引擎改动——达成率/时间进度都是**普通指标**，
+    // 目标对报表不可见（spec D2 的核心决策）。槽位只让调用方选「哪条达成率/进度指标」。
+    // 达标着色 = 表格列 `target: 1` + `colorSemantics: 'target'`（≥100% 绿 / <80% 红的三色由渲染层
+    // 按 report-spec 既有语义给，不在模板里造第二套阈值）。
+    id: 'goal_achievement',
+    title: '目标达成',
+    description: '达成率与时间进度双卡 + 按门店达标表（≥100% 着色）+ 周期节奏 + 经营分析；适合月度经营会。',
+    // 刻意**不声明默认 period**：目标关系的日期列 `bizday` = 周期首日，按天/近 7 天兜底会过滤成空表；
+    // 期间由使用者在建报表时显式选（月区间覆盖周期首日即可）。lint 会提示 MISSING_PERIOD（warn 级）。
+    slots: [
+      { key: 'achievement', label: '销售达成率', chart: 'kpi', required: true, format: 'percent', compare: 'none', span: 8 },
+      { key: 'progress', label: '时间进度', chart: 'kpi', required: false, format: 'percent', compare: 'none', span: 8 },
+      {
+        key: 'by_store', label: '门店达成', chart: 'table', dims: ['branch_num'], span: 24,
+        measures: [
+          { key: 'sale_rate', label: '销售达成率', format: 'percent', required: true, target: 1, colorSemantics: 'target' },
+          { key: 'outbound_rate', label: '配送达成率', format: 'percent', target: 1, colorSemantics: 'target' },
+          { key: 'pace', label: '时间进度', format: 'percent' },
+        ],
+      },
+      { key: 'rhythm', label: '达成节奏', chart: 'line', required: false, dims: ['bizday'], span: 24 },
+      { key: 'analysis', label: '目标分析', chart: 'ai_text', title: '目标分析', focus: 'overview', span: 24 },
+    ],
+  },
+  {
     id: 'category_analysis',
     title: '品类分析',
     description: '按品类看销售额与毛利，识别结构问题。',
@@ -158,6 +190,8 @@ export function compileTemplate(
           metricId: values[m.key]!,
           label: m.label,
           ...(m.format === undefined ? {} : { format: m.format }),
+          ...(m.target === undefined ? {} : { target: m.target }),
+          ...(m.colorSemantics === undefined ? {} : { colorSemantics: m.colorSemantics }),
         }))
       if (measures.length === 0) continue
       panels.push({
