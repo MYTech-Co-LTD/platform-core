@@ -67,10 +67,5 @@ where r.bizday >= (select max(bizday) - interval '7 days' from {{ this }})
 {% else %}
 where r.bizday >= (cast(now() at time zone 'Asia/Shanghai' as date) - interval '30 days')
 {% endif %}
-{% if env_var('MAT_CLOSED_BEFORE', 'false') == 'true' %}
--- 物化闭窗读（2026-11-09）：tick 采集每 10 分钟重写**当前小时**的分区，物化若同时读它就会撞
--- `HTTP Error: ETag ... was initially X and now returned Y` ⇒ 整轮 hourly 判红（实测 06:30 那轮
--- 读 `bizday=2026-11-09/hour=14`）。与 fct_retail_sale / fct_retail_quantity / fct_retail_item_sale
--- 同一口径：闭窗读只取「今天已过去的小时」，当前小时留给下一档。
-and {{ closed_before_predicate('r.') }}
-{% endif %}
+-- 闭窗谓词已于 #2761 下移到 staging（湖腿闭窗、热层腿不闭窗）；marts 不再施加，
+-- 否则会把热层提供的「当前小时」也滤掉。

@@ -71,10 +71,8 @@ with base as (
     -- 且用编译期字面量才能触发 read_parquet 的 bizday 分区裁剪（#1524）。
     and bizday >= {{ incremental_cutoff(10) }}
     {% endif %}
-    {% if env_var('MAT_CLOSED_BEFORE', 'false') == 'true' %}
-    -- 物化闭窗读（2026-11-08 P0）：tick 采集每 10 分钟重写当前小时，物化读同一分区会撞 ETag。
-    and {{ closed_before_predicate() }}
-    {% endif %}
+    -- 闭窗谓词已于 #2761 下移到 staging（湖腿闭窗、热层腿不闭窗）；marts 不再施加，
+    -- 否则会把热层提供的「当前小时」也滤掉。
 )
 -- ⚠️ 逗号只能落在标记区**外**（区内逐字节受 `--check` 管），故单独起一行。
 ,
@@ -89,9 +87,8 @@ base_rq_sale as (
     and bizday >= {{ cutoff_or_backfill(10) }}
     {{ backfill_to() }}
     {% endif %}
-    {% if env_var('MAT_CLOSED_BEFORE', 'false') == 'true' %}
-    and {{ closed_before_predicate() }}
-    {% endif %}
+    -- 闭窗谓词已于 #2761 下移到 staging 层（湖腿自己闭窗、热层腿不闭窗）——
+    -- marts 不再施加，否则会把热层提供的「当前小时」也滤掉。
 ),
 sale_quantity__gen as (
     select system_book, bizday, branch_num, item_num, sum(quantity)::numeric(20,3) as sale_quantity__gen from base_rq_sale group by 1, 2, 3, 4
@@ -103,9 +100,8 @@ base_rq_return as (
     and bizday >= {{ cutoff_or_backfill(10) }}
     {{ backfill_to() }}
     {% endif %}
-    {% if env_var('MAT_CLOSED_BEFORE', 'false') == 'true' %}
-    and {{ closed_before_predicate() }}
-    {% endif %}
+    -- 闭窗谓词已于 #2761 下移到 staging 层（湖腿自己闭窗、热层腿不闭窗）——
+    -- marts 不再施加，否则会把热层提供的「当前小时」也滤掉。
 ),
 return_quantity__gen as (
     select system_book, bizday, branch_num, item_num, sum(quantity)::numeric(20,3) as return_quantity__gen from base_rq_return group by 1, 2, 3, 4
