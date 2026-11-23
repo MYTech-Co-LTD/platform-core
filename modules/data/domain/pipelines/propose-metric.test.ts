@@ -5,6 +5,7 @@
 //   ② 保真：全量 YAML piece 的未触碰区域逐字相等（含注释归属不动）——不是「内容等价」，是「字节相等」；
 //   ③ 同尺：expression/ratio/sla/命名的判据全部来自 check-data-models 的导出与 parseL1Select，
 //      测试只钉「调用了同一把尺」，不复制判据文本。
+import { readFileSync } from 'node:fs'
 import { parseDocument } from 'yaml'
 import { describe, expect, it } from 'vitest'
 import { composeMetricDeclaration, proposeMetricDeclarationImpl, SEMANTICS_YAML_REL } from './propose-metric'
@@ -492,8 +493,14 @@ describe('proposeMetricDeclarationImpl（路由实现，只读现行文件）', 
     expect(pieces[0].path).toBe('dbt/semantics/l1_metrics.yml')
     const re = parseDocument(pieces[0].content)
     expect(re.errors).toEqual([])
-    // 56 条声明 + 本条探针 = 57（2026-11-10 新增零售商品毛利 L1）
-    expect(metricNamesOf(pieces[0].content)).toHaveLength(57)
+    // 条数**不写死**：期望 = 真实 dbt/semantics/l1_metrics.yml 的声明数 + 本条探针。
+    // 写死数字会让每次合法新增 L1 都红一次（2026-11-23 件① #2706 就踩过），且改数字的人
+    // 不看语义就顺手改——计数在这里只是「全量拼接没丢条目」的兜底，不是口径事实源。
+    const realYaml = readFileSync(
+      new URL('../../../../dbt/semantics/l1_metrics.yml', import.meta.url),
+      'utf8',
+    )
+    expect(metricNamesOf(pieces[0].content)).toHaveLength(metricNamesOf(realYaml).length + 1)
   })
 
   it('name / rationale 缺失 ⇒ bad_param（工具级错误）', async () => {
