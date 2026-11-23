@@ -1,0 +1,104 @@
+# 售后模块接入 runbook（冷启动 → 正式运营）
+
+> 状态：2026-11-23 人裁「数据先不迁移，先跑一阵」的落地记录与执行单。
+> 范围：从「代码已在生产」（M1c single 已随山海一果销账，2026-09-19）到「真实业务稳定在跑」之间的 Gate。
+> 代码侧能力与协议见 `docs/module-onboarding.md`；本文只写**接入与运营动作**。
+
+## 0. 裁决记录（2026-11-23）
+
+| 项 | 裁决 |
+|---|---|
+| 历史**工单** | **不迁**，从 AS-00000001 重新编号 |
+| 历史**附件** | 不迁（旧图留在无极 COS 原值；外链展示另立题） |
+| **员工花名册** | **批量导入**（`employee_info`） |
+| **售后规则** | **批量导入**（`after_sales_rule`） |
+| 回迁通路 | **保留**（#151 挂起不关闭），短期不承诺 |
+
+**对外预期（必须提前同步给业务方，否则会被当 bug）**：
+1. 系统内查不到历史工单与历史图片；
+2. 新单号从 `AS-00000001` 起，与无极单号不同体系；
+3. 花名册/规则是导入快照，之后变更一律走平台（登记审批 / console 规则页）。
+
+## 1. Gate 1：冷启动导入
+
+**前置（缺一不可）**
+- [ ] wuji 只读凭据在 env：`WUJI_APPID` / `WUJI_KEY_<表>`（不落仓、不落日志）
+- [ ] 拉真样本核对字段名：`migration/clean.ts` 的 KEYS 是**暂定清单**，Task 3 要求逐表对真样本钉死
+- [ ] 门店编码映射决策（见下，**最重要**）
+- 接龙金额单位：**不导入 group_buying_\***，此 gate 不适用（`--tables` 不含它即不会触发 `GROUPBUY_UNIT_UNPROVEN`）
+
+**命令（默认 dry-run，`--apply` 才写库）**
+```sh
+# 1) 拉样（只读，落盘供核对字段名）
+npx tsx scripts/migrate-aftersales-wuji.mjs --org <casdoor_org> --sample 50 --sample-out /tmp/wuji-sample
+# 2) dry-run：拉取 + 清洗 + 打印，不写库
+npx tsx scripts/migrate-aftersales-wuji.mjs --org <casdoor_org> --tables employee_info,after_sales_rule
+# 3) apply
+npx tsx scripts/migrate-aftersales-wuji.mjs --org <casdoor_org> --tables employee_info,after_sales_rule --apply
+# 4) 对账：clean 产物 vs 库内计数/金额和（reconcile）；skip reasons 必须为空或逐条解释
+```
+
+**门店编码硬约束（导入员工前必读）**
+
+员工的门店引用由导入器写**无忌门店 id 的字符串形**进 `employee.store_code` / `employee_store.store_code`
+（`modules/aftersales/migration/import.ts` 的 #476 注释）——它和 `data.dim_branch.code`（乐檬门店编码）
+**不是同一套编码，仓内无映射表**。因此：
+
+- **不要导入 `store_info`**。导了只会让员工门店链「解析成功」，落的还是无忌 id——制造「看起来有归属、
+  其实对不上」的假象，比明着空更贵。
+- 不导 `store_info` 时，员工行照常导入，门店链计入 `unresolved_store_ref`（可见计数，不静默）。
+- 补正推荐：导入后按「员工姓名 ↔ `dim_branch.name`」人工核对一次，再用一次性 SQL 补
+  `employee_store.store_code`（脚本与核对表留档；**改之前先跑同一份核对的 dry-run**）。
+- **在门店归属正确之前，不要开访客登记页**（「我的门店」会展示错编码）。
+
+**对账判据**
+- 每张导入表：`fetched = imported + skipped`，且 `skipped/reasons` 为空或已逐条说明；
+- 抽 5 名员工、5 条规则与源系统逐字段比对（金额/比例/状态码是重点）。
+
+## 2. Gate 2：账号与授权
+
+- [ ] 租户管理员在 Casdoor 租户 org 下**持有并授予** `aftersales:manage`——否则审批通知
+      **零收件人**（notify-preflight 会红，且 health 全绿不报警）。
+- [ ] 门店员工账号挂 `aftersales:guest`（访客/门店侧权限的来源）。
+- [ ] 手机号摸底：`node scripts/audit-employee-phones.mjs`（只读）；回填先 dry-run 再 `--apply`
+      （`CASDOOR_*` 五 env 齐备）。
+- [ ] 身份绑定走 `platform.identity_link`；Phase 2（企微绑定分流 + 通讯录预填）未立项，
+      绑定期望按「自动匹配 + 人工审核」管理。
+
+## 3. Gate 3：存储
+
+- [ ] 租户行五键（或平台默认 env）：endpoint / bucket / AK / SK / region；
+      **漏配 = 附件端点 503，不是启动报错**。
+- [ ] 冒烟：小图直传 → console 看原图；>1MiB 视频直传（bodyLimit 外的预签名链路）；
+      删单后跑 GC dry-run 看孤儿计数。
+
+## 4. Gate 4：渠道
+
+- [ ] 公众号 appid/secret 落租户行（CLI 写，无管理页）——`--module aftersales` 一并配。
+- [ ] 真机链（只有客户机能验）：公众号内开 `/app/aftersales` → 访客 session → 带图提交 →
+      console 按规则出金额 → 状态流转 → 二次访问免登录。
+- [ ] 走企微直连时：出口 IP 进**对应自建应用**的企业可信 IP（换机踩过 60020）。
+
+## 5. Gate 5：验收
+
+- [ ] M1c **multi** 销账（#153）——单租户试点验过的是 single，多租户隔离未验。
+- [ ] 冒烟清单 `docs/m0-smoke-checklist.md` 重跑。
+- [ ] 回滚演练：当前版本（非 M3c 时期）重跑一次回到上一镜像。
+- [ ] B13 真库对账绿：`scripts/check-data-dependencies.mjs`（`data.dim_*` 列集与 lock 一致）。
+- [ ] 依赖维表在**本租户**有数据：`data.dim_branch` / `data.dim_item` /
+      `data.dim_settlement_order_line` 非空（清单与选单页的数据源）。
+
+## 6. Gate 6：运营（可随业务滚动补齐）
+
+- [ ] GC：openship job 补台账（`deploy/jobs.md`），或迁平台调度器（与 Wave 6/8 方向一致）。
+- [ ] 通知：每日巡检「零收件人」（notify-preflight）。
+- [ ] 附件：`STORAGE_REF_UNRESOLVED` 目前只有 60s 去重的 warn——升级为可告警信号。
+
+## 7. 回迁通路（#151 挂起）
+
+迁移脚本骨架保留、默认 dry-run；#151 不关闭。**越晚越痛**，三条已知：
+1. **员工重复**：冷启动若有人自建/登记，补迁时需按手机号人工合并；
+2. **规则两套**：导入的规则与后来手工建的规则语义可能重叠，需人工收敛；
+3. **历史附件永久缺失**：源侧 COS 若被清理，补迁也补不回图片——需按需同步归档源侧。
+
+重开条件：业务提出历史查询需求 / 数据合规要求 / 出现明确回迁窗口。
