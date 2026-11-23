@@ -81,6 +81,11 @@ frontend:
     - { path: /console/aftersales/stores, title: 门店, description: 门店档案（编号/名称/地址），售后单与员工都挂在门店下。,  scope: aftersales:manage, entry: ./console/index.tsx }
     - { path: /console/aftersales/approvals, title: 申请审批, description: 员工登记/变更申请的审批队列。,  scope: aftersales:manage, entry: ./console/index.tsx }
     - { path: /console/aftersales/links, title: 身份绑定, description: 员工与企微/Casdoor 账号的绑定关系；一个员工只应绑一个身份。,  scope: aftersales:manage, entry: ./console/index.tsx }
+  # 管理组子页（2026-11-23）：模块自带的**渠道凭据配置**放「管理」组而非业务菜单
+  # （console-ui-conventions：平台管理 → 管理组）。三重过滤（registry ∩ 模块启用 ∩ scope）
+  # ⇒ 售后不启用时本页自动隐藏，直达 URL 也被 config 门挡住。
+  admin:
+    - { path: /console/admin/aftersales/settings, title: 售后设置, icon: SettingOutlined, scope: aftersales:manage, entry: ./console/admin/settings.tsx }
   # 移动端 userApp（M3b-2）：Vite 壳 + Vue 3.5 + TDesign，搬自 wuji-2 的两个保留页。
   # mount 与 mobile/vite.config.ts 的 `base` **必须一致**（不一致 ⇒ 产物引用错前缀）。
   # dist 相对**模块目录**解析（loader 的 path.resolve(m.dir, dist)）。

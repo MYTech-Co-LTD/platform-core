@@ -238,7 +238,7 @@ frontend:
 字段五项，与 `frontend.console` **同形**（`{ path, title, icon?, scope, entry }`）；形状与三条约法正典在 `docs/module-protocol.md`「模块管理页：`frontend.admin`」节。
 
 ```yaml
-# modules/<id>/manifest.yaml —— 本期仓内零真实消费者，照形状写
+# modules/<id>/manifest.yaml —— 首个真实消费者：aftersales 售后设置（2026-11-23），照形状写
 frontend:
   admin:
     - { path: /console/admin/<id>/settings, title: 模块设置, icon: SettingOutlined, scope: <id>:manage, entry: ./console/admin/settings.tsx }
@@ -251,7 +251,8 @@ frontend:
 - **服务端 config 不暴露 admin 清单**：菜单侧前端按 registry∩config 自判（`apps/web/src/pages/console-menu.ts`），零后端改动。
 - **进组顺序**：平台内置三项（用户管理／角色与授权／我的订阅）→ 存储配置（能力联动）→ 模块 admin 页（manifest 声明序）。
 - **停用联动**：模块停用 ⇒ 菜单不出、直敲 URL 也进不去——路由同判 config，出「模块可能未启用」Result（registry 未命中的路径是同款 Result）。
-- **已知边界**：本期**零真实消费者**——协议与联动逻辑已交付、fixture 级验证覆盖，但还没有真实模块用它。接入者就是第一个真实用例，记得补浏览器级验收（见文末「已知边界」）。
+- **真实消费者**：首个 = `modules/aftersales` 的「售后设置」页（2026-11-23，公众号 AppID/Secret 配置）；
+  管理组位置 + 模块禁用自动隐藏（三重过滤）已在该页端到端验证。新接入者照此形状写，补浏览器级验收。
 
 ### `frontend.userApp`：独立前端应用（C 端／移动端）
 
@@ -452,8 +453,9 @@ const results = await probeAnonymous(mountedApp) // 期望每条都是 401
 
 - **manifest 预留字段已清理（#126）**：`notifications.dir` / `config.schema` / `bindings`
   已从 schema 移除；需要 reintroduce 时先有真实消费者与案例（无案例不立标准）。
-- **`frontend.admin` 本期零真实消费者**：协议与联动逻辑已交付（fixture 级验证覆盖），但还没有
-  真实模块用它。第一个真实模块接入时要补**浏览器级**验收（沿 2026-09-20 spec 的待销账）。
+- **`frontend.admin` 首个真实消费者已落地（aftersales 售后设置，2026-11-23）**：协议与联动
+  逻辑此前只有 fixture 级验证；该页提供管理组位置、模块禁用自动隐藏、`tenant:admin` 组门与
+  渠道凭据的掩码/留空不改语义。浏览器级验收随该页补上（沿 2026-09-20 spec 的待销账）。
 - **平铺菜单在模块多了会破**：侧栏模块条目是平铺的（协议不支持嵌套），行业经验约 7±2 项。
   届时的演进先例是 Grafana 的做法——section 分组 + 排序权重 + **管理员侧** placement 配置
   （与本平台「模块作者 manifest 决定序」不同）。现在不做（YAGNI），方向先钉住。
