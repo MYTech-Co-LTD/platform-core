@@ -79,6 +79,28 @@ describe('relationSlug / kindOf / fieldsOfBody（映射与 storage.listDataPlane
     expect(fieldsOfBody({ schema: { type: 'object' } })).toEqual([])
     expect(fieldsOfBody({})).toEqual([])
   })
+
+  it('fieldsOfBody（v2 #2755）：显式 dataPlane.fields 优先（kind 原样），非法 kind 剔除', () => {
+    const fields = fieldsOfBody({
+      schema: {
+        type: 'object',
+        properties: { score: { type: 'number' }, extra: { type: 'string' }, grade: { type: 'string', enum: ['a'] } },
+      },
+      dataPlane: {
+        fields: [
+          { field: 'score', kind: 'number', agg: ['sum'] },
+          { field: 'grade', kind: 'enum' },
+          { field: 'bad', kind: 'money' },
+          { kind: 'string' },
+        ],
+      },
+    })
+    // 显式声明是**子集**也照声明取（stats-only 表单允许不摊平全部字段）
+    expect(fields).toEqual([
+      { field: 'score', column: 'f_score', kind: 'number' },
+      { field: 'grade', column: 'f_grade', kind: 'enum' },
+    ])
+  })
 })
 
 describe('buildContract（字段→列/类型映射；生成物 == committed 的事实源）', () => {

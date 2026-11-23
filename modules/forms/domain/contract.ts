@@ -12,6 +12,10 @@
 // （平台全局，P4 分档）；`x-binding: "required" | "open"`（P7：v1 两档，extensible 拒）。
 import Ajv from 'ajv'
 import { itemWecomRefOf } from './wecom-binding'
+// 统计白名单（聚合算子 / 字段名形态 / kind 映射）与视图校验的**单一事实源**在 stats.ts；
+// 本文件以值导入取用，stats.ts 反向只以 `import type` 引用本文件的类型 ⇒ 运行期无环。
+import { AGGS, FIELD_IDENT_RE, fieldKindOf, isFieldKind, validateStatsView } from './stats'
+export { AGGS, FIELD_IDENT_RE, fieldKindOf } from './stats'
 
 /** 字典引用格式（P4 分档前缀）。第二消费者出现时迁 `@platform/sdk`（可搬迁纪律）。 */
 export const DICT_REF_RE = /^(dict|gdict):([a-z][a-z0-9-]*)$/
@@ -50,6 +54,156 @@ export type GateErrorCode =
   | 'APPROVAL_REF_INVALID'
   | 'DATA_PLANE_FIELD_NAME_INVALID'
   | 'DATA_PLANE_TYPE_UNSUPPORTED'
+  // ── 件④ dataPlane v2（#2755）：显式字段声明 / 统计 / 分析能力位 ──
+  | 'DATA_PLANE_STRUCTURE'
+  | 'DATA_PLANE_FIELD_UNKNOWN'
+  | 'DATA_PLANE_FIELD_MISSING'
+  | 'DATA_PLANE_KIND_MISMATCH'
+  | 'STATS_NO_MEASURE'
+  | 'STATS_BAD_AGG'
+  | 'STATS_AGG_TYPE_MISMATCH'
+  | 'STATS_AGG_NOT_ALLOWED'
+  | 'STATS_NOT_GROUPABLE'
+  | 'STATS_FIELD_NOT_ALLOWED'
+  | 'STATS_TOO_MANY_GROUP_BY'
+  | 'STATS_TOO_MANY_MEASURES'
+  | 'STATS_TOO_MANY_WHERE'
+  | 'STATS_LIMIT_TOO_LARGE'
+  | 'STATS_IN_TOO_LARGE'
+  | 'STATS_BAD_FILTER'
+  | 'STATS_VIEW_BAD_SHAPE'
+  | 'STATS_VIEW_BAD_LABEL'
+  | 'STATS_VIEW_DUPLICATE_KEY'
+  | 'STATS_VIEW_NOT_FOUND'
+
+// ── dataPlane v2 类型（件④ #2755）────────────────────────────────────────────────
+// 契约把「湖投影」与「实时统计」拆成两个能力位：`analytics`（湖 → 摊平 → mart，需平台审批）
+// 与 `stats`（平台 PG 实时聚合，发布者自开）。两者共用一份显式字段声明 `fields`。
+
+/** 统计聚合算子（字段声明与 `/stats` 入参共用同一套白名单；运行时白名单在 stats.ts）。 */
+export type Agg = 'sum' | 'avg' | 'count' | 'min' | 'max'
+
+export type FieldKind = 'string' | 'number' | 'integer' | 'boolean' | 'date' | 'enum'
+
+/**
+ * 字段声明：`field` = 契约顶层字段名，`kind` = 湖/payload 提取类型，`agg` = 允许的聚合，
+ * `groupable` = 是否可作为分组维度。声明必须与 schema 同名字段的类型一致（kind 对照）。
+ */
+export interface FieldDecl {
+  field: string
+  kind: FieldKind
+  agg?: Agg[]
+  groupable?: boolean
+}
+
+export interface StatsMeasure { field: string; agg: Agg }
+export type StatsWhereOp = 'eq' | 'neq' | 'gt' | 'gte' | 'lt' | 'lte' | 'in'
+export interface StatsWhere { field: string; op: StatsWhereOp; value: unknown }
+export interface StatsFilter {
+  /** `YYYY-MM-DD`，按 Asia/Shanghai 日界（含当日）。 */
+  submittedFrom?: string
+  submittedTo?: string
+  where?: StatsWhere[]
+}
+
+/** 预声明统计视图（agent 起草表单时一并产出；发布时过与 `/stats` 同一套白名单）。 */
+export interface StatsViewDecl {
+  key: string
+  label: string
+  groupBy?: string[]
+  measures: StatsMeasure[]
+  filter?: StatsFilter
+  limit?: number
+}
+
+/** `/stats` 入参（ad-hoc）或视图入参（`viewId`）。org 永不在此——只来自 identity。 */
+export interface StatsInput {
+  assetId?: string
+  viewId?: string
+  groupBy?: string[]
+  measures?: StatsMeasure[]
+  filter?: StatsFilter
+  limit?: number
+}
+
+/** dataPlane v2：`enabled` 是 legacy 兼容位（等价 `analytics.enabled`）。 */
+export interface DataPlaneV2 {
+  /** @deprecated 等价 `analytics.enabled=true`（存量 goal 表单的写法，不迁移数据）。 */
+  enabled?: boolean
+  fields?: FieldDecl[]
+  stats?: { enabled?: boolean; views?: StatsViewDecl[] }
+  analytics?: { enabled?: boolean }
+}
+
+const NUMERIC_AGGS: ReadonlySet<Agg> = new Set(['sum', 'avg', 'min', 'max'])
+const NUMERIC_KINDS: ReadonlySet<FieldKind> = new Set(['number', 'integer', 'date'])
+/** 分组维度允许的基础类型（文本/枚举/日期/布尔都能分组）。 */
+const GROUPABLE_KINDS: ReadonlySet<FieldKind> = new Set(['string', 'enum', 'date', 'boolean'])
+
+/** 未显式声明的字段（legacy 从 schema 派生）给的保守默认聚合。 */
+const DEFAULT_AGGS: Record<FieldKind, Agg[]> = {
+  number: ['sum', 'avg', 'min', 'max', 'count'],
+  integer: ['sum', 'avg', 'min', 'max', 'count'],
+  date: ['min', 'max', 'count'],
+  string: ['count'],
+  enum: ['count'],
+  boolean: ['count'],
+}
+
+function asRecord(v: unknown): Record<string, unknown> | null {
+  return v !== null && typeof v === 'object' && !Array.isArray(v) ? (v as Record<string, unknown>) : null
+}
+
+/** legacy 兼容：`dataPlane.enabled=true` 按 `analytics.enabled=true` 读取（不迁移数据）。 */
+export function analyticsEnabledOf(body: unknown): boolean {
+  const dp = asRecord(asRecord(body)?.['dataPlane'])
+  if (dp === null) return false
+  return asRecord(dp['analytics'])?.['enabled'] === true || dp['enabled'] === true
+}
+
+/** 实时统计能力位（发布者自己开：`stats.enabled === true`）。 */
+export function statsEnabledOf(body: unknown): boolean {
+  return asRecord(asRecord(asRecord(body)?.['dataPlane'])?.['stats'])?.['enabled'] === true
+}
+
+/**
+ * 契约 body → 字段声明（统计端点的白名单事实源）：
+ * - v2：`dataPlane.fields` 原样（已由发布门校验）；
+ * - legacy：从 `schema.properties` 派生（kind 直映 + 保守默认 agg/groupable）。
+ */
+export function fieldDeclsOf(body: unknown): FieldDecl[] {
+  const rec = asRecord(body)
+  if (rec === null) return []
+  const dp = asRecord(rec['dataPlane'])
+  const declared = dp?.['fields']
+  if (Array.isArray(declared)) {
+    const out: FieldDecl[] = []
+    for (const entry of declared) {
+      const e = asRecord(entry)
+      if (e === null || typeof e['field'] !== 'string' || !isFieldKind(e['kind'])) continue
+      const agg = Array.isArray(e['agg'])
+        ? (e['agg'].filter((a): a is Agg => typeof a === 'string' && (AGGS as readonly string[]).includes(a)))
+        : undefined
+      const groupable = typeof e['groupable'] === 'boolean' ? e['groupable'] : undefined
+      out.push({
+        field: e['field'],
+        kind: e['kind'],
+        ...(agg !== undefined ? { agg } : {}),
+        ...(groupable !== undefined ? { groupable } : {}),
+      })
+    }
+    return out
+  }
+  const props = asRecord(asRecord(rec['schema'])?.['properties'])
+  if (props === null) return []
+  const out: FieldDecl[] = []
+  for (const [field, def] of Object.entries(props)) {
+    const kind = fieldKindOf(def)
+    if (kind === null) continue
+    out.push({ field, kind, agg: [...DEFAULT_AGGS[kind]], groupable: GROUPABLE_KINDS.has(kind) })
+  }
+  return out
+}
 
 /**
  * dataPlane（件① 字段级数据通路，#2706）v1 白名单：字段名的形态与可摊平类型。
@@ -160,6 +314,8 @@ export interface FormContractBody {
   assignees?: { dictRef: string }
   /** 可选（§2.4）：截止 = 发布时刻 + afterDays 天（v1 只此一种）。 */
   due?: { afterDays: number }
+  /** 可选（件④ #2755）：字段级数据通路（湖投影 analytics）+ 实时统计 stats。 */
+  dataPlane?: DataPlaneV2
 }
 
 /**
@@ -318,15 +474,141 @@ export function compileGate(body: unknown): GateResult {
       }
     }
   }
-  // dataPlane opt-in 闸（件① 字段级数据通路，#2706）：**只咬 `dataPlane.enabled === true`**
-  // 的契约——未声明的表单行为逐字不变（上面的既有闸照旧，嵌套/数组照常放行）。声明了 ⇒
-  // 每个顶层字段都要能落成湖上的一列（`f_<name>`）：名字合法 + 类型在白名单内 + 无嵌套。
+  // dataPlane 闸（件① #2706 v1 / 件④ #2755 v2）：
+  //   v1 legacy：`dataPlane.enabled === true` ⇒ 每个顶层字段都要能落成湖上的一列（名字/类型/无嵌套）。
+  //   v2：`fields` 显式声明（field∈schema、kind 与 schema 类型一致、agg/groupable 合法）；
+  //       `stats.enabled` 允许子集（只统计选中的字段）；`analytics.enabled` 要求全覆盖
+  //       （湖投影不能悄悄丢列）且字段名须是小写蛇形（湖列 `f_<name>`）。
   // 闸跑在 publish 门（写时校验纪律）——坏声明不静默入库拖到生成器/物化时才炸。
-  const dp = (body as Record<string, unknown>)['dataPlane']
-  if (dp !== null && typeof dp === 'object' && !Array.isArray(dp) && (dp as { enabled?: unknown }).enabled === true) {
-    const props = schema['properties']
-    if (props !== null && typeof props === 'object' && !Array.isArray(props)) {
-      for (const [name, def] of Object.entries(props as Record<string, unknown>)) {
+  const dpRaw = (body as Record<string, unknown>)['dataPlane']
+  if (dpRaw !== undefined) {
+    const dp = asRecord(dpRaw)
+    if (dp === null) return { ok: false, code: 'DATA_PLANE_STRUCTURE', detail: 'dataPlane 必须是对象' }
+    for (const key of ['enabled'] as const) {
+      if (dp[key] !== undefined && typeof dp[key] !== 'boolean') {
+        return { ok: false, code: 'DATA_PLANE_STRUCTURE', detail: `dataPlane.${key} 必须是布尔` }
+      }
+    }
+    const statsRaw = dp['stats']
+    const statsEnabled = statsEnabledOf(body)
+    if (statsRaw !== undefined) {
+      const stats = asRecord(statsRaw)
+      if (stats === null) return { ok: false, code: 'DATA_PLANE_STRUCTURE', detail: 'dataPlane.stats 必须是对象' }
+      if (stats['enabled'] !== undefined && typeof stats['enabled'] !== 'boolean') {
+        return { ok: false, code: 'DATA_PLANE_STRUCTURE', detail: 'dataPlane.stats.enabled 必须是布尔' }
+      }
+    }
+    if (dp['analytics'] !== undefined) {
+      const analytics = asRecord(dp['analytics'])
+      if (analytics === null) return { ok: false, code: 'DATA_PLANE_STRUCTURE', detail: 'dataPlane.analytics 必须是对象' }
+      if (analytics['enabled'] !== undefined && typeof analytics['enabled'] !== 'boolean') {
+        return { ok: false, code: 'DATA_PLANE_STRUCTURE', detail: 'dataPlane.analytics.enabled 必须是布尔' }
+      }
+    }
+    const analytics = analyticsEnabledOf(body)
+    const propsRaw = schema['properties']
+    const props = asRecord(propsRaw) ?? {}
+
+    // ── 显式 fields（v2）──
+    const fieldsRaw = dp['fields']
+    const declared = new Set<string>()
+    if (fieldsRaw !== undefined) {
+      if (!Array.isArray(fieldsRaw)) {
+        return { ok: false, code: 'DATA_PLANE_STRUCTURE', detail: 'dataPlane.fields 必须是数组' }
+      }
+      for (const entryRaw of fieldsRaw) {
+        const e = asRecord(entryRaw)
+        if (e === null || typeof e['field'] !== 'string' || !isFieldKind(e['kind'])) {
+          return {
+            ok: false,
+            code: 'DATA_PLANE_STRUCTURE',
+            detail: 'dataPlane.fields 条目须是 { field: string, kind: 白名单类型, agg?, groupable? }',
+          }
+        }
+        const field = e['field'] as string
+        const kind = e['kind'] as FieldKind
+        if (!FIELD_IDENT_RE.test(field)) {
+          return {
+            ok: false,
+            code: 'DATA_PLANE_FIELD_NAME_INVALID',
+            detail: `dataPlane 字段名须是 SQL 安全标识符（^[a-zA-Z_][a-zA-Z0-9_]{0,63}$）：${field}`,
+          }
+        }
+        if (analytics && !DATA_PLANE_FIELD_NAME_RE.test(field)) {
+          return {
+            ok: false,
+            code: 'DATA_PLANE_FIELD_NAME_INVALID',
+            detail: `analytics 字段名须 ^[a-z][a-z0-9_]{0,63}$（湖列 f_<name>）：${field}`,
+          }
+        }
+        if (declared.has(field)) {
+          return { ok: false, code: 'DATA_PLANE_STRUCTURE', detail: `dataPlane.fields 重复声明：${field}` }
+        }
+        declared.add(field)
+        if (!(field in props)) {
+          return {
+            ok: false,
+            code: 'DATA_PLANE_FIELD_UNKNOWN',
+            detail: `dataPlane 字段 ${field} 不在 schema.properties 内`,
+          }
+        }
+        const derived = fieldKindOf(props[field])
+        if (derived === null) {
+          return {
+            ok: false,
+            code: 'DATA_PLANE_TYPE_UNSUPPORTED',
+            detail: `dataPlane 字段类型不支持：${field}（string/number/integer/boolean/string+format:date/string 枚举）`,
+          }
+        }
+        if (derived !== kind) {
+          return {
+            ok: false,
+            code: 'DATA_PLANE_KIND_MISMATCH',
+            detail: `dataPlane 字段 ${field} 声明 kind=${kind}，schema 实际是 ${derived}`,
+          }
+        }
+        if (e['groupable'] !== undefined && typeof e['groupable'] !== 'boolean') {
+          return { ok: false, code: 'DATA_PLANE_STRUCTURE', detail: `dataPlane 字段 ${field} 的 groupable 必须是布尔` }
+        }
+        if (e['groupable'] === true && !GROUPABLE_KINDS.has(kind)) {
+          return {
+            ok: false,
+            code: 'STATS_NOT_GROUPABLE',
+            detail: `字段 ${field}（${kind}）不能作为分组维度（只许 string/enum/date/boolean）`,
+          }
+        }
+        if (e['agg'] !== undefined) {
+          if (!Array.isArray(e['agg'])) {
+            return { ok: false, code: 'DATA_PLANE_STRUCTURE', detail: `dataPlane 字段 ${field} 的 agg 必须是数组` }
+          }
+          for (const agg of e['agg']) {
+            if (typeof agg !== 'string' || !(AGGS as readonly string[]).includes(agg)) {
+              return { ok: false, code: 'STATS_BAD_AGG', detail: `字段 ${field} 的聚合 ${String(agg)} 不在白名单 ${AGGS.join('/')}` }
+            }
+            if (NUMERIC_AGGS.has(agg as Agg) && !NUMERIC_KINDS.has(kind)) {
+              return {
+                ok: false,
+                code: 'STATS_AGG_TYPE_MISMATCH',
+                detail: `字段 ${field}（${kind}）不能做 ${agg}（sum/avg/min/max 只许 number/integer/date）`,
+              }
+            }
+          }
+        }
+      }
+      if (analytics) {
+        for (const name of Object.keys(props)) {
+          if (!declared.has(name)) {
+            return {
+              ok: false,
+              code: 'DATA_PLANE_FIELD_MISSING',
+              detail: `analytics 要求声明全部 schema 字段：缺 ${name}`,
+            }
+          }
+        }
+      }
+    } else if (analytics) {
+      // Phase A（v1 行为逐字不变）：每个顶层字段都要能落成湖上的一列。
+      for (const [name, def] of Object.entries(props)) {
         if (!DATA_PLANE_FIELD_NAME_RE.test(name)) {
           return {
             ok: false,
@@ -352,6 +634,46 @@ export function compileGate(body: unknown): GateResult {
             detail: `dataPlane 字段不支持嵌套/数组：${name}`,
           }
         }
+      }
+    }
+
+    // ── stats 能力位 + 视图（与 `/stats` 入参同一套白名单）──
+    if (statsEnabled) {
+      const decls = fieldDeclsOf(body)
+      const hasMeasure = decls.some((d) => Array.isArray(d.agg) && d.agg.length > 0)
+      if (!Array.isArray(fieldsRaw) || !hasMeasure) {
+        return {
+          ok: false,
+          code: 'STATS_NO_MEASURE',
+          detail: 'stats.enabled 需要显式 fields 且至少一个字段声明非空 agg（不猜聚合）',
+        }
+      }
+      const views = asRecord(statsRaw)?.['views']
+      if (views !== undefined) {
+        if (!Array.isArray(views)) {
+          return { ok: false, code: 'STATS_VIEW_BAD_SHAPE', detail: 'dataPlane.stats.views 必须是数组' }
+        }
+        const seen = new Set<string>()
+        for (const view of views) {
+          const err = validateStatsView(view, decls)
+          if (err !== null) return { ok: false, code: err.code as GateErrorCode, detail: err.detail }
+          const key = (asRecord(view) as { key: string }).key
+          if (seen.has(key)) {
+            return { ok: false, code: 'STATS_VIEW_DUPLICATE_KEY', detail: `统计视图 key 重复：${key}` }
+          }
+          seen.add(key)
+        }
+      }
+    } else if (asRecord(statsRaw)?.['views'] !== undefined) {
+      // views 只在 stats.enabled 时有意义；结构也照样校验（发布时别把坏声明落库）
+      const views = (asRecord(statsRaw) as { views: unknown }).views
+      if (!Array.isArray(views)) {
+        return { ok: false, code: 'STATS_VIEW_BAD_SHAPE', detail: 'dataPlane.stats.views 必须是数组' }
+      }
+      const decls = fieldDeclsOf(body)
+      for (const view of views) {
+        const err = validateStatsView(view, decls)
+        if (err !== null) return { ok: false, code: err.code as GateErrorCode, detail: err.detail }
       }
     }
   }

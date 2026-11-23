@@ -181,7 +181,9 @@ async function runTool(deps: McpDeps, name: string, args: Record<string, unknown
         status: 'draft',
         repairUsed: result.repairUsed,
         body: result.body,
-        next: '草稿已落地，需由持发布权限的人在控制台发布后才可填报',
+        // 件④ #2755：起草即返回 dataPlane（含 stats.views；模型没给时是确定性兜底）
+        dataPlane: result.body.dataPlane ?? null,
+        next: '草稿已落地，需由持发布权限的人在控制台发布后才可填报（AI 永不发布）',
       }),
       assetId: result.assetId,
       version,

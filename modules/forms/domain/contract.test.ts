@@ -3,8 +3,11 @@ import {
   BINDINGS,
   DICT_REF_RE,
   RESERVED_KEYS,
+  analyticsEnabledOf,
   compileGate,
+  fieldDeclsOf,
   schemaOf,
+  statsEnabledOf,
   validateSubmission,
 } from './contract'
 
@@ -579,5 +582,319 @@ describe('compileGate：dataPlane opt-in 闸（#2706）', () => {
       dataPlane: { enabled: true },
     })
     expect(r).toMatchObject({ ok: false, code: 'DATA_PLANE_TYPE_UNSUPPORTED' })
+  })
+})
+
+// ── 件④ dataPlane v2（#2755）：fields / stats / analytics 三件套 ──────────────────
+// fields 是**显式字段声明**（field/kind/agg/groupable）；stats/analytics 是能力位。
+// 声明了 fields ⇒ 必须与 schema 顶层字段**一一对应**（多/少都拒），kind 必须与 schema 类型
+// 一致——生成器与统计端点都按这张表取列，漂开就是「发布得了但查不出」。
+describe('compileGate：dataPlane v2 fields（#2755）', () => {
+  const scoreOnly = {
+    schema: { type: 'object', properties: { score: { type: 'number' } } },
+  }
+  const classScore = {
+    schema: {
+      type: 'object',
+      properties: { class: { type: 'string' }, score: { type: 'number' } },
+    },
+  }
+
+  it('fields 与 schema 一致（kind 合法）→ ok', () => {
+    expect(
+      compileGate({
+        ...classScore,
+        dataPlane: {
+          fields: [
+            { field: 'class', kind: 'string', groupable: true },
+            { field: 'score', kind: 'number', agg: ['sum', 'avg'] },
+          ],
+          stats: { enabled: true },
+        },
+      }).ok,
+    ).toBe(true)
+  })
+
+  it('v2 fields 必须与 schema 字段一致（多/少都拒）', () => {
+    const body = {
+      ...scoreOnly,
+      dataPlane: { fields: [{ field: 'score', kind: 'number', agg: ['sum'] }, { field: 'ghost', kind: 'string' }] },
+    }
+    expect(compileGate(body as never)).toMatchObject({ ok: false, code: 'DATA_PLANE_FIELD_UNKNOWN' })
+
+    // analytics（湖投影）要求字段全覆盖：少声明一个 schema 字段 ⇒ 拒（stats-only 允许子集）
+    const missing = {
+      schema: { type: 'object', properties: { score: { type: 'number' }, name: { type: 'string' } } },
+      dataPlane: { fields: [{ field: 'score', kind: 'number', agg: ['sum'] }], analytics: { enabled: true } },
+    }
+    expect(compileGate(missing as never)).toMatchObject({ ok: false, code: 'DATA_PLANE_FIELD_MISSING' })
+  })
+
+  it('stats-only 允许字段子集（数组/附件等不可摊平字段无需声明）', () => {
+    expect(
+      compileGate({
+        schema: {
+          type: 'object',
+          properties: {
+            class: { type: 'string', enum: ['A', 'B'] },
+            score: { type: 'number' },
+            photos: { type: 'array', items: { type: 'string', format: 'data-url' } },
+            note: { type: 'string' },
+          },
+        },
+        dataPlane: {
+          fields: [
+            { field: 'class', kind: 'enum', groupable: true },
+            { field: 'score', kind: 'number', agg: ['sum', 'avg'] },
+          ],
+          stats: { enabled: true },
+        },
+      }).ok,
+    ).toBe(true)
+  })
+
+  it('字段名必须是 SQL 安全标识符；analytics（湖列）另要求小写蛇形', () => {
+    // stats-only：camelCase 合法（只进 payload 键，不进湖列）
+    expect(
+      compileGate({
+        schema: { type: 'object', properties: { storeNo: { type: 'string' } } },
+        dataPlane: { fields: [{ field: 'storeNo', kind: 'string' }], stats: { enabled: false } },
+      }).ok,
+    ).toBe(true)
+    // 注入面：引号/空格/点一律拒
+    for (const name of ["a'b", 'a b', 'a.b', '1abc']) {
+      expect(
+        compileGate({
+          schema: { type: 'object', properties: { [name]: { type: 'string' } } },
+          dataPlane: { fields: [{ field: name, kind: 'string' }], stats: { enabled: false } },
+        }),
+        name,
+      ).toMatchObject({ ok: false, code: 'DATA_PLANE_FIELD_NAME_INVALID' })
+    }
+    // analytics：湖列要求小写蛇形（camelCase ⇒ 拒）
+    expect(
+      compileGate({
+        schema: { type: 'object', properties: { storeNo: { type: 'string' } } },
+        dataPlane: { fields: [{ field: 'storeNo', kind: 'string' }], analytics: { enabled: true } },
+      }),
+    ).toMatchObject({ ok: false, code: 'DATA_PLANE_FIELD_NAME_INVALID' })
+  })
+
+  it('kind 与 schema 类型不一致 ⇒ DATA_PLANE_KIND_MISMATCH', () => {
+    expect(
+      compileGate({
+        ...scoreOnly,
+        dataPlane: { fields: [{ field: 'score', kind: 'string' }] },
+      }),
+    ).toMatchObject({ ok: false, code: 'DATA_PLANE_KIND_MISMATCH' })
+    // string+format:date 必须写 date；string 枚举必须写 enum
+    expect(
+      compileGate({
+        schema: { type: 'object', properties: { d: { type: 'string', format: 'date' } } },
+        dataPlane: { fields: [{ field: 'd', kind: 'string' }] },
+      }),
+    ).toMatchObject({ ok: false, code: 'DATA_PLANE_KIND_MISMATCH' })
+    expect(
+      compileGate({
+        schema: { type: 'object', properties: { g: { type: 'string', enum: ['a'] } } },
+        dataPlane: { fields: [{ field: 'g', kind: 'enum', groupable: true }] },
+      }).ok,
+    ).toBe(true)
+  })
+
+  it('stats.enabled 无任何可聚合字段 ⇒ 拒', () => {
+    const body = {
+      schema: { type: 'object', properties: { name: { type: 'string' } } },
+      dataPlane: { stats: { enabled: true }, fields: [{ field: 'name', kind: 'string' }] },
+    }
+    expect(compileGate(body as never)).toMatchObject({ ok: false, code: 'STATS_NO_MEASURE' })
+  })
+
+  it('stats.enabled 但没有显式 fields（legacy 形态）⇒ STATS_NO_MEASURE（不许猜聚合）', () => {
+    const body = { ...scoreOnly, dataPlane: { stats: { enabled: true } } }
+    expect(compileGate(body as never)).toMatchObject({ ok: false, code: 'STATS_NO_MEASURE' })
+  })
+
+  it('agg 白名单：sum/avg 只允许数值字段', () => {
+    const body = {
+      schema: { type: 'object', properties: { name: { type: 'string' } } },
+      dataPlane: { fields: [{ field: 'name', kind: 'string', agg: ['sum'] }] },
+    }
+    expect(compileGate(body as never)).toMatchObject({ ok: false, code: 'STATS_AGG_TYPE_MISMATCH' })
+  })
+
+  it('agg 不在白名单 ⇒ STATS_BAD_AGG', () => {
+    expect(
+      compileGate({
+        ...scoreOnly,
+        dataPlane: { fields: [{ field: 'score', kind: 'number', agg: ['median'] }] },
+      }),
+    ).toMatchObject({ ok: false, code: 'STATS_BAD_AGG' })
+  })
+
+  it('groupable 只许 string/enum/date/boolean', () => {
+    expect(
+      compileGate({
+        ...scoreOnly,
+        dataPlane: { fields: [{ field: 'score', kind: 'number', groupable: true }] },
+      }),
+    ).toMatchObject({ ok: false, code: 'STATS_NOT_GROUPABLE' })
+    expect(
+      compileGate({
+        schema: { type: 'object', properties: { b: { type: 'boolean' } } },
+        dataPlane: { fields: [{ field: 'b', kind: 'boolean', groupable: true }] },
+      }).ok,
+    ).toBe(true)
+  })
+
+  it('fields 结构非法（非数组 / 条目缺 field / kind 不在白名单）⇒ DATA_PLANE_STRUCTURE', () => {
+    for (const fields of [
+      'x',
+      [{ kind: 'string' }],
+      [{ field: 'score', kind: 'money' }],
+      [{ field: 7, kind: 'number' }],
+    ]) {
+      expect(
+        compileGate({ ...scoreOnly, dataPlane: { fields } }),
+        JSON.stringify(fields),
+      ).toMatchObject({ ok: false, code: 'DATA_PLANE_STRUCTURE' })
+    }
+  })
+
+  it('analytics 只做结构校验（权限在 publish 路由）：enabled 非布尔 ⇒ 拒', () => {
+    expect(
+      compileGate({ ...scoreOnly, dataPlane: { analytics: { enabled: 'yes' } } }),
+    ).toMatchObject({ ok: false, code: 'DATA_PLANE_STRUCTURE' })
+    expect(
+      compileGate({
+        ...scoreOnly,
+        dataPlane: { fields: [{ field: 'score', kind: 'number', agg: ['sum'] }], analytics: { enabled: true } },
+      }).ok,
+    ).toBe(true)
+  })
+})
+
+// ── stats.views：预声明统计视图（agent 同创）——校验与 /stats 入参同一套白名单 ──────
+describe('compileGate：dataPlane.stats.views（#2755 追加）', () => {
+  const base = {
+    schema: {
+      type: 'object',
+      properties: { class: { type: 'string', enum: ['A', 'B'] }, score: { type: 'number' } },
+    },
+    dataPlane: {
+      fields: [
+        { field: 'class', kind: 'enum', agg: ['count'], groupable: true },
+        { field: 'score', kind: 'number', agg: ['sum', 'avg'] },
+      ],
+      stats: {
+        enabled: true,
+        views: [
+          { key: 'total', label: '合计', measures: [{ field: 'score', agg: 'sum' }] },
+          { key: 'by_class', label: '按班级', groupBy: ['class'], measures: [{ field: 'score', agg: 'sum' }] },
+        ],
+      },
+    },
+  }
+
+  it('合法 views → ok', () => {
+    expect(compileGate(base).ok).toBe(true)
+  })
+
+  it('key 重复 ⇒ STATS_VIEW_DUPLICATE_KEY', () => {
+    const views = [base.dataPlane.stats.views[0], base.dataPlane.stats.views[0]]
+    expect(
+      compileGate({ ...base, dataPlane: { ...base.dataPlane, stats: { enabled: true, views } } }),
+    ).toMatchObject({ ok: false, code: 'STATS_VIEW_DUPLICATE_KEY' })
+  })
+
+  it('label 空 / 非字符串 ⇒ STATS_VIEW_BAD_LABEL', () => {
+    for (const label of ['', '   ', 7, undefined]) {
+      const views = [{ key: 'v', label, measures: [{ field: 'score', agg: 'sum' }] }]
+      expect(
+        compileGate({ ...base, dataPlane: { ...base.dataPlane, stats: { enabled: true, views } } }),
+        String(label),
+      ).toMatchObject({ ok: false, code: 'STATS_VIEW_BAD_LABEL' })
+    }
+  })
+
+  it('view 内 groupBy/measures/字段/agg 与 /stats 同一套白名单', () => {
+    const withView = (view: unknown) =>
+      compileGate({ ...base, dataPlane: { ...base.dataPlane, stats: { enabled: true, views: [view] } } })
+    // groupBy 超 3 维
+    expect(withView({ key: 'v', label: 'L', groupBy: ['class', 'class', 'class', 'class'], measures: [{ field: 'score', agg: 'sum' }] }))
+      .toMatchObject({ ok: false, code: 'STATS_TOO_MANY_GROUP_BY' })
+    // measures 超 5 个
+    expect(withView({ key: 'v', label: 'L', measures: Array.from({ length: 6 }, () => ({ field: 'score', agg: 'sum' })) }))
+      .toMatchObject({ ok: false, code: 'STATS_TOO_MANY_MEASURES' })
+    // 未声明字段
+    expect(withView({ key: 'v', label: 'L', groupBy: ['ghost'], measures: [{ field: 'score', agg: 'sum' }] }))
+      .toMatchObject({ ok: false, code: 'STATS_FIELD_NOT_ALLOWED' })
+    // 字段未声明该 agg
+    expect(withView({ key: 'v', label: 'L', measures: [{ field: 'class', agg: 'sum' }] }))
+      .toMatchObject({ ok: false, code: 'STATS_AGG_NOT_ALLOWED' })
+  })
+
+  it('stats.enabled 但没有任何 measure ⇒ STATS_NO_MEASURE', () => {
+    expect(
+      compileGate({
+        schema: { type: 'object', properties: { score: { type: 'number' } } },
+        dataPlane: { fields: [{ field: 'score', kind: 'number' }], stats: { enabled: true } },
+      }),
+    ).toMatchObject({ ok: false, code: 'STATS_NO_MEASURE' })
+  })
+
+  it('views 只在 stats.enabled 时生效——views 结构非法同样在发布门拦下', () => {
+    expect(
+      compileGate({ ...base, dataPlane: { ...base.dataPlane, stats: { enabled: true, views: 'nope' } } }),
+    ).toMatchObject({ ok: false, code: 'STATS_VIEW_BAD_SHAPE' })
+  })
+})
+
+describe('analyticsEnabledOf / statsEnabledOf（兼容 legacy，#2755）', () => {
+  it('legacy dataPlane.enabled 视为 analytics.enabled（兼容）', () => {
+    expect(analyticsEnabledOf({ dataPlane: { enabled: true } })).toBe(true)
+    expect(analyticsEnabledOf({ dataPlane: { analytics: { enabled: true } } })).toBe(true)
+    expect(analyticsEnabledOf({ dataPlane: { stats: { enabled: true } } })).toBe(false)
+    expect(analyticsEnabledOf({ dataPlane: { enabled: false } })).toBe(false)
+    expect(analyticsEnabledOf({})).toBe(false)
+    expect(analyticsEnabledOf(null)).toBe(false)
+  })
+
+  it('statsEnabledOf 只认 stats.enabled === true', () => {
+    expect(statsEnabledOf({ dataPlane: { stats: { enabled: true } } })).toBe(true)
+    expect(statsEnabledOf({ dataPlane: { enabled: true } })).toBe(false)
+    expect(statsEnabledOf({ dataPlane: { stats: { enabled: 1 } } })).toBe(false)
+    expect(statsEnabledOf(undefined)).toBe(false)
+  })
+})
+
+describe('fieldDeclsOf（v2 显式 fields 优先；legacy 从 schema 派生）', () => {
+  it('v2：按声明原样返回', () => {
+    expect(
+      fieldDeclsOf({
+        dataPlane: { fields: [{ field: 'score', kind: 'number', agg: ['sum'], groupable: false }] },
+        schema: { type: 'object', properties: { score: { type: 'number' } } },
+      }),
+    ).toEqual([{ field: 'score', kind: 'number', agg: ['sum'], groupable: false }])
+  })
+
+  it('legacy：从 schema 派生 kind，并给保守的默认 agg/groupable', () => {
+    const decls = fieldDeclsOf({
+      schema: {
+        type: 'object',
+        properties: {
+          name: { type: 'string' },
+          score: { type: 'number' },
+          d: { type: 'string', format: 'date' },
+          nested: { type: 'array', items: { type: 'string' } },
+        },
+      },
+      dataPlane: { enabled: true },
+    })
+    expect(decls.map((d) => `${d.field}:${d.kind}`)).toEqual(['name:string', 'score:number', 'd:date'])
+    expect(decls.find((d) => d.field === 'score')?.agg).toEqual(['sum', 'avg', 'min', 'max', 'count'])
+    expect(decls.find((d) => d.field === 'name')?.agg).toEqual(['count'])
+    expect(decls.find((d) => d.field === 'name')?.groupable).toBe(true)
+    expect(decls.find((d) => d.field === 'score')?.groupable).toBe(false)
   })
 })

@@ -1,7 +1,8 @@
 #!/usr/bin/env node
 // scripts/gen-forms-data-projection.mjs — dataPlane 表单字段契约 → 摊平模型生成器（件① #2706）。
 //
-// 读库（声明了 `dataPlane.enabled=true` 的已发布表单）→ 生成两份产物，逐表单一份：
+// 读库（声明了 `dataPlane.analytics.enabled=true`（v2）或 `dataPlane.enabled=true`（legacy）的
+// 已发布表单）→ 生成两份产物，逐表单一份：
 //   ① 字段契约   `contracts/forms/data-plane/<slug>.json`
 //                （field→column/type 映射；生成模型与 L1 引用的唯一事实源）
 //   ② 摊平模型   `dbt/models/forms/data_plane/stg_forms_submission__<relationSlug>.sql`
@@ -23,7 +24,7 @@
 //
 // 本脚本必须在**裸 node** 下跑（CI gates 是 `node scripts/…`，无 tsx）⇒ 不能 import TS 的
 // `storage.listDataPlaneForms` ⇒ SQL 与 kind 映射在此内联一份。判据必须与
-// `storage.listDataPlaneForms` 逐字同构（published + active_version + dataPlane.enabled
+// `storage.listDataPlaneForms` 逐字同构（published + active_version + analytics/legacy enabled
 // + kind 映射）——改任一侧必须同步另一侧；契约闸（compileGate 的 dataPlane 分支）保证
 // 入库形状，这里只做映射。
 //
@@ -116,11 +117,26 @@ export function kindOf(def) {
 }
 
 /**
- * 契约 body（schema 那一半的 properties）→ fields（`f_` 前缀列名；映不出 kind 的字段剔除）。
+ * 契约 body → fields（`f_` 前缀列名；映不出 kind 的字段剔除）。
+ * v2（件④ #2755）：优先取显式 `dataPlane.fields`（发布门已校验 field∈schema、kind 与 schema 一致）；
+ * legacy：从 `schema.properties` 派生（存量 goal/ops 表单的产物逐字节不变）。
  * @param {unknown} body
  * @returns {Array<{ field: string, column: string, kind: string }>}
  */
 export function fieldsOfBody(body) {
+  const declared = /** @type {any} */ (body)?.['dataPlane']?.['fields']
+  if (Array.isArray(declared)) {
+    /** @type {Array<{ field: string, column: string, kind: string }>} */
+    const out = []
+    for (const entry of declared) {
+      const field = entry?.field
+      const kind = entry?.kind
+      if (typeof field !== 'string' || typeof kind !== 'string') continue
+      if (!(kind in SQL_TYPE)) continue // 白名单外 kind：闸保证不会出现，这里是生成器侧同构守卫
+      out.push({ field, column: `${FIELD_COLUMN_PREFIX}${field}`, kind })
+    }
+    return out
+  }
   const props = /** @type {any} */ (body)?.['schema']?.['properties']
   if (props === null || typeof props !== 'object' || Array.isArray(props)) return []
   /** @type {Array<{ field: string, column: string, kind: string }>} */
@@ -207,7 +223,8 @@ export async function listFormsFromDb(pool) {
        join forms.asset_head h on h.org = v.org and h.kind = v.kind
         and h.asset_id = v.asset_id and h.active_version = v.version
       where v.kind = 'form_def' and v.status = 'published'
-        and v.body->'dataPlane'->>'enabled' = 'true'`,
+        and (v.body->'dataPlane'->'analytics'->>'enabled' = 'true'
+             or v.body->'dataPlane'->>'enabled' = 'true')`,
   )
   /** @type {Array<{ org: string, assetId: string, version: number, slug: string, fields: Array<{ field: string, column: string, kind: string }> }>} */
   const out = []

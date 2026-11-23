@@ -166,7 +166,44 @@ const DATA_PLANE_KINDS: Record<string, DataPlaneField['kind']> = {
 }
 
 /**
- * 跨租户列出**当前活跃版本**、已发布、且契约声明 `dataPlane.enabled=true` 的表单
+ * 契约 body → dataPlane 字段清单（湖投影的输入）：
+ * - v2：优先取显式 `dataPlane.fields`（发布门已校验 field∈schema、kind 与 schema 一致）；
+ * - legacy：从 `schema.properties` 派生（Phase A 行为，存量 goal 表单的产物逐字节不变）。
+ */
+const ALL_DATA_PLANE_KINDS: ReadonlySet<string> = new Set([
+  'string', 'number', 'integer', 'boolean', 'date', 'enum',
+])
+
+export function dataPlaneFieldsOf(body: unknown): DataPlaneField[] {
+  const rec = body !== null && typeof body === 'object' ? (body as Record<string, unknown>) : null
+  const dp = rec?.['dataPlane'] as { fields?: unknown } | undefined
+  if (Array.isArray(dp?.fields)) {
+    return (dp.fields as unknown[]).flatMap((raw) => {
+      if (raw === null || typeof raw !== 'object') return []
+      const e = raw as Record<string, unknown>
+      const field = typeof e['field'] === 'string' ? e['field'] : null
+      const kind = e['kind']
+      if (field === null || typeof kind !== 'string' || !ALL_DATA_PLANE_KINDS.has(kind)) return []
+      return [{ field, column: `f_${field}`, kind: kind as DataPlaneField['kind'] }]
+    })
+  }
+  const props = (rec?.['schema'] as Record<string, unknown> | undefined)?.['properties']
+  if (props === null || typeof props !== 'object' || Array.isArray(props)) return []
+  return Object.entries(props as Record<string, Record<string, unknown>>).flatMap(([field, def]) => {
+    const t = typeof def?.type === 'string' ? def.type : ''
+    const kind =
+      t === 'string' && def?.format === 'date'
+        ? 'date'
+        : t === 'string' && Array.isArray(def?.enum)
+          ? 'enum'
+          : DATA_PLANE_KINDS[t]
+    return kind ? [{ field, column: `f_${field}`, kind }] : []
+  })
+}
+
+/**
+ * 跨租户列出**当前活跃版本**、已发布、且契约声明 `analytics.enabled=true`（v2）或
+ * `dataPlane.enabled=true`（legacy，等价 analytics）的表单
  * （供 `scripts/gen-forms-data-projection.mjs` 生成字段契约与摊平模型）。
  * ⚠️ 与 listAssignmentTargets 同款边界：**唯一**不带 org 入参的读函数族——调用方是 scripts/
  * （不在 B1 扫描根内），生成产物按行带 org。
@@ -180,22 +217,12 @@ export async function listDataPlaneForms(pool: Pool): Promise<DataPlaneForm[]> {
        join forms.asset_head h on h.org = v.org and h.kind = v.kind
         and h.asset_id = v.asset_id and h.active_version = v.version
       where v.kind = $1 and v.status = 'published'
-        and v.body->'dataPlane'->>'enabled' = 'true'`,
+        and (v.body->'dataPlane'->'analytics'->>'enabled' = 'true'
+             or v.body->'dataPlane'->>'enabled' = 'true')`,
     [COLLECTION_KIND],
   )
   return rows.flatMap((r) => {
-    const props = ((r.body as Record<string, unknown>)?.['schema'] as Record<string, unknown> | undefined)?.['properties']
-    if (props === null || typeof props !== 'object' || Array.isArray(props)) return []
-    const fields = Object.entries(props as Record<string, Record<string, unknown>>).flatMap(([field, def]) => {
-      const t = typeof def?.type === 'string' ? def.type : ''
-      const kind =
-        t === 'string' && def?.format === 'date'
-          ? 'date'
-          : t === 'string' && Array.isArray(def?.enum)
-            ? 'enum'
-            : DATA_PLANE_KINDS[t]
-      return kind ? [{ field, column: `f_${field}`, kind }] : []
-    })
+    const fields = dataPlaneFieldsOf(r.body)
     return fields.length > 0
       ? [{ org: r.org, assetId: r.asset_id, version: r.version, slug: r.asset_id, fields }]
       : []

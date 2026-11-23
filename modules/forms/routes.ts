@@ -9,7 +9,18 @@ import type { Identity, NotifyPort, OrganizationPort } from '@platform/sdk'
 import { validateApprovalBody } from './domain/approval'
 import { isWecomBindingBody, itemWecomRefOf, validateWecomBinding } from './domain/wecom-binding'
 import { compilePlan } from './domain/approval-compile'
-import { compileGate } from './domain/contract'
+import { analyticsEnabledOf, compileGate, fieldDeclsOf, statsEnabledOf } from './domain/contract'
+import type { StatsInput } from './domain/contract'
+import {
+  DEFAULT_LIMIT,
+  STATS_CACHE_MAX_ENTRIES,
+  STATS_CACHE_TTL_MS,
+  STATS_LIMITS,
+  StatsError,
+  compileStats,
+  resolveViewRequest,
+  statsViewsOf,
+} from './domain/stats'
 import {
   EngineHttpError, approversOfNode, currentNodeOf, firstNodeTitleFor, planHasApprover,
 } from './domain/engine-client'
@@ -37,6 +48,17 @@ function fail(c: any, status: number, code: string, detail?: string) {
   return c.json({ error: code, ...(detail !== undefined ? { detail } : {}) }, status as 400)
 }
 
+/** 稳定序列化（缓存键用：对象键排序，避免「同义入参不同键」）。 */
+function stableJson(v: unknown): string {
+  if (v === null || typeof v !== 'object') return JSON.stringify(v) ?? 'null'
+  if (Array.isArray(v)) return `[${v.map(stableJson).join(',')}]`
+  const rec = v as Record<string, unknown>
+  return `{${Object.keys(rec)
+    .sort()
+    .map((k) => `${JSON.stringify(k)}:${stableJson(rec[k])}`)
+    .join(',')}}`
+}
+
 async function handle(c: any, fn: () => Promise<Response>): Promise<Response> {
   try {
     return await fn()
@@ -47,6 +69,10 @@ async function handle(c: any, fn: () => Promise<Response>): Promise<Response> {
       return e.status === 409
         ? fail(c, 409, 'ENGINE_CONFLICT', e.detail)
         : fail(c, 502, 'ENGINE_HTTP_ERROR', e.detail)
+    }
+    if (e instanceof StatsError) {
+      // 统计入参错误一律 400；视图不存在是 404（与被查实体不存在同档）。
+      return fail(c, e.code === 'STATS_VIEW_NOT_FOUND' ? 404 : 400, e.code, e.message)
     }
     if (e instanceof FormsError) {
       const map: Record<string, number> = {
@@ -117,6 +143,16 @@ export function createFormsRouter({
   engineFor?: EngineResolver
 }) {
   const r = new Hono<{ Variables: { identity: Identity } }>()
+
+  // ── 实时统计缓存（件④ #2755）：15s TTL + 提交后按 org+asset 失效；上限 500 条 ──
+  // 键 = org + assetId + 归一化入参（视图/日期窗/ad-hoc 各自成键）；值带 `asOf`。
+  const statsCache = new Map<string, { at: number; value: Record<string, unknown> }>()
+  const statsKeyOf = (org: string, assetId: string, input: StatsInput): string =>
+    `${org}\u0000${assetId}\u0000${stableJson(input)}`
+  const invalidateStats = (org: string, assetId: string): void => {
+    const prefix = `${org}\u0000${assetId}\u0000`
+    for (const key of [...statsCache.keys()]) if (key.startsWith(prefix)) statsCache.delete(key)
+  }
 
   /** 审批模板的编译（dry-run / publish / 提交前的共用闸）。 */
   const compileFor = async (
@@ -209,7 +245,14 @@ export function createFormsRouter({
       }
       const version = await store.newDraft(pool, identity.orgId, result.assetId, result.body, identity.userId)
       return c.json(
-        { assetId: result.assetId, version, body: result.body, repairUsed: result.repairUsed },
+        {
+          assetId: result.assetId,
+          version,
+          body: result.body,
+          // 件④ #2755：agent 起草即拿到「表单 + 统计」（模型没给时是确定性兜底）
+          dataPlane: result.body.dataPlane ?? null,
+          repairUsed: result.repairUsed,
+        },
         201,
       )
     }),
@@ -248,6 +291,15 @@ export function createFormsRouter({
       if (draftBody === null) return fail(c, 404, 'ASSET_NOT_FOUND', `版本 v${version} 不存在`)
       const gate = compileGate(draftBody)
       if (!gate.ok) return fail(c, 400, gate.code, gate.detail)
+      // 分析面（湖投影）发布门（件④ #2755）：`analytics.enabled=true`（含 legacy `dataPlane.enabled`）
+      // 需要平台数据负责人批准（`forms:data-plane` platformOnly）。`stats.enabled` 不额外要求——
+      // 实时统计是发布者自己开的能力位，数据授权仍由 org 钉死。
+      if (analyticsEnabledOf(draftBody) && !identity.hasScope('forms:data-plane')) {
+        return fail(
+          c, 403, 'DATA_PLANE_APPROVAL_REQUIRED',
+          'analytics（湖投影）需平台数据负责人批准：缺少 forms:data-plane',
+        )
+      }
       // 标准审批（P2）：`provider=wecom_native` 的事项模板必须引用**已发布**的绑定资产。
       // 绑定退役/仍在草稿 ⇒ 引用它的模板不能新发布（否则深链指向一条平台不认识的模板）。
       if ((draftBody as { provider?: unknown }).provider === 'wecom_native') {
@@ -283,6 +335,58 @@ export function createFormsRouter({
       if (!Number.isInteger(version)) return fail(c, 400, 'BAD_VERSION', 'rollback 需要 { version: int }')
       await store.rollbackTo(pool, identity.orgId, c.req.param('assetId'), version)
       return c.json({ ok: true })
+    }),
+  )
+
+  // ── 运营实时统计（件④ / #2755）─────────────────────────────────────────────────
+  // 单一源、当前态聚合：只查已发布 head 的提交（`forms.submission` 本身只落 head 版本）。
+  // org 只来自 identity；字段/聚合只来自契约声明（`dataPlane.fields` + `stats.views`）。
+  // 两种入参：`{assetId, viewId}` 跑预声明视图；ad-hoc（groupBy/measures/filter）给 console 高级模式。
+  // 响应 `{rows, asOf, truncated}`；15s 缓存（命中带 `cached:true`），提交后按 org+asset 失效。
+  r.post('/stats', (c) =>
+    handle(c, async () => {
+      const { identity } = ctx(c)
+      const body = (await c.req.json().catch(() => null)) as Record<string, unknown> | null
+      if (body === null || typeof body !== 'object' || Array.isArray(body)) {
+        return fail(c, 400, 'STATS_BAD_SHAPE', '需要 { assetId, viewId? } 或 ad-hoc 查询体')
+      }
+      const assetId = typeof body['assetId'] === 'string' ? body['assetId'] : ''
+      if (!ASSET_ID_RE.test(assetId)) return fail(c, 400, 'BAD_ASSET_ID', `assetId 不匹配 ${ASSET_ID_RE}`)
+
+      const version = await store.headVersion(pool, identity.orgId, assetId)
+      if (version === null) return fail(c, 404, 'NO_PUBLISHED_HEAD', `表单 ${assetId} 没有已发布版本`)
+      const def = await store.bodyAt(pool, identity.orgId, assetId, version)
+      if (!statsEnabledOf(def)) {
+        return fail(c, 403, 'STATS_NOT_ENABLED', `表单 ${assetId} 未开启实时统计（dataPlane.stats.enabled）`)
+      }
+
+      const input = { ...body, assetId } as StatsInput
+      // 视图优先：视图给 groupBy/measures/where，请求只能覆盖日期窗（ad-hoc 入参原样使用）。
+      const resolved = resolveViewRequest(input, statsViewsOf(def))
+      const key = statsKeyOf(identity.orgId, assetId, resolved)
+      const hit = statsCache.get(key)
+      if (hit !== undefined && Date.now() - hit.at < STATS_CACHE_TTL_MS) {
+        statsCache.delete(key) // 命中即刷新 LRU 位置
+        statsCache.set(key, hit)
+        return c.json({ ...hit.value, cached: true })
+      }
+
+      const { sql, params } = compileStats(resolved, { fields: fieldDeclsOf(def) }, { org: identity.orgId })
+      const { rows } = await pool.query(sql, params)
+      const requestedLimit = typeof resolved.limit === 'number' ? resolved.limit : DEFAULT_LIMIT
+      const capped = Math.min(requestedLimit, STATS_LIMITS.cardinality)
+      const value: Record<string, unknown> = {
+        rows,
+        asOf: new Date().toISOString(),
+        truncated: rows.length >= capped,
+        ...(resolved.viewId !== undefined ? { viewId: resolved.viewId } : {}),
+      }
+      statsCache.set(key, { at: Date.now(), value })
+      if (statsCache.size > STATS_CACHE_MAX_ENTRIES) {
+        const oldest = statsCache.keys().next().value
+        if (oldest !== undefined) statsCache.delete(oldest)
+      }
+      return c.json(value)
     }),
   )
 
@@ -567,6 +671,8 @@ export function createFormsRouter({
         pool, identity.orgId, assetId, body?.payload, identity.userId,
         undefined, roundId !== undefined ? { roundId, anchorKey } : undefined,
       )
+      // 实时统计缓存：提交后立即失效（不然 15s 内看到旧数）
+      invalidateStats(identity.orgId, assetId)
       return c.json(result, 201)
     }),
   )

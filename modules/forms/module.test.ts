@@ -23,13 +23,14 @@ describe('forms 模块声明（#708/#710）', () => {
     expect(m.migrations?.dir).toBe('./migrations')
   })
 
-  it('权限码矩阵：全 forms: 前缀；global-manage 在列（P4：platformOnly）；OA P1 审批三档 + 回调码', () => {
+  it('权限码矩阵：全 forms: 前缀；global-manage / data-plane 在列（P4：platformOnly）；OA P1 审批三档 + 回调码', () => {
     const codes = mod.manifest.permissions.map((p) => p.code).sort()
     expect(codes).toEqual([
       'forms:approval:manage',
       'forms:approval:publish',
       'forms:approval:view',
       'forms:case:callback',
+      'forms:data-plane',
       'forms:fill',
       'forms:global-manage',
       'forms:manage',
@@ -38,9 +39,11 @@ describe('forms 模块声明（#708/#710）', () => {
     ])
   })
 
-  it('全局字典管理码标记 platformOnly（租户管理员授权宇宙不含它）', () => {
-    const p = mod.manifest.permissions.find((x) => x.code === 'forms:global-manage')
-    expect(p?.platformOnly).toBe(true)
+  it('全局字典管理码 / 分析面审批码标记 platformOnly（租户管理员授权宇宙不含它们）', () => {
+    for (const code of ['forms:global-manage', 'forms:data-plane']) {
+      const p = mod.manifest.permissions.find((x) => x.code === code)
+      expect(p?.platformOnly, code).toBe(true)
+    }
   })
 
   it('api.internal 声明集合与 createRouter 注册的路由集合逐条一致（双向核对的本地版）', () => {
@@ -73,7 +76,8 @@ describe('forms 模块声明（#708/#710）', () => {
   it('声明面断言：发布/回滚/退役端点必须是 forms:publish（人 gate 的 scope 落点）；写面不出现 guest', () => {
     // 24 + OA P1 审批 12 条 + /mcp（2026-11-16 能力网关）+ OA P2 标准审批绑定 6 条
     // + OA P2 Task 7 标准审批镜像列表/导出 2 条 + 收集轮次 5 条（件③ #2707）
-    expect(mod.manifest.api?.internal?.length).toBe(50)
+    // + 运营实时统计 1 条（件④ #2755：POST /stats）
+    expect(mod.manifest.api?.internal?.length).toBe(51)
     expect(mod.manifest.guest).toBeUndefined() // M1.2 无 guest 面（§14.4 防滥用随 M1.3 填报通道）
     for (const e of mod.manifest.api?.internal ?? []) {
       const key = `${e.method} ${e.path}`
@@ -95,6 +99,8 @@ describe('forms 模块声明（#708/#710）', () => {
         expect(e.method, key).toBe('GET')
         expect(e.scope, key).toBe('forms:view')
       }
+      // 件④ #2755：实时统计是只读面（org 由身份钉死），与读面同档
+      if (key === 'POST /stats') expect(e.scope).toBe('forms:view')
       // 件③ #2707：轮次读面 forms:view；写面（建轮/开轮/关轮）forms:manage
       if (e.path === '/rounds' || e.path === '/rounds/:id') {
         if (e.method === 'GET') expect(e.scope, key).toBe('forms:view')

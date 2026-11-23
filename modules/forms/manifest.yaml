@@ -13,6 +13,8 @@ permissions:
   - { code: forms:manage,           name: 表单与租户字典管理 }
   - { code: forms:publish,          name: 表单发布（人 gate） }
   - { code: forms:global-manage,    name: 平台全局字典管理, platformOnly: true }
+  # 件④ #2755：分析面（湖投影 analytics）发布审批——部门管理员只能提申请，平台数据负责人批准
+  - { code: forms:data-plane,       name: 表单分析面暴露审批, platformOnly: true }
   # ── 审批（OA P1 / issue #2363）：三档人 gate + 服务账号回调 ──
   - { code: forms:approval:view,    name: 审批模板查看与解析 }
   - { code: forms:approval:manage,  name: 审批模板起草与编辑（AI 工具面到此为止） }
@@ -59,6 +61,8 @@ api:
     # 与 /export/submissions 同款）；agent 选模板走 /mcp 的 search_standard_approvals。
     - { method: GET,    path: /standard-approvals,                         scope: forms:view }
     - { method: GET,    path: /standard-approvals/export,                  scope: forms:view }
+    # ── 运营实时统计（件④ #2755）：只读面，org 由身份钉死；白名单来自契约声明 ──
+    - { method: POST,   path: /stats,                               scope: forms:view }
     # ── 提交（org 钉死 + 按提交钉住版本契约校验）──
     - { method: POST,   path: /defs/:assetId/submissions,           scope: forms:fill }
     - { method: GET,    path: /defs/:assetId/submissions,           scope: forms:view }
