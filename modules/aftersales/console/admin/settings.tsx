@@ -10,7 +10,7 @@
 //   · 从未配过且本次也留空 ⇒ SECRET_REQUIRED（fail-explicit：半套配置 = 访客登录一定失败）。
 // 写操作要 CSRF：现取 /session 的 csrfToken（会话重签会轮换，不缓存）。
 import { useCallback, useEffect, useState } from 'react'
-import { Alert, App, Button, Card, Form, Input, Space, Spin, Typography } from 'antd'
+import { Alert, Button, Card, Form, Input, Space, Spin, Typography, message } from 'antd'
 import { platformFetch } from '@platform/sdk/web'
 
 const API = '/api/platform/admin/integrations/wechat-oa'
@@ -40,8 +40,11 @@ async function csrfPut<T>(path: string, body: unknown): Promise<T> {
 }
 
 export default function AftersalesSettingsPage() {
-  const { message } = App.useApp()
+  // 提示一律走**页面内 Alert**（错误需要有下一步可读，见 ConsolePage 约定）+ 静态 message
+  // （成功提示）——不用 App.useApp：本仓既有页面同惯例，且它要求 <App> 上下文（测试/独立
+  // 渲染下会变成 `message.error is not a function`，CI 实际抓红过）。
   const [state, setState] = useState<WechatOaState | null>(null)
+  const [error, setError] = useState<string | null>(null)
   const [loading, setLoading] = useState(true)
   const [saving, setSaving] = useState(false)
   const [form] = Form.useForm<{ appId: string, secret: string }>()
@@ -55,11 +58,11 @@ export default function AftersalesSettingsPage() {
       setState(data)
       form.setFieldsValue({ appId: data.appId, secret: '' })
     } catch (e) {
-      message.error(e instanceof Error ? `加载失败：${e.message}` : '加载失败')
+      setError(e instanceof Error ? `加载失败：${e.message}` : '加载失败')
     } finally {
       setLoading(false)
     }
-  }, [form, message])
+  }, [form])
 
   useEffect(() => { void load() }, [load])
 
@@ -73,13 +76,14 @@ export default function AftersalesSettingsPage() {
       return
     }
     setSaving(true)
+    setError(null)
     try {
       await csrfPut<{ ok: true }>(API, { appId: v.appId, secret: v.secret || undefined })
       message.success('已保存')
       await load()
     } catch (e) {
       const code = e instanceof Error ? e.message : 'UNKNOWN'
-      message.error(code === 'SECRET_REQUIRED'
+      setError(code === 'SECRET_REQUIRED'
         ? '首次配置必须填写 AppSecret'
         : code === 'APP_ID_REQUIRED' ? 'AppID 不能为空' : `保存失败：${code}`)
     } finally {
@@ -94,6 +98,7 @@ export default function AftersalesSettingsPage() {
     >
       {loading ? <Spin /> : (
         <Space direction="vertical" size="middle" style={{ width: '100%' }}>
+          {error !== null && <Alert type="error" showIcon message={error} />}
           {state?.partial && (
             <Alert type="warning" showIcon message="配置不完整 ⇒ 访客登录不可用"
               description="AppID 与 AppSecret 必须成对。请补齐后保存。" />
