@@ -11,6 +11,10 @@
 
 ## [Unreleased]
 
+## [0.378.0](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.377.0...v0.378.0) - 2026-11-23
+- 【新增】data: 零售热层——报表新鲜度 1-2 小时压到 10 分钟（Lambda 速度层） ([#2765](https://github.com/MYTech-Co-LTD/platform-core/pull/2765), [20daa2e](https://github.com/MYTech-Co-LTD/platform-core/commit/20daa2e0227c54e6c1be7e4adbc97e487064014f))
+
+
 ## [0.377.0](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.376.0...v0.377.0) - 2026-11-23
 - 【新增】forms: dataPlane v2 与运营实时统计——白名单/缓存/审批门 + AI 同创 (#2755) ([#2760](https://github.com/MYTech-Co-LTD/platform-core/pull/2760), [14b372d](https://github.com/MYTech-Co-LTD/platform-core/commit/14b372d66ac239a7abfb5b91237d64144fce5d6b))
 
