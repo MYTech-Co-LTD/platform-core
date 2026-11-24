@@ -11,6 +11,10 @@
 
 ## [Unreleased]
 
+## [0.383.1](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.383.0...v0.383.1) - 2026-11-24
+- 【修复】aftersales: 访客门店查询补 fail-closed 与中文 code——修无参回全量（泄露面）/参数名错配/ASCII 白名单 ([#2798](https://github.com/MYTech-Co-LTD/platform-core/pull/2798), [358078a](https://github.com/MYTech-Co-LTD/platform-core/commit/358078abdd554fd755ec1c7f48fe9fefaa589d64))
+
+
 ## [0.383.0](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.382.0...v0.383.0) - 2026-11-24
 - 【修复】aftersales: 自然键校验支持中文——修 storeCode/itemCode 的 ASCII 白名单（97% 门店提单恒 400） ([#2796](https://github.com/MYTech-Co-LTD/platform-core/pull/2796), [ecec2d3](https://github.com/MYTech-Co-LTD/platform-core/commit/ecec2d3af77bd479c6db8500b4229b19fd421c53))
 - 【新增】data: 采集窗口扩到次日 1 点 + 高消耗物化/审计挪夜间 ([#2792](https://github.com/MYTech-Co-LTD/platform-core/pull/2792), [0fef7e3](https://github.com/MYTech-Co-LTD/platform-core/commit/0fef7e379d15e0ab884a9264e78331b2389d2266))
