@@ -75,7 +75,7 @@
 | **c. 目标 = 一张 dbt 生成关系 + L1 ratio 指标（推荐）** | ✅ 达成率/进度全是普通指标，报表 10 组件零改动渲染；「目标」对报表不可见 |
 
 **设计**（2026-11-23 实测后定为**两段式**，见 §9 探针）：
-- **目标定义**（新的一等声明，git 受控 YAML，照 `l1_metrics.yml` 模式进 `dbt/semantics/goals.yml`）：
+- **目标定义**（**DB 一等对象**，不新增 git YAML 日常路径——见 D12：照 W8 租户语义自治同款「提交 → 预览/试算 → 采纳 → 即时生效」面；下文 YAML 只是稳定后的**形状示例**，平台基线仍可由 `dbt/semantics/goals.yml` 播种）：
   ```yaml
   - goal: shanhai:monthly_store_sale
     label: 门店月度销售目标
@@ -126,8 +126,21 @@
 
 ### D8 权限与多租户
 
-- 目标定义 YAML 是平台级（数据面部署=单租户口径，与 L1 一致）；收集值带 org（forms 既有纪律）；达成率关系经 Gate-B/部门门出。
-- agent 面：`search_goal_definitions` / `get_goal_status` 两个只读工具进 forms mcp-manage（起草目标值仍走表单，AI 不产出生效值）。
+- 目标定义**分两层**：平台基线（git seed，全租户共享，走 PR）与租户定义（DB 对象，照 W8 自助面，不部署）；收集值带 org（forms 既有纪律）；达成率关系经 Gate-B/部门门出。
+- agent 面：`search_goal_definitions` / `get_goal_status` 只读 + `propose_goal_definition`（只提案，人采纳）；起草目标值仍走表单，AI 不产出生效值。
+
+### D12 目标定义的自助面照 W8（2026-11-24 人审追问后修订）
+
+**现状取证**：租户 L1 同形指标已有一条零代码路径（W8，2026-11-09，#1716）——
+`POST /api/modules/data/metrics/declarations`（`data:manage`）→ `modules/data/domain/tenant-declaration-write.ts`，与平台 L1 **同一把尺**（`semanticsYamlPieceIssues` + `compileTenantDeclaration`；禁自由 SQL、B11 已纳管关系白名单、列存在、EXPLAIN、grain 非空、`required_scope` 不降门）→ 写 `data.metrics`（`org=<租户>`、`source='l2'`、`basis='declared'`、`certified='draft'`）→ `loadMergedCatalog` 在四条读通道即时生效，**不 PR、不部署**。覆盖平台口径走 `POST /metrics/:id/override`（草稿）→ `.../confirm`（生效）。agent 面 `submit_metric_change kind='declaration'` **只提案**，人采纳后复用同一条写路径（`metric-change.ts` 第 591–592 行），采纳不等于绕过校验。
+
+**因此修正**：目标定义不再设计成「又一个 git YAML 特例」，而是照 W8 同款：`platform.goal_definition` 表 + 提交/预览（试算）/采纳/版本/审计/回滚；agent 只提案，人采纳；不部署即可生效。
+
+**必须正视的一处真实差异（G 计划要先定）**：指标声明是**查询期编译的 SQL**，指向已存在的湖/mart 关系，所以「零部署生效」天然成立；目标达成要**生成新关系**（段① stg + 段② mart）。作者面可以零代码，但「零部署生效」要求物化入口从「dbt 模型文件 + 构建」改成「调度任务读已发布定义 → 生成 SQL → 物化」；否则新目标仍要一次构建/部署。两条路：
+1. 调度任务运行时物化（`goal.materialize` 读 DB 定义 → 执行生成的两段 SQL）——真正零部署，但要补审计/断言语义与 pg_duckdb 约束；
+2. 生成 dbt 模型 + 触发现有构建（保留 dbt 测试/血缘）——零代码但不零部署。
+
+**边界不变**：平台级、跨租户共享口径（含平台 L1）仍走 git/PR；租户只能写自己 org。
 
 ### D9 双通道划分：运营实时统计 vs 分析批（2026-11-23 人审同意）
 
