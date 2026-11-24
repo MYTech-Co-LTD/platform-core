@@ -3,7 +3,11 @@
 // 铁律边界：**存储契约永不含值**（§2.4）；本文件的 injectDictEnums 造的是**渲染视图模型副本**
 // ——值同源取自 /options（与服务端提交校验同一数据源），不回写、不落契约。
 import { platformFetch } from '@platform/sdk/web'
-import { DICT_REF_RE } from '../domain/contract'
+import { DICT_REF_RE, fieldDeclsOf, statsEnabledOf } from '../domain/contract'
+import { statsViewsOf } from '../domain/stats'
+import type { FieldDecl, StatsFilter, StatsMeasure, StatsViewDecl } from '../domain/contract'
+
+export type { FieldDecl, StatsFilter, StatsMeasure, StatsViewDecl } from '../domain/contract'
 
 export interface DefSummary {
   assetId: string
@@ -315,4 +319,80 @@ export function renderModelOf(
     }
   }
   return { schema: copy, uiSchema }
+}
+
+// ── 运营实时统计（件④ / #2755；console 面 D3 / #2756）──
+// 只打声明式聚合端点 `POST /stats`：字段 / 聚合 / 视图全部来自契约（`GET /defs/:assetId` 回带
+// head 版本 body），前端**不构造任意字段输入**。合计行用同过滤条件的无分组查询取得
+// （avg 不能由各组合计反推，故不前端累加）。
+
+export interface StatsQuery {
+  assetId: string
+  viewId?: string
+  groupBy?: string[]
+  measures?: StatsMeasure[]
+  filter?: StatsFilter
+  limit?: number
+}
+
+export interface StatsResult {
+  /** 行对象键：分组字段用字段名，度量用 `<agg>_<field>`（`field='*'` 为 `count`）。 */
+  rows: Array<Record<string, unknown>>
+  /** 数据快照时刻（ISO）。 */
+  asOf: string
+  truncated: boolean
+  cached?: boolean
+  viewId?: string
+}
+
+export interface DefDetail {
+  assetId: string
+  head: number | null
+  versions: Array<{ version: number; status: string; body: unknown }>
+}
+
+export async function runStats(input: StatsQuery): Promise<StatsResult> {
+  return apiSend<StatsResult>('POST', '/api/modules/forms/stats', input)
+}
+
+export async function getDefDetail(assetId: string): Promise<DefDetail> {
+  return apiGet<DefDetail>(`/api/modules/forms/defs/${encodeURIComponent(assetId)}`)
+}
+
+/** 契约里与统计有关的全部声明 + 字段标题（schema.properties[*].title，缺省用字段名）。 */
+export interface StatsContract {
+  enabled: boolean
+  fields: FieldDecl[]
+  views: StatsViewDecl[]
+  titles: Record<string, string>
+  /** 表单名（schema.title，缺省 assetId）。 */
+  title: string
+}
+
+/**
+ * `GET /defs/:assetId` → 已发布 head 的统计契约（无 head / 找不到 head 版本 ⇒ null）。
+ * 统计开关只看 head：草稿上的 `stats.enabled` 不生效（与 `/stats` 只查 published head 同口径）。
+ */
+export function statsContractOf(detail: DefDetail): StatsContract | null {
+  if (detail.head === null) return null
+  const head = detail.versions.find((v) => v.version === detail.head)
+  if (head === undefined) return null
+  const body = head.body
+  const schema = (body as { schema?: { title?: unknown; properties?: unknown } } | null)?.schema
+  const titles: Record<string, string> = {}
+  const props = schema?.properties
+  if (props !== null && typeof props === 'object' && !Array.isArray(props)) {
+    for (const [field, def] of Object.entries(props as Record<string, unknown>)) {
+      const title = (def as { title?: unknown } | null)?.title
+      titles[field] = typeof title === 'string' && title.trim().length > 0 ? title.trim() : field
+    }
+  }
+  const schemaTitle = typeof schema?.title === 'string' ? schema.title.trim() : ''
+  return {
+    enabled: statsEnabledOf(body),
+    fields: fieldDeclsOf(body),
+    views: statsViewsOf(body),
+    titles,
+    title: schemaTitle.length > 0 ? schemaTitle : detail.assetId,
+  }
 }

@@ -15,6 +15,7 @@ import Approvals from './Approvals'
 import ApprovalDetail from './ApprovalDetail'
 import StandardApprovals from './StandardApprovals'
 import Rounds from './Rounds'
+import RealtimeStats from './RealtimeStats'
 
 const BASE = '/console/forms'
 
@@ -22,6 +23,8 @@ const TABS = [
   { key: 'forms', label: '表单' },
   { key: 'fill', label: '填报' },
   { key: 'submissions', label: '提交记录' },
+  // 件④ D3（issue #2756）：运营实时统计（读 forms:view；只列 dataPlane.stats.enabled 的表单）
+  { key: 'stats', label: '实时统计' },
   // 件③（issue #2707）：收集轮次管理（名单轮/值集轮；读 forms:view，写 forms:manage）
   { key: 'rounds', label: '轮次' },
   // OA P1：应用内待审批（响应用户端；scope forms:view——审批动作按计划快照授权）
@@ -38,7 +41,7 @@ export default function FormsConsolePage() {
   const { pathname } = useLocation()
 
   // 解析 rest（BASE 之后的部分）：'' | '/fill/:assetId' | '/submissions/:assetId'
-  // | '/approvals/:caseId' | '/:tab'（含 /standard）
+  // | '/approvals/:caseId' | '/:tab'（含 /standard、/stats）
   const rest = pathname.startsWith(BASE) ? pathname.slice(BASE.length) : pathname
   const segs = rest.split('/').filter(Boolean)
   let active: TabKey = 'forms'
@@ -75,6 +78,7 @@ export default function FormsConsolePage() {
       {active === 'forms' && <FormsList />}
       {active === 'fill' && <FillForm assetId={fillAsset} />}
       {active === 'submissions' && <Submissions assetId={subAsset} onAssetChange={(v) => navigate(v ? `${BASE}/submissions/${v}` : `${BASE}/submissions`)} />}
+      {active === 'stats' && <RealtimeStats />}
       {active === 'rounds' && <Rounds />}
       {active === 'approvals' && (approvalCase !== undefined
         ? <ApprovalDetail caseId={approvalCase} />

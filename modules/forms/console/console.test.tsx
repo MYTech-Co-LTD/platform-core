@@ -612,3 +612,153 @@ describe('轮次页（件③ #2707）', () => {
     expect(screen.getByText('待交')).toBeInTheDocument()
   })
 })
+
+// 运营实时统计页（件④ D3 / issue #2756）：只列 dataPlane.stats.enabled 的表单；
+// 具名视图点开即渲染；合计用同过滤条件的无分组查询；顶部 asOf 文案「实时（截至 HH:mm:ss）」。
+describe('实时统计页（件④ D3 #2756）', () => {
+  const statsBody = {
+    schema: {
+      type: 'object',
+      title: '打分表',
+      properties: {
+        class: { type: 'string', title: '班级', enum: ['A', 'B'] },
+        score: { type: 'number', title: '分数' },
+      },
+    },
+    dataPlane: {
+      fields: [
+        { field: 'class', kind: 'enum', agg: ['count'], groupable: true },
+        { field: 'score', kind: 'number', agg: ['sum', 'avg'] },
+      ],
+      stats: {
+        enabled: true,
+        views: [
+          { key: 'by_class', label: '按班级汇总', groupBy: ['class'], measures: [{ field: 'score', agg: 'sum' }] },
+        ],
+      },
+    },
+  }
+  const plainBody = { schema: { type: 'object', properties: { name: { type: 'string' } } } }
+  const summary = (assetId: string) => ({
+    assetId, headVersion: 1, draftCount: 0, publishedCount: 1, retiredCount: 0,
+    updatedAt: '2026-11-23T00:00:00Z',
+  })
+  const detailResponse = (assetId: string, body: unknown) =>
+    jsonResponse({
+      assetId,
+      head: 1,
+      versions: [{ version: 1, status: 'published', createdBy: 'u', publishedBy: 'h', body }],
+    })
+
+  it('只列开启 stats 的表单；点具名视图 → 渲染行、合计与「实时（截至 …）」', async () => {
+    const posts: Record<string, unknown>[] = []
+    const detailsFetched: string[] = []
+    platformFetchMock.mockImplementation(async (input: string, init?: RequestInit) => {
+      if (input === '/api/modules/forms/defs') {
+        return jsonResponse({ defs: [summary('score-form'), summary('plain-form')] })
+      }
+      if (input === '/api/modules/forms/defs/score-form') {
+        detailsFetched.push('score-form')
+        return detailResponse('score-form', statsBody)
+      }
+      if (input === '/api/modules/forms/defs/plain-form') {
+        detailsFetched.push('plain-form')
+        return detailResponse('plain-form', plainBody)
+      }
+      if (input === '/api/modules/forms/stats' && init?.method === 'POST') {
+        posts.push(JSON.parse(String(init.body)) as Record<string, unknown>)
+        // 第一次 = 具名视图分组行；第二次 = 无分组「合计」查询
+        return posts.length === 1
+          ? jsonResponse({ rows: [{ class: 'A', sum_score: '170' }, { class: 'B', sum_score: '70' }], asOf: '2026-11-23T00:12:33Z', truncated: false })
+          : jsonResponse({ rows: [{ sum_score: '240' }], asOf: '2026-11-23T00:12:33Z', truncated: false })
+      }
+      throw new Error('unexpected platformFetch: ' + input)
+    })
+    renderAt('/console/forms/stats', ['forms:view'])
+    // 两张都探过（判定 stats.enabled），但只有 score-form 进选择器；具名视图卡片出现
+    await waitFor(() => expect(detailsFetched).toEqual(['score-form', 'plain-form']))
+    expect(await screen.findByText('按班级汇总')).toBeInTheDocument()
+    fireEvent.mouseDown(document.querySelector('#stats-form-select') as Element)
+    await waitFor(() => expect(screen.getAllByText('打分表（score-form）').length).toBeGreaterThanOrEqual(1))
+    expect(screen.queryByText(/plain-form/)).not.toBeInTheDocument()
+
+    fireEvent.click(screen.getByText('按班级汇总'))
+    await waitFor(() => expect(screen.getByText('170')).toBeInTheDocument())
+    expect(screen.getByText('70')).toBeInTheDocument()
+    expect(screen.getByText('合计')).toBeInTheDocument()
+    expect(screen.getByText('240')).toBeInTheDocument()
+    expect(screen.getByText(/实时（截至 \d{2}:\d{2}:\d{2}）/)).toBeInTheDocument()
+    // 视图查询 + 同过滤条件的无分组「合计」查询
+    expect(posts[0]).toMatchObject({ assetId: 'score-form', viewId: 'by_class' })
+    expect(posts[1]).toMatchObject({
+      assetId: 'score-form', groupBy: [], measures: [{ field: 'score', agg: 'sum' }],
+    })
+  })
+
+  it('没有任何开启 stats 的表单 → 空态给下一步（不是「暂无数据」）', async () => {
+    platformFetchMock.mockImplementation(async (input: string) => {
+      if (input === '/api/modules/forms/defs') return jsonResponse({ defs: [summary('plain-form')] })
+      if (input === '/api/modules/forms/defs/plain-form') return detailResponse('plain-form', plainBody)
+      throw new Error('unexpected platformFetch: ' + input)
+    })
+    renderAt('/console/forms/stats', ['forms:view'])
+    expect(await screen.findByText(/还没有开启实时统计的表单/)).toBeInTheDocument()
+  })
+
+  it('查询 0 行 → 空态说「当前条件下没有提交记录」（与「无可用表单」区分）', async () => {
+    const posts: Record<string, unknown>[] = []
+    platformFetchMock.mockImplementation(async (input: string, init?: RequestInit) => {
+      if (input === '/api/modules/forms/defs') return jsonResponse({ defs: [summary('score-form')] })
+      if (input === '/api/modules/forms/defs/score-form') return detailResponse('score-form', statsBody)
+      if (input === '/api/modules/forms/stats' && init?.method === 'POST') {
+        posts.push(JSON.parse(String(init.body)) as Record<string, unknown>)
+        return jsonResponse({ rows: [], asOf: '2026-11-23T00:12:33Z', truncated: false })
+      }
+      throw new Error('unexpected platformFetch: ' + input)
+    })
+    renderAt('/console/forms/stats', ['forms:view'])
+    fireEvent.click(await screen.findByText('按班级汇总'))
+    expect(await screen.findByText(/当前条件下没有提交记录/)).toBeInTheDocument()
+  })
+
+  it('高级模式：维度/度量选项全部来自契约（无任意字段输入），查询按声明字段提交', async () => {
+    const posts: Record<string, unknown>[] = []
+    platformFetchMock.mockImplementation(async (input: string, init?: RequestInit) => {
+      if (input === '/api/modules/forms/defs') return jsonResponse({ defs: [summary('score-form')] })
+      if (input === '/api/modules/forms/defs/score-form') return detailResponse('score-form', statsBody)
+      if (input === '/api/modules/forms/stats' && init?.method === 'POST') {
+        const body = JSON.parse(String(init.body)) as Record<string, unknown>
+        posts.push(body)
+        const isTotal = body['viewId'] === undefined && Array.isArray(body['groupBy']) && body['groupBy'].length === 0
+        return jsonResponse({
+          rows: isTotal ? [{ sum_score: '240' }] : [{ class: 'A', sum_score: '170' }],
+          asOf: '2026-11-23T00:12:33Z',
+          truncated: false,
+        })
+      }
+      throw new Error('unexpected platformFetch: ' + input)
+    })
+    renderAt('/console/forms/stats', ['forms:view'])
+    await screen.findByText('按班级汇总')
+    fireEvent.click(document.querySelector('.ant-collapse-header') as Element)
+
+    // 维度选项 = 契约里 groupable 的字段（class），没有自由文本输入
+    fireEvent.mouseDown(document.querySelector('#stats-groupby') as Element)
+    await waitFor(() => expect(screen.getByText('班级')).toBeInTheDocument())
+    expect(screen.queryByText('ghost')).not.toBeInTheDocument()
+    fireEvent.click(screen.getByText('班级'))
+
+    // 度量选项 = 契约里每个字段声明的聚合（score 有 sum/avg）
+    fireEvent.mouseDown(document.querySelector('#stats-measures') as Element)
+    await waitFor(() => expect(screen.getByText('求和 · 分数')).toBeInTheDocument())
+    expect(screen.queryByText(/求和 · 姓名/)).not.toBeInTheDocument()
+    fireEvent.click(screen.getByText('求和 · 分数'))
+
+    fireEvent.click(screen.getByRole('button', { name: /查\s*询/ }))
+    await waitFor(() => expect(posts.length).toBeGreaterThanOrEqual(1))
+    expect(posts[0]).toMatchObject({
+      assetId: 'score-form', groupBy: ['class'], measures: [{ field: 'score', agg: 'sum' }],
+    })
+    expect(posts[0]['viewId']).toBeUndefined()
+  })
+})
