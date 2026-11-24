@@ -44,6 +44,22 @@ select
   t.order_total_money
 from staging.retail_hot t
 where t.run_token = (
-  select max(h.run_token) from staging.retail_hot h where h.system_book = t.system_book
+  -- 取批必须**按窗**（system_book + bizday + hour）各取最新，不能取全局最新（#2803 实测）：
+  -- 采集 tick 的每个窗口是独立子管线、各写各的 run_token（`${datetime}`），全局 max
+  -- 只剩「最后写完的那一窗」⇒ 湖腿闭窗排除两窗（当前小时 + 前一小时）时，另一窗整段缺失。
+  -- 2026-11-24 19:20 真机：湖闭窗 6,453 + 全局最新批 1,388 = 7,841，比湖全量 8,144 少 303；
+  -- 按窗取最新 = 1,691，6,453 + 1,691 = 8,144，逐行一致。
+  select max(h.run_token) from staging.retail_hot h
+  where h.system_book = t.system_book
+    and h.bizday = t.bizday
+    and h.hour = t.hour
 )
+-- 只补「湖腿闭窗排除掉的那两窗」，且**仅限今天**——与 `closed_before_predicate` 严格互补：
+--   · 湖腿 = not (bizday = 上海今天 and hour >= 上海当前小时 - 1)；
+--   · 跨日（00–01 点）热表最后一窗是「昨天 h23」，而湖腿此时**包含**它 ⇒ 不按今天过滤
+--     就会双算；昨天缺的尾款由湖腿自己提供。
+--   · 某窗连续失败时，按窗最新批可能落在闭窗之外（旧小时）⇒ 用同一个 hour 下界剔掉，
+--     那部分由湖腿照常读，不会与热腿重叠。
+and t.bizday = {{ shanghai_today() }}
+and t.hour >= {{ shanghai_hour_now() }} - 1
 {% endmacro %}
