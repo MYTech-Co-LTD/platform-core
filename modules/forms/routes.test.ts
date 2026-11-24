@@ -386,9 +386,14 @@ describe('forms 实时统计（件④ #2755）', () => {
     },
   }
 
-  /** 同一 app（= 同一 router 实例 = 同一份缓存）；身份同时有 fill/view，便于测「提交后失效」。 */
+  /** 同一 app（= 同一 router 实例 = 同一份缓存）；身份同时有 fill/view，便于测「提交后失效」。
+   *  TTL 注入 1h：命中/失效断言只考「语义」（显式失效与是否命中），不赌慢 CI 的墙钟。 */
   const opsApp = () =>
-    appAs(makeIdentity({ orgId: ORG_A, userId: 'stats-ops', scopes: ['forms:view', 'forms:fill', 'forms:publish'] }))
+    buildTestApp(
+      { manifest: mod.manifest, createRouter: () => createFormsRouter({ pool, statsCacheTtlMs: 3_600_000 }) } as never,
+      makeIdentity({ orgId: ORG_A, userId: 'stats-ops', scopes: ['forms:view', 'forms:fill', 'forms:publish'] }),
+      { pool },
+    )
 
   const errOf = async (res: Response): Promise<string> =>
     ((await res.json()) as { error: string }).error
@@ -437,19 +442,37 @@ describe('forms 实时统计（件④ #2755）', () => {
     expect(out.cached).toBeUndefined()
     expect(out.rows.map((r) => `${r.class}=${Number(r.sum_score)}`)).toEqual(['A=170', 'B=170'])
 
-    // 日期窗过滤（提交都在今天 ⇒ 今天命中、更晚的窗口为空）
-    const today = new Date().toISOString().slice(0, 10)
+    // 日期窗过滤。⚠️ 窗口按 **Asia/Shanghai** 日界解释（与 SQL `AT TIME ZONE` 同一口径）——
+    // 绝不能用 `toISOString()` 的 UTC 日历日：CI 跑在 UTC，16:00–24:00Z 期间 UTC 日期落后
+    // 上海一天，提交已落在上海「明天」，`[UTC today, UTC today]` 窗过滤为空 ⇒ sum=null → 0
+    // （#2767 实测：run 45211829579 在 16:10Z 红，本地同时段同红）。取「上海今天」并用
+    // [昨天, 今天] 两天窗：提交与断言之间是否跨过上海零点都必然包含，时钟无关、确定性。
+    const today = new Date().toLocaleDateString('en-CA', { timeZone: 'Asia/Shanghai' })
+    const yesterday = new Date(new Date(`${today}T00:00:00Z`).getTime() - 86_400_000).toISOString().slice(0, 10)
     res = await reqA(app, 'POST', '/stats', {
-      assetId: S_ASSET, viewId: 'total', filter: { submittedFrom: today, submittedTo: today },
+      assetId: S_ASSET, viewId: 'total', filter: { submittedFrom: yesterday, submittedTo: today },
     })
     out = (await res.json()) as typeof out
     expect(Number(out.rows[0].sum_score)).toBe(340)
     res = await reqA(app, 'POST', '/stats', {
-      assetId: S_ASSET, viewId: 'total', filter: { submittedFrom: '2099-01-01' },
+      assetId: S_ASSET, viewId: 'total', filter: { submittedFrom: '2099-01-01', submittedTo: '2099-12-31' },
     })
     out = (await res.json()) as typeof out
     // 无分组的聚合恒返回一行（无命中 ⇒ sum 为 null）
     expect(out.rows).toEqual([{ sum_score: null }])
+  })
+
+  it('缓存 TTL：ttl=0 ⇒ 恒未命中（缓存语义与墙钟时序解耦，不靠 sleep）', async () => {
+    const ttlApp = buildTestApp(
+      { manifest: mod.manifest, createRouter: () => createFormsRouter({ pool, statsCacheTtlMs: 0 }) } as never,
+      makeIdentity({ orgId: ORG_A, userId: 'stats-ttl', scopes: ['forms:view'] }),
+      { pool },
+    )
+    for (let i = 0; i < 2; i++) {
+      const res = await reqA(ttlApp, 'POST', '/stats', { assetId: S_ASSET, viewId: 'by_class' })
+      expect(res.status).toBe(200)
+      expect(((await res.json()) as { cached?: boolean }).cached, `第 ${i + 1} 次`).toBeUndefined()
+    }
   })
 
   it('负对照：未开 stats / 未声明字段 / string sum / limit 超限 / in 超长 / viewId 不存在', async () => {

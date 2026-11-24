@@ -132,6 +132,7 @@ export function createFormsRouter({
   orgPort = null,
   notify = null,
   engineFor = async () => null,
+  statsCacheTtlMs = STATS_CACHE_TTL_MS,
 }: {
   pool: Pool
   chatModel?: ChatModel | null
@@ -141,6 +142,11 @@ export function createFormsRouter({
   notify?: NotifyPort | null
   /** 租户 → 引擎 client（无映射 ⇒ null ⇒ 409 OA_NOT_ENABLED）。 */
   engineFor?: EngineResolver
+  /**
+   * 实时统计缓存的 TTL（毫秒；缺省 15s）。**测试注入用**：生产缺省不变；测试传超大值
+   * 把「缓存命中/失效语义」与「墙钟时序」解耦（慢 CI 不会把语义断言变成计时赌博）。
+   */
+  statsCacheTtlMs?: number
 }) {
   const r = new Hono<{ Variables: { identity: Identity } }>()
 
@@ -365,7 +371,7 @@ export function createFormsRouter({
       const resolved = resolveViewRequest(input, statsViewsOf(def))
       const key = statsKeyOf(identity.orgId, assetId, resolved)
       const hit = statsCache.get(key)
-      if (hit !== undefined && Date.now() - hit.at < STATS_CACHE_TTL_MS) {
+      if (hit !== undefined && Date.now() - hit.at < statsCacheTtlMs) {
         statsCache.delete(key) // 命中即刷新 LRU 位置
         statsCache.set(key, hit)
         return c.json({ ...hit.value, cached: true })
