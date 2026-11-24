@@ -11,6 +11,10 @@
 
 ## [Unreleased]
 
+## [0.380.1](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.380.0...v0.380.1) - 2026-11-24
+- 【修复】aftersales: 注册页门店精确搜索补品牌前缀归一变体——「品品甜X店」与「X店」都命中 ([#2778](https://github.com/MYTech-Co-LTD/platform-core/pull/2778), [2846451](https://github.com/MYTech-Co-LTD/platform-core/commit/284645152fd27a2edf5fba5e9c8d77117123ed9d))
+
+
 ## [0.380.0](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.379.0...v0.380.0) - 2026-11-24
 - 【新增】aftersales: 注册页门店搜索改精确等值匹配（防品牌词枚举）——shim 补 exact=1 恢复源语义 ([#2776](https://github.com/MYTech-Co-LTD/platform-core/pull/2776), [a346a14](https://github.com/MYTech-Co-LTD/platform-core/commit/a346a1429e153f6996a484937ee079dacbe396eb))
 
