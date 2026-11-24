@@ -194,7 +194,12 @@ export const JOB_REGISTRY: JobDef[] = [
   { key: 'data.hour_partition_gc', scope: 'data', requiresEnv: ['ZOS_ACCESS_KEY','ZOS_SECRET_KEY','ZOS_ENDPOINT','ZOS_REGION','ZOS_BUCKET'], script: 'scripts/lemeng/hour-partition-gc.mjs', env: { GC_DAYS_BACK: '0', GC_TZ: 'UTC', GC_SCAN_DAYS: '4' }, cron: '5,35 * * * *', timezone: 'UTC', timeoutMs: 300000, maxAttempts: 1, expectedIntervalSecs: 1800, description: '小时对象激进回收（UTC 今天前、扫 4 天；封版+天文件双证才删；#2668）' },
   // 窗口：before=上海今天−2、扫 30 天（重述窗口护栏），CST 03:20。
   { key: 'data.hot_hours_gc', scope: 'data', requiresEnv: ['ZOS_ACCESS_KEY','ZOS_SECRET_KEY','ZOS_ENDPOINT','ZOS_REGION','ZOS_BUCKET'], script: 'scripts/lemeng/hour-partition-gc.mjs', env: { GC_DAYS_BACK: '2', GC_TZ: 'Asia/Shanghai', GC_SCAN_DAYS: '30' }, cron: '20 19 * * *', timezone: 'UTC', timeoutMs: 600000, maxAttempts: 1, expectedIntervalSecs: 86400, description: '热小时对象保守回收（上海今天−2、扫 30 天；CST 03:20）' },
-  // handler-only：排班由 agent/console 经 SchedulerPort 建（source≠'system'），seed 不建行。
+
+  // 热层 GC（#2761）：快照表 `staging.retail_hot` 只服务「上海今天」，昨天的批次是死数据
+  // （明细已由 `_DAY_DATA` 天文件接管）。与小时对象 GC **分开调度**：判据不同（那边要
+  // 「封版+天文件双证」走 ZOS 对象删除；这边是纯 pg DELETE）、失败域不同 ⇒ 互不连坐。
+  // 只共享同一个清理窗口（CST 凌晨，错开 5 分钟）。
+  { key: 'data.retail_hot_gc', scope: 'data', requiresEnv: ['DATA_WAREHOUSE_URL'], script: 'scripts/lemeng/retail-hot-gc.mjs', cron: '25 19 * * *', timezone: 'UTC', timeoutMs: 120000, maxAttempts: 1, expectedIntervalSecs: 86400, description: '热层 GC：删 retail_hot 中上海今天以前的批次（CST 03:25；快照表只服务当天）' },  // handler-only：排班由 agent/console 经 SchedulerPort 建（source≠'system'），seed 不建行。
   // cron/timezone 是 JobDef 必填字段的占位值（不会被 seed 使用），真实时间以排班行为准。
   { key: 'notify.emit', scope: 'platform', script: 'scripts/notify-emit-job.mjs', cron: '0 0 1 1 *', timezone: 'UTC', timeoutMs: 60000, maxAttempts: 2, expectedIntervalSecs: 86400, description: '周期消息：把一条事件入队（由 agent/console 建按其 cron 排班）', noSystemSchedule: true },
 ]
