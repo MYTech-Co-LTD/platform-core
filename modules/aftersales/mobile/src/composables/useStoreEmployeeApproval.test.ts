@@ -75,14 +75,22 @@ describe('useStoreEmployeeApproval', () => {
     expect(c.employeeInfo.value?.employee_name).toBe('张三')
   })
 
-  it('loadSelectedStores：**一次** query 取回全部门店（不是 N 次并发）', async () => {
+  it('loadSelectedStores：**一次** query 取回全部门店（不是 N 次并发），id 原样传**字符串** code', async () => {
     const c = useStoreEmployeeApproval()
     await c.loadSelectedStores(['3', '5'])
     expect(storeQuery).toHaveBeenCalledTimes(1)
-    expect(storeQuery).toHaveBeenCalledWith({ filter: { OR: [{ id__eq: 3 }, { id__eq: 5 }] } })
+    expect(storeQuery).toHaveBeenCalledWith({ filter: { OR: [{ id__eq: '3' }, { id__eq: '5' }] } })
     // 取回即赋值。**不再断言「按请求 id 收窄」**：收窄是服务端 `?ids=` 的事，客户端收窄
     // 拿 mock 返回多余行去"证明"它，测的是不存在的情形。
     expect(c.storeList.value).toEqual(STORES)
+  })
+
+  // 2026-11-24 真机验收实测：`Number('凤庆01')`=NaN ⇒ shim 判据（非空字符串）抛
+  // ⇒ 门店回显整体失败（员工卡门店显示成编码 + 页面底部一条 shim 报错）。与 #2782 同源。
+  it('loadSelectedStores：字母数字混合 code 不数字化（「凤庆01」原样进 filter）', async () => {
+    const c = useStoreEmployeeApproval()
+    await c.loadSelectedStores(['凤庆01'])
+    expect(storeQuery).toHaveBeenCalledWith({ filter: { OR: [{ id__eq: '凤庆01' }] } })
   })
 
   it('loadStores(搜索词)：把词翻成 store_name__eq 的 OR 形状（shim 认这个形状）', async () => {

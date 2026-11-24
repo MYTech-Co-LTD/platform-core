@@ -83,7 +83,10 @@ export function useStoreEmployeeApproval() {
     }
     try {
       storeList.value = await store_info.query({
-        filter: { OR: storeIds.map((id) => ({ id__eq: Number(id) })) },
+        // id 就是 `data.dim_branch.code` 自然键（#476），**原样透传字符串**——
+        // `Number('凤庆01')` = NaN ⇒ shim 判据（非空字符串）拒绝 ⇒ 门店回显整体失败并弹错
+        // （2026-11-24 真机验收实测：员工卡门店显示成编码、页面底部一条 shim 报错）。
+        filter: { OR: storeIds.map((id) => ({ id__eq: id })) },
       })
     } catch (error: any) {
       Message.error(error?.message || '加载门店列表失败')
