@@ -645,3 +645,58 @@ describe('classifyNarrativeError（stream_failed 分类）', () => {
     expect(classifyNarrativeError(new Error('something odd'))).toBe('unknown')
   })
 })
+
+describe('streamNarrative：上游失败的重试边界', () => {
+  /** 第 n 次调用按 rounds[n] 行为：throw 或吐 chunk。 */
+  function flakyModel(rounds: Array<'throw' | StreamDelta[]>) {
+    const calls: { messages: ChatMessage[]; opts?: StreamOpts }[] = []
+    const model: StreamingChatModel & { id: string } = {
+      id: 'flaky-model',
+      complete: async () => ({ content: '', toolCalls: [] }),
+      async *completeStream(messages, _tools, opts) {
+        calls.push({ messages, opts })
+        const r = rounds[Math.min(calls.length - 1, rounds.length - 1)]
+        if (r === 'throw') throw new Error('fetch failed')
+        for (const c of r ?? []) yield c
+      },
+    }
+    return { model, calls }
+  }
+
+  it('★ 首字前失败 ⇒ 重试一次并成功（不再直接套模板）', async () => {
+    const { pool } = fakePool()
+    const { model, calls } = flakyModel([
+      'throw',
+      [{ content: '结论：销售额 51,273.89。\n异常：无。\n行动：核对明细。' }],
+    ])
+    const evs = await collect(streamNarrative(depsOf(pool, { model })))
+    expect(calls).toHaveLength(2)
+    expect(evs).toContainEqual({ type: 'phase', phase: 'thinking', label: '连接波动，重试一次…' })
+    expect(evs.at(-1)).toMatchObject({ type: 'done', fallback: false })
+  })
+
+  it('★ 已吐正文后失败 ⇒ 不重试（避免整段替换已读内容），直接模板兜底', async () => {
+    const { pool } = fakePool()
+    const calls: number[] = []
+    const model: StreamingChatModel & { id: string } = {
+      id: 'late-fail',
+      complete: async () => ({ content: '', toolCalls: [] }),
+      async *completeStream() {
+        calls.push(1)
+        yield { content: '结论：销售额 51,273.89。' }
+        throw new Error('socket hang up')
+      },
+    }
+    const evs = await collect(streamNarrative(depsOf(pool, { model })))
+    expect(calls).toHaveLength(1)
+    expect(evs.at(-1)).toMatchObject({ type: 'done', fallback: true })
+  })
+
+  it('首字前连续两次失败 ⇒ 模板兜底', async () => {
+    const { pool } = fakePool()
+    const { model, calls } = flakyModel(['throw', 'throw'])
+    const evs = await collect(streamNarrative(depsOf(pool, { model })))
+    expect(calls).toHaveLength(2)
+    expect(evs.at(-1)).toMatchObject({ type: 'done', fallback: true })
+  })
+})
