@@ -84,14 +84,24 @@ describe('employee_info_approve', () => {
     expect(await employee_info_approve.query({ filter: { openid__eq: 'o1', status__eq: '待审批' } })).toHaveLength(1)
   })
 
-  it('create：把表单目标值映射成域端点的 {name, phone, storeIds}', async () => {
+  it('create：把表单目标值映射成域端点的 {name, phone, storeCodes}（**字符串数组**，端点 TargetBody 收 dim code 自然键）', async () => {
     send.mockResolvedValue({ id: 1 })
     await employee_info_approve.create({
       approvetype: '注册',
       approveinfo: { employee_name: '张三', employee_phonenumber: '138', store_info: '3,5' },
     })
     expect(send).toHaveBeenCalledWith('/guest/employee-approvals', 'POST', {
-      name: '张三', phone: '138', storeIds: [3, 5],
+      name: '张三', phone: '138', storeCodes: ['3', '5'],
+    })
+  })
+
+  it('create：字母数字混合 code（如「凤庆01」）原样保留——**禁止 Number 化**（2026-11-24 真机事故：Number(\'凤庆01\')=NaN 被 filter ⇒ storeIds 空数组 ⇒ INVALID_BODY）', async () => {
+    send.mockResolvedValue({ id: 1 })
+    await employee_info_approve.create({
+      approveinfo: { employee_name: '张三', employee_phonenumber: '138', store_info: ['凤庆01', '102'] },
+    })
+    expect(send).toHaveBeenCalledWith('/guest/employee-approvals', 'POST', {
+      name: '张三', phone: '138', storeCodes: ['凤庆01', '102'],
     })
   })
 
@@ -99,7 +109,7 @@ describe('employee_info_approve', () => {
     send.mockResolvedValue({ id: 1 })
     await employee_info_approve.create({ approveinfo: { employee_name: '张三', employee_phonenumber: '138', store_info: '3' } })
     const body = send.mock.calls[0]![2] as Record<string, unknown>
-    expect(Object.keys(body).sort()).toEqual(['name', 'phone', 'storeIds'])
+    expect(Object.keys(body).sort()).toEqual(['name', 'phone', 'storeCodes'])
   })
 
   it('create：服务端 409 APPROVAL_PENDING ⇒ 翻成源侧那句文案（页面 catch 分支不用改）', async () => {
