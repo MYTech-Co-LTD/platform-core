@@ -11,6 +11,10 @@
 
 ## [Unreleased]
 
+## [0.383.4](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.383.3...v0.383.4) - 2026-11-24
+- 【修复】data: 热腿按窗取最新批 + 只补今天的闭窗两窗 ([#2804](https://github.com/MYTech-Co-LTD/platform-core/pull/2804), [72cb12c](https://github.com/MYTech-Co-LTD/platform-core/commit/72cb12cac3cc37ceb8934ff504cd8cdb3ab7861f))
+
+
 ## [0.383.3](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.383.2...v0.383.3) - 2026-11-24
 - 【修复】data: dbt tick 物化窗口随采集扩到次日 1 点 ([#2802](https://github.com/MYTech-Co-LTD/platform-core/pull/2802), [d20fcc3](https://github.com/MYTech-Co-LTD/platform-core/commit/d20fcc32e3e898e3a98ef4f7916822e6dc98cb22))
 
