@@ -11,6 +11,10 @@
 
 ## [Unreleased]
 
+## [0.383.3](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.383.2...v0.383.3) - 2026-11-24
+- 【修复】data: dbt tick 物化窗口随采集扩到次日 1 点 ([#2802](https://github.com/MYTech-Co-LTD/platform-core/pull/2802), [d20fcc3](https://github.com/MYTech-Co-LTD/platform-core/commit/d20fcc32e3e898e3a98ef4f7916822e6dc98cb22))
+
+
 ## [0.383.2](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.383.1...v0.383.2) - 2026-11-24
 - 【修复】aftersales: 工单列表商品/门店列补宽度并加横向滚动——修新增归属列导致的竖排挤压 ([#2800](https://github.com/MYTech-Co-LTD/platform-core/pull/2800), [b257518](https://github.com/MYTech-Co-LTD/platform-core/commit/b257518c9e1d74145c9a74a2d8e7c7dddb4f006b))
 
