@@ -120,11 +120,11 @@ export function registerTicketManage(r: ModuleHono, ctx: RouteCtx): void {
       // 先读工单的快照字段算金额；再条件更新当守卫。
       // 这里【不加 for update】：真正的并发守卫是下面 update 的 where status='pending'——
       // 两个并发处理请求都会读到 pending、都算出一份金额，但只有一个 update 能落，另一份影响行数 0 ⇒ 409。
-      const cur = await client.query<TicketRow & { code: string; submitter_openid: string }>(
+      const cur = await client.query<TicketRow & { code: string; submitter_openid: string; product_name: string }>(
         // code / submitter_openid 是**处理结果通知**（#2805）的收件人与单号来源；
         // 只多读两列，不参与任何金额判定。
         `select id, status, damage_quantity, basic_quantity, basic_unit_price_minor, settlement_price_minor,
-                code, submitter_openid
+                code, submitter_openid, product_name
            from aftersales.ticket where org = $1 and id = $2`,
         [org, id],
       )
@@ -202,6 +202,8 @@ export function registerTicketManage(r: ModuleHono, ctx: RouteCtx): void {
             payload: {
               user: row.submitter_openid,
               ticketCode: row.code,
+              productName: row.product_name,
+              time: new Date().toLocaleString('sv-SE', { timeZone: 'Asia/Shanghai' }).slice(0, 16),
               result: outcome.status === 'completed' ? '已通过' : '已驳回',
               // 金额按「分 → 元」展示（与 console `formatMinor` 同口径：两位小数）
               amountText: outcome.amountMinor !== null ? `¥${(outcome.amountMinor / 100).toFixed(2)}` : '',

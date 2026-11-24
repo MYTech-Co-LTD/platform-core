@@ -141,8 +141,9 @@ notifications:
         user:          { type: user, required: true, label: 提交人 }
         ticketCode:    { type: string, required: true, label: 工单编号 }
         storeName:     { type: string, label: 门店 }
-        productName:   { type: string, label: 商品 }
+        productName:   { type: string, required: true, label: 商品 }
         damageQuantity: { type: string, label: 数量 }
+        time:          { type: string, required: true, label: 时间 }
         link:          { type: url, required: true, label: 详情链接 }
       recipients:
         submitter: { kind: field, field: user, label: 提交人本人 }
@@ -161,9 +162,11 @@ notifications:
       payload:
         user:        { type: user, required: true, label: 提交人 }
         ticketCode:  { type: string, required: true, label: 工单编号 }
+        productName: { type: string, required: true, label: 商品 }
         result:      { type: string, required: true, label: 处理结果 }
-        amountText:  { type: string, label: 退款额 }
+        amountText:  { type: string, required: true, label: 退款额 }
         remark:      { type: string, label: 处理备注 }
+        time:        { type: string, required: true, label: 时间 }
         link:        { type: url, required: true, label: 详情链接 }
       recipients:
         submitter: { kind: field, field: user, label: 提交人本人 }
