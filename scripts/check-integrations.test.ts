@@ -63,6 +63,8 @@ describe('checkCoverage', () => {
 describe('真 registry 与真 provider 清单', () => {
   it('providers.ts 的清单非空且与迁移/worker 同源（门禁据此判覆盖）', () => {
     expect(NOTIFY_PROVIDERS.length).toBeGreaterThan(0)
-    expect([...NOTIFY_PROVIDERS].sort()).toEqual(['in_app', 'webhook', 'wecom_chat'])
+    // 这张清单是「加 provider 时必须同步三处」的锚点：新增 provider 就把它加进来，
+    // 忘了加 ⇒ 本断言红（2026-11-24 #2805 加 wechat_oa 时正是这么被拦下的）
+    expect([...NOTIFY_PROVIDERS].sort()).toEqual(['in_app', 'webhook', 'wechat_oa', 'wecom_chat'])
   })
 })
