@@ -11,6 +11,10 @@
 
 ## [Unreleased]
 
+## [0.384.0](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.383.4...v0.384.0) - 2026-11-24
+- 【新增】notify: 接入公众号模板消息渠道 wechat_oa——工单回执/处理结果/审批结果推给本人 ([#2807](https://github.com/MYTech-Co-LTD/platform-core/pull/2807), [8fd7cb7](https://github.com/MYTech-Co-LTD/platform-core/commit/8fd7cb7aa13965231d12dd5747d285e964586fa1))
+
+
 ## [0.383.4](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.383.3...v0.383.4) - 2026-11-24
 - 【修复】data: 热腿按窗取最新批 + 只补今天的闭窗两窗 ([#2804](https://github.com/MYTech-Co-LTD/platform-core/pull/2804), [72cb12c](https://github.com/MYTech-Co-LTD/platform-core/commit/72cb12cac3cc37ceb8934ff504cd8cdb3ab7861f))
 
