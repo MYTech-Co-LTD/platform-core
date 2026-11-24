@@ -11,6 +11,13 @@
 
 ## [Unreleased]
 
+## [0.381.0](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.380.1...v0.381.0) - 2026-11-24
+- 【新增】data: 叙事流式失败重试——首字前断线重试一次 (#2784) ([#2785](https://github.com/MYTech-Co-LTD/platform-core/pull/2785), [2ed0a93](https://github.com/MYTech-Co-LTD/platform-core/commit/2ed0a9359afebe0355c08d9b4b18588c978f6268))
+- 【修复】aftersales: 注册提交改发 storeCodes 字符串数组——修 shim storeIds 数字化错配（真机恒 400） ([#2783](https://github.com/MYTech-Co-LTD/platform-core/pull/2783), [3c7e4b8](https://github.com/MYTech-Co-LTD/platform-core/commit/3c7e4b8a4374ef4d1f7882d3351eefa704b8221c))
+- 【新增】data: 热层收尾——run_token 修复 + 热表每日 GC（data.retail_hot_gc） ([#2773](https://github.com/MYTech-Co-LTD/platform-core/pull/2773), [ef1cda2](https://github.com/MYTech-Co-LTD/platform-core/commit/ef1cda20636382efbf8fd7b0d50f59e13c52d39b))
+- 【新增】data: 报表事件遥测 report_events + N1/N2 漏斗 + 叙事错误分类 (#2780) ([#2781](https://github.com/MYTech-Co-LTD/platform-core/pull/2781), [7b7349a](https://github.com/MYTech-Co-LTD/platform-core/commit/7b7349a71aa3ded7b495a9f11301891f616485db))
+
+
 ## [0.380.1](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.380.0...v0.380.1) - 2026-11-24
 - 【修复】aftersales: 注册页门店精确搜索补品牌前缀归一变体——「品品甜X店」与「X店」都命中 ([#2778](https://github.com/MYTech-Co-LTD/platform-core/pull/2778), [2846451](https://github.com/MYTech-Co-LTD/platform-core/commit/284645152fd27a2edf5fba5e9c8d77117123ed9d))
 
