@@ -19,6 +19,7 @@
 // 退出码：0 清理成功；1 SQL 失败；2 配置/依赖缺失。
 // stdout 末行：`RETAIL_HOT_GC_OK date=<上海今天> deleted=<n>` / `RETAIL_HOT_GC_FAILED: …`
 import { spawnSync } from 'node:child_process'
+import { shanghaiToday } from '../lib/time-semantics.mjs'
 
 const url = process.env.DATA_WAREHOUSE_URL
 if (!url) {
@@ -26,13 +27,8 @@ if (!url) {
   process.exit(2)
 }
 
-/** 上海今天：`YYYY-MM-DD`（en-CA 的短日期恰好是这个形状）。 */
-const today = new Intl.DateTimeFormat('en-CA', {
-  timeZone: 'Asia/Shanghai',
-  year: 'numeric',
-  month: '2-digit',
-  day: '2-digit',
-}).format(new Date())
+// 时区语义走单一事实源（scripts/lib/time-semantics.mjs）——扩散守卫会拦裸写时区字面量。
+const today = shanghaiToday()
 
 // 只删「上海今天」以前的批次：今天的行永不删（热表就是当前小时的唯一来源）。
 const sql = `delete from staging.retail_hot where bizday < date '${today}';`
