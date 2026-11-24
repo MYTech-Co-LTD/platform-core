@@ -229,3 +229,21 @@
 - [ ] §11 填完成日期 + PR + 证据
 - [ ] 指标 N1–N5 有更新的就回填
 - [ ] 与 §6/§7 有偏离的，写进台账「偏离与备注」
+
+
+## §12 运营遥测（N1–N4 数据基础，2026-11-24）
+
+此前 N1–N4 不可计算：`report_views` 只存最近一次访问，没有「谁建/改过几次/多久发布/被谁导出」的事件历史。现补事件级遥测（迁移 055 `data.report_events`）：
+
+| 事件 | 触发点 | source |
+|---|---|---|
+| `created` | HTTP 建报 / MCP `propose_report` | http / agent |
+| `spec_edited` | `PUT /spec`、`PUT /layout`、MCP `revise_report_spec` | http / agent |
+| `published` | `POST /reports/:id/publish` | http |
+| `viewed` | `GET /published-spec`（与 R6 汇总表并存） | http |
+| `exported` | 凭证/明细导出（csv/xlsx） | http |
+
+- 读面：`GET /reports/funnel-stats?days=30`（`data:manage`）——created/published/viewedReports/exports/specEdits/createdBySource，以及 **N2 代理 `publishedWithoutEdit`**（首次发布前无 spec_edited）。
+- 写入 best-effort，失败只打日志，不阻塞创建/发布/观看；`meta` 不放指标值。
+- 叙事失败分类：`stream_failed` → `client_aborted` / `upstream_timeout` / `upstream_error` / `unknown`（`narrative_runs.reason`），用于把「客户端断开」与真实故障分开。
+- **边界**：事件从 2026-11-24 起才落库，N1/N2 的窗口口径需从此日起算；窗口外的历史不追溯。

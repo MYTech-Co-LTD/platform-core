@@ -451,6 +451,21 @@ function ensureGeneralSections(text: string, facts: FactBundle): string {
     .filter((l): l is string => l !== undefined)
   return missing.length === 0 ? text : `${text.trim()}\n${missing.join('\n')}`
 }
+/**
+ * 流式失败的错误分类（可观测性）：`stream_failed` 一个词回答不了「是谁的问题」。
+ *  · client_aborted：客户端断开/取消（浏览器切页、关抽屉）——不是故障，不该告警；
+ *  · upstream_timeout：上游 LLM 超时；
+ *  · upstream_error：上游 HTTP 5xx/连接失败；
+ *  · unknown：其余（保留 message 前缀便于排障，但不回显完整细节）。
+ */
+export function classifyNarrativeError(e: unknown): string {
+  const msg = e instanceof Error ? `${e.name} ${e.message}` : String(e)
+  if (/abort|aborted|premature close|client disconnected/i.test(msg)) return 'client_aborted'
+  if (/timeout|timed out|ETIMEDOUT/i.test(msg)) return 'upstream_timeout'
+  if (/\b5\d\d\b|fetch failed|ECONNREFUSED|ECONNRESET|socket hang up|ENOTFOUND/i.test(msg)) return 'upstream_error'
+  return 'unknown'
+}
+
 /** 缓存键：内容寻址。`branchNum=null` ⇒ `*`；未配模型 ⇒ `none`（模板结果也缓存）。 */
 export function narrativeKeyOf(deps: NarrativeDeps): NarrativeKey {
   return {

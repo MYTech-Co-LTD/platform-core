@@ -19,6 +19,7 @@ import { compileTemplate, REPORT_TEMPLATES, templateById } from '../domain/repor
 import { getReport, getReportVersion, listReports, updateSpec, upsertReport } from '../domain/report-store'
 import { getVersion } from '../domain/report-version'
 import { manageFaceOfSlice } from './mcp-manage-face'
+import { recordReportEvent } from '../domain/report-events'
 import type { McpDeps, McpToolGroup, McpToolResult } from './mcp-rpc'
 
 /**
@@ -168,6 +169,11 @@ export const reportTools: McpToolGroup = {
         spec: spec.raw,
       }, 'create-only')
       if (id === null) return refused('TITLE_TAKEN')
+      // 事件遥测（N1/N2）：agent 提报记 source=agent，与人工建报区分。
+      void recordReportEvent(deps.pool, {
+        org, reportId: id, actor: deps.requester?.userId ?? null, event: 'created', source: 'agent',
+        meta: { renderer: 'platform', template: parsed.data.templateId ?? null },
+      })
       const row = await getReport(deps.pool, org, id)
       return ok({ id, version: row?.version ?? 1, requiredScope: FORCED_GATE })
     }
@@ -197,6 +203,10 @@ export const reportTools: McpToolGroup = {
         const cur = await getReportVersion(deps.pool, org, id)
         return cur === null ? refused('NOT_FOUND') : refused('STALE_WRITE', { currentVersion: cur })
       }
+      void recordReportEvent(deps.pool, {
+        org, reportId: id, actor: deps.requester?.userId ?? null, event: 'spec_edited', source: 'agent',
+        meta: { version: updated.version, kind: 'spec' },
+      })
       return ok({ id, version: updated.version })
     })
   },
