@@ -1,4 +1,4 @@
-sha256-of-rest 58519d31946816d0545bd54d72cc124467d6d283d822625c8af53eb798a9984c
+sha256-of-rest 83ae5e243f1a88c6c11ce943ec25a6655b1ffc239a61f748a36d44fcf4b4b07f
 57c67f58b38c8450ddcedf477607e722b51998873b12f84c15ffadc7fe5e81d3 contracts/README.md ${REPO}/contracts/README.md 0644
 fcc8189e1012d5fbb8e2505025bed637dd01c7b4465ab86125d3eaa7f330eff3 contracts/common/_schema.schema.json ${REPO}/contracts/common/_schema.schema.json 0644
 1730119518c3371f3c2ff3492f4c15cd731688047c6d40805ec4d2c65892f3ff contracts/common/_template.contract.json ${REPO}/contracts/common/_template.contract.json 0644
@@ -454,6 +454,7 @@ bbcc8969b337591f9431a1a06f0d603deab72d59364ce21722bb3139e7a31100 scripts/lemeng/
 474bc40f692a2f1b4cba7cf1c02005e9ed2894e3616cf0ebe54aff461694d019 scripts/lemeng/check-zero-row-days.py /opt/lemeng-check-zero-row-days.py 0755
 08480101d431e8429860e10ed21200817c864dc407f9847e8f30c6f805a00d3e scripts/lemeng/compare-console-schedules.py ${REPO}/scripts/lemeng/compare-console-schedules.py 0644
 0ca6c7eed72d0dd69c5fb73cab28dccb36da2d1f6cfba26e5a48dbe450914fac scripts/lemeng/console-gc.sh /opt/lemeng-console-gc.sh 0755
+ac6d9a9a6b51534675598789e95ccc9650dc06f2aa407acebd35d285b0144e39 scripts/lemeng/data-lanes.json ${REPO}/scripts/lemeng/data-lanes.json 0644
 1ee2533aa08dbf23be165d3e722b6625e423bc8fe7b0697dbc74c145004d0aa9 scripts/lemeng/dbt-failed-nodes.py ${REPO}/scripts/lemeng/dbt-failed-nodes.py 0755
 ffeddbeba2f0b7df748a60e737009cd45689320dad2ea1233230c20eb541acba scripts/lemeng/delete-supplanted-hour-partitions.py ${REPO}/scripts/lemeng/delete-supplanted-hour-partitions.py 0644
 11802d4ad217623f340aac3429bba62da61e3f40f6a12a947c8055043a4c28a7 scripts/lemeng/diagnose.sh /opt/lemeng-diagnose.sh 0755

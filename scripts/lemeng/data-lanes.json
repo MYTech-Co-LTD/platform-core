@@ -1,0 +1,33 @@
+{
+  "_note": [
+    "数据新鲜度双车道的事实源（路线图 docs/superpowers/plans/2026-11-24-data-freshness-lanes-roadmap.md 的 A4/A5）。",
+    "A4：每个 incremental 模型必须恰好属于一个车道（retail_10m / nonretail_1h.* / daily_report）。",
+    "A5：nonretail_1h 的起点必须紧随最后一个小时级采集偏移；retail_10m 的物化偏移必须与采集 tick 对齐。",
+    "改本文件 = 改车道归属：必须同步更新路线图 §5 台账；retail_10m 只允许 fct_retail_sale（D2 定案）。",
+    "daily_report = 源端日粒度的派生 mart（D4 定案），不进 1h 车道。"
+  ],
+  "lanes": {
+    "retail_10m": {
+      "models": ["fct_retail_sale"],
+      "schedule": { "buildOffsetMinutes": 2 }
+    },
+    "nonretail_1h": {
+      "schedule": { "startMinuteCst": 5, "maxGapMinutes": 15 },
+      "domains": {
+        "retail_derived": ["fct_order_event", "fct_retail_item_sale", "fct_retail_quantity"],
+        "purchase": ["fct_purchase", "fct_purchase_concentration"],
+        "inventory": ["fct_inventory_snapshot"],
+        "member": ["fct_member_summary"],
+        "client": ["fct_client_expense"],
+        "branch": ["fct_branch_expense", "fct_branch_indicator"],
+        "transfer": ["fct_transfer_item"],
+        "outbound": ["fct_hq_outbound", "fct_outbound_region"],
+        "request": ["fct_request_fulfillment"],
+        "loss": ["fct_loss_adjustment"]
+      }
+    },
+    "daily_report": {
+      "models": ["fct_retail_item_profit", "fct_retail_profit"]
+    }
+  }
+}

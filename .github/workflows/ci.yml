@@ -113,6 +113,11 @@ jobs:
       #    而 B9 不扫 dbt/）；`contracts/` 与 `duckle/` 的**列集**由下面那条 check-data-contract 管
       #    （2026-10-05 起，issue #430；正典 docs/architecture.md §5.2）。
       - run: pnpm exec tsx scripts/check-data-models.mjs
+      # 数据新鲜度双车道的静态门禁（路线图 2026-11-24 §4 的 A4/A5）：
+      #   A4 每个 incremental 模型恰好属于一个车道（10m / 1h / daily）；漏归属/重复/越界即红；
+      #   A5 1h 起点必须紧随最后一个小时级采集偏移，10m 物化偏移必须与采集 tick 对齐。
+      # 纯静态：读 dbt 模型、console 排班、registry 与 scripts/lemeng/data-lanes.json，不连库。
+      - run: pnpm exec tsx scripts/check-data-lanes.mjs
       # W4 语义完备门禁（#1447）：实体必填四字段 + 指标 entity 引用闭合 + 维度层级可校验列。
       # 纯静态（只读 dbt/semantics 与 contracts/），不连库。
       - run: pnpm exec tsx scripts/check-semantics.mjs
