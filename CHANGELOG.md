@@ -11,6 +11,11 @@
 
 ## [Unreleased]
 
+## [0.385.0](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.384.0...v0.385.0) - 2026-11-24
+- 【修复】notify: 公众号模板字段对齐真实模板（character_string/thing/amount/time）——const 不可传 ([#2810](https://github.com/MYTech-Co-LTD/platform-core/pull/2810), [44187e0](https://github.com/MYTech-Co-LTD/platform-core/commit/44187e08288f66ada03a7903b5dd461e1f4301f7))
+- 【新增】data: A4/A5 车道静态门禁——增量模型全覆盖 + 1h 起点对齐 ([#2811](https://github.com/MYTech-Co-LTD/platform-core/pull/2811), [592039d](https://github.com/MYTech-Co-LTD/platform-core/commit/592039d97829a589f6791a004dfc1252a4c1b953))
+
+
 ## [0.384.0](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.383.4...v0.384.0) - 2026-11-24
 - 【新增】notify: 接入公众号模板消息渠道 wechat_oa——工单回执/处理结果/审批结果推给本人 ([#2807](https://github.com/MYTech-Co-LTD/platform-core/pull/2807), [8fd7cb7](https://github.com/MYTech-Co-LTD/platform-core/commit/8fd7cb7aa13965231d12dd5747d285e964586fa1))
 
