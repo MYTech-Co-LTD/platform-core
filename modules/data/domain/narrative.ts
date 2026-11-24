@@ -712,8 +712,11 @@ export async function* streamNarrative(
   for (let attempt = 0; attempt < MAX_ATTEMPTS; attempt++) {
     if (attempt > 0) {
       // 第一遍可能已向客户端吐过正文：整段清空，否则两遍文本会拼在一起。
-      yield { type: 'replace', text: '', reason: 'number_check' }
-      yield { type: 'phase', phase: 'thinking', label: '正在重新核对数字…' }
+      yield { type: 'replace', text: '', reason: lastReason }
+      yield {
+        type: 'phase', phase: 'thinking',
+        label: lastReason === 'llm_failed' ? '连接波动，重试一次…' : '正在重新核对数字…',
+      }
     }
     const controller = new AbortController()
     // 与 JSON 端点同一口径（spec §4.4：`signal=AbortSignal.timeout(30000)`）：
@@ -782,7 +785,12 @@ export async function* streamNarrative(
       return
     }
     lastReason = failed
-    if (failed === 'llm_failed') break
+    if (failed === 'llm_failed') {
+      // 上游在**首字之前**断掉（连接抖动/超时）⇒ 重试一次；已经吐过正文就不重试
+      // （流式 replace 会把用户已读的内容整段换掉，体验比直接模板更差）。
+      if (!sawContent && attempt === 0) continue
+      break
+    }
   }
   const text = templateOf(deps.facts)
   settleOnce({ text, fallback: true })
