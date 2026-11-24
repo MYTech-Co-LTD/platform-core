@@ -183,7 +183,11 @@ export const employee_info_approve = {
   },
 
   /**
-   * 域端点收的是**目标值** `{name, phone, storeIds}`（spec §2.5 纪律②：差异由服务端算）。
+   * 域端点收的是**目标值** `{name, phone, storeCodes}`（spec §2.5 纪律②：差异由服务端算）。
+   * `storeCodes` = `data.dim_branch.code` 自然键（#476），**字符串数组原样透传**——
+   * 禁止 Number 化：dim code 是「凤庆01」这类字母数字混合串（2026-11-24 真机事故，
+   * Number 化全变 NaN ⇒ 空数组 ⇒ 端点 INVALID_BODY）。字段名也对齐端点 TargetBody
+   * （曾错写成 storeIds ⇒ zod strip 后缺 storeCodes 必 400）。
    * 源侧 payload 里的 `approvetype` / `openid` / `status` / `old_info` **一律不发**——
    * `old_info` 尤其不能发：服务端本来就知道当前行，发过去只会变成第二份事实。
    */
@@ -197,14 +201,14 @@ export const employee_info_approve = {
       store_info?: unknown
     }
     const raw = info.store_info
-    const storeIds = (Array.isArray(raw) ? raw : String(raw ?? '').split(','))
-      .map((x) => Number(String(x).trim()))
-      .filter((n) => Number.isSafeInteger(n) && n > 0)
+    const storeCodes = (Array.isArray(raw) ? raw : String(raw ?? '').split(','))
+      .map((x) => String(x).trim())
+      .filter((x) => x !== '')
     try {
       return await apiSend('/guest/employee-approvals', 'POST', {
         name: String(info.employee_name ?? ''),
         phone: String(info.employee_phonenumber ?? ''),
-        storeIds,
+        storeCodes,
       })
     } catch (e) {
       // 「已有待审批」在**服务端**是 409 APPROVAL_PENDING（部分唯一索引兜底，spec §2.5 纪律①）。
