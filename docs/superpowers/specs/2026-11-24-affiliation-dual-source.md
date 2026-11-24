@@ -108,12 +108,19 @@ membership 是**纯投影，整组重写**（源码注释：「≈520 行，量�
 
 ## 7 落地清单
 
-### P1（现在就该做；`aftersales.employee` 生产 0 行 = 迁移成本最低点）
+### P1-a（立即可做：纯展示，无行为变更）
 
-1. 资格行加 `source`（`directory` / `self_declared`）+ `reconciled_at`
-2. `resolveAffiliation()` 单入口：目录优先 → fallback 自助声明
-3. 管理端员工列表加筛选：**未进组织架构**
-4. **审批页显示「该手机号在企微通讯录：有/无」**——把「认人」从盲批变成有据可依（价值最高的一步）
+1. **审批页显示「该手机号在企微通讯录：有/无」**——把「认人」从盲批变成有据可依
+2. 管理端员工列表加筛选：**未进组织架构**
+
+这两件事只读 `platform.v_org_membership`（需在 manifest `dataDependencies` 声明），不写组织架构、不改任何判定，可独立上线。
+
+### P1-b（等「归属是否执法」的决定，见 §3.1）
+
+3. 资格行加 `source`（`directory` / `self_declared`）+ `reconciled_at`
+4. `resolveAffiliation()` 单入口：目录优先 → fallback 自助声明
+
+⚠️ 这两项的价值**完全取决于归属是否变成执法门**：若归属只做展示，`resolveAffiliation()` 没有调用者，加了就是空转的抽象。`aftersales.employee` 生产 0 行是迁移成本最低点，但**「便宜」不是做的理由**。
 
 ### P2（有数据再谈）
 
