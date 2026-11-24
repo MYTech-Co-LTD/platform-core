@@ -11,6 +11,12 @@
 
 ## [Unreleased]
 
+## [0.383.0](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.382.0...v0.383.0) - 2026-11-24
+- 【修复】aftersales: 自然键校验支持中文——修 storeCode/itemCode 的 ASCII 白名单（97% 门店提单恒 400） ([#2796](https://github.com/MYTech-Co-LTD/platform-core/pull/2796), [ecec2d3](https://github.com/MYTech-Co-LTD/platform-core/commit/ecec2d3af77bd479c6db8500b4229b19fd421c53))
+- 【新增】data: 采集窗口扩到次日 1 点 + 高消耗物化/审计挪夜间 ([#2792](https://github.com/MYTech-Co-LTD/platform-core/pull/2792), [0fef7e3](https://github.com/MYTech-Co-LTD/platform-core/commit/0fef7e379d15e0ab884a9264e78331b2389d2266))
+- 【修复】aftersales: 员工卡门店回显改传字符串 code——修 loadSelectedStores 的 Number 化（真机 shim 报错） ([#2794](https://github.com/MYTech-Co-LTD/platform-core/pull/2794), [2e63b11](https://github.com/MYTech-Co-LTD/platform-core/commit/2e63b11079a9df3cc0237749990ff4f56039e8a8))
+
+
 ## [0.382.0](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.381.1...v0.382.0) - 2026-11-24
 - 【新增】aftersales: 工单记录「提交人门店归属一致性」快照——归属不执法但可见（ADR P1-a） ([#2790](https://github.com/MYTech-Co-LTD/platform-core/pull/2790), [7a94f9e](https://github.com/MYTech-Co-LTD/platform-core/commit/7a94f9eca696bba5a207c62e7cb29b6a834b4870))
 
