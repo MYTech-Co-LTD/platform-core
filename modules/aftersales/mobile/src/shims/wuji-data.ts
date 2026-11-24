@@ -123,8 +123,10 @@ export const store_info = {
     const f = parseStoreFilter(args.filter)
     const params = new URLSearchParams()
     if (f.kind === 'ids') {
-      // 空集显式写成 `ids=`（服务端按空集处理），**不是**省略参数——省略等于「不过滤」
-      params.set('ids', f.ids.join(','))
+      // 空集显式写成 `codes=`（服务端按空集处理），**不是**省略参数——省略等于「不过滤」。
+      // ⚠️ 参数名是 `codes`（服务端 `registration-guest.ts` 收的名字）。曾误写成 `ids`：
+      // 服务端不认识它 ⇒ **静默回全量门店**（2026-11-24 真机实测，等于把门店清单开了个口子）。
+      params.set('codes', f.ids.join(','))
     } else if (f.text !== '') {
       // 源侧 `store_name__eq`/`store_number__eq` 语义 = **精确等值**（__eq 后缀）——
       // 翻译必须带 exact=1 恢复该语义（#2762：此前误译成 ilike 模糊，既改变源语义，

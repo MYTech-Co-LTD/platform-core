@@ -314,8 +314,14 @@ describe('GET /guest/products', () => {
 
 // ── GET /guest/stores（M3b-2 增补；spec §3.2）───────────────────────────────
 describe('GET /guest/stores', () => {
-  it('无参数：回本 org 的门店，形状是 camelCase 的 StoreItem（#476：code/enable，无 id）', async () => {
+  it('无参数 ⇒ 400 STORE_QUERY_REQUIRED（保密口径 #2772：禁止全量预载门店清单）', async () => {
     const res = await app().request('/guest/stores')
+    expect(res.status).toBe(400)
+    expect((await res.json()).error).toBe('STORE_QUERY_REQUIRED')
+  })
+
+  it('q 命中：形状是 camelCase 的 StoreItem（#476：code/enable，无 id）', async () => {
+    const res = await app().request('/guest/stores?q=' + encodeURIComponent('店'))
     expect(res.status).toBe(200)
     const body = await res.json()
     expect(body.items.map((s: { name: string }) => s.name)).toEqual(['店A', '店B'])
@@ -352,6 +358,19 @@ describe('GET /guest/stores', () => {
     expect(plain.items.map((s: { code: string }) => s.code)).toEqual([codes[1]])
   })
 
+  it('codes 支持中文编码（乐檬真机形状「凤庆01」）——ASCII 白名单曾让它 400（#2795 同源）', async () => {
+    await pool.query(
+      `insert into data.dim_branch(org, code, name, enable, address, phone, source_book, snapshot)
+       values ($1, '凤庆01', '临沧凤庆1店', true, '', '', '3120', current_date)`,
+      [ORG],
+    )
+    const res = await app().request('/guest/stores?codes=' + encodeURIComponent('凤庆01'))
+    expect(res.status).toBe(200)
+    const body = (await res.json()) as { items: Array<{ code: string; name: string }> }
+    expect(body.items.map((s) => s.code)).toEqual(['凤庆01'])
+    expect(body.items[0]!.name).toBe('临沧凤庆1店')
+  })
+
   it('codes：只回指定的那几个（提交页「我的门店」走这条）', async () => {
     const codes = await storeCodes()
     const res = await app().request(`/guest/stores?codes=${codes[1]}`)
@@ -379,12 +398,13 @@ describe('GET /guest/stores', () => {
       `insert into data.dim_branch(org, code, name, source_book, snapshot) values ($1,'999','别家店','3120',current_date)`,
       [OTHER_ORG],
     )
-    const body = await (await app().request('/guest/stores')).json()
+    // 无参已被 fail-closed 挡住（见上），取门店必须带 q 或 codes
+    const body = await (await app().request('/guest/stores?codes=' + encodeURIComponent('101,102'))).json()
     expect(body.items.map((s: { name: string }) => s.name)).toEqual(['店A', '店B'])
   })
 
   it('分页：非法 size 回落默认值、超上界夹住（与 /guest/products 同一口径）', async () => {
-    const body = await (await app().request('/guest/stores?page=1&size=99999')).json()
+    const body = await (await app().request('/guest/stores?q=' + encodeURIComponent('店') + '&page=1&size=99999')).json()
     expect(body.size).toBe(100) // MAX_PAGE_SIZE，不是 99999
   })
 })
