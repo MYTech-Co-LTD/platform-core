@@ -91,14 +91,18 @@ export default function TicketsPage() {
         loading={loading}
         locale={{ emptyText: '还没有工单。员工在公众号提交后会出现在这里。' }}
         pagination={{ current: page, pageSize: SIZE, total, showSizeChanger: false, onChange: setPage }}
+        // 列宽总和超出容器时横向滚动，而不是把无宽度列压成竖排
+        scroll={{ x: 1180 }}
         columns={[
           { title: '编号', dataIndex: 'code', width: 140 },
-          { title: '商品', dataIndex: 'product_name' },
-          { title: '门店', dataIndex: 'store_name' },
+          // 这两列**必须有宽度**：不给宽度时 antd 会把它俩压到剩余空间（加了「提交人归属」
+          // 之后实测被挤成竖排——2026-11-24 真机截图）。数值与其它列同档，总量走 scroll.x。
+          { title: '商品', dataIndex: 'product_name', width: 180 },
+          { title: '门店', dataIndex: 'store_name', width: 150 },
           {
             title: '提交人归属',
             dataIndex: 'store_affiliation',
-            width: 130,
+            width: 110,
             render: (v: StoreAffiliation | null | undefined) =>
               v && AFFIL[v] ? <Status tone={AFFIL[v].tone}>{AFFIL[v].label}</Status>
                             : <Typography.Text type="secondary">—</Typography.Text>,
