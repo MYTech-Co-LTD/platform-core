@@ -7,7 +7,7 @@
 // 本文的端点决的是**申请**，通过后按申请内容写回档案。**加而不改**。
 import { z } from 'zod'
 import { pickPrimaryStoreCode } from '../domain/registration'
-import { parseIdParam } from './context'
+import { parseIdParam , consoleBaseUrl} from './context'
 import { writeAudit } from '../domain/audit'
 import type { ModuleHono, RouteCtx } from './context'
 
@@ -158,7 +158,7 @@ export function registerRegistrationManage(r: ModuleHono, ctx: RouteCtx): void {
               approvalId: String(id),
               approveType: ap.approve_type,
               decision: decision === 'approve' ? '已通过' : '已驳回',
-              link: `${process.env.PLATFORM_CONSOLE_BASE_URL ?? ''}/app/aftersales/register`,
+              link: `${consoleBaseUrl()}/app/aftersales/register`,
             },
           })
         } catch (e) {

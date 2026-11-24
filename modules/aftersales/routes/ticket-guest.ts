@@ -5,7 +5,7 @@ import { storageCandidatesFor, storageResolverFor } from '../storage'
 import { loadAttachments, normalizeTicketRow } from './ticket-manage'
 // 分页常量与解析器在 routes/context.ts：与管理端【同一份】实现、【同一套】语义
 // （此前本文件内联算 page/size 且无整数守卫 ⇒ 非法值 500；?size=-5 也与端点间漂移）。
-import { DEFAULT_PAGE_SIZE, MAX_PAGE_SIZE, guestIdentityIds, parseIdParam, parsePageParam } from './context'
+import { DEFAULT_PAGE_SIZE, MAX_PAGE_SIZE, guestIdentityIds, parseIdParam, parsePageParam , consoleBaseUrl} from './context'
 import type { ModuleHono, RouteCtx } from './context'
 import { resolveStoreAffiliation } from './affiliation'
 
@@ -65,7 +65,7 @@ async function emitTicketSubmitted(
         damageQuantity: String(p.damageQuantity),
         // 模板 time4 的来源：提交时刻（本地时区，微信 time 类型建议 `YYYY-MM-DD HH:mm`）
         time: new Date().toLocaleString('sv-SE', { timeZone: 'Asia/Shanghai' }).slice(0, 16),
-        link: `${process.env.PLATFORM_CONSOLE_BASE_URL ?? ''}/app/aftersales`,
+        link: `${consoleBaseUrl()}/app/aftersales`,
       },
     })
   } catch (e) {
