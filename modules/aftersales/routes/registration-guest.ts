@@ -227,13 +227,21 @@ export function registerRegistrationGuest(r: ModuleHono, ctx: RouteCtx): void {
         where += ` and name ilike $${params.length}`
       }
     }
+    // 保密口径（#2772 / 2026-11-24 ADR）：访客侧**只许按关键词或已登记 code 取门店**，
+    // 禁止全量预载——「无参数 ⇒ 回全量」等于给任何人一个门店清单接口（枚举竞对门店网络）。
+    // 前端从不无参调用；这里 fail-closed 是对**直接打 API** 的兜底。
+    if (!q && codesRaw === undefined) {
+      return c.json({ error: 'STORE_QUERY_REQUIRED' }, 400)
+    }
     if (codesRaw !== undefined) {
       // 约定：空串 = **空集**（调用方说「我没有任何门店」），不是「不过滤」——
       // 不过滤会把全量门店回给访客，是这批端点里最不该发生的一种静默降级。
       const parts = codesRaw === '' ? [] : codesRaw.split(',')
       // 只认 dim_branch.code 的发布契约形状（非空、限长、无通配/注入面字符）：坏值一律 400，
       // **不静默丢弃**——少几个门店比报错难查得多。
-      const codes = parts.map((t) => (/^[A-Za-z0-9_-]{1,64}$/.test(t) ? t : null))
+      // ⚠️ 字符集必须允许中文：乐檬的门店编码是「凤庆01」「万科学府」（生产 364/374 含非 ASCII）。
+      // 旧的 `[A-Za-z0-9_-]` 白名单会让这些 code 直接 400（#2795 同一根因）。
+      const codes = parts.map((t) => (/^[\p{L}\p{N}_-]{1,64}$/u.test(t) ? t : null))
       if (codes.some((v) => v === null)) {
         return c.json({ error: 'INVALID_CODES' }, 400)
       }

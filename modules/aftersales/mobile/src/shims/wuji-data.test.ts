@@ -33,14 +33,14 @@ describe('store_info.query', () => {
   it('提交页形状（OR 里是 id）⇒ 转成 ids（不是「不过滤」）', async () => {
     get.mockResolvedValue({ items: [], total: 0, page: 1, size: 20 })
     await store_info.query({ filter: { is_enabled__eq: '1', OR: [{ id__eq: '103' }, { id__eq: '105' }] } })
-    expect(get).toHaveBeenCalledWith('/guest/stores?ids=103%2C105')
+    expect(get).toHaveBeenCalledWith('/guest/stores?codes=103%2C105')
   })
 
-  it('OR 为空数组（集合为空的真实形态）⇒ 仍然走 ids=，绝不回落成「查全部」', async () => {
+  it('OR 为空数组（集合为空的真实形态）⇒ 仍然走 codes=，绝不回落成「查全部」', async () => {
     get.mockResolvedValue({ items: [], total: 0, page: 1, size: 20 })
     await store_info.query({ filter: { OR: [] } })
-    // 空集：`ids=`（服务端按空集处理），**不是**不带参数的「不过滤」
-    expect(get).toHaveBeenCalledWith('/guest/stores?ids=')
+    // 空集：`codes=`（服务端按空集处理），**不是**不带参数的「不过滤」
+    expect(get).toHaveBeenCalledWith('/guest/stores?codes=')
   })
 
   it('OR 里的 id__eq 是空串/非字符串 ⇒ 抛（坏值不被静默吞掉；#476 起为 code 自然键）', async () => {
