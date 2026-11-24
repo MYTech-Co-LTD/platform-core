@@ -6,7 +6,7 @@
     "enabled": true,
     "kind": {
       "type": "cron",
-      "expr": "*/10 9-23 * * *"
+      "expr": "*/10 9-23,0-1 * * *"
     },
     "timezone": "Asia/Shanghai",
     "misfire": "skip",
