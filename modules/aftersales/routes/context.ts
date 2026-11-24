@@ -85,6 +85,18 @@ export function parseIdParam(raw: string | undefined): number | null {
  * 也重复申请。本函数把空集合接回登录 openid，作为「撤销后 ≤5 分钟窗口」（下一次
  * scopes/ext 刷新前）的自见基准：看得到自己的历史单据与档案，写侧语义不变。
  */
+/**
+ * 对外基址（通知里的 `link` / 微信模板消息的 `url` 必须是**绝对 URL**）。
+ *
+ * `PLATFORM_CONSOLE_BASE_URL` 优先（私有化可指向独立域名），回落 `PUBLIC_ORIGIN`——
+ * 2026-11-25 实测：只写 `?? ''` 时生产 env 没配前者 ⇒ link 变成 `/app/aftersales`，
+ * 站内信能点（同源），**微信模板消息点不动**（它不解析相对路径）。
+ */
+export function consoleBaseUrl(): string {
+  const raw = process.env.PLATFORM_CONSOLE_BASE_URL || process.env.PUBLIC_ORIGIN || ''
+  return raw.replace(/\/+$/, '')
+}
+
 export function guestIdentityIds(identity: Identity): string[] {
   return identity.boundExternalIds?.length ? identity.boundExternalIds : [identity.userId]
 }

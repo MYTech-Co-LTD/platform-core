@@ -7,7 +7,7 @@
 // `GET /guest/me/registration` 的结果；**本文件不替它决定 UI 怎么呈现**。
 import { z } from 'zod'
 import { RegistrationError, computeRegistration } from '../domain/registration'
-import { DEFAULT_PAGE_SIZE, MAX_PAGE_SIZE, guestIdentityIds, parsePageParam } from './context'
+import { DEFAULT_PAGE_SIZE, MAX_PAGE_SIZE, guestIdentityIds, parsePageParam , consoleBaseUrl} from './context'
 import type { ModuleHono, RouteCtx } from './context'
 import { readMySnapshot } from './affiliation'
 
@@ -145,7 +145,7 @@ export function registerRegistrationGuest(r: ModuleHono, ctx: RouteCtx): void {
             approveType: diff.approveType,
             applicantName: target.name,
             // 审批页是单页列表（无 :id 深链）；审批单号在 scope/payload 里
-            link: `${process.env.PLATFORM_CONSOLE_BASE_URL ?? ''}/console/aftersales/approvals`,
+            link: `${consoleBaseUrl()}/console/aftersales/approvals`,
           },
         })
       } catch (e) {

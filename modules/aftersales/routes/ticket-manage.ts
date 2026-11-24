@@ -13,7 +13,7 @@ import type { TicketStatus } from '../domain/ticket'
 import { writeAudit } from '../domain/audit'
 // 分页常量与解析器在 routes/context.ts（四域共享层）——本文件不再留本地副本，
 // 避免与管理端/访客端两份实现静默漂移（见 context.ts 的 parsePageParam 注释）。
-import { DEFAULT_PAGE_SIZE, MAX_PAGE_SIZE, parseIdParam, parsePageParam } from './context'
+import { DEFAULT_PAGE_SIZE, MAX_PAGE_SIZE, parseIdParam, parsePageParam , consoleBaseUrl} from './context'
 import type { ModuleHono, RouteCtx } from './context'
 
 const ProcessBody = z.discriminatedUnion('amountType', [
@@ -208,7 +208,7 @@ export function registerTicketManage(r: ModuleHono, ctx: RouteCtx): void {
               // 金额按「分 → 元」展示（与 console `formatMinor` 同口径：两位小数）
               amountText: outcome.amountMinor !== null ? `¥${(outcome.amountMinor / 100).toFixed(2)}` : '',
               remark: body.remark ?? '',
-              link: `${process.env.PLATFORM_CONSOLE_BASE_URL ?? ''}/app/aftersales`,
+              link: `${consoleBaseUrl()}/app/aftersales`,
             },
           })
         } catch (e) {
