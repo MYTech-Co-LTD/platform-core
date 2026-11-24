@@ -6,6 +6,7 @@ import { loadAttachments, normalizeTicketRow } from './ticket-manage'
 // （此前本文件内联算 page/size 且无整数守卫 ⇒ 非法值 500；?size=-5 也与端点间漂移）。
 import { DEFAULT_PAGE_SIZE, MAX_PAGE_SIZE, guestIdentityIds, parseIdParam, parsePageParam } from './context'
 import type { ModuleHono, RouteCtx } from './context'
+import { resolveStoreAffiliation } from './affiliation'
 
 /**
  * `ticket.damage_quantity` 是 **int4** 列，上界必须按列型取——**不能**借 bigint 那档的
@@ -144,6 +145,10 @@ export function registerTicketGuest(r: ModuleHono, ctx: RouteCtx): void {
     if (!parsed.success) return c.json({ error: 'INVALID_BODY' }, 400)
     const body = parsed.data
 
+    // 归属一致性快照（ADR 2026-11-24 §7 P1-a）：**信息性**，不是放行条件。
+    // 放在开事务之前：① 它是只读查询，不该占事务；② fail-open —— 判定失败返回 null 照常提单。
+    const storeAffiliation = await resolveStoreAffiliation(ctx, org, identity, body.storeCode)
+
     const client = await ctx.pool.connect()
     try {
       await client.query('begin')
@@ -208,15 +213,15 @@ export function registerTicketGuest(r: ModuleHono, ctx: RouteCtx): void {
            product_code, product_name, store_code, store_name,
            damage_quantity, remark,
            settlement_source, settlement_order_no, settlement_item_code, settlement_line_key,
-           settlement_price_minor, settlement_bizday)
-         values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15)
+           settlement_price_minor, settlement_bizday, store_affiliation)
+         values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16)
          returning id`,
         [
           org, body.clientRequestId, identity.userId,
           body.itemCode, item.name, body.storeCode, store.name,
           body.damageQuantity, body.remark ?? '',
           settlement.source, body.orderNo, body.itemCode, body.lineKey,
-          Number(settlement.price_minor), settlement.bizday,
+          Number(settlement.price_minor), settlement.bizday, storeAffiliation,
         ],
       )
       const ticketId = Number(ins.rows[0].id)

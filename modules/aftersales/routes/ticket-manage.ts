@@ -58,7 +58,9 @@ export function registerTicketManage(r: ModuleHono, ctx: RouteCtx): void {
       `select id, code, product_id, product_name, store_id, store_name,
               product_code, store_code,
               damage_quantity, status, amount_type, amount_minor, refund_ratio,
-              operator, remark, related_order, created_at, processed_at
+              operator, remark, related_order, created_at, processed_at,
+              -- 归属一致性快照（ADR 2026-11-24 §7 P1-a）：信息性，供管理端展示异常
+              store_affiliation
          from aftersales.ticket
         where ${where.join(' and ')}
         order by id desc

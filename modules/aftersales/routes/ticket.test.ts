@@ -133,6 +133,53 @@ describePg('工单域', () => {
     expect(row.rows[0].settlement_bizday).not.toBeNull()
   })
 
+  it('归属一致性快照（ADR 2026-11-24 §7 P1-a）：未登记/unregistered、含该店/matched、不含/mismatch——**信息性，恒 201**', async () => {
+    const cleanProfile = async () => {
+      await pool.query('delete from aftersales.employee_store where org = $1', [ORG])
+      await pool.query('delete from aftersales.employee where org = $1', [ORG])
+    }
+    await cleanProfile()
+
+    const affilOf = async (res: Response) => {
+      const { id } = (await res.json()) as { id: number }
+      const r = await pool.query<{ store_affiliation: string | null }>(
+        'select store_affiliation from aftersales.ticket where org = $1 and id = $2',
+        [ORG, id],
+      )
+      return r.rows[0].store_affiliation
+    }
+
+    // ① 无档案（未注册/待审批）⇒ unregistered，且**照常 201**（不是拒绝）
+    const r1 = await submit(appGuest, validBody('req-affil-1'))
+    expect(r1.status).toBe(201)
+    expect(await affilOf(r1)).toBe('unregistered')
+
+    // ② 建档且门店集合含提交门店 S01 ⇒ matched
+    const emp = await pool.query<{ id: string }>(
+      `insert into aftersales.employee(org, name, phone, open_id, approve_status)
+       values ($1, 'alice', '138', 'openid-alice', 'approved') returning id`,
+      [ORG],
+    )
+    await pool.query(
+      `insert into aftersales.employee_store(org, employee_id, store_code) values ($1, $2, 'S01')`,
+      [ORG, emp.rows[0].id],
+    )
+    const r2 = await submit(appGuest, validBody('req-affil-2'))
+    expect(r2.status).toBe(201)
+    expect(await affilOf(r2)).toBe('matched')
+
+    // ③ 档案只含别的店 ⇒ mismatch（调店未更新 / 填错 / 借用账号，都落到这一态）
+    await pool.query(
+      `update aftersales.employee_store set store_code = 'S99' where org = $1 and employee_id = $2`,
+      [ORG, emp.rows[0].id],
+    )
+    const r3 = await submit(appGuest, validBody('req-affil-3'))
+    expect(r3.status).toBe(201)
+    expect(await affilOf(r3)).toBe('mismatch')
+
+    await cleanProfile()
+  })
+
   it('挂原单取价 fail-closed：行不存在 ⇒ 400 PRICE_NOT_FOUND；串店引用 ⇒ 400 ORDER_STORE_MISMATCH', async () => {
     // ① 该店该商品没有这张单 ⇒ 400（不 fallback 档案价、不取 0）
     const missing = await submit(appGuest, { ...validBody('req-missing'), orderNo: 'MO0000000000000001' })

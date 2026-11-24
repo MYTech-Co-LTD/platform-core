@@ -11,7 +11,7 @@ import { apiGet, messageOf } from '../lib/api'
 import { formatMinor } from '../lib/format'
 import { ProcessDialog } from './ProcessDialog'
 import { ListCard, Status } from '../lib/ui'
-import type { Paged, TicketListItem, TicketStatus } from '../../api-types'
+import type { Paged, StoreAffiliation, TicketListItem, TicketStatus } from '../../api-types'
 
 const SIZE = 20
 
@@ -19,6 +19,13 @@ const STATUS_LABEL: Record<TicketStatus, string> = {
   pending: '待处理',
   completed: '已处理',
   cancelled: '已驳回',
+}
+/** 归属一致性（ADR 2026-11-24 §7 P1-a）：**信息性展示**，不参与任何放行判定。
+ *  `matched` 是常态，用弱色以免每行都在喊；异常两态才上语义色。 */
+const AFFIL: Record<StoreAffiliation, { label: string; tone: 'warn' | 'ok' | 'danger' }> = {
+  matched: { label: '一致', tone: 'ok' },
+  mismatch: { label: '门店不一致', tone: 'danger' },
+  unregistered: { label: '未登记', tone: 'warn' },
 }
 const STATUS_TONE: Record<TicketStatus, 'warn' | 'ok' | 'danger'> = {
   pending: 'warn',
@@ -88,6 +95,14 @@ export default function TicketsPage() {
           { title: '编号', dataIndex: 'code', width: 140 },
           { title: '商品', dataIndex: 'product_name' },
           { title: '门店', dataIndex: 'store_name' },
+          {
+            title: '提交人归属',
+            dataIndex: 'store_affiliation',
+            width: 130,
+            render: (v: StoreAffiliation | null | undefined) =>
+              v && AFFIL[v] ? <Status tone={AFFIL[v].tone}>{AFFIL[v].label}</Status>
+                            : <Typography.Text type="secondary">—</Typography.Text>,
+          },
           { title: '数量', dataIndex: 'damage_quantity', width: 80 },
           {
             title: '状态',
