@@ -133,6 +133,55 @@ describePg('工单域', () => {
     expect(row.rows[0].settlement_bizday).not.toBeNull()
   })
 
+  it('【P0 回归】中文自然键（乐檬真实形状）：门店「凤庆01」+ 中文商品码能正常提单（#2795）', async () => {
+    // 生产实测 364/374 门店 code 含中文（「凤庆01」「万科学府」…），商品 31 个含中文。
+    // 旧 `[0-9A-Za-z_-]` 白名单 ⇒ 这些门店提单恒 400 INVALID_BODY；夹具全用 'S01'/'I001'
+    // 这类 ASCII，所以从没拦住。本用例的夹具**就是真机形状**。
+    const CN_STORE = '凤庆01'
+    const CN_ITEM = '瓜瓜乐海沙脆蜜'
+    const CN_ORDER = 'MO3120992607050086'
+    await pool.query(
+      `insert into data.dim_branch(org, code, name, enable, source_book, snapshot)
+       values ($1, $2, '临沧凤庆1店', true, '3120', current_date)`,
+      [ORG, CN_STORE],
+    )
+    await pool.query(
+      `insert into data.dim_item(org, item_code, name, sale_cease, source_book, snapshot)
+       values ($1, $2, '瓜瓜乐海沙脆蜜', false, '3120', current_date)`,
+      [ORG, CN_ITEM],
+    )
+    await pool.query(
+      `insert into data.dim_settlement_order_line(
+         org, source, store_code, store_name, order_no, order_bizday, order_time,
+         item_code, item_name, line_key, quantity, money, price_minor)
+       values ($1,'transfer',$2,'临沧凤庆1店',$3,current_date - 1,'2026-10-07 11:07:31',
+               $4,'瓜瓜乐海沙脆蜜','0',10,7500,750)`,
+      [ORG, CN_STORE, CN_ORDER, CN_ITEM],
+    )
+
+    const res = await submit(appGuest, {
+      clientRequestId: 'req-cn-natural-key',
+      storeCode: CN_STORE,
+      itemCode: CN_ITEM,
+      orderNo: CN_ORDER,
+      lineKey: '0',
+      damageQuantity: 1,
+    })
+    const payload = (await res.json()) as { id?: number; error?: string }
+    expect({ status: res.status, payload }, `中文自然键提交被拒：${JSON.stringify(payload)}`).toMatchObject({ status: 201 })
+    const id = payload.id as number
+    const row = await pool.query<{ store_code: string; product_code: string }>(
+      'select store_code, product_code from aftersales.ticket where org = $1 and id = $2',
+      [ORG, id],
+    )
+    expect(row.rows[0]).toMatchObject({ store_code: CN_STORE, product_code: CN_ITEM })
+
+    // 清理本用例夹具（其他用例假设只有 S01/S99/I001）
+    await pool.query('delete from data.dim_settlement_order_line where org = $1 and store_code = $2', [ORG, CN_STORE])
+    await pool.query('delete from data.dim_item where org = $1 and item_code = $2', [ORG, CN_ITEM])
+    await pool.query('delete from data.dim_branch where org = $1 and code = $2', [ORG, CN_STORE])
+  })
+
   it('归属一致性快照（ADR 2026-11-24 §7 P1-a）：未登记/unregistered、含该店/matched、不含/mismatch——**信息性，恒 201**', async () => {
     const cleanProfile = async () => {
       await pool.query('delete from aftersales.employee_store where org = $1', [ORG])

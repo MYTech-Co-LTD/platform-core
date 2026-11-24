@@ -18,9 +18,16 @@ const SubmitBody = z.object({
   // 客户端幂等键（spec §2.2）；同时是附件 object key 里的 {ticket_ref}（spec §2.3）
   clientRequestId: z.string().min(1).max(128),
   // 自然键（#500/#476）：门店 = data.dim_branch.code；商品 = data.dim_item.item_code（在售）。
-  // 发布契约形状（非空、限长、无通配/注入面字符）；坏值一律 400 INVALID_BODY。
-  storeCode: z.string().regex(/^[0-9A-Za-z_-]{1,64}$/),
-  itemCode: z.string().regex(/^[0-9A-Za-z_-]{1,64}$/),
+  //
+  // ⚠️ 字符集必须允许**中文**：乐檬的门店编码是「凤庆01」「万科学府」「下关02」这类中文串。
+  // 生产实测（2026-11-24，shanhaiyiguo-org）：374 家门店里 **364 家（97%）** code 含非 ASCII，
+  // 商品 31 个含非 ASCII。此前的 `[0-9A-Za-z_-]` 白名单 ⇒ **97% 的门店提单恒 400 INVALID_BODY**
+  // （测试夹具全用 'S01'/'101' 这类 ASCII，所以从没拦住——#2795）。
+  //
+  // 现在的口径：Unicode 字母/数字 + `_` + `-`，**挡空格/点/控制字符**（无通配面），
+  // 长度上限与发布契约对齐；存在性由后面的 dim_branch / dim_item 查询兜底（STORE_NOT_FOUND）。
+  storeCode: z.string().regex(/^[\p{L}\p{N}_-]{1,64}$/u),
+  itemCode: z.string().regex(/^[\p{L}\p{N}_-]{1,64}$/u),
   // 挂原单取价（spec §6.2）：MO…/WO… 单号 + 单内商品行键（MO=item_grade_num / WO=order_detail_num）。
   // 行级三元组一起精确锁价——价随单走，票面可追溯到具体那张 MO/WO 的那一行。
   orderNo: z.string().regex(/^(MO|WO)[0-9]{6,}$/),
