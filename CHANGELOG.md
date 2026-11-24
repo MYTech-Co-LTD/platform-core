@@ -11,6 +11,10 @@
 
 ## [Unreleased]
 
+## [0.383.2](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.383.1...v0.383.2) - 2026-11-24
+- 【修复】aftersales: 工单列表商品/门店列补宽度并加横向滚动——修新增归属列导致的竖排挤压 ([#2800](https://github.com/MYTech-Co-LTD/platform-core/pull/2800), [b257518](https://github.com/MYTech-Co-LTD/platform-core/commit/b257518c9e1d74145c9a74a2d8e7c7dddb4f006b))
+
+
 ## [0.383.1](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.383.0...v0.383.1) - 2026-11-24
 - 【修复】aftersales: 访客门店查询补 fail-closed 与中文 code——修无参回全量（泄露面）/参数名错配/ASCII 白名单 ([#2798](https://github.com/MYTech-Co-LTD/platform-core/pull/2798), [358078a](https://github.com/MYTech-Co-LTD/platform-core/commit/358078abdd554fd755ec1c7f48fe9fefaa589d64))
 
