@@ -241,11 +241,13 @@ export function registerRegistrationGuest(r: ModuleHono, ctx: RouteCtx): void {
     let where = 'org = $1'
     if (q) {
       if (exact) {
-        // 精确等值（门店名或编码任一命中，2026-11-24 保密口径 #2762）：
-        // 部分关键词搜不出 ⇒ 防「品牌词枚举门店」——模糊 ilike 会把「品品甜」一次吐 81 家，
-        // 那正是访客不该拿到的门店清单泄露面。门店名中文无大小写问题；编号按等值比对。
-        params.push(q)
-        where += ` and (name = $${params.length} or code = $${params.length})`
+        // 精确等值 + **品牌前缀归一变体**（2026-11-24 保密口径 #2762）：
+        // 同一实体店在 wuji（员工记忆）与乐檬维表（平台数据）里叫法不同——
+        // 「品品甜临沧凤庆1店」 vs 「临沧凤庆1店」。把「原文 / 去品牌前缀」都作为等值候选，
+        // 员工两种输法都能命中；而部分关键词（「凤庆」「品品甜」）依然搜不出 ⇒ 枚举防住。
+        const variants = [q, q.replace(/^(品品甜|熊喵)/, '')].filter((v) => v !== '')
+        params.push(variants)
+        where += ` and (name = any($${params.length}::text[]) or code = any($${params.length}::text[]))`
       } else {
         params.push(`%${escapeLike(q)}%`)
         where += ` and name ilike $${params.length}`
