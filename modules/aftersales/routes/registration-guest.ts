@@ -236,11 +236,20 @@ export function registerRegistrationGuest(r: ModuleHono, ctx: RouteCtx): void {
     const page = parsePageParam(c.req.query('page'), 1, Number.MAX_SAFE_INTEGER)
     const size = parsePageParam(c.req.query('size'), DEFAULT_PAGE_SIZE, MAX_PAGE_SIZE)
 
+    const exact = c.req.query('exact') === '1'
     const params: unknown[] = [org]
     let where = 'org = $1'
     if (q) {
-      params.push(`%${escapeLike(q)}%`)
-      where += ` and name ilike $${params.length}`
+      if (exact) {
+        // 精确等值（门店名或编码任一命中，2026-11-24 保密口径 #2762）：
+        // 部分关键词搜不出 ⇒ 防「品牌词枚举门店」——模糊 ilike 会把「品品甜」一次吐 81 家，
+        // 那正是访客不该拿到的门店清单泄露面。门店名中文无大小写问题；编号按等值比对。
+        params.push(q)
+        where += ` and (name = $${params.length} or code = $${params.length})`
+      } else {
+        params.push(`%${escapeLike(q)}%`)
+        where += ` and name ilike $${params.length}`
+      }
     }
     if (codesRaw !== undefined) {
       // 约定：空串 = **空集**（调用方说「我没有任何门店」），不是「不过滤」——

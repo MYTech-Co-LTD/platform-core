@@ -126,7 +126,11 @@ export const store_info = {
       // 空集显式写成 `ids=`（服务端按空集处理），**不是**省略参数——省略等于「不过滤」
       params.set('ids', f.ids.join(','))
     } else if (f.text !== '') {
+      // 源侧 `store_name__eq`/`store_number__eq` 语义 = **精确等值**（__eq 后缀）——
+      // 翻译必须带 exact=1 恢复该语义（#2762：此前误译成 ilike 模糊，既改变源语义，
+      // 又给访客开了「品牌词枚举门店」的泄露面）。服务端 exact=1 时按等值比对。
       params.set('q', f.text)
+      params.set('exact', '1')
     }
     if (args.pageSize) params.set('size', String(Math.min(args.pageSize, SERVER_MAX_PAGE_SIZE)))
     const qs = params.toString()

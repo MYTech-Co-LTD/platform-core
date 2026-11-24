@@ -174,7 +174,7 @@
             </label>
             <t-select
               v-model="formData.store_info"
-              placeholder="请输入门店名称或编号搜索"
+              placeholder="请输入完整门店名称或编号"
               filterable
               clearable
               multiple
@@ -197,7 +197,7 @@
               </t-option>
             </t-select>
             <p class="text-xs text-gray-400 mt-2">
-              <i class="fa fa-info-circle mr-1"></i>可选择多个门店，最多5个
+              <i class="fa fa-info-circle mr-1"></i>可选择多个门店
             </p>
           </div>
         </t-card>
@@ -243,7 +243,6 @@ import dayjs from 'dayjs'
 
 // 常量
 const STORE_SEARCH_DEBOUNCE_MS = 300
-const MAX_STORE_COUNT = 5
 
 // 防抖定时器
 let storeSearchTimer: ReturnType<typeof setTimeout> | null = null
@@ -393,12 +392,6 @@ const handleSubmit = async (): Promise<void> => {
   // 验证门店选择
   if (!data.store_info || (Array.isArray(data.store_info) && data.store_info.length === 0)) {
     Message.warning('请选择所属门店')
-    return
-  }
-
-  // 验证门店数量限制
-  if (Array.isArray(data.store_info) && data.store_info.length > MAX_STORE_COUNT) {
-    Message.warning(`最多只能选择${MAX_STORE_COUNT}个门店`)
     return
   }
 

@@ -21,10 +21,12 @@ beforeEach(() => {
 })
 
 describe('store_info.query', () => {
-  it('登记页形状（OR 里是名字）⇒ 转成 q 搜索，行翻成源侧 snake_case', async () => {
+  it('登记页形状（OR 里是名字）⇒ 转成 q+exact=1 精确搜索，行翻成源侧 snake_case', async () => {
     get.mockResolvedValue({ items: [{ code: '107', name: '城东店', enable: true, address: 'a', phone: 'p' }], total: 1, page: 1, size: 20 })
     const rows = await store_info.query({ filter: { OR: [{ store_name__eq: '城东' }, { store_number__eq: '城东' }] }, sort: 'store_name' })
-    expect(get).toHaveBeenCalledWith('/guest/stores?q=%E5%9F%8E%E4%B8%9C')
+    // exact=1（2026-11-24，#2762）：源侧 __eq 语义 = 精确等值——翻译必须带上，
+    // 否则降级成 ilike 模糊，访客用一个品牌词就能枚举门店（保密口径破坏）
+    expect(get).toHaveBeenCalledWith('/guest/stores?q=%E5%9F%8E%E4%B8%9C&exact=1')
     expect(rows[0]).toMatchObject({ id: '107', store_number: '107', store_name: '城东店', is_enabled: '1' })
   })
 

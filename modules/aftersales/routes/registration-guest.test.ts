@@ -331,6 +331,17 @@ describe('GET /guest/stores', () => {
     expect(all.items).toEqual([])
   })
 
+  it('exact=1：按名称或编码【等值】命中，部分关键词搜不出（2026-11-24 保密口径 #2762）', async () => {
+    const codes = await storeCodes()
+    // 完整名称 = 等值命中
+    const hit = await (await app().request(`/guest/stores?q=${encodeURIComponent(codes[0])}&exact=1`)).json()
+    expect(hit.items.map((s: { code: string }) => s.code)).toEqual([codes[0]])
+    // 部分关键词（品牌前缀子串）⇒ 等值比对搜不出（防「品牌词枚举门店」）
+    const partial = codes[0].slice(0, 2)
+    const miss = await (await app().request(`/guest/stores?q=${encodeURIComponent(partial)}&exact=1`)).json()
+    expect(miss.items).toEqual([])
+  })
+
   it('codes：只回指定的那几个（提交页「我的门店」走这条）', async () => {
     const codes = await storeCodes()
     const res = await app().request(`/guest/stores?codes=${codes[1]}`)
