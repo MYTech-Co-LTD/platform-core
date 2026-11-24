@@ -38,6 +38,8 @@ export async function resolveDeliveryAddress(
   // in_app 的「地址」就是用户名本身（收件箱按人查）——宿主的 resolve 也是这么回的，
   // 这里再写一遍是为了**解析器没注入时**（routes/mcp 的可选依赖）行为不漂移。
   if (channel.provider === 'in_app') return input.casdoorName
+  // 公众号：收件人标识即 openid（同 channel-address.ts 的理由，保持两处口径一致）
+  if (channel.provider === 'wechat_oa') return input.casdoorName
 
   if (channel.provider === 'wecom_chat' && channel.config?.address_fallback === 'casdoor_name') {
     console.warn(JSON.stringify({

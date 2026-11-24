@@ -21,6 +21,8 @@ import { sendWecom } from '../../providers/wecom'
 import type { NotifyProvider } from '../providers'
 import { sendDirect } from './wecom-direct'
 import type { WecomDirectCred } from './wecom-direct'
+import { sendWechatOa } from './wechat-oa'
+import type { WechatOaCred } from './wechat-oa'
 
 export type ProviderResult =
   | { ok: true }
@@ -51,10 +53,10 @@ export interface SendContext {
   /** 测试缝：所有 provider 的 HTTP 走它（缺省 = 全局 fetch） */
   fetchImpl?: typeof fetch
   /**
-   * 企微直连凭据（已解密）。`transport==='direct'` 时由调用方解析后传入；
-   * 缺省 ⇒ 走共享桥（与改造前逐字一致）。
+   * 渠道凭据（已解密）。企微：`transport==='direct'` 时由调用方解析后传入，缺省 ⇒ 走共享桥；
+   * 公众号（#2805）：appId/appSecret，由调用方按 provider 解析后传入。
    */
-  credential?: WecomDirectCred
+  credential?: WecomDirectCred | WechatOaCred
 }
 
 export type ImSender = (ctx: SendContext, d: DeliveryLike) => Promise<ProviderResult>
@@ -77,7 +79,7 @@ const SENDERS: Record<NotifyProvider, ImSender> = {
     const timeoutMs = typeof ctx.config.timeout_ms === 'number' ? ctx.config.timeout_ms : undefined
     return ctx.credential !== undefined
       ? sendDirect({
-        cred: ctx.credential,
+        cred: ctx.credential as WecomDirectCred,
         to: d.address,
         content: (d.rendered.text as string | undefined) ?? '',
         fetchImpl: ctx.fetchImpl,
@@ -90,6 +92,11 @@ const SENDERS: Record<NotifyProvider, ImSender> = {
         fetchImpl: ctx.fetchImpl,
         timeoutMs,
       })
+  },
+  // 公众号模板消息（#2805）：收件人地址 = openid；内容形状见 wechat-oa.ts 顶部注释。
+  wechat_oa: (ctx, d) => {
+    const timeoutMs = typeof ctx.config.timeout_ms === 'number' ? ctx.config.timeout_ms : undefined
+    return sendWechatOa(ctx, d, { timeoutMs })
   },
   webhook: (ctx, d) =>
     sendWebhook({

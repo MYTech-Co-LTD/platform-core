@@ -10,6 +10,7 @@
 import type { Pool } from 'pg'
 import { decryptSecret, encryptSecret, kekFromEnv } from './cred-crypto'
 import { orgEnvKeyFor } from './org-env'
+import type { WechatOaCred } from './im/wechat-oa'
 import type { WecomDirectCred } from './im/wecom-direct'
 
 export interface CredentialRow {
@@ -55,11 +56,49 @@ export async function upsertCredential(
   )
 }
 
+/** 渠道凭据的联合：企微（corpId/agentId/secret）与公众号（appId/appSecret）。
+ *  两个解析器各自窄化自己的形状，调用方按 provider 收窄——**不做统一形状**（字段语义不同）。 */
+export type ChannelCredential = WecomDirectCred | WechatOaCred
+
 export type CredentialResolution =
-  | { ok: true; source: 'db' | 'env'; cred: WecomDirectCred }
+  | { ok: true; source: 'db' | 'env'; cred: ChannelCredential }
   | { ok: false; reason: 'missing' | 'kek_missing' | 'env_malformed' | 'decrypt_failed'; detail?: string }
 
 /** 解析企微直连凭据（DB 优先，env 兜底）。**不静默降级**——解析不到就返回原因。 */
+/**
+ * 公众号模板消息凭据（#2805）：appId + appSecret。
+ *
+ * 复用同一张 `notify.channel_credential`（provider='wechat_oa'）与同一把 KEK——
+ * 凭据**只有一份加密实现**（本文件顶部纪律），不给第二个 provider 造第二套存储。
+ * env 兜底形态：`WECHAT_OA_DIRECT__<ORG>` = `appId|appSecret`（与企微同款命名）。
+ */
+export async function resolveWechatOaCredential(
+  pool: Pool, org: string, env: NodeJS.ProcessEnv = process.env,
+): Promise<CredentialResolution> {
+  const r = await pool.query(
+    'select app_key, secret_enc from notify.channel_credential where org = $1 and provider = $2',
+    [org, 'wechat_oa'],
+  )
+  if ((r.rowCount ?? 0) > 0) {
+    const row = r.rows[0] as { app_key: string; secret_enc: string }
+    try {
+      const kek = kekFromEnv(env)
+      return { ok: true, source: 'db', cred: { appId: row.app_key, appSecret: decryptSecret(row.secret_enc, kek) } }
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : String(e)
+      return { ok: false, reason: msg.startsWith('NOTIFY_CRED_KEK') ? 'kek_missing' : 'decrypt_failed', detail: msg }
+    }
+  }
+
+  const raw = env[orgEnvKeyFor('WECHAT_OA_DIRECT', org)]
+  if (raw === undefined || raw === '') return { ok: false, reason: 'missing' }
+  const [appId, appSecret] = raw.split('|')
+  if (!appId || !appSecret) {
+    return { ok: false, reason: 'env_malformed', detail: 'WECHAT_OA_DIRECT__<ORG> 需为 appId|appSecret' }
+  }
+  return { ok: true, source: 'env', cred: { appId, appSecret } }
+}
+
 export async function resolveWecomCredential(
   pool: Pool, org: string, env: NodeJS.ProcessEnv = process.env,
 ): Promise<CredentialResolution> {

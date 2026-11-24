@@ -3,6 +3,7 @@ import type { Pool } from 'pg'
 import { sendWebhook } from '../providers/webhook'
 import { resolveWecomCredential } from './credential-store'
 import { probeDirect } from './im/wecom-direct'
+import type { WecomDirectCred } from './im/wecom-direct'
 export async function checkWecomHealth(
   bridgeUrl: string,
   fetchImpl: typeof fetch = fetch,
@@ -57,5 +58,6 @@ export async function checkWecomDirectHealth(a: {
       detail: `credential_${cred.reason}${cred.detail ? `: ${cred.detail}` : ''}`,
     }
   }
-  return probeDirect(cred.cred, { fetchImpl: a.fetchImpl })
+  // 本函数只服务企微直连渠道的活性判据 ⇒ 收窄
+  return probeDirect(cred.cred as WecomDirectCred, { fetchImpl: a.fetchImpl })
 }

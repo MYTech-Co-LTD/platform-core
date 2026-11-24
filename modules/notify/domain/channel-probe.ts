@@ -13,8 +13,11 @@
 //   ③ **探针自己坏了 ≠ 渠道坏了**：resolve 报 `missing`（没配直连）时不写失败——那是**没有通道**，
 //      不是**通道坏了**；写失败会让「压根没启用直连」的实例天天红。只有「配了但取不到 token」才落错误。
 import type { Pool } from 'pg'
-import { resolveWecomCredential } from './credential-store'
+import { resolveWecomCredential, resolveWechatOaCredential } from './credential-store'
+import { wechatAccessToken } from './im/wechat-oa'
+import type { WechatOaCred } from './im/wechat-oa'
 import { probeDirect, probeUser } from './im/wecom-direct'
+import type { WecomDirectCred } from './im/wecom-direct'
 
 /** 同一 (org, provider) 两次真探的最小间隔（秒）；worker 每 2s 转一圈，这个值决定真实探测频率。 */
 export const MIN_PROBE_INTERVAL_SECONDS = 300
@@ -41,6 +44,8 @@ interface ProbeDep {
   now?: () => Date
   /** 测试注入：绕过最小间隔（生产不传） */
   minIntervalSeconds?: number
+  /** 公众号 API 基址（测试缝；缺省 api.weixin.qq.com） */
+  wechatApiBase?: string
   /**
    * 只探这些 org（缺省 = 全部）。worker 不传；测试用它隔离并行文件/其他 org 的直连通道，
    * 也可供「只重探某个 org」的运维入口复用。
@@ -70,7 +75,8 @@ export async function probeDirectChannels(dep: ProbeDep): Promise<ProbeSummary> 
        from notify.channel c
        left join notify.channel_probe p on p.org = c.org and p.provider = c.provider
       where c.enabled
-        and c.config->>'transport' = 'direct'
+        -- 企微直连按 transport 开关；公众号（#2805）没有桥这一档，**恒定探测**
+        and (c.config->>'transport' = 'direct' or c.provider = 'wechat_oa')
         and (p.checked_at is null or p.checked_at < now() - ($1::int * interval '1 second'))
         and ($2::text[] is null or c.org = any($2))
       order by c.org, c.provider`,
@@ -79,6 +85,34 @@ export async function probeDirectChannels(dep: ProbeDep): Promise<ProbeSummary> 
 
   for (const r of rows as Array<{ org: string; provider: string }>) {
     const key = `${r.org}/${r.provider}`
+
+    // 公众号模板消息（#2805）：判据 = **能取到 access_token**（幂等、不发消息）——
+    // 与企微直连同款口径：取得到证明 appId/appSecret 活着，取不到就点名原因。
+    if (r.provider === 'wechat_oa') {
+      const oaCred = await resolveWechatOaCredential(pool, r.org, dep.env ?? process.env)
+      if (!oaCred.ok && oaCred.reason === 'missing') {
+        summary.skipped += 1
+        continue
+      }
+      summary.probed += 1
+      const at0 = now().toISOString()
+      if (!oaCred.ok) {
+        const err = `credential_${oaCred.reason}${oaCred.detail ? `: ${oaCred.detail}` : ''}`
+        await recordProbe(pool, r.org, r.provider, at0, null, err)
+        summary.failed.push(`${key} (${err})`)
+        continue
+      }
+      const t = await wechatAccessToken(oaCred.cred as WechatOaCred, { fetchImpl: dep.fetchImpl, apiBase: dep.wechatApiBase })
+      if (t.ok) {
+        await recordProbe(pool, r.org, r.provider, at0, at0, null)
+        summary.ok.push(key)
+      } else {
+        await recordProbe(pool, r.org, r.provider, at0, null, t.summary)
+        summary.failed.push(`${key} (${t.summary})`)
+      }
+      continue
+    }
+
     if (r.provider !== 'wecom_chat') {
       // 没有探法的 provider 不写假 OK（那会造出「有人测过」的错觉）
       summary.skipped += 1
@@ -101,11 +135,12 @@ export async function probeDirectChannels(dep: ProbeDep): Promise<ProbeSummary> 
       continue
     }
 
-    const p = await probeDirect(cred.cred, { fetchImpl: dep.fetchImpl })
+    // 本循环只处理企微直连渠道（源头按 provider 过滤）⇒ 收窄到企微凭据形状
+    const p = await probeDirect(cred.cred as WecomDirectCred, { fetchImpl: dep.fetchImpl })
     if (p.ok) {
       // 凭据活着 ⇒ 顺带做一次**个人级**抽样（plan 2026-10-31 Phase 2）：
       // 只调 `user/get`，幂等、不发消息；结果只进统计列，**不改变 last_ok_at / 判据 verdict**。
-      const sample = await sampleReachability(dep, cred.cred, r.org)
+      const sample = await sampleReachability(dep, cred.cred as WecomDirectCred, r.org)
       await recordProbe(pool, r.org, r.provider, at, at, null, sample)
       summary.ok.push(key)
     } else {

@@ -8,7 +8,7 @@
 //
 // ⚠️ 与迁移 002 的 `check (provider in (...))` 必须同步：加 provider 时两处一起改，
 //    `check-integrations` 会读本文件、读不到迁移，所以迁移侧的漂移靠评审与 DB 报错兜底。
-export const NOTIFY_PROVIDERS = ['wecom_chat', 'in_app', 'webhook'] as const
+export const NOTIFY_PROVIDERS = ['wecom_chat', 'in_app', 'webhook', 'wechat_oa'] as const
 
 export type NotifyProvider = (typeof NOTIFY_PROVIDERS)[number]
 
@@ -26,6 +26,9 @@ export const PROVIDER_REQUIRES_ADDRESS: Record<NotifyProvider, boolean> = {
   wecom_chat: true,
   in_app: false,
   webhook: false,
+  // 公众号模板消息（#2805）：**必须**有 openid——它就是 `touser`。收件人本身以 openid
+  // 作标识（访客身份即 openid，未绑 Casdoor 账户也照样能收），见 channel-address.ts。
+  wechat_oa: true,
 }
 
 /** 未知 provider 保守按“需要地址”处理；发送侧会先报 `provider_unsupported`。 */

@@ -64,6 +64,10 @@ export function createChannelAddressResolver(deps: {
   return {
     async resolve({ org, provider, casdoorName }) {
       if (provider === 'in_app') return casdoorName
+      // 公众号模板消息（#2805）：收件人标识**本身就是 openid**——访客身份即 openid，
+      // 未绑 Casdoor 账户的员工也照样收得到。这里不做任何反查：反查（casdoorName → openid）
+      // 会把「没绑账户的人」判成无法送达，而他们恰恰是最需要收到回执的那批人。
+      if (provider === 'wechat_oa') return casdoorName
       if (provider !== 'wecom_chat') return null
 
       // ① 显式地址（spec 2026-10-31 §3.3）：同步时把渠道原生地址落在 org_membership.external_id。

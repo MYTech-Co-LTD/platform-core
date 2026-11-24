@@ -44,11 +44,12 @@ describePg('seedBuiltin', () => {
     const env = { NOTIFY_APPROVERS__ORG_SEED2: 'alice, bob' }
     await seedBuiltin(pool, env, [ORG])
     const first = await counts()
-    // templates/revisions 18：员工登记审批 + 集成活性超期 + 审批待处理 + 指标定义变更
+    // templates/revisions 21：员工登记审批 + 集成活性超期 + 审批待处理 + 指标定义变更
     //   + 表单指派/表单催办 + 收集轮次开轮/催办（件③ #2707）+ 目标达成日报（件② #2708）
     //   + 定时任务三条（W6-P4a）+ 业务监控三条（W7-V1）+ OA 审批两条（P1）
-    //   rules 19 = 上述 derived 18 + manual 1（NOTIFY_APPROVERS）
-    expect(first).toEqual({ templates: 18, revisions: 18, channels: 2, rules: 19 })
+    //   + 售后回执三条（#2805：工单已提交 / 工单已处理 / 审批结果）
+    //   rules 22 = 上述 derived 21 + manual 1（NOTIFY_APPROVERS）
+    expect(first).toEqual({ templates: 21, revisions: 21, channels: 2, rules: 22 })
 
     const manual = await pool.query(
       "select recipient_key, recipient_literal from notify.rule where org=$1 and id like 'manual:%'",
@@ -94,9 +95,9 @@ describePg('seedBuiltin', () => {
     expect(revsAfter).toBe(revsBefore)
   })
 
-  it('无 NOTIFY_APPROVERS ⇒ 只剩十八条 derived 规则（aftersales/集成健康/审批/指标变更/表单两条/收集轮次两条/目标日报一条/OA 两条/定时任务三条/业务监控三条）', async () => {
+  it('无 NOTIFY_APPROVERS ⇒ 只剩二十一条 derived 规则（aftersales/集成健康/审批/指标变更/表单两条/收集轮次两条/目标日报一条/OA 两条/定时任务三条/业务监控三条/售后回执三条）', async () => {
     await seedBuiltin(pool, {}, [ORG])
-    expect((await counts()).rules).toBe(18)
+    expect((await counts()).rules).toBe(21)
     const stale = await pool.query(
       "select channels from notify.rule where org=$1 and event_key='notify.integration.stale'", [ORG])
     // 只用 in_app：企微通道本身可能正是坏掉的那个（坏通道报坏消息 = 自欺）
