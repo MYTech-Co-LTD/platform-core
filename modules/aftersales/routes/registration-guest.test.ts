@@ -342,6 +342,16 @@ describe('GET /guest/stores', () => {
     expect(miss.items).toEqual([])
   })
 
+  it('exact=1 品牌前缀归一：q=「品品甜店A」→ 去前缀「店A」也命中（wuji/乐檬名称体系差）', async () => {
+    const codes = await storeCodes()
+    // 员工按 wuji 记忆输「品品甜店A」，平台维表叫「店A」⇒ 变体等值命中，不丢匹配
+    const hit = await (await app().request(`/guest/stores?q=${encodeURIComponent('品品甜店A')}&exact=1`)).json()
+    expect(hit.items.map((s: { code: string }) => s.code)).toEqual([codes[0]])
+    // 无前缀的普通全名不受归一影响，照常等值命中
+    const plain = await (await app().request(`/guest/stores?q=${encodeURIComponent('店B')}&exact=1`)).json()
+    expect(plain.items.map((s: { code: string }) => s.code)).toEqual([codes[1]])
+  })
+
   it('codes：只回指定的那几个（提交页「我的门店」走这条）', async () => {
     const codes = await storeCodes()
     const res = await app().request(`/guest/stores?codes=${codes[1]}`)
