@@ -25,6 +25,8 @@
 export type TicketStatus = 'pending' | 'completed' | 'cancelled'
 export type AmountType = 'ratio' | 'fixed'
 export type ApproveStatus = 'pending' | 'approved' | 'rejected'
+/** 提单时「提交人档案门店 vs 单据门店」的一致性（ADR 2026-11-24；见 routes/affiliation.ts） */
+export type StoreAffiliation = 'matched' | 'mismatch' | 'unregistered'
 
 /**
  * `GET /tickets` 的一行。
@@ -51,6 +53,9 @@ export interface TicketListItem {
   related_order: string | null
   created_at: string
   processed_at: string | null
+  // 归属一致性快照（ADR 2026-11-24 §7 P1-a）：**信息性**，不参与任何放行判定。
+  // 快照语义——记录提单那一刻的事实，档案后改不回溯。null = 判定失败（fail-open）或存量行。
+  store_affiliation?: StoreAffiliation | null
   // —— `normalizeTicketRow` 额外挂的 camelCase 别名（同值）——
   productId?: number | null
   storeId?: number | null

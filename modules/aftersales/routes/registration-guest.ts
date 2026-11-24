@@ -9,6 +9,7 @@ import { z } from 'zod'
 import { RegistrationError, computeRegistration } from '../domain/registration'
 import { DEFAULT_PAGE_SIZE, MAX_PAGE_SIZE, guestIdentityIds, parsePageParam } from './context'
 import type { ModuleHono, RouteCtx } from './context'
+import { readMySnapshot } from './affiliation'
 
 /** 目标值：客户端只表达「我要变成什么」（spec §2.5 纪律②），差异由服务端算 */
 const TargetBody = z.object({
@@ -19,13 +20,6 @@ const TargetBody = z.object({
   // 提交时的存在性校验（STORE_NOT_FOUND），这里只挡明显乱形。
   storeCodes: z.array(z.string().min(1).max(64)).max(50),
 })
-
-interface MySnapshot {
-  id: number
-  name: string
-  phone: string
-  storeCodes: string[]
-}
 
 /**
  * 绑定身份视图（账户统一 Task 9，设计稿 §2「userApp 内展示当前绑定身份 + 异议入口」）。
@@ -53,26 +47,6 @@ async function readGuestIdentity(ctx: RouteCtx, org: string, openid: string): Pr
     boundVia: link.status === 'active' ? link.boundVia : null,
     accountMasked: link.phoneMasked ?? '',
   }
-}
-
-/**
- * 读「我的档案」快照：employee 行 + employee_store 展开。**org + open_id 双向收窄**；
- * open_id 按【绑定集合】判（账户统一设计 §4.1）——多绑身份在任一渠道登记的档案都算「我的」；
- * 中间态/旧会话集合 = 登录 openid 单元素，行为与旧的单 openid 逐字等价。
- */
-async function readMySnapshot(ctx: RouteCtx, org: string, openids: string[]): Promise<MySnapshot | null> {
-  const emp = await ctx.pool.query<{ id: string; name: string; phone: string }>(
-    `select id, name, phone from aftersales.employee
-      where org = $1 and open_id = any($2::text[]) and approve_status = 'approved'`,
-    [org, openids],
-  )
-  const row = emp.rows[0]
-  if (!row) return null
-  const stores = await ctx.pool.query<{ store_code: string }>(
-    `select store_code from aftersales.employee_store where org = $1 and employee_id = $2 order by store_code`,
-    [org, Number(row.id)],
-  )
-  return { id: Number(row.id), name: row.name, phone: row.phone, storeCodes: stores.rows.map((s) => s.store_code) }
 }
 
 /** ILIKE 的 `%` `_` 在搜索词里是通配符——转义掉，否则用户输入 `%` 等于全表匹配（同 masterdata.ts） */
