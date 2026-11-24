@@ -11,6 +11,10 @@
 
 ## [Unreleased]
 
+## [0.381.1](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.381.0...v0.381.1) - 2026-11-24
+- 【修复】aftersales: 注册页补「审批中」态——员工档案未生成时不再退回空白表单 ([#2787](https://github.com/MYTech-Co-LTD/platform-core/pull/2787), [6e1d30f](https://github.com/MYTech-Co-LTD/platform-core/commit/6e1d30f4d2bab55ec2bd6a6d171e5980004e19f3))
+
+
 ## [0.381.0](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.380.1...v0.381.0) - 2026-11-24
 - 【新增】data: 叙事流式失败重试——首字前断线重试一次 (#2784) ([#2785](https://github.com/MYTech-Co-LTD/platform-core/pull/2785), [2ed0a93](https://github.com/MYTech-Co-LTD/platform-core/commit/2ed0a9359afebe0355c08d9b4b18588c978f6268))
 - 【修复】aftersales: 注册提交改发 storeCodes 字符串数组——修 shim storeIds 数字化错配（真机恒 400） ([#2783](https://github.com/MYTech-Co-LTD/platform-core/pull/2783), [3c7e4b8](https://github.com/MYTech-Co-LTD/platform-core/commit/3c7e4b8a4374ef4d1f7882d3351eefa704b8221c))
