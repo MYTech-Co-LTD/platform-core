@@ -11,6 +11,12 @@
 
 ## [Unreleased]
 
+## [0.379.0](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.378.0...v0.379.0) - 2026-11-24
+- 【新增】forms: 运营实时统计 console 页——具名视图/自定义维度/合计与 asOf ([#2764](https://github.com/MYTech-Co-LTD/platform-core/pull/2764), [35f301c](https://github.com/MYTech-Co-LTD/platform-core/commit/35f301c2913dbbf1c68a3131ed9134c2ce954326))
+- 【修复】forms: /stats 测试日期窗改按上海日界取「今天」——修 CI 16–24Z 恒红 (#2768) ([#2769](https://github.com/MYTech-Co-LTD/platform-core/pull/2769), [b9a65f9](https://github.com/MYTech-Co-LTD/platform-core/commit/b9a65f9d5fe1f6cc344df76c81ddeea459bf92aa))
+- 【修复】data: SQL 注释里的裸 Jinja 占位符导致 dbt 编译失败（unexpected '.'） ([#2766](https://github.com/MYTech-Co-LTD/platform-core/pull/2766), [59a1cd6](https://github.com/MYTech-Co-LTD/platform-core/commit/59a1cd60f5c6d07d8a64bdf192b84bef4ceb5ed9))
+
+
 ## [0.378.0](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.377.0...v0.378.0) - 2026-11-23
 - 【新增】data: 零售热层——报表新鲜度 1-2 小时压到 10 分钟（Lambda 速度层） ([#2765](https://github.com/MYTech-Co-LTD/platform-core/pull/2765), [20daa2e](https://github.com/MYTech-Co-LTD/platform-core/commit/20daa2e0227c54e6c1be7e4adbc97e487064014f))
 
