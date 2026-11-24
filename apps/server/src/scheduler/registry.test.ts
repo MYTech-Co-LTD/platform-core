@@ -146,10 +146,11 @@ describe('JOB_REGISTRY', () => {
 })
 
 describe('registry · dbt tick（Wave 8 P1）', () => {
-  it('★ data.dbt_tick 与 openship 现役逐字一致，且 env 指向 tick 档', () => {
+  it('★ data.dbt_tick 覆盖采集窗口（CST 9-23 + 次日 0-1），且 env 指向 tick 档', () => {
     const def = JOB_REGISTRY.find((d) => d.key === 'data.dbt_tick')!
     expect(def).toBeDefined()
-    expect(def.cron).toBe('2-59/10 1-15 * * *')
+    // 采集 tick 是 */10 9-23,0-1（CST）；物化晚 2 分钟，故 UTC 1-17 = CST 09:02–次日 01:52。
+    expect(def.cron).toBe('2-59/10 1-17 * * *')
     expect(def.timeoutMs).toBe(600000)
     expect(def.maxAttempts).toBe(1)
     expect(def.env).toEqual({ MATERIALIZE_SCOPE: 'tick', DATA_PLANE_DOMAINS: 'lemeng', MATERIALIZE_MODE: 'container', LEMENG_ZOS_BUCKET: 'shanhai-data', LEMENG_ZOS_REGION: 'xinan1', LEMENG_ZOS_ENDPOINT: 'xinan-1-internal.zos.ctyun.cn' })
@@ -158,7 +159,7 @@ describe('registry · dbt tick（Wave 8 P1）', () => {
 })
 
 describe('registry · dbt hourly/tables（Wave 8 P1）', () => {
-  it('★ cron/timeout/scope 与 openship 现役逐字一致', () => {
+  it('★ cron/timeout/scope 与现役一致', () => {
     const hourly = JOB_REGISTRY.find((d) => d.key === 'data.dbt_hourly')!
     expect(hourly.cron).toBe('5 1-15 * * *')
     expect(hourly.timeoutMs).toBe(1800000)
