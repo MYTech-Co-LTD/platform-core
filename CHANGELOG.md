@@ -11,6 +11,10 @@
 
 ## [Unreleased]
 
+## [0.382.0](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.381.1...v0.382.0) - 2026-11-24
+- 【新增】aftersales: 工单记录「提交人门店归属一致性」快照——归属不执法但可见（ADR P1-a） ([#2790](https://github.com/MYTech-Co-LTD/platform-core/pull/2790), [7a94f9e](https://github.com/MYTech-Co-LTD/platform-core/commit/7a94f9eca696bba5a207c62e7cb29b6a834b4870))
+
+
 ## [0.381.1](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.381.0...v0.381.1) - 2026-11-24
 - 【修复】aftersales: 注册页补「审批中」态——员工档案未生成时不再退回空白表单 ([#2787](https://github.com/MYTech-Co-LTD/platform-core/pull/2787), [6e1d30f](https://github.com/MYTech-Co-LTD/platform-core/commit/6e1d30f4d2bab55ec2bd6a6d171e5980004e19f3))
 
