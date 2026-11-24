@@ -165,6 +165,25 @@ export async function seedBuiltin(
       rules += jobRule.rowCount ?? 0
     }
 
+    // 售后回执/结果（#2805）：收件人 = 事件 payload 里的 `user`（提交人本人 openid，kind=field）。
+    // 「事件声明 + 模板 + 派生规则」三处同描；公众号通道**不预置**——建成后由运营把
+    // `wechat_default` 加进本条规则（defaults 里塞不存在的通道名会让事件整体 no_channel）。
+    for (const [event, template, recipientKey] of [
+      ['aftersales.ticket.submitted', 'aftersales_ticket_submitted', 'submitter'],
+      ['aftersales.ticket.processed', 'aftersales_ticket_processed', 'submitter'],
+      ['aftersales.employee_approval.decided', 'aftersales_employee_approval_decided', 'applicant'],
+    ] as const) {
+      const asRule = await pool.query(
+        `insert into notify.rule
+           (org,id,enabled,event_key,scope,recipient_key,template_key,channels,origin,created_by)
+         values ($1,$2,true,$3,'*',$4,$5,'{inapp_default}'::text[],'derived','system')
+         on conflict (org,id) do update set template_key=excluded.template_key,
+           channels=excluded.channels`,
+        [org, `derived:aftersales:${event}:*`, event, recipientKey, template],
+      )
+      rules += asRule.rowCount ?? 0
+    }
+
     // 业务监控（Wave 7 V1）：收件人 = 事件 payload 里的 `to`（监控自己的收件人，kind=field）。
     // 「事件声明 + 模板 + 派生规则」三处同描；投递期复判在 tick 里做（越权者不入 `to`）。
     for (const [event, template] of [

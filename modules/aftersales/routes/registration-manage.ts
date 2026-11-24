@@ -68,10 +68,10 @@ export function registerRegistrationManage(r: ModuleHono, ctx: RouteCtx): void {
       await client.query('begin')
 
       // 状态机守卫：只决 pending 的（并发下另一个请求会 rowCount=0 ⇒ 409），**不先查后改**
-      const lock = await client.query<{ open_id: string; new_info: NewInfo }>(
+      const lock = await client.query<{ open_id: string; new_info: NewInfo; approve_type: string }>(
         `update aftersales.employee_approval set status = $3, decided_at = now(), decided_by = $4
           where org = $1 and id = $2 and status = 'pending'
-        returning open_id, new_info`,
+        returning open_id, new_info, approve_type`,
         [org, id, decision === 'approve' ? 'approved' : 'rejected', who],
       )
       if (lock.rowCount === 0) {
@@ -144,6 +144,28 @@ export function registerRegistrationManage(r: ModuleHono, ctx: RouteCtx): void {
         detail: { decision, status: decision === 'approve' ? 'approved' : 'rejected' },
       })
       await client.query('commit')
+
+      // 审批结果通知（#2805）：推给**申请人本人**（open_id = 他提交申请时的登录身份）
+      if (ctx.notify) {
+        const ap = lock.rows[0]!
+        try {
+          await ctx.notify.emit(c.get('identity'), {
+            eventKey: 'aftersales.employee_approval.decided',
+            eventId: `aftersales.employee_approval:${id}:decided`,
+            scope: String(id),
+            payload: {
+              user: ap.open_id,
+              approvalId: String(id),
+              approveType: ap.approve_type,
+              decision: decision === 'approve' ? '已通过' : '已驳回',
+              link: `${process.env.PLATFORM_CONSOLE_BASE_URL ?? ''}/app/aftersales/register`,
+            },
+          })
+        } catch (e) {
+          console.warn('[aftersales] approval decided notify failed（不阻断业务）:', e instanceof Error ? e.message : e)
+        }
+      }
+
       return c.json({ ok: true, id, decision })
     } catch (err) {
       await client.query('rollback').catch(() => {})

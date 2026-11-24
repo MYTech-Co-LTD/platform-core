@@ -23,6 +23,73 @@ export const BUILTIN_TEMPLATES: BuiltinTemplate[] = [
       },
     },
   },
+  // ── 售后回执/结果类（#2805）：收件人是**提交人本人**（公众号 openid） ────────────
+  // `wechat_oa` 的 `template_id` 留空：服务号模板消息一事一模板，ID 只能在公众号后台创建后
+  // 由运营填入（`notify.template` 的覆盖行）。空值 ⇒ sender 判 `template_id_missing` 永久失败，
+  // 落 `notify.delivery.last_error`——**可见地缺配**，而不是静默发不出去。
+  {
+    key: 'aftersales_ticket_submitted',
+    name: '工单已提交回执',
+    eventKey: 'aftersales.ticket.submitted',
+    contents: {
+      in_app: {
+        title: '工单已提交：{{ticketCode}}',
+        body: '{{storeName}} · {{productName}} × {{damageQuantity}}，我们会尽快处理',
+        link: '{{link}}',
+      },
+      wechat_oa: {
+        template_id: '',
+        first: '您的售后工单已提交',
+        keyword1: '{{ticketCode}}',
+        keyword2: '{{storeName}}',
+        keyword3: '{{productName}}',
+        keyword4: '{{damageQuantity}}',
+        remark: '我们会尽快处理，结果将通过本公众号通知您',
+        url: '{{link}}',
+      },
+    },
+  },
+  {
+    key: 'aftersales_ticket_processed',
+    name: '工单已处理',
+    eventKey: 'aftersales.ticket.processed',
+    contents: {
+      in_app: {
+        title: '工单已处理：{{ticketCode}}',
+        body: '结果：{{result}}{{amountText}}',
+        link: '{{link}}',
+      },
+      wechat_oa: {
+        template_id: '',
+        first: '您的售后工单已处理',
+        keyword1: '{{ticketCode}}',
+        keyword2: '{{result}}',
+        keyword3: '{{amountText}}',
+        remark: '{{remark}}',
+        url: '{{link}}',
+      },
+    },
+  },
+  {
+    key: 'aftersales_employee_approval_decided',
+    name: '员工登记审批结果',
+    eventKey: 'aftersales.employee_approval.decided',
+    contents: {
+      in_app: {
+        title: '登记申请{{decision}}',
+        body: '{{approveType}}申请已{{decision}}',
+        link: '{{link}}',
+      },
+      wechat_oa: {
+        template_id: '',
+        first: '您的员工登记申请已{{decision}}',
+        keyword1: '{{approvalId}}',
+        keyword2: '{{approveType}}',
+        remark: '点击查看详情',
+        url: '{{link}}',
+      },
+    },
+  },
   {
     key: 'notify_integration_stale',
     name: '集成活性超期',

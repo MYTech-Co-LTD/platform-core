@@ -126,3 +126,65 @@ notifications:
         recipient: approvers
         template: aftersales_employee_approval_pending
         channels: [wecom_default, inapp_default]
+
+    # ── 2026-11-24（#2805）：回执/结果类事件，收件人 = **提交人本人** ─────────────────
+    # 收件人用 `kind: field` 指向 payload 的 `user`（= 公众号 openid）：访客身份即 openid，
+    # 未绑 Casdoor 账户的员工也照样收得到（地址解析见 channel-address.ts 的 wechat_oa 分支）。
+    # 三个事件各带 defaults（「声明 ≠ 开通」：#2805 落地时踩到门禁——没 defaults 的声明
+    # 只会得到 no_rules，等于声明了却发不出去）。默认通道只放**已存在**的 `inapp_default`；
+    # 公众号通道建成后由运营在控制台把 `wechat_default` 加进规则。
+    - key: aftersales.ticket.submitted
+      title: 工单已提交（回执）
+      description: 员工在公众号提交售后工单后，回推一条已受理回执给他本人
+      scope: { key: ticketCode, label: 工单编号 }
+      payload:
+        user:          { type: user, required: true, label: 提交人 }
+        ticketCode:    { type: string, required: true, label: 工单编号 }
+        storeName:     { type: string, label: 门店 }
+        productName:   { type: string, label: 商品 }
+        damageQuantity: { type: string, label: 数量 }
+        link:          { type: url, required: true, label: 详情链接 }
+      recipients:
+        submitter: { kind: field, field: user, label: 提交人本人 }
+      # 零配置默认：先开通**站内信**（公众号通道需建通道 + 填模板 ID 后才可用，
+      # 运营在控制台把 `wechat_default` 加进本条规则即可——defaults 不预置不存在的通道名，
+      # 否则事件会整体落到 no_channel）
+      defaults:
+        recipient: submitter
+        template: aftersales_ticket_submitted
+        channels: [inapp_default]
+
+    - key: aftersales.ticket.processed
+      title: 工单已处理
+      description: 售后工单处理完成后，把结果（通过/驳回、退款额）推给提交人
+      scope: { key: ticketCode, label: 工单编号 }
+      payload:
+        user:        { type: user, required: true, label: 提交人 }
+        ticketCode:  { type: string, required: true, label: 工单编号 }
+        result:      { type: string, required: true, label: 处理结果 }
+        amountText:  { type: string, label: 退款额 }
+        remark:      { type: string, label: 处理备注 }
+        link:        { type: url, required: true, label: 详情链接 }
+      recipients:
+        submitter: { kind: field, field: user, label: 提交人本人 }
+      defaults:
+        recipient: submitter
+        template: aftersales_ticket_processed
+        channels: [inapp_default]
+
+    - key: aftersales.employee_approval.decided
+      title: 员工登记审批结果
+      description: 员工注册/变更审批通过或驳回后，通知申请人本人
+      scope: { key: approvalId, label: 审批单 }
+      payload:
+        user:        { type: user, required: true, label: 申请人 }
+        approvalId:  { type: string, required: true, label: 审批单号 }
+        approveType: { type: string, required: true, label: 类型 }
+        decision:    { type: string, required: true, label: 结果 }
+        link:        { type: url, required: true, label: 详情链接 }
+      recipients:
+        applicant: { kind: field, field: user, label: 申请人本人 }
+      defaults:
+        recipient: applicant
+        template: aftersales_employee_approval_decided
+        channels: [inapp_default]

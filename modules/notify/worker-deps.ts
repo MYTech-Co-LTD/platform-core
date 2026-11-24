@@ -5,9 +5,10 @@ import type { ChannelAddressResolver, NotificationEventDecl } from '@platform/sd
 import { createChannelAddressResolver } from '../../apps/server/src/channel-address'
 import { channelIsConfigured } from './domain/channel-config'
 import { probeDirectChannels } from './domain/channel-probe'
-import { resolveWecomCredential } from './domain/credential-store'
+import { resolveWecomCredential, resolveWechatOaCredential } from './domain/credential-store'
 import { dispatchSend } from './domain/im/senders'
 import type { WecomDirectCred } from './domain/im/wecom-direct'
+import type { WechatOaCred } from './domain/im/wechat-oa'
 import { rateLimitVerdict } from './domain/rate-limit'
 import * as storage from './storage'
 import { audit } from './storage'
@@ -107,7 +108,21 @@ export function buildWorkerDeps(
       // ⚠️ 直连解析失败**不回落桥**：回落会把「配错了直连」伪装成「照常工作」，
       //    正是本设计要消灭的静默。要回桥就把通道配置改回 bridge——那是显式动作。
       const direct = ch.provider === 'wecom_chat' && ch.config.transport === 'direct'
-      let credential: WecomDirectCred | undefined
+      // 公众号模板消息（#2805）：凭据**始终**从 channel_credential 解析（没有「共享桥」这种降级）
+      const isWechatOa = ch.provider === 'wechat_oa'
+      let credential: WecomDirectCred | WechatOaCred | undefined
+      if (isWechatOa) {
+        const r = await resolveWechatOaCredential(pool, d.org, env)
+        if (!r.ok) {
+          return {
+            ok: false,
+            kind: 'permanent',
+            code: r.reason === 'missing' ? 'credential_missing' : `credential_${r.reason}`,
+            summary: r.detail ?? '公众号凭据未配置（channel_credential 无行且 WECHAT_OA_DIRECT__<ORG> 缺失）',
+          }
+        }
+        credential = r.cred as WechatOaCred
+      }
       if (direct) {
         const r = await resolveWecomCredential(pool, d.org, env)
         if (!r.ok) {
@@ -122,7 +137,7 @@ export function buildWorkerDeps(
       }
       // 直连**不消费** `secret_refs`（那是桥的地址）；要求它存在等于「换成直连还必须留着桥的 env」——
       // 部署上会变成「先配好桥才允许直连」，正是要退役的那个依赖。只在走桥/其它 provider 时校验。
-      const secrets = direct ? {} : secretsOf(ch)
+      const secrets = direct || isWechatOa ? {} : secretsOf(ch)
       if (!secrets) {
         return { ok: false, kind: 'permanent', code: 'secret_missing', summary: 'secret_refs 指向的 env 未配置' }
       }

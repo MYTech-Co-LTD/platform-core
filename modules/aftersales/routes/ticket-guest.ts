@@ -1,5 +1,6 @@
 import { z } from 'zod'
 import { TENANT_STORAGE } from '@platform/sdk'
+import type { Identity } from '@platform/sdk'
 import { storageCandidatesFor, storageResolverFor } from '../storage'
 import { loadAttachments, normalizeTicketRow } from './ticket-manage'
 // 分页常量与解析器在 routes/context.ts：与管理端【同一份】实现、【同一套】语义
@@ -38,6 +39,37 @@ const SubmitBody = z.object({
   /** 本次提交要一起认领的附件（先传图后提交，见 spec §2.3） */
   attachmentIds: z.array(z.number().int().positive().safe()).max(50).optional(),
 })
+
+/**
+ * 工单提交回执（#2805）：推给**提交人本人**（`user` = 提交时登录的 openid）。
+ *
+ * fail-open：通知是附加价值，绝不因为发不出去就回滚一张已经落库的工单——
+ * 与审批通知同一纪律（见 registration-guest.ts 的同款 try/catch）。
+ */
+async function emitTicketSubmitted(
+  ctx: RouteCtx,
+  identity: Identity,
+  p: { ticketCode: string; storeName: string; productName: string; damageQuantity: number },
+): Promise<void> {
+  if (!ctx.notify) return
+  try {
+    await ctx.notify.emit(identity, {
+      eventKey: 'aftersales.ticket.submitted',
+      eventId: `aftersales.ticket:${p.ticketCode}:submitted`,
+      scope: p.ticketCode,
+      payload: {
+        user: identity.userId,
+        ticketCode: p.ticketCode,
+        storeName: p.storeName,
+        productName: p.productName,
+        damageQuantity: String(p.damageQuantity),
+        link: `${process.env.PLATFORM_CONSOLE_BASE_URL ?? ''}/app/aftersales`,
+      },
+    })
+  } catch (e) {
+    console.warn('[aftersales] ticket submitted notify failed（不阻断业务）:', e instanceof Error ? e.message : e)
+  }
+}
 
 export function registerTicketGuest(r: ModuleHono, ctx: RouteCtx): void {
   // GET /guest/tickets —— 只回自己的（按绑定集合收窄：读侧 ∈ guestIdentityIds，spec §2.2 +
@@ -265,6 +297,15 @@ export function registerTicketGuest(r: ModuleHono, ctx: RouteCtx): void {
       }
 
       await client.query('commit')
+
+      // 回执（#2805）：事务已提交后再发——通知失败不能拖累一张已经落库的工单
+      await emitTicketSubmitted(ctx, identity, {
+        ticketCode: coded.rows[0].code,
+        storeName: store.name,
+        productName: item.name,
+        damageQuantity: body.damageQuantity,
+      })
+
       return c.json(
         { id: ticketId, code: coded.rows[0].code, status: coded.rows[0].status, duplicated: false },
         201,
