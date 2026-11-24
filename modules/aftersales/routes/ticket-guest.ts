@@ -63,6 +63,8 @@ async function emitTicketSubmitted(
         storeName: p.storeName,
         productName: p.productName,
         damageQuantity: String(p.damageQuantity),
+        // 模板 time4 的来源：提交时刻（本地时区，微信 time 类型建议 `YYYY-MM-DD HH:mm`）
+        time: new Date().toLocaleString('sv-SE', { timeZone: 'Asia/Shanghai' }).slice(0, 16),
         link: `${process.env.PLATFORM_CONSOLE_BASE_URL ?? ''}/app/aftersales`,
       },
     })

@@ -37,14 +37,15 @@ export const BUILTIN_TEMPLATES: BuiltinTemplate[] = [
         body: '{{storeName}} · {{productName}} × {{damageQuantity}}，我们会尽快处理',
         link: '{{link}}',
       },
+      // 服务号模板字段是**模板自定**的：山海的「售后订单审核结果通知」用
+      // character_string1/thing2/amount3/time4 + 一个 const5（**const 不能传值**，2026-11-24 实测
+      // 传了报 47003）。`template_id` 留在覆盖行里填（每租户公众号不同）。
       wechat_oa: {
         template_id: '',
-        first: '您的售后工单已提交',
-        keyword1: '{{ticketCode}}',
-        keyword2: '{{storeName}}',
-        keyword3: '{{productName}}',
-        keyword4: '{{damageQuantity}}',
-        remark: '我们会尽快处理，结果将通过本公众号通知您',
+        character_string1: '{{ticketCode}}',
+        thing2: '{{productName}}',
+        amount3: '0.00元',
+        time4: '{{time}}',
         url: '{{link}}',
       },
     },
@@ -61,11 +62,12 @@ export const BUILTIN_TEMPLATES: BuiltinTemplate[] = [
       },
       wechat_oa: {
         template_id: '',
-        first: '您的售后工单已处理',
-        keyword1: '{{ticketCode}}',
-        keyword2: '{{result}}',
-        keyword3: '{{amountText}}',
-        remark: '{{remark}}',
+        character_string1: '{{ticketCode}}',
+        // thing 限 20 字：商品名 + 结果拼一起会超；结果进 const5 那种固定位不可传，
+        // 所以这里用商品名（结果本身在站内信里有完整版）
+        thing2: '{{productName}}',
+        amount3: '{{amountText}}',
+        time4: '{{time}}',
         url: '{{link}}',
       },
     },
@@ -80,14 +82,9 @@ export const BUILTIN_TEMPLATES: BuiltinTemplate[] = [
         body: '{{approveType}}申请已{{decision}}',
         link: '{{link}}',
       },
-      wechat_oa: {
-        template_id: '',
-        first: '您的员工登记申请已{{decision}}',
-        keyword1: '{{approvalId}}',
-        keyword2: '{{approveType}}',
-        remark: '点击查看详情',
-        url: '{{link}}',
-      },
+      // ⚠️ 暂**不**接公众号：现有模板「售后订单审核结果通知」的字段是订单语义
+      // （订单号/商品/金额/时间），套审批会传出误导内容。接它需要另建一个「审批结果通知」
+      // 模板（用户侧动作），建成后在此加 wechat_oa 内容 + 覆盖行填 template_id。
     },
   },
   {
