@@ -11,6 +11,10 @@
 
 ## [Unreleased]
 
+## [0.380.0](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.379.0...v0.380.0) - 2026-11-24
+- 【新增】aftersales: 注册页门店搜索改精确等值匹配（防品牌词枚举）——shim 补 exact=1 恢复源语义 ([#2776](https://github.com/MYTech-Co-LTD/platform-core/pull/2776), [a346a14](https://github.com/MYTech-Co-LTD/platform-core/commit/a346a1429e153f6996a484937ee079dacbe396eb))
+
+
 ## [0.379.0](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.378.0...v0.379.0) - 2026-11-24
 - 【新增】forms: 运营实时统计 console 页——具名视图/自定义维度/合计与 asOf ([#2764](https://github.com/MYTech-Co-LTD/platform-core/pull/2764), [35f301c](https://github.com/MYTech-Co-LTD/platform-core/commit/35f301c2913dbbf1c68a3131ed9134c2ce954326))
 - 【修复】forms: /stats 测试日期窗改按上海日界取「今天」——修 CI 16–24Z 恒红 (#2768) ([#2769](https://github.com/MYTech-Co-LTD/platform-core/pull/2769), [b9a65f9](https://github.com/MYTech-Co-LTD/platform-core/commit/b9a65f9d5fe1f6cc344df76c81ddeea459bf92aa))
