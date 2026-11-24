@@ -633,3 +633,15 @@ describe('daily_review 模板', () => {
     expect(text).toContain('不足以生成日报')
   })
 })
+
+describe('classifyNarrativeError（stream_failed 分类）', () => {
+  it('客户端断开 / 超时 / 上游错误 / 未知 各归其类', async () => {
+    const { classifyNarrativeError } = await import('./narrative')
+    expect(classifyNarrativeError(new Error('The operation was aborted'))).toBe('client_aborted')
+    expect(classifyNarrativeError(Object.assign(new Error('stream'), { name: 'AbortError' }))).toBe('client_aborted')
+    expect(classifyNarrativeError(new Error('upstream request timed out after 30s'))).toBe('upstream_timeout')
+    expect(classifyNarrativeError(new Error('HTTP 503 from gateway'))).toBe('upstream_error')
+    expect(classifyNarrativeError(new Error('fetch failed'))).toBe('upstream_error')
+    expect(classifyNarrativeError(new Error('something odd'))).toBe('unknown')
+  })
+})

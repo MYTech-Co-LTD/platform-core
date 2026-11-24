@@ -215,7 +215,7 @@ function gatedApp(identity: ReturnType<typeof makeIdentity>, pool: Pool | null) 
 }
 
 describe('报表面声明（不需要数据库）', () => {
-  it('报表端点都声明了（api.internal 全模块共 107 条），且页门分档：管理动作=data:manage，观看面=data:query', () => {
+  it('报表端点都声明了（api.internal 全模块共 108 条），且页门分档：管理动作=data:manage，观看面=data:query', () => {
     const declared = new Map(
       (mod.manifest.api?.internal ?? []).map((d) => [`${d.method} ${d.path}`, d.scope]),
     )
@@ -250,13 +250,14 @@ describe('报表面声明（不需要数据库）', () => {
     // +1：文本语义内嵌（R3 L2：POST /reports/:id/token-text，观看面 data:query）。
     // +1：30 天零访问报表（R6：GET /reports/stale，管理面 data:manage）。
     // +1：查询性能统计（R4：GET /reports/query-stats，管理面 data:manage）。
+    // +1：报表漏斗（N1/N2 代理：GET /reports/funnel-stats，管理面）。
     // +4：版式编辑（issue #2295：PUT /reports/:id/layout + my-layout 的 GET/PUT/DELETE，
     //     观看面 data:query；默认版式的真判据在 handler 的 canEditAsset）。
     // +2：agent 网关 face（spec 2026-11-16 §5.2：POST /mcp-read + POST /mcp-curated）。
     // +1：采集流程（#2397：GET /system-map/pipelines/:id/flow，观看面 data:query）。
     // 穷举口径（同 module.test.ts 的表清单）——别处加端点而漏改这里会红，
     // 逼着声明与测试一起动。
-    expect(declared).toHaveLength(107)
+    expect(declared).toHaveLength(108)
     // 指标变更单：七条全 data:manage；采纳/驳回的会话限定是路由内的第二道闸（不在这张表上）
     for (const p of [
       'POST /metric-changes', 'GET /metric-changes', 'GET /metric-changes/:id',
@@ -346,6 +347,7 @@ describe('报表面声明（不需要数据库）', () => {
     expect(declared.get('POST /reports/:id/token-text')).toBe('data:query')
     expect(declared.get('GET /reports/stale')).toBe('data:manage')
     expect(declared.get('GET /reports/query-stats')).toBe('data:manage')
+    expect(declared.get('GET /reports/funnel-stats')).toBe('data:manage')
     // 版式编辑（issue #2295）
     expect(declared.get('PUT /reports/:id/layout')).toBe('data:query')
     expect(declared.get('GET /reports/:id/my-layout')).toBe('data:query')
@@ -4767,6 +4769,37 @@ describePg('报表路由（需要 DATABASE_URL）', () => {
       const unknown = await compile({ revenue: OPEN_METRIC, nope: OPEN_METRIC })
       expect(unknown.status).toBe(400)
       expect(await unknown.json()).toMatchObject({ error: 'UNKNOWN_SLOT', keys: ['nope'] })
+    })
+  })
+
+  // ── 报表事件遥测（N1/N2 数据基础；迁移 055）──────────────────────────────────────
+  describe('报表事件漏斗', () => {
+    it('★ 建/发/看都落事件；funnel-stats 能数出来', async () => {
+      const { app } = manage()
+      const res = await post(app, {
+        title: '事件漏斗报表', renderer: 'platform',
+        spec: { panels: [{ chart: 'text', content: 'x', span: 24 }] },
+      })
+      expect(res.status).toBe(201)
+      const { id } = await res.json() as { id: string }
+      const pub = await app.request(`/reports/${id}/publish`, {
+        method: 'POST', headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ expectedVersion: await versionOf(app, id) }),
+      })
+      expect(pub.status).toBe(200)
+      expect((await viewer().app.request(`/reports/${id}/published-spec`)).status).toBe(200)
+      // 事件是 best-effort 异步写：给一点时间落库（只等这一轮）。
+      await new Promise((r) => setTimeout(r, 150))
+      const stats = await (await app.request('/reports/funnel-stats?days=30')).json() as {
+        created: number; published: number; viewedReports: number
+        createdBySource: Record<string, number>
+      }
+      expect(stats.created).toBeGreaterThanOrEqual(1)
+      expect(stats.published).toBeGreaterThanOrEqual(1)
+      expect(stats.viewedReports).toBeGreaterThanOrEqual(1)
+      expect(stats.createdBySource.http).toBeGreaterThanOrEqual(1)
+      // 权限分档由 manifest 声明（上面的声明测试已断言 data:manage）；模块壳不挂门卫，故这里不重复。
+      expect((await app.request('/reports/funnel-stats?days=0')).status).toBe(400)
     })
   })
 })

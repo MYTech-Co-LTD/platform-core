@@ -44,12 +44,13 @@ import { recordReportView, staleReports } from '../domain/report-views'
 import { applyLayoutToRaw } from '../domain/report-layout'
 import { deleteMyLayout, getMyLayout, saveMyLayout } from '../domain/report-layout-store'
 import { queryStats } from '../domain/query-stats'
+import { funnelStats, recordReportEvent } from '../domain/report-events'
 import type { QueryDeps } from '../domain/query-service'
 import { beijingTodayOf, freshnessFaceFor } from '../domain/query-service'
 import { warehouseConfigured, warehousePool } from '../domain/warehouse'
 import { periodRangeOf, type DateRange } from '../domain/report-period'
 import type { FactBundle } from '../domain/report-facts'
-import { generateNarrative, NARRATIVE_PROMPT_VERSION, streamNarrative } from '../domain/narrative'
+import { classifyNarrativeError, generateNarrative, NARRATIVE_PROMPT_VERSION, streamNarrative } from '../domain/narrative'
 import { narrativeStats, recordNarrativeRun, type NarrativeOutcome } from '../domain/narrative-runs'
 import type { NarrativeEvent } from '../domain/narrative'
 import { signEditHandoff } from '../domain/edit-handoff'
@@ -462,6 +463,11 @@ export function registerReports(r: ModuleHono, ctx: RouteCtx): void {
         visibility: parsed.data.visibility,
       })
       await ensureOwner(ctx.pool, org, id, requester.userId)
+      // 事件遥测（N1/N2）：创建即记一条；source 由入口决定（HTTP 面统一 http，agent 面在 MCP 工具里记 agent）。
+      void recordReportEvent(ctx.pool, {
+        org, reportId: id, actor: requester.userId, event: 'created', source: 'http',
+        meta: { renderer: 'platform', visibility: parsed.data.visibility },
+      })
       // `version` 是登记侧版本，**写后**回读（与 metabase 路径同口径）。自绘没有内容侧指纹
       // （内容就是 spec 本身，写保护走 PUT /spec 的 expectedVersion）也没有 `created` 证据
       // （upsertReport 只回 id）⇒ 响应体相应少这两键。
@@ -1092,6 +1098,10 @@ export function registerReports(r: ModuleHono, ctx: RouteCtx): void {
         return c.json({ error: 'STALE_WRITE', currentVersion: cur }, 409)
       }
       // 回带推进后的版本（调用方据此续写下一次，无需再读一次——与 PUT /reports/:id 同契约）
+      void recordReportEvent(ctx.pool, {
+        org, reportId: id, actor: requester.userId, event: 'spec_edited',
+        meta: { version: updated.version, kind: 'spec' },
+      })
       return c.json({ version: updated.version })
     })
   })
@@ -1213,6 +1223,10 @@ export function registerReports(r: ModuleHono, ctx: RouteCtx): void {
         if (cur === null) return c.json({ error: 'NOT_FOUND' }, 404)
         return c.json({ error: 'STALE_WRITE', currentVersion: cur }, 409)
       }
+      void recordReportEvent(ctx.pool, {
+        org, reportId: id, actor: requester.userId, event: 'spec_edited',
+        meta: { version: updated.version, kind: 'layout' },
+      })
       return c.json({ version: updated.version })
     })
   })
@@ -1382,6 +1396,10 @@ export function registerReports(r: ModuleHono, ctx: RouteCtx): void {
         statusOfVersionFailure(out.reason),
       )
     }
+    void recordReportEvent(ctx.pool, {
+      org, reportId: id, actor: requester.userId, event: 'published',
+      meta: { version: out.publishedVersion, noteLength: body.data.note.length },
+    })
     return c.json(scopeIssues.length === 0 ? out : { ...out, scopeIssues })
   })
 
@@ -1548,6 +1566,11 @@ export function registerReports(r: ModuleHono, ctx: RouteCtx): void {
     if (render.blocked) return c.json({ error: 'NOT_FOUND' }, 404)
     // 观看面渲染成功 = 一次真实访问（R6 零访问归档提醒的事实来源）。best-effort，不拖慢回包。
     void recordReportView(ctx.pool, org, id, requester.userId)
+    // 事件级访问历史（N1 分母/活跃面）：与上面的汇总表并存——汇总给清单，事件给漏斗。
+    void recordReportEvent(ctx.pool, {
+      org, reportId: id, actor: requester.userId, event: 'viewed',
+      meta: { version: snapshot.version ?? null },
+    })
     return c.json({ ...snapshot, spec: render.spec, deniedPanels: render.deniedPanels })
   })
 
@@ -1889,7 +1912,8 @@ export function registerReports(r: ModuleHono, ctx: RouteCtx): void {
             send(ev)
           }
         } catch (e) {
-          console.error(`[data/narrative] ${id} stream failed: ${e instanceof Error ? e.message : String(e)}`)
+          outcomeReason = classifyNarrativeError(e)
+          console.error(`[data/narrative] ${id} stream failed (${outcomeReason}): ${e instanceof Error ? e.message : String(e)}`)
           // 流已开（200 已发）⇒ 只能用事件收敛状态，改不了状态码。
           send({ type: 'error', reason: 'NARRATIVE_FAILED' })
         } finally {
@@ -1927,6 +1951,17 @@ export function registerReports(r: ModuleHono, ctx: RouteCtx): void {
   })
 
   // ── 查询性能（R4 p95 基线）：数据源 = query_audit（每次查询一行，052 起带 duration_ms）──
+  // 报表漏斗（N1/N2 代理）：只数事件，不猜口径。窗口外的发布不进分母。
+  r.get('/reports/funnel-stats', async (c) => {
+    const requester = requesterOf(c)
+    if (requester === null) return c.json({ error: 'UNAUTHENTICATED' }, 403)
+    const raw = c.req.query('days') ?? '30'
+    const days = Number(raw)
+    if (!Number.isInteger(days) || days < 1 || days > 365) return c.json({ error: 'INVALID_BODY' }, 400)
+    const org = c.get('tenant').casdoor_org
+    return c.json(await funnelStats(ctx.pool, org, days))
+  })
+
   r.get('/reports/query-stats', async (c) => {
     if (requesterOf(c) === null) return c.json({ error: 'UNAUTHENTICATED' }, 403)
     const raw = Number(c.req.query('days') ?? '7')
@@ -2062,6 +2097,10 @@ export function registerReports(r: ModuleHono, ctx: RouteCtx): void {
     if (!out.ok) return c.json({ error: out.error.error, ...(out.error.detail === undefined ? {} : { detail: out.error.detail }) }, out.error.status)
     // 没有按日组成（比率/不可加）⇒ 不导出：导出「没有组成」的凭证只会让人以为能复算。
     if (out.receipt.series === null) return c.json({ error: 'NO_SERIES' }, 409)
+    void recordReportEvent(ctx.pool, {
+      org: c.get('tenant').casdoor_org, reportId: id, actor: requesterOf(c)?.userId ?? null,
+      event: 'exported', meta: { kind: 'receipt', format: body.data.format ?? 'csv' },
+    })
     const base = `receipt-${out.receipt.metric.id.replace(/[^a-zA-Z0-9_-]/g, '_')}-${out.receipt.window.from}_${out.receipt.window.to}`
     if (body.data.format === 'xlsx') {
       const buf = await receiptXlsx(out.receipt)
@@ -2096,6 +2135,10 @@ export function registerReports(r: ModuleHono, ctx: RouteCtx): void {
         : out.reason === 'denied' ? 'FORBIDDEN' : 'QUERY_FAILED'
       return c.json({ error, ...(out.detail === undefined ? {} : { detail: out.detail }) }, status)
     }
+    void recordReportEvent(ctx.pool, {
+      org: t.target.org, reportId: id, actor: t.target.requester.userId,
+      event: 'exported', meta: { kind: 'detail', format: body.data.format ?? 'csv' },
+    })
     const base = `detail-${t.target.panel.metricId.replace(/[^a-zA-Z0-9_-]/g, '_')}-${t.target.range.from}_${t.target.range.to}`
     if (body.data.format === 'xlsx') {
       const buf = await detailXlsx(out.out.columns, out.out.data)
