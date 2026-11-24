@@ -39,7 +39,7 @@
 | 阶段 | 动作 | 状态 |
 |---|---|---|
 | **A 退配置** | `deploy/data-compose.yml` 移除 `metabase` / `metabase-db` 服务与 `mbdata` 卷声明；保留宿主卷（延后删除） | ✅ **2026-11-19 已在 main 落地**（随调度拆分同一波；本文件只补证据与台账，不再改编排） |
-| **B 停机** | 两台实例 `docker stop && docker rm` 两个容器；确认站点/报表不受影响 | 🟡 **山海已停**（2026-11-24 实测无 metabase 容器）；**mytech 仍在跑**（待执行） |
+| **B 停机** | 两台实例 `docker stop && docker rm` 两个容器；确认站点/报表不受影响 | ✅ **2026-11-24 两台均已完成**：山海实测无 metabase 容器；mytech 已 stop+rm（`no-metabase`），`mytech.hookflow.cn/healthz` 200、平台容器 healthy |
 | **C 代码清理** | 移除 `domain/metabase.ts`、embed-url/edit-url/reconcile 路由与测试、移动端引用；`renderer` 枚举保留历史兼容，存量行另行迁移 | 待办（独立 PR，需回归全量门禁） |
 | **D 删卷** | `docker volume rm` `mbdata` 卷（**不可逆**，需点名） | 待观察期后再议；mytech 的卷同样保留 |
 
