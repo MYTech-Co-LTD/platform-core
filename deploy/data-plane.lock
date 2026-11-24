@@ -1,4 +1,4 @@
-sha256-of-rest 9187e49450fa5c651a33dbe9bdf3175c9b2c4186dadd585f352811bc6bdd0996
+sha256-of-rest 751002bc982220d76621f9357cc34d5f56880bec62c90e4246e8a5457b13a169
 57c67f58b38c8450ddcedf477607e722b51998873b12f84c15ffadc7fe5e81d3 contracts/README.md ${REPO}/contracts/README.md 0644
 fcc8189e1012d5fbb8e2505025bed637dd01c7b4465ab86125d3eaa7f330eff3 contracts/common/_schema.schema.json ${REPO}/contracts/common/_schema.schema.json 0644
 1730119518c3371f3c2ff3492f4c15cd731688047c6d40805ec4d2c65892f3ff contracts/common/_template.contract.json ${REPO}/contracts/common/_template.contract.json 0644
@@ -432,8 +432,8 @@ ccd99ea130a42b1a70c06d20a6fc3b448d2f6eaec79eb18af7e82b5fb4458360 deploy/duckle/c
 e692dc03df90200ea8617b35b2f9b85e5623eb64023520c50afecc48afb895ac deploy/duckle/console/pipelines/lemeng.wholesale.return.l0.3120.json ${REPO}/deploy/duckle/console/pipelines/lemeng.wholesale.return.l0.3120.json 0644
 ad74d5d45f1a23091835e3e9015917d82dc8903173a54666b9e8de4c3357f18e deploy/duckle/console/retail_hot.ddl.sql ${REPO}/deploy/duckle/console/retail_hot.ddl.sql 0644
 f4011dd588d2121bbb20f717bf2231b93baf8e431b81e33c2728a39f1a49379e deploy/duckle/console/schedule-durations.json ${REPO}/deploy/duckle/console/schedule-durations.json 0644
-d0c7803e855133ec87a1b3b9631114a23074dd99445be6f7c4a77903088ef429 deploy/duckle/console/schedules/3120.json ${REPO}/deploy/duckle/console/schedules/3120.json 0644
-5bbca7676dcfe4a68952161d391d8623663b0c25dfdf48d9a13ac2c188daeff7 deploy/duckle/console/schedules/64188.json ${REPO}/deploy/duckle/console/schedules/64188.json 0644
+e91572e4616a2362c8370a59d0a5d327441e46acdb52cfdd5417627f963548cf deploy/duckle/console/schedules/3120.json ${REPO}/deploy/duckle/console/schedules/3120.json 0644
+eed37a586b54ee6c5c23ff5401931f9091b7746e626f9a6efff465a02c6d531e deploy/duckle/console/schedules/64188.json ${REPO}/deploy/duckle/console/schedules/64188.json 0644
 127dde28f2d058ec300de7777f171f1922fa8b787af810f2ce63fbfa7a52d53d deploy/duckle/console/schedules/forms.json ${REPO}/deploy/duckle/console/schedules/forms.json 0644
 c1e4977c83bbadb61efcc3a90d745754c9f15de73aedc1f6ae74d5c02d0375d8 deploy/duckle/console/scorecard-alert.py ${REPO}/deploy/duckle/console/scorecard-alert.py 0644
 2e88d604de7ff821db77af4938bdcf43d99f3fee8cb91fbf0c4526961aa20c6f deploy/duckle/console/scorecard-baseline.py ${REPO}/deploy/duckle/console/scorecard-baseline.py 0644
