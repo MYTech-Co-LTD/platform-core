@@ -21,6 +21,9 @@ export function useStoreEmployeeApproval() {
   const loading = ref(false)
   // 员工信息
   const employeeInfo = ref<any>(null)
+  // 待审批申请（2026-11-24：pending 期间 employee_info 还没有行，页面必须单独表态，
+  // 否则刷新后退回空白表单——员工以为没提交成功，会重复提交，只能靠服务端 409 兜）
+  const hasPendingApproval = ref(false)
   // 绑定身份（账户统一 Task 9）：null = 无在效/异议中的绑定（服务端已收敛 pending/revoked）
   const identity = ref<GuestIdentity | null>(null)
   // 门店列表
@@ -95,11 +98,15 @@ export function useStoreEmployeeApproval() {
       loading.value = true
       // 绑定身份与登记档案同源同刷（账户统一 Task 9）：异议提交后的「刷新页面状态」走的就是
       // 这一次重载——两个请求都落在 /guest/me/registration，并行发不掉一个往返。
-      const [employees, link] = await Promise.all([
+      // 三个 shim 同打 `/guest/me/registration`（shim 层各自一次请求，不共享缓存），
+      // 并行发 ⇒ 页面多一个「待审批」状态的代价只是并发度，不是往返次数。
+      const [employees, link, approvals] = await Promise.all([
         employee_info.query({}),
         identity_link.query(),
+        employee_info_approve.query({ filter: { status__eq: '待审批' } }),
       ])
       identity.value = link
+      hasPendingApproval.value = Array.isArray(approvals) && approvals.length > 0
 
       if (employees && employees.length > 0) {
         employeeInfo.value = employees[0]
@@ -189,6 +196,7 @@ export function useStoreEmployeeApproval() {
     pageLoading,
     loading,
     employeeInfo,
+    hasPendingApproval,
     identity,
     storeList,
     formData,

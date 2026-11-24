@@ -36,12 +36,34 @@ beforeEach(() => {
 })
 
 describe('useStoreEmployeeApproval', () => {
-  it('loadEmployeeInfo：未登记 ⇒ employeeInfo 为 null（页面据此进「注册」态）', async () => {
+  it('loadEmployeeInfo：未登记且无待审批 ⇒ employeeInfo 为 null、hasPendingApproval 为 false（页面进「注册」态）', async () => {
     const c = useStoreEmployeeApproval()
     await c.loadEmployeeInfo()
     expect(c.employeeInfo.value).toBeNull()
-    // ⚠️ 「有没有待审批」**不在这里查**：源侧那次查询在 submitApproval 开头（见下），
-    // 断言也从这里搬走了——给 loadEmployeeInfo 加查询会让页面加载多发一次请求。
+    expect(c.hasPendingApproval.value).toBe(false)
+  })
+
+  // 2026-11-24 真机验收缺口：employee_info 在审批通过前没有行，若页面只按它判态，
+  // 刷新后回退空白注册表单 ⇒ 员工以为没提交成功而重复提交（只能靠服务端 409 兜）。
+  it('loadEmployeeInfo：未登记但有待审批 ⇒ hasPendingApproval 为 true（页面进「审批中」态，不出表单）', async () => {
+    approvalQuery.mockResolvedValue([{ id: 0, openid: '', status: '待审批' }])
+    const c = useStoreEmployeeApproval()
+    await c.loadEmployeeInfo()
+    expect(c.employeeInfo.value).toBeNull()
+    expect(c.hasPendingApproval.value).toBe(true)
+  })
+
+  it('loadEmployeeInfo：已登记 + 队列有「变更」申请 ⇒ 两值都反映事实，页面靠模板 v-if 顺序让员工卡优先', async () => {
+    empQuery.mockResolvedValue([
+      { id: 1, employee_name: '张三', employee_phonenumber: '138', store_info: '3', status: '通过', _ctime: '', _mtime: '' },
+    ])
+    approvalQuery.mockResolvedValue([{ id: 0, openid: '', status: '待审批' }])
+    const c = useStoreEmployeeApproval()
+    await c.loadEmployeeInfo()
+    expect(c.employeeInfo.value?.employee_name).toBe('张三')
+    expect(c.hasPendingApproval.value).toBe(true)
+    // ↑ ref 只陈述事实，不做优先级判断：`employeeInfo` 分支在模板里先判，
+    //   待审批态因此抢不走员工卡（硬塞 false 会把「变更申请」这个事实从模型里抹掉）。
   })
 
   it('loadEmployeeInfo：已登记 ⇒ 档案回填（门店串的回填属页面的 handleEdit，见页面测试）', async () => {

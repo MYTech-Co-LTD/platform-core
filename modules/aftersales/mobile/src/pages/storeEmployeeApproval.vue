@@ -120,6 +120,25 @@
         </t-button>
       </div>
 
+      <!-- 待审批（2026-11-24）：employee_info 在审批通过前没有行，若只按它判态，刷新后
+           会退回空白注册表单 ⇒ 员工以为没提交成功而重复提交（服务端 409 才兜住）。
+           申请明细在审批队列里、访客面无读口 ⇒ 这里只表态「已提交，审批中」。 -->
+      <div v-else-if="hasPendingApproval">
+        <t-card class="mb-4 rounded-xl shadow-sm bg-[#FFF7E6] border-[#F5E1B8]">
+          <div class="flex items-start gap-3">
+            <i class="fa fa-clock text-[#E08A00] text-xl mt-0.5"></i>
+            <div class="text-sm text-gray-700">
+              <p class="font-medium mb-1">注册申请审批中</p>
+              <p class="text-gray-600">您的注册信息已提交，管理员将在 1-3 个工作日内完成审批。审批通过后即可正常使用系统功能。</p>
+            </div>
+          </div>
+        </t-card>
+
+        <t-button theme="default" variant="outline" size="large" block @click="handleRefresh">
+          <i class="fa fa-refresh mr-2"></i>刷新审批状态
+        </t-button>
+      </div>
+
       <!-- 注册/编辑表单 -->
       <div v-else>
         <!-- 表单标题 -->
@@ -261,6 +280,7 @@ const composable = useStoreEmployeeApproval()
 const pageLoading = composable.pageLoading
 const loading = composable.loading
 const employeeInfo = composable.employeeInfo
+const hasPendingApproval = composable.hasPendingApproval
 const identity = composable.identity
 const storeList = composable.storeList
 const formData = composable.formData
@@ -418,6 +438,15 @@ const handleSubmit = async (): Promise<void> => {
   } finally {
     submitting.value = false
   }
+}
+
+/**
+ * 刷新审批状态：审批通过后 employee_info 才有行，重载即从「审批中」切到员工信息卡。
+ */
+const handleRefresh = async (): Promise<void> => {
+  pageLoading.value = true
+  await loadEmployeeInfo()
+  pageLoading.value = false
 }
 
 /**
