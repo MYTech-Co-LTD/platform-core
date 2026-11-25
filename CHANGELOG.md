@@ -11,6 +11,10 @@
 
 ## [Unreleased]
 
+## [0.391.3](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.391.2...v0.391.3) - 2026-11-25
+- 【修复】assertions: 结构判据留 5 分钟、全量证明与延迟探测搬 30 分钟 ([#2859](https://github.com/MYTech-Co-LTD/platform-core/pull/2859), [c053539](https://github.com/MYTech-Co-LTD/platform-core/commit/c053539129fd159a8616eb949c5dcadf09bc88cd))
+
+
 ## [0.391.2](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.391.1...v0.391.2) - 2026-11-25
 - 【修复】scheduler: 10m 车道留槽 + retail_derived 分块（B2 第一阶段） ([#2857](https://github.com/MYTech-Co-LTD/platform-core/pull/2857), [d40fdc4](https://github.com/MYTech-Co-LTD/platform-core/commit/d40fdc439cc097f554557e21604e1738314374d9))
 
