@@ -133,13 +133,13 @@ describe('afterSalesWorkOrderSubmit 页面', () => {
     await flushPromises()
     expect(settlementOrdersQuery).toHaveBeenCalledWith('103')
 
-    await selects[1]!.vm.$emit('update:modelValue', ORDER)
-    await selects[1]!.vm.$emit('change', ORDER)
+    await selects[1]!.vm.$emit('update:modelValue', ORDER.orderNo)
+    await selects[1]!.vm.$emit('change', ORDER.orderNo)
     await flushPromises()
 
-    // 选行（页面的选中形状 = 行 + 所属单号——提交侧的四键之一）
+    // 选行（#2837：下拉值改用**稳定字符串** lineKey，页面 watch 再解析成行 + 所属单号）
     selects = w.findAllComponents(Select)
-    await selects[2]!.vm.$emit('update:modelValue', { ...ORDER.lines[0]!, orderNo: ORDER.orderNo })
+    await selects[2]!.vm.$emit('update:modelValue', ORDER.lines[0]!.lineKey)
     await flushPromises()
     expect(w.find('input[placeholder*="报损数量"]').attributes('placeholder')).toContain('该行数量 30')
   })
@@ -174,11 +174,11 @@ describe('afterSalesWorkOrderSubmit 页面', () => {
     await selects[0]!.vm.$emit('update:modelValue', STORE.id)
     await selects[0]!.vm.$emit('change', STORE.id)
     await flushPromises()
-    await selects[1]!.vm.$emit('update:modelValue', ORDER)
-    await selects[1]!.vm.$emit('change', ORDER)
+    await selects[1]!.vm.$emit('update:modelValue', ORDER.orderNo)
+    await selects[1]!.vm.$emit('change', ORDER.orderNo)
     await flushPromises()
     selects = w.findAllComponents(Select)
-    await selects[2]!.vm.$emit('update:modelValue', { ...ORDER.lines[0]!, orderNo: ORDER.orderNo })
+    await selects[2]!.vm.$emit('update:modelValue', ORDER.lines[0]!.lineKey)
     await w.find('input[placeholder*="报损数量"]').setValue('2')
     await w.find('textarea').setValue('外包装破损')
     await flushPromises()
@@ -212,8 +212,8 @@ describe('afterSalesWorkOrderSubmit 页面', () => {
     expect(src).not.toContain('generateOrderNumber')
     expect(src).not.toContain('selectedProduct')
     expect(src).not.toContain(':value="product"')
-    // 新选择面的绑定形状：行值摊上所属单号（提交侧四键之一），价格随单冻结的提示在场
-    expect(src).toContain(':value="{ ...line, orderNo: selectedOrder.orderNo }"')
+    // 新选择面的绑定形状（#2837）：行值 = 稳定字符串 lineKey；价格随单冻结的提示在场
+    expect(src).toContain(':value="line.lineKey"')
     expect(src).toContain('随单冻结')
     // ④ 页内前端微信 OAuth 是**整体删除**，不是被条件分支藏起来
     expect(src).not.toContain('open.weixin.qq.com')
