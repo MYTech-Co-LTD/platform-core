@@ -36,6 +36,12 @@
                 <span class="text-xs text-gray-400 shrink-0">{{ product.id }}</span>
               </div>
             </t-option>
+            <!-- 空态：远程搜索必须先输关键词（源系统同口径），不给提示会被当成「没有商品」 -->
+            <template #empty>
+              <div class="py-3 text-center text-xs text-gray-400">
+                {{ productLoading ? '搜索中…' : '请输入商品名称后选择' }}
+              </div>
+            </template>
           </t-select>
         </div>
       </t-card>
@@ -464,6 +470,8 @@ watch(selectedOrderNo, (no) => {
   const first = o?.lines?.[0] ?? null
   selectedLineKey.value = first?.lineKey ?? ''
   selectedLine.value = first ? { ...first, orderNo: o!.orderNo } : null
+  // 源系统同款：选单后把到货日期预填成该单的业务日期（用户仍可改）
+  if (o?.bizday) arrivalDate.value = String(o.bizday).slice(0, 10)
 })
 
 // 到货日期 / 时间（对齐 wuji 的两个必填控件）
