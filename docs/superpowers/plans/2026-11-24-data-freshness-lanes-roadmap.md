@@ -62,7 +62,10 @@
 - [x] **B1** G0 基线测量 → **单飞定案**：两路并发峰值 2.46GB、重模型+采集峰值 3.02GB / 上限 4GB，无 postmaster 重启；长查询不可取消（只能预防）
 - [ ] **B2** 单飞锁 + chunk 上限实现（≤3 分钟）
 - [ ] **C1–C6** 水位 / 幂等 / 热湖互补性回归
-- [ ] **D1–D4** per-mart SLA 断言 + 告警
+- [x] **D1** SLA 事实源 `scripts/lemeng/sla.json`（产品/域/源/窗口/阈值）+ `check-data-lanes` 覆盖门禁（域缺条目/源 id 不存在/多出域 即红）
+- [x] **D2** `scripts/lemeng/sla-check.mjs`（只读测量，恒 exit 0）+ `data.sla_check`（seed disabled）+ 11 条纯函数测试
+- [ ] **D3** `data.sla_measure` 历史表 + 观测 2–3 天，回填 p95
+- [ ] **D4** 按实测收紧阈值 + 接 OO 告警 + 开闸（`data.sla_check`）
 - [ ] **G6** 48h soak
 
 ### P0.5 物化水位门禁
@@ -117,6 +120,7 @@
 | 2026-11-25 | A3 1h 车道拆域首轮 | ✅ 9/10 + 审计独立 | dims 34s / retail_derived 503s / purchase 42s / inventory 87s / client 33s / branch 63s / transfer 27s / outbound 53s / request 94s / loss 33s；窗口审计独立 ok 167s；**member 429 失败**（#2831） |
 | 2026-11-25 | 429 容量竞态修复 | ✅ PR #2832 | lane `maxAttempts` 3 / dims 2；**DB 已写库** |
 | 2026-11-25 | A3 拆域第二轮（修复后） | ✅ **10/10 + 审计** | 13:09–13:48：dims 36s / retail_derived 498s / purchase 39s / inventory 101s / **member 30s（429 修复生效）** / client 33s / branch 62s / transfer 27s / outbound 50s / request 96s / loss 30s；窗口审计 168s 独立 ok |
+| 2026-11-25 | D1/D2 SLA 事实源 + 只读测量 | ✅ 本 PR | `sla.json`（10m/1h 十域/日）+ `sla-check.mjs`（source/built 两钟、跨零点窗口、木桶源）+ `data.sla_check`（disabled）；25 条测试（D1 门禁 3 + D2 纯函数 11 + 原 11） |
 | 2026-11-25 | 部署僵尸 running 行 | ⚠️ 待查 | `publish_dims` 部署被杀后行停留 22 分钟占槽；executor 启动对账未生效 |
 
 ## §6 变更记录
