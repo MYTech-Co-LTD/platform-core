@@ -11,6 +11,12 @@
 
 ## [Unreleased]
 
+## [0.391.0](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.390.1...v0.391.0) - 2026-11-25
+- 【修复】data: A3 拆域漏掉 daily_report 车道——补 job + SLA + 门禁 ([#2852](https://github.com/MYTech-Co-LTD/platform-core/pull/2852), [bd1b47d](https://github.com/MYTech-Co-LTD/platform-core/commit/bd1b47d871e31434ad6c0c5f1a32d397b5435624))
+- 【新增】aftersales: 提交页按 wuji 交互重排（商品→门店→订单+商品信息卡）并补到货时间 ([#2850](https://github.com/MYTech-Co-LTD/platform-core/pull/2850), [7b6de8f](https://github.com/MYTech-Co-LTD/platform-core/commit/7b6de8fdda99907c44462aeb611e4b5cac2a9620))
+- 【新增】data: D3 SLA 测量历史表 + 观测模式 ([#2848](https://github.com/MYTech-Co-LTD/platform-core/pull/2848), [748ac2d](https://github.com/MYTech-Co-LTD/platform-core/commit/748ac2d961d712a689609ea182c3ba17b19c6b1d))
+
+
 ## [0.390.1](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.390.0...v0.390.1) - 2026-11-25
 - 【修复】data: sla-check 按 workspace 回退解析 pg ([#2846](https://github.com/MYTech-Co-LTD/platform-core/pull/2846), [e82b6ad](https://github.com/MYTech-Co-LTD/platform-core/commit/e82b6ad11cb40b44c62adc8588c1654c7c2fe1e3))
 
