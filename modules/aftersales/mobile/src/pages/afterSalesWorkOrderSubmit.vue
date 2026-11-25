@@ -267,6 +267,10 @@
       >
         <i class="fa fa-paper-plane mr-2"></i>提交工单
       </t-button>
+      <!-- 2026-11-25：本店工单列表入口（多店员工进列表页切换门店查看） -->
+      <t-button theme="default" variant="text" size="small" block class="mt-2" @click="goMyTickets">
+        <i class="fa fa-list mr-1"></i>查看我的工单
+      </t-button>
     </div>
   </div>
 </template>
@@ -447,6 +451,8 @@ const handleFileInputChange = async (event: Event) => {
 }
 
 // 提交表单
+const goMyTickets = () => router.push({ name: 'myTickets' })
+
 const handleSubmit = async () => {
   const data = formData.value
 

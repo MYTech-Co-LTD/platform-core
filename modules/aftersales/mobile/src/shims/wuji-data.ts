@@ -285,6 +285,29 @@ export interface SettlementLineRow {
   quantity: number | null
   priceMinor: number
 }
+/** 访客可见的工单列表行（服务端 `normalizeTicketRow` 出的形状，snake_case + 部分 camel 别名）。 */
+export interface TicketListRow {
+  id: number
+  code: string
+  product_name: string
+  store_name: string
+  store_code: string
+  damage_quantity: number
+  status: 'pending' | 'completed' | 'cancelled'
+  amount_minor: number | null
+  remark: string | null
+  created_at: string
+  processed_at: string | null
+}
+
+export type TicketDetailRow = TicketListRow & {
+  product_code?: string
+  amount_type?: 'ratio' | 'fixed' | null
+  refund_ratio?: number | null
+  related_order?: string | null
+  attachments?: Array<{ id: number; url: string | null }>
+}
+
 export interface SettlementOrderRow {
   orderNo: string
   source: 'transfer' | 'wholesale'
@@ -303,6 +326,29 @@ export const after_sales_work_order = {
       `/guest/settlement-orders?storeCode=${encodeURIComponent(storeCode)}`,
     )
     return body.orders
+  },
+
+  /**
+   * 我的门店工单列表（2026-11-25 门店可见性）：`GET /guest/tickets[?storeCode=]`。
+   * 服务端按「我有资格的门店」收窄；`storeCode` 用于多店切换（不在资格集合内 ⇒ 403）。
+   */
+  async query(params: { storeCode?: string; page?: number; size?: number } = {}): Promise<{
+    items: TicketListRow[]
+    total: number
+    page: number
+    size: number
+  }> {
+    const qs = new URLSearchParams()
+    if (params.storeCode) qs.set('storeCode', params.storeCode)
+    if (params.page) qs.set('page', String(params.page))
+    if (params.size) qs.set('size', String(params.size))
+    const s = qs.toString()
+    return apiGet(`/guest/tickets${s ? `?${s}` : ''}`)
+  },
+
+  /** 单条详情：同店才放行（跨店 404 与不存在同形）。 */
+  async get(id: number): Promise<TicketDetailRow> {
+    return apiGet(`/guest/tickets/${id}`)
   },
 
   /**
