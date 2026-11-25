@@ -317,6 +317,12 @@ mat_built_table_models() { # $1=dbt 输出日志 → 模型名（已剥 `staging
   sed -n 's/.*OK created sql table model staging\.\([a-z0-9_]*\).*/\1/p' "$1" | LC_ALL=C sort -u
 }
 
+# 本轮**真建成**的全部模型（table / incremental / view）——从 dbt 日志抽，不猜名单。
+# 用于 hourly 档按车道落账：只给本轮建过的模型的上游 staging 写水位（而不是全域 staging）。
+mat_built_models() { # $1=dbt 输出日志
+  sed -n 's/.*OK created sql [a-z]* model staging\.\([a-z0-9_]*\).*/\1/p' "$1" | LC_ALL=C sort -u
+}
+
 # 本域的 staging 模型名（每行一个）——**从树派生**，不是手写名单。
 # 落点两处都扫：`dbt/models/<域>/staging/*.sql` 与域内的客户分叉
 # `dbt/models/<域>/customers/<客户>/staging/*.sql`（二维格子，见 dbt/models/README.md）。
@@ -327,6 +333,43 @@ mat_domain_staging_models() { # $1=检出根 $2=域
     _b=${_f##*/}
     printf '%s\n' "${_b%.sql}"
   done
+}
+
+# 本轮建成的模型 → 其**上游 staging 关系**（含自身若是 stg_*）。用于 hourly 档按车道落账：
+# 不手抄「域 → staging」映射，而是读 dbt manifest 的 depends_on 图（生成物）⇒ 新模型自动纳入。
+# $1=manifest.json；其余=本轮建成的模型名（mat_built_models 的输出）。
+# 空输出不是错误（例如只跑了审计、没有可落账的模型），调用方按空集告警即可。
+mat_staging_watermarks() {
+  _manifest=$1; shift
+  [ -f "$_manifest" ] || {
+    echo "materialize warn: manifest 缺失 ${_manifest}（无法按本轮模型反推上游 staging）" >&2
+    return 0
+  }
+  python3 - "$_manifest" "$@" <<'PY'
+import json, sys
+manifest = json.load(open(sys.argv[1]))
+built = sys.argv[2:]
+nodes = manifest.get('nodes', {})
+by_name = {}
+for n in nodes.values():
+    if n.get('resource_type') == 'model':
+        by_name.setdefault(n.get('name'), []).append(n)
+seen, out = set(), set()
+stack = list(built)
+while stack:
+    name = stack.pop()
+    if name in seen:
+        continue
+    seen.add(name)
+    for n in by_name.get(name, []):
+        if str(name).startswith('stg_'):
+            out.add(name)
+        for dep in (n.get('depends_on') or {}).get('nodes') or []:
+            dn = nodes.get(dep)
+            if dn and dn.get('resource_type') == 'model':
+                stack.append(dn.get('name'))
+print(' '.join(sorted(out)))
+PY
 }
 
 # ── 运行时取值（不落盘、不落 argv；stderr 静默 ⇒ 容器不在时值取空、由 mat_require 兜）──
@@ -758,7 +801,14 @@ if [ "$SCOPE" = hourly ]; then
   _attempt=1
   while :; do
     if [ "$_attempt" = 1 ]; then
-      _excl="--exclude tag:audit --exclude fct_retail_sale"
+      # 车道 job 只建模型 + schema test；窗口审计由独立 audit job 跑（tag:audit_window）。
+      # 否则一个审计红会把整轮域 build 判失败、连带 load_log 不落账（2026-11-25 实测：
+      # audit_lemeng__outbound__net_amount 600 行差异把 17 个增量全判失败）。
+      if [ -n "${MATERIALIZE_LANE:-}" ]; then
+        _excl="--exclude tag:audit --exclude tag:audit_window --exclude fct_retail_sale"
+      else
+        _excl="--exclude tag:audit --exclude fct_retail_sale"
+      fi
     else
       _excl=''
     fi
@@ -790,9 +840,11 @@ if [ "$SCOPE" = hourly ]; then
   # 不落账的后果：`freshness_relations` 读的是 `stg_lemeng_*` 的 max_bizday，
   # 而 full 档停用后**只有 tick 档写过 `fct_retail_sale`** ⇒ 其余 relation 的 data_as_of
   # 停在 full 档停用那天（实测 load_log 里 12 行全是 fct_retail_sale）⇒ 新鲜度面全面失真。
-  # 只在本轮**构建成功**后落账（失败不写 = 不假报新鲜）；表集与全量档同源派生。
+  # 只在本轮**构建成功**后落账（失败不写 = 不假报新鲜）。
+  # 表集 = 本轮**真建成**模型的上游 staging（manifest DAG 反推）——按车道/审计 job 收窄；
+  # 旧的「写全域 staging」会让域 job 把别的域也标成新鲜（data_as_of 假新鲜）。
   _tables=''
-  for _m in $(mat_domain_staging_models "$R" "$TICK_DOMAIN"); do
+  for _m in $(mat_staging_watermarks "$(mat_target_dir)/manifest.json" $(mat_built_models "$_log")); do
     case " ${MAT_TABLES_ALL} " in *" ${_m} "*) _tables="${_tables} ${_m}";; esac
   done
   if [ -z "$_tables" ]; then

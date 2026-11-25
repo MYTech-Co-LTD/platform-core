@@ -145,6 +145,35 @@ check "tick 档引用 MATERIALIZE_LANE（静态接线）" \
   sh -c 'printf "%s" "$1" | grep -Fq "MATERIALIZE_LANE"' _ "$SRC_CONTENT"
 check "hourly 档引用 MATERIALIZE_LANE / MATERIALIZE_HOURLY_SELECT（静态接线）" \
   sh -c 'printf "%s" "$1" | grep -Fq "MATERIALIZE_HOURLY_SELECT"' _ "$SRC_CONTENT"
+check "hourly 落账按本轮模型反推 staging（静态接线）" \
+  sh -c 'printf "%s" "$1" | grep -Fq "mat_staging_watermarks" ' _ "$SRC_CONTENT"
+
+# ── ④-d 本轮模型 → 上游 staging（A3 按车道落账的基础）────────────────────────────
+BM_FN=$(extract mat_built_models)
+[ -n "$BM_FN" ] || bad "mat_built_models 抽取失败"
+eval "$BM_FN"
+BM_DIR=$(mktemp -d)
+printf '\033[0m1 of 3 OK created sql incremental model staging.fct_a .......... [SELECT 1 in 0.1s]\n' > "$BM_DIR/log"
+printf '\033[0m2 of 3 OK created sql table model staging.fct_b ................ [SELECT 1 in 0.1s]\n' >> "$BM_DIR/log"
+printf '\033[0m3 of 3 OK created sql view model staging.stg_c ............... [OK in 0.1s]\n' >> "$BM_DIR/log"
+BM_OUT=$(mat_built_models "$BM_DIR/log" | tr '\n' ' ')
+check "mat_built_models 抽 table/incremental/view 三类（space-separated）" \
+  sh -c '[ "$1" = "fct_a fct_b stg_c " ]' _ "$BM_OUT"
+SW_FN=$(extract mat_staging_watermarks)
+[ -n "$SW_FN" ] || bad "mat_staging_watermarks 抽取失败"
+eval "$SW_FN"
+cat > "$BM_DIR/manifest.json" <<'JSON'
+{"nodes":{
+ "model.lemeng.fct_a":{"name":"fct_a","resource_type":"model","depends_on":{"nodes":["model.lemeng.stg_a"]}},
+ "model.lemeng.stg_a":{"name":"stg_a","resource_type":"model","depends_on":{"nodes":[]}},
+ "model.lemeng.stg_b":{"name":"stg_b","resource_type":"model","depends_on":{"nodes":[]}}
+}}
+JSON
+SW_OUT=$(mat_staging_watermarks "$BM_DIR/manifest.json" fct_a)
+check "上游 staging 反推（fct_a → stg_a）" sh -c '[ "$1" = "stg_a" ]' _ "$SW_OUT"
+SW_SELF=$(mat_staging_watermarks "$BM_DIR/manifest.json" stg_b)
+check "自身是 stg_* 也纳入（stg_b → stg_b）" sh -c '[ "$1" = "stg_b" ]' _ "$SW_SELF"
+rm -rf "$BM_DIR"
 
 # ── ⑤ 物化落账（spec §10.1 + §10.7.2）：load_log DDL 与水位 SQL 的判别面 ──────────
 LOG_SQL_FN=$(extract mat_load_log_sql)

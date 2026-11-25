@@ -277,7 +277,8 @@ export function checkDataLanes(rootDir = fileURLToPath(new URL('..', import.meta
   if (!existsSync(registryAbs)) {
     errors.push(`缺少 registry：${REGISTRY_REL}`)
   } else {
-    const line = readFileSync(registryAbs, 'utf8').split('\n').find((l) => l.includes("key: 'data.dbt_tick'"))
+    const regText = readFileSync(registryAbs, 'utf8')
+    const line = regText.split('\n').find((l) => l.includes("key: 'data.dbt_tick'"))
     const cron = line?.match(/cron:\s*'([^']+)'/)?.[1]
     if (!cron) {
       errors.push('registry 里找不到 data.dbt_tick 的 cron')
@@ -292,6 +293,17 @@ export function checkDataLanes(rootDir = fileURLToPath(new URL('..', import.meta
           errors.push(`data.dbt_tick 的物化偏移 ${range.start} 与 data-lanes.json 的 buildOffsetMinutes=${buildOffset} 不一致`)
         }
       }
+    }
+
+    // A3：每个 nonretail_1h 域必须有一个 registry job（`hourlyLaneJob('<domain>'`），
+    // 且不能出现配置里没有的域——否则拆车道后某个域**静默不跑**或跑错车道。
+    const configDomains = Object.keys(domainsObj)
+    const calls = [...regText.matchAll(/hourlyLaneJob\('([^']+)'/g)].map((m) => m[1])
+    for (const d of configDomains) {
+      if (!calls.includes(d)) errors.push(`data-lanes.json 的域 ${d} 没有对应的 hourlyLaneJob('${d}')（A3 registry job 缺失）`)
+    }
+    for (const c of calls) {
+      if (!configDomains.includes(c)) errors.push(`registry 的 hourlyLaneJob('${c}') 不在 data-lanes.json 的 nonretail_1h.domains 里`)
     }
   }
 

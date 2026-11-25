@@ -158,21 +158,49 @@ describe('registry · dbt tick（Wave 8 P1）', () => {
   })
 })
 
-describe('registry · dbt hourly/tables（Wave 8 P1）', () => {
-  it('★ cron/timeout/scope 与现役一致', () => {
-    const hourly = JOB_REGISTRY.find((d) => d.key === 'data.dbt_hourly')!
-    expect(hourly.cron).toBe('5 1-15 * * *')
-    expect(hourly.timeoutMs).toBe(1800000)
-    expect(hourly.env?.MATERIALIZE_SCOPE).toBe('hourly')
+describe('registry · dbt hourly/tables（Wave 8 P1 / A3 拆车道）', () => {
+  it('★ 1h 车道：门店维 :04 / 各域 :05–:41 / 窗口审计 :45', () => {
+    const dims = JOB_REGISTRY.find((d) => d.key === 'data.dbt_hourly_dims')!
+    expect(dims.cron).toBe('4 1-15 * * *')
+    expect(dims.env?.MATERIALIZE_HOURLY_SELECT).toBe('stg_lemeng_branch')
+    expect(dims.timeoutMs).toBe(300000)
+    const audit = JOB_REGISTRY.find((d) => d.key === 'data.dbt_hourly')!
+    expect(audit.cron).toBe('45 1-15 * * *')
+    expect(audit.timeoutMs).toBe(1800000)
+    expect(audit.env?.MATERIALIZE_SCOPE).toBe('hourly')
+    expect(audit.env?.MATERIALIZE_HOURLY_SELECT).toBe('tag:audit_window')
     const tables = JOB_REGISTRY.find((d) => d.key === 'data.dbt_tables')!
     expect(tables.cron).toBe('30 18 * * *')
     expect(tables.timeoutMs).toBe(5400000)
     expect(tables.env?.MATERIALIZE_SCOPE).toBe('tables')
-    for (const d of [hourly, tables]) {
+    for (const d of [dims, audit, tables]) {
       expect(d.env?.DATA_PLANE_DOMAINS).toBe('lemeng')
       expect(d.env?.MATERIALIZE_MODE).toBe('container')
       expect(existsSync(repoPath(d.script))).toBe(true)
     }
+  })
+
+  it('★ 1h 车道：每个域一个 job，车道名与 data-lanes.json 对应、分钟错峰且不撞 tick', () => {
+    const lanes = JSON.parse(readFileSync(repoPath('scripts/lemeng/data-lanes.json'), 'utf8')) as {
+      lanes: { nonretail_1h: { domains: Record<string, string[]> } }
+    }
+    const domains = Object.keys(lanes.lanes.nonretail_1h.domains)
+    const minutes = new Set<number>()
+    for (const d of domains) {
+      const job = JOB_REGISTRY.find((j) => j.key === `data.dbt_hourly_${d}`)
+      expect(job, `缺少 data.dbt_hourly_${d}`).toBeTruthy()
+      expect(job!.env?.MATERIALIZE_SCOPE).toBe('hourly')
+      expect(job!.env?.MATERIALIZE_LANE).toBe(`nonretail_1h.${d}`)
+      expect(job!.scope).toBe('data')
+      expect(job!.timeoutMs).toBe(900000)
+      const m = Number(job!.cron.split(' ')[0])
+      expect(Number.isInteger(m)).toBe(true)
+      // 10m tick 是 `2-59/10`：域 job 不落 2 mod 10，避免与 tick 撞分钟。
+      expect(m % 10).not.toBe(2)
+      minutes.add(m)
+    }
+    expect(minutes.size).toBe(domains.length) // 错峰：分钟互异
+    expect(Math.max(...minutes)).toBeLessThan(45) // 审计 :45 之前跑完
   })
 
   it('★ #2674 拆档：全史 CTAS 模型从主档排除，独立对账档只跑它们', () => {
