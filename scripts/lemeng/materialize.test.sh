@@ -145,6 +145,15 @@ check "tick 档引用 MATERIALIZE_LANE（静态接线）" \
   sh -c 'printf "%s" "$1" | grep -Fq "MATERIALIZE_LANE"' _ "$SRC_CONTENT"
 check "hourly 档引用 MATERIALIZE_LANE / MATERIALIZE_HOURLY_SELECT（静态接线）" \
   sh -c 'printf "%s" "$1" | grep -Fq "MATERIALIZE_HOURLY_SELECT"' _ "$SRC_CONTENT"
+# 分块（B2）：车道分支内必须允许子集覆盖——并且**仍然走车道分支**（排除集在那边）。
+# 判据不是「文件里出现过这两个词」（那在 SELECT-only 分支也有），而是「车道分支块里出现了子集」。
+LANE_BLOCK=$(awk '/if \[ -n "\$\{MATERIALIZE_LANE:-\}" \]; then/{f=1} f{print} f && /^  elif \[ -n "\$\{MATERIALIZE_HOURLY_SELECT:-\}" \]; then/{exit}' "$SRC")
+# 判据必须落在**赋值行**上：注释里提到这个名字不算（否则删掉赋值仍绿——本轮变异实测）。
+SUB_LINE='_select="$MATERIALIZE_HOURLY_SELECT"'
+check "分块：车道分支内确有子集赋值（B2）" \
+  sh -c 'printf "%s" "$1" | grep -Fq "$2"' _ "$LANE_BLOCK" "$SUB_LINE"
+check "分块：覆盖发生在「已解析车道选择器」之后（否则等于没声明车道）" \
+  sh -c 'printf "%s" "$1" | awk -v s="$2" "index(\$0, \"mat_lane_select\"){a=NR} index(\$0, s){b=NR} END{exit !(b>a)}"' _ "$LANE_BLOCK" "$SUB_LINE"
 check "hourly 落账按本轮模型反推 staging（静态接线）" \
   sh -c 'printf "%s" "$1" | grep -Fq "mat_staging_watermarks" ' _ "$SRC_CONTENT"
 

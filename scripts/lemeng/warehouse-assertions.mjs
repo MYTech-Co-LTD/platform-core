@@ -44,7 +44,7 @@ const require = createRequire(import.meta.url)
 /**
  * 断言结果。`verdict` 可选：默认由 `ok` 推出（OK/ERR）；只有「分不清真假」的情形才显式给
  * **WARN**（如查不动 ≠ 数据错）——WARN 仍然进 OO，桥也可转发，但它不冒充「这条判据失败了」。
- * @typedef {{ check: string, ok: boolean, detail: string, verdict?: 'OK'|'WARN'|'ERR' }} Verdict
+ * @typedef {{ check: string, ok: boolean, detail: string, verdict?: 'OK'|'WARN'|'ERR', ms?: number }} Verdict
  */
 
 const SCHEMA = process.env.WIRE_SCHEMA ?? 'staging'
@@ -933,6 +933,23 @@ const ADVISORY = new Set([
 export async function runAll(group = 'all') {
   /** @type {Verdict[]} */
   const out = []
+  // 逐检查计时（B2，2026-11-25）：整轮 118s / 每 5 分钟一次 = 每小时吃掉约 20% 执行容量，
+  // 但此前不知道钱花在哪几条上。计时只进 **stdout**（不进 probe detail，保持告警文案不变），
+  // 下一轮台账就能按耗时排出来，再决定哪些检查降频 / 哪些保持 5 分钟。
+  /**
+   * @template T
+   * @param {() => Promise<T>} fn
+   * @returns {Promise<T>}
+   */
+  const timed = async (fn) => {
+    const t0 = Date.now()
+    const r = await fn()
+    const ms = Date.now() - t0
+    for (const v of Array.isArray(r) ? r : [r]) {
+      if (v && typeof v === 'object') /** @type {{ms?: number}} */ (v).ms = ms
+    }
+    return r
+  }
   // 按**凭据边界**分组（不是按偏好）：⑭⑮ 要 OO 读凭据，而它只在应用单元；仓库/平台 PG 的
   // 断言在数据单元跑（贴着实例、且不占 API 容器的算力）。
   //   · `core`     —— 只需 DATA_WAREHOUSE_URL + DATABASE_URL（数据单元）
@@ -941,41 +958,41 @@ export async function runAll(group = 'all') {
   const wantOo = group === 'all' || group === 'oo'
 
   if (!wantCore) {
-    return [await checkConfigDrift(), await checkPgCrashFree()]
+    return [await timed(() => checkConfigDrift()), await timed(() => checkPgCrashFree())]
   }
 
   const pool = await warehouse()
   try {
     // ①② 可达性与 ③ 真查询：一条链，掉线时这里先红（后面的 SQL 断言会跟着红，是有意的）。
-    out.push(...(await checkGateB()))
-    out.push(await checkQuery(pool))
-    out.push(await checkFresh(pool))
-    out.push(await checkMartsFresh(pool))
+    out.push(...(await timed(() => checkGateB())))
+    out.push(await timed(() => checkQuery(pool)))
+    out.push(await timed(() => checkFresh(pool)))
+    out.push(await timed(() => checkMartsFresh(pool)))
     // ⑤⑥⑦⑧ 读**平台 PG**（发布面），不在仓库。
-    out.push(await checkMetrics())
-    out.push(await checkDims())
-    out.push(await checkSettlementFace())
-    out.push(await checkItemPrice())
+    out.push(await timed(() => checkMetrics()))
+    out.push(await timed(() => checkDims()))
+    out.push(await timed(() => checkSettlementFace()))
+    out.push(await timed(() => checkItemPrice()))
     // ⑩⑪⑫⑬⑯⑰⑱ 读仓库。
-    out.push(await checkRegionRegistered(pool))
-    out.push(await checkReconLedgerCover(pool))
-    out.push(await checkReconNotEvaluated(pool))
-    out.push(await checkReconSourceCover(pool))
-    out.push(await checkSealedManifest(pool))
-    out.push(await checkDetailPath(pool))
-    out.push(await checkHotPartitions(pool))
+    out.push(await timed(() => checkRegionRegistered(pool)))
+    out.push(await timed(() => checkReconLedgerCover(pool)))
+    out.push(await timed(() => checkReconNotEvaluated(pool)))
+    out.push(await timed(() => checkReconSourceCover(pool)))
+    out.push(await timed(() => checkSealedManifest(pool)))
+    out.push(await timed(() => checkDetailPath(pool)))
+    out.push(await timed(() => checkHotPartitions(pool)))
     // ⑲ 主体列合法：⑰ 只 count、看不出 org 脏（#2638 事故形态）
-    out.push(await checkOrgValid(pool))
+    out.push(await timed(() => checkOrgValid(pool)))
     // ⑳ 差额换货抵扣额（描述性；超阈只 WARN）
-    out.push(await checkSwapOffset(pool))
+    out.push(await timed(() => checkSwapOffset(pool)))
     // ㉑ 湖卫生（路径级不变量：hour 最老 bizday / 日区水位 vs 封版表）
-    out.push(await checkLakeHygiene(pool))
+    out.push(await timed(() => checkLakeHygiene(pool)))
   } finally {
     await pool.end().catch(() => {})
   }
   if (wantOo) {
-    out.push(await checkConfigDrift())
-    out.push(await checkPgCrashFree())
+    out.push(await timed(() => checkConfigDrift()))
+    out.push(await timed(() => checkPgCrashFree()))
   }
   return out
 }
@@ -1004,7 +1021,7 @@ async function main() {
     const mode = ADVISORY.has(v.check) ? 'advisory' : 'hard'
     const verdict = v.verdict ?? (v.ok ? 'OK' : 'ERR')
     if (verdict === 'ERR') errs += 1
-    console.log(`${verdict} ${v.check}: ${v.detail}`)
+    console.log(`${verdict} ${v.check}: ${v.detail}${typeof v.ms === 'number' ? ` (${v.ms}ms)` : ''}`)
     await emitProbe({
       check: v.check,
       verdict,

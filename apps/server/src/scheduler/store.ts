@@ -342,6 +342,26 @@ export async function countRunning(pool: Pool, keys: string[]): Promise<number> 
   return rows[0]?.n ?? 0
 }
 
+/**
+ * 高优先车道（10m）是否**即将到期**（B2）：用于给实时车道留槽。
+ *
+ * 判据只认 `next_run_at`（自动排班）：claim 会立刻把它前推，所以「到期未领」= 真的马上要跑；
+ * 已经在跑的不会让这里恒真。重试槽（`retry_at`）不参与——tick 的 maxAttempts=1，没有重试面。
+ */
+export async function hasDueSoon(pool: Pool, keys: string[], now: Date, windowMs: number): Promise<boolean> {
+  if (keys.length === 0) return false
+  const { rows } = await pool.query(
+    `select 1 from platform.job_schedule
+      where source='system' and enabled and deleted_at is null
+        and key = any($1::text[])
+        and next_run_at is not null
+        and next_run_at <= $2::timestamptz + make_interval(secs => $3::double precision)
+      limit 1`,
+    [keys, now, windowMs / 1000],
+  )
+  return rows.length > 0
+}
+
 export async function hasRunning(pool: Pool, scheduleId: number): Promise<boolean> {
   const { rows } = await pool.query(
     "select 1 from platform.job_run where schedule_id=$1 and status='running' limit 1",

@@ -220,8 +220,8 @@ describe('#2628 数据面断言面（容器化）', () => {
   it('按凭据边界分组：core 组不含 ⑭⑮，oo 组**只**含 ⑭⑮（不连仓库）', async () => {
     const { readFileSync } = await import('node:fs')
     const src = readFileSync(new URL('./warehouse-assertions.mjs', import.meta.url), 'utf8')
-    // oo 组早退：只跑两条 OO 断言
-    expect(src).toMatch(/if \(!wantCore\) \{\s*return \[await checkConfigDrift\(\), await checkPgCrashFree\(\)\]/)
+    // oo 组早退：只跑两条 OO 断言（计时包装只影响统计，不影响分组形态）
+    expect(src).toMatch(/if \(!wantCore\) \{\s*return \[await (?:timed\(\(\) => )?checkConfigDrift\(\)\)?, await (?:timed\(\(\) => )?checkPgCrashFree\(\)\)?\]/)
     // core 组不含 OO 两条（要 OO 读凭据，只在应用单元）
     const coreBlock = src.slice(src.indexOf('const pool = await warehouse()'), src.indexOf('if (wantOo)'))
     expect(coreBlock).not.toContain('checkConfigDrift')

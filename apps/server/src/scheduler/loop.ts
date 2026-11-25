@@ -10,9 +10,16 @@ import { JOB_REGISTRY, fillNextRunAt, seedSchedules, type JobDef } from './regis
 import { defaultSpawn, type SpawnFn } from './runner'
 import { executeJob, type JobEventInput } from './execute'
 import {
-  beat, claimDue, claimQueuedManual, countRunning, finishRun, isDraining, reapQueued, reapStale,
+  beat, claimDue, claimQueuedManual, countRunning, finishRun, hasDueSoon, isDraining, reapQueued, reapStale,
   scheduleRetry, type ClaimedJob,
 } from './store'
+
+/**
+ * 实时车道的留槽窗口（B2）：到期前 90 秒起，批量车道不得占用最后一个槽。
+ * 为什么是 90 秒：调度拍 30 秒 + 派发/领取抖动（实测 p50 46s）留一倍余量；再长会让批量车道
+ * 每小时被挡 1.5 分钟 × 6 拍，而 10m 车道本身只占 6% 的槽时。
+ */
+export const REALTIME_RESERVE_WINDOW_MS = 90_000
 
 export interface SchedulerDeps {
   pool: Pool
@@ -126,23 +133,51 @@ export function createSchedulerLoop(deps: SchedulerDeps) {
         return stats
       }
 
-      // 并发判据：本地模式看进程内在跑；派发模式看 DB 的 running 行（进程内 Set 恒空）。
-      const inFlight = deps.dispatch ? await countRunning(deps.pool, keys) : running.size
-      const free = Math.max(0, max - inFlight)
-      if (free === 0) return stats
-      const manual = await claimQueuedManual(deps.pool, free, t, { runnerId: instanceId, keys })
-      // claimQueuedManual 已把行置 running 并带回 runId，这里直接起进程。
-      for (const job of manual) { void runOne(job, true); stats.started += 1 }
-      stats.claimed += manual.length
+      // 车道分级（B2，2026-11-25）：实时车道（`realtime: true`）到期前 90 秒，**给它留一个槽**——
+      // 这一拍批量车道最多只用「空闲槽 − 1」。根因是排队而非容量：实测利用率仅 39%，却有 p90
+      // 220 秒的领取迟到，因为一条 500 秒的批量作业能把两个槽都占住、让 38 秒的 tick 干等。
+      const realtimeKeys = registry.filter((d) => d.realtime).map((d) => d.key)
+      const batchKeys = realtimeKeys.length === 0 ? keys : keys.filter((k) => !realtimeKeys.includes(k))
+      const reserve = await hasDueSoon(deps.pool, realtimeKeys, t, REALTIME_RESERVE_WINDOW_MS)
 
-      // runOne 在首个 await 前已 running.add ⇒ 这里直接按 running.size 算，别再扣 manual.length（那是双重扣减）。
-      const room = Math.max(0, max - (deps.dispatch ? await countRunning(deps.pool, keys) : running.size))
+      /** 当前还能起几个（本地模式看进程内，派发模式看 DB——进程内 Set 在派发模式下恒空）。 */
+      const freeSlots = async (): Promise<number> =>
+        deps.dispatch ? Math.max(0, max - await countRunning(deps.pool, keys)) : Math.max(0, max - running.size)
+
+      /** 批量车道可用额度：留槽期内扣掉 1 个（留槽是给**尚未领取**的实时作业的）。 */
+      const batchCap = (free: number): number => (reserve ? Math.max(0, free - 1) : free)
+
+      const startManual = async (laneKeys: string[], limit: number): Promise<number> => {
+        if (limit <= 0 || laneKeys.length === 0) return 0
+        const jobs = await claimQueuedManual(deps.pool, limit, t, { runnerId: instanceId, keys: laneKeys })
+        // claimQueuedManual 已把行置 running 并带回 runId，这里直接起进程。
+        for (const job of jobs) { void runOne(job, true); stats.started += 1 }
+        stats.claimed += jobs.length
+        return jobs.length
+      }
+
+      const free0 = await freeSlots()
+      if (free0 === 0) return stats
+      // 手动（人的显式动作）先领，实时车道排在批量前：留槽期批量最多 free−1。
+      await startManual(realtimeKeys, free0)
+      await startManual(batchKeys, batchCap(await freeSlots()))
+
+      const room = await freeSlots()
       if (room === 0) return stats
-      const due = await claimDue(deps.pool, room, t, nextRunAt, { runnerId: instanceId, keys })
-      stats.claimed += due.length
-      // claim 的 SELECT 已排除「同 schedule 有 running」的排班（该格不消费、下一拍再来），
-      // 这里无需再查 hasRunning、也不写 skipped 台账（否则每拍刷一行）。
-      for (const job of due) { void runOne(job, false); stats.started += 1 }
+      // 到期作业同样先实时后批量；`claimDue` 的 SELECT 已排除「同 schedule 有 running」的排班
+      // （该格不消费、下一拍再来），所以这里无需再查 hasRunning、也不写 skipped 台账。
+      const dueRealtime = realtimeKeys.length === 0
+        ? []
+        : await claimDue(deps.pool, room, t, nextRunAt, { runnerId: instanceId, keys: realtimeKeys })
+      stats.claimed += dueRealtime.length
+      for (const job of dueRealtime) { void runOne(job, false); stats.started += 1 }
+
+      const room2 = batchCap(await freeSlots())
+      const dueBatch = room2 <= 0 || batchKeys.length === 0
+        ? []
+        : await claimDue(deps.pool, room2, t, nextRunAt, { runnerId: instanceId, keys: batchKeys })
+      stats.claimed += dueBatch.length
+      for (const job of dueBatch) { void runOne(job, false); stats.started += 1 }
       return stats
     },
   }
