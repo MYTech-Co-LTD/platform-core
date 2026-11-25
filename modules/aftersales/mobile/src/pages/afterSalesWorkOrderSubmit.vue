@@ -42,19 +42,18 @@
               <span class="text-[#E5484D]">*</span>选择结算单
             </label>
             <t-select
-              v-model="selectedOrder"
+              v-model="selectedOrderNo"
               placeholder="请选择进货结算单"
               :loading="settlementLoading"
               :disabled="!selectedStore"
               filterable
               clearable
               class="w-full"
-              @change="handleOrderChange"
             >
               <t-option
                 v-for="order in settlementOrders"
                 :key="order.orderNo"
-                :value="order"
+                :value="order.orderNo"
                 :label="`${order.orderNo}（${order.bizday}）`"
               >
                 <div class="flex items-center justify-between min-w-0 gap-2">
@@ -69,7 +68,7 @@
               <span class="text-[#E5484D]">*</span>选择商品行
             </label>
             <t-select
-              v-model="selectedLine"
+              v-model="selectedLineKey"
               placeholder="请选择商品行（金额按该行结算价冻结）"
               filterable
               clearable
@@ -78,7 +77,7 @@
               <t-option
                 v-for="line in selectedOrder.lines"
                 :key="line.lineKey"
-                :value="{ ...line, orderNo: selectedOrder.orderNo }"
+                :value="line.lineKey"
                 :label="`${line.itemName ?? line.itemCode}（¥${(line.priceMinor / 100).toFixed(2)}）`"
               >
                 <div class="flex items-center justify-between min-w-0 gap-2">
@@ -276,7 +275,7 @@
 </template>
 
 <script setup lang="ts">
-import { computed, onMounted, ref } from 'vue'
+import { computed, onMounted, ref, watch } from 'vue'
 import { useRouter } from 'vue-router'
 import { Message } from '@wujibase/wuji'
 import { useAfterSalesWorkOrder } from '@/composables/useAfterSalesWorkOrder'
@@ -337,6 +336,24 @@ const settlementOrders = composable.settlementOrders
 const selectedStore = composable.selectedStore
 const selectedOrder = composable.selectedOrder
 const selectedLine = composable.selectedLine
+
+// 2026-11-25：`t-option` 的 value 改用**稳定字符串**（orderNo / lineKey）。
+// 原来直接绑对象（商品行还是每次渲染新建的对象）⇒ TDesign 的选中匹配靠值比较，
+// 对象引用每次都变，选中态与 v-model 都不可靠——现象就是「选了单/行，商品信息带不出来」。
+// 这里用字符串做 UI 值，再同步回 composable 的对象 ref（提交逻辑读的仍是对象）。
+const selectedOrderNo = ref('')
+const selectedLineKey = ref('')
+
+watch(selectedOrderNo, (no) => {
+  selectedOrder.value = settlementOrders.value.find((o: any) => o.orderNo === no) ?? null
+  selectedLineKey.value = ''
+  selectedLine.value = null
+})
+
+watch(selectedLineKey, (key) => {
+  const line = selectedOrder.value?.lines?.find((l: any) => l.lineKey === key) ?? null
+  selectedLine.value = line ? { ...line, orderNo: selectedOrder.value.orderNo } : null
+})
 const attachments = composable.attachments
 const formData = composable.formData
 const loadEmployeeStores = composable.loadEmployeeStores
@@ -353,10 +370,7 @@ const isSubmitting = ref(false)
 const handleStoreChange = (storeCode: unknown) => {
   loadSettlementOrders(typeof storeCode === 'string' ? storeCode : '')
 }
-// 选单变化 ⇒ 清空已选行（跨单残留的行键是错的）
-const handleOrderChange = () => {
-  selectedLine.value = null
-}
+// 选单变化后的清理由 selectedOrderNo 的 watch 负责（见上），此处不再重复
 
 // 报损数量显示值（支持两位小数）
 const damageQuantityDisplay = computed({
@@ -524,8 +538,10 @@ const handleSubmit = async () => {
 // 初始化
 onMounted(async () => {
   try {
-    // 重置表单，确保每次进入页面时都是清空状态
+    // 重置表单，确保每次进入页面时都是清空状态（含 UI 侧的字符串选择值）
     resetForm()
+    selectedOrderNo.value = ''
+    selectedLineKey.value = ''
 
     // ① 闸门：先读「我的登记快照」。未登记 ⇒ 提示 + 跳登记页，**并且直接 return**——
     //    后面两句（门店 / 商品）一个都不发：未登记的人不该看到可选门店（spec §3.2）。
