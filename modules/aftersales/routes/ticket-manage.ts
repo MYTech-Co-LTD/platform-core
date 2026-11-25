@@ -120,11 +120,11 @@ export function registerTicketManage(r: ModuleHono, ctx: RouteCtx): void {
       // 先读工单的快照字段算金额；再条件更新当守卫。
       // 这里【不加 for update】：真正的并发守卫是下面 update 的 where status='pending'——
       // 两个并发处理请求都会读到 pending、都算出一份金额，但只有一个 update 能落，另一份影响行数 0 ⇒ 409。
-      const cur = await client.query<TicketRow & { code: string; submitter_openid: string; product_name: string }>(
+      const cur = await client.query<TicketRow & { code: string; submitter_openid: string; product_name: string; store_code: string | null }>(
         // code / submitter_openid 是**处理结果通知**（#2805）的收件人与单号来源；
         // 只多读两列，不参与任何金额判定。
         `select id, status, damage_quantity, basic_quantity, basic_unit_price_minor, settlement_price_minor,
-                code, submitter_openid, product_name
+                code, submitter_openid, product_name, store_code
            from aftersales.ticket where org = $1 and id = $2`,
         [org, id],
       )
@@ -192,15 +192,28 @@ export function registerTicketManage(r: ModuleHono, ctx: RouteCtx): void {
       })
       await client.query('commit')
 
-      // 处理结果通知（#2805）：事务已提交后再发（fail-open，绝不回滚已处理的结果）
+      // 处理结果通知（#2805 / 2026-11-25 改口径）：发给**该门店所有已审批员工**
+      // （不再只有提交人）。收件人集合在事务外查（只读，且失败不该影响已提交的结果）。
       if (ctx.notify) {
         try {
+          const members = await ctx.pool.query<{ open_id: string }>(
+            `select distinct e.open_id
+               from aftersales.employee e
+               join aftersales.employee_store s
+                 on s.org = e.org and s.employee_id = e.id
+              where e.org = $1 and s.store_code = $2
+                and e.approve_status = 'approved' and e.open_id <> ''`,
+            [org, row.store_code ?? ''],
+          )
+          const recipients = members.rows.map((m) => m.open_id)
+          if (recipients.length === 0) recipients.push(row.submitter_openid) // 兜底：至少给提交人
           await ctx.notify.emit(c.get('identity'), {
             eventKey: 'aftersales.ticket.processed',
             eventId: `aftersales.ticket:${row.code}:processed`,
             scope: row.code,
             payload: {
-              user: row.submitter_openid,
+              user: recipients,
+              storeCode: row.store_code ?? '',
               ticketCode: row.code,
               productName: row.product_name,
               time: new Date().toLocaleString('sv-SE', { timeZone: 'Asia/Shanghai' }).slice(0, 16),

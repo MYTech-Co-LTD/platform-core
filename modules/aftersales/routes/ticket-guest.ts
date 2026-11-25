@@ -7,7 +7,7 @@ import { loadAttachments, normalizeTicketRow } from './ticket-manage'
 // （此前本文件内联算 page/size 且无整数守卫 ⇒ 非法值 500；?size=-5 也与端点间漂移）。
 import { DEFAULT_PAGE_SIZE, MAX_PAGE_SIZE, guestIdentityIds, parseIdParam, parsePageParam , consoleBaseUrl} from './context'
 import type { ModuleHono, RouteCtx } from './context'
-import { resolveStoreAffiliation } from './affiliation'
+import { myStoreCodes, resolveStoreAffiliation } from './affiliation'
 
 /**
  * `ticket.damage_quantity` 是 **int4** 列，上界必须按列型取——**不能**借 bigint 那档的
@@ -82,18 +82,31 @@ export function registerTicketGuest(r: ModuleHono, ctx: RouteCtx): void {
     const page = parsePageParam(c.req.query('page'), 1, Number.MAX_SAFE_INTEGER)
     const size = parsePageParam(c.req.query('size'), DEFAULT_PAGE_SIZE, MAX_PAGE_SIZE)
 
+    // 可见性（2026-11-25 人裁改口径）：从「只看自己提交的」改为**看我有资格的门店下的全部工单**。
+    // 未注册/未审批 ⇒ myStoreCodes 为空 ⇒ 空列表（不是全量）。
+    const myStores = await myStoreCodes(ctx, identity.orgId, identity)
+    if (myStores.length === 0) {
+      return c.json({ items: [], total: 0, page, size })
+    }
+    // 多店员工切店：`?storeCode=` 只允许在其资格集合内（越界 = 403，不是静默空集）
+    const wanted = c.req.query('storeCode')
+    if (wanted !== undefined && !myStores.includes(wanted)) {
+      return c.json({ error: 'STORE_NOT_AUTHORIZED' }, 403)
+    }
+    const scopeStores = wanted !== undefined ? [wanted] : myStores
+
     const totalRes = await ctx.pool.query<{ n: number }>(
-      'select count(*)::int as n from aftersales.ticket where org = $1 and submitter_openid = any($2::text[])',
-      [identity.orgId, guestIdentityIds(identity)],
+      'select count(*)::int as n from aftersales.ticket where org = $1 and store_code = any($2::text[])',
+      [identity.orgId, scopeStores],
     )
     const listRes = await ctx.pool.query(
-      `select id, code, product_name, store_name, damage_quantity, status,
+      `select id, code, product_name, store_name, store_code, damage_quantity, status,
               amount_type, amount_minor, remark, created_at, processed_at
          from aftersales.ticket
-        where org = $1 and submitter_openid = any($2::text[])
+        where org = $1 and store_code = any($2::text[])
         order by id desc
         limit $3 offset $4`,
-      [identity.orgId, guestIdentityIds(identity), size, (page - 1) * size],
+      [identity.orgId, scopeStores, size, (page - 1) * size],
     )
     return c.json({
       items: listRes.rows.map(normalizeTicketRow),
@@ -118,8 +131,8 @@ export function registerTicketGuest(r: ModuleHono, ctx: RouteCtx): void {
               settlement_price_minor, settlement_bizday,
               remark, related_order, created_at, processed_at
          from aftersales.ticket
-        where org = $1 and id = $2 and submitter_openid = any($3::text[])`,
-      [identity.orgId, id, guestIdentityIds(identity)],
+        where org = $1 and id = $2 and store_code = any($3::text[])`,
+      [identity.orgId, id, await myStoreCodes(ctx, identity.orgId, identity)],
     )
     const row = res.rows[0]
     if (!row) return c.json({ error: 'NOT_FOUND' }, 404)
@@ -186,8 +199,16 @@ export function registerTicketGuest(r: ModuleHono, ctx: RouteCtx): void {
     if (!parsed.success) return c.json({ error: 'INVALID_BODY' }, 400)
     const body = parsed.data
 
-    // 归属一致性快照（ADR 2026-11-24 §7 P1-a）：**信息性**，不是放行条件。
-    // 放在开事务之前：① 它是只读查询，不该占事务；② fail-open —— 判定失败返回 null 照常提单。
+    // **归属执法**（2026-11-25 人裁，取代 ADR 2026-11-24 §3.1 的「不执法」）：
+    // 只能提**自己有资格的门店**的单。未注册/待审批 ⇒ 空集 ⇒ 403。
+    // 这条把「注册 → 审批」变成提单的前置条件——是需求要的语义，不是副作用。
+    const myStores = await myStoreCodes(ctx, org, identity)
+    if (!myStores.includes(body.storeCode)) {
+      return c.json({ error: 'STORE_NOT_AUTHORIZED' }, 403)
+    }
+
+    // 归属一致性快照（ADR 2026-11-24 §7 P1-a）：执法后本列**恒为 matched**
+    // （门店已在资格集合内）；保留是为了不改历史数据列与已发布的 admin 列。
     const storeAffiliation = await resolveStoreAffiliation(ctx, org, identity, body.storeCode)
 
     const client = await ctx.pool.connect()

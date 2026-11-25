@@ -42,6 +42,23 @@ export async function readMySnapshot(
 }
 
 /**
+ * 当前访客**有资格的门店集合**（`data.dim_branch.code`）。
+ *
+ * 2026-11-25 人裁：归属从「信息性」转**执法性**——
+ *   · 提单：`storeCode` 必须 ∈ 本集合，否则 403 `STORE_NOT_AUTHORIZED`
+ *   · 可见性：只看得见这些门店的单（不再是「只看自己提交的」）
+ * 未注册/未审批 ⇒ 空集 ⇒ 既不能提也看不到（这是需求本身要的，不是副作用）。
+ */
+export async function myStoreCodes(
+  ctx: RouteCtx,
+  org: string,
+  identity: Identity,
+): Promise<string[]> {
+  const snap = await readMySnapshot(ctx, org, guestIdentityIds(identity))
+  return snap?.storeCodes ?? []
+}
+
+/**
  * 门店归属一致性（**快照语义**：记录提单那一刻的事实，档案后改不回溯）。
  *
  * - `matched`      档案存在，且单据门店在其门店集合里

@@ -34,6 +34,10 @@ describePg('工单域', () => {
   const manage = makeIdentity({ orgId: ORG, scopes: ['aftersales:manage'] })
   const guest = makeIdentity({ orgId: ORG, userId: 'openid-alice', scopes: ['aftersales:guest'] })
   const guestBob = makeIdentity({ orgId: ORG, userId: 'openid-bob', scopes: ['aftersales:guest'] })
+  // 同店（S01）的另一名已审批员工：验「同店可见」
+  const guestCarol = makeIdentity({ orgId: ORG, userId: 'openid-carol', scopes: ['aftersales:guest'] })
+  // 完全未注册（无 employee 行）：验「未注册 ⇒ 403」
+  const guestNobody = makeIdentity({ orgId: ORG, userId: 'openid-nobody', scopes: ['aftersales:guest'] })
   // buildTestApp 的第三个参数是宿主的 ModuleContext（本仓模块只用到 pool）。
   // 第 4 参是**本请求的存储配置**（M3c 步 4）：与宿主投影同形状。旧注释说「不要在这里塞
   // storage，模块自己从 process.env 解析」——那句描述的是**装载期形态**，已被本步消灭；
@@ -42,6 +46,8 @@ describePg('工单域', () => {
   const appManage = buildTestApp(mod, manage, ctx, TENANT_CFG)
   const appGuest = buildTestApp(mod, guest, ctx, TENANT_CFG)
   const appGuestBob = buildTestApp(mod, guestBob, ctx, TENANT_CFG)
+  const appGuestCarol = buildTestApp(mod, guestCarol, ctx, TENANT_CFG)
+  const appGuestNobody = buildTestApp(mod, guestNobody, ctx, TENANT_CFG)
 
   beforeAll(async () => {
     await applyMigrations(pool)
@@ -62,6 +68,33 @@ describePg('工单域', () => {
        values ($1,'I001','测试商品',false,'3120',current_date)`,
       [ORG],
     )
+    // 2026-11-25 归属执法：访客必须**已审批**且在目标门店，才能提单/看单。
+    // alice → S01（主路径）；bob 不建档案（未注册）；carol → S01（同店，验「同店可见」）。
+    await pool.query('delete from aftersales.employee_store where org = $1', [ORG])
+    await pool.query('delete from aftersales.employee where org = $1', [ORG])
+    const alice = await pool.query<{ id: string }>(
+      `insert into aftersales.employee(org, name, phone, open_id, approve_status)
+       values ($1, 'alice', '13800000001', 'openid-alice', 'approved') returning id`, [ORG])
+    const carol = await pool.query<{ id: string }>(
+      `insert into aftersales.employee(org, name, phone, open_id, approve_status)
+       values ($1, 'carol', '13800000003', 'openid-carol', 'approved') returning id`, [ORG])
+    const bob = await pool.query<{ id: string }>(
+      `insert into aftersales.employee(org, name, phone, open_id, approve_status)
+       values ($1, 'bob', '13800000002', 'openid-bob', 'approved') returning id`, [ORG])
+    await pool.query(
+      `insert into aftersales.employee_store(org, employee_id, store_code)
+       values ($1,$2,'S01'), ($1,$3,'S01'), ($1,$4,'S01')`,
+      [ORG, alice.rows[0]!.id, carol.rows[0]!.id, bob.rows[0]!.id],
+    )
+    // 多绑用例的两个 openid 也要有已审批档案（归属执法后，无档案一律 403）
+    for (const [openid, name] of [['openid-mba', 'mba'], ['openid-mbb', 'mbb']] as const) {
+      const e = await pool.query<{ id: string }>(
+        `insert into aftersales.employee(org, name, phone, open_id, approve_status)
+         values ($1, $2, '13800009000', $3, 'approved') returning id`, [ORG, name, openid])
+      await pool.query(
+        `insert into aftersales.employee_store(org, employee_id, store_code) values ($1,$2,'S01')`,
+        [ORG, e.rows[0]!.id])
+    }
     await pool.query(
       `insert into data.dim_settlement_order_line(
          org, source, store_code, store_name, order_no, order_bizday, order_time,
@@ -78,10 +111,24 @@ describePg('工单域', () => {
     await pool.query('delete from aftersales.ticket_attachment where org = $1', [ORG])
     await pool.query('delete from aftersales.ticket where org = $1', [ORG])
     await pool.query('delete from data.dim_settlement_order_line where org = $1', [ORG])
+    await pool.query('delete from aftersales.employee_store where org = $1', [ORG])
+    await pool.query('delete from aftersales.employee where org = $1', [ORG])
     await pool.query('delete from data.dim_item where org = $1', [ORG])
     await pool.query('delete from data.dim_branch where org = $1', [ORG])
     expect(pool.ended, '池在本 afterAll 之前已被 end——有别的钩子提前收摊').toBe(false)
     await pool.end().catch(() => {})
+  })
+
+  it('夹具自检：alice 的已审批档案与门店关联存在（后续用例的前提）', async () => {
+    const r = await pool.query(
+      `select e.open_id, s.store_code
+         from aftersales.employee e
+         join aftersales.employee_store s on s.org = e.org and s.employee_id = e.id
+        where e.org = $1 and e.approve_status = 'approved'`,
+      [ORG],
+    )
+    expect(r.rows.map((x: { open_id: string; store_code: string }) => `${x.open_id}:${x.store_code}`).sort())
+      .toEqual(['openid-alice:S01', 'openid-bob:S01', 'openid-carol:S01', 'openid-mba:S01', 'openid-mbb:S01'])
   })
 
   const submit = (app: typeof appGuest, body: Record<string, unknown>) =>
@@ -138,6 +185,12 @@ describePg('工单域', () => {
     // 旧 `[0-9A-Za-z_-]` 白名单 ⇒ 这些门店提单恒 400 INVALID_BODY；夹具全用 'S01'/'I001'
     // 这类 ASCII，所以从没拦住。本用例的夹具**就是真机形状**。
     const CN_STORE = '凤庆01'
+    // 归属执法：alice 必须有该店资格（用例末尾回收）
+    await pool.query(
+      `insert into aftersales.employee_store(org, employee_id, store_code)
+       select $1, id, $2 from aftersales.employee where org = $1 and open_id = 'openid-alice'`,
+      [ORG, CN_STORE],
+    )
     const CN_ITEM = '瓜瓜乐海沙脆蜜'
     const CN_ORDER = 'MO3120992607050086'
     await pool.query(
@@ -180,53 +233,44 @@ describePg('工单域', () => {
     await pool.query('delete from data.dim_settlement_order_line where org = $1 and store_code = $2', [ORG, CN_STORE])
     await pool.query('delete from data.dim_item where org = $1 and item_code = $2', [ORG, CN_ITEM])
     await pool.query('delete from data.dim_branch where org = $1 and code = $2', [ORG, CN_STORE])
+    await pool.query('delete from aftersales.employee_store where org = $1 and store_code = $2', [ORG, CN_STORE])
   })
 
-  it('归属一致性快照（ADR 2026-11-24 §7 P1-a）：未登记/unregistered、含该店/matched、不含/mismatch——**信息性，恒 201**', async () => {
-    const cleanProfile = async () => {
-      await pool.query('delete from aftersales.employee_store where org = $1', [ORG])
-      await pool.query('delete from aftersales.employee where org = $1', [ORG])
-    }
-    await cleanProfile()
-
+  it('【2026-11-25 归属执法】只能提自己有资格的门店：未注册 ⇒ 403；别人的店 ⇒ 403；本店 ⇒ 201', async () => {
     const affilOf = async (res: Response) => {
       const { id } = (await res.json()) as { id: number }
       const r = await pool.query<{ store_affiliation: string | null }>(
-        'select store_affiliation from aftersales.ticket where org = $1 and id = $2',
-        [ORG, id],
-      )
+        'select store_affiliation from aftersales.ticket where org = $1 and id = $2', [ORG, id])
       return r.rows[0].store_affiliation
     }
 
-    // ① 无档案（未注册/待审批）⇒ unregistered，且**照常 201**（不是拒绝）
-    const r1 = await submit(appGuest, validBody('req-affil-1'))
-    expect(r1.status).toBe(201)
-    expect(await affilOf(r1)).toBe('unregistered')
+    // ① 完全未注册（nobody 无 employee 行）⇒ 403，不是「照提但标记 unregistered」
+    const r1 = await submit(appGuestNobody, validBody('req-authz-0'))
+    expect(r1.status).toBe(403)
+    expect(((await r1.json()) as { error: string }).error).toBe('STORE_NOT_AUTHORIZED')
 
-    // ② 建档且门店集合含提交门店 S01 ⇒ matched
-    const emp = await pool.query<{ id: string }>(
-      `insert into aftersales.employee(org, name, phone, open_id, approve_status)
-       values ($1, 'alice', '138', 'openid-alice', 'approved') returning id`,
-      [ORG],
-    )
+    // ② 已注册但门店不在其资格集合 ⇒ 403（**只动 alice 的行**，别碰其他用例的夹具）
     await pool.query(
-      `insert into aftersales.employee_store(org, employee_id, store_code) values ($1, $2, 'S01')`,
-      [ORG, emp.rows[0].id],
-    )
-    const r2 = await submit(appGuest, validBody('req-affil-2'))
-    expect(r2.status).toBe(201)
-    expect(await affilOf(r2)).toBe('matched')
+      `delete from aftersales.employee_store
+        where org = $1 and employee_id = (select id from aftersales.employee where org = $1 and open_id = 'openid-alice')`,
+      [ORG])
+    await pool.query(
+      `insert into aftersales.employee_store(org, employee_id, store_code)
+       select $1, id, 'S02' from aftersales.employee where org = $1 and open_id = 'openid-alice'`, [ORG])
+    const r2 = await submit(appGuest, validBody('req-authz-1'))
+    expect(r2.status).toBe(403)
 
-    // ③ 档案只含别的店 ⇒ mismatch（调店未更新 / 填错 / 借用账号，都落到这一态）
+    // ③ 门店在其集合内 ⇒ 201，快照恒 matched（恢复 alice 到 S01）
     await pool.query(
-      `update aftersales.employee_store set store_code = 'S99' where org = $1 and employee_id = $2`,
-      [ORG, emp.rows[0].id],
-    )
-    const r3 = await submit(appGuest, validBody('req-affil-3'))
+      `delete from aftersales.employee_store
+        where org = $1 and employee_id = (select id from aftersales.employee where org = $1 and open_id = 'openid-alice')`,
+      [ORG])
+    await pool.query(
+      `insert into aftersales.employee_store(org, employee_id, store_code)
+       select $1, id, 'S01' from aftersales.employee where org = $1 and open_id = 'openid-alice'`, [ORG])
+    const r3 = await submit(appGuest, validBody('req-authz-2'))
     expect(r3.status).toBe(201)
-    expect(await affilOf(r3)).toBe('mismatch')
-
-    await cleanProfile()
+    expect(await affilOf(r3)).toBe('matched')
   })
 
   it('挂原单取价 fail-closed：行不存在 ⇒ 400 PRICE_NOT_FOUND；串店引用 ⇒ 400 ORDER_STORE_MISMATCH', async () => {
@@ -270,7 +314,17 @@ describePg('工单域', () => {
     expect(cnt.rows[0].n).toBe(1)
   })
 
-  it('访客只能看到自己的工单：alice 提交的，bob 查列表看不到、按 id 查是 404（与不存在同形）', async () => {
+  it('跨店不可见：alice（S01）提交的，bob（S02）看不到；同店 carol 看得到（2026-11-25 按门店口径）', async () => {
+    // bob 移到 S02：验「跨店不可见」
+    await pool.query(
+      `update aftersales.employee_store set store_code = 'S02'
+        where org = $1 and employee_id = (select id from aftersales.employee where org = $1 and open_id = 'openid-bob')`,
+      [ORG])
+    // S02 需要存在于 dim_branch（可见性按 store_code 过滤，不校验存在性，但保持夹具真实）
+    await pool.query(
+      `insert into data.dim_branch(org, code, name, enable, source_book, snapshot)
+       values ($1,'S02','隔壁门店',true,'3120',current_date) on conflict do nothing`, [ORG])
+
     const created = await submit(appGuest, validBody('req-private'))
     const { id } = (await created.json()) as { id: number }
 
@@ -280,9 +334,24 @@ describePg('工单域', () => {
 
     const bobDetail = await appGuestBob.request(`/guest/tickets/${id}`)
     expect(bobDetail.status).toBe(404)
-    // 同形：不存在的 id 也是 404、同样的错误体（不泄露"存在但不属于你"）
+    // 同形：不存在的 id 也是 404（不泄露"存在但不在你门店"）
     const ghost = await appGuestBob.request('/guest/tickets/999999999')
     expect(ghost.status).toBe(404)
+
+    // 同店 carol 看得到（新语义的核心）
+    const carolList = await appGuestCarol.request('/guest/tickets')
+    const carolBody = (await carolList.json()) as { items: { id: number }[] }
+    expect(carolBody.items.some((t) => t.id === id)).toBe(true)
+    const carolDetail = await appGuestCarol.request(`/guest/tickets/${id}`)
+    expect(carolDetail.status).toBe(200)
+
+    // 复原：bob 回到 S01，避免污染后续用例
+    await pool.query(
+      `delete from aftersales.employee_store
+        where org = $1 and employee_id = (select id from aftersales.employee where org = $1 and open_id = 'openid-bob')`, [ORG])
+    await pool.query(
+      `insert into aftersales.employee_store(org, employee_id, store_code)
+       select $1, id, 'S01' from aftersales.employee where org = $1 and open_id = 'openid-bob'`, [ORG])
     expect(await bobDetail.text()).toBe(await ghost.text())
   })
 
@@ -746,21 +815,35 @@ describePg('工单域', () => {
     expect(body.total).toBeGreaterThanOrEqual(2)
   })
 
-  it('【多绑】GET /guest/tickets/:id：集合内（oB 的单）放行；集合外（bob 的单）仍 404 与不存在同形', async () => {
-    const b = await submit(appB, validBody('req-mb-detail-b'))
-    expect(b.status).toBe(201)
-    const idB = ((await b.json()) as { id: number }).id
+  it('同店（S01）放行、跨店（bob 在 S02）404：可见性按门店集合，不放宽成全租户', async () => {
+    // alice 与 mba 同店 S01；bob 暂时移出到 S02
+    await pool.query(
+      `delete from aftersales.employee_store
+        where org = $1 and employee_id = (select id from aftersales.employee where org = $1 and open_id = 'openid-bob')`, [ORG])
+    await pool.query(
+      `insert into aftersales.employee_store(org, employee_id, store_code)
+       select $1, id, 'S02' from aftersales.employee where org = $1 and open_id = 'openid-bob'`, [ORG])
 
-    const own = await appMulti.request(`/guest/tickets/${idB}`)
-    expect(own.status).toBe(200)
-    expect(((await own.json()) as { id: number }).id).toBe(idB)
+    const a = await submit(appGuest, validBody('req-cross-detail'))
+    expect(a.status).toBe(201)
+    const idA = ((await a.json()) as { id: number }).id
 
-    // 集合外：openid-bob ∉ [openid-mba, openid-mbb]——多绑不得放宽成「全租户可见」
-    const bobTicket = await submit(appGuestBob, validBody('req-mb-detail-bob'))
-    const idBob = ((await bobTicket.json()) as { id: number }).id
-    const foreign = await appMulti.request(`/guest/tickets/${idBob}`)
+    // 同店（carol）放行
+    const sameStore = await appGuestCarol.request(`/guest/tickets/${idA}`)
+    expect(sameStore.status).toBe(200)
+
+    // 跨店（bob 在 S02）⇒ 404，与「不存在」同形
+    const foreign = await appGuestBob.request(`/guest/tickets/${idA}`)
     expect(foreign.status).toBe(404)
-    expect((await foreign.json()) as { error: string }).toMatchObject({ error: 'NOT_FOUND' })
+    expect(((await foreign.json()) as { error: string }).error).toBe('NOT_FOUND')
+
+    // 复原 bob 到 S01
+    await pool.query(
+      `delete from aftersales.employee_store
+        where org = $1 and employee_id = (select id from aftersales.employee where org = $1 and open_id = 'openid-bob')`, [ORG])
+    await pool.query(
+      `insert into aftersales.employee_store(org, employee_id, store_code)
+       select $1, id, 'S01' from aftersales.employee where org = $1 and open_id = 'openid-bob'`, [ORG])
   })
 
   it('【多绑·红线】写路径不变：多绑身份提交 ⇒ submitter_openid 仍落 identity.userId（登录 openid）', async () => {
