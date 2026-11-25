@@ -20,7 +20,7 @@ import { dirname } from 'node:path'
 import { pathToFileURL } from 'node:url'
 import { JOB_REGISTRY } from '../apps/server/src/scheduler/registry.ts'
 import { executeJob } from '../apps/server/src/scheduler/execute.ts'
-import { reapLostRunners } from '../apps/server/src/scheduler/store.ts'
+import { beat, reapLostRunners } from '../apps/server/src/scheduler/store.ts'
 import { enqueueEvent } from '../modules/notify/storage.ts'
 
 /**
@@ -107,6 +107,14 @@ export async function main(env = process.env) {
   // 启动对账：本实例上一次化身留下的 running 行要当场收口（与调度器同语义，只是实例 id 不同）。
   const reaped = await reapLostRunners(pool, new Date(), instanceId)
   if (reaped > 0) console.log(JSON.stringify({ ts: new Date().toISOString(), executorReapedLost: reaped }))
+
+  // #2835：每 10s 写心跳（与 scheduler 同表）。scheduler 的 `reapStale` 据此回收
+  // 「runner 已死、但 running 行还占槽」的作业，不必等 2×timeout 或依赖启动对账。
+  const heartbeat = () => beat(pool, new Date(), instanceId).catch((e) => {
+    console.error(JSON.stringify({ ts: new Date().toISOString(), executorHeartbeatError: e instanceof Error ? e.message : String(e) }))
+  })
+  void heartbeat()
+  setInterval(heartbeat, 10_000)
 
   // 事件发射：与 notify-worker 同构造（fail-open；execute.ts 内部已 try/catch）。
   /** @type {{ rows: Array<{ casdoor_org: string }> }} */

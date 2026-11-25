@@ -122,7 +122,7 @@
 | 2026-11-25 | A3 拆域第二轮（修复后） | ✅ **10/10 + 审计** | 13:09–13:48：dims 36s / retail_derived 498s / purchase 39s / inventory 101s / **member 30s（429 修复生效）** / client 33s / branch 62s / transfer 27s / outbound 50s / request 96s / loss 30s；窗口审计 168s 独立 ok |
 | 2026-11-25 | D1/D2 SLA 事实源 + 只读测量 | ✅ PR #2844 | `sla.json`（10m/1h 十域/日）+ `sla-check.mjs` + `data.sla_check`（disabled） |
 | 2026-11-25 | **A3 漏项：daily_report 无 job** | ✅ 本 PR | `fct_retail_item_profit` / `fct_retail_profit` 拆域后停更；补 `data.dbt_daily_report`（09:10 CST）+ SLA daily_report + A4 门禁「每个车道必须有 job」 |
-| 2026-11-25 | 部署僵尸 running 行 | ⚠️ 待查 | `publish_dims` 部署被杀后行停留 22 分钟占槽；executor 启动对账未生效 |
+| 2026-11-25 | 部署僵尸 running 行 | ✅ 本 PR（#2835） | `publish_dims` 部署被杀后行停留 22 分钟占槽（启动对账兜不住「executor 没重启」）；改为 runner 心跳：executor 每 10s 写 `platform.job_heartbeat`，`reapStale` 对「心跳过期 5 分钟」的 running 行直接 timeout（不再等 2×timeout）；有据可依的过期才回收，无心跳的旧 runner 仍走 2×timeout |
 
 ## §6 变更记录
 

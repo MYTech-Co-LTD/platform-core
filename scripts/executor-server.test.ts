@@ -3,6 +3,7 @@
 // 钉两件事：
 //   ① 请求体只带排班元数据；缺字段/类型不对 ⇒ 明确报错（不静默用默认值跑一个作业）；
 //   ② 鉴权只有「Bearer <token>」一种形态，token 为空一律拒绝。
+import { readFileSync } from 'node:fs'
 import { describe, expect, it } from 'vitest'
 import { authorized, parseRunRequest } from './executor-server.mjs'
 
@@ -54,5 +55,18 @@ describe('executor authorized', () => {
     expect(authorized('abc', 'abc')).toBe(false)
     expect(authorized('Bearer ', '')).toBe(false)
     expect(authorized(undefined, 'abc')).toBe(false)
+  })
+})
+
+describe('executor 心跳接线（#2835）', () => {
+  // 为什么是「读源码断言」而不是起进程：heartbeat 是进程级副作用（setInterval + 库），
+  // 起真进程要连库、跑满一个周期才有观测点，成本远高于它要守的风险。
+  // 它守的风险很硬：`reapStale` 会按「该 runner 心跳过期 5 分钟」回收在跑的作业——
+  // **一旦这里的心跳被删/被改名**，活着的执行器作业会被当成死 runner 误杀（5 分钟后判 timeout）。
+  it('★ 本进程必须周期写 platform.job_heartbeat（否则 reapStale 会误杀活作业）', () => {
+    const src = readFileSync(new URL('./executor-server.mjs', import.meta.url), 'utf8')
+    expect(src).toMatch(/import \{[^}]*\bbeat\b[^}]*\} from '\.\.\/apps\/server\/src\/scheduler\/store\.ts'/)
+    expect(src).toMatch(/beat\(pool, new Date\(\), instanceId\)/)
+    expect(src).toMatch(/setInterval\(heartbeat, 10_000\)/)
   })
 })
