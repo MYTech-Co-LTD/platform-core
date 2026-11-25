@@ -23,3 +23,19 @@ not (
   and {{ prefix }}hour >= {{ shanghai_hour_now() }} - 1
 )
 {% endmacro %}
+
+{#
+  closed_before_predicate_parquet(alias='r') —— 同一语义，但用于 **read_parquet 的函数别名**。
+
+  为什么不能复用上面的宏（#2819 真机）：pg_duckdb 把 `read_parquet(...) r` 暴露成函数别名，
+  列必须用 `r['col']` 取；写成 `r.bizday` 会在建 view 时报
+  `column r.bizday does not exist`（提示原文：use the r['colname'] syntax）。
+  当前唯一调用点是 `stg_lemeng_retail_order_line` 的湖腿——`closed_before_predicate('r.')`
+  渲染成点号语法，导致热层 view 从未成功建出来。语义与上宏逐字一致，只换取列形态。
+#}
+{% macro closed_before_predicate_parquet(alias='r') %}
+not (
+  ({{ alias }}['bizday']::date) = {{ shanghai_today() }}
+  and ({{ alias }}['hour']::int) >= {{ shanghai_hour_now() }} - 1
+)
+{% endmacro %}

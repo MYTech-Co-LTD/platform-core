@@ -176,7 +176,9 @@ where sealed['schema_version'] = 3
   )
   -- 闭窗（#2761）：湖永远只读「已关闭的小时」。闭窗谓词从 marts 层**下移到这里** ——
   --   「谁读活数据谁闭窗」；当前小时的数据改由下面第三腿（热层）提供。
-  and {{ closed_before_predicate('r.') }}
+  -- ⚠️ 这里 `r` 是 read_parquet 的函数别名 ⇒ 必须用 parquet 版宏（#2819 真机：
+  --   `r.bizday` 建 view 时报 column does not exist）。
+  and {{ closed_before_predicate_parquet('r') }}
 -- ══ 第三腿（#2761）：热层「当前小时」═══════════════════════════════════════════════════════════
 -- 为什么要这一腿：上面湖的热腿被闭窗谓词限制在「已关闭的小时」，当前小时不在任何来源里
 --   ⇒ 报表滞后 1–2 小时。热层由采集 tick 每 10 分钟 append 一批，这里只读最新批次。
