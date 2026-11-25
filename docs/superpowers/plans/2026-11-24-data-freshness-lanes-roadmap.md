@@ -58,7 +58,7 @@
 - [ ] **G0** 基线测量：单 build 时长/内存；两并发是否 postmaster 重启
 - [x] **A1** `materialize.sh` selector 覆盖：`MATERIALIZE_LANE` 从 `data-lanes.json` 解析模型清单（tick/hourly 通用；未知车道 fail loud）+ `MATERIALIZE_HOURLY_SELECT`；3 条用例 + 静态接线断言
 - [x] **A2** 10m 车道落地（仅 `fct_retail_sale`）：tick 已是该模型；A1 之后可选 `MATERIALIZE_LANE=retail_10m`（默认值不变）
-- [x] **A3** 1h 车道按域分片（代码）：门店维 :04 / 10 域 :05–:41 奇数分钟错峰 / 窗口审计 :45；域 job 排除 `tag:audit_window`；load_log 按本轮模型反推上游 staging（**DB 开闸待部署后执行**）
+- [x] **A3** 1h 车道按域分片：门店维 :04 / 10 域 :05–:41 奇数分钟错峰 / 窗口审计 :45；域 job 排除 `tag:audit_window`；load_log 按本轮模型反推上游 staging；**两轮验收：首轮 9/10（member 429）→ maxAttempts=3 后 10/10 + 审计独立 ok**
 - [x] **B1** G0 基线测量 → **单飞定案**：两路并发峰值 2.46GB、重模型+采集峰值 3.02GB / 上限 4GB，无 postmaster 重启；长查询不可取消（只能预防）
 - [ ] **B2** 单飞锁 + chunk 上限实现（≤3 分钟）
 - [ ] **C1–C6** 水位 / 幂等 / 热湖互补性回归
@@ -115,7 +115,8 @@
 | 2026-11-25 | G0 并发实验 | ✅ 单飞定案 | 2.46GB / 3.02GB / 4GB；postmaster 未重启；`pg_terminate_backend` 对 DuckDB 扫描无效 |
 | 2026-11-25 | A1 车道选择器 | ✅ PR #2826 | `MATERIALIZE_LANE` 解析 `data-lanes.json`；未知车道 fail loud；materialize.test 112 pass |
 | 2026-11-25 | A3 1h 车道拆域首轮 | ✅ 9/10 + 审计独立 | dims 34s / retail_derived 503s / purchase 42s / inventory 87s / client 33s / branch 63s / transfer 27s / outbound 53s / request 94s / loss 33s；窗口审计独立 ok 167s；**member 429 失败**（#2831） |
-| 2026-11-25 | 429 容量竞态修复 | ✅ 本 PR | lane `maxAttempts` 3 / dims 2；DB `max_attempts` 迁移待部署后 |
+| 2026-11-25 | 429 容量竞态修复 | ✅ PR #2832 | lane `maxAttempts` 3 / dims 2；**DB 已写库** |
+| 2026-11-25 | A3 拆域第二轮（修复后） | ✅ **10/10 + 审计** | 13:09–13:48：dims 36s / retail_derived 498s / purchase 39s / inventory 101s / **member 30s（429 修复生效）** / client 33s / branch 62s / transfer 27s / outbound 50s / request 96s / loss 30s；窗口审计 168s 独立 ok |
 | 2026-11-25 | 部署僵尸 running 行 | ⚠️ 待查 | `publish_dims` 部署被杀后行停留 22 分钟占槽；executor 启动对账未生效 |
 
 ## §6 变更记录
