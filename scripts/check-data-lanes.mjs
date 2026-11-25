@@ -345,6 +345,22 @@ export function checkDataLanes(rootDir = fileURLToPath(new URL('..', import.meta
       for (const d of Object.keys(slaDomains)) {
         if (!laneDomains.includes(d)) errors.push(`sla.json 的域 ${d} 不在 data-lanes.json 的 nonretail_1h.domains 里`)
       }
+
+      // A4 补口：**每个车道必须有 job**。`daily_report` 的模型曾被 A3 拆域漏掉作业
+      // （fct_retail_item_profit / fct_retail_profit 停更半天）——这里把「有归属」升级成「有 job」。
+      const dailyReportModels = Array.isArray(lanes?.lanes?.daily_report?.models) ? lanes.lanes.daily_report.models : []
+      if (dailyReportModels.length > 0) {
+        const dr = products.daily_report
+        if (!dr?.job) {
+          errors.push('sla.json: products.daily_report.job 缺失（daily_report 车道无 job）')
+        } else {
+          const regText = existsSync(registryAbs) ? readFileSync(registryAbs, 'utf8') : ''
+          if (!regText.includes(`key: '${dr.job}'`)) errors.push(`registry 缺少 daily_report 车道的 job：${dr.job}`)
+          if (!regText.includes("MATERIALIZE_LANE: 'daily_report'")) {
+            errors.push("registry 的 daily_report job 缺 MATERIALIZE_LANE: 'daily_report'")
+          }
+        }
+      }
     }
   }
 

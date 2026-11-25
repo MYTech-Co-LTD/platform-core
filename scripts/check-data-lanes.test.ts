@@ -60,6 +60,7 @@ function slaConfig(domains: Record<string, string[]> = { d: ['src.22'] }): strin
         domains: Object.fromEntries(Object.entries(domains).map(([d, sources]) => [d, { job: `data.dbt_hourly_${d}`, sources }])),
       },
       daily: { job: 'data.dbt_tables', window: 'all', sla: { maxAgeMinutes: 1560 } },
+      daily_report: { job: 'data.dbt_daily_report', window: 'all', sla: { maxAgeMinutes: 1560 } },
     },
   })
 }
@@ -82,6 +83,7 @@ function schedules(): Record<string, string> {
 
 const REGISTRY = "  { key: 'data.dbt_tick', scope: 'data', cron: '2-59/10 1-17 * * *', timezone: 'UTC' },\n"
   + "  hourlyLaneJob('d', 5, 'd'),\n"
+  + "  { key: 'data.dbt_daily_report', scope: 'data', env: { MATERIALIZE_LANE: 'daily_report' }, cron: '10 1 * * *', timezone: 'UTC' },\n"
 
 function baseFiles(over: { lanes?: string; sla?: string; registry?: string; models?: Record<string, string> } = {}): Record<string, string> {
   return {
@@ -198,6 +200,22 @@ describe('check-data-lanes · D1 SLA 覆盖', () => {
     const { ok, errors } = checkDataLanes(fixture(baseFiles({ sla: slaConfig({ d: ['src.22'], ghost: ['src.22'] }) })))
     expect(ok).toBe(false)
     expect(errors.join('\n')).toContain('sla.json 的域 ghost 不在 data-lanes.json')
+  })
+
+  it('daily_report 车道没有 job/SLA ⇒ 红', () => {
+    const cfg = JSON.parse(slaConfig()) as { products: Record<string, unknown> }
+    delete cfg.products.daily_report
+    const { ok, errors } = checkDataLanes(fixture(baseFiles({ sla: JSON.stringify(cfg) })))
+    expect(ok).toBe(false)
+    expect(errors.join('\n')).toContain('products.daily_report.job 缺失')
+  })
+
+  it('registry 缺 daily_report job ⇒ 红', () => {
+    const registry = "  { key: 'data.dbt_tick', scope: 'data', cron: '2-59/10 1-17 * * *', timezone: 'UTC' },\n"
+      + "  hourlyLaneJob('d', 5, 'd'),\n"
+    const { ok, errors } = checkDataLanes(fixture(baseFiles({ registry })))
+    expect(ok).toBe(false)
+    expect(errors.join('\n')).toContain('registry 缺少 daily_report 车道的 job')
   })
 })
 
