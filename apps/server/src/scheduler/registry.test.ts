@@ -205,6 +205,25 @@ describe('registry · dbt hourly/tables（Wave 8 P1 / A3 拆车道）', () => {
     expect(Math.max(...minutes)).toBeLessThan(45) // 审计 :45 之前跑完
   })
 
+  it('★ 分块车道（B2）：retail_derived 两块的选择器并集 == 车道模型清单，且不重不漏', () => {
+    const lanes = JSON.parse(readFileSync(repoPath('scripts/lemeng/data-lanes.json'), 'utf8')) as {
+      lanes: { nonretail_1h: { domains: Record<string, string[]> } }
+    }
+    const blocks = JOB_REGISTRY.filter((j) => j.key === 'data.dbt_hourly_retail_derived'
+      || j.key.startsWith('data.dbt_hourly_retail_derived_'))
+    expect(blocks).toHaveLength(2)
+    // 两块都声明同一条车道：排除集（audit/audit_window）与语义不变，只是范围收窄。
+    for (const b of blocks) expect(b.env?.MATERIALIZE_LANE).toBe('nonretail_1h.retail_derived')
+    const selected = blocks
+      .flatMap((b) => (b.env?.MATERIALIZE_HOURLY_SELECT ?? '').split(/\s+/).filter(Boolean))
+      .sort()
+    expect(selected).toEqual([...lanes.lanes.nonretail_1h.domains.retail_derived].sort())
+    // 两块错开分钟，且都不撞 tick（2 mod 10）。
+    const ms = blocks.map((b) => Number(b.cron.split(' ')[0]))
+    expect(new Set(ms).size).toBe(2)
+    for (const m of ms) expect(m % 10).not.toBe(2)
+  })
+
   it('★ 日档车道 job：daily_report 两件（09:10 CST，错开 item_profit 09:05 采集）', () => {
     const job = JOB_REGISTRY.find((d) => d.key === 'data.dbt_daily_report')!
     expect(job.cron).toBe('10 1 * * *')

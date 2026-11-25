@@ -48,6 +48,12 @@ export interface JobDef {
    * `params` 不能覆盖它（registry 是系统 job 的唯一事实源，spec §3.6）。
    */
   env?: Record<string, string>
+  /**
+   * 实时车道（B2，2026-11-25）：标 true 的作业到期前 90 秒，调度器**在执行器里给它留一个槽**
+   * ——这一拍批量车道最多只用 `空闲槽 − 1`。用字段而不是按 key 硬编码：换车道归属只改这里，
+   * 调度器不需要认识具体 job 名。只标真正有分钟级 SLA 的作业（当前只有 `data.dbt_tick`）。
+   */
+  realtime?: boolean
 }
 
 /**
@@ -56,16 +62,26 @@ export interface JobDef {
  * 分钟错峰（奇数分钟，避开 10m tick 的 `2-59/10`）⇒ 各域串行、不与 tick 撞分钟；
  * 单域单轮 ≤3 分钟，10 个域在 :05–:41 内跑完，审计 job 在 :45 收尾。
  */
-function hourlyLaneJob(domain: string, minute: number, desc: string): JobDef {
+function hourlyLaneJob(
+  domain: string,
+  minute: number,
+  desc: string,
+  opts: { select?: string; block?: string } = {},
+): JobDef {
   const mm = String(minute).padStart(2, '0')
+  const { select, block } = opts
+  // 分块（B2，2026-11-25）：`select` 给定时同一域拆成多条 job，块内只跑该子集；
+  // 车道声明照旧（MATERIALIZE_LANE）⇒ 排除集与语义不变，只是范围收窄。
+  // `block` 是 key 后缀（块名），缺省则一个域一条 job（原形态）。
   return {
-    key: `data.dbt_hourly_${domain}`,
+    key: `data.dbt_hourly_${domain}${block ? `_${block}` : ''}`,
     scope: 'data',
     requiresEnv: ['DATABASE_URL', 'DATA_WAREHOUSE_URL', 'LEMENG_ZOS_BUCKET', 'LEMENG_ZOS_REGION', 'LEMENG_ZOS_ENDPOINT'],
     script: 'scripts/lemeng/materialize-job.mjs',
     env: {
       MATERIALIZE_SCOPE: 'hourly',
       MATERIALIZE_LANE: `nonretail_1h.${domain}`,
+      ...(select ? { MATERIALIZE_HOURLY_SELECT: select } : {}),
       DATA_PLANE_DOMAINS: 'lemeng',
       MATERIALIZE_MODE: 'container',
       LEMENG_ZOS_BUCKET: 'shanhai-data',
@@ -163,7 +179,15 @@ export const JOB_REGISTRY: JobDef[] = [
   // 旧的 `data.dbt_hourly` 一条跑全部增量 + 审计（~20 分钟），审计一红整轮失败、load_log 不落账
   // （2026-11-25 实测：outbound 审计 600 行差异把 17 个增量全判失败）。
   hourlySelectJob('data.dbt_hourly_dims', 'stg_lemeng_branch', 4, 300000, '乐檬 1h 车道 · 门店维（stg_lemeng_branch，先于各域）', 2),
-  hourlyLaneJob('retail_derived', 5, '零售派生（item_sale / quantity / order_event）'),
+  // 分块（B2，2026-11-25 真机实测）：本域单轮 408s 里 **343s 全在 fct_order_event**
+  // （item_sale 27.5s / quantity 37.5s）。拆成两条：
+  //   · :05 order_event（343s，长尾；它占住一个槽时另一个槽仍可给 tick）
+  //   · :07 item_sale + quantity（≈65s，快速放槽）
+  // 注意 **3 分钟上限（D5）在这块达不到**：order_event 的窗口写死在模型里（max(bizday)−7d），
+  // 再切必须改模型语义（回填边界/半窗失败即半陈旧），不做。真正的保护 = 调度器留槽（loop.ts）。
+  //   · 保留原 key（不换名）⇒ 存量排班行/台账连续，enabled 状态与 cron 不被 seed 覆盖。
+  hourlyLaneJob('retail_derived', 5, '零售派生 · order_event（长尾，343s）', { select: 'fct_order_event' }),
+  hourlyLaneJob('retail_derived', 7, '零售派生 · item_sale + quantity（≈65s）', { block: 'item_sale_quantity', select: 'fct_retail_item_sale fct_retail_quantity' }),
   hourlyLaneJob('purchase', 9, '采购'),
   hourlyLaneJob('inventory', 13, '库存快照'),
   hourlyLaneJob('member', 17, '会员汇总'),
@@ -188,7 +212,7 @@ export const JOB_REGISTRY: JobDef[] = [
   // · 对账档：只跑那三个全史模型（CST 11:45，错开主档；闭窗读已让它们不与采集抢）
   { key: 'data.dbt_tables', scope: 'data', requiresEnv: ['DATABASE_URL','DATA_WAREHOUSE_URL','LEMENG_ZOS_BUCKET','LEMENG_ZOS_REGION','LEMENG_ZOS_ENDPOINT'], script: 'scripts/lemeng/materialize-job.mjs', env: { MATERIALIZE_SCOPE: 'tables', DATA_PLANE_DOMAINS: 'lemeng', MATERIALIZE_MODE: 'container', MATERIALIZE_TABLES_EXCLUDE: 'recon_fact recon_break fct_retail_swap_offset', LEMENG_ZOS_BUCKET: 'shanhai-data', LEMENG_ZOS_REGION: 'xinan1', LEMENG_ZOS_ENDPOINT: 'xinan-1-internal.zos.ctyun.cn' }, cron: '30 18 * * *', timezone: 'UTC', timeoutMs: 5400000, maxAttempts: 1, expectedIntervalSecs: 86400, description: '乐檬 dbt tables 主档（table 模型 + seeds + views，排除对账族；CST 02:30）' },
   { key: 'data.dbt_tables_recon', scope: 'data', requiresEnv: ['DATABASE_URL','DATA_WAREHOUSE_URL','LEMENG_ZOS_BUCKET','LEMENG_ZOS_REGION','LEMENG_ZOS_ENDPOINT'], script: 'scripts/lemeng/materialize-job.mjs', env: { MATERIALIZE_SCOPE: 'tables', DATA_PLANE_DOMAINS: 'lemeng', MATERIALIZE_MODE: 'container', MATERIALIZE_TABLES_SELECT: 'recon_fact recon_break fct_retail_swap_offset', LEMENG_ZOS_BUCKET: 'shanhai-data', LEMENG_ZOS_REGION: 'xinan1', LEMENG_ZOS_ENDPOINT: 'xinan-1-internal.zos.ctyun.cn' }, cron: '45 3 * * *', timezone: 'UTC', timeoutMs: 2700000, maxAttempts: 1, expectedIntervalSecs: 86400, description: '乐檬 dbt tables 对账族（recon_fact/recon_break/swap_offset 全史 CTAS；CST 11:45）' },
-  { key: 'data.dbt_tick', scope: 'data', requiresEnv: ['DATABASE_URL','DATA_WAREHOUSE_URL','LEMENG_ZOS_BUCKET','LEMENG_ZOS_REGION','LEMENG_ZOS_ENDPOINT'], script: 'scripts/lemeng/materialize-job.mjs', env: { MATERIALIZE_SCOPE: 'tick', DATA_PLANE_DOMAINS: 'lemeng', MATERIALIZE_MODE: 'container', LEMENG_ZOS_BUCKET: 'shanhai-data', LEMENG_ZOS_REGION: 'xinan1', LEMENG_ZOS_ENDPOINT: 'xinan-1-internal.zos.ctyun.cn' }, cron: '2-59/10 1-17 * * *', timezone: 'UTC', timeoutMs: 600000, maxAttempts: 1, expectedIntervalSecs: 600, description: '乐檬 dbt tick 档（销售明细 10 分钟；CST 9-23 + 次日 0-1；容器内 dbt 1.9.1）' },
+  { key: 'data.dbt_tick', scope: 'data', requiresEnv: ['DATABASE_URL','DATA_WAREHOUSE_URL','LEMENG_ZOS_BUCKET','LEMENG_ZOS_REGION','LEMENG_ZOS_ENDPOINT'], script: 'scripts/lemeng/materialize-job.mjs', env: { MATERIALIZE_SCOPE: 'tick', DATA_PLANE_DOMAINS: 'lemeng', MATERIALIZE_MODE: 'container', LEMENG_ZOS_BUCKET: 'shanhai-data', LEMENG_ZOS_REGION: 'xinan1', LEMENG_ZOS_ENDPOINT: 'xinan-1-internal.zos.ctyun.cn' }, cron: '2-59/10 1-17 * * *', timezone: 'UTC', timeoutMs: 600000, maxAttempts: 1, expectedIntervalSecs: 600, realtime: true, description: '乐檬 dbt tick 档（销售明细 10 分钟；CST 9-23 + 次日 0-1；容器内 dbt 1.9.1；实时车道=调度器给留槽）' },
   // 对账按**被测 mart 的物化语义**分族（#2428 定案）：
   //   · 全史族（a1/a2a/a2b）：只含 **table/view** 支撑的审计 —— 紧跟 tables 重建之后跑，两侧同源；
   //   · 窗口族（data.dbt_audit_window）：只含 **增量 mart** 支撑的审计 —— 与增量 lookback 同窗

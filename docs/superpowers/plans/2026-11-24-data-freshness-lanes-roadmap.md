@@ -60,7 +60,11 @@
 - [x] **A2** 10m 车道落地（仅 `fct_retail_sale`）：tick 已是该模型；A1 之后可选 `MATERIALIZE_LANE=retail_10m`（默认值不变）
 - [x] **A3** 1h 车道按域分片：门店维 :04 / 10 域 :05–:41 奇数分钟错峰 / 窗口审计 :45；域 job 排除 `tag:audit_window`；load_log 按本轮模型反推上游 staging；**两轮验收：首轮 9/10（member 429）→ maxAttempts=3 后 10/10 + 审计独立 ok**；**拆域漏项的补口：`daily_report` 两件补 `data.dbt_daily_report`（09:10 CST），A4 门禁升级为「每个车道必须有 job」**
 - [x] **B1** G0 基线测量 → **单飞定案**：两路并发峰值 2.46GB、重模型+采集峰值 3.02GB / 上限 4GB，无 postmaster 重启；长查询不可取消（只能预防）
-- [ ] **B2** 单飞锁 + chunk 上限实现（≤3 分钟）
+- [x] **B2 第一阶段**（2026-11-25）：**实时车道留槽**（`JobDef.realtime` + 调度器 90 秒预留窗）
+      + **retail_derived 分块**（order_event 343s / item_sale+quantity 65s，真机实测）+ **断言逐项计时**
+      （分层的输入；本阶段**没动 asserts 频率**，避免敲掉 5 分钟探针节拍）
+- [ ] **B2 第二阶段**：断言按耗时分层（快组 5 分钟 / 重组 30 分钟）；chunk ≤3 分钟的可行性复评
+      （order_event 窗口写死在模型里，再切要改语义 ⇒ 当前**以留槽为准**，不强切）
 - [ ] **C1–C6** 水位 / 幂等 / 热湖互补性回归
 - [x] **D1** SLA 事实源 `scripts/lemeng/sla.json`（产品/域/源/窗口/阈值）+ `check-data-lanes` 覆盖门禁（域缺条目/源 id 不存在/多出域 即红）
 - [x] **D2** `scripts/lemeng/sla-check.mjs`（只读测量，恒 exit 0）+ `data.sla_check`（seed disabled）+ 11 条纯函数测试
@@ -122,6 +126,7 @@
 | 2026-11-25 | A3 拆域第二轮（修复后） | ✅ **10/10 + 审计** | 13:09–13:48：dims 36s / retail_derived 498s / purchase 39s / inventory 101s / **member 30s（429 修复生效）** / client 33s / branch 62s / transfer 27s / outbound 50s / request 96s / loss 30s；窗口审计 168s 独立 ok |
 | 2026-11-25 | D1/D2 SLA 事实源 + 只读测量 | ✅ PR #2844 | `sla.json`（10m/1h 十域/日）+ `sla-check.mjs` + `data.sla_check`（disabled） |
 | 2026-11-25 | **A3 漏项：daily_report 无 job** | ✅ 本 PR | `fct_retail_item_profit` / `fct_retail_profit` 拆域后停更；补 `data.dbt_daily_report`（09:10 CST）+ SLA daily_report + A4 门禁「每个车道必须有 job」 |
+| 2026-11-25 | B2 第一阶段：留槽 + 分块 + 计时 | ✅ 本 PR | 近 6h tick 领取迟到 p50 46s / p90 220s / max 442s，而利用率仅 39%（断言 118s×每5分钟=20% 容量、retail_derived 505s）⇒ 判定「排队无优先级」而非容量不足；`realtime` 标记 + 90s 预留窗（`hasDueSoon`）；retail_derived 拆两块（实测 order_event 343s / item_sale 27s / quantity 37s）；断言逐项 ms 只进 stdout |
 | 2026-11-25 | 部署僵尸 running 行 | ✅ 本 PR（#2835） | `publish_dims` 部署被杀后行停留 22 分钟占槽（启动对账兜不住「executor 没重启」）；改为 runner 心跳：executor 每 10s 写 `platform.job_heartbeat`，`reapStale` 对「心跳过期 5 分钟」的 running 行直接 timeout（不再等 2×timeout）；有据可依的过期才回收，无心跳的旧 runner 仍走 2×timeout |
 
 ## §6 变更记录

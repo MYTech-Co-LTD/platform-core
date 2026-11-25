@@ -180,6 +180,56 @@ describePg('scheduler loop', () => {
     expect(loop.inFlight()).toBe(1)
   })
 
+  it('★ 实时车道留槽（B2）：tick 到期前 90 秒，批量车道不许占满槽', async () => {
+    await clearFixtures()
+    const rt = await insertSchedule({ key: 'jobtest-loop:rt', nextRunAt: new Date(Date.now() + 30_000) })
+    const batch = await insertSchedule({ key: 'jobtest-loop:batch', nextRunAt: new Date(Date.now() - 60_000) })
+    const spawned: string[] = []
+    const loop = createSchedulerLoop({
+      pool, cwd: process.cwd(), maxConcurrency: 1,
+      registry: [def({ key: 'jobtest-loop:rt', realtime: true }), def({ key: 'jobtest-loop:batch' })],
+      spawn: async (o) => { spawned.push(String(o.env?.JOB_KEY)); return okResult() },
+    })
+    const stats = await loop.tick()
+    // 唯一一个槽留给 30 秒后到期的 tick：批量作业到期了也不许起。
+    expect(spawned).toEqual([])
+    expect(stats.started).toBe(0)
+    expect(await latestRun(batch)).toBeUndefined()
+    expect(await latestRun(rt)).toBeUndefined()
+  })
+
+  it('★ 实时车道留槽（B2）：tick 已到期 ⇒ 它先领，批量继续排队', async () => {
+    await clearFixtures()
+    // 故意让批量作业**更早到期**：没有优先级时 claimDue 会先领它（order by next_run_at）。
+    const batch = await insertSchedule({ key: 'jobtest-loop:batch', nextRunAt: new Date(Date.now() - 120_000) })
+    const rt = await insertSchedule({ key: 'jobtest-loop:rt', nextRunAt: new Date(Date.now() - 60_000) })
+    const spawned: string[] = []
+    const loop = createSchedulerLoop({
+      pool, cwd: process.cwd(), maxConcurrency: 1,
+      registry: [def({ key: 'jobtest-loop:rt', realtime: true }), def({ key: 'jobtest-loop:batch' })],
+      spawn: async (o) => { spawned.push(String(o.env?.JOB_KEY)); return okResult() },
+    })
+    await loop.tick()
+    expect(spawned).toEqual(['jobtest-loop:rt'])
+    expect((await waitTerminal(rt)).status).toBe('ok')
+    expect(await latestRun(batch)).toBeUndefined()
+  })
+
+  it('★ 实时车道留槽（B2）：tick 还远（10 分钟后）⇒ 批量照常全速', async () => {
+    await clearFixtures()
+    await insertSchedule({ key: 'jobtest-loop:rt', nextRunAt: new Date(Date.now() + 600_000) })
+    const batch = await insertSchedule({ key: 'jobtest-loop:batch', nextRunAt: new Date(Date.now() - 60_000) })
+    const spawned: string[] = []
+    const loop = createSchedulerLoop({
+      pool, cwd: process.cwd(), maxConcurrency: 1,
+      registry: [def({ key: 'jobtest-loop:rt', realtime: true }), def({ key: 'jobtest-loop:batch' })],
+      spawn: async (o) => { spawned.push(String(o.env?.JOB_KEY)); return okResult() },
+    })
+    await loop.tick()
+    expect(spawned).toEqual(['jobtest-loop:batch'])
+    expect((await waitTerminal(batch)).status).toBe('ok')
+  })
+
   it('★ JobDef.env 注入子进程（Wave 8 P1）：系统 job 的 env 是 registry 真相', async () => {
     const id = await seed({ key: 'jobtest-loop:env' })
     let seen: NodeJS.ProcessEnv | undefined

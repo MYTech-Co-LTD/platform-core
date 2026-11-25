@@ -784,6 +784,16 @@ if [ "$SCOPE" = hourly ]; then
       echo "MATERIALIZE_FAILED:bad_lane（MATERIALIZE_LANE=${MATERIALIZE_LANE}）" >&2
       exit 1
     }
+    # **同域分块**（B2，2026-11-25）：一个域的模型可以拆成多条 job 跑，块内仍用显式模型名收窄。
+    # 为什么保留 MATERIALIZE_LANE 而不是只传 SELECT：排除集（`--exclude tag:audit[_window]`）
+    # 只在线道分支里加——走 SELECT 分支会把窗口审计的 singular test 一起拖进来（eager 间选），
+    # 那正是 #2456 的 600 行差异把整轮域 build 判失败的原因。
+    if [ -n "${MATERIALIZE_HOURLY_SELECT:-}" ]; then
+      _select="$MATERIALIZE_HOURLY_SELECT"
+    fi
+
+
+
   elif [ -n "${MATERIALIZE_HOURLY_SELECT:-}" ]; then
     _select="$MATERIALIZE_HOURLY_SELECT"
   else
