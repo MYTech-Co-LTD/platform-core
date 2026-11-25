@@ -11,6 +11,12 @@
 
 ## [Unreleased]
 
+## [0.386.0](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.385.1...v0.386.0) - 2026-11-25
+- 【修复】data: 闭窗谓词补 parquet 别名版——热层 view 重建不再报 column r.bizday ([#2820](https://github.com/MYTech-Co-LTD/platform-core/pull/2820), [cd737b3](https://github.com/MYTech-Co-LTD/platform-core/commit/cd737b3a163868cda6ac9b536bc2be6a314af0b2))
+- 【新增】notify: 成员申请待审核通知接入公众号模板——管理员收件人按绑定反查 openid ([#2817](https://github.com/MYTech-Co-LTD/platform-core/pull/2817), [057de2a](https://github.com/MYTech-Co-LTD/platform-core/commit/057de2a1890125020c00c18bf3d0e6e5e173c5f2))
+- 【修复】data: tables 档补 staging 视图——热层三腿的 view 从未被重建 ([#2818](https://github.com/MYTech-Co-LTD/platform-core/pull/2818), [0024ea6](https://github.com/MYTech-Co-LTD/platform-core/commit/0024ea67f21a9898918b0c3fd25a14ca94dd7c11))
+
+
 ## [0.385.1](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.385.0...v0.385.1) - 2026-11-24
 - 【修复】aftersales: 通知链接回落 PUBLIC_ORIGIN——微信模板消息 url 不认相对路径 ([#2814](https://github.com/MYTech-Co-LTD/platform-core/pull/2814), [bab0345](https://github.com/MYTech-Co-LTD/platform-core/commit/bab0345175c104c172c62b4fde75f770029cff0f))
 
