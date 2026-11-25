@@ -21,6 +21,14 @@ export const BUILTIN_TEMPLATES: BuiltinTemplate[] = [
         body: '{{applicantName}} 提交了{{approveType}}申请',
         link: '{{link}}',
       },
+      // 「成员申请待审核通知」（#2815）：thing1/thing13/phone_number5 + const9（**不可传**）
+      wechat_oa: {
+        template_id: '',
+        thing1: '{{applicantName}}',
+        thing13: '{{stores}}',
+        phone_number5: '{{phone}}',
+        url: '{{link}}',
+      },
     },
   },
   // ── 售后回执/结果类（#2805）：收件人是**提交人本人**（公众号 openid） ────────────

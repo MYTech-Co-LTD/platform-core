@@ -113,7 +113,10 @@ notifications:
       payload:
         approvalId:    { type: string, required: true, label: 审批单号 }
         approveType:   { type: string, required: true, label: 类型 }
-        applicantName: { type: string, label: 申请人 }
+        applicantName: { type: string, required: true, label: 申请人 }
+        # 公众号模板「成员申请待审核通知」的 thing1/thing13/phone_number5 来源（#2815）
+        phone:         { type: string, required: true, label: 手机号 }
+        stores:        { type: string, required: true, label: 门店 }
         link:          { type: url, required: true, label: 详情链接 }
       recipients:
         approvers:        { kind: scope_holders, scope: aftersales:manage, label: 售后管理员 }
