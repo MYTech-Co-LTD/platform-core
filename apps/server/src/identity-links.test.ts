@@ -316,17 +316,19 @@ describe.skipIf(!dbUrl)('IdentityLinks 服务（真 PG）', () => {
     expect(['carol', 'cathy']).toContain(row?.casdoorName) // 行上先落首个候选作机器建议
   })
 
-  it('未命中 ⇒ ensureUser(externalId) 建草稿 + pending，返回 {state:"draft"}', async () => {
+  // 2026-11-25 人裁订正：**未命中不再造草稿户**（原行为会在 Casdoor 里建 name=openid 的
+  // 影子账户，真人因此有两个账户）。现在 casdoor_name 落 NULL = 尚未指向任何人，转人工指定。
+  it('未命中 ⇒ **不建号**、pending、casdoor_name 为 NULL，返回 {state:"draft"}', async () => {
     const ensured: string[] = []
     const svc = createIdentityLinks(pool, fakeCasdoorFor(ensured))
     const r = await svc.matchOnApplication({
       org: 'm3', provider: 'wechat-oa', externalId: 'w-d', phone: '13500003333', approvalId: 13,
     })
     expect(r).toEqual({ state: 'draft' })
-    expect(ensured).toEqual(['m3/w-d']) // 草稿 Casdoor user 名 = externalId，建在**本 org**
+    expect(ensured).toEqual([]) // ← 关键：绝不在 Casdoor 里造影子账户
     const row = await findLinkByExternal(pool, 'm3', 'wechat-oa', 'w-d')
     expect(row?.status).toBe('pending')
-    expect(row?.casdoorName).toBe('w-d')
+    expect(row?.casdoorName).toBeNull() // 尚未指向任何人
     expect(row?.boundVia).toBeNull()
     expect(row?.sourceApprovalId).toBe(13)
   })
@@ -358,7 +360,7 @@ describe.skipIf(!dbUrl)('IdentityLinks 服务（真 PG）', () => {
       org: 'm5', provider: 'wechat-oa', externalId: 'w-f', phone: '010-1234', approvalId: 14,
     })
     expect(r).toEqual({ state: 'draft' })
-    expect(ensured).toEqual(['m5/w-f'])
+    expect(ensured).toEqual([]) // 同上：不建号
     const row = await findLinkByExternal(pool, 'm5', 'wechat-oa', 'w-f')
     expect(row?.status).toBe('pending')
     expect(row?.phone).toBeNull() // 无效手机号不落行（不能当强键用）

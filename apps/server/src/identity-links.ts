@@ -26,7 +26,8 @@ export interface IdentityLinkRow {
   org: string
   provider: LinkProvider
   externalId: string
-  casdoorName: string
+  /** 指向的 Casdoor 账户；**NULL = 尚未指向任何人**（2026-11-25 订正：未匹配时不再造草稿户） */
+  casdoorName: string | null
   status: LinkStatus
   phone: string | null
   boundVia: 'auto' | 'manual' | null
@@ -126,7 +127,7 @@ export async function upsertLink(
     org: string
     provider: LinkProvider
     externalId: string
-    casdoorName: string
+    casdoorName: string | null
     phone: string | null
     boundVia: 'auto' | 'manual' | null
     status: LinkStatus
@@ -348,11 +349,12 @@ export function createIdentityLinks(
         })
         return { state: 'active' }
       }
-      if (candidates.length === 0) {
-        // 未命中（含手机号无效）⇒ 建草稿 Casdoor user（名 = externalId；add 竞态由 ensureUser
-        // 的 getUser 回读兜底——真机语义）+ pending，转人工
-        await casdoorFor(input.org).ensureUser(input.externalId)
-      }
+      // ⚠️ 2026-11-25 人裁订正（作废「建草稿户」）：未命中**绝不**建 Casdoor 用户。
+      // 原实现 `ensureUser(externalId)` 会在 Casdoor 里造一个 name=openid 的影子账户
+      // （不在组织架构、无角色；真人因此有两个账户，影子账户一旦拿到会话就是
+      // 「有账号无角色」的幽灵身份）。且它只是为了满足 casdoor_name NOT NULL 而去创建
+      // 一个真实用户——代价远大于改约束（迁移 025 已放开该列）。
+      // 现在：casdoor_name 落 NULL = 尚未指向任何人，由管理员审核时**从组织架构选人**。
       // 多命中、以及 C-1 的 revoked/disputed 抑制（唯一命中也不绑）⇒ pending + 转人工；
       // 行上 casdoor_name 落首个候选作机器建议（完整候选清单经返回值进审批面，行上只留
       // 建议位——casdoor_name 列 NOT NULL 必须有值）
@@ -360,7 +362,7 @@ export function createIdentityLinks(
         org: input.org,
         provider: input.provider,
         externalId: input.externalId,
-        casdoorName: candidates[0] ?? input.externalId,
+        casdoorName: candidates[0] ?? null,
         phone,
         boundVia: null,
         status: 'pending',
