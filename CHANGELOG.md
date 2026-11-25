@@ -11,6 +11,11 @@
 
 ## [Unreleased]
 
+## [0.386.1](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.386.0...v0.386.1) - 2026-11-25
+- 【修复】notify: 公众号投递失败摘要带上 errcode——40037 与 43004 处置不同 ([#2824](https://github.com/MYTech-Co-LTD/platform-core/pull/2824), [70a2c57](https://github.com/MYTech-Co-LTD/platform-core/commit/70a2c575d1117c4d6357bd246fd9d18297ca7ab8))
+- 【修复】identity: 取消「未命中即建草稿户」——casdoor_name 可空，不造影子账户 ([#2822](https://github.com/MYTech-Co-LTD/platform-core/pull/2822), [743af7a](https://github.com/MYTech-Co-LTD/platform-core/commit/743af7ad08ca6e6e6c78cb11f67d8018fa06ca7b))
+
+
 ## [0.386.0](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.385.1...v0.386.0) - 2026-11-25
 - 【修复】data: 闭窗谓词补 parquet 别名版——热层 view 重建不再报 column r.bizday ([#2820](https://github.com/MYTech-Co-LTD/platform-core/pull/2820), [cd737b3](https://github.com/MYTech-Co-LTD/platform-core/commit/cd737b3a163868cda6ac9b536bc2be6a314af0b2))
 - 【新增】notify: 成员申请待审核通知接入公众号模板——管理员收件人按绑定反查 openid ([#2817](https://github.com/MYTech-Co-LTD/platform-core/pull/2817), [057de2a](https://github.com/MYTech-Co-LTD/platform-core/commit/057de2a1890125020c00c18bf3d0e6e5e173c5f2))
