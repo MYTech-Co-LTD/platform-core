@@ -11,6 +11,10 @@
 
 ## [Unreleased]
 
+## [0.389.0](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.388.0...v0.389.0) - 2026-11-25
+- 【新增】aftersales: 门店归属转执法——只能提/看本店工单，结果通知全店员工 ([#2830](https://github.com/MYTech-Co-LTD/platform-core/pull/2830), [3055645](https://github.com/MYTech-Co-LTD/platform-core/commit/305564537b736684bd1815214794a44014974db1))
+
+
 ## [0.388.0](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.387.0...v0.388.0) - 2026-11-25
 - 【新增】data: 1h 车道按域拆分（A3） ([#2828](https://github.com/MYTech-Co-LTD/platform-core/pull/2828), [7c3d486](https://github.com/MYTech-Co-LTD/platform-core/commit/7c3d4865776a42cb4839a53140595af48fa6f985))
 
