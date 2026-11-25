@@ -205,6 +205,17 @@ describe('registry · dbt hourly/tables（Wave 8 P1 / A3 拆车道）', () => {
     expect(Math.max(...minutes)).toBeLessThan(45) // 审计 :45 之前跑完
   })
 
+  it('★ 日档车道 job：daily_report 两件（09:10 CST，错开 item_profit 09:05 采集）', () => {
+    const job = JOB_REGISTRY.find((d) => d.key === 'data.dbt_daily_report')!
+    expect(job.cron).toBe('10 1 * * *')
+    expect(job.env?.MATERIALIZE_SCOPE).toBe('hourly')
+    expect(job.env?.MATERIALIZE_LANE).toBe('daily_report')
+    expect(job.timeoutMs).toBe(900000)
+    expect(job.maxAttempts).toBe(2)
+    expect(job.scope).toBe('data')
+    expect(existsSync(repoPath(job.script))).toBe(true)
+  })
+
   it('★ #2674 拆档：全史 CTAS 模型从主档排除，独立对账档只跑它们', () => {
     // 拆档理由：三个全史模型单轮 ~11 分钟且必撞采集期 ETag，与几十个表同档 ⇒ 90 分钟必超时，
     // 新增/修改的 table 模型整天进不了生产（#2655 实证）。

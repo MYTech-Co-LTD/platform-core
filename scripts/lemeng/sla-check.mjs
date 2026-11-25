@@ -185,18 +185,19 @@ export function computeReport(config, clocks) {
     }
   }
 
-  const daily = products.daily
-  if (daily) {
-    const built = jobs.get(daily.job) ?? null
-    const maxAge = Number(daily.sla?.maxAgeMinutes ?? 0) * 60_000
+  // 日档产品（daily = 夜间 tables；daily_report = 两个日粒度增量 mart）——同一判据（age）。
+  for (const key of ['daily', 'daily_report']) {
+    const d = products[key]
+    if (!d) continue
+    const built = jobs.get(d.job) ?? null
+    const maxAge = Number(d.sla?.maxAgeMinutes ?? 0) * 60_000
     const age = built ? now.getTime() - built.getTime() : null
     const verdict = !built ? 'ERR' : (maxAge > 0 && (age ?? 0) > maxAge ? 'ERR' : 'OK')
     rows.push({
-      product: 'daily', job: daily.job, windowActive: true,
+      product: key, job: d.job, windowActive: true,
       sourceAt: null, builtAt: built ? built.toISOString() : null,
       lagSourceToBuildMs: null, buildAgeMs: age, verdict,
-      detail: verdict === 'OK' ? 'ok' : (built ? `age ${Math.round((age ?? 0) / 60000)}m > ${daily.sla?.maxAgeMinutes}m` : '无 ok 运行'),
-
+      detail: verdict === 'OK' ? 'ok' : (built ? `age ${Math.round((age ?? 0) / 60000)}m > ${d.sla?.maxAgeMinutes}m` : '无 ok 运行'),
     })
   }
   return { generatedAt: now.toISOString(), products: rows }

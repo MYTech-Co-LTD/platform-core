@@ -174,6 +174,10 @@ export const JOB_REGISTRY: JobDef[] = [
   hourlyLaneJob('request', 37, '要货'),
   hourlyLaneJob('loss', 41, '报损'),
   hourlySelectJob('data.dbt_hourly', 'tag:audit_window', 45, 1800000, '乐檬 1h 车道 · 窗口审计（9 条窗口对账）'),
+  // 日档车道（A3 拆域时漏掉的 job）：`daily_report` 的两个增量模型（fct_retail_item_profit /
+  // fct_retail_profit）在拆域后不再被任何 job 覆盖 ⇒ 独立日 job，09:10 CST（错开 item_profit
+  // 09:05 采集）。A4 门禁从此要求「每个车道必须有 job」。
+  { key: 'data.dbt_daily_report', scope: 'data', requiresEnv: ['DATABASE_URL','DATA_WAREHOUSE_URL','LEMENG_ZOS_BUCKET','LEMENG_ZOS_REGION','LEMENG_ZOS_ENDPOINT'], script: 'scripts/lemeng/materialize-job.mjs', env: { MATERIALIZE_SCOPE: 'hourly', MATERIALIZE_LANE: 'daily_report', DATA_PLANE_DOMAINS: 'lemeng', MATERIALIZE_MODE: 'container', LEMENG_ZOS_BUCKET: 'shanhai-data', LEMENG_ZOS_REGION: 'xinan1', LEMENG_ZOS_ENDPOINT: 'xinan-1-internal.zos.ctyun.cn' }, cron: '10 1 * * *', timezone: 'UTC', timeoutMs: 900000, maxAttempts: 2, expectedIntervalSecs: 86400, description: '乐檬 日档 · 零售利润两件（车道 daily_report；CST 09:10，错开 item_profit 09:05 采集）' },
   // 数据新鲜度 SLA 测量（路线图 D1/D2）：**只读**（不写库、不发探针、恒 exit 0），seed disabled；
   // D3/D4 观测 2–3 天校准阈值后再接 OO 告警与开闸。指标定义在 scripts/lemeng/sla.json。
   { key: 'data.sla_check', scope: 'data', requiresEnv: ['DATABASE_URL','DATA_WAREHOUSE_URL'], script: 'scripts/lemeng/sla-check.mjs', cron: '*/5 * * * *', timezone: 'UTC', timeoutMs: 120000, maxAttempts: 1, expectedIntervalSecs: 300, description: '数据新鲜度 SLA 测量（10m/1h/daily；只读，seed disabled；D4 才接告警）' },

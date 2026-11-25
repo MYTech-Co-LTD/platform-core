@@ -34,6 +34,11 @@
       "job": "data.dbt_tables",
       "window": "all",
       "sla": { "maxAgeMinutes": 1560 }
+    },
+    "daily_report": {
+      "job": "data.dbt_daily_report",
+      "window": "all",
+      "sla": { "maxAgeMinutes": 1560 }
     }
   }
 }

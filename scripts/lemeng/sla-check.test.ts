@@ -16,6 +16,7 @@ const CONFIG = {
       domains: { purchase: { job: 'data.dbt_hourly_purchase', sources: ['src.a', 'src.b'] } },
     },
     daily: { job: 'data.dbt_tables', window: 'all', sla: { maxAgeMinutes: 1560 } },
+    daily_report: { job: 'data.dbt_daily_report', window: 'all', sla: { maxAgeMinutes: 1560 } },
   },
 }
 
@@ -130,5 +131,11 @@ describe('sla-check · 判据', () => {
     const jobs = new Map([['data.dbt_tables', new Date('2026-11-23T11:00:00Z')]])
     const r = computeReport(CONFIG, clocks({ jobs }))
     expect(r.products.find((p) => p.product === 'daily')!.verdict).toBe('ERR')
+  })
+
+  it('daily_report：超过 maxAge ⇒ ERR（A3 漏 job 的守护）', () => {
+    const jobs = new Map([['data.dbt_daily_report', new Date('2026-11-23T11:00:00Z')]])
+    const r = computeReport(CONFIG, clocks({ jobs }))
+    expect(r.products.find((p) => p.product === 'daily_report')!.verdict).toBe('ERR')
   })
 })
