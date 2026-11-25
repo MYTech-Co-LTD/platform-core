@@ -11,6 +11,10 @@
 
 ## [Unreleased]
 
+## [0.387.0](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.386.1...v0.387.0) - 2026-11-25
+- 【新增】data: 车道选择器接入 data-lanes.json（A1） ([#2826](https://github.com/MYTech-Co-LTD/platform-core/pull/2826), [d1031a4](https://github.com/MYTech-Co-LTD/platform-core/commit/d1031a44a96d2378d808100fba741330fb34d7eb))
+
+
 ## [0.386.1](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.386.0...v0.386.1) - 2026-11-25
 - 【修复】notify: 公众号投递失败摘要带上 errcode——40037 与 43004 处置不同 ([#2824](https://github.com/MYTech-Co-LTD/platform-core/pull/2824), [70a2c57](https://github.com/MYTech-Co-LTD/platform-core/commit/70a2c575d1117c4d6357bd246fd9d18297ca7ab8))
 - 【修复】identity: 取消「未命中即建草稿户」——casdoor_name 可空，不造影子账户 ([#2822](https://github.com/MYTech-Co-LTD/platform-core/pull/2822), [743af7a](https://github.com/MYTech-Co-LTD/platform-core/commit/743af7ad08ca6e6e6c78cb11f67d8018fa06ca7b))
