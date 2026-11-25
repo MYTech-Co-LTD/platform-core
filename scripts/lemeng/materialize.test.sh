@@ -343,6 +343,10 @@ check "tables：load_log 落的是 **table 模型**名（fct_lemeng_x）" LOG_GR
 check "tables：另一个 table 模型也落账（fct_lemeng_y）" LOG_GREP tables_ok "VALUES ('fct_lemeng_y', "
 check "tables：**不再**拿 staging 文件名冒充（stg_lemeng_a 无水位行）" \
   sh -c '! grep -Fq "$2" "$1"' _ "$STUB_E2E/tables_ok/state/calls.log" "VALUES ('stg_lemeng_a', "
+# #2815：默认选择器必须显式含 staging（`config.materialized:table,path:...` 联合选择器不含它；
+# 少了这一项，热层三腿的 view 永远不会被重建，生产一直读旧两腿版）。
+check "tables：默认选择器含 staging 视图（#2815）" \
+  sh -c 'printf "%s" "$1" | grep -Fq "path:models/\$TABLES_DOMAIN/staging"' _ "$SRC_CONTENT"
 unset SCOPE_FIXTURE
 
 # ★ #1537：tick 选择器空匹配 ⇒ dbt 退出 0 但 `Nothing to do.` ⇒ 必须判 noop，不许假绿
