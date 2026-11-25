@@ -11,6 +11,10 @@
 
 ## [Unreleased]
 
+## [0.390.1](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.390.0...v0.390.1) - 2026-11-25
+- 【修复】data: sla-check 按 workspace 回退解析 pg ([#2846](https://github.com/MYTech-Co-LTD/platform-core/pull/2846), [e82b6ad](https://github.com/MYTech-Co-LTD/platform-core/commit/e82b6ad11cb40b44c62adc8588c1654c7c2fe1e3))
+
+
 ## [0.390.0](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.389.1...v0.390.0) - 2026-11-25
 - 【新增】data: D1/D2 数据新鲜度 SLA——事实源 + 只读测量 ([#2844](https://github.com/MYTech-Co-LTD/platform-core/pull/2844), [11c025e](https://github.com/MYTech-Co-LTD/platform-core/commit/11c025e81ec812a4dacbfc9c136fa15ee3d20ef3))
 - 【修复】data: SystemMapView 测试 waitFor 显式 5s 超时——CI 慢机器稳定超时阻塞部署 ([#2840](https://github.com/MYTech-Co-LTD/platform-core/pull/2840), [59f9e43](https://github.com/MYTech-Co-LTD/platform-core/commit/59f9e4308fb8b3533fa8b0e8ec31d99025bc4b04))
