@@ -8,7 +8,7 @@ import TDesign, { Select } from 'tdesign-vue-next'
  * 否则报 `Cannot access 'X' before initialization`。计划 Task 6 的订正表第 5 条已实证过这一点，
  * 而 Task 8 的测试初稿同样缺这一步 —— 这里按订正执行。
  */
-const { replace, back, success, warning, woCreate, empQuery, storeQuery, settlementOrdersQuery } = vi.hoisted(() => ({
+const { replace, back, success, warning, woCreate, empQuery, storeQuery, productQuery, settlementOrdersQuery } = vi.hoisted(() => ({
   replace: vi.fn(),
   back: vi.fn(),
   success: vi.fn(),
@@ -16,6 +16,7 @@ const { replace, back, success, warning, woCreate, empQuery, storeQuery, settlem
   woCreate: vi.fn(),
   empQuery: vi.fn(),
   storeQuery: vi.fn(),
+  productQuery: vi.fn(),
   settlementOrdersQuery: vi.fn(),
 }))
 
@@ -23,6 +24,8 @@ vi.mock('vue-router', () => ({ useRouter: () => ({ replace, back }), useRoute: (
 vi.mock('@/shims/wuji-data', () => ({
   employee_info: { query: (...a: unknown[]) => empQuery(...a) },
   store_info: { query: (...a: unknown[]) => storeQuery(...a) },
+  // 2026-11-25：进页面会预加载一页商品做首屏候选（对齐 wuji 的 loadProducts('')）
+  product_archive: { query: async (...a: unknown[]) => productQuery(...a) },
   after_sales_work_order: {
     create: (...a: unknown[]) => woCreate(...a),
     settlementOrders: (...a: unknown[]) => settlementOrdersQuery(...a),
