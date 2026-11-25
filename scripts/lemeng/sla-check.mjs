@@ -21,6 +21,28 @@ export const SCRIPT_NAME = 'sla-check'
 export const CONFIG_REL = 'scripts/lemeng/sla.json'
 export const DEFAULT_WORKSPACES = ['/data/ws3120', '/data/ws64188']
 
+/**
+ * `pg` 只在 workspace 包里（apps/server / modules/data），根 `/app/node_modules` 没有（pnpm 布局）。
+ * 从 `scripts/lemeng/` 直接 `createRequire(...)('pg')` 会 MODULE_NOT_FOUND；按顺序回退到包内解析。
+ * @param {string} root 仓根（容器里 /app）
+ * @returns {any}
+ */
+function loadPg(root) {
+  const bases = [
+    import.meta.url,
+    pathToFileURL(join(root, 'apps/server/package.json')).href,
+    pathToFileURL(join(root, 'modules/data/package.json')).href,
+  ]
+  for (const base of bases) {
+    try {
+      return createRequire(base)('pg')
+    } catch {
+      // 试下一个
+    }
+  }
+  throw new Error('找不到 pg 模块（试过 scripts/、apps/server、modules/data）')
+}
+
 /** `YYYY-MM-DD_HHMMSS`（duckle `${datetime}`，UTC）→ Date；非法 → null。 @param {any} token @returns {Date|null} */
 export function parseRunToken(token) {
   const m = /^(\d{4}-\d{2}-\d{2})_(\d{2})(\d{2})(\d{2})$/.exec(String(token ?? ''))
@@ -214,7 +236,7 @@ async function main() {
   if (Number.isNaN(now.getTime())) throw new Error(`--now 非法：${nowIso}`)
   const config = JSON.parse(readFileSync(join(root, CONFIG_REL), 'utf8'))
 
-  const { Pool } = createRequire(import.meta.url)('pg')
+  const { Pool } = loadPg(root)
   const platformUrl = process.env.DATABASE_URL
   const warehouseUrl = process.env.DATA_WAREHOUSE_URL
   if (!platformUrl) throw new Error('缺 DATABASE_URL')
