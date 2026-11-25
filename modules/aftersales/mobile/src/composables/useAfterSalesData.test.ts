@@ -44,7 +44,7 @@ describe('useAfterSalesData（M3b-2 裁剪后）', () => {
   it('loadSettlementOrders：按门店码拉结算单（#500 段③）', async () => {
     const d = useAfterSalesData()
     await d.loadSettlementOrders('103')
-    expect(settlementOrders).toHaveBeenCalledWith('103')
+    expect(settlementOrders).toHaveBeenCalledWith('103', undefined)
     expect(d.settlementOrders.value).toHaveLength(1)
     expect(d.settlementOrders.value[0]!.orderNo).toBe('MO3120992607050085')
   })
@@ -58,7 +58,7 @@ describe('useAfterSalesData（M3b-2 裁剪后）', () => {
     // 选中项必须被清掉（列表本身会按新店 refill——mock 恒回同一行，断言选中态而非列表空）
     expect(d.selectedOrder.value).toBeNull()
     expect(d.selectedLine.value).toBeNull()
-    expect(settlementOrders).toHaveBeenLastCalledWith('104')
+    expect(settlementOrders).toHaveBeenLastCalledWith('104', undefined)
   })
 
   it('空门店码 ⇒ **不**发请求（无店无可查）', async () => {

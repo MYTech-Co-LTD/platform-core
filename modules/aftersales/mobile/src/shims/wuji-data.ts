@@ -321,10 +321,12 @@ export const after_sales_work_order = {
    * 选单页数据源（#500 段③，spec §6.1）：`GET /guest/settlement-orders?storeCode=`。
    * 返回该店近 30 天的结算单（MO/WO 两族已由发布面归一，本 shim 不感知源数）。
    */
-  async settlementOrders(storeCode: string): Promise<SettlementOrderRow[]> {
-    const body = await apiGet<{ orders: SettlementOrderRow[] }>(
-      `/guest/settlement-orders?storeCode=${encodeURIComponent(storeCode)}`,
-    )
+  async settlementOrders(storeCode: string, itemCode?: string): Promise<SettlementOrderRow[]> {
+    const qs = new URLSearchParams({ storeCode })
+    // 2026-11-25：按商品过滤（对齐 wuji 的「商品 + 门店」双过滤）——
+    // 服务端只回含该商品的行，前端按单分组后每单只呈现匹配行。
+    if (itemCode) qs.set('itemCode', itemCode)
+    const body = await apiGet<{ orders: SettlementOrderRow[] }>(`/guest/settlement-orders?${qs}`)
     return body.orders
   },
 
@@ -365,6 +367,8 @@ export const after_sales_work_order = {
     damage_quantity?: unknown
     damage_reason?: unknown
     damage_images?: unknown
+    /** 到货时间（2026-11-25 对齐 wuji）：前端两控件拼好的 ISO 字符串 */
+    arrival_time?: unknown
   } = {}): Promise<{ id: number; code?: string; duplicated?: boolean }> {
     const attachments = Array.isArray(payload.damage_images) ? payload.damage_images : []
     const attachmentIds = attachments
@@ -378,6 +382,7 @@ export const after_sales_work_order = {
       lineKey: String(payload.line_key ?? ''),
       damageQuantity: Number(payload.damage_quantity),
       remark: String(payload.damage_reason ?? ''),
+      ...(payload.arrival_time ? { arrivalAt: String(payload.arrival_time) } : {}),
       ...(attachmentIds.length > 0 ? { attachmentIds } : {}),
     })
   },
