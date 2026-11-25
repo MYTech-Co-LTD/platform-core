@@ -622,6 +622,8 @@ describe('registry · 子进程参数（W6-P4b）', () => {
       // 缺了它 = 跑到全套 ⇒ 数据单元因无 OO 读凭据恒红 ⑭⑮、应用单元白跑仓库查询。
       ['data.warehouse_assertions', '--group core：只跑不依赖 OO 读凭据的 16 条'],
       ['platform.warehouse_assertions_oo', '--group oo：只跑 ⑭⑮（需 OO 读凭据，只在应用单元）'],
+      // B2 第二阶段：全量证明档（org 单值 84s + 下钻延迟 23s）从 5 分钟档搬出来，每 30 分钟跑。
+      ['data.warehouse_assertions_heavy', '--group heavy：只跑全量扫描/延迟探测两条（每 30 分钟）'],
     ])
     for (const d of JOB_REGISTRY) {
       if (allow.has(d.key)) continue

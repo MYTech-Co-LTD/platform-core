@@ -44,9 +44,11 @@ describe('#2628 数据面断言面（容器化）', () => {
     expect([...ADVISORY].sort()).toEqual([
       'config_drift',
       'detail_path',
+      'detail_path_latency',
       'hot_partitions',
       'lake_hygiene',
       'org_valid',
+      'org_valid_single',
       'pg_crash_free',
       'recon_ledger_cover',
       'recon_not_evaluated',
@@ -159,7 +161,7 @@ describe('#2628 数据面断言面（容器化）', () => {
       if (sql.includes('max(bizday)')) return [{ d: '2026-11-20' }]
       return [{ n: 100 }]
     })
-    const r = await mod.checkDetailPath(pool as never)
+    const r = await mod.checkDetailLatency(pool as never)
     expect(r.ok).toBe(true)
     // drill 路径：月感知视图 + month 谓词（不是 bizday）
     const drill = pool.calls.filter((s) => s.includes('vw_lemeng_retail_order_line_month'))
@@ -180,7 +182,7 @@ describe('#2628 数据面断言面（容器化）', () => {
       if (sql.includes('max(bizday)')) return [{ d: '2026-11-20' }]
       return [{ n: 100 }]
     })
-    await mod.checkDetailPath(pool as never)
+    await mod.checkDetailLatency(pool as never)
     const drill = pool.calls.filter((s) => s.includes('vw_lemeng_retail_order_line_month'))
     expect(drill[0]).toContain("month = '2026-10'") // 已合并月，不是当月 2026-11
   })
@@ -217,33 +219,84 @@ describe('#2628 数据面断言面（容器化）', () => {
     expect(src).not.toMatch(/(execFileSync|spawnSync|execSync)\(\s*['"]docker['"]/)
   })
 
-  it('按凭据边界分组：core 组不含 ⑭⑮，oo 组**只**含 ⑭⑮（不连仓库）', async () => {
+  it('分组：oo 只跑两条 OO 断言；core 不含 OO，也不跑重型档', async () => {
+    vi.resetModules()
+    const mod = await import('./warehouse-assertions.mjs')
+    // oo 组只两条：不连仓库（warehouse 没被调用 —— 用「指向不存在主机」的连接串证明它不会去连）
+    const prev = process.env.DATA_WAREHOUSE_URL
+    process.env.DATA_WAREHOUSE_URL = 'postgres://nobody:nobody@127.0.0.1:1/none'
+    try {
+      const oo = await mod.runAll('oo')
+      expect(oo.map((v) => v.check).sort()).toEqual(['config_drift', 'pg_crash_free'])
+    } finally {
+      if (prev === undefined) delete process.env.DATA_WAREHOUSE_URL
+      else process.env.DATA_WAREHOUSE_URL = prev
+    }
     const { readFileSync } = await import('node:fs')
     const src = readFileSync(new URL('./warehouse-assertions.mjs', import.meta.url), 'utf8')
-    // oo 组早退：只跑两条 OO 断言（计时包装只影响统计，不影响分组形态）
-    expect(src).toMatch(/if \(!wantCore\) \{\s*return \[await (?:timed\(\(\) => )?checkConfigDrift\(\)\)?, await (?:timed\(\(\) => )?checkPgCrashFree\(\)\)?\]/)
     // core 组不含 OO 两条（要 OO 读凭据，只在应用单元）
     const coreBlock = src.slice(src.indexOf('const pool = await warehouse()'), src.indexOf('if (wantOo)'))
     expect(coreBlock).not.toContain('checkConfigDrift')
     expect(coreBlock).not.toContain('checkPgCrashFree')
+    // 重型档不得进 core 的常驻路径（只在 group=heavy/all 时追加）
+    expect(src).toMatch(/if \(wantHeavy\) \{\s*out\.push\(await timed\(\(\) => checkOrgValidSingle/)
   })
 
   it('⑲ org 非法必须判红（#2638：错误文本被当 org 烧进视图，where org=… 恒 0 行）', async () => {
     vi.resetModules()
     const mod = await import('./warehouse-assertions.mjs')
-    // 形态脏
+    // 表路径：取一行就够（廉价档）
     const dirty = fakePool(() => [
       { org: 'OCIruntimeexecfailed:execfailed:exec:"psql":executablefilenotfoundin$PATH', n: 19 },
     ])
     const r1 = await mod.checkOrgValid(dirty as never)
     expect(r1.ok).toBe(false)
     expect(r1.detail).toContain('org 非法')
-    // 多值（一面一租户被破坏）
-    const multi = fakePool(() => [{ org: 'a-org', n: 1 }, { org: 'b-org', n: 1 }])
-    expect((await mod.checkOrgValid(multi as never)).ok).toBe(false)
-    // 合法单值
+    // 合法
     const good = fakePool(() => [{ org: 'shanhaiyiguo-org', n: 100 }])
     expect((await mod.checkOrgValid(good as never)).ok).toBe(true)
+    // 多值（一面一租户被破坏）—— **全量证明属重型档**，廉价档不做这个扫描
+    const multi = fakePool(() => [{ org: 'a-org', n: 1 }, { org: 'b-org', n: 1 }])
+    expect((await mod.checkOrgValidSingle(multi as never)).ok).toBe(false)
+  })
+
+  it('⑲ 廉价档：视图走**读定义**（不扫数据），这正是把 84s 降到毫秒的机制', async () => {
+    vi.resetModules()
+    const mod = await import('./warehouse-assertions.mjs')
+    const calls: string[] = []
+    const pool = {
+      calls,
+      query: async (sql: string) => {
+        calls.push(String(sql))
+        // 顺序要紧：pg_get_viewdef 的 SQL 里也 join 了 pg_class
+        if (sql.includes('pg_get_viewdef')) {
+          // 视图定义里 org 是错误文本 ⇒ 必须判红（#2638 的真实形态）
+          return { rows: [{ def: "select 'OCI exec failed: psql not found'::text as org from x" }] }
+        }
+        if (sql.includes('pg_class')) return { rows: [{ kind: 'v' }] }
+        return { rows: [{ org: 'shanhaiyiguo-org' }] }
+      },
+      end: async () => {},
+    }
+    const r = await mod.checkOrgValid(pool as never)
+    expect(r.ok).toBe(false)
+    expect(r.detail).toContain('org 非法')
+    // 关键：**没有**退回到 `select org from … limit 1`（读定义就够）
+    expect(calls.some((s) => /select org from/i.test(s))).toBe(false)
+    // 正例：定义里是合法字面量 ⇒ OK，同样不扫数据
+    calls.length = 0
+    const pool2 = {
+      calls,
+      query: async (sql: string) => {
+        calls.push(String(sql))
+        if (sql.includes('pg_get_viewdef')) return { rows: [{ def: "select 'shanhaiyiguo-org'::text as org from x" }] }
+        if (sql.includes('pg_class')) return { rows: [{ kind: 'v' }] }
+        return { rows: [{ org: 'shanhaiyiguo-org' }] }
+      },
+      end: async () => {},
+    }
+    expect((await mod.checkOrgValid(pool2 as never)).ok).toBe(true)
+    expect(calls.some((s) => /select org from/i.test(s))).toBe(false)
   })
 
   it('⑲ 查不动 ≠ org 脏：争用期判 WARN（不冒充「数据错了」）', async () => {
