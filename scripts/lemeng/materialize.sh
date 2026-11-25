@@ -138,6 +138,37 @@ mat_dbt() {
 mat_dbt_select() { # $1=域 → 打印给 --select 的**单个**值（调用方自己加引号）
   printf '%s' "path:models/$1 config.materialized:seed path:tests/$1"
 }
+# 车道事实源解析（路线图 A1/A2/A3）：`scripts/lemeng/data-lanes.json` 是车道归属的唯一事实源，
+# registry job 只传车道名（`retail_10m` / `nonretail_1h.<domain>` / `daily_report`），
+# 模型清单由本函数解析，避免在 registry 里手抄第二份名单。
+# 输出：空格分隔的模型名（dbt `--select` 的并集语法）；未知车道/空清单 ⇒ 非零 + 点名（fail loud）。
+mat_lane_select() { # $1=车道名
+  _lane_cfg="${R}/scripts/lemeng/data-lanes.json"
+  [ -f "$_lane_cfg" ] || {
+    echo "materialize: 车道事实源缺失：${_lane_cfg}" >&2
+    return 1
+  }
+  python3 - "$_lane_cfg" "$1" <<'PY'
+import json, sys
+cfg = json.load(open(sys.argv[1]))
+lane = sys.argv[2]
+lanes = cfg.get('lanes', {})
+if lane == 'retail_10m':
+    models = lanes.get('retail_10m', {}).get('models', [])
+elif lane == 'daily_report':
+    models = lanes.get('daily_report', {}).get('models', [])
+elif lane.startswith('nonretail_1h.'):
+    domain = lane.split('.', 1)[1]
+    models = lanes.get('nonretail_1h', {}).get('domains', {}).get(domain, [])
+else:
+    sys.stderr.write(f'materialize: 未知车道 {lane}\n')
+    sys.exit(1)
+if not models:
+    sys.stderr.write(f'materialize: 车道 {lane} 没有模型\n')
+    sys.exit(1)
+print(' '.join(models))
+PY
+}
 # 窗口对账的窗口参数（today−10 .. 昨天）：打印 `"<start> <月段字符类>"`，供 hourly 档与
 # 每日窗口对账（MATERIALIZE_AUDIT_WINDOW=1）共用。为什么是 10 天：① 不能宽于增量 mart 的
 # lookback（`max(bizday)−10`，更老的分区是建表快照 ⇒ 放宽必假红，2026-11-07 实测 transfer
@@ -592,6 +623,13 @@ fi
 # （2026-11-02 #1275），无需重建。水位照写 `data.load_log`（relation=fct_retail_sale），
 # 新鲜度面与全量档同源。
 if [ "$SCOPE" = tick ]; then
+  # 车道事实源（A1）：registry 传 MATERIALIZE_LANE=retail_10m，模型清单从 data-lanes.json 解析。
+  if [ -n "${MATERIALIZE_LANE:-}" ]; then
+    TICK_SELECT=$(mat_lane_select "$MATERIALIZE_LANE") || {
+      echo "MATERIALIZE_FAILED:bad_lane（MATERIALIZE_LANE=${MATERIALIZE_LANE}）" >&2
+      exit 1
+    }
+  fi
   echo "── tick: ${TICK_SELECT}（domain=${TICK_DOMAIN}${TICK_FULL_REFRESH:+ full-refresh}）──"
   _log="$_WORK/dbt.tick.log"
   _rc="$_WORK/dbt.tick.rc"
@@ -691,7 +729,24 @@ if [ "$SCOPE" = hourly ]; then
   AUDIT_WINDOW_START=${_win%% *}
   AUDIT_WINDOW_PATTERNS=${_win#* }
   export AUDIT_WINDOW_START AUDIT_WINDOW_PATTERNS
-  echo "── hourly: incremental + window audits（start=${AUDIT_WINDOW_START} lookback-glob=${AUDIT_WINDOW_PATTERNS}）──"
+  # 车道事实源（A1/A3）：registry 传 MATERIALIZE_LANE=nonretail_1h.<domain>，模型清单从
+  # data-lanes.json 解析；也支持 MATERIALIZE_HOURLY_SELECT 直接覆盖（调试/灰度用）。
+  # 未指定时保持旧行为：全部 incremental + 9 条窗口对账 + stg_lemeng_branch。
+  # `stg_lemeng_branch` 进小时档（2026-11-08 战区变更事故）：它是 **table 模型**，原先只有全量档
+  # 才重建 ⇒ 源端改了门店战区后，stg 一直是旧值，而审计**直读湖**（最新 snapshot）⇒ 每轮 20 行
+  # 假红，且 mart 侧继续按旧战区落行。门店维只有几百行，小时重建成本可忽略；dbt 按 DAG 先建 stg
+  # 再建增量 mart，所以同一轮里 mart 就能吃到新维表。
+  if [ -n "${MATERIALIZE_LANE:-}" ]; then
+    _select=$(mat_lane_select "$MATERIALIZE_LANE") || {
+      echo "MATERIALIZE_FAILED:bad_lane（MATERIALIZE_LANE=${MATERIALIZE_LANE}）" >&2
+      exit 1
+    }
+  elif [ -n "${MATERIALIZE_HOURLY_SELECT:-}" ]; then
+    _select="$MATERIALIZE_HOURLY_SELECT"
+  else
+    _select="config.materialized:incremental tag:audit_window stg_lemeng_branch"
+  fi
+  echo "── hourly: select=${_select}（start=${AUDIT_WINDOW_START} lookback-glob=${AUDIT_WINDOW_PATTERNS}）──"
   _log="$_WORK/dbt.hourly.log"
   _rc="$_WORK/dbt.hourly.rc"
   # ── 节点级重试（2026-11-07，issue #1621）─────────────────────────────────────────
@@ -701,11 +756,6 @@ if [ "$SCOPE" = hourly ]; then
   # job 级重跑要重跑整轮 8 分钟；这里只从 `run_results.json` 取**失败节点**重跑，几秒收敛。
   # ⚠️ 收敛判据是「没有失败节点」而不是「退出 0」：dbt 的 warn（test 软失败）不该触发重跑。
   _attempt=1
-  # `stg_lemeng_branch` 进小时档（2026-11-08 战区变更事故）：它是 **table 模型**，原先只有全量档
-  # 才重建 ⇒ 源端改了门店战区后，stg 一直是旧值，而审计**直读湖**（最新 snapshot）⇒ 每轮 20 行
-  # 假红，且 mart 侧继续按旧战区落行。门店维只有几百行，小时重建成本可忽略；dbt 按 DAG 先建 stg
-  # 再建增量 mart，所以同一轮里 mart 就能吃到新维表。
-  _select="config.materialized:incremental tag:audit_window stg_lemeng_branch"
   while :; do
     if [ "$_attempt" = 1 ]; then
       _excl="--exclude tag:audit --exclude fct_retail_sale"

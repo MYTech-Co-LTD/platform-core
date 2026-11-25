@@ -33,6 +33,7 @@
 | D5 | 并发默认**单飞 + chunk ≤3 min**；G0 实测后可切并行（B3） |
 | D6 | P0.5 物化水位门禁：**仅对有内容水位的域开启**，其余默认 `always` |
 | D7 | 安全网不可省：每日强制 build + 日终全量 + 对账 |
+| D8 | **保留 dbt 作为工程化层**（2026-11-25 用户决定）：DAG/增量/67 条审计测试/选择器/血缘都留；热路径暂不抽取成裸 SQL，后续若 dbt 选择器/宏的维护成本持续高于收益再评估 |
 
 ## §4 阶段与条目（状态）
 
@@ -55,10 +56,11 @@
 - [x] **A4** 覆盖性门禁：每个 incremental 恰好属于一个车道（变异测试）——`scripts/check-data-lanes.mjs`，`scripts/lemeng/data-lanes.json` 为事实源
 - [x] **A5** 起点门禁：1h 起点紧随最后一个采集偏移 + 10m 物化偏移对齐——同脚本；真机 gap 7 分钟（:58 → :05）
 - [ ] **G0** 基线测量：单 build 时长/内存；两并发是否 postmaster 重启
-- [ ] **A1** `materialize.sh` selector 覆盖（按域）
+- [x] **A1** `materialize.sh` selector 覆盖：`MATERIALIZE_LANE` 从 `data-lanes.json` 解析模型清单（tick/hourly 通用；未知车道 fail loud）+ `MATERIALIZE_HOURLY_SELECT`；3 条用例 + 静态接线断言
 - [ ] **A2** 10m 车道落地（仅 `fct_retail_sale`）
 - [ ] **A3** 1h 车道按域分片
-- [ ] **B1/B2** 单飞 + chunk 上限（或 B3 并行，依 G0）
+- [x] **B1** G0 基线测量 → **单飞定案**：两路并发峰值 2.46GB、重模型+采集峰值 3.02GB / 上限 4GB，无 postmaster 重启；长查询不可取消（只能预防）
+- [ ] **B2** 单飞锁 + chunk 上限实现（≤3 分钟）
 - [ ] **C1–C6** 水位 / 幂等 / 热湖互补性回归
 - [ ] **D1–D4** per-mart SLA 断言 + 告警
 - [ ] **G6** 48h soak
@@ -108,7 +110,10 @@
 | 2026-11-24 | 存量 cron 对账 | ✅ 已改库 | tables/a1/a2a/a2b/window/tick |
 | 2026-11-24 | 02:30 view 翻转 | ⏳ 待验证 | 今晚 02:30 |
 | 2026-11-24 | P0 A4/A5 静态门禁 | ✅ PR #2811 | 18 增量全部归属；37 小时级源，最后 :58 → 1h :05，gap 7；10 条 fixture 测试 |
-| 2026-11-25 | 02:30 view 未翻转，根因定位 | 🔴 修复中 | #2815：`dbt ls` 实测 tables 联合选择器不含 staging；tables run ok 但 view 仍旧（len=4291） |
+| 2026-11-25 | 02:30 view 未翻转，根因定位 | ✅ 修复 | #2815（选择器补 staging）+ #2819（parquet 别名谓词）；手动重建后 view 含 `retail_hot`（len 5504） |
+| 2026-11-25 | 热层首跑验证 | ✅ | 三腿等价 211 = 0 + 211；09:42 tick（首跑新 view）ok 32s；今日 fct 90 行 / 净额 8,696.20 |
+| 2026-11-25 | G0 并发实验 | ✅ 单飞定案 | 2.46GB / 3.02GB / 4GB；postmaster 未重启；`pg_terminate_backend` 对 DuckDB 扫描无效 |
+| 2026-11-25 | A1 车道选择器 | ✅ 本 PR | `MATERIALIZE_LANE` 解析 `data-lanes.json`；未知车道 fail loud；materialize.test 112 pass |
 
 ## §6 变更记录
 
