@@ -164,6 +164,7 @@ describe('registry · dbt hourly/tables（Wave 8 P1 / A3 拆车道）', () => {
     expect(dims.cron).toBe('4 1-15 * * *')
     expect(dims.env?.MATERIALIZE_HOURLY_SELECT).toBe('stg_lemeng_branch')
     expect(dims.timeoutMs).toBe(300000)
+    expect(dims.maxAttempts).toBe(2)
     const audit = JOB_REGISTRY.find((d) => d.key === 'data.dbt_hourly')!
     expect(audit.cron).toBe('45 1-15 * * *')
     expect(audit.timeoutMs).toBe(1800000)
@@ -193,6 +194,7 @@ describe('registry · dbt hourly/tables（Wave 8 P1 / A3 拆车道）', () => {
       expect(job!.env?.MATERIALIZE_LANE).toBe(`nonretail_1h.${d}`)
       expect(job!.scope).toBe('data')
       expect(job!.timeoutMs).toBe(900000)
+      expect(job!.maxAttempts).toBe(3) // 429 busy 是容量竞态，不能 1 次判终态
       const m = Number(job!.cron.split(' ')[0])
       expect(Number.isInteger(m)).toBe(true)
       // 10m tick 是 `2-59/10`：域 job 不落 2 mod 10，避免与 tick 撞分钟。
