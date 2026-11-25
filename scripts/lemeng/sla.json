@@ -16,7 +16,7 @@
     },
     "nonretail_1h": {
       "window": { "start": "09:00", "end": "23:59" },
-      "sla": { "sourceToBuildMinutes": 60, "buildIntervalMinutes": 75, "missingOkMinutes": 120 },
+      "sla": { "sourceToBuildMinutes": 75, "buildIntervalMinutes": 75, "missingOkMinutes": 120 },
       "domains": {
         "retail_derived": { "job": "data.dbt_hourly_retail_derived", "sources": ["panel-lemeng.retail.tick.l1"] },
         "purchase": { "job": "data.dbt_hourly_purchase", "sources": ["panel-lemeng.purchase.analysis.l0.3120", "panel-lemeng.purchase.analysis.l0.64188"] },

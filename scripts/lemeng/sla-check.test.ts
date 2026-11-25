@@ -68,7 +68,7 @@ describe('sla-check · 判据', () => {
     const r = computeReport(CONFIG, clocks({ jobs, hot: ['2026-11-25_010000'] }))
     const ten = r.products.find((p) => p.product === 'retail_10m')!
     expect(ten.verdict).toBe('ERR')
-    expect(ten.detail).toContain('source→build')
+    expect(ten.detail).toContain('source↔build')
   })
 
   it('10m：窗口外 ⇒ SKIP（08:30 CST）', () => {
@@ -87,6 +87,28 @@ describe('sla-check · 判据', () => {
     const p = r.products.find((x) => x.product === 'nonretail_1h.purchase')!
     expect(p.verdict).toBe('OK')
     expect(p.lagSourceToBuildMs).toBe(55 * 60_000) // 02:00 → 02:55
+  })
+
+  it('1h：源领先 build 20 分钟是**节拍**（|lag|≤75）⇒ OK', () => {
+    const jobs = new Map([['data.dbt_hourly_purchase', new Date('2026-11-25T02:55:00Z')]])
+    const console = new Map<string, Date | null>([
+      ['src.a', new Date('2026-11-25T03:15:00Z')],
+      ['src.b', new Date('2026-11-25T03:15:00Z')],
+    ])
+    const r = computeReport(CONFIG, clocks({ jobs, console }))
+    const p = r.products.find((x) => x.product === 'nonretail_1h.purchase')!
+    expect(p.verdict).toBe('OK')
+    expect(p.detail).toContain('source ahead')
+  })
+
+  it('1h：build 落后源 120 分钟（错过一个周期）⇒ ERR', () => {
+    const jobs = new Map([['data.dbt_hourly_purchase', new Date('2026-11-25T02:00:00Z')]])
+    const console = new Map<string, Date | null>([
+      ['src.a', new Date('2026-11-25T04:00:00Z')],
+      ['src.b', new Date('2026-11-25T04:00:00Z')],
+    ])
+    const r = computeReport(CONFIG, clocks({ jobs, console }))
+    expect(r.products.find((x) => x.product === 'nonretail_1h.purchase')!.verdict).toBe('ERR')
   })
 
   it('1h：任一源缺 last_ok ⇒ UNKNOWN（不拿部分值冒充）', () => {

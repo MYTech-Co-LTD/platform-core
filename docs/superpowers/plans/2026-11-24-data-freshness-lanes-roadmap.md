@@ -64,8 +64,8 @@
 - [ ] **C1–C6** 水位 / 幂等 / 热湖互补性回归
 - [x] **D1** SLA 事实源 `scripts/lemeng/sla.json`（产品/域/源/窗口/阈值）+ `check-data-lanes` 覆盖门禁（域缺条目/源 id 不存在/多出域 即红）
 - [x] **D2** `scripts/lemeng/sla-check.mjs`（只读测量，恒 exit 0）+ `data.sla_check`（seed disabled）+ 11 条纯函数测试
-- [ ] **D3** `data.sla_measure` 历史表 + 观测 2–3 天，回填 p95
-- [ ] **D4** 按实测收紧阈值 + 接 OO 告警 + 开闸（`data.sla_check`）
+- [x] **D3** `data.sla_measure` 历史表 + 观测模式（写表、不发探针）；源→建判据改 `|built−source|`：10m ≤10m、1h ≤75m（1h 源领先是节拍）
+- [ ] **D4** 观测 2–3 天回填 p95 后收紧阈值 + 接 OO 告警 + 开闸（`data.sla_check`）
 - [ ] **G6** 48h soak
 
 ### P0.5 物化水位门禁
