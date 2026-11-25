@@ -104,8 +104,10 @@ export async function seedBuiltin(
          (org,id,enabled,event_key,scope,recipient_key,template_key,channels,origin,created_by)
        values ($1,$2,true,$3,'*','approvers',$4,$5::text[],'derived','system')
        on conflict (org,id) do update set template_key=excluded.template_key,
+         recipient_key=excluded.recipient_key,
          channels=excluded.channels`,
-      [org, `derived:aftersales:${EVENT}:*`, EVENT, TEMPLATE, CHANNELS],
+      // 公众号（#2805/#2817）：审批通知也走 wechat_oa——通道未建时 worker 跳过，不影响另外两条
+      [org, `derived:aftersales:${EVENT}:*`, EVENT, TEMPLATE, [...CHANNELS, 'wechat_default']],
     )
     rules += derived.rowCount ?? 0
 
@@ -117,6 +119,7 @@ export async function seedBuiltin(
          (org,id,enabled,event_key,scope,recipient_key,template_key,channels,origin,created_by)
        values ($1,$2,true,$3,'*','admins',$4,'{inapp_default}'::text[],'derived','system')
        on conflict (org,id) do update set template_key=excluded.template_key,
+         recipient_key=excluded.recipient_key,
          channels=excluded.channels`,
       [org, 'derived:notify:notify.integration.stale:*', 'notify.integration.stale', 'notify_integration_stale'],
     )
@@ -128,6 +131,7 @@ export async function seedBuiltin(
          (org,id,enabled,event_key,scope,recipient_key,template_key,channels,origin,created_by)
        values ($1,'derived:notify:notify.approval.pending:*',true,'notify.approval.pending','*','admins','notify_approval_pending','{inapp_default}'::text[],'derived','system')
        on conflict (org,id) do update set template_key=excluded.template_key,
+         recipient_key=excluded.recipient_key,
          channels=excluded.channels`,
       [org],
     )
@@ -142,6 +146,7 @@ export async function seedBuiltin(
          (org,id,enabled,event_key,scope,recipient_key,template_key,channels,origin,created_by)
        values ($1,$2,true,$3,'*','viewers',$4,'{inapp_default}'::text[],'derived','system')
        on conflict (org,id) do update set template_key=excluded.template_key,
+         recipient_key=excluded.recipient_key,
          channels=excluded.channels`,
       [org, 'derived:data:data.metric.definition.changed:*', 'data.metric.definition.changed', 'data_metric_definition_changed'],
     )
@@ -176,7 +181,8 @@ export async function seedBuiltin(
       const asRule = await pool.query(
         `insert into notify.rule
            (org,id,enabled,event_key,scope,recipient_key,template_key,channels,origin,created_by)
-         values ($1,$2,true,$3,'*',$4,$5,'{inapp_default}'::text[],'derived','system')
+         -- 工单回执/结果也走公众号（#2805）：收件人是 payload.user（提交人或该店全体员工）
+         values ($1,$2,true,$3,'*',$4,$5,'{inapp_default,wechat_default}'::text[],'derived','system')
          on conflict (org,id) do update set template_key=excluded.template_key,
            channels=excluded.channels`,
         [org, `derived:aftersales:${event}:*`, event, recipientKey, template],
@@ -232,6 +238,7 @@ export async function seedBuiltin(
          (org,id,enabled,event_key,scope,recipient_key,template_key,channels,origin,created_by)
        values ($1,$2,true,$3,'*','viewers',$4,$5::text[],'derived','system')
        on conflict (org,id) do update set template_key=excluded.template_key,
+         recipient_key=excluded.recipient_key,
          channels=excluded.channels`,
       [org, 'derived:forms:forms.goal.daily:*', 'forms.goal.daily', 'oa_goal_daily', CHANNELS],
     )
