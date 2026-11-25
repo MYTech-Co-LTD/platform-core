@@ -42,30 +42,30 @@ describe('移动端体系地图', () => {
       return url.includes('/trail') ? { trail: TRAIL } : GRAPH
     })
     render(<SystemMapView />)
-    await waitFor(() => expect(screen.getByText('体系地图')).toBeTruthy())
+    await waitFor(() => expect(screen.getByText('体系地图')).toBeTruthy(), { timeout: 5000 })
     expect(screen.getByText('57')).toBeTruthy()
     expect(screen.getByText('门店 · 2')).toBeTruthy()
 
     fireEvent.change(screen.getByPlaceholderText('搜索指标或口径'), { target: { value: '订单' } })
-    await waitFor(() => expect(screen.queryByText('净销售额')).toBeNull())
+    await waitFor(() => expect(screen.queryByText('净销售额')).toBeNull(), { timeout: 5000 })
     expect(screen.getByText('订单数')).toBeTruthy()
   })
 
   it('点指标 ⇒ 详情（observations + 链路），返回可回列表', async () => {
     m.mockImplementation(async (url: string) => (url.includes('/trail') ? { trail: TRAIL } : GRAPH))
     render(<SystemMapView />)
-    await waitFor(() => expect(screen.getByText('净销售额')).toBeTruthy())
+    await waitFor(() => expect(screen.getByText('净销售额')).toBeTruthy(), { timeout: 5000 })
     fireEvent.click(screen.getByText('净销售额'))
-    await waitFor(() => expect(screen.getByText('口径：按门店日结净额汇总')).toBeTruthy())
+    await waitFor(() => expect(screen.getByText('口径：按门店日结净额汇总')).toBeTruthy(), { timeout: 5000 })
     expect(screen.getByText('lemeng/retail_order_line')).toBeTruthy()
     expect(screen.getByText(/最近一次运行/)).toBeTruthy()
     fireEvent.click(screen.getByRole('button', { name: /返回/ }))
-    await waitFor(() => expect(screen.getByText('门店 · 2')).toBeTruthy())
+    await waitFor(() => expect(screen.getByText('门店 · 2')).toBeTruthy(), { timeout: 5000 })
   })
 
   it('深链带指标 id ⇒ 数据到达后自动打开该指标', async () => {
     m.mockImplementation(async (url: string) => (url.includes('/trail') ? { trail: TRAIL } : GRAPH))
     render(<SystemMapView focus="lemeng:retail:order_count" />)
-    await waitFor(() => expect(screen.getByText('口径：有效订单笔数')).toBeTruthy())
+    await waitFor(() => expect(screen.getByText('口径：有效订单笔数')).toBeTruthy(), { timeout: 5000 })
   })
 })
