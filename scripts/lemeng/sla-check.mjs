@@ -29,16 +29,19 @@ export function parseRunToken(token) {
   return Number.isNaN(d.getTime()) ? null : d
 }
 
-/** console `last_run_at` 解析：ISO 带时区直接解析；裸 `YYYY-MM-DD HH:mm:ss` 按 CST（+08:00）补。 @param {any} raw @returns {Date|null} */
+/** console `last_run_at` 解析：裸 `YYYY-MM-DD HH:mm:ss` 按 CST（+08:00）补；ISO 带时区直接解析。 @param {any} raw @returns {Date|null} */
 export function parseConsoleTime(raw) {
   if (!raw) return null
   const s = String(raw).trim()
+  // ⚠️ **裸形态必须先判**：`Date.parse('2026-11-25 10:30:00')` 会按**进程时区**解释
+  // （CI 是 UTC ⇒ 10:30Z；本机 CST ⇒ 02:30Z）——不先判就会「本机绿 / CI 红」。
+  const naive = /^(\d{4}-\d{2}-\d{2})[ T](\d{2}:\d{2}:\d{2})$/.exec(s)
+  if (naive) {
+    const d = new Date(`${naive[1]}T${naive[2]}+08:00`)
+    return Number.isNaN(d.getTime()) ? null : d
+  }
   const direct = Date.parse(s)
-  if (!Number.isNaN(direct)) return new Date(direct)
-  const m = /^(\d{4}-\d{2}-\d{2})[ T](\d{2}:\d{2}:\d{2})$/.exec(s)
-  if (!m) return null
-  const d = new Date(`${m[1]}T${m[2]}+08:00`)
-  return Number.isNaN(d.getTime()) ? null : d
+  return Number.isNaN(direct) ? null : new Date(direct)
 }
 
 /** 上海墙钟的「当天第几分钟」。 @param {Date} d @returns {number} */
