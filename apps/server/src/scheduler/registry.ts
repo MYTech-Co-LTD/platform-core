@@ -275,7 +275,8 @@ export const JOB_REGISTRY: JobDef[] = [
   // **按凭据边界拆两条**（2026-11-21 真机首跑定案）：数据单元只有 OO **摄取**凭据
   // （`OO_AUTH`，读端点恒 401，实测），OO **读**凭据只在应用单元 ⇒ ⑭⑮ 必须在 `platform` 域，
   // 与 `demand.mining` / `verify_*` 同款处置（**不新增密钥**，见 Wave 8 计划 §凭据实测细节）。
-  { key: 'data.warehouse_assertions', scope: 'data', requiresEnv: ['DATA_WAREHOUSE_URL','DATABASE_URL'], script: 'scripts/lemeng/warehouse-assertions.mjs', args: ['--group', 'core'], cron: '*/5 * * * *', timezone: 'UTC', timeoutMs: 300000, maxAttempts: 1, expectedIntervalSecs: 300, description: '数据面断言 ①②③④⑤⑥⑦⑧⑨⑩⑪⑫⑬⑯⑰⑱（可达性/新鲜度/对账台账/封版双算 → OO probes）' },
+  { key: 'data.warehouse_assertions', scope: 'data', requiresEnv: ['DATA_WAREHOUSE_URL','DATABASE_URL'], script: 'scripts/lemeng/warehouse-assertions.mjs', args: ['--group', 'core'], cron: '*/5 * * * *', timezone: 'UTC', timeoutMs: 300000, maxAttempts: 1, expectedIntervalSecs: 300, description: '数据面断言·5 分钟廉价档 ①②③④⑤⑥⑦⑧⑨⑩⑪⑫⑬⑯⑰⑱（可达性/新鲜度/对账台账/封版结构 → OO probes）' },
+  { key: 'data.warehouse_assertions_heavy', scope: 'data', requiresEnv: ['DATA_WAREHOUSE_URL','DATABASE_URL'], script: 'scripts/lemeng/warehouse-assertions.mjs', args: ['--group', 'heavy'], cron: '7,37 * * * *', timezone: 'UTC', timeoutMs: 300000, maxAttempts: 1, expectedIntervalSecs: 1800, description: '数据面断言·全量证明档（org 单值证明 / 下钻延迟探测；每 30 分钟，B2 第二阶段）' },
   // duckle console 的「运行态 vs 声明真相」对账（#2629）：duckle **没有回拉也没有漂移检测**
   // （源码穷举 reconcile/drift/desync 均无此语义）⇒「有人在服务器改了管线」「实验残留没清」
   // 永远不会自己暴露。2026-11-21 实测两卷各有 16/11 个仓内不存在的管线、~150 条实验 run，

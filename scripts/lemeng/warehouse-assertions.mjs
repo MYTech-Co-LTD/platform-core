@@ -595,6 +595,7 @@ async function checkDetailPath(pool) {
   }
   try {
     const [schema, view] = DETAIL_VIEW.split('.')
+    // 结构判据（读定义，毫秒）：视图必须引用封版表、且不得回退到 `_DAILY`。
     const d = await pool.query(
       `select position('lemeng_daily_sealed' in definition) as sealed_refs,
               position('_DAILY' in definition) as daily_refs
@@ -612,12 +613,43 @@ async function checkDetailPath(pool) {
     if (dailyRefs > 0) {
       return { check: 'detail_path', ok: false, detail: `ERR 视图定义仍含 _DAILY（daily_refs=${dailyRefs}）——#1872 的慢/崩路径回来了` }
     }
+    // 封版水位（小表，毫秒）：取不到最近封版日 = 封版链断了。
     const dq = await pool.query(
       `select max(bizday)::text as d from ${SEALED_TABLE} where bizday > date '1970-01-01'`,
     )
-    const day = String(dq.rows[0].d ?? '')
+    const day = String(dq.rows[0]?.d ?? '')
     if (!/^\d{4}-\d{2}-\d{2}$/.test(day)) {
       return { check: 'detail_path', ok: false, detail: `ERR 取不到最近封版日（max(bizday)=${day}）` }
+    }
+    return {
+      check: 'detail_path',
+      ok: true,
+      detail: `OK sealed_refs=${sealedRefs} daily_refs=0 last_sealed=${day}（延迟探测见 detail_path_latency）`,
+    }
+  } catch (e) {
+    return { check: 'detail_path', ok: false, detail: `ERR ${msg(e)}` }
+  }
+}
+
+/**
+ * ⑰-b 下钻路径**延迟探测** —— 重型档（每 30 分钟）。
+ *
+ * 为什么不能跟结构判据一起跑 5 分钟一轮：它是**故意测用户真实路径**（预热 + 两次全量 count），
+ * 实测 23s；而延迟退化是趋势，5 分钟采样只是烧容量。
+ * 判据与阈值逐字保留（drill 热态 ≤8s；通用视图灾难线 ≤30s；两侧都必须读得到行）。
+ * @param {Queryable} pool
+ */
+async function checkDetailLatency(pool) {
+  if (selftest('detail_path_latency')) {
+    return { check: 'detail_path_latency', ok: false, detail: 'ERR 自测注入：下钻路径变慢（WIRE_DETAIL_LATENCY_SELFTEST）' }
+  }
+  try {
+    const dq = await pool.query(
+      `select max(bizday)::text as d from ${SEALED_TABLE} where bizday > date '1970-01-01'`,
+    )
+    const day = String(dq.rows[0]?.d ?? '')
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(day)) {
+      return { check: 'detail_path_latency', ok: false, detail: `ERR 取不到最近封版日（max(bizday)=${day}）` }
     }
     // ── 延迟判据测**用户真实走的那条路**（2026-11-21 重写，#2636 的实测换来的）─────────────
     // 旧写法测 `DETAIL_VIEW` 且 bizday 谓词、且是新进程冷启动 ⇒ 恒 16s 假红。
@@ -650,11 +682,11 @@ async function checkDetailPath(pool) {
     const drillMs = Date.now() - t0
     const n = Number(r.rows[0].n)
     if (n <= 0) {
-      return { check: 'detail_path', ok: false, detail: `ERR drill 视图 ${ym} 月 count=0（读不到数据）` }
+      return { check: 'detail_path_latency', ok: false, detail: `ERR drill 视图 ${ym} 月 count=0（读不到数据）` }
     }
     if (drillMs > DETAIL_MAX_MS) {
       return {
-        check: 'detail_path',
+        check: 'detail_path_latency',
         ok: false,
         detail: `ERR drill 路径（${drillRel} month=${ym}）热态 ${drillMs}ms > ${DETAIL_MAX_MS}ms（rows=${n}）`,
       }
@@ -668,22 +700,22 @@ async function checkDetailPath(pool) {
     const genericMs = Date.now() - g0
     const gn = Number(g.rows[0].n)
     if (gn <= 0) {
-      return { check: 'detail_path', ok: false, detail: 'ERR 最近封版日单日 count=0（视图读不到数据）' }
+      return { check: 'detail_path_latency', ok: false, detail: 'ERR 最近封版日单日 count=0（视图读不到数据）' }
     }
     if (genericMs > GENERIC_MAX_MS) {
       return {
-        check: 'detail_path',
+        check: 'detail_path_latency',
         ok: false,
         detail: `ERR 通用视图单日 ${genericMs}ms > 灾难线 ${GENERIC_MAX_MS}ms（rows=${gn}；历史增长会让它线性变慢，见 #2636）`,
       }
     }
     return {
-      check: 'detail_path',
+      check: 'detail_path_latency',
       ok: true,
-      detail: `OK sealed_refs=${sealedRefs} daily_refs=0 drill=${drillMs}ms(month=${ym}) generic=${genericMs}ms(day=${day},rows=${gn})`,
+      detail: `OK drill=${drillMs}ms(month=${ym}) generic=${genericMs}ms(day=${day},rows=${gn})`,
     }
   } catch (e) {
-    return { check: 'detail_path', ok: false, detail: `ERR ${msg(e)}` }
+    return { check: 'detail_path_latency', ok: false, detail: `ERR ${msg(e)}` }
   }
 }
 
@@ -821,7 +853,45 @@ const ORG_RELATIONS = (process.env.WIRE_ORG_RELATIONS ?? [
   'staging.vw_lemeng_wholesale_out',
 ].join(',')).split(',').map((s) => s.trim()).filter(Boolean)
 
-/** @param {Queryable} pool */
+/** 关系是视图还是表（用于选择「读定义」还是「取一行」两种廉价判法）。 */
+/**
+ * @param {Queryable} pool
+ * @param {string} rel
+ * @returns {Promise<'view'|'table'|null>}
+ */
+async function relKindOf(pool, rel) {
+  const [schema, name] = rel.split('.')
+  const { rows } = await pool.query(
+    `select c.relkind::text as kind from pg_class c
+       join pg_namespace n on n.oid = c.relnamespace
+      where n.nspname = $1 and c.relname = $2`,
+    [schema, name],
+  )
+  const kind = String(rows[0]?.kind ?? '')
+  if (kind === 'v' || kind === 'm') return 'view'
+  if (kind === 'r' || kind === 'p' || kind === 'f') return 'table'
+  return null
+}
+
+/**
+ * 从视图定义里抠出 `… AS org` 的那个字面量；抠不到返回 null（调用方退回取一行）。
+ * @param {string} def
+ * @returns {string | null}
+ */
+export function orgLiteralOf(def) {
+  const m = String(def ?? '').match(/'([^']{1,120})'\s*(?:::text)?\s+AS\s+org\b/i)
+  return m ? m[1] : null
+}
+
+/**
+ * ⑲ 主体列合法 —— **廉价档（每 5 分钟）**。
+ *
+ * 判据只保留「形态」与「可读」：视图读 `pg_get_viewdef` 里的 org 字面量（毫秒），表取一行。
+ * #2638 的事故形态正是「错误文本被烧进 VIEW 定义」——读定义与扫数据抓到的是同一个根因，
+ * 但成本差四个数量级（实测：全量 84.4s → 本档为毫秒级）。
+ * 「单值证明」（`count(distinct org)`）是真正的全量扫描，移到重型档 `org_valid_single`（30 分钟）。
+ * @param {Queryable} pool
+ */
 async function checkOrgValid(pool) {
   if (selftest('org_valid')) {
     return { check: 'org_valid', ok: false, detail: 'ERR 自测注入：org 非法（WIRE_ORG_VALID_SELFTEST）' }
@@ -833,9 +903,25 @@ async function checkOrgValid(pool) {
   const unreadable = []
   try {
     for (const rel of ORG_RELATIONS) {
-      let rows
+      let org = null
       try {
-        rows = (await queryWithRetry(pool, `select org, count(*)::bigint as n from ${rel} group by 1`)).rows
+        const kind = await relKindOf(pool, rel)
+        if (kind === 'view') {
+          const [schema, name] = rel.split('.')
+          const v = await pool.query(
+            `select pg_get_viewdef(c.oid, true) as def from pg_class c
+               join pg_namespace n on n.oid = c.relnamespace
+              where n.nspname = $1 and c.relname = $2`,
+            [schema, name],
+          )
+          org = orgLiteralOf(v.rows[0]?.def)
+        }
+        if (org === null) {
+          // 表（org 是行值）或视图定义里没有字面量 org（透传列）⇒ 取一行。
+          const r = await pool.query(`select org from ${rel} limit 1`)
+          if (r.rows.length === 0) { bad.push(`${rel}: 空表（无从判定主体列）`); continue }
+          org = String(r.rows[0].org ?? '')
+        }
       } catch (e) {
         // 🔴 2026-11-21 实测修正：这一格原本记进 `bad`（判 ERR），于是 **tables 档重建期间**
         //    pg_duckdb 争用导致 `Query cancelled` ⇒ ⑲ 连续误报「org 非法」，而那条视图单独查是好的。
@@ -844,15 +930,6 @@ async function checkOrgValid(pool) {
         unreadable.push(`${rel}（${msg(e).slice(0, 50)}）`)
         continue
       }
-      if (rows.length === 0) {
-        bad.push(`${rel}: 空表（无从判定主体列）`)
-        continue
-      }
-      if (rows.length > 1) {
-        bad.push(`${rel}: org 多值 ${rows.length} 个（一面一租户被破坏）`)
-        continue
-      }
-      const org = String(rows[0].org ?? '')
       if (!/^[a-z0-9][a-z0-9._-]*$/.test(org)) {
         bad.push(`${rel}: org 非法 \`${org.slice(0, 60)}\``)
       }
@@ -866,9 +943,52 @@ async function checkOrgValid(pool) {
         detail: `WARN 读不动 ${unreadable.join('; ')}（争用/cancel，不是 org 脏——下一轮再判）`,
       })
     }
-    return { check: 'org_valid', ok: true, detail: `OK ${ORG_RELATIONS.length} 个关系主体列合法且单值` }
+    return { check: 'org_valid', ok: true, detail: `OK ${ORG_RELATIONS.length} 个关系主体列形态合法（单值证明见 org_valid_single）` }
   } catch (e) {
     return { check: 'org_valid', ok: false, detail: `ERR ${msg(e)}` }
+  }
+}
+
+/**
+ * ⑲-b 主体列**单值证明** —— 重型档（每 30 分钟）：`count(distinct org)` 必须为 1。
+ * 为什么要单独一条：它是**全量扫描**（实测 84s），5 分钟一轮就是把执行器容量当柴烧；
+ * 而它抓的是「一个关系混进两个部署主体」——只可能在构建时发生，30 分钟窗口足够。
+ * @param {Queryable} pool
+ */
+async function checkOrgValidSingle(pool) {
+  if (selftest('org_valid_single')) {
+    return { check: 'org_valid_single', ok: false, detail: 'ERR 自测注入：org 多值（WIRE_ORG_VALID_SINGLE_SELFTEST）' }
+  }
+  /** @type {string[]} */
+  const bad = []
+  /** @type {string[]} */
+  const unreadable = []
+  try {
+    for (const rel of ORG_RELATIONS) {
+      let rows
+      try {
+        rows = (await queryWithRetry(pool, `select org, count(*)::bigint as n from ${rel} group by 1`)).rows
+      } catch (e) {
+        unreadable.push(`${rel}（${msg(e).slice(0, 50)}）`)
+        continue
+      }
+      if (rows.length === 0) { bad.push(`${rel}: 空表（无从判定主体列）`); continue }
+      if (rows.length > 1) { bad.push(`${rel}: org 多值 ${rows.length} 个（一面一租户被破坏）`); continue }
+      const org = String(rows[0].org ?? '')
+      if (!/^[a-z0-9][a-z0-9._-]*$/.test(org)) bad.push(`${rel}: org 非法 \`${org.slice(0, 60)}\``)
+    }
+    if (bad.length) return { check: 'org_valid_single', ok: false, detail: `ERR ${bad.join('; ')}` }
+    if (unreadable.length) {
+      return /** @type {Verdict} */ ({
+        check: 'org_valid_single',
+        ok: true,
+        verdict: 'WARN',
+        detail: `WARN 读不动 ${unreadable.join('; ')}（争用/cancel，下一轮再判）`,
+      })
+    }
+    return { check: 'org_valid_single', ok: true, detail: `OK ${ORG_RELATIONS.length} 个关系 org 单值` }
+  } catch (e) {
+    return { check: 'org_valid_single', ok: false, detail: `ERR ${msg(e)}` }
   }
 }
 
@@ -913,6 +1033,7 @@ async function checkSwapOffset(pool) {
 /** advisory 集：判红只投递、不翻 rc（红线③：语义判据不走 job 通知）。 */
 const ADVISORY = new Set([
   'org_valid',
+  'org_valid_single',
   'region_registered',
   'recon_ledger_cover',
   'recon_not_evaluated',
@@ -922,12 +1043,13 @@ const ADVISORY = new Set([
   'sealed_manifest',
   'swap_offset',
   'detail_path',
+  'detail_path_latency',
   'hot_partitions',
   'lake_hygiene',
 ])
 
 /**
- * @param {'all'|'core'|'oo'} [group]
+ * @param {'all'|'core'|'heavy'|'oo'} [group]
  * @returns {Promise<Verdict[]>}
  */
 export async function runAll(group = 'all') {
@@ -950,15 +1072,29 @@ export async function runAll(group = 'all') {
     }
     return r
   }
-  // 按**凭据边界**分组（不是按偏好）：⑭⑮ 要 OO 读凭据，而它只在应用单元；仓库/平台 PG 的
-  // 断言在数据单元跑（贴着实例、且不占 API 容器的算力）。
-  //   · `core`     —— 只需 DATA_WAREHOUSE_URL + DATABASE_URL（数据单元）
-  //   · `oo`       —— 只需 OO 读凭据（应用单元；两条都是 OO 查询，无需仓库连接）
+  // 分组两条轴：**凭据边界**（core/oo）+ **成本等级**（core/heavy）。
+  //   · `core`     —— 数据单元，每 5 分钟：便宜的判据（含结构类 org_valid / detail_path）
+  //   · `heavy`    —— 数据单元，每 30 分钟：全量扫描类（org_valid_single）与延迟探测（detail_path_latency）
+  //   · `oo`       —— 应用单元（⑭⑮ 要 OO 读凭据）
+  // 为什么按成本拆而不是按偏好：实测一轮 114s 里 107s 在两条全量扫描上，而它们抓的风险
+  // 只在构建/发布时变化 ⇒ 5 分钟一轮是结构性的浪费（B2 第二阶段）。
   const wantCore = group === 'all' || group === 'core'
+  const wantHeavy = group === 'all' || group === 'heavy'
   const wantOo = group === 'all' || group === 'oo'
 
-  if (!wantCore) {
+  if (group === 'oo') {
     return [await timed(() => checkConfigDrift()), await timed(() => checkPgCrashFree())]
+  }
+  if (group === 'heavy') {
+    const heavyPool = await warehouse()
+    try {
+      return [
+        await timed(() => checkOrgValidSingle(heavyPool)),
+        await timed(() => checkDetailLatency(heavyPool)),
+      ]
+    } finally {
+      await heavyPool.end().catch(() => {})
+    }
   }
 
   const pool = await warehouse()
@@ -987,6 +1123,11 @@ export async function runAll(group = 'all') {
     out.push(await timed(() => checkSwapOffset(pool)))
     // ㉑ 湖卫生（路径级不变量：hour 最老 bizday / 日区水位 vs 封版表）
     out.push(await timed(() => checkLakeHygiene(pool)))
+    // 重型档（group=all 时一并跑；生产上由 30 分钟独立 job 承担）
+    if (wantHeavy) {
+      out.push(await timed(() => checkOrgValidSingle(pool)))
+      out.push(await timed(() => checkDetailLatency(pool)))
+    }
   } finally {
     await pool.end().catch(() => {})
   }
@@ -998,7 +1139,7 @@ export async function runAll(group = 'all') {
 }
 
 /**
- * 解析 `--group core|oo|all`（默认 all；未知值响亮拒绝——静默忽略会让人以为跑过全套）。
+ * 解析 `--group core|heavy|oo|all`（默认 all；未知值响亮拒绝——静默忽略会让人以为跑过全套）。
  * @param {string[]} argv
  */
 function parseGroup(argv) {
@@ -1006,10 +1147,10 @@ function parseGroup(argv) {
   if (!raw) return 'all'
   const val = raw.includes('=') ? raw.split('=')[1] : argv[argv.indexOf(raw) + 1]
   const v = String(val)
-  if (v !== 'core' && v !== 'oo' && v !== 'all') {
-    throw new Error(`--group 只支持 core / oo / all，收到 '${val}'`)
+  if (v !== 'core' && v !== 'heavy' && v !== 'oo' && v !== 'all') {
+    throw new Error(`--group 只支持 core / heavy / oo / all，收到 '${val}'`)
   }
-  /** @type {'all'|'core'|'oo'} */
+  /** @type {'all'|'core'|'heavy'|'oo'} */
   return v
 }
 
@@ -1067,6 +1208,7 @@ if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) 
 export {
   ADVISORY,
   checkConfigDrift,
+  checkDetailLatency,
   checkDetailPath,
   checkDims,
   checkFresh,
@@ -1076,6 +1218,7 @@ export {
   checkMartsFresh,
   checkMetrics,
   checkOrgValid,
+  checkOrgValidSingle,
   checkPgCrashFree,
   checkQuery,
   checkReconLedgerCover,
