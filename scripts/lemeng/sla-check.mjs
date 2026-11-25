@@ -136,8 +136,14 @@ function judge(now, job, built, source, windowActive, sla) {
   const notes = []
   if (miss > 0 && ageMs > miss) { verdict = 'ERR'; notes.push(`build age ${Math.round(ageMs / 60000)}m > ${sla.missingOkMinutes}m`) }
   else if (interval > 0 && ageMs > interval) { verdict = 'WARN'; notes.push(`build age ${Math.round(ageMs / 60000)}m > ${sla.buildIntervalMinutes}m`) }
-  if (lagMs !== null && lagMs < 0) { notes.push('source clock ahead of build') }
-  if (lagMs !== null && stb > 0 && lagMs > stb) { verdict = 'ERR'; notes.push(`source→build ${Math.round(lagMs / 60000)}m > ${sla.sourceToBuildMinutes}m`) }
+  // 1h 的源 10 分钟一更、build 1 小时一次 ⇒ 源领先 build 是**节拍**，不是违规。
+  // 判据用 |built − source|：既有「build 落后源」（负）也有「build 晚于源」（正），
+  // 超过阈值都说明错过了一个周期；10m 阈值 10m、1h 阈值 75m（= 一个周期）。
+  if (lagMs !== null && lagMs < 0) { notes.push(`source ahead of build ${Math.round(-lagMs / 60000)}m`) }
+  if (lagMs !== null && stb > 0 && Math.abs(lagMs) > stb) {
+    verdict = 'ERR'
+    notes.push(`source↔build |${Math.round(lagMs / 60000)}m| > ${sla.sourceToBuildMinutes}m`)
+  }
   if (lagMs === null && verdict === 'OK') { verdict = 'UNKNOWN'; notes.push('source clock missing') }
   return {
     windowActive, sourceAt: sourceIso, builtAt: builtIso, lagSourceToBuildMs: lagMs, buildAgeMs: ageMs,
@@ -194,6 +200,46 @@ export function computeReport(config, clocks) {
     })
   }
   return { generatedAt: now.toISOString(), products: rows }
+}
+
+const MEASURE_DDL = `create schema if not exists data;
+create table if not exists data.sla_measure (
+  measured_at timestamptz default now(),
+  product text not null,
+  job text not null,
+  window_active boolean not null,
+  source_at timestamptz,
+  built_at timestamptz,
+  lag_source_to_build_ms bigint,
+  build_age_ms bigint,
+  verdict text not null,
+  detail text
+);`
+
+/** D3：幂等建测量表（观测模式；D4 才接告警）。 @param {any} pool @returns {Promise<void>} */
+export async function ensureMeasureTable(pool) {
+  await pool.query(MEASURE_DDL)
+}
+
+/** D3：把一次报告写进 `data.sla_measure`。 @param {any} pool @param {any} report @returns {Promise<void>} */
+export async function insertMeasures(pool, report) {
+  const rows = Array.isArray(report?.products) ? report.products : []
+  if (rows.length === 0) return
+  /** @type {string[]} */
+  const values = []
+  /** @type {any[]} */
+  const params = []
+  rows.forEach((/** @type {any} */ r, /** @type {number} */ i) => {
+    const b = i * 9
+    values.push(`($${b + 1},$${b + 2},$${b + 3},$${b + 4},$${b + 5},$${b + 6},$${b + 7},$${b + 8},$${b + 9})`)
+    params.push(r.product, r.job, r.windowActive, r.sourceAt, r.builtAt, r.lagSourceToBuildMs, r.buildAgeMs, r.verdict, r.detail)
+  })
+  await pool.query(
+    `insert into data.sla_measure
+       (product, job, window_active, source_at, built_at, lag_source_to_build_ms, build_age_ms, verdict, detail)
+     values ${values.join(',')}`,
+    params,
+  )
 }
 
 /** 从两个 console 工作区读 `schedules.json`，返回 scheduleId → last_ok（Date|null），跨卷取 min。 */
@@ -267,6 +313,9 @@ async function main() {
     const consoleLastOk = readConsoleLastOk(wsDirs)
 
     const report = computeReport(config, { now, jobs, hotRunTokens, consoleLastOk })
+    // D3：观测模式——只写测量表，不发探针、不因判红退出非零。
+    await ensureMeasureTable(warehouse)
+    await insertMeasures(warehouse, report)
     console.log(JSON.stringify(report, null, 2))
   } finally {
     await platform.end().catch(() => {})
