@@ -163,8 +163,10 @@ notifications:
       description: 售后工单处理完成后，把结果（通过/驳回、退款额）推给提交人
       scope: { key: ticketCode, label: 工单编号 }
       payload:
-        user:        { type: user, required: true, label: 提交人 }
+        # 2026-11-25：收件人从「提交人」改为**该门店所有已审批员工**（user_list）
+        user:        { type: user_list, required: true, label: 门店员工 }
         ticketCode:  { type: string, required: true, label: 工单编号 }
+        storeCode:   { type: string, required: true, label: 门店编码 }
         productName: { type: string, required: true, label: 商品 }
         result:      { type: string, required: true, label: 处理结果 }
         amountText:  { type: string, required: true, label: 退款额 }
@@ -172,9 +174,10 @@ notifications:
         time:        { type: string, required: true, label: 时间 }
         link:        { type: url, required: true, label: 详情链接 }
       recipients:
-        submitter: { kind: field, field: user, label: 提交人本人 }
+        # 门店员工（payload.user 是 user_list：该店所有已审批员工）
+        store_members: { kind: field, field: user, label: 门店员工 }
       defaults:
-        recipient: submitter
+        recipient: store_members
         template: aftersales_ticket_processed
         channels: [inapp_default]
 
