@@ -144,6 +144,11 @@ export function registerRegistrationGuest(r: ModuleHono, ctx: RouteCtx): void {
             approvalId: String(approvalId),
             approveType: diff.approveType,
             applicantName: target.name,
+            phone: target.phone,
+            // thing 限 20 字：多店时取前三个 + 省略，避免超长被微信拒
+            stores: target.storeCodes.length > 3
+              ? `${target.storeCodes.slice(0, 3).join('、')}等${target.storeCodes.length}家`
+              : target.storeCodes.join('、'),
             // 审批页是单页列表（无 :id 深链）；审批单号在 scope/payload 里
             link: `${consoleBaseUrl()}/console/aftersales/approvals`,
           },

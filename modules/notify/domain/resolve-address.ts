@@ -38,8 +38,13 @@ export async function resolveDeliveryAddress(
   // in_app 的「地址」就是用户名本身（收件箱按人查）——宿主的 resolve 也是这么回的，
   // 这里再写一遍是为了**解析器没注入时**（routes/mcp 的可选依赖）行为不漂移。
   if (channel.provider === 'in_app') return input.casdoorName
-  // 公众号：收件人标识即 openid（同 channel-address.ts 的理由，保持两处口径一致）
-  if (channel.provider === 'wechat_oa') return input.casdoorName
+  // 公众号：这里只是**兜底**（宿主解析器没注入时）。主路径会先按 Casdoor 用户名反查
+  // `identity_link` 拿 openid（见 apps/server/src/channel-address.ts）；兜底这里只认
+  // 「收件人本身就是 openid」这一种，形状不对就返回 null —— 把一个用户名当 openid 发出去
+  // 只会得到 40003 永久失败，把「没绑定」伪装成「发失败」。
+  if (channel.provider === 'wechat_oa') {
+    return /^o[\w-]{27}$/.test(input.casdoorName) ? input.casdoorName : null
+  }
 
   if (channel.provider === 'wecom_chat' && channel.config?.address_fallback === 'casdoor_name') {
     console.warn(JSON.stringify({
