@@ -254,13 +254,16 @@ export const product_archive = {
    * ⇒ 这里**按页循环收齐**。上界 `MAX_PRODUCT_PAGES` 是防御：服务端 total 若因并发变动
    * 让我们永远收不齐，也不能把移动端拖进死循环。
    */
-  async query(args: { filter?: unknown; sort?: string; pageSize?: number } = {}): Promise<ProductRow[]> {
+  async query(args: { filter?: unknown; sort?: string; pageSize?: number; singlePage?: boolean } = {}): Promise<ProductRow[]> {
     const f = (args.filter ?? {}) as { product_name__contains?: unknown }
     const q = typeof f.product_name__contains === 'string' ? f.product_name__contains : ''
     const size = Math.min(args.pageSize ?? SERVER_MAX_PAGE_SIZE, SERVER_MAX_PAGE_SIZE)
+    // `singlePage`（2026-11-25）：商品选择器的**首屏候选**只要一页（源侧 pageSize:1000 一次拿，
+    // 域侧上界 100 ⇒ 取第一页即可）。全量循环收齐会拉几千条，移动端首屏没必要等。
+    const maxPages = args.singlePage ? 1 : MAX_PRODUCT_PAGES
 
     const out: ProductRow[] = []
-    for (let page = 1; page <= MAX_PRODUCT_PAGES; page++) {
+    for (let page = 1; page <= maxPages; page++) {
       const params = new URLSearchParams({ page: String(page), size: String(size) })
       if (q !== '') params.set('q', q)
       const body = await apiGet<{ items: ProductItem[]; total: number }>(`/guest/products?${params}`)

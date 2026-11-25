@@ -697,6 +697,13 @@ onMounted(async () => {
 
     employeeVerified.value = true
 
+    // 源系统同款（2026-11-25）：进页面先预加载一页商品做**首屏候选**——点开下拉就有东西，
+    // 不必先输关键词（此前漏了这步，用户点开是空的，被当成「没有商品」）。
+    void product_archive
+      .query({ pageSize: 100, singlePage: true })
+      .then((rows) => { productList.value = rows as any })
+      .catch(() => { /* 首屏预加载失败不阻断：用户输入时仍会按关键词搜 */ })
+
     // 加载页面数据（结算单在选店后按店拉取——handleStoreChange）
     await loadEmployeeStores() // 根据登记档里的门店 id 串加载「我的门店」
   } catch (error: any) {
