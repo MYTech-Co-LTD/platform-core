@@ -113,8 +113,12 @@ function classify(errcode: number): ProviderResult | null {
   if (PERMANENT_ERRCODES.has(errcode)) {
     return {
       ok: false, kind: 'permanent', code: `wechat_${errcode}`,
-      // 43004 的特殊含义写进 summary：它是「48h 窗口/未关注」，与真错误要能分开看
-      summary: errcode === 43004 ? 'user not subscribed or outside 48h window' : 'wechat permanent error',
+      // summary 必须带 errcode：`notify.delivery` 只存 last_error（没有 code 列），
+      // 2026-11-25 实测把 40037 简化成「wechat permanent error」后，运维无法判断
+      // 是「模板无效」还是「用户未关注」——两者的处置完全不同。
+      summary: errcode === 43004
+        ? `user not subscribed or outside 48h window (errcode ${errcode})`
+        : `wechat permanent error (errcode ${errcode})`,
     }
   }
   if (errcode === 45009 || errcode === 45047) return { ok: false, kind: 'retryable', code: `wechat_${errcode}`, summary: 'rate limited' }
