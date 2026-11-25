@@ -45,6 +45,25 @@ function lanesConfig(over: Record<string, unknown> = {}): string {
   })
 }
 
+function slaConfig(domains: Record<string, string[]> = { d: ['src.22'] }): string {
+  return JSON.stringify({
+    products: {
+      retail_10m: {
+        job: 'data.dbt_tick',
+        window: { start: '09:00', end: '01:59' },
+        sla: { sourceToBuildMinutes: 10, buildIntervalMinutes: 15, missingOkMinutes: 20 },
+        source: { kind: 'retail_hot_run_token' },
+      },
+      nonretail_1h: {
+        window: { start: '09:00', end: '23:59' },
+        sla: { sourceToBuildMinutes: 60, buildIntervalMinutes: 75, missingOkMinutes: 120 },
+        domains: Object.fromEntries(Object.entries(domains).map(([d, sources]) => [d, { job: `data.dbt_hourly_${d}`, sources }])),
+      },
+      daily: { job: 'data.dbt_tables', window: 'all', sla: { maxAgeMinutes: 1560 } },
+    },
+  })
+}
+
 function schedules(): Record<string, string> {
   const base = (tick: string, extra: Array<{ id: string; expr: string }>) => JSON.stringify([
     { id: tick, enabled: true, kind: { type: 'cron', expr: '*/10 9-23,0-1' }, timezone: 'Asia/Shanghai' },
@@ -64,9 +83,10 @@ function schedules(): Record<string, string> {
 const REGISTRY = "  { key: 'data.dbt_tick', scope: 'data', cron: '2-59/10 1-17 * * *', timezone: 'UTC' },\n"
   + "  hourlyLaneJob('d', 5, 'd'),\n"
 
-function baseFiles(over: { lanes?: string; registry?: string; models?: Record<string, string> } = {}): Record<string, string> {
+function baseFiles(over: { lanes?: string; sla?: string; registry?: string; models?: Record<string, string> } = {}): Record<string, string> {
   return {
     'scripts/lemeng/data-lanes.json': over.lanes ?? lanesConfig(),
+    'scripts/lemeng/sla.json': over.sla ?? slaConfig(),
     'deploy/duckle/console/schedules/3120.json': schedules()['deploy/duckle/console/schedules/3120.json'],
     'deploy/duckle/console/schedules/64188.json': schedules()['deploy/duckle/console/schedules/64188.json'],
     'apps/server/src/scheduler/registry.ts': over.registry ?? REGISTRY,
@@ -158,6 +178,26 @@ describe('check-data-lanes · A3 变异', () => {
     const { ok, errors } = checkDataLanes(fixture(baseFiles({ registry })))
     expect(ok).toBe(false)
     expect(errors.join('\n')).toContain("hourlyLaneJob('ghost')")
+  })
+})
+
+describe('check-data-lanes · D1 SLA 覆盖', () => {
+  it('缺域 SLA 条目 ⇒ 红', () => {
+    const { ok, errors } = checkDataLanes(fixture(baseFiles({ sla: slaConfig({}) })))
+    expect(ok).toBe(false)
+    expect(errors.join('\n')).toContain('sla.json 缺域 d')
+  })
+
+  it('源 id 不在 console 排班 ⇒ 红（拼错/退役）', () => {
+    const { ok, errors } = checkDataLanes(fixture(baseFiles({ sla: slaConfig({ d: ['src.ghost'] }) })))
+    expect(ok).toBe(false)
+    expect(errors.join('\n')).toContain('的源 src.ghost 不在 console 排班里')
+  })
+
+  it('SLA 多出配置外的域 ⇒ 红', () => {
+    const { ok, errors } = checkDataLanes(fixture(baseFiles({ sla: slaConfig({ d: ['src.22'], ghost: ['src.22'] }) })))
+    expect(ok).toBe(false)
+    expect(errors.join('\n')).toContain('sla.json 的域 ghost 不在 data-lanes.json')
   })
 })
 

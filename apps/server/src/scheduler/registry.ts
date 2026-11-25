@@ -174,6 +174,9 @@ export const JOB_REGISTRY: JobDef[] = [
   hourlyLaneJob('request', 37, '要货'),
   hourlyLaneJob('loss', 41, '报损'),
   hourlySelectJob('data.dbt_hourly', 'tag:audit_window', 45, 1800000, '乐檬 1h 车道 · 窗口审计（9 条窗口对账）'),
+  // 数据新鲜度 SLA 测量（路线图 D1/D2）：**只读**（不写库、不发探针、恒 exit 0），seed disabled；
+  // D3/D4 观测 2–3 天校准阈值后再接 OO 告警与开闸。指标定义在 scripts/lemeng/sla.json。
+  { key: 'data.sla_check', scope: 'data', requiresEnv: ['DATABASE_URL','DATA_WAREHOUSE_URL'], script: 'scripts/lemeng/sla-check.mjs', cron: '*/5 * * * *', timezone: 'UTC', timeoutMs: 120000, maxAttempts: 1, expectedIntervalSecs: 300, description: '数据新鲜度 SLA 测量（10m/1h/daily；只读，seed disabled；D4 才接告警）' },
   // #2674 拆档：全史 CTAS 模型（recon 家族 + swap_offset，单轮 ~11 分钟且必撞采集期 ETag）
   // 从主档拆出去，各自有超时与失败隔离。主档要跑几十个 table 模型 + 39 个测试，90 分钟曾被
   // 全史模型拖到必超时 ⇒ 未建成的表（#2655 的 swap_offset / 新列版 recon_break）整天进不了生产。

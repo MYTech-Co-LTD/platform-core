@@ -21,6 +21,7 @@ import { SHANGHAI_TZ } from './lib/time-semantics.mjs'
 
 export const SCRIPT_NAME = 'check-data-lanes'
 export const LANES_REL = 'scripts/lemeng/data-lanes.json'
+export const SLA_REL = 'scripts/lemeng/sla.json'
 const DBT_MODELS_REL = 'dbt/models'
 const SCHEDULES_REL = [
   'deploy/duckle/console/schedules/3120.json',
@@ -97,7 +98,7 @@ function parseMinuteRange(field) {
 /**
  * A5：读两份 console 排班，算小时级 L0 的最大分钟偏移 + tick 步长。
  * @param {string} rootDir
- * @returns {{ errors: string[], hourly: Array<{ id: string, minute: number }>, ticks: Array<{ id: string, step: number }> }}
+ * @returns {{ errors: string[], hourly: Array<{ id: string, minute: number }>, ticks: Array<{ id: string, step: number }>, allIds: Set<string> }}
  */
 function collectScheduleFacts(rootDir) {
   /** @type {string[]} */
@@ -106,6 +107,8 @@ function collectScheduleFacts(rootDir) {
   const hourly = []
   /** @type {Array<{ id: string, step: number }>} */
   const ticks = []
+  /** @type {Set<string>} */
+  const allIds = new Set()
   for (const rel of SCHEDULES_REL) {
     const abs = join(rootDir, rel)
     if (!existsSync(abs)) {
@@ -121,6 +124,7 @@ function collectScheduleFacts(rootDir) {
       continue
     }
     for (const s of list) {
+      if (s?.id) allIds.add(String(s.id))
       if (s?.enabled === false) continue
       if (s?.kind?.type !== 'cron') continue
       if (s?.timezone !== SHANGHAI_TZ) continue
@@ -133,7 +137,7 @@ function collectScheduleFacts(rootDir) {
       else if (/^\*\/\d+$/.test(min) && /9-23/.test(hour)) ticks.push({ id: s.id, step: Number(min.slice(2)) })
     }
   }
-  return { errors, hourly, ticks }
+  return { errors, hourly, ticks, allIds }
 }
 
 /**
@@ -304,6 +308,43 @@ export function checkDataLanes(rootDir = fileURLToPath(new URL('..', import.meta
     }
     for (const c of calls) {
       if (!configDomains.includes(c)) errors.push(`registry 的 hourlyLaneJob('${c}') 不在 data-lanes.json 的 nonretail_1h.domains 里`)
+    }
+  }
+
+  // ── D1：SLA 覆盖（每个 nonretail_1h 域必须有 job + sources；源 id 必须真实存在）─────────────
+  const slaAbs = join(rootDir, SLA_REL)
+  if (!existsSync(slaAbs)) {
+    errors.push(`缺少 SLA 事实源：${SLA_REL}`)
+  } else {
+    /** @type {any} */
+    let sla
+    try {
+      sla = JSON.parse(readFileSync(slaAbs, 'utf8'))
+    } catch (e) {
+      errors.push(`${SLA_REL} 不是合法 JSON：${e instanceof Error ? e.message : String(e)}`)
+      sla = null
+    }
+    if (sla) {
+      const products = sla.products ?? {}
+      if (!products.retail_10m?.job) errors.push('sla.json: products.retail_10m.job 缺失')
+      if (!products.daily?.job) errors.push('sla.json: products.daily.job 缺失')
+      const slaDomains = products.nonretail_1h?.domains ?? {}
+      const laneDomains = Object.keys(domainsObj)
+      for (const d of laneDomains) {
+        const entry = slaDomains[d]
+        if (!entry) { errors.push(`sla.json 缺域 ${d} 的 SLA 条目`); continue }
+        if (!entry.job) errors.push(`sla.json 域 ${d} 缺 job`)
+        if (!Array.isArray(entry.sources) || entry.sources.length === 0) {
+          errors.push(`sla.json 域 ${d} 的 sources 必须是非空数组`)
+          continue
+        }
+        for (const s of entry.sources) {
+          if (!sched.allIds.has(String(s))) errors.push(`sla.json 域 ${d} 的源 ${s} 不在 console 排班里（拼错或已退役）`)
+        }
+      }
+      for (const d of Object.keys(slaDomains)) {
+        if (!laneDomains.includes(d)) errors.push(`sla.json 的域 ${d} 不在 data-lanes.json 的 nonretail_1h.domains 里`)
+      }
     }
   }
 

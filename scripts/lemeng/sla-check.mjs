@@ -1,0 +1,254 @@
+// scripts/lemeng/sla-check.mjs — 数据新鲜度 SLA 的**只读**测量器（路线图 2026-11-24 D1/D2）。
+//
+// 只做三件事：读 `scripts/lemeng/sla.json` → 取三个时钟（source / built / now）→ 打印 JSON 报告。
+// **不写库、不发探针、不退出非零**——D4 才把判红接到 OO 告警；先观测 2–3 天校准阈值。
+//
+// 两个时钟（设计见路线图 §4 D1）：
+//   · source_at：10m = `staging.retail_hot` 的 max(run_token)（数据真正进热层的时刻）；
+//                1h = 域内各源 console 的 last_ok 取 **min**（木桶）；
+//   · built_at： `platform.job_run` 里该 job 最近一次 status='ok' 的 finished_at（执行钟）。
+//
+// 用法：node scripts/lemeng/sla-check.mjs [--json] [--now <iso>] [--root <dir>]
+// 环境：DATABASE_URL（平台库）、DATA_WAREHOUSE_URL（pg_duckdb）、SLA_WORKSPACES（默认两卷路径）。
+
+import { existsSync, readFileSync } from 'node:fs'
+import { join } from 'node:path'
+import { createRequire } from 'node:module'
+import { fileURLToPath, pathToFileURL } from 'node:url'
+import { SHANGHAI_TZ } from '../lib/time-semantics.mjs'
+
+export const SCRIPT_NAME = 'sla-check'
+export const CONFIG_REL = 'scripts/lemeng/sla.json'
+export const DEFAULT_WORKSPACES = ['/data/ws3120', '/data/ws64188']
+
+/** `YYYY-MM-DD_HHMMSS`（duckle `${datetime}`，UTC）→ Date；非法 → null。 @param {any} token @returns {Date|null} */
+export function parseRunToken(token) {
+  const m = /^(\d{4}-\d{2}-\d{2})_(\d{2})(\d{2})(\d{2})$/.exec(String(token ?? ''))
+  if (!m) return null
+  const d = new Date(`${m[1]}T${m[2]}:${m[3]}:${m[4]}Z`)
+  return Number.isNaN(d.getTime()) ? null : d
+}
+
+/** console `last_run_at` 解析：ISO 带时区直接解析；裸 `YYYY-MM-DD HH:mm:ss` 按 CST（+08:00）补。 @param {any} raw @returns {Date|null} */
+export function parseConsoleTime(raw) {
+  if (!raw) return null
+  const s = String(raw).trim()
+  const direct = Date.parse(s)
+  if (!Number.isNaN(direct)) return new Date(direct)
+  const m = /^(\d{4}-\d{2}-\d{2})[ T](\d{2}:\d{2}:\d{2})$/.exec(s)
+  if (!m) return null
+  const d = new Date(`${m[1]}T${m[2]}+08:00`)
+  return Number.isNaN(d.getTime()) ? null : d
+}
+
+/** 上海墙钟的「当天第几分钟」。 @param {Date} d @returns {number} */
+export function cstMinuteOfDay(d) {
+  const parts = new Intl.DateTimeFormat('en-GB', {
+    timeZone: SHANGHAI_TZ, hour: '2-digit', minute: '2-digit', hour12: false,
+  }).formatToParts(d)
+  const h = Number(parts.find((p) => p.type === 'hour')?.value ?? '0') % 24
+  const m = Number(parts.find((p) => p.type === 'minute')?.value ?? '0')
+  return h * 60 + m
+}
+
+/** `"HH:MM"` → 当天第几分钟。 @param {any} s @returns {number} */
+function hhmm(s) {
+  const [h, m] = String(s).split(':').map(Number)
+  return (Number.isFinite(h) ? h : 0) * 60 + (Number.isFinite(m) ? m : 0)
+}
+
+/** 活跃窗口（CST）；window 为 'all' 或缺省 ⇒ 恒 true；支持跨零点（start > end）。 @param {Date} now @param {any} window @returns {boolean} */
+export function inWindow(now, window) {
+  if (!window || window === 'all') return true
+  const start = hhmm(window.start)
+  const end = hhmm(window.end)
+  const n = cstMinuteOfDay(now)
+  return start <= end ? (n >= start && n <= end) : (n >= start || n <= end)
+}
+
+/**
+ * @typedef {{
+ *   now: Date,
+ *   jobs: Map<string, Date|null>,
+ *   hotRunTokens: string[],
+ *   consoleLastOk: Map<string, Date|null>
+ * }} Clocks
+ *
+ * @typedef {{
+ *   product: string, job: string, windowActive: boolean,
+ *   sourceAt: string|null, builtAt: string|null,
+ *   lagSourceToBuildMs: number|null, buildAgeMs: number|null,
+ *   verdict: 'OK'|'WARN'|'ERR'|'UNKNOWN'|'SKIP', detail: string
+ * }} SlaRow
+ */
+
+/**
+ * 单行判据；纯函数（测试注入 clocks，不碰库）。
+ * @param {Date} now
+ * @param {string} job
+ * @param {Date|null} built
+ * @param {Date|null} source
+ * @param {boolean} windowActive
+ * @param {any} sla
+ * @returns {{ windowActive: boolean, sourceAt: string|null, builtAt: string|null, lagSourceToBuildMs: number|null, buildAgeMs: number|null, verdict: 'OK'|'WARN'|'ERR'|'UNKNOWN'|'SKIP', detail: string }}
+ */
+function judge(now, job, built, source, windowActive, sla) {
+  const builtIso = built ? built.toISOString() : null
+  const sourceIso = source ? source.toISOString() : null
+  if (!windowActive) {
+    return { windowActive, sourceAt: sourceIso, builtAt: builtIso, lagSourceToBuildMs: null, buildAgeMs: null, verdict: 'SKIP', detail: '窗口外' }
+  }
+  if (!built) {
+    return { windowActive, sourceAt: sourceIso, builtAt: null, lagSourceToBuildMs: null, buildAgeMs: null, verdict: 'ERR', detail: '窗口内无 ok 运行' }
+  }
+  const ageMs = now.getTime() - built.getTime()
+  const lagMs = source ? built.getTime() - source.getTime() : null
+  const miss = Number(sla.missingOkMinutes ?? 0) * 60_000
+  const interval = Number(sla.buildIntervalMinutes ?? 0) * 60_000
+  const stb = Number(sla.sourceToBuildMinutes ?? 0) * 60_000
+  /** @type {'OK'|'WARN'|'ERR'|'UNKNOWN'|'SKIP'} */
+  let verdict = 'OK'
+  const notes = []
+  if (miss > 0 && ageMs > miss) { verdict = 'ERR'; notes.push(`build age ${Math.round(ageMs / 60000)}m > ${sla.missingOkMinutes}m`) }
+  else if (interval > 0 && ageMs > interval) { verdict = 'WARN'; notes.push(`build age ${Math.round(ageMs / 60000)}m > ${sla.buildIntervalMinutes}m`) }
+  if (lagMs !== null && lagMs < 0) { notes.push('source clock ahead of build') }
+  if (lagMs !== null && stb > 0 && lagMs > stb) { verdict = 'ERR'; notes.push(`source→build ${Math.round(lagMs / 60000)}m > ${sla.sourceToBuildMinutes}m`) }
+  if (lagMs === null && verdict === 'OK') { verdict = 'UNKNOWN'; notes.push('source clock missing') }
+  return {
+    windowActive, sourceAt: sourceIso, builtAt: builtIso, lagSourceToBuildMs: lagMs, buildAgeMs: ageMs,
+    verdict, detail: notes.join('; ') || 'ok',
+  }
+}
+
+/**
+ * @param {any} config sla.json
+ * @param {Clocks} clocks
+ * @returns {{ generatedAt: string, products: SlaRow[] }}
+ */
+export function computeReport(config, clocks) {
+  const { now, jobs, hotRunTokens, consoleLastOk } = clocks
+  /** @type {SlaRow[]} */
+  const rows = []
+  const products = config?.products ?? {}
+
+  const ten = products.retail_10m
+  if (ten) {
+    const built = jobs.get(ten.job) ?? null
+    const tokens = /** @type {Date[]} */ ((hotRunTokens ?? []).map(parseRunToken).filter(Boolean))
+    const source = tokens.length ? new Date(Math.min(...tokens.map((d) => d.getTime()))) : null
+    rows.push({ product: 'retail_10m', job: ten.job, ...judge(now, ten.job, built, source, inWindow(now, ten.window), ten.sla ?? {}) })
+  }
+
+  const oneHour = products.nonretail_1h
+  if (oneHour) {
+    for (const [domain, dRaw] of Object.entries(oneHour.domains ?? {})) {
+      const d = /** @type {any} */ (dRaw ?? {})
+      const built = jobs.get(d.job) ?? null
+      const sources = Array.isArray(d.sources) ? d.sources : []
+      const times = sources.map((/** @type {string} */ s) => consoleLastOk.get(s) ?? null)
+      // 木桶：任何一个源缺 last_ok 就算「源钟不完整」（不拿部分值冒充）。
+      const source = times.length > 0 && times.every(Boolean)
+        ? new Date(Math.min(...times.map((/** @type {Date} */ t) => t.getTime())))
+        : null
+      rows.push({ product: `nonretail_1h.${domain}`, job: d.job, ...judge(now, d.job, built, source, inWindow(now, oneHour.window), oneHour.sla ?? {}) })
+    }
+  }
+
+  const daily = products.daily
+  if (daily) {
+    const built = jobs.get(daily.job) ?? null
+    const maxAge = Number(daily.sla?.maxAgeMinutes ?? 0) * 60_000
+    const age = built ? now.getTime() - built.getTime() : null
+    const verdict = !built ? 'ERR' : (maxAge > 0 && (age ?? 0) > maxAge ? 'ERR' : 'OK')
+    rows.push({
+      product: 'daily', job: daily.job, windowActive: true,
+      sourceAt: null, builtAt: built ? built.toISOString() : null,
+      lagSourceToBuildMs: null, buildAgeMs: age, verdict,
+      detail: verdict === 'OK' ? 'ok' : (built ? `age ${Math.round((age ?? 0) / 60000)}m > ${daily.sla?.maxAgeMinutes}m` : '无 ok 运行'),
+
+    })
+  }
+  return { generatedAt: now.toISOString(), products: rows }
+}
+
+/** 从两个 console 工作区读 `schedules.json`，返回 scheduleId → last_ok（Date|null），跨卷取 min。 */
+export function readConsoleLastOk(dirs = DEFAULT_WORKSPACES) {
+  /** @type {Map<string, Date|null>} */
+  const perWorkspace = new Map()
+  for (const dir of dirs) {
+    const file = join(dir, 'schedules.json')
+    if (!existsSync(file)) continue
+    let list
+    try {
+      list = JSON.parse(readFileSync(file, 'utf8'))
+    } catch {
+      continue
+    }
+    for (const s of Array.isArray(list) ? list : []) {
+      const id = String(s?.id ?? '')
+      if (!id) continue
+      const ok = String(s?.last_run_status ?? '') === 'ok' ? parseConsoleTime(s?.last_run_at) : null
+      const prev = perWorkspace.get(id)
+      if (!perWorkspace.has(id)) perWorkspace.set(id, ok)
+      else if (ok && prev) { if (ok.getTime() < prev.getTime()) perWorkspace.set(id, ok) }
+      else if (ok && !prev) perWorkspace.set(id, ok)
+    }
+  }
+  return perWorkspace
+}
+
+/** CLI：只读测量并打印 JSON；退出码恒 0（D4 才接告警）。 */
+async function main() {
+  const args = process.argv.slice(2)
+  /** @param {string} name */
+  const get = (name) => {
+    const i = args.indexOf(name)
+    return i >= 0 ? args[i + 1] : undefined
+  }
+  const root = get('--root') ?? fileURLToPath(new URL('../..', import.meta.url))
+  const nowIso = get('--now')
+  const now = nowIso ? new Date(nowIso) : new Date()
+  if (Number.isNaN(now.getTime())) throw new Error(`--now 非法：${nowIso}`)
+  const config = JSON.parse(readFileSync(join(root, CONFIG_REL), 'utf8'))
+
+  const { Pool } = createRequire(import.meta.url)('pg')
+  const platformUrl = process.env.DATABASE_URL
+  const warehouseUrl = process.env.DATA_WAREHOUSE_URL
+  if (!platformUrl) throw new Error('缺 DATABASE_URL')
+  if (!warehouseUrl) throw new Error('缺 DATA_WAREHOUSE_URL')
+
+  const jobKeys = []
+  for (const p of Object.values(config.products ?? {})) {
+    if (p.job) jobKeys.push(p.job)
+    for (const d of Object.values(p.domains ?? {})) if (d.job) jobKeys.push(d.job)
+  }
+
+  const platform = new Pool({ connectionString: platformUrl })
+  const warehouse = new Pool({ connectionString: warehouseUrl })
+  try {
+    /** @type {Map<string, Date|null>} */
+    const jobs = new Map()
+    for (const key of [...new Set(jobKeys)]) {
+      const { rows } = await platform.query(
+        "select finished_at from platform.job_run where key=$1 and status='ok' order by id desc limit 1",
+        [key],
+      )
+      jobs.set(key, rows[0]?.finished_at ? new Date(rows[0].finished_at) : null)
+    }
+    const hot = await warehouse.query('select system_book, max(run_token) as token from staging.retail_hot group by 1')
+    const hotRunTokens = hot.rows.map((/** @type {any} */ r) => r.token).filter(Boolean)
+    const wsDirs = (process.env.SLA_WORKSPACES ?? DEFAULT_WORKSPACES.join(','))
+      .split(',').map((s) => s.trim()).filter(Boolean)
+    const consoleLastOk = readConsoleLastOk(wsDirs)
+
+    const report = computeReport(config, { now, jobs, hotRunTokens, consoleLastOk })
+    console.log(JSON.stringify(report, null, 2))
+  } finally {
+    await platform.end().catch(() => {})
+    await warehouse.end().catch(() => {})
+  }
+}
+
+if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
+  await main()
+}
