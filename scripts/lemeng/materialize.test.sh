@@ -123,6 +123,29 @@ check "选择器只含**派生**三段：path:models/<域> + config.materialized
 check "选择器里没有任何具体模型名（手抄名单的形态：stg_/fct_）" \
   sh -c '! echo "$1" | grep -Eq "stg_|fct_"' _ "$SEL_OUT"
 
+# ── ④-c 车道事实源解析（A1）：registry 只传车道名，模型清单从 data-lanes.json 解析 ─────────
+LANE_FN=$(extract mat_lane_select)
+[ -n "$LANE_FN" ] || bad "mat_lane_select 抽取失败（函数不存在或格式变了）"
+eval "$LANE_FN"
+R="$(cd "$(dirname "$0")/../.." && pwd)"
+LANE_10M=$(mat_lane_select retail_10m 2>/dev/null || true)
+check "车道 retail_10m → fct_retail_sale" sh -c '[ "$1" = "fct_retail_sale" ]' _ "$LANE_10M"
+LANE_PUR=$(mat_lane_select nonretail_1h.purchase 2>/dev/null || true)
+check "车道 nonretail_1h.purchase → fct_purchase fct_purchase_concentration" \
+  sh -c '[ "$1" = "fct_purchase fct_purchase_concentration" ]' _ "$LANE_PUR"
+LANE_DAILY=$(mat_lane_select daily_report 2>/dev/null || true)
+check "车道 daily_report → 两个日粒度 mart" \
+  sh -c '[ "$1" = "fct_retail_item_profit fct_retail_profit" ]' _ "$LANE_DAILY"
+if mat_lane_select nope >/dev/null 2>&1; then
+  bad "未知车道应非零退出（fail loud，不静默空选）"
+else
+  ok "未知车道 ⇒ 非零退出（fail loud）"
+fi
+check "tick 档引用 MATERIALIZE_LANE（静态接线）" \
+  sh -c 'printf "%s" "$1" | grep -Fq "MATERIALIZE_LANE"' _ "$SRC_CONTENT"
+check "hourly 档引用 MATERIALIZE_LANE / MATERIALIZE_HOURLY_SELECT（静态接线）" \
+  sh -c 'printf "%s" "$1" | grep -Fq "MATERIALIZE_HOURLY_SELECT"' _ "$SRC_CONTENT"
+
 # ── ⑤ 物化落账（spec §10.1 + §10.7.2）：load_log DDL 与水位 SQL 的判别面 ──────────
 LOG_SQL_FN=$(extract mat_load_log_sql)
 [ -n "$LOG_SQL_FN" ] || bad "mat_load_log_sql 抽取失败（函数不存在或格式变了）"
