@@ -11,6 +11,10 @@
 
 ## [Unreleased]
 
+## [0.388.0](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.387.0...v0.388.0) - 2026-11-25
+- 【新增】data: 1h 车道按域拆分（A3） ([#2828](https://github.com/MYTech-Co-LTD/platform-core/pull/2828), [7c3d486](https://github.com/MYTech-Co-LTD/platform-core/commit/7c3d4865776a42cb4839a53140595af48fa6f985))
+
+
 ## [0.387.0](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.386.1...v0.387.0) - 2026-11-25
 - 【新增】data: 车道选择器接入 data-lanes.json（A1） ([#2826](https://github.com/MYTech-Co-LTD/platform-core/pull/2826), [d1031a4](https://github.com/MYTech-Co-LTD/platform-core/commit/d1031a44a96d2378d808100fba741330fb34d7eb))
 
