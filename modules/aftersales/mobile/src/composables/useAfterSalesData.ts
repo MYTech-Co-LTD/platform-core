@@ -72,14 +72,15 @@ export function useAfterSalesData() {
    * 拉选中门店的近期结算单（#500 段③：建单挂原单的选单数据面）。
    * 门店变化必须**清空已选单/行**——跨店残留的选中行是串店引用（服务端 400 ORDER_STORE_MISMATCH）。
    */
-  const loadSettlementOrders = async (storeCode: string) => {
+  const loadSettlementOrders = async (storeCode: string, itemCode?: string) => {
     settlementLoading.value = true
     settlementOrders.value = []
     selectedOrder.value = null
     selectedLine.value = null
     if (!storeCode) return
     try {
-      settlementOrders.value = await after_sales_work_order.settlementOrders(storeCode)
+      // itemCode 可选（2026-11-25 对齐 wuji 双过滤）：只回含该商品的行
+      settlementOrders.value = await after_sales_work_order.settlementOrders(storeCode, itemCode)
     } catch (error: any) {
       console.error('加载结算单列表失败:', error)
       Message.error(error?.message || '加载结算单列表失败')

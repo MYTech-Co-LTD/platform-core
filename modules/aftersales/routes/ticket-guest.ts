@@ -35,6 +35,9 @@ const SubmitBody = z.object({
   lineKey: z.string().regex(/^[0-9A-Za-z_-]{1,32}$/),
   // 这一档走 int4 上界，见 MAX_INT4。
   damageQuantity: z.number().int().nonnegative().max(MAX_INT4),
+  // 到货时间（2026-11-25 对齐 wuji 源交互）：前端两个控件（日期+时间）拼 ISO 字符串。
+  // 服务端只校验「能被 Date 解析」，不写死格式——时区由客户端给（带 Z 或 +08:00）。
+  arrivalAt: z.string().datetime({ offset: true }).optional(),
   remark: z.string().max(2000).optional(),
   /** 本次提交要一起认领的附件（先传图后提交，见 spec §2.3） */
   attachmentIds: z.array(z.number().int().positive().safe()).max(50).optional(),
@@ -152,6 +155,9 @@ export function registerTicketGuest(r: ModuleHono, ctx: RouteCtx): void {
     const org = c.get('identity').orgId
     const storeCode = c.req.query('storeCode') ?? ''
     if (!storeCode) return c.json({ error: 'STORE_CODE_REQUIRED' }, 400)
+    // `itemCode`（2026-11-25）：选了商品时才传——只回**含该商品**的行，
+    // 前端按单分组后每单只呈现匹配行（对齐 wuji「一行一单品」的展示粒度）。
+    const itemCode = c.req.query('itemCode') ?? ''
     const daysRaw = Number(c.req.query('days') ?? 30)
     const days = Number.isFinite(daysRaw) ? Math.min(Math.max(Math.trunc(daysRaw), 1), 90) : 30
 
@@ -165,8 +171,9 @@ export function registerTicketGuest(r: ModuleHono, ctx: RouteCtx): void {
          from data.dim_settlement_order_line
         where org = $1 and store_code = $2
           and order_bizday >= current_date - $3::int
+          and ($4 = '' or item_code = $4)
         order by order_bizday desc, order_no, item_code, line_key`,
-      [org, storeCode, days],
+      [org, storeCode, days, itemCode],
     )
     /** 按单分组：一单 = {orderNo, source, bizday, createTime, lines[]}——选单页的两级选择面。 */
     const orders = new Map<string, {
@@ -275,15 +282,15 @@ export function registerTicketGuest(r: ModuleHono, ctx: RouteCtx): void {
            product_code, product_name, store_code, store_name,
            damage_quantity, remark,
            settlement_source, settlement_order_no, settlement_item_code, settlement_line_key,
-           settlement_price_minor, settlement_bizday, store_affiliation)
-         values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16)
+           settlement_price_minor, settlement_bizday, store_affiliation, arrival_at)
+         values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17)
          returning id`,
         [
           org, body.clientRequestId, identity.userId,
           body.itemCode, item.name, body.storeCode, store.name,
           body.damageQuantity, body.remark ?? '',
           settlement.source, body.orderNo, body.itemCode, body.lineKey,
-          Number(settlement.price_minor), settlement.bizday, storeAffiliation,
+          Number(settlement.price_minor), settlement.bizday, storeAffiliation, body.arrivalAt ?? null,
         ],
       )
       const ticketId = Number(ins.rows[0].id)

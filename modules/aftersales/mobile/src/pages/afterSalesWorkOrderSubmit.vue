@@ -8,94 +8,174 @@
 
     <!-- 主表单 -->
     <div v-else class="p-4 pb-24">
-      <!-- 选店选单（#500 段③）：选店拉结算单 → 选单选行锁价（价随单冻结） -->
+      <!-- 2026-11-25：选择区按 wuji 源交互重排 —— 商品 → 门店 → 订单 → 商品信息卡。
+           商品与门店都是「远程搜索」（访客侧不做全量预载）；订单按「门店 + 商品」双过滤。 -->
       <t-card class="mb-4 rounded-xl shadow-sm" hover-shadow>
-        <div class="space-y-4">
-          <div>
-            <label class="block text-sm font-medium text-gray-700 mb-2">
-              <span class="text-[#E5484D]">*</span>选择门店
-            </label>
-            <t-select
-              v-model="selectedStore"
-              placeholder="请选择门店"
-              :loading="loading"
-              filterable
-              clearable
-              class="w-full"
-              @change="handleStoreChange"
+        <div>
+          <label class="block text-sm font-medium text-gray-700 mb-2">
+            <span class="text-[#E5484D]">*</span>商品名称
+          </label>
+          <t-select
+            v-model="selectedProduct"
+            placeholder="请输入商品名称搜索"
+            :loading="productLoading"
+            filterable
+            clearable
+            class="w-full"
+            @search="handleProductSearch"
+            @change="handleProductChange"
+          >
+            <t-option
+              v-for="product in productList"
+              :key="product.id"
+              :value="product.id"
+              :label="product.product_name"
             >
-              <t-option
-                v-for="store in storeList"
-                :key="store.id"
-                :value="store.id"
-                :label="store.store_name"
-              >
-                <div class="flex items-center justify-between min-w-0 gap-2">
-                  <span class="font-medium truncate">{{ store.store_name }}</span>
-                  <span class="text-xs text-gray-400 shrink-0">{{ store.store_number }}</span>
-                </div>
-              </t-option>
-            </t-select>
-          </div>
-          <div>
-            <label class="block text-sm font-medium text-gray-700 mb-2">
-              <span class="text-[#E5484D]">*</span>选择结算单
-            </label>
-            <t-select
-              v-model="selectedOrderNo"
-              placeholder="请选择进货结算单"
-              :loading="settlementLoading"
-              :disabled="!selectedStore"
-              filterable
-              clearable
-              class="w-full"
+              <div class="flex items-center justify-between min-w-0 gap-2">
+                <span class="font-medium truncate">{{ product.product_name }}</span>
+                <span class="text-xs text-gray-400 shrink-0">{{ product.id }}</span>
+              </div>
+            </t-option>
+          </t-select>
+        </div>
+      </t-card>
+
+      <t-card class="mb-4 rounded-xl shadow-sm" hover-shadow>
+        <div>
+          <label class="block text-sm font-medium text-gray-700 mb-2">
+            <span class="text-[#E5484D]">*</span>选择门店
+          </label>
+          <t-select
+            v-model="selectedStore"
+            placeholder="请选择门店"
+            :loading="loading"
+            clearable
+            class="w-full"
+            @change="handleStoreChange"
+          >
+            <t-option
+              v-for="store in storeList"
+              :key="store.id"
+              :value="store.id"
+              :label="store.store_name"
             >
-              <t-option
-                v-for="order in settlementOrders"
-                :key="order.orderNo"
-                :value="order.orderNo"
-                :label="`${order.orderNo}（${order.bizday}）`"
-              >
-                <div class="flex items-center justify-between min-w-0 gap-2">
-                  <span class="font-medium truncate">{{ order.orderNo }}</span>
-                  <span class="text-xs text-gray-400 shrink-0">{{ order.bizday }}{{ order.source === 'wholesale' ? ' · 批发' : '' }}</span>
-                </div>
-              </t-option>
-            </t-select>
-          </div>
-          <div v-if="selectedOrder">
-            <label class="block text-sm font-medium text-gray-700 mb-2">
-              <span class="text-[#E5484D]">*</span>选择商品行
-            </label>
-            <t-select
-              v-model="selectedLineKey"
-              placeholder="请选择商品行（金额按该行结算价冻结）"
-              filterable
-              clearable
-              class="w-full"
+              <div class="flex items-center justify-between min-w-0 gap-2">
+                <span class="font-medium truncate">{{ store.store_name }}</span>
+                <span class="text-xs text-gray-400 shrink-0">{{ store.store_number }}</span>
+              </div>
+            </t-option>
+          </t-select>
+        </div>
+      </t-card>
+
+      <t-card class="mb-4 rounded-xl shadow-sm" hover-shadow>
+        <div>
+          <label class="block text-sm font-medium text-gray-700 mb-2">
+            <span class="text-[#E5484D]">*</span>选择订单
+          </label>
+          <t-select
+            v-model="selectedOrderNo"
+            placeholder="请选择订单（按日期倒序）"
+            :loading="settlementLoading"
+            filterable
+            clearable
+            :disabled="!selectedStore && !selectedProduct"
+            class="w-full"
+          >
+            <t-option
+              v-for="order in settlementOrders"
+              :key="order.orderNo"
+              :value="order.orderNo"
+              :label="order.orderNo"
             >
-              <t-option
-                v-for="line in selectedOrder.lines"
-                :key="line.lineKey"
-                :value="line.lineKey"
-                :label="`${line.itemName ?? line.itemCode}（¥${(line.priceMinor / 100).toFixed(2)}）`"
-              >
-                <div class="flex items-center justify-between min-w-0 gap-2">
-                  <span class="font-medium truncate">{{ line.itemName ?? line.itemCode }}</span>
-                  <span class="text-xs text-gray-400 shrink-0 tnum">¥{{ (line.priceMinor / 100).toFixed(2) }}</span>
-                </div>
-              </t-option>
-            </t-select>
-            <p v-if="selectedLine" class="mt-2 text-xs text-gray-500 tnum">
-              <i class="fa fa-lock mr-1"></i>结算单价 ¥{{ (selectedLine.priceMinor / 100).toFixed(2) }}（随单冻结，来源 {{ selectedLine.orderNo }}）
-            </p>
+              <div class="flex items-center justify-between min-w-0 gap-2">
+                <span class="font-medium truncate">{{ order.orderNo }}</span>
+                <span class="text-xs text-gray-400 shrink-0">{{ order.bizday }}{{ order.source === 'wholesale' ? ' · 批发' : '' }}</span>
+              </div>
+            </t-option>
+          </t-select>
+          <p class="text-xs text-gray-400 mt-2" v-if="!selectedStore && !selectedProduct">
+            <i class="fa fa-info-circle mr-1"></i>请先选择商品或门店
+          </p>
+        </div>
+      </t-card>
+
+      <!-- 商品信息卡（选中订单行后显示；对齐 wuji 的「商品信息」卡） -->
+      <t-card v-if="selectedLine" class="mb-4 rounded-xl shadow-sm" title="商品信息">
+        <div class="space-y-2 text-sm">
+          <div class="flex justify-between">
+            <span class="text-gray-600">单据号：</span>
+            <span class="font-medium tnum">{{ selectedOrder?.orderNo }}</span>
           </div>
+          <div class="flex justify-between">
+            <span class="text-gray-600">商品名称：</span>
+            <span class="font-medium">{{ selectedLine.itemName ?? selectedLine.itemCode }}</span>
+          </div>
+          <div class="flex justify-between">
+            <span class="text-gray-600">基本数量：</span>
+            <span class="tnum">{{ selectedLine.quantity ?? '—' }}</span>
+          </div>
+          <div class="flex justify-between">
+            <span class="text-gray-600">基本单价：</span>
+            <span class="text-[#4D6BFE] tnum">¥{{ (selectedLine.priceMinor / 100).toFixed(2) }}<span class="text-xs text-gray-400 ml-1">（随单冻结）</span></span>
+          </div>
+          <div class="flex justify-between">
+            <span class="text-gray-600">订货时间：</span>
+            <span class="tnum">{{ selectedOrder?.bizday }}</span>
+          </div>
+        </div>
+        <!-- 多行时让用户确认报的是哪一行（按单分只显示匹配行，通常只有 1 行） -->
+        <div v-if="(selectedOrder?.lines?.length ?? 0) > 1" class="mt-3">
+          <label class="block text-sm font-medium text-gray-700 mb-2">行（该单含多个匹配商品）</label>
+          <t-select v-model="selectedLineKey" class="w-full">
+            <t-option
+              v-for="line in selectedOrder?.lines ?? []"
+              :key="line.lineKey"
+              :value="line.lineKey"
+              :label="line.itemName ?? line.itemCode"
+            />
+          </t-select>
         </div>
       </t-card>
 
       <!-- 售后信息 -->
       <t-card class="mb-4 rounded-xl shadow-sm" title="售后信息">
         <div class="space-y-5">
+          <!-- 到货日期 / 到货时间（2026-11-25 对齐 wuji 源交互）：售后判责的关键事实 ——
+               什么时候到的货、什么时候坏的。提交时拼成 ISO 字符串进 `arrivalAt`。 -->
+          <div class="flex flex-col sm:flex-row sm:items-center">
+            <label class="text-sm font-medium text-gray-700 min-w-[80px]">
+              <span class="text-[#E5484D]">*</span>到货日期
+            </label>
+            <div class="mt-2 sm:mt-0 sm:ml-4 flex-1">
+              <t-date-picker
+                v-model="arrivalDate"
+                type="date"
+                placeholder="请选择到货日期"
+                format="YYYY-MM-DD"
+                :clearable="false"
+                size="small"
+                class="w-full"
+              />
+            </div>
+          </div>
+
+          <div class="flex flex-col sm:flex-row sm:items-center">
+            <label class="text-sm font-medium text-gray-700 min-w-[80px]">
+              <span class="text-[#E5484D]">*</span>到货时间
+            </label>
+            <div class="mt-2 sm:mt-0 sm:ml-4 flex-1">
+              <t-time-picker
+                v-model="arrivalTime"
+                placeholder="请选择到货时间"
+                format="HH:mm"
+                :clearable="false"
+                size="small"
+                class="w-full"
+              />
+            </div>
+          </div>
+
           <!-- 报损数量 -->
           <div class="flex items-center">
             <label class="text-sm font-medium text-gray-700 min-w-[80px]">
@@ -280,7 +360,8 @@ import { useRouter } from 'vue-router'
 import { Message } from '@wujibase/wuji'
 import { useAfterSalesWorkOrder } from '@/composables/useAfterSalesWorkOrder'
 import { countSubmittable } from '@/composables/useWorkOrderSubmit'
-import { employee_info } from '@wujibase/wuji-data'
+import { employee_info, product_archive } from '@wujibase/wuji-data'
+import dayjs from 'dayjs'
 
 /**
  * 售后工单提交页（M3b-2：从 wuji-2 搬入后按 Task 8 改造）
@@ -344,11 +425,50 @@ const selectedLine = composable.selectedLine
 const selectedOrderNo = ref('')
 const selectedLineKey = ref('')
 
+// 商品选择（2026-11-25 对齐 wuji）：远程搜索，不做全量预载
+const selectedProduct = ref('')
+const productList = ref<Array<{ id: string; product_name: string }>>([])
+const productLoading = ref(false)
+let productSearchTimer: ReturnType<typeof setTimeout> | null = null
+
+const handleProductSearch = (q: string): void => {
+  if (productSearchTimer) clearTimeout(productSearchTimer)
+  if (!q || q.trim() === '') {
+    productList.value = []
+    return
+  }
+  productSearchTimer = setTimeout(async () => {
+    productLoading.value = true
+    try {
+      const rows = await product_archive.query({ filter: { product_name__contains: q.trim() } })
+      productList.value = rows as any
+    } catch (e: any) {
+      Message.error(e?.message || '加载商品失败')
+    } finally {
+      productLoading.value = false
+    }
+  }, 300)
+}
+
+// 商品变化 ⇒ 若已选门店，按「门店 + 商品」重拉订单（双过滤对齐 wuji）
+const handleProductChange = (): void => {
+  if (selectedStore.value) {
+    loadSettlementOrders(selectedStore.value, selectedProduct.value || undefined)
+  }
+}
+
 watch(selectedOrderNo, (no) => {
-  selectedOrder.value = settlementOrders.value.find((o: any) => o.orderNo === no) ?? null
-  selectedLineKey.value = ''
-  selectedLine.value = null
+  const o = settlementOrders.value.find((x: any) => x.orderNo === no) ?? null
+  selectedOrder.value = o
+  // 按单分只显示匹配行 ⇒ 选中订单后**自动选中第一行**（多数单只有一行匹配）
+  const first = o?.lines?.[0] ?? null
+  selectedLineKey.value = first?.lineKey ?? ''
+  selectedLine.value = first ? { ...first, orderNo: o!.orderNo } : null
 })
+
+// 到货日期 / 时间（对齐 wuji 的两个必填控件）
+const arrivalDate = ref<string>(dayjs().format('YYYY-MM-DD'))
+const arrivalTime = ref<string>(dayjs().format('HH:mm'))
 
 watch(selectedLineKey, (key) => {
   const line = selectedOrder.value?.lines?.find((l: any) => l.lineKey === key) ?? null
@@ -368,7 +488,10 @@ const isSubmitting = ref(false)
 
 // 选店变化 ⇒ 拉该店的结算单（loadSettlementOrders 内部会清空已选单/行，防串店残留）
 const handleStoreChange = (storeCode: unknown) => {
-  loadSettlementOrders(typeof storeCode === 'string' ? storeCode : '')
+  loadSettlementOrders(
+    typeof storeCode === 'string' ? storeCode : '',
+    selectedProduct.value || undefined,
+  )
 }
 // 选单变化后的清理由 selectedOrderNo 的 watch 负责（见上），此处不再重复
 
@@ -482,9 +605,17 @@ const handleSubmit = async () => {
   }
 
   if (!selectedLine.value) {
-    Message.warning('请先选择结算单与商品行（金额按该行结算价冻结）')
+    Message.warning('请选择订单（金额按该行结算价冻结）')
     return
   }
+
+  // 到货日期 / 时间（2026-11-25 对齐 wuji：源侧两个必填控件）
+  if (!arrivalDate.value || !arrivalTime.value) {
+    Message.warning('请选择到货日期与到货时间')
+    return
+  }
+  // 拼成带时区的 ISO 串（Asia/Shanghai）——服务端列是 timestamptz
+  formData.value.arrival_time = dayjs(`${arrivalDate.value} ${arrivalTime.value}`).toISOString()
 
   if (!data.damage_quantity || data.damage_quantity <= 0) {
     Message.warning('请输入报损数量（支持两位小数）')
@@ -542,6 +673,8 @@ onMounted(async () => {
     resetForm()
     selectedOrderNo.value = ''
     selectedLineKey.value = ''
+    selectedProduct.value = ''
+    productList.value = []
 
     // ① 闸门：先读「我的登记快照」。未登记 ⇒ 提示 + 跳登记页，**并且直接 return**——
     //    后面两句（门店 / 商品）一个都不发：未登记的人不该看到可选门店（spec §3.2）。

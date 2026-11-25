@@ -109,7 +109,7 @@ describe('afterSalesWorkOrderSubmit 页面', () => {
     expect(replace).not.toHaveBeenCalled()
     // 放行的**行为凭据**：主表单渲染出来了（不是停在「正在验证员工信息」那一屏）
     expect(w.text()).toContain('选择门店')
-    expect(w.text()).toContain('选择结算单')
+    expect(w.text()).toContain('选择订单')
     expect(storeQuery).toHaveBeenCalledTimes(1)
     // #500 段③：结算单按店拉取——没选店之前一个请求都不发
     expect(settlementOrdersQuery).not.toHaveBeenCalled()
@@ -127,19 +127,14 @@ describe('afterSalesWorkOrderSubmit 页面', () => {
     // （Select 从 slot 读 vnode 注册选项），点选这条路走不通，只能自己喂 v-model；
     // `@change` 处理器（拉结算单/清行）也要显式 emit——编程式 v-model 不触发 TDesign 的 change。
     // ⚠️ 行下拉带 `v-if="selectedOrder"` ⇒ **选单之后才挂载**，必须重新查询组件树再喂。
+    // 2026-11-25 交互重排：商品(0) → 门店(1) → 订单(2)；选单后 watch 自动选中第一行
     let selects = w.findAllComponents(Select)
-    await selects[0]!.vm.$emit('update:modelValue', STORE.id)
-    await selects[0]!.vm.$emit('change', STORE.id)
+    await selects[1]!.vm.$emit('update:modelValue', STORE.id)
+    await selects[1]!.vm.$emit('change', STORE.id)
     await flushPromises()
-    expect(settlementOrdersQuery).toHaveBeenCalledWith('103')
+    expect(settlementOrdersQuery).toHaveBeenCalledWith('103', undefined)
 
-    await selects[1]!.vm.$emit('update:modelValue', ORDER.orderNo)
-    await selects[1]!.vm.$emit('change', ORDER.orderNo)
-    await flushPromises()
-
-    // 选行（#2837：下拉值改用**稳定字符串** lineKey，页面 watch 再解析成行 + 所属单号）
-    selects = w.findAllComponents(Select)
-    await selects[2]!.vm.$emit('update:modelValue', ORDER.lines[0]!.lineKey)
+    await selects[2]!.vm.$emit('update:modelValue', ORDER.orderNo)
     await flushPromises()
     expect(w.find('input[placeholder*="报损数量"]').attributes('placeholder')).toContain('该行数量 30')
   })
@@ -170,15 +165,13 @@ describe('afterSalesWorkOrderSubmit 页面', () => {
     // ② 其余必填项填满——不填的话闸门会被**别的**校验先拦下，这条用例就测不到附件闸门。
     //    门店/结算单/行下拉直接喂 v-model + change（`<t-option>` 不挂载，点选走不通，见上一条用例注）。
     //    行下拉带 v-if ⇒ 选单后重查组件树（同上一条用例）。
+    // 2026-11-25 交互重排：商品(0) → 门店(1) → 订单(2)；选单后自动选中第一行
     let selects = w.findAllComponents(Select)
-    await selects[0]!.vm.$emit('update:modelValue', STORE.id)
-    await selects[0]!.vm.$emit('change', STORE.id)
-    await flushPromises()
-    await selects[1]!.vm.$emit('update:modelValue', ORDER.orderNo)
-    await selects[1]!.vm.$emit('change', ORDER.orderNo)
+    await selects[1]!.vm.$emit('update:modelValue', STORE.id)
+    await selects[1]!.vm.$emit('change', STORE.id)
     await flushPromises()
     selects = w.findAllComponents(Select)
-    await selects[2]!.vm.$emit('update:modelValue', ORDER.lines[0]!.lineKey)
+    await selects[2]!.vm.$emit('update:modelValue', ORDER.orderNo)
     await w.find('input[placeholder*="报损数量"]').setValue('2')
     await w.find('textarea').setValue('外包装破损')
     await flushPromises()
@@ -210,7 +203,9 @@ describe('afterSalesWorkOrderSubmit 页面', () => {
     expect(src).not.toContain('currentOrder')
     expect(src).not.toContain('outbound_detail')
     expect(src).not.toContain('generateOrderNumber')
-    expect(src).not.toContain('selectedProduct')
+    // 2026-11-25：商品选择回来了（对齐 wuji 的「商品 → 门店 → 订单」），故不再禁止 selectedProduct；
+    // 但仍禁止**旧的** `<t-option :value="product">` 形状（那是源侧 product_archive 直绑对象）
+
     expect(src).not.toContain(':value="product"')
     // 新选择面的绑定形状（#2837）：行值 = 稳定字符串 lineKey；价格随单冻结的提示在场
     expect(src).toContain(':value="line.lineKey"')

@@ -115,6 +115,8 @@ export function useWorkOrderSubmit(deps: {
         line_key: line.lineKey,
         damage_quantity: formData.value.damage_quantity,
         damage_reason: formData.value.damage_reason,
+        // 到货时间（ISO 字符串；空则不传，服务端列可空）
+        ...(formData.value.arrival_time ? { arrival_time: formData.value.arrival_time } : {}),
         // 只带**已完成**的附件：上传中的带上会被服务端按 id 认领，而对象可能还没落。
         // 判据取自 `isSubmittable`——与提交页闸门共用同一份口径（F2）。
         damage_images: attachments.value.filter(isSubmittable),
