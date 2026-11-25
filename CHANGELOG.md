@@ -11,6 +11,13 @@
 
 ## [Unreleased]
 
+## [0.390.0](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.389.1...v0.390.0) - 2026-11-25
+- 【新增】data: D1/D2 数据新鲜度 SLA——事实源 + 只读测量 ([#2844](https://github.com/MYTech-Co-LTD/platform-core/pull/2844), [11c025e](https://github.com/MYTech-Co-LTD/platform-core/commit/11c025e81ec812a4dacbfc9c136fa15ee3d20ef3))
+- 【修复】data: SystemMapView 测试 waitFor 显式 5s 超时——CI 慢机器稳定超时阻塞部署 ([#2840](https://github.com/MYTech-Co-LTD/platform-core/pull/2840), [59f9e43](https://github.com/MYTech-Co-LTD/platform-core/commit/59f9e4308fb8b3533fa8b0e8ec31d99025bc4b04))
+- 【修复】aftersales: 提交页单测跟上 #2837 的稳定字符串 value ([#2842](https://github.com/MYTech-Co-LTD/platform-core/pull/2842), [c58faa4](https://github.com/MYTech-Co-LTD/platform-core/commit/c58faa4a992c61c09a49c81858815b6cc09ab574))
+- 【修复】aftersales: 提交页 t-option 改用稳定字符串 value——修选单后带不出商品行 ([#2837](https://github.com/MYTech-Co-LTD/platform-core/pull/2837), [5e25fa4](https://github.com/MYTech-Co-LTD/platform-core/commit/5e25fa42c17ceccdb40eae14f1d379f740e0ed73))
+
+
 ## [0.389.1](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.389.0...v0.389.1) - 2026-11-25
 - 【修复】notify: seed 规则 upsert 补 recipient_key 同步——修改收件人档位后 no_recipients ([#2834](https://github.com/MYTech-Co-LTD/platform-core/pull/2834), [2afe616](https://github.com/MYTech-Co-LTD/platform-core/commit/2afe616b6ffe6fc8b3bddaed8fd5b9b085db3103))
 - 【修复】data: 1h 车道 job maxAttempts=3——executor 429 busy 不再终态失败 ([#2832](https://github.com/MYTech-Co-LTD/platform-core/pull/2832), [26a078b](https://github.com/MYTech-Co-LTD/platform-core/commit/26a078b5837fefc9cd59e311ad5683cce72e8e21))
