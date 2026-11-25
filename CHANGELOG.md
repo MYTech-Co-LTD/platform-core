@@ -11,6 +11,11 @@
 
 ## [Unreleased]
 
+## [0.389.1](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.389.0...v0.389.1) - 2026-11-25
+- 【修复】notify: seed 规则 upsert 补 recipient_key 同步——修改收件人档位后 no_recipients ([#2834](https://github.com/MYTech-Co-LTD/platform-core/pull/2834), [2afe616](https://github.com/MYTech-Co-LTD/platform-core/commit/2afe616b6ffe6fc8b3bddaed8fd5b9b085db3103))
+- 【修复】data: 1h 车道 job maxAttempts=3——executor 429 busy 不再终态失败 ([#2832](https://github.com/MYTech-Co-LTD/platform-core/pull/2832), [26a078b](https://github.com/MYTech-Co-LTD/platform-core/commit/26a078b5837fefc9cd59e311ad5683cce72e8e21))
+
+
 ## [0.389.0](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.388.0...v0.389.0) - 2026-11-25
 - 【新增】aftersales: 门店归属转执法——只能提/看本店工单，结果通知全店员工 ([#2830](https://github.com/MYTech-Co-LTD/platform-core/pull/2830), [3055645](https://github.com/MYTech-Co-LTD/platform-core/commit/305564537b736684bd1815214794a44014974db1))
 
