@@ -11,6 +11,11 @@
 
 ## [Unreleased]
 
+## [0.391.1](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.391.0...v0.391.1) - 2026-11-25
+- 【修复】scheduler: 部署后僵尸 running 行按 runner 心跳回收 ([#2855](https://github.com/MYTech-Co-LTD/platform-core/pull/2855), [5e97124](https://github.com/MYTech-Co-LTD/platform-core/commit/5e971249da2eb8b71f804c248d3e444baf53812e))
+- 【修复】aftersales: 商品选择预加载首屏候选 + 空态指引 + 选单预填到货日期（对齐 wuji） ([#2854](https://github.com/MYTech-Co-LTD/platform-core/pull/2854), [47c6dae](https://github.com/MYTech-Co-LTD/platform-core/commit/47c6dae2ff7bf2009a906997204332229ddc1a55))
+
+
 ## [0.391.0](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.390.1...v0.391.0) - 2026-11-25
 - 【修复】data: A3 拆域漏掉 daily_report 车道——补 job + SLA + 门禁 ([#2852](https://github.com/MYTech-Co-LTD/platform-core/pull/2852), [bd1b47d](https://github.com/MYTech-Co-LTD/platform-core/commit/bd1b47d871e31434ad6c0c5f1a32d397b5435624))
 - 【新增】aftersales: 提交页按 wuji 交互重排（商品→门店→订单+商品信息卡）并补到货时间 ([#2850](https://github.com/MYTech-Co-LTD/platform-core/pull/2850), [7b6de8f](https://github.com/MYTech-Co-LTD/platform-core/commit/7b6de8fdda99907c44462aeb611e4b5cac2a9620))
