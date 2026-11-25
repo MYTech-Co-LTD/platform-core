@@ -136,6 +136,30 @@ describePg('scheduler store', () => {
     expect(rows[0].status).toBe('timeout')
   })
 
+  it('★ #2835：runner 心跳过期 ⇒ 不等 2×timeout 就回收', async () => {
+    const id = await mkSchedule(pool, 'jobtest-store:stale-runner', { timeoutMs: 3_600_000 })
+    await pool.query(
+      `insert into platform.job_run(schedule_id,key,occurrence,trigger,status,started_at,runner_id)
+       values ($1,'jobtest-store:stale-runner',now(),'schedule','running', now() - interval '2 minutes','executor-stale')`, [id])
+    await beat(pool, new Date(Date.now() - 10 * 60_000), 'executor-stale')
+    expect(await reapStale(pool, new Date())).toBeGreaterThanOrEqual(1)
+    const { rows } = await pool.query('select status from platform.job_run where schedule_id=$1', [id])
+    expect(rows[0].status).toBe('timeout')
+    await pool.query("delete from platform.job_heartbeat where id='executor-stale'")
+  })
+
+  it('★ #2835：心跳新鲜 ⇒ 不误杀正在跑的行', async () => {
+    const id = await mkSchedule(pool, 'jobtest-store:fresh-runner', { timeoutMs: 3_600_000 })
+    await pool.query(
+      `insert into platform.job_run(schedule_id,key,occurrence,trigger,status,started_at,runner_id)
+       values ($1,'jobtest-store:fresh-runner',now(),'schedule','running', now() - interval '2 minutes','executor-fresh')`, [id])
+    await beat(pool, new Date(), 'executor-fresh')
+    await reapStale(pool, new Date())
+    const { rows } = await pool.query('select status from platform.job_run where schedule_id=$1', [id])
+    expect(rows[0].status).toBe('running')
+    await pool.query("delete from platform.job_heartbeat where id='executor-fresh'")
+  })
+
   it('★ 启动对账只收自己的：别的实例的 running 行不许动（#2511 两单元并存）', async () => {
     // ⚠️ 只调一次 mkSchedule：它会 clearFixtures，连调两次会把兄弟夹具删掉。
     const mine = await mkSchedule(pool, 'jobtest-store:mine', { timeoutMs: 1000 })

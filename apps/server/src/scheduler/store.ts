@@ -393,7 +393,24 @@ export async function reapStale(pool: Pool, now: Date): Promise<number> {
         and r.started_at < $1::timestamptz - make_interval(secs => 2 * s.timeout_ms / 1000.0)`,
     [now],
   )
-  return rowCount ?? 0
+  // #2835：**runner 心跳过期** ⇒ 不等 2×timeout 直接回收。部署杀掉 executor 后，它的
+  // `running` 行会在 2×timeout（30 分钟档 ⇒ 60 分钟）里一直占槽；启动对账在「executor 没重启」
+  // 时又兜不住。心跳每 10s/30s 一拍，5 分钟没拍 = runner 已死。
+  // 判据取「**有据可依的过期**」（存在该 runner 的心跳行且已过期），而不是「没有心跳就判死」：
+  // 从未写过心跳的 runner（迁移前的 `scheduler-legacy` 行等）继续走上面的 2×timeout 兜底，
+  // 不因缺一行心跳被提前误杀。
+  // `started_at < now - 1min` 守卫防误杀「刚派发、runner 还没写第一拍」的作业。
+  const stale = await pool.query(
+    `update platform.job_run r set status='timeout', finished_at=$1, error='runner heartbeat stale'
+      where r.status = 'running'
+        and r.runner_id is not null
+        and r.started_at < $1::timestamptz - interval '1 minute'
+        and exists (select 1 from platform.job_heartbeat h
+                     where h.id = r.runner_id
+                       and h.beat_at < $1::timestamptz - interval '5 minutes')`,
+    [now],
+  )
+  return (rowCount ?? 0) + (stale.rowCount ?? 0)
 }
 
 /** 启动对账（#2442）：上一进程起的 runner 已随容器/进程消失，但行还停在 running。
