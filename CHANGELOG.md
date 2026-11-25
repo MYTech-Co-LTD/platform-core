@@ -11,6 +11,10 @@
 
 ## [Unreleased]
 
+## [0.391.2](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.391.1...v0.391.2) - 2026-11-25
+- 【修复】scheduler: 10m 车道留槽 + retail_derived 分块（B2 第一阶段） ([#2857](https://github.com/MYTech-Co-LTD/platform-core/pull/2857), [d40fdc4](https://github.com/MYTech-Co-LTD/platform-core/commit/d40fdc439cc097f554557e21604e1738314374d9))
+
+
 ## [0.391.1](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.391.0...v0.391.1) - 2026-11-25
 - 【修复】scheduler: 部署后僵尸 running 行按 runner 心跳回收 ([#2855](https://github.com/MYTech-Co-LTD/platform-core/pull/2855), [5e97124](https://github.com/MYTech-Co-LTD/platform-core/commit/5e971249da2eb8b71f804c248d3e444baf53812e))
 - 【修复】aftersales: 商品选择预加载首屏候选 + 空态指引 + 选单预填到货日期（对齐 wuji） ([#2854](https://github.com/MYTech-Co-LTD/platform-core/pull/2854), [47c6dae](https://github.com/MYTech-Co-LTD/platform-core/commit/47c6dae2ff7bf2009a906997204332229ddc1a55))
