@@ -50,6 +50,63 @@ export interface JobDef {
   env?: Record<string, string>
 }
 
+/**
+ * 1h 车道的 per-domain job（路线图 A3）：车道名由 `scripts/lemeng/data-lanes.json` 解析，
+ * registry **只传车道名 + 错峰分钟**，不手抄模型清单（A4 门禁保证每个增量模型恰好归属一个车道）。
+ * 分钟错峰（奇数分钟，避开 10m tick 的 `2-59/10`）⇒ 各域串行、不与 tick 撞分钟；
+ * 单域单轮 ≤3 分钟，10 个域在 :05–:41 内跑完，审计 job 在 :45 收尾。
+ */
+function hourlyLaneJob(domain: string, minute: number, desc: string): JobDef {
+  const mm = String(minute).padStart(2, '0')
+  return {
+    key: `data.dbt_hourly_${domain}`,
+    scope: 'data',
+    requiresEnv: ['DATABASE_URL', 'DATA_WAREHOUSE_URL', 'LEMENG_ZOS_BUCKET', 'LEMENG_ZOS_REGION', 'LEMENG_ZOS_ENDPOINT'],
+    script: 'scripts/lemeng/materialize-job.mjs',
+    env: {
+      MATERIALIZE_SCOPE: 'hourly',
+      MATERIALIZE_LANE: `nonretail_1h.${domain}`,
+      DATA_PLANE_DOMAINS: 'lemeng',
+      MATERIALIZE_MODE: 'container',
+      LEMENG_ZOS_BUCKET: 'shanhai-data',
+      LEMENG_ZOS_REGION: 'xinan1',
+      LEMENG_ZOS_ENDPOINT: 'xinan-1-internal.zos.ctyun.cn',
+    },
+    cron: `${minute} 1-15 * * *`,
+    timezone: 'UTC',
+    timeoutMs: 900000,
+    maxAttempts: 1,
+    expectedIntervalSecs: 3600,
+    description: `乐檬 1h 车道 · ${desc}（CST 09:${mm}-23:${mm}；车道 nonretail_1h.${domain}）`,
+  }
+}
+
+/** 1h 车道的「选择器类」job（窗口审计 / 门店维）：只传 select，模型清单不手抄。 */
+function hourlySelectJob(key: string, select: string, minute: number, timeoutMs: number, desc: string): JobDef {
+  const mm = String(minute).padStart(2, '0')
+  return {
+    key,
+    scope: 'data',
+    requiresEnv: ['DATABASE_URL', 'DATA_WAREHOUSE_URL', 'LEMENG_ZOS_BUCKET', 'LEMENG_ZOS_REGION', 'LEMENG_ZOS_ENDPOINT'],
+    script: 'scripts/lemeng/materialize-job.mjs',
+    env: {
+      MATERIALIZE_SCOPE: 'hourly',
+      MATERIALIZE_HOURLY_SELECT: select,
+      DATA_PLANE_DOMAINS: 'lemeng',
+      MATERIALIZE_MODE: 'container',
+      LEMENG_ZOS_BUCKET: 'shanhai-data',
+      LEMENG_ZOS_REGION: 'xinan1',
+      LEMENG_ZOS_ENDPOINT: 'xinan-1-internal.zos.ctyun.cn',
+    },
+    cron: `${minute} 1-15 * * *`,
+    timezone: 'UTC',
+    timeoutMs,
+    maxAttempts: 1,
+    expectedIntervalSecs: 3600,
+    description: `${desc}（CST 09:${mm}-23:${mm}）`,
+  }
+}
+
 /** P1 首迁三个系统 job。时区一律 UTC——与 openship 上现有 cron 的 UTC 语义逐字一致。 */
 export const JOB_REGISTRY: JobDef[] = [
   // 需求挖掘（原 openship `custom:4eM6UfhB2ANodSJ_`，靠 `docker exec` 进 server 容器跑）。
@@ -100,7 +157,21 @@ export const JOB_REGISTRY: JobDef[] = [
   // Wave 7 V1：业务监控求值（每实例一条；seed 为 disabled，切流按 deploy/jobs.md 四步开闸）
   // Wave 8 P1：dbt 由平台 scheduler 在容器内执行（镜像已内置 dbt 1.9.1，issue #2343）。
   // env/timeout/retry 与原 openship `lemeng-dbt-tick` 一致；cron 已按平台采集窗口调整（#2801）。
-  { key: 'data.dbt_hourly', scope: 'data', requiresEnv: ['DATABASE_URL','DATA_WAREHOUSE_URL','LEMENG_ZOS_BUCKET','LEMENG_ZOS_REGION','LEMENG_ZOS_ENDPOINT'], script: 'scripts/lemeng/materialize-job.mjs', env: { MATERIALIZE_SCOPE: 'hourly', DATA_PLANE_DOMAINS: 'lemeng', MATERIALIZE_MODE: 'container', LEMENG_ZOS_BUCKET: 'shanhai-data', LEMENG_ZOS_REGION: 'xinan1', LEMENG_ZOS_ENDPOINT: 'xinan-1-internal.zos.ctyun.cn' }, cron: '5 1-15 * * *', timezone: 'UTC', timeoutMs: 1800000, maxAttempts: 1, expectedIntervalSecs: 3600, description: '乐檬 dbt hourly（增量模型 + 9 条窗口对账；容器内 dbt 1.9.1）' },
+  // 1h 车道（A3）：门店维 → 各域增量（:05–:41 奇数分钟错峰）→ 窗口审计（:45）。
+  // 旧的 `data.dbt_hourly` 一条跑全部增量 + 审计（~20 分钟），审计一红整轮失败、load_log 不落账
+  // （2026-11-25 实测：outbound 审计 600 行差异把 17 个增量全判失败）。
+  hourlySelectJob('data.dbt_hourly_dims', 'stg_lemeng_branch', 4, 300000, '乐檬 1h 车道 · 门店维（stg_lemeng_branch，先于各域）'),
+  hourlyLaneJob('retail_derived', 5, '零售派生（item_sale / quantity / order_event）'),
+  hourlyLaneJob('purchase', 9, '采购'),
+  hourlyLaneJob('inventory', 13, '库存快照'),
+  hourlyLaneJob('member', 17, '会员汇总'),
+  hourlyLaneJob('client', 21, '客户费用'),
+  hourlyLaneJob('branch', 25, '门店费用/指标'),
+  hourlyLaneJob('transfer', 29, '调拨'),
+  hourlyLaneJob('outbound', 33, '出库'),
+  hourlyLaneJob('request', 37, '要货'),
+  hourlyLaneJob('loss', 41, '报损'),
+  hourlySelectJob('data.dbt_hourly', 'tag:audit_window', 45, 1800000, '乐檬 1h 车道 · 窗口审计（9 条窗口对账）'),
   // #2674 拆档：全史 CTAS 模型（recon 家族 + swap_offset，单轮 ~11 分钟且必撞采集期 ETag）
   // 从主档拆出去，各自有超时与失败隔离。主档要跑几十个 table 模型 + 39 个测试，90 分钟曾被
   // 全史模型拖到必超时 ⇒ 未建成的表（#2655 的 swap_offset / 新列版 recon_break）整天进不了生产。

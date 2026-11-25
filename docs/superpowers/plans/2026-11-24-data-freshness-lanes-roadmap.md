@@ -57,8 +57,8 @@
 - [x] **A5** 起点门禁：1h 起点紧随最后一个采集偏移 + 10m 物化偏移对齐——同脚本；真机 gap 7 分钟（:58 → :05）
 - [ ] **G0** 基线测量：单 build 时长/内存；两并发是否 postmaster 重启
 - [x] **A1** `materialize.sh` selector 覆盖：`MATERIALIZE_LANE` 从 `data-lanes.json` 解析模型清单（tick/hourly 通用；未知车道 fail loud）+ `MATERIALIZE_HOURLY_SELECT`；3 条用例 + 静态接线断言
-- [ ] **A2** 10m 车道落地（仅 `fct_retail_sale`）
-- [ ] **A3** 1h 车道按域分片
+- [x] **A2** 10m 车道落地（仅 `fct_retail_sale`）：tick 已是该模型；A1 之后可选 `MATERIALIZE_LANE=retail_10m`（默认值不变）
+- [x] **A3** 1h 车道按域分片（代码）：门店维 :04 / 10 域 :05–:41 奇数分钟错峰 / 窗口审计 :45；域 job 排除 `tag:audit_window`；load_log 按本轮模型反推上游 staging（**DB 开闸待部署后执行**）
 - [x] **B1** G0 基线测量 → **单飞定案**：两路并发峰值 2.46GB、重模型+采集峰值 3.02GB / 上限 4GB，无 postmaster 重启；长查询不可取消（只能预防）
 - [ ] **B2** 单飞锁 + chunk 上限实现（≤3 分钟）
 - [ ] **C1–C6** 水位 / 幂等 / 热湖互补性回归

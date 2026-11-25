@@ -62,6 +62,7 @@ function schedules(): Record<string, string> {
 }
 
 const REGISTRY = "  { key: 'data.dbt_tick', scope: 'data', cron: '2-59/10 1-17 * * *', timezone: 'UTC' },\n"
+  + "  hourlyLaneJob('d', 5, 'd'),\n"
 
 function baseFiles(over: { lanes?: string; registry?: string; models?: Record<string, string> } = {}): Record<string, string> {
   return {
@@ -134,6 +135,29 @@ describe('check-data-lanes · A4 变异', () => {
     const { ok, errors } = checkDataLanes(fixture(baseFiles({ lanes })))
     expect(ok).toBe(false)
     expect(errors.join('\n')).toContain('retail_10m 只允许 fct_retail_sale')
+  })
+})
+
+describe('check-data-lanes · A3 变异', () => {
+  it('配置了域但没有 registry job ⇒ 红', () => {
+    const lanes = lanesConfig({
+      daily_report: { models: [] },
+      nonretail_1h: {
+        schedule: { startMinuteCst: 5, maxGapMinutes: 15 },
+        domains: { d: ['fct_a'], e: ['fct_b'] },
+      },
+    })
+    const { ok, errors } = checkDataLanes(fixture(baseFiles({ lanes })))
+    expect(ok).toBe(false)
+    expect(errors.join('\n')).toContain("没有对应的 hourlyLaneJob('e')")
+  })
+
+  it('registry 里有配置域之外的 lane job ⇒ 红', () => {
+    const registry = "  { key: 'data.dbt_tick', scope: 'data', cron: '2-59/10 1-17 * * *', timezone: 'UTC' },\n"
+      + "  hourlyLaneJob('d', 5, 'd'),\n  hourlyLaneJob('ghost', 6, 'g'),\n"
+    const { ok, errors } = checkDataLanes(fixture(baseFiles({ registry })))
+    expect(ok).toBe(false)
+    expect(errors.join('\n')).toContain("hourlyLaneJob('ghost')")
   })
 })
 
