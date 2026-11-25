@@ -50,8 +50,14 @@
 - 权限区分靠角色：租户 org 下建**门店角色**，挂 `aftersales:guest` 等门店码；
   管理角色照旧挂 `aftersales:manage`。角色/权限的运营入口 = console（平台超管
   直操 Casdoor 后台的 D4 分工不变）。
-- 草稿户：自动匹配「未命中」时即建 Casdoor user（无角色、标记草稿态），
-  供管理员在审核时「补全绑定/拒绝（删户）」，避免审核通过时才建户的长链路。
+- **~~草稿户~~（2026-11-25 人裁订正，作废原设计）**：自动匹配「未命中」时**不建 Casdoor user**，
+  `identity_link.casdoor_name` 落 **NULL**（= 尚未指向任何人），link 保持 pending 转人工，
+  由管理员在审核界面**从组织架构选人**（rebind）。
+  - 作废理由：原「即建草稿户」会造**影子账户**——每个未匹配的微信用户都在 Casdoor 里多一个
+    `name=openid` 的用户（不在组织架构、无角色），同一个人出现两个账户（真人 + 影子），
+    且影子账户一旦拿到会话就是「有账号无角色」的幽灵身份。
+  - 更根本的：它为了满足 `casdoor_name NOT NULL` 去创建一个**真实用户**。代价远大于改约束。
+    **「人」的唯一事实在组织架构/HR，平台不凭空造人。**
 
 ### 1.2 绑定关系真身 = platform 本地 `platform.identity_link`
 
@@ -84,10 +90,11 @@ platform.identity_link
 申请提交（公众号注册页）/ 企微首次登录
   ↓ 宿主按强键（手机号）自动匹配 identity_link ∪ Casdoor user
   ├─ 唯一命中 → 自动绑定（bound_via=auto, status=active），即时生效
-  │             + userApp 内展示「当前绑定身份 + 异议入口」（不做公众号
-  │             模板消息推送——依赖服务号消息权限，新依赖不做）
+  │             + userApp 内展示「当前绑定身份 + 异议入口」
+  │             （~~不做公众号模板消息推送~~ → **2026-11-25 已接**：`wechat_oa`
+  │              provider + 三个回执/审批事件，见 #2807 / #2817）
   ├─ 多命中   → 不自动绑；link pending + 候选清单转人工
-  └─ 未命中   → 建草稿 Casdoor user + link pending，转人工
+  └─ 未命中   → link pending（casdoor_name=NULL，**不建号**），转人工指定真人
   ↓
 人工（压力从「逐条审」降为「看异常」）：
   ① 修正：审核界面逐条显示机器判定建议 → 确认/改绑/新建/拒绝（§1.2）
