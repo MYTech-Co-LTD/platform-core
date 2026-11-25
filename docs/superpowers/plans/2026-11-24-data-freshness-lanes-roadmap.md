@@ -113,7 +113,10 @@
 | 2026-11-25 | 02:30 view 未翻转，根因定位 | ✅ 修复 | #2815（选择器补 staging）+ #2819（parquet 别名谓词）；手动重建后 view 含 `retail_hot`（len 5504） |
 | 2026-11-25 | 热层首跑验证 | ✅ | 三腿等价 211 = 0 + 211；09:42 tick（首跑新 view）ok 32s；今日 fct 90 行 / 净额 8,696.20 |
 | 2026-11-25 | G0 并发实验 | ✅ 单飞定案 | 2.46GB / 3.02GB / 4GB；postmaster 未重启；`pg_terminate_backend` 对 DuckDB 扫描无效 |
-| 2026-11-25 | A1 车道选择器 | ✅ 本 PR | `MATERIALIZE_LANE` 解析 `data-lanes.json`；未知车道 fail loud；materialize.test 112 pass |
+| 2026-11-25 | A1 车道选择器 | ✅ PR #2826 | `MATERIALIZE_LANE` 解析 `data-lanes.json`；未知车道 fail loud；materialize.test 112 pass |
+| 2026-11-25 | A3 1h 车道拆域首轮 | ✅ 9/10 + 审计独立 | dims 34s / retail_derived 503s / purchase 42s / inventory 87s / client 33s / branch 63s / transfer 27s / outbound 53s / request 94s / loss 33s；窗口审计独立 ok 167s；**member 429 失败**（#2831） |
+| 2026-11-25 | 429 容量竞态修复 | ✅ 本 PR | lane `maxAttempts` 3 / dims 2；DB `max_attempts` 迁移待部署后 |
+| 2026-11-25 | 部署僵尸 running 行 | ⚠️ 待查 | `publish_dims` 部署被杀后行停留 22 分钟占槽；executor 启动对账未生效 |
 
 ## §6 变更记录
 

@@ -75,14 +75,16 @@ function hourlyLaneJob(domain: string, minute: number, desc: string): JobDef {
     cron: `${minute} 1-15 * * *`,
     timezone: 'UTC',
     timeoutMs: 900000,
-    maxAttempts: 1,
+    // 3 次：`dispatch failed: executor 429 busy` 是**容量竞态**，不是业务失败。首轮实测
+    //（2026-11-25）member 因 429 被 maxAttempts=1 判终态，整小时没建；+60s 重试即可自愈。
+    maxAttempts: 3,
     expectedIntervalSecs: 3600,
     description: `乐檬 1h 车道 · ${desc}（CST 09:${mm}-23:${mm}；车道 nonretail_1h.${domain}）`,
   }
 }
 
 /** 1h 车道的「选择器类」job（窗口审计 / 门店维）：只传 select，模型清单不手抄。 */
-function hourlySelectJob(key: string, select: string, minute: number, timeoutMs: number, desc: string): JobDef {
+function hourlySelectJob(key: string, select: string, minute: number, timeoutMs: number, desc: string, maxAttempts = 1): JobDef {
   const mm = String(minute).padStart(2, '0')
   return {
     key,
@@ -101,7 +103,7 @@ function hourlySelectJob(key: string, select: string, minute: number, timeoutMs:
     cron: `${minute} 1-15 * * *`,
     timezone: 'UTC',
     timeoutMs,
-    maxAttempts: 1,
+    maxAttempts,
     expectedIntervalSecs: 3600,
     description: `${desc}（CST 09:${mm}-23:${mm}）`,
   }
@@ -160,7 +162,7 @@ export const JOB_REGISTRY: JobDef[] = [
   // 1h 车道（A3）：门店维 → 各域增量（:05–:41 奇数分钟错峰）→ 窗口审计（:45）。
   // 旧的 `data.dbt_hourly` 一条跑全部增量 + 审计（~20 分钟），审计一红整轮失败、load_log 不落账
   // （2026-11-25 实测：outbound 审计 600 行差异把 17 个增量全判失败）。
-  hourlySelectJob('data.dbt_hourly_dims', 'stg_lemeng_branch', 4, 300000, '乐檬 1h 车道 · 门店维（stg_lemeng_branch，先于各域）'),
+  hourlySelectJob('data.dbt_hourly_dims', 'stg_lemeng_branch', 4, 300000, '乐檬 1h 车道 · 门店维（stg_lemeng_branch，先于各域）', 2),
   hourlyLaneJob('retail_derived', 5, '零售派生（item_sale / quantity / order_event）'),
   hourlyLaneJob('purchase', 9, '采购'),
   hourlyLaneJob('inventory', 13, '库存快照'),
