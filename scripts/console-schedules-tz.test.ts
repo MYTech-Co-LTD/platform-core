@@ -51,7 +51,7 @@ const EXPECTED: Record<string, Record<string, string>> = {
     'panel-lemeng.client.expense.l0.3120': '28 9-23 * * *',
     'panel-lemeng.request.order.l0.3120': '54 9-23 * * *',
     'panel-lemeng.transfer.in.l0.3120': '44 9-23 * * *',
-    'panel-lemeng.retail.windows.l1': '30 10,18 * * *',
+    'panel-lemeng.retail.windows.l1': '50 8 * * *',
     'panel-lemeng.transfer.out.l0.3120': '38 9-23 * * *',
     'panel-lemeng.inventory.snapshot.l0.3120': '27 9-23 * * *',
     // #1079 兜底轮：主轮（T-2）当天全空时补前一日（T-3），每日 00:35 CST 一轮
@@ -85,7 +85,7 @@ const EXPECTED: Record<string, Record<string, string>> = {
     'panel-lemeng.dim.item_category.l0': '17 9-23 * * *',
     'panel-lemeng.dim.item.l0': '3 9-23 * * *',
     'panel-lemeng.dim.item_price.l0': '42 9-23 * * *',
-    'panel-lemeng.retail.windows.l1': '30 10,18 * * *',
+    'panel-lemeng.retail.windows.l1': '50 8 * * *',
     'panel-lemeng.retail.tick.l1': '*/10 9-23,0-1 * * *',
     'panel-lemeng.retail.close.l1': '0 0 * * *',
     'panel-lemeng.recon.preagg': '30 0 * * *',
