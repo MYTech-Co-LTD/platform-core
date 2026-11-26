@@ -11,6 +11,10 @@
 
 ## [Unreleased]
 
+## [0.395.0](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.394.0...v0.395.0) - 2026-11-26
+- 【新增】data: 湖封版分区压缩 P0（WIP）——索引表 DDL + 单源管线 + 两腿视图 ([#2869](https://github.com/MYTech-Co-LTD/platform-core/pull/2869), [813084e](https://github.com/MYTech-Co-LTD/platform-core/commit/813084e699e72e6b582468340a7909ef2570908d))
+
+
 ## [0.394.0](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.393.0...v0.394.0) - 2026-11-26
 - 【新增】aftersales: 图片上传前客户端压缩（2048/q0.85）+ 上限按类型分档 ([#2874](https://github.com/MYTech-Co-LTD/platform-core/pull/2874), [8fd56e7](https://github.com/MYTech-Co-LTD/platform-core/commit/8fd56e7c9710f4e68954fe47823379d81760864d))
 
