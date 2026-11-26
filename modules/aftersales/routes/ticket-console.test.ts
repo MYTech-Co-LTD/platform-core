@@ -58,6 +58,10 @@ describePg('工单页对齐无极（#2884）', () => {
       related_order: '',
       processed_at: null,
       store_affiliation: 'matched',
+      brand_code: '',
+      brand_name: '',
+      brand_source: '',
+      brand_origin: '',
       ...over,
     }
     const res = await pool.query<{ id: string }>(
@@ -65,13 +69,14 @@ describePg('工单页对齐无极（#2884）', () => {
          org, code, product_name, store_name,
          damage_quantity, basic_quantity, settlement_price_minor,
          status, amount_type, amount_minor, refund_ratio, operator, remark, opinion,
-         watermark_at, related_order, processed_at, store_affiliation)
-       values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18)
+         watermark_at, related_order, processed_at, store_affiliation,
+         brand_code, brand_name, brand_source, brand_origin)
+       values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22)
        returning id`,
       [ORG, t.code, t.product_name, t.store_name, t.damage_quantity, t.basic_quantity,
         t.settlement_price_minor, t.status, t.amount_type, t.amount_minor, t.refund_ratio,
         t.operator, t.remark, t.opinion, t.watermark_at, t.related_order, t.processed_at,
-        t.store_affiliation],
+        t.store_affiliation, t.brand_code, t.brand_name, t.brand_source, t.brand_origin],
     )
     return Number(res.rows[0]!.id)
   }
@@ -93,6 +98,18 @@ describePg('工单页对齐无极（#2884）', () => {
     await pool.query('delete from data.dim_settlement_order_line where org = $1', [ORG])
     await pool.query('delete from data.dim_item where org = $1', [ORG])
     await pool.query('delete from data.dim_branch where org = $1', [ORG])
+    await pool.query('delete from data.brand_assignment where org = $1', [ORG])
+    await pool.query('delete from data.brand_registry where org = $1', [ORG])
+    await pool.query('delete from data.brand_audit where org = $1', [ORG])
+
+    // 品牌字典 + S01→熊喵（source_field）。product 优先级在专门用例里临时加。
+    await pool.query(
+      `insert into data.brand_registry(org, code, name, sort, enabled, source)
+       values ($1,'xiongmao','熊喵',1,true,'source_field'),
+              ($1,'pptd','品品甜',2,true,'source_field')`, [ORG])
+    await pool.query(
+      `insert into data.brand_assignment(org, subject_type, subject_code, brand_code, source)
+       values ($1,'store','S01','xiongmao','source_field')`, [ORG])
 
     await pool.query(
       `insert into data.dim_branch(org, code, name, enable, source_book, snapshot)
@@ -122,6 +139,9 @@ describePg('工单页对齐无极（#2884）', () => {
     await pool.query('delete from data.dim_settlement_order_line where org = $1', [ORG])
     await pool.query('delete from data.dim_item where org = $1', [ORG])
     await pool.query('delete from data.dim_branch where org = $1', [ORG])
+    await pool.query('delete from data.brand_assignment where org = $1', [ORG])
+    await pool.query('delete from data.brand_registry where org = $1', [ORG])
+    await pool.query('delete from data.brand_audit where org = $1', [ORG])
     expect(pool.ended, '池在本 afterAll 之前已被 end').toBe(false)
     await pool.end().catch(() => {})
   })
@@ -140,11 +160,47 @@ describePg('工单页对齐无极（#2884）', () => {
     expect(res.status).toBe(201)
     const { id } = (await res.json()) as { id: number }
     const row = await pool.query(
-      'select damage_quantity, basic_quantity from aftersales.ticket where org = $1 and id = $2',
+      `select damage_quantity, basic_quantity, brand_code, brand_name, brand_source, brand_origin
+         from aftersales.ticket where org = $1 and id = $2`,
       [ORG, id],
     )
     expect(Number(row.rows[0].damage_quantity)).toBe(1.25)
     expect(Number(row.rows[0].basic_quantity)).toBe(12.5)
+    // 品牌快照：S01 的 store 分配（beforeAll 种了）⇒ 熊喵/source_field
+    expect(row.rows[0]).toMatchObject({
+      brand_code: 'xiongmao', brand_name: '熊喵', brand_source: 'store', brand_origin: 'source_field',
+    })
+  })
+
+  it('提单：品牌解析 product > store（product 覆盖 store）', async () => {
+    await pool.query(
+      `insert into data.brand_assignment(org, subject_type, subject_code, brand_code, source, locked)
+       values ($1,'product','I001','pptd','manual',true)
+       on conflict (org, subject_type, subject_code)
+       do update set brand_code = excluded.brand_code, source = excluded.source, locked = true`,
+      [ORG])
+    try {
+      const res = await appGuest.request('/guest/tickets', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({
+          clientRequestId: 'req-brand-product', storeCode: 'S01', itemCode: 'I001',
+          orderNo: 'MO3120992607050085', lineKey: '0', damageQuantity: 1,
+        }),
+      })
+      expect(res.status).toBe(201)
+      const { id } = (await res.json()) as { id: number }
+      const row = await pool.query(
+        `select brand_code, brand_name, brand_source, brand_origin
+           from aftersales.ticket where org = $1 and id = $2`, [ORG, id])
+      expect(row.rows[0]).toMatchObject({
+        brand_code: 'pptd', brand_name: '品品甜', brand_source: 'product', brand_origin: 'manual',
+      })
+    } finally {
+      await pool.query(
+        `delete from data.brand_assignment
+          where org = $1 and subject_type = 'product' and subject_code = 'I001'`, [ORG])
+    }
   })
 
   it('提单：三位小数 ⇒ 400 INVALID_BODY', async () => {
@@ -162,11 +218,15 @@ describePg('工单页对齐无极（#2884）', () => {
   // ── 列表筛选 / 计数 ────────────────────────────────────────────────────────
 
   it('GET /tickets：状态/品牌/搜索/处理时间筛选，非法值 400', async () => {
-    const xm = await createTicket({ code: 'AS-90000101', store_name: '熊喵一号店', product_name: '苹果' })
+    const xm = await createTicket({
+      code: 'AS-90000101', store_name: '熊喵一号店', product_name: '苹果',
+      brand_code: 'xiongmao', brand_name: '熊喵', brand_source: 'store', brand_origin: 'source_field',
+    })
     const pp = await createTicket({
       code: 'AS-90000102', store_name: '品品甜二号店', product_name: '香蕉',
       status: 'completed', amount_type: 'ratio', amount_minor: 800, refund_ratio: '0.5000',
       opinion: '已处理', watermark_at: '2026-11-25', processed_at: new Date(),
+      brand_code: 'pptd', brand_name: '品品甜', brand_source: 'store', brand_origin: 'source_field',
     })
     const wh = await createTicket({ code: 'AS-90000103', store_name: '仓储中心', product_name: '橙子', status: 'cancelled' })
     await addAttachment(xm, { contentType: 'image/jpeg' })
@@ -190,12 +250,14 @@ describePg('工单页对齐无极（#2884）', () => {
     // 处理时间：只 completed 有值 ⇒ 当天范围应只命中 pp
     const today = new Date().toLocaleDateString('sv-SE', { timeZone: 'Asia/Shanghai' })
     expect((await list(`processedFrom=${today}&processedTo=${today}`)).items.map((i) => i.id)).toEqual([pp])
-    // 无品牌门店不进品牌筛选（不在任何品牌结果里）
+    // 未分类（brand_code='') 不在任何品牌结果里，但可被 __unclassified__ 筛出
     expect((await list('brand=pptd')).items.map((i) => i.id)).not.toContain(wh)
+    expect((await list('brand=__unclassified__')).items.map((i) => i.id)).toContain(wh)
 
-    // 行字段：品牌 / 报损金额（毛额）/ 附件计数 / 售后意见 / 水印
+    // 行字段：品牌快照 / 报损金额（毛额）/ 附件计数 / 售后意见 / 水印
     const row = (await list('code=AS-90000101')).items[0]!
-    expect(row.brand).toBe('xiongmao')
+    expect(row.brand_code).toBe('xiongmao')
+    expect(row.brand_name).toBe('熊喵')
     expect(row.damage_amount_minor).toBe(900)
     expect(row.image_count).toBe(1)
     expect(row.video_count).toBe(1)
@@ -213,25 +275,47 @@ describePg('工单页对齐无极（#2884）', () => {
     const res = await appManage.request('/tickets/counts')
     const body = (await res.json()) as {
       status: { all: number; pending: number; completed: number; cancelled: number }
-      brand: { xiongmao: number; pptd: number; none: number }
+      brand: {
+        options: { code: string; name: string; count: number }[]
+        unclassified: number
+        showFilter: boolean
+        degraded: boolean
+      }
     }
     expect(body.status.all).toBe(body.status.pending + body.status.completed + body.status.cancelled)
     expect(body.status.completed).toBeGreaterThanOrEqual(1)
     // 不带 status：品牌计数是全量分布（熊喵 ≥ 1、品品甜 ≥ 1）
-    expect(body.brand.xiongmao).toBeGreaterThanOrEqual(1)
-    expect(body.brand.pptd).toBeGreaterThanOrEqual(1)
+    const opt = (b: typeof body, code: string) => b.brand.options.find((o) => o.code === code)?.count ?? 0
+    expect(opt(body, 'xiongmao')).toBeGreaterThanOrEqual(1)
+    expect(opt(body, 'pptd')).toBeGreaterThanOrEqual(1)
+    expect(body.brand.showFilter).toBe(true)
+    expect(body.brand.degraded).toBe(false)
 
-    const completed = (await (await appManage.request('/tickets/counts?status=completed')).json()) as {
-      status: { all: number; completed: number }
-      brand: { xiongmao: number; pptd: number; none: number }
-    }
+    const completed = (await (await appManage.request('/tickets/counts?status=completed')).json()) as typeof body
     // 状态计数仍是全局的（不因 status 参数而变）
     expect(completed.status.all).toBe(body.status.all)
     // 品牌计数只跟 completed
-    expect(completed.brand.pptd).toBeGreaterThanOrEqual(1)
-    expect(completed.brand.xiongmao).toBe(0)
+    expect(opt(completed, 'pptd')).toBeGreaterThanOrEqual(1)
+    expect(opt(completed, 'xiongmao')).toBe(0)
 
     expect((await appManage.request('/tickets/counts?status=foo')).status).toBe(400)
+  })
+
+  it('历史品牌（不在字典里）仍可筛/计数：禁用不删、历史不丢', async () => {
+    const legacy = await createTicket({
+      code: 'AS-90000104', store_name: '老店', brand_code: 'legacy', brand_name: '旧品牌',
+    })
+    const counts = (await (await appManage.request('/tickets/counts')).json()) as {
+      brand: { options: { code: string; name: string; count: number }[] }
+    }
+    const opt = counts.brand.options.find((o) => o.code === 'legacy')
+    expect(opt).toMatchObject({ code: 'legacy', name: '旧品牌' })
+    expect(opt!.count).toBeGreaterThanOrEqual(1)
+
+    const list = (await (await appManage.request('/tickets?brand=legacy')).json()) as {
+      items: { id: number }[]
+    }
+    expect(list.items.map((i) => i.id)).toContain(legacy)
   })
 
   // ── 金额预览 / 处理 ────────────────────────────────────────────────────────

@@ -8,7 +8,7 @@ import type { ColumnsType } from 'antd/es/table'
 import type { TicketListItem } from '../../api-types'
 import { formatMinor } from '../lib/format'
 import { Status } from '../lib/ui'
-import { AFFIL_LABEL, BRAND_LABEL, BRAND_TONE, STATUS_LABEL, STATUS_TONE } from './lib/labels'
+import { AFFIL_LABEL, STATUS_LABEL, STATUS_TONE } from './lib/labels'
 
 const fmtTime = (v: string | null | undefined): string => (v ? v.replace('T', ' ').slice(0, 16) : '—')
 
@@ -70,10 +70,13 @@ export function TicketTable(props: {
     },
     {
       title: '品牌',
-      dataIndex: 'brand',
-      width: 90,
-      render: (b: TicketListItem['brand']) =>
-        b ? <Status tone={BRAND_TONE[b]}>{BRAND_LABEL[b]}</Status> : <Typography.Text type="secondary">—</Typography.Text>,
+      dataIndex: 'brand_name',
+      width: 100,
+      // 品牌是分类维度，不是状态——用中性文字，不套语义色。
+      render: (_v, r) => {
+        const text = r.brand_name || r.brand_code || ''
+        return text || <Typography.Text type="secondary">—</Typography.Text>
+      },
     },
     { title: '商品', dataIndex: 'product_name', width: 180 },
     { title: '门店', dataIndex: 'store_name', width: 160 },

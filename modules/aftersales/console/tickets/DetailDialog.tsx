@@ -5,7 +5,7 @@ import { Alert, Card, Descriptions, Modal, Space, Spin, Typography } from 'antd'
 import type { TicketAttachment, TicketDetail } from '../../api-types'
 import { apiGet, messageOf } from '../lib/api'
 import { formatMinor } from '../lib/format'
-import { AFFIL_LABEL, BRAND_LABEL, STATUS_LABEL } from './lib/labels'
+import { AFFIL_LABEL, STATUS_LABEL } from './lib/labels'
 
 const fmtTime = (v: string | null | undefined): string => (v ? v.replace('T', ' ').slice(0, 16) : '—')
 
@@ -46,7 +46,7 @@ export function DetailDialog(props: {
             <Descriptions size="small" column={2} items={[
               { key: 'code', label: '编号', children: detail.code },
               { key: 'status', label: '状态', children: STATUS_LABEL[detail.status] },
-              { key: 'brand', label: '品牌', children: detail.brand ? BRAND_LABEL[detail.brand] : '—' },
+              { key: 'brand', label: '品牌', children: detail.brand_name || detail.brand_code || '—' },
               { key: 'product', label: '商品', children: detail.product_name },
               { key: 'store', label: '门店', children: detail.store_name },
               { key: 'order', label: '关联订单', children: detail.related_order || '—' },

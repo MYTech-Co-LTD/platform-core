@@ -2,11 +2,12 @@
 //
 // 为什么单独一个文件：列表查询与导出清单必须用**同一套参数名**。各写一份的典型症状是
 // 「列表筛了 3 条，导出却是 5 条」——参数名拼错不会报错，只会静默不过滤。
-import type { Brand, TicketStatus } from '../../../api-types'
+import type { TicketStatus } from '../../../api-types'
 
 export interface TicketFilters {
   status: '' | TicketStatus
-  brand: '' | Brand
+  /** 品牌 code，或 `__unclassified__`；空串 = 不筛 */
+  brand: string
   code: string
   product: string
   store: string

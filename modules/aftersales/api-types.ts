@@ -24,9 +24,14 @@
 
 export type TicketStatus = 'pending' | 'completed' | 'cancelled'
 export type AmountType = 'ratio' | 'fixed'
-/** 品牌是**派生维度**（按工单快照 store_name 前缀），不是存储列；`''` = 无品牌前缀。 */
-export type Brand = 'xiongmao' | 'pptd' | ''
 export type ApproveStatus = 'pending' | 'approved' | 'rejected'
+
+/** 品牌选项（动态，来自 data.v_brand_registry ∪ 工单历史快照；不再有租户业务枚举）。 */
+export interface BrandOption {
+  code: string
+  name: string
+  count: number
+}
 /** 提单时「提交人档案门店 vs 单据门店」的一致性（ADR 2026-11-24；见 routes/affiliation.ts） */
 export type StoreAffiliation = 'matched' | 'mismatch' | 'unregistered'
 
@@ -65,7 +70,11 @@ export interface TicketListItem {
   opinion?: string
   /** 照片水印日期 `YYYY-MM-DD` */
   watermark_at?: string | null
-  brand?: Brand
+  // 品牌快照（#2892）：提单时解析，读侧不 join；空串 = 未分类。
+  brand_code?: string
+  brand_name?: string
+  brand_source?: string
+  brand_origin?: string
   image_count?: number
   video_count?: number
   /** 报损金额（毛额，整数分）= 报损数量 × 单价；pending 也有值 */
@@ -96,15 +105,28 @@ export interface TicketDetail extends TicketListItem, TicketSettlement {
   basic_unit_price_minor: number
   opinion: string
   watermark_at: string | null
-  brand: Brand
+  brand_code: string
+  brand_name: string
+  brand_source: string
+  brand_origin: string
   damage_amount_minor: number
   attachments: TicketAttachment[]
 }
 
-/** `GET /tickets/counts`：状态全局计数 + 品牌跟随当前状态的计数（spec §2.3）。 */
+/**
+ * `GET /tickets/counts`：状态全局计数 + 动态品牌选项。
+ * 品牌计数只跟随 `status`；`unclassified` 是 brand_code='' 的一等计数；
+ * `showFilter=false`（0/1 品牌且无未分类）时 console 不渲染品牌行；
+ * `degraded=true` 表示品牌视图不可用（状态计数仍可用）。
+ */
 export interface TicketCounts {
   status: { all: number; pending: number; completed: number; cancelled: number }
-  brand: { xiongmao: number; pptd: number; none: number }
+  brand: {
+    options: BrandOption[]
+    unclassified: number
+    showFilter: boolean
+    degraded: boolean
+  }
 }
 
 /** `GET /guest/settlement-orders` 的一行：选单页的两级选择面（单 → 行）。 */

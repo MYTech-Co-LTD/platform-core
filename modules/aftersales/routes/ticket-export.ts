@@ -12,7 +12,7 @@ import { storageCandidatesFor, storageResolverFor, warnUnresolvedRef } from '../
 import { ticketsXlsx } from '../domain/xlsx'
 import type { XlsxRow } from '../domain/xlsx'
 import { EXPORT_FIELDS } from '../export-fields'
-import { BRAND_SQL, parseTicketFilters, ticketWhere } from './ticket-query'
+import { parseTicketFilters, ticketWhere } from './ticket-query'
 import type { TicketFilters } from './ticket-query'
 import type { ModuleHono, RouteCtx } from './context'
 
@@ -23,7 +23,6 @@ export const EXPORT_URL_TTL_SECONDS = 3600
 type ExportRange = 'selected' | 'filtered' | 'all'
 
 const STATUS_LABEL: Record<string, string> = { pending: '待处理', completed: '已处理', cancelled: '已驳回' }
-const BRAND_LABEL: Record<string, string> = { xiongmao: '熊喵', pptd: '品品甜', '': '无' }
 const AMOUNT_TYPE_LABEL: Record<string, string> = { ratio: '按比例', fixed: '固定金额', reject: '驳回' }
 const AFFIL_LABEL: Record<string, string> = { matched: '一致', mismatch: '门店不一致', unregistered: '未登记' }
 
@@ -48,7 +47,8 @@ interface ExportRow {
   processed_at: string | null
   arrival_at: string | null
   store_affiliation: string | null
-  brand: string
+  brand_code: string
+  brand_name: string
   damage_amount_minor: string
   attachment_count: number
 }
@@ -92,8 +92,7 @@ const TICKET_COLUMNS_SQL = `
   select id, code, status, store_name, product_name, related_order,
          damage_quantity, amount_minor, amount_type, refund_ratio, operator, opinion,
          watermark_at::text as watermark_at, created_at, processed_at, arrival_at,
-         store_affiliation,
-         (${BRAND_SQL}) as brand,
+         store_affiliation, brand_code, brand_name,
          round(damage_quantity * coalesce(settlement_price_minor, basic_unit_price_minor))::bigint
            as damage_amount_minor,
          (select count(*) from aftersales.ticket_attachment a
@@ -118,7 +117,7 @@ function rowToXlsx(r: ExportRow): XlsxRow {
   return {
     code: r.code,
     status: STATUS_LABEL[r.status] ?? r.status,
-    brand: BRAND_LABEL[r.brand] ?? '',
+    brand: r.brand_name || r.brand_code || '',
     productName: r.product_name,
     storeName: r.store_name,
     relatedOrder: r.related_order,

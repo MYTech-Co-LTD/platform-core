@@ -37,7 +37,10 @@ const row = (id: number, over: Record<string, unknown> = {}) => ({
   related_order: '',
   arrival_at: null,
   watermark_at: null,
-  brand: 'xiongmao',
+  brand_code: 'xiongmao',
+  brand_name: '熊喵',
+  brand_source: 'store',
+  brand_origin: 'source_field',
   image_count: 0,
   video_count: 0,
   created_at: '2026-09-16T00:00:00Z',
@@ -47,7 +50,15 @@ const row = (id: number, over: Record<string, unknown> = {}) => ({
 
 const counts = {
   status: { all: 5, pending: 2, completed: 2, cancelled: 1 },
-  brand: { xiongmao: 3, pptd: 1, none: 1 },
+  brand: {
+    options: [
+      { code: 'xiongmao', name: '熊喵', count: 3 },
+      { code: 'pptd', name: '品品甜', count: 1 },
+    ],
+    unclassified: 1,
+    showFilter: true,
+    degraded: false,
+  },
 }
 
 const detail = {
@@ -147,6 +158,35 @@ describe('工单列表', () => {
     await waitFor(() => expect(screen.getByText('AS-00000001')).toBeInTheDocument())
     fireEvent.click(screen.getByRole('button', { name: '熊喵 3' }))
     await waitFor(() => expect(urls.some((u) => u.includes('brand=xiongmao'))).toBe(true))
+  })
+
+  it('品牌只有 1 个且无未分类 ⇒ 不渲染品牌行（不放一个没用的胶囊）', async () => {
+    m.mockImplementation(async (url: string) => {
+      urls.push(url)
+      if (url.includes('/tickets/counts')) {
+        return json({
+          status: { all: 1, pending: 1, completed: 0, cancelled: 0 },
+          brand: {
+            options: [{ code: 'xiongmao', name: '熊喵', count: 1 }],
+            unclassified: 0,
+            showFilter: false,
+            degraded: false,
+          },
+        })
+      }
+      if (url.includes('/tickets?')) return json({ items: [row(1)], total: 1, page: 1, size: 20 })
+      return json({ error: 'NOT_FOUND' }, 404)
+    })
+    renderPage()
+    await waitFor(() => expect(screen.getByText('AS-00000001')).toBeInTheDocument())
+    expect(screen.queryByRole('button', { name: /熊喵/ })).toBeNull()
+  })
+
+  it('未分类是一等筛选：点「未分类」查询带 __unclassified__', async () => {
+    renderPage()
+    await waitFor(() => expect(screen.getByText('AS-00000001')).toBeInTheDocument())
+    fireEvent.click(screen.getByRole('button', { name: '未分类 1' }))
+    await waitFor(() => expect(urls.some((u) => u.includes('brand=__unclassified__'))).toBe(true))
   })
 
   it('搜索：输入工单编号后点搜索，查询带 code；重置清空', async () => {
