@@ -123,6 +123,7 @@ const EXEMPT_GLOBAL = new Map([
   ['lemeng.transfer.in.backfill.3120', '回填专用（#665 契约 v2 重采 10-12 用；同族 wholesale 先例）'],
   ['lemeng.retail_order_line.tick', '旧零售族残留——已被 retail.tick.l1 取代，待退役（§2 台账）'],
   ['lemeng.retail_order_line.window', '旧零售族残留——已被 retail.windows.l1 取代，待退役（§2 台账）'],
+  ['lemeng.lake.compact.month', '**foreach 子管线**——由 lemeng.lake.compact 的 ctl.foreach 逐月驱动（封版分区压缩 #2868），不单独排班；排班在父管线'],
   ['lemeng.retail_order_line.day', '**foreach 子管线**——由 lemeng.retail.windows.l1 的 ctl.foreach 逐天驱动（2026-10-20 起整天重采），不单独排班；排班在父管线'],
   ['lemeng.retail_order_line.month.compact.iter', '**foreach 子管线**——由 lemeng.retail_order_line.month.compact 的 ctl.foreach 逐月驱动（#1916 月度合并），不单独排班；排班在父管线'],
   ['lemeng.retail_order_line.tick.t2', '**foreach 子管线（懒扩容段 t2，5–8 页）**——由 lemeng.retail_order_line.tick 的 ctl.foreach 按需驱动（上段末页满才跑，零 item = 零请求），不单独排班；排班在父管线 retailer.tick.l1（#2713）'],
@@ -197,6 +198,7 @@ const EXEMPT_BY_BOOK = new Map([
   ])],
   ['64188', new Map([
     ['lemeng.retail_order_line.month.compact', '月度合并单跑手——只在 3120 console 排班（#1916；清单按账套枚举，一个跑手覆盖两账套，双跑徒增写放大）'],
+    ['lemeng.lake.compact', '封版分区压缩单跑手——只在 3120 console 排班（#2868；清单按账套枚举，一个跑手覆盖两账套，双跑会并发写同一 key）'],
   ])],
 ])
 

@@ -756,9 +756,9 @@
     "next_run_at": null
   },
   {
-    "id": "panel-lake.compact",
-    "pipeline_id": "lake.compact",
-    "name": "lake.compact",
+    "id": "panel-lemeng.lake.compact",
+    "pipeline_id": "lemeng.lake.compact",
+    "name": "lemeng.lake.compact",
     "enabled": true,
     "kind": {
       "type": "cron",

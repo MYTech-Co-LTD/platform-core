@@ -1,5 +1,5 @@
 {
- "name": "lake.compact.month",
+ "name": "lemeng.lake.compact.month",
  "_note": [
   "封版分区压缩·搬运（C 设计 2026-11-26 终版）：src.s3 → snk.minio，**纯字节搬运**，对列盲（不依赖契约列清单）。",
   "为什么没有守卫/统计：本环境实测（2026-11-26）以远程 sink 结尾时所有节点都是惰性 view，ctl.die 恒数到 0 行（materialize 不生效），die 后也不能分叉 ⇒ 控制流搬到平台 job `data.lake_compact_index`（读 _MONTH 单文件 → 行数/边界 → 写索引）。",

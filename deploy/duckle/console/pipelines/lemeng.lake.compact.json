@@ -1,5 +1,5 @@
 {
- "name": "lake.compact",
+ "name": "lemeng.lake.compact",
  "_note": [
   "封版分区压缩·父（C 设计，2026-11-26）：从 data.lake_compact_source × data.lake_compact_index 算出待压 (source, system_book, 月)，ctl.foreach 逐月驱动子管线。",
   "待压 = start_ym..上月 中，索引里没有该 (source, book, ym, contract_sha) 的月；正常一天只补上月与缺口。",
@@ -41,7 +41,7 @@
     "label": "逐月跑压缩子管线",
     "componentId": "ctl.foreach",
     "properties": {
-     "pipelineRef": "${workspace}/pipelines/lake.compact.month.json",
+     "pipelineRef": "${workspace}/pipelines/lemeng.lake.compact.month.json",
      "itemKey": "ym",
      "concurrency": 1,
      "retryAttempts": 2,

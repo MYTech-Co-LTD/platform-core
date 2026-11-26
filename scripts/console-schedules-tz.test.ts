@@ -69,7 +69,7 @@ const EXPECTED: Record<string, Record<string, string>> = {
     // #1905 P1：月度合并（日文件 → _MONTH 月文件），CST 04:10（GC 03:20 之后）
     'panel-lemeng.retail_order_line.month.compact': '10 20 * * *',
     // #2868：湖封版分区压缩（月文件搬运），CST 03:10（采集停窗内，早于记账 job 03:40）
-    'panel-lake.compact': '10 3 * * *',
+    'panel-lemeng.lake.compact': '10 3 * * *',
   },
   '64188': {
     'panel-lemeng.inventory.movement.seg1.l0.64188': '15 4 * * *',
