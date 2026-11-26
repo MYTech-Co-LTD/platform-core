@@ -200,7 +200,7 @@
                 type="number"
                 placeholder="数量"
                 size="small"
-                class="damage-number-input"
+                class="damage-number-input w-28"
                 @blur="handleDamageQuantityBlur"
               />
               <span v-if="selectedLine?.priceMinor" class="text-xs text-gray-400 tnum">
