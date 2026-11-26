@@ -11,6 +11,10 @@
 
 ## [Unreleased]
 
+## [0.391.4](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.391.3...v0.391.4) - 2026-11-26
+- 【修复】scheduler: 主档超时 90→150 分钟，审计链整体后移 ([#2861](https://github.com/MYTech-Co-LTD/platform-core/pull/2861), [853a6ec](https://github.com/MYTech-Co-LTD/platform-core/commit/853a6ec8985b43d46c188dc22b72ff94ebc240df))
+
+
 ## [0.391.3](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.391.2...v0.391.3) - 2026-11-25
 - 【修复】assertions: 结构判据留 5 分钟、全量证明与延迟探测搬 30 分钟 ([#2859](https://github.com/MYTech-Co-LTD/platform-core/pull/2859), [c053539](https://github.com/MYTech-Co-LTD/platform-core/commit/c053539129fd159a8616eb949c5dcadf09bc88cd))
 
