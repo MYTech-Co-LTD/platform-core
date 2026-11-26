@@ -172,7 +172,7 @@ describe('registry · dbt hourly/tables（Wave 8 P1 / A3 拆车道）', () => {
     expect(audit.env?.MATERIALIZE_HOURLY_SELECT).toBe('tag:audit_window')
     const tables = JOB_REGISTRY.find((d) => d.key === 'data.dbt_tables')!
     expect(tables.cron).toBe('30 18 * * *')
-    expect(tables.timeoutMs).toBe(5400000)
+    expect(tables.timeoutMs).toBe(9000000) // 2026-11-26：湖读 256s/全史 count ⇒ 90 分钟常超时，放宽到 150 分钟
     expect(tables.env?.MATERIALIZE_SCOPE).toBe('tables')
     for (const d of [dims, audit, tables]) {
       expect(d.env?.DATA_PLANE_DOMAINS).toBe('lemeng')
@@ -259,11 +259,11 @@ describe('registry · dbt hourly/tables（Wave 8 P1 / A3 拆车道）', () => {
 
 describe('registry · dbt 对账分族（full / window，#2428）', () => {
   const FULL = [
-    { scope: 'platform', key: 'data.dbt_audit_a1', cron: '30 21 * * *', n: 5 },
-    { scope: 'platform', key: 'data.dbt_audit_a2a', cron: '0 20 * * *', n: 8 },
-    { scope: 'platform', key: 'data.dbt_audit_a2b', cron: '0 21 * * *', n: 6 },
+    { scope: 'platform', key: 'data.dbt_audit_a1', cron: '30 22 * * *', n: 5 },
+    { scope: 'platform', key: 'data.dbt_audit_a2a', cron: '30 21 * * *', n: 8 },
+    { scope: 'platform', key: 'data.dbt_audit_a2b', cron: '0 22 * * *', n: 6 },
   ] as const
-  const WINDOW = { scope: 'platform', key: 'data.dbt_audit_window', cron: '0 23 * * *', n: 24 } as const
+  const WINDOW = { scope: 'platform', key: 'data.dbt_audit_window', cron: '30 23 * * *', n: 24 } as const
 
   /** 递归收集 dbt/models 下的 .sql（ref 解析用）。 */
   function collectSql(dir: string, out: string[] = []): string[] {
