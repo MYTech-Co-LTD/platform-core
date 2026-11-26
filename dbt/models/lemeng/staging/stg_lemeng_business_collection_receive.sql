@@ -5,6 +5,14 @@
 -- 【行】= 一行 = 账套×bizday×门店×支付方式（summary_types=[branch,payment_type]）。源 nhsoft.report.ai.businesscollection.receive.find，单日窗（date_start=date_end=BIZDAY）。
 -- 【缺口】当日无数据的门店不出现在响应里（total_count == len(rows) 合法）⇒ 缺行 = 无数据，不是零值。
 -- 【前缀单点】var `lemeng_business_collection_receive_prefix`（出处：契约 layout.prefix）。
+--
+-- ⚠️ 两腿读（湖封版分区压缩，#2868 / spec 2026-11-26）：
+--   冷腿 = `_MONTH/v=<契约sha>/**`（已封月，一个源×一账套×一月=一个文件，实测全史 275s → 11s）；
+--   活跃腿 = 原始 glob 且 `bizday >= 边界`（边界 = 索引里最大的 ok 月 + 1 天，编译期字面量）。
+--   边界必须字面量：子查询会让 pg_duckdb 放弃文件裁剪（同族实测 >120s）。
+--   失效方向：索引不可用/为空 ⇒ 冷腿整段不渲染，退化为单腿读原始（慢但正确）。
+{% set cs = compact_state('business_collection_receive') %}
+{% if cs.enabled %}
 select
   r['batch_id']::varchar as batch_id,
   r['system_book']::int as system_book,
@@ -34,5 +42,39 @@ select
   r['purchase_records_order_count']::int as purchase_records_order_count,
   r['computed_at']::timestamptz as computed_at
 from read_parquet(
-  's3://{{ var("zos_bucket") }}/{{ var("lemeng_business_collection_receive_prefix") }}/*/bizday=**/*.parquet'
+  's3://{{ var("zos_bucket") }}/{{ var("lemeng_business_collection_receive_prefix") }}_month/_MONTH/v={{ cs.sha }}/**/*.parquet'
 ) r
+union all
+{% endif %}
+select
+  r['batch_id']::varchar as batch_id,
+  r['system_book']::int as system_book,
+  {{ subject_org() }}       as org,
+  r['bizday']::date as bizday,
+  r['branch_num']::int as branch_num,
+  r['branch_code']::varchar as branch_code,
+  r['branch_name']::varchar as branch_name,
+  r['payment_type']::varchar as payment_type,
+  r['receive_money']::numeric(20,2) as receive_money,
+  r['receive_money_rate']::numeric(20,6) as receive_money_rate,
+  r['order_count']::int as order_count,
+  r['order_count_rate']::numeric(20,6) as order_count_rate,
+  r['pos_order_receive_money']::numeric(20,2) as pos_order_receive_money,
+  r['pos_order_count']::int as pos_order_count,
+  r['card_deposit_receive_money']::numeric(20,2) as card_deposit_receive_money,
+  r['card_deposit_order_count']::int as card_deposit_order_count,
+  r['card_relate_receive_money']::numeric(20,2) as card_relate_receive_money,
+  r['card_relate_order_count']::int as card_relate_order_count,
+  r['card_replace_receive_money']::numeric(20,2) as card_replace_receive_money,
+  r['card_replace_order_count']::int as card_replace_order_count,
+  r['exchange_card_receive_money']::numeric(20,2) as exchange_card_receive_money,
+  r['exchange_card_order_count']::int as exchange_card_order_count,
+  r['other_receive_money']::numeric(20,2) as other_receive_money,
+  r['other_order_count']::int as other_order_count,
+  r['purchase_records_receive_money']::numeric(20,2) as purchase_records_receive_money,
+  r['purchase_records_order_count']::int as purchase_records_order_count,
+  r['computed_at']::timestamptz as computed_at
+from read_parquet(
+  's3://{{ var("zos_bucket") }}/{{ var("lemeng_business_collection_receive_prefix") }}/*/bizday={{ cs.tail_prefix }}-*/all.parquet'
+) r
+where r['bizday']::date >= date '{{ cs.boundary }}'
