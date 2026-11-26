@@ -11,6 +11,10 @@
 
 ## [Unreleased]
 
+## [0.396.0](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.395.0...v0.396.0) - 2026-11-26
+- 【新增】aftersales: 孤儿附件 GC 定时 job（平台调度器，每日 --apply） ([#2877](https://github.com/MYTech-Co-LTD/platform-core/pull/2877), [6f15f1f](https://github.com/MYTech-Co-LTD/platform-core/commit/6f15f1fd1a13e65d114b5cc810982ff8bb0d3f5d))
+
+
 ## [0.395.0](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.394.0...v0.395.0) - 2026-11-26
 - 【新增】data: 湖封版分区压缩 P0（WIP）——索引表 DDL + 单源管线 + 两腿视图 ([#2869](https://github.com/MYTech-Co-LTD/platform-core/pull/2869), [813084e](https://github.com/MYTech-Co-LTD/platform-core/commit/813084e699e72e6b582468340a7909ef2570908d))
 
