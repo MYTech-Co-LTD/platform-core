@@ -18,6 +18,14 @@
 #   两张维度的**列名集合**由契约钉死（`contracts/common/lemeng.branch.json` 16 列、
 #   `contracts/common/lemeng.item.json` 108 列），下面 `columns:` 是那份集合在 dbt 侧的登记面；
 #   **类型 / 语义 / 空值性的事实源仍是契约**，在这里抄第二份只会漂。
+#
+# ⚠️ **有 `bizday` 的 staging 模型：列级测试只验最近 `test_window_days`（默认 30）天。**
+#   为什么（2026-11-26 实测）：这些视图是**全史 glob**（`.../bizday=**/*.parquet`），
+#   单源 1,500–6,700 个 parquet、全史 `count(*)` 实测 256s / 654k 行（≈170ms/文件）——
+#   而日档 `dbt build` 会跑十几条这样的测试，成本随历史线性增长（2026-11-25 的日档因此 90 分钟超时）。
+#   窗口谓词让测试只打开最近一个月的那批文件（≈1/25），成本**有界**；老数据在采集落盘时已验过，
+#   且它们是 append-only（不会事后变异）。
+#   调窗口：`dbt build --vars '{test_window_days: 60}'`；**别**把 `where` 加到没有 `bizday` 的模型上。
 version: 2
 
 models:
@@ -36,43 +44,53 @@ models:
         description: '账套（3120 熊喵 / 64188 品品甜）。**hive 分区键**：路径 `system_book=<账套>/` 推断，湖里被自动转成 BIGINT，本层 `::varchar` 定型回契约类型。'
       # ── dbt 注入的主体列（非契约列；行级授权谓词 WHERE org = … 的着力点）────────────────
         tests:
-          - not_null
+          - not_null:
+              config:
+                where: "bizday >= current_date - {{ var('test_window_days', 30) }}"
       - name: org
         description: '主体列 = 该部署租户的 casdoor_org（经 env `LEMENG_SUBJECT_ORG` 注入，值不落仓）。**不是契约列**：契约只有 24 列（v2），本列由 dbt 层加（dbt/macros/subject_org.sql）。'
         tests:
           - not_null:
               config:
-                where: "bizday < CAST(now() AT TIME ZONE 'Asia/Shanghai' AS DATE)"
+                where: "bizday >= current_date - {{ var('test_window_days', 30) }} AND bizday < CAST(now() AT TIME ZONE 'Asia/Shanghai' AS DATE)"
       - name: bizday
         description: '营业日（**hive 分区键**，路径 `bizday=<日期>/` 推断为 DATE；管线侧由 shift_table_bizday 定型）。'
         tests:
-          - not_null
+          - not_null:
+              config:
+                where: "bizday >= current_date - {{ var('test_window_days', 30) }}"
       - name: hour
         description: '成交时间所在小时 0-23（**hive 分区键**，路径 `hour=<时>/` 推断；零填充目录读回 VARCHAR、无前导零目录读回 BIGINT ⇒ 本层 `::int` 统一）。'
       # ── 自然键两列（行粒度）──────────────────────────────────────────────────────────
         tests:
-          - not_null
+          - not_null:
+              config:
+                where: "bizday >= current_date - {{ var('test_window_days', 30) }}"
       - name: order_no
         description: '订单号。**自然键之一**（行粒度键 = order_no × order_detail_num）。'
         tests:
           - not_null:
               config:
-                where: "bizday < CAST(now() AT TIME ZONE 'Asia/Shanghai' AS DATE)"
+                where: "bizday >= current_date - {{ var('test_window_days', 30) }} AND bizday < CAST(now() AT TIME ZONE 'Asia/Shanghai' AS DATE)"
       - name: order_detail_num
         description: '明细行号。**自然键之一**（varchar：外部系统编号，长度不受我们控制）。'
         tests:
           - not_null:
               config:
-                where: "bizday < CAST(now() AT TIME ZONE 'Asia/Shanghai' AS DATE)"
+                where: "bizday >= current_date - {{ var('test_window_days', 30) }} AND bizday < CAST(now() AT TIME ZONE 'Asia/Shanghai' AS DATE)"
       # ── 其余列（一对一透传，语义见契约；这里只登记形状，不做口径）────────────────────
       - name: batch_id
         description: '批次标记（采集 run id）。**载荷列**（`batch.unique=false`）：同窗重跑会换值，幂等靠对象覆盖写 —— 别拿它做去重或幂等判据。'
         tests:
-          - not_null
+          - not_null:
+              config:
+                where: "bizday >= current_date - {{ var('test_window_days', 30) }}"
       - name: branch_num
         description: '门店号（账套内编号）。'
         tests:
-          - not_null
+          - not_null:
+              config:
+                where: "bizday >= current_date - {{ var('test_window_days', 30) }}"
       - name: branch_name
         description: '门店名（契约里可空）。'
       - name: order_time
@@ -89,17 +107,19 @@ models:
         tests:
           - not_null:
               config:
-                where: "bizday < CAST(now() AT TIME ZONE 'Asia/Shanghai' AS DATE)"
+                where: "bizday >= current_date - {{ var('test_window_days', 30) }} AND bizday < CAST(now() AT TIME ZONE 'Asia/Shanghai' AS DATE)"
           - accepted_values:
               config:
-                where: "bizday < CAST(now() AT TIME ZONE 'Asia/Shanghai' AS DATE)"
+                where: "bizday >= current_date - {{ var('test_window_days', 30) }} AND bizday < CAST(now() AT TIME ZONE 'Asia/Shanghai' AS DATE)"
               values: ['FINISHED', 'CANCELED', 'REPAID']
       - name: order_source
         description: '订单来源（契约里可空）。'
       - name: item_num
         description: '商品号（账套内编号，varchar 防撑爆）。'
         tests:
-          - not_null
+          - not_null:
+              config:
+                where: "bizday >= current_date - {{ var('test_window_days', 30) }}"
       - name: item_code
         description: '上游订单 API 无此字段（PosOrderDetailAiVO/PosOrderAiVO 均无），恒空串；跨品牌归并键职责由 dim_item.item_code 承担（实测两账套 100% 有值），join 键 item_num。'
       - name: sale_money
@@ -328,29 +348,41 @@ models:
       - name: batch_id
         description: '批次标记（采集 run id）。**载荷列**（契约 `batch.unique=false`）：同快照重跑会换值，幂等靠对象覆盖写。'
         tests:
-          - not_null
+          - not_null:
+              config:
+                where: "bizday >= current_date - {{ var('test_window_days', 30) }}"
       - name: system_book
         description: '账套（3120 熊喵 / 64188 品品甜）。**hive 分区键**：路径推断，本层 `::varchar` 定型。'
         tests:
-          - not_null
+          - not_null:
+              config:
+                where: "bizday >= current_date - {{ var('test_window_days', 30) }}"
       - name: org
         description: '主体列（经 env `LEMENG_SUBJECT_ORG` 注入，值不落仓）。**不是契约列**。'
         tests:
-          - not_null
+          - not_null:
+              config:
+                where: "bizday >= current_date - {{ var('test_window_days', 30) }}"
       - name: snapshot
         description: '快照日。**hive 分区键**：路径推断，本层 `::date` 定型。'
       - name: branch_num
         description: '门店号。**自然键之一 + 发布 join 键**（→ stg_lemeng_branch.branch_num 解析 code）。'
         tests:
-          - not_null
+          - not_null:
+              config:
+                where: "bizday >= current_date - {{ var('test_window_days', 30) }}"
       - name: item_num
         description: '主商品号。**自然键之一**。'
         tests:
-          - not_null
+          - not_null:
+              config:
+                where: "bizday >= current_date - {{ var('test_window_days', 30) }}"
       - name: item_code
         description: '商品业务码（源自 pos_variant 摊平；= dim_item.item_code 同源，发布 join 键）。'
         tests:
-          - not_null
+          - not_null:
+              config:
+                where: "bizday >= current_date - {{ var('test_window_days', 30) }}"
       - name: item_grade_num
         description: '分级商品号；主商品行为 null（自然键含它：null 参与分组不误报）。'
       - name: regular_real_price
@@ -358,7 +390,9 @@ models:
       - name: bizday
         description: '业务日（hive 分区键）。契约 nullable=false。'
         tests:
-          - not_null
+          - not_null:
+              config:
+                where: "bizday >= current_date - {{ var('test_window_days', 30) }}"
 
   - name: stg_lemeng_transfer_out
     description: >-
@@ -371,35 +405,51 @@ models:
       - name: batch_id
         description: '批次标记（采集 run id）。载荷列。'
         tests:
-          - not_null
+          - not_null:
+              config:
+                where: "bizday >= current_date - {{ var('test_window_days', 30) }}"
       - name: system_book
         description: '账套（采集范围=3120）。hive 分区键。'
         tests:
-          - not_null
+          - not_null:
+              config:
+                where: "bizday >= current_date - {{ var('test_window_days', 30) }}"
       - name: org
         description: '主体列（env `LEMENG_SUBJECT_ORG` 注入）。不是契约列。'
         tests:
-          - not_null
+          - not_null:
+              config:
+                where: "bizday >= current_date - {{ var('test_window_days', 30) }}"
       - name: bizday
         description: '单据制单日。hive 分区键。'
         tests:
-          - not_null
+          - not_null:
+              config:
+                where: "bizday >= current_date - {{ var('test_window_days', 30) }}"
       - name: branch_num
         description: '收货门店编号。自然键之一 + 发布 join 键。'
         tests:
-          - not_null
+          - not_null:
+              config:
+                where: "bizday >= current_date - {{ var('test_window_days', 30) }}"
       - name: order_no
         description: '配送业务单号（MO…）。自然键之一 + 工单关联键。'
         tests:
-          - not_null
+          - not_null:
+              config:
+                where: "bizday >= current_date - {{ var('test_window_days', 30) }}"
       - name: item_num
         description: '商品内部编号。自然键之一。'
         tests:
-          - not_null
+          - not_null:
+              config:
+                where: "bizday >= current_date - {{ var('test_window_days', 30) }}"
       - name: item_code
         description: '商品编码（发布 join 键）。'
         tests:
-          - not_null
+          - not_null:
+              config:
+                where: "bizday >= current_date - {{ var('test_window_days', 30) }}"
       - name: item_grade_num
         description: '商品分级编号；主商品行为 null（自然键含它）。'
       - name: lot_number
@@ -415,35 +465,51 @@ models:
       - name: batch_id
         description: '批次标记（采集 run id）。载荷列。'
         tests:
-          - not_null
+          - not_null:
+              config:
+                where: "bizday >= current_date - {{ var('test_window_days', 30) }}"
       - name: system_book
         description: '账套（采集范围=3120）。hive 分区键。'
         tests:
-          - not_null
+          - not_null:
+              config:
+                where: "bizday >= current_date - {{ var('test_window_days', 30) }}"
       - name: org
         description: '主体列（env `LEMENG_SUBJECT_ORG` 注入）。不是契约列。'
         tests:
-          - not_null
+          - not_null:
+              config:
+                where: "bizday >= current_date - {{ var('test_window_days', 30) }}"
       - name: bizday
         description: '单据制单日。hive 分区键。'
         tests:
-          - not_null
+          - not_null:
+              config:
+                where: "bizday >= current_date - {{ var('test_window_days', 30) }}"
       - name: order_no
         description: '批发销售单号（WO…）。自然键之一。'
         tests:
-          - not_null
+          - not_null:
+              config:
+                where: "bizday >= current_date - {{ var('test_window_days', 30) }}"
       - name: order_detail_num
         description: '行号（同单内唯一）。自然键之一。'
         tests:
-          - not_null
+          - not_null:
+              config:
+                where: "bizday >= current_date - {{ var('test_window_days', 30) }}"
       - name: item_num
         description: '商品内部编号。自然键之一。'
         tests:
-          - not_null
+          - not_null:
+              config:
+                where: "bizday >= current_date - {{ var('test_window_days', 30) }}"
       - name: item_code
         description: '商品编码（发布 join 键）。'
         tests:
-          - not_null
+          - not_null:
+              config:
+                where: "bizday >= current_date - {{ var('test_window_days', 30) }}"
       - name: client_fid
         description: '批发客户 ID（品品甜等外部客户在此可辨）。'
 
@@ -459,29 +525,41 @@ models:
       - name: batch_id
         description: '批次标记（采集 run id）。载荷列。'
         tests:
-          - not_null
+          - not_null:
+              config:
+                where: "bizday >= current_date - {{ var('test_window_days', 30) }}"
       - name: system_book
         description: '账套（采集范围=3120）。hive 分区键。'
         tests:
-          - not_null
+          - not_null:
+              config:
+                where: "bizday >= current_date - {{ var('test_window_days', 30) }}"
       - name: org
         description: '主体列（env `LEMENG_SUBJECT_ORG` 注入）。不是契约列。'
         tests:
-          - not_null
+          - not_null:
+              config:
+                where: "bizday >= current_date - {{ var('test_window_days', 30) }}"
       - name: bizday
         description: '单据制单日。hive 分区键。'
         tests:
-          - not_null
+          - not_null:
+              config:
+                where: "bizday >= current_date - {{ var('test_window_days', 30) }}"
       - name: wholesale_return_fid
         description: '退货单号。自然键之一。'
         tests:
-          - not_null
+          - not_null:
+              config:
+                where: "bizday >= current_date - {{ var('test_window_days', 30) }}"
       - name: order_no
         description: '关联批发销售单号（接口 wholesale_order_fid；fct 退货扣减 join 键）。可空性未获真样本实证。'
       - name: branch_num
         description: '门店/发货主体编号。自然键之一。'
         tests:
-          - not_null
+          - not_null:
+              config:
+                where: "bizday >= current_date - {{ var('test_window_days', 30) }}"
       - name: client_fid
         description: '批发客户 ID（前导零按字符串保留）。'
       - name: audit_time
@@ -495,7 +573,9 @@ models:
       - name: item_num
         description: '商品内部编号。自然键之一。'
         tests:
-          - not_null
+          - not_null:
+              config:
+                where: "bizday >= current_date - {{ var('test_window_days', 30) }}"
       - name: return_detail_money
         description: '明细退货金额（符号未实证；不得与 D02 红字重复扣）。'
       - name: return_detail_cost_money
@@ -508,31 +588,45 @@ models:
       - name: system_book
         description: 账套。hive 分区键。
         tests:
-          - not_null
+          - not_null:
+              config:
+                where: "bizday >= current_date - {{ var('test_window_days', 30) }}"
       - name: org
         description: 主体列。
         tests:
-          - not_null
+          - not_null:
+              config:
+                where: "bizday >= current_date - {{ var('test_window_days', 30) }}"
       - name: bizday
         description: 制单/快照日。hive 分区键。
         tests:
-          - not_null
+          - not_null:
+              config:
+                where: "bizday >= current_date - {{ var('test_window_days', 30) }}"
       - name: order_no
         description: 自然键之一。
         tests:
-          - not_null
+          - not_null:
+              config:
+                where: "bizday >= current_date - {{ var('test_window_days', 30) }}"
       - name: branch_num
         description: 自然键之一。
         tests:
-          - not_null
+          - not_null:
+              config:
+                where: "bizday >= current_date - {{ var('test_window_days', 30) }}"
       - name: item_num
         description: 自然键之一。
         tests:
-          - not_null
+          - not_null:
+              config:
+                where: "bizday >= current_date - {{ var('test_window_days', 30) }}"
       - name: batch_id
         description: '批次标记（采集 run id）。载荷列；契约 nullable=false。'
         tests:
-          - not_null
+          - not_null:
+              config:
+                where: "bizday >= current_date - {{ var('test_window_days', 30) }}"
 
   - name: stg_lemeng_transfer_in
     description: >-
@@ -541,31 +635,45 @@ models:
       - name: system_book
         description: 账套。hive 分区键。
         tests:
-          - not_null
+          - not_null:
+              config:
+                where: "bizday >= current_date - {{ var('test_window_days', 30) }}"
       - name: org
         description: 主体列。
         tests:
-          - not_null
+          - not_null:
+              config:
+                where: "bizday >= current_date - {{ var('test_window_days', 30) }}"
       - name: bizday
         description: 制单/快照日。hive 分区键。
         tests:
-          - not_null
+          - not_null:
+              config:
+                where: "bizday >= current_date - {{ var('test_window_days', 30) }}"
       - name: order_no
         description: 自然键之一。
         tests:
-          - not_null
+          - not_null:
+              config:
+                where: "bizday >= current_date - {{ var('test_window_days', 30) }}"
       - name: branch_num
         description: 自然键之一。
         tests:
-          - not_null
+          - not_null:
+              config:
+                where: "bizday >= current_date - {{ var('test_window_days', 30) }}"
       - name: item_num
         description: 自然键之一。
         tests:
-          - not_null
+          - not_null:
+              config:
+                where: "bizday >= current_date - {{ var('test_window_days', 30) }}"
       - name: batch_id
         description: '批次标记（采集 run id）。载荷列；契约 nullable=false。'
         tests:
-          - not_null
+          - not_null:
+              config:
+                where: "bizday >= current_date - {{ var('test_window_days', 30) }}"
 
   - name: stg_lemeng_inventory_snapshot
     description: >-
@@ -574,31 +682,45 @@ models:
       - name: system_book
         description: 账套。hive 分区键。
         tests:
-          - not_null
+          - not_null:
+              config:
+                where: "bizday >= current_date - {{ var('test_window_days', 30) }}"
       - name: org
         description: 主体列。
         tests:
-          - not_null
+          - not_null:
+              config:
+                where: "bizday >= current_date - {{ var('test_window_days', 30) }}"
       - name: bizday
         description: 制单/快照日。hive 分区键。
         tests:
-          - not_null
+          - not_null:
+              config:
+                where: "bizday >= current_date - {{ var('test_window_days', 30) }}"
       - name: branch_num
         description: 自然键之一。
         tests:
-          - not_null
+          - not_null:
+              config:
+                where: "bizday >= current_date - {{ var('test_window_days', 30) }}"
       - name: storehouse_num
         description: 自然键之一。
         tests:
-          - not_null
+          - not_null:
+              config:
+                where: "bizday >= current_date - {{ var('test_window_days', 30) }}"
       - name: item_num
         description: 自然键之一。
         tests:
-          - not_null
+          - not_null:
+              config:
+                where: "bizday >= current_date - {{ var('test_window_days', 30) }}"
       - name: batch_id
         description: '批次标记（采集 run id）。载荷列；契约 nullable=false。'
         tests:
-          - not_null
+          - not_null:
+              config:
+                where: "bizday >= current_date - {{ var('test_window_days', 30) }}"
 
   - name: stg_lemeng_item_purchase
     description: >-
@@ -608,27 +730,39 @@ models:
       - name: system_book
         description: 账套。hive 分区键。
         tests:
-          - not_null
+          - not_null:
+              config:
+                where: "bizday >= current_date - {{ var('test_window_days', 30) }}"
       - name: org
         description: 主体列。
         tests:
-          - not_null
+          - not_null:
+              config:
+                where: "bizday >= current_date - {{ var('test_window_days', 30) }}"
       - name: bizday
         description: 采购审核日（取请求参数）。hive 分区键。
         tests:
-          - not_null
+          - not_null:
+              config:
+                where: "bizday >= current_date - {{ var('test_window_days', 30) }}"
       - name: supplier_num
         description: 自然键之一（供应商）。
         tests:
-          - not_null
+          - not_null:
+              config:
+                where: "bizday >= current_date - {{ var('test_window_days', 30) }}"
       - name: item_num
         description: 自然键之一（商品）。
         tests:
-          - not_null
+          - not_null:
+              config:
+                where: "bizday >= current_date - {{ var('test_window_days', 30) }}"
       - name: batch_id
         description: '批次标记（采集 run id）。载荷列；契约 nullable=false。'
         tests:
-          - not_null
+          - not_null:
+              config:
+                where: "bizday >= current_date - {{ var('test_window_days', 30) }}"
 
 
 # 三张维度/价格表的**行粒度自然键**唯一性由 singular test 手写（单列 `unique` 判不了复合键；
@@ -664,25 +798,39 @@ models:
     columns:
       - name: batch_id
         tests:
-          - not_null
+          - not_null:
+              config:
+                where: "bizday >= current_date - {{ var('test_window_days', 30) }}"
       - name: system_book
         tests:
-          - not_null
+          - not_null:
+              config:
+                where: "bizday >= current_date - {{ var('test_window_days', 30) }}"
       - name: bizday
         tests:
-          - not_null
+          - not_null:
+              config:
+                where: "bizday >= current_date - {{ var('test_window_days', 30) }}"
       - name: bill_no
         tests:
-          - not_null
+          - not_null:
+              config:
+                where: "bizday >= current_date - {{ var('test_window_days', 30) }}"
       - name: branch_num
         tests:
-          - not_null
+          - not_null:
+              config:
+                where: "bizday >= current_date - {{ var('test_window_days', 30) }}"
       - name: expense_type
         tests:
-          - not_null
+          - not_null:
+              config:
+                where: "bizday >= current_date - {{ var('test_window_days', 30) }}"
       - name: direction
         tests:
-          - not_null
+          - not_null:
+              config:
+                where: "bizday >= current_date - {{ var('test_window_days', 30) }}"
   - name: stg_lemeng_branch_indicator
     description: >-
       乐檬 `branch_indicator` staging（新湖）。列集与空值性以 `contracts/common/lemeng.branch_indicator.json` 为准；
@@ -691,25 +839,39 @@ models:
     columns:
       - name: batch_id
         tests:
-          - not_null
+          - not_null:
+              config:
+                where: "bizday >= current_date - {{ var('test_window_days', 30) }}"
       - name: system_book
         tests:
-          - not_null
+          - not_null:
+              config:
+                where: "bizday >= current_date - {{ var('test_window_days', 30) }}"
       - name: bizday
         tests:
-          - not_null
+          - not_null:
+              config:
+                where: "bizday >= current_date - {{ var('test_window_days', 30) }}"
       - name: branch_num
         tests:
-          - not_null
+          - not_null:
+              config:
+                where: "bizday >= current_date - {{ var('test_window_days', 30) }}"
       - name: metric
         tests:
-          - not_null
+          - not_null:
+              config:
+                where: "bizday >= current_date - {{ var('test_window_days', 30) }}"
       - name: actual_value
         tests:
-          - not_null
+          - not_null:
+              config:
+                where: "bizday >= current_date - {{ var('test_window_days', 30) }}"
       - name: computed_at
         tests:
-          - not_null
+          - not_null:
+              config:
+                where: "bizday >= current_date - {{ var('test_window_days', 30) }}"
   - name: stg_lemeng_business_collection
     description: >-
       乐檬 `business_collection` staging（新湖）。列集与空值性以 `contracts/common/lemeng.business_collection.json` 为准；
@@ -718,19 +880,29 @@ models:
     columns:
       - name: batch_id
         tests:
-          - not_null
+          - not_null:
+              config:
+                where: "bizday >= current_date - {{ var('test_window_days', 30) }}"
       - name: system_book
         tests:
-          - not_null
+          - not_null:
+              config:
+                where: "bizday >= current_date - {{ var('test_window_days', 30) }}"
       - name: bizday
         tests:
-          - not_null
+          - not_null:
+              config:
+                where: "bizday >= current_date - {{ var('test_window_days', 30) }}"
       - name: branch_num
         tests:
-          - not_null
+          - not_null:
+              config:
+                where: "bizday >= current_date - {{ var('test_window_days', 30) }}"
       - name: computed_at
         tests:
-          - not_null
+          - not_null:
+              config:
+                where: "bizday >= current_date - {{ var('test_window_days', 30) }}"
   - name: stg_lemeng_business_collection_coupon
     description: >-
       乐檬 `business_collection_coupon` staging（新湖）。列集与空值性以 `contracts/common/lemeng.business_collection_coupon.json` 为准；
@@ -739,19 +911,29 @@ models:
     columns:
       - name: batch_id
         tests:
-          - not_null
+          - not_null:
+              config:
+                where: "bizday >= current_date - {{ var('test_window_days', 30) }}"
       - name: system_book
         tests:
-          - not_null
+          - not_null:
+              config:
+                where: "bizday >= current_date - {{ var('test_window_days', 30) }}"
       - name: bizday
         tests:
-          - not_null
+          - not_null:
+              config:
+                where: "bizday >= current_date - {{ var('test_window_days', 30) }}"
       - name: branch_num
         tests:
-          - not_null
+          - not_null:
+              config:
+                where: "bizday >= current_date - {{ var('test_window_days', 30) }}"
       - name: computed_at
         tests:
-          - not_null
+          - not_null:
+              config:
+                where: "bizday >= current_date - {{ var('test_window_days', 30) }}"
   - name: stg_lemeng_business_collection_receive
     description: >-
       乐檬 `business_collection_receive` staging（新湖）。列集与空值性以 `contracts/common/lemeng.business_collection_receive.json` 为准；
@@ -760,19 +942,29 @@ models:
     columns:
       - name: batch_id
         tests:
-          - not_null
+          - not_null:
+              config:
+                where: "bizday >= current_date - {{ var('test_window_days', 30) }}"
       - name: system_book
         tests:
-          - not_null
+          - not_null:
+              config:
+                where: "bizday >= current_date - {{ var('test_window_days', 30) }}"
       - name: bizday
         tests:
-          - not_null
+          - not_null:
+              config:
+                where: "bizday >= current_date - {{ var('test_window_days', 30) }}"
       - name: branch_num
         tests:
-          - not_null
+          - not_null:
+              config:
+                where: "bizday >= current_date - {{ var('test_window_days', 30) }}"
       - name: computed_at
         tests:
-          - not_null
+          - not_null:
+              config:
+                where: "bizday >= current_date - {{ var('test_window_days', 30) }}"
   - name: stg_lemeng_client
     description: >-
       乐檬 `client` staging（新湖）。列集与空值性以 `contracts/common/lemeng.client.json` 为准；
@@ -799,25 +991,39 @@ models:
     columns:
       - name: batch_id
         tests:
-          - not_null
+          - not_null:
+              config:
+                where: "bizday >= current_date - {{ var('test_window_days', 30) }}"
       - name: system_book
         tests:
-          - not_null
+          - not_null:
+              config:
+                where: "bizday >= current_date - {{ var('test_window_days', 30) }}"
       - name: bizday
         tests:
-          - not_null
+          - not_null:
+              config:
+                where: "bizday >= current_date - {{ var('test_window_days', 30) }}"
       - name: other_inout_bill_no
         tests:
-          - not_null
+          - not_null:
+              config:
+                where: "bizday >= current_date - {{ var('test_window_days', 30) }}"
       - name: client_fid
         tests:
-          - not_null
+          - not_null:
+              config:
+                where: "bizday >= current_date - {{ var('test_window_days', 30) }}"
       - name: other_inout_flag
         tests:
-          - not_null
+          - not_null:
+              config:
+                where: "bizday >= current_date - {{ var('test_window_days', 30) }}"
       - name: other_inout_kind
         tests:
-          - not_null
+          - not_null:
+              config:
+                where: "bizday >= current_date - {{ var('test_window_days', 30) }}"
   - name: stg_lemeng_customer_analysis
     description: >-
       乐檬 `customer_analysis` staging（新湖）。列集与空值性以 `contracts/common/lemeng.customer_analysis.json` 为准；
@@ -826,22 +1032,34 @@ models:
     columns:
       - name: batch_id
         tests:
-          - not_null
+          - not_null:
+              config:
+                where: "bizday >= current_date - {{ var('test_window_days', 30) }}"
       - name: system_book
         tests:
-          - not_null
+          - not_null:
+              config:
+                where: "bizday >= current_date - {{ var('test_window_days', 30) }}"
       - name: bizday
         tests:
-          - not_null
+          - not_null:
+              config:
+                where: "bizday >= current_date - {{ var('test_window_days', 30) }}"
       - name: branch_num
         tests:
-          - not_null
+          - not_null:
+              config:
+                where: "bizday >= current_date - {{ var('test_window_days', 30) }}"
       - name: time_period
         tests:
-          - not_null
+          - not_null:
+              config:
+                where: "bizday >= current_date - {{ var('test_window_days', 30) }}"
       - name: computed_at
         tests:
-          - not_null
+          - not_null:
+              config:
+                where: "bizday >= current_date - {{ var('test_window_days', 30) }}"
   - name: stg_lemeng_inventory_movement
     description: >-
       乐檬 `inventory_movement` staging（新湖）。列集与空值性以 `contracts/common/lemeng.inventory_movement.json` 为准；
@@ -850,25 +1068,39 @@ models:
     columns:
       - name: batch_id
         tests:
-          - not_null
+          - not_null:
+              config:
+                where: "bizday >= current_date - {{ var('test_window_days', 30) }}"
       - name: system_book
         tests:
-          - not_null
+          - not_null:
+              config:
+                where: "bizday >= current_date - {{ var('test_window_days', 30) }}"
       - name: bizday
         tests:
-          - not_null
+          - not_null:
+              config:
+                where: "bizday >= current_date - {{ var('test_window_days', 30) }}"
       - name: movement_id
         tests:
-          - not_null
+          - not_null:
+              config:
+                where: "bizday >= current_date - {{ var('test_window_days', 30) }}"
       - name: branch_num
         tests:
-          - not_null
+          - not_null:
+              config:
+                where: "bizday >= current_date - {{ var('test_window_days', 30) }}"
       - name: item_num
         tests:
-          - not_null
+          - not_null:
+              config:
+                where: "bizday >= current_date - {{ var('test_window_days', 30) }}"
       - name: computed_at
         tests:
-          - not_null
+          - not_null:
+              config:
+                where: "bizday >= current_date - {{ var('test_window_days', 30) }}"
   - name: stg_lemeng_item_category
     description: >-
       乐檬 `item_category` staging（新湖）。列集与空值性以 `contracts/common/lemeng.item_category.json` 为准；
@@ -898,25 +1130,39 @@ models:
     columns:
       - name: batch_id
         tests:
-          - not_null
+          - not_null:
+              config:
+                where: "bizday >= current_date - {{ var('test_window_days', 30) }}"
       - name: system_book
         tests:
-          - not_null
+          - not_null:
+              config:
+                where: "bizday >= current_date - {{ var('test_window_days', 30) }}"
       - name: bizday
         tests:
-          - not_null
+          - not_null:
+              config:
+                where: "bizday >= current_date - {{ var('test_window_days', 30) }}"
       - name: branch_num
         tests:
-          - not_null
+          - not_null:
+              config:
+                where: "bizday >= current_date - {{ var('test_window_days', 30) }}"
       - name: item_num
         tests:
-          - not_null
+          - not_null:
+              config:
+                where: "bizday >= current_date - {{ var('test_window_days', 30) }}"
       - name: sale_money
         tests:
-          - not_null
+          - not_null:
+              config:
+                where: "bizday >= current_date - {{ var('test_window_days', 30) }}"
       - name: computed_at
         tests:
-          - not_null
+          - not_null:
+              config:
+                where: "bizday >= current_date - {{ var('test_window_days', 30) }}"
   - name: stg_lemeng_item_sales
     description: >-
       乐檬 `item_sales` staging（新湖）。列集与空值性以 `contracts/common/lemeng.item_sales.json` 为准；
@@ -925,25 +1171,39 @@ models:
     columns:
       - name: batch_id
         tests:
-          - not_null
+          - not_null:
+              config:
+                where: "bizday >= current_date - {{ var('test_window_days', 30) }}"
       - name: system_book
         tests:
-          - not_null
+          - not_null:
+              config:
+                where: "bizday >= current_date - {{ var('test_window_days', 30) }}"
       - name: bizday
         tests:
-          - not_null
+          - not_null:
+              config:
+                where: "bizday >= current_date - {{ var('test_window_days', 30) }}"
       - name: branch_num
         tests:
-          - not_null
+          - not_null:
+              config:
+                where: "bizday >= current_date - {{ var('test_window_days', 30) }}"
       - name: item_num
         tests:
-          - not_null
+          - not_null:
+              config:
+                where: "bizday >= current_date - {{ var('test_window_days', 30) }}"
       - name: sale_num
         tests:
-          - not_null
+          - not_null:
+              config:
+                where: "bizday >= current_date - {{ var('test_window_days', 30) }}"
       - name: computed_at
         tests:
-          - not_null
+          - not_null:
+              config:
+                where: "bizday >= current_date - {{ var('test_window_days', 30) }}"
   - name: stg_lemeng_loss_adjustment
     description: >-
       乐檬 `loss_adjustment` staging（新湖）。列集与空值性以 `contracts/common/lemeng.loss_adjustment.json` 为准；
@@ -952,22 +1212,34 @@ models:
     columns:
       - name: batch_id
         tests:
-          - not_null
+          - not_null:
+              config:
+                where: "bizday >= current_date - {{ var('test_window_days', 30) }}"
       - name: system_book
         tests:
-          - not_null
+          - not_null:
+              config:
+                where: "bizday >= current_date - {{ var('test_window_days', 30) }}"
       - name: bizday
         tests:
-          - not_null
+          - not_null:
+              config:
+                where: "bizday >= current_date - {{ var('test_window_days', 30) }}"
       - name: order_no
         tests:
-          - not_null
+          - not_null:
+              config:
+                where: "bizday >= current_date - {{ var('test_window_days', 30) }}"
       - name: branch_num
         tests:
-          - not_null
+          - not_null:
+              config:
+                where: "bizday >= current_date - {{ var('test_window_days', 30) }}"
       - name: cause
         tests:
-          - not_null
+          - not_null:
+              config:
+                where: "bizday >= current_date - {{ var('test_window_days', 30) }}"
   - name: stg_lemeng_member_summary
     description: >-
       乐檬 `member_summary` staging（新湖）。列集与空值性以 `contracts/common/lemeng.member_summary.json` 为准；
@@ -976,19 +1248,29 @@ models:
     columns:
       - name: batch_id
         tests:
-          - not_null
+          - not_null:
+              config:
+                where: "bizday >= current_date - {{ var('test_window_days', 30) }}"
       - name: system_book
         tests:
-          - not_null
+          - not_null:
+              config:
+                where: "bizday >= current_date - {{ var('test_window_days', 30) }}"
       - name: bizday
         tests:
-          - not_null
+          - not_null:
+              config:
+                where: "bizday >= current_date - {{ var('test_window_days', 30) }}"
       - name: order_sale_type
         tests:
-          - not_null
+          - not_null:
+              config:
+                where: "bizday >= current_date - {{ var('test_window_days', 30) }}"
       - name: branch_num
         tests:
-          - not_null
+          - not_null:
+              config:
+                where: "bizday >= current_date - {{ var('test_window_days', 30) }}"
   - name: stg_lemeng_recon_source
     description: >-
       乐檬 `recon_source` staging（新湖）。列集与空值性以 `contracts/common/lemeng.recon_source.json` 为准；
@@ -997,22 +1279,34 @@ models:
     columns:
       - name: batch_id
         tests:
-          - not_null
+          - not_null:
+              config:
+                where: "bizday >= current_date - {{ var('test_window_days', 30) }}"
       - name: system_book
         tests:
-          - not_null
+          - not_null:
+              config:
+                where: "bizday >= current_date - {{ var('test_window_days', 30) }}"
       - name: bizday
         tests:
-          - not_null
+          - not_null:
+              config:
+                where: "bizday >= current_date - {{ var('test_window_days', 30) }}"
       - name: chunk_no
         tests:
-          - not_null
+          - not_null:
+              config:
+                where: "bizday >= current_date - {{ var('test_window_days', 30) }}"
       - name: branch_num
         tests:
-          - not_null
+          - not_null:
+              config:
+                where: "bizday >= current_date - {{ var('test_window_days', 30) }}"
       - name: computed_at
         tests:
-          - not_null
+          - not_null:
+              config:
+                where: "bizday >= current_date - {{ var('test_window_days', 30) }}"
   - name: stg_lemeng_saler_commission
     description: >-
       乐檬 `saler_commission` staging（新湖）。列集与空值性以 `contracts/common/lemeng.saler_commission.json` 为准；
@@ -1021,19 +1315,31 @@ models:
     columns:
       - name: batch_id
         tests:
-          - not_null
+          - not_null:
+              config:
+                where: "bizday >= current_date - {{ var('test_window_days', 30) }}"
       - name: system_book
         tests:
-          - not_null
+          - not_null:
+              config:
+                where: "bizday >= current_date - {{ var('test_window_days', 30) }}"
       - name: bizday
         tests:
-          - not_null
+          - not_null:
+              config:
+                where: "bizday >= current_date - {{ var('test_window_days', 30) }}"
       - name: branch_num
         tests:
-          - not_null
+          - not_null:
+              config:
+                where: "bizday >= current_date - {{ var('test_window_days', 30) }}"
       - name: saler
         tests:
-          - not_null
+          - not_null:
+              config:
+                where: "bizday >= current_date - {{ var('test_window_days', 30) }}"
       - name: computed_at
         tests:
-          - not_null
+          - not_null:
+              config:
+                where: "bizday >= current_date - {{ var('test_window_days', 30) }}"
