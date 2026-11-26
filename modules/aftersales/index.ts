@@ -4,6 +4,8 @@ import { parse as parseYaml } from 'yaml'
 import { ManifestSchema, TENANT_STORAGE, defineModule } from '@platform/sdk'
 import type { Identity, TenantStorageConfig } from '@platform/sdk'
 import { registerTicketManage } from './routes/ticket-manage'
+import { registerTicketExport } from './routes/ticket-export'
+import { registerTicketDelete } from './routes/ticket-delete'
 import { registerTicketGuest } from './routes/ticket-guest'
 import { registerRule } from './routes/rule'
 import { registerMasterData } from './routes/masterdata'
@@ -29,7 +31,11 @@ export default defineModule({
     // storage 已从 RouteCtx 消失，配置改为按请求取；identityLinks 可缺省（旧宿主不注入）
     const ctx: RouteCtx = { pool, identityLinks, notify }
 
+    // ⚠️ 导出必须先于 ticket-manage 注册：`/tickets/export` 与 `/tickets/:id` 同为两段 GET，
+    // 先注册 `:id` 会让 export 被当成 id（路由优先级不靠猜）。
+    registerTicketExport(r, ctx)
     registerTicketManage(r, ctx)
+    registerTicketDelete(r, ctx)
     registerTicketGuest(r, ctx)
     registerRule(r, ctx)
     registerMasterData(r, ctx)

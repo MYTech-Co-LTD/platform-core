@@ -51,9 +51,9 @@ export function toRatioOrNull(v: string | number | null | undefined): number | n
 }
 
 export interface AmountInput {
-  /** 报损数量（件，整数） */
+  /** 报损数量（件，小数最多 2 位；列 numeric(12,2)，见迁移 010） */
   damageQuantity: number
-  /** 基本数量（件，整数）——免赔门槛的基数 */
+  /** 基本数量（件，小数最多 6 位）——免赔门槛的基数；建单时冻结结算行数量 */
   basicQuantity: number
   /** 基本单价（整数【分】/件） */
   basicUnitPriceMinor: number
@@ -81,6 +81,33 @@ export function computeAmountMinor(i: AmountInput): number {
   const payableQuantity = i.damageQuantity - i.basicQuantity * i.refundRatio
   if (payableQuantity <= 0) return 0
   return Math.round(payableQuantity * i.basicUnitPriceMinor)
+}
+
+/**
+ * 报损数量上界（业务口径）：沿用旧 int4 上界。列型 numeric(12,2) 能容纳 int4 全量，
+ * 但业务上没有这么大的单——上界拦的是手滑输入，不是列型。
+ */
+export const MAX_DAMAGE_QUANTITY = 2_147_483_647
+
+/**
+ * 报损数量合法性：非负、有限、**最多两位小数**（列 numeric(12,2) 的精度）。
+ *
+ * 为什么不用 `Number.isInteger` / `toFixed` 来回转：JSON 里的 1.1 在 double 下是
+ * 1.100000000000000088…，`v * 100` 的尾差会落在 1e-13 量级；用 1e-6 的容差既放过两位小数，
+ * 又拒绝 1.005（`1.005*100 = 100.49999999999999`，diff≈0.5）。
+ */
+export function isValidDamageQuantity(v: number): boolean {
+  if (!Number.isFinite(v) || v < 0 || v > MAX_DAMAGE_QUANTITY) return false
+  return Math.abs(v * 100 - Math.round(v * 100)) < 1e-6
+}
+
+/**
+ * 报损金额（毛额，整数分）= 报损数量 × 基本单价。**不是赔付额**——它只用于：
+ * ① 列表/详情展示「报损金额」；② 固定金额输入框的 UI 上限；③ 预览响应里的
+ * `damageAmountMinor`。赔付额仍走 `computeAmountMinor`（扣掉免赔门槛）。
+ */
+export function computeDamageAmountMinor(damageQuantity: number, basicUnitPriceMinor: number): number {
+  return Math.round(damageQuantity * basicUnitPriceMinor)
 }
 
 /**

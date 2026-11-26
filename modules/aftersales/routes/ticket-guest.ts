@@ -8,12 +8,7 @@ import { loadAttachments, normalizeTicketRow } from './ticket-manage'
 import { DEFAULT_PAGE_SIZE, MAX_PAGE_SIZE, guestIdentityIds, parseIdParam, parsePageParam , consoleBaseUrl} from './context'
 import type { ModuleHono, RouteCtx } from './context'
 import { myStoreCodes, resolveStoreAffiliation } from './affiliation'
-
-/**
- * `ticket.damage_quantity` 是 **int4** 列，上界必须按列型取——**不能**借 bigint 那档的
- * `MAX_SAFE_INTEGER`：`9007199254740991` 是安全整数却仍超 int4（实测 `22003`）。
- */
-const MAX_INT4 = 2_147_483_647
+import { isValidDamageQuantity, MAX_DAMAGE_QUANTITY } from '../domain/ticket'
 
 /** ILIKE 的 `%` `_` 在用户输入里是通配符——转义掉，否则输入 `%` 等于匹配全部。
  *  与 `registration-guest.ts` / `masterdata.ts` 同款（三处各自定义是因为这几个文件互不 import）。 */
@@ -37,8 +32,10 @@ const SubmitBody = z.object({
   // 行级三元组一起精确锁价——价随单走，票面可追溯到具体那张 MO/WO 的那一行。
   orderNo: z.string().regex(/^(MO|WO)[0-9]{6,}$/),
   lineKey: z.string().regex(/^[0-9A-Za-z_-]{1,32}$/),
-  // 这一档走 int4 上界，见 MAX_INT4。
-  damageQuantity: z.number().int().nonnegative().max(MAX_INT4),
+  // 2026-11-26（迁移 010）：列改成 numeric(12,2)，移动端已按两位小数收——服务端不再拒小数。
+  // 上界沿用原 int4 业务口径（见 MAX_DAMAGE_QUANTITY），精度按列型最多两位。
+  damageQuantity: z.number().nonnegative().max(MAX_DAMAGE_QUANTITY)
+    .refine(isValidDamageQuantity, { message: 'damageQuantity 最多两位小数' }),
   // 到货时间（2026-11-25 对齐 wuji 源交互）：前端两个控件（日期+时间）拼 ISO 字符串。
   // 服务端只校验「能被 Date 解析」，不写死格式——时区由客户端给（带 Z 或 +08:00）。
   arrivalAt: z.string().datetime({ offset: true }).optional(),
@@ -284,9 +281,12 @@ export function registerTicketGuest(r: ModuleHono, ctx: RouteCtx): void {
       //    行在但 store_code ≠ 提交门店 ⇒ ORDER_STORE_MISMATCH（防串店引用别家的单）。
       //    六列随工单定死：后续调价/促销不得改写历史工单的金额依据（与 ② 的快照纪律同一原则）。
       const line = await client.query<{
-        source: string; store_code: string; store_name: string | null; bizday: string; price_minor: string
+        source: string; store_code: string; store_name: string | null; bizday: string
+        price_minor: string; quantity: string | null
       }>(
-        `select source, store_code, store_name, order_bizday::text as bizday, price_minor
+        // quantity 是「基本数量」的来源（迁移 010 / issue #2884）：建单时冻结结算行的采购数量，
+        // 让按比例退款的免赔门槛真正生效。它是 decimal(14,6)，pg 返回字符串。
+        `select source, store_code, store_name, order_bizday::text as bizday, price_minor, quantity
            from data.dim_settlement_order_line
           where org = $1 and order_no = $2 and item_code = $3 and line_key = $4`,
         [org, body.orderNo, body.itemCode, body.lineKey],
@@ -305,15 +305,18 @@ export function registerTicketGuest(r: ModuleHono, ctx: RouteCtx): void {
         `insert into aftersales.ticket(
            org, client_request_id, submitter_openid,
            product_code, product_name, store_code, store_name,
-           damage_quantity, remark,
+           damage_quantity, basic_quantity, remark,
            settlement_source, settlement_order_no, settlement_item_code, settlement_line_key,
            settlement_price_minor, settlement_bizday, store_affiliation, arrival_at)
-         values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17)
+         values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18)
          returning id`,
         [
           org, body.clientRequestId, identity.userId,
           body.itemCode, item.name, body.storeCode, store.name,
-          body.damageQuantity, body.remark ?? '',
+          body.damageQuantity,
+          // 结算行 quantity 可能为空（视图允许）——空值按 0 冻结，不编造数量；四元组仍可追溯。
+          settlement.quantity ?? '0',
+          body.remark ?? '',
           settlement.source, body.orderNo, body.itemCode, body.lineKey,
           Number(settlement.price_minor), settlement.bizday, storeAffiliation, body.arrivalAt ?? null,
         ],

@@ -47,6 +47,22 @@ export async function apiSend<T>(
   return (await res.json()) as T
 }
 
+/**
+ * 下载二进制（导出 Excel）。文件名从 `Content-Disposition` 取：
+ * 优先 RFC 5987 的 `filename*=UTF-8''…`（中文名），回落 ASCII 的 `filename="…"`。
+ */
+export async function apiBlob(path: string): Promise<{ blob: Blob; filename: string | null }> {
+  const res = await platformFetch(BASE + path)
+  if (!res.ok) throw await toApiError(res)
+  const cd = res.headers.get('content-disposition') ?? ''
+  const utf8 = /filename\*=UTF-8''([^;]+)/i.exec(cd)?.[1]
+  const ascii = /filename="([^"]+)"/i.exec(cd)?.[1]
+  return {
+    blob: await res.blob(),
+    filename: utf8 ? decodeURIComponent(utf8) : (ascii ?? null),
+  }
+}
+
 /** 错误码 → 中文文案。只列端点真会回的；其余回落成码本身（排障时比一句笼统话更有用） */
 const MESSAGES: Record<string, string> = {
   NOT_FOUND: '记录不存在（可能已被他人删除）',
@@ -59,6 +75,16 @@ const MESSAGES: Record<string, string> = {
   // 身份绑定管理面（账户统一 Task 8）
   LINK_TARGET_MISSING: '目标账户不存在，请核对账户名后重试',
   IDENTITY_LINKS_UNAVAILABLE: '身份绑定服务未就绪，请联系管理员',
+  // 2026-11-26 工单页对齐无极（#2884）
+  INVALID_STATUS: '状态筛选不合法',
+  INVALID_BRAND: '品牌筛选不合法',
+  INVALID_DATE: '时间范围不合法',
+  INVALID_RANGE: '导出范围不合法',
+  INVALID_IDS: '选中的工单不合法（最多 100 条）',
+  INVALID_COLUMNS: '导出字段不合法',
+  EXPORT_TOO_LARGE: '导出数据超过 2 万行，请缩小筛选范围',
+  STORAGE_UNRESOLVED: '附件存储配置解析失败，该单未删除',
+  DELETE_FAILED: '删除失败，请重试',
 }
 
 export function messageOf(e: unknown): string {
