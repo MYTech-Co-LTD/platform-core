@@ -11,6 +11,10 @@
 
 ## [Unreleased]
 
+## [0.399.1](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.399.0...v0.399.1) - 2026-11-26
+- 【修复】scheduler: recon_run 台账归到对账档——主档一超时就停摆 ([#2891](https://github.com/MYTech-Co-LTD/platform-core/pull/2891), [86b159d](https://github.com/MYTech-Co-LTD/platform-core/commit/86b159d62865a7b8125015d27fa3d1dd79d43161))
+
+
 ## [0.399.0](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.398.1...v0.399.0) - 2026-11-26
 - 【新增】aftersales: 工单页对齐无极（筛选/计数/金额预览/导出/批量删除） ([#2889](https://github.com/MYTech-Co-LTD/platform-core/pull/2889), [1e97da3](https://github.com/MYTech-Co-LTD/platform-core/commit/1e97da355a260ff0f76bc219b1c55aa0743d0e59))
 - 【修复】data: 本周四项——密钥守卫 / 排窗挪出 tick / SLA 起步宽限 / 排空只拦批量 ([#2888](https://github.com/MYTech-Co-LTD/platform-core/pull/2888), [fe61151](https://github.com/MYTech-Co-LTD/platform-core/commit/fe611514d70aba3cec74523505af1ac977cd99e7))
