@@ -337,7 +337,13 @@ export const after_sales_work_order = {
    * 我的门店工单列表（2026-11-25 门店可见性）：`GET /guest/tickets[?storeCode=]`。
    * 服务端按「我有资格的门店」收窄；`storeCode` 用于多店切换（不在资格集合内 ⇒ 403）。
    */
-  async query(params: { storeCode?: string; page?: number; size?: number } = {}): Promise<{
+  async query(params: {
+    storeCode?: string; page?: number; size?: number
+    /** 商品名模糊（2026-11-26，对齐源「我的工单」的折叠筛选） */
+    q?: string
+    /** 日期范围（含两端） */
+    from?: string; to?: string
+  } = {}): Promise<{
     items: TicketListRow[]
     total: number
     page: number
@@ -347,6 +353,9 @@ export const after_sales_work_order = {
     if (params.storeCode) qs.set('storeCode', params.storeCode)
     if (params.page) qs.set('page', String(params.page))
     if (params.size) qs.set('size', String(params.size))
+    if (params.q) qs.set('q', params.q)
+    if (params.from) qs.set('from', params.from)
+    if (params.to) qs.set('to', params.to)
     const s = qs.toString()
     return apiGet(`/guest/tickets${s ? `?${s}` : ''}`)
   },

@@ -15,6 +15,10 @@ import { myStoreCodes, resolveStoreAffiliation } from './affiliation'
  */
 const MAX_INT4 = 2_147_483_647
 
+/** ILIKE 的 `%` `_` 在用户输入里是通配符——转义掉，否则输入 `%` 等于匹配全部。
+ *  与 `registration-guest.ts` / `masterdata.ts` 同款（三处各自定义是因为这几个文件互不 import）。 */
+const escapeLike = (s: string) => s.replace(/[\\%_]/g, (m) => `\\${m}`)
+
 const SubmitBody = z.object({
   // 客户端幂等键（spec §2.2）；同时是附件 object key 里的 {ticket_ref}（spec §2.3）
   clientRequestId: z.string().min(1).max(128),
@@ -98,18 +102,39 @@ export function registerTicketGuest(r: ModuleHono, ctx: RouteCtx): void {
     }
     const scopeStores = wanted !== undefined ? [wanted] : myStores
 
+    // 筛选（2026-11-26，对齐源「我的工单」的折叠筛选）：商品名模糊 + 日期范围。
+    // 都用**参数追加**而不是拼字符串——这个 WHERE 已经有两段动态条件了，再拼就是注入面。
+    const params: unknown[] = [identity.orgId, scopeStores]
+    let where = 'org = $1 and store_code = any($2::text[])'
+    const q = c.req.query('q')
+    if (q) {
+      params.push(`%${escapeLike(q)}%`)
+      where += ` and product_name ilike $${params.length}`
+    }
+    const from = c.req.query('from')
+    if (from) {
+      params.push(from)
+      where += ` and created_at >= $${params.length}::date`
+    }
+    const to = c.req.query('to')
+    if (to) {
+      // 含当天：`< to + 1 天`，不用 `<= to`（那会把当天 00:00 之后的全部漏掉）
+      params.push(to)
+      where += ` and created_at < ($${params.length}::date + interval '1 day')`
+    }
+
     const totalRes = await ctx.pool.query<{ n: number }>(
-      'select count(*)::int as n from aftersales.ticket where org = $1 and store_code = any($2::text[])',
-      [identity.orgId, scopeStores],
+      `select count(*)::int as n from aftersales.ticket where ${where}`,
+      params,
     )
     const listRes = await ctx.pool.query(
       `select id, code, product_name, store_name, store_code, damage_quantity, status,
               amount_type, amount_minor, remark, created_at, processed_at
          from aftersales.ticket
-        where org = $1 and store_code = any($2::text[])
+        where ${where}
         order by id desc
-        limit $3 offset $4`,
-      [identity.orgId, scopeStores, size, (page - 1) * size],
+        limit $${params.length + 1} offset $${params.length + 2}`,
+      [...params, size, (page - 1) * size],
     )
     return c.json({
       items: listRes.rows.map(normalizeTicketRow),
