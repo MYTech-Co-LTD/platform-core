@@ -155,6 +155,15 @@ export const JOB_REGISTRY: JobDef[] = [
   // 时区沿用 registry 不变量 UTC：小时级 cron 在 UTC 与 Asia/Shanghai 的触发时刻逐点相同（上海无夏令时）。
   { key: 'oa.standard_approval_reconcile', scope: 'platform', requiresEnv: ['DATABASE_URL'], script: 'scripts/oa-standard-approval-reconcile.mjs', cron: '17 * * * *', timezone: 'UTC', timeoutMs: 300000, maxAttempts: 2, expectedIntervalSecs: 3600, description: '标准审批（企微）镜像对账：逐租户拉企微 → forms.external_approval（回调兜底；token 失败 exit 1）' },
   { key: 'oa.approval_reconcile', scope: 'platform', requiresEnv: ['DATABASE_URL'], script: 'scripts/oa-approval-reconcile.mjs', cron: '47 * * * *', timezone: 'UTC', timeoutMs: 300000, maxAttempts: 2, expectedIntervalSecs: 3600, description: '应用内审批终态对账：pending_approval 补终态（与回调同 SQL 幂等）' },
+  // 孤儿附件 GC（spec §5 #12；#2728 判据=**业务动作**：删 `aftersales.ticket_attachment` 的孤儿行
+  // + 租户桶里的对象 ⇒ 平台调度器，不是 openship job）。此前只有 manage 面端点
+  // `POST /attachments/gc` 且从未被定时触发（audit 表 0 次 ⇒ 行与对象永存）。
+  // 判据与删除顺序的唯一实现在 `modules/aftersales/domain/attachment-gc.ts`；脚本只做
+  // 「逐租户解析配置 → 按行上 storage_ref 归桶 → 落审计」，默认 dry-run，排班显式 `--apply`。
+  // 只要求 `DATABASE_URL`：租户存储配置在 `platform.tenant` 行上（平台默认 env 只是兜底），
+  // 缺平台默认时脚本逐租户跳过并告警——绝不替租户删到别的桶里。
+  // CST 04:20（UTC 20:20）夜间低峰；seed 恒 enabled=false，四步开闸时先无参手工跑一轮看 dry-run 报告。
+  { key: 'aftersales.attachment_gc', scope: 'platform', requiresEnv: ['DATABASE_URL'], script: 'scripts/aftersales-attachment-gc.mjs', args: ['--apply'], cron: '20 20 * * *', timezone: 'UTC', timeoutMs: 300000, maxAttempts: 2, expectedIntervalSecs: 86400, description: '孤儿附件 GC（未提交/提交失败的预签名附件行+对象，>7 天；CST 04:20；排班带 --apply）' },
   // 判据化（Wave 8 ④，#2606）：原 openship 靠宿主 `docker exec` 进 server 容器跑，判红只到退出码。
   // 落在 **platform 域**：`verify-ingest` 要 OO 只读凭据（应用单元本来就有），`verify-regression`
   // 只用 `DATABASE_URL`。水位默认路径 `/var/lib/askdata`（compose 里挂了命名卷 ⇒ 跨部署保留；
