@@ -104,18 +104,19 @@ describe('afterSalesWorkOrderSubmit 页面', () => {
     expect(settlementOrdersQuery).not.toHaveBeenCalled()
   })
 
-  it('已登记 ⇒ 闸门放行：不跳转，门店加载一次；结算单**选店后才拉**（不是进页就拉）', async () => {
+  it('已登记 ⇒ 闸门放行：不跳转，门店加载一次；**单店**进页即自动选定并拉该店订单', async () => {
     empQuery.mockResolvedValue([REGISTERED])
     const w = mount(Submit, { global })
     await flushPromises()
 
     expect(replace).not.toHaveBeenCalled()
     // 放行的**行为凭据**：主表单渲染出来了（不是停在「正在验证员工信息」那一屏）
-    expect(w.text()).toContain('选择门店')
-    expect(w.text()).toContain('选择订单')
+    expect(w.text()).toContain('门店')
+    expect(w.text()).toContain('订单')
     expect(storeQuery).toHaveBeenCalledTimes(1)
-    // #500 段③：结算单按店拉取——没选店之前一个请求都不发
-    expect(settlementOrdersQuery).not.toHaveBeenCalled()
+    // 2026-11-26 产品重构：单店员工的「门店」是事实不是选择 ⇒ 进页自动选定并拉订单。
+    // 多店仍是他选（本用例夹具是单店）。
+    expect(settlementOrdersQuery).toHaveBeenCalledWith(STORE.id, undefined)
   })
 
   it('选店 ⇒ 按店拉结算单；选单选行 ⇒ 报损数量上界取**选中行**的数量', async () => {
@@ -124,22 +125,19 @@ describe('afterSalesWorkOrderSubmit 页面', () => {
     await flushPromises()
 
     // 未选行 ⇒ 占位符不写上界（行数量为空则不设上限）
-    expect(w.find('input[placeholder*="报损数量"]').attributes('placeholder')).toBe('请输入报损数量')
+    expect(w.find('input[placeholder="数量"]').exists()).toBe(true)
 
     // 页面里的 Select 顺序：门店 → 结算单 → 商品行。`<t-option>` 在 TDesign 里**不挂载**
     // （Select 从 slot 读 vnode 注册选项），点选这条路走不通，只能自己喂 v-model；
     // `@change` 处理器（拉结算单/清行）也要显式 emit——编程式 v-model 不触发 TDesign 的 change。
     // ⚠️ 行下拉带 `v-if="selectedOrder"` ⇒ **选单之后才挂载**，必须重新查询组件树再喂。
-    // 2026-11-25 交互重排：商品(0) → 门店(1) → 订单(2)；选单后 watch 自动选中第一行
-    let selects = w.findAllComponents(Select)
-    await selects[1]!.vm.$emit('update:modelValue', STORE.id)
-    await selects[1]!.vm.$emit('change', STORE.id)
-    await flushPromises()
+    // 2026-11-26：单店员工**没有门店下拉**（门店是只读标签、自动选定）⇒ 商品(0) → 订单(1)
     expect(settlementOrdersQuery).toHaveBeenCalledWith('103', undefined)
-
-    await selects[2]!.vm.$emit('update:modelValue', ORDER.orderNo)
+    const selects = w.findAllComponents(Select)
+    await selects[1]!.vm.$emit('update:modelValue', ORDER.orderNo)
     await flushPromises()
-    expect(w.find('input[placeholder*="报损数量"]').attributes('placeholder')).toContain('该行数量 30')
+    // 上界从 placeholder 挪到了 label（「本单共 30 件」）——比占位符更常驻、更好找
+    expect(w.text()).toContain('本单共 30 件')
   })
 
   /**
@@ -168,14 +166,10 @@ describe('afterSalesWorkOrderSubmit 页面', () => {
     // ② 其余必填项填满——不填的话闸门会被**别的**校验先拦下，这条用例就测不到附件闸门。
     //    门店/结算单/行下拉直接喂 v-model + change（`<t-option>` 不挂载，点选走不通，见上一条用例注）。
     //    行下拉带 v-if ⇒ 选单后重查组件树（同上一条用例）。
-    // 2026-11-25 交互重排：商品(0) → 门店(1) → 订单(2)；选单后自动选中第一行
-    let selects = w.findAllComponents(Select)
-    await selects[1]!.vm.$emit('update:modelValue', STORE.id)
-    await selects[1]!.vm.$emit('change', STORE.id)
-    await flushPromises()
-    selects = w.findAllComponents(Select)
-    await selects[2]!.vm.$emit('update:modelValue', ORDER.orderNo)
-    await w.find('input[placeholder*="报损数量"]').setValue('2')
+    // 2026-11-26：单店无门店下拉 ⇒ 商品(0) → 订单(1)；选单后自动选中第一行
+    const selects = w.findAllComponents(Select)
+    await selects[1]!.vm.$emit('update:modelValue', ORDER.orderNo)
+    await w.find('input[placeholder="数量"]').setValue('2')
     await w.find('textarea').setValue('外包装破损')
     await flushPromises()
 
