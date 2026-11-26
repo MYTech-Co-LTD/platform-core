@@ -19,10 +19,19 @@ export const JPEG_QUALITY = 0.85
 /** 小于这个体积且长边不超限的文件不值得再压（二次压缩只损质量） */
 export const SKIP_IF_UNDER_BYTES = 1.5 * 1024 * 1024
 
-/** 图片体积上限（压缩后通常 <1MB；10MB 是给「压不动」的格式留的余量） */
-export const MAX_IMAGE_BYTES = 10 * 1024 * 1024
-/** 视频体积上限（客户端不转码——转码放服务端；这里只挡异常大文件） */
-export const MAX_VIDEO_BYTES = 100 * 1024 * 1024
+/**
+ * 图片体积上限。**它的作用是挡异常文件，不是替代压缩**：
+ * 压缩成功时实际只有 200–400KB，这个上限只在「压不动」（HEIC / 浏览器解不了）时兜底。
+ * 20MB 覆盖 iPhone 4K 竖拍 HEIC（3–8MB）与安卓高像素原图（10–15MB）；
+ * ProRAW 单张可到 25–50MB，属于「请自行导出后再传」的范畴。
+ */
+export const MAX_IMAGE_BYTES = 20 * 1024 * 1024
+/**
+ * 视频体积上限。客户端**不转码**，所以这个值是纯兜底：
+ * 手机 4K/30 秒 ≈ 350–400MB、1080p/1 分钟 ≈ 150MB ⇒ 500MB 覆盖常见短视频。
+ * 再大就是异常（或长时间录屏），挡掉比默默收下更好。
+ */
+export const MAX_VIDEO_BYTES = 500 * 1024 * 1024
 
 const isImage = (file: File): boolean => file.type.startsWith('image/')
 

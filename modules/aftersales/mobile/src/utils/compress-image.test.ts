@@ -3,7 +3,7 @@
 // happy-dom 没有真 canvas / createImageBitmap，所以这里测的是「什么时候压、什么时候不压、
 // 压失败怎么办」这三类判断——它们才是会丢图或白花钱的地方。
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { compressImage, JPEG_QUALITY, MAX_EDGE_PX, SKIP_IF_UNDER_BYTES } from './compress-image'
+import { compressImage, JPEG_QUALITY, MAX_EDGE_PX, MAX_IMAGE_BYTES, MAX_VIDEO_BYTES, SKIP_IF_UNDER_BYTES } from './compress-image'
 
 const makeFile = (name: string, type: string, size: number): File => {
   const f = new File([new Uint8Array(1)], name, { type })
@@ -88,8 +88,11 @@ describe('compressImage', () => {
     expect(await compressImage(f)).toBe(f)
   })
 
-  it('常量：长边 2048 / 质量 0.85（质量红线的唯一事实源）', () => {
+  it('常量：长边 2048 / 质量 0.85 / 上限 20MB·500MB（红线与兜底的唯一事实源）', () => {
     expect(MAX_EDGE_PX).toBe(2048)
     expect(JPEG_QUALITY).toBe(0.85)
+    // 上限是**兜底**不是压缩目标：压得动就压，压不动也不能把人挡在门外
+    expect(MAX_IMAGE_BYTES).toBe(20 * 1024 * 1024)
+    expect(MAX_VIDEO_BYTES).toBe(500 * 1024 * 1024)
   })
 })
