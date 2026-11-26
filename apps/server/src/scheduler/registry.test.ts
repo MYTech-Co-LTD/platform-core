@@ -258,6 +258,29 @@ describe('registry · dbt hourly/tables（Wave 8 P1 / A3 拆车道）', () => {
     expect(recon.env?.MATERIALIZE_MODE).toBe('container')
     expect(existsSync(repoPath(recon.script))).toBe(true)
   })
+
+  it('★ #2894 台账当夜自愈闸：CST 04:30，判据与断言 ⑪ 同源，缺行才重建', () => {
+    // 断言 ⑪ 是只读兜底：它红了没人会因此重建台账 ⇒ 红满一整天（2026-11-26 实证）。
+    // 本 job 用同一条 SQL 判 T-4 缺行，缺了才重建（≈35s，不碰 500s 的 swap_offset）。
+    const guard = JOB_REGISTRY.find((d) => d.key === 'data.recon_ledger_guard')!
+    expect(guard, 'data.recon_ledger_guard').toBeDefined()
+    expect(guard.scope).toBe('data')
+    expect(guard.cron).toBe('30 20 * * *') // UTC ⇒ CST 04:30
+    expect(guard.timezone).toBe('UTC')
+    expect(guard.timeoutMs).toBe(1800000)
+    expect(guard.maxAttempts).toBe(1) // 判据红是真红，重试只会重复吵
+    expect(existsSync(repoPath(guard.script))).toBe(true)
+    // 要跑 dbt（materialize.sh 容器模式）+ 读仓库 ⇒ 两组 env 都得在
+    for (const k of ['DATA_WAREHOUSE_URL', 'DATABASE_URL', 'LEMENG_ZOS_BUCKET']) {
+      expect(guard.requiresEnv).toContain(k)
+    }
+    // 重建范围写死在脚本里（不靠 registry env 传入）：只许碰台账族三个模型，
+    // 尤其**不许**带上 `fct_retail_swap_offset`（单轮 ~500s，与「某天没进台账」无关）。
+    const src = readFileSync(repoPath(guard.script), 'utf8')
+    const sel = src.match(/MATERIALIZE_TABLES_SELECT:\s*'([^']+)'/)?.[1]
+    expect(sel, '缺 MATERIALIZE_TABLES_SELECT').toBeDefined()
+    expect(String(sel).split(/\s+/).sort()).toEqual(['recon_break', 'recon_fact', 'recon_run'])
+  })
 })
 
 describe('registry · dbt 对账分族（full / window，#2428）', () => {

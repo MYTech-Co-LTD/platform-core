@@ -161,7 +161,8 @@
 | `oa.standard_approval_reconcile` | **已登记（#2385 收口，`enabled=false`）** | 待启用：手动跑一轮 → stdout 统计与 `forms.external_approval` 行数比对 → enable（§13） | 本无 openship 作业（脚本此前零调度登记，2026-11-23 起有 registry key） |
 | `oa.approval_reconcile` | **已登记（#2363/#2385 收口，`enabled=false`）** | 待启用：手动跑一轮 → stdout 统计核对 → enable（§13） | 本无 openship 作业（同上） |
 | `data.recon_monthly` | **已切流（#2735，2026-11-23）** | worker 的 `platform.scheduler`（`enabled=true`，`next_run_at=2026-12-15T04:00Z` = CST 15 号 12:00） | 原 openship job **已停用并删除**（`custom:4UQ2ugvbFRGKtIUv`）。脚本调两个 console 的现成管线 `lemeng.recon.preagg.backfill`（不实现口径）；worker 已有 `DUCKLE_TOKEN`（三容器同一份，实测）+ 服务名可达 ⇒ **零新增密钥**。开闸实测：10 月全月 62 次 **pass=62 skip=0**，与 `/opt/lemeng-recon-preagg.sh` 同期结论逐项一致（688s） |
-| ⚠️ `lemeng-recon-restate` | **待切（#2742）** | 现役 openship（`25 15 * * *` = CST 23:25） | 业务对账仍走宿主内联命令；迁法：改走 DSN/服务名 HTTP → registry 登记 |
+| `data.recon_ledger_guard` | **新增（#2894，2026-11-26）** | worker 的 `platform.scheduler`（`30 20 * * *` = CST 04:30） | 台账**当夜自愈闸**：判据与断言 ⑪ **同一条 SQL**（T-4 缺行）；缺了才重建 `recon_fact/recon_break/recon_run`（≈35s，不碰 500s 的 swap_offset），重建后仍缺就 exit 1 响铃（那是一天在 `recon_break` 里就没行，归 restate heal）。排班在 restate（23:25）之后、审计链（05:30）之前 |
+| ⚠️ `lemeng-recon-restate` | **待切（#2742）** | 现役 openship（`25 15 * * *` = CST 23:25） | 业务对账仍走宿主内联命令；迁法：改走 DSN/服务名 HTTP → registry 登记。**#2894 起**候选集多一类 `kind=gap`（窗口内整天没台账、且平台侧当天有营业）⇒ 能补「源快照当天没落」；`ledger_stale`（数据在、只是台账没重建）跳过并交给 `data.recon_ledger_guard` |
 | ⚠️ `OO 预警配置对账` | **待切（#2742）** | 现役 openship（`17,47 * * * *`） | 监控面只读对账；worker 已有 OO 读凭据 ⇒ 可迁 |
 | ⚠️ `lemeng 夜间回填窗口` | **待切（#2742）** | 现役 openship（`5 16 * * *` = CST 00:05） | 业务回填驱动；迁法：改调 console `/api/run` |
 | `lemeng-console-gc` | **登记为例外（#2742）** | 留在 openship（`40 0 * * *` = CST 08:40） | **真基建**：worker 对 console workspace 是只读挂载，GC 要删文件 ⇒ 需可写挂载或 console 侧回收入口；在此之前只能留宿主 |
