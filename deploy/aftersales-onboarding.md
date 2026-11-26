@@ -126,7 +126,12 @@ DATABASE_URL=… WUJI_APPID=… WUJI_KEY_STORE_INFO=… WUJI_API_PATH=/api/publi
 
 ## 6. Gate 6：运营（可随业务滚动补齐）
 
-- [ ] GC：openship job 补台账（`deploy/jobs.md`），或迁平台调度器（与 Wave 6/8 方向一致）。
+- [ ] GC：平台调度器 `aftersales.attachment_gc`（`scripts/aftersales-attachment-gc.mjs`）；
+      **是业务动作 ⇒ 不进 openship**（#2728 判据）。每日 CST 04:20，排班带 `--apply`；
+      seed 恒 `enabled=false` ⇒ 开闸按四步：先无参手工跑一轮看 dry-run 报告（只扫描不删，
+      同样落 `attachment.gc` 审计）→ 确认候选/`unresolved` 口径 → 再
+      `update platform.job_schedule set enabled = true where key = 'aftersales.attachment_gc'`。
+      手工跑：`DATABASE_URL=… pnpm exec tsx scripts/aftersales-attachment-gc.mjs [--org <casdoor_org>] [--apply]`。
 - [ ] 审计：`aftersales.audit` 已落（#2748）——写操作与业务同事务留痕；运维可 `select * from
       aftersales.audit where org = '<org>' order by id desc` 查（detail 只含业务事实，无 PII 明文）。
 - [ ] 通知：每日巡检「零收件人」（notify-preflight）。
