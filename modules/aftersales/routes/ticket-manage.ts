@@ -15,7 +15,7 @@ import { writeAudit } from '../domain/audit'
 // 分页常量与解析器在 routes/context.ts（四域共享层）——本文件不再留本地副本，
 // 避免与管理端/访客端两份实现静默漂移（见 context.ts 的 parsePageParam 注释）。
 import { DEFAULT_PAGE_SIZE, MAX_PAGE_SIZE, parseIdParam, parsePageParam , consoleBaseUrl} from './context'
-import { BRAND_SQL, parseTicketFilters, ticketWhere } from './ticket-query'
+import { brandExists, parseTicketFilters, ticketWhere, UNCLASSIFIED_BRAND } from './ticket-query'
 import type { ModuleHono, RouteCtx } from './context'
 
 /** 水印日期：`YYYY-MM-DD` 且真实存在（2026-02-30 会被 Date 滚到 3 月 2 日 ⇒ ISO 比较能抓住）。 */
@@ -82,6 +82,11 @@ export function registerTicketManage(r: ModuleHono, ctx: RouteCtx): void {
 
     const parsed = parseTicketFilters((k) => c.req.query(k))
     if (!parsed.ok) return c.json({ error: parsed.error }, 400)
+    // 品牌存在性需要 DB：字典（含停用，历史可筛）或工单快照里出现过。
+    if (parsed.filters.brand && parsed.filters.brand !== UNCLASSIFIED_BRAND
+      && !(await brandExists(ctx.pool, org, parsed.filters.brand))) {
+      return c.json({ error: 'INVALID_BRAND' }, 400)
+    }
     const { sql: where, params } = ticketWhere(org, parsed.filters)
 
     const totalRes = await ctx.pool.query<{ n: number }>(
@@ -96,8 +101,8 @@ export function registerTicketManage(r: ModuleHono, ctx: RouteCtx): void {
               watermark_at::text as watermark_at,
               -- 归属一致性快照（ADR 2026-11-24 §7 P1-a）：信息性，供管理端展示异常
               store_affiliation,
-              -- 品牌（派生）：按工单快照 store_name 前缀，不新增存储列。
-              (${BRAND_SQL}) as brand,
+              -- 品牌快照（#2892）：提单时解析，读侧不 join。
+              brand_code, brand_name, brand_source, brand_origin,
               -- 报损金额（毛额，整数分）：pending 也显示「损失多少」，与赔付额不同。
               round(damage_quantity * coalesce(settlement_price_minor, basic_unit_price_minor))::bigint
                 as damage_amount_minor,
@@ -122,9 +127,10 @@ export function registerTicketManage(r: ModuleHono, ctx: RouteCtx): void {
     })
   })
 
-  // GET /tickets/counts —— 状态胶囊与品牌胶囊的计数（2026-11-26 / #2884）
-  // 语义（spec §2.3）：状态计数**全局**（不受任何筛选影响）；品牌计数**只跟随 status**
-  // （否则点一个品牌后另一个品牌归零，胶囊点不回去）。
+  // GET /tickets/counts —— 状态胶囊 + 动态品牌选项/计数（2026-11-26 / #2884，#2892 通用化）
+  // 语义：状态计数**全局**（不受任何筛选影响）；品牌计数**只跟随 status**（与 wuji 一致）。
+  // 品牌选项来自 data.v_brand_registry（含停用，历史可筛）∪ 工单快照里出现过的历史品牌；
+  // 未分类（brand_code='')是一等计数，不是被排除。
   // ⚠️ 必须注册在 `/tickets/:id` 之前，否则 `counts` 被当成 id。
   r.get('/tickets/counts', async (c) => {
     const org = c.get('identity').orgId
@@ -132,35 +138,64 @@ export function registerTicketManage(r: ModuleHono, ctx: RouteCtx): void {
     if (status && status !== 'pending' && status !== 'completed' && status !== 'cancelled') {
       return c.json({ error: 'INVALID_STATUS' }, 400)
     }
-    const params: unknown[] = [org]
-    let brandWhere = 'org = $1'
-    if (status) {
-      params.push(status)
-      brandWhere += ' and status = $2'
-    }
 
-    const [statusRes, brandRes] = await Promise.all([
-      ctx.pool.query<{ status: TicketStatus; n: number }>(
-        'select status, count(*)::int as n from aftersales.ticket where org = $1 group by status',
-        [org],
-      ),
-      ctx.pool.query<{ brand: string; n: number }>(
-        `select (${BRAND_SQL}) as brand, count(*)::int as n
-           from aftersales.ticket where ${brandWhere} group by 1`,
-        params,
-      ),
-    ])
+    const statusRes = await ctx.pool.query<{ status: TicketStatus; n: number }>(
+      'select status, count(*)::int as n from aftersales.ticket where org = $1 group by status',
+      [org],
+    )
     const byStatus = { pending: 0, completed: 0, cancelled: 0 }
     for (const row of statusRes.rows) byStatus[row.status] = row.n
-    const brand = { xiongmao: 0, pptd: 0, none: 0 }
-    for (const row of brandRes.rows) {
-      if (row.brand === 'xiongmao') brand.xiongmao = row.n
-      else if (row.brand === 'pptd') brand.pptd = row.n
-      else brand.none = row.n
+
+    const params: unknown[] = [org]
+    let ticketWhere = 'org = $1'
+    if (status) {
+      params.push(status)
+      ticketWhere += ' and status = $2'
     }
+
+    let options: { code: string; name: string; count: number }[] = []
+    let unclassified = 0
+    let degraded = false
+    try {
+      const [optRes, unclassifiedRes] = await Promise.all([
+        ctx.pool.query<{ code: string; name: string; n: number }>(
+          `with tc as (
+             select brand_code, max(brand_name) as name, count(*)::int as n
+               from aftersales.ticket
+              where ${ticketWhere} and brand_code <> ''
+              group by brand_code
+           )
+           select r.code, r.name, r.sort, coalesce(tc.n, 0)::int as n
+             from data.v_brand_registry r
+             left join tc on tc.brand_code = r.code
+            where r.org = $1
+           union all
+           select tc.brand_code as code, coalesce(tc.name, '') as name, 9999 as sort, tc.n
+             from tc
+            where not exists (
+              select 1 from data.v_brand_registry r where r.org = $1 and r.code = tc.brand_code
+            )
+           order by sort, name`,
+          params,
+        ),
+        ctx.pool.query<{ n: number }>(
+          `select count(*)::int as n from aftersales.ticket
+            where ${ticketWhere} and brand_code = ''`,
+          params,
+        ),
+      ])
+      options = optRes.rows.map((r) => ({ code: r.code, name: r.name, count: r.n }))
+      unclassified = unclassifiedRes.rows[0]?.n ?? 0
+    } catch (e) {
+      // 品牌是分类维度：视图缺失/查询失败只降级品牌面，状态计数照常返回。
+      degraded = true
+      console.warn('[aftersales] 品牌计数失败（品牌面降级，状态计数照常）:', e instanceof Error ? e.message : e)
+    }
+
+    const showFilter = !degraded && (options.length >= 2 || unclassified > 0)
     return c.json({
       status: { all: byStatus.pending + byStatus.completed + byStatus.cancelled, ...byStatus },
-      brand,
+      brand: { options, unclassified, showFilter, degraded },
     })
   })
 
@@ -179,7 +214,7 @@ export function registerTicketManage(r: ModuleHono, ctx: RouteCtx): void {
               status, amount_type, amount_minor, refund_ratio,
               operator, remark, opinion, related_order, arrival_at, created_at, processed_at,
               watermark_at::text as watermark_at, store_affiliation,
-              (${BRAND_SQL}) as brand,
+              brand_code, brand_name, brand_source, brand_origin,
               round(damage_quantity * coalesce(settlement_price_minor, basic_unit_price_minor))::bigint
                 as damage_amount_minor
          from aftersales.ticket where org = $1 and id = $2`,

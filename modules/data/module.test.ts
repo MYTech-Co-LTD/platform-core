@@ -60,16 +60,18 @@ describePg('迁移（需要 DATABASE_URL）', () => {
     }
   })
 
-  it('三十二张表建成（001 三张 + 002 报表登记 + 009 三张发布维 + 010 口径审计 + 011 价格批 + 012 调出单 + 013 批发单 + 014 取价面 + 015 客户对照 + 022 报表版本 + 023 AI 文本缓存 + 026 资产 ACL/审计 + 032 已验证问答 + 034 测度候选 + 036 需求台账 + 042 数据范围 + 046 变更单 + 047 概念表 + 048 叙事运行台账 + 050 报表访问台账 + 053 业务监控两张 + 054 报表版式一张 + 055 报表事件一张），且 data.query_keys.token_hash 唯一', async () => {
+  it('三十五张表建成（001 三张 + 002 报表登记 + 009 三张发布维 + 010 口径审计 + 011 价格批 + 012 调出单 + 013 批发单 + 014 取价面 + 015 客户对照 + 022 报表版本 + 023 AI 文本缓存 + 026 资产 ACL/审计 + 032 已验证问答 + 034 测度候选 + 036 需求台账 + 042 数据范围 + 046 变更单 + 047 概念表 + 048 叙事运行台账 + 050 报表访问台账 + 053 业务监控两张 + 054 报表版式一张 + 055 报表事件一张 + 056 品牌维度三张），且 data.query_keys.token_hash 唯一', async () => {
     await applyMigrations(pool)
     const t = await pool.query(
+      // 只数基表：稳定视图（v_brand_*）不是表，不能混进这份穷举清单。
       `select table_name from information_schema.tables
-        where table_schema = 'data' order by table_name`,
+        where table_schema = 'data' and table_type = 'BASE TABLE' order by table_name`,
     )
     // 清单是**穷举**（不是「包含」）：新增迁移必须在这里显式表态，
     // 免得删掉一张表时这道断言还绿（002_reports 就是这么加进来的）。
     expect(t.rows.map((r) => r.table_name)).toEqual([
       'asset_acl', 'asset_audit',
+      'brand_assignment', 'brand_audit', 'brand_registry',
       'client_store_override', 'demand_mining_state', 'demand_signals',
       'dim_branch', 'dim_item', 'dim_item_price', 'dim_settlement_order_line', 'dim_transfer_out', 'dim_wholesale_out', 'metric_audit', 'metric_candidates', 'metric_change', 'metric_concept', 'metrics', 'monitor', 'monitor_run', 'narrative_runs', 'query_audit', 'query_keys', 'report_events', 'report_layout_pref', 'report_narratives', 'report_versions', 'report_views', 'reports', 'scope', 'scope_assignment', 'scope_audit', 'semantic_relation', 'verified_questions',
     ])

@@ -109,6 +109,9 @@ dataDependencies:
   - data.dim_branch
   - data.dim_item
   - data.dim_settlement_order_line
+  # 租户品牌维度（#2892）：稳定视图；消费者只读，基表 DDL 演进不破坏本模块。
+  - data.v_brand_registry
+  - data.v_brand_assignment
 
 # 通知事件声明（2026-10-27 通知基础设施 §3.1）：宿主装载期登记到 platform.event_catalog。
 # 收件人由平台解析：approvers = 本 org 持有 aftersales:manage 的用户；不可枚举时用

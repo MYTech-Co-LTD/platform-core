@@ -145,6 +145,70 @@
       "type": "text"
     }
   ],
+  "data.v_brand_assignment": [
+    {
+      "name": "brand_code",
+      "type": "text"
+    },
+    {
+      "name": "brand_enabled",
+      "type": "boolean"
+    },
+    {
+      "name": "brand_name",
+      "type": "text"
+    },
+    {
+      "name": "org",
+      "type": "text"
+    },
+    {
+      "name": "source",
+      "type": "text"
+    },
+    {
+      "name": "subject_code",
+      "type": "text"
+    },
+    {
+      "name": "subject_type",
+      "type": "text"
+    },
+    {
+      "name": "updated_at",
+      "type": "timestamp with time zone"
+    }
+  ],
+  "data.v_brand_registry": [
+    {
+      "name": "code",
+      "type": "text"
+    },
+    {
+      "name": "enabled",
+      "type": "boolean"
+    },
+    {
+      "name": "name",
+      "type": "text"
+    },
+    {
+      "name": "org",
+      "type": "text"
+    },
+    {
+      "name": "sort",
+      "type": "integer"
+    },
+    {
+      "name": "source",
+      "type": "text"
+    },
+    {
+      "name": "updated_at",
+      "type": "timestamp with time zone"
+    }
+  ],
   "platform.job_run": [
     {
       "name": "attempt",

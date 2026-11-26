@@ -9,6 +9,7 @@ import { DEFAULT_PAGE_SIZE, MAX_PAGE_SIZE, guestIdentityIds, parseIdParam, parse
 import type { ModuleHono, RouteCtx } from './context'
 import { myStoreCodes, resolveStoreAffiliation } from './affiliation'
 import { isValidDamageQuantity, MAX_DAMAGE_QUANTITY } from '../domain/ticket'
+import { resolveBrand } from '../domain/brand'
 
 /** ILIKE 的 `%` `_` 在用户输入里是通配符——转义掉，否则输入 `%` 等于匹配全部。
  *  与 `registration-guest.ts` / `masterdata.ts` 同款（三处各自定义是因为这几个文件互不 import）。 */
@@ -301,14 +302,19 @@ export function registerTicketGuest(r: ModuleHono, ctx: RouteCtx): void {
         return c.json({ error: 'ORDER_STORE_MISMATCH' }, 400)
       }
 
+      // 品牌快照（#2892）：解析顺序 product > store > 未分类；解析失败 fail-open，
+      // 只让这张单成为未分类，不阻断提单。快照后读侧不再 join。
+      const brand = await resolveBrand(client, org, body.itemCode, body.storeCode)
+
       const ins = await client.query<{ id: string }>(
         `insert into aftersales.ticket(
            org, client_request_id, submitter_openid,
            product_code, product_name, store_code, store_name,
            damage_quantity, basic_quantity, remark,
            settlement_source, settlement_order_no, settlement_item_code, settlement_line_key,
-           settlement_price_minor, settlement_bizday, store_affiliation, arrival_at)
-         values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18)
+           settlement_price_minor, settlement_bizday, store_affiliation, arrival_at,
+           brand_code, brand_name, brand_source, brand_origin)
+         values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22)
          returning id`,
         [
           org, body.clientRequestId, identity.userId,
@@ -319,6 +325,7 @@ export function registerTicketGuest(r: ModuleHono, ctx: RouteCtx): void {
           body.remark ?? '',
           settlement.source, body.orderNo, body.itemCode, body.lineKey,
           Number(settlement.price_minor), settlement.bizday, storeAffiliation, body.arrivalAt ?? null,
+          brand.code, brand.name, brand.source, brand.origin,
         ],
       )
       const ticketId = Number(ins.rows[0].id)

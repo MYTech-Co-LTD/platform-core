@@ -1,10 +1,15 @@
-// FilterBar.tsx — 状态 / 品牌胶囊（带计数）。2026-11-26 / #2884，spec §3.2。
+// FilterBar.tsx — 状态胶囊 + 动态品牌筛选（2026-11-26 / #2884，#2892 通用化）。
 //
-// 交互：点未选中的 ⇒ 选中并查询；点已选中的 ⇒ 回到「全部/取消」。这是胶囊与单选组的关键差别——
-// 用户要能「点回去」，否则选错了只能刷新页面。
+// 品牌不再有租户业务枚举：选项/名称/计数全部来自 `GET /tickets/counts`
+// （data.v_brand_registry ∪ 工单历史快照）。0/1 个品牌且无未分类时 `showFilter=false`，
+// 整行不渲染；2–4 个用胶囊，5+ 用 Select；未分类是一等选项。
 import type { ReactNode } from 'react'
-import type { Brand, TicketCounts, TicketStatus } from '../../api-types'
-import { BRAND_LABEL } from './lib/labels'
+import { Select } from 'antd'
+import type { BrandOption, TicketCounts, TicketStatus } from '../../api-types'
+
+/** 与 routes/ticket-query.ts 的 UNCLASSIFIED_BRAND 同一保留值。 */
+const UNCLASSIFIED = '__unclassified__'
+const PILL_LIMIT = 4
 
 function Pill(props: { active: boolean; onClick: () => void; children: ReactNode }) {
   return (
@@ -30,15 +35,16 @@ function Pill(props: { active: boolean; onClick: () => void; children: ReactNode
 
 export function FilterBar(props: {
   status: '' | TicketStatus
-  brand: '' | Brand
+  brand: string
   counts: TicketCounts | null
   onStatus: (v: '' | TicketStatus) => void
-  onBrand: (v: '' | Brand) => void
+  onBrand: (v: string) => void
 }) {
   const s = props.counts?.status
-  const b = props.counts?.brand
+  const brand = props.counts?.brand
+  const options: BrandOption[] = brand?.options ?? []
   const pickStatus = (v: TicketStatus): void => props.onStatus(props.status === v ? '' : v)
-  const pickBrand = (v: Exclude<Brand, ''>): void => props.onBrand(props.brand === v ? '' : v)
+  const pickBrand = (v: string): void => props.onBrand(props.brand === v ? '' : v)
 
   return (
     <div style={{ display: 'flex', gap: 20, flexWrap: 'wrap', alignItems: 'center', marginBottom: 12 }}>
@@ -54,13 +60,40 @@ export function FilterBar(props: {
           已驳回 {s?.cancelled ?? 0}
         </Pill>
       </div>
-      <div style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
-        {(['xiongmao', 'pptd'] as const).map((v) => (
-          <Pill key={v} active={props.brand === v} onClick={() => pickBrand(v)}>
-            {BRAND_LABEL[v]} {v === 'xiongmao' ? (b?.xiongmao ?? 0) : (b?.pptd ?? 0)}
-          </Pill>
-        ))}
-      </div>
+
+      {brand?.showFilter ? (
+        <div style={{ display: 'flex', gap: 6, alignItems: 'center', flexWrap: 'wrap' }}>
+          {options.length > PILL_LIMIT ? (
+            <Select
+              aria-label="品牌筛选"
+              allowClear
+              placeholder="全部品牌"
+              style={{ width: 180 }}
+              value={props.brand || undefined}
+              onChange={(v?: string) => props.onBrand(v ?? '')}
+              options={[
+                ...options.map((o) => ({ value: o.code, label: `${o.name} ${o.count}` })),
+                ...(brand.unclassified > 0
+                  ? [{ value: UNCLASSIFIED, label: `未分类 ${brand.unclassified}` }]
+                  : []),
+              ]}
+            />
+          ) : (
+            <>
+              {options.map((o) => (
+                <Pill key={o.code} active={props.brand === o.code} onClick={() => pickBrand(o.code)}>
+                  {o.name} {o.count}
+                </Pill>
+              ))}
+              {brand.unclassified > 0 ? (
+                <Pill active={props.brand === UNCLASSIFIED} onClick={() => pickBrand(UNCLASSIFIED)}>
+                  未分类 {brand.unclassified}
+                </Pill>
+              ) : null}
+            </>
+          )}
+        </div>
+      ) : null}
     </div>
   )
 }

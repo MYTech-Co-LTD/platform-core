@@ -163,26 +163,32 @@ create index if not exists aftersales_ticket_org_brand_id_idx
 
 ## 5. API
 
-### 5.1 `GET /tickets/brands`
+### 5.1 品牌选项并入 `GET /tickets/counts`（不另开端点）
+
+品牌选项与计数和状态计数来自同一个端点，避免同一份数据两条接口、两次请求：
 
 ```json
 {
-  "showFilter": true,
-  "options": [
-    { "code": "xiongmao", "name": "熊喵", "count": 120 },
-    { "code": "pptd", "name": "品品甜", "count": 80 }
-  ],
-  "unclassified": 12,
-  "degraded": false
+  "status": { "all": 212, "pending": 12, "completed": 180, "cancelled": 20 },
+  "brand": {
+    "options": [
+      { "code": "xiongmao", "name": "熊喵", "count": 120 },
+      { "code": "pptd", "name": "品品甜", "count": 80 }
+    ],
+    "unclassified": 12,
+    "showFilter": true,
+    "degraded": false
+  }
 }
 ```
 
-- `options` = `data.v_brand_registry` 的启用品牌 **∪** 工单里出现过的历史品牌（禁用品牌仍可筛）；
+- `options` = `data.v_brand_registry` 的品牌（含停用，历史可筛）**∪** 工单里出现过的历史品牌；
   名称优先字典，字典缺失回落到工单快照名；排序用 `sort`，缺失排后。
 - `count` 跟随当前 `status`（与状态胶囊语义一致）；`unclassified` 同样跟随 `status`。
 - `showFilter = options.length >= 2 || unclassified > 0`；0/1 品牌且无未分类 ⇒ `false`，
-  console 不渲染品牌行，也不发品牌计数查询。
-- 视图缺失/查询失败 ⇒ `{ showFilter:false, options:[], unclassified:0, degraded:true }`，不是 500。
+  console 不渲染品牌行。
+- 视图缺失/查询失败 ⇒ 品牌面 `{ options:[], unclassified:0, showFilter:false, degraded:true }`，
+  状态计数照常返回，不是 500。
 
 ### 5.2 `GET /tickets?brand=<code>`
 
@@ -237,6 +243,9 @@ create index if not exists aftersales_ticket_org_brand_id_idx
    - 写 `data.brand_registry`（`xiongmao/熊喵`、`pptd/品品甜`）；
    - 写 `data.brand_assignment`（`subject_type='store'`，`source='source_field'`）；
    - `brand_relation` 为空的门店用名称前缀兜底（`source='prefix'`），并计入未分配告警。
+   - **无 wuji 凭据时的引导**：`--from-dim-branch --prefix-map` 直接按 `data.dim_branch`
+     名称前缀分配（`source='prefix'`），与旧运行时行为一致；之后用 `--from-wuji` 的
+     `source_field` 覆盖（prefix 行未锁，会被更新；manual 行不会被覆盖）。
 2. `scripts/backfill-ticket-brand.mjs`（`--dry-run` / `--apply`）：
    - 只对 `brand_code=''` 的工单，按 `store_code`/`product_code` 查 `data.v_brand_assignment`；
    - 写入 `brand_code/brand_name`、`brand_source='backfill'`、`brand_origin='backfill'`；
