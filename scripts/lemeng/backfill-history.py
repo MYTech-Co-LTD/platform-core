@@ -140,14 +140,12 @@ def lake_rows(book: str, prefix: str, bizday: str) -> int:
         if sep:
             pgenv[k] = v
     glob = f"s3://{bucket}/{prefix}/system_book={book}/bizday={bizday}/**/*.parquet"
-    sql = (
-        "select duckdb.create_simple_secret('s3','%s','%s','','%s','path','','%s','','','true');\n"
-        % (
-            env.get("LEMENG_ZOS_ACCESS_KEY", ""), env.get("LEMENG_ZOS_SECRET", ""),
-            env.get("LEMENG_ZOS_REGION", ""), env.get("LEMENG_ZOS_ENDPOINT", ""),
-        )
-        + f"select * from duckdb.query($$select count(*) n from read_parquet('{glob}')$$);\n"
-    )
+    # ⚠️ 不建密钥（2026-11-26，#2883）：原实现每回读一次就 `duckdb.create_simple_secret(...)`，
+    # 而该函数**只追加不替换** ⇒ pg_duckdb 里堆到 22,817 个重复 secret，每次读湖都要线性扫它们
+    # （受控实测：20k 个时 31 个文件的 count 从 0.27s 慢到 4.13s；生产实测同批文件 5.69s → 0.66s）。
+    # pg_duckdb 的 S3 凭据是 **catalog 级**（建库时 provision、跨重启存活），读湖直接用即可；
+    # 同族先例：/opt/lemeng-backfill.sh 的「免凭据通道」也不建 secret。
+    sql = f"select * from duckdb.query($$select count(*) n from read_parquet('{glob}')$$);\n"
     p = subprocess.run(
         ["docker", "exec", "-i", "-e", "PGPASSWORD=" + pgenv.get("PGDUCK_PASSWORD", ""),
          PG_CT, "psql", "-U", pgenv.get("PGDUCK_USER", "postgres"),
