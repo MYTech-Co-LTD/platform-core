@@ -55,6 +55,7 @@ describe('#2628 数据面断言面（容器化）', () => {
       'recon_source_cover',
       'region_registered',
       'sealed_manifest',
+      'secrets',
       'swap_offset',
     ])
     // 硬断言不得混进来——否则 advisory 语义被稀释，或反之把硬判据塞进桥。
@@ -330,5 +331,32 @@ describe('#2628 数据面断言面（容器化）', () => {
     const r = await mod.checkHotPartitions(fakePool(() => [{}]) as never)
     expect(r.ok).toBe(false)
     expect(r.detail).toContain('不可解析')
+  })
+})
+
+describe('㉒ S3 密钥数守卫（#2885）', () => {
+  it('超过阈值 ⇒ ERR，且文案指名「每次调用新建」这条根因', async () => {
+    vi.resetModules()
+    const mod = await import('./warehouse-assertions.mjs')
+    const pool = fakePool(() => [{ n: 22817 }])
+    const r = await mod.checkSecrets(pool as never)
+    expect(r.ok).toBe(false)
+    expect(r.detail).toContain('22817')
+    expect(r.detail).toContain('create_simple_secret')  // 指向根因，不是只说"太多了"
+  })
+
+  it('正常值（≤5）⇒ OK；查不动 ⇒ WARN 而不是冒充「没有密钥」', async () => {
+    vi.resetModules()
+    const mod = await import('./warehouse-assertions.mjs')
+    expect((await mod.checkSecrets(fakePool(() => [{ n: 2 }]) as never)).ok).toBe(true)
+    const thrown = { calls: [], query: async () => { throw new Error('relation "pg_foreign_server" does not exist') }, end: async () => {} }
+    const r = await mod.checkSecrets(thrown as never)
+    expect(r.ok).toBe(true)
+    expect(r.verdict).toBe('WARN')
+  })
+
+  it('advisory：判红只投递、不翻 job rc（与 ⑱ 热分区同族）', async () => {
+    const { ADVISORY } = await import('./warehouse-assertions.mjs')
+    expect([...ADVISORY]).toContain('secrets')
   })
 })

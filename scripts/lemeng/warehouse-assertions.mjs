@@ -66,6 +66,10 @@ const HOT_GLOB = process.env.WIRE_HOT_GLOB
 // 2026-11-22 校准（#2668/#2636 实测）：71 个微文件 = 热腿 ~24s/tick + 每查询（350ms/文件）；
 // GC 稳态 ~20-40 个。100 的旧阈值要等 ~35s 税才红，太晚。
 const HOT_MAX_FILES = numEnv('WIRE_HOT_MAX_FILES', 60)
+// ㉒ S3 密钥数上限（2026-11-26，#2885）：pg_duckdb 的 secret 是 catalog 行，**只增不改**；
+// 每多一个，每次读湖都要多扫一遍（受控实测 31 文件：1 个 0.27s → 20k 个 4.13s）。
+// 正常值 = 建库 provision 的 1~2 个（内网/公网各一）；超过 5 说明又有代码在每次调用里新建。
+const SECRET_MAX = numEnv('WIRE_SECRET_MAX', 5)
 // ㉑ 日区 glob（湖卫生）：只从**文件名**提取日期（regexp on glob 结果），不打开任何文件。
 const DAY_GLOB = process.env.WIRE_DAY_GLOB
   ?? 's3://shanhai-data/lemeng/retail_order_line/_DAY_DATA/system_book=*/bizday=*/all.parquet'
@@ -375,6 +379,43 @@ async function checkRegionRegistered(pool) {
     return { check: 'region_registered', ok: true, detail: 'OK 全部已登记' }
   } catch (e) {
     return { check: 'region_registered', ok: false, detail: `ERR ${msg(e)}` }
+  }
+}
+
+/**
+ * ㉒ S3 密钥数守卫（2026-11-26，#2885）：`pg_foreign_server` 的 `duckdb` FDW 行数即密钥数。
+ *
+ * 为什么必须钉：`duckdb.create_simple_secret(...)` **只追加不替换**，而它曾被放在「每次回读」的路径上
+ * （夜间回填的 lake_rows），7.4 天堆到 22,817 个 ⇒ 湖读慢 8 倍（单文件 0.37s→0.06s、31 文件 5.69s→0.66s）。
+ * 这类「成本随状态线性涨、却没有任何指标」的坑今天出现了三次（密钥数 / 湖文件数 / 断言条数），
+ * 本条是其中唯一能零成本常驻钉住的一个。
+ * @param {Queryable} pool
+ */
+async function checkSecrets(pool) {
+  if (selftest('secrets')) {
+    return { check: 'secrets', ok: false, detail: 'ERR 自测注入：密钥堆积（WIRE_SECRETS_SELFTEST）' }
+  }
+  try {
+    const r = await pool.query(
+      `select count(*)::int as n from pg_foreign_server s
+         join pg_foreign_data_wrapper w on w.oid = s.srvfdw
+        where w.fdwname = 'duckdb'`,
+    )
+    const n = Number(r.rows[0]?.n ?? 0)
+    if (n > SECRET_MAX) {
+      return {
+        check: 'secrets',
+        ok: false,
+        detail: `ERR pg_duckdb 密钥 ${n} 个 > ${SECRET_MAX}——有代码在每次调用里新建 secret（只增不改），`
+          + `它会线性拖慢每一次读湖。查：grep -rn create_simple_secret scripts/ 与 /opt/*.sh`,
+      }
+    }
+    return { check: 'secrets', ok: true, detail: `OK ${n} 个（≤${SECRET_MAX}）` }
+  } catch (e) {
+    // 表/库不存在时别冒充「没有密钥」——按读不动处理（WARN，不判红）
+    return /** @type {Verdict} */ ({
+      check: 'secrets', ok: true, verdict: 'WARN', detail: `WARN 查不动 pg_foreign_server（${msg(e).slice(0, 60)}）`,
+    })
   }
 }
 
@@ -1045,6 +1086,7 @@ const ADVISORY = new Set([
   'detail_path',
   'detail_path_latency',
   'hot_partitions',
+  'secrets',
   'lake_hygiene',
 ])
 
@@ -1107,6 +1149,8 @@ export async function runAll(group = 'all') {
     // ⑤⑥⑦⑧ 读**平台 PG**（发布面），不在仓库。
     out.push(await timed(() => checkMetrics()))
     out.push(await timed(() => checkDims()))
+    // ㉒ S3 密钥数（与「湖文件数」同族：成本随状态线性涨的守卫）
+    out.push(await timed(() => checkSecrets(pool)))
     out.push(await timed(() => checkSettlementFace()))
     out.push(await timed(() => checkItemPrice()))
     // ⑩⑪⑫⑬⑯⑰⑱ 读仓库。
@@ -1225,6 +1269,7 @@ export {
   checkReconNotEvaluated,
   checkReconSourceCover,
   checkRegionRegistered,
+  checkSecrets,
   checkSealedManifest,
   checkSettlementFace,
   checkSwapOffset,
