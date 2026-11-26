@@ -52,6 +52,7 @@ lemeng/<source>_month/_MONTH/
 ```
 
 - 形态照搬零售已验证的 `lemeng/retail_order_line_month/_MONTH/system_book=<book>/month=<YM>/all.parquet`。
+- 注册表 `data.lake_compact_source(source, start_ym, system_books, contract_sha, enabled)`：父管线要把「源清单」与索引 join，而 workspace JSON 与 PG 无法在同一个 SQL 节点里 join（2026-11-26 实测），故用一张小表。
 - 新表（**不复用** `data.lake_month_index`：零售的 conflict key 是 `(system_book, ym)`，多源需要 `source`）：
 
 ```sql
@@ -110,7 +111,7 @@ select max(ym) from data.lake_compact_index
 
 **子管线 `lake.compact.month`**：逐月
 ```
-read_parquet(原始 glob, 该月谓词)
+read_parquet(原始 glob, 该月谓词) → select r.*（pg_duckdb 单列 struct 必须 r.* 展开，2026-11-26 实测）
   → qa.contract（列集/类型 == 契约；不符 ⇒ 拒写）
   → ctl.die（0 行 ⇒ 拒写，绝不写空文件）
   → snk.minio  _MONTH/v=<sha>/system_book=<book>/month=<YM>/all.parquet（overwrite，幂等）

@@ -1,0 +1,151 @@
+{
+ "name": "lake.compact.month",
+ "_note": [
+  "封版分区压缩·子：读该月原始文件 → 空月守卫 → 写 _MONTH 月文件 → 统计 → upsert 索引。",
+  "顺序不可颠倒：文件先落（k），统计与索引（st→i）排在 k 之后——索引写了而文件没写会让读侧冷腿指向不存在的对象。",
+  "⚠️ 必须用 `r.*` 展开：pg_duckdb 把 read_parquet 暴露成单列 struct，`select *` 只得到一列 r，`r['col']` 又需要逐列名单 ⇒ `select r.*` 才能通用地取到全部定型列（实测 2026-11-26）。",
+  "bizday 保留在文件体（月文件路径没有 bizday 分区）。",
+  "0 行 = 该月原始缺失，拒写（写空月文件会毁数据）。"
+ ],
+ "nodes": [
+  {
+   "id": "s",
+   "type": "source",
+   "position": {
+    "x": 0,
+    "y": 0
+   },
+   "data": {
+    "label": "读该月原始文件（pg_duckdb read_parquet，r.* 展开）",
+    "componentId": "src.postgres",
+    "properties": {
+     "connectionRef": "pgduck",
+     "mode": "sql",
+     "readOnly": true,
+     "pushdown": true,
+     "connectTimeout": 60,
+     "schemaName": "data",
+     "tableName": "lake_compact_index",
+     "sql": "select r.* from read_parquet('${ITER_ITEM_GLOB_PATH}') r"
+    }
+   }
+  },
+  {
+   "id": "g",
+   "type": "transform",
+   "position": {
+    "x": 260,
+    "y": 0
+   },
+   "data": {
+    "label": "空月守卫（0 行=原始缺失，拒写）",
+    "componentId": "ctl.die",
+    "properties": {
+     "condition": "no-rows",
+     "message": "lake.compact: source=${ITER_ITEM_SOURCE} system_book=${ITER_ITEM_SYSTEM_BOOK} month=${ITER_ITEM_YM} 读到 0 行——写空月文件会毁数据，拒绝"
+    }
+   }
+  },
+  {
+   "id": "k",
+   "type": "sink",
+   "position": {
+    "x": 520,
+    "y": 0
+   },
+   "data": {
+    "label": "月文件 → _MONTH/",
+    "componentId": "snk.minio",
+    "properties": {
+     "connectionRef": "zos",
+     "bucket": "${ENV:ZOS_BUCKET}",
+     "key": "lemeng/${ITER_ITEM_SOURCE}_month/_MONTH/v=${ITER_ITEM_CONTRACT_SHA}/system_book=${ITER_ITEM_SYSTEM_BOOK}/month=${ITER_ITEM_YM}/all.parquet",
+     "format": "parquet",
+     "mode": "overwrite",
+     "compression": "zstd"
+    }
+   }
+  },
+  {
+   "id": "st",
+   "type": "transform",
+   "position": {
+    "x": 780,
+    "y": 0
+   },
+   "data": {
+    "label": "月统计（行数/边界）",
+    "componentId": "code.sql",
+    "properties": {
+     "sql": "select '${ITER_ITEM_SOURCE}' as source, cast('${ITER_ITEM_SYSTEM_BOOK}' as integer) as system_book, '${ITER_ITEM_YM}' as ym, count(*)::bigint as rows, null::bigint as bytes, min(bizday) as min_bizday, max(bizday) as max_bizday, '${ITER_ITEM_CONTRACT_SHA}' as contract_sha, 'lemeng/${ITER_ITEM_SOURCE}_month/_MONTH/v=${ITER_ITEM_CONTRACT_SHA}/system_book=${ITER_ITEM_SYSTEM_BOOK}/month=${ITER_ITEM_YM}/all.parquet' as object_key, now() as built_at from input"
+    }
+   }
+  },
+  {
+   "id": "i",
+   "type": "sink",
+   "position": {
+    "x": 1040,
+    "y": 0
+   },
+   "data": {
+    "label": "upsert data.lake_compact_index",
+    "componentId": "snk.postgres",
+    "properties": {
+     "connectionRef": "pgduck",
+     "schemaName": "data",
+     "tableName": "lake_compact_index",
+     "mode": "upsert",
+     "conflictColumns": [
+      "source",
+      "system_book",
+      "ym"
+     ],
+     "connectTimeout": 30
+    }
+   }
+  }
+ ],
+ "edges": [
+  {
+   "id": "e_s_g",
+   "source": "s",
+   "target": "g",
+   "sourceHandle": "main",
+   "targetHandle": "main",
+   "data": {
+    "connectionType": "main"
+   }
+  },
+  {
+   "id": "e_g_k",
+   "source": "g",
+   "target": "k",
+   "sourceHandle": "main",
+   "targetHandle": "main",
+   "data": {
+    "connectionType": "main"
+   }
+  },
+  {
+   "id": "e_k_st",
+   "source": "k",
+   "target": "st",
+   "sourceHandle": "main",
+   "targetHandle": "main",
+   "data": {
+    "connectionType": "main"
+   }
+  },
+  {
+   "id": "e_st_i",
+   "source": "st",
+   "target": "i",
+   "sourceHandle": "main",
+   "targetHandle": "main",
+   "data": {
+    "connectionType": "main"
+   }
+  }
+ ]
+}
