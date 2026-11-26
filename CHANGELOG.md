@@ -11,6 +11,10 @@
 
 ## [Unreleased]
 
+## [0.398.0](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.397.0...v0.398.0) - 2026-11-26
+- 【新增】data: 压缩记账档补四条断言（索引连续 / 滞后 / 逐月 parity） ([#2882](https://github.com/MYTech-Co-LTD/platform-core/pull/2882), [cdad950](https://github.com/MYTech-Co-LTD/platform-core/commit/cdad95080b01b190a05456d7e481ce1fdd9f7026))
+
+
 ## [0.397.0](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.396.0...v0.397.0) - 2026-11-26
 - 【新增】dbt: business_collection_receive 切两腿读（冷腿 _MONTH / 活跃腿按月裁剪） ([#2878](https://github.com/MYTech-Co-LTD/platform-core/pull/2878), [773b80a](https://github.com/MYTech-Co-LTD/platform-core/commit/773b80aed155d6b78417e0b21aa1a383c111dc80))
 
