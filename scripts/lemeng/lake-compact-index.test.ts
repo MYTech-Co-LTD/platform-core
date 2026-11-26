@@ -2,7 +2,7 @@
 // 判据只钉**形状**：月份连续无洞、key 与 duckle 搬运管线逐字一致（两边不一致 ⇒ 读侧指向不存在的对象）。
 import { describe, expect, it } from 'vitest'
 import {
-  lastMonth, monthObjectKey, monthObjectUrl, monthsBetween, rawMonthGlob,
+  lagMonths, lastMonth, missingMonths, monthObjectKey, monthObjectUrl, monthsBetween, rawMonthGlob,
 } from './lake-compact-index.mjs'
 
 describe('lake-compact-index · 月份枚举', () => {
@@ -33,5 +33,20 @@ describe('lake-compact-index · key 形状', () => {
       .toBe('s3://shanhai-data/lemeng/x_month/_MONTH/v=abcd1234/system_book=64188/month=2026-09/all.parquet')
     expect(rawMonthGlob({ source: 'x', book: 64188, ym: '2026-09' }))
       .toBe('s3://shanhai-data/lemeng/x/system_book=64188/bizday=2026-09-*/all.parquet')
+  })
+})
+
+describe('lake-compact-index · 断言（§7 ①②）', () => {
+  it('连续性：中间缺月必须被点名', () => {
+    expect(missingMonths({ start_ym: '2026-06', last_ym: '2026-10', have: ['2026-06', '2026-07', '2026-09', '2026-10'] }))
+      .toEqual(['2026-08'])
+    expect(missingMonths({ start_ym: '2026-06', last_ym: '2026-08', have: ['2026-06', '2026-07', '2026-08'] })).toEqual([])
+  })
+
+  it('滞后：上月未压（lag=1）可接受，缺两个月才红', () => {
+    const now = new Date('2026-11-26T19:40:00Z') // 上月 = 2026-10
+    expect(lagMonths({ last_ok_ym: '2026-10', now })).toBe(0)
+    expect(lagMonths({ last_ok_ym: '2026-09', now })).toBe(1)
+    expect(lagMonths({ last_ok_ym: '2026-08', now })).toBe(2)
   })
 })

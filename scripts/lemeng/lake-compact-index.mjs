@@ -87,6 +87,28 @@ export function monthsBetween({ start_ym, until }) {
   return out
 }
 
+/**
+ * 索引连续性：从 start_ym 到最后一个 ok 月，中间不许有洞。
+ * 洞 = 父管线以为「该压」但索引里既没有 ok 也没有 empty 行 ⇒ 冷腿会漏一整个月（静默少数据）。
+ * @param {{start_ym: string, last_ym: string, have: string[]}} a
+ * @returns {string[]} 缺失月份
+ */
+export function missingMonths({ start_ym, last_ym, have }) {
+  const set = new Set(have)
+  return monthsBetween({ start_ym, until: last_ym }).filter((ym) => !set.has(ym))
+}
+
+/**
+ * 记账滞后判据：索引里最大的 ok 月与「上月」之间允许的滞后（月数）。
+ * 1 = 允许「上月还没压完」（常态是当晚压完；连续两晚失败才算红）。
+ * @param {{last_ok_ym: string, now?: Date}} a
+ * @returns {number} 滞后月数（0 = 跟上）
+ */
+export function lagMonths({ last_ok_ym, now = new Date() }) {
+  const all = monthsBetween({ start_ym: last_ok_ym, until: lastMonth(now) })
+  return Math.max(0, all.length - 1)
+}
+
 /** 上一个自然月（UTC 口径，与 job 的 CST 03:40 排班兼容：此时上月已封）。 */
 export function lastMonth(now = new Date()) {
   const d = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), 1))
@@ -121,6 +143,17 @@ export async function monthStats(pool, url) {
 }
 
 /**
+ * 原始月**行数**（parity 用；比文件数贵，但一个月只有几十个文件）。
+ * @param {Db} pool
+ * @param {string} glob
+ * @returns {Promise<number>}
+ */
+export async function rawRowCount(pool, glob) {
+  const rows = await duck(pool, `select count(*)::bigint as n from read_parquet('${glob}')`)
+  return Number(rows[0]?.n ?? 0)
+}
+
+/**
  * @param {Db} pool
  * @param {string} glob
  * @returns {Promise<number>}
@@ -132,6 +165,7 @@ export async function rawFileCount(pool, glob) {
 
 async function main() {
   const dry = process.argv.includes('--dry-run')
+  const noParity = process.argv.includes('--no-parity')
   const limArg = process.argv.indexOf('--limit')
   const limit = limArg > -1 ? Number(process.argv[limArg + 1]) : 200
   const dbUrl = process.env.DATABASE_URL
@@ -144,6 +178,8 @@ async function main() {
   let written = 0
   let skipped = 0
   let failed = 0
+  /** @type {Array<Record<string, unknown>>} */
+  const parity = []
   try {
     const srcs = await w.query(`select source, start_ym, system_books, contract_sha from data.lake_compact_source where enabled order by source`)
     for (const s of srcs.rows) {
@@ -171,11 +207,48 @@ async function main() {
             continue
           }
           const status = st.rows > 0 ? 'ok' : 'empty'
+          // ③ parity：月文件 vs 原始同月（行数必须**精确**相等；金额比较留给既有 audit）
+          if (!noParity && st.rows > 0) {
+            const rawN = await rawRowCount(w, rawMonthGlob({ source: s.source, book, ym }))
+            if (rawN !== st.rows) {
+              parity.push({ source: s.source, book, ym, month: st.rows, raw: rawN })
+              console.log(JSON.stringify({ event: 'parity_mismatch', source: s.source, book, ym, month: st.rows, raw: rawN }))
+              continue // 不写索引（写了会让冷腿指向一个行数不对的月）
+            }
+          }
           if (!dry) await upsert(w, { source: s.source, book, ym, rows: st.rows, min: st.min, max: st.max, sha: s.contract_sha, key, status })
           written += 1
           console.log(JSON.stringify({ event: status, source: s.source, book, ym, rows: st.rows, min: st.min, max: st.max }))
         }
       }
+    }
+    // ── 断言（§7 的 ①②③；④ 由既有 audit 承担）────────────────────────────────
+    const problems = []
+    for (const s of srcs.rows) {
+      for (const book of s.system_books) {
+        const idx = await w.query(
+          `select ym, status, built_at from data.lake_compact_index
+            where source=$1 and system_book=$2 and contract_sha=$3 order by ym`,
+          [s.source, book, s.contract_sha],
+        )
+        if (idx.rows.length === 0) continue // 尚未开压，不是错
+        const have = idx.rows.map((/** @type {any} */ r) => r.ym)
+        const lastOk = idx.rows.filter((/** @type {any} */ r) => r.status === 'ok').map((/** @type {any} */ r) => r.ym).pop()
+        // ① 连续性（到最后一个 ok 月；更晚的缺口属于「还没跑」）
+        if (lastOk) {
+          const gap = missingMonths({ start_ym: s.start_ym, last_ym: lastOk, have })
+          if (gap.length) problems.push({ check: 'contiguous', source: s.source, book, gap })
+          // ② 滞后
+          const lag = lagMonths({ last_ok_ym: lastOk })
+          if (lag > 1) problems.push({ check: 'lag', source: s.source, book, lastOk, lag })
+        }
+      }
+    }
+    for (const pr of parity) problems.push({ check: 'parity', ...pr })
+    for (const pr of problems) console.log(JSON.stringify({ event: 'assert_failed', ...pr }))
+    if (problems.length && !dry) {
+      console.error(JSON.stringify({ event: 'error', message: `${problems.length} 条压缩断言失败`, problems: problems.map((x) => x.check) }))
+      process.exitCode = 1
     }
   } finally {
     await w.end().catch(() => {})
