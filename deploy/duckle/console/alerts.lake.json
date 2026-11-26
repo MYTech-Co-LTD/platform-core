@@ -1,0 +1,26 @@
+{
+ "_note": [
+  "lake（湖封版分区压缩，#2868/#2869）的引擎原生告警规则。seed 进 3120 console workspace 卷的",
+  "`/workspace/alerts.json`（与 pipelines/ schedules/ 同路；不在 pipelines/ 里）。",
+  "",
+  "① 覆盖面：只覆盖 `lake.compact` 这一条排班管线的 failure/recovery。子管线 `lake.compact.month`",
+  "   不单独排班，它的失败会以父管线 run 的 error 形式暴露（父的 ctl.foreach 是 continueOnFailure=false）。",
+  "② match 用**精确 id**：将来加压缩相关管线时逐条加规则，不用通配把未来的管线静默纳入。",
+  "③ channel/url/headers 三处与 alerts.lemeng.json 逐字一致（OO 转投，凭据走 ${ENV:OO_*} 插值）。",
+  "④ 记账 job（平台调度 `data.lake_compact_index`）不在本文件范围——它走平台 job 通知，不走 duckle 告警。",
+  "",
+  "字段语义与冷却计法见 deploy/duckle/console/README.md §引擎原生告警（机制正文唯一出处）。"
+ ],
+ "rules": [
+  {
+   "match": "lake.compact",
+   "on": ["failure", "recovery"],
+   "cooldownMinutes": 30,
+   "channel": {
+    "channel": "webhook",
+    "url": "${ENV:OO_BASE}/api/${ENV:OO_ORG}/data_alerts/_json",
+    "headers": { "Authorization": "Basic ${ENV:OO_AUTH}", "Content-Type": "application/json" }
+   }
+  }
+ ]
+}
