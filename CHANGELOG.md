@@ -11,6 +11,10 @@
 
 ## [Unreleased]
 
+## [0.400.0](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.399.1...v0.400.0) - 2026-11-26
+- 【新增】data: 台账当夜自愈——补上断言 ⑪ 只读留下的洞 ([#2895](https://github.com/MYTech-Co-LTD/platform-core/pull/2895), [30615a6](https://github.com/MYTech-Co-LTD/platform-core/commit/30615a6506d100e94f556b1ff930bfc9442afec1))
+
+
 ## [0.399.1](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.399.0...v0.399.1) - 2026-11-26
 - 【修复】scheduler: recon_run 台账归到对账档——主档一超时就停摆 ([#2891](https://github.com/MYTech-Co-LTD/platform-core/pull/2891), [86b159d](https://github.com/MYTech-Co-LTD/platform-core/commit/86b159d62865a7b8125015d27fa3d1dd79d43161))
 
