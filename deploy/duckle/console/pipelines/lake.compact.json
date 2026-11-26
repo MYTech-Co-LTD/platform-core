@@ -4,7 +4,7 @@
   "封版分区压缩·父（C 设计，2026-11-26）：从 data.lake_compact_source × data.lake_compact_index 算出待压 (source, system_book, 月)，ctl.foreach 逐月驱动子管线。",
   "待压 = start_ym..上月 中，索引里没有该 (source, book, ym, contract_sha) 的月；正常一天只补上月与缺口。",
   "0 个待压 = 正常 noop，不判红。",
-  "glob_path 在父管线里拼好（桶名取 data.lake_config）：子管线只收 ${ITER_ITEM_GLOB_PATH}——ENV 在 SQL 里不展开（实测）。",
+  "key 在父管线里拼好（不含 s3://）：子管线用 src.minio 的 bucket+key 原生读（比 pg_duckdb 快一个量级：17k 行 0.8s vs 9.9s，实测）。",
   "限 24 条/轮：回填时按批推进，避免单轮跑几小时把执行器占住。"
  ],
  "nodes": [
@@ -26,7 +26,7 @@
      "connectTimeout": 30,
      "schemaName": "data",
      "tableName": "lake_compact_source",
-     "sql": "with cfg as (\n  select s.source, s.start_ym, s.contract_sha, unnest(s.system_books) as system_book\n  from data.lake_compact_source s where s.enabled\n),\nmonths as (\n  select c.source, c.system_book, c.contract_sha, strftime(m, '%Y-%m') as ym\n  from cfg c,\n       generate_series(cast(strptime(c.start_ym || '-01', '%Y-%m-%d') as date),\n                       date_trunc('month', (now() at time zone 'Asia/Shanghai')::date) - interval '1 day',\n                       interval '1 month') as t(m)\n),\npending as (\n  select m.source, m.system_book, m.ym, m.contract_sha\n  from months m\n  left join data.lake_compact_index i\n    on i.source = m.source and i.system_book = m.system_book\n   and i.ym = m.ym and i.contract_sha = m.contract_sha\n  where i.source is null\n)\nselect source, system_book, ym, contract_sha,\n       's3://' || (select value from data.lake_config where key = 'zos_bucket')\n       || '/lemeng/' || source || '/system_book=' || system_book || '/bizday=' || ym || '-*/all.parquet' as glob_path\nfrom pending\norder by source, system_book, ym\nlimit 24"
+     "sql": "with cfg as (\n  select s.source, s.start_ym, s.contract_sha, unnest(s.system_books) as system_book\n  from data.lake_compact_source s where s.enabled\n),\nmonths as (\n  select c.source, c.system_book, c.contract_sha, strftime(m, '%Y-%m') as ym\n  from cfg c,\n       generate_series(cast(strptime(c.start_ym || '-01', '%Y-%m-%d') as date),\n                       date_trunc('month', (now() at time zone 'Asia/Shanghai')::date) - interval '1 day',\n                       interval '1 month') as t(m)\n),\npending as (\n  select m.source, m.system_book, m.ym, m.contract_sha\n  from months m\n  left join data.lake_compact_index i\n    on i.source = m.source and i.system_book = m.system_book\n   and i.ym = m.ym and i.contract_sha = m.contract_sha\n  where i.source is null\n)\nselect source, system_book, ym, contract_sha,\n       'lemeng/' || source || '/system_book=' || system_book || '/bizday=' || ym || '-*/all.parquet' as key\nfrom pending\norder by source, system_book, ym\nlimit 24"
     }
    }
   },
