@@ -85,7 +85,7 @@ describe('sla-check · 判据', () => {
       ['src.b', new Date('2026-11-25T02:00:00Z')],
     ])
     const r = computeReport(CONFIG, clocks({ jobs, console }))
-    const p = r.products.find((x) => x.product === 'nonretail_1h.purchase')!
+    const p = r.products.find((x) => x.product === 'nonretail_1h.purchase')!!
     expect(p.verdict).toBe('OK')
     expect(p.lagSourceToBuildMs).toBe(55 * 60_000) // 02:00 → 02:55
   })
@@ -154,7 +154,7 @@ describe('sla-check · 窗口起步宽限（2026-11-26）', () => {
       },
     },
   }
-  const mk = (now, built, source) => ({
+  const mk = (now: Date, built: Date, source: Date) => ({
     now, jobs: new Map([['data.dbt_hourly_purchase', built]]),
     hotRunTokens: [], consoleLastOk: new Map([['src.a', source]]),
   })
@@ -168,7 +168,7 @@ describe('sla-check · 窗口起步宽限（2026-11-26）', () => {
   it('★ 09:00 整点：昨天那次 build 的 age 不再判红（原来是 588m > 120m 的假红）', () => {
     const now = new Date('2026-11-25T01:00:00Z') // 09:00 CST
     const r = computeReport(cfg, mk(now, new Date('2026-11-24T18:30:00Z'), new Date('2026-11-25T00:20:00Z')))
-    const p = r.products.find((x) => x.product === 'nonretail_1h.purchase')
+    const p = r.products.find((x) => x.product === 'nonretail_1h.purchase')!
     expect(p.verdict).toBe('SKIP')
     expect(p.detail).toContain('起步宽限')
   })
@@ -176,6 +176,6 @@ describe('sla-check · 窗口起步宽限（2026-11-26）', () => {
   it('宽限期过后（10:20，已过 80m > 70m）同样的 age 照常判红——宽限只挡窗口起点', () => {
     const now = new Date('2026-11-25T02:20:00Z') // 10:20 CST
     const r = computeReport(cfg, mk(now, new Date('2026-11-24T18:30:00Z'), new Date('2026-11-25T00:20:00Z')))
-    expect(r.products.find((x) => x.product === 'nonretail_1h.purchase').verdict).toBe('ERR')
+    expect(r.products.find((x) => x.product === 'nonretail_1h.purchase')!.verdict).toBe('ERR')
   })
 })
