@@ -11,6 +11,10 @@
 
 ## [Unreleased]
 
+## [0.393.0](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.392.0...v0.393.0) - 2026-11-26
+- 【新增】aftersales: 我的工单页对齐源设计——骨架屏/折叠筛选/卡片分区/详情弹窗（视觉收敛） ([#2871](https://github.com/MYTech-Co-LTD/platform-core/pull/2871), [e89d6a3](https://github.com/MYTech-Co-LTD/platform-core/commit/e89d6a33bf61f66d63fba52f208e52a6fb2a282b))
+
+
 ## [0.392.0](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.391.4...v0.392.0) - 2026-11-26
 - 【新增】aftersales: 提交页产品重构——三卡合一/单店免选/原因快捷标签/提交前摘要 ([#2865](https://github.com/MYTech-Co-LTD/platform-core/pull/2865), [50d5d69](https://github.com/MYTech-Co-LTD/platform-core/commit/50d5d69cf3d12ef81c226f5c831c2e55678e6ef5))
 - 【修复】dbt: staging 列级测试限窗 30 天，日档成本不再随历史增长（B） ([#2863](https://github.com/MYTech-Co-LTD/platform-core/pull/2863), [517d0c2](https://github.com/MYTech-Co-LTD/platform-core/commit/517d0c2dd03b43e9f84404b3ea269540db5fd18a))
