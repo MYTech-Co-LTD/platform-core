@@ -11,6 +11,10 @@
 
 ## [Unreleased]
 
+## [0.394.0](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.393.0...v0.394.0) - 2026-11-26
+- 【新增】aftersales: 图片上传前客户端压缩（2048/q0.85）+ 上限按类型分档 ([#2874](https://github.com/MYTech-Co-LTD/platform-core/pull/2874), [8fd56e7](https://github.com/MYTech-Co-LTD/platform-core/commit/8fd56e7c9710f4e68954fe47823379d81760864d))
+
+
 ## [0.393.0](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.392.0...v0.393.0) - 2026-11-26
 - 【新增】aftersales: 我的工单页对齐源设计——骨架屏/折叠筛选/卡片分区/详情弹窗（视觉收敛） ([#2871](https://github.com/MYTech-Co-LTD/platform-core/pull/2871), [e89d6a3](https://github.com/MYTech-Co-LTD/platform-core/commit/e89d6a33bf61f66d63fba52f208e52a6fb2a282b))
 
