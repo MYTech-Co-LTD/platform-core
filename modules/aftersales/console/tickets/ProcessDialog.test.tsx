@@ -1,4 +1,4 @@
-// ProcessDialog.test.tsx — 三种 amountType 的提交体形状 + ★「提交前无任何金额」+ 409 分支
+// ProcessDialog.test.tsx — 三路提交体 / 服务端金额预览 / 409 分支（2026-11-26 重写，#2884）。
 import '@testing-library/jest-dom/vitest'
 import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
@@ -8,73 +8,153 @@ import { platformFetch } from '@platform/sdk/web'
 import { ProcessDialog } from './ProcessDialog'
 
 const m = vi.mocked(platformFetch)
-const sends: Array<{ url: string; body: unknown }> = []
+const sends: Array<{ url: string; body: Record<string, unknown> }> = []
+const quotes: Array<Record<string, unknown>> = []
 
 function json(body: unknown, status = 200): Response {
   return new Response(JSON.stringify(body), { status, headers: { 'content-type': 'application/json' } })
 }
 
+const detail = {
+  id: 7,
+  code: 'AS-00000007',
+  status: 'pending',
+  product_name: '苹果',
+  store_name: '一号店',
+  damage_quantity: 2,
+  basic_quantity: 15,
+  basic_unit_price_minor: 450,
+  settlement_price_minor: 450,
+  damage_amount_minor: 900,
+  related_order: '',
+  arrival_at: null,
+  attachments: [],
+}
+
+const rules = {
+  items: [
+    { id: 1, name: '全额', refundRatio: 0, remark: null, createdAt: '' },
+    { id: 2, name: '一成', refundRatio: 0.1, remark: null, createdAt: '' },
+  ],
+  total: 2,
+  page: 1,
+  size: 100,
+}
+
 beforeEach(() => {
   sends.length = 0
+  quotes.length = 0
   m.mockReset()
   m.mockImplementation(async (url: string, init?: RequestInit) => {
-    if (init?.method === 'POST') {
-      sends.push({ url, body: JSON.parse(String(init.body)) })
-      return json({ ok: true, id: 7, status: 'completed', amountType: 'ratio', amountMinor: 12345 })
+    if (url.includes('/quote')) {
+      const body = JSON.parse(String(init?.body)) as Record<string, unknown>
+      quotes.push(body)
+      const fixed = body.amountType === 'fixed'
+      return json({
+        status: 'completed',
+        amountType: body.amountType,
+        amountMinor: fixed ? body.amountMinor : 225,
+        refundRatio: fixed ? null : body.refundRatio,
+        damageAmountMinor: 900,
+      })
     }
+    if (url.includes('/process')) {
+      sends.push({ url, body: JSON.parse(String(init?.body)) as Record<string, unknown> })
+      return json({ ok: true, id: 7, status: 'completed', amountType: 'ratio', amountMinor: 225 })
+    }
+    if (url.includes('/tickets/7')) return json(detail)
+    if (url.includes('/rules')) return json(rules)
     return json({ error: 'NOT_FOUND' }, 404)
   })
 })
 afterEach(cleanup)
 
-function open() {
-  render(<ProcessDialog ticketId={7} open onClose={() => {}} onDone={() => {}} />)
+function open(onConflict = vi.fn()) {
+  render(
+    <ProcessDialog
+      ticketId={7}
+      open
+      onClose={() => {}}
+      onDone={() => {}}
+      onConflict={onConflict}
+    />,
+  )
+  return onConflict
+}
+
+/** 按标签选比例：antd Select 用 mousedown 打开（实测有效的驱动方式）。 */
+async function pickRatio(label: string): Promise<void> {
+  await waitFor(() => expect(screen.getByRole('combobox')).toBeInTheDocument())
+  fireEvent.mouseDown(screen.getByRole('combobox'))
+  fireEvent.click(await screen.findByText(label))
+}
+
+function fillOpinion(text = '外观破损'): void {
+  fireEvent.change(screen.getByLabelText('售后意见'), { target: { value: text } })
 }
 
 describe('ProcessDialog', () => {
-  it('ratio：提交体是 { amountType: ratio, refundRatio }（不带空备注）', async () => {
+  it('ratio：提交体带 refundRatio / opinion / watermarkAt（不再带 remark）', async () => {
     open()
-    fireEvent.click(screen.getByText('按比例退款'))
-    fireEvent.change(screen.getByLabelText('退款比例'), { target: { value: '0.5' } })
+    await pickRatio('10%')
+    fillOpinion()
     fireEvent.click(screen.getByRole('button', { name: /提\s*交/ }))
     await waitFor(() => expect(sends.length).toBe(1))
     expect(sends[0]!.url).toBe('/api/modules/aftersales/tickets/7/process')
-    expect(sends[0]!.body).toEqual({ amountType: 'ratio', refundRatio: 0.5 })
+    expect(sends[0]!.body).toMatchObject({ amountType: 'ratio', refundRatio: 0.1, opinion: '外观破损' })
+    expect(sends[0]!.body.watermarkAt).toMatch(/^\d{4}-\d{2}-\d{2}$/)
+    expect(sends[0]!.body).not.toHaveProperty('remark')
   })
 
-  it('★ 提交前【不出现】任何金额；提交后展示的是服务端返回的金额', async () => {
+  it('★ 金额只来自服务端：选比例后出现预览值，前端不写公式', async () => {
     open()
-    fireEvent.click(screen.getByText('按比例退款'))
-    fireEvent.change(screen.getByLabelText('退款比例'), { target: { value: '0.5' } })
-    // 填了比例之后、提交之前：页面上不该有任何 ¥ 金额（前端不引入第二份金额公式）
-    expect(screen.queryByText(/¥/)).toBeNull()
-    fireEvent.click(screen.getByRole('button', { name: /提\s*交/ }))
-    // 服务端返回 12345 分 ⇒ 展示 ¥123.45
-    await waitFor(() => expect(screen.getByText(/¥123\.45/)).toBeInTheDocument())
+    expect(screen.queryByText('¥2.25')).toBeNull()
+    await pickRatio('10%')
+    await waitFor(() => expect(screen.getByText('¥2.25')).toBeInTheDocument())
+    expect(quotes.at(-1)).toEqual({ amountType: 'ratio', refundRatio: 0.1 })
   })
 
-  it('fixed：提交体是 { amountType: fixed, amountMinor }（操作员填元，换算成整数分）', async () => {
+  it('fixed：操作员填元，提交换算成整数分', async () => {
     open()
-    fireEvent.click(screen.getByText('固定金额退款'))
-    fireEvent.change(screen.getByLabelText('退款金额（元）'), { target: { value: '12.34' } })
-    fireEvent.click(screen.getByRole('button', { name: /提\s*交/ }))
-    await waitFor(() => expect(sends.length).toBe(1))
-    expect(sends[0]!.body).toEqual({ amountType: 'fixed', amountMinor: 1234 })
-  })
-
-  it('reject：只带 amountType（无备注时不带 remark 键）', async () => {
-    open()
-    fireEvent.click(screen.getByText('驳回'))
+    await screen.findByText('处理工单 AS-00000007')
+    fireEvent.click(screen.getByText('固定金额'))
+    fireEvent.change(screen.getByRole('spinbutton'), { target: { value: '8.34' } })
+    fillOpinion()
     fireEvent.click(screen.getByRole('button', { name: /提\s*交/ }))
     await waitFor(() => expect(sends.length).toBe(1))
-    expect(sends[0]!.body).toEqual({ amountType: 'reject' })
+    expect(sends[0]!.body).toMatchObject({ amountType: 'fixed', amountMinor: 834, opinion: '外观破损' })
   })
 
-  it('409 ALREADY_PROCESSED → 明确提示「已被他人处理」，不是笼统报错', async () => {
-    m.mockImplementation(async () => json({ error: 'ALREADY_PROCESSED' }, 409))
+  it('reject：带 amountType + 必填事实', async () => {
     open()
+    await screen.findByText('处理工单 AS-00000007')
     fireEvent.click(screen.getByText('驳回'))
+    fillOpinion()
+    fireEvent.click(screen.getByRole('button', { name: /提\s*交/ }))
+    await waitFor(() => expect(sends.length).toBe(1))
+    expect(sends[0]!.body).toMatchObject({ amountType: 'reject', opinion: '外观破损' })
+  })
+
+  it('意见为空 ⇒ 提交按钮禁用（必填）', async () => {
+    open()
+    await screen.findByText('处理工单 AS-00000007')
+    fireEvent.click(screen.getByText('驳回'))
+    expect(screen.getByRole('button', { name: /提\s*交/ })).toBeDisabled()
+  })
+
+  it('409 ALREADY_PROCESSED → 明确提示「已被他人处理」并刷新', async () => {
+    m.mockImplementation(async (url: string, init?: RequestInit) => {
+      if (url.includes('/process')) return json({ error: 'ALREADY_PROCESSED' }, 409)
+      if (url.includes('/tickets/7')) return json(detail)
+      if (url.includes('/rules')) return json(rules)
+      return json({ amountMinor: 0, damageAmountMinor: 900 }, 200)
+    })
+    const onConflict = open()
+    await screen.findByText('处理工单 AS-00000007')
+    fireEvent.click(screen.getByText('驳回'))
+    fillOpinion()
     fireEvent.click(screen.getByRole('button', { name: /提\s*交/ }))
     await waitFor(() => expect(screen.getByText(/已被他人处理/)).toBeInTheDocument())
+    expect(onConflict).toHaveBeenCalled()
   })
 })

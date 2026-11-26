@@ -14,7 +14,9 @@ describe('manifest（不需要数据库）', () => {
     const raw = parseYaml(readFileSync(new URL('./manifest.yaml', import.meta.url), 'utf8'))
     const m = ManifestSchema.parse(raw)
     expect(m.id).toBe('aftersales')
-    expect(m.permissions.map((p) => p.code).sort()).toEqual(['aftersales:guest', 'aftersales:manage'])
+    // 2026-11-26（#2884）：批量删除单独发码（默认无人持有）。
+    expect(m.permissions.map((p) => p.code).sort())
+      .toEqual(['aftersales:delete', 'aftersales:guest', 'aftersales:manage'])
     expect(m.guest?.scope).toBe('aftersales:guest')
     expect(m.migrations?.dir).toBe('./migrations')
     // M3c：声明租户级存储能力（宿主据此挂投影中间件；不声明 ⇒ c.get(TENANT_STORAGE) 恒 undefined）

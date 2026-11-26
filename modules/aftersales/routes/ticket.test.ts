@@ -148,6 +148,11 @@ describePg('工单域', () => {
     remark: '摔坏了',
   })
 
+  /** 2026-11-26（#2884）：处理必须带 opinion + watermarkAt；remark 不再由处理写入。 */
+  const processBody = (extra: Record<string, unknown>) => ({
+    opinion: '处理意见', watermarkAt: '2026-11-26', ...extra,
+  })
+
   it('访客提交工单 ⇒ 201，引用与冻结价被【快照】下来，状态 pending、金额类型暂空', async () => {
     const res = await submit(appGuest, validBody('req-snap'))
     expect(res.status).toBe(201)
@@ -159,6 +164,7 @@ describePg('工单域', () => {
       `select product_name, store_name, product_code, store_code,
               settlement_source, settlement_order_no, settlement_item_code, settlement_line_key,
               settlement_price_minor, settlement_bizday::text as settlement_bizday,
+              damage_quantity, basic_quantity,
               amount_type, amount_minor, submitter_openid
          from aftersales.ticket where org = $1 and id = $2`,
       [ORG, body.id],
@@ -178,6 +184,9 @@ describePg('工单域', () => {
       submitter_openid: 'openid-alice',
     })
     expect(row.rows[0].settlement_bizday).not.toBeNull()
+    // 2026-11-26（#2884）：建单时把结算行数量冻进 basic_quantity（夹具 MO 行 quantity = 30）。
+    expect(Number(row.rows[0].damage_quantity)).toBe(30)
+    expect(Number(row.rows[0].basic_quantity)).toBe(30)
   })
 
   it('【P0 回归】中文自然键（乐檬真实形状）：门店「凤庆01」+ 中文商品码能正常提单（#2795）', async () => {
@@ -371,7 +380,7 @@ describePg('工单域', () => {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
       // 刻意塞一个 amountMinor 想让服务端采信——ratio 路必须无视它
-      body: JSON.stringify({ amountType: 'ratio', refundRatio: 0.1, amountMinor: 999999 }),
+      body: JSON.stringify(processBody({ amountType: 'ratio', refundRatio: 0.1, amountMinor: 999999 })),
     })
     expect(res.status).toBe(200)
 
@@ -379,13 +388,13 @@ describePg('工单域', () => {
       'select status, amount_type, amount_minor, refund_ratio, processed_at from aftersales.ticket where org = $1 and id = $2',
       [ORG, id],
     )
-    // (30 − 0×0.1) × 500 分 = 15000 分——单价来源 = settlement_price_minor（500）；
-    // basic_quantity 新单冻结 0 ⇒ **比例项退化为 no-op**（dim_item 无免赔基数位，
-    // 业务语义变化已在 PR 显式声明：金额 = 报损 × 结算价，免赔门槛暂消失）
+    // (30 − 30×0.1) × 500 分 = 13500 分——单价来源 = settlement_price_minor（500）；
+    // 2026-11-26 起 basic_quantity 在建单时冻结结算行数量（本夹具 = 30）⇒ 比例真正生效
+    // （旧行为是 basic_quantity 恒 0，比例项退化为 no-op）。
     expect(row.rows[0]).toMatchObject({
       status: 'completed',
       amount_type: 'ratio',
-      amount_minor: '15000',
+      amount_minor: '13500',
       refund_ratio: '0.1000',
     })
     expect(row.rows[0].processed_at).not.toBeNull()
@@ -399,7 +408,8 @@ describePg('工单域', () => {
     expect(audit.rows).toHaveLength(1)
     expect(audit.rows[0]).toMatchObject({ actor: manage.userId, action: 'ticket.process' })
     expect(audit.rows[0].detail).toMatchObject({
-      fromStatus: 'pending', toStatus: 'completed', amountType: 'ratio', amountMinor: 15000,
+      fromStatus: 'pending', toStatus: 'completed', amountType: 'ratio', amountMinor: 13500,
+      watermarkAt: '2026-11-26',
     })
   })
 
@@ -409,7 +419,7 @@ describePg('工单域', () => {
     const res = await appManage.request(`/tickets/${id}/process`, {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ amountType: 'reject' }),
+      body: JSON.stringify(processBody({ amountType: 'reject' })),
     })
     expect(res.status).toBe(200)
     const row = await pool.query(
@@ -430,13 +440,13 @@ describePg('工单域', () => {
     const first = await appManage.request(`/tickets/${id}/process`, {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ amountType: 'reject' }),
+      body: JSON.stringify(processBody({ amountType: 'reject' })),
     })
     expect(first.status).toBe(200)
     const second = await appManage.request(`/tickets/${id}/process`, {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ amountType: 'reject' }),
+      body: JSON.stringify(processBody({ amountType: 'reject' })),
     })
     expect(second.status).toBe(409)
     expect((await second.json()) as { error: string }).toMatchObject({ error: 'ALREADY_PROCESSED' })
@@ -446,7 +456,7 @@ describePg('工单域', () => {
     const res = await appManage.request('/tickets/999999999/process', {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ amountType: 'reject' }),
+      body: JSON.stringify(processBody({ amountType: 'reject' })),
     })
     expect(res.status).toBe(404)
   })
@@ -457,7 +467,7 @@ describePg('工单域', () => {
     const bad = await appManage.request(`/tickets/${id}/process`, {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ amountType: 'ratio', refundRatio: 1.5 }),
+      body: JSON.stringify(processBody({ amountType: 'ratio', refundRatio: 1.5 })),
     })
     expect(bad.status).toBe(400)
     const row = await pool.query('select status from aftersales.ticket where org = $1 and id = $2', [ORG, id])
@@ -526,7 +536,7 @@ describePg('工单域', () => {
     const proc = await appManage.request(`/tickets/${id}/process`, {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ amountType: 'ratio', refundRatio: 0.1235 }),
+      body: JSON.stringify(processBody({ amountType: 'ratio', refundRatio: 0.1235 })),
     })
     expect(proc.status).toBe(200)
 
@@ -552,7 +562,7 @@ describePg('工单域', () => {
     //    注意键名：本接口的金额类型就是 snake_case 的 `amount_type`（normalizeTicketRow 只给
     //    amount_minor 起了 camelCase 别名，没给 amount_type 起），故按【实际契约】断言。
     expect(li!.amount_type).toBe('ratio')
-    expect(li!.amountMinor).toBe(15000)
+    expect(li!.amountMinor).toBe(13148)
 
     // ③ 对照：访客详情是宽 SELECT，必须给出真值（修前就正确，别弱化）。
     expect(detail.refundRatio).toBe(0.1235)
@@ -570,7 +580,7 @@ describePg('工单域', () => {
     const proc = await appManage.request(`/tickets/${id}/process`, {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ amountType: 'reject' }),
+      body: JSON.stringify(processBody({ amountType: 'reject' })),
     })
     expect(proc.status).toBe(200)
 

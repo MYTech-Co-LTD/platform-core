@@ -24,6 +24,8 @@
 
 export type TicketStatus = 'pending' | 'completed' | 'cancelled'
 export type AmountType = 'ratio' | 'fixed'
+/** 品牌是**派生维度**（按工单快照 store_name 前缀），不是存储列；`''` = 无品牌前缀。 */
+export type Brand = 'xiongmao' | 'pptd' | ''
 export type ApproveStatus = 'pending' | 'approved' | 'rejected'
 /** 提单时「提交人档案门店 vs 单据门店」的一致性（ADR 2026-11-24；见 routes/affiliation.ts） */
 export type StoreAffiliation = 'matched' | 'mismatch' | 'unregistered'
@@ -51,16 +53,29 @@ export interface TicketListItem {
   operator: string | null
   remark: string | null
   related_order: string | null
+  /** 到货时间（迁移 009）：前端两个控件拼成的 ISO 字符串，可空 */
+  arrival_at?: string | null
   created_at: string
   processed_at: string | null
   // 归属一致性快照（ADR 2026-11-24 §7 P1-a）：**信息性**，不参与任何放行判定。
   // 快照语义——记录提单那一刻的事实，档案后改不回溯。null = 判定失败（fail-open）或存量行。
   store_affiliation?: StoreAffiliation | null
+  // ── 2026-11-26 起列表新增（#2884）──
+  /** 处理人的售后意见（与店员填的报损原因 `remark` 分开） */
+  opinion?: string
+  /** 照片水印日期 `YYYY-MM-DD` */
+  watermark_at?: string | null
+  brand?: Brand
+  image_count?: number
+  video_count?: number
+  /** 报损金额（毛额，整数分）= 报损数量 × 单价；pending 也有值 */
+  damage_amount_minor?: number
   // —— `normalizeTicketRow` 额外挂的 camelCase 别名（同值）——
   productId?: number | null
   storeId?: number | null
   amountMinor?: number
   refundRatio?: number | null
+  damageAmountMinor?: number
 }
 
 /** 挂原单冻结依据（#500 段③，spec §6.2）：建单时定死，票面可追溯到具体那张 MO/WO 的那一行。 */
@@ -76,9 +91,20 @@ export interface TicketSettlement {
 /** `GET /tickets/:id`：列表行 + 详情独有的字段 + 附件（附件 URL 由服务端预签名，未配 ZOS 时为 null） */
 export interface TicketDetail extends TicketListItem, TicketSettlement {
   submitter_openid: string
+  /** numeric(14,6)（迁移 010）：建单时冻结的结算行数量；存量单为 0 */
   basic_quantity: number
   basic_unit_price_minor: number
+  opinion: string
+  watermark_at: string | null
+  brand: Brand
+  damage_amount_minor: number
   attachments: TicketAttachment[]
+}
+
+/** `GET /tickets/counts`：状态全局计数 + 品牌跟随当前状态的计数（spec §2.3）。 */
+export interface TicketCounts {
+  status: { all: number; pending: number; completed: number; cancelled: number }
+  brand: { xiongmao: number; pptd: number; none: number }
 }
 
 /** `GET /guest/settlement-orders` 的一行：选单页的两级选择面（单 → 行）。 */
@@ -165,11 +191,29 @@ export interface ProductItem {
   eliminate: boolean | null
 }
 
-/** `POST /tickets/:id/process` 的请求体（与路由的 `ProcessBody` 判别联合同形） */
+/**
+ * `POST /tickets/:id/process` 的请求体（与服务端 `ProcessBody` 判别联合同形）。
+ * 2026-11-26：`opinion`（售后意见，必填 ≤500）与 `watermarkAt`（水印日期，必填）替代 `remark`。
+ */
 export type ProcessBody =
-  | { amountType: 'ratio'; refundRatio: number; remark?: string }
-  | { amountType: 'fixed'; amountMinor: number; remark?: string }
-  | { amountType: 'reject'; remark?: string }
+  | { amountType: 'ratio'; refundRatio: number; opinion: string; watermarkAt: string }
+  | { amountType: 'fixed'; amountMinor: number; opinion: string; watermarkAt: string }
+  | { amountType: 'reject'; opinion: string; watermarkAt: string }
+
+/** `POST /tickets/:id/quote` 的请求体（只关心金额三路，不要求意见/水印）。 */
+export type QuoteBody =
+  | { amountType: 'ratio'; refundRatio: number }
+  | { amountType: 'fixed'; amountMinor: number }
+  | { amountType: 'reject' }
+
+/** 处理/预览共用的金额结果。`damageAmountMinor` 只有预览返回（固定金额的 UI 上限来源）。 */
+export interface QuoteResult {
+  status: TicketStatus
+  amountType: 'ratio' | 'fixed' | 'reject'
+  amountMinor: number
+  refundRatio: number | null
+  damageAmountMinor?: number
+}
 
 /** 处理成功响应。失败形如 `{ error: string }`（模块 API 约定），由 `lib/api.ts` 翻成 ApiError */
 export interface ProcessResult {
@@ -178,6 +222,22 @@ export interface ProcessResult {
   status: TicketStatus
   amountType: AmountType
   amountMinor: number
+  refundRatio?: number | null
+}
+
+/** `POST /tickets/batch-delete` 的逐单结果（请求合法就不因部分失败而整体 4xx）。 */
+export interface BatchDeleteResult {
+  deleted: number[]
+  failed: { id: number; code: string; error: string }[]
+}
+
+/** `GET /tickets/export-manifest` 的一项附件（`url` 为对象存储预签名 GET，TTL 3600s）。 */
+export interface ExportManifest {
+  tickets: {
+    id: number
+    code: string
+    attachments: TicketAttachment[]
+  }[]
 }
 
 // ── 员工登记与审批（M3b-1，spec §2.5）─────────────────────────────────────────

@@ -4,6 +4,7 @@ import { storageCandidatesFor, storageResolverFor, warnUnresolvedRef } from '../
 import type { ZosStorage } from '../storage'
 import {
   AmountValidationError,
+  computeDamageAmountMinor,
   isProcessable,
   resolveProcess,
   toMinor,
@@ -14,55 +15,100 @@ import { writeAudit } from '../domain/audit'
 // 分页常量与解析器在 routes/context.ts（四域共享层）——本文件不再留本地副本，
 // 避免与管理端/访客端两份实现静默漂移（见 context.ts 的 parsePageParam 注释）。
 import { DEFAULT_PAGE_SIZE, MAX_PAGE_SIZE, parseIdParam, parsePageParam , consoleBaseUrl} from './context'
+import { BRAND_SQL, parseTicketFilters, ticketWhere } from './ticket-query'
 import type { ModuleHono, RouteCtx } from './context'
 
+/** 水印日期：`YYYY-MM-DD` 且真实存在（2026-02-30 会被 Date 滚到 3 月 2 日 ⇒ ISO 比较能抓住）。 */
+const DateOnly = z.string()
+  .regex(/^\d{4}-\d{2}-\d{2}$/, 'watermarkAt 必须是 YYYY-MM-DD')
+  .refine((s) => {
+    const d = new Date(`${s}T00:00:00Z`)
+    return !Number.isNaN(d.getTime()) && d.toISOString().slice(0, 10) === s
+  }, 'watermarkAt 不是有效日期')
+
+/**
+ * 处理动作（2026-11-26 改，issue #2884）：三路金额 + 两件必填事实。
+ *
+ * `opinion`（处理人售后意见，≤500 字）与 `watermarkAt`（水印日期）替代原来的自由 `remark`：
+ * `remark` 是**店员填的报损原因**，处理再写它就是把人家的事实覆盖掉（spec §3.1 的旧缺陷）。
+ * 历史客户端若仍传 `remark`，zod 默认剥掉——不报错、不落库。
+ */
 const ProcessBody = z.discriminatedUnion('amountType', [
-  z.object({ amountType: z.literal('ratio'), refundRatio: z.number(), remark: z.string().max(2000).optional() }),
+  z.object({
+    amountType: z.literal('ratio'),
+    refundRatio: z.number(),
+    opinion: z.string().trim().min(1).max(500),
+    watermarkAt: DateOnly,
+  }),
   z.object({
     amountType: z.literal('fixed'),
     amountMinor: z.number().int(),
-    remark: z.string().max(2000).optional(),
+    opinion: z.string().trim().min(1).max(500),
+    watermarkAt: DateOnly,
   }),
-  z.object({ amountType: z.literal('reject'), remark: z.string().max(2000).optional() }),
+  z.object({
+    amountType: z.literal('reject'),
+    opinion: z.string().trim().min(1).max(500),
+    watermarkAt: DateOnly,
+  }),
+])
+
+/** 预览只关心金额三路，不要求 opinion/watermarkAt（弹窗里还没填完）。 */
+const QuoteBody = z.discriminatedUnion('amountType', [
+  z.object({ amountType: z.literal('ratio'), refundRatio: z.number() }),
+  z.object({ amountType: z.literal('fixed'), amountMinor: z.number().int() }),
+  z.object({ amountType: z.literal('reject') }),
 ])
 
 interface TicketRow {
   id: string
   status: TicketStatus
-  damage_quantity: number
-  basic_quantity: number
+  /** numeric(12,2)（迁移 010）——pg 返回字符串，算钱前必须 Number() */
+  damage_quantity: string
+  /** numeric(14,6)（迁移 010）——同上 */
+  basic_quantity: string
   basic_unit_price_minor: string
   settlement_price_minor: string | null
 }
 
 export function registerTicketManage(r: ModuleHono, ctx: RouteCtx): void {
-  // GET /tickets —— 管理端列表：服务端分页 + 状态筛选（spec §0.3：不搬「全量拉取+前端过滤」）
+  // GET /tickets —— 管理端列表：服务端分页 + 筛选（spec §0.3：不搬「全量拉取+前端过滤」）
+  // 2026-11-26（#2884）：补品牌、五个搜索项、处理时间范围；行补品牌/报损金额/售后意见/
+  // 水印时间/图片视频数。筛选语义集中在 routes/ticket-query.ts，与计数/导出共用。
   r.get('/tickets', async (c) => {
     const org = c.get('identity').orgId
     const page = parsePageParam(c.req.query('page'), 1, Number.MAX_SAFE_INTEGER)
     const size = parsePageParam(c.req.query('size'), DEFAULT_PAGE_SIZE, MAX_PAGE_SIZE)
-    const status = c.req.query('status')
 
-    const where = ['org = $1']
-    const params: unknown[] = [org]
-    if (status) {
-      params.push(status)
-      where.push(`status = $${params.length}`)
-    }
+    const parsed = parseTicketFilters((k) => c.req.query(k))
+    if (!parsed.ok) return c.json({ error: parsed.error }, 400)
+    const { sql: where, params } = ticketWhere(org, parsed.filters)
 
     const totalRes = await ctx.pool.query<{ n: number }>(
-      `select count(*)::int as n from aftersales.ticket where ${where.join(' and ')}`,
+      `select count(*)::int as n from aftersales.ticket where ${where}`,
       params,
     )
     const listRes = await ctx.pool.query(
       `select id, code, product_id, product_name, store_id, store_name,
               product_code, store_code,
               damage_quantity, status, amount_type, amount_minor, refund_ratio,
-              operator, remark, related_order, created_at, processed_at,
+              operator, remark, opinion, related_order, arrival_at, created_at, processed_at,
+              watermark_at::text as watermark_at,
               -- 归属一致性快照（ADR 2026-11-24 §7 P1-a）：信息性，供管理端展示异常
-              store_affiliation
-         from aftersales.ticket
-        where ${where.join(' and ')}
+              store_affiliation,
+              -- 品牌（派生）：按工单快照 store_name 前缀，不新增存储列。
+              (${BRAND_SQL}) as brand,
+              -- 报损金额（毛额，整数分）：pending 也显示「损失多少」，与赔付额不同。
+              round(damage_quantity * coalesce(settlement_price_minor, basic_unit_price_minor))::bigint
+                as damage_amount_minor,
+              (select count(*) from aftersales.ticket_attachment a
+                where a.org = t.org and a.ticket_id = t.id and a.content_type like 'image/%')::int
+                as image_count,
+              (select count(*) from aftersales.ticket_attachment a
+                where a.org = t.org and a.ticket_id = t.id and a.content_type like 'video/%')::int
+                as video_count
+         from aftersales.ticket t
+        where ${where}
         order by id desc
         limit $${params.length + 1} offset $${params.length + 2}`,
       [...params, size, (page - 1) * size],
@@ -73,6 +119,48 @@ export function registerTicketManage(r: ModuleHono, ctx: RouteCtx): void {
       total: totalRes.rows[0].n,
       page,
       size,
+    })
+  })
+
+  // GET /tickets/counts —— 状态胶囊与品牌胶囊的计数（2026-11-26 / #2884）
+  // 语义（spec §2.3）：状态计数**全局**（不受任何筛选影响）；品牌计数**只跟随 status**
+  // （否则点一个品牌后另一个品牌归零，胶囊点不回去）。
+  // ⚠️ 必须注册在 `/tickets/:id` 之前，否则 `counts` 被当成 id。
+  r.get('/tickets/counts', async (c) => {
+    const org = c.get('identity').orgId
+    const status = (c.req.query('status') ?? '').trim()
+    if (status && status !== 'pending' && status !== 'completed' && status !== 'cancelled') {
+      return c.json({ error: 'INVALID_STATUS' }, 400)
+    }
+    const params: unknown[] = [org]
+    let brandWhere = 'org = $1'
+    if (status) {
+      params.push(status)
+      brandWhere += ' and status = $2'
+    }
+
+    const [statusRes, brandRes] = await Promise.all([
+      ctx.pool.query<{ status: TicketStatus; n: number }>(
+        'select status, count(*)::int as n from aftersales.ticket where org = $1 group by status',
+        [org],
+      ),
+      ctx.pool.query<{ brand: string; n: number }>(
+        `select (${BRAND_SQL}) as brand, count(*)::int as n
+           from aftersales.ticket where ${brandWhere} group by 1`,
+        params,
+      ),
+    ])
+    const byStatus = { pending: 0, completed: 0, cancelled: 0 }
+    for (const row of statusRes.rows) byStatus[row.status] = row.n
+    const brand = { xiongmao: 0, pptd: 0, none: 0 }
+    for (const row of brandRes.rows) {
+      if (row.brand === 'xiongmao') brand.xiongmao = row.n
+      else if (row.brand === 'pptd') brand.pptd = row.n
+      else brand.none = row.n
+    }
+    return c.json({
+      status: { all: byStatus.pending + byStatus.completed + byStatus.cancelled, ...byStatus },
+      brand,
     })
   })
 
@@ -89,7 +177,11 @@ export function registerTicketManage(r: ModuleHono, ctx: RouteCtx): void {
               settlement_source, settlement_order_no, settlement_item_code, settlement_line_key,
               settlement_price_minor, settlement_bizday,
               status, amount_type, amount_minor, refund_ratio,
-              operator, remark, related_order, created_at, processed_at
+              operator, remark, opinion, related_order, arrival_at, created_at, processed_at,
+              watermark_at::text as watermark_at, store_affiliation,
+              (${BRAND_SQL}) as brand,
+              round(damage_quantity * coalesce(settlement_price_minor, basic_unit_price_minor))::bigint
+                as damage_amount_minor
          from aftersales.ticket where org = $1 and id = $2`,
       [org, id],
     )
@@ -100,6 +192,54 @@ export function registerTicketManage(r: ModuleHono, ctx: RouteCtx): void {
       ...normalizeTicketRow(row),
       // 本请求的候选集（注入值 + 平台默认）穿进加载器：每行按它自己的 storage_ref 解析
       attachments: await loadAttachments(ctx, org, id, storageResolverFor(storageCandidatesFor(c.get(TENANT_STORAGE)))),
+    })
+  })
+
+  // POST /tickets/:id/quote —— 金额预览（2026-11-26 / #2884）：只算不写，与处理共用 resolveProcess。
+  // 不落库 ⇒ 不需要事务；只读快照 + 纯函数，预览值与提交后的落库值必然一致。
+  r.post('/tickets/:id/quote', async (c) => {
+    const org = c.get('identity').orgId
+    const id = parseIdParam(c.req.param('id'))
+    if (id === null) return c.json({ error: 'INVALID_ID' }, 400)
+
+    const parsed = QuoteBody.safeParse(await c.req.json().catch(() => null))
+    if (!parsed.success) return c.json({ error: 'INVALID_BODY' }, 400)
+
+    const res = await ctx.pool.query<TicketRow>(
+      `select id, status, damage_quantity, basic_quantity, basic_unit_price_minor, settlement_price_minor
+         from aftersales.ticket where org = $1 and id = $2`,
+      [org, id],
+    )
+    const row = res.rows[0]
+    if (!row) return c.json({ error: 'NOT_FOUND' }, 404)
+    if (!isProcessable(row.status)) return c.json({ error: 'ALREADY_PROCESSED', status: row.status }, 409)
+
+    const damageQuantity = Number(row.damage_quantity)
+    const basicUnitPriceMinor = toMinor(row.settlement_price_minor ?? row.basic_unit_price_minor)
+    let outcome
+    try {
+      outcome = resolveProcess(
+        {
+          damageQuantity,
+          basicQuantity: Number(row.basic_quantity),
+          basicUnitPriceMinor,
+        },
+        parsed.data,
+      )
+    } catch (err) {
+      if (err instanceof AmountValidationError) {
+        return c.json({ error: 'INVALID_AMOUNT', message: err.message }, 400)
+      }
+      throw err
+    }
+
+    return c.json({
+      status: outcome.status,
+      amountType: outcome.amountType,
+      amountMinor: outcome.amountMinor,
+      refundRatio: outcome.refundRatio,
+      // 固定金额输入框的 UI 上限来源：前端不再自己乘。
+      damageAmountMinor: computeDamageAmountMinor(damageQuantity, basicUnitPriceMinor),
     })
   })
 
@@ -161,9 +301,11 @@ export function registerTicketManage(r: ModuleHono, ctx: RouteCtx): void {
       }
 
       const upd = await client.query(
+        // 2026-11-26：售后意见写 opinion（不动 remark——那是店员填的报损原因）；
+        // 水印日期必填，与处理事实一起落库。
         `update aftersales.ticket
             set status = $3, amount_type = $4, amount_minor = $5, refund_ratio = $6,
-                operator = $7, remark = coalesce($8, remark), processed_at = now()
+                operator = $7, opinion = $8, watermark_at = $9::date, processed_at = now()
           where org = $1 and id = $2 and status = 'pending'`,
         [
           org,
@@ -173,7 +315,8 @@ export function registerTicketManage(r: ModuleHono, ctx: RouteCtx): void {
           outcome.amountMinor,
           outcome.refundRatio,
           c.get('identity').displayName,
-          body.remark ?? null,
+          body.opinion,
+          body.watermarkAt,
         ],
       )
       if (upd.rowCount === 0) {
@@ -187,7 +330,7 @@ export function registerTicketManage(r: ModuleHono, ctx: RouteCtx): void {
         detail: {
           fromStatus: row.status, toStatus: outcome.status,
           amountType: outcome.amountType, amountMinor: outcome.amountMinor,
-          refundRatio: outcome.refundRatio,
+          refundRatio: outcome.refundRatio, watermarkAt: body.watermarkAt,
         },
       })
       await client.query('commit')
@@ -220,7 +363,9 @@ export function registerTicketManage(r: ModuleHono, ctx: RouteCtx): void {
               result: outcome.status === 'completed' ? '已通过' : '已驳回',
               // 金额按「分 → 元」展示（与 console `formatMinor` 同口径：两位小数）
               amountText: outcome.amountMinor !== null ? `¥${(outcome.amountMinor / 100).toFixed(2)}` : '',
-              remark: body.remark ?? '',
+              // 通知模板的 payload 键仍叫 remark（模板契约已发布），值改取 opinion——
+              // 处理备注从此是处理人的售后意见，不是店员的报损原因。
+              remark: body.opinion,
               link: `${consoleBaseUrl()}/app/aftersales`,
             },
           })
@@ -271,6 +416,14 @@ export function normalizeTicketRow(row: Record<string, unknown>): Record<string,
   return {
     ...row,
     id: Number(row.id),
+    // 迁移 010 起 damage_quantity/basic_quantity 是 numeric ⇒ pg 返回字符串。
+    // 列缺席时不造键（同下面的纪律）；在场就必须是 number，别把字符串漏给前端。
+    damage_quantity: row.damage_quantity === undefined ? undefined : Number(row.damage_quantity),
+    basic_quantity: row.basic_quantity === undefined ? undefined : Number(row.basic_quantity),
+    // 报损金额（毛额）是 bigint ⇒ 字符串；只有管理端列表/详情会 SELECT 它。
+    // snake_case 与 camelCase 两个出口都要转，别让前端拿到 '900' 这种字符串。
+    damage_amount_minor: row.damage_amount_minor === undefined ? undefined : toMinor(row.damage_amount_minor as string),
+    damageAmountMinor: row.damage_amount_minor === undefined ? undefined : toMinor(row.damage_amount_minor as string),
     productId: row.product_id === undefined ? undefined : toNullableInt(row.product_id),
     storeId: row.store_id === undefined ? undefined : toNullableInt(row.store_id),
     basicUnitPriceMinor: row.basic_unit_price_minor === undefined ? undefined : toMinor(row.basic_unit_price_minor as string),

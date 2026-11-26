@@ -95,6 +95,8 @@ DATABASE_URL=… WUJI_APPID=… WUJI_KEY_STORE_INFO=… WUJI_API_PATH=/api/publi
 
 - [ ] 租户管理员在 Casdoor 租户 org 下**持有并授予** `aftersales:manage`——否则审批通知
       **零收件人**（notify-preflight 会红，且 health 全绿不报警）。
+- [ ] **按需**授予 `aftersales:delete`（2026-11-26 / #2884）：默认无人持有，工单页的「删除」
+      按钮只对持有者出现；不授予 = 谁都不能批量删工单（包含附件，不可恢复）。
 - [ ] 门店员工账号挂 `aftersales:guest`（访客/门店侧权限的来源）。
 - [ ] 手机号摸底：`node scripts/audit-employee-phones.mjs`（只读）；回填先 dry-run 再 `--apply`
       （`CASDOOR_*` 五 env 齐备）。

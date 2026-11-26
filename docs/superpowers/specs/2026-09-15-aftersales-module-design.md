@@ -124,6 +124,14 @@ M1 落协议字段与发放逻辑，M2 的 aftersales manifest
 > **不再成立**——§3.3 的 14 张源表无部门表，**无源可迁**，M2b 不建不迁 `department`；
 > 真需要部门数据时**另立项**。
 
+> **落地注记（2026-11-26，工单页对齐无极）**：`ticket` 表补四列/改两型——
+> `damage_quantity` 整数 → `numeric(12,2)`（移动端已按两位小数收）；`basic_quantity` 整数 →
+> `numeric(14,6)`，**建单时冻结所选结算行的数量**（与 `data.dim_settlement_order_line.quantity`
+> 同精度，让按比例退款真正生效）；新增 `opinion`（处理人售后意见，与店员填的 `remark` 分开）
+> 与 `watermark_at date`（水印时间）。迁移 `010_ticket_console_fields.sql` 幂等，存量单
+> `basic_quantity` 保持 0、不跨表回填。正典见
+> `2026-11-26-ticket-console-wuji-alignment-design.md` §1。
+
 **金额表示（2026-09-15 定）**：目标表金额**一律整数分**（列名 `_minor` 后缀或注释标明），
 **永不浮点**——§0.3 服务端权威计算的前提（浮点累加会在对账时变成假的差额）。源侧单位
 （分/元）的解释**不在这一层**，只发生在 §3.3 的迁移脚本一处转换里。
@@ -132,6 +140,8 @@ M1 落协议字段与发放逻辑，M2 的 aftersales manifest
 
 ```
 工单   GET/POST /tickets、GET /tickets/:id、POST /tickets/:id/process
+       GET /tickets/counts、POST /tickets/:id/quote（2026-11-26）
+       GET /tickets/export、GET /tickets/export-manifest、POST /tickets/batch-delete（2026-11-26）
 规则   GET/POST/PUT/DELETE /rules
 主数据 GET /stores、GET /products（搜索）、GET/POST /employees、POST /employees/:id/approve
 登记   GET /employee-approvals、POST /employee-approvals/:id/decide（管理面）
@@ -146,7 +156,8 @@ M1 落协议字段与发放逻辑，M2 的 aftersales manifest
 
 | 面 | scope | 端点 |
 |---|---|---|
-| 管理端 | `aftersales:manage` | `GET /tickets`（分页/筛选）· `GET /tickets/:id` · `POST /tickets/:id/process` · `GET/POST /rules` · `PUT/DELETE /rules/:id` · `GET /stores` · `GET /products` · `GET/POST /employees` · `POST /employees/:id/approve` · `GET /attachments/:id` · `GET /employee-approvals` · `POST /employee-approvals/:id/decide` |
+| 管理端 | `aftersales:manage` | `GET /tickets`（分页/筛选）· `GET /tickets/counts` · `GET /tickets/:id` · `POST /tickets/:id/quote` · `POST /tickets/:id/process` · `GET /tickets/export` · `GET /tickets/export-manifest` · `GET/POST /rules` · `PUT/DELETE /rules/:id` · `GET /stores` · `GET /products` · `GET/POST /employees` · `POST /employees/:id/approve` · `GET /attachments/:id` · `GET /employee-approvals` · `POST /employee-approvals/:id/decide` |
+| 管理端（高危） | `aftersales:delete` | `POST /tickets/batch-delete`（2026-11-26：单独权限码，默认无人持有；不限状态；逐单事务 + 审计 + 附件清理） |
 | 访客端 | `aftersales:guest` | `GET /guest/tickets`（**只回自己的**，按 `identity.userId`＝openid 过滤）· `GET /guest/tickets/:id` · `POST /guest/tickets`（提交）· `POST /guest/attachments`（元数据→预签名 PUT URL）· `GET /guest/me/registration`（我的登记 + 我的门店 + 有无待审）· `POST /guest/employee-approvals`（提交登记/变更）· `GET /guest/products`（选商品；见 §2.5）· `GET /guest/stores`（选/查门店；见 §3.2） |
 
 分面而非靠「同一个 handler 里判 scope」是**故意的**：门卫按声明逐条判定，一个端点一个 scope
@@ -233,6 +244,14 @@ M2a 要复刻的业务内核。以下全部取自 wuji-1 源码**逐行实证**�
 
 语义：`基本数量 × 比例` 是**免赔门槛**，超出部分才赔。⇒ M2a 把它搬成服务端纯函数并落库
 （§0.3「服务端权威计算」）；**前端传来的金额一概不采信**。
+
+**2026-11-26 补（工单页对齐无极）**：公式**不变**，但此前 `basic_quantity` 建单时恒为 0
+（没记所选结算行的数量）⇒ 比例形同虚设、选任何比例都赔全额。现在建单时把
+`data.dim_settlement_order_line.quantity` 冻进 `basic_quantity`（`numeric(14,6)`），比例
+真正生效；存量单保持 0、不跨表回填。处理动作同时补两件必填事实：`opinion`（处理人售后意见，
+≤500 字，**不再覆盖**店员填的 `remark`）与 `watermark_at`（水印日期）。金额预览走新端点
+`POST /tickets/:id/quote`，与处理共用 `resolveProcess`，前端不引入第二份公式。正典见
+`2026-11-26-ticket-console-wuji-alignment-design.md` §2–§4。
 
 **三态状态机**（源：`src/utils/enumConstants.ts:56-79` 为权威；`src/types/afterSalesWorkOrder.ts:60`
 另声明了一个**含 `processing` 的 4 态版本，全仓从未写入过** —— 死声明，勿照搬）：
@@ -330,7 +349,7 @@ M3a 的 console 员工页实现的是**单表简化版**（直接改 `employee.a
 
 | 页签 | 端点 | **砍掉**（无端点支撑） |
 |---|---|---|
-| 工单 | `GET /tickets`（`status` 筛选 + `page/size` + **有 `total`**）· `GET /tickets/:id` · `POST /tickets/:id/process` | 批量删除、导出、品牌筛选、状态计数 |
+| 工单 | `GET /tickets`（状态/品牌/五个搜索项/处理时间范围 + `page/size` + **有 `total`**）· `GET /tickets/counts` · `GET /tickets/:id` · `POST /tickets/:id/quote` · `POST /tickets/:id/process` · `GET /tickets/export` · `GET /tickets/export-manifest` · `POST /tickets/batch-delete`（**2026-11-26 补**：品牌筛选、状态计数、金额预览、导出、批量删除全部有端点支撑，不再是「砍掉」项） | —— |
 | 规则 | `GET/POST /rules` · `PUT/DELETE /rules/:id` | ——（端点完整） |
 | 员工 | `GET/POST /employees` · `POST /employees/:id/approve` | 导入、导出 |
 | 商品 | `GET /products`（**有 `total`**，可真分页） | 写操作（只读起步） |
@@ -348,11 +367,13 @@ M3a 的 console 员工页实现的是**单表简化版**（直接改 `employee.a
 > **console 三页的分页重构不在 #155** ⇒ 上文「只能单页展示」降级为 console 侧临时现状
 > （不摆假页码的纪律不变），待分页重构落地后销记。
 
-**处理弹窗不显示预估金额**：`POST /tickets/:id/process` **只在提交之后**返回服务端算出的
-`amountMinor`，没有预览端点；而 §0.3 把「前端算金额」列为**要消灭的模式**。⇒ `ratio` 路
-只选/填比例、**盲提交**，提交返回的金额才是唯一真相；`fixed` 路的金额是操作员自己填的。
-**前端不引入第二份金额公式**（两份实现必然漂移）。故障分支各有明确文案，其中
-`409 ALREADY_PROCESSED` 表示已被他人处理 ⇒ 提示并刷新列表。
+**处理弹窗的金额**（2026-11-26 改写）：新增 `POST /tickets/:id/quote` 做**金额预览**（只算不写），
+与 `POST /tickets/:id/process` 共用 `resolveProcess` ⇒ 预览值与落库值必然一致。
+`ratio` 路选/填比例后显示「预计赔付」，`fixed` 路的上限来自预览返回的报损金额（毛额）。
+**前端仍然不引入第二份金额公式**（两份实现必然漂移）——预览失败时只显示错误，提交仍由
+服务端重算，服务端是唯一真相。故障分支各有明确文案，其中 `409 ALREADY_PROCESSED`
+表示已被他人处理 ⇒ 提示并刷新列表。**已处理/已驳回是终态**，不提供「再处理」入口
+（与无极的「可覆盖处理」有意不同；要改只能删了重提）。
 
 **落点与纪律**（照 demo 范式 `modules/demo/console/`）：`modules/aftersales/console/`，
 入口 `index.tsx` 默认导出组件；HTTP **只走 `platformFetch`**、权限读 Outlet 注入 scopes、
@@ -718,6 +739,19 @@ GET https://data.wujisite.com/api/private/object
 - module-protocol.md（userApp 闸门缺口、租户数据隔离约定）。
 
 ## 7. 修订记录
+
+- 2026-11-26（**工单页对齐无极：筛选/计数/金额预览/导出/批量删除**，用户逐项拍板）：
+  ① **§2.1 补落地注记**——`damage_quantity` → `numeric(12,2)`；`basic_quantity` →
+  `numeric(14,6)` 且**建单时冻结所选结算行数量**；新增 `opinion`、`watermark_at`；
+  ② **§2.2 端点面扩**——管理面补 `GET /tickets/counts`、`POST /tickets/:id/quote`、
+  `GET /tickets/export`、`GET /tickets/export-manifest`；新权限码 `aftersales:delete`
+  承载 `POST /tickets/batch-delete`（默认无人持有、不限状态）；
+  ③ **§2.4 补**——公式不变，`basic_quantity` 的来源与存量语义；处理动作补 `opinion`
+  （≤500 字、不再覆盖 `remark`）与 `watermark_at`（必填）；金额预览与处理共用 `resolveProcess`；
+  ④ **§3.1 改写**——「批量删除/导出/品牌筛选/状态计数」从「砍掉」改为「有端点支撑」；
+  「处理弹窗不显示预估金额」整段改为「预览端点 + 前端仍无公式」；已处理单为终态、不可重处理。
+  **本轮只改文档，代码与迁移未动**。正典：
+  `docs/superpowers/specs/2026-11-26-ticket-console-wuji-alignment-design.md`。
 
 - 2026-10-10（**入口即授权：`/silent` 语义扩为「确保有会话」**，issue #560，真机试点后用户裁定）：
   首访移动端的「慢」拆开后主项是**首屏白跑一遍**——现行链路要 SPA 载两次（第一次纯为撞 401）。
