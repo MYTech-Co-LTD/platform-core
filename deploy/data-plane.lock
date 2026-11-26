@@ -1,4 +1,4 @@
-sha256-of-rest c7e6ab2fc1ac4ee4eb0714d7e6cc4f74242588b00210cf0b5c27e247d3cf815a
+sha256-of-rest 3dfddc192fd43cf215679d30270320ebc9f652b01a70a3330baea81a2696eb61
 57c67f58b38c8450ddcedf477607e722b51998873b12f84c15ffadc7fe5e81d3 contracts/README.md ${REPO}/contracts/README.md 0644
 fcc8189e1012d5fbb8e2505025bed637dd01c7b4465ab86125d3eaa7f330eff3 contracts/common/_schema.schema.json ${REPO}/contracts/common/_schema.schema.json 0644
 1730119518c3371f3c2ff3492f4c15cd731688047c6d40805ec4d2c65892f3ff contracts/common/_template.contract.json ${REPO}/contracts/common/_template.contract.json 0644
@@ -374,7 +374,7 @@ feec5824e5e79ce19c36d8049dfa2127803225f516beffdaeb8bbd8f3504a0fd deploy/duckle/c
 1957a5171380d4fe8d94b1bfe5516f495039363fc17adfde9fc2536304db2bd1 deploy/duckle/console/pipelines/lemeng.item_sales.day.json ${REPO}/deploy/duckle/console/pipelines/lemeng.item_sales.day.json 0644
 d8e833dc5797a90093457de58995d472ec38e9f9f8ded726502690c0fb92e2bc deploy/duckle/console/pipelines/lemeng.item_sales.l0.3120.json ${REPO}/deploy/duckle/console/pipelines/lemeng.item_sales.l0.3120.json 0644
 6301705c78af0826ad52135a9b3cc32b844bafc7766595bec2234d6afceb667b deploy/duckle/console/pipelines/lemeng.item_sales.l0.64188.json ${REPO}/deploy/duckle/console/pipelines/lemeng.item_sales.l0.64188.json 0644
-acbd0af110bf9fe4c5aa101d7f2903a9a947e230560427591e9e05e343b83f4e deploy/duckle/console/pipelines/lemeng.lake.compact.json ${REPO}/deploy/duckle/console/pipelines/lemeng.lake.compact.json 0644
+c36a699f5459e48848cc1bbf83a44176b223f56249de4ed7d271c2576d7a5c37 deploy/duckle/console/pipelines/lemeng.lake.compact.json ${REPO}/deploy/duckle/console/pipelines/lemeng.lake.compact.json 0644
 98d2b041e3bfd2045cb1832a825e949e9128d13aedbba11b8f2de3d7fb086124 deploy/duckle/console/pipelines/lemeng.lake.compact.month.json ${REPO}/deploy/duckle/console/pipelines/lemeng.lake.compact.month.json 0644
 7afe54062cdefc0d5f72bef2d16dd751373d8d702119e59e85c08cbb0285907a deploy/duckle/console/pipelines/lemeng.loss.adjustment.backfill.3120.json ${REPO}/deploy/duckle/console/pipelines/lemeng.loss.adjustment.backfill.3120.json 0644
 b94032ffb808f64edaacbf19d93043ab9e5a93e437fd3a9ba1d43ef84ba62d57 deploy/duckle/console/pipelines/lemeng.loss.adjustment.backfill.64188.json ${REPO}/deploy/duckle/console/pipelines/lemeng.loss.adjustment.backfill.64188.json 0644

@@ -5,7 +5,7 @@
   "待压 = start_ym..上月 中，索引里没有该 (source, book, ym, contract_sha) 的月；正常一天只补上月与缺口。",
   "0 个待压 = 正常 noop，不判红。",
   "path 在父管线里拼成完整 s3 URL（子管线 src.s3 只收 ${ITER_ITEM_PATH}）；控制流（守卫/统计/索引）在平台 job data.lake_compact_index。",
-  "限 24 条/轮：回填时按批推进，避免单轮跑几小时把执行器占住。"
+  "限 120 条/轮：回填期一夜间覆盖两账套×24 月；稳态每晚只有 1–2 个月待压。"
  ],
  "nodes": [
   {
@@ -26,7 +26,7 @@
      "connectTimeout": 30,
      "schemaName": "data",
      "tableName": "lake_compact_source",
-     "sql": "with cfg as (\n  select s.source, s.start_ym, s.contract_sha, unnest(s.system_books) as system_book\n  from data.lake_compact_source s where s.enabled\n),\nmonths as (\n  select c.source, c.system_book, c.contract_sha, strftime(m, '%Y-%m') as ym\n  from cfg c,\n       generate_series(cast(strptime(c.start_ym || '-01', '%Y-%m-%d') as date),\n                       date_trunc('month', (now() at time zone 'Asia/Shanghai')::date) - interval '1 day',\n                       interval '1 month') as t(m)\n),\npending as (\n  select m.source, m.system_book, m.ym, m.contract_sha\n  from months m\n  left join data.lake_compact_index i\n    on i.source = m.source and i.system_book = m.system_book\n   and i.ym = m.ym and i.contract_sha = m.contract_sha\n  where i.source is null\n)\nselect source, system_book, ym, contract_sha,\n       's3://' || (select value from data.lake_config where key = 'zos_bucket') || '/lemeng/' || source || '/system_book=' || system_book || '/bizday=' || ym || '-*/all.parquet' as path\nfrom pending\norder by source, system_book, ym\nlimit 24"
+     "sql": "with cfg as (\n  select s.source, s.start_ym, s.contract_sha, unnest(s.system_books) as system_book\n  from data.lake_compact_source s where s.enabled\n),\nmonths as (\n  select c.source, c.system_book, c.contract_sha, strftime(m, '%Y-%m') as ym\n  from cfg c,\n       generate_series(cast(strptime(c.start_ym || '-01', '%Y-%m-%d') as date),\n                       date_trunc('month', (now() at time zone 'Asia/Shanghai')::date) - interval '1 day',\n                       interval '1 month') as t(m)\n),\npending as (\n  select m.source, m.system_book, m.ym, m.contract_sha\n  from months m\n  left join data.lake_compact_index i\n    on i.source = m.source and i.system_book = m.system_book\n   and i.ym = m.ym and i.contract_sha = m.contract_sha\n  where i.source is null\n)\nselect source, system_book, ym, contract_sha,\n       's3://' || (select value from data.lake_config where key = 'zos_bucket') || '/lemeng/' || source || '/system_book=' || system_book || '/bizday=' || ym || '-*/all.parquet' as path\nfrom pending\norder by source, system_book, ym\nlimit 120"
     }
    }
   },
