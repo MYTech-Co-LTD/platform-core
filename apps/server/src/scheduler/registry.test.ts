@@ -238,14 +238,17 @@ describe('registry · dbt hourly/tables（Wave 8 P1 / A3 拆车道）', () => {
   it('★ #2674 拆档：全史 CTAS 模型从主档排除，独立对账档只跑它们', () => {
     // 拆档理由：三个全史模型单轮 ~11 分钟且必撞采集期 ETag，与几十个表同档 ⇒ 90 分钟必超时，
     // 新增/修改的 table 模型整天进不了生产（#2655 实证）。
-    const FULL = ['recon_fact', 'recon_break', 'fct_retail_swap_offset']
+    // #2890：`recon_run` 也必须在对账档里 —— 它只是 `recon_break` 的 count(*) 汇总（毫秒级、
+    // 不碰湖），留在主档会被主档超时连坐（2026-11-26：主档 90 分钟被杀 ⇒ 台账停在 11-21，
+    // 而 recon_break 已被对账档刷到 11-23）。台账的刷新者必须 = 它上游的刷新者。
+    const FULL = ['recon_fact', 'recon_break', 'fct_retail_swap_offset', 'recon_run']
     const tables = JOB_REGISTRY.find((d) => d.key === 'data.dbt_tables')!
     const recon = JOB_REGISTRY.find((d) => d.key === 'data.dbt_tables_recon')!
     expect(recon, 'data.dbt_tables_recon').toBeDefined()
     // 主档：默认选择器 + 明确的排除清单（不许两档都跑同一模型 ⇒ 并发写同一张表）
     expect(tables.env?.MATERIALIZE_TABLES_SELECT).toBeUndefined()
     expect(String(tables.env?.MATERIALIZE_TABLES_EXCLUDE).split(/\s+/).sort()).toEqual([...FULL].sort())
-    // 对账档：**只**跑这三个，写死选择器
+    // 对账档：**只**跑这四个，写死选择器
     expect(String(recon.env?.MATERIALIZE_TABLES_SELECT).split(/\s+/).sort()).toEqual([...FULL].sort())
     expect(recon.env?.MATERIALIZE_TABLES_EXCLUDE).toBeUndefined()
     // 错峰：对账档在主档之后（CST 11:45 vs 10:25），且上限收紧到 45 分钟
