@@ -364,6 +364,22 @@
    "headers": {
     "Authorization": "Basic ${ENV:OO_AUTH}"
    }
+  },
+  {
+   "match": "lemeng.lake.compact",
+   "on": [
+    "failure",
+    "recovery"
+   ],
+   "cooldownMinutes": 30,
+   "channel": {
+    "channel": "webhook",
+    "url": "${ENV:OO_BASE}/api/${ENV:OO_ORG}/data_alerts/_json",
+    "headers": {
+     "Authorization": "Basic ${ENV:OO_AUTH}",
+     "Content-Type": "application/json"
+    }
+   }
   }
  ]
 }

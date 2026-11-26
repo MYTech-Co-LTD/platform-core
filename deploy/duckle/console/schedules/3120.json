@@ -754,5 +754,26 @@
     "last_run_duration_ms": null,
     "last_run_error": null,
     "next_run_at": null
+  },
+  {
+    "id": "panel-lemeng.lake.compact",
+    "pipeline_id": "lemeng.lake.compact",
+    "name": "lemeng.lake.compact",
+    "enabled": true,
+    "kind": {
+      "type": "cron",
+      "expr": "10 3 * * *"
+    },
+    "timezone": "Asia/Shanghai",
+    "misfire": "skip",
+    "catchup": {
+      "maxCatchupRuns": 1,
+      "maxCatchupAgeDays": 2
+    },
+    "last_run_at": null,
+    "last_run_status": null,
+    "last_run_duration_ms": null,
+    "last_run_error": null,
+    "next_run_at": null
   }
 ]

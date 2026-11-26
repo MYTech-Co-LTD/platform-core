@@ -52,6 +52,7 @@ lemeng/<source>_month/_MONTH/
 ```
 
 - 形态照搬零售已验证的 `lemeng/retail_order_line_month/_MONTH/system_book=<book>/month=<YM>/all.parquet`。
+- 注册表 `data.lake_compact_source(source, start_ym, system_books, contract_sha, enabled)`：父管线要把「源清单」与索引 join，而 workspace JSON 与 PG 无法在同一个 SQL 节点里 join（2026-11-26 实测），故用一张小表。
 - 新表（**不复用** `data.lake_month_index`：零售的 conflict key 是 `(system_book, ym)`，多源需要 `source`）：
 
 ```sql
@@ -110,7 +111,7 @@ select max(ym) from data.lake_compact_index
 
 **子管线 `lake.compact.month`**：逐月
 ```
-read_parquet(原始 glob, 该月谓词)
+read_parquet(原始 glob, 该月谓词) → select r.*（pg_duckdb 单列 struct 必须 r.* 展开，2026-11-26 实测）
   → qa.contract（列集/类型 == 契约；不符 ⇒ 拒写）
   → ctl.die（0 行 ⇒ 拒写，绝不写空文件）
   → snk.minio  _MONTH/v=<sha>/system_book=<book>/month=<YM>/all.parquet（overwrite，幂等）
@@ -186,3 +187,23 @@ parity 的数值比较用**容差而非全精度**（既有纪律）；行数必
 - [ ] 单源两腿视图（`stg_lemeng_business_collection_receive` 的读面）
 - [ ] 四条断言 SQL + 两个诊断脚本（boundary / parity）
 - [ ] 回填该源全部历史月；四层断言全绿；记录前后 `count(*)` 与日档耗时
+
+## 14. 实施中发现（2026-11-26，真机）
+
+P0 做到「管线落地」时撞到四条引擎形状约束（详见记忆 `duckle-lazy-views-break-ctl-die`）：
+
+1. **以远程 sink 结尾的管线里 `ctl.die` 恒报 0 行**（所有节点都是惰性 view，`materialize: true` 也不生效）；
+   同源节点放到 `snk.csv` 结尾的探针里正常。⇒ 照抄零售 `month.compact` 的**形状**时必须保留它的源形态
+   （`src.postgres` + pg_duckdb pushdown），不能换成 `src.s3/src.minio`。
+2. **`ctl.die` 之后不能分叉**（第二次评估看到空流）。
+3. **sink 不产出表**，统计节点不能接在 sink 后面。
+4. **`src.minio` 在本环境未安装**；`src.s3` 可用（17,423 行 / 0.84s）。pg_duckdb 侧 `read_parquet` 只暴露
+   单列 struct（`r['col']` 要逐列名单、`r.*` 报 missing FROM-clause）。
+
+### 结论：P0 改为「按契约生成列清单」的零售同族形态（方案 B）
+
+- 子管线：`src.postgres`（`select r['c1']::t as c1, … from read_parquet(<月 glob>) r`，**列清单由契约生成**）
+- 结构：`源 → ctl.die → snk.minio` 单链；索引另起一条管线（03:40），同样单链
+- 生成器：`scripts/lemeng/gen-compact-pipelines.mjs`（读 `contracts/` 产出每源子管线 JSON）
+- 现状：`lake.compact` / `lake.compact.month` 已进 console（注册表 `enabled=false`，排班是 no-op），
+  索引表与源注册表已建；无生产写入、无湖对象改动

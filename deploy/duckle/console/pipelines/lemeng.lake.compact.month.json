@@ -1,0 +1,60 @@
+{
+ "name": "lemeng.lake.compact.month",
+ "_note": [
+  "封版分区压缩·搬运（C 设计 2026-11-26 终版）：src.s3 → snk.minio，**纯字节搬运**，对列盲（不依赖契约列清单）。",
+  "为什么没有守卫/统计：本环境实测（2026-11-26）以远程 sink 结尾时所有节点都是惰性 view，ctl.die 恒数到 0 行（materialize 不生效），die 后也不能分叉 ⇒ 控制流搬到平台 job `data.lake_compact_index`（读 _MONTH 单文件 → 行数/边界 → 写索引）。",
+  "空月：若原始月为空，本管线会写空文件；索引 job 依据「原始 glob 为 0」写 status='empty' 行，父管线把任何索引行视为已完成，不会反复重试。",
+  "实测：16,360 行 / 1.5s（2024-11 3120）。"
+ ],
+ "nodes": [
+  {
+   "id": "s",
+   "type": "source",
+   "position": {
+    "x": 0,
+    "y": 0
+   },
+   "data": {
+    "label": "读该月原始文件（src.s3）",
+    "componentId": "src.s3",
+    "properties": {
+     "connectionRef": "zos",
+     "path": "${ITER_ITEM_PATH}",
+     "format": "parquet"
+    }
+   }
+  },
+  {
+   "id": "k",
+   "type": "sink",
+   "position": {
+    "x": 260,
+    "y": 0
+   },
+   "data": {
+    "label": "月文件 → _MONTH/",
+    "componentId": "snk.minio",
+    "properties": {
+     "connectionRef": "zos",
+     "bucket": "${ENV:ZOS_BUCKET}",
+     "key": "lemeng/${ITER_ITEM_SOURCE}_month/_MONTH/v=${ITER_ITEM_CONTRACT_SHA}/system_book=${ITER_ITEM_SYSTEM_BOOK}/month=${ITER_ITEM_YM}/all.parquet",
+     "format": "parquet",
+     "mode": "overwrite",
+     "compression": "zstd"
+    }
+   }
+  }
+ ],
+ "edges": [
+  {
+   "id": "e_s_k",
+   "source": "s",
+   "target": "k",
+   "sourceHandle": "main",
+   "targetHandle": "main",
+   "data": {
+    "connectionType": "main"
+   }
+  }
+ ]
+}
