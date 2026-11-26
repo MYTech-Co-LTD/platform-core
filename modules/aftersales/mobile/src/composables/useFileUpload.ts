@@ -14,6 +14,7 @@
 
 import { ref } from 'vue'
 import { Message } from '@wujibase/wuji'
+import { compressImage, MAX_IMAGE_BYTES, MAX_VIDEO_BYTES } from '@/utils/compress-image'
 import { uploadFile, uploadImage } from '@wujibase/wuji-upload'
 import dayjs from 'dayjs'
 import type { IAttachment } from '@/types/afterSalesWorkOrder'
@@ -88,12 +89,18 @@ export function useFileUpload() {
       }
     }
 
-    // 检查文件大小（限制为 2G）
-    const maxFileSize = 2 * 1024 * 1024 * 1024 // 2G
+    // 上限按类型分档（2026-11-26）：2GB 是移植时从源系统抄来的，对售后凭证毫无意义。
+    // 照片压缩后通常 <1MB，10MB 是给「压不动」的格式留余量；视频客户端不转码，100MB 兜底。
+    const maxFileSize = fileType === 'image' ? MAX_IMAGE_BYTES : MAX_VIDEO_BYTES
     if (file.size > maxFileSize) {
-      Message.warning(`文件大小超过限制 (${(file.size / 1024 / 1024 / 1024).toFixed(2)}GB > 2GB)，请压缩后再上传`)
-      throw new Error(`文件大小超过限制 (2GB)`)
+      const mb = (n: number) => (n / 1024 / 1024).toFixed(0)
+      Message.warning(`文件过大（${mb(file.size)}MB > ${mb(maxFileSize)}MB），请压缩后再上传`)
+      throw new Error(`文件大小超过限制`)
     }
+
+    // 图片上传前压缩（长边 2048 / q0.85）——省的是对象存储的存储费与出流量费。
+    // **失败一律回退原图**（compressImage 内部保证），绝不因为省钱丢用户的照片。
+    const fileToUpload = fileType === 'image' ? await compressImage(file) : file
 
     try {
       // 获取文件扩展名
@@ -120,7 +127,7 @@ export function useFileUpload() {
         }, 200)
 
         try {
-          const result = await uploadFn(file as File, uniqueFilePath)
+          const result = await uploadFn(fileToUpload as File, uniqueFilePath)
           uploading = false
           clearInterval(progressInterval)
           attachmentId = result.id

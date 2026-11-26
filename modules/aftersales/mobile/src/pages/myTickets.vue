@@ -81,8 +81,10 @@
 
           <!-- 底：金额 + 时间 -->
           <div class="mt-3 flex items-center justify-between text-xs">
+            <!-- 未处理 ⇒ 金额还没算过，显示占位符而不是 ¥0.00
+                 （后者会让人以为「算过了，结果是 0」——DESIGN 里同款的判据） -->
             <span class="text-gray-500">
-              退款 <span class="text-gray-800 font-medium tnum ml-1">{{ t.amount_minor === null ? '—' : formatMinor(t.amount_minor) }}</span>
+              退款 <span class="text-gray-800 font-medium tnum ml-1">{{ refundText(t) }}</span>
             </span>
             <span class="text-gray-400 tnum">{{ formatTime(t.created_at) }}</span>
           </div>
@@ -249,6 +251,9 @@ const statusColor = (s: string) =>
   ({ pending: '#E08A00', completed: '#0FA958', cancelled: '#E5484D' }[s] ?? '#C9CDD4')
 const formatTime = (t: string) => (t ? dayjs(t).format('MM-DD HH:mm') : '-')
 const formatMinor = (m: number) => `¥${(m / 100).toFixed(2)}`
+/** 待处理工单的金额是「还没算」，不是「0 元」 */
+const refundText = (t: TicketListRow) =>
+  t.status === 'pending' || t.amount_minor === null ? '—' : formatMinor(t.amount_minor)
 
 onMounted(async () => {
   try {
