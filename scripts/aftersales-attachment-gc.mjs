@@ -95,10 +95,14 @@ export async function selectTenants(pool, org) {
  */
 export async function runGcJob(pool, opts) {
   const tenants = await selectTenants(pool, opts.org)
-  if (tenants.length === 0) {
-    throw new Error(`platform.tenant 里没有租户（--org=${JSON.stringify(opts.org)} 不存在？）`)
-  }
   const tally = { processed: 0, skipped: 0, failed: 0 }
+  if (tenants.length === 0) {
+    // `--org` 指向不存在的租户 = 调用方写错了 ⇒ 判红（静默 0 租户是「跑成功了」的假绿）；
+    // 不指定 org 且表为空 = 真的无事可做（新环境/刚清空）⇒ 不判红，只记一行。
+    if (opts.org !== '') throw new Error(`platform.tenant 里没有租户 --org=${JSON.stringify(opts.org)}`)
+    console.warn('aftersales-attachment-gc: platform.tenant 为空——无事可做')
+    return tally
+  }
 
   for (const row of tenants) {
     const org = row.casdoor_org
