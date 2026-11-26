@@ -207,3 +207,21 @@ P0 做到「管线落地」时撞到四条引擎形状约束（详见记忆 `duc
 - 生成器：`scripts/lemeng/gen-compact-pipelines.mjs`（读 `contracts/` 产出每源子管线 JSON）
 - 现状：`lake.compact` / `lake.compact.month` 已进 console（注册表 `enabled=false`，排班是 no-op），
   索引表与源注册表已建；无生产写入、无湖对象改动
+
+## 15. 实测结果（2026-11-26，P0 单源端到端）
+
+| 项 | 结果 |
+|---|---|
+| 搬运 | `business_collection_receive` 两账套 × 24 月 = **48 个 `_MONTH` 文件**，两轮共 93s |
+| 记账 | 48 行索引全部 `status=ok`（24.6s） |
+| 单月 parity | 3120/2024-11：16,360 = 16,360；64188/2024-11：8,614 = 8,614 |
+| 全史 parity | 冷腿 635,632 + 当月原始 19,297 = **654,929 = 原始**（逐行精确） |
+| 读速 | 原始单腿 **275.4s** → 两腿 **21.9s**（模型内实测），线上视图 `count(*)` **22.1s** |
+| 视图 | `dbt run --select stg_lemeng_business_collection_receive` → CREATE VIEW 0.15s；viewdef 含 `_MONTH` 与 `bizday=2026-11-` 两条腿 |
+
+**实施要点（都被实测推翻过一版）**：
+1. 活跃腿必须**按月裁路径**（`bizday=<tail>-*/all.parquet`）；只加下界谓词 ⇒ DuckDB 仍打开全部 footer，无收益。
+2. 边界在**编译期**（`compact_state` 的 `run_query`）渲染成字面量；子查询会废掉文件裁剪。
+3. 边界次月由索引最大 `ok` 月推导（`tail_prefix`），索引不可用则整段冷腿不渲染（退化为慢但正确）。
+
+**尚未做**：§7 的四条断言（索引连续 / 不陈旧+契约当前 / 两腿 vs 原始逐日 parity / audit）、其余源的推广、原始文件 GC。
