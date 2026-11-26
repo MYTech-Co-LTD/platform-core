@@ -11,6 +11,10 @@
 
 ## [Unreleased]
 
+## [0.398.1](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.398.0...v0.398.1) - 2026-11-26
+- 【修复】data: 夜间回填每次回读都新建 S3 密钥——改复用 catalog 级凭据（读湖 5.69s→0.66s） ([#2886](https://github.com/MYTech-Co-LTD/platform-core/pull/2886), [5d9fe19](https://github.com/MYTech-Co-LTD/platform-core/commit/5d9fe1933ad5bff3223dec109b46c901d08e4373))
+
+
 ## [0.398.0](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.397.0...v0.398.0) - 2026-11-26
 - 【新增】data: 压缩记账档补四条断言（索引连续 / 滞后 / 逐月 parity） ([#2882](https://github.com/MYTech-Co-LTD/platform-core/pull/2882), [cdad950](https://github.com/MYTech-Co-LTD/platform-core/commit/cdad95080b01b190a05456d7e481ce1fdd9f7026))
 
