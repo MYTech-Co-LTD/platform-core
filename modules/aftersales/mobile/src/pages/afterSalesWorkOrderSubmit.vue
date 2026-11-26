@@ -8,101 +8,105 @@
 
     <!-- 主表单 -->
     <div v-else class="p-4 pb-24">
-      <!-- 2026-11-25：选择区按 wuji 源交互重排 —— 商品 → 门店 → 订单 → 商品信息卡。
-           商品与门店都是「远程搜索」（访客侧不做全量预载）；订单按「门店 + 商品」双过滤。 -->
-      <t-card class="mb-4 rounded-xl shadow-sm" hover-shadow>
-        <div>
-          <label class="block text-sm font-medium text-gray-700 mb-2">
-            <span class="text-[#E5484D]">*</span>商品名称
-          </label>
-          <t-select
-            v-model="selectedProduct"
-            placeholder="请输入商品名称搜索"
-            :loading="productLoading"
-            filterable
-            clearable
-            class="w-full"
-            @search="handleProductSearch"
-            @change="handleProductChange"
-          >
-            <t-option
-              v-for="product in productList"
-              :key="product.id"
-              :value="product.id"
-              :label="product.product_name"
+      <!-- 报损对象（2026-11-26 产品重构）：商品/门店/订单合成一张卡。
+           密度优先：三行紧凑排列，一屏内完成选择；单店员工不给他做无意义的选择。 -->
+      <t-card class="mb-3 rounded-xl shadow-sm">
+        <div class="space-y-4">
+          <!-- 门店：单店 ⇒ 只读标签（他只有这一家）；多店 ⇒ 下拉切换 -->
+          <div>
+            <label class="block text-sm font-medium text-gray-700 mb-2">门店</label>
+            <div v-if="storeList.length <= 1" class="flex items-center gap-2 py-2">
+              <i class="fa fa-store text-[#4D6BFE]"></i>
+              <span class="text-gray-800 font-medium">{{ storeList[0]?.store_name ?? '—' }}</span>
+              <span class="text-xs text-gray-400 tnum">{{ storeList[0]?.store_number }}</span>
+            </div>
+            <t-select
+              v-else
+              v-model="selectedStore"
+              placeholder="请选择门店"
+              :loading="loading"
+              class="w-full"
+              @change="handleStoreChange"
             >
-              <div class="flex items-center justify-between min-w-0 gap-2">
-                <span class="font-medium truncate">{{ product.product_name }}</span>
-                <span class="text-xs text-gray-400 shrink-0">{{ product.id }}</span>
-              </div>
-            </t-option>
-            <!-- 空态：远程搜索必须先输关键词（源系统同口径），不给提示会被当成「没有商品」 -->
-            <template #empty>
-              <div class="py-3 text-center text-xs text-gray-400">
-                {{ productLoading ? '搜索中…' : '请输入商品名称后选择' }}
-              </div>
-            </template>
-          </t-select>
-        </div>
-      </t-card>
+              <t-option
+                v-for="store in storeList"
+                :key="store.id"
+                :value="store.id"
+                :label="store.store_name"
+              >
+                <div class="flex items-center justify-between min-w-0 gap-2">
+                  <span class="font-medium truncate">{{ store.store_name }}</span>
+                  <span class="text-xs text-gray-400 shrink-0">{{ store.store_number }}</span>
+                </div>
+              </t-option>
+            </t-select>
+          </div>
 
-      <t-card class="mb-4 rounded-xl shadow-sm" hover-shadow>
-        <div>
-          <label class="block text-sm font-medium text-gray-700 mb-2">
-            <span class="text-[#E5484D]">*</span>选择门店
-          </label>
-          <t-select
-            v-model="selectedStore"
-            placeholder="请选择门店"
-            :loading="loading"
-            clearable
-            class="w-full"
-            @change="handleStoreChange"
-          >
-            <t-option
-              v-for="store in storeList"
-              :key="store.id"
-              :value="store.id"
-              :label="store.store_name"
+          <div>
+            <label class="block text-sm font-medium text-gray-700 mb-2">
+              <span class="text-[#E5484D]">*</span>商品
+            </label>
+            <t-select
+              v-model="selectedProduct"
+              placeholder="搜索商品名称或编码"
+              :loading="productLoading"
+              filterable
+              clearable
+              class="w-full"
+              @search="handleProductSearch"
+              @change="handleProductChange"
             >
-              <div class="flex items-center justify-between min-w-0 gap-2">
-                <span class="font-medium truncate">{{ store.store_name }}</span>
-                <span class="text-xs text-gray-400 shrink-0">{{ store.store_number }}</span>
-              </div>
-            </t-option>
-          </t-select>
-        </div>
-      </t-card>
+              <t-option
+                v-for="product in productList"
+                :key="product.id"
+                :value="product.id"
+                :label="product.product_name"
+              >
+                <div class="flex items-center justify-between min-w-0 gap-2">
+                  <span class="font-medium truncate">{{ product.product_name }}</span>
+                  <span class="text-xs text-gray-400 shrink-0 tnum">{{ product.id }}</span>
+                </div>
+              </t-option>
+              <template #empty>
+                <div class="py-3 text-center text-xs text-gray-400">
+                  {{ productLoading ? '搜索中…' : '没有匹配的商品' }}
+                </div>
+              </template>
+            </t-select>
+          </div>
 
-      <t-card class="mb-4 rounded-xl shadow-sm" hover-shadow>
-        <div>
-          <label class="block text-sm font-medium text-gray-700 mb-2">
-            <span class="text-[#E5484D]">*</span>选择订单
-          </label>
-          <t-select
-            v-model="selectedOrderNo"
-            placeholder="请选择订单（按日期倒序）"
-            :loading="settlementLoading"
-            filterable
-            clearable
-            :disabled="!selectedStore && !selectedProduct"
-            class="w-full"
-          >
-            <t-option
-              v-for="order in settlementOrders"
-              :key="order.orderNo"
-              :value="order.orderNo"
-              :label="order.orderNo"
+          <div>
+            <label class="block text-sm font-medium text-gray-700 mb-2">
+              <span class="text-[#E5484D]">*</span>订单
+            </label>
+            <t-select
+              v-model="selectedOrderNo"
+              placeholder="选择进货单"
+              :loading="settlementLoading"
+              filterable
+              :disabled="!selectedStore && !selectedProduct"
+              class="w-full"
             >
-              <div class="flex items-center justify-between min-w-0 gap-2">
-                <span class="font-medium truncate">{{ order.orderNo }}</span>
-                <span class="text-xs text-gray-400 shrink-0">{{ order.bizday }}{{ order.source === 'wholesale' ? ' · 批发' : '' }}</span>
-              </div>
-            </t-option>
-          </t-select>
-          <p class="text-xs text-gray-400 mt-2" v-if="!selectedStore && !selectedProduct">
-            <i class="fa fa-info-circle mr-1"></i>请先选择商品或门店
-          </p>
+              <t-option
+                v-for="order in settlementOrders"
+                :key="order.orderNo"
+                :value="order.orderNo"
+                :label="order.orderNo"
+              >
+                <div class="flex items-center justify-between min-w-0 gap-2">
+                  <span class="font-medium truncate tnum">{{ order.orderNo }}</span>
+                  <span class="text-xs text-gray-400 shrink-0 tnum">
+                    {{ order.bizday }} · {{ order.lines[0]?.quantity ?? '—' }} 件
+                  </span>
+                </div>
+              </t-option>
+              <template #empty>
+                <div class="py-3 text-center text-xs text-gray-400">
+                  {{ settlementLoading ? '加载中…' : (selectedProduct ? '该商品近期没有进货单' : '没有可选的进货单') }}
+                </div>
+              </template>
+            </t-select>
+          </div>
         </div>
       </t-card>
 
@@ -182,32 +186,52 @@
             </div>
           </div>
 
-          <!-- 报损数量 -->
-          <div class="flex items-center">
-            <label class="text-sm font-medium text-gray-700 min-w-[80px]">
+          <!-- 报损数量（上界 = 该行数量；选中行后直接显示「共 N 件」） -->
+          <div>
+            <label class="block text-sm font-medium text-gray-700 mb-2">
               <span class="text-[#E5484D]">*</span>报损数量
+              <span v-if="selectedLine?.quantity" class="ml-2 text-xs font-normal text-gray-400 tnum">
+                本单共 {{ selectedLine.quantity }} 件
+              </span>
             </label>
-            <div class="ml-4">
+            <div class="flex items-center gap-3">
               <t-input
                 v-model="damageQuantityDisplay"
                 type="number"
-                :placeholder="selectedLine?.quantity ? `请输入报损数量（该行数量 ${selectedLine.quantity}）` : '请输入报损数量'"
+                placeholder="数量"
                 size="small"
                 class="damage-number-input"
                 @blur="handleDamageQuantityBlur"
               />
+              <span v-if="selectedLine?.priceMinor" class="text-xs text-gray-400 tnum">
+                预估退款 ¥{{ ((Number(formData.damage_quantity ?? 0)) * selectedLine.priceMinor / 100).toFixed(2) }}
+              </span>
             </div>
           </div>
 
-          <!-- 报损原因 -->
+          <!-- 报损原因：常见原因一键选（这是高频输入），下方再补文字 -->
           <div>
-            <label class="block text-sm font-medium text-gray-700 mb-3">
+            <label class="block text-sm font-medium text-gray-700 mb-2">
               <span class="text-[#E5484D]">*</span>报损原因
             </label>
+            <div class="flex flex-wrap gap-2 mb-2">
+              <button
+                v-for="tag in REASON_TAGS"
+                :key="tag"
+                type="button"
+                class="px-3 py-1 rounded-full text-xs border transition-colors"
+                :style="reasonHas(tag)
+                  ? { background: '#4D6BFE', color: '#fff', borderColor: '#4D6BFE' }
+                  : { background: '#fff', color: '#6B7280', borderColor: '#EBEDF0' }"
+                @click="toggleReasonTag(tag)"
+              >
+                {{ tag }}
+              </button>
+            </div>
             <t-textarea
               v-model="formData.damage_reason"
-              placeholder="请详细描述报损原因"
-              :autosize="{ minRows: 4, maxRows: 8 }"
+              placeholder="补充说明（可选）"
+              :autosize="{ minRows: 2, maxRows: 6 }"
               maxlength="500"
               class="w-full"
             />
@@ -331,17 +355,21 @@
             </div>
           </div>
 
-          <!-- 提示文本 -->
-          <p class="text-xs text-gray-400 mt-2">
-            <i class="fa fa-info-circle mr-1"></i>
-            可选择多张图片或视频上传，单个文件不超过2G
-          </p>
+          <!-- 只留上限，不留教程（DESIGN.md Copy Discipline） -->
+          <p class="text-xs text-gray-400 mt-2">单个文件不超过 2G</p>
         </div>
       </t-card>
     </div>
 
     <!-- 底部提交按钮 -->
     <div v-if="employeeVerified" class="fixed bottom-0 left-0 right-0 bg-white border-t p-4 safe-area-inset-bottom z-10">
+      <!-- 提交前摘要（2026-11-26）：按提交的那一刻，一眼确认「报的是什么」 -->
+      <div v-if="selectedLine" class="flex items-center justify-between mb-2 px-1 text-xs text-gray-500">
+        <span class="truncate">
+          {{ selectedLine.itemName ?? selectedLine.itemCode }} × {{ formData.damage_quantity ?? 0 }}
+        </span>
+        <span class="shrink-0 tnum">{{ selectedOrder?.orderNo }}</span>
+      </div>
       <t-button
         theme="primary"
         size="large"
@@ -473,6 +501,22 @@ watch(selectedOrderNo, (no) => {
   // 源系统同款：选单后把到货日期预填成该单的业务日期（用户仍可改）
   if (o?.bizday) arrivalDate.value = String(o.bizday).slice(0, 10)
 })
+
+// 报损原因快捷标签（2026-11-26 产品重构）：店员高频输入就是这几个词。
+// 标签与文本框**共用同一个字段**——点标签即在文本里增删该词，用户仍可自由编辑，
+// 高亮态由「文本是否包含该词」推出（不做第二份状态，避免两者漂移）。
+const REASON_TAGS = ['压伤', '腐烂', '过期', '破损', '少件'] as const
+const reasonHas = (tag: string): boolean =>
+  String(formData.value.damage_reason ?? '').split('、').map((x) => x.trim()).includes(tag)
+const toggleReasonTag = (tag: string): void => {
+  const parts = String(formData.value.damage_reason ?? '')
+    .split('、')
+    .map((x) => x.trim())
+    .filter(Boolean)
+  formData.value.damage_reason = parts.includes(tag)
+    ? parts.filter((x) => x !== tag).join('、')
+    : [...parts, tag].join('、')
+}
 
 // 到货日期 / 时间（对齐 wuji 的两个必填控件）
 const arrivalDate = ref<string>(dayjs().format('YYYY-MM-DD'))
@@ -706,6 +750,13 @@ onMounted(async () => {
 
     // 加载页面数据（结算单在选店后按店拉取——handleStoreChange）
     await loadEmployeeStores() // 根据登记档里的门店 id 串加载「我的门店」
+
+    // 单店员工：门店不是「选择」，是他所在的店——直接选定并拉该店订单，
+    // 省掉一次无意义的点击（2026-11-26 产品重构）。多店仍由他选。
+    if (storeList.value.length === 1) {
+      selectedStore.value = storeList.value[0]!.id
+      await loadSettlementOrders(selectedStore.value, selectedProduct.value || undefined)
+    }
   } catch (error: any) {
     console.error('初始化失败:', error)
     Message.error(error?.message || '初始化失败，请稍后重试')
