@@ -5,40 +5,128 @@
     "10m 的 source_at = staging.retail_hot 的 max(run_token)（数据真正进热层的时刻，不是 console 跑完的时刻）。",
     "1h 的 source_at = 域内所有源 console 的 last_ok 取 **min**（木桶：域和它最慢的源一样新）。",
     "daily 只判 built_at 的 age（源端日粒度，不做源→建映射）。",
-    "改本文件 = 改 SLA；必须同步路线图 §5 台账。D2 的脚本只读本文件，不写任何东西。"
+    "改本文件 = 改 SLA；必须同步路线图 §5 台账。D2 的脚本只读本文件，不写任何东西。",
+    "窗口起步宽限（windowGraceMinutes，2026-11-26 加）：窗口刚开的前 N 分钟不判 age——此时「最后一次 ok build」必然是**昨天**的，直接判 age 必然假红（实测 09:00 那批 80 条 ERR 全是这个）。10m 取 20（首拍 09:02，容一拍半）；1h 取 70（首域 09:05 起、跑完约 09:12）。"
   ],
   "products": {
     "retail_10m": {
       "job": "data.dbt_tick",
-      "window": { "start": "09:00", "end": "01:59" },
-      "sla": { "sourceToBuildMinutes": 10, "buildIntervalMinutes": 15, "missingOkMinutes": 20 },
-      "source": { "kind": "retail_hot_run_token" }
+      "window": {
+        "start": "09:00",
+        "end": "01:59"
+      },
+      "sla": {
+        "sourceToBuildMinutes": 10,
+        "buildIntervalMinutes": 15,
+        "missingOkMinutes": 20,
+        "windowGraceMinutes": 20
+      },
+      "source": {
+        "kind": "retail_hot_run_token"
+      }
     },
     "nonretail_1h": {
-      "window": { "start": "09:00", "end": "23:59" },
-      "sla": { "sourceToBuildMinutes": 75, "buildIntervalMinutes": 75, "missingOkMinutes": 120 },
+      "window": {
+        "start": "09:00",
+        "end": "23:59"
+      },
+      "sla": {
+        "sourceToBuildMinutes": 75,
+        "buildIntervalMinutes": 75,
+        "missingOkMinutes": 120,
+        "windowGraceMinutes": 70
+      },
       "domains": {
-        "retail_derived": { "job": "data.dbt_hourly_retail_derived", "sources": ["panel-lemeng.retail.tick.l1"] },
-        "purchase": { "job": "data.dbt_hourly_purchase", "sources": ["panel-lemeng.purchase.analysis.l0.3120", "panel-lemeng.purchase.analysis.l0.64188"] },
-        "inventory": { "job": "data.dbt_hourly_inventory", "sources": ["panel-lemeng.inventory.snapshot.l0.3120", "panel-lemeng.inventory.snapshot.l0.64188"] },
-        "member": { "job": "data.dbt_hourly_member", "sources": ["panel-lemeng.member.summary.l0.3120", "panel-lemeng.member.summary.l0.64188"] },
-        "client": { "job": "data.dbt_hourly_client", "sources": ["panel-lemeng.client.expense.l0.3120", "panel-lemeng.client.expense.l0.64188"] },
-        "branch": { "job": "data.dbt_hourly_branch", "sources": ["panel-lemeng.branch.expense.l0.3120", "panel-lemeng.branch.expense.l0.64188", "panel-lemeng.branch_indicator.l0.3120", "panel-lemeng.branch_indicator.l0.64188"] },
-        "transfer": { "job": "data.dbt_hourly_transfer", "sources": ["panel-lemeng.transfer.in.l0.3120", "panel-lemeng.transfer.in.l0.64188", "panel-lemeng.transfer.out.l0.3120", "panel-lemeng.transfer.out.l0.64188"] },
-        "outbound": { "job": "data.dbt_hourly_outbound", "sources": ["panel-lemeng.wholesale.out.l0.3120", "panel-lemeng.wholesale.return.l0.3120", "panel-lemeng.transfer.out.l0.3120", "panel-lemeng.transfer.out.l0.64188"] },
-        "request": { "job": "data.dbt_hourly_request", "sources": ["panel-lemeng.request.order.l0.3120", "panel-lemeng.request.order.l0.64188"] },
-        "loss": { "job": "data.dbt_hourly_loss", "sources": ["panel-lemeng.loss.adjustment.l0.3120", "panel-lemeng.loss.adjustment.l0.64188"] }
+        "retail_derived": {
+          "job": "data.dbt_hourly_retail_derived",
+          "sources": [
+            "panel-lemeng.retail.tick.l1"
+          ]
+        },
+        "purchase": {
+          "job": "data.dbt_hourly_purchase",
+          "sources": [
+            "panel-lemeng.purchase.analysis.l0.3120",
+            "panel-lemeng.purchase.analysis.l0.64188"
+          ]
+        },
+        "inventory": {
+          "job": "data.dbt_hourly_inventory",
+          "sources": [
+            "panel-lemeng.inventory.snapshot.l0.3120",
+            "panel-lemeng.inventory.snapshot.l0.64188"
+          ]
+        },
+        "member": {
+          "job": "data.dbt_hourly_member",
+          "sources": [
+            "panel-lemeng.member.summary.l0.3120",
+            "panel-lemeng.member.summary.l0.64188"
+          ]
+        },
+        "client": {
+          "job": "data.dbt_hourly_client",
+          "sources": [
+            "panel-lemeng.client.expense.l0.3120",
+            "panel-lemeng.client.expense.l0.64188"
+          ]
+        },
+        "branch": {
+          "job": "data.dbt_hourly_branch",
+          "sources": [
+            "panel-lemeng.branch.expense.l0.3120",
+            "panel-lemeng.branch.expense.l0.64188",
+            "panel-lemeng.branch_indicator.l0.3120",
+            "panel-lemeng.branch_indicator.l0.64188"
+          ]
+        },
+        "transfer": {
+          "job": "data.dbt_hourly_transfer",
+          "sources": [
+            "panel-lemeng.transfer.in.l0.3120",
+            "panel-lemeng.transfer.in.l0.64188",
+            "panel-lemeng.transfer.out.l0.3120",
+            "panel-lemeng.transfer.out.l0.64188"
+          ]
+        },
+        "outbound": {
+          "job": "data.dbt_hourly_outbound",
+          "sources": [
+            "panel-lemeng.wholesale.out.l0.3120",
+            "panel-lemeng.wholesale.return.l0.3120",
+            "panel-lemeng.transfer.out.l0.3120",
+            "panel-lemeng.transfer.out.l0.64188"
+          ]
+        },
+        "request": {
+          "job": "data.dbt_hourly_request",
+          "sources": [
+            "panel-lemeng.request.order.l0.3120",
+            "panel-lemeng.request.order.l0.64188"
+          ]
+        },
+        "loss": {
+          "job": "data.dbt_hourly_loss",
+          "sources": [
+            "panel-lemeng.loss.adjustment.l0.3120",
+            "panel-lemeng.loss.adjustment.l0.64188"
+          ]
+        }
       }
     },
     "daily": {
       "job": "data.dbt_tables",
       "window": "all",
-      "sla": { "maxAgeMinutes": 1560 }
+      "sla": {
+        "maxAgeMinutes": 1560
+      }
     },
     "daily_report": {
       "job": "data.dbt_daily_report",
       "window": "all",
-      "sla": { "maxAgeMinutes": 1560 }
+      "sla": {
+        "maxAgeMinutes": 1560
+      }
     }
   }
 }
