@@ -32,6 +32,7 @@ import { createRequire } from 'node:module'
 import { pathToFileURL, fileURLToPath } from 'node:url'
 import { join, dirname } from 'node:path'
 import { spawnSync } from 'node:child_process'
+import { dateLiteral, shanghaiDaysAgo } from '../lib/time-semantics.mjs'
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..', '..')
 const DRY = process.argv.includes('--dry-run')
@@ -56,19 +57,27 @@ function loadPg(root) {
 }
 
 /**
- * 与断言 ⑪ `checkReconLedgerCover` 的同一条 SQL：目标日 T-4，期望集合 = 近 7 天出现过的
- * (账套, control)。**改这里必须同步改 warehouse-assertions.mjs**，两边判断不许分叉。
+ * 与断言 ⑪ `checkReconLedgerCover` 的同一条判据：目标日 T-4，期望集合 = 近 7 天出现过的
+ * (账套, control)。**改这里必须同步改 warehouse-assertions.mjs**，两边不许分叉
+ * （`recon-ledger-guard.test.ts` 把两边的「4 / 7」两个常量都钉住了）。
+ *
+ * 日期用 `dateLiteral(shanghaiDaysAgo(n))` 在 JS 侧算好再拼**字面量**：时区语义走单一事实源
+ * （扩散守卫会拦裸写时区字面量），且字面量对 pg 的计划更友好。
+ * 断言侧仍是 SQL 内 `now()`（历史形态、在白名单里）——两者在同一时刻取值相同。
+ *
  * @param {any} pool
+ * @param {Date} [now]
  * @returns {Promise<Array<{system_book: string, control: string}>>}
  */
-export async function missingLedgerRows(pool) {
+export async function missingLedgerRows(pool, now = new Date()) {
+  const target = dateLiteral(shanghaiDaysAgo(4, now)) // T-4
+  const since = dateLiteral(shanghaiDaysAgo(11, now)) // (T-4) − 7
   const r = await pool.query(
-    `with t as (select ((now() at time zone 'Asia/Shanghai')::date - 4) as d),
-          b as (select distinct system_book, control from recon_run
-                 where bizday > (select d from t) - 7)
+    `with b as (select distinct system_book, control from recon_run
+                 where bizday > ${since})
      select b.system_book, b.control
        from b left join recon_run r
-         on r.system_book = b.system_book and r.control = b.control and r.bizday = (select d from t)
+         on r.system_book = b.system_book and r.control = b.control and r.bizday = ${target}
       where r.status is null
       order by 1, 2`,
   )
