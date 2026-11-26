@@ -105,6 +105,8 @@ DATABASE_URL=… WUJI_APPID=… WUJI_KEY_STORE_INFO=… WUJI_API_PATH=/api/publi
 
 - [ ] 租户行五键（或平台默认 env）：endpoint / bucket / AK / SK / region；
       **漏配 = 附件端点 503，不是启动报错**。
+- [ ] **桶 CORS 放行本租户 console 域名**（见 §3.2）——漏配的表现是「预签名 201、PUT
+      `TypeError: Failed to fetch`」，服务端日志**零告警**，而 `ticket_attachment` 一直 0 行。
 - [ ] 冒烟：小图直传 → console 看原图；>1MiB 视频直传（bodyLimit 外的预签名链路）；
       删单后跑 GC dry-run 看孤儿计数。
 
@@ -125,6 +127,30 @@ DATABASE_URL=… WUJI_APPID=… WUJI_KEY_STORE_INFO=… WUJI_API_PATH=/api/publi
 **新租户接附件时要做同样的配置**——这是环境动作，不是代码能力（代码侧只有上传/预签名/GC）。
 
 > ZOS 的三档存储（2026-11-26 文档实测）：标准（无最小期限）/ 低频（**30 天**）/ 归档（**90 天**，需解冻）。
+
+### 3.2 桶 CORS（2026-11-26 实测补齐，**不配 = 浏览器传不上去**）
+
+附件是**浏览器直传**（预签名 PUT，字节不过平台），所以桶必须放行本租户 console 的 Origin：
+
+```json
+[{"AllowedOrigins":["https://platform.shanhaiyiguo.com","https://console.ctyun.cn"],
+  "AllowedMethods":["GET","PUT","DELETE","HEAD","POST"],
+  "AllowedHeaders":["*"],"MaxAgeSeconds":3000}]
+```
+
+**为什么容易漏**：服务端 `curl` 拿预签名 URL 能传（curl 不做 CORS），接口级验证因此**全绿**；
+真实浏览器里 `PUT` 直接 `TypeError: Failed to fetch`，服务端**零日志**，`ticket_attachment`
+一直是 0 行——2026-11-26 就是这样漏了一整个模块的上传能力。
+
+排查/修复口径（在应用单元容器内跑，凭据从 env 取）：
+
+```ts
+// GetBucketCors / PutBucketCors，@aws-sdk/client-s3 + platformStorageFromEnv(process.env)
+// 只在 AllowedOrigins 里增删域名，**保留**只读方法集与 AllowedHeaders:['*']
+```
+
+**新租户**：域名进 `AllowedOrigins` 才算接完上传；`*.shanhaiyiguo.com` 子域不用通配（一个租户域名
+一条，面最小）。改完**用浏览器**（不是 curl）复验一次：预签名 201 + PUT 200。
 
 ## 4. Gate 4：渠道
 
