@@ -11,6 +11,11 @@
 
 ## [Unreleased]
 
+## [0.399.0](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.398.1...v0.399.0) - 2026-11-26
+- 【新增】aftersales: 工单页对齐无极（筛选/计数/金额预览/导出/批量删除） ([#2889](https://github.com/MYTech-Co-LTD/platform-core/pull/2889), [1e97da3](https://github.com/MYTech-Co-LTD/platform-core/commit/1e97da355a260ff0f76bc219b1c55aa0743d0e59))
+- 【修复】data: 本周四项——密钥守卫 / 排窗挪出 tick / SLA 起步宽限 / 排空只拦批量 ([#2888](https://github.com/MYTech-Co-LTD/platform-core/pull/2888), [fe61151](https://github.com/MYTech-Co-LTD/platform-core/commit/fe611514d70aba3cec74523505af1ac977cd99e7))
+
+
 ## [0.398.1](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.398.0...v0.398.1) - 2026-11-26
 - 【修复】data: 夜间回填每次回读都新建 S3 密钥——改复用 catalog 级凭据（读湖 5.69s→0.66s） ([#2886](https://github.com/MYTech-Co-LTD/platform-core/pull/2886), [5d9fe19](https://github.com/MYTech-Co-LTD/platform-core/commit/5d9fe1933ad5bff3223dec109b46c901d08e4373))
 
