@@ -604,6 +604,21 @@ describe('registry · 小时对象回收（Wave 8 ③；#2668 拆回两条）', 
     expect(def.env).toEqual({ GC_DAYS_BACK: '2', GC_TZ: 'Asia/Shanghai', GC_SCAN_DAYS: '30' })
     expect(existsSync(repoPath(def.script))).toBe(true)
   })
+
+  it('★ aftersales.attachment_gc：平台域、每日 CST 04:20、排班必须 --apply（脚本默认 dry-run）', () => {
+    const def = JOB_REGISTRY.find((d) => d.key === 'aftersales.attachment_gc')!
+    expect(def, 'aftersales.attachment_gc').toBeDefined()
+    // 业务动作（#2728）⇒ 平台调度器。租户存储配置在 `platform.tenant` 行上、平台默认 env 只是兜底
+    // ⇒ 只要求 DATABASE_URL（不能把 AFTERSALES_ZOS_* 列为必需：缺平台默认时租户自备配置照样能删）。
+    expect(def.scope).toBe('platform')
+    expect(def.requiresEnv).toEqual(['DATABASE_URL'])
+    expect(def.cron).toBe('20 20 * * *') // UTC 20:20 = CST 04:20（夜间低峰）
+    expect(def.timezone).toBe('UTC')
+    expect(def.expectedIntervalSecs).toBe(86400)
+    // 缺 --apply = 每天只打 dry-run 报告、孤儿行与对象永不清理（静默失败）
+    expect(def.args).toEqual(['--apply'])
+    expect(existsSync(repoPath(def.script))).toBe(true)
+  })
 })
 
 describe('registry · 子进程参数（W6-P4b）', () => {
@@ -624,6 +639,9 @@ describe('registry · 子进程参数（W6-P4b）', () => {
       ['platform.warehouse_assertions_oo', '--group oo：只跑 ⑭⑮（需 OO 读凭据，只在应用单元）'],
       // B2 第二阶段：全量证明档（org 单值 84s + 下钻延迟 23s）从 5 分钟档搬出来，每 30 分钟跑。
       ['data.warehouse_assertions_heavy', '--group heavy：只跑全量扫描/延迟探测两条（每 30 分钟）'],
+      // spec §5 #12：脚本默认 dry-run（安全缺省），系统排班必须 --apply 才真删；
+      // 缺了它 = 每天跑一轮只打报告、孤儿行与对象永不清理（= 现状的静默失败）。
+      ['aftersales.attachment_gc', '脚本默认 dry-run，排班必须 --apply'],
     ])
     for (const d of JOB_REGISTRY) {
       if (allow.has(d.key)) continue
