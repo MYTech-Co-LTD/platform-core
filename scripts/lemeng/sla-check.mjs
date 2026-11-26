@@ -82,6 +82,20 @@ function hhmm(s) {
   return (Number.isFinite(h) ? h : 0) * 60 + (Number.isFinite(m) ? m : 0)
 }
 
+/**
+ * 窗口内已过的分钟数（CST；跨零点窗口安全）。窗口外返回 null。
+ * 用于**窗口起步宽限**：窗口刚开时「最后一次 ok build」必然是昨天的，直接判 age 必然假红。
+ * @param {Date} now
+ * @param {{start: string, end: string} | 'all'} window
+ * @returns {number|null}
+ */
+export function minutesIntoWindow(now, window) {
+  if (!window || window === 'all') return null
+  if (!inWindow(now, window)) return null
+  const start = hhmm(window.start)
+  return (((cstMinuteOfDay(now) - start) % 1440) + 1440) % 1440
+}
+
 /** 活跃窗口（CST）；window 为 'all' 或缺省 ⇒ 恒 true；支持跨零点（start > end）。 @param {Date} now @param {any} window @returns {boolean} */
 export function inWindow(now, window) {
   if (!window || window === 'all') return true
@@ -117,11 +131,18 @@ export function inWindow(now, window) {
  * @param {any} sla
  * @returns {{ windowActive: boolean, sourceAt: string|null, builtAt: string|null, lagSourceToBuildMs: number|null, buildAgeMs: number|null, verdict: 'OK'|'WARN'|'ERR'|'UNKNOWN'|'SKIP', detail: string }}
  */
-function judge(now, job, built, source, windowActive, sla) {
+function judge(now, job, built, source, windowActive, sla, elapsedInWindowMin = /** @type {number|null} */ (null)) {
   const builtIso = built ? built.toISOString() : null
   const sourceIso = source ? source.toISOString() : null
   if (!windowActive) {
     return { windowActive, sourceAt: sourceIso, builtAt: builtIso, lagSourceToBuildMs: null, buildAgeMs: null, verdict: 'SKIP', detail: '窗口外' }
+  }
+  // 窗口起步宽限（2026-11-26）：窗口刚开的 N 分钟内不判——此时"最后一次 ok build"必然是昨天的，
+  // 判 age 必然假红（实测 09:00 那批 80 条 ERR 全来自此）。源↔建判据仍然生效（它不看绝对 age）。
+  const grace = Number(sla?.windowGraceMinutes ?? 0)
+  if (grace > 0 && elapsedInWindowMin !== null && elapsedInWindowMin < grace) {
+    return { windowActive, sourceAt: sourceIso, builtAt: builtIso, lagSourceToBuildMs: null, buildAgeMs: null,
+      verdict: 'SKIP', detail: `窗口起步宽限（已过 ${elapsedInWindowMin}m < ${grace}m，不判 age）` }
   }
   if (!built) {
     return { windowActive, sourceAt: sourceIso, builtAt: null, lagSourceToBuildMs: null, buildAgeMs: null, verdict: 'ERR', detail: '窗口内无 ok 运行' }
@@ -167,7 +188,7 @@ export function computeReport(config, clocks) {
     const built = jobs.get(ten.job) ?? null
     const tokens = /** @type {Date[]} */ ((hotRunTokens ?? []).map(parseRunToken).filter(Boolean))
     const source = tokens.length ? new Date(Math.min(...tokens.map((d) => d.getTime()))) : null
-    rows.push({ product: 'retail_10m', job: ten.job, ...judge(now, ten.job, built, source, inWindow(now, ten.window), ten.sla ?? {}) })
+    rows.push({ product: 'retail_10m', job: ten.job, ...judge(now, ten.job, built, source, inWindow(now, ten.window), ten.sla ?? {}, minutesIntoWindow(now, ten.window)) })
   }
 
   const oneHour = products.nonretail_1h
@@ -181,7 +202,7 @@ export function computeReport(config, clocks) {
       const source = times.length > 0 && times.every(Boolean)
         ? new Date(Math.min(...times.map((/** @type {Date} */ t) => t.getTime())))
         : null
-      rows.push({ product: `nonretail_1h.${domain}`, job: d.job, ...judge(now, d.job, built, source, inWindow(now, oneHour.window), oneHour.sla ?? {}) })
+      rows.push({ product: `nonretail_1h.${domain}`, job: d.job, ...judge(now, d.job, built, source, inWindow(now, oneHour.window), oneHour.sla ?? {}, minutesIntoWindow(now, oneHour.window)) })
     }
   }
 

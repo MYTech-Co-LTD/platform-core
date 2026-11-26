@@ -279,7 +279,7 @@
     "enabled": true,
     "kind": {
       "type": "cron",
-      "expr": "30 10,18 * * *"
+      "expr": "50 8 * * *"
     },
     "timezone": "Asia/Shanghai",
     "misfire": "all",

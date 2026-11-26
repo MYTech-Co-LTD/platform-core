@@ -1,7 +1,7 @@
 // scripts/lemeng/sla-check.test.ts — SLA 只读测量器的纯函数测试（D2）。
 // 判据：时钟解析、跨零点窗口、以及每个 product 的 OK/ERR/UNKNOWN/SKIP 分支。
 import { describe, expect, it } from 'vitest'
-import { computeReport, inWindow, parseConsoleTime, parseRunToken } from './sla-check.mjs'
+import { computeReport, inWindow, minutesIntoWindow, parseConsoleTime, parseRunToken } from './sla-check.mjs'
 
 const CONFIG = {
   products: {
@@ -85,7 +85,7 @@ describe('sla-check · 判据', () => {
       ['src.b', new Date('2026-11-25T02:00:00Z')],
     ])
     const r = computeReport(CONFIG, clocks({ jobs, console }))
-    const p = r.products.find((x) => x.product === 'nonretail_1h.purchase')!
+    const p = r.products.find((x) => x.product === 'nonretail_1h.purchase')!!
     expect(p.verdict).toBe('OK')
     expect(p.lagSourceToBuildMs).toBe(55 * 60_000) // 02:00 → 02:55
   })
@@ -137,5 +137,45 @@ describe('sla-check · 判据', () => {
     const jobs = new Map([['data.dbt_daily_report', new Date('2026-11-23T11:00:00Z')]])
     const r = computeReport(CONFIG, clocks({ jobs }))
     expect(r.products.find((p) => p.product === 'daily_report')!.verdict).toBe('ERR')
+  })
+})
+
+describe('sla-check · 窗口起步宽限（2026-11-26）', () => {
+  const cfg = {
+    products: {
+      nonretail_1h: {
+        window: { start: '09:00', end: '23:59' },
+        sla: { sourceToBuildMinutes: 75, buildIntervalMinutes: 75, missingOkMinutes: 120, windowGraceMinutes: 70 },
+        domains: { purchase: { job: 'data.dbt_hourly_purchase', sources: ['src.a'] } },
+      },
+      retail_10m: {
+        job: 'data.dbt_tick', window: { start: '09:00', end: '01:59' },
+        sla: { sourceToBuildMinutes: 10, buildIntervalMinutes: 15, missingOkMinutes: 20, windowGraceMinutes: 20 },
+      },
+    },
+  }
+  const mk = (now: Date, built: Date, source: Date) => ({
+    now, jobs: new Map([['data.dbt_hourly_purchase', built]]),
+    hotRunTokens: [], consoleLastOk: new Map([['src.a', source]]),
+  })
+
+  it('minutesIntoWindow：跨零点窗口也落在 [0,1440)', () => {
+    expect(minutesIntoWindow(new Date('2026-11-25T01:00:00Z'), { start: '09:00', end: '01:59' })).toBe(0)
+    expect(minutesIntoWindow(new Date('2026-11-24T16:30:00Z'), { start: '09:00', end: '01:59' })).toBe(930) // 00:30 CST = 9h30
+    expect(minutesIntoWindow(new Date('2026-11-25T00:30:00Z'), { start: '09:00', end: '01:59' })).toBeNull() // 08:30 窗口外
+  })
+
+  it('★ 09:00 整点：昨天那次 build 的 age 不再判红（原来是 588m > 120m 的假红）', () => {
+    const now = new Date('2026-11-25T01:00:00Z') // 09:00 CST
+    const r = computeReport(cfg, mk(now, new Date('2026-11-24T18:30:00Z'), new Date('2026-11-25T00:20:00Z')))
+    const p = r.products.find((x) => x.product === 'nonretail_1h.purchase')!
+    expect(p.verdict).toBe('SKIP')
+    expect(p.detail).toContain('起步宽限')
+  })
+
+  it('宽限期过后（10:20，已过 80m > 70m）同样的 age 照常判红——宽限只挡窗口起点', () => {
+    const now = new Date('2026-11-25T02:20:00Z') // 10:20 CST
+    const r = computeReport(cfg, mk(now, new Date('2026-11-24T18:30:00Z'), new Date('2026-11-25T00:20:00Z')))
+    expect(r.products.find((x) => x.product === 'nonretail_1h.purchase')!.verdict).toBe('ERR')
   })
 })
