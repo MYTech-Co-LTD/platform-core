@@ -11,6 +11,10 @@
 
 ## [Unreleased]
 
+## [0.397.0](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.396.0...v0.397.0) - 2026-11-26
+- 【新增】dbt: business_collection_receive 切两腿读（冷腿 _MONTH / 活跃腿按月裁剪） ([#2878](https://github.com/MYTech-Co-LTD/platform-core/pull/2878), [773b80a](https://github.com/MYTech-Co-LTD/platform-core/commit/773b80aed155d6b78417e0b21aa1a383c111dc80))
+
+
 ## [0.396.0](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.395.0...v0.396.0) - 2026-11-26
 - 【新增】aftersales: 孤儿附件 GC 定时 job（平台调度器，每日 --apply） ([#2877](https://github.com/MYTech-Co-LTD/platform-core/pull/2877), [6f15f1f](https://github.com/MYTech-Co-LTD/platform-core/commit/6f15f1fd1a13e65d114b5cc810982ff8bb0d3f5d))
 
