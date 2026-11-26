@@ -141,6 +141,7 @@
 
 ## §7 详细设计指针
 
+- 湖封版分区压缩（C）：`docs/superpowers/specs/2026-11-26-lake-closed-partition-compaction-design.md`（P0 待实施）
 - 热层设计：`docs/superpowers/specs/2026-11-23-retail-hot-layer-design.md`
 - 增量 mart 与频率：`docs/superpowers/plans/2026-11-06-materialize-frequency-and-incremental.md`
 - 数据面架构：`docs/architecture.md` §5
