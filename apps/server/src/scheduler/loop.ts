@@ -124,20 +124,23 @@ export function createSchedulerLoop(deps: SchedulerDeps) {
       stats.reaped = await reapStale(deps.pool, t)
       stats.reaped += await reapQueued(deps.pool, t)
 
-      // 部署排空（#2567）：CI 在触发数据单元部署前写 `scheduler_control(key='drain')`，构建期间
-      // 这里**不再 claim**——否则新起的 hourly/审计会在容器重启时被砍成 0s timeout（容器侧优雅停机
-      // 指望不上：docker 的宽限期由部署方定，实测 openship 只等 10s 就 SIGKILL）。
-      // 心跳/对账照跑（上面那两行）：排空不是停摆，台账仍要新鲜。
-      if (await isDraining(deps.pool, t)) {
-        stats.draining = true
-        return stats
-      }
-
       // 车道分级（B2，2026-11-25）：实时车道（`realtime: true`）到期前 90 秒，**给它留一个槽**——
       // 这一拍批量车道最多只用「空闲槽 − 1」。根因是排队而非容量：实测利用率仅 39%，却有 p90
       // 220 秒的领取迟到，因为一条 500 秒的批量作业能把两个槽都占住、让 38 秒的 tick 干等。
       const realtimeKeys = registry.filter((d) => d.realtime).map((d) => d.key)
       const batchKeys = realtimeKeys.length === 0 ? keys : keys.filter((k) => !realtimeKeys.includes(k))
+
+      // 部署排空（#2567 / 2026-11-26 收窄）：CI 在触发数据单元部署前写 `scheduler_control(key='drain')`。
+      // 原语义是**整段不 claim**——但排空覆盖的是整个构建+发布（实测 10–20 分钟），而真正的容器重启只有
+      // 十几秒 ⇒ 一天 11 次部署 = **295 分钟**没有任何 tick（实测：排空窗内 tick 迟到 p90 438s、
+      // 正常拍 p90 27s）。现在只拦**批量车道**（20–90 分钟的 hourly/审计，被砍代价大）；
+      // 实时车道（38 秒的 tick）照常 claim——最坏情况丢一拍，远好过整段停摆。
+      const draining = await isDraining(deps.pool, t)
+      if (draining) {
+        stats.draining = true
+        if (realtimeKeys.length === 0) return stats
+      }
+
       const reserve = await hasDueSoon(deps.pool, realtimeKeys, t, REALTIME_RESERVE_WINDOW_MS)
 
       /** 当前还能起几个（本地模式看进程内，派发模式看 DB——进程内 Set 在派发模式下恒空）。 */
@@ -156,11 +159,14 @@ export function createSchedulerLoop(deps: SchedulerDeps) {
         return jobs.length
       }
 
+      // 排空期：批量车道不 claim（不新起会被重启砍掉的长作业）；实时车道照跑。
+      const activeBatchKeys = draining ? [] : batchKeys
+
       const free0 = await freeSlots()
       if (free0 === 0) return stats
       // 手动（人的显式动作）先领，实时车道排在批量前：留槽期批量最多 free−1。
       await startManual(realtimeKeys, free0)
-      await startManual(batchKeys, batchCap(await freeSlots()))
+      await startManual(activeBatchKeys, batchCap(await freeSlots()))
 
       const room = await freeSlots()
       if (room === 0) return stats
@@ -173,9 +179,9 @@ export function createSchedulerLoop(deps: SchedulerDeps) {
       for (const job of dueRealtime) { void runOne(job, false); stats.started += 1 }
 
       const room2 = batchCap(await freeSlots())
-      const dueBatch = room2 <= 0 || batchKeys.length === 0
+      const dueBatch = room2 <= 0 || activeBatchKeys.length === 0
         ? []
-        : await claimDue(deps.pool, room2, t, nextRunAt, { runnerId: instanceId, keys: batchKeys })
+        : await claimDue(deps.pool, room2, t, nextRunAt, { runnerId: instanceId, keys: activeBatchKeys })
       stats.claimed += dueBatch.length
       for (const job of dueBatch) { void runOne(job, false); stats.started += 1 }
       return stats

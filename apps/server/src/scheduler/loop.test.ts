@@ -112,7 +112,7 @@ describePg('scheduler loop', () => {
     expect(String(row.error ?? '')).toMatch(/dispatch failed/)
   })
 
-  it('★ 部署排空信号在 ⇒ 本拍不 claim 任何作业（#2567：构建期间不起新作业）', async () => {
+  it('★ 部署排空信号在 ⇒ 批量车道不 claim（#2567；2026-11-26 收窄：实时车道照跑）', async () => {
     const id = await seed()
     await pool.query(
       `insert into platform.scheduler_control(key,value)
@@ -134,6 +134,32 @@ describePg('scheduler loop', () => {
       expect(beat.rows.length).toBeGreaterThan(0)
       const ran = await pool.query("select 1 from platform.job_run where schedule_id=$1", [id])
       expect(ran.rows.length).toBe(0)
+    } finally {
+      await pool.query("delete from platform.scheduler_control where key='drain'")
+    }
+  })
+
+  it('★ 排空期实时车道照跑（2026-11-26 收窄：只拦批量，tick 38s 丢了也比整段停摆好）', async () => {
+    await clearFixtures()
+    const rt = await insertSchedule({ key: 'jobtest-loop:rt-drain', nextRunAt: new Date(Date.now() - 60_000) })
+    const batch = await insertSchedule({ key: 'jobtest-loop:batch-drain', nextRunAt: new Date(Date.now() - 60_000) })
+    await pool.query(
+      `insert into platform.scheduler_control(key,value)
+       values ('drain', jsonb_build_object('until_ms', (extract(epoch from now() + interval '10 minutes') * 1000)::bigint))
+       on conflict (key) do update set value = excluded.value`,
+    )
+    const spawned: string[] = []
+    const loop = createSchedulerLoop({
+      pool, cwd: process.cwd(), maxConcurrency: 2,
+      registry: [def({ key: 'jobtest-loop:rt-drain', realtime: true }), def({ key: 'jobtest-loop:batch-drain' })],
+      spawn: async (o) => { spawned.push(String(o.env?.JOB_KEY)); return okResult() },
+    })
+    try {
+      const stats = await loop.tick()
+      expect(stats.draining).toBe(true)
+      expect(spawned).toEqual(['jobtest-loop:rt-drain'])
+      expect((await waitTerminal(rt)).status).toBe('ok')
+      expect(await latestRun(batch)).toBeUndefined()
     } finally {
       await pool.query("delete from platform.scheduler_control where key='drain'")
     }
