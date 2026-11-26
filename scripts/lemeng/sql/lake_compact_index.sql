@@ -15,15 +15,21 @@ create table if not exists data.lake_compact_index (
   source        text        not null,   -- 源名，例如 business_collection_receive
   system_book   integer     not null,   -- 账套（3120 / 64188）
   ym            text        not null,   -- 'YYYY-MM'（只收已封月）
-  rows          bigint      not null check (rows > 0),
+  rows          bigint      not null check (rows >= 0),
   bytes         bigint,
   min_bizday    date,
   max_bizday    date,
   contract_sha  text        not null,   -- contracts 的规范 sha8；契约一变则冷腿自动失效
   object_key    text        not null,   -- _MONTH 对象的完整 key（取证用）
+  status        text        not null default 'ok',  -- ok | empty（空月也记一行，父管线据此不再重试）
   built_at      timestamptz not null default now(),
   primary key (source, system_book, ym)
 );
+
+-- 存量库的幂等补齐（新库上面已含）：
+alter table data.lake_compact_index add column if not exists status text not null default 'ok';
+alter table data.lake_compact_index drop constraint if exists lake_compact_index_rows_check;
+alter table data.lake_compact_index add constraint lake_compact_index_rows_check check (rows >= 0);
 
 create index if not exists lake_compact_index_source_ym
   on data.lake_compact_index (source, ym);

@@ -1,12 +1,10 @@
 {
  "name": "lake.compact.month",
  "_note": [
-  "封版分区压缩·子：读该月原始文件 → 空月守卫 → 写 _MONTH 月文件 → 统计 → upsert 索引。",
-  "sink 不产出表（code.sql 会把上游节点的 id 当表名读）⇒ st 必须接在守卫 g 上，与 k 并列；索引写入与文件写入同属一次 run，失败即整轮红。",
-  "⚠️ 用 src.minio 原生读：pg_duckdb 的 read_parquet 在 PG 侧只暴露单列 struct（r['col'] 要逐列名单、r.* 报 missing FROM-clause），而 src.minio 直接给定型列且快一个量级（17k 行 0.8s vs 9.9s，实测 2026-11-26）。",
-  "bizday 保留在文件体（月文件路径没有 bizday 分区）。",
-  "0 行 = 该月原始缺失，拒写（写空月文件会毁数据）。",
-  "⚠️ 不能在 ctl.die 之后分叉：实测（2026-11-26）给 g 加第二个下游后，同一条 stream 只被第一个分支消费，第二次评估看到 0 行 ⇒ die 误报。故本管线只写月文件；索引由 lake.compact.index 单独写。"
+  "封版分区压缩·搬运（C 设计 2026-11-26 终版）：src.s3 → snk.minio，**纯字节搬运**，对列盲（不依赖契约列清单）。",
+  "为什么没有守卫/统计：本环境实测（2026-11-26）以远程 sink 结尾时所有节点都是惰性 view，ctl.die 恒数到 0 行（materialize 不生效），die 后也不能分叉 ⇒ 控制流搬到平台 job `data.lake_compact_index`（读 _MONTH 单文件 → 行数/边界 → 写索引）。",
+  "空月：若原始月为空，本管线会写空文件；索引 job 依据「原始 glob 为 0」写 status='empty' 行，父管线把任何索引行视为已完成，不会反复重试。",
+  "实测：16,360 行 / 1.5s（2024-11 3120）。"
  ],
  "nodes": [
   {
@@ -17,29 +15,12 @@
     "y": 0
    },
    "data": {
-    "label": "读该月原始文件（src.minio 原生读，原生列类型）",
-    "componentId": "src.minio",
+    "label": "读该月原始文件（src.s3）",
+    "componentId": "src.s3",
     "properties": {
      "connectionRef": "zos",
-     "bucket": "${ENV:ZOS_BUCKET}",
-     "key": "${ITER_ITEM_KEY}",
+     "path": "${ITER_ITEM_PATH}",
      "format": "parquet"
-    }
-   }
-  },
-  {
-   "id": "g",
-   "type": "transform",
-   "position": {
-    "x": 260,
-    "y": 0
-   },
-   "data": {
-    "label": "空月守卫（0 行=原始缺失，拒写）",
-    "componentId": "ctl.die",
-    "properties": {
-     "condition": "no-rows",
-     "message": "lake.compact: source=${ITER_ITEM_SOURCE} system_book=${ITER_ITEM_SYSTEM_BOOK} month=${ITER_ITEM_YM} 读到 0 行——写空月文件会毁数据，拒绝"
     }
    }
   },
@@ -47,7 +28,7 @@
    "id": "k",
    "type": "sink",
    "position": {
-    "x": 520,
+    "x": 260,
     "y": 0
    },
    "data": {
@@ -66,18 +47,8 @@
  ],
  "edges": [
   {
-   "id": "e_s_g",
+   "id": "e_s_k",
    "source": "s",
-   "target": "g",
-   "sourceHandle": "main",
-   "targetHandle": "main",
-   "data": {
-    "connectionType": "main"
-   }
-  },
-  {
-   "id": "e_g_k",
-   "source": "g",
    "target": "k",
    "sourceHandle": "main",
    "targetHandle": "main",
