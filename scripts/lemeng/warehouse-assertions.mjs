@@ -29,7 +29,9 @@
 // 由调度器的 job 失败面覆盖。⇒ 告警语义变**宽**了一档，不会更吵。
 
 import { createRequire } from 'node:module'
-import { pathToFileURL } from 'node:url'
+import { readFileSync } from 'node:fs'
+import { createHash } from 'node:crypto'
+import { fileURLToPath, pathToFileURL } from 'node:url'
 import { emitProbe, emitFailure, ooEnv } from '../probe-emit.mjs'
 import { shanghaiToday, shiftDay as shift } from '../lib/time-semantics.mjs'
 
@@ -231,6 +233,9 @@ async function checkFresh(pool) {
  */
 /** @param {Queryable} pool */
 async function checkMartsFresh(pool) {
+  // 上一个自然月（CST）：today=2026-11-27 ⇒ prevYm=2026-10
+  const [ty, tm] = shanghaiToday().split('-').map(Number)
+  const prevYm = tm === 1 ? `${ty - 1}-12` : `${ty}-${String(tm - 1).padStart(2, '0')}`
   /** @type {string[]} */
   const bad = []
   const spec = MARTS_FRESH_SPEC.trim().split(/\s+/).map((s) => {
@@ -404,6 +409,83 @@ async function checkRegionRegistered(pool) {
  * 判不了（源没注册/没有 ok 行/读失败）⇒ `UNKNOWN`，**不当作通过**（三条红线：判不了 ≠ 没问题）。
  * @param {Queryable} pool
  */
+/**
+ * ㉔ 压缩索引**形状**（spec §7 ①②）：连续性 + 不陈旧 + 契约当前。
+ *
+ * 这三条为什么必须常驻：冷腿 boundary = 最大 ok 月，若中间**有洞**，读面会静默跳过那一段；
+ * 若 `built_at` 很久没推进，说明压缩没在跑（而读面照旧信它）；若契约改了而索引还记旧 sha，
+ * 冷腿读的是**旧布局的月文件**。三条都不会报错，只会少数据或读错。
+ *
+ * 判据（任一不满足即 ERR）：① `[start_ym, max(ym)]` 逐月都有 ok 行；
+ * ② 边界月 == **上一个自然月**（月文件只在该月封版后重建一次，用「built_at 多久以前」判会天天假红）；
+ * ③ 索引 `contract_sha` == 契约文件当前 sha256 前 8 位。
+ * 读不到表/契约 ⇒ UNKNOWN（不当作通过）。
+ * @param {Queryable} pool
+ */
+async function checkCompactIndexShape(pool) {
+  if (selftest('compact_index_shape')) {
+    return { check: 'compact_index_shape', ok: false, verdict: 'ERR', detail: 'ERR 自测注入：索引洞/陈旧/契约漂移（WIRE_COMPACT_INDEX_SHAPE_SELFTEST）' }
+  }
+  /** @type {any[]} */
+  let srcs = []
+  try {
+    const r = await pool.query(
+      `select s.source, s.start_ym, s.contract_sha as want_sha,
+              max(i.ym) filter (where i.status = 'ok') as max_ym,
+              max(i.built_at) as built_at
+         from data.lake_compact_source s
+         left join data.lake_compact_index i on i.source = s.source
+        where s.enabled
+        group by 1,2,3`,
+    )
+    srcs = r.rows
+  } catch (e) {
+    return { check: 'compact_index_shape', ok: true, verdict: 'OK', detail: `OK 未启用压缩（表不可读：${msg(e).slice(0, 60)}）` }
+  }
+  if (srcs.length === 0) return { check: 'compact_index_shape', ok: true, verdict: 'OK', detail: 'OK 无已启用源' }
+
+  // 上一个自然月（CST）：today=2026-11-27 ⇒ prevYm=2026-10
+  const [ty, tm] = shanghaiToday().split('-').map(Number)
+  const prevYm = tm === 1 ? `${ty - 1}-12` : `${ty}-${String(tm - 1).padStart(2, '0')}`
+  /** @type {string[]} */
+  const bad = []
+  /** @type {string[]} */
+  const okNotes = []
+  for (const row of srcs) {
+    const src = String(row.source)
+    const maxYm = row.max_ym ? String(row.max_ym) : null
+    if (!maxYm) { bad.push(`${src} 无任何 ok 月`); continue }
+    const gaps = await pool.query(
+      `with m as (
+         select to_char(d, 'YYYY-MM') as ym
+           from generate_series(to_date($2 || '-01', 'YYYY-MM-DD'), to_date($3 || '-01', 'YYYY-MM-DD'), interval '1 month') as d
+       )
+       select m.ym from m
+        where not exists (select 1 from data.lake_compact_index i where i.source=$1 and i.ym=m.ym and i.status='ok')
+        order by 1`,
+      [src, String(row.start_ym), maxYm],
+    )
+    if (gaps.rows.length > 0) bad.push(`${src} 索引有洞 ${gaps.rows.map((/** @type {any} */ x) => x.ym).join(',')}`)
+    // ② 不陈旧：边界月**必须**是「上一个自然月」（月文件只在该月封版后重建一次）。
+    // 不用「built_at 多久以前」——那个时间点只在月末推进一次，用小时数判会天天假红；
+    // 用「该推进到哪个月」判才是真判据：进入新月份而索引还停在旧月 ⇒ 压缩没跑。
+    if (maxYm < prevYm) bad.push(`${src} 索引停在 ${maxYm}，应已推进到 ${prevYm}`)
+    try {
+      const file = fileURLToPath(new URL(`../../contracts/common/lemeng.${src}.json`, import.meta.url))
+      const sha8 = createHash('sha256').update(readFileSync(file)).digest('hex').slice(0, 8)
+      if (String(row.want_sha) !== sha8) bad.push(`${src} 契约 sha 漂移：注册 ${row.want_sha} ≠ 当前 ${sha8}`)
+    } catch (e) {
+      return { check: 'compact_index_shape', ok: true, verdict: 'UNKNOWN', detail: `UNKNOWN ${src} 契约读不到：${msg(e).slice(0, 60)}` }
+    }
+    okNotes.push(`${src}→${maxYm}`)
+  }
+  if (bad.length > 0) {
+    return { check: 'compact_index_shape', ok: false, verdict: 'ERR', detail: `ERR ${bad.join('；').slice(0, 320)}` }
+  }
+  return { check: 'compact_index_shape', ok: true, verdict: 'OK', detail: `OK 连续/新鲜/契约当前（${okNotes.join('、')}）` }
+}
+
+/** @param {Queryable} pool */
 async function checkCompactParity(pool) {
   if (selftest('compact_parity')) {
     return { check: 'compact_parity', ok: false, verdict: 'ERR', detail: 'ERR 自测注入：月文件与原始行数不一致（WIRE_COMPACT_PARITY_SELFTEST）' }
@@ -426,6 +508,9 @@ async function checkCompactParity(pool) {
     return { check: 'compact_parity', ok: true, verdict: 'OK', detail: 'OK 无已压缩源' }
   }
   const bucket = process.env.LEMENG_ZOS_BUCKET ?? 'shanhai-data'
+  // 上一个自然月（CST）：today=2026-11-27 ⇒ prevYm=2026-10
+  const [ty, tm] = shanghaiToday().split('-').map(Number)
+  const prevYm = tm === 1 ? `${ty - 1}-12` : `${ty}-${String(tm - 1).padStart(2, '0')}`
   /** @type {string[]} */
   const bad = []
   /** @type {string[]} */
@@ -1004,6 +1089,9 @@ async function checkOrgValid(pool) {
   if (selftest('org_valid')) {
     return { check: 'org_valid', ok: false, detail: 'ERR 自测注入：org 非法（WIRE_ORG_VALID_SELFTEST）' }
   }
+  // 上一个自然月（CST）：today=2026-11-27 ⇒ prevYm=2026-10
+  const [ty, tm] = shanghaiToday().split('-').map(Number)
+  const prevYm = tm === 1 ? `${ty - 1}-12` : `${ty}-${String(tm - 1).padStart(2, '0')}`
   /** @type {string[]} */
   const bad = []
   /** 读不动（争用 / cancel）单独记——**它不是「org 脏」**，不能混成一条判红。 */
@@ -1067,6 +1155,9 @@ async function checkOrgValidSingle(pool) {
   if (selftest('org_valid_single')) {
     return { check: 'org_valid_single', ok: false, detail: 'ERR 自测注入：org 多值（WIRE_ORG_VALID_SINGLE_SELFTEST）' }
   }
+  // 上一个自然月（CST）：today=2026-11-27 ⇒ prevYm=2026-10
+  const [ty, tm] = shanghaiToday().split('-').map(Number)
+  const prevYm = tm === 1 ? `${ty - 1}-12` : `${ty}-${String(tm - 1).padStart(2, '0')}`
   /** @type {string[]} */
   const bad = []
   /** @type {string[]} */
@@ -1200,6 +1291,7 @@ export async function runAll(group = 'all') {
       return [
         await timed(() => checkOrgValidSingle(heavyPool)),
         await timed(() => checkDetailLatency(heavyPool)),
+        await timed(() => checkCompactIndexShape(heavyPool)),
         await timed(() => checkCompactParity(heavyPool)),
       ]
     } finally {
