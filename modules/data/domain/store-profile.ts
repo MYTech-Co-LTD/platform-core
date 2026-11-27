@@ -88,6 +88,15 @@ export interface StoreProfileImportResult {
   rows: StoreProfileImportRowResult[]
 }
 
+export interface StoreBrandView {
+  code: string
+  name: string
+  sort: number
+  enabled: boolean
+  source: string
+  updatedAt: string | null
+}
+
 export interface StoreLevelView {
   code: string
   name: string
@@ -509,6 +518,72 @@ export async function importStoreProfiles(
     })
     await client.query('commit')
     return { ok: true, value: result }
+  } catch (e) {
+    await client.query('rollback').catch(() => {})
+    throw e
+  } finally {
+    client.release()
+  }
+}
+
+// ── 品牌字典（门店页签内联新建）──────────────────────────────────────
+
+export interface StoreBrandCreateInput {
+  code?: unknown
+  name?: unknown
+  sort?: unknown
+  enabled?: unknown
+}
+
+const BRAND_CODE_RE = /^[a-z0-9][a-z0-9_-]{0,63}$/
+
+function brandView(row: {
+  code: string; name: string; sort: number; enabled: boolean; source: string; updated_at: Date | string | null
+}): StoreBrandView {
+  return {
+    code: row.code,
+    name: row.name,
+    sort: Number(row.sort),
+    enabled: row.enabled,
+    source: row.source,
+    updatedAt: row.updated_at === null ? null : new Date(row.updated_at).toISOString(),
+  }
+}
+
+/** 新建品牌字典项（`data:store`）。门店页签「没有选项直接新建」的落点。 */
+export async function createStoreBrand(
+  deps: { pool: Pool }, org: string, actor: string, input: StoreBrandCreateInput,
+): Promise<StoreProfileResult<StoreBrandView>> {
+  const code = asText(input.code) ?? ''
+  if (!BRAND_CODE_RE.test(code)) return err('INVALID_CODE')
+  const name = parseLevelName(input.name)
+  if (name === null) return err('INVALID_BODY')
+  const sort = parseSort(input.sort)
+  if (sort === null) return err('INVALID_BODY')
+  if (input.enabled !== undefined && typeof input.enabled !== 'boolean') return err('INVALID_BODY')
+  const enabled = input.enabled ?? true
+
+  const client = await deps.pool.connect()
+  try {
+    await client.query('begin')
+    const inserted = await client.query(
+      `insert into data.brand_registry(org, code, name, sort, enabled, source)
+       values ($1, $2, $3, $4, $5, 'manual')
+       on conflict (org, code) do nothing
+       returning code, name, sort, enabled, source, updated_at`,
+      [org, code, name, sort, enabled],
+    )
+    if (inserted.rows.length === 0) {
+      await client.query('rollback')
+      return err('DUP_CODE', code)
+    }
+    await client.query(
+      `insert into data.brand_audit(org, actor, action, subject_type, subject_code, brand_code, detail)
+       values ($1, $2, 'brand.create', 'brand', $3, $3, $4::jsonb)`,
+      [org, actor, code, JSON.stringify({ code, name, sort, enabled })],
+    )
+    await client.query('commit')
+    return { ok: true, value: brandView(inserted.rows[0]) }
   } catch (e) {
     await client.query('rollback').catch(() => {})
     throw e

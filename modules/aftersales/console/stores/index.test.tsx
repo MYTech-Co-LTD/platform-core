@@ -1,15 +1,16 @@
 // stores/index.test.tsx — 门店页（只读）：★ 未接分页 ⇒ 不出现分页控件
 import '@testing-library/jest-dom/vitest'
-import { cleanup, render, screen, waitFor } from '@testing-library/react'
+import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import { MemoryRouter, Outlet, Route, Routes } from 'react-router-dom'
 
 vi.mock('@platform/sdk/web', () => ({ platformFetch: vi.fn() }))
 import { platformFetch } from '@platform/sdk/web'
 import StoresPage from './index'
 
 const m = vi.mocked(platformFetch)
-const json = (b: unknown) =>
-  new Response(JSON.stringify(b), { status: 200, headers: { 'content-type': 'application/json' } })
+const json = (b: unknown, status = 200) =>
+  new Response(JSON.stringify(b), { status, headers: { 'content-type': 'application/json' } })
 
 beforeEach(() => {
   m.mockReset()
@@ -34,6 +35,21 @@ beforeEach(() => {
 })
 afterEach(cleanup)
 
+function EditableShell() {
+  return <Outlet context={{ session: { scopes: ['data:store'] } }} />
+}
+function renderEditable() {
+  return render(
+    <MemoryRouter>
+      <Routes>
+        <Route element={<EditableShell />}>
+          <Route index element={<StoresPage />} />
+        </Route>
+      </Routes>
+    </MemoryRouter>,
+  )
+}
+
 describe('门店页（只读）', () => {
   it('渲染门店', async () => {
     render(<StoresPage />)
@@ -48,5 +64,54 @@ describe('门店页（只读）', () => {
     render(<StoresPage />)
     await waitFor(() => expect(screen.getByText('一号店')).toBeInTheDocument())
     expect(document.querySelector('.ant-pagination')).toBeNull()
+  })
+
+  it('★ 有 data:store：点标签 → 内联新建品牌 → 创建后赋值给该门店（#2930）', async () => {
+    const calls: Array<{ url: string; method?: string; body?: unknown }> = []
+    m.mockImplementation(async (url: string, init?: RequestInit) => {
+      calls.push({
+        url,
+        method: init?.method,
+        body: init?.body === undefined ? undefined : JSON.parse(String(init.body)),
+      })
+      if (url.includes('/stores/profile-options')) {
+        return json({
+          brands: [{ code: 'xiongmao', name: '熊喵', enabled: true, sort: 1 }],
+          levels: [],
+          coverage: { stores: 1, brandTagged: 1, levelTagged: 0 },
+          degraded: false,
+        })
+      }
+      if (url.startsWith('/api/modules/data/brands')) {
+        return json({ code: 'b_new', name: '新品牌', sort: 0, enabled: true, source: 'manual' }, 201)
+      }
+      if (url.includes('/store-profiles/S01')) return json({ storeCode: 'S01' })
+      return json({
+        items: [{
+          code: 'S01', name: '一号店', enable: true, address: '某路 1 号', phone: '010-1',
+          brandCode: 'xiongmao', brandName: '熊喵', levelCode: null, levelName: null,
+        }],
+        total: 1, page: 1, size: 20,
+      })
+    })
+
+    renderEditable()
+    await waitFor(() => expect(screen.getByText('一号店')).toBeInTheDocument())
+
+    fireEvent.click(screen.getByText('熊喵'))
+    const nameInput = await screen.findByPlaceholderText('新品牌名称')
+    fireEvent.change(nameInput, { target: { value: '新品牌' } })
+    fireEvent.click(screen.getByRole('button', { name: /新建/ }))
+
+    await waitFor(() => {
+      expect(calls.some((c) => c.url.startsWith('/api/modules/data/brands')
+        && c.method === 'POST'
+        && (c.body as { name?: string }).name === '新品牌')).toBe(true)
+    })
+    await waitFor(() => {
+      expect(calls.some((c) => c.url.includes('/store-profiles/S01')
+        && c.method === 'PUT'
+        && (c.body as { brandCode?: string }).brandCode === 'b_new')).toBe(true)
+    })
   })
 })

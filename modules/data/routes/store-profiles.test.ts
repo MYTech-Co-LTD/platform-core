@@ -52,6 +52,7 @@ describePg('store-profiles 路由（需要 DATABASE_URL）', () => {
   async function clean(): Promise<void> {
     await pool.query('delete from data.store_profile_audit where org = $1', [ORG])
     await pool.query('delete from data.store_profile where org = $1', [ORG])
+    await pool.query('delete from data.brand_audit where org = $1', [ORG])
     await pool.query('delete from data.brand_registry where org = $1', [ORG])
     await pool.query('delete from data.store_level_registry where org = $1', [ORG])
     await pool.query('delete from data.dim_branch where org = $1', [ORG])
@@ -112,6 +113,24 @@ describePg('store-profiles 路由（需要 DATABASE_URL）', () => {
     expect(res.status).toBe(200)
     const body = await res.json() as { dryRun: boolean; total: number; errors: number }
     expect(body).toMatchObject({ dryRun: true, total: 2, errors: 1 })
+  })
+
+  it('brands：create 201 / duplicate 409（门店页签内联新建）', async () => {
+    const created = await appFor().request('/brands', json({
+      code: 'newbrand', name: '新品牌', sort: 3,
+    }))
+    expect(created.status).toBe(201)
+    expect(await created.json()).toMatchObject({
+      code: 'newbrand', name: '新品牌', sort: 3, enabled: true, source: 'manual',
+    })
+
+    const dup = await appFor().request('/brands', json({ code: 'newbrand', name: '重复' }))
+    expect(dup.status).toBe(409)
+    expect((await dup.json()).error).toBe('DUP_CODE')
+
+    const bad = await appFor().request('/brands', json({ code: '中文', name: '非法' }))
+    expect(bad.status).toBe(400)
+    expect((await bad.json()).error).toBe('INVALID_CODE')
   })
 
   it('store-levels：create 201 / duplicate 409 / PATCH 200', async () => {
