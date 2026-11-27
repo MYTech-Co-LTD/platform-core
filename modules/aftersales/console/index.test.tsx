@@ -48,7 +48,7 @@ function renderAt(path: string) {
 }
 
 describe('售后 console 入口', () => {
-  it('页内不再渲染页签导航（#1953 二期：七页改由宿主左侧菜单承担）', () => {
+  it('页内不再渲染页签导航（#1953 二期：六页改由宿主左侧菜单承担）', () => {
     renderAt('/console/aftersales/tickets')
     expect(screen.queryByRole('menuitem', { name: '规则' })).toBeNull()
   })
@@ -69,4 +69,9 @@ describe('售后 console 入口', () => {
     const router = renderAt('/console/aftersales')
     await waitFor(() => expect(router.state.location.pathname).toBe('/console/aftersales/tickets'))
   })
+  it('旧 /links 深链规范化到人员页（独立身份绑定菜单已并入人员）', async () => {
+    const router = renderAt('/console/aftersales/links')
+    await waitFor(() => expect(router.state.location.pathname).toBe('/console/aftersales/employees'))
+  })
+
 })
