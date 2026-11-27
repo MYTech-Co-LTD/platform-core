@@ -218,14 +218,19 @@ export const JOB_REGISTRY: JobDef[] = [
   // 从主档拆出去，各自有超时与失败隔离。主档要跑几十个 table 模型 + 39 个测试，90 分钟曾被
   // 全史模型拖到必超时 ⇒ 未建成的表（#2655 的 swap_offset / 新列版 recon_break）整天进不了生产。
   // · 主档：table 模型 + seeds + views，**排除** recon 家族
-  // · 对账档：只跑那三个全史模型（CST 11:45，错开主档；闭窗读已让它们不与采集抢）
+  // · 对账档：只跑那几个全史模型
+  // ⚠️ #2896：本档原在 **CST 11:45**——#2674 拆档时主档在 10:25，「错开 80 分钟」成立；
+  //    但 #2792（0fef7e37）把主档与四条审计全挪进夜间时**漏了这一条**，于是「错峰」变成
+  //    「孤零零落在采集窗口（09:00–01:59）正中」——每轮 ~500s 的全史 CTAS 正撞 ETag 竞态。
+  //    ⇒ 挪到 **CST 03:30**：在 00:40 preagg（T-3 源快照）与主档（02:30，约 18 分钟）之后，
+  //    且与 04:30 的 `data.recon_ledger_guard`、05:30 起的审计链互不重叠。
   // ⚠️ #2890：拆档时漏了 `recon_run`（台账）。它只是对 `recon_break` 做 `count(*) group by`
   //    （毫秒级、不碰湖），却因此留在**主档**里 ⇒ 主档一超时，台账就停在超时前一天
   //    （2026-11-26 实测：主档 90 分钟被杀 ⇒ `staging.recon_run` 缺 11-22/11-23，
   //    而 `data.dbt_tables_recon` 当天正常把 recon_fact/recon_break 刷到了 11-23）。
   //    台账的新鲜度必须由**建它上游的那个档**决定，不能跨档搭车。
   { key: 'data.dbt_tables', scope: 'data', requiresEnv: ['DATABASE_URL','DATA_WAREHOUSE_URL','LEMENG_ZOS_BUCKET','LEMENG_ZOS_REGION','LEMENG_ZOS_ENDPOINT'], script: 'scripts/lemeng/materialize-job.mjs', env: { MATERIALIZE_SCOPE: 'tables', DATA_PLANE_DOMAINS: 'lemeng', MATERIALIZE_MODE: 'container', MATERIALIZE_TABLES_EXCLUDE: 'recon_fact recon_break fct_retail_swap_offset recon_run', LEMENG_ZOS_BUCKET: 'shanhai-data', LEMENG_ZOS_REGION: 'xinan1', LEMENG_ZOS_ENDPOINT: 'xinan-1-internal.zos.ctyun.cn' }, cron: '30 18 * * *', timezone: 'UTC', timeoutMs: 9000000, maxAttempts: 1, expectedIntervalSecs: 86400, description: '乐檬 dbt tables 主档（table 模型 + seeds + views，排除对账族；CST 02:30）' },
-  { key: 'data.dbt_tables_recon', scope: 'data', requiresEnv: ['DATABASE_URL','DATA_WAREHOUSE_URL','LEMENG_ZOS_BUCKET','LEMENG_ZOS_REGION','LEMENG_ZOS_ENDPOINT'], script: 'scripts/lemeng/materialize-job.mjs', env: { MATERIALIZE_SCOPE: 'tables', DATA_PLANE_DOMAINS: 'lemeng', MATERIALIZE_MODE: 'container', MATERIALIZE_TABLES_SELECT: 'recon_fact recon_break fct_retail_swap_offset recon_run', LEMENG_ZOS_BUCKET: 'shanhai-data', LEMENG_ZOS_REGION: 'xinan1', LEMENG_ZOS_ENDPOINT: 'xinan-1-internal.zos.ctyun.cn' }, cron: '45 3 * * *', timezone: 'UTC', timeoutMs: 2700000, maxAttempts: 1, expectedIntervalSecs: 86400, description: '乐檬 dbt tables 对账族（recon_fact/recon_break/swap_offset 全史 CTAS + recon_run 台账；CST 11:45）' },
+  { key: 'data.dbt_tables_recon', scope: 'data', requiresEnv: ['DATABASE_URL','DATA_WAREHOUSE_URL','LEMENG_ZOS_BUCKET','LEMENG_ZOS_REGION','LEMENG_ZOS_ENDPOINT'], script: 'scripts/lemeng/materialize-job.mjs', env: { MATERIALIZE_SCOPE: 'tables', DATA_PLANE_DOMAINS: 'lemeng', MATERIALIZE_MODE: 'container', MATERIALIZE_TABLES_SELECT: 'recon_fact recon_break fct_retail_swap_offset recon_run', LEMENG_ZOS_BUCKET: 'shanhai-data', LEMENG_ZOS_REGION: 'xinan1', LEMENG_ZOS_ENDPOINT: 'xinan-1-internal.zos.ctyun.cn' }, cron: '30 19 * * *', timezone: 'UTC', timeoutMs: 2700000, maxAttempts: 1, expectedIntervalSecs: 86400, description: '乐檬 dbt tables 对账族（recon_fact/recon_break/swap_offset 全史 CTAS + recon_run 台账；CST 03:30，夜间空窗）' },
   // 对账台账**当夜自愈闸**（#2894）：断言 ⑪ 红了不会自己去重建台账 ⇒ 红满一整天。
   // 本 job 用与 ⑪ **同一条 SQL** 判「T-4 缺行」，缺了才重建 `recon_fact/recon_break/recon_run`
   // （≈35s，不碰 500s 的 swap_offset）。重建后仍缺 = 不是台账没建而是那天在 recon_break 里就没行

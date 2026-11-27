@@ -251,8 +251,9 @@ describe('registry · dbt hourly/tables（Wave 8 P1 / A3 拆车道）', () => {
     // 对账档：**只**跑这四个，写死选择器
     expect(String(recon.env?.MATERIALIZE_TABLES_SELECT).split(/\s+/).sort()).toEqual([...FULL].sort())
     expect(recon.env?.MATERIALIZE_TABLES_EXCLUDE).toBeUndefined()
-    // 错峰：对账档在主档之后（CST 11:45 vs 10:25），且上限收紧到 45 分钟
-    expect(recon.cron).toBe('45 3 * * *')
+    // #2896：对账档在**夜间空窗**（CST 03:30）——主档 02:30 之后、preagg 00:40 之后，
+    // 且不与 04:30 的台账闸、05:30 起的审计链重叠。原 11:45 是 #2792 挪夜间时漏改的化石。
+    expect(recon.cron).toBe('30 19 * * *')
     expect(recon.timeoutMs).toBe(2700000)
     expect(recon.env?.MATERIALIZE_SCOPE).toBe('tables')
     expect(recon.env?.MATERIALIZE_MODE).toBe('container')
