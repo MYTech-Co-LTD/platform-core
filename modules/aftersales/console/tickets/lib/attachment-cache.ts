@@ -93,6 +93,34 @@ export async function refreshUrl(id: number): Promise<string> {
   return freshUrl(id)
 }
 
+/**
+ * 打开处理弹窗后后台预缓存**图片**附件（视频不预拉字节）。
+ *
+ * 并发 4：一张失败只跳过该张（预览打开时仍会显示错误/重试），不影响其他张，也不阻塞表单。
+ * 与预览共用同一个 inflight 去重：用户马上点预览时，等的也是这同一个 fetch，不会重复下载。
+ */
+export async function preloadImageAttachments(
+  items: TicketAttachment[],
+  concurrency = 4,
+): Promise<void> {
+  const images = items.filter((a) => a.contentType.startsWith('image/'))
+  let next = 0
+  const workers = Array.from(
+    { length: Math.min(concurrency, images.length) },
+    async () => {
+      while (next < images.length) {
+        const item = images[next++]
+        try {
+          await imageObjectUrl(item)
+        } catch {
+          // 单张失败不打断预缓存；预览打开时再显示错误与重试。
+        }
+      }
+    },
+  )
+  await Promise.all(workers)
+}
+
 /** 仅供测试：清空缓存并 revoke 所有 object URL。 */
 export function __resetAttachmentCacheForTests(): void {
   for (const e of cache.values()) if (e.objectUrl) URL.revokeObjectURL(e.objectUrl)

@@ -14,6 +14,7 @@ import type {
 } from '../../api-types'
 import { ApiError, apiGet, apiSend, messageOf } from '../lib/api'
 import { formatMinor } from '../lib/format'
+import { preloadImageAttachments } from './lib/attachment-cache'
 import { STATUS_LABEL } from './lib/labels'
 
 /** 规则表可能是多页（`size` 上限 100）——按 total 翻完，别只读第一页就断定「没有比例」。 */
@@ -84,6 +85,14 @@ export function ProcessDialog(props: {
       })
     return () => { alive = false }
   }, [props.open, props.ticketId])
+
+  // 打开处理弹窗即后台预缓存**图片**附件（并发 4，单张失败跳过）。
+  // 预览弹窗打开时直接命中这个缓存；关闭/重开处理弹窗也不再重复下载。
+  // 视频不预拉字节——预览弹窗用预签名 URL 流式播放。
+  useEffect(() => {
+    if (!props.open || !detail || detail.id !== props.ticketId) return
+    void preloadImageAttachments(detail.attachments)
+  }, [props.open, detail, props.ticketId])
 
   const ratios = useMemo(
     () => [...new Set(rules.map((r) => r.refundRatio).filter((v): v is number => v !== null))]
