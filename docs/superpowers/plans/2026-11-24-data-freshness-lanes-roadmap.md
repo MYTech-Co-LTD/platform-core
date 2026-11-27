@@ -79,7 +79,10 @@
 - [x] **D1** SLA 事实源 `scripts/lemeng/sla.json`（产品/域/源/窗口/阈值）+ `check-data-lanes` 覆盖门禁（域缺条目/源 id 不存在/多出域 即红）
 - [x] **D2** `scripts/lemeng/sla-check.mjs`（只读测量，恒 exit 0）+ `data.sla_check`（seed disabled）+ 11 条纯函数测试
 - [x] **D3** `data.sla_measure` 历史表 + 观测模式（写表、不发探针）；源→建判据改 `|built−source|`：10m ≤10m、1h ≤75m（1h 源领先是节拍）
-- [ ] **D4** 观测 2–3 天回填 p95 后收紧阈值 + 接 OO 告警 + 开闸（`data.sla_check`）
+- [x] **D4** 观测回填 p95 + 接 OO 告警 + 开闸（**2026-11-27 完成**）：`data.sla_check` 继续 `*/5` 运行；
+      **ERR 行投 OO `probe=sla`**（桥转企微，只投事实、不改判定/退出码）；阈值**按实测维持现值**
+      ——真滞后 p95 全部低于阈值（10m 8.0 vs 10；1h 0.5–48.1 vs 75），唯一超阈的是真停摆。
+      理由写进 `sla.json` 注释：不为了好看而调阈值
 - [ ] **G6** 48h soak
 
 ### P0.5 物化水位门禁

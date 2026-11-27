@@ -213,7 +213,7 @@ export const JOB_REGISTRY: JobDef[] = [
   { key: 'data.dbt_daily_report', scope: 'data', requiresEnv: ['DATABASE_URL','DATA_WAREHOUSE_URL','LEMENG_ZOS_BUCKET','LEMENG_ZOS_REGION','LEMENG_ZOS_ENDPOINT'], script: 'scripts/lemeng/materialize-job.mjs', env: { MATERIALIZE_SCOPE: 'hourly', MATERIALIZE_LANE: 'daily_report', DATA_PLANE_DOMAINS: 'lemeng', MATERIALIZE_MODE: 'container', LEMENG_ZOS_BUCKET: 'shanhai-data', LEMENG_ZOS_REGION: 'xinan1', LEMENG_ZOS_ENDPOINT: 'xinan-1-internal.zos.ctyun.cn' }, cron: '10 1 * * *', timezone: 'UTC', timeoutMs: 900000, maxAttempts: 2, expectedIntervalSecs: 86400, description: '乐檬 日档 · 零售利润两件（车道 daily_report；CST 09:10，错开 item_profit 09:05 采集）' },
   // 数据新鲜度 SLA 测量（路线图 D1/D2）：**只读**（不写库、不发探针、恒 exit 0），seed disabled；
   // D3/D4 观测 2–3 天校准阈值后再接 OO 告警与开闸。指标定义在 scripts/lemeng/sla.json。
-  { key: 'data.sla_check', scope: 'data', requiresEnv: ['DATABASE_URL','DATA_WAREHOUSE_URL'], script: 'scripts/lemeng/sla-check.mjs', cron: '*/5 * * * *', timezone: 'UTC', timeoutMs: 120000, maxAttempts: 1, expectedIntervalSecs: 300, description: '数据新鲜度 SLA 测量（10m/1h/daily；只读，seed disabled；D4 才接告警）' },
+  { key: 'data.sla_check', scope: 'data', requiresEnv: ['DATABASE_URL','DATA_WAREHOUSE_URL'], script: 'scripts/lemeng/sla-check.mjs', cron: '*/5 * * * *', timezone: 'UTC', timeoutMs: 120000, maxAttempts: 1, expectedIntervalSecs: 300, description: '数据新鲜度 SLA 测量 + D4 告警（ERR 行投 OO probe=sla；OO 凭据用 worker 既有的 OO_BASE/ORG/AUTH 回落，不新增 requiresEnv——缺键会把 job 整条剔出 claim 集合）' },
   // #2674 拆档：全史 CTAS 模型（recon 家族 + swap_offset，单轮 ~11 分钟且必撞采集期 ETag）
   // 从主档拆出去，各自有超时与失败隔离。主档要跑几十个 table 模型 + 39 个测试，90 分钟曾被
   // 全史模型拖到必超时 ⇒ 未建成的表（#2655 的 swap_offset / 新列版 recon_break）整天进不了生产。
