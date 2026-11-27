@@ -54,7 +54,7 @@
 | 自动指标推导（AMD） | `2026-11-04-auto-metric-derivation-roadmap.md` | 🟡 W0–W8 完成/观察中 | **首答产出率**与**徽标覆盖率**两项抽样度量未做（有效样本不足）；B 臂首答率等样本累积 |
 | 监控职责分工（OO / openship / 平台三层） | issue #538 + `docs/data-platform-handbook.md` §1.5.3 | 🟡 Phase 0/1 定案并执行 | **Phase 2–3 探针与告警未接**；OO 规则仍靠手动 sync（`2026-11-26` 起由 `data.monitor` 承载业务判据） |
 | 售后（aftersales） | `docs/superpowers/specs/` + ADR `2026-11-24-*affiliation*` | 🟡 主体 + 移动端 + 通知 + 审计 + 附件 GC 已上线 | **#153 M1c multi 验收**；**「归属是否执法」未决**（当前 P1-a 只做展示）；`#151` M2b 数据迁移 |
-| 定时归属 Wave 6/7/8 | 本文件 §4 | ✅ Wave 6 P1–P4b、Wave 7 V1–V2c、Wave 8 P1/③ 已收口（`deploy/jobs.md` 为准） | **Wave 6**：租户级 kill switch、console 页面、`seed`/`health` 折叠（优化项）· **Wave 7**：外发通道、比率类指标阈值、真实影子监控实例 · **Wave 8 余**：`#2560` demand-mining 迁入、`#2742` 三条待切（recon-restate / 夜间回填 / OO 预警对账）、`lemeng-console-gc` 登记为例外 |
+| 定时归属 Wave 6/7/8 | 本文件 §4 | ✅ Wave 6 P1–P4b、Wave 7 V1–V2c、Wave 8 P1/③ 已收口（`deploy/jobs.md` 为准） | **Wave 6**：租户级 kill switch、console 页面、`seed`/`health` 折叠（优化项）· **Wave 7**：外发通道、比率类指标阈值、真实影子监控实例 · **Wave 8 余**：`#2560` demand-mining 迁入；`#2742` 三条**已按 `deploy/jobs.md` §1.1 四问分类**（2026-11-27）：OO 预警对账＝登记例外不迁、夜间回填＝改形成切片、recon-restate＝重写后迁、`lemeng-console-gc` 登记为例外 |
 | 平台数据宪法（ADR 2026-11-23） | `docs/superpowers/specs/2026-11-23-platform-data-constitution.md` | 🟡 六条人裁中 3 条已落地（B13 列集 / B14 org 谓词 / 扩展点拒绝） | 宪法 #3/#4 的实现**待触发**（无案例不立标准）；可声明物 seam 已裁决、实现未开工 |
 
 **读这张表的纪律**：① 上表说「未开工」的项，**不要**在别的线里顺手做掉（会绕开那条线的台账）；
@@ -121,7 +121,7 @@
 | **下线提案 SHOULD-FIX（终审四条）** | ① **提案→采纳的陈旧凭据窗口**：job 判「无报表引用」之后若有报表引用该指标，采纳侧仍会执行删除（修法二选一，需裁决：人点「跑试算」时重算引用并盖进快照 / `deleteMetricDeclaration` 加引用硬闸）② 每 org 每轮提单**无上限**（建议 20，防一轮刷屏；周更 cron 下影响有限）③ `verified_questions` 孤儿回归红（删指标后回归基线残留，需单条清理）④ v2 `ai_text` dataset 键在引用面上是**惰性缺口**（当前 `ai_text` 不承载 metricId，靠 `parseStoredSpec` 归一兜住） | 观察/触发式（①② 需裁决） |
 | **`data.retail_hot_gc` 从未跑过** | 排班 2026-11-24 以 `enabled=false` 播种，`platform.job_run` 里 **0 次运行** ⇒ 热表每日 GC 实际未开机（#2773 只做了「登记」） | 触发式：热表体积增长或 GC 需求明确时按 §13 四步开闸 |
 | **SLA 观测已采集、阈值未收紧** | `data.sla_check` 2026-11-25 起 `*/5` 运行，446 次全 ok；`data.sla_measure` 有历史；**D4 的「回填 p95 → 收紧阈值 → 接 OO 告警」未做** | 数据新鲜度分线 D4 |
-| **对账族余项**（2026-11-27 新入） | ① `#2666` compact 月文件对已封版日写入不完整（少 34 行）② `#2493` 64188 2026-01 历史从未进增量 mart ③ `#2458` 全史对账既有红谱 ④ `recon-restate` 仍由 openship 驱动（`#2742` 待切） | 分线台账 + 触发式回填 |
+| **对账族余项**（2026-11-27 新入） | ① `#2666` compact 月文件对已封版日写入不完整（少 34 行）② `#2493` 64188 2026-01 历史从未进增量 mart ③ `#2458` 全史对账既有红谱 ④ `recon-restate` 仍由 openship 驱动（`#2742`：按四问判为「重写后迁」，模板用 `recon-monthly.mjs`） | 分线台账 + 触发式回填 |
 
 > **Wave 0–3 主线已全部收口（2026-11-12）**：Wave 0–3 的待办只剩一个「触发式」与一个「观察项」；
 > 表末「下线提案 SHOULD-FIX」是 2026-11-14 尾波终审的新增（①② 需裁决，③④ 触发式）。
