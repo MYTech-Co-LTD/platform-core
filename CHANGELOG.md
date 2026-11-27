@@ -11,6 +11,10 @@
 
 ## [Unreleased]
 
+## [0.404.0](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.403.0...v0.404.0) - 2026-11-27
+- 【新增】data: 分区压缩推广 #1——member_summary 两腿读（parity 逐月相等） ([#2929](https://github.com/MYTech-Co-LTD/platform-core/pull/2929), [9d1b13d](https://github.com/MYTech-Co-LTD/platform-core/commit/9d1b13d32742be184fa7e53db3e648ec658a6f80))
+
+
 ## [0.403.0](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.402.3...v0.403.0) - 2026-11-27
 - 【新增】data: 门店画像统一品牌与等级（#2924） ([#2927](https://github.com/MYTech-Co-LTD/platform-core/pull/2927), [895bfa5](https://github.com/MYTech-Co-LTD/platform-core/commit/895bfa51a4db0402e0b06e67b5ad9575e2f8e429))
 
