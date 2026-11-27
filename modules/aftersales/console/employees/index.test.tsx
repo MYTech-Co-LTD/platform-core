@@ -22,8 +22,11 @@ const LINK = {
   status: 'pending', phoneMasked: '138****00', boundVia: 'auto', sourceApprovalId: null,
   disputedAt: null, boundAt: null, revokedAt: null, revokedBy: null, createdAt: '2026-11-27T00:00:00Z',
 }
+const WECOM = {
+  ...LINK, id: 12, provider: 'wecom', externalId: 'w1', status: 'active', boundVia: 'manual',
+}
 
-function mockData(links: unknown[] = [LINK]) {
+function mockData(links: unknown[] = [LINK, WECOM]) {
   m.mockImplementation(async (url: string, init?: RequestInit) => {
     calls.push({ url, method: init?.method, body: init?.body ? JSON.parse(String(init.body)) : undefined })
     if (init?.method === 'POST') return json({ ok: true })
@@ -70,12 +73,15 @@ describe('人员页', () => {
   it('★ 身份绑定列：公众号 openid 关联；点开抽屉可确认', async () => {
     render(<EmployeesPage />)
     await waitFor(() => expect(screen.getByText('张三')).toBeInTheDocument())
-    // 派生摘要：LINK 是 pending ⇒ 待确认
-    expect(screen.getByText('待确认')).toBeInTheDocument()
+    // 两个渠道恒列出：公众号 pending 灰色 + 待确认文案；企微 active 通过 casdoorName 链到同一人
+    expect(screen.getByText(/公众号.*待确认/)).toBeInTheDocument()
+    expect(screen.getByText('企业微信')).toBeInTheDocument()
+    expect(screen.getByText(/未归属绑定（0）/)).toBeInTheDocument()
 
-    fireEvent.click(screen.getByText('待确认'))
+    fireEvent.click(screen.getByText(/公众号.*待确认/))
     await waitFor(() => expect(screen.getByText('张三 · 身份绑定')).toBeInTheDocument())
     expect(screen.getAllByText('o1').length).toBeGreaterThan(0)
+    expect(screen.getByText('w1')).toBeInTheDocument()
 
     fireEvent.click(screen.getByRole('button', { name: /确\s*认/ }))
     await waitFor(() =>

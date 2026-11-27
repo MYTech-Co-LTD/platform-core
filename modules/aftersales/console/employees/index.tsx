@@ -7,7 +7,7 @@
 // 审批请求体是 `{ approveStatus }`（英文枚举，spec §5 #9：中文是展示层的事、不入库）。
 import { useCallback, useEffect, useState } from 'react'
 import {
-  Alert, Button, Descriptions, Drawer, Form, Input, Modal, Segmented, Space, Table, Typography,
+  Alert, Button, Descriptions, Drawer, Form, Input, Modal, Segmented, Space, Table, Tag,
 } from 'antd'
 import { apiGet, apiSend, messageOf } from '../lib/api'
 import { ListCard, Status } from '../lib/ui'
@@ -45,8 +45,6 @@ const VIA_LABEL: Record<NonNullable<IdentityLinkView['boundVia']>, string> = {
   manual: '人工',
 }
 
-type LinkTone = 'ok' | 'warn' | 'danger' | 'muted'
-
 /** 一次性分页拉全：员工量级不大；分页在这里只影响渲染。 */
 async function fetchAllEmployees(): Promise<EmployeeItem[]> {
   const all: EmployeeItem[] = []
@@ -58,25 +56,48 @@ async function fetchAllEmployees(): Promise<EmployeeItem[]> {
   return all
 }
 
-/** 当前唯一的稳定关联：公众号 openid。企微暂无账户桥。 */
+const CHANNELS: IdentityLinkView['provider'][] = ['wechat-oa', 'wecom']
+
+/**
+ * 员工 → 绑定。当前直接关联只有公众号 openid；若该员工已有公众号绑定，再用它的
+ * casdoorName 反查同一账户的企微绑定（账户桥的第一半）。仍无账户桥的进「未归属绑定」。
+ */
 function linksOf(employee: EmployeeItem, all: IdentityLinkView[]): IdentityLinkView[] {
-  if (!employee.openId) return []
-  return all.filter((l) => l.provider === 'wechat-oa' && l.externalId === employee.openId)
+  const direct = employee.openId
+    ? all.filter((l) => l.provider === 'wechat-oa' && l.externalId === employee.openId)
+    : []
+  const accounts = new Set(
+    direct.map((l) => l.casdoorName).filter((v): v is string => typeof v === 'string' && v !== ''),
+  )
+  if (accounts.size === 0) return direct
+  const chained = all.filter(
+    (l) => l.provider !== 'wechat-oa' && typeof l.casdoorName === 'string' && accounts.has(l.casdoorName),
+  )
+  return [...direct, ...chained]
 }
 
-function summaryOf(rows: IdentityLinkView[]): { text: string; tone: LinkTone } {
-  if (rows.length === 0) return { text: '未绑定', tone: 'muted' }
-  if (rows.some((r) => r.status === 'disputed')) return { text: '争议', tone: 'danger' }
-  if (rows.some((r) => r.status === 'pending')) return { text: '待确认', tone: 'warn' }
-  const active = rows.filter((r) => r.status === 'active')
-  if (active.length > 0) {
-    const channels = [...new Set(active.map((r) => PROVIDER_LABEL[r.provider]))]
-    return {
-      text: `已绑定 · ${channels.join('+')}${active.length > 1 ? `（${active.length}）` : ''}`,
-      tone: 'ok',
-    }
-  }
-  return { text: '已解绑', tone: 'muted' }
+/** 所有渠道恒列出：已绑定用渠道色，未绑定/已解绑灰色；待确认/争议保留灰色 + 文字后缀。 */
+function ChannelTags(props: { rows: IdentityLinkView[]; onClick: () => void }) {
+  return (
+    <Space size={4} wrap onClick={props.onClick} style={{ cursor: 'pointer' }}>
+      {CHANNELS.map((provider) => {
+        const rows = props.rows.filter((l) => l.provider === provider)
+        const active = rows.some((l) => l.status === 'active')
+        const disputed = rows.some((l) => l.status === 'disputed')
+        const pending = rows.some((l) => l.status === 'pending')
+        const suffix = active ? '' : disputed ? ' · 争议' : pending ? ' · 待确认' : ''
+        return (
+          <Tag
+            key={provider}
+            color={active ? (provider === 'wechat-oa' ? 'blue' : 'green') : undefined}
+            style={{ marginInlineEnd: 0 }}
+          >
+            {PROVIDER_LABEL[provider]}{suffix}
+          </Tag>
+        )
+      })}
+    </Space>
+  )
 }
 
 function BindingTable(props: {
@@ -250,10 +271,9 @@ export default function EmployeesPage() {
       apiSend(`/identity-links/${rebind.id}/rebind`, 'POST', { casdoorName: target.trim() }))
   }
 
-  const knownOpenIds = new Set(employees.map((e) => e.openId).filter((v) => v !== ''))
-  const unmatched = links.filter(
-    (l) => l.provider !== 'wechat-oa' || !knownOpenIds.has(l.externalId),
-  )
+  const matchedIds = new Set<number>()
+  for (const e of employees) for (const l of linksOf(e, links)) matchedIds.add(l.id)
+  const unmatched = links.filter((l) => !matchedIds.has(l.id))
   const drawerLinks = drawer === null ? [] : linksOf(drawer, links)
 
   return (
@@ -293,14 +313,11 @@ export default function EmployeesPage() {
             { title: '手机号', dataIndex: 'phone', width: 140 },
             { title: '门店编码', dataIndex: 'storeCode', width: 110, render: (v: string | null) => v || '—' },
             {
-              title: '身份绑定', width: 210,
+              title: '身份绑定', width: 260,
               render: (_: unknown, r: EmployeeItem) => {
                 if (linkError !== null) return <Status tone="muted">绑定信息不可用</Status>
-                const s = summaryOf(linksOf(r, links))
                 return (
-                  <Typography.Link onClick={() => setDrawer(r)}>
-                    <Status tone={s.tone}>{s.text}</Status>
-                  </Typography.Link>
+                  <ChannelTags rows={linksOf(r, links)} onClick={() => setDrawer(r)} />
                 )
               },
             },
