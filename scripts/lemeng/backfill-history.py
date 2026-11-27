@@ -30,13 +30,14 @@ retail day 回填 `rows=4`，而湖侧 16,522 行）。只信 run 状态 = 把�
 
 ## 环境
 
-宿主无 python 依赖；`docker` 可用（取 console token 与回读湖都靠它）。
+宿主无 python 依赖；`docker` 可用（取 console token 与回读湖都靠它）。\nworker（平台调度器容器）无 docker ⇒ **自动回落**：console env 取进程 env、回读湖直连 `DATA_WAREHOUSE_URL`。
 S3 五键同样从 console 容器 env 现取（`LEMENG_ZOS_*`），不落盘、不进 argv。
 """
 from __future__ import annotations
 
 import json
 import os
+import shutil
 import subprocess
 import sys
 import time
@@ -79,7 +80,20 @@ def arg(name: str, default: str = "") -> str:
     return default
 
 
+def _docker_ok() -> bool:
+    """有没有 docker 可用。worker 容器里没有 docker（平台调度器形态），宿主上才有。"""
+    return shutil.which("docker") is not None
+
+
 def container_env(book: str) -> dict[str, str]:
+    """取 console 的 env：宿主=docker inspect；worker=进程 env（两者键名同源）。
+
+    为什么要有回落（#2742 第③刀）：切片后的 `data.backfill_slice` 跑在平台调度器容器里，
+    那里**没有 docker**。worker 的环境里本来就有 `DUCKLE_TOKEN` 与 `LEMENG_ZOS_*`（与 console
+    同一份），所以直接用进程 env 即可，不需要再引新密钥。
+    """
+    if not _docker_ok():
+        return {k: v for k, v in os.environ.items()}
     out = subprocess.run(
         ["docker", "inspect", CONSOLE_CT.format(book=book), "--format",
          "{{range .Config.Env}}{{println .}}{{end}}"],
@@ -90,7 +104,7 @@ def container_env(book: str) -> dict[str, str]:
         k, sep, v = line.partition("=")
         if sep:
             env[k] = v
-    return env
+    return env or {k: v for k, v in os.environ.items()}
 
 
 def api(book: str, method: str, path: str, body: dict | None = None) -> dict:
@@ -130,7 +144,8 @@ def lake_rows(book: str, prefix: str, bizday: str) -> int:
     bucket = env.get("LEMENG_ZOS_BUCKET") or env.get("ZOS_BUCKET") or ""
     if not bucket:
         return -1
-    pg = subprocess.run(
+    direct = os.environ.get("DATA_WAREHOUSE_URL", "")
+    pg = "" if direct else subprocess.run(
         ["docker", "inspect", PG_CT, "--format", "{{range .Config.Env}}{{println .}}{{end}}"],
         capture_output=True, text=True, check=False,
     ).stdout
@@ -146,12 +161,27 @@ def lake_rows(book: str, prefix: str, bizday: str) -> int:
     # pg_duckdb 的 S3 凭据是 **catalog 级**（建库时 provision、跨重启存活），读湖直接用即可；
     # 同族先例：/opt/lemeng-backfill.sh 的「免凭据通道」也不建 secret。
     sql = f"select * from duckdb.query($$select count(*) n from read_parquet('{glob}')$$);\n"
-    p = subprocess.run(
-        ["docker", "exec", "-i", "-e", "PGPASSWORD=" + pgenv.get("PGDUCK_PASSWORD", ""),
-         PG_CT, "psql", "-U", pgenv.get("PGDUCK_USER", "postgres"),
-         "-d", pgenv.get("PGDUCK_DB", "postgres"), "-tA", "-f", "-"],
-        input=sql, capture_output=True, text=True, check=False,
-    )
+    if direct:
+        # worker 形态（#2742）：直连仓库；凭据走 PGPASSWORD 环境变量，不进 argv（#2423 同款纪律）。
+        u = direct.split("://", 1)[-1]
+        cred, _, hostpart = u.partition("@")
+        user, _, pwd = cred.partition(":")
+        hostport, _, dbname = hostpart.partition("/")
+        host, _, port = hostport.partition(":")
+        cmd = ["psql", "-h", host, "-U", user, "-d", dbname or "warehouse", "-tA", "-f", "-"]
+        if port:
+            cmd[3:3] = ["-p", port]
+        p = subprocess.run(
+            cmd, input=sql, capture_output=True, text=True, check=False,
+            env={**os.environ, "PGPASSWORD": pwd},
+        )
+    else:
+        p = subprocess.run(
+            ["docker", "exec", "-i", "-e", "PGPASSWORD=" + pgenv.get("PGDUCK_PASSWORD", ""),
+             PG_CT, "psql", "-U", pgenv.get("PGDUCK_USER", "postgres"),
+             "-d", pgenv.get("PGDUCK_DB", "postgres"), "-tA", "-f", "-"],
+            input=sql, capture_output=True, text=True, check=False,
+        )
     for line in p.stdout.splitlines():
         line = line.strip()
         if line.isdigit():
