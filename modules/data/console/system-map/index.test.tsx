@@ -150,7 +150,11 @@ describe('体系地图·本体图', () => {
     // 点击回调会触发 fetch('/trail') → setState → 抽屉渲染。包 act() 让 React 更新确定性冲刷；
     // 首次断言显式放宽到 5s：CI 负载下「点击 → 取链路 → 渲染」常超过 waitFor 默认的 1s
     // （#2177：main 上偶发 Unable to find an element，本地与重跑均通过）。
-    act(() => handler({ dataType: 'node', data: { id: 'metric:lemeng:retail:net_sales' } }))
+    // ⚠️ 必须是 **async act**：`act(() => handler(...))` 只冲刷同步更新，而 handler 里是
+    // `fetch('/trail').then(setState)` —— 状态的落地发生在 act 之外的微任务里，
+    // 于是「点击 → 抽屉渲染」在 CI 冷缓存下会超过 waitFor 的窗口（#2726 的第 4 次复现）。
+    // async act 会把这段微任务也纳入冲刷范围，拔掉这个竞态，而不是加长超时去赌。
+    await act(async () => { handler({ dataType: 'node', data: { id: 'metric:lemeng:retail:net_sales' } }) })
 
     await waitFor(() => expect(screen.getByText('口径：按门店日结净额汇总')).toBeInTheDocument(), { timeout: 5000 })
     expect(screen.getByText('近 30 天使用 12 次')).toBeInTheDocument()
@@ -191,8 +195,9 @@ describe('体系地图·本体图', () => {
     await waitFor(() => expect(screen.getByText('57')).toBeInTheDocument())
     const clickCalls = chart.on.mock.calls.filter((c) => c[0] === 'click')
     const handler = clickCalls[clickCalls.length - 1]?.[1] as (p: unknown) => void
-    // 指标抽屉现在还挂字段画板（#2338）⇒ 首屏更重，1s 默认等待在 CI 上不够（#2346）
-    act(() => handler({ dataType: 'node', data: { id: 'metric:lemeng:retail:net_sales' } }))
+    // 指标抽屉现在还挂字段画板（#2338）⇒ 首屏更重，1s 默认等待在 CI 上不够（#2346）。
+    // async act：handler 内的 `fetch('/trail').then(setState)` 是微任务，同步 act 冲刷不到（#2726）。
+    await act(async () => { handler({ dataType: 'node', data: { id: 'metric:lemeng:retail:net_sales' } }) })
     await waitFor(() => expect(screen.getByText('口径：按门店日结净额汇总')).toBeInTheDocument(), { timeout: 5000 })
     fireEvent.click(screen.getByRole('button', { name: /close/i }))
     await waitFor(() => expect(screen.queryByText('口径：按门店日结净额汇总')).toBeNull(), { timeout: 5000 })
