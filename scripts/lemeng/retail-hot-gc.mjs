@@ -19,33 +19,60 @@
 // 退出码：0 清理成功；1 SQL 失败；2 配置/依赖缺失。
 // stdout 末行：`RETAIL_HOT_GC_OK date=<上海今天> deleted=<n>` / `RETAIL_HOT_GC_FAILED: …`
 import { spawnSync } from 'node:child_process'
+import { pathToFileURL } from 'node:url'
 import { shanghaiToday } from '../lib/time-semantics.mjs'
 
-const url = process.env.DATA_WAREHOUSE_URL
-if (!url) {
-  console.error('RETAIL_HOT_GC_FAILED: DATA_WAREHOUSE_URL 未注入（worker 容器应自带）')
-  process.exit(2)
-}
-
 // 时区语义走单一事实源（scripts/lib/time-semantics.mjs）——扩散守卫会拦裸写时区字面量。
-const today = shanghaiToday()
 
-// 只删「上海今天」以前的批次：今天的行永不删（热表就是当前小时的唯一来源）。
-const sql = `delete from staging.retail_hot where bizday < date '${today}';`
-
-const r = spawnSync('psql', [url, '-v', 'ON_ERROR_STOP=1', '-tAq', '-c', sql], {
-  encoding: 'utf8',
-  timeout: 60_000,
-})
-
-if (r.error) {
-  console.error(`RETAIL_HOT_GC_FAILED: psql 不可用（${r.error.message?.slice(0, 160)}）`)
-  process.exit(2)
-}
-if (r.status !== 0) {
-  console.error(`RETAIL_HOT_GC_FAILED: ${String(r.stderr || r.stdout || '').slice(0, 300)}`)
-  process.exit(1)
+/**
+ * 从 psql（`-tAq`）输出里取删除行数：期望是**一行裸数字**；兼容旧的 `DELETE n` 标签形态。
+ * 解析不出来时返回 '?'（**不返回 0**：0 是「确实没删」，与「不知道」必须能区分）。
+ * @param {unknown} stdout
+ * @returns {string}
+ */
+export function parseDeleted(stdout) {
+  const s = String(stdout ?? '')
+  const tag = s.match(/DELETE (\d+)/)
+  if (tag) return tag[1]
+  const lines = s.split('\n').map((x) => x.trim()).filter(Boolean)
+  const last = lines[lines.length - 1] ?? ''
+  return /^\d+$/.test(last) ? last : '?'
 }
 
-const deleted = (String(r.stdout).match(/DELETE (\d+)/) ?? [])[1] ?? '0'
-console.log(`RETAIL_HOT_GC_OK date=${today} deleted=${deleted}`)
+/**
+ * 真身：删除并打印审计行。
+ * 只删「上海今天」以前的批次——今天的行永不删（热表就是当前小时的唯一来源）。
+ * ⚠️ 必须用 `DELETE ... RETURNING` + `select count(*)`：`-q` 会**抑制 `DELETE n` 命令标签**，
+ *    旧写法因此恒打印 `deleted=0`（2026-11-27 实测：真删了 347,678 行仍报 0）——那是最坏的一种
+ *    「看起来很安全」，运维会以为 GC 没生效而去手工删。
+ * 顶层包成函数是为了单测能 import（模块体不执行 ⇒ 未注入 env 也不会 exit）。
+ */
+function main() {
+  const url = process.env.DATA_WAREHOUSE_URL
+  if (!url) {
+    console.error('RETAIL_HOT_GC_FAILED: DATA_WAREHOUSE_URL 未注入（worker 容器应自带）')
+    process.exit(2)
+  }
+  const today = shanghaiToday()
+  const sql = `with d as (delete from staging.retail_hot where bizday < date '${today}' returning 1) select count(*) from d;`
+
+  const r = spawnSync('psql', [url, '-v', 'ON_ERROR_STOP=1', '-tAq', '-c', sql], {
+    encoding: 'utf8',
+    timeout: 60_000,
+  })
+
+  if (r.error) {
+    console.error(`RETAIL_HOT_GC_FAILED: psql 不可用（${r.error.message?.slice(0, 160)}）`)
+    process.exit(2)
+  }
+  if (r.status !== 0) {
+    console.error(`RETAIL_HOT_GC_FAILED: ${String(r.stderr || r.stdout || '').slice(0, 300)}`)
+    process.exit(1)
+  }
+
+  console.log(`RETAIL_HOT_GC_OK date=${today} deleted=${parseDeleted(r.stdout)}`)
+}
+
+if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
+  main()
+}
