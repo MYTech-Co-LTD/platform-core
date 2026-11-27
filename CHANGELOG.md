@@ -11,6 +11,10 @@
 
 ## [Unreleased]
 
+## [0.403.0](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.402.3...v0.403.0) - 2026-11-27
+- 【新增】data: 门店画像统一品牌与等级（#2924） ([#2927](https://github.com/MYTech-Co-LTD/platform-core/pull/2927), [895bfa5](https://github.com/MYTech-Co-LTD/platform-core/commit/895bfa51a4db0402e0b06e67b5ad9575e2f8e429))
+
+
 ## [0.402.3](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.402.2...v0.402.3) - 2026-11-27
 - 【修复】aftersales: 品牌胶囊计数跟随搜索/时间（最末级筛选） ([#2921](https://github.com/MYTech-Co-LTD/platform-core/pull/2921), [bf3bc01](https://github.com/MYTech-Co-LTD/platform-core/commit/bf3bc0136fb83046441104620fc6ee8ec9dd1cd0))
 
