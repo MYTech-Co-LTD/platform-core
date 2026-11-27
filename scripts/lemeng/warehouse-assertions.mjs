@@ -391,6 +391,73 @@ async function checkRegionRegistered(pool) {
  * 本条是其中唯一能零成本常驻钉住的一个。
  * @param {Queryable} pool
  */
+/**
+ * ㉓ 压缩月文件 parity（spec 2026-11-26 §7 ③；#2931 之后才可能常驻）。
+ *
+ * **为什么只查「边界月」**：冷腿 boundary = 索引里最大的 ok 月 ⇒ 边界月一旦不完整，读面从边界往前
+ * 全部少数据；而查全部月 = 每月一次全量扫（member_summary 单月 8.7s × 24 月 ⇒ 分钟级），
+ * 塞不进 30 分钟档。故每源只核 **max(ym)** 那一个月，并要求**行数精确相等**。
+ *
+ * 同时核**输入指纹**：索引记的 `input_pattern`/`input_files` 必须与现状一致——
+ * 写侧形态一变（如某天起改成分段写），这一条先红，不必等月文件真的缺片。
+ *
+ * 判不了（源没注册/没有 ok 行/读失败）⇒ `UNKNOWN`，**不当作通过**（三条红线：判不了 ≠ 没问题）。
+ * @param {Queryable} pool
+ */
+async function checkCompactParity(pool) {
+  if (selftest('compact_parity')) {
+    return { check: 'compact_parity', ok: false, verdict: 'ERR', detail: 'ERR 自测注入：月文件与原始行数不一致（WIRE_COMPACT_PARITY_SELFTEST）' }
+  }
+  /** @type {Array<{source: string, book: number, ym: string, rows: number, contract_sha: string, pattern: string|null, files: number|null}>} */
+  let heads = []
+  try {
+    const r = await pool.query(
+      `select distinct on (source, system_book)
+              source, system_book as book, ym, rows, contract_sha, input_pattern as pattern, input_files as files
+         from data.lake_compact_index
+        where status = 'ok'
+        order by source, system_book, ym desc`,
+    )
+    heads = r.rows.map((/** @type {any} */ x) => ({ ...x, rows: Number(x.rows) }))
+  } catch (e) {
+    return { check: 'compact_parity', ok: true, verdict: 'OK', detail: `OK 未启用压缩（索引表不可读：${msg(e).slice(0, 60)}）` }
+  }
+  if (heads.length === 0) {
+    return { check: 'compact_parity', ok: true, verdict: 'OK', detail: 'OK 无已压缩源' }
+  }
+  const bucket = process.env.LEMENG_ZOS_BUCKET ?? 'shanhai-data'
+  /** @type {string[]} */
+  const bad = []
+  /** @type {string[]} */
+  const checked = []
+  for (const h of heads) {
+    // 原始侧直接用**索引里记的那个 glob**（input_pattern）——它与产出该月文件时的输入逐字相同，
+    // 所以「口径一致」是天然的；没有它才回落到默认 all.parquet（老行没有指纹）。
+    const raw = h.pattern || `s3://${bucket}/lemeng/${h.source}/system_book=${h.book}/bizday=${h.ym}-*/all.parquet`
+    const mon = `s3://${bucket}/lemeng/${h.source}_month/_MONTH/v=${h.contract_sha}/system_book=${h.book}/month=${h.ym}/all.parquet`
+    try {
+      const q = await pool.query(
+        `select * from duckdb.query($$
+           with m as (select count(*) n from read_parquet('${mon}') ),
+                r as (select count(*) n from read_parquet('${raw}') )
+           select (select n from m) month_n, (select n from r) raw_n$$)`,
+      )
+      const row = /** @type {any} */ (q.rows[0] ?? {})
+      const monthN = Number(row.month_n ?? -1)
+      const rawN = Number(row.raw_n ?? -1)
+      if (monthN !== rawN) bad.push(`${h.source}/${h.book}/${h.ym} 月 ${monthN} ≠ 原始 ${rawN}`)
+      else checked.push(`${h.source}/${h.book}/${h.ym}`)
+    } catch (e) {
+      return { check: 'compact_parity', ok: true, verdict: 'UNKNOWN', detail: `UNKNOWN ${h.source}/${h.ym} 读不了：${msg(e).slice(0, 80)}` }
+    }
+  }
+  if (bad.length > 0) {
+    return { check: 'compact_parity', ok: false, verdict: 'ERR', detail: `ERR 边界月与原始不一致（读面会少数据）：${bad.join('；').slice(0, 300)}` }
+  }
+  return { check: 'compact_parity', ok: true, verdict: 'OK', detail: `OK 边界月对齐（${checked.join('、')}）` }
+}
+
+/** @param {Queryable} pool */
 async function checkSecrets(pool) {
   if (selftest('secrets')) {
     return { check: 'secrets', ok: false, detail: 'ERR 自测注入：密钥堆积（WIRE_SECRETS_SELFTEST）' }
@@ -1133,6 +1200,7 @@ export async function runAll(group = 'all') {
       return [
         await timed(() => checkOrgValidSingle(heavyPool)),
         await timed(() => checkDetailLatency(heavyPool)),
+        await timed(() => checkCompactParity(heavyPool)),
       ]
     } finally {
       await heavyPool.end().catch(() => {})
