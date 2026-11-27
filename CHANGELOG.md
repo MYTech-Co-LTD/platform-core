@@ -11,6 +11,10 @@
 
 ## [Unreleased]
 
+## [0.400.3](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.400.2...v0.400.3) - 2026-11-27
+- 【优化】aftersales: 附件预览懒加载 + 单次缓存 ([#2904](https://github.com/MYTech-Co-LTD/platform-core/pull/2904), [fcde532](https://github.com/MYTech-Co-LTD/platform-core/commit/fcde532725c98d65fa1f5b545505a4ae370a1d78))
+
+
 ## [0.400.2](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.400.1...v0.400.2) - 2026-11-27
 - 【修复】data: 热层 GC 的审计行说真话——psql -q 抑制命令标签导致恒报 deleted=0 ([#2902](https://github.com/MYTech-Co-LTD/platform-core/pull/2902), [05e8189](https://github.com/MYTech-Co-LTD/platform-core/commit/05e8189d53a12b40b53d148d81dad8fa6c93d155))
 - 【修复】data: SLA 判据按方向拆开——源闲置不再判建落后 ([#2900](https://github.com/MYTech-Co-LTD/platform-core/pull/2900), [9556d81](https://github.com/MYTech-Co-LTD/platform-core/commit/9556d811decb6ff695d45207e304d8f06184152c))
