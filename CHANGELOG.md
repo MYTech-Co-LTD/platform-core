@@ -11,6 +11,10 @@
 
 ## [Unreleased]
 
+## [0.408.1](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.408.0...v0.408.1) - 2026-11-27
+- 【修复】aftersales: 人员页身份绑定失败不拖垮员工档案（#2943） ([#2944](https://github.com/MYTech-Co-LTD/platform-core/pull/2944), [e727587](https://github.com/MYTech-Co-LTD/platform-core/commit/e72758702f16a04187db85d686a80b257650fd3c))
+
+
 ## [0.408.0](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.407.0...v0.408.0) - 2026-11-27
 - 【新增】aftersales: 人员页合并身份绑定列（#2941） ([#2942](https://github.com/MYTech-Co-LTD/platform-core/pull/2942), [3c4ca0f](https://github.com/MYTech-Co-LTD/platform-core/commit/3c4ca0f5f777387c2c4c9f3b317cf148bf8f7aa6))
 
