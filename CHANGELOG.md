@@ -11,6 +11,10 @@
 
 ## [Unreleased]
 
+## [0.401.0](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.400.3...v0.401.0) - 2026-11-27
+- 【新增】data: D4 收口——SLA 的 ERR 接 OO 告警，阈值按实测维持 ([#2907](https://github.com/MYTech-Co-LTD/platform-core/pull/2907), [48985bd](https://github.com/MYTech-Co-LTD/platform-core/commit/48985bd715f6fa1dcf19f133b677ca92d74d43c1))
+
+
 ## [0.400.3](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.400.2...v0.400.3) - 2026-11-27
 - 【优化】aftersales: 附件预览懒加载 + 单次缓存 ([#2904](https://github.com/MYTech-Co-LTD/platform-core/pull/2904), [fcde532](https://github.com/MYTech-Co-LTD/platform-core/commit/fcde532725c98d65fa1f5b545505a4ae370a1d78))
 
