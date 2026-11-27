@@ -5,6 +5,12 @@ config(materialized='view')
 -- 【行】= 门店×营业日×订单类型的汇总行（report 端点，无明细）。【会员口径】customer_vip_* 字段；
 --   全部 order_sale_type 的 vip 合计才是报表口径（漏「拼团」型差 82.19——2026-10-25 网关锚）。
 -- 【店维】三批静态全店（branch_nums 各≤100，API 上限 100 家/次——2026-10-26 实测）。
+--
+-- ⚠️ 两腿读（湖封版分区压缩，spec 2026-11-26 §16 推广 #1）：冷腿 `_MONTH/v=<契约sha>/**`，
+--   活跃腿原始 glob 且 `bizday >= 边界`（边界=索引最大 ok 月的次月 1 日，编译期字面量）。
+--   索引不可用 ⇒ 冷腿整段不渲染，退化为单腿读原始（慢但正确）。parity 已逐月核平（2024-11..2026-10）。
+{% set cs = compact_state('member_summary') %}
+{% if cs.enabled %}
 select
   r['batch_id']::varchar as batch_id,
   r['system_book']::varchar as system_book,
@@ -31,5 +37,36 @@ select
   r['branch_code']::varchar as branch_code,
   r['branch_name']::varchar as branch_name
 from read_parquet(
-'s3://{{ var("zos_bucket") }}/{{ var("lemeng_member_summary_prefix") }}/system_book=*/bizday=*/all.parquet'
+  's3://{{ var("zos_bucket") }}/{{ var("lemeng_member_summary_prefix") }}_month/_MONTH/v={{ cs.sha }}/**/*.parquet'
 ) r
+union all
+{% endif %}
+select
+  r['batch_id']::varchar as batch_id,
+  r['system_book']::varchar as system_book,
+  {{ subject_org() }}       as org,
+  r['bizday']::date as bizday,
+  r['order_sale_type']::int as order_sale_type,
+  r['order_sale_type_name']::varchar as order_sale_type_name,
+  r['receive_money']::numeric(14,2) as receive_money,
+  r['receipt_coupon_share_money']::numeric(14,2) as receipt_coupon_share_money,
+  r['customer_nums']::bigint as customer_nums,
+  r['customer_ave_price_no_coupon']::numeric(14,2) as customer_ave_price_no_coupon,
+  r['customer_ave_price']::numeric(14,2) as customer_ave_price,
+  r['customer_vip_money']::numeric(14,2) as customer_vip_money,
+  r['customer_vip_nums']::bigint as customer_vip_nums,
+  r['customer_vip_ave_price']::numeric(14,2) as customer_vip_ave_price,
+  r['member_customer_price']::numeric(14,2) as member_customer_price,
+  r['relat_rate']::numeric(18,8) as relat_rate,
+  r['relat_rate_vip']::numeric(18,8) as relat_rate_vip,
+  r['buy_rate']::numeric(18,8) as buy_rate,
+  r['item_sale_cost']::numeric(14,2) as item_sale_cost,
+  r['item_sale_profit']::numeric(14,2) as item_sale_profit,
+  r['item_sale_profit_rate']::numeric(18,8) as item_sale_profit_rate,
+  r['branch_num']::int as branch_num,
+  r['branch_code']::varchar as branch_code,
+  r['branch_name']::varchar as branch_name
+from read_parquet(
+'s3://{{ var("zos_bucket") }}/{{ var("lemeng_member_summary_prefix") }}/*/bizday={{ cs.tail_prefix }}-*/all.parquet'
+) r
+where r['bizday']::date >= date '{{ cs.boundary }}'

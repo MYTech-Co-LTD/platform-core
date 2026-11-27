@@ -225,3 +225,27 @@ P0 做到「管线落地」时撞到四条引擎形状约束（详见记忆 `duc
 3. 边界次月由索引最大 `ok` 月推导（`tail_prefix`），索引不可用则整段冷腿不渲染（退化为慢但正确）。
 
 **尚未做**：§7 的四条断言（索引连续 / 不陈旧+契约当前 / 两腿 vs 原始逐日 parity / audit）、其余源的推广、原始文件 GC。
+
+---
+
+## 16. 推广清单（每源照做，2026-11-27 立）
+
+> 管线与记账是**数据驱动**的（父管线只读 `data.lake_compact_source`），所以「加一个源」= 配置 + 读面 + 取证三步。
+> **顺序不可颠倒**：先让文件产出并对上 parity，再翻读面。翻早了 = 读面静默少数据（#2666 的教训）。
+
+| 步 | 动作 | 判据（缺失即停） |
+|---|---|---|
+| 0 | 选源并确认前缀：`dbt_project.yml` 的 `lemeng_<source>_prefix` 必须与契约 `layout.prefix` 一致 | `grep` 两处相等 |
+| 1 | 算契约 sha8：`shasum -a 256 contracts/common/lemeng.<source>.json \| cut -c1-8` | 与 P0 行同法（`business_collection_receive` = `8b6b3529`） |
+| 2 | 插 `data.lake_compact_source(source, start_ym, system_books, contract_sha, enabled=true, note)` | `start_ym` 取该源湖里**最早**有数据的月；`system_books` 取实际有数据的账套 |
+| 3 | 跑 console 管线 `lemeng.lake.compact`（父管线按待办月派发，limit 120） | 输出逐月 `ok`；失败的月**不进索引** |
+| 4 | 跑 `data.lake_compact_index`（或等 CST 03:40） | `data.lake_compact_index` 里该源 `status='ok'` 的月连续、`max(ym)` = 上一个自然月 |
+| 5 | **parity**：逐 `(账套, 月)` 比「月文件行数」vs「原始日文件行数」 | **逐月必须完全相等**；不等即停（#2666 是「已并入但不完整」的反例） |
+| 6 | 改 staging 视图为两腿（`compact_state('<source>')` + 冷腿 `_MONTH/v=<sha>` + 活跃腿 `bizday=<tail>-*/` + `>= boundary`） | 视图**未启用时**退化为单腿读原始（`cs.enabled=false` 分支必须存在） |
+| 7 | `pnpm exec tsx scripts/lemeng/data-plane-lock.mjs` + `gen-data-projection --check` | 两个门禁绿 |
+| 8 | 翻读面后复核：同一查询翻前/翻后行数与金额相等 | 差一行都不翻 |
+
+**源顺序（按风险）**：
+1. `member_summary`（日快照，无热层，最安全）；
+2. `inventory_movement`（日增量明细）；
+3. `retail_order_line`（**最后**：它同时有热层三腿与 10m 车道，压缩腿与热腿的边界要单独验）。
