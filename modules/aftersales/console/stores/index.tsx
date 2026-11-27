@@ -42,6 +42,32 @@ interface ImportResult {
 
 type Option = StoreProfileOptions['brands'][number]
 
+const UNMARKED = '__unmarked__'
+const UNLEVELED = '__unleveled__'
+
+/** 门店列表一次拉全：375 家量级下前端搜索/筛选最顺；分页只影响渲染。 */
+async function fetchAllStores(): Promise<StoreItem[]> {
+  const all: StoreItem[] = []
+  for (let page = 1; page <= 100; page++) {
+    const paged = await apiGet<Paged<StoreItem>>(`/stores?page=${page}&size=100`)
+    all.push(...paged.items)
+    if (all.length >= paged.total || paged.items.length === 0) break
+  }
+  return all
+}
+
+/** 品牌/等级标签的稳定配色：同一个 code 永远同色；两组色板区分维度。 */
+const BRAND_PALETTE = ['blue', 'geekblue', 'cyan', 'purple', 'magenta', 'volcano', 'orange', 'gold', 'lime', 'green', 'teal']
+const LEVEL_PALETTE = ['green', 'orange', 'purple', 'blue', 'gold', 'magenta', 'cyan', 'volcano']
+
+function tagColor(code: string | null, kind: 'brand' | 'level'): string | undefined {
+  if (!code) return undefined
+  const palette = kind === 'brand' ? BRAND_PALETTE : LEVEL_PALETTE
+  let h = 0
+  for (const ch of code) h = (h * 31 + ch.charCodeAt(0)) >>> 0
+  return palette[h % palette.length]
+}
+
 async function dataSend<T>(
   path: string, method: 'POST' | 'PUT' | 'PATCH', body?: unknown,
 ): Promise<T> {
@@ -86,6 +112,7 @@ function TagEditor(props: {
   emptyLabel: string
   code: string | null
   name: string | null
+  color?: string
   options: Option[]
   canEdit: boolean
   onAssign: (code: string | null) => Promise<void>
@@ -97,7 +124,7 @@ function TagEditor(props: {
   const [busy, setBusy] = useState(false)
   const text = props.name || props.code
   const tag = (
-    <Tag style={props.canEdit ? { cursor: 'pointer', marginInlineEnd: 0 } : { marginInlineEnd: 0 }}>
+    <Tag color={props.color} style={props.canEdit ? { cursor: 'pointer', marginInlineEnd: 0 } : { marginInlineEnd: 0 }}>
       {text || props.emptyLabel}
     </Tag>
   )
@@ -191,6 +218,12 @@ export default function StoresPage() {
   const [options, setOptions] = useState<StoreProfileOptions | null>(null)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
+  const [search, setSearch] = useState('')
+  const [brandFilter, setBrandFilter] = useState('')
+  const [levelFilter, setLevelFilter] = useState('')
+  const [enableFilter, setEnableFilter] = useState('')
+  const [page, setPage] = useState(1)
+  const [size, setSize] = useState(20)
 
   const [importOpen, setImportOpen] = useState(false)
   const [csvText, setCsvText] = useState('store_code,brand_code,level_code\n')
@@ -203,8 +236,7 @@ export default function StoresPage() {
     setLoading(true)
     setError(null)
     try {
-      const paged = await apiGet<Paged<StoreItem>>('/stores')
-      setStores(paged.items)
+      setStores(await fetchAllStores())
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e))
       setStores([])
@@ -267,6 +299,30 @@ export default function StoresPage() {
   const coverage = options?.coverage
   const problemRows = (importPreview?.rows ?? []).filter((r) => r.status !== 'ok')
 
+  const q = search.trim().toLowerCase()
+  const filtered = stores.filter((s) => {
+    if (q && !String(s.name).toLowerCase().includes(q) && !String(s.code).toLowerCase().includes(q)) return false
+    if (brandFilter === UNMARKED) {
+      if (s.brandCode) return false
+    } else if (brandFilter && s.brandCode !== brandFilter) return false
+    if (levelFilter === UNLEVELED) {
+      if (s.levelCode) return false
+    } else if (levelFilter && s.levelCode !== levelFilter) return false
+    if (enableFilter === '1' && s.enable !== true) return false
+    if (enableFilter === '0' && s.enable !== false) return false
+    return true
+  })
+  const maxPage = Math.max(1, Math.ceil(filtered.length / size))
+  const currentPage = Math.min(page, maxPage)
+  const hasFilter = search.trim() !== '' || brandFilter !== '' || levelFilter !== '' || enableFilter !== ''
+  const resetFilters = (): void => {
+    setSearch('')
+    setBrandFilter('')
+    setLevelFilter('')
+    setEnableFilter('')
+    setPage(1)
+  }
+
   return (
     <Card>
       {contextHolder}
@@ -280,6 +336,51 @@ export default function StoresPage() {
       ) : null}
 
       <Space wrap style={{ marginBottom: 12 }}>
+        <Input.Search
+          allowClear
+          placeholder="搜索门店名称/编码"
+          style={{ width: 240 }}
+          value={search}
+          onChange={(e) => { setSearch(e.target.value); setPage(1) }}
+        />
+        <Select
+          aria-label="品牌筛选"
+          style={{ width: 150 }}
+          value={brandFilter}
+          options={[
+            { value: '', label: '全部品牌' },
+            { value: UNMARKED, label: '未标记' },
+            ...(options?.brands ?? []).map((b) => ({
+              value: b.code, label: b.enabled ? b.name : `${b.name}（停用）`,
+            })),
+          ]}
+          onChange={(v: string) => { setBrandFilter(v); setPage(1) }}
+        />
+        <Select
+          aria-label="等级筛选"
+          style={{ width: 140 }}
+          value={levelFilter}
+          options={[
+            { value: '', label: '全部等级' },
+            { value: UNLEVELED, label: '未分级' },
+            ...(options?.levels ?? []).map((l) => ({
+              value: l.code, label: l.enabled ? l.name : `${l.name}（停用）`,
+            })),
+          ]}
+          onChange={(v: string) => { setLevelFilter(v); setPage(1) }}
+        />
+        <Select
+          aria-label="启用筛选"
+          style={{ width: 120 }}
+          value={enableFilter}
+          options={[
+            { value: '', label: '全部状态' },
+            { value: '1', label: '启用' },
+            { value: '0', label: '停用' },
+          ]}
+          onChange={(v: string) => { setEnableFilter(v); setPage(1) }}
+        />
+        {hasFilter ? <Button onClick={resetFilters}>重置</Button> : null}
         {coverage ? (
           <Typography.Text type="secondary">
             已标记品牌 {coverage.brandTagged}/{coverage.stores} · 已分级 {coverage.levelTagged}/{coverage.stores}
@@ -295,9 +396,17 @@ export default function StoresPage() {
       <Table<StoreItem>
         rowKey="code"
         size="small"
-        dataSource={stores}
+        dataSource={filtered}
         loading={loading}
-        pagination={false}
+        pagination={{
+          current: currentPage,
+          pageSize: size,
+          total: filtered.length,
+          showSizeChanger: true,
+          pageSizeOptions: [20, 50, 100],
+          showTotal: (n) => `共 ${n} 家`,
+          onChange: (p2, s2) => { setPage(p2); setSize(s2) },
+        }}
         locale={{ emptyText: '还没有门店档案。数据面的门店维表发布后会出现在这里。' }}
         columns={[
           { title: '编码', dataIndex: 'code', width: 120 },
@@ -310,6 +419,7 @@ export default function StoresPage() {
                 emptyLabel="未标记"
                 code={r.brandCode ?? null}
                 name={r.brandName ?? null}
+                color={tagColor(r.brandCode ?? null, 'brand')}
                 options={options?.brands ?? []}
                 canEdit={canEdit}
                 onAssign={(code) => assignProfile(r, { brandCode: code })}
@@ -326,6 +436,7 @@ export default function StoresPage() {
                 emptyLabel="未分级"
                 code={r.levelCode ?? null}
                 name={r.levelName ?? null}
+                color={tagColor(r.levelCode ?? null, 'level')}
                 options={options?.levels ?? []}
                 canEdit={canEdit}
                 onAssign={(code) => assignProfile(r, { levelCode: code })}
