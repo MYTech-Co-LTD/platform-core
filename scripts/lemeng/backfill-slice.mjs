@@ -157,6 +157,11 @@ async function main() {
     console.log(
       `BACKFILL_SLICE_ITEM ds=${item.dataset} book=${item.book} rc=${rc} ok=${sum.ok} empty=${sum.empty} failed=${sum.failed} skip=${sum.skipped} secs=${secs}`,
     )
+    // 失败时必须带出**人话**：rc≠0 且没解析出 BF_DONE 时（如依赖缺失、参数错）只报 rc 等于没报。
+    if (rc !== 0 || sum.failed > 0) {
+      const tail = out.trim().split('\n').slice(-4).join(' | ')
+      console.log(`BACKFILL_SLICE_ITEM_ERR ds=${item.dataset} book=${item.book} tail=${tail.slice(0, 400)}`)
+    }
   }
 
   const total = ((Date.now() - startedAt) / 1000).toFixed(0)
