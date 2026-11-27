@@ -11,6 +11,10 @@
 
 ## [Unreleased]
 
+## [0.402.2](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.402.1...v0.402.2) - 2026-11-27
+- 【修复】data: 回填执行体在 worker 里连不到 console——基址默认按环境选 ([#2918](https://github.com/MYTech-Co-LTD/platform-core/pull/2918), [fcec79e](https://github.com/MYTech-Co-LTD/platform-core/commit/fcec79e47f0e968e5cca772b1956e2277b124174))
+
+
 ## [0.402.1](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.402.0...v0.402.1) - 2026-11-27
 - 【修复】data: 回填执行体在无 docker 的 worker 里跑不起来——加进程 env / 直连回落 ([#2916](https://github.com/MYTech-Co-LTD/platform-core/pull/2916), [71e3c43](https://github.com/MYTech-Co-LTD/platform-core/commit/71e3c437f3e565cf90bdd8f98bb9fe0938ed281d))
 
