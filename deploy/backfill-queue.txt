@@ -1,0 +1,41 @@
+# 夜间回填队列（#2742 第③刀：2026-11-27 起**以本文件为准**）
+#
+# 格式：<dataset> <book> <from YYYY-MM-DD> <to YYYY-MM-DD>（to 为排他上界）[flags]
+# flags：目前只认 `allow-empty`（空日不算失败；**判据必须交叉验证过**——前后各两天有行、
+#        只有该日为 0 才算真零单，别图省事）。
+#
+# 谁读它：平台 job `data.backfill_slice`（CST 00:05–07:35 每 30 分钟一轮），
+#         每轮**每条只推进一天**（`--max-days 1` + `--skip-existing`）。
+#         ⇒ 进度**从湖里推导**：某天已在湖里就不会再跑，无需另存状态。
+# 为什么在仓里：原来是 /opt 上的 ops 手维文件；迁到平台调度器后容器里读不到宿主文件，
+#         且队列本身该可版本化、可 review。原文件仍在宿主（/opt/lemeng-backfill-queue.txt），
+#         自本文件生效起**只剩历史 [DONE] 记录**，不再被任何调度读取。
+#
+# 完成一条就**删掉该行**（或注释成 `# [DONE <日期>] …` 保留痕迹）。
+
+# ---- business_collection_coupon（两账套 × 季度；2024-11 → 2026-11）
+business_collection_coupon     3120 2024-11-01 2025-02-01 allow-empty
+business_collection_coupon     3120 2025-02-01 2025-05-01 allow-empty
+business_collection_coupon     3120 2025-05-01 2025-08-01 allow-empty
+business_collection_coupon     3120 2025-08-01 2025-11-01 allow-empty
+business_collection_coupon     3120 2025-11-01 2026-02-01 allow-empty
+business_collection_coupon     3120 2026-02-01 2026-05-01 allow-empty
+business_collection_coupon     3120 2026-05-01 2026-08-01 allow-empty
+business_collection_coupon     3120 2026-08-01 2026-11-06 allow-empty
+business_collection_coupon     64188 2024-11-01 2025-02-01 allow-empty
+business_collection_coupon     64188 2025-02-01 2025-05-01 allow-empty
+business_collection_coupon     64188 2025-05-01 2025-08-01 allow-empty
+business_collection_coupon     64188 2025-08-01 2025-11-01 allow-empty
+business_collection_coupon     64188 2025-11-01 2026-02-01 allow-empty
+business_collection_coupon     64188 2026-02-01 2026-05-01 allow-empty
+business_collection_coupon     64188 2026-05-01 2026-08-01 allow-empty
+business_collection_coupon     64188 2026-08-01 2026-11-06 allow-empty
+
+# ---- 短口子（2026-11-02..11-07）
+transfer_in                    3120 2026-11-02 2026-11-07
+transfer_out                   3120 2026-11-02 2026-11-07
+loss_adjustment                3120 2026-11-02 2026-11-07
+loss_adjustment                64188 2026-11-02 2026-11-07
+request_order                  3120 2026-11-02 2026-11-07
+request_order                  64188 2026-11-02 2026-11-07
+client_expense                 3120 2026-11-02 2026-11-07 allow-empty
