@@ -49,6 +49,8 @@ interface ExportRow {
   store_affiliation: string | null
   brand_code: string
   brand_name: string
+  store_level_code: string
+  store_level_name: string
   damage_amount_minor: string
   attachment_count: number
 }
@@ -93,6 +95,7 @@ const TICKET_COLUMNS_SQL = `
          damage_quantity, amount_minor, amount_type, refund_ratio, operator, opinion,
          watermark_at::text as watermark_at, created_at, processed_at, arrival_at,
          store_affiliation, brand_code, brand_name,
+         store_level_code, store_level_name,
          round(damage_quantity * coalesce(settlement_price_minor, basic_unit_price_minor))::bigint
            as damage_amount_minor,
          (select count(*) from aftersales.ticket_attachment a
@@ -118,6 +121,7 @@ function rowToXlsx(r: ExportRow): XlsxRow {
     code: r.code,
     status: STATUS_LABEL[r.status] ?? r.status,
     brand: r.brand_name || r.brand_code || '',
+    storeLevel: r.store_level_name || r.store_level_code || '',
     productName: r.product_name,
     storeName: r.store_name,
     relatedOrder: r.related_order,

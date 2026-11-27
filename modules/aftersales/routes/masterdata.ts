@@ -1,5 +1,7 @@
 import { z } from 'zod'
-import type { ApproveStatus, EmployeeItem, Paged, ProductItem, StoreItem } from '../api-types'
+import type {
+  ApproveStatus, EmployeeItem, Paged, ProductItem, StoreItem, StoreProfileOptions,
+} from '../api-types'
 import { DEFAULT_PAGE_SIZE, MAX_PAGE_SIZE, parseIdParam, parsePageParam } from './context'
 import { writeAudit } from '../domain/audit'
 import type { ModuleHono, RouteCtx } from './context'
@@ -19,6 +21,46 @@ const EmployeeBody = z.object({
 const ApproveBody = z.object({ approveStatus: z.enum(['approved', 'rejected']) })
 
 export function registerMasterData(r: ModuleHono, ctx: RouteCtx): void {
+  // 门店页签的编辑选项 + 覆盖率（#2924）。写面在 data（`data:store`）；这里只读。
+  // data 057 未部署时视图缺失 ⇒ 降级返回空选项（degraded=true），门店列表本身照常可看。
+  r.get('/stores/profile-options', async (c) => {
+    const org = c.get('identity').orgId
+    const storesRes = await ctx.pool.query<{ n: number }>(
+      'select count(*)::int as n from data.dim_branch where org = $1', [org])
+    let degraded = false
+    let brands: StoreProfileOptions['brands'] = []
+    let levels: StoreProfileOptions['levels'] = []
+    let brandTagged = 0
+    let levelTagged = 0
+    try {
+      const [brandRes, levelRes, coverageRes] = await Promise.all([
+        ctx.pool.query<{ code: string; name: string; enabled: boolean; sort: number }>(
+          `select code, name, enabled, sort from data.v_brand_registry
+            where org = $1 order by sort, name`, [org]),
+        ctx.pool.query<{ code: string; name: string; enabled: boolean; sort: number }>(
+          `select code, name, enabled, sort from data.v_store_level_registry
+            where org = $1 order by sort, name`, [org]),
+        ctx.pool.query<{ brand_tagged: number; level_tagged: number }>(
+          `select count(*) filter (where brand_code is not null)::int as brand_tagged,
+                  count(*) filter (where level_code is not null)::int as level_tagged
+             from data.v_store_profile where org = $1`, [org]),
+      ])
+      brands = brandRes.rows
+      levels = levelRes.rows
+      brandTagged = coverageRes.rows[0]?.brand_tagged ?? 0
+      levelTagged = coverageRes.rows[0]?.level_tagged ?? 0
+    } catch (e) {
+      degraded = true
+      console.warn('[aftersales] 门店画像选项降级（data 057 可能未部署）:', e instanceof Error ? e.message : e)
+    }
+    const body: StoreProfileOptions = {
+      brands, levels,
+      coverage: { stores: storesRes.rows[0]?.n ?? 0, brandTagged, levelTagged },
+      degraded,
+    }
+    return c.json(body)
+  })
+
   r.get('/stores', async (c) => {
     const org = c.get('identity').orgId
     const q = c.req.query('q')
@@ -45,15 +87,41 @@ export function registerMasterData(r: ModuleHono, ctx: RouteCtx): void {
         where ${where} order by code limit $${params.length + 1} offset $${params.length + 2}`,
       [...params, size, (page - 1) * size],
     )
+    // 门店画像（#2924）：单独查本页门店，视图缺失时只丢 tag，不影响门店列表。
+    const profileByCode = new Map<string, {
+      brand_code: string | null; brand_name: string | null
+      level_code: string | null; level_name: string | null
+    }>()
+    const codes = res.rows.map((s) => String(s.code))
+    if (codes.length > 0) {
+      try {
+        const profiles = await ctx.pool.query(
+          `select store_code, brand_code, brand_name, level_code, level_name
+             from data.v_store_profile
+            where org = $1 and store_code = any($2::text[])`,
+          [org, codes],
+        )
+        for (const p of profiles.rows) profileByCode.set(String(p.store_code), p)
+      } catch (e) {
+        console.warn('[aftersales] 门店画像读取失败（列表按无 tag 降级）:', e instanceof Error ? e.message : e)
+      }
+    }
     // 响应形状与 console 共用同一份类型（api-types.ts）
     const body: Paged<StoreItem> = {
-      items: res.rows.map((s) => ({
-        code: String(s.code),
-        name: s.name,
-        enable: s.enable,
-        address: s.address,
-        phone: s.phone,
-      })),
+      items: res.rows.map((s) => {
+        const p = profileByCode.get(String(s.code))
+        return {
+          code: String(s.code),
+          name: s.name,
+          enable: s.enable,
+          address: s.address,
+          phone: s.phone,
+          brandCode: p?.brand_code ?? null,
+          brandName: p?.brand_name ?? null,
+          levelCode: p?.level_code ?? null,
+          levelName: p?.level_name ?? null,
+        }
+      }),
       total: totalRes.rows[0]!.n,
       page,
       size,

@@ -44,6 +44,8 @@ api:
     # 资源名刻意通用（stores/products/employees）——spec §1.2「可搬迁」纪律，
     # 接龙二期若成为第二消费者，这组端点可整体搬去独立档案模块。
     - { method: GET,  path: /stores,                 scope: aftersales:manage }
+    # 门店画像选项 + 覆盖率（#2924）：品牌/等级下拉与「已标记/已分级」计数。只读。
+    - { method: GET,  path: /stores/profile-options, scope: aftersales:manage }
     - { method: GET,  path: /products,               scope: aftersales:manage }
     - { method: GET,  path: /employees,              scope: aftersales:manage }
     - { method: POST, path: /employees,              scope: aftersales:manage }
@@ -112,6 +114,9 @@ dataDependencies:
   # 租户品牌维度（#2892）：稳定视图；消费者只读，基表 DDL 演进不破坏本模块。
   - data.v_brand_registry
   - data.v_brand_assignment
+  # 门店画像（#2924）：门店级品牌 + 等级；售后只读（写面在 data，`data:store`）。
+  - data.v_store_profile
+  - data.v_store_level_registry
 
 # 通知事件声明（2026-10-27 通知基础设施 §3.1）：宿主装载期登记到 platform.event_catalog。
 # 收件人由平台解析：approvers = 本 org 持有 aftersales:manage 的用户；不可枚举时用

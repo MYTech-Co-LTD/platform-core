@@ -9,7 +9,7 @@ import { DEFAULT_PAGE_SIZE, MAX_PAGE_SIZE, guestIdentityIds, parseIdParam, parse
 import type { ModuleHono, RouteCtx } from './context'
 import { myStoreCodes, resolveStoreAffiliation } from './affiliation'
 import { isValidDamageQuantity, MAX_DAMAGE_QUANTITY } from '../domain/ticket'
-import { resolveBrand } from '../domain/brand'
+import { resolveBrand, resolveStoreLevel } from '../domain/brand'
 
 /** ILIKE 的 `%` `_` 在用户输入里是通配符——转义掉，否则输入 `%` 等于匹配全部。
  *  与 `registration-guest.ts` / `masterdata.ts` 同款（三处各自定义是因为这几个文件互不 import）。 */
@@ -302,9 +302,10 @@ export function registerTicketGuest(r: ModuleHono, ctx: RouteCtx): void {
         return c.json({ error: 'ORDER_STORE_MISMATCH' }, 400)
       }
 
-      // 品牌快照（#2892）：解析顺序 product > store > 未分类；解析失败 fail-open，
-      // 只让这张单成为未分类，不阻断提单。快照后读侧不再 join。
+      // 品牌/等级快照（#2892 / #2924）：品牌 product > store > 未分类；等级只取门店画像。
+      // 解析失败 fail-open，只让这张单成为未分类/未分级，不阻断提单。快照后读侧不再 join。
       const brand = await resolveBrand(client, org, body.itemCode, body.storeCode)
+      const level = await resolveStoreLevel(client, org, body.storeCode)
 
       const ins = await client.query<{ id: string }>(
         `insert into aftersales.ticket(
@@ -313,8 +314,9 @@ export function registerTicketGuest(r: ModuleHono, ctx: RouteCtx): void {
            damage_quantity, basic_quantity, remark,
            settlement_source, settlement_order_no, settlement_item_code, settlement_line_key,
            settlement_price_minor, settlement_bizday, store_affiliation, arrival_at,
-           brand_code, brand_name, brand_source, brand_origin)
-         values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22)
+           brand_code, brand_name, brand_source, brand_origin,
+           store_level_code, store_level_name, store_level_source)
+         values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24,$25)
          returning id`,
         [
           org, body.clientRequestId, identity.userId,
@@ -326,6 +328,7 @@ export function registerTicketGuest(r: ModuleHono, ctx: RouteCtx): void {
           settlement.source, body.orderNo, body.itemCode, body.lineKey,
           Number(settlement.price_minor), settlement.bizday, storeAffiliation, body.arrivalAt ?? null,
           brand.code, brand.name, brand.source, brand.origin,
+          level.code, level.name, level.source,
         ],
       )
       const ticketId = Number(ins.rows[0].id)

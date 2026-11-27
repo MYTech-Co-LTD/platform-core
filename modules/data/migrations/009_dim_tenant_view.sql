@@ -11,6 +11,9 @@
 -- 账套原始数据仍在数据面 staging（本表不含账套粒度；按账套的分析走问数/语义层，不走这里）。
 --
 -- 008 建的两张表此刻**无任何消费方**（发布后尚未被读）⇒ drop 重建零成本；此后形状变更走新迁移。
+-- 057 的稳定视图 data.v_store_profile 依赖 dim_branch；部署脚本会全量重跑全部迁移，
+-- 009 先 drop 表 ⇒ 必须先摘掉依赖视图（057 在同一轮稍后重建）。别删这两行。
+drop view if exists data.v_store_profile;
 drop table if exists data.dim_branch;
 drop table if exists data.dim_item;
 

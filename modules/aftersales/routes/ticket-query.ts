@@ -12,11 +12,16 @@ import type { TicketStatus } from '../domain/ticket'
 /** 未分类的保留查询值；不是品牌 code（brand_registry.code 不允许 `__` 开头）。 */
 export const UNCLASSIFIED_BRAND = '__unclassified__'
 const BRAND_CODE_RE = /^[a-z0-9][a-z0-9_-]{0,63}$/
+/** 未分级的保留查询值；不是等级 code（store_level_registry.code 不允许 `__` 开头）。 */
+export const UNLEVELED_LEVEL = '__unleveled__'
+const LEVEL_CODE_RE = /^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$/
 
 export interface TicketFilters {
   status: '' | TicketStatus
   /** 品牌 code，或 `__unclassified__`；空串 = 不筛 */
   brand: string
+  /** 门店等级 code，或 `__unleveled__`；空串 = 不筛 */
+  level: string
   code: string
   product: string
   store: string
@@ -54,12 +59,16 @@ export type ParsedFilters =
 export function parseTicketFilters(get: (name: string) => string | undefined): ParsedFilters {
   const status = (get('status') ?? '').trim()
   const brand = (get('brand') ?? '').trim()
+  const level = (get('level') ?? '').trim()
   const processedFrom = (get('processedFrom') ?? '').trim()
   const processedTo = (get('processedTo') ?? '').trim()
 
   if (status && !STATUSES.includes(status as TicketStatus)) return { ok: false, error: 'INVALID_STATUS' }
   if (brand && brand !== UNCLASSIFIED_BRAND && !BRAND_CODE_RE.test(brand)) {
     return { ok: false, error: 'INVALID_BRAND' }
+  }
+  if (level && level !== UNLEVELED_LEVEL && !LEVEL_CODE_RE.test(level)) {
+    return { ok: false, error: 'INVALID_LEVEL' }
   }
   if (processedFrom && !isDateOnly(processedFrom)) return { ok: false, error: 'INVALID_DATE' }
   if (processedTo && !isDateOnly(processedTo)) return { ok: false, error: 'INVALID_DATE' }
@@ -69,6 +78,7 @@ export function parseTicketFilters(get: (name: string) => string | undefined): P
     filters: {
       status: status as '' | TicketStatus,
       brand,
+      level,
       code: (get('code') ?? '').trim(),
       product: (get('product') ?? '').trim(),
       store: (get('store') ?? '').trim(),
@@ -99,6 +109,14 @@ export function ticketWhere(org: string, f: TicketFilters): { sql: string; param
     } else {
       params.push(f.brand)
       where.push(`brand_code = $${params.length}`)
+    }
+  }
+  if (f.level) {
+    if (f.level === UNLEVELED_LEVEL) {
+      where.push("store_level_code = ''")
+    } else {
+      params.push(f.level)
+      where.push(`store_level_code = $${params.length}`)
     }
   }
   for (const [key, value] of [
@@ -147,6 +165,29 @@ export async function brandExists(
      select 1
        from aftersales.ticket
       where org = $1 and brand_code = $2
+      limit 1`,
+    [org, code],
+  )) as { rows: unknown[] }
+  return res.rows.length > 0
+}
+
+/**
+ * 等级是否可筛：字典里的（含停用，历史可筛）或工单快照里出现过的。
+ * 返回 false 时路由层回 400 INVALID_LEVEL；与 `__unleveled__` 无关。
+ */
+export async function levelExists(
+  db: { query: (sql: string, params?: unknown[]) => Promise<unknown> },
+  org: string,
+  code: string,
+): Promise<boolean> {
+  const res = (await db.query(
+    `select 1
+       from data.v_store_level_registry
+      where org = $1 and code = $2
+      union all
+     select 1
+       from aftersales.ticket
+      where org = $1 and store_level_code = $2
       limit 1`,
     [org, code],
   )) as { rows: unknown[] }

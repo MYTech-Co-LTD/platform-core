@@ -47,6 +47,7 @@ export function DetailDialog(props: {
               { key: 'code', label: '编号', children: detail.code },
               { key: 'status', label: '状态', children: STATUS_LABEL[detail.status] },
               { key: 'brand', label: '品牌', children: detail.brand_name || detail.brand_code || '—' },
+              { key: 'level', label: '门店等级', children: detail.store_level_name || detail.store_level_code || '—' },
               { key: 'product', label: '商品', children: detail.product_name },
               { key: 'store', label: '门店', children: detail.store_name },
               { key: 'order', label: '关联订单', children: detail.related_order || '—' },

@@ -26,6 +26,10 @@ describePg('主数据域', () => {
     await pool.query('delete from data.dim_branch where org = $1', [ORG])
     await pool.query('delete from data.dim_item where org = $1', [ORG])
     await pool.query('delete from aftersales.employee where org = $1', [ORG])
+    await pool.query('delete from data.store_profile_audit where org = $1', [ORG])
+    await pool.query('delete from data.store_profile where org = $1', [ORG])
+    await pool.query('delete from data.brand_registry where org = $1', [ORG])
+    await pool.query('delete from data.store_level_registry where org = $1', [ORG])
     await pool.query(
       `insert into data.dim_branch(org, code, name, enable, address, phone, source_book, snapshot)
        values ($1,'101','上海门店',true,'', '', '3120', current_date),
@@ -38,12 +42,25 @@ describePg('主数据域', () => {
               ($1,'3002','6900000002','梨','规格B','kg',false,false,'3120',current_date)`,
       [ORG],
     )
+    // 门店画像（#2924）：101 有品牌+等级，102 未标记/未分级 ⇒ 覆盖率 1/2。
+    await pool.query(
+      `insert into data.brand_registry(org, code, name, sort, enabled)
+       values ($1,'xiongmao','熊喵',1,true)`, [ORG])
+    await pool.query(
+      `insert into data.store_level_registry(org, code, name, sort, enabled)
+       values ($1,'A','一级',1,true)`, [ORG])
+    await pool.query(
+      `insert into data.store_profile(org, store_code, brand_code, brand_source, level_code, level_source)
+       values ($1,'101','xiongmao','manual','A','manual')`, [ORG])
   })
 
   afterAll(async () => {
     await pool.query('delete from aftersales.employee where org = $1', [ORG])
     await pool.query('delete from data.dim_item where org = $1', [ORG])
     await pool.query('delete from data.dim_branch where org = $1', [ORG])
+    await pool.query('delete from data.store_profile where org = $1', [ORG])
+    await pool.query('delete from data.brand_registry where org = $1', [ORG])
+    await pool.query('delete from data.store_level_registry where org = $1', [ORG])
     expect(pool.ended, '池在本 afterAll 之前已被 end——有别的钩子提前收摊').toBe(false)
     await pool.end().catch(() => {})
   })
@@ -57,8 +74,30 @@ describePg('主数据域', () => {
   it('门店列表只回本 org', async () => {
     const res = await app.request('/stores')
     expect(res.status).toBe(200)
-    const body = (await res.json()) as { items: { name: string }[] }
+    const body = (await res.json()) as { items: { name: string; brandName: string | null; levelName: string | null }[] }
     expect(body.items.map((s) => s.name).sort()).toEqual(['上海门店', '北京门店'])
+    // 门店画像 tag（#2924）：101 有品牌/等级，102 没有
+    expect(body.items.find((s) => s.name === '上海门店')).toMatchObject({
+      brandName: '熊喵', levelName: '一级',
+    })
+    expect(body.items.find((s) => s.name === '北京门店')).toMatchObject({
+      brandName: null, levelName: null,
+    })
+  })
+
+  it('GET /stores/profile-options：选项 + 覆盖率（#2924）', async () => {
+    const res = await app.request('/stores/profile-options')
+    expect(res.status).toBe(200)
+    const body = (await res.json()) as {
+      brands: { code: string; name: string }[]
+      levels: { code: string; name: string }[]
+      coverage: { stores: number; brandTagged: number; levelTagged: number }
+      degraded: boolean
+    }
+    expect(body.degraded).toBe(false)
+    expect(body.brands).toEqual([{ code: 'xiongmao', name: '熊喵', enabled: true, sort: 1 }])
+    expect(body.levels).toEqual([{ code: 'A', name: '一级', enabled: true, sort: 1 }])
+    expect(body.coverage).toEqual({ stores: 2, brandTagged: 1, levelTagged: 1 })
   })
 
   // 【#155】与 /products 同形：回 {items,total,page,size}；q 过滤要计入 total（同一 where）。

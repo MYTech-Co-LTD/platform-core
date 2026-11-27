@@ -72,9 +72,18 @@ export function TicketTable(props: {
       title: '品牌',
       dataIndex: 'brand_name',
       width: 100,
-      // 品牌是分类维度，不是状态——用中性文字，不套语义色。
+      // 品牌/等级是分类维度，不是状态——用中性文字，不套语义色。
       render: (_v, r) => {
         const text = r.brand_name || r.brand_code || ''
+        return text || <Typography.Text type="secondary">—</Typography.Text>
+      },
+    },
+    {
+      title: '门店等级',
+      dataIndex: 'store_level_name',
+      width: 100,
+      render: (_v, r) => {
+        const text = r.store_level_name || r.store_level_code || ''
         return text || <Typography.Text type="secondary">—</Typography.Text>
       },
     },
@@ -149,7 +158,7 @@ export function TicketTable(props: {
       loading={props.loading}
       columns={columns}
       locale={{ emptyText: '没有符合条件的工单。' }}
-      scroll={{ x: 2350 }}
+      scroll={{ x: 2450 }}
       rowSelection={{
         selectedRowKeys: props.selected,
         onChange: (keys) => props.onSelectedChange(keys.map(Number)),

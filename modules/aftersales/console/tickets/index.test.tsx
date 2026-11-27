@@ -42,6 +42,9 @@ const row = (id: number, over: Record<string, unknown> = {}) => ({
   brand_name: '熊喵',
   brand_source: 'store',
   brand_origin: 'source_field',
+  store_level_code: 'A',
+  store_level_name: '一级',
+  store_level_source: 'manual',
   image_count: 0,
   video_count: 0,
   created_at: '2026-09-16T00:00:00Z',
@@ -57,6 +60,15 @@ const counts = {
       { code: 'pptd', name: '品品甜', count: 1 },
     ],
     unclassified: 1,
+    showFilter: true,
+    degraded: false,
+  },
+  level: {
+    options: [
+      { code: 'A', name: '一级', count: 2 },
+      { code: 'B', name: '二级', count: 1 },
+    ],
+    unleveled: 2,
     showFilter: true,
     degraded: false,
   },
@@ -172,6 +184,16 @@ describe('工单列表', () => {
     await waitFor(() => expect(urls.some((u) => u.includes('brand=xiongmao'))).toBe(true))
     // 点品牌只刷新列表，不重新拉计数
     expect(urls.filter((u) => u.includes('/tickets/counts')).length).toBe(countsBefore)
+  })
+
+  it('等级胶囊：点击后查询带 level，且计数重拉（品牌计数含等级）', async () => {
+    renderPage()
+    await waitFor(() => expect(screen.getByText('AS-00000001')).toBeInTheDocument())
+    await waitFor(() => expect(urls.some((u) => u.includes('/tickets/counts'))).toBe(true))
+    const countsBefore = urls.filter((u) => u.includes('/tickets/counts')).length
+    fireEvent.click(screen.getByRole('button', { name: '二级 1' }))
+    await waitFor(() => expect(urls.some((u) => u.includes('level=B'))).toBe(true))
+    expect(urls.filter((u) => u.includes('/tickets/counts')).length).toBeGreaterThan(countsBefore)
   })
 
   it('品牌只有 1 个且无未分类 ⇒ 不渲染品牌行（不放一个没用的胶囊）', async () => {
