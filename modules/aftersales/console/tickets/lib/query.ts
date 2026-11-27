@@ -6,8 +6,10 @@ import type { TicketStatus } from '../../../api-types'
 
 export interface TicketFilters {
   status: '' | TicketStatus
-  /** 品牌 code，或 `__unclassified__`；空串 = 不筛 */
+  /** 品牌 code，或 `__unclassified__`；空串 = 不筛（最末级） */
   brand: string
+  /** 门店等级 code，或 `__unleveled__`；空串 = 不筛（品级之前） */
+  level: string
   code: string
   product: string
   store: string
@@ -21,6 +23,7 @@ export interface TicketFilters {
 export const EMPTY_FILTERS: TicketFilters = {
   status: '',
   brand: '',
+  level: '',
   code: '',
   product: '',
   store: '',
@@ -33,7 +36,7 @@ export const EMPTY_FILTERS: TicketFilters = {
 /** 只把**非空**条件写进查询串——空值传过去服务端也会忽略，但会让 URL 变脏、测试断言变脆。 */
 export function ticketQuery(f: TicketFilters, page?: number, size?: number): string {
   const qs = new URLSearchParams()
-  for (const key of ['status', 'brand', 'code', 'product', 'store', 'relatedOrder', 'opinion',
+  for (const key of ['status', 'brand', 'level', 'code', 'product', 'store', 'relatedOrder', 'opinion',
     'processedFrom', 'processedTo'] as const) {
     const value = f[key]
     if (value) qs.set(key, value)

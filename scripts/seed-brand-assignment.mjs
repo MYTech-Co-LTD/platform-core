@@ -23,10 +23,13 @@
 // （可选 `WUJI_STORE_SCHEMAID` 默认 store_info、`WUJI_API_PATH` 默认 /api/private/object）。
 // **密钥不进仓、不打印**。
 //
-// 纪律：
-//   · 幂等：brand_registry / brand_assignment 都是 upsert；
+// 纪律（#2924 起）：
+//   · 幂等：brand_registry / store_profile 都是 upsert；
+//   · **门店级品牌写 data.store_profile**（不再写 brand_assignment 的 store 行）；
+//     商品级品牌不由本脚本写（品牌解析的商品级覆盖仍在 brand_assignment，人工维护）；
 //   · manual/locked 行不被源同步覆盖（where not locked or excluded.locked）；
-//   · 每次运行写一条 data.brand_audit 汇总（不回填工单——回填用 backfill-ticket-brand.mjs）。
+//   · 每次运行写一条 data.store_profile_audit（profile.import）汇总；
+//   · 不回填工单——回填用 backfill-ticket-brand.mjs / backfill-ticket-level.mjs。
 import { readFile } from 'node:fs/promises'
 import { createRequire } from 'node:module'
 // pg 不是根依赖：从 data 模块解析（与 test-all.mjs 同一个绕法），别在根 package.json 加依赖。
@@ -215,30 +218,33 @@ async function main() {
     }
     let written = 0
     let lockedSkipped = 0
+    let productSkipped = 0
     for (const a of input.assignments) {
+      // 商品级品牌不再由本脚本写（#2924）：门店级品牌统一进 store_profile。
+      if (a.subjectType !== 'store') { productSkipped++; continue }
       const res = await client.query(
-        `insert into data.brand_assignment as ba(org, subject_type, subject_code, brand_code, source, locked)
-         values ($1,$2,$3,$4,$5,$6)
-         on conflict (org, subject_type, subject_code) do update
-           set brand_code = excluded.brand_code, source = excluded.source,
-               locked = excluded.locked, updated_at = now()
-           where not ba.locked or excluded.locked`,
-        [org, a.subjectType, a.subjectCode, a.brandCode, a.source, a.locked],
+        `insert into data.store_profile as sp(org, store_code, brand_code, brand_source, brand_locked)
+         values ($1,$2,$3,$4,$5)
+         on conflict (org, store_code) do update
+           set brand_code = excluded.brand_code, brand_source = excluded.brand_source,
+               brand_locked = excluded.brand_locked, updated_at = now()
+           where not sp.brand_locked or excluded.brand_locked`,
+        [org, a.subjectCode, a.brandCode, a.source, a.locked],
       )
       if (res.rowCount === 0) lockedSkipped++
       else written++
     }
     await client.query(
-      `insert into data.brand_audit(org, actor, action, detail)
-       values ($1,$2,'assignment.import',$3::jsonb)`,
+      `insert into data.store_profile_audit(org, actor, action, detail)
+       values ($1,$2,'profile.import',$3::jsonb)`,
       [org, actor, JSON.stringify({
         brands: input.brands.length, assignments: input.assignments.length,
-        skipped: input.skipped ?? 0, written, lockedSkipped,
-        mode: has('from-wuji') ? 'wuji' : 'input',
+        skipped: input.skipped ?? 0, written, lockedSkipped, productSkipped,
+        mode: has('from-wuji') ? 'wuji' : has('from-dim-branch') ? 'dim-branch' : 'input',
       })],
     )
     await client.query('commit')
-    console.log(`OK：brands=${input.brands.length} assignments_written=${written} locked_skipped=${lockedSkipped}`)
+    console.log(`OK：brands=${input.brands.length} store_profiles_written=${written} locked_skipped=${lockedSkipped} product_skipped=${productSkipped}`)
   } catch (e) {
     await client.query('rollback').catch(() => {})
     throw e

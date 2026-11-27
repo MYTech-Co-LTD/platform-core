@@ -15,7 +15,9 @@ import { writeAudit } from '../domain/audit'
 // 分页常量与解析器在 routes/context.ts（四域共享层）——本文件不再留本地副本，
 // 避免与管理端/访客端两份实现静默漂移（见 context.ts 的 parsePageParam 注释）。
 import { DEFAULT_PAGE_SIZE, MAX_PAGE_SIZE, parseIdParam, parsePageParam , consoleBaseUrl} from './context'
-import { brandExists, parseTicketFilters, ticketWhere, UNCLASSIFIED_BRAND } from './ticket-query'
+import {
+  brandExists, levelExists, parseTicketFilters, ticketWhere, UNCLASSIFIED_BRAND, UNLEVELED_LEVEL,
+} from './ticket-query'
 import type { ModuleHono, RouteCtx } from './context'
 
 /** 水印日期：`YYYY-MM-DD` 且真实存在（2026-02-30 会被 Date 滚到 3 月 2 日 ⇒ ISO 比较能抓住）。 */
@@ -87,6 +89,10 @@ export function registerTicketManage(r: ModuleHono, ctx: RouteCtx): void {
       && !(await brandExists(ctx.pool, org, parsed.filters.brand))) {
       return c.json({ error: 'INVALID_BRAND' }, 400)
     }
+    if (parsed.filters.level && parsed.filters.level !== UNLEVELED_LEVEL
+      && !(await levelExists(ctx.pool, org, parsed.filters.level))) {
+      return c.json({ error: 'INVALID_LEVEL' }, 400)
+    }
     const { sql: where, params } = ticketWhere(org, parsed.filters)
 
     const totalRes = await ctx.pool.query<{ n: number }>(
@@ -101,8 +107,9 @@ export function registerTicketManage(r: ModuleHono, ctx: RouteCtx): void {
               watermark_at::text as watermark_at,
               -- 归属一致性快照（ADR 2026-11-24 §7 P1-a）：信息性，供管理端展示异常
               store_affiliation,
-              -- 品牌快照（#2892）：提单时解析，读侧不 join。
+              -- 品牌/等级快照（#2892 / #2924）：提单时解析，读侧不 join。
               brand_code, brand_name, brand_source, brand_origin,
+              store_level_code, store_level_name, store_level_source,
               -- 报损金额（毛额，整数分）：pending 也显示「损失多少」，与赔付额不同。
               round(damage_quantity * coalesce(settlement_price_minor, basic_unit_price_minor))::bigint
                 as damage_amount_minor,
@@ -127,21 +134,22 @@ export function registerTicketManage(r: ModuleHono, ctx: RouteCtx): void {
     })
   })
 
-  // GET /tickets/counts —— 状态胶囊 + 品牌胶囊（最末级筛选）
-  // 语义（#2919）：
+  // GET /tickets/counts —— 状态 / 等级 / 品牌胶囊（层级筛选）
+  // 语义（#2919 / #2924）：
   //   · 状态：顶层，计数**全局**；
   //   · 搜索 / 处理时间：中间层；
-  //   · 品牌：**最末级**。品牌计数 = status + 搜索 + 时间，**排除 brand 自身**——
-  //     这样选中一个品牌时，其他品牌的数字仍可点、不会全部归零。
-  //   · 未分类（brand_code='') 同样走上游条件；showFilter 用全局判断，避免搜索把整行弄消失。
-  // 品牌选项来自 data.v_brand_registry（含停用，历史可筛）∪ 工单快照里出现过的历史品牌。
+  //   · 等级：品牌之前。等级计数 = status + 搜索 + 时间，**排除 level 与 brand**；
+  //   · 品牌：**最末级**。品牌计数 = status + 搜索 + 时间 + **等级**，**排除 brand 自身**。
+  //   · 未分类/未分级走各自的上游条件；showFilter 用全局判断，避免搜索让整行忽隐忽现。
+  // 选项来自 data 稳定视图（含停用，历史可筛）∪ 工单快照里出现过的历史值。
   // ⚠️ 必须注册在 `/tickets/:id` 之前，否则 `counts` 被当成 id。
   r.get('/tickets/counts', async (c) => {
     const org = c.get('identity').orgId
     const parsed = parseTicketFilters((k) => c.req.query(k))
     if (!parsed.ok) return c.json({ error: parsed.error }, 400)
-    // 品牌是最末级：品牌计数排除 brand，其它上游条件全带上。
-    const upstream = ticketWhere(org, { ...parsed.filters, brand: '' })
+    // 等级计数只含上游（不含 level、不含 brand）；品牌计数含等级（只排除 brand 自己）。
+    const levelUpstream = ticketWhere(org, { ...parsed.filters, brand: '', level: '' })
+    const brandUpstream = ticketWhere(org, { ...parsed.filters, brand: '' })
 
     const statusRes = await ctx.pool.query<{ status: TicketStatus; n: number }>(
       'select status, count(*)::int as n from aftersales.ticket where org = $1 group by status',
@@ -150,17 +158,17 @@ export function registerTicketManage(r: ModuleHono, ctx: RouteCtx): void {
     const byStatus = { pending: 0, completed: 0, cancelled: 0 }
     for (const row of statusRes.rows) byStatus[row.status] = row.n
 
-    let options: { code: string; name: string; count: number }[] = []
-    let unclassified = 0
-    let showFilter = false
-    let degraded = false
+    let brand = {
+      options: [] as { code: string; name: string; count: number }[],
+      unclassified: 0, showFilter: false, degraded: false,
+    }
     try {
       const [optRes, unclassifiedRes, globalRes] = await Promise.all([
         ctx.pool.query<{ code: string; name: string; n: number }>(
           `with tc as (
              select brand_code, max(brand_name) as name, count(*)::int as n
                from aftersales.ticket
-              where ${upstream.sql} and brand_code <> ''
+              where ${brandUpstream.sql} and brand_code <> ''
               group by brand_code
            )
            select r.code, r.name, r.sort, coalesce(tc.n, 0)::int as n
@@ -174,12 +182,12 @@ export function registerTicketManage(r: ModuleHono, ctx: RouteCtx): void {
               select 1 from data.v_brand_registry r where r.org = $1 and r.code = tc.brand_code
             )
            order by sort, name`,
-          upstream.params,
+          brandUpstream.params,
         ),
         ctx.pool.query<{ n: number }>(
           `select count(*)::int as n from aftersales.ticket
-            where ${upstream.sql} and brand_code = ''`,
-          upstream.params,
+            where ${brandUpstream.sql} and brand_code = ''`,
+          brandUpstream.params,
         ),
         // showFilter 看全局：只要本租户有 >=2 个品牌、或全局有未分类、或历史品牌，
         // 品牌行就一直在；搜索只改数字，不让整行忽隐忽现。
@@ -197,19 +205,86 @@ export function registerTicketManage(r: ModuleHono, ctx: RouteCtx): void {
           [org],
         ),
       ])
-      options = optRes.rows.map((r) => ({ code: r.code, name: r.name, count: r.n }))
-      unclassified = unclassifiedRes.rows[0]?.n ?? 0
-      const g = globalRes.rows[0]
-      showFilter = (g?.registry_n ?? 0) >= 2 || (g?.unclassified_n ?? 0) > 0 || (g?.historical_n ?? 0) > 0
+      brand = {
+        options: optRes.rows.map((r) => ({ code: r.code, name: r.name, count: r.n })),
+        unclassified: unclassifiedRes.rows[0]?.n ?? 0,
+        showFilter: (() => {
+          const g = globalRes.rows[0]
+          return (g?.registry_n ?? 0) >= 2 || (g?.unclassified_n ?? 0) > 0 || (g?.historical_n ?? 0) > 0
+        })(),
+        degraded: false,
+      }
     } catch (e) {
       // 品牌是分类维度：视图缺失/查询失败只降级品牌面，状态计数照常返回。
-      degraded = true
+      brand.degraded = true
       console.warn('[aftersales] 品牌计数失败（品牌面降级，状态计数照常）:', e instanceof Error ? e.message : e)
+    }
+
+    let level = {
+      options: [] as { code: string; name: string; count: number }[],
+      unleveled: 0, showFilter: false, degraded: false,
+    }
+    try {
+      const [optRes, unleveledRes, globalRes] = await Promise.all([
+        ctx.pool.query<{ code: string; name: string; n: number }>(
+          `with tc as (
+             select store_level_code as code, max(store_level_name) as name, count(*)::int as n
+               from aftersales.ticket
+              where ${levelUpstream.sql} and store_level_code <> ''
+              group by store_level_code
+           )
+           select r.code, r.name, r.sort, coalesce(tc.n, 0)::int as n
+             from data.v_store_level_registry r
+             left join tc on tc.code = r.code
+            where r.org = $1
+           union all
+           select tc.code, coalesce(tc.name, ''), 9999, tc.n
+             from tc
+            where not exists (
+              select 1 from data.v_store_level_registry r where r.org = $1 and r.code = tc.code
+            )
+           order by sort, name`,
+          levelUpstream.params,
+        ),
+        ctx.pool.query<{ n: number }>(
+          `select count(*)::int as n from aftersales.ticket
+            where ${levelUpstream.sql} and store_level_code = ''`,
+          levelUpstream.params,
+        ),
+        ctx.pool.query<{ registry_n: number; unleveled_n: number; historical_n: number }>(
+          `select
+             (select count(*)::int from data.v_store_level_registry where org = $1) as registry_n,
+             (select count(*)::int from aftersales.ticket
+               where org = $1 and store_level_code = '') as unleveled_n,
+             (select count(*)::int from (
+                select distinct store_level_code from aftersales.ticket
+                 where org = $1 and store_level_code <> ''
+                   and not exists (
+                     select 1 from data.v_store_level_registry r
+                      where r.org = $1 and r.code = store_level_code
+                   )
+              ) h) as historical_n`,
+          [org],
+        ),
+      ])
+      level = {
+        options: optRes.rows.map((r) => ({ code: r.code, name: r.name, count: r.n })),
+        unleveled: unleveledRes.rows[0]?.n ?? 0,
+        showFilter: (() => {
+          const g = globalRes.rows[0]
+          return (g?.registry_n ?? 0) >= 2 || (g?.unleveled_n ?? 0) > 0 || (g?.historical_n ?? 0) > 0
+        })(),
+        degraded: false,
+      }
+    } catch (e) {
+      level.degraded = true
+      console.warn('[aftersales] 等级计数失败（等级面降级，状态计数照常）:', e instanceof Error ? e.message : e)
     }
 
     return c.json({
       status: { all: byStatus.pending + byStatus.completed + byStatus.cancelled, ...byStatus },
-      brand: { options, unclassified, showFilter, degraded },
+      brand,
+      level,
     })
   })
 
@@ -229,6 +304,7 @@ export function registerTicketManage(r: ModuleHono, ctx: RouteCtx): void {
               operator, remark, opinion, related_order, arrival_at, created_at, processed_at,
               watermark_at::text as watermark_at, store_affiliation,
               brand_code, brand_name, brand_source, brand_origin,
+              store_level_code, store_level_name, store_level_source,
               round(damage_quantity * coalesce(settlement_price_minor, basic_unit_price_minor))::bigint
                 as damage_amount_minor
          from aftersales.ticket where org = $1 and id = $2`,

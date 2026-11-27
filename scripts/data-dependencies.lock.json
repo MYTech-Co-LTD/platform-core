@@ -209,6 +209,78 @@
       "type": "timestamp with time zone"
     }
   ],
+  "data.v_store_level_registry": [
+    {
+      "name": "code",
+      "type": "text"
+    },
+    {
+      "name": "enabled",
+      "type": "boolean"
+    },
+    {
+      "name": "name",
+      "type": "text"
+    },
+    {
+      "name": "org",
+      "type": "text"
+    },
+    {
+      "name": "sort",
+      "type": "integer"
+    },
+    {
+      "name": "source",
+      "type": "text"
+    },
+    {
+      "name": "updated_at",
+      "type": "timestamp with time zone"
+    }
+  ],
+  "data.v_store_profile": [
+    {
+      "name": "brand_code",
+      "type": "text"
+    },
+    {
+      "name": "brand_name",
+      "type": "text"
+    },
+    {
+      "name": "brand_source",
+      "type": "text"
+    },
+    {
+      "name": "level_code",
+      "type": "text"
+    },
+    {
+      "name": "level_name",
+      "type": "text"
+    },
+    {
+      "name": "level_source",
+      "type": "text"
+    },
+    {
+      "name": "org",
+      "type": "text"
+    },
+    {
+      "name": "store_code",
+      "type": "text"
+    },
+    {
+      "name": "store_name",
+      "type": "text"
+    },
+    {
+      "name": "updated_at",
+      "type": "timestamp with time zone"
+    }
+  ],
   "platform.job_run": [
     {
       "name": "attempt",

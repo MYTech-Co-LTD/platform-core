@@ -33,19 +33,23 @@ const batch = Math.max(1, Math.trunc(Number(arg('batch', '500'))) || 500)
 const actor = arg('actor', process.env.USER ?? 'ops')
 const pool = new Pool({ connectionString: process.env.DATABASE_URL })
 
+// 解析顺序与运行时一致：product 分配 > 门店画像（store_profile）> 未分类。
+// 只取启用中的品牌（停用品牌仍在字典里供历史筛选，但不参与新分类）。
 const SELECT_SQL = `
   select t.id,
          p.brand_code as p_code, p.brand_name as p_name, p.source as p_source,
-         s.brand_code as s_code, s.brand_name as s_name, s.source as s_source
+         case when sr.code is not null then sp.brand_code end as s_code,
+         sr.name as s_name, sp.brand_source as s_source
     from aftersales.ticket t
     left join data.v_brand_assignment p
       on p.org = t.org and p.subject_type = 'product'
      and p.subject_code = t.product_code and p.brand_enabled
-    left join data.v_brand_assignment s
-      on s.org = t.org and s.subject_type = 'store'
-     and s.subject_code = t.store_code and s.brand_enabled
+    left join data.v_store_profile sp
+      on sp.org = t.org and sp.store_code = t.store_code
+    left join data.v_brand_registry sr
+      on sr.org = sp.org and sr.code = sp.brand_code and sr.enabled
    where t.org = $1 and t.brand_code = ''
-     and coalesce(p.brand_code, s.brand_code) is not null
+     and coalesce(p.brand_code, case when sr.code is not null then sp.brand_code end) is not null
    order by t.id
    limit $2`
 
@@ -72,11 +76,12 @@ async function main() {
          left join data.v_brand_assignment p
            on p.org = t.org and p.subject_type = 'product'
           and p.subject_code = t.product_code and p.brand_enabled
-         left join data.v_brand_assignment s
-           on s.org = t.org and s.subject_type = 'store'
-          and s.subject_code = t.store_code and s.brand_enabled
+         left join data.v_store_profile sp
+           on sp.org = t.org and sp.store_code = t.store_code
+         left join data.v_brand_registry sr
+           on sr.org = sp.org and sr.code = sp.brand_code and sr.enabled
         where t.org = $1 and t.brand_code = ''
-          and coalesce(p.brand_code, s.brand_code) is not null`,
+          and coalesce(p.brand_code, case when sr.code is not null then sp.brand_code end) is not null`,
       [org],
     )
     const total = totalRes.rows[0]?.n ?? 0

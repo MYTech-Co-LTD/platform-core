@@ -14,6 +14,7 @@ export const EXPORT_FIELDS: readonly ExportField[] = [
   { key: 'code', header: '工单编号', width: 16 },
   { key: 'status', header: '状态', width: 10 },
   { key: 'brand', header: '品牌', width: 10 },
+  { key: 'storeLevel', header: '门店等级', width: 10 },
   { key: 'productName', header: '商品', width: 20 },
   { key: 'storeName', header: '门店', width: 18 },
   { key: 'relatedOrder', header: '关联订单', width: 18 },

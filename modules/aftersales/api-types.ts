@@ -70,11 +70,14 @@ export interface TicketListItem {
   opinion?: string
   /** 照片水印日期 `YYYY-MM-DD` */
   watermark_at?: string | null
-  // 品牌快照（#2892）：提单时解析，读侧不 join；空串 = 未分类。
+  // 品牌/等级快照（#2892 / #2924）：提单时解析，读侧不 join；空串 = 未分类/未分级。
   brand_code?: string
   brand_name?: string
   brand_source?: string
   brand_origin?: string
+  store_level_code?: string
+  store_level_name?: string
+  store_level_source?: string
   image_count?: number
   video_count?: number
   /** 报损金额（毛额，整数分）= 报损数量 × 单价；pending 也有值 */
@@ -109,21 +112,30 @@ export interface TicketDetail extends TicketListItem, TicketSettlement {
   brand_name: string
   brand_source: string
   brand_origin: string
+  store_level_code: string
+  store_level_name: string
+  store_level_source: string
   damage_amount_minor: number
   attachments: TicketAttachment[]
 }
 
 /**
- * `GET /tickets/counts`：状态全局计数 + 动态品牌选项。
- * 品牌计数只跟随 `status`；`unclassified` 是 brand_code='' 的一等计数；
- * `showFilter=false`（0/1 品牌且无未分类）时 console 不渲染品牌行；
- * `degraded=true` 表示品牌视图不可用（状态计数仍可用）。
+ * `GET /tickets/counts`：状态全局计数 + 等级/品牌动态选项。
+ * 层级：状态（全局）→ 搜索/时间 → 等级（只含上游）→ 品牌（最末级，含等级）。
+ * `unclassified` 是 brand_code='' 的一等计数；`unleveled` 是 store_level_code='' 的一等计数；
+ * `showFilter=false` 时 console 不渲染该行；`degraded=true` 表示对应视图不可用（其余照常）。
  */
 export interface TicketCounts {
   status: { all: number; pending: number; completed: number; cancelled: number }
   brand: {
     options: BrandOption[]
     unclassified: number
+    showFilter: boolean
+    degraded: boolean
+  }
+  level?: {
+    options: BrandOption[]
+    unleveled: number
     showFilter: boolean
     degraded: boolean
   }
@@ -206,6 +218,19 @@ export interface StoreItem {
   enable: boolean | null
   address: string | null
   phone: string | null
+  // 门店画像（#2924，来自 data.v_store_profile；视图缺失时 null）
+  brandCode?: string | null
+  brandName?: string | null
+  levelCode?: string | null
+  levelName?: string | null
+}
+
+/** `GET /stores/profile-options`：门店页签的编辑选项 + 覆盖率。 */
+export interface StoreProfileOptions {
+  brands: { code: string; name: string; enabled: boolean; sort: number }[]
+  levels: { code: string; name: string; enabled: boolean; sort: number }[]
+  coverage: { stores: number; brandTagged: number; levelTagged: number }
+  degraded: boolean
 }
 
 /** `GET /products` / `/guest/products` 的一行——数据源 = `data.dim_item`（同上）。 */

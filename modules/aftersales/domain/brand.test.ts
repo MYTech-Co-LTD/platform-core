@@ -1,6 +1,6 @@
 // brand.test.ts — 品牌解析的优先级与 fail-open（#2892）。
 import { describe, expect, it, vi } from 'vitest'
-import { resolveBrand } from './brand'
+import { resolveBrand, resolveStoreLevel } from './brand'
 
 function dbOf(rows: unknown[]) {
   return { query: vi.fn(async (_sql: string, _params?: unknown[]) => ({ rows })) }
@@ -8,7 +8,7 @@ function dbOf(rows: unknown[]) {
 
 describe('resolveBrand', () => {
   it('返回视图给的第一行（SQL 已按 product=0/store=1 排序）', async () => {
-    const db = dbOf([{ subject_type: 'product', brand_code: 'pptd', brand_name: '品品甜', source: 'manual' }])
+    const db = dbOf([{ source: 'product', brand_code: 'pptd', brand_name: '品品甜', origin: 'manual' }])
     await expect(resolveBrand(db, 'org', 'I001', 'S01')).resolves.toEqual({
       code: 'pptd', name: '品品甜', source: 'product', origin: 'manual',
     })
@@ -17,7 +17,7 @@ describe('resolveBrand', () => {
   })
 
   it('store 行也映射为 source=store', async () => {
-    const db = dbOf([{ subject_type: 'store', brand_code: 'xiongmao', brand_name: '熊喵', source: 'source_field' }])
+    const db = dbOf([{ source: 'store', brand_code: 'xiongmao', brand_name: '熊喵', origin: 'source_field' }])
     await expect(resolveBrand(db, 'org', 'I001', 'S01')).resolves.toEqual({
       code: 'xiongmao', name: '熊喵', source: 'store', origin: 'source_field',
     })
@@ -44,5 +44,31 @@ describe('resolveBrand', () => {
     const db = dbOf([])
     await expect(resolveBrand(db, 'org', '', '')).resolves.toMatchObject({ source: 'unavailable' })
     expect(db.query).not.toHaveBeenCalled()
+  })
+})
+
+describe('resolveStoreLevel', () => {
+  it('门店画像的等级 ⇒ 快照值 + 映射来源', async () => {
+    const db = dbOf([{ level_code: 'A', level_name: '一级', level_source: 'manual' }])
+    await expect(resolveStoreLevel(db, 'org', 'S01')).resolves.toEqual({
+      code: 'A', name: '一级', source: 'manual',
+    })
+  })
+
+  it('没有等级 ⇒ 未分级', async () => {
+    const db = dbOf([])
+    await expect(resolveStoreLevel(db, 'org', 'S01')).resolves.toEqual({
+      code: '', name: '', source: 'unavailable',
+    })
+  })
+
+  it('★ 视图缺失/查询失败 ⇒ fail-open 未分级，并打 warn', async () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {})
+    const db = { query: vi.fn(async () => { throw new Error('relation "data.v_store_profile" does not exist') }) }
+    await expect(resolveStoreLevel(db, 'org', 'S01')).resolves.toEqual({
+      code: '', name: '', source: 'unavailable',
+    })
+    expect(warn).toHaveBeenCalled()
+    warn.mockRestore()
   })
 })

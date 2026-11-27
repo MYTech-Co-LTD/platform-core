@@ -13,10 +13,24 @@ const json = (b: unknown) =>
 
 beforeEach(() => {
   m.mockReset()
-  m.mockImplementation(async () =>
+  m.mockImplementation(async (url: string) => {
+    if (url.includes('/stores/profile-options')) {
+      return json({
+        brands: [{ code: 'xiongmao', name: '熊喵', enabled: true, sort: 1 }],
+        levels: [{ code: 'A', name: '一级', enabled: true, sort: 1 }],
+        coverage: { stores: 1, brandTagged: 1, levelTagged: 1 },
+        degraded: false,
+      })
+    }
     // #155 起真机回 {items,total,page,size}——替身钉在真实形状上（AGENTS.md #11）
-    json({ items: [{ id: 1, name: '一号店', regionId: 3, address: '某路 1 号', phone: '010-1' }], total: 1, page: 1, size: 20 }),
-  )
+    return json({
+      items: [{
+        code: 'S01', name: '一号店', enable: true, address: '某路 1 号', phone: '010-1',
+        brandCode: 'xiongmao', brandName: '熊喵', levelCode: 'A', levelName: '一级',
+      }],
+      total: 1, page: 1, size: 20,
+    })
+  })
 })
 afterEach(cleanup)
 
@@ -25,6 +39,9 @@ describe('门店页（只读）', () => {
     render(<StoresPage />)
     await waitFor(() => expect(screen.getByText('一号店')).toBeInTheDocument())
     expect(screen.getByText('某路 1 号')).toBeInTheDocument()
+    expect(screen.getByText('熊喵')).toBeInTheDocument()
+    expect(screen.getByText('一级')).toBeInTheDocument()
+    expect(screen.getByText(/已标记品牌 1\/1/)).toBeInTheDocument()
   })
 
   it('★ API 已回 total 但 console 未接分页（#155 只做 API 面）⇒ 不出现分页控件', async () => {

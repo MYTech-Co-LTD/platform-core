@@ -28,6 +28,10 @@ permissions:
   # ⚠️ Wave 1 端点门仍是 data:query（/mcp）——本码先收录进清单（可授予、可审计），
   #    端点级 read/query 分离留人工裁决（计划决策 D1：一端点一 scope 的正典约束）。
   - { code: data:read,   name: 数据探索 }
+  # 门店画像写面（#2924，spec 2026-11-27）：门店级品牌 + 等级。与 data:manage 分开是刻意的——
+  # 售后门店页签的运营人员需要编辑这份主数据，但不该顺带获得指标/报表/范围的全局管理权。
+  # 没有该码时门店页签只读；data API 由声明面 403 兜底。
+  - { code: data:store,  name: 门店画像管理 }
 # ⚠️ api.internal 的 path 是**模块相对路径**（不带 /api/modules/<id> 前缀）——
 # loader 的 applyDeclaredApiGate 会用 moduleApiBasePath(id) 加前缀后再做门卫比对。
 # 声明集合必须与 createRouter 注册的集合逐条一致（装载期双向核对，任一方向差集 ⇒ 装载失败）。
@@ -305,6 +309,14 @@ api:
     - { method: POST,   path: /metric-changes/:id/adopt,    scope: data:manage }
     - { method: POST,   path: /metric-changes/:id/reject,   scope: data:manage }
     - { method: POST,   path: /metric-changes/:id/withdraw, scope: data:manage }
+    # ── 门店画像（#2924，spec 2026-11-27）：门店级品牌 + 等级 ──
+    # 写面单独用 data:store（最小权限）；读面在售后门店页签（aftersales:manage join 稳定视图）。
+    # PUT 缺省字段 = 保持不变，null = 清空；import 空值 = 保持不变，null/`__clear__` = 清空。
+    # 静态 /import 在 :storeCode 之前注册（路由纪律）。
+    - { method: POST,   path: /store-profiles/import,     scope: data:store }
+    - { method: PUT,    path: /store-profiles/:storeCode, scope: data:store }
+    - { method: POST,   path: /store-levels,              scope: data:store }
+    - { method: PATCH,  path: /store-levels/:code,        scope: data:store }
 # agent 能力网关（spec 2026-11-16 §5.2）：网关按 group 内 precedence（数字大的优先）选面下发。
 # `/mcp`（full）**不声明**在这里——它保留给直连客户端，不是 agent face。
 mcpFaces:

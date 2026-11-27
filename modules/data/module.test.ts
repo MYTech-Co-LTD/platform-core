@@ -18,7 +18,7 @@ describe('manifest（不需要数据库）', () => {
     // 「看得到成本/毛利」档（spec 2026-10-17 §4.2），由租户管理员发放；`data:precise` 是
     // 值级脱敏**默认档**的豁免码（spec 2026-10-17 §4.1.1 裁决 A，f5209ce 落清单）。
     expect(m.permissions.map((p) => p.code).sort())
-      .toEqual(['data:cost', 'data:create', 'data:manage', 'data:precise', 'data:query', 'data:read'])
+      .toEqual(['data:cost', 'data:create', 'data:manage', 'data:precise', 'data:query', 'data:read', 'data:store'])
     expect(m.migrations?.dir).toBe('./migrations')
     // 本模块【不】声明 storage：问数不碰租户级对象存储（数据仓库连接是部署级，见 T3）
     expect(m.storage).toBeUndefined()
@@ -60,7 +60,7 @@ describePg('迁移（需要 DATABASE_URL）', () => {
     }
   })
 
-  it('三十五张表建成（001 三张 + 002 报表登记 + 009 三张发布维 + 010 口径审计 + 011 价格批 + 012 调出单 + 013 批发单 + 014 取价面 + 015 客户对照 + 022 报表版本 + 023 AI 文本缓存 + 026 资产 ACL/审计 + 032 已验证问答 + 034 测度候选 + 036 需求台账 + 042 数据范围 + 046 变更单 + 047 概念表 + 048 叙事运行台账 + 050 报表访问台账 + 053 业务监控两张 + 054 报表版式一张 + 055 报表事件一张 + 056 品牌维度三张），且 data.query_keys.token_hash 唯一', async () => {
+  it('三十八张表建成（001 三张 + 002 报表登记 + 009 三张发布维 + 010 口径审计 + 011 价格批 + 012 调出单 + 013 批发单 + 014 取价面 + 015 客户对照 + 022 报表版本 + 023 AI 文本缓存 + 026 资产 ACL/审计 + 032 已验证问答 + 034 测度候选 + 036 需求台账 + 042 数据范围 + 046 变更单 + 047 概念表 + 048 叙事运行台账 + 050 报表访问台账 + 053 业务监控两张 + 054 报表版式一张 + 055 报表事件一张 + 056 品牌维度三张 + 057 门店画像三张），且 data.query_keys.token_hash 唯一', async () => {
     await applyMigrations(pool)
     const t = await pool.query(
       // 只数基表：稳定视图（v_brand_*）不是表，不能混进这份穷举清单。
@@ -73,7 +73,7 @@ describePg('迁移（需要 DATABASE_URL）', () => {
       'asset_acl', 'asset_audit',
       'brand_assignment', 'brand_audit', 'brand_registry',
       'client_store_override', 'demand_mining_state', 'demand_signals',
-      'dim_branch', 'dim_item', 'dim_item_price', 'dim_settlement_order_line', 'dim_transfer_out', 'dim_wholesale_out', 'metric_audit', 'metric_candidates', 'metric_change', 'metric_concept', 'metrics', 'monitor', 'monitor_run', 'narrative_runs', 'query_audit', 'query_keys', 'report_events', 'report_layout_pref', 'report_narratives', 'report_versions', 'report_views', 'reports', 'scope', 'scope_assignment', 'scope_audit', 'semantic_relation', 'verified_questions',
+      'dim_branch', 'dim_item', 'dim_item_price', 'dim_settlement_order_line', 'dim_transfer_out', 'dim_wholesale_out', 'metric_audit', 'metric_candidates', 'metric_change', 'metric_concept', 'metrics', 'monitor', 'monitor_run', 'narrative_runs', 'query_audit', 'query_keys', 'report_events', 'report_layout_pref', 'report_narratives', 'report_versions', 'report_views', 'reports', 'scope', 'scope_assignment', 'scope_audit', 'semantic_relation', 'store_level_registry', 'store_profile', 'store_profile_audit', 'verified_questions',
     ])
 
     // 口径两条（都是开工实测订正，别按口味改回去）：
@@ -86,6 +86,45 @@ describePg('迁移（需要 DATABASE_URL）', () => {
         where schemaname = 'data' and tablename = 'query_keys' and lower(indexdef) like '%unique%'`,
     )
     expect(u.rows.map((r) => r.indexdef).some((d) => /[(]token_hash[)]/.test(d))).toBe(true)
+  })
+
+  it('057：store 级品牌迁入 store_profile 并从 brand_assignment 删除（事务内复跑，滚回）', async () => {
+    const sql = readFileSync(new URL('./migrations/057_store_profile.sql', import.meta.url), 'utf8')
+    const org = `org-mig057-${Math.random().toString(36).slice(2, 8)}`
+    const client = await pool.connect()
+    try {
+      await client.query('begin')
+      await client.query(
+        `insert into data.brand_registry(org, code, name) values ($1, 'xiongmao', '熊喵')`, [org])
+      await client.query(
+        `insert into data.brand_assignment(org, subject_type, subject_code, brand_code, source, locked)
+         values ($1, 'store', 'S1', 'xiongmao', 'manual', true)`, [org])
+
+      await client.query(sql)
+      const profile = await client.query(
+        `select brand_code, brand_source, brand_locked, level_code
+           from data.store_profile where org = $1 and store_code = 'S1'`, [org])
+      expect(profile.rows).toEqual([{
+        brand_code: 'xiongmao', brand_source: 'manual', brand_locked: true, level_code: null,
+      }])
+      const left = await client.query('select 1 from data.brand_assignment where org = $1', [org])
+      expect(left.rows).toEqual([])
+
+      const audit = await client.query(
+        `select detail from data.store_profile_audit
+          where org = $1 and action = 'profile.migrate'`, [org])
+      expect(audit.rows).toEqual([{ detail: { brandRows: 1 } }])
+
+      // 复跑：brand_assignment 已无 store 行 ⇒ 不重复写审计、不改 level
+      await client.query(sql)
+      const audit2 = await client.query(
+        `select 1 from data.store_profile_audit
+          where org = $1 and action = 'profile.migrate'`, [org])
+      expect(audit2.rows).toHaveLength(1)
+    } finally {
+      await client.query('rollback').catch(() => {})
+      client.release()
+    }
   })
 
   it('009：发布维表（dim_branch/dim_item）= 跨账套去重租户视图，键列/版本列/来源列在位（#476）', async () => {

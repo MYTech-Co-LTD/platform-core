@@ -76,9 +76,8 @@ export default function TicketsPage() {
     }
   }, [filters, page, size])
 
-  // 品牌是最末级筛选：品牌计数跟随状态 + 搜索 + 时间，但**排除 brand 自身**。
-  // 这个查询串在 brand 变化时保持不变 ⇒ 点品牌只刷新列表，不重拉计数；
-  // 搜索/状态/时间变化时它变化 ⇒ 计数跟着刷新。
+  // 层级：状态 → 搜索/时间 → 等级 → 品牌（最末级）。
+  // 计数串排除 brand、保留 level ⇒ 点品牌只刷新列表；点等级/搜索/状态/时间会重拉计数。
   const countsQuery = ticketQuery({ ...filters, brand: '' })
   const loadCounts = useCallback(async () => {
     try {
@@ -171,9 +170,11 @@ export default function TicketsPage() {
       {contextHolder}
       <FilterBar
         status={filters.status}
+        level={filters.level}
         brand={filters.brand}
         counts={counts}
         onStatus={(v) => apply({ ...filters, status: v })}
+        onLevel={(v) => apply({ ...filters, level: v })}
         onBrand={(v) => apply({ ...filters, brand: v })}
       />
       <SearchBar
