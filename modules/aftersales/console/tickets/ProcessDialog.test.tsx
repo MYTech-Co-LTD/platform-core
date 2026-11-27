@@ -6,6 +6,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 vi.mock('@platform/sdk/web', () => ({ platformFetch: vi.fn() }))
 import { platformFetch } from '@platform/sdk/web'
 import { ProcessDialog } from './ProcessDialog'
+import { __resetAttachmentCacheForTests } from './lib/attachment-cache'
 
 const m = vi.mocked(platformFetch)
 const sends: Array<{ url: string; body: Record<string, unknown> }> = []
@@ -41,9 +42,16 @@ const rules = {
   size: 100,
 }
 
+let fetchMock: ReturnType<typeof vi.fn>
+
 beforeEach(() => {
   sends.length = 0
   quotes.length = 0
+  fetchMock = vi.fn(async () => new Response(new Blob(['x'], { type: 'image/jpeg' }), { status: 200 }))
+  vi.stubGlobal('fetch', fetchMock)
+  Object.defineProperty(URL, 'createObjectURL', { value: vi.fn(() => 'blob:test'), configurable: true })
+  Object.defineProperty(URL, 'revokeObjectURL', { value: vi.fn(), configurable: true })
+  __resetAttachmentCacheForTests()
   m.mockReset()
   m.mockImplementation(async (url: string, init?: RequestInit) => {
     if (url.includes('/quote')) {
@@ -67,7 +75,11 @@ beforeEach(() => {
     return json({ error: 'NOT_FOUND' }, 404)
   })
 })
-afterEach(cleanup)
+afterEach(() => {
+  cleanup()
+  vi.unstubAllGlobals()
+  __resetAttachmentCacheForTests()
+})
 
 function open(onConflict = vi.fn()) {
   render(
@@ -130,6 +142,35 @@ describe('ProcessDialog', () => {
     await screen.findByText('处理工单 AS-00000007')
     expect(screen.getByText('图片 1')).toBeInTheDocument()
     expect(document.querySelector('img')).toBeNull()
+    // 打开处理弹窗就预缓存了这张图（不是等预览才下载）
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(1))
+  })
+
+  it('关闭再打开处理弹窗：图片走缓存，不重复下载', async () => {
+    m.mockImplementation(async (url: string) => {
+      if (url.includes('/tickets/7')) {
+        return json({
+          ...detail,
+          attachments: [
+            { id: 9, objectKey: 'k9', contentType: 'image/jpeg', sizeBytes: 10, url: 'https://x/9.jpg' },
+            { id: 10, objectKey: 'k10', contentType: 'image/jpeg', sizeBytes: 10, url: 'https://x/10.jpg' },
+          ],
+        })
+      }
+      if (url.includes('/rules')) return json(rules)
+      if (url.includes('/quote')) return json({ amountMinor: 0, damageAmountMinor: 900 })
+      return json({ error: 'NOT_FOUND' }, 404)
+    })
+    const { rerender } = render(
+      <ProcessDialog ticketId={7} open onClose={() => {}} onDone={() => {}} />,
+    )
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(2))
+
+    rerender(<ProcessDialog ticketId={7} open={false} onClose={() => {}} onDone={() => {}} />)
+    rerender(<ProcessDialog ticketId={7} open onClose={() => {}} onDone={() => {}} />)
+    await waitFor(() => expect(screen.getByText('处理工单 AS-00000007')).toBeInTheDocument())
+    // 缓存命中，没有第二次下载
+    expect(fetchMock).toHaveBeenCalledTimes(2)
   })
 
   it('fixed：操作员填元，提交换算成整数分', async () => {
