@@ -11,6 +11,11 @@
 
 ## [Unreleased]
 
+## [0.406.0](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.405.0...v0.406.0) - 2026-11-27
+- 【新增】aftersales: 门店页签标签配色与搜索筛选（#2936） ([#2937](https://github.com/MYTech-Co-LTD/platform-core/pull/2937), [821913e](https://github.com/MYTech-Co-LTD/platform-core/commit/821913e8ae163ebaa9f9ecee41ad4039aec056f6))
+- 【新增】data: 断言 ㉓ compact_parity——压缩月文件对原始常驻核账 ([#2935](https://github.com/MYTech-Co-LTD/platform-core/pull/2935), [85328a4](https://github.com/MYTech-Co-LTD/platform-core/commit/85328a4a939f78870251e22b367a626e40731c4b))
+
+
 ## [0.405.0](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.404.0...v0.405.0) - 2026-11-27
 - 【新增】data: 门店页签品牌/等级改标签内联单选（#2930） ([#2933](https://github.com/MYTech-Co-LTD/platform-core/pull/2933), [0e0fd5c](https://github.com/MYTech-Co-LTD/platform-core/commit/0e0fd5c253d2b8d5229b7d2daf33ba7ef11b4c73))
 - 【新增】data: 压缩索引补输入指纹——让「月文件陈旧」可判 ([#2932](https://github.com/MYTech-Co-LTD/platform-core/pull/2932), [35c2f30](https://github.com/MYTech-Co-LTD/platform-core/commit/35c2f30cf8fafa3edc779ada4868673067786ac3))
