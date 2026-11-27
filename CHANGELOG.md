@@ -11,6 +11,10 @@
 
 ## [Unreleased]
 
+## [0.400.1](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.400.0...v0.400.1) - 2026-11-27
+- 【修复】data: 对账档挪出白天——#2792 挪夜间时漏了这一条 ([#2897](https://github.com/MYTech-Co-LTD/platform-core/pull/2897), [e2d7afa](https://github.com/MYTech-Co-LTD/platform-core/commit/e2d7afad9dcdf04ffa0c330e8987942e11661089))
+
+
 ## [0.400.0](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.399.1...v0.400.0) - 2026-11-26
 - 【新增】data: 台账当夜自愈——补上断言 ⑪ 只读留下的洞 ([#2895](https://github.com/MYTech-Co-LTD/platform-core/pull/2895), [30615a6](https://github.com/MYTech-Co-LTD/platform-core/commit/30615a6506d100e94f556b1ff930bfc9442afec1))
 
