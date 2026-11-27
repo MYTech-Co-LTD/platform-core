@@ -167,6 +167,7 @@ export default function EmployeesPage() {
   const [links, setLinks] = useState<IdentityLinkView[]>([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
+  const [linkError, setLinkError] = useState<string | null>(null)
   const [view, setView] = useState<'people' | 'unmatched'>('people')
   const [creating, setCreating] = useState(false)
   const [form] = Form.useForm<{ name: string; phone?: string; storeCode?: string }>()
@@ -178,18 +179,25 @@ export default function EmployeesPage() {
   const reload = useCallback(async () => {
     setLoading(true)
     setError(null)
-    try {
-      const [emps, linkBody] = await Promise.all([
-        fetchAllEmployees(),
-        apiGet<{ items: IdentityLinkView[] }>('/identity-links'),
-      ])
-      setEmployees(emps)
-      setLinks(linkBody.items)
-    } catch (e: unknown) {
-      setError(messageOf(e))
-    } finally {
-      setLoading(false)
+    setLinkError(null)
+    const [empResult, linkResult] = await Promise.allSettled([
+      fetchAllEmployees(),
+      apiGet<{ items: IdentityLinkView[] }>('/identity-links'),
+    ])
+    if (empResult.status === 'fulfilled') {
+      setEmployees(empResult.value)
+    } else {
+      setEmployees([])
+      setError(messageOf(empResult.reason))
     }
+    // 绑定是增补面：宿主未注入 identityLinks 端口（503）时，员工档案仍必须可看。
+    if (linkResult.status === 'fulfilled') {
+      setLinks(linkResult.value.items)
+    } else {
+      setLinks([])
+      setLinkError(messageOf(linkResult.reason))
+    }
+    setLoading(false)
   }, [])
 
   useEffect(() => { void reload() }, [reload])
@@ -265,6 +273,12 @@ export default function EmployeesPage() {
       </Space>
 
       {error ? <Alert type="error" showIcon message={error} style={{ marginBottom: 12 }} /> : null}
+      {linkError !== null ? (
+        <Alert
+          type="warning" showIcon style={{ marginBottom: 12 }}
+          message="身份绑定数据暂不可用，人员档案仍可查看。"
+        />
+      ) : null}
 
       {view === 'people' ? (
         <Table<EmployeeItem>
@@ -281,6 +295,7 @@ export default function EmployeesPage() {
             {
               title: '身份绑定', width: 210,
               render: (_: unknown, r: EmployeeItem) => {
+                if (linkError !== null) return <Status tone="muted">绑定信息不可用</Status>
                 const s = summaryOf(linksOf(r, links))
                 return (
                   <Typography.Link onClick={() => setDrawer(r)}>

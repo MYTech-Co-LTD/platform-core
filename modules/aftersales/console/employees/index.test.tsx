@@ -105,4 +105,16 @@ describe('人员页', () => {
     await waitFor(() => expect(screen.getByText('张三')).toBeInTheDocument())
     expect(document.querySelector('.ant-pagination')).toBeNull()
   })
+  it('★ /identity-links 503 ⇒ 员工档案仍显示，绑定列降级', async () => {
+    m.mockImplementation(async (url: string) => {
+      if (url.includes('/identity-links')) return json({ error: 'IDENTITY_LINKS_UNAVAILABLE' }, 503)
+      if (url.includes('/employees')) return json({ items: [EMP], total: 1, page: 1, size: 100 })
+      return json({ error: 'NOT_FOUND' }, 404)
+    })
+    render(<EmployeesPage />)
+    await waitFor(() => expect(screen.getByText('张三')).toBeInTheDocument())
+    expect(screen.getByText('绑定信息不可用')).toBeInTheDocument()
+    expect(screen.getByText('身份绑定数据暂不可用，人员档案仍可查看。')).toBeInTheDocument()
+  })
+
 })
