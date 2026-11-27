@@ -7,6 +7,7 @@ import { MemoryRouter, Outlet, Route, Routes } from 'react-router-dom'
 vi.mock('@platform/sdk/web', () => ({ platformFetch: vi.fn() }))
 import { platformFetch } from '@platform/sdk/web'
 import TicketsPage from './index'
+import { __resetAttachmentCacheForTests } from './lib/attachment-cache'
 
 const m = vi.mocked(platformFetch)
 const urls: string[] = []
@@ -78,6 +79,11 @@ const detail = {
 beforeEach(() => {
   urls.length = 0
   posts.length = 0
+  // 预览弹窗会按需 fetch 图片 Blob；happy-dom 里给一个成功响应，避免真网络/未处理拒绝。
+  vi.stubGlobal('fetch', vi.fn(async () => new Response(new Blob(['x'], { type: 'image/jpeg' }), { status: 200 })))
+  Object.defineProperty(URL, 'createObjectURL', { value: vi.fn(() => 'blob:test'), configurable: true })
+  Object.defineProperty(URL, 'revokeObjectURL', { value: vi.fn(), configurable: true })
+  __resetAttachmentCacheForTests()
   m.mockReset()
   m.mockImplementation(async (url: string, init?: RequestInit) => {
     urls.push(url)
@@ -96,7 +102,11 @@ beforeEach(() => {
     return json({ error: 'NOT_FOUND' }, 404)
   })
 })
-afterEach(cleanup)
+afterEach(() => {
+  cleanup()
+  vi.unstubAllGlobals()
+  __resetAttachmentCacheForTests()
+})
 
 /** 带 Outlet context 的渲染壳：删除按钮按 `session.scopes` 显隐。 */
 function Shell(props: { scopes: string[] }) {
