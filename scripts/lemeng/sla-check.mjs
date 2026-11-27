@@ -157,13 +157,23 @@ function judge(now, job, built, source, windowActive, sla, elapsedInWindowMin = 
   const notes = []
   if (miss > 0 && ageMs > miss) { verdict = 'ERR'; notes.push(`build age ${Math.round(ageMs / 60000)}m > ${sla.missingOkMinutes}m`) }
   else if (interval > 0 && ageMs > interval) { verdict = 'WARN'; notes.push(`build age ${Math.round(ageMs / 60000)}m > ${sla.buildIntervalMinutes}m`) }
-  // 1h 的源 10 分钟一更、build 1 小时一次 ⇒ 源领先 build 是**节拍**，不是违规。
-  // 判据用 |built − source|：既有「build 落后源」（负）也有「build 晚于源」（正），
-  // 超过阈值都说明错过了一个周期；10m 阈值 10m、1h 阈值 75m（= 一个周期）。
-  if (lagMs !== null && lagMs < 0) { notes.push(`source ahead of build ${Math.round(-lagMs / 60000)}m`) }
-  if (lagMs !== null && stb > 0 && Math.abs(lagMs) > stb) {
+  // 判据按**方向**拆开（2026-11-27，#2899）——旧实现用 |built − source|，两个方向被混为一谈：
+  //   · `source > built`（lag<0，源有新数据而建没跟上）**超过阈值** ⇒ **建落后**，ERR；
+  //   · `built ≥ source`（lag≥0，建已跑到源前面）⇒ **源侧没有新数据可建，不是延迟**。
+  //     夜里门店停止下单后 `retail_hot.run_token` 冻结，而 tick 仍每 10 分钟重建 ⇒ |lag| 会从
+  //     12 分钟机械涨到 60+ 分钟，两天造出 101 条假红（占全部 ERR 的 84%，实测）。
+  //
+  // ⚠️ 已知边界：**源自己断了**（白天也不来数）本判据看不出来——它只回答「源有数时建跟上了没有」。
+  //    源断供由采集面负责（`platform.verify_ingest` / 断言 `fresh` / `data.monitor` 的 missing·stale），
+  //    不要在这里用「建全新鲜但源很旧」去猜断供：那与「夜里正常无单」同形，猜必假红。
+  if (lagMs !== null && stb > 0 && -lagMs > stb) {
     verdict = 'ERR'
-    notes.push(`source↔build |${Math.round(lagMs / 60000)}m| > ${sla.sourceToBuildMinutes}m`)
+    notes.push(`建落后源 ${Math.round(-lagMs / 60000)}m > ${sla.sourceToBuildMinutes}m`)
+  } else if (lagMs !== null && lagMs < 0) {
+    // 源领先但未超阈值：1h 的源 10 分钟一更、build 1 小时一次 ⇒ 这是**节拍**，不是违规。
+    notes.push(`源领先建 ${Math.round(-lagMs / 60000)}m（阈值内）`)
+  } else if (lagMs !== null && lagMs > 0) {
+    notes.push(`源无新数据（建已跟上，源闲置 ${Math.round(lagMs / 60000)}m）`)
   }
   if (lagMs === null && verdict === 'OK') { verdict = 'UNKNOWN'; notes.push('source clock missing') }
   return {
