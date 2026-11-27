@@ -132,6 +132,9 @@
 | 2026-11-26 | C 封版分区压缩 P0（单源端到端） | ✅ 搬运+记账+读面全部落地 | 48 个 `_MONTH` 文件；全史 parity 635,632+19,297=654,929；读速 275.4s → **21.9s**（线上视图 22.1s）；管线 `lemeng.lake.compact`（03:10）+ job `data.lake_compact_index`（03:40）；两腿视图 `stg_lemeng_business_collection_receive` |
 | 2026-11-25 | B2 第二阶段：断言按成本分档 | ✅ 本 PR | 逐项计时实测：`org_valid` 84.4s（74%）/ `detail_path` 23.4s / 其余 14 条 ≤0.5s ⇒ 视图类改读 `pg_get_viewdef`（毫秒，抓的仍是 #2638 的同一根因）、表类 `limit 1`；全量证明与延迟探测搬 30 分钟 job；5 分钟档 114s → ~5s，probe 名不变（OO 存量规则零改动），新增两条为加法 |
 | 2026-11-25 | B2 第一阶段：留槽 + 分块 + 计时 | ✅ 本 PR | 近 6h tick 领取迟到 p50 46s / p90 220s / max 442s，而利用率仅 39%（断言 118s×每5分钟=20% 容量、retail_derived 505s）⇒ 判定「排队无优先级」而非容量不足；`realtime` 标记 + 90s 预留窗（`hasDueSoon`）；retail_derived 拆两块（实测 order_event 343s / item_sale 27s / quantity 37s）；断言逐项 ms 只进 stdout |
+| 2026-11-26 | 数据面密钥泄漏根治 | ✅ PR #2886 | 夜间回填**每次回读都 `create_simple_secret`** ⇒ 22,817 个内存态密钥，每次请求线性变慢（单文件 0.37s→0.01s、1,508 文件 275.4s→24.6s）。修复 + 分级清理，生产降回 2 个 |
+| 2026-11-26 | 本周四项（观测面假红/真停摆） | ✅ PR #2888 | ㉒ 密钥数守卫（>5 判红，advisory）· `retail.windows.l1` 挪到 08:50 单轮（消除与 tick 的确定性 ETag 撞车）· SLA 加窗口起步宽限（09:00 那批 80 条假红）· 排空只拦批量车道（重启不再停摆 10–20 分钟） |
+| 2026-11-26 | 对账台账归口 + 当夜自愈 + 对账档挪夜间 | ✅ PR #2891 / #2895 / #2897 | ① `recon_run` 从主档移到对账档（主档超时不再连坐台账）；② 新增 `data.recon_ledger_guard`（CST 04:30，判据与断言 ⑪ 同一 SQL，缺行才重建 ≈35s）；③ 对账档 11:45 → **03:30**（#2792 挪夜间时漏改的化石排班，白天那轮 ~500s 全史 CTAS 正撞 ETag）。**生产验证**：11-27 04:30 首跑 `RECON_LEDGER_GUARD_OK missing=0`；台账 bizday 推到 11-24；主档回到 17.5 分钟 |
 | 2026-11-25 | 部署僵尸 running 行 | ✅ 本 PR（#2835） | `publish_dims` 部署被杀后行停留 22 分钟占槽（启动对账兜不住「executor 没重启」）；改为 runner 心跳：executor 每 10s 写 `platform.job_heartbeat`，`reapStale` 对「心跳过期 5 分钟」的 running 行直接 timeout（不再等 2×timeout）；有据可依的过期才回收，无心跳的旧 runner 仍走 2×timeout |
 
 ## §6 变更记录
