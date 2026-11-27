@@ -1,16 +1,19 @@
-// stores/index.tsx — 门店档案 + 门店画像（品牌/等级，issue #2924）。
+// stores/index.tsx — 门店档案 + 门店画像（品牌/等级，issue #2924 / #2930）。
 //
 // 读：`GET /stores`（aftersales:manage，join data.v_store_profile 的 tag）
 //     + `GET /stores/profile-options`（品牌/等级选项 + 覆盖率）。
-// 写：data 模块的 `data:store` 面（PUT /store-profiles/:code、POST /store-profiles/import、
-//     POST/PATCH /store-levels）；本页不复制校验逻辑，服务端的逐行错误原样回显。
+// 写：data 模块的 `data:store` 面（PUT /store-profiles/:code、POST /brands、
+//     POST /store-levels、POST /store-profiles/import）；本页不复制校验逻辑。
 //
-// 权限：没有 `data:store` 时只读（tag 可见，编辑/导入/等级字典隐藏）；data API 403 仍是真闸。
+// 交互（#2930）：品牌/等级不再有「编辑抽屉」或「等级字典」独立入口——表格里直接点标签，
+// 弹出单选下拉，选中即保存；下拉里没有想要的选项时，填名称直接新建（code 自动生成）。
+//
+// 权限：没有 `data:store` 时只读（标签不可点，批量导入隐藏）；data API 403 仍是真闸。
 import { useCallback, useEffect, useState } from 'react'
 import { useOutletContext } from 'react-router-dom'
 import {
-  Alert, Button, Card, Drawer, Input, InputNumber, Modal, Select, Space, Switch, Table, Tag,
-  Typography, message,
+  Alert, Button, Card, Input, Modal, Popover, Select, Space, Switch, Table, Tag, Typography,
+  message,
 } from 'antd'
 import { platformFetch } from '@platform/sdk/web'
 import { apiGet } from '../lib/api'
@@ -37,6 +40,8 @@ interface ImportResult {
   rows: ImportRowResult[]
 }
 
+type Option = StoreProfileOptions['brands'][number]
+
 async function dataSend<T>(
   path: string, method: 'POST' | 'PUT' | 'PATCH', body?: unknown,
 ): Promise<T> {
@@ -50,6 +55,11 @@ async function dataSend<T>(
     throw new Error(b?.detail ? `${b.error ?? res.status}：${b.detail}` : (b?.error ?? `HTTP_${res.status}`))
   }
   return (await res.json()) as T
+}
+
+/** 自动 code：用户只填名称；code 是内部标识，展示一律用 name。 */
+function autoCode(prefix: 'b' | 'lv'): string {
+  return `${prefix}_${Date.now().toString(36)}${Math.random().toString(36).slice(2, 6)}`
 }
 
 /** CSV → rows。空字段 = 保持不变；`__clear__` = 清空（服务端两样都懂）。 */
@@ -70,6 +80,109 @@ function parseCsv(text: string): { rows: Array<Record<string, unknown>>; error: 
   return { rows, error: null }
 }
 
+/** 表格里的可点标签：单选下拉 + 内联新建。 */
+function TagEditor(props: {
+  label: '品牌' | '等级'
+  emptyLabel: string
+  code: string | null
+  name: string | null
+  options: Option[]
+  canEdit: boolean
+  onAssign: (code: string | null) => Promise<void>
+  onCreate: (name: string) => Promise<string>
+  onError: (message: string) => void
+}) {
+  const [open, setOpen] = useState(false)
+  const [newName, setNewName] = useState('')
+  const [busy, setBusy] = useState(false)
+  const text = props.name || props.code
+  const tag = (
+    <Tag style={props.canEdit ? { cursor: 'pointer', marginInlineEnd: 0 } : { marginInlineEnd: 0 }}>
+      {text || props.emptyLabel}
+    </Tag>
+  )
+  if (!props.canEdit) return tag
+
+  const assign = async (code: string | null): Promise<void> => {
+    setBusy(true)
+    try {
+      await props.onAssign(code)
+      setOpen(false)
+    } catch (e) {
+      props.onError(e instanceof Error ? e.message : String(e))
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  const create = async (): Promise<void> => {
+    const name = newName.trim()
+    if (name === '') return
+    setBusy(true)
+    try {
+      const code = await props.onCreate(name)
+      await props.onAssign(code)
+      setNewName('')
+      setOpen(false)
+    } catch (e) {
+      props.onError(e instanceof Error ? e.message : String(e))
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  const content = (
+    <Space direction="vertical" size={8} style={{ width: 230 }}>
+      <Select
+        size="small"
+        style={{ width: '100%' }}
+        allowClear
+        disabled={busy}
+        placeholder={`选择${props.label}`}
+        value={props.code ?? undefined}
+        options={props.options.map((o) => ({
+          value: o.code,
+          label: o.enabled ? o.name : `${o.name}（停用）`,
+        }))}
+        onChange={(v?: string) => void assign(v ?? null)}
+      />
+      <Typography.Text type="secondary" style={{ fontSize: 12 }}>
+        没有想要的？直接新建
+      </Typography.Text>
+      <Input
+        size="small"
+        placeholder={`新${props.label}名称`}
+        value={newName}
+        disabled={busy}
+        onChange={(e) => setNewName(e.target.value)}
+        onPressEnter={() => void create()}
+      />
+      <Button
+        size="small"
+        type="primary"
+        ghost
+        block
+        loading={busy}
+        disabled={newName.trim() === ''}
+        onClick={() => void create()}
+      >
+        新建「{newName.trim() || '…'}」
+      </Button>
+    </Space>
+  )
+
+  return (
+    <Popover
+      open={open}
+      onOpenChange={(v) => { setOpen(v); if (!v) setNewName('') }}
+      trigger="click"
+      content={content}
+    >
+      {tag}
+    </Popover>
+  )
+}
+
 export default function StoresPage() {
   const outlet = useOutletContext<ConsoleContext | null>()
   const canEdit = (outlet?.session.scopes ?? []).includes('data:store')
@@ -79,21 +192,12 @@ export default function StoresPage() {
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
 
-  const [editing, setEditing] = useState<StoreItem | null>(null)
-  const [editBrand, setEditBrand] = useState<string | undefined>()
-  const [editLevel, setEditLevel] = useState<string | undefined>()
-  const [saving, setSaving] = useState(false)
-
   const [importOpen, setImportOpen] = useState(false)
   const [csvText, setCsvText] = useState('store_code,brand_code,level_code\n')
   const [overrideLocked, setOverrideLocked] = useState(false)
   const [importPreview, setImportPreview] = useState<ImportResult | null>(null)
   const [importing, setImporting] = useState(false)
-
-  const [levelsOpen, setLevelsOpen] = useState(false)
-  const [levels, setLevels] = useState<StoreProfileOptions['levels']>([])
-  const [newLevel, setNewLevel] = useState({ code: '', name: '', sort: 0 })
-  const [levelSaving, setLevelSaving] = useState(false)
+  const [messageApi, contextHolder] = message.useMessage()
 
   const reload = useCallback(async () => {
     setLoading(true)
@@ -117,34 +221,28 @@ export default function StoresPage() {
 
   useEffect(() => { void reload() }, [reload])
 
-  const openEdit = (row: StoreItem) => {
-    setEditing(row)
-    setEditBrand(row.brandCode ?? undefined)
-    setEditLevel(row.levelCode ?? undefined)
+  const assignProfile = async (
+    store: StoreItem, patch: { brandCode?: string | null; levelCode?: string | null },
+  ): Promise<void> => {
+    await dataSend(`/store-profiles/${encodeURIComponent(store.code)}`, 'PUT', patch)
+    messageApi.success('已保存')
+    await reload()
   }
 
-  const saveProfile = async () => {
-    if (!editing) return
-    setSaving(true)
-    try {
-      await dataSend(`/store-profiles/${encodeURIComponent(editing.code)}`, 'PUT', {
-        brandCode: editBrand ?? null,
-        levelCode: editLevel ?? null,
-      })
-      message.success('门店画像已保存')
-      setEditing(null)
-      await reload()
-    } catch (e) {
-      message.error(e instanceof Error ? e.message : String(e))
-    } finally {
-      setSaving(false)
-    }
+  const createBrand = async (name: string): Promise<string> => {
+    const created = await dataSend<{ code: string }>('/brands', 'POST', { code: autoCode('b'), name })
+    return created.code
+  }
+
+  const createLevel = async (name: string): Promise<string> => {
+    const created = await dataSend<{ code: string }>('/store-levels', 'POST', { code: autoCode('lv'), name })
+    return created.code
   }
 
   const runImport = async (dryRun: boolean) => {
     const parsed = parseCsv(csvText)
     if (parsed.error !== null) {
-      message.error(parsed.error)
+      messageApi.error(parsed.error)
       return
     }
     setImporting(true)
@@ -154,80 +252,24 @@ export default function StoresPage() {
       })
       setImportPreview(result)
       if (dryRun) {
-        message.success(`预检完成：${result.applied} 行可写入，${result.errors} 行错误，${result.skipped} 行跳过`)
+        messageApi.success(`预检完成：${result.applied} 行可写入，${result.errors} 行错误，${result.skipped} 行跳过`)
       } else {
-        message.success(`已导入：${result.applied} 行写入，${result.errors} 行错误，${result.duplicates} 行重复`)
+        messageApi.success(`已导入：${result.applied} 行写入，${result.errors} 行错误，${result.duplicates} 行重复`)
         await reload()
       }
     } catch (e) {
-      message.error(e instanceof Error ? e.message : String(e))
+      messageApi.error(e instanceof Error ? e.message : String(e))
     } finally {
       setImporting(false)
     }
   }
 
-  const openLevels = async () => {
-    if (options !== null) {
-      setLevels(options.levels)
-    } else {
-      try {
-        const opts = await apiGet<StoreProfileOptions>('/stores/profile-options')
-        setOptions(opts)
-        setLevels(opts.levels)
-      } catch { /* 保持空列表 */ }
-    }
-    setLevelsOpen(true)
-  }
-
-  const createLevel = async () => {
-    if (newLevel.code.trim() === '' || newLevel.name.trim() === '') {
-      message.error('等级 code 与名称都必填')
-      return
-    }
-    setLevelSaving(true)
-    try {
-      await dataSend('/store-levels', 'POST', newLevel)
-      message.success('等级已新增')
-      setNewLevel({ code: '', name: '', sort: 0 })
-      const opts = await apiGet<StoreProfileOptions>('/stores/profile-options')
-      setOptions(opts)
-      setLevels(opts.levels)
-    } catch (e) {
-      message.error(e instanceof Error ? e.message : String(e))
-    } finally {
-      setLevelSaving(false)
-    }
-  }
-
-  const saveLevel = async (level: StoreProfileOptions['levels'][number]) => {
-    setLevelSaving(true)
-    try {
-      await dataSend(`/store-levels/${encodeURIComponent(level.code)}`, 'PATCH', {
-        name: level.name, sort: level.sort, enabled: level.enabled,
-      })
-      message.success(`等级 ${level.code} 已保存`)
-      const opts = await apiGet<StoreProfileOptions>('/stores/profile-options')
-      setOptions(opts)
-      setLevels(opts.levels)
-      await reload()
-    } catch (e) {
-      message.error(e instanceof Error ? e.message : String(e))
-    } finally {
-      setLevelSaving(false)
-    }
-  }
-
   const coverage = options?.coverage
-  const brandOptions = (options?.brands ?? []).map((b) => ({
-    value: b.code, label: b.enabled ? b.name : `${b.name}（停用）`,
-  }))
-  const levelOptions = (options?.levels ?? []).map((l) => ({
-    value: l.code, label: l.enabled ? l.name : `${l.name}（停用）`,
-  }))
   const problemRows = (importPreview?.rows ?? []).filter((r) => r.status !== 'ok')
 
   return (
     <Card>
+      {contextHolder}
       {error ? <Alert type="error" showIcon message={error} style={{ marginBottom: 12 }} /> : null}
       {options?.degraded ? (
         <Alert
@@ -244,12 +286,9 @@ export default function StoresPage() {
           </Typography.Text>
         ) : null}
         {canEdit ? (
-          <>
-            <Button onClick={() => { setCsvText('store_code,brand_code,level_code\n'); setImportPreview(null); setImportOpen(true) }}>
-              批量导入
-            </Button>
-            <Button onClick={() => void openLevels()}>等级字典</Button>
-          </>
+          <Button onClick={() => { setCsvText('store_code,brand_code,level_code\n'); setImportPreview(null); setImportOpen(true) }}>
+            批量导入
+          </Button>
         ) : null}
       </Space>
 
@@ -264,16 +303,36 @@ export default function StoresPage() {
           { title: '编码', dataIndex: 'code', width: 120 },
           { title: '门店', dataIndex: 'name' },
           {
-            title: '品牌', width: 120,
-            render: (_, r) => r.brandCode
-              ? <Tag>{r.brandName || r.brandCode}</Tag>
-              : <Typography.Text type="secondary">未标记</Typography.Text>,
+            title: '品牌', width: 130,
+            render: (_, r) => (
+              <TagEditor
+                label="品牌"
+                emptyLabel="未标记"
+                code={r.brandCode ?? null}
+                name={r.brandName ?? null}
+                options={options?.brands ?? []}
+                canEdit={canEdit}
+                onAssign={(code) => assignProfile(r, { brandCode: code })}
+                onCreate={createBrand}
+                onError={(m) => messageApi.error(m)}
+              />
+            ),
           },
           {
-            title: '等级', width: 120,
-            render: (_, r) => r.levelCode
-              ? <Tag>{r.levelName || r.levelCode}</Tag>
-              : <Typography.Text type="secondary">未分级</Typography.Text>,
+            title: '等级', width: 130,
+            render: (_, r) => (
+              <TagEditor
+                label="等级"
+                emptyLabel="未分级"
+                code={r.levelCode ?? null}
+                name={r.levelName ?? null}
+                options={options?.levels ?? []}
+                canEdit={canEdit}
+                onAssign={(code) => assignProfile(r, { levelCode: code })}
+                onCreate={createLevel}
+                onError={(m) => messageApi.error(m)}
+              />
+            ),
           },
           {
             title: '启用', width: 70,
@@ -281,48 +340,8 @@ export default function StoresPage() {
           },
           { title: '地址', dataIndex: 'address' },
           { title: '电话', dataIndex: 'phone', width: 150 },
-          ...(canEdit ? [{
-            title: '操作', width: 80,
-            render: (_: unknown, r: StoreItem) => <Button size="small" onClick={() => openEdit(r)}>编辑</Button>,
-          }] : []),
         ]}
       />
-
-      <Drawer
-        open={editing !== null}
-        title={editing ? `编辑门店画像 · ${editing.name}` : '编辑门店画像'}
-        onClose={() => setEditing(null)}
-        width={380}
-        extra={<Button type="primary" loading={saving} onClick={() => void saveProfile()}>保存</Button>}
-      >
-        <Space direction="vertical" size="large" style={{ width: '100%' }}>
-          <div>
-            <Typography.Text strong>品牌</Typography.Text>
-            <Select
-              style={{ width: '100%', marginTop: 6 }}
-              allowClear
-              placeholder="未标记（清空）"
-              value={editBrand}
-              options={brandOptions}
-              onChange={(v) => setEditBrand(v)}
-            />
-          </div>
-          <div>
-            <Typography.Text strong>等级</Typography.Text>
-            <Select
-              style={{ width: '100%', marginTop: 6 }}
-              allowClear
-              placeholder="未分级（清空）"
-              value={editLevel}
-              options={levelOptions}
-              onChange={(v) => setEditLevel(v)}
-            />
-          </div>
-          <Typography.Text type="secondary">
-            保存后：新工单按新值快照；历史工单保持提单时的品牌/等级。
-          </Typography.Text>
-        </Space>
-      </Drawer>
 
       <Modal
         open={importOpen}
@@ -373,76 +392,6 @@ export default function StoresPage() {
               ) : null}
             </>
           ) : null}
-        </Space>
-      </Modal>
-
-      <Modal
-        open={levelsOpen}
-        title="等级字典"
-        width={760}
-        onCancel={() => setLevelsOpen(false)}
-        footer={<Button onClick={() => setLevelsOpen(false)}>关闭</Button>}
-      >
-        <Space direction="vertical" size="middle" style={{ width: '100%' }}>
-          <Space wrap>
-            <Input
-              placeholder="code（如 A）" style={{ width: 120 }}
-              value={newLevel.code}
-              onChange={(e) => setNewLevel({ ...newLevel, code: e.target.value })}
-            />
-            <Input
-              placeholder="名称（如 一级）" style={{ width: 160 }}
-              value={newLevel.name}
-              onChange={(e) => setNewLevel({ ...newLevel, name: e.target.value })}
-            />
-            <InputNumber
-              placeholder="排序" value={newLevel.sort}
-              onChange={(v) => setNewLevel({ ...newLevel, sort: Number(v ?? 0) })}
-            />
-            <Button type="primary" loading={levelSaving} onClick={() => void createLevel()}>新增</Button>
-          </Space>
-          <Table<StoreProfileOptions['levels'][number]>
-            rowKey="code"
-            size="small"
-            dataSource={levels}
-            pagination={false}
-            columns={[
-              { title: 'code', dataIndex: 'code', width: 100 },
-              {
-                title: '名称', width: 200,
-                render: (_, l) => (
-                  <Input
-                    value={l.name}
-                    onChange={(e) => setLevels(levels.map((x) => x.code === l.code ? { ...x, name: e.target.value } : x))}
-                  />
-                ),
-              },
-              {
-                title: '排序', width: 100,
-                render: (_, l) => (
-                  <InputNumber
-                    value={l.sort}
-                    onChange={(v) => setLevels(levels.map((x) => x.code === l.code ? { ...x, sort: Number(v ?? 0) } : x))}
-                  />
-                ),
-              },
-              {
-                title: '启用', width: 80,
-                render: (_, l) => (
-                  <Switch
-                    checked={l.enabled}
-                    onChange={(v) => setLevels(levels.map((x) => x.code === l.code ? { ...x, enabled: v } : x))}
-                  />
-                ),
-              },
-              {
-                title: '操作', width: 80,
-                render: (_, l) => (
-                  <Button size="small" loading={levelSaving} onClick={() => void saveLevel(l)}>保存</Button>
-                ),
-              },
-            ]}
-          />
         </Space>
       </Modal>
     </Card>

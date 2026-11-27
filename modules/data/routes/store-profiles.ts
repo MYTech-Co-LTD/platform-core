@@ -6,6 +6,7 @@ import type { Context } from 'hono'
 import type { ModuleHono, ModuleVars, RouteCtx } from './context'
 import { requesterOf } from './context'
 import {
+  createStoreBrand,
   createStoreLevel,
   importStoreProfiles,
   updateStoreLevel,
@@ -90,6 +91,20 @@ export function registerStoreProfiles(r: ModuleHono, ctx: RouteCtx): void {
         ...(brand.present ? { brandCode: brand.value } : {}),
         ...(level.present ? { levelCode: level.value } : {}),
       }), 200)
+  })
+
+  // 门店页签内联新建品牌：只补字典项；赋值仍走 PUT /store-profiles/:code。
+  r.post('/brands', async (c) => {
+    const actor = actorOf(c)
+    if (actor === null) return c.json({ error: 'UNAUTHENTICATED' }, 403)
+    const body = await c.req.json().catch(() => null)
+    if (!isRecord(body)) return c.json({ error: 'INVALID_BODY' }, 400)
+    return outcome(c, await createStoreBrand({ pool: ctx.pool }, orgOf(c), actor, {
+      code: body.code,
+      name: body.name,
+      sort: body.sort,
+      enabled: body.enabled,
+    }), 201)
   })
 
   r.post('/store-levels', async (c) => {

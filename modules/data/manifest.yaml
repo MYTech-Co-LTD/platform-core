@@ -315,6 +315,8 @@ api:
     # 静态 /import 在 :storeCode 之前注册（路由纪律）。
     - { method: POST,   path: /store-profiles/import,     scope: data:store }
     - { method: PUT,    path: /store-profiles/:storeCode, scope: data:store }
+    # 门店页签内联新建品牌（无选项直接新建）：只建字典项，赋值走上面的 PUT。
+    - { method: POST,   path: /brands,                    scope: data:store }
     - { method: POST,   path: /store-levels,              scope: data:store }
     - { method: PATCH,  path: /store-levels/:code,        scope: data:store }
 # agent 能力网关（spec 2026-11-16 §5.2）：网关按 group 内 precedence（数字大的优先）选面下发。
