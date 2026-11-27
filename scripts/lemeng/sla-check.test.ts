@@ -64,12 +64,23 @@ describe('sla-check · 判据', () => {
     expect(ten.lagSourceToBuildMs).toBe(8 * 60_000)
   })
 
-  it('10m：源→建 118 分钟 ⇒ ERR', () => {
+  it('10m：建落后源 118 分钟 ⇒ ERR（真迟到）', () => {
+    // #2899：只有「源有更新、建没跟上」才是迟到。方向反了就变成「源闲置」，见下一条。
+    const jobs = new Map([['data.dbt_tick', new Date('2026-11-25T01:00:00Z')]])
+    const r = computeReport(CONFIG, clocks({ jobs, hot: ['2026-11-25_025800'] }))
+    const ten = r.products.find((p) => p.product === 'retail_10m')!
+    expect(ten.verdict).toBe('ERR')
+    expect(ten.detail).toContain('建落后源')
+  })
+
+  it('10m：源闲置（建已跟上）⇒ OK —— 夜里 101 条假红的形态', () => {
+    // 2026-11-27 生产实测：源 00:50 冻结、建每 10 分钟照跑，|lag| 从 12m 涨到 62m 全判 ERR。
     const jobs = new Map([['data.dbt_tick', new Date('2026-11-25T02:58:00Z')]])
     const r = computeReport(CONFIG, clocks({ jobs, hot: ['2026-11-25_010000'] }))
     const ten = r.products.find((p) => p.product === 'retail_10m')!
-    expect(ten.verdict).toBe('ERR')
-    expect(ten.detail).toContain('source↔build')
+    expect(ten.verdict).toBe('OK')
+    expect(ten.detail).toContain('源无新数据')
+    expect(ten.detail).toContain('118m') // 闲置量如实记录，便于判「源是不是真不动了」
   })
 
   it('10m：窗口外 ⇒ SKIP（08:30 CST）', () => {
@@ -99,7 +110,7 @@ describe('sla-check · 判据', () => {
     const r = computeReport(CONFIG, clocks({ jobs, console }))
     const p = r.products.find((x) => x.product === 'nonretail_1h.purchase')!
     expect(p.verdict).toBe('OK')
-    expect(p.detail).toContain('source ahead')
+    expect(p.detail).toContain('源领先建')
   })
 
   it('1h：build 落后源 120 分钟（错过一个周期）⇒ ERR', () => {
