@@ -11,6 +11,10 @@
 
 ## [Unreleased]
 
+## [0.407.0](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.406.0...v0.407.0) - 2026-11-27
+- 【新增】data: 断言 ㉔ compact_index_shape——索引连续/新鲜/契约当前 ([#2940](https://github.com/MYTech-Co-LTD/platform-core/pull/2940), [f015f68](https://github.com/MYTech-Co-LTD/platform-core/commit/f015f68a76195319de1ef64476d8edf7ecc19769))
+
+
 ## [0.406.0](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.405.0...v0.406.0) - 2026-11-27
 - 【新增】aftersales: 门店页签标签配色与搜索筛选（#2936） ([#2937](https://github.com/MYTech-Co-LTD/platform-core/pull/2937), [821913e](https://github.com/MYTech-Co-LTD/platform-core/commit/821913e8ae163ebaa9f9ecee41ad4039aec056f6))
 - 【新增】data: 断言 ㉓ compact_parity——压缩月文件对原始常驻核账 ([#2935](https://github.com/MYTech-Co-LTD/platform-core/pull/2935), [85328a4](https://github.com/MYTech-Co-LTD/platform-core/commit/85328a4a939f78870251e22b367a626e40731c4b))
