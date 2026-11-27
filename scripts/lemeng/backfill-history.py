@@ -107,13 +107,27 @@ def container_env(book: str) -> dict[str, str]:
     return env or {k: v for k, v in os.environ.items()}
 
 
+def console_base(book: str) -> str:
+    """console 基址：默认宿主回环（端口已发布到 127.0.0.1）；worker 里 127.0.0.1 是自己 ⇒ 必须可覆盖。
+
+    覆盖键与 `recon-monthly.mjs` 同源（`CONSOLE_<book>_URL`），免得同一件事两套命名。
+    """
+    env = os.environ.get(f"CONSOLE_{book}_URL", "").strip()
+    if env:
+        return env.rstrip("/")
+    # 宿主：端口已发布到回环；worker：127.0.0.1 是自己 ⇒ 走 compose 服务名（与 recon-monthly.mjs 同源）。
+    if _docker_ok():
+        return f"http://127.0.0.1:{CONSOLE_PORT[book]}"
+    return f"http://lemeng-console-{book}:{CONSOLE_PORT[book]}"
+
+
 def api(book: str, method: str, path: str, body: dict | None = None) -> dict:
     tok = container_env(book).get("DUCKLE_TOKEN", "")
     if not tok:
         raise SystemExit(f"ENV_FAILED: console-{book} 没有 DUCKLE_TOKEN")
     data = json.dumps(body).encode() if body is not None else None
     req = urllib.request.Request(
-        f"http://127.0.0.1:{CONSOLE_PORT[book]}{path}", data=data, method=method,
+        f"{console_base(book)}{path}", data=data, method=method,
         headers={"Authorization": "Bearer " + tok, "Content-Type": "application/json"},
     )
     with urllib.request.urlopen(req, timeout=180) as r:
