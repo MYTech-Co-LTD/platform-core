@@ -11,6 +11,10 @@
 
 ## [Unreleased]
 
+## [0.408.0](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.407.0...v0.408.0) - 2026-11-27
+- 【新增】aftersales: 人员页合并身份绑定列（#2941） ([#2942](https://github.com/MYTech-Co-LTD/platform-core/pull/2942), [3c4ca0f](https://github.com/MYTech-Co-LTD/platform-core/commit/3c4ca0f5f777387c2c4c9f3b317cf148bf8f7aa6))
+
+
 ## [0.407.0](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.406.0...v0.407.0) - 2026-11-27
 - 【新增】data: 断言 ㉔ compact_index_shape——索引连续/新鲜/契约当前 ([#2940](https://github.com/MYTech-Co-LTD/platform-core/pull/2940), [f015f68](https://github.com/MYTech-Co-LTD/platform-core/commit/f015f68a76195319de1ef64476d8edf7ecc19769))
 
