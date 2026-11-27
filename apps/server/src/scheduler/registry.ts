@@ -231,6 +231,11 @@ export const JOB_REGISTRY: JobDef[] = [
   //    台账的新鲜度必须由**建它上游的那个档**决定，不能跨档搭车。
   { key: 'data.dbt_tables', scope: 'data', requiresEnv: ['DATABASE_URL','DATA_WAREHOUSE_URL','LEMENG_ZOS_BUCKET','LEMENG_ZOS_REGION','LEMENG_ZOS_ENDPOINT'], script: 'scripts/lemeng/materialize-job.mjs', env: { MATERIALIZE_SCOPE: 'tables', DATA_PLANE_DOMAINS: 'lemeng', MATERIALIZE_MODE: 'container', MATERIALIZE_TABLES_EXCLUDE: 'recon_fact recon_break fct_retail_swap_offset recon_run', LEMENG_ZOS_BUCKET: 'shanhai-data', LEMENG_ZOS_REGION: 'xinan1', LEMENG_ZOS_ENDPOINT: 'xinan-1-internal.zos.ctyun.cn' }, cron: '30 18 * * *', timezone: 'UTC', timeoutMs: 9000000, maxAttempts: 1, expectedIntervalSecs: 86400, description: '乐檬 dbt tables 主档（table 模型 + seeds + views，排除对账族；CST 02:30）' },
   { key: 'data.dbt_tables_recon', scope: 'data', requiresEnv: ['DATABASE_URL','DATA_WAREHOUSE_URL','LEMENG_ZOS_BUCKET','LEMENG_ZOS_REGION','LEMENG_ZOS_ENDPOINT'], script: 'scripts/lemeng/materialize-job.mjs', env: { MATERIALIZE_SCOPE: 'tables', DATA_PLANE_DOMAINS: 'lemeng', MATERIALIZE_MODE: 'container', MATERIALIZE_TABLES_SELECT: 'recon_fact recon_break fct_retail_swap_offset recon_run', LEMENG_ZOS_BUCKET: 'shanhai-data', LEMENG_ZOS_REGION: 'xinan1', LEMENG_ZOS_ENDPOINT: 'xinan-1-internal.zos.ctyun.cn' }, cron: '30 19 * * *', timezone: 'UTC', timeoutMs: 2700000, maxAttempts: 1, expectedIntervalSecs: 86400, description: '乐檬 dbt tables 对账族（recon_fact/recon_break/swap_offset 全史 CTAS + recon_run 台账；CST 03:30，夜间空窗）' },
+  // 对账「缺整天」自愈（#2742 第②刀）：窗口内**没进 recon_break** 且平台侧有营业的日子 ⇒ 逐日重触发
+  // console 回填（源快照没落是 gap 的唯一成因，无需 diagnose）；随后 04:30 的台账闸重建 dbt ⇒ 闭环。
+  // 判据与宿主 restate 的 `kind=gap` 同源；`diff` 那一半（要逐小时判别，依赖 diagnose.sh 32KB）
+  // 按 deploy/jobs.md §1.1 暂留宿主，退役条件写在那里。
+  { key: 'data.recon_restate', scope: 'data', requiresEnv: ['DATA_WAREHOUSE_URL','DUCKLE_TOKEN'], script: 'scripts/lemeng/recon-gap-restate.mjs', cron: '50 19 * * *', timezone: 'UTC', timeoutMs: 1800000, maxAttempts: 1, expectedIntervalSecs: 86400, description: '对账缺整天自愈（窗口 T-3..T-9 无 recon_break 行且有营业 ⇒ 逐日重触发 console 回填；CST 03:50，随后 04:30 台账闸重建）' },
   // 对账台账**当夜自愈闸**（#2894）：断言 ⑪ 红了不会自己去重建台账 ⇒ 红满一整天。
   // 本 job 用与 ⑪ **同一条 SQL** 判「T-4 缺行」，缺了才重建 `recon_fact/recon_break/recon_run`
   // （≈35s，不碰 500s 的 swap_offset）。重建后仍缺 = 不是台账没建而是那天在 recon_break 里就没行
