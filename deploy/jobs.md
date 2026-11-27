@@ -20,6 +20,27 @@
 - **单调度者**：任一 job 任一时刻只能有一个调度者（openship 或本调度器）。切流期间不得双跑。
 - **排引擎不排规则**：可排的是代码里已注册的 key；agent 不能注册 handler，也不能凭空排一个未注册 key。
 - **只做 cron + 台账**：不做 DAG / 依赖编排 / 回填队列 / 分布式执行。
+
+### 1.1 作业归属四问（2026-11-27 立，先于任何切流讨论）
+
+迁了 30+ 条之后每一条仍在重新讨论「这条算谁的」。判据按**作业形状**问，不按「它现在在哪」问：
+
+| # | 问题 | 答「是」⇒ | 为什么 |
+|---|---|---|---|
+| ① | **单轮会不会超过 30 分钟**（含窗口驱动的长跑）？ | **不是 cron 形态**：先切片（一轮一次、可中断、进度入库），再谈迁移 | 调度器并发是有限槽（数据单元 `SCHEDULER_MAX_CONCURRENCY=2` + 执行器单飞）；长任务占槽一夜会压缩物化容量。且容器每天重启若干次（2026-11-27 一天 6 次）——**必须活 8 小时的进程放在每天重启的环境里是结构错配** |
+| ② | **要不要跨机、或宿主机 docker**？ | **基建，留 openship 并在此登记例外** | 例外清单见 §1.2；给业务调度器开跨机 DB 访问是安全面倒退 |
+| ③ | 是**业务动作**且无 docker 耦合？ | **平台调度器** | §1 的分工 |
+| ④ | **幂等吗？有台账吗？** | 没有 ⇒ 先补完再迁 | 没台账的迁移 = 把「跑没跑」也一起丢掉；没幂等 = 重试即双算 |
+
+**用法**：新作业先过四问再开 issue；存量作业按四问复核（2026-11-27 的 `#2742` 三条就是按它分类的）。
+
+### 1.2 留在 openship 的例外清单（第 ② 问命中）
+
+| 作业 | 为什么留 | 登记日期 |
+|---|---|---|
+| `lemeng-console-gc` | worker 对 console workspace 是只读挂载，GC 要删文件 | 2026-11-23 |
+| `OO 预警配置对账`（`oo-config-audit`） | 跑在 **OO 那台机**、`docker exec` 读 OO 元库；control 面 worker 连不到该 pg。按三层分工属**基建**（OO=预警面 / openship=基建 / 数据面=判据）。硬迁只能靠「给 OO 元库开跨机访问」（安全面倒退）或改写成 OO HTTP API（新增集成+凭据面）—— 为一个只读对账付这两种代价不划算 | 2026-11-27 |
+| `host-metrics` / `OO 桥·看门狗` / `integration-probe 心跳` | 永久留 openship（基建定时，Wave 8 定案） | 2026-11-15 |
 - **system job 的 `params` 不生效**：`source='system'` 时行为只由代码 registry 决定，改库改不了副作用。
 - **业务 job 的定时副作用不进 HTTP 进程**：手动触发只**入队**，执行在 worker 的子进程。
   既有例外是**监控面**的集成健康探针（`apps/server/src/integration-probe.ts:385` 的 `setInterval`，
@@ -162,9 +183,9 @@
 | `oa.approval_reconcile` | **已登记（#2363/#2385 收口，`enabled=false`）** | 待启用：手动跑一轮 → stdout 统计核对 → enable（§13） | 本无 openship 作业（同上） |
 | `data.recon_monthly` | **已切流（#2735，2026-11-23）** | worker 的 `platform.scheduler`（`enabled=true`，`next_run_at=2026-12-15T04:00Z` = CST 15 号 12:00） | 原 openship job **已停用并删除**（`custom:4UQ2ugvbFRGKtIUv`）。脚本调两个 console 的现成管线 `lemeng.recon.preagg.backfill`（不实现口径）；worker 已有 `DUCKLE_TOKEN`（三容器同一份，实测）+ 服务名可达 ⇒ **零新增密钥**。开闸实测：10 月全月 62 次 **pass=62 skip=0**，与 `/opt/lemeng-recon-preagg.sh` 同期结论逐项一致（688s） |
 | `data.recon_ledger_guard` | **新增（#2894，2026-11-26）** | worker 的 `platform.scheduler`（`30 20 * * *` = CST 04:30） | 台账**当夜自愈闸**：判据与断言 ⑪ **同一条 SQL**（T-4 缺行）；缺了才重建 `recon_fact/recon_break/recon_run`（≈35s，不碰 500s 的 swap_offset），重建后仍缺就 exit 1 响铃（那是一天在 `recon_break` 里就没行，归 restate heal）。排班在 restate（23:25）之后、审计链（05:30）之前 |
-| ⚠️ `lemeng-recon-restate` | **待切（#2742）** | 现役 openship（`25 15 * * *` = CST 23:25） | 业务对账仍走宿主内联命令；迁法：改走 DSN/服务名 HTTP → registry 登记。**#2894 起**候选集多一类 `kind=gap`（窗口内整天没台账、且平台侧当天有营业）⇒ 能补「源快照当天没落」；`ledger_stale`（数据在、只是台账没重建）跳过并交给 `data.recon_ledger_guard` |
-| ⚠️ `OO 预警配置对账` | **待切（#2742）** | 现役 openship（`17,47 * * * *`） | 监控面只读对账；worker 已有 OO 读凭据 ⇒ 可迁 |
-| ⚠️ `lemeng 夜间回填窗口` | **待切（#2742）** | 现役 openship（`5 16 * * *` = CST 00:05） | 业务回填驱动；迁法：改调 console `/api/run` |
+| ⚠️ `lemeng-recon-restate` | **要迁，且是重写（#2742，按 §1.1 第③问）** | 现役 openship（`25 15 * * *` = CST 23:25） | 业务对账，427 行 shell 但有 8 处 `docker exec`（pg_duckdb + console 容器）⇒ **不能搬，要重写**。模板用现成的 `scripts/lemeng/recon-monthly.mjs`（console 服务名 HTTP + `DUCKLE_TOKEN` + `DATA_WAREHOUSE_URL`，零新增密钥）。目标形态：与 `data.recon_ledger_guard` **串成一条「对账自愈」链**（guard 管台账重建 / restate 管源快照重采），判据即 `kind=gap|ledger_stale|nobiz` 三档 |
+| ~~`OO 预警配置对账`~~ | **登记例外，不迁**（§1.2，2026-11-27） | 留 openship（`17,47 * * * *`） | 跑在 OO 那台机、`docker exec` 读 OO 元库；worker 连不到该 pg。按三层分工属基建 |
+| ⚠️ `lemeng 夜间回填窗口` | **不搬，改形（#2742，按 §1.1 第①问）** | 现役 openship（`5 16 * * *` = CST 00:05） | 窗口到 CST 08:00（最长 ~8h）的**队列驱动**：塞进 cron 会占满数据单元 2 个并发槽整夜、且每天若干次部署都会杀它。目标形态=**切片**：每 30 分钟一轮、每轮跑 N 天即停、进度与队列入库（队列文件现在在 `/opt` 不入仓），再登记 |
 | `lemeng-console-gc` | **登记为例外（#2742）** | 留在 openship（`40 0 * * *` = CST 08:40） | **真基建**：worker 对 console workspace 是只读挂载，GC 要删文件 ⇒ 需可写挂载或 console 侧回收入口；在此之前只能留宿主 |
 
 **顺序按爆炸半径**：已完成 `notify.reconcile` → `metric.candidates` → `report.scope_scan`；
