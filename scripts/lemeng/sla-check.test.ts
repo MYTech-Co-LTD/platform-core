@@ -1,7 +1,7 @@
 // scripts/lemeng/sla-check.test.ts — SLA 只读测量器的纯函数测试（D2）。
 // 判据：时钟解析、跨零点窗口、以及每个 product 的 OK/ERR/UNKNOWN/SKIP 分支。
 import { describe, expect, it } from 'vitest'
-import { computeReport, inWindow, minutesIntoWindow, parseConsoleTime, parseRunToken } from './sla-check.mjs'
+import { computeReport, errRows, inWindow, minutesIntoWindow, parseConsoleTime, parseRunToken } from './sla-check.mjs'
 
 const CONFIG = {
   products: {
@@ -188,5 +188,25 @@ describe('sla-check · 窗口起步宽限（2026-11-26）', () => {
     const now = new Date('2026-11-25T02:20:00Z') // 10:20 CST
     const r = computeReport(cfg, mk(now, new Date('2026-11-24T18:30:00Z'), new Date('2026-11-25T00:20:00Z')))
     expect(r.products.find((x) => x.product === 'nonretail_1h.purchase')!.verdict).toBe('ERR')
+  })
+})
+
+describe('sla-check · D4 告警出口（只投 ERR）', () => {
+  it('errRows 只挑 ERR：OK/WARN/SKIP/UNKNOWN 一律不投', () => {
+    const report = {
+      products: [
+        { product: 'a', verdict: 'ERR', detail: 'x' },
+        { product: 'b', verdict: 'OK', detail: 'ok' },
+        { product: 'c', verdict: 'WARN', detail: 'w' },
+        { product: 'd', verdict: 'SKIP', detail: '窗口外' },
+        { product: 'e', verdict: 'UNKNOWN', detail: 'u' },
+      ],
+    }
+    expect(errRows(report).map((r: any) => r.product)).toEqual(['a'])
+  })
+
+  it('预算报告里没有 ERR ⇒ 一条都不投（常态）', () => {
+    expect(errRows({ products: [{ product: 'x', verdict: 'OK' }] })).toEqual([])
+    expect(errRows(null)).toEqual([])
   })
 })

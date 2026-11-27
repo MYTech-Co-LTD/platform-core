@@ -16,6 +16,7 @@ import { join } from 'node:path'
 import { createRequire } from 'node:module'
 import { fileURLToPath, pathToFileURL } from 'node:url'
 import { SHANGHAI_TZ } from '../lib/time-semantics.mjs'
+import { emitProbe } from '../probe-emit.mjs'
 
 export const SCRIPT_NAME = 'sla-check'
 export const CONFIG_REL = 'scripts/lemeng/sla.json'
@@ -234,6 +235,17 @@ export function computeReport(config, clocks) {
   return { generatedAt: now.toISOString(), products: rows }
 }
 
+/**
+ * D4：从报告里挑出要投 OO 的行——**只有 ERR**。
+ * 单独抽成纯函数是为了机检「WARN/SKIP/OK 不会进告警」（否则一次窗口起步宽限就能刷出一屏）。
+ * @param {any} report
+ * @returns {SlaRow[]}
+ */
+export function errRows(report) {
+  const rows = /** @type {SlaRow[]} */ (Array.isArray(report?.products) ? report.products : [])
+  return rows.filter((/** @type {SlaRow} */ r) => r && r.verdict === 'ERR')
+}
+
 const MEASURE_DDL = `create schema if not exists data;
 create table if not exists data.sla_measure (
   measured_at timestamptz default now(),
@@ -345,9 +357,19 @@ async function main() {
     const consoleLastOk = readConsoleLastOk(wsDirs)
 
     const report = computeReport(config, { now, jobs, hotRunTokens, consoleLastOk })
-    // D3：观测模式——只写测量表，不发探针、不因判红退出非零。
+    // D3：测量表照写；D4 起**只有 ERR 行**进 OO 探针（`sla`），桥转发企微。
+    // 只投事实、不改判定、不改退出码（probe-emit 的红线）；缺 OO 三元组时 emitProbe 自己跳过。
     await ensureMeasureTable(warehouse)
     await insertMeasures(warehouse, report)
+    for (const row of errRows(report)) {
+      await emitProbe({
+        probe: 'sla',
+        check: row.product,
+        verdict: 'ERR',
+        detail: `${row.job}: ${row.detail}`.slice(0, 400),
+        mode: 'hard',
+      })
+    }
     console.log(JSON.stringify(report, null, 2))
   } finally {
     await platform.end().catch(() => {})
