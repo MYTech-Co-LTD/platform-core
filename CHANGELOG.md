@@ -11,6 +11,11 @@
 
 ## [Unreleased]
 
+## [0.405.0](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.404.0...v0.405.0) - 2026-11-27
+- 【新增】data: 门店页签品牌/等级改标签内联单选（#2930） ([#2933](https://github.com/MYTech-Co-LTD/platform-core/pull/2933), [0e0fd5c](https://github.com/MYTech-Co-LTD/platform-core/commit/0e0fd5c253d2b8d5229b7d2daf33ba7ef11b4c73))
+- 【新增】data: 压缩索引补输入指纹——让「月文件陈旧」可判 ([#2932](https://github.com/MYTech-Co-LTD/platform-core/pull/2932), [35c2f30](https://github.com/MYTech-Co-LTD/platform-core/commit/35c2f30cf8fafa3edc779ada4868673067786ac3))
+
+
 ## [0.404.0](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.403.0...v0.404.0) - 2026-11-27
 - 【新增】data: 分区压缩推广 #1——member_summary 两腿读（parity 逐月相等） ([#2929](https://github.com/MYTech-Co-LTD/platform-core/pull/2929), [9d1b13d](https://github.com/MYTech-Co-LTD/platform-core/commit/9d1b13d32742be184fa7e53db3e648ec658a6f80))
 
