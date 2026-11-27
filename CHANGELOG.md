@@ -11,6 +11,11 @@
 
 ## [Unreleased]
 
+## [0.400.2](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.400.1...v0.400.2) - 2026-11-27
+- 【修复】data: 热层 GC 的审计行说真话——psql -q 抑制命令标签导致恒报 deleted=0 ([#2902](https://github.com/MYTech-Co-LTD/platform-core/pull/2902), [05e8189](https://github.com/MYTech-Co-LTD/platform-core/commit/05e8189d53a12b40b53d148d81dad8fa6c93d155))
+- 【修复】data: SLA 判据按方向拆开——源闲置不再判建落后 ([#2900](https://github.com/MYTech-Co-LTD/platform-core/pull/2900), [9556d81](https://github.com/MYTech-Co-LTD/platform-core/commit/9556d811decb6ff695d45207e304d8f06184152c))
+
+
 ## [0.400.1](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.400.0...v0.400.1) - 2026-11-27
 - 【修复】data: 对账档挪出白天——#2792 挪夜间时漏了这一条 ([#2897](https://github.com/MYTech-Co-LTD/platform-core/pull/2897), [e2d7afa](https://github.com/MYTech-Co-LTD/platform-core/commit/e2d7afad9dcdf04ffa0c330e8987942e11661089))
 
