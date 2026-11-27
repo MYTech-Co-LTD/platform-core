@@ -21,16 +21,14 @@ import EmployeesPage from './employees'
 import ProductsPage from './products'
 import StoresPage from './stores'
 import ApprovalsPage from './approvals'
-import LinksPage from './links'
 
 const TABS = [
   { key: 'tickets', label: '工单' },
   { key: 'rules', label: '规则' },
-  { key: 'employees', label: '员工' },
+  { key: 'employees', label: '人员' },
   { key: 'products', label: '商品' },
   { key: 'stores', label: '门店' },
   { key: 'approvals', label: '申请审批' },
-  { key: 'links', label: '身份绑定' },
 ] as const
 
 type TabKey = (typeof TABS)[number]['key']
@@ -51,6 +49,11 @@ export default function AftersalesConsolePage() {
   // 裸 `/console/aftersales` 规范化到工单页：让 URL 与「页面上显示的内容」始终一致
   // （否则同一个 URL 对应的页面取决于内部默认值，深链/刷新语义含混）
   useEffect(() => {
+    // 旧「身份绑定」深链已并入人员页：别把它当成未知段补 /tickets。
+    if (last === 'links') {
+      navigate(`${pathname.replace(/\/links$/, '/employees')}`, { replace: true })
+      return
+    }
     if (!isTabSegment(last)) navigate(`${pathname}/${DEFAULT_TAB}`, { replace: true })
   }, [last, pathname, navigate])
 
@@ -61,11 +64,10 @@ export default function AftersalesConsolePage() {
     products: ProductsPage,
     stores: StoresPage,
     approvals: ApprovalsPage,
-    links: LinksPage,
   }
   const Active = PAGES[active]
 
-  // #1953 二期：页内 tabs 已撤，各页改为宿主左侧菜单子项（manifest 声明 7 个子路径）。
+  // #1953 二期：页内 tabs 已撤，各页改为宿主左侧菜单子项（manifest 声明 6 个子路径）。
   return (
     <Layout style={{ background: 'transparent' }}>
       <Active />

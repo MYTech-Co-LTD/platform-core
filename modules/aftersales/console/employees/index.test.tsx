@@ -1,7 +1,6 @@
-// employees/index.test.tsx — 员工列表 + 审批；★ 未接分页 ⇒ 无分页控件
+// employees/index.test.tsx — 人员页：员工档案 + 身份绑定（#2941）。
 //
-// ⚠️ 审批的请求体是 `{ approveStatus }`（枚举字符串），**不是** `{ approve: boolean }`
-//    ——以 `routes/masterdata.ts` 的 `ApproveBody` 为准。
+// 审批请求体是 `{ approveStatus }`；身份绑定列从 `/identity-links` 派生，写操作走同一组端点。
 import '@testing-library/jest-dom/vitest'
 import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
@@ -15,24 +14,37 @@ const calls: Array<{ url: string; method?: string; body?: unknown }> = []
 const json = (b: unknown, s = 200) =>
   new Response(JSON.stringify(b), { status: s, headers: { 'content-type': 'application/json' } })
 
-const EMP = { id: 1, name: '张三', phone: '13800000000', storeId: 1, openId: 'o1', approveStatus: 'pending' }
+const EMP = {
+  id: 1, name: '张三', phone: '13800000000', storeCode: 'S1', openId: 'o1', approveStatus: 'pending',
+}
+const LINK = {
+  id: 11, org: 'test', provider: 'wechat-oa', externalId: 'o1', casdoorName: 'zhangsan',
+  status: 'pending', phoneMasked: '138****00', boundVia: 'auto', sourceApprovalId: null,
+  disputedAt: null, boundAt: null, revokedAt: null, revokedBy: null, createdAt: '2026-11-27T00:00:00Z',
+}
+
+function mockData(links: unknown[] = [LINK]) {
+  m.mockImplementation(async (url: string, init?: RequestInit) => {
+    calls.push({ url, method: init?.method, body: init?.body ? JSON.parse(String(init.body)) : undefined })
+    if (init?.method === 'POST') return json({ ok: true })
+    if (url.includes('/identity-links')) return json({ items: links })
+    if (url.includes('/employees')) return json({ items: [EMP], total: 1, page: 1, size: 100 })
+    return json({ error: 'NOT_FOUND' }, 404)
+  })
+}
 
 beforeEach(() => {
   calls.length = 0
   m.mockReset()
-  m.mockImplementation(async (url: string, init?: RequestInit) => {
-    calls.push({ url, method: init?.method, body: init?.body ? JSON.parse(String(init.body)) : undefined })
-    if (init?.method === 'POST') return json({ ok: true })
-    // #155 起真机回 {items,total,page,size}——替身钉在真实形状上（AGENTS.md #11）
-    return json({ items: [EMP], total: 1, page: 1, size: 20 })
-  })
+  mockData()
 })
 afterEach(cleanup)
 
-describe('员工页', () => {
+describe('人员页', () => {
   it('列表渲染，待审批显示「通过」「驳回」', async () => {
     render(<EmployeesPage />)
     await waitFor(() => expect(screen.getByText('张三')).toBeInTheDocument())
+    expect(screen.getByText('S1')).toBeInTheDocument()
     expect(screen.getByRole('button', { name: /通\s*过/ })).toBeInTheDocument()
     expect(screen.getByRole('button', { name: /驳\s*回/ })).toBeInTheDocument()
   })
@@ -55,7 +67,40 @@ describe('员工页', () => {
     expect(calls.find((c) => c.url.endsWith('/approve'))!.body).toEqual({ approveStatus: 'rejected' })
   })
 
-  it('★ API 已回 total 但 console 未接分页（#155 只做 API 面）⇒ 不出现分页控件', async () => {
+  it('★ 身份绑定列：公众号 openid 关联；点开抽屉可确认', async () => {
+    render(<EmployeesPage />)
+    await waitFor(() => expect(screen.getByText('张三')).toBeInTheDocument())
+    // 派生摘要：LINK 是 pending ⇒ 待确认
+    expect(screen.getByText('待确认')).toBeInTheDocument()
+
+    fireEvent.click(screen.getByText('待确认'))
+    await waitFor(() => expect(screen.getByText('张三 · 身份绑定')).toBeInTheDocument())
+    expect(screen.getAllByText('o1').length).toBeGreaterThan(0)
+
+    fireEvent.click(screen.getByRole('button', { name: /确\s*认/ }))
+    await waitFor(() =>
+      expect(calls.some((c) => c.method === 'POST'
+        && c.url === '/api/modules/aftersales/identity-links/11/confirm')).toBe(true),
+    )
+    // 等操作后的 reload 落地，避免 teardown 时还有 setState 在排队
+    await waitFor(() =>
+      expect(calls.filter((c) => c.url === '/api/modules/aftersales/identity-links').length)
+        .toBeGreaterThanOrEqual(2),
+    )
+  })
+
+  it('★ 未归属绑定：openid 匹配不上员工的绑定单独查看', async () => {
+    mockData([{ ...LINK, id: 12, externalId: 'o999' }])
+    render(<EmployeesPage />)
+    await waitFor(() => expect(screen.getByText('张三')).toBeInTheDocument())
+    expect(screen.getByText(/未归属绑定（1）/)).toBeInTheDocument()
+
+    fireEvent.click(screen.getByText(/未归属绑定（1）/))
+    await waitFor(() => expect(screen.getByText('o999')).toBeInTheDocument())
+    expect(screen.getByText(/按公众号 openid 关联员工/)).toBeInTheDocument()
+  })
+
+  it('无分页控件（员工量级小；一次拉全）', async () => {
     render(<EmployeesPage />)
     await waitFor(() => expect(screen.getByText('张三')).toBeInTheDocument())
     expect(document.querySelector('.ant-pagination')).toBeNull()
