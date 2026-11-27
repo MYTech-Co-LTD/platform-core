@@ -114,6 +114,24 @@ describe('ProcessDialog', () => {
     expect(quotes.at(-1)).toEqual({ amountType: 'ratio', refundRatio: 0.1 })
   })
 
+  it('附件只显示 chip，不渲染 <img> 缩略图（不提前下载字节）', async () => {
+    m.mockImplementation(async (url: string) => {
+      if (url.includes('/tickets/7')) {
+        return json({
+          ...detail,
+          attachments: [{ id: 9, objectKey: 'k', contentType: 'image/jpeg', sizeBytes: 10, url: 'https://x/1.jpg' }],
+        })
+      }
+      if (url.includes('/rules')) return json(rules)
+      if (url.includes('/quote')) return json({ amountMinor: 0, damageAmountMinor: 900 })
+      return json({ error: 'NOT_FOUND' }, 404)
+    })
+    open()
+    await screen.findByText('处理工单 AS-00000007')
+    expect(screen.getByText('图片 1')).toBeInTheDocument()
+    expect(document.querySelector('img')).toBeNull()
+  })
+
   it('fixed：操作员填元，提交换算成整数分', async () => {
     open()
     await screen.findByText('处理工单 AS-00000007')

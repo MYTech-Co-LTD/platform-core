@@ -152,6 +152,13 @@ export interface TicketAttachment {
   url: string | null
 }
 
+/** `GET /attachments/:id`：单附件元数据 + 当次预签名 GET URL（预览按需取用）。 */
+export interface AttachmentDetail extends TicketAttachment {
+  ticketId: number | null
+  uploaderOpenid: string
+  createdAt: string
+}
+
 /** 分页列表响应：`GET /tickets` / `/products` / `/guest/*`；#155 起 `/rules` / `/employees` / `/stores` 同形对齐 */
 export interface Paged<T> {
   items: T[]

@@ -188,25 +188,17 @@ export function ProcessDialog(props: {
           />
 
           {images.length > 0 ? (
+            // 2026-11-27：这里**只放元数据 chip，不放 `<img>`**——缩略图会让处理弹窗一打开
+            // 就下载全部图片字节。字节只在附件预览弹窗里按需加载（见 AttachmentPreview）。
             <Space wrap>
-              {images.map((a, i) =>
-                a.url === null ? (
-                  // 预签名签不出来时**不要**渲染 <img src=undefined>（浏览器会画一个破图标）。
-                  <Typography.Text key={a.id} type="secondary">附件 {i + 1}（不可预览）</Typography.Text>
-                ) : a.contentType.startsWith('image/') ? (
-                  <img
-                    key={a.id}
-                    src={a.url}
-                    alt={`附件 ${i + 1}`}
-                    style={{ width: 72, height: 72, objectFit: 'cover', borderRadius: 8, cursor: 'pointer', border: '1px solid #EBEDF0' }}
-                    onClick={() => props.onPreview?.(images, i)}
-                  />
-                ) : (
-                  <Typography.Link key={a.id} onClick={() => props.onPreview?.(images, i)}>
-                    视频 {i + 1}
-                  </Typography.Link>
-                ),
-              )}
+              {images.map((a, i) => (
+                <Typography.Link key={a.id} onClick={() => props.onPreview?.(images, i)}>
+                  {a.contentType.startsWith('video/')
+                    ? `视频 ${i + 1}`
+                    : a.contentType.startsWith('image/') ? `图片 ${i + 1}` : `附件 ${i + 1}`}
+                  {a.url === null ? '（不可预览）' : ''}
+                </Typography.Link>
+              ))}
             </Space>
           ) : null}
 
