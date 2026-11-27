@@ -11,6 +11,10 @@
 
 ## [Unreleased]
 
+## [0.409.0](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.408.1...v0.409.0) - 2026-11-27
+- 【新增】aftersales: 人员身份绑定按渠道标签展示（#2945） ([#2946](https://github.com/MYTech-Co-LTD/platform-core/pull/2946), [44854fa](https://github.com/MYTech-Co-LTD/platform-core/commit/44854fafb0e1d4723519875cecc849ff1077ae1f))
+
+
 ## [0.408.1](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.408.0...v0.408.1) - 2026-11-27
 - 【修复】aftersales: 人员页身份绑定失败不拖垮员工档案（#2943） ([#2944](https://github.com/MYTech-Co-LTD/platform-core/pull/2944), [e727587](https://github.com/MYTech-Co-LTD/platform-core/commit/e72758702f16a04187db85d686a80b257650fd3c))
 
