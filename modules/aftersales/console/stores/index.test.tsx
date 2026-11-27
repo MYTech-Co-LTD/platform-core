@@ -113,5 +113,11 @@ describe('门店页（只读）', () => {
         && c.method === 'PUT'
         && (c.body as { brandCode?: string }).brandCode === 'b_new')).toBe(true)
     })
+    // 等 assign 后的 reload 全部落地，避免 teardown 时还有 setState 在排队
+    await waitFor(() => {
+      expect(calls.filter((c) => c.url === '/api/modules/aftersales/stores').length).toBeGreaterThanOrEqual(2)
+      expect(calls.filter((c) => c.url === '/api/modules/aftersales/stores/profile-options').length)
+        .toBeGreaterThanOrEqual(2)
+    })
   })
 })

@@ -90,6 +90,7 @@ function TagEditor(props: {
   canEdit: boolean
   onAssign: (code: string | null) => Promise<void>
   onCreate: (name: string) => Promise<string>
+  onError: (message: string) => void
 }) {
   const [open, setOpen] = useState(false)
   const [newName, setNewName] = useState('')
@@ -108,7 +109,7 @@ function TagEditor(props: {
       await props.onAssign(code)
       setOpen(false)
     } catch (e) {
-      message.error(e instanceof Error ? e.message : String(e))
+      props.onError(e instanceof Error ? e.message : String(e))
     } finally {
       setBusy(false)
     }
@@ -124,7 +125,7 @@ function TagEditor(props: {
       setNewName('')
       setOpen(false)
     } catch (e) {
-      message.error(e instanceof Error ? e.message : String(e))
+      props.onError(e instanceof Error ? e.message : String(e))
     } finally {
       setBusy(false)
     }
@@ -196,6 +197,7 @@ export default function StoresPage() {
   const [overrideLocked, setOverrideLocked] = useState(false)
   const [importPreview, setImportPreview] = useState<ImportResult | null>(null)
   const [importing, setImporting] = useState(false)
+  const [messageApi, contextHolder] = message.useMessage()
 
   const reload = useCallback(async () => {
     setLoading(true)
@@ -223,7 +225,7 @@ export default function StoresPage() {
     store: StoreItem, patch: { brandCode?: string | null; levelCode?: string | null },
   ): Promise<void> => {
     await dataSend(`/store-profiles/${encodeURIComponent(store.code)}`, 'PUT', patch)
-    message.success('已保存')
+    messageApi.success('已保存')
     await reload()
   }
 
@@ -240,7 +242,7 @@ export default function StoresPage() {
   const runImport = async (dryRun: boolean) => {
     const parsed = parseCsv(csvText)
     if (parsed.error !== null) {
-      message.error(parsed.error)
+      messageApi.error(parsed.error)
       return
     }
     setImporting(true)
@@ -250,13 +252,13 @@ export default function StoresPage() {
       })
       setImportPreview(result)
       if (dryRun) {
-        message.success(`预检完成：${result.applied} 行可写入，${result.errors} 行错误，${result.skipped} 行跳过`)
+        messageApi.success(`预检完成：${result.applied} 行可写入，${result.errors} 行错误，${result.skipped} 行跳过`)
       } else {
-        message.success(`已导入：${result.applied} 行写入，${result.errors} 行错误，${result.duplicates} 行重复`)
+        messageApi.success(`已导入：${result.applied} 行写入，${result.errors} 行错误，${result.duplicates} 行重复`)
         await reload()
       }
     } catch (e) {
-      message.error(e instanceof Error ? e.message : String(e))
+      messageApi.error(e instanceof Error ? e.message : String(e))
     } finally {
       setImporting(false)
     }
@@ -267,6 +269,7 @@ export default function StoresPage() {
 
   return (
     <Card>
+      {contextHolder}
       {error ? <Alert type="error" showIcon message={error} style={{ marginBottom: 12 }} /> : null}
       {options?.degraded ? (
         <Alert
@@ -311,6 +314,7 @@ export default function StoresPage() {
                 canEdit={canEdit}
                 onAssign={(code) => assignProfile(r, { brandCode: code })}
                 onCreate={createBrand}
+                onError={(m) => messageApi.error(m)}
               />
             ),
           },
@@ -326,6 +330,7 @@ export default function StoresPage() {
                 canEdit={canEdit}
                 onAssign={(code) => assignProfile(r, { levelCode: code })}
                 onCreate={createLevel}
+                onError={(m) => messageApi.error(m)}
               />
             ),
           },
