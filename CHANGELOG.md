@@ -11,6 +11,10 @@
 
 ## [Unreleased]
 
+## [0.402.1](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.402.0...v0.402.1) - 2026-11-27
+- 【修复】data: 回填执行体在无 docker 的 worker 里跑不起来——加进程 env / 直连回落 ([#2916](https://github.com/MYTech-Co-LTD/platform-core/pull/2916), [71e3c43](https://github.com/MYTech-Co-LTD/platform-core/commit/71e3c437f3e565cf90bdd8f98bb9fe0938ed281d))
+
+
 ## [0.402.0](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.401.0...v0.402.0) - 2026-11-27
 - 【新增】data: 夜间回填切片——长驱动改 30 分钟一轮，进度从湖推导 ([#2915](https://github.com/MYTech-Co-LTD/platform-core/pull/2915), [2880dd2](https://github.com/MYTech-Co-LTD/platform-core/commit/2880dd2c54e5bd21f74446e193805fdd00cbed69))
 - 【新增】data: 对账「缺整天」自愈切到平台（#2742 第②刀） ([#2913](https://github.com/MYTech-Co-LTD/platform-core/pull/2913), [c5cb453](https://github.com/MYTech-Co-LTD/platform-core/commit/c5cb453c79bc5ccb4eba6419db81b62068cf3e44))
