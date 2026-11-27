@@ -11,6 +11,12 @@
 
 ## [Unreleased]
 
+## [0.402.0](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.401.0...v0.402.0) - 2026-11-27
+- 【新增】data: 夜间回填切片——长驱动改 30 分钟一轮，进度从湖推导 ([#2915](https://github.com/MYTech-Co-LTD/platform-core/pull/2915), [2880dd2](https://github.com/MYTech-Co-LTD/platform-core/commit/2880dd2c54e5bd21f74446e193805fdd00cbed69))
+- 【新增】data: 对账「缺整天」自愈切到平台（#2742 第②刀） ([#2913](https://github.com/MYTech-Co-LTD/platform-core/pull/2913), [c5cb453](https://github.com/MYTech-Co-LTD/platform-core/commit/c5cb453c79bc5ccb4eba6419db81b62068cf3e44))
+- 【优化】aftersales: 处理弹窗打开即预缓存图片附件 ([#2911](https://github.com/MYTech-Co-LTD/platform-core/pull/2911), [37bb123](https://github.com/MYTech-Co-LTD/platform-core/commit/37bb12337ad3c7ad554563c16c256364da4ba6e8))
+
+
 ## [0.401.0](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.400.3...v0.401.0) - 2026-11-27
 - 【新增】data: D4 收口——SLA 的 ERR 接 OO 告警，阈值按实测维持 ([#2907](https://github.com/MYTech-Co-LTD/platform-core/pull/2907), [48985bd](https://github.com/MYTech-Co-LTD/platform-core/commit/48985bd715f6fa1dcf19f133b677ca92d74d43c1))
 
