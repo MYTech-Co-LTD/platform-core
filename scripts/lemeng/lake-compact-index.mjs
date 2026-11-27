@@ -195,9 +195,10 @@ async function main() {
           const url = monthObjectUrl({ source: s.source, book, ym, sha: s.contract_sha })
           const st = await monthStats(w, url)
           if (st === null) {
-            const raw = await rawFileCount(w, rawMonthGlob({ source: s.source, book, ym }))
+            const pattern = rawMonthGlob({ source: s.source, book, ym })
+            const raw = await rawFileCount(w, pattern)
             if (raw === 0) {
-              if (!dry) await upsert(w, { source: s.source, book, ym, rows: 0, min: null, max: null, sha: s.contract_sha, key, status: 'empty' })
+              if (!dry) await upsert(w, { source: s.source, book, ym, rows: 0, min: null, max: null, sha: s.contract_sha, key, status: 'empty', pattern, files: 0 })
               written += 1
               console.log(JSON.stringify({ event: 'empty', source: s.source, book, ym, raw }))
             } else {
@@ -207,16 +208,20 @@ async function main() {
             continue
           }
           const status = st.rows > 0 ? 'ok' : 'empty'
+          const pattern = rawMonthGlob({ source: s.source, book, ym })
+          // 输入指纹：这一月是从哪个模式、多少个原始文件算出来的（写路径一变即可比对出来）。
+          let files = null
           // ③ parity：月文件 vs 原始同月（行数必须**精确**相等；金额比较留给既有 audit）
           if (!noParity && st.rows > 0) {
-            const rawN = await rawRowCount(w, rawMonthGlob({ source: s.source, book, ym }))
+            const rawN = await rawRowCount(w, pattern)
+            files = await rawFileCount(w, pattern)
             if (rawN !== st.rows) {
               parity.push({ source: s.source, book, ym, month: st.rows, raw: rawN })
               console.log(JSON.stringify({ event: 'parity_mismatch', source: s.source, book, ym, month: st.rows, raw: rawN }))
               continue // 不写索引（写了会让冷腿指向一个行数不对的月）
             }
           }
-          if (!dry) await upsert(w, { source: s.source, book, ym, rows: st.rows, min: st.min, max: st.max, sha: s.contract_sha, key, status })
+          if (!dry) await upsert(w, { source: s.source, book, ym, rows: st.rows, min: st.min, max: st.max, sha: s.contract_sha, key, status, pattern, files })
           written += 1
           console.log(JSON.stringify({ event: status, source: s.source, book, ym, rows: st.rows, min: st.min, max: st.max }))
         }
@@ -259,18 +264,20 @@ async function main() {
 
 /**
  * @param {Db} w
- * @param {{source:string,book:number|string,ym:string,rows:number,min:string|null,max:string|null,sha:string,key:string,status:string}} a
+ * @param {{source:string,book:number|string,ym:string,rows:number,min:string|null,max:string|null,sha:string,key:string,status:string,pattern?:string|null,files?:number|null}} a
  */
 async function upsert(w, a) {
   await w.query(
     `insert into data.lake_compact_index
-       (source, system_book, ym, rows, bytes, min_bizday, max_bizday, contract_sha, object_key, status, built_at)
-     values ($1,$2,$3,$4,null,$5,$6,$7,$8,$9, now())
+       (source, system_book, ym, rows, bytes, min_bizday, max_bizday, contract_sha, object_key, status, built_at,
+        input_pattern, input_files)
+     values ($1,$2,$3,$4,null,$5,$6,$7,$8,$9, now(), $10, $11)
      on conflict (source, system_book, ym) do update set
        rows=excluded.rows, min_bizday=excluded.min_bizday, max_bizday=excluded.max_bizday,
        contract_sha=excluded.contract_sha, object_key=excluded.object_key,
-       status=excluded.status, built_at=excluded.built_at`,
-    [a.source, a.book, a.ym, a.rows, a.min, a.max, a.sha, a.key, a.status],
+       status=excluded.status, built_at=excluded.built_at,
+       input_pattern=excluded.input_pattern, input_files=excluded.input_files`,
+    [a.source, a.book, a.ym, a.rows, a.min, a.max, a.sha, a.key, a.status, a.pattern ?? null, a.files ?? null],
   )
 }
 

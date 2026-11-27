@@ -28,6 +28,11 @@ create table if not exists data.lake_compact_index (
 
 -- 存量库的幂等补齐（新库上面已含）：
 alter table data.lake_compact_index add column if not exists status text not null default 'ok';
+-- 输入指纹（2026-11-27，推广 #2 的教训）：索引必须能回答「这一月是从**哪些文件**算出来的」。
+-- 没有它，写路径一变（例如某天起改写成 chunk=segN.parquet），旧行仍然 'ok'，而月文件已经不完整
+-- —— 这正是 #2666 的形状。带指纹 ⇒ 「陈旧」可判，而不是只能靠人工 parity。
+alter table data.lake_compact_index add column if not exists input_pattern text;
+alter table data.lake_compact_index add column if not exists input_files integer;
 alter table data.lake_compact_index drop constraint if exists lake_compact_index_rows_check;
 alter table data.lake_compact_index add constraint lake_compact_index_rows_check check (rows >= 0);
 
