@@ -84,7 +84,7 @@ permissions:
 | 端点 | scope | 说明 |
 |---|---|---|
 | `GET /tickets` | `aftersales:manage` | 扩筛选与行字段（见 2.2） |
-| `GET /tickets/counts`（新） | `aftersales:manage` | 状态全局计数 + 品牌跟随状态计数 |
+| `GET /tickets/counts`（新） | `aftersales:manage` | 状态全局计数 + 品牌最末级（跟随状态/搜索/时间，排除品牌自身） |
 | `GET /tickets/:id` | `aftersales:manage` | 详情补品牌/报损金额/基本数量/基本单价/售后意见/水印时间 |
 | `POST /tickets/:id/quote`（新） | `aftersales:manage` | 金额预览，**只算不写**；与处理共用 `resolveProcess` |
 | `POST /tickets/:id/process` | `aftersales:manage` | 售后意见必填（≤500）、水印时间必填；不再收/写 `remark` |
@@ -127,19 +127,31 @@ permissions:
 
 ### 2.3 `GET /tickets/counts`
 
-响应：
+响应（2026-11-27 起品牌为动态选项）：
 
 ```json
 {
   "status": { "all": 123, "pending": 4, "completed": 110, "cancelled": 9 },
-  "brand":  { "xiongmao": 80, "pptd": 30, "none": 13 }
+  "brand": {
+    "options": [ { "code": "xiongmao", "name": "熊喵", "count": 80 } ],
+    "unclassified": 13,
+    "showFilter": true,
+    "degraded": false
+  }
 }
 ```
 
-- `status` 计数是**全局的**：只按 org，不受品牌、搜索、时间范围影响。
-- `brand` 计数**只跟随 `status`**：传了 `status` 就统计该状态下的品牌分布，不跟随品牌本身
-  或其他搜索条件（否则点一个品牌后另一个品牌的计数会归零，胶囊没法再点回去）。
-- `brand.none` 可选返回（无品牌前缀门店数），UI 不展示为胶囊。
+**筛选层级（#2919）**：
+
+- `status`：顶层，计数**全局**（只按 org，不受任何筛选影响）。
+- 搜索 / 处理时间：中间层。
+- **`brand`：最末级**。品牌计数 = `status + code/product/store/relatedOrder/opinion/
+  processedFrom/processedTo`，**排除 brand 自身**——选中一个品牌时，其他品牌的数字仍可点、
+  不会全部归零；未分类（`brand_code=''`）同样走上游条件。
+- 品牌点击只刷新列表，**不重新拉计数**；搜索/状态/时间变化才刷新计数。
+- `options` = 品牌字典（含停用，0 也保留）∪ 上游计数 >0 的历史品牌；
+  `showFilter` 用**全局**品牌/未分类/历史品牌判断，搜索不会让整行忽隐忽现。
+- 视图缺失/查询失败 ⇒ 品牌面 `degraded=true`，状态计数照常返回，不是 500。
 
 ### 2.4 `POST /tickets/:id/quote`
 

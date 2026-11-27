@@ -163,11 +163,15 @@ describe('工单列表', () => {
     })
   })
 
-  it('品牌胶囊：点击后查询带 brand', async () => {
+  it('品牌胶囊：点击后查询带 brand；品牌计数不重拉（brand 不计入自己的计数）', async () => {
     renderPage()
     await waitFor(() => expect(screen.getByText('AS-00000001')).toBeInTheDocument())
+    await waitFor(() => expect(urls.some((u) => u.includes('/tickets/counts'))).toBe(true))
+    const countsBefore = urls.filter((u) => u.includes('/tickets/counts')).length
     fireEvent.click(screen.getByRole('button', { name: '熊喵 3' }))
     await waitFor(() => expect(urls.some((u) => u.includes('brand=xiongmao'))).toBe(true))
+    // 点品牌只刷新列表，不重新拉计数
+    expect(urls.filter((u) => u.includes('/tickets/counts')).length).toBe(countsBefore)
   })
 
   it('品牌只有 1 个且无未分类 ⇒ 不渲染品牌行（不放一个没用的胶囊）', async () => {
@@ -205,6 +209,8 @@ describe('工单列表', () => {
     fireEvent.change(screen.getByPlaceholderText('工单编号'), { target: { value: 'AS-9' } })
     fireEvent.click(screen.getByRole('button', { name: /搜\s*索/ }))
     await waitFor(() => expect(urls.some((u) => u.includes('code=AS-9'))).toBe(true))
+    // 品牌是最末级：搜索条件也要进入计数请求（不带品牌）
+    await waitFor(() => expect(urls.some((u) => u.includes('/tickets/counts?') && u.includes('code=AS-9'))).toBe(true))
     fireEvent.click(screen.getByRole('button', { name: /重\s*置/ }))
     await waitFor(() => {
       const last = [...urls].reverse().find((u) => u.includes('/tickets?'))

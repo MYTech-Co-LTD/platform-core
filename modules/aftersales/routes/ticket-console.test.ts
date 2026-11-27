@@ -271,7 +271,7 @@ describePg('工单页对齐无极（#2884）', () => {
     }
   })
 
-  it('GET /tickets/counts：状态全局、品牌只跟随 status', async () => {
+  it('GET /tickets/counts：状态全局、品牌跟随 status + 搜索 + 时间（最末级）', async () => {
     const res = await appManage.request('/tickets/counts')
     const body = (await res.json()) as {
       status: { all: number; pending: number; completed: number; cancelled: number }
@@ -299,6 +299,45 @@ describePg('工单页对齐无极（#2884）', () => {
     expect(opt(completed, 'xiongmao')).toBe(0)
 
     expect((await appManage.request('/tickets/counts?status=foo')).status).toBe(400)
+  })
+
+  it('品牌是最末级筛选：计数跟随搜索/时间，且排除 brand 自身', async () => {
+    type Counts = {
+      status: { all: number }
+      brand: { options: { code: string; name: string; count: number }[]; unclassified: number }
+    }
+    const get = async (qs: string) => {
+      const res = await appManage.request(`/tickets/counts?${qs}`)
+      expect(res.status, qs).toBe(200)
+      return (await res.json()) as Counts
+    }
+    const opt = (b: Counts, code: string) => b.brand.options.find((o) => o.code === code)?.count ?? 0
+
+    const all = await get('')
+    const banana = await get(`product=${encodeURIComponent('香蕉')}`)
+    // 搜索只命中品品甜香蕉那张：熊喵归零、品品甜 1、未分类 0
+    expect(opt(banana, 'pptd')).toBe(1)
+    expect(opt(banana, 'xiongmao')).toBe(0)
+    expect(banana.brand.unclassified).toBe(0)
+    // 状态计数仍全局
+    expect(banana.status.all).toBe(all.status.all)
+
+    // brand 参数被排除：带上 brand=pptd 不改变品牌分布（否则其他品牌会全部归零）
+    const bananaWithBrand = await get(`product=${encodeURIComponent('香蕉')}&brand=pptd`)
+    expect(opt(bananaWithBrand, 'pptd')).toBe(1)
+    expect(opt(bananaWithBrand, 'xiongmao')).toBe(0)
+
+    // 未分类跟随搜索
+    const orange = await get(`product=${encodeURIComponent('橙子')}`)
+    expect(orange.brand.unclassified).toBe(1)
+
+    // 处理时间范围同样进入品牌计数；pp 的 processed_at 是今天
+    const today = new Date().toLocaleDateString('sv-SE', { timeZone: 'Asia/Shanghai' })
+    const dated = await get(`processedFrom=${today}&processedTo=${today}`)
+    expect(opt(dated, 'pptd')).toBe(1)
+    expect(opt(dated, 'xiongmao')).toBe(0)
+    expect(dated.brand.unclassified).toBe(0)
+    expect(dated.status.all).toBe(all.status.all)
   })
 
   it('历史品牌（不在字典里）仍可筛/计数：禁用不删、历史不丢', async () => {

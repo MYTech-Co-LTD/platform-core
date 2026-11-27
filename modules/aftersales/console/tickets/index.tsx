@@ -76,14 +76,17 @@ export default function TicketsPage() {
     }
   }, [filters, page, size])
 
+  // 品牌是最末级筛选：品牌计数跟随状态 + 搜索 + 时间，但**排除 brand 自身**。
+  // 这个查询串在 brand 变化时保持不变 ⇒ 点品牌只刷新列表，不重拉计数；
+  // 搜索/状态/时间变化时它变化 ⇒ 计数跟着刷新。
+  const countsQuery = ticketQuery({ ...filters, brand: '' })
   const loadCounts = useCallback(async () => {
     try {
-      const qs = filters.status ? `?status=${filters.status}` : ''
-      setCounts(await apiGet<TicketCounts>(`/tickets/counts${qs}`))
+      setCounts(await apiGet<TicketCounts>(`/tickets/counts${countsQuery ? `?${countsQuery}` : ''}`))
     } catch {
       // 计数失败不阻断列表：胶囊上的数字可以暂时保留旧值（比整页报错更有用）。
     }
-  }, [filters.status])
+  }, [countsQuery])
 
   useEffect(() => { void load() }, [load])
   useEffect(() => { void loadCounts() }, [loadCounts])
