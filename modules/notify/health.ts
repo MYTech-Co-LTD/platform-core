@@ -3,6 +3,8 @@ import type { Pool } from 'pg'
 
 export type Health = {
   dead: number
+  /** 其中「永久性失败」（重投永远不会成功：收件人 OpenID 无效 / 模板缺配）——**不参与判红** */
+  deadPermanent: number
   stale: number
   workers: number
   oldestPendingSeconds: number
@@ -29,12 +31,30 @@ export const FAILED_LAST_HOUR_LIMIT = 50
  */
 export const DEAD_WINDOW_DAYS = 7
 
+/**
+ * 「永久性失败」的识别式（`notify.delivery.last_error`）。
+ *
+ * 为什么要把 dead 拆成两类（2026-11-28）：`dead` 里混着两种完全不同的东西——
+ *   · **可重试耗尽**（超时/5xx/限流打满）：说明「现在投不出去」，是健康面该报的；
+ *   · **永久性失败**（`errcode 40003` 收件人 OpenID 无效、`模板未配置 template_id`、渠道判 permanent）：
+ *     重投一万次也不会成功，它说的是**收件人数据/模板配置**有问题，不是投递能力有问题。
+ * 混在一起判的后果是实测的：4 条永久失败把 health 按红 7 天（`DEAD_WINDOW_DAYS` 只是把红推迟，
+ * 不是解决），一天 288 条 job_run 全红 ⇒ **告警疲劳**，真故障反而看不见。
+ * ⇒ 永久性失败仍**逐次打印**（可见），但只有当它**成规模**（超此上限）才判红——那时是系统性配置问题。
+ */
+export const DEAD_PERMANENT_PATTERN = 'errcode (40003|40013|42001|43004|48001)|permanent error|模板未配置 template_id'
+
+/** 永久性失败超过它 ⇒ 判红（单条/少量是数据问题，成规模才是系统性问题） */
+export const DEAD_PERMANENT_LIMIT = 50
+
 /** invalid 事件的容忍上限（模板轮换期会短暂出现，给一点余量） */
 export const EVENTS_INVALID_LIMIT = 5
 
 /** 1 = 不健康（窗口内有 dead / pending 超 10min / 无 worker 心跳 / 近 1 小时失败过多），0 = 干净 */
 export function healthVerdict(h: Health): 0 | 1 {
-  if (h.dead > 0 || h.stale > 0 || h.workers === 0) return 1
+  // 只看「可重试耗尽」那部分 dead：永久性失败（40003 / 模板缺配）单独按规模判，见 DEAD_PERMANENT_*。
+  if (h.dead - h.deadPermanent > 0 || h.stale > 0 || h.workers === 0) return 1
+  if (h.deadPermanent > DEAD_PERMANENT_LIMIT) return 1
   if (h.failedLastHour > FAILED_LAST_HOUR_LIMIT) return 1
   // 零收件人 / 零通道是**配置错误**，不是流量波动 ⇒ 一个也算红（不给阈值）
   if (h.eventsNoRecipients > 0 || h.eventsNoChannel > 0) return 1
@@ -47,6 +67,9 @@ export async function checkHealth(pool: Pool): Promise<Health> {
     select
       (select count(*)::int from notify.delivery
         where status='dead' and created_at > now()-(${DEAD_WINDOW_DAYS} || ' days')::interval) as dead,
+      (select count(*)::int from notify.delivery
+        where status='dead' and created_at > now()-(${DEAD_WINDOW_DAYS} || ' days')::interval
+          and coalesce(last_error,'') ~ '${DEAD_PERMANENT_PATTERN}') as "deadPermanent",
       (select count(*)::int from notify.delivery
         where status='pending' and created_at < now()-interval '10 minutes') as stale,
       (select count(*)::int from notify.worker_heartbeat

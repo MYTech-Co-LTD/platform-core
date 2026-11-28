@@ -2,14 +2,14 @@
 import { describe, it, expect, beforeAll, afterAll } from 'vitest'
 import { Pool } from 'pg'
 import { applyMigrations } from './test-util'
-import { DEAD_WINDOW_DAYS, FAILED_LAST_HOUR_LIMIT, checkHealth, healthVerdict, type Health } from './health'
+import { DEAD_PERMANENT_LIMIT, DEAD_WINDOW_DAYS, FAILED_LAST_HOUR_LIMIT, checkHealth, healthVerdict, type Health } from './health'
 
 const url = process.env.DATABASE_URL
 const describePg = url ? describe : describe.skip
 const ORG = 'org-health2'
 
 const clean = (over: Partial<Health> = {}): Health => ({
-  dead: 0, stale: 0, workers: 1,
+  dead: 0, deadPermanent: 0, stale: 0, workers: 1,
   oldestPendingSeconds: 0, failedLastHour: 0, channelErrors: 0,
   eventsNoRecipients: 0, eventsNoChannel: 0, eventsInvalid: 0,
   ...over,
@@ -21,6 +21,17 @@ describe('healthVerdict', () => {
     expect(healthVerdict(clean({ dead: 1 }))).toBe(1)
     expect(healthVerdict(clean({ stale: 1 }))).toBe(1)
     expect(healthVerdict(clean({ workers: 0 }))).toBe(1)
+  })
+
+  it('★ 永久性失败（40003 / 模板缺配）不判红，但成规模要判（2026-11-28）', () => {
+    // 单条 40003：收件人 OpenID 失效——数据问题，不该把健康面按红 7 天（实测一天 288 条 job_run 全红）。
+    expect(healthVerdict(clean({ dead: 1, deadPermanent: 1 }))).toBe(0)
+    expect(healthVerdict(clean({ dead: 4, deadPermanent: 4 }))).toBe(0)
+    // 可重试耗尽那部分照旧判红：dead=4 里只有 1 条是永久 ⇒ 还有 3 条是能力问题。
+    expect(healthVerdict(clean({ dead: 4, deadPermanent: 1 }))).toBe(1)
+    // 成规模（> DEAD_PERMANENT_LIMIT）⇒ 系统性配置问题，判红。
+    expect(healthVerdict(clean({ dead: DEAD_PERMANENT_LIMIT, deadPermanent: DEAD_PERMANENT_LIMIT }))).toBe(0)
+    expect(healthVerdict(clean({ dead: DEAD_PERMANENT_LIMIT + 1, deadPermanent: DEAD_PERMANENT_LIMIT + 1 }))).toBe(1)
   })
 
   it('近 1 小时失败超阈值 ⇒ 1；等于阈值 ⇒ 0', () => {

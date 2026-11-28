@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 // scripts/notify-health.mjs — 薄 CLI；判定与查询在 modules/notify/health.ts。
-// 退出码：0 干净；1 有 dead / pending > 10min / worker 心跳 > 2min；2 查不成账。
+// 退出码：0 干净；1 有「可重试耗尽」的 dead（永久性失败按规模判，见 health.ts）/ pending > 10min /
+//        worker 心跳 > 2min；2 查不成账。
 import { createRequire } from 'node:module'
 import { pathToFileURL } from 'node:url'
 import { checkHealth, healthVerdict } from '../modules/notify/health.ts'
@@ -16,7 +17,7 @@ if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) 
   try {
     const r = await checkHealth(pool)
     console.log(
-      `notify-health: dead=${r.dead} stale=${r.stale} workers=${r.workers} `
+      `notify-health: dead=${r.dead} deadPermanent=${r.deadPermanent} stale=${r.stale} workers=${r.workers} `
       + `oldestPending=${r.oldestPendingSeconds}s failedLastHour=${r.failedLastHour} `
       + `channelErrors=${r.channelErrors} `
       + `noRecipients=${r.eventsNoRecipients} noChannel=${r.eventsNoChannel} invalid=${r.eventsInvalid}`)

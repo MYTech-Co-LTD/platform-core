@@ -3,7 +3,7 @@ import { describe, it, expect } from 'vitest'
 import { healthVerdict, type Health } from '../modules/notify/health.ts'
 
 const clean = (over: Partial<Health> = {}): Health => ({
-  dead: 0, stale: 0, workers: 1,
+  dead: 0, deadPermanent: 0, stale: 0, workers: 1,
   oldestPendingSeconds: 0, failedLastHour: 0, channelErrors: 0,
   eventsNoRecipients: 0, eventsNoChannel: 0, eventsInvalid: 0,
   ...over,
