@@ -73,8 +73,13 @@
 - [x] **B2 第二阶段**（2026-11-25）：断言**按成本分档**——结构判据（读 `pg_get_viewdef` / 表取一行）
       留 5 分钟；全量证明（`org_valid_single`）与延迟探测（`detail_path_latency`）搬进
       `data.warehouse_assertions_heavy`（`7,37 * * * *`）。实测 114s → 5 分钟档约 5s
-- [ ] **B2 第三阶段**：chunk ≤3 分钟的可行性复评（order_event 窗口写死在模型里，再切要改语义
-      ⇒ 当前**以留槽为准**，不强切）；OO 侧给两条新 probe 各配一条规则
+- [x] **B2 第三阶段**（2026-11-28 收口）：
+      **① chunk 不再切**——留槽已解决问题，证据：tick p50 **38s→21s**、p95 **43s→23s**（11-24→11-28），
+      11-27/28 **零失败**；再切 chunk 要改 `order_event` 的窗口语义，收益不成比例。
+      **② 两条新 probe 不新建 OO 规则**——按 §1.5.3 与 Phase 1 先例（「判据接上即可见，缺的从来不是规则」），
+      桥 `oo-notify-bridge.sh` 通道② 消费 `verdict <> 'OK'`，新 check 自动覆盖。
+      **③ 反向测试已做**：`WIRE_ORG_VALID_SINGLE_SELFTEST=1` 注入 → OO `data_plane_probes` 里确有
+      `check=org_valid_single / verdict=ERR` 行（时间戳对得上执行时刻）⇒ 桥路径通
 - [ ] **C1–C6** 水位 / 幂等 / 热湖互补性回归
 - [x] **D1** SLA 事实源 `scripts/lemeng/sla.json`（产品/域/源/窗口/阈值）+ `check-data-lanes` 覆盖门禁（域缺条目/源 id 不存在/多出域 即红）
 - [x] **D2** `scripts/lemeng/sla-check.mjs`（只读测量，恒 exit 0）+ `data.sla_check`（seed disabled）+ 11 条纯函数测试
@@ -83,7 +88,8 @@
       **ERR 行投 OO `probe=sla`**（桥转企微，只投事实、不改判定/退出码）；阈值**按实测维持现值**
       ——真滞后 p95 全部低于阈值（10m 8.0 vs 10；1h 0.5–48.1 vs 75），唯一超阈的是真停摆。
       理由写进 `sla.json` 注释：不为了好看而调阈值
-- [ ] **G6** 48h soak
+- [ ] **G6** 48h soak（**未到期**：tick 自 11-27 00:00 零失败、SLA 自 11-27 13:00 零 ERR
+      ⇒ 最早 11-29 00:00（tick）/ 11-29 13:00（SLA）满 48h；到期前不翻绿）
 
 ### P0.5 物化水位门禁
 
