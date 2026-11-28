@@ -11,6 +11,10 @@
 
 ## [Unreleased]
 
+## [0.410.0](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.409.0...v0.410.0) - 2026-11-28
+- 【新增】aftersales: 商品搜索合并门店近30天历史名称（#2948） ([#2949](https://github.com/MYTech-Co-LTD/platform-core/pull/2949), [77c0697](https://github.com/MYTech-Co-LTD/platform-core/commit/77c0697402a46161d503b8bf804835d626a40ca1))
+
+
 ## [0.409.0](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.408.1...v0.409.0) - 2026-11-27
 - 【新增】aftersales: 人员身份绑定按渠道标签展示（#2945） ([#2946](https://github.com/MYTech-Co-LTD/platform-core/pull/2946), [44854fa](https://github.com/MYTech-Co-LTD/platform-core/commit/44854fafb0e1d4723519875cecc849ff1077ae1f))
 
