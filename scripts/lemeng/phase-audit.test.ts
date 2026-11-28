@@ -6,7 +6,7 @@ import { readFileSync, readdirSync } from 'node:fs'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { describe, expect, it } from 'vitest'
-import { CLASSIFY, classify, minutesOf, overlapsInClock } from './phase-audit.mjs'
+import { CLASSIFY, READERS, classify, minutesOf, minutesOfDay, overlapsInClock, scheduleOf } from './phase-audit.mjs'
 
 const HERE = dirname(fileURLToPath(import.meta.url))
 
@@ -61,5 +61,24 @@ describe('phase-audit · cron 与重叠', () => {
     const iL0 = CLASSIFY.findIndex((c) => String(c.match).includes('\\.l0'))
     expect(iSnap).toBeGreaterThanOrEqual(0)
     expect(iL0).toBeGreaterThan(iSnap)
+  })
+})
+
+describe('phase-audit · 时区换算与读侧', () => {
+  it('平台 job 的 UTC cron 换算成 CST 后比：19:30Z ⇒ 03:30 CST', () => {
+    expect([...minutesOfDay('30 19 * * *', 'UTC')]).toEqual(['03:30'])
+    expect([...minutesOfDay('30 18 * * *', 'UTC')]).toEqual(['02:30'])
+  })
+
+  it('console 的 CST cron 原样', () => {
+    expect([...minutesOfDay('50 8 * * *', 'Asia/Shanghai')]).toEqual(['08:50'])
+  })
+
+  it('小时范围解析：*/10 1-17 UTC ⇒ 9:02–1:52 CST 共 96 格', () => {
+    expect(minutesOfDay('2-59/10 1-17 * * *', 'UTC').size).toBe(17 * 6)
+  })
+
+  it('★ 每个声明的读侧 job 都必须能在 registry 里找到 cron（防表的键名腐化）', () => {
+    for (const r of READERS) expect(r.cron ?? scheduleOf(r.key), r.key).toBeTruthy()
   })
 })

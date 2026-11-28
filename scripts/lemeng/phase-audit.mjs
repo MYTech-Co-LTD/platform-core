@@ -48,6 +48,25 @@ export const CLASSIFY = [
 ]
 
 /**
+ * **读侧声明表**：平台 job → 它读哪几天 + 用什么手段避可变面。
+ *
+ * `days`：读的相对日集合（`null` = 全史）。`tz`：cron 的时区（平台 job 是 UTC）。
+ * `guard`：`closed` = 已用闭窗谓词（只读到「已闭窗」的边界前）；`sealed` = 只读封版天/月文件。
+ * ⚠️ 与 CLASSIFY 一样是**声明视图**：新增 job 必须在这里登记（或显式标 unknown）。
+ */
+export const READERS = [
+  { key: 'data.dbt_tick', days: [0, 1], tz: 'UTC', guard: 'closed', why: 'tick 只建今天（+昨天尾窗），闭窗谓词挡当前小时' },
+  { key: 'data.dbt_hourly_retail_derived', cron: '5 1-15 * * *', days: [0,1,2,3,4,5,6,7,8,9,10], tz: 'UTC', guard: 'closed', why: 'key 由 hourlyLaneJob 生成（源码里不是字面量）⇒ cron 在这里显式声明' },
+  { key: 'data.dbt_tables', days: null, tz: 'UTC', guard: 'closed', why: '全史 CTAS；读湖但走闭窗谓词' },
+  { key: 'data.dbt_tables_recon', days: null, tz: 'UTC', guard: null, why: '全史；**无闭窗谓词**（读源快照 + 构件）' },
+  { key: 'data.dbt_audit_a1', days: [3,4,5,6,7,8,9,10], tz: 'UTC', guard: null, why: '审计上界 T-3（audit_until_date），不读 T-1/T-2' },
+  { key: 'data.dbt_audit_window', days: [3,4,5,6,7,8,9,10], tz: 'UTC', guard: null },
+  { key: 'data.recon_restate', days: [3,4,5,6,7,8,9], tz: 'UTC', guard: null },
+  { key: 'data.lake_compact_index', days: [], tz: 'UTC', guard: 'sealed', why: '只读封版月文件与原始月内文件' },
+  { key: 'data.backfill_slice', days: [], tz: 'UTC', guard: null, why: '读历史（队列决定），与今日可变面无关' },
+]
+
+/**
  * 把一条管线名归类成「会重写哪几天」。
  * @param {string} id 管线 id
  * @returns {{days: number[], why: string}}
@@ -79,6 +98,51 @@ export function minutesOf(cron) {
   return [...out].sort((a, b) => a - b)
 }
 
+/**
+ * cron（含小时字段）→ 「HH:MM」集合，按给定时区解释。
+ * 平台 job 的 cron 是 UTC，console 是 Asia/Shanghai —— 必须先换算再比，否则差 8 小时。
+ * @param {string} cron @param {string} tz @returns {Set<string>}
+ */
+export function minutesOfDay(cron, tz) {
+  const [mm, hh] = String(cron ?? '').trim().split(/\s+/)
+  const ms = minutesOf(mm)
+  const hs = hourSet(hh)
+  /** @type {Set<string>} */
+  const out = new Set()
+  for (const h of hs) for (const m of ms) out.add(`${String(h).padStart(2, '0')}:${String(m).padStart(2, '0')}`)
+  if (tz === 'UTC') {
+    /** @type {Set<string>} */
+    const cst = new Set()
+    for (const k of out) {
+      const [h, m] = k.split(':').map(Number)
+      cst.add(`${String((h + 8) % 24).padStart(2, '0')}:${String(m).padStart(2, '0')}`)
+    }
+    return cst
+  }
+  return out
+}
+
+/** cron 小时字段 → 小时集合。 @param {string} f @returns {number[]} */
+function hourSet(f) {
+  if (!f || f === '*') return Array.from({ length: 24 }, (_, i) => i)
+  /** @type {Set<number>} */
+  const out = new Set()
+  for (const part of String(f).split(',')) {
+    const m = /^(\*|\d+(?:-\d+)?)(?:\/(\d+))?$/.exec(part)
+    if (!m) continue
+    const step = Number(m[2] ?? 1)
+    let lo = 0
+    let hi = 23
+    if (m[1] !== '*') {
+      const [a, b] = m[1].split('-').map(Number)
+      lo = a
+      hi = b ?? a
+    }
+    for (let i = lo; i <= hi; i += step) out.add(i)
+  }
+  return [...out]
+}
+
 /** @param {number[]} a @param {number[]} b @param {number} tol 相差 ≤tol 分钟算重叠 @returns {boolean} */
 export function overlapsInClock(a, b, tol = 2) {
   for (const x of a) for (const y of b) if (Math.abs(x - y) <= tol) return true
@@ -105,6 +169,16 @@ export function readWriteSide(root) {
     }
   }
   return out
+}
+
+/** 从 registry 源码里取某 key 的 cron（只读；避免本脚本依赖数据库）。 @param {string} key @returns {{cron:string}|null} */
+export function scheduleOf(key) {
+  const f = join(ROOT, 'apps/server/src/scheduler/registry.ts')
+  if (!existsSync(f)) return null
+  const src = readFileSync(f, 'utf8')
+  const re = new RegExp(`key: '${key.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}'[\\s\\S]{0,3000}?cron: '([^']+)'`)
+  const m = re.exec(src)
+  return m ? { cron: m[1] } : null
 }
 
 function main() {
@@ -136,12 +210,32 @@ function main() {
 
   const unknown = writers.filter((w) => w.why.startsWith('unknown'))
 
+  // ③ 读侧求交：读窗口 × 可变面 × 时钟重叠，且读侧没有声明 mitigation
+  /** @type {any[]} */
+  const conflicts = []
+  for (const r of READERS) {
+    const sched = r.cron ? { cron: r.cron } : scheduleOf(r.key)
+    if (!sched) continue
+    const rMinutes = minutesOfDay(sched.cron, r.tz ?? 'UTC')
+    const rDays = r.days
+    for (const w of mutables) {
+      const shareDay = rDays === null || w.days.some((d) => rDays.includes(d))
+      if (!shareDay) continue
+      const wMinutes = minutesOfDay(w.cron, 'Asia/Shanghai')
+      const clockHit = [...rMinutes].some((k) => wMinutes.has(k))
+      if (!clockHit) continue
+      if (r.guard === 'closed' || r.guard === 'sealed') continue
+      conflicts.push({ reader: r.key, readerCron: sched.cron, writer: `${w.book}/${w.id}`, writerCron: w.cron, days: w.days })
+    }
+  }
+
   if (json) {
     console.log(JSON.stringify({
       writers: writers.length,
       unknown: unknown.map((u) => `${u.book}/${u.id}`),
       mutableFaces: mutables.map((w) => ({ book: w.book, id: w.id, cron: w.cron, days: w.days })),
       crowdedMinutes: crowded.map(([m, v]) => ({ minute: m, n: v.length, who: v })),
+      conflicts,
     }, null, 2))
     return
   }
@@ -157,6 +251,8 @@ function main() {
   for (const w of mutables) console.log(`   ${String(w.days.map((d) => 'T-' + d)).padEnd(14)} ${w.book}/${w.id}（${w.cron}）`)
   console.log('  ── ② 最拥挤的 CST 分钟（≥3 条会重写数据同时触发）')
   for (const [m, v] of crowded) console.log(`   第 ${String(m).padStart(2)} 分: ${v.length} 条 — ${v.slice(0, 4).join(' / ')}${v.length > 4 ? ' …' : ''}`)
+  console.log(`  ── ③ 读侧求交：无 mitigation 的冲突 ${conflicts.length} 组`)
+  for (const c of conflicts) console.log(`   ${c.reader}（${c.readerCron}）↔ ${c.writer}（${c.writerCron}，重写 T-${c.days.join('/T-')}）`)
 }
 
 if (process.argv[1] && import.meta.url === new URL(`file://${process.argv[1]}`).href) main()
