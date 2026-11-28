@@ -93,38 +93,77 @@
 
 ### P0.5 物化水位门禁
 
-> **2026-11-28 设计草案（未开工，待裁）**——先把「内容水位」是什么钉住，否则 S1–S9 无从谈起。
->
-> **要解决的问题**：现在每个域到点就整轮重建，不管源端有没有新数据。拿「无变化」的日子跑全量，
-> 既是成本也是**可变面的制造机**（时序方法论 §1 ② 的频率维）。
->
-> **内容水位 = 源端能自己给出的「这一批数据变过没有」的证据**，三档强度（由强到弱）：
->
-> | 档 | 判据 | 例子 | 可用性 |
-> |---|---|---|---|
-> | A | 源端提供版本/修订戳 | `last_edit_time` / `update_time` / ETag | 最好，**要先逐源确认有没有** |
-> | B | 源端返回行数或合计 | 预聚合端点的 `total_count` | 便宜，但「改了值不改行数」看不出来 |
-> | C | 我们自己算的内容指纹 | 上一批文件的 `count(*) + sum(金额列)` | 兜底，**只能事后发现**，省不了这一轮 |
->
-> **前置取证（S1 之前必须先做）**：逐源确认它能给 A / B / C 哪一档，**能不能给**由接口实测决定，
-> 不许按文档假设（案例 27：契约写「T-1 有数据」，实测恰好相反）。
->
-> **默认值必须 fail-open**：拿不到水位 ⇒ 照常重建（`wm_kind='always'`）。**绝不能**因为读不到水位就跳过——
-> 那是把「不知道」当成「没变」。
->
-> **与 P0 车道的关系**：10m 车道（`fct_retail_sale`）**不参与**（数据一直在变，热层已是最便宜路径，见 §2 边界）；
-> 先只在 1h 车道的域上试点，取「A 档 + 每日强制 build」的组合。
+> **2026-11-28 设计定稿（未开工）**——经过实测，草案的两条前提被推翻，方案改成下面这版。
+> 上一版（「跳/不跳」二值门禁 + 自建水位表 + A/B/C 三档自由选）**作废**，不要照着做。
 
+**起点：钱在小时车道。** `platform.job_run` 近两天成功运行折算日均：
+`dbt_tick` ≈ 40 min、**`dbt_hourly_*`（13 个作业）≈ 133 min**、`dbt_tables` ≈ 18 min。
+小时车道占物化算力约 70%，且增量 mart 的窗口是 **10 天**（`incremental_cutoff(10)` =
+`max(bizday in mart) − 10 days`），不是常量 7 天。
 
-- [ ] **S1** 水位表（`source_watermark` / `build_watermark`）
-- [ ] **S2** 内容水位清单（每域一个 `wm_kind`，默认 `always`）
-- [ ] **S3** 门禁脚本（fail-open）
-- [ ] **S4** 跳过记账（`skipped_no_change`）
-- [ ] **S5** 时间敏感 mart 排除
-- [ ] **S6** 每日强制 build
-- [ ] **S7** 观测与告警
-- [ ] **S8** A/B 对照（1 周）
-- [ ] **S9** 回滚开关
+#### 实测一：引擎已经有「变化探测」（`src.changed`，duckle 0.7.4 实查目录）
+
+`src.changed`「Changed? (remote poll)」在生产 console 里 **available**，且真机跑通：
+- `s3://` 对对象 HEAD、listing 模式扫前缀、`https://` HEAD（可带 API key header）；吐 `uri / size / modified_at / etag / fingerprint / status`；
+- **无变化是 `unchanged` 一等状态**（实测 `0 of 1 entry changed (1 unchanged)`），不是空成功；
+- **指纹保守**：缺失/读不到 ⇒ 记 CHANGED（正好是我们要的 fail-open）；
+- 位置只在整轮成功时推进。
+
+⇒ **探测不该自建**（重复引擎能力 = #917 那类事故）。原草案 S1/S3 的探测部分作废。
+
+#### 实测二：ETag 不能判语义变化——每个分区都带 `batch_id`
+
+`inventory_snapshot` / 3120 / bizday=2026-11-26，每小时 :12 被 `l0` 重写：
+
+| 时刻 (UTC) | mtime | size | etag | 业务列指纹 |
+|---|---|---|---|---|
+| 10:09 | 09:15:15 | 126506 | `514f36ac…` | — |
+| 10:21 | 10:13:06 | 126506 | `791f19c9…` | 4208 / `2773ddab…` |
+| 11:13 | 11:13:08 | 126506 | `f14ec5dc…` | — |
+| 11:19 | — | — | — | **4208 / `2773ddab…`（没变）** |
+
+⇒ **每轮重写 ETag 必变、业务内容一次都没变**。机制在载荷里：23 列的第一列是
+`batch_id`（值形如 `iv-3120-inventory_snapshot-20261128T101204Z`），随每次采集变。
+「ETag 是 32 位 hex（像内容 MD5）」这个观察是真的，但**内容里含 run 变量**，所以它等于重写戳。
+
+两条连带结论：
+- `batch_id` **不能删**（全仓 853 处引用，staging 去重与唯一键断言都靠它）⇒ 语义水位只能自算；
+- `count(*)` **不能当水位**（本例重写前后都是 4208 行）——现有 `data.source_day_fingerprint`
+  正好瞎在这个点上，**必须先修它**，否则 P0.5 建在假绿仪表上。
+
+#### 三段架构（各段都不可替代）
+
+| 段 | 用什么 | 档 | 为什么不能省 |
+|---|---|---|---|
+| 廉价前置过滤 | `src.changed`（listing，per 账套） | **②引擎有、本环境已跑通探测侧**（写的侧未验） | 稳态下每天只有 2–3 天被重写，其余 7 天不必重算指纹 |
+| 语义判定 | **业务列指纹**：`md5(string_agg(concat_ws('\|', columns(* exclude (batch_id))), '\|' order by c))` | **③结构性自建** | ETag 被 `batch_id` 打死；行数不是语义 |
+| 决策与记账 | `materialize.sh` + `data.build_watermark` | **③自建** | 引擎不管 dbt 的窗口（ADR-0014：duckle 只调度自己的管线） |
+
+指纹成本实测：4208 行 ≈ 250 ms（含连接开销）。`columns(* exclude (…))` 让源端加列不用改 SQL，
+但**新增的 run 变量列会被默认算进去** ⇒ 排除清单要显式配置 + 护栏测试。
+
+#### 门禁语义：改「窗口下界」，不是「跳/不跳」
+
+窗口下界 = 最早「业务指纹变了」的 bizday，再夹到 `[mart 下界, 上界]`。
+整窗都没变 且 上次构建成功 ⇒ skip（记 `skipped_no_change`，exit 0）。
+inventory 的可变面只有 T-2（l0 每小时）+ T-3（catchup）⇒ **10 天 → 2 天，省约 80% 的湖扫描与落盘**。
+
+**fail-open 四条**（缺一条就不许上线）：
+1. 探测读不到 ⇒ 当作变了；2. 水位缺失/超龄 ⇒ 照常全窗重建；3. skip 必须留行（否则「跳过」与「没跑」无法区分）；
+4. 连续 skip 有上限，到点强制重建一次。
+
+**不做什么**：不给 10m 车道做门禁（语义就是每轮重建）；不自写 S3 HEAD 客户端；不用 `count(*)` 当水位；
+不改 `batch_id`（契约变更，另案）。
+
+- [ ] **S0** 前置修正：`data.source_day_fingerprint` 的 `rows` 升级为 `content_hash`（排除清单 + 护檻测试）
+- [ ] **S1** 探针管线：`src.changed` listing over `lemeng/<source>/system_book=*/bizday=*`，per 账套
+- [ ] **S2** `data.source_watermark`（source, book, bizday, content_hash, observed_at，幂等 upsert）
+- [ ] **S3** `incremental_cutoff(days, start?)` 加可选起点（不传 = 原 `mart_max−days`）
+- [ ] **S4** `materialize.sh` hourly 档读水位算 `window_start` 并注入（fail-open）
+- [ ] **S5** skip 记账 + 连续 skip 上限 + 时间敏感 mart 排除清单
+- [ ] **S6** A/B 一周（inventory）：窗口天数、skip 次数、mart 行级一致性零差异
+- [ ] **S7** 扩面 `retail_derived`（先过 §7 审计判断，它依赖热层）
+- [ ] **S8** 回滚开关（水位失效即退回全窗）
 
 ### P1 不可变微批 + manifest（P0 验收后）
 
