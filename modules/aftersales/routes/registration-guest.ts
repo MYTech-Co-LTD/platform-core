@@ -202,42 +202,57 @@ export function registerRegistrationGuest(r: ModuleHono, ctx: RouteCtx): void {
     })
   })
 
-  // ── 选商品（按门店历史订单）──────────────────────────────────────────────
-  // 商品名称会变，但结算行仍保留历史 item_name + item_code。已知门店时，商品搜索
-  // = 当前档案 ∪ 该店近 N 天结算行名称/编码，按 item_code 去重；最终仍回填 code。
+  // ── 选商品（按门店 / 全门店历史订单）────────────────────────────────────
+  // 商品名称会变，但结算行仍保留历史 item_name + item_code。商品搜索
+  // = 当前档案 ∪ 结算行近 N 天的名称/编码，按 item_code 去重；最终仍回填 code。
+  //   · 带 storeCode：只搜该店（必须在本人可见门店内，越权 403）；
+  //   · 不带 storeCode：在「本人可见门店集合」内搜（不是全租户——与订单列表同一授权面）。
   // 时间窗必须与 /guest/settlement-orders 一致（默认 30 天），否则会出现
   // 「搜到历史名 → 选中 → 订单列表为空」的错位。
+  //
+  // 查询形状：历史名/别名在 agg CTE 里一次聚合后 left join，**不用相关子查询**。
+  // 相关子查询把 plan cost 抬到 100 万量级 ⇒ 每次执行触发 JIT 编译（生产实测多 ~400 ms），
+  // 索引省下的时间全被吃掉；join 版 cost 回到 ~100，JIT 不触发（实测 53 ms vs 459 ms）。
   r.get('/guest/settlement-products', async (c) => {
     const identity = c.get('identity')
     const org = identity.orgId
     const storeCode = (c.req.query('storeCode') ?? '').trim()
-    if (!storeCode) return c.json({ error: 'STORE_CODE_REQUIRED' }, 400)
     const q = (c.req.query('q') ?? '').trim()
     if (!q) return c.json({ error: 'QUERY_REQUIRED' }, 400)
 
     // 与提单/订单列表同一归属执法：只能搜自己有资格的门店。
     const myStores = await myStoreCodes(ctx, org, identity)
-    if (!myStores.includes(storeCode)) {
+    if (storeCode && !myStores.includes(storeCode)) {
       return c.json({ error: 'STORE_NOT_AUTHORIZED' }, 403)
     }
 
     const daysRaw = Number(c.req.query('days') ?? 30)
     const days = Number.isFinite(daysRaw) ? Math.min(Math.max(Math.trunc(daysRaw), 1), 90) : 30
     const like = `%${escapeLike(q)}%`
+    // 未指定门店时的搜索面 = 本人可见门店集合（空集合 ⇒ 只有档案命中，不回全租户历史）
+    const storeScope: string | string[] = storeCode || myStores
 
     const res = await ctx.pool.query(
       `with hist as (
          select item_code, item_name, max(order_bizday) as last_day
            from data.dim_settlement_order_line
-          where org = $1 and store_code = $2
+          where org = $1
+            and ${storeCode ? 'store_code = $2' : 'store_code = any($2::text[])'}
             and order_bizday >= current_date - $3::int
             and item_name is not null and item_name <> ''
           group by item_code, item_name
        ),
-       hist_hits as (
-         select distinct item_code
+       agg as (
+         select item_code,
+                (array_agg(item_name order by last_day desc))[1] as hist_name,
+                array_agg(distinct item_name) as aliases
            from hist
-          where item_name ilike $4 or item_code ilike $4
+          group by item_code
+       ),
+       hist_hits as (
+         select item_code
+           from agg
+          where hist_name ilike $4 or item_code ilike $4
        ),
        arch as (
          select item_code, bar_code, name, spec, unit_name, sale_cease, eliminate
@@ -251,21 +266,14 @@ export function registerRegistrationGuest(r: ModuleHono, ctx: RouteCtx): void {
        )
        select c.item_code,
               a.bar_code, a.spec, a.unit_name, a.sale_cease, a.eliminate,
-              coalesce(a.name, (
-                select h.item_name from hist h
-                 where h.item_code = c.item_code
-                 order by h.last_day desc
-                 limit 1
-              )) as name,
-              (
-                select array_agg(distinct h.item_name)
-                  from hist h where h.item_code = c.item_code
-              ) as aliases
+              coalesce(a.name, g.hist_name) as name,
+              coalesce(g.aliases, '{}'::text[]) as aliases
          from codes c
          left join arch a on a.item_code = c.item_code
+         left join agg g on g.item_code = c.item_code
         order by name, c.item_code
         limit 100`,
-      [org, storeCode, days, like],
+      [org, storeScope, days, like],
     )
     const items = res.rows.map((p) => ({
       code: String(p.item_code),
@@ -280,6 +288,8 @@ export function registerRegistrationGuest(r: ModuleHono, ctx: RouteCtx): void {
         : [],
     }))
     // 搜索面只取前 100 个候选；`total` 即本次返回数，避免移动端继续翻页（搜索词应收窄）。
+    // ⚠️ 全门店搜索命中面更大：这里是「按名称排序后截断」，搜到 100 名以后的历史名不会出现——
+    // 前端应引导用更具体的词，而不是把 100 当成完整结果。
     return c.json({ items, total: items.length, page: 1, size: items.length })
   })
 

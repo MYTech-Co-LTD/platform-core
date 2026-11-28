@@ -315,20 +315,29 @@ describe('GET /guest/products', () => {
 
 // ── GET /guest/stores（M3b-2 增补；spec §3.2）───────────────────────────────
 describe('GET /guest/settlement-products', () => {
-  async function seedHistory(): Promise<void> {
-    await seedMe(['101'])
-    await pool.query(
-      `insert into data.dim_item(org, item_code, name, unit_name, source_book, snapshot)
-       values ($1,'3001','苹果','箱','3120',current_date)`, [ORG])
+  async function seedHistory(
+    storeCode = '101',
+    itemCode = '3001',
+    itemName = '红富士苹果',
+    orderNo = 'MO-OLD-1',
+  ): Promise<void> {
     await pool.query(
       `insert into data.dim_settlement_order_line(
          org, source, store_code, store_name, order_no, order_bizday, order_time,
          item_code, item_name, line_key, quantity, money, price_minor)
-       values ($1,'transfer','101','店A','MO-OLD-1',current_date - 5,null,
-               '3001','红富士苹果','0',10,50,500)`, [ORG])
+       values ($1,'transfer',$2,'店A',$3,current_date - 5,null,
+               $4,$5,'0',10,50,500)`, [ORG, storeCode, orderNo, itemCode, itemName])
+  }
+
+  async function seedArchive(): Promise<void> {
+    await seedMe(['101'])
+    await pool.query(
+      `insert into data.dim_item(org, item_code, name, unit_name, source_book, snapshot)
+       values ($1,'3001','苹果','箱','3120',current_date)`, [ORG])
   }
 
   it('★ 当前名称 / 历史名称 / 编码都命中同一个 item_code，并带 aliases', async () => {
+    await seedArchive()
     await seedHistory()
     const get = async (q: string) => {
       const res = await app().request(`/guest/settlement-products?storeCode=101&q=${encodeURIComponent(q)}`)
@@ -345,14 +354,26 @@ describe('GET /guest/settlement-products', () => {
     }
   })
 
+  it('不指定门店 ⇒ 在本人可见门店内搜历史名，不越权到别的门店', async () => {
+    await seedArchive()
+    await seedHistory() // 101：本人可见
+    await seedHistory('102', '3002', '红富士苹果', 'MO-OLD-2') // 他人门店，结果里不能出现
+    const body = (await (await app().request(
+      '/guest/settlement-products?q=' + encodeURIComponent('红富士'))).json()) as {
+      items: Array<{ code: string }>
+    }
+    expect(body.items.map((i) => i.code)).toEqual(['3001'])
+  })
+
   it('未授权门店 403；q 空 400；超 30 天的历史名不出现', async () => {
+    await seedArchive()
     await seedHistory()
     expect((await app().request('/guest/settlement-products?storeCode=102&q=苹果')).status).toBe(403)
     expect((await app().request('/guest/settlement-products?storeCode=101')).status).toBe(400)
     await pool.query(
       `update data.dim_settlement_order_line set order_bizday = current_date - 40 where org=$1`, [ORG])
     const body = (await (await app().request(
-      '/guest/settlement-products?storeCode=101&q=' + encodeURIComponent('红富士'))).json()) as {
+      '/guest/settlement-products?q=' + encodeURIComponent('红富士'))).json()) as {
       items: unknown[]
     }
     expect(body.items).toEqual([])
