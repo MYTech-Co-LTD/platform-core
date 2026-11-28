@@ -11,6 +11,11 @@
 
 ## [Unreleased]
 
+## [0.414.0](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.413.0...v0.414.0) - 2026-11-28
+- 【新增】data: 可变窗口从「声明」变成「测量」——每日记湖日文件指纹 ([#2972](https://github.com/MYTech-Co-LTD/platform-core/pull/2972), [538dc78](https://github.com/MYTech-Co-LTD/platform-core/commit/538dc7860f77803860e845e866e2b2f056017c0a))
+- 【修复】data: 相位审的「可变面」声明逐个核对管线定义——6 条里 4 条是错的 ([#2969](https://github.com/MYTech-Co-LTD/platform-core/pull/2969), [f454b25](https://github.com/MYTech-Co-LTD/platform-core/commit/f454b25a2f99ccd8aba50b55639c4148850e3b8c))
+
+
 ## [0.413.0](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.412.0...v0.413.0) - 2026-11-28
 - 【新增】data: 相位审计进门禁——读侧缺避让手段且与可变面相交即红 ([#2967](https://github.com/MYTech-Co-LTD/platform-core/pull/2967), [da65a9e](https://github.com/MYTech-Co-LTD/platform-core/commit/da65a9eb6d07bd6607bfbba75b05117a7be6021f))
 
