@@ -216,7 +216,7 @@ function main() {
   for (const r of READERS) {
     const sched = r.cron ? { cron: r.cron } : scheduleOf(r.key)
     if (!sched) continue
-    const rMinutes = minutesOfDay(sched.cron, sched.tz)
+    const rMinutes = minutesOfDay(sched.cron, r.tz ?? 'UTC')
     const rDays = r.days
     for (const w of mutables) {
       const shareDay = rDays === null || w.days.some((d) => rDays.includes(d))
