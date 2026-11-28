@@ -502,7 +502,14 @@ async function checkCompactParity(pool) {
     )
     heads = r.rows.map((/** @type {any} */ x) => ({ ...x, rows: Number(x.rows) }))
   } catch (e) {
-    return { check: 'compact_parity', ok: true, verdict: 'OK', detail: `OK 未启用压缩（索引表不可读：${msg(e).slice(0, 60)}）` }
+    // ⚠️ 只有「表还不存在」才算「未启用压缩」（新实例首装）。**其它错误一律 UNKNOWN**：
+    // 2026-11-28 实测踩过——DDL 加了 `input_pattern` 列但没在生产库执行，本检查查询报
+    // `column "input_pattern" does not exist`，被这条 catch 兜成 OK ⇒ **假绿**。
+    // 这正是本文件自己的红线（「判不了 ≠ 没问题」），不能在这里破例。
+    if (/does not exist/i.test(msg(e)) && /relation/i.test(msg(e))) {
+      return { check: 'compact_parity', ok: true, verdict: 'OK', detail: 'OK 未启用压缩（索引表不存在）' }
+    }
+    return { check: 'compact_parity', ok: true, verdict: 'UNKNOWN', detail: `UNKNOWN 索引表读不了：${msg(e).slice(0, 100)}` }
   }
   if (heads.length === 0) {
     return { check: 'compact_parity', ok: true, verdict: 'OK', detail: 'OK 无已压缩源' }
