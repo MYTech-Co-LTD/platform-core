@@ -51,6 +51,7 @@ async function cleanup() {
   // #476：门店/商品清单的消费源 = `data.dim_*`（发布快照）——夹具种它、清理清它（org 键隔离）
   await pool.query(`delete from data.dim_branch where org = any($1::text[])`, [ORGS])
   await pool.query(`delete from data.dim_item where org = any($1::text[])`, [ORGS])
+  await pool.query(`delete from data.dim_settlement_order_line where org = any($1::text[])`, [ORGS])
 }
 
 // 自带迁移（评审 N3）：本文件必须**自足**，不能依赖别的包先迁完 aftersales schema。
@@ -313,6 +314,51 @@ describe('GET /guest/products', () => {
 })
 
 // ── GET /guest/stores（M3b-2 增补；spec §3.2）───────────────────────────────
+describe('GET /guest/settlement-products', () => {
+  async function seedHistory(): Promise<void> {
+    await seedMe(['101'])
+    await pool.query(
+      `insert into data.dim_item(org, item_code, name, unit_name, source_book, snapshot)
+       values ($1,'3001','苹果','箱','3120',current_date)`, [ORG])
+    await pool.query(
+      `insert into data.dim_settlement_order_line(
+         org, source, store_code, store_name, order_no, order_bizday, order_time,
+         item_code, item_name, line_key, quantity, money, price_minor)
+       values ($1,'transfer','101','店A','MO-OLD-1',current_date - 5,null,
+               '3001','红富士苹果','0',10,50,500)`, [ORG])
+  }
+
+  it('★ 当前名称 / 历史名称 / 编码都命中同一个 item_code，并带 aliases', async () => {
+    await seedHistory()
+    const get = async (q: string) => {
+      const res = await app().request(`/guest/settlement-products?storeCode=101&q=${encodeURIComponent(q)}`)
+      expect(res.status, q).toBe(200)
+      return (await res.json()) as { items: Array<{ code: string; name: string; aliases: string[] }> }
+    }
+    for (const q of ['苹果', '红富士', '3001']) {
+      const body = await get(q)
+      expect(body.items).toHaveLength(1)
+      expect(body.items[0]!.code).toBe('3001')
+      // 当前名/编码命中时展示档案名；只有历史名命中时展示历史名。
+      expect(body.items[0]!.name).toBe(q === '红富士' ? '红富士苹果' : '苹果')
+      expect(body.items[0]!.aliases).toContain('红富士苹果')
+    }
+  })
+
+  it('未授权门店 403；q 空 400；超 30 天的历史名不出现', async () => {
+    await seedHistory()
+    expect((await app().request('/guest/settlement-products?storeCode=102&q=苹果')).status).toBe(403)
+    expect((await app().request('/guest/settlement-products?storeCode=101')).status).toBe(400)
+    await pool.query(
+      `update data.dim_settlement_order_line set order_bizday = current_date - 40 where org=$1`, [ORG])
+    const body = (await (await app().request(
+      '/guest/settlement-products?storeCode=101&q=' + encodeURIComponent('红富士'))).json()) as {
+      items: unknown[]
+    }
+    expect(body.items).toEqual([])
+  })
+})
+
 describe('GET /guest/stores', () => {
   it('无参数 ⇒ 400 STORE_QUERY_REQUIRED（保密口径 #2772：禁止全量预载门店清单）', async () => {
     const res = await app().request('/guest/stores')

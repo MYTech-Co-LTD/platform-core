@@ -63,7 +63,12 @@
                 :label="product.product_name"
               >
                 <div class="flex items-center justify-between min-w-0 gap-2">
-                  <span class="font-medium truncate">{{ product.product_name }}</span>
+                  <span
+                    class="font-medium truncate"
+                    :title="product.aliases?.length
+                      ? `曾用名：${product.aliases.filter((a) => a !== product.product_name).join('、')}`
+                      : undefined"
+                  >{{ product.product_name }}</span>
                   <span class="text-xs text-gray-400 shrink-0 tnum">{{ product.id }}</span>
                 </div>
               </t-option>
@@ -461,7 +466,7 @@ const selectedLineKey = ref('')
 
 // 商品选择（2026-11-25 对齐 wuji）：远程搜索，不做全量预载
 const selectedProduct = ref('')
-const productList = ref<Array<{ id: string; product_name: string }>>([])
+const productList = ref<Array<{ id: string; product_name: string; aliases?: string[] }>>([])
 const productLoading = ref(false)
 let productSearchTimer: ReturnType<typeof setTimeout> | null = null
 
@@ -474,7 +479,10 @@ const handleProductSearch = (q: string): void => {
   productSearchTimer = setTimeout(async () => {
     productLoading.value = true
     try {
-      const rows = await product_archive.query({ filter: { product_name__contains: q.trim() } })
+      const rows = await product_archive.query({
+        filter: { product_name__contains: q.trim() },
+        storeCode: selectedStore.value || undefined,
+      })
       productList.value = rows as any
     } catch (e: any) {
       Message.error(e?.message || '加载商品失败')
@@ -540,9 +548,11 @@ const isSubmitting = ref(false)
 
 // 选店变化 ⇒ 拉该店的结算单（loadSettlementOrders 内部会清空已选单/行，防串店残留）
 const handleStoreChange = (storeCode: unknown) => {
+  // 换了门店，上一店的商品候选/已选商品不再可信（新搜索面按门店历史订单，跨店残留会错配）
+  selectedProduct.value = ''
+  productList.value = []
   loadSettlementOrders(
     typeof storeCode === 'string' ? storeCode : '',
-    selectedProduct.value || undefined,
   )
 }
 // 选单变化后的清理由 selectedOrderNo 的 watch 负责（见上），此处不再重复
