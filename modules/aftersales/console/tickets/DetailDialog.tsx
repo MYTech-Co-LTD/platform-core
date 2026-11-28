@@ -5,7 +5,8 @@ import { Alert, Card, Descriptions, Modal, Space, Spin, Typography } from 'antd'
 import type { TicketAttachment, TicketDetail } from '../../api-types'
 import { apiGet, messageOf } from '../lib/api'
 import { formatMinor } from '../lib/format'
-import { AFFIL_LABEL, STATUS_LABEL } from './lib/labels'
+import { isExcelType } from './lib/attachment-kind'
+import { AFFIL_LABEL, QUALITY_LABEL, STATUS_LABEL } from './lib/labels'
 
 const fmtTime = (v: string | null | undefined): string => (v ? v.replace('T', ' ').slice(0, 16) : '—')
 
@@ -71,7 +72,11 @@ export function DetailDialog(props: {
               <Space wrap>
                 {detail.attachments.map((a, i) => (
                   <Typography.Link key={a.id} onClick={() => props.onPreview(detail.attachments, i)}>
-                    {a.contentType.startsWith('image/') ? `图片 ${i + 1}` : `附件 ${i + 1}`}
+                    {a.contentType.startsWith('image/')
+                      ? `图片 ${i + 1}`
+                      : a.contentType.startsWith('video/')
+                        ? `视频 ${i + 1}`
+                        : isExcelType(a.contentType) ? `表格 ${i + 1}` : `附件 ${i + 1}`}
                   </Typography.Link>
                 ))}
               </Space>
@@ -92,6 +97,11 @@ export function DetailDialog(props: {
               { key: 'amount', label: '赔付金额', children: formatMinor(detail.amount_minor) },
               { key: 'operator', label: '处理人', children: detail.operator || '—' },
               { key: 'opinion', label: '售后意见', children: detail.opinion || '—' },
+              {
+                key: 'quality', label: '提报规范性',
+                // 空串 = 未评价（存量单）⇒ 展示 '—'，不把 '' 透给用户
+                children: detail.submissionQuality ? QUALITY_LABEL[detail.submissionQuality] ?? detail.submissionQuality : '—',
+              },
               { key: 'watermark', label: '水印时间', children: detail.watermark_at || '—' },
             ]} />
           </Section>

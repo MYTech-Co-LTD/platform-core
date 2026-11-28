@@ -1,5 +1,5 @@
 // labels.ts — 工单页的文案与语义色（列表 / 详情 / 导出共用）。
-import type { StoreAffiliation, TicketStatus } from '../../../api-types'
+import type { StoreAffiliation, SubmissionQuality, TicketStatus } from '../../../api-types'
 import type { Tone } from '../../lib/ui'
 
 export const STATUS_LABEL: Record<TicketStatus, string> = {
@@ -26,3 +26,16 @@ export const AMOUNT_TYPE_LABEL: Record<'ratio' | 'fixed' | 'reject', string> = {
   fixed: '固定金额',
   reject: '驳回',
 }
+
+/** 售后提报规范性（2026-11-28）：处理时必选，**门店侧不可见**。空串 = 未评价。 */
+export const QUALITY_LABEL: Record<SubmissionQuality, string> = {
+  normal: '正常提交',
+  false_claim: '虚假报损',
+  late: '逾期提报',
+  duplicate: '重复提报',
+  incomplete: '材料不完整',
+}
+
+/** Select 选项（保持与 QUALITY_LABEL 同一顺序与文案，别写第二份）。 */
+export const QUALITY_OPTIONS = (Object.keys(QUALITY_LABEL) as SubmissionQuality[])
+  .map((value) => ({ value, label: QUALITY_LABEL[value] }))

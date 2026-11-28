@@ -16,11 +16,21 @@ import { writeAudit } from '../domain/audit'
 import type { ModuleHono, RouteCtx } from './context'
 
 /**
- * 只收图片与视频（白名单，不是黑名单）。
+ * 只收图片、视频与 Excel（白名单，不是黑名单）。
  * 理由不是"分类整洁"：预签名 GET 的 URL 一旦泄露，对象的实际内容由上传者决定，
  * 而桶域是独立源。收窄入口是这一层唯一能做的把关（`text/html` 一类不给进）。
+ *
+ * Excel（2026-11-28）：门店会补传对账/出库明细表。只放行两种 Office MIME，
+ * **不放行 CSV/任意 `application/*`**——CSV 是纯文本，`text/csv` 常被浏览器按 HTML 嗅探。
+ * 移动端文件选择器的 accept 与这里必须同步（见 afterSalesWorkOrderSubmit.vue）。
  */
 const ALLOWED_PREFIXES = ['image/', 'video/']
+const ALLOWED_EXACT_TYPES = [
+  'application/vnd.ms-excel', // .xls
+  'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet', // .xlsx
+]
+const isAllowedContentType = (t: string): boolean =>
+  ALLOWED_PREFIXES.some((p) => t.startsWith(p)) || ALLOWED_EXACT_TYPES.includes(t)
 /** 导出是为了让测试直接引用这个上界（`M-5`）——在测试里重写一遍字面量就是第二个事实源。 */
 export const MAX_DECLARED_BYTES = 500 * 1024 * 1024 // 500MB，仅作明显误报的护栏，见下方注释
 
@@ -39,7 +49,7 @@ export function registerAttachmentGuest(r: ModuleHono, ctx: RouteCtx): void {
     if (!parsed.success) return c.json({ error: 'INVALID_BODY' }, 400)
     const { clientRequestId, contentType, sizeBytes } = parsed.data
 
-    if (!ALLOWED_PREFIXES.some((p) => contentType.startsWith(p))) {
+    if (!isAllowedContentType(contentType)) {
       return c.json({ error: 'UNSUPPORTED_CONTENT_TYPE', contentType }, 400)
     }
 

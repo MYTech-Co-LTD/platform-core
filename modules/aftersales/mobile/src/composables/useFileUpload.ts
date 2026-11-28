@@ -68,7 +68,7 @@ export function useFileUpload() {
     const folderPath = `after-sales/temp/${year}/${month}/${day}`
 
     // 判断文件类型（优先通过 MIME 类型判断）
-    let fileType: 'image' | 'video'
+    let fileType: 'image' | 'video' | 'file'
 
     if (file.type.startsWith('image/')) {
       fileType = 'image'
@@ -78,14 +78,24 @@ export function useFileUpload() {
       // 通过扩展名判断
       const imageExtensions = /\.(jpg|jpeg|png|gif|webp|bmp)$/i
       const videoExtensions = /\.(mp4|mov|avi|mkv|webm|flv|wmv|m4v|3gp)$/i
+      const excelExtensions = /\.(xls|xlsx)$/i
 
       if (imageExtensions.test(file.name)) {
         fileType = 'image'
       } else if (videoExtensions.test(file.name)) {
         fileType = 'video'
+      } else if (
+        excelExtensions.test(file.name)
+        // 部分安卓文件选择器给不出 Excel 的标准 MIME，扩展名是第二判据；
+        // 白名单以服务端 routes/attachment.ts 为准（这里只决定展示形态）
+        || file.type === 'application/vnd.ms-excel'
+        || file.type === 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
+      ) {
+        fileType = 'file'
       } else {
-        // 默认作为视频处理
-        fileType = 'video'
+        // 未知类型仍按 file 处理：服务端会以 UNSUPPORTED_CONTENT_TYPE 拒绝，
+        // 不再静默塞进 video（那会让用户以为是视频上传失败）
+        fileType = 'file'
       }
     }
 

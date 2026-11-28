@@ -94,10 +94,18 @@ function open(onConflict = vi.fn()) {
   return onConflict
 }
 
-/** 按标签选比例：antd Select 用 mousedown 打开（实测有效的驱动方式）。 */
+/** 按标签选比例：antd Select 用 mousedown 打开（实测有效的驱动方式）。
+ *  2026-11-28：弹窗里多了「售后提报规范性」下拉 ⇒ combobox 不止一个，按 DOM 顺序取第一个（比例）。 */
 async function pickRatio(label: string): Promise<void> {
-  await waitFor(() => expect(screen.getByRole('combobox')).toBeInTheDocument())
-  fireEvent.mouseDown(screen.getByRole('combobox'))
+  const boxes = await screen.findAllByRole('combobox')
+  fireEvent.mouseDown(boxes[0]!)
+  fireEvent.click(await screen.findByText(label))
+}
+
+/** 售后提报规范性（必选）：DOM 里最后一个 combobox 就是它。 */
+async function pickQuality(label = '正常提交'): Promise<void> {
+  const boxes = await screen.findAllByRole('combobox')
+  fireEvent.mouseDown(boxes[boxes.length - 1]!)
   fireEvent.click(await screen.findByText(label))
 }
 
@@ -110,10 +118,13 @@ describe('ProcessDialog', () => {
     open()
     await pickRatio('10%')
     fillOpinion()
+    await pickQuality('虚假报损')
     fireEvent.click(screen.getByRole('button', { name: /提\s*交/ }))
     await waitFor(() => expect(sends.length).toBe(1))
     expect(sends[0]!.url).toBe('/api/modules/aftersales/tickets/7/process')
-    expect(sends[0]!.body).toMatchObject({ amountType: 'ratio', refundRatio: 0.1, opinion: '外观破损' })
+    expect(sends[0]!.body).toMatchObject({
+      amountType: 'ratio', refundRatio: 0.1, opinion: '外观破损', submissionQuality: 'false_claim',
+    })
     expect(sends[0]!.body.watermarkAt).toMatch(/^\d{4}-\d{2}-\d{2}$/)
     expect(sends[0]!.body).not.toHaveProperty('remark')
   })
@@ -179,6 +190,7 @@ describe('ProcessDialog', () => {
     fireEvent.click(screen.getByText('固定金额'))
     fireEvent.change(screen.getByRole('spinbutton'), { target: { value: '8.34' } })
     fillOpinion()
+    await pickQuality()
     fireEvent.click(screen.getByRole('button', { name: /提\s*交/ }))
     await waitFor(() => expect(sends.length).toBe(1))
     expect(sends[0]!.body).toMatchObject({ amountType: 'fixed', amountMinor: 834, opinion: '外观破损' })
@@ -189,9 +201,12 @@ describe('ProcessDialog', () => {
     await screen.findByText('处理工单 AS-00000007')
     fireEvent.click(screen.getByText('驳回'))
     fillOpinion()
+    await pickQuality()
     fireEvent.click(screen.getByRole('button', { name: /提\s*交/ }))
     await waitFor(() => expect(sends.length).toBe(1))
-    expect(sends[0]!.body).toMatchObject({ amountType: 'reject', opinion: '外观破损' })
+    expect(sends[0]!.body).toMatchObject({
+      amountType: 'reject', opinion: '外观破损', submissionQuality: 'normal',
+    })
   })
 
   it('意见为空 ⇒ 提交按钮禁用（必填）', async () => {
@@ -212,6 +227,7 @@ describe('ProcessDialog', () => {
     await screen.findByText('处理工单 AS-00000007')
     fireEvent.click(screen.getByText('驳回'))
     fillOpinion()
+    await pickQuality()
     fireEvent.click(screen.getByRole('button', { name: /提\s*交/ }))
     await waitFor(() => expect(screen.getByText(/已被他人处理/)).toBeInTheDocument())
     expect(onConflict).toHaveBeenCalled()
