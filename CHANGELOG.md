@@ -11,6 +11,10 @@
 
 ## [Unreleased]
 
+## [0.413.0](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.412.0...v0.413.0) - 2026-11-28
+- 【新增】data: 相位审计进门禁——读侧缺避让手段且与可变面相交即红 ([#2967](https://github.com/MYTech-Co-LTD/platform-core/pull/2967), [da65a9e](https://github.com/MYTech-Co-LTD/platform-core/commit/da65a9eb6d07bd6607bfbba75b05117a7be6021f))
+
+
 ## [0.412.0](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.411.0...v0.412.0) - 2026-11-28
 - 【新增】aftersales: 附件支持 Excel + 处理工单增加提报规范性 ([#2965](https://github.com/MYTech-Co-LTD/platform-core/pull/2965), [b950b06](https://github.com/MYTech-Co-LTD/platform-core/commit/b950b06e18366389c2598cfc8928d22b37a3cf61))
 - 【修复】data: 相位审计裸写时区字面量，撞上扩散守卫 ([#2963](https://github.com/MYTech-Co-LTD/platform-core/pull/2963), [3005ed9](https://github.com/MYTech-Co-LTD/platform-core/commit/3005ed977dd972d5d17dfc1088808c53056be96f))
