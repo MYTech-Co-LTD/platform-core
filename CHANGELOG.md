@@ -11,6 +11,11 @@
 
 ## [Unreleased]
 
+## [0.410.1](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.410.0...v0.410.1) - 2026-11-28
+- 【修复】notify: health 把「永久性失败」与「可重试耗尽」分开判 ([#2953](https://github.com/MYTech-Co-LTD/platform-core/pull/2953), [9027f17](https://github.com/MYTech-Co-LTD/platform-core/commit/9027f17b237bca8e6ed8249d53327b35fefef172))
+- 【修复】data: ㉓ 的 catch 把 schema 漂移兜成 OK——自己的红线自己破了 ([#2951](https://github.com/MYTech-Co-LTD/platform-core/pull/2951), [7717d36](https://github.com/MYTech-Co-LTD/platform-core/commit/7717d36fcd7ef7a2384e583c48d074f6ae71f111))
+
+
 ## [0.410.0](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.409.0...v0.410.0) - 2026-11-28
 - 【新增】aftersales: 商品搜索合并门店近30天历史名称（#2948） ([#2949](https://github.com/MYTech-Co-LTD/platform-core/pull/2949), [77c0697](https://github.com/MYTech-Co-LTD/platform-core/commit/77c0697402a46161d503b8bf804835d626a40ca1))
 
