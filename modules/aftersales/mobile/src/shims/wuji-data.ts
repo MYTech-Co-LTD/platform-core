@@ -37,6 +37,8 @@ export interface ProductRow {
   /** #476：维表消费源切 `data.dim_item` 发布快照 ⇒ 自然键 code 字符串（不再是本地数字 id） */
   id: string
   product_name: string
+  /** 同一 item_code 的历史名称（结算单里出现过的旧名；商品改名后仍可搜到） */
+  aliases?: string[]
   /** ⚠️ 乐檬商品维**没有**无忌的「基本数量/基本单位价」（#476 口径②A：先不显示价格）——
    *  填 0 是「无价可依」的诚实值：工单金额依据的来源等价格数据接通后另切（issue #476）。 */
   basic_quantity: number
@@ -46,7 +48,7 @@ export interface ProductRow {
 // 与模块根 api-types.ts 的 StoreItem/ProductItem **形状对齐**（#476：id → code 自然键、
 // 价格/数量字段退役）。刻意不跨包 import——mobile 的构建隔离是「整包搬」纪律的一部分。
 interface StoreItem { code: string; name: string; enable: boolean | null; address: string | null; phone: string | null }
-interface ProductItem { code: string; barCode: string | null; name: string; spec: string | null; unitName: string | null; saleCease: boolean | null; eliminate: boolean | null }
+interface ProductItem { code: string; barCode: string | null; name: string; spec: string | null; unitName: string | null; saleCease: boolean | null; eliminate: boolean | null; aliases?: string[] }
 interface MyRegistration {
   registration: { name: string; phone: string; storeCodes: string[] } | null
   hasPendingApproval: boolean
@@ -254,9 +256,25 @@ export const product_archive = {
    * ⇒ 这里**按页循环收齐**。上界 `MAX_PRODUCT_PAGES` 是防御：服务端 total 若因并发变动
    * 让我们永远收不齐，也不能把移动端拖进死循环。
    */
-  async query(args: { filter?: unknown; sort?: string; pageSize?: number; singlePage?: boolean } = {}): Promise<ProductRow[]> {
+  async query(args: { filter?: unknown; sort?: string; pageSize?: number; singlePage?: boolean; storeCode?: string } = {}): Promise<ProductRow[]> {
     const f = (args.filter ?? {}) as { product_name__contains?: unknown }
     const q = typeof f.product_name__contains === 'string' ? f.product_name__contains : ''
+    const storeCode = typeof args.storeCode === 'string' ? args.storeCode : ''
+
+    // 已知门店 + 有搜索词：当前档案 ∪ 该店近 30 天结算行名称/编码。
+    // 未选门店仍走原档案搜索（首屏预加载也走这条），用户体感不变。
+    if (q !== '' && storeCode !== '') {
+      const params = new URLSearchParams({ storeCode, q })
+      const body = await apiGet<{ items: ProductItem[] }>(`/guest/settlement-products?${params}`)
+      return body.items.map((p) => ({
+        id: p.code,
+        product_name: p.name,
+        aliases: p.aliases ?? [],
+        basic_quantity: 0,
+        basic_unit_price_minor: 0,
+      }))
+    }
+
     const size = Math.min(args.pageSize ?? SERVER_MAX_PAGE_SIZE, SERVER_MAX_PAGE_SIZE)
     // `singlePage`（2026-11-25）：商品选择器的**首屏候选**只要一页（源侧 pageSize:1000 一次拿，
     // 域侧上界 100 ⇒ 取第一页即可）。全量循环收齐会拉几千条，移动端首屏没必要等。
@@ -270,6 +288,7 @@ export const product_archive = {
       out.push(...body.items.map((p) => ({
         id: p.code,
         product_name: p.name,
+        aliases: p.aliases ?? [],
         basic_quantity: 0,
         basic_unit_price_minor: 0,
       })))

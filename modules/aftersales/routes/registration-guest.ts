@@ -9,7 +9,7 @@ import { z } from 'zod'
 import { RegistrationError, computeRegistration } from '../domain/registration'
 import { DEFAULT_PAGE_SIZE, MAX_PAGE_SIZE, guestIdentityIds, parsePageParam , consoleBaseUrl} from './context'
 import type { ModuleHono, RouteCtx } from './context'
-import { readMySnapshot } from './affiliation'
+import { myStoreCodes, readMySnapshot } from './affiliation'
 
 /** 目标值：客户端只表达「我要变成什么」（spec §2.5 纪律②），差异由服务端算 */
 const TargetBody = z.object({
@@ -174,7 +174,8 @@ export function registerRegistrationGuest(r: ModuleHono, ctx: RouteCtx): void {
     let where = 'org = $1'
     if (q) {
       params.push(`%${escapeLike(q)}%`)
-      where += ` and name ilike $${params.length}`
+      // 名称或编码：改名后忘新名时仍可直接输 item_code（与 /guest/settlement-products 同口径）
+      where += ` and (name ilike $${params.length} or item_code ilike $${params.length})`
     }
     const totalRes = await ctx.pool.query<{ n: number }>(
       `select count(*)::int as n from data.dim_item where ${where}`,
@@ -199,6 +200,87 @@ export function registerRegistrationGuest(r: ModuleHono, ctx: RouteCtx): void {
       page,
       size,
     })
+  })
+
+  // ── 选商品（按门店历史订单）──────────────────────────────────────────────
+  // 商品名称会变，但结算行仍保留历史 item_name + item_code。已知门店时，商品搜索
+  // = 当前档案 ∪ 该店近 N 天结算行名称/编码，按 item_code 去重；最终仍回填 code。
+  // 时间窗必须与 /guest/settlement-orders 一致（默认 30 天），否则会出现
+  // 「搜到历史名 → 选中 → 订单列表为空」的错位。
+  r.get('/guest/settlement-products', async (c) => {
+    const identity = c.get('identity')
+    const org = identity.orgId
+    const storeCode = (c.req.query('storeCode') ?? '').trim()
+    if (!storeCode) return c.json({ error: 'STORE_CODE_REQUIRED' }, 400)
+    const q = (c.req.query('q') ?? '').trim()
+    if (!q) return c.json({ error: 'QUERY_REQUIRED' }, 400)
+
+    // 与提单/订单列表同一归属执法：只能搜自己有资格的门店。
+    const myStores = await myStoreCodes(ctx, org, identity)
+    if (!myStores.includes(storeCode)) {
+      return c.json({ error: 'STORE_NOT_AUTHORIZED' }, 403)
+    }
+
+    const daysRaw = Number(c.req.query('days') ?? 30)
+    const days = Number.isFinite(daysRaw) ? Math.min(Math.max(Math.trunc(daysRaw), 1), 90) : 30
+    const like = `%${escapeLike(q)}%`
+
+    const res = await ctx.pool.query(
+      `with hist as (
+         select item_code, item_name, max(order_bizday) as last_day
+           from data.dim_settlement_order_line
+          where org = $1 and store_code = $2
+            and order_bizday >= current_date - $3::int
+            and item_name is not null and item_name <> ''
+          group by item_code, item_name
+       ),
+       hist_hits as (
+         select distinct item_code
+           from hist
+          where item_name ilike $4 or item_code ilike $4
+       ),
+       arch as (
+         select item_code, bar_code, name, spec, unit_name, sale_cease, eliminate
+           from data.dim_item
+          where org = $1 and (name ilike $4 or item_code ilike $4)
+       ),
+       codes as (
+         select item_code from arch
+         union
+         select item_code from hist_hits
+       )
+       select c.item_code,
+              a.bar_code, a.spec, a.unit_name, a.sale_cease, a.eliminate,
+              coalesce(a.name, (
+                select h.item_name from hist h
+                 where h.item_code = c.item_code
+                 order by h.last_day desc
+                 limit 1
+              )) as name,
+              (
+                select array_agg(distinct h.item_name)
+                  from hist h where h.item_code = c.item_code
+              ) as aliases
+         from codes c
+         left join arch a on a.item_code = c.item_code
+        order by name, c.item_code
+        limit 100`,
+      [org, storeCode, days, like],
+    )
+    const items = res.rows.map((p) => ({
+      code: String(p.item_code),
+      barCode: p.bar_code === null || p.bar_code === undefined ? null : String(p.bar_code),
+      name: String(p.name ?? ''),
+      spec: p.spec ?? null,
+      unitName: p.unit_name ?? null,
+      saleCease: p.sale_cease ?? null,
+      eliminate: p.eliminate ?? null,
+      aliases: Array.isArray(p.aliases)
+        ? (p.aliases as unknown[]).filter((x): x is string => typeof x === 'string' && x !== '')
+        : [],
+    }))
+    // 搜索面只取前 100 个候选；`total` 即本次返回数，避免移动端继续翻页（搜索词应收窄）。
+    return c.json({ items, total: items.length, page: 1, size: items.length })
   })
 
   // ── 选门店（M3b-2 的移动端要用；spec §3.2）──────────────────────────────

@@ -130,6 +130,24 @@ describe('product_archive.query', () => {
     expect(get).toHaveBeenCalledTimes(2)
   })
 
+  it('已知门店 + 搜索词 ⇒ 走 /guest/settlement-products（档案 ∪ 门店近 30 天历史名）', async () => {
+    get.mockResolvedValue({
+      items: [{ code: '3001', name: '苹果', aliases: ['红富士苹果'] }],
+      total: 1,
+    })
+    const rows = await product_archive.query({
+      filter: { product_name__contains: '红富士' },
+      storeCode: '101',
+    })
+    expect(rows[0]).toMatchObject({
+      id: '3001', product_name: '苹果', aliases: ['红富士苹果'],
+    })
+    const url = get.mock.calls[0]![0] as string
+    expect(url.startsWith('/guest/settlement-products?')).toBe(true)
+    expect(url).toContain('storeCode=101')
+    expect(url).toContain('q=%E7%BA%A2%E5%AF%8C%E5%A3%AB')
+  })
+
   it('搜索词走 q（域侧没有「商品编码」这一路，源侧的双分支合并因此收成一路）', async () => {
     get.mockResolvedValue({ items: [], total: 0, page: 1, size: 100 })
     await product_archive.query({ filter: { product_name__contains: '螺栓', status__eq: 1 } })
