@@ -429,22 +429,29 @@ describePg('工单页对齐无极（#2884）', () => {
     const proc = await appManage.request(`/tickets/${id}/process`, {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ amountType: 'ratio', refundRatio: 0.5, opinion: '按比例赔付', watermarkAt: '2026-11-26' }),
+      body: JSON.stringify({
+        amountType: 'ratio', refundRatio: 0.5, opinion: '按比例赔付',
+        watermarkAt: '2026-11-26', submissionQuality: 'incomplete',
+      }),
     })
     expect(proc.status).toBe(200)
     const after = await pool.query(
-      `select status, amount_minor, refund_ratio, operator, remark, opinion, watermark_at::text, processed_at
+      `select status, amount_minor, refund_ratio, operator, remark, opinion,
+              watermark_at::text, submission_quality, processed_at
          from aftersales.ticket where org = $1 and id = $2`, [ORG, id])
     expect(after.rows[0]).toMatchObject({
       status: 'completed', amount_minor: '800', refund_ratio: '0.5000',
       remark: '店员填的原因', opinion: '按比例赔付', watermark_at: '2026-11-26',
+      submission_quality: 'incomplete',
     })
     expect(after.rows[0].processed_at).not.toBeNull()
 
     const audit = await pool.query(
       `select detail from aftersales.audit where org = $1 and action = 'ticket.process' and target = $2`,
       [ORG, String(id)])
-    expect(audit.rows[0].detail).toMatchObject({ amountMinor: 800, watermarkAt: '2026-11-26' })
+    expect(audit.rows[0].detail).toMatchObject({
+      amountMinor: 800, watermarkAt: '2026-11-26', submissionQuality: 'incomplete',
+    })
   })
 
   it('quote：非 pending ⇒ 409；reject 预览 0 分', async () => {
@@ -464,13 +471,16 @@ describePg('工单页对齐无极（#2884）', () => {
     expect((await q.json()) as { amountMinor: number }).toMatchObject({ amountMinor: 0 })
   })
 
-  it('process：缺 opinion / watermarkAt ⇒ 400（必填）', async () => {
+  it('process：缺 opinion / watermarkAt / submissionQuality ⇒ 400（均必填）', async () => {
     const id = await createTicket({})
     for (const body of [
       { amountType: 'reject', watermarkAt: '2026-11-26' },
       { amountType: 'reject', opinion: '意见' },
-      { amountType: 'reject', opinion: '', watermarkAt: '2026-11-26' },
-      { amountType: 'reject', opinion: '意见', watermarkAt: '2026-02-30' },
+      { amountType: 'reject', opinion: '', watermarkAt: '2026-11-26', submissionQuality: 'normal' },
+      { amountType: 'reject', opinion: '意见', watermarkAt: '2026-02-30', submissionQuality: 'normal' },
+      // 规范性是枚举：缺省与未知值都拒（存量调用方升级前会在这里被明确挡住，不会静默落空串）
+      { amountType: 'reject', opinion: '意见', watermarkAt: '2026-11-26' },
+      { amountType: 'reject', opinion: '意见', watermarkAt: '2026-11-26', submissionQuality: 'bogus' },
     ]) {
       const res = await appManage.request(`/tickets/${id}/process`, {
         method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body),

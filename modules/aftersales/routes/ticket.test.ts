@@ -148,9 +148,10 @@ describePg('工单域', () => {
     remark: '摔坏了',
   })
 
-  /** 2026-11-26（#2884）：处理必须带 opinion + watermarkAt；remark 不再由处理写入。 */
+  /** 2026-11-26（#2884）：处理必须带 opinion + watermarkAt；remark 不再由处理写入。
+   *  2026-11-28：提报规范性 submissionQuality 也必填（管理端字段，门店侧不可见）。 */
   const processBody = (extra: Record<string, unknown>) => ({
-    opinion: '处理意见', watermarkAt: '2026-11-26', ...extra,
+    opinion: '处理意见', watermarkAt: '2026-11-26', submissionQuality: 'normal', ...extra,
   })
 
   it('访客提交工单 ⇒ 201，引用与冻结价被【快照】下来，状态 pending、金额类型暂空', async () => {
@@ -411,6 +412,33 @@ describePg('工单域', () => {
       fromStatus: 'pending', toStatus: 'completed', amountType: 'ratio', amountMinor: 13500,
       watermarkAt: '2026-11-26',
     })
+  })
+
+  it('提报规范性只存管理端：访客列表/详情都不返回该字段（对门店侧隐藏）', async () => {
+    const created = await submit(appGuest, validBody('req-quality'))
+    const { id } = (await created.json()) as { id: number }
+
+    const proc = await appManage.request(`/tickets/${id}/process`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify(processBody({ amountType: 'reject', submissionQuality: 'false_claim' })),
+    })
+    expect(proc.status).toBe(200)
+
+    const detail = (await (await appGuest.request(`/guest/tickets/${id}`)).json()) as Record<string, unknown>
+    expect(detail).not.toHaveProperty('submission_quality')
+    expect(detail).not.toHaveProperty('submissionQuality')
+
+    const list = (await (await appGuest.request('/guest/tickets')).json()) as {
+      items: Array<Record<string, unknown> & { id: number }>
+    }
+    const item = list.items.find((x) => x.id === id)!
+    expect(item).not.toHaveProperty('submission_quality')
+    expect(item).not.toHaveProperty('submissionQuality')
+
+    // 管理端读得到（同一条数据，只是面向不同）
+    const admin = (await (await appManage.request(`/tickets/${id}`)).json()) as { submissionQuality?: string }
+    expect(admin.submissionQuality).toBe('false_claim')
   })
 
   it('reject 处理 ⇒ cancelled、金额强制 0', async () => {

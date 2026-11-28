@@ -74,7 +74,8 @@ export type AfterSalesType = 'return' | 'exchange' | 'repair' | 'refund' | 'othe
  * 于是页面真正要的两样东西改由下面两个字段承载（`previewUrl` + `attachmentId`）：
  */
 export interface IAttachment {
-  type: 'image' | 'video'
+  /** file = Excel 等非图片/视频附件（2026-11-28）；没有本地预览图，列表里显示文件名 */
+  type: 'image' | 'video' | 'file'
   /** 本地预览（`URL.createObjectURL(file)`）——提交前展示用；提交后即可 revoke */
   previewUrl: string
   /** 服务端预签名时给的行 id：提交工单时作为 `attachmentIds` 认领（spec §2.3） */

@@ -28,12 +28,16 @@ const DateOnly = z.string()
     return !Number.isNaN(d.getTime()) && d.toISOString().slice(0, 10) === s
   }, 'watermarkAt 不是有效日期')
 
+/** 售后提报规范性（2026-11-28）：处理时必选，门店侧不可见（guest 接口不 SELECT 本列）。 */
+const SubmissionQuality = z.enum(['normal', 'false_claim', 'late', 'duplicate', 'incomplete'])
+
 /**
  * 处理动作（2026-11-26 改，issue #2884）：三路金额 + 两件必填事实。
  *
  * `opinion`（处理人售后意见，≤500 字）与 `watermarkAt`（水印日期）替代原来的自由 `remark`：
  * `remark` 是**店员填的报损原因**，处理再写它就是把人家的事实覆盖掉（spec §3.1 的旧缺陷）。
  * 历史客户端若仍传 `remark`，zod 默认剥掉——不报错、不落库。
+ * 2026-11-28 起另加必填 `submissionQuality`（提报规范性）。
  */
 const ProcessBody = z.discriminatedUnion('amountType', [
   z.object({
@@ -41,17 +45,20 @@ const ProcessBody = z.discriminatedUnion('amountType', [
     refundRatio: z.number(),
     opinion: z.string().trim().min(1).max(500),
     watermarkAt: DateOnly,
+    submissionQuality: SubmissionQuality,
   }),
   z.object({
     amountType: z.literal('fixed'),
     amountMinor: z.number().int(),
     opinion: z.string().trim().min(1).max(500),
     watermarkAt: DateOnly,
+    submissionQuality: SubmissionQuality,
   }),
   z.object({
     amountType: z.literal('reject'),
     opinion: z.string().trim().min(1).max(500),
     watermarkAt: DateOnly,
+    submissionQuality: SubmissionQuality,
   }),
 ])
 
@@ -105,6 +112,8 @@ export function registerTicketManage(r: ModuleHono, ctx: RouteCtx): void {
               damage_quantity, status, amount_type, amount_minor, refund_ratio,
               operator, remark, opinion, related_order, arrival_at, created_at, processed_at,
               watermark_at::text as watermark_at,
+              -- 提报规范性（2026-11-28）：**仅管理端**读取；guest 接口的显式列清单不含它
+              submission_quality,
               -- 归属一致性快照（ADR 2026-11-24 §7 P1-a）：信息性，供管理端展示异常
               store_affiliation,
               -- 品牌/等级快照（#2892 / #2924）：提单时解析，读侧不 join。
@@ -303,6 +312,7 @@ export function registerTicketManage(r: ModuleHono, ctx: RouteCtx): void {
               status, amount_type, amount_minor, refund_ratio,
               operator, remark, opinion, related_order, arrival_at, created_at, processed_at,
               watermark_at::text as watermark_at, store_affiliation,
+              submission_quality,
               brand_code, brand_name, brand_source, brand_origin,
               store_level_code, store_level_name, store_level_source,
               round(damage_quantity * coalesce(settlement_price_minor, basic_unit_price_minor))::bigint
@@ -430,7 +440,8 @@ export function registerTicketManage(r: ModuleHono, ctx: RouteCtx): void {
         // 水印日期必填，与处理事实一起落库。
         `update aftersales.ticket
             set status = $3, amount_type = $4, amount_minor = $5, refund_ratio = $6,
-                operator = $7, opinion = $8, watermark_at = $9::date, processed_at = now()
+                operator = $7, opinion = $8, watermark_at = $9::date,
+                submission_quality = $10, processed_at = now()
           where org = $1 and id = $2 and status = 'pending'`,
         [
           org,
@@ -442,6 +453,7 @@ export function registerTicketManage(r: ModuleHono, ctx: RouteCtx): void {
           c.get('identity').displayName,
           body.opinion,
           body.watermarkAt,
+          body.submissionQuality,
         ],
       )
       if (upd.rowCount === 0) {
@@ -456,6 +468,7 @@ export function registerTicketManage(r: ModuleHono, ctx: RouteCtx): void {
           fromStatus: row.status, toStatus: outcome.status,
           amountType: outcome.amountType, amountMinor: outcome.amountMinor,
           refundRatio: outcome.refundRatio, watermarkAt: body.watermarkAt,
+          submissionQuality: body.submissionQuality,
         },
       })
       await client.query('commit')
@@ -558,6 +571,9 @@ export function normalizeTicketRow(row: Record<string, unknown>): Record<string,
       : toMinor(row.settlement_price_minor as string),
     amountMinor: toMinor(row.amount_minor as string),
     refundRatio: row.refund_ratio === undefined ? undefined : toRatioOrNull(row.refund_ratio as string | null),
+    // 提报规范性（2026-11-28）：snake_case 随 `...row` 透出，camelCase 供 console 直读。
+    // guest 的 SELECT 列清单不含该列 ⇒ 门店侧天然拿不到（不是靠删字段）。
+    submissionQuality: row.submission_quality === undefined ? undefined : String(row.submission_quality),
   }
 }
 

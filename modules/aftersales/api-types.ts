@@ -26,6 +26,9 @@ export type TicketStatus = 'pending' | 'completed' | 'cancelled'
 export type AmountType = 'ratio' | 'fixed'
 export type ApproveStatus = 'pending' | 'approved' | 'rejected'
 
+/** 售后提报规范性（2026-11-28）：处理时必选，**仅管理端可见**（访客接口不返回该字段）。 */
+export type SubmissionQuality = 'normal' | 'false_claim' | 'late' | 'duplicate' | 'incomplete'
+
 /** 品牌选项（动态，来自 data.v_brand_registry ∪ 工单历史快照；不再有租户业务枚举）。 */
 export interface BrandOption {
   code: string
@@ -78,6 +81,9 @@ export interface TicketListItem {
   store_level_code?: string
   store_level_name?: string
   store_level_source?: string
+  /** 售后提报规范性（2026-11-28）：空串 = 未评价（存量单/待处理单）。管理端字段，门店侧不可见。 */
+  submission_quality?: SubmissionQuality | ''
+  submissionQuality?: SubmissionQuality | ''
   image_count?: number
   video_count?: number
   /** 报损金额（毛额，整数分）= 报损数量 × 单价；pending 也有值 */
@@ -252,9 +258,9 @@ export interface ProductItem {
  * 2026-11-26：`opinion`（售后意见，必填 ≤500）与 `watermarkAt`（水印日期，必填）替代 `remark`。
  */
 export type ProcessBody =
-  | { amountType: 'ratio'; refundRatio: number; opinion: string; watermarkAt: string }
-  | { amountType: 'fixed'; amountMinor: number; opinion: string; watermarkAt: string }
-  | { amountType: 'reject'; opinion: string; watermarkAt: string }
+  | { amountType: 'ratio'; refundRatio: number; opinion: string; watermarkAt: string; submissionQuality: SubmissionQuality }
+  | { amountType: 'fixed'; amountMinor: number; opinion: string; watermarkAt: string; submissionQuality: SubmissionQuality }
+  | { amountType: 'reject'; opinion: string; watermarkAt: string; submissionQuality: SubmissionQuality }
 
 /** `POST /tickets/:id/quote` 的请求体（只关心金额三路，不要求意见/水印）。 */
 export type QuoteBody =

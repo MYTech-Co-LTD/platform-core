@@ -162,13 +162,33 @@ describePg('附件域（已配置 ZOS）', () => {
     })
   })
 
-  it('非图片/视频 contentType ⇒ 400（白名单，不是黑名单）', async () => {
+  it('非图片/视频/Excel contentType ⇒ 400（白名单，不是黑名单）', async () => {
     const res = await guest.request(
       '/guest/attachments',
       post({ clientRequestId: 'req-att-bad', contentType: 'text/html' }),
     )
     expect(res.status).toBe(400)
     expect((await res.json()) as { error: string }).toMatchObject({ error: 'UNSUPPORTED_CONTENT_TYPE' })
+    // CSV 不放行：纯文本会被浏览器按 HTML 嗅探，白名单只认两种 Office Excel MIME
+    const csv = await guest.request(
+      '/guest/attachments',
+      post({ clientRequestId: 'req-att-csv', contentType: 'text/csv' }),
+    )
+    expect(csv.status).toBe(400)
+  })
+
+  it('Excel（xls / xlsx）⇒ 200（与移动端文件选择器的 accept 同步）', async () => {
+    const types = [
+      'application/vnd.ms-excel',
+      'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+    ]
+    for (const [i, contentType] of types.entries()) {
+      const res = await guest.request(
+        '/guest/attachments',
+        post({ clientRequestId: `req-att-xls-${i}`, contentType, sizeBytes: 1024 }),
+      )
+      expect(res.status, contentType).toBe(201)
+    }
   })
 
   it('管理端取附件 ⇒ 200 回预签名 GET URL；跨 org 取 ⇒ 404', async () => {

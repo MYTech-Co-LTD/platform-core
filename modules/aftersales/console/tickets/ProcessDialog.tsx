@@ -10,12 +10,14 @@ import {
 } from 'antd'
 import dayjs, { type Dayjs } from 'dayjs'
 import type {
-  Paged, ProcessBody, ProcessResult, QuoteBody, QuoteResult, RuleItem, TicketAttachment, TicketDetail,
+  Paged, ProcessBody, ProcessResult, QuoteBody, QuoteResult, RuleItem, SubmissionQuality,
+  TicketAttachment, TicketDetail,
 } from '../../api-types'
 import { ApiError, apiGet, apiSend, messageOf } from '../lib/api'
 import { formatMinor } from '../lib/format'
 import { preloadImageAttachments } from './lib/attachment-cache'
-import { STATUS_LABEL } from './lib/labels'
+import { isExcelType } from './lib/attachment-kind'
+import { QUALITY_OPTIONS, STATUS_LABEL } from './lib/labels'
 
 /** 规则表可能是多页（`size` 上限 100）——按 total 翻完，别只读第一页就断定「没有比例」。 */
 async function fetchAllRules(): Promise<RuleItem[]> {
@@ -48,6 +50,8 @@ export function ProcessDialog(props: {
   const [ratio, setRatio] = useState<number | null>(null)
   const [yuan, setYuan] = useState<number | null>(null)
   const [opinion, setOpinion] = useState('')
+  // 售后提报规范性（2026-11-28）：必选；门店侧不可见（只存管理端字段）。
+  const [quality, setQuality] = useState<SubmissionQuality | null>(null)
   const [watermark, setWatermark] = useState<Dayjs | null>(dayjs())
   const [quote, setQuote] = useState<QuoteResult | null>(null)
   const [quoteError, setQuoteError] = useState<string | null>(null)
@@ -60,6 +64,7 @@ export function ProcessDialog(props: {
     setRatio(null)
     setYuan(null)
     setOpinion('')
+    setQuality(null)
     setWatermark(dayjs())
     setQuote(null)
     setQuoteError(null)
@@ -130,16 +135,16 @@ export function ProcessDialog(props: {
   const opinionOk = opinion.trim().length > 0 && opinion.length <= 500
   const ratioOk = amountType !== 'ratio' || (ratio !== null && ratios.length > 0)
   const fixedOk = amountType !== 'fixed' || yuan !== null
-  const canSubmit = !busy && !loading && opinionOk && watermark !== null && ratioOk && fixedOk
+  const canSubmit = !busy && !loading && opinionOk && quality !== null && watermark !== null && ratioOk && fixedOk
 
   const submit = async (): Promise<void> => {
     if (!canSubmit) return
     const watermarkAt = (watermark as Dayjs).format('YYYY-MM-DD')
     const body: ProcessBody = amountType === 'ratio'
-      ? { amountType: 'ratio', refundRatio: ratio as number, opinion: opinion.trim(), watermarkAt }
+      ? { amountType: 'ratio', refundRatio: ratio as number, opinion: opinion.trim(), watermarkAt, submissionQuality: quality as SubmissionQuality }
       : amountType === 'fixed'
-        ? { amountType: 'fixed', amountMinor: Math.round((yuan as number) * 100), opinion: opinion.trim(), watermarkAt }
-        : { amountType: 'reject', opinion: opinion.trim(), watermarkAt }
+        ? { amountType: 'fixed', amountMinor: Math.round((yuan as number) * 100), opinion: opinion.trim(), watermarkAt, submissionQuality: quality as SubmissionQuality }
+        : { amountType: 'reject', opinion: opinion.trim(), watermarkAt, submissionQuality: quality as SubmissionQuality }
     setBusy(true)
     setError(null)
     try {
@@ -204,7 +209,9 @@ export function ProcessDialog(props: {
                 <Typography.Link key={a.id} onClick={() => props.onPreview?.(images, i)}>
                   {a.contentType.startsWith('video/')
                     ? `视频 ${i + 1}`
-                    : a.contentType.startsWith('image/') ? `图片 ${i + 1}` : `附件 ${i + 1}`}
+                    : a.contentType.startsWith('image/')
+                      ? `图片 ${i + 1}`
+                      : isExcelType(a.contentType) ? `表格 ${i + 1}` : `附件 ${i + 1}`}
                   {a.url === null ? '（不可预览）' : ''}
                 </Typography.Link>
               ))}
@@ -258,6 +265,23 @@ export function ProcessDialog(props: {
             </Typography.Text>
             {quoteError ? <Alert type="warning" showIcon title={quoteError} /> : null}
           </Space>
+
+          <div>
+            <Typography.Text>售后提报规范性</Typography.Text>
+            <div>
+              <Select
+                aria-label="售后提报规范性"
+                style={{ width: 240 }}
+                placeholder="请选择"
+                value={quality}
+                onChange={setQuality}
+                options={QUALITY_OPTIONS}
+              />
+            </div>
+            <Typography.Text type="secondary" style={{ fontSize: 12 }}>
+              仅内部可见，门店侧不会看到。
+            </Typography.Text>
+          </div>
 
           <div>
             <Typography.Text>水印时间</Typography.Text>

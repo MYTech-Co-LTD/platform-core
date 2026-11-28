@@ -245,7 +245,7 @@
       </t-card>
 
       <!-- 附件上传 -->
-      <t-card class="mb-4 rounded-xl shadow-sm" title="上传图片/视频">
+      <t-card class="mb-4 rounded-xl shadow-sm" title="上传图片/视频/表格">
         <label class="block text-sm font-medium text-gray-700 mb-3">
           <span class="text-[#E5484D]">*</span>附件上传
         </label>
@@ -266,6 +266,14 @@
                 :alt="attachment.name"
                 class="w-full h-full object-cover"
               />
+              <!-- 表格附件：没有预览图，显示文件名 -->
+              <div
+                v-else-if="attachment.type === 'file'"
+                class="w-full h-full flex flex-col items-center justify-center bg-gray-100 px-1"
+              >
+                <i class="fa fa-file-excel-o text-2xl text-[#1D6F42]"></i>
+                <span class="text-[10px] text-gray-500 truncate w-full text-center mt-1">{{ attachment.name }}</span>
+              </div>
               <!-- 视频缩略图 -->
               <div v-else class="relative w-full h-full bg-gray-200">
                 <video
@@ -352,7 +360,7 @@
                 ref="fileInputRef"
                 type="file"
                 multiple
-                accept="image/*,video/*"
+                accept="image/*,video/*,.xls,.xlsx,application/vnd.ms-excel,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
                 class="absolute inset-0 opacity-0 cursor-pointer w-full h-full"
                 style="font-size: 999px"
                 @change="handleFileInputChange"
