@@ -904,6 +904,12 @@ capabilities / policy 门禁 / run 回执」一句打包，**实测与其中两�
 
 **伸缩论据**：事件行带 org 标签 ⇒ OO 规则**一条覆盖全部租户**，告警规则数不随租户涨（否决「每租户一份 openship job 副本」路线；day-heal 类多账套循环另案 #538）。
 
+**2026-11-28 补记（B2 第三阶段）**：`data.warehouse_assertions_heavy` 的两条新判据
+（`org_valid_single` / `detail_path_latency`，含后加的 `compact_parity` / `compact_index_shape`）
+**不新建 OO 规则**——桥 `oo-notify-bridge.sh` 通道② 消费 `verdict <> 'OK'`，新 check 自动覆盖
+（与 2026-10-18 「判据接上即可见」同一条结论）。反向测试：`WIRE_ORG_VALID_SINGLE_SELFTEST=1` 注入后
+`data_plane_probes` 确有 `check=org_valid_single / verdict=ERR` 行（2026-11-28 实测）。
+
 **执行状态（与 #538 同步；未过实测的环节不翻绿）**：
 
 | Phase | 内容 | 状态 |
