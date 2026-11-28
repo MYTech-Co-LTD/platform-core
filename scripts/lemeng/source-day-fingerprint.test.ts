@@ -9,12 +9,19 @@ import { SOURCES, ensureTable, observeDays, rowsOf } from './source-day-fingerpr
 describe('source-day-fingerprint · 观测窗口', () => {
   const now = new Date('2026-11-28T05:00:00Z') // 13:00 CST
 
-  it('T-1 起，不含 T-0（当天还在被写，指纹没意义）', () => {
-    expect(observeDays(3, now)).toEqual(['2026-11-27', '2026-11-26', '2026-11-25'])
+  it('默认从 T-1 起，不含 T-0（当天还在被写，指纹没意义）', () => {
+    expect(observeDays(3, 1, now)).toEqual(['2026-11-27', '2026-11-26', '2026-11-25'])
   })
-  it('默认 3 天，且跨月正确', () => {
+  it('★ 起点按源的发布滞后：lagDays=2 ⇒ 从 T-2 起（inventory_snapshot 实测没有 T-1）', () => {
+    expect(observeDays(3, 2, now)).toEqual(['2026-11-26', '2026-11-25', '2026-11-24'])
+  })
+  it('lagDays 非法（0/负数）按 1 处理，不观测 T-0', () => {
+    expect(observeDays(2, 0, now)[0]).toBe('2026-11-27')
+    expect(observeDays(2, -3, now)[0]).toBe('2026-11-27')
+  })
+  it('跨月正确', () => {
     const m = new Date('2026-12-02T05:00:00Z')
-    expect(observeDays(3, m)).toEqual(['2026-12-01', '2026-11-30', '2026-11-29'])
+    expect(observeDays(3, 1, m)).toEqual(['2026-12-01', '2026-11-30', '2026-11-29'])
   })
 })
 
@@ -22,6 +29,7 @@ describe('source-day-fingerprint · 路径', () => {
   it('★ 与实测湖布局逐字一致（bizday=YYYY-MM-DD/chunk=all.parquet）', () => {
     const s = SOURCES[0]
     expect(s.source).toBe('inventory_snapshot')
+    expect(s.lagDays).toBe(2) // 源端 D+1 22:35 发布（#1079 实测）
     expect(s.file(3120, '2026-11-27')).toBe(
       's3://shanhai-data/lemeng/inventory_snapshot/system_book=3120/bizday=2026-11-27/chunk=all.parquet',
     )
