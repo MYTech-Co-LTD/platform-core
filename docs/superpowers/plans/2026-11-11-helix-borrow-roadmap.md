@@ -48,7 +48,7 @@
 
 | 分线 | 唯一导航面 | 状态 | 未完成（要点） |
 |---|---|---|---|
-| **数据新鲜度双车道（10m/1h）** ← **现行主线** | `2026-11-24-data-freshness-lanes-roadmap.md` | 🟡 P0 车道拆分（A1–A5）、B1/B2 两阶段、**D1–D4 全收口**（含 ERR→OO 告警）、C 压缩 P0 已落地 | **B2 第三阶段**（chunk≤3min 复评 + 两条新 probe 的 OO 规则）· **C1–C6**（水位/幂等/热湖互补性回归）· **C 推广**：`member_summary` 已完成（parity 逐月相等）、`inventory_movement` 因混写暂缓（收益也低）、`retail_order_line` 待做（有 ㉓ 兜底后可上）· **G6** 48h soak · **P0.5 S1–S9**、**P1 I1–I6**、**P1.5 探针**、**P2 J1–J4** 全部未开工 · C 压缩只做了 1 个源（其余 member_summary / inventory_movement / retail_order_line 待推广） |
+| **数据新鲜度双车道（10m/1h）** ← **现行主线** | `2026-11-24-data-freshness-lanes-roadmap.md` | 🟡 P0 车道拆分（A1–A5）、B1/B2 两阶段、**D1–D4 全收口**（含 ERR→OO 告警）、C 压缩 P0 已落地 | ~~B2 第三阶段~~ ✅（2026-11-28：不切 chunk〔tick p50 38→21s、两日零失败〕；两条新 probe 由桥覆盖、无需新建 OO 规则；反向测试留证）· **C1–C6**（水位/幂等/热湖互补性回归）· **C 推广**：`member_summary` 已完成（parity 逐月相等）、`inventory_movement` 因混写暂缓（收益也低）、`retail_order_line` 待做（有 ㉓ 兜底后可上）· **G6** 48h soak（未到期：最早 11-29 00:00 / 13:00） · **P0.5 S1–S9**、**P1 I1–I6**、**P1.5 探针**、**P2 J1–J4** 全部未开工 · C 压缩只做了 1 个源（其余 member_summary / inventory_movement / retail_order_line 待推广） |
 | 报表平台 R0–R6 | `2026-11-13-report-platform-roadmap.md` | 🟡 R0–R5 已完成，R6 进行中 | **R6**：发布队列与线上 commit 对照（需 OpenShip 控制面支持，另案）；L4 **双轴**（谨慎，待真实案例）；`daily_review` 降级为 recipe（并入 R4 一起做，尚未做） |
 | 通知底座 | `2026-11-14-notification-platform-roadmap.md` | ✅ P1–P3 / N0–N5 / SchedulerPort / 双平面事件 + 企微直连 + 公众号模板（#2807）全部完成 | 钉钉/飞书通道仅预留；**外发审批状态机明确不做**（agent 只能建规则、人在控制台改） |
 | 自动指标推导（AMD） | `2026-11-04-auto-metric-derivation-roadmap.md` | 🟡 W0–W8 完成/观察中 | **首答产出率**与**徽标覆盖率**两项抽样度量未做（有效样本不足）；B 臂首答率等样本累积 |
@@ -327,3 +327,6 @@
 | 2026-11-27 | **压缩推广第 1 源 `member_summary` 落地**：48 个对象、parity 逐月相等、读面翻两腿后 2026-10 视图 7,740 = 索引 5,471+2,269 | 按 spec §16 清单八步执行（先核 parity 再翻读面）；spec 同步新增 §16 推广清单与源顺序（#2928，PR #2929） |
 | 2026-11-27 | **推广第 2 源被清单挡住**：`inventory_movement` 同分区两条写路径（`all.parquet` + `chunk=segN`），压缩路径写死 `all.parquet` ⇒ 会只压回填日；且其消费方是 10 天窗、压缩收益低 | **否掉 `file_glob` 字段方案**（等于把文件形态再抄一份，写错即静默少片）；改为给索引补**输入指纹**（`input_pattern`/`input_files`）让「陈旧」可判（#2931，PR #2932） |
 | 2026-11-27 | **断言 ㉓ `compact_parity` 常驻**：每源只核边界月（索引 max(ym)），月文件行数须精确等于原始行数；原始 glob 直接用 `input_pattern`；判不了给 UNKNOWN | spec §7 ③ 一直标「尚未做」，而今天正是人工 parity 抓到的混写 ⇒ 把人工步骤变成机器判据，也是 `retail_order_line` 敢翻读面的前提（#2934，PR #2935，实测 2.2s） |
+| 2026-11-28 | **B2 第三阶段收口**：不切 chunk（tick p50 38→21s、11-27/28 零失败）；两条新 probe **不新建 OO 规则**（桥消费 `verdict<>'OK'` 自动覆盖）；反向测试注入 ERR 并留证 | 再切要改 `order_event` 窗口语义、收益不成比例；而「配规则」在 Phase 1 已有结论（判据接上即可见），新建即重复建设 |
+| 2026-11-28 | **两处判据假绿修掉**：㉓ `compact_parity` 的 catch 把 schema 漂移兜成 OK（#2951）；`notify.health` 用 `dead>0` 一刀切，4 条永久失败按红 7 天、一天 288 条红（#2953） | 共同形态是**降级分支写太宽**：一个 catch-all 兜住不该兜的错、一个把两种性质的失败当一种。都不报错，只让判据慢慢失去意义 |
+| 2026-11-28 | **G6 到期时点订正**：曾按「已经两天了」判定 48h soak 满足——**错的**，实际最早 11-29 00:00（tick）/ 13:00（SLA） | tick 自 11-27 00:00 零失败、SLA 自 11-27 13:00 零 ERR；未到期不翻绿 |
