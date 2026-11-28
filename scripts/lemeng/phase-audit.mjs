@@ -36,10 +36,14 @@ const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..', '..')
  * ⚠️ 这只是「我们认为它是这样」，与代码无关；发现不符就改这里（并回写正典 §1.5.2）。
  */
 export const CLASSIFY = [
-  { match: /\.snapshot(\.|$)/, days: [0, 1, 2], why: '库存快照类：每小时重采 T-0..T-2' },
-  { match: /\.windows\.l1$/, days: [1, 2], why: '窗口重采：整天重写 T-1..T-2' },
-  { match: /\.close\.l1$/, days: [1], why: '日结：重写 T-1' },
-  { match: /\.daily_sealed\.reconcile$/, days: [1], why: '封版对账：重写 T-1' },
+  // ⚠️ 下面每条都在 2026-11-28 **逐个核对了管线定义**（sink key 的 bizday 模板 / 父管线 SQL 的
+  // `unnest([...])`）。核之前凭印象写的 6 条里有 4 条是错的——**声明不准，门禁就是假的**。
+  { match: /\.snapshot\.l0(\.|$)/, days: [2], why: '库存快照 L0：写 bizday=${date-2d}（T-2）' },
+  { match: /\.snapshot\.catchup/, days: [3], why: '库存快照补采：写 bizday=${date-3d}（T-3）' },
+  { match: /\.snapshot\.backfill/, days: [], why: '库存快照回填：写显式 BIZDAY（按需，非周期可变面）' },
+  { match: /\.windows\.l1$/, days: [1, 2, 3], why: '窗口重采：父管线 `unnest([1,2,3])` ⇒ T-1..T-3' },
+  { match: /\.close\.l1$/, days: [1], why: '日结：`now()-1 day` ⇒ T-1' },
+  { match: /\.daily_sealed\.reconcile$/, days: [], why: '封版对账：src.minio 读 _DAILY → snk.postgres 写 PG 表，**不改湖分区**' },
   { match: /recon\.preagg/, days: [3], why: '对账父管线：写 T-3 源快照' },
   { match: /\.l0(\.|$)/, days: [0], why: 'L0 采集：写今天' },
   { match: /\.tick\.l1$/, days: [0], why: '10m 车道采集：写今天' },
