@@ -11,6 +11,13 @@
 
 ## [Unreleased]
 
+## [0.412.0](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.411.0...v0.412.0) - 2026-11-28
+- 【新增】aftersales: 附件支持 Excel + 处理工单增加提报规范性 ([#2965](https://github.com/MYTech-Co-LTD/platform-core/pull/2965), [b950b06](https://github.com/MYTech-Co-LTD/platform-core/commit/b950b06e18366389c2598cfc8928d22b37a3cf61))
+- 【修复】data: 相位审计裸写时区字面量，撞上扩散守卫 ([#2963](https://github.com/MYTech-Co-LTD/platform-core/pull/2963), [3005ed9](https://github.com/MYTech-Co-LTD/platform-core/commit/3005ed977dd972d5d17dfc1088808c53056be96f))
+- 【新增】data: 相位审计补读侧求交——谁读哪几天 × 可变面 ([#2961](https://github.com/MYTech-Co-LTD/platform-core/pull/2961), [e2d8bca](https://github.com/MYTech-Co-LTD/platform-core/commit/e2d8bca729a1f0a721271b7050926608bbd0615e))
+- 【新增】data: 排班相位审计——把「谁在重写哪几天」摆出来（只读） ([#2959](https://github.com/MYTech-Co-LTD/platform-core/pull/2959), [b3c7740](https://github.com/MYTech-Co-LTD/platform-core/commit/b3c7740b8581a4e8799665aacd38a1dea31829c7))
+
+
 ## [0.411.0](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.410.1...v0.411.0) - 2026-11-28
 - 【新增】aftersales: 商品搜索支持全门店历史名，结算行加日期索引 ([#2957](https://github.com/MYTech-Co-LTD/platform-core/pull/2957), [2276683](https://github.com/MYTech-Co-LTD/platform-core/commit/22766836fa472fe3f562d9ed58b8d2389f023acb))
 
