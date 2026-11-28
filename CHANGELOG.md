@@ -11,6 +11,10 @@
 
 ## [Unreleased]
 
+## [0.414.1](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.414.0...v0.414.1) - 2026-11-28
+- 【修复】data: 指纹观测窗按源的发布滞后起算 + 方法论补「频率」维 ([#2974](https://github.com/MYTech-Co-LTD/platform-core/pull/2974), [3421b9d](https://github.com/MYTech-Co-LTD/platform-core/commit/3421b9de8528c1a5260923500330cbaee8a7b718))
+
+
 ## [0.414.0](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.413.0...v0.414.0) - 2026-11-28
 - 【新增】data: 可变窗口从「声明」变成「测量」——每日记湖日文件指纹 ([#2972](https://github.com/MYTech-Co-LTD/platform-core/pull/2972), [538dc78](https://github.com/MYTech-Co-LTD/platform-core/commit/538dc7860f77803860e845e866e2b2f056017c0a))
 - 【修复】data: 相位审的「可变面」声明逐个核对管线定义——6 条里 4 条是错的 ([#2969](https://github.com/MYTech-Co-LTD/platform-core/pull/2969), [f454b25](https://github.com/MYTech-Co-LTD/platform-core/commit/f454b25a2f99ccd8aba50b55639c4148850e3b8c))
