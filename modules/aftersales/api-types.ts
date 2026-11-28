@@ -243,7 +243,7 @@ export interface ProductItem {
   /** 停售/淘汰标记（任一账套）： true ⇒ 建单选它可能无价可依 */
   saleCease: boolean | null
   eliminate: boolean | null
-  /** 同一 item_code 的历史名称（结算行里出现过的旧名；仅按门店搜索时返回） */
+  /** 同一 item_code 的历史名称（结算行里出现过的旧名；走历史搜索时返回，可为空） */
   aliases?: string[]
 }
 

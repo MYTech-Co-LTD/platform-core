@@ -261,10 +261,13 @@ export const product_archive = {
     const q = typeof f.product_name__contains === 'string' ? f.product_name__contains : ''
     const storeCode = typeof args.storeCode === 'string' ? args.storeCode : ''
 
-    // 已知门店 + 有搜索词：当前档案 ∪ 该店近 30 天结算行名称/编码。
-    // 未选门店仍走原档案搜索（首屏预加载也走这条），用户体感不变。
-    if (q !== '' && storeCode !== '') {
-      const params = new URLSearchParams({ storeCode, q })
+    // 有搜索词：当前档案 ∪ 结算行历史名称/编码。
+    //   · 带门店 ⇒ 只搜该店（近 30 天，与订单列表同窗口）；
+    //   · 不带门店 ⇒ 服务端在「我登记的门店」范围内搜（不是全租户）。
+    // 无搜索词的首屏预加载仍走档案分页（/guest/products），用户体感不变。
+    if (q !== '') {
+      const params = new URLSearchParams({ q })
+      if (storeCode !== '') params.set('storeCode', storeCode)
       const body = await apiGet<{ items: ProductItem[] }>(`/guest/settlement-products?${params}`)
       return body.items.map((p) => ({
         id: p.code,
