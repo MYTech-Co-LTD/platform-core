@@ -11,14 +11,17 @@ import { CLASSIFY, READERS, classify, minutesOf, minutesOfDay, overlapsInClock, 
 const HERE = dirname(fileURLToPath(import.meta.url))
 
 describe('phase-audit · 可变面归类', () => {
-  it('库存快照类：每小时重采 T-0..T-2', () => {
-    expect(classify('lemeng.inventory.snapshot.l0.3120').days).toEqual([0, 1, 2])
-    expect(classify('lemeng.inventory.snapshot.catchup.3120').days).toEqual([0, 1, 2])
+  // 2026-11-28 逐个核对管线定义后的真值（此前 6 条里有 4 条是凭印象写错的）：
+  it('库存快照：l0 写 T-2、catchup 写 T-3（不是 T-0..T-2）', () => {
+    expect(classify('lemeng.inventory.snapshot.l0.3120').days).toEqual([2])
+    expect(classify('lemeng.inventory.snapshot.catchup.3120').days).toEqual([3])
   })
-  it('窗口重采 / 日结 / 封版对账 / 对账父管线', () => {
-    expect(classify('lemeng.retail.windows.l1').days).toEqual([1, 2])
+  it('窗口重采 T-1..T-3（父管线 unnest([1,2,3])）；日结 T-1', () => {
+    expect(classify('lemeng.retail.windows.l1').days).toEqual([1, 2, 3])
     expect(classify('lemeng.retail.close.l1').days).toEqual([1])
-    expect(classify('lemeng.retail_order_line.daily_sealed.reconcile').days).toEqual([1])
+  })
+  it('封版对账**不改湖分区**（读 _DAILY、写 PG 表）；对账父管线写 T-3', () => {
+    expect(classify('lemeng.retail_order_line.daily_sealed.reconcile').days).toEqual([])
     expect(classify('lemeng.recon.preagg').days).toEqual([3])
   })
   it('回填/压缩不改周期可变面', () => {
@@ -55,12 +58,14 @@ describe('phase-audit · cron 与重叠', () => {
     expect(overlapsInClock([7], [10], 2)).toBe(false)
   })
 
-  it('归类表本身没有重叠语义的重复条目（顺序即优先级，写清楚）', () => {
-    // snapshot 必须在 l0 之前（`inventory.snapshot.l0` 同时命中 `.l0`）
-    const iSnap = CLASSIFY.findIndex((c) => String(c.match).includes('snapshot'))
-    const iL0 = CLASSIFY.findIndex((c) => String(c.match).includes('\\.l0'))
-    expect(iSnap).toBeGreaterThanOrEqual(0)
-    expect(iL0).toBeGreaterThan(iSnap)
+  it('顺序即优先级：更具体的规则必须排在通用 `.l0` 之前', () => {
+    // `lemeng.inventory.snapshot.l0.3120` 同时命中 snapshot.l0 与通用 .l0 ⇒ 具体规则要在前。
+    const iSnapL0 = CLASSIFY.findIndex((c) => c.why.includes('库存快照 L0'))
+    const iGenericL0 = CLASSIFY.findIndex((c) => c.why.includes('L0 采集'))
+    expect(iSnapL0).toBeGreaterThanOrEqual(0)
+    expect(iGenericL0).toBeGreaterThan(iSnapL0)
+    // 真值检查：走的是具体规则（T-2），不是通用规则的 T-0
+    expect(classify('lemeng.inventory.snapshot.l0.3120').days).toEqual([2])
   })
 })
 
