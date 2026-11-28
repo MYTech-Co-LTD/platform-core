@@ -40,19 +40,30 @@ const BUCKET = process.env.LEMENG_ZOS_BUCKET ?? 'shanhai-data'
  * `file` 是该源某账套某日的**精确对象**（已按 2026-11-28 实测的湖布局写死：
  * `inventory_snapshot/system_book=<b>/bizday=<YYYY-MM-DD>/chunk=all.parquet`）。
  * v1 只收一个源：它每小时重采 T-2、每天重采 T-3，是最激进的可变面；跑通攒够数据再加下一个。
- * @type {Array<{source: string, books: number[], file: (book: number, day: string) => string}>}
+ * `lagDays` 是该源的**发布滞后**（源端 D 日的快照在 D+lagDays 才拿得到）——观测窗口从它开始，
+ * 否则每天都会对它 SKIP 一次「文件不存在」（2026-11-28 实测：inventory_snapshot 没有 T-1，
+ * 因为源端 D+1 22:35 才发布，见正典 §7 #1079）。
+ * @type {Array<{source: string, books: number[], lagDays: number, file: (book: number, day: string) => string}>}
  */
 export const SOURCES = [
   {
     source: 'inventory_snapshot',
     books: [3120, 64188],
+    lagDays: 2, // 源端 D+1 22:35 发布 ⇒ 采集主窗 T-2、兜底 T-3（#1079 实测）
     file: (book, day) => `s3://${BUCKET}/lemeng/inventory_snapshot/system_book=${book}/bizday=${day}/chunk=all.parquet`,
   },
 ]
 
-/** 观测窗口：T-1..T-N（T-0 还在被写，指纹没意义）。 @param {number} n @param {Date} [now] @returns {string[]} */
-export function observeDays(n = 3, now = new Date()) {
-  return Array.from({ length: n }, (_, i) => shanghaiDaysAgo(i + 1, now))
+/**
+ * 观测窗口：T-lagDays .. T-(lagDays+n-1)。**起点必须按源的发布滞后**，否则会对着不存在的日子空转。
+ * @param {number} n 观测几个营业日
+ * @param {number} lagDays 该源的发布滞后（≥1；T-0 还在被写，指纹没意义）
+ * @param {Date} [now]
+ * @returns {string[]}
+ */
+export function observeDays(n = 3, lagDays = 1, now = new Date()) {
+  const from = Math.max(1, lagDays)
+  return Array.from({ length: n }, (_, i) => shanghaiDaysAgo(from + i, now))
 }
 
 /** 幂等建表：**观测日进主键**（同一天可被观测多次，历史保留）。 @param {any} pool */
@@ -101,7 +112,7 @@ async function main() {
     if (!dry) await ensureTable(pool)
     for (const s of SOURCES) {
       for (const book of s.books) {
-        for (const day of observeDays(days)) {
+        for (const day of observeDays(days, s.lagDays)) {
           const file = s.file(book, day)
           let rows
           try {
