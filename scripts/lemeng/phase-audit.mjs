@@ -26,6 +26,7 @@
 import { readFileSync, existsSync, readdirSync } from 'node:fs'
 import { join, dirname } from 'node:path'
 import { fileURLToPath } from 'node:url'
+import { SHANGHAI_TZ } from '../lib/time-semantics.mjs'
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..', '..')
 
@@ -100,7 +101,7 @@ export function minutesOf(cron) {
 
 /**
  * cron（含小时字段）→ 「HH:MM」集合，按给定时区解释。
- * 平台 job 的 cron 是 UTC，console 是 Asia/Shanghai —— 必须先换算再比，否则差 8 小时。
+ * 平台 job 的 cron 是 UTC，console 是上海时区 —— 必须先换算再比，否则差 8 小时。
  * @param {string} cron @param {string} tz @returns {Set<string>}
  */
 export function minutesOfDay(cron, tz) {
@@ -221,7 +222,7 @@ function main() {
     for (const w of mutables) {
       const shareDay = rDays === null || w.days.some((d) => rDays.includes(d))
       if (!shareDay) continue
-      const wMinutes = minutesOfDay(w.cron, 'Asia/Shanghai')
+      const wMinutes = minutesOfDay(w.cron, SHANGHAI_TZ)
       const clockHit = [...rMinutes].some((k) => wMinutes.has(k))
       if (!clockHit) continue
       if (r.guard === 'closed' || r.guard === 'sealed') continue
