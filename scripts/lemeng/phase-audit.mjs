@@ -185,6 +185,7 @@ export function scheduleOf(key) {
 function main() {
   const args = process.argv.slice(2)
   const json = args.includes('--json')
+  const check = args.includes('--check')
   const rootArg = args.indexOf('--root')
   const root = rootArg > -1 ? args[rootArg + 1] : ROOT
   const writers = readWriteSide(root)
@@ -238,6 +239,7 @@ function main() {
       crowdedMinutes: crowded.map(([m, v]) => ({ minute: m, n: v.length, who: v })),
       conflicts,
     }, null, 2))
+    if (check && conflicts.length > 0) process.exit(1)
     return
   }
   console.log(`PHASE_AUDIT writers=${writers.length} unknown=${unknown.length} mutable_faces=${mutables.length} crowded_minutes=${crowded.length}`)
@@ -254,6 +256,15 @@ function main() {
   for (const [m, v] of crowded) console.log(`   第 ${String(m).padStart(2)} 分: ${v.length} 条 — ${v.slice(0, 4).join(' / ')}${v.length > 4 ? ' …' : ''}`)
   console.log(`  ── ③ 读侧求交：无 mitigation 的冲突 ${conflicts.length} 组`)
   for (const c of conflicts) console.log(`   ${c.reader}（${c.readerCron}）↔ ${c.writer}（${c.writerCron}，重写 T-${c.days.join('/T-')}）`)
+  if (check) {
+    // CI 门禁：非 0 即红。⚠️ 判据是「读侧**没有声明避让手段**却与可变面相交」——
+    // 有 mitigation（闭窗谓词 / 只读封版 / 上界 T-3）的不算冲突，那是**声明过的**设计。
+    if (conflicts.length > 0) {
+      console.error(`PHASE_AUDIT_FAIL conflicts=${conflicts.length}（读侧缺避让手段；见上表：要么加闭窗谓词/上界，要么挪相位并在此声明）`)
+      process.exit(1)
+    }
+    console.log('PHASE_AUDIT_CHECK_OK conflicts=0')
+  }
 }
 
 if (process.argv[1] && import.meta.url === new URL(`file://${process.argv[1]}`).href) main()

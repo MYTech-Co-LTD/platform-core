@@ -118,6 +118,12 @@ jobs:
       #   A5 1h 起点必须紧随最后一个小时级采集偏移，10m 物化偏移必须与采集 tick 对齐。
       # 纯静态：读 dbt 模型、console 排班、registry 与 scripts/lemeng/data-lanes.json，不连库。
       - run: pnpm exec tsx scripts/check-data-lanes.mjs
+      # 排班相位门禁（#2958/#2960，时序方法论的第 ③ 步「门禁固化」）：
+      #   ① 每条 console 排班必须能归类到「会重写哪几天」（未知写法即红，不猜）；
+      #   ② 读侧 job（物化车道/审计/压缩/回填）的读窗口若与可变面相交、**且没有声明避让手段**
+      #      （闭窗谓词 / 只读封版 / 上界 T-3）⇒ 红。有 mitigation 的不算冲突，那是声明过的设计。
+      # 纯静态：读 console schedules、registry 源码与仓内声明表，不连库。
+      - run: pnpm exec tsx scripts/lemeng/phase-audit.mjs --check
       # W4 语义完备门禁（#1447）：实体必填四字段 + 指标 entity 引用闭合 + 维度层级可校验列。
       # 纯静态（只读 dbt/semantics 与 contracts/），不连库。
       - run: pnpm exec tsx scripts/check-semantics.mjs
