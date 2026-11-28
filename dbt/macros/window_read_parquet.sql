@@ -3,9 +3,10 @@
   env AUDIT_WINDOW_PATTERNS 未设 = 原样全史 glob；设了 = 把 bizday=* / bizday=** 段换成
   恰好一个融合月段 glob（如 2026-1[01]-*）。行级精度由两侧 WHERE（AUDIT_WINDOW_START /
   window_start_date）负责。
-  ⚠️ 窗口起点必须对齐**增量 lookback**（today−7），不是月初：增量 mart 只重建最近 7 天，
-  更老分区是建表时快照，源头重述后必然「湖新 mart 旧」⇒ 窗口放宽就假红（2026-11-07 实测
-  transfer 2260 条差异全部落在 10-01..10-27，无一在 7 天内）。
+  ⚠️ 窗口起点必须对齐**增量 lookback**（`incremental_cutoff(10)` ⇒ `mart_max−10`；14 个模型用 10、
+  1 个用 60——2026-11-28 实测计数，此前这里写的 today−7 是过时值），不是月初：增量 mart 只重建
+  最近 10 天，更老分区是建表时快照，源头重述后必然「湖新 mart 旧」⇒ 窗口放宽就假红（2026-11-07 实测
+  transfer 2260 条差异全部落在 10-01..10-27，无一在 10 天内）。
   为什么必须是单 glob 裸函数调用、tag 语义、实测数字：
   见 PR #1618 描述与 scripts/lemeng/materialize.sh hourly 档注释。
   ⚠️ 本文件刻意**不用 if/endif 控制流块**（用条件表达式）：dbt 1.9 解析器对宏体内
