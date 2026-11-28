@@ -241,6 +241,11 @@ export const JOB_REGISTRY: JobDef[] = [
   // 判据与宿主 restate 的 `kind=gap` 同源；`diff` 那一半（要逐小时判别，依赖 diagnose.sh 32KB）
   // 按 deploy/jobs.md §1.1 暂留宿主，退役条件写在那里。
   { key: 'data.recon_restate', scope: 'data', requiresEnv: ['DATA_WAREHOUSE_URL','DUCKLE_TOKEN'], script: 'scripts/lemeng/recon-gap-restate.mjs', cron: '50 19 * * *', timezone: 'UTC', timeoutMs: 1800000, maxAttempts: 1, expectedIntervalSecs: 86400, description: '对账缺整天自愈（窗口 T-3..T-9 无 recon_break 行且有营业 ⇒ 逐日重触发 console 回填；CST 03:50，随后 04:30 台账闸重建）' },
+  // 可变窗口**测量**（时序方法论 §4 缺口①，issue #2972）：湖按日覆盖写、旧版本不保留 ⇒ 只能从现在起记录。
+  // 每天 CST 01:30（采集收窗 01:59 之后、主档 02:30 之前）给 T-1..T-3 记一次行数指纹；
+  // 同一 (源,账套,营业日) 在不同观测日的 rows 是否变化 = 这天在首采后还改了多少。
+  // 攒够 2 天就能回答「为什么 T-1/T-2 要整天重采」。**只读湖、只写一张窄表**，不改采集/物化。
+  { key: 'data.source_day_fingerprint', scope: 'data', requiresEnv: ['DATA_WAREHOUSE_URL','LEMENG_ZOS_BUCKET'], script: 'scripts/lemeng/source-day-fingerprint.mjs', env: { LEMENG_ZOS_BUCKET: 'shanhai-data' }, cron: '30 17 * * *', timezone: 'UTC', timeoutMs: 900000, maxAttempts: 1, expectedIntervalSecs: 86400, description: '可变窗口测量：每日给 T-1..T-3 的湖日文件记行数指纹（时序方法论 §4；CST 01:30）' },
   // 对账台账**当夜自愈闸**（#2894）：断言 ⑪ 红了不会自己去重建台账 ⇒ 红满一整天。
   // 本 job 用与 ⑪ **同一条 SQL** 判「T-4 缺行」，缺了才重建 `recon_fact/recon_break/recon_run`
   // （≈35s，不碰 500s 的 swap_offset）。重建后仍缺 = 不是台账没建而是那天在 recon_break 里就没行
